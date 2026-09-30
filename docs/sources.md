@@ -62,6 +62,12 @@ Local sources are pinned by `vendor.txt` (Petari `0fac090b`, galaxy-macos `92d7a
 | "3D All-Stars mapped the pointer to the right stick" | X — unsourced |
 | "Code ~8 MB, runtime ~6 MB, asset budget 18 MB" | X — replaced by measured budget (see spec) |
 
+## Tools
+
+| Claim | Source | St |
+|---|---|---|
+| `nodtool` reads ISO, WIA/RVZ, WBFS, CISO, GCZ, NKit and extracts the data partition by default | https://raw.githubusercontent.com/encounter/nod/main/README.md (l.20-26, 47-52); `nodtool extract --help` | V |
+
 ## Design choices (ours)
 
 | Choice | Rationale | St |
