@@ -2,14 +2,15 @@
 
 usage: python tools/budget.py data/fs [out_dir]    (data/fs = extracted disc filesystem)
        python tools/budget.py --selftest
+Every format detail below cites docs/sources.md (Petari file:line).
 """
-import csv, json, struct, sys
+import csv, json, re, struct, sys
 from pathlib import Path
 
 def u16(b, o): return struct.unpack_from(">H", b, o)[0]
 def u32(b, o): return struct.unpack_from(">I", b, o)[0]
 
-# ---------- Yaz0 ----------
+# ---------- Yaz0 (JKRDecomp.cpp:195-260) ----------
 def yaz0(src):
     if src[:4] != b"Yaz0":
         return src
@@ -39,20 +40,20 @@ def yaz0(src):
                     dst.append(dst[start + i])
     return bytes(dst)
 
-# ---------- RARC ----------
+# ---------- RARC (JKRArchive.hpp:17-73, JKRCompArchive.cpp:117-123) ----------
 def rarc_files(arc):
     """Yield (name, bytes) for every file in a (decompressed) RARC."""
     arc = yaz0(arc)
     if arc[:4] != b"RARC":
         return
-    data_off = u32(arc, 0x0C) + 0x20
-    info = 0x20
-    n_entries, entry_off = u32(arc, info + 0x08), u32(arc, info + 0x0C) + 0x20
-    str_off = u32(arc, info + 0x14) + 0x20
+    info = u32(arc, 0x08)                  # mHeaderSize: info block follows the header
+    data_off = info + u32(arc, 0x0C)       # mHeaderSize + mFileDataOffset
+    n_entries, entry_off = u32(arc, info + 0x08), info + u32(arc, info + 0x0C)
+    str_off = info + u32(arc, info + 0x14)
     for i in range(n_entries):
         e = entry_off + i * 0x14
         type_name = u32(arc, e + 4)
-        if (type_name >> 24) & 0x02:  # directory
+        if (type_name >> 24) & 0x02:  # FILE_FLAG_FOLDER
             continue
         name_off = type_name & 0xFFFFFF
         name = arc[str_off + name_off: arc.index(b"\0", str_off + name_off)].decode("shift_jis", "replace")
@@ -60,18 +61,23 @@ def rarc_files(arc):
         yield name, yaz0(arc[off:off + size])
 
 # ---------- textures ----------
-# GX format -> (bits per pixel, block w, block h)
-GX_FMT = {0: (4, 8, 8), 1: (8, 8, 4), 2: (8, 8, 4), 3: (16, 4, 4), 4: (16, 4, 4), 5: (16, 4, 4),
-          6: (32, 4, 4), 8: (4, 8, 8), 9: (8, 8, 4), 10: (16, 4, 4), 14: (4, 8, 8)}
-PS2_4BPP = {0, 2, 8, 14}  # I4, IA4, C4, CMPR -> CLUT4; everything else -> CLUT8
-PS2_MAX_DIM = 256
+# GX texture format -> tile shift (x, y); port of __GXGetTexTileShift (GXTexture.c:69-113)
+GX_TILE_SHIFT = {0: (3, 3), 8: (3, 3), 14: (3, 3),                      # I4 C4 CMPR
+                 1: (3, 2), 2: (3, 2), 9: (3, 2),                       # I8 IA4 C8
+                 3: (2, 2), 4: (2, 2), 5: (2, 2), 6: (2, 2), 10: (2, 2)}  # IA8 565 5A3 RGBA8 C14X2
+PS2_4BPP = {0, 8, 14}  # D (sources.md): 4-bpp GX formats -> PSMT4, everything else -> PSMT8
+PS2_MAX_DIM = 256      # D (sources.md): budget lever, GS itself allows 1024
 
 def gx_tex_size(fmt, w, h, mips):
-    bpp, bw, bh = GX_FMT.get(fmt, (32, 4, 4))
+    """Port of GXGetTexBufferSize (GXTexture.c:117-152); `mips` = ResTIMG image count."""
+    sx, sy = GX_TILE_SHIFT.get(fmt, (0, 0))
+    tile = 64 if fmt == 6 else 32
     total = 0
     for _ in range(max(mips, 1)):
-        total += (-(-w // bw) * bw) * (-(-h // bh) * bh) * bpp // 8
-        w, h = max(w // 2, 1), max(h // 2, 1)
+        total += ((w + (1 << sx) - 1) >> sx) * ((h + (1 << sy) - 1) >> sy) * tile
+        if w == 1 and h == 1:
+            break
+        w, h = max(w >> 1, 1), max(h >> 1, 1)
     return total
 
 def ps2_tex_size(fmt, w, h, mips):
@@ -93,9 +99,9 @@ def bti_headers(b, base, count):
         h = base + i * 0x20
         yield b[h], u16(b, h + 2), u16(b, h + 4), b[h + 0x18], h + u32(b, h + 0x1C)
 
-# ---------- J3D (bmd/bdl) ----------
-GX_COMP_SIZE = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4}  # u8 s8 u16 s16 f32
-GX_CLR_SIZE = {0: 2, 1: 3, 2: 4, 3: 2, 4: 3, 5: 4}
+# ---------- J3D (bmd/bdl): J3DModelLoader.hpp:49-77,187-191 ----------
+GX_COMP_SIZE = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4}        # GX_U8 S8 U16 S16 F32 (GXEnum.h:129-133)
+GX_CLR_SIZE = {0: 2, 1: 3, 2: 4, 3: 2, 4: 3, 5: 4}   # RGB565 RGB8 RGBX8 RGBA4 RGBA6 RGBA8 (GXEnum.h:135-140)
 
 def j3d_sizes(b):
     """-> dict tex_gx, tex_ps2, geo_gx, geo_ps2, other."""
@@ -115,7 +121,7 @@ def j3d_sizes(b):
             r["geo_gx"] += size
             r["geo_ps2"] += vtx1_ps2(b, o, size)
         elif tag == b"SHP1":
-            # ponytail: indices kept as-is (EE de-indexes at draw time); pre-expanded strips could be 2-3x
+            # ponytail: display lists counted as-is; de-indexed PS2 strips would be larger (factor not measured)
             r["geo_gx"] += size
             r["geo_ps2"] += size
         else:
@@ -130,7 +136,7 @@ def vtx1_ps2(b, o, size):
         fmts[u32(b, f)] = (u32(b, f + 4), u32(b, f + 8))
         f += 0x10
     offs = [u32(b, o + 0x0C + 4 * i) for i in range(13)]
-    # array index -> GX attribute: pos 9, nrm 10, nbt, clr0 11, clr1 12, tex0-7 13-20
+    # J3DVertexBlock order: pos, nrm, nbt, clr0, clr1, tex0-7 -> GX_VA_* (GXEnum.h:17-46)
     attrs = [9, 10, None, 11, 12] + list(range(13, 21))
     live = sorted(x for x in offs if x)
     total = 0
@@ -143,6 +149,7 @@ def vtx1_ps2(b, o, size):
         if attrs[i] in (11, 12):
             total += length // GX_CLR_SIZE.get(typ, 4) * 4
             continue
+        # GXCompCnt (GXEnum.h:387-395): POS_XY/XYZ, NRM_XYZ/NBT/NBT3, TEX_S/ST
         comps = 2 + cnt if attrs[i] == 9 else (3 if cnt == 0 else 9) if attrs[i] == 10 else 1 + cnt
         elem = comps * GX_COMP_SIZE.get(typ, 4)
         total += length // elem * comps * 2
@@ -154,11 +161,11 @@ def file_sizes(name, b):
         return j3d_sizes(b)
     if n.endswith(".bti"):
         fmt, w, h, mips, _ = next(bti_headers(b, 0, 1))
-        return dict(tex_gx=len(b), tex_ps2=ps2_tex_size(fmt, w, h, mips), geo_gx=0, geo_ps2=0, other=0)
+        return dict(tex_gx=gx_tex_size(fmt, w, h, mips), tex_ps2=ps2_tex_size(fmt, w, h, mips), geo_gx=0, geo_ps2=0, other=0)
     return dict(tex_gx=0, tex_ps2=0, geo_gx=0, geo_ps2=0, other=len(b))
 
-# ---------- BCSV (JMap) ----------
-def jmap_hash(s):
+# ---------- BCSV (JMap): JMapInfo.hpp:6-31, JMapInfo.cpp:55-70 ----------
+def jmap_hash(s):  # JGadget hashcode.cpp:7-13
     h = 0
     for c in s.encode("shift_jis"):
         h = (h * 31 + c) & 0xFFFFFFFF
@@ -190,6 +197,15 @@ def bcsv_column(b, field):
             out.append(b[s:end].decode("shift_jis", "replace"))
         return out
     return []
+
+# ---------- resident set: StationedFileInfo.cpp ----------
+STATIONED_CPP = Path(__file__).resolve().parent.parent / "vendor/Petari/src/Game/System/StationedFileInfo.cpp"
+
+def stationed_paths():
+    """Archive paths the game keeps loaded, minus the Luigi-only set (only one player is loaded)."""
+    src = STATIONED_CPP.read_text(encoding="utf-8")
+    entries = re.findall(r"LOAD_TYPE_(\w+),\s*\"([^\"]+)\"", src)
+    return list(dict.fromkeys(p for t, p in entries if t != "MOUNT_RESOURCE_LUIGI"))
 
 # ---------- disc walk ----------
 KEYS = ("tex_gx", "tex_ps2", "geo_gx", "geo_ps2", "other")
@@ -224,12 +240,18 @@ def main(fs, out):
     cache = json.loads(cache_file.read_text()) if cache_file.exists() else {}
     stage, objdir = fs / "StageData", fs / "ObjectData"
     objects = {p.stem.lower(): p for p in objdir.glob("*.arc")}
-    galaxies, zones = [], []
+    # ponytail: name -> archive is a heuristic (sources.md, E); LOD archives counted whenever they exist
+    # (LodCtrl.cpp:351-374), which over-counts actors without LOD
+    lod = lambda names: {v for n in names for v in (n, n + "low", n + "middle") if v in objects}
+    resident = [fs / p.lstrip("/") for p in stationed_paths()]
+    resident_row = row("<resident>", [arc_stats(p, cache) for p in resident if p.exists()])
+    galaxies, zones = [dict(**resident_row, zones=0, unresolved=sum(not p.exists() for p in resident))], []
     try:
         for scen in sorted(stage.glob("*Scenario.arc")):
             gname = scen.name[: -len("Scenario.arc")]
             print(gname, flush=True)
-            zone_names = [gname] + [z for z in arc_stats(scen, cache)["zones"] if z != gname]
+            # a galaxy loads exactly its ZoneList entries (StageFileLoader.cpp:14-40)
+            zone_names = list(dict.fromkeys(arc_stats(scen, cache)["zones"]))
             g_parts, g_objs, unresolved = [], set(), set()
             for z in zone_names:
                 zp = stage / f"{z}.arc"
@@ -238,10 +260,10 @@ def main(fs, out):
                     continue
                 zs = arc_stats(zp, cache)
                 objs = {n.lower() for n in zs["names"]}
-                z_parts = [zs] + [arc_stats(objects[n], cache) for n in sorted(objs & objects.keys())]
+                z_parts = [zs] + [arc_stats(objects[n], cache) for n in sorted(lod(objs))]
                 zones.append(dict(galaxy=gname, **row(z, z_parts), unresolved=len(objs - objects.keys())))
                 g_parts.append(zs)
-                g_objs |= objs & objects.keys()
+                g_objs |= lod(objs)
                 unresolved |= objs - objects.keys()
             g_parts += [arc_stats(objects[n], cache) for n in sorted(g_objs)]
             galaxies.append(dict(**row(gname, g_parts), zones=len(zone_names), unresolved=len(unresolved)))
