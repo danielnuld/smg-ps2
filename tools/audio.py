@@ -50,6 +50,80 @@ def banks(smr):
     return out
 
 
+def cmds(smr, tag, magic):
+    """BAA commands `tag {number, offset, ...}` whose offset holds `magic` -> [(number, offset)]."""
+    out, c = [], smr.find(tag)
+    while 0 <= c <= len(smr) - 12:
+        n, off = u32(smr, c + 4), u32(smr, c + 8)
+        if c % 4 == 0 and smr[off:off + 4] == magic:
+            out.append((n, off))
+        c = smr.find(tag, c + 1)
+    return out
+
+
+def waves(smr):
+    """-> {wave bank: [(archive index, wave id, wii bytes, ps2 bytes)]}. Wave id from the ctrl table
+    (JASWSParser.hpp TCtrlGroup @+0x14 -> scene offsets @+0xC -> scene ctrl @+0xC -> {count @4, offsets @8},
+    id = low half of the TCtrlWave word, JASWSParser.cpp createBasicWaveBank)."""
+    out = {}
+    for bid, o in cmds(smr, b"ws  ", b"WSYS"):
+        winf, grp = o + u32(smr, o + 0x10), o + u32(smr, o + 0x14)
+        rows = []
+        for i in range(u32(smr, winf + 4)):
+            a = o + u32(smr, winf + 8 + 4 * i)
+            ctrl = o + u32(smr, o + u32(smr, grp + 0xC + 4 * i) + 0xC)
+            for j in range(u32(smr, a + 0x70)):
+                w = o + u32(smr, a + 0x74 + 4 * j)
+                wid = u32(smr, o + u32(smr, ctrl + 8 + 4 * j)) & 0xFFFF
+                rows.append((i, wid, u32(smr, w + 0x0C), -(-u32(smr, w + 0x1C) // 28) * 16))
+        out[bid] = rows
+    return out
+
+
+def referenced(smr):
+    """-> {wave bank: set of wave ids} named by any instrument or percussion velocity region of the IBNKs
+    bound to that wave bank (`bnk ` command, JAUSectionHeap.cpp:394-410; IBNK v1 'LIST' -> 'Inst'/'Perc',
+    JASBNKParser.cpp:93-195; velocity region = 4 words, wave id = low half of word 1)."""
+    out = {}
+    for wb, o in cmds(smr, b"bnk ", b"IBNK"):
+        ids = out.setdefault(wb, set())
+        end, ch = o + u32(smr, o + 4), o + 0x20
+        lst = None
+        while ch < end:  # findChunk: next = (chunk + 0xB + size) & ~3
+            if smr[ch:ch + 4] == b"LIST":
+                lst = ch
+                break
+            ch = (ch + 0xB + u32(smr, ch + 4)) & ~3
+        if lst is None:
+            continue
+        for i in range(u32(smr, lst + 8)):
+            off = u32(smr, lst + 0xC + 4 * i)
+            if not off:
+                continue
+            d = o + off
+            kind, d = smr[d:d + 4], d + 4
+            if kind == b"Inst":
+                d += 4 + 4 * u32(smr, d)            # oscillators
+                d += 4 + 4 * u32(smr, d)            # effects
+                keys, d = u32(smr, d), d + 4
+                for _ in range(keys):
+                    velos, d = u32(smr, d + 4), d + 8
+                    for _ in range(velos):
+                        ids.add(u32(smr, d + 4) & 0xFFFF); d += 16
+            elif kind == b"Perc":
+                count, d = u32(smr, d), d + 4
+                for j in range(count):
+                    po = u32(smr, d + 4 * j)
+                    if not po:
+                        continue
+                    q = o + po + 16                 # 'Pmap' + TPercData, then effects
+                    q += 4 + 4 * u32(smr, q)
+                    velos, q = u32(smr, q), q + 4
+                    for _ in range(velos):
+                        ids.add(u32(smr, q + 4) & 0xFFFF); q += 16
+    return out
+
+
 def tables():
     src = SCENE_CPP.read_text(encoding="utf-8")
     def tbl(name):
@@ -115,6 +189,17 @@ def selftest():
     assert size({(9, 1)}, {9: [("a", 1, 2), ("b", 10, 20)]}, 2) == 20
     s = scene_sets()
     assert (34, 1) in s[("OceanPhantomCaveGalaxy", 0)] and (18, None) in s[("OceanPhantomCaveGalaxy", 1)]
+    # IBNK v1 bound to wave bank 5: LIST with one 'Inst' (no osc/effects, 1 key, 2 velos -> waves 7, 8)
+    # and one 'Perc' (1 perc, 1 velo -> wave 9)
+    ib = bytearray(0x100)
+    ib[0:4] = b"IBNK"; struct.pack_into(">II", ib, 4, 0x100, 0); struct.pack_into(">I", ib, 0xC, 1)
+    ib[0x20:0x24] = b"LIST"; struct.pack_into(">III", ib, 0x24, 8, 2, 0x40); struct.pack_into(">I", ib, 0x30, 0x80)
+    ib[0x40:0x44] = b"Inst"; struct.pack_into(">IIIII", ib, 0x44, 0, 0, 1, 0x7F << 24, 2)
+    struct.pack_into(">4I", ib, 0x58, 0, 7, 0, 0); struct.pack_into(">4I", ib, 0x68, 0, 8, 0, 0)
+    ib[0x80:0x84] = b"Perc"; struct.pack_into(">II", ib, 0x84, 1, 0xA0)
+    ib[0xA0:0xA4] = b"Pmap"; struct.pack_into(">II", ib, 0xB0, 0, 1); struct.pack_into(">4I", ib, 0xB8, 0, 9, 0, 0)
+    baa = b"AA_<" + b"bnk " + struct.pack(">II", 5, 20) + bytes(4) + bytes(ib)
+    assert referenced(baa) == {5: {7, 8, 9}}, referenced(baa)
     print("selftest ok")
 
 

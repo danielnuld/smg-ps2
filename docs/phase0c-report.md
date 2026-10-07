@@ -92,3 +92,21 @@ two stereo pairs over the two cores = the 4 stream channels SMG uses (`AudParams
 runs at the SPU2 output rate, so `.ast` streams (32 kHz on the Wii, `AudParams.cpp` `streamSampleRate`) are resampled
 offline; their buffers live in IOP or EE RAM (task 2.4), not in SPU2. With reverb HALL instead of SPACE the budget is
 1.89 MB; with no reverb 1.98 MB.
+
+## Which waves a scene can play (task 2.2) — `tools/audio.py` `waves()` / `referenced()`
+
+Static chain from the game's tables: scene → loaded wave banks (`AudSceneMgr`) → instrument banks bound to them
+(`bnk ` commands) → instruments and percussion → wave ids → archive and size (WSYS ctrl table).
+
+Result: **every one of the 1 796 waves is referenced by some instrument or percussion region** (22.95 MB as SPU ADPCM,
+all referenced; cross-check: 0 referenced ids missing from their bank). Bank 34 (player voices) has 320 waves in 3
+archives sharing 160 ids. So the tables cut nothing: by them a scene can play every wave of its loaded banks, the
+12.06–13.09 MB of 0b.
+
+What the tables cannot say is which instruments are actually played. Two ways to learn it:
+
+1. **Music vs effects split** (static): disassemble the BMS sequences (BGM in `AudioRes/Seqs/JaiSeq.arc`, effects in
+   the BSC collection) following jumps, and collect the banks each one selects (`cmdBank` / `cmdBankPrg`). A bank used
+   only by sequenced music leaves SPU2 if that music is pre-rendered to an ADMA stream. Bank 2 (4.65 MB, always
+   loaded) is the one to check first.
+2. **Observed use** (Dolphin): log the waves started per scene while playing. Exact, needs play time.
