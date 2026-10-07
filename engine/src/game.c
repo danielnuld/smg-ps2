@@ -27,7 +27,8 @@ typedef struct {
     int land_timer;     /* frames since landing (_3CE), for the 2nd / 3rd jump window */
     int air_timer;      /* frames since take-off */
     int last_jump;      /* jump_kind of the last jump, kept after landing */
-    int squat, wall;    /* squatting; touching a wall in the air (wall_n valid) */
+    int squat, wall;    /* squatting; touching a wall this frame (wall_n valid) */
+    int wall_timer;     /* frames since the last wall contact */
     int low_grav;       /* frames left at the spin's low gravity */
 } Player;
 
@@ -59,6 +60,9 @@ static const float JUMP_GRAV[12] = {1.8f, 1.8f, 1.8f, 1.8f, 1.8f, 0.95f, 1.8f, 2
 #define WALL_JUMP_XZ 13.0f        /* mWallJumpPowerXZ */
 #define WALL_JUMP_Y 30.0f         /* mWallJumpPowerY */
 #define SLIP_ANGLE_COS 0.5f       /* mSlipAngle 60: steeper floors are not ground (Mario slides off) */
+#define WALL_ANGLE_COS 0.087f     /* mForceWallAngle 85: only faces steeper than this are walls; 60-85 slopes are
+                                   * neither ground nor wall, Mario just slides down them */
+#define WALL_KEEP 6               /* frames a wall contact stays valid (wall slide clip, wall kick) */
 #define GROUNDING 20.0f           /* mGravityGrounding: downward step while on the ground keeps Mario on crests */
 #define DROP_WAIT 5               /* mDropWaitTime: frames in the air before the fall clip (MarioMove.cpp:138) */
 #define TURN_STAND 0.9f           /* mTurnAngleSpeed (rad per frame, standing) */
@@ -201,7 +205,7 @@ static int collide_n(V3 *center, V3 up, float radius, V3 *ground_n, V3 *wall_n, 
         if (d > SLIP_ANGLE_COS) {
             ground = 1;
             if (ground_n) *ground_n = nrm;
-        } else if (d > -0.3f && wall) {
+        } else if (d > -0.3f && d < WALL_ANGLE_COS && wall) {
             *wall = 1;
             *wall_n = nrm;
         }
@@ -326,6 +330,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     mario->up = up_at(mario->pos, v3(0, 1, 0));
     mario->face = vnorm(vtangent(v3(0, 0, 1), mario->up));
     mario->jump_kind = mario->last_jump = -1;
+    mario->wall_timer = 1000;
     cam_pos = vadd(mario->pos, vadd(vmul(mario->up, 500), vmul(mario->face, -1000)));
     {   /* SMG cameras: CAMS + CARE chunks (tools/camera.py); the slice plays zone 1 */
         u32 sz;
@@ -418,7 +423,7 @@ static void update_mario(void)
             m->hvel = vmul(m->hvel, m->jump_kind == 5 ? SQUAT_FRONT_RED : JUMP_FRONT_RED);
         if (vlen(m->hvel) > MAX_JUMP_SPEED) m->hvel = vmul(vnorm(m->hvel), MAX_JUMP_SPEED);
         if (stick > 0.1f && m->jump_kind != 6) m->face = vnorm(vadd(vmul(m->face, 0.9f), vmul(want, 0.1f)));
-        if (m->wall && pad_pressed(PAD_CROSS)) { /* wall kick: away from the wall (tryWallJump) */
+        if (m->wall_timer <= WALL_KEEP && pad_pressed(PAD_CROSS)) { /* wall kick: away from the wall (tryWallJump) */
             m->face = vnorm(vtangent(m->wall_n, m->up));
             start_jump(m, 0, vmul(m->face, WALL_JUMP_XZ), WALL_JUMP_Y, "walljump");
         } else if (pad_pressed(PAD_SQUARE) && !m->spin_used && m->spin_timer == 0) { /* trySpinJump */
@@ -444,7 +449,9 @@ static void update_mario(void)
     V3 center = vadd(vadd(m->pos, vmul(m->up, BODY_RADIUS)), vadd(m->hvel, vmul(m->up, down)));
     V3 gn = m->up;
     int was_ground = m->grounded;
-    int ground = collide_n(&center, m->up, BODY_RADIUS, &gn, &m->wall_n, &m->wall);
+    V3 wn = m->wall_n;
+    int ground = collide_n(&center, m->up, BODY_RADIUS, &gn, &wn, &m->wall);
+    if (m->wall) { m->wall_n = wn; m->wall_timer = 0; } else if (m->wall_timer < 1000) m->wall_timer++;
     m->pos = vsub(center, vmul(m->up, BODY_RADIUS));
     if (ground && m->vup <= 0) {
         if (!was_ground && (m->jump_kind > 0 || m->last_jump >= 0 || m->air_timer > DROP_WAIT)) {
@@ -482,7 +489,7 @@ static void update_mario(void)
             else if (sp > 0.05f) mario_play("walk", 0.5f + sp, 1);
             else mario_play("wait", 1.0f, 1);
         } else if (!m->grounded && !busy && m->air_timer > DROP_WAIT) {
-            if (m->wall && m->vup < 0) mario_play("wallslide", 1.0f, 1);
+            if (m->wall_timer <= WALL_KEEP && m->vup < 0) mario_play("wallslide", 1.0f, 1);
             else mario_play("fall", 1.0f, 1);
         }
         anim_update(mario_anim);
