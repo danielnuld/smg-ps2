@@ -15,6 +15,8 @@ int game_zone_next(const unsigned char *full);
 int game_teleport_low(const unsigned char *full);
 /* Test builds: Mario caught by launch star i as if he spun there. Returns i, or -1 if there is none. */
 int game_test_launch(int i);
+/* Test builds: Mario just above the first breakable box, spinning. Returns its OBJS row or -1. */
+int game_test_box(void);
 void game_draw(void);
 /* HUD numbers */
 int game_coins(void);

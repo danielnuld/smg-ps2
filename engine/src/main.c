@@ -263,6 +263,12 @@ int main(void)
         pad_update();
         game_update();
 #ifdef PACKS
+#ifdef BOX_TEST
+        if (frame == 120)
+            printf("box test: Mario spins on box row %d\n", game_test_box());
+        if (frame == 240)
+            printf("box test: coins %d\n", game_coins());
+#endif
 #ifdef ZONE_TEST
         if (frame == 120)
             printf("zone test: launch star %d\n", game_test_launch(0));
