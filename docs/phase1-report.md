@@ -45,3 +45,23 @@ Gateway 2 (stages HeavensDoorGalaxy + HeavensDoorMysteriousZone, layers common +
 
 Not in the blob yet (by design, added when the engine needs them): textures/UVs, strips, Mario's model and
 animations, the planet's other parts (house door, flowers, pipes).
+
+## Engine skeleton (tasks 3.1-3.2)
+
+`engine/` (C99, ps2sdk + gsKit from the WSL ps2dev at `/usr/local/ps2dev`; `engine/build.sh` builds on the WSL disk).
+The blob is linked into the ELF (`src/assets.S`, `.incbin`) and read in place (`blob.c`); runtime memory comes from
+one arena with every byte charged to a type (`mem.c`); text is a 3x5 sprite font (the BIOS FONTM path,
+`gsKit_init_fontm`, fails in this setup). 16-bit colour and Z (24-bit colour + Z24 would take ~3.4 of the GS's 4 MB).
+
+First light on PCSX2 (`docs/renders/slice-first-light.png`): the Mysterious planet with every placed purple coin,
+coin, star piece and Kuribo in place. EE-only transform, flat shading, gsKit triangle lists:
+
+| | |
+|---|---|
+| Triangles drawn | 58 052 |
+| EE time per frame (PCSX2, indicative only) | 173 ms (~3 µs per triangle) |
+| Runtime arena | 411 KB (render scratch 48 KB, object table 4.5 KB…) + gsKit's own queues 2.25 MB (malloc, not yet charged) |
+| ELF | 1.52 MB text+data (blob 1.34 MB), arena in bss |
+
+The EE path is an order of magnitude too slow for 16.7 ms; the renderer has to move to VU1 (design decision 5 said
+"VU1 only if the EE transform dominates": it does).
