@@ -1,18 +1,21 @@
-; VU1 microprogram for the slice: transform, guard-band clip, perspective, flat colour per vertex.
+; VU1 microprogram: transform, guard-band clip, perspective, texture coordinates (STQ), colour per vertex.
 ; Written for this engine after ps2sdk's samples/draw/vu1/draw_3D.vsm (h4570, AFL 2.0): same matrix load,
-; xtop double buffering, clipw/fcand ADC trick and scale step; no texture, one RGBA qword per vertex.
+; xtop double buffering, clipw/fcand ADC trick and scale step. Untextured batches run the same code: their PRIM has
+; TME = 0, so the GS ignores the ST it is given.
 ;
 ; VU mem 0..3   : matrix rows (local -> clip), uploaded once per model instance (no TOP)
-; batch at TOP  : +0 scale.xyz, w = vertex count (int)
-;                 +1 GIF tag (PRE + PRIM, NLOOP = count, regs RGBAQ, XYZ2)
-;                 +2 .. +2+n-1     positions (x, y, z, w = 1)
-;                 +2+n .. +2+2n-1  colours (u32 r, g, b, a)
-; output        : right after the colours: GIF tag, then RGBAQ, XYZ2 per vertex, XGKICKed.
+; batch at TOP  : +0 scale.xyz, w = vertex count n (int)
+;                 +1 GIF tag (PRE + PRIM, NLOOP = n, regs ST, RGBAQ, XYZ2)
+;                 +2 .. +2+n-1       positions (x, y, z, w = 1)          UNPACK V4-32
+;                 +2+n .. +2+2n-1    colours (u32 r, g, b, a)             UNPACK V4-8, unsigned
+;                 +2+2n .. +2+3n-1   UVs (s32 s, t, 12 fraction bits)     UNPACK V2-16, signed (absent if untextured)
+; output        : right after the UVs: GIF tag, then ST (s/w, t/w, 1/w), RGBAQ, XYZ2 per vertex, XGKICKed.
+;                 ST comes before RGBAQ so the GS takes Q from it (ps2sdk draw3d.h, DRAW_STQ2_REGLIST note).
         .vu
         .align 4
-        .global VU1Flat_CodeStart
-        .global VU1Flat_CodeEnd
-VU1Flat_CodeStart:
+        .global VU1Tex_CodeStart
+        .global VU1Tex_CodeEnd
+VU1Tex_CodeStart:
         NOP                                 lq            VF01,0(VI00)
         NOP                                 lq            VF02,1(VI00)
         NOP                                 lq            VF03,2(VI00)
@@ -24,24 +27,26 @@ VU1Flat_CodeStart:
         NOP                                 lq            VF06,1(VI02)
         NOP                                 iaddiu        VI03,VI02,2
         NOP                                 iadd          VI04,VI03,VI07
-        NOP                                 iadd          VI05,VI04,VI07
+        NOP                                 iadd          VI08,VI04,VI07
+        NOP                                 iadd          VI05,VI08,VI07
         NOP                                 iadd          VI06,VI05,VI00
         NOP                                 sqi           VF06,(VI06++)
         NOP                                 iadd          VI07,VI02,VI07
 vertexLoop:
         NOP                                 lq            VF07,0(VI03)
         NOP                                 lq            VF08,0(VI04)
+        NOP                                 lq            VF09,0(VI08)
         mulax         ACC,VF01,VF07x        NOP
         madday        ACC,VF02,VF07y        NOP
         maddaz        ACC,VF03,VF07z        NOP
         maddw         VF07,VF04,VF07w       NOP
-        NOP                                 NOP
+        itof12        VF09,VF09             NOP
         NOP                                 NOP
         NOP                                 NOP
         clipw.xyz     VF07xyz,VF07w         div           Q,VF00w,VF07w
-        NOP                                 waitq
+        addw.z        VF09,VF00,VF00w       waitq
         mulq.xyz      VF07,VF07,Q           NOP
-        NOP                                 NOP
+        mulq.xyz      VF09,VF09,Q           NOP
         NOP                                 NOP
         NOP                                 NOP
         mulaw.xyz     ACC,VF05,VF00w        NOP
@@ -51,14 +56,15 @@ vertexLoop:
         NOP                                 NOP
         ftoi4.xyz     VF07,VF07             fcand         VI01,262143
         NOP                                 iaddiu        VI01,VI01,0x00007fff
-        NOP                                 sq            VF08,0(VI06)
+        NOP                                 sq            VF09,0(VI06)
+        NOP                                 sq            VF08,1(VI06)
         NOP                                 NOP
-        NOP                                 NOP
-        NOP                                 sq.xyz        VF07,1(VI06)
-        NOP                                 isw.w         VI01,1(VI06)
+        NOP                                 sq.xyz        VF07,2(VI06)
+        NOP                                 isw.w         VI01,2(VI06)
         NOP                                 iaddiu        VI03,VI03,1
         NOP                                 iaddiu        VI04,VI04,1
-        NOP                                 iaddiu        VI06,VI06,2
+        NOP                                 iaddiu        VI08,VI08,1
+        NOP                                 iaddiu        VI06,VI06,3
         NOP                                 isubiu        VI07,VI07,1
         NOP                                 ibne          VI07,VI02,vertexLoop
         NOP                                 NOP
@@ -66,4 +72,4 @@ vertexLoop:
         NOP[E]                              NOP
         NOP                                 NOP
         .align 4
-VU1Flat_CodeEnd:
+VU1Tex_CodeEnd:

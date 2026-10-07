@@ -41,6 +41,7 @@ int main(void)
         printf("slice: bad blob\n");
         for (;;) {}
     }
+    render_load_textures(&scene);
     game_init(&scene, slice_blob);
     mem_report();
 

@@ -10,21 +10,27 @@
 #include <gs_gp.h>
 #include <gs_psm.h>
 #include <kernel.h>
+#include <malloc.h>
 #include <math.h>
 #include <packet2.h>
 #include <packet2_utils.h>
+#include <stdio.h>
 #include <string.h>
 
 /* VU1 renderer: the EE only builds DMA chains that point at the blob's VU-ready vertex data (VUMD chunk) and at one
- * matrix per model instance; VU1 (vu1_flat.vsm) transforms, rejects off-band triangles, projects and XGKICKs to the
- * GS. Set-up follows ps2sdk samples/draw/vu1 (libpacket2, libdraw, libgraph). */
+ * matrix per model instance; VU1 (vu1_tex.vsm) transforms, rejects off-band triangles, projects, computes STQ and
+ * XGKICKs to the GS. Set-up follows ps2sdk samples/draw/vu1 (libpacket2, libdraw, libgraph).
+ * Textures (TEXT chunk, PSMT4 + 16-entry CLUT) are uploaded to VRAM once at load: Gateway's set fits the VRAM left
+ * after two frames and Z (ponytail: per-frame upload over PATH3 when a scene's set does not fit, milestone 5).
+ * A texture change is a FLUSH + DIRECT A+D packet (TEX0 with CLUT load, TEX1, CLAMP, TEST) in the VIF chain. */
 
-extern u32 VU1Flat_CodeStart __attribute__((section(".vudata")));
-extern u32 VU1Flat_CodeEnd __attribute__((section(".vudata")));
+extern u32 VU1Tex_CodeStart __attribute__((section(".vudata")));
+extern u32 VU1Tex_CodeEnd __attribute__((section(".vudata")));
 
 #define SCREEN_W 640
 #define SCREEN_H 448
-#define BATCH 120          /* vertices per VU1 batch: 4n + 3 qwords must fit a 496-qword buffer */
+#define BATCH 72           /* vertices per VU1 batch: 6n + 3 qwords must fit a 496-qword buffer, and n a multiple
+                            * of 12 so the 4-byte colour and UV arrays of the next batch start on a qword */
 #define NEAR 50.0f
 #define FAR 120000.0f
 #define MAX_INST 1024
@@ -38,8 +44,13 @@ static int cur;
 static float view[16], proj[16];
 static float (*mats)[16];        /* one matrix per instance this frame, read by DMA */
 static int nmats;
-static qword_t *headers;         /* 2 qwords per vertex count 3..BATCH (scale + count, GIF tag) */
+static qword_t *headers[2];      /* [untextured, textured]: 2 qwords per vertex count 3..BATCH (scale + count, GIF tag) */
 static u32 tris_drawn;
+static u32 vram_tex;             /* VRAM words taken by textures and CLUTs */
+static qword_t *tex_packets;     /* per texture 5 qwords (GIF tag + TEX0, TEX1, CLAMP, TEST), then 2 for NO_TEX */
+static u32 ntex;
+static int cur_tex;
+static u64 test_z;               /* TEST with the depth test only */
 
 void mat_identity(float m[16])
 {
@@ -87,9 +98,9 @@ void render_init(void)
     dma_channel_fast_waits(DMA_CHANNEL_VIF1);
 
     /* microprogram + double buffer (base 8, 496 qwords each), as in the ps2sdk sample */
-    u32 sz = packet2_utils_get_packet_size_for_program(&VU1Flat_CodeStart, &VU1Flat_CodeEnd) + 1;
+    u32 sz = packet2_utils_get_packet_size_for_program(&VU1Tex_CodeStart, &VU1Tex_CodeEnd) + 1;
     packet2_t *p = packet2_create(sz, P2_TYPE_NORMAL, P2_MODE_CHAIN, 1);
-    packet2_vif_add_micro_program(p, 0, &VU1Flat_CodeStart, &VU1Flat_CodeEnd);
+    packet2_vif_add_micro_program(p, 0, &VU1Tex_CodeStart, &VU1Tex_CodeEnd);
     packet2_utils_vu_add_end_tag(p);
     send_vif_wait(p);
     packet2_free(p);
@@ -121,16 +132,19 @@ void render_init(void)
     gif = packet2_create(4096, P2_TYPE_NORMAL, P2_MODE_NORMAL, 0);
     mem_charge(MEM_RENDER, 2 * PACKET_QW * 16 + 4096 * 16);
     mats = mem_alloc(MEM_RENDER, MAX_INST * 64);
-    headers = mem_alloc(MEM_RENDER, (BATCH / 3 + 1) * 2 * 16);
-    for (int n = 3; n <= BATCH; n += 3) {
-        qword_t *h = headers + 2 * (n / 3);
-        ((float *)h)[0] = 2048.0f;
-        ((float *)h)[1] = 2048.0f;
-        ((float *)h)[2] = (float)0xFFFFFF / 32.0f;
-        ((u32 *)h)[3] = n;
-        h[1].dw[0] = GIF_SET_TAG(n, 1, 1, GS_SET_PRIM(PRIM_TRIANGLE, 1, 0, 0, 0, 0, 0, 0, 0), GIF_FLG_PACKED, 2);
-        h[1].dw[1] = DRAW_RGBAQ_REGLIST;
+    for (int t = 0; t < 2; t++) {
+        headers[t] = mem_alloc(MEM_RENDER, (BATCH / 3 + 1) * 2 * 16);
+        for (int n = 3; n <= BATCH; n += 3) {
+            qword_t *h = headers[t] + 2 * (n / 3);
+            ((float *)h)[0] = 2048.0f;
+            ((float *)h)[1] = 2048.0f;
+            ((float *)h)[2] = (float)0xFFFFFF / 32.0f;
+            ((u32 *)h)[3] = n;
+            h[1].dw[0] = GIF_SET_TAG(n, 1, 1, GS_SET_PRIM(PRIM_TRIANGLE, 1, t, 0, 0, 0, 0, 0, 0), GIF_FLG_PACKED, 3);
+            h[1].dw[1] = (u64)GIF_REG_ST | (u64)GIF_REG_RGBAQ << 4 | (u64)GIF_REG_XYZ2 << 8; /* ST first: Q */
+        }
     }
+    test_z = GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, ZTEST_METHOD_GREATER_EQUAL);
 
     /* projection (column-major, v' = P v): x, y to the GS's +-2048 guard band, depth near -> 1, far -> -1 */
     float f = (SCREEN_H / 2) / tanf(50.0f * 3.14159265f / 360.0f);
@@ -172,6 +186,76 @@ void render_begin(const float eye[3], const float target[3], const float up[3])
     packet2_reset(vif[cur], 0);
     nmats = 0;
     tris_drawn = 0;
+    cur_tex = -1;
+}
+
+void render_load_textures(const Scene *s)
+{
+    ntex = s->ntex;
+    tex_packets = mem_alloc(MEM_RENDER, (5 * ntex + 2) * 16);
+    qword_t *up = memalign(64, (ntex * 2 * 16 + 4) * 16); /* upload chain, freed after the transfer */
+    qword_t *q = up;
+    for (u32 i = 0; i < ntex; i++) {
+        const TexEntry *t = &s->tex[i];
+        /* PSMT4 needs an even buffer width in 64-pixel units: 128-pixel rows for every texture (max 128 wide) */
+        int addr = graph_vram_allocate(128, t->h, GS_PSM_4, GRAPH_ALIGN_BLOCK);
+        int clut = graph_vram_allocate(8, 2, GS_PSM_32, GRAPH_ALIGN_BLOCK);
+        if (addr < 0 || clut < 0) {
+            printf("render: VRAM full at texture %u of %u\n", i, ntex);
+            for (;;) {}
+        }
+        q = draw_texture_transfer(q, (void *)(s->tex_base + t->pix_off), t->w, t->h, GS_PSM_4, addr, 128);
+        q = draw_texture_transfer(q, (void *)(s->tex_base + t->clut_off), 8, 2, GS_PSM_32, clut, 64);
+        qword_t *p = tex_packets + 5 * i;
+        p[0].dw[0] = GIF_SET_TAG(4, 1, 0, 0, GIF_FLG_PACKED, 1);
+        p[0].dw[1] = GIF_REG_AD;
+        p[1].dw[0] = GS_SET_TEX0(addr >> 6, 2, GS_PSM_4, t->tw, t->th, 1, 0, clut >> 6, GS_PSM_32, 0, 0, 1);
+        p[1].dw[1] = GS_REG_TEX0;
+        p[2].dw[0] = GS_SET_TEX1(1, 0, 1, 1, 0, 0, 0); /* fixed LOD 0, bilinear */
+        p[2].dw[1] = GS_REG_TEX1;
+        p[3].dw[0] = GS_SET_CLAMP(t->clamp_s, t->clamp_t, 0, 0, 0, 0);
+        p[3].dw[1] = GS_REG_CLAMP;
+        /* ponytail: blended textures (alpha 2) are drawn as cut-outs; Gateway has none */
+        p[4].dw[0] = t->alpha ? GS_SET_TEST(1, ATEST_METHOD_GREATER_EQUAL, 0x40, 0, 0, 0, 1, ZTEST_METHOD_GREATER_EQUAL) : test_z;
+        p[4].dw[1] = GS_REG_TEST;
+        vram_tex += graph_vram_size(128, t->h, GS_PSM_4, GRAPH_ALIGN_BLOCK) + graph_vram_size(8, 2, GS_PSM_32, GRAPH_ALIGN_BLOCK);
+    }
+    qword_t *p = tex_packets + 5 * ntex;
+    p[0].dw[0] = GIF_SET_TAG(1, 1, 0, 0, GIF_FLG_PACKED, 1);
+    p[0].dw[1] = GIF_REG_AD;
+    p[1].dw[0] = test_z;
+    p[1].dw[1] = GS_REG_TEST;
+    q = draw_texture_flush(q);
+    FlushCache(0);
+    dma_channel_send_chain(DMA_CHANNEL_GIF, up, q - up, 0, 0);
+    dma_wait_fast();
+    free(up);
+    printf("render: %u textures in VRAM, %u KB (words x 4)\n", ntex, vram_tex * 4 / 1024);
+}
+
+/* Switch texture state in the VIF chain: FLUSH waits for VU1 and PATH1, DIRECT sends the A+D packet on PATH2. */
+static void set_tex(u32 t)
+{
+    if ((int)t == cur_tex)
+        return;
+    cur_tex = t;
+    const qword_t *p = t == NO_TEX ? tex_packets + 5 * ntex : tex_packets + 5 * t;
+    u32 n = t == NO_TEX ? 2 : 5;
+    packet2_chain_ref(vif[cur], p, n, 0, 0, 0);
+    packet2_vif_flush(vif[cur], 0);
+    packet2_vif_open_direct(vif[cur], 0);
+    packet2_vif_close_direct_manual(vif[cur], n);
+}
+
+/* UNPACK of n vectors from `data` in a format narrower than a qword (REF tag, the VIF codes ride in the tag). The
+ * REF moves whole qwords; the bytes past the vectors are the zero padding of the array (VIF NOPs) or, between
+ * batches, never there because BATCH is a multiple of 12. */
+static void unpack_narrow(const void *data, u32 bytes, u32 dest, u32 n, enum UnpackMode mode, u8 usn)
+{
+    packet2_chain_ref(vif[cur], data, (bytes + 15) / 16, 0, 0, 0);
+    packet2_vif_stcycl(vif[cur], 0, 0x0101, 0);
+    packet2_vif_open_unpack(vif[cur], mode, dest, 1, 0, usn, 0);
+    packet2_vif_close_unpack_manual(vif[cur], n);
 }
 
 static void flush_vif(void)
@@ -204,16 +288,20 @@ void render_model(const Model *md, const float world[16], u8 cr, u8 cg, u8 cb)
     u32 batches = 0;
     for (u32 g = 0; g < md->vu_ngroups; g++)
         batches += (md->vu[g].nverts + BATCH - 1) / BATCH;
-    if (packet2_get_qw_count(vif[cur]) + 8 + batches * 6 > PACKET_QW)
+    if (packet2_get_qw_count(vif[cur]) + 8 + batches * 6 + md->vu_ngroups * 2 > PACKET_QW)
         flush_vif();
     packet2_utils_vu_add_unpack_data(vif[cur], 0, m, 4, 0);
     for (u32 g = 0; g < md->vu_ngroups; g++) {
         const VuGroup *vg = &md->vu[g];
+        set_tex(vg->tex);
+        int textured = vg->tex != NO_TEX;
         for (u32 off = 0; off < vg->nverts; off += BATCH) {
             u32 n = vg->nverts - off < BATCH ? vg->nverts - off : BATCH;
-            packet2_utils_vu_add_unpack_data(vif[cur], 0, headers + 2 * (n / 3), 2, 1);
+            packet2_utils_vu_add_unpack_data(vif[cur], 0, headers[textured] + 2 * (n / 3), 2, 1);
             packet2_utils_vu_add_unpack_data(vif[cur], 2, (void *)(vg->pos + 4 * off), n, 1);
-            packet2_utils_vu_add_unpack_data(vif[cur], 2 + n, (void *)(vg->col + 4 * off), n, 1);
+            unpack_narrow(vg->col + off, 4 * n, 2 + n, n, P2_UNPACK_V4_8, 1);
+            if (textured)
+                unpack_narrow(vg->uv + 2 * off, 4 * n, 2 + 2 * n, n, P2_UNPACK_V2_16, 0);
             packet2_utils_vu_add_start_program(vif[cur], 0);
             tris_drawn += n / 3;
         }

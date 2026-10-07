@@ -13,21 +13,30 @@ PRIMS = {0x80, 0x90, 0x98, 0xA0, 0xA8, 0xB0, 0xB8}           # GXEnum.h:701-709
 PS2_ATTR = {9: 6, 10: 6, 11: 4, 12: 4, **{a: 4 for a in range(13, 21)}}
 COMP = {0: "B", 1: "b", 2: "H", 3: "h", 4: "f"}                  # GXEnum.h:898-900 comp types u8 s8 u16 s16 f32
 
-def vtx1_positions(b, v):
-    """VTX1 block at v -> index -> (x, y, z) floats. J3DModelLoader.hpp:70-77 (fmt list @+8, pos @+0x0C);
-    fmt entry {attr, cnt, type, frac} (GXStruct.h:32-37) padded to 16 bytes; cnt 0 = XY, 1 = XYZ (GXEnum.h:387-388)."""
+VTX1_ARRAY = {9: 0x0C, 10: 0x10, 11: 0x18, 12: 0x1C, **{13 + k: 0x20 + 4 * k for k in range(8)}}  # J3DModelLoader.hpp:70-77
+
+
+def vtx1_attr(b, v, attr=9):
+    """VTX1 block at v -> index -> floats of one attribute (POS = 9 xyz, TEX0.. = 13.. st). J3DModelLoader.hpp:70-77
+    (fmt list @+8, arrays from @+0x0C); fmt entry {attr, cnt, type, frac} (GXStruct.h:32-37) padded to 16 bytes;
+    POS cnt 0 = XY, 1 = XYZ; TEX cnt 0 = S, 1 = ST (GXEnum.h:387-392)."""
     f = v + u32(b, v + 8)
     while u32(b, f) != 0xFF:
-        if u32(b, f) == 9:
+        if u32(b, f) == attr:
             cnt, typ, frac = u32(b, f + 4), u32(b, f + 8), b[f + 12]
-            n, c = (3 if cnt else 2), COMP[typ]
-            sz, scale, base = struct.calcsize(c), (1.0 if typ == 4 else 1.0 / (1 << frac)), v + u32(b, v + 0x0C)
-            def pos(i):
-                xyz = [x * scale for x in struct.unpack_from(">" + c * n, b, base + i * n * sz)]
-                return xyz + [0.0] * (3 - n)
-            return pos
+            n, want = (cnt + 2, 3) if attr == 9 else (cnt + 1, 2)
+            c = COMP[typ]
+            sz, scale, base = struct.calcsize(c), (1.0 if typ == 4 else 1.0 / (1 << frac)), v + u32(b, v + VTX1_ARRAY[attr])
+            def get(i):
+                xs = [x * scale for x in struct.unpack_from(">" + c * n, b, base + i * n * sz)]
+                return xs + [0.0] * (want - n)
+            return get
         f += 16
     return None
+
+
+vtx1_positions = vtx1_attr
+
 
 def triangles(op, v):
     """GX primitive (GXEnum.h:701-709) -> flat triangle list, degenerate triangles dropped; None if not triangles."""
@@ -52,7 +61,8 @@ def shp1(b, o, pool=None, ratio=1.0, positions=None, collect=None):
     ratio<1 (needs positions from vtx1_positions): each matrix group's triangles are simplified to ~ratio of their count
     (meshoptimizer, tools/simplify.py), re-stripped with degenerate joins, then sized the same way; vertices never merge
     across groups (each group has its own matrix table). Lines/points are kept as they are.
-    collect: list that receives (flat positions, triangle list) per group, after simplification (for renders)."""
+    collect: list that receives (flat positions, triangle list, info) per group, after simplification; info = {shape,
+    at: attr -> (offset, width) of its index in a vertex key, keys: vertex key bytes per vertex id}."""
     n = u16(b, o + 8)
     init, idx, desc, dl, draw = (o + u32(b, o + k) for k in (0x0C, 0x10, 0x18, 0x20, 0x28))
     emitted = ps2 = dl_bytes = bad = 0
@@ -60,14 +70,15 @@ def shp1(b, o, pool=None, ratio=1.0, positions=None, collect=None):
         si = init + u16(b, idx + 2 * s) * 0x28
         groups, desc_off, draw_idx = u16(b, si + 2), u16(b, si + 4), u16(b, si + 8)
         stride, ps2_stride, d = 0, 0, desc + desc_off
-        pos_at = None                                         # (byte offset, width) of the POS index in a vertex
+        at = {}                                               # attr -> (byte offset, width) of its index in a vertex
         while u32(b, d) != 0xFF:                              # GX_VA_NULL
             attr, typ = u32(b, d), u32(b, d + 4)
-            if attr == 9 and typ in (2, 3):
-                pos_at = (stride, typ - 1)
+            if typ in (2, 3):
+                at[attr] = (stride, typ - 1)
             stride += 1 if attr < 9 else {0: 0, 1: 0, 2: 1, 3: 2}[typ]  # MTXIDX direct u8; INDEX8/16
             ps2_stride += PS2_ATTR.get(attr, 0) if typ else 0
             d += 8
+        pos_at = at.get(9)
         batch = set()
         flush = lambda: len(batch) * ps2_stride + 16 if batch else 0
         simp = (ratio < 1 or collect is not None) and positions is not None and pos_at is not None
@@ -116,7 +127,8 @@ def shp1(b, o, pool=None, ratio=1.0, positions=None, collect=None):
                 if ratio < 1:
                     emit([(g, i) for i in stripify(new, len(ids))])
                 if collect is not None:
-                    collect.append((pos, new))
+                    keys_of = sorted(ids, key=ids.get)
+                    collect.append((pos, new, dict(shape=s, at=at, keys=keys_of)))
         if pool is not None:
             ps2 += flush()
     return emitted, ps2, dl_bytes, bad

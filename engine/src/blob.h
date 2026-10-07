@@ -19,9 +19,21 @@ typedef struct {
 
 typedef struct {
     u32 nverts;          /* 3 per triangle */
+    u16 tex;             /* TEXT index, NO_TEX for untextured */
     const float *pos;    /* nverts qwords (x, y, z, 1), 16-byte aligned */
-    const u32 *col;      /* nverts qwords (r, g, b, a) */
+    const u32 *col;      /* nverts x u8 (r, g, b, a), 16-byte aligned */
+    const s16 *uv;       /* nverts x s16 (s, t), 12 fraction bits; NULL if untextured */
 } VuGroup;
+
+#define NO_TEX 0xFFFF
+
+typedef struct {
+    u16 w, h;
+    u8 psm, clamp_s, clamp_t, alpha; /* alpha: 0 opaque, 1 cut-out, 2 blended */
+    u32 pix_off, pix_size, clut_off; /* from the TEXT payload; CLUT = 16 x u32 */
+    u8 tw, th;                       /* log2 of w, h */
+    u8 pad[10];
+} TexEntry; /* 32 bytes, matches slice.py TEXT */
 
 typedef struct {
     const char *name;
@@ -40,6 +52,9 @@ typedef struct {
     Model *models;
     const u8 *kcl;
     u32 kcl_size;
+    u32 ntex;
+    const TexEntry *tex;
+    const u8 *tex_base; /* TEXT payload: TexEntry offsets are from here */
 } Scene;
 
 int blob_load(Scene *s, const u8 *blob);

@@ -1,7 +1,7 @@
 # Phase-1 slice engine. Build in WSL with the ps2dev toolchain (/usr/local/ps2dev):
 #   bash engine/build.sh          (copies the tree to the WSL disk, builds, copies slice.elf back)
 EE_BIN = slice.elf
-EE_OBJS = src/main.o src/mem.o src/blob.o src/render.o src/pad.o src/gravity.o src/kcl.o src/game.o src/vu1_flat.o src/assets.o
+EE_OBJS = src/main.o src/mem.o src/blob.o src/render.o src/pad.o src/gravity.o src/kcl.o src/game.o src/vu1_tex.o src/assets.o
 
 EE_INCS += -Isrc
 EE_LIBS += -lpacket2 -ldraw -lgraph -ldma -lpad -lpatches -ldebug -lm

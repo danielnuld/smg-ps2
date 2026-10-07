@@ -8,7 +8,7 @@
 const u8 *blob_chunk(const u8 *blob, const char *tag, u32 *size)
 {
     u32 n = *(const u32 *)(blob + 8);
-    const u8 *p = blob + 16; /* format v2: 16-byte headers, payloads 16-byte aligned (tools/slice.py) */
+    const u8 *p = blob + 16; /* format v3: 16-byte headers, payloads 16-byte aligned (tools/slice.py) */
     for (u32 i = 0; i < n; i++) {
         u32 sz = *(const u32 *)(p + 4);
         if (memcmp(p, tag, 4) == 0) {
@@ -23,7 +23,7 @@ const u8 *blob_chunk(const u8 *blob, const char *tag, u32 *size)
 
 int blob_load(Scene *s, const u8 *blob)
 {
-    if (memcmp(blob, "SMGS", 4) != 0)
+    if (memcmp(blob, "SMGS", 4) != 0 || *(const u32 *)(blob + 4) != 3)
         return -1;
     const u8 *t = blob_chunk(blob, "TYPE", NULL), *o = blob_chunk(blob, "OBJS", NULL), *st = blob_chunk(blob, "STRT", NULL);
     const u8 *m = blob_chunk(blob, "MODL", NULL), *k = blob_chunk(blob, "KCL ", NULL);
@@ -63,7 +63,7 @@ int blob_load(Scene *s, const u8 *blob)
         md->radius = sqrtf(r2);
     }
     const u8 *vm = blob_chunk(blob, "VUMD", NULL);
-    if (vm) { /* {u32 n, pad}, n x {char[32] name, u32 ngroups, pad, groups {u32 nverts, pad, pos[], col[]}} */
+    if (vm) { /* {u32 n, pad}, n x {char[32] name, u32 ngroups, pad, groups {u32 nverts, u16 tex, pad, pos[], col[], uv[]}} */
         u32 nv = *(const u32 *)vm;
         const u8 *q = vm + 16;
         for (u32 i = 0; i < nv && i < s->nmodels; i++) {
@@ -72,13 +72,22 @@ int blob_load(Scene *s, const u8 *blob)
             md->vu = mem_alloc(MEM_RENDER, md->vu_ngroups * sizeof(VuGroup));
             q += 48;
             for (u32 g = 0; g < md->vu_ngroups; g++) {
-                u32 n = *(const u32 *)q;
-                md->vu[g].nverts = n;
-                md->vu[g].pos = (const float *)(q + 16);
-                md->vu[g].col = (const u32 *)(q + 16 + 16 * n);
-                q += 16 + 32 * n;
+                u32 n = *(const u32 *)q, cb = (4 * n + 15) & ~15u;
+                VuGroup *vg = &md->vu[g];
+                vg->nverts = n;
+                vg->tex = *(const u16 *)(q + 4);
+                vg->pos = (const float *)(q + 16);
+                vg->col = (const u32 *)(q + 16 + 16 * n);
+                vg->uv = vg->tex == NO_TEX ? NULL : (const s16 *)(q + 16 + 16 * n + cb);
+                q += 16 + 16 * n + cb + (vg->uv ? cb : 0);
             }
         }
+    }
+    const u8 *tx = blob_chunk(blob, "TEXT", NULL);
+    if (tx) { /* {u32 n, pad}, n x TexEntry, then pixels and CLUTs */
+        s->ntex = *(const u32 *)tx;
+        s->tex = (const TexEntry *)(tx + 16);
+        s->tex_base = tx;
     }
     if (k && *(const u32 *)k) {
         s->kcl_size = *(const u32 *)(k + 36);

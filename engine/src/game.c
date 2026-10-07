@@ -175,7 +175,7 @@ static VuGroup box_vu;
 static void build_box_vu(void)
 {
     float *pos = mem_alloc(MEM_PLAYER, 36 * 16);
-    u32 *col = mem_alloc(MEM_PLAYER, 36 * 16);
+    u8 *col = mem_alloc(MEM_PLAYER, 36 * 4);
     const V3 L = vnorm(v3(0.35f, 0.75f, -0.55f));
     for (int t = 0; t < 12; t++) {
         const float *a = box_v + 3 * box_i[3 * t], *b = box_v + 3 * box_i[3 * t + 1], *c = box_v + 3 * box_i[3 * t + 2];
@@ -185,11 +185,11 @@ static void build_box_vu(void)
             const float *v = box_v + 3 * box_i[3 * t + q];
             float *o = pos + 4 * (3 * t + q);
             o[0] = v[0]; o[1] = v[1]; o[2] = v[2]; o[3] = 1.0f;
-            u32 *cc = col + 4 * (3 * t + q);
-            cc[0] = (u32)(0xE0 * k); cc[1] = (u32)(0x20 * k); cc[2] = (u32)(0x20 * k); cc[3] = 0x80;
+            u8 *cc = col + 4 * (3 * t + q);
+            cc[0] = (u8)(0xE0 * k); cc[1] = (u8)(0x20 * k); cc[2] = (u8)(0x20 * k); cc[3] = 0x80;
         }
     }
-    box_vu.nverts = 36; box_vu.pos = pos; box_vu.col = col;
+    box_vu.nverts = 36; box_vu.tex = NO_TEX; box_vu.pos = pos; box_vu.col = (const u32 *)col; box_vu.uv = NULL;
 }
 
 void game_init(const Scene *s, const unsigned char *blob)

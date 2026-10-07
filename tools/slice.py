@@ -39,6 +39,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import budget as B
 import geom
+import tex
 
 OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup", "PurpleRailCoin")
 ROW_FIELDS = ("pos_x", "pos_y", "pos_z", "dir_x", "dir_y", "dir_z", "scale_x", "scale_y", "scale_z")
@@ -131,20 +132,49 @@ def scene(fs, galaxy, scenario):
     return act, zones, objs, starts, paths
 
 
-def model_groups(arc, ratio):
-    """-> (groups [(verts, tris)], kcl bytes or None) for the first J3D model of an archive."""
+def model_groups(arc, ratio, stats=None):
+    """-> (groups [(verts, tris, uvs or None, texture or None)], kcl bytes or None) for the first J3D model of an
+    archive. texture = tex.to_ps2 dict of the group's material (tex.py rule); uvs per vertex after the material's
+    texture matrix and the mirror halving. stats counts groups without texture / with projected coordinates."""
     groups, kcl = [], None
+    stats = stats if stats is not None else {}
     for name, b in B.rarc_files(arc.read_bytes()):
         n = name.lower()
         if n.endswith((".bdl", ".bmd")) and b[:4] == b"J3D2" and not groups:
             got = []
             geom.model(b, ratio, None, got)
-            for pos, tri in got:
-                if tri:
-                    used = sorted(set(tri))
-                    remap = {v: i for i, v in enumerate(used)}
-                    verts = [pos[3 * v:3 * v + 3] for v in used]
-                    groups.append((verts, [remap[v] for v in tri]))
+            bl = tex.blocks(b)
+            shapes = tex.shape_materials(b, bl[b"INF1"])
+            texs = tex.textures(b, bl[b"TEX1"]) if b"TEX1" in bl else []
+            ps2 = {}
+            for pos, tri, info in got:
+                if not tri:
+                    continue
+                used = sorted(set(tri))
+                remap = {v: i for i, v in enumerate(used)}
+                verts = [pos[3 * v:3 * v + 3] for v in used]
+                mat = shapes.get(info["shape"])
+                mt = tex.material_tex(b, bl[b"MAT3"], mat) if mat is not None else None
+                get = geom.vtx1_attr(b, bl[b"VTX1"], mt["attr"]) if mt and mt["attr"] in info["at"] else None
+                uvs = t = None
+                if get and mt["tex"] < len(texs):
+                    if mt["tex"] not in ps2:
+                        x = texs[mt["tex"]]
+                        ps2[mt["tex"]] = tex.to_ps2(x["rgba"], x["wrap_s"], x["wrap_t"])
+                    t = ps2[mt["tex"]]
+                    off, w = info["at"][mt["attr"]]
+                    m = mt["mtx"]
+                    uvs = []
+                    for v in used:
+                        k = info["keys"][v]
+                        su, sv = get(k[off] if w == 1 else k[off] << 8 | k[off + 1])
+                        if m:
+                            su, sv = (m[0][0] * su + m[0][1] * sv + m[0][2], m[1][0] * su + m[1][1] * sv + m[1][2])
+                        uvs.append((su * t["u_scale"], sv * t["v_scale"]))
+                    stats["projected"] = stats.get("projected", 0) + mt["projected"]
+                else:
+                    stats["untextured"] = stats.get("untextured", 0) + 1
+                groups.append((verts, [remap[v] for v in tri], uvs, t))
         elif n.endswith(".kcl") and kcl is None:
             kcl = b
     return groups, kcl
@@ -204,25 +234,42 @@ BASE_COLOUR = {"Coin": (240, 208, 48), "PurpleCoin": (176, 80, 240), "StarPiece"
 LIGHT = (0.35, 0.75, -0.55)
 
 
-def vu_groups(groups, base):
-    """Indexed groups -> [(pos qwords, colour qwords)] per group, flat shading: k = 0.25 + 0.75 |n . L|."""
+UV_ONE = 4096  # UVs as s16 with 12 fraction bits (VU1 itof12): -8 .. +8 per triangle
+
+
+def vu_groups(groups, base, stats=None):
+    """Indexed groups -> [(pos qwords, colour u8x4, uv s16x2)] per group, flat shading: k = 0.25 + 0.75 |n . L|.
+    Textured groups get grey 0x80 * k (the GS modulates: 0x80 = 1.0), untextured ones base * k. Each triangle's UVs
+    are shifted by whole repeats towards 0 on repeating axes so they fit s16; triangles still wider than 8 repeats
+    are clamped and counted in stats["uv_clamped"]. Colour and UV arrays are padded to 16 bytes (DMA)."""
     ll = math.sqrt(sum(c * c for c in LIGHT))
     L = [c / ll for c in LIGHT]
+    pad = lambda x: bytes(x) + b"\0" * (-len(x) % 16)
     out = []
-    for verts, tris in groups:
-        pos, col = bytearray(), bytearray()
-        for t in range(0, len(tris), 3):
-            a, b, c = (verts[tris[t + k]] for k in range(3))
-            e1 = [b[i] - a[i] for i in range(3)]
-            e2 = [c[i] - a[i] for i in range(3)]
+    for verts, tris, uvs, t in groups:
+        pos, col, uv = bytearray(), bytearray(), bytearray()
+        rgb = (0x80, 0x80, 0x80) if t else base
+        for i in range(0, len(tris), 3):
+            a, b, c = (verts[tris[i + k]] for k in range(3))
+            e1 = [b[j] - a[j] for j in range(3)]
+            e2 = [c[j] - a[j] for j in range(3)]
             n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]]
             nl = math.sqrt(sum(x * x for x in n)) or 1.0
-            k = 0.25 + 0.75 * abs(sum(n[i] * L[i] for i in range(3))) / nl
-            rgba = struct.pack("<4I", int(base[0] * k), int(base[1] * k), int(base[2] * k), 0x80)
+            k = 0.25 + 0.75 * abs(sum(n[j] * L[j] for j in range(3))) / nl
+            rgba = struct.pack("<4B", int(rgb[0] * k), int(rgb[1] * k), int(rgb[2] * k), 0x80)
             for v in (a, b, c):
                 pos += struct.pack("<4f", v[0], v[1], v[2], 1.0)
                 col += rgba
-        out.append((bytes(pos), bytes(col)))
+            if uvs:
+                tri = [uvs[tris[i + k]] for k in range(3)]
+                du = 0 if t["clamp_s"] else math.floor(min(x[0] for x in tri))
+                dv = 0 if t["clamp_t"] else math.floor(min(x[1] for x in tri))
+                for su, sv in tri:
+                    q = [round((su - du) * UV_ONE), round((sv - dv) * UV_ONE)]
+                    if not all(-32768 <= x < 32768 for x in q) and stats is not None:
+                        stats["uv_clamped"] = stats.get("uv_clamped", 0) + 1
+                    uv += struct.pack("<2h", *(max(-32768, min(32767, x)) for x in q))
+        out.append((bytes(pos), pad(col), pad(uv)))
     return out
 
 
@@ -266,32 +313,49 @@ def build(fs, galaxy, scenario, ratio=0.99):
         grav.append(struct.pack("<HHiiff3f3f", kind, o["zone"], o["priority"], 1 if o["inverse"] == 1 else 0,
                                 o["range"], distant, *o["pos"], *up))
     out.append(chunk(b"GRAV", struct.pack("<I", len(grav)) + b"".join(grav)))
-    models, kcls, vumd = [], [], []
+    models, kcls, vumd, stats = [], [], [], {}
+    texts, tex_id = [], {}  # PS2 textures, deduplicated by content
     for t in [t for t in types if t in planets] + [t for t in types if t in OBJ_TYPES]:
         arc = fsp / "ObjectData" / f"{t}.arc"
         if not arc.exists():
             continue
-        groups, kcl = model_groups(arc, ratio)
+        groups, kcl = model_groups(arc, ratio, stats)
         g = b""
-        for verts, tris in groups:
+        for verts, tris, _, _ in groups:
             idx = struct.pack(f"<{len(tris)}H", *tris)
             g += struct.pack("<II", len(verts), len(tris) // 3) + b"".join(struct.pack("<3f", *v) for v in verts)
             g += idx + b"\0" * (-len(idx) % 4)
         models.append(name32(t) + struct.pack("<I", len(groups)) + g)
         vg = b""
-        for pos, col in vu_groups(groups, BASE_COLOUR.get(t, (112, 176, 96))):
-            vg += struct.pack("<I12x", len(pos) // 16) + pos + col
+        for (_, _, _, tx), (pos, col, uv) in zip(groups, vu_groups(groups, BASE_COLOUR.get(t, (112, 176, 96)), stats)):
+            ti = 0xFFFF
+            if tx:
+                key = tx["pix"] + tx["clut"] + bytes((tx["clamp_s"], tx["clamp_t"]))
+                ti = tex_id.setdefault(key, len(texts))
+                if ti == len(texts):
+                    texts.append(tx)
+            vg += struct.pack("<IH10x", len(pos) // 16, ti) + pos + col + uv
         vumd.append(name32(t) + struct.pack("<I12x", len(groups)) + vg)
         if kcl and t in planets:
             kcl = kcl_to_le(kcl)
             kcls.append(name32(t) + struct.pack("<I", len(kcl)) + kcl + b"\0" * (-len(kcl) % 4))
+    head, data = bytearray(), bytearray()
+    base = 16 + 32 * len(texts)
+    for tx in texts:
+        pix = base + len(data)
+        data += tx["pix"] + b"\0" * (-len(tx["pix"]) % 16)
+        clut = base + len(data)
+        data += tx["clut"]
+        head += struct.pack("<HHBBBBIIIBB10x", tx["w"], tx["h"], tx["psm"], tx["clamp_s"], tx["clamp_t"], tx["alpha"],
+                            pix, len(tx["pix"]), clut, tx["w"].bit_length() - 1, tx["h"].bit_length() - 1)
+    out.append(chunk(b"TEXT", struct.pack("<I12x", len(texts)) + bytes(head) + bytes(data)))
     out.append(chunk(b"MODL", struct.pack("<I", len(models)) + b"".join(models)))
     out.append(chunk(b"VUMD", struct.pack("<I12x", len(vumd)) + b"".join(vumd)))
     out.append(chunk(b"KCL ", struct.pack("<I", len(kcls)) + b"".join(kcls)))
-    blob = b"SMGS" + struct.pack("<II4x", 2, len(out)) + b"".join(out)
+    blob = b"SMGS" + struct.pack("<II4x", 3, len(out)) + b"".join(out)
     blob += b"\0" * (-len(blob) % 16)
     return blob, dict(stages=act, types=types, objs=len(keep), starts=len(starts), paths=len(paths),
-                      models=len(models), kcls=len(kcls))
+                      models=len(models), kcls=len(kcls), textures=len(texts), **stats)
 
 
 def read_chunks(blob):

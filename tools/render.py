@@ -24,7 +24,7 @@ def triangles(b, ratio):
     got = []
     model(b, ratio, None, got)
     out = [np.asarray(pos, dtype=np.float32).reshape(-1, 3)[np.asarray(tri, dtype=np.int64).reshape(-1, 3)]
-           for pos, tri in got if tri]
+           for pos, tri, _ in got if tri]
     return np.concatenate(out) if out else np.zeros((0, 3, 3), np.float32)
 
 
