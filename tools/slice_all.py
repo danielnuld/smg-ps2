@@ -1,10 +1,12 @@
-"""Run slice.py over every galaxy/scenario: blob size per scenario, failures, missing object classes.
+"""Convert every galaxy/scenario into the streaming layout (slice.py packs) and report the bytes per scenario.
 
-usage: python tools/slice_all.py data/fs/files out/slice_all [jobs]
-writes <out>/<Galaxy>_<n>.bin and <out>/scenarios.csv (galaxy, scenario, bytes, models, textures, error)
+usage: python tools/slice_all.py data/fs/files out/packs [jobs]
+writes <out>/resident.bin, <out>/<Galaxy>/<n>/{scene,common,<Stage>,<Stage>.low}.bin and <out>/scenarios.csv:
+  whole   every pack of the scenario in full (no streaming)
+  stream  the most loaded at once with streaming (worst stage: its chain in full, other stages low)
+  fits    stream <= ROOM
 """
 import csv
-import struct
 import sys
 import time
 import traceback
@@ -15,43 +17,56 @@ sys.path.insert(0, str(Path(__file__).parent))
 import budget as B
 import slice as SL
 
-
-def scenarios(fs):
-    for g in sorted((Path(fs) / "StageData").iterdir()):
-        arc = g / f"{g.name}Scenario.arc"
-        if g.is_dir() and arc.exists():
-            sd = {n.lower(): d for n, d in B.rarc_files(arc.read_bytes())}["scenariodata.bcsv"]
-            for no in sorted(B.scenario_masks(sd)):
-                yield g.name, no
+ROOM = 9.01e6  # phase 0b: room for scenario data with the levers (docs/phase0b-report.md)
 
 
-def one(fs, out, galaxy, no):
-    t = time.time()
-    try:
-        blob, info = SL.build(fs, galaxy, no)
-        (Path(out) / f"{galaxy}_{no}.bin").write_bytes(blob)
-        return dict(galaxy=galaxy, scenario=no, bytes=len(blob), seconds=round(time.time() - t, 1),
-                    zones=len(info["stages"]), objs=info["objs"], models=info["models"], textures=info["textures"],
-                    error="")
-    except Exception as e:
-        return dict(galaxy=galaxy, scenario=no, bytes=0, seconds=round(time.time() - t, 1), zones=0, objs=0, models=0,
-                    textures=0, error=f"{type(e).__name__}: {e} @ {traceback.extract_tb(e.__traceback__)[-1].lineno}")
+def scenarios(fs, galaxy):
+    sd = {n.lower(): d for n, d in B.rarc_files((Path(fs) / "StageData" / galaxy / f"{galaxy}Scenario.arc").read_bytes())}
+    return sorted(B.scenario_masks(sd["scenariodata.bcsv"]))
+
+
+def galaxy(fs, out, g, resident):
+    rows = []
+    for no in scenarios(fs, g):  # one process per galaxy: its models are converted once (slice._model_cache)
+        t = time.time()
+        try:
+            files, info = SL.packs(fs, g, no, resident)
+            d = Path(out) / g / str(no)
+            d.mkdir(parents=True, exist_ok=True)
+            for f, b in files.items():
+                (d / f).write_bytes(b)
+            worst = max(info["stream"], key=info["stream"].get)
+            rows.append(dict(galaxy=g, scenario=no, whole=info["whole"], stream=info["stream"][worst], worst_stage=worst,
+                             fits=int(info["stream"][worst] <= ROOM), stages=len(info["stages"]), objs=info["objs"],
+                             seconds=round(time.time() - t, 1), error=""))
+        except Exception as e:
+            rows.append(dict(galaxy=g, scenario=no, whole=0, stream=0, worst_stage="", fits=0, stages=0, objs=0,
+                             seconds=round(time.time() - t, 1),
+                             error=f"{type(e).__name__}: {e} @ {traceback.extract_tb(e.__traceback__)[-1].lineno}"))
+        r = rows[-1]
+        print(f"{g} {no}: whole {r['whole'] / 1e6:.2f} stream {r['stream'] / 1e6:.2f} MB ({r['worst_stage']}) "
+              f"{r['seconds']} s {r['error']}", flush=True)
+    return rows
 
 
 if __name__ == "__main__":
     fs, out = sys.argv[1], Path(sys.argv[2])
     jobs = int(sys.argv[3]) if len(sys.argv) > 3 else 6
     out.mkdir(parents=True, exist_ok=True)
-    todo = list(scenarios(fs))
+    res, names = SL.resident_pack(fs)
+    (out / "resident.bin").write_bytes(res)
+    print(f"resident.bin {len(res) / 1e6:.2f} MB ({', '.join(sorted(names))} + clips)", flush=True)
+    gs = sorted(p.name for p in (Path(fs) / "StageData").iterdir() if (p / f"{p.name}Scenario.arc").exists())
     rows = []
     with ProcessPoolExecutor(jobs) as ex:
-        for r in ex.map(one, *zip(*[(fs, str(out), g, n) for g, n in todo])):
-            rows.append(r)
-            print(f"{r['galaxy']} {r['scenario']}: {r['bytes'] / 1e6:.2f} MB {r['seconds']} s {r['error']}", flush=True)
-    rows.sort(key=lambda r: -r["bytes"])
+        for r in ex.map(galaxy, *zip(*[(fs, str(out), g, names) for g in gs])):
+            rows += r
+    rows.sort(key=lambda r: -r["stream"])
     with open(out / "scenarios.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=rows[0].keys())
         w.writeheader()
         w.writerows(rows)
     ok = [r for r in rows if not r["error"]]
-    print(f"{len(ok)} / {len(rows)} built, largest {ok[0]['galaxy']} {ok[0]['scenario']} {ok[0]['bytes'] / 1e6:.2f} MB")
+    print(f"{len(ok)} / {len(rows)} converted, {sum(r['fits'] for r in ok)} fit {ROOM / 1e6:.2f} MB streaming, "
+          f"{sum(r['whole'] <= ROOM for r in ok)} whole; worst {ok[0]['galaxy']} {ok[0]['scenario']} "
+          f"{ok[0]['stream'] / 1e6:.2f} MB")

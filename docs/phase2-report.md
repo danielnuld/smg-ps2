@@ -287,3 +287,40 @@ or the matrices carried in the batch (skinned Mario, z = 0).
 
 Phase 1's ×2.80 object rule on the new worst gives 16.6 ms: back under 16.7 ms, without margin. The heavy-scenario
 gate (5.3) measures it for real.
+
+### Blob v4: s16 positions
+
+Positions go to VU1 as s16 (UNPACK V4-16, `itof0` in the microprogram) in steps of a per-model scale that the EE folds
+into the matrices; the matrix slot rides in w. MODL keeps only the bounding radius (the indexed float copy was used
+for nothing else). Gateway 2: blob 6.47 → 4.38 MB (VUMD 2.20 MB), bench worst 5.92 → 5.22 ms, picture unchanged.
+
+### 5.1 Every scenario in the streaming layout
+
+`tools/slice.py` `packs()` writes phase 0b's `stream` split per scenario, and `tools/slice_all.py` runs it over every
+galaxy (one process per galaxy, models converted once per process):
+
+| File | Holds | Loaded |
+|---|---|---|
+| `resident.bin` | Coin, StarPiece, Mario + his clips (phase 0b RESIDENT ∩ converted classes) | always, 1.85 MB |
+| `scene.bin` | TYPE ZONE OBJS STRT PATH GRAV CAMS CARE of every active stage, in world space | the whole scenario |
+| `common.bin` | models placed in two or more stages | the whole scenario |
+| `<Stage>.bin` | models placed only there, full, with KCL | while the stage is on the player's zone chain |
+| `<Stage>.low.bin` | that stage's planets at their lowest LOD (Low, Middle, else full), no KCL, no actors | otherwise |
+
+Placement is now baked to world space by the converter (zone placement composed up the chain of parent zones):
+objects, starts, rails, camera areas and gravities. Camera parameters stay zone-local, as Petari's cameras compute
+in the zone frame (`Camera::setZoneMtx`); the engine does the same per camera.
+
+`python tools/slice_all.py data/fs/files out/packs` (`out/packs/scenarios.csv`):
+
+| | Whole (no streaming) | Stream (worst stage loaded) |
+|---|---|---|
+| Fit 9.01 MB (phase 0b room) | 124 / 136 | **136 / 136** |
+| Worst | CosmosGarden 1, 11.88 MB | OceanPhantomCave 2, 5.58 MB (GhostShipCaveZone) |
+| Median | 4.51 MB | 3.62 MB |
+
+136 / 136 converted, no errors; 1.0 GB of packs on disk. **These bytes cover the converted classes only** (planets,
+Coin, PurpleCoin, StarPiece, Kuribo, gravities): every other actor class adds its archives as 5.2 ports it, so the
+margin (3.4 MB on the worst scenario) is what the remaining classes have to fit in. Phase 0b's all-archives figure
+for the same scenario was 9.86 MB before the levers. ponytail: models shared by two stages always sit in
+`common.bin`; per-zone deduplication at run time if that ever matters.

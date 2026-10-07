@@ -44,6 +44,7 @@ import geom
 import skin
 import tex
 
+RESIDENT = ("Coin", "StarPiece")  # OBJ_TYPES in phase 0b's RESIDENT set (out/sets.json): the resident pack
 SKINNED = ("Mario",)   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
 OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup", "PurpleRailCoin")
 ROW_FIELDS = ("pos_x", "pos_y", "pos_z", "dir_x", "dir_y", "dir_z", "scale_x", "scale_y", "scale_z")
@@ -139,7 +140,7 @@ def scene(fs, galaxy, scenario):
             xs, ys, zs = (float_column(pts, f"pnt0_{a}") for a in "xyz")
             paths.append(dict(zone=zid, id=pid, closed=int(str(closed[i] if i < len(closed) else "").lower() == "close"),
                               pts=list(zip(xs, ys, zs))))
-    return act, zones, objs, starts, paths, cubes, bcams
+    return act, zones, objs, starts, paths, cubes, bcams, up
 
 
 def model_groups(arc, ratio, stats=None, skinned=False):
@@ -370,8 +371,61 @@ def name32(s):
     return s.encode("ascii", "replace")[:31].ljust(32, b"\0")
 
 
-def build(fs, galaxy, scenario, ratio=0.99):
-    act, zones, objs, starts, paths, cubes, bcams = scene(fs, galaxy, scenario)
+def rot_mtx(rot):
+    """R = Rz * Ry * Rx of Euler angles in degrees (the engine's mat_translate_rot_scale), rows."""
+    cx, sx, cy, sy, cz, sz = (f(math.radians(a)) for a in (rot[0], rot[1], rot[2]) for f in (math.cos, math.sin))
+    return [[cz * cy, cz * sy * sx - sz * cx, cz * sy * cx + sz * sx],
+            [sz * cy, sz * sy * sx + cz * cx, sz * sy * cx - cz * sx],
+            [-sy, cy * sx, cy * cx]]
+
+
+def mtx_euler(r):
+    """Inverse of rot_mtx -> degrees."""
+    ry = math.asin(max(-1.0, min(1.0, -r[2][0])))
+    if abs(r[2][0]) < 0.99999:
+        rx, rz = math.atan2(r[2][1], r[2][2]), math.atan2(r[1][0], r[0][0])
+    else:  # gimbal lock: put everything in x
+        rx, rz = math.atan2(-r[1][2], r[1][1]), 0.0
+    return [math.degrees(a) for a in (rx, ry, rz)]
+
+
+def mul3(a, b):
+    return [[sum(a[i][k] * b[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
+
+
+def to_world(zones, up_ids, items):
+    """Zone-local rows (pos, rot) -> world, in place: world = zone placement composed up its chain of parents."""
+    world = {}
+
+    def zw(z):
+        if z not in world:
+            r, t = rot_mtx(zones[z]["rot"]), zones[z]["pos"]
+            if z in up_ids:
+                pr, pt = zw(up_ids[z])
+                r, t = mul3(pr, r), [pt[i] + sum(pr[i][k] * t[k] for k in range(3)) for i in range(3)]
+            world[z] = (r, list(t))
+        return world[z]
+    for it in items:
+        z = it["zone"]
+        if z == 0 or (zones[z]["pos"] == [0, 0, 0] and zones[z]["rot"] == [0, 0, 0] and z not in up_ids):
+            continue
+        r, t = zw(z)
+        if "pts" in it:
+            it["pts"] = [tuple(t[i] + sum(r[i][k] * pt[k] for k in range(3)) for i in range(3)) for pt in it["pts"]]
+            continue
+        it["pos"] = [t[i] + sum(r[i][k] * it["pos"][k] for k in range(3)) for i in range(3)]
+        it["rot"] = mtx_euler(mul3(r, rot_mtx(it["rot"])))
+
+
+def placement(fs, galaxy, scenario):
+    """Scenario-wide chunks (TYPE ZONE OBJS STRT PATH GRAV CAMS CARE) and what the asset packs need."""
+    act, zones, objs, starts, paths, cubes, bcams, up = scene(fs, galaxy, scenario)
+    # everything placed in a zone goes to world space here, so the engine never composes zone matrices.
+    # ponytail: CAMS vectors (fixed eye points, tower axes) stay zone-local; fine while zones sit at the origin
+    # unrotated, transform them in camera.c by the CAMS zone when a galaxy needs it
+    zid = {z["name"]: i for i, z in enumerate(zones)}
+    up_ids = {zid[z]: zid[p] for z, p in up.items() if z in zid and p in zid and zid[p] != 0}
+    to_world(zones, up_ids, objs + starts + paths + cubes)
     fsp = Path(fs)
     planets = B.planet_table(fsp, lambda a: (fsp / "ObjectData" / f"{a}.arc").exists())
     keep = [o for o in objs if o["name"] in OBJ_TYPES or o["name"] in planets or "Gravity" in o["name"]]
@@ -395,11 +449,11 @@ def build(fs, galaxy, scenario, ratio=0.99):
         d = math.radians
         rx, ry, rz = (d(a) for a in o["rot"])
         # rotated Y axis of R = Rz * Ry * Rx (same order as the engine's placement matrices)
-        up = [math.cos(rz) * math.sin(ry) * math.sin(rx) - math.sin(rz) * math.cos(rx),
-              math.sin(rz) * math.sin(ry) * math.sin(rx) + math.cos(rz) * math.cos(rx), math.cos(ry) * math.sin(rx)]
+        up_ = [math.cos(rz) * math.sin(ry) * math.sin(rx) - math.sin(rz) * math.cos(rx),
+               math.sin(rz) * math.sin(ry) * math.sin(rx) + math.cos(rz) * math.cos(rx), math.cos(ry) * math.sin(rx)]
         distant = o["distant"] if o["distant"] is not None else (500.0 * o["scale"][0] if kind == 0 else 0.0)
         grav.append(struct.pack("<HHiiff3f3f", kind, o["zone"], o["priority"], 1 if o["inverse"] == 1 else 0,
-                                o["range"], distant, *o["pos"], *up))
+                                o["range"], distant, *o["pos"], *up_))
     out.append(chunk(b"GRAV", struct.pack("<I", len(grav)) + b"".join(grav)))
     cams, cam_index, cam_types = camera.cameras(bcams, float_column, int_or)
     care = [struct.pack("<BBH9f", camera.SHAPES[r["name"]], r["zone"],
@@ -407,31 +461,57 @@ def build(fs, galaxy, scenario, ratio=0.99):
             for r in camera.areas(cubes)]
     out.append(chunk(b"CAMS", struct.pack("<I12x", len(cams)) + b"".join(cams)))
     out.append(chunk(b"CARE", struct.pack("<I12x", len(care)) + b"".join(care)))
-    models, kcls, vumd, skins, stats = [], [], [], [], {}
-    texts, tex_id = [], {}  # PS2 textures, deduplicated by content
-    for t in [t for t in types if t in planets] + [t for t in types if t in OBJ_TYPES] + list(SKINNED):
-        arc = fsp / "ObjectData" / f"{t}.arc"
+    # asset names per stage, in draw order: planets first, then object types
+    names = [z["name"] for z in zones]
+    per_stage = {st: [] for st in act}
+    for o in keep:
+        n = o["name"]
+        if (n in planets or n in OBJ_TYPES) and n not in per_stage[names[o["zone"]]]:
+            per_stage[names[o["zone"]]].append(n)
+    for st in per_stage:
+        per_stage[st].sort(key=lambda n: (n not in planets, n))
+    info = dict(stages=act, types=types, objs=len(keep), starts=len(starts), paths=len(paths), cameras=len(cams),
+                areas=len(care), camera_types=dict(cam_types))
+    return out, info, dict(planets=planets, per_stage=per_stage, up=up)
+
+
+_model_cache = {}
+
+
+def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True):
+    """Asset chunks (TEXT MODL SKIN VUMD KCL) for [(model name, archive name)]: textures deduplicated within the pack.
+    KCL for planets when `collision`. Converted models are cached per process (one archive, many scenarios)."""
+    stats = stats if stats is not None else {}
+    models_, kcls, vumd, skins = [], [], [], []
+    texts, tex_id = [], {}
+    for t, a in models:
+        arc = fsp / "ObjectData" / f"{a}.arc"
         if not arc.exists():
             continue
-        groups, kcl, sk = model_groups(arc, ratio, stats, t in SKINNED)
+        key = (a, ratio)
+        if key not in _model_cache:
+            st = {}
+            _model_cache[key] = (model_groups(arc, ratio, st, t in SKINNED), st)
+        (groups, kcl, sk), st = _model_cache[key]
+        for k, v in st.items():
+            stats[k] = stats.get(k, 0) + v
         if sk:
             skins.append(name32(t) + sk)
         # MODL keeps only the bounding radius (culling): drawing uses VUMD, collision KCL
-        models.append(name32(t) + struct.pack("<f", math.sqrt(max((sum(c * c for c in v) for verts, *_ in groups
-                                                                   for v in verts), default=0.0))))
+        models_.append(name32(t) + struct.pack("<f", math.sqrt(max((sum(c * c for c in v) for verts, *_ in groups
+                                                                    for v in verts), default=0.0))))
         vg, qs = b"", pos_scale(groups)
         for (_, tris, _, tx, _, _), (pos, col, uv) in zip(groups, vu_groups(groups, BASE_COLOUR.get(t, (112, 176, 96)),
                                                                              stats, qs)):
-            n = len(tris)
             ti = 0xFFFF
             if tx:
                 key = tx["pix"] + tx["clut"] + bytes((tx["clamp_s"], tx["clamp_t"]))
                 ti = tex_id.setdefault(key, len(texts))
                 if ti == len(texts):
                     texts.append(tx)
-            vg += struct.pack("<IH10x", n, ti) + pos + col + uv
+            vg += struct.pack("<IH10x", len(tris), ti) + pos + col + uv
         vumd.append(name32(t) + struct.pack("<If8x", len(groups), qs) + vg)
-        if kcl and t in planets:
+        if kcl and collision and t in planets:
             kcl = kcl_to_le(kcl)
             kcls.append(name32(t) + struct.pack("<I", len(kcl)) + kcl + b"\0" * (-len(kcl) % 4))
     head, data = bytearray(), bytearray()
@@ -443,9 +523,16 @@ def build(fs, galaxy, scenario, ratio=0.99):
         data += tx["clut"]
         head += struct.pack("<HHBBBBIIIBB10x", tx["w"], tx["h"], tx["psm"], tx["clamp_s"], tx["clamp_t"], tx["alpha"],
                             pix, len(tx["pix"]), clut, tx["w"].bit_length() - 1, tx["h"].bit_length() - 1)
-    out.append(chunk(b"TEXT", struct.pack("<I12x", len(texts)) + bytes(head) + bytes(data)))
-    out.append(chunk(b"MODL", struct.pack("<I", len(models)) + b"".join(models)))
-    out.append(chunk(b"SKIN", struct.pack("<I", len(skins)) + b"".join(skins)))
+    stats.update(models=stats.get("models", 0) + len(models_), kcls=stats.get("kcls", 0) + len(kcls),
+                 textures=stats.get("textures", 0) + len(texts))
+    return [chunk(b"TEXT", struct.pack("<I12x", len(texts)) + bytes(head) + bytes(data)),
+            chunk(b"MODL", struct.pack("<I", len(models_)) + b"".join(models_)),
+            chunk(b"SKIN", struct.pack("<I", len(skins)) + b"".join(skins)),
+            chunk(b"VUMD", struct.pack("<I12x", len(vumd)) + b"".join(vumd)),
+            chunk(b"KCL ", struct.pack("<I", len(kcls)) + b"".join(kcls))]
+
+
+def anim_chunk(fsp):
     clips = []
     for n, b in B.rarc_files((fsp / "ObjectData" / "MarioAnime.arc").read_bytes()):
         if n.lower().endswith(".bck"):
@@ -453,14 +540,71 @@ def build(fs, galaxy, scenario, ratio=0.99):
             z = zlib.compress(raw, 9)
             clips.append(name32(n.rsplit("/", 1)[-1][:-4].lower()) + struct.pack("<II", len(raw), len(z)) + z +
                          b"\0" * (-len(z) % 4))
-    out.append(chunk(b"ANIM", struct.pack("<I", len(clips)) + b"".join(clips)))
-    out.append(chunk(b"VUMD", struct.pack("<I12x", len(vumd)) + b"".join(vumd)))
-    out.append(chunk(b"KCL ", struct.pack("<I", len(kcls)) + b"".join(kcls)))
-    blob = b"SMGS" + struct.pack("<II4x", 4, len(out)) + b"".join(out)
-    blob += b"\0" * (-len(blob) % 16)
-    return blob, dict(stages=act, types=types, objs=len(keep), starts=len(starts), paths=len(paths),
-                      models=len(models), kcls=len(kcls), textures=len(texts), cameras=len(cams), areas=len(care),
-                      camera_types=dict(cam_types), **stats)
+    return chunk(b"ANIM", struct.pack("<I", len(clips)) + b"".join(clips))
+
+
+def blob_of(chunks):
+    blob = b"SMGS" + struct.pack("<II4x", 4, len(chunks)) + b"".join(chunks)
+    return blob + b"\0" * (-len(blob) % 16)
+
+
+def build(fs, galaxy, scenario, ratio=0.99):
+    """Everything in one blob: placement, every placed model in full, Mario and his clips (the phase 1 layout)."""
+    out, info, ctx = placement(fs, galaxy, scenario)
+    fsp, stats = Path(fs), {}
+    types = info["types"]
+    names = [t for t in types if t in ctx["planets"]] + [t for t in types if t in OBJ_TYPES] + list(SKINNED)
+    out += assets(fsp, [(t, t) for t in names], ctx["planets"], ratio, stats) + [anim_chunk(fsp)]
+    return blob_of(out), dict(info, **stats)
+
+
+def low_lod(fsp, name):
+    """Lowest LOD archive of a model (budget.py stream rule): Low, else Middle, else the model itself."""
+    return next(a for a in (name + "Low", name + "Middle", name) if (fsp / "ObjectData" / f"{a}.arc").exists()
+                or a == name)
+
+
+def packs(fs, galaxy, scenario, resident, ratio=0.99):
+    """Streaming layout of one scenario (phase 0b `stream`): -> ({file name: blob}, info).
+    scene.bin   placement chunks of every active stage
+    common.bin  models placed in two or more stages (always loaded)
+    <Stage>.bin models placed only in that stage, in full, with collision (loaded while the stage is on the zone chain)
+    <Stage>.low.bin  that stage's planets at their lowest LOD, no collision, no actors (loaded otherwise)
+    Models in `resident` (the resident pack: Mario, coins, ...) are left out.
+    info["stream"] = {stage: bytes loaded while the player is in it}: scene + common + its chain in full + the other
+    stages low. ponytail: shared models always resident in common.bin; per-zone dedup at run time if that is too big."""
+    out, info, ctx = placement(fs, galaxy, scenario)
+    fsp, planets, per, up = Path(fs), ctx["planets"], ctx["per_stage"], ctx["up"]
+    count = {}
+    for st, ns in per.items():
+        for n in ns:
+            if n not in resident:
+                count[n] = count.get(n, 0) + 1
+    shared = sorted(n for n, c in count.items() if c > 1)
+    files = {"scene.bin": blob_of(out),
+             "common.bin": blob_of(assets(fsp, [(n, n) for n in shared], planets, ratio))}
+    for st, ns in per.items():
+        own = [n for n in ns if count.get(n) == 1]
+        files[f"{st}.bin"] = blob_of(assets(fsp, [(n, n) for n in own], planets, ratio))
+        files[f"{st}.low.bin"] = blob_of(assets(fsp, [(n, low_lod(fsp, n)) for n in own if n in planets], planets,
+                                                ratio, collision=False))
+    stream = {}
+    for z in per:
+        chain = [z]
+        while chain[-1] in up:
+            chain.append(up[chain[-1]])
+        chain = set(chain) | {galaxy}
+        stream[z] = len(files["scene.bin"]) + len(files["common.bin"]) + sum(
+            len(files[f"{st}.bin" if st in chain else f"{st}.low.bin"]) for st in per)
+    info.update(stream=stream, whole=sum(len(b) for f, b in files.items() if not f.endswith(".low.bin")))
+    return files, info
+
+
+def resident_pack(fs, ratio=0.99):
+    """Models every scenario shares (phase 0b RESIDENT set, the ones the converter knows) + Mario + his clips."""
+    fsp = Path(fs)
+    names = list(RESIDENT) + list(SKINNED)
+    return blob_of(assets(fsp, [(t, t) for t in names], {}, ratio) + [anim_chunk(fsp)]), set(names)
 
 
 def read_chunks(blob):
@@ -491,6 +635,13 @@ def selftest():
     blob = b"SMGS" + struct.pack("<II4x", 2, 2) + chunk(b"TYPE", struct.pack("<I", 1) + name32("Coin")) + chunk(b"KCL ", b"x")
     c = read_chunks(blob)
     assert c[b"TYPE"][4:8] == b"Coin" and c[b"KCL "][:1] == b"x", c
+    for rot in ([10, 20, 30], [-45, 80, 170], [0, 0, 90]):
+        assert all(abs(x - y) < 1e-6 for x, y in zip(mtx_euler(rot_mtx(rot)), rot)), rot
+    zs = [dict(pos=[0, 0, 0], rot=[0, 0, 0]), dict(pos=[100, 0, 0], rot=[0, 90, 0])]
+    it = [dict(zone=1, pos=[10, 0, 0], rot=[0, 0, 0]), dict(zone=1, pts=[(0, 0, 10)])]
+    to_world(zs, {}, it)
+    assert all(abs(x - y) < 1e-6 for x, y in zip(it[0]["pos"], [100, 0, -10])), it[0]
+    assert abs(it[0]["rot"][1] - 90) < 1e-6 and abs(it[1]["pts"][0][0] - 110) < 1e-6, it
     print("selftest ok")
 
 
