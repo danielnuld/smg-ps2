@@ -30,8 +30,10 @@ typedef struct { V3 pos, front, up; int jumping; } CamTarget;
 /* Index of the last area (in the blob's priority order) that contains p, or -1 (AreaObjMgr::find_in). */
 int camera_area_at(const CamArea *a, int n, V3 p);
 
-/* Areas of other zones are ignored: the engine plays one zone in its local frame. */
-void camera_init(const CamParam *cams, int ncams, const CamArea *areas, int nareas, int zone, const CamTarget *t);
+/* Areas are in world space (tools/slice.py to_world); camera parameters are zone-local, so each camera computes in
+ * its zone's frame (Petari Camera::setZoneMtx): zones = world matrix per zone (column-major), NULL = all identity. */
+void camera_init(const CamParam *cams, int ncams, const CamArea *areas, int nareas, const float (*zones)[16],
+                 const CamTarget *t);
 void camera_update(const CamTarget *t);
 void camera_pose(V3 *eye, V3 *watch, V3 *up, float *fovy);
 /* Active camera (CAMS index, -1 = default) and its type, for the HUD. */

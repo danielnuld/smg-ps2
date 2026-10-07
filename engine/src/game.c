@@ -71,7 +71,15 @@ static const float JUMP_GRAV[12] = {1.8f, 1.8f, 1.8f, 1.8f, 1.8f, 0.95f, 1.8f, 2
 #define BODY_RADIUS 50.0f         /* ponytail: one sphere for Mario's body; SMG uses several collision checks */
 
 static const Scene *sc;
-static const unsigned char *kcl;
+/* Placed static models (planets and every class without behaviour yet): drawn, and collided if they have a KCL */
+typedef struct {
+    const Model *md;
+    const unsigned char *kcl;
+    float m[16];     /* world matrix (uniform scale s) */
+    float s, reach;  /* scale, bounding radius in world units */
+} Inst;
+static Inst *insts;
+static int ninsts;
 static const Gravity *grav;
 static int ngrav;
 static Pickup *coins, *purple, *pieces;
@@ -83,7 +91,7 @@ static V3 start_pos;
 static int got_coins, got_purple, got_pieces;
 static float spin_angle;
 static V3 cam_pos;
-static const Model *m_coin, *m_purple, *m_piece, *m_kuribo, *m_planet;
+static const Model *m_coin, *m_purple, *m_piece, *m_kuribo;
 static const Model *m_mario_skin; /* Mario.arc, skinned (SKIN chunk) */
 static Anim *mario_anim;
 
@@ -183,22 +191,62 @@ static V3 up_at(V3 p, V3 prev)
 /* Push a sphere out of the KCL; returns 1 if it rests on ground (a face within 60 degrees of up). */
 unsigned int game_kcl_cycles;
 
+typedef struct { V3 n; float dist; } Hit; /* world normal, penetration */
+
+/* Sphere against every placed KCL: the sphere goes to the instance's object space (KCL data is in model space),
+ * normals and depths come back to world. ponytail: uniform scale only (scale.x), like every planet seen so far. */
+static int kcl_query(V3 c, float radius, Hit *out, int max)
+{
+    int n = 0;
+    for (int i = 0; i < ninsts && n < max; i++) {
+        const Inst *in = &insts[i];
+        if (!in->kcl) continue;
+        V3 d = vsub(c, v3(in->m[12], in->m[13], in->m[14]));
+        if (vdot(d, d) > (in->reach + radius) * (in->reach + radius)) continue;
+        const float *m = in->m;
+        float k = 1.0f / (in->s * in->s); /* columns are R * s */
+        float lc[3] = {vdot(d, v3(m[0], m[1], m[2])) * k, vdot(d, v3(m[4], m[5], m[6])) * k,
+                       vdot(d, v3(m[8], m[9], m[10])) * k};
+        KclHit h[16];
+        int got = kcl_check_sphere(in->kcl, lc, radius / in->s, h, max - n < 16 ? max - n : 16);
+        for (int j = 0; j < got; j++) {
+            const float *fn = kcl_face_normal(in->kcl, h[j].prism);
+            V3 w = vadd(vadd(vmul(v3(m[0], m[1], m[2]), fn[0]), vmul(v3(m[4], m[5], m[6]), fn[1])),
+                        vmul(v3(m[8], m[9], m[10]), fn[2]));
+            out[n].n = vmul(w, 1.0f / in->s);
+            out[n++].dist = h[j].dist * in->s;
+        }
+    }
+    return n;
+}
+
+/* Fell into space: farther than 4000 from every collision mesh's bounding sphere */
+static int lost(V3 p)
+{
+    for (int i = 0; i < ninsts; i++) {
+        if (!insts[i].kcl) continue;
+        float r = insts[i].reach + 4000.0f;
+        V3 d = vsub(p, v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]));
+        if (vdot(d, d) < r * r) return 0;
+    }
+    return 1;
+}
+
 static int collide_n(V3 *center, V3 up, float radius, V3 *ground_n, V3 *wall_n, int *wall)
 {
     unsigned int c0 = cycles();
     int ground = 0;
     if (wall) *wall = 0;
     for (int it = 0; it < 3; it++) {
-        KclHit hits[16];
-        int n = kcl_check_sphere(kcl, (const float *)center, radius, hits, 16);
+        Hit hits[16];
+        int n = kcl_query(*center, radius, hits, 16);
         if (!n)
             break;
         int deepest = 0;
         for (int i = 1; i < n; i++)
             if (hits[i].dist > hits[deepest].dist)
                 deepest = i;
-        const float *fn = kcl_face_normal(kcl, hits[deepest].prism);
-        V3 nrm = v3(fn[0], fn[1], fn[2]);
+        V3 nrm = hits[deepest].n;
         *center = vadd(*center, vmul(nrm, hits[deepest].dist + 0.01f));
         float d = vdot(nrm, up);
         if (d > SLIP_ANGLE_COS) {
@@ -211,15 +259,13 @@ static int collide_n(V3 *center, V3 up, float radius, V3 *ground_n, V3 *wall_n, 
     }
     if (!ground) { /* resting check: a sphere a little lower touches ground */
         V3 probe = vsub(*center, vmul(up, 4.0f));
-        KclHit hits[16];
-        int n = kcl_check_sphere(kcl, (const float *)&probe, radius, hits, 16);
-        for (int i = 0; i < n; i++) {
-            const float *fn = kcl_face_normal(kcl, hits[i].prism);
-            if (vdot(v3(fn[0], fn[1], fn[2]), up) > SLIP_ANGLE_COS) {
+        Hit hits[16];
+        int n = kcl_query(probe, radius, hits, 16);
+        for (int i = 0; i < n; i++)
+            if (vdot(hits[i].n, up) > SLIP_ANGLE_COS) {
                 ground = 1;
-                if (ground_n) *ground_n = v3(fn[0], fn[1], fn[2]);
+                if (ground_n) *ground_n = hits[i].n;
             }
-        }
     }
     game_kcl_cycles += cycles() - c0;
     return ground;
@@ -232,7 +278,6 @@ static int collide(V3 *center, V3 up, float radius) { return collide_n(center, u
 void game_init(const Scene *s, const unsigned char *blob)
 {
     sc = s;
-    kcl = s->kcl;
     u32 gsz;
     const unsigned char *g = blob_chunk(blob, "GRAV", &gsz);
     ngrav = *(const int *)g;
@@ -241,7 +286,6 @@ void game_init(const Scene *s, const unsigned char *blob)
     m_purple = scene_model(s, "PurpleCoin");
     m_piece = scene_model(s, "StarPiece");
     m_kuribo = scene_model(s, "Kuribo");
-    m_planet = scene_model(s, "HeavensDoorMysteriousPlanet");
     m_mario_skin = scene_model(s, "Mario");
     if (m_mario_skin && m_mario_skin->skin) {
         anim_init(s);
@@ -266,8 +310,22 @@ void game_init(const Scene *s, const unsigned char *blob)
     int ic = 0, ip = 0, is = 0, ik = 0;
     int t_coin = scene_type(s, "Coin"), t_pc = scene_type(s, "PurpleCoin"), t_circle = scene_type(s, "CirclePurpleCoinGroup");
     int t_rail = scene_type(s, "PurpleRailCoin"), t_piece = scene_type(s, "StarPiece"), t_kuribo = scene_type(s, "Kuribo");
+    insts = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(Inst));
     for (u32 i = 0; i < s->nobjs; i++) {
         const Row *r = &s->objs[i];
+        if (r->type != t_coin && r->type != t_pc && r->type != t_piece && r->type != t_kuribo && r->type != t_circle &&
+            r->type != t_rail) {
+            const char *name = s->types + 32 * r->type;
+            const Model *md = scene_model(s, name);
+            if (md) {
+                Inst *in = &insts[ninsts++];
+                in->md = md;
+                in->kcl = scene_kcl(s, name);
+                mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
+                in->s = r->scale[0];
+                in->reach = md->radius * in->s;
+            }
+        }
         if (r->type == t_coin) { coins[ic].pos = row_pos(r); coins[ic++].alive = 1; }
         else if (r->type == t_pc) { purple[ip].pos = row_pos(r); purple[ip++].alive = 1; }
         else if (r->type == t_piece) { pieces[is].pos = row_pos(r); pieces[is++].alive = 1; }
@@ -303,15 +361,23 @@ void game_init(const Scene *s, const unsigned char *blob)
     mario->jump_kind = mario->last_jump = -1;
     mario->wall_timer = 1000;
     cam_pos = vadd(mario->pos, vadd(vmul(mario->up, 500), vmul(mario->face, -1000)));
-    {   /* SMG cameras: CAMS + CARE chunks (tools/camera.py); the slice plays zone 1 */
+    {   /* SMG cameras: CAMS + CARE chunks (tools/camera.py), each camera in its zone's frame (ZONE: world placement) */
         u32 sz;
         const unsigned char *c = blob_chunk(blob, "CAMS", &sz), *a = blob_chunk(blob, "CARE", &sz);
+        const unsigned char *z = blob_chunk(blob, "ZONE", &sz);
+        u32 nz = *(const u32 *)z;
+        float (*zm)[16] = mem_alloc(MEM_SCENE, nz * 64);
+        static const float one[3] = {1, 1, 1};
+        for (u32 i = 0; i < nz; i++) {
+            const float *e = (const float *)(z + 4 + 56 * i + 32);
+            mat_translate_rot_scale(zm[i], e, e + 3, one);
+        }
         CamTarget t = {mario->pos, mario->face, mario->up, 0};
         camera_init(c ? (const CamParam *)(c + 16) : NULL, c ? *(const int *)c : 0,
-                    a ? (const CamArea *)(a + 16) : NULL, a ? *(const int *)a : 0, 1, &t);
+                    a ? (const CamArea *)(a + 16) : NULL, a ? *(const int *)a : 0, (const float (*)[16])zm, &t);
     }
-    printf("game: coins %d, purple %d, star pieces %d, kuribo %d, start (%d %d %d)\n", ncoins, npurple, npieces, nkuribo,
-           (int)start_pos.x, (int)start_pos.y, (int)start_pos.z);
+    printf("game: %d static instances, coins %d, purple %d, star pieces %d, kuribo %d, start (%d %d %d)\n", ninsts,
+           ncoins, npurple, npieces, nkuribo, (int)start_pos.x, (int)start_pos.y, (int)start_pos.z);
 }
 
 /* --- update ---------------------------------------------------------------------------------------------- */
@@ -443,7 +509,7 @@ static void update_mario(void)
         float into = vdot(m->hvel, m->wall_n);
         if (into < 0) m->hvel = vsub(m->hvel, vmul(m->wall_n, into));
     }
-    if (vlen(m->pos) > 9000.0f) { /* fell off: back to the start */
+    if (lost(m->pos)) { /* fell off: back to the start */
         m->pos = start_pos; m->hvel = v3(0, 0, 0); m->vup = 0;
     }
     if (m->hurt_timer) m->hurt_timer--;
@@ -556,8 +622,8 @@ void game_draw(void)
     float eye[3] = {ce.x, ce.y, ce.z}, target[3] = {cw.x, cw.y, cw.z}, up[3] = {cu.x, cu.y, cu.z};
     float m[16];
     render_begin(eye, target, up);
-    mat_identity(m);
-    if (m_planet) render_model(m_planet, m, 0x70, 0xB0, 0x60);
+    for (int i = 0; i < ninsts; i++)
+        render_model(insts[i].md, insts[i].m, 0x70, 0xB0, 0x60);
     draw_pickups(coins, ncoins, m_coin, 0xF0, 0xD0, 0x30);
     draw_pickups(purple, npurple, m_purple, 0xB0, 0x50, 0xF0);
     draw_pickups(pieces, npieces, m_piece, 0x60, 0xD0, 0xF0);

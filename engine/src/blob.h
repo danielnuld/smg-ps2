@@ -61,8 +61,7 @@ typedef struct {
     u32 nobjs, nstarts, nmodels;
     const Row *objs, *starts;
     Model *models;
-    const u8 *kcl;
-    u32 kcl_size;
+    const u8 *kcl_chunk; /* KCL chunk: {u32 n}, n x {char[32] model, u32 size, bytes, pad 4} */
     u32 nclips;
     Clip *clips;
     u32 ntex;
@@ -75,5 +74,7 @@ int blob_load(Scene *s, const u8 *blob);
 const u8 *blob_chunk(const u8 *blob, const char *tag, u32 *size);
 int scene_type(const Scene *s, const char *name);
 const Model *scene_model(const Scene *s, const char *name);
+/* Little-endian KCL of a model (planets), NULL if it has none. */
+const u8 *scene_kcl(const Scene *s, const char *name);
 
 #endif

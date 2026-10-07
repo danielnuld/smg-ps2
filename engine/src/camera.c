@@ -35,7 +35,8 @@ int camera_area_at(const CamArea *a, int n, V3 p)
 
 static const CamParam *cams;
 static const CamArea *areas;
-static int ncams, nareas, zone_id;
+static int ncams, nareas;
+static const float (*zones)[16];
 static int cur = -2;                  /* active CAMS index, -1 = default (null) camera, -2 = none yet */
 static CamParam null_cam;             /* CameraHolder default: XZ_PARA with CameraParamChunk defaults */
 static V3 look_off, last_target;      /* smoothed loffset / loffsetv (makeWatchPoint) */
@@ -67,9 +68,43 @@ static V3 rotate_between(V3 a, V3 b, V3 v)
     return vadd(vadd(vmul(v, c), vmul(vcross(ax, v), s)), vmul(ax, vdot(ax, v) * (1.0f - c)));
 }
 
-void camera_init(const CamParam *c, int nc, const CamArea *a, int na, int zone, const CamTarget *t)
+/* zone frame: rotation columns m[0..2], m[4..6], m[8..10] (orthonormal), translation m[12..14] */
+static V3 to_local(const float *m, V3 v, int point)
 {
-    cams = c; ncams = nc; areas = a; nareas = na; zone_id = zone;
+    if (point) v = vsub(v, v3(m[12], m[13], m[14]));
+    return v3(vdot(v, vec(m)), vdot(v, vec(m + 4)), vdot(v, vec(m + 8)));
+}
+static V3 to_world(const float *m, V3 v, int point)
+{
+    V3 w = vadd(vadd(vmul(vec(m), v.x), vmul(vec(m + 4), v.y)), vmul(vec(m + 8), v.z));
+    return point ? vadd(w, v3(m[12], m[13], m[14])) : w;
+}
+
+static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V3 *watch, V3 *up);
+
+/* type_pose in the camera's zone frame: target and the type's previous output in, the pose back out */
+static void zone_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V3 *watch, V3 *up)
+{
+    if (!zones || p->zone == 0) {
+        type_pose(p, t, move, eye, watch, up);
+        return;
+    }
+    const float *m = zones[p->zone];
+    CamTarget l = {to_local(m, t->pos, 1), to_local(m, t->front, 0), to_local(m, t->up, 0), t->jumping};
+    V3 se = type_eye, su = type_up;
+    type_eye = to_local(m, se, 1);
+    type_up = to_local(m, su, 0);
+    type_pose(p, &l, to_local(m, move, 0), eye, watch, up);
+    type_eye = se;
+    type_up = su;
+    *eye = to_world(m, *eye, 1);
+    *watch = to_world(m, *watch, 1);
+    *up = to_world(m, *up, 0);
+}
+
+void camera_init(const CamParam *c, int nc, const CamArea *a, int na, const float (*z)[16], const CamTarget *t)
+{
+    cams = c; ncams = nc; areas = a; nareas = na; zones = z;
     null_cam.type = CAM_XZ_PARA; null_cam.dist = 1200.0f; null_cam.angle_b = 0.3f; null_cam.fovy = 45.0f;
     null_cam.camint = 0; null_cam.vpanuse = 1; null_cam.vpanaxis[1] = 1.0f; null_cam.uplay = 300.0f;
     last_target = t->pos;
@@ -174,7 +209,7 @@ void camera_update(const CamTarget *t)
 {
     int a = -1;
     for (int i = nareas - 1; i >= 0; i--)
-        if (areas[i].zone == zone_id && inside(&areas[i], t->pos)) { a = i; break; }
+        if (inside(&areas[i], t->pos)) { a = i; break; }
     /* no area: keep the current camera (the ground-triangle cameras are not ported), the default one at first */
     int want = a >= 0 && areas[a].cam != 0xFFFF ? areas[a].cam : (cur == -2 ? -1 : cur);
     V3 move = vsub(t->pos, last_target);
@@ -188,7 +223,7 @@ void camera_update(const CamTarget *t)
             V3 e, w, u;
             type_eye = vadd(t->pos, vadd(vmul(t->up, 600.0f), vmul(t->front, -1200.0f)));
             type_up = t->up;
-            type_pose(param(), t, move, &e, &w, &u);
+            zone_pose(param(), t, move, &e, &w, &u);
             i_eye = f_eye = e; i_watch = f_watch = w; i_up = f_up = u;
             type_eye = e; type_up = u;
         } else {
@@ -198,7 +233,7 @@ void camera_update(const CamTarget *t)
     }
     const CamParam *p = param();
     V3 e, w, u;
-    type_pose(p, t, move, &e, &w, &u);
+    zone_pose(p, t, move, &e, &w, &u);
     type_eye = e;
     type_up = u;
     /* CameraViewInterpolator.cpp:275-327, on positions: r = (timer / camint)^2 */

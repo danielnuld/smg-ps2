@@ -106,10 +106,7 @@ int blob_load(Scene *s, const u8 *blob)
         s->tex = (const TexEntry *)(tx + 16);
         s->tex_base = tx;
     }
-    if (k && *(const u32 *)k) {
-        s->kcl_size = *(const u32 *)(k + 36);
-        s->kcl = k + 40;
-    }
+    s->kcl_chunk = k;
     return 0;
 }
 
@@ -119,6 +116,20 @@ int scene_type(const Scene *s, const char *name)
         if (strcmp(s->types + 32 * i, name) == 0)
             return i;
     return -1;
+}
+
+const u8 *scene_kcl(const Scene *s, const char *name)
+{
+    if (!s->kcl_chunk)
+        return NULL;
+    const u8 *q = s->kcl_chunk + 4;
+    for (u32 i = 0, n = *(const u32 *)s->kcl_chunk; i < n; i++) {
+        u32 size = *(const u32 *)(q + 32);
+        if (strcmp((const char *)q, name) == 0)
+            return q + 36;
+        q += 36 + ((size + 3) & ~3u);
+    }
+    return NULL;
 }
 
 const Model *scene_model(const Scene *s, const char *name)

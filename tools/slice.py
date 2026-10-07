@@ -9,24 +9,22 @@ zones placed by `stageobjinfo` rows of the stage that holds them (pos + dir in d
 calcPlacementMtx). Rails from `jmp/path/commonpathinfo` + `commonpathpointinfo.<n>` (control point pnt0 only).
 Models: every placed planet (PlanetMapDataTable names) and the archives of the object types in OBJ_TYPES, through
 geom.py (triangles per matrix group, simplified to R when R < 1). KCL copied as on disc (big-endian) from each planet
-archive, converted to little-endian (kcl_to_le). ponytail: meshes are untextured indexed triangle lists with float positions; textures, UVs and strips come
-when the renderer needs them (task 3.2/4.x), and only then cost bytes.
+archive, converted to little-endian (kcl_to_le). Streaming layout of a scenario: packs() (task 5.1).
 
 Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
-  header  'SMGS' u32 version=2, u32 chunk count, u32 pad          (16 B)
+  header  'SMGS' u32 version=4, u32 chunk count, u32 pad          (16 B)
   chunk   tag[4], u32 payload size, 8 B pad, payload               (16 B header, payload padded to 16)
   'TYPE'  u32 n, n × char[32]                  type names; OBJS/STRT rows index this table
-  'ZONE'  u32 n, n × {char[32] name, f32 pos[3], f32 rot[3]}          zone 0 = main stage (identity)
+  'ZONE'  u32 n, n × {char[32] name, f32 pos[3], f32 rot[3]}   world placement; zone 0 = main stage (identity).
+          Everything else placed in a zone is already in world space (to_world); CAMS stays zone-local
   'OBJS'  u32 n, n × ROW;  'STRT' same layout (Mario start points)
           ROW = {u16 type, u16 zone, s32 l_id, s32 path_id, f32 pos[3], f32 rot[3], f32 scale[3], s32 arg[8]}  (80 B)
   'PATH'  u32 n, n × {u16 zone, u16 closed, s32 id, u32 npts, f32 pts[npts][3]}
-  'MODL'  u32 n, n × {char[32] name, u32 ngroups, ngroups × {u32 nverts, u32 ntris, f32 v[nverts][3],
-          u16 idx[ntris][3], pad to 4}}
+  'MODL'  u32 n, n × {char[32] name, f32 bounding radius}
   'KCL '  u32 n, n × {char[32] model, u32 size, bytes[size] (little-endian KCL, kcl_to_le), pad to 4}
-  'VUMD'  u32 n, n × {char[32] name, u32 ngroups, ngroups × {u32 nverts (3 per triangle), pad to 16,
-          f32 pos[nverts][4] (w = 1), u32 rgba[nverts][4]}}: the same triangles de-indexed for the VU1 renderer,
-          flat shaded per triangle with a fixed light baked in (BASE_COLOUR per model). ponytail: 32 B per emitted
-          vertex; the compact indexed form (budget.py --vu-index) is the next step once the VU1 path runs.
+  'VUMD'  u32 n, 12 pad, n × {char[32] name, u32 ngroups, f32 qscale, 8 pad, ngroups × {u32 nverts (3 per
+          triangle), u16 tex, 10 pad, s16 pos[nverts][4] (x, y, z in steps of qscale, w = 4 * matrix slot),
+          u8 rgba[nverts][4], s16 uv[nverts][2] if textured, each array padded to 16}}
   'GRAV'  u32 n, n × {u16 kind (0 point, 1 plane), u16 zone, s32 priority, s32 inverse, f32 range, f32 distant,
           f32 pos[3], f32 up[3]}   (Petari GravityCreator/GravityUtil: point distant = 500 * scale.x, plane up = rotated
           Y axis; Range/Distant/Priority/Inverse from the placement row when present, defaults -1, 0, 0, 0)
@@ -394,7 +392,8 @@ def mul3(a, b):
 
 
 def to_world(zones, up_ids, items):
-    """Zone-local rows (pos, rot) -> world, in place: world = zone placement composed up its chain of parents."""
+    """Zone-local rows (pos, rot) -> world, in place: world = zone placement composed up its chain of parents.
+    Returns each zone's world (rotation rows, translation)."""
     world = {}
 
     def zw(z):
@@ -415,6 +414,7 @@ def to_world(zones, up_ids, items):
             continue
         it["pos"] = [t[i] + sum(r[i][k] * it["pos"][k] for k in range(3)) for i in range(3)]
         it["rot"] = mtx_euler(mul3(r, rot_mtx(it["rot"])))
+    return [zw(z) for z in range(len(zones))]
 
 
 def placement(fs, galaxy, scenario):
@@ -425,7 +425,7 @@ def placement(fs, galaxy, scenario):
     # unrotated, transform them in camera.c by the CAMS zone when a galaxy needs it
     zid = {z["name"]: i for i, z in enumerate(zones)}
     up_ids = {zid[z]: zid[p] for z, p in up.items() if z in zid and p in zid and zid[p] != 0}
-    to_world(zones, up_ids, objs + starts + paths + cubes)
+    zworld = to_world(zones, up_ids, objs + starts + paths + cubes)
     fsp = Path(fs)
     planets = B.planet_table(fsp, lambda a: (fsp / "ObjectData" / f"{a}.arc").exists())
     keep = [o for o in objs if o["name"] in OBJ_TYPES or o["name"] in planets or "Gravity" in o["name"]]
@@ -435,7 +435,7 @@ def placement(fs, galaxy, scenario):
                                   *[a if -2**31 <= a < 2**31 else -1 for a in r["args"]])
     out = [chunk(b"TYPE", struct.pack("<I", len(types)) + b"".join(name32(t) for t in types)),
            chunk(b"ZONE", struct.pack("<I", len(zones)) + b"".join(
-               name32(z["name"]) + struct.pack("<6f", *z["pos"], *z["rot"]) for z in zones)),
+               name32(z["name"]) + struct.pack("<6f", *t, *mtx_euler(r)) for z, (r, t) in zip(zones, zworld))),
            chunk(b"OBJS", struct.pack("<I", len(keep)) + b"".join(pack_row(r) for r in keep)),
            chunk(b"STRT", struct.pack("<I", len(starts)) + b"".join(pack_row(r) for r in starts)),
            chunk(b"PATH", struct.pack("<I", len(paths)) + b"".join(
