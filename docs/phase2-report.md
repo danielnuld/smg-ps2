@@ -268,3 +268,22 @@ The input path is milestone 3's, but the stick is camera-relative, so with SMG's
 (end position 1295, 1640, 69). Video: `videos/2026-10-07_1015_phase2-camera_543f2c2.mp4`.
 
 **Verdict: GO** (9.09 of 16.7 ms; camera bytes negligible).
+
+## Milestone 5: galaxies and streaming
+
+### Before 5.1: prebuilt chains (the item flagged at milestones 2-4)
+
+Static models get their whole VIF chain built once at load (`render.c` build_chain: per group the texture packet,
+per batch header / positions / colours / UVs / MSCAL, ending with RET). An instance is now a FLUSHE, its matrix
+uploaded to VU mem 1..4 and a CALL; the microprogram reads an absolute matrix base from the batch header (z = 1)
+or the matrices carried in the batch (skinned Mario, z = 0).
+
+| Bench (PCSX2) | Before | Prebuilt chains |
+|---|---|---|
+| EE draw, worst | 5.95 ms | 1.57 ms |
+| GS finish, worst | 1.59 ms | 2.47 ms (the EE now waits for VU1/GS sooner) |
+| Total, worst | 9.11 ms | 5.92 ms |
+| Render runtime | 674 816 B | 843 216 B (+168 KB of chains) |
+
+Phase 1's ×2.80 object rule on the new worst gives 16.6 ms: back under 16.7 ms, without margin. The heavy-scenario
+gate (5.3) measures it for real.

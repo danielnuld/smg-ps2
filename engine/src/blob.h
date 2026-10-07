@@ -59,6 +59,7 @@ typedef struct {
     u32 vu_ngroups;
     VuGroup *vu;
     float radius; /* bounding sphere around the origin, for culling */
+    void *chain;  /* static models: prebuilt VIF chain of all batches, ends with RET (render.c) */
 } Model;
 
 typedef struct {

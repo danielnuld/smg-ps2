@@ -4,7 +4,9 @@
 ; ignores the ST it is given.
 ;
 ; VU mem 0      : scale (2048, 2048, 0xFFFFFF / 32), written once at init (outside the double buffers)
-; batch at TOP  : +0 int x = vertex count n, int y = 4 * matrix count m
+; VU mem 1..4   : the matrix of a static model instance (prebuilt chains, written after a FLUSHE)
+; batch at TOP  : +0 int x = vertex count n, int y = 4 * matrix count m, int z = absolute matrix base (0: the m
+;                 matrices that follow in the batch; 1: the static instance matrix at VU mem 1, then m = 0)
 ;                 +1 GIF tag (PRE + PRIM, NLOOP = n, regs ST, RGBAQ, XYZ2)
 ;                 +2 .. +2+4m-1      m matrices (local -> clip, 4 columns each); static models send one
 ;                 then n positions (x, y, z; w raw bits: low 16 = 4 * matrix slot; 1.0f reads as slot 0)
@@ -23,9 +25,14 @@ VU1Tex_CodeStart:
         NOP                                 fcset         0
         NOP                                 ilw.x         VI07,0(VI02)
         NOP                                 ilw.y         VI10,0(VI02)
+        NOP                                 ilw.z         VI12,0(VI02)
         NOP                                 lq            VF06,1(VI02)
         NOP                                 iaddiu        VI11,VI02,2
         NOP                                 iadd          VI03,VI11,VI10
+        NOP                                 ibeq          VI12,VI00,matInBatch
+        NOP                                 NOP
+        NOP                                 iadd          VI11,VI12,VI00
+matInBatch:
         NOP                                 iadd          VI04,VI03,VI07
         NOP                                 iadd          VI08,VI04,VI07
         NOP                                 iadd          VI05,VI08,VI07

@@ -49,6 +49,8 @@ static int nmats;
 #define HDR(t, m, n) (headers + 2 * (((t) * MAX_MAT + (m) - 1) * (BATCH / 3 + 1) + (n) / 3))
 static qword_t *headers;         /* [textured][matrices 1..MAX_MAT][count 3..BATCH]: {n, 4m} ints + GIF tag */
 static qword_t scale_qw __attribute__((aligned(16)));
+#define HDRS(t, n) (headers_static + 2 * ((t) * (BATCH / 3 + 1) + (n) / 3))
+static qword_t *headers_static;  /* [textured][count]: {n, 0, matrix base 1} + GIF tag, for prebuilt chains */
 static u32 tris_drawn;
 static u32 vram_tex;             /* VRAM words taken by textures and CLUTs */
 static qword_t *tex_packets;     /* per texture 5 qwords (GIF tag + TEX0, TEX1, CLAMP, TEST), then 2 for NO_TEX */
@@ -146,6 +148,15 @@ void render_init(void)
                 h[1].dw[0] = GIF_SET_TAG(n, 1, 1, GS_SET_PRIM(PRIM_TRIANGLE, 1, t, 0, 0, 0, 0, 0, 0), GIF_FLG_PACKED, 3);
                 h[1].dw[1] = (u64)GIF_REG_ST | (u64)GIF_REG_RGBAQ << 4 | (u64)GIF_REG_XYZ2 << 8; /* ST first: Q */
             }
+    headers_static = mem_alloc(MEM_RENDER, 2 * (BATCH / 3 + 1) * 2 * 16);
+    for (int t = 0; t < 2; t++)
+        for (int n = 3; n <= BATCH; n += 3) {
+            qword_t *h = HDRS(t, n);
+            *h = *HDR(t, 1, n);
+            h->sw[1] = 0;
+            h->sw[2] = 1;
+            h[1] = HDR(t, 1, n)[1];
+        }
     /* scale constant at VU mem 0, below the double buffers: written once */
     ((float *)&scale_qw)[0] = 2048.0f;
     ((float *)&scale_qw)[1] = 2048.0f;
@@ -205,6 +216,8 @@ void render_begin(const float eye[3], const float target[3], const float up[3])
     cur_tex = -1;
 }
 
+static void build_chain(Model *md);
+
 void render_load_textures(const Scene *s)
 {
     ntex = s->ntex;
@@ -247,31 +260,76 @@ void render_load_textures(const Scene *s)
     dma_wait_fast();
     free(up);
     printf("render: %u textures in VRAM, %u KB (words x 4)\n", ntex, vram_tex * 4 / 1024);
+    for (u32 i = 0; i < s->nmodels; i++)
+        if (!s->models[i].skin && s->models[i].vu_ngroups)
+            build_chain(&s->models[i]);
 }
 
 /* Switch texture state in the VIF chain: FLUSH waits for VU1 and PATH1, DIRECT sends the A+D packet on PATH2. */
+static void emit_tex(packet2_t *pk, u32 t)
+{
+    const qword_t *p = t == NO_TEX ? tex_packets + 5 * ntex : tex_packets + 5 * t;
+    u32 n = t == NO_TEX ? 2 : 5;
+    packet2_chain_ref(pk, p, n, 0, 0, 0);
+    packet2_vif_flush(pk, 0);
+    packet2_vif_open_direct(pk, 0);
+    packet2_vif_close_direct_manual(pk, n);
+}
+
 static void set_tex(u32 t)
 {
     if ((int)t == cur_tex)
         return;
     cur_tex = t;
-    const qword_t *p = t == NO_TEX ? tex_packets + 5 * ntex : tex_packets + 5 * t;
-    u32 n = t == NO_TEX ? 2 : 5;
-    packet2_chain_ref(vif[cur], p, n, 0, 0, 0);
-    packet2_vif_flush(vif[cur], 0);
-    packet2_vif_open_direct(vif[cur], 0);
-    packet2_vif_close_direct_manual(vif[cur], n);
+    emit_tex(vif[cur], t);
 }
 
 /* UNPACK of n vectors from `data` in a format narrower than a qword (REF tag, the VIF codes ride in the tag). The
  * REF moves whole qwords; the bytes past the vectors are the zero padding of the array (VIF NOPs) or, between
  * batches, never there because BATCH is a multiple of 12. */
+static void unpack_narrow_to(packet2_t *pk, const void *data, u32 bytes, u32 dest, u32 n, enum UnpackMode mode, u8 usn)
+{
+    packet2_chain_ref(pk, data, (bytes + 15) / 16, 0, 0, 0);
+    packet2_vif_stcycl(pk, 0, 0x0101, 0);
+    packet2_vif_open_unpack(pk, mode, dest, 1, 0, usn, 0);
+    packet2_vif_close_unpack_manual(pk, n);
+}
+
 static void unpack_narrow(const void *data, u32 bytes, u32 dest, u32 n, enum UnpackMode mode, u8 usn)
 {
-    packet2_chain_ref(vif[cur], data, (bytes + 15) / 16, 0, 0, 0);
-    packet2_vif_stcycl(vif[cur], 0, 0x0101, 0);
-    packet2_vif_open_unpack(vif[cur], mode, dest, 1, 0, usn, 0);
-    packet2_vif_close_unpack_manual(vif[cur], n);
+    unpack_narrow_to(vif[cur], data, bytes, dest, n, mode, usn);
+}
+
+/* Prebuilt chain of a static model: every batch (header, positions, colours, UVs, MSCAL) and every texture
+ * change, ending with RET. Drawing an instance is then a FLUSHE, the instance matrix to VU mem 1..4 and a CALL:
+ * the EE no longer walks the batches each frame (milestone 2 flagged 4.3-5.9 ms of EE draw time). */
+static void build_chain(Model *md)
+{
+    u32 batches = 0;
+    for (u32 g = 0; g < md->vu_ngroups; g++)
+        batches += (md->vu[g].nverts + BATCH - 1) / BATCH;
+    u32 qw = batches * 6 + md->vu_ngroups * 2 + 4;
+    packet2_t *pk = packet2_create(qw, P2_TYPE_NORMAL, P2_MODE_CHAIN, 1);
+    mem_charge(MEM_RENDER, qw * 16);
+    for (u32 g = 0; g < md->vu_ngroups; g++) {
+        const VuGroup *vg = &md->vu[g];
+        emit_tex(pk, vg->tex);
+        int textured = vg->tex != NO_TEX;
+        for (u32 off = 0; off < vg->nverts; off += BATCH) {
+            u32 n = vg->nverts - off < BATCH ? vg->nverts - off : BATCH;
+            packet2_utils_vu_add_unpack_data(pk, 0, HDRS(textured, n), 2, 1);
+            packet2_utils_vu_add_unpack_data(pk, 2, (void *)(vg->pos + 4 * off), n, 1);
+            unpack_narrow_to(pk, vg->col + off, 4 * n, 2 + n, n, P2_UNPACK_V4_8, 1);
+            if (textured)
+                unpack_narrow_to(pk, vg->uv + 2 * off, 4 * n, 2 + 2 * n, n, P2_UNPACK_V2_16, 0);
+            packet2_utils_vu_add_start_program(pk, 0);
+        }
+    }
+    packet2_chain_ret(pk, 0, 0);
+    packet2_vif_nop(pk, 0);
+    packet2_vif_nop(pk, 0);
+    packet2_chain_close_tag(pk);
+    md->chain = pk;
 }
 
 static void flush_vif(void)
@@ -301,6 +359,27 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
     if (mv[14] + rad < NEAR) /* whole model behind the camera */
         return;
     mat_mul(pvw, proj, mv);
+    if (!drw && md->chain) {
+        if (nmats >= MAX_INST)
+            return;
+        if (packet2_get_qw_count(vif[cur]) + 8 > PACKET_QW)
+            flush_vif();
+        float *m = mats[nmats++];
+        memcpy(m, pvw, 64);
+        packet2_chain_open_cnt(vif[cur], 0, 0, 0);   /* FLUSHE: the previous instance stops reading VU mem 1..4 */
+        packet2_vif_flushe(vif[cur], 0);
+        packet2_vif_nop(vif[cur], 0);
+        packet2_chain_close_tag(vif[cur]);
+        packet2_utils_vu_add_unpack_data(vif[cur], 1, m, 4, 0);
+        packet2_chain_call(vif[cur], ((packet2_t *)md->chain)->base, 0, 0, 0);
+        packet2_vif_nop(vif[cur], 0);
+        packet2_vif_nop(vif[cur], 0);
+        packet2_chain_close_tag(vif[cur]);
+        cur_tex = -1; /* the chain changed the texture state */
+        for (u32 g = 0; g < md->vu_ngroups; g++)
+            tris_drawn += md->vu[g].nverts / 3;
+        return;
+    }
     u32 need = drw ? 0 : 1, batches = 0;
     for (u32 g = 0; g < md->vu_ngroups; g++) {
         batches += (md->vu[g].nverts + BATCH - 1) / BATCH;
