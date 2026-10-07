@@ -123,3 +123,23 @@ figure makes them unnecessary for 31 of 36.
 **Stream fits 31 / 36**, so with per-scenario loading **131 / 136** scenarios fit. Over: OceanPhantomCave 1-4
 (GhostShipCaveZone, up to 9.86) and Phantom 1 (TeresaHouseZone, 9.47) → task 2.3. These margins are before heap and
 audio; the gate subtracts those.
+
+## One more lever: indexed geometry expanded on VU1 (task 2.3)
+
+The streaming sets that overflowed are geometry-bound (OceanPhantomCave 2 / GhostShipCaveZone: geo 5.64 of 9.86 MB;
+Phantom 1 / TeresaHouseZone: 5.47 of 9.47), because phase 0 de-indexes every emitted vertex. Lever `--vu-index=N`
+keeps geometry indexed in RAM; VU1 (16 KB data memory, ps2tek:82) expands batches of at most N unique vertices
+(sources: `--vu-index` row, D). N is a knob; the VU1 cycle cost is not measured.
+
+Per scenario the better of whole (no streaming) and streaming counts. `python tools/budget.py data/fs/files out/vuN --levers --scenario --vu-index=N`:
+
+| Geometry | Resident (geo) | Room | Scenarios that fit | Worst | Margin before heap/audio |
+|---|---|---|---|---|---|
+| de-indexed (`--levers`) | 15.28 (4.15) | 9.01 | 131 / 136 | OceanPhantomCave 2, 9.86 | −0.84 |
+| `--vu-index=64` | 15.00 (3.87) | 9.29 | 133 / 136 | OceanPhantomCave 2, 9.68 | −0.39 |
+| `--vu-index=128` | 14.73 (3.60) | 9.56 | **136 / 136** | OceanPhantomCave 1, 9.41 | **+0.16** |
+| `--vu-index=255` | 14.44 (3.31) | 9.85 | **136 / 136** | OceanPhantomCave 1, 9.09 | **+0.76** |
+
+Every scenario fits from N = 128 on, but the margin is what heap and audio must live in: 0.16-0.76 MB, against a Wii
+audio heap of 1.88 MB and a scene heap not yet measured. N = 255 means a pool of ~7 KB at a ~28-byte stride: double
+buffered it takes ~14 of VU1's 16 KB (estimate, E). The memory question now sits on task 3 (heap) and task 4 (audio).

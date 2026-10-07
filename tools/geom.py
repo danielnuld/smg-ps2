@@ -12,8 +12,11 @@ PRIMS = {0x80, 0x90, 0x98, 0xA0, 0xA8, 0xB0, 0xB8}           # GXEnum.h:701-709
 # D (sources.md): PS2 vertex = V3-16 pos + V3-16 nrm + V4-8 color + 16-bit UV pair per tex set
 PS2_ATTR = {9: 6, 10: 6, 11: 4, 12: 4, **{a: 4 for a in range(13, 21)}}
 
-def shp1(b, o):
-    """-> (emitted vertices, ps2 bytes, display-list bytes, unknown cmds) for one SHP1 block at o."""
+def shp1(b, o, pool=None):
+    """-> (emitted vertices, ps2 bytes, display-list bytes, unknown cmds) for one SHP1 block at o.
+    pool=N: geometry stays indexed in RAM and VU1 expands it (D, sources.md): each shape is cut into batches of at
+    most N unique vertices; a batch = its unique vertices at PS2 stride + 1-byte index per emitted vertex + 16-byte tag.
+    ponytail: a strip cut at a batch edge does not re-send its last 2 vertices; under-counts by <= 2 per batch."""
     n = u16(b, o + 8)
     init, idx, desc, dl, draw = (o + u32(b, o + k) for k in (0x0C, 0x10, 0x18, 0x20, 0x28))
     emitted = ps2 = dl_bytes = bad = 0
@@ -26,6 +29,8 @@ def shp1(b, o):
             stride += 1 if attr < 9 else {0: 0, 1: 0, 2: 1, 3: 2}[typ]  # MTXIDX direct u8; INDEX8/16
             ps2_stride += PS2_ATTR.get(attr, 0) if typ else 0
             d += 8
+        batch = set()
+        flush = lambda: len(batch) * ps2_stride + 16 if batch else 0
         for g in range(groups):
             size, start = u32(b, draw + (draw_idx + g) * 8), u32(b, draw + (draw_idx + g) * 8 + 4)
             p, end = dl + start, dl + start + size
@@ -37,8 +42,19 @@ def shp1(b, o):
                 if op & 0xF8 not in PRIMS:
                     bad += 1; break
                 cnt = u16(b, p + 1)
-                emitted += cnt; ps2 += cnt * ps2_stride
+                emitted += cnt
+                if pool is None:
+                    ps2 += cnt * ps2_stride
+                else:
+                    for v in range(cnt):
+                        key = b[p + 3 + v * stride: p + 3 + (v + 1) * stride]
+                        if key not in batch and len(batch) == pool:
+                            ps2 += flush(); batch.clear()
+                        batch.add(key)
+                    ps2 += cnt  # u8 index per emitted vertex
                 p += 3 + cnt * stride
+        if pool is not None:
+            ps2 += flush()
     return emitted, ps2, dl_bytes, bad
 
 def model(b):

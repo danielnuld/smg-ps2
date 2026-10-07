@@ -77,6 +77,7 @@ PS2_MAX_DIM = 256      # D (sources.md): budget lever, GS itself allows 1024
 # --levers (docs/phase0-report.md "Levers"): textures max 128 + all PSMT4, drop high LOD when Middle exists,
 # kcl normals f32 -> s16, bck kept zlib-9 in RAM. All D; quality/precision/CPU cost not evaluated.
 LEVERS = False
+VU_POOL = None    # --vu-index=N: geometry kept indexed, expanded on VU1 in batches of <= N unique vertices (geom.py)
 SCENARIO = False  # --scenario: also write scenarios.csv (per galaxy and scenario, layer-masked)
 
 def gx_tex_size(fmt, w, h, mips):
@@ -131,7 +132,7 @@ def j3d_sizes(b):
         elif tag == b"SHP1":
             from geom import shp1                   # de-indexed: every emitted vertex carries its data (geom.py)
             r["geo_gx"] += size
-            r["geo_ps2"] += shp1(b, o)[1]
+            r["geo_ps2"] += shp1(b, o, VU_POOL)[1]
         else:
             r["other"] += size
             r["other_ps2"] += size
@@ -252,7 +253,7 @@ def planet_table(fs, exists):
 KEYS = ("tex_gx", "tex_ps2", "geo_gx", "geo_ps2", "other", "other_ps2")
 
 def arc_stats(path, cache):
-    key = f"{path}:{path.stat().st_mtime_ns}:{LEVERS}"
+    key = f"{path}:{path.stat().st_mtime_ns}:{LEVERS}" + (f":vu{VU_POOL}" if VU_POOL else "")
     if key not in cache:
         tot = dict.fromkeys(KEYS, 0)
         names = set()
@@ -474,13 +475,28 @@ def selftest():
     sd = struct.pack(">4I", 2, 2, 16 + 24, 8) + fields + struct.pack(">4I", 1, 1, 2, 2)
     sm = scenario_masks(sd)
     assert (sm[1]("G"), sm[2]("G"), sm[2]("Nope")) == (0b11, 0b101, 0b1), (sm[1]("G"), sm[2]("G"), sm[2]("Nope"))
+    # SHP1: 1 shape, POS as INDEX16, one strip of 4 vertices with indices 0 1 0 2 (3 unique)
+    from geom import shp1
+    blk = bytearray(0xC0)
+    struct.pack_into(">H", blk, 8, 1)
+    struct.pack_into(">5I", blk, 0x0C, 0x40, 0x68, 0, 0x70, 0)
+    struct.pack_into(">I", blk, 0x20, 0x90); struct.pack_into(">I", blk, 0x28, 0xB0)
+    struct.pack_into(">HHHH", blk, 0x40, 0, 1, 0, 0)          # groups=1, desc_off=0, draw_idx=0
+    struct.pack_into(">4I", blk, 0x70, 9, 3, 0xFF, 0)         # GX_VA_POS INDEX16, NULL
+    blk[0x90:0x9B] = bytes([0x98, 0, 4]) + struct.pack(">4H", 0, 1, 0, 2)
+    struct.pack_into(">II", blk, 0xB0, 11, 0)
+    blk = bytes(blk)
+    assert shp1(blk, 0)[:2] == (4, 4 * 6), shp1(blk, 0)
+    assert shp1(blk, 0, 8)[1] == 3 * 6 + 16 + 4, shp1(blk, 0, 8)      # one batch
+    assert shp1(blk, 0, 2)[1] == (2 * 6 + 16) + (6 + 16) + 4, shp1(blk, 0, 2)  # cut before index 2
     print("selftest ok")
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["--selftest"]:
         selftest()
     else:
-        args = [a for a in sys.argv[1:] if a not in ("--levers", "--scenario")]
+        VU_POOL = next((int(a.split("=")[1]) for a in sys.argv if a.startswith("--vu-index=")), None)
+        args = [a for a in sys.argv[1:] if a not in ("--levers", "--scenario") and not a.startswith("--vu-index=")]
         LEVERS = "--levers" in sys.argv
         SCENARIO = "--scenario" in sys.argv
         main(args[0], args[1] if len(args) > 1 else "out")

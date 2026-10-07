@@ -36,6 +36,8 @@ Local sources are pinned by `vendor.txt` (Petari `0fac090b`, galaxy-macos `92d7a
 | Stage archives: all `ZoneList` zones mounted async into the scene heap at scene start, none unmounted during the scene | `Petari/src/Game/Scene/StageFileLoader.cpp:14-40` | V |
 | `ViewGroupCtrlCube` (area): player inside → group `ObjArg0` flagged, level `ObjArg1` 1-4; actors with JMap `ViewGroupId` then clip against the full frustum (far level 0) instead of their far-clip level. Draw/clip only; actors stay in memory | `Petari/src/Game/LiveActor/ViewGroupCtrl.cpp` (`update`), `ClippingActorInfo.cpp:18-39`, `ClippingJudge.cpp:39-41`, `JMapUtil.cpp:601-608` | V |
 | `ZoneSwitch` = per-zone 128-bit switch flags; `addToZone`/`removeFromZone` = collision partitioning. Neither loads or unloads a zone | `Petari/src/Game/Map/StageSwitch.cpp:22-70`; `src/Game/Map/CollisionCategorizedKeeper.cpp` | V |
+| VU1 data memory 16 KB | ps2tek:82 | V |
+| `--vu-index=N`: geometry kept indexed in EE RAM, VU1 expands batches of <= N unique vertices (unique × PS2 stride + u8 index per emitted vertex + 16 B tag); N = 64 is ours, VU1 cycle cost not measured | design choice, `tools/geom.py` `shp1(pool=N)` | D |
 | JKRExpHeap used block: `u16 magic='HM'`, `u8 flags`, `u8 group`, `u32 size`, `prev`, `next` | `Petari/libs/JSystem/include/JSystem/JKernel/JKRExpHeap.hpp` (CMemBlock 0x00-0x0C); magic set `src/JSystem/JKernel/JKRExpHeap.cpp:552` | V |
 | `makeArchiveList` literals counted for every branch reachable by name (args ignored) | upper bound | E |
 | SHP1 block: shape count @+8, offsets @+0x0C..0x28; shape init 0x28 B; draw init {size, offset}; desc list at byte offset | `Petari/libs/JSystem/include/JSystem/J3DGraphLoader/J3DModelLoader.hpp:175-185`, `J3DShapeFactory.hpp:10-31,54-56` | V |
