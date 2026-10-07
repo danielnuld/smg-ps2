@@ -20,6 +20,9 @@ int game_test_box(void);
 /* Test builds: Mario dropped onto the first CollapsePlane. Returns its OBJS row or -1; game_test_collapse_step(row)
  * gives that plane's collapse frame (0 not started) or -1 once it has vanished. */
 int game_test_collapse(void);
+/* Test builds: Mario put next to the first SpaceMine (kind 1) or NeedlePlant (2). Returns its OBJS row or -1. */
+int game_test_hazard(int kind);
+int game_hurt_timer(void);
 int game_test_collapse_step(int row);
 void game_draw(void);
 /* HUD numbers */

@@ -263,6 +263,14 @@ int main(void)
         pad_update();
         game_update();
 #ifdef PACKS
+#ifdef HAZARD_TEST
+        if (frame == 120)
+            printf("hazard test: mine row %d\n", game_test_hazard(1));
+        if (frame == 300)
+            printf("hazard test: plant row %d\n", game_test_hazard(2));
+        if (frame % 20 == 0 && ((frame > 120 && frame < 200) || (frame > 300 && frame < 380)))
+            printf("hazard test f %u: hurt %d\n", frame, game_hurt_timer());
+#endif
 #ifdef COLLAPSE_TEST
         static int crow = -1;
         if (frame == 120)

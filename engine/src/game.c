@@ -108,9 +108,12 @@ typedef struct {
     int row;         /* OBJS index */
     int breaks;      /* breakable (breakable()): a spin breaks it, then it drops its coins / star pieces */
     int collapse;    /* CollapsePlane: frames from standing on it to vanishing (arg0, default 140), 0 if not one */
+    int hazard;      /* 1 SpaceMine (explodes on touch), 2 NeedlePlant (pricks on touch), 0 none */
 } Inst;
 static unsigned short *row_step; /* per OBJS row: CollapsePlane frames since Mario stood on it (0: not yet) */
 static int ground_inst = -1;     /* instance under the last collide_n's ground normal, -1 none */
+static void zone_spheres(void);
+static void zone_grow(const Inst *in);
 
 /* Spin-breakable classes and what they drop (Petari PunchBox.cpp, WoodBox.cpp, CrystalCage.cpp): PunchBox / WoodBox
  * arg0 coins (default 1), WoodBox also arg2 star pieces; CrystalCageS / M one hit, a coin when the item inside
@@ -428,6 +431,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     int t_coin = scene_type(s, "Coin"), t_pc = scene_type(s, "PurpleCoin"), t_circle = scene_type(s, "CirclePurpleCoinGroup");
     int t_rail = scene_type(s, "PurpleRailCoin"), t_piece = scene_type(s, "StarPiece"), t_kuribo = scene_type(s, "Kuribo");
     insts = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(Inst));
+    zone_spheres();
     game_rebind();
     for (u32 i = 0; i < s->nobjs; i++) {
         const Row *r = &s->objs[i];
@@ -535,6 +539,8 @@ void game_rebind(void)
         int dc, dp;
         in->breaks = breakable(name, r, &dc, &dp);
         in->collapse = strcmp(name, "CollapsePlane") == 0 ? (r->arg[0] > 0 ? r->arg[0] : 140) : 0;
+        in->hazard = strcmp(name, "SpaceMine") == 0 ? 1 : strcmp(name, "NeedlePlant") == 0 ? 2 : 0;
+        zone_grow(in);
         in->kcl = scene_kcl(s, name);
         in->zone = r->zone;
         mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
@@ -543,50 +549,73 @@ void game_rebind(void)
     }
 }
 
+/* Zone spheres for streaming: every placement row of the zone (centre of their box, farthest + 500), grown to cover
+ * each model of the zone once one is bound (game_rebind). Zones with no planet (objects only) are found too. */
+#define MAX_ZONES 64
+static V3 zone_c[MAX_ZONES];
+static float zone_r[MAX_ZONES];
+
+static void zone_spheres(void)
+{
+    V3 lo[MAX_ZONES], hi[MAX_ZONES];
+    int seen[MAX_ZONES] = {0};
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if (r->zone >= MAX_ZONES) continue;
+        V3 p = row_pos(r);
+        if (!seen[r->zone]) { lo[r->zone] = hi[r->zone] = p; seen[r->zone] = 1; }
+        lo[r->zone] = v3(fminf(lo[r->zone].x, p.x), fminf(lo[r->zone].y, p.y), fminf(lo[r->zone].z, p.z));
+        hi[r->zone] = v3(fmaxf(hi[r->zone].x, p.x), fmaxf(hi[r->zone].y, p.y), fmaxf(hi[r->zone].z, p.z));
+    }
+    for (int z = 0; z < MAX_ZONES; z++) {
+        zone_r[z] = seen[z] ? 0.0f : -1.0f;
+        if (seen[z]) zone_c[z] = vmul(vadd(lo[z], hi[z]), 0.5f);
+    }
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if (r->zone >= MAX_ZONES) continue;
+        float d = vlen(vsub(row_pos(r), zone_c[r->zone])) + 500.0f;
+        if (d > zone_r[r->zone]) zone_r[r->zone] = d;
+    }
+}
+
+static void zone_grow(const Inst *in)
+{
+    if (in->zone >= MAX_ZONES || zone_r[in->zone] < 0) return;
+    float d = vlen(vsub(v3(in->m[12], in->m[13], in->m[14]), zone_c[in->zone])) + in->reach;
+    if (d > zone_r[in->zone]) zone_r[in->zone] = d;
+}
+
+/* nearest low zone (distance to its sphere's surface) under `limit`, or -1 */
+static int nearest_low_zone(V3 p, const unsigned char *full, float limit)
+{
+    int want = -1;
+    for (int z = 0; z < MAX_ZONES; z++) {
+        if (zone_r[z] < 0 || full[z]) continue;
+        float d = vlen(vsub(p, zone_c[z])) - zone_r[z];
+        if (d < limit) { limit = d; want = z; }
+    }
+    return want;
+}
+
 int game_zone_wanted(const unsigned char *full)
 {
-    /* the nearest low-loaded stage whose bounding sphere (+1500) Mario is in, once he is out of every full zone's
-     * model sphere (else the zone he stands in would go low and come back each frame). ponytail: proximity only */
-    int want = -1;
-    float best = 1e30f;
+    /* the nearest low zone whose sphere (+1000) Mario is in, once he is out of every full zone's model sphere (else
+     * the zone he stands in would go low and come back each frame). ponytail: proximity only, no visibility */
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
         V3 d = vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14]));
         if (in->zone && full[in->zone] && vdot(d, d) < in->reach * in->reach) return -1;
     }
-    for (int i = 0; i < ninsts; i++) {
-        const Inst *in = &insts[i];
-        if (full[in->zone]) continue;
-        V3 d = vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14]));
-        float r = in->reach + 1500.0f, dd = vdot(d, d);
-        if (dd < r * r && dd < best) { best = dd; want = in->zone; }
-    }
-    return want;
+    return nearest_low_zone(mario->pos, full, 1000.0f);
 }
 
 int game_zone_next(const unsigned char *full)
 {
-    if (mario->launch < 0) { /* on foot: the nearest low zone within 5000 of its model sphere starts reading early */
-        int want = -1;
-        float best = 5000.0f;
-        for (int i = 0; i < ninsts; i++) {
-            const Inst *in = &insts[i];
-            if (full[in->zone]) continue;
-            float d = vlen(vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14]))) - in->reach;
-            if (d < best) { best = d; want = in->zone; }
-        }
-        return want;
-    }
-    V3 end = launch_pos(&launches[mario->launch], 1.0f);
-    int best = -1;
-    float bd = 1e30f;
-    for (int i = 0; i < ninsts; i++) { /* the low zone model whose surface is nearest the landing point */
-        const Inst *in = &insts[i];
-        if (full[in->zone]) continue;
-        float d = vlen(vsub(end, v3(in->m[12], in->m[13], in->m[14]))) - in->reach;
-        if (d < bd) { bd = d; best = in->zone; }
-    }
-    return bd < 1500.0f ? best : -1;
+    if (mario->launch < 0) /* on foot: the nearest low zone within 5000 of its sphere starts reading early */
+        return nearest_low_zone(mario->pos, full, 5000.0f);
+    /* flying: the low zone around the launch star's landing point */
+    return nearest_low_zone(launch_pos(&launches[mario->launch], 1.0f), full, 1500.0f);
 }
 
 int game_test_box(void)
@@ -617,6 +646,24 @@ int game_test_collapse(void)
 }
 
 int game_test_collapse_step(int row) { return row < 0 ? -2 : row_dead[row] ? -1 : row_step[row]; }
+
+int game_test_hazard(int kind)
+{
+    /* by placement row, so a hazard in a zone loaded low counts too (the zone swap brings its model) */
+    const char *want = kind == 1 ? "SpaceMine" : "NeedlePlant";
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if (strcmp(sc->types + 32 * r->type, want) != 0 || row_dead[i]) continue;
+        V3 p = row_pos(r), up = up_at(p, v3(0, 1, 0));
+        V3 side = vnorm(vtangent(v3(1, 0, 0), up));
+        mario->pos = vadd(p, vmul(side, kind == 1 ? 150.0f : 60.0f)); /* within reach of its sensor */
+        mario->hvel = v3(0, 0, 0);
+        return i;
+    }
+    return -1;
+}
+
+int game_hurt_timer(void) { return mario->hurt_timer; }
 
 int game_test_launch(int i)
 {
@@ -930,6 +977,16 @@ static void update_mario(void)
     }
 }
 
+/* Mario hit by something at `from`: knocked away from it and blinking (ponytail: no health yet) */
+static void hurt_mario(V3 from, float push)
+{
+    if (mario->hurt_timer) return;
+    V3 away = vtangent(vsub(mario->pos, from), mario->up);
+    if (vlen(away) < 1e-3f) away = mario->face;
+    mario->hvel = vmul(vnorm(away), push);
+    mario->vup = 10.0f; mario->grounded = 0; mario->hurt_timer = 60;
+}
+
 static void update_kuribo(void)
 {
     for (int i = 0; i < nkuribo; i++) {
@@ -953,10 +1010,8 @@ static void update_kuribo(void)
         float above = vdot(to, k->up);
         if (d < 130.0f && mario->vup < 0 && above > 40.0f) { k->state = KURIBO_DEAD; mario->vup = 15.0f; mario->grounded = 0; }
         else if (d < 170.0f && mario->spin_timer > 0 && k->state == KURIBO_WALK) { k->state = KURIBO_STUN; k->timer = 180; }
-        else if (d < 100.0f && k->state == KURIBO_WALK && mario->hurt_timer == 0) {
-            mario->hvel = vmul(vnorm(vtangent(to, k->up)), 15.0f);
-            mario->vup = 10.0f; mario->grounded = 0; mario->hurt_timer = 60;
-        }
+        else if (d < 100.0f && k->state == KURIBO_WALK)
+            hurt_mario(k->pos, 15.0f);
     }
 }
 
@@ -1012,6 +1067,36 @@ static void update_collapse(void)
     }
 }
 
+/* SpaceMine (Petari SpaceMine.cpp): sensor radius 100; touching it is an explosion on Mario and the mine is gone.
+ * NeedlePlant (NeedlePlant.cpp): sensor 150 * scale above its base, radius 70 * scale; touching it pricks Mario, the
+ * plant stays. ponytail: no star-piece shots or invincibility kills, the mine does not spin */
+#define HIT_BODY_H 80.0f            /* Mario's hit sensor for touches: centre this high, radius HIT_BODY_R (the
+                                     * collision sphere is lower and smaller); ponytail: one sphere, not his sensors */
+#define HIT_BODY_R 70.0f
+
+static void update_hazards(void)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->hazard) continue;
+        V3 p = v3(in->m[12], in->m[13], in->m[14]);
+        float r = 100.0f;
+        if (in->hazard == 2) {
+            p = vadd(p, vmul(up_at(p, mario->up), 150.0f * in->s));
+            r = 70.0f * in->s;
+        }
+        if (vlen(vsub(c, p)) > r + HIT_BODY_R) continue;
+        hurt_mario(p, in->hazard == 1 ? 25.0f : 15.0f);
+        if (in->hazard == 1) {
+            row_dead[in->row] = 1;
+            printf("SpaceMine %d exploded\n", in->row);
+            game_rebind();
+            return;
+        }
+    }
+}
+
 static void collect(Pickup *p, int n, float reach, int *counter)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, BODY_RADIUS));
@@ -1025,6 +1110,7 @@ void game_update(void)
     update_kuribo();
     break_boxes();
     update_collapse();
+    update_hazards();
     collect(coins, ncoins, 100.0f, &got_coins);
     collect(purple, npurple, 100.0f, &got_purple);
     collect(pieces, npieces, 120.0f, &got_pieces);
