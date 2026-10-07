@@ -21,34 +21,51 @@ const u8 *blob_chunk(const u8 *blob, const char *tag, u32 *size)
     return NULL;
 }
 
+static int valid(const u8 *blob) { return memcmp(blob, "SMGS", 4) == 0 && *(const u32 *)(blob + 4) == 4; }
+
 int blob_load(Scene *s, const u8 *blob)
 {
-    if (memcmp(blob, "SMGS", 4) != 0 || *(const u32 *)(blob + 4) != 4)
+    if (!valid(blob))
         return -1;
     const u8 *t = blob_chunk(blob, "TYPE", NULL), *o = blob_chunk(blob, "OBJS", NULL), *st = blob_chunk(blob, "STRT", NULL);
-    const u8 *m = blob_chunk(blob, "MODL", NULL), *k = blob_chunk(blob, "KCL ", NULL);
     s->ntypes = *(const u32 *)t;
     s->types = (const char *)(t + 4);
     s->nobjs = *(const u32 *)o;
     s->objs = (const Row *)(o + 4);
     s->nstarts = *(const u32 *)st;
     s->starts = (const Row *)(st + 4);
+    return blob_add(s, blob);
+}
 
-    s->nmodels = *(const u32 *)m;
-    s->models = mem_alloc(MEM_RENDER, s->nmodels * sizeof(Model));
-    const u8 *p = m + 4;
-    for (u32 i = 0; i < s->nmodels; i++) {
+int blob_add(Scene *s, const u8 *blob)
+{
+    if (!valid(blob))
+        return -1;
+    if (!s->models) { /* fixed capacity: game.c keeps Model pointers */
+        s->models = mem_alloc(MEM_RENDER, SCENE_MAX_MODELS * sizeof(Model));
+        s->tex = mem_alloc(MEM_RENDER, SCENE_MAX_TEX * sizeof(TexRef));
+    }
+    const u8 *m = blob_chunk(blob, "MODL", NULL), *k = blob_chunk(blob, "KCL ", NULL);
+    u32 first = s->nmodels, nm = m ? *(const u32 *)m : 0, tex0 = s->ntex;
+    if (first + nm > SCENE_MAX_MODELS || s->nkcl >= SCENE_MAX_PACKS) {
+        printf("blob: scene full (%u models)\n", first + nm);
+        return -1;
+    }
+    s->nmodels += nm;
+    const u8 *p = m ? m + 4 : NULL;
+    for (u32 i = first; i < s->nmodels; i++) {
         Model *md = &s->models[i];
+        memset(md, 0, sizeof *md);
         md->name = (const char *)p;
         md->radius = *(const float *)(p + 32);
         p += 36;
     }
     const u8 *vm = blob_chunk(blob, "VUMD", NULL);
     if (vm) { /* {u32 n, pad}, n x {char[32] name, u32 ngroups, f32 qscale, pad, groups {u32 nverts, u16 tex, pad,
-               * pos[], col[], uv[]}} */
+               * pos[], col[], uv[]}}; texture indices are per pack, made scene-wide here */
         u32 nv = *(const u32 *)vm;
         const u8 *q = vm + 16;
-        for (u32 i = 0; i < nv && i < s->nmodels; i++) {
+        for (u32 i = first; i < first + nv && i < s->nmodels; i++) {
             Model *md = &s->models[i];
             md->vu_ngroups = *(const u32 *)(q + 32);
             md->qscale = *(const float *)(q + 36);
@@ -63,6 +80,8 @@ int blob_load(Scene *s, const u8 *blob)
                 vg->col = (const u32 *)(q + 16 + pb);
                 vg->uv = vg->tex == NO_TEX ? NULL : (const s16 *)(q + 16 + pb + cb);
                 q += 16 + pb + cb + (vg->uv ? cb : 0);
+                if (vg->tex != NO_TEX)
+                    vg->tex += tex0;
             }
         }
     }
@@ -71,23 +90,23 @@ int blob_load(Scene *s, const u8 *blob)
         u32 n = *(const u32 *)sk;
         const u8 *q = sk + 4;
         for (u32 i = 0; i < n; i++) {
-            Skin *k = mem_alloc(MEM_PLAYER, sizeof(Skin));
+            Skin *sn = mem_alloc(MEM_PLAYER, sizeof(Skin));
             const u16 *h = (const u16 *)(q + 32);
-            k->njoints = h[0]; k->ndrw = h[1]; k->ngroups = h[2]; k->nmix = h[3];
-            const u8 *p = q + 40;
-            k->joints = (const SkJoint *)p; p += k->njoints * sizeof(SkJoint);
-            k->drw = (const SkDrw *)p; p += k->ndrw * sizeof(SkDrw);
-            k->mix = (const SkMix *)p; p += k->nmix * sizeof(SkMix);
-            k->groups = (const SkGroup *)p; p += k->ngroups * sizeof(SkGroup);
-            p += (4 - ((u32)(unsigned long)p & 3)) & 3;
-            for (u32 m = 0; m < s->nmodels; m++)
-                if (strcmp(s->models[m].name, (const char *)q) == 0)
-                    s->models[m].skin = k;
-            q = p;
+            sn->njoints = h[0]; sn->ndrw = h[1]; sn->ngroups = h[2]; sn->nmix = h[3];
+            const u8 *r = q + 40;
+            sn->joints = (const SkJoint *)r; r += sn->njoints * sizeof(SkJoint);
+            sn->drw = (const SkDrw *)r; r += sn->ndrw * sizeof(SkDrw);
+            sn->mix = (const SkMix *)r; r += sn->nmix * sizeof(SkMix);
+            sn->groups = (const SkGroup *)r; r += sn->ngroups * sizeof(SkGroup);
+            r += (4 - ((u32)(unsigned long)r & 3)) & 3;
+            for (u32 j = first; j < s->nmodels; j++)
+                if (strcmp(s->models[j].name, (const char *)q) == 0)
+                    s->models[j].skin = sn;
+            q = r;
         }
     }
     const u8 *an = blob_chunk(blob, "ANIM", NULL);
-    if (an) { /* {u32 n}, n x {char[32] name, u32 raw, u32 zsize, z[zsize], pad 4} */
+    if (an && *(const u32 *)an) { /* {u32 n}, n x {char[32] name, u32 raw, u32 zsize, z[zsize], pad 4} */
         s->nclips = *(const u32 *)an;
         s->clips = mem_alloc(MEM_PLAYER, s->nclips * sizeof(Clip));
         const u8 *q = an + 4;
@@ -101,13 +120,28 @@ int blob_load(Scene *s, const u8 *blob)
         }
     }
     const u8 *tx = blob_chunk(blob, "TEXT", NULL);
-    if (tx) { /* {u32 n, pad}, n x TexEntry, then pixels and CLUTs */
-        s->ntex = *(const u32 *)tx;
-        s->tex = (const TexEntry *)(tx + 16);
-        s->tex_base = tx;
+    if (tx) { /* {u32 n, pad}, n x TexEntry, then pixels and CLUTs (offsets from the payload) */
+        u32 n = *(const u32 *)tx;
+        if (s->ntex + n > SCENE_MAX_TEX) {
+            printf("blob: too many textures (%u)\n", s->ntex + n);
+            return -1;
+        }
+        for (u32 i = 0; i < n; i++) {
+            s->tex[s->ntex].e = (const TexEntry *)(tx + 16) + i;
+            s->tex[s->ntex++].base = tx;
+        }
     }
-    s->kcl_chunk = k;
+    if (k && *(const u32 *)k)
+        s->kcl_chunk[s->nkcl++] = k;
     return 0;
+}
+
+const Row *scene_start(const Scene *s)
+{
+    for (u32 i = 0; i < s->nstarts; i++)
+        if (s->starts[i].zone == 1)
+            return &s->starts[i];
+    return &s->starts[0];
 }
 
 int scene_type(const Scene *s, const char *name)
@@ -120,14 +154,14 @@ int scene_type(const Scene *s, const char *name)
 
 const u8 *scene_kcl(const Scene *s, const char *name)
 {
-    if (!s->kcl_chunk)
-        return NULL;
-    const u8 *q = s->kcl_chunk + 4;
-    for (u32 i = 0, n = *(const u32 *)s->kcl_chunk; i < n; i++) {
-        u32 size = *(const u32 *)(q + 32);
-        if (strcmp((const char *)q, name) == 0)
-            return q + 36;
-        q += 36 + ((size + 3) & ~3u);
+    for (u32 c = 0; c < s->nkcl; c++) {
+        const u8 *q = s->kcl_chunk[c] + 4;
+        for (u32 i = 0, n = *(const u32 *)s->kcl_chunk[c]; i < n; i++) {
+            u32 size = *(const u32 *)(q + 32);
+            if (strcmp((const char *)q, name) == 0)
+                return q + 36;
+            q += 36 + ((size + 3) & ~3u);
+        }
     }
     return NULL;
 }

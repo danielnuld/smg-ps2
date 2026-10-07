@@ -368,10 +368,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         }
     }
     npurple = ip;
-    /* Mario starts at the Mysterious zone's start point (zone 1); fall back to the first */
-    const Row *st = &s->starts[0];
-    for (u32 i = 0; i < s->nstarts; i++)
-        if (s->starts[i].zone == 1) { st = &s->starts[i]; break; }
+    const Row *st = scene_start(s);
     start_pos = row_pos(st);
 #ifdef SLOPE_TEST
     { /* Gateway planet face with a vertex at local (1093, 1353, 1265), normal (-0.22, 0.88, -0.43), 79 degrees off the

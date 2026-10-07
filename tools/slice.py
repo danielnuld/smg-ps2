@@ -17,6 +17,7 @@ Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
   'TYPE'  u32 n, n × char[32]                  type names; OBJS/STRT rows index this table
   'ZONE'  u32 n, n × {char[32] name, f32 pos[3], f32 rot[3]}   world placement; zone 0 = main stage (identity).
           Everything else placed in a zone is already in world space (to_world); CAMS stays zone-local
+  'ZPAR'  u32 n, n × s32 parent zone (-1 for the main stage): the zone chain for streaming
   'OBJS'  u32 n, n × ROW;  'STRT' same layout (Mario start points)
           ROW = {u16 type, u16 zone, s32 l_id, s32 path_id, f32 pos[3], f32 rot[3], f32 scale[3], s32 arg[8]}  (80 B)
   'PATH'  u32 n, n × {u16 zone, u16 closed, s32 id, u32 npts, f32 pts[npts][3]}
@@ -507,6 +508,8 @@ def placement(fs, galaxy, scenario):
                b"".join(struct.pack("<3f", *pt) for pt in p["pts"]) for p in paths))]
     grav = [g for g in (grav_record(o) for o in keep) if g]
     out.append(chunk(b"GRAV", struct.pack("<I", len(grav)) + b"".join(grav)))
+    out.append(chunk(b"ZPAR", struct.pack(f"<I{len(zones)}i", len(zones),
+                                          *[-1 if i == 0 else up_ids.get(i, 0) for i in range(len(zones))])))
     cams, cam_index, cam_types = camera.cameras(bcams, float_column, int_or)
     care = [struct.pack("<BBH9f", camera.SHAPES[r["name"]], r["zone"],
                         cam_index.get((r["zone"], "c", r["args"][0] & 0xFFFF), 0xFFFF), *r["pos"], *r["rot"], *r["scale"])

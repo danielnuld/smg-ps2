@@ -225,7 +225,7 @@ void render_load_textures(const Scene *s)
     qword_t *up = memalign(64, (ntex * 2 * 16 + 4) * 16); /* upload chain, freed after the transfer */
     qword_t *q = up;
     for (u32 i = 0; i < ntex; i++) {
-        const TexEntry *t = &s->tex[i];
+        const TexEntry *t = s->tex[i].e;
         /* PSMT4 needs an even buffer width in 64-pixel units: 128-pixel rows for every texture (max 128 wide) */
         int addr = graph_vram_allocate(128, t->h, GS_PSM_4, GRAPH_ALIGN_BLOCK);
         int clut = graph_vram_allocate(8, 2, GS_PSM_32, GRAPH_ALIGN_BLOCK);
@@ -233,8 +233,8 @@ void render_load_textures(const Scene *s)
             printf("render: VRAM full at texture %u of %u\n", i, ntex);
             for (;;) {}
         }
-        q = draw_texture_transfer(q, (void *)(s->tex_base + t->pix_off), t->w, t->h, GS_PSM_4, addr, 128);
-        q = draw_texture_transfer(q, (void *)(s->tex_base + t->clut_off), 8, 2, GS_PSM_32, clut, 64);
+        q = draw_texture_transfer(q, (void *)(s->tex[i].base + t->pix_off), t->w, t->h, GS_PSM_4, addr, 128);
+        q = draw_texture_transfer(q, (void *)(s->tex[i].base + t->clut_off), 8, 2, GS_PSM_32, clut, 64);
         qword_t *p = tex_packets + 5 * i;
         p[0].dw[0] = GIF_SET_TAG(4, 1, 0, 0, GIF_FLG_PACKED, 1);
         p[0].dw[1] = GIF_REG_AD;
