@@ -76,3 +76,19 @@ before audio and heap (+0.25 with the 1.88 MB audio bound).
 The next step for geometry, if needed after audio and heap, is an **error-capped** simplification (meshoptimizer's
 `target_error` instead of a fixed ratio, per model) so flat terrain like GhostShipCave or Peach's slopes shrinks and
 curves like TrialBall's are left alone. Not done here.
+
+## SPU2 budget (task 2.1)
+
+| Item | Bytes | Source |
+|---|---|---|
+| SPU2 RAM | 2 097 152 | ps2tek:111 |
+| System areas + MEMIN, halfwords 0x0000-0x27FF | −20 480 | ps2tek:3457-3470 (MEMIN, V); lower part E |
+| Reverb, SPACE on one core (largest real reverb; echo/delay are 192 KB but are echoes) | −126 336 | libsd effect.c:27 |
+| Music | 0 | ADMA: PCM straight into MEMIN, no sample RAM (ps2tek:3453) |
+| **Sample budget for curated waves** | **1 950 336 (1.86 MB)** | |
+
+Design choices behind it (D): reverb on one core only (the other core plays dry voices and ADMA); music through ADMA,
+two stereo pairs over the two cores = the 4 stream channels SMG uses (`AudParams.cpp` `numStreamChannels = 4`). ADMA
+runs at the SPU2 output rate, so `.ast` streams (32 kHz on the Wii, `AudParams.cpp` `streamSampleRate`) are resampled
+offline; their buffers live in IOP or EE RAM (task 2.4), not in SPU2. With reverb HALL instead of SPACE the budget is
+1.89 MB; with no reverb 1.98 MB.
