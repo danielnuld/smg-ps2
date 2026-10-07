@@ -27,6 +27,9 @@ Local sources are pinned by `vendor.txt` (Petari `0fac090b`, galaxy-macos `92d7a
 | Objects load `/ObjectData/<name>.arc`, plus `Low`/`Middle` LOD archives | `Petari/src/Game/Util/ModelUtil.cpp:618`; `src/Game/LiveActor/LodCtrl.cpp:351-374` | V |
 | Placement `name` = ObjectData archive name | retired: replaced by the game's preload list | X |
 | Archives mounted per placement: create-table archive + `cName2ArchiveNamesTable` + `makeArchiveList` funcs; planets via table | `Petari/src/Game/NameObj/NameObjFactory.cpp` `getMountObjectArchiveList`; `src/Game/Map/PlanetMapCreator.cpp:303-365` | V |
+| Scenario layer mask: common layers = 1; scenario layers = `ScenarioData.bcsv[<stage name>]` for that `ScenarioNo`, shifted left by 1 | `Petari/src/Game/System/ScenarioDataParser.cpp:217-231`; used `src/Game/Scene/StageDataHolder.cpp:99-115` | V |
+| Zones placed by `StageObjInfo` entries, zone id from `ZoneList` | `Petari/src/Game/Scene/StageDataHolder.cpp:662-667` | V |
+| JKRExpHeap used block: `u16 magic='HM'`, `u8 flags`, `u8 group`, `u32 size`, `prev`, `next` | `Petari/libs/JSystem/include/JSystem/JKernel/JKRExpHeap.hpp` (CMemBlock 0x00-0x0C); magic set `src/JSystem/JKernel/JKRExpHeap.cpp:552` | V |
 | `makeArchiveList` literals counted for every branch reachable by name (args ignored) | upper bound | E |
 | SHP1 block: shape count @+8, offsets @+0x0C..0x28; shape init 0x28 B; draw init {size, offset}; desc list at byte offset | `Petari/libs/JSystem/include/JSystem/J3DGraphLoader/J3DModelLoader.hpp:175-185`, `J3DShapeFactory.hpp:10-31,54-56` | V |
 | Display list primitive = u8 (type\|vtxfmt) + u16 count; prim types | `Petari/src/RVL_SDK/gx/GXGeometry.c:152-153`; `GXEnum.h:701-709` | V |
