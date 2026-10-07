@@ -212,6 +212,40 @@ static int place_on_rail(Pickup *out, const float *pts, u32 np, int closed, int 
     return count;
 }
 
+/* StarPieceGroup (Petari StarPieceGroup.cpp init / placementAllPiece): arg0 pieces (default 6); on a rail, spread by
+ * length, or one per rail point when arg2 == 1; else a circle of radius arg1 (default 400) in the placement's X / Z
+ * plane, scale included (makeMtxTRS). ponytail: StarPieceFlow (pieces moving along a rail) is not ported. */
+static int star_group(Pickup *out, const Row *r, const unsigned char *blob)
+{
+    int n = r->arg[0] > 0 ? r->arg[0] : 6;
+    u32 np = 0;
+    int closed = 0;
+    const float *pts = r->path >= 0 ? find_rail(blob, r->zone, r->path, &np, &closed) : NULL;
+    if (pts && np > 0) {
+        if (r->arg[2] == 1) {
+            for (u32 i = 0; out && i < np; i++) {
+                out[i].pos = v3(pts[3 * i], pts[3 * i + 1], pts[3 * i + 2]);
+                out[i].alive = 1;
+            }
+            return np;
+        }
+        return out ? place_on_rail(out, pts, np, closed, n) : n;
+    }
+    if (out) {
+        V3 x, z, c = row_pos(r);
+        row_axes(r, &x, &z);
+        x = vmul(x, r->scale[0]);
+        z = vmul(z, r->scale[2]);
+        float radius = r->arg[1] > 0 ? (float)r->arg[1] : 400.0f;
+        for (int i = 0; i < n; i++) {
+            float a = 6.2831853f * i / n;
+            out[i].pos = n == 1 ? c : vadd(c, vadd(vmul(z, radius * cosf(a)), vmul(x, radius * sinf(a))));
+            out[i].alive = 1;
+        }
+    }
+    return n;
+}
+
 /* --- physics shared by Mario and Kuribo ------------------------------------------------------------------- */
 
 static V3 up_at(V3 p, V3 prev)
@@ -340,6 +374,10 @@ void game_init(const Scene *s, const unsigned char *blob)
     ncoins = count_type("Coin", 0);
     npurple = count_type("PurpleCoin", 0) + count_type("CirclePurpleCoinGroup", 1) + count_type("PurpleRailCoin", 1);
     npieces = count_type("StarPiece", 0);
+    int t_spg = scene_type(s, "StarPieceGroup");
+    for (u32 i = 0; i < s->nobjs; i++)
+        if (s->objs[i].type == t_spg)
+            npieces += star_group(NULL, &s->objs[i], blob);
     nkuribo = count_type("Kuribo", 0);
     coins = mem_alloc(MEM_OBJECTS, ncoins * sizeof(Pickup));
     purple = mem_alloc(MEM_OBJECTS, npurple * sizeof(Pickup));
@@ -357,6 +395,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         if (r->type == t_coin) { coins[ic].pos = row_pos(r); coins[ic++].alive = 1; }
         else if (r->type == t_pc) { purple[ip].pos = row_pos(r); purple[ip++].alive = 1; }
         else if (r->type == t_piece) { pieces[is].pos = row_pos(r); pieces[is++].alive = 1; }
+        else if (r->type == t_spg) is += star_group(pieces + is, r, blob);
         else if (r->type == t_kuribo) {
             kuribo[ik].pos = row_pos(r);
             kuribo[ik].up = up_at(kuribo[ik].pos, v3(0, 1, 0));
@@ -439,11 +478,12 @@ void game_rebind(void)
     m_kuribo = scene_model(s, "Kuribo");
     int t_coin = scene_type(s, "Coin"), t_pc = scene_type(s, "PurpleCoin"), t_circle = scene_type(s, "CirclePurpleCoinGroup");
     int t_rail = scene_type(s, "PurpleRailCoin"), t_piece = scene_type(s, "StarPiece"), t_kuribo = scene_type(s, "Kuribo");
+    int t_spg = scene_type(s, "StarPieceGroup");
     ninsts = 0;
     for (u32 i = 0; i < s->nobjs; i++) { /* every placed model without behaviour: planets and the rest */
         const Row *r = &s->objs[i];
         if (r->type == t_coin || r->type == t_pc || r->type == t_piece || r->type == t_kuribo || r->type == t_circle ||
-            r->type == t_rail)
+            r->type == t_rail || r->type == t_spg)
             continue;
         const char *name = s->types + 32 * r->type;
         const Model *md = scene_model(s, name);
