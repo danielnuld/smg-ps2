@@ -11,6 +11,8 @@ void render_load_textures(const Scene *s);
 void render_begin(const float eye[3], const float target[3], const float up[3]);
 /* Draw a model with world matrix `world` (column-major 4x4), flat-shaded with a base colour. */
 void render_model(const Model *md, const float world[16], u8 r, u8 g, u8 b);
+/* Draw a skinned model with its draw matrices (anim.c Anim.drw). */
+void render_skinned(const Model *md, const float world[16], const float (*drw)[16]);
 void render_text(float x, float y, const char *s);
 /* Finish the frame (VIF chain, HUD, wait for the GS) and flip; returns EE cycles spent before the vsync wait. */
 u32 render_end(void);

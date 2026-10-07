@@ -83,6 +83,40 @@ int blob_load(Scene *s, const u8 *blob)
             }
         }
     }
+    const u8 *sk = blob_chunk(blob, "SKIN", NULL);
+    if (sk) { /* {u32 n}, n x {char[32] model, u16 njoints, ndrw, ngroups, nmix, joints, drw, mix, groups, pad 4} */
+        u32 n = *(const u32 *)sk;
+        const u8 *q = sk + 4;
+        for (u32 i = 0; i < n; i++) {
+            Skin *k = mem_alloc(MEM_PLAYER, sizeof(Skin));
+            const u16 *h = (const u16 *)(q + 32);
+            k->njoints = h[0]; k->ndrw = h[1]; k->ngroups = h[2]; k->nmix = h[3];
+            const u8 *p = q + 40;
+            k->joints = (const SkJoint *)p; p += k->njoints * sizeof(SkJoint);
+            k->drw = (const SkDrw *)p; p += k->ndrw * sizeof(SkDrw);
+            k->mix = (const SkMix *)p; p += k->nmix * sizeof(SkMix);
+            k->groups = (const SkGroup *)p; p += k->ngroups * sizeof(SkGroup);
+            p += (4 - ((u32)p & 3)) & 3;
+            for (u32 m = 0; m < s->nmodels; m++)
+                if (strcmp(s->models[m].name, (const char *)q) == 0)
+                    s->models[m].skin = k;
+            q = p;
+        }
+    }
+    const u8 *an = blob_chunk(blob, "ANIM", NULL);
+    if (an) { /* {u32 n}, n x {char[32] name, u32 raw, u32 zsize, z[zsize], pad 4} */
+        s->nclips = *(const u32 *)an;
+        s->clips = mem_alloc(MEM_PLAYER, s->nclips * sizeof(Clip));
+        const u8 *q = an + 4;
+        for (u32 i = 0; i < s->nclips; i++) {
+            Clip *c = &s->clips[i];
+            c->name = (const char *)q;
+            c->raw = *(const u32 *)(q + 32);
+            c->zsize = *(const u32 *)(q + 36);
+            c->z = q + 40;
+            q += 40 + ((c->zsize + 3) & ~3u);
+        }
+    }
     const u8 *tx = blob_chunk(blob, "TEXT", NULL);
     if (tx) { /* {u32 n, pad}, n x TexEntry, then pixels and CLUTs */
         s->ntex = *(const u32 *)tx;

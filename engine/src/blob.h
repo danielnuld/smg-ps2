@@ -35,8 +35,25 @@ typedef struct {
     u8 pad[10];
 } TexEntry; /* 32 bytes, matches slice.py TEXT */
 
+/* SKIN chunk (tools/slice.py skin_entry): bind pose, draw matrices, matrix table per VUMD group. */
+typedef struct { s16 parent; u16 pad; float scale[3], rot[3], trans[3]; } SkJoint;   /* rot in radians */
+typedef struct { u16 first, count; } SkDrw;  /* count 0: rigid, first = joint; else mix[first .. first+count) */
+typedef struct { u16 joint, pad; float weight; float invbind[12]; } SkMix;          /* invbind: 3x4 rows */
+typedef struct { u8 nmat, drw[11]; } SkGroup;
+typedef struct {
+    u16 njoints, ndrw, ngroups, nmix;
+    const SkJoint *joints;
+    const SkDrw *drw;
+    const SkMix *mix;
+    const SkGroup *groups;
+} Skin;
+
+/* ANIM chunk: zlib-compressed little-endian clips (tools/slice.py anim_clip). */
+typedef struct { const char *name; u32 raw, zsize; const u8 *z; } Clip;
+
 typedef struct {
     const char *name;
+    const Skin *skin;    /* NULL for static models */
     u32 ngroups;
     Group *groups;
     u32 vu_ngroups;
@@ -52,6 +69,8 @@ typedef struct {
     Model *models;
     const u8 *kcl;
     u32 kcl_size;
+    u32 nclips;
+    Clip *clips;
     u32 ntex;
     const TexEntry *tex;
     const u8 *tex_base; /* TEXT payload: TexEntry offsets are from here */

@@ -29,8 +29,9 @@ extern u32 VU1Tex_CodeEnd __attribute__((section(".vudata")));
 
 #define SCREEN_W 640
 #define SCREEN_H 448
-#define BATCH 72           /* vertices per VU1 batch: 6n + 3 qwords must fit a 496-qword buffer, and n a multiple
-                            * of 12 so the 4-byte colour and UV arrays of the next batch start on a qword */
+#define BATCH 72           /* vertices per VU1 batch: 6n + 4m + 2 qwords (m <= 10 matrices) must fit a 496-qword
+                            * buffer, and n a multiple of 12 so the 4-byte colour and UV arrays of the next batch
+                            * start on a qword */
 #define NEAR 50.0f
 #define FAR 120000.0f
 #define MAX_INST 1024
@@ -44,7 +45,10 @@ static int cur;
 static float view[16], proj[16];
 static float (*mats)[16];        /* one matrix per instance this frame, read by DMA */
 static int nmats;
-static qword_t *headers[2];      /* [untextured, textured]: 2 qwords per vertex count 3..BATCH (scale + count, GIF tag) */
+#define MAX_MAT 10               /* matrices per batch (a J3D matrix group holds up to 10) */
+#define HDR(t, m, n) (headers + 2 * (((t) * MAX_MAT + (m) - 1) * (BATCH / 3 + 1) + (n) / 3))
+static qword_t *headers;         /* [textured][matrices 1..MAX_MAT][count 3..BATCH]: {n, 4m} ints + GIF tag */
+static qword_t scale_qw __attribute__((aligned(16)));
 static u32 tris_drawn;
 static u32 vram_tex;             /* VRAM words taken by textures and CLUTs */
 static qword_t *tex_packets;     /* per texture 5 qwords (GIF tag + TEX0, TEX1, CLAMP, TEST), then 2 for NO_TEX */
@@ -132,18 +136,25 @@ void render_init(void)
     gif = packet2_create(4096, P2_TYPE_NORMAL, P2_MODE_NORMAL, 0);
     mem_charge(MEM_RENDER, 2 * PACKET_QW * 16 + 4096 * 16);
     mats = mem_alloc(MEM_RENDER, MAX_INST * 64);
-    for (int t = 0; t < 2; t++) {
-        headers[t] = mem_alloc(MEM_RENDER, (BATCH / 3 + 1) * 2 * 16);
-        for (int n = 3; n <= BATCH; n += 3) {
-            qword_t *h = headers[t] + 2 * (n / 3);
-            ((float *)h)[0] = 2048.0f;
-            ((float *)h)[1] = 2048.0f;
-            ((float *)h)[2] = (float)0xFFFFFF / 32.0f;
-            ((u32 *)h)[3] = n;
-            h[1].dw[0] = GIF_SET_TAG(n, 1, 1, GS_SET_PRIM(PRIM_TRIANGLE, 1, t, 0, 0, 0, 0, 0, 0), GIF_FLG_PACKED, 3);
-            h[1].dw[1] = (u64)GIF_REG_ST | (u64)GIF_REG_RGBAQ << 4 | (u64)GIF_REG_XYZ2 << 8; /* ST first: Q */
-        }
-    }
+    headers = mem_alloc(MEM_RENDER, 2 * MAX_MAT * (BATCH / 3 + 1) * 2 * 16);
+    for (int t = 0; t < 2; t++)
+        for (int m = 1; m <= MAX_MAT; m++)
+            for (int n = 3; n <= BATCH; n += 3) {
+                qword_t *h = HDR(t, m, n);
+                h->sw[0] = n;
+                h->sw[1] = 4 * m;
+                h[1].dw[0] = GIF_SET_TAG(n, 1, 1, GS_SET_PRIM(PRIM_TRIANGLE, 1, t, 0, 0, 0, 0, 0, 0), GIF_FLG_PACKED, 3);
+                h[1].dw[1] = (u64)GIF_REG_ST | (u64)GIF_REG_RGBAQ << 4 | (u64)GIF_REG_XYZ2 << 8; /* ST first: Q */
+            }
+    /* scale constant at VU mem 0, below the double buffers: written once */
+    ((float *)&scale_qw)[0] = 2048.0f;
+    ((float *)&scale_qw)[1] = 2048.0f;
+    ((float *)&scale_qw)[2] = (float)0xFFFFFF / 32.0f;
+    p = packet2_create(4, P2_TYPE_NORMAL, P2_MODE_CHAIN, 1);
+    packet2_utils_vu_add_unpack_data(p, 0, &scale_qw, 1, 0);
+    packet2_utils_vu_add_end_tag(p);
+    send_vif_wait(p);
+    packet2_free(p);
     test_z = GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, ZTEST_METHOD_GREATER_EQUAL);
 
     /* projection (column-major, v' = P v): x, y to the GS's +-2048 guard band, depth near -> 1, far -> -1 */
@@ -273,39 +284,70 @@ static void flush_vif(void)
     packet2_reset(vif[cur], 0);
 }
 
-void render_model(const Model *md, const float world[16], u8 cr, u8 cg, u8 cb)
+/* Draw a model: drw = NULL for a static model (one matrix, proj * view * world), else the draw matrices of a
+ * skinned instance (anim.c), each group getting its SKIN table's matrices premultiplied by proj * view * world. */
+static void draw_model(const Model *md, const float world[16], const float (*drw)[16])
 {
-    (void)cr; (void)cg; (void)cb; /* colours are baked into the VUMD data */
-    if (!md->vu_ngroups || nmats >= MAX_INST)
+    if (!md->vu_ngroups)
         return;
-    float mv[16];
+    float mv[16], pvw[16];
     mat_mul(mv, view, world);
     float rad = md->radius * sqrtf(mv[0] * mv[0] + mv[1] * mv[1] + mv[2] * mv[2]);
     if (mv[14] + rad < NEAR) /* whole model behind the camera */
         return;
-    float *m = mats[nmats++];
-    mat_mul(m, proj, mv);
-    u32 batches = 0;
-    for (u32 g = 0; g < md->vu_ngroups; g++)
+    mat_mul(pvw, proj, mv);
+    u32 need = drw ? 0 : 1, batches = 0;
+    for (u32 g = 0; g < md->vu_ngroups; g++) {
         batches += (md->vu[g].nverts + BATCH - 1) / BATCH;
-    if (packet2_get_qw_count(vif[cur]) + 8 + batches * 6 + md->vu_ngroups * 2 > PACKET_QW)
+        if (drw)
+            need += md->skin->groups[g].nmat;
+    }
+    if (nmats + need > MAX_INST)
+        return;
+    if (packet2_get_qw_count(vif[cur]) + 8 + batches * 7 + md->vu_ngroups * 2 > PACKET_QW)
         flush_vif();
-    packet2_utils_vu_add_unpack_data(vif[cur], 0, m, 4, 0);
+    float (*gm)[16] = mats + nmats; /* this group's matrices */
+    u32 m = 1;
+    if (!drw) {
+        memcpy(gm, pvw, 64);
+        nmats++;
+    }
     for (u32 g = 0; g < md->vu_ngroups; g++) {
         const VuGroup *vg = &md->vu[g];
+        if (drw) {
+            const SkGroup *sg = &md->skin->groups[g];
+            gm = mats + nmats;
+            m = sg->nmat;
+            for (u32 i = 0; i < m; i++)
+                mat_mul(gm[i], pvw, drw[sg->drw[i]]);
+            nmats += m;
+        }
         set_tex(vg->tex);
         int textured = vg->tex != NO_TEX;
+        u32 base = 2 + 4 * m;
         for (u32 off = 0; off < vg->nverts; off += BATCH) {
             u32 n = vg->nverts - off < BATCH ? vg->nverts - off : BATCH;
-            packet2_utils_vu_add_unpack_data(vif[cur], 0, headers[textured] + 2 * (n / 3), 2, 1);
-            packet2_utils_vu_add_unpack_data(vif[cur], 2, (void *)(vg->pos + 4 * off), n, 1);
-            unpack_narrow(vg->col + off, 4 * n, 2 + n, n, P2_UNPACK_V4_8, 1);
+            packet2_utils_vu_add_unpack_data(vif[cur], 0, HDR(textured, m, n), 2, 1);
+            packet2_utils_vu_add_unpack_data(vif[cur], 2, gm, 4 * m, 1);
+            packet2_utils_vu_add_unpack_data(vif[cur], base, (void *)(vg->pos + 4 * off), n, 1);
+            unpack_narrow(vg->col + off, 4 * n, base + n, n, P2_UNPACK_V4_8, 1);
             if (textured)
-                unpack_narrow(vg->uv + 2 * off, 4 * n, 2 + 2 * n, n, P2_UNPACK_V2_16, 0);
+                unpack_narrow(vg->uv + 2 * off, 4 * n, base + 2 * n, n, P2_UNPACK_V2_16, 0);
             packet2_utils_vu_add_start_program(vif[cur], 0);
             tris_drawn += n / 3;
         }
     }
+}
+
+void render_model(const Model *md, const float world[16], u8 cr, u8 cg, u8 cb)
+{
+    (void)cr; (void)cg; (void)cb; /* colours are baked into the VUMD data */
+    draw_model(md, world, NULL);
+}
+
+void render_skinned(const Model *md, const float world[16], const float (*drw)[16])
+{
+    draw_model(md, world, drw);
 }
 
 /* 3x5 bitmap font as GS sprites (no texture, no VRAM). Digits, upper-case letters and a few signs. */

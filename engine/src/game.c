@@ -1,4 +1,5 @@
 #include "game.h"
+#include "anim.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -47,6 +48,8 @@ static float spin_angle;
 static V3 cam_pos;
 static const Model *m_coin, *m_purple, *m_piece, *m_kuribo, *m_planet;
 static Model m_mario;
+static const Model *m_mario_skin; /* Mario.arc, skinned (SKIN chunk); the box stays as a fallback */
+static Anim *mario_anim;
 
 /* --- placement ------------------------------------------------------------------------------------------- */
 
@@ -208,6 +211,14 @@ void game_init(const Scene *s, const unsigned char *blob)
     m_mario.name = "Mario"; m_mario.ngroups = 1; m_mario.groups = &box_g; m_mario.radius = 170;
     build_box_vu();
     m_mario.vu_ngroups = 1; m_mario.vu = &box_vu;
+    m_mario_skin = scene_model(s, "Mario");
+    if (m_mario_skin && m_mario_skin->skin) {
+        anim_init(s);
+        mario_anim = mem_alloc(MEM_PLAYER, sizeof(Anim));
+        anim_bind(mario_anim, m_mario_skin->skin);
+        anim_play(mario_anim, "wait", 1.0f, 1);
+    } else
+        m_mario_skin = NULL;
 
     ncoins = count_type("Coin", 0);
     npurple = count_type("PurpleCoin", 0) + count_type("CirclePurpleCoinGroup", 1) + count_type("PurpleRailCoin", 1);
@@ -297,6 +308,15 @@ static void update_mario(void)
         m->pos = start_pos; m->hvel = v3(0, 0, 0); m->vup = 0;
     }
     if (m->hurt_timer) m->hurt_timer--;
+    if (mario_anim) { /* ponytail: clip by state only; Petari's move logic is task 3.3 */
+        float sp = vlen(m->hvel);
+        if (m->spin_timer > 0) anim_play(mario_anim, "spin", 1.0f, 0);
+        else if (!m->grounded) anim_play(mario_anim, m->vup > 0 ? "jump" : "fall", 1.0f, 0);
+        else if (sp > 8.0f) anim_play(mario_anim, "run", 1.0f, 1);
+        else if (sp > 1.0f) anim_play(mario_anim, "walk", 1.0f, 1);
+        else anim_play(mario_anim, "wait", 1.0f, 1);
+        anim_update(mario_anim);
+    }
 }
 
 static void update_kuribo(void)
@@ -395,7 +415,10 @@ void game_draw(void)
         render_model(m_kuribo, m, kuribo[i].state == KURIBO_STUN ? 0x50 : 0x90, 0x50, 0x20);
     }
     basis_matrix(m, mario->pos, mario->up, mario->face, 0);
-    render_model(&m_mario, m, mario->hurt_timer & 4 ? 0xFF : 0xE0, 0x20, 0x20);
+    if (m_mario_skin) {
+        if (!(mario->hurt_timer & 4)) render_skinned(m_mario_skin, m, (const float (*)[16])mario_anim->drw);
+    } else
+        render_model(&m_mario, m, mario->hurt_timer & 4 ? 0xFF : 0xE0, 0x20, 0x20);
 }
 
 void game_debug(char *out, int n)
