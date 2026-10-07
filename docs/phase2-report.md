@@ -205,3 +205,66 @@ Video: `videos/2026-10-07_0953_phase2-mario_429eb06.mp4`.
 **Verdict: GO** (9.16 of 16.7 ms on Gateway 2; player and animation memory within the margins above). The EE draw
 time flagged at milestone 2 is now 5.9 ms worst (more batches: one matrix REF per batch); the prebuilt-chain work
 stays the first item before the heavy-scenario gate.
+
+## Milestone 4: camera
+
+### 4.1 Data (`tools/camera.py`, blob chunks CAMS and CARE)
+
+- Camera areas from `jmp/placement/<layer>/cameracubeinfo`: CubeCameraBox (centre-origin cube, 1000 × scale),
+  CubeCameraCylinder (base origin, radius 500 × scale_x, height 500 × scale_y), CubeCameraSphere (radius
+  500 × scale_x) (AreaForm.cpp). Obj_arg0 is the camera `c:%04x` of the same zone; areas are selection-sorted on
+  Obj_arg2 exactly as CubeCameraMgr::sort and the last one containing Mario wins (AreaObjMgr::find_in). Areas whose
+  category mask (Obj_arg3) lacks the normal-game bit, or that start invalid, are dropped.
+- Cameras from each stage's `camera/cameraparam.bcam` (JMap; field names from CameraParamChunk::load, vectors as
+  `.X/.Y/.Z`), game cameras only (`c:`, `s:`, `o:`), missing fields filled with CameraParamChunk's defaults.
+- Gateway 2: 28 cameras (CAMS 3 600 B) and 9 areas (CARE 384 B): a sphere around the whole planet
+  (WONDER_PLANET, distance 1600, minimum pitch 0.7 rad), two tower cylinders and a box (TOWER), cylinders on the
+  slopes (WONDER_PLANET 0x14 / 0x15) and the parallel cameras 2 and 0x17 (XZ_PARA).
+
+### 4.2 Engine (`camera.c`)
+
+Formulas extracted from Petari (CameraParallel, CameraTower, CameraWonderPlanet, CameraFollow, CameraFixedPoint,
+CameraLocalUtil::makeWatchPoint, CameraHeightArrange, CameraViewInterpolator, CameraManGame):
+
+| Type | Ported |
+|---|---|
+| XZ_PARA | watch + polar(dist ≥ 300, angleB, angleA − 90°), zone up |
+| TOWER | ideal = watch + (horizontal direction from the tower axis lifted by angleB) × dist; the yaw lags the ideal one by up to π(1 − angleA)/2; horizontal length eased 0.05 |
+| WONDER_PLANET | dragged along in Mario's frame: pitch eased (0.05) up to angleA, distance clamped to axis.x .. axis.y, camera up turned with the view direction |
+| FOLLOW | distance clamp (axis.y .. axis.x with the 0.5 overshoot rule), pitch window angleA .. angleA + angleB, yaw converging behind Mario at `dist` degrees/frame scaled by speed, none while jumping |
+| EYEPOS_FIX | eye at wpoint, looking at the watch point |
+
+Watch point: Mario + woffset (zone frame) + an eased loffset / loffsetv in Mario's frame. Vertical pan: the watch
+height along vpanaxis is frozen while Mario is in the air and eased at 0.05 otherwise. Switching cameras: the new
+camera starts from the current pose and blends over its camint frames with r = (t / camint)²; then the final
+pose is smoothed at 0.3 per frame (0.1 for fovy). The renderer now takes the camera's fovy (45° default).
+Without an area the current camera is kept, and the CameraHolder default (XZ_PARA, distance 1200) is used before
+the first area. Host test `engine/test/test_camera.c` covers the three area shapes and the "last area wins" rule.
+
+![Camera on the bench path](renders/phase2-camera-bench.png)
+
+Not ported:
+- **Camera types** (they run as XZ_PARA, as Petari does for unknown names):
+  - in Gateway, MEDIAN_PLANET (no area uses it), FOO_FIGHTER_PLANET (its area is for the Star Ball mode only), and WATER_PLANET / POINT_FIX (event cameras);
+  - in Good Egg, CHARMED_FIX (8 areas), TOWER_POS (4), EYEPOS_FIX_THERE, MEDIAN_PLANET, OBJ_PARALLEL, TRUNDLE, FRONT_AND_BACK and TRIPOD_PLANET.
+  - The five ported types cover 78 of Good Egg's 99 area cameras.
+- **Camera sources:** ground-triangle cameras (`g:`, read from the collision attribute table), start cameras (`s:`) and event cameras (`e:`).
+- **Behaviour:**
+  - C-stick rounding and reset;
+  - the upper / lower screen pushes of the vertical pan (one clamp at uplay instead);
+  - FOLLOW's wall and height arrangement;
+  - `gflag.thru` / `camendint`;
+  - the rotation slerp of the interpolator (positions are blended instead).
+
+### 4.3 Gate (PCSX2, `build.sh bench`, milestone 3's input path)
+
+| Row | Value | Budget |
+|---|---|---|
+| Camera data (blob) | CAMS 3 600 B + CARE 384 B | asset row |
+| Camera runtime | 324 B static state (`camera.o` bss), no arena use | |
+| Worst frame | 9.09 ms (logic 1.76, KCL 0.27, draw 5.95, GS finish 1.59 worst; average 7.84) | 16.7 ms |
+
+The input path is milestone 3's, but the stick is camera-relative, so with SMG's cameras Mario walks elsewhere
+(end position 1295, 1640, 69). Video: `videos/2026-10-07_1015_phase2-camera_543f2c2.mp4`.
+
+**Verdict: GO** (9.09 of 16.7 ms; camera bytes negligible).
