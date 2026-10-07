@@ -41,24 +41,31 @@ def yaz0(src):
     return bytes(dst)
 
 # ---------- RARC (JKRArchive.hpp:17-73, JKRCompArchive.cpp:117-123) ----------
-def rarc_files(arc):
-    """Yield (name, bytes) for every file in a (decompressed) RARC."""
+def rarc_files(arc, paths=False):
+    """Yield (name, bytes) for every file in a (decompressed) RARC; with paths, name is 'dir/sub/file'."""
     arc = yaz0(arc)
     if arc[:4] != b"RARC":
         return
     info = u32(arc, 0x08)                  # mHeaderSize: info block follows the header
     data_off = info + u32(arc, 0x0C)       # mHeaderSize + mFileDataOffset
-    n_entries, entry_off = u32(arc, info + 0x08), info + u32(arc, info + 0x0C)
+    n_dirs, dir_off = u32(arc, info), info + u32(arc, info + 0x04)
+    entry_off = info + u32(arc, info + 0x0C)
     str_off = info + u32(arc, info + 0x14)
-    for i in range(n_entries):
-        e = entry_off + i * 0x14
-        type_name = u32(arc, e + 4)
-        if (type_name >> 24) & 0x02:  # FILE_FLAG_FOLDER
-            continue
-        name_off = type_name & 0xFFFFFF
-        name = arc[str_off + name_off: arc.index(b"\0", str_off + name_off)].decode("shift_jis", "replace")
-        off, size = u32(arc, e + 8) + data_off, u32(arc, e + 12)
-        yield name, yaz0(arc[off:off + size])
+    cstr = lambda o: arc[str_off + o: arc.index(b"\0", str_off + o)].decode("shift_jis", "replace")
+    dir_path = {0: cstr(u32(arc, dir_off + 4))}  # SDIDirEntry {id, name, hash, nFiles, first} (JKRArchive.hpp:75-81)
+    for d in range(n_dirs):
+        de = dir_off + d * 0x10
+        first, count = u32(arc, de + 0x0C), u16(arc, de + 0x0A)
+        for i in range(first, first + count):
+            e = entry_off + i * 0x14
+            type_name = u32(arc, e + 4)
+            name = cstr(type_name & 0xFFFFFF)
+            if (type_name >> 24) & 0x02:  # FILE_FLAG_FOLDER: mDirIndex at +8
+                if name not in (".", ".."):
+                    dir_path[u32(arc, e + 8)] = dir_path[d] + "/" + name
+                continue
+            off, size = u32(arc, e + 8) + data_off, u32(arc, e + 12)
+            yield (dir_path[d] + "/" + name if paths else name), yaz0(arc[off:off + size])
 
 # ---------- textures ----------
 # GX texture format -> tile shift (x, y); port of __GXGetTexTileShift (GXTexture.c:69-113)
