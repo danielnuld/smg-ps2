@@ -2,26 +2,161 @@
 
 #include <math.h>
 
+static float dot(const float a[3], const float b[3]) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+static void sub(float o[3], const float a[3], const float b[3]) { o[0] = a[0] - b[0]; o[1] = a[1] - b[1]; o[2] = a[2] - b[2]; }
+static float len(const float a[3]) { return sqrtf(dot(a, a)); }
+/* o = v / |v|, returns |v| (MR::separateScalarAndDirection) */
+static float split(float o[3], const float v[3])
+{
+    float l = len(v), k = l > 1e-6f ? 1.0f / l : 0.0f;
+    o[0] = v[0] * k; o[1] = v[1] * k; o[2] = v[2] * k;
+    return l;
+}
+/* PlanetGravity::isInRangeDistance */
+static int in_range(const Gravity *g, float d) { return g->range < 0 || d < g->range + g->distant; }
+
+/* gravity from p towards point q: direction and distance */
+static int towards(const Gravity *g, const float q[3], const float p[3], float dir[3], float *dist)
+{
+    float d[3];
+    sub(d, q, p);
+    *dist = split(dir, d);
+    return in_range(g, *dist);
+}
+
+/* CubeGravity: calcGravityArea (per axis 0 below, 1 between, 2 above; inactive faces cut the region off), then
+ * calcFaceGravity / calcEdgeGravity / calcCornerGravity */
+static int cube(const Gravity *g, const float p[3], float dir[3], float *dist)
+{
+    float rel[3], u[3][3], l[3];
+    int r[3];
+    sub(rel, p, g->m[3]);
+    for (int k = 0; k < 3; k++) {
+        l[k] = split(u[k], g->m[k]);
+        float x = dot(rel, u[k]);
+        r[k] = x < -l[k] ? 0 : x <= l[k] ? 1 : 2;
+        if ((r[k] == 0 && !(g->flags & 2 << 2 * k)) || (r[k] == 2 && !(g->flags & 1 << 2 * k)))
+            return 0;
+    }
+    int outside = (r[0] != 1) + (r[1] != 1) + (r[2] != 1);
+    if (outside == 0)
+        return 0;
+    float q[3] = {g->m[3][0], g->m[3][1], g->m[3][2]};
+    if (outside == 1) { /* face: straight at the face, height above it */
+        int k = r[0] != 1 ? 0 : r[1] != 1 ? 1 : 2;
+        float s = r[k] == 0 ? 1.0f : -1.0f, d[3];
+        dir[0] = u[k][0] * s; dir[1] = u[k][1] * s; dir[2] = u[k][2] * s;
+        sub(d, q, p);
+        *dist = dot(dir, d) - l[k];
+        if (*dist < 0) *dist = 0;
+        return in_range(g, *dist);
+    }
+    /* edge (two axes outside: nearest point on the edge line) or corner (three: the vertex) */
+    int along = -1;
+    for (int k = 0; k < 3; k++) {
+        if (r[k] == 1) { along = k; continue; }
+        float s = r[k] == 0 ? -1.0f : 1.0f;
+        q[0] += g->m[k][0] * s; q[1] += g->m[k][1] * s; q[2] += g->m[k][2] * s;
+    }
+    float d[3];
+    sub(d, q, p);
+    if (along >= 0) {
+        float t = dot(d, u[along]);
+        d[0] -= u[along][0] * t; d[1] -= u[along][1] * t; d[2] -= u[along][2] * t;
+    }
+    if (len(d) < 1e-6f) { /* exactly on it: Petari takes centre -> edge / vertex, distance 0 */
+        sub(d, q, g->m[3]);
+        split(dir, d);
+        *dist = 0;
+        return in_range(g, 0);
+    }
+    *dist = split(dir, d);
+    return in_range(g, *dist);
+}
+
 /* One gravity's raw vector (direction * 4e6 / r^2), PlanetGravity::calcGravity. Returns 0 when out of range. */
 static int one(const Gravity *g, const float p[3], float v[3])
 {
-    float dir[3], radius;
-    if (g->kind == 0) { /* PointGravity::calcOwnGravityVector */
-        float d[3] = {g->pos[0] - p[0], g->pos[1] - p[1], g->pos[2] - p[2]};
-        float len = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-        float inv = len > 1e-4f ? 1.0f / len : 0.0f;
-        dir[0] = d[0] * inv; dir[1] = d[1] * inv; dir[2] = d[2] * inv;
-        if (g->range >= 0 && !(len < g->range + g->distant)) /* isInRangeDistance */
-            return 0;
-        radius = len;
-    } else { /* ParallelGravity, RangeType_Sphere: in range if |plane pos - p| < range; scalar = base distance */
+    float dir[3], radius, rel[3], up[3];
+    switch (g->kind) {
+    case GRAV_POINT: /* PointGravity::calcOwnGravityVector */
+        if (!towards(g, g->m[3], p, dir, &radius)) return 0;
+        break;
+    case GRAV_PLANE: /* ParallelGravity, RangeType_Sphere: in range if |plane pos - p| < range */
         if (g->range >= 0) {
-            float d[3] = {g->pos[0] - p[0], g->pos[1] - p[1], g->pos[2] - p[2]};
-            if (!(d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < g->range * g->range))
-                return 0;
+            sub(rel, g->m[3], p);
+            if (!(dot(rel, rel) < g->range * g->range)) return 0;
         }
-        dir[0] = -g->up[0]; dir[1] = -g->up[1]; dir[2] = -g->up[2];
-        radius = 2000.0f; /* mBaseDistance default */
+        split(up, g->m[1]);
+        dir[0] = -up[0]; dir[1] = -up[1]; dir[2] = -up[2];
+        radius = g->p[0];
+        break;
+    case GRAV_PLANE_BOX: { /* ParallelGravity::isInBoxRange: |rel . axis| <= |axis|^2 per (scaled) axis */
+        float d[3];
+        sub(rel, p, g->m[3]);
+        for (int k = 0; k < 3; k++) {
+            float e = dot(g->m[k], g->m[k]);
+            d[k] = dot(rel, g->m[k]);
+            if (d[k] < -e || e < d[k]) return 0;
+        }
+        radius = g->p[0];
+        if (g->flags < 3) radius += fabsf(d[g->flags]) / len(g->m[g->flags]);
+        split(up, g->m[1]);
+        dir[0] = -up[0]; dir[1] = -up[1]; dir[2] = -up[2];
+        break;
+    }
+    case GRAV_PLANE_CYLINDER: { /* ParallelGravity::isInCylinderRange */
+        split(up, g->m[1]);
+        sub(rel, p, g->m[3]);
+        float h = dot(up, rel);
+        if (h < 0 || g->p[2] < h) return 0;
+        rel[0] -= up[0] * h; rel[1] -= up[1] * h; rel[2] -= up[2] * h;
+        float r = len(rel);
+        if (r > g->p[1]) return 0;
+        radius = g->p[0] + r;
+        dir[0] = -up[0]; dir[1] = -up[1]; dir[2] = -up[2];
+        break;
+    }
+    case GRAV_CUBE:
+        if (!cube(g, p, dir, &radius)) return 0;
+        break;
+    case GRAV_DISK: { /* DiskGravity::calcOwnGravityVector */
+        const float *n = g->m[1];
+        sub(rel, p, g->m[3]);
+        float y = dot(rel, n), side[3] = {rel[0] - n[0] * y, rel[1] - n[1] * y, rel[2] - n[2] * y}, ds[3];
+        if (!(g->flags & 1) && y < 0) return 0;
+        float r = split(ds, side);
+        if (g->p[1] > -1.0f && dot(ds, g->m[0]) < g->p[1]) return 0;
+        if (r <= g->p[0]) {
+            float s = y >= 0 ? -1.0f : 1.0f;
+            dir[0] = n[0] * s; dir[1] = n[1] * s; dir[2] = n[2] * s;
+            radius = fabsf(y);
+            if (!in_range(g, radius)) return 0;
+        } else {
+            if (!(g->flags & 2)) return 0;
+            float q[3] = {g->m[3][0] + ds[0] * g->p[0], g->m[3][1] + ds[1] * g->p[0], g->m[3][2] + ds[2] * g->p[0]};
+            if (!towards(g, q, p, dir, &radius)) return 0;
+        }
+        break;
+    }
+    case GRAV_SEGMENT: { /* SegmentGravity::calcOwnGravityVector (hemisphere extensions are always 0) */
+        const float *ax = g->m[1];
+        sub(rel, p, g->m[3]);
+        float y = dot(rel, ax);
+        if (g->p[1] > -1.0f) {
+            float b[3] = {rel[0] - ax[0] * y, rel[1] - ax[1] * y, rel[2] - ax[2] * y}, bd[3];
+            split(bd, b);
+            if (dot(bd, g->m[0]) < g->p[1]) return 0;
+        }
+        float t = y;
+        if (y < 0) { if (!(g->flags & 1)) return 0; t = 0; }
+        else if (y > g->p[0]) { if (!(g->flags & 2)) return 0; t = g->p[0]; }
+        float q[3] = {g->m[3][0] + ax[0] * t, g->m[3][1] + ax[1] * t, g->m[3][2] + ax[2] * t};
+        if (!towards(g, q, p, dir, &radius)) return 0;
+        break;
+    }
+    default:
+        return 0;
     }
     radius -= g->distant;
     if (radius < 1.0f)

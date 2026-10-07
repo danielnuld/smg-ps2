@@ -25,9 +25,8 @@ Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
   'VUMD'  u32 n, 12 pad, n × {char[32] name, u32 ngroups, f32 qscale, 8 pad, ngroups × {u32 nverts (3 per
           triangle), u16 tex, 10 pad, s16 pos[nverts][4] (x, y, z in steps of qscale, w = 4 * matrix slot),
           u8 rgba[nverts][4], s16 uv[nverts][2] if textured, each array padded to 16}}
-  'GRAV'  u32 n, n × {u16 kind (0 point, 1 plane), u16 zone, s32 priority, s32 inverse, f32 range, f32 distant,
-          f32 pos[3], f32 up[3]}   (Petari GravityCreator/GravityUtil: point distant = 500 * scale.x, plane up = rotated
-          Y axis; Range/Distant/Priority/Inverse from the placement row when present, defaults -1, 0, 0, 0)
+  'GRAV'  u32 n, n × {u16 kind, u16 flags, s32 priority, s32 inverse, f32 range, f32 distant, f32 m[12] (x, y, z
+          axes and translation, world), f32 p[4]}  (84 B): grav_record, Petari GravityCreator.cpp per kind
 """
 import math
 import struct
@@ -417,6 +416,71 @@ def to_world(zones, up_ids, items):
     return [zw(z) for z in range(len(zones))]
 
 
+GRAV_KINDS = {"GlobalPointGravity": 0, "GlobalPlaneGravity": 1, "GlobalPlaneGravityInBox": 2,
+              "GlobalPlaneGravityInCylinder": 3, "GlobalCubeGravity": 4, "GlobalDiskGravity": 5,
+              "GlobalSegmentGravity": 6}
+
+
+def rotate_about(v, axis, deg):
+    """Rodrigues: v rotated by deg around unit axis (TRot3f::setRotate + mult)."""
+    a = math.radians(deg)
+    c, sn = math.cos(a), math.sin(a)
+    cr = [axis[1] * v[2] - axis[2] * v[1], axis[2] * v[0] - axis[0] * v[2], axis[0] * v[1] - axis[1] * v[0]]
+    d = sum(axis[i] * v[i] for i in range(3))
+    return [v[i] * c + cr[i] * sn + axis[i] * d * (1 - c) for i in range(3)]
+
+
+def unit(v):
+    n = math.sqrt(sum(x * x for x in v))
+    return [x / n for x in v] if n > 1e-9 else [0.0, 0.0, 0.0]
+
+
+def grav_record(o):
+    """One gravity row -> GRAV bytes, or None for kinds the engine has no evaluator for (Petari GravityCreator.cpp:
+    settingFromSRT / settingFromJMapArgs, the world matrix baked in). m = x, y, z axes + translation; p, flags:
+    plane (1-3): p0 base distance; box: m = range box (axes scaled to the half extents), flags = distance calc type
+    (0 X, 1 Y, 2 Z, 3 default); cylinder: p1 radius, p2 height. cube (4): m = cube (axes = half extents), flags =
+    active faces. disk (5): m.t centre, m.y normal, m.x the valid-sector direction, p0 radius, p1 valid cos, flags
+    bit 0 both sides, bit 1 edge gravity. segment (6): m.t point 0, m.y unit axis, m.x valid-side direction, p0 axis
+    length, p1 valid cos, flags bit 0/1 = edge 0/1 valid."""
+    kind = GRAV_KINDS.get(o["name"])
+    if kind is None:
+        return None
+    r, t, sc = rot_mtx(o["rot"]), list(o["pos"]), o["scale"]
+    ax = [[r[i][k] for i in range(3)] for k in range(3)]  # unit axes x, y, z
+    a = [x if -2**31 <= x < 2**31 else -1 for x in o["args"]]
+    m, pr, flags = ax + [t], [0.0] * 4, 0
+    distant = o["distant"]
+    if distant is None:
+        distant = 500.0 * sc[0] if kind == 0 else 0.0
+    base = 2000.0 if a[0] < 0 else float(a[0])
+    if kind == 1:
+        pr[0] = 2000.0
+    elif kind in (2, 4):  # box range / cube: TR, translation up by 500 sy, axes scaled by 500 s
+        h = [500.0 * x for x in sc]
+        m = [[c * h[k] for c in ax[k]] for k in range(3)] + [[t[i] + ax[1][i] * h[1] for i in range(3)]]
+        if kind == 2:
+            pr[0], flags = base, a[1] if a[1] in (0, 1, 2) else 3
+        else:
+            flags = (a[0] & 1) | (a[0] & 2) | (a[1] & 1) << 2 | (a[1] & 2) << 2 | (a[2] & 1) << 4 | (a[2] & 2) << 4
+    elif kind == 3:
+        pr[:3] = [base, 500.0 * sc[0], 500.0 * sc[1]]
+    elif kind == 5:
+        deg = float(a[2]) if a[2] >= 0 else 360.0
+        side = unit([ax[0][i] - ax[1][i] * sum(ax[0][j] * ax[1][j] for j in range(3)) for i in range(3)])
+        m[0] = rotate_about(side, ax[1], 0.5 * deg)
+        pr[:2] = [500.0 * max(sc), math.cos(math.radians(0.5 * deg))]
+        flags = (a[0] != 0) | (a[1] != 0) << 1
+    elif kind == 6:  # TRS: the axis is 1000 * scale.y long, the side vector the (unit) X axis
+        deg = float(a[1]) if a[1] >= 0 else 360.0
+        side = unit([ax[0][i] - ax[1][i] * sum(ax[0][j] * ax[1][j] for j in range(3)) for i in range(3)])
+        m[0] = rotate_about(side, ax[1], 0.5 * deg)
+        pr[:2] = [1000.0 * abs(sc[1]), math.cos(math.radians(0.5 * deg))]
+        flags = {0: 0, 1: 1, 2: 2}.get(a[0], 3)
+    return struct.pack("<HHiiff12f4f", kind, flags, o["priority"], 1 if o["inverse"] == 1 else 0, o["range"], distant,
+                       *[x for v in m for x in v], *pr)
+
+
 def placement(fs, galaxy, scenario):
     """Scenario-wide chunks (TYPE ZONE OBJS STRT PATH GRAV CAMS CARE) and what the asset packs need."""
     act, zones, objs, starts, paths, cubes, bcams, up = scene(fs, galaxy, scenario)
@@ -441,19 +505,7 @@ def placement(fs, galaxy, scenario):
            chunk(b"PATH", struct.pack("<I", len(paths)) + b"".join(
                struct.pack("<HHiI", p["zone"], p["closed"], p["id"], len(p["pts"])) +
                b"".join(struct.pack("<3f", *pt) for pt in p["pts"]) for p in paths))]
-    grav = []
-    for o in keep:
-        kind = {"GlobalPointGravity": 0, "GlobalPlaneGravity": 1}.get(o["name"])
-        if kind is None:
-            continue
-        d = math.radians
-        rx, ry, rz = (d(a) for a in o["rot"])
-        # rotated Y axis of R = Rz * Ry * Rx (same order as the engine's placement matrices)
-        up_ = [math.cos(rz) * math.sin(ry) * math.sin(rx) - math.sin(rz) * math.cos(rx),
-               math.sin(rz) * math.sin(ry) * math.sin(rx) + math.cos(rz) * math.cos(rx), math.cos(ry) * math.sin(rx)]
-        distant = o["distant"] if o["distant"] is not None else (500.0 * o["scale"][0] if kind == 0 else 0.0)
-        grav.append(struct.pack("<HHiiff3f3f", kind, o["zone"], o["priority"], 1 if o["inverse"] == 1 else 0,
-                                o["range"], distant, *o["pos"], *up_))
+    grav = [g for g in (grav_record(o) for o in keep) if g]
     out.append(chunk(b"GRAV", struct.pack("<I", len(grav)) + b"".join(grav)))
     cams, cam_index, cam_types = camera.cameras(bcams, float_column, int_or)
     care = [struct.pack("<BBH9f", camera.SHAPES[r["name"]], r["zone"],
@@ -642,6 +694,10 @@ def selftest():
     to_world(zs, {}, it)
     assert all(abs(x - y) < 1e-6 for x, y in zip(it[0]["pos"], [100, 0, -10])), it[0]
     assert abs(it[0]["rot"][1] - 90) < 1e-6 and abs(it[1]["pts"][0][0] - 110) < 1e-6, it
+    g = grav_record(dict(name="GlobalCubeGravity", pos=[0, 0, 0], rot=[0, 0, 0], scale=[2, 1, 1], args=[3, 1, 2, -1],
+                         distant=None, range=-1.0, priority=0, inverse=0))
+    v = struct.unpack("<HHiiff12f4f", g)
+    assert v[1] == 0b100111 and v[6:9] == (1000.0, 0.0, 0.0) and v[15:18] == (0.0, 500.0, 0.0), v
     print("selftest ok")
 
 
