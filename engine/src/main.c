@@ -21,8 +21,7 @@ static Scene scene;
 
 #ifdef PACKS
 /* Streaming layout (tools/slice.py packs, task 5.1) read through host: (PCSX2 host filesystem, the ELF's folder).
- * Loaded once at boot for the start zone: its chain in full, every other stage low. ponytail: no reload on zone
- * change yet, and the files stay in malloc'd memory. */
+ * At boot the base packs; the stage packs come with the first zone swap (stream_update). */
 static u32 pack_bytes;
 
 static const u8 *load_file(const char *path)
@@ -45,56 +44,138 @@ static const u8 *load_file(const char *path)
     return b;
 }
 
-static const u8 *zone_files[64];
-static unsigned char zone_full[64];
+static const u8 *zone_files[64];      /* the stage packs in use, one per zone */
+static unsigned char zone_full[64];    /* 1: that stage's .bin is in use, 0: its .low.bin */
 static const u8 *scene_blob;
 static u32 nzones, base_models, base_tex, base_kcl;
 static MemMark base_mark;
 
-/* Load every stage pack for the chain of zone `start`: in full on the chain, low elsewhere. */
-static int load_zones(Scene *s, int start)
+/* Next zone's packs, read a slice per frame (a launch star's flight hides it); stages whose pack does not change
+ * keep their buffer. ponytail: the old and the new packs are both in RAM until the swap */
+#define READ_STEP (32 << 10) /* ~4.5 ms of host: read per frame; 3 MB fits a 300-frame flight */
+static struct {
+    int zone, active;                  /* target zone */
+    u32 z;                             /* next stage to read */
+    unsigned char full[64];
+    const u8 *buf[64];
+    FILE *f;
+    u8 *cur;
+    u32 size, off, bytes;
+} pend;
+
+static void chain_of(int zone, unsigned char *full)
+{
+    u32 sz;
+    const s32 *parent = (const s32 *)(blob_chunk(scene_blob, "ZPAR", &sz) + 4);
+    memset(full, 0, 64);
+    for (int z = zone; z >= 0 && z < 64; z = parent[z])
+        full[z] = 1;
+    full[0] = 1;
+}
+
+static void pend_cancel(void)
+{
+    if (pend.f) fclose(pend.f);
+    if (pend.cur) free(pend.cur);
+    for (u32 z = 0; z < pend.z && z < nzones; z++)
+        if (pend.buf[z] && pend.buf[z] != zone_files[z]) free((void *)pend.buf[z]);
+    memset(&pend, 0, sizeof pend);
+}
+
+static void pend_start(int zone)
+{
+    pend_cancel();
+    pend.zone = zone;
+    pend.active = 1;
+    chain_of(zone, pend.full);
+}
+
+/* Read up to `budget` bytes of the pending packs; returns 1 when every stage pack is in memory. */
+static int pend_step(u32 budget)
 {
     char path[160];
     u32 sz;
-    const u8 *zn = blob_chunk(scene_blob, "ZONE", &sz), *zp = blob_chunk(scene_blob, "ZPAR", &sz);
-    const s32 *parent = (const s32 *)(zp + 4);
-    memset(zone_full, 0, sizeof zone_full);
-    for (int z = start; z >= 0 && z < 64; z = parent[z])
-        zone_full[z] = 1;
-    zone_full[0] = 1;
-    for (u32 z = 0; z < nzones; z++) {
-        snprintf(path, sizeof path, "host:packs/%s/%s%s", PACKS, (const char *)(zn + 4 + 56 * z),
-                 zone_full[z] ? ".bin" : ".low.bin");
-        zone_files[z] = load_file(path);
-        if (blob_add(s, zone_files[z]) != 0)
-            return -1;
+    const u8 *zn = blob_chunk(scene_blob, "ZONE", &sz);
+    while (pend.z < nzones) {
+        u32 z = pend.z;
+        if (!pend.f && !pend.cur) {
+            if (zone_files[z] && pend.full[z] == zone_full[z]) { /* unchanged: keep it */
+                pend.buf[z] = zone_files[z];
+                pend.z++;
+                continue;
+            }
+            snprintf(path, sizeof path, "host:packs/%s/%s%s", PACKS, (const char *)(zn + 4 + 56 * z),
+                     pend.full[z] ? ".bin" : ".low.bin");
+            pend.f = fopen(path, "rb");
+            if (!pend.f) {
+                printf("packs: missing %s" "\n", path);
+                for (;;) {}
+            }
+            fseek(pend.f, 0, SEEK_END);
+            pend.size = ftell(pend.f);
+            fseek(pend.f, 0, SEEK_SET);
+            pend.cur = memalign(64, pend.size);
+            pend.off = 0;
+        }
+        if (!budget)
+            return 0;
+        u32 n = pend.size - pend.off < budget ? pend.size - pend.off : budget;
+        if (fread(pend.cur + pend.off, 1, n, pend.f) != n) {
+            printf("packs: read error" "\n");
+            for (;;) {}
+        }
+        pend.off += n;
+        pend.bytes += n;
+        budget -= n;
+        if (pend.off == pend.size) {
+            fclose(pend.f);
+            pend.f = NULL;
+            pend.buf[z] = pend.cur;
+            pend.cur = NULL;
+            pend.z++;
+        }
     }
-    return 0;
+    return 1;
 }
 
-/* Swap the stage packs for another zone's chain: drop everything loaded after the base, load again. ponytail:
- * synchronous (the frame stalls while host: reads), and every stage pack is reloaded, not only the changed ones */
-static void switch_zone(Scene *s, int zone)
+/* Swap to the pending zone (its packs all read): drop the zone models, textures and chains, parse the packs. */
+static void pend_commit(Scene *s)
 {
     u32 t0 = cycles();
     render_release(s, base_tex, base_models);
     for (u32 z = 0; z < nzones; z++) {
-        free((void *)zone_files[z]);
-        zone_files[z] = NULL;
+        if (zone_files[z] && zone_files[z] != pend.buf[z]) free((void *)zone_files[z]);
+        zone_files[z] = pend.buf[z];
     }
+    memcpy(zone_full, pend.full, sizeof zone_full);
     s->nmodels = base_models;
     s->ntex = base_tex;
     s->nkcl = base_kcl;
     mem_release(&base_mark);
-    pack_bytes = 0;
-    if (load_zones(s, zone) != 0) {
-        printf("packs: zone %d failed\n", zone);
-        for (;;) {}
-    }
+    for (u32 z = 0; z < nzones; z++)
+        if (blob_add(s, zone_files[z]) != 0) {
+            printf("packs: zone %d failed" "\n", pend.zone);
+            for (;;) {}
+        }
     render_load_textures(s, base_tex, base_models);
     game_rebind();
-    printf("packs: zone %d, %u models, %u textures, %u KB read, %u ms\n", zone, s->nmodels, s->ntex, pack_bytes >> 10,
-           (u32)((cycles() - t0) / 294912));
+    printf("packs: zone %d, %u models, %u textures, %u KB read before, swap %u us" "\n", pend.zone, s->nmodels, s->ntex,
+           pend.bytes >> 10, (u32)((cycles() - t0) / 294.912f));
+    memset(&pend, 0, sizeof pend);
+}
+
+/* Per frame: prepare the zone the game expects next, swap when it is wanted (reading the rest at once if needed). */
+static void stream_update(Scene *s)
+{
+    int next = game_zone_next(zone_full), want = game_zone_wanted(zone_full);
+    if (want >= 0 && (!pend.active || pend.zone != want))
+        pend_start(want);
+    else if (want < 0 && next >= 0 && (!pend.active || pend.zone != next))
+        pend_start(next);
+    if (!pend.active)
+        return;
+    if (pend_step(want >= 0 ? 0xFFFFFFFF : READ_STEP) && want >= 0)
+        pend_commit(s);
 }
 
 static const u8 *load_packs(Scene *s)
@@ -160,7 +241,9 @@ int main(void)
     render_load_textures(&scene, 0, 0);
     game_init(&scene, blob);
     mem_mark(&base_mark);
-    switch_zone(&scene, scene_start(&scene)->zone);
+    pend_start(scene_start(&scene)->zone);
+    pend_step(0xFFFFFFFF);
+    pend_commit(&scene);
 #else
     render_load_textures(&scene, 0, 0);
     game_init(&scene, blob);
@@ -199,9 +282,7 @@ int main(void)
             }
         }
 #endif
-        int want = game_zone_wanted(zone_full);
-        if (want >= 0)
-            switch_zone(&scene, want);
+        stream_update(&scene);
 #endif
         u32 t1 = cycles();
         game_draw();

@@ -9,6 +9,8 @@ void game_update(void);
 void game_rebind(void);
 /* A stage Mario is close to whose pack is only loaded low (zone index), or -1. full[z]: stage z is loaded in full. */
 int game_zone_wanted(const unsigned char *full);
+/* The low-loaded zone Mario is heading for (a launch star's landing point), else game_zone_wanted; -1 for none. */
+int game_zone_next(const unsigned char *full);
 /* Test builds: put Mario just above the first model of a low-loaded zone. Returns its zone or -1. */
 int game_teleport_low(const unsigned char *full);
 /* Test builds: Mario caught by launch star i as if he spun there. Returns i, or -1 if there is none. */

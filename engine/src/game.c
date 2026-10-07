@@ -54,6 +54,7 @@ typedef struct {
 #define LAUNCH_START 45
 
 static void init_launch(Launch *L, const Row *r, const float *pts, u32 np);
+static V3 launch_pos(const Launch *L, float t);
 
 /* Mario constants from Petari MarioConst.cpp gMarioConstDefault (units per frame at 60 Hz). Indices of the arrays
  * are the jump kinds of MarioJump.cpp (tryJump _430, trySquatJump 5, tryBackJump 6, trySpinJump / tryTornadoJump 8) */
@@ -476,6 +477,22 @@ int game_zone_wanted(const unsigned char *full)
         if (dd < r * r && dd < best) { best = dd; want = in->zone; }
     }
     return want;
+}
+
+int game_zone_next(const unsigned char *full)
+{
+    if (mario->launch < 0)
+        return game_zone_wanted(full);
+    V3 end = launch_pos(&launches[mario->launch], 1.0f);
+    int best = -1;
+    float bd = 1e30f;
+    for (int i = 0; i < ninsts; i++) { /* the low zone model whose surface is nearest the landing point */
+        const Inst *in = &insts[i];
+        if (full[in->zone]) continue;
+        float d = vlen(vsub(end, v3(in->m[12], in->m[13], in->m[14]))) - in->reach;
+        if (d < bd) { bd = d; best = in->zone; }
+    }
+    return bd < 1500.0f ? best : -1;
 }
 
 int game_test_launch(int i)
