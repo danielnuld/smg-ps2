@@ -30,6 +30,7 @@ typedef struct {
     int squat, wall;    /* squatting; touching a wall this frame (wall_n valid) */
     int wall_timer;     /* frames since the last wall contact */
     int low_grav;       /* frames left at the spin's low gravity */
+    int slip_keep;      /* frames Mario may still stand on a 60-85 degree slope before it slips (Petari _41C) */
 } Player;
 
 /* Mario constants from Petari MarioConst.cpp gMarioConstDefault (units per frame at 60 Hz). Indices of the arrays
@@ -59,9 +60,12 @@ static const float JUMP_GRAV[12] = {1.8f, 1.8f, 1.8f, 1.8f, 1.8f, 0.95f, 1.8f, 2
 #define SPIN_TIME 30              /* mStartSpinTime: ground spin / cooldown */
 #define WALL_JUMP_XZ 13.0f        /* mWallJumpPowerXZ */
 #define WALL_JUMP_Y 30.0f         /* mWallJumpPowerY */
-#define SLIP_ANGLE_COS 0.5f       /* mSlipAngle 60: steeper floors are not ground (Mario slides off) */
-#define WALL_ANGLE_COS 0.087f     /* mForceWallAngle 85: only faces steeper than this are walls; 60-85 slopes are
-                                   * neither ground nor wall, Mario just slides down them */
+#define SLIP_ANGLE_COS 0.5f       /* mSlipAngle 60: steeper ground is a slope Mario slips down */
+#define WALL_ANGLE_COS 0.087f     /* mForceWallAngle 85: steeper faces are walls; up to here they are ground */
+#define SLIP_KEEP 15              /* Mario::updateFloorCode: frames on a slope before its floor code turns slip */
+#define SLIP_ACCEL 1.2f           /* ponytail: slide speed gain per frame x sin(slope); Petari's slip move is not
+                                   * ported, tune by eye */
+#define SLIP_MAX 30.0f
 #define WALL_KEEP 6               /* frames a wall contact stays valid (wall slide clip, wall kick) */
 #define GROUNDING 20.0f           /* mGravityGrounding: downward step while on the ground keeps Mario on crests */
 #define DROP_WAIT 5               /* mDropWaitTime: frames in the air before the fall clip (MarioMove.cpp:138) */
@@ -94,6 +98,10 @@ static V3 cam_pos;
 static const Model *m_coin, *m_purple, *m_piece, *m_kuribo;
 static const Model *m_mario_skin; /* Mario.arc, skinned (SKIN chunk) */
 static Anim *mario_anim;
+static int ground_flips, slip_frames;
+#ifdef SLOPE_TEST
+V3 slope_n;
+#endif /* bench: ground <-> air changes (flicker) and frames spent slipping */
 
 /* Interpolation frames per clip from Petari's marioAnimeTable (MarioAnimatorData.hpp, XanimeGroupInfo _8):
  * locomotion (基本) and squat 6, fall 15, long jump and its landing 6, back flip and its landing 6, triple-jump
@@ -102,7 +110,7 @@ static void mario_play(const char *clip, float speed, int loop)
 {
     static const struct { const char *clip; int frames; } t[] = {
         {"wait", 6}, {"walk", 6}, {"run", 6}, {"squatwait", 6}, {"squatwalk", 6}, {"fall", 15}, {"jumpbroad", 6},
-        {"jumpbroadland", 6}, {"jumpback", 6}, {"jumpbackland", 6}, {"jumprollland", 6}, {"wallslide", 10}};
+        {"jumpbroadland", 6}, {"jumpback", 6}, {"jumpbackland", 6}, {"jumprollland", 6}, {"wallslide", 10}, {"slidehipforward", 6}};
     int f = 0;
     for (unsigned i = 0; i < sizeof t / sizeof t[0]; i++)
         if (strcmp(t[i].clip, clip) == 0) f = t[i].frames;
@@ -236,6 +244,8 @@ static int collide_n(V3 *center, V3 up, float radius, V3 *ground_n, V3 *wall_n, 
 {
     unsigned int c0 = cycles();
     int ground = 0;
+    float flat = WALL_ANGLE_COS; /* ground normal = the flattest ground face touched: it is what holds Mario up, and
+                                  * taking the deepest one flipped between the two faces of a crease */
     if (wall) *wall = 0;
     for (int it = 0; it < 3; it++) {
         Hit hits[16];
@@ -243,16 +253,23 @@ static int collide_n(V3 *center, V3 up, float radius, V3 *ground_n, V3 *wall_n, 
         if (!n)
             break;
         int deepest = 0;
-        for (int i = 1; i < n; i++)
+        for (int i = 0; i < n; i++) {
             if (hits[i].dist > hits[deepest].dist)
                 deepest = i;
+            float di = vdot(hits[i].n, up);
+            if (di > flat) {
+                flat = di;
+                ground = 1;
+                if (ground_n) *ground_n = hits[i].n;
+            }
+        }
         V3 nrm = hits[deepest].n;
-        *center = vadd(*center, vmul(nrm, hits[deepest].dist + 0.01f));
         float d = vdot(nrm, up);
-        if (d > SLIP_ANGLE_COS) {
-            ground = 1;
-            if (ground_n) *ground_n = nrm;
-        } else if (d > -0.3f && d < WALL_ANGLE_COS && wall) {
+        /* walkable ground pushes straight up (depth / cos): pushing along a slope's normal would shift Mario sideways
+         * every frame by the grounding step, so he crept downhill while standing; steeper faces push along the normal */
+        if (d > SLIP_ANGLE_COS) *center = vadd(*center, vmul(up, (hits[deepest].dist + 0.01f) / d));
+        else *center = vadd(*center, vmul(nrm, hits[deepest].dist + 0.01f));
+        if (d > -0.3f && d < WALL_ANGLE_COS && wall) {
             *wall = 1;
             *wall_n = nrm;
         }
@@ -262,7 +279,8 @@ static int collide_n(V3 *center, V3 up, float radius, V3 *ground_n, V3 *wall_n, 
         Hit hits[16];
         int n = kcl_query(probe, radius, hits, 16);
         for (int i = 0; i < n; i++)
-            if (vdot(hits[i].n, up) > SLIP_ANGLE_COS) {
+            if (vdot(hits[i].n, up) > flat) {
+                flat = vdot(hits[i].n, up);
                 ground = 1;
                 if (ground_n) *ground_n = hits[i].n;
             }
@@ -355,11 +373,25 @@ void game_init(const Scene *s, const unsigned char *blob)
     for (u32 i = 0; i < s->nstarts; i++)
         if (s->starts[i].zone == 1) { st = &s->starts[i]; break; }
     start_pos = row_pos(st);
+#ifdef SLOPE_TEST
+    { /* Gateway planet face with a vertex at local (1093, 1353, 1265), normal (-0.22, 0.88, -0.43), 79 degrees off the
+       * radial up, 733 tall: start 150 above the vertex along the radial up, in world space through the placement */
+        extern V3 slope_n;
+        const float *pm = insts[0].m;
+        V3 ru = vnorm(v3(1093, 1353, 1265));
+        V3 lp = vadd(v3(1093, 1353, 1265), vmul(ru, 150)), ln = v3(-0.22f, 0.88f, -0.43f);
+        start_pos = v3(pm[0] * lp.x + pm[4] * lp.y + pm[8] * lp.z + pm[12], pm[1] * lp.x + pm[5] * lp.y + pm[9] * lp.z + pm[13],
+                       pm[2] * lp.x + pm[6] * lp.y + pm[10] * lp.z + pm[14]);
+        slope_n = vnorm(v3(pm[0] * ln.x + pm[4] * ln.y + pm[8] * ln.z, pm[1] * ln.x + pm[5] * ln.y + pm[9] * ln.z,
+                           pm[2] * ln.x + pm[6] * ln.y + pm[10] * ln.z));
+    }
+#endif
     mario->pos = start_pos;
     mario->up = up_at(mario->pos, v3(0, 1, 0));
     mario->face = vnorm(vtangent(v3(0, 0, 1), mario->up));
     mario->jump_kind = mario->last_jump = -1;
     mario->wall_timer = 1000;
+    mario->slip_keep = SLIP_KEEP;
     cam_pos = vadd(mario->pos, vadd(vmul(mario->up, 500), vmul(mario->face, -1000)));
     {   /* SMG cameras: CAMS + CARE chunks (tools/camera.py), each camera in its zone's frame (ZONE: world placement) */
         u32 sz;
@@ -424,6 +456,13 @@ static void update_mario(void)
     V3 cam_fwd = vnorm(vtangent(vsub(m->pos, cam_pos), m->up));
     V3 cam_right = vnorm(vcross(cam_fwd, m->up));
     V3 want = vadd(vmul(cam_right, pad_lx()), vmul(cam_fwd, pad_ly()));
+#ifdef SLOPE_TEST
+    { /* push into the 77 degree face slope_test() chose for 240 frames, then let go */
+        static int t;
+        extern V3 slope_n;
+        want = ++t < 240 ? vmul(vnorm(vtangent(vmul(slope_n, -1.0f), m->up)), 0.6f) : v3(0, 0, 0);
+    }
+#endif
     if (pad_held(PAD_UP)) want = vadd(want, cam_fwd);
     if (pad_held(PAD_DOWN)) want = vsub(want, cam_fwd);
     if (pad_held(PAD_RIGHT)) want = vadd(want, cam_right);
@@ -433,7 +472,18 @@ static void update_mario(void)
     m->hvel = vtangent(m->hvel, m->up);
     float ratio = vlen(m->hvel) / WALK_SPEED;
 
-    if (m->grounded) {
+    int slipping = m->grounded && m->slip_keep == 0;
+    if (slipping) { /* slide down the slope (hip slide), facing downhill; jumping still works */
+        V3 downhill = vtangent(vmul(m->up, -1.0f), m->ground_n);
+        float sn = vlen(downhill);
+        if (sn > 1e-3f) {
+            downhill = vmul(downhill, 1.0f / sn);
+            m->hvel = vadd(vmul(m->hvel, 0.98f), vmul(downhill, SLIP_ACCEL * sn));
+            if (vlen(m->hvel) > SLIP_MAX) m->hvel = vmul(vnorm(m->hvel), SLIP_MAX);
+            m->face = vnorm(vtangent(downhill, m->up));
+        }
+        if (pad_pressed(PAD_CROSS)) try_jump(m, ratio);
+    } else if (m->grounded) {
         if (stick > 0.1f) { /* turn towards the stick at most TURN_* radians per frame */
             float lim = ratio > 0.1f ? TURN_MOVE : TURN_STAND;
             V3 f = vnorm(vtangent(m->face, m->up));
@@ -481,6 +531,7 @@ static void update_mario(void)
         if (m->vup < -MAX_DROP) m->vup = -MAX_DROP;
     }
     if (m->spin_timer) m->spin_timer--;
+    if (slipping) slip_frames++;
 
     float down = m->grounded ? -GROUNDING : m->vup; /* on the ground: step down to follow the floor */
     V3 center = vadd(vadd(m->pos, vmul(m->up, BODY_RADIUS)), vadd(m->hvel, vmul(m->up, down)));
@@ -501,6 +552,8 @@ static void update_mario(void)
         m->grounded = 1; m->vup = 0; m->spin_used = 0; m->jump_kind = -1; m->low_grav = 0;
         m->ground_n = gn;
         m->hvel = vtangent(m->hvel, gn); /* walk along the slope */
+        if (vdot(gn, m->up) < SLIP_ANGLE_COS) { if (m->slip_keep) m->slip_keep--; }
+        else m->slip_keep = SLIP_KEEP;
     } else if (!ground) {
         if (m->grounded) { m->jump_kind = 0; m->air_timer = 0; m->last_jump = -1; }
         m->grounded = 0;
@@ -509,6 +562,17 @@ static void update_mario(void)
         float into = vdot(m->hvel, m->wall_n);
         if (into < 0) m->hvel = vsub(m->hvel, vmul(m->wall_n, into));
     }
+    if (m->grounded != was_ground) ground_flips++;
+#ifdef SLOPE_TEST
+    {
+        static int f;
+        if (++f % 10 == 0 && f <= 400)
+            printf("slope f %d grounded %d slip_keep %d flips %d wall %d d %.2f clip %s pos %d %d %d\n", f, m->grounded,
+                   m->slip_keep, ground_flips, m->wall, vdot(m->ground_n, m->up),
+                   mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-",
+                   (int)m->pos.x, (int)m->pos.y, (int)m->pos.z);
+    }
+#endif
     if (lost(m->pos)) { /* fell off: back to the start */
         m->pos = start_pos; m->hvel = v3(0, 0, 0); m->vup = 0;
     }
@@ -517,7 +581,8 @@ static void update_mario(void)
     if (mario_anim) { /* animation: the one-shot clip of a move plays out, then the state picks a loop */
         float sp = vlen(m->hvel) / WALK_SPEED;
         int busy = mario_anim->clip_id >= 0 && !mario_anim->loop && !mario_anim->done;
-        if (m->grounded && m->spin_timer > 0) mario_play("spinground", 1.0f, 0);
+        if (m->grounded && m->slip_keep == 0) mario_play("slidehipforward", 1.0f, 1); /* 坂すべり下向きあおむけ */
+        else if (m->grounded && m->spin_timer > 0) mario_play("spinground", 1.0f, 0);
         else if (m->grounded && (!busy || stick > 0.1f)) { /* moving cancels a landing */
             if (m->squat) mario_play(sp > 0.05f ? "squatwalk" : "squatwait", 1.0f, 1);
             else if (sp > 0.6f || (sp > 0.5f && mario_anim->clip_id >= 0 && mario_anim->loop && anim_length(mario_anim) &&
@@ -639,9 +704,9 @@ void game_draw(void)
 
 void game_debug(char *out, int n)
 {
-    snprintf(out, n, "mario %d %d %d up %d %d %d cam %d %d %d", (int)mario->pos.x, (int)mario->pos.y,
+    snprintf(out, n, "mario %d %d %d up %d %d %d cam %d %d %d flips %d slip %d", (int)mario->pos.x, (int)mario->pos.y,
              (int)mario->pos.z, (int)(mario->up.x * 100), (int)(mario->up.y * 100), (int)(mario->up.z * 100), (int)cam_pos.x, (int)cam_pos.y,
-             (int)cam_pos.z);
+             (int)cam_pos.z, ground_flips, slip_frames);
 }
 
 int game_coins(void) { return got_coins; }
