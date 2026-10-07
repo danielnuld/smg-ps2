@@ -4,3 +4,6 @@ out/
 refs/
 bin/
 __pycache__/
+tools/dolphin/dumps/
+tools/dolphin/*.png
+tools/dolphin/*.log
