@@ -3,6 +3,7 @@
 #include <sbv_patches.h>
 #include <sifrpc.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "blob.h"
 #include "game.h"
@@ -63,8 +64,10 @@ int main(void)
         if (t2 - t0 > worst && frame > 60) worst = t2 - t0;
         ms(a, sizeof a, "LOGIC", t_logic);
         ms(b, sizeof b, "DRAW", t_draw);
-        ms(c, sizeof c, "WORST", worst);
-        snprintf(line, sizeof line, "%s  %s  %s MS  TRIS %u", a, b, c, render_tris_drawn());
+        ms(c, sizeof c, "GS", t_gs);
+        snprintf(line, sizeof line, "%s  %s  %s", a, b, c);
+        ms(a, sizeof a, "WORST", worst);
+        snprintf(line + strlen(line), sizeof line - strlen(line), "  %s MS  TRIS %u", a, render_tris_drawn());
         render_text(16, 12, line);
         snprintf(line, sizeof line, "COINS %d  PURPLE %d/%d  PIECES %d  KURIBO %d  RUNTIME %u KB", game_coins(),
                  game_purple(), game_purple_total(), game_starpieces(), game_kuribo_alive(), mem_total() >> 10);
