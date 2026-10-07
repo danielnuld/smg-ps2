@@ -436,9 +436,6 @@ static void update_mario(void)
         m->ground_n = gn;
         m->hvel = vtangent(m->hvel, gn); /* walk along the slope */
     } else if (!ground) {
-#ifdef BENCH
-        if (m->grounded) printf("airborne vup %d\n", (int)m->vup);
-#endif
         if (m->grounded) { m->jump_kind = 0; m->air_timer = 0; m->last_jump = -1; }
         m->grounded = 0;
     }

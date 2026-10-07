@@ -75,9 +75,6 @@ int anim_play(Anim *a, const char *name, float speed, int loop)
             if ((int)i == a->clip_id)
                 return 1;
             a->clip_id = i;
-#ifdef BENCH
-            printf("clip %s\n", name);
-#endif
             /* loop to loop (walk <-> run): keep the step phase instead of restarting the cycle */
             a->phase = was_loop && loop && a->clip && anim_length(a) ? a->frame / anim_length(a) : -1.0f;
             a->frame = 0;
