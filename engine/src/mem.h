@@ -10,6 +10,10 @@ void *mem_alloc(int type, u32 size);
 /* Charge memory allocated elsewhere (library buffers) to a type. */
 void mem_charge(int type, u32 size);
 u32 mem_used(int type);
+/* Everything allocated after a mark goes away at release (zone packs: the arena stays a bump allocator). */
+typedef struct { u32 top, used[MEM_TYPES]; } MemMark;
+void mem_mark(MemMark *m);
+void mem_release(const MemMark *m);
 u32 mem_total(void);
 const char *mem_name(int type);
 void mem_report(void);

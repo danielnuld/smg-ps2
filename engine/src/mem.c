@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
-/* ponytail: one static arena, no free; a scene is loaded once. Per-scene reset comes with scene changes. */
+/* One static arena, no free: a bump allocator with marks (mem_mark / mem_release) for the streamed zone packs. */
 #define ARENA_SIZE (6 << 20)
 static u8 arena[ARENA_SIZE] __attribute__((aligned(64)));
 static u32 top;
@@ -22,6 +22,18 @@ void *mem_alloc(int type, u32 size)
     used[type] += size;
     memset(p, 0, size);
     return p;
+}
+
+void mem_mark(MemMark *m)
+{
+    m->top = top;
+    memcpy(m->used, used, sizeof used);
+}
+
+void mem_release(const MemMark *m)
+{
+    top = m->top;
+    memcpy(used, m->used, sizeof used);
 }
 
 static u32 external;

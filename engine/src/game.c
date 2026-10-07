@@ -81,6 +81,7 @@ typedef struct {
     const unsigned char *kcl;
     float m[16];     /* world matrix (uniform scale s) */
     float s, reach;  /* scale, bounding radius in world units */
+    int zone;
 } Inst;
 static Inst *insts;
 static int ninsts;
@@ -300,10 +301,6 @@ void game_init(const Scene *s, const unsigned char *blob)
     const unsigned char *g = blob_chunk(blob, "GRAV", &gsz);
     ngrav = *(const int *)g;
     grav = (const Gravity *)(g + 4);
-    m_coin = scene_model(s, "Coin");
-    m_purple = scene_model(s, "PurpleCoin");
-    m_piece = scene_model(s, "StarPiece");
-    m_kuribo = scene_model(s, "Kuribo");
     m_mario_skin = scene_model(s, "Mario");
     if (m_mario_skin && m_mario_skin->skin) {
         anim_init(s);
@@ -329,21 +326,9 @@ void game_init(const Scene *s, const unsigned char *blob)
     int t_coin = scene_type(s, "Coin"), t_pc = scene_type(s, "PurpleCoin"), t_circle = scene_type(s, "CirclePurpleCoinGroup");
     int t_rail = scene_type(s, "PurpleRailCoin"), t_piece = scene_type(s, "StarPiece"), t_kuribo = scene_type(s, "Kuribo");
     insts = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(Inst));
+    game_rebind();
     for (u32 i = 0; i < s->nobjs; i++) {
         const Row *r = &s->objs[i];
-        if (r->type != t_coin && r->type != t_pc && r->type != t_piece && r->type != t_kuribo && r->type != t_circle &&
-            r->type != t_rail) {
-            const char *name = s->types + 32 * r->type;
-            const Model *md = scene_model(s, name);
-            if (md) {
-                Inst *in = &insts[ninsts++];
-                in->md = md;
-                in->kcl = scene_kcl(s, name);
-                mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
-                in->s = r->scale[0];
-                in->reach = md->radius * in->s;
-            }
-        }
         if (r->type == t_coin) { coins[ic].pos = row_pos(r); coins[ic++].alive = 1; }
         else if (r->type == t_pc) { purple[ip].pos = row_pos(r); purple[ip++].alive = 1; }
         else if (r->type == t_piece) { pieces[is].pos = row_pos(r); pieces[is++].alive = 1; }
@@ -407,6 +392,68 @@ void game_init(const Scene *s, const unsigned char *blob)
     }
     printf("game: %d static instances, coins %d, purple %d, star pieces %d, kuribo %d, start (%d %d %d)\n", ninsts,
            ncoins, npurple, npieces, nkuribo, (int)start_pos.x, (int)start_pos.y, (int)start_pos.z);
+}
+
+void game_rebind(void)
+{
+    const Scene *s = sc;
+    m_coin = scene_model(s, "Coin");
+    m_purple = scene_model(s, "PurpleCoin");
+    m_piece = scene_model(s, "StarPiece");
+    m_kuribo = scene_model(s, "Kuribo");
+    int t_coin = scene_type(s, "Coin"), t_pc = scene_type(s, "PurpleCoin"), t_circle = scene_type(s, "CirclePurpleCoinGroup");
+    int t_rail = scene_type(s, "PurpleRailCoin"), t_piece = scene_type(s, "StarPiece"), t_kuribo = scene_type(s, "Kuribo");
+    ninsts = 0;
+    for (u32 i = 0; i < s->nobjs; i++) { /* every placed model without behaviour: planets and the rest */
+        const Row *r = &s->objs[i];
+        if (r->type == t_coin || r->type == t_pc || r->type == t_piece || r->type == t_kuribo || r->type == t_circle ||
+            r->type == t_rail)
+            continue;
+        const char *name = s->types + 32 * r->type;
+        const Model *md = scene_model(s, name);
+        if (!md) continue;
+        Inst *in = &insts[ninsts++];
+        in->md = md;
+        in->kcl = scene_kcl(s, name);
+        in->zone = r->zone;
+        mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
+        in->s = r->scale[0];
+        in->reach = md->radius * in->s;
+    }
+}
+
+int game_zone_wanted(const unsigned char *full)
+{
+    /* the nearest low-loaded stage whose bounding sphere (+1500) Mario is in, once he is out of every full zone's
+     * model sphere (else the zone he stands in would go low and come back each frame). ponytail: proximity only */
+    int want = -1;
+    float best = 1e30f;
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        V3 d = vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14]));
+        if (in->zone && full[in->zone] && vdot(d, d) < in->reach * in->reach) return -1;
+    }
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (full[in->zone]) continue;
+        V3 d = vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14]));
+        float r = in->reach + 1500.0f, dd = vdot(d, d);
+        if (dd < r * r && dd < best) { best = dd; want = in->zone; }
+    }
+    return want;
+}
+
+int game_teleport_low(const unsigned char *full)
+{
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (full[in->zone]) continue;
+        V3 c = v3(in->m[12], in->m[13], in->m[14]), u = up_at(c, v3(0, 1, 0));
+        mario->pos = vadd(c, vmul(u, -(in->reach + 300.0f))); /* gravity points down: up = -g, go against it */
+        mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
+        return in->zone;
+    }
+    return -1;
 }
 
 /* --- update ---------------------------------------------------------------------------------------------- */

@@ -8,8 +8,12 @@ typedef struct { float m[16]; } Mat4; /* column-major, v' = M v */
 void render_init(void);
 /* Vertical field of view in degrees (SMG's camera default is 45). */
 void render_set_fovy(float deg);
-/* Upload the scene's textures (TEXT chunk) to VRAM and build their GS state packets. Call once after blob_load. */
-void render_load_textures(const Scene *s);
+/* Upload the scene's textures from index first_tex on to VRAM (their GS state packets too) and build the prebuilt
+ * chains of the models from first_model on. Call after blob_load / blob_add (0, 0 the first time). */
+void render_load_textures(const Scene *s, u32 first_tex, u32 first_model);
+/* Undo render_load_textures from these indices: frees those models' chains and rewinds the texture VRAM. Waits for
+ * the GS and the VIF first, so nothing in flight still reads them. */
+void render_release(Scene *s, u32 first_tex, u32 first_model);
 void render_begin(const float eye[3], const float target[3], const float up[3]);
 /* Draw a model with world matrix `world` (column-major 4x4), flat-shaded with a base colour. */
 void render_model(const Model *md, const float world[16], u8 r, u8 g, u8 b);

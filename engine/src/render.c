@@ -54,7 +54,10 @@ static qword_t *headers_static;  /* [textured][count]: {n, 0, matrix base 1} + G
 static u32 tris_drawn;
 static u32 vram_tex;             /* VRAM words taken by textures and CLUTs */
 static qword_t *tex_packets;     /* per texture 5 qwords (GIF tag + TEX0, TEX1, CLAMP, TEST), then 2 for NO_TEX */
-static u32 ntex;
+static int vram_cursor = -1;      /* texture VRAM is ours above the frame buffers: a bump pointer, rewound per zone */
+static int tex_vram[SCENE_MAX_TEX + 1];
+#define VRAM_WORDS (1 << 20)        /* 4 MB of GS memory in 32-bit words */
+#define NO_TEX_PACKET (tex_packets + 5 * SCENE_MAX_TEX)
 static int cur_tex;
 static u64 test_z;               /* TEST with the depth test only */
 
@@ -218,18 +221,34 @@ void render_begin(const float eye[3], const float target[3], const float up[3])
 
 static void build_chain(Model *md);
 
-void render_load_textures(const Scene *s)
+static int vram_take(int words)
 {
-    ntex = s->ntex;
-    tex_packets = mem_alloc(MEM_RENDER, (5 * ntex + 2) * 16);
-    qword_t *up = memalign(64, (ntex * 2 * 16 + 4) * 16); /* upload chain, freed after the transfer */
+    int a = vram_cursor;
+    vram_cursor += (words + 63) & ~63; /* block aligned (TBP / CBP count 64 words) */
+    return a;
+}
+
+void render_load_textures(const Scene *s, u32 first_tex, u32 first_model)
+{
+    u32 ntex = s->ntex;
+    if (!tex_packets) { /* fixed slots: prebuilt chains point into them; the NO_TEX packet sits after the last */
+        tex_packets = mem_alloc(MEM_RENDER, (5 * SCENE_MAX_TEX + 2) * 16);
+        vram_cursor = graph_vram_allocate(64, 1, GS_PSM_32, GRAPH_ALIGN_BLOCK); /* first word above libgraph's */
+        qword_t *p = NO_TEX_PACKET;
+        p[0].dw[0] = GIF_SET_TAG(1, 1, 0, 0, GIF_FLG_PACKED, 1);
+        p[0].dw[1] = GIF_REG_AD;
+        p[1].dw[0] = test_z;
+        p[1].dw[1] = GS_REG_TEST;
+    }
+    qword_t *up = memalign(64, ((ntex - first_tex) * 2 * 16 + 4) * 16); /* upload chain, freed after the transfer */
     qword_t *q = up;
-    for (u32 i = 0; i < ntex; i++) {
+    for (u32 i = first_tex; i < ntex; i++) {
         const TexEntry *t = s->tex[i].e;
         /* PSMT4 needs an even buffer width in 64-pixel units: 128-pixel rows for every texture (max 128 wide) */
-        int addr = graph_vram_allocate(128, t->h, GS_PSM_4, GRAPH_ALIGN_BLOCK);
-        int clut = graph_vram_allocate(8, 2, GS_PSM_32, GRAPH_ALIGN_BLOCK);
-        if (addr < 0 || clut < 0) {
+        tex_vram[i] = vram_cursor;
+        int addr = vram_take(graph_vram_size(128, t->h, GS_PSM_4, GRAPH_ALIGN_BLOCK));
+        int clut = vram_take(graph_vram_size(8, 2, GS_PSM_32, GRAPH_ALIGN_BLOCK));
+        if (vram_cursor > VRAM_WORDS) {
             printf("render: VRAM full at texture %u of %u\n", i, ntex);
             for (;;) {}
         }
@@ -247,28 +266,40 @@ void render_load_textures(const Scene *s)
         /* ponytail: blended textures (alpha 2) are drawn as cut-outs; Gateway has none */
         p[4].dw[0] = t->alpha ? GS_SET_TEST(1, ATEST_METHOD_GREATER_EQUAL, 0x40, 0, 0, 0, 1, ZTEST_METHOD_GREATER_EQUAL) : test_z;
         p[4].dw[1] = GS_REG_TEST;
-        vram_tex += graph_vram_size(128, t->h, GS_PSM_4, GRAPH_ALIGN_BLOCK) + graph_vram_size(8, 2, GS_PSM_32, GRAPH_ALIGN_BLOCK);
     }
-    qword_t *p = tex_packets + 5 * ntex;
-    p[0].dw[0] = GIF_SET_TAG(1, 1, 0, 0, GIF_FLG_PACKED, 1);
-    p[0].dw[1] = GIF_REG_AD;
-    p[1].dw[0] = test_z;
-    p[1].dw[1] = GS_REG_TEST;
+    tex_vram[ntex] = vram_cursor;
+    vram_tex = vram_cursor - tex_vram[0];
     q = draw_texture_flush(q);
     FlushCache(0);
     dma_channel_send_chain(DMA_CHANNEL_GIF, up, q - up, 0, 0);
     dma_wait_fast();
     free(up);
     printf("render: %u textures in VRAM, %u KB (words x 4)\n", ntex, vram_tex * 4 / 1024);
-    for (u32 i = 0; i < s->nmodels; i++)
+    for (u32 i = first_model; i < s->nmodels; i++)
         if (!s->models[i].skin && s->models[i].vu_ngroups)
             build_chain(&s->models[i]);
+}
+
+void render_release(Scene *s, u32 first_tex, u32 first_model)
+{
+    dma_channel_wait(DMA_CHANNEL_VIF1, 0);
+    dma_channel_wait(DMA_CHANNEL_GIF, 0);
+    for (u32 i = first_model; i < s->nmodels; i++)
+        if (s->models[i].chain) {
+            packet2_t *pk = s->models[i].chain;
+            mem_charge(MEM_RENDER, -(u32)(pk->max_qwords_count * 16));
+            packet2_free(pk);
+            s->models[i].chain = NULL;
+        }
+    if (first_tex < s->ntex)
+        vram_cursor = tex_vram[first_tex];
+    cur_tex = -1;
 }
 
 /* Switch texture state in the VIF chain: FLUSH waits for VU1 and PATH1, DIRECT sends the A+D packet on PATH2. */
 static void emit_tex(packet2_t *pk, u32 t)
 {
-    const qword_t *p = t == NO_TEX ? tex_packets + 5 * ntex : tex_packets + 5 * t;
+    const qword_t *p = t == NO_TEX ? NO_TEX_PACKET : tex_packets + 5 * t;
     u32 n = t == NO_TEX ? 2 : 5;
     packet2_chain_ref(pk, p, n, 0, 0, 0);
     packet2_vif_flush(pk, 0);

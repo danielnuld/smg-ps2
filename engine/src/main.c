@@ -45,12 +45,64 @@ static const u8 *load_file(const char *path)
     return b;
 }
 
+static const u8 *zone_files[64];
+static unsigned char zone_full[64];
+static const u8 *scene_blob;
+static u32 nzones, base_models, base_tex, base_kcl;
+static MemMark base_mark;
+
+/* Load every stage pack for the chain of zone `start`: in full on the chain, low elsewhere. */
+static int load_zones(Scene *s, int start)
+{
+    char path[160];
+    u32 sz;
+    const u8 *zn = blob_chunk(scene_blob, "ZONE", &sz), *zp = blob_chunk(scene_blob, "ZPAR", &sz);
+    const s32 *parent = (const s32 *)(zp + 4);
+    memset(zone_full, 0, sizeof zone_full);
+    for (int z = start; z >= 0 && z < 64; z = parent[z])
+        zone_full[z] = 1;
+    zone_full[0] = 1;
+    for (u32 z = 0; z < nzones; z++) {
+        snprintf(path, sizeof path, "host:packs/%s/%s%s", PACKS, (const char *)(zn + 4 + 56 * z),
+                 zone_full[z] ? ".bin" : ".low.bin");
+        zone_files[z] = load_file(path);
+        if (blob_add(s, zone_files[z]) != 0)
+            return -1;
+    }
+    return 0;
+}
+
+/* Swap the stage packs for another zone's chain: drop everything loaded after the base, load again. ponytail:
+ * synchronous (the frame stalls while host: reads), and every stage pack is reloaded, not only the changed ones */
+static void switch_zone(Scene *s, int zone)
+{
+    u32 t0 = cycles();
+    render_release(s, base_tex, base_models);
+    for (u32 z = 0; z < nzones; z++) {
+        free((void *)zone_files[z]);
+        zone_files[z] = NULL;
+    }
+    s->nmodels = base_models;
+    s->ntex = base_tex;
+    s->nkcl = base_kcl;
+    mem_release(&base_mark);
+    pack_bytes = 0;
+    if (load_zones(s, zone) != 0) {
+        printf("packs: zone %d failed\n", zone);
+        for (;;) {}
+    }
+    render_load_textures(s, base_tex, base_models);
+    game_rebind();
+    printf("packs: zone %d, %u models, %u textures, %u KB read, %u ms\n", zone, s->nmodels, s->ntex, pack_bytes >> 10,
+           (u32)((cycles() - t0) / 294912));
+}
+
 static const u8 *load_packs(Scene *s)
 {
     char path[160];
     const char *dir = "host:packs/"; /* run the ELF from out/ (host: cannot leave the ELF folder) */
     snprintf(path, sizeof path, "%s%s/scene.bin", dir, PACKS);
-    const u8 *scene_blob = load_file(path);
+    scene_blob = load_file(path);
     if (blob_load(s, scene_blob) != 0)
         return NULL;
     snprintf(path, sizeof path, "%sresident.bin", dir);
@@ -60,20 +112,13 @@ static const u8 *load_packs(Scene *s)
     if (blob_add(s, load_file(path)) != 0)
         return NULL;
     u32 sz;
-    const u8 *zn = blob_chunk(scene_blob, "ZONE", &sz), *zp = blob_chunk(scene_blob, "ZPAR", &sz);
-    u32 nz = *(const u32 *)zn;
-    const s32 *parent = (const s32 *)(zp + 4);
-    int chain[64] = {0};
-    for (int z = scene_start(s)->zone; z >= 0 && z < 64; z = parent[z])
-        chain[z] = 1;
-    chain[0] = 1;
-    for (u32 z = 0; z < nz && z < 64; z++) {
-        snprintf(path, sizeof path, "%s%s/%s%s", dir, PACKS, (const char *)(zn + 4 + 56 * z),
-                 chain[z] ? ".bin" : ".low.bin");
-        if (blob_add(s, load_file(path)) != 0)
-            return NULL;
-    }
-    printf("packs: %s, %u zones, %u models, %u textures, %u KB read\n", PACKS, nz, s->nmodels, s->ntex,
+    nzones = *(const u32 *)blob_chunk(scene_blob, "ZONE", &sz);
+    if (nzones > 64)
+        return NULL;
+    base_models = s->nmodels;
+    base_tex = s->ntex;
+    base_kcl = s->nkcl;
+    printf("packs: %s, %u zones, base %u models, %u textures, %u KB read\n", PACKS, nzones, s->nmodels, s->ntex,
            pack_bytes >> 10);
     return scene_blob;
 }
@@ -110,8 +155,16 @@ int main(void)
         printf("slice: bad blob\n");
         for (;;) {}
     }
-    render_load_textures(&scene);
+#ifdef PACKS
+    /* base packs first, then the game (its allocations stay), then the zone packs above the mark */
+    render_load_textures(&scene, 0, 0);
     game_init(&scene, blob);
+    mem_mark(&base_mark);
+    switch_zone(&scene, scene_start(&scene)->zone);
+#else
+    render_load_textures(&scene, 0, 0);
+    game_init(&scene, blob);
+#endif
     mem_report();
 
     u32 t_logic = 0, t_draw = 0, t_gs = 0, worst = 0, frame = 0;
@@ -126,6 +179,15 @@ int main(void)
         game_kcl_cycles = 0;
         pad_update();
         game_update();
+#ifdef PACKS
+#ifdef ZONE_TEST
+        if (frame == 120)
+            printf("zone test: teleport to zone %d\n", game_teleport_low(zone_full));
+#endif
+        int want = game_zone_wanted(zone_full);
+        if (want >= 0)
+            switch_zone(&scene, want);
+#endif
         u32 t1 = cycles();
         game_draw();
         u32 t2 = cycles();

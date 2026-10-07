@@ -5,6 +5,12 @@
 
 void game_init(const Scene *s, const unsigned char *blob);
 void game_update(void);
+/* After the scene's models changed (zone packs swapped): find every placed model again. */
+void game_rebind(void);
+/* A stage Mario is close to whose pack is only loaded low (zone index), or -1. full[z]: stage z is loaded in full. */
+int game_zone_wanted(const unsigned char *full);
+/* Test builds: put Mario just above the first model of a low-loaded zone. Returns its zone or -1. */
+int game_teleport_low(const unsigned char *full);
 void game_draw(void);
 /* HUD numbers */
 int game_coins(void);
