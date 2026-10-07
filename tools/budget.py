@@ -293,19 +293,22 @@ def scenario_masks(b):
         out[no] = lambda stage, i=i: 1 | ((bcsv_column(b, stage) or [0] * (i + 1))[i] << 1)
     return out
 
-def active_stages(main, mask_of, layers_of):
+def active_stages(main, mask_of, layers_of, parent=None):
     """Stages placed for one scenario: main, then every zone whose StageObjInfo row is in an active layer
-    (createLocalStageDataHolder); each stage contributes common + its scenario layers. -> {stage: [layer names]}"""
-    out, todo = {}, [main]
+    (createLocalStageDataHolder); each stage contributes common + its scenario layers. -> {stage: [layer names]}
+    `parent`, if given, is filled with {zone: stage that places it}."""
+    out, todo = {}, [(main, None)]
     while todo:
-        st = todo.pop()
+        st, up = todo.pop()
         if st in out:
             continue
+        if parent is not None and up:
+            parent[st] = up
         m = mask_of(st)
         out[st] = [LAYERS[i] for i in range(len(LAYERS)) if m >> i & 1]
         lay = layers_of(st)
         for l in out[st]:
-            todo += lay.get(l, {}).get("zones", [])
+            todo += [(z, st) for z in lay.get(l, {}).get("zones", [])]
     return out
 
 def row(label, parts):
@@ -375,8 +378,9 @@ def main(fs, out):
                 sd = {n.lower(): b for n, b in rarc_files(scen.read_bytes())}["scenariodata.bcsv"]
                 layers_of = lambda st: arc_layers(stage / f"{st}.arc", cache)["layers"] if (stage / f"{st}.arc").exists() else {}
                 for no, mask_of in scenario_masks(sd).items():
-                    act = active_stages(gname, mask_of, layers_of)
-                    s_parts, s_objs, s_unres = [], set(), set()
+                    up = {}
+                    act = active_stages(gname, mask_of, layers_of, up)
+                    s_parts, s_objs, s_unres, per = [], set(), set(), {}
                     for st, lays in act.items():
                         zp = stage / f"{st}.arc"
                         if not zp.exists():
@@ -388,10 +392,38 @@ def main(fs, out):
                         s_parts.append(arc_stats(zp, cache))
                         s_objs |= lod(arcs)
                         s_unres |= unknown
+                        per[st] = (zp, lod(arcs), {n for n in names if n in planets})
                     s_parts += [arc_stats(objects[n], cache) for n in sorted(s_objs)]
                     r = row(gname, s_parts)
+                    # floor for any zone split: main stage + one zone (+ the stages that place it), shared archives once
+                    def chain_size(z):
+                        chain = [z]
+                        while chain[-1] in up:
+                            chain.append(up[chain[-1]])
+                        chain = [c for c in dict.fromkeys(chain + [gname]) if c in per]
+                        objs = set().union(*(per[c][1] for c in chain))
+                        return row(z, [arc_stats(per[c][0], cache) for c in chain] +
+                                   [arc_stats(objects[n], cache) for n in sorted(objs)])["ps2_total"]
+                    pairs = sorted(((chain_size(z), z) for z in per), reverse=True)
+                    # streaming with distant zones kept visible: zone chain in full + every other stage's planets at
+                    # their lowest LOD archive, no actors (actors beyond their far clip are not drawn, ClippingJudge.cpp:39-41)
+                    # ponytail: no visibility data used; actors visible from afar (bosses) would need their own model
+                    low = lambda n: next(a for a in (n + "Low", n + "Middle", n) if a.lower() in objects)
+                    def stream_size(z):
+                        chain = [z]
+                        while chain[-1] in up:
+                            chain.append(up[chain[-1]])
+                        chain = [c for c in dict.fromkeys(chain + [gname]) if c in per]
+                        objs = set().union(*(per[c][1] for c in chain))
+                        objs |= {low(n).lower() for c in per if c not in chain for n in per[c][2] if any(
+                                 (n + x).lower() in objects for x in ("Low", "Middle", ""))}
+                        return row(z, [arc_stats(per[c][0], cache) for c in per] +
+                                   [arc_stats(objects[n], cache) for n in sorted(objs)])["ps2_total"]
+                    streams = sorted(((stream_size(z), z) for z in per), reverse=True)
                     scenarios.append(dict(galaxy=r.pop("name"), scenario=no, **r, zones=len(act), unresolved=len(s_unres), unresolved_names=" ".join(sorted(s_unres)),
-                                          zone_list=" ".join(sorted(act))))
+                                          zone_list=" ".join(sorted(act)), main_only_ps2=chain_size(gname) if gname in per else 0,
+                                          worst_zone=pairs[0][1], worst_zone_ps2=pairs[0][0],
+                                          stream_worst_zone=streams[0][1], stream_ps2=streams[0][0]))
     finally:
         cache_file.write_text(json.dumps(cache))
     for fname, rows in (("budget.csv", galaxies), ("zones.csv", zones)) + ((("scenarios.csv", scenarios),) if SCENARIO else ()):
@@ -431,7 +463,12 @@ def selftest():
     act = active_stages("G", mask(2), lambda st: lay.get(st, {}))
     assert act == {"G": ["common", "layerb"], "Z1": ["common", "layerb"], "Z3": ["common", "layerb"],
                    "Z4": ["common", "layerb"]}, act
-    assert set(active_stages("G", mask(1), lambda st: lay.get(st, {}))) == {"G", "Z1", "Z2"}
+    up = {}
+    assert set(active_stages("G", mask(1), lambda st: lay.get(st, {}), up)) == {"G", "Z1", "Z2"}
+    assert up == {"Z1": "G", "Z2": "G"}, up
+    up = {}
+    active_stages("G", mask(2), lambda st: lay.get(st, {}), up)
+    assert up["Z4"] == "Z1", up
     # scenario_masks on a real BCSV: ScenarioNo [1, 2], column G [1, 2]; missing column -> common only
     fields = b"".join(struct.pack(">IIHBB", jmap_hash(f), 0xFFFFFFFF, o, 0, 0) for f, o in (("ScenarioNo", 0), ("G", 4)))
     sd = struct.pack(">4I", 2, 2, 16 + 24, 8) + fields + struct.pack(">4I", 1, 1, 2, 2)
