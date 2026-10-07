@@ -35,6 +35,8 @@ typedef struct {
 } Scene;
 
 int blob_load(Scene *s, const u8 *blob);
+/* Payload of a chunk by tag (NULL if absent). */
+const u8 *blob_chunk(const u8 *blob, const char *tag, u32 *size);
 int scene_type(const Scene *s, const char *name);
 const Model *scene_model(const Scene *s, const char *name);
 

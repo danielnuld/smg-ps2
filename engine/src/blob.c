@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
-static const u8 *find(const u8 *blob, const char *tag, u32 *size)
+const u8 *blob_chunk(const u8 *blob, const char *tag, u32 *size)
 {
     u32 n = *(const u32 *)(blob + 8);
     const u8 *p = blob + 12;
@@ -25,8 +25,8 @@ int blob_load(Scene *s, const u8 *blob)
 {
     if (memcmp(blob, "SMGS", 4) != 0)
         return -1;
-    const u8 *t = find(blob, "TYPE", NULL), *o = find(blob, "OBJS", NULL), *st = find(blob, "STRT", NULL);
-    const u8 *m = find(blob, "MODL", NULL), *k = find(blob, "KCL ", NULL);
+    const u8 *t = blob_chunk(blob, "TYPE", NULL), *o = blob_chunk(blob, "OBJS", NULL), *st = blob_chunk(blob, "STRT", NULL);
+    const u8 *m = blob_chunk(blob, "MODL", NULL), *k = blob_chunk(blob, "KCL ", NULL);
     s->ntypes = *(const u32 *)t;
     s->types = (const char *)(t + 4);
     s->nobjs = *(const u32 *)o;

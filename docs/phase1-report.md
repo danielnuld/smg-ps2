@@ -77,3 +77,24 @@ The EE path is an order of magnitude too slow for 16.7 ms; the renderer has to m
   turns the KCL little-endian by walking its octree (`slice.kcl_to_le`).
 - Host tests (`engine/test/run.sh`, gcc in WSL): `test_gravity` (both gravities, priority, sum, inverse) and
   `test_kcl` on the real planet KCL (face hit 10 deep on three prisms, none 100 away, none outside the box).
+
+## Gameplay subset (tasks 4.3-4.4) — `engine/src/game.c`
+
+Playable on PCSX2 (`docs/renders/slice-walk.png`): Mario walks with the stick (camera-relative, on the plane under
+him), jumps (Cross), spins (Square), follows point and plane gravity around the planet, collides with the planet KCL,
+collects coins, purple coins and star pieces; the four Kuribo chase him, are stomped or stunned by the spin, and
+knock him back on contact. The scene holds **100 purple coins** (42 single + 4 circles + 1 rail), the number of
+Gateway's purple-coin mission, which checks the circle (arg0 count, arg2 radius, CircleCoinGroup.cpp) and rail
+(arg0 count, RailCoin.cpp) placement.
+
+Data per object, all from one arena: Pickup 16 B (coin, purple coin, star piece), Kuribo 48 B, Player 80 B.
+Mario uses Petari's constants (MarioConst.cpp gMarioConstDefault: walk 13, inertia 0.9, jump 22, jump gravity 1.8,
+max drop 35, spin lift 5).
+
+Differences from SMG (not costed in the slice):
+- Mario: a box instead of the skinned model, no animation; walk only (no dash, triple/long jump, wall jump, slopes,
+  slip); one collision sphere; spin = small lift + stun.
+- Kuribo: no model animation, chases straight on the surface, simplified stomp/side-hit tests.
+- Camera: plain follow behind and above Mario (SMG's camera system is ~12.5 k lines and uses camera areas).
+- Rails: straight segments between control points (the game uses Bezier rails).
+- No sound, particles, shadows, HUD layouts, star bits shooting, pause menu.

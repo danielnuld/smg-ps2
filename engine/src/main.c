@@ -1,12 +1,11 @@
 #include <kernel.h>
 #include <loadfile.h>
-#include <math.h>
 #include <sbv_patches.h>
 #include <sifrpc.h>
 #include <stdio.h>
-#include <stdlib.h>
 
 #include "blob.h"
+#include "game.h"
 #include "mem.h"
 #include "pad.h"
 #include "render.h"
@@ -22,7 +21,7 @@ static inline u32 cycles(void)
     __asm__ volatile("mfc0 %0, $9" : "=r"(c));
     return c;
 }
-#define EE_HZ 294912000.0f
+#define EE_MHZ 294.912f
 
 static void load_modules(void)
 {
@@ -33,67 +32,47 @@ static void load_modules(void)
     SifLoadModule("rom0:PADMAN", 0, NULL);
 }
 
-static void colour_for(const char *t, u8 *r, u8 *g, u8 *b)
+static void ms(char *out, int n, const char *label, u32 c)
 {
-    *r = 0x70; *g = 0xB0; *b = 0x60; /* planet */
-    if (t[0] == 'C' && t[1] == 'o') { *r = 0xF0; *g = 0xD0; *b = 0x30; }       /* Coin */
-    else if (t[0] == 'P' && t[1] == 'u') { *r = 0xB0; *g = 0x50; *b = 0xF0; }  /* PurpleCoin */
-    else if (t[0] == 'S') { *r = 0x60; *g = 0xD0; *b = 0xF0; }                 /* StarPiece */
-    else if (t[0] == 'K') { *r = 0x90; *g = 0x50; *b = 0x20; }                 /* Kuribo */
+    u32 us = (u32)(c / EE_MHZ);
+    snprintf(out, n, "%s %u.%02u", label, us / 1000, (us % 1000) / 10);
 }
 
 int main(void)
 {
     load_modules();
-    {   /* heap check: how much malloc can give right after boot */
-        u32 got = 0;
-        for (u32 sz = 16 << 20; sz >= 64 << 10; sz >>= 1) { void *p = malloc(sz); if (p) { got = sz; free(p); break; } }
-        printf("slice: largest malloc at boot %u KB\n", got >> 10);
-    }
     render_init();
     pad_init();
     if (blob_load(&scene, slice_blob) != 0) {
         printf("slice: bad blob\n");
         for (;;) {}
     }
-    printf("slice: %u types, %u objects, %u models, kcl %u B\n", scene.ntypes, scene.nobjs, scene.nmodels,
-           scene.kcl_size);
-
-    /* world matrices for every placed object that has a model (zone-local space) */
-    const Model **mdl = mem_alloc(MEM_OBJECTS, scene.nobjs * sizeof(Model *));
-    float (*world)[16] = mem_alloc(MEM_OBJECTS, scene.nobjs * 64);
-    for (u32 i = 0; i < scene.nobjs; i++) {
-        const Row *r = &scene.objs[i];
-        mdl[i] = scene_model(&scene, scene.types + 32 * r->type);
-        mat_translate_rot_scale(world[i], r->pos, r->rot, r->scale);
-    }
+    game_init(&scene, slice_blob);
     mem_report();
 
-    float yaw = 0.6f, pitch = 0.35f, dist = 6500.0f;
-    u32 frame_cycles = 0;
-    char line[96];
+    u32 t_logic = 0, t_draw = 0, worst = 0, frame = 0;
+    char line[128], a[24], b[24], c[24];
     for (;;) {
         u32 t0 = cycles();
         pad_update();
-        yaw += pad_lx() * 0.03f + 0.004f;
-        pitch += pad_ly() * 0.02f;
-        if (pad_held(PAD_R1)) dist *= 0.98f;
-        if (pad_held(PAD_L1)) dist *= 1.02f;
-        float eye[3] = {dist * cosf(pitch) * sinf(yaw), dist * sinf(pitch), dist * cosf(pitch) * cosf(yaw)};
-        float target[3] = {0, 0, 0}, up[3] = {0, 1, 0};
-        render_begin(eye, target, up);
-        for (u32 i = 0; i < scene.nobjs; i++) {
-            if (!mdl[i])
-                continue;
-            u8 r, g, b;
-            colour_for(scene.types + 32 * scene.objs[i].type, &r, &g, &b);
-            render_model(mdl[i], world[i], r, g, b);
-        }
-        u32 us = (u32)(frame_cycles / (EE_HZ / 1000000.0f));
-        snprintf(line, sizeof line, "FRAME %u.%02u MS  TRIS %u  RUNTIME %u KB", us / 1000, (us % 1000) / 10,
-                 render_tris_drawn(), mem_total() >> 10);
-        render_text(16, 16, line);
-        frame_cycles = cycles() - t0; /* EE time before waiting for vsync */
+        game_update();
+        u32 t1 = cycles();
+        game_draw();
+        u32 t2 = cycles();
+        t_logic = t1 - t0;
+        t_draw = t2 - t1;
+        if (t2 - t0 > worst && frame > 60) worst = t2 - t0;
+        ms(a, sizeof a, "LOGIC", t_logic);
+        ms(b, sizeof b, "DRAW", t_draw);
+        ms(c, sizeof c, "WORST", worst);
+        snprintf(line, sizeof line, "%s  %s  %s MS  TRIS %u", a, b, c, render_tris_drawn());
+        render_text(16, 12, line);
+        snprintf(line, sizeof line, "COINS %d  PURPLE %d/%d  PIECES %d  KURIBO %d  RUNTIME %u KB", game_coins(),
+                 game_purple(), game_purple_total(), game_starpieces(), game_kuribo_alive(), mem_total() >> 10);
+        render_text(16, 26, line);
+        if ((frame++ & 255) == 0)
+            printf("frame %u: logic %u us, draw %u us, worst %u us, tris %u\n", frame, (u32)(t_logic / EE_MHZ),
+                   (u32)(t_draw / EE_MHZ), (u32)(worst / EE_MHZ), render_tris_drawn());
         render_end();
     }
     return 0;
