@@ -193,3 +193,30 @@ filter: a sound played by a helper class reached other than by `new` (templates,
 string built at run time, is dropped and would be silent; the 17 remix-note sounds take their instrument from the
 current music, which is pre-rendered, so they need their own small sample set. Upgrade path for both: log the SE ids
 played per scenario in Dolphin and add what is missing.
+
+## EE-side audio (task 2.4)
+
+Non-wave data, measured from the BAA (`SMR.szs` unpacked 596 320 B; block sizes from each WSYS/IBNK header, ranges
+for the others) and the `AudioRes/Info`, `Seqs` archives (files unpacked):
+
+| Data | KB | In PS2 RAM? (D) |
+|---|---|---|
+| WSYS wave tables (48) | 206.5 | yes (a compact SPU-address table would be ~28 KB: 1 796 waves × 16 B, E) |
+| IBNK instrument banks (48) | 84.6 | yes |
+| BSC effect sequences | 159.3 | yes (all kept; pruning the dropped effects would shrink it) |
+| BST sound table | 37.8 | yes |
+| BSTN sound names | 91.7 | no if the port turns sound names into ids at build time; counted here |
+| JaiChord + JaiMe + JaiRemixSeq | 113.5 | yes |
+| JaiSeq BGM sequences | 887.2 | **no**: music is pre-rendered to ADMA streams |
+| **Total in EE RAM** | **693.4 (0.68 MB)** | 0.42 MB without BSTN and with compact wave tables |
+
+**Stream buffers:** music plays through ADMA from IOP RAM (2 MB, ps2tek:84), not EE RAM (D). Bandwidth: 2 stereo
+pairs of PCM16 at 48 kHz = 384 000 B/s from storage (E: USB-1.1 mass storage throughput on the SCPH-75001 not
+measured). How much IOP RAM is free after the IOP modules is not measured (E).
+
+**For the gate:** EE audio = **0.68 MB** (raw data size, E: JAudio's parsed objects and track pools live in the audio
+heap; `heapwalk.py` reads its real use from the Dolphin dumps, task 3) instead of the 1.88 MB Wii heap bound used in
+0b and in task 1.4.
+
+Risk: some gameplay follows the music's beat (`AudBgmRhythmStrategy`, `RhythmLib`). With pre-rendered music the
+port needs the beat timing as a small table per track instead of reading it from the sequencer.

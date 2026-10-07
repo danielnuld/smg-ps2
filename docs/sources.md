@@ -62,6 +62,8 @@ Local sources are pinned by `vendor.txt` (Petari `0fac090b`, galaxy-macos `92d7a
 | A track starts with bank 0 / program 0xF0; child tracks inherit bank and program | `Petari/src/JSystem/JAudio2/JASTrack.cpp:109-110,160-164` | V |
 | cmdWait (0xF0) reads a MIDI varint; cmdPrintf (0xFD) reads a string and one byte per %-value | `Petari/src/JSystem/JAudio2/JASSeqParser.cpp` `cmdWait`, `cmdPrintf` | V |
 | SE cut rules (categories kept/dropped, global code dirs, rate caps 8 kHz player/system, 6 kHz others, one variant for register-picked keys) | `tools/sfxcut.py` | D |
+| IOP RAM is 2 MB | `refs/ps2tek.txt:84` | V |
+| EE audio data 0.68 MB = WSYS + IBNK + BSC + BST + BSTN + Info arcs, raw sizes; JaiSeq dropped (music pre-rendered); stream buffers in IOP RAM | measured from `SMR.szs` and `AudioRes/`; placement D | E |
 | JKRExpHeap used block: `u16 magic='HM'`, `u8 flags`, `u8 group`, `u32 size`, `prev`, `next` | `Petari/libs/JSystem/include/JSystem/JKernel/JKRExpHeap.hpp` (CMemBlock 0x00-0x0C); magic set `src/JSystem/JKernel/JKRExpHeap.cpp:552` | V |
 | `makeArchiveList` literals counted for every branch reachable by name (args ignored) | upper bound | E |
 | SHP1 block: shape count @+8, offsets @+0x0C..0x28; shape init 0x28 B; draw init {size, offset}; desc list at byte offset | `Petari/libs/JSystem/include/JSystem/J3DGraphLoader/J3DModelLoader.hpp:175-185`, `J3DShapeFactory.hpp:10-31,54-56` | V |
