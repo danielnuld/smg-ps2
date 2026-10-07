@@ -361,3 +361,12 @@ With every class converted (`out/packs/scenarios.csv`, `out/packs/vram.csv`):
 
 OceanPhantomCave 3 bench (VRAM-heaviest, 138 textures / 895 KB, 207 k triangles in view before culling): worst frame
 17.2 → **5.5 ms**, 94 uploads, 0 textures without room, 0 waits. Gateway 2: worst 5.4 ms, 42 uploads.
+
+#### Indexed geometry (063d344)
+
+Per batch of 72 emitted vertices the unique (position, UV) pairs go once; each emitted vertex keeps its flat colour
+with the unique index in the alpha byte (VU1: `mtir` reads it, `mfir` puts the 0x80 alpha back), so the index costs
+no byte. Gateway 2 blob 5.55 → 4.40 MB, bench worst 5.4 → 4.9 ms (GS 1.64 → 1.08 ms: less vertex data on the bus).
+
+With every class converted: **136 / 136 fit the 9.01 MB room with streaming** (worst OceanPhantomCave 1, 6.99 MB:
+2.0 MB of margin), 120 / 136 without streaming.
