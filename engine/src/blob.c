@@ -8,15 +8,15 @@
 const u8 *blob_chunk(const u8 *blob, const char *tag, u32 *size)
 {
     u32 n = *(const u32 *)(blob + 8);
-    const u8 *p = blob + 12;
+    const u8 *p = blob + 16; /* format v2: 16-byte headers, payloads 16-byte aligned (tools/slice.py) */
     for (u32 i = 0; i < n; i++) {
         u32 sz = *(const u32 *)(p + 4);
         if (memcmp(p, tag, 4) == 0) {
             if (size)
                 *size = sz;
-            return p + 8;
+            return p + 16;
         }
-        p += 8 + sz;
+        p += 16 + sz;
     }
     return NULL;
 }
@@ -61,6 +61,24 @@ int blob_load(Scene *s, const u8 *blob)
             }
         }
         md->radius = sqrtf(r2);
+    }
+    const u8 *vm = blob_chunk(blob, "VUMD", NULL);
+    if (vm) { /* {u32 n, pad}, n x {char[32] name, u32 ngroups, pad, groups {u32 nverts, pad, pos[], col[]}} */
+        u32 nv = *(const u32 *)vm;
+        const u8 *q = vm + 16;
+        for (u32 i = 0; i < nv && i < s->nmodels; i++) {
+            Model *md = &s->models[i];
+            md->vu_ngroups = *(const u32 *)(q + 32);
+            md->vu = mem_alloc(MEM_RENDER, md->vu_ngroups * sizeof(VuGroup));
+            q += 48;
+            for (u32 g = 0; g < md->vu_ngroups; g++) {
+                u32 n = *(const u32 *)q;
+                md->vu[g].nverts = n;
+                md->vu[g].pos = (const float *)(q + 16);
+                md->vu[g].col = (const u32 *)(q + 16 + 16 * n);
+                q += 16 + 32 * n;
+            }
+        }
     }
     if (k && *(const u32 *)k) {
         s->kcl_size = *(const u32 *)(k + 36);

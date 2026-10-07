@@ -12,5 +12,6 @@ int game_purple(void);
 int game_purple_total(void);
 int game_starpieces(void);
 int game_kuribo_alive(void);
+void game_debug(char *out, int n);
 
 #endif

@@ -12,9 +12,9 @@ geom.py (triangles per matrix group, simplified to R when R < 1). KCL copied as 
 archive, converted to little-endian (kcl_to_le). ponytail: meshes are untextured indexed triangle lists with float positions; textures, UVs and strips come
 when the renderer needs them (task 3.2/4.x), and only then cost bytes.
 
-Blob (all little-endian, chunks 16-byte aligned):
-  header  'SMGS' u32 version=1, u32 chunk count
-  chunk   tag[4], u32 payload size, payload
+Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
+  header  'SMGS' u32 version=2, u32 chunk count, u32 pad          (16 B)
+  chunk   tag[4], u32 payload size, 8 B pad, payload               (16 B header, payload padded to 16)
   'TYPE'  u32 n, n × char[32]                  type names; OBJS/STRT rows index this table
   'ZONE'  u32 n, n × {char[32] name, f32 pos[3], f32 rot[3]}          zone 0 = main stage (identity)
   'OBJS'  u32 n, n × ROW;  'STRT' same layout (Mario start points)
@@ -23,6 +23,10 @@ Blob (all little-endian, chunks 16-byte aligned):
   'MODL'  u32 n, n × {char[32] name, u32 ngroups, ngroups × {u32 nverts, u32 ntris, f32 v[nverts][3],
           u16 idx[ntris][3], pad to 4}}
   'KCL '  u32 n, n × {char[32] model, u32 size, bytes[size] (little-endian KCL, kcl_to_le), pad to 4}
+  'VUMD'  u32 n, n × {char[32] name, u32 ngroups, ngroups × {u32 nverts (3 per triangle), pad to 16,
+          f32 pos[nverts][4] (w = 1), u32 rgba[nverts][4]}}: the same triangles de-indexed for the VU1 renderer,
+          flat shaded per triangle with a fixed light baked in (BASE_COLOUR per model). ponytail: 32 B per emitted
+          vertex; the compact indexed form (budget.py --vu-index) is the next step once the VU1 path runs.
   'GRAV'  u32 n, n × {u16 kind (0 point, 1 plane), u16 zone, s32 priority, s32 inverse, f32 range, f32 distant,
           f32 pos[3], f32 up[3]}   (Petari GravityCreator/GravityUtil: point distant = 500 * scale.x, plane up = rotated
           Y axis; Range/Distant/Priority/Inverse from the placement row when present, defaults -1, 0, 0, 0)
@@ -195,9 +199,36 @@ def kcl_to_le(b):
     return bytes(out)
 
 
+BASE_COLOUR = {"Coin": (240, 208, 48), "PurpleCoin": (176, 80, 240), "StarPiece": (96, 208, 240),
+               "Kuribo": (144, 80, 32)}
+LIGHT = (0.35, 0.75, -0.55)
+
+
+def vu_groups(groups, base):
+    """Indexed groups -> [(pos qwords, colour qwords)] per group, flat shading: k = 0.25 + 0.75 |n . L|."""
+    ll = math.sqrt(sum(c * c for c in LIGHT))
+    L = [c / ll for c in LIGHT]
+    out = []
+    for verts, tris in groups:
+        pos, col = bytearray(), bytearray()
+        for t in range(0, len(tris), 3):
+            a, b, c = (verts[tris[t + k]] for k in range(3))
+            e1 = [b[i] - a[i] for i in range(3)]
+            e2 = [c[i] - a[i] for i in range(3)]
+            n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]]
+            nl = math.sqrt(sum(x * x for x in n)) or 1.0
+            k = 0.25 + 0.75 * abs(sum(n[i] * L[i] for i in range(3))) / nl
+            rgba = struct.pack("<4I", int(base[0] * k), int(base[1] * k), int(base[2] * k), 0x80)
+            for v in (a, b, c):
+                pos += struct.pack("<4f", v[0], v[1], v[2], 1.0)
+                col += rgba
+        out.append((bytes(pos), bytes(col)))
+    return out
+
+
 def chunk(tag, payload):
     payload += b"\0" * (-len(payload) % 16)
-    return tag + struct.pack("<I", len(payload)) + payload
+    return tag + struct.pack("<I8x", len(payload)) + payload
 
 
 def name32(s):
@@ -235,7 +266,7 @@ def build(fs, galaxy, scenario, ratio=0.99):
         grav.append(struct.pack("<HHiiff3f3f", kind, o["zone"], o["priority"], 1 if o["inverse"] == 1 else 0,
                                 o["range"], distant, *o["pos"], *up))
     out.append(chunk(b"GRAV", struct.pack("<I", len(grav)) + b"".join(grav)))
-    models, kcls = [], []
+    models, kcls, vumd = [], [], []
     for t in [t for t in types if t in planets] + [t for t in types if t in OBJ_TYPES]:
         arc = fsp / "ObjectData" / f"{t}.arc"
         if not arc.exists():
@@ -247,11 +278,17 @@ def build(fs, galaxy, scenario, ratio=0.99):
             g += struct.pack("<II", len(verts), len(tris) // 3) + b"".join(struct.pack("<3f", *v) for v in verts)
             g += idx + b"\0" * (-len(idx) % 4)
         models.append(name32(t) + struct.pack("<I", len(groups)) + g)
+        vg = b""
+        for pos, col in vu_groups(groups, BASE_COLOUR.get(t, (112, 176, 96))):
+            vg += struct.pack("<I12x", len(pos) // 16) + pos + col
+        vumd.append(name32(t) + struct.pack("<I12x", len(groups)) + vg)
         if kcl and t in planets:
+            kcl = kcl_to_le(kcl)
             kcls.append(name32(t) + struct.pack("<I", len(kcl)) + kcl + b"\0" * (-len(kcl) % 4))
     out.append(chunk(b"MODL", struct.pack("<I", len(models)) + b"".join(models)))
+    out.append(chunk(b"VUMD", struct.pack("<I12x", len(vumd)) + b"".join(vumd)))
     out.append(chunk(b"KCL ", struct.pack("<I", len(kcls)) + b"".join(kcls)))
-    blob = b"SMGS" + struct.pack("<II", 1, len(out)) + b"".join(out)
+    blob = b"SMGS" + struct.pack("<II4x", 2, len(out)) + b"".join(out)
     blob += b"\0" * (-len(blob) % 16)
     return blob, dict(stages=act, types=types, objs=len(keep), starts=len(starts), paths=len(paths),
                       models=len(models), kcls=len(kcls))
@@ -261,11 +298,11 @@ def read_chunks(blob):
     """Parse a blob back: -> {tag: payload}. Used by the selftest and handy for checking files."""
     assert blob[:4] == b"SMGS", blob[:4]
     n = struct.unpack_from("<I", blob, 8)[0]
-    o, out = 12, {}
+    o, out = 16, {}
     for _ in range(n):
         tag, size = blob[o:o + 4], struct.unpack_from("<I", blob, o + 4)[0]
-        out[tag] = blob[o + 8:o + 8 + size]
-        o += 8 + size
+        out[tag] = blob[o + 16:o + 16 + size]
+        o += 16 + size
     return out
 
 
@@ -282,7 +319,7 @@ def selftest():
     assert [x["name"] for x in r] == ["Coin", "Kuribo"] and r[0]["args"][0] == 7 and r[1]["pos"][0] == -2.0, r
     assert r[0]["scale"] == [1.0, 1.0, 1.0] and r[0]["path"] == -1
     # round trip of the chunk framing
-    blob = b"SMGS" + struct.pack("<II", 1, 2) + chunk(b"TYPE", struct.pack("<I", 1) + name32("Coin")) + chunk(b"KCL ", b"x")
+    blob = b"SMGS" + struct.pack("<II4x", 2, 2) + chunk(b"TYPE", struct.pack("<I", 1) + name32("Coin")) + chunk(b"KCL ", b"x")
     c = read_chunks(blob)
     assert c[b"TYPE"][4:8] == b"Coin" and c[b"KCL "][:1] == b"x", c
     print("selftest ok")
@@ -298,5 +335,9 @@ if __name__ == "__main__":
         Path(args[3]).parent.mkdir(parents=True, exist_ok=True)
         Path(args[3]).write_bytes(blob)
         print(info)
-        sizes = {k.decode(): len(v) for k, v in read_chunks(blob).items()}
+        chunks = read_chunks(blob)
+        k = chunks.get(b"KCL ", b"")
+        if len(k) > 44:  # little-endian check: the first header word is the pos offset 0x38
+            assert struct.unpack_from("<I", k, 40)[0] == 0x38, "KCL in the blob is not little-endian"
+        sizes = {k.decode(): len(v) for k, v in chunks.items()}
         print(f"blob {len(blob)} B ({len(blob) / 2**20:.2f} MB), simplify R = {ratio}, chunks {sizes}")

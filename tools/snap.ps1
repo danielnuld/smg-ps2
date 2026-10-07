@@ -13,6 +13,8 @@ public class W {
 [W]::SetProcessDPIAware() | Out-Null
 $p = Get-Process $Proc | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
 $h = $p.MainWindowHandle
+(New-Object -ComObject WScript.Shell).AppActivate($p.Id) | Out-Null
+Start-Sleep -Milliseconds 200
 [W]::SetForegroundWindow($h) | Out-Null
 Start-Sleep -Milliseconds 300
 $r = New-Object W+RECT

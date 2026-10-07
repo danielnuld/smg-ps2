@@ -70,6 +70,11 @@ int main(void)
         snprintf(line, sizeof line, "COINS %d  PURPLE %d/%d  PIECES %d  KURIBO %d  RUNTIME %u KB", game_coins(),
                  game_purple(), game_purple_total(), game_starpieces(), game_kuribo_alive(), mem_total() >> 10);
         render_text(16, 26, line);
+        if ((frame & 255) == 0) {
+            char dbg[128];
+            game_debug(dbg, sizeof dbg);
+            printf("%s\n", dbg);
+        }
         if ((frame++ & 255) == 0)
             printf("frame %u: logic %u us, draw %u us, worst %u us, tris %u\n", frame, (u32)(t_logic / EE_MHZ),
                    (u32)(t_draw / EE_MHZ), (u32)(worst / EE_MHZ), render_tris_drawn());

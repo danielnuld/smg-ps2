@@ -24,13 +24,15 @@ void *mem_alloc(int type, u32 size)
     return p;
 }
 
+static u32 external;
+void mem_charge(int type, u32 size) { used[type] += size; external += size; }
 u32 mem_used(int type) { return used[type]; }
-u32 mem_total(void) { return top; }
+u32 mem_total(void) { return top + external; }
 const char *mem_name(int type) { return names[type]; }
 
 void mem_report(void)
 {
-    printf("mem: runtime %u B\n", top);
+    printf("mem: runtime %u B (arena %u + library buffers %u)\n", top + external, top, external);
     for (int i = 0; i < MEM_TYPES; i++)
         printf("mem:   %-9s %8u B\n", names[i], used[i]);
 }

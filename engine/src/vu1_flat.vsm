@@ -1,0 +1,69 @@
+; VU1 microprogram for the slice: transform, guard-band clip, perspective, flat colour per vertex.
+; Written for this engine after ps2sdk's samples/draw/vu1/draw_3D.vsm (h4570, AFL 2.0): same matrix load,
+; xtop double buffering, clipw/fcand ADC trick and scale step; no texture, one RGBA qword per vertex.
+;
+; VU mem 0..3   : matrix rows (local -> clip), uploaded once per model instance (no TOP)
+; batch at TOP  : +0 scale.xyz, w = vertex count (int)
+;                 +1 GIF tag (PRE + PRIM, NLOOP = count, regs RGBAQ, XYZ2)
+;                 +2 .. +2+n-1     positions (x, y, z, w = 1)
+;                 +2+n .. +2+2n-1  colours (u32 r, g, b, a)
+; output        : right after the colours: GIF tag, then RGBAQ, XYZ2 per vertex, XGKICKed.
+        .vu
+        .align 4
+        .global VU1Flat_CodeStart
+        .global VU1Flat_CodeEnd
+VU1Flat_CodeStart:
+        NOP                                 lq            VF01,0(VI00)
+        NOP                                 lq            VF02,1(VI00)
+        NOP                                 lq            VF03,2(VI00)
+        NOP                                 lq            VF04,3(VI00)
+        NOP                                 xtop          VI02
+        NOP                                 fcset         0
+        NOP                                 lq.xyz        VF05,0(VI02)
+        NOP                                 ilw.w         VI07,0(VI02)
+        NOP                                 lq            VF06,1(VI02)
+        NOP                                 iaddiu        VI03,VI02,2
+        NOP                                 iadd          VI04,VI03,VI07
+        NOP                                 iadd          VI05,VI04,VI07
+        NOP                                 iadd          VI06,VI05,VI00
+        NOP                                 sqi           VF06,(VI06++)
+        NOP                                 iadd          VI07,VI02,VI07
+vertexLoop:
+        NOP                                 lq            VF07,0(VI03)
+        NOP                                 lq            VF08,0(VI04)
+        mulax         ACC,VF01,VF07x        NOP
+        madday        ACC,VF02,VF07y        NOP
+        maddaz        ACC,VF03,VF07z        NOP
+        maddw         VF07,VF04,VF07w       NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        clipw.xyz     VF07xyz,VF07w         div           Q,VF00w,VF07w
+        NOP                                 waitq
+        mulq.xyz      VF07,VF07,Q           NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        mulaw.xyz     ACC,VF05,VF00w        NOP
+        madd.xyz      VF07,VF07,VF05        NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        ftoi4.xyz     VF07,VF07             fcand         VI01,262143
+        NOP                                 iaddiu        VI01,VI01,0x00007fff
+        NOP                                 sq            VF08,0(VI06)
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 sq.xyz        VF07,1(VI06)
+        NOP                                 isw.w         VI01,1(VI06)
+        NOP                                 iaddiu        VI03,VI03,1
+        NOP                                 iaddiu        VI04,VI04,1
+        NOP                                 iaddiu        VI06,VI06,2
+        NOP                                 isubiu        VI07,VI07,1
+        NOP                                 ibne          VI07,VI02,vertexLoop
+        NOP                                 NOP
+        NOP                                 xgkick        VI05
+        NOP[E]                              NOP
+        NOP                                 NOP
+        .align 4
+VU1Flat_CodeEnd:

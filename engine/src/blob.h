@@ -18,9 +18,17 @@ typedef struct {
 } Group;
 
 typedef struct {
+    u32 nverts;          /* 3 per triangle */
+    const float *pos;    /* nverts qwords (x, y, z, 1), 16-byte aligned */
+    const u32 *col;      /* nverts qwords (r, g, b, a) */
+} VuGroup;
+
+typedef struct {
     const char *name;
     u32 ngroups;
     Group *groups;
+    u32 vu_ngroups;
+    VuGroup *vu;
     float radius; /* bounding sphere around the origin, for culling */
 } Model;
 

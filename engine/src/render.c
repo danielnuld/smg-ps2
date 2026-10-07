@@ -1,27 +1,45 @@
 #include "render.h"
 #include "mem.h"
 
-#include <dmaKit.h>
-#include <gsKit.h>
-#include <gsToolkit.h>
-#include <gsInline.h>
-#include <gsTexManager.h>
+#include <dma.h>
+#include <draw.h>
+#include <draw2d.h>
+#include <draw3d.h>
+#include <gif_tags.h>
+#include <graph.h>
+#include <gs_gp.h>
+#include <gs_psm.h>
+#include <kernel.h>
 #include <math.h>
+#include <packet2.h>
+#include <packet2_utils.h>
 #include <string.h>
 
-/* First-light renderer: EE transform, flat shading per triangle, gsKit triangle lists.
- * ponytail: no textures, no strips, no VU1; the frame-time row decides which of these comes first. */
+/* VU1 renderer: the EE only builds DMA chains that point at the blob's VU-ready vertex data (VUMD chunk) and at one
+ * matrix per model instance; VU1 (vu1_flat.vsm) transforms, rejects off-band triangles, projects and XGKICKs to the
+ * GS. Set-up follows ps2sdk samples/draw/vu1 (libpacket2, libdraw, libgraph). */
 
-static GSGLOBAL *gs;
-static float view[16], proj_x, proj_y;
-static float *xf;            /* transformed vertices: x, y, z(view), w per vertex */
-static u32 xf_cap;
-static GSPRIMPOINT *batch;   /* 3 points per triangle */
-static u32 batch_n, tris_drawn;
-#define BATCH_TRIS 512
+extern u32 VU1Flat_CodeStart __attribute__((section(".vudata")));
+extern u32 VU1Flat_CodeEnd __attribute__((section(".vudata")));
+
+#define SCREEN_W 640
+#define SCREEN_H 448
+#define BATCH 120          /* vertices per VU1 batch: 4n + 3 qwords must fit a 496-qword buffer */
 #define NEAR 50.0f
-#define SCREEN_W 640.0f
-#define SCREEN_H 448.0f
+#define FAR 120000.0f
+#define MAX_INST 1024
+#define PACKET_QW 16384
+
+static framebuffer_t frame[2];   /* double buffered: draw into frame[back], show the other one */
+static int back;
+static zbuffer_t zbuf;
+static packet2_t *vif[2], *gif;
+static int cur;
+static float view[16], proj[16];
+static float (*mats)[16];        /* one matrix per instance this frame, read by DMA */
+static int nmats;
+static qword_t *headers;         /* 2 qwords per vertex count 3..BATCH (scale + count, GIF tag) */
+static u32 tris_drawn;
 
 void mat_identity(float m[16])
 {
@@ -45,7 +63,6 @@ void mat_translate_rot_scale(float m[16], const float pos[3], const float rot[3]
     const float d = 3.14159265f / 180.0f;
     float cx = cosf(rot[0] * d), sx = sinf(rot[0] * d), cy = cosf(rot[1] * d), sy = sinf(rot[1] * d);
     float cz = cosf(rot[2] * d), sz = sinf(rot[2] * d);
-    /* R = Rz * Ry * Rx, columns */
     float r00 = cz * cy, r10 = sz * cy, r20 = -sy;
     float r01 = cz * sy * sx - sz * cx, r11 = sz * sy * sx + cz * cx, r21 = cy * sx;
     float r02 = cz * sy * cx + sz * sx, r12 = sz * sy * cx - cz * sx, r22 = cy * cx;
@@ -56,154 +73,205 @@ void mat_translate_rot_scale(float m[16], const float pos[3], const float rot[3]
     m[12] = pos[0]; m[13] = pos[1]; m[14] = pos[2];
 }
 
+static void send_vif_wait(packet2_t *p)
+{
+    dma_channel_send_packet2(p, DMA_CHANNEL_VIF1, 1);
+    dma_channel_wait(DMA_CHANNEL_VIF1, 0);
+}
+
 void render_init(void)
 {
-    gs = gsKit_init_global_custom(2 * 1024 * 1024, GS_RENDER_QUEUE_PER_POOLSIZE);
-    /* 16-bit colour and depth: 2 x 560 KB framebuffers + 560 KB Z leave VRAM for textures and the font
-     * (24-bit colour with Z24 takes ~3.4 of the GS's 4 MB). */
-    gs->PSM = GS_PSM_CT16S;
-    gs->PSMZ = GS_PSMZ_16S;
-    gs->ZBuffering = GS_SETTING_ON;
-    gs->DoubleBuffering = GS_SETTING_ON;
-    gs->PrimAAEnable = GS_SETTING_OFF;
-    dmaKit_init(D_CTRL_RELE_OFF, D_CTRL_MFD_OFF, D_CTRL_STS_UNSPEC, D_CTRL_STD_OFF, D_CTRL_RCYC_8,
-                1 << DMA_CHANNEL_GIF);
-    dmaKit_chan_init(DMA_CHANNEL_GIF);
-    gsKit_init_screen(gs);
-    gsKit_TexManager_init(gs);
-    gsKit_mode_switch(gs, GS_ONESHOT);
-    gs->Test->ZTST = 2; /* GEQUAL: larger z is nearer (we write near/w) */
-    gsKit_set_test(gs, GS_ZTEST_ON);
-    batch = mem_alloc(MEM_RENDER, BATCH_TRIS * 3 * sizeof(GSPRIMPOINT));
-    float fovy = 50.0f * 3.14159265f / 180.0f;
-    proj_y = (SCREEN_H / 2) / tanf(fovy / 2);
-    proj_x = proj_y; /* square pixels at 640x448 */
+    dma_channel_initialize(DMA_CHANNEL_GIF, NULL, 0);
+    dma_channel_initialize(DMA_CHANNEL_VIF1, NULL, 0);
+    dma_channel_fast_waits(DMA_CHANNEL_GIF);
+    dma_channel_fast_waits(DMA_CHANNEL_VIF1);
+
+    /* microprogram + double buffer (base 8, 496 qwords each), as in the ps2sdk sample */
+    u32 sz = packet2_utils_get_packet_size_for_program(&VU1Flat_CodeStart, &VU1Flat_CodeEnd) + 1;
+    packet2_t *p = packet2_create(sz, P2_TYPE_NORMAL, P2_MODE_CHAIN, 1);
+    packet2_vif_add_micro_program(p, 0, &VU1Flat_CodeStart, &VU1Flat_CodeEnd);
+    packet2_utils_vu_add_end_tag(p);
+    send_vif_wait(p);
+    packet2_free(p);
+    p = packet2_create(2, P2_TYPE_NORMAL, P2_MODE_CHAIN, 1);
+    packet2_utils_vu_add_double_buffer(p, 8, 496);
+    packet2_utils_vu_add_end_tag(p);
+    send_vif_wait(p);
+    packet2_free(p);
+
+    for (int i = 0; i < 2; i++) {
+        frame[i].width = SCREEN_W; frame[i].height = SCREEN_H; frame[i].mask = 0; frame[i].psm = GS_PSM_32;
+        frame[i].address = graph_vram_allocate(SCREEN_W, SCREEN_H, GS_PSM_32, GRAPH_ALIGN_PAGE);
+    }
+    zbuf.enable = DRAW_ENABLE; zbuf.mask = 0; zbuf.method = ZTEST_METHOD_GREATER_EQUAL; zbuf.zsm = GS_ZBUF_24;
+    zbuf.address = graph_vram_allocate(SCREEN_W, SCREEN_H, GS_ZBUF_24, GRAPH_ALIGN_PAGE);
+    graph_initialize(frame[0].address, SCREEN_W, SCREEN_H, GS_PSM_32, 0, 0);
+    back = 1;
+    p = packet2_create(20, P2_TYPE_NORMAL, P2_MODE_NORMAL, 0);
+    packet2_update(p, draw_setup_environment(p->next, 0, &frame[back], &zbuf));
+    packet2_update(p, draw_primitive_xyoffset(p->next, 0, 2048 - SCREEN_W / 2, 2048 - SCREEN_H / 2));
+    packet2_update(p, draw_finish(p->next));
+    dma_channel_send_packet2(p, DMA_CHANNEL_GIF, 1);
+    dma_wait_fast();
+    packet2_free(p);
+
+    /* packets, matrices and batch headers: charged to the render runtime */
+    vif[0] = packet2_create(PACKET_QW, P2_TYPE_NORMAL, P2_MODE_CHAIN, 1);
+    vif[1] = packet2_create(PACKET_QW, P2_TYPE_NORMAL, P2_MODE_CHAIN, 1);
+    gif = packet2_create(4096, P2_TYPE_NORMAL, P2_MODE_NORMAL, 0);
+    mem_charge(MEM_RENDER, 2 * PACKET_QW * 16 + 4096 * 16);
+    mats = mem_alloc(MEM_RENDER, MAX_INST * 64);
+    headers = mem_alloc(MEM_RENDER, (BATCH / 3 + 1) * 2 * 16);
+    for (int n = 3; n <= BATCH; n += 3) {
+        qword_t *h = headers + 2 * (n / 3);
+        ((float *)h)[0] = 2048.0f;
+        ((float *)h)[1] = 2048.0f;
+        ((float *)h)[2] = (float)0xFFFFFF / 32.0f;
+        ((u32 *)h)[3] = n;
+        h[1].dw[0] = GIF_SET_TAG(n, 1, 1, GS_SET_PRIM(PRIM_TRIANGLE, 1, 0, 0, 0, 0, 0, 0, 0), GIF_FLG_PACKED, 2);
+        h[1].dw[1] = DRAW_RGBAQ_REGLIST;
+    }
+
+    /* projection (column-major, v' = P v): x, y to the GS's +-2048 guard band, depth near -> 1, far -> -1 */
+    float f = (SCREEN_H / 2) / tanf(50.0f * 3.14159265f / 360.0f);
+    float B = 2.0f / (1.0f / NEAR - 1.0f / FAR), A = 1.0f - B / NEAR;
+    memset(proj, 0, sizeof proj);
+    proj[0] = f / 2048.0f;
+    proj[5] = -f / 2048.0f;
+    proj[10] = A; proj[11] = 1.0f;
+    proj[14] = B;
 }
 
 void render_begin(const float eye[3], const float target[3], const float up[3])
 {
-    float f[3] = {target[0] - eye[0], target[1] - eye[1], target[2] - eye[2]};
-    float fl = sqrtf(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
-    f[0] /= fl; f[1] /= fl; f[2] /= fl;
-    float s[3] = {f[1] * up[2] - f[2] * up[1], f[2] * up[0] - f[0] * up[2], f[0] * up[1] - f[1] * up[0]};
+    float fw[3] = {target[0] - eye[0], target[1] - eye[1], target[2] - eye[2]};
+    float fl = sqrtf(fw[0] * fw[0] + fw[1] * fw[1] + fw[2] * fw[2]);
+    fw[0] /= fl; fw[1] /= fl; fw[2] /= fl;
+    float s[3] = {fw[1] * up[2] - fw[2] * up[1], fw[2] * up[0] - fw[0] * up[2], fw[0] * up[1] - fw[1] * up[0]};
     float sl = sqrtf(s[0] * s[0] + s[1] * s[1] + s[2] * s[2]);
     s[0] /= sl; s[1] /= sl; s[2] /= sl;
-    float u[3] = {s[1] * f[2] - s[2] * f[1], s[2] * f[0] - s[0] * f[2], s[0] * f[1] - s[1] * f[0]};
-    /* view: x right, y up, z forward (depth) */
+    float u[3] = {s[1] * fw[2] - s[2] * fw[1], s[2] * fw[0] - s[0] * fw[2], s[0] * fw[1] - s[1] * fw[0]};
     mat_identity(view);
     view[0] = s[0]; view[4] = s[1]; view[8] = s[2];
     view[1] = u[0]; view[5] = u[1]; view[9] = u[2];
-    view[2] = f[0]; view[6] = f[1]; view[10] = f[2];
+    view[2] = fw[0]; view[6] = fw[1]; view[10] = fw[2];
     view[12] = -(s[0] * eye[0] + s[1] * eye[1] + s[2] * eye[2]);
     view[13] = -(u[0] * eye[0] + u[1] * eye[1] + u[2] * eye[2]);
-    view[14] = -(f[0] * eye[0] + f[1] * eye[1] + f[2] * eye[2]);
-    gsKit_clear(gs, GS_SETREG_RGBAQ(0x08, 0x0C, 0x28, 0x80, 0x00));
+    view[14] = -(fw[0] * eye[0] + fw[1] * eye[1] + fw[2] * eye[2]);
+
+    dma_channel_wait(DMA_CHANNEL_VIF1, 0);
+    packet2_reset(gif, 0);
+    packet2_update(gif, draw_setup_environment(gif->next, 0, &frame[back], &zbuf));
+    packet2_update(gif, draw_primitive_xyoffset(gif->next, 0, 2048 - SCREEN_W / 2, 2048 - SCREEN_H / 2));
+    packet2_update(gif, draw_disable_tests(gif->next, 0, &zbuf));
+    packet2_update(gif, draw_clear(gif->next, 0, 2048.0f - SCREEN_W / 2, 2048.0f - SCREEN_H / 2, SCREEN_W, SCREEN_H, 0x08, 0x0C, 0x28));
+    packet2_update(gif, draw_enable_tests(gif->next, 0, &zbuf));
+    packet2_update(gif, draw_finish(gif->next));
+    dma_channel_send_packet2(gif, DMA_CHANNEL_GIF, 1);
+    draw_wait_finish();
+    packet2_reset(vif[cur], 0);
+    nmats = 0;
     tris_drawn = 0;
 }
 
-static void flush(void)
+static void flush_vif(void)
 {
-    if (batch_n) {
-        gsKit_prim_list_triangle_gouraud_3d(gs, batch_n * 3, batch);
-        batch_n = 0;
-    }
+    /* FLUSH: the chain only ends once VU1 has finished and PATH1 has delivered its last XGKICK, so whatever is
+     * sent on PATH3 afterwards (the HUD) lands on top */
+    packet2_chain_open_cnt(vif[cur], 0, 0, 0);
+    packet2_vif_flush(vif[cur], 0);
+    packet2_vif_nop(vif[cur], 0); /* two VIF codes keep the CNT tag 16-byte aligned */
+    packet2_chain_close_tag(vif[cur]);
+    packet2_utils_vu_add_end_tag(vif[cur]);
+    dma_channel_wait(DMA_CHANNEL_VIF1, 0);
+    dma_channel_send_packet2(vif[cur], DMA_CHANNEL_VIF1, 1);
+    cur ^= 1;
+    packet2_reset(vif[cur], 0);
 }
 
 void render_model(const Model *md, const float world[16], u8 cr, u8 cg, u8 cb)
 {
+    (void)cr; (void)cg; (void)cb; /* colours are baked into the VUMD data */
+    if (!md->vu_ngroups || nmats >= MAX_INST)
+        return;
     float mv[16];
     mat_mul(mv, view, world);
-    /* sphere cull against the near plane and the side planes (rough) */
-    float cz = mv[14], rad = md->radius * sqrtf(mv[0] * mv[0] + mv[1] * mv[1] + mv[2] * mv[2]);
-    if (cz + rad < NEAR)
+    float rad = md->radius * sqrtf(mv[0] * mv[0] + mv[1] * mv[1] + mv[2] * mv[2]);
+    if (mv[14] + rad < NEAR) /* whole model behind the camera */
         return;
-    const float L[3] = {0.35f, 0.75f, -0.55f};
-    for (u32 g = 0; g < md->ngroups; g++) {
-        const Group *gr = &md->groups[g];
-        if (gr->nverts > xf_cap) {
-            xf_cap = gr->nverts > 4096 ? gr->nverts : 4096;
-            xf = mem_alloc(MEM_RENDER, xf_cap * 16);
-        }
-        for (u32 v = 0; v < gr->nverts; v++) {
-            const float *p = gr->verts + 3 * v;
-            float x = mv[0] * p[0] + mv[4] * p[1] + mv[8] * p[2] + mv[12];
-            float y = mv[1] * p[0] + mv[5] * p[1] + mv[9] * p[2] + mv[13];
-            float z = mv[2] * p[0] + mv[6] * p[1] + mv[10] * p[2] + mv[14];
-            float *o = xf + 4 * v;
-            o[2] = z;
-            o[0] = x; o[1] = y;
-        }
-        for (u32 t = 0; t < gr->ntris; t++) {
-            const u16 *ix = gr->idx + 3 * t;
-            const float *a = xf + 4 * ix[0], *b = xf + 4 * ix[1], *c = xf + 4 * ix[2];
-            if (a[2] < NEAR || b[2] < NEAR || c[2] < NEAR)
-                continue;
-            float sx[3], sy[3];
-            const float *vv[3] = {a, b, c};
-            int out = 0;
-            for (int k = 0; k < 3; k++) {
-                float iw = 1.0f / vv[k][2];
-                sx[k] = SCREEN_W / 2 + vv[k][0] * proj_x * iw;
-                sy[k] = SCREEN_H / 2 - vv[k][1] * proj_y * iw;
-                if (sx[k] < -1500 || sx[k] > 2100 || sy[k] < -1500 || sy[k] > 1900)
-                    out = 1;
-            }
-            if (out || (sx[0] < 0 && sx[1] < 0 && sx[2] < 0) || (sx[0] > SCREEN_W && sx[1] > SCREEN_W && sx[2] > SCREEN_W) ||
-                (sy[0] < 0 && sy[1] < 0 && sy[2] < 0) || (sy[0] > SCREEN_H && sy[1] > SCREEN_H && sy[2] > SCREEN_H))
-                continue;
-            float e1[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]}, e2[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
-            float n[3] = {e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]};
-            float nl = sqrtf(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]) + 1e-6f;
-            float lit = fabsf(n[0] * L[0] + n[1] * L[1] + n[2] * L[2]) / nl; /* two-sided */
-            float k = 0.25f + 0.75f * lit;
-            gs_rgbaq col = color_to_RGBAQ(cr * k, cg * k, cb * k, 0x80, 0.0f);
-            GSPRIMPOINT *pt = batch + 3 * batch_n;
-            for (int q = 0; q < 3; q++) {
-                int iz = (int)(65535.0f * NEAR / vv[q][2]);
-                pt[q].rgbaq = col;
-                pt[q].xyz2 = vertex_to_XYZ2(gs, sx[q], sy[q], iz);
-            }
-            tris_drawn++;
-            if (++batch_n == BATCH_TRIS)
-                flush();
+    float *m = mats[nmats++];
+    mat_mul(m, proj, mv);
+    u32 batches = 0;
+    for (u32 g = 0; g < md->vu_ngroups; g++)
+        batches += (md->vu[g].nverts + BATCH - 1) / BATCH;
+    if (packet2_get_qw_count(vif[cur]) + 8 + batches * 6 > PACKET_QW)
+        flush_vif();
+    packet2_utils_vu_add_unpack_data(vif[cur], 0, m, 4, 0);
+    for (u32 g = 0; g < md->vu_ngroups; g++) {
+        const VuGroup *vg = &md->vu[g];
+        for (u32 off = 0; off < vg->nverts; off += BATCH) {
+            u32 n = vg->nverts - off < BATCH ? vg->nverts - off : BATCH;
+            packet2_utils_vu_add_unpack_data(vif[cur], 0, headers + 2 * (n / 3), 2, 1);
+            packet2_utils_vu_add_unpack_data(vif[cur], 2, (void *)(vg->pos + 4 * off), n, 1);
+            packet2_utils_vu_add_unpack_data(vif[cur], 2 + n, (void *)(vg->col + 4 * off), n, 1);
+            packet2_utils_vu_add_start_program(vif[cur], 0);
+            tris_drawn += n / 3;
         }
     }
-    flush();
 }
 
-/* 3x5 bitmap font drawn with sprites: no texture, no VRAM, no BIOS font (gsKit_init_fontm fails here).
- * Each glyph is 5 rows of 3 bits, top row first. Digits, upper-case letters and a few signs. */
+/* 3x5 bitmap font as GS sprites (no texture, no VRAM). Digits, upper-case letters and a few signs. */
 static const char *glyph_chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ.:%-/ ";
 static const u16 glyphs[] = {
-    075557, 026227, 071747, 071717, 055711, 074717, 074757, 071111, 075757, 075711,   /* 0-9 */
-    025755, 065656, 034443, 065556, 074647, 074644, 034553, 055755, 072227, 011157,   /* A-J */
-    055655, 044447, 057555, 065555, 025552, 065644, 025573, 065655, 034716, 072222,   /* K-T */
-    055557, 055552, 055575, 055255, 055222, 071247, 000020, 002020, 041241, 000700,   /* U-Z . : % - */
-    001240, 000000};                                                                     /* / space */
+    075557, 026227, 071747, 071717, 055711, 074717, 074757, 071111, 075757, 075711,
+    025755, 065656, 034443, 065556, 074647, 074644, 034553, 055755, 072227, 011157,
+    055655, 044447, 057555, 065555, 025552, 065644, 025573, 065655, 034716, 072222,
+    055557, 055552, 055575, 055255, 055222, 071247, 000020, 002020, 041241, 000700,
+    001240, 000000};
+static int text_open;
 
 void render_text(float x, float y, const char *s)
 {
+    if (!text_open) {
+        packet2_reset(gif, 0);
+        packet2_update(gif, draw_disable_tests(gif->next, 0, &zbuf)); /* HUD over everything */
+        text_open = 1;
+    }
     const float px = 2.0f;
-    u64 col = GS_SETREG_RGBAQ(0xFF, 0xFF, 0xFF, 0x80, 0x00);
+    rect_t r;
+    r.color.r = r.color.g = r.color.b = 0xFF; r.color.a = 0x80; r.color.q = 1.0f;
+    r.v0.z = r.v1.z = 0xFFFFFF;
     for (; *s; s++, x += 4 * px) {
         char ch = (*s >= 'a' && *s <= 'z') ? *s - 32 : *s;
         const char *at = strchr(glyph_chars, ch);
         if (!at)
             continue;
-        u16 g = glyphs[at - glyph_chars];
+        u16 gl = glyphs[at - glyph_chars];
         for (int row = 0; row < 5; row++)
             for (int c = 0; c < 3; c++)
-                if (g >> (3 * (4 - row) + (2 - c)) & 1)
-                    gsKit_prim_sprite(gs, x + c * px, y + row * px, x + (c + 1) * px, y + (row + 1) * px, 0xFFFF, col);
+                if (gl >> (3 * (4 - row) + (2 - c)) & 1) {
+                    r.v0.x = x + c * px - SCREEN_W / 2; r.v0.y = y + row * px - SCREEN_H / 2; /* libdraw adds the 2048 offset */
+                    r.v1.x = r.v0.x + px; r.v1.y = r.v0.y + px;
+                    if (packet2_get_qw_count(gif) < 4000)
+                        packet2_update(gif, draw_rect_filled(gif->next, 0, &r));
+                }
     }
 }
 
 void render_end(void)
 {
-    flush();
-    gsKit_queue_exec(gs);
-    gsKit_sync_flip(gs);
-    gsKit_TexManager_nextFrame(gs);
+    flush_vif();
+    dma_channel_wait(DMA_CHANNEL_VIF1, 0);
+    if (text_open) {
+        packet2_update(gif, draw_enable_tests(gif->next, 0, &zbuf));
+        packet2_update(gif, draw_finish(gif->next));
+        dma_channel_send_packet2(gif, DMA_CHANNEL_GIF, 1);
+        draw_wait_finish();
+        text_open = 0;
+    }
+    graph_wait_vsync();
+    graph_set_framebuffer_filtered(frame[back].address, SCREEN_W, GS_PSM_32, 0, 0);
+    back ^= 1;
 }
 
 u32 render_tris_drawn(void) { return tris_drawn; }
