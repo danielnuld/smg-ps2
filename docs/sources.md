@@ -64,6 +64,10 @@ Local sources are pinned by `vendor.txt` (Petari `0fac090b`, galaxy-macos `92d7a
 | SE cut rules (categories kept/dropped, global code dirs, rate caps 8 kHz player/system, 6 kHz others, one variant for register-picked keys) | `tools/sfxcut.py` | D |
 | IOP RAM is 2 MB | `refs/ps2tek.txt:84` | V |
 | EE audio data 0.68 MB = WSYS + IBNK + BSC + BST + BSTN + Info arcs, raw sizes; JaiSeq dropped (music pre-rendered); stream buffers in IOP RAM | measured from `SMR.szs` and `AudioRes/`; placement D | E |
+| Game heaps: scene heaps are solid heaps of size -1 on the MEM1/MEM2 game heaps; the 0x1040400 file cache is a solid heap on the MEM2 game heap; HeapMemoryWatcher keeps 10 heap pointers in a fixed order | `Petari/src/Game/System/HeapMemoryWatcher.cpp:71-76,139-159` | V |
+| Scene change: every galaxy move writes mNextSceneControlInfo {scene, stage, scenario, selected} then requestChangeScene | `Petari/src/Game/System/GameSequenceProgress.cpp:152-180` | V |
+| Wii SD save (data.bin) layout and SD key/IV | Dolphin `Source/Core/Core/HW/WiiSaveStructs.h`, `WiiSave.cpp:47-48`, `IOS/IOSC.cpp:609-613` (master) | V |
+| Measured heaps (Dolphin 2609, RMGE01, 121-star save, dumps 30 s after load): see `docs/phase0c-report.md` "Heap measured" | `tools/dolphin/`, `tools/heapreport.py` | V (measurement) |
 | JKRExpHeap used block: `u16 magic='HM'`, `u8 flags`, `u8 group`, `u32 size`, `prev`, `next` | `Petari/libs/JSystem/include/JSystem/JKernel/JKRExpHeap.hpp` (CMemBlock 0x00-0x0C); magic set `src/JSystem/JKernel/JKRExpHeap.cpp:552` | V |
 | `makeArchiveList` literals counted for every branch reachable by name (args ignored) | upper bound | E |
 | SHP1 block: shape count @+8, offsets @+0x0C..0x28; shape init 0x28 B; draw init {size, offset}; desc list at byte offset | `Petari/libs/JSystem/include/JSystem/J3DGraphLoader/J3DModelLoader.hpp:175-185`, `J3DShapeFactory.hpp:10-31,54-56` | V |

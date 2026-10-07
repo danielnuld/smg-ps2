@@ -252,3 +252,47 @@ OceanPhantomCave 1, 2, 4 and CosmosGarden 2 in Dolphin, read with `python tools/
 (scene exp heap + audio solid heap). Costs already accepted to get here, for the record: audio at 6-8 kHz with one
 voice variant, music and cutscene sound pre-rendered, a VU1 microcode for indexed geometry (N = 255, cycle cost not
 measured), the beat-timing table for rhythm gameplay, and the remix-note samples.
+
+## Heap measured (after the gate, 2026-10-06)
+
+How (`tools/dolphin/README.md`): a 121-star save (PAL `data.bin` from savegameworld.com, "Super Mario Galaxy by
+ILoveVideoGame", decrypted and placed under the RMGE title; it loads as "Complete! ★121"); Dolphin 2609 driven by
+key/mouse input; the galaxy chosen by rewriting the next `SceneControlInfo` when "Play This File" requests the
+observatory; MEM1/MEM2 dumped 30 s after the stage loads; heaps named through the game's own `HeapMemoryWatcher`
+table (`tools/heapreport.py`). Each stage was checked on screen.
+
+| Scene | File cache (archives) | Scene heap MEM1 | Scene heap MEM2 | **Scene heap total** |
+|---|---|---|---|---|
+| AstroGalaxy (observatory) | 4.13 | 7.15 | 0.96 | 8.11 |
+| OceanPhantomCave 1 | 11.76 | 5.52 | 2.29 | **7.81** |
+| OceanPhantomCave 2 | 12.62 | 5.63 | 2.29 | **7.92** |
+| OceanPhantomCave 4 | 11.37 | 5.49 | 2.29 | **7.78** |
+| CosmosGarden 2 | 15.17 | 5.79 | 2.69 | **8.48** |
+| Phantom 1 | 12.06 | 4.76 | 1.91 | **6.67** |
+
+Every scene also keeps the stationed heaps full (6.69 MB MEM1 + 19.30 MB MEM2) and the audio heap (1.87 MB).
+
+The file cache holds the scene's archives (what `budget.py` sizes); archives overflow into the scene heap only below
+3 % free (`MemoryUtil.cpp:51-60`) and the fullest cache here is 93 %. So the scene heap is runtime memory: actors,
+model instances and the J3D structures built from the archives, collision, effects, layouts.
+
+Margin minus the measured scene heap:
+
+| Scenario | R = 0.99 | R = 0.75 | R = 0.5 |
+|---|---|---|---|
+| OceanPhantomCave 1 | +1.45 − 7.81 = **−6.36** | −5.20 | −4.11 |
+| OceanPhantomCave 2 | −6.46 | −5.29 | −4.19 |
+| OceanPhantomCave 4 | −6.12 | −5.00 | −3.94 |
+| CosmosGarden 2 | −3.88 | −3.02 | −2.23 |
+| Phantom 1 | −5.10 | −3.96 | −2.89 |
+
+**Verdict: NO-GO.** With the Wii's runtime memory per scene, no scenario measured fits, at any R. And this is the
+optimistic side: the stationed heaps hold 26 MB on the Wii, while the budget's resident row counts only their
+archives (17.27 MB Wii); the other ~8.7 MB of resident runtime objects (E: if any archive stays compressed in RAM
+the share is larger) is not in the PS2 budget at all.
+
+What would have to be true to retry: the PS2 port's runtime structures per scene at **≤ 19 %** of the Wii's scene
+heap (R = 0.99) or ≤ 47 % (R = 0.5), *and* the resident runtime objects shrunk the same way. The scene heap mixes
+derived model data (which a PS2 asset format would replace) with plain actor objects (32-bit pointers on both CPUs,
+so similar size); splitting it needs an allocation trace by type (Dolphin breakpoints on JKRHeap::alloc with the
+caller's return address), which is the next measurement if this is ever reopened.
