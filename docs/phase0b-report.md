@@ -143,3 +143,35 @@ Per scenario the better of whole (no streaming) and streaming counts. `python to
 Every scenario fits from N = 128 on, but the margin is what heap and audio must live in: 0.16-0.76 MB, against a Wii
 audio heap of 1.88 MB and a scene heap not yet measured. N = 255 means a pool of ~7 KB at a ~28-byte stride: double
 buffered it takes ~14 of VU1's 16 KB (estimate, E). The memory question now sits on task 3 (heap) and task 4 (audio).
+
+## Runtime heap tool (task 3.1)
+
+`tools/heapwalk.py mem1.raw mem2.raw` (Dolphin memory view -> Dump MEM1 / Dump MEM2). It lists every JKRExpHeap
+used-block chain (one per heap; blocks whose links disagree with their neighbours are dropped) and every JKRHeap
+object found at the start of a used block, with **used** bytes: `mSize − mFreeSize` for solid heaps, the largest chain
+inside the heap for exp heaps. No symbols needed, so RMGE01 works. Selftest: synthetic chains, a nested heap, a stale
+`'HM'`, a solid heap. The scene heap and the 1.88 MB audio solid heap both show up there (task 3.3).
+
+## Audio (tasks 4.1–4.2) — `python tools/audio.py data/fs/files`
+
+4.1: the bound decides. Every margin left after task 2.3 (0.16–0.76 MB) is below the 1.88 MB audio heap, so the split
+was measured (4.2). What the split showed is bigger than the EE question:
+
+**Wave data.** On the Wii waves do not live in the 1.88 MB heap but in a 14 MB "ARAM" heap carved out of MEM2
+(`AudParams.cpp:21`). Banks from the BAA `ws  ` commands, archives from each WSYS, which banks from `AudSceneMgr`:
+
+| | Wii (.aw) | PS2 SPU ADPCM |
+|---|---|---|
+| Always loaded (banks 0-8, 11, Mario voices) | 12.24 MB | 12.06 MB |
+| Worst scene (LibraryRoom / AstroDome) | 13.25 MB | 13.09 MB |
+| Worst scene, resampled to ≤ 16 kHz | | 9.72 MB |
+| ≤ 11 025 Hz | | 6.83 MB |
+| ≤ 8 kHz | | 4.99 MB |
+
+SPU2 RAM is 2 MB in total (ps2tek:111), before reverb work area and stream buffers. Waves are already 16-22 kHz on
+the Wii (97 % ADPCM); even at 8 kHz the worst scene needs 2.5× the SPU2. The biggest bank (2, `B64kawa_0.aw`, 4.55 MB)
+is always loaded. **The waves cannot be resident in SPU2**, and the EE has no room for the overflow (margin
+0.16–0.76 MB). Sound would need its own design: SPU2 as a cache over samples streamed from storage, or cutting/merging
+banks. Neither is measured here.
+
+**EE side (non-wave).** Bound 1.88 MB (the Wii solid heap). Its real use is read with `heapwalk.py` in task 3.3.

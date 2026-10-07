@@ -38,6 +38,12 @@ Local sources are pinned by `vendor.txt` (Petari `0fac090b`, galaxy-macos `92d7a
 | `ZoneSwitch` = per-zone 128-bit switch flags; `addToZone`/`removeFromZone` = collision partitioning. Neither loads or unloads a zone | `Petari/src/Game/Map/StageSwitch.cpp:22-70`; `src/Game/Map/CollisionCategorizedKeeper.cpp` | V |
 | VU1 data memory 16 KB | ps2tek:82 | V |
 | `--vu-index=N`: geometry kept indexed in EE RAM, VU1 expands batches of <= N unique vertices (unique × PS2 stride + u8 index per emitted vertex + 16 B tag); N = 64 is ours, VU1 cycle cost not measured | design choice, `tools/geom.py` `shp1(pool=N)` | D |
+| Wii wave data lives in the JAudio "ARAM" heap, 0xE00000 (14 MB); the 0x1E0000 audio solid heap is the JAudio system heap (banks, sequences, pools), not waves | `Petari/src/Game/AudioLib/AudParams.cpp:20-22`, `AudSystem.cpp:62-64`, `src/Game/System/Overwrite.cpp:1076-1087`, `HeapMemoryWatcher.cpp:142` | V |
+| Wave bank number = first word of BAA command `ws  ` (not the WSYS header id); `loadWaveArc(bank)` loads every archive of the bank | `Petari/src/JSystem/JAudio2/JAUAudioArcInterpreter.cpp:31-36`, `JAUSectionHeap.cpp:305-356` | V |
+| Banks always loaded: 0-6, 8, 11 (`loadStaticResource`), 7 (`isLoadDoneSystemInit`), 34 archive 1 for Mario; per stage SE/BGM sets and per scenario SE sets from the tables | `Petari/src/Game/AudioLib/AudSceneMgr.cpp:10-216,240-345,440-460` | V |
+| JKRHeap: mStart 0x30, mEnd 0x34, mSize 0x38; JKRSolidHeap: mFreeSize 0x6C, mSolidHead 0x70, mSolidTail 0x74 | `Petari/libs/JSystem/include/JSystem/JKernel/JKRHeap.hpp:216-226`, `JKRSolidHeap.hpp:51-54` | V |
+| PSX SPU ADPCM: 16-byte blocks of 28 samples | `refs/psx-spx-spu.md:151-159` (https://raw.githubusercontent.com/psx-spx/psx-spx.github.io/master/docs/ps1/spu/soundprocessingunitspu.md) | V |
+| SPU2 uses the PSX SPU ADPCM format | ps2tek:111 only says the SPU2 RAM is "quadrupled from PSX's SPU" | E |
 | JKRExpHeap used block: `u16 magic='HM'`, `u8 flags`, `u8 group`, `u32 size`, `prev`, `next` | `Petari/libs/JSystem/include/JSystem/JKernel/JKRExpHeap.hpp` (CMemBlock 0x00-0x0C); magic set `src/JSystem/JKernel/JKRExpHeap.cpp:552` | V |
 | `makeArchiveList` literals counted for every branch reachable by name (args ignored) | upper bound | E |
 | SHP1 block: shape count @+8, offsets @+0x0C..0x28; shape init 0x28 B; draw init {size, offset}; desc list at byte offset | `Petari/libs/JSystem/include/JSystem/J3DGraphLoader/J3DModelLoader.hpp:175-185`, `J3DShapeFactory.hpp:10-31,54-56` | V |
