@@ -1,10 +1,10 @@
 """Per-galaxy memory budget: original Wii asset sizes vs. estimated PS2-converted sizes.
 
-usage: python tools/budget.py data/fs [out_dir]    (data/fs = extracted disc filesystem)
+usage: python tools/budget.py data/fs/files [out_dir] [--levers]    (nodtool extract puts the game tree in files/)
        python tools/budget.py --selftest
 Every format detail below cites docs/sources.md (Petari file:line).
 """
-import csv, json, re, struct, sys
+import csv, json, re, struct, sys, zlib
 from pathlib import Path
 
 def u16(b, o): return struct.unpack_from(">H", b, o)[0]
@@ -67,6 +67,9 @@ GX_TILE_SHIFT = {0: (3, 3), 8: (3, 3), 14: (3, 3),                      # I4 C4 
                  3: (2, 2), 4: (2, 2), 5: (2, 2), 6: (2, 2), 10: (2, 2)}  # IA8 565 5A3 RGBA8 C14X2
 PS2_4BPP = {0, 8, 14}  # D (sources.md): 4-bpp GX formats -> PSMT4, everything else -> PSMT8
 PS2_MAX_DIM = 256      # D (sources.md): budget lever, GS itself allows 1024
+# --levers (docs/phase0-report.md "Levers"): textures max 128 + all PSMT4, drop high LOD when Middle exists,
+# kcl normals f32 -> s16, bck kept zlib-9 in RAM. All D; quality/precision/CPU cost not evaluated.
+LEVERS = False
 
 def gx_tex_size(fmt, w, h, mips):
     """Port of GXGetTexBufferSize (GXTexture.c:117-152); `mips` = ResTIMG image count."""
@@ -81,11 +84,12 @@ def gx_tex_size(fmt, w, h, mips):
     return total
 
 def ps2_tex_size(fmt, w, h, mips):
-    bpp = 4 if fmt in PS2_4BPP else 8
+    max_dim = 128 if LEVERS else PS2_MAX_DIM
+    bpp = 4 if LEVERS or fmt in PS2_4BPP else 8
     mips = max(mips, 1)
-    while (w > PS2_MAX_DIM or h > PS2_MAX_DIM) and mips > 1:  # drop top mip levels
+    while (w > max_dim or h > max_dim) and mips > 1:          # drop top mip levels
         w, h, mips = max(w // 2, 1), max(h // 2, 1), mips - 1
-    while w > PS2_MAX_DIM or h > PS2_MAX_DIM:                 # no mips left: downscale
+    while w > max_dim or h > max_dim:                         # no mips left: downscale
         w, h = max(w // 2, 1), max(h // 2, 1)
     total = 0
     for _ in range(mips):
@@ -100,12 +104,9 @@ def bti_headers(b, base, count):
         yield b[h], u16(b, h + 2), u16(b, h + 4), b[h + 0x18], h + u32(b, h + 0x1C)
 
 # ---------- J3D (bmd/bdl): J3DModelLoader.hpp:49-77,187-191 ----------
-GX_COMP_SIZE = {0: 1, 1: 1, 2: 2, 3: 2, 4: 4}        # GX_U8 S8 U16 S16 F32 (GXEnum.h:129-133)
-GX_CLR_SIZE = {0: 2, 1: 3, 2: 4, 3: 2, 4: 3, 5: 4}   # RGB565 RGB8 RGBX8 RGBA4 RGBA6 RGBA8 (GXEnum.h:135-140)
-
 def j3d_sizes(b):
     """-> dict tex_gx, tex_ps2, geo_gx, geo_ps2, other."""
-    r = dict(tex_gx=0, tex_ps2=0, geo_gx=0, geo_ps2=0, other=0)
+    r = dict(tex_gx=0, tex_ps2=0, geo_gx=0, geo_ps2=0, other=0, other_ps2=0)
     o = 0x20
     for _ in range(u32(b, 0x0C)):
         tag, size = b[o:o + 4], u32(b, o + 4)
@@ -118,42 +119,16 @@ def j3d_sizes(b):
                 r["tex_gx"] += gx_tex_size(fmt, w, h, mips)
                 r["tex_ps2"] += ps2_tex_size(fmt, w, h, mips)
         elif tag == b"VTX1":
-            r["geo_gx"] += size
-            r["geo_ps2"] += vtx1_ps2(b, o, size)
+            r["geo_gx"] += size                     # PS2 side is counted per emitted vertex in SHP1
         elif tag == b"SHP1":
-            # ponytail: display lists counted as-is; de-indexed PS2 strips would be larger (factor not measured)
+            from geom import shp1                   # de-indexed: every emitted vertex carries its data (geom.py)
             r["geo_gx"] += size
-            r["geo_ps2"] += size
+            r["geo_ps2"] += shp1(b, o)[1]
         else:
             r["other"] += size
+            r["other_ps2"] += size
         o += size
     return r
-
-def vtx1_ps2(b, o, size):
-    """VTX1 arrays re-encoded with 16-bit components (colors stay 4 bytes)."""
-    fmts, f = {}, o + u32(b, o + 8)
-    while u32(b, f) != 0xFF:
-        fmts[u32(b, f)] = (u32(b, f + 4), u32(b, f + 8))
-        f += 0x10
-    offs = [u32(b, o + 0x0C + 4 * i) for i in range(13)]
-    # J3DVertexBlock order: pos, nrm, nbt, clr0, clr1, tex0-7 -> GX_VA_* (GXEnum.h:17-46)
-    attrs = [9, 10, None, 11, 12] + list(range(13, 21))
-    live = sorted(x for x in offs if x)
-    total = 0
-    for i, off in enumerate(offs):
-        if not off or attrs[i] not in fmts:
-            continue
-        nxt = next((x for x in live if x > off), size)
-        length = nxt - off
-        cnt, typ = fmts[attrs[i]]
-        if attrs[i] in (11, 12):
-            total += length // GX_CLR_SIZE.get(typ, 4) * 4
-            continue
-        # GXCompCnt (GXEnum.h:387-395): POS_XY/XYZ, NRM_XYZ/NBT/NBT3, TEX_S/ST
-        comps = 2 + cnt if attrs[i] == 9 else (3 if cnt == 0 else 9) if attrs[i] == 10 else 1 + cnt
-        elem = comps * GX_COMP_SIZE.get(typ, 4)
-        total += length // elem * comps * 2
-    return total
 
 def file_sizes(name, b):
     n = name.lower()
@@ -161,8 +136,14 @@ def file_sizes(name, b):
         return j3d_sizes(b)
     if n.endswith(".bti"):
         fmt, w, h, mips, _ = next(bti_headers(b, 0, 1))
-        return dict(tex_gx=gx_tex_size(fmt, w, h, mips), tex_ps2=ps2_tex_size(fmt, w, h, mips), geo_gx=0, geo_ps2=0, other=0)
-    return dict(tex_gx=0, tex_ps2=0, geo_gx=0, geo_ps2=0, other=len(b))
+        return dict(tex_gx=gx_tex_size(fmt, w, h, mips), tex_ps2=ps2_tex_size(fmt, w, h, mips), geo_gx=0, geo_ps2=0, other=0, other_ps2=0)
+    ps2 = len(b)
+    if LEVERS and n.endswith(".kcl"):
+        # normals sit between mNormOffset and the first prism (1-based: KCollision.cpp:67); f32 -> s16 halves them
+        ps2 -= (u32(b, 8) + 0x10 - u32(b, 4)) // 2
+    elif LEVERS and n.endswith(".bck"):
+        ps2 = len(zlib.compress(b, 9))
+    return dict(tex_gx=0, tex_ps2=0, geo_gx=0, geo_ps2=0, other=len(b), other_ps2=ps2)
 
 # ---------- BCSV (JMap): JMapInfo.hpp:6-31, JMapInfo.cpp:55-70 ----------
 def jmap_hash(s):  # JGadget hashcode.cpp:7-13
@@ -172,7 +153,7 @@ def jmap_hash(s):  # JGadget hashcode.cpp:7-13
     return h
 
 def bcsv_column(b, field):
-    """Values of string column `field`, or [] if absent / not a BCSV."""
+    """Values of column `field` (str, or int for LONG/SHORT/BYTE), or [] if absent / not a BCSV."""
     if len(b) < 16:
         return []
     n, nf, data, esize = struct.unpack_from(">4I", b, 0)
@@ -180,13 +161,17 @@ def bcsv_column(b, field):
         return []
     want = jmap_hash(field)
     for i in range(nf):
-        fh, _mask, foff, _shift, ftype = struct.unpack_from(">IIHBB", b, 16 + i * 12)
+        fh, mask, foff, shift, ftype = struct.unpack_from(">IIHBB", b, 16 + i * 12)
         if fh != want:
             continue
         strings = data + n * esize
         out = []
         for e in range(n):
             base = data + e * esize + foff
+            if ftype in (0, 3, 4, 5):  # LONG, LONG_2, SHORT, BYTE: (raw & mask) >> shift
+                raw = struct.unpack_from({0: ">I", 3: ">I", 4: ">H", 5: ">B"}[ftype], b, base)[0]
+                out.append((raw & mask) >> shift)
+                continue
             if ftype == 6:
                 s = strings + u32(b, base)
             elif ftype == 1:
@@ -207,11 +192,59 @@ def stationed_paths():
     entries = re.findall(r"LOAD_TYPE_(\w+),\s*\"([^\"]+)\"", src)
     return list(dict.fromkeys(p for t, p in entries if t != "MOUNT_RESOURCE_LUIGI"))
 
+# ---------- placement name -> mounted archives: NameObjFactory::getMountObjectArchiveList ----------
+PETARI_SRC = STATIONED_CPP.parents[2]
+FACTORY_CPP = PETARI_SRC / "Game/NameObj/NameObjFactory.cpp"
+PLANET_SUFFIXES = ("Low", "Middle", "Bloom", "Water", "Indirect")  # PlanetMapCreator.cpp:353-357
+
+def factory_tables():
+    """-> (created: lowercase names the factory can create, by_name: name -> archive names)."""
+    src = FACTORY_CPP.read_text(encoding="utf-8")
+    i, j, k = (src.index(t) for t in ("cCreateTable[]", "cName2ArchiveNamesTable[]", "cName2MakeArchiveListFuncTable[]"))
+    created, by_name = set(), {}
+    # create table: {name, func, archive|nullptr}; name match is case-insensitive (getName2CreateFunc)
+    for name, arc in re.findall(r'\{\s*"([^"]+)",[^{}"]*?,\s*(nullptr|"[^"]*"),?\s*\}', src[i:j]):
+        created.add(name.lower())
+        if arc != "nullptr":
+            by_name.setdefault(name, []).append(arc.strip('"'))
+    for name, arc in re.findall(r'\{\s*"([^"]+)",\s*"([^"]+)",?\s*\}', src[j:k]):
+        by_name.setdefault(name, []).append(arc)
+    # makeArchiveList funcs also branch on placement args; every literal reachable for the name counts (upper bound, sources.md E)
+    bodies = {}
+    for f in PETARI_SRC.rglob("*.cpp"):
+        t = f.read_text(encoding="utf-8", errors="replace")
+        # body ends at the closing brace with the definition's own indent
+        for m in re.finditer(r"^( *)\w[\w ]*? (?:(\w+)::)?(\w+)\(NameObjArchiveListCollector\*[^)]*\)\s*\{(.*?)\n\1\}\n", t, re.S | re.M):
+            # top-level `if (isEqualObjectName(rIter, "X") ...)` blocks only apply to X (MorphItemObjNeo.cpp:37-86)
+            parts = []
+            for seg in re.split(rf"\n{m.group(1)}    (?=if \()", m.group(4)):
+                head = seg.split("\n", 1)[0]
+                guard = set(re.findall(r'isEqualObjectName\(rIter, "([^"]+)"\)', head)) if head.startswith("if (") else set()
+                parts.append((guard, [a for a in re.findall(r'addArchive\("([^"]+)"\)', seg) if "Luigi" not in a]))
+            bodies[f"{m.group(2)}::{m.group(3)}" if m.group(2) else m.group(3)] = parts
+    for name, func in re.findall(r'\{\s*"([^"]+)",\s*([\w:]+),?\s*\}', src[k:]):
+        for guard, arcs in bodies.get(func, bodies.get(func.split("::")[-1], [])):
+            if not guard or name in guard:
+                by_name.setdefault(name, []).extend(arcs)
+    return created, by_name
+
+def planet_table(fs, exists):
+    """PlanetName -> archives (PlanetMapCreator::makeArchiveListPlanet, .cpp:303-338). ForceLow ignored: high models counted."""
+    arc = fs / "ObjectData/PlanetMapDataTable.arc"
+    b = {n.lower(): d for n, d in rarc_files(arc.read_bytes())}["planetmapdatatable.bcsv"]
+    names = bcsv_column(b, "PlanetName")
+    out = {n: [n] for n in names}
+    for suf in PLANET_SUFFIXES:
+        for n, flag in zip(names, bcsv_column(b, suf + "Flag")):
+            if flag and exists(n + suf):  # flag != 0 and MR::isExistModel (.cpp:24, 359-363)
+                out[n].append(n + suf)
+    return out
+
 # ---------- disc walk ----------
-KEYS = ("tex_gx", "tex_ps2", "geo_gx", "geo_ps2", "other")
+KEYS = ("tex_gx", "tex_ps2", "geo_gx", "geo_ps2", "other", "other_ps2")
 
 def arc_stats(path, cache):
-    key = f"{path}:{path.stat().st_mtime_ns}"
+    key = f"{path}:{path.stat().st_mtime_ns}:{LEVERS}"
     if key not in cache:
         tot = dict.fromkeys(KEYS, 0)
         names = set()
@@ -230,7 +263,7 @@ def row(label, parts):
         for k in KEYS:
             r[k] += p["sizes"][k]
     r["wii_total"] = r["tex_gx"] + r["geo_gx"] + r["other"]
-    r["ps2_total"] = r["tex_ps2"] + r["geo_ps2"] + r["other"]
+    r["ps2_total"] = r["tex_ps2"] + r["geo_ps2"] + r["other_ps2"]
     return dict(name=label, **r)
 
 def main(fs, out):
@@ -239,15 +272,34 @@ def main(fs, out):
     cache_file = out / "cache.json"
     cache = json.loads(cache_file.read_text()) if cache_file.exists() else {}
     stage, objdir = fs / "StageData", fs / "ObjectData"
-    objects = {p.stem.lower(): p for p in objdir.glob("*.arc")}
-    # ponytail: name -> archive is a heuristic (sources.md, E); LOD archives counted whenever they exist
-    # (LodCtrl.cpp:351-374), which over-counts actors without LOD
-    lod = lambda names: {v for n in names for v in (n, n + "low", n + "middle") if v in objects}
-    resident = [fs / p.lstrip("/") for p in stationed_paths()]
+    # archives mount by object or layout name (NameObjFactory.cpp requestMountObjectArchives); localized layout wins
+    objects = {p.stem.lower(): p for d in (fs / "LayoutData", objdir, fs / "UsEnglish/LayoutData") for p in d.glob("*.arc")}
+    created, by_name = factory_tables()
+    planets = planet_table(fs, lambda a: a.lower() in objects)
+    zone_arcs = {p.stem.lower() for p in stage.glob("*.arc")}
+
+    def resolve(names):
+        """-> (lowercase archives on disc, placement names the factory cannot create)."""
+        arcs, unknown = set(), set()
+        for n in names:
+            if n in planets:
+                arcs.update(planets[n])
+            elif n.lower() in created or n in by_name:
+                arcs.update(by_name.get(n, []))
+            elif n.lower() not in zone_arcs:  # sub-zone names are counted through ZoneList
+                unknown.add(n)
+        return {a.lower() for a in arcs if a.lower() in objects}, unknown
+
+    # ponytail: LOD archives counted whenever they exist (LodCtrl.cpp:351-374), over-counts actors without LOD
+    lod = lambda names: {v for n in names for v in (n, n + "low", n + "middle") if v in objects
+                         and not (LEVERS and v == n and n + "middle" in objects)}  # lever: Middle becomes top
+    # language-prefixed path first, then plain (FileUtil.cpp:187-193); UsEnglish is our pick (sources.md, D)
+    loc = lambda p: next((q for q in (fs / "UsEnglish" / p.lstrip("/"), fs / p.lstrip("/")) if q.exists()), fs / p.lstrip("/"))
+    resident = [loc(p) for p in stationed_paths()]
     resident_row = row("<resident>", [arc_stats(p, cache) for p in resident if p.exists()])
     galaxies, zones = [dict(**resident_row, zones=0, unresolved=sum(not p.exists() for p in resident))], []
     try:
-        for scen in sorted(stage.glob("*Scenario.arc")):
+        for scen in sorted(stage.glob("*/*Scenario.arc")):
             gname = scen.name[: -len("Scenario.arc")]
             print(gname, flush=True)
             # a galaxy loads exactly its ZoneList entries (StageFileLoader.cpp:14-40)
@@ -259,12 +311,12 @@ def main(fs, out):
                     unresolved.add(z)
                     continue
                 zs = arc_stats(zp, cache)
-                objs = {n.lower() for n in zs["names"]}
-                z_parts = [zs] + [arc_stats(objects[n], cache) for n in sorted(lod(objs))]
-                zones.append(dict(galaxy=gname, **row(z, z_parts), unresolved=len(objs - objects.keys())))
+                arcs, unknown = resolve(zs["names"])
+                z_parts = [zs] + [arc_stats(objects[n], cache) for n in sorted(lod(arcs))]
+                zones.append(dict(galaxy=gname, **row(z, z_parts), unresolved=len(unknown)))
                 g_parts.append(zs)
-                g_objs |= lod(objs)
-                unresolved |= objs - objects.keys()
+                g_objs |= lod(arcs)
+                unresolved |= unknown
             g_parts += [arc_stats(objects[n], cache) for n in sorted(g_objs)]
             galaxies.append(dict(**row(gname, g_parts), zones=len(zone_names), unresolved=len(unresolved)))
     finally:
@@ -288,6 +340,10 @@ def selftest():
     assert gx_tex_size(14, 256, 256, 1) == 32768
     # 512x512 RGBA8 with 2 mips -> top level dropped -> 256x256 CLUT8 single level
     assert ps2_tex_size(6, 512, 512, 2) == 65536 + 1024
+    global LEVERS
+    LEVERS = True  # same texture under --levers: 128x128 PSMT4
+    assert ps2_tex_size(6, 512, 512, 2) == 128 * 128 // 2 + 64
+    LEVERS = False
     # BCSV: 2 entries, 1 string-offset field "name"
     strings = b"Kuribo\0Coin\0"
     hdr = struct.pack(">4I", 2, 1, 16 + 12, 4) + struct.pack(">IIHBB", jmap_hash("name"), 0xFFFFFFFF, 0, 0, 6)
@@ -300,4 +356,6 @@ if __name__ == "__main__":
     if sys.argv[1:] == ["--selftest"]:
         selftest()
     else:
-        main(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else "out")
+        args = [a for a in sys.argv[1:] if a != "--levers"]
+        LEVERS = "--levers" in sys.argv
+        main(args[0], args[1] if len(args) > 1 else "out")

@@ -25,8 +25,20 @@ Local sources are pinned by `vendor.txt` (Petari `0fac090b`, galaxy-macos `92d7a
 | JMap field hash: `h = c + h*31` | `Petari/src/JSystem/JGadget/hashcode.cpp:7-13` | V |
 | A galaxy loads exactly the zones in `<Galaxy>Scenario.arc:/ZoneList.bcsv` (`ZoneName`) as `/StageData/<Zone>.arc`, all at once | `Petari/src/Game/System/ScenarioDataParser.cpp:33-55,97-101`; `src/Game/Scene/StageFileLoader.cpp:14-40` | V |
 | Objects load `/ObjectData/<name>.arc`, plus `Low`/`Middle` LOD archives | `Petari/src/Game/Util/ModelUtil.cpp:618`; `src/Game/LiveActor/LodCtrl.cpp:351-374` | V |
-| Placement `name` = ObjectData archive name | heuristic; many actors pick their archive in code | E |
+| Placement `name` = ObjectData archive name | retired: replaced by the game's preload list | X |
+| Archives mounted per placement: create-table archive + `cName2ArchiveNamesTable` + `makeArchiveList` funcs; planets via table | `Petari/src/Game/NameObj/NameObjFactory.cpp` `getMountObjectArchiveList`; `src/Game/Map/PlanetMapCreator.cpp:303-365` | V |
+| `makeArchiveList` literals counted for every branch reachable by name (args ignored) | upper bound | E |
+| SHP1 block: shape count @+8, offsets @+0x0C..0x28; shape init 0x28 B; draw init {size, offset}; desc list at byte offset | `Petari/libs/JSystem/include/JSystem/J3DGraphLoader/J3DModelLoader.hpp:175-185`, `J3DShapeFactory.hpp:10-31,54-56` | V |
+| Display list primitive = u8 (type\|vtxfmt) + u16 count; prim types | `Petari/src/RVL_SDK/gx/GXGeometry.c:152-153`; `GXEnum.h:701-709` | V |
+| KCL prism array is 1-based (first prism at mPrismOffset + 0x10) | `Petari/src/Game/Map/KCollision.cpp:67` | V |
+| Per-TU PPC section ranges | `Petari/config/RMGK01/splits.txt` | V |
+| EE code ≈ PPC code (×1.007 over 84 % of ported bytes, GCC 15.2 -Os vs MWCC) | measured, `tools/codesize.py` | V (sample), E (extrapolation) |
+| Wii heaps: system 0x40000, audio 0x1E0000, stationed 0x900000 + 0x1400000, file cache 0x1040400 | `HeapMemoryWatcher.cpp:139-152`; `GameSystemSceneController.cpp:113` | V |
+| KCL header: pos/nrm/prism/octree offsets; prism 0x10 B | `Petari/include/Game/Map/KCollision.hpp:9-41` | V |
+| BCK (ANK1): table @0x14, scale f32 @0x18, rot s16 @0x1C, trans f32 @0x20 | `Petari/libs/JSystem/include/JSystem/J3DGraphAnimator/J3DAnimation.hpp:306-317` (types from J3DAnmTransformFullData l.162-173) | V |
 | Resident ("stationed") archive list, 190 entries | `Petari/src/Game/System/StationedFileInfo.cpp` | V |
+| Localized files: the game tries `/<LanguagePrefix>/<path>` first and falls back to `<path>`; US prefixes `UsEnglish`/`UsSpanish`/… | `Petari/src/Game/Util/FileUtil.cpp:187-193`; `src/Game/System/Language.cpp:118` | V |
+| DOL header: 7 text sizes @0x90, 11 data sizes @0xAC, bss size @0xDC | from memory, no source file; consistent with RMGE01: text+data+0x100 = 6 283 264 B = file size exactly | E |
 | `LOAD_TYPE_MOUNT_RESOURCE_LUIGI` entries are loaded only when playing as Luigi, so they are excluded from the resident row | inferred from the enum name (`StationedFileInfo.hpp:13-20`); loader code not traced | E |
 | `main.dol` size approximates the PS2 code + static data size | PPC→MIPS code-size ratio not measured | E |
 | SMG heap reservations: system 0x40000, audio 0x1E0000, stationed MEM1 0x900000, stationed MEM2 0x1400000, 0xE00000 of MEM2 as alt-ARAM; scene heaps take the rest | `Petari/src/Game/System/HeapMemoryWatcher.cpp:119-155` | V (capacities, not usage) |
@@ -73,5 +85,6 @@ Local sources are pinned by `vendor.txt` (Petari `0fac090b`, galaxy-macos `92d7a
 | Choice | Rationale | St |
 |---|---|---|
 | 4 bpp GX formats (I4, C4, CMPR) → PSMT4; all others → PSMT8 | never raises bpp; CMPR→PSMT4 is lossy (per-block palettes → one 16-color palette) | D |
+| Size localized files with `UsEnglish` (disc is RMGE01; Fr/Es Message.arc are +7 KB/+1.6 KB) | any one language is loaded at a time (FileUtil.cpp:187-193) | D |
 | Drop mip levels above 256×256 | budget lever; GS allows up to 1024 | D |
 | Vertex arrays re-encoded to 16-bit components | matches VIF UNPACK V3-16 (ps2tek:2674); precision loss not evaluated | D |
