@@ -98,3 +98,65 @@ Differences from SMG (not costed in the slice):
 - Camera: plain follow behind and above Mario (SMG's camera system is ~12.5 k lines and uses camera areas).
 - Rails: straight segments between control points (the game uses Bezier rails).
 - No sound, particles, shadows, HUD layouts, star bits shooting, pause menu.
+
+## VU1 renderer (follow-up to 3.2) — `engine/src/render.c`, `engine/src/vu1_flat.vsm`
+
+The blob gains a VUMD chunk (format v2): every model pre-split into batches of 120 vertices (40 triangles), position
+and colour as VU-ready quadwords. Per frame the EE only builds a DMA chain of REF tags (matrix per instance, then
+UNPACK + MSCAL per batch); VU1 transforms, projects and emits GIF packets (PATH1), double-buffered in VU memory.
+Colour and Z are now 32-bit and Z24 (two 640×448 frames + Z = 3.4 MB of the 4 MB of GS VRAM). HUD text goes over
+PATH3 after the VIF chain (libdraw adds the 2048 primitive offset itself; passing screen coordinates + 2048 put the
+text off-screen).
+
+PCSX2 (`docs/renders/slice-vu1.png`, indicative only, not the console):
+
+| | EE path (3.2) | VU1 path |
+|---|---|---|
+| Triangles drawn | 58 052 | 62 206 (+ Mario box) |
+| EE time to draw | 173 ms (later 75-80 ms) | **2.09 ms** (4.17 ms after ~40 s of the same still frame, see below) |
+| Logic (game_update) | — | 0.14-0.21 ms |
+| Worst frame seen | — | 2.34 ms, 4.91 ms in the slower stretch |
+| Frame rate | ~6 FPS | 60 FPS |
+
+The draw time doubled after ~40 s with nothing on screen changing (same Mario position, same triangle count) and
+stayed there; the EE time includes the wait for the previous frame's VIF DMA, so it follows PCSX2's VU/GS pacing.
+Real numbers need the console (task 5.2).
+
+VUMD is 3.96 MB at 32 B per vertex, non-indexed (the indexed MODL chunk stays for collision-free uses). Not
+compacted: the slice fits; a 16-bit position + 32-bit colour layout would halve it when a full scene needs it.
+
+## Runtime memory row (task 5.1)
+
+Console at boot (`mem_report`) and HUD every frame (`RUNTIME … KB`, live coins/purple/pieces/Kuribo):
+
+| Type | Bytes | Wii (Gateway 2) |
+|---|---|---|
+| render (VIF/GIF packets 576 KB, VU batch headers, libdraw buffers) | 657 408 | render targets 0.32 MB + GX FIFO 0.5 MB (stationed) |
+| objects (100 purple coins, 10 coins, 3 star pieces as 16-B pickups; 4 Kuribo × 48 B) | 1 984 | PurpleCoin 373.5 KB, StarPiece 380.9 KB, Kuribo 47.2 KB |
+| player | 1 232 | 296.6 KB |
+| collision, scene (KCL, models read in place from the blob) | 0 | in the scene heap as model instances |
+| **Runtime total** | **660 624 (0.63 MB)** | **scene heap 3.24 MB** |
+
+Per object: PurpleCoin 16 B vs 2 567 B, Kuribo 48 B vs 12 073 B, player 1.2 KB vs 297 KB, all far under the
+one-sixth targets of 1.2. The slice does much less per object (see "Differences from SMG"), so these are floors.
+
+## Gate (task 6.1) — provisional until 5.2
+
+Spec formula, OceanPhantomCave 1 (phase 0c):
+
+- **Memory** = Wii scene heap 7.81 MB × (slice 0.630 MB / Wii slice 3.24 MB = 0.194) = **1.52 MB**, against a room of
+  1.45 (asset margin at R = 0.99) + 2.3 (render targets) + 2.6 (XFB + GX FIFO) = **6.35 MB → fits**. Without the
+  fixed render buffers the slice ratio is 0.001 and the extrapolation ~8 KB.
+- **CPU** = slice worst frame × object ratio (Wii NameObjs 3 621 / 1 295 = 2.80): 2.34 ms → 6.5 ms, or with the slow
+  stretch 4.91 ms → **13.7 ms**, under 16.7 ms. PCSX2 numbers; the gate takes the SCPH-75001's (design, risks).
+
+What the formula does not see (said plainly):
+- It scales only the scene heap. The phase 0c trace found ~8 MB of *resident* runtime (stationed C++ objects 4.34 MB,
+  other data ~3.6 MB: sound, camera, layouts, effects, save). The slice has none of those systems, so nothing measures
+  their PS2 cost yet; that is the real open risk of a full engine.
+- The slice is a subset: no Mario model/animation, no sound, particles, shadows, camera system, Bezier rails.
+- Render cost scales with triangles and batches, not objects; 62 k triangles at ~2 ms of EE is the measured part.
+
+**Verdict: GO-pending-console.** By the spec's formula both rows fit with room (memory 1.52 of 6.35 MB, CPU
+6.5-13.7 ms of 16.7 in PCSX2). It becomes GO when 5.2 (frame time on the SCPH-75001 over a fixed path) stays
+under 16.7 ms; then 6.2 opens the full-engine plan, starting with the resident systems the slice does not have.
