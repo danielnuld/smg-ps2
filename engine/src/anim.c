@@ -61,11 +61,13 @@ void anim_bind(Anim *a, const Skin *skin)
     memset(a, 0, sizeof *a);
     a->skin = skin;
     a->clip_id = -1;
+    a->phase = -1.0f;
     anim_update(a);
 }
 
 int anim_play(Anim *a, const char *name, float speed, int loop)
 {
+    int was_loop = a->loop;
     a->speed = speed;
     a->loop = loop;
     for (u32 i = 0; i < sc->nclips; i++)
@@ -73,6 +75,11 @@ int anim_play(Anim *a, const char *name, float speed, int loop)
             if ((int)i == a->clip_id)
                 return 1;
             a->clip_id = i;
+#ifdef BENCH
+            printf("clip %s\n", name);
+#endif
+            /* loop to loop (walk <-> run): keep the step phase instead of restarting the cycle */
+            a->phase = was_loop && loop && a->clip && anim_length(a) ? a->frame / anim_length(a) : -1.0f;
             a->frame = 0;
             a->done = 0;
             return 1;
@@ -137,6 +144,10 @@ void anim_update(Anim *a)
     a->clip = a->clip_id >= 0 ? clip_data(a->clip_id) : NULL;
     if (a->clip) {
         float len = *(const u16 *)a->clip;
+        if (a->phase >= 0) {
+            a->frame = a->phase * len;
+            a->phase = -1.0f;
+        }
         a->frame += a->speed;
         if (a->frame >= len) {
             if (a->loop)

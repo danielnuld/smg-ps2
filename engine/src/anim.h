@@ -12,6 +12,7 @@ typedef struct {
     const u8 *clip;      /* inflated clip in the cache, NULL = bind pose */
     int clip_id;
     float frame, speed;
+    float phase;         /* >= 0: start the next clip at this fraction of its length (loop to loop switch) */
     int loop, done;
     float world[ANIM_MAX_JOINTS][16];  /* joint world matrices (model space), column-major */
     float drw[ANIM_MAX_DRW][16];       /* draw matrices: rigid = joint world, envelope = sum w * world * invbind */
