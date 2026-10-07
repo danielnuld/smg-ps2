@@ -44,14 +44,15 @@ def triangles(op, v):
         return None
     return [x for i in range(0, len(t), 3) if len({t[i], t[i + 1], t[i + 2]}) == 3 for x in t[i:i + 3]]
 
-def shp1(b, o, pool=None, ratio=1.0, positions=None):
+def shp1(b, o, pool=None, ratio=1.0, positions=None, collect=None):
     """-> (emitted vertices, ps2 bytes, display-list bytes, unknown cmds) for one SHP1 block at o.
     pool=N: geometry stays indexed in RAM and VU1 expands it (D, sources.md): each shape is cut into batches of at
     most N unique vertices; a batch = its unique vertices at PS2 stride + 1-byte index per emitted vertex + 16-byte tag.
     ponytail: a strip cut at a batch edge does not re-send its last 2 vertices; under-counts by <= 2 per batch.
     ratio<1 (needs positions from vtx1_positions): each matrix group's triangles are simplified to ~ratio of their count
     (meshoptimizer, tools/simplify.py), re-stripped with degenerate joins, then sized the same way; vertices never merge
-    across groups (each group has its own matrix table). Lines/points are kept as they are."""
+    across groups (each group has its own matrix table). Lines/points are kept as they are.
+    collect: list that receives (flat positions, triangle list) per group, after simplification (for renders)."""
     n = u16(b, o + 8)
     init, idx, desc, dl, draw = (o + u32(b, o + k) for k in (0x0C, 0x10, 0x18, 0x20, 0x28))
     emitted = ps2 = dl_bytes = bad = 0
@@ -69,7 +70,7 @@ def shp1(b, o, pool=None, ratio=1.0, positions=None):
             d += 8
         batch = set()
         flush = lambda: len(batch) * ps2_stride + 16 if batch else 0
-        simp = ratio < 1 and positions is not None and pos_at is not None
+        simp = (ratio < 1 or collect is not None) and positions is not None and pos_at is not None
         def emit(keys):
             nonlocal emitted, ps2
             emitted += len(keys)
@@ -104,19 +105,23 @@ def shp1(b, o, pool=None, ratio=1.0, positions=None):
                             pos += positions(k[off] if w == 1 else (k[off] << 8 | k[off + 1]))
                         vids.append(ids[k])
                     t = triangles(op, vids)
-                if t is None:
+                if t is None or ratio >= 1:
                     emit(keys)
-                else:
+                if t is not None:
                     tri += t
                 p += 3 + cnt * stride
             if tri:
                 from simplify import simplify, stripify
-                emit([(g, i) for i in stripify(simplify(tri, pos, ratio)[0], len(ids))])
+                new = simplify(tri, pos, ratio)[0] if ratio < 1 else tri
+                if ratio < 1:
+                    emit([(g, i) for i in stripify(new, len(ids))])
+                if collect is not None:
+                    collect.append((pos, new))
         if pool is not None:
             ps2 += flush()
     return emitted, ps2, dl_bytes, bad
 
-def model(b, ratio=1.0, pool=None):
+def model(b, ratio=1.0, pool=None, collect=None):
     r = dict(emitted=0, ps2=0, dl=0, bad=0, vtx1=0, shp1=0)
     o, pos = 0x20, None
     for _ in range(u32(b, 0x0C)):
@@ -126,7 +131,7 @@ def model(b, ratio=1.0, pool=None):
             pos = vtx1_positions(b, o)
         if tag == b"SHP1":
             r["shp1"] += size
-            for k, v in zip(("emitted", "ps2", "dl", "bad"), shp1(b, o, pool, ratio, pos)): r[k] += v
+            for k, v in zip(("emitted", "ps2", "dl", "bad"), shp1(b, o, pool, ratio, pos, collect)): r[k] += v
         o += size
     return r
 
@@ -159,6 +164,8 @@ def selftest():
     half = shp1(shp, 0, None, 0.5, pos)
     assert full[0] == 3 * n_tri and half[0] < full[0] // 3, (full, half)   # list -> strip, and fewer triangles
     assert shp1(shp, 0, None, 1.0, pos) == full                            # ratio 1 is the untouched path
+    got = []
+    assert shp1(shp, 0, None, 1.0, pos, got) == full and len(got[0][1]) == 3 * n_tri  # collecting changes no size
     print("selftest ok", full[0], "->", half[0], "emitted vertices at R=0.5")
 
 if __name__ == "__main__" and sys.argv[1:] == ["--selftest"]:

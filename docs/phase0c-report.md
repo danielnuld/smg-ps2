@@ -45,3 +45,34 @@ column subtracts the 1.88 MB Wii audio solid heap as a **bound** (task 2.4 repla
 Re-stripping alone (R = 0.99, no visible change) is worth 1.37 MB on the worst scenario; each further step of
 simplification gives about 1 MB. Whatever R is chosen, the heap now has 1.4-3.1 MB to live in (with the audio bound).
 Which R is acceptable is decided by the renders (task 1.5), not by the budget.
+
+## Renders (task 1.5) — `python tools/render.py data/fs/files docs/renders <models>`
+
+Flat-shaded, untextured, painter's algorithm (PIL + numpy); row 1 the whole model, row 2 a 4× zoom on its centre.
+Models: the three planets with the most PS2 geometry (PeachCastleGardenPlanet 1.93 MB, DarkHopperPlanetC 1.62,
+TrialBallPlanet 1.57, from `out/vu255/cache.json`) plus GhostShipCavePlanet (worst scenario).
+
+![PeachCastleGarden](renders/PeachCastleGardenPlanet.png)
+![DarkHopperC](renders/DarkHopperPlanetC.png)
+![TrialBall](renders/TrialBallPlanet.png)
+![GhostShipCave](renders/GhostShipCavePlanet.png)
+
+Triangles kept (the simplifier stops early on seams): Peach 56 483 → 47 112 / 40 654 / 37 258 at R 0.75 / 0.5 / 0.35;
+DarkHopperC 50 610 → 41 860 / 35 164 / 31 843; TrialBall 41 190 → 34 549 / 33 167 / 32 574;
+GhostShipCave 38 692 → 29 558 / 22 478 / 18 632.
+
+| Model | R = 0.75 | R = 0.5 | R = 0.35 |
+|---|---|---|---|
+| GhostShipCave | same | same | same |
+| PeachCastleGarden | same | small cracks along pond edges | broken: long slivers, holes |
+| DarkHopperC | a few new notches | visible spikes and notches | small detail gone |
+| TrialBall | **round holes turn into triangles, curved edges facet** | worse | worse |
+
+**Judgement:** no uniform R below 1 is clean. 0.75 already damages curved, gameplay-relevant shapes (TrialBall is a
+rolling-ball course: collision `.kcl` is not simplified, so a visibly triangular hole would not match the round
+collision hole). Only re-stripping (R = 0.99, no visible change) is free; it alone gives the worst scenario +2.13 MB
+before audio and heap (+0.25 with the 1.88 MB audio bound).
+
+The next step for geometry, if needed after audio and heap, is an **error-capped** simplification (meshoptimizer's
+`target_error` instead of a fixed ratio, per model) so flat terrain like GhostShipCave or Peach's slopes shrinks and
+curves like TrialBall's are left alone. Not done here.
