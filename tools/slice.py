@@ -29,6 +29,7 @@ Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
   'GRAV'  u32 n, n × {u16 kind, u16 flags, s32 priority, s32 inverse, f32 range, f32 distant, f32 m[12] (x, y, z
           axes and translation, world), f32 p[4]}  (84 B): grav_record, Petari GravityCreator.cpp per kind
 """
+import json
 import math
 import struct
 import sys
@@ -43,7 +44,10 @@ import skin
 import tex
 
 RESIDENT = ("Coin", "StarPiece", "SuperSpinDriver")  # OBJ_TYPES in phase 0b's RESIDENT set (out/sets.json): the resident pack
-SKINNED = ("Mario",)   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
+SKINNED = ("Mario",)
+# ponytail: translucent volumes and effects the renderer would draw opaque (no blending yet): the atmosphere sphere,
+# the sky ring (793 869 radius), the sun's lens flare. Grows as galaxies show more; blending replaces it
+NO_DRAW = ("SphereAir", "VROrbit", "BrightSun")   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
 OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup", "PurpleRailCoin", "SuperSpinDriver")
 ROW_FIELDS = ("pos_x", "pos_y", "pos_z", "dir_x", "dir_y", "dir_z", "scale_x", "scale_y", "scale_z")
 ROW = struct.Struct("<HHii9f8i")
@@ -482,6 +486,30 @@ def grav_record(o):
                        *[x for v in m for x in v], *pr)
 
 
+_factory = None
+
+
+def model_archive(fsp, name, planets):
+    """Archive holding a placed class's model: the planet itself, else the first archive Petari's NameObjFactory gives
+    the name (cCreateTable / cName2ArchiveNamesTable, budget.factory_tables), else the name; None if not on disc."""
+    global _factory
+    if name in planets or name in OBJ_TYPES or name in SKINNED:
+        return name
+    if name in NO_DRAW:
+        return None
+    if _factory is None:  # parsing Petari's sources takes minutes on the SD card: cached next to the other outputs
+        cache = Path(__file__).parent.parent / "out" / "factory.json"
+        if cache.exists():
+            _factory = json.loads(cache.read_text())
+        else:
+            _factory = B.factory_tables()[1]
+            cache.write_text(json.dumps(_factory))
+    for a in _factory.get(name, []) + [name]:
+        if (fsp / "ObjectData" / f"{a}.arc").exists():
+            return a
+    return None
+
+
 def placement(fs, galaxy, scenario):
     """Scenario-wide chunks (TYPE ZONE OBJS STRT PATH GRAV CAMS CARE) and what the asset packs need."""
     act, zones, objs, starts, paths, cubes, bcams, up = scene(fs, galaxy, scenario)
@@ -493,7 +521,9 @@ def placement(fs, galaxy, scenario):
     zworld = to_world(zones, up_ids, objs + starts + paths + cubes)
     fsp = Path(fs)
     planets = B.planet_table(fsp, lambda a: (fsp / "ObjectData" / f"{a}.arc").exists())
-    keep = [o for o in objs if o["name"] in OBJ_TYPES or o["name"] in planets or "Gravity" in o["name"]]
+    # every class with a model on disc is kept (static until it gets a behaviour), plus gravities
+    arcmap = {n: model_archive(fsp, n, planets) for n in {o["name"] for o in objs}}
+    keep = [o for o in objs if arcmap[o["name"]] or "Gravity" in o["name"]]
     types = sorted({o["name"] for o in keep} | {s["name"] for s in starts})
     tid = {t: i for i, t in enumerate(types)}
     pack_row = lambda r: ROW.pack(tid[r["name"]], r["zone"], r["l_id"], r["path"], *r["pos"], *r["rot"], *r["scale"],
@@ -521,13 +551,13 @@ def placement(fs, galaxy, scenario):
     per_stage = {st: [] for st in act}
     for o in keep:
         n = o["name"]
-        if (n in planets or n in OBJ_TYPES) and n not in per_stage[names[o["zone"]]]:
+        if arcmap[n] and n not in per_stage[names[o["zone"]]]:
             per_stage[names[o["zone"]]].append(n)
     for st in per_stage:
         per_stage[st].sort(key=lambda n: (n not in planets, n))
     info = dict(stages=act, types=types, objs=len(keep), starts=len(starts), paths=len(paths), cameras=len(cams),
                 areas=len(care), camera_types=dict(cam_types))
-    return out, info, dict(planets=planets, per_stage=per_stage, up=up)
+    return out, info, dict(planets=planets, per_stage=per_stage, up=up, arcmap=arcmap)
 
 
 _model_cache = {}
@@ -566,7 +596,7 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True):
                     texts.append(tx)
             vg += struct.pack("<IH10x", len(tris), ti) + pos + col + uv
         vumd.append(name32(t) + struct.pack("<If8x", len(groups), qs) + vg)
-        if kcl and collision and t in planets:
+        if kcl and collision:
             kcl = kcl_to_le(kcl)
             kcls.append(name32(t) + struct.pack("<I", len(kcl)) + kcl + b"\0" * (-len(kcl) % 4))
     head, data = bytearray(), bytearray()
@@ -608,8 +638,10 @@ def build(fs, galaxy, scenario, ratio=0.99):
     out, info, ctx = placement(fs, galaxy, scenario)
     fsp, stats = Path(fs), {}
     types = info["types"]
-    names = [t for t in types if t in ctx["planets"]] + [t for t in types if t in OBJ_TYPES] + list(SKINNED)
-    out += assets(fsp, [(t, t) for t in names], ctx["planets"], ratio, stats) + [anim_chunk(fsp)]
+    am = ctx["arcmap"]
+    names = sorted((t for t in types if am.get(t)), key=lambda t: (t not in ctx["planets"], t))
+    out += assets(fsp, [(t, am[t]) for t in names] + [(t, t) for t in SKINNED], ctx["planets"], ratio, stats) + \
+        [anim_chunk(fsp)]
     return blob_of(out), dict(info, **stats)
 
 
@@ -629,7 +661,7 @@ def packs(fs, galaxy, scenario, resident, ratio=0.99):
     info["stream"] = {stage: bytes loaded while the player is in it}: scene + common + its chain in full + the other
     stages low. ponytail: shared models always resident in common.bin; per-zone dedup at run time if that is too big."""
     out, info, ctx = placement(fs, galaxy, scenario)
-    fsp, planets, per, up = Path(fs), ctx["planets"], ctx["per_stage"], ctx["up"]
+    fsp, planets, per, up, am = Path(fs), ctx["planets"], ctx["per_stage"], ctx["up"], ctx["arcmap"]
     count = {}
     for st, ns in per.items():
         for n in ns:
@@ -637,10 +669,10 @@ def packs(fs, galaxy, scenario, resident, ratio=0.99):
                 count[n] = count.get(n, 0) + 1
     shared = sorted(n for n, c in count.items() if c > 1)
     files = {"scene.bin": blob_of(out),
-             "common.bin": blob_of(assets(fsp, [(n, n) for n in shared], planets, ratio))}
+             "common.bin": blob_of(assets(fsp, [(n, am[n]) for n in shared], planets, ratio))}
     for st, ns in per.items():
         own = [n for n in ns if count.get(n) == 1]
-        files[f"{st}.bin"] = blob_of(assets(fsp, [(n, n) for n in own], planets, ratio))
+        files[f"{st}.bin"] = blob_of(assets(fsp, [(n, am[n]) for n in own], planets, ratio))
         files[f"{st}.low.bin"] = blob_of(assets(fsp, [(n, low_lod(fsp, n)) for n in own if n in planets], planets,
                                                 ratio, collision=False))
     stream = {}
