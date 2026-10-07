@@ -27,3 +27,21 @@ information observer 40 KB, Yes/No layout 32 KB.
 
 **Targets for the slice** (a sixth of the Wii, design decision 1): PurpleCoin ≤ ~430 B, StarPiece ≤ ~840 B,
 Kuribo ≤ ~2 KB, Mario/player ≤ ~50 KB, scene runtime ≤ ~0.54 MB.
+
+## Slice asset blob (tasks 2.1-2.2) — `python tools/slice.py data/fs/files HeavensDoorGalaxy 2 out/slice/hd2.bin`
+
+Format documented in the script header (little-endian chunks: TYPE, ZONE, OBJS, STRT, PATH, MODL, KCL). Contents for
+Gateway 2 (stages HeavensDoorGalaxy + HeavensDoorMysteriousZone, layers common + layerb):
+
+| Chunk | Bytes | Contents |
+|---|---|---|
+| OBJS | 5 376 | 67 rows: 42 PurpleCoin, 4 CirclePurpleCoinGroup, 1 PurpleRailCoin, 10 Coin, 4 Kuribo, 3 StarPiece, the planet, point + plane gravity |
+| STRT | 496 | 6 Mario start points |
+| PATH | 352 | 6 rails (control points) |
+| ZONE | 128 | main stage + Mysterious zone (pos 14760, −10676, 6770; rot 65.6°, 70.1°, 56.6°) |
+| MODL | 702 816 | planet + Coin, Kuribo, PurpleCoin, StarPiece (re-stripped R = 0.99, float positions, indexed triangles, untextured) |
+| KCL | 632 480 | planet collision as on disc |
+| **Blob** | **1 342 064 (1.28 MB)** | `budget.py` estimate for the same scenario: 2.66 MB (includes textures, animations, all archives) |
+
+Not in the blob yet (by design, added when the engine needs them): textures/UVs, strips, Mario's model and
+animations, the planet's other parts (house door, flowers, pipes).
