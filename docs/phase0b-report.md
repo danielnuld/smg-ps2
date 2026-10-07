@@ -45,3 +45,21 @@ Still over the room (36 scenarios in 10 galaxies) → task 2:
 Unresolved placement names now 0–2 per scenario (was ~50 per galaxy: camera/rail names no longer read). What is left are
 real objects the factory tables do not map: StrayTico (25 scenarios), ChildKameck, TamakoroTutorial, BossKameckMoveRail,
 ChildKuribo, NormalCommonMapParts, StoryDemoSimpleBloomArea, ChildIceMeramera, … → still an **undercount**, smaller.
+
+## Does the game ever split zones? (task 2.1)
+
+No. Read in Petari:
+
+- `StageFileLoader` mounts every `ZoneList` archive at scene start and never unmounts one (`StageFileLoader.cpp:14-40`).
+- `ViewGroupCtrl` is the only "what is near the player" mechanism: designer-placed `ViewGroupCtrlCube` volumes switch
+  actors with a `ViewGroupId` to the full far-clip distance while the player is inside. It changes drawing, not memory.
+- `ZoneSwitch` is per-zone switch flags, `addToZone` partitions collision. Neither loads anything.
+
+So on the Wii every active zone of a scenario is resident at once, and splitting zones on PS2 is **new engine work**
+(streaming), not a switch the game already has. Per design decision 4, a split needs evidence that one zone set is
+never on screen while the player is in another. Candidate evidence for task 2.2, all checkable:
+
+1. `ViewGroupCtrlCube` volumes in the overflowing scenarios: designer data saying which groups matter from where.
+2. Travel between zones by launch star (`SuperSpinDriver`) or pipe: the camera cuts, which a load can hide behind,
+   but only if the source zone is not visible from the target. Needs a Dolphin look per pair.
+3. Dolphin free camera at the zone boundaries of the 6 large galaxies.
