@@ -141,3 +141,55 @@ Against the 1.86 MB SPU2 budget, **the effects alone are 2.4× over even at 8 kH
 game's data cannot say which effects a scene really uses (19 583 SE notes take their bank from outside the sequence,
 and actors pick sounds in code). Task 2.3 therefore needs either per-scene use observed in Dolphin, or a cut list
 decided by hand.
+
+### Correction to 2.2b (decoder bug)
+
+`cmdWait` (0xF0) reads a MIDI varint inside its handler, and `cmdPrintf` (0xFD) a string; the first version of
+`bms.py` skipped neither, so the byte after every wait was decoded as a note. With both fixed (selftest: "wait 1 is
+not a note"), and notes resolved per key region instead of whole programs: 0 paths run off their data (was 113), and
+only 23 SE sequences (17 remix notes, 6 HOME menu) leave their bank unset (was 2 967). Corrected split:
+
+| | Waves | PS2 MB |
+|---|---|---|
+| BGM sequences reach | 168 | 2.69 |
+| SE sequences reach | 1 336 | 18.14 |
+| Music only | 134 | 2.09 |
+| Played by no sequence (unused key regions) | 166 | 1.50 |
+
+## Hand-cut effects set (task 2.3) — `python tools/sfxcut.py data/fs/files out/s099/scenario_sets.json`
+
+Per scenario, the effects kept are (`tools/sfxcut.py`, all rules D):
+
+1. **Mario everywhere**: PLAYER_VOICE, PLAYER_MOTION and REMIX_SEQ whole.
+2. **Global code**: SE names written in `Game/{Player,Screen,System,Scene,Camera,Util,AudioLib,Demo,LiveActor,Effect,
+   Gravity,NameObj,Speaker,RhythmLib}` (182 names). SYSTEM sounds count only through code, like the rest.
+3. **Placed only**: SE names in the `.cpp` of the classes the scenario's placed objects create (NameObjFactory
+   template argument), plus every class those files `new`, transitively; StageEffectDataTable entries for placed
+   names; sounds named by the `.bas` animation tables in the archives the scenario loads.
+4. **Dropped**: HOME_BUTTON_MENU (Wii only), DEMO (cutscene sounds ride in the cutscene's pre-rendered stream), music
+   (pre-rendered to ADMA streams), and every sound none of the above names.
+5. **Resampled**: player and system to ≤ 8 kHz, everything else to ≤ 6 kHz; a wave shared by several kept sounds
+   keeps the highest cap. A note whose key is read from a register (random voice variant) keeps one variant.
+
+Cut list: `docs/sfx-cut.csv`, one row per SE name: 1 695 kept where their class is placed, 267 kept everywhere
+(whole category), 151 kept through global code, 1 083 dropped with no known user, 49 dropped by category.
+
+How each rule moved the worst scenario (SPU ADPCM):
+
+| Step | Worst scenario | MB | Over the 1.86 MB budget |
+|---|---|---|---|
+| All loaded banks (0b) | KoopaBattleVs3 0 | 13.09 | 136 / 136 |
+| Placed/global/category filter, original rates | PhantomGalaxy 3 | 6.64 | 136 |
+| + rates: player/system 11 kHz, rest 8 kHz | PhantomGalaxy 3 | 2.93 | 136 |
+| + one variant per random voice + player 8 kHz | EggStar 3 | 2.30 | 63 |
+| + rest at 6 kHz (**chosen**) | EggStar 3 | **1.91** | **1** |
+
+EggStar 3 is 0.05 MB over with reverb SPACE; with reverb ROOM (19 KB instead of 123 KB, libsd effect.c:27) the
+budget is 2.06 MB and all 136 fit. Median scenario 1.57 MB.
+
+**Cost, said plainly:** 6 kHz keeps only content under 3 kHz: objects, enemies and ambience will sound muffled; Mario
+and the UI at 8 kHz (under 4 kHz) lose their brightness. Random voice variants collapse to one. Risks of the static
+filter: a sound played by a helper class reached other than by `new` (templates, function tables), or named by a
+string built at run time, is dropped and would be silent; the 17 remix-note sounds take their instrument from the
+current music, which is pre-rendered, so they need their own small sample set. Upgrade path for both: log the SE ids
+played per scenario in Dolphin and add what is missing.

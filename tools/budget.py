@@ -357,6 +357,7 @@ def main(fs, out):
     resident_row = row("<resident>", [arc_stats(p, cache) for p in resident if p.exists()])
     galaxies, zones = [dict(**resident_row, zones=0, unresolved=sum(not p.exists() for p in resident))], []
     scenarios = []
+    scenario_sets = {}  # "Galaxy:N" -> placed object names and loaded ObjectData archives (for tools/sfxcut.py)
     try:
         for scen in sorted(stage.glob("*/*Scenario.arc")):
             gname = scen.name[: -len("Scenario.arc")]
@@ -385,6 +386,7 @@ def main(fs, out):
                     up = {}
                     act = active_stages(gname, mask_of, layers_of, up)
                     s_parts, s_objs, s_unres, per = [], set(), set(), {}
+                    placed = set()
                     for st, lays in act.items():
                         zp = stage / f"{st}.arc"
                         if not zp.exists():
@@ -392,6 +394,7 @@ def main(fs, out):
                             continue
                         al = arc_layers(zp, cache)
                         names = set(al["child"]) | {n for l in lays for n in al["layers"].get(l, {}).get("names", [])}
+                        placed |= names
                         arcs, unknown = resolve(sorted(names))
                         s_parts.append(arc_stats(zp, cache))
                         s_objs |= lod(arcs)
@@ -424,12 +427,16 @@ def main(fs, out):
                         return row(z, [arc_stats(per[c][0], cache) for c in per] +
                                    [arc_stats(objects[n], cache) for n in sorted(objs)])["ps2_total"]
                     streams = sorted(((stream_size(z), z) for z in per), reverse=True)
+                    scenario_sets[f"{gname}:{no}"] = dict(names=sorted(placed),
+                                                          archives=sorted(str(objects[n]) for n in s_objs))
                     scenarios.append(dict(galaxy=r.pop("name"), scenario=no, **r, zones=len(act), unresolved=len(s_unres), unresolved_names=" ".join(sorted(s_unres)),
                                           zone_list=" ".join(sorted(act)), main_only_ps2=chain_size(gname) if gname in per else 0,
                                           worst_zone=pairs[0][1], worst_zone_ps2=pairs[0][0],
                                           stream_worst_zone=streams[0][1], stream_ps2=streams[0][0]))
     finally:
         cache_file.write_text(json.dumps(cache))
+        if SCENARIO:
+            (out / "scenario_sets.json").write_text(json.dumps(scenario_sets))
     for fname, rows in (("budget.csv", galaxies), ("zones.csv", zones)) + ((("scenarios.csv", scenarios),) if SCENARIO else ()):
         rows.sort(key=lambda r: -r["ps2_total"])
         if rows:

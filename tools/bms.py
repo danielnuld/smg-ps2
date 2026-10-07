@@ -1,11 +1,12 @@
-"""Which (bank, program) pairs a JAudio2 BMS sequence plays notes with, by following its control flow.
+"""Which (bank, program) pairs, and which keys, a JAudio2 BMS sequence plays notes with, following its control flow.
 
 Decoding follows Petari's JASSeqParser.cpp: parse() (note on < 0x80, note off 0x8x, register-arg prefix 0x9x),
 parseCommand() (arg widths 2 bits each: byte, u16, u24, register byte), sCmdInfo (opcodes 0xA0-0xFF), and
 JASSeqReader::readMidiValue (note gate time). Bank/program come from 0xE1 (u16: bank hi, prog lo), 0xE2 (bank),
 0xE3 (prog) and register writes 0x27/0x28 (writeReg). Values read from registers are unknown statically: notes
 played then are counted as "dynamic". Jump tables (0xC9/0xCA) have no length in the data: their targets are
-counted as unexplored (`tables`).
+counted as unexplored (`tables`). Two commands read more than their table entry says: cmdWait (0xF0) a MIDI varint
+and cmdPrintf (0xFD) a string plus one byte per %-value (JASSeqParser.cpp cmdWait, cmdPrintf).
 """
 import struct
 
@@ -24,7 +25,7 @@ DYN = "dyn"   # value came from a register
 def analyse(seq, start=0, bank=None, prog=None, max_steps=200000):
     """Truncated reads (a path running off the data) count as `bad` and end that path only."""
     """-> dict(pairs={(bank, prog): notes}, tables=n, bad=n). bank/prog may be None (never set) or DYN."""
-    pairs, tables, bad = {}, 0, 0
+    pairs, keys, tables, bad = {}, {}, 0, 0
     seen = set()
     todo = [(start, bank, prog, ())]           # pc, bank, prog, call stack
     steps = 0
@@ -44,6 +45,7 @@ def analyse(seq, start=0, bank=None, prog=None, max_steps=200000):
                             pc += 1
                         pc += 1
                     pairs[(bk, pg)] = pairs.get((bk, pg), 0) + 1
+                    keys.setdefault((bk, pg), set()).add(op)        # note pitch = key (transpose ignored)
                     continue
                 if op & 0xF0 == 0x80:                                   # note off
                     continue
@@ -72,8 +74,28 @@ def analyse(seq, start=0, bank=None, prog=None, max_steps=200000):
                         size = t + 1
                         args.append(int.from_bytes(seq[pc:pc + size], "big")); pc += size
                     w >>= 2
+                if op == 0xF0:                                      # cmdWait reads a MIDI varint itself
+                    while seq[pc] & 0x80:
+                        pc += 1
+                    pc += 1
+                elif op == 0xFD:                                    # cmdPrintf: string (\ escapes, %x specs), then one byte per value
+                    nvals = 0
+                    while True:
+                        ch = seq[pc]; pc += 1
+                        if ch == 0:
+                            break
+                        if ch in (0x5C, 0x25):
+                            nxt = seq[pc]; pc += 1
+                            if nxt == 0:
+                                break
+                            nvals += ch == 0x25
+                    pc += nvals
                 a0 = args[0] if args else None
-                if op == 0xE1:
+                if op in (0xB1, 0xB3):                              # cmdNoteOn (key = args[0]) / cmdNote (args[1])
+                    k = args[0] if op == 0xB1 else args[1]
+                    pairs[(bk, pg)] = pairs.get((bk, pg), 0) + 1
+                    keys.setdefault((bk, pg), set()).add(k if k == DYN else k & 0x7F)
+                elif op == 0xE1:
                     bk, pg = (DYN, DYN) if a0 == DYN else (a0 >> 8 & 0xFF, a0 & 0xFF)
                 elif op == 0xE2:
                     bk = a0 if a0 == DYN else a0 & 0xFF
@@ -109,7 +131,7 @@ def analyse(seq, start=0, bank=None, prog=None, max_steps=200000):
                     break
         except IndexError:
             bad += 1
-    return dict(pairs=pairs, tables=tables, bad=bad)
+    return dict(pairs=pairs, keys=keys, tables=tables, bad=bad)
 
 
 def selftest():
@@ -126,7 +148,10 @@ def selftest():
     s[0x1A:0x1D] = bytes([64, 0x01, 80])
     s[0x1D] = 0xFF
     r = analyse(bytes(s))
+    w = analyse(bytes([0xF0, 0x01, 0xE1, 0x40, 0x0A, 60, 0x01, 100, 0xFF]))   # wait 1 is not a note
+    assert w["pairs"] == {(64, 10): 1}, w
     assert r["pairs"] == {(3, 5): 1, (7, 5): 1, (DYN, 5): 1} and r["bad"] == 0, r
+    assert r["keys"] == {(3, 5): {60}, (7, 5): {62}, (DYN, 5): {64}}, r
     print("selftest ok")
 
 

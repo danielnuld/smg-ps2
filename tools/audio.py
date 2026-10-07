@@ -81,7 +81,8 @@ def waves(smr):
 
 
 def instruments(smr):
-    """-> {IBNK bank number: (wave bank, {program: set of wave ids})}. Bank number = IBNK word 2
+    """-> {IBNK bank number: (wave bank, {program: [(high key, set of wave ids)]})}; a percussion program has one
+    entry per key (high key = that key). Bank number = IBNK word 2
     (JASBNKParser.hpp:181-184), what BMS bank commands name; wave bank = first word of its `bnk ` command
     (JAUSectionHeap.cpp:394-410). IBNK v1 'LIST' -> 'Inst'/'Perc' (JASBNKParser.cpp:93-195): program = LIST index,
     velocity region = 4 words, wave id = low half of word 1."""
@@ -102,7 +103,7 @@ def instruments(smr):
             off = u32(smr, lst + 0xC + 4 * i)
             if not off:
                 continue
-            ids = progs.setdefault(i, set())
+            regions = progs.setdefault(i, [])
             d = o + off
             kind, d = smr[d:d + 4], d + 4
             if kind == b"Inst":
@@ -110,20 +111,24 @@ def instruments(smr):
                 d += 4 + 4 * u32(smr, d)            # effects
                 keys, d = u32(smr, d), d + 4
                 for _ in range(keys):
-                    velos, d = u32(smr, d + 4), d + 8
+                    high, velos, d = u32(smr, d) >> 24, u32(smr, d + 4), d + 8   # setHighKey(data[0] >> 24)
+                    ids = set()
                     for _ in range(velos):
                         ids.add(u32(smr, d + 4) & 0xFFFF); d += 16
+                    regions.append((high, ids))
             elif kind == b"Perc":
                 count, d = u32(smr, d), d + 4
-                for j in range(count):
+                for j in range(count):          # drump->setPerc(j, ...): percussion j answers key j
                     po = u32(smr, d + 4 * j)
                     if not po:
                         continue
                     q = o + po + 16                 # 'Pmap' + TPercData, then effects
                     q += 4 + 4 * u32(smr, q)
                     velos, q = u32(smr, q), q + 4
+                    ids = set()
                     for _ in range(velos):
                         ids.add(u32(smr, q + 4) & 0xFFFF); q += 16
+                    regions.append((-j - 1, ids))   # negative = percussion key j
     return out
 
 
@@ -131,8 +136,24 @@ def referenced(smr):
     """-> {wave bank: set of wave ids named by any instrument or percussion of the IBNKs bound to it}."""
     out = {}
     for wb, progs in instruments(smr).values():
-        out.setdefault(wb, set()).update(*progs.values())
+        out.setdefault(wb, set()).update(*(ids for regs in progs.values() for _, ids in regs))
     return out
+
+
+DYN_KEY = "all"   # a key read from a register: "all" regions (what the game may pick) or "first" (one variant kept, D)
+
+
+def key_waves(regions, key):
+    """Wave ids a note `key` plays on a program: percussion entry `key`, else the first key region whose high key
+    is >= key (JASBasicInst key regions are ordered by high key). A key read from a register ("dyn") plays any."""
+    if not isinstance(key, int):
+        if not regions:
+            return set()
+        return set(regions[0][1]) if DYN_KEY == "first" else set().union(*(ids for _, ids in regions))
+    perc = [ids for h, ids in regions if h == -key - 1]
+    if any(h < 0 for h, _ in regions):
+        return perc[0] if perc else set()
+    return next((ids for h, ids in regions if key <= h), set())
 
 
 def sequences(fs, smr):
@@ -152,6 +173,27 @@ def sequences(fs, smr):
     return bgm, se
 
 
+def se_names(smr):
+    """BSTN section 0 (sound effects) -> [(category, [sound names])] per group. Layout JAUSoundTable.hpp:171-209:
+    root @word 3 {sections, offsets}; section {groups, global, group offsets}; group {items, category name, item
+    name offsets}; all offsets from the table start. Group g / item k = SE sequence collection group g / entry k
+    (JAUSeqCollection.cpp:65-69: sound id group / wave id)."""
+    c = smr.find(b"bstn")
+    while c >= 0:
+        s0, s1 = u32(smr, c + 4), u32(smr, c + 8)
+        if c % 4 == 0 and smr[s0:s0 + 4] == b"BSTN":
+            d = smr[s0:s1]
+            cstr = lambda o: d[o:d.index(b"\0", o)].decode("ascii", "replace")
+            sec = u32(d, u32(d, 0xC) + 4)
+            out = []
+            for g in range(u32(d, sec)):
+                go = u32(d, sec + 8 + 4 * g)
+                out.append((cstr(u32(d, go + 4)), [cstr(u32(d, go + 8 + 4 * k)) for k in range(u32(d, go))]) if go else ("", []))
+            return out
+        c = smr.find(b"bstn", c + 1)
+    return []
+
+
 def reached(seqs, inst):
     """Waves (wave bank, wave id) played by notes of these sequences, via bms.analyse and the IBNK programs.
     -> (waves, notes with no bank set, bad paths). Notes on banks with no IBNK resolve nothing."""
@@ -165,7 +207,8 @@ def reached(seqs, inst):
                 unset += n
             elif bk in inst:
                 wb, progs = inst[bk]
-                out |= {(wb, w) for w in progs.get(pg, ())}
+                for k in r["keys"][(bk, pg)]:
+                    out |= {(wb, w) for w in key_waves(progs.get(pg, []), k)}
     return out, unset, bad
 
 
@@ -245,6 +288,9 @@ def selftest():
     ib[0xA0:0xA4] = b"Pmap"; struct.pack_into(">II", ib, 0xB0, 0, 1); struct.pack_into(">4I", ib, 0xB8, 0, 9, 0, 0)
     baa = b"AA_<" + b"bnk " + struct.pack(">II", 5, 20) + bytes(4) + bytes(ib)
     assert referenced(baa) == {5: {7, 8, 9}}, referenced(baa)
+    regs = instruments(baa)[0][1]
+    assert key_waves(regs[0], 60) == {7, 8} and key_waves(regs[0], 0x7F) == {7, 8} and key_waves(regs[0], 200) == set()
+    assert key_waves(regs[1], 0) == {9} and key_waves(regs[1], 1) == set() and key_waves(regs[1], "dyn") == {9}
     print("selftest ok")
 
 
