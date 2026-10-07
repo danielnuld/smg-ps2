@@ -84,8 +84,7 @@ static int got_coins, got_purple, got_pieces;
 static float spin_angle;
 static V3 cam_pos;
 static const Model *m_coin, *m_purple, *m_piece, *m_kuribo, *m_planet;
-static Model m_mario;
-static const Model *m_mario_skin; /* Mario.arc, skinned (SKIN chunk); the box stays as a fallback */
+static const Model *m_mario_skin; /* Mario.arc, skinned (SKIN chunk) */
 static Anim *mario_anim;
 
 /* Interpolation frames per clip from Petari's marioAnimeTable (MarioAnimatorData.hpp, XanimeGroupInfo _8):
@@ -230,33 +229,6 @@ static int collide(V3 *center, V3 up, float radius) { return collide_n(center, u
 
 /* --- init ------------------------------------------------------------------------------------------------ */
 
-static const float box_v[] = {-30, 0, -30, 30, 0, -30, 30, 0, 30, -30, 0, 30, -30, 160, -30, 30, 160, -30, 30, 160, 30, -30, 160, 30};
-static const unsigned short box_i[] = {0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6, 0, 4, 5, 0, 5, 1, 1, 5, 6, 1, 6, 2,
-                                       2, 6, 7, 2, 7, 3, 3, 7, 4, 3, 4, 0};
-static Group box_g = {8, 12, box_v, box_i};
-static VuGroup box_vu;
-
-/* Mario's placeholder box in the VU1 layout (de-indexed, flat red with a fixed light), like tools/slice.py vu_groups */
-static void build_box_vu(void)
-{
-    float *pos = mem_alloc(MEM_PLAYER, 36 * 16);
-    u8 *col = mem_alloc(MEM_PLAYER, 36 * 4);
-    const V3 L = vnorm(v3(0.35f, 0.75f, -0.55f));
-    for (int t = 0; t < 12; t++) {
-        const float *a = box_v + 3 * box_i[3 * t], *b = box_v + 3 * box_i[3 * t + 1], *c = box_v + 3 * box_i[3 * t + 2];
-        V3 n = vnorm(vcross(v3(b[0] - a[0], b[1] - a[1], b[2] - a[2]), v3(c[0] - a[0], c[1] - a[1], c[2] - a[2])));
-        float k = 0.25f + 0.75f * fabsf(vdot(n, L));
-        for (int q = 0; q < 3; q++) {
-            const float *v = box_v + 3 * box_i[3 * t + q];
-            float *o = pos + 4 * (3 * t + q);
-            o[0] = v[0]; o[1] = v[1]; o[2] = v[2]; o[3] = 1.0f;
-            u8 *cc = col + 4 * (3 * t + q);
-            cc[0] = (u8)(0xE0 * k); cc[1] = (u8)(0x20 * k); cc[2] = (u8)(0x20 * k); cc[3] = 0x80;
-        }
-    }
-    box_vu.nverts = 36; box_vu.tex = NO_TEX; box_vu.pos = pos; box_vu.col = (const u32 *)col; box_vu.uv = NULL;
-}
-
 void game_init(const Scene *s, const unsigned char *blob)
 {
     sc = s;
@@ -270,17 +242,16 @@ void game_init(const Scene *s, const unsigned char *blob)
     m_piece = scene_model(s, "StarPiece");
     m_kuribo = scene_model(s, "Kuribo");
     m_planet = scene_model(s, "HeavensDoorMysteriousPlanet");
-    m_mario.name = "Mario"; m_mario.ngroups = 1; m_mario.groups = &box_g; m_mario.radius = 170;
-    build_box_vu();
-    m_mario.vu_ngroups = 1; m_mario.vu = &box_vu;
     m_mario_skin = scene_model(s, "Mario");
     if (m_mario_skin && m_mario_skin->skin) {
         anim_init(s);
         mario_anim = mem_alloc(MEM_PLAYER, sizeof(Anim));
         anim_bind(mario_anim, m_mario_skin->skin);
         mario_play("wait", 1.0f, 1);
-    } else
+    } else {
+        printf("game: no skinned Mario in the blob\n");
         m_mario_skin = NULL;
+    }
 
     ncoins = count_type("Coin", 0);
     npurple = count_type("PurpleCoin", 0) + count_type("CirclePurpleCoinGroup", 1) + count_type("PurpleRailCoin", 1);
@@ -596,10 +567,8 @@ void game_draw(void)
         render_model(m_kuribo, m, kuribo[i].state == KURIBO_STUN ? 0x50 : 0x90, 0x50, 0x20);
     }
     basis_matrix(m, mario->pos, mario->up, mario->face, 0);
-    if (m_mario_skin) {
-        if (!(mario->hurt_timer & 4)) render_skinned(m_mario_skin, m, (const float (*)[16])mario_anim->drw);
-    } else
-        render_model(&m_mario, m, mario->hurt_timer & 4 ? 0xFF : 0xE0, 0x20, 0x20);
+    if (m_mario_skin && !(mario->hurt_timer & 4))
+        render_skinned(m_mario_skin, m, (const float (*)[16])mario_anim->drw);
 }
 
 void game_debug(char *out, int n)

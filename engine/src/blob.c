@@ -23,7 +23,7 @@ const u8 *blob_chunk(const u8 *blob, const char *tag, u32 *size)
 
 int blob_load(Scene *s, const u8 *blob)
 {
-    if (memcmp(blob, "SMGS", 4) != 0 || *(const u32 *)(blob + 4) != 3)
+    if (memcmp(blob, "SMGS", 4) != 0 || *(const u32 *)(blob + 4) != 4)
         return -1;
     const u8 *t = blob_chunk(blob, "TYPE", NULL), *o = blob_chunk(blob, "OBJS", NULL), *st = blob_chunk(blob, "STRT", NULL);
     const u8 *m = blob_chunk(blob, "MODL", NULL), *k = blob_chunk(blob, "KCL ", NULL);
@@ -40,46 +40,29 @@ int blob_load(Scene *s, const u8 *blob)
     for (u32 i = 0; i < s->nmodels; i++) {
         Model *md = &s->models[i];
         md->name = (const char *)p;
-        md->ngroups = *(const u32 *)(p + 32);
-        md->groups = mem_alloc(MEM_RENDER, md->ngroups * sizeof(Group));
+        md->radius = *(const float *)(p + 32);
         p += 36;
-        float r2 = 0;
-        for (u32 g = 0; g < md->ngroups; g++) {
-            Group *gr = &md->groups[g];
-            gr->nverts = ((const u32 *)p)[0];
-            gr->ntris = ((const u32 *)p)[1];
-            gr->verts = (const float *)(p + 8);
-            p += 8 + gr->nverts * 12;
-            gr->idx = (const u16 *)p;
-            u32 ib = gr->ntris * 6;
-            p += ib + ((4 - ib % 4) % 4);
-            for (u32 v = 0; v < gr->nverts; v++) {
-                const float *q = gr->verts + 3 * v;
-                float d = q[0] * q[0] + q[1] * q[1] + q[2] * q[2];
-                if (d > r2)
-                    r2 = d;
-            }
-        }
-        md->radius = sqrtf(r2);
     }
     const u8 *vm = blob_chunk(blob, "VUMD", NULL);
-    if (vm) { /* {u32 n, pad}, n x {char[32] name, u32 ngroups, pad, groups {u32 nverts, u16 tex, pad, pos[], col[], uv[]}} */
+    if (vm) { /* {u32 n, pad}, n x {char[32] name, u32 ngroups, f32 qscale, pad, groups {u32 nverts, u16 tex, pad,
+               * pos[], col[], uv[]}} */
         u32 nv = *(const u32 *)vm;
         const u8 *q = vm + 16;
         for (u32 i = 0; i < nv && i < s->nmodels; i++) {
             Model *md = &s->models[i];
             md->vu_ngroups = *(const u32 *)(q + 32);
+            md->qscale = *(const float *)(q + 36);
             md->vu = mem_alloc(MEM_RENDER, md->vu_ngroups * sizeof(VuGroup));
             q += 48;
             for (u32 g = 0; g < md->vu_ngroups; g++) {
-                u32 n = *(const u32 *)q, cb = (4 * n + 15) & ~15u;
+                u32 n = *(const u32 *)q, cb = (4 * n + 15) & ~15u, pb = (8 * n + 15) & ~15u;
                 VuGroup *vg = &md->vu[g];
                 vg->nverts = n;
                 vg->tex = *(const u16 *)(q + 4);
-                vg->pos = (const float *)(q + 16);
-                vg->col = (const u32 *)(q + 16 + 16 * n);
-                vg->uv = vg->tex == NO_TEX ? NULL : (const s16 *)(q + 16 + 16 * n + cb);
-                q += 16 + 16 * n + cb + (vg->uv ? cb : 0);
+                vg->pos = (const s16 *)(q + 16);
+                vg->col = (const u32 *)(q + 16 + pb);
+                vg->uv = vg->tex == NO_TEX ? NULL : (const s16 *)(q + 16 + pb + cb);
+                q += 16 + pb + cb + (vg->uv ? cb : 0);
             }
         }
     }

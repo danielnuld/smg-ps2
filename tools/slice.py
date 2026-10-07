@@ -310,8 +310,15 @@ LIGHT = (0.35, 0.75, -0.55)
 UV_ONE = 4096  # UVs as s16 with 12 fraction bits (VU1 itof12): -8 .. +8 per triangle
 
 
-def vu_groups(groups, base, stats=None):
-    """Indexed groups -> [(pos qwords, colour u8x4, uv s16x2)] per group, flat shading: k = 0.25 + 0.75 |n . L|.
+def pos_scale(groups):
+    """Quantisation step of a model's s16 positions: the largest coordinate maps to 32767."""
+    m = max((abs(c) for verts, *_ in groups for v in verts for c in v), default=1.0)
+    return (m or 1.0) / 32767.0
+
+
+def vu_groups(groups, base, stats=None, qs=1.0):
+    """Indexed groups -> [(pos s16x4, colour u8x4, uv s16x2)] per group, flat shading: k = 0.25 + 0.75 |n . L|.
+    Positions are x, y, z in steps of qs (the engine folds qs into the matrix) and w = 4 * matrix slot (0: static).
     Textured groups get grey 0x80 * k (the GS modulates: 0x80 = 1.0), untextured ones base * k. Each triangle's UVs
     are shifted by whole repeats towards 0 on repeating axes so they fit s16; triangles still wider than 8 repeats
     are clamped and counted in stats["uv_clamped"]. Colour and UV arrays are padded to 16 bytes (DMA)."""
@@ -333,11 +340,12 @@ def vu_groups(groups, base, stats=None):
             for q in range(3):
                 vi = tris[i + q]
                 v = verts[vi]
-                if slots is None:   # static: w = 1.0, whose low 16 bits (slot 0) the VU reads as the matrix slot
-                    pos += struct.pack("<4f", v[0], v[1], v[2], 1.0)
+                p = [max(-32767, min(32767, round(c / qs))) for c in v]
+                if slots is None:   # static: slot 0
+                    pos += struct.pack("<4h", *p, 0)
                     col += rgba
-                else:               # skinned: w = 4 * matrix slot (raw bits); colour = CLR0 scaled to 0x80, unlit
-                    pos += struct.pack("<3fI", v[0], v[1], v[2], 4 * slots[vi])
+                else:               # skinned: w = 4 * matrix slot; colour = CLR0 scaled to 0x80, unlit
+                    pos += struct.pack("<4h", *p, 4 * slots[vi])
                     cc = cols[vi] if cols else (255, 255, 255, 255)
                     col += struct.pack("<4B", *(x * 0x80 // 255 for x in cc[:3]), 0x80)
             if uvs:
@@ -349,7 +357,7 @@ def vu_groups(groups, base, stats=None):
                     if not all(-32768 <= x < 32768 for x in q) and stats is not None:
                         stats["uv_clamped"] = stats.get("uv_clamped", 0) + 1
                     uv += struct.pack("<2h", *(max(-32768, min(32767, x)) for x in q))
-        out.append((bytes(pos), pad(col), pad(uv)))
+        out.append((pad(pos), pad(col), pad(uv)))
     return out
 
 
@@ -408,22 +416,21 @@ def build(fs, galaxy, scenario, ratio=0.99):
         groups, kcl, sk = model_groups(arc, ratio, stats, t in SKINNED)
         if sk:
             skins.append(name32(t) + sk)
-        g = b""
-        for verts, tris, *_ in groups:
-            idx = struct.pack(f"<{len(tris)}H", *tris)
-            g += struct.pack("<II", len(verts), len(tris) // 3) + b"".join(struct.pack("<3f", *v) for v in verts)
-            g += idx + b"\0" * (-len(idx) % 4)
-        models.append(name32(t) + struct.pack("<I", len(groups)) + g)
-        vg = b""
-        for (_, _, _, tx, _, _), (pos, col, uv) in zip(groups, vu_groups(groups, BASE_COLOUR.get(t, (112, 176, 96)), stats)):
+        # MODL keeps only the bounding radius (culling): drawing uses VUMD, collision KCL
+        models.append(name32(t) + struct.pack("<f", math.sqrt(max((sum(c * c for c in v) for verts, *_ in groups
+                                                                   for v in verts), default=0.0))))
+        vg, qs = b"", pos_scale(groups)
+        for (_, tris, _, tx, _, _), (pos, col, uv) in zip(groups, vu_groups(groups, BASE_COLOUR.get(t, (112, 176, 96)),
+                                                                             stats, qs)):
+            n = len(tris)
             ti = 0xFFFF
             if tx:
                 key = tx["pix"] + tx["clut"] + bytes((tx["clamp_s"], tx["clamp_t"]))
                 ti = tex_id.setdefault(key, len(texts))
                 if ti == len(texts):
                     texts.append(tx)
-            vg += struct.pack("<IH10x", len(pos) // 16, ti) + pos + col + uv
-        vumd.append(name32(t) + struct.pack("<I12x", len(groups)) + vg)
+            vg += struct.pack("<IH10x", n, ti) + pos + col + uv
+        vumd.append(name32(t) + struct.pack("<If8x", len(groups), qs) + vg)
         if kcl and t in planets:
             kcl = kcl_to_le(kcl)
             kcls.append(name32(t) + struct.pack("<I", len(kcl)) + kcl + b"\0" * (-len(kcl) % 4))
@@ -449,7 +456,7 @@ def build(fs, galaxy, scenario, ratio=0.99):
     out.append(chunk(b"ANIM", struct.pack("<I", len(clips)) + b"".join(clips)))
     out.append(chunk(b"VUMD", struct.pack("<I12x", len(vumd)) + b"".join(vumd)))
     out.append(chunk(b"KCL ", struct.pack("<I", len(kcls)) + b"".join(kcls)))
-    blob = b"SMGS" + struct.pack("<II4x", 3, len(out)) + b"".join(out)
+    blob = b"SMGS" + struct.pack("<II4x", 4, len(out)) + b"".join(out)
     blob += b"\0" * (-len(blob) % 16)
     return blob, dict(stages=act, types=types, objs=len(keep), starts=len(starts), paths=len(paths),
                       models=len(models), kcls=len(kcls), textures=len(texts), cameras=len(cams), areas=len(care),

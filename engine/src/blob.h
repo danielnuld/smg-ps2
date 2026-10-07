@@ -12,15 +12,9 @@ typedef struct {
 } Row; /* 80 bytes, matches slice.py ROW */
 
 typedef struct {
-    u32 nverts, ntris;
-    const float *verts; /* nverts * 3 */
-    const u16 *idx;     /* ntris * 3 */
-} Group;
-
-typedef struct {
     u32 nverts;          /* 3 per triangle */
     u16 tex;             /* TEXT index, NO_TEX for untextured */
-    const float *pos;    /* nverts qwords (x, y, z, 1), 16-byte aligned */
+    const s16 *pos;      /* nverts x s16 (x, y, z in steps of Model.qscale, w = 4 * matrix slot), 16-byte aligned */
     const u32 *col;      /* nverts x u8 (r, g, b, a), 16-byte aligned */
     const s16 *uv;       /* nverts x s16 (s, t), 12 fraction bits; NULL if untextured */
 } VuGroup;
@@ -54,11 +48,10 @@ typedef struct { const char *name; u32 raw, zsize; const u8 *z; } Clip;
 typedef struct {
     const char *name;
     const Skin *skin;    /* NULL for static models */
-    u32 ngroups;
-    Group *groups;
     u32 vu_ngroups;
     VuGroup *vu;
     float radius; /* bounding sphere around the origin, for culling */
+    float qscale; /* position quantisation step, folded into the matrices */
     void *chain;  /* static models: prebuilt VIF chain of all batches, ends with RET (render.c) */
 } Model;
 

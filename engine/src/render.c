@@ -318,7 +318,7 @@ static void build_chain(Model *md)
         for (u32 off = 0; off < vg->nverts; off += BATCH) {
             u32 n = vg->nverts - off < BATCH ? vg->nverts - off : BATCH;
             packet2_utils_vu_add_unpack_data(pk, 0, HDRS(textured, n), 2, 1);
-            packet2_utils_vu_add_unpack_data(pk, 2, (void *)(vg->pos + 4 * off), n, 1);
+            unpack_narrow_to(pk, vg->pos + 4 * off, 8 * n, 2, n, P2_UNPACK_V4_16, 0);
             unpack_narrow_to(pk, vg->col + off, 4 * n, 2 + n, n, P2_UNPACK_V4_8, 1);
             if (textured)
                 unpack_narrow_to(pk, vg->uv + 2 * off, 4 * n, 2 + 2 * n, n, P2_UNPACK_V2_16, 0);
@@ -347,6 +347,13 @@ static void flush_vif(void)
     packet2_reset(vif[cur], 0);
 }
 
+/* m * diag(s, s, s, 1): the model's s16 positions are in steps of s */
+static void scale_cols(float m[16], float s)
+{
+    for (int i = 0; i < 12; i++)
+        m[i] *= s;
+}
+
 /* Draw a model: drw = NULL for a static model (one matrix, proj * view * world), else the draw matrices of a
  * skinned instance (anim.c), each group getting its SKIN table's matrices premultiplied by proj * view * world. */
 static void draw_model(const Model *md, const float world[16], const float (*drw)[16])
@@ -366,6 +373,7 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
             flush_vif();
         float *m = mats[nmats++];
         memcpy(m, pvw, 64);
+        scale_cols(m, md->qscale);
         packet2_chain_open_cnt(vif[cur], 0, 0, 0);   /* FLUSHE: the previous instance stops reading VU mem 1..4 */
         packet2_vif_flushe(vif[cur], 0);
         packet2_vif_nop(vif[cur], 0);
@@ -394,6 +402,7 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
     u32 m = 1;
     if (!drw) {
         memcpy(gm, pvw, 64);
+        scale_cols(gm[0], md->qscale);
         nmats++;
     }
     for (u32 g = 0; g < md->vu_ngroups; g++) {
@@ -402,8 +411,10 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
             const SkGroup *sg = &md->skin->groups[g];
             gm = mats + nmats;
             m = sg->nmat;
-            for (u32 i = 0; i < m; i++)
+            for (u32 i = 0; i < m; i++) {
                 mat_mul(gm[i], pvw, drw[sg->drw[i]]);
+                scale_cols(gm[i], md->qscale);
+            }
             nmats += m;
         }
         set_tex(vg->tex);
@@ -413,7 +424,7 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
             u32 n = vg->nverts - off < BATCH ? vg->nverts - off : BATCH;
             packet2_utils_vu_add_unpack_data(vif[cur], 0, HDR(textured, m, n), 2, 1);
             packet2_utils_vu_add_unpack_data(vif[cur], 2, gm, 4 * m, 1);
-            packet2_utils_vu_add_unpack_data(vif[cur], base, (void *)(vg->pos + 4 * off), n, 1);
+            unpack_narrow(vg->pos + 4 * off, 8 * n, base, n, P2_UNPACK_V4_16, 0);
             unpack_narrow(vg->col + off, 4 * n, base + n, n, P2_UNPACK_V4_8, 1);
             if (textured)
                 unpack_narrow(vg->uv + 2 * off, 4 * n, base + 2 * n, n, P2_UNPACK_V2_16, 0);

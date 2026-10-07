@@ -9,7 +9,8 @@
 ;                 matrices that follow in the batch; 1: the static instance matrix at VU mem 1, then m = 0)
 ;                 +1 GIF tag (PRE + PRIM, NLOOP = n, regs ST, RGBAQ, XYZ2)
 ;                 +2 .. +2+4m-1      m matrices (local -> clip, 4 columns each); static models send one
-;                 then n positions (x, y, z; w raw bits: low 16 = 4 * matrix slot; 1.0f reads as slot 0)
+;                 then n positions (s32 x, y, z, w from UNPACK V4-16 signed: x, y, z in the model's quantisation
+;                 step, which the matrices carry; w = 4 * matrix slot)
 ;                 then n colours (u32 r, g, b, a: UNPACK V4-8 unsigned), n UVs (s32 s, t, 12 fraction bits:
 ;                 UNPACK V2-16 signed, absent if untextured)
 ; output        : right after the UVs: GIF tag, then ST (s/w, t/w, 1/w), RGBAQ, XYZ2 per vertex, XGKICKed.
@@ -44,7 +45,7 @@ vertexLoop:
         NOP                                 NOP
         NOP                                 NOP
         NOP                                 NOP
-        NOP                                 mtir          VI09,VF07w
+        itof0.xyz     VF07,VF07             mtir          VI09,VF07w
         NOP                                 iadd          VI09,VI09,VI11
         NOP                                 lq            VF01,0(VI09)
         NOP                                 lq            VF02,1(VI09)
