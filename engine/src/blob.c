@@ -96,7 +96,7 @@ int blob_load(Scene *s, const u8 *blob)
             k->drw = (const SkDrw *)p; p += k->ndrw * sizeof(SkDrw);
             k->mix = (const SkMix *)p; p += k->nmix * sizeof(SkMix);
             k->groups = (const SkGroup *)p; p += k->ngroups * sizeof(SkGroup);
-            p += (4 - ((u32)p & 3)) & 3;
+            p += (4 - ((u32)(unsigned long)p & 3)) & 3;
             for (u32 m = 0; m < s->nmodels; m++)
                 if (strcmp(s->models[m].name, (const char *)q) == 0)
                     s->models[m].skin = k;

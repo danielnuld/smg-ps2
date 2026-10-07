@@ -84,6 +84,20 @@ static Model m_mario;
 static const Model *m_mario_skin; /* Mario.arc, skinned (SKIN chunk); the box stays as a fallback */
 static Anim *mario_anim;
 
+/* Interpolation frames per clip from Petari's marioAnimeTable (MarioAnimatorData.hpp, XanimeGroupInfo _8):
+ * locomotion (基本) and squat 6, fall 15, long jump and its landing 6, back flip and its landing 6, triple-jump
+ * landing 6, wall slide 10; jumps, plain landings, spins and the wall kick snap (0). */
+static void mario_play(const char *clip, float speed, int loop)
+{
+    static const struct { const char *clip; int frames; } t[] = {
+        {"wait", 6}, {"walk", 6}, {"run", 6}, {"squatwait", 6}, {"squatwalk", 6}, {"fall", 15}, {"jumpbroad", 6},
+        {"jumpbroadland", 6}, {"jumpback", 6}, {"jumpbackland", 6}, {"jumprollland", 6}, {"wallslide", 10}};
+    int f = 0;
+    for (unsigned i = 0; i < sizeof t / sizeof t[0]; i++)
+        if (strcmp(t[i].clip, clip) == 0) f = t[i].frames;
+    anim_play(mario_anim, clip, speed, loop, f);
+}
+
 /* --- placement ------------------------------------------------------------------------------------------- */
 
 static V3 row_pos(const Row *r) { return v3(r->pos[0], r->pos[1], r->pos[2]); }
@@ -260,7 +274,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         anim_init(s);
         mario_anim = mem_alloc(MEM_PLAYER, sizeof(Anim));
         anim_bind(mario_anim, m_mario_skin->skin);
-        anim_play(mario_anim, "wait", 1.0f, 1);
+        mario_play("wait", 1.0f, 1);
     } else
         m_mario_skin = NULL;
 
@@ -334,7 +348,7 @@ static void start_jump(Player *m, int kind, V3 hvel, float vup, const char *clip
     m->grounded = 0;
     m->air_timer = 0;
     m->squat = 0;
-    if (mario_anim) anim_play(mario_anim, clip, 1.0f, 0);
+    if (mario_anim) mario_play(clip, 1.0f, 0);
 #ifdef BENCH
     printf("jump %s\n", clip);
 #endif
@@ -414,7 +428,7 @@ static void update_mario(void)
             m->jump_kind = 8;
             m->vup = SPIN_HEIGHT;
             m->hvel = vadd(m->hvel, vmul(m->face, ratio * TORNADO_FRONT));
-            if (mario_anim) anim_play(mario_anim, "spin", 1.0f, 0);
+            if (mario_anim) mario_play("spin", 1.0f, 0);
 #ifdef BENCH
             printf("jump spin\n");
 #endif
@@ -438,7 +452,7 @@ static void update_mario(void)
             static const char *land[9] = {"land", "jump2land", "jumprollland", "land", "land", "jumpbroadland",
                                           "jumpbackland", "land", "land"};
             m->land_timer = 0;
-            if (mario_anim && m->jump_kind >= 0) anim_play(mario_anim, land[m->jump_kind], 1.0f, 0);
+            if (mario_anim && m->jump_kind >= 0) mario_play(land[m->jump_kind], 1.0f, 0);
         }
         m->grounded = 1; m->vup = 0; m->spin_used = 0; m->jump_kind = -1; m->low_grav = 0;
         m->ground_n = gn;
@@ -459,17 +473,17 @@ static void update_mario(void)
     if (mario_anim) { /* animation: the one-shot clip of a move plays out, then the state picks a loop */
         float sp = vlen(m->hvel) / WALK_SPEED;
         int busy = mario_anim->clip_id >= 0 && !mario_anim->loop && !mario_anim->done;
-        if (m->grounded && m->spin_timer > 0) anim_play(mario_anim, "spinground", 1.0f, 0);
+        if (m->grounded && m->spin_timer > 0) mario_play("spinground", 1.0f, 0);
         else if (m->grounded && (!busy || stick > 0.1f)) { /* moving cancels a landing */
-            if (m->squat) anim_play(mario_anim, sp > 0.05f ? "squatwalk" : "squatwait", 1.0f, 1);
+            if (m->squat) mario_play(sp > 0.05f ? "squatwalk" : "squatwait", 1.0f, 1);
             else if (sp > 0.6f || (sp > 0.5f && mario_anim->clip_id >= 0 && mario_anim->loop && anim_length(mario_anim) &&
                                    strcmp(sc->clips[mario_anim->clip_id].name, "run") == 0))
-                anim_play(mario_anim, "run", sp, 1); /* hysteresis: run above 0.6, back to walk below 0.5 */
-            else if (sp > 0.05f) anim_play(mario_anim, "walk", 0.5f + sp, 1);
-            else anim_play(mario_anim, "wait", 1.0f, 1);
+                mario_play("run", sp, 1); /* hysteresis: run above 0.6, back to walk below 0.5 */
+            else if (sp > 0.05f) mario_play("walk", 0.5f + sp, 1);
+            else mario_play("wait", 1.0f, 1);
         } else if (!m->grounded && !busy && m->air_timer > DROP_WAIT) {
-            if (m->wall && m->vup < 0) anim_play(mario_anim, "wallslide", 1.0f, 1);
-            else anim_play(mario_anim, "fall", 1.0f, 1);
+            if (m->wall && m->vup < 0) mario_play("wallslide", 1.0f, 1);
+            else mario_play("fall", 1.0f, 1);
         }
         anim_update(mario_anim);
     }

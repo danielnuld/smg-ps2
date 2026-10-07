@@ -14,6 +14,10 @@ typedef struct {
     float frame, speed;
     float phase;         /* >= 0: start the next clip at this fraction of its length (loop to loop switch) */
     int loop, done;
+    int interp_left;     /* frames left of the cross-fade from the frozen pose (XanimePlayer::updateInterpoleRatio) */
+    float interp;        /* 0..1 weight of the new clip */
+    float q[ANIM_MAX_JOINTS][4], t[ANIM_MAX_JOINTS][3], s[ANIM_MAX_JOINTS][3];     /* last local pose */
+    float fq[ANIM_MAX_JOINTS][4], ft[ANIM_MAX_JOINTS][3], fs[ANIM_MAX_JOINTS][3];  /* frozen pose */
     float world[ANIM_MAX_JOINTS][16];  /* joint world matrices (model space), column-major */
     float drw[ANIM_MAX_DRW][16];       /* draw matrices: rigid = joint world, envelope = sum w * world * invbind */
 } Anim;
@@ -21,8 +25,10 @@ typedef struct {
 /* Allocate the clip cache (sized from the scene's largest clip). */
 void anim_init(const Scene *s);
 void anim_bind(Anim *a, const Skin *skin);
-/* Start a clip by name (no-op if it is already playing); returns 0 if the clip is missing. */
-int anim_play(Anim *a, const char *name, float speed, int loop);
+/* Start a clip by name (no-op if it is already playing); returns 0 if the clip is missing. interp > 0: freeze the
+ * current pose and fade into the clip over that many frames (Petari's per-animation interpolation, XanimeGroupInfo
+ * _8); 0 snaps. */
+int anim_play(Anim *a, const char *name, float speed, int loop, int interp);
 /* Advance one frame and compute the pose (world + draw matrices). */
 void anim_update(Anim *a);
 /* Clip frames (frame_max) of the playing clip, 0 if none. */

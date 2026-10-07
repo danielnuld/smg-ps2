@@ -62,10 +62,11 @@ void anim_bind(Anim *a, const Skin *skin)
     a->skin = skin;
     a->clip_id = -1;
     a->phase = -1.0f;
+    a->interp = 1.0f;
     anim_update(a);
 }
 
-int anim_play(Anim *a, const char *name, float speed, int loop)
+int anim_play(Anim *a, const char *name, float speed, int loop, int interp)
 {
     int was_loop = a->loop;
     a->speed = speed;
@@ -79,6 +80,12 @@ int anim_play(Anim *a, const char *name, float speed, int loop)
             a->phase = was_loop && loop && a->clip && anim_length(a) ? a->frame / anim_length(a) : -1.0f;
             a->frame = 0;
             a->done = 0;
+            /* XanimePlayer::prepareAnimation: doFreeze, then the ratio starts at 0 */
+            memcpy(a->fq, a->q, sizeof a->q);
+            memcpy(a->ft, a->t, sizeof a->t);
+            memcpy(a->fs, a->s, sizeof a->s);
+            a->interp_left = interp;
+            a->interp = interp > 0 ? 0.0f : 1.0f;
             return 1;
         }
     return 0;
@@ -139,6 +146,10 @@ void anim_update(Anim *a)
 {
     const Skin *k = a->skin;
     a->clip = a->clip_id >= 0 ? clip_data(a->clip_id) : NULL;
+    if (a->interp_left > 0) { /* XanimePlayer::updateInterpoleRatio */
+        a->interp += (1.0f - a->interp) / a->interp_left;
+        if (--a->interp_left == 0) a->interp = 1.0f;
+    }
     if (a->clip) {
         float len = *(const u16 *)a->clip;
         if (a->phase >= 0) {
@@ -166,7 +177,33 @@ void anim_update(Anim *a)
                 r[i] = jt->rot[i] * (180.0f / 3.14159265f);
                 t[i] = jt->trans[i];
             }
-        mat_translate_rot_scale(local, t, r, s);
+        /* rotation as a quaternion: R = Rz * Ry * Rx -> q = qz * qy * qx */
+        const float h = 3.14159265f / 360.0f;
+        float cx = cosf(r[0] * h), sx = sinf(r[0] * h), cy = cosf(r[1] * h), sy = sinf(r[1] * h);
+        float cz = cosf(r[2] * h), sz = sinf(r[2] * h);
+        float q[4] = {cz * cy * sx - sz * sy * cx, cz * sy * cx + sz * cy * sx, sz * cy * cx - cz * sy * sx,
+                      cz * cy * cx + sz * sy * sx}; /* x, y, z, w */
+        if (a->interp < 1.0f) { /* fade from the frozen pose: nlerp the rotation, lerp scale and translation */
+            float w = a->interp, d = 0;
+            for (int i = 0; i < 4; i++) d += q[i] * a->fq[j][i];
+            float sgn = d < 0 ? -1.0f : 1.0f, l = 0;
+            for (int i = 0; i < 4; i++) { q[i] = a->fq[j][i] * (1 - w) * sgn + q[i] * w; l += q[i] * q[i]; }
+            l = 1.0f / sqrtf(l);
+            for (int i = 0; i < 4; i++) q[i] *= l;
+            for (int i = 0; i < 3; i++) {
+                t[i] = a->ft[j][i] + (t[i] - a->ft[j][i]) * w;
+                s[i] = a->fs[j][i] + (s[i] - a->fs[j][i]) * w;
+            }
+        }
+        memcpy(a->q[j], q, 16);
+        memcpy(a->t[j], t, 12);
+        memcpy(a->s[j], s, 12);
+        float x = q[0], y = q[1], z = q[2], w = q[3];
+        mat_identity(local);
+        local[0] = (1 - 2 * (y * y + z * z)) * s[0]; local[1] = 2 * (x * y + z * w) * s[0]; local[2] = 2 * (x * z - y * w) * s[0];
+        local[4] = 2 * (x * y - z * w) * s[1]; local[5] = (1 - 2 * (x * x + z * z)) * s[1]; local[6] = 2 * (y * z + x * w) * s[1];
+        local[8] = 2 * (x * z + y * w) * s[2]; local[9] = 2 * (y * z - x * w) * s[2]; local[10] = (1 - 2 * (x * x + y * y)) * s[2];
+        local[12] = t[0]; local[13] = t[1]; local[14] = t[2];
         if (jt->parent < 0)
             memcpy(a->world[j], local, 64);
         else
