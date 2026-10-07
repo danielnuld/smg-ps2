@@ -44,6 +44,7 @@ Local sources are pinned by `vendor.txt` (Petari `0fac090b`, galaxy-macos `92d7a
 | JKRHeap: mStart 0x30, mEnd 0x34, mSize 0x38; JKRSolidHeap: mFreeSize 0x6C, mSolidHead 0x70, mSolidTail 0x74 | `Petari/libs/JSystem/include/JSystem/JKernel/JKRHeap.hpp:216-226`, `JKRSolidHeap.hpp:51-54` | V |
 | PSX SPU ADPCM: 16-byte blocks of 28 samples | `refs/psx-spx-spu.md:151-159` (https://raw.githubusercontent.com/psx-spx/psx-spx.github.io/master/docs/ps1/spu/soundprocessingunitspu.md) | V |
 | SPU2 uses the PSX SPU ADPCM format | ps2tek:111 only says the SPU2 RAM is "quadrupled from PSX's SPU" | E |
+| Mesh simplifier: meshoptimizer v1.3 `meshopt_simplify` (`vendor/meshoptimizer/src/meshoptimizer.h:517`), MIT, pinned in `vendor.txt`; built as `bin/meshopt.dll` with MinGW g++ and called via ctypes (`tools/simplify.py`). Chosen over a stdlib quadric decimator for speed; the PyPI package is only a 0.2.30a0 sdist | https://github.com/zeux/meshoptimizer (tag v1.3, 9e1f07b) | D |
 | JKRExpHeap used block: `u16 magic='HM'`, `u8 flags`, `u8 group`, `u32 size`, `prev`, `next` | `Petari/libs/JSystem/include/JSystem/JKernel/JKRExpHeap.hpp` (CMemBlock 0x00-0x0C); magic set `src/JSystem/JKernel/JKRExpHeap.cpp:552` | V |
 | `makeArchiveList` literals counted for every branch reachable by name (args ignored) | upper bound | E |
 | SHP1 block: shape count @+8, offsets @+0x0C..0x28; shape init 0x28 B; draw init {size, offset}; desc list at byte offset | `Petari/libs/JSystem/include/JSystem/J3DGraphLoader/J3DModelLoader.hpp:175-185`, `J3DShapeFactory.hpp:10-31,54-56` | V |

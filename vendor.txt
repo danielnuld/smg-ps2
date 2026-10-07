@@ -1,3 +1,4 @@
 Petari 0fac090b6066818c20f6406c3e1ade0004a073aa
 galaxy-macos 92d7ae4ae643296ba1c9742e3002168a200a3eb6
 aurora 0812291 (+ galaxy-macos port/patches/aurora), headers only for tools/ee_cc.sh
+meshoptimizer v1.3 9e1f07b159d3cb777f1c67ed31fc11fd117986f4 https://github.com/zeux/meshoptimizer (MIT)
