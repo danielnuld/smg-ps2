@@ -34,13 +34,16 @@ Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
 import math
 import struct
 import sys
+import zlib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import budget as B
 import geom
+import skin
 import tex
 
+SKINNED = ("Mario",)   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
 OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup", "PurpleRailCoin")
 ROW_FIELDS = ("pos_x", "pos_y", "pos_z", "dir_x", "dir_y", "dir_z", "scale_x", "scale_y", "scale_z")
 ROW = struct.Struct("<HHii9f8i")
@@ -132,18 +135,24 @@ def scene(fs, galaxy, scenario):
     return act, zones, objs, starts, paths
 
 
-def model_groups(arc, ratio, stats=None):
-    """-> (groups [(verts, tris, uvs or None, texture or None)], kcl bytes or None) for the first J3D model of an
-    archive. texture = tex.to_ps2 dict of the group's material (tex.py rule); uvs per vertex after the material's
-    texture matrix and the mirror halving. stats counts groups without texture / with projected coordinates."""
-    groups, kcl = [], None
+def model_groups(arc, ratio, stats=None, skinned=False):
+    """-> (groups [(verts, tris, uvs or None, texture or None, slots or None, colours or None)], kcl bytes or None,
+    skin chunk entry or None) for the first J3D model of an archive. texture = tex.to_ps2 dict of the group's material
+    (tex.py rule); uvs per vertex after the material's texture matrix and the mirror halving. stats counts groups
+    without texture / with projected coordinates. skinned: no simplification (vertices of one group sit in different
+    joint spaces), per vertex the matrix slot (PNMTXIDX / 3) and the CLR0 colour, and the SKIN entry (skin_entry)."""
+    groups, kcl, sk = [], None, None
     stats = stats if stats is not None else {}
     for name, b in B.rarc_files(arc.read_bytes()):
         n = name.lower()
         if n.endswith((".bdl", ".bmd")) and b[:4] == b"J3D2" and not groups:
             got = []
-            geom.model(b, ratio, None, got)
+            geom.model(b, 1.0 if skinned else ratio, None, got)
             bl = tex.blocks(b)
+            if skinned:
+                tables = skin.group_tables(b, bl)
+                gtab = []
+                clr = geom.vtx1_color(b, bl[b"VTX1"])
             shapes = tex.shape_materials(b, bl[b"INF1"])
             texs = tex.textures(b, bl[b"TEX1"]) if b"TEX1" in bl else []
             ps2 = {}
@@ -154,7 +163,7 @@ def model_groups(arc, ratio, stats=None):
                 remap = {v: i for i, v in enumerate(used)}
                 verts = [pos[3 * v:3 * v + 3] for v in used]
                 mat = shapes.get(info["shape"])
-                mt = tex.material_tex(b, bl[b"MAT3"], mat) if mat is not None else None
+                mt = tex.material_tex(b, bl[b"MAT3"], mat, bl.get(b"TEX1")) if mat is not None else None
                 get = geom.vtx1_attr(b, bl[b"VTX1"], mt["attr"]) if mt and mt["attr"] in info["at"] else None
                 uvs = t = None
                 if get and mt["tex"] < len(texs):
@@ -174,10 +183,67 @@ def model_groups(arc, ratio, stats=None):
                     stats["projected"] = stats.get("projected", 0) + mt["projected"]
                 else:
                     stats["untextured"] = stats.get("untextured", 0) + 1
-                groups.append((verts, [remap[v] for v in tri], uvs, t))
+                slots = cols = None
+                if skinned:
+                    at = info["at"]
+                    slots = [info["keys"][v][at[0][0]] // 3 if 0 in at else 0 for v in used]
+                    if clr and 11 in at:
+                        o, w = at[11]
+                        cols = [clr(info["keys"][v][o] if w == 1 else info["keys"][v][o] << 8 | info["keys"][v][o + 1])
+                                for v in used]
+                    gtab.append(tables[(info["shape"], info["group"])])
+                groups.append((verts, [remap[v] for v in tri], uvs, t, slots, cols))
+            if skinned:
+                sk = skin_entry(b, bl, gtab)
         elif n.endswith(".kcl") and kcl is None:
             kcl = b
-    return groups, kcl
+    return groups, kcl, sk
+
+
+def skin_entry(b, bl, gtab):
+    """SKIN chunk entry (after the model name): u16 njoints, ndrw, ngroups, nmix; joints {s16 parent, u16 pad,
+    f32 scale[3], rot[3] (radians), trans[3]} (bind pose locals); drw {u16 first, u16 count} (count 0: rigid, first =
+    joint; else a run of mix entries); mix {u16 joint, u16 pad, f32 weight, f32 invbind[3][4]}; groups {u8 nmat,
+    u8 drw[11]} (skin.py)."""
+    js, dr = skin.joints(b, bl), skin.draw_entries(b, bl)
+    out, drw, mix = bytearray(), bytearray(), bytearray()
+    nmix = 0
+    for j, m in dr:
+        if m is None:
+            drw += struct.pack("<HH", j, 0)
+        else:
+            drw += struct.pack("<HH", nmix, len(m))
+            for jj, w, ib in m:
+                mix += struct.pack("<HHf12f", jj, 0, w, *ib[:3, :].reshape(-1))
+                nmix += 1
+    assert all(len(t) <= 11 and max(t) < 256 for t in gtab), "matrix table does not fit u8[11]"
+    out += struct.pack("<4H", len(js), len(dr), len(gtab), nmix)
+    for j in js:
+        out += struct.pack("<hH9f", j["parent"], 0, *j["scale"], *j["rot"], *j["trans"])
+    out += drw + mix
+    for t in gtab:
+        out += struct.pack("<B11B", len(t), *(list(t) + [0] * (11 - len(t))))
+    return bytes(out) + b"\0" * (-len(out) % 4)
+
+
+def anim_clip(bck):
+    """BCK (ANK1) -> little-endian clip: {u16 frame_max, u8 attribute (loop mode), u8 dec_shift, u16 njoints,
+    u16 nscale, u16 nrot, u16 ntrans, 4 pad}, njoints x 3 axes x {scale, rot, trans} x {u16 count, u16 offset,
+    u16 type} (J3DAnmTransformKeyTable), then f32 scale[nscale], s16 rot[nrot] (pad to 4), f32 trans[ntrans].
+    Offsets in the ANK1 block (J3DAnmLoader.cpp:303-313, J3DAnimation.hpp:306-317) are from the block start."""
+    k = 0x20
+    assert bck[k:k + 4] == b"ANK1", bck[k:k + 4]
+    attr, shift = bck[k + 8], bck[k + 9]
+    fmax, nj, ns, nr, nt = struct.unpack_from(">h4H", bck, k + 0xA)
+    tab, so, ro, to = (k + B.u32(bck, k + x) for x in (0x14, 0x18, 0x1C, 0x20))
+    table = struct.unpack_from(f">{nj * 27}H", bck, tab)
+    out = struct.pack("<HBBHHHH4x", fmax, attr, shift, nj, ns, nr, nt) + struct.pack(f"<{nj * 27}H", *table)
+    out += b"\0" * (-len(out) % 4)
+    out += struct.pack(f"<{ns}f", *struct.unpack_from(f">{ns}f", bck, so))
+    rot = struct.pack(f"<{nr}h", *struct.unpack_from(f">{nr}h", bck, ro))
+    out += rot + b"\0" * (-len(rot) % 4)
+    out += struct.pack(f"<{nt}f", *struct.unpack_from(f">{nt}f", bck, to))
+    return out
 
 
 def kcl_to_le(b):
@@ -246,7 +312,7 @@ def vu_groups(groups, base, stats=None):
     L = [c / ll for c in LIGHT]
     pad = lambda x: bytes(x) + b"\0" * (-len(x) % 16)
     out = []
-    for verts, tris, uvs, t in groups:
+    for verts, tris, uvs, t, slots, cols in groups:
         pos, col, uv = bytearray(), bytearray(), bytearray()
         rgb = (0x80, 0x80, 0x80) if t else base
         for i in range(0, len(tris), 3):
@@ -257,9 +323,16 @@ def vu_groups(groups, base, stats=None):
             nl = math.sqrt(sum(x * x for x in n)) or 1.0
             k = 0.25 + 0.75 * abs(sum(n[j] * L[j] for j in range(3))) / nl
             rgba = struct.pack("<4B", int(rgb[0] * k), int(rgb[1] * k), int(rgb[2] * k), 0x80)
-            for v in (a, b, c):
-                pos += struct.pack("<4f", v[0], v[1], v[2], 1.0)
-                col += rgba
+            for q in range(3):
+                vi = tris[i + q]
+                v = verts[vi]
+                if slots is None:   # static: w = 1.0, whose low 16 bits (slot 0) the VU reads as the matrix slot
+                    pos += struct.pack("<4f", v[0], v[1], v[2], 1.0)
+                    col += rgba
+                else:               # skinned: w = 4 * matrix slot (raw bits); colour = CLR0 scaled to 0x80, unlit
+                    pos += struct.pack("<3fI", v[0], v[1], v[2], 4 * slots[vi])
+                    cc = cols[vi] if cols else (255, 255, 255, 255)
+                    col += struct.pack("<4B", *(x * 0x80 // 255 for x in cc[:3]), 0x80)
             if uvs:
                 tri = [uvs[tris[i + k]] for k in range(3)]
                 du = 0 if t["clamp_s"] else math.floor(min(x[0] for x in tri))
@@ -313,21 +386,23 @@ def build(fs, galaxy, scenario, ratio=0.99):
         grav.append(struct.pack("<HHiiff3f3f", kind, o["zone"], o["priority"], 1 if o["inverse"] == 1 else 0,
                                 o["range"], distant, *o["pos"], *up))
     out.append(chunk(b"GRAV", struct.pack("<I", len(grav)) + b"".join(grav)))
-    models, kcls, vumd, stats = [], [], [], {}
+    models, kcls, vumd, skins, stats = [], [], [], [], {}
     texts, tex_id = [], {}  # PS2 textures, deduplicated by content
-    for t in [t for t in types if t in planets] + [t for t in types if t in OBJ_TYPES]:
+    for t in [t for t in types if t in planets] + [t for t in types if t in OBJ_TYPES] + list(SKINNED):
         arc = fsp / "ObjectData" / f"{t}.arc"
         if not arc.exists():
             continue
-        groups, kcl = model_groups(arc, ratio, stats)
+        groups, kcl, sk = model_groups(arc, ratio, stats, t in SKINNED)
+        if sk:
+            skins.append(name32(t) + sk)
         g = b""
-        for verts, tris, _, _ in groups:
+        for verts, tris, *_ in groups:
             idx = struct.pack(f"<{len(tris)}H", *tris)
             g += struct.pack("<II", len(verts), len(tris) // 3) + b"".join(struct.pack("<3f", *v) for v in verts)
             g += idx + b"\0" * (-len(idx) % 4)
         models.append(name32(t) + struct.pack("<I", len(groups)) + g)
         vg = b""
-        for (_, _, _, tx), (pos, col, uv) in zip(groups, vu_groups(groups, BASE_COLOUR.get(t, (112, 176, 96)), stats)):
+        for (_, _, _, tx, _, _), (pos, col, uv) in zip(groups, vu_groups(groups, BASE_COLOUR.get(t, (112, 176, 96)), stats)):
             ti = 0xFFFF
             if tx:
                 key = tx["pix"] + tx["clut"] + bytes((tx["clamp_s"], tx["clamp_t"]))
@@ -350,6 +425,15 @@ def build(fs, galaxy, scenario, ratio=0.99):
                             pix, len(tx["pix"]), clut, tx["w"].bit_length() - 1, tx["h"].bit_length() - 1)
     out.append(chunk(b"TEXT", struct.pack("<I12x", len(texts)) + bytes(head) + bytes(data)))
     out.append(chunk(b"MODL", struct.pack("<I", len(models)) + b"".join(models)))
+    out.append(chunk(b"SKIN", struct.pack("<I", len(skins)) + b"".join(skins)))
+    clips = []
+    for n, b in B.rarc_files((fsp / "ObjectData" / "MarioAnime.arc").read_bytes()):
+        if n.lower().endswith(".bck"):
+            raw = anim_clip(b)
+            z = zlib.compress(raw, 9)
+            clips.append(name32(n.rsplit("/", 1)[-1][:-4].lower()) + struct.pack("<II", len(raw), len(z)) + z +
+                         b"\0" * (-len(z) % 4))
+    out.append(chunk(b"ANIM", struct.pack("<I", len(clips)) + b"".join(clips)))
     out.append(chunk(b"VUMD", struct.pack("<I12x", len(vumd)) + b"".join(vumd)))
     out.append(chunk(b"KCL ", struct.pack("<I", len(kcls)) + b"".join(kcls)))
     blob = b"SMGS" + struct.pack("<II4x", 3, len(out)) + b"".join(out)

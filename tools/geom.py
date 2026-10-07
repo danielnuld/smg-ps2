@@ -38,6 +38,32 @@ def vtx1_attr(b, v, attr=9):
 vtx1_positions = vtx1_attr
 
 
+def vtx1_color(b, v, attr=11):
+    """VTX1 colour array (CLR0 = 11) -> index -> (r, g, b, a) 0..255; comp types RGB565, RGB8, RGBX8, RGBA4, RGBA6,
+    RGBA8 (GXEnum.h:902-907)."""
+    f = v + u32(b, v + 8)
+    while u32(b, f) != 0xFF:
+        if u32(b, f) == attr:
+            typ, base = u32(b, f + 8), v + u32(b, v + VTX1_ARRAY[attr])
+            def get(i):
+                if typ == 0:
+                    c = u16(b, base + 2 * i)
+                    return ((c >> 11) * 255 // 31, (c >> 5 & 63) * 255 // 63, (c & 31) * 255 // 31, 255)
+                if typ in (1, 2):
+                    n = 3 if typ == 1 else 4
+                    return tuple(b[base + n * i:base + n * i + 3]) + (255,)
+                if typ == 3:
+                    c = u16(b, base + 2 * i)
+                    return tuple((c >> sh & 15) * 17 for sh in (12, 8, 4, 0))
+                if typ == 4:
+                    c = int.from_bytes(b[base + 3 * i:base + 3 * i + 3], "big")
+                    return tuple((c >> sh & 63) * 255 // 63 for sh in (18, 12, 6, 0))
+                return tuple(b[base + 4 * i:base + 4 * i + 4])
+            return get
+        f += 16
+    return None
+
+
 def triangles(op, v):
     """GX primitive (GXEnum.h:701-709) -> flat triangle list, degenerate triangles dropped; None if not triangles."""
     op &= 0xF8
@@ -61,7 +87,7 @@ def shp1(b, o, pool=None, ratio=1.0, positions=None, collect=None):
     ratio<1 (needs positions from vtx1_positions): each matrix group's triangles are simplified to ~ratio of their count
     (meshoptimizer, tools/simplify.py), re-stripped with degenerate joins, then sized the same way; vertices never merge
     across groups (each group has its own matrix table). Lines/points are kept as they are.
-    collect: list that receives (flat positions, triangle list, info) per group, after simplification; info = {shape,
+    collect: list that receives (flat positions, triangle list, info) per group, after simplification; info = {shape, group,
     at: attr -> (offset, width) of its index in a vertex key, keys: vertex key bytes per vertex id}."""
     n = u16(b, o + 8)
     init, idx, desc, dl, draw = (o + u32(b, o + k) for k in (0x0C, 0x10, 0x18, 0x20, 0x28))
@@ -75,6 +101,8 @@ def shp1(b, o, pool=None, ratio=1.0, positions=None, collect=None):
             attr, typ = u32(b, d), u32(b, d + 4)
             if typ in (2, 3):
                 at[attr] = (stride, typ - 1)
+            elif attr < 9 and typ == 1:                       # direct matrix index (PNMTXIDX = 3 * slot)
+                at[attr] = (stride, 1)
             stride += 1 if attr < 9 else {0: 0, 1: 0, 2: 1, 3: 2}[typ]  # MTXIDX direct u8; INDEX8/16
             ps2_stride += PS2_ATTR.get(attr, 0) if typ else 0
             d += 8
@@ -128,7 +156,7 @@ def shp1(b, o, pool=None, ratio=1.0, positions=None, collect=None):
                     emit([(g, i) for i in stripify(new, len(ids))])
                 if collect is not None:
                     keys_of = sorted(ids, key=ids.get)
-                    collect.append((pos, new, dict(shape=s, at=at, keys=keys_of)))
+                    collect.append((pos, new, dict(shape=s, group=g, at=at, keys=keys_of)))
         if pool is not None:
             ps2 += flush()
     return emitted, ps2, dl_bytes, bad

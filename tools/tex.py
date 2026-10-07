@@ -185,12 +185,15 @@ def tex_mtx(b, e):
             (sy * sr, sy * cr, -sy * sr * cx - sy * cr * cy + cy + ty))
 
 
-def material_tex(b, mat3, m):
+def material_tex(b, mat3, m, tex1=None):
     """Material m -> dict(tex = TEX1 index, attr = VTX1 attribute of its coords (13 = TEX0), mtx = 2x3 or None,
-    projected = bool), or None when no TEV stage samples a texture."""
+    projected = bool), or None when no TEV stage samples a texture. With tex1 (TEX1 block offset) the stage whose
+    texture has the largest area wins (first on ties): Mario's first stage samples a small noise texture and the
+    colour map comes later. ponytail: one texture per material; the other stages are dropped."""
     off = lambda k: mat3 + u32(b, mat3 + k)
     e = off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C
     stages = b[off(0x58) + b[e + 4]]
+    best, area = None, -1
     for k in range(stages):
         oi = u16(b, e + 0xBC + 2 * k)
         if oi == 0xFFFF:
@@ -199,6 +202,12 @@ def material_tex(b, mat3, m):
         if tmap == 0xFF:
             continue
         tex = u16(b, off(0x48) + 2 * u16(b, e + 0x84 + 2 * tmap))
+        a = 0
+        if tex1 is not None:
+            hd = tex1 + u32(b, tex1 + 0x0C) + 0x20 * tex
+            a = u16(b, hd + 2) * u16(b, hd + 4)
+        if a <= area:
+            continue
         ci = u16(b, e + 0x28 + 2 * coord)
         src, mtx = b[off(0x38) + 4 * ci + 1], b[off(0x38) + 4 * ci + 2]
         res = dict(tex=tex, attr=13 + src - 4 if 4 <= src <= 11 else None, mtx=None, projected=False)
@@ -207,8 +216,10 @@ def material_tex(b, mat3, m):
             if mi != 0xFFFF:
                 res["mtx"] = tex_mtx(b, off(0x40) + 0x64 * mi)
                 res["projected"] = res["mtx"] is None
-        return res
-    return None
+        best, area = res, a
+        if tex1 is None:
+            break
+    return best
 
 
 def selftest():
