@@ -11,3 +11,7 @@ engine/slice.elf
 engine/data/
 engine/test/fixtures/
 videos/
+
+# test builds (build.sh slope|zone|box|collapse|hazard)
+engine/slice-*.elf
+!engine/slice-bench.elf
