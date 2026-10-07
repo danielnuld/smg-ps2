@@ -324,3 +324,19 @@ Coin, PurpleCoin, StarPiece, Kuribo, gravities): every other actor class adds it
 margin (3.4 MB on the worst scenario) is what the remaining classes have to fit in. Phase 0b's all-archives figure
 for the same scenario was 9.86 MB before the levers. ponytail: models shared by two stages always sit in
 `common.bin`; per-zone deduplication at run time if that ever matters.
+
+### 5.2 Engine: any galaxy, streaming (in progress)
+
+| Step | Commit | Check (PCSX2) |
+|---|---|---|
+| World space: placement baked by the converter, every placed model drawn and collided with its own matrix, cameras in their zone frame (`Camera::setZoneMtx`) | dc30bcf | Gateway bench unchanged (5.35 ms) |
+| Gravity: plane in box / cylinder, cube, disk, segment (Petari creators baked into GRAV, host tests per kind); about 3 000 of the game's placements | 5ccde74 | TriLeg 1 walked on segment / cube / disk gravity |
+| Slopes as in Petari: up to 85° is ground, above 60° slips after 15 frames into the hip slide; walkable ground pushes along up; flattest ground normal | d73b151 | scripted slope test (`build.sh slope`): no ground/air flicker, no creep; confirmed by the user |
+| Boot from the packs through `host:packs/` (scene, resident, common, start chain full, rest low) | b3bcf6f | Gateway 1 (6 zones, first time it runs) and 2 |
+| Zone swap at run time: arena marks, texture VRAM as a rewound bump pointer, chains freed, models rebound | 658654e | teleport test |
+| Launch stars (SuperSpinDriver): bind, wind-up, flight along the parabola / rail, SpaceFly clips | e3fb834 | Gateway 1: star 0 flies Mario to zone 5 |
+| Swap without the stall: changed packs read 32 KB per frame during the flight, unchanged packs kept, swap 6.8 ms | 5a0ff3d | no emulated frame over 16.7 ms during the flight (worst 7.5 ms) |
+
+Open: camera types beyond the five ported (TriLeg uses others), object classes by placement count (`out/census.json`:
+988 classes, 33 082 placements), the VRAM budget of the biggest galaxies (all textures of a zone set resident),
+Bezier rails (straight segments today).
