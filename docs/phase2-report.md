@@ -340,3 +340,24 @@ for the same scenario was 9.86 MB before the levers. ponytail: models shared by 
 Open: camera types beyond the five ported (TriLeg uses others), object classes by placement count (`out/census.json`:
 988 classes, 33 082 placements), the VRAM budget of the biggest galaxies (all textures of a zone set resident),
 Bezier rails (straight segments today).
+
+#### Every class with a model, texture cache, frustum culling
+
+| Step | Commit | Result |
+|---|---|---|
+| Camera types POINT_FIX, EYEPOS_FIX_THERE, CHARMED_FIX, TOWER_POS, FRONT_AND_BACK, TRUNDLE, CUBE_PLANET (12 ported, host smoke test of all) | 673759c | zones on foot prefetched from 5000 out: Melty Molten 1 worst 128 → 7.9 ms |
+| Every placed class with a model on disc converted (NameObjFactory archive tables), drawn and collided as static until it gets a behaviour; NO_DRAW for translucent volumes | 70aa287 | Gateway 2: 6 → 44 static instances |
+| Non-power-of-two GX textures resized to the nearest power of two | ba08eb2 | the 2 failing scenarios convert |
+| Texture cache in GS memory (LRU, PATH3 uploads before their chain) + frustum culling | b79bb4d | see below |
+
+With every class converted (`out/packs/scenarios.csv`, `out/packs/vram.csv`):
+
+| | Result |
+|---|---|
+| Converted | 136 / 136 |
+| Fit the 9.01 MB room with streaming | **133 / 136**; over: OceanPhantomCave 1, 3, 4 (9.50–9.64 MB, GhostShipCaveZone), the ones phase 0b flagged; lever left: indexed geometry (`--vu-index`, phase 0b: 136 / 136) |
+| Fit without streaming | 103 / 136 |
+| Textures of the worst zone set if all resident | 123 / 136 fit 720 KB, worst 979 KB: no longer a limit with the cache |
+
+OceanPhantomCave 3 bench (VRAM-heaviest, 138 textures / 895 KB, 207 k triangles in view before culling): worst frame
+17.2 → **5.5 ms**, 94 uploads, 0 textures without room, 0 waits. Gateway 2: worst 5.4 ms, 42 uploads.
