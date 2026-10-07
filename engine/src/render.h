@@ -10,7 +10,8 @@ void render_begin(const float eye[3], const float target[3], const float up[3]);
 /* Draw a model with world matrix `world` (column-major 4x4), flat-shaded with a base colour. */
 void render_model(const Model *md, const float world[16], u8 r, u8 g, u8 b);
 void render_text(float x, float y, const char *s);
-void render_end(void);
+/* Finish the frame (VIF chain, HUD, wait for the GS) and flip; returns EE cycles spent before the vsync wait. */
+u32 render_end(void);
 u32 render_tris_drawn(void);
 
 void mat_identity(float m[16]);

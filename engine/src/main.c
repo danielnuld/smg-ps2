@@ -14,13 +14,6 @@ extern const u8 slice_blob[];
 
 static Scene scene;
 
-/* EE COUNT register: one tick per CPU cycle (294.912 MHz). */
-static inline u32 cycles(void)
-{
-    u32 c;
-    __asm__ volatile("mfc0 %0, $9" : "=r"(c));
-    return c;
-}
 #define EE_MHZ 294.912f
 
 static void load_modules(void)
@@ -50,10 +43,16 @@ int main(void)
     game_init(&scene, slice_blob);
     mem_report();
 
-    u32 t_logic = 0, t_draw = 0, worst = 0, frame = 0;
+    u32 t_logic = 0, t_draw = 0, t_gs = 0, worst = 0, frame = 0;
+#ifdef BENCH
+    /* frames 60..1859 of the scripted path: sums and worsts of logic (minus KCL), KCL, draw, GS finish, total */
+    u64 sum[5] = {0};
+    u32 top[5] = {0};
+#endif
     char line[128], a[24], b[24], c[24];
     for (;;) {
         u32 t0 = cycles();
+        game_kcl_cycles = 0;
         pad_update();
         game_update();
         u32 t1 = cycles();
@@ -78,7 +77,24 @@ int main(void)
         if ((frame++ & 255) == 0)
             printf("frame %u: logic %u us, draw %u us, worst %u us, tris %u\n", frame, (u32)(t_logic / EE_MHZ),
                    (u32)(t_draw / EE_MHZ), (u32)(worst / EE_MHZ), render_tris_drawn());
-        render_end();
+        t_gs = render_end();
+#ifdef BENCH
+        if (frame > 60 && frame <= 1860) {
+            u32 v[5] = {t_logic - game_kcl_cycles, game_kcl_cycles, t_draw, t_gs, t_logic + t_draw + t_gs};
+            for (int i = 0; i < 5; i++) {
+                sum[i] += v[i];
+                if (v[i] > top[i]) top[i] = v[i];
+            }
+        }
+        if (frame == 1861) {
+            static const char *nm[5] = {"logic", "kcl", "draw", "gs", "total"};
+            for (int i = 0; i < 5; i++)
+                printf("bench %-5s avg %u us worst %u us\n", nm[i], (u32)(sum[i] / 1800 / EE_MHZ), (u32)(top[i] / EE_MHZ));
+            game_debug(line, sizeof line);
+            printf("bench end: %s coins %d purple %d pieces %d kuribo %d\n", line, game_coins(), game_purple(),
+                   game_starpieces(), game_kuribo_alive());
+        }
+#endif
     }
     return 0;
 }

@@ -258,8 +258,11 @@ void render_text(float x, float y, const char *s)
     }
 }
 
-void render_end(void)
+#include "game.h"
+
+u32 render_end(void)
 {
+    u32 c0 = cycles();
     flush_vif();
     dma_channel_wait(DMA_CHANNEL_VIF1, 0);
     if (text_open) {
@@ -269,9 +272,11 @@ void render_end(void)
         draw_wait_finish();
         text_open = 0;
     }
+    u32 busy = cycles() - c0;
     graph_wait_vsync();
     graph_set_framebuffer_filtered(frame[back].address, SCREEN_W, GS_PSM_32, 0, 0);
     back ^= 1;
+    return busy;
 }
 
 u32 render_tris_drawn(void) { return tris_drawn; }

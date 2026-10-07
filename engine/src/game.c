@@ -128,8 +128,11 @@ static V3 up_at(V3 p, V3 prev)
 }
 
 /* Push a sphere out of the KCL; returns 1 if it rests on ground (a face within 60 degrees of up). */
+unsigned int game_kcl_cycles;
+
 static int collide(V3 *center, V3 up, float radius)
 {
+    unsigned int c0 = cycles();
     int ground = 0;
     for (int it = 0; it < 3; it++) {
         KclHit hits[16];
@@ -156,6 +159,7 @@ static int collide(V3 *center, V3 up, float radius)
                 ground = 1;
         }
     }
+    game_kcl_cycles += cycles() - c0;
     return ground;
 }
 

@@ -5,7 +5,7 @@ EE_OBJS = src/main.o src/mem.o src/blob.o src/render.o src/pad.o src/gravity.o s
 
 EE_INCS += -Isrc
 EE_LIBS += -lpacket2 -ldraw -lgraph -ldma -lpad -lpatches -ldebug -lm
-EE_CFLAGS += -O2 -Wall -Wextra -std=gnu99 -ffast-math
+EE_CFLAGS += -O2 -Wall -Wextra -std=gnu99 -ffast-math $(EXTRA)
 
 all: $(EE_BIN)
 

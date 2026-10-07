@@ -1,4 +1,4 @@
-# Phase 1 report (in progress)
+# Phase 1 report
 
 ## Wii reference (tasks 1.1-1.2)
 
@@ -140,23 +140,42 @@ Console at boot (`mem_report`) and HUD every frame (`RUNTIME … KB`, live coins
 Per object: PurpleCoin 16 B vs 2 567 B, Kuribo 48 B vs 12 073 B, player 1.2 KB vs 297 KB, all far under the
 one-sixth targets of 1.2. The slice does much less per object (see "Differences from SMG"), so these are floors.
 
-## Gate (task 6.1) — provisional until 5.2
+## Frame time over a fixed path (task 5.2) — PCSX2, by the user's decision
+
+`engine/build.sh bench` builds `slice-bench.elf`: the pad is replaced by a 30 s script (`pad.c`, `#ifdef BENCH`):
+forward with a jump every 1.5 s for 10 s, a right-hand circle with a spin every 2 s for 10 s, forward-left for 10 s.
+Mario crosses to the far side of the planet (1317, −425, 1574 → −510, 290, −1982), collects 4 purple coins and
+stomps 2 Kuribo (`docs/renders/slice-bench.png`). Frames 61-1860, EE COUNT cycles:
+
+| Part | Average | Worst |
+|---|---|---|
+| Logic (minus KCL) | 0.04 ms | 0.05 ms |
+| Collision (KCL queries) | 0.08 ms | 0.22 ms |
+| Draw (EE builds the VIF chain) | 2.21 ms | 2.37 ms |
+| GS finish (VIF chain + HUD drained, `render_end` before vsync) | 2.77 ms | 3.01 ms |
+| **Total busy** | **5.10 ms** | **5.51 ms** |
+
+60 FPS throughout, up to 70 984 triangles in view. PCSX2 does not time the VU1 and GS like the console, so the
+"GS finish" row is the least reliable one; the user chose the emulator over the SCPH-75001 for this gate.
+
+## Gate (task 6.1)
 
 Spec formula, OceanPhantomCave 1 (phase 0c):
 
 - **Memory** = Wii scene heap 7.81 MB × (slice 0.630 MB / Wii slice 3.24 MB = 0.194) = **1.52 MB**, against a room of
   1.45 (asset margin at R = 0.99) + 2.3 (render targets) + 2.6 (XFB + GX FIFO) = **6.35 MB → fits**. Without the
   fixed render buffers the slice ratio is 0.001 and the extrapolation ~8 KB.
-- **CPU** = slice worst frame × object ratio (Wii NameObjs 3 621 / 1 295 = 2.80): 2.34 ms → 6.5 ms, or with the slow
-  stretch 4.91 ms → **13.7 ms**, under 16.7 ms. PCSX2 numbers; the gate takes the SCPH-75001's (design, risks).
+- **CPU** = slice worst frame × object ratio (Wii NameObjs 3 621 / 1 295 = 2.80): 5.51 ms × 2.80 = **15.4 ms**, under
+  16.7 ms with 1.3 ms to spare. Scaling draw and GS time by objects is pessimistic (they follow triangles), but it is
+  the spec's rule.
 
 What the formula does not see (said plainly):
 - It scales only the scene heap. The phase 0c trace found ~8 MB of *resident* runtime (stationed C++ objects 4.34 MB,
   other data ~3.6 MB: sound, camera, layouts, effects, save). The slice has none of those systems, so nothing measures
   their PS2 cost yet; that is the real open risk of a full engine.
 - The slice is a subset: no Mario model/animation, no sound, particles, shadows, camera system, Bezier rails.
-- Render cost scales with triangles and batches, not objects; 62 k triangles at ~2 ms of EE is the measured part.
+- Frame time is from PCSX2, not the console.
 
-**Verdict: GO-pending-console.** By the spec's formula both rows fit with room (memory 1.52 of 6.35 MB, CPU
-6.5-13.7 ms of 16.7 in PCSX2). It becomes GO when 5.2 (frame time on the SCPH-75001 over a fixed path) stays
-under 16.7 ms; then 6.2 opens the full-engine plan, starting with the resident systems the slice does not have.
+**Verdict: GO** for the full engine (memory 1.52 of 6.35 MB, CPU 15.4 of 16.7 ms extrapolated, PCSX2). The CPU margin
+is thin: the full-engine plan has to keep the render path on VU1, budget the resident systems the slice lacks, and
+re-measure on the console when one is at hand.

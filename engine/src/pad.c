@@ -39,6 +39,18 @@ void pad_update(void)
         ly = -axis(st.ljoy_v);
     }
     pressed = held & ~prev;
+#ifdef BENCH
+    /* fixed path, 30 s: forward with a jump every 1.5 s, a right-hand circle with spins, forward-left */
+    static u32 f;
+    u32 t = f++;
+    prev = held;
+    held = 0;
+    lx = t < 600 ? 0.0f : t < 1200 ? 1.0f : -0.7f;
+    ly = t < 600 ? 1.0f : t < 1200 ? 0.5f : 0.7f;
+    if (t % 90 == 45) held |= PAD_CROSS;
+    if (t >= 600 && t < 1200 && t % 120 == 0) held |= PAD_SQUARE;
+    pressed = held & ~prev;
+#endif
 }
 
 int pad_held(u32 m) { return (held & m) != 0; }
