@@ -39,6 +39,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import budget as B
+import camera
 import geom
 import skin
 import tex
@@ -108,6 +109,7 @@ def scene(fs, galaxy, scenario):
     act = B.active_stages(galaxy, B.scenario_masks(sd)[scenario],
                           lambda s: B.arc_layers(st / f"{s}.arc", cache)["layers"] if (st / f"{s}.arc").exists() else {}, up)
     zones, objs, starts, paths = [dict(name=galaxy, pos=[0, 0, 0], rot=[0, 0, 0])], [], [], []
+    cubes, bcams = [], []  # camera areas (cameracubeinfo rows) and each stage's cameraparam.bcam
     zone_id = {galaxy: 0}
     order = [galaxy] + [s for s in act if s != galaxy]
     for s in order:
@@ -125,6 +127,11 @@ def scene(fs, galaxy, scenario):
                     objs.append(dict(r, zone=zid))
             for r in rows(files.get(f"{root}/jmp/start/{layer}/startinfo", b"")):
                 starts.append(dict(r, zone=zid))
+            cb = files.get(f"{root}/jmp/placement/{layer}/cameracubeinfo", b"")
+            valid, sw_a = B.bcsv_column(cb, "Validity"), int_or(cb, "SW_A", len(B.bcsv_column(cb, "name")), -1)
+            for i, r in enumerate(rows(cb)):
+                cubes.append(dict(r, zone=zid, invalid=i < len(valid) and valid[i] == "Invalid", sw_a=sw_a[i]))
+        bcams.append((zid, files.get(f"{root}/camera/cameraparam.bcam", b"")))
         info = files.get(f"{root}/jmp/path/commonpathinfo", b"")
         ids, closed = col(info, "l_id", len(B.bcsv_column(info, "name")), -1), B.bcsv_column(info, "closed")
         for i, pid in enumerate(ids):
@@ -132,7 +139,7 @@ def scene(fs, galaxy, scenario):
             xs, ys, zs = (float_column(pts, f"pnt0_{a}") for a in "xyz")
             paths.append(dict(zone=zid, id=pid, closed=int(str(closed[i] if i < len(closed) else "").lower() == "close"),
                               pts=list(zip(xs, ys, zs))))
-    return act, zones, objs, starts, paths
+    return act, zones, objs, starts, paths, cubes, bcams
 
 
 def model_groups(arc, ratio, stats=None, skinned=False):
@@ -356,7 +363,7 @@ def name32(s):
 
 
 def build(fs, galaxy, scenario, ratio=0.99):
-    act, zones, objs, starts, paths = scene(fs, galaxy, scenario)
+    act, zones, objs, starts, paths, cubes, bcams = scene(fs, galaxy, scenario)
     fsp = Path(fs)
     planets = B.planet_table(fsp, lambda a: (fsp / "ObjectData" / f"{a}.arc").exists())
     keep = [o for o in objs if o["name"] in OBJ_TYPES or o["name"] in planets or "Gravity" in o["name"]]
@@ -386,6 +393,12 @@ def build(fs, galaxy, scenario, ratio=0.99):
         grav.append(struct.pack("<HHiiff3f3f", kind, o["zone"], o["priority"], 1 if o["inverse"] == 1 else 0,
                                 o["range"], distant, *o["pos"], *up))
     out.append(chunk(b"GRAV", struct.pack("<I", len(grav)) + b"".join(grav)))
+    cams, cam_index, cam_types = camera.cameras(bcams, float_column, int_or)
+    care = [struct.pack("<BBH9f", camera.SHAPES[r["name"]], r["zone"],
+                        cam_index.get((r["zone"], "c", r["args"][0] & 0xFFFF), 0xFFFF), *r["pos"], *r["rot"], *r["scale"])
+            for r in camera.areas(cubes)]
+    out.append(chunk(b"CAMS", struct.pack("<I12x", len(cams)) + b"".join(cams)))
+    out.append(chunk(b"CARE", struct.pack("<I12x", len(care)) + b"".join(care)))
     models, kcls, vumd, skins, stats = [], [], [], [], {}
     texts, tex_id = [], {}  # PS2 textures, deduplicated by content
     for t in [t for t in types if t in planets] + [t for t in types if t in OBJ_TYPES] + list(SKINNED):
@@ -439,7 +452,8 @@ def build(fs, galaxy, scenario, ratio=0.99):
     blob = b"SMGS" + struct.pack("<II4x", 3, len(out)) + b"".join(out)
     blob += b"\0" * (-len(blob) % 16)
     return blob, dict(stages=act, types=types, objs=len(keep), starts=len(starts), paths=len(paths),
-                      models=len(models), kcls=len(kcls), textures=len(texts), **stats)
+                      models=len(models), kcls=len(kcls), textures=len(texts), cameras=len(cams), areas=len(care),
+                      camera_types=dict(cam_types), **stats)
 
 
 def read_chunks(blob):
