@@ -7,6 +7,6 @@ Start-Process -FilePath "D:\dolphin\Dolphin.exe" -ArgumentList @('-b','-e','D:\s
 $w = Start-Process -FilePath python -ArgumentList @("$s\dolmem.py","warp",$Stage,"$Scenario","45") -RedirectStandardOutput "$s\warp_$Tag.log" -NoNewWindow -PassThru
 Start-Sleep 3
 & "$s\keys.ps1" "mouse:615,507" "wait:600" "K:200" "wait:30000" | Out-Null
-& "$ssnap.ps1" "$ssnap_$Tag.png" | Out-Null
+& "$s\snap.ps1" "$s\snap_$Tag.png" | Out-Null
 python "$s\dolmem.py" dump "$s\dumps\$Tag" | Out-Null
 Get-Content "$s\warp_$Tag.log"
