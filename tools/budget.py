@@ -77,6 +77,7 @@ PS2_MAX_DIM = 256      # D (sources.md): budget lever, GS itself allows 1024
 # --levers (docs/phase0-report.md "Levers"): textures max 128 + all PSMT4, drop high LOD when Middle exists,
 # kcl normals f32 -> s16, bck kept zlib-9 in RAM. All D; quality/precision/CPU cost not evaluated.
 LEVERS = False
+SCENARIO = False  # --scenario: also write scenarios.csv (per galaxy and scenario, layer-masked)
 
 def gx_tex_size(fmt, w, h, mips):
     """Port of GXGetTexBufferSize (GXTexture.c:117-152); `mips` = ResTIMG image count."""
@@ -264,6 +265,49 @@ def arc_stats(path, cache):
         cache[key] = dict(sizes=tot, names=sorted(names), zones=zones)
     return cache[key]
 
+LAYERS = ["common"] + [f"layer{c}" for c in "abcdefghijklmnop"]  # cLayerDirName, StageDataHolder.cpp:31-32
+
+def arc_layers(path, cache):
+    """Placement data per layer: {layer: {"names": [...], "zones": [...]}} plus "child" names (all layers)."""
+    key = f"layers:{path}:{path.stat().st_mtime_ns}"
+    if key not in cache:
+        lay, child = {}, set()
+        for p, b in rarc_files(path.read_bytes(), paths=True):
+            parts = p.lower().split("/")
+            if len(parts) != 5 or parts[1] != "jmp":
+                continue
+            cat, layer, fname = parts[2:]
+            if cat == "childobj":  # loaded from every layer (initAllLayerJmpInfo), spawned by parents
+                child.update(bcsv_column(b, "name"))
+            elif cat in ("placement", "mapparts"):  # only these are layer-masked (initLayerJmpInfo)
+                d = lay.setdefault(layer, {"names": [], "zones": []})
+                names = bcsv_column(b, "name")
+                d["zones" if fname == "stageobjinfo" else "names"] += names
+        cache[key] = dict(layers=lay, child=sorted(child))
+    return cache[key]
+
+def scenario_masks(b):
+    """ScenarioData.bcsv -> {scenarioNo: callable(stage) -> layer mask} (ScenarioDataParser.cpp:217-231)."""
+    out = {}
+    for i, no in enumerate(bcsv_column(b, "ScenarioNo")):
+        out[no] = lambda stage, i=i: 1 | ((bcsv_column(b, stage) or [0] * (i + 1))[i] << 1)
+    return out
+
+def active_stages(main, mask_of, layers_of):
+    """Stages placed for one scenario: main, then every zone whose StageObjInfo row is in an active layer
+    (createLocalStageDataHolder); each stage contributes common + its scenario layers. -> {stage: [layer names]}"""
+    out, todo = {}, [main]
+    while todo:
+        st = todo.pop()
+        if st in out:
+            continue
+        m = mask_of(st)
+        out[st] = [LAYERS[i] for i in range(len(LAYERS)) if m >> i & 1]
+        lay = layers_of(st)
+        for l in out[st]:
+            todo += lay.get(l, {}).get("zones", [])
+    return out
+
 def row(label, parts):
     r = dict.fromkeys(KEYS, 0)
     for p in parts:
@@ -305,6 +349,7 @@ def main(fs, out):
     resident = [loc(p) for p in stationed_paths()]
     resident_row = row("<resident>", [arc_stats(p, cache) for p in resident if p.exists()])
     galaxies, zones = [dict(**resident_row, zones=0, unresolved=sum(not p.exists() for p in resident))], []
+    scenarios = []
     try:
         for scen in sorted(stage.glob("*/*Scenario.arc")):
             gname = scen.name[: -len("Scenario.arc")]
@@ -326,9 +371,30 @@ def main(fs, out):
                 unresolved |= unknown
             g_parts += [arc_stats(objects[n], cache) for n in sorted(g_objs)]
             galaxies.append(dict(**row(gname, g_parts), zones=len(zone_names), unresolved=len(unresolved)))
+            if SCENARIO:
+                sd = {n.lower(): b for n, b in rarc_files(scen.read_bytes())}["scenariodata.bcsv"]
+                layers_of = lambda st: arc_layers(stage / f"{st}.arc", cache)["layers"] if (stage / f"{st}.arc").exists() else {}
+                for no, mask_of in scenario_masks(sd).items():
+                    act = active_stages(gname, mask_of, layers_of)
+                    s_parts, s_objs, s_unres = [], set(), set()
+                    for st, lays in act.items():
+                        zp = stage / f"{st}.arc"
+                        if not zp.exists():
+                            s_unres.add(st)
+                            continue
+                        al = arc_layers(zp, cache)
+                        names = set(al["child"]) | {n for l in lays for n in al["layers"].get(l, {}).get("names", [])}
+                        arcs, unknown = resolve(sorted(names))
+                        s_parts.append(arc_stats(zp, cache))
+                        s_objs |= lod(arcs)
+                        s_unres |= unknown
+                    s_parts += [arc_stats(objects[n], cache) for n in sorted(s_objs)]
+                    r = row(gname, s_parts)
+                    scenarios.append(dict(galaxy=r.pop("name"), scenario=no, **r, zones=len(act), unresolved=len(s_unres), unresolved_names=" ".join(sorted(s_unres)),
+                                          zone_list=" ".join(sorted(act))))
     finally:
         cache_file.write_text(json.dumps(cache))
-    for fname, rows in (("budget.csv", galaxies), ("zones.csv", zones)):
+    for fname, rows in (("budget.csv", galaxies), ("zones.csv", zones)) + ((("scenarios.csv", scenarios),) if SCENARIO else ()):
         rows.sort(key=lambda r: -r["ps2_total"])
         if rows:
             with open(out / fname, "w", newline="") as f:
@@ -357,12 +423,27 @@ def selftest():
     b = hdr + struct.pack(">II", 0, 7) + strings
     assert bcsv_column(b, "name") == ["Kuribo", "Coin"], bcsv_column(b, "name")
     assert bcsv_column(b, "ZoneName") == []
+    # scenario masks: Gateway-like data, zone value 2 in scenario 2 -> common + LayerB
+    lay = {"G": {"common": {"zones": ["Z1"]}, "layera": {"zones": ["Z2"]}, "layerb": {"zones": ["Z3"]}},
+           "Z1": {"layerb": {"zones": ["Z4"]}}}
+    m = {"G": [1, 2], "Z1": [1, 2], "Z3": [1, 2], "Z4": [0, 2]}
+    mask = lambda no: (lambda st: 1 | (m.get(st, [0, 0])[no - 1] << 1))
+    act = active_stages("G", mask(2), lambda st: lay.get(st, {}))
+    assert act == {"G": ["common", "layerb"], "Z1": ["common", "layerb"], "Z3": ["common", "layerb"],
+                   "Z4": ["common", "layerb"]}, act
+    assert set(active_stages("G", mask(1), lambda st: lay.get(st, {}))) == {"G", "Z1", "Z2"}
+    # scenario_masks on a real BCSV: ScenarioNo [1, 2], column G [1, 2]; missing column -> common only
+    fields = b"".join(struct.pack(">IIHBB", jmap_hash(f), 0xFFFFFFFF, o, 0, 0) for f, o in (("ScenarioNo", 0), ("G", 4)))
+    sd = struct.pack(">4I", 2, 2, 16 + 24, 8) + fields + struct.pack(">4I", 1, 1, 2, 2)
+    sm = scenario_masks(sd)
+    assert (sm[1]("G"), sm[2]("G"), sm[2]("Nope")) == (0b11, 0b101, 0b1), (sm[1]("G"), sm[2]("G"), sm[2]("Nope"))
     print("selftest ok")
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["--selftest"]:
         selftest()
     else:
-        args = [a for a in sys.argv[1:] if a != "--levers"]
+        args = [a for a in sys.argv[1:] if a not in ("--levers", "--scenario")]
         LEVERS = "--levers" in sys.argv
+        SCENARIO = "--scenario" in sys.argv
         main(args[0], args[1] if len(args) > 1 else "out")
