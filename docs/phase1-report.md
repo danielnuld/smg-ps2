@@ -65,3 +65,15 @@ coin, star piece and Kuribo in place. EE-only transform, flat shading, gsKit tri
 
 The EE path is an order of magnitude too slow for 16.7 ms; the renderer has to move to VU1 (design decision 5 said
 "VU1 only if the EE transform dominates": it does).
+
+## Gravity and collision (tasks 4.1-4.2)
+
+- `engine/src/gravity.c`: point and plane (sphere range) gravity with Petari's rules: highest priority in range wins,
+  equal priorities add, strength 4e6 / (r − Distant)², Inverse flips (PlanetGravity.cpp, PointGravity.cpp,
+  ParallelGravity.cpp, PlanetGravityManager.cpp). The blob's GRAV chunk carries kind, priority, inverse, range,
+  distant, position and up. Gateway 2: point gravity (range 8200) and a priority-1 plane gravity over the planet's
+  flat top (sphere of 2300 at y = 3305).
+- `engine/src/kcl.c`: KCL sphere queries transcribed from Petari (searchBlock, outCheck, KCHitSphere); the converter
+  turns the KCL little-endian by walking its octree (`slice.kcl_to_le`).
+- Host tests (`engine/test/run.sh`, gcc in WSL): `test_gravity` (both gravities, priority, sum, inverse) and
+  `test_kcl` on the real planet KCL (face hit 10 deep on three prisms, none 100 away, none outside the box).

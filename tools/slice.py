@@ -9,7 +9,7 @@ zones placed by `stageobjinfo` rows of the stage that holds them (pos + dir in d
 calcPlacementMtx). Rails from `jmp/path/commonpathinfo` + `commonpathpointinfo.<n>` (control point pnt0 only).
 Models: every placed planet (PlanetMapDataTable names) and the archives of the object types in OBJ_TYPES, through
 geom.py (triangles per matrix group, simplified to R when R < 1). KCL copied as on disc (big-endian) from each planet
-archive. ponytail: meshes are untextured indexed triangle lists with float positions; textures, UVs and strips come
+archive, converted to little-endian (kcl_to_le). ponytail: meshes are untextured indexed triangle lists with float positions; textures, UVs and strips come
 when the renderer needs them (task 3.2/4.x), and only then cost bytes.
 
 Blob (all little-endian, chunks 16-byte aligned):
@@ -22,8 +22,12 @@ Blob (all little-endian, chunks 16-byte aligned):
   'PATH'  u32 n, n × {u16 zone, u16 closed, s32 id, u32 npts, f32 pts[npts][3]}
   'MODL'  u32 n, n × {char[32] name, u32 ngroups, ngroups × {u32 nverts, u32 ntris, f32 v[nverts][3],
           u16 idx[ntris][3], pad to 4}}
-  'KCL '  u32 n, n × {char[32] model, u32 size, bytes[size], pad to 4}
+  'KCL '  u32 n, n × {char[32] model, u32 size, bytes[size] (little-endian KCL, kcl_to_le), pad to 4}
+  'GRAV'  u32 n, n × {u16 kind (0 point, 1 plane), u16 zone, s32 priority, s32 inverse, f32 range, f32 distant,
+          f32 pos[3], f32 up[3]}   (Petari GravityCreator/GravityUtil: point distant = 500 * scale.x, plane up = rotated
+          Y axis; Range/Distant/Priority/Inverse from the placement row when present, defaults -1, 0, 0, 0)
 """
+import math
 import struct
 import sys
 from pathlib import Path
@@ -58,6 +62,12 @@ def float_column(b, field):
     return []
 
 
+def int_or(b, field, n, default):
+    v = B.bcsv_column(b, field)
+    v = [x - 2**32 if isinstance(x, int) and x >= 2**31 else x for x in v]
+    return v if len(v) == n else [default] * n
+
+
 def rows(b):
     names = B.bcsv_column(b, "name")
     n = len(names)
@@ -71,7 +81,9 @@ def rows(b):
     for i in range(n):
         out.append(dict(name=names[i], l_id=lid[i], path=path[i], pos=[fl[f][i] for f in ROW_FIELDS[:3]],
                         rot=[fl[f][i] for f in ROW_FIELDS[3:6]], scale=[fl[f][i] or 1.0 for f in ROW_FIELDS[6:]],
-                        args=[a[i] for a in args]))
+                        args=[a[i] for a in args], range=(float_column(b, "Range") or [-1.0] * n)[i],
+                        distant=(float_column(b, "Distant") or [None] * n)[i],
+                        priority=int_or(b, "Priority", n, 0)[i], inverse=int_or(b, "Inverse", n, 0)[i]))
     return out
 
 
@@ -134,6 +146,55 @@ def model_groups(arc, ratio):
     return groups, kcl
 
 
+def kcl_to_le(b):
+    """KCL big-endian -> little-endian, same layout (Petari KCollision.hpp:9-41, KCollision.cpp searchBlock):
+    header 14 words; pos and normal arrays (f32); prisms from prismOffset+0x10 (1-based), 0x10 each {f32 height,
+    u16 pos, nrm, edge0..2, attribute}; octree: a root grid of s32, each >= 0 = offset (from the current node) to 8
+    child s32, < 0 = (value & 0x7FFFFFFF) offset to a u16 prism list whose entries after the first run until 0."""
+    out = bytearray(b)
+    sw32 = lambda o: out.__setitem__(slice(o, o + 4), b[o:o + 4][::-1])
+    sw16 = lambda o: out.__setitem__(slice(o, o + 2), b[o:o + 2][::-1])
+    pos, nrm, prism, octree = struct.unpack_from(">4I", b, 0)
+    xmask, ymask, zmask, shift, xshift, xyshift = struct.unpack_from(">6i", b, 0x20)
+    for o in range(0, 0x38, 4):
+        sw32(o)
+    for o in range(pos, prism + 0x10, 4):   # positions then normals, all f32
+        sw32(o)
+    for o in range(prism + 0x10, octree, 0x10):
+        sw32(o)
+        for k in range(6):
+            sw16(o + 4 + 2 * k)
+    blocks = lambda m: ((~m & 0xFFFFFFFF) >> shift) + 1   # root cells along an axis (mask = ~(extent - 1))
+    root = 1 if xshift == -1 and xyshift == -1 else blocks(xmask) * blocks(ymask) * blocks(zmask)
+    seen_nodes, seen_lists = set(), set()
+    todo = [(octree, root)]
+    while todo:
+        base, count = todo.pop()
+        if base in seen_nodes:
+            continue
+        seen_nodes.add(base)
+        for i in range(count):
+            e = base + 4 * i
+            v = struct.unpack_from(">i", b, e)[0]
+            sw32(e)
+            if v >= 0:
+                todo.append((base + v, 8))
+            else:
+                lst = base + (v & 0x7FFFFFFF)
+                if lst in seen_lists:
+                    continue
+                seen_lists.add(lst)
+                o = lst
+                sw16(o)
+                o += 2
+                while True:
+                    sw16(o)
+                    if struct.unpack_from(">H", b, o)[0] == 0:
+                        break
+                    o += 2
+    return bytes(out)
+
+
 def chunk(tag, payload):
     payload += b"\0" * (-len(payload) % 16)
     return tag + struct.pack("<I", len(payload)) + payload
@@ -160,6 +221,20 @@ def build(fs, galaxy, scenario, ratio=0.99):
            chunk(b"PATH", struct.pack("<I", len(paths)) + b"".join(
                struct.pack("<HHiI", p["zone"], p["closed"], p["id"], len(p["pts"])) +
                b"".join(struct.pack("<3f", *pt) for pt in p["pts"]) for p in paths))]
+    grav = []
+    for o in keep:
+        kind = {"GlobalPointGravity": 0, "GlobalPlaneGravity": 1}.get(o["name"])
+        if kind is None:
+            continue
+        d = math.radians
+        rx, ry, rz = (d(a) for a in o["rot"])
+        # rotated Y axis of R = Rz * Ry * Rx (same order as the engine's placement matrices)
+        up = [math.cos(rz) * math.sin(ry) * math.sin(rx) - math.sin(rz) * math.cos(rx),
+              math.sin(rz) * math.sin(ry) * math.sin(rx) + math.cos(rz) * math.cos(rx), math.cos(ry) * math.sin(rx)]
+        distant = o["distant"] if o["distant"] is not None else (500.0 * o["scale"][0] if kind == 0 else 0.0)
+        grav.append(struct.pack("<HHiiff3f3f", kind, o["zone"], o["priority"], 1 if o["inverse"] == 1 else 0,
+                                o["range"], distant, *o["pos"], *up))
+    out.append(chunk(b"GRAV", struct.pack("<I", len(grav)) + b"".join(grav)))
     models, kcls = [], []
     for t in [t for t in types if t in planets] + [t for t in types if t in OBJ_TYPES]:
         arc = fsp / "ObjectData" / f"{t}.arc"

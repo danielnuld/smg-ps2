@@ -9,3 +9,4 @@ tools/dolphin/*.png
 tools/dolphin/*.log
 engine/slice.elf
 engine/data/
+engine/test/fixtures/
