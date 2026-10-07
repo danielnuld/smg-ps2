@@ -78,6 +78,7 @@ PS2_MAX_DIM = 256      # D (sources.md): budget lever, GS itself allows 1024
 # kcl normals f32 -> s16, bck kept zlib-9 in RAM. All D; quality/precision/CPU cost not evaluated.
 LEVERS = False
 VU_POOL = None    # --vu-index=N: geometry kept indexed, expanded on VU1 in batches of <= N unique vertices (geom.py)
+SIMPLIFY = 1.0    # --simplify=R: meshes simplified to ~R of their triangles and re-stripped (geom.py, simplify.py)
 SCENARIO = False  # --scenario: also write scenarios.csv (per galaxy and scenario, layer-masked)
 
 def gx_tex_size(fmt, w, h, mips):
@@ -116,7 +117,7 @@ def bti_headers(b, base, count):
 def j3d_sizes(b):
     """-> dict tex_gx, tex_ps2, geo_gx, geo_ps2, other."""
     r = dict(tex_gx=0, tex_ps2=0, geo_gx=0, geo_ps2=0, other=0, other_ps2=0)
-    o = 0x20
+    o, pos = 0x20, None
     for _ in range(u32(b, 0x0C)):
         tag, size = b[o:o + 4], u32(b, o + 4)
         if tag == b"TEX1":
@@ -129,10 +130,12 @@ def j3d_sizes(b):
                 r["tex_ps2"] += ps2_tex_size(fmt, w, h, mips)
         elif tag == b"VTX1":
             r["geo_gx"] += size                     # PS2 side is counted per emitted vertex in SHP1
+            from geom import vtx1_positions
+            pos = vtx1_positions(b, o) if SIMPLIFY < 1 else None
         elif tag == b"SHP1":
             from geom import shp1                   # de-indexed: every emitted vertex carries its data (geom.py)
             r["geo_gx"] += size
-            r["geo_ps2"] += shp1(b, o, VU_POOL)[1]
+            r["geo_ps2"] += shp1(b, o, VU_POOL, SIMPLIFY, pos)[1]
         else:
             r["other"] += size
             r["other_ps2"] += size
@@ -253,7 +256,7 @@ def planet_table(fs, exists):
 KEYS = ("tex_gx", "tex_ps2", "geo_gx", "geo_ps2", "other", "other_ps2")
 
 def arc_stats(path, cache):
-    key = f"{path}:{path.stat().st_mtime_ns}:{LEVERS}" + (f":vu{VU_POOL}" if VU_POOL else "")
+    key = f"{path}:{path.stat().st_mtime_ns}:{LEVERS}" + (f":vu{VU_POOL}" if VU_POOL else "") + (f":s{SIMPLIFY}" if SIMPLIFY < 1 else "")
     if key not in cache:
         tot = dict.fromkeys(KEYS, 0)
         names = set()
@@ -496,7 +499,8 @@ if __name__ == "__main__":
         selftest()
     else:
         VU_POOL = next((int(a.split("=")[1]) for a in sys.argv if a.startswith("--vu-index=")), None)
-        args = [a for a in sys.argv[1:] if a not in ("--levers", "--scenario") and not a.startswith("--vu-index=")]
+        SIMPLIFY = next((float(a.split("=")[1]) for a in sys.argv if a.startswith("--simplify=")), 1.0)
+        args = [a for a in sys.argv[1:] if a not in ("--levers", "--scenario") and not a.startswith(("--vu-index=", "--simplify="))]
         LEVERS = "--levers" in sys.argv
         SCENARIO = "--scenario" in sys.argv
         main(args[0], args[1] if len(args) > 1 else "out")

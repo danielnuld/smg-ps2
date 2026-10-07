@@ -22,3 +22,9 @@ GhostShipCavePlanet.bdl (the heaviest planet of the worst scenario), 38 692 tria
 Re-stripping alone saves 23 % in VU1 mode (better batch locality), before removing any triangle. The simplifier
 stops short of its target on meshes with many UV/normal seams: at R = 0.5 it keeps 58 % of the triangles
 (`meshopt_SimplifyPermissive` would go further at a texture-quality cost; not used).
+
+## `--simplify=R` in the budget (task 1.3)
+
+`budget.py ... --simplify=R` passes R and the VTX1 positions to `geom.shp1`; the cache key carries R. Check: a run
+from an empty cache with `--levers --scenario --vu-index=255 --simplify=1` writes `budget.csv`, `zones.csv` and
+`scenarios.csv` byte-identical to `out/vu255` (`cmp`, 39 s).
