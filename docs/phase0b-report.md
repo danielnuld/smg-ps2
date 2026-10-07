@@ -209,6 +209,6 @@ Negative with `--vu-index=255`: OceanPhantomCave 1 -1.12, OceanPhantomCave 2 -1.
 4. **Geometry on VU1 at N ≈ 255 is feasible**: a VU1 microcode that expands ~7 KB pools double-buffered in 16 KB,
    at an acceptable cycle cost.
 5. **OceanPhantomCave and Phantom get one more cut** (−1.12 MB at worst), for instance the GhostShipCaveZone planet
-   (1.92 MB de-indexed with ) at Middle LOD.
+   (1.92 MB de-indexed with `--levers`) at Middle LOD.
 
 Not retried here. The tools stay: `budget.py --scenario --vu-index=N`, `heapwalk.py`, `audio.py`.
