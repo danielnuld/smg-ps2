@@ -58,7 +58,9 @@ def areas(rows):
     return out
 
 
-TYPES = ("CAM_TYPE_XZ_PARA", "CAM_TYPE_TOWER", "CAM_TYPE_FOLLOW", "CAM_TYPE_WONDER_PLANET", "CAM_TYPE_EYEPOS_FIX")
+TYPES = ("CAM_TYPE_XZ_PARA", "CAM_TYPE_TOWER", "CAM_TYPE_FOLLOW", "CAM_TYPE_WONDER_PLANET", "CAM_TYPE_EYEPOS_FIX",
+         "CAM_TYPE_POINT_FIX", "CAM_TYPE_EYEPOS_FIX_THERE", "CAM_TYPE_CHARMED_FIX", "CAM_TYPE_TOWER_POS",
+         "CAM_TYPE_FRONT_AND_BACK", "CAM_TYPE_TRUNDLE", "CAM_TYPE_CUBE_PLANET")
 FLAGS = ("noreset", "nofovy", "lofserpoff", "antibluroff", "collisionoff", "subjectiveoff")  # CameraParamChunk.cpp:14
 FLOATS = (("dist", 1200.0), ("angleA", 0.0), ("angleB", 0.3), ("wpoint", (0, 0, 0)), ("axis", (0, 1, 0)),
           ("up", (0, 1, 0)), ("woffset", (0, 100, 0)), ("loffset", 0.0), ("loffsetv", 0.0), ("fovy", 45.0),

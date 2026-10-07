@@ -22,7 +22,8 @@ typedef struct {
     unsigned char pad[4];
 } CamParam; /* 128 bytes */
 
-enum { CAM_XZ_PARA, CAM_TOWER, CAM_FOLLOW, CAM_WONDER_PLANET, CAM_EYEPOS_FIX };
+enum { CAM_XZ_PARA, CAM_TOWER, CAM_FOLLOW, CAM_WONDER_PLANET, CAM_EYEPOS_FIX, CAM_POINT_FIX, CAM_EYEPOS_FIX_THERE,
+       CAM_CHARMED_FIX, CAM_TOWER_POS, CAM_FRONT_AND_BACK, CAM_TRUNDLE, CAM_CUBE_PLANET };  /* tools/camera.py TYPES */
 
 /* What the camera follows (Mario): position, facing, up (against gravity), airborne. */
 typedef struct { V3 pos, front, up; int jumping; } CamTarget;

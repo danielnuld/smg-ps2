@@ -481,8 +481,17 @@ int game_zone_wanted(const unsigned char *full)
 
 int game_zone_next(const unsigned char *full)
 {
-    if (mario->launch < 0)
-        return game_zone_wanted(full);
+    if (mario->launch < 0) { /* on foot: the nearest low zone within 5000 of its model sphere starts reading early */
+        int want = -1;
+        float best = 5000.0f;
+        for (int i = 0; i < ninsts; i++) {
+            const Inst *in = &insts[i];
+            if (full[in->zone]) continue;
+            float d = vlen(vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14]))) - in->reach;
+            if (d < best) { best = d; want = in->zone; }
+        }
+        return want;
+    }
     V3 end = launch_pos(&launches[mario->launch], 1.0f);
     int best = -1;
     float bd = 1e30f;

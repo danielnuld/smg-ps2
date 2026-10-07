@@ -1,5 +1,7 @@
 #include "camera.h"
 
+#include <stdio.h>
+
 /* Petari AreaForm.cpp: cube 45-54 + 104-125 (centre origin, 1000 x scale), cylinder 241-313 (base origin, radius
  * 500 x scale_x, height 500 x scale_y along R * Y), sphere 160-166 + 277-285 (radius 500 x scale_x). Rotation order
  * as every placement: R = Rz * Ry * Rx (degrees). */
@@ -43,6 +45,8 @@ static V3 look_off, last_target;      /* smoothed loffset / loffsetv (makeWatchP
 static float vpan_h;                  /* smoothed watch height along the vpan axis */
 static int vpan_init;
 static V3 type_eye, type_up;          /* the type camera's own previous output (Tower, Follow, WonderPlanet read it) */
+static int fresh;                     /* first frame of a camera (its reset()) */
+static V3 cube_up;                    /* CameraCubePlanet::mUp */
 static V3 i_eye, i_watch, i_up;       /* interpolated towards the type camera over camint frames */
 static int timer, camint;
 static V3 f_eye, f_watch, f_up;       /* final, after the 0.3 per-frame smoothing */
@@ -57,6 +61,22 @@ static V3 polar(float len, float pitch, float yaw) /* CameraCalc.cpp:25-29 */
     return v3(len * cosf(pitch) * sinf(yaw), len * sinf(pitch), len * cosf(pitch) * cosf(yaw));
 }
 static const CamParam *param(void) { return cur >= 0 ? &cams[cur] : &null_cam; }
+
+/* rotate v about unit axis k by angle a (TQuat4f::setRotate(axis, angle) + transform), Rodrigues */
+static V3 rot_axis(V3 v, V3 k, float a)
+{
+    float c = cosf(a), s = sinf(a);
+    return vadd(vadd(vmul(v, c), vmul(vcross(k, v), s)), vmul(k, vdot(k, v) * (1.0f - c)));
+}
+
+/* rotate v by `rate` of the shortest arc taking unit a to unit b (TQuat4f::setRotate(a, b, rate)) */
+static V3 rotate_part(V3 a, V3 b, V3 v, float rate)
+{
+    V3 ax = vcross(a, b);
+    float s = vlen(ax);
+    if (s < 1e-6f) return v;
+    return rot_axis(v, vmul(ax, 1.0f / s), atan2f(s, vdot(a, b)) * rate);
+}
 
 /* rotate v by the rotation that takes unit a to unit b (TQuat4f::setRotate + transform), Rodrigues */
 static V3 rotate_between(V3 a, V3 b, V3 v)
@@ -140,7 +160,9 @@ static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V
     V3 Y = v3(0, 1, 0);
     V3 w = watch_point(p, t, move);
     int type = p->type == 255 ? CAM_XZ_PARA : p->type;
-    if (type != CAM_WONDER_PLANET && type != CAM_EYEPOS_FIX) w = vertical_pan(p, t, w);
+    int still = type == CAM_WONDER_PLANET || type == CAM_EYEPOS_FIX || type == CAM_POINT_FIX ||
+                type == CAM_EYEPOS_FIX_THERE || type == CAM_CHARMED_FIX || type == CAM_CUBE_PLANET;
+    if (!still) w = vertical_pan(p, t, w);
     *watch = w;
     *up = Y;
     switch (type) {
@@ -197,6 +219,102 @@ static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V
         *eye = vec(p->wpoint);
         if (p->num1 == 2) *up = t->up;
         break;
+    case CAM_POINT_FIX: { /* CameraFix.cpp + CamTranslatorFix: all fixed; eye = wpoint + polar(dist, axis.x, axis.y) */
+        *watch = vadd(vec(p->wpoint), vec(p->woffset));
+        *eye = vadd(vec(p->wpoint), polar(p->dist, p->axis[0], p->axis[1]));
+        V3 u = vnorm(vec(p->up)), f = vnorm(vsub(*watch, *eye));
+        if (vlen(u) < 0.5f) u = Y;
+        if (fabsf(vdot(f, u)) > 0.98f) u = v3(u.y, u.z, u.x);
+        *up = u;
+        break;
+    }
+    case CAM_EYEPOS_FIX_THERE: { /* CameraFixedThere.cpp: the eye stays where the last camera left it */
+        *eye = type_eye;
+        V3 f = vnorm(vsub(w, type_eye));
+        /* num1 0 (CameraType_GravityUp): up against gravity unless looking within 30 degrees of it */
+        *up = p->num1 == 0 && fabsf(vdot(f, t->up)) <= 0.866f ? t->up : type_up;
+        break;
+    }
+    case CAM_CHARMED_FIX: { /* CameraCharmedFix.cpp: base point = axis, offset wpoint in the frame looking at Mario */
+        V3 f = vsub(t->pos, vec(p->axis));
+        V3 u = vnorm(vec(p->up));
+        if (vlen(u) < 0.5f) u = Y;
+        if (vlen(f) < 1e-3f) { *eye = type_eye; break; }
+        f = vnorm(f);
+        V3 side = vcross(u, f);
+        if (vlen(side) < 1e-3f) { *eye = type_eye; break; }
+        side = vnorm(side);
+        u = vcross(f, side);
+        *eye = vadd(t->pos, vadd(vadd(vmul(side, p->wpoint[0]), vmul(u, p->wpoint[1])), vmul(f, p->wpoint[2])));
+        *watch = vsub(*eye, vmul(f, p->wpoint[2]));
+        *up = u;
+        break;
+    }
+    case CAM_TOWER_POS: { /* CameraTowerPos.cpp: dist = up.x, pitch angleB, yaw speed pi (1 - angleA) / 2 */
+        V3 axis = vnorm(vec(p->axis));
+        if (vlen(axis) < 0.5f) axis = Y;
+        V3 f = vtangent(vsub(w, vec(p->wpoint)), axis);
+        if (vlen(f) < 1e-3f) { *eye = type_eye; break; }
+        f = vnorm(f);
+        f = rot_axis(f, vnorm(vcross(f, Y)), p->angle_b);
+        V3 ideal = vadd(w, vmul(f, p->up[0]));
+        if (fresh) { *eye = ideal; break; }
+        /* arrangeHorizontalPose: yaw towards the ideal at most the speed per frame, pitch blended at 0.05 */
+        V3 ri = vsub(ideal, w), rp = vsub(type_eye, w);
+        float yi = atan2f(ri.x, ri.z), yp = atan2f(rp.x, rp.z), sp = PI * (1.0f - p->angle_a) * 0.5f;
+        float yaw = yp + clampf(wrap_pi(yi - yp), -sp, sp);
+        float pi_ = atan2f(ri.y, sqrtf(ri.x * ri.x + ri.z * ri.z)), pp = atan2f(rp.y, sqrtf(rp.x * rp.x + rp.z * rp.z));
+        *eye = vadd(w, polar(p->up[0], pp + 0.05f * wrap_pi(pi_ - pp), yaw));
+        break;
+    }
+    case CAM_FRONT_AND_BACK: { /* CameraFrontAndBack.cpp: zone Z turned so X lies on the axis, spun by angleA
+                                * degrees about it, dipped towards Mario by at most angleB degrees */
+        V3 axis = vnorm(vec(p->axis));
+        if (vlen(axis) < 0.5f) axis = v3(1, 0, 0);
+        V3 dir = vtangent(vsub(t->pos, vec(p->wpoint)), axis);
+        if (vlen(dir) < 1e-3f) { *eye = type_eye; *up = type_up; break; }
+        V3 f = rotate_between(v3(1, 0, 0), axis, v3(0, 0, 1)), u = rotate_between(v3(1, 0, 0), axis, Y);
+        float spin = PI * p->angle_a / 180.0f, dip = PI * p->angle_b / 180.0f;
+        f = rot_axis(f, axis, spin);
+        u = rot_axis(u, axis, spin);
+        V3 d = vnorm(dir);
+        float ang = acosf(clampf(vdot(d, f), -1.0f, 1.0f)), rate = ang > dip ? dip / ang : 1.0f;
+        V3 nf = rotate_part(f, d, f, rate);
+        u = rotate_part(f, d, u, rate);
+        *eye = vadd(t->pos, vmul(nf, p->dist));
+        *up = u;
+        break;
+    }
+    case CAM_TRUNDLE: { /* CameraTrundle.cpp: rolls around the axis through wpoint; dist, angleA / angleB, up.x */
+        V3 side = vnorm(vec(p->axis));
+        if (vlen(side) < 0.5f) { *eye = type_eye; break; }
+        V3 rel = vsub(t->pos, vec(p->wpoint));
+        V3 u = vsub(rel, vmul(side, vdot(side, rel)));
+        V3 z = vcross(u, side);
+        if (vlen(z) < 1e-3f) { *eye = type_eye; *up = type_up; break; }
+        z = rot_axis(vnorm(z), side, -p->angle_a);
+        u = vcross(side, z);
+        if (fabsf(p->up[0]) > 1e-6f) {
+            float rate = clampf(vdot(rel, side) / p->up[0], -1.0f, 1.0f);
+            z = rot_axis(z, vnorm(u), p->angle_b * rate);
+        }
+        *eye = vsub(w, vmul(z, p->dist));
+        *up = vnorm(u);
+        break;
+    }
+    case CAM_CUBE_PLANET: { /* CameraCubePlanet.cpp: up eased to the gravity's (angleB per frame), angleA pitch */
+        if (fresh) cube_up = t->up;
+        cube_up = vnorm(rotate_part(cube_up, t->up, cube_up, p->angle_b));
+        V3 u = cube_up, f = vtangent(vsub(w, type_eye), u);
+        if (vlen(f) < 1e-3f) { *eye = type_eye; *up = u; break; }
+        f = vnorm(f);
+        V3 side = vnorm(vcross(u, f));
+        u = rot_axis(u, side, p->angle_a);
+        f = rot_axis(f, side, p->angle_a);
+        *eye = vsub(w, vmul(f, p->dist));
+        *up = u;
+        break;
+    }
     default: /* CAM_XZ_PARA, CameraParallel.cpp:61-87, CamTranslatorParallel.cpp:12 */
         *eye = vadd(w, polar(p->dist < 300.0f ? 300.0f : p->dist, p->angle_b, p->angle_a - PI * 0.5f));
         break;
@@ -219,6 +337,10 @@ void camera_update(const CamTarget *t)
         cur = want;
         timer = 0;
         camint = first ? 0 : param()->camint;
+        fresh = 1;
+#ifdef BENCH
+        printf("camera %d %s\n", cur, camera_type_name());
+#endif
         if (first) {
             V3 e, w, u;
             type_eye = vadd(t->pos, vadd(vmul(t->up, 600.0f), vmul(t->front, -1200.0f)));
@@ -234,6 +356,7 @@ void camera_update(const CamTarget *t)
     const CamParam *p = param();
     V3 e, w, u;
     zone_pose(p, t, move, &e, &w, &u);
+    fresh = 0;
     type_eye = e;
     type_up = u;
     /* CameraViewInterpolator.cpp:275-327, on positions: r = (timer / camint)^2 */
@@ -260,7 +383,8 @@ int camera_current(void) { return cur < ncams ? cur : -1; }
 
 const char *camera_type_name(void)
 {
-    static const char *n[] = {"XZ PARA", "TOWER", "FOLLOW", "WONDER PLANET", "EYEPOS FIX"};
+    static const char *n[] = {"XZ PARA", "TOWER", "FOLLOW", "WONDER PLANET", "EYEPOS FIX", "POINT FIX",
+                              "EYEPOS FIX THERE", "CHARMED FIX", "TOWER POS", "FRONT AND BACK", "TRUNDLE", "CUBE PLANET"};
     const CamParam *p = param();
     return p->type == 255 ? "OTHER" : n[p->type];
 }
