@@ -106,8 +106,27 @@ typedef struct {
     float s, reach;  /* scale, bounding radius in world units */
     int zone;
     int row;         /* OBJS index */
-    int breaks;      /* PunchBox / WoodBox: broken by a spin, then drops coins */
+    int breaks;      /* breakable (breakable()): a spin breaks it, then it drops its coins / star pieces */
 } Inst;
+
+/* Spin-breakable classes and what they drop (Petari PunchBox.cpp, WoodBox.cpp, CrystalCage.cpp): PunchBox / WoodBox
+ * arg0 coins (default 1), WoodBox also arg2 star pieces; CrystalCageS / M one hit, a coin when the item inside
+ * (arg7, DummyDisplayModel) is 0. Returns 0 for anything else. ponytail: CrystalCageL (2 hits, power star) waits for
+ * power stars */
+static int breakable(const char *name, const Row *r, int *coins, int *pieces)
+{
+    *coins = *pieces = 0;
+    if (strcmp(name, "PunchBox") == 0 || strcmp(name, "WoodBox") == 0) {
+        *coins = r->arg[0] >= 0 ? r->arg[0] : 1;
+        if (name[0] == 'W' && r->arg[2] > 0) *pieces = r->arg[2];
+        return 1;
+    }
+    if (strcmp(name, "CrystalCageS") == 0 || strcmp(name, "CrystalCageM") == 0) {
+        *coins = r->arg[7] == 0;
+        return 1;
+    }
+    return 0;
+}
 static unsigned char *row_dead; /* per OBJS row: broken, never comes back (zone swaps rebind from the rows) */
 static int box_pieces;          /* star pieces WoodBoxes hold (arg2) */
 static Inst *insts;
@@ -376,12 +395,12 @@ void game_init(const Scene *s, const unsigned char *blob)
     }
 
     ncoins = count_type("Coin", 0);
-    for (u32 i = 0; i < s->nobjs; i++) { /* room for the coins boxes drop (arg0, default 1) */
-        const char *name = s->types + 32 * s->objs[i].type;
-        if (strcmp(name, "PunchBox") == 0 || strcmp(name, "WoodBox") == 0)
-            ncoins += s->objs[i].arg[0] >= 0 ? s->objs[i].arg[0] : 1;
-        if (strcmp(name, "WoodBox") == 0 && s->objs[i].arg[2] > 0)
-            box_pieces += s->objs[i].arg[2];
+    for (u32 i = 0; i < s->nobjs; i++) { /* room for what breakables drop */
+        int c, p;
+        if (breakable(s->types + 32 * s->objs[i].type, &s->objs[i], &c, &p)) {
+            ncoins += c;
+            box_pieces += p;
+        }
     }
     row_dead = mem_alloc(MEM_OBJECTS, s->nobjs);
     npurple = count_type("PurpleCoin", 0) + count_type("CirclePurpleCoinGroup", 1) + count_type("PurpleRailCoin", 1);
@@ -505,7 +524,8 @@ void game_rebind(void)
         Inst *in = &insts[ninsts++];
         in->md = md;
         in->row = i;
-        in->breaks = strcmp(name, "PunchBox") == 0 || strcmp(name, "WoodBox") == 0;
+        int dc, dp;
+        in->breaks = breakable(name, r, &dc, &dp);
         in->kcl = scene_kcl(s, name);
         in->zone = r->zone;
         mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
@@ -914,9 +934,9 @@ static void update_kuribo(void)
     }
 }
 
-/* PunchBox / WoodBox (Petari PunchBox.cpp, WoodBox.cpp): a player attack breaks them; collision goes at once, then
- * arg0 coins (default 1) and, for WoodBox, arg2 star pieces appear. ponytail: only Mario's spin hits (no upper punch / hip drop), the coins appear
- * where the box was instead of popping out, no star piece on a switch kill */
+/* Breakables (breakable()): a player attack breaks them; collision goes at once, then their drops appear.
+ * ponytail: only Mario's spin hits (no upper punch / hip drop), drops appear where the box was instead of popping
+ * out, no star piece on a switch kill */
 static void break_boxes(void)
 {
     if (mario->spin_timer <= 0)
@@ -928,7 +948,8 @@ static void break_boxes(void)
         V3 p = v3(in->m[12], in->m[13], in->m[14]);
         if (vlen(vsub(c, p)) > in->reach + 120.0f) continue;
         const Row *r = &sc->objs[in->row];
-        int n = r->arg[0] >= 0 ? r->arg[0] : 1;
+        int n, sp;
+        breakable(sc->types + 32 * r->type, r, &n, &sp);
         V3 up = up_at(p, mario->up);
         for (int k = 0; k < n; k++) { /* a small ring above the box */
             float a = 6.2831853f * k / (n > 0 ? n : 1);
@@ -936,7 +957,6 @@ static void break_boxes(void)
             coins[ncoins].pos = vadd(p, vadd(vmul(up, 80.0f), vmul(side, n > 1 ? 70.0f : 0.0f)));
             coins[ncoins++].alive = 1;
         }
-        int sp = strcmp(sc->types + 32 * r->type, "WoodBox") == 0 && r->arg[2] > 0 ? r->arg[2] : 0;
         for (int k = 0; k < sp; k++) { /* WoodBox arg2: star pieces */
             float a = 6.2831853f * k / sp + 0.5f;
             V3 side = vnorm(vtangent(v3(cosf(a), 0.3f, sinf(a)), up));
@@ -944,7 +964,7 @@ static void break_boxes(void)
             pieces[npieces++].alive = 1;
         }
         row_dead[in->row] = 1;
-        printf("box %d broken, %d coins\n", in->row, n);
+        printf("%s %d broken, %d coins, %d star pieces\n", sc->types + 32 * r->type, in->row, n, sp);
         game_rebind();
         return;
     }
