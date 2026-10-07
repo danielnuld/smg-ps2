@@ -1,4 +1,4 @@
-# Phase 0c report (in progress)
+# Phase 0c report
 
 ## Mesh simplification (tasks 1.1-1.2)
 
@@ -220,3 +220,35 @@ heap; `heapwalk.py` reads its real use from the Dolphin dumps, task 3) instead o
 
 Risk: some gameplay follows the music's beat (`AudBgmRhythmStrategy`, `RhythmLib`). With pre-rendered music the
 port needs the beat timing as a small table per track instead of reading it from the sequencer.
+
+## Gate (task 4.1)
+
+Margin per scenario (spec: Phase 0c gate) = 31 − 6.71 (code) − resident − 0.68 (EE audio, task 2.4) −
+min(scenario, streaming), with `--levers --scenario --vu-index=255 --simplify=R`. **The scene heap is not measured**
+(tasks 3.1-3.2 skipped at the user's request), so every margin below is the room left for it. The spec does not allow
+heap = 0, so this gate cannot say GO; it says how much heap each choice tolerates.
+
+| Geometry | Resident | Worst scenario | Margin | Median | Scenarios that still fit with a heap of 1 / 2 / 3 / 4 MB |
+|---|---|---|---|---|---|
+| R = 0.99 (re-strip only, no visible change) | 13.95 | OceanPhantomCave 1 | **+1.45** | +5.65 | 136 / 131 / 128 / 118 |
+| R = 0.75 (visible on curved models, task 1.5) | 13.45 | OceanPhantomCave 1 | +2.61 | +6.45 | 136 / 136 / 131 / 128 |
+| R = 0.5 | 12.96 | OceanPhantomCave 1 | +3.70 | +7.20 | 136 / 136 / 136 / 131 |
+
+The tightest scenarios are always OceanPhantomCave 1-4 and Phantom 1 (GhostShipCaveZone and TeresaHouseZone).
+
+Audio (SPU2): the hand-cut effects set fits 135/136 scenarios with reverb SPACE and 136/136 with reverb ROOM
+(task 2.3), at 8 kHz for Mario and the UI and 6 kHz for everything else; music and cutscene sound as streams.
+
+**Verdict: not decided — conditional on the scene heap.**
+
+- With no visible geometry change (R = 0.99): **GO-pending-CPU if the heap of the heaviest scenes is ≤ 1.45 MB**.
+- Accepting the R = 0.75 artefacts: GO-pending-CPU if the heap is ≤ 2.61 MB.
+- If the heap is larger than 2.6 MB in OceanPhantomCave/Phantom: NO-GO for those scenarios with these rules.
+
+## Task 4.2
+
+Neither GO nor NO-GO, so `phase-1-host-port` is not opened. One measurement decides it: MEM1/MEM2 dumps of
+OceanPhantomCave 1, 2, 4 and CosmosGarden 2 in Dolphin, read with `python tools/heapwalk.py mem1.raw mem2.raw`
+(scene exp heap + audio solid heap). Costs already accepted to get here, for the record: audio at 6-8 kHz with one
+voice variant, music and cutscene sound pre-rendered, a VU1 microcode for indexed geometry (N = 255, cycle cost not
+measured), the beat-timing table for rhythm gameplay, and the remix-note samples.
