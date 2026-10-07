@@ -14,7 +14,7 @@ import struct
 import sys
 from pathlib import Path
 
-from budget import yaz0, u32
+from budget import rarc_files, yaz0, u32
 
 SCENE_CPP = Path(__file__).resolve().parent.parent / "vendor/Petari/src/Game/AudioLib/AudSceneMgr.cpp"
 STATIC = [0, 1, 2, 3, 4, 5, 6, 8, 11]  # loadStaticResource
@@ -80,13 +80,15 @@ def waves(smr):
     return out
 
 
-def referenced(smr):
-    """-> {wave bank: set of wave ids} named by any instrument or percussion velocity region of the IBNKs
-    bound to that wave bank (`bnk ` command, JAUSectionHeap.cpp:394-410; IBNK v1 'LIST' -> 'Inst'/'Perc',
-    JASBNKParser.cpp:93-195; velocity region = 4 words, wave id = low half of word 1)."""
+def instruments(smr):
+    """-> {IBNK bank number: (wave bank, {program: set of wave ids})}. Bank number = IBNK word 2
+    (JASBNKParser.hpp:181-184), what BMS bank commands name; wave bank = first word of its `bnk ` command
+    (JAUSectionHeap.cpp:394-410). IBNK v1 'LIST' -> 'Inst'/'Perc' (JASBNKParser.cpp:93-195): program = LIST index,
+    velocity region = 4 words, wave id = low half of word 1."""
     out = {}
     for wb, o in cmds(smr, b"bnk ", b"IBNK"):
-        ids = out.setdefault(wb, set())
+        progs = {}
+        out[u32(smr, o + 8)] = (wb, progs)
         end, ch = o + u32(smr, o + 4), o + 0x20
         lst = None
         while ch < end:  # findChunk: next = (chunk + 0xB + size) & ~3
@@ -100,6 +102,7 @@ def referenced(smr):
             off = u32(smr, lst + 0xC + 4 * i)
             if not off:
                 continue
+            ids = progs.setdefault(i, set())
             d = o + off
             kind, d = smr[d:d + 4], d + 4
             if kind == b"Inst":
@@ -122,6 +125,48 @@ def referenced(smr):
                     for _ in range(velos):
                         ids.add(u32(smr, q + 4) & 0xFFFF); q += 16
     return out
+
+
+def referenced(smr):
+    """-> {wave bank: set of wave ids named by any instrument or percussion of the IBNKs bound to it}."""
+    out = {}
+    for wb, progs in instruments(smr).values():
+        out.setdefault(wb, set()).update(*progs.values())
+    return out
+
+
+def sequences(fs, smr):
+    """-> (BGM sequences, SE sequences) as (data, start offset). BGM: AudioRes/Seqs/JaiSeq.arc (Yaz0 BMS files,
+    AudSystem.cpp:44,114-115). SE: BAA `bsc  {start, end}` (JAUAudioArcInterpreter.cpp:53-58) -> 'SC' collection
+    {u16 groups @2, offsets @8} -> table {count, sequence offsets} (JAUSeqCollection.hpp:8-18)."""
+    bgm = [(yaz0(d), 0) for n, d in rarc_files((Path(fs) / "AudioRes/Seqs/JaiSeq.arc").read_bytes()) if n.endswith(".szs")]
+    se, c = [], smr.find(b"bsc ")
+    while c >= 0:
+        s0, s1 = u32(smr, c + 4), u32(smr, c + 8)
+        if c % 4 == 0 and smr[s0:s0 + 2] == b"SC":
+            coll = smr[s0:s1]
+            for g in range(int.from_bytes(coll[2:4], "big")):
+                t = u32(coll, 8 + 4 * g)
+                se += [(coll, u32(coll, t + 4 + 4 * k)) for k in range(u32(coll, t))]
+        c = smr.find(b"bsc ", c + 1)
+    return bgm, se
+
+
+def reached(seqs, inst):
+    """Waves (wave bank, wave id) played by notes of these sequences, via bms.analyse and the IBNK programs.
+    -> (waves, notes with no bank set, bad paths). Notes on banks with no IBNK resolve nothing."""
+    import bms
+    out, unset, bad = set(), 0, 0
+    for data, start in seqs:
+        r = bms.analyse(data, start)
+        bad += r["bad"]
+        for (bk, pg), n in r["pairs"].items():
+            if bk is None or bk == bms.DYN or pg == bms.DYN:
+                unset += n
+            elif bk in inst:
+                wb, progs = inst[bk]
+                out |= {(wb, w) for w in progs.get(pg, ())}
+    return out, unset, bad
 
 
 def tables():

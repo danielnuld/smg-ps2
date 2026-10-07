@@ -110,3 +110,34 @@ What the tables cannot say is which instruments are actually played. Two ways to
    only by sequenced music leaves SPU2 if that music is pre-rendered to an ADMA stream. Bank 2 (4.65 MB, always
    loaded) is the one to check first.
 2. **Observed use** (Dolphin): log the waves started per scene while playing. Exact, needs play time.
+
+## Music vs effects (task 2.2b) — `tools/bms.py` + `audio.py` `sequences()` / `reached()`
+
+`bms.analyse` follows each sequence's flow (jumps, calls, child tracks, both sides of conditionals) carrying the
+current bank and program, and records the (bank, program) of every note. Programs resolve to waves through
+`instruments()` (IBNK number = word 2). 105 BGM sequences, 3 245 SE sequences; 50 BGM and 63 SE paths ran off their
+data (counted as `bad`, path dropped), 2 jump tables not followed.
+
+| | Notes with a bank | Notes with no static bank | Waves reached | PS2 MB |
+|---|---|---|---|---|
+| BGM (sequenced music) | mostly IBNK 0, 1, 8, 9 → wave banks 0, 1, 10, 23 | 15 798 | 194 | 3.05 |
+| SE (effects) | IBNK 64, 72, 74, 65, … (64 → wave bank 2 is the top user) | 19 583 | 1 349 | 18.35 |
+| Music only (not reached by any SE) | | | 100 | **1.73** |
+
+The music banks match the names (`B00mahit`/`B01mahit` = the composer's banks) and the BGM wave sets in
+`AudSceneMgr` (`cBgmWaveSet` = 10, 23). Bank 2 (`B64kawa`, 4.65 MB, always loaded) is **effects**, not music. Some BGM
+notes name banks 2-7 and 10-19, which have no IBNK; they resolve no wave.
+
+Pre-rendering all sequenced music to ADMA streams and dropping the music-only waves:
+
+| Max sample rate | Always loaded | Worst scene (KoopaBattleVs3 0) |
+|---|---|---|
+| original | 10.48 MB | 11.50 MB |
+| 16 kHz | 7.75 | 8.74 |
+| 11 025 Hz | 5.46 | 6.15 |
+| 8 kHz | 4.00 | 4.50 |
+
+Against the 1.86 MB SPU2 budget, **the effects alone are 2.4× over even at 8 kHz** (6× at the original rate). The
+game's data cannot say which effects a scene really uses (19 583 SE notes take their bank from outside the sequence,
+and actors pick sounds in code). Task 2.3 therefore needs either per-scene use observed in Dolphin, or a cut list
+decided by hand.
