@@ -130,3 +130,78 @@ Flagged for milestone 5: the EE draw time went from 2.2 to 4.3-4.6 ms (1.7× mor
 batch). With phase 1's ×2.80 object rule the extrapolated OceanPhantomCave 1 frame is now 19.5 ms, over 16.7. The EE
 rebuilds every model's chain each frame; prebuilt per-model chains (CALL with only the matrix changing) and larger
 batches are the fix to try before the heavy-scenario gate.
+
+## Milestone 3: Mario
+
+### 3.1 Converter (`tools/skin.py`, `tools/slice.py`)
+
+- `mario.bdl`: 30 joints, 48 draw matrices (22 rigid, 26 weighted over 13 envelopes), 9 shapes (8 single-matrix,
+  1 with 4 groups of 10). Rigid vertices are in their joint's space, weighted ones in model space (J3D uses the joint
+  matrix as is for rigid entries, `sum(w * world * invbind)` for envelopes); checked by composing the bind pose and
+  six clips offline (`docs/renders/phase2-mario-poses.png`). Converted unsimplified (one group mixes joint spaces).
+- VUMD per vertex: the matrix slot (PNMTXIDX / 3) rides in the low 16 bits of position w (static models keep
+  1.0f, whose low bits read as slot 0), colour from CLR0. Material texture: of the TEV stages that sample a texture,
+  the largest one (Mario's first stage samples a 64×64 noise texture; the colour map comes later). This also gave
+  PurpleCoin and Kuribo their colour maps in Gateway.
+- `SKIN` chunk (4 608 B): bind pose, draw entries and envelope mixes with inverse binds, the matrix table of each
+  VUMD group.
+- `ANIM` chunk: all 456 BCK clips of MarioAnime.arc, converted to little-endian (same key tables) and zlib-9
+  compressed one by one: 1 558 096 B (raw BCK 2 601 600 B).
+
+### 3.2 Engine
+
+- `vu1_tex.vsm`: every batch carries its matrices (1 for static models, up to 10 for a skinned group) in the double
+  buffer, and each vertex picks one by its slot (`mtir`); 3 + 4m + 6n qwords, n = 72. This also removes the old
+  single matrix at VU address 0, which the VIF could overwrite while the previous model's batch was still running.
+- `anim.c`: clips inflated with zlib (ps2dev's `libz.a`) into 4 cache slots on play; keys evaluated as
+  J3DGetKeyFrameInterpolation / JMAHermiteInterpolation (both key layouts, constant and default tracks, rotation
+  `<< dec_shift`); joint world matrices, then draw matrices (rigid or envelope sums). The renderer premultiplies them by
+  projection × view × world per group.
+
+![Mario on the bench path](renders/phase2-mario-bench.png)
+
+### 3.3 Player (Petari `MarioJump.cpp`, `MarioConst.cpp` gMarioConstDefault)
+
+Ported on the phase 1 physics (gravity per point/plane, KCL sphere):
+
+| Move | Rule and constants |
+|---|---|
+| Walk / run | `mWalkSpeed` 13, `mInertiaStandardMax` 0.9 (stick held), `mInertiaStandardStop` 0.94; wait / walk / run clips by speed ratio |
+| Jump, 2nd, 3rd | `tryJump`: next kind if it starts within `mJumpConnectTime` 7 frames of landing; the 3rd needs ratio ≥ `mJumpConnectSpeed` 0.6; front `ratio × mJumpFrontSpeed` 12.5, up `mJumpHeight` 22 / 26 / 36, gravity `mGravityJumping`; clips Jump / Jump2 / JumpRoll and their landings (Petari's animation table) |
+| Long jump | `trySquatJump` (squat + jump with ratio > 0.3): front `mSquatJumpFrontSpeed` 16.5, up 15, gravity 0.95, front reduction 0.99 after 30 frames; JumpBroad |
+| Back flip | `tryBackJump` (squat + jump standing): back `mSquatJumpBackSpeed` 5, up 32; JumpBack |
+| Spin | `trySpinJump` once per jump: up `mSpinJumpHeight` 12, front `ratio × mJumpTornadoSpeed` 5, gravity 0.4 for `mAirWalkTimeSpin` 24 frames; on the ground SpinGround for `mStartSpinTime` 30 |
+| Wall | touching a wall in the air: WallSlide while falling, jump = wall kick (`mWallJumpPowerXZ` 13 away from the wall, `mWallJumpPowerY` 30) |
+| Slopes | floors steeper than `mSlipAngle` 60° are not ground (Mario slides off); on ground the velocity follows the floor plane |
+| Squat | R1 (the Wii's Z): `mInertiaSquat` 0.95, `mSquatWalkMaxSpeed` 0.2 |
+
+Bench path for this milestone (`pad.c`): forward with X every 4 frames for 85 of every 180 frames (jump chains),
+a right-hand circle with a spin every 2 s and a long jump every 2 s, then forward-left with a jump every 1.5 s and a
+back flip every 3 s. The bench build logs every take-off: the run produced Jump → Jump2 → JumpRoll three times, spin,
+8 long jumps and 2 back flips.
+
+Not ported (list for later milestones): hip drop and homing hip drop, turn jump (side somersault), brake/turn slip,
+belly and hip slides on slip floors, wall grip / wall walk, ledge hang and climb, swimming, poles, trees and ropes,
+power-ups (Bee, Boo, Fire, Ice, Spring, Rainbow, Flying), damage and knock-back clips, Petari's air-walk timers
+(replaced by one air-steering factor), blending between locomotion clips (Petari blends WalkSoft / Walk / Run / Wait),
+upper-body layers and the eye/face texture animations (BTP).
+
+### 3.4 Gate (PCSX2, `build.sh bench`, this milestone's path)
+
+| Row | Value | Budget |
+|---|---|---|
+| Player runtime (`mem_report` "player") | 147 280 B: clip cache 4 × 33 232 B = 132 928, clip table 7 KB, Anim (world + draw matrices) 6 KB, SKIN headers | Wii player 297 KB (phase 1) |
+| Animation bytes in RAM | 1 558 096 B compressed (blob) + 132 928 cache = 1.61 MB | resident asset row counted MarioAnime at 1.50 MB (phase 0 lever): +0.11 MB, inside milestone 1's 3.78 MB left |
+| Mario model (blob) | VUMD ~0.35 MB, SKIN 4.6 KB | asset row |
+| Render runtime | 674 816 B (+15 KB: header tables for 1-10 matrices) | |
+| Worst frame | 9.16 ms (logic 1.73, KCL 0.39, draw 5.88, GS finish 2.19 worst; average 7.67) | 16.7 ms |
+
+The logic worst (1.73 ms) is a clip inflate on a clip change; the average logic is 0.52 ms (pose + 48 draw
+matrices). The cache slot is sized by the largest clip (a 33 KB demo clip; the median clip is 4.6 KB): capping
+gameplay slots and inflating demo clips on their own would cut ~100 KB when memory gets tight.
+
+Video: `videos/2026-10-07_0953_phase2-mario_429eb06.mp4`.
+
+**Verdict: GO** (9.16 of 16.7 ms on Gateway 2; player and animation memory within the margins above). The EE draw
+time flagged at milestone 2 is now 5.9 ms worst (more batches: one matrix REF per batch); the prebuilt-chain work
+stays the first item before the heavy-scenario gate.
