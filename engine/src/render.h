@@ -6,6 +6,8 @@
 typedef struct { float m[16]; } Mat4; /* column-major, v' = M v */
 
 void render_init(void);
+/* Vertical field of view in degrees (SMG's camera default is 45). */
+void render_set_fovy(float deg);
 /* Upload the scene's textures (TEXT chunk) to VRAM and build their GS state packets. Call once after blob_load. */
 void render_load_textures(const Scene *s);
 void render_begin(const float eye[3], const float target[3], const float up[3]);

@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "blob.h"
+#include "camera.h"
 #include "game.h"
 #include "mem.h"
 #include "pad.h"
@@ -73,6 +74,8 @@ int main(void)
         snprintf(line, sizeof line, "COINS %d  PURPLE %d/%d  PIECES %d  KURIBO %d  RUNTIME %u KB", game_coins(),
                  game_purple(), game_purple_total(), game_starpieces(), game_kuribo_alive(), mem_total() >> 10);
         render_text(16, 26, line);
+        snprintf(line, sizeof line, "CAM %d %s", camera_current(), camera_type_name());
+        render_text(16, 40, line);
         if ((frame & 255) == 0) {
             char dbg[128];
             game_debug(dbg, sizeof dbg);

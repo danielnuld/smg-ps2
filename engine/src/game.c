@@ -1,5 +1,6 @@
 #include "game.h"
 #include "anim.h"
+#include "camera.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -312,6 +313,13 @@ void game_init(const Scene *s, const unsigned char *blob)
     mario->face = vnorm(vtangent(v3(0, 0, 1), mario->up));
     mario->jump_kind = mario->last_jump = -1;
     cam_pos = vadd(mario->pos, vadd(vmul(mario->up, 500), vmul(mario->face, -1000)));
+    {   /* SMG cameras: CAMS + CARE chunks (tools/camera.py); the slice plays zone 1 */
+        u32 sz;
+        const unsigned char *c = blob_chunk(blob, "CAMS", &sz), *a = blob_chunk(blob, "CARE", &sz);
+        CamTarget t = {mario->pos, mario->face, mario->up, 0};
+        camera_init(c ? (const CamParam *)(c + 16) : NULL, c ? *(const int *)c : 0,
+                    a ? (const CamArea *)(a + 16) : NULL, a ? *(const int *)a : 0, 1, &t);
+    }
     printf("game: coins %d, purple %d, star pieces %d, kuribo %d, start (%d %d %d)\n", ncoins, npurple, npieces, nkuribo,
            (int)start_pos.x, (int)start_pos.y, (int)start_pos.z);
 }
@@ -512,9 +520,11 @@ void game_update(void)
     collect(purple, npurple, 100.0f, &got_purple);
     collect(pieces, npieces, 120.0f, &got_pieces);
     spin_angle += 0.08f;
-    /* camera: behind and above Mario in his local frame, eased */
-    V3 want = vadd(mario->pos, vadd(vmul(mario->up, 450.0f), vmul(mario->face, -900.0f)));
-    cam_pos = vadd(cam_pos, vmul(vsub(want, cam_pos), 0.08f));
+    CamTarget t = {mario->pos, mario->face, mario->up, !mario->grounded};
+    camera_update(&t);
+    V3 w, u;
+    float fovy;
+    camera_pose(&cam_pos, &w, &u, &fovy); /* cam_pos also steers the stick (camera-relative) */
 }
 
 /* --- draw ------------------------------------------------------------------------------------------------ */
@@ -547,9 +557,11 @@ static void draw_pickups(const Pickup *p, int n, const Model *md, u8 r, u8 g, u8
 
 void game_draw(void)
 {
-    float eye[3] = {cam_pos.x, cam_pos.y, cam_pos.z};
-    V3 tgt = vadd(mario->pos, vmul(mario->up, 120.0f));
-    float target[3] = {tgt.x, tgt.y, tgt.z}, up[3] = {mario->up.x, mario->up.y, mario->up.z};
+    V3 ce, cw, cu;
+    float fovy;
+    camera_pose(&ce, &cw, &cu, &fovy);
+    render_set_fovy(fovy);
+    float eye[3] = {ce.x, ce.y, ce.z}, target[3] = {cw.x, cw.y, cw.z}, up[3] = {cu.x, cu.y, cu.z};
     float m[16];
     render_begin(eye, target, up);
     mat_identity(m);

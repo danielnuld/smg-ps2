@@ -157,8 +157,13 @@ void render_init(void)
     packet2_free(p);
     test_z = GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, ZTEST_METHOD_GREATER_EQUAL);
 
-    /* projection (column-major, v' = P v): x, y to the GS's +-2048 guard band, depth near -> 1, far -> -1 */
-    float f = (SCREEN_H / 2) / tanf(50.0f * 3.14159265f / 360.0f);
+    render_set_fovy(45.0f);
+}
+
+/* projection (column-major, v' = P v): x, y to the GS's +-2048 guard band, depth near -> 1, far -> -1 */
+void render_set_fovy(float deg)
+{
+    float f = (SCREEN_H / 2) / tanf(deg * 3.14159265f / 360.0f);
     float B = 2.0f / (1.0f / NEAR - 1.0f / FAR), A = 1.0f - B / NEAR;
     memset(proj, 0, sizeof proj);
     proj[0] = f / 2048.0f;
