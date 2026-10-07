@@ -21,7 +21,7 @@ const u8 *blob_chunk(const u8 *blob, const char *tag, u32 *size)
     return NULL;
 }
 
-static int valid(const u8 *blob) { return memcmp(blob, "SMGS", 4) == 0 && *(const u32 *)(blob + 4) == 4; }
+static int valid(const u8 *blob) { return memcmp(blob, "SMGS", 4) == 0 && *(const u32 *)(blob + 4) == 5; }
 
 int blob_load(Scene *s, const u8 *blob)
 {
@@ -72,14 +72,17 @@ int blob_add(Scene *s, const u8 *blob)
             md->vu = mem_alloc(MEM_RENDER, md->vu_ngroups * sizeof(VuGroup));
             q += 48;
             for (u32 g = 0; g < md->vu_ngroups; g++) {
-                u32 n = *(const u32 *)q, cb = (4 * n + 15) & ~15u, pb = (8 * n + 15) & ~15u;
                 VuGroup *vg = &md->vu[g];
-                vg->nverts = n;
+                vg->nverts = *(const u32 *)q;
                 vg->tex = *(const u16 *)(q + 4);
-                vg->pos = (const s16 *)(q + 16);
-                vg->col = (const u32 *)(q + 16 + pb);
-                vg->uv = vg->tex == NO_TEX ? NULL : (const s16 *)(q + 16 + pb + cb);
-                q += 16 + pb + cb + (vg->uv ? cb : 0);
+                vg->nbatch = *(const u16 *)(q + 6);
+                vg->batch = (const u16 *)(q + 16);
+                vg->data = q + 16 + ((4 * vg->nbatch + 15) & ~15u);
+                q = vg->data;
+                for (u32 b = 0; b < vg->nbatch; b++) {
+                    u32 ne = vg->batch[2 * b], nu = vg->batch[2 * b + 1];
+                    q += ((8 * nu + 15) & ~15u) + (vg->tex != NO_TEX ? (4 * nu + 15) & ~15u : 0) + ((4 * ne + 15) & ~15u);
+                }
                 if (vg->tex != NO_TEX)
                     vg->tex += tex0;
             }

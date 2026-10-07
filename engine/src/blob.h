@@ -14,9 +14,11 @@ typedef struct {
 typedef struct {
     u32 nverts;          /* 3 per triangle */
     u16 tex;             /* TEXT index, NO_TEX for untextured */
-    const s16 *pos;      /* nverts x s16 (x, y, z in steps of Model.qscale, w = 4 * matrix slot), 16-byte aligned */
-    const u32 *col;      /* nverts x u8 (r, g, b, a), 16-byte aligned */
-    const s16 *uv;       /* nverts x s16 (s, t), 12 fraction bits; NULL if untextured */
+    u16 nbatch;
+    const u16 *batch;    /* nbatch x {emitted, unique} */
+    const u8 *data;      /* per batch: s16 pos[unique][4] (x, y, z in steps of Model.qscale, w = 4 * matrix slot),
+                          * s16 uv[unique][2] (12 fraction bits) if textured, u8 rgbi[emitted][4] (colour + unique
+                          * index), each padded to 16 (tools/slice.py index_batches) */
 } VuGroup;
 
 #define NO_TEX 0xFFFF

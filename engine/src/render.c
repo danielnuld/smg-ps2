@@ -436,33 +436,50 @@ static void unpack_narrow_to(packet2_t *pk, const void *data, u32 bytes, u32 des
     packet2_vif_close_unpack_manual(pk, n);
 }
 
-static void unpack_narrow(const void *data, u32 bytes, u32 dest, u32 n, enum UnpackMode mode, u8 usn)
-{
-    unpack_narrow_to(vif[cur], data, bytes, dest, n, mode, usn);
-}
-
 /* Prebuilt chain of a static model: every batch (header, positions, colours, UVs, MSCAL) and every texture
  * change, ending with RET. Drawing an instance is then a FLUSHE, the instance matrix to VU mem 1..4 and a CALL:
  * the EE no longer walks the batches each frame (milestone 2 flagged 4.3-5.9 ms of EE draw time). */
+/* the batch header from a template (HDR / HDRS) with w = unique vertex count, unpacked inline to VU mem 0 */
+static void add_header(packet2_t *pk, const qword_t *tmpl, u32 nu)
+{
+    packet2_utils_vu_open_unpack(pk, 0, 1);
+    packet2_add_2x_s64(pk, tmpl[0].dw[0], (s64)(((u64)nu << 32) | (u32)tmpl[0].sw[2]));
+    packet2_add_2x_s64(pk, tmpl[1].dw[0], tmpl[1].dw[1]);
+    packet2_utils_vu_close_unpack(pk);
+}
+
+/* one indexed batch from `base` on (after the matrices): positions, UVs, colours; advances *p past its data */
+static void add_batch(packet2_t *pk, const u8 **p, u32 ne, u32 nu, int textured, u32 base)
+{
+    const u8 *d = *p;
+    unpack_narrow_to(pk, d, 8 * nu, base, nu, P2_UNPACK_V4_16, 0);
+    d += (8 * nu + 15) & ~15u;
+    if (textured) {
+        unpack_narrow_to(pk, d, 4 * nu, base + nu, nu, P2_UNPACK_V2_16, 0);
+        d += (4 * nu + 15) & ~15u;
+    }
+    unpack_narrow_to(pk, d, 4 * ne, base + 2 * nu, ne, P2_UNPACK_V4_8, 1);
+    d += (4 * ne + 15) & ~15u;
+    *p = d;
+}
+
 static void build_chain(Model *md)
 {
     u32 batches = 0;
     for (u32 g = 0; g < md->vu_ngroups; g++)
-        batches += (md->vu[g].nverts + BATCH - 1) / BATCH;
-    u32 qw = batches * 6 + md->vu_ngroups * 2 + 4;
+        batches += md->vu[g].nbatch;
+    u32 qw = batches * 9 + md->vu_ngroups * 2 + 4;
     packet2_t *pk = packet2_create(qw, P2_TYPE_NORMAL, P2_MODE_CHAIN, 1);
     mem_charge(MEM_RENDER, qw * 16);
     for (u32 g = 0; g < md->vu_ngroups; g++) {
         const VuGroup *vg = &md->vu[g];
         emit_tex(pk, vg->tex);
         int textured = vg->tex != NO_TEX;
-        for (u32 off = 0; off < vg->nverts; off += BATCH) {
-            u32 n = vg->nverts - off < BATCH ? vg->nverts - off : BATCH;
-            packet2_utils_vu_add_unpack_data(pk, 0, HDRS(textured, n), 2, 1);
-            unpack_narrow_to(pk, vg->pos + 4 * off, 8 * n, 2, n, P2_UNPACK_V4_16, 0);
-            unpack_narrow_to(pk, vg->col + off, 4 * n, 2 + n, n, P2_UNPACK_V4_8, 1);
-            if (textured)
-                unpack_narrow_to(pk, vg->uv + 2 * off, 4 * n, 2 + 2 * n, n, P2_UNPACK_V2_16, 0);
+        const u8 *d = vg->data;
+        for (u32 b = 0; b < vg->nbatch; b++) {
+            u32 ne = vg->batch[2 * b], nu = vg->batch[2 * b + 1];
+            add_header(pk, HDRS(textured, ne), nu);
+            add_batch(pk, &d, ne, nu, textured, 2);
             packet2_utils_vu_add_start_program(pk, 0);
         }
     }
@@ -538,13 +555,13 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
     }
     u32 need = drw ? 0 : 1, batches = 0;
     for (u32 g = 0; g < md->vu_ngroups; g++) {
-        batches += (md->vu[g].nverts + BATCH - 1) / BATCH;
+        batches += md->vu[g].nbatch;
         if (drw)
             need += md->skin->groups[g].nmat;
     }
     if (nmats + need > MAX_INST)
         return;
-    if (packet2_get_qw_count(vif[cur]) + 8 + batches * 7 + md->vu_ngroups * 2 > PACKET_QW)
+    if (packet2_get_qw_count(vif[cur]) + 8 + batches * 10 + md->vu_ngroups * 2 > PACKET_QW)
         flush_vif();
     float (*gm)[16] = mats + nmats; /* this group's matrices */
     u32 m = 1;
@@ -568,16 +585,14 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
         set_tex(vg->tex);
         int textured = vg->tex != NO_TEX;
         u32 base = 2 + 4 * m;
-        for (u32 off = 0; off < vg->nverts; off += BATCH) {
-            u32 n = vg->nverts - off < BATCH ? vg->nverts - off : BATCH;
-            packet2_utils_vu_add_unpack_data(vif[cur], 0, HDR(textured, m, n), 2, 1);
+        const u8 *d = vg->data;
+        for (u32 b = 0; b < vg->nbatch; b++) {
+            u32 ne = vg->batch[2 * b], nu = vg->batch[2 * b + 1];
+            add_header(vif[cur], HDR(textured, m, ne), nu);
             packet2_utils_vu_add_unpack_data(vif[cur], 2, gm, 4 * m, 1);
-            unpack_narrow(vg->pos + 4 * off, 8 * n, base, n, P2_UNPACK_V4_16, 0);
-            unpack_narrow(vg->col + off, 4 * n, base + n, n, P2_UNPACK_V4_8, 1);
-            if (textured)
-                unpack_narrow(vg->uv + 2 * off, 4 * n, base + 2 * n, n, P2_UNPACK_V2_16, 0);
+            add_batch(vif[cur], &d, ne, nu, textured, base);
             packet2_utils_vu_add_start_program(vif[cur], 0);
-            tris_drawn += n / 3;
+            tris_drawn += ne / 3;
         }
     }
 }

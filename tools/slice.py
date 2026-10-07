@@ -12,7 +12,7 @@ geom.py (triangles per matrix group, simplified to R when R < 1). KCL copied as 
 archive, converted to little-endian (kcl_to_le). Streaming layout of a scenario: packs() (task 5.1).
 
 Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
-  header  'SMGS' u32 version=4, u32 chunk count, u32 pad          (16 B)
+  header  'SMGS' u32 version=5, u32 chunk count, u32 pad          (16 B)
   chunk   tag[4], u32 payload size, 8 B pad, payload               (16 B header, payload padded to 16)
   'TYPE'  u32 n, n × char[32]                  type names; OBJS/STRT rows index this table
   'ZONE'  u32 n, n × {char[32] name, f32 pos[3], f32 rot[3]}   world placement; zone 0 = main stage (identity).
@@ -24,8 +24,9 @@ Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
   'MODL'  u32 n, n × {char[32] name, f32 bounding radius}
   'KCL '  u32 n, n × {char[32] model, u32 size, bytes[size] (little-endian KCL, kcl_to_le), pad to 4}
   'VUMD'  u32 n, 12 pad, n × {char[32] name, u32 ngroups, f32 qscale, 8 pad, ngroups × {u32 nverts (3 per
-          triangle), u16 tex, 10 pad, s16 pos[nverts][4] (x, y, z in steps of qscale, w = 4 * matrix slot),
-          u8 rgba[nverts][4], s16 uv[nverts][2] if textured, each array padded to 16}}
+          triangle), u16 tex, u16 nbatch, 8 pad, nbatch × {u16 emitted, u16 unique} padded to 16, then per batch
+          (index_batches): s16 pos[unique][4] (x, y, z in steps of qscale, w = 4 * matrix slot), s16 uv[unique][2]
+          if textured, u8 rgbi[emitted][4] (colour + unique index), each array padded to 16}}
   'GRAV'  u32 n, n × {u16 kind, u16 flags, s32 priority, s32 inverse, f32 range, f32 distant, f32 m[12] (x, y, z
           axes and translation, world), f32 p[4]}  (84 B): grav_record, Petari GravityCreator.cpp per kind
 """
@@ -364,6 +365,32 @@ def vu_groups(groups, base, stats=None, qs=1.0):
     return out
 
 
+BATCH = 72  # emitted vertices per VU1 batch (engine render.c BATCH)
+
+
+def index_batches(pos, col, uv, n):
+    """De-indexed group arrays (vu_groups) -> (batch table, data) of the indexed VUMD layout: per batch of BATCH
+    emitted vertices, the unique (position, uv) pairs once, then per emitted vertex its colour with the unique index
+    in the 4th byte (the alpha, always 0x80, is put back on VU1). -> (nbatch, bytes)."""
+    pad = lambda x: bytes(x) + b"\0" * (-len(x) % 16)
+    table, data = b"", b""
+    for o in range(0, n, BATCH):
+        ne = min(BATCH, n - o)
+        keys, upos, uuv, cols = {}, bytearray(), bytearray(), bytearray()
+        for e in range(o, o + ne):
+            p = pos[8 * e:8 * e + 8]
+            t = uv[4 * e:4 * e + 4] if uv else b""
+            if p + t not in keys:
+                keys[p + t] = len(keys)
+                upos += p
+                uuv += t
+            k = keys[p + t]
+            cols += col[4 * e:4 * e + 3] + bytes((k,))
+        table += struct.pack("<HH", ne, len(keys))
+        data += pad(upos) + (pad(uuv) if uv else b"") + pad(cols)
+    return len(table) // 4, pad(table) + data
+
+
 def chunk(tag, payload):
     payload += b"\0" * (-len(payload) % 16)
     return tag + struct.pack("<I8x", len(payload)) + payload
@@ -594,7 +621,8 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True):
                 ti = tex_id.setdefault(key, len(texts))
                 if ti == len(texts):
                     texts.append(tx)
-            vg += struct.pack("<IH10x", len(tris), ti) + pos + col + uv
+            nb, body = index_batches(pos, col, uv, len(tris))
+            vg += struct.pack("<IHH8x", len(tris), ti, nb) + body
         vumd.append(name32(t) + struct.pack("<If8x", len(groups), qs) + vg)
         if kcl and collision:
             kcl = kcl_to_le(kcl)
@@ -629,7 +657,7 @@ def anim_chunk(fsp):
 
 
 def blob_of(chunks):
-    blob = b"SMGS" + struct.pack("<II4x", 4, len(chunks)) + b"".join(chunks)
+    blob = b"SMGS" + struct.pack("<II4x", 5, len(chunks)) + b"".join(chunks)
     return blob + b"\0" * (-len(blob) % 16)
 
 
@@ -733,6 +761,11 @@ def selftest():
                          distant=None, range=-1.0, priority=0, inverse=0))
     v = struct.unpack("<HHiiff12f4f", g)
     assert v[1] == 0b100111 and v[6:9] == (1000.0, 0.0, 0.0) and v[15:18] == (0.0, 500.0, 0.0), v
+    # two triangles sharing an edge: 6 emitted, 4 unique; colours keep their rgb, the 4th byte is the index
+    P = [struct.pack("<4h", *v, 0) for v in ((0, 0, 0), (1, 0, 0), (0, 1, 0), (1, 0, 0), (0, 1, 0), (1, 1, 0))]
+    nb, body = index_batches(b"".join(P), b"\x10\x20\x30\x80" * 6, b"", 6)
+    assert nb == 1 and struct.unpack_from("<HH", body, 0) == (6, 4), body[:4]
+    assert body[16 + 32 + 3::4][:6] == bytes((0, 1, 2, 1, 2, 3)), body
     print("selftest ok")
 
 
