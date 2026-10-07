@@ -14,5 +14,5 @@ if (-not $mp4) { throw "no capture written to $src" }
 $commit = (git -C D:\smg-ps2 rev-parse --short HEAD)
 $out = "D:\smg-ps2\videos\{0:yyyy-MM-dd_HHmm}_{1}_{2}.mp4" -f $t0, $Name, $commit
 New-Item -ItemType Directory -Force (Split-Path $out) | Out-Null
-Move-Item $mp4.FullName $out
+Move-Item -LiteralPath $mp4.FullName $out
 $out
