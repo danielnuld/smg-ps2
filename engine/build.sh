@@ -3,7 +3,7 @@
 # usage (from Windows): wsl.exe -e bash /mnt/d/smg-ps2/engine/build.sh [bench|plain|slope] [blob, default out/slice/hd2.bin] [Galaxy/n]
 # Galaxy/n: boot from the streaming packs in out/packs (host:packs/) instead of the linked blob; the ELF is
 #           also copied to out/slice-packs[-bench].elf, run it from there
-# zone: with packs, Mario teleported next to a low-loaded zone at frame 120 (-DZONE_TEST)
+# zone: with packs, Mario caught by the first launch star at frame 120 (-DZONE_TEST)
 # slope: Mario pushed into a steep slope (-DSLOPE_TEST), slice-slope.elf
 # bench: scripted input path + frame-time summary (-DBENCH), written as slice-bench.elf
 set -e

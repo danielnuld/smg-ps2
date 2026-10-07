@@ -31,7 +31,29 @@ typedef struct {
     int wall_timer;     /* frames since the last wall contact */
     int low_grav;       /* frames left at the spin's low gravity */
     int slip_keep;      /* frames Mario may still stand on a 60-85 degree slope before it slips (Petari _41C) */
+    int launch, launch_t; /* launch star carrying Mario (-1 none) and frames since it caught him */
+    V3 launch_from;     /* where Mario was caught */
 } Player;
+
+/* SuperSpinDriver (Petari SuperSpinDriver.cpp, SpinDriverShootPath.cpp, ParabolicPath.cpp): bind radius 300,
+ * ShootStart 45 frames (Mario pulled to the centre over 15), then Shoot along the path for mFlightTime (arg0,
+ * default 300). Path: rails of at most 2 points are a parabola from the star to the rail's end whose top is the
+ * rail's start (initFromMaxHeight); longer rails are followed by length with the star's offset eased out over the
+ * first half. ponytail: rails are straight segments between control points (the game's are Bezier), no camera of
+ * its own, no pull-in (arg2), no operate ring */
+typedef struct {
+    V3 pos;
+    int flight, cool;
+    const float *pts;
+    u32 npts;
+    int parab;
+    V3 py, pz, off;   /* parabola axes / rail start offset */
+    float pa, pv, plen, len;
+} Launch;
+#define LAUNCH_BIND 300.0f
+#define LAUNCH_START 45
+
+static void init_launch(Launch *L, const Row *r, const float *pts, u32 np);
 
 /* Mario constants from Petari MarioConst.cpp gMarioConstDefault (units per frame at 60 Hz). Indices of the arrays
  * are the jump kinds of MarioJump.cpp (tryJump _430, trySquatJump 5, tryBackJump 6, trySpinJump / tryTornadoJump 8) */
@@ -99,6 +121,8 @@ static V3 cam_pos;
 static const Model *m_coin, *m_purple, *m_piece, *m_kuribo;
 static const Model *m_mario_skin; /* Mario.arc, skinned (SKIN chunk) */
 static Anim *mario_anim;
+static Launch *launches;
+static int nlaunches;
 static int ground_flips, slip_frames;
 #ifdef SLOPE_TEST
 V3 slope_n;
@@ -141,14 +165,14 @@ static int count_type(const char *name, int per_row_arg0)
 }
 
 /* rail polyline from the PATH chunk: {u16 zone, u16 closed, s32 id, u32 npts, f32 pts[][3]} */
-static const float *find_rail(const unsigned char *blob, int id, u32 *npts, int *closed)
+static const float *find_rail(const unsigned char *blob, int zone, int id, u32 *npts, int *closed)
 {
     const unsigned char *p = blob_chunk(blob, "PATH", NULL);
     u32 n = *(const u32 *)p;
     p += 4;
     for (u32 i = 0; i < n; i++) {
         u32 np = *(const u32 *)(p + 8);
-        if (*(const int *)(p + 4) == id) {
+        if (*(const int *)(p + 4) == id && *(const unsigned short *)p == zone) { /* rail ids are per zone */
             *npts = np;
             *closed = *(const unsigned short *)(p + 2);
             return (const float *)(p + 12);
@@ -347,12 +371,21 @@ void game_init(const Scene *s, const unsigned char *blob)
             }
         } else if (r->type == t_rail && r->arg[0] > 0) {
             u32 np; int closed;
-            const float *pts = find_rail(blob, r->path, &np, &closed);
+            const float *pts = find_rail(blob, r->zone, r->path, &np, &closed);
             if (pts && np > 1)
                 ip += place_on_rail(purple + ip, pts, np, closed, r->arg[0]);
         }
     }
     npurple = ip;
+    int t_launch = scene_type(s, "SuperSpinDriver");
+    launches = mem_alloc(MEM_OBJECTS, (count_type("SuperSpinDriver", 0) + 1) * sizeof(Launch));
+    for (u32 i = 0; i < s->nobjs; i++) {
+        const Row *r = &s->objs[i];
+        u32 np; int closed;
+        const float *pts = r->type == t_launch ? find_rail(blob, r->zone, r->path, &np, &closed) : NULL;
+        if (pts && np >= 2)
+            init_launch(&launches[nlaunches++], r, pts, np);
+    }
     const Row *st = scene_start(s);
     start_pos = row_pos(st);
 #ifdef SLOPE_TEST
@@ -374,6 +407,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     mario->jump_kind = mario->last_jump = -1;
     mario->wall_timer = 1000;
     mario->slip_keep = SLIP_KEEP;
+    mario->launch = -1;
     cam_pos = vadd(mario->pos, vadd(vmul(mario->up, 500), vmul(mario->face, -1000)));
     {   /* SMG cameras: CAMS + CARE chunks (tools/camera.py), each camera in its zone's frame (ZONE: world placement) */
         u32 sz;
@@ -390,6 +424,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         camera_init(c ? (const CamParam *)(c + 16) : NULL, c ? *(const int *)c : 0,
                     a ? (const CamArea *)(a + 16) : NULL, a ? *(const int *)a : 0, (const float (*)[16])zm, &t);
     }
+    printf("game: %d launch stars\n", nlaunches);
     printf("game: %d static instances, coins %d, purple %d, star pieces %d, kuribo %d, start (%d %d %d)\n", ninsts,
            ncoins, npurple, npieces, nkuribo, (int)start_pos.x, (int)start_pos.y, (int)start_pos.z);
 }
@@ -443,6 +478,15 @@ int game_zone_wanted(const unsigned char *full)
     return want;
 }
 
+int game_test_launch(int i)
+{
+    if (i >= nlaunches) return -1;
+    mario->pos = launches[i].pos;
+    mario->launch = i; mario->launch_t = 0; mario->launch_from = mario->pos;
+    if (mario_anim) mario_play("superspindriverstart", 1.0f, 0);
+    return i;
+}
+
 int game_teleport_low(const unsigned char *full)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -492,10 +536,112 @@ static void try_jump(Player *m, float ratio)
     start_jump(m, k, vmul(m->face, ratio * JUMP_FRONT), JUMP_HEIGHT[k], clips[k]);
 }
 
+/* point at length d along a polyline */
+static V3 rail_at(const float *p, u32 n, float d)
+{
+    for (u32 i = 0; i + 1 < n; i++) {
+        V3 a = v3(p[3 * i], p[3 * i + 1], p[3 * i + 2]), b = v3(p[3 * i + 3], p[3 * i + 4], p[3 * i + 5]);
+        float l = vlen(vsub(b, a));
+        if (d <= l || i + 2 == n)
+            return vadd(a, vmul(vsub(b, a), l > 0 ? (d < l ? d : l) / l : 0));
+        d -= l;
+    }
+    return v3(p[0], p[1], p[2]);
+}
+
+/* SpinDriverShootPath::calcPosition at t in 0..1 */
+static V3 launch_pos(const Launch *L, float t)
+{
+    if (L->parab)
+        return vadd(L->pos, vadd(vmul(L->py, t * (L->pv + L->pa * t)), vmul(L->pz, L->plen * t)));
+    float h = t < 0.5f ? t / 0.5f : 1.0f;
+    return vadd(rail_at(L->pts, L->npts, t * L->len), vmul(L->off, 1.0f - sinf(h * 1.5707963f)));
+}
+
+static void init_launch(Launch *L, const Row *r, const float *pts, u32 np)
+{
+    L->pos = row_pos(r);
+    L->flight = r->arg[0] > 0 ? r->arg[0] : 300;
+    L->pts = pts;
+    L->npts = np;
+    V3 rs = v3(pts[0], pts[1], pts[2]), re = v3(pts[3 * np - 3], pts[3 * np - 2], pts[3 * np - 1]);
+    L->parab = np <= 2;
+    if (L->parab) { /* ParabolicPath::initFromMaxHeight(star, rail end, rail start) + calcParabolicFunctionParam */
+        V3 dir = vnorm(vsub(rs, re));
+        float top = vdot(dir, vsub(rs, L->pos)), end = vdot(dir, vsub(re, L->pos));
+        V3 z = vsub(vsub(re, L->pos), vmul(dir, end));
+        L->py = dir;
+        L->plen = vlen(z);
+        L->pz = L->plen > 1e-3f ? vmul(z, 1.0f / L->plen) : v3(0, 0, 0);
+        float disc = top * (top - end);
+        if (disc <= 0) { L->pa = -top; L->pv = end + top; }
+        else if (fabsf(end) < 1e-4f) { L->pa = -4 * top; L->pv = 4 * top; }
+        else {
+            float rt = sqrtf(disc), t1 = (top + rt) / end, t2 = (top - rt) / end;
+            float t = t1 >= 0 && t1 <= 1 ? t1 : t2 >= 0 && t2 <= 1 ? t2 : 1.0f;
+            L->pa = -top / (t * t);
+            L->pv = -2.0f * t * L->pa;
+        }
+    } else {
+        L->len = 0;
+        for (u32 i = 0; i + 1 < np; i++)
+            L->len += vlen(vsub(v3(pts[3 * i + 3], pts[3 * i + 4], pts[3 * i + 5]), v3(pts[3 * i], pts[3 * i + 1], pts[3 * i + 2])));
+        L->off = vsub(L->pos, rs);
+    }
+}
+
+/* Mario while a launch star holds him: returns 0 once it lets go */
+static int update_launch(Player *m)
+{
+    Launch *L = &launches[m->launch];
+    int t = ++m->launch_t;
+    if (t <= LAUNCH_START) { /* exeShootStart: to the centre over 15 frames, then the wind-up */
+        float k = t < 15 ? t / 15.0f : 1.0f;
+        m->pos = vadd(m->launch_from, vmul(vsub(L->pos, m->launch_from), k));
+        return 1;
+    }
+    int s = t - LAUNCH_START;
+    float u = (float)s / L->flight;
+    if (s == 1 && mario_anim) mario_play("spaceflystart", 1.0f, 0);
+    if (s == L->flight / 5 && mario_anim) mario_play("spaceflyloop", 1.0f, 1);
+    if (s == L->flight - 70 && mario_anim) mario_play("spaceflyend", 1.0f, 0);
+    V3 p = launch_pos(L, u > 1 ? 1 : u), q = launch_pos(L, u + 0.01f > 1 ? 1 : u + 0.01f);
+    V3 dir = vsub(q, p);
+    m->pos = p;
+    if (vlen(dir) > 1e-3f) m->face = vnorm(vtangent(dir, m->up));
+    if (s < L->flight)
+        return 1;
+    /* endBind: Mario falls from the path's end; the star rests 60 frames (exeCoolDown) */
+    L->cool = 60;
+    m->launch = -1;
+    m->hvel = v3(0, 0, 0); m->vup = 0; m->grounded = 0;
+    m->jump_kind = 0; m->air_timer = DROP_WAIT + 1; m->spin_used = 0;
+    return 0;
+}
+
 static void update_mario(void)
 {
     Player *m = mario;
     m->up = up_at(m->pos, m->up);
+    for (int i = 0; i < nlaunches; i++)
+        if (launches[i].cool) launches[i].cool--;
+    if (m->launch >= 0) {
+        if (update_launch(m)) {
+            if (mario_anim) anim_update(mario_anim);
+            return;
+        }
+    } else if (pad_pressed(PAD_SQUARE)) { /* the spin near a launch star binds Mario (tryBind) */
+        for (int i = 0; i < nlaunches; i++)
+            if (!launches[i].cool && vlen(vsub(vadd(m->pos, vmul(m->up, BODY_RADIUS)), launches[i].pos)) < LAUNCH_BIND) {
+                m->launch = i; m->launch_t = 0; m->launch_from = m->pos;
+                if (mario_anim) mario_play("superspindriverstart", 1.0f, 0);
+#ifdef BENCH
+                printf("launch %d\n", i);
+#endif
+                if (mario_anim) anim_update(mario_anim);
+                return;
+            }
+    }
     /* camera-relative stick on the plane under Mario */
     V3 cam_fwd = vnorm(vtangent(vsub(m->pos, cam_pos), m->up));
     V3 cam_right = vnorm(vcross(cam_fwd, m->up));

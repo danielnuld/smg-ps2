@@ -182,7 +182,22 @@ int main(void)
 #ifdef PACKS
 #ifdef ZONE_TEST
         if (frame == 120)
-            printf("zone test: teleport to zone %d\n", game_teleport_low(zone_full));
+            printf("zone test: launch star %d\n", game_test_launch(0));
+        { /* per 60 frames: frames longer than 20 ms (missed vsync) and the worst logic / draw / GS of the window */
+            static u32 prev, slow, wl, wd, wg;
+            if (prev && t0 - prev > (u32)(20000 * EE_MHZ)) slow++;
+            prev = t0;
+            if (t_logic > wl) wl = t_logic;
+            if (t_draw > wd) wd = t_draw;
+            if (t_gs > wg) wg = t_gs;
+            if (frame % 60 == 0 && frame <= 900) {
+                char d[128];
+                game_debug(d, sizeof d);
+                printf("zone test f %u: slow %u, worst logic %u draw %u gs %u us; %s\n", frame, slow,
+                       (u32)(wl / EE_MHZ), (u32)(wd / EE_MHZ), (u32)(wg / EE_MHZ), d);
+                slow = wl = wd = wg = 0;
+            }
+        }
 #endif
         int want = game_zone_wanted(zone_full);
         if (want >= 0)

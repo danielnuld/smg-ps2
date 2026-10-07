@@ -11,6 +11,8 @@ void game_rebind(void);
 int game_zone_wanted(const unsigned char *full);
 /* Test builds: put Mario just above the first model of a low-loaded zone. Returns its zone or -1. */
 int game_teleport_low(const unsigned char *full);
+/* Test builds: Mario caught by launch star i as if he spun there. Returns i, or -1 if there is none. */
+int game_test_launch(int i);
 void game_draw(void);
 /* HUD numbers */
 int game_coins(void);

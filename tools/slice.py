@@ -42,9 +42,9 @@ import geom
 import skin
 import tex
 
-RESIDENT = ("Coin", "StarPiece")  # OBJ_TYPES in phase 0b's RESIDENT set (out/sets.json): the resident pack
+RESIDENT = ("Coin", "StarPiece", "SuperSpinDriver")  # OBJ_TYPES in phase 0b's RESIDENT set (out/sets.json): the resident pack
 SKINNED = ("Mario",)   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
-OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup", "PurpleRailCoin")
+OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup", "PurpleRailCoin", "SuperSpinDriver")
 ROW_FIELDS = ("pos_x", "pos_y", "pos_z", "dir_x", "dir_y", "dir_z", "scale_x", "scale_y", "scale_z")
 ROW = struct.Struct("<HHii9f8i")
 
