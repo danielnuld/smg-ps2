@@ -1,4 +1,4 @@
-# Phase 0b report (in progress)
+# Phase 0b report
 
 ## Layers, checked by hand (task 1.2) — HeavensDoorGalaxy (Gateway)
 
@@ -175,3 +175,40 @@ is always loaded. **The waves cannot be resident in SPU2**, and the EE has no ro
 banks. Neither is measured here.
 
 **EE side (non-wave).** Bound 1.88 MB (the Wii solid heap). Its real use is read with `heapwalk.py` in task 3.3.
+
+## Gate (task 5.1)
+
+Margin per scenario (spec: Phase 0b gate) = 31 − 6.71 (code) − resident − EE audio − min(scenario, streaming) − heap.
+Closed **without** the runtime heap (tasks 3.2–3.3 not run: needs Dolphin dumps), so heap = 0 here and every margin
+below is an **upper bound**. EE audio = the 1.88 MB Wii audio solid heap (bound; its real use was not measured).
+Best geometry setting, `--vu-index=255` (resident 14.44 MB):
+
+| Setting | Scenarios with negative margin | Worst | Best |
+|---|---|---|---|
+| `--levers` (de-indexed) | 12 / 136 | OceanPhantomCave 2, −2.72 | 6.88 |
+| `--vu-index=128` | 7 / 136 | OceanPhantomCave 1, −1.72 | 7.44 |
+| `--vu-index=255` | **6 / 136** | OceanPhantomCave 1, −1.12 | 7.73 |
+| `--vu-index=255` + wave overflow kept in EE at 8 kHz (4.99 − 2 MB) | 54 / 136 | | 4.74 |
+
+Negative with `--vu-index=255`: OceanPhantomCave 1 -1.12, OceanPhantomCave 2 -1.06, OceanPhantomCave 4 -0.89, Phantom 1 -0.75, OceanPhantomCave 3 -0.66, OceanPhantomCave 5 -0.14.
+
+**Verdict: NO-GO** for the current conversion rules, on two counts:
+
+1. **Memory:** 6 scenarios stay negative even with heap = 0 and the most aggressive geometry setting.
+2. **Audio:** the waves a scene keeps loaded (12.06–13.09 MB as SPU ADPCM) are 6× the 2 MB SPU2, and still 2.5× at
+   8 kHz. There is no place to keep them resident on PS2.
+
+## What would have to be true to retry (task 5.2)
+
+1. **Sample streaming works**: SPU2 used as a cache over waves read on demand from USB/HDD (or IOP RAM), with
+   latency good enough for sound effects. Measure: how many distinct waves a scene plays per second in Dolphin, and the
+   USB/HDD read latency on the SCPH-75001.
+2. **Scene heap is small**: measure it with `tools/heapwalk.py` (tasks 3.2–3.3). With heap = 0 the best scenario keeps
+   7.73 MB and the worst −1.12 MB; any real heap moves every number down.
+3. **The audio solid heap uses well under 1.88 MB**, also read by `heapwalk.py` from the same dumps.
+4. **Geometry on VU1 at N ≈ 255 is feasible**: a VU1 microcode that expands ~7 KB pools double-buffered in 16 KB,
+   at an acceptable cycle cost.
+5. **OceanPhantomCave and Phantom get one more cut** (−1.12 MB at worst), for instance the GhostShipCaveZone planet
+   (1.92 MB de-indexed with ) at Middle LOD.
+
+Not retried here. The tools stay: `budget.py --scenario --vu-index=N`, `heapwalk.py`, `audio.py`.
