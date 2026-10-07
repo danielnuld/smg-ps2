@@ -296,3 +296,32 @@ heap (R = 0.99) or ≤ 47 % (R = 0.5), *and* the resident runtime objects shrunk
 derived model data (which a PS2 asset format would replace) with plain actor objects (32-bit pointers on both CPUs,
 so similar size); splitting it needs an allocation trace by type (Dolphin breakpoints on JKRHeap::alloc with the
 caller's return address), which is the next measurement if this is ever reopened.
+
+## Where the Wii's runtime memory goes (heap trace, OceanPhantomCave 1)
+
+`tools/heapclass.py` (no symbols): scene heaps are solid, so allocations sit back to back; every NameObj starts with
+its vtable (+0) and its name (+4); each object is charged what follows it until the next one. Stationed heaps are
+exp heaps, so each block was classified by its content (`'HM'` blocks, `heapwalk.py`). All-zero 64-byte blocks were
+counted separately (memory reserved and not yet written).
+
+| Region (OceanPhantomCave 1) | MB | What it is | On PS2 |
+|---|---|---|---|
+| Scene heap MEM2 | 2.29 (2.27 zero) | render targets: alpha-texture capture, bloom, image effects, projected shadow, footprints, Mario's buffers (owners found by pointers) | GS VRAM or dropped |
+| Scene heap MEM1 | 5.52 (0.52 zero) | 3 621 NameObjs: actors with their model instances, particles (0.54), volume shadows, star-piece groups (0.68), coins (2.8 KB each)… classes with ≥ 10 instances hold 3.62 MB | game runtime |
+| Stationed: mounted archives (RARC/Yaz0/U8) | 14.41 + 0.49 | resident archives | counted in the budget (converted) |
+| Stationed: C++ objects (no name) | 4.34 | resident systems and objects | game runtime |
+| Stationed: XFB ×3 (693 760 B, YUV422 640×542) | 2.08 | video output buffers | GS VRAM |
+| Stationed: GX FIFO (512 KB) | 0.50 | GPU command FIFO | smaller VIF/GIF packet buffers |
+| Stationed: save + banner buffers | 0.19 | GameData.bin copies, WIBN | memory-card buffers |
+| Stationed: thread stacks (0xDEADBABE fill) | ~0.25 | stacks | still needed |
+| Stationed: other data | ~3.6 | unclassified (derived model/layout/effect data, tables) | partly replaced by converted assets |
+
+**What this changes.** About 5 MB of the Wii's runtime memory per scene is GPU/video infrastructure (render targets,
+XFB, GX FIFO) that a PS2 port would hold in the GS's own 4 MB or not need. What remains is game runtime: ~5 MB of
+scene actors plus ~4.3 MB of resident objects and up to ~3.6 MB of other resident data, **~12-13 MB**, against the
+1.45-3.70 MB the asset budget leaves. Even if repeated objects (the 3.6 MB in classes with ≥ 10 instances) shrank
+by 80 % through shared models, the deficit stays around 8-10 MB.
+
+**Conclusion of the trace:** the port does not fail on assets or sound any more; it fails on the engine's runtime
+footprint. Fitting needs the runtime at roughly a sixth of the Wii's, which means a new, lean engine for SMG's
+content rather than a port of Petari.
