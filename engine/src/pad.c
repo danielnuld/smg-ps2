@@ -40,15 +40,22 @@ void pad_update(void)
     }
     pressed = held & ~prev;
 #ifdef BENCH
-    /* fixed path, 30 s: forward with a jump every 1.5 s, a right-hand circle with spins, forward-left */
+    /* fixed path, 30 s (milestone 3): forward with chained jumps (X every 4 frames for 85 frames out of 180: the
+     * 2nd and 3rd jumps), a right-hand circle with spins and a long jump every 2 s (R1 + X), forward-left with a
+     * jump every 1.5 s and a back flip every 3 s (R1 + X standing still) */
     static u32 f;
     u32 t = f++;
     prev = held;
     held = 0;
     lx = t < 600 ? 0.0f : t < 1200 ? 1.0f : -0.7f;
     ly = t < 600 ? 1.0f : t < 1200 ? 0.5f : 0.7f;
-    if (t % 90 == 45) held |= PAD_CROSS;
+    if (t < 600 && t % 180 >= 45 && t % 180 < 130 && (t & 2)) held |= PAD_CROSS;
     if (t >= 600 && t < 1200 && t % 120 == 0) held |= PAD_SQUARE;
+    if (t >= 600 && t < 1200 && t % 120 >= 50 && t % 120 <= 62) held |= PAD_R1;
+    if (t >= 600 && t < 1200 && t % 120 == 60) held |= PAD_CROSS;
+    if (t >= 1200 && t % 90 == 45) held |= PAD_CROSS;
+    if (t >= 1200 && t % 180 >= 140) { lx = ly = 0.0f; held |= PAD_R1; } /* 0.95^30: ratio < 0.3 */
+    if (t >= 1200 && t % 180 == 170) held |= PAD_CROSS;
     pressed = held & ~prev;
 #endif
 }
