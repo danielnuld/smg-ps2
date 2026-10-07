@@ -17,6 +17,10 @@ int game_teleport_low(const unsigned char *full);
 int game_test_launch(int i);
 /* Test builds: Mario just above the first breakable box, spinning. Returns its OBJS row or -1. */
 int game_test_box(void);
+/* Test builds: Mario dropped onto the first CollapsePlane. Returns its OBJS row or -1; game_test_collapse_step(row)
+ * gives that plane's collapse frame (0 not started) or -1 once it has vanished. */
+int game_test_collapse(void);
+int game_test_collapse_step(int row);
 void game_draw(void);
 /* HUD numbers */
 int game_coins(void);

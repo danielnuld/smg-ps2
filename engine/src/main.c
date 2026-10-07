@@ -263,6 +263,13 @@ int main(void)
         pad_update();
         game_update();
 #ifdef PACKS
+#ifdef COLLAPSE_TEST
+        static int crow = -1;
+        if (frame == 120)
+            printf("collapse test: Mario on plane row %d\n", crow = game_test_collapse());
+        if (frame > 120 && frame % 30 == 0 && frame <= 420)
+            printf("collapse test f %u: step %d\n", frame, game_test_collapse_step(crow));
+#endif
 #ifdef BOX_TEST
         if (frame == 120)
             printf("box test: Mario spins on box row %d\n", game_test_box());

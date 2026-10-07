@@ -107,7 +107,10 @@ typedef struct {
     int zone;
     int row;         /* OBJS index */
     int breaks;      /* breakable (breakable()): a spin breaks it, then it drops its coins / star pieces */
+    int collapse;    /* CollapsePlane: frames from standing on it to vanishing (arg0, default 140), 0 if not one */
 } Inst;
+static unsigned short *row_step; /* per OBJS row: CollapsePlane frames since Mario stood on it (0: not yet) */
+static int ground_inst = -1;     /* instance under the last collide_n's ground normal, -1 none */
 
 /* Spin-breakable classes and what they drop (Petari PunchBox.cpp, WoodBox.cpp, CrystalCage.cpp): PunchBox / WoodBox
  * arg0 coins (default 1), WoodBox also arg2 star pieces; CrystalCageS / M one hit, a coin when the item inside
@@ -282,7 +285,7 @@ static V3 up_at(V3 p, V3 prev)
 /* Push a sphere out of the KCL; returns 1 if it rests on ground (a face within 60 degrees of up). */
 unsigned int game_kcl_cycles;
 
-typedef struct { V3 n; float dist; } Hit; /* world normal, penetration */
+typedef struct { V3 n; float dist; int inst; } Hit; /* world normal, penetration, instance */
 
 /* Sphere against every placed KCL: the sphere goes to the instance's object space (KCL data is in model space),
  * normals and depths come back to world. ponytail: uniform scale only (scale.x), like every planet seen so far. */
@@ -305,6 +308,7 @@ static int kcl_query(V3 c, float radius, Hit *out, int max)
             V3 w = vadd(vadd(vmul(v3(m[0], m[1], m[2]), fn[0]), vmul(v3(m[4], m[5], m[6]), fn[1])),
                         vmul(v3(m[8], m[9], m[10]), fn[2]));
             out[n].n = vmul(w, 1.0f / in->s);
+            out[n].inst = i;
             out[n++].dist = h[j].dist * in->s;
         }
     }
@@ -327,6 +331,7 @@ static int collide_n(V3 *center, V3 up, float radius, V3 *ground_n, V3 *wall_n, 
 {
     unsigned int c0 = cycles();
     int ground = 0;
+    ground_inst = -1;
     float flat = WALL_ANGLE_COS; /* ground normal = the flattest ground face touched: it is what holds Mario up, and
                                   * taking the deepest one flipped between the two faces of a crease */
     if (wall) *wall = 0;
@@ -344,6 +349,7 @@ static int collide_n(V3 *center, V3 up, float radius, V3 *ground_n, V3 *wall_n, 
                 flat = di;
                 ground = 1;
                 if (ground_n) *ground_n = hits[i].n;
+                ground_inst = hits[i].inst;
             }
         }
         V3 nrm = hits[deepest].n;
@@ -366,6 +372,7 @@ static int collide_n(V3 *center, V3 up, float radius, V3 *ground_n, V3 *wall_n, 
                 flat = vdot(hits[i].n, up);
                 ground = 1;
                 if (ground_n) *ground_n = hits[i].n;
+                ground_inst = hits[i].inst;
             }
     }
     game_kcl_cycles += cycles() - c0;
@@ -403,6 +410,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         }
     }
     row_dead = mem_alloc(MEM_OBJECTS, s->nobjs);
+    row_step = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(unsigned short));
     npurple = count_type("PurpleCoin", 0) + count_type("CirclePurpleCoinGroup", 1) + count_type("PurpleRailCoin", 1);
     npieces = count_type("StarPiece", 0) + box_pieces;
     int t_spg = scene_type(s, "StarPieceGroup");
@@ -526,6 +534,7 @@ void game_rebind(void)
         in->row = i;
         int dc, dp;
         in->breaks = breakable(name, r, &dc, &dp);
+        in->collapse = strcmp(name, "CollapsePlane") == 0 ? (r->arg[0] > 0 ? r->arg[0] : 140) : 0;
         in->kcl = scene_kcl(s, name);
         in->zone = r->zone;
         mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
@@ -593,6 +602,21 @@ int game_test_box(void)
     }
     return -1;
 }
+
+int game_test_collapse(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->collapse) continue;
+        V3 p = v3(in->m[12], in->m[13], in->m[14]), up = up_at(p, v3(0, 1, 0));
+        mario->pos = vadd(p, vmul(up, 40.0f));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return in->row;
+    }
+    return -1;
+}
+
+int game_test_collapse_step(int row) { return row < 0 ? -2 : row_dead[row] ? -1 : row_step[row]; }
 
 int game_test_launch(int i)
 {
@@ -845,6 +869,8 @@ static void update_mario(void)
     int was_ground = m->grounded;
     V3 wn = m->wall_n;
     int ground = collide_n(&center, m->up, BODY_RADIUS, &gn, &wn, &m->wall);
+    if (ground && ground_inst >= 0 && insts[ground_inst].collapse && !row_step[insts[ground_inst].row])
+        row_step[insts[ground_inst].row] = 1; /* CollapsePlane::exeWait: Mario on it starts the collapse */
     if (m->wall) { m->wall_n = wn; m->wall_timer = 0; } else if (m->wall_timer < 1000) m->wall_timer++;
     m->pos = vsub(center, vmul(m->up, BODY_RADIUS));
     if (ground && m->vup <= 0) {
@@ -970,6 +996,22 @@ static void break_boxes(void)
     }
 }
 
+/* CollapsePlane (Petari CollapsePlane.cpp): once stood on, the plane shrinks in x / z (1 - 0.7 step / time) and after
+ * `time` frames vanishes with its collision, for good. ponytail: the collision keeps its full size while shrinking,
+ * no star pointer stop */
+static void update_collapse(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->collapse || !row_step[in->row]) continue;
+        if (++row_step[in->row] >= in->collapse) {
+            row_dead[in->row] = 1;
+            game_rebind();
+            return;
+        }
+    }
+}
+
 static void collect(Pickup *p, int n, float reach, int *counter)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, BODY_RADIUS));
@@ -982,6 +1024,7 @@ void game_update(void)
     update_mario();
     update_kuribo();
     break_boxes();
+    update_collapse();
     collect(coins, ncoins, 100.0f, &got_coins);
     collect(purple, npurple, 100.0f, &got_purple);
     collect(pieces, npieces, 120.0f, &got_pieces);
@@ -1030,8 +1073,16 @@ void game_draw(void)
     float eye[3] = {ce.x, ce.y, ce.z}, target[3] = {cw.x, cw.y, cw.z}, up[3] = {cu.x, cu.y, cu.z};
     float m[16];
     render_begin(eye, target, up);
-    for (int i = 0; i < ninsts; i++)
-        render_model(insts[i].md, insts[i].m, 0x70, 0xB0, 0x60);
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (in->collapse && row_step[in->row]) { /* calcJointPlane: x / z scale 1 - 0.7 step / time */
+            float k = 1.0f - 0.7f * row_step[in->row] / in->collapse, cm[16];
+            memcpy(cm, in->m, 64);
+            for (int j = 0; j < 3; j++) { cm[j] *= k; cm[8 + j] *= k; }
+            render_model(in->md, cm, 0x70, 0xB0, 0x60);
+        } else
+            render_model(in->md, in->m, 0x70, 0xB0, 0x60);
+    }
     draw_pickups(coins, ncoins, m_coin, 0xF0, 0xD0, 0x30);
     draw_pickups(purple, npurple, m_purple, 0xB0, 0x50, 0xF0);
     draw_pickups(pieces, npieces, m_piece, 0x60, 0xD0, 0xF0);
