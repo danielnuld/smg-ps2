@@ -326,6 +326,9 @@ int main(void)
             game_debug(line, sizeof line);
             printf("bench end: %s coins %d purple %d pieces %d kuribo %d\n", line, game_coins(), game_purple(),
                    game_starpieces(), game_kuribo_alive());
+            u32 tm, to, ts;
+            render_tex_stats(&tm, &to, &ts);
+            printf("bench textures: %u uploads, %u without room, %u waits for room\n", tm, to, ts);
         }
 #endif
     }

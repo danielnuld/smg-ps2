@@ -43,6 +43,7 @@ static zbuffer_t zbuf;
 static packet2_t *vif[2], *gif;
 static int cur;
 static float view[16], proj[16];
+static float frustum[4];        /* side planes in view space: x n, z n for |x| and |y| (render_set_fovy) */
 static float (*mats)[16];        /* one matrix per instance this frame, read by DMA */
 static int nmats;
 #define MAX_MAT 10               /* matrices per batch (a J3D matrix group holds up to 10) */
@@ -54,8 +55,6 @@ static qword_t *headers_static;  /* [textured][count]: {n, 0, matrix base 1} + G
 static u32 tris_drawn;
 static u32 vram_tex;             /* VRAM words taken by textures and CLUTs */
 static qword_t *tex_packets;     /* per texture 5 qwords (GIF tag + TEX0, TEX1, CLAMP, TEST), then 2 for NO_TEX */
-static int vram_cursor = -1;      /* texture VRAM is ours above the frame buffers: a bump pointer, rewound per zone */
-static int tex_vram[SCENE_MAX_TEX + 1];
 #define VRAM_WORDS (1 << 20)        /* 4 MB of GS memory in 32-bit words */
 #define NO_TEX_PACKET (tex_packets + 5 * SCENE_MAX_TEX)
 static int cur_tex;
@@ -184,6 +183,9 @@ void render_set_fovy(float deg)
     proj[5] = -f / 2048.0f;
     proj[10] = A; proj[11] = 1.0f;
     proj[14] = B;
+    float lx = sqrtf(f * f + (SCREEN_W / 2) * (SCREEN_W / 2)), ly = sqrtf(f * f + (SCREEN_H / 2) * (SCREEN_H / 2));
+    frustum[0] = f / lx; frustum[1] = (SCREEN_W / 2) / lx;
+    frustum[2] = f / ly; frustum[3] = (SCREEN_H / 2) / ly;
 }
 
 void render_begin(const float eye[3], const float target[3], const float up[3])
@@ -221,60 +223,166 @@ void render_begin(const float eye[3], const float target[3], const float up[3])
 
 static void build_chain(Model *md);
 
-static int vram_take(int words)
+/* Texture cache: the textures live in EE RAM (the packs) and come to GS memory when a model about to be drawn uses
+ * them. GS memory above the frame buffers is a run of 64-word blocks, first fit; when it is full, the least recently
+ * used texture whose last VIF chain has completed goes (nothing in flight still reads its blocks or REFs its state
+ * packet; the GS draws and uploads in order). If every resident texture is still in use, the chain built so far is
+ * sent and waited for, which frees them all. Uploads go on PATH3 (GIF DMA) right before the VIF chain that draws
+ * with them. Each texture keeps its GS state packet; TEX0 is rewritten when it moves, and the prebuilt chains REF
+ * the packet, so they follow. */
+#define TEX_BLOCKS ((VRAM_WORDS >> 6) + 1)
+static const Scene *tex_scene;
+static int tex_block[SCENE_MAX_TEX], tex_nblk[SCENE_MAX_TEX];
+static u32 tex_last[SCENE_MAX_TEX];
+static s16 *block_tex;              /* owner of each block, -1 free */
+static int block_first, block_end;   /* the cache's blocks */
+static u32 chain_seq = 1, done_seq, tex_misses, tex_overflow, tex_syncs; /* chain being built, last one completed */
+#define MAX_UPLOADS 96
+static int uploads[MAX_UPLOADS], nuploads;
+static qword_t *upload_chain;
+
+static int blocks_of(const TexEntry *t)
 {
-    int a = vram_cursor;
-    vram_cursor += (words + 63) & ~63; /* block aligned (TBP / CBP count 64 words) */
-    return a;
+    return (graph_vram_size(128, t->h, GS_PSM_4, GRAPH_ALIGN_BLOCK) + 63) / 64 + 1; /* pixels (128-pixel rows) + CLUT */
+}
+
+static void tex_free(int t)
+{
+    for (int b = tex_block[t]; b >= 0 && b < tex_block[t] + tex_nblk[t]; b++)
+        block_tex[b] = -1;
+    tex_block[t] = -1;
+}
+
+static int tex_alloc(int n)
+{
+    for (int b = block_first, run = 0; b < block_end; b++) {
+        run = block_tex[b] < 0 ? run + 1 : 0;
+        if (run == n)
+            return b - n + 1;
+    }
+    return -1;
+}
+
+static void flush_uploads(void)
+{
+    if (!nuploads)
+        return;
+    qword_t *q = upload_chain;
+    for (int i = 0; i < nuploads; i++) {
+        int t = uploads[i];
+        const TexEntry *e = tex_scene->tex[t].e;
+        int addr = tex_block[t] * 64, clut = (tex_block[t] + tex_nblk[t] - 1) * 64;
+        q = draw_texture_transfer(q, (void *)(tex_scene->tex[t].base + e->pix_off), e->w, e->h, GS_PSM_4, addr, 128);
+        q = draw_texture_transfer(q, (void *)(tex_scene->tex[t].base + e->clut_off), 8, 2, GS_PSM_32, clut, 64);
+    }
+    q = draw_texture_flush(q);
+    dma_channel_wait(DMA_CHANNEL_GIF, 0);
+    dma_channel_send_chain(DMA_CHANNEL_GIF, upload_chain, q - upload_chain, 0, 0);
+    dma_channel_wait(DMA_CHANNEL_GIF, 0);
+    nuploads = 0;
+}
+
+static void flush_vif(void);
+
+/* Make texture t resident for the chain being built (upload queued for the next flush). Returns 1 if it had to
+ * send and wait for the chain built so far (textures marked before that may have been evicted since). */
+static int tex_need(u32 t)
+{
+    if (t == NO_TEX)
+        return 0;
+    tex_last[t] = chain_seq;
+    if (tex_block[t] >= 0)
+        return 0;
+    int synced = 0;
+    if (nuploads == MAX_UPLOADS) {
+        flush_vif();                 /* sends the queued uploads, then what was drawn so far */
+        tex_last[t] = chain_seq;
+    }
+    int n = tex_nblk[t], b;
+    while ((b = tex_alloc(n)) < 0) { /* evict the least recently used texture whose chain has completed */
+        int lru = -1;
+        for (u32 i = 0; i < tex_scene->ntex; i++)
+            if (tex_block[i] >= 0 && tex_last[i] <= done_seq && (lru < 0 || tex_last[i] < tex_last[lru]))
+                lru = i;
+        if (lru >= 0) {
+            tex_free(lru);
+            continue;
+        }
+        if (synced) {
+            tex_overflow++;          /* larger than the whole cache: drawn with stale texels */
+            return 1;
+        }
+        flush_vif();                 /* all in use: send what is built, wait for it, then they can go */
+        dma_channel_wait(DMA_CHANNEL_VIF1, 0);
+        done_seq = chain_seq - 1;
+        tex_last[t] = chain_seq;
+        tex_syncs++;
+        synced = 1;
+    }
+    tex_block[t] = b;
+    for (int i = b; i < b + n; i++)
+        block_tex[i] = t;
+    const TexEntry *e = tex_scene->tex[t].e;
+    qword_t *p = tex_packets + 5 * t;
+    p[1].dw[0] = GS_SET_TEX0(b, 2, GS_PSM_4, e->tw, e->th, 1, 0, b + n - 1, GS_PSM_32, 0, 0, 1);
+    uploads[nuploads++] = t;
+    tex_misses++;
+    return synced;
+}
+
+/* every texture of a model resident for its CALL; after a sync the earlier ones are checked again */
+static void model_textures(const Model *md)
+{
+    for (int pass = 0; pass < 2; pass++) {
+        int synced = 0;
+        for (u32 g = 0; g < md->vu_ngroups; g++)
+            synced |= tex_need(md->vu[g].tex);
+        if (!synced)
+            return;
+    }
 }
 
 void render_load_textures(const Scene *s, u32 first_tex, u32 first_model)
 {
     u32 ntex = s->ntex;
+    tex_scene = s;
     if (!tex_packets) { /* fixed slots: prebuilt chains point into them; the NO_TEX packet sits after the last */
         tex_packets = mem_alloc(MEM_RENDER, (5 * SCENE_MAX_TEX + 2) * 16);
-        vram_cursor = graph_vram_allocate(64, 1, GS_PSM_32, GRAPH_ALIGN_BLOCK); /* first word above libgraph's */
+        block_tex = mem_alloc(MEM_RENDER, TEX_BLOCKS * sizeof(s16));
+        upload_chain = mem_alloc(MEM_RENDER, (MAX_UPLOADS * 2 * 16 + 4) * 16);
+        block_first = graph_vram_allocate(64, 1, GS_PSM_32, GRAPH_ALIGN_BLOCK) / 64; /* first block above libgraph's */
+        block_end = VRAM_WORDS / 64;
+        for (int b = 0; b < TEX_BLOCKS; b++)
+            block_tex[b] = -1;
         qword_t *p = NO_TEX_PACKET;
         p[0].dw[0] = GIF_SET_TAG(1, 1, 0, 0, GIF_FLG_PACKED, 1);
         p[0].dw[1] = GIF_REG_AD;
         p[1].dw[0] = test_z;
         p[1].dw[1] = GS_REG_TEST;
     }
-    qword_t *up = memalign(64, ((ntex - first_tex) * 2 * 16 + 4) * 16); /* upload chain, freed after the transfer */
-    qword_t *q = up;
+    u32 need = 0;
     for (u32 i = first_tex; i < ntex; i++) {
         const TexEntry *t = s->tex[i].e;
-        /* PSMT4 needs an even buffer width in 64-pixel units: 128-pixel rows for every texture (max 128 wide) */
-        tex_vram[i] = vram_cursor;
-        int addr = vram_take(graph_vram_size(128, t->h, GS_PSM_4, GRAPH_ALIGN_BLOCK));
-        int clut = vram_take(graph_vram_size(8, 2, GS_PSM_32, GRAPH_ALIGN_BLOCK));
-        if (vram_cursor > VRAM_WORDS) {
-            printf("render: VRAM full at texture %u of %u\n", i, ntex);
-            for (;;) {}
-        }
-        q = draw_texture_transfer(q, (void *)(s->tex[i].base + t->pix_off), t->w, t->h, GS_PSM_4, addr, 128);
-        q = draw_texture_transfer(q, (void *)(s->tex[i].base + t->clut_off), 8, 2, GS_PSM_32, clut, 64);
+        tex_block[i] = -1;
+        tex_nblk[i] = blocks_of(t);
+        tex_last[i] = 0;
+        need += tex_nblk[i];
         qword_t *p = tex_packets + 5 * i;
         p[0].dw[0] = GIF_SET_TAG(4, 1, 0, 0, GIF_FLG_PACKED, 1);
         p[0].dw[1] = GIF_REG_AD;
-        p[1].dw[0] = GS_SET_TEX0(addr >> 6, 2, GS_PSM_4, t->tw, t->th, 1, 0, clut >> 6, GS_PSM_32, 0, 0, 1);
-        p[1].dw[1] = GS_REG_TEX0;
+        p[1].dw[1] = GS_REG_TEX0;    /* TEX0 itself is written when the texture gets its blocks (tex_need) */
         p[2].dw[0] = GS_SET_TEX1(1, 0, 1, 1, 0, 0, 0); /* fixed LOD 0, bilinear */
         p[2].dw[1] = GS_REG_TEX1;
         p[3].dw[0] = GS_SET_CLAMP(t->clamp_s, t->clamp_t, 0, 0, 0, 0);
         p[3].dw[1] = GS_REG_CLAMP;
-        /* ponytail: blended textures (alpha 2) are drawn as cut-outs; Gateway has none */
+        /* ponytail: blended textures (alpha 2) are drawn as cut-outs */
         p[4].dw[0] = t->alpha ? GS_SET_TEST(1, ATEST_METHOD_GREATER_EQUAL, 0x40, 0, 0, 0, 1, ZTEST_METHOD_GREATER_EQUAL) : test_z;
         p[4].dw[1] = GS_REG_TEST;
     }
-    tex_vram[ntex] = vram_cursor;
-    vram_tex = vram_cursor - tex_vram[0];
-    q = draw_texture_flush(q);
     FlushCache(0);
-    dma_channel_send_chain(DMA_CHANNEL_GIF, up, q - up, 0, 0);
-    dma_wait_fast();
-    free(up);
-    printf("render: %u textures in VRAM, %u KB (words x 4)\n", ntex, vram_tex * 4 / 1024);
+    vram_tex = need * 64;
+    printf("render: %u textures (%u KB if all resident), texture cache %u KB" "\n", ntex, need * 256 / 1024,
+           (block_end - block_first) * 256 / 1024);
     for (u32 i = first_model; i < s->nmodels; i++)
         if (!s->models[i].skin && s->models[i].vu_ngroups)
             build_chain(&s->models[i]);
@@ -291,8 +399,9 @@ void render_release(Scene *s, u32 first_tex, u32 first_model)
             packet2_free(pk);
             s->models[i].chain = NULL;
         }
-    if (first_tex < s->ntex)
-        vram_cursor = tex_vram[first_tex];
+    for (u32 t = first_tex; t < s->ntex; t++)
+        if (tex_block[t] >= 0)
+            tex_free(t);
     cur_tex = -1;
 }
 
@@ -309,6 +418,7 @@ static void emit_tex(packet2_t *pk, u32 t)
 
 static void set_tex(u32 t)
 {
+    tex_need(t);
     if ((int)t == cur_tex)
         return;
     cur_tex = t;
@@ -373,7 +483,10 @@ static void flush_vif(void)
     packet2_chain_close_tag(vif[cur]);
     packet2_utils_vu_add_end_tag(vif[cur]);
     dma_channel_wait(DMA_CHANNEL_VIF1, 0);
+    done_seq = chain_seq - 1;         /* the previous chain has completed (it ends with FLUSH) */
+    flush_uploads();
     dma_channel_send_packet2(vif[cur], DMA_CHANNEL_VIF1, 1);
+    chain_seq++;
     cur ^= 1;
     packet2_reset(vif[cur], 0);
 }
@@ -394,7 +507,10 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
     float mv[16], pvw[16];
     mat_mul(mv, view, world);
     float rad = md->radius * sqrtf(mv[0] * mv[0] + mv[1] * mv[1] + mv[2] * mv[2]);
-    if (mv[14] + rad < NEAR) /* whole model behind the camera */
+    if (mv[14] + rad < NEAR || mv[14] - rad > FAR) /* whole model behind the camera or past the far plane */
+        return;
+    /* side planes through the eye: f x = (w/2) z etc., normals unit (frustum[]); outside by more than rad: culled */
+    if (frustum[0] * fabsf(mv[12]) - frustum[1] * mv[14] > rad || frustum[2] * fabsf(mv[13]) - frustum[3] * mv[14] > rad)
         return;
     mat_mul(pvw, proj, mv);
     if (!drw && md->chain) {
@@ -402,6 +518,7 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
             return;
         if (packet2_get_qw_count(vif[cur]) + 8 > PACKET_QW)
             flush_vif();
+        model_textures(md);
         float *m = mats[nmats++];
         memcpy(m, pvw, 64);
         scale_cols(m, md->qscale);
@@ -536,3 +653,8 @@ u32 render_end(void)
 }
 
 u32 render_tris_drawn(void) { return tris_drawn; }
+
+void render_tex_stats(u32 *misses, u32 *overflow, u32 *syncs)
+{
+    *misses = tex_misses; *overflow = tex_overflow; *syncs = tex_syncs;
+}

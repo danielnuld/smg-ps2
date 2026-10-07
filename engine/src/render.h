@@ -23,6 +23,8 @@ void render_text(float x, float y, const char *s);
 /* Finish the frame (VIF chain, HUD, wait for the GS) and flip; returns EE cycles spent before the vsync wait. */
 u32 render_end(void);
 u32 render_tris_drawn(void);
+/* Texture cache counters since boot: uploads (misses), textures that found no GS memory, chains waited on for room. */
+void render_tex_stats(u32 *misses, u32 *overflow, u32 *syncs);
 
 void mat_identity(float m[16]);
 void mat_translate_rot_scale(float m[16], const float pos[3], const float rot_deg[3], const float scale[3]);
