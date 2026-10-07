@@ -122,8 +122,11 @@ def to_ps2(rgba, wrap_s, wrap_t):
     if wrap_t == 2:
         rgba, vs = np.concatenate([rgba, rgba[::-1]], 0), 0.5
     h, w = rgba.shape[:2]
-    assert w & (w - 1) == 0 and h & (h - 1) == 0, (w, h)
     img = Image.fromarray(np.ascontiguousarray(rgba), "RGBA")
+    if w & (w - 1) or h & (h - 1):  # GX takes any size, the GS powers of two: nearest one (UVs are normalized)
+        p2 = lambda n: min((1 << k for k in range(12)), key=lambda v: (abs(v - n), -v))
+        w, h = p2(w), p2(h)
+        img = img.resize((w, h), Image.Resampling.BOX)
     while w > MAX_DIM or h > MAX_DIM:
         w, h = (w // 2 if w > MAX_DIM else w), (h // 2 if h > MAX_DIM else h)
         img = img.resize((w, h), Image.Resampling.BOX)
