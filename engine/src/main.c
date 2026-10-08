@@ -17,6 +17,7 @@
 #include "pad.h"
 #include "render.h"
 
+#include "fx.h"
 #include "music_tab.h"
 #include "packs_cfg.h" /* written by build.sh: PACKS = "<Galaxy>/<scenario>", or empty */
 
@@ -646,7 +647,7 @@ int main(void)
         ms(c, sizeof c, "GS", t_gs);
         snprintf(line, sizeof line, "%s  %s  %s", a, b, c);
         ms(a, sizeof a, "WORST", worst);
-        snprintf(line + strlen(line), sizeof line - strlen(line), "  %s MS  TRIS %u", a, render_tris_drawn());
+        snprintf(line + strlen(line), sizeof line - strlen(line), "  %s MS  TRIS %u  FX %u", a, render_tris_drawn(), fx_count());
         render_text(16, 12, line);
         snprintf(line, sizeof line, "LIFE %d  COINS %d  PURPLE %d/%d  PIECES %d  KURIBO %d  RUNTIME %u KB", game_life(), game_coins(),
                  game_purple(), game_purple_total(), game_starpieces(), game_kuribo_alive(), mem_total() >> 10);

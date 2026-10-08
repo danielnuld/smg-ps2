@@ -1,5 +1,6 @@
 #include "game.h"
 #include "anim.h"
+#include "fx.h"
 #include "camera.h"
 
 #include <stdio.h>
@@ -141,6 +142,14 @@ typedef struct {
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP };
 static V3 firebar_ball(const Inst *in, int j, int k);
+static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle);
+/* a one-shot effect standing on `up` at p */
+static void fx_at(int fx, V3 p, V3 up)
+{
+    float m[16];
+    basis_matrix(m, p, up, v3(0, 0, 1), 0);
+    fx_emit(fx, m);
+}
 #define MAX_ZONES 64
 
 /* Stage switches (Petari StageSwitch.cpp): ids below 1000 belong to the row's zone (128 each), the rest are the
@@ -584,6 +593,7 @@ static int collide(V3 *center, V3 up, float radius) { return collide_n(center, u
 void game_init(const Scene *s, const unsigned char *blob)
 {
     sc = s;
+    fx_init(s);
     u32 gsz;
     const unsigned char *g = blob_chunk(blob, "GRAV", &gsz);
     ngrav = *(const int *)g;
@@ -1739,10 +1749,10 @@ static void update_kuribo(void)
             k->vel = vadd(vh, vu);
             float above = vdot(to, k->up);
             if (d < 130.0f && mario->vup < 0 && above > 40.0f) {
-                k->state = KURIBO_DEAD; row_kill(k->row); pop_coins(k->pos, k->up, 1);
+                k->state = KURIBO_DEAD; row_kill(k->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, k->pos, k->up); pop_coins(k->pos, k->up, 1);
                 mario->vup = 15.0f; mario->grounded = 0;
             } else if (d < 170.0f && mario->spin_timer > 0) {
-                k->state = KURIBO_DEAD; row_kill(k->row); pop_coins(k->pos, k->up, 1);
+                k->state = KURIBO_DEAD; row_kill(k->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, k->pos, k->up); pop_coins(k->pos, k->up, 1);
             } else if (d < 110.0f && above <= 40.0f && !ground) /* hurts while jumping, pushes otherwise */
                 hurt_mario(k->pos, 15.0f);
             continue;
@@ -1752,10 +1762,10 @@ static void update_kuribo(void)
             k->timer = d < 300.0f ? k->timer + 1 : 0; /* in reach: 70 frames winding up, then a 20-frame bite */
             int bite = k->timer % 90 >= 70;
             if (!bite && d < 150.0f && mario->vup < 0 && above > 60.0f) { /* TrampleDown */
-                k->state = KURIBO_DEAD; row_kill(k->row); mario->vup = 15.0f; mario->grounded = 0;
+                k->state = KURIBO_DEAD; row_kill(k->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, k->pos, k->up); mario->vup = 15.0f; mario->grounded = 0;
                 pop_coins(k->pos, k->up, 1);
             } else if (!bite && d < 200.0f && mario->spin_timer > 0) { /* PunchDown */
-                k->state = KURIBO_DEAD; row_kill(k->row); pop_coins(k->pos, k->up, 1);
+                k->state = KURIBO_DEAD; row_kill(k->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, k->pos, k->up); pop_coins(k->pos, k->up, 1);
             } else if (bite) {
                 V3 head = vadd(vadd(k->pos, vmul(k->up, 120.0f)), vmul(vnorm(vtangent(to, k->up)), 80.0f));
                 if (vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), head)) < 50.0f + HIT_BODY_R)
@@ -1786,10 +1796,10 @@ static void update_kuribo(void)
             if (kote && k->state == KURIBO_WALK && mario->hip != HIP_FALL) { k->state = KURIBO_STUN; k->timer = 240; }
             else if (kote && k->state == KURIBO_STUN && k->timer > 210 && mario->hip != HIP_FALL)
                 continue; /* the bounce off the first stomp lands on it again: not a second stomp yet, no bounce */
-            else { k->state = KURIBO_DEAD; row_kill(k->row); pop_coins(k->pos, k->up, 1); }
+            else { k->state = KURIBO_DEAD; row_kill(k->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, k->pos, k->up); pop_coins(k->pos, k->up, 1); }
             mario->vup = 15.0f; mario->grounded = 0;
         } else if (d < 170.0f && mario->spin_timer > 0 && (k->state == KURIBO_WALK || (kote && k->timer < 230))) {
-            if (tako || (kote && k->state == KURIBO_STUN)) { k->state = KURIBO_DEAD; row_kill(k->row); pop_coins(k->pos, k->up, 1); }
+            if (tako || (kote && k->state == KURIBO_STUN)) { k->state = KURIBO_DEAD; row_kill(k->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, k->pos, k->up); pop_coins(k->pos, k->up, 1); }
             else { k->state = KURIBO_STUN; k->timer = kote ? 240 : 180; }
         } else if (d < (tako ? 140.0f : 100.0f) && above <= 40.0f && k->state == KURIBO_WALK) /* not from above */
             hurt_mario(k->pos, 15.0f);
@@ -1816,7 +1826,10 @@ static void break_inst(const Inst *in, int drops)
         pieces[npieces++].alive = 1;
     }
     row_kill(in->row);
-    printf("%s %d broken, %d coins, %d star pieces\n", sc->types + 32 * r->type, in->row, n, sp);
+    const char *name = sc->types + 32 * r->type;
+    if (in->breaks != 3) /* ItemBlocks stay */
+        fx_at(strncmp(name, "CrystalCage", 11) == 0 ? FX_CRYSTALCAGES_BREAK : FX_PUNCHBOX_BREAK, p, up);
+    printf("%s %d broken, %d coins, %d star pieces\n", name, in->row, n, sp);
 }
 
 static void break_boxes(void)
@@ -2032,6 +2045,7 @@ static void update_hazards(void)
         if (vlen(vsub(c, p)) > r + HIT_BODY_R) continue;
         hurt_mario(p, in->hazard == 1 ? 25.0f : 15.0f);
         if (in->hazard == 1) {
+            fx_emit(FX_SPACEMINE_EXPLOSION, in->m);
             row_kill(in->row);
             printf("SpaceMine %d exploded\n", in->row);
             game_rebind();
@@ -2304,6 +2318,9 @@ static void update_items(void)
         if (in->item == ITEM_STAR) printf("power star %d got\n", ++stars);
         else if (in->item == ITEM_ONEUP) printf("1-up, lives %d\n", ++lives);
         else if (in->item == ITEM_LIFEUP) { life = max_life = 2 * MAX_LIFE; printf("life up\n"); }
+        else if (in->item == ITEM_QCOIN) fx_emit(FX_QUESTIONCOIN_GET, in->m);
+        else if (in->item == ITEM_CHIP)
+            fx_emit(sc->types[32 * sc->objs[in->row].type] == 'Y' ? FX_YELLOWCHIP_GET : FX_BLUECHIP_GET, in->m);
         row_kill(in->row);
         game_rebind();
         return;
@@ -2332,11 +2349,42 @@ static void update_pops(void)
     }
 }
 
-static void collect(Pickup *p, int n, float reach, int *counter)
+static void collect(Pickup *p, int n, float reach, int *counter, int fx)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, BODY_RADIUS));
     for (int i = 0; i < n; i++)
-        if (pickup_on(&p[i], 1) && vlen(vsub(p[i].pos, c)) < reach) { p[i].alive = PICK_GONE; (*counter)++; }
+        if (pickup_on(&p[i], 1) && vlen(vsub(p[i].pos, c)) < reach) {
+            p[i].alive = PICK_GONE;
+            (*counter)++;
+            fx_at(fx, p[i].pos, up_at(p[i].pos, mario->up));
+        }
+}
+
+/* Looping effects (AutoEffectList lights) of what is shown near the camera: star pieces, power stars, launch stars,
+ * ? coins and chips. ponytail: by distance only (4000), not by the actor's own clipping */
+static void keep_effects(void)
+{
+    float m[16];
+    for (int i = 0; i < npieces; i++)
+        if (pickup_shown(&pieces[i]) && vlen(vsub(pieces[i].pos, cam_pos)) < 4000.0f) {
+            basis_matrix(m, pieces[i].pos, up_at(pieces[i].pos, mario->up), v3(0, 0, 1), 0);
+            fx_keep(FX_STARPIECE_STARPIECELIGHT, &pieces[i], m);
+        }
+    for (int i = 0; i < nlaunches; i++)
+        if (row_shown(launches[i].row) && vlen(vsub(launches[i].pos, cam_pos)) < 4000.0f) {
+            basis_matrix(m, launches[i].pos, up_at(launches[i].pos, mario->up), v3(0, 0, 1), 0);
+            fx_keep(launches[i].start < 45 ? FX_SPINDRIVER_SPINDRIVERLIGHT : FX_SUPERSPINDRIVER_SUPERSPINDRIVERLIGHT,
+                    &launches[i], m);
+        }
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->item || !row_shown(in->row) || vlen(vsub(v3(in->m[12], in->m[13], in->m[14]), cam_pos)) > 4000.0f)
+            continue;
+        const char *name = sc->types + 32 * sc->objs[in->row].type;
+        int fx = in->item == ITEM_STAR ? FX_POWERSTAR_LIGHT : in->item == ITEM_QCOIN ? FX_QUESTIONCOIN_LIGHT :
+                 in->item == ITEM_CHIP ? (name[0] == 'Y' ? FX_YELLOWCHIP_WAIT : FX_BLUECHIP_WAIT) : -1;
+        if (fx >= 0) fx_keep(fx, in, in->m);
+    }
 }
 
 void game_update(void)
@@ -2360,18 +2408,20 @@ void game_update(void)
     update_switches();
     update_pops();
     int had = got_coins;
-    collect(coins, ncoins, 100.0f, &got_coins);
+    collect(coins, ncoins, 100.0f, &got_coins, FX_COIN_COINGET);
     life += got_coins - had;
     if (life > max_life) life = max_life;
     if (got_coins / 50 > had / 50) lives++; /* every 50 coins a 1-up */
-    collect(purple, npurple, 100.0f, &got_purple);
-    collect(pieces, npieces, 120.0f, &got_pieces);
+    collect(purple, npurple, 100.0f, &got_purple, FX_PURPLECOIN_COINGET);
+    collect(pieces, npieces, 120.0f, &got_pieces, FX_STARPIECE_STARPIECEGET);
     spin_angle += 0.08f;
     CamTarget t = {mario->pos, mario->face, mario->up, !mario->grounded};
     camera_update(&t);
     V3 w, u;
     float fovy;
     camera_pose(&cam_pos, &w, &u, &fovy); /* cam_pos also steers the stick (camera-relative) */
+    keep_effects();
+    fx_update();
 }
 
 /* --- draw ------------------------------------------------------------------------------------------------ */
@@ -2562,6 +2612,7 @@ void game_draw(void)
     basis_matrix(m, mario->pos, mario->up, mario->face, 0);
     if (m_mario_skin && !(mario->hurt_timer & 4))
         render_skinned(m_mario_skin, m, (const float (*)[16])mario_anim->drw);
+    fx_draw();
 }
 
 void game_debug(char *out, int n)

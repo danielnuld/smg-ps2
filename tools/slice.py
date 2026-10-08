@@ -45,6 +45,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import budget as B
 import camera
 import geom
+import jpa
 import skin
 import tex
 
@@ -752,12 +753,16 @@ def placement(fs, galaxy, scenario):
 _model_cache = {}
 
 
-def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True):
+def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=False):
     """Asset chunks (TEXT MODL SKIN VUMD KCL) for [(model name, archive name)]: textures deduplicated within the pack.
-    KCL for planets when `collision`. Converted models are cached per process (one archive, many scenarios)."""
+    KCL for planets when `collision`. Converted models are cached per process (one archive, many scenarios). fx: also
+    the particle effects (PTCL, tools/jpa.py pack), their textures first in TEXT."""
     stats = stats if stats is not None else {}
     models_, kcls, vumd, skins = [], [], [], []
-    texts, tex_id = [], {}
+    texts, tex_id, ptcl = [], {}, []
+    if fx:
+        payload, texts = jpa.pack(fsp)
+        ptcl = [chunk(b"PTCL", payload)]
     for t, a in models:
         arc = fsp / "ObjectData" / f"{a}.arc"
         if not arc.exists():
@@ -807,7 +812,7 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True):
             chunk(b"MODL", struct.pack("<I", len(models_)) + b"".join(models_)),
             chunk(b"SKIN", struct.pack("<I", len(skins)) + b"".join(skins)),
             chunk(b"VUMD", struct.pack("<I12x", len(vumd)) + b"".join(vumd)),
-            chunk(b"KCL ", struct.pack("<I", len(kcls)) + b"".join(kcls))]
+            chunk(b"KCL ", struct.pack("<I", len(kcls)) + b"".join(kcls))] + ptcl
 
 
 def anim_chunk(fsp):
@@ -833,7 +838,7 @@ def build(fs, galaxy, scenario, ratio=0.99):
     types = info["types"]
     am = ctx["arcmap"]
     names = sorted({n for ns in ctx["per_stage"].values() for n in ns}, key=lambda t: (t not in ctx["planets"], t))
-    out += assets(fsp, [(t, am[t]) for t in names] + [(t, t) for t in SKINNED], ctx["planets"], ratio, stats) + \
+    out += assets(fsp, [(t, am[t]) for t in names] + [(t, t) for t in SKINNED], ctx["planets"], ratio, stats, fx=True) + \
         [anim_chunk(fsp)]
     return blob_of(out), dict(info, **stats)
 
@@ -884,7 +889,7 @@ def resident_pack(fs, ratio=0.99):
     """Models every scenario shares (phase 0b RESIDENT set, the ones the converter knows) + Mario + his clips."""
     fsp = Path(fs)
     names = list(RESIDENT) + list(SKINNED)
-    return blob_of(assets(fsp, [(t, t) for t in names], {}, ratio) + [anim_chunk(fsp)]), set(names)
+    return blob_of(assets(fsp, [(t, t) for t in names], {}, ratio, fx=True) + [anim_chunk(fsp)]), set(names)
 
 
 def read_chunks(blob):

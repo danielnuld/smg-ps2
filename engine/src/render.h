@@ -20,6 +20,10 @@ void render_model(const Model *md, const float world[16], u8 r, u8 g, u8 b);
 /* Draw a skinned model with its draw matrices (anim.c Anim.drw). */
 void render_skinned(const Model *md, const float world[16], const float (*drw)[16]);
 void render_text(float x, float y, const char *s);
+/* Camera-facing textured squares (particles): centre, half size in world units, colour 0xAABBGGRR (0x80 = 1.0),
+ * scene texture, additive (else alpha) blending. Depth tested, not written; draw them after the models. */
+typedef struct { float pos[3], half; u32 rgba; u16 tex; u8 add, pad; } Sprite;
+void render_sprites(const Sprite *sp, int n);
 /* Finish the frame (VIF chain, HUD, wait for the GS) and flip; returns EE cycles spent before the vsync wait. */
 u32 render_end(void);
 /* Depth reset to far over the screen (after the sky): later draws always cover what is there */

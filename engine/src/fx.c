@@ -1,0 +1,348 @@
+#include "fx.h"
+
+#include "render.h"
+
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
+
+/* A lean port of JParticle (Petari src/JSystem/JParticle): per resource one emitter (JPADynamicsBlock::create: rate,
+ * rate step, max frame, start frame; volumes cube / sphere / cylinder / torus / point / circle / line), particles
+ * (JPABaseParticle::init_p / calc_p: omni / axis / direction cone / random velocities, air resistance, gravity
+ * fields, follow), drawn as billboards with JPAExtraShape's scale and alpha curves and the BSP1 colour keys.
+ * ponytail: no child particles, rotation, texture animation, other field types, other shape types (all
+ * billboards), emitter local rotation; colour combine baked into the textures by the converter. */
+
+typedef struct {
+    float rate, rate_rndm, life_rndm, vol_size, min_rad, sweep;
+    float vel_omni, vel_axis, vel_dir, vel_rndm, spread, vel_ratio, air, moment_rndm;
+    float trs[3], dir[3], scl[3], grav[3];
+    float size[2];
+    float sc_in_t, sc_out_t, sc_in_x, sc_out_x, sc_in_y, sc_out_y, sc_rndm;
+    float al_in_t, al_out_t, al_in, al_base, al_out;
+    s16 life, max_frame, start_frame, clr_max;
+    u16 tex;
+    u8 vol, add, rate_step, esp, follow, nkeys; /* esp: 1 scale curve, 2 alpha curve, 4 scale X / Y differ */
+    u8 prm[4];
+    s16 key_frame[8];
+    u8 key_rgba[8][4];
+} PtRes; /* 228 bytes: tools/jpa.py pack */
+
+typedef struct { u16 n, res[7]; float off[3], pad; } FxDef; /* 32 bytes */
+
+#define MAX_EMIT 128
+#define MAX_PTCL 1024
+
+typedef struct {
+    const PtRes *r;
+    const void *key;    /* fx_keep owner, NULL for a one-shot */
+    float m[16];        /* emitter world matrix (the owner's) */
+    float s;            /* its scale */
+    float acc;          /* fractional particles carried to the next emission */
+    u16 tick, wait, nptcl;
+    u8 live, stop, kept, first;
+} Emitter;
+
+typedef struct {
+    float loc[3], off[3], v1[3], v0[3];
+    float scale, moment;
+    u16 age, life, em;
+} Ptcl;
+
+static const PtRes *res;
+static const FxDef *defs;
+static u32 nres, ndefs, tex0;
+static Emitter em[MAX_EMIT];
+static Ptcl pt[MAX_PTCL];
+static u16 freelist[MAX_PTCL], nfree;
+static u16 alive[MAX_PTCL], nalive;
+static Sprite spr[MAX_PTCL];
+static u32 seed = 0x12345678;
+
+static float rf(void) { seed = seed * 1103515245u + 12345u; return (seed >> 8) * (1.0f / 16777216.0f); } /* [0, 1) */
+static float zp(void) { return rf() * 2.0f - 1.0f; }                                                       /* [-1, 1) */
+static float zh(void) { return rf() - 0.5f; }                                                              /* [-0.5, 0.5) */
+
+void fx_init(const Scene *s)
+{
+    memset(em, 0, sizeof em);
+    nalive = 0;
+    nfree = MAX_PTCL;
+    for (int i = 0; i < MAX_PTCL; i++)
+        freelist[i] = MAX_PTCL - 1 - i;
+    res = NULL;
+    if (!s->ptcl)
+        return;
+    nres = ((const u32 *)s->ptcl)[0];
+    ndefs = ((const u32 *)s->ptcl)[1];
+    defs = (const FxDef *)(s->ptcl + 16);
+    res = (const PtRes *)(defs + ndefs);
+    tex0 = s->ptcl_tex0;
+    printf("fx: %u effects, %u particle resources\n", ndefs, nres);
+}
+
+/* m * v (rotation and scale only) */
+static void rot(const float m[16], const float v[3], float out[3])
+{
+    for (int i = 0; i < 3; i++)
+        out[i] = m[i] * v[0] + m[4 + i] * v[1] + m[8 + i] * v[2];
+}
+
+static void norm_to(float v[3], float len)
+{
+    float l = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    float k = l > 1e-6f ? len / l : 0.0f;
+    v[0] *= k; v[1] *= k; v[2] *= k;
+}
+
+/* the emitter's world position: its matrix applied to the resource's translation */
+static void emitter_pos(const Emitter *e, float p[3])
+{
+    rot(e->m, e->r->trs, p);
+    p[0] += e->m[12]; p[1] += e->m[13]; p[2] += e->m[14];
+}
+
+static void create(int ei)
+{
+    if (!nfree)
+        return;
+    Emitter *e = &em[ei];
+    const PtRes *r = e->r;
+    u16 pi = freelist[--nfree];
+    Ptcl *p = &pt[pi];
+    alive[nalive++] = pi;
+    e->nptcl++;
+    p->em = ei;
+    /* volume (JPAVolume*): a position and the omni / axis directions */
+    float vp[3] = {0, 0, 0}, omni[3], axis[3];
+    float size = r->vol_size, th = r->sweep * zp() * 3.14159265f;
+    float rad = size * (r->min_rad + rf() * (1.0f - r->min_rad));
+    switch (r->vol) {
+    case 0: vp[0] = size * zh(); vp[1] = size * zh(); vp[2] = size * zh(); break;                 /* cube */
+    case 1: {                                                                                         /* sphere */
+        float ph = zp() * 1.5707963f;
+        vp[0] = rad * cosf(ph) * sinf(th); vp[1] = -rad * sinf(ph); vp[2] = rad * cosf(ph) * cosf(th);
+        break;
+    }
+    case 2: vp[0] = rad * sinf(th); vp[1] = size * zp(); vp[2] = rad * cosf(th); break;            /* cylinder */
+    case 3: vp[0] = size * sinf(th); vp[2] = size * cosf(th); break;                               /* torus (ring) */
+    case 5: vp[0] = rad * sinf(th); vp[2] = rad * cosf(th); break;                                 /* circle */
+    case 6: vp[2] = size * zh(); break;                                                            /* line */
+    default: break;                                                                                /* point */
+    }
+    if (r->vol == 4) {
+        omni[0] = zh(); omni[1] = zh(); omni[2] = zh();
+    } else {
+        omni[0] = vp[0] * r->scl[0]; omni[1] = vp[1] * r->scl[1]; omni[2] = vp[2] * r->scl[2];
+    }
+    axis[0] = omni[0]; axis[1] = 0; axis[2] = omni[2];
+    norm_to(omni, r->vel_omni);
+    norm_to(axis, r->vel_axis);
+    /* direction cone (JPAGetYZRotateMtx(zp * 0x8000 * spread, random) after the direction matrix) */
+    float d[3] = {0, 0, 0};
+    if (r->vel_dir != 0.0f) {
+        const float *D = r->dir;
+        float u[3] = {D[1], -D[0], 0};
+        if (fabsf(D[2]) > 0.9f) { u[0] = 0; u[1] = D[2]; u[2] = -D[1]; }
+        norm_to(u, 1.0f);
+        float v[3] = {D[1] * u[2] - D[2] * u[1], D[2] * u[0] - D[0] * u[2], D[0] * u[1] - D[1] * u[0]};
+        float a = zp() * 3.14159265f * r->spread, b = zp() * 3.14159265f, sa = sinf(a);
+        for (int i = 0; i < 3; i++)
+            d[i] = r->vel_dir * (sa * (cosf(b) * u[i] + sinf(b) * v[i]) + cosf(a) * D[i]);
+    }
+    float k = 1.0f + zp() * r->vel_ratio, v1[3], lp[3];
+    for (int i = 0; i < 3; i++) {
+        v1[i] = k * (omni[i] + axis[i] + d[i] + r->vel_rndm * zh());
+        lp[i] = vp[i] * r->scl[i];
+    }
+    /* into the owner's orientation (unit rotation: the scale applies to positions, JPA mPublicScale) */
+    float m1[16];
+    memcpy(m1, e->m, sizeof m1);
+    for (int i = 0; i < 12; i++)
+        m1[i] /= e->s;
+    rot(m1, v1, p->v1);
+    rot(m1, lp, p->loc);
+    emitter_pos(e, p->off);
+    p->v0[0] = p->v0[1] = p->v0[2] = 0;
+    p->moment = 1.0f - r->moment_rndm * rf();
+    p->life = (u16)((1.0f - r->life_rndm * rf()) * r->life);
+    if (!p->life)
+        p->life = 1;
+    p->age = 0;
+    p->scale = (r->esp & 1) ? 1.0f + zp() * r->sc_rndm : 1.0f;
+}
+
+static Emitter *new_emitter(const PtRes *r, const void *key, const float m[16], const float off[3])
+{
+    for (int i = 0; i < MAX_EMIT; i++) {
+        Emitter *e = &em[i];
+        if (e->live)
+            continue;
+        memset(e, 0, sizeof *e);
+        e->r = r;
+        e->key = key;
+        memcpy(e->m, m, sizeof e->m);
+        e->s = sqrtf(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
+        if (e->s < 1e-6f) e->s = 1.0f;
+        float o[3];
+        rot(m, off, o);
+        e->m[12] += o[0]; e->m[13] += o[1]; e->m[14] += o[2];
+        e->live = e->first = e->kept = 1;
+        return e;
+    }
+    return NULL;
+}
+
+void fx_emit(int fx, const float m[16])
+{
+    if (!res || fx >= (int)ndefs)
+        return;
+    const FxDef *d = &defs[fx];
+    for (int i = 0; i < d->n; i++)
+        new_emitter(&res[d->res[i]], NULL, m, d->off);
+}
+
+void fx_keep(int fx, const void *key, const float m[16])
+{
+    if (!res || fx >= (int)ndefs)
+        return;
+    const FxDef *d = &defs[fx];
+    for (int i = 0; i < d->n; i++) {
+        const PtRes *r = &res[d->res[i]];
+        Emitter *e = NULL;
+        for (int j = 0; j < MAX_EMIT && !e; j++)
+            if (em[j].live && !em[j].stop && em[j].key == key && em[j].r == r)
+                e = &em[j];
+        if (e) {
+            e->kept = 1;
+            memcpy(e->m, m, 48);                       /* follow the owner (offset kept: m[12..14] below) */
+            float o[3];
+            rot(m, d->off, o);
+            e->m[12] = m[12] + o[0]; e->m[13] = m[13] + o[1]; e->m[14] = m[14] + o[2];
+        } else {
+            new_emitter(r, key, m, d->off);
+        }
+    }
+}
+
+void fx_update(void)
+{
+    for (int i = 0; i < MAX_EMIT; i++) {
+        Emitter *e = &em[i];
+        if (!e->live)
+            continue;
+        const PtRes *r = e->r;
+        if (e->key) {
+            if (!e->kept)
+                e->stop = 1;
+            e->kept = 0;
+        }
+        if (e->wait < r->start_frame) {
+            e->wait++;
+            continue;
+        }
+        /* JPABaseEmitter::processTermination, JPADynamicsBlock::create */
+        if (r->max_frame < 0 || (r->max_frame > 0 && e->tick >= r->max_frame))
+            e->stop = 1;
+        if (!e->stop && e->tick % (r->rate_step + 1) == 0) {
+            float c = r->rate * (1.0f + r->rate_rndm * zp());
+            e->acc += c;
+            int n = (int)e->acc;
+            e->acc -= n;
+            if (e->first && c > 0.0f && c < 1.0f)
+                n = 1;
+            while (n-- > 0)
+                create(i);
+            e->first = 0;
+        }
+        e->tick++;
+    }
+    for (int i = 0; i < nalive;) {
+        Ptcl *p = &pt[alive[i]];
+        Emitter *e = &em[p->em];
+        const PtRes *r = e->r;
+        if (++p->age >= p->life) {
+            e->nptcl--;
+            freelist[nfree++] = alive[i];
+            alive[i] = alive[--nalive];
+            continue;
+        }
+        if (r->follow)
+            emitter_pos(e, p->off);
+        float g[3], m1[16];
+        memcpy(m1, e->m, sizeof m1);
+        for (int k = 0; k < 12; k++)
+            m1[k] /= e->s;
+        rot(m1, r->grav, g);
+        for (int k = 0; k < 3; k++) {
+            p->v0[k] += g[k];
+            p->v1[k] *= r->air;
+            p->loc[k] += p->moment * (p->v1[k] + p->v0[k]);
+        }
+        i++;
+    }
+    for (int i = 0; i < MAX_EMIT; i++)
+        if (em[i].live && em[i].stop && !em[i].nptcl)
+            em[i].live = 0;
+}
+
+/* BSP1 colour keys at frame f (JPACalcClrIdxNormal: clamped to the last frame), linear between keys */
+static void key_colour(const PtRes *r, int f, u8 out[4])
+{
+    if (f > r->clr_max) f = r->clr_max;
+    int k = 0;
+    while (k + 1 < r->nkeys && r->key_frame[k + 1] <= f)
+        k++;
+    if (k + 1 >= r->nkeys || r->key_frame[k + 1] == r->key_frame[k]) {
+        memcpy(out, r->key_rgba[k], 4);
+        return;
+    }
+    float t = (float)(f - r->key_frame[k]) / (r->key_frame[k + 1] - r->key_frame[k]);
+    for (int c = 0; c < 4; c++)
+        out[c] = (u8)(r->key_rgba[k][c] + t * (r->key_rgba[k + 1][c] - r->key_rgba[k][c]));
+}
+
+void fx_draw(void)
+{
+    int n = 0;
+    for (int i = 0; i < nalive; i++) {
+        const Ptcl *p = &pt[alive[i]];
+        const Emitter *e = &em[p->em];
+        const PtRes *r = e->r;
+        if (r->tex == 0xFFFF)
+            continue;
+        float t = (float)p->age / p->life, sc = p->scale, a = 1.0f;
+        if (r->esp & 1) { /* JPACalcScaleX */
+            if (t < r->sc_in_t)
+                sc *= (1.0f - r->sc_in_x) / r->sc_in_t * t + r->sc_in_x;
+            else if (t > r->sc_out_t && r->sc_out_t != 1.0f)
+                sc *= (r->sc_out_x - 1.0f) / (1.0f - r->sc_out_t) * (t - r->sc_out_t) + 1.0f;
+        }
+        if (r->esp & 2) { /* JPACalcAlphaAnm */
+            if (t < r->al_in_t)
+                a = r->al_in + (r->al_base - r->al_in) / r->al_in_t * t;
+            else if (t > r->al_out_t && r->al_out_t != 1.0f)
+                a = r->al_base + (r->al_out - r->al_base) / (1.0f - r->al_out_t) * (t - r->al_out_t);
+            else
+                a = r->al_base;
+        }
+        u8 c[4];
+        if (r->nkeys)
+            key_colour(r, p->age, c);
+        else
+            memcpy(c, r->prm, 4);
+        float al = c[3] * a * (128.0f / 255.0f);
+        if (al < 1.0f || sc <= 0.0f)
+            continue;
+        Sprite *s = &spr[n++];
+        for (int k = 0; k < 3; k++)
+            s->pos[k] = p->off[k] + p->loc[k] * e->s;
+        s->half = 25.0f * r->size[0] * sc * e->s;
+        s->rgba = (c[0] * 128 / 255) | (c[1] * 128 / 255) << 8 | (c[2] * 128 / 255) << 16 | (u32)(al > 128 ? 128 : al) << 24;
+        s->tex = tex0 + r->tex;
+        s->add = r->add;
+    }
+    render_sprites(spr, n);
+}
+
+u32 fx_count(void) { return nalive; }

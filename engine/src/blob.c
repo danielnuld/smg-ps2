@@ -139,6 +139,11 @@ int blob_add(Scene *s, const u8 *blob)
     }
     if (k && *(const u32 *)k)
         s->kcl_chunk[s->nkcl++] = k;
+    const u8 *pt = blob_chunk(blob, "PTCL", NULL);
+    if (pt) {
+        s->ptcl = pt;
+        s->ptcl_tex0 = tex0;
+    }
     return 0;
 }
 

@@ -53,6 +53,11 @@ Last updated 2026-10-08. Detail and numbers: `docs/phase2-report.md`; tasks: `op
     its mips, level k weighted 2^k, so the mips keep in-between tones: `tex.to_ps2`; confirmed by the user), the GS picks
     them by depth: K per texture from its texel density (`slice.lod_k`) plus `LOD_BIAS` (2 levels: surfaces seen
     edge-on), trilinear; rotating discs in BattleShip shimmer about half as much. 136 / 136 fit the 2416 KB cache;
+  - particle effects (`tools/jpa.py`, `engine/src/fx.c`): a lean JParticle port (emitters, volumes, velocities,
+    gravity fields, scale / alpha curves, colour keys; TEV colour combine and ETX1 second texture baked into 32 px
+    textures, billboards via `render_sprites`) for coin / star piece / chip gets, box / cage breaks, mine explosions,
+    enemy deaths, and the lights of star pieces, power stars, launch stars, ? coins and chips (`FX` list, PTCL in the
+    resident pack); host test `test_fx`;
   - lighting: lit materials (colour channel 0 lighting on: WoodBox, Kuribo...) get smooth per-vertex shading from
     their NRM normals (`shade`, half-Lambert, one fixed light in model space), unlit ones none; planets keep the
     vertex colours Nintendo baked (unlit, CLR0);
@@ -86,7 +91,8 @@ there needs the embedded blob and every pack rebuilt.
 
 ## Next
 
-0. Look: effects (sparkles, stars).
+0. Look: more effects (child particles, rotation, other field / shape types; Mario's own: dust, spin); the
+   look of FlipPanelEx's boxes (colours reported wrong by the user).
 1. More switch sources and users: IronCannonLauncherPoint, StarPieceSpot, Kinopio / Tico; spawned power stars
    (FlipPanelObserver arg7, requestAppearPowerStar); RestartCube (checkpoints).
 2. Lumas / NPCs (static models today).

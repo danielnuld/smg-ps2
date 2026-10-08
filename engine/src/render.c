@@ -822,6 +822,57 @@ void render_text(float x, float y, const char *s)
 
 #include "game.h"
 
+/* Particles (fx.c): camera-facing sprites projected here as the VU1 program would (x = 2048 + f x / z, depth
+ * (zndc + 1) * 0xFFFFFF / 2), sent through PATH2 in the chain after what is drawn so far; depth tested, not written.
+ * Runs of one texture and blend share a state block; 64 sprites per DIRECT. */
+void render_sprites(const Sprite *sp, int n)
+{
+    for (int i = 0; i < n;) {
+        u32 t = sp[i].tex;
+        int add = sp[i].add, j = i;
+        while (j < n && j - i < 64 && sp[j].tex == t && sp[j].add == add)
+            j++;
+        if (packet2_get_qw_count(vif[cur]) + 16 + (j - i) * 5 > PACKET_QW)
+            flush_vif();
+        set_tex(t);
+        const TexEntry *e = tex_scene->tex[t].e;
+        packet2_chain_open_cnt(vif[cur], 0, 0, 0);
+        packet2_vif_flush(vif[cur], 0);
+        packet2_vif_open_direct(vif[cur], 0);
+        qword_t *tag = (qword_t *)vif[cur]->next;
+        packet2_add_2x_s64(vif[cur], 0, GIF_REG_AD);
+        packet2_add_2x_s64(vif[cur], add ? GS_SET_ALPHA(0, 2, 0, 1, 0) : GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA);
+        packet2_add_2x_s64(vif[cur], GS_SET_TEST(1, ATEST_METHOD_GREATER, 0, 0, 0, 0, 1, ZTEST_METHOD_GREATER_EQUAL), GS_REG_TEST);
+        packet2_add_2x_s64(vif[cur], GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 1), GS_REG_ZBUF);
+        packet2_add_2x_s64(vif[cur], GS_SET_PRIM(PRIM_SPRITE, 0, 1, 0, 1, 0, 1, 0, 0), GS_REG_PRIM);
+        u32 regs = 4;
+        for (; i < j; i++) {
+            const Sprite *s = &sp[i];
+            float xv = view[0] * s->pos[0] + view[4] * s->pos[1] + view[8] * s->pos[2] + view[12];
+            float yv = view[1] * s->pos[0] + view[5] * s->pos[1] + view[9] * s->pos[2] + view[13];
+            float zv = view[2] * s->pos[0] + view[6] * s->pos[1] + view[10] * s->pos[2] + view[14];
+            if (zv < NEAR || zv > FAR)
+                continue;
+            float k = 2048.0f / zv, sx = 2048.0f + proj[0] * xv * k, sy = 2048.0f + proj[5] * yv * k;
+            float hx = proj[0] * s->half * k, hy = -proj[5] * s->half * k;
+            if (sx + hx < 2048 - SCREEN_W / 2 || sx - hx > 2048 + SCREEN_W / 2 || sy + hy < 2048 - SCREEN_H / 2 ||
+                sy - hy > 2048 + SCREEN_H / 2)
+                continue;
+            u32 z = (u32)(((proj[10] * zv + proj[14]) / zv + 1.0f) * (float)(0xFFFFFF / 2));
+            packet2_add_2x_s64(vif[cur], GS_SET_RGBAQ(s->rgba & 0xFF, s->rgba >> 8 & 0xFF, s->rgba >> 16 & 0xFF, s->rgba >> 24, 0x3F800000), GS_REG_RGBAQ);
+            packet2_add_2x_s64(vif[cur], GS_SET_UV(0, 0), GS_REG_UV);
+            packet2_add_2x_s64(vif[cur], GS_SET_XYZ((int)((sx - hx) * 16), (int)((sy - hy) * 16), z), GS_REG_XYZ2);
+            packet2_add_2x_s64(vif[cur], GS_SET_UV(e->w << 4, e->h << 4), GS_REG_UV);
+            packet2_add_2x_s64(vif[cur], GS_SET_XYZ((int)((sx + hx) * 16), (int)((sy + hy) * 16), z), GS_REG_XYZ2);
+            regs += 5;
+        }
+        tag->dw[0] = GIF_SET_TAG(regs, 1, 0, 0, GIF_FLG_PACKED, 1);
+        packet2_vif_close_direct_auto(vif[cur]);
+        packet2_chain_close_tag(vif[cur]);
+        cur_tex = -1; /* ALPHA, TEST, ZBUF changed: the next texture packet puts them back */
+    }
+}
+
 u32 render_end(void)
 {
     u32 c0 = cycles();
