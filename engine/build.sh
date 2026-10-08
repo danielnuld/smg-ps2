@@ -8,6 +8,7 @@
 # item: with packs, Mario put on each PowerStar / 1-up / life-up mushroom in turn from frame 120 (-DITEM_TEST)
 # collapse: with packs, Mario dropped onto the first CollapsePlane at frame 120 (-DCOLLAPSE_TEST)
 # box: with packs, Mario spinning on the first breakable box at frame 120 (-DBOX_TEST)
+# spin: with packs, Mario caught by the first SpinDriver at frame 120 (-DSPIN_TEST)
 # zone: with packs, Mario caught by the first launch star at frame 120 (-DZONE_TEST)
 # slope: Mario pushed into a steep slope (-DSLOPE_TEST), slice-slope.elf
 # bench: scripted input path + frame-time summary (-DBENCH), written as slice-bench.elf
@@ -20,7 +21,7 @@ rm -rf $W && mkdir -p $W/data
 cp -r /mnt/d/smg-ps2/engine/src /mnt/d/smg-ps2/engine/Makefile $W/
 cp ${2:-/mnt/d/smg-ps2/out/slice/hd2.bin} $W/data/slice.bin
 if [ -n "$3" ]; then echo "#define PACKS \"$3\"" > $W/src/packs_cfg.h; else : > $W/src/packs_cfg.h; fi
-cd $W && B=${1#plain}; F=; [ "$B" = bench ] && F=-DBENCH; [ "$B" = slope ] && F=-DSLOPE_TEST; [ "$B" = zone ] && F=-DZONE_TEST; [ "$B" = box ] && F=-DBOX_TEST; [ "$B" = collapse ] && F=-DCOLLAPSE_TEST; [ "$B" = hazard ] && F=-DHAZARD_TEST; [ "$B" = item ] && F=-DITEM_TEST; make -s EXTRA=$F 2>&1 | grep -v "^$" || true
+cd $W && B=${1#plain}; F=; [ "$B" = bench ] && F=-DBENCH; [ "$B" = slope ] && F=-DSLOPE_TEST; [ "$B" = zone ] && F=-DZONE_TEST; [ "$B" = box ] && F=-DBOX_TEST; [ "$B" = collapse ] && F=-DCOLLAPSE_TEST; [ "$B" = hazard ] && F=-DHAZARD_TEST; [ "$B" = item ] && F=-DITEM_TEST; [ "$B" = spin ] && F=-DSPIN_TEST; make -s EXTRA=$F 2>&1 | grep -v "^$" || true
 test -f slice.elf
 cp slice.elf /mnt/d/smg-ps2/engine/slice${B:+-$B}.elf
 [ -n "$3" ] && cp slice.elf /mnt/d/smg-ps2/out/slice-packs${B:+-$B}.elf

@@ -15,6 +15,10 @@ int game_zone_next(const unsigned char *full);
 int game_teleport_low(const unsigned char *full);
 /* Test builds: Mario caught by launch star i as if he spun there. Returns i, or -1 if there is none. */
 int game_test_launch(int i);
+/* Test builds: Mario caught by the first SpinDriver (small 1) or SuperSpinDriver (0). Returns its launch index or -1;
+ * game_launch_state() gives the launch holding Mario (-1 none). */
+int game_test_spindriver(int small);
+int game_launch_state(void);
 /* Test builds: Mario just above the first breakable box, spinning. Returns its OBJS row or -1. */
 int game_test_box(void);
 /* Test builds: Mario dropped onto the first CollapsePlane. Returns its OBJS row or -1; game_test_collapse_step(row)

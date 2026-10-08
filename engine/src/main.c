@@ -298,9 +298,18 @@ int main(void)
         if (frame == 240)
             printf("box test: coins %d\n", game_coins());
 #endif
+#ifdef SPIN_TEST
+        if (frame == 120)
+            printf("spin test: spin driver %d\n", game_test_spindriver(1));
+        if (frame > 120 && frame <= 600 && frame % 15 == 0) {
+            char d[128];
+            game_debug(d, sizeof d);
+            printf("spin test f %u: launch %d %s\n", frame, game_launch_state(), d);
+        }
+#endif
 #ifdef ZONE_TEST
         if (frame == 120)
-            printf("zone test: launch star %d\n", game_test_launch(0));
+            printf("zone test: launch star %d\n", game_test_spindriver(0));
         { /* per 60 frames: frames longer than 20 ms (missed vsync) and the worst logic / draw / GS of the window */
             static u32 prev, slow, wl, wd, wg;
             if (prev && t0 - prev > (u32)(20000 * EE_MHZ)) slow++;

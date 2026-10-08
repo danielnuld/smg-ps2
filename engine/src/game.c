@@ -40,18 +40,21 @@ typedef struct {
  * default 300). Path: rails of at most 2 points are a parabola from the star to the rail's end whose top is the
  * rail's start (initFromMaxHeight); longer rails are followed by length with the star's offset eased out over the
  * first half. ponytail: rails are straight segments between control points (the game's are Bezier), no camera of
- * its own, no pull-in (arg2), no operate ring */
+ * its own, no pull-in (arg2), no operate ring. SuperSpinDriverPink / Green are the same class (Green needs no star).
+ * SpinDriver (SpinDriver.cpp): bind radius 300, ShootStart 20 frames; on a rail the same path for arg0 frames (default
+ * 300), else Mario is thrown along its Y axis at arg0 (default 40) */
 typedef struct {
     V3 pos;
     int flight, cool;
-    const float *pts;
+    int start;        /* ShootStart frames: 45 SuperSpinDriver, 20 SpinDriver */
+    const float *pts; /* NULL: no rail, Mario leaves with `kick` */
     u32 npts;
     int parab;
     V3 py, pz, off;   /* parabola axes / rail start offset */
     float pa, pv, plen, len;
+    V3 kick;
 } Launch;
 #define LAUNCH_BIND 300.0f
-#define LAUNCH_START 45
 
 static void init_launch(Launch *L, const Row *r, const float *pts, u32 np);
 static V3 launch_pos(const Launch *L, float t);
@@ -489,14 +492,30 @@ void game_init(const Scene *s, const unsigned char *blob)
     npurple = ip;
     ncoins = ic; /* box coins and star pieces are appended as boxes break */
     npieces = is;
-    int t_launch = scene_type(s, "SuperSpinDriver");
-    launches = mem_alloc(MEM_OBJECTS, (count_type("SuperSpinDriver", 0) + 1) * sizeof(Launch));
+    int t_super[3] = {scene_type(s, "SuperSpinDriver"), scene_type(s, "SuperSpinDriverPink"),
+                      scene_type(s, "SuperSpinDriverGreen")}, t_spin = scene_type(s, "SpinDriver");
+    launches = mem_alloc(MEM_OBJECTS, (count_type("SuperSpinDriver", 0) + count_type("SuperSpinDriverPink", 0) +
+                                       count_type("SuperSpinDriverGreen", 0) + count_type("SpinDriver", 0) + 1) * sizeof(Launch));
     for (u32 i = 0; i < s->nobjs; i++) {
         const Row *r = &s->objs[i];
-        u32 np; int closed;
-        const float *pts = r->type == t_launch ? find_rail(blob, r->zone, r->path, &np, &closed) : NULL;
+        int super = r->type == t_super[0] || r->type == t_super[1] || r->type == t_super[2];
+        if (!super && r->type != t_spin) continue;
+        u32 np = 0; int closed;
+        const float *pts = r->path >= 0 ? find_rail(blob, r->zone, r->path, &np, &closed) : NULL;
+        Launch *L = &launches[nlaunches];
         if (pts && np >= 2)
-            init_launch(&launches[nlaunches++], r, pts, np);
+            init_launch(L, r, pts, np);
+        else if (super)
+            continue;
+        else { /* SpinDriver without a rail: thrown along its Y axis at arg0 */
+            V3 x, z;
+            row_axes(r, &x, &z);
+            memset(L, 0, sizeof *L);
+            L->pos = row_pos(r);
+            L->kick = vmul(vcross(z, x), r->arg[0] > 0 ? (float)r->arg[0] : 40.0f);
+        }
+        L->start = super ? 45 : 20;
+        nlaunches++;
     }
     int t_erail = scene_type(s, "ElectricRail");
     for (int pass = 0; pass < 2; pass++) { /* count the segments, then fill them */
@@ -758,9 +777,18 @@ int game_test_launch(int i)
     if (i >= nlaunches) return -1;
     mario->pos = launches[i].pos;
     mario->launch = i; mario->launch_t = 0; mario->launch_from = mario->pos;
-    if (mario_anim) mario_play("superspindriverstart", 1.0f, 0);
+    if (mario_anim) mario_play(launches[i].start < 45 ? "spin" : "superspindriverstart", 1.0f, 0);
     return i;
 }
+
+int game_test_spindriver(int small)
+{
+    for (int i = 0; i < nlaunches; i++)
+        if ((launches[i].start < 45) == small) return game_test_launch(i);
+    return -1;
+}
+
+int game_launch_state(void) { return mario->launch; }
 
 int game_teleport_low(const unsigned char *full)
 {
@@ -870,15 +898,23 @@ static int update_launch(Player *m)
 {
     Launch *L = &launches[m->launch];
     int t = ++m->launch_t;
-    if (t <= LAUNCH_START) { /* exeShootStart: to the centre over 15 frames, then the wind-up */
+    if (t <= L->start) { /* exeShootStart: to the centre over 15 frames, then the wind-up */
         float k = t < 15 ? t / 15.0f : 1.0f;
         m->pos = vadd(m->launch_from, vmul(vsub(L->pos, m->launch_from), k));
         return 1;
     }
-    int s = t - LAUNCH_START;
+    int small = L->start < 45, s = t - L->start;
+    if (!L->pts) { /* SpinDriver without a rail: endBindAndSpinDriverJump with its kick */
+        L->cool = 60;
+        m->launch = -1;
+        m->vup = vdot(L->kick, m->up); m->hvel = vtangent(L->kick, m->up); m->grounded = 0;
+        m->jump_kind = 0; m->air_timer = 0; m->spin_used = 0;
+        if (mario_anim) mario_play("spaceflyshortstart", 1.0f, 0);
+        return 0;
+    }
     float u = (float)s / L->flight;
-    if (s == 1 && mario_anim) mario_play("spaceflystart", 1.0f, 0);
-    if (s == L->flight / 5 && mario_anim) mario_play("spaceflyloop", 1.0f, 1);
+    if (s == 1 && mario_anim) mario_play(small ? "spaceflyshortstart" : "spaceflystart", 1.0f, 0);
+    if (s == L->flight / 5 && mario_anim) mario_play(small ? "spaceflyshort" : "spaceflyloop", 1.0f, 1);
     if (s == L->flight - 70 && mario_anim) mario_play("spaceflyend", 1.0f, 0);
     V3 p = launch_pos(L, u > 1 ? 1 : u), q = launch_pos(L, u + 0.01f > 1 ? 1 : u + 0.01f);
     V3 dir = vsub(q, p);
@@ -909,7 +945,7 @@ static void update_mario(void)
         for (int i = 0; i < nlaunches; i++)
             if (!launches[i].cool && vlen(vsub(vadd(m->pos, vmul(m->up, BODY_RADIUS)), launches[i].pos)) < LAUNCH_BIND) {
                 m->launch = i; m->launch_t = 0; m->launch_from = m->pos;
-                if (mario_anim) mario_play("superspindriverstart", 1.0f, 0);
+                if (mario_anim) mario_play(launches[i].start < 45 ? "spin" : "superspindriverstart", 1.0f, 0);
 #ifdef BENCH
                 printf("launch %d\n", i);
 #endif
