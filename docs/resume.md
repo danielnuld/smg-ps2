@@ -75,8 +75,7 @@ there needs the embedded blob and every pack rebuilt.
 
 ## Next
 
-0. Look: baked lighting per vertex, effects (sparkles, stars), sound effects (AFC -> ADPCM); music on the disc
-   (streams in the ISO), ChangeBgmCube / RestartCube BGM changes.
+0. Look: baked lighting per vertex, effects (sparkles, stars), sound effects (AFC -> ADPCM).
 1. More switch sources and users: IronCannonLauncherPoint, StarPieceSpot, Kinopio / Tico; spawned power stars
    (FlipPanelObserver arg7, requestAppearPowerStar); RestartCube (checkpoints).
 2. Lumas / NPCs (static models today).
@@ -87,3 +86,4 @@ there needs the embedded blob and every pack rebuilt.
 6. Task 5.3 gate: coverage run done once (136 / 136 play, `out/coverage.md`, `tools/coverage_report.py`), class
    weights (`out/class_coverage.md`); left: the final run on the current build, worst frame on the heaviest scenario,
    videos. Blocking zone loads (a zone wanted before its prefetch ends) are the worst frames (HoneyBee ~0.4 s).
+7. Last (the user's call): music on the disc (streams in the ISO), ChangeBgmCube / RestartCube BGM changes.
