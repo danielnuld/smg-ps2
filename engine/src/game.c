@@ -3,6 +3,7 @@
 #include "camera.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "gravity.h"
@@ -17,7 +18,9 @@
 
 typedef struct { V3 pos; short alive, row; } Pickup;             /* 16 B: Coin, PurpleCoin, StarPiece; row: the
                                                                   * placement it came from, -1 a drop */
-typedef struct { V3 pos, vel, up; int state, timer; } Kuribo;     /* 44 B -> 48 with alignment */
+enum { PICK_GONE, PICK_ON, PICK_POP_NEW, PICK_POP_BLINK }; /* alive: popping coins cannot be taken while new and
+                                                             * are not drawn on their blink frames */
+typedef struct { V3 pos, vel, up; int state, timer, row; } Kuribo; /* 48 B; row: its placement (switches) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
 
 typedef struct {
@@ -123,9 +126,12 @@ typedef struct {
     int breaks;      /* breakable (breakable()): a spin breaks it, then it drops its coins / star pieces */
     int collapse;    /* CollapsePlane: frames from standing on it to vanishing (arg0, default 140), 0 if not one */
     int hazard;      /* 1 SpaceMine (explodes on touch), 2 NeedlePlant (pricks on touch), 0 none */
-    int item;        /* touch to take: ITEM_STAR, ITEM_ONEUP, ITEM_LIFEUP; 0 none */
+    int item;        /* touch to take: ITEM_STAR, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN; 0 none */
+    int firebar;     /* FireBar core: its balls turn around it and burn Mario */
+    int invisible;   /* InvisiblePolygonObj (InvisibleWall*): collision only, never drawn */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN };
+static V3 firebar_ball(const Inst *in, int j, int k);
 #define MAX_ZONES 64
 
 /* Stage switches (Petari StageSwitch.cpp): ids below 1000 belong to the row's zone (128 each), the rest are the
@@ -202,12 +208,20 @@ static void row_kill(int i)
     sw_set(&sc->objs[i], SW_DEAD, 1);
 }
 
-/* Coins (Coin.cpp, CoinGroup.cpp) also go when their SW_B turns on */
-static int pickup_shown(const Pickup *p)
+/* Coins (Coin.cpp, CoinGroup.cpp) also go when their SW_B turns on. take: can Mario take it now (else: is it drawn) */
+static int pickup_on(const Pickup *p, int take)
 {
-    return p->alive && (p->row < 0 || (row_shown(p->row) && !sw_on(&sc->objs[p->row], SW_B)));
+    if (p->alive == PICK_GONE || p->alive == (take ? PICK_POP_NEW : PICK_POP_BLINK)) return 0;
+    return p->row < 0 || (row_shown(p->row) && !sw_on(&sc->objs[p->row], SW_B));
 }
+#define pickup_shown(p) pickup_on(p, 0)
 static int box_pieces;          /* star pieces WoodBoxes hold (arg2) */
+/* Coins popping out of what broke (Petari CoinHolder::appearCoinPop, Coin::exeMove): 25 against gravity plus up to 4
+ * at random, gravity 1, 0.75 rebound off the ground (impacts of 2 and more), 0.9 / 0.995 damping on the ground / in
+ * the air, not to be taken for 30 frames, blinking at the end, gone after 600 */
+typedef struct { int coin, t; V3 vel; } Pop;
+static Pop *pops;
+static int npops, box_coins;
 static Inst *insts;
 static int ninsts;
 static const Gravity *grav;
@@ -233,17 +247,20 @@ static Anim *mario_anim;
 typedef struct { V3 a, b; int h; } Spark;
 static Spark *erails;
 static int nerails;
-static const Model *m_erail;
+static const Model *m_erail, *m_fireball;
+static unsigned game_frame;      /* frames since the scene started (FireBar angles) */
 /* EarthenPipe (Petari EarthenPipe.cpp): pipes sharing arg3 are a pair; the top is 100 * scale.y along the pipe's up
  * (-gravity, or its Y axis when arg6); a binder of radius 70 at 50 below the top takes Mario if he is within 50 of
  * the axis or above the top, and the partner throws him out with Y * arg1 + Z * arg0 (default 20, 5). A pipe works
  * again once Mario stood on ground 30 frames after the warp. ponytail: instant warp (no in / out clips, no hidden
  * pipes rising, no camera), no water pipes' stream */
-typedef struct { V3 top, up, front; float hf, vf; int id, partner, zone; } Pipe;
+typedef struct { V3 top, up, front; float hf, vf; int id, partner, zone, row, mode; } Pipe; /* mode arg2: 1 / 2
+                    * hidden until the partner is used (row_step[row] 1 while out), 1 hides again after the exit */
+static int pipe_out = -1; /* the mode 1 pipe Mario came out of, hidden once the pipes re-arm */
 static Pipe *pipes;
 static int npipes, pipe_wait, pipe_zone = -1;
 /* Switch logic rows (no model): TimerSwitch, SwitchSynchronizerReverse, GroupSwitchWatcher */
-enum { LOGIC_TIMER = 1, LOGIC_REVERSE, LOGIC_GROUP };
+enum { LOGIC_TIMER = 1, LOGIC_REVERSE, LOGIC_GROUP, LOGIC_BLOCKER };
 typedef struct { int row, kind; } Logic;
 static Logic *logic;
 static int nlogic; /* pipe_zone: the exit pipe's zone, wanted in full */
@@ -527,10 +544,12 @@ void game_init(const Scene *s, const unsigned char *blob)
         int c, p;
         if (breakable(s->types + 32 * s->objs[i].type, &s->objs[i], &c, &p)) {
             ncoins += c;
+            box_coins += c;
             box_pieces += p;
         }
     }
     row_dead = mem_alloc(MEM_OBJECTS, s->nobjs);
+    pops = mem_alloc(MEM_OBJECTS, (box_coins + 1) * sizeof(Pop));
     row_step = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(unsigned short));
     npurple = count_type("PurpleCoin", 0) + count_type("CirclePurpleCoinGroup", 1) + count_type("PurpleRailCoin", 1);
     npieces = count_type("StarPiece", 0) + box_pieces;
@@ -561,6 +580,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         else if (r->type == t_spg) is += star_group(pieces + is, r, blob);
         else if (r->type == t_kuribo) {
             kuribo[ik].pos = row_pos(r);
+            kuribo[ik].row = i;
             kuribo[ik].up = up_at(kuribo[ik].pos, v3(0, 1, 0));
             kuribo[ik++].state = KURIBO_WALK;
         } else if (r->type == t_circle || r->type == t_rail)
@@ -634,18 +654,22 @@ void game_init(const Scene *s, const unsigned char *blob)
         p->vf = r->arg[1] >= 0 ? (float)r->arg[1] : 20.0f;
         p->id = r->arg[3];
         p->zone = r->zone;
+        p->row = i;
+        p->mode = r->arg[2];
         p->partner = -1;
         for (int k = 0; k < npipes; k++) /* EarthenPipeMediator::entry: the first pipe with the same id */
             if (pipes[k].id == p->id && pipes[k].partner < 0) { pipes[k].partner = npipes; p->partner = k; break; }
         npipes++;
     }
     logic = mem_alloc(MEM_OBJECTS, (count_type("TimerSwitch", 0) + count_type("SwitchSynchronizerReverse", 0) +
-                                    count_type("GroupSwitchWatcher", 0) + 1) * sizeof(Logic));
+                                    count_type("GroupSwitchWatcher", 0) + count_type("CollisionBlocker", 0) + 1) *
+                                       sizeof(Logic));
     int t_timer = scene_type(s, "TimerSwitch"), t_rev = scene_type(s, "SwitchSynchronizerReverse"),
-        t_group = scene_type(s, "GroupSwitchWatcher");
+        t_group = scene_type(s, "GroupSwitchWatcher"), t_block = scene_type(s, "CollisionBlocker");
     for (u32 i = 0; i < s->nobjs; i++) {
         int t = s->objs[i].type;
-        int k = t == t_timer ? LOGIC_TIMER : t == t_rev ? LOGIC_REVERSE : t == t_group ? LOGIC_GROUP : 0;
+        int k = t == t_timer ? LOGIC_TIMER : t == t_rev ? LOGIC_REVERSE : t == t_group ? LOGIC_GROUP :
+                t == t_block ? LOGIC_BLOCKER : 0;
         if (k) { logic[nlogic].row = i; logic[nlogic++].kind = k; }
     }
     const Row *st = scene_start(s);
@@ -702,6 +726,7 @@ void game_rebind(void)
     int t_rail = scene_type(s, "PurpleRailCoin"), t_piece = scene_type(s, "StarPiece"), t_kuribo = scene_type(s, "Kuribo");
     int t_spg = scene_type(s, "StarPieceGroup"), t_erail = scene_type(s, "ElectricRail");
     m_erail = scene_model(s, "ElectricRail");
+    m_fireball = scene_model(s, "FireBarBall");
     ninsts = 0;
     for (u32 i = 0; i < s->nobjs; i++) { /* every placed model without behaviour: planets and the rest */
         const Row *r = &s->objs[i];
@@ -711,6 +736,8 @@ void game_rebind(void)
         const char *name = s->types + 32 * r->type;
         const Model *md = scene_model(s, name);
         if (!md || (row_dead && !row_shown(i))) continue;
+        if (row_step && (r->arg[2] == 1 || r->arg[2] == 2) && !row_step[i] && strcmp(name, "EarthenPipe") == 0)
+            continue; /* a hidden pipe (EarthenPipeNrvHide) */
         Inst *in = &insts[ninsts++];
         in->md = md;
         in->row = i;
@@ -721,6 +748,8 @@ void game_rebind(void)
                      strcmp(name, "BlackHole") == 0 ? 3 : strcmp(name, "BlackHoleCube") == 0 ? 4 : 0;
         in->item = strcmp(name, "PowerStar") == 0 ? ITEM_STAR : strcmp(name, "BenefitItemOneUp") == 0 ? ITEM_ONEUP :
                    strcmp(name, "BenefitItemLifeUp") == 0 ? ITEM_LIFEUP : strcmp(name, "QuestionCoin") == 0 ? ITEM_QCOIN : 0;
+        in->firebar = strcmp(name, "FireBar") == 0;
+        in->invisible = strncmp(name, "InvisibleWall", 13) == 0;
         in->kcl = scene_kcl(s, name);
         in->zone = r->zone;
         mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
@@ -862,6 +891,18 @@ int game_test_pipe(void)
             mario->pos = vadd(pipes[i].top, vmul(pipes[i].up, 30.0f));
             mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
             return i;
+        }
+    return -1;
+}
+
+int game_test_firebar(void)
+{
+    for (int i = 0; i < ninsts; i++)
+        if (insts[i].firebar) {
+            V3 p = firebar_ball(&insts[i], 0, 2);
+            mario->pos = vadd(p, vmul(up_at(p, mario->up), -HIT_BODY_H));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return insts[i].row;
         }
     return -1;
 }
@@ -1303,7 +1344,7 @@ static void update_kuribo(void)
 {
     for (int i = 0; i < nkuribo; i++) {
         Kuribo *k = &kuribo[i];
-        if (k->state == KURIBO_DEAD) continue;
+        if (k->state == KURIBO_DEAD || !row_shown(k->row)) continue;
         k->up = up_at(k->pos, k->up);
         V3 to = vsub(mario->pos, k->pos);
         float d = vlen(to);
@@ -1320,8 +1361,9 @@ static void update_kuribo(void)
         k->pos = vsub(center, vmul(k->up, 45.0f));
         /* stomp: Mario falling onto its top; spin: stun; side touch: Mario knocked back */
         float above = vdot(to, k->up);
-        if (d < 130.0f && mario->vup < 0 && above > 40.0f) { k->state = KURIBO_DEAD; mario->vup = 15.0f; mario->grounded = 0; }
-        else if (d < 170.0f && mario->spin_timer > 0 && k->state == KURIBO_WALK) { k->state = KURIBO_STUN; k->timer = 180; }
+        if (d < 130.0f && mario->vup < 0 && above > 40.0f) {
+            k->state = KURIBO_DEAD; row_kill(k->row); mario->vup = 15.0f; mario->grounded = 0;
+        } else if (d < 170.0f && mario->spin_timer > 0 && k->state == KURIBO_WALK) { k->state = KURIBO_STUN; k->timer = 180; }
         else if (d < 100.0f && k->state == KURIBO_WALK)
             hurt_mario(k->pos, 15.0f);
     }
@@ -1338,12 +1380,15 @@ static void break_inst(const Inst *in, int drops)
     breakable(sc->types + 32 * r->type, r, &n, &sp);
     if (!drops) n = sp = 0;
     V3 up = up_at(p, mario->up);
-    for (int k = 0; k < n; k++) { /* a small ring above the box */
-        float a = 6.2831853f * k / (n > 0 ? n : 1);
-        V3 side = vnorm(vtangent(v3(cosf(a), 0.3f, sinf(a)), up));
-        coins[ncoins].pos = vadd(p, vadd(vmul(up, 80.0f), vmul(side, n > 1 ? 70.0f : 0.0f)));
+    for (int k = 0; k < n; k++) { /* appearCoinPop: up 25, randomized by 4 when several */
+        V3 rnd = n > 1 ? v3((rand() % 801 - 400) / 100.0f, (rand() % 801 - 400) / 100.0f, (rand() % 801 - 400) / 100.0f)
+                       : v3(0, 0, 0);
+        pops[npops].coin = ncoins;
+        pops[npops].t = 0;
+        pops[npops++].vel = vadd(vmul(up, 25.0f), rnd);
+        coins[ncoins].pos = vadd(p, vmul(up, 50.0f));
         coins[ncoins].row = -1;
-        coins[ncoins++].alive = 1;
+        coins[ncoins++].alive = PICK_POP_NEW;
     }
     for (int k = 0; k < sp; k++) { /* WoodBox arg2: star pieces */
         float a = 6.2831853f * k / sp + 0.5f;
@@ -1427,7 +1472,7 @@ static void update_hazards(void)
     }
 }
 
-/* TimerSwitch.cpp: SW_B on starts arg0 frames, then SW_A goes on and the timer is gone. SwitchSynchronizer.cpp
+/* CollisionBlocker (above). TimerSwitch.cpp: SW_B on starts arg0 frames, then SW_A goes on and the timer is gone. SwitchSynchronizer.cpp
  * (Reverse): SW_A follows the opposite of SW_B. GroupSwitchWatcher.cpp: SW_A on once all (arg1 -1) or any one (arg1
  * 0) of the arg0 switches from SW_B on are on; action arg2 -1 does it once, else SW_A follows the group. Then a
  * changed switch rebinds the instances its appear switch shows or hides. */
@@ -1437,7 +1482,13 @@ static void update_switches(void)
         int row = logic[i].row;
         const Row *r = &sc->objs[row];
         if (row_dead[row]) continue;
-        if (logic[i].kind == LOGIC_TIMER) { /* row_step: frames left + 1, 0 not started */
+        if (logic[i].kind == LOGIC_BLOCKER) { /* CollisionBlocker.cpp: a 50 * scale sphere pushing Mario out until SW_B */
+            if (sw_on(r, SW_B)) { row_dead[row] = 1; continue; }
+            if (!row_shown(row)) continue;
+            V3 c = vadd(mario->pos, vmul(mario->up, BODY_RADIUS)), d = vsub(c, row_pos(r));
+            float reach = 50.0f * r->scale[0] + BODY_RADIUS, l = vlen(d);
+            if (l < reach && l > 1e-3f) mario->pos = vadd(mario->pos, vmul(d, (reach - l) / l));
+        } else if (logic[i].kind == LOGIC_TIMER) { /* row_step: frames left + 1, 0 not started */
             if (!row_step[row] && r->arg[0] > 0 && sw_on(r, SW_B)) row_step[row] = r->arg[0] + 1;
             if (row_step[row] > 1 && --row_step[row] == 1) { sw_set(r, SW_A, 1); row_dead[row] = 1; }
         } else if (logic[i].kind == LOGIC_REVERSE) {
@@ -1467,7 +1518,10 @@ static void update_switches(void)
 static void update_pipes(void)
 {
     if (pipe_wait) { /* exeInvalid: re-armed once Mario is on ground after 30 frames */
-        if (++pipe_wait > 30 && mario->grounded) pipe_wait = 0;
+        if (++pipe_wait > 30 && mario->grounded) {
+            pipe_wait = 0;
+            if (pipe_out >= 0) { row_step[pipes[pipe_out].row] = 0; pipe_out = -1; game_rebind(); } /* tryHideDown */
+        }
         return;
     }
     if (mario->launch >= 0) return;
@@ -1487,6 +1541,11 @@ static void update_pipes(void)
         if (mario_anim) mario_play("earthenpipejump", 1.0f, 0);
         pipe_wait = 1;
         pipe_zone = o->zone;
+        if (o->mode == 1 || o->mode == 2) { /* tryShowUp: the hidden partner rises */
+            row_step[o->row] = 1;
+            pipe_out = o->mode == 1 ? p->partner : -1;
+            game_rebind();
+        }
         printf("pipe %d -> %d\n", i, p->partner);
         return;
     }
@@ -1508,6 +1567,39 @@ static void update_electric(void)
                 hurt_mario(q, 15.0f);
                 return;
             }
+    }
+}
+
+/* FireBar (Petari FireBar.cpp): arg7 sticks (default 1) of arg0 balls (default 5) 100 apart, the first arg5 (default
+ * 140) out from the core and 50 up its Y axis; they turn 0.1 * arg1 degrees a frame about that axis from its Z
+ * axis. A sensor of radius 30 at the point of a stick nearest Mario burns him. Ball k of stick j: */
+static V3 firebar_ball(const Inst *in, int j, int k)
+{
+    const Row *r = &sc->objs[in->row];
+    V3 x, z, c = v3(in->m[12], in->m[13], in->m[14]);
+    row_axes(r, &x, &z);
+    V3 y = vcross(z, x);
+    int sticks = r->arg[7] > 0 ? r->arg[7] : 1;
+    float a = (0.1f * r->arg[1] * game_frame + 360.0f * (j + 1) / sticks) * 0.0174533f;
+    V3 dir = vadd(vmul(z, cosf(a)), vmul(x, sinf(a)));
+    float d = (r->arg[5] >= 0 ? r->arg[5] : 140.0f) + 100.0f * k;
+    return vadd(c, vadd(vmul(dir, d), vmul(y, 50.0f)));
+}
+
+static void update_firebars(void)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->firebar) continue;
+        const Row *r = &sc->objs[in->row];
+        int sticks = r->arg[7] > 0 ? r->arg[7] : 1, balls = r->arg[0] > 0 ? r->arg[0] : 5;
+        for (int j = 0; j < sticks; j++) {
+            V3 a = firebar_ball(in, j, 0), ab = vsub(firebar_ball(in, j, balls - 1), a);
+            float t = fminf(fmaxf(vdot(vsub(c, a), ab) / fmaxf(vdot(ab, ab), 1e-3f), 0.0f), 1.0f);
+            V3 q = vadd(a, vmul(ab, t));
+            if (vlen(vsub(c, q)) < 30.0f + HIT_BODY_R) { hurt_mario(q, 15.0f); return; }
+        }
     }
 }
 
@@ -1534,16 +1626,39 @@ static void update_items(void)
     }
 }
 
+static void update_pops(void)
+{
+    for (int i = 0; i < npops; i++) {
+        Pop *q = &pops[i];
+        Pickup *c = &coins[q->coin];
+        if (c->alive == PICK_GONE || q->t >= 600) { c->alive = PICK_GONE; continue; }
+        q->t++;
+        V3 up = up_at(c->pos, mario->up), gn = up, wn;
+        int wall;
+        q->vel = vsub(q->vel, up);
+        V3 center = vadd(c->pos, q->vel);
+        int ground = collide_n(&center, up, 30.0f, &gn, &wn, &wall);
+        c->pos = center;
+        if (ground) { /* calcRebouond */
+            float into = -vdot(q->vel, gn);
+            if (into > 0) q->vel = vadd(q->vel, vmul(gn, into * (into >= 2.0f ? 1.75f : 1.0f)));
+        }
+        q->vel = vmul(q->vel, ground ? 0.9f : 0.995f);
+        c->alive = q->t < 30 ? PICK_POP_NEW : q->t > 480 && (q->t & 4) ? PICK_POP_BLINK : PICK_ON;
+    }
+}
+
 static void collect(Pickup *p, int n, float reach, int *counter)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, BODY_RADIUS));
     for (int i = 0; i < n; i++)
-        if (pickup_shown(&p[i]) && vlen(vsub(p[i].pos, c)) < reach) { p[i].alive = 0; (*counter)++; }
+        if (pickup_on(&p[i], 1) && vlen(vsub(p[i].pos, c)) < reach) { p[i].alive = PICK_GONE; (*counter)++; }
 }
 
 void game_update(void)
 {
     hip_hit = 0;
+    game_frame++;
     update_mario();
     update_kuribo();
     break_boxes();
@@ -1551,8 +1666,10 @@ void game_update(void)
     update_hazards();
     update_items();
     update_electric();
+    update_firebars();
     update_pipes();
     update_switches();
+    update_pops();
     int had = got_coins;
     collect(coins, ncoins, 100.0f, &got_coins);
     life += got_coins - had;
@@ -1607,6 +1724,7 @@ void game_draw(void)
     render_begin(eye, target, up);
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
+        if (in->invisible) continue;
         if (in->collapse && row_step[in->row]) { /* calcJointPlane: x / z scale 1 - 0.7 step / time */
             float k = 1.0f - 0.7f * row_step[in->row] / in->collapse, cm[16];
             memcpy(cm, in->m, 64);
@@ -1621,6 +1739,17 @@ void game_draw(void)
             render_model(in->md, cm, 0x70, 0xB0, 0x60);
         } else
             render_model(in->md, in->m, 0x70, 0xB0, 0x60);
+    }
+    for (int i = 0; m_fireball && i < ninsts; i++) {
+        if (!insts[i].firebar) continue;
+        const Row *r = &sc->objs[insts[i].row];
+        int sticks = r->arg[7] > 0 ? r->arg[7] : 1, balls = r->arg[0] > 0 ? r->arg[0] : 5;
+        for (int j = 0; j < sticks; j++)
+            for (int k = 0; k < balls; k++) {
+                V3 p = firebar_ball(&insts[i], j, k);
+                basis_matrix(m, p, up_at(p, v3(0, 1, 0)), vsub(cam_pos, p), 0);
+                render_model(m_fireball, m, 0xF0, 0x80, 0x20);
+            }
     }
     for (int i = 0; m_erail && i < nerails; i++) { /* the 600-long rail model stretched over each segment */
         const Spark *e = &erails[i];
@@ -1645,7 +1774,7 @@ void game_draw(void)
     draw_pickups(purple, npurple, m_purple, 0xB0, 0x50, 0xF0);
     draw_pickups(pieces, npieces, m_piece, 0x60, 0xD0, 0xF0);
     for (int i = 0; i < nkuribo; i++) {
-        if (kuribo[i].state == KURIBO_DEAD || !m_kuribo) continue;
+        if (kuribo[i].state == KURIBO_DEAD || !m_kuribo || !row_shown(kuribo[i].row)) continue;
         basis_matrix(m, kuribo[i].pos, kuribo[i].up, vsub(mario->pos, kuribo[i].pos), 0);
         render_model(m_kuribo, m, kuribo[i].state == KURIBO_STUN ? 0x50 : 0x90, 0x50, 0x20);
     }

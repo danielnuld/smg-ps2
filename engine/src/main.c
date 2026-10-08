@@ -270,9 +270,11 @@ int main(void)
             printf("hazard test: plant row %d\n", game_test_hazard(2));
         if (frame == 600)
             printf("hazard test: electric rail %d\n", game_test_spark());
+        if (frame == 800)
+            printf("hazard test: fire bar row %d\n", game_test_firebar());
         if (frame == 700)
             printf("hazard test: black hole row %d\n", game_test_hole());
-        if (frame % 20 == 0 && ((frame > 120 && frame < 200) || (frame > 300 && frame < 760)))
+        if (frame % 20 == 0 && ((frame > 120 && frame < 200) || (frame > 300 && frame < 860)))
             printf("hazard test f %u: hurt %d life %d misses %d\n", frame, game_hurt_timer(), game_life(),
                    game_misses());
 #endif
@@ -297,6 +299,8 @@ int main(void)
 #ifdef BOX_TEST
         if (frame == 120)
             printf("box test: Mario spins on box row %d\n", game_test_box());
+        if (frame > 120 && frame <= 240 && frame % 10 == 0)
+            printf("box test f %u: coins %d\n", frame, game_coins());
         if (frame == 240)
             printf("box test: coins %d\n", game_coins());
 #endif

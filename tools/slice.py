@@ -55,8 +55,10 @@ OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup
 SW_FIELDS = ("SW_APPEAR", "SW_A", "SW_B", "SW_DEAD", "SW_SLEEP")  # stage switch ids: < 1000 the zone's, else global
 ROW_FIELDS = ("pos_x", "pos_y", "pos_z", "dir_x", "dir_y", "dir_z", "scale_x", "scale_y", "scale_z")
 ROW = struct.Struct("<HHii9f8i5hxx")
+# second models a class draws besides its own (FireBar.cpp: FireBarBall around the FireBarCore)
+EXTRA = {"FireBar": ("FireBarBall",)}
 # model-less classes the engine runs (stage switch logic): kept in OBJS like the classes with a model
-LOGIC = ("TimerSwitch", "SwitchSynchronizerReverse", "GroupSwitchWatcher")
+LOGIC = ("TimerSwitch", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker")
 
 
 def col(b, field, n, default=0):
@@ -558,6 +560,9 @@ def placement(fs, galaxy, scenario):
     # every class with a model on disc is kept (static until it gets a behaviour), plus gravities
     arcmap = {n: model_archive(fsp, n, planets) for n in {o["name"] for o in objs}}
     keep = [o for o in objs if arcmap[o["name"]] or "Gravity" in o["name"] or o["name"] in LOGIC]
+    for o in keep:
+        for e in EXTRA.get(o["name"], ()):
+            arcmap.setdefault(e, e if (fsp / "ObjectData" / f"{e}.arc").exists() else None)
     types = sorted({o["name"] for o in keep} | {s["name"] for s in starts})
     tid = {t: i for i, t in enumerate(types)}
     pack_row = lambda r: ROW.pack(tid[r["name"]], r["zone"], r["l_id"], r["path"], *r["pos"], *r["rot"], *r["scale"],
@@ -586,8 +591,9 @@ def placement(fs, galaxy, scenario):
     per_stage = {st: [] for st in act}
     for o in keep:
         n = o["name"]
-        if arcmap[n] and n not in per_stage[names[o["zone"]]]:
-            per_stage[names[o["zone"]]].append(n)
+        for m in (n,) + EXTRA.get(n, ()):
+            if arcmap[m] and m not in per_stage[names[o["zone"]]]:
+                per_stage[names[o["zone"]]].append(m)
     for st in per_stage:
         per_stage[st].sort(key=lambda n: (n not in planets, n))
     info = dict(stages=act, types=types, objs=len(keep), starts=len(starts), paths=len(paths), cameras=len(cams),
@@ -675,7 +681,7 @@ def build(fs, galaxy, scenario, ratio=0.99):
     fsp, stats = Path(fs), {}
     types = info["types"]
     am = ctx["arcmap"]
-    names = sorted((t for t in types if am.get(t)), key=lambda t: (t not in ctx["planets"], t))
+    names = sorted({n for ns in ctx["per_stage"].values() for n in ns}, key=lambda t: (t not in ctx["planets"], t))
     out += assets(fsp, [(t, am[t]) for t in names] + [(t, t) for t in SKINNED], ctx["planets"], ratio, stats) + \
         [anim_chunk(fsp)]
     return blob_of(out), dict(info, **stats)

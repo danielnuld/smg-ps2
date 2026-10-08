@@ -4,7 +4,7 @@
 # Galaxy/n: boot from the streaming packs in out/packs (host:packs/) instead of the linked blob; the ELF is
 #           also copied to out/slice-packs[-bench].elf, run it from there
 # hazard: with packs, Mario walked into the first SpaceMine (frame 120), NeedlePlant (300, 400, 500: the third prick
-#         is a miss), ElectricRail (600) and black hole (700) (-DHAZARD_TEST)
+#         is a miss), ElectricRail (600), black hole (700) and FireBar (800) (-DHAZARD_TEST)
 # item: with packs, Mario put on each PowerStar / 1-up / life-up mushroom / QuestionCoin in turn from frame 120
 #       (-DITEM_TEST)
 # collapse: with packs, Mario dropped onto the first CollapsePlane at frame 120 (-DCOLLAPSE_TEST)

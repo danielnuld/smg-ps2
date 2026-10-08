@@ -30,6 +30,8 @@ int game_test_hazard(int kind);
 int game_test_item(void);
 /* Test builds: Mario put on the first ElectricRail segment (0, or -1 if none) / into the first black hole (its row). */
 int game_test_spark(void);
+/* Test builds: Mario put on the third ball of the first FireBar. Returns its row or -1. */
+int game_test_firebar(void);
 /* Test builds: Mario dropped onto the first EarthenPipe that has a partner. Returns its index or -1. */
 int game_test_pipe(void);
 /* Test builds: Mario 500 above the first HipDropRock (else breakable), starting a hip drop. Returns its row or -1;
