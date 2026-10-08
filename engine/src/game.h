@@ -23,7 +23,7 @@ int game_launch_state(void);
 int game_test_box(void);
 /* Test builds: Mario jumping into the first ItemBlock from below. Returns its row or -1. */
 int game_test_block(void);
-int game_test_enemy(int kind, int k, int how); /* kind: 0 Kuribo, 1 TakoHei, 2 PackunPetit */
+int game_test_enemy(int kind, int k, int how); /* kind: 0 Kuribo, 1 TakoHei, 2 PackunPetit, 3 KoteBug, 4 JumpSpider */
 int game_kind_alive(int kind);
 /* Test builds: Mario dropped onto the first CollapsePlane. Returns its OBJS row or -1; game_test_collapse_step(row)
  * gives that plane's collapse frame (0 not started) or -1 once it has vanished. */

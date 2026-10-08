@@ -22,7 +22,7 @@ enum { PICK_GONE, PICK_ON, PICK_POP_NEW, PICK_POP_BLINK }; /* alive: popping coi
                                                              * are not drawn on their blink frames */
 typedef struct { V3 pos, vel, up; int state, timer, row, kind; } Kuribo; /* walking enemies; row: its placement */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
-enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN };
+enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER };
 
 typedef struct {
     V3 pos, up, hvel, face, ground_n, wall_n;
@@ -251,7 +251,7 @@ static void miss(void);
 static int got_coins, got_purple, got_pieces;
 static float spin_angle;
 static V3 cam_pos;
-static const Model *m_coin, *m_purple, *m_piece, *m_kuribo, *m_takohei, *m_packun;
+static const Model *m_coin, *m_purple, *m_piece, *m_kuribo, *m_takohei, *m_packun, *m_kotebug, *m_spider;
 static const Model *m_mario_skin; /* Mario.arc, skinned (SKIN chunk) */
 static Anim *mario_anim;
 /* ElectricRail (Petari ElectricRail.cpp, ElectricRailHolder.cpp): one segment per pair of rail points, arg0 rails
@@ -572,7 +572,8 @@ void game_init(const Scene *s, const unsigned char *blob)
     for (u32 i = 0; i < s->nobjs; i++)
         if (s->objs[i].type == t_spg)
             npieces += star_group(NULL, &s->objs[i], blob);
-    nkuribo = count_type("Kuribo", 0) + count_type("TakoHei", 0) + count_type("PackunPetit", 0);
+    nkuribo = count_type("Kuribo", 0) + count_type("TakoHei", 0) + count_type("PackunPetit", 0) + count_type("KoteBug", 0) +
+              count_type("JumpSpider", 0);
     box_coins += nkuribo; /* each drops a coin (appearCoinPop) */
     ncoins += nkuribo;
     coins = mem_alloc(MEM_OBJECTS, ncoins * sizeof(Pickup));
@@ -585,7 +586,8 @@ void game_init(const Scene *s, const unsigned char *blob)
     int ic = 0, ip = 0, is = 0, ik = 0;
     int t_coin = scene_type(s, "Coin"), t_pc = scene_type(s, "PurpleCoin"), t_circle = scene_type(s, "CirclePurpleCoinGroup");
     int t_rail = scene_type(s, "PurpleRailCoin"), t_piece = scene_type(s, "StarPiece"), t_kuribo = scene_type(s, "Kuribo");
-    int t_tako = scene_type(s, "TakoHei"), t_packun = scene_type(s, "PackunPetit");
+    int t_tako = scene_type(s, "TakoHei"), t_packun = scene_type(s, "PackunPetit"), t_kote = scene_type(s, "KoteBug");
+    int t_spider = scene_type(s, "JumpSpider");
     int t_gcircle = scene_type(s, "CircleCoinGroup"), t_grail = scene_type(s, "RailCoin");
     insts =mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(Inst));
     zone_spheres();
@@ -597,8 +599,9 @@ void game_init(const Scene *s, const unsigned char *blob)
         else if (r->type == t_pc) { purple[ip].pos = row_pos(r); purple[ip++].alive = 1; }
         else if (r->type == t_piece) { pieces[is].pos = row_pos(r); pieces[is++].alive = 1; }
         else if (r->type == t_spg) is += star_group(pieces + is, r, blob);
-        else if (r->type == t_kuribo || r->type == t_tako || r->type == t_packun) {
-            kuribo[ik].kind = r->type == t_tako ? WALK_TAKOHEI : r->type == t_packun ? WALK_PACKUN : WALK_KURIBO;
+        else if (r->type == t_kuribo || r->type == t_tako || r->type == t_packun || r->type == t_kote || r->type == t_spider) {
+            kuribo[ik].kind = r->type == t_tako ? WALK_TAKOHEI : r->type == t_packun ? WALK_PACKUN :
+                              r->type == t_kote ? WALK_KOTEBUG : r->type == t_spider ? WALK_SPIDER : WALK_KURIBO;
             kuribo[ik].pos = row_pos(r);
             kuribo[ik].row = i;
             kuribo[ik].up = up_at(kuribo[ik].pos, v3(0, 1, 0));
@@ -761,17 +764,20 @@ void game_rebind(void)
     m_kuribo = scene_model(s, "Kuribo");
     m_takohei = scene_model(s, "TakoHei");
     m_packun = scene_model(s, "PackunPetit");
+    m_kotebug = scene_model(s, "KoteBug");
+    m_spider = scene_model(s, "JumpSpider");
     int t_coin = scene_type(s, "Coin"), t_pc = scene_type(s, "PurpleCoin"), t_circle = scene_type(s, "CirclePurpleCoinGroup");
     int t_rail = scene_type(s, "PurpleRailCoin"), t_piece = scene_type(s, "StarPiece"), t_kuribo = scene_type(s, "Kuribo");
     int t_spg = scene_type(s, "StarPieceGroup"), t_erail = scene_type(s, "ElectricRail"), t_tako = scene_type(s, "TakoHei"),
-        t_packun = scene_type(s, "PackunPetit");
+        t_packun = scene_type(s, "PackunPetit"), t_kote = scene_type(s, "KoteBug"),
+        t_spider = scene_type(s, "JumpSpider");
     m_erail = scene_model(s, "ElectricRail");
     m_fireball = scene_model(s, "FireBarBall");
     ninsts = 0;
     for (u32 i = 0; i < s->nobjs; i++) { /* every placed model without behaviour: planets and the rest */
         const Row *r = &s->objs[i];
         if (r->type == t_coin || r->type == t_pc || r->type == t_piece || r->type == t_kuribo || r->type == t_circle ||
-            r->type == t_tako || r->type == t_packun ||
+            r->type == t_tako || r->type == t_packun || r->type == t_kote || r->type == t_spider ||
             r->type == t_rail || r->type == t_spg || r->type == t_erail)
             continue;
         const char *name = s->types + 32 * r->type;
@@ -1473,7 +1479,33 @@ static void update_kuribo(void)
         k->up = up_at(k->pos, k->up);
         V3 to = vsub(mario->pos, k->pos);
         float d = vlen(to);
+        if (d > 3000.0f) continue; /* sActiveDistance: far ones wait (their zone may be loaded low, no collision) */
         int tako = k->kind == WALK_TAKOHEI;
+        if (k->kind == WALK_SPIDER) { /* JumpSpider.cpp: hops at Mario; ponytail: hop size and rate guessed (Petari's
+                                        * hJumpDistance / hWaitTime are not in the decompilation) */
+            V3 vu = vmul(k->up, vdot(k->vel, k->up)), vh = vsub(k->vel, vu);
+            vu = vsub(vu, vmul(k->up, 1.5f));
+            V3 center = vadd(vadd(k->pos, vmul(k->up, 45.0f)), vadd(vh, vu));
+            int ground = collide(&center, k->up, 45.0f);
+            k->pos = vsub(center, vmul(k->up, 45.0f));
+            if (ground && vdot(vu, k->up) <= 0) { /* hGroundDamp; on the ground it may hop again */
+                vh = vmul(vh, 0.8f); vu = v3(0, 0, 0);
+                if (++k->timer > 60 && d < 1200.0f) {
+                    vh = vmul(vnorm(vtangent(to, k->up)), 10.0f); vu = vmul(k->up, 18.0f); k->timer = 0;
+                }
+            } else
+                vh = vmul(vh, 0.98f); /* hAirDampH */
+            k->vel = vadd(vh, vu);
+            float above = vdot(to, k->up);
+            if (d < 130.0f && mario->vup < 0 && above > 40.0f) {
+                k->state = KURIBO_DEAD; row_kill(k->row); pop_coins(k->pos, k->up, 1);
+                mario->vup = 15.0f; mario->grounded = 0;
+            } else if (d < 170.0f && mario->spin_timer > 0) {
+                k->state = KURIBO_DEAD; row_kill(k->row); pop_coins(k->pos, k->up, 1);
+            } else if (d < 110.0f && above <= 40.0f && !ground) /* hurts while jumping, pushes otherwise */
+                hurt_mario(k->pos, 15.0f);
+            continue;
+        }
         if (k->kind == WALK_PACKUN) { /* PackunPetit.cpp: stands; within reach it bites (head sensor 50) */
             float above = vdot(to, k->up);
             k->timer = d < 300.0f ? k->timer + 1 : 0; /* in reach: 70 frames winding up, then a 20-frame bite */
@@ -1492,7 +1524,7 @@ static void update_kuribo(void)
         }
         if (k->state == KURIBO_STUN) {
             if (--k->timer <= 0) k->state = KURIBO_WALK;
-        } else if (d < (tako ? 1600.0f : 1500.0f)) { /* chase on the surface (ponytail: no turn rate, no notice
+        } else if (d < (tako ? 1600.0f : k->kind == WALK_KOTEBUG ? 1000.0f : 1500.0f)) { /* chase on the surface (ponytail: no turn rate, no notice
                                                          * animation); TakoHei.cpp: sFindDistance, sPursueAccel 0.5,
                                                          * sNormalGroundFrec 0.85 */
             V3 dir = vnorm(vtangent(to, k->up));
@@ -1505,13 +1537,19 @@ static void update_kuribo(void)
         k->pos = vsub(center, vmul(k->up, 45.0f));
         /* stomp: Mario falling onto its top; spin: stun; side touch: Mario knocked back */
         float above = vdot(to, k->up);
-        /* TakoHei: a spin (requestPunch) kills it too, and the hip drop (requestHipDropDown) */
+        /* TakoHei: a spin (requestPunch) kills it too, and the hip drop (requestHipDropDown). KoteBug.cpp: a stomp or
+         * a spin overturns it for 240 frames (hOverturnTime), the next one while it lies on its back kills it; a hip
+         * drop kills it at once */
+        int kote = k->kind == WALK_KOTEBUG;
         if (d < (tako ? 170.0f : 130.0f) && mario->vup < 0 && above > 40.0f) {
-            k->state = KURIBO_DEAD; row_kill(k->row); mario->vup = 15.0f; mario->grounded = 0;
-            pop_coins(k->pos, k->up, 1);
-        } else if (d < 170.0f && mario->spin_timer > 0 && k->state == KURIBO_WALK) {
-            if (tako) { k->state = KURIBO_DEAD; row_kill(k->row); pop_coins(k->pos, k->up, 1); }
-            else { k->state = KURIBO_STUN; k->timer = 180; }
+            if (kote && k->state == KURIBO_WALK && mario->hip != HIP_FALL) { k->state = KURIBO_STUN; k->timer = 240; }
+            else if (kote && k->state == KURIBO_STUN && k->timer > 210 && mario->hip != HIP_FALL)
+                continue; /* the bounce off the first stomp lands on it again: not a second stomp yet, no bounce */
+            else { k->state = KURIBO_DEAD; row_kill(k->row); pop_coins(k->pos, k->up, 1); }
+            mario->vup = 15.0f; mario->grounded = 0;
+        } else if (d < 170.0f && mario->spin_timer > 0 && (k->state == KURIBO_WALK || (kote && k->timer < 230))) {
+            if (tako || (kote && k->state == KURIBO_STUN)) { k->state = KURIBO_DEAD; row_kill(k->row); pop_coins(k->pos, k->up, 1); }
+            else { k->state = KURIBO_STUN; k->timer = kote ? 240 : 180; }
         } else if (d < (tako ? 140.0f : 100.0f) && above <= 40.0f && k->state == KURIBO_WALK) /* not from above */
             hurt_mario(k->pos, 15.0f);
     }
@@ -1998,7 +2036,8 @@ void game_draw(void)
     draw_pickups(purple, npurple, m_purple, 0xB0, 0x50, 0xF0);
     draw_pickups(pieces, npieces, m_piece, 0x60, 0xD0, 0xF0);
     for (int i = 0; i < nkuribo; i++) {
-        const Model *md = kuribo[i].kind == WALK_TAKOHEI ? m_takohei : kuribo[i].kind == WALK_PACKUN ? m_packun : m_kuribo;
+        const Model *md = kuribo[i].kind == WALK_TAKOHEI ? m_takohei : kuribo[i].kind == WALK_PACKUN ? m_packun :
+                          kuribo[i].kind == WALK_KOTEBUG ? m_kotebug : kuribo[i].kind == WALK_SPIDER ? m_spider : m_kuribo;
         if (kuribo[i].state == KURIBO_DEAD || !md || !row_shown(kuribo[i].row)) continue;
         basis_matrix(m, kuribo[i].pos, kuribo[i].up, vsub(mario->pos, kuribo[i].pos), 0);
         render_model(md, m, kuribo[i].state == KURIBO_STUN ? 0x50 : 0x90, 0x50, 0x20);

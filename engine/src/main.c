@@ -537,9 +537,13 @@ int main(void)
         if (frame == 120) printf("enemy test: stomp TakoHei row %d\n", game_test_enemy(1, 0, 0));
         if (frame == 240) printf("enemy test: spin by PackunPetit row %d\n", game_test_enemy(2, 0, 1));
         if (frame == 360) printf("enemy test: stand by PackunPetit row %d\n", game_test_enemy(2, 0, 2));
-        if (frame % 60 == 0 && frame >= 180 && frame <= 540)
-            printf("enemy test f %u: takohei %d packun %d life %d coins %d\n", frame, game_kind_alive(1),
-                   game_kind_alive(2), game_life(), game_coins());
+        if (frame == 600) printf("enemy test: stomp KoteBug row %d\n", game_test_enemy(3, 0, 0));
+        if (frame == 780) printf("enemy test: stomp it again row %d\n", game_test_enemy(3, 0, 0));
+        if (frame == 900) printf("enemy test: stand by JumpSpider row %d\n", game_test_enemy(4, 0, 2));
+        if (frame == 1020) printf("enemy test: spin by JumpSpider row %d\n", game_test_enemy(4, 0, 1));
+        if (frame % 60 == 0 && frame >= 180 && frame <= 1140)
+            printf("enemy test f %u: takohei %d packun %d kotebug %d spider %d life %d coins %d\n", frame,
+                   game_kind_alive(1), game_kind_alive(2), game_kind_alive(3), game_kind_alive(4), game_life(), game_coins());
 #endif
 #ifdef HIP_TEST
         if (frame == 120)
