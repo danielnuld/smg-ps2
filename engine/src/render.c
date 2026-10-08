@@ -28,7 +28,12 @@ extern u32 VU1Tex_CodeStart __attribute__((section(".vudata")));
 extern u32 VU1Tex_CodeEnd __attribute__((section(".vudata")));
 
 #define SCREEN_W 640
-#define SCREEN_H 448
+/* 640 x 224 buffers shown in FRAME mode (each field reads every line): the picture is the same on both fields, so it
+ * does not bob a line per frame under PCSX2's deinterlacing (a 448-line buffer read every other line did: each
+ * buffer always lands on the same field). Layout and projection stay in 448-line units (DISP_H), scaled by YS. */
+#define SCREEN_H 224
+#define DISP_H 448
+#define YS ((float)SCREEN_H / DISP_H)
 #define BATCH 72           /* vertices per VU1 batch: 6n + 4m + 2 qwords (m <= 10 matrices) must fit a 496-qword
                             * buffer, and n a multiple of 12 so the 4-byte colour and UV arrays of the next batch
                             * start on a qword */
@@ -133,6 +138,10 @@ void render_init(void)
     zbuf.enable = DRAW_ENABLE; zbuf.mask = 0; zbuf.method = ZTEST_METHOD_GREATER_EQUAL; zbuf.zsm = GS_ZBUF_24;
     zbuf.address = graph_vram_allocate(SCREEN_W, SCREEN_H, GS_ZBUF_24, GRAPH_ALIGN_PAGE);
     graph_initialize(frame[0].address, SCREEN_W, SCREEN_H, GS_PSM_32, 0, 0);
+    graph_set_mode(GRAPH_MODE_INTERLACED, graph_get_region(), GRAPH_MODE_FRAME, GRAPH_DISABLE);
+    graph_set_screen(0, 16, SCREEN_W, DISP_H);
+    graph_set_framebuffer(0, frame[0].address, SCREEN_W, GS_PSM_32, 0, 0);
+    graph_set_output(GRAPH_ENABLE, GRAPH_DISABLE, 1, 0, 0, 0xFF); /* circuit 1, alpha from ALP (frame alpha is 0x80) */
     back = 1;
     p = packet2_create(20, P2_TYPE_NORMAL, P2_MODE_NORMAL, 0);
     packet2_update(p, draw_setup_environment(p->next, 0, &frame[back], &zbuf));
@@ -185,16 +194,16 @@ void render_init(void)
 /* projection (column-major, v' = P v): x, y to the GS's +-2048 guard band, depth near -> 1, far -> -1 */
 void render_set_fovy(float deg)
 {
-    float f = (SCREEN_H / 2) / tanf(deg * 3.14159265f / 360.0f);
+    float f = (DISP_H / 2) / tanf(deg * 3.14159265f / 360.0f);
     float B = 2.0f / (1.0f / NEAR - 1.0f / FAR), A = 1.0f - B / NEAR;
     memset(proj, 0, sizeof proj);
     proj[0] = f / 2048.0f;
-    proj[5] = -f / 2048.0f;
+    proj[5] = -f * YS / 2048.0f;
     proj[10] = A; proj[11] = 1.0f;
     proj[14] = B;
-    float lx = sqrtf(f * f + (SCREEN_W / 2) * (SCREEN_W / 2)), ly = sqrtf(f * f + (SCREEN_H / 2) * (SCREEN_H / 2));
+    float lx = sqrtf(f * f + (SCREEN_W / 2) * (SCREEN_W / 2)), ly = sqrtf(f * f + (DISP_H / 2) * (DISP_H / 2));
     frustum[0] = f / lx; frustum[1] = (SCREEN_W / 2) / lx;
-    frustum[2] = f / ly; frustum[3] = (SCREEN_H / 2) / ly;
+    frustum[2] = f / ly; frustum[3] = (DISP_H / 2) / ly;
 }
 
 void render_begin(const float eye[3], const float target[3], const float up[3])
@@ -779,8 +788,8 @@ void render_text(float x, float y, const char *s)
         for (int row = 0; row < 5; row++)
             for (int c = 0; c < 3; c++)
                 if (gl >> (3 * (4 - row) + (2 - c)) & 1) {
-                    r.v0.x = x + c * px - SCREEN_W / 2; r.v0.y = y + row * px - SCREEN_H / 2; /* libdraw adds the 2048 offset */
-                    r.v1.x = r.v0.x + px; r.v1.y = r.v0.y + px;
+                    r.v0.x = x + c * px - SCREEN_W / 2; r.v0.y = (y + row * px) * YS - SCREEN_H / 2; /* libdraw adds the 2048 offset */
+                    r.v1.x = r.v0.x + px; r.v1.y = r.v0.y + px * YS;
                     if (packet2_get_qw_count(gif) < GIF_QW - 96)
                         packet2_update(gif, draw_rect_filled(gif->next, 0, &r));
                 }
@@ -808,7 +817,7 @@ u32 render_end(void)
     }
     u32 busy = cycles() - c0;
     graph_wait_vsync();
-    graph_set_framebuffer_filtered(frame[back].address, SCREEN_W, GS_PSM_32, 0, 0);
+    graph_set_framebuffer(0, frame[back].address, SCREEN_W, GS_PSM_32, 0, 0);
     back ^= 1;
     return busy;
 }

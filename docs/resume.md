@@ -45,6 +45,10 @@ Last updated 2026-10-08. Detail and numbers: `docs/phase2-report.md`; tasks: `op
   - materials: the converter evaluates each material's TEV stages (`tools/tex.py` `tev`, `bake`) and bakes them into
     its texture; untextured groups take the TEV's constant colour. ponytail: no lighting (RAS = material colour),
     every stage at the base texture's UVs; near-white results fall back to the plain texture (Coin);
+  - video: 640 x 224 buffers shown in FRAME mode (each field reads every line; layout and projection in 448-line
+    units): the 448-line FIELD setup bobbed one line per frame in PCSX2 (each buffer always on the same field). Frees
+    ~1.7 MB of GS memory (two colour buffers + z at half height) for the texture cache; `vram_need.py`'s 720 KB budget
+    can grow;
   - lighting: lit materials (colour channel 0 lighting on: WoodBox, Kuribo...) get smooth per-vertex shading from
     their NRM normals (`shade`, half-Lambert, one fixed light in model space), unlit ones none; planets keep the
     vertex colours Nintendo baked (unlit, CLR0);
