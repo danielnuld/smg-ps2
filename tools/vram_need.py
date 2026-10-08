@@ -1,8 +1,8 @@
 """GS memory the textures of each scenario need with streaming: resident + common + the worst zone chain in full +
-every other stage low, as the engine uploads them (render.c: PSMT4 rows of 128 pixels + a 64-word CLUT, both
-rounded to 64-word blocks).
+every other stage low, as the engine uploads them (render.c: PSMT4 rows of 128 pixels per level (base + nmip mips)
++ a 64-word CLUT, each rounded to 64-word blocks).
 
-usage: python tools/vram_need.py out/packs [free KB, default 720: 4 MB minus frame buffers and Z]
+usage: python tools/vram_need.py out/packs [free KB, default 2416: 4 MB minus the 640 x 224 frame buffers and Z]
 """
 import csv
 import struct
@@ -21,14 +21,15 @@ def tex_words(blob):
     words = 0
     for i in range(n):
         w, h, psm = struct.unpack_from("<HHB", t, 16 + 32 * i)
+        nmip = t[16 + 32 * i + 22]
         if psm == 0x13:  # PSMT8 (skies): rows of 128 or 256 pixels, a 256-word CLUT
             words += ((256 if w > 128 else 128) * h // 4 + 63) // 64 * 64 + 256
         else:
-            words += (128 * h // 8 + 63) // 64 * 64 + 64
+            words += sum((128 * (h >> k) // 8 + 63) // 64 * 64 for k in range(nmip + 1)) + 64
     return words
 
 
-def main(packs, free_kb=720):
+def main(packs, free_kb=2416):
     packs = Path(packs)
     base = tex_words((packs / "resident.bin").read_bytes())
     rows = []
@@ -62,4 +63,4 @@ def main(packs, free_kb=720):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 720)
+    main(sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 2416)

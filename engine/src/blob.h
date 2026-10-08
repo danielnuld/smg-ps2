@@ -32,7 +32,9 @@ typedef struct {
     u8 psm, clamp_s, clamp_t, alpha; /* alpha: 0 opaque, 1 cut-out, 2 blended */
     u32 pix_off, pix_size, clut_off; /* from the TEXT payload; CLUT = 16 x u32 */
     u8 tw, th;                       /* log2 of w, h */
-    u8 pad[10];
+    u8 nmip, pad0;                   /* PSMT4 mip levels after the base in pix (w >> k by h >> k, each padded to 16) */
+    s16 lod_k;                       /* GS TEX1 K (1/16): LOD = log2(depth) + K */
+    u8 pad[6];
 } TexEntry; /* 32 bytes, matches slice.py TEXT */
 
 /* SKIN chunk (tools/slice.py skin_entry): bind pose, draw matrices, matrix table per VUMD group. */

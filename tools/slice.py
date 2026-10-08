@@ -391,6 +391,30 @@ BASE_COLOUR = {"Coin": (240, 208, 48), "PurpleCoin": (176, 80, 240), "StarPiece"
 LIGHT = (0.35, 0.75, -0.55)
 
 
+# pixels per world unit at depth 1: render.c's fovy 45 over 448 lines (f = 224 / tan 22.5), geometric mean of the
+# horizontal and the half-height vertical scale (224 drawn lines)
+LOD_F = 224 / math.tan(math.radians(22.5)) / math.sqrt(2)
+
+
+def lod_k(verts, tris, uvs, t):
+    """GS TEX1 K (1/16 units) of a texture on these triangles: the GS takes LOD = log2(depth) + K, and texels per
+    pixel = density * depth / LOD_F, density = area-weighted texels per model unit (ponytail: instance scale 1,
+    fovy 45; one K per texture, from the first group using it)."""
+    num = den = 0.0
+    for i in range(0, len(tris), 3):
+        a, b, c = (verts[tris[i + k]] for k in range(3))
+        e1, e2 = [b[j] - a[j] for j in range(3)], [c[j] - a[j] for j in range(3)]
+        pa = math.sqrt(sum(x * x for x in (e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2],
+                                           e1[0] * e2[1] - e1[1] * e2[0]))) / 2
+        (u0, v0), (u1, v1), (u2, v2) = (uvs[tris[i + k]] for k in range(3))
+        ua = abs((u1 - u0) * (v2 - v0) - (u2 - u0) * (v1 - v0)) / 2 * t["w"] * t["h"]
+        num += math.sqrt(ua * pa)
+        den += pa
+    if not num or not den:
+        return 0
+    return max(-2048, min(2047, round(16 * math.log2(num / den / LOD_F))))
+
+
 def shade(n, L):
     """Light factor of a vertex normal: half-Lambert (the side away from LIGHT keeps 0.35, as planets' undersides are
     walked on; ponytail: one fixed light in model space, not the zone's LightData nor the camera's)."""
@@ -751,14 +775,14 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True):
         models_.append(name32(t) + struct.pack("<f", math.sqrt(max((sum(c * c for c in v) for verts, *_ in groups
                                                                     for v in verts), default=0.0))))
         vg, qs = b"", pos_scale(groups)
-        for (_, tris, _, tx, _, _, bl, _), (pos, col, uv) in zip(groups, vu_groups(groups, BASE_COLOUR.get(t, (112, 176, 96)),
+        for (verts, tris, uvs, tx, _, _, bl, _), (pos, col, uv) in zip(groups, vu_groups(groups, BASE_COLOUR.get(t, (112, 176, 96)),
                                                                              stats, qs)):
             ti = 0xFFFF
             if tx:
                 key = tx["pix"] + tx["clut"] + bytes((tx["clamp_s"], tx["clamp_t"]))
                 ti = tex_id.setdefault(key, len(texts))
-                if ti == len(texts):
-                    texts.append(tx)
+                if ti == len(texts):  # its LOD from the first group that uses it
+                    texts.append(dict(tx, lod_k=lod_k(verts, tris, uvs, tx)))
             nb, body = index_batches(pos, col, uv, len(tris))
             vg += struct.pack("<IHHBBB5x", len(tris), ti, nb, *bl) + body
         vumd.append(name32(t) + struct.pack("<If8x", len(groups), qs) + vg)
@@ -769,11 +793,14 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True):
     base = 16 + 32 * len(texts)
     for tx in texts:
         pix = base + len(data)
-        data += tx["pix"] + b"\0" * (-len(tx["pix"]) % 16)
+        for lv in [tx["pix"]] + tx.get("mips", []):  # base level then the mips, each padded to 16
+            data += lv + b"\0" * (-len(lv) % 16)
+        size = base + len(data) - pix
         clut = base + len(data)
         data += tx["clut"]
-        head += struct.pack("<HHBBBBIIIBB10x", tx["w"], tx["h"], tx["psm"], tx["clamp_s"], tx["clamp_t"], tx["alpha"],
-                            pix, len(tx["pix"]), clut, tx["w"].bit_length() - 1, tx["h"].bit_length() - 1)
+        head += struct.pack("<HHBBBBIIIBBBxh6x", tx["w"], tx["h"], tx["psm"], tx["clamp_s"], tx["clamp_t"], tx["alpha"],
+                            pix, size, clut, tx["w"].bit_length() - 1, tx["h"].bit_length() - 1,
+                            len(tx.get("mips", [])), tx.get("lod_k", 0))
     stats.update(models=stats.get("models", 0) + len(models_), kcls=stats.get("kcls", 0) + len(kcls),
                  textures=stats.get("textures", 0) + len(texts))
     return [chunk(b"TEXT", struct.pack("<I12x", len(texts)) + bytes(head) + bytes(data)),
@@ -874,6 +901,9 @@ def read_chunks(blob):
 
 def selftest():
     L = (0.0, 1.0, 0.0)
+    # a unit right triangle mapped onto a 64 x 64 texture: 64 texels per unit -> K = 16 log2(64 / LOD_F)
+    sq = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+    assert lod_k(sq, [0, 1, 2], [(0, 0), (1, 0), (0, 1)], {"w": 64, "h": 64}) == round(16 * math.log2(64 / LOD_F))
     assert shade((0, 2, 0), L) == 1.0 and abs(shade((0, -1, 0), L) - 0.35) < 1e-9 and 0.35 < shade((1, 0, 0), L) < 1
     # BCSV with name (string) + pos_x (float) + Obj_arg0 (long): 2 rows
     fields = [("name", 0, 6), ("pos_x", 4, 2), ("Obj_arg0", 8, 0)]

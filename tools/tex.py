@@ -147,6 +147,14 @@ def to_ps2(rgba, wrap_s, wrap_t, hi=False):
     idx = np.asarray(q, np.uint8)
     if alpha == 0:
         pal[:, 3] = 255
+    mips = []  # PSMT4 levels 1-3 down to 8 texels (GS MIPTBP1), box-filtered, mapped onto the base palette
+    if not hi:
+        p255, lv = pal.astype(np.int64), img
+        while len(mips) < 3 and min(w, h) >> (len(mips) + 1) >= 8:
+            lv = lv.resize((lv.width // 2, lv.height // 2), Image.Resampling.BOX)
+            px = np.asarray(lv).astype(np.int64).reshape(-1, 1, 4)
+            li = ((px - p255[None]) ** 2).sum(2).argmin(1).astype(np.uint8).reshape(lv.height, lv.width)
+            mips.append((li[:, 0::2] | li[:, 1::2] << 4).astype(np.uint8).tobytes())
     pal[:, 3] = (pal[:, 3] * 128 + 127) // 255
     clut = (pal[:, 0] | pal[:, 1] << 8 | pal[:, 2] << 16 | pal[:, 3] << 24).astype("<u4")
     if hi:
@@ -156,7 +164,7 @@ def to_ps2(rgba, wrap_s, wrap_t, hi=False):
     clut = clut.tobytes()
     pix = (idx[:, 0::2] | idx[:, 1::2] << 4).astype(np.uint8).tobytes() if w > 1 else idx.tobytes()
     return dict(w=w, h=h, psm=PSMT4, clamp_s=0 if wrap_s else 1, clamp_t=0 if wrap_t else 1, alpha=alpha, pix=pix,
-                clut=clut, u_scale=us, v_scale=vs)
+                clut=clut, u_scale=us, v_scale=vs, mips=mips)
 
 
 # ---------- materials ----------

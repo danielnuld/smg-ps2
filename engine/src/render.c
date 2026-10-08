@@ -62,10 +62,11 @@ static qword_t scale_qw __attribute__((aligned(16)));
 static qword_t *headers_static;  /* [mode][count]: {n, 0, matrix base 1} + GIF tag, for prebuilt chains */
 static u32 tris_drawn;
 static u32 vram_tex;             /* VRAM words taken by textures and CLUTs */
-static qword_t *tex_packets;     /* per texture 7 qwords (GIF tag + TEX0, TEX1, CLAMP, TEST, ALPHA, ZBUF), then 3
+static qword_t *tex_packets;     /* per texture 8 qwords (GIF tag + TEX0, TEX1, CLAMP, TEST, ALPHA, ZBUF, MIPTBP1), then 3
                                   * for NO_TEX (tag + TEST, ZBUF). Blended textures (alpha kind 2) blend
                                   * (Cs - Cd) As + Cd and leave the depth alone; the rest write it */
-#define TEXP 7
+#define TEXP 8
+#define LOD_BIAS 32 /* 1/16 levels added to every K: surfaces seen edge-on shrink more than the GS depth LOD says */
 #define VRAM_WORDS (1 << 20)        /* 4 MB of GS memory in 32-bit words */
 #define NO_TEX_PACKET (tex_packets + TEXP * SCENE_MAX_TEX)
 static int cur_tex;
@@ -263,11 +264,20 @@ static qword_t *upload_chain;
  * 16 PSMCT32: 4 blocks, 4-aligned so they make one square), then the pixels in rows of 128 or 256. */
 #define T8(t) ((t)->psm == GS_PSM_8)
 #define TBW(t) (T8(t) && (t)->w > 128 ? 4 : 2)
+/* PSMT4 level k (0 = base): blocks in rows of 128 pixels; the mips follow the base, the CLUT comes last */
+static int lvl_blocks(const TexEntry *t, int k)
+{
+    return (graph_vram_size(128, t->h >> k, GS_PSM_4, GRAPH_ALIGN_BLOCK) + 63) / 64;
+}
+
 static int blocks_of(const TexEntry *t)
 {
     if (T8(t))
         return 4 + (graph_vram_size(64 * TBW(t), t->h, GS_PSM_8, GRAPH_ALIGN_BLOCK) + 63) / 64;
-    return (graph_vram_size(128, t->h, GS_PSM_4, GRAPH_ALIGN_BLOCK) + 63) / 64 + 1;
+    int n = 1;
+    for (int k = 0; k <= t->nmip; k++)
+        n += lvl_blocks(t, k);
+    return n;
 }
 
 static void tex_free(int t)
@@ -302,8 +312,14 @@ static void flush_uploads(void)
                                       tex_block[t] * 64, 64);
             continue;
         }
-        int addr = tex_block[t] * 64, clut = (tex_block[t] + tex_nblk[t] - 1) * 64;
-        q = draw_texture_transfer(q, (void *)(tex_scene->tex[t].base + e->pix_off), e->w, e->h, GS_PSM_4, addr, 128);
+        int blk = tex_block[t], clut = (tex_block[t] + tex_nblk[t] - 1) * 64;
+        const u8 *pix = tex_scene->tex[t].base + e->pix_off;
+        for (int k = 0; k <= e->nmip; k++) {
+            int w = e->w >> k, h = e->h >> k;
+            q = draw_texture_transfer(q, (void *)pix, w, h, GS_PSM_4, blk * 64, 128);
+            pix += (w * h / 2 + 15) & ~15;
+            blk += lvl_blocks(e, k);
+        }
         q = draw_texture_transfer(q, (void *)(tex_scene->tex[t].base + e->clut_off), 8, 2, GS_PSM_32, clut, 64);
     }
     q = draw_texture_flush(q);
@@ -357,6 +373,10 @@ static int tex_need(u32 t)
     qword_t *p = tex_packets + TEXP * t;
     p[1].dw[0] = T8(e) ? GS_SET_TEX0(b + 4, TBW(e), GS_PSM_8, e->tw, e->th, 1, 0, b, GS_PSM_32, 0, 0, 1)
                        : GS_SET_TEX0(b, 2, GS_PSM_4, e->tw, e->th, 1, 0, b + n - 1, GS_PSM_32, 0, 0, 1);
+    if (!T8(e) && e->nmip) { /* MIPTBP1: levels 1-3 after the base, rows of 128 (TBW 2) */
+        u64 b1 = b + lvl_blocks(e, 0), b2 = b1 + lvl_blocks(e, 1), b3 = b2 + lvl_blocks(e, 2);
+        p[7].dw[0] = b1 | 2ULL << 14 | b2 << 20 | 2ULL << 34 | b3 << 40 | 2ULL << 54;
+    }
     uploads[nuploads++] = t;
     tex_misses++;
     return synced;
@@ -381,7 +401,7 @@ void render_load_textures(const Scene *s, u32 first_tex, u32 first_model)
     if (!tex_packets) { /* fixed slots: prebuilt chains point into them; the NO_TEX packet sits after the last */
         tex_packets = mem_alloc(MEM_RENDER, (TEXP * SCENE_MAX_TEX + 3) * 16);
         block_tex = mem_alloc(MEM_RENDER, TEX_BLOCKS * sizeof(s16));
-        upload_chain = mem_alloc(MEM_RENDER, (MAX_UPLOADS * 2 * 16 + 4) * 16);
+        upload_chain = mem_alloc(MEM_RENDER, (MAX_UPLOADS * 5 * 16 + 4) * 16); /* base, 3 mips, CLUT */
         block_first = graph_vram_allocate(64, 1, GS_PSM_32, GRAPH_ALIGN_BLOCK) / 64; /* first block above libgraph's */
         block_end = VRAM_WORDS / 64;
         for (int b = 0; b < TEX_BLOCKS; b++)
@@ -402,11 +422,15 @@ void render_load_textures(const Scene *s, u32 first_tex, u32 first_model)
         tex_last[i] = 0;
         need += tex_nblk[i];
         qword_t *p = tex_packets + TEXP * i;
-        p[0].dw[0] = GIF_SET_TAG(6, 1, 0, 0, GIF_FLG_PACKED, 1);
+        p[0].dw[0] = GIF_SET_TAG(TEXP - 1, 1, 0, 0, GIF_FLG_PACKED, 1);
         p[0].dw[1] = GIF_REG_AD;
         p[1].dw[1] = GS_REG_TEX0;    /* TEX0 itself is written when the texture gets its blocks (tex_need) */
-        p[2].dw[0] = GS_SET_TEX1(1, 0, 1, 1, 0, 0, 0); /* fixed LOD 0, bilinear */
+        /* no mips: fixed LOD 0, bilinear; mips: LOD = log2(depth) + K, bilinear in the nearest level (MMIN 4) */
+        p[2].dw[0] = t->nmip ? (u64)t->nmip << 2 | 1 << 5 | 5 << 6 | (u64)((t->lod_k + LOD_BIAS) & 0xFFF) << 32
+                             : GS_SET_TEX1(1, 0, 1, 1, 0, 0, 0);
         p[2].dw[1] = GS_REG_TEX1;
+        p[7].dw[0] = 0; /* MIPTBP1 itself is written with TEX0 (tex_need) */
+        p[7].dw[1] = 0x34; /* MIPTBP1_1 */
         p[3].dw[0] = GS_SET_CLAMP(t->clamp_s, t->clamp_t, 0, 0, 0, 0);
         p[3].dw[1] = GS_REG_CLAMP;
         /* texels under half alpha are cut out; a blended material blends them instead (blend_state's TEST) */
