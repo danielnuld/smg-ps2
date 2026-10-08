@@ -97,7 +97,7 @@ there needs the embedded blob and every pack rebuilt.
 ## Next
 
 0. Look: more effects (child particles, rotation, other field / shape types; Mario's own: dust, spin).
-1. More switch sources and users: IronCannonLauncherPoint, StarPieceSpot, Kinopio / Tico; spawned power stars
+1. (Pick up here: start with the power star FlipPanelObserver spawns, FlipPanelEx 1.) More switch sources and users: IronCannonLauncherPoint, StarPieceSpot, Kinopio / Tico; spawned power stars
    (FlipPanelObserver arg7, requestAppearPowerStar); RestartCube (checkpoints).
 2. Lumas / NPCs (static models today).
 3. More classes by placement count (`out/census.json`): GCaptureTarget, FlowerGroup, CutBushGroup, ShootingStar,
