@@ -32,6 +32,10 @@ int game_test_item(void);
 int game_test_spark(void);
 /* Test builds: Mario dropped onto the first EarthenPipe that has a partner. Returns its index or -1. */
 int game_test_pipe(void);
+/* Test builds: Mario 500 above the first HipDropRock (else breakable), starting a hip drop. Returns its row or -1;
+ * game_hip_state() gives the hip drop phase (0 none, 1 start, 2 fall, 3 landing). */
+int game_test_hip(void);
+int game_hip_state(void);
 int game_test_hole(void);
 int game_hurt_timer(void);
 int game_test_collapse_step(int row);

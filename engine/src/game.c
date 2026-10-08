@@ -32,6 +32,7 @@ typedef struct {
     int low_grav;       /* frames left at the spin's low gravity */
     int slip_keep;      /* frames Mario may still stand on a 60-85 degree slope before it slips (Petari _41C) */
     int launch, launch_t; /* launch star carrying Mario (-1 none) and frames since it caught him */
+    int hip, hip_t;     /* hip drop: HIP_START / HIP_FALL / HIP_LAND (0 none), frames in that phase */
     V3 launch_from;     /* where Mario was caught */
 } Player;
 
@@ -98,7 +99,12 @@ static const float JUMP_GRAV[12] = {1.8f, 1.8f, 1.8f, 1.8f, 1.8f, 0.95f, 1.8f, 2
 #define TURN_STAND 0.9f           /* mTurnAngleSpeed (rad per frame, standing) */
 #define TURN_MOVE 0.15f           /* mTurnAngleSpeed2, above mFastTurnSpeed 0.1 (MarioMove.cpp:368-373) */
 #define AIR_CONTROL 0.1f          /* ponytail: one air steering factor instead of Petari's air-walk timers */
-#define BODY_RADIUS 50.0f         /* ponytail: one sphere for Mario's body; SMG uses several collision checks */
+#define GRAVITY_HIP_DROP 12.0f    /* mGravityHipDrop */
+#define LIMIT_SPEED_HIP_DROP 150.0f /* mLimitSpeedHipDrop */
+#define HIP_DROP_LIMIT_HEIGHT 100.0f /* mHipDropLimitHeight: no hip drop closer to the ground */
+#define HIP_DROP_ZERO_GR_TIME 2   /* mHipDropZeroGrTime: frames hanging after the start clip */
+enum { HIP_START = 1, HIP_FALL, HIP_LAND };
+#define BODY_RADIUS 50.0f        /* ponytail: one sphere for Mario's body; SMG uses several collision checks */
 #define HIT_BODY_H 80.0f          /* Mario's hit sensor for touches: centre this high, radius HIT_BODY_R (the
                                    * collision sphere is lower and smaller); ponytail: one sphere, not his sensors */
 #define HIT_BODY_R 70.0f
@@ -119,14 +125,16 @@ typedef struct {
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP };
 static unsigned short *row_step; /* per OBJS row: CollapsePlane frames since Mario stood on it (0: not yet) */
+static int hip_hit, hip_inst;   /* Mario landed a hip drop this frame, on instance hip_inst (-1 none) */
 static int ground_inst = -1;     /* instance under the last collide_n's ground normal, -1 none */
 static void zone_spheres(void);
 static void zone_grow(const Inst *in);
 
-/* Spin-breakable classes and what they drop (Petari PunchBox.cpp, WoodBox.cpp, CrystalCage.cpp): PunchBox / WoodBox
- * arg0 coins (default 1), WoodBox also arg2 star pieces; CrystalCageS / M one hit, a coin when the item inside
- * (arg7, DummyDisplayModel) is 0. Returns 0 for anything else. ponytail: CrystalCageL (2 hits, power star) waits for
- * power stars */
+/* Breakable classes and what they drop (Petari PunchBox.cpp, WoodBox.cpp, CrystalCage.cpp, HipDropRock.cpp):
+ * PunchBox / WoodBox arg0 coins (default 1), WoodBox also arg2 star pieces; CrystalCageS / M one hit, a coin when the
+ * item inside (arg7, DummyDisplayModel) is 0; HipDropRock (a hip drop only) a coin when arg0 is 0, arg1 star pieces
+ * (default 6) when it is 1. Returns 1 (spin or hip drop), 2 (hip drop only) or 0 for anything else. ponytail:
+ * CrystalCageL (2 hits, power star) waits for power stars */
 static int breakable(const char *name, const Row *r, int *coins, int *pieces)
 {
     *coins = *pieces = 0;
@@ -138,6 +146,11 @@ static int breakable(const char *name, const Row *r, int *coins, int *pieces)
     if (strcmp(name, "CrystalCageS") == 0 || strcmp(name, "CrystalCageM") == 0) {
         *coins = r->arg[7] == 0;
         return 1;
+    }
+    if (strcmp(name, "HipDropRock") == 0) {
+        *coins = r->arg[0] == 0;
+        *pieces = r->arg[0] == 1 ? (r->arg[1] >= 0 ? r->arg[1] : 6) : 0;
+        return 2;
     }
     return 0;
 }
@@ -754,6 +767,24 @@ int game_test_collapse(void)
 
 int game_test_collapse_step(int row) { return row < 0 ? -2 : row_dead[row] ? -1 : row_step[row]; }
 
+int game_test_hip(void)
+{
+    int best = -1;
+    for (int i = 0; i < ninsts; i++)
+        if (insts[i].breaks && (best < 0 || (insts[i].breaks == 2 && insts[best].breaks != 2))) best = i;
+    if (best < 0) return -1;
+    const Inst *in = &insts[best];
+    V3 p = v3(in->m[12], in->m[13], in->m[14]);
+    mario->up = up_at(p, mario->up);
+    mario->pos = vadd(p, vmul(mario->up, in->reach + 500.0f));
+    mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
+    mario->hip = HIP_START; mario->hip_t = 0; /* as if R1 was pressed up there */
+    if (mario_anim) mario_play("hipdropstart", 1.0f, 0);
+    return in->row;
+}
+
+int game_hip_state(void) { return mario->hip; }
+
 int game_test_pipe(void)
 {
     for (int i = 0; i < npipes; i++)
@@ -987,7 +1018,7 @@ static void update_mario(void)
     } else if (pad_pressed(PAD_SQUARE)) { /* the spin near a launch star binds Mario (tryBind) */
         for (int i = 0; i < nlaunches; i++)
             if (!launches[i].cool && vlen(vsub(vadd(m->pos, vmul(m->up, BODY_RADIUS)), launches[i].pos)) < LAUNCH_BIND) {
-                m->launch = i; m->launch_t = 0; m->launch_from = m->pos;
+                m->launch = i; m->launch_t = 0; m->launch_from = m->pos; m->hip = 0;
                 if (mario_anim) mario_play(launches[i].start < 45 ? "spin" : "superspindriverstart", 1.0f, 0);
 #ifdef BENCH
                 printf("launch %d\n", i);
@@ -1027,6 +1058,24 @@ static void update_mario(void)
             m->face = vnorm(vtangent(downhill, m->up));
         }
         if (pad_pressed(PAD_CROSS)) try_jump(m, ratio);
+    } else if (m->hip == HIP_LAND) { /* procHipDrop landing: stuck until the clip ends, the stick (after 15) or A (5) */
+        m->hvel = v3(0, 0, 0);
+        m->hip_t++;
+        if (pad_pressed(PAD_CROSS) && m->hip_t > 5) { m->hip = 0; try_jump(m, 0); }
+        else if ((m->hip_t > 15 && stick > 0.1f) || (mario_anim && mario_anim->done) || m->hip_t > 60) m->hip = 0;
+    } else if (m->hip) { /* jumpToHipDrop: hang while the start clip plays (+2 frames), then fall straight down */
+        m->hvel = v3(0, 0, 0);
+        m->hip_t++;
+        if (m->hip == HIP_START) {
+            m->vup = 0;
+            if ((!mario_anim || mario_anim->done || m->hip_t > 30) && m->hip_t > HIP_DROP_ZERO_GR_TIME) {
+                m->hip = HIP_FALL; m->hip_t = 0;
+                if (mario_anim) mario_play("hipdrop", 1.0f, 1);
+            }
+        } else {
+            float rate = fminf(fmaxf(1.1f - fabsf(m->vup) / LIMIT_SPEED_HIP_DROP, 0.0f), 1.0f);
+            m->vup = fmaxf(m->vup - GRAVITY_HIP_DROP * rate, -LIMIT_SPEED_HIP_DROP);
+        }
     } else if (m->grounded) {
         if (stick > 0.1f) { /* turn towards the stick at most TURN_* radians per frame */
             float lim = ratio > 0.1f ? TURN_MOVE : TURN_STAND;
@@ -1054,7 +1103,13 @@ static void update_mario(void)
             m->hvel = vmul(m->hvel, m->jump_kind == 5 ? SQUAT_FRONT_RED : JUMP_FRONT_RED);
         if (vlen(m->hvel) > MAX_JUMP_SPEED) m->hvel = vmul(vnorm(m->hvel), MAX_JUMP_SPEED);
         if (stick > 0.1f && m->jump_kind != 6) m->face = vnorm(vadd(vmul(m->face, 0.9f), vmul(want, 0.1f)));
-        if (m->wall_timer <= WALL_KEEP && pad_pressed(PAD_CROSS)) { /* wall kick: away from the wall (tryWallJump) */
+        Hit h[1];
+        if (pad_pressed(PAD_R1) && m->jump_kind != 5 && /* jumpToHipDrop: not from a long jump, not near the ground */
+            !kcl_query(vsub(m->pos, vmul(m->up, HIP_DROP_LIMIT_HEIGHT * 0.5f)), HIP_DROP_LIMIT_HEIGHT * 0.5f, h, 1)) {
+            m->hip = HIP_START; m->hip_t = 0;
+            m->hvel = v3(0, 0, 0); m->vup = 0; m->low_grav = 0;
+            if (mario_anim) mario_play("hipdropstart", 1.0f, 0);
+        } else if (m->wall_timer <= WALL_KEEP && pad_pressed(PAD_CROSS)) { /* wall kick: away from the wall (tryWallJump) */
             m->face = vnorm(vtangent(m->wall_n, m->up));
             start_jump(m, 0, vmul(m->face, WALL_JUMP_XZ), WALL_JUMP_Y, "walljump");
         } else if (pad_pressed(PAD_SQUARE) && !m->spin_used && m->spin_timer == 0) { /* trySpinJump */
@@ -1078,17 +1133,26 @@ static void update_mario(void)
     if (slipping) slip_frames++;
 
     float down = m->grounded ? -GROUNDING : m->vup; /* on the ground: step down to follow the floor */
-    V3 center = vadd(vadd(m->pos, vmul(m->up, BODY_RADIUS)), vadd(m->hvel, vmul(m->up, down)));
+    V3 move = vadd(m->hvel, vmul(m->up, down)), center = vadd(m->pos, vmul(m->up, BODY_RADIUS));
     V3 gn = m->up;
     int was_ground = m->grounded;
     V3 wn = m->wall_n;
-    int ground = collide_n(&center, m->up, BODY_RADIUS, &gn, &wn, &m->wall);
+    int ground = 0, steps = (int)(vlen(move) / BODY_RADIUS) + 1; /* no step longer than the body: a hip drop falls
+                                                                   * 150 a frame, thin floors would let it through */
+    for (int s = 0; s < steps && !ground; s++) {
+        center = vadd(center, vmul(move, 1.0f / steps));
+        ground = collide_n(&center, m->up, BODY_RADIUS, &gn, &wn, &m->wall);
+    }
     if (ground && ground_inst >= 0 && insts[ground_inst].collapse && !row_step[insts[ground_inst].row])
         row_step[insts[ground_inst].row] = 1; /* CollapsePlane::exeWait: Mario on it starts the collapse */
     if (m->wall) { m->wall_n = wn; m->wall_timer = 0; } else if (m->wall_timer < 1000) m->wall_timer++;
     m->pos = vsub(center, vmul(m->up, BODY_RADIUS));
     if (ground && m->vup <= 0) {
-        if (!was_ground && (m->jump_kind > 0 || m->last_jump >= 0 || m->air_timer > DROP_WAIT)) {
+        if (m->hip == HIP_FALL) { /* hip drop landing: hip_hit tells the objects under Mario this frame */
+            m->hip = HIP_LAND; m->hip_t = 0;
+            hip_hit = 1; hip_inst = ground_inst;
+            if (mario_anim) mario_play("hipdropland", 1.0f, 0);
+        } else if (!was_ground && (m->jump_kind > 0 || m->last_jump >= 0 || m->air_timer > DROP_WAIT)) {
             /* landing from a jump or a real fall: keep the jump kind for the 2nd / 3rd jump window */
             static const char *land[9] = {"land", "jump2land", "jumprollland", "land", "land", "jumpbroadland",
                                           "jumpbackland", "land", "land"};
@@ -1126,7 +1190,8 @@ static void update_mario(void)
     if (mario_anim) { /* animation: the one-shot clip of a move plays out, then the state picks a loop */
         float sp = vlen(m->hvel) / WALK_SPEED;
         int busy = mario_anim->clip_id >= 0 && !mario_anim->loop && !mario_anim->done;
-        if (m->grounded && m->slip_keep == 0) mario_play("slidehipforward", 1.0f, 1); /* 坂すべり下向きあおむけ */
+        if (m->hip) ; /* the hip drop plays its own clips */
+        else if (m->grounded && m->slip_keep == 0) mario_play("slidehipforward", 1.0f, 1); /* 坂すべり下向きあおむけ */
         else if (m->grounded && m->spin_timer > 0) mario_play("spinground", 1.0f, 0);
         else if (m->grounded && (!busy || stick > 0.1f)) { /* moving cancels a landing */
             if (m->squat) mario_play(sp > 0.05f ? "squatwalk" : "squatwait", 1.0f, 1);
@@ -1147,7 +1212,7 @@ static void update_mario(void)
  * animation, the stage is not reset, game over just refills the lives */
 static void miss(void)
 {
-    mario->pos = start_pos; mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->hurt_timer = 0;
+    mario->pos = start_pos; mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->hurt_timer = 0; mario->hip = 0;
     life = max_life = MAX_LIFE;
     if (--lives < 0) { printf("game over\n"); lives = START_LIVES; }
     printf("miss %d, lives %d\n", ++misses, lives);
@@ -1161,7 +1226,7 @@ static void hurt_mario(V3 from, float push)
     V3 away = vtangent(vsub(mario->pos, from), mario->up);
     if (vlen(away) < 1e-3f) away = mario->face;
     mario->hvel = vmul(vnorm(away), push);
-    mario->vup = 10.0f; mario->grounded = 0; mario->hurt_timer = 60;
+    mario->vup = 10.0f; mario->grounded = 0; mario->hurt_timer = 60; mario->hip = 0;
 }
 
 static void update_kuribo(void)
@@ -1192,19 +1257,19 @@ static void update_kuribo(void)
     }
 }
 
-/* Breakables (breakable()): a player attack breaks them; collision goes at once, then their drops appear.
- * ponytail: only Mario's spin hits (no upper punch / hip drop), drops appear where the box was instead of popping
- * out, no star piece on a switch kill */
+/* Breakables (breakable()): Mario's spin near one, or his hip drop landing on it, breaks it; collision goes at once,
+ * then its drops appear. ponytail: no upper punch, drops appear where the box was instead of popping out, a broken
+ * HipDropRock is gone (no wreck left), no star piece on a switch kill */
 static void break_boxes(void)
 {
-    if (mario->spin_timer <= 0)
+    if (mario->spin_timer <= 0 && !hip_hit)
         return;
     V3 c = vadd(mario->pos, vmul(mario->up, BODY_RADIUS));
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
         if (!in->breaks) continue;
         V3 p = v3(in->m[12], in->m[13], in->m[14]);
-        if (vlen(vsub(c, p)) > in->reach + 120.0f) continue;
+        if (hip_hit ? i != hip_inst : in->breaks == 2 || vlen(vsub(c, p)) > in->reach + 120.0f) continue;
         const Row *r = &sc->objs[in->row];
         int n, sp;
         breakable(sc->types + 32 * r->type, r, &n, &sp);
@@ -1301,7 +1366,7 @@ static void update_pipes(void)
         mario->up = o->up;
         mario->vup = o->vf; /* endBindAndPlayerForceWeakGravityJumpInputOff(Y * vert + Z * horiz) */
         mario->hvel = vmul(vtangent(o->front, o->up), o->hf);
-        mario->grounded = 0; mario->jump_kind = 0; mario->air_timer = 0;
+        mario->grounded = 0; mario->jump_kind = 0; mario->air_timer = 0; mario->hip = 0;
         if (vlen(mario->hvel) > 0.1f) mario->face = vnorm(mario->hvel);
         if (mario_anim) mario_play("earthenpipejump", 1.0f, 0);
         pipe_wait = 1;
@@ -1362,6 +1427,7 @@ static void collect(Pickup *p, int n, float reach, int *counter)
 
 void game_update(void)
 {
+    hip_hit = 0;
     update_mario();
     update_kuribo();
     break_boxes();

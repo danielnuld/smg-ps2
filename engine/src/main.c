@@ -307,6 +307,16 @@ int main(void)
             printf("spin test f %u: launch %d %s\n", frame, game_launch_state(), d);
         }
 #endif
+#ifdef HIP_TEST
+        if (frame == 120)
+            printf("hip test: above row %d\n", game_test_hip());
+        if (frame > 120 && frame <= 220 && frame % 5 == 0) {
+            char d[128];
+            game_debug(d, sizeof d);
+            printf("hip test f %u: hip %d coins %d pieces %d %s\n", frame, game_hip_state(), game_coins(),
+                   game_starpieces(), d);
+        }
+#endif
 #ifdef PIPE_TEST
         if (frame == 120)
             printf("pipe test: on pipe %d\n", game_test_pipe());
