@@ -518,6 +518,17 @@ int main(void)
             printf("spin test f %u: launch %d %s\n", frame, game_launch_state(), d);
         }
 #endif
+#ifdef ROTOR_TEST
+        {
+            static int row = -1;
+            if (frame == 120) printf("rotor test: on row %d\n", row = game_test_rotor());
+            if (frame > 120 && frame <= 600 && frame % 30 == 0) {
+                char d[128];
+                game_debug(d, sizeof d);
+                printf("rotor test f %u: angle %d %s\n", frame, (int)game_rotor_angle(row), d);
+            }
+        }
+#endif
 #ifdef FLIP_TEST
         if (frame >= 120 && frame % 40 == 0) { /* every 40 frames Mario on the next panel */
             static int k, done;

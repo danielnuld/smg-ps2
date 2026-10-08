@@ -113,6 +113,21 @@ def rows(b):
     return out
 
 
+def map_parts(b, rs):
+    """mappartsinfo rows: Obj_arg0-3 as usual, the MapPartsRotator columns in args 4-7: RotateSpeed, RotateAngle,
+    RotateAxis, then bit 30 (a map part) | RotateType (bits 0-3, default 1) | RotateAccelType << 4 | MoveConditionType
+    << 8 | RotateStopTime << 12 (unset: Petari's defaults, 0 but the type)."""
+    n = len(rs)
+    col = {f: int_or(b, f, n, -1) for f in ("RotateSpeed", "RotateAngle", "RotateAxis", "RotateType", "RotateAccelType",
+                                           "MoveConditionType", "RotateStopTime")}
+    for i, r in enumerate(rs):
+        g = lambda f, d: col[f][i] if col[f][i] >= 0 else d
+        r["args"][4:8] = [col["RotateSpeed"][i], col["RotateAngle"][i], col["RotateAxis"][i],
+                          1 << 30 | g("RotateType", 1) & 15 | (g("RotateAccelType", 0) & 15) << 4 |
+                          (g("MoveConditionType", 0) & 15) << 8 | min(g("RotateStopTime", 0), 0x3FFF) << 12]
+    return rs
+
+
 def stage_files(path):
     return {p.lower(): d for p, d in B.rarc_files(path.read_bytes(), paths=True)}
 
@@ -142,6 +157,11 @@ def scene(fs, galaxy, scenario):
             for f in ("objinfo", "planetobjinfo", "areaobjinfo"):
                 for r in rows(files.get(f"{root}/jmp/placement/{layer}/{f}", b"")):
                     objs.append(dict(r, zone=zid))
+            for r in rows(files.get(f"{root}/jmp/childobj/{layer}/childobjinfo", b"")):
+                objs.append(dict(r, zone=zid))
+            mp = files.get(f"{root}/jmp/mapparts/{layer}/mappartsinfo", b"")
+            for r in map_parts(mp, rows(mp)):
+                objs.append(dict(r, zone=zid))
             for r in rows(files.get(f"{root}/jmp/start/{layer}/startinfo", b"")):
                 starts.append(dict(r, zone=zid))
             cb = files.get(f"{root}/jmp/placement/{layer}/cameracubeinfo", b"")

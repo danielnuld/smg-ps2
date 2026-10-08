@@ -133,6 +133,7 @@ typedef struct {
     int flip;        /* FlipPanel / FlipPanelReverse: row_step[row] holds FLIP_* bits */
     int npc;         /* talking NPC (npc_class): turns to face Mario when he is near */
     int hipsw;       /* hip drop switch: 1 PicketSwitch(Big) / HipDropSwitch (SW_A for good), 2 HipDropTimerSwitch */
+    int rotor;       /* map part with a RotateSpeed: turns (rotor_matrix), carries Mario */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP };
 static V3 firebar_ball(const Inst *in, int j, int k);
@@ -167,6 +168,9 @@ static void sw_set(const Row *r, int k, int on)
     sw_changed = 1;
 }
 static unsigned short *row_step; /* per OBJS row: CollapsePlane frames since Mario stood on it (0: not yet) */
+static float *row_angle;         /* per OBJS row: a rotating map part's angle (degrees) */
+static signed char *row_turn;    /* per OBJS row: its direction (+1 / -1, 0 not started) and */
+static unsigned short *row_hold; /* frames it still holds at the end of its turn */
 static int hip_hit, hip_inst;   /* Mario landed a hip drop this frame, on instance hip_inst (-1 none) */
 static int mario_ground = -1;   /* instance Mario stands on this frame, -1 in the air */
 static int ground_inst = -1;     /* instance under the last collide_n's ground normal, -1 none */
@@ -581,6 +585,9 @@ void game_init(const Scene *s, const unsigned char *blob)
     }
     row_dead = mem_alloc(MEM_OBJECTS, s->nobjs);
     row_step = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(unsigned short));
+    row_angle = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(float));
+    row_turn = mem_alloc(MEM_OBJECTS, s->nobjs);
+    row_hold = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(unsigned short));
     npurple = count_type("PurpleCoin", 0) + count_type("CirclePurpleCoinGroup", 1) + count_type("PurpleRailCoin", 1);
     npieces = count_type("StarPiece", 0) + box_pieces;
     int t_spg = scene_type(s, "StarPieceGroup");
@@ -808,6 +815,24 @@ static int npc_class(const char *name)
     return 0;
 }
 
+/* MapPartsRotator.cpp: the placement turned by row_angle about its own X / Y / Z axis (RotateAxis), about its origin */
+static void rotor_matrix(Inst *in)
+{
+    const Row *r = &sc->objs[in->row];
+    float base[16], rot[16];
+    mat_translate_rot_scale(base, r->pos, r->rot, r->scale);
+    int ax = r->arg[6] >= 0 && r->arg[6] <= 2 ? r->arg[6] : 0;
+    V3 a = vnorm(v3(base[4 * ax], base[4 * ax + 1], base[4 * ax + 2]));
+    float t = row_angle[in->row] * 0.0174533f, c = cosf(t), s = sinf(t), k = 1 - c;
+    mat_identity(rot); /* axis-angle, column-major */
+    rot[0] = c + a.x * a.x * k;       rot[4] = a.x * a.y * k - a.z * s; rot[8] = a.x * a.z * k + a.y * s;
+    rot[1] = a.y * a.x * k + a.z * s; rot[5] = c + a.y * a.y * k;       rot[9] = a.y * a.z * k - a.x * s;
+    rot[2] = a.z * a.x * k - a.y * s; rot[6] = a.z * a.y * k + a.x * s; rot[10] = c + a.z * a.z * k;
+    base[12] = base[13] = base[14] = 0;
+    mat_mul(in->m, rot, base);
+    in->m[12] = r->pos[0]; in->m[13] = r->pos[1]; in->m[14] = r->pos[2];
+}
+
 void game_rebind(void)
 {
     const Scene *s = sc;
@@ -859,6 +884,7 @@ void game_rebind(void)
         in->npc = npc_class(name);
         in->hipsw = strncmp(name, "PicketSwitch", 12) == 0 || strcmp(name, "HipDropSwitch") == 0 ? 1 :
                     strcmp(name, "HipDropTimerSwitch") == 0 ? 2 : 0;
+        in->rotor = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->arg[4] != -1 && r->arg[4] != 0; /* -1: not a map part */
         in->kcl = scene_kcl(s, name);
         in->zone = r->zone;
         mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
@@ -870,6 +896,7 @@ void game_rebind(void)
             in->s = k;
         }
         in->reach = md->radius * in->s;
+        if (in->rotor && row_angle) rotor_matrix(in);
         zone_grow(in);
     }
 }
@@ -1094,6 +1121,22 @@ int game_rocks_alive(void)
     for (int i = 0; i < nrollers; i++) n += rollers[i].alive;
     return n;
 }
+
+int game_test_rotor(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->rotor) continue;
+        V3 p = v3(in->m[12], in->m[13], in->m[14]);
+        mario->up = up_at(p, mario->up);
+        mario->pos = vadd(p, vmul(mario->up, in->reach * 0.5f + 100.0f));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
+        return in->row;
+    }
+    return -1;
+}
+
+float game_rotor_angle(int row) { return row >= 0 ? row_angle[row] : 0; }
 
 int game_test_firebar(void)
 {
@@ -1719,6 +1762,49 @@ static void update_hip_switches(void)
     }
 }
 
+/* Rotating map parts (MapPartsRotator): RotateSpeed * 0.01 degrees a frame; RotateAngle 0 turns for ever, else it
+ * turns that far, holds RotateStopTime frames, then RotateType 0 stops, 1 swings back, 2 goes on; MoveConditionType
+ * other than 0 waits for Mario on it. Mario standing on one (last frame's ground) is carried along. ponytail: constant
+ * speed (no RotateAccelType easing), no start sign motion */
+static void update_rotors(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->rotor) continue;
+        const Row *r = &sc->objs[in->row];
+        int row = in->row, packed = r->arg[7], type = packed & 15, cond = packed >> 8 & 15, hold = packed >> 12 & 0x3FFF;
+        if (!row_turn[row]) {
+            if (cond && mario_ground != i) continue;
+            row_turn[row] = 1;
+        }
+        if (row_turn[row] == 2) continue; /* RotateType 0: stopped at its end */
+        if (row_hold[row]) { row_hold[row]--; continue; }
+        float speed = r->arg[4] * 0.01f, range = r->arg[5] > 0 ? (float)r->arg[5] : 0, sg = speed > 0 ? 1.0f : -1.0f;
+        int dir = row_turn[row];
+        float old[16], prev = row_angle[row], a = prev + fabsf(speed) * sg * dir;
+        memcpy(old, in->m, 64);
+        if (range > 0 && type == 2) { /* goes on: holds at every multiple of the angle */
+            if (floorf(a * sg / range) != floorf(prev * sg / range)) { a = sg * ceilf(prev * sg / range) * range; row_hold[row] = hold; }
+        } else if (range > 0 && ((dir > 0 && a * sg >= range) || (dir < 0 && a * sg <= 0))) { /* the end of a turn */
+            a = dir > 0 ? sg * range : 0;
+            row_turn[row] = type == 0 ? 2 : -dir;
+            row_hold[row] = hold;
+        }
+        if (range == 0 || type == 2) a = fmodf(a, 360.0f);
+        row_angle[row] = a;
+        rotor_matrix(in);
+        if (mario_ground == i) { /* carried: Mario's position in the old pose, put back in the new one */
+            V3 d = vsub(mario->pos, v3(old[12], old[13], old[14]));
+            float k = 1.0f / (in->s * in->s), l[3] = {vdot(d, v3(old[0], old[1], old[2])) * k,
+                                                     vdot(d, v3(old[4], old[5], old[6])) * k,
+                                                     vdot(d, v3(old[8], old[9], old[10])) * k};
+            V3 p = v3(in->m[12], in->m[13], in->m[14]);
+            for (int j = 0; j < 3; j++) p = vadd(p, vmul(v3(in->m[4 * j], in->m[4 * j + 1], in->m[4 * j + 2]), l[j]));
+            mario->pos = p;
+        }
+    }
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -2094,6 +2180,7 @@ void game_update(void)
 {
     hip_hit = 0;
     game_frame++;
+    update_rotors();
     update_mario();
     update_kuribo();
     break_boxes();

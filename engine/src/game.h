@@ -36,6 +36,9 @@ int game_test_item(void);
 int game_test_spark(void);
 /* Test builds: Mario put on the third ball of the first FireBar. Returns its row or -1. */
 int game_test_firebar(void);
+/* Test builds: Mario dropped onto the first rotating map part (its row or -1); that row's angle */
+int game_test_rotor(void);
+float game_rotor_angle(int row);
 /* Test builds: Mario on the rail 300 ahead of the first rolling rock (its RockCreator row, or -1); rocks rolling */
 int game_test_rock(void);
 int game_test_rockcreator(void); /* Mario at the start of the first RockCreator's rail */
