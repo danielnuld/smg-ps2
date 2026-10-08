@@ -204,6 +204,7 @@ def model_groups(arc, ratio, stats=None, skinned=False):
             geom.model(b, 1.0 if skinned else ratio, None, got)
             bl = tex.blocks(b)
             clr = geom.vtx1_color(b, bl[b"VTX1"])
+            nget = geom.vtx1_attr(b, bl[b"VTX1"], 10)
             if skinned:
                 tables = skin.group_tables(b, bl)
                 gtab = []
@@ -274,7 +275,15 @@ def model_groups(arc, ratio, stats=None, skinned=False):
                                 for v in used]
                     gtab.append(tables[(info["shape"], info["group"])])
                 blend = tex.material_blend(b, bl[b"MAT3"], mat) if mat is not None else (0, 1, 255)
-                groups.append((verts, [remap[v] for v in tri], uvs, t, slots, cols, blend))
+                # per-vertex normals for lit materials (smooth shading), False for unlit ones, None: face normals
+                nrm = None
+                if not skinned and mat is not None and not tex.lit(b, bl[b"MAT3"], mat):
+                    nrm = False
+                elif not skinned and nget and 10 in info["at"]:
+                    o, w = info["at"][10]
+                    nrm = [nget(info["keys"][v][o] if w == 1 else info["keys"][v][o] << 8 | info["keys"][v][o + 1])
+                           for v in used]
+                groups.append((verts, [remap[v] for v in tri], uvs, t, slots, cols, blend, nrm))
             if skinned:
                 sk = skin_entry(b, bl, gtab)
         elif n.endswith(".kcl") and kcl is None:
@@ -382,6 +391,14 @@ BASE_COLOUR = {"Coin": (240, 208, 48), "PurpleCoin": (176, 80, 240), "StarPiece"
 LIGHT = (0.35, 0.75, -0.55)
 
 
+def shade(n, L):
+    """Light factor of a vertex normal: half-Lambert (the side away from LIGHT keeps 0.35, as planets' undersides are
+    walked on; ponytail: one fixed light in model space, not the zone's LightData nor the camera's)."""
+    nl = math.sqrt(sum(x * x for x in n)) or 1.0
+    h = 0.5 + 0.5 * sum(n[j] * L[j] for j in range(3)) / nl
+    return 0.35 + 0.65 * h * h
+
+
 UV_ONE = 4096  # UVs as s16 with 12 fraction bits (VU1 itof12): -8 .. +8 per triangle
 
 
@@ -392,7 +409,8 @@ def pos_scale(groups):
 
 
 def vu_groups(groups, base, stats=None, qs=1.0):
-    """Indexed groups -> [(pos s16x4, colour u8x4, uv s16x2)] per group, flat shading: k = 0.25 + 0.75 |n . L|.
+    """Indexed groups -> [(pos s16x4, colour u8x4, uv s16x2)] per group, shading: per-vertex normals (shade), unlit
+    materials k = 1, without normals flat k = 0.25 + 0.75 |n . L|.
     Positions are x, y, z in steps of qs (the engine folds qs into the matrix) and w = 4 * matrix slot (0: static).
     Textured groups get grey 0x80 * k (the GS modulates: 0x80 = 1.0), untextured ones base * k. Each triangle's UVs
     are shifted by whole repeats towards 0 on repeating axes so they fit s16; triangles still wider than 8 repeats
@@ -401,7 +419,7 @@ def vu_groups(groups, base, stats=None, qs=1.0):
     L = [c / ll for c in LIGHT]
     pad = lambda x: bytes(x) + b"\0" * (-len(x) % 16)
     out = []
-    for verts, tris, uvs, t, slots, cols, _ in groups:
+    for verts, tris, uvs, t, slots, cols, _, nrm in groups:
         pos, col, uv = bytearray(), bytearray(), bytearray()
         rgb = (0x80, 0x80, 0x80) if t else cols if slots is None and isinstance(cols, tuple) else base
         vcol = slots is None and isinstance(cols, list)  # unlit vertex colours (0..255; textured: times 0x80 / 255)
@@ -411,11 +429,14 @@ def vu_groups(groups, base, stats=None, qs=1.0):
             e2 = [c[j] - a[j] for j in range(3)]
             n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]]
             nl = math.sqrt(sum(x * x for x in n)) or 1.0
-            k = 0.25 + 0.75 * abs(sum(n[j] * L[j] for j in range(3))) / nl
+            k = 1.0 if nrm is False else 0.25 + 0.75 * abs(sum(n[j] * L[j] for j in range(3))) / nl
             rgba = struct.pack("<4B", int(rgb[0] * k), int(rgb[1] * k), int(rgb[2] * k), 0x80)
             for q in range(3):
                 vi = tris[i + q]
                 v = verts[vi]
+                if nrm:
+                    k = shade(nrm[vi], L)
+                    rgba = struct.pack("<4B", int(rgb[0] * k), int(rgb[1] * k), int(rgb[2] * k), 0x80)
                 p = [max(-32767, min(32767, round(c / qs))) for c in v]
                 if slots is None:   # static: slot 0
                     pos += struct.pack("<4h", *p, 0)
@@ -730,7 +751,7 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True):
         models_.append(name32(t) + struct.pack("<f", math.sqrt(max((sum(c * c for c in v) for verts, *_ in groups
                                                                     for v in verts), default=0.0))))
         vg, qs = b"", pos_scale(groups)
-        for (_, tris, _, tx, _, _, bl), (pos, col, uv) in zip(groups, vu_groups(groups, BASE_COLOUR.get(t, (112, 176, 96)),
+        for (_, tris, _, tx, _, _, bl, _), (pos, col, uv) in zip(groups, vu_groups(groups, BASE_COLOUR.get(t, (112, 176, 96)),
                                                                              stats, qs)):
             ti = 0xFFFF
             if tx:
@@ -852,6 +873,8 @@ def read_chunks(blob):
 
 
 def selftest():
+    L = (0.0, 1.0, 0.0)
+    assert shade((0, 2, 0), L) == 1.0 and abs(shade((0, -1, 0), L) - 0.35) < 1e-9 and 0.35 < shade((1, 0, 0), L) < 1
     # BCSV with name (string) + pos_x (float) + Obj_arg0 (long): 2 rows
     fields = [("name", 0, 6), ("pos_x", 4, 2), ("Obj_arg0", 8, 0)]
     hdr = struct.pack(">4I", 2, 3, 16 + 36, 12) + b"".join(

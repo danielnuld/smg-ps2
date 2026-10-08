@@ -337,6 +337,14 @@ def vertex_colour(b, mat3, m):
     return ci != 0xFFFF and b[off(0x28) + 8 * ci] == 0 and b[off(0x28) + 8 * ci + 1] == 1
 
 
+def lit(b, mat3, m):
+    """True when material m's colour channel 0 has lighting on (MAT3 channel table, as vertex_colour)."""
+    off = lambda k: mat3 + u32(b, mat3 + k)
+    e = off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C
+    ci = u16(b, e + 0x0C)
+    return ci != 0xFFFF and b[off(0x28) + 8 * ci] != 0
+
+
 def bake(b, mat3, m, tex1, texs, t):
     """Texture t with material m's TEV baked in (tev), RGBA8, keeping the texture's own alpha (cut-outs; the TEV alpha
     often reads lit channels). ponytail: a result near white where the texture is not (RAS from lit or second colour

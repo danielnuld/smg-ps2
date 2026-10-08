@@ -45,6 +45,9 @@ Last updated 2026-10-08. Detail and numbers: `docs/phase2-report.md`; tasks: `op
   - materials: the converter evaluates each material's TEV stages (`tools/tex.py` `tev`, `bake`) and bakes them into
     its texture; untextured groups take the TEV's constant colour. ponytail: no lighting (RAS = material colour),
     every stage at the base texture's UVs; near-white results fall back to the plain texture (Coin);
+  - lighting: lit materials (colour channel 0 lighting on: WoodBox, Kuribo...) get smooth per-vertex shading from
+    their NRM normals (`shade`, half-Lambert, one fixed light in model space), unlit ones none; planets keep the
+    vertex colours Nintendo baked (unlit, CLR0);
   - skies (Sky kind and VROrbit / VRDarkSpace / VRSandwichSun) drawn first at the camera, then `render_clear_depth`;
     projected sky textures get spherical UVs (`SKY_ARCS`);
   - music: `tools/music.py` (AST -> `out/music/*.pcm`), streamed through audsrv (`engine/src/audio.c`), looping;
@@ -75,7 +78,7 @@ there needs the embedded blob and every pack rebuilt.
 
 ## Next
 
-0. Look: baked lighting per vertex, effects (sparkles, stars), sound effects (AFC -> ADPCM).
+0. Look: effects (sparkles, stars).
 1. More switch sources and users: IronCannonLauncherPoint, StarPieceSpot, Kinopio / Tico; spawned power stars
    (FlipPanelObserver arg7, requestAppearPowerStar); RestartCube (checkpoints).
 2. Lumas / NPCs (static models today).
@@ -86,4 +89,4 @@ there needs the embedded blob and every pack rebuilt.
 6. Task 5.3 gate: coverage run done once (136 / 136 play, `out/coverage.md`, `tools/coverage_report.py`), class
    weights (`out/class_coverage.md`); left: the final run on the current build, worst frame on the heaviest scenario,
    videos. Blocking zone loads (a zone wanted before its prefetch ends) are the worst frames (HoneyBee ~0.4 s).
-7. Last (the user's call): music on the disc (streams in the ISO), ChangeBgmCube / RestartCube BGM changes.
+7. Last (the user's call): sound effects (AFC -> ADPCM), music on the disc (streams in the ISO), ChangeBgmCube / RestartCube BGM changes.

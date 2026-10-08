@@ -17,18 +17,20 @@ VTX1_ARRAY = {9: 0x0C, 10: 0x10, 11: 0x18, 12: 0x1C, **{13 + k: 0x20 + 4 * k for
 
 
 def vtx1_attr(b, v, attr=9):
-    """VTX1 block at v -> index -> floats of one attribute (POS = 9 xyz, TEX0.. = 13.. st). J3DModelLoader.hpp:70-77
-    (fmt list @+8, arrays from @+0x0C); fmt entry {attr, cnt, type, frac} (GXStruct.h:32-37) padded to 16 bytes;
-    POS cnt 0 = XY, 1 = XYZ; TEX cnt 0 = S, 1 = ST (GXEnum.h:387-392)."""
+    """VTX1 block at v -> index -> floats of one attribute (POS = 9 xyz, NRM = 10 xyz, TEX0.. = 13.. st).
+    J3DModelLoader.hpp:70-77 (fmt list @+8, arrays from @+0x0C); fmt entry {attr, cnt, type, frac} (GXStruct.h:32-37)
+    padded to 16 bytes; POS cnt 0 = XY, 1 = XYZ; NRM cnt 0 = XYZ, 1 = NBT (9 values, the normal first); TEX cnt 0 =
+    S, 1 = ST (GXEnum.h:387-392)."""
     f = v + u32(b, v + 8)
     while u32(b, f) != 0xFF:
         if u32(b, f) == attr:
             cnt, typ, frac = u32(b, f + 4), u32(b, f + 8), b[f + 12]
-            n, want = (cnt + 2, 3) if attr == 9 else (cnt + 1, 2)
+            n, want = (cnt + 2, 3) if attr == 9 else (3, 3) if attr == 10 else (cnt + 1, 2)
+            step = 9 if attr == 10 and cnt == 1 else n
             c = COMP[typ]
             sz, scale, base = struct.calcsize(c), (1.0 if typ == 4 else 1.0 / (1 << frac)), v + u32(b, v + VTX1_ARRAY[attr])
             def get(i):
-                xs = [x * scale for x in struct.unpack_from(">" + c * n, b, base + i * n * sz)]
+                xs = [x * scale for x in struct.unpack_from(">" + c * n, b, base + i * step * sz)]
                 return xs + [0.0] * (want - n)
             return get
         f += 16
