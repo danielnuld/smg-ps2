@@ -30,6 +30,23 @@ static Scene scene;
  *   {char path[88], u32 offset, u32 size}, every pack on a sector of its own); only this scenario's entries and
  *   resident.bin are kept. Buffers are rounded up to whole sectors (PACK_ALLOC). */
 static u32 pack_bytes;
+/* the scenario played: PACKS (build.sh), or for host builds the first line of host:boot.txt when there is one
+ * (tools/coverage.ps1 plays every scenario with one ELF that way) */
+static char scen[64] = PACKS;
+
+static void pick_scenario(void)
+{
+#ifndef DISC
+    FILE *f = fopen("host:boot.txt", "rb");
+    if (!f) return;
+    int n = fread(scen, 1, sizeof scen - 1, f);
+    fclose(f);
+    scen[n > 0 ? n : 0] = 0;
+    for (int i = 0; i < n; i++)
+        if (scen[i] == '\r' || scen[i] == '\n') scen[i] = 0;
+    if (!scen[0]) strcpy(scen, PACKS);
+#endif
+}
 typedef struct { u32 base, size, pos; FILE *f; } Pack; /* DISC: base = first sector, f unused but non-NULL while open */
 
 #ifdef DISC
@@ -53,6 +70,49 @@ static int cd_read(u32 lsn, u32 sectors, void *dst, int wait)
     return 1;
 }
 
+/* Boot menu: every scenario on the disc (the TOC's "<Galaxy>/<n>/scene.bin" entries), D-pad up / down (left / right
+ * a page), X or START plays it; the build's PACKS is the first choice, played after 10 s without input. Sets scen. */
+#define MENU_MAX 192
+#define MENU_ROWS 12
+static void disc_menu(const u8 *entries, u32 n)
+{
+    static char names[MENU_MAX][40];
+    int count = 0, sel = 0;
+    for (u32 i = 0; i < n && count < MENU_MAX; i++) {
+        const char *p = ((const TocEntry *)(entries + i * sizeof(TocEntry)))->path;
+        const char *tail = strstr(p, "/scene.bin");
+        if (!tail || tail[10] || tail - p >= 40) continue;
+        memcpy(names[count], p, tail - p);
+        names[count][tail - p] = 0;
+        if (strcmp(names[count], scen) == 0) sel = count;
+        count++;
+    }
+    if (!count) return;
+    static const float eye[3] = {0, 0, 1}, at[3] = {0, 0, 0}, up[3] = {0, 1, 0};
+    for (int f = 0, touched = 0;; f++) {
+        pad_update();
+        touched |= pad_held(PAD_UP | PAD_DOWN | PAD_LEFT | PAD_RIGHT);
+        if (!touched && f >= 600) break;
+        if (pad_pressed(PAD_UP)) sel = (sel + count - 1) % count;
+        if (pad_pressed(PAD_DOWN)) sel = (sel + 1) % count;
+        if (pad_pressed(PAD_LEFT)) sel = sel >= MENU_ROWS ? sel - MENU_ROWS : 0;
+        if (pad_pressed(PAD_RIGHT)) sel = sel + MENU_ROWS < count ? sel + MENU_ROWS : count - 1;
+        if (f > 10 && (pad_pressed(PAD_CROSS) || pad_pressed(PAD_START))) break;
+        render_begin(eye, at, up);
+        char line[64];
+        snprintf(line, sizeof line, "SCENARIO %d / %d   X: PLAY", sel + 1, count);
+        render_text(16, 12, line);
+        int first = sel - MENU_ROWS / 2 < 0 ? 0 : sel - MENU_ROWS / 2;
+        if (first + MENU_ROWS > count) first = count > MENU_ROWS ? count - MENU_ROWS : 0;
+        for (int i = first; i < count && i < first + MENU_ROWS; i++) {
+            snprintf(line, sizeof line, "%s %s", i == sel ? ">" : " ", names[i]);
+            render_text(16, 36 + 14 * (i - first), line);
+        }
+        render_end();
+    }
+    strcpy(scen, names[sel]);
+}
+
 static void toc_load(void)
 {
     sceCdlFILE ft, fb;
@@ -69,16 +129,17 @@ static void toc_load(void)
         for (;;) {}
     }
     u32 n = *(const u32 *)t;
-    size_t lp = strlen(PACKS);
+    disc_menu(t + 4, n);
+    size_t lp = strlen(scen);
     for (u32 i = 0; i < n; i++) {
         const TocEntry *e = (const TocEntry *)(t + 4 + i * sizeof(TocEntry));
-        if ((strncmp(e->path, PACKS, lp) == 0 && e->path[lp] == '/') || strcmp(e->path, "resident.bin") == 0) {
+        if ((strncmp(e->path, scen, lp) == 0 && e->path[lp] == '/') || strcmp(e->path, "resident.bin") == 0) {
             if (ntoc == (int)(sizeof toc / sizeof toc[0])) { printf("packs: TOC full\n"); for (;;) {} }
             memcpy(&toc[ntoc++], e, sizeof *e);
         }
     }
     free(t);
-    printf("packs: disc TOC %u entries, %d for %s\n", n, ntoc, PACKS);
+    printf("packs: disc TOC %u entries, %d for %s\n", n, ntoc, scen);
 }
 #else
 #define PACK_ALLOC(n) (n)
@@ -213,7 +274,7 @@ static int pend_step(u32 budget)
                 pend.z++;
                 continue;
             }
-            snprintf(path, sizeof path, "%s/%s%s", PACKS, (const char *)(zn + 4 + 56 * z),
+            snprintf(path, sizeof path, "%s/%s%s", scen, (const char *)(zn + 4 + 56 * z),
                      pend.full[z] ? ".bin" : ".low.bin");
             if (!pack_open(&pend.f, path)) {
                 printf("packs: missing %s" "\n", path);
@@ -315,16 +376,17 @@ static void stream_update(Scene *s)
 static const u8 *load_packs(Scene *s)
 {
     char path[160];
+    pick_scenario();
 #ifdef DISC
     toc_load();
 #endif
-    snprintf(path, sizeof path, "%s/scene.bin", PACKS);
+    snprintf(path, sizeof path, "%s/scene.bin", scen);
     scene_blob = load_file(path);
     if (blob_load(s, scene_blob) != 0)
         return NULL;
     if (blob_add(s, load_file("resident.bin")) != 0)
         return NULL;
-    snprintf(path, sizeof path, "%s/common.bin", PACKS);
+    snprintf(path, sizeof path, "%s/common.bin", scen);
     if (blob_add(s, load_file(path)) != 0)
         return NULL;
     u32 sz;
@@ -334,7 +396,7 @@ static const u8 *load_packs(Scene *s)
     base_models = s->nmodels;
     base_tex = s->ntex;
     base_kcl = s->nkcl;
-    printf("packs: %s, %u zones, base %u models, %u textures, %u KB read\n", PACKS, nzones, s->nmodels, s->ntex,
+    printf("packs: %s, %u zones, base %u models, %u textures, %u KB read\n", scen, nzones, s->nmodels, s->ntex,
            pack_bytes >> 10);
     return scene_blob;
 }
@@ -436,6 +498,10 @@ int main(void)
             printf("box test: Mario spins on box row %d\n", game_test_box());
         if (frame > 120 && frame <= 240 && frame % 10 == 0)
             printf("box test f %u: coins %d\n", frame, game_coins());
+        if (frame == 300)
+            printf("box test: Mario under item block row %d\n", game_test_block());
+        if (frame == 360)
+            printf("box test: after the block coins %d pieces out %d\n", game_coins(), game_pieces_out());
         if (frame == 240)
             printf("box test: coins %d\n", game_coins());
 #endif
@@ -503,6 +569,19 @@ int main(void)
                        (u32)(wl / EE_MHZ), (u32)(wd / EE_MHZ), (u32)(wg / EE_MHZ), d);
                 slow = wl = wd = wg = 0;
             }
+        }
+#endif
+#ifdef COVER_TEST
+        /* coverage run (tools/coverage.ps1): a launch star at frame 60 if there is one, then one line at 900 */
+        if (frame == 60)
+            game_test_spindriver(0);
+        {
+            static u32 prev, slow;
+            if (frame > 120 && prev && t0 - prev > (u32)(20000 * EE_MHZ)) slow++;
+            prev = t0;
+            if (frame == 900)
+                printf("cover: %s ok, slow %u, worst %u us, runtime %u KB, lives %d\n", scen, slow,
+                       (u32)(worst / EE_MHZ), mem_total() >> 10, game_lives());
         }
 #endif
         stream_update(&scene);

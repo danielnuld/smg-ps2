@@ -58,7 +58,8 @@ ROW = struct.Struct("<HHii9f8i5hh")
 # second models a class draws besides its own (FireBar.cpp: FireBarBall around the FireBarCore)
 EXTRA = {"FireBar": ("FireBarBall",)}
 # model-less classes the engine runs (stage switch logic): kept in OBJS like the classes with a model
-LOGIC = ("TimerSwitch", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver")
+LOGIC = ("TimerSwitch", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
+         "YellowChipGroup", "BlueChipGroup")
 
 
 def col(b, field, n, default=0):

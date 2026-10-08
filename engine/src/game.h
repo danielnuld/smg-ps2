@@ -21,6 +21,8 @@ int game_test_spindriver(int small);
 int game_launch_state(void);
 /* Test builds: Mario just above the first breakable box, spinning. Returns its OBJS row or -1. */
 int game_test_box(void);
+/* Test builds: Mario jumping into the first ItemBlock from below. Returns its row or -1. */
+int game_test_block(void);
 /* Test builds: Mario dropped onto the first CollapsePlane. Returns its OBJS row or -1; game_test_collapse_step(row)
  * gives that plane's collapse frame (0 not started) or -1 once it has vanished. */
 int game_test_collapse(void);

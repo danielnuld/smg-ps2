@@ -131,7 +131,7 @@ typedef struct {
     int invisible;   /* InvisiblePolygonObj (InvisibleWall*): collision only, never drawn */
     int flip;        /* FlipPanel / FlipPanelReverse: row_step[row] holds FLIP_* bits */
 } Inst;
-enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN };
+enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP };
 static V3 firebar_ball(const Inst *in, int j, int k);
 #define MAX_ZONES 64
 
@@ -173,8 +173,10 @@ static void zone_grow(const Inst *in);
 /* Breakable classes and what they drop (Petari PunchBox.cpp, WoodBox.cpp, CrystalCage.cpp, HipDropRock.cpp):
  * PunchBox / WoodBox arg0 coins (default 1), WoodBox also arg2 star pieces; CrystalCageS / M one hit, a coin when the
  * item inside (arg7, DummyDisplayModel) is 0; HipDropRock (a hip drop only) a coin when arg0 is 0, arg1 star pieces
- * (default 6) when it is 1. Returns 1 (spin or hip drop), 2 (hip drop only) or 0 for anything else. ponytail:
- * CrystalCageL (2 hits, power star) waits for power stars */
+ * (default 6) when it is 1; ItemBlock (ItemBlock.cpp, hit from below): TimerCoinBlock 10 coins, SplashCoinBlock arg0
+ * (default 8), TimerPieceBlock 20 star pieces, SplashPieceBlock arg0 (default 8), ItemBlockSwitch nothing (its dead
+ * switch). Returns 1 (spin or hip drop), 2 (hip drop only), 3 (hit from below) or 0 for anything else. ponytail:
+ * CrystalCageL (2 hits, power star) waits for power stars; a timer block gives everything on its first hit */
 static int breakable(const char *name, const Row *r, int *coins, int *pieces)
 {
     *coins = *pieces = 0;
@@ -186,6 +188,13 @@ static int breakable(const char *name, const Row *r, int *coins, int *pieces)
     if (strcmp(name, "CrystalCageS") == 0 || strcmp(name, "CrystalCageM") == 0) {
         *coins = r->arg[7] == 0;
         return 1;
+    }
+    if (strcmp(name, "TimerCoinBlock") == 0 || strcmp(name, "SplashCoinBlock") == 0 ||
+        strcmp(name, "TimerPieceBlock") == 0 || strcmp(name, "SplashPieceBlock") == 0 || strcmp(name, "ItemBlockSwitch") == 0) {
+        int n = name[0] == 'T' ? (name[5] == 'C' ? 10 : 20) : r->arg[0] >= 0 ? r->arg[0] : 8;
+        if (name[0] == 'I') n = 0;
+        if (strstr(name, "Coin")) *coins = n; else *pieces = n;
+        return 3;
     }
     if (strcmp(name, "HipDropRock") == 0) {
         *coins = r->arg[0] == 0;
@@ -262,7 +271,7 @@ static int pipe_out = -1; /* the mode 1 pipe Mario came out of, hidden once the 
 static Pipe *pipes;
 static int npipes, pipe_wait, pipe_zone = -1;
 /* Switch logic rows (no model): TimerSwitch, SwitchSynchronizerReverse, GroupSwitchWatcher */
-enum { LOGIC_TIMER = 1, LOGIC_REVERSE, LOGIC_GROUP, LOGIC_BLOCKER, LOGIC_FLIPS };
+enum { LOGIC_TIMER = 1, LOGIC_REVERSE, LOGIC_GROUP, LOGIC_BLOCKER, LOGIC_FLIPS, LOGIC_CHIPS };
 /* FlipPanel (Petari FlipPanel.cpp): row_step bits. Back = flipped (ACTMES_SUCCESS to the observer); a flip locks the
  * panel until Mario stood on other ground; it flips once he has stood on it 3 frames (checkPlayerOnTop). Done: the
  * group is complete (FlipPanelNrvEnd) */
@@ -669,15 +678,17 @@ void game_init(const Scene *s, const unsigned char *blob)
     }
     logic = mem_alloc(MEM_OBJECTS, (count_type("TimerSwitch", 0) + count_type("SwitchSynchronizerReverse", 0) +
                                     count_type("GroupSwitchWatcher", 0) + count_type("CollisionBlocker", 0) +
-                                    count_type("FlipPanelObserver", 0) + 1) *
+                                    count_type("FlipPanelObserver", 0) + count_type("YellowChipGroup", 0) +
+                                    count_type("BlueChipGroup", 0) + 1) *
                                        sizeof(Logic));
     int t_timer = scene_type(s, "TimerSwitch"), t_rev = scene_type(s, "SwitchSynchronizerReverse"),
         t_group = scene_type(s, "GroupSwitchWatcher"), t_block = scene_type(s, "CollisionBlocker"),
-        t_flipobs = scene_type(s, "FlipPanelObserver");
+        t_flipobs = scene_type(s, "FlipPanelObserver"), t_ychips = scene_type(s, "YellowChipGroup"),
+        t_bchips = scene_type(s, "BlueChipGroup");
     for (u32 i = 0; i < s->nobjs; i++) {
         int t = s->objs[i].type;
         int k = t == t_timer ? LOGIC_TIMER : t == t_rev ? LOGIC_REVERSE : t == t_group ? LOGIC_GROUP :
-                t == t_block ? LOGIC_BLOCKER : t == t_flipobs ? LOGIC_FLIPS : 0;
+                t == t_block ? LOGIC_BLOCKER : t == t_flipobs ? LOGIC_FLIPS : t == t_ychips || t == t_bchips ? LOGIC_CHIPS : 0;
         if (k) { logic[nlogic].row = i; logic[nlogic++].kind = k; }
     }
     const Row *st = scene_start(s);
@@ -723,6 +734,17 @@ void game_init(const Scene *s, const unsigned char *blob)
            ncoins, npurple, npieces, nkuribo, (int)start_pos.x, (int)start_pos.y, (int)start_pos.z);
 }
 
+/* a chip's group (same arg0, ChipHolder) waiting for its appear switch keeps the chip hidden */
+static int chip_group_out(const Row *chip, const char *name)
+{
+    for (int i = 0; i < nlogic; i++) {
+        const Row *g = &sc->objs[logic[i].row];
+        if (logic[i].kind == LOGIC_CHIPS && g->arg[0] == chip->arg[0] && sc->types[32 * g->type] == name[0])
+            return row_shown(logic[i].row);
+    }
+    return 1;
+}
+
 void game_rebind(void)
 {
     const Scene *s = sc;
@@ -746,6 +768,8 @@ void game_rebind(void)
         if (!md || (row_dead && !row_shown(i))) continue;
         if (row_step && (r->arg[2] == 1 || r->arg[2] == 2) && !row_step[i] && strcmp(name, "EarthenPipe") == 0)
             continue; /* a hidden pipe (EarthenPipeNrvHide) */
+        if (logic && (strcmp(name, "YellowChip") == 0 || strcmp(name, "BlueChip") == 0) && !chip_group_out(r, name))
+            continue;
         Inst *in = &insts[ninsts++];
         in->md = md;
         in->row = i;
@@ -755,7 +779,8 @@ void game_rebind(void)
         in->hazard = strcmp(name, "SpaceMine") == 0 ? 1 : strcmp(name, "NeedlePlant") == 0 ? 2 :
                      strcmp(name, "BlackHole") == 0 ? 3 : strcmp(name, "BlackHoleCube") == 0 ? 4 : 0;
         in->item = strcmp(name, "PowerStar") == 0 ? ITEM_STAR : strcmp(name, "BenefitItemOneUp") == 0 ? ITEM_ONEUP :
-                   strcmp(name, "BenefitItemLifeUp") == 0 ? ITEM_LIFEUP : strcmp(name, "QuestionCoin") == 0 ? ITEM_QCOIN : 0;
+                   strcmp(name, "BenefitItemLifeUp") == 0 ? ITEM_LIFEUP : strcmp(name, "QuestionCoin") == 0 ? ITEM_QCOIN :
+                   strcmp(name, "YellowChip") == 0 || strcmp(name, "BlueChip") == 0 ? ITEM_CHIP : 0;
         in->firebar = strcmp(name, "FireBar") == 0;
         in->invisible = strncmp(name, "InvisibleWall", 13) == 0;
         in->flip = strcmp(name, "FlipPanel") == 0 || strcmp(name, "FlipPanelReverse") == 0;
@@ -846,11 +871,25 @@ int game_zone_next(const unsigned char *full)
     return nearest_low_zone(launch_pos(&launches[mario->launch], 1.0f), full, 1500.0f);
 }
 
+int game_test_block(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (in->breaks != 3) continue;
+        V3 p = v3(in->m[12], in->m[13], in->m[14]), up = up_at(p, v3(0, 1, 0));
+        mario->up = up;
+        mario->pos = vadd(p, vmul(up, -(2.0f * BODY_RADIUS + 120.0f))); /* under it, jumping */
+        mario->hvel = v3(0, 0, 0); mario->vup = 20.0f; mario->grounded = 0;
+        return in->row;
+    }
+    return -1;
+}
+
 int game_test_box(void)
 {
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
-        if (!in->breaks) continue;
+        if (in->breaks != 1) continue; /* spin-breakable */
         V3 p = v3(in->m[12], in->m[13], in->m[14]), up = up_at(p, v3(0, 1, 0));
         mario->pos = vadd(p, vmul(up, in->reach + 20.0f));
         mario->hvel = v3(0, 0, 0); mario->vup = 0;
@@ -957,13 +996,16 @@ int game_test_hole(void)
     return -1;
 }
 
+static V3 item_sensor(const Inst *in, float *r);
+
 int game_test_item(void)
 {
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
         if (!in->item) continue;
-        V3 p = v3(in->m[12], in->m[13], in->m[14]);
-        mario->pos = vadd(p, vmul(up_at(p, mario->up), -HIT_BODY_H)); /* his touch sphere on the item */
+        float r;
+        V3 p = item_sensor(in, &r);
+        mario->pos = vadd(p, vmul(up_at(p, mario->up), -HIT_BODY_H)); /* his touch sphere on the item's */
         mario->hvel = v3(0, 0, 0); mario->vup = 0;
         return in->item;
     }
@@ -1435,12 +1477,27 @@ static void break_inst(const Inst *in, int drops)
 
 static void break_boxes(void)
 {
-    if (mario->spin_timer <= 0 && !hip_hit)
-        return;
     V3 c = vadd(mario->pos, vmul(mario->up, BODY_RADIUS));
+    V3 head = vadd(mario->pos, vmul(mario->up, 2.0f * BODY_RADIUS + 60.0f));
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
-        if (!in->breaks) continue;
+        if (in->breaks != 3) continue;
+        /* ItemBlock: Mario rising into it from below (its sensor: radius 100, 100 up its axis) */
+        V3 p = v3(in->m[12], in->m[13], in->m[14]);
+        V3 d = vsub(vadd(p, vmul(mario->up, 100.0f * in->s)), head);
+        if (mario->vup > 0 && vdot(d, mario->up) > -40.0f && vdot(d, mario->up) < 120.0f * in->s &&
+            vlen(vtangent(d, mario->up)) < 110.0f * in->s) {
+            mario->vup = 0;
+            break_inst(in, 1);
+            game_rebind();
+            return;
+        }
+    }
+    if (mario->spin_timer <= 0 && !hip_hit)
+        return;
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->breaks || in->breaks == 3) continue;
         V3 p = v3(in->m[12], in->m[13], in->m[14]);
         if (hip_hit ? i != hip_inst : in->breaks == 2 || vlen(vsub(c, p)) > in->reach + 120.0f) continue;
         break_inst(in, 1);
@@ -1531,6 +1588,21 @@ static void update_switches(void)
         int row = logic[i].row;
         const Row *r = &sc->objs[row];
         if (row_dead[row]) continue;
+        if (logic[i].kind == LOGIC_CHIPS) { /* ChipGroup.cpp: SW_A once every chip of its arg0 is taken */
+            const char *chip = sc->types[32 * r->type] == 'Y' ? "YellowChip" : "BlueChip";
+            int n = 0, got = 0;
+            for (u32 k = 0; k < sc->nobjs; k++)
+                if (sc->objs[k].arg[0] == r->arg[0] && strcmp(sc->types + 32 * sc->objs[k].type, chip) == 0) {
+                    n++;
+                    got += row_dead[k];
+                }
+            if (n && got == n) {
+                sw_set(r, SW_A, 1);
+                row_dead[row] = 1;
+                printf("%s %d complete\n", sc->types + 32 * r->type, r->arg[0]);
+            }
+            continue;
+        }
         if (logic[i].kind == LOGIC_FLIPS) { /* FlipPanelObserver: all its group's panels on their back side */
             if (!row_shown(row) || r->group < 0) continue;
             int n = 0, back = 0;
@@ -1677,15 +1749,23 @@ static void update_firebars(void)
  * BenefitItemLifeUp.cpp: sensor 50, 50 above the base): touched, they are taken for good. LifeUp: 6 life until a miss.
  * ponytail: stars waiting for a demo or switch are out from the start, no get demo (the stage goes on), mushrooms
  * stand still instead of running off */
+/* an item's sensor: centre (returned) and radius */
+static V3 item_sensor(const Inst *in, float *r)
+{
+    V3 p = v3(in->m[12], in->m[13], in->m[14]);
+    *r = (in->item == ITEM_STAR ? 75.0f : in->item == ITEM_QCOIN ? 150.0f : in->item == ITEM_CHIP ? 80.0f : 50.0f) * in->s;
+    if (in->item == ITEM_STAR || in->item == ITEM_CHIP) return p;
+    return vadd(p, vmul(up_at(p, mario->up), (in->item == ITEM_QCOIN ? 210.0f : 50.0f) * in->s));
+}
+
 static void update_items(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
         if (!in->item) continue;
-        V3 p = v3(in->m[12], in->m[13], in->m[14]);
-        float r = (in->item == ITEM_STAR ? 75.0f : in->item == ITEM_QCOIN ? 150.0f : 50.0f) * in->s;
-        if (in->item != ITEM_STAR) p = vadd(p, vmul(up_at(p, mario->up), (in->item == ITEM_QCOIN ? 210.0f : 50.0f) * in->s));
+        float r;
+        V3 p = item_sensor(in, &r);
         if (vlen(vsub(c, p)) > r + HIT_BODY_R) continue;
         if (in->item == ITEM_STAR) printf("power star %d got\n", ++stars);
         else if (in->item == ITEM_ONEUP) printf("1-up, lives %d\n", ++lives);

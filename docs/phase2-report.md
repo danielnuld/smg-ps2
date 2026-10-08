@@ -370,3 +370,24 @@ no byte. Gateway 2 blob 5.55 → 4.40 MB, bench worst 5.4 → 4.9 ms (GS 1.64 �
 
 With every class converted: **136 / 136 fit the 9.01 MB room with streaming** (worst OceanPhantomCave 1, 6.99 MB:
 2.0 MB of margin), 120 / 136 without streaming.
+
+#### Gameplay classes, stage switches, blending, disc image
+
+| Step | Commit | Result |
+|---|---|---|
+| Mario's life (3, a coin gives one back, miss at 0 / fell into space) | 91011d1 | EggStar 1: third NeedlePlant prick is a miss |
+| RailCoin / CircleCoinGroup, PowerStar, 1-up / life-up, lives, BlackHole(Cube), ElectricRail | 1067f19 | BattleShip 2: rail shocks, black hole is a miss |
+| SpinDriver, SuperSpinDriverPink / Green | 2d9a8e3 | CannonFleet 1: 140-frame rail flight |
+| EarthenPipe pairs (arg3), exit zone wanted at once | 1da1528 | BattleShip 2: pipe 17 → 133, zone 8 loads |
+| Hip drop (Petari jumpToHipDrop / procHipDrop), HipDropRock, move split in body-sized steps | 328de2d | Factory 1: rock broken; bench unchanged (5.2 ms) |
+| Stage switches (rows carry SW_APPEAR / A / B / DEAD / SLEEP; appear, dead, Coin SW_B; TimerSwitch, SwitchSynchronizerReverse, GroupSwitchWatcher), QuestionCoin | 536049a | CosmosGarden 1: QuestionCoins bring star pieces 33 → 119 |
+| FireBar (EXTRA models), InvisibleWall*, CollisionBlocker, coin pop, Kuribo switches, hidden pipes | 93ce551 | Factory 1: FireBar burns; FlipPanelEx 1: a popped coin is taken |
+| Blending (MAT3 blend per VUMD group, late pass sorted far to near), FlipPanel / Observer (GroupId) | 3667ec2 | FlipPanelEx 1: 18 panels, group complete; NO_DRAW down to SphereAir |
+| Disc image: PACKS.BIN + PACKS.TOC, libcdvd, asynchronous prefetch | 35a11f1 | BattleShip 2 from the ISO: no slow frame while streaming |
+
+Disc image (`tools/disc.py`, `build.sh ... disc`): the ROM's `cdrom0:` reads ISO 9660 level 1 names only, so the
+2085 packs go into one sector-aligned PACKS.BIN (812 MB) with a table of paths, offsets and sizes; the ISO is 819 MB.
+Reads are whole sectors with libcdvd: boot packs synchronously, the prefetch one 32 KB `sceCdRead` per frame polled
+with `sceCdSync(1)`. Through newlib `fread` on `cdrom0:` the same zone test had 22 slow frames (worst 53 ms) while
+prefetching; asynchronous, none. PCSX2's disc delivers ~1.5–2 MB/s: a zone wanted at once (no prefetch) blocks
+~0.9 s at boot (0.17 s through `host:`).

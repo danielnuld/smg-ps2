@@ -41,6 +41,7 @@ static framebuffer_t frame[2];   /* double buffered: draw into frame[back], show
 static int back;
 static zbuffer_t zbuf;
 static packet2_t *vif[2], *gif;
+#define GIF_QW 8192             /* HUD text: one sprite per lit font pixel (the boot menu fills it) */
 static int cur;
 static float view[16], proj[16];
 static float frustum[4];        /* side planes in view space: x n, z n for |x| and |y| (render_set_fovy) */
@@ -144,8 +145,8 @@ void render_init(void)
     /* packets, matrices and batch headers: charged to the render runtime */
     vif[0] = packet2_create(PACKET_QW, P2_TYPE_NORMAL, P2_MODE_CHAIN, 1);
     vif[1] = packet2_create(PACKET_QW, P2_TYPE_NORMAL, P2_MODE_CHAIN, 1);
-    gif = packet2_create(4096, P2_TYPE_NORMAL, P2_MODE_NORMAL, 0);
-    mem_charge(MEM_RENDER, 2 * PACKET_QW * 16 + 4096 * 16);
+    gif = packet2_create(GIF_QW, P2_TYPE_NORMAL, P2_MODE_NORMAL, 0);
+    mem_charge(MEM_RENDER, 2 * PACKET_QW * 16 + GIF_QW * 16);
     mats = mem_alloc(MEM_RENDER, MAX_INST * 64);
     headers = mem_alloc(MEM_RENDER, MODES * MAX_MAT * (BATCH / 3 + 1) * 2 * 16);
     for (int t = 0; t < MODES; t++)
@@ -709,13 +710,13 @@ void render_skinned(const Model *md, const float world[16], const float (*drw)[1
 }
 
 /* 3x5 bitmap font as GS sprites (no texture, no VRAM). Digits, upper-case letters and a few signs. */
-static const char *glyph_chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ.:%-/ ";
+static const char *glyph_chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ.:%-/ >";
 static const u16 glyphs[] = {
     075557, 026227, 071747, 071717, 055711, 074717, 074757, 071111, 075757, 075711,
     025755, 065656, 034443, 065556, 074647, 074644, 034553, 055755, 072227, 011157,
     055655, 044447, 057555, 065555, 025552, 065644, 025573, 065655, 034716, 072222,
     055557, 055552, 055575, 055255, 055222, 071247, 000020, 002020, 041241, 000700,
-    001240, 000000};
+    001240, 000000, 042124};
 static int text_open;
 
 void render_text(float x, float y, const char *s)
@@ -740,7 +741,7 @@ void render_text(float x, float y, const char *s)
                 if (gl >> (3 * (4 - row) + (2 - c)) & 1) {
                     r.v0.x = x + c * px - SCREEN_W / 2; r.v0.y = y + row * px - SCREEN_H / 2; /* libdraw adds the 2048 offset */
                     r.v1.x = r.v0.x + px; r.v1.y = r.v0.y + px;
-                    if (packet2_get_qw_count(gif) < 4000)
+                    if (packet2_get_qw_count(gif) < GIF_QW - 96)
                         packet2_update(gif, draw_rect_filled(gif->next, 0, &r));
                 }
     }
