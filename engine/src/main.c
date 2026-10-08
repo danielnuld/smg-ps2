@@ -533,6 +533,14 @@ int main(void)
             }
         }
 #endif
+#ifdef ENEMY_TEST
+        if (frame == 120) printf("enemy test: stomp TakoHei row %d\n", game_test_enemy(1, 0, 0));
+        if (frame == 240) printf("enemy test: spin by PackunPetit row %d\n", game_test_enemy(2, 0, 1));
+        if (frame == 360) printf("enemy test: stand by PackunPetit row %d\n", game_test_enemy(2, 0, 2));
+        if (frame % 60 == 0 && frame >= 180 && frame <= 540)
+            printf("enemy test f %u: takohei %d packun %d life %d coins %d\n", frame, game_kind_alive(1),
+                   game_kind_alive(2), game_life(), game_coins());
+#endif
 #ifdef HIP_TEST
         if (frame == 120)
             printf("hip test: above row %d\n", game_test_hip());
