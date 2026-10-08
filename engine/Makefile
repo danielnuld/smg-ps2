@@ -4,7 +4,7 @@ EE_BIN = slice.elf
 EE_OBJS = src/main.o src/mem.o src/blob.o src/render.o src/pad.o src/gravity.o src/kcl.o src/game.o src/anim.o src/camera.o src/vu1_tex.o src/assets.o
 
 EE_INCS += -Isrc -I$(PS2SDK)/ports/include
-EE_LIBS += -L$(PS2SDK)/ports/lib -lz -lpacket2 -ldraw -lgraph -ldma -lpad -lpatches -ldebug -lm
+EE_LIBS += -L$(PS2SDK)/ports/lib -lz -lcdvd -lpacket2 -ldraw -lgraph -ldma -lpad -lpatches -ldebug -lm
 EE_CFLAGS += -O2 -Wall -Wextra -std=gnu99 -ffast-math $(EXTRA)
 
 all: $(EE_BIN)

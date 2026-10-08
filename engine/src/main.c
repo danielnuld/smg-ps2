@@ -1,4 +1,7 @@
 #include <kernel.h>
+#ifdef DISC
+#include <libcdvd.h>
+#endif
 #include <malloc.h>
 #include <loadfile.h>
 #include <sbv_patches.h>
@@ -20,27 +23,127 @@ extern const u8 slice_blob[];
 static Scene scene;
 
 #ifdef PACKS
-/* Streaming layout (tools/slice.py packs, task 5.1) read through host: (PCSX2 host filesystem, the ELF's folder).
- * At boot the base packs; the stage packs come with the first zone swap (stream_update). */
+/* Streaming layout (tools/slice.py packs, task 5.1). At boot the base packs; the stage packs come with the first zone
+ * swap (stream_update). A pack is a path under packs/ ("<Galaxy>/<n>/<file>", "resident.bin"):
+ *   host build: host:packs/<path> (PCSX2 host filesystem, run the ELF from out/);
+ *   DISC build: sectors of \PACKS.BIN;1 read with libcdvd, found through \PACKS.TOC;1 (tools/disc.py: u32 n, n x
+ *   {char path[88], u32 offset, u32 size}, every pack on a sector of its own); only this scenario's entries and
+ *   resident.bin are kept. Buffers are rounded up to whole sectors (PACK_ALLOC). */
 static u32 pack_bytes;
+typedef struct { u32 base, size, pos; FILE *f; } Pack; /* DISC: base = first sector, f unused but non-NULL while open */
+
+#ifdef DISC
+#define SECTOR 2048
+#define PACK_ALLOC(n) (((n) + SECTOR - 1) & ~(SECTOR - 1))
+typedef struct { char path[88]; u32 off, size; } TocEntry;
+static TocEntry toc[72];
+static int ntoc;
+static u32 bin_lsn;
+static sceCdRMode cd_mode = {5, SCECdSpinNom, SCECdSecS2048, 0};
+
+/* whole sectors from `lsn` into `dst` (64-aligned, PACK_ALLOC long); wait: block until they are in */
+static int cd_read(u32 lsn, u32 sectors, void *dst, int wait)
+{
+    if (!sceCdRead(lsn, sectors, dst, &cd_mode))
+        return 0;
+    if (wait) {
+        sceCdSync(0);
+        InvalidDCache(dst, (u8 *)dst + sectors * SECTOR - 1);
+    }
+    return 1;
+}
+
+static void toc_load(void)
+{
+    sceCdlFILE ft, fb;
+    sceCdInit(SCECdINoD);
+    sceCdMmode(SCECdMmodeDvd);
+    if (!sceCdSearchFile(&ft, "\\PACKS.TOC;1") || !sceCdSearchFile(&fb, "\\PACKS.BIN;1")) {
+        printf("packs: no PACKS.TOC / PACKS.BIN on the disc\n");
+        for (;;) {}
+    }
+    bin_lsn = fb.lsn;
+    u8 *t = memalign(64, PACK_ALLOC(ft.size));
+    if (!t || !cd_read(ft.lsn, PACK_ALLOC(ft.size) / SECTOR, t, 1)) {
+        printf("packs: cannot read PACKS.TOC\n");
+        for (;;) {}
+    }
+    u32 n = *(const u32 *)t;
+    size_t lp = strlen(PACKS);
+    for (u32 i = 0; i < n; i++) {
+        const TocEntry *e = (const TocEntry *)(t + 4 + i * sizeof(TocEntry));
+        if ((strncmp(e->path, PACKS, lp) == 0 && e->path[lp] == '/') || strcmp(e->path, "resident.bin") == 0) {
+            if (ntoc == (int)(sizeof toc / sizeof toc[0])) { printf("packs: TOC full\n"); for (;;) {} }
+            memcpy(&toc[ntoc++], e, sizeof *e);
+        }
+    }
+    free(t);
+    printf("packs: disc TOC %u entries, %d for %s\n", n, ntoc, PACKS);
+}
+#else
+#define PACK_ALLOC(n) (n)
+#endif
+
+static int pack_open(Pack *p, const char *path)
+{
+    memset(p, 0, sizeof *p);
+#ifdef DISC
+    for (int i = 0; i < ntoc; i++)
+        if (strcmp(toc[i].path, path) == 0) {
+            p->base = bin_lsn + toc[i].off / SECTOR;
+            p->size = toc[i].size;
+            p->f = (FILE *)1;
+            return 1;
+        }
+    return 0;
+#else
+    char full[160];
+    snprintf(full, sizeof full, "host:packs/%s", path);
+    if (!(p->f = fopen(full, "rb")))
+        return 0;
+    fseek(p->f, 0, SEEK_END);
+    p->size = ftell(p->f);
+    fseek(p->f, 0, SEEK_SET);
+    return 1;
+#endif
+}
+
+/* n bytes at the pack's read position into dst (DISC: whole sectors, the position stays sector aligned) */
+static int pack_read(Pack *p, u8 *dst, u32 n)
+{
+#ifdef DISC
+    if (!cd_read(p->base + p->pos / SECTOR, PACK_ALLOC(n) / SECTOR, dst, 1))
+        return 0;
+#else
+    if (fread(dst, 1, n, p->f) != n)
+        return 0;
+#endif
+    p->pos += n;
+    return 1;
+}
+
+static void pack_close(Pack *p)
+{
+#ifndef DISC
+    if (p->f) fclose(p->f);
+#endif
+    p->f = NULL;
+}
 
 static const u8 *load_file(const char *path)
 {
-    FILE *f = fopen(path, "rb");
-    if (!f) {
+    Pack p;
+    if (!pack_open(&p, path)) {
         printf("packs: missing %s\n", path);
         for (;;) {}
     }
-    fseek(f, 0, SEEK_END);
-    u32 n = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    u8 *b = memalign(64, n);
-    if (!b || fread(b, 1, n, f) != n) {
-        printf("packs: cannot read %s (%u B)\n", path, n);
+    u8 *b = memalign(64, PACK_ALLOC(p.size));
+    if (!b || !pack_read(&p, b, p.size)) {
+        printf("packs: cannot read %s (%u B)\n", path, p.size);
         for (;;) {}
     }
-    fclose(f);
-    pack_bytes += n;
+    pack_close(&p);
+    pack_bytes += p.size;
     return b;
 }
 
@@ -58,9 +161,10 @@ static struct {
     u32 z;                             /* next stage to read */
     unsigned char full[64];
     const u8 *buf[64];
-    FILE *f;
+    Pack f;           /* f.f != NULL while a pack is being read */
     u8 *cur;
     u32 size, off, bytes;
+    u32 flight;       /* DISC: bytes of the asynchronous read in progress (0 none) */
 } pend;
 
 static void chain_of(int zone, unsigned char *full)
@@ -75,7 +179,10 @@ static void chain_of(int zone, unsigned char *full)
 
 static void pend_cancel(void)
 {
-    if (pend.f) fclose(pend.f);
+#ifdef DISC
+    if (pend.flight) sceCdSync(0); /* the read in progress must land before its buffer goes */
+#endif
+    if (pend.f.f) pack_close(&pend.f);
     if (pend.cur) free(pend.cur);
     for (u32 z = 0; z < pend.z && z < nzones; z++)
         if (pend.buf[z] && pend.buf[z] != zone_files[z]) free((void *)pend.buf[z]);
@@ -93,34 +200,61 @@ static void pend_start(int zone)
 /* Read up to `budget` bytes of the pending packs; returns 1 when every stage pack is in memory. */
 static int pend_step(u32 budget)
 {
+    int all = budget == 0xFFFFFFFF; /* read everything now (the budget shrinks as it goes) */
+    (void)all;
     char path[160];
     u32 sz;
     const u8 *zn = blob_chunk(scene_blob, "ZONE", &sz);
     while (pend.z < nzones) {
         u32 z = pend.z;
-        if (!pend.f && !pend.cur) {
+        if (!pend.f.f && !pend.cur) {
             if (zone_files[z] && pend.full[z] == zone_full[z]) { /* unchanged: keep it */
                 pend.buf[z] = zone_files[z];
                 pend.z++;
                 continue;
             }
-            snprintf(path, sizeof path, "host:packs/%s/%s%s", PACKS, (const char *)(zn + 4 + 56 * z),
+            snprintf(path, sizeof path, "%s/%s%s", PACKS, (const char *)(zn + 4 + 56 * z),
                      pend.full[z] ? ".bin" : ".low.bin");
-            pend.f = fopen(path, "rb");
-            if (!pend.f) {
+            if (!pack_open(&pend.f, path)) {
                 printf("packs: missing %s" "\n", path);
                 for (;;) {}
             }
-            fseek(pend.f, 0, SEEK_END);
-            pend.size = ftell(pend.f);
-            fseek(pend.f, 0, SEEK_SET);
-            pend.cur = memalign(64, pend.size);
+            pend.size = pend.f.size;
+            pend.cur = memalign(64, PACK_ALLOC(pend.size));
             pend.off = 0;
         }
+#ifdef DISC
+        if (pend.flight) { /* the asynchronous read: still going, or in */
+            if (!all && sceCdSync(1))
+                return 0;
+            sceCdSync(0);
+            InvalidDCache(pend.cur + pend.off, pend.cur + pend.off + PACK_ALLOC(pend.flight) - 1);
+            pend.off += pend.flight;
+            pend.f.pos += pend.flight;
+            pend.bytes += pend.flight;
+            pend.flight = 0;
+            if (!all) budget = 0; /* one read per frame */
+        } else if (budget && !all && pend.off < pend.size) { /* start the next one, poll it later */
+            u32 n = pend.size - pend.off < budget ? pend.size - pend.off : budget;
+            if (!cd_read(pend.f.base + pend.off / SECTOR, PACK_ALLOC(n) / SECTOR, pend.cur + pend.off, 0)) {
+                printf("packs: read error" "\n");
+                for (;;) {}
+            }
+            pend.flight = n;
+            return 0;
+        }
+        if (pend.off == pend.size) {
+            pack_close(&pend.f);
+            pend.buf[z] = pend.cur;
+            pend.cur = NULL;
+            pend.z++;
+            continue;
+        }
+#endif
         if (!budget)
             return 0;
         u32 n = pend.size - pend.off < budget ? pend.size - pend.off : budget;
-        if (fread(pend.cur + pend.off, 1, n, pend.f) != n) {
+        if (!pack_read(&pend.f, pend.cur + pend.off, n)) {
             printf("packs: read error" "\n");
             for (;;) {}
         }
@@ -128,8 +262,7 @@ static int pend_step(u32 budget)
         pend.bytes += n;
         budget -= n;
         if (pend.off == pend.size) {
-            fclose(pend.f);
-            pend.f = NULL;
+            pack_close(&pend.f);
             pend.buf[z] = pend.cur;
             pend.cur = NULL;
             pend.z++;
@@ -154,6 +287,7 @@ static void pend_commit(Scene *s)
     mem_release(&base_mark);
     for (u32 z = 0; z < nzones; z++)
         if (blob_add(s, zone_files[z]) != 0) {
+            printf("packs: zone pack %u (%s) starts %.4s\n", z, zone_full[z] ? "full" : "low", (const char *)zone_files[z]);
             printf("packs: zone %d failed" "\n", pend.zone);
             for (;;) {}
         }
@@ -181,15 +315,16 @@ static void stream_update(Scene *s)
 static const u8 *load_packs(Scene *s)
 {
     char path[160];
-    const char *dir = "host:packs/"; /* run the ELF from out/ (host: cannot leave the ELF folder) */
-    snprintf(path, sizeof path, "%s%s/scene.bin", dir, PACKS);
+#ifdef DISC
+    toc_load();
+#endif
+    snprintf(path, sizeof path, "%s/scene.bin", PACKS);
     scene_blob = load_file(path);
     if (blob_load(s, scene_blob) != 0)
         return NULL;
-    snprintf(path, sizeof path, "%sresident.bin", dir);
-    if (blob_add(s, load_file(path)) != 0)
+    if (blob_add(s, load_file("resident.bin")) != 0)
         return NULL;
-    snprintf(path, sizeof path, "%s%s/common.bin", dir, PACKS);
+    snprintf(path, sizeof path, "%s/common.bin", PACKS);
     if (blob_add(s, load_file(path)) != 0)
         return NULL;
     u32 sz;
