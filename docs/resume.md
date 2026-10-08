@@ -27,6 +27,8 @@ Last updated 2026-10-07. Detail and numbers: `docs/phase2-report.md`; tasks: `op
     they die, wait beyond 3000; RockCreator rolls rocks along its rail; NPCs (Kinopio, Tico, Penguin...) face Mario;
   - PicketSwitch / HipDropSwitch / HipDropTimerSwitch (hip drop);
   - rails are Bezier (converter samples curved parts, keeps the JMap points for point-based uses);
+  - map parts and child objects (were missing): rotating parts (MapPartsRotator) and rail movers (MapPartsRailMover:
+    point speed / stop, end types) move with their collision and carry Mario;
   - FlipPanel / FlipPanelReverse flip after 3 frames under Mario (turned over: ponytail for the colour animation),
     FlipPanelObserver turns SW_A on once all of its GroupId are flipped (rows carry GroupId in the old pad);
   - items taken on touch: PowerStar (counted, spins), 1-up / life-up mushrooms, QuestionCoin, Yellow / BlueChip

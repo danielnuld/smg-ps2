@@ -134,6 +134,7 @@ typedef struct {
     int npc;         /* talking NPC (npc_class): turns to face Mario when he is near */
     int hipsw;       /* hip drop switch: 1 PicketSwitch(Big) / HipDropSwitch (SW_A for good), 2 HipDropTimerSwitch */
     int rotor;       /* map part with a RotateSpeed: turns (rotor_matrix), carries Mario */
+    const unsigned char *railer; /* map part on a rail: its PATH entry; moves along it (update_railers) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP };
 static V3 firebar_ball(const Inst *in, int j, int k);
@@ -171,6 +172,10 @@ static unsigned short *row_step; /* per OBJS row: CollapsePlane frames since Mar
 static float *row_angle;         /* per OBJS row: a rotating map part's angle (degrees) */
 static signed char *row_turn;    /* per OBJS row: its direction (+1 / -1, 0 not started) and */
 static unsigned short *row_hold; /* frames it still holds at the end of its turn */
+static float *row_coord, *row_speed; /* per OBJS row: a rail-moving map part's distance along its rail, its speed */
+static signed char *row_rdir;    /* its direction (+1 / -1; 0 not started, 2 stopped) */
+static unsigned short *row_rhold; /* frames it still waits at a rail point */
+static const unsigned char *scene_blob_g; /* the scene blob (PATH) for rebinds */
 static int hip_hit, hip_inst;   /* Mario landed a hip drop this frame, on instance hip_inst (-1 none) */
 static int mario_ground = -1;   /* instance Mario stands on this frame, -1 in the air */
 static int ground_inst = -1;     /* instance under the last collide_n's ground normal, -1 none */
@@ -339,23 +344,31 @@ static int count_type(const char *name, int per_row_arg0)
     return t < 0 ? 0 : n;
 }
 
-/* a rail from the PATH chunk: {u16 zone, u16 closed, s32 id, u32 npts, u32 nraw, f32 pts[npts][3], f32 raw[nraw][3]}:
- * the polyline along it (Bezier parts sampled by tools/slice.py), or with raw its JMap points (nraw of them) */
-static const float *find_rail_of(const unsigned char *blob, int zone, int id, u32 *npts, int *closed, int raw)
+/* a rail from the PATH chunk: {u16 zone, u16 closed, s32 id, u32 npts, u32 nraw, s32 stop_type, s32 pad, f32
+ * pts[npts][3], f32 raw[nraw][3], nraw x {f32 coord, s32 arg0, s32 arg5}}: the polyline along it (Bezier parts sampled
+ * by tools/slice.py), or with raw its JMap points (nraw of them) */
+static const unsigned char *find_path(const unsigned char *blob, int zone, int id)
 {
     const unsigned char *p = blob_chunk(blob, "PATH", NULL);
     u32 n = *(const u32 *)p;
     p += 4;
     for (u32 i = 0; i < n; i++) {
         u32 np = *(const u32 *)(p + 8), nr = *(const u32 *)(p + 12);
-        if (*(const int *)(p + 4) == id && *(const unsigned short *)p == zone) { /* rail ids are per zone */
-            *npts = raw ? nr : np;
-            *closed = *(const unsigned short *)(p + 2);
-            return (const float *)(p + 16 + (raw ? 12 * np : 0));
-        }
-        p += 16 + 12 * (np + nr);
+        if (*(const int *)(p + 4) == id && *(const unsigned short *)p == zone) /* rail ids are per zone */
+            return p;
+        p += 24 + 12 * np + 24 * nr;
     }
     return NULL;
+}
+
+static const float *find_rail_of(const unsigned char *blob, int zone, int id, u32 *npts, int *closed, int raw)
+{
+    const unsigned char *p = find_path(blob, zone, id);
+    if (!p) return NULL;
+    u32 np = *(const u32 *)(p + 8), nr = *(const u32 *)(p + 12);
+    *npts = raw ? nr : np;
+    *closed = *(const unsigned short *)(p + 2);
+    return (const float *)(p + 24 + (raw ? 12 * np : 0));
 }
 #define find_rail(blob, zone, id, npts, closed) find_rail_of(blob, zone, id, npts, closed, 0)
 
@@ -588,6 +601,11 @@ void game_init(const Scene *s, const unsigned char *blob)
     row_angle = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(float));
     row_turn = mem_alloc(MEM_OBJECTS, s->nobjs);
     row_hold = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(unsigned short));
+    row_coord = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(float));
+    row_speed = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(float));
+    row_rdir = mem_alloc(MEM_OBJECTS, s->nobjs);
+    row_rhold = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(unsigned short));
+    scene_blob_g = blob;
     npurple = count_type("PurpleCoin", 0) + count_type("CirclePurpleCoinGroup", 1) + count_type("PurpleRailCoin", 1);
     npieces = count_type("StarPiece", 0) + box_pieces;
     int t_spg = scene_type(s, "StarPieceGroup");
@@ -833,6 +851,15 @@ static void rotor_matrix(Inst *in)
     in->m[12] = r->pos[0]; in->m[13] = r->pos[1]; in->m[14] = r->pos[2];
 }
 
+/* a rail-moving part's translation: its rail at row_coord */
+static V3 rail_at(const float *p, u32 n, float d);
+static void railer_place(Inst *in)
+{
+    const unsigned char *e = in->railer;
+    V3 p = rail_at((const float *)(e + 24), *(const u32 *)(e + 8), row_coord[in->row]);
+    in->m[12] = p.x; in->m[13] = p.y; in->m[14] = p.z;
+}
+
 void game_rebind(void)
 {
     const Scene *s = sc;
@@ -885,6 +912,8 @@ void game_rebind(void)
         in->hipsw = strncmp(name, "PicketSwitch", 12) == 0 || strcmp(name, "HipDropSwitch") == 0 ? 1 :
                     strcmp(name, "HipDropTimerSwitch") == 0 ? 2 : 0;
         in->rotor = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->arg[4] != -1 && r->arg[4] != 0; /* -1: not a map part */
+        in->railer = scene_blob_g && r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->path >= 0 ?
+                     find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->kcl = scene_kcl(s, name);
         in->zone = r->zone;
         mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
@@ -897,6 +926,7 @@ void game_rebind(void)
         }
         in->reach = md->radius * in->s;
         if (in->rotor && row_angle) rotor_matrix(in);
+        if (in->railer && row_coord) railer_place(in);
         zone_grow(in);
     }
 }
@@ -1122,11 +1152,11 @@ int game_rocks_alive(void)
     return n;
 }
 
-int game_test_rotor(void)
+int game_test_rotor(int rail)
 {
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
-        if (!in->rotor) continue;
+        if (rail ? !in->railer : !in->rotor) continue;
         V3 p = v3(in->m[12], in->m[13], in->m[14]);
         mario->up = up_at(p, mario->up);
         mario->pos = vadd(p, vmul(mario->up, in->reach * 0.5f + 100.0f));
@@ -1137,6 +1167,7 @@ int game_test_rotor(void)
 }
 
 float game_rotor_angle(int row) { return row >= 0 ? row_angle[row] : 0; }
+float game_rail_coord(int row) { return row >= 0 ? row_coord[row] : 0; }
 
 int game_test_firebar(void)
 {
@@ -1762,6 +1793,18 @@ static void update_hip_switches(void)
     }
 }
 
+/* Mario standing on a moving instance: his position in its old pose put back in the new one */
+static void carry(const float old[16], const Inst *in)
+{
+    V3 d = vsub(mario->pos, v3(old[12], old[13], old[14]));
+    float k = 1.0f / (in->s * in->s), l[3] = {vdot(d, v3(old[0], old[1], old[2])) * k,
+                                             vdot(d, v3(old[4], old[5], old[6])) * k,
+                                             vdot(d, v3(old[8], old[9], old[10])) * k};
+    V3 p = v3(in->m[12], in->m[13], in->m[14]);
+    for (int j = 0; j < 3; j++) p = vadd(p, vmul(v3(in->m[4 * j], in->m[4 * j + 1], in->m[4 * j + 2]), l[j]));
+    mario->pos = p;
+}
+
 /* Rotating map parts (MapPartsRotator): RotateSpeed * 0.01 degrees a frame; RotateAngle 0 turns for ever, else it
  * turns that far, holds RotateStopTime frames, then RotateType 0 stops, 1 swings back, 2 goes on; MoveConditionType
  * other than 0 waits for Mario on it. Mario standing on one (last frame's ground) is carried along. ponytail: constant
@@ -1793,15 +1836,57 @@ static void update_rotors(void)
         if (range == 0 || type == 2) a = fmodf(a, 360.0f);
         row_angle[row] = a;
         rotor_matrix(in);
-        if (mario_ground == i) { /* carried: Mario's position in the old pose, put back in the new one */
-            V3 d = vsub(mario->pos, v3(old[12], old[13], old[14]));
-            float k = 1.0f / (in->s * in->s), l[3] = {vdot(d, v3(old[0], old[1], old[2])) * k,
-                                                     vdot(d, v3(old[4], old[5], old[6])) * k,
-                                                     vdot(d, v3(old[8], old[9], old[10])) * k};
-            V3 p = v3(in->m[12], in->m[13], in->m[14]);
-            for (int j = 0; j < 3; j++) p = vadd(p, vmul(v3(in->m[4 * j], in->m[4 * j + 1], in->m[4 * j + 2]), l[j]));
-            mario->pos = p;
+        if (in->railer) railer_place(in);
+        if (mario_ground == i) carry(old, in);
+    }
+}
+
+/* MapPartsRailMover.cpp: a map part on a rail moves along it at the speed of the last point that set one (point_arg0),
+ * waits point_arg5 frames at a point, and at an end MoveStopType (path_arg1, default 1): 0 stops, 1 turns back, 2
+ * starts over, 3 vanishes; MoveConditionType other than 0 waits for Mario on it. It carries Mario like a rotating
+ * part. ponytail: no acceleration (point_arg1), no time-based speed (point_arg7), no rail posture */
+static void update_railers(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->railer) continue;
+        const Row *r = &sc->objs[in->row];
+        const unsigned char *e = in->railer;
+        int row = in->row, cond = r->arg[7] >> 8 & 15, stop = *(const int *)(e + 16);
+        u32 np = *(const u32 *)(e + 8), nr = *(const u32 *)(e + 12);
+        const unsigned char *pa = e + 24 + 12 * np + 12 * nr; /* nr x {f32 coord, s32 arg0, s32 arg5} */
+        float len = *(const float *)(pa + 12 * (nr - 1));
+        if (!row_rdir[row]) {
+            if (cond && mario_ground != i) continue;
+            row_rdir[row] = 1;
         }
+        if (row_rdir[row] == 2) continue;
+        if (row_rhold[row]) { row_rhold[row]--; continue; }
+        float c = row_coord[row];
+        int dir = row_rdir[row];
+        for (u32 k = 0; k < nr; k++) /* the speed of the last point behind it that sets one */
+            if (*(const float *)(pa + 12 * k) <= c + 0.01f && *(const int *)(pa + 12 * k + 4) >= 0)
+                row_speed[row] = (float)*(const int *)(pa + 12 * k + 4);
+        float n = c + row_speed[row] * dir, old[16];
+        memcpy(old, in->m, 64);
+        for (u32 k = 1; k + 1 < nr; k++) { /* passing a point that holds */
+            float pc = *(const float *)(pa + 12 * k);
+            int hold = *(const int *)(pa + 12 * k + 8);
+            if (hold > 0 && ((c < pc && n >= pc) || (c > pc && n <= pc))) { n = pc; row_rhold[row] = hold; break; }
+        }
+        if (n >= len || n <= 0) { /* an end */
+            int type = stop >= 0 ? stop : 1;
+            n = n >= len ? len : 0;
+            int hold = *(const int *)(pa + 12 * (n > 0 ? nr - 1 : 0) + 8);
+            if (hold > 0) row_rhold[row] = hold;
+            if (type == 0) row_rdir[row] = 2;
+            else if (type == 1) row_rdir[row] = -dir;
+            else if (type == 2) n = 0;
+            else { row_kill(row); game_rebind(); return; }
+        }
+        row_coord[row] = n;
+        railer_place(in);
+        if (mario_ground == i) carry(old, in);
     }
 }
 
@@ -2181,6 +2266,7 @@ void game_update(void)
     hip_hit = 0;
     game_frame++;
     update_rotors();
+    update_railers();
     update_mario();
     update_kuribo();
     break_boxes();

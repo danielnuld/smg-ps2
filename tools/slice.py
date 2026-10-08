@@ -21,8 +21,10 @@ Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
   'OBJS'  u32 n, n × ROW;  'STRT' same layout (Mario start points)
           ROW = {u16 type, u16 zone, s32 l_id, s32 path_id, f32 pos[3], f32 rot[3], f32 scale[3], s32 arg[8],
                  s16 sw[5] (SW_FIELDS, -1 none), s16 group (GroupId, -1 none)}  (92 B)
-  'PATH'  u32 n, n × {u16 zone, u16 closed, s32 id, u32 npts, u32 nraw, f32 pts[npts][3], f32 raw[nraw][3]}: pts the
-          rail as a polyline (Bezier parts sampled, bezier_polyline), raw its JMap points (pnt0)
+  'PATH'  u32 n, n × {u16 zone, u16 closed, s32 id, u32 npts, u32 nraw, s32 stop_type (path_arg1), s32 pad,
+          f32 pts[npts][3], f32 raw[nraw][3], nraw × {f32 coord, s32 arg0, s32 arg5}}: pts the rail as a polyline
+          (Bezier parts sampled, bezier_polyline), raw its JMap points (pnt0), each with its distance along pts and its
+          point_arg0 / point_arg5 (map parts: speed, stop time)
   'MODL'  u32 n, n × {char[32] name, f32 bounding radius}
   'KCL '  u32 n, n × {char[32] model, u32 size, bytes[size] (little-endian KCL, kcl_to_le), pad to 4}
   'VUMD'  u32 n, 12 pad, n × {char[32] name, u32 ngroups, f32 qscale, 8 pad, ngroups × {u32 nverts (3 per
@@ -174,8 +176,11 @@ def scene(fs, galaxy, scenario):
         for i, pid in enumerate(ids):
             pts = files.get(f"{root}/jmp/path/commonpathpointinfo.{i}", b"")
             p0, p1, p2 = ([float_column(pts, f"pnt{k}_{a}") for a in "xyz"] for k in range(3))
+            npt = len(p0[0])
             paths.append(dict(zone=zid, id=pid, closed=int(str(closed[i] if i < len(closed) else "").lower() == "close"),
-                              pts=list(zip(*p0)), cin=list(zip(*p1)) or list(zip(*p0)), cout=list(zip(*p2)) or list(zip(*p0))))
+                              pts=list(zip(*p0)), cin=list(zip(*p1)) or list(zip(*p0)), cout=list(zip(*p2)) or list(zip(*p0)),
+                              stop=int_or(info, "path_arg1", len(ids), -1)[i], arg0=int_or(pts, "point_arg0", npt, -1),
+                              arg5=int_or(pts, "point_arg5", npt, -1)))
     return act, zones, objs, starts, paths, cubes, bcams, up
 
 
@@ -460,13 +465,15 @@ def mul3(a, b):
 BEZIER_STEPS = 8  # samples per curved rail part
 
 
-def bezier_polyline(pts, cin, cout, closed):
+def bezier_polyline(pts, cin, cout, closed, marks=None):
     """Petari BezierRail: part i runs from pnt0[i] (control pnt2[i]) to pnt0[i+1] (control pnt1[i+1]); a part whose
     controls sit on its ends is straight. -> the rail as points along it (closed rails without the repeated start)."""
     n = len(pts)
     if n < 2:
         return list(pts)
     out = [pts[0]]
+    if marks is not None:
+        marks.append(0)
     for i in range(n if closed else n - 1):
         a, b, c, d = pts[i], cout[i], cin[(i + 1) % n], pts[(i + 1) % n]
         near = lambda u, v: sum((u[k] - v[k]) ** 2 for k in range(3)) < 1.0
@@ -477,13 +484,22 @@ def bezier_polyline(pts, cin, cout, closed):
                 t = s / BEZIER_STEPS
                 w = ((1 - t) ** 3, 3 * t * (1 - t) ** 2, 3 * t * t * (1 - t), t ** 3)
                 out.append(tuple(w[0] * a[k] + w[1] * b[k] + w[2] * c[k] + w[3] * d[k] for k in range(3)))
+        if marks is not None and (i + 1 < n):
+            marks.append(len(out) - 1)
     return out[:-1] if closed else out
 
 
 def path_entry(p):
-    dense = bezier_polyline(p["pts"], p.get("cin", p["pts"]), p.get("cout", p["pts"]), p["closed"])
-    return (struct.pack("<HHiII", p["zone"], p["closed"], p["id"], len(dense), len(p["pts"])) +
-            b"".join(struct.pack("<3f", *pt) for pt in dense) + b"".join(struct.pack("<3f", *pt) for pt in p["pts"]))
+    marks = []
+    dense = bezier_polyline(p["pts"], p.get("cin", p["pts"]), p.get("cout", p["pts"]), p["closed"], marks)
+    along = [0.0]
+    for i in range(1, len(dense)):
+        along.append(along[-1] + math.dist(dense[i - 1], dense[i]))
+    n = len(p["pts"])
+    a0, a5 = p.get("arg0", [-1] * n), p.get("arg5", [-1] * n)
+    return (struct.pack("<HHiIIii", p["zone"], p["closed"], p["id"], len(dense), n, p.get("stop", -1), 0) +
+            b"".join(struct.pack("<3f", *pt) for pt in dense) + b"".join(struct.pack("<3f", *pt) for pt in p["pts"]) +
+            b"".join(struct.pack("<fii", along[marks[i]] if i < len(marks) else along[-1], a0[i], a5[i]) for i in range(n)))
 
 
 def to_world(zones, up_ids, items):

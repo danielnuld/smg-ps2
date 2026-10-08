@@ -518,14 +518,19 @@ int main(void)
             printf("spin test f %u: launch %d %s\n", frame, game_launch_state(), d);
         }
 #endif
-#ifdef ROTOR_TEST
+#if defined(ROTOR_TEST) || defined(RAIL_TEST)
         {
             static int row = -1;
-            if (frame == 120) printf("rotor test: on row %d\n", row = game_test_rotor());
+#ifdef RAIL_TEST
+            if (frame == 120) printf("rail test: on row %d\n", row = game_test_rotor(1));
+#else
+            if (frame == 120) printf("rotor test: on row %d\n", row = game_test_rotor(0));
+#endif
             if (frame > 120 && frame <= 600 && frame % 30 == 0) {
                 char d[128];
                 game_debug(d, sizeof d);
-                printf("rotor test f %u: angle %d %s\n", frame, (int)game_rotor_angle(row), d);
+                printf("rotor test f %u: angle %d coord %d %s\n", frame, (int)game_rotor_angle(row),
+                       (int)game_rail_coord(row), d);
             }
         }
 #endif
