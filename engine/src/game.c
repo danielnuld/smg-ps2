@@ -145,6 +145,9 @@ static Kuribo *kuribo;
 static int nkuribo;
 static Player *mario;
 static V3 start_pos;
+#define MAX_LIFE 3              /* Petari: 3 life, a coin gives one back; ponytail: no LifeUp (6) */
+static int life = MAX_LIFE, misses;
+static void miss(void);
 static int got_coins, got_purple, got_pieces;
 static float spin_angle;
 static V3 cam_pos;
@@ -952,9 +955,8 @@ static void update_mario(void)
                    (int)m->pos.x, (int)m->pos.y, (int)m->pos.z);
     }
 #endif
-    if (lost(m->pos)) { /* fell off: back to the start */
-        m->pos = start_pos; m->hvel = v3(0, 0, 0); m->vup = 0;
-    }
+    if (lost(m->pos)) /* fell off */
+        miss();
     if (m->hurt_timer) m->hurt_timer--;
 
     if (mario_anim) { /* animation: the one-shot clip of a move plays out, then the state picks a loop */
@@ -977,10 +979,20 @@ static void update_mario(void)
     }
 }
 
-/* Mario hit by something at `from`: knocked away from it and blinking (ponytail: no health yet) */
+/* A miss (no life left, or fell into space): back to the start with full life. ponytail: no miss animation, no
+ * lives counter / game over, the stage is not reset */
+static void miss(void)
+{
+    mario->pos = start_pos; mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->hurt_timer = 0;
+    life = MAX_LIFE;
+    printf("miss %d\n", ++misses);
+}
+
+/* Mario hit by something at `from`: one life gone, knocked away from it and blinking */
 static void hurt_mario(V3 from, float push)
 {
     if (mario->hurt_timer) return;
+    if (--life <= 0) { miss(); return; }
     V3 away = vtangent(vsub(mario->pos, from), mario->up);
     if (vlen(away) < 1e-3f) away = mario->face;
     mario->hvel = vmul(vnorm(away), push);
@@ -1111,7 +1123,10 @@ void game_update(void)
     break_boxes();
     update_collapse();
     update_hazards();
+    int had = got_coins;
     collect(coins, ncoins, 100.0f, &got_coins);
+    life += got_coins - had;
+    if (life > MAX_LIFE) life = MAX_LIFE;
     collect(purple, npurple, 100.0f, &got_purple);
     collect(pieces, npieces, 120.0f, &got_pieces);
     spin_angle += 0.08f;
@@ -1190,6 +1205,8 @@ void game_debug(char *out, int n)
 }
 
 int game_coins(void) { return got_coins; }
+int game_life(void) { return life; }
+int game_misses(void) { return misses; }
 int game_purple(void) { return got_purple; }
 int game_purple_total(void) { return npurple; }
 int game_starpieces(void) { return got_pieces; }

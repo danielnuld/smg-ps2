@@ -3,7 +3,7 @@
 # usage (from Windows): wsl.exe -e bash /mnt/d/smg-ps2/engine/build.sh [bench|plain|slope] [blob, default out/slice/hd2.bin] [Galaxy/n]
 # Galaxy/n: boot from the streaming packs in out/packs (host:packs/) instead of the linked blob; the ELF is
 #           also copied to out/slice-packs[-bench].elf, run it from there
-# hazard: with packs, Mario walked into the first SpaceMine (frame 120) and NeedlePlant (300) (-DHAZARD_TEST)
+# hazard: with packs, Mario walked into the first SpaceMine (frame 120) and NeedlePlant (300, 400, 500: the third prick is a miss) (-DHAZARD_TEST)
 # collapse: with packs, Mario dropped onto the first CollapsePlane at frame 120 (-DCOLLAPSE_TEST)
 # box: with packs, Mario spinning on the first breakable box at frame 120 (-DBOX_TEST)
 # zone: with packs, Mario caught by the first launch star at frame 120 (-DZONE_TEST)

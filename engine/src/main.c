@@ -266,10 +266,11 @@ int main(void)
 #ifdef HAZARD_TEST
         if (frame == 120)
             printf("hazard test: mine row %d\n", game_test_hazard(1));
-        if (frame == 300)
+        if (frame == 300 || frame == 400 || frame == 500) /* three pricks: the last one is a miss */
             printf("hazard test: plant row %d\n", game_test_hazard(2));
-        if (frame % 20 == 0 && ((frame > 120 && frame < 200) || (frame > 300 && frame < 380)))
-            printf("hazard test f %u: hurt %d\n", frame, game_hurt_timer());
+        if (frame % 20 == 0 && ((frame > 120 && frame < 200) || (frame > 300 && frame < 600)))
+            printf("hazard test f %u: hurt %d life %d misses %d\n", frame, game_hurt_timer(), game_life(),
+                   game_misses());
 #endif
 #ifdef COLLAPSE_TEST
         static int crow = -1;
@@ -318,7 +319,7 @@ int main(void)
         ms(a, sizeof a, "WORST", worst);
         snprintf(line + strlen(line), sizeof line - strlen(line), "  %s MS  TRIS %u", a, render_tris_drawn());
         render_text(16, 12, line);
-        snprintf(line, sizeof line, "COINS %d  PURPLE %d/%d  PIECES %d  KURIBO %d  RUNTIME %u KB", game_coins(),
+        snprintf(line, sizeof line, "LIFE %d  COINS %d  PURPLE %d/%d  PIECES %d  KURIBO %d  RUNTIME %u KB", game_life(), game_coins(),
                  game_purple(), game_purple_total(), game_starpieces(), game_kuribo_alive(), mem_total() >> 10);
         render_text(16, 26, line);
         snprintf(line, sizeof line, "CAM %d %s", camera_current(), camera_type_name());

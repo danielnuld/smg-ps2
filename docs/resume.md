@@ -16,7 +16,8 @@ Last updated 2026-10-07. Detail and numbers: `docs/phase2-report.md`; tasks: `op
   - launch stars, StarPieceGroup;
   - breakables: PunchBox, WoodBox, CrystalCage S/M;
   - CollapsePlane, SpaceMine, NeedlePlant;
-  - Mario slopes as in Petari (confirmed by the user).
+  - Mario slopes as in Petari (confirmed by the user);
+  - Mario's life: 3, one lost per hit, a coin gives one back, a miss (0 life or fell into space) puts him back at the start with full life (`LIFE` on the HUD).
 - Every other placed class with a model is drawn and collided as a static instance.
 
 ## How to run
@@ -27,7 +28,7 @@ Last updated 2026-10-07. Detail and numbers: `docs/phase2-report.md`; tasks: `op
 | Convert everything (packs + table) | `python tools/slice_all.py data/fs/files out/packs 6` then `python tools/vram_need.py out/packs` |
 | Build, embedded Gateway 2 | `wsl.exe -e bash /mnt/d/smg-ps2/engine/build.sh [bench]` → `engine/slice[-bench].elf` |
 | Build from packs | `wsl.exe -e bash /mnt/d/smg-ps2/engine/build.sh MODE out/slice/hd2.bin Galaxy/n` → `out/slice-packs[-MODE].elf` (run from `out/`: `host:packs/`) |
-| Modes | `plain`, `bench`, `slope`, `zone` (launch star 0 at frame 120), `box`, `collapse`, `hazard` |
+| Modes | `plain`, `bench`, `slope`, `zone` (launch star 0 at frame 120), `box`, `collapse`, `hazard` (EggStarGalaxy/1: the third NeedlePlant prick is a miss) |
 | Host tests | `wsl.exe -e bash /mnt/d/smg-ps2/engine/test/run.sh` |
 | PCSX2 in the background | `tools/run_quiet.ps1 -Elf <elf> -Wait <s>`, `tools/snapbg.ps1 <png>`, log `Documents/PCSX2/logs/emulog.txt` |
 
@@ -35,7 +36,7 @@ Patch scripts go through files (Write), not bash heredocs, because of apostrophe
 
 ## Next
 
-1. Mario's health (hurt_mario only knocks back today), then Lumas / NPCs, coins popping out.
+1. Lumas / NPCs, coins popping out (health done: no LifeUp, no lives counter / game over yet).
 2. More classes by placement count (`out/census.json`), e.g.:
    - GCaptureTarget, FlowerGroup, CutBushGroup;
    - ShootingStar, StarPieceSpot, BenefitItemOneUp;
