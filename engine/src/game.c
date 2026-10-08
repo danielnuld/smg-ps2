@@ -169,6 +169,14 @@ typedef struct { V3 a, b; int h; } Spark;
 static Spark *erails;
 static int nerails;
 static const Model *m_erail;
+/* EarthenPipe (Petari EarthenPipe.cpp): pipes sharing arg3 are a pair; the top is 100 * scale.y along the pipe's up
+ * (-gravity, or its Y axis when arg6); a binder of radius 70 at 50 below the top takes Mario if he is within 50 of
+ * the axis or above the top, and the partner throws him out with Y * arg1 + Z * arg0 (default 20, 5). A pipe works
+ * again once Mario stood on ground 30 frames after the warp. ponytail: instant warp (no in / out clips, no hidden
+ * pipes rising, no camera), no water pipes' stream */
+typedef struct { V3 top, up, front; float hf, vf; int id, partner, zone; } Pipe;
+static Pipe *pipes;
+static int npipes, pipe_wait, pipe_zone = -1; /* pipe_zone: the exit pipe's zone, wanted in full */
 static Launch *launches;
 static int nlaunches;
 static int ground_flips, slip_frames;
@@ -536,6 +544,26 @@ void game_init(const Scene *s, const unsigned char *blob)
         if (!pass) erails = mem_alloc(MEM_OBJECTS, (n + 1) * sizeof(Spark));
         nerails = n;
     }
+    int t_pipe = scene_type(s, "EarthenPipe"), t_wpipe = scene_type(s, "EarthenPipeInWater");
+    pipes = mem_alloc(MEM_OBJECTS, (count_type("EarthenPipe", 0) + count_type("EarthenPipeInWater", 0) + 1) * sizeof(Pipe));
+    for (u32 i = 0; i < s->nobjs; i++) {
+        const Row *r = &s->objs[i];
+        if (r->type != t_pipe && r->type != t_wpipe) continue;
+        Pipe *p = &pipes[npipes];
+        V3 x, z, pos = row_pos(r);
+        row_axes(r, &x, &z);
+        p->up = r->arg[6] > 0 ? vcross(z, x) : up_at(pos, vcross(z, x));
+        p->front = z;
+        p->top = vadd(pos, vmul(p->up, 100.0f * r->scale[1]));
+        p->hf = r->arg[0] >= 0 ? (float)r->arg[0] : 5.0f;
+        p->vf = r->arg[1] >= 0 ? (float)r->arg[1] : 20.0f;
+        p->id = r->arg[3];
+        p->zone = r->zone;
+        p->partner = -1;
+        for (int k = 0; k < npipes; k++) /* EarthenPipeMediator::entry: the first pipe with the same id */
+            if (pipes[k].id == p->id && pipes[k].partner < 0) { pipes[k].partner = npipes; p->partner = k; break; }
+        npipes++;
+    }
     const Row *st = scene_start(s);
     start_pos = row_pos(st);
 #ifdef SLOPE_TEST
@@ -675,6 +703,10 @@ static int nearest_low_zone(V3 p, const unsigned char *full, float limit)
 
 int game_zone_wanted(const unsigned char *full)
 {
+    if (pipe_zone >= 0) { /* came out of a pipe in a low zone: its collision is needed now */
+        if (!full[pipe_zone]) return pipe_zone;
+        pipe_zone = -1;
+    }
     /* the nearest low zone whose sphere (+1000) Mario is in, once he is out of every full zone's model sphere (else
      * the zone he stands in would go low and come back each frame). ponytail: proximity only, no visibility */
     for (int i = 0; i < ninsts; i++) {
@@ -721,6 +753,17 @@ int game_test_collapse(void)
 }
 
 int game_test_collapse_step(int row) { return row < 0 ? -2 : row_dead[row] ? -1 : row_step[row]; }
+
+int game_test_pipe(void)
+{
+    for (int i = 0; i < npipes; i++)
+        if (pipes[i].partner >= 0) {
+            mario->pos = vadd(pipes[i].top, vmul(pipes[i].up, 30.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
+            return i;
+        }
+    return -1;
+}
 
 int game_test_spark(void)
 {
@@ -1240,6 +1283,34 @@ static void update_hazards(void)
     }
 }
 
+static void update_pipes(void)
+{
+    if (pipe_wait) { /* exeInvalid: re-armed once Mario is on ground after 30 frames */
+        if (++pipe_wait > 30 && mario->grounded) pipe_wait = 0;
+        return;
+    }
+    if (mario->launch >= 0) return;
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < npipes; i++) {
+        const Pipe *p = &pipes[i];
+        if (p->partner < 0 || vlen(vsub(c, vsub(p->top, vmul(p->up, 50.0f)))) > 70.0f + HIT_BODY_R) continue;
+        V3 d = vsub(mario->pos, p->top);
+        if (vlen(vtangent(d, p->up)) > 50.0f && vdot(d, p->up) < -5.0f) continue; /* beside the pipe, below its top */
+        const Pipe *o = &pipes[p->partner];
+        mario->pos = o->top;
+        mario->up = o->up;
+        mario->vup = o->vf; /* endBindAndPlayerForceWeakGravityJumpInputOff(Y * vert + Z * horiz) */
+        mario->hvel = vmul(vtangent(o->front, o->up), o->hf);
+        mario->grounded = 0; mario->jump_kind = 0; mario->air_timer = 0;
+        if (vlen(mario->hvel) > 0.1f) mario->face = vnorm(mario->hvel);
+        if (mario_anim) mario_play("earthenpipejump", 1.0f, 0);
+        pipe_wait = 1;
+        pipe_zone = o->zone;
+        printf("pipe %d -> %d\n", i, p->partner);
+        return;
+    }
+}
+
 /* ElectricRail: sensors of radius 30 at the rail point nearest Mario (and every 100 above it for stacked rails) shock
  * him unless he squats. ponytail: no switch turning the rail off, no ElectricRailMoving */
 static void update_electric(void)
@@ -1298,6 +1369,7 @@ void game_update(void)
     update_hazards();
     update_items();
     update_electric();
+    update_pipes();
     int had = got_coins;
     collect(coins, ncoins, 100.0f, &got_coins);
     life += got_coins - had;

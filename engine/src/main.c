@@ -307,6 +307,15 @@ int main(void)
             printf("spin test f %u: launch %d %s\n", frame, game_launch_state(), d);
         }
 #endif
+#ifdef PIPE_TEST
+        if (frame == 120)
+            printf("pipe test: on pipe %d\n", game_test_pipe());
+        if (frame > 120 && frame <= 300 && frame % 15 == 0) {
+            char d[128];
+            game_debug(d, sizeof d);
+            printf("pipe test f %u: %s\n", frame, d);
+        }
+#endif
 #ifdef ZONE_TEST
         if (frame == 120)
             printf("zone test: launch star %d\n", game_test_spindriver(0));
