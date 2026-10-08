@@ -49,8 +49,8 @@ SKINNED = ("Mario",)
 # ponytail: translucent volumes and effects the renderer would draw opaque (no blending yet): the atmosphere sphere,
 # the sky ring (793 869 radius), the sun's lens flare. Grows as galaxies show more; blending replaces it
 NO_DRAW = ("SphereAir", "VROrbit", "BrightSun")   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
-OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup", "PurpleRailCoin", "SuperSpinDriver",
-             "StarPieceGroup")
+OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup", "PurpleRailCoin", "CircleCoinGroup",
+             "RailCoin", "SuperSpinDriver", "StarPieceGroup")
 ROW_FIELDS = ("pos_x", "pos_y", "pos_z", "dir_x", "dir_y", "dir_z", "scale_x", "scale_y", "scale_z")
 ROW = struct.Struct("<HHii9f8i")
 

@@ -22,12 +22,19 @@ int game_test_box(void);
 int game_test_collapse(void);
 /* Test builds: Mario put next to the first SpaceMine (kind 1) or NeedlePlant (2). Returns its OBJS row or -1. */
 int game_test_hazard(int kind);
+/* Test builds: Mario put on the first PowerStar / 1-up / life-up mushroom left. Returns its kind (1-3) or 0. */
+int game_test_item(void);
+/* Test builds: Mario put on the first ElectricRail segment (0, or -1 if none) / into the first black hole (its row). */
+int game_test_spark(void);
+int game_test_hole(void);
 int game_hurt_timer(void);
 int game_test_collapse_step(int row);
 void game_draw(void);
 /* HUD numbers */
 int game_coins(void);
 int game_life(void);
+int game_lives(void);
+int game_stars(void);
 int game_misses(void);
 int game_purple(void);
 int game_purple_total(void);

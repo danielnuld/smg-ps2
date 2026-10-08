@@ -96,6 +96,9 @@ static const float JUMP_GRAV[12] = {1.8f, 1.8f, 1.8f, 1.8f, 1.8f, 0.95f, 1.8f, 2
 #define TURN_MOVE 0.15f           /* mTurnAngleSpeed2, above mFastTurnSpeed 0.1 (MarioMove.cpp:368-373) */
 #define AIR_CONTROL 0.1f          /* ponytail: one air steering factor instead of Petari's air-walk timers */
 #define BODY_RADIUS 50.0f         /* ponytail: one sphere for Mario's body; SMG uses several collision checks */
+#define HIT_BODY_H 80.0f          /* Mario's hit sensor for touches: centre this high, radius HIT_BODY_R (the
+                                   * collision sphere is lower and smaller); ponytail: one sphere, not his sensors */
+#define HIT_BODY_R 70.0f
 
 static const Scene *sc;
 /* Placed static models (planets and every class without behaviour yet): drawn, and collided if they have a KCL */
@@ -109,7 +112,9 @@ typedef struct {
     int breaks;      /* breakable (breakable()): a spin breaks it, then it drops its coins / star pieces */
     int collapse;    /* CollapsePlane: frames from standing on it to vanishing (arg0, default 140), 0 if not one */
     int hazard;      /* 1 SpaceMine (explodes on touch), 2 NeedlePlant (pricks on touch), 0 none */
+    int item;        /* touch to take: ITEM_STAR, ITEM_ONEUP, ITEM_LIFEUP; 0 none */
 } Inst;
+enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP };
 static unsigned short *row_step; /* per OBJS row: CollapsePlane frames since Mario stood on it (0: not yet) */
 static int ground_inst = -1;     /* instance under the last collide_n's ground normal, -1 none */
 static void zone_spheres(void);
@@ -145,8 +150,9 @@ static Kuribo *kuribo;
 static int nkuribo;
 static Player *mario;
 static V3 start_pos;
-#define MAX_LIFE 3              /* Petari: 3 life, a coin gives one back; ponytail: no LifeUp (6) */
-static int life = MAX_LIFE, misses;
+#define MAX_LIFE 3              /* Petari: 3 life, a coin gives one back; a LifeUp mushroom makes it 6 until a miss */
+#define START_LIVES 4
+static int life = MAX_LIFE, max_life = MAX_LIFE, misses, lives = START_LIVES, stars;
 static void miss(void);
 static int got_coins, got_purple, got_pieces;
 static float spin_angle;
@@ -154,6 +160,12 @@ static V3 cam_pos;
 static const Model *m_coin, *m_purple, *m_piece, *m_kuribo;
 static const Model *m_mario_skin; /* Mario.arc, skinned (SKIN chunk) */
 static Anim *mario_anim;
+/* ElectricRail (Petari ElectricRail.cpp, ElectricRailHolder.cpp): one segment per pair of rail points, arg0 rails
+ * stacked 100 apart against gravity (default 1) */
+typedef struct { V3 a, b; int h; } Spark;
+static Spark *erails;
+static int nerails;
+static const Model *m_erail;
 static Launch *launches;
 static int nlaunches;
 static int ground_flips, slip_frames;
@@ -242,6 +254,28 @@ static int place_on_rail(Pickup *out, const float *pts, u32 np, int closed, int 
         }
     }
     return count;
+}
+
+/* CoinGroup (Petari CoinGroup.cpp, CircleCoinGroup.cpp, RailCoin.cpp): arg0 coins; on a rail spread by length, else a
+ * circle of radius arg2 (default 200) in the placement's X / Z plane. ponytail: no Mercator rails, no time limit
+ * (arg1), every group is out from the start (no appear switch / demo) */
+static int coin_group(Pickup *out, const Row *r, const unsigned char *blob)
+{
+    if (r->arg[0] <= 0) return 0;
+    if (r->path >= 0) {
+        u32 np; int closed;
+        const float *pts = find_rail(blob, r->zone, r->path, &np, &closed);
+        return pts && np > 1 ? place_on_rail(out, pts, np, closed, r->arg[0]) : 0;
+    }
+    V3 side, front, c = row_pos(r);
+    row_axes(r, &side, &front);
+    float radius = r->arg[2] > 0 ? (float)r->arg[2] : 200.0f;
+    for (int k = 0; k < r->arg[0]; k++) {
+        float a = 6.2831853f * k / r->arg[0];
+        out[k].pos = vadd(c, vadd(vmul(front, radius * cosf(a)), vmul(side, radius * sinf(a))));
+        out[k].alive = 1;
+    }
+    return r->arg[0];
 }
 
 /* StarPieceGroup (Petari StarPieceGroup.cpp init / placementAllPiece): arg0 pieces (default 6); on a rail, spread by
@@ -407,7 +441,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         m_mario_skin = NULL;
     }
 
-    ncoins = count_type("Coin", 0);
+    ncoins = count_type("Coin", 0) + count_type("CircleCoinGroup", 1) + count_type("RailCoin", 1);
     for (u32 i = 0; i < s->nobjs; i++) { /* room for what breakables drop */
         int c, p;
         if (breakable(s->types + 32 * s->objs[i].type, &s->objs[i], &c, &p)) {
@@ -433,7 +467,8 @@ void game_init(const Scene *s, const unsigned char *blob)
     int ic = 0, ip = 0, is = 0, ik = 0;
     int t_coin = scene_type(s, "Coin"), t_pc = scene_type(s, "PurpleCoin"), t_circle = scene_type(s, "CirclePurpleCoinGroup");
     int t_rail = scene_type(s, "PurpleRailCoin"), t_piece = scene_type(s, "StarPiece"), t_kuribo = scene_type(s, "Kuribo");
-    insts = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(Inst));
+    int t_gcircle = scene_type(s, "CircleCoinGroup"), t_grail = scene_type(s, "RailCoin");
+    insts =mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(Inst));
     zone_spheres();
     game_rebind();
     for (u32 i = 0; i < s->nobjs; i++) {
@@ -446,21 +481,10 @@ void game_init(const Scene *s, const unsigned char *blob)
             kuribo[ik].pos = row_pos(r);
             kuribo[ik].up = up_at(kuribo[ik].pos, v3(0, 1, 0));
             kuribo[ik++].state = KURIBO_WALK;
-        } else if (r->type == t_circle) { /* CircleCoinGroup::placementCoin: arg0 coins, arg2 radius (default 200) */
-            V3 side, front, c = row_pos(r);
-            row_axes(r, &side, &front);
-            float radius = r->arg[2] > 0 ? (float)r->arg[2] : 200.0f;
-            for (int k = 0; k < r->arg[0]; k++) {
-                float a = 6.2831853f * k / r->arg[0];
-                purple[ip].pos = vadd(c, vadd(vmul(front, radius * cosf(a)), vmul(side, radius * sinf(a))));
-                purple[ip++].alive = 1;
-            }
-        } else if (r->type == t_rail && r->arg[0] > 0) {
-            u32 np; int closed;
-            const float *pts = find_rail(blob, r->zone, r->path, &np, &closed);
-            if (pts && np > 1)
-                ip += place_on_rail(purple + ip, pts, np, closed, r->arg[0]);
-        }
+        } else if (r->type == t_circle || r->type == t_rail)
+            ip += coin_group(purple + ip, r, blob);
+        else if (r->type == t_gcircle || r->type == t_grail)
+            ic += coin_group(coins + ic, r, blob);
     }
     npurple = ip;
     ncoins = ic; /* box coins and star pieces are appended as boxes break */
@@ -473,6 +497,25 @@ void game_init(const Scene *s, const unsigned char *blob)
         const float *pts = r->type == t_launch ? find_rail(blob, r->zone, r->path, &np, &closed) : NULL;
         if (pts && np >= 2)
             init_launch(&launches[nlaunches++], r, pts, np);
+    }
+    int t_erail = scene_type(s, "ElectricRail");
+    for (int pass = 0; pass < 2; pass++) { /* count the segments, then fill them */
+        int n = 0;
+        for (u32 i = 0; i < s->nobjs; i++) {
+            const Row *r = &s->objs[i];
+            u32 np; int closed;
+            const float *pts = r->type == t_erail ? find_rail(blob, r->zone, r->path, &np, &closed) : NULL;
+            if (!pts || np < 2) continue;
+            for (u32 k = 0; k < (closed ? np : np - 1); k++, n++) {
+                if (!pass) continue;
+                const float *a = pts + 3 * k, *b = pts + 3 * ((k + 1) % np);
+                erails[n].a = v3(a[0], a[1], a[2]);
+                erails[n].b = v3(b[0], b[1], b[2]);
+                erails[n].h = r->arg[0] > 0 ? (r->arg[0] < 8 ? r->arg[0] : 8) : 1;
+            }
+        }
+        if (!pass) erails = mem_alloc(MEM_OBJECTS, (n + 1) * sizeof(Spark));
+        nerails = n;
     }
     const Row *st = scene_start(s);
     start_pos = row_pos(st);
@@ -512,7 +555,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         camera_init(c ? (const CamParam *)(c + 16) : NULL, c ? *(const int *)c : 0,
                     a ? (const CamArea *)(a + 16) : NULL, a ? *(const int *)a : 0, (const float (*)[16])zm, &t);
     }
-    printf("game: %d launch stars\n", nlaunches);
+    printf("game: %d launch stars, %d electric rail segments\n", nlaunches, nerails);
     printf("game: %d static instances, coins %d, purple %d, star pieces %d, kuribo %d, start (%d %d %d)\n", ninsts,
            ncoins, npurple, npieces, nkuribo, (int)start_pos.x, (int)start_pos.y, (int)start_pos.z);
 }
@@ -526,12 +569,13 @@ void game_rebind(void)
     m_kuribo = scene_model(s, "Kuribo");
     int t_coin = scene_type(s, "Coin"), t_pc = scene_type(s, "PurpleCoin"), t_circle = scene_type(s, "CirclePurpleCoinGroup");
     int t_rail = scene_type(s, "PurpleRailCoin"), t_piece = scene_type(s, "StarPiece"), t_kuribo = scene_type(s, "Kuribo");
-    int t_spg = scene_type(s, "StarPieceGroup");
+    int t_spg = scene_type(s, "StarPieceGroup"), t_erail = scene_type(s, "ElectricRail");
+    m_erail = scene_model(s, "ElectricRail");
     ninsts = 0;
     for (u32 i = 0; i < s->nobjs; i++) { /* every placed model without behaviour: planets and the rest */
         const Row *r = &s->objs[i];
         if (r->type == t_coin || r->type == t_pc || r->type == t_piece || r->type == t_kuribo || r->type == t_circle ||
-            r->type == t_rail || r->type == t_spg)
+            r->type == t_rail || r->type == t_spg || r->type == t_erail)
             continue;
         const char *name = s->types + 32 * r->type;
         const Model *md = scene_model(s, name);
@@ -542,13 +586,22 @@ void game_rebind(void)
         int dc, dp;
         in->breaks = breakable(name, r, &dc, &dp);
         in->collapse = strcmp(name, "CollapsePlane") == 0 ? (r->arg[0] > 0 ? r->arg[0] : 140) : 0;
-        in->hazard = strcmp(name, "SpaceMine") == 0 ? 1 : strcmp(name, "NeedlePlant") == 0 ? 2 : 0;
-        zone_grow(in);
+        in->hazard = strcmp(name, "SpaceMine") == 0 ? 1 : strcmp(name, "NeedlePlant") == 0 ? 2 :
+                     strcmp(name, "BlackHole") == 0 ? 3 : strcmp(name, "BlackHoleCube") == 0 ? 4 : 0;
+        in->item = strcmp(name, "PowerStar") == 0 ? ITEM_STAR : strcmp(name, "BenefitItemOneUp") == 0 ? ITEM_ONEUP :
+                   strcmp(name, "BenefitItemLifeUp") == 0 ? ITEM_LIFEUP : 0;
         in->kcl = scene_kcl(s, name);
         in->zone = r->zone;
         mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
         in->s = r->scale[0];
+        if (in->hazard >= 3) { /* the core model: 0.5 * arg0 / 1000, else the scale (the cube: 1) */
+            float k = 0.5f * (r->arg[0] > 0 ? r->arg[0] / 1000.0f : in->hazard == 3 ? r->scale[0] : 1.0f);
+            float one[3] = {k, k, k};
+            mat_translate_rot_scale(in->m, r->pos, r->rot, one);
+            in->s = k;
+        }
         in->reach = md->radius * in->s;
+        zone_grow(in);
     }
 }
 
@@ -649,6 +702,38 @@ int game_test_collapse(void)
 }
 
 int game_test_collapse_step(int row) { return row < 0 ? -2 : row_dead[row] ? -1 : row_step[row]; }
+
+int game_test_spark(void)
+{
+    if (!nerails) return -1;
+    V3 p = vmul(vadd(erails[0].a, erails[0].b), 0.5f);
+    mario->pos = vadd(p, vmul(up_at(p, mario->up), -HIT_BODY_H));
+    mario->hvel = v3(0, 0, 0); mario->vup = 0;
+    return 0;
+}
+
+int game_test_hole(void)
+{
+    for (int i = 0; i < ninsts; i++)
+        if (insts[i].hazard >= 3) {
+            mario->pos = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]);
+            return insts[i].row;
+        }
+    return -1;
+}
+
+int game_test_item(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->item) continue;
+        V3 p = v3(in->m[12], in->m[13], in->m[14]);
+        mario->pos = vadd(p, vmul(up_at(p, mario->up), -HIT_BODY_H)); /* his touch sphere on the item */
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return in->item;
+    }
+    return 0;
+}
 
 int game_test_hazard(int kind)
 {
@@ -979,13 +1064,14 @@ static void update_mario(void)
     }
 }
 
-/* A miss (no life left, or fell into space): back to the start with full life. ponytail: no miss animation, no
- * lives counter / game over, the stage is not reset */
+/* A miss (no life left, or fell into space): one Mario less, back to the start with 3 life. ponytail: no miss
+ * animation, the stage is not reset, game over just refills the lives */
 static void miss(void)
 {
     mario->pos = start_pos; mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->hurt_timer = 0;
-    life = MAX_LIFE;
-    printf("miss %d\n", ++misses);
+    life = max_life = MAX_LIFE;
+    if (--lives < 0) { printf("game over\n"); lives = START_LIVES; }
+    printf("miss %d, lives %d\n", ++misses, lives);
 }
 
 /* Mario hit by something at `from`: one life gone, knocked away from it and blinking */
@@ -1081,11 +1167,9 @@ static void update_collapse(void)
 
 /* SpaceMine (Petari SpaceMine.cpp): sensor radius 100; touching it is an explosion on Mario and the mine is gone.
  * NeedlePlant (NeedlePlant.cpp): sensor 150 * scale above its base, radius 70 * scale; touching it pricks Mario, the
- * plant stays. ponytail: no star-piece shots or invincibility kills, the mine does not spin */
-#define HIT_BODY_H 80.0f            /* Mario's hit sensor for touches: centre this high, radius HIT_BODY_R (the
-                                     * collision sphere is lower and smaller); ponytail: one sphere, not his sensors */
-#define HIT_BODY_R 70.0f
-
+ * plant stays. BlackHole / BlackHoleCube (BlackHole.cpp): inside the sphere of radius 500 * scale, or the cube's box
+ * of +-500 * scale, Mario is inhaled: a miss. ponytail: no star-piece shots or invincibility kills, the mine does not
+ * spin, no inhale demo, black holes never switch off */
 static void update_hazards(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -1094,6 +1178,17 @@ static void update_hazards(void)
         if (!in->hazard) continue;
         V3 p = v3(in->m[12], in->m[13], in->m[14]);
         float r = 100.0f;
+        if (in->hazard >= 3) { /* black hole: sphere 500 * scale, or Mario's sensor inside the cube's box */
+            const Row *rw = &sc->objs[in->row];
+            V3 d = vsub(c, p), x, z;
+            row_axes(rw, &x, &z);
+            int in_hole = in->hazard == 3 ? vlen(d) < 500.0f * rw->scale[0] + HIT_BODY_R
+                                          : fabsf(vdot(d, x)) < 500.0f * rw->scale[0] &&
+                                                fabsf(vdot(d, vcross(z, x))) < 500.0f * rw->scale[1] &&
+                                                fabsf(vdot(d, z)) < 500.0f * rw->scale[2];
+            if (in_hole) { printf("black hole %d\n", in->row); miss(); return; }
+            continue;
+        }
         if (in->hazard == 2) {
             p = vadd(p, vmul(up_at(p, mario->up), 150.0f * in->s));
             r = 70.0f * in->s;
@@ -1106,6 +1201,48 @@ static void update_hazards(void)
             game_rebind();
             return;
         }
+    }
+}
+
+/* ElectricRail: sensors of radius 30 at the rail point nearest Mario (and every 100 above it for stacked rails) shock
+ * him unless he squats. ponytail: no switch turning the rail off, no ElectricRailMoving */
+static void update_electric(void)
+{
+    if (mario->squat) return;
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < nerails; i++) {
+        const Spark *e = &erails[i];
+        V3 ab = vsub(e->b, e->a);
+        float t = vdot(vsub(c, e->a), ab) / fmaxf(vdot(ab, ab), 1e-3f);
+        V3 q = vadd(e->a, vmul(ab, fminf(fmaxf(t, 0.0f), 1.0f))), up = up_at(q, mario->up);
+        for (int k = 0; k < e->h; k++)
+            if (vlen(vsub(c, vadd(q, vmul(up, 100.0f * k)))) < 30.0f + HIT_BODY_R) {
+                hurt_mario(q, 15.0f);
+                return;
+            }
+    }
+}
+
+/* PowerStar (Petari PowerStar.cpp: sensor 75 at its centre), BenefitItemOneUp / LifeUp (BenefitItemObj.cpp,
+ * BenefitItemLifeUp.cpp: sensor 50, 50 above the base): touched, they are taken for good. LifeUp: 6 life until a miss.
+ * ponytail: stars waiting for a demo or switch are out from the start, no get demo (the stage goes on), mushrooms
+ * stand still instead of running off */
+static void update_items(void)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->item) continue;
+        V3 p = v3(in->m[12], in->m[13], in->m[14]);
+        if (in->item != ITEM_STAR) p = vadd(p, vmul(up_at(p, mario->up), 50.0f * in->s));
+        float r = (in->item == ITEM_STAR ? 75.0f : 50.0f) * in->s;
+        if (vlen(vsub(c, p)) > r + HIT_BODY_R) continue;
+        if (in->item == ITEM_STAR) printf("power star %d got\n", ++stars);
+        else if (in->item == ITEM_ONEUP) printf("1-up, lives %d\n", ++lives);
+        else { life = max_life = 2 * MAX_LIFE; printf("life up\n"); }
+        row_dead[in->row] = 1;
+        game_rebind();
+        return;
     }
 }
 
@@ -1123,10 +1260,13 @@ void game_update(void)
     break_boxes();
     update_collapse();
     update_hazards();
+    update_items();
+    update_electric();
     int had = got_coins;
     collect(coins, ncoins, 100.0f, &got_coins);
     life += got_coins - had;
-    if (life > MAX_LIFE) life = MAX_LIFE;
+    if (life > max_life) life = max_life;
+    if (got_coins / 50 > had / 50) lives++; /* every 50 coins a 1-up */
     collect(purple, npurple, 100.0f, &got_purple);
     collect(pieces, npieces, 120.0f, &got_pieces);
     spin_angle += 0.08f;
@@ -1181,8 +1321,34 @@ void game_draw(void)
             memcpy(cm, in->m, 64);
             for (int j = 0; j < 3; j++) { cm[j] *= k; cm[8 + j] *= k; }
             render_model(in->md, cm, 0x70, 0xB0, 0x60);
+        } else if (in->item == ITEM_STAR) { /* spins about its own up */
+            float rot[16], cm[16];
+            mat_identity(rot);
+            rot[0] = rot[10] = cosf(spin_angle);
+            rot[8] = sinf(spin_angle); rot[2] = -rot[8];
+            mat_mul(cm, in->m, rot);
+            render_model(in->md, cm, 0x70, 0xB0, 0x60);
         } else
             render_model(in->md, in->m, 0x70, 0xB0, 0x60);
+    }
+    for (int i = 0; m_erail && i < nerails; i++) { /* the 600-long rail model stretched over each segment */
+        const Spark *e = &erails[i];
+        V3 d = vsub(e->b, e->a), mid = vmul(vadd(e->a, e->b), 0.5f), up = up_at(mid, v3(0, 1, 0));
+        float len = vlen(d);
+        if (len < 1.0f) continue;
+        V3 z = vmul(d, 1.0f / len), x = vcross(up, z);
+        if (vlen(x) < 0.1f) x = vcross(v3(1, 0, 0), z); /* a rail along gravity */
+        x = vnorm(x);
+        V3 y = vcross(z, x);
+        mat_identity(m);
+        m[0] = x.x; m[1] = x.y; m[2] = x.z;
+        m[4] = y.x; m[5] = y.y; m[6] = y.z;
+        m[8] = z.x * len / 600.0f; m[9] = z.y * len / 600.0f; m[10] = z.z * len / 600.0f;
+        for (int k = 0; k < e->h; k++) {
+            V3 p = vadd(mid, vmul(up, 100.0f * k));
+            m[12] = p.x; m[13] = p.y; m[14] = p.z;
+            render_model(m_erail, m, 0x70, 0xB0, 0x60);
+        }
     }
     draw_pickups(coins, ncoins, m_coin, 0xF0, 0xD0, 0x30);
     draw_pickups(purple, npurple, m_purple, 0xB0, 0x50, 0xF0);
@@ -1206,6 +1372,8 @@ void game_debug(char *out, int n)
 
 int game_coins(void) { return got_coins; }
 int game_life(void) { return life; }
+int game_lives(void) { return lives; }
+int game_stars(void) { return stars; }
 int game_misses(void) { return misses; }
 int game_purple(void) { return got_purple; }
 int game_purple_total(void) { return npurple; }
