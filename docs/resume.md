@@ -22,6 +22,11 @@ Last updated 2026-10-07. Detail and numbers: `docs/phase2-report.md`; tasks: `op
   - CollapsePlane, SpaceMine, NeedlePlant, BlackHole / BlackHoleCube (miss), ElectricRail (shock unless squatting),
     FireBar (balls from the FireBarBall archive, converter `EXTRA` models);
   - InvisibleWall* collide without being drawn, CollisionBlocker pushes Mario out until its SW_B;
+  - areas (areaobjinfo rows in OBJS): Switch Cube / Sphere / Cylinder (SwitchArea rules), Death* (a miss);
+  - walking enemies (one table): Kuribo, TakoHei, PackunPetit, KoteBug, JumpSpider, Meramera; they pop a coin when
+    they die, wait beyond 3000; RockCreator rolls rocks along its rail; NPCs (Kinopio, Tico, Penguin...) face Mario;
+  - PicketSwitch / HipDropSwitch / HipDropTimerSwitch (hip drop);
+  - rails are Bezier (converter samples curved parts, keeps the JMap points for point-based uses);
   - FlipPanel / FlipPanelReverse flip after 3 frames under Mario (turned over: ponytail for the colour animation),
     FlipPanelObserver turns SW_A on once all of its GroupId are flipped (rows carry GroupId in the old pad);
   - items taken on touch: PowerStar (counted, spins), 1-up / life-up mushrooms, QuestionCoin, Yellow / BlueChip
@@ -59,12 +64,13 @@ there needs the embedded blob and every pack rebuilt.
 
 ## Next
 
-1. More switch sources and users: IronCannonLauncherPoint, StarPieceSpot, Kinopio / Tico, HipDropSwitch,
-   PicketSwitch; spawned power stars (FlipPanelObserver arg7, requestAppearPowerStar).
+1. More switch sources and users: IronCannonLauncherPoint, StarPieceSpot, Kinopio / Tico; spawned power stars
+   (FlipPanelObserver arg7, requestAppearPowerStar); RestartCube (checkpoints).
 2. Lumas / NPCs (static models today).
 3. More classes by placement count (`out/census.json`): GCaptureTarget, FlowerGroup, CutBushGroup, ShootingStar,
    Kinopio, FlipPanel; LavaSteam (its danger is an effect: needs effects first).
 4. Vertex alpha in VUMD (rgbi has no room: the 4th byte is the index) for SphereAir-like fades.
-5. Bezier rails (straight segments today), StarPieceFlow, CrystalCageL.
-6. Task 5.3 gate: coverage table (plays / does not fit / missing classes), worst frame on the heaviest scenario,
-   videos.
+5. StarPieceFlow, CrystalCageL, Karikari (clings to Mario: needs Mario-side slowdown), MechanicKoopaMini.
+6. Task 5.3 gate: coverage run done once (136 / 136 play, `out/coverage.md`, `tools/coverage_report.py`), class
+   weights (`out/class_coverage.md`); left: the final run on the current build, worst frame on the heaviest scenario,
+   videos. Blocking zone loads (a zone wanted before its prefetch ends) are the worst frames (HoneyBee ~0.4 s).

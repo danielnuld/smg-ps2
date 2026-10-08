@@ -36,12 +36,16 @@ int game_test_item(void);
 int game_test_spark(void);
 /* Test builds: Mario put on the third ball of the first FireBar. Returns its row or -1. */
 int game_test_firebar(void);
+/* Test builds: Mario on the rail 300 ahead of the first rolling rock (its RockCreator row, or -1); rocks rolling */
+int game_test_rock(void);
+int game_test_rockcreator(void); /* Mario at the start of the first RockCreator's rail */
+int game_rocks_alive(void);
 /* Test builds: Mario put on the k-th FlipPanel. Returns its row or -1 past the last. */
 int game_test_flip(int k);
 int game_flips_back(void); /* FlipPanels showing their back */
 /* Test builds: Mario dropped onto the first EarthenPipe that has a partner. Returns its index or -1. */
 int game_test_pipe(void);
-/* Test builds: Mario 500 above the first HipDropRock (else breakable), starting a hip drop. Returns its row or -1;
+/* Test builds: Mario 500 above the first hip drop switch (else HipDropRock, else breakable), starting a hip drop. Returns its row or -1;
  * game_hip_state() gives the hip drop phase (0 none, 1 start, 2 fall, 3 landing). */
 int game_test_hip(void);
 int game_hip_state(void);

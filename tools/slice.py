@@ -21,7 +21,8 @@ Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
   'OBJS'  u32 n, n × ROW;  'STRT' same layout (Mario start points)
           ROW = {u16 type, u16 zone, s32 l_id, s32 path_id, f32 pos[3], f32 rot[3], f32 scale[3], s32 arg[8],
                  s16 sw[5] (SW_FIELDS, -1 none), s16 group (GroupId, -1 none)}  (92 B)
-  'PATH'  u32 n, n × {u16 zone, u16 closed, s32 id, u32 npts, f32 pts[npts][3]}
+  'PATH'  u32 n, n × {u16 zone, u16 closed, s32 id, u32 npts, u32 nraw, f32 pts[npts][3], f32 raw[nraw][3]}: pts the
+          rail as a polyline (Bezier parts sampled, bezier_polyline), raw its JMap points (pnt0)
   'MODL'  u32 n, n × {char[32] name, f32 bounding radius}
   'KCL '  u32 n, n × {char[32] model, u32 size, bytes[size] (little-endian KCL, kcl_to_le), pad to 4}
   'VUMD'  u32 n, 12 pad, n × {char[32] name, u32 ngroups, f32 qscale, 8 pad, ngroups × {u32 nverts (3 per
@@ -59,7 +60,8 @@ ROW = struct.Struct("<HHii9f8i5hh")
 EXTRA = {"FireBar": ("FireBarBall",)}
 # model-less classes the engine runs (stage switch logic): kept in OBJS like the classes with a model
 LOGIC = ("TimerSwitch", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
-         "YellowChipGroup", "BlueChipGroup")
+         "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "DeathCube", "DeathSphere",
+         "DeathCylinder")  # areas (areaobjinfo) travel as OBJS rows too
 
 
 def col(b, field, n, default=0):
@@ -137,7 +139,7 @@ def scene(fs, galaxy, scenario):
                     zones.append(dict(name=z["name"], pos=z["pos"], rot=z["rot"]))
         zid = zone_id.get(s, 0)
         for layer in act[s]:
-            for f in ("objinfo", "planetobjinfo"):
+            for f in ("objinfo", "planetobjinfo", "areaobjinfo"):
                 for r in rows(files.get(f"{root}/jmp/placement/{layer}/{f}", b"")):
                     objs.append(dict(r, zone=zid))
             for r in rows(files.get(f"{root}/jmp/start/{layer}/startinfo", b"")):
@@ -151,9 +153,9 @@ def scene(fs, galaxy, scenario):
         ids, closed = col(info, "l_id", len(B.bcsv_column(info, "name")), -1), B.bcsv_column(info, "closed")
         for i, pid in enumerate(ids):
             pts = files.get(f"{root}/jmp/path/commonpathpointinfo.{i}", b"")
-            xs, ys, zs = (float_column(pts, f"pnt0_{a}") for a in "xyz")
+            p0, p1, p2 = ([float_column(pts, f"pnt{k}_{a}") for a in "xyz"] for k in range(3))
             paths.append(dict(zone=zid, id=pid, closed=int(str(closed[i] if i < len(closed) else "").lower() == "close"),
-                              pts=list(zip(xs, ys, zs))))
+                              pts=list(zip(*p0)), cin=list(zip(*p1)) or list(zip(*p0)), cout=list(zip(*p2)) or list(zip(*p0))))
     return act, zones, objs, starts, paths, cubes, bcams, up
 
 
@@ -435,6 +437,35 @@ def mul3(a, b):
     return [[sum(a[i][k] * b[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
 
 
+BEZIER_STEPS = 8  # samples per curved rail part
+
+
+def bezier_polyline(pts, cin, cout, closed):
+    """Petari BezierRail: part i runs from pnt0[i] (control pnt2[i]) to pnt0[i+1] (control pnt1[i+1]); a part whose
+    controls sit on its ends is straight. -> the rail as points along it (closed rails without the repeated start)."""
+    n = len(pts)
+    if n < 2:
+        return list(pts)
+    out = [pts[0]]
+    for i in range(n if closed else n - 1):
+        a, b, c, d = pts[i], cout[i], cin[(i + 1) % n], pts[(i + 1) % n]
+        near = lambda u, v: sum((u[k] - v[k]) ** 2 for k in range(3)) < 1.0
+        if near(a, b) and near(c, d):
+            out.append(d)
+        else:
+            for s in range(1, BEZIER_STEPS + 1):
+                t = s / BEZIER_STEPS
+                w = ((1 - t) ** 3, 3 * t * (1 - t) ** 2, 3 * t * t * (1 - t), t ** 3)
+                out.append(tuple(w[0] * a[k] + w[1] * b[k] + w[2] * c[k] + w[3] * d[k] for k in range(3)))
+    return out[:-1] if closed else out
+
+
+def path_entry(p):
+    dense = bezier_polyline(p["pts"], p.get("cin", p["pts"]), p.get("cout", p["pts"]), p["closed"])
+    return (struct.pack("<HHiII", p["zone"], p["closed"], p["id"], len(dense), len(p["pts"])) +
+            b"".join(struct.pack("<3f", *pt) for pt in dense) + b"".join(struct.pack("<3f", *pt) for pt in p["pts"]))
+
+
 def to_world(zones, up_ids, items):
     """Zone-local rows (pos, rot) -> world, in place: world = zone placement composed up its chain of parents.
     Returns each zone's world (rotation rows, translation)."""
@@ -454,7 +485,8 @@ def to_world(zones, up_ids, items):
             continue
         r, t = zw(z)
         if "pts" in it:
-            it["pts"] = [tuple(t[i] + sum(r[i][k] * pt[k] for k in range(3)) for i in range(3)) for pt in it["pts"]]
+            for key in ("pts", "cin", "cout"):
+                it[key] = [tuple(t[i] + sum(r[i][k] * pt[k] for k in range(3)) for i in range(3)) for pt in it.get(key, [])]
             continue
         it["pos"] = [t[i] + sum(r[i][k] * it["pos"][k] for k in range(3)) for i in range(3)]
         it["rot"] = mtx_euler(mul3(r, rot_mtx(it["rot"])))
@@ -578,9 +610,7 @@ def placement(fs, galaxy, scenario):
                name32(z["name"]) + struct.pack("<6f", *t, *mtx_euler(r)) for z, (r, t) in zip(zones, zworld))),
            chunk(b"OBJS", struct.pack("<I", len(keep)) + b"".join(pack_row(r) for r in keep)),
            chunk(b"STRT", struct.pack("<I", len(starts)) + b"".join(pack_row(r) for r in starts)),
-           chunk(b"PATH", struct.pack("<I", len(paths)) + b"".join(
-               struct.pack("<HHiI", p["zone"], p["closed"], p["id"], len(p["pts"])) +
-               b"".join(struct.pack("<3f", *pt) for pt in p["pts"]) for p in paths))]
+           chunk(b"PATH", struct.pack("<I", len(paths)) + b"".join(path_entry(p) for p in paths))]
     grav = [g for g in (grav_record(o) for o in keep) if g]
     out.append(chunk(b"GRAV", struct.pack("<I", len(grav)) + b"".join(grav)))
     out.append(chunk(b"ZPAR", struct.pack(f"<I{len(zones)}i", len(zones),
@@ -765,6 +795,11 @@ def selftest():
     r = rows(b)
     assert [x["name"] for x in r] == ["Coin", "Kuribo"] and r[0]["args"][0] == 7 and r[1]["pos"][0] == -2.0, r
     assert r[0]["scale"] == [1.0, 1.0, 1.0] and r[0]["path"] == -1
+    # Bezier rails: a straight part stays two points, a curved one is sampled (midpoint of this arch: y = 37.5)
+    line = [(0, 0, 0), (100, 0, 0)]
+    assert bezier_polyline(line, line, line, 0) == line
+    arch = bezier_polyline(line, [(0, 0, 0), (100, 50, 0)], [(0, 50, 0), (100, 0, 0)], 0)
+    assert len(arch) == BEZIER_STEPS + 1 and abs(arch[BEZIER_STEPS // 2][1] - 37.5) < 1e-6, arch
     # round trip of the chunk framing
     blob = b"SMGS" + struct.pack("<II4x", 2, 2) + chunk(b"TYPE", struct.pack("<I", 1) + name32("Coin")) + chunk(b"KCL ", b"x")
     c = read_chunks(blob)

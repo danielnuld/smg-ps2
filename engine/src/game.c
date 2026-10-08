@@ -22,7 +22,7 @@ enum { PICK_GONE, PICK_ON, PICK_POP_NEW, PICK_POP_BLINK }; /* alive: popping coi
                                                              * are not drawn on their blink frames */
 typedef struct { V3 pos, vel, up; int state, timer, row, kind; } Kuribo; /* walking enemies; row: its placement */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
-enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER };
+enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA };
 
 typedef struct {
     V3 pos, up, hvel, face, ground_n, wall_n;
@@ -63,7 +63,7 @@ typedef struct {
 } Launch;
 #define LAUNCH_BIND 300.0f
 
-static void init_launch(Launch *L, const Row *r, const float *pts, u32 np);
+static void init_launch(Launch *L, const Row *r, const float *pts, u32 np, int parab);
 static V3 launch_pos(const Launch *L, float t);
 
 /* Mario constants from Petari MarioConst.cpp gMarioConstDefault (units per frame at 60 Hz). Indices of the arrays
@@ -131,6 +131,8 @@ typedef struct {
     int firebar;     /* FireBar core: its balls turn around it and burn Mario */
     int invisible;   /* InvisiblePolygonObj (InvisibleWall*): collision only, never drawn */
     int flip;        /* FlipPanel / FlipPanelReverse: row_step[row] holds FLIP_* bits */
+    int npc;         /* talking NPC (npc_class): turns to face Mario when he is near */
+    int hipsw;       /* hip drop switch: 1 PicketSwitch(Big) / HipDropSwitch (SW_A for good), 2 HipDropTimerSwitch */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP };
 static V3 firebar_ball(const Inst *in, int j, int k);
@@ -251,7 +253,7 @@ static void miss(void);
 static int got_coins, got_purple, got_pieces;
 static float spin_angle;
 static V3 cam_pos;
-static const Model *m_coin, *m_purple, *m_piece, *m_kuribo, *m_takohei, *m_packun, *m_kotebug, *m_spider;
+static const Model *m_coin, *m_purple, *m_piece, *m_kuribo, *m_takohei, *m_packun, *m_kotebug, *m_spider, *m_meramera;
 static const Model *m_mario_skin; /* Mario.arc, skinned (SKIN chunk) */
 static Anim *mario_anim;
 /* ElectricRail (Petari ElectricRail.cpp, ElectricRailHolder.cpp): one segment per pair of rail points, arg0 rails
@@ -259,7 +261,16 @@ static Anim *mario_anim;
 typedef struct { V3 a, b; int h; } Spark;
 static Spark *erails;
 static int nerails;
-static const Model *m_erail, *m_fireball;
+static const Model *m_erail, *m_fireball, *m_rock;
+/* RockCreator (Petari RockCreator.cpp, Rock.cpp): rocks of radius 225 * scale roll along its rail at arg0 (default 10)
+ * a frame, one every arg1 seconds, or a single one when arg1 is unset; a touch hits Mario hard, a spin breaks the rock;
+ * its appear switch shows it, SW_A ends it. ponytail: at most ROCKS_PER on a rail, a single rock starts over at the
+ * rail's end, no star pieces from a broken rock, no bounce, no Wanwan */
+#define ROCKS_PER 4
+typedef struct { const float *pts; u32 np; float len, d; int row, alive; } Roller;
+static Roller *rollers;
+static int nrollers; /* ROCKS_PER per creator, consecutive */
+static V3 rail_at(const float *p, u32 n, float d);
 static unsigned game_frame;      /* frames since the scene started (FireBar angles) */
 /* EarthenPipe (Petari EarthenPipe.cpp): pipes sharing arg3 are a pair; the top is 100 * scale.y along the pipe's up
  * (-gravity, or its Y axis when arg6); a binder of radius 70 at 50 below the top takes Mario if he is within 50 of
@@ -272,7 +283,8 @@ static int pipe_out = -1; /* the mode 1 pipe Mario came out of, hidden once the 
 static Pipe *pipes;
 static int npipes, pipe_wait, pipe_zone = -1;
 /* Switch logic rows (no model): TimerSwitch, SwitchSynchronizerReverse, GroupSwitchWatcher */
-enum { LOGIC_TIMER = 1, LOGIC_REVERSE, LOGIC_GROUP, LOGIC_BLOCKER, LOGIC_FLIPS, LOGIC_CHIPS };
+enum { LOGIC_TIMER = 1, LOGIC_REVERSE, LOGIC_GROUP, LOGIC_BLOCKER, LOGIC_FLIPS, LOGIC_CHIPS, LOGIC_SWAREA, LOGIC_DEATH };
+static int area_shape(const char *name);
 /* FlipPanel (Petari FlipPanel.cpp): row_step bits. Back = flipped (ACTMES_SUCCESS to the observer); a flip locks the
  * panel until Mario stood on other ground; it flips once he has stood on it 3 frames (checkPlayerOnTop). Done: the
  * group is complete (FlipPanelNrvEnd) */
@@ -323,23 +335,25 @@ static int count_type(const char *name, int per_row_arg0)
     return t < 0 ? 0 : n;
 }
 
-/* rail polyline from the PATH chunk: {u16 zone, u16 closed, s32 id, u32 npts, f32 pts[][3]} */
-static const float *find_rail(const unsigned char *blob, int zone, int id, u32 *npts, int *closed)
+/* a rail from the PATH chunk: {u16 zone, u16 closed, s32 id, u32 npts, u32 nraw, f32 pts[npts][3], f32 raw[nraw][3]}:
+ * the polyline along it (Bezier parts sampled by tools/slice.py), or with raw its JMap points (nraw of them) */
+static const float *find_rail_of(const unsigned char *blob, int zone, int id, u32 *npts, int *closed, int raw)
 {
     const unsigned char *p = blob_chunk(blob, "PATH", NULL);
     u32 n = *(const u32 *)p;
     p += 4;
     for (u32 i = 0; i < n; i++) {
-        u32 np = *(const u32 *)(p + 8);
+        u32 np = *(const u32 *)(p + 8), nr = *(const u32 *)(p + 12);
         if (*(const int *)(p + 4) == id && *(const unsigned short *)p == zone) { /* rail ids are per zone */
-            *npts = np;
+            *npts = raw ? nr : np;
             *closed = *(const unsigned short *)(p + 2);
-            return (const float *)(p + 12);
+            return (const float *)(p + 16 + (raw ? 12 * np : 0));
         }
-        p += 12 + 12 * np;
+        p += 16 + 12 * (np + nr);
     }
     return NULL;
 }
+#define find_rail(blob, zone, id, npts, closed) find_rail_of(blob, zone, id, npts, closed, 0)
 
 /* RailCoin::placementNormalRail: count coins evenly spaced by length (loop rails: length / n).
  * ponytail: straight segments between control points; the game's rails are Bezier curves. */
@@ -403,6 +417,7 @@ static int star_group(Pickup *out, const Row *r, const unsigned char *blob)
     const float *pts = r->path >= 0 ? find_rail(blob, r->zone, r->path, &np, &closed) : NULL;
     if (pts && np > 0) {
         if (r->arg[2] == 1) {
+            pts = find_rail_of(blob, r->zone, r->path, &np, &closed, 1);
             for (u32 i = 0; out && i < np; i++) {
                 out[i].pos = v3(pts[3 * i], pts[3 * i + 1], pts[3 * i + 2]);
                 out[i].alive = 1;
@@ -573,7 +588,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         if (s->objs[i].type == t_spg)
             npieces += star_group(NULL, &s->objs[i], blob);
     nkuribo = count_type("Kuribo", 0) + count_type("TakoHei", 0) + count_type("PackunPetit", 0) + count_type("KoteBug", 0) +
-              count_type("JumpSpider", 0);
+              count_type("JumpSpider", 0) + count_type("Meramera", 0);
     box_coins += nkuribo; /* each drops a coin (appearCoinPop) */
     ncoins += nkuribo;
     coins = mem_alloc(MEM_OBJECTS, ncoins * sizeof(Pickup));
@@ -587,7 +602,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     int t_coin = scene_type(s, "Coin"), t_pc = scene_type(s, "PurpleCoin"), t_circle = scene_type(s, "CirclePurpleCoinGroup");
     int t_rail = scene_type(s, "PurpleRailCoin"), t_piece = scene_type(s, "StarPiece"), t_kuribo = scene_type(s, "Kuribo");
     int t_tako = scene_type(s, "TakoHei"), t_packun = scene_type(s, "PackunPetit"), t_kote = scene_type(s, "KoteBug");
-    int t_spider = scene_type(s, "JumpSpider");
+    int t_spider = scene_type(s, "JumpSpider"), t_mera = scene_type(s, "Meramera");
     int t_gcircle = scene_type(s, "CircleCoinGroup"), t_grail = scene_type(s, "RailCoin");
     insts =mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(Inst));
     zone_spheres();
@@ -599,9 +614,11 @@ void game_init(const Scene *s, const unsigned char *blob)
         else if (r->type == t_pc) { purple[ip].pos = row_pos(r); purple[ip++].alive = 1; }
         else if (r->type == t_piece) { pieces[is].pos = row_pos(r); pieces[is++].alive = 1; }
         else if (r->type == t_spg) is += star_group(pieces + is, r, blob);
-        else if (r->type == t_kuribo || r->type == t_tako || r->type == t_packun || r->type == t_kote || r->type == t_spider) {
+        else if (r->type == t_kuribo || r->type == t_tako || r->type == t_packun || r->type == t_kote || r->type == t_spider ||
+                 r->type == t_mera) {
             kuribo[ik].kind = r->type == t_tako ? WALK_TAKOHEI : r->type == t_packun ? WALK_PACKUN :
-                              r->type == t_kote ? WALK_KOTEBUG : r->type == t_spider ? WALK_SPIDER : WALK_KURIBO;
+                              r->type == t_kote ? WALK_KOTEBUG : r->type == t_spider ? WALK_SPIDER :
+                              r->type == t_mera ? WALK_MERAMERA : WALK_KURIBO;
             kuribo[ik].pos = row_pos(r);
             kuribo[ik].row = i;
             kuribo[ik].up = up_at(kuribo[ik].pos, v3(0, 1, 0));
@@ -628,8 +645,10 @@ void game_init(const Scene *s, const unsigned char *blob)
         u32 np = 0; int closed;
         const float *pts = r->path >= 0 ? find_rail(blob, r->zone, r->path, &np, &closed) : NULL;
         Launch *L = &launches[nlaunches];
+        u32 nraw = 0;
+        if (pts) find_rail_of(blob, r->zone, r->path, &nraw, &closed, 1);
         if (pts && np >= 2)
-            init_launch(L, r, pts, np);
+            init_launch(L, r, pts, np, nraw <= 2);
         else if (super)
             continue;
         else { /* SpinDriver without a rail: thrown along its Y axis at arg0 */
@@ -662,6 +681,21 @@ void game_init(const Scene *s, const unsigned char *blob)
         if (!pass) erails = mem_alloc(MEM_OBJECTS, (n + 1) * sizeof(Spark));
         nerails = n;
     }
+    int t_rockc = scene_type(s, "RockCreator");
+    rollers = mem_alloc(MEM_OBJECTS, (count_type("RockCreator", 0) * ROCKS_PER + 1) * sizeof(Roller));
+    for (u32 i = 0; i < s->nobjs; i++) {
+        const Row *r = &s->objs[i];
+        u32 np; int closed;
+        const float *pts = r->type == t_rockc && r->path >= 0 ? find_rail(blob, r->zone, r->path, &np, &closed) : NULL;
+        if (!pts || np < 2) continue;
+        float len = 0;
+        for (u32 k = 0; k + 1 < np; k++)
+            len += vlen(vsub(v3(pts[3 * k + 3], pts[3 * k + 4], pts[3 * k + 5]), v3(pts[3 * k], pts[3 * k + 1], pts[3 * k + 2])));
+        for (int k = 0; k < ROCKS_PER; k++) {
+            Roller *o = &rollers[nrollers++];
+            o->pts = pts; o->np = np; o->len = len; o->row = i;
+        }
+    }
     int t_pipe = scene_type(s, "EarthenPipe"), t_wpipe = scene_type(s, "EarthenPipeInWater");
     pipes = mem_alloc(MEM_OBJECTS, (count_type("EarthenPipe", 0) + count_type("EarthenPipeInWater", 0) + 1) * sizeof(Pipe));
     for (u32 i = 0; i < s->nobjs; i++) {
@@ -687,7 +721,10 @@ void game_init(const Scene *s, const unsigned char *blob)
     logic = mem_alloc(MEM_OBJECTS, (count_type("TimerSwitch", 0) + count_type("SwitchSynchronizerReverse", 0) +
                                     count_type("GroupSwitchWatcher", 0) + count_type("CollisionBlocker", 0) +
                                     count_type("FlipPanelObserver", 0) + count_type("YellowChipGroup", 0) +
-                                    count_type("BlueChipGroup", 0) + 1) *
+                                    count_type("BlueChipGroup", 0) + count_type("SwitchCube", 0) +
+                                    count_type("SwitchSphere", 0) + count_type("SwitchCylinder", 0) +
+                                    count_type("DeathCube", 0) + count_type("DeathSphere", 0) +
+                                    count_type("DeathCylinder", 0) + 1) *
                                        sizeof(Logic));
     int t_timer = scene_type(s, "TimerSwitch"), t_rev = scene_type(s, "SwitchSynchronizerReverse"),
         t_group = scene_type(s, "GroupSwitchWatcher"), t_block = scene_type(s, "CollisionBlocker"),
@@ -695,7 +732,10 @@ void game_init(const Scene *s, const unsigned char *blob)
         t_bchips = scene_type(s, "BlueChipGroup");
     for (u32 i = 0; i < s->nobjs; i++) {
         int t = s->objs[i].type;
-        int k = t == t_timer ? LOGIC_TIMER : t == t_rev ? LOGIC_REVERSE : t == t_group ? LOGIC_GROUP :
+        const char *tn = s->types + 32 * t;
+        int k = strncmp(tn, "Switch", 6) == 0 && area_shape(tn) >= 0 ? LOGIC_SWAREA :
+                strncmp(tn, "Death", 5) == 0 && area_shape(tn) >= 0 ? LOGIC_DEATH :
+                t == t_timer ? LOGIC_TIMER : t == t_rev ? LOGIC_REVERSE : t == t_group ? LOGIC_GROUP :
                 t == t_block ? LOGIC_BLOCKER : t == t_flipobs ? LOGIC_FLIPS : t == t_ychips || t == t_bchips ? LOGIC_CHIPS : 0;
         if (k) { logic[nlogic].row = i; logic[nlogic++].kind = k; }
     }
@@ -755,6 +795,19 @@ static int chip_group_out(const Row *chip, const char *name)
     return 1;
 }
 
+/* NPCs that turn to Mario within NPC_TURN (Petari NPCActor: the talk range; ponytail: an instant turn, no talk, no
+ * idle animation) */
+#define NPC_TURN 1000.0f
+static int npc_class(const char *name)
+{
+    static const char *const npcs[] = {"Kinopio", "KinopioAstro", "Tico", "TicoAstro", "TicoFat", "TicoShop", "TicoReading",
+                                       "TicoGalaxy", "Penguin", "PenguinRacer", "PenguinCoach", "PenguinMaster", "Caretaker",
+                                       "HoneyBee", "Rabbit", "Rosetta", "CollectTico"};
+    for (unsigned i = 0; i < sizeof npcs / sizeof npcs[0]; i++)
+        if (strcmp(name, npcs[i]) == 0) return 1;
+    return 0;
+}
+
 void game_rebind(void)
 {
     const Scene *s = sc;
@@ -766,19 +819,21 @@ void game_rebind(void)
     m_packun = scene_model(s, "PackunPetit");
     m_kotebug = scene_model(s, "KoteBug");
     m_spider = scene_model(s, "JumpSpider");
+    m_meramera = scene_model(s, "Meramera");
     int t_coin = scene_type(s, "Coin"), t_pc = scene_type(s, "PurpleCoin"), t_circle = scene_type(s, "CirclePurpleCoinGroup");
     int t_rail = scene_type(s, "PurpleRailCoin"), t_piece = scene_type(s, "StarPiece"), t_kuribo = scene_type(s, "Kuribo");
     int t_spg = scene_type(s, "StarPieceGroup"), t_erail = scene_type(s, "ElectricRail"), t_tako = scene_type(s, "TakoHei"),
         t_packun = scene_type(s, "PackunPetit"), t_kote = scene_type(s, "KoteBug"),
-        t_spider = scene_type(s, "JumpSpider");
+        t_spider = scene_type(s, "JumpSpider"), t_mera = scene_type(s, "Meramera");
     m_erail = scene_model(s, "ElectricRail");
     m_fireball = scene_model(s, "FireBarBall");
+    m_rock = scene_model(s, "RockCreator");
     ninsts = 0;
     for (u32 i = 0; i < s->nobjs; i++) { /* every placed model without behaviour: planets and the rest */
         const Row *r = &s->objs[i];
         if (r->type == t_coin || r->type == t_pc || r->type == t_piece || r->type == t_kuribo || r->type == t_circle ||
-            r->type == t_tako || r->type == t_packun || r->type == t_kote || r->type == t_spider ||
-            r->type == t_rail || r->type == t_spg || r->type == t_erail)
+            r->type == t_tako || r->type == t_packun || r->type == t_kote || r->type == t_spider || r->type == t_mera ||
+            r->type == t_rail || r->type == t_spg || r->type == t_erail || r->type == scene_type(s, "RockCreator"))
             continue;
         const char *name = s->types + 32 * r->type;
         const Model *md = scene_model(s, name);
@@ -801,6 +856,9 @@ void game_rebind(void)
         in->firebar = strcmp(name, "FireBar") == 0;
         in->invisible = strncmp(name, "InvisibleWall", 13) == 0;
         in->flip = strcmp(name, "FlipPanel") == 0 || strcmp(name, "FlipPanelReverse") == 0;
+        in->npc = npc_class(name);
+        in->hipsw = strncmp(name, "PicketSwitch", 12) == 0 || strcmp(name, "HipDropSwitch") == 0 ? 1 :
+                    strcmp(name, "HipDropTimerSwitch") == 0 ? 2 : 0;
         in->kcl = scene_kcl(s, name);
         in->zone = r->zone;
         mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
@@ -958,9 +1016,11 @@ int game_test_collapse_step(int row) { return row < 0 ? -2 : row_dead[row] ? -1 
 
 int game_test_hip(void)
 {
-    int best = -1;
-    for (int i = 0; i < ninsts; i++)
-        if (insts[i].breaks && (best < 0 || (insts[i].breaks == 2 && insts[best].breaks != 2))) best = i;
+    int best = -1, rank = 0; /* a hip drop switch, else a HipDropRock, else any breakable */
+    for (int i = 0; i < ninsts; i++) {
+        int k = insts[i].hipsw ? 3 : insts[i].breaks == 2 ? 2 : insts[i].breaks == 1 ? 1 : 0;
+        if (k > rank) { rank = k; best = i; }
+    }
     if (best < 0) return -1;
     const Inst *in = &insts[best];
     V3 p = v3(in->m[12], in->m[13], in->m[14]);
@@ -1004,6 +1064,34 @@ int game_flips_back(void)
 {
     int n = 0;
     for (int i = 0; i < ninsts; i++) n += insts[i].flip && (row_step[insts[i].row] & FLIP_BACK);
+    return n;
+}
+
+int game_test_rockcreator(void)
+{
+    if (!nrollers) return -1;
+    mario->pos = rail_at(rollers[0].pts, rollers[0].np, 0); /* where its rocks start: inside the area that wakes it */
+    mario->hvel = v3(0, 0, 0); mario->vup = 0;
+    return rollers[0].row;
+}
+
+int game_test_rock(void)
+{
+    for (int i = 0; i < nrollers; i++) {
+        Roller *o = &rollers[i];
+        if (!o->alive) continue;
+        V3 p = rail_at(o->pts, o->np, o->d + 300.0f); /* on its way, 300 ahead */
+        mario->pos = p;
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return o->row;
+    }
+    return -1;
+}
+
+int game_rocks_alive(void)
+{
+    int n = 0;
+    for (int i = 0; i < nrollers; i++) n += rollers[i].alive;
     return n;
 }
 
@@ -1161,14 +1249,14 @@ static V3 launch_pos(const Launch *L, float t)
     return vadd(rail_at(L->pts, L->npts, t * L->len), vmul(L->off, 1.0f - sinf(h * 1.5707963f)));
 }
 
-static void init_launch(Launch *L, const Row *r, const float *pts, u32 np)
+static void init_launch(Launch *L, const Row *r, const float *pts, u32 np, int parab)
 {
     L->pos = row_pos(r);
     L->flight = r->arg[0] > 0 ? r->arg[0] : 300;
     L->pts = pts;
     L->npts = np;
     V3 rs = v3(pts[0], pts[1], pts[2]), re = v3(pts[3 * np - 3], pts[3 * np - 2], pts[3 * np - 1]);
-    L->parab = np <= 2;
+    L->parab = parab; /* SpinDriverShootPath: rails of at most 2 JMap points are a parabola */
     if (L->parab) { /* ParabolicPath::initFromMaxHeight(star, rail end, rail start) + calcParabolicFunctionParam */
         V3 dir = vnorm(vsub(rs, re));
         float top = vdot(dir, vsub(rs, L->pos)), end = vdot(dir, vsub(re, L->pos));
@@ -1480,7 +1568,8 @@ static void update_kuribo(void)
         V3 to = vsub(mario->pos, k->pos);
         float d = vlen(to);
         if (d > 3000.0f) continue; /* sActiveDistance: far ones wait (their zone may be loaded low, no collision) */
-        int tako = k->kind == WALK_TAKOHEI;
+        int tako = k->kind == WALK_TAKOHEI || k->kind == WALK_MERAMERA; /* Meramera.cpp: a stomp, hip drop or spin
+                                                                             * kills it, a touch burns (requestAttack) */
         if (k->kind == WALK_SPIDER) { /* JumpSpider.cpp: hops at Mario; ponytail: hop size and rate guessed (Petari's
                                         * hJumpDistance / hWaitTime are not in the decompilation) */
             V3 vu = vmul(k->up, vdot(k->vel, k->up)), vh = vsub(k->vel, vu);
@@ -1609,6 +1698,27 @@ static void break_boxes(void)
     }
 }
 
+/* PicketSwitch.cpp / HipDropSwitch.cpp: a hip drop landing on it turns SW_A on; HipDropTimerSwitch.cpp: for arg0
+ * frames (default 300, mTimerMax; row_step counts them down), then off. ponytail: the stake does not sink */
+static void update_hip_switches(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->hipsw) continue;
+        const Row *r = &sc->objs[in->row];
+        unsigned short *t = &row_step[in->row];
+        V3 d = vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14])); /* on it: over its footprint (the ground
+                                                                         * instance may be the planet around it) */
+        int on = hip_inst == i || (fabsf(vdot(d, mario->up)) < in->reach && vlen(vtangent(d, mario->up)) < 0.7f * in->reach);
+        if (hip_hit && on && !sw_on(r, SW_A)) {
+            sw_set(r, SW_A, 1);
+            if (in->hipsw == 2) *t = r->arg[0] > 0 ? r->arg[0] : 300;
+            printf("%s %d on\n", sc->types + 32 * r->type, in->row);
+        } else if (in->hipsw == 2 && *t && --*t == 0)
+            sw_set(r, SW_A, 0);
+    }
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -1681,6 +1791,28 @@ static void update_hazards(void)
     }
 }
 
+/* AreaObj forms (Petari AreaForm.cpp; NameObjFactory: Switch / Death Cube base origin, Sphere, Cylinder base origin):
+ * 0 box from the base (1000 x scale, y from 0), 1 cylinder from the base (radius 500 x scale_x, height 1000 x
+ * scale_y), 2 sphere (radius 500 x scale_x); -1 not an area */
+static int area_shape(const char *name)
+{
+    const char *f = strstr(name, "Cube") ? "Cube" : strstr(name, "Cylinder") ? "Cylinder" : strstr(name, "Sphere") ? "Sphere" : 0;
+    return !f ? -1 : f[1] == 'u' ? 0 : f[1] == 'y' ? 1 : 2;
+}
+
+static int area_inside(const Row *r, V3 p)
+{
+    V3 d = vsub(p, row_pos(r)), x, z;
+    int shape = area_shape(sc->types + 32 * r->type);
+    if (shape == 2) return vlen(d) < 500.0f * r->scale[0];
+    row_axes(r, &x, &z);
+    V3 y = vcross(z, x);
+    float h = vdot(d, y);
+    if (h < 0.0f || h > 1000.0f * r->scale[1]) return 0;
+    if (shape == 1) return vlen(vtangent(d, y)) < 500.0f * r->scale[0];
+    return fabsf(vdot(d, x)) < 500.0f * r->scale[0] && fabsf(vdot(d, z)) < 500.0f * r->scale[2];
+}
+
 /* CollisionBlocker (above). TimerSwitch.cpp: SW_B on starts arg0 frames, then SW_A goes on and the timer is gone. SwitchSynchronizer.cpp
  * (Reverse): SW_A follows the opposite of SW_B. GroupSwitchWatcher.cpp: SW_A on once all (arg1 -1) or any one (arg1
  * 0) of the arg0 switches from SW_B on are on; action arg2 -1 does it once, else SW_A follows the group. Then a
@@ -1691,6 +1823,18 @@ static void update_switches(void)
         int row = logic[i].row;
         const Row *r = &sc->objs[row];
         if (row_dead[row]) continue;
+        if (logic[i].kind == LOGIC_SWAREA) { /* SwitchArea.cpp */
+            int in = area_inside(r, mario->pos);
+            if (r->arg[2] != -1 && !mario->grounded) continue;                          /* isUpdate: on ground */
+            if (r->arg[0] == -1 && sw_on(r, SW_A) != (r->arg[1] != -1)) continue;      /* nothing left to do */
+            if ((r->sw[SW_B] < 0 || sw_on(r, SW_B)) && in) sw_set(r, SW_A, r->arg[1] == -1);
+            else if (r->arg[0] != -1) sw_set(r, SW_A, 0);                              /* only while inside */
+            continue;
+        }
+        if (logic[i].kind == LOGIC_DEATH) { /* DeathArea.cpp: forceKillPlayerByAbyss */
+            if (row_shown(row) && area_inside(r, mario->pos)) { printf("death area %d\n", row); miss(); }
+            continue;
+        }
         if (logic[i].kind == LOGIC_CHIPS) { /* ChipGroup.cpp: SW_A once every chip of its arg0 is taken */
             const char *chip = sc->types[32 * r->type] == 'Y' ? "YellowChip" : "BlueChip";
             int n = 0, got = 0;
@@ -1831,6 +1975,44 @@ static V3 firebar_ball(const Inst *in, int j, int k)
     return vadd(c, vadd(vmul(dir, d), vmul(y, 50.0f)));
 }
 
+
+static V3 rock_pos(const Roller *o, float *radius)
+{
+    const Row *r = &sc->objs[o->row];
+    *radius = 225.0f * r->scale[0];
+    V3 p = rail_at(o->pts, o->np, o->d);
+    return vadd(p, vmul(up_at(p, mario->up), *radius)); /* the rail runs along the ground under the rock */
+}
+
+static void update_rocks(void)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < nrollers; i += ROCKS_PER) {
+        const Row *r = &sc->objs[rollers[i].row];
+        unsigned short *t = &row_step[rollers[i].row];
+        if (!row_shown(rollers[i].row) || sw_on(r, SW_A)) { /* syncStageSwitchAppear / invalidate */
+            for (int k = 0; k < ROCKS_PER; k++) rollers[i + k].alive = 0;
+            continue;
+        }
+        int every = r->arg[1] > 0 ? r->arg[1] * 60 : 0, any = 0;
+        for (int k = 0; k < ROCKS_PER; k++) any |= rollers[i + k].alive;
+        if (every ? (*t)++ % every == 0 : !any)
+            for (int k = 0; k < ROCKS_PER; k++)
+                if (!rollers[i + k].alive) { rollers[i + k].alive = 1; rollers[i + k].d = 0; break; }
+        for (int k = 0; k < ROCKS_PER; k++) {
+            Roller *o = &rollers[i + k];
+            if (!o->alive) continue;
+            o->d += r->arg[0] > 0 ? (float)r->arg[0] : 10.0f;
+            if (o->d >= o->len) { o->alive = 0; continue; } /* breaks at the rail's goal */
+            float rad;
+            V3 p = rock_pos(o, &rad);
+            float dist = vlen(vsub(c, p));
+            if (mario->spin_timer > 0 && dist < rad + 120.0f) { o->alive = 0; continue; } /* a spin breaks a rock */
+            if (dist < rad + HIT_BODY_R) hurt_mario(p, 25.0f);
+        }
+    }
+}
+
 static void update_firebars(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -1917,10 +2099,12 @@ void game_update(void)
     break_boxes();
     update_collapse();
     update_flips();
+    update_hip_switches();
     update_hazards();
     update_items();
     update_electric();
     update_firebars();
+    update_rocks();
     update_pipes();
     update_switches();
     update_pops();
@@ -1979,6 +2163,17 @@ void game_draw(void)
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
         if (in->invisible) continue;
+        if (in->npc) { /* its own up, its front turned to Mario when he is near */
+            V3 p = v3(in->m[12], in->m[13], in->m[14]), to = vsub(mario->pos, p);
+            if (vdot(to, to) < NPC_TURN * NPC_TURN) {
+                V3 up = vmul(v3(in->m[4], in->m[5], in->m[6]), 1.0f / in->s);
+                float cm[16];
+                basis_matrix(cm, p, up, to, 0);
+                for (int j = 0; j < 12; j++) if (j % 4 != 3) cm[j] *= in->s;
+                render_model(in->md, cm, 0x70, 0xB0, 0x60);
+                continue;
+            }
+        }
         if (in->flip && ((row_step[in->row] & FLIP_BACK) != (strcmp(sc->types + 32 * sc->objs[in->row].type,
                                                                      "FlipPanelReverse") == 0))) {
             float cm[16]; /* ponytail: turned over about its X axis instead of the PanelA / PanelB animation */
@@ -2001,6 +2196,20 @@ void game_draw(void)
             render_model(in->md, cm, 0x70, 0xB0, 0x60);
         } else
             render_model(in->md, in->m, 0x70, 0xB0, 0x60);
+    }
+    for (int i = 0; m_rock && i < nrollers; i++) {
+        const Roller *o = &rollers[i];
+        if (!o->alive) continue;
+        float rad;
+        V3 p = rock_pos(o, &rad), up = up_at(p, v3(0, 1, 0));
+        V3 ahead = vsub(rail_at(o->pts, o->np, o->d + 10.0f), rail_at(o->pts, o->np, o->d));
+        basis_matrix(m, p, up, ahead, 0);
+        float roll = o->d / rad, cr = cosf(roll), sr = sinf(roll), rm[16], cm[16]; /* rolls about its x axis */
+        mat_identity(rm);
+        rm[5] = cr; rm[6] = sr; rm[9] = -sr; rm[10] = cr;
+        mat_mul(cm, m, rm);
+        for (int j = 0; j < 12; j++) if (j % 4 != 3) cm[j] *= sc->objs[o->row].scale[0];
+        render_model(m_rock, cm, 0x70, 0xB0, 0x60);
     }
     for (int i = 0; m_fireball && i < ninsts; i++) {
         if (!insts[i].firebar) continue;
@@ -2037,7 +2246,8 @@ void game_draw(void)
     draw_pickups(pieces, npieces, m_piece, 0x60, 0xD0, 0xF0);
     for (int i = 0; i < nkuribo; i++) {
         const Model *md = kuribo[i].kind == WALK_TAKOHEI ? m_takohei : kuribo[i].kind == WALK_PACKUN ? m_packun :
-                          kuribo[i].kind == WALK_KOTEBUG ? m_kotebug : kuribo[i].kind == WALK_SPIDER ? m_spider : m_kuribo;
+                          kuribo[i].kind == WALK_KOTEBUG ? m_kotebug : kuribo[i].kind == WALK_SPIDER ? m_spider :
+                          kuribo[i].kind == WALK_MERAMERA ? m_meramera : m_kuribo;
         if (kuribo[i].state == KURIBO_DEAD || !md || !row_shown(kuribo[i].row)) continue;
         basis_matrix(m, kuribo[i].pos, kuribo[i].up, vsub(mario->pos, kuribo[i].pos), 0);
         render_model(md, m, kuribo[i].state == KURIBO_STUN ? 0x50 : 0x90, 0x50, 0x20);

@@ -467,11 +467,15 @@ int main(void)
             printf("hazard test: plant row %d\n", game_test_hazard(2));
         if (frame == 600)
             printf("hazard test: electric rail %d\n", game_test_spark());
+        if (frame == 850)
+            printf("hazard test: at the start of RockCreator row %d\n", game_test_rockcreator());
+        if (frame == 900)
+            printf("hazard test: rock of RockCreator row %d, %d rolling\n", game_test_rock(), game_rocks_alive());
         if (frame == 800)
             printf("hazard test: fire bar row %d\n", game_test_firebar());
         if (frame == 700)
             printf("hazard test: black hole row %d\n", game_test_hole());
-        if (frame % 20 == 0 && ((frame > 120 && frame < 200) || (frame > 300 && frame < 860)))
+        if (frame % 20 == 0 && ((frame > 120 && frame < 200) || (frame > 300 && frame < 1000)))
             printf("hazard test f %u: hurt %d life %d misses %d\n", frame, game_hurt_timer(), game_life(),
                    game_misses());
 #endif
