@@ -48,15 +48,20 @@ static float (*mats)[16];        /* one matrix per instance this frame, read by 
 static int nmats;
 #define MAX_MAT 10               /* matrices per batch (a J3D matrix group holds up to 10) */
 #define HDR(t, m, n) (headers + 2 * (((t) * MAX_MAT + (m) - 1) * (BATCH / 3 + 1) + (n) / 3))
-static qword_t *headers;         /* [textured][matrices 1..MAX_MAT][count 3..BATCH]: {n, 4m} ints + GIF tag */
+static qword_t *headers;         /* [mode][matrices 1..MAX_MAT][count 3..BATCH]: {n, 4m} ints + GIF tag; mode
+                                  * bit 0 textured, bit 1 alpha blended (group_mode) */
+#define MODES 4
 static qword_t scale_qw __attribute__((aligned(16)));
 #define HDRS(t, n) (headers_static + 2 * ((t) * (BATCH / 3 + 1) + (n) / 3))
-static qword_t *headers_static;  /* [textured][count]: {n, 0, matrix base 1} + GIF tag, for prebuilt chains */
+static qword_t *headers_static;  /* [mode][count]: {n, 0, matrix base 1} + GIF tag, for prebuilt chains */
 static u32 tris_drawn;
 static u32 vram_tex;             /* VRAM words taken by textures and CLUTs */
-static qword_t *tex_packets;     /* per texture 5 qwords (GIF tag + TEX0, TEX1, CLAMP, TEST), then 2 for NO_TEX */
+static qword_t *tex_packets;     /* per texture 7 qwords (GIF tag + TEX0, TEX1, CLAMP, TEST, ALPHA, ZBUF), then 3
+                                  * for NO_TEX (tag + TEST, ZBUF). Blended textures (alpha kind 2) blend
+                                  * (Cs - Cd) As + Cd and leave the depth alone; the rest write it */
+#define TEXP 7
 #define VRAM_WORDS (1 << 20)        /* 4 MB of GS memory in 32-bit words */
-#define NO_TEX_PACKET (tex_packets + 5 * SCENE_MAX_TEX)
+#define NO_TEX_PACKET (tex_packets + TEXP * SCENE_MAX_TEX)
 static int cur_tex;
 static u64 test_z;               /* TEST with the depth test only */
 
@@ -97,6 +102,8 @@ static void send_vif_wait(packet2_t *p)
     dma_channel_send_packet2(p, DMA_CHANNEL_VIF1, 1);
     dma_channel_wait(DMA_CHANNEL_VIF1, 0);
 }
+
+static void init_blend_states(void);
 
 void render_init(void)
 {
@@ -140,18 +147,18 @@ void render_init(void)
     gif = packet2_create(4096, P2_TYPE_NORMAL, P2_MODE_NORMAL, 0);
     mem_charge(MEM_RENDER, 2 * PACKET_QW * 16 + 4096 * 16);
     mats = mem_alloc(MEM_RENDER, MAX_INST * 64);
-    headers = mem_alloc(MEM_RENDER, 2 * MAX_MAT * (BATCH / 3 + 1) * 2 * 16);
-    for (int t = 0; t < 2; t++)
+    headers = mem_alloc(MEM_RENDER, MODES * MAX_MAT * (BATCH / 3 + 1) * 2 * 16);
+    for (int t = 0; t < MODES; t++)
         for (int m = 1; m <= MAX_MAT; m++)
             for (int n = 3; n <= BATCH; n += 3) {
                 qword_t *h = HDR(t, m, n);
                 h->sw[0] = n;
                 h->sw[1] = 4 * m;
-                h[1].dw[0] = GIF_SET_TAG(n, 1, 1, GS_SET_PRIM(PRIM_TRIANGLE, 1, t, 0, 0, 0, 0, 0, 0), GIF_FLG_PACKED, 3);
+                h[1].dw[0] = GIF_SET_TAG(n, 1, 1, GS_SET_PRIM(PRIM_TRIANGLE, 1, t & 1, 0, t >> 1, 0, 0, 0, 0), GIF_FLG_PACKED, 3);
                 h[1].dw[1] = (u64)GIF_REG_ST | (u64)GIF_REG_RGBAQ << 4 | (u64)GIF_REG_XYZ2 << 8; /* ST first: Q */
             }
-    headers_static = mem_alloc(MEM_RENDER, 2 * (BATCH / 3 + 1) * 2 * 16);
-    for (int t = 0; t < 2; t++)
+    headers_static = mem_alloc(MEM_RENDER, MODES * (BATCH / 3 + 1) * 2 * 16);
+    for (int t = 0; t < MODES; t++)
         for (int n = 3; n <= BATCH; n += 3) {
             qword_t *h = HDRS(t, n);
             *h = *HDR(t, 1, n);
@@ -169,6 +176,7 @@ void render_init(void)
     send_vif_wait(p);
     packet2_free(p);
     test_z = GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, ZTEST_METHOD_GREATER_EQUAL);
+    init_blend_states();
 
     render_set_fovy(45.0f);
 }
@@ -323,7 +331,7 @@ static int tex_need(u32 t)
     for (int i = b; i < b + n; i++)
         block_tex[i] = t;
     const TexEntry *e = tex_scene->tex[t].e;
-    qword_t *p = tex_packets + 5 * t;
+    qword_t *p = tex_packets + TEXP * t;
     p[1].dw[0] = GS_SET_TEX0(b, 2, GS_PSM_4, e->tw, e->th, 1, 0, b + n - 1, GS_PSM_32, 0, 0, 1);
     uploads[nuploads++] = t;
     tex_misses++;
@@ -347,7 +355,7 @@ void render_load_textures(const Scene *s, u32 first_tex, u32 first_model)
     u32 ntex = s->ntex;
     tex_scene = s;
     if (!tex_packets) { /* fixed slots: prebuilt chains point into them; the NO_TEX packet sits after the last */
-        tex_packets = mem_alloc(MEM_RENDER, (5 * SCENE_MAX_TEX + 2) * 16);
+        tex_packets = mem_alloc(MEM_RENDER, (TEXP * SCENE_MAX_TEX + 3) * 16);
         block_tex = mem_alloc(MEM_RENDER, TEX_BLOCKS * sizeof(s16));
         upload_chain = mem_alloc(MEM_RENDER, (MAX_UPLOADS * 2 * 16 + 4) * 16);
         block_first = graph_vram_allocate(64, 1, GS_PSM_32, GRAPH_ALIGN_BLOCK) / 64; /* first block above libgraph's */
@@ -355,10 +363,12 @@ void render_load_textures(const Scene *s, u32 first_tex, u32 first_model)
         for (int b = 0; b < TEX_BLOCKS; b++)
             block_tex[b] = -1;
         qword_t *p = NO_TEX_PACKET;
-        p[0].dw[0] = GIF_SET_TAG(1, 1, 0, 0, GIF_FLG_PACKED, 1);
+        p[0].dw[0] = GIF_SET_TAG(2, 1, 0, 0, GIF_FLG_PACKED, 1);
         p[0].dw[1] = GIF_REG_AD;
         p[1].dw[0] = test_z;
         p[1].dw[1] = GS_REG_TEST;
+        p[2].dw[0] = GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 0);
+        p[2].dw[1] = GS_REG_ZBUF;
     }
     u32 need = 0;
     for (u32 i = first_tex; i < ntex; i++) {
@@ -367,17 +377,22 @@ void render_load_textures(const Scene *s, u32 first_tex, u32 first_model)
         tex_nblk[i] = blocks_of(t);
         tex_last[i] = 0;
         need += tex_nblk[i];
-        qword_t *p = tex_packets + 5 * i;
-        p[0].dw[0] = GIF_SET_TAG(4, 1, 0, 0, GIF_FLG_PACKED, 1);
+        qword_t *p = tex_packets + TEXP * i;
+        p[0].dw[0] = GIF_SET_TAG(6, 1, 0, 0, GIF_FLG_PACKED, 1);
         p[0].dw[1] = GIF_REG_AD;
         p[1].dw[1] = GS_REG_TEX0;    /* TEX0 itself is written when the texture gets its blocks (tex_need) */
         p[2].dw[0] = GS_SET_TEX1(1, 0, 1, 1, 0, 0, 0); /* fixed LOD 0, bilinear */
         p[2].dw[1] = GS_REG_TEX1;
         p[3].dw[0] = GS_SET_CLAMP(t->clamp_s, t->clamp_t, 0, 0, 0, 0);
         p[3].dw[1] = GS_REG_CLAMP;
-        /* ponytail: blended textures (alpha 2) are drawn as cut-outs */
-        p[4].dw[0] = t->alpha ? GS_SET_TEST(1, ATEST_METHOD_GREATER_EQUAL, 0x40, 0, 0, 0, 1, ZTEST_METHOD_GREATER_EQUAL) : test_z;
+        /* texels under half alpha are cut out; a blended material blends them instead (blend_state's TEST) */
+        p[4].dw[0] = t->alpha ? GS_SET_TEST(1, ATEST_METHOD_GREATER_EQUAL, 0x40, 0, 0, 0, 1, ZTEST_METHOD_GREATER_EQUAL)
+                              : test_z;
         p[4].dw[1] = GS_REG_TEST;
+        p[5].dw[0] = GS_SET_ALPHA(0, 1, 0, 1, 0x80);
+        p[5].dw[1] = GS_REG_ALPHA;
+        p[6].dw[0] = GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 0);
+        p[6].dw[1] = GS_REG_ZBUF;
     }
     FlushCache(0);
     vram_tex = need * 64;
@@ -393,11 +408,13 @@ void render_release(Scene *s, u32 first_tex, u32 first_model)
     dma_channel_wait(DMA_CHANNEL_VIF1, 0);
     dma_channel_wait(DMA_CHANNEL_GIF, 0);
     for (u32 i = first_model; i < s->nmodels; i++)
-        if (s->models[i].chain) {
-            packet2_t *pk = s->models[i].chain;
+        for (int x = 0; x < 2; x++) {
+            void **c = x ? &s->models[i].chain_xlu : &s->models[i].chain;
+            if (!*c) continue;
+            packet2_t *pk = *c;
             mem_charge(MEM_RENDER, -(u32)(pk->max_qwords_count * 16));
             packet2_free(pk);
-            s->models[i].chain = NULL;
+            *c = NULL;
         }
     for (u32 t = first_tex; t < s->ntex; t++)
         if (tex_block[t] >= 0)
@@ -408,8 +425,8 @@ void render_release(Scene *s, u32 first_tex, u32 first_model)
 /* Switch texture state in the VIF chain: FLUSH waits for VU1 and PATH1, DIRECT sends the A+D packet on PATH2. */
 static void emit_tex(packet2_t *pk, u32 t)
 {
-    const qword_t *p = t == NO_TEX ? NO_TEX_PACKET : tex_packets + 5 * t;
-    u32 n = t == NO_TEX ? 2 : 5;
+    const qword_t *p = t == NO_TEX ? NO_TEX_PACKET : tex_packets + TEXP * t;
+    u32 n = t == NO_TEX ? 3 : TEXP;
     packet2_chain_ref(pk, p, n, 0, 0, 0);
     packet2_vif_flush(pk, 0);
     packet2_vif_open_direct(pk, 0);
@@ -463,23 +480,77 @@ static void add_batch(packet2_t *pk, const u8 **p, u32 ne, u32 nu, int textured,
     *p = d;
 }
 
-static void build_chain(Model *md)
+/* header mode of a group: bit 0 textured (PRIM TME), bit 1 blended material (PRIM ABE, drawn in the late pass) */
+static int group_mode(const VuGroup *vg)
 {
-    u32 batches = 0;
+    return (vg->tex != NO_TEX) | (vg->blend ? 2 : 0);
+}
+
+/* GS state of a blended material, after its texture packet: ALPHA (Cs - Cd) A + Cd, or Cs A + Cd when additive, with
+ * A the texture alpha when it has one, else the material alpha (FIX, 16 steps); ZBUF writes depth only if the
+ * material does; TEST without the alpha cut. Prebuilt per (additive, z write, texture alpha, alpha / 16). */
+#define BLEND_STATES (2 * 2 * 2 * 16)
+static qword_t *blend_states;
+
+static const qword_t *blend_state(const VuGroup *vg)
+{
+    int as = vg->tex != NO_TEX && tex_scene->tex[vg->tex].e->alpha;
+    return blend_states + 4 * ((((vg->blend == 2) * 2 + !!vg->zwrite) * 2 + as) * 16 + (vg->alpha >> 4));
+}
+
+static void init_blend_states(void)
+{
+    blend_states = mem_alloc(MEM_RENDER, BLEND_STATES * 4 * 16);
+    for (int i = 0; i < BLEND_STATES; i++) {
+        int add = i >> 6 & 1, zw = i >> 5 & 1, as = i >> 4 & 1, a = (i & 15) * 0x11 >> 1; /* FIX: 0..0x80 */
+        qword_t *p = blend_states + 4 * i;
+        p[0].dw[0] = GIF_SET_TAG(3, 1, 0, 0, GIF_FLG_PACKED, 1);
+        p[0].dw[1] = GIF_REG_AD;
+        p[1].dw[0] = GS_SET_ALPHA(0, add ? 2 : 1, as ? 0 : 2, 1, a);
+        p[1].dw[1] = GS_REG_ALPHA;
+        p[2].dw[0] = GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, !zw);
+        p[2].dw[1] = GS_REG_ZBUF;
+        p[3].dw[0] = GS_SET_TEST(1, ATEST_METHOD_GREATER_EQUAL, 0x01, 0, 0, 0, 1, ZTEST_METHOD_GREATER_EQUAL);
+        p[3].dw[1] = GS_REG_TEST;
+    }
+}
+
+/* a group's texture, then its blend state when its material blends */
+static void emit_group(packet2_t *pk, const VuGroup *vg)
+{
+    emit_tex(pk, vg->tex);
+    if (!vg->blend)
+        return;
+    packet2_chain_ref(pk, blend_state(vg), 4, 0, 0, 0);
+    packet2_vif_flush(pk, 0);
+    packet2_vif_open_direct(pk, 0);
+    packet2_vif_close_direct_manual(pk, 4);
+}
+
+/* the prebuilt chain of a model's opaque groups (xlu 0) or of its blended ones (xlu 1); NULL when it has none */
+static packet2_t *build_chain_pass(Model *md, int xlu)
+{
+    u32 batches = 0, groups = 0;
     for (u32 g = 0; g < md->vu_ngroups; g++)
-        batches += md->vu[g].nbatch;
-    u32 qw = batches * 9 + md->vu_ngroups * 2 + 4;
+        if ((group_mode(&md->vu[g]) >= 2) == xlu) {
+            batches += md->vu[g].nbatch;
+            groups++;
+        }
+    if (!groups)
+        return NULL;
+    u32 qw = batches * 9 + groups * 4 + 4;
     packet2_t *pk = packet2_create(qw, P2_TYPE_NORMAL, P2_MODE_CHAIN, 1);
     mem_charge(MEM_RENDER, qw * 16);
     for (u32 g = 0; g < md->vu_ngroups; g++) {
         const VuGroup *vg = &md->vu[g];
-        emit_tex(pk, vg->tex);
-        int textured = vg->tex != NO_TEX;
+        int mode = group_mode(vg);
+        if ((mode >= 2) != xlu) continue;
+        emit_group(pk, vg);
         const u8 *d = vg->data;
         for (u32 b = 0; b < vg->nbatch; b++) {
             u32 ne = vg->batch[2 * b], nu = vg->batch[2 * b + 1];
-            add_header(pk, HDRS(textured, ne), nu);
-            add_batch(pk, &d, ne, nu, textured, 2);
+            add_header(pk, HDRS(mode, ne), nu);
+            add_batch(pk, &d, ne, nu, vg->tex != NO_TEX, 2);
             packet2_utils_vu_add_start_program(pk, 0);
         }
     }
@@ -487,7 +558,13 @@ static void build_chain(Model *md)
     packet2_vif_nop(pk, 0);
     packet2_vif_nop(pk, 0);
     packet2_chain_close_tag(pk);
-    md->chain = pk;
+    return pk;
+}
+
+static void build_chain(Model *md)
+{
+    md->chain = build_chain_pass(md, 0);
+    md->chain_xlu = build_chain_pass(md, 1);
 }
 
 static void flush_vif(void)
@@ -517,6 +594,29 @@ static void scale_cols(float m[16], float s)
 
 /* Draw a model: drw = NULL for a static model (one matrix, proj * view * world), else the draw matrices of a
  * skinned instance (anim.c), each group getting its SKIN table's matrices premultiplied by proj * view * world. */
+/* a prebuilt chain for one instance: FLUSHE (the previous instance stops reading VU mem 1..4), its matrix, CALL */
+static void call_chain(void *chain, float *m)
+{
+    if (packet2_get_qw_count(vif[cur]) + 8 > PACKET_QW)
+        flush_vif();
+    packet2_chain_open_cnt(vif[cur], 0, 0, 0);
+    packet2_vif_flushe(vif[cur], 0);
+    packet2_vif_nop(vif[cur], 0);
+    packet2_chain_close_tag(vif[cur]);
+    packet2_utils_vu_add_unpack_data(vif[cur], 1, m, 4, 0);
+    packet2_chain_call(vif[cur], ((packet2_t *)chain)->base, 0, 0, 0);
+    packet2_vif_nop(vif[cur], 0);
+    packet2_vif_nop(vif[cur], 0);
+    packet2_chain_close_tag(vif[cur]);
+    cur_tex = -1; /* the chain changed the texture state */
+}
+
+/* blended instances of the frame, drawn after everything opaque (render_end), farthest first. ponytail: sorted per
+ * instance, not per triangle; skinned models blend in place */
+#define MAX_XLU 128
+static struct { const Model *md; float *m; float depth; } xlu[MAX_XLU];
+static int nxlu;
+
 static void draw_model(const Model *md, const float world[16], const float (*drw)[16])
 {
     if (!md->vu_ngroups)
@@ -530,25 +630,21 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
     if (frustum[0] * fabsf(mv[12]) - frustum[1] * mv[14] > rad || frustum[2] * fabsf(mv[13]) - frustum[3] * mv[14] > rad)
         return;
     mat_mul(pvw, proj, mv);
-    if (!drw && md->chain) {
+    if (!drw && (md->chain || md->chain_xlu)) {
         if (nmats >= MAX_INST)
             return;
-        if (packet2_get_qw_count(vif[cur]) + 8 > PACKET_QW)
-            flush_vif();
         model_textures(md);
         float *m = mats[nmats++];
         memcpy(m, pvw, 64);
         scale_cols(m, md->qscale);
-        packet2_chain_open_cnt(vif[cur], 0, 0, 0);   /* FLUSHE: the previous instance stops reading VU mem 1..4 */
-        packet2_vif_flushe(vif[cur], 0);
-        packet2_vif_nop(vif[cur], 0);
-        packet2_chain_close_tag(vif[cur]);
-        packet2_utils_vu_add_unpack_data(vif[cur], 1, m, 4, 0);
-        packet2_chain_call(vif[cur], ((packet2_t *)md->chain)->base, 0, 0, 0);
-        packet2_vif_nop(vif[cur], 0);
-        packet2_vif_nop(vif[cur], 0);
-        packet2_chain_close_tag(vif[cur]);
-        cur_tex = -1; /* the chain changed the texture state */
+        if (md->chain)
+            call_chain(md->chain, m);
+        if (md->chain_xlu && nxlu < MAX_XLU) { /* blended groups wait for the end of the frame, far ones first */
+            int k = nxlu++;
+            for (; k > 0 && xlu[k - 1].depth < mv[14]; k--)
+                xlu[k] = xlu[k - 1];
+            xlu[k].md = md; xlu[k].m = m; xlu[k].depth = mv[14];
+        }
         for (u32 g = 0; g < md->vu_ngroups; g++)
             tris_drawn += md->vu[g].nverts / 3;
         return;
@@ -583,14 +679,18 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
             nmats += m;
         }
         set_tex(vg->tex);
-        int textured = vg->tex != NO_TEX;
+        if (vg->blend) {
+            emit_group(vif[cur], vg);
+            cur_tex = -1; /* the next group's texture packet puts the opaque state back */
+        }
+        int mode = group_mode(vg);
         u32 base = 2 + 4 * m;
         const u8 *d = vg->data;
         for (u32 b = 0; b < vg->nbatch; b++) {
             u32 ne = vg->batch[2 * b], nu = vg->batch[2 * b + 1];
-            add_header(vif[cur], HDR(textured, m, ne), nu);
+            add_header(vif[cur], HDR(mode, m, ne), nu);
             packet2_utils_vu_add_unpack_data(vif[cur], 2, gm, 4 * m, 1);
-            add_batch(vif[cur], &d, ne, nu, textured, base);
+            add_batch(vif[cur], &d, ne, nu, vg->tex != NO_TEX, base);
             packet2_utils_vu_add_start_program(vif[cur], 0);
             tris_drawn += ne / 3;
         }
@@ -651,6 +751,11 @@ void render_text(float x, float y, const char *s)
 u32 render_end(void)
 {
     u32 c0 = cycles();
+    for (int i = 0; i < nxlu; i++) {
+        model_textures(xlu[i].md);
+        call_chain(xlu[i].md->chain_xlu, xlu[i].m);
+    }
+    nxlu = 0;
     flush_vif();
     dma_channel_wait(DMA_CHANNEL_VIF1, 0);
     if (text_open) {

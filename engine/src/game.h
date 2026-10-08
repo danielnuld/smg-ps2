@@ -32,6 +32,9 @@ int game_test_item(void);
 int game_test_spark(void);
 /* Test builds: Mario put on the third ball of the first FireBar. Returns its row or -1. */
 int game_test_firebar(void);
+/* Test builds: Mario put on the k-th FlipPanel. Returns its row or -1 past the last. */
+int game_test_flip(int k);
+int game_flips_back(void); /* FlipPanels showing their back */
 /* Test builds: Mario dropped onto the first EarthenPipe that has a partner. Returns its index or -1. */
 int game_test_pipe(void);
 /* Test builds: Mario 500 above the first HipDropRock (else breakable), starting a hip drop. Returns its row or -1;

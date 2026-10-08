@@ -129,6 +129,7 @@ typedef struct {
     int item;        /* touch to take: ITEM_STAR, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN; 0 none */
     int firebar;     /* FireBar core: its balls turn around it and burn Mario */
     int invisible;   /* InvisiblePolygonObj (InvisibleWall*): collision only, never drawn */
+    int flip;        /* FlipPanel / FlipPanelReverse: row_step[row] holds FLIP_* bits */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN };
 static V3 firebar_ball(const Inst *in, int j, int k);
@@ -164,6 +165,7 @@ static void sw_set(const Row *r, int k, int on)
 }
 static unsigned short *row_step; /* per OBJS row: CollapsePlane frames since Mario stood on it (0: not yet) */
 static int hip_hit, hip_inst;   /* Mario landed a hip drop this frame, on instance hip_inst (-1 none) */
+static int mario_ground = -1;   /* instance Mario stands on this frame, -1 in the air */
 static int ground_inst = -1;     /* instance under the last collide_n's ground normal, -1 none */
 static void zone_spheres(void);
 static void zone_grow(const Inst *in);
@@ -260,7 +262,11 @@ static int pipe_out = -1; /* the mode 1 pipe Mario came out of, hidden once the 
 static Pipe *pipes;
 static int npipes, pipe_wait, pipe_zone = -1;
 /* Switch logic rows (no model): TimerSwitch, SwitchSynchronizerReverse, GroupSwitchWatcher */
-enum { LOGIC_TIMER = 1, LOGIC_REVERSE, LOGIC_GROUP, LOGIC_BLOCKER };
+enum { LOGIC_TIMER = 1, LOGIC_REVERSE, LOGIC_GROUP, LOGIC_BLOCKER, LOGIC_FLIPS };
+/* FlipPanel (Petari FlipPanel.cpp): row_step bits. Back = flipped (ACTMES_SUCCESS to the observer); a flip locks the
+ * panel until Mario stood on other ground; it flips once he has stood on it 3 frames (checkPlayerOnTop). Done: the
+ * group is complete (FlipPanelNrvEnd) */
+enum { FLIP_BACK = 1, FLIP_LOCK = 2, FLIP_DONE = 4, FLIP_STEP = 8 };
 typedef struct { int row, kind; } Logic;
 static Logic *logic;
 static int nlogic; /* pipe_zone: the exit pipe's zone, wanted in full */
@@ -662,14 +668,16 @@ void game_init(const Scene *s, const unsigned char *blob)
         npipes++;
     }
     logic = mem_alloc(MEM_OBJECTS, (count_type("TimerSwitch", 0) + count_type("SwitchSynchronizerReverse", 0) +
-                                    count_type("GroupSwitchWatcher", 0) + count_type("CollisionBlocker", 0) + 1) *
+                                    count_type("GroupSwitchWatcher", 0) + count_type("CollisionBlocker", 0) +
+                                    count_type("FlipPanelObserver", 0) + 1) *
                                        sizeof(Logic));
     int t_timer = scene_type(s, "TimerSwitch"), t_rev = scene_type(s, "SwitchSynchronizerReverse"),
-        t_group = scene_type(s, "GroupSwitchWatcher"), t_block = scene_type(s, "CollisionBlocker");
+        t_group = scene_type(s, "GroupSwitchWatcher"), t_block = scene_type(s, "CollisionBlocker"),
+        t_flipobs = scene_type(s, "FlipPanelObserver");
     for (u32 i = 0; i < s->nobjs; i++) {
         int t = s->objs[i].type;
         int k = t == t_timer ? LOGIC_TIMER : t == t_rev ? LOGIC_REVERSE : t == t_group ? LOGIC_GROUP :
-                t == t_block ? LOGIC_BLOCKER : 0;
+                t == t_block ? LOGIC_BLOCKER : t == t_flipobs ? LOGIC_FLIPS : 0;
         if (k) { logic[nlogic].row = i; logic[nlogic++].kind = k; }
     }
     const Row *st = scene_start(s);
@@ -750,6 +758,7 @@ void game_rebind(void)
                    strcmp(name, "BenefitItemLifeUp") == 0 ? ITEM_LIFEUP : strcmp(name, "QuestionCoin") == 0 ? ITEM_QCOIN : 0;
         in->firebar = strcmp(name, "FireBar") == 0;
         in->invisible = strncmp(name, "InvisibleWall", 13) == 0;
+        in->flip = strcmp(name, "FlipPanel") == 0 || strcmp(name, "FlipPanelReverse") == 0;
         in->kcl = scene_kcl(s, name);
         in->zone = r->zone;
         mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
@@ -893,6 +902,28 @@ int game_test_pipe(void)
             return i;
         }
     return -1;
+}
+
+int game_test_flip(int k)
+{
+    for (int i = 0; i < ninsts; i++) {
+        if (!insts[i].flip || k--) continue;
+        V3 p = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]);
+        V3 y = vnorm(v3(insts[i].m[4], insts[i].m[5], insts[i].m[6])); /* the panel's own up: side panels' origins
+                                                                           * lie outside their face's gravity box */
+        mario->pos = vadd(p, vmul(y, 200.0f)); /* the panel's top is about 100 up its axis */
+        mario->up = up_at(mario->pos, y);
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return insts[i].row;
+    }
+    return -1;
+}
+
+int game_flips_back(void)
+{
+    int n = 0;
+    for (int i = 0; i < ninsts; i++) n += insts[i].flip && (row_step[insts[i].row] & FLIP_BACK);
+    return n;
 }
 
 int game_test_firebar(void)
@@ -1283,6 +1314,7 @@ static void update_mario(void)
         float into = vdot(m->hvel, m->wall_n);
         if (into < 0) m->hvel = vsub(m->hvel, vmul(m->wall_n, into));
     }
+    mario_ground = m->grounded ? ground_inst : -1;
     if (m->grounded != was_ground) ground_flips++;
 #ifdef SLOPE_TEST
     {
@@ -1417,6 +1449,23 @@ static void break_boxes(void)
     }
 }
 
+static void update_flips(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        if (!insts[i].flip) continue;
+        unsigned short *st = &row_step[insts[i].row];
+        if (*st & FLIP_DONE) continue;
+        /* on it: grounded over its footprint (ground_inst may be the planet under a flush panel) */
+        V3 d = vsub(mario->pos, v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]));
+        int on = mario->grounded && fabsf(vdot(d, mario->up)) < insts[i].reach * 0.5f && /* origin under the top */
+                 vlen(vtangent(d, mario->up)) < 0.7f * insts[i].reach;
+        if ((*st & FLIP_LOCK) && !on && mario->grounded) *st &= ~FLIP_LOCK;
+        if ((*st & FLIP_LOCK) || !on) { *st &= FLIP_BACK | FLIP_LOCK; continue; }
+        if (*st / FLIP_STEP < 2) { *st += FLIP_STEP; continue; }
+        *st = ((*st & FLIP_BACK) ^ FLIP_BACK) | FLIP_LOCK;
+    }
+}
+
 /* CollapsePlane (Petari CollapsePlane.cpp): once stood on, the plane shrinks in x / z (1 - 0.7 step / time) and after
  * `time` frames vanishes with its collision, for good. ponytail: the collision keeps its full size while shrinking,
  * no star pointer stop */
@@ -1482,6 +1531,27 @@ static void update_switches(void)
         int row = logic[i].row;
         const Row *r = &sc->objs[row];
         if (row_dead[row]) continue;
+        if (logic[i].kind == LOGIC_FLIPS) { /* FlipPanelObserver: all its group's panels on their back side */
+            if (!row_shown(row) || r->group < 0) continue;
+            int n = 0, back = 0;
+            for (u32 k = 0; k < sc->nobjs; k++) {
+                const Row *q = &sc->objs[k];
+                const char *qn = sc->types + 32 * q->type;
+                if (q->group != r->group || q->zone != r->zone ||
+                    (strcmp(qn, "FlipPanel") != 0 && strcmp(qn, "FlipPanelReverse") != 0))
+                    continue;
+                n++;
+                back += row_step[k] & FLIP_BACK;
+            }
+            if (n && back == n) {
+                for (u32 k = 0; k < sc->nobjs; k++)
+                    if (sc->objs[k].group == r->group && sc->objs[k].zone == r->zone) row_step[k] |= FLIP_DONE;
+                sw_set(r, SW_A, 1);
+                row_dead[row] = 1;
+                printf("flip panels %d complete\n", r->group);
+            }
+            continue;
+        }
         if (logic[i].kind == LOGIC_BLOCKER) { /* CollisionBlocker.cpp: a 50 * scale sphere pushing Mario out until SW_B */
             if (sw_on(r, SW_B)) { row_dead[row] = 1; continue; }
             if (!row_shown(row)) continue;
@@ -1663,6 +1733,7 @@ void game_update(void)
     update_kuribo();
     break_boxes();
     update_collapse();
+    update_flips();
     update_hazards();
     update_items();
     update_electric();
@@ -1725,6 +1796,14 @@ void game_draw(void)
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
         if (in->invisible) continue;
+        if (in->flip && ((row_step[in->row] & FLIP_BACK) != (strcmp(sc->types + 32 * sc->objs[in->row].type,
+                                                                     "FlipPanelReverse") == 0))) {
+            float cm[16]; /* ponytail: turned over about its X axis instead of the PanelA / PanelB animation */
+            memcpy(cm, in->m, 64);
+            for (int j = 4; j < 11; j++) if (j != 7) cm[j] = -cm[j];
+            render_model(in->md, cm, 0x70, 0xB0, 0x60);
+            continue;
+        }
         if (in->collapse && row_step[in->row]) { /* calcJointPlane: x / z scale 1 - 0.7 step / time */
             float k = 1.0f - 0.7f * row_step[in->row] / in->collapse, cm[16];
             memcpy(cm, in->m, 64);

@@ -10,7 +10,7 @@ typedef struct {
     float pos[3], rot[3], scale[3];
     s32 arg[8];
     s16 sw[5];  /* stage switches (SW_APPEAR, SW_A, SW_B, SW_DEAD, SW_SLEEP), -1 none: < 1000 the row's zone's */
-    u16 pad;
+    s16 group;  /* GroupId (joinToGroupArray), -1 none */
 } Row; /* 92 bytes, matches slice.py ROW */
 enum { SW_APPEAR, SW_A, SW_B, SW_DEAD, SW_SLEEP };
 
@@ -18,6 +18,7 @@ typedef struct {
     u32 nverts;          /* 3 per triangle */
     u16 tex;             /* TEXT index, NO_TEX for untextured */
     u16 nbatch;
+    u8 blend, zwrite, alpha; /* material: 0 opaque, 1 blended, 2 additive; depth written; constant alpha 0..255 */
     const u16 *batch;    /* nbatch x {emitted, unique} */
     const u8 *data;      /* per batch: s16 pos[unique][4] (x, y, z in steps of Model.qscale, w = 4 * matrix slot),
                           * s16 uv[unique][2] (12 fraction bits) if textured, u8 rgbi[emitted][4] (colour + unique
@@ -57,7 +58,8 @@ typedef struct {
     VuGroup *vu;
     float radius; /* bounding sphere around the origin, for culling */
     float qscale; /* position quantisation step, folded into the matrices */
-    void *chain;  /* static models: prebuilt VIF chain of all batches, ends with RET (render.c) */
+    void *chain;  /* static models: prebuilt VIF chain of the opaque batches, ends with RET (render.c) */
+    void *chain_xlu; /* the same for the alpha-blended batches, drawn after the opaque ones */
 } Model;
 
 #define SCENE_MAX_MODELS 512

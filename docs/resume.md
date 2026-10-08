@@ -15,13 +15,22 @@ Last updated 2026-10-07. Detail and numbers: `docs/phase2-report.md`; tasks: `op
   - texture cache in GS memory, frustum culling, indexed geometry;
   - launch stars: SuperSpinDriver (+ Pink / Green), SpinDriver (rail flight or a throw along its Y axis);
   - coins: Coin, RailCoin, CircleCoinGroup and the purple ones, StarPiece, StarPieceGroup;
-  - breakables: PunchBox, WoodBox, CrystalCage S/M (spin or hip drop), HipDropRock (hip drop only);
-  - CollapsePlane, SpaceMine, NeedlePlant, BlackHole / BlackHoleCube (miss), ElectricRail (shock unless squatting);
+  - breakables: PunchBox, WoodBox, CrystalCage S/M (spin or hip drop), HipDropRock (hip drop only); their coins pop
+    out and bounce (CoinHolder::appearCoinPop);
+  - CollapsePlane, SpaceMine, NeedlePlant, BlackHole / BlackHoleCube (miss), ElectricRail (shock unless squatting),
+    FireBar (balls from the FireBarBall archive, converter `EXTRA` models);
+  - InvisibleWall* collide without being drawn, CollisionBlocker pushes Mario out until its SW_B;
+  - FlipPanel / FlipPanelReverse flip after 3 frames under Mario (turned over: ponytail for the colour animation),
+    FlipPanelObserver turns SW_A on once all of its GroupId are flipped (rows carry GroupId in the old pad);
   - items taken on touch: PowerStar (counted, spins), 1-up / life-up mushrooms, QuestionCoin;
-  - EarthenPipe pairs (arg3), instant warp and the partner's exit jump;
+  - EarthenPipe pairs (arg3), instant warp and the partner's exit jump; hidden pipes (arg2 1 / 2) rise when used;
   - stage switches: per-zone (< 1000) and global ids, appear switches hide / show rows (instances, coins, star pieces,
     launch stars), SW_DEAD on kills, Coin SW_B kills; logic rows TimerSwitch, SwitchSynchronizerReverse,
-    GroupSwitchWatcher (`out/switch_census.json`: which classes use which switch);
+    GroupSwitchWatcher (`out/switch_census.json`: which classes use which switch); PunchBox / CrystalCage SW_A,
+    Kuribo appear / dead;
+  - blending: each VUMD group carries its material's blend (MAT3 blend mode: opaque / blended / additive, z write,
+    material alpha); blended groups get their own GS state and are drawn after the opaque pass, farthest instance
+    first. `NO_DRAW` is down to SphereAir (its glow is a TEV rim effect);
   - Mario: slopes as in Petari (confirmed by the user), hip drop, life 3 (6 after a life-up), a coin gives one back,
     lives 4, a miss (0 life, fell into space, black hole) costs one and restarts at the start; HUD LIFE / STARS / LIVES.
 - Every other placed class with a model is drawn and collided as a static instance.
@@ -34,7 +43,7 @@ Last updated 2026-10-07. Detail and numbers: `docs/phase2-report.md`; tasks: `op
 | Convert everything (packs + table, ~5 min) | `python tools/slice_all.py data/fs/files out/packs 6` then `python tools/vram_need.py out/packs` |
 | Build, embedded Gateway 2 | `wsl.exe -e bash /mnt/d/smg-ps2/engine/build.sh [bench]` → `engine/slice[-bench].elf` |
 | Build from packs | `wsl.exe -e bash /mnt/d/smg-ps2/engine/build.sh MODE out/slice/hd2.bin Galaxy/n` → `out/slice-packs[-MODE].elf` (run from `out/`: `host:packs/`) |
-| Modes | `plain`, `bench`, `slope`, `zone` (first SuperSpinDriver at frame 120), `box`, `collapse`, `hazard` (EggStar 1: third NeedlePlant prick is a miss; BattleShip 2: mine, electric rail, black hole), `item` (BattleShip 2; CosmosGarden 1: a QuestionCoin's dead switch brings star pieces), `spin` (BattleShip 2, CannonFleet 1), `pipe` (BattleShip 2), `hip` (Factory 1) |
+| Modes | `plain`, `bench`, `slope`, `zone` (first SuperSpinDriver at frame 120), `box` (FlipPanelEx 1: the coin pops and is taken), `collapse`, `hazard` (EggStar 1: third NeedlePlant prick is a miss; BattleShip 2: mine, electric rail, black hole; Factory 1: FireBar), `item` (BattleShip 2; CosmosGarden 1: a QuestionCoin's dead switch brings star pieces), `spin` (BattleShip 2, CannonFleet 1), `pipe` (BattleShip 2), `hip` (Factory 1), `flip` (FlipPanelEx 1: 18 panels, the group completes) |
 | Host tests | `wsl.exe -e bash /mnt/d/smg-ps2/engine/test/run.sh` |
 | PCSX2 in the background | `tools/run_quiet.ps1 -Elf <elf> -Wait <s>`, `tools/snapbg.ps1 <png>`, log `Documents/PCSX2/logs/emulog.txt` |
 
@@ -44,13 +53,12 @@ there needs the embedded blob and every pack rebuilt.
 
 ## Next
 
-1. More switch sources and users: PunchBox SW_A, IronCannonLauncherPoint, StarPieceSpot, Kinopio / Tico, HipDropSwitch,
-   PicketSwitch, FlipPanel / FlipPanelObserver, hidden EarthenPipes (mode 1 / 2).
-2. Lumas / NPCs, coins popping out of boxes instead of appearing in place.
+1. More switch sources and users: IronCannonLauncherPoint, StarPieceSpot, Kinopio / Tico, HipDropSwitch,
+   PicketSwitch; spawned power stars (FlipPanelObserver arg7, requestAppearPowerStar).
+2. Lumas / NPCs (static models today).
 3. More classes by placement count (`out/census.json`): GCaptureTarget, FlowerGroup, CutBushGroup, ShootingStar,
-   Kinopio, FlipPanel, LavaSparks / LavaSteam / FireBar hazards.
-4. Transparency / blending, which would let `NO_DRAW` in `tools/slice.py` go (electric rails and black holes need it
-   to look right).
+   Kinopio, FlipPanel; LavaSteam (its danger is an effect: needs effects first).
+4. Vertex alpha in VUMD (rgbi has no room: the 4th byte is the index) for SphereAir-like fades.
 5. Bezier rails (straight segments today), StarPieceFlow, CrystalCageL.
 6. Task 5.3 gate: coverage table (plays / does not fit / missing classes), worst frame on the heaviest scenario,
    videos.

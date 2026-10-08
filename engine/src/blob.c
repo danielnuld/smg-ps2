@@ -76,6 +76,9 @@ int blob_add(Scene *s, const u8 *blob)
                 vg->nverts = *(const u32 *)q;
                 vg->tex = *(const u16 *)(q + 4);
                 vg->nbatch = *(const u16 *)(q + 6);
+                vg->blend = q[8];
+                vg->zwrite = q[9];
+                vg->alpha = q[10];
                 vg->batch = (const u16 *)(q + 16);
                 vg->data = q + 16 + ((4 * vg->nbatch + 15) & ~15u);
                 q = vg->data;

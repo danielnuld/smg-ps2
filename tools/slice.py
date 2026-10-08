@@ -20,12 +20,12 @@ Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
   'ZPAR'  u32 n, n × s32 parent zone (-1 for the main stage): the zone chain for streaming
   'OBJS'  u32 n, n × ROW;  'STRT' same layout (Mario start points)
           ROW = {u16 type, u16 zone, s32 l_id, s32 path_id, f32 pos[3], f32 rot[3], f32 scale[3], s32 arg[8],
-                 s16 sw[5] (SW_FIELDS, -1 none), u16 pad}  (92 B)
+                 s16 sw[5] (SW_FIELDS, -1 none), s16 group (GroupId, -1 none)}  (92 B)
   'PATH'  u32 n, n × {u16 zone, u16 closed, s32 id, u32 npts, f32 pts[npts][3]}
   'MODL'  u32 n, n × {char[32] name, f32 bounding radius}
   'KCL '  u32 n, n × {char[32] model, u32 size, bytes[size] (little-endian KCL, kcl_to_le), pad to 4}
   'VUMD'  u32 n, 12 pad, n × {char[32] name, u32 ngroups, f32 qscale, 8 pad, ngroups × {u32 nverts (3 per
-          triangle), u16 tex, u16 nbatch, 8 pad, nbatch × {u16 emitted, u16 unique} padded to 16, then per batch
+          triangle), u16 tex, u16 nbatch, u8 blend (0 opaque, 1 blended, 2 additive), u8 z_write, u8 alpha, 5 pad, nbatch × {u16 emitted, u16 unique} padded to 16, then per batch
           (index_batches): s16 pos[unique][4] (x, y, z in steps of qscale, w = 4 * matrix slot), s16 uv[unique][2]
           if textured, u8 rgbi[emitted][4] (colour + unique index), each array padded to 16}}
   'GRAV'  u32 n, n × {u16 kind, u16 flags, s32 priority, s32 inverse, f32 range, f32 distant, f32 m[12] (x, y, z
@@ -47,18 +47,18 @@ import tex
 
 RESIDENT = ("Coin", "StarPiece", "SuperSpinDriver")  # OBJ_TYPES in phase 0b's RESIDENT set (out/sets.json): the resident pack
 SKINNED = ("Mario",)
-# ponytail: translucent volumes and effects the renderer would draw opaque (no blending yet): the atmosphere sphere,
-# the sky ring (793 869 radius), the sun's lens flare. Grows as galaxies show more; blending replaces it
-NO_DRAW = ("SphereAir", "VROrbit", "BrightSun")   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
+# ponytail: models the renderer cannot reproduce: the atmosphere sphere (its glow is a TEV rim effect; drawn with its
+# additive material it floods the screen)
+NO_DRAW = ("SphereAir",)   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
 OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup", "PurpleRailCoin", "CircleCoinGroup",
              "RailCoin", "SuperSpinDriver", "StarPieceGroup")
 SW_FIELDS = ("SW_APPEAR", "SW_A", "SW_B", "SW_DEAD", "SW_SLEEP")  # stage switch ids: < 1000 the zone's, else global
 ROW_FIELDS = ("pos_x", "pos_y", "pos_z", "dir_x", "dir_y", "dir_z", "scale_x", "scale_y", "scale_z")
-ROW = struct.Struct("<HHii9f8i5hxx")
+ROW = struct.Struct("<HHii9f8i5hh")
 # second models a class draws besides its own (FireBar.cpp: FireBarBall around the FireBarCore)
 EXTRA = {"FireBar": ("FireBarBall",)}
 # model-less classes the engine runs (stage switch logic): kept in OBJS like the classes with a model
-LOGIC = ("TimerSwitch", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker")
+LOGIC = ("TimerSwitch", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver")
 
 
 def col(b, field, n, default=0):
@@ -98,6 +98,7 @@ def rows(b):
     lid = col(b, "l_id", n, -1)
     path = [v - 0x10000 if 0x8000 <= v < 0x10000 else v for v in col(b, "CommonPath_ID", n, -1)]  # SHORT, unsigned in bcsv_column
     sw = {f: int_or(b, f, n, -1) for f in SW_FIELDS}
+    group = int_or(b, "GroupId", n, -1)
     out = []
     for i in range(n):
         out.append(dict(name=names[i], l_id=lid[i], path=path[i], pos=[fl[f][i] for f in ROW_FIELDS[:3]],
@@ -105,7 +106,7 @@ def rows(b):
                         args=[a[i] for a in args], range=(float_column(b, "Range") or [-1.0] * n)[i],
                         distant=(float_column(b, "Distant") or [None] * n)[i],
                         priority=int_or(b, "Priority", n, 0)[i], inverse=int_or(b, "Inverse", n, 0)[i],
-                        sw=[sw[f][i] for f in SW_FIELDS]))
+                        sw=[sw[f][i] for f in SW_FIELDS], group=group[i]))
     return out
 
 
@@ -156,7 +157,8 @@ def scene(fs, galaxy, scenario):
 
 
 def model_groups(arc, ratio, stats=None, skinned=False):
-    """-> (groups [(verts, tris, uvs or None, texture or None, slots or None, colours or None)], kcl bytes or None,
+    """-> (groups [(verts, tris, uvs or None, texture or None, slots or None, colours or None, blend)], kcl bytes or
+    None,
     skin chunk entry or None) for the first J3D model of an archive. texture = tex.to_ps2 dict of the group's material
     (tex.py rule); uvs per vertex after the material's texture matrix and the mirror halving. stats counts groups
     without texture / with projected coordinates. skinned: no simplification (vertices of one group sit in different
@@ -212,7 +214,8 @@ def model_groups(arc, ratio, stats=None, skinned=False):
                         cols = [clr(info["keys"][v][o] if w == 1 else info["keys"][v][o] << 8 | info["keys"][v][o + 1])
                                 for v in used]
                     gtab.append(tables[(info["shape"], info["group"])])
-                groups.append((verts, [remap[v] for v in tri], uvs, t, slots, cols))
+                blend = tex.material_blend(b, bl[b"MAT3"], mat) if mat is not None else (0, 1, 255)
+                groups.append((verts, [remap[v] for v in tri], uvs, t, slots, cols, blend))
             if skinned:
                 sk = skin_entry(b, bl, gtab)
         elif n.endswith(".kcl") and kcl is None:
@@ -339,7 +342,7 @@ def vu_groups(groups, base, stats=None, qs=1.0):
     L = [c / ll for c in LIGHT]
     pad = lambda x: bytes(x) + b"\0" * (-len(x) % 16)
     out = []
-    for verts, tris, uvs, t, slots, cols in groups:
+    for verts, tris, uvs, t, slots, cols, _ in groups:
         pos, col, uv = bytearray(), bytearray(), bytearray()
         rgb = (0x80, 0x80, 0x80) if t else base
         for i in range(0, len(tris), 3):
@@ -567,7 +570,8 @@ def placement(fs, galaxy, scenario):
     tid = {t: i for i, t in enumerate(types)}
     pack_row = lambda r: ROW.pack(tid[r["name"]], r["zone"], r["l_id"], r["path"], *r["pos"], *r["rot"], *r["scale"],
                                   *[a if -2**31 <= a < 2**31 else -1 for a in r["args"]],
-                                  *[v if -2**15 <= v < 2**15 else -1 for v in r.get("sw", [-1] * 5)])
+                                  *[v if -2**15 <= v < 2**15 else -1 for v in r.get("sw", [-1] * 5)],
+                                  r.get("group", -1) if -2**15 <= r.get("group", -1) < 2**15 else -1)
     out = [chunk(b"TYPE", struct.pack("<I", len(types)) + b"".join(name32(t) for t in types)),
            chunk(b"ZONE", struct.pack("<I", len(zones)) + b"".join(
                name32(z["name"]) + struct.pack("<6f", *t, *mtx_euler(r)) for z, (r, t) in zip(zones, zworld))),
@@ -627,7 +631,7 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True):
         models_.append(name32(t) + struct.pack("<f", math.sqrt(max((sum(c * c for c in v) for verts, *_ in groups
                                                                     for v in verts), default=0.0))))
         vg, qs = b"", pos_scale(groups)
-        for (_, tris, _, tx, _, _), (pos, col, uv) in zip(groups, vu_groups(groups, BASE_COLOUR.get(t, (112, 176, 96)),
+        for (_, tris, _, tx, _, _, bl), (pos, col, uv) in zip(groups, vu_groups(groups, BASE_COLOUR.get(t, (112, 176, 96)),
                                                                              stats, qs)):
             ti = 0xFFFF
             if tx:
@@ -636,7 +640,7 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True):
                 if ti == len(texts):
                     texts.append(tx)
             nb, body = index_batches(pos, col, uv, len(tris))
-            vg += struct.pack("<IHH8x", len(tris), ti, nb) + body
+            vg += struct.pack("<IHHBBB5x", len(tris), ti, nb, *bl) + body
         vumd.append(name32(t) + struct.pack("<If8x", len(groups), qs) + vg)
         if kcl and collision:
             kcl = kcl_to_le(kcl)

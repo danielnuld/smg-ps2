@@ -225,6 +225,23 @@ def material_tex(b, mat3, m, tex1=None):
     return best
 
 
+def material_blend(b, mat3, m):
+    """Material m -> (kind, z_write, alpha): kind 0 opaque, 1 blended (Cs - Cd) As + Cd, 2 additive (destination
+    factor ONE); z_write from its z mode; alpha = material colour 0's alpha (0..255), the constant when no texture
+    alpha. MAT3 entry: z mode index u8 at 6, material colour indices u16 at 8, blend mode index u16 at 0x148; header
+    tables: material colours 0x20, blend modes 0x70 ({type, src, dst, logic op}), z modes 0x74 ({on, func, update})."""
+    off = lambda k: mat3 + u32(b, mat3 + k)
+    e = off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C
+    bm = off(0x70) + 4 * u16(b, e + 0x148)
+    kind = 0
+    if b[bm] == 1:  # GX_BM_BLEND
+        kind = 2 if b[bm + 2] == 1 else 1  # dst GX_BL_ONE: additive
+    zw = b[off(0x74) + 4 * b[e + 6] + 2]
+    mc = u16(b, e + 8)
+    alpha = b[off(0x20) + 4 * mc + 3] if mc != 0xFFFF else 255
+    return kind, zw, alpha
+
+
 def selftest():
     # RGB565 4x4 block: all red -> (255, 0, 0, 255)
     assert decode(b"\xf8\x00" * 16, 4, 4, 4)[1, 2].tolist() == [255, 0, 0, 255]

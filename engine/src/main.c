@@ -313,6 +313,25 @@ int main(void)
             printf("spin test f %u: launch %d %s\n", frame, game_launch_state(), d);
         }
 #endif
+#ifdef FLIP_TEST
+        if (frame >= 120 && frame % 40 == 0) { /* every 40 frames Mario on the next panel */
+            static int k, done;
+            if (!done && k) {
+                char d[128];
+                game_debug(d, sizeof d);
+                printf("flip test f %u: panel %d, %d on their back, %s\n", frame, k - 1, game_flips_back(), d);
+            }
+            int row = done ? -1 : game_test_flip(k++);
+            if (row < 0 && done == 0) { /* back to panel 2 too: Mario's start point flipped it, his visit flipped it back */
+                printf("flip test end: %d panels\n", k - 1);
+                game_test_flip(2);
+                done = 1;
+            } else if (done == 1) {
+                printf("flip test after panel 2 again: %d on their back\n", game_flips_back());
+                done = 2;
+            }
+        }
+#endif
 #ifdef HIP_TEST
         if (frame == 120)
             printf("hip test: above row %d\n", game_test_hip());
