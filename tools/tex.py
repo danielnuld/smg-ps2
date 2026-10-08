@@ -190,9 +190,10 @@ def tex_mtx(b, e):
 
 def material_tex(b, mat3, m, tex1=None):
     """Material m -> dict(tex = TEX1 index, attr = VTX1 attribute of its coords (13 = TEX0), mtx = 2x3 or None,
-    projected = bool), or None when no TEV stage samples a texture. With tex1 (TEX1 block offset) the stage whose
-    texture has the largest area wins (first on ties): Mario's first stage samples a small noise texture and the
-    colour map comes later. ponytail: one texture per material; the other stages are dropped."""
+    projected = bool), or None when no TEV stage samples a texture. With tex1 (TEX1 block offset) a colour texture wins
+    over a greyscale one (I4 / I8 / IA4 / IA8: shading ramps the TEV multiplies in, e.g. Mario's hair stage 0 is a
+    white IA8 ramp the size of the brown colour map), then the largest area (first on ties). ponytail: one texture per
+    material; the other stages are dropped."""
     off = lambda k: mat3 + u32(b, mat3 + k)
     e = off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C
     stages = b[off(0x58) + b[e + 4]]
@@ -208,7 +209,7 @@ def material_tex(b, mat3, m, tex1=None):
         a = 0
         if tex1 is not None:
             hd = tex1 + u32(b, tex1 + 0x0C) + 0x20 * tex
-            a = u16(b, hd + 2) * u16(b, hd + 4)
+            a = u16(b, hd + 2) * u16(b, hd + 4) + (1 << 24 if b[hd] > 3 else 0)  # colour formats first
         if a <= area:
             continue
         ci = u16(b, e + 0x28 + 2 * coord)
@@ -223,6 +224,34 @@ def material_tex(b, mat3, m, tex1=None):
         if tex1 is None:
             break
     return best
+
+
+def material_tint(b, mat3, m, tex1, tex):
+    """(dark, bright) RGB a greyscale texture is coloured with, or None. SMG often lerps from konst colour 0 to TEV
+    colour 0 by a greyscale texture's intensity (SummerSky: blue (0, 35, 157) to white clouds). ponytail: that one
+    TEV pattern assumed whenever the texture is I4 / I8 / IA4 / IA8 and konst 0 is not white; no TEV evaluation."""
+    if tex1 is None or b[tex1 + u32(b, tex1 + 0x0C) + 0x20 * tex] > 3:
+        return None
+    off = lambda k: mat3 + u32(b, mat3 + k)
+    e = off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C
+    k0, c0 = u16(b, e + 0x94), u16(b, e + 0xDC)
+    if k0 == 0xFFFF:
+        return None
+    dark = tuple(b[off(0x54) + 4 * k0 + i] for i in range(3))
+    if dark == (255, 255, 255):
+        return None
+    bright = (255, 255, 255)
+    if c0 != 0xFFFF:
+        bright = tuple(max(0, min(255, v)) for v in struct.unpack_from(">3h", b, off(0x50) + 8 * c0))
+    return dark, bright
+
+
+def tint(rgba, dark, bright):
+    """greyscale RGBA -> dark + (bright - dark) * intensity, alpha kept"""
+    out = rgba.copy()
+    i = rgba[..., 0:1].astype(np.float32) / 255.0
+    out[..., :3] = (np.array(dark, np.float32) + (np.array(bright, np.float32) - np.array(dark, np.float32)) * i).astype(np.uint8)
+    return out
 
 
 def material_blend(b, mat3, m):

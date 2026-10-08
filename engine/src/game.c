@@ -130,10 +130,13 @@ typedef struct {
     int item;        /* touch to take: ITEM_STAR, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN; 0 none */
     int firebar;     /* FireBar core: its balls turn around it and burn Mario */
     int invisible;   /* InvisiblePolygonObj (InvisibleWall*): collision only, never drawn */
+    int kcl_ready;   /* plants: the scene's collision is bound (set at the end of game_rebind) */
     int flip;        /* FlipPanel / FlipPanelReverse: row_step[row] holds FLIP_* bits */
     int npc;         /* talking NPC (npc_class): turns to face Mario when he is near */
     int hipsw;       /* hip drop switch: 1 PicketSwitch(Big) / HipDropSwitch (SW_A for good), 2 HipDropTimerSwitch */
     int rotor;       /* map part with a RotateSpeed: turns (rotor_matrix), carries Mario */
+    int sky;         /* sky dome (Petari Sky): centred on the camera, drawn first */
+    int plant;       /* PlantGroup (Flower / FlowerBlue / CutBush Group): its model drawn at each member (plants) */
     const unsigned char *railer; /* map part on a rail: its PATH entry; moves along it (update_railers) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP };
@@ -301,6 +304,15 @@ enum { FLIP_BACK = 1, FLIP_LOCK = 2, FLIP_DONE = 4, FLIP_STEP = 8 };
 typedef struct { int row, kind; } Logic;
 static Logic *logic;
 static int nlogic; /* pipe_zone: the exit pipe's zone, wanted in full */
+/* PlantGroup.cpp: arg0 members (default 7) in hexagonal rings 160 apart (ring k: 6k of them), each dropped onto
+ * the ground along gravity (a 1000 ray from 100 above), dropped when nothing is under it. Placed once per group, the
+ * first rebind its zone has collision (plant_row; plant_state 0 not yet, 1 placed). ponytail: the ray is stepped
+ * spheres; no shaking, no hidden coins */
+typedef struct { V3 pos, up; int ok; } Plant;
+static Plant *plants;
+static int *plant_first;           /* per OBJS row: index of its first member in plants, -1 not a group */
+static unsigned char *plant_state; /* per OBJS row */
+static int plant_count(const Row *r);
 static Launch *launches;
 static int nlaunches;
 static int ground_flips, slip_frames;
@@ -706,6 +718,18 @@ void game_init(const Scene *s, const unsigned char *blob)
         if (!pass) erails = mem_alloc(MEM_OBJECTS, (n + 1) * sizeof(Spark));
         nerails = n;
     }
+    {
+        int t_fg = scene_type(s, "FlowerGroup"), t_fb = scene_type(s, "FlowerBlueGroup"), t_cb = scene_type(s, "CutBushGroup");
+        int total = 0;
+        plant_first = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(int));
+        plant_state = mem_alloc(MEM_OBJECTS, s->nobjs);
+        for (u32 i = 0; i < s->nobjs; i++) {
+            int t = s->objs[i].type;
+            plant_first[i] = -1;
+            if (t == t_fg || t == t_fb || t == t_cb) { plant_first[i] = total; total += plant_count(&s->objs[i]); }
+        }
+        plants = mem_alloc(MEM_OBJECTS, (total + 1) * sizeof(Plant));
+    }
     int t_rockc = scene_type(s, "RockCreator");
     rollers = mem_alloc(MEM_OBJECTS, (count_type("RockCreator", 0) * ROCKS_PER + 1) * sizeof(Roller));
     for (u32 i = 0; i < s->nobjs; i++) {
@@ -820,6 +844,18 @@ static int chip_group_out(const Row *chip, const char *name)
     return 1;
 }
 
+/* NameObjFactory's Sky kind: domes that follow the camera (Petari Sky.cpp: setBaseTRMtx at the camera position) */
+static int sky_class(const char *name)
+{
+    static const char *const skies[] = {"SummerSky", /* ponytail: the VR* ones (rings, flat backdrops) stay where placed */ "GalaxySky", "MilkyWaySky",
+                                        "HalfGalaxySky", "GreenPlanetOrbitSky", "PhantomSky", "KoopaVS1Sky", "KoopaVS2Sky",
+                                        "FamicomMarioSky", "DesertSky", "ChildRoomSky", "AuroraSky", "CloudSky",
+                                        "RockPlanetOrbitSky", "StarrySky", "AstroDomeSkyA"};
+    for (unsigned i = 0; i < sizeof skies / sizeof skies[0]; i++)
+        if (strcmp(name, skies[i]) == 0) return 1;
+    return 0;
+}
+
 /* NPCs that turn to Mario within NPC_TURN (Petari NPCActor: the talk range; ponytail: an instant turn, no talk, no
  * idle animation) */
 #define NPC_TURN 1000.0f
@@ -858,6 +894,43 @@ static void railer_place(Inst *in)
     const unsigned char *e = in->railer;
     V3 p = rail_at((const float *)(e + 24), *(const u32 *)(e + 8), row_coord[in->row]);
     in->m[12] = p.x; in->m[13] = p.y; in->m[14] = p.z;
+}
+
+static int plant_count(const Row *r) { return r->arg[0] > 0 ? r->arg[0] : 7; }
+
+/* the first collision under `from` along -up within len, stepped by spheres of radius 20 */
+static int kcl_query(V3 c, float radius, Hit *out, int max);
+static int drop_to_ground(V3 from, V3 up, float len, V3 *hit)
+{
+    Hit h[1];
+    for (float d = 0; d <= len; d += 30.0f) {
+        V3 p = vsub(from, vmul(up, d));
+        if (kcl_query(p, 20.0f, h, 1)) { *hit = vsub(p, vmul(up, 20.0f)); return 1; }
+    }
+    return 0;
+}
+
+static void place_plants(const Inst *in)
+{
+    int row = in->row;
+    if (plant_state[row] || !in->kcl_ready) return;
+    const Row *r = &sc->objs[row];
+    V3 x, z, c = row_pos(r), up = up_at(c, v3(0, 1, 0));
+    row_axes(r, &x, &z);
+    x = vnorm(vtangent(x, up));
+    if (vlen(x) < 0.5f) x = vnorm(vtangent(z, up));
+    V3 y = vcross(up, x);
+    int ring = 0, n = plant_count(r), hits = 0;
+    float angle = 0, step = 6.2831853f, radius = 0;
+    for (int k = 0; k < n; k++) {
+        Plant *p = &plants[plant_first[row] + k];
+        V3 at = vadd(c, vadd(vmul(x, cosf(angle) * radius), vmul(y, sinf(angle) * radius)));
+        p->up = up_at(at, up);
+        hits += p->ok = drop_to_ground(vadd(at, vmul(p->up, 100.0f)), p->up, 1000.0f, &p->pos);
+        angle += step;
+        if (angle >= 6.2831f) { ring++; angle = 0; step = 6.2831853f / (ring * 6); radius = 160.0f * ring; }
+    }
+    plant_state[row] = hits > 0; /* none: its ground is not loaded yet, try again at the next rebind */
 }
 
 void game_rebind(void)
@@ -909,6 +982,8 @@ void game_rebind(void)
         in->invisible = strncmp(name, "InvisibleWall", 13) == 0;
         in->flip = strcmp(name, "FlipPanel") == 0 || strcmp(name, "FlipPanelReverse") == 0;
         in->npc = npc_class(name);
+        in->sky = sky_class(name);
+        in->plant = strcmp(name, "FlowerGroup") == 0 || strcmp(name, "FlowerBlueGroup") == 0 || strcmp(name, "CutBushGroup") == 0;
         in->hipsw = strncmp(name, "PicketSwitch", 12) == 0 || strcmp(name, "HipDropSwitch") == 0 ? 1 :
                     strcmp(name, "HipDropTimerSwitch") == 0 ? 2 : 0;
         in->rotor = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->arg[4] != -1 && r->arg[4] != 0; /* -1: not a map part */
@@ -927,8 +1002,11 @@ void game_rebind(void)
         in->reach = md->radius * in->s;
         if (in->rotor && row_angle) rotor_matrix(in);
         if (in->railer && row_coord) railer_place(in);
+        in->kcl_ready = 0;
         zone_grow(in);
     }
+    for (int i = 0; plant_first && i < ninsts; i++)
+        if (insts[i].plant) { insts[i].kcl_ready = 1; place_plants(&insts[i]); }
 }
 
 /* Zone spheres for streaming: every placement row of the zone (centre of their box, farthest + 500), grown to cover
@@ -2329,13 +2407,64 @@ void game_draw(void)
     V3 ce, cw, cu;
     float fovy;
     camera_pose(&ce, &cw, &cu, &fovy);
+#ifdef OVERVIEW_TEST
+    { /* the whole galaxy: a camera orbiting the box of the placed objects (the middle 90 % on each axis, so a far
+       * stray row does not shrink the rest), a third of a turn every 20 s */
+        static V3 c;
+        static float rad;
+        if (rad == 0) {
+            static float ax[3][2048];
+            int n = 0;
+            for (u32 i = 0; i < sc->nobjs && n < 2048; i++, n++) {
+                ax[0][n] = sc->objs[i].pos[0]; ax[1][n] = sc->objs[i].pos[1]; ax[2][n] = sc->objs[i].pos[2];
+            }
+            float lo[3], hi[3];
+            for (int k = 0; k < 3; k++) { /* 5th and 95th percentiles by partial selection */
+                for (int a = 0; a < n; a++)
+                    for (int b = a + 1; b < n; b++)
+                        if (ax[k][b] < ax[k][a]) { float t = ax[k][a]; ax[k][a] = ax[k][b]; ax[k][b] = t; }
+                lo[k] = ax[k][n / 20]; hi[k] = ax[k][n - 1 - n / 20];
+            }
+            c = v3((lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2);
+            rad = fmaxf(0.5f * vlen(v3(hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2])), 3000.0f);
+            printf("overview: centre %d %d %d radius %d\n", (int)c.x, (int)c.y, (int)c.z, (int)rad);
+        }
+        float a = game_frame * 0.00175f;
+        cw = c;
+        ce = vadd(c, vmul(vnorm(v3(cosf(a), 0.55f, sinf(a))), fminf(rad * 1.3f, 90000.0f)));
+        cu = v3(0, 1, 0);
+        fovy = 50.0f;
+    }
+#endif
     render_set_fovy(fovy);
     float eye[3] = {ce.x, ce.y, ce.z}, target[3] = {cw.x, cw.y, cw.z}, up[3] = {cu.x, cu.y, cu.z};
     float m[16];
     render_begin(eye, target, up);
+    for (int i = 0; i < ninsts; i++) { /* skies first, at the camera; ponytail: scaled to fit inside the far plane
+                                         * (render.c FAR 120000) so the rest of the scene draws over them by depth */
+        const Inst *in = &insts[i];
+        if (!in->sky || in->md->radius <= 0) continue;
+        float cm[16], k = 108000.0f / (in->md->radius * in->s);
+        memcpy(cm, in->m, 64);
+        for (int j = 0; j < 12; j++) if (j % 4 != 3) cm[j] *= k;
+        cm[12] = ce.x; cm[13] = ce.y; cm[14] = ce.z;
+        render_model(in->md, cm, 0x70, 0xB0, 0x60);
+    }
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
-        if (in->invisible) continue;
+        if (in->invisible || in->sky) continue;
+        if (in->plant) {
+            if (plant_first[in->row] < 0) continue;
+            int n = plant_count(&sc->objs[in->row]);
+            for (int k = 0; k < n; k++) {
+                const Plant *p = &plants[plant_first[in->row] + k];
+                if (!p->ok) continue;
+                basis_matrix(m, p->pos, p->up, v3(0, 0, 1), k * 1.3f);
+                for (int j = 0; j < 12; j++) if (j % 4 != 3) m[j] *= in->s;
+                render_model(in->md, m, 0x70, 0xB0, 0x60);
+            }
+            continue;
+        }
         if (in->npc) { /* its own up, its front turned to Mario when he is near */
             V3 p = v3(in->m[12], in->m[13], in->m[14]), to = vsub(mario->pos, p);
             if (vdot(to, to) < NPC_TURN * NPC_TURN) {

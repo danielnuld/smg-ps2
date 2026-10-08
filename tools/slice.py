@@ -50,9 +50,9 @@ import tex
 
 RESIDENT = ("Coin", "StarPiece", "SuperSpinDriver")  # OBJ_TYPES in phase 0b's RESIDENT set (out/sets.json): the resident pack
 SKINNED = ("Mario",)
-# ponytail: models the renderer cannot reproduce: the atmosphere sphere (its glow is a TEV rim effect; drawn with its
-# additive material it floods the screen)
-NO_DRAW = ("SphereAir",)   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
+# ponytail: models the renderer cannot reproduce: the atmosphere spheres (*Air: their glow is a TEV rim effect; drawn
+# with their material they flood the screen)
+NO_DRAW = ("SphereAir", "DimensionAir", "HomeAir", "TwilightAir", "DarknessRoomAir", "SunsetAir", "FineAir")   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
 OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup", "PurpleRailCoin", "CircleCoinGroup",
              "RailCoin", "SuperSpinDriver", "StarPieceGroup")
 SW_FIELDS = ("SW_APPEAR", "SW_A", "SW_B", "SW_DEAD", "SW_SLEEP")  # stage switch ids: < 1000 the zone's, else global
@@ -217,10 +217,12 @@ def model_groups(arc, ratio, stats=None, skinned=False):
                 get = geom.vtx1_attr(b, bl[b"VTX1"], mt["attr"]) if mt and mt["attr"] in info["at"] else None
                 uvs = t = None
                 if get and mt["tex"] < len(texs):
-                    if mt["tex"] not in ps2:
+                    tn = tex.material_tint(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), mt["tex"])
+                    key = (mt["tex"], tn)
+                    if key not in ps2:
                         x = texs[mt["tex"]]
-                        ps2[mt["tex"]] = tex.to_ps2(x["rgba"], x["wrap_s"], x["wrap_t"])
-                    t = ps2[mt["tex"]]
+                        ps2[key] = tex.to_ps2(tex.tint(x["rgba"], *tn) if tn else x["rgba"], x["wrap_s"], x["wrap_t"])
+                    t = ps2[key]
                     off, w = info["at"][mt["attr"]]
                     m = mt["mtx"]
                     uvs = []
