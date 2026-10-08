@@ -698,6 +698,32 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
     }
 }
 
+/* Depth back to "far" over the whole screen, colour untouched: what was drawn so far (the sky) stays behind
+ * everything drawn after. In the VIF1 chain: FLUSH (VU1 and PATH1 done), then DIRECT a sprite with the colour masked,
+ * the depth test off and z 0, then the frame mask and depth test back. */
+void render_clear_depth(void)
+{
+    if (packet2_get_qw_count(vif[cur]) + 16 > PACKET_QW)
+        flush_vif();
+    u32 fb = frame[back].address >> 11, fw = SCREEN_W >> 6;
+    packet2_chain_open_cnt(vif[cur], 0, 0, 0);
+    packet2_vif_flush(vif[cur], 0);
+    packet2_vif_open_direct(vif[cur], 0);
+    packet2_add_2x_s64(vif[cur], GIF_SET_TAG(9, 1, 0, 0, GIF_FLG_PACKED, 1), GIF_REG_AD);
+    packet2_add_2x_s64(vif[cur], GS_SET_FRAME(fb, fw, GS_PSM_32, 0xFFFFFFFF), GS_REG_FRAME);
+    packet2_add_2x_s64(vif[cur], GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, ZTEST_METHOD_ALLPASS), GS_REG_TEST);
+    packet2_add_2x_s64(vif[cur], GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 0), GS_REG_ZBUF);
+    packet2_add_2x_s64(vif[cur], GS_SET_PRIM(PRIM_SPRITE, 0, 0, 0, 0, 0, 0, 0, 0), GS_REG_PRIM);
+    packet2_add_2x_s64(vif[cur], GS_SET_RGBAQ(0, 0, 0, 0x80, 0x3F800000), GS_REG_RGBAQ);
+    packet2_add_2x_s64(vif[cur], GS_SET_XYZ((2048 - SCREEN_W / 2) << 4, (2048 - SCREEN_H / 2) << 4, 0), GS_REG_XYZ2);
+    packet2_add_2x_s64(vif[cur], GS_SET_XYZ((2048 + SCREEN_W / 2) << 4, (2048 + SCREEN_H / 2) << 4, 0), GS_REG_XYZ2);
+    packet2_add_2x_s64(vif[cur], GS_SET_FRAME(fb, fw, GS_PSM_32, 0), GS_REG_FRAME);
+    packet2_add_2x_s64(vif[cur], test_z, GS_REG_TEST);
+    packet2_vif_close_direct_auto(vif[cur]);
+    packet2_chain_close_tag(vif[cur]);
+    cur_tex = -1; /* TEST changed */
+}
+
 void render_model(const Model *md, const float world[16], u8 cr, u8 cg, u8 cb)
 {
     (void)cr; (void)cg; (void)cb; /* colours are baked into the VUMD data */

@@ -58,6 +58,10 @@ OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup
 SW_FIELDS = ("SW_APPEAR", "SW_A", "SW_B", "SW_DEAD", "SW_SLEEP")  # stage switch ids: < 1000 the zone's, else global
 ROW_FIELDS = ("pos_x", "pos_y", "pos_z", "dir_x", "dir_y", "dir_z", "scale_x", "scale_y", "scale_z")
 ROW = struct.Struct("<HHii9f8i5hh")
+# sky archives whose star textures are projected from positions (spherical UVs instead, model_groups)
+SKY_ARCS = ("VROrbit", "VRDarkSpace", "VRSandwichSun", "GalaxySky", "MilkyWaySky", "HalfGalaxySky", "PhantomSky",
+            "KoopaVS1Sky", "KoopaVS2Sky", "StarrySky", "RockPlanetOrbitSky", "GreenPlanetOrbitSky")
+SKY_TILES = 8
 # second models a class draws besides its own (FireBar.cpp: FireBarBall around the FireBarCore)
 EXTRA = {"FireBar": ("FireBarBall",)}
 # model-less classes the engine runs (stage switch logic): kept in OBJS like the classes with a model
@@ -199,10 +203,10 @@ def model_groups(arc, ratio, stats=None, skinned=False):
             got = []
             geom.model(b, 1.0 if skinned else ratio, None, got)
             bl = tex.blocks(b)
+            clr = geom.vtx1_color(b, bl[b"VTX1"])
             if skinned:
                 tables = skin.group_tables(b, bl)
                 gtab = []
-                clr = geom.vtx1_color(b, bl[b"VTX1"])
             shapes = tex.shape_materials(b, bl[b"INF1"])
             texs = tex.textures(b, bl[b"TEX1"]) if b"TEX1" in bl else []
             ps2 = {}
@@ -217,11 +221,11 @@ def model_groups(arc, ratio, stats=None, skinned=False):
                 get = geom.vtx1_attr(b, bl[b"VTX1"], mt["attr"]) if mt and mt["attr"] in info["at"] else None
                 uvs = t = None
                 if get and mt["tex"] < len(texs):
-                    tn = tex.material_tint(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), mt["tex"])
-                    key = (mt["tex"], tn)
+                    key = (mt["tex"], mat)  # the material's TEV baked into its texture (tex.tev)
                     if key not in ps2:
                         x = texs[mt["tex"]]
-                        ps2[key] = tex.to_ps2(tex.tint(x["rgba"], *tn) if tn else x["rgba"], x["wrap_s"], x["wrap_t"])
+                        baked = tex.bake(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, mt["tex"])
+                        ps2[key] = tex.to_ps2(baked, x["wrap_s"], x["wrap_t"])
                     t = ps2[key]
                     off, w = info["at"][mt["attr"]]
                     m = mt["mtx"]
@@ -233,9 +237,33 @@ def model_groups(arc, ratio, stats=None, skinned=False):
                             su, sv = (m[0][0] * su + m[0][1] * sv + m[0][2], m[1][0] * su + m[1][1] * sv + m[1][2])
                         uvs.append((su * t["u_scale"], sv * t["v_scale"]))
                     stats["projected"] = stats.get("projected", 0) + mt["projected"]
+                elif mt and mt["projected"] and arc.stem in SKY_ARCS and mt["tex"] < len(texs):
+                    # ponytail: a sky's texture projected from vertex positions (texgen POS + texture matrix) gets
+                    # spherical UVs from each vertex's direction instead (the stars tile SKY_TILES times around)
+                    x = texs[mt["tex"]]
+                    key = (mt["tex"], mat)
+                    if key not in ps2:
+                        baked = tex.bake(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, mt["tex"])
+                        ps2[key] = tex.to_ps2(baked, x["wrap_s"], x["wrap_t"])
+                    t = ps2[key]
+                    uvs = []
+                    for vx, vy, vz in verts:
+                        l = math.sqrt(vx * vx + vy * vy + vz * vz) or 1.0
+                        su = (math.atan2(vz, vx) / (2 * math.pi) + 0.5) * SKY_TILES
+                        sv = (math.asin(max(-1.0, min(1.0, vy / l))) / math.pi + 0.5) * SKY_TILES / 2
+                        uvs.append((su * t["u_scale"], sv * t["v_scale"]))
                 else:
                     stats["untextured"] = stats.get("untextured", 0) + 1
                 slots = cols = None
+                if t is None and mat is not None and not skinned:  # untextured: the TEV's constant colour
+                    cols = tuple(int(c * 255 + 0.5) for c in tex.tev(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs)[:3])
+                if not skinned and clr and 11 in info["at"] and mat is not None and tex.vertex_colour(b, bl[b"MAT3"], mat):
+                    # unlit, coloured per vertex (VROrbit's cloud layers fade to black): CLR0 times the flat colour
+                    o, w = info["at"][11]
+                    flat = cols or (255, 255, 255)
+                    cols = [tuple(f * c // 255 for f, c in zip(flat, clr(info["keys"][v][o] if w == 1 else
+                                                                          info["keys"][v][o] << 8 | info["keys"][v][o + 1])))
+                            for v in used]
                 if skinned:
                     at = info["at"]
                     slots = [info["keys"][v][at[0][0]] // 3 if 0 in at else 0 for v in used]
@@ -374,7 +402,8 @@ def vu_groups(groups, base, stats=None, qs=1.0):
     out = []
     for verts, tris, uvs, t, slots, cols, _ in groups:
         pos, col, uv = bytearray(), bytearray(), bytearray()
-        rgb = (0x80, 0x80, 0x80) if t else base
+        rgb = (0x80, 0x80, 0x80) if t else cols if slots is None and isinstance(cols, tuple) else base
+        vcol = slots is None and isinstance(cols, list)  # unlit vertex colours (0..255; textured: times 0x80 / 255)
         for i in range(0, len(tris), 3):
             a, b, c = (verts[tris[i + k]] for k in range(3))
             e1 = [b[j] - a[j] for j in range(3)]
@@ -389,7 +418,7 @@ def vu_groups(groups, base, stats=None, qs=1.0):
                 p = [max(-32767, min(32767, round(c / qs))) for c in v]
                 if slots is None:   # static: slot 0
                     pos += struct.pack("<4h", *p, 0)
-                    col += rgba
+                    col += struct.pack("<4B", *(x * 0x80 // 255 if t else x for x in cols[vi][:3]), 0x80) if vcol else rgba
                 else:               # skinned: w = 4 * matrix slot; colour = CLR0 scaled to 0x80, unlit
                     pos += struct.pack("<4h", *p, 4 * slots[vi])
                     cc = cols[vi] if cols else (255, 255, 255, 255)

@@ -847,7 +847,7 @@ static int chip_group_out(const Row *chip, const char *name)
 /* NameObjFactory's Sky kind: domes that follow the camera (Petari Sky.cpp: setBaseTRMtx at the camera position) */
 static int sky_class(const char *name)
 {
-    static const char *const skies[] = {"SummerSky", /* ponytail: the VR* ones (rings, flat backdrops) stay where placed */ "GalaxySky", "MilkyWaySky",
+    static const char *const skies[] = {"VROrbit", "VRDarkSpace", "VRSandwichSun", "SummerSky", "GalaxySky", "MilkyWaySky",
                                         "HalfGalaxySky", "GreenPlanetOrbitSky", "PhantomSky", "KoopaVS1Sky", "KoopaVS2Sky",
                                         "FamicomMarioSky", "DesertSky", "ChildRoomSky", "AuroraSky", "CloudSky",
                                         "RockPlanetOrbitSky", "StarrySky", "AstroDomeSkyA"};
@@ -2440,6 +2440,7 @@ void game_draw(void)
     float eye[3] = {ce.x, ce.y, ce.z}, target[3] = {cw.x, cw.y, cw.z}, up[3] = {cu.x, cu.y, cu.z};
     float m[16];
     render_begin(eye, target, up);
+    int sky_drawn = 0;
     for (int i = 0; i < ninsts; i++) { /* skies first, at the camera; ponytail: scaled to fit inside the far plane
                                          * (render.c FAR 120000) so the rest of the scene draws over them by depth */
         const Inst *in = &insts[i];
@@ -2449,7 +2450,9 @@ void game_draw(void)
         for (int j = 0; j < 12; j++) if (j % 4 != 3) cm[j] *= k;
         cm[12] = ce.x; cm[13] = ce.y; cm[14] = ce.z;
         render_model(in->md, cm, 0x70, 0xB0, 0x60);
+        sky_drawn = 1;
     }
+    if (sky_drawn) render_clear_depth(); /* the sky stays behind whatever its scale put in front */
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
         if (in->invisible || in->sky) continue;

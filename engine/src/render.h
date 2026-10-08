@@ -22,6 +22,8 @@ void render_skinned(const Model *md, const float world[16], const float (*drw)[1
 void render_text(float x, float y, const char *s);
 /* Finish the frame (VIF chain, HUD, wait for the GS) and flip; returns EE cycles spent before the vsync wait. */
 u32 render_end(void);
+/* Depth reset to far over the screen (after the sky): later draws always cover what is there */
+void render_clear_depth(void);
 u32 render_tris_drawn(void);
 /* Texture cache counters since boot: uploads (misses), textures that found no GS memory, chains waited on for room. */
 void render_tex_stats(u32 *misses, u32 *overflow, u32 *syncs);

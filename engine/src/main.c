@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "audio.h"
 #include "blob.h"
 #include "camera.h"
 #include "game.h"
@@ -422,6 +423,7 @@ static void ms(char *out, int n, const char *label, u32 c)
 int main(void)
 {
     load_modules();
+    audio_init();
     render_init();
     pad_init();
 #ifdef PACKS
@@ -438,6 +440,10 @@ int main(void)
     render_load_textures(&scene, 0, 0);
     game_init(&scene, blob);
     mem_mark(&base_mark);
+#ifndef MUSIC
+#define MUSIC "SMG_galaxy01_strm" /* ponytail: one track for every galaxy until the stage -> BGM table is known */
+#endif
+    audio_music("host:music/" MUSIC ".pcm");
     pend_start(scene_start(&scene)->zone);
     pend_step(0xFFFFFFFF);
     pend_commit(&scene);
@@ -617,6 +623,7 @@ int main(void)
         }
 #endif
         stream_update(&scene);
+        audio_update();
 #endif
         u32 t1 = cycles();
         game_draw();

@@ -226,31 +226,111 @@ def material_tex(b, mat3, m, tex1=None):
     return best
 
 
-def material_tint(b, mat3, m, tex1, tex):
-    """(dark, bright) RGB a greyscale texture is coloured with, or None. SMG often lerps from konst colour 0 to TEV
-    colour 0 by a greyscale texture's intensity (SummerSky: blue (0, 35, 157) to white clouds). ponytail: that one
-    TEV pattern assumed whenever the texture is I4 / I8 / IA4 / IA8 and konst 0 is not white; no TEV evaluation."""
-    if tex1 is None or b[tex1 + u32(b, tex1 + 0x0C) + 0x20 * tex] > 3:
-        return None
+KSEL_FRAC = [1.0, 7 / 8, 6 / 8, 5 / 8, 4 / 8, 3 / 8, 2 / 8, 1 / 8]
+
+
+def tev(b, mat3, m, tex1, texs, base=None):
+    """Evaluate material m's TEV stages (GX: d op (a (1 - c) + b c), bias, scale, clamp, into PREV / C0-C2) ->
+    RGBA float array in 0..1: per texel of texture `base` (TEX1 index; every stage samples its own texture resized to
+    it, as if all shared the UVs), or one colour (shape (4,)) when base is None (texture inputs read 1).
+    MAT3 entry: tev stage count via 0x58[e+4], orders u16 @0xBC (-> {coord, map, channel}), stages u16 @0xE4 (-> 20 B:
+    colour a b c d op bias scale clamp reg @1-9, alpha @10-18), konst colours u16 @0x94 (-> RGBA8 table 0x54), konst
+    selectors u8 @0x9C (colour) / @0xAC (alpha), TEV colours u16 @0xDC (-> RGBA S16 table 0x50: C0, C1, C2, PREV),
+    material colour u16 @8 (-> 0x20) for the rasterized colour. ponytail: no lighting (RAS = material colour), every
+    stage's texture at the base texture's UVs, swap tables and indirect stages ignored."""
     off = lambda k: mat3 + u32(b, mat3 + k)
     e = off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C
-    k0, c0 = u16(b, e + 0x94), u16(b, e + 0xDC)
-    if k0 == 0xFFFF:
-        return None
-    dark = tuple(b[off(0x54) + 4 * k0 + i] for i in range(3))
-    if dark == (255, 255, 255):
-        return None
-    bright = (255, 255, 255)
-    if c0 != 0xFFFF:
-        bright = tuple(max(0, min(255, v)) for v in struct.unpack_from(">3h", b, off(0x50) + 8 * c0))
-    return dark, bright
+    ns = b[off(0x58) + b[e + 4]]
+    shape = texs[base]["rgba"].shape[:2] if base is not None else ()
+
+    def col(table, idx, signed):
+        if idx == 0xFFFF:
+            return np.zeros(4, np.float32)
+        if signed:
+            return np.array(struct.unpack_from(">4h", b, off(table) + 8 * idx), np.float32) / 255.0
+        return np.frombuffer(b, np.uint8, 4, off(table) + 4 * idx).astype(np.float32) / 255.0
+
+    regs = [col(0x50, u16(b, e + 0xDC + 2 * k), True) for k in range(4)]   # C0, C1, C2, PREV
+    regs = [regs[3], regs[0], regs[1], regs[2]]                              # by GX output reg: PREV, C0, C1, C2
+    regs = [np.broadcast_to(r, shape + (4,)).copy() for r in regs]
+    konst = [col(0x54, u16(b, e + 0x94 + 2 * k), False) for k in range(4)]
+    mc = u16(b, e + 8)
+    ras = col(0x20, mc, False) if mc != 0xFFFF and not vertex_colour(b, mat3, m) else np.ones(4, np.float32)
+    tex_cache = {}
+
+    def texel(stage):
+        oi = u16(b, e + 0xBC + 2 * stage)
+        tmap = b[off(0x4C) + 4 * oi + 1] if oi != 0xFFFF else 0xFF
+        if tmap == 0xFF or base is None:
+            return np.ones(shape + (4,), np.float32)
+        t = u16(b, off(0x48) + 2 * u16(b, e + 0x84 + 2 * tmap))
+        if t not in tex_cache:
+            x = texs[t]["rgba"] if t < len(texs) else texs[base]["rgba"]
+            if x.shape[:2] != shape:  # nearest resize to the base texture's size
+                ys = np.arange(shape[0]) * x.shape[0] // shape[0]
+                xs = np.arange(shape[1]) * x.shape[1] // shape[1]
+                x = x[ys][:, xs]
+            tex_cache[t] = x.astype(np.float32) / 255.0
+        return tex_cache[t]
+
+    def ksel(sel, alpha):
+        if sel < 8:
+            return np.full(4, KSEL_FRAC[sel], np.float32)
+        if 0x0C <= sel <= 0x0F and not alpha:
+            return konst[sel - 0x0C]
+        if 0x10 <= sel <= 0x1F:
+            c = konst[(sel - 0x10) % 4][(sel - 0x10) // 4]
+            return np.full(4, c, np.float32)
+        return konst[0]
+
+    one = np.ones(shape + (4,), np.float32)
+    for s in range(ns):
+        st = b[off(0x5C) + 20 * u16(b, e + 0xE4 + 2 * s):][:20]
+        tx = texel(s)
+        kc, ka = ksel(b[e + 0x9C + s], False), ksel(b[e + 0xAC + s], True)
+        prev, c0, c1, c2 = regs
+        cin = [prev[..., :3], prev[..., 3:4], c0[..., :3], c0[..., 3:4], c1[..., :3], c1[..., 3:4], c2[..., :3],
+               c2[..., 3:4], tx[..., :3], tx[..., 3:4], ras[:3] * one[..., :3], ras[3] * one[..., 3:4],
+               one[..., :3], 0.5 * one[..., :3], kc[:3] * one[..., :3], 0 * one[..., :3]]
+        ain = [prev[..., 3], c0[..., 3], c1[..., 3], c2[..., 3], tx[..., 3], ras[3] * one[..., 3], ka[3] * one[..., 3],
+               0 * one[..., 3]]
+
+        def run(a, bb, c, d, op, bias, scale, clamp):
+            v = a * (1 - c) + bb * c
+            v = d - v if op == 1 else d + v
+            v = v + (0.5 if bias == 1 else -0.5 if bias == 2 else 0.0)
+            v = v * (2.0 if scale == 1 else 4.0 if scale == 2 else 0.5 if scale == 3 else 1.0)
+            return np.clip(v, 0, 1) if clamp else np.clip(v, -4, 4)
+
+        pick = lambda lst, i: lst[i] if i < len(lst) else lst[-1]
+        rgb = run(*(np.broadcast_to(pick(cin, st[k]), shape + (3,)) for k in range(1, 5)), st[5], st[6], st[7], st[8])
+        al = run(*(np.broadcast_to(pick(ain, st[k]), shape) for k in range(10, 14)), st[14], st[15], st[16], st[17])
+        out = regs[st[9] & 3].copy()
+        out[..., :3] = rgb
+        regs[st[18] & 3][..., 3] = al
+        regs[st[9] & 3][..., :3] = out[..., :3]
+    return np.clip(regs[0], 0, 1)
 
 
-def tint(rgba, dark, bright):
-    """greyscale RGBA -> dark + (bright - dark) * intensity, alpha kept"""
-    out = rgba.copy()
-    i = rgba[..., 0:1].astype(np.float32) / 255.0
-    out[..., :3] = (np.array(dark, np.float32) + (np.array(bright, np.float32) - np.array(dark, np.float32)) * i).astype(np.uint8)
+def vertex_colour(b, mat3, m):
+    """True when material m's colour channel 0 is unlit and takes the vertex colour (CLR0) as its material colour
+    (the converter then puts CLR0 in the vertex colours; tev reads RAS as 1). MAT3: channel indices u16 @0x0C ->
+    table 0x28 of 8 B {lighting on, material colour source (1 = vertex), ...}."""
+    off = lambda k: mat3 + u32(b, mat3 + k)
+    e = off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C
+    ci = u16(b, e + 0x0C)
+    return ci != 0xFFFF and b[off(0x28) + 8 * ci] == 0 and b[off(0x28) + 8 * ci + 1] == 1
+
+
+def bake(b, mat3, m, tex1, texs, t):
+    """Texture t with material m's TEV baked in (tev), RGBA8, keeping the texture's own alpha (cut-outs; the TEV alpha
+    often reads lit channels). ponytail: a result near white where the texture is not (RAS from lit or second colour
+    channels, e.g. Coin's env-map stages) falls back to the plain texture; real lighting would fix those."""
+    src = texs[t]["rgba"]
+    out = (tev(b, mat3, m, tex1, texs, t) * 255 + 0.5).astype(np.uint8)
+    out[..., 3] = src[..., 3]
+    if out[..., :3].mean() > 240 and src[..., :3].mean() < 200:
+        return src
     return out
 
 
@@ -302,6 +382,25 @@ def selftest():
     struct.pack_into(">2f", e, 0x10, 2.0, 2.0)
     m = tex_mtx(bytes(e), 0)
     assert abs(m[0][0] - 2) < 1e-6 and abs(m[0][2]) < 1e-6 and abs(m[1][1] - 2) < 1e-6 and abs(m[1][2] + 1) < 1e-6, m
+    # TEV: one stage, colour = KONST (selector K0) * TEXC; texture [black, white] -> [0, konst]; no texture -> konst
+    mb = bytearray(0x400)
+    for k, o in ((0x0C, 0x100), (0x10, 0x300), (0x58, 0x310), (0x4C, 0x320), (0x48, 0x330), (0x54, 0x340),
+                 (0x50, 0x350), (0x20, 0x360), (0x5C, 0x370)):
+        struct.pack_into(">I", mb, k, o)
+    mb[0x100:0x24C] = bytes([255]) * 0x14C
+    mb[0x104], mb[0x310], mb[0x19C] = 0, 1, 0x0C
+    for f in (0x08, 0x84, 0x94, 0xBC, 0xE4):
+        struct.pack_into(">H", mb, 0x100 + f, 0)
+    struct.pack_into(">H", mb, 0x300, 0)
+    mb[0x320:0x324] = bytes((0, 0, 4, 255))
+    mb[0x340:0x344] = bytes((0, 35, 157, 255))
+    mb[0x360:0x364] = bytes([255]) * 4
+    mb[0x370:0x384] = bytes.fromhex("ff0f0e080f0000000100070707070000000100ff")
+    tx = np.zeros((1, 2, 4), np.uint8)
+    tx[0, 1] = 255
+    r = tev(bytes(mb), 0, 0, None, [{"rgba": tx}], 0)
+    assert np.allclose(r[0, 0, :3], 0) and np.allclose(r[0, 1, :3] * 255, (0, 35, 157)), r
+    assert np.allclose(tev(bytes(mb), 0, 0, None, [])[:3] * 255, (0, 35, 157))
     print("selftest ok")
 
 

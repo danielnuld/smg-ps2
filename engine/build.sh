@@ -31,6 +31,7 @@ W=/root/smg-engine
 rm -rf $W && mkdir -p $W/data
 cp -r /mnt/d/smg-ps2/engine/src /mnt/d/smg-ps2/engine/Makefile $W/
 cp ${2:-/mnt/d/smg-ps2/out/slice/hd2.bin} $W/data/slice.bin
+cp $PS2SDK/iop/irx/libsd.irx $PS2SDK/iop/irx/audsrv.irx $W/data/
 if [ -n "$3" ]; then echo "#define PACKS \"$3\"" > $W/src/packs_cfg.h; else : > $W/src/packs_cfg.h; fi
 cd $W && B=${1#plain}; F=; [ "$B" = bench ] && F=-DBENCH; [ "$B" = slope ] && F=-DSLOPE_TEST; [ "$B" = zone ] && F=-DZONE_TEST; [ "$B" = box ] && F=-DBOX_TEST; [ "$B" = collapse ] && F=-DCOLLAPSE_TEST; [ "$B" = hazard ] && F=-DHAZARD_TEST; [ "$B" = item ] && F=-DITEM_TEST; [ "$B" = spin ] && F=-DSPIN_TEST; [ "$B" = pipe ] && F=-DPIPE_TEST; [ "$B" = hip ] && F=-DHIP_TEST; [ "$B" = flip ] && F=-DFLIP_TEST; [ "$B" = cover ] && F=-DCOVER_TEST; [ "$B" = enemy ] && F=-DENEMY_TEST; [ "$B" = rotor ] && F=-DROTOR_TEST; [ "$B" = rail ] && F=-DRAIL_TEST; [ "$B" = overview ] && F=-DOVERVIEW_TEST; [ "$4" = disc ] && F="$F -DDISC"; make -s EXTRA="$F" 2>&1 | grep -v "^$" || true
 test -f slice.elf

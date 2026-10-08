@@ -42,6 +42,13 @@ Last updated 2026-10-07. Detail and numbers: `docs/phase2-report.md`; tasks: `op
   - blending: each VUMD group carries its material's blend (MAT3 blend mode: opaque / blended / additive, z write,
     material alpha); blended groups get their own GS state and are drawn after the opaque pass, farthest instance
     first. `NO_DRAW` is down to SphereAir (its glow is a TEV rim effect);
+  - materials: the converter evaluates each material's TEV stages (`tools/tex.py` `tev`, `bake`) and bakes them into
+    its texture; untextured groups take the TEV's constant colour. ponytail: no lighting (RAS = material colour),
+    every stage at the base texture's UVs; near-white results fall back to the plain texture (Coin);
+  - skies (Sky kind and VROrbit / VRDarkSpace / VRSandwichSun) drawn first at the camera, then `render_clear_depth`;
+    projected sky textures get spherical UVs (`SKY_ARCS`);
+  - music: `tools/music.py` (AST -> `out/music/*.pcm`), streamed through audsrv (`engine/src/audio.c`), looping;
+    one track for every galaxy so far (`MUSIC` in main.c);
   - Mario: slopes as in Petari (confirmed by the user), hip drop, life 3 (6 after a life-up), a coin gives one back,
     lives 4, a miss (0 life, fell into space, black hole) costs one and restarts at the start; HUD LIFE / STARS / LIVES.
 - Every other placed class with a model is drawn and collided as a static instance.
@@ -66,6 +73,7 @@ there needs the embedded blob and every pack rebuilt.
 
 ## Next
 
+0. Look: baked lighting per vertex, effects (sparkles, stars), sound effects (AFC -> ADPCM), music per galaxy.
 1. More switch sources and users: IronCannonLauncherPoint, StarPieceSpot, Kinopio / Tico; spawned power stars
    (FlipPanelObserver arg7, requestAppearPowerStar); RestartCube (checkpoints).
 2. Lumas / NPCs (static models today).
