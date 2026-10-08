@@ -49,7 +49,8 @@ Last updated 2026-10-08. Detail and numbers: `docs/phase2-report.md`; tasks: `op
     units): the 448-line FIELD setup bobbed one line per frame in PCSX2 (each buffer always on the same field). Frees
     ~1.7 MB of GS memory (two colour buffers + z at half height) for the texture cache; `vram_need.py`'s 720 KB budget
     can grow;
-  - mipmaps: PSMT4 textures carry up to 3 levels (box-filtered onto the base palette, `tex.to_ps2`), the GS picks
+  - mipmaps: PSMT4 textures carry up to 3 levels (box-filtered; one 16-colour palette quantized from the base and
+    its mips, level k weighted 2^k, so the mips keep in-between tones: `tex.to_ps2`; confirmed by the user), the GS picks
     them by depth: K per texture from its texel density (`slice.lod_k`) plus `LOD_BIAS` (2 levels: surfaces seen
     edge-on), trilinear; rotating discs in BattleShip shimmer about half as much. 136 / 136 fit the 2416 KB cache;
   - lighting: lit materials (colour channel 0 lighting on: WoodBox, Kuribo...) get smooth per-vertex shading from

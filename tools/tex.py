@@ -141,20 +141,32 @@ def to_ps2(rgba, wrap_s, wrap_t, hi=False):
         rgb = q.getpalette() or []
         pal = np.zeros((nc, 4), np.uint32)
         pal[:len(rgb) // 3, :3] = np.array(rgb, np.uint32).reshape(-1, 3)[:nc]
-    else:
+    elif hi:
         q = img.quantize(nc, method=Image.Quantize.FASTOCTREE)
+    else:
+        # PSMT4: the base and its mips (levels 1-3 down to 8 texels, GS MIPTBP1, box-filtered) share one palette,
+        # quantized from all of them (level k weighted 2^k) so the mips keep the in-between tones they average to
+        levels = [img]
+        while len(levels) < 4 and min(w, h) >> len(levels) >= 8:
+            levels.append(levels[-1].resize((levels[-1].width // 2, levels[-1].height // 2), Image.Resampling.BOX))
+        px = [np.asarray(lv).reshape(-1, 4) for lv in levels]
+        allpx = np.concatenate([np.tile(p, (1 << k, 1)) for k, p in enumerate(px)])
+        q = Image.fromarray(allpx.reshape(1, -1, 4), "RGBA").quantize(nc, method=Image.Quantize.FASTOCTREE)
+    if not hi or alpha:
         pal = np.array((q.getpalette(rawmode="RGBA") or [])[:4 * nc] + [0] * 4 * nc, np.uint32)[:4 * nc].reshape(nc, 4)
     idx = np.asarray(q, np.uint8)
     if alpha == 0:
         pal[:, 3] = 255
-    mips = []  # PSMT4 levels 1-3 down to 8 texels (GS MIPTBP1), box-filtered, mapped onto the base palette
+    mips = []
     if not hi:
-        p255, lv = pal.astype(np.int64), img
-        while len(mips) < 3 and min(w, h) >> (len(mips) + 1) >= 8:
-            lv = lv.resize((lv.width // 2, lv.height // 2), Image.Resampling.BOX)
-            px = np.asarray(lv).astype(np.int64).reshape(-1, 1, 4)
-            li = ((px - p255[None]) ** 2).sum(2).argmin(1).astype(np.uint8).reshape(lv.height, lv.width)
-            mips.append((li[:, 0::2] | li[:, 1::2] << 4).astype(np.uint8).tobytes())
+        flat, o = idx.reshape(-1), 0
+        for k, (lv, p) in enumerate(zip(levels, px)):
+            li = flat[o:o + len(p)].reshape(lv.height, lv.width)
+            o += len(p) << k
+            if k:
+                mips.append((li[:, 0::2] | li[:, 1::2] << 4).astype(np.uint8).tobytes())
+            else:
+                idx = li
     pal[:, 3] = (pal[:, 3] * 128 + 127) // 255
     clut = (pal[:, 0] | pal[:, 1] << 8 | pal[:, 2] << 16 | pal[:, 3] << 24).astype("<u4")
     if hi:
@@ -383,6 +395,12 @@ def material_blend(b, mat3, m):
 
 
 def selftest():
+    # 1-texel red / black stripes: 3 mips, level 1 one in-between red from the shared palette, the base keeps both
+    st = np.zeros((64, 64, 4), np.uint8)
+    st[..., 3], st[::2, :, 0] = 255, 255
+    t = to_ps2(st, 1, 1)
+    red = lambda pix: {int(np.frombuffer(t["clut"], "<u4")[i]) & 255 for i in set(np.frombuffer(pix, np.uint8) & 15)}
+    assert len(t["mips"]) == 3 and red(t["pix"]) == {0, 255} and red(t["mips"][0]) == {128}, (red(t["pix"]), red(t["mips"][0]))
     # RGB565 4x4 block: all red -> (255, 0, 0, 255)
     assert decode(b"\xf8\x00" * 16, 4, 4, 4)[1, 2].tolist() == [255, 0, 0, 255]
     # I8 8x4 block of 0..31 in block order -> row 1, col 0 is byte 8
