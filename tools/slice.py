@@ -19,7 +19,8 @@ Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
           Everything else placed in a zone is already in world space (to_world); CAMS stays zone-local
   'ZPAR'  u32 n, n × s32 parent zone (-1 for the main stage): the zone chain for streaming
   'OBJS'  u32 n, n × ROW;  'STRT' same layout (Mario start points)
-          ROW = {u16 type, u16 zone, s32 l_id, s32 path_id, f32 pos[3], f32 rot[3], f32 scale[3], s32 arg[8]}  (80 B)
+          ROW = {u16 type, u16 zone, s32 l_id, s32 path_id, f32 pos[3], f32 rot[3], f32 scale[3], s32 arg[8],
+                 s16 sw[5] (SW_FIELDS, -1 none), u16 pad}  (92 B)
   'PATH'  u32 n, n × {u16 zone, u16 closed, s32 id, u32 npts, f32 pts[npts][3]}
   'MODL'  u32 n, n × {char[32] name, f32 bounding radius}
   'KCL '  u32 n, n × {char[32] model, u32 size, bytes[size] (little-endian KCL, kcl_to_le), pad to 4}
@@ -51,8 +52,11 @@ SKINNED = ("Mario",)
 NO_DRAW = ("SphereAir", "VROrbit", "BrightSun")   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
 OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup", "PurpleRailCoin", "CircleCoinGroup",
              "RailCoin", "SuperSpinDriver", "StarPieceGroup")
+SW_FIELDS = ("SW_APPEAR", "SW_A", "SW_B", "SW_DEAD", "SW_SLEEP")  # stage switch ids: < 1000 the zone's, else global
 ROW_FIELDS = ("pos_x", "pos_y", "pos_z", "dir_x", "dir_y", "dir_z", "scale_x", "scale_y", "scale_z")
-ROW = struct.Struct("<HHii9f8i")
+ROW = struct.Struct("<HHii9f8i5hxx")
+# model-less classes the engine runs (stage switch logic): kept in OBJS like the classes with a model
+LOGIC = ("TimerSwitch", "SwitchSynchronizerReverse", "GroupSwitchWatcher")
 
 
 def col(b, field, n, default=0):
@@ -91,13 +95,15 @@ def rows(b):
     args = [col(b, f"Obj_arg{i}", n, -1) for i in range(8)]
     lid = col(b, "l_id", n, -1)
     path = [v - 0x10000 if 0x8000 <= v < 0x10000 else v for v in col(b, "CommonPath_ID", n, -1)]  # SHORT, unsigned in bcsv_column
+    sw = {f: int_or(b, f, n, -1) for f in SW_FIELDS}
     out = []
     for i in range(n):
         out.append(dict(name=names[i], l_id=lid[i], path=path[i], pos=[fl[f][i] for f in ROW_FIELDS[:3]],
                         rot=[fl[f][i] for f in ROW_FIELDS[3:6]], scale=[fl[f][i] or 1.0 for f in ROW_FIELDS[6:]],
                         args=[a[i] for a in args], range=(float_column(b, "Range") or [-1.0] * n)[i],
                         distant=(float_column(b, "Distant") or [None] * n)[i],
-                        priority=int_or(b, "Priority", n, 0)[i], inverse=int_or(b, "Inverse", n, 0)[i]))
+                        priority=int_or(b, "Priority", n, 0)[i], inverse=int_or(b, "Inverse", n, 0)[i],
+                        sw=[sw[f][i] for f in SW_FIELDS]))
     return out
 
 
@@ -551,11 +557,12 @@ def placement(fs, galaxy, scenario):
     planets = B.planet_table(fsp, lambda a: (fsp / "ObjectData" / f"{a}.arc").exists())
     # every class with a model on disc is kept (static until it gets a behaviour), plus gravities
     arcmap = {n: model_archive(fsp, n, planets) for n in {o["name"] for o in objs}}
-    keep = [o for o in objs if arcmap[o["name"]] or "Gravity" in o["name"]]
+    keep = [o for o in objs if arcmap[o["name"]] or "Gravity" in o["name"] or o["name"] in LOGIC]
     types = sorted({o["name"] for o in keep} | {s["name"] for s in starts})
     tid = {t: i for i, t in enumerate(types)}
     pack_row = lambda r: ROW.pack(tid[r["name"]], r["zone"], r["l_id"], r["path"], *r["pos"], *r["rot"], *r["scale"],
-                                  *[a if -2**31 <= a < 2**31 else -1 for a in r["args"]])
+                                  *[a if -2**31 <= a < 2**31 else -1 for a in r["args"]],
+                                  *[v if -2**15 <= v < 2**15 else -1 for v in r.get("sw", [-1] * 5)])
     out = [chunk(b"TYPE", struct.pack("<I", len(types)) + b"".join(name32(t) for t in types)),
            chunk(b"ZONE", struct.pack("<I", len(zones)) + b"".join(
                name32(z["name"]) + struct.pack("<6f", *t, *mtx_euler(r)) for z, (r, t) in zip(zones, zworld))),

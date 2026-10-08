@@ -15,7 +15,8 @@
 /* Gameplay subset of HeavensDoorGalaxy scenario 2, data-oriented: one compact array per type, sized at load,
  * no allocation per object. Behaviour follows Petari where noted; differences are listed in docs/phase1-report.md. */
 
-typedef struct { V3 pos; int alive; } Pickup;                    /* 16 B: Coin, PurpleCoin, StarPiece */
+typedef struct { V3 pos; short alive, row; } Pickup;             /* 16 B: Coin, PurpleCoin, StarPiece; row: the
+                                                                  * placement it came from, -1 a drop */
 typedef struct { V3 pos, vel, up; int state, timer; } Kuribo;     /* 44 B -> 48 with alignment */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
 
@@ -47,6 +48,7 @@ typedef struct {
 typedef struct {
     V3 pos;
     int flight, cool;
+    int row;          /* placement row (appear switch) */
     int start;        /* ShootStart frames: 45 SuperSpinDriver, 20 SpinDriver */
     const float *pts; /* NULL: no rail, Mario leaves with `kick` */
     u32 npts;
@@ -123,7 +125,37 @@ typedef struct {
     int hazard;      /* 1 SpaceMine (explodes on touch), 2 NeedlePlant (pricks on touch), 0 none */
     int item;        /* touch to take: ITEM_STAR, ITEM_ONEUP, ITEM_LIFEUP; 0 none */
 } Inst;
-enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP };
+enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN };
+#define MAX_ZONES 64
+
+/* Stage switches (Petari StageSwitch.cpp): ids below 1000 belong to the row's zone (128 each), the rest are the
+ * galaxy's (id - 1000). One bit each, all off at the start; sw_changed makes the frame rebind what appear switches
+ * show. ponytail: no SW_SLEEP, switches are not saved */
+#define SW_PER_ZONE 128
+static unsigned char sw_bits[(MAX_ZONES + 1) * SW_PER_ZONE / 8];
+static int sw_changed;
+
+static int sw_bit(const Row *r, int k, int add)
+{
+    int id = r->sw[k], n = (id >= 1000 ? id - 1000 : id) + add;
+    if (id < 0 || n >= SW_PER_ZONE || r->zone >= MAX_ZONES) return -1;
+    return (id >= 1000 ? 0 : (r->zone + 1) * SW_PER_ZONE) + n;
+}
+
+static int sw_on_n(const Row *r, int k, int add)
+{
+    int b = sw_bit(r, k, add);
+    return b >= 0 && (sw_bits[b >> 3] >> (b & 7) & 1);
+}
+#define sw_on(r, k) sw_on_n(r, k, 0)
+
+static void sw_set(const Row *r, int k, int on)
+{
+    int b = sw_bit(r, k, 0);
+    if (b < 0 || (sw_bits[b >> 3] >> (b & 7) & 1) == on) return;
+    sw_bits[b >> 3] ^= 1 << (b & 7);
+    sw_changed = 1;
+}
 static unsigned short *row_step; /* per OBJS row: CollapsePlane frames since Mario stood on it (0: not yet) */
 static int hip_hit, hip_inst;   /* Mario landed a hip drop this frame, on instance hip_inst (-1 none) */
 static int ground_inst = -1;     /* instance under the last collide_n's ground normal, -1 none */
@@ -155,6 +187,26 @@ static int breakable(const char *name, const Row *r, int *coins, int *pieces)
     return 0;
 }
 static unsigned char *row_dead; /* per OBJS row: broken, never comes back (zone swaps rebind from the rows) */
+
+/* A row with an appear switch is out only while it is on (syncStageSwitchAppear); a dead row never again */
+static int row_shown(int i)
+{
+    const Row *r = &sc->objs[i];
+    return !row_dead[i] && (r->sw[SW_APPEAR] < 0 || sw_on(r, SW_APPEAR));
+}
+
+/* The row's object is gone for good: its dead switch goes on */
+static void row_kill(int i)
+{
+    row_dead[i] = 1;
+    sw_set(&sc->objs[i], SW_DEAD, 1);
+}
+
+/* Coins (Coin.cpp, CoinGroup.cpp) also go when their SW_B turns on */
+static int pickup_shown(const Pickup *p)
+{
+    return p->alive && (p->row < 0 || (row_shown(p->row) && !sw_on(&sc->objs[p->row], SW_B)));
+}
 static int box_pieces;          /* star pieces WoodBoxes hold (arg2) */
 static Inst *insts;
 static int ninsts;
@@ -189,7 +241,12 @@ static const Model *m_erail;
  * pipes rising, no camera), no water pipes' stream */
 typedef struct { V3 top, up, front; float hf, vf; int id, partner, zone; } Pipe;
 static Pipe *pipes;
-static int npipes, pipe_wait, pipe_zone = -1; /* pipe_zone: the exit pipe's zone, wanted in full */
+static int npipes, pipe_wait, pipe_zone = -1;
+/* Switch logic rows (no model): TimerSwitch, SwitchSynchronizerReverse, GroupSwitchWatcher */
+enum { LOGIC_TIMER = 1, LOGIC_REVERSE, LOGIC_GROUP };
+typedef struct { int row, kind; } Logic;
+static Logic *logic;
+static int nlogic; /* pipe_zone: the exit pipe's zone, wanted in full */
 static Launch *launches;
 static int nlaunches;
 static int ground_flips, slip_frames;
@@ -497,6 +554,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     game_rebind();
     for (u32 i = 0; i < s->nobjs; i++) {
         const Row *r = &s->objs[i];
+        int c0 = ic, p0 = ip, s0 = is;
         if (r->type == t_coin) { coins[ic].pos = row_pos(r); coins[ic++].alive = 1; }
         else if (r->type == t_pc) { purple[ip].pos = row_pos(r); purple[ip++].alive = 1; }
         else if (r->type == t_piece) { pieces[is].pos = row_pos(r); pieces[is++].alive = 1; }
@@ -509,6 +567,9 @@ void game_init(const Scene *s, const unsigned char *blob)
             ip += coin_group(purple + ip, r, blob);
         else if (r->type == t_gcircle || r->type == t_grail)
             ic += coin_group(coins + ic, r, blob);
+        for (int k = c0; k < ic; k++) coins[k].row = i;
+        for (int k = p0; k < ip; k++) purple[k].row = i;
+        for (int k = s0; k < is; k++) pieces[k].row = i;
     }
     npurple = ip;
     ncoins = ic; /* box coins and star pieces are appended as boxes break */
@@ -536,6 +597,7 @@ void game_init(const Scene *s, const unsigned char *blob)
             L->kick = vmul(vcross(z, x), r->arg[0] > 0 ? (float)r->arg[0] : 40.0f);
         }
         L->start = super ? 45 : 20;
+        L->row = i;
         nlaunches++;
     }
     int t_erail = scene_type(s, "ElectricRail");
@@ -576,6 +638,15 @@ void game_init(const Scene *s, const unsigned char *blob)
         for (int k = 0; k < npipes; k++) /* EarthenPipeMediator::entry: the first pipe with the same id */
             if (pipes[k].id == p->id && pipes[k].partner < 0) { pipes[k].partner = npipes; p->partner = k; break; }
         npipes++;
+    }
+    logic = mem_alloc(MEM_OBJECTS, (count_type("TimerSwitch", 0) + count_type("SwitchSynchronizerReverse", 0) +
+                                    count_type("GroupSwitchWatcher", 0) + 1) * sizeof(Logic));
+    int t_timer = scene_type(s, "TimerSwitch"), t_rev = scene_type(s, "SwitchSynchronizerReverse"),
+        t_group = scene_type(s, "GroupSwitchWatcher");
+    for (u32 i = 0; i < s->nobjs; i++) {
+        int t = s->objs[i].type;
+        int k = t == t_timer ? LOGIC_TIMER : t == t_rev ? LOGIC_REVERSE : t == t_group ? LOGIC_GROUP : 0;
+        if (k) { logic[nlogic].row = i; logic[nlogic++].kind = k; }
     }
     const Row *st = scene_start(s);
     start_pos = row_pos(st);
@@ -639,7 +710,7 @@ void game_rebind(void)
             continue;
         const char *name = s->types + 32 * r->type;
         const Model *md = scene_model(s, name);
-        if (!md || (row_dead && row_dead[i])) continue;
+        if (!md || (row_dead && !row_shown(i))) continue;
         Inst *in = &insts[ninsts++];
         in->md = md;
         in->row = i;
@@ -649,7 +720,7 @@ void game_rebind(void)
         in->hazard = strcmp(name, "SpaceMine") == 0 ? 1 : strcmp(name, "NeedlePlant") == 0 ? 2 :
                      strcmp(name, "BlackHole") == 0 ? 3 : strcmp(name, "BlackHoleCube") == 0 ? 4 : 0;
         in->item = strcmp(name, "PowerStar") == 0 ? ITEM_STAR : strcmp(name, "BenefitItemOneUp") == 0 ? ITEM_ONEUP :
-                   strcmp(name, "BenefitItemLifeUp") == 0 ? ITEM_LIFEUP : 0;
+                   strcmp(name, "BenefitItemLifeUp") == 0 ? ITEM_LIFEUP : strcmp(name, "QuestionCoin") == 0 ? ITEM_QCOIN : 0;
         in->kcl = scene_kcl(s, name);
         in->zone = r->zone;
         mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
@@ -667,7 +738,6 @@ void game_rebind(void)
 
 /* Zone spheres for streaming: every placement row of the zone (centre of their box, farthest + 500), grown to cover
  * each model of the zone once one is bound (game_rebind). Zones with no planet (objects only) are found too. */
-#define MAX_ZONES 64
 static V3 zone_c[MAX_ZONES];
 static float zone_r[MAX_ZONES];
 
@@ -1017,7 +1087,7 @@ static void update_mario(void)
         }
     } else if (pad_pressed(PAD_SQUARE)) { /* the spin near a launch star binds Mario (tryBind) */
         for (int i = 0; i < nlaunches; i++)
-            if (!launches[i].cool && vlen(vsub(vadd(m->pos, vmul(m->up, BODY_RADIUS)), launches[i].pos)) < LAUNCH_BIND) {
+            if (!launches[i].cool && row_shown(launches[i].row) && vlen(vsub(vadd(m->pos, vmul(m->up, BODY_RADIUS)), launches[i].pos)) < LAUNCH_BIND) {
                 m->launch = i; m->launch_t = 0; m->launch_from = m->pos; m->hip = 0;
                 if (mario_anim) mario_play(launches[i].start < 45 ? "spin" : "superspindriverstart", 1.0f, 0);
 #ifdef BENCH
@@ -1260,6 +1330,32 @@ static void update_kuribo(void)
 /* Breakables (breakable()): Mario's spin near one, or his hip drop landing on it, breaks it; collision goes at once,
  * then its drops appear. ponytail: no upper punch, drops appear where the box was instead of popping out, a broken
  * HipDropRock is gone (no wreck left), no star piece on a switch kill */
+static void break_inst(const Inst *in, int drops)
+{
+    V3 p = v3(in->m[12], in->m[13], in->m[14]);
+    const Row *r = &sc->objs[in->row];
+    int n, sp;
+    breakable(sc->types + 32 * r->type, r, &n, &sp);
+    if (!drops) n = sp = 0;
+    V3 up = up_at(p, mario->up);
+    for (int k = 0; k < n; k++) { /* a small ring above the box */
+        float a = 6.2831853f * k / (n > 0 ? n : 1);
+        V3 side = vnorm(vtangent(v3(cosf(a), 0.3f, sinf(a)), up));
+        coins[ncoins].pos = vadd(p, vadd(vmul(up, 80.0f), vmul(side, n > 1 ? 70.0f : 0.0f)));
+        coins[ncoins].row = -1;
+        coins[ncoins++].alive = 1;
+    }
+    for (int k = 0; k < sp; k++) { /* WoodBox arg2: star pieces */
+        float a = 6.2831853f * k / sp + 0.5f;
+        V3 side = vnorm(vtangent(v3(cosf(a), 0.3f, sinf(a)), up));
+        pieces[npieces].pos = vadd(p, vadd(vmul(up, 120.0f), vmul(side, 90.0f)));
+        pieces[npieces].row = -1;
+        pieces[npieces++].alive = 1;
+    }
+    row_kill(in->row);
+    printf("%s %d broken, %d coins, %d star pieces\n", sc->types + 32 * r->type, in->row, n, sp);
+}
+
 static void break_boxes(void)
 {
     if (mario->spin_timer <= 0 && !hip_hit)
@@ -1270,24 +1366,7 @@ static void break_boxes(void)
         if (!in->breaks) continue;
         V3 p = v3(in->m[12], in->m[13], in->m[14]);
         if (hip_hit ? i != hip_inst : in->breaks == 2 || vlen(vsub(c, p)) > in->reach + 120.0f) continue;
-        const Row *r = &sc->objs[in->row];
-        int n, sp;
-        breakable(sc->types + 32 * r->type, r, &n, &sp);
-        V3 up = up_at(p, mario->up);
-        for (int k = 0; k < n; k++) { /* a small ring above the box */
-            float a = 6.2831853f * k / (n > 0 ? n : 1);
-            V3 side = vnorm(vtangent(v3(cosf(a), 0.3f, sinf(a)), up));
-            coins[ncoins].pos = vadd(p, vadd(vmul(up, 80.0f), vmul(side, n > 1 ? 70.0f : 0.0f)));
-            coins[ncoins++].alive = 1;
-        }
-        for (int k = 0; k < sp; k++) { /* WoodBox arg2: star pieces */
-            float a = 6.2831853f * k / sp + 0.5f;
-            V3 side = vnorm(vtangent(v3(cosf(a), 0.3f, sinf(a)), up));
-            pieces[npieces].pos = vadd(p, vadd(vmul(up, 120.0f), vmul(side, 90.0f)));
-            pieces[npieces++].alive = 1;
-        }
-        row_dead[in->row] = 1;
-        printf("%s %d broken, %d coins, %d star pieces\n", sc->types + 32 * r->type, in->row, n, sp);
+        break_inst(in, 1);
         game_rebind();
         return;
     }
@@ -1340,11 +1419,48 @@ static void update_hazards(void)
         if (vlen(vsub(c, p)) > r + HIT_BODY_R) continue;
         hurt_mario(p, in->hazard == 1 ? 25.0f : 15.0f);
         if (in->hazard == 1) {
-            row_dead[in->row] = 1;
+            row_kill(in->row);
             printf("SpaceMine %d exploded\n", in->row);
             game_rebind();
             return;
         }
+    }
+}
+
+/* TimerSwitch.cpp: SW_B on starts arg0 frames, then SW_A goes on and the timer is gone. SwitchSynchronizer.cpp
+ * (Reverse): SW_A follows the opposite of SW_B. GroupSwitchWatcher.cpp: SW_A on once all (arg1 -1) or any one (arg1
+ * 0) of the arg0 switches from SW_B on are on; action arg2 -1 does it once, else SW_A follows the group. Then a
+ * changed switch rebinds the instances its appear switch shows or hides. */
+static void update_switches(void)
+{
+    for (int i = 0; i < nlogic; i++) {
+        int row = logic[i].row;
+        const Row *r = &sc->objs[row];
+        if (row_dead[row]) continue;
+        if (logic[i].kind == LOGIC_TIMER) { /* row_step: frames left + 1, 0 not started */
+            if (!row_step[row] && r->arg[0] > 0 && sw_on(r, SW_B)) row_step[row] = r->arg[0] + 1;
+            if (row_step[row] > 1 && --row_step[row] == 1) { sw_set(r, SW_A, 1); row_dead[row] = 1; }
+        } else if (logic[i].kind == LOGIC_REVERSE) {
+            sw_set(r, SW_A, !sw_on(r, SW_B));
+        } else {
+            int n = r->arg[0] > 0 ? r->arg[0] : 1, all = 1, any = 0;
+            for (int k = 0; k < n; k++) {
+                int on = sw_on_n(r, SW_B, k);
+                all &= on; any |= on;
+            }
+            int hit = r->arg[1] == 0 ? any : all;
+            if (r->arg[2] < 0) { if (hit && !sw_on(r, SW_A)) { sw_set(r, SW_A, 1); row_dead[row] = 1; } }
+            else sw_set(r, SW_A, hit);
+        }
+    }
+    if (sw_changed) {
+        sw_changed = 0;
+        for (int i = 0; i < ninsts; i++) { /* PunchBox::kill / CrystalCage::forceBreak on SW_A */
+            const Row *r = &sc->objs[insts[i].row];
+            if (insts[i].breaks && r->sw[SW_A] >= 0 && sw_on(r, SW_A) && !row_dead[insts[i].row])
+                break_inst(&insts[i], strcmp(sc->types + 32 * r->type, "PunchBox") != 0);
+        }
+        game_rebind();
     }
 }
 
@@ -1406,13 +1522,13 @@ static void update_items(void)
         Inst *in = &insts[i];
         if (!in->item) continue;
         V3 p = v3(in->m[12], in->m[13], in->m[14]);
-        if (in->item != ITEM_STAR) p = vadd(p, vmul(up_at(p, mario->up), 50.0f * in->s));
-        float r = (in->item == ITEM_STAR ? 75.0f : 50.0f) * in->s;
+        float r = (in->item == ITEM_STAR ? 75.0f : in->item == ITEM_QCOIN ? 150.0f : 50.0f) * in->s;
+        if (in->item != ITEM_STAR) p = vadd(p, vmul(up_at(p, mario->up), (in->item == ITEM_QCOIN ? 210.0f : 50.0f) * in->s));
         if (vlen(vsub(c, p)) > r + HIT_BODY_R) continue;
         if (in->item == ITEM_STAR) printf("power star %d got\n", ++stars);
         else if (in->item == ITEM_ONEUP) printf("1-up, lives %d\n", ++lives);
-        else { life = max_life = 2 * MAX_LIFE; printf("life up\n"); }
-        row_dead[in->row] = 1;
+        else if (in->item == ITEM_LIFEUP) { life = max_life = 2 * MAX_LIFE; printf("life up\n"); }
+        row_kill(in->row);
         game_rebind();
         return;
     }
@@ -1422,7 +1538,7 @@ static void collect(Pickup *p, int n, float reach, int *counter)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, BODY_RADIUS));
     for (int i = 0; i < n; i++)
-        if (p[i].alive && vlen(vsub(p[i].pos, c)) < reach) { p[i].alive = 0; (*counter)++; }
+        if (pickup_shown(&p[i]) && vlen(vsub(p[i].pos, c)) < reach) { p[i].alive = 0; (*counter)++; }
 }
 
 void game_update(void)
@@ -1436,6 +1552,7 @@ void game_update(void)
     update_items();
     update_electric();
     update_pipes();
+    update_switches();
     int had = got_coins;
     collect(coins, ncoins, 100.0f, &got_coins);
     life += got_coins - had;
@@ -1472,7 +1589,7 @@ static void draw_pickups(const Pickup *p, int n, const Model *md, u8 r, u8 g, u8
     float m[16];
     if (!md) return;
     for (int i = 0; i < n; i++) {
-        if (!p[i].alive) continue;
+        if (!pickup_shown(&p[i])) continue;
         V3 up = up_at(p[i].pos, v3(0, 1, 0));
         basis_matrix(m, p[i].pos, up, v3(0, 0, 1), spin_angle);
         render_model(md, m, r, g, b);
@@ -1552,6 +1669,12 @@ int game_misses(void) { return misses; }
 int game_purple(void) { return got_purple; }
 int game_purple_total(void) { return npurple; }
 int game_starpieces(void) { return got_pieces; }
+int game_pieces_out(void)
+{
+    int n = 0;
+    for (int i = 0; i < npieces; i++) n += pickup_shown(&pieces[i]);
+    return n;
+}
 int game_kuribo_alive(void)
 {
     int n = 0;

@@ -9,7 +9,10 @@ typedef struct {
     s32 l_id, path;
     float pos[3], rot[3], scale[3];
     s32 arg[8];
-} Row; /* 80 bytes, matches slice.py ROW */
+    s16 sw[5];  /* stage switches (SW_APPEAR, SW_A, SW_B, SW_DEAD, SW_SLEEP), -1 none: < 1000 the row's zone's */
+    u16 pad;
+} Row; /* 92 bytes, matches slice.py ROW */
+enum { SW_APPEAR, SW_A, SW_B, SW_DEAD, SW_SLEEP };
 
 typedef struct {
     u32 nverts;          /* 3 per triangle */

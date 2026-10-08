@@ -280,8 +280,10 @@ int main(void)
         if (frame >= 120 && frame % 60 == 0) { /* every second Mario put on the next item, until none is left */
             static int done;
             int k = done ? 0 : game_test_item();
-            if (!k && !done) printf("item test end: stars %d lives %d life %d\n", game_stars(), game_lives(), game_life());
-            else if (k) printf("item test f %u: on item kind %d\n", frame, k);
+            if (!k && !done)
+                printf("item test end: stars %d lives %d life %d, star pieces out %d\n", game_stars(), game_lives(),
+                       game_life(), game_pieces_out());
+            else if (k) printf("item test f %u: on item kind %d, star pieces out %d\n", frame, k, game_pieces_out());
             done = !k;
         }
 #endif

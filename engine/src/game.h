@@ -49,6 +49,7 @@ int game_misses(void);
 int game_purple(void);
 int game_purple_total(void);
 int game_starpieces(void);
+int game_pieces_out(void); /* star pieces out now (not taken, appear switch on) */
 int game_kuribo_alive(void);
 void game_debug(char *out, int n);
 /* EE cycles spent in KCL queries since the last reset (frame-time split) */
