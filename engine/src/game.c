@@ -133,6 +133,7 @@ typedef struct {
     int invisible;   /* InvisiblePolygonObj (InvisibleWall*): collision only, never drawn */
     int kcl_ready;   /* plants: the scene's collision is bound (set at the end of game_rebind) */
     int flip;        /* FlipPanel / FlipPanelReverse: row_step[row] holds FLIP_* bits */
+    const Model *md_flip[2]; /* its "#PanelA" ("!", turned) and "#PanelEnd" (group complete) models (slice.py EXTRA) */
     int npc;         /* talking NPC (npc_class): turns to face Mario when he is near */
     int hipsw;       /* hip drop switch: 1 PicketSwitch(Big) / HipDropSwitch (SW_A for good), 2 HipDropTimerSwitch */
     int rotor;       /* map part with a RotateSpeed: turns (rotor_matrix), carries Mario */
@@ -991,6 +992,13 @@ void game_rebind(void)
         in->firebar = strcmp(name, "FireBar") == 0;
         in->invisible = strncmp(name, "InvisibleWall", 13) == 0;
         in->flip = strcmp(name, "FlipPanel") == 0 || strcmp(name, "FlipPanelReverse") == 0;
+        if (in->flip) {
+            char v[48];
+            snprintf(v, sizeof v, "%s#PanelA", name);
+            in->md_flip[0] = scene_model(sc, v);
+            snprintf(v, sizeof v, "%s#PanelEnd", name);
+            in->md_flip[1] = scene_model(sc, v);
+        }
         in->npc = npc_class(name);
         in->sky = sky_class(name);
         in->plant = strcmp(name, "FlowerGroup") == 0 || strcmp(name, "FlowerBlueGroup") == 0 || strcmp(name, "CutBushGroup") == 0;
@@ -2531,12 +2539,12 @@ void game_draw(void)
                 continue;
             }
         }
-        if (in->flip && ((row_step[in->row] & FLIP_BACK) != (strcmp(sc->types + 32 * sc->objs[in->row].type,
-                                                                     "FlipPanelReverse") == 0))) {
-            float cm[16]; /* ponytail: turned over about its X axis instead of the PanelA / PanelB animation */
-            memcpy(cm, in->m, 64);
-            for (int j = 4; j < 11; j++) if (j != 7) cm[j] = -cm[j];
-            render_model(in->md, cm, 0x70, 0xB0, 0x60);
+        if (in->flip && in->md_flip[0]) { /* the face PanelA / PanelB / PanelEnd leave shown (ponytail: no turn) */
+            int turned = (row_step[in->row] & FLIP_BACK) != (strcmp(sc->types + 32 * sc->objs[in->row].type,
+                                                                    "FlipPanelReverse") == 0);
+            const Model *md = (row_step[in->row] & FLIP_DONE) && in->md_flip[1] ? in->md_flip[1] :
+                              turned ? in->md_flip[0] : in->md;
+            render_model(md, in->m, 0x70, 0xB0, 0x60);
             continue;
         }
         if (in->collapse && row_step[in->row]) { /* calcJointPlane: x / z scale 1 - 0.7 step / time */

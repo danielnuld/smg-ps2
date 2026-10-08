@@ -264,16 +264,35 @@ static qword_t *upload_chain;
  * 16 PSMCT32: 4 blocks, 4-aligned so they make one square), then the pixels in rows of 128 or 256. */
 #define T8(t) ((t)->psm == GS_PSM_8)
 #define TBW(t) (T8(t) && (t)->w > 128 ? 4 : 2)
-/* PSMT4 level k (0 = base): blocks in rows of 128 pixels; the mips follow the base, the CLUT comes last */
+/* Blocks a w x h image spans from its base block in a buffer `bw` pixels wide: the GS swizzles the blocks of a page
+ * (PSMT4: 128 x 128 pages of 32 x 16 blocks; PSMT8: 128 x 64 pages of 16 x 16), so a strip shorter than a page
+ * reaches further than its size says (128 x 32 PSMT4 touches blocks 0-3 and 8-11). Highest block touched + 1. */
+static const unsigned char blk4[8][4] = {{0, 2, 8, 10}, {1, 3, 9, 11}, {4, 6, 12, 14}, {5, 7, 13, 15},
+                                         {16, 18, 24, 26}, {17, 19, 25, 27}, {20, 22, 28, 30}, {21, 23, 29, 31}};
+static const unsigned char blk8[4][8] = {{0, 1, 4, 5, 8, 9, 12, 13}, {2, 3, 6, 7, 10, 11, 14, 15},
+                                         {16, 17, 20, 21, 24, 25, 28, 29}, {18, 19, 22, 23, 26, 27, 30, 31}};
+static int footprint(int t8, int w, int h, int bw)
+{
+    int bkw = t8 ? 16 : 32, bkh = 16, pw = 128, ph = t8 ? 64 : 128, top = 0;
+    for (int y = 0; y < h; y += bkh)
+        for (int x = 0; x < w; x += bkw) {
+            int page = (y / ph) * (bw / pw) + x / pw;
+            int b = t8 ? blk8[(y % ph) / bkh][(x % pw) / bkw] : blk4[(y % ph) / bkh][(x % pw) / bkw];
+            if (page * 32 + b + 1 > top) top = page * 32 + b + 1;
+        }
+    return top;
+}
+
+/* PSMT4 level k (0 = base): in a 128-pixel-wide buffer; the mips follow the base, the CLUT comes last */
 static int lvl_blocks(const TexEntry *t, int k)
 {
-    return (graph_vram_size(128, t->h >> k, GS_PSM_4, GRAPH_ALIGN_BLOCK) + 63) / 64;
+    return footprint(0, t->w >> k, t->h >> k, 128);
 }
 
 static int blocks_of(const TexEntry *t)
 {
     if (T8(t))
-        return 4 + (graph_vram_size(64 * TBW(t), t->h, GS_PSM_8, GRAPH_ALIGN_BLOCK) + 63) / 64;
+        return 4 + footprint(1, t->w, t->h, 64 * TBW(t));
     int n = 1;
     for (int k = 0; k <= t->nmip; k++)
         n += lvl_blocks(t, k);

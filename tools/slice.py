@@ -64,7 +64,9 @@ SKY_ARCS = ("VROrbit", "VRDarkSpace", "VRSandwichSun", "GalaxySky", "MilkyWaySky
             "KoopaVS1Sky", "KoopaVS2Sky", "StarrySky", "RockPlanetOrbitSky", "GreenPlanetOrbitSky")
 SKY_TILES = 8
 # second models a class draws besides its own (FireBar.cpp: FireBarBall around the FireBarCore)
-EXTRA = {"FireBar": ("FireBarBall",)}
+# extra models a class draws: a name of its own, or "#<BCK>": the class's archive with that animation's visibility
+# (FlipPanel: "?" at rest, "!" once flipped, the End face when its group is complete)
+EXTRA = {"FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd")}
 # model-less classes the engine runs (stage switch logic): kept in OBJS like the classes with a model
 LOGIC = ("TimerSwitch", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
          "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "DeathCube", "DeathSphere",
@@ -189,16 +191,39 @@ def scene(fs, galaxy, scenario):
     return act, zones, objs, starts, paths, cubes, bcams, up
 
 
-def model_groups(arc, ratio, stats=None, skinned=False):
+def hidden_joints(b, bl, files, pose=None):
+    """Joints drawn at scale 0 (a joint or a parent scaled to 0): in the bind pose, or at the last frame of the BCK
+    `pose` from the archive's files (FlipPanel: End and Exclamation hidden at rest, Question shown; PanelA shows
+    Exclamation). Static models drop the shapes on them."""
+    js = skin.joints(b, bl)
+    scales = [j["scale"] for j in js]
+    if pose:
+        bck = files[pose.lower() + ".bck"]
+        clip = anim_clip(bck)
+        scales = [p[0] for p in skin.clip_pose(clip, struct.unpack_from("<H", clip, 0)[0], None)]
+    zero = [min(abs(x) for x in sc) < 1e-6 for sc in scales]
+    out = set()
+    for i, j in enumerate(js):
+        k = i
+        while k >= 0 and not zero[k]:
+            k = js[k]["parent"]
+        if k >= 0:
+            out.add(i)
+    return out
+
+
+def model_groups(arc, ratio, stats=None, skinned=False, pose=None):
     """-> (groups [(verts, tris, uvs or None, texture or None, slots or None, colours or None, blend)], kcl bytes or
     None,
     skin chunk entry or None) for the first J3D model of an archive. texture = tex.to_ps2 dict of the group's material
     (tex.py rule); uvs per vertex after the material's texture matrix and the mirror halving. stats counts groups
     without texture / with projected coordinates. skinned: no simplification (vertices of one group sit in different
-    joint spaces), per vertex the matrix slot (PNMTXIDX / 3) and the CLR0 colour, and the SKIN entry (skin_entry)."""
+    joint spaces), per vertex the matrix slot (PNMTXIDX / 3) and the CLR0 colour, and the SKIN entry (skin_entry).
+    Static models leave out the shapes on joints hidden_joints gives (bind pose, or the BCK `pose`)."""
     groups, kcl, sk = [], None, None
     stats = stats if stats is not None else {}
-    for name, b in B.rarc_files(arc.read_bytes()):
+    files = dict(B.rarc_files(arc.read_bytes()))
+    for name, b in files.items():
         n = name.lower()
         if n.endswith((".bdl", ".bmd")) and b[:4] == b"J3D2" and not groups:
             got = []
@@ -213,8 +238,15 @@ def model_groups(arc, ratio, stats=None, skinned=False):
             texs = tex.textures(b, bl[b"TEX1"]) if b"TEX1" in bl else []
             ps2 = {}
             sky = arc.stem in SKY_ARCS or arc.stem.endswith("Sky")  # 8-bit textures (tex.to_ps2 hi)
+            hide, gtab_all, drw = set(), {}, []
+            if not skinned and b"JNT1" in bl:
+                hide = hidden_joints(b, bl, {k.lower(): v for k, v in files.items()}, pose)
+                gtab_all, drw = skin.group_tables(b, bl), skin.draw_entries(b, bl)
             for pos, tri, info in got:
                 if not tri:
+                    continue
+                ents = [drw[d] for d in gtab_all.get((info["shape"], info["group"]), []) if d < len(drw)]
+                if hide and ents and all(m is None and j in hide for j, m in ents):
                     continue
                 used = sorted(set(tri))
                 remap = {v: i for i, v in enumerate(used)}
@@ -397,10 +429,18 @@ LIGHT = (0.35, 0.75, -0.55)
 LOD_F = 224 / math.tan(math.radians(22.5)) / math.sqrt(2)
 
 
-def lod_k(verts, tris, uvs, t):
-    """GS TEX1 K (1/16 units) of a texture on these triangles: the GS takes LOD = log2(depth) + K, and texels per
-    pixel = density * depth / LOD_F, density = area-weighted texels per model unit (ponytail: instance scale 1,
-    fovy 45; one K per texture, from the first group using it)."""
+def lod_k(sums):
+    """GS TEX1 K (1/16 units) of a texture from lod_sums over every group using it: the GS takes LOD = log2(depth) +
+    K, and texels per pixel = density * depth / LOD_F, density = area-weighted texels per model unit (ponytail:
+    instance scale 1, fovy 45, one K per texture)."""
+    num, den = sums
+    if not num or not den:
+        return 0
+    return max(-2048, min(2047, round(16 * math.log2(num / den / LOD_F))))
+
+
+def lod_sums(verts, tris, uvs, t):
+    """(sum of sqrt(texel area * model area), sum of model area) over the triangles: lod_k's density terms."""
     num = den = 0.0
     for i in range(0, len(tris), 3):
         a, b, c = (verts[tris[i + k]] for k in range(3))
@@ -411,9 +451,7 @@ def lod_k(verts, tris, uvs, t):
         ua = abs((u1 - u0) * (v2 - v0) - (u2 - u0) * (v1 - v0)) / 2 * t["w"] * t["h"]
         num += math.sqrt(ua * pa)
         den += pa
-    if not num or not den:
-        return 0
-    return max(-2048, min(2047, round(16 * math.log2(num / den / LOD_F))))
+    return num, den
 
 
 def shade(n, L):
@@ -712,7 +750,10 @@ def placement(fs, galaxy, scenario):
     keep = [o for o in objs if arcmap[o["name"]] or "Gravity" in o["name"] or o["name"] in LOGIC]
     for o in keep:
         for e in EXTRA.get(o["name"], ()):
-            arcmap.setdefault(e, e if (fsp / "ObjectData" / f"{e}.arc").exists() else None)
+            if e[0] == "#":
+                arcmap.setdefault(o["name"] + e, arcmap[o["name"]] + e if arcmap[o["name"]] else None)
+            else:
+                arcmap.setdefault(e, e if (fsp / "ObjectData" / f"{e}.arc").exists() else None)
     types = sorted({o["name"] for o in keep} | {s["name"] for s in starts})
     tid = {t: i for i, t in enumerate(types)}
     pack_row = lambda r: ROW.pack(tid[r["name"]], r["zone"], r["l_id"], r["path"], *r["pos"], *r["rot"], *r["scale"],
@@ -740,7 +781,7 @@ def placement(fs, galaxy, scenario):
     per_stage = {st: [] for st in act}
     for o in keep:
         n = o["name"]
-        for m in (n,) + EXTRA.get(n, ()):
+        for m in (n,) + tuple(n + e if e[0] == "#" else e for e in EXTRA.get(n, ())):
             if arcmap[m] and m not in per_stage[names[o["zone"]]]:
                 per_stage[names[o["zone"]]].append(m)
     for st in per_stage:
@@ -764,13 +805,14 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
         payload, texts = jpa.pack(fsp)
         ptcl = [chunk(b"PTCL", payload)]
     for t, a in models:
+        a, _, pose = a.partition("#")  # "<archive>#<BCK>": the model with that animation's last-frame visibility
         arc = fsp / "ObjectData" / f"{a}.arc"
         if not arc.exists():
             continue
-        key = (a, ratio)
+        key = (a, pose, ratio)
         if key not in _model_cache:
             st = {}
-            _model_cache[key] = (model_groups(arc, ratio, st, t in SKINNED), st)
+            _model_cache[key] = (model_groups(arc, ratio, st, t in SKINNED, pose or None), st)
         (groups, kcl, sk), st = _model_cache[key]
         for k, v in st.items():
             stats[k] = stats.get(k, 0) + v
@@ -786,8 +828,9 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
             if tx:
                 key = tx["pix"] + tx["clut"] + bytes((tx["clamp_s"], tx["clamp_t"]))
                 ti = tex_id.setdefault(key, len(texts))
-                if ti == len(texts):  # its LOD from the first group that uses it
-                    texts.append(dict(tx, lod_k=lod_k(verts, tris, uvs, tx)))
+                if ti == len(texts):
+                    texts.append(dict(tx, lod=[0.0, 0.0]))
+                texts[ti]["lod"] = [a + b for a, b in zip(texts[ti]["lod"], lod_sums(verts, tris, uvs, tx))]
             nb, body = index_batches(pos, col, uv, len(tris))
             vg += struct.pack("<IHHBBB5x", len(tris), ti, nb, *bl) + body
         vumd.append(name32(t) + struct.pack("<If8x", len(groups), qs) + vg)
@@ -805,7 +848,7 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
         data += tx["clut"]
         head += struct.pack("<HHBBBBIIIBBBxh6x", tx["w"], tx["h"], tx["psm"], tx["clamp_s"], tx["clamp_t"], tx["alpha"],
                             pix, size, clut, tx["w"].bit_length() - 1, tx["h"].bit_length() - 1,
-                            len(tx.get("mips", [])), tx.get("lod_k", 0))
+                            len(tx.get("mips", [])), lod_k(tx.get("lod", (0, 0))))
     stats.update(models=stats.get("models", 0) + len(models_), kcls=stats.get("kcls", 0) + len(kcls),
                  textures=stats.get("textures", 0) + len(texts))
     return [chunk(b"TEXT", struct.pack("<I12x", len(texts)) + bytes(head) + bytes(data)),
@@ -906,9 +949,19 @@ def read_chunks(blob):
 
 def selftest():
     L = (0.0, 1.0, 0.0)
+    fp = Path(__file__).resolve().parent.parent / "data/fs/files/ObjectData/FlipPanel.arc"
+    if fp.exists():  # its three faces overlap: the one its joints show (rest: "?", PanelA: "!", PanelEnd: End)
+        faces = lambda pose: [len(g[1]) // 3 for g in model_groups(fp, 1.0, pose=pose)[0]]
+        assert len(faces(None)) == len(faces("PanelA")) == len(faces("PanelEnd")) == 2
+        assert len({faces(None)[1], faces("PanelA")[1], faces("PanelEnd")[1]}) == 3
     # a unit right triangle mapped onto a 64 x 64 texture: 64 texels per unit -> K = 16 log2(64 / LOD_F)
     sq = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
-    assert lod_k(sq, [0, 1, 2], [(0, 0), (1, 0), (0, 1)], {"w": 64, "h": 64}) == round(16 * math.log2(64 / LOD_F))
+    full = lod_sums(sq, [0, 1, 2], [(0, 0), (1, 0), (0, 1)], {"w": 64, "h": 64})
+    assert lod_k(full) == round(16 * math.log2(64 / LOD_F))
+    # a group on a corner of the same texture (FlipPanel's edge) must not drag the texture to its smallest mip
+    tiny = lod_sums(sq, [0, 1, 2], [(0, 0), (0.01, 0), (0, 0.01)], {"w": 64, "h": 64})
+    both = [x + y for x, y in zip(full, tiny)]
+    assert lod_k(tiny) < lod_k(both) < lod_k(full), (lod_k(tiny), lod_k(both), lod_k(full))
     assert shade((0, 2, 0), L) == 1.0 and abs(shade((0, -1, 0), L) - 0.35) < 1e-9 and 0.35 < shade((1, 0, 0), L) < 1
     # BCSV with name (string) + pos_x (float) + Obj_arg0 (long): 2 rows
     fields = [("name", 0, 6), ("pos_x", 4, 2), ("Obj_arg0", 8, 0)]

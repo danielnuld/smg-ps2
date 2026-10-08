@@ -292,21 +292,30 @@ def tev(b, mat3, m, tex1, texs, base=None):
     mc = u16(b, e + 8)
     ras = col(0x20, mc, False) if mc != 0xFFFF and not vertex_colour(b, mat3, m) else np.ones(4, np.float32)
     tex_cache = {}
+    order = lambda stage: u16(b, e + 0xBC + 2 * stage)
+    sampled = lambda oi: u16(b, off(0x48) + 2 * u16(b, e + 0x84 + 2 * b[off(0x4C) + 4 * oi + 1]))
+    base_coord = next((b[off(0x4C) + 4 * order(s)] for s in range(ns) if order(s) != 0xFFFF and
+                       b[off(0x4C) + 4 * order(s) + 1] != 0xFF and sampled(order(s)) == base), None)
 
     def texel(stage):
-        oi = u16(b, e + 0xBC + 2 * stage)
+        oi = order(stage)
         tmap = b[off(0x4C) + 4 * oi + 1] if oi != 0xFFFF else 0xFF
         if tmap == 0xFF or base is None:
             return np.ones(shape + (4,), np.float32)
-        t = u16(b, off(0x48) + 2 * u16(b, e + 0x84 + 2 * tmap))
-        if t not in tex_cache:
+        t = sampled(oi)
+        # a texture on other coordinates than the base's (environment maps, scrolling sparkles, projections) cannot
+        # be laid over the base's texels: its mean colour stands in
+        other = t != base and b[off(0x4C) + 4 * oi] != base_coord
+        if (t, other) not in tex_cache:
             x = texs[t]["rgba"] if t < len(texs) else texs[base]["rgba"]
-            if x.shape[:2] != shape:  # nearest resize to the base texture's size
+            if other:
+                x = np.broadcast_to(x.reshape(-1, 4).mean(0), shape + (4,))
+            elif x.shape[:2] != shape:  # nearest resize to the base texture's size
                 ys = np.arange(shape[0]) * x.shape[0] // shape[0]
                 xs = np.arange(shape[1]) * x.shape[1] // shape[1]
                 x = x[ys][:, xs]
-            tex_cache[t] = x.astype(np.float32) / 255.0
-        return tex_cache[t]
+            tex_cache[(t, other)] = x.astype(np.float32) / 255.0
+        return tex_cache[(t, other)]
 
     def ksel(sel, alpha):
         if sel < 8:
