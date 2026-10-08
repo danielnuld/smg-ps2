@@ -631,6 +631,10 @@ int main(void)
         t_logic = t1 - t0;
         t_draw = t2 - t1;
         if (t2 - t0 > worst && frame > 60) worst = t2 - t0;
+#ifdef TEASER /* videos (build.sh with TEASER=1): a plain counter instead of the debug lines */
+        snprintf(line, sizeof line, "COINS %d   STAR BITS %d   LIVES %d", game_coins(), game_starpieces(), game_lives());
+        render_text(16, 12, line);
+#else
         ms(a, sizeof a, "LOGIC", t_logic);
         ms(b, sizeof b, "DRAW", t_draw);
         ms(c, sizeof c, "GS", t_gs);
@@ -644,6 +648,7 @@ int main(void)
         snprintf(line, sizeof line, "STARS %d  LIVES %d  CAM %d %s", game_stars(), game_lives(), camera_current(),
                  camera_type_name());
         render_text(16, 40, line);
+#endif
         if ((frame & 255) == 0) {
             char dbg[128];
             game_debug(dbg, sizeof dbg);
