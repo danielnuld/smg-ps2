@@ -2430,8 +2430,10 @@ void game_draw(void)
             printf("overview: centre %d %d %d radius %d\n", (int)c.x, (int)c.y, (int)c.z, (int)rad);
         }
         float a = game_frame * 0.00175f;
-        cw = c;
-        ce = vadd(c, vmul(vnorm(v3(cosf(a), 0.55f, sinf(a))), fminf(rad * 1.3f, 90000.0f)));
+        float d = fminf(rad * 1.3f, 90000.0f); /* nearly level and looking a little up: the sky's horizon (VROrbit:
+                                                 * stars above, the sea of clouds below) crosses the picture */
+        cw = vadd(c, v3(0, d * 0.25f, 0));
+        ce = vadd(c, vmul(vnorm(v3(cosf(a), 0.12f, sinf(a))), d));
         cu = v3(0, 1, 0);
         fovy = 50.0f;
     }

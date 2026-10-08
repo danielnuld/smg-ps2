@@ -210,6 +210,7 @@ def model_groups(arc, ratio, stats=None, skinned=False):
             shapes = tex.shape_materials(b, bl[b"INF1"])
             texs = tex.textures(b, bl[b"TEX1"]) if b"TEX1" in bl else []
             ps2 = {}
+            sky = arc.stem in SKY_ARCS or arc.stem.endswith("Sky")  # 8-bit textures (tex.to_ps2 hi)
             for pos, tri, info in got:
                 if not tri:
                     continue
@@ -225,7 +226,7 @@ def model_groups(arc, ratio, stats=None, skinned=False):
                     if key not in ps2:
                         x = texs[mt["tex"]]
                         baked = tex.bake(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, mt["tex"])
-                        ps2[key] = tex.to_ps2(baked, x["wrap_s"], x["wrap_t"])
+                        ps2[key] = tex.to_ps2(baked, x["wrap_s"], x["wrap_t"], sky)
                     t = ps2[key]
                     off, w = info["at"][mt["attr"]]
                     m = mt["mtx"]
@@ -244,7 +245,7 @@ def model_groups(arc, ratio, stats=None, skinned=False):
                     key = (mt["tex"], mat)
                     if key not in ps2:
                         baked = tex.bake(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, mt["tex"])
-                        ps2[key] = tex.to_ps2(baked, x["wrap_s"], x["wrap_t"])
+                        ps2[key] = tex.to_ps2(baked, x["wrap_s"], x["wrap_t"], sky)
                     t = ps2[key]
                     uvs = []
                     for vx, vy, vz in verts:

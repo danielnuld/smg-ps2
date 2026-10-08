@@ -20,8 +20,11 @@ def tex_words(blob):
     n = struct.unpack_from("<I", t, 0)[0]
     words = 0
     for i in range(n):
-        w, h = struct.unpack_from("<HH", t, 16 + 32 * i)
-        words += (128 * h // 8 + 63) // 64 * 64 + 64
+        w, h, psm = struct.unpack_from("<HHB", t, 16 + 32 * i)
+        if psm == 0x13:  # PSMT8 (skies): rows of 128 or 256 pixels, a 256-word CLUT
+            words += ((256 if w > 128 else 128) * h // 4 + 63) // 64 * 64 + 256
+        else:
+            words += (128 * h // 8 + 63) // 64 * 64 + 64
     return words
 
 

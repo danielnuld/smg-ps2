@@ -250,9 +250,15 @@ static u32 chain_seq = 1, done_seq, tex_misses, tex_overflow, tex_syncs; /* chai
 static int uploads[MAX_UPLOADS], nuploads;
 static qword_t *upload_chain;
 
+/* PSMT4: pixels in 128-pixel rows, then the 16-entry CLUT (one block). PSMT8 (skies): the 256-entry CLUT first (16 x
+ * 16 PSMCT32: 4 blocks, 4-aligned so they make one square), then the pixels in rows of 128 or 256. */
+#define T8(t) ((t)->psm == GS_PSM_8)
+#define TBW(t) (T8(t) && (t)->w > 128 ? 4 : 2)
 static int blocks_of(const TexEntry *t)
 {
-    return (graph_vram_size(128, t->h, GS_PSM_4, GRAPH_ALIGN_BLOCK) + 63) / 64 + 1; /* pixels (128-pixel rows) + CLUT */
+    if (T8(t))
+        return 4 + (graph_vram_size(64 * TBW(t), t->h, GS_PSM_8, GRAPH_ALIGN_BLOCK) + 63) / 64;
+    return (graph_vram_size(128, t->h, GS_PSM_4, GRAPH_ALIGN_BLOCK) + 63) / 64 + 1;
 }
 
 static void tex_free(int t)
@@ -262,10 +268,10 @@ static void tex_free(int t)
     tex_block[t] = -1;
 }
 
-static int tex_alloc(int n)
+static int tex_alloc(int n, int align)
 {
     for (int b = block_first, run = 0; b < block_end; b++) {
-        run = block_tex[b] < 0 ? run + 1 : 0;
+        run = block_tex[b] < 0 && (run || b % align == 0) ? run + 1 : 0;
         if (run == n)
             return b - n + 1;
     }
@@ -280,6 +286,13 @@ static void flush_uploads(void)
     for (int i = 0; i < nuploads; i++) {
         int t = uploads[i];
         const TexEntry *e = tex_scene->tex[t].e;
+        if (T8(e)) {
+            q = draw_texture_transfer(q, (void *)(tex_scene->tex[t].base + e->pix_off), e->w, e->h, GS_PSM_8,
+                                      (tex_block[t] + 4) * 64, 64 * TBW(e));
+            q = draw_texture_transfer(q, (void *)(tex_scene->tex[t].base + e->clut_off), 16, 16, GS_PSM_32,
+                                      tex_block[t] * 64, 64);
+            continue;
+        }
         int addr = tex_block[t] * 64, clut = (tex_block[t] + tex_nblk[t] - 1) * 64;
         q = draw_texture_transfer(q, (void *)(tex_scene->tex[t].base + e->pix_off), e->w, e->h, GS_PSM_4, addr, 128);
         q = draw_texture_transfer(q, (void *)(tex_scene->tex[t].base + e->clut_off), 8, 2, GS_PSM_32, clut, 64);
@@ -307,8 +320,9 @@ static int tex_need(u32 t)
         flush_vif();                 /* sends the queued uploads, then what was drawn so far */
         tex_last[t] = chain_seq;
     }
+    const TexEntry *e = tex_scene->tex[t].e;
     int n = tex_nblk[t], b;
-    while ((b = tex_alloc(n)) < 0) { /* evict the least recently used texture whose chain has completed */
+    while ((b = tex_alloc(n, T8(e) ? 4 : 1)) < 0) { /* evict the least recently used texture whose chain has completed */
         int lru = -1;
         for (u32 i = 0; i < tex_scene->ntex; i++)
             if (tex_block[i] >= 0 && tex_last[i] <= done_seq && (lru < 0 || tex_last[i] < tex_last[lru]))
@@ -331,9 +345,9 @@ static int tex_need(u32 t)
     tex_block[t] = b;
     for (int i = b; i < b + n; i++)
         block_tex[i] = t;
-    const TexEntry *e = tex_scene->tex[t].e;
     qword_t *p = tex_packets + TEXP * t;
-    p[1].dw[0] = GS_SET_TEX0(b, 2, GS_PSM_4, e->tw, e->th, 1, 0, b + n - 1, GS_PSM_32, 0, 0, 1);
+    p[1].dw[0] = T8(e) ? GS_SET_TEX0(b + 4, TBW(e), GS_PSM_8, e->tw, e->th, 1, 0, b, GS_PSM_32, 0, 0, 1)
+                       : GS_SET_TEX0(b, 2, GS_PSM_4, e->tw, e->th, 1, 0, b + n - 1, GS_PSM_32, 0, 0, 1);
     uploads[nuploads++] = t;
     tex_misses++;
     return synced;

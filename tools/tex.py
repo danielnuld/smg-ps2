@@ -29,6 +29,7 @@ from budget import u16, u32
 
 MAX_DIM = 128
 PSMT4 = 0x14
+PSMT8 = 0x13
 
 
 # ---------- GX decoding ----------
@@ -113,9 +114,10 @@ def textures(b, tex1):
 
 
 # ---------- PS2 rule ----------
-def to_ps2(rgba, wrap_s, wrap_t):
+def to_ps2(rgba, wrap_s, wrap_t, hi=False):
     """-> dict(w, h, psm, clamp_s, clamp_t, alpha, pix (PSMT4 bytes), clut (16 x u32 RGBA, a 0..0x80), u_scale,
-    v_scale): steps 1-3 of the module rule."""
+    v_scale): steps 1-3 of the module rule. hi (skies): PSMT8, 256 colours (CLUT in CSM1 order: index bits 3 and 4
+    swapped), up to 2 * MAX_DIM, so star fields keep their points."""
     us = vs = 1.0
     if wrap_s == 2:
         rgba, us = np.concatenate([rgba, rgba[:, ::-1]], 1), 0.5
@@ -127,18 +129,31 @@ def to_ps2(rgba, wrap_s, wrap_t):
         p2 = lambda n: min((1 << k for k in range(12)), key=lambda v: (abs(v - n), -v))
         w, h = p2(w), p2(h)
         img = img.resize((w, h), Image.Resampling.BOX)
-    while w > MAX_DIM or h > MAX_DIM:
-        w, h = (w // 2 if w > MAX_DIM else w), (h // 2 if h > MAX_DIM else h)
+    md = MAX_DIM * 2 if hi else MAX_DIM
+    while w > md or h > md:
+        w, h = (w // 2 if w > md else w), (h // 2 if h > md else h)
         img = img.resize((w, h), Image.Resampling.BOX)
     a = np.asarray(img)[:, :, 3]
     alpha = 0 if a.min() == 255 else 1 if np.isin(a, (0, 255)).all() else 2
-    q = img.quantize(16, method=Image.Quantize.FASTOCTREE)
+    nc = 256 if hi else 16
+    if hi and alpha == 0:  # opaque: median cut on RGB (fast octree keeps few levels of a smooth gradient)
+        q = img.convert("RGB").quantize(nc, method=Image.Quantize.MEDIANCUT)
+        rgb = q.getpalette() or []
+        pal = np.zeros((nc, 4), np.uint32)
+        pal[:len(rgb) // 3, :3] = np.array(rgb, np.uint32).reshape(-1, 3)[:nc]
+    else:
+        q = img.quantize(nc, method=Image.Quantize.FASTOCTREE)
+        pal = np.array((q.getpalette(rawmode="RGBA") or [])[:4 * nc] + [0] * 4 * nc, np.uint32)[:4 * nc].reshape(nc, 4)
     idx = np.asarray(q, np.uint8)
-    pal = np.array((q.getpalette(rawmode="RGBA") or [])[:64] + [0] * 64, np.uint32)[:64].reshape(16, 4)
     if alpha == 0:
         pal[:, 3] = 255
     pal[:, 3] = (pal[:, 3] * 128 + 127) // 255
-    clut = (pal[:, 0] | pal[:, 1] << 8 | pal[:, 2] << 16 | pal[:, 3] << 24).astype("<u4").tobytes()
+    clut = (pal[:, 0] | pal[:, 1] << 8 | pal[:, 2] << 16 | pal[:, 3] << 24).astype("<u4")
+    if hi:
+        clut = clut[[i ^ ((i >> 3 ^ i >> 4) & 1) * 0x18 for i in range(256)]]  # CSM1: entries 8-15 <-> 16-23 per 32
+        return dict(w=w, h=h, psm=PSMT8, clamp_s=0 if wrap_s else 1, clamp_t=0 if wrap_t else 1, alpha=alpha,
+                    pix=idx.tobytes(), clut=clut.tobytes(), u_scale=us, v_scale=vs)
+    clut = clut.tobytes()
     pix = (idx[:, 0::2] | idx[:, 1::2] << 4).astype(np.uint8).tobytes() if w > 1 else idx.tobytes()
     return dict(w=w, h=h, psm=PSMT4, clamp_s=0 if wrap_s else 1, clamp_t=0 if wrap_t else 1, alpha=alpha, pix=pix,
                 clut=clut, u_scale=us, v_scale=vs)
@@ -376,6 +391,16 @@ def selftest():
     assert clut[p["pix"][1] & 15] & 0xFF == 0                                        # pixel 2 black
     assert clut[p["pix"][3] >> 4] & 0xFF == 255                                      # pixel 7 red (mirrored)
     assert (clut >> 24).max() == 0x80
+    # PSMT8: 256 x 1 grey ramp keeps 256 levels; CLUT entry 8 holds the colour of index 16 (CSM1)
+    t = np.zeros((1, 256, 4), np.uint8)
+    t[..., 0] = t[..., 1] = t[..., 2] = np.arange(256)
+    t[..., 3] = 255
+    p = to_ps2(t, 0, 0, hi=True)
+    clut = np.frombuffer(p["clut"], "<u4")
+    assert p["psm"] == PSMT8 and len(p["pix"]) == 256 and len(set(p["pix"])) > 200
+    k = p["pix"][100]
+    csm1 = k ^ ((k >> 3 ^ k >> 4) & 1) * 0x18
+    assert abs((clut[csm1] & 0xFF) - 100) <= 2, (clut[csm1] & 0xFF)
     # Maya SRT with scale 2, no rotation/translation: s' = 2 s, t' = 2 t - 1 (J3DGetTextureMtxMaya)
     e = bytearray(0x64)
     e[1] = 0x80
