@@ -1,6 +1,7 @@
 """Music streams (milestone 6, music through PCM streams as phase 0c decided): AudioRes/Stream/*.ast -> PS2 PCM.
 
-usage: python tools/music.py data/fs/files out/music [names...]   (no names: every stream)
+usage: python tools/music.py data/fs/files out/music [names...]   (no names: every stream the table uses)
+       python tools/music.py --table data/fs/files engine/src/music_tab.h
        python tools/music.py --selftest
 
 AST (Wii stream): header 'STRM' {u32 data size, u16 format (1 = PCM16), u16 bits, u16 channels, u16 ?, u32 rate,
@@ -15,11 +16,91 @@ from pathlib import Path
 
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from budget import bcsv_column, rarc_files  # noqa: E402
+
+# Stage -> BGM (Petari AudStageBgmWrap.cpp sMAStageBgmData / sMASenarioBgmData, AudStageBgmTable.cpp entry 0 for
+# stages missing there); sound ids by name, a scenario group's -1 falls back to the stage's own id.
+STAGE_BGM = {
+    "HellProminenceGalaxy": "GALAXY_02", "OceanRingGalaxy": "GALAXY_03", "OceanFloaterLandGalaxy": "GALAXY_04",
+    "EggStarGalaxy": "GALAXY_01", "PhantomGalaxy": "GALAXY_INTER", "AstroDome": ("ASTRO_DOME", 4),
+    "HeavenlyBeachGalaxy": "GALAXY_03", "AstroGalaxy": ("ASTRO_OUT", 1), "CosmosGardenGalaxy": "GALAXY_14",
+    "HoneyBeeKingdomGalaxy": ("GALAXY_10", 0), "BeltConveyerExGalaxy": "GALAXY_17", "KoopaBattleVs1Galaxy": "GALAXY_15",
+    "SurfingLv1Galaxy": "GALAXY_03", "SurfingLv2Galaxy": "GALAXY_03", "CubeBubbleExLv1Galaxy": "GALAXY_12",
+    "CubeBubbleExLv2Galaxy": "GALAXY_12", "FlipPanelExGalaxy": "GALAXY_13", "TamakoroExLv1Galaxy": "GALAXY_17",
+    "TamakoroExLv2Galaxy": "GALAXY_17", "BreakDownPlanetGalaxy": "GALAXY_13", "SandClockGalaxy": "GALAXY_19",
+    "KoopaBattleVs2Galaxy": "GALAXY_15", "KoopaJrShipLv1Galaxy": "GALAXY_09", "HoneyBeeExGalaxy": "GALAXY_17",
+    "TriLegLv1Galaxy": "GALAXY_01_TOMB", "TriLegLv2Galaxy": "GALAXY_01_TOMB", "CocoonExGalaxy": "GALAXY_12",
+    "ReverseKingdomGalaxy": "GALAXY_10", "DarkRoomGalaxy": "GALAXY_12", "FactoryGalaxy": "GALAXY_22",
+    "SkullSharkGalaxy": "GALAXY_23", "KoopaJrDriverGalaxy": "GALAXY_01_TOMB", "FloaterOtaKingGalaxy": "GALAXY_01_TOMB",
+    "TransformationExGalaxy": "GALAXY_13", "LibraryRoom": "LIBRARY", "TearDropGalaxy": "GALAXY_23",
+    "SnowCapsuleGalaxy": "GALAXY_27", "FishTunnelGalaxy": "GALAXY_05", "HeavensDoorGalaxy": ("GALAXY_24", 2),
+    "TeresaMario2DGalaxy": "GALAXY_12", "OceanPhantomCaveGalaxy": "GALAXY_INTER", "KoopaBattleVs3Galaxy": "GALAXY_28",
+    "PeachCastleGardenGalaxy": "PROLOGUE_05", "BattleShipGalaxy": ("GALAXY_11", 3), "CannonFleetGalaxy": ("GALAXY_11", 3),
+    "PeachCastleFinalGalaxy": "PROLOGUE_02", "E3HeavenlyBeachGalaxy": "GALAXY_13",
+    # AudStageBgmTable entry 0 (no sMAStageBgmData row)
+    "StarDustGalaxy": "GALAXY_09", "IceVolcanoGalaxy": "GALAXY_INTER",
+}
+SCENARIO_BGM = [
+    ["GALAXY_10", "GALAXY_10", "GALAXY_10_HURRY", "GALAXY_10", "GALAXY_10", "GALAXY_10"],
+    ["ASTRO_OUT", "ASTRO_OUT_2", "ASTRO_OUT_3", "GALAXY_24", "ASTRO_OUT_3", "ASTRO_OUT_3"],
+    [None, "GALAXY_24", "GALAXY_24", "GALAXY_24", "GALAXY_24", "GALAXY_24"],
+    [None, None, None, None, "GALAXY_21", None],
+    ["ASTRO_DOME", "ASTRO_DOME", "ASTRO_DOME", "ASTRO_DOME", "ASTRO_DOME", "ASTRO_DOME_LOFT"],
+]
+COMET_BGM = {"Red": "GALAXY_02_HURRY", "Dark": "GALAXY_02_HURRY", "Ghost": "GALAXY_20", "Quick": "GALAXY_20",
+             "Black": "GALAXY_21"}  # AudStageBgmWrap::getCometEventBgm
+
+
+def stream_of(bgm, streams):
+    """Sound id name -> stream stem in AudioRes/Stream, or None (sequenced: LIBRARY, ASTRO_DOME_LOFT...)."""
+    if bgm.startswith("GALAXY_"):
+        stem = "SMG_" + bgm.lower().replace("galaxy_", "galaxy", 1).replace("galaxyinter", "galaxy_inter")
+    elif bgm.startswith("ASTRO_OUT"):
+        stem = "SMG_astroout0" + (bgm[-1] if bgm[-1].isdigit() else "1")
+    elif bgm == "ASTRO_DOME":
+        stem = "SMG_astrodome"
+    elif bgm.startswith("PROLOGUE_"):
+        stem = "SMG_ev_prolo" + bgm[-2:]
+    else:
+        return None
+    return next((stem + t for t in ("_strm", "_multi") if stem + t in streams), None)
+
+
+def scenario_bgm(stage, no, comet):
+    """AudStageBgmWrap::changeStageNameToSoundID (no Koopa fortress / AstroGalaxy bright flag: a first visit)."""
+    if comet in COMET_BGM:
+        return COMET_BGM[comet]
+    e = STAGE_BGM.get(stage)
+    if isinstance(e, tuple):
+        return SCENARIO_BGM[e[1]][no - 1] if no <= 6 and SCENARIO_BGM[e[1]][no - 1] else e[0]
+    return e
+
+
+def table(fs, out):
+    """C table {"<Galaxy>/<n>", stream} for every scenario with a streamed BGM; returns the streams used."""
+    streams = {p.name[:-4] for p in (Path(fs) / "AudioRes" / "Stream").glob("*.ast")}
+    rows, used = [], set()
+    for arc in sorted((Path(fs) / "StageData").glob("*/*Scenario.arc")):
+        stage = arc.parent.name
+        sd = {n.lower(): b for n, b in rarc_files(arc.read_bytes())}["scenariodata.bcsv"]
+        for no, comet in zip(bcsv_column(sd, "ScenarioNo"), bcsv_column(sd, "Comet") or [""] * 99):
+            bgm = scenario_bgm(stage, no, comet)
+            st = bgm and stream_of(bgm, streams)
+            if st:
+                rows.append(f'    {{"{stage}/{no}", "{st}"}},')
+                used.add(st)
+    Path(out).write_text("\n".join(["/* written by tools/music.py --table: scenario -> music stream (Petari AudStageBgmWrap) */",
+                                    "static const struct { const char *scen, *track; } music_tab[] = {", *rows, "};", ""]))
+    print(f"{out}: {len(rows)} scenarios, {len(used)} streams")
+    return used
+
 
 def convert(ast):
     magic, size, fmt, bits, chans, _, rate, samples, loop_start, loop_end = struct.unpack_from(">4sIHHHHIIII", ast, 0)
     assert magic == b"STRM" and fmt == 1 and bits == 16, (magic, fmt, bits)
     out, o = [], 0x40
+    ast = ast + bytes(0x10000)  # some last blocks end short of their size (galaxy03_multi): zeros past `samples`
     while o + 0x20 <= len(ast) and ast[o:o + 4] == b"BLCK":
         n = struct.unpack_from(">I", ast, o + 4)[0]
         o += 0x20
@@ -32,6 +113,7 @@ def convert(ast):
 
 def main(fs, out, names):
     src = Path(fs) / "AudioRes" / "Stream"
+    names = names or table(fs, Path(__file__).resolve().parent.parent / "engine/src/music_tab.h")
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     for p in sorted(src.glob("*.ast")):
@@ -50,11 +132,20 @@ def selftest():
     blk = lambda l, r: b"BLCK" + struct.pack(">I", 4) + b"\0" * 0x18 + struct.pack(">2h", *l) + struct.pack(">2h", *r)
     rate, loop, data = convert(hdr + blk((1, 2), (3, 4)) + blk((5, 6), (7, 8)))
     assert rate == 32000 and loop == 4 and np.frombuffer(data, "<i2").tolist() == [1, 3, 2, 4, 5, 7, 6, 8]
+    streams = {"SMG_galaxy11_strm", "SMG_galaxy21_strm", "SMG_galaxy_inter_strm", "SMG_galaxy01_tomb_strm",
+               "SMG_galaxy03_multi", "SMG_astroout02_strm", "SMG_galaxy02_hurry_strm"}
+    got = lambda *a: stream_of(scenario_bgm(*a), streams)
+    assert got("BattleShipGalaxy", 1, "") == "SMG_galaxy11_strm" and got("BattleShipGalaxy", 5, "") == "SMG_galaxy21_strm"
+    assert got("PhantomGalaxy", 2, "") == "SMG_galaxy_inter_strm" and got("TriLegLv1Galaxy", 1, "") == "SMG_galaxy01_tomb_strm"
+    assert got("OceanRingGalaxy", 1, "") == "SMG_galaxy03_multi" and got("AstroGalaxy", 2, "") == "SMG_astroout02_strm"
+    assert got("EggStarGalaxy", 4, "Dark") == "SMG_galaxy02_hurry_strm" and scenario_bgm("Nowhere", 1, "") is None
     print("selftest ok")
 
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["--selftest"]:
         selftest()
+    elif sys.argv[1] == "--table":
+        table(sys.argv[2], sys.argv[3])
     else:
         main(sys.argv[1], sys.argv[2], sys.argv[3:])

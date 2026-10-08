@@ -17,6 +17,7 @@
 #include "pad.h"
 #include "render.h"
 
+#include "music_tab.h"
 #include "packs_cfg.h" /* written by build.sh: PACKS = "<Galaxy>/<scenario>", or empty */
 
 extern const u8 slice_blob[];
@@ -440,10 +441,15 @@ int main(void)
     render_load_textures(&scene, 0, 0);
     game_init(&scene, blob);
     mem_mark(&base_mark);
-#ifndef MUSIC
-#define MUSIC "SMG_galaxy01_strm" /* ponytail: one track for every galaxy until the stage -> BGM table is known */
-#endif
-    audio_music("host:music/" MUSIC ".pcm");
+    {
+        /* the scenario's stage BGM (music_tab.h); sequenced ones (LibraryRoom...) are not streams: galaxy 01 */
+        const char *track = "SMG_galaxy01_strm";
+        char path[96];
+        for (u32 i = 0; i < sizeof music_tab / sizeof music_tab[0]; i++)
+            if (!strcmp(music_tab[i].scen, scen)) track = music_tab[i].track;
+        snprintf(path, sizeof path, "host:music/%s.pcm", track);
+        audio_music(path);
+    }
     pend_start(scene_start(&scene)->zone);
     pend_step(0xFFFFFFFF);
     pend_commit(&scene);

@@ -1,6 +1,6 @@
 # Where phase 2 stands (resume notes)
 
-Last updated 2026-10-07. Detail and numbers: `docs/phase2-report.md`; tasks: `openspec/changes/phase-2-full-engine/tasks.md`.
+Last updated 2026-10-08. Detail and numbers: `docs/phase2-report.md`; tasks: `openspec/changes/phase-2-full-engine/tasks.md`.
 
 ## Done
 
@@ -48,7 +48,9 @@ Last updated 2026-10-07. Detail and numbers: `docs/phase2-report.md`; tasks: `op
   - skies (Sky kind and VROrbit / VRDarkSpace / VRSandwichSun) drawn first at the camera, then `render_clear_depth`;
     projected sky textures get spherical UVs (`SKY_ARCS`);
   - music: `tools/music.py` (AST -> `out/music/*.pcm`), streamed through audsrv (`engine/src/audio.c`), looping;
-    one track for every galaxy so far (`MUSIC` in main.c);
+    per scenario: `python tools/music.py --table data/fs/files engine/src/music_tab.h` ports Petari's stage BGM
+    (AudStageBgmWrap: per stage, per scenario group, comets) for 132 scenarios / 31 streams, `music.py data/fs/files
+    out/music` converts those (~300 MB); sequenced BGMs (LibraryRoom...) and the disc build fall back / stay silent;
   - Mario: slopes as in Petari (confirmed by the user), hip drop, life 3 (6 after a life-up), a coin gives one back,
     lives 4, a miss (0 life, fell into space, black hole) costs one and restarts at the start; HUD LIFE / STARS / LIVES.
 - Every other placed class with a model is drawn and collided as a static instance.
@@ -73,7 +75,8 @@ there needs the embedded blob and every pack rebuilt.
 
 ## Next
 
-0. Look: baked lighting per vertex, effects (sparkles, stars), sound effects (AFC -> ADPCM), music per galaxy.
+0. Look: baked lighting per vertex, effects (sparkles, stars), sound effects (AFC -> ADPCM); music on the disc
+   (streams in the ISO), ChangeBgmCube / RestartCube BGM changes.
 1. More switch sources and users: IronCannonLauncherPoint, StarPieceSpot, Kinopio / Tico; spawned power stars
    (FlipPanelObserver arg7, requestAppearPowerStar); RestartCube (checkpoints).
 2. Lumas / NPCs (static models today).
