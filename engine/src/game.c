@@ -314,7 +314,7 @@ static int pipe_out = -1; /* the mode 1 pipe Mario came out of, hidden once the 
 static Pipe *pipes;
 static int npipes, pipe_wait, pipe_zone = -1;
 /* Switch logic rows (no model): TimerSwitch, SwitchSynchronizerReverse, GroupSwitchWatcher */
-enum { LOGIC_TIMER = 1, LOGIC_REVERSE, LOGIC_GROUP, LOGIC_BLOCKER, LOGIC_FLIPS, LOGIC_CHIPS, LOGIC_SWAREA, LOGIC_DEATH, LOGIC_RESTART };
+enum { LOGIC_TIMER = 1, LOGIC_REVERSE, LOGIC_GROUP, LOGIC_BLOCKER, LOGIC_FLIPS, LOGIC_CHIPS, LOGIC_SWAREA, LOGIC_DEATH, LOGIC_RESTART, LOGIC_PIECESPOT };
 static int area_shape(const char *name);
 /* FlipPanel (Petari FlipPanel.cpp): row_step bits. Back = flipped (ACTMES_SUCCESS to the observer); a flip locks the
  * panel until Mario stood on other ground; it flips once he has stood on it 3 frames (checkPlayerOnTop). Done: the
@@ -627,6 +627,8 @@ void game_init(const Scene *s, const unsigned char *blob)
             box_coins += c;
             box_pieces += p;
         }
+        if (strcmp(s->types + 32 * s->objs[i].type, "StarPieceSpot") == 0)
+            box_pieces += s->objs[i].arg[0] >= 0 ? s->objs[i].arg[0] : 5;
     }
     row_dead = mem_alloc(MEM_OBJECTS, s->nobjs);
     star_wait = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(short));
@@ -798,7 +800,8 @@ void game_init(const Scene *s, const unsigned char *blob)
                                     count_type("BlueChipGroup", 0) + count_type("SwitchCube", 0) +
                                     count_type("SwitchSphere", 0) + count_type("SwitchCylinder", 0) +
                                     count_type("DeathCube", 0) + count_type("DeathSphere", 0) +
-                                    count_type("DeathCylinder", 0) + count_type("RestartCube", 0) + 1) *
+                                    count_type("DeathCylinder", 0) + count_type("RestartCube", 0) +
+                                    count_type("StarPieceSpot", 0) + 1) *
                                        sizeof(Logic));
     int t_timer = scene_type(s, "TimerSwitch"), t_rev = scene_type(s, "SwitchSynchronizerReverse"),
         t_group = scene_type(s, "GroupSwitchWatcher"), t_block = scene_type(s, "CollisionBlocker"),
@@ -809,7 +812,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         const char *tn = s->types + 32 * t;
         int k = strncmp(tn, "Switch", 6) == 0 && area_shape(tn) >= 0 ? LOGIC_SWAREA :
                 strncmp(tn, "Death", 5) == 0 && area_shape(tn) >= 0 ? LOGIC_DEATH :
-                strcmp(tn, "RestartCube") == 0 ? LOGIC_RESTART :
+                strcmp(tn, "RestartCube") == 0 ? LOGIC_RESTART : strcmp(tn, "StarPieceSpot") == 0 ? LOGIC_PIECESPOT :
                 t == t_timer ? LOGIC_TIMER : t == t_rev ? LOGIC_REVERSE : t == t_group ? LOGIC_GROUP :
                 t == t_block ? LOGIC_BLOCKER : t == t_flipobs ? LOGIC_FLIPS : t == t_ychips || t == t_bchips ? LOGIC_CHIPS : 0;
         if (k) { logic[nlogic].row = i; logic[nlogic++].kind = k; }
@@ -1189,6 +1192,29 @@ int game_test_cage(int on_star)
         mario->hvel = v3(0, 0, 0); mario->vup = 0;
         mario->spin_timer = SPIN_TIME;
         return row;
+    }
+    return -1;
+}
+
+int game_test_spot(void)
+{
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *b = &sc->objs[i];
+        int c, p;
+        if (row_dead[i] || b->sw[SW_DEAD] < 0 || !breakable(sc->types + 32 * b->type, b, &c, &p)) continue;
+        for (u32 k = 0; k < sc->nobjs; k++) {
+            const Row *s = &sc->objs[k];
+            if (strcmp(sc->types + 32 * s->type, "StarPieceSpot") || s->sw[SW_APPEAR] != b->sw[SW_DEAD] || s->zone != b->zone)
+                continue;
+            float reach = 150.0f * b->scale[0];
+            for (int j = 0; j < ninsts; j++)
+                if (insts[j].row == (int)i) reach = insts[j].reach;
+            V3 q = row_pos(b), up = up_at(q, v3(0, 1, 0));
+            mario->pos = vadd(q, vmul(up, reach + 20.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            mario->spin_timer = SPIN_TIME;
+            return i;
+        }
     }
     return -1;
 }
@@ -1873,6 +1899,18 @@ static void update_kuribo(void)
 /* Breakables (breakable()): Mario's spin near one, or his hip drop landing on it, breaks it; collision goes at once,
  * then its drops appear. ponytail: no upper punch, drops appear where the box was instead of popping out, a broken
  * HipDropRock is gone (no wreck left), no star piece on a switch kill */
+/* n star pieces in a ring around p, 120 up. ponytail: they stay put (appearStarPiece throws them about) */
+static void drop_pieces(V3 p, V3 up, int n)
+{
+    for (int k = 0; k < n; k++) {
+        float a = 6.2831853f * k / n + 0.5f;
+        V3 side = vnorm(vtangent(v3(cosf(a), 0.3f, sinf(a)), up));
+        pieces[npieces].pos = vadd(p, vadd(vmul(up, 120.0f), vmul(side, 90.0f)));
+        pieces[npieces].row = -1;
+        pieces[npieces++].alive = 1;
+    }
+}
+
 static void break_inst(const Inst *in, int drops)
 {
     V3 p = v3(in->m[12], in->m[13], in->m[14]);
@@ -1882,13 +1920,7 @@ static void break_inst(const Inst *in, int drops)
     if (!drops) n = sp = 0;
     V3 up = up_at(p, mario->up);
     pop_coins(p, up, n);
-    for (int k = 0; k < sp; k++) { /* WoodBox arg2: star pieces */
-        float a = 6.2831853f * k / sp + 0.5f;
-        V3 side = vnorm(vtangent(v3(cosf(a), 0.3f, sinf(a)), up));
-        pieces[npieces].pos = vadd(p, vadd(vmul(up, 120.0f), vmul(side, 90.0f)));
-        pieces[npieces].row = -1;
-        pieces[npieces++].alive = 1;
-    }
+    drop_pieces(p, up, sp); /* WoodBox arg2 */
     row_kill(in->row);
     const char *name = sc->types + 32 * r->type;
     if (in->breaks != 3) /* ItemBlocks stay */
@@ -2180,6 +2212,17 @@ static void update_switches(void)
         }
         if (logic[i].kind == LOGIC_DEATH) { /* DeathArea.cpp: forceKillPlayerByAbyss */
             if (row_shown(row) && area_inside(r, mario->pos)) { printf("death area %d\n", row); miss(); }
+            continue;
+        }
+        if (logic[i].kind == LOGIC_PIECESPOT) { /* StarPieceSpot.cpp: arg0 star pieces (default 5) burst out when its
+                                                  * appear switch goes on, or without one at a spin within 150 */
+            V3 p = row_pos(r);
+            if (r->sw[SW_APPEAR] >= 0 ? !sw_on(r, SW_APPEAR) :
+                mario->spin_timer <= 0 || vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), p)) > 150.0f + HIT_BODY_R)
+                continue;
+            drop_pieces(p, up_at(p, mario->up), r->arg[0] >= 0 ? r->arg[0] : 5);
+            row_dead[row] = 1;
+            printf("star piece spot %d burst\n", row);
             continue;
         }
         if (logic[i].kind == LOGIC_CHIPS) { /* ChipGroup.cpp: SW_A once every chip of its arg0 is taken */

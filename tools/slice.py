@@ -77,7 +77,7 @@ STAR_DECLARERS = {"FlipPanelObserver": 7, "CrystalCageL": 0, "BreakableCage": No
 COIN100 = "１００枚コイン"
 LOGIC = ("TimerSwitch", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
          "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "DeathCube", "DeathSphere",
-         "DeathCylinder", "RestartCube")  # areas (areaobjinfo) travel as OBJS rows too
+         "DeathCylinder", "RestartCube", "StarPieceSpot")  # areas (areaobjinfo) travel as OBJS rows too
 
 
 def col(b, field, n, default=0):
