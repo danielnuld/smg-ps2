@@ -557,6 +557,12 @@ int main(void)
                 printf("plant test f %u: member %d of row %d, coins %d, pieces out %d\n", frame, k, row, game_coins(), game_pieces_out());
         }
 #endif
+#ifdef STEAM_TEST
+        if (frame >= 120 && frame <= 900 && frame % 15 == 0) {
+            int row = game_test_steam();
+            if (frame % 60 == 0) printf("steam test f %u: in row %d, life %d\n", frame, row, game_life());
+        }
+#endif
 #ifdef CAGE_TEST
         if (frame == 120 || frame == 300 || frame == 380) /* the first: its zone streams in */
             printf("cage test f %u: Mario spins on row %d\n", frame, game_test_cage(0));

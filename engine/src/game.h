@@ -31,6 +31,8 @@ int game_test_cannon(void);
 /* Test builds: Mario walking through the k-th member of the plant groups holding items, its group row; -2 the group's
  * members are not placed yet (Mario put over it), -1 no more */
 int game_test_plant(int k);
+/* Test builds: Mario held in the first LavaSteam's vent (his touch sphere 100 up it); its row or -1 */
+int game_test_steam(void);
 /* Test builds: Mario spinning on the first breakable whose dead switch makes a StarPieceSpot burst; its row or -1 */
 int game_test_spot(void);
 /* Test builds: Mario jumping into the first ItemBlock from below. Returns its row or -1. */

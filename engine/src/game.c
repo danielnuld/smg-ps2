@@ -138,6 +138,7 @@ typedef struct {
     int hipsw;       /* hip drop switch: 1 PicketSwitch(Big) / HipDropSwitch (SW_A for good), 2 HipDropTimerSwitch */
     int rotor;       /* map part with a RotateSpeed: turns (rotor_matrix), carries Mario */
     int sky;         /* sky dome (Petari Sky): centred on the camera, drawn first */
+    int steam;       /* LavaSteam: vents on a cycle and burns (update_steam) */
     int shoot;       /* ShootingStar: falls, bursts into star pieces (update_shooting) */
     int plant;       /* PlantGroup (Flower / FlowerBlue / CutBush Group): its model drawn at each member (plants) */
     const unsigned char *railer; /* map part on a rail: its PATH entry; moves along it (update_railers) */
@@ -1066,6 +1067,7 @@ void game_rebind(void)
         in->npc = npc_class(name);
         in->sky = sky_class(name);
         in->shoot = strcmp(name, "ShootingStar") == 0;
+        in->steam = strcmp(name, "LavaSteam") == 0;
         in->plant = strcmp(name, "FlowerGroup") == 0 || strcmp(name, "FlowerBlueGroup") == 0 || strcmp(name, "CutBushGroup") == 0;
         in->hipsw = strncmp(name, "PicketSwitch", 12) == 0 || strcmp(name, "HipDropSwitch") == 0 ? 1 :
                     strcmp(name, "HipDropTimerSwitch") == 0 ? 2 : 0;
@@ -1285,6 +1287,18 @@ int game_test_plant(int k)
             mario->vup = 0;
             return i;
         }
+    }
+    return -1;
+}
+
+int game_test_steam(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        if (!insts[i].steam) continue;
+        V3 p = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]);
+        mario->pos = vadd(p, vmul(vnorm(v3(insts[i].m[4], insts[i].m[5], insts[i].m[6])), 100.0f - HIT_BODY_H));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return insts[i].row;
     }
     return -1;
 }
@@ -2500,6 +2514,42 @@ static void update_shooting(void)
     }
 }
 
+/* LavaSteam.cpp: Wait 120 frames (its Sign effect the first 90), Steam 90 (burns: a 330 cylinder up its y, a sphere
+ * of 70 at 400), SteamEnd 90, again; with SW_A it waits for the switch, then steams and cycles. row_turn: 0 wait, 1
+ * steam, 2 end, 3 waiting for SW_A; row_step its frames. ponytail: a burn is an ordinary hurt */
+static void update_steam(void)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->steam || !row_shown(in->row)) continue;
+        const Row *r = &sc->objs[in->row];
+        unsigned short *t = &row_step[in->row];
+        signed char *ph = &row_turn[in->row];
+        if (*ph == 0 && *t == 0 && r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) *ph = 3; /* also back to waiting if it goes off */
+        if (*ph == 3) {
+            if (!sw_on(r, SW_A)) continue;
+            *ph = 1; *t = 0;
+        }
+        ++*t;
+        if (*ph == 0 && *t >= 120) { *ph = 1; *t = 0; }
+        else if (*ph == 1 && *t >= 90) { *ph = 2; *t = 0; }
+        else if (*ph == 2 && *t >= 90) { *ph = 0; *t = 0; }
+        V3 p = v3(in->m[12], in->m[13], in->m[14]), up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+        int near = vlen(vsub(p, cam_pos)) < 6000.0f;
+        if (*ph == 0 && *t < 90 && near) fx_keep(FX_LAVASTEAM_SIGN, t, in->m);
+        if (*ph != 1) continue;
+        if (near) fx_keep(FX_LAVASTEAM_STEAM, t, in->m);
+        V3 d = vsub(c, p);
+        float h = vdot(d, up), rr = 0.7f * HIT_BODY_R;
+        if (((h >= 0.0f && h <= 330.0f && vlen(vsub(d, vmul(up, h))) < rr + 10.0f) ||
+            (vlen(vsub(c, vadd(p, vmul(up, 400.0f)))) < rr + 70.0f)) && !mario->hurt_timer) {
+            hurt_mario(p, 15.0f);
+            printf("lava steam %d burns\n", in->row);
+        }
+    }
+}
+
 static void update_plants(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -2797,6 +2847,7 @@ void game_update(void)
     update_shells();
     update_shooting();
     update_plants();
+    update_steam();
     update_pipes();
     update_switches();
     update_pops();
