@@ -26,6 +26,8 @@ int game_test_box(void);
 int game_test_cage(int on_star);
 /* Test builds: Mario put inside RestartCube k, its arg0 (MarioNo) or -1; k -1: a miss */
 int game_test_restart(int k);
+/* Test builds: Mario put 600 in front of the first cannon launcher's muzzle (his touch sphere on its line); its row */
+int game_test_cannon(void);
 /* Test builds: Mario spinning on the first breakable whose dead switch makes a StarPieceSpot burst; its row or -1 */
 int game_test_spot(void);
 /* Test builds: Mario jumping into the first ItemBlock from below. Returns its row or -1. */

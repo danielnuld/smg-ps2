@@ -299,6 +299,17 @@ static const Model *m_erail, *m_fireball, *m_rock;
  * rail's end, no star pieces from a broken rock, no bounce, no Wanwan */
 #define ROCKS_PER 4
 typedef struct { const float *pts; u32 np; float len, d; int row, alive; } Roller;
+/* IronCannonLauncherPoint / IronCannonLauncher (Petari IronCannonShell.cpp, KoopaJrShipCannonShell.cpp): every arg0
+ * frames (default 300) a shell leaves 75 (the launcher: 100) along its z at arg1 a frame (default 30), at most 3 out;
+ * SW_A, when set, must be on (the Point); its appear switch shows it. A shell flies straight for 360 frames and
+ * explodes on what it hits (after 10 frames) or on Mario (hurt); stomped, it drops under gravity (0.55 rebound, 0.95
+ * / 0.99 damping) and misfires after 45. The Point's own model is the shell (its archive). ponytail: no star pointer
+ * freeze, launchers fire only within 8000 of Mario */
+#define SHELLS_PER 3
+typedef struct { V3 pos, vel, dir; int row, t, state; } Shell; /* state 0 none, 1 flying, 2 stomped */
+static Shell *shells;
+static int nshells;
+static const Model *m_shell;
 static Roller *rollers;
 static int nrollers; /* ROCKS_PER per creator, consecutive */
 static V3 rail_at(const float *p, u32 n, float d);
@@ -757,6 +768,16 @@ void game_init(const Scene *s, const unsigned char *blob)
         }
         plants = mem_alloc(MEM_OBJECTS, (total + 1) * sizeof(Plant));
     }
+    shells = mem_alloc(MEM_OBJECTS, ((count_type("IronCannonLauncherPoint", 0) + count_type("IronCannonLauncher", 0)) *
+                                     SHELLS_PER + 1) * sizeof(Shell));
+    for (u32 i = 0; i < s->nobjs; i++) {
+        const char *tn = s->types + 32 * s->objs[i].type;
+        if (strcmp(tn, "IronCannonLauncherPoint") && strcmp(tn, "IronCannonLauncher")) continue;
+        for (int k = 0; k < SHELLS_PER; k++) {
+            memset(&shells[nshells], 0, sizeof(Shell));
+            shells[nshells++].row = i;
+        }
+    }
     int t_rockc = scene_type(s, "RockCreator");
     rollers = mem_alloc(MEM_OBJECTS, (count_type("RockCreator", 0) * ROCKS_PER + 1) * sizeof(Roller));
     for (u32 i = 0; i < s->nobjs; i++) {
@@ -982,6 +1003,8 @@ void game_rebind(void)
     m_erail = scene_model(s, "ElectricRail");
     m_fireball = scene_model(s, "FireBarBall");
     m_rock = scene_model(s, "RockCreator");
+    m_shell = scene_model(s, "KoopaJrShipCannonShell");
+    if (!m_shell) m_shell = scene_model(s, "IronCannonLauncherPoint");
     ninsts = 0;
     for (u32 i = 0; i < s->nobjs; i++) { /* every placed model without behaviour: planets and the rest */
         const Row *r = &s->objs[i];
@@ -1008,7 +1031,7 @@ void game_rebind(void)
                    strcmp(name, "BenefitItemLifeUp") == 0 ? ITEM_LIFEUP : strcmp(name, "QuestionCoin") == 0 ? ITEM_QCOIN :
                    strcmp(name, "YellowChip") == 0 || strcmp(name, "BlueChip") == 0 ? ITEM_CHIP : 0;
         in->firebar = strcmp(name, "FireBar") == 0;
-        in->invisible = strncmp(name, "InvisibleWall", 13) == 0;
+        in->invisible = strncmp(name, "InvisibleWall", 13) == 0 || strcmp(name, "IronCannonLauncherPoint") == 0;
         in->flip = strcmp(name, "FlipPanel") == 0 || strcmp(name, "FlipPanelReverse") == 0;
         if (in->flip) {
             char v[48];
@@ -1217,6 +1240,17 @@ int game_test_spot(void)
         }
     }
     return -1;
+}
+
+int game_test_cannon(void)
+{
+    if (!nshells) return -1;
+    const Row *r = &sc->objs[shells[0].row];
+    V3 x, z;
+    row_axes(r, &x, &z);
+    mario->pos = vsub(vadd(row_pos(r), vmul(z, 600.0f)), vmul(up_at(row_pos(r), mario->up), HIT_BODY_H));
+    mario->hvel = v3(0, 0, 0); mario->vup = 0;
+    return shells[0].row;
 }
 
 int game_test_restart(int k)
@@ -2375,6 +2409,74 @@ static V3 rock_pos(const Roller *o, float *radius)
     return vadd(p, vmul(up_at(p, mario->up), *radius)); /* the rail runs along the ground under the rock */
 }
 
+static void shell_explode(Shell *o)
+{
+    fx_at(FX_SPACEMINE_EXPLOSION, o->pos, up_at(o->pos, mario->up));
+    o->state = 0;
+}
+
+static void update_shells(void)
+{
+    for (int i = 0; i < nshells; i += SHELLS_PER) { /* the launchers */
+        int row = shells[i].row;
+        const Row *r = &sc->objs[row];
+        unsigned short *t = &row_step[row];
+        V3 p = row_pos(r);
+        if (!row_shown(row) || (r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) || vlen(vsub(p, mario->pos)) > 8000.0f) {
+            *t = 0;
+            continue;
+        }
+        if (++*t <= (r->arg[0] >= 0 ? r->arg[0] : 300)) continue;
+        *t = 0;
+        for (int k = 0; k < SHELLS_PER; k++) {
+            Shell *o = &shells[i + k];
+            if (o->state) continue;
+            V3 x, z;
+            row_axes(r, &x, &z);
+            z = vmul(z, r->scale[2]);
+            int point = strcmp(sc->types + 32 * r->type, "IronCannonLauncherPoint") == 0;
+            o->pos = vadd(p, vmul(z, point ? 75.0f : 100.0f));
+            o->vel = vmul(z, r->arg[1] >= 0 ? (float)r->arg[1] : 30.0f);
+            o->dir = z;
+            o->t = 0;
+            o->state = 1;
+            break;
+        }
+    }
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < nshells; i++) {
+        Shell *o = &shells[i];
+        if (!o->state) continue;
+        o->t++;
+        V3 up = up_at(o->pos, mario->up), gn = up, wn;
+        int wall;
+        if (o->state == 2) o->vel = vsub(o->vel, up);
+        V3 center = vadd(o->pos, o->vel);
+        int ground = collide_n(&center, up, 75.0f, &gn, &wn, &wall);
+        if (o->state == 1) {
+            if ((ground || wall) && o->t > 10) { shell_explode(o); continue; }
+            o->pos = vadd(o->pos, o->vel);
+            if (o->t >= 360) { o->state = 0; continue; }
+        } else {
+            o->pos = center;
+            float into = -vdot(o->vel, gn);
+            if (ground && into > 2.0f) o->vel = vadd(o->vel, vmul(gn, 1.55f * into)); /* reboundVelocityFromCollision */
+            o->vel = vmul(o->vel, ground ? 0.95f : 0.99f);
+            if (o->t >= 45) { o->state = 0; continue; } /* misfire */
+        }
+        if (o->state != 1 || vlen(vsub(c, o->pos)) > 60.0f + HIT_BODY_R) continue;
+        if (mario->vup < 0 && vdot(vsub(mario->pos, o->pos), up) > 30.0f) { /* trampled */
+            o->state = 2;
+            o->t = 0;
+            mario->vup = 15.0f; mario->grounded = 0;
+        } else {
+            hurt_mario(o->pos, 25.0f);
+            shell_explode(o);
+            printf("cannon shell hit Mario\n");
+        }
+    }
+}
+
 static void update_rocks(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -2579,6 +2681,7 @@ void game_update(void)
     update_electric();
     update_firebars();
     update_rocks();
+    update_shells();
     update_pipes();
     update_switches();
     update_pops();
@@ -2746,6 +2849,12 @@ void game_draw(void)
         mat_mul(cm, m, rm);
         for (int j = 0; j < 12; j++) if (j % 4 != 3) cm[j] *= sc->objs[o->row].scale[0];
         render_model(m_rock, cm, 0x70, 0xB0, 0x60);
+    }
+    for (int i = 0; m_shell && i < nshells; i++) {
+        const Shell *o = &shells[i];
+        if (!o->state) continue;
+        basis_matrix(m, o->pos, up_at(o->pos, v3(0, 1, 0)), o->dir, 0);
+        render_model(m_shell, m, 0x70, 0xB0, 0x60);
     }
     for (int i = 0; m_fireball && i < ninsts; i++) {
         if (!insts[i].firebar) continue;

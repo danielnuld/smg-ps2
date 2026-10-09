@@ -540,6 +540,10 @@ int main(void)
         if (frame >= 120 && frame <= 600 && frame % 40 == 0) /* breakables whose dead switch a StarPieceSpot waits for */
             printf("spot test f %u: spins on row %d, star pieces out %d\n", frame, game_test_spot(), game_pieces_out());
 #endif
+#ifdef CANNON_TEST
+        if (frame >= 120 && frame <= 900 && frame % 30 == 0) /* held in its line of fire */
+            printf("cannon test f %u: on row %d, life %d\n", frame, game_test_cannon(), game_life());
+#endif
 #ifdef CAGE_TEST
         if (frame == 120 || frame == 300 || frame == 380) /* the first: its zone streams in */
             printf("cage test f %u: Mario spins on row %d\n", frame, game_test_cage(0));
