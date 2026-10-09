@@ -3,7 +3,6 @@
 
 #include "blob.h"
 
-extern int game_scenario; /* the scenario number ("<Galaxy>/<n>"), before game_init */
 void game_init(const Scene *s, const unsigned char *blob);
 void game_update(void);
 /* After the scene's models changed (zone packs swapped): find every placed model again. */
@@ -22,6 +21,9 @@ int game_test_spindriver(int small);
 int game_launch_state(void);
 /* Test builds: Mario just above the first breakable box, spinning. Returns its OBJS row or -1. */
 int game_test_box(void);
+/* Test builds: Mario spinning on the cage (or other declarer) holding the first event power star, its row (-2 it is
+ * gone, -1 none); on_star: Mario put on that star instead, returns its star_pos state (3: can be taken) */
+int game_test_cage(int on_star);
 /* Test builds: Mario jumping into the first ItemBlock from below. Returns its row or -1. */
 int game_test_block(void);
 int game_test_enemy(int kind, int k, int how); /* kind: 0 Kuribo, 1 TakoHei, 2 PackunPetit, 3 KoteBug, 4 JumpSpider */

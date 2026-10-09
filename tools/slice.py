@@ -68,6 +68,13 @@ SKY_TILES = 8
 # (FlipPanel: "?" at rest, "!" once flipped, the End face when its group is complete)
 EXTRA = {"FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd")}
 # model-less classes the engine runs (stage switch logic): kept in OBJS like the classes with a model
+# power stars an event brings out (Petari PowerStarEventKeeper): ScenarioData AppearPowerStarObj names each star's
+# declarer by its ObjNameTable name. The classes the engine runs, with the arg giving an explicit star id (None: the
+# one their name finds); BreakableCage* only with a power star inside (arg7 7). The star's arg7 gets the declarer's
+# OBJS index (-2: a hundred coins), the engine keeps it hidden until then (star_wait)
+STAR_DECLARERS = {"FlipPanelObserver": 7, "CrystalCageL": 0, "BreakableCage": None, "BreakableCageRotate": None,
+                  "BreakableCageL": None}
+COIN100 = "１００枚コイン"
 LOGIC = ("TimerSwitch", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
          "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "DeathCube", "DeathSphere",
          "DeathCylinder")  # areas (areaobjinfo) travel as OBJS rows too
@@ -734,6 +741,36 @@ def model_archive(fsp, name, planets):
     return None
 
 
+def s32(v):
+    return v - 2**32 if v >= 2**31 else v
+
+
+def declare_stars(keep, scenario, appear, jp):
+    """Points each event star's arg7 at its declarer (STAR_DECLARERS). appear: {scenarioNo: AppearPowerStarObj},
+    jp: ObjNameTable {class: Japanese name}."""
+    def find(name):  # PowerStarEventKeeper::findStarID: the current scenario first
+        if appear.get(scenario) == name:
+            return scenario
+        return next((n for n, a in sorted(appear.items()) if a == name), -1)
+    marks = []
+    for i, r in enumerate(keep):
+        k = STAR_DECLARERS.get(r["name"], -1)
+        if k == -1 or (k is None and s32(r["args"][7]) != 7):
+            continue
+        sid = s32(r["args"][k]) if k is not None else -1
+        if r["name"] == "FlipPanelObserver":
+            sid = -1 if sid < 0 else sid or find(jp.get(r["name"]))
+        elif sid < 0:
+            sid = find(jp.get(r["name"]))
+        marks += [(sid, i)] if sid > 0 else []
+    if appear.get(scenario) == COIN100:
+        marks.append((scenario, -2))
+    for sid, i in marks:
+        for r in keep:
+            if r["name"] == "PowerStar" and s32(r["args"][0]) == sid:
+                r["args"] = r["args"][:7] + [i]
+
+
 def placement(fs, galaxy, scenario):
     """Scenario-wide chunks (TYPE ZONE OBJS STRT PATH GRAV CAMS CARE) and what the asset packs need."""
     act, zones, objs, starts, paths, cubes, bcams, up = scene(fs, galaxy, scenario)
@@ -754,6 +791,11 @@ def placement(fs, galaxy, scenario):
                 arcmap.setdefault(o["name"] + e, arcmap[o["name"]] + e if arcmap[o["name"]] else None)
             else:
                 arcmap.setdefault(e, e if (fsp / "ObjectData" / f"{e}.arc").exists() else None)
+    sd = {n.lower(): d for n, d in B.rarc_files((fsp / "StageData" / galaxy / f"{galaxy}Scenario.arc").read_bytes())}
+    sd = sd["scenariodata.bcsv"]
+    names = next(B.rarc_files((fsp / "StageData" / "ObjNameTable.arc").read_bytes()))[1]
+    declare_stars(keep, scenario, dict(zip(B.bcsv_column(sd, "ScenarioNo"), B.bcsv_column(sd, "AppearPowerStarObj"))),
+                  dict(zip(B.bcsv_column(names, "en_name"), B.bcsv_column(names, "jp_name"))))
     types = sorted({o["name"] for o in keep} | {s["name"] for s in starts})
     tid = {t: i for i, t in enumerate(types)}
     pack_row = lambda r: ROW.pack(tid[r["name"]], r["zone"], r["l_id"], r["path"], *r["pos"], *r["rot"], *r["scale"],
@@ -999,6 +1041,12 @@ def selftest():
     nb, body = index_batches(b"".join(P), b"\x10\x20\x30\x80" * 6, b"", 6)
     assert nb == 1 and struct.unpack_from("<HH", body, 0) == (6, 4), body[:4]
     assert body[16 + 32 + 3::4][:6] == bytes((0, 1, 2, 1, 2, 3)), body
+    # event stars: the observer's arg7 4 names star 4; a cage with a star (arg7 7) the scenario's whose declarer it is
+    st = lambda n: dict(name="PowerStar", args=[n] + [2**32 - 1] * 7)
+    keep = [st(4), dict(name="FlipPanelObserver", args=[2**32 - 1] * 7 + [4]), st(1),
+            dict(name="BreakableCage", args=[2**32 - 1] * 7 + [7]), st(2)]
+    declare_stars(keep, 2, {1: "籠", 2: COIN100}, {"BreakableCage": "籠"})
+    assert [s32(r["args"][7]) for r in keep] == [1, 4, 3, 7, -2], keep
     print("selftest ok")
 
 

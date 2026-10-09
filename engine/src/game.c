@@ -143,7 +143,7 @@ typedef struct {
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP };
 static V3 firebar_ball(const Inst *in, int j, int k);
-static V3 star_pos(const Inst *in);
+static V3 star_pos(const Inst *in, int *state);
 static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle);
 /* a one-shot effect standing on `up` at p */
 static void fx_at(int fx, V3 p, V3 up)
@@ -202,7 +202,8 @@ static void zone_grow(const Inst *in);
  * (default 6) when it is 1; ItemBlock (ItemBlock.cpp, hit from below): TimerCoinBlock 10 coins, SplashCoinBlock arg0
  * (default 8), TimerPieceBlock 20 star pieces, SplashPieceBlock arg0 (default 8), ItemBlockSwitch nothing (its dead
  * switch). Returns 1 (spin or hip drop), 2 (hip drop only), 3 (hit from below) or 0 for anything else. ponytail:
- * CrystalCageL (2 hits, power star) waits for power stars; a timer block gives everything on its first hit */
+ * a timer block gives everything on its first hit. CrystalCageL takes 2 hits 20 frames apart (its star: star_pos);
+ * BreakableCage(Rotate / L) breaks on a spin too (ponytail: in SMG only what Mario rides or throws breaks it) */
 static int breakable(const char *name, const Row *r, int *coins, int *pieces)
 {
     *coins = *pieces = 0;
@@ -215,6 +216,9 @@ static int breakable(const char *name, const Row *r, int *coins, int *pieces)
         *coins = r->arg[7] == 0;
         return 1;
     }
+    if (strcmp(name, "CrystalCageL") == 0 || strcmp(name, "BreakableCage") == 0 || strcmp(name, "BreakableCageRotate") == 0 ||
+        strcmp(name, "BreakableCageL") == 0)
+        return 1;
     if (strcmp(name, "TimerCoinBlock") == 0 || strcmp(name, "SplashCoinBlock") == 0 ||
         strcmp(name, "TimerPieceBlock") == 0 || strcmp(name, "SplashPieceBlock") == 0 || strcmp(name, "ItemBlockSwitch") == 0) {
         int n = name[0] == 'T' ? (name[5] == 'C' ? 10 : 20) : r->arg[0] >= 0 ? r->arg[0] : 8;
@@ -230,16 +234,16 @@ static int breakable(const char *name, const Row *r, int *coins, int *pieces)
     return 0;
 }
 static unsigned char *row_dead; /* per OBJS row: broken, never comes back (zone swaps rebind from the rows) */
-/* per OBJS row: a PowerStar some event brings out (declarePowerStar / requestAppearPowerStar): its declarer's row + 1,
- * 0 none. Out once the declarer is done (row_dead), then row_step counts its appear demo (star_pos) */
+/* per OBJS row: a PowerStar some event brings out (declarePowerStar / requestAppearPowerStar; slice.py STAR_DECLARERS
+ * puts the declarer's row in its arg7): that row + 1, -1 a hundred coins, 0 none. Out once the declarer is done
+ * (row_dead), then row_step counts its appear demo (star_pos) */
 static short *star_wait;
-int game_scenario = 1;
 
 /* A row with an appear switch is out only while it is on (syncStageSwitchAppear); a dead row never again */
 static int row_shown(int i)
 {
     const Row *r = &sc->objs[i];
-    return !row_dead[i] && (r->sw[SW_APPEAR] < 0 || sw_on(r, SW_APPEAR)) && !(star_wait[i] && !row_dead[star_wait[i] - 1]);
+    return !row_dead[i] && (r->sw[SW_APPEAR] < 0 || sw_on(r, SW_APPEAR));
 }
 
 /* The row's object is gone for good: its dead switch goes on */
@@ -626,13 +630,9 @@ void game_init(const Scene *s, const unsigned char *blob)
     }
     row_dead = mem_alloc(MEM_OBJECTS, s->nobjs);
     star_wait = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(short));
-    memset(star_wait, 0, s->nobjs * sizeof(short));
-    int t_obs = scene_type(s, "FlipPanelObserver");
-    for (u32 i = 0; i < s->nobjs; i++) { /* FlipPanelObserver arg7: its star (0 the scenario's), -1 none */
-        int id = s->objs[i].arg[7] ? s->objs[i].arg[7] : game_scenario;
-        if (s->objs[i].type != t_obs || s->objs[i].arg[7] < 0) continue;
-        for (u32 k = 0; k < s->nobjs; k++)
-            if (s->objs[k].arg[0] == id && strcmp(s->types + 32 * s->objs[k].type, "PowerStar") == 0) star_wait[k] = i + 1;
+    for (u32 i = 0; i < s->nobjs; i++) {
+        int a = s->objs[i].arg[7];
+        star_wait[i] = strcmp(s->types + 32 * s->objs[i].type, "PowerStar") ? 0 : a >= 0 ? a + 1 : a == -2 ? -1 : 0;
     }
     row_step = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(unsigned short));
     row_angle = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(float));
@@ -1162,6 +1162,32 @@ int game_test_box(void)
         mario->hvel = v3(0, 0, 0); mario->vup = 0;
         mario->spin_timer = SPIN_TIME;
         return in->row;
+    }
+    return -1;
+}
+
+int game_test_cage(int on_star)
+{
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (in->item != ITEM_STAR || star_wait[in->row] <= 0) continue;
+        if (on_star) {
+            int state;
+            V3 p = star_pos(in, &state);
+            mario->pos = vadd(p, vmul(up_at(p, mario->up), -HIT_BODY_H));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return state;
+        }
+        int row = star_wait[in->row] - 1; /* its declarer: Mario spinning on it (by row: its zone may be loaded low) */
+        if (row_dead[row]) return -2;
+        float reach = 300.0f * sc->objs[row].scale[0];
+        for (int k = 0; k < ninsts; k++)
+            if (insts[k].row == row) reach = insts[k].reach;
+        V3 p = row_pos(&sc->objs[row]), up = up_at(p, v3(0, 1, 0));
+        mario->pos = vadd(p, vmul(up, reach + 20.0f));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        mario->spin_timer = SPIN_TIME;
+        return row;
     }
     return -1;
 }
@@ -1872,6 +1898,8 @@ static void break_boxes(void)
             return;
         }
     }
+    for (int i = 0; i < ninsts; i++)
+        if (insts[i].breaks == 1 && (row_step[insts[i].row] & 0x7FFF)) row_step[insts[i].row]--;
     if (mario->spin_timer <= 0 && !hip_hit)
         return;
     for (int i = 0; i < ninsts; i++) {
@@ -1879,6 +1907,13 @@ static void break_boxes(void)
         if (!in->breaks || in->breaks == 3) continue;
         V3 p = v3(in->m[12], in->m[13], in->m[14]);
         if (hip_hit ? i != hip_inst : in->breaks == 2 || vlen(vsub(c, p)) > in->reach + 120.0f) continue;
+        unsigned short *hit = &row_step[in->row]; /* CrystalCageL: 0x8000 hit once, low bits frames until the next */
+        if (strcmp(sc->types + 32 * sc->objs[in->row].type, "CrystalCageL") == 0 && !(*hit & 0x8000)) {
+            *hit = 0x8000 | (SPIN_TIME + 20);
+            printf("CrystalCageL %d hit\n", in->row);
+            continue;
+        }
+        if (*hit & 0x7FFF) continue;
         break_inst(in, 1);
         game_rebind();
         return;
@@ -2152,7 +2187,6 @@ static void update_switches(void)
                     if (sc->objs[k].group == r->group && sc->objs[k].zone == r->zone) row_step[k] |= FLIP_DONE;
                 sw_set(r, SW_A, 1);
                 row_dead[row] = 1;
-                sw_changed = 1; /* its star comes out (star_wait) */
                 printf("flip panels %d complete\n", r->group);
             }
             continue;
@@ -2183,7 +2217,8 @@ static void update_switches(void)
         sw_changed = 0;
         for (int i = 0; i < ninsts; i++) { /* PunchBox::kill / CrystalCage::forceBreak on SW_A */
             const Row *r = &sc->objs[insts[i].row];
-            if (insts[i].breaks && r->sw[SW_A] >= 0 && sw_on(r, SW_A) && !row_dead[insts[i].row])
+            if (insts[i].breaks && r->sw[SW_A] >= 0 && sw_on(r, SW_A) && !row_dead[insts[i].row] &&
+                strncmp(sc->types + 32 * r->type, "Breakable", 9) != 0) /* BreakableCage writes its SW_A */
                 break_inst(&insts[i], strcmp(sc->types + 32 * r->type, "PunchBox") != 0);
         }
         game_rebind();
@@ -2323,21 +2358,39 @@ static void update_firebars(void)
 /* an item's sensor: centre (returned) and radius */
 static V3 item_sensor(const Inst *in, float *r)
 {
-    V3 p = in->item == ITEM_STAR ? star_pos(in) : v3(in->m[12], in->m[13], in->m[14]);
+    int state;
+    V3 p = in->item == ITEM_STAR ? star_pos(in, &state) : v3(in->m[12], in->m[13], in->m[14]);
     *r = (in->item == ITEM_STAR ? 75.0f : in->item == ITEM_QCOIN ? 150.0f : in->item == ITEM_CHIP ? 80.0f : 50.0f) * in->s;
     if (in->item == ITEM_STAR || in->item == ITEM_CHIP) return p;
     return vadd(p, vmul(up_at(p, mario->up), (in->item == ITEM_QCOIN ? 210.0f : 50.0f) * in->s));
 }
 
-/* PowerStar.cpp appear demo (exeAppearDemoRise / Move): from its declarer 300 up its own y (ease out over 60 frames),
- * at frame 80 off to its place in 120 frames on an arc as high as half the distance across its up (300 to 5000);
- * taken from frame 210. ponytail: no demo camera, the stage goes on */
-static V3 star_pos(const Inst *in)
+/* An event star (star_wait) waits hidden, or shown inside the cage that declared it (CrystalCageL: 250 up the cage,
+ * BreakableCage: 150, DummyDisplayModel); then the PowerStar.cpp appear demo (exeAppearDemoRise / Move): from there
+ * (its own place for the hundred coins) 300 up its own y (ease out over 60 frames), at frame 80 off to its place in
+ * 120 frames on an arc as high as half the distance across its up (300 to 5000); taken from frame 210. *state: 0
+ * hidden, 1 waiting in its cage, 2 appearing, 3 can be taken. ponytail: no demo camera, the stage goes on */
+static V3 star_pos(const Inst *in, int *state)
 {
     V3 p = v3(in->m[12], in->m[13], in->m[14]);
     int w = star_wait[in->row], t = row_step[in->row];
-    if (!w || t >= 200) return p;
-    V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), o = row_pos(&sc->objs[w - 1]);
+    *state = 3;
+    if (!w) return p;
+    V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), o = p;
+    if (w > 0) {
+        const Row *r = &sc->objs[w - 1];
+        const char *name = sc->types + 32 * r->type;
+        V3 x, z;
+        row_axes(r, &x, &z);
+        float h = strcmp(name, "CrystalCageL") == 0 ? 250.0f : strncmp(name, "Breakable", 9) == 0 ? 150.0f : 0.0f;
+        o = vadd(row_pos(r), vmul(vcross(z, x), h * r->scale[0]));
+        if (!row_dead[w - 1]) { *state = h > 0; return o; }
+    } else if (got_coins < 100) {
+        *state = 0;
+        return o;
+    }
+    *state = t >= 210 ? 3 : 2;
+    if (t >= 200) return p;
     if (t < 80) return vadd(o, vmul(up, 300.0f * sinf(fminf(t / 60.0f, 1.0f) * 1.5707963f)));
     V3 a = vadd(o, vmul(up, 300.0f)), d = vsub(p, a);
     float s = (t - 80) / 120.0f, h = vlen(vsub(d, vmul(up, vdot(d, up)))) * 0.5f;
@@ -2350,7 +2403,11 @@ static void update_items(void)
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
         if (!in->item) continue;
-        if (star_wait[in->row] && row_step[in->row] < 210) { row_step[in->row]++; continue; }
+        if (in->item == ITEM_STAR && star_wait[in->row]) {
+            int state;
+            star_pos(in, &state);
+            if (state < 3) { row_step[in->row] += state == 2; continue; } /* row_step: its appear demo */
+        }
         float r;
         V3 p = item_sensor(in, &r);
         if (vlen(vsub(c, p)) > r + HIT_BODY_R) continue;
@@ -2422,7 +2479,16 @@ static void keep_effects(void)
         const char *name = sc->types + 32 * sc->objs[in->row].type;
         int fx = in->item == ITEM_STAR ? FX_POWERSTAR_LIGHT : in->item == ITEM_QCOIN ? FX_QUESTIONCOIN_LIGHT :
                  in->item == ITEM_CHIP ? (name[0] == 'Y' ? FX_YELLOWCHIP_WAIT : FX_BLUECHIP_WAIT) : -1;
-        if (fx >= 0) fx_keep(fx, in, in->m);
+        if (fx < 0) continue;
+        float lm[16];
+        memcpy(lm, in->m, 64);
+        if (in->item == ITEM_STAR) { /* the light follows an event star */
+            int state;
+            V3 p = star_pos(in, &state);
+            if (!state) continue;
+            lm[12] = p.x; lm[13] = p.y; lm[14] = p.z;
+        }
+        fx_keep(fx, in, lm);
     }
 }
 
@@ -2589,7 +2655,9 @@ void game_draw(void)
             rot[0] = rot[10] = cosf(spin_angle);
             rot[8] = sinf(spin_angle); rot[2] = -rot[8];
             mat_mul(cm, in->m, rot);
-            V3 p = star_pos(in);
+            int state;
+            V3 p = star_pos(in, &state);
+            if (!state) continue;
             cm[12] = p.x; cm[13] = p.y; cm[14] = p.z;
             render_model(in->md, cm, 0x70, 0xB0, 0x60);
         } else

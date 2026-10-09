@@ -7,7 +7,6 @@
 #include <sbv_patches.h>
 #include <sifrpc.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #include "audio.h"
@@ -441,7 +440,6 @@ int main(void)
 #ifdef PACKS
     /* base packs first, then the game (its allocations stay), then the zone packs above the mark */
     render_load_textures(&scene, 0, 0);
-    if (strchr(scen, '/')) game_scenario = atoi(strchr(scen, '/') + 1);
     game_init(&scene, blob);
     mem_mark(&base_mark);
     {
@@ -523,6 +521,12 @@ int main(void)
             printf("box test: after the block coins %d pieces out %d\n", game_coins(), game_pieces_out());
         if (frame == 240)
             printf("box test: coins %d\n", game_coins());
+#endif
+#ifdef CAGE_TEST
+        if (frame == 120 || frame == 300 || frame == 380) /* the first: its zone streams in */
+            printf("cage test f %u: Mario spins on row %d\n", frame, game_test_cage(0));
+        if (frame == 440 || frame == 740)
+            printf("cage test f %u: on its star, state %d, stars %d\n", frame, game_test_cage(1), game_stars());
 #endif
 #ifdef SPIN_TEST
         if (frame == 120)
