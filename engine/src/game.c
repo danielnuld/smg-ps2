@@ -143,6 +143,7 @@ typedef struct {
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP };
 static V3 firebar_ball(const Inst *in, int j, int k);
+static V3 star_pos(const Inst *in);
 static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle);
 /* a one-shot effect standing on `up` at p */
 static void fx_at(int fx, V3 p, V3 up)
@@ -229,12 +230,16 @@ static int breakable(const char *name, const Row *r, int *coins, int *pieces)
     return 0;
 }
 static unsigned char *row_dead; /* per OBJS row: broken, never comes back (zone swaps rebind from the rows) */
+/* per OBJS row: a PowerStar some event brings out (declarePowerStar / requestAppearPowerStar): its declarer's row + 1,
+ * 0 none. Out once the declarer is done (row_dead), then row_step counts its appear demo (star_pos) */
+static short *star_wait;
+int game_scenario = 1;
 
 /* A row with an appear switch is out only while it is on (syncStageSwitchAppear); a dead row never again */
 static int row_shown(int i)
 {
     const Row *r = &sc->objs[i];
-    return !row_dead[i] && (r->sw[SW_APPEAR] < 0 || sw_on(r, SW_APPEAR));
+    return !row_dead[i] && (r->sw[SW_APPEAR] < 0 || sw_on(r, SW_APPEAR)) && !(star_wait[i] && !row_dead[star_wait[i] - 1]);
 }
 
 /* The row's object is gone for good: its dead switch goes on */
@@ -620,6 +625,15 @@ void game_init(const Scene *s, const unsigned char *blob)
         }
     }
     row_dead = mem_alloc(MEM_OBJECTS, s->nobjs);
+    star_wait = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(short));
+    memset(star_wait, 0, s->nobjs * sizeof(short));
+    int t_obs = scene_type(s, "FlipPanelObserver");
+    for (u32 i = 0; i < s->nobjs; i++) { /* FlipPanelObserver arg7: its star (0 the scenario's), -1 none */
+        int id = s->objs[i].arg[7] ? s->objs[i].arg[7] : game_scenario;
+        if (s->objs[i].type != t_obs || s->objs[i].arg[7] < 0) continue;
+        for (u32 k = 0; k < s->nobjs; k++)
+            if (s->objs[k].arg[0] == id && strcmp(s->types + 32 * s->objs[k].type, "PowerStar") == 0) star_wait[k] = i + 1;
+    }
     row_step = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(unsigned short));
     row_angle = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(float));
     row_turn = mem_alloc(MEM_OBJECTS, s->nobjs);
@@ -2138,6 +2152,7 @@ static void update_switches(void)
                     if (sc->objs[k].group == r->group && sc->objs[k].zone == r->zone) row_step[k] |= FLIP_DONE;
                 sw_set(r, SW_A, 1);
                 row_dead[row] = 1;
+                sw_changed = 1; /* its star comes out (star_wait) */
                 printf("flip panels %d complete\n", r->group);
             }
             continue;
@@ -2308,10 +2323,25 @@ static void update_firebars(void)
 /* an item's sensor: centre (returned) and radius */
 static V3 item_sensor(const Inst *in, float *r)
 {
-    V3 p = v3(in->m[12], in->m[13], in->m[14]);
+    V3 p = in->item == ITEM_STAR ? star_pos(in) : v3(in->m[12], in->m[13], in->m[14]);
     *r = (in->item == ITEM_STAR ? 75.0f : in->item == ITEM_QCOIN ? 150.0f : in->item == ITEM_CHIP ? 80.0f : 50.0f) * in->s;
     if (in->item == ITEM_STAR || in->item == ITEM_CHIP) return p;
     return vadd(p, vmul(up_at(p, mario->up), (in->item == ITEM_QCOIN ? 210.0f : 50.0f) * in->s));
+}
+
+/* PowerStar.cpp appear demo (exeAppearDemoRise / Move): from its declarer 300 up its own y (ease out over 60 frames),
+ * at frame 80 off to its place in 120 frames on an arc as high as half the distance across its up (300 to 5000);
+ * taken from frame 210. ponytail: no demo camera, the stage goes on */
+static V3 star_pos(const Inst *in)
+{
+    V3 p = v3(in->m[12], in->m[13], in->m[14]);
+    int w = star_wait[in->row], t = row_step[in->row];
+    if (!w || t >= 200) return p;
+    V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), o = row_pos(&sc->objs[w - 1]);
+    if (t < 80) return vadd(o, vmul(up, 300.0f * sinf(fminf(t / 60.0f, 1.0f) * 1.5707963f)));
+    V3 a = vadd(o, vmul(up, 300.0f)), d = vsub(p, a);
+    float s = (t - 80) / 120.0f, h = vlen(vsub(d, vmul(up, vdot(d, up)))) * 0.5f;
+    return vadd(vadd(a, vmul(d, s)), vmul(up, sinf(s * 3.14159265f) * fminf(fmaxf(h, 300.0f), 5000.0f)));
 }
 
 static void update_items(void)
@@ -2320,6 +2350,7 @@ static void update_items(void)
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
         if (!in->item) continue;
+        if (star_wait[in->row] && row_step[in->row] < 210) { row_step[in->row]++; continue; }
         float r;
         V3 p = item_sensor(in, &r);
         if (vlen(vsub(c, p)) > r + HIT_BODY_R) continue;
@@ -2558,6 +2589,8 @@ void game_draw(void)
             rot[0] = rot[10] = cosf(spin_angle);
             rot[8] = sinf(spin_angle); rot[2] = -rot[8];
             mat_mul(cm, in->m, rot);
+            V3 p = star_pos(in);
+            cm[12] = p.x; cm[13] = p.y; cm[14] = p.z;
             render_model(in->md, cm, 0x70, 0xB0, 0x60);
         } else
             render_model(in->md, in->m, 0x70, 0xB0, 0x60);

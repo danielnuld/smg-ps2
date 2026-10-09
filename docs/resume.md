@@ -30,7 +30,9 @@ Last updated 2026-10-08. Detail and numbers: `docs/phase2-report.md`; tasks: `op
   - map parts and child objects (were missing): rotating parts (MapPartsRotator) and rail movers (MapPartsRailMover:
     point speed / stop, end types) move with their collision and carry Mario;
   - FlipPanel / FlipPanelReverse flip after 3 frames under Mario (turned over: ponytail for the colour animation),
-    FlipPanelObserver turns SW_A on once all of its GroupId are flipped (rows carry GroupId in the old pad);
+    FlipPanelObserver turns SW_A on once all of its GroupId are flipped (rows carry GroupId in the old pad), and
+    brings out its power star (arg7: that star id, 0 the scenario's; `star_wait`): hidden until then, it rises 300
+    from the observer and flies to its place on an arc (PowerStar appear demo, no demo camera), taken from frame 210;
   - items taken on touch: PowerStar (counted, spins), 1-up / life-up mushrooms, QuestionCoin, Yellow / BlueChip
     (their ChipGroup turns SW_A on when complete); ItemBlocks (Timer / Splash Coin / Piece blocks, ItemBlockSwitch)
     hit from below give all their items at once;
@@ -84,7 +86,7 @@ Last updated 2026-10-08. Detail and numbers: `docs/phase2-report.md`; tasks: `op
 | Convert everything (packs + table, ~5 min) | `python tools/slice_all.py data/fs/files out/packs 6` then `python tools/vram_need.py out/packs` |
 | Build, embedded Gateway 2 | `wsl.exe -e bash /mnt/d/smg-ps2/engine/build.sh [bench]` → `engine/slice[-bench].elf` |
 | Build from packs | `wsl.exe -e bash /mnt/d/smg-ps2/engine/build.sh MODE out/slice/hd2.bin Galaxy/n` → `out/slice-packs[-MODE].elf` (run from `out/`: `host:packs/`) |
-| Modes | `plain`, `bench`, `slope`, `zone` (first SuperSpinDriver at frame 120), `box` (FlipPanelEx 1: the coin pops and is taken), `collapse`, `hazard` (EggStar 1: third NeedlePlant prick is a miss; BattleShip 2: mine, electric rail, black hole; Factory 1: FireBar), `item` (BattleShip 2; CosmosGarden 1: a QuestionCoin's dead switch brings star pieces), `spin` (BattleShip 2, CannonFleet 1), `pipe` (BattleShip 2), `hip` (Factory 1), `flip` (FlipPanelEx 1: 18 panels, the group completes) |
+| Modes | `plain`, `bench`, `slope`, `zone` (first SuperSpinDriver at frame 120), `box` (FlipPanelEx 1: the coin pops and is taken), `collapse`, `hazard` (EggStar 1: third NeedlePlant prick is a miss; BattleShip 2: mine, electric rail, black hole; Factory 1: FireBar), `item` (BattleShip 2; CosmosGarden 1: a QuestionCoin's dead switch brings star pieces), `spin` (BattleShip 2, CannonFleet 1), `pipe` (BattleShip 2), `hip` (Factory 1), `flip` (FlipPanelEx 1: 18 panels, the group completes, its power star comes out and is taken) |
 | Host tests | `wsl.exe -e bash /mnt/d/smg-ps2/engine/test/run.sh` |
 | Coverage (task 5.3) | `build.sh cover out/slice/hd2.bin BattleShipGalaxy/2` then `tools/coverage.ps1` → `out/coverage.csv` (one ELF, the scenario through `out/boot.txt`; ~1 min each); `python tools/class_coverage.py` → `out/class_coverage.md` (behaviour / static / missing placements) |
 | Disc image | `build.sh MODE out/slice/hd2.bin Galaxy/n disc` (→ `out/disc/SLICE.ELF`) then `python tools/disc.py` → `out/smg-ps2.iso` (819 MB, all 136 scenarios' packs); boot with `tools/run_quiet.ps1 -Iso out/smg-ps2.iso`; a boot menu lists every scenario (D-pad, X; the build's scenario starts after 10 s) |
@@ -97,8 +99,9 @@ there needs the embedded blob and every pack rebuilt.
 ## Next
 
 0. Look: more effects (child particles, rotation, other field / shape types; Mario's own: dust, spin).
-1. (Pick up here: start with the power star FlipPanelObserver spawns, FlipPanelEx 1.) More switch sources and users: IronCannonLauncherPoint, StarPieceSpot, Kinopio / Tico; spawned power stars
-   (FlipPanelObserver arg7, requestAppearPowerStar); RestartCube (checkpoints).
+1. More switch sources and users: IronCannonLauncherPoint, StarPieceSpot, Kinopio / Tico; RestartCube (checkpoints).
+   Other power star declarers (ScenarioData AppearPowerStarObj: '壊れる籠' CrystalCage arg7, '１００枚コイン' 100 coins,
+   'クリスタルケージ[大]' CrystalCageL...): set `star_wait` for them like FlipPanelObserver.
 2. Lumas / NPCs (static models today).
 3. More classes by placement count (`out/census.json`): GCaptureTarget, FlowerGroup, CutBushGroup, ShootingStar,
    Kinopio, FlipPanel; LavaSteam (its danger is an effect: needs effects first).

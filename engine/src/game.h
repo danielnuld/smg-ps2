@@ -3,6 +3,7 @@
 
 #include "blob.h"
 
+extern int game_scenario; /* the scenario number ("<Galaxy>/<n>"), before game_init */
 void game_init(const Scene *s, const unsigned char *blob);
 void game_update(void);
 /* After the scene's models changed (zone packs swapped): find every placed model again. */

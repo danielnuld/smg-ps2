@@ -7,6 +7,7 @@
 #include <sbv_patches.h>
 #include <sifrpc.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "audio.h"
@@ -440,6 +441,7 @@ int main(void)
 #ifdef PACKS
     /* base packs first, then the game (its allocations stay), then the zone packs above the mark */
     render_load_textures(&scene, 0, 0);
+    if (strchr(scen, '/')) game_scenario = atoi(strchr(scen, '/') + 1);
     game_init(&scene, blob);
     mem_mark(&base_mark);
     {
@@ -563,7 +565,8 @@ int main(void)
             } else if (done == 1) {
                 printf("flip test after panel 2 again: %d on their back\n", game_flips_back());
                 done = 2;
-            }
+            } else if (done >= 2 && ++done == 8) /* its power star out and in place (210 frames): Mario on it */
+                printf("flip test: on item %d\n", game_test_item());
         }
 #endif
 #ifdef ENEMY_TEST
