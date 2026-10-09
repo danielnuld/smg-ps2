@@ -548,6 +548,15 @@ int main(void)
         if (frame % 120 == 0 && frame <= 1800)
             printf("shoot test f %u: star pieces out %d\n", frame, game_pieces_out());
 #endif
+#ifdef PLANT_TEST
+        if (frame >= 120 && frame % 10 == 0) {
+            static int k;
+            int row = game_test_plant(k);
+            if (row >= 0) k++;
+            if (row != -1 || frame % 200 == 0)
+                printf("plant test f %u: member %d of row %d, coins %d, pieces out %d\n", frame, k, row, game_coins(), game_pieces_out());
+        }
+#endif
 #ifdef CAGE_TEST
         if (frame == 120 || frame == 300 || frame == 380) /* the first: its zone streams in */
             printf("cage test f %u: Mario spins on row %d\n", frame, game_test_cage(0));

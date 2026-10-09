@@ -28,6 +28,9 @@ int game_test_cage(int on_star);
 int game_test_restart(int k);
 /* Test builds: Mario put 600 in front of the first cannon launcher's muzzle (his touch sphere on its line); its row */
 int game_test_cannon(void);
+/* Test builds: Mario walking through the k-th member of the plant groups holding items, its group row; -2 the group's
+ * members are not placed yet (Mario put over it), -1 no more */
+int game_test_plant(int k);
 /* Test builds: Mario spinning on the first breakable whose dead switch makes a StarPieceSpot burst; its row or -1 */
 int game_test_spot(void);
 /* Test builds: Mario jumping into the first ItemBlock from below. Returns its row or -1. */

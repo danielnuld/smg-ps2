@@ -337,9 +337,11 @@ static Logic *logic;
 static int nlogic; /* pipe_zone: the exit pipe's zone, wanted in full */
 /* PlantGroup.cpp: arg0 members (default 7) in hexagonal rings 160 apart (ring k: 6k of them), each dropped onto
  * the ground along gravity (a 1000 ray from 100 above), dropped when nothing is under it. Placed once per group, the
- * first rebind its zone has collision (plant_row; plant_state 0 not yet, 1 placed). ponytail: the ray is stepped
- * spheres; no shaking, no hidden coins */
-typedef struct { V3 pos, up; int ok; } Plant;
+ * first rebind its zone has collision (plant_row; plant_state 0 not yet, 1 placed). arg1 of the members (shuffled)
+ * hide a coin, or a star piece when arg2 is 1: Mario moving through one (within 50 * scale_y of his touch sphere,
+ * PlantMember::tryPush) or spinning by it brings it out (update_plants). ponytail: the ray is stepped spheres; no
+ * shaking, the star piece is dropped, not thrown */
+typedef struct { V3 pos, up; int ok, item; } Plant;
 static Plant *plants;
 static int *plant_first;           /* per OBJS row: index of its first member in plants, -1 not a group */
 static unsigned char *plant_state; /* per OBJS row */
@@ -643,6 +645,11 @@ void game_init(const Scene *s, const unsigned char *blob)
             box_pieces += s->objs[i].arg[0] >= 0 ? s->objs[i].arg[0] : 5;
         if (strcmp(s->types + 32 * s->objs[i].type, "ShootingStar") == 0)
             box_pieces += s->objs[i].arg[3] >= 0 ? s->objs[i].arg[3] : 5;
+        const char *tn = s->types + 32 * s->objs[i].type;
+        if ((!strcmp(tn, "FlowerGroup") || !strcmp(tn, "FlowerBlueGroup") || !strcmp(tn, "CutBushGroup")) && s->objs[i].arg[1] > 0) {
+            if (s->objs[i].arg[2] == 1) box_pieces += s->objs[i].arg[1];
+            else { ncoins += s->objs[i].arg[1]; box_coins += s->objs[i].arg[1]; }
+        }
     }
     row_dead = mem_alloc(MEM_OBJECTS, s->nobjs);
     star_wait = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(short));
@@ -773,6 +780,16 @@ void game_init(const Scene *s, const unsigned char *blob)
             if (t == t_fg || t == t_fb || t == t_cb) { plant_first[i] = total; total += plant_count(&s->objs[i]); }
         }
         plants = mem_alloc(MEM_OBJECTS, (total + 1) * sizeof(Plant));
+        for (u32 i = 0; i < s->nobjs; i++) { /* initMember: the first arg1 hold an item, then shuffled */
+            if (plant_first[i] < 0) continue;
+            Plant *g = &plants[plant_first[i]];
+            int n = plant_count(&s->objs[i]), items = s->objs[i].arg[1] > 0 ? s->objs[i].arg[1] : 0;
+            for (int k = 0; k < n; k++) g[k].item = k < items;
+            for (int k = 0; k < n; k++) {
+                int j = rand() % (k + 1), t = g[k].item;
+                g[k].item = g[j].item; g[j].item = t;
+            }
+        }
     }
     shells = mem_alloc(MEM_OBJECTS, ((count_type("IronCannonLauncherPoint", 0) + count_type("IronCannonLauncher", 0)) *
                                      SHELLS_PER + 1) * sizeof(Shell));
@@ -1243,6 +1260,29 @@ int game_test_spot(void)
             mario->pos = vadd(q, vmul(up, reach + 20.0f));
             mario->hvel = v3(0, 0, 0); mario->vup = 0;
             mario->spin_timer = SPIN_TIME;
+            return i;
+        }
+    }
+    return -1;
+}
+
+int game_test_plant(int k)
+{
+    for (u32 i = 0; i < sc->nobjs; i++) { /* groups holding items: Mario walking through their k-th placed member */
+        if (plant_first[i] < 0 || sc->objs[i].arg[1] <= 0) continue;
+        V3 p = row_pos(&sc->objs[i]);
+        if (!plant_state[i]) { /* not placed yet: Mario over the group, its zone streams in */
+            mario->pos = vadd(p, vmul(up_at(p, mario->up), 100.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return -2;
+        }
+        for (int j = 0; j < plant_count(&sc->objs[i]); j++) {
+            const Plant *m = &plants[plant_first[i] + j];
+            if (!m->ok || k--) continue;
+            mario->pos = m->pos;
+            mario->up = m->up;
+            mario->hvel = vmul(vnorm(vtangent(v3(1, 0, 0), m->up)), 2.0f);
+            mario->vup = 0;
             return i;
         }
     }
@@ -2460,6 +2500,28 @@ static void update_shooting(void)
     }
 }
 
+static void update_plants(void)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    int moving = vdot(mario->hvel, mario->hvel) >= 2.0f || mario->spin_timer > 0;
+    for (int i = 0; moving && i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->plant || plant_first[in->row] < 0 || !row_shown(in->row) ||
+            vlen(vsub(c, v3(in->m[12], in->m[13], in->m[14]))) > in->reach + 1000.0f)
+            continue;
+        const Row *r = &sc->objs[in->row];
+        int n = plant_count(r);
+        for (int k = 0; k < n; k++) {
+            Plant *p = &plants[plant_first[in->row] + k];
+            if (!p->ok || !p->item || vlen(vsub(c, p->pos)) > 50.0f * r->scale[1] + HIT_BODY_R) continue;
+            p->item = 0;
+            if (r->arg[2] == 1) drop_pieces(p->pos, p->up, 1);
+            else pop_coins(p->pos, p->up, 1);
+            printf("plant group %d: item out\n", in->row);
+        }
+    }
+}
+
 static void shell_explode(Shell *o)
 {
     fx_at(FX_SPACEMINE_EXPLOSION, o->pos, up_at(o->pos, mario->up));
@@ -2734,6 +2796,7 @@ void game_update(void)
     update_rocks();
     update_shells();
     update_shooting();
+    update_plants();
     update_pipes();
     update_switches();
     update_pops();
