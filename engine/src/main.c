@@ -544,6 +544,10 @@ int main(void)
         if (frame >= 120 && frame <= 900 && frame % 30 == 0) /* held in its line of fire */
             printf("cannon test f %u: on row %d, life %d\n", frame, game_test_cannon(), game_life());
 #endif
+#ifdef SHOOT_TEST
+        if (frame % 120 == 0 && frame <= 1800)
+            printf("shoot test f %u: star pieces out %d\n", frame, game_pieces_out());
+#endif
 #ifdef CAGE_TEST
         if (frame == 120 || frame == 300 || frame == 380) /* the first: its zone streams in */
             printf("cage test f %u: Mario spins on row %d\n", frame, game_test_cage(0));

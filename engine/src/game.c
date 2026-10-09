@@ -138,6 +138,7 @@ typedef struct {
     int hipsw;       /* hip drop switch: 1 PicketSwitch(Big) / HipDropSwitch (SW_A for good), 2 HipDropTimerSwitch */
     int rotor;       /* map part with a RotateSpeed: turns (rotor_matrix), carries Mario */
     int sky;         /* sky dome (Petari Sky): centred on the camera, drawn first */
+    int shoot;       /* ShootingStar: falls, bursts into star pieces (update_shooting) */
     int plant;       /* PlantGroup (Flower / FlowerBlue / CutBush Group): its model drawn at each member (plants) */
     const unsigned char *railer; /* map part on a rail: its PATH entry; moves along it (update_railers) */
 } Inst;
@@ -640,6 +641,8 @@ void game_init(const Scene *s, const unsigned char *blob)
         }
         if (strcmp(s->types + 32 * s->objs[i].type, "StarPieceSpot") == 0)
             box_pieces += s->objs[i].arg[0] >= 0 ? s->objs[i].arg[0] : 5;
+        if (strcmp(s->types + 32 * s->objs[i].type, "ShootingStar") == 0)
+            box_pieces += s->objs[i].arg[3] >= 0 ? s->objs[i].arg[3] : 5;
     }
     row_dead = mem_alloc(MEM_OBJECTS, s->nobjs);
     star_wait = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(short));
@@ -655,6 +658,9 @@ void game_init(const Scene *s, const unsigned char *blob)
     row_speed = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(float));
     row_rdir = mem_alloc(MEM_OBJECTS, s->nobjs);
     row_rhold = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(unsigned short));
+    for (u32 i = 0; i < s->nobjs; i++) /* ShootingStar: star pieces it still holds (declareStarPiece arg3) */
+        if (strcmp(s->types + 32 * s->objs[i].type, "ShootingStar") == 0)
+            row_hold[i] = s->objs[i].arg[3] >= 0 ? s->objs[i].arg[3] : 5;
     scene_blob_g = blob;
     npurple = count_type("PurpleCoin", 0) + count_type("CirclePurpleCoinGroup", 1) + count_type("PurpleRailCoin", 1);
     npieces = count_type("StarPiece", 0) + box_pieces;
@@ -1042,6 +1048,7 @@ void game_rebind(void)
         }
         in->npc = npc_class(name);
         in->sky = sky_class(name);
+        in->shoot = strcmp(name, "ShootingStar") == 0;
         in->plant = strcmp(name, "FlowerGroup") == 0 || strcmp(name, "FlowerBlueGroup") == 0 || strcmp(name, "CutBushGroup") == 0;
         in->hipsw = strncmp(name, "PicketSwitch", 12) == 0 || strcmp(name, "HipDropSwitch") == 0 ? 1 :
                     strcmp(name, "HipDropTimerSwitch") == 0 ? 2 : 0;
@@ -2409,6 +2416,50 @@ static V3 rock_pos(const Roller *o, float *radius)
     return vadd(p, vmul(up_at(p, mario->up), *radius)); /* the rail runs along the ground under the rock */
 }
 
+/* ShootingStar.cpp: it appears arg2 (default 2000) up its y from its place, growing for 20 frames, then falls 25 a
+ * frame spinning 10 degrees a frame; on the ground it bursts into arg0 star pieces (default 5) of the arg3 it holds
+ * (default 5), hides for arg1 frames (default 240) and starts over until it holds none; after 360 frames of falling it
+ * starts over. row_turn: 0 appearing, 1 falling, 2 waiting; row_step its frames; row_hold the pieces left.
+ * ponytail: the pieces are dropped in a ring (drop_pieces), not thrown */
+static V3 shoot_pos(const Inst *in, float *k)
+{
+    const Row *r = &sc->objs[in->row];
+    V3 axis = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+    float h = r->arg[2] >= 0 ? (float)r->arg[2] : 2000.0f;
+    int t = row_step[in->row], ph = row_turn[in->row];
+    *k = ph == 0 ? fminf(t / 20.0f, 1.0f) : ph == 1 ? 1.0f : 0.0f;
+    return vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(axis, ph == 1 ? h - 25.0f * t : h));
+}
+
+static void update_shooting(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->shoot || !row_shown(in->row)) continue;
+        int row = in->row;
+        const Row *r = &sc->objs[row];
+        unsigned short *t = &row_step[row];
+        signed char *ph = &row_turn[row];
+        ++*t;
+        if (*ph == 0 && *t > 20) { *ph = 1; *t = 0; }
+        else if (*ph == 2 && *t > (r->arg[1] >= 0 ? r->arg[1] : 240)) { *ph = 0; *t = 0; }
+        else if (*ph == 1) {
+            if (*t > 360) { *ph = 0; *t = 0; continue; }
+            float k;
+            V3 p = shoot_pos(in, &k), q = p, up = up_at(p, mario->up), gn = up, wn;
+            int wall;
+            if (!collide_n(&q, up, 100.0f, &gn, &wn, &wall) && !wall) continue;
+            int n = r->arg[0] >= 0 ? r->arg[0] : 5;
+            if (n > row_hold[row]) n = row_hold[row];
+            drop_pieces(p, up, n);
+            row_hold[row] -= n;
+            *ph = 2; *t = 0;
+            if (!row_hold[row]) row_dead[row] = 1;
+            printf("shooting star %d burst %d, %d left\n", row, n, row_hold[row]);
+        }
+    }
+}
+
 static void shell_explode(Shell *o)
 {
     fx_at(FX_SPACEMINE_EXPLOSION, o->pos, up_at(o->pos, mario->up));
@@ -2682,6 +2733,7 @@ void game_update(void)
     update_firebars();
     update_rocks();
     update_shells();
+    update_shooting();
     update_pipes();
     update_switches();
     update_pops();
@@ -2815,6 +2867,19 @@ void game_draw(void)
             const Model *md = (row_step[in->row] & FLIP_DONE) && in->md_flip[1] ? in->md_flip[1] :
                               turned ? in->md_flip[0] : in->md;
             render_model(md, in->m, 0x70, 0xB0, 0x60);
+            continue;
+        }
+        if (in->shoot) { /* spinning about its y, grown by k */
+            float k, rot[16], cm[16], a = game_frame * 0.17453293f;
+            V3 p = shoot_pos(in, &k);
+            if (k <= 0.0f || row_dead[in->row]) continue;
+            mat_identity(rot);
+            rot[0] = rot[10] = cosf(a);
+            rot[8] = sinf(a); rot[2] = -rot[8];
+            mat_mul(cm, in->m, rot);
+            for (int j = 0; j < 12; j++) if (j % 4 != 3) cm[j] *= k;
+            cm[12] = p.x; cm[13] = p.y; cm[14] = p.z;
+            render_model(in->md, cm, 0x70, 0xB0, 0x60);
             continue;
         }
         if (in->collapse && row_step[in->row]) { /* calcJointPlane: x / z scale 1 - 0.7 step / time */
