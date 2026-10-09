@@ -111,7 +111,8 @@ there needs the embedded blob and every pack rebuilt.
 
 ## Next
 
-0. Look: more effects (child particles, rotation, other field / shape types; Mario's own: dust, spin).
+0. Look: more effects (child particles, rotation, other field / shape types; Mario's dust, on his joints).
+   Mario has SpinLight, HipDropFlower and Damage (`mario_fx`).
 1. More switch sources and users: Kinopio / Tico.
    More power star declarers (`STAR_DECLARERS` in slice.py, then the origin in `star_pos`): bosses, Tico
    collecting (チコ集め), Kuribo / SkullShark baby "all dead" checkers, NPC events; PowerStarAppearPoint groups.

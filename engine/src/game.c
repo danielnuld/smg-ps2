@@ -1881,9 +1881,19 @@ static void miss(void)
 }
 
 /* Mario hit by something at `from`: one life gone, knocked away from it and blinking */
+/* Mario's own effects (AutoEffectList group Mario): at his body (k 1) or his feet (k 0), facing his front.
+ * ponytail: not on his joints */
+static void mario_fx(int fx, float k)
+{
+    float m[16];
+    basis_matrix(m, vadd(mario->pos, vmul(mario->up, k * BODY_RADIUS)), mario->up, mario->face, 0);
+    fx_emit(fx, m);
+}
+
 static void hurt_mario(V3 from, float push)
 {
     if (mario->hurt_timer) return;
+    mario_fx(FX_MARIO_DAMAGE, 1.0f);
     if (--life <= 0) { miss(); return; }
     V3 away = vtangent(vsub(mario->pos, from), mario->up);
     if (vlen(away) < 1e-3f) away = mario->face;
@@ -2834,6 +2844,8 @@ void game_update(void)
     update_rotors();
     update_railers();
     update_mario();
+    if (mario->spin_timer == SPIN_TIME - 1) mario_fx(FX_MARIO_SPINLIGHT, 1.0f); /* a spin started this frame */
+    if (hip_hit) mario_fx(FX_MARIO_HIPDROPFLOWER, 0.0f);
     update_kuribo();
     break_boxes();
     update_collapse();

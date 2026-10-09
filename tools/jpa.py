@@ -112,7 +112,8 @@ FX = [("Coin", "CoinGet"), ("PurpleCoin", "CoinGet"), ("StarPiece", "StarPieceLi
       ("PunchBox", "Break"), ("CrystalCageS", "Break"), ("CrystalCageM", "Break"), ("SpaceMine", "Explosion"),
       ("Kuribo", "DeathSmokeKuribo"), ("TakoHei", "Death"), ("QuestionCoin", "Get"), ("BlueChip", "Get"),
       ("YellowChip", "Get"), ("BlueChip", "Wait"), ("YellowChip", "Wait"), ("QuestionCoin", "Light"),
-      ("LavaSteam", "Sign"), ("LavaSteam", "Steam")]
+      ("LavaSteam", "Sign"), ("LavaSteam", "Steam"), ("Mario", "SpinLight"), ("Mario", "HipDropFlower"),
+      ("Mario", "Damage")]
 FX_RES = 7  # resources per effect at most (fx.c FxDef)
 
 
