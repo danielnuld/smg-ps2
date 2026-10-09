@@ -314,7 +314,7 @@ static int pipe_out = -1; /* the mode 1 pipe Mario came out of, hidden once the 
 static Pipe *pipes;
 static int npipes, pipe_wait, pipe_zone = -1;
 /* Switch logic rows (no model): TimerSwitch, SwitchSynchronizerReverse, GroupSwitchWatcher */
-enum { LOGIC_TIMER = 1, LOGIC_REVERSE, LOGIC_GROUP, LOGIC_BLOCKER, LOGIC_FLIPS, LOGIC_CHIPS, LOGIC_SWAREA, LOGIC_DEATH };
+enum { LOGIC_TIMER = 1, LOGIC_REVERSE, LOGIC_GROUP, LOGIC_BLOCKER, LOGIC_FLIPS, LOGIC_CHIPS, LOGIC_SWAREA, LOGIC_DEATH, LOGIC_RESTART };
 static int area_shape(const char *name);
 /* FlipPanel (Petari FlipPanel.cpp): row_step bits. Back = flipped (ACTMES_SUCCESS to the observer); a flip locks the
  * panel until Mario stood on other ground; it flips once he has stood on it 3 frames (checkPlayerOnTop). Done: the
@@ -798,7 +798,7 @@ void game_init(const Scene *s, const unsigned char *blob)
                                     count_type("BlueChipGroup", 0) + count_type("SwitchCube", 0) +
                                     count_type("SwitchSphere", 0) + count_type("SwitchCylinder", 0) +
                                     count_type("DeathCube", 0) + count_type("DeathSphere", 0) +
-                                    count_type("DeathCylinder", 0) + 1) *
+                                    count_type("DeathCylinder", 0) + count_type("RestartCube", 0) + 1) *
                                        sizeof(Logic));
     int t_timer = scene_type(s, "TimerSwitch"), t_rev = scene_type(s, "SwitchSynchronizerReverse"),
         t_group = scene_type(s, "GroupSwitchWatcher"), t_block = scene_type(s, "CollisionBlocker"),
@@ -809,6 +809,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         const char *tn = s->types + 32 * t;
         int k = strncmp(tn, "Switch", 6) == 0 && area_shape(tn) >= 0 ? LOGIC_SWAREA :
                 strncmp(tn, "Death", 5) == 0 && area_shape(tn) >= 0 ? LOGIC_DEATH :
+                strcmp(tn, "RestartCube") == 0 ? LOGIC_RESTART :
                 t == t_timer ? LOGIC_TIMER : t == t_rev ? LOGIC_REVERSE : t == t_group ? LOGIC_GROUP :
                 t == t_block ? LOGIC_BLOCKER : t == t_flipobs ? LOGIC_FLIPS : t == t_ychips || t == t_bchips ? LOGIC_CHIPS : 0;
         if (k) { logic[nlogic].row = i; logic[nlogic++].kind = k; }
@@ -1188,6 +1189,21 @@ int game_test_cage(int on_star)
         mario->hvel = v3(0, 0, 0); mario->vup = 0;
         mario->spin_timer = SPIN_TIME;
         return row;
+    }
+    return -1;
+}
+
+int game_test_restart(int k)
+{
+    if (k < 0) { miss(); return 0; }
+    for (int i = 0; i < nlogic; i++) {
+        if (logic[i].kind != LOGIC_RESTART || k--) continue;
+        const Row *r = &sc->objs[logic[i].row];
+        V3 x, z;
+        row_axes(r, &x, &z);
+        mario->pos = vadd(row_pos(r), vmul(vcross(z, x), 100.0f)); /* inside, above its base */
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return r->arg[0];
     }
     return -1;
 }
@@ -2149,6 +2165,17 @@ static void update_switches(void)
             if (r->arg[0] == -1 && sw_on(r, SW_A) != (r->arg[1] != -1)) continue;      /* nothing left to do */
             if ((r->sw[SW_B] < 0 || sw_on(r, SW_B)) && in) sw_set(r, SW_A, r->arg[1] == -1);
             else if (r->arg[0] != -1) sw_set(r, SW_A, 0);                              /* only while inside */
+            continue;
+        }
+        if (logic[i].kind == LOGIC_RESTART) { /* RestartCube.cpp: inside (on the ground unless arg3 is -1), a miss
+                                                * brings Mario back to the start point of its zone with MarioNo arg0 */
+            if (!row_shown(row) || (r->arg[3] != -1 && !mario->grounded) || !area_inside(r, mario->pos)) continue;
+            for (u32 k = 0; k < sc->nstarts; k++)
+                if (sc->starts[k].zone == r->zone && sc->starts[k].arg[0] == r->arg[0] &&
+                    vlen(vsub(row_pos(&sc->starts[k]), start_pos)) > 1.0f) {
+                    start_pos = row_pos(&sc->starts[k]);
+                    printf("restart point %d (row %d)\n", r->arg[0], row);
+                }
             continue;
         }
         if (logic[i].kind == LOGIC_DEATH) { /* DeathArea.cpp: forceKillPlayerByAbyss */

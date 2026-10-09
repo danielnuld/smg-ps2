@@ -24,6 +24,8 @@ int game_test_box(void);
 /* Test builds: Mario spinning on the cage (or other declarer) holding the first event power star, its row (-2 it is
  * gone, -1 none); on_star: Mario put on that star instead, returns its star_pos state (3: can be taken) */
 int game_test_cage(int on_star);
+/* Test builds: Mario put inside RestartCube k, its arg0 (MarioNo) or -1; k -1: a miss */
+int game_test_restart(int k);
 /* Test builds: Mario jumping into the first ItemBlock from below. Returns its row or -1. */
 int game_test_block(void);
 int game_test_enemy(int kind, int k, int how); /* kind: 0 Kuribo, 1 TakoHei, 2 PackunPetit, 3 KoteBug, 4 JumpSpider */

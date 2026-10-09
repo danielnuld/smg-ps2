@@ -522,6 +522,20 @@ int main(void)
         if (frame == 240)
             printf("box test: coins %d\n", game_coins());
 #endif
+#ifdef RESTART_TEST
+        if (frame == 120 || frame == 300) {
+            char d[128];
+            int no = game_test_restart(frame == 120 ? 0 : 1);
+            game_debug(d, sizeof d);
+            printf("restart test f %u: in RestartCube to MarioNo %d, %s\n", frame, no, d);
+        }
+        if (frame == 200 || frame == 380) {
+            char d[128];
+            game_test_restart(-1);
+            game_debug(d, sizeof d);
+            printf("restart test f %u: after a miss %s\n", frame, d);
+        }
+#endif
 #ifdef CAGE_TEST
         if (frame == 120 || frame == 300 || frame == 380) /* the first: its zone streams in */
             printf("cage test f %u: Mario spins on row %d\n", frame, game_test_cage(0));

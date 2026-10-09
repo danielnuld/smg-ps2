@@ -18,7 +18,7 @@ Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
   'ZONE'  u32 n, n × {char[32] name, f32 pos[3], f32 rot[3]}   world placement; zone 0 = main stage (identity).
           Everything else placed in a zone is already in world space (to_world); CAMS stays zone-local
   'ZPAR'  u32 n, n × s32 parent zone (-1 for the main stage): the zone chain for streaming
-  'OBJS'  u32 n, n × ROW;  'STRT' same layout (Mario start points)
+  'OBJS'  u32 n, n × ROW;  'STRT' same layout (Mario start points, arg0 their MarioNo)
           ROW = {u16 type, u16 zone, s32 l_id, s32 path_id, f32 pos[3], f32 rot[3], f32 scale[3], s32 arg[8],
                  s16 sw[5] (SW_FIELDS, -1 none), s16 group (GroupId, -1 none)}  (92 B)
   'PATH'  u32 n, n × {u16 zone, u16 closed, s32 id, u32 npts, u32 nraw, s32 stop_type (path_arg1), s32 pad,
@@ -77,7 +77,7 @@ STAR_DECLARERS = {"FlipPanelObserver": 7, "CrystalCageL": 0, "BreakableCage": No
 COIN100 = "１００枚コイン"
 LOGIC = ("TimerSwitch", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
          "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "DeathCube", "DeathSphere",
-         "DeathCylinder")  # areas (areaobjinfo) travel as OBJS rows too
+         "DeathCylinder", "RestartCube")  # areas (areaobjinfo) travel as OBJS rows too
 
 
 def col(b, field, n, default=0):
@@ -178,8 +178,9 @@ def scene(fs, galaxy, scenario):
             mp = files.get(f"{root}/jmp/mapparts/{layer}/mappartsinfo", b"")
             for r in map_parts(mp, rows(mp)):
                 objs.append(dict(r, zone=zid))
-            for r in rows(files.get(f"{root}/jmp/start/{layer}/startinfo", b"")):
-                starts.append(dict(r, zone=zid))
+            sb = files.get(f"{root}/jmp/start/{layer}/startinfo", b"")
+            for r, no in zip(rows(sb), int_or(sb, "MarioNo", len(B.bcsv_column(sb, "name")), 0)):
+                starts.append(dict(r, zone=zid, args=[no] + r["args"][1:]))  # arg0: MarioNo (RestartCube arg0)
             cb = files.get(f"{root}/jmp/placement/{layer}/cameracubeinfo", b"")
             valid, sw_a = B.bcsv_column(cb, "Validity"), int_or(cb, "SW_A", len(B.bcsv_column(cb, "name")), -1)
             for i, r in enumerate(rows(cb)):
