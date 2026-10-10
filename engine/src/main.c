@@ -687,6 +687,11 @@ int main(void)
         if (frame == 520) printf("takobo test: spin by row %d\n", game_test_enemy(6, 0, 1));
         if (frame == 640) printf("takobo test: %d alive, life %d\n", game_kind_alive(6), game_life());
 #endif
+#ifdef KARIKARI_TEST
+        if (frame == 120 || frame == 160 || frame == 200) printf("karikari test f %u: by row %d" "\n", frame, game_test_enemy(8, 0, 3));
+        if (frame % 60 == 0 && frame <= 900) printf("karikari test f %u: life %d" "\n", frame, game_life());
+        if (frame == 700) printf("karikari test: hip drop by row %d" "\n", game_test_enemy(8, 0, 5));
+#endif
 #ifdef MKOOPA_TEST
         if (frame >= 120 && frame < 400 && frame % 10 == 0) { /* held 200 off: it hops, closes in, fires */
             int row = game_test_enemy(7, 0, 3);
