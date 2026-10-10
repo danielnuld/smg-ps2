@@ -625,6 +625,14 @@ int main(void)
         if (frame >= 120 && frame % 40 == 0 && frame <= 600)
             printf("flow test f %u: on piece %d, pieces %d\n", frame, game_test_flow(), game_pieces_out());
 #endif
+#ifdef CURSOR_TEST
+        if (frame >= 120 && frame < 600) { /* a raster sweep of the screen: 12 rows, 40 frames each */
+            int k = frame - 120, row = k / 40;
+            float t = (k % 40) / 39.0f;
+            game_set_cursor(row & 1 ? 620 - 600 * t : 20 + 600 * t, 20 + row * 37.0f);
+        }
+        if (frame % 60 == 0 && frame <= 660) printf("cursor test f %u: pieces %d\n", frame, game_starpieces());
+#endif
 #ifdef GEYSER_TEST
         if (frame >= 120 && frame <= 1200 && frame % 15 == 0) {
             int row = game_test_geyser();
@@ -795,6 +803,13 @@ int main(void)
                  camera_type_name());
         render_text(16, 40, line);
 #endif
+        { /* the star pointer's cursor: a yellow cross, white in the middle */
+            float cx, cy;
+            game_cursor(&cx, &cy);
+            render_rect(cx - 8, cy - 2, 16, 4, 0xFF, 0xD0, 0x20);
+            render_rect(cx - 2, cy - 8, 4, 16, 0xFF, 0xD0, 0x20);
+            render_rect(cx - 1, cy - 1, 2, 2, 0xFF, 0xFF, 0xFF);
+        }
         if ((frame & 255) == 0) {
             char dbg[128];
             game_debug(dbg, sizeof dbg);

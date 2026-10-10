@@ -4,7 +4,7 @@
 static char pad_buf[256] __attribute__((aligned(64)));
 static struct padButtonStatus st;
 static u32 held, prev, pressed;
-static float lx, ly;
+static float lx, ly, rx, ry;
 static int analog_set;
 
 int pad_init(void)
@@ -37,6 +37,8 @@ void pad_update(void)
         held = 0xFFFF ^ st.btns; /* libpad: 0 = pressed */
         lx = axis(st.ljoy_h);
         ly = -axis(st.ljoy_v);
+        rx = axis(st.rjoy_h);
+        ry = -axis(st.rjoy_v);
     }
     pressed = held & ~prev;
 #ifdef BENCH
@@ -64,3 +66,5 @@ int pad_held(u32 m) { return (held & m) != 0; }
 int pad_pressed(u32 m) { return (pressed & m) != 0; }
 float pad_lx(void) { return lx; }
 float pad_ly(void) { return ly; }
+float pad_rx(void) { return rx; }
+float pad_ry(void) { return ry; }

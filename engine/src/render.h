@@ -20,6 +20,8 @@ void render_model(const Model *md, const float world[16], u8 r, u8 g, u8 b);
 /* Draw a skinned model with its draw matrices (anim.c Anim.drw). */
 void render_skinned(const Model *md, const float world[16], const float (*drw)[16]);
 void render_text(float x, float y, const char *s);
+/* A filled rectangle over everything, in the HUD's units (x 0..640, y 0..448) */
+void render_rect(float x, float y, float w, float h, u8 r, u8 g, u8 b);
 /* Camera-facing textured squares (particles): centre, half size in world units, colour 0xAABBGGRR (0x80 = 1.0),
  * scene texture, additive (else alpha) blending. Depth tested, not written; draw them after the models. */
 typedef struct { float pos[3], half; u32 rgba; u16 tex; u8 add, pad; } Sprite;

@@ -205,6 +205,7 @@ static unsigned short *row_rhold; /* frames it still waits at a rail point */
 static const unsigned char *scene_blob_g; /* the scene blob (PATH) for rebinds */
 static int hip_hit, hip_inst;   /* Mario landed a hip drop this frame, on instance hip_inst (-1 none) */
 static int mario_ground = -1;   /* instance Mario stands on this frame, -1 in the air */
+static float cur_x = 320, cur_y = 224; /* the star pointer's stand-in, moved by the right stick (HUD units) */
 typedef struct { int row; V3 pos, front; } Killer; /* HomingKiller: its bullet (update_killers) */
 typedef struct { int first, n; const float *pts; u32 np; float len, step, speed; } Flow; /* StarPieceFlow (update_flows) */
 #define MAX_FLOWS 64
@@ -3757,6 +3758,54 @@ static void update_pops(void)
     }
 }
 
+/* The star pointer (Wii remote) on the PS2: a cursor moved by the right stick, faster the further it is pushed (6
+ * to 16 pixels a frame), R3 back to the centre. cursor_ray: the camera ray through it (render.c's projection: f =
+ * 224 / tan(fovy / 2) in 448-line units, screen x along s = forward x up, screen y down along -u). Star pieces pass
+ * to the pointer when they show within 24 pixels of it and 4000 of the camera (StarPiece.cpp: the pointer takes
+ * them as it sweeps over). ponytail: no pointer effect, no grab of far pieces through walls checked */
+static void cursor_ray(V3 *o, V3 *d)
+{
+    V3 ce, cw, cu;
+    float fovy;
+    camera_pose(&ce, &cw, &cu, &fovy);
+    V3 fw = vnorm(vsub(cw, ce)), s = vnorm(vcross(fw, cu)), u = vcross(s, fw);
+    float f = 224.0f / tanf(fovy * 3.14159265f / 360.0f);
+    *o = ce;
+    *d = vnorm(vadd(vadd(vmul(fw, f), vmul(s, cur_x - 320.0f)), vmul(u, 224.0f - cur_y)));
+}
+
+static int cursor_sees(V3 p, float px) /* p shows within px pixels of the cursor */
+{
+    V3 o, d;
+    cursor_ray(&o, &d);
+    V3 to = vsub(p, o);
+    float z = vdot(to, d);
+    if (z <= 0 || z > 4000.0f) return 0;
+    V3 ce, cw, cu;
+    float fovy;
+    camera_pose(&ce, &cw, &cu, &fovy);
+    float f = 224.0f / tanf(fovy * 3.14159265f / 360.0f);
+    return vlen(vsub(to, vmul(d, z))) * f / z < px;
+}
+
+static void update_cursor(void)
+{
+    float x = pad_rx(), y = pad_ry(), k = 6.0f + 10.0f * sqrtf(x * x + y * y);
+    cur_x += x * k; cur_y -= y * k;
+    if (pad_pressed(PAD_R3)) { cur_x = 320; cur_y = 224; }
+    cur_x = cur_x < 0 ? 0 : cur_x > 639 ? 639 : cur_x;
+    cur_y = cur_y < 0 ? 0 : cur_y > 447 ? 447 : cur_y;
+    for (int i = 0; i < npieces; i++)
+        if (pickup_on(&pieces[i], 1) && cursor_sees(pieces[i].pos, 24.0f)) {
+            pieces[i].alive = PICK_GONE;
+            got_pieces++;
+            fx_at(FX_STARPIECE_STARPIECEGET, pieces[i].pos, up_at(pieces[i].pos, mario->up));
+        }
+}
+
+void game_cursor(float *x, float *y) { *x = cur_x; *y = cur_y; }
+void game_set_cursor(float x, float y) { cur_x = x; cur_y = y; }
+
 static void collect(Pickup *p, int n, float reach, int *counter, int fx)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, BODY_RADIUS));
@@ -3846,6 +3895,7 @@ void game_update(void)
     if (got_coins / 50 > had / 50) lives++; /* every 50 coins a 1-up */
     collect(purple, npurple, 100.0f, &got_purple, FX_PURPLECOIN_COINGET);
     collect(pieces, npieces, 120.0f, &got_pieces, FX_STARPIECE_STARPIECEGET);
+    update_cursor();
     spin_angle += 0.08f;
     CamTarget t = {mario->pos, mario->face, mario->up, !mario->grounded};
     camera_update(&t);

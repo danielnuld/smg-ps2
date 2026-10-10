@@ -839,6 +839,22 @@ void render_text(float x, float y, const char *s)
     }
 }
 
+void render_rect(float x, float y, float w, float h, u8 r, u8 g, u8 b)
+{
+    if (!text_open) {
+        packet2_reset(gif, 0);
+        packet2_update(gif, draw_disable_tests(gif->next, 0, &zbuf));
+        text_open = 1;
+    }
+    rect_t q;
+    q.color.r = r; q.color.g = g; q.color.b = b; q.color.a = 0x80; q.color.q = 1.0f;
+    q.v0.z = q.v1.z = 0xFFFFFF;
+    q.v0.x = x - SCREEN_W / 2; q.v0.y = y * YS - SCREEN_H / 2;
+    q.v1.x = q.v0.x + w; q.v1.y = q.v0.y + h * YS;
+    if (packet2_get_qw_count(gif) < GIF_QW - 96)
+        packet2_update(gif, draw_rect_filled(gif->next, 0, &q));
+}
+
 #include "game.h"
 
 /* Particles (fx.c): camera-facing sprites projected here as the VU1 program would (x = 2048 + f x / z, depth
