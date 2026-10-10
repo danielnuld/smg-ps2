@@ -320,6 +320,10 @@ static int pend_step(u32 budget)
             }
             pend.size = pend.f.size;
             pend.cur = memalign(64, PACK_ALLOC(pend.size));
+            if (!pend.cur) {
+                printf("packs: no memory for %s (%u KB)\n", path, pend.size >> 10);
+                for (;;) {}
+            }
             pend.off = 0;
         }
 #ifdef DISC

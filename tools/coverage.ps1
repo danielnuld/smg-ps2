@@ -6,7 +6,7 @@
 param([string]$Only = "", [int]$Timeout = 45, [switch]$Resume)
 $out = "D:\smg-ps2\out"
 $log = "$env:USERPROFILE\Documents\PCSX2\logs\emulog.txt"
-$rows = Import-Csv "$out\packs\scenarios.csv" | Where-Object { $_.fits -eq "1" -and (-not $Only -or $_.galaxy -eq $Only) }
+$rows = Import-Csv "$out\packs\scenarios.csv" | Where-Object { $_.fits -eq "1" -and $_.start -ne "0" -and (-not $Only -or $_.galaxy -eq $Only) }
 $res = @()
 if ($Resume -and (Test-Path "$out\coverage.csv")) { $res = @(Import-Csv "$out\coverage.csv") }
 $done = @{}; foreach ($x in $res) { $done["$($x.galaxy)/$($x.scenario)"] = 1 }

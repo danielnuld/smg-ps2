@@ -78,6 +78,10 @@ STAR_DECLARERS = {"FlipPanelObserver": 7, "CrystalCageL": 0, "BreakableCage": No
                   "BreakableCageL": None}
 COIN100 = "１００枚コイン"
 KCL_JOINT = {"JumpStand": "JumpStandJoint03"}  # collision at that joint's (bind pose) place
+# drawn and collided at the last frame of a BCK, the named KCLs added at their joint (PhantomShipBridge.cpp:
+# setStateMoveA, the bridge down without SW_A; createCollisionPartsFromLiveActor "Move" on joint Move).
+# ponytail: the end pose for good (no MoveA / MoveB playing on the switches)
+POSE = {"PhantomShipBridge": ("MoveA", {"move.kcl": "Move"}), "NutShipFleetBridge": ("MoveA", {"move.kcl": "Move"})}
 HOME_POS = "\u5408\u4f53\u30d6\u30ed\u30c3\u30af\u6545\u90f7\u70b9"  # 合体ブロック故郷点: AssemblyBlock's home (Petari sReturnPosName)
 LOGIC = ("TimerSwitch", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
          "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "DeathCube", "DeathSphere",
@@ -241,6 +245,7 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None):
     joint spaces), per vertex the matrix slot (PNMTXIDX / 3) and the CLR0 colour, and the SKIN entry (skin_entry).
     Static models leave out the shapes on joints hidden_joints gives (bind pose, or the BCK `pose`)."""
     groups, kcl, sk, kcls = [], None, None, {}
+    pose_world = None  # POSE: joint name -> world matrix at the BCK's last frame
     stats = stats if stats is not None else {}
     files = dict(B.rarc_files(arc.read_bytes()))
     for name, b in files.items():
@@ -252,7 +257,14 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None):
             if not skinned and b"JNT1" in bl:
                 hide = hidden_joints(b, bl, {k.lower(): v for k, v in files.items()}, pose)
                 gtab_all, drw = skin.group_tables(b, bl), skin.draw_entries(b, bl)
-                posed = skin.draw_mtx(drw, skin.world(skin.joints(b, bl)))  # bind pose, per DRW1 entry
+                js = skin.joints(b, bl)
+                wj = skin.world(js)  # bind pose
+                if arc.stem in POSE:  # the BCK's last frame (POSE)
+                    clip = anim_clip({k.lower(): v for k, v in files.items()}[POSE[arc.stem][0].lower() + ".bck"])
+                    lp = skin.clip_pose(clip, struct.unpack_from("<H", clip, 0)[0], None)
+                    wj = skin.world(js, [skin.local(sc, ro, tr) for sc, ro, tr in lp])
+                    pose_world = {j["name"]: w for j, w in zip(js, wj)}
+                posed = skin.draw_mtx(drw, wj)  # per DRW1 entry
             # ponytail: models whose draw matrices move vertices are not simplified (the simplifier sees positions
             # before posing: LavaGeyser's rings, all at 0, came out mangled); posing inside geom.shp1 if it matters
             moved = any(not np.allclose(m, np.eye(4), atol=1e-3) for m in posed)
@@ -359,6 +371,12 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None):
     # the model's own collision: <archive>.kcl, else the first that is not a MoveLimit boundary (PuffballPlanetA lists
     # movelimit.kcl first: its ground was a missing invisible wall)
     kcl = kcls.get(arc.stem.lower() + ".kcl") or next((v for k, v in kcls.items() if not k.startswith("movelimit")), None)
+    if kcl and arc.stem in POSE and pose_world:  # its parts' collisions at their posed joints, one KCL
+        tris = kcl_tris(kcl)
+        for kn, jn in POSE[arc.stem][1].items():
+            w = pose_world[jn]
+            tris += [tuple(w[:3, :3] @ v + w[:3, 3] for v in t[:3]) + (t[3],) for t in kcl_tris(kcls[kn])]
+        kcl = kcl_build(tris, struct.unpack_from(">f", kcl, 0x10)[0])
     if kcl and arc.stem in KCL_JOINT:  # collision placed at a joint (initCollisionParts with its joint matrix)
         mb = next(v for k, v in files.items() if k.lower().endswith((".bdl", ".bmd")))
         bl = tex.blocks(mb)
@@ -412,6 +430,71 @@ def anim_clip(bck):
     out += rot + b"\0" * (-len(rot) % 4)
     out += struct.pack(f"<{nt}f", *struct.unpack_from(f">{nt}f", bck, to))
     return out
+
+
+def kcl_tris(b):
+    """Big-endian KCL -> [(a, b, c, attribute)] (numpy vertices), each prism back to its triangle: a its position, the
+    other two where the edges through a (normals n0, n1, in the face plane) meet the opposite edge (n2, at height)."""
+    pos, nrm, prism, octree = struct.unpack_from(">4I", b, 0)
+    v = lambda off, i: np.array(struct.unpack_from(">3f", b, off + 12 * i))
+    out = []
+    for o in range(prism + 0x10, octree, 0x10):
+        h, pi, fi, e0, e1, e2, at = struct.unpack_from(">f6H", b, o)
+        a, fn, n2 = v(pos, pi), v(nrm, fi), v(nrm, e2)
+        ends = []
+        for e in (e0, e1):
+            d = np.cross(v(nrm, e), fn)
+            k = d @ n2
+            if abs(k) < 1e-9:
+                break
+            ends.append(a + d * (h / k))
+        if len(ends) == 2:
+            out.append((a, ends[1], ends[0], at))  # n0's edge is a-c, n1's a-b (the face normal (b-a) x (c-a))
+    return out
+
+
+def kcl_build(tris, thickness=40.0):
+    """[(a, b, c, attribute)] -> big-endian KCL (the layout kcl_to_le reads): one root block (xshift = xyshift = -1)
+    whose list holds every prism; edge normals point out (n0 edge a-c, n1 edge a-b, n2 edge b-c at height). ponytail:
+    no octree subdivision, for small collisions (a joint's part); split blocks if a big one is ever built this way"""
+    pts, nrms, prisms = [], [], []
+    def idx(lst, x):
+        lst.append(tuple(float(c) for c in x))
+        return len(lst) - 1
+    for a, b, c, at in tris:
+        a, b, c = (np.asarray(x, float) for x in (a, b, c))
+        fn = np.cross(b - a, c - a)
+        if np.linalg.norm(fn) < 1e-6:
+            continue
+        fn /= np.linalg.norm(fn)
+        n0, n1, n2 = (x / np.linalg.norm(x) for x in (np.cross(fn, c - a), np.cross(b - a, fn), np.cross(c - b, fn)))
+        prisms.append((float((b - a) @ n2), idx(pts, a), idx(nrms, fn), idx(nrms, n0), idx(nrms, n1), idx(nrms, n2), at))
+    allp = np.array([x for t in tris for x in t[:3]], float)
+    lo = allp.min(0) - 1.0
+    ext = float((allp.max(0) + 1.0 - lo).max())
+    shift = max(1, int(math.ceil(math.log2(max(ext, 2.0)))))
+    mask = ~((1 << shift) - 1)
+    hdr = 0x38
+    pos_off = hdr
+    nrm_off = pos_off + 12 * len(pts)
+    prism_off = nrm_off + 12 * len(nrms) - 0x10  # prisms are 1-based: index 0 sits at prismOffset
+    body = b"".join(struct.pack(">3f", *x) for x in pts) + b"".join(struct.pack(">3f", *x) for x in nrms)
+    body += b"".join(struct.pack(">f6H", *pr) for pr in prisms)
+    oct_off = hdr + len(body)
+    lst = struct.pack(f">{len(prisms) + 2}H", 0, *range(1, len(prisms) + 1), 0)  # first u16 never read, 0 ends it
+    octree = struct.pack(">I", 0x80000000 | 4) + lst  # the root: a list 4 bytes on (offset from the node)
+    head = struct.pack(">4If3f6i", pos_off, nrm_off, prism_off, oct_off, thickness, *lo, mask, mask, mask, shift, -1, -1)
+    return head + body + octree
+
+
+def kcl_selftest():
+    tris = [((0, 0, 0), (100, 0, 0), (0, 0, -100), 3), ((0, 0, 0), (0, 0, -100), (-100, 50, 0), 1)]
+    back = kcl_tris(kcl_build(tris))
+    assert len(back) == 2
+    for (a, b, c, at), (x, y, z, w) in zip(tris, back):
+        assert at == w and np.allclose(a, x, atol=1e-3)
+        assert {tuple(np.round(b, 2)), tuple(np.round(c, 2))} == {tuple(np.round(y, 2)), tuple(np.round(z, 2))}
+    print("kcl selftest ok")
 
 
 def kcl_shift(b, d):
@@ -826,6 +909,9 @@ def placement(fs, galaxy, scenario):
     zid = {z["name"]: i for i, z in enumerate(zones)}
     up_ids = {zid[z]: zid[p] for z, p in up.items() if z in zid and p in zid and zid[p] != 0}
     zworld = to_world(zones, up_ids, objs + starts + paths + cubes + [o["home"] for o in objs if "home" in o])
+    for o in objs:  # POSE classes are LiveActors with a BCK, not MapPartsRotators: their mappartsinfo columns unused
+        if o["name"] in POSE:
+            o["args"][4:8] = [-1, -1, -1, -1]
     for o in objs:  # AssemblyBlock: its home point (world) in args 2-6 (assembly_home in game.c)
         if o["name"].startswith("AssemblyBlock"):
             h = o.get("home") or dict(pos=[o["pos"][0], o["pos"][1] + 1000.0, o["pos"][2] + 1000.0], rot=[0.0, 0.0, 0.0])

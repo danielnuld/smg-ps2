@@ -149,10 +149,15 @@ int blob_add(Scene *s, const u8 *blob)
 
 const Row *scene_start(const Scene *s)
 {
+    /* SceneUtil.cpp cInitializeStartIdInfo(0, 0): entering a galaxy, Mario starts at MarioNo 0 (arg0) of zone 0
+     * (StageDataHolder::makeMarioJMapInfoIter); else the first MarioNo 0, else the first */
+    const Row *any = NULL;
     for (u32 i = 0; i < s->nstarts; i++)
-        if (s->starts[i].zone == 1)
-            return &s->starts[i];
-    return &s->starts[0];
+        if (s->starts[i].arg[0] == 0) {
+            if (s->starts[i].zone == 0) return &s->starts[i];
+            if (!any) any = &s->starts[i];
+        }
+    return any ? any : &s->starts[0];
 }
 
 int scene_type(const Scene *s, const char *name)

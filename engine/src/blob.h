@@ -92,7 +92,7 @@ int blob_add(Scene *s, const u8 *blob);
 /* Payload of a chunk by tag (NULL if absent). */
 const u8 *blob_chunk(const u8 *blob, const char *tag, u32 *size);
 int scene_type(const Scene *s, const char *name);
-/* Mario's start row: the first start in zone 1 (the slice's Mysterious zone), else the first. */
+/* Mario's start row: MarioNo 0 of zone 0 (Petari cInitializeStartIdInfo), else the first MarioNo 0, else the first. */
 const Row *scene_start(const Scene *s);
 const Model *scene_model(const Scene *s, const char *name);
 /* Little-endian KCL of a model (planets), NULL if it has none. */

@@ -5,8 +5,10 @@ writes <out>/resident.bin, <out>/<Galaxy>/<n>/{scene,common,<Stage>,<Stage>.low}
   whole   every pack of the scenario in full (no streaming)
   stream  the most loaded at once with streaming (worst stage: its chain in full, other stages low)
   fits    stream <= ROOM
+  start   1 if MarioNo 0 of zone 0 exists (a galaxy's entry; 0: a hidden star reached from another scenario)
 """
 import csv
+import struct
 import sys
 import time
 import traceback
@@ -18,6 +20,17 @@ import budget as B
 import slice as SL
 
 ROOM = 9.01e6  # phase 0b: room for scenario data with the levers (docs/phase0b-report.md)
+
+
+def has_start(scene):
+    """1 if scene.bin has MarioNo 0 in zone 0, where the game enters a galaxy (Petari cInitializeStartIdInfo(0, 0)):
+    hidden-star scenarios (layer mask 0: BattleShip 6, CosmosGarden 6) are only reached from another one."""
+    i = scene.find(b"STRT")
+    if i < 0:
+        return 0
+    n = struct.unpack_from("<I", scene, i + 16)[0]
+    rows = (struct.unpack_from("<HHii9f8i", scene, i + 20 + 92 * k) for k in range(n))
+    return int(any(r[1] == 0 and r[13] == 0 for r in rows))
 
 
 def scenarios(fs, galaxy):
@@ -38,9 +51,10 @@ def galaxy(fs, out, g, resident):
             worst = max(info["stream"], key=info["stream"].get)
             rows.append(dict(galaxy=g, scenario=no, whole=info["whole"], stream=info["stream"][worst], worst_stage=worst,
                              fits=int(info["stream"][worst] <= ROOM), stages=len(info["stages"]), objs=info["objs"],
+                             start=has_start(files["scene.bin"]),
                              seconds=round(time.time() - t, 1), error=""))
         except Exception as e:
-            rows.append(dict(galaxy=g, scenario=no, whole=0, stream=0, worst_stage="", fits=0, stages=0, objs=0,
+            rows.append(dict(galaxy=g, scenario=no, whole=0, stream=0, worst_stage="", fits=0, stages=0, objs=0, start=0,
                              seconds=round(time.time() - t, 1),
                              error=f"{type(e).__name__}: {e} @ {traceback.extract_tb(e.__traceback__)[-1].lineno}"))
         r = rows[-1]

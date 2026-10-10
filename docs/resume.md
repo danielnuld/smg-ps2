@@ -190,20 +190,19 @@ there needs the embedded blob and every pack rebuilt.
    static 15.3 %, missing 8.5 % of placements): WaterPlant (hand-drawn quads, loose BTIs), SpaceCocoon,
    CoconutTreeLeaf, PunchingKinoko, JetTurtle, CocoNut, Fluff (BeeFlowerHover still lacks Bee Mario).
 5. Vertex alpha in VUMD (rgbi has no room: the 4th byte is the index) for SphereAir-like fades.
-6. Task 5.3 gate: 2026-10-10 run with ambient effects and miss counts: 112 play clean, 23 miss, 1 timeout
-   (SandClock 1: stuck at boot), worst frame 157.6 ms (CosmosGarden 2) (`out/coverage.md`). The cover test takes a
-   shown launch star landing by something placed (OceanPhantomCave 1's first one flew to another scenario's planet).
-   Fixed since: the first load also takes what streaming wants around the start (OceanRing 4 / 6 started over a zone
-   only `soon`: a miss a frame for 2 s), off every full model the `soon` zones are urgent too; black holes leave Mario
-   alone in a launch star's flight and a miss ends the flight (BreakDownPlanet, HoneyBeeEx, Phantom 2: the flight
-   crossed a BlackHoleCube, every respawn flew back into it). Left: AstroDome 1-6, FileSelect, EpilogueDemoStage
-   (menus, no map collision) and BattleShip 6 (a hidden star: layer mask 0, no start) should leave the run;
-   SurfingLv2 1 (starts on a SurfRay) and KoopaJrShipLv1 1 (starts on KoopaJrSmallShipA at its guide point) need
-   those rides; Phantom 6: not a gravity bug (restart point 1 is upside down in a GlobalPlaneGravityInBox, box as
-   Petari's PlaneInBoxGravityCreator): the cover test's launch star lands by a point gravity whose planet is in other
-   scenarios' layers, Mario falls through RestartCube 57 into BlackHoleCube 58 (the test now ignores areas and
-   gravities when it looks for something by a launch star's landing; this one still passes); one miss each in BattleShip 3, CannonFleet 2 (death areas), CocoonEx 1,
-   BreakDownPlanet 1, HoneyBeeEx 1, Phantom 3 (2): after the cover test's flight. Earlier: coverage run done once (136 / 136 play, `out/coverage.md`, `tools/coverage_report.py`), class
-   weights (`out/class_coverage.md`); left: the final run on the current build, worst frame on the heaviest scenario,
-   videos. Blocking zone loads (a zone wanted before its prefetch ends) are the worst frames (HoneyBee ~0.4 s).
+6. Task 5.3 gate: 2026-10-10 run after the start fix and the repack: 106 play clean, 16 miss, 2 timeouts, 12
+   hidden stars left out (`out/coverage.md`; scenarios.csv `start` 0: no MarioNo 0 in zone 0, a hidden star reached
+   from another scenario: BattleShip 6 / 7, CosmosGarden 6, StarDust 6...), worst frame 147.0 ms (CosmosGarden 2).
+   Fixed on the way: Mario starts at MarioNo 0 of zone 0 (Petari cInitializeStartIdInfo(0, 0); scene_start took the
+   first start of zone 1, a sub-zone's, in 100 of 135 scenarios); the first load also takes what streaming wants
+   around the start, `soon` zones are urgent while Mario is off every full model (OceanRing 4 / 6); black holes leave
+   Mario alone in a launch star's flight and a miss ends the flight; the cover test takes a shown launch star landing
+   by something that is not an area or a gravity; PhantomShipBridge drawn and collided lowered (slice.py POSE: MoveA's
+   last frame, move.kcl at joint Move merged by kcl_tris / kcl_build, a one-block KCL writer: KoopaJrShipLv1 1).
+   Left: AstroDome 1-6 (the dome has no collision here: its map is not kept), FileSelect / EpilogueDemoStage (menus);
+   SurfingLv2 1 starts on a SurfRay (not done); Phantom 6: the cover test's launch star lands by another scenario's
+   planet; SandClock 1 / 3 hang now and then at boot inside a coverage batch only (6 / 6 fine alone; no "no memory");
+   single misses after the cover test's flight or by enemies (CosmosGarden 5, StarDust 5, BattleShip 3, CannonFleet 2,
+   HoneyBeeEx 1, CocoonEx 1, BreakDownPlanet 1). Earlier: class weights (`out/class_coverage.md`); left: videos.
+   Blocking zone loads (a zone wanted before its prefetch ends) are the worst frames (HoneyBee ~0.4 s).
 7. Last (the user's call): sound effects (AFC -> ADPCM), music on the disc (streams in the ISO), ChangeBgmCube / RestartCube BGM changes.
