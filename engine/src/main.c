@@ -760,6 +760,26 @@ int main(void)
             printf("giver test f %u: %s row %d, coins %d, pieces %d\n", frame, frame % 80 ? "leaves" : "pompon",
                    game_test_giver(frame % 80 ? 1 : 2), game_coins(), game_pieces_out());
 #endif
+#ifdef COCO_TEST
+        { /* a spin at 150, a kick at 600 */
+            if (frame == 150 || frame == 600 || (frame < 150 && frame % 30 == 0 && game_test_coco(2) == -2))
+                printf("coco test f %u: row %d\n", frame, game_test_coco(frame == 600));
+            if (frame >= 150 && frame < 1000 && frame % 10 == 0) {
+                int dist = 0, st = game_coco_state(&dist);
+                printf("coco test f %u: phase %d dist %d\n", frame, st, dist);
+            }
+        }
+#endif
+#ifdef PUNCH_TEST
+        { /* a spin at 150, then at 600 a hip drop; the head logged every 10 frames */
+            if (frame == 150 || frame == 600 || (frame < 150 && frame % 30 == 0 && game_test_punch(2) == -2))
+                printf("punch test f %u: row %d\n", frame, game_test_punch(frame == 600));
+            if (frame >= 150 && frame < 900 && frame % 10 == 0) {
+                int dist = 0, st = game_punch_state(&dist);
+                printf("punch test f %u: phase %d head %d life %d\n", frame, st, dist, game_life());
+            }
+        }
+#endif
 #ifdef BIRI_TEST
         if (frame >= 120 && frame < 1200 && frame % 20 == 0) {
             int row = game_test_biri();
@@ -927,8 +947,8 @@ int main(void)
             if (frame > 120 && prev && t0 - prev > (u32)(20000 * EE_MHZ)) slow++;
             prev = t0;
             if (frame == 900)
-                printf("cover: %s ok, slow %u, worst %u us, runtime %u KB, lives %d\n", scen, slow,
-                       (u32)(worst / EE_MHZ), mem_total() >> 10, game_lives());
+                printf("cover: %s ok, slow %u, worst %u us, runtime %u KB, lives %d, misses %d\n", scen, slow,
+                       (u32)(worst / EE_MHZ), mem_total() >> 10, game_lives(), game_misses());
         }
 #endif
         stream_update(&scene);

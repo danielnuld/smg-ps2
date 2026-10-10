@@ -55,6 +55,10 @@ int main(void)
     }
     printf("coin get: peak %d, then %u\n", peak, fx_count());
     if (peak < 2 || fx_count()) return 1;
+    fx_keep(-1, &key, m); /* no such effect (a row that is not an effect object): nothing, not defs[-1] */
+    fx_emit(-1, m);
+    for (int f = 0; f < 10; f++) fx_update();
+    if (fx_count()) { printf("effect -1 made %u particles\n", fx_count()); return 1; }
     printf("test_fx ok\n");
     return 0;
 }

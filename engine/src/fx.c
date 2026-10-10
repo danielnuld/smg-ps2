@@ -195,7 +195,7 @@ static Emitter *new_emitter(const PtRes *r, const void *key, const float m[16], 
 
 void fx_emit(int fx, const float m[16])
 {
-    if (!res || fx >= (int)ndefs)
+    if (!res || fx < 0 || fx >= (int)ndefs)
         return;
     const FxDef *d = &defs[fx];
     for (int i = 0; i < d->n; i++)
@@ -204,7 +204,7 @@ void fx_emit(int fx, const float m[16])
 
 void fx_keep(int fx, const void *key, const float m[16])
 {
-    if (!res || fx >= (int)ndefs)
+    if (!res || fx < 0 || fx >= (int)ndefs)
         return;
     const FxDef *d = &defs[fx];
     for (int i = 0; i < d->n; i++) {

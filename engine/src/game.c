@@ -157,6 +157,14 @@ typedef struct {
     int giver;       /* DeadLeaves 1 / Pompon2Plant, Pompon4Plant 2: their item comes out once (update_givers) */
     int biri;        /* BigBirikyu 1 / Birikyu 2: an electric ball on its rail or circling (update_birikyu) */
     const unsigned char *biri_rail;
+    int punch;       /* PunchingKinoko: a spin punches its head away on its stalk, it swings back (update_punch) */
+    V3 head, hvel;   /* PunchingKinoko: its head (GroundChecker) and its velocity; its own matrix in m0.
+                      * CocoNut: head its centre, m0 its turned rotation */
+    float m0[16];
+    int coco;        /* CocoNut: a spin / hip drop / kick sends it rolling (update_coconuts) */
+    V3 cfront;       /* CocoNut: _94 its rolling direction, cspd _8C its speed, cfall _90 its fall speed */
+    float cspd, cfall;
+    int cstrong;     /* CocoNut: _13C sent by a spin: light gravity, blows walkers away, until it lands */
     const float *prom; u32 prom_n; /* LavaProminence: its rail (polyline); a lava ball rides it (update_prom) */
     const unsigned char *tsuki; /* Tsukidashikun: its PATH entry; pushes along it and back (update_tsuki) */
     int shoot;       /* ShootingStar: falls, bursts into star pieces (update_shooting) */
@@ -1143,6 +1151,7 @@ static float tsuki_len(const unsigned char *e)
 
 static void ticorail_place(Inst *in);
 static void biri_place(Inst *in);
+static void coco_spawn(Inst *in);
 static void tsuki_place(Inst *in)
 {
     V3 p = rail_at((const float *)(in->tsuki + 24), *(const u32 *)(in->tsuki + 8), row_coord[in->row]);
@@ -1691,6 +1700,241 @@ static void update_birikyu(void)
     }
 }
 
+/* PunchingKinoko.cpp: a mushroom whose head (a GroundChecker 130 up its stalk) is pulled back to its place
+ * (velocity += offset x 0.008, x 0.94 at rest, x 0.97 swinging). A spin by the head punches it (+50 away from Mario
+ * along the ground, Punched 5 frames, PunchedBrake up to 40 at x 0.9), then it swings back (Swing, until slower
+ * than 40 and within 50 of its place); punched or swinging it blows walkers it touches away, swinging it knocks
+ * Mario (faster than 15; 30 and up a hard knock); a star piece pushes it 15; a hip drop crushes it 180 frames (flat,
+ * head on the ground), 60 more to come back; landing on it pushes it 5 down. row_turn 0 wait, 1 swing, 2 punched,
+ * 3 brake, 4 crushed, 5 crushed end; row_step its frames. ponytail: the model is posed static (no Ball joint), so it
+ * is tilted to the head and stretched along its stalk; the head keeps its height over the base plane, not over the
+ * ground (addVelocityKeepHeight's shadow); no collision for the head, no 2P pointer snap, no breakables hit */
+static void punch_place(Inst *in)
+{
+    V3 base = v3(in->m0[12], in->m0[13], in->m0[14]), up0 = vnorm(v3(in->m0[4], in->m0[5], in->m0[6]));
+    V3 d = vsub(in->head, base);
+    float l = vlen(d), s = in->s;
+    V3 up = l > 1e-3f ? vmul(d, 1.0f / l) : up0;
+    float stretch = row_turn[in->row] == 4 ? 0.25f : l / 130.0f;
+    basis_matrix(in->m, base, up, v3(in->m0[8], in->m0[9], in->m0[10]), 0);
+    for (int j = 0; j < 3; j++) { in->m[j] *= s; in->m[4 + j] *= s * stretch; in->m[8 + j] *= s; }
+}
+
+static void update_punch(void)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->punch || !row_shown(in->row)) continue;
+        int row = in->row;
+        signed char *ph = &row_turn[row];
+        unsigned short *t = &row_step[row];
+        V3 base = v3(in->m0[12], in->m0[13], in->m0[14]), up = up_at(base, v3(in->m0[4], in->m0[5], in->m0[6]));
+        V3 rest = vadd(base, vmul(up, 130.0f)), off = vsub(rest, in->head);
+        ++*t;
+        V3 to = vsub(in->head, c);
+        float d = vlen(to), speed = vlen(in->hvel);
+        if (*ph == 4) { /* Crushed: flat on the ground */
+            in->head = vadd(base, vmul(up, 20.0f)); in->hvel = v3(0, 0, 0);
+            if (*t >= 180) { *ph = 5; *t = 0; }
+            punch_place(in);
+            continue;
+        }
+        if ((*ph == 0 || *ph == 1) && mario->spin_timer > 0 && d < 70.0f + 100.0f) { /* requestPunch */
+            V3 dir = vtangent(to, up);
+            dir = vlen(dir) > 1e-3f ? vnorm(dir) : vnorm(vtangent(mario->face, up));
+            in->hvel = vadd(in->hvel, vmul(dir, 50.0f));
+            *ph = 2; *t = 0;
+            printf("punching kinoko %d punched" "\n", row);
+        } else if ((*ph == 0 || *ph == 5) && mario->hip == HIP_FALL && d < 70.0f + HIT_BODY_R && vdot(to, up) < 0) { /* requestCrush */
+            *ph = 4; *t = 0; mario->hip = HIP_LAND; mario->hip_t = 0; mario->vup = 0;
+            printf("punching kinoko %d crushed" "\n", row);
+            punch_place(in);
+            continue;
+        } else if (*ph != 5 && mario->vup < 0 && d < 70.0f + HIT_BODY_R && vdot(to, up) < -40.0f) { /* requestTrample */
+            in->hvel = vsub(in->hvel, vmul(up, 5.0f));
+            mario->vup = 15.0f; mario->grounded = 0;
+        }
+        switch (*ph) {
+        case 0: case 5: /* Wait, CrushedEnd */
+            in->hvel = vmul(vadd(in->hvel, vmul(off, 0.008f)), 0.94f);
+            if (*ph == 5 && *t >= 60) { *ph = 0; *t = 0; }
+            break;
+        case 1: /* Swing */
+            in->hvel = vmul(vadd(in->hvel, vmul(off, 0.008f)), 0.97f);
+            if (vlen(in->hvel) < 40.0f && vlen(off) < 50.0f) { *ph = 0; *t = 0; }
+            break;
+        default: { /* Punched, PunchedBrake: keep the height over the base plane */
+            float h = vdot(vsub(in->head, base), up), dv = (130.0f - h) * 0.5f;
+            dv = dv > 60.0f ? 60.0f : dv < -60.0f ? -60.0f : dv;
+            in->hvel = vadd(vtangent(in->hvel, up), vmul(up, dv));
+            in->hvel = vmul(in->hvel, *ph == 2 ? 0.99f : 0.9f);
+            if (*ph == 2 && *t > 5) { *ph = 3; *t = 0; }
+            else if (*ph == 3 && *t > 40) { *ph = 1; *t = 0; }
+            break;
+        }
+        }
+        in->head = vadd(in->head, in->hvel);
+        if (*ph >= 1 && *ph <= 3) { /* sendMsgToEnemyAttackBlow: walkers it touches are blown away */
+            for (int k = 0; k < nkuribo; k++) {
+                Kuribo *e = &kuribo[k];
+                if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_PACKUN || e->kind == WALK_SPIDER ||
+                    e->kind == WALK_BUTTERFLY || e->kind == WALK_TERESA || e->kind == WALK_KARON ||
+                    vlen(vsub(in->head, vadd(e->pos, vmul(e->up, 50.0f)))) > 70.0f + 60.0f) continue;
+                e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up); pop_coins(e->pos, e->up, 1);
+                printf("punching kinoko %d blows walker row %d" "\n", row, e->row);
+            }
+        }
+        if (*ph == 1 && speed >= 15.0f && vlen(vsub(c, in->head)) < 70.0f + HIT_BODY_R && !mario->hurt_timer) { /* isEnableHitPlayer */
+            hurt_mario(in->head, speed >= 30.0f ? 25.0f : 12.0f);
+            in->hvel = vmul(in->hvel, 0.3f);
+            *ph = 0; *t = 0;
+            printf("punching kinoko %d hits Mario" "\n", row);
+        }
+        punch_place(in);
+    }
+}
+
+/* CocoNut.cpp: a coconut (radius 55 x scale) waiting where it is placed. A spin by it sends it off at 35 (up 20,
+ * light gravity 0.4 until it lands: then it blows away walkers it touches and breaks), a hip drop at 25 (up 15,
+ * Mario jumps away), Mario running into it faster than it rolls kicks it (at least 18, up 0.7 of his speed), a star
+ * piece at 10 (up 5). Rolling (Move): gravity adds 1 a frame up to 25; landing faster than 2.5 bounces at -0.5;
+ * on the ground the speed goes x 0.925; a wall reflects its direction (x 0.8); slower than 1.5 on the ground it stops.
+ * It turns as it rolls (updateRotate). A walker hit, a death area, the void or water (ponytail: not checked) bring it
+ * back to its place after a break (60 frames hidden). row_turn 0 wait, 1 move, 2 broken; row_step its frames.
+ * ponytail: no effects or sounds, no coconut-to-coconut hits, no breakables, no moving ground (velocity areas) */
+static int area_inside(const Row *r, V3 p);
+static void coco_spawn(Inst *in)
+{
+    const Row *r = &sc->objs[in->row];
+    in->head = row_pos(r);
+    in->cfront = vnorm(v3(in->m[8], in->m[9], in->m[10]));
+    in->cspd = in->cfall = 0; in->cstrong = 0;
+    memcpy(in->m0, in->m, 64);
+    for (int j = 0; j < 12; j++) in->m0[j] /= in->s; /* the rotation alone */
+    row_turn[in->row] = 0; row_step[in->row] = 0;
+}
+
+static void coco_place(Inst *in)
+{
+    memcpy(in->m, in->m0, 64);
+    for (int j = 0; j < 12; j++) in->m[j] *= in->s;
+    in->m[12] = in->head.x; in->m[13] = in->head.y; in->m[14] = in->head.z;
+}
+
+/* hit: off along `dir` (flattened to the ground) at speed `spd`, up at -fall */
+static void coco_hit(Inst *in, V3 dir, float spd, float fall, V3 up)
+{
+    V3 f = vtangent(dir, up);
+    if (vlen(f) > 1e-3f) in->cfront = vnorm(f);
+    in->cspd = spd; in->cfall = fall;
+    row_turn[in->row] = 1; row_step[in->row] = 0;
+}
+
+static void update_coconuts(void)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->coco || !row_shown(in->row)) continue;
+        int row = in->row;
+        signed char *ph = &row_turn[row];
+        unsigned short *t = &row_step[row];
+        float rad = 55.0f * in->s;
+        V3 up = up_at(in->head, mario->up);
+        ++*t;
+        if (*ph == 2) { /* Break, then ReplaceReady back at its place */
+            if (*t >= 60) { coco_spawn(in); coco_place(in); }
+            continue;
+        }
+        V3 to = vsub(in->head, c);
+        float d = vlen(to);
+        if (*ph == 0 || (*ph == 1 && *t > 15)) {
+            if (mario->spin_timer > 0 && d < rad + 100.0f && (*ph == 0 || *t > SPIN_TIME)) { /* once a spin */ /* isMsgPlayerSpinAttack */
+                coco_hit(in, to, 35.0f, -20.0f, up);
+                in->cstrong = 1;
+                printf("coconut %d spun" "\n", row);
+            } else if (mario->hip == HIP_FALL && d < rad + HIT_BODY_R) { /* isMsgPlayerHipDrop: sendMsgAwayJump */
+                coco_hit(in, to, 25.0f, -15.0f, up);
+                mario->hip = 0; mario->vup = 20.0f; mario->hvel = vmul(vnorm(vtangent(vmul(to, -1.0f), up)), 5.0f);
+                printf("coconut %d hip dropped" "\n", row);
+            } else if (d < rad + HIT_BODY_R * 0.6f) {
+                V3 mv = mario->hvel;
+                float ms = vlen(mv), along = ms > 1e-3f ? vdot(vnorm(to), vmul(mv, 1.0f / ms)) : 0;
+                float cs = *ph == 1 ? vlen(vadd(vmul(in->cfront, in->cspd), vmul(up, -in->cfall))) : 0;
+                if (in->cfall >= 0 && ms > 1.0f && ms >= cs && along >= 0.7071f) { /* isValidPushedFromPlayer: a kick */
+                    float k = ms; /* _94 . his velocity, _94 being his direction */
+                    coco_hit(in, mv, k * 1.1f > 18.0f ? k * 1.1f : 18.0f, -0.7f * k, up);
+                    printf("coconut %d kicked" "\n", row);
+                } else { /* sendMsgPush: Mario is pushed out */
+                    V3 out = vtangent(vmul(to, -1.0f), up);
+                    float l = vlen(out);
+                    if (l > 1e-3f) mario->pos = vadd(mario->pos, vmul(out, (rad + HIT_BODY_R * 0.6f - d) / l));
+                }
+            }
+        }
+        if (*ph == 0) { coco_place(in); continue; }
+        /* Move: processMove */
+        float spd0 = vlen(vadd(vmul(in->cfront, in->cspd), vmul(up, -in->cfall)));
+        V3 vel = vadd(vmul(in->cfront, in->cspd), vmul(up, -in->cfall));
+        V3 gn = up, wn;
+        int wall = 0;
+        V3 center = vadd(in->head, vel);
+        int ground = collide_n(&center, up, rad, &gn, &wn, &wall);
+        in->head = center;
+        if (ground && in->cfall > 0) {
+            if (in->cfall > 2.5f) in->cfall *= -0.5f; /* bounce */
+            else in->cfall = 0;
+            in->cspd *= 0.925f;
+            in->cstrong = 0;
+        }
+        if (wall && vdot(in->cfront, wn) < 0) { /* reflect off the wall */
+            V3 n = vnorm(vtangent(wn, up));
+            in->cfront = vnorm(vsub(in->cfront, vmul(n, 2.0f * vdot(in->cfront, n))));
+            in->cspd *= 0.8f;
+        }
+        float fall = in->cfall + (in->cstrong ? 0.4f : 1.0f); /* updateGravity */
+        in->cfall = fall > 25.0f ? 25.0f : fall;
+        { /* updateRotate: about front x up, |v| x 180 / (r pi) degrees a frame */
+            V3 ax = vcross(in->cfront, up);
+            float a = -spd0 * (ground ? 1.0f : 0.75f) / rad;
+            if (vlen(ax) > 1e-3f && a != 0) {
+                float rm[16], o[16];
+                ax = vnorm(ax);
+                float cs = cosf(a), sn = sinf(a), k = 1 - cs;
+                float R[9] = {cs + ax.x * ax.x * k, ax.y * ax.x * k + ax.z * sn, ax.z * ax.x * k - ax.y * sn,
+                              ax.x * ax.y * k - ax.z * sn, cs + ax.y * ax.y * k, ax.z * ax.y * k + ax.x * sn,
+                              ax.x * ax.z * k + ax.y * sn, ax.y * ax.z * k - ax.x * sn, cs + ax.z * ax.z * k};
+                memcpy(o, in->m0, 64);
+                memcpy(rm, in->m0, 64);
+                for (int col = 0; col < 3; col++) /* R x column */
+                    for (int j = 0; j < 3; j++)
+                        rm[4 * col + j] = R[j] * o[4 * col] + R[3 + j] * o[4 * col + 1] + R[6 + j] * o[4 * col + 2];
+                memcpy(in->m0, rm, 48);
+            }
+        }
+        int broken = 0;
+        if (in->cstrong) /* sendMsgToEnemyAttackBlow */
+            for (int k = 0; k < nkuribo && !broken; k++) {
+                Kuribo *e = &kuribo[k];
+                if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_BUTTERFLY || e->kind == WALK_TERESA ||
+                    vlen(vsub(in->head, vadd(e->pos, vmul(e->up, 50.0f)))) > rad + 60.0f) continue;
+                e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up); pop_coins(e->pos, e->up, 1);
+                printf("coconut %d blows walker row %d" "\n", row, e->row);
+                broken = 1;
+            }
+        if (!broken && lost(in->head)) broken = 1; /* tryDisappear */
+        for (int k = 0; k < nlogic && !broken; k++)
+            if (logic[k].kind == LOGIC_DEATH && row_shown(logic[k].row) && area_inside(&sc->objs[logic[k].row], in->head)) broken = 1;
+        if (broken) { *ph = 2; *t = 0; in->m[12] = 1e9f; continue; } /* hidden until it comes back */
+        if (ground && in->cspd < 1.5f) { /* tryMoveEnd: statusToWait (calcMoveSpeed: the rolling speed) */
+            *ph = 0; in->cspd = in->cfall = 0;
+            printf("coconut %d stops" "\n", row);
+        }
+        coco_place(in);
+    }
+}
+
 /* JumpStand.cpp: Mario landing on it is held (bound); TrampleBound throws him at step 5 along -gravity at 26, 32 if
  * he pressed jump in those 5 frames; HipDropBound (a hip drop landing) sinks him 6 - ease a frame for 15 frames, then
  * 43 along its up. row_turn: 0 wait, 1 trample, 2 high trample, 3 hip drop; row_step frames; jstand_pos the held
@@ -1881,6 +2125,8 @@ void game_rebind(void)
         in->beeflower = strcmp(name, "BeeFlowerHover") == 0;
         in->jbranch = strcmp(name, "JumpBranch") == 0;
         in->biri = strcmp(name, "BigBirikyu") == 0 ? 1 : strcmp(name, "Birikyu") == 0 ? 2 : 0;
+        in->punch = strcmp(name, "PunchingKinoko") == 0;
+        in->coco = strcmp(name, "CocoNut") == 0;
         in->biri_rail = in->biri && scene_blob_g && r->path >= 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->giver = strcmp(name, "DeadLeaves") == 0 ? 1 : strcmp(name, "Pompon2Plant") == 0 || strcmp(name, "Pompon4Plant") == 0 ? 2 : 0;
         in->ticorail = scene_blob_g && r->path >= 0 && strcmp(name, "TicoRail") == 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
@@ -1919,6 +2165,13 @@ void game_rebind(void)
         if (in->tsuki && row_coord && row_turn[i]) tsuki_place(in);
         if (in->ticorail && row_coord && row_turn[i]) ticorail_place(in);
         if (in->biri && row_coord && row_turn[i]) biri_place(in);
+        if (in->coco) coco_spawn(in);
+        if (in->punch) { /* its head 130 up (calcPositionUpOffset), at rest */
+            memcpy(in->m0, in->m, 64);
+            V3 base = v3(in->m[12], in->m[13], in->m[14]);
+            in->head = vadd(base, vmul(up_at(base, v3(in->m[4], in->m[5], in->m[6])), 130.0f)); /* -gravity */
+            in->hvel = v3(0, 0, 0);
+        }
         if (in->assembly) {
             float h[16];
             assembly_home(r, h);
@@ -2573,6 +2826,83 @@ int game_test_giver(int kind)
     return -1;
 }
 
+int game_test_coco(int how)
+{
+    for (int i = 0; i < ninsts; i++) { /* how 0: Mario spinning by the first waiting one; 1: running into it; 2: none */
+        Inst *in = &insts[i];
+        if (!in->coco || row_turn[in->row] != 0) continue;
+        if (how == 2) return in->row; /* only bound? */
+        V3 up = up_at(in->head, mario->up), side = vnorm(vtangent(v3(in->m0[0], in->m0[1], in->m0[2]), up));
+        mario->up = up;
+        mario->pos = vsub(vadd(in->head, vmul(side, how ? 130.0f : 120.0f)), vmul(up, 55.0f * in->s));
+        mario->hvel = how ? vmul(side, -12.0f) : v3(0, 0, 0); mario->vup = 0;
+        if (!how) mario->spin_timer = SPIN_TIME;
+        return in->row;
+    }
+    for (u32 i = 0; i < sc->nobjs; i++) /* not bound yet: Mario at its row, its zone streams in */
+        if (strcmp(sc->types + 32 * sc->objs[i].type, "CocoNut") == 0) {
+            const Row *r = &sc->objs[i];
+            mario->pos = vadd(v3(r->pos[0], r->pos[1], r->pos[2]), vmul(mario->up, 300.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return -2;
+        }
+    return -1;
+}
+
+/* the first CocoNut that is not waiting: its row_turn and its distance from its place, else -1 */
+int game_coco_state(int *dist)
+{
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->coco || !row_turn[in->row]) continue;
+        *dist = (int)vlen(vsub(in->head, row_pos(&sc->objs[in->row])));
+        return row_turn[in->row];
+    }
+    return -1;
+}
+
+int game_test_punch(int how)
+{
+    for (int i = 0; i < ninsts; i++) { /* how 0: Mario spinning by the first one's head; 1: hip drop onto it */
+        Inst *in = &insts[i];
+        if (!in->punch) continue;
+        if (how == 2) return in->row; /* only bound? */
+        V3 base = v3(in->m0[12], in->m0[13], in->m0[14]), up = up_at(base, v3(in->m0[4], in->m0[5], in->m0[6]));
+        V3 side = vnorm(vtangent(v3(in->m0[0], in->m0[1], in->m0[2]), up));
+        if (how == 0) {
+            mario->pos = vadd(base, vmul(side, 150.0f));
+            mario->spin_timer = SPIN_TIME;
+        } else {
+            mario->pos = vadd(base, vmul(up, 300.0f));
+            mario->grounded = 0; mario->hip = HIP_FALL; mario->hip_t = 0;
+        }
+        mario->up = up;
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return in->row;
+    }
+    for (u32 i = 0; i < sc->nobjs; i++) /* not bound yet: Mario at its row, its zone streams in */
+        if (strcmp(sc->types + 32 * sc->objs[i].type, "PunchingKinoko") == 0) {
+            const Row *r = &sc->objs[i];
+            mario->pos = vadd(v3(r->pos[0], r->pos[1], r->pos[2]), vmul(mario->up, 300.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return -2;
+        }
+    return -1;
+}
+
+/* the first PunchingKinoko's state (row_turn) and its head's distance from its place */
+int game_punch_state(int *dist)
+{
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->punch) continue;
+        V3 base = v3(in->m0[12], in->m0[13], in->m0[14]), rest = vadd(base, vmul(up_at(base, v3(in->m0[4], in->m0[5], in->m0[6])), 130.0f));
+        *dist = (int)vlen(vsub(in->head, rest));
+        return row_turn[in->row];
+    }
+    return -1;
+}
+
 int game_test_biri(void)
 {
     for (int i = 0; i < ninsts; i++) { /* Mario held on the first one's path: its place (circle centre / row) */
@@ -2824,8 +3154,13 @@ int game_test_launch(int i)
 
 int game_test_spindriver(int small)
 {
-    for (int i = 0; i < nlaunches; i++)
-        if ((launches[i].start < 45) == small) return game_test_launch(i);
+    for (int i = 0; i < nlaunches; i++) { /* a shown one landing by something placed (OceanPhantomCave 1's first one
+                                            * flies to a planet of other scenarios: nothing there, a miss loop) */
+        if ((launches[i].start < 45) != small || !row_shown(launches[i].row)) continue;
+        V3 e = launch_pos(&launches[i], 1.0f);
+        for (u32 k = 0; k < sc->nobjs; k++)
+            if ((int)k != launches[i].row && vlen(vsub(row_pos(&sc->objs[k]), e)) < 3000.0f) return game_test_launch(i);
+    }
     return -1;
 }
 
@@ -4901,6 +5236,19 @@ static void update_shots(void)
             printf("star piece explodes kiraira %d" "\n", in->row);
             hit = 1;
         }
+        for (int k = 0; k < ninsts && !hit; k++) { /* CocoNut: isMsgStarPieceReflect sends it off at 10 */
+            Inst *in = &insts[k];
+            if (!in->coco || row_turn[in->row] == 2 || vlen(vsub(s->pos, in->head)) > 55.0f * in->s + 30.0f) continue;
+            coco_hit(in, s->vel, 10.0f, -5.0f, up_at(in->head, mario->up));
+            hit = 1;
+        }
+        for (int k = 0; k < ninsts && !hit; k++) { /* PunchingKinoko: isMsgStarPieceAttack pushes its head 15 */
+            Inst *in = &insts[k];
+            if (!in->punch || row_turn[in->row] == 4 || vlen(vsub(s->pos, in->head)) > 70.0f + 30.0f) continue;
+            V3 dir = vnorm(s->vel);
+            if (vdot(in->hvel, dir) < 15.0f) in->hvel = vadd(in->hvel, vmul(dir, 15.0f));
+            hit = 1;
+        }
         for (int k = 0; k < ninsts && !hit; k++) { /* PomponPlant: isMsgStarPieceReflect swings it */
             const Inst *in = &insts[k];
             if (in->giver != 2 || row_turn[in->row] || vlen(vsub(s->pos, giver_sensor(in))) > 90.0f) continue;
@@ -4949,7 +5297,7 @@ static int ambient_fx(const char *name)
     return -1;
 }
 
-static void __attribute__((unused)) ambient_effects(void)
+static void ambient_effects(void)
 {
     static const char *const once[] = {"IceLayerBreak", "WaterLayerBreak", "StarPieceClusterBreak", "BattleShipExplosionMetal",
                                        "BattleShipExplosionRock", "LavaVolcanoEruption"};
@@ -4974,8 +5322,8 @@ static void __attribute__((unused)) ambient_effects(void)
         if (r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) continue;
         float d = vlen(vsub(row_pos(r), cam_pos));
         if (d > 5000.0f) continue;
+        if (nb == 12 && d >= bd[11]) continue;
         int k = nb < 12 ? nb++ : 11;
-        if (k == 11 && nb == 12 && d >= bd[11]) continue;
         while (k > 0 && bd[k - 1] > d) { bd[k] = bd[k - 1]; best[k] = best[k - 1]; k--; }
         bd[k] = d; best[k] = (int)i;
     }
@@ -4989,9 +5337,7 @@ static void __attribute__((unused)) ambient_effects(void)
 
 static void keep_effects(void)
 {
-#ifdef AMBIENT_FX /* off: with every effect of OceanPhantomCave 1 the EE / GS hang within seconds (see resume.md) */
     ambient_effects();
-#endif
     float m[16];
     for (int i = 0; i < npieces; i++)
         if (pickup_shown(&pieces[i]) && vlen(vsub(pieces[i].pos, cam_pos)) < 4000.0f) {
@@ -5061,6 +5407,8 @@ void game_update(void)
     update_ticorails();
     update_givers();
     update_birikyu();
+    update_punch();
+    update_coconuts();
     update_pipes();
     update_switches();
     update_pops();
@@ -5389,8 +5737,8 @@ void game_debug(char *out, int n)
 int game_coins(void) { return got_coins; }
 int game_life(void) { return life; }
 int game_lives(void) { return lives; }
-int game_stars(void) { return stars; }
 int game_misses(void) { return misses; }
+int game_stars(void) { return stars; }
 int game_purple(void) { return got_purple; }
 int game_purple_total(void) { return npurple; }
 int game_starpieces(void) { return got_pieces; }
