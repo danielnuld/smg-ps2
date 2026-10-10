@@ -81,6 +81,15 @@ KCL_JOINT = {"JumpStand": "JumpStandJoint03"}  # collision at that joint's (bind
 # drawn and collided at the last frame of a BCK, the named KCLs added at their joint (PhantomShipBridge.cpp:
 # setStateMoveA, the bridge down without SW_A; createCollisionPartsFromLiveActor "Move" on joint Move).
 # ponytail: the end pose for good (no MoveA / MoveB playing on the switches)
+# AstroMapObjFunction::getModelName: these classes take their model from a table by arg0 (the dome, 1-6)
+ASTRO_MODELS = {
+    "AstroDome": ("AstroDomeObservatory", "AstroDomeWell", "AstroDomeKitchen", "AstroDomeBedRoom", "AstroDomeMachine",
+                  "AstroDomeTower"),
+    "AstroDomeSky": ("AstroDomeSkyA", "AstroDomeSkyB", "AstroDomeSkyC", "AstroDomeSkyA", "AstroDomeSkyB", "AstroDomeSkyC"),
+    "AstroDomeEntrance": ("AstroDomeEntranceObservatory", "AstroDomeEntranceWell", "AstroDomeEntranceKitchen",
+                          "AstroDomeEntranceBedRoom", "AstroDomeEntranceMachine", "AstroDomeEntranceTower"),
+    "AstroStarPlate": ("AstroStarPlateObservatory", "AstroStarPlateWell", "AstroStarPlateKitchen", "AstroStarPlateBedRoom",
+                       "AstroStarPlateMachine", "AstroStarPlateTower")}
 POSE = {"PhantomShipBridge": ("MoveA", {"move.kcl": "Move"}), "NutShipFleetBridge": ("MoveA", {"move.kcl": "Move"})}
 HOME_POS = "\u5408\u4f53\u30d6\u30ed\u30c3\u30af\u6545\u90f7\u70b9"  # 合体ブロック故郷点: AssemblyBlock's home (Petari sReturnPosName)
 LOGIC = ("TimerSwitch", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
@@ -909,6 +918,9 @@ def placement(fs, galaxy, scenario):
     zid = {z["name"]: i for i, z in enumerate(zones)}
     up_ids = {zid[z]: zid[p] for z, p in up.items() if z in zid and p in zid and zid[p] != 0}
     zworld = to_world(zones, up_ids, objs + starts + paths + cubes + [o["home"] for o in objs if "home" in o])
+    for o in objs:  # the Astro classes drawn with their dome's model (ASTRO_MODELS)
+        if o["name"] in ASTRO_MODELS and 1 <= o["args"][0] <= 6:
+            o["name"] = ASTRO_MODELS[o["name"]][o["args"][0] - 1]
     for o in objs:  # POSE classes are LiveActors with a BCK, not MapPartsRotators: their mappartsinfo columns unused
         if o["name"] in POSE:
             o["args"][4:8] = [-1, -1, -1, -1]

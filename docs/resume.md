@@ -199,7 +199,8 @@ there needs the embedded blob and every pack rebuilt.
    Mario alone in a launch star's flight and a miss ends the flight; the cover test takes a shown launch star landing
    by something that is not an area or a gravity; PhantomShipBridge drawn and collided lowered (slice.py POSE: MoveA's
    last frame, move.kcl at joint Move merged by kcl_tris / kcl_build, a one-block KCL writer: KoopaJrShipLv1 1).
-   Left: AstroDome 1-6 (the dome has no collision here: its map is not kept), FileSelect / EpilogueDemoStage (menus);
+   AstroDome 1-6 fixed (slice.py ASTRO_MODELS: AstroDome / Sky / Entrance / StarPlate take their dome's model by arg0,
+   AstroMapObjFunction::getModelName). Left: FileSelect / EpilogueDemoStage (menus);
    SurfingLv2 1 starts on a SurfRay (not done); Phantom 6: the cover test's launch star lands by another scenario's
    planet; SandClock 1 / 3 hang now and then at boot inside a coverage batch only (6 / 6 fine alone; no "no memory");
    single misses after the cover test's flight or by enemies (CosmosGarden 5, StarDust 5, BattleShip 3, CannonFleet 2,
