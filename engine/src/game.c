@@ -146,6 +146,7 @@ typedef struct {
     int jstand;      /* JumpStand: holds Mario landing on it, then throws him up (update_jumpstands) */
     int warppod;     /* WarpPod: takes Mario to its pair (warp_try, warp_update) */
     int kiraira;     /* Kiraira: a chained mine, explodes on touch and recovers (update_kiraira, kiraira_pos) */
+    const float *meteor; /* MeteorStrike(Environment): its rail's JMap points; meteors fall along them (update_meteor) */
     const unsigned char *tsuki; /* Tsukidashikun: its PATH entry; pushes along it and back (update_tsuki) */
     int shoot;       /* ShootingStar: falls, bursts into star pieces (update_shooting) */
     int plant;       /* PlantGroup (Flower / FlowerBlue / CutBush Group): its model drawn at each member (plants) */
@@ -253,6 +254,9 @@ static short *star_wait;
 static int row_shown(int i)
 {
     const Row *r = &sc->objs[i];
+#ifdef METEOR_TEST /* the meteors come with a boss fight's switch area: out at once in the test */
+    if (strcmp(sc->types + 32 * r->type, "MeteorStrike") == 0) return 1;
+#endif
     return !row_dead[i] && (r->sw[SW_APPEAR] < 0 || sw_on(r, SW_APPEAR));
 }
 
@@ -1150,6 +1154,57 @@ static void update_kiraira(void)
     }
 }
 
+/* MeteorStrikeLauncher.cpp / MeteorStrike.cpp: every arg1 x 60 frames (once if arg1 is unset) a meteor leaves its rail's
+ * point 0 towards point 1 at arg0 a frame (default 10), turning 7.5 degrees a frame, until it hits the map (binder 80)
+ * or passes point 1; its body (90) hits Mario (a strong attack) and breaks it. MeteorStrikeEnvironment ones touch
+ * nothing. row_turn 0 waiting (row_step the interval), 1 falling (row_step its steps), 2 done. ponytail: one meteor at
+ * a time per launcher (no arg2 multi meteors, no start part-way when off screen), no shadow, no break model / lava
+ * column, no meteor at all before the first frame it is on screen is not checked */
+static int kcl_query(V3 c, float radius, Hit *out, int max);
+static V3 meteor_pos(const Inst *in, V3 *dir)
+{
+    const float *p = in->meteor;
+    V3 a = v3(p[0], p[1], p[2]), b = v3(p[3], p[4], p[5]);
+    const Row *r = &sc->objs[in->row];
+    *dir = vnorm(vsub(b, a));
+    return vadd(a, vmul(*dir, (r->arg[0] > 0 ? r->arg[0] : 10) * (float)row_step[in->row]));
+}
+
+static void update_meteor(void)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->meteor || !row_shown(in->row)) continue;
+        const Row *r = &sc->objs[in->row];
+        unsigned short *t = &row_step[in->row];
+        signed char *ph = &row_turn[in->row];
+        if (*ph == 2) continue;
+        if (*ph == 0) {
+            if (*t && ++*t < r->arg[1] * 60) continue;
+            *ph = 1; *t = 0;
+        }
+        ++*t;
+        V3 dir, p = meteor_pos(in, &dir), b = v3(in->meteor[3], in->meteor[4], in->meteor[5]);
+        int env = strcmp(sc->types + 32 * r->type, "MeteorStrikeEnvironment") == 0, end = 0;
+        Hit h[1];
+        if (!env && vlen(vsub(c, p)) < 90.0f + HIT_BODY_R) {
+            hurt_mario(p, 25.0f);
+            printf("meteor %d hits Mario\n", in->row);
+            end = 1;
+        } else if (vdot(vsub(p, b), dir) > 0)
+            end = 1;
+        else if (!env && kcl_query(p, 80.0f, h, 1)) {
+            printf("meteor %d breaks on the ground after %d steps\n", in->row, *t);
+            end = 1;
+        }
+        if (end) {
+            *ph = r->arg[1] > 0 ? 0 : 2;
+            *t = 1; /* the interval counts from 1 */
+        }
+    }
+}
+
 /* JumpStand.cpp: Mario landing on it is held (bound); TrampleBound throws him at step 5 along -gravity at 26, 32 if
  * he pressed jump in those 5 frames; HipDropBound (a hip drop landing) sinks him 6 - ease a frame for 15 frames, then
  * 43 along its up. row_turn: 0 wait, 1 trample, 2 high trample, 3 hip drop; row_step frames; jstand_pos the held
@@ -1313,6 +1368,12 @@ void game_rebind(void)
         in->jstand = strcmp(name, "JumpStand") == 0;
         in->warppod = strcmp(name, "WarpPod") == 0;
         in->kiraira = strcmp(name, "Kiraira") == 0;
+        in->meteor = NULL;
+        if (scene_blob_g && r->path >= 0 && (strcmp(name, "MeteorStrike") == 0 || strcmp(name, "MeteorStrikeEnvironment") == 0)) {
+            u32 n; int cl;
+            const float *p = find_rail_of(scene_blob_g, r->zone, r->path, &n, &cl, 1);
+            in->meteor = p && n >= 2 ? p : NULL;
+        }
         in->tsuki = scene_blob_g && r->path >= 0 && strcmp(name, "Tsukidashikun") == 0 ?
                     find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->plant = strcmp(name, "FlowerGroup") == 0 || strcmp(name, "FlowerBlueGroup") == 0 || strcmp(name, "CutBushGroup") == 0;
@@ -1648,6 +1709,27 @@ int game_test_kiraira(void)
             const Row *r = &sc->objs[i];
             mario->pos = vadd(v3(r->pos[0], r->pos[1], r->pos[2]), vmul(mario->up, 600.0f));
             mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return -2;
+        }
+    return -1;
+}
+
+int game_test_meteor(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        if (!insts[i].meteor || strcmp(sc->types + 32 * sc->objs[insts[i].row].type, "MeteorStrike")) continue;
+        const float *p = insts[i].meteor;
+        V3 a = v3(p[0], p[1], p[2]), b = v3(p[3], p[4], p[5]);
+        mario->pos = vsub(vadd(a, vmul(vsub(b, a), 0.5f)), vmul(mario->up, HIT_BODY_H)); /* half way down its rail */
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return insts[i].row;
+    }
+    for (u32 i = 0; i < sc->nobjs; i++) /* not bound yet: Mario at its row, its zone streams in */
+        if (strcmp(sc->types + 32 * sc->objs[i].type, "MeteorStrike") == 0) {
+            const Row *r = &sc->objs[i];
+            mario->pos = v3(r->pos[0], r->pos[1], r->pos[2]); /* its zone's full pack streams in */
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            game_rebind();
             return -2;
         }
     return -1;
@@ -3430,6 +3512,7 @@ void game_update(void)
     update_jumpstands();
     update_tsuki();
     update_kiraira();
+    update_meteor();
     update_pipes();
     update_switches();
     update_pops();
@@ -3581,6 +3664,19 @@ void game_draw(void)
         if (in->assembly && row_turn[in->row] == 4 && row_step[in->row] + 100 >= (sc->objs[in->row].arg[1] > 0 ?
             sc->objs[in->row].arg[1] : 300) && (game_frame & 4))
             continue; /* about to vanish: blinks (ponytail for its Disappear animation) */
+        if (in->meteor) { /* falling along its rail, turning about its x */
+            if (row_turn[in->row] != 1) continue;
+            V3 dir, p = meteor_pos(in, &dir), up = up_at(p, v3(0, 1, 0));
+            float cm[16], rot[16], a = -7.5f * row_step[in->row] * 0.0174533f, tmp[16];
+            basis_matrix(tmp, p, fabsf(vdot(up, dir)) > 0.99f ? vnorm(vcross(dir, v3(1, 0, 0))) : up, dir, 0);
+            mat_identity(rot);
+            rot[5] = rot[10] = cosf(a);
+            rot[6] = sinf(a); rot[9] = -rot[6];
+            mat_mul(cm, tmp, rot);
+            for (int j = 0; j < 12; j++) if (j % 4 != 3) cm[j] *= in->s;
+            render_model(in->md, cm, 0x70, 0xB0, 0x60);
+            continue;
+        }
         if (in->kiraira) { /* drifting, facing Mario within 1500; hidden while Dead */
             if (row_turn[in->row] && row_step[in->row] < 300) continue;
             V3 up, p = kiraira_pos(in, &up), to = vsub(mario->pos, p), fwd = v3(in->m[8], in->m[9], in->m[10]);

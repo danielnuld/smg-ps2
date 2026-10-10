@@ -607,6 +607,12 @@ int main(void)
         if (frame >= 120 && frame % 60 == 0)
             printf("kiraira test f %u: Mario into row %d, life %d\n", frame, game_test_kiraira(), game_life());
 #endif
+#ifdef METEOR_TEST
+        if (frame >= 120 && frame < 1500 && frame % 10 == 0) {
+            int row = game_test_meteor();
+            if (frame % 120 == 0) printf("meteor test f %u: in row %d's path, life %d" "\n", frame, row, game_life());
+        }
+#endif
 #ifdef GEYSER_TEST
         if (frame >= 120 && frame <= 1200 && frame % 15 == 0) {
             int row = game_test_geyser();
