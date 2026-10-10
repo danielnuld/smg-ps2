@@ -77,6 +77,7 @@ EXTRA = {"FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "Fl
 STAR_DECLARERS = {"FlipPanelObserver": 7, "CrystalCageL": 0, "BreakableCage": None, "BreakableCageRotate": None,
                   "BreakableCageL": None}
 COIN100 = "１００枚コイン"
+KCL_JOINT = {"JumpStand": "JumpStandJoint03"}  # collision at that joint's (bind pose) place
 HOME_POS = "\u5408\u4f53\u30d6\u30ed\u30c3\u30af\u6545\u90f7\u70b9"  # 合体ブロック故郷点: AssemblyBlock's home (Petari sReturnPosName)
 LOGIC = ("TimerSwitch", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
          "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "DeathCube", "DeathSphere",
@@ -355,6 +356,12 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None):
                 sk = skin_entry(b, bl, gtab)
         elif n.endswith(".kcl") and kcl is None:
             kcl = b
+    if kcl and arc.stem in KCL_JOINT:  # collision placed at a joint (initCollisionParts with its joint matrix)
+        mb = next(v for k, v in files.items() if k.lower().endswith((".bdl", ".bmd")))
+        bl = tex.blocks(mb)
+        js = skin.joints(mb, bl)
+        w = skin.world(js)[[j["name"] for j in js].index(KCL_JOINT[arc.stem])]
+        kcl = kcl_shift(kcl, [float(x) for x in w[:3, 3]])
     return groups, kcl, sk
 
 
@@ -402,6 +409,15 @@ def anim_clip(bck):
     out += rot + b"\0" * (-len(rot) % 4)
     out += struct.pack(f"<{nt}f", *struct.unpack_from(f">{nt}f", bck, to))
     return out
+
+
+def kcl_shift(b, d):
+    """Big-endian KCL moved by d: its positions and its octree's min corner (the octree is relative to min)."""
+    out = bytearray(b)
+    pos, nrm = struct.unpack_from(">2I", b, 0)
+    for o in list(range(pos, nrm, 12)) + [0x14]:
+        struct.pack_into(">3f", out, o, *(a + c for a, c in zip(struct.unpack_from(">3f", b, o), d)))
+    return bytes(out)
 
 
 def kcl_to_le(b):

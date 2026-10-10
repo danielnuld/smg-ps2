@@ -569,6 +569,20 @@ int main(void)
             if (frame % 60 == 0) printf("assembly test f %u: block %d row %d, %d assembled\n", frame, k / 2, row, game_assembled());
         }
 #endif
+#ifdef JUMPSTAND_TEST
+        {
+            static unsigned at; /* the frame of the first drop, once its zone is in */
+            if (!at && frame >= 120 && frame % 30 == 0 && game_test_jumpstand(0) >= 0) at = frame;
+            if (at && frame == at + 300)
+                printf("jumpstand test f %u: Mario dropped on row %d (hip drop)\n", frame, game_test_jumpstand(1));
+            if (at && at == frame) printf("jumpstand test f %u: Mario dropped\n", frame);
+        }
+        if (frame > 120 && frame < 1500 && frame % 10 == 0) {
+            char d[128];
+            game_debug(d, sizeof d);
+            printf("jumpstand test f %u: %s\n", frame, d);
+        }
+#endif
 #ifdef GEYSER_TEST
         if (frame >= 120 && frame <= 1200 && frame % 15 == 0) {
             int row = game_test_geyser();

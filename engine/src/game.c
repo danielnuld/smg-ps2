@@ -142,6 +142,7 @@ typedef struct {
     int geyser;      /* LavaGeyser: shoots up on a cycle and burns (update_geyser, geyser_height) */
     int assembly;    /* AssemblyBlock: floats at its home, flies into place when Mario is near (assembly_place) */
     V3 gup;          /* AssemblyBlock: up at its home (its bobbing) */
+    int jstand;      /* JumpStand: holds Mario landing on it, then throws him up (update_jumpstands) */
     int shoot;       /* ShootingStar: falls, bursts into star pieces (update_shooting) */
     int plant;       /* PlantGroup (Flower / FlowerBlue / CutBush Group): its model drawn at each member (plants) */
     const unsigned char *railer; /* map part on a rail: its PATH entry; moves along it (update_railers) */
@@ -1039,6 +1040,55 @@ static void update_assembly(void)
     }
 }
 
+/* JumpStand.cpp: Mario landing on it is held (bound); TrampleBound throws him at step 5 along -gravity at 26, 32 if
+ * he pressed jump in those 5 frames; HipDropBound (a hip drop landing) sinks him 6 - ease a frame for 15 frames, then
+ * 43 along its up. row_turn: 0 wait, 1 trample, 2 high trample, 3 hip drop; row_step frames; jstand_pos the held
+ * place. ponytail: no stick steering on the throw; the bound is a squash of the model (jstand_squash), not its BCK */
+static V3 jstand_pos;
+static int jstand_prev = -1; /* mario_ground last frame */
+
+static float jstand_squash(const Inst *in)
+{
+    int t = row_step[in->row], ph = row_turn[in->row], n = ph == 3 ? 20 : 10;
+    return ph && t < n ? 1.0f - (ph == 3 ? 0.4f : 0.25f) * sinf(3.14159f * t / n) : 1.0f;
+}
+
+static void update_jumpstands(void)
+{
+    int prev = jstand_prev;
+    jstand_prev = mario_ground;
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->jstand) continue;
+        unsigned short *t = &row_step[in->row];
+        signed char *ph = &row_turn[in->row];
+        V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+        if (!*ph) {
+            if (mario_ground != i || prev == i || mario->launch >= 0) continue;
+            *ph = hip_hit ? 3 : 1; *t = 0;
+            jstand_pos = mario->pos;
+            printf("jump stand %d: %s\n", in->row, hip_hit ? "hip drop" : "trample");
+        }
+        ++*t;
+        int hold = *ph == 3 ? 15 : 5;
+        if (*t <= hold) {
+            if (*ph == 1 && pad_pressed(PAD_CROSS)) *ph = 2;
+            if (*ph == 3) {
+                float u = (float)*t / 15.0f;
+                jstand_pos = vsub(jstand_pos, vmul(up, 6.0f - (1.0f - (1.0f - u) * (1.0f - u))));
+            }
+            mario->pos = jstand_pos;
+            mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->hip = 0;
+            if (*t == hold) { /* endBindAndShootUp */
+                float v = *ph == 3 ? 43.0f : *ph == 2 ? 32.0f : 26.0f;
+                if (*ph == 3) mario->up = up;
+                mario->vup = v; mario->grounded = 0; mario->jump_kind = 0; mario->air_timer = 0;
+                printf("jump stand %d throws at %d\n", in->row, (int)v);
+            }
+        } else if (*t >= (*ph == 3 ? 20 : 10)) *ph = 0;
+    }
+}
+
 /* a rail-moving part's translation: its rail at row_coord */
 static V3 rail_at(const float *p, u32 n, float d);
 static void railer_place(Inst *in)
@@ -1148,6 +1198,7 @@ void game_rebind(void)
         in->steam = strcmp(name, "LavaSteam") == 0;
         in->geyser = strcmp(name, "LavaGeyser") == 0;
         in->assembly = strncmp(name, "AssemblyBlock", 13) == 0;
+        in->jstand = strcmp(name, "JumpStand") == 0;
         in->plant = strcmp(name, "FlowerGroup") == 0 || strcmp(name, "FlowerBlueGroup") == 0 || strcmp(name, "CutBushGroup") == 0;
         in->hipsw = strncmp(name, "PicketSwitch", 12) == 0 || strcmp(name, "HipDropSwitch") == 0 ? 1 :
                     strcmp(name, "HipDropTimerSwitch") == 0 ? 2 : 0;
@@ -1408,6 +1459,27 @@ int game_assembled(void)
     for (int i = 0; i < ninsts; i++)
         if (insts[i].assembly && row_turn[insts[i].row] >= 1) n++;
     return n;
+}
+
+int game_test_jumpstand(int hip)
+{
+    for (int i = 0; i < ninsts; i++) {
+        if (!insts[i].jstand) continue;
+        V3 up = vnorm(v3(insts[i].m[4], insts[i].m[5], insts[i].m[6]));
+        mario->pos = vadd(v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]), vmul(up, 600.0f));
+        mario->up = up;
+        mario->hvel = v3(0, 0, 0); mario->vup = -5.0f; mario->grounded = 0;
+        if (hip) { mario->hip = HIP_FALL; mario->hip_t = 0; }
+        return insts[i].row;
+    }
+    for (u32 i = 0; i < sc->nobjs; i++) /* not bound yet: Mario over its row, its zone streams in */
+        if (strcmp(sc->types + 32 * sc->objs[i].type, "JumpStand") == 0) {
+            const Row *r = &sc->objs[i];
+            mario->pos = v3(r->pos[0], r->pos[1] + 600.0f, r->pos[2]);
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return -2;
+        }
+    return -1;
 }
 
 int game_test_geyser(void)
@@ -3033,6 +3105,7 @@ void game_update(void)
     update_steam();
     update_geyser();
     update_assembly();
+    update_jumpstands();
     update_pipes();
     update_switches();
     update_pops();
@@ -3184,6 +3257,13 @@ void game_draw(void)
         if (in->assembly && row_turn[in->row] == 4 && row_step[in->row] + 100 >= (sc->objs[in->row].arg[1] > 0 ?
             sc->objs[in->row].arg[1] : 300) && (game_frame & 4))
             continue; /* about to vanish: blinks (ponytail for its Disappear animation) */
+        if (in->jstand && row_turn[in->row]) { /* bound: squashed along its y */
+            float cm[16], k = jstand_squash(in);
+            memcpy(cm, in->m, 64);
+            for (int j = 4; j < 7; j++) cm[j] *= k;
+            render_model(in->md, cm, 0x70, 0xB0, 0x60);
+            continue;
+        }
         if (in->geyser) { /* stretched along its y to its height (geyser_height) */
             float k = geyser_height(in) / GEYSER_BIND, cm[16];
             if (k <= 0.0f) continue;
