@@ -867,7 +867,7 @@ void render_sprites(const Sprite *sp, int n)
         int add = sp[i].add, j = i;
         while (j < n && j - i < 64 && sp[j].tex == t && sp[j].add == add)
             j++;
-        if (packet2_get_qw_count(vif[cur]) + 16 + (j - i) * 5 > PACKET_QW)
+        if (packet2_get_qw_count(vif[cur]) + 16 + TEXP + 4 + (j - i) * 5 > PACKET_QW) /* state, its texture change */
             flush_vif();
         set_tex(t);
         const TexEntry *e = tex_scene->tex[t].e;
@@ -890,6 +890,10 @@ void render_sprites(const Sprite *sp, int n)
                 continue;
             float k = 2048.0f / zv, sx = 2048.0f + proj[0] * xv * k, sy = 2048.0f + proj[5] * yv * k;
             float hx = proj[0] * s->half * k, hy = -proj[5] * s->half * k;
+            /* wider than the screen (a big emitter's scale, or right at the camera): skipped. Its corners would leave
+             * the GS's 0..4095 range and wrap, and a few such sprites stall the GS for seconds (ambient effects) */
+            if (hx > SCREEN_W || hy > SCREEN_H)
+                continue;
             if (sx + hx < 2048 - SCREEN_W / 2 || sx - hx > 2048 + SCREEN_W / 2 || sy + hy < 2048 - SCREEN_H / 2 ||
                 sy - hy > 2048 + SCREEN_H / 2)
                 continue;

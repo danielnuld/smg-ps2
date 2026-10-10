@@ -34,6 +34,23 @@ int game_test_plant(int k);
 int game_test_steam(void);
 /* Test builds: Mario held in the first LavaGeyser's column (his centre 300 up it); its row or -1 */
 int game_test_geyser(void);
+/* Test builds: Mario held on the first Birikyu's path; its row, -2 streaming, -1 none */
+int game_test_biri(void);
+/* Test builds: Mario at the first ungiven DeadLeaves (1, spinning) / Pompon plant (2, into its flower); its row,
+ * -2 streaming, -1 none */
+int game_test_giver(int kind);
+/* Test builds: 0 Mario jumping into the first JumpBranch (its row, -2 streaming, -1 none); 1 its row while he swings */
+int game_test_jbranch(int phase);
+/* Test builds: the first TicoRail's row and rail coordinate (-2: Mario sent there while its zone streams in) */
+int game_test_ticorail(float *coord);
+/* Test builds: the cursor onto the first live walker of a kind; its row, -2 behind the camera, -1 none */
+int game_test_point_walker(int kind);
+/* Test builds: the first live walker of a kind as text (row, phase, timer, distance to Mario) */
+void game_walker_state(int kind, char *out, int n);
+/* Test builds: Mario kept still where he is (set: this place from now on) */
+void game_test_hold(int set);
+/* Test builds: Mario dropped onto the first standing BeeFlowerHover; its row, -2 streaming, -1 none */
+int game_test_beeflower(void);
 /* Test builds: Mario at the first unbroken SmallStone ring (spin: spinning); its row or -1 */
 int game_test_stone(int spin);
 /* Test builds: Mario held half way along the first LavaProminence's rail; its row, -2 streaming, -1 none */

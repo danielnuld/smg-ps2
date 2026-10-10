@@ -216,7 +216,8 @@ static unsigned char zone_full[64];    /* 1: that stage's .bin is in use, 0: its
 static const u8 *scene_blob;
 static u32 nzones, base_models, base_tex, base_kcl;
 static u32 size_full[64], size_low[64], zone_room; /* each stage pack's bytes; what the stage packs may use */
-#define PACK_ROOM 9010000u /* phase 0b: room for scenario data (tools/slice_all.py ROOM) */
+static u32 resident_bytes;
+#define PACK_ROOM 9010000u /* phase 0b: room for scenario data, resident.bin aside (tools/slice_all.py ROOM) */
 static MemMark base_mark;
 
 /* Next zone's packs, read a slice per frame (a launch star's flight hides it); stages whose pack does not change
@@ -270,7 +271,7 @@ static u32 set_cost(const unsigned char *full)
 }
 
 /* The target set: the main stage's chain, then the chains of the zones Mario needs, then of those he is heading for,
- * nearest first, each kept only if the set still fits zone_room. ponytail: insertion sort over at most 64 zones */
+ * nearest first, each kept only if the set still fits zone_room (the nearest needed one always). ponytail: insertion sort over at most 64 zones */
 static void target_set(unsigned char *out)
 {
     unsigned char need[64], soon[64], chain[64], tmp[64];
@@ -289,7 +290,8 @@ static void target_set(unsigned char *out)
         for (int k = 0; k < n; k++) {
             chain_of(order[k], chain);
             for (int z = 0; z < 64; z++) tmp[z] = out[z] | chain[z];
-            if (set_cost(tmp) <= zone_room) memcpy(out, tmp, 64);
+            /* the nearest zone he needs always comes in (the one he stands in), the rest only while they fit */
+            if ((pass == 0 && k == 0) || set_cost(tmp) <= zone_room) memcpy(out, tmp, 64);
         }
     }
 }
@@ -428,8 +430,10 @@ static const u8 *load_packs(Scene *s)
     scene_blob = load_file(path);
     if (blob_load(s, scene_blob) != 0)
         return NULL;
+    u32 before_resident = pack_bytes;
     if (blob_add(s, load_file("resident.bin")) != 0)
         return NULL;
+    resident_bytes = pack_bytes - before_resident; /* its own budget (milestone 1), not the scenario room */
     snprintf(path, sizeof path, "%s/common.bin", scen);
     if (blob_add(s, load_file(path)) != 0)
         return NULL;
@@ -450,7 +454,8 @@ static const u8 *load_packs(Scene *s)
             if (p.f) pack_close(&p);
         }
     }
-    zone_room = PACK_ROOM > pack_bytes ? PACK_ROOM - pack_bytes : 0;
+    u32 scen_base = pack_bytes - resident_bytes; /* scene.bin + common.bin: tools/slice_all.py's stream count */
+    zone_room = PACK_ROOM > scen_base ? PACK_ROOM - scen_base : 0;
     printf("packs: %s, %u zones, base %u models, %u textures, %u KB read\n", scen, nzones, s->nmodels, s->ntex,
            pack_bytes >> 10);
     return scene_blob;
@@ -725,6 +730,42 @@ int main(void)
         if (frame >= 120 && frame < 600 && frame % 60 < 30) game_test_stone(0); /* its zone streams in, the ring drops */
         if (frame >= 120 && frame < 600 && frame % 60 == 30) printf("stone test f %u: spin at row %d, pieces %d\n", frame, game_test_stone(1), game_pieces_out());
 #endif
+#ifdef BEEFLOWER_TEST
+        if (frame >= 120 && frame % 60 == 0 && frame <= 900) {
+            char d[128];
+            game_debug(d, sizeof d);
+            printf("beeflower test f %u: dropped on row %d, %s\n", frame, game_test_beeflower(), d);
+        }
+#endif
+#ifdef TICORAIL_TEST
+        if (frame >= 120 && frame % 60 == 0 && frame <= 1500) {
+            float c = 0;
+            int row = game_test_ticorail(&c);
+            printf("ticorail test f %u: row %d coord %d\n", frame, row, (int)c);
+        }
+#endif
+#ifdef JBRANCH_TEST
+        {
+            static unsigned at;
+            if (!at && frame >= 120 && frame % 30 == 0 && game_test_jbranch(0) >= 0) at = frame;
+            if (at && frame > at && frame < at + 120 && frame % 10 == 0) {
+                char d[128];
+                game_debug(d, sizeof d);
+                printf("jbranch test f %u: swinging row %d, %s\n", frame, game_test_jbranch(1), d);
+            }
+        }
+#endif
+#ifdef GIVER_TEST
+        if (frame >= 120 && frame % 40 == 0 && frame <= 1000)
+            printf("giver test f %u: %s row %d, coins %d, pieces %d\n", frame, frame % 80 ? "leaves" : "pompon",
+                   game_test_giver(frame % 80 ? 1 : 2), game_coins(), game_pieces_out());
+#endif
+#ifdef BIRI_TEST
+        if (frame >= 120 && frame < 1200 && frame % 20 == 0) {
+            int row = game_test_biri();
+            if (frame % 120 == 0) printf("biri test f %u: row %d, life %d\n", frame, row, game_life());
+        }
+#endif
 #ifdef GEYSER_TEST
         if (frame >= 120 && frame <= 1200 && frame % 15 == 0) {
             int row = game_test_geyser();
@@ -815,6 +856,17 @@ int main(void)
 #ifdef KARON_TEST
         if (frame == 120) printf("karon test: stomp row %d\n", game_test_enemy(10, 0, 0));
         if (frame >= 200 && frame < 600 && frame % 60 == 0) printf("karon test f %u: %d up, life %d\n", frame, game_kind_alive(10), game_life());
+#endif
+#ifdef TERESA_TEST
+        if (frame == 120) { game_test_enemy(11, 0, 3); game_test_hold(1); } /* 200 off a Boo, his back to it */
+        if (frame > 120 && frame < 400) game_test_hold(0); /* held still: it comes to him */
+        if (frame % 30 == 0 && frame >= 120 && frame <= 600) { char w[96]; game_walker_state(11, w, sizeof w); printf("teresa test f %u: life %d, %s\n", frame, game_life(), w); }
+        if (frame == 450) printf("teresa test: spin by row %d\n", game_test_enemy(11, 0, 1));
+#endif
+#ifdef BUTTERFLY_TEST
+        if (frame >= 120 && frame < 300) game_test_enemy(12, 0, 3); /* by a butterfly while the camera settles */
+        if (frame == 300 || frame == 360) printf("butterfly test f %u: pointer on row %d, pieces %d\n", frame, game_test_point_walker(12), game_pieces_out());
+        if (frame == 420) printf("butterfly test: pieces %d\n", game_pieces_out());
 #endif
 #ifdef ENEMY_TEST
         if (frame == 120) printf("enemy test: stomp TakoHei row %d\n", game_test_enemy(1, 0, 0));

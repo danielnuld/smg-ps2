@@ -247,10 +247,14 @@ void fx_update(void)
         if (!e->stop && e->tick % (r->rate_step + 1) == 0) {
             float c = r->rate * (1.0f + r->rate_rndm * zp());
             e->acc += c;
+            if (!(e->acc >= 0.0f && e->acc < 4096.0f)) /* a huge or broken rate: the loop below ran for billions */
+                e->acc = 0.0f;
             int n = (int)e->acc;
             e->acc -= n;
             if (e->first && c > 0.0f && c < 1.0f)
                 n = 1;
+            if (n > (int)nfree)
+                n = nfree; /* no more than the pool can hold */
             while (n-- > 0)
                 create(i);
             e->first = 0;

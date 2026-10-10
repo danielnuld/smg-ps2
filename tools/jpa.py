@@ -114,6 +114,18 @@ FX = [("Coin", "CoinGet"), ("PurpleCoin", "CoinGet"), ("StarPiece", "StarPieceLi
       ("YellowChip", "Get"), ("BlueChip", "Wait"), ("YellowChip", "Wait"), ("QuestionCoin", "Light"),
       ("LavaSteam", "Sign"), ("LavaSteam", "Steam"), ("Mario", "SpinLight"), ("Mario", "HipDropFlower"),
       ("Mario", "Damage"), ("LavaGeyser", "Sign")]
+# Placed effect objects (NameObjFactory's *EffectObj* classes: SnowS, LavaSparksS...): each plays its AutoEffectList group
+# (the first row of GroupName = its name); FX_AMBIENT_FIRST + k in fx_tab.h, names in fx_ambient (game.c ambient_fx)
+AMBIENT = ("AstroTorchLightBlue", "AstroTorchLightRed", "BattleShipExplosionMetal", "BattleShipExplosionRock",
+           "BirdLouseL", "BirdLouseS", "DrainPipeBubbleA", "DrainPipeBubbleB", "EffectObjSample", "EffectTeresa",
+           "EffectTicoL", "EffectTicoS", "FallGreenLeaf", "FallRedLeaf", "FireworksA", "ForestWaterfallL",
+           "ForestWaterfallS", "GravityDust", "IceLayerBreak", "IcePlanetLight", "IcicleRockLight",
+           "LavaHomeVolcanoFallingRock", "LavaSparksL", "LavaSparksS", "SandBreezeL", "SandBreezeS",
+           "SandUpDownKGBaseEffect", "SandUpDownTowerTopEffect", "ShootingStarArea", "SnowS", "SpaceDustL",
+           "SpaceDustS", "StarPieceClusterBreak", "Steam", "TwinFallLakeWaterFall", "UFOKinokoLandingBlackSmoke",
+           "UFOSandObstacleAEffect", "UFOSandObstacleBEffect", "UFOSandObstacleCEffect", "WaterDropBottom",
+           "WaterDropMiddle", "WaterDropTop", "WaterLayerBreak", "WaterfallL", "WaterfallS")
+FX += [(n, None) for n in AMBIENT]
 FX_RES = 7  # resources per effect at most (fx.c FxDef)
 
 
@@ -168,7 +180,7 @@ def pack(fs):
                     B.bcsv_column(auto, "EffectName")))
     used, defs, out_tex, tex_key = [], [], [], {}
     for g, u in FX:
-        e = next((r[2] for r in rows if r[0] == g and r[1] == u), "")
+        e = next((r[2] for r in rows if r[0] == g and (u is None or r[1] == u)), "")
         ids = [names[n] for n in e.split() if n in names] or effect_ids(names, e)
         idx = []
         for i in ids[:FX_RES]:
@@ -230,9 +242,13 @@ def pack(fs):
 
 def header(path):
     """engine/src/fx_tab.h: FX_* ids in FX order."""
-    ids = [f"FX_{(g + '_' + u).upper()}" for g, u in FX]
+    ids = [f"FX_{(g + '_' + u).upper()}" for g, u in FX if u is not None]
+    amb = ", ".join(f'"{n}"' for n in AMBIENT)
     Path(path).write_text("/* written by tools/jpa.py --header: effect ids (tools/jpa.py FX) */\n"
-                          "enum { " + ", ".join(ids) + ", FX_COUNT };\n")
+                          "enum { " + ", ".join(ids) + ", FX_AMBIENT_FIRST };\n"
+                          f"#define FX_AMBIENT_N {len(AMBIENT)}\n"
+                          "#define FX_COUNT (FX_AMBIENT_FIRST + FX_AMBIENT_N)\n"
+                          f"static const char *const fx_ambient[FX_AMBIENT_N] = {{{amb}}};\n", newline="\n")
 
 
 def selftest():
