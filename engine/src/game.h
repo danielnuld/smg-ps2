@@ -35,6 +35,9 @@ int game_test_plant(int k);
 int game_test_steam(void);
 /* Test builds: Mario held in the first LavaGeyser's column (his centre 300 up it); its row or -1 */
 int game_test_geyser(void);
+/* Test builds: the cursor onto the first live walking enemy of a kind and L1 (a star piece shot; one given if
+ * none); its row, -2 behind the camera, -1 none */
+int game_test_shoot(int kind);
 /* Test builds: hold: R2 held with the cursor on the first GCaptureTarget within 2400 of Mario (its row, -1 none);
  * else R2 let go, returns the capture phase */
 int game_test_gcap(int hold);

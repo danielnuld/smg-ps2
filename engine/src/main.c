@@ -646,6 +646,12 @@ int main(void)
             printf("gcap test f %u: %s\n", frame, d);
         }
 #endif
+#ifdef SHOOT2_TEST
+        if (frame >= 120 && frame < 300) game_test_enemy(6, 0, 3); /* held 200 off a Takobo while the camera settles */
+        if (frame == 300) printf("shoot2 test: shot at Takobo row %d\n", game_test_shoot(6));
+        if (frame == 330) printf("shoot2 test: stomp it row %d\n", game_test_enemy(6, 0, 0));
+        if (frame == 360) printf("shoot2 test: %d Takobo alive\n", game_kind_alive(6));
+#endif
 #ifdef GEYSER_TEST
         if (frame >= 120 && frame <= 1200 && frame % 15 == 0) {
             int row = game_test_geyser();

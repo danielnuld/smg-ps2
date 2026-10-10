@@ -209,6 +209,10 @@ static int mario_ground = -1;   /* instance Mario stands on this frame, -1 in th
 static float cur_x = 320, cur_y = 224; /* the star pointer's stand-in, moved by the right stick (HUD units) */
 static struct { int phase, t, target; V3 vel; float power; } gcap; /* GCapture (gcap_update) */
 static int test_r2; /* test builds: R2 held */
+typedef struct { V3 pos, vel; int t; } Shot; /* star pieces shot at the pointer (update_shots) */
+#define MAX_SHOTS 8
+static Shot shots[MAX_SHOTS];
+static int test_l1; /* test builds: L1 pressed this frame */
 typedef struct { int row; V3 pos, front; } Killer; /* HomingKiller: its bullet (update_killers) */
 typedef struct { int first, n; const float *pts; u32 np; float len, step, speed; } Flow; /* StarPieceFlow (update_flows) */
 #define MAX_FLOWS 64
@@ -1967,6 +1971,26 @@ int game_test_gcap(int hold)
     return -1;
 }
 
+int game_test_shoot(int kind)
+{
+    for (int i = 0; i < nkuribo; i++) { /* the cursor onto the first live enemy of the kind, L1 */
+        const Kuribo *e = &kuribo[i];
+        if (e->kind != kind || e->state == KURIBO_DEAD) continue;
+        V3 ce, cw, cu;
+        float fovy;
+        camera_pose(&ce, &cw, &cu, &fovy);
+        V3 p = vadd(e->pos, vmul(e->up, 50.0f));
+        V3 fw = vnorm(vsub(cw, ce)), s = vnorm(vcross(fw, cu)), u = vcross(s, fw), to = vsub(p, ce);
+        float z = vdot(to, fw), f = 224.0f / tanf(fovy * 3.14159265f / 360.0f);
+        if (z <= 0) return -2;
+        cur_x = 320.0f + f * vdot(to, s) / z; cur_y = 224.0f - f * vdot(to, u) / z;
+        if (got_pieces < 1) got_pieces = 1;
+        test_l1 = 1;
+        return e->row;
+    }
+    return -1;
+}
+
 int game_test_geyser(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -2801,6 +2825,10 @@ static void takobo_update(Kuribo *k, V3 to, float d)
     if (d < 170.0f * s && mario->spin_timer > 0) { /* HitPunch */
         k->state = KURIBO_DEAD; row_kill(k->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, k->pos, k->up);
         pop_coins(k->pos, k->up, 1);
+        return;
+    }
+    if (k->phase == 3) { /* StunStart / Stun (a star piece): a spin blows it away (above) */
+        if (++k->timer >= 240) { k->phase = 2; k->timer = 0; }
         return;
     }
     k->timer++;
@@ -3915,11 +3943,15 @@ static int cursor_sees(V3 p, float px) /* p shows within px pixels of the cursor
     return vlen(vsub(to, vmul(d, z))) * f / z < px;
 }
 
+static void shoot_piece(void);
+static void update_shots(void);
 static void update_cursor(void)
 {
     float x = pad_rx(), y = pad_ry(), k = 6.0f + 10.0f * sqrtf(x * x + y * y);
     cur_x += x * k; cur_y -= y * k;
     if (pad_pressed(PAD_R3)) { cur_x = 320; cur_y = 224; }
+    if (pad_pressed(PAD_L1) || test_l1) { test_l1 = 0; shoot_piece(); }
+    update_shots();
     cur_x = cur_x < 0 ? 0 : cur_x > 639 ? 639 : cur_x;
     cur_y = cur_y < 0 ? 0 : cur_y > 447 ? 447 : cur_y;
     for (int i = 0; i < npieces; i++)
@@ -3928,6 +3960,71 @@ static void update_cursor(void)
             got_pieces++;
             fx_at(FX_STARPIECE_STARPIECEGET, pieces[i].pos, up_at(pieces[i].pos, mario->up));
         }
+}
+
+/* A star piece shot (StarPieceShooter): L1 spends one taken piece, thrown from Mario's chest at 40 a frame towards
+ * where the pointer's ray meets the map (or 3000 down it), for 60 frames; it stops on the map. What it hits:
+ * walking enemies stagger (Kuribo.cpp requestStagger: KURIBO_STUN 180 frames), Takobo stuns 240 (StunStart), a
+ * MechanicKoopaMini turns to SpinHit then fires, a free Karikari is blown out (dies), a Kiraira explodes; HomingKiller
+ * and meteors only reflect it (isMsgStarPieceReflect). ponytail: no shooter effect / sound, no piece cost if none
+ * are left, PackunPetit and JumpSpider ignore it */
+static void shoot_piece(void)
+{
+    if (got_pieces <= 0) return;
+    V3 o, d;
+    cursor_ray(&o, &d);
+    V3 aim = vadd(o, vmul(d, 3000.0f));
+    Hit h[1];
+    for (float t = 100.0f; t <= 3000.0f; t += 60.0f)
+        if (kcl_query(vadd(o, vmul(d, t)), 30.0f, h, 1)) { aim = vadd(o, vmul(d, t)); break; }
+    for (int i = 0; i < MAX_SHOTS; i++)
+        if (!shots[i].t) {
+            shots[i].pos = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+            shots[i].vel = vmul(vnorm(vsub(aim, shots[i].pos)), 40.0f);
+            shots[i].t = 1;
+            got_pieces--;
+            printf("star piece shot (%d left)" "\n", got_pieces);
+            return;
+        }
+}
+
+static void update_shots(void)
+{
+    Hit h[1];
+    for (int i = 0; i < MAX_SHOTS; i++) {
+        Shot *s = &shots[i];
+        if (!s->t) continue;
+        if (++s->t > 60) { s->t = 0; continue; }
+        s->pos = vadd(s->pos, s->vel);
+        int hit = 0;
+        for (int k = 0; k < nkuribo && !hit; k++) {
+            Kuribo *e = &kuribo[k];
+            if (e->state == KURIBO_DEAD || !row_shown(e->row) || vlen(vsub(s->pos, vadd(e->pos, vmul(e->up, 50.0f)))) > 90.0f) continue;
+            hit = 1;
+            if (e->kind == WALK_TAKOBO) { e->phase = 3; e->timer = 0; }
+            else if (e->kind == WALK_MKOOPA) { e->phase = 6; e->timer = 0; }
+            else if (e->kind == WALK_KARIKARI) {
+                if (e->phase == 2) { hit = 0; continue; } /* clinging: passes */
+                e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up);
+            } else if (e->kind != WALK_PACKUN && e->kind != WALK_SPIDER) { e->state = KURIBO_STUN; e->timer = 180; }
+            printf("star piece hits walker row %d" "\n", e->row);
+        }
+        for (int k = 0; k < ninsts && !hit; k++) {
+            const Inst *in = &insts[k];
+            if (!in->kiraira || row_turn[in->row]) continue;
+            V3 up, p = kiraira_pos(in, &up);
+            if (vlen(vsub(s->pos, p)) > 150.0f) continue;
+            float m[16];
+            memcpy(m, in->m, 64);
+            m[12] = p.x; m[13] = p.y; m[14] = p.z;
+            fx_emit(FX_SPACEMINE_EXPLOSION, m);
+            row_turn[in->row] = 1; row_step[in->row] = 0;
+            if (sc->objs[in->row].sw[SW_B] >= 0) sw_set(&sc->objs[in->row], SW_B, 1);
+            printf("star piece explodes kiraira %d" "\n", in->row);
+            hit = 1;
+        }
+        if (hit || kcl_query(s->pos, 20.0f, h, 1)) s->t = 0;
+    }
 }
 
 void game_cursor(float *x, float *y) { *x = cur_x; *y = cur_y; }
@@ -4283,6 +4380,11 @@ void game_draw(void)
     draw_pickups(coins, ncoins, m_coin, 0xF0, 0xD0, 0x30);
     draw_pickups(purple, npurple, m_purple, 0xB0, 0x50, 0xF0);
     draw_pickups(pieces, npieces, m_piece, 0x60, 0xD0, 0xF0);
+    for (int i = 0; m_piece && i < MAX_SHOTS; i++)
+        if (shots[i].t) {
+            basis_matrix(m, shots[i].pos, up_at(shots[i].pos, v3(0, 1, 0)), shots[i].vel, game_frame * 0.5f);
+            render_model(m_piece, m, 0x60, 0xD0, 0xF0);
+        }
     for (int i = 0; i < nkuribo; i++) {
         const Model *md = kuribo[i].kind == WALK_TAKOHEI ? m_takohei : kuribo[i].kind == WALK_PACKUN ? m_packun :
                           kuribo[i].kind == WALK_KOTEBUG ? m_kotebug : kuribo[i].kind == WALK_SPIDER ? m_spider :
