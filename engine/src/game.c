@@ -162,6 +162,7 @@ typedef struct {
                       * CocoNut: head its centre, m0 its turned rotation */
     float m0[16];
     int coco;        /* CocoNut: a spin / hip drop / kick sends it rolling (update_coconuts) */
+    int cocoon;      /* SpaceCocoon: head its cocoon, hvel its spring velocity, m0 its base (update_cocoons, cocoon_*) */
     V3 cfront;       /* CocoNut: _94 its rolling direction, cspd _8C its speed, cfall _90 its fall speed */
     float cspd, cfall;
     int cstrong;     /* CocoNut: _13C sent by a spin: light gravity, blows walkers away, until it lands */
@@ -226,6 +227,7 @@ static float cur_x = 320, cur_y = 224; /* the star pointer's stand-in, moved by 
 static struct { int phase, t, target; V3 vel; float power; } gcap; /* GCapture (gcap_update) */
 static int test_r2; /* test builds: R2 held */
 static struct { int inst, cool; V3 pt, vel, side, front; } jb = {.inst = -1}; /* JumpBranch (jbranch_update) */
+static struct { int inst, phase, t, wait; V3 vel; } coc = {.inst = -1, .wait = -1}; /* SpaceCocoon Mario hangs on (cocoon_update) */
 typedef struct { V3 pos, vel; int t; } Shot; /* star pieces shot at the pointer (update_shots) */
 #define MAX_SHOTS 8
 static Shot shots[MAX_SHOTS];
@@ -1152,6 +1154,8 @@ static float tsuki_len(const unsigned char *e)
 static void ticorail_place(Inst *in);
 static void biri_place(Inst *in);
 static void coco_spawn(Inst *in);
+static V3 cocoon_neutral(const Inst *in);
+static void cocoon_place(Inst *in);
 static void tsuki_place(Inst *in)
 {
     V3 p = rail_at((const float *)(in->tsuki + 24), *(const u32 *)(in->tsuki + 8), row_coord[in->row]);
@@ -2128,6 +2132,7 @@ void game_rebind(void)
         in->biri = strcmp(name, "BigBirikyu") == 0 ? 1 : strcmp(name, "Birikyu") == 0 ? 2 : 0;
         in->punch = strcmp(name, "PunchingKinoko") == 0;
         in->coco = strcmp(name, "CocoNut") == 0;
+        in->cocoon = strcmp(name, "SpaceCocoon") == 0;
         in->biri_rail = in->biri && scene_blob_g && r->path >= 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->giver = strcmp(name, "DeadLeaves") == 0 ? 1 : strcmp(name, "Pompon2Plant") == 0 || strcmp(name, "Pompon4Plant") == 0 ? 2 : 0;
         in->ticorail = scene_blob_g && r->path >= 0 && strcmp(name, "TicoRail") == 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
@@ -2167,6 +2172,12 @@ void game_rebind(void)
         if (in->ticorail && row_coord && row_turn[i]) ticorail_place(in);
         if (in->biri && row_coord && row_turn[i]) biri_place(in);
         if (in->coco) coco_spawn(in);
+        if (in->cocoon) { /* at rest at its neutral point, arg1 (default 100) up its axis */
+            memcpy(in->m0, in->m, 64);
+            in->head = cocoon_neutral(in);
+            in->hvel = v3(0, 0, 0);
+            cocoon_place(in);
+        }
         if (in->punch) { /* its head 130 up (calcPositionUpOffset), at rest */
             memcpy(in->m0, in->m, 64);
             V3 base = v3(in->m[12], in->m[13], in->m[14]);
@@ -2826,6 +2837,42 @@ int game_test_giver(int kind)
         mario->hvel = v3(0, 0, 0); mario->vup = 0;
         return -2;
     }
+    return -1;
+}
+
+/* Test builds: phase 0 Mario in the air at the first SpaceCocoon's bind point (its row, -2 streaming, -1 none);
+ * 1 the cursor on the cocoon and R2 held; 2 the cursor `drag` px lower; 3 R2 let go. Returns coc.phase (0 none) for
+ * phases 1-3; 4 only coc.phase */
+int game_test_cocoon(int phase, float drag)
+{
+    if (phase == 4) return coc.inst < 0 ? 0 : coc.phase;
+    if (phase) {
+        if (coc.inst < 0) return 0;
+        Inst *in = &insts[coc.inst];
+        V3 ce, cw, cu;
+        float fovy;
+        camera_pose(&ce, &cw, &cu, &fovy);
+        V3 fw = vnorm(vsub(cw, ce)), s = vnorm(vcross(fw, cu)), u = vcross(s, fw), to = vsub(cocoon_neutral(in), ce);
+        float f = 224.0f / tanf(fovy * 3.14159265f / 360.0f), z = vdot(to, fw);
+        if (z > 1.0f && phase < 3) { cur_x = 320.0f + vdot(to, s) * f / z; cur_y = 224.0f - vdot(to, u) * f / z + (phase == 2 ? drag : 0); }
+        test_r2 = phase < 3;
+        return coc.phase;
+    }
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->cocoon) continue;
+        V3 up = vnorm(v3(in->m0[4], in->m0[5], in->m0[6]));
+        mario->pos = vsub(vadd(in->head, vmul(up, 100.0f)), vmul(mario->up, HIT_BODY_H));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
+        return in->row;
+    }
+    for (u32 i = 0; i < sc->nobjs; i++) /* not bound yet: Mario at its row, its zone streams in */
+        if (strcmp(sc->types + 32 * sc->objs[i].type, "SpaceCocoon") == 0) {
+            const Row *r = &sc->objs[i];
+            mario->pos = vadd(v3(r->pos[0], r->pos[1], r->pos[2]), vmul(mario->up, 300.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return -2;
+        }
     return -1;
 }
 
@@ -3587,10 +3634,165 @@ static int jbranch_update(Player *m)
     return 1;
 }
 
+/* SpaceCocoon.cpp: a cocoon on a springy stalk (neutral point arg1, default 100, up its axis; spring velocity x 0.95
+ * + offset x 0.02). Mario in the air within 200 of its bind point (100 over it) hangs on (AutoRushBegin: the spring
+ * takes his speed along the ground). R2 with the pointer on it starts the aim (BindAim): while R2 is held the cocoon
+ * follows the pointer on the plane through its neutral point (x 0.03 a frame, at most 500 off); let go 100 or more
+ * off and Mario flies off towards the neutral point at 60 (BindAttack) for arg0 (60) frames, x 0.98 a frame in the
+ * last 90, until he hits the map after 20; closer it goes back to waiting. X lets go (RushCancel). Then it ignores
+ * him until he is 300 off or on the ground (FreeInvalid). A pointer sweep over it (R2 off) and star pieces push the
+ * cocoon. coc.phase 1 wait, 2 aim, 3 flight; coc.wait the FreeInvalid inst. ponytail: no stalk drawn (the cocoon
+ * model only, tilted along it), no CocoonWait / Stretch / Fly animations, no breakables hit at the end */
+static V3 cocoon_neutral(const Inst *in)
+{
+    const Row *r = &sc->objs[in->row];
+    float h = r->arg[1] > 0 ? (float)r->arg[1] : 100.0f;
+    return vadd(v3(in->m0[12], in->m0[13], in->m0[14]), vmul(vnorm(v3(in->m0[4], in->m0[5], in->m0[6])), h));
+}
+
+static void cocoon_place(Inst *in)
+{
+    V3 base = v3(in->m0[12], in->m0[13], in->m0[14]), d = vsub(in->head, base);
+    V3 up = vlen(d) > 1e-3f ? vnorm(d) : vnorm(v3(in->m0[4], in->m0[5], in->m0[6]));
+    basis_matrix(in->m, in->head, up, v3(in->m0[8], in->m0[9], in->m0[10]), 0);
+    for (int j = 0; j < 12; j++) if (j % 4 != 3) in->m[j] *= in->s;
+}
+
+/* updateSpringPoint: returns 1 at rest */
+static int cocoon_spring(Inst *in)
+{
+    V3 n = cocoon_neutral(in);
+    in->hvel = vadd(vmul(in->hvel, 0.95f), vmul(vsub(n, in->head), 0.02f));
+    in->head = vadd(in->head, in->hvel);
+    if (vlen(in->hvel) < 0.1f && vlen(vsub(in->head, n)) < 1.0f) { in->head = n; in->hvel = v3(0, 0, 0); return 1; }
+    return 0;
+}
+
+static void cursor_ray(V3 *o, V3 *d);
+static int cursor_sees(V3 p, float px);
+static int pointer_a(void);
+static void update_cocoons(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->cocoon) continue;
+        if (coc.wait == i) { /* FreeInvalid */
+            V3 b = vadd(in->head, vmul(vnorm(v3(in->m0[4], in->m0[5], in->m0[6])), 100.0f));
+            if (vlen(vsub(mario->pos, b)) > 300.0f || mario->grounded) coc.wait = -1;
+        }
+        if (coc.inst == i && coc.phase == 2) continue; /* the aim moves it */
+        if (coc.inst != i && !pointer_a() && cursor_sees(in->head, 30.0f) && !row_turn[in->row]) { /* tryTouch */
+            V3 o, d, up = vnorm(v3(in->m0[4], in->m0[5], in->m0[6]));
+            cursor_ray(&o, &d);
+            in->hvel = vadd(in->hvel, vmul(vnorm(vtangent(vcross(d, up), up)), 5.0f));
+            row_turn[in->row] = 20; /* sTouchTimerMax */
+        }
+        if (row_turn[in->row] > 0) row_turn[in->row]--;
+        cocoon_spring(in);
+        cocoon_place(in);
+    }
+}
+
+static int cocoon_try(Player *m)
+{
+    if (coc.inst >= 0 || m->grounded || m->launch >= 0) return 0;
+    V3 c = vadd(m->pos, vmul(m->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->cocoon || coc.wait == i) continue;
+        V3 up = vnorm(v3(in->m0[4], in->m0[5], in->m0[6])), b = vadd(in->head, vmul(up, 100.0f));
+        if (vlen(vsub(c, b)) > 200.0f + HIT_BODY_R * 0.5f) continue;
+        coc.inst = i; coc.phase = 1; coc.t = 0;
+        in->hvel = vtangent(vadd(m->hvel, vmul(m->up, m->vup)), up); /* mSpringVel: his speed along side and front */
+        m->hip = 0; m->spin_timer = 0;
+        if (mario_anim) mario_play("cocoonland", 1.0f, 0);
+        printf("space cocoon row %d: Mario hangs on" "\n", in->row);
+        return 1;
+    }
+    return 0;
+}
+
+static void cocoon_release(Player *m, V3 v)
+{
+    m->hvel = vtangent(v, m->up); m->vup = vdot(v, m->up);
+    m->grounded = 0; m->jump_kind = 0; m->air_timer = 0; m->spin_used = 0;
+    coc.wait = coc.inst; coc.inst = -1; coc.phase = 0;
+}
+
+/* returns 1 while Mario hangs on or flies */
+static int cocoon_update(Player *m)
+{
+    Inst *in = &insts[coc.inst];
+    const Row *r = &sc->objs[in->row];
+    V3 up = vnorm(v3(in->m0[4], in->m0[5], in->m0[6])), n = cocoon_neutral(in);
+    coc.t++;
+    if (coc.phase == 3) { /* BindAttack: Mario flies, the cocoon springs back */
+        int time = r->arg[0] > 0 ? r->arg[0] : 60;
+        if (coc.t >= time - 90) coc.vel = vmul(coc.vel, 0.98f);
+        V3 c = vadd(m->pos, coc.vel);
+        int wall = 0;
+        V3 gn, wn;
+        int hit = collide_n(&c, m->up, 50.0f, &gn, &wn, &wall) || wall;
+        m->pos = c;
+        m->up = up_at(m->pos, m->up);
+        if ((hit && coc.t > 20) || coc.t >= time) {
+            printf("space cocoon row %d: flight ends (%s) at %d" "\n", in->row, hit ? "hit" : "time", coc.t);
+            cocoon_release(m, hit ? v3(0, 0, 0) : coc.vel);
+            if (mario_anim) mario_play("fall", 1.0f, 0);
+            return 0;
+        }
+        m->hvel = v3(0, 0, 0); m->vup = 0; m->grounded = 0;
+        m->face = vnorm(vtangent(coc.vel, m->up));
+        return 1;
+    }
+    if (coc.phase == 1 && pad_pressed(PAD_CROSS)) { /* RushCancel */
+        printf("space cocoon row %d: let go" "\n", in->row);
+        cocoon_release(m, v3(0, 0, 0));
+        return 0;
+    }
+    if (coc.phase == 1 && pointer_a() && cursor_sees(in->head, 40.0f)) { coc.phase = 2; coc.t = 0; } /* BindAim */
+    if (coc.phase == 2) {
+        if (!pointer_a()) { /* tryRelease */
+            float off = vlen(vsub(in->head, n));
+            if (off < 100.0f) coc.phase = 1;
+            else {
+                coc.vel = vmul(vnorm(vsub(n, in->head)), 60.0f);
+                coc.phase = 3; coc.t = 0;
+                in->hvel = v3(0, 0, 0);
+                if (mario_anim) mario_play("cocoonfly", 1.0f, 1);
+                printf("space cocoon row %d: launched from %d off" "\n", in->row, (int)off);
+                return 1;
+            }
+        } else { /* updateHang: the pointer on the plane, at most 500 off */
+            V3 o, d;
+            cursor_ray(&o, &d);
+            float k = vdot(d, up);
+            if (fabsf(k) > 1e-3f) {
+                float t = vdot(vsub(n, o), up) / k;
+                if (t > 0) {
+                    V3 p = vadd(o, vmul(d, t)), off = vsub(p, n);
+                    if (vlen(off) > 500.0f) p = vadd(n, vmul(vnorm(off), 500.0f));
+                    in->head = vadd(vmul(p, 0.03f), vmul(in->head, 0.97f));
+                }
+            }
+            cocoon_place(in);
+        }
+    }
+    m->pos = vsub(in->head, vmul(m->up, HIT_BODY_H)); /* on the cocoon */
+    m->hvel = v3(0, 0, 0); m->vup = 0; m->grounded = 0;
+    return 1;
+}
+
 static void update_mario(void)
 {
     Player *m = mario;
     m->up = up_at(m->pos, m->up);
+    if (coc.inst >= 0 || (warp.from < 0 && jb.inst < 0 && cocoon_try(m))) {
+        if (coc.inst >= 0 && cocoon_update(m)) {
+            if (mario_anim) anim_update(mario_anim);
+            return;
+        }
+    }
     if (jb.inst >= 0 || (warp.from < 0 && gcap.phase < 2 && jbranch_try(m))) {
         if (jb.inst >= 0 && jbranch_update(m)) {
             if (mario_anim) anim_update(mario_anim);
@@ -5245,6 +5447,12 @@ static void update_shots(void)
             printf("star piece explodes kiraira %d" "\n", in->row);
             hit = 1;
         }
+        for (int k = 0; k < ninsts && !hit; k++) { /* SpaceCocoon: a star piece pushes the cocoon 5 */
+            Inst *in = &insts[k];
+            if (!in->cocoon || vlen(vsub(s->pos, in->head)) > 100.0f) continue;
+            in->hvel = vadd(in->hvel, vmul(vnorm(vtangent(s->vel, vnorm(v3(in->m0[4], in->m0[5], in->m0[6])))), 5.0f));
+            hit = 1;
+        }
         for (int k = 0; k < ninsts && !hit; k++) { /* CocoNut: isMsgStarPieceReflect sends it off at 10 */
             Inst *in = &insts[k];
             if (!in->coco || row_turn[in->row] == 2 || vlen(vsub(s->pos, in->head)) > 55.0f * in->s + 30.0f) continue;
@@ -5418,6 +5626,7 @@ void game_update(void)
     update_birikyu();
     update_punch();
     update_coconuts();
+    update_cocoons();
     update_pipes();
     update_switches();
     update_pops();

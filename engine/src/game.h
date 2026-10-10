@@ -42,6 +42,8 @@ int game_test_punch(int how);
 /* Test builds: Mario spinning by (0) / running into (1) the first waiting CocoNut (its row, -2 streaming, -1 none);
  * game_coco_state: the first moving one's phase and distance from its place */
 int game_test_coco(int how);
+/* Test builds: SpaceCocoon steps (game.c game_test_cocoon) */
+int game_test_cocoon(int phase, float drag);
 int game_coco_state(int *dist);
 int game_punch_state(int *dist);
 /* Test builds: Mario at the first ungiven DeadLeaves (1, spinning) / Pompon plant (2, into its flower); its row,

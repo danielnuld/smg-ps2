@@ -767,6 +767,20 @@ int main(void)
             printf("giver test f %u: %s row %d, coins %d, pieces %d\n", frame, frame % 80 ? "leaves" : "pompon",
                    game_test_giver(frame % 80 ? 1 : 2), game_coins(), game_pieces_out());
 #endif
+#ifdef COCOON_TEST
+        { /* Mario onto a cocoon (120), aim (200), drag 150 px down (210-290), let go (300); logged every 10 frames */
+            int ph = -1;
+            if (frame >= 120 && frame < 200 && frame % 20 == 0 && game_test_cocoon(4, 0) == 0) ph = game_test_cocoon(0, 0);
+            else if (frame >= 200 && frame < 210) ph = game_test_cocoon(1, 0);
+            else if (frame >= 210 && frame < 300) ph = game_test_cocoon(2, 150.0f * (frame - 210) / 90.0f);
+            else if (frame == 300) ph = game_test_cocoon(3, 0);
+            if (frame >= 120 && frame < 500 && frame % 10 == 0) {
+                char d[128];
+                game_debug(d, sizeof d);
+                printf("cocoon test f %u: %d %s\n", frame, ph, d);
+            }
+        }
+#endif
 #ifdef COCO_TEST
         { /* a spin at 150, a kick at 600 */
             if (frame == 150 || frame == 600 || (frame < 150 && frame % 30 == 0 && game_test_coco(2) == -2))
