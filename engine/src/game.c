@@ -149,6 +149,7 @@ typedef struct {
     int kiraira;     /* Kiraira: a chained mine, explodes on touch and recovers (update_kiraira, kiraira_pos) */
     const float *meteor; /* MeteorStrike(Environment): its rail's JMap points; meteors fall along them (update_meteor) */
     int killer;      /* HomingKiller launcher: shoots a bullet that may chase Mario (update_killers) */
+    int gcap;        /* GCaptureTarget: the pointer (R2) pulls Mario to it (gcap_try, gcap_update) */
     const unsigned char *tsuki; /* Tsukidashikun: its PATH entry; pushes along it and back (update_tsuki) */
     int shoot;       /* ShootingStar: falls, bursts into star pieces (update_shooting) */
     int plant;       /* PlantGroup (Flower / FlowerBlue / CutBush Group): its model drawn at each member (plants) */
@@ -206,6 +207,8 @@ static const unsigned char *scene_blob_g; /* the scene blob (PATH) for rebinds *
 static int hip_hit, hip_inst;   /* Mario landed a hip drop this frame, on instance hip_inst (-1 none) */
 static int mario_ground = -1;   /* instance Mario stands on this frame, -1 in the air */
 static float cur_x = 320, cur_y = 224; /* the star pointer's stand-in, moved by the right stick (HUD units) */
+static struct { int phase, t, target; V3 vel; float power; } gcap; /* GCapture (gcap_update) */
+static int test_r2; /* test builds: R2 held */
 typedef struct { int row; V3 pos, front; } Killer; /* HomingKiller: its bullet (update_killers) */
 typedef struct { int first, n; const float *pts; u32 np; float len, step, speed; } Flow; /* StarPieceFlow (update_flows) */
 #define MAX_FLOWS 64
@@ -1527,6 +1530,7 @@ void game_rebind(void)
         in->kiraira = strcmp(name, "Kiraira") == 0;
         in->meteor = NULL;
         in->killer = strcmp(name, "HomingKiller") == 0;
+        in->gcap = strcmp(name, "GCaptureTarget") == 0;
         if (scene_blob_g && r->path >= 0 && (strcmp(name, "MeteorStrike") == 0 || strcmp(name, "MeteorStrikeEnvironment") == 0)) {
             u32 n; int cl;
             const float *p = find_rail_of(scene_blob_g, r->zone, r->path, &n, &cl, 1);
@@ -1930,6 +1934,37 @@ int game_test_flow(void)
             return f->first + k;
         }
     return -2;
+}
+
+int game_test_gcap(int hold)
+{
+    if (hold == 2) { /* Mario held 300 over the first target */
+        for (u32 i = 0; i < sc->nobjs; i++)
+            if (strcmp(sc->types + 32 * sc->objs[i].type, "GCaptureTarget") == 0) {
+                const Row *r = &sc->objs[i];
+                V3 p = v3(r->pos[0], r->pos[1], r->pos[2]);
+                mario->pos = vadd(p, vmul(up_at(p, mario->up), 300.0f)); /* the camera settles behind him */
+                mario->hvel = v3(0, 0, 0); mario->vup = 0;
+                return (int)i;
+            }
+        return -1;
+    }
+    test_r2 = hold;
+    if (!hold) return gcap.phase;
+    for (int i = 0; i < ninsts; i++) { /* the cursor onto the first target near Mario */
+        if (!insts[i].gcap) continue;
+        V3 p = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]);
+        if (vlen(vsub(p, mario->pos)) > 2400.0f) continue;
+        V3 ce, cw, cu;
+        float fovy;
+        camera_pose(&ce, &cw, &cu, &fovy);
+        V3 fw = vnorm(vsub(cw, ce)), s = vnorm(vcross(fw, cu)), u = vcross(s, fw), to = vsub(p, ce);
+        float z = vdot(to, fw), f = 224.0f / tanf(fovy * 3.14159265f / 360.0f);
+        if (z <= 0) continue;
+        cur_x = 320.0f + f * vdot(to, s) / z; cur_y = 224.0f - f * vdot(to, u) / z;
+        return insts[i].row;
+    }
+    return -1;
 }
 
 int game_test_geyser(void)
@@ -2394,10 +2429,102 @@ static int warp_update(Player *m)
     return 1;
 }
 
+/* GCapture.cpp / GCaptureTarget.cpp with the pointer on the right stick (cursor_ray) and A on R2: R2 with the cursor
+ * on a target (within 200 of its ray, StarPointerTarget radius) and within arg1 (default 2500) of Mario captures it;
+ * 30 frames later (the ribbon reaching him; R2 let go before: cancelled) Traction pulls him: velocity += 0.7 x power
+ * towards it (power up to 1 in 30 frames), damped 0.99 (down to 0.75 inside 500 of it), rebounding off the map at
+ * half speed; R2 let go (after 30 frames) leaves him in Hold: damped 0.99 until 180 frames or the map touches him,
+ * then he falls free with that velocity (endBindAndPlayerWeakGravityLimitJump). R2 on a target again recaptures;
+ * R1 (Wii Z) or coming within arg0 of the target breaks it. phase 0 none, 1 capture, 2 traction, 3 hold. ponytail:
+ * no ribbon, no spin, power ramp guessed (sTractionPowerUpSpeed is not in the decompilation), railed targets stay */
+static void cursor_ray(V3 *o, V3 *d);
+static int pointer_a(void) { return pad_held(PAD_R2) || test_r2; }
+
+static int gcap_pick(void) /* the target under the cursor, -1 none */
+{
+    V3 o, d;
+    cursor_ray(&o, &d);
+    int best = -1;
+    float bz = 1e30f;
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->gcap || !row_shown(in->row)) continue;
+        const Row *r = &sc->objs[in->row];
+        V3 p = v3(in->m[12], in->m[13], in->m[14]), to = vsub(p, o);
+        float z = vdot(to, d), range = r->arg[1] > 0 ? (float)r->arg[1] : 2500.0f;
+        if (z <= 0 || vlen(vsub(to, vmul(d, z))) > 200.0f || vlen(vsub(p, mario->pos)) > range || z >= bz) continue;
+        bz = z; best = i;
+    }
+    return best;
+}
+
+static void gcap_release(Player *m)
+{
+    m->hvel = vtangent(gcap.vel, m->up);
+    m->vup = vdot(gcap.vel, m->up);
+    m->grounded = 0; m->jump_kind = 0; m->air_timer = 0;
+    printf("gcapture: released" "\n");
+    gcap.phase = 0;
+}
+
+/* returns 1 while the capture holds Mario */
+static int gcap_update(Player *m)
+{
+    static int prev_a;
+    int a = pointer_a(), trig = a && !prev_a;
+    prev_a = a;
+    if (!gcap.phase) {
+        if (trig) {
+            int t = gcap_pick();
+            if (t >= 0) { gcap.phase = 1; gcap.t = 0; gcap.target = t; gcap.power = 0; printf("gcapture: target row %d" "\n", insts[t].row); }
+        }
+        return 0;
+    }
+    if (gcap.target >= ninsts || !insts[gcap.target].gcap) { gcap.phase = 0; return 0; } /* rebound away */
+    const Inst *in = &insts[gcap.target];
+    const Row *r = &sc->objs[in->row];
+    V3 tp = v3(in->m[12], in->m[13], in->m[14]);
+    gcap.t++;
+    if (gcap.phase == 1) { /* the ribbon on its way: Mario still free */
+        if (!a && gcap.t > 30) { gcap.phase = 0; return 0; }
+        if (gcap.t >= 30) { gcap.phase = 2; gcap.t = 0; gcap.vel = v3(0, 0, 0); m->hip = 0; } /* requestBind: zeroVelocity */
+        return 0;
+    }
+    if (trig && gcap.phase == 3) { /* tryRecapture */
+        int t = gcap_pick();
+        if (t >= 0) { gcap.target = t; gcap.phase = 2; gcap.t = 0; return 1; }
+    }
+    if (pad_pressed(PAD_R1) || (r->arg[0] >= 0 && vlen(vsub(tp, m->pos)) <= r->arg[0])) { gcap_release(m); return 0; }
+    V3 c = vadd(m->pos, vmul(m->up, BODY_RADIUS));
+    if (gcap.phase == 2) {
+        V3 to = vsub(tp, c);
+        float dist = vlen(to), damp = dist < 500.0f ? 0.99f * dist / 500.0f + 0.75f * (1.0f - dist / 500.0f) : 0.99f;
+        gcap.power = gcap.power + 1.0f / 30.0f > 1.0f ? 1.0f : gcap.power + 1.0f / 30.0f;
+        gcap.vel = vmul(vadd(gcap.vel, vmul(vnorm(to), 0.7f * gcap.power)), damp);
+        if (!a && gcap.t > 30) { gcap.phase = 3; gcap.t = 0; }
+    } else
+        gcap.vel = vmul(gcap.vel, 0.99f);
+    V3 moved = vadd(c, gcap.vel), pushed = moved;
+    int wall = 0, ground = collide_n(&pushed, m->up, BODY_RADIUS, NULL, NULL, &wall);
+    if (ground || wall) { /* reboundVelocityFromCollision 0.5: the pushed-out part reflected */
+        V3 n = vnorm(vsub(pushed, moved));
+        if (vlen(n) > 0.5f && vdot(gcap.vel, n) < 0) gcap.vel = vsub(gcap.vel, vmul(n, 1.5f * vdot(gcap.vel, n)));
+        if (gcap.phase == 3) { m->pos = vsub(pushed, vmul(m->up, BODY_RADIUS)); gcap_release(m); return 0; }
+    }
+    m->pos = vsub(pushed, vmul(m->up, BODY_RADIUS));
+    m->hvel = v3(0, 0, 0); m->vup = 0; m->grounded = 0;
+    if (gcap.phase == 3 && gcap.t > 180) { gcap_release(m); return 0; }
+    return 1;
+}
+
 static void update_mario(void)
 {
     Player *m = mario;
     m->up = up_at(m->pos, m->up);
+    if (m->launch < 0 && warp.from < 0 && gcap_update(m) && gcap.phase >= 2) {
+        if (mario_anim) anim_update(mario_anim);
+        return;
+    }
     if (warp.from >= 0 && warp_update(m)) {
         if (mario_anim) anim_update(mario_anim);
         return;

@@ -633,6 +633,19 @@ int main(void)
         }
         if (frame % 60 == 0 && frame <= 660) printf("cursor test f %u: pieces %d\n", frame, game_starpieces());
 #endif
+#ifdef GCAP_TEST
+        if (frame >= 120 && frame < 300) game_test_gcap(2); /* held over it while the camera settles */
+        if (frame >= 300 && frame < 500) {
+            int row = game_test_gcap(1);
+            if (frame == 300) printf("gcap test: cursor on row %d\n", row);
+        }
+        if (frame == 500) printf("gcap test: R2 let go, phase %d\n", game_test_gcap(0));
+        if (frame >= 300 && frame < 800 && frame % 20 == 0) {
+            char d[128];
+            game_debug(d, sizeof d);
+            printf("gcap test f %u: %s\n", frame, d);
+        }
+#endif
 #ifdef GEYSER_TEST
         if (frame >= 120 && frame <= 1200 && frame % 15 == 0) {
             int row = game_test_geyser();

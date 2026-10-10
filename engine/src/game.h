@@ -35,6 +35,9 @@ int game_test_plant(int k);
 int game_test_steam(void);
 /* Test builds: Mario held in the first LavaGeyser's column (his centre 300 up it); its row or -1 */
 int game_test_geyser(void);
+/* Test builds: hold: R2 held with the cursor on the first GCaptureTarget within 2400 of Mario (its row, -1 none);
+ * else R2 let go, returns the capture phase */
+int game_test_gcap(int hold);
 /* The star pointer's cursor (right stick), HUD units (x 0..640, y 0..448); set: test builds */
 void game_cursor(float *x, float *y);
 void game_set_cursor(float x, float y);
