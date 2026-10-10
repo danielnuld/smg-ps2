@@ -179,8 +179,12 @@ static int pack_read(Pack *p, u8 *dst, u32 n)
     if (!cd_read(p->base + p->pos / SECTOR, PACK_ALLOC(n) / SECTOR, dst, 1))
         return 0;
 #else
-    if (fread(dst, 1, n, p->f) != n)
-        return 0;
+    for (u32 done = 0; done < n;) { /* 128 KB at a time: one big host fread now and then never returned (PCSX2) */
+        u32 k = n - done < (128u << 10) ? n - done : (128u << 10);
+        if (fread(dst + done, 1, k, p->f) != k)
+            return 0;
+        done += k;
+    }
 #endif
     p->pos += n;
     return 1;
@@ -766,6 +770,20 @@ int main(void)
         if (frame >= 120 && frame % 40 == 0 && frame <= 1000)
             printf("giver test f %u: %s row %d, coins %d, pieces %d\n", frame, frame % 80 ? "leaves" : "pompon",
                    game_test_giver(frame % 80 ? 1 : 2), game_coins(), game_pieces_out());
+#endif
+#ifdef FLUFF_TEST
+        { /* a spin by a Fluff (150), Mario jumps into it (190), spins up (230, 330); logged every 10 frames */
+            int r = -9;
+            if (frame < 150 && frame % 30 == 0) r = game_test_fluff(-1); /* to its zone */
+            if (frame == 150) r = game_test_fluff(0);
+            else if (frame == 190) r = game_test_fluff(1);
+            if (frame == 230 || frame == 330) game_test_fluff(3);
+            if (frame >= 150 && frame < 600 && frame % 10 == 0) {
+                char d[128];
+                game_debug(d, sizeof d);
+                printf("fluff test f %u: %d spins %d %s\n", frame, r, game_test_fluff(2), d);
+            }
+        }
 #endif
 #ifdef COCOON_TEST
         { /* Mario onto a cocoon (120), aim (200), drag 150 px down (210-290), let go (300); logged every 10 frames */

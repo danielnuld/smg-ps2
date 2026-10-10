@@ -162,6 +162,7 @@ typedef struct {
                       * CocoNut: head its centre, m0 its turned rotation */
     float m0[16];
     int coco;        /* CocoNut: a spin / hip drop / kick sends it rolling (update_coconuts) */
+    int fluff;       /* Fluff: head its place, hvel its velocity, m0 its home (update_fluffs, fluff_*) */
     int cocoon;      /* SpaceCocoon: head its cocoon, hvel its spring velocity, m0 its base (update_cocoons, cocoon_*) */
     V3 cfront;       /* CocoNut: _94 its rolling direction, cspd _8C its speed, cfall _90 its fall speed */
     float cspd, cfall;
@@ -227,11 +228,13 @@ static float cur_x = 320, cur_y = 224; /* the star pointer's stand-in, moved by 
 static struct { int phase, t, target; V3 vel; float power; } gcap; /* GCapture (gcap_update) */
 static int test_r2; /* test builds: R2 held */
 static struct { int inst, cool; V3 pt, vel, side, front; } jb = {.inst = -1}; /* JumpBranch (jbranch_update) */
+static struct { int inst, phase, t, spins; } flf = {.inst = -1}; /* the Fluff Mario rides (fluff_update) */
 static struct { int inst, phase, t, wait; V3 vel; } coc = {.inst = -1, .wait = -1}; /* SpaceCocoon Mario hangs on (cocoon_update) */
 typedef struct { V3 pos, vel; int t; } Shot; /* star pieces shot at the pointer (update_shots) */
 #define MAX_SHOTS 8
 static Shot shots[MAX_SHOTS];
 static int test_l1; /* test builds: L1 pressed this frame */
+static int test_sq; /* test builds: Square pressed this frame (Fluff) */
 typedef struct { int row; V3 pos, front; int freeze; } Killer; /* HomingKiller: its bullet (update_killers) */
 typedef struct { int first, n; const float *pts; u32 np; float len, step, speed; } Flow; /* StarPieceFlow (update_flows) */
 #define MAX_FLOWS 64
@@ -1156,6 +1159,7 @@ static void biri_place(Inst *in);
 static void coco_spawn(Inst *in);
 static V3 cocoon_neutral(const Inst *in);
 static void cocoon_place(Inst *in);
+static void fluff_place(Inst *in);
 static void tsuki_place(Inst *in)
 {
     V3 p = rail_at((const float *)(in->tsuki + 24), *(const u32 *)(in->tsuki + 8), row_coord[in->row]);
@@ -2076,6 +2080,12 @@ void game_rebind(void)
     m_rock = scene_model(s, "RockCreator");
     m_shell = scene_model(s, "KoopaJrShipCannonShell");
     if (!m_shell) m_shell = scene_model(s, "IronCannonLauncherPoint");
+    /* what Mario rides (Fluff, SpaceCocoon, JumpBranch) keeps its state across the rebuild: found again by its row */
+    int ride_row[3] = {flf.inst >= 0 ? insts[flf.inst].row : -1, coc.inst >= 0 ? insts[coc.inst].row : -1,
+                       jb.inst >= 0 ? insts[jb.inst].row : -1};
+    V3 ride_head[2] = {flf.inst >= 0 ? insts[flf.inst].head : v3(0, 0, 0), coc.inst >= 0 ? insts[coc.inst].head : v3(0, 0, 0)};
+    V3 ride_vel[2] = {flf.inst >= 0 ? insts[flf.inst].hvel : v3(0, 0, 0), coc.inst >= 0 ? insts[coc.inst].hvel : v3(0, 0, 0)};
+    int wait_row = coc.wait >= 0 ? insts[coc.wait].row : -1;
     ninsts = 0;
     for (u32 i = 0; i < s->nobjs; i++) { /* every placed model without behaviour: planets and the rest */
         const Row *r = &s->objs[i];
@@ -2133,6 +2143,7 @@ void game_rebind(void)
         in->punch = strcmp(name, "PunchingKinoko") == 0;
         in->coco = strcmp(name, "CocoNut") == 0;
         in->cocoon = strcmp(name, "SpaceCocoon") == 0;
+        in->fluff = strcmp(name, "Fluff") == 0;
         in->biri_rail = in->biri && scene_blob_g && r->path >= 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->giver = strcmp(name, "DeadLeaves") == 0 ? 1 : strcmp(name, "Pompon2Plant") == 0 || strcmp(name, "Pompon4Plant") == 0 ? 2 : 0;
         in->ticorail = scene_blob_g && r->path >= 0 && strcmp(name, "TicoRail") == 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
@@ -2172,6 +2183,7 @@ void game_rebind(void)
         if (in->ticorail && row_coord && row_turn[i]) ticorail_place(in);
         if (in->biri && row_coord && row_turn[i]) biri_place(in);
         if (in->coco) coco_spawn(in);
+        if (in->fluff) { memcpy(in->m0, in->m, 64); in->head = v3(in->m[12], in->m[13], in->m[14]); in->hvel = v3(0, 0, 0); }
         if (in->cocoon) { /* at rest at its neutral point, arg1 (default 100) up its axis */
             memcpy(in->m0, in->m, 64);
             in->head = cocoon_neutral(in);
@@ -2195,6 +2207,14 @@ void game_rebind(void)
     }
     for (int i = 0; plant_first && i < ninsts; i++)
         if (insts[i].plant) { insts[i].kcl_ready = 1; place_plants(&insts[i]); }
+    flf.inst = coc.inst = jb.inst = coc.wait = -1;
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (in->row == ride_row[0]) { flf.inst = i; in->head = ride_head[0]; in->hvel = ride_vel[0]; fluff_place(in); }
+        if (in->row == ride_row[1]) { coc.inst = i; in->head = ride_head[1]; in->hvel = ride_vel[1]; cocoon_place(in); }
+        if (in->row == ride_row[2]) jb.inst = i;
+        if (in->row == wait_row) coc.wait = i;
+    }
 }
 
 /* Zone spheres for streaming: every placement row of the zone (centre of their box, farthest + 500), grown to cover
@@ -2843,6 +2863,40 @@ int game_test_giver(int kind)
 /* Test builds: phase 0 Mario in the air at the first SpaceCocoon's bind point (its row, -2 streaming, -1 none);
  * 1 the cursor on the cocoon and R2 held; 2 the cursor `drag` px lower; 3 R2 let go. Returns coc.phase (0 none) for
  * phases 1-3; 4 only coc.phase */
+/* Test builds: phase 0 Mario spinning by the first Fluff (its row, -2 streaming, -1 none); 1 Mario jumping into it
+ * (its row_turn, or 9 riding); 2 flf.spins (-1 not riding); 3 Square pressed this frame */
+int game_test_fluff(int phase)
+{
+    if (phase == 2) return flf.inst >= 0 ? flf.spins : -1;
+    if (phase == 3) { test_sq = 1; return 0; }
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->fluff) continue;
+        if (phase < 0) return in->row; /* bound already */
+        if (flf.inst >= 0) return 9;
+        V3 up = up_at(in->head, mario->up);
+        mario->up = up;
+        if (phase == 0) {
+            mario->pos = vadd(in->head, vmul(vnorm(vtangent(v3(in->m0[0], in->m0[1], in->m0[2]), up)), 120.0f));
+            mario->spin_timer = SPIN_TIME;
+        } else {
+            mario->pos = vsub(in->head, vmul(up, HIT_BODY_H + 40.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = 20.0f; mario->grounded = 0; /* jumping up into it */
+            return row_turn[in->row];
+        }
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return in->row;
+    }
+    for (u32 i = 0; i < sc->nobjs; i++) /* not bound yet: Mario at its row, its zone streams in */
+        if (strcmp(sc->types + 32 * sc->objs[i].type, "Fluff") == 0) {
+            const Row *r = &sc->objs[i];
+            mario->pos = vadd(v3(r->pos[0], r->pos[1], r->pos[2]), vmul(mario->up, 300.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return -2;
+        }
+    return -1;
+}
+
 int game_test_cocoon(int phase, float drag)
 {
     if (phase == 4) return coc.inst < 0 ? 0 : coc.phase;
@@ -3783,10 +3837,130 @@ static int cocoon_update(Player *m)
     return 1;
 }
 
+/* Fluff.cpp: a dandelion fluff on its leaf. A spin by it sends it up at 10 (FreeWaitAir; again at 5 after 60
+ * frames in the air); it drifts down (gravity 0.15, at most 0.8 down) and gone on the ground for 120 frames, then
+ * blooms again at home. Mario in the air within 150 of it while it floats takes hold (RideStart: up 0.2 a frame to
+ * 15, his speed along the ground kept), then flies (RideFly: x 0.98 a frame, the stick 0.2 along the ground, gravity
+ * 0.15); a spin lifts him (RideSpinUp: +0.8 a frame for 30 frames, 3 times; after the last it falls turning), X jumps
+ * off (18 up), touching the map lets go. row_turn 0 on its leaf, 1 floating, 2 gone; flf.phase 1 start, 2 fly, 3 spin
+ * up; row_step its frames. ponytail: no FluffWind, no leaf model, no Bloom / Spin animations, Mario hangs 130 under it */
+static void fluff_place(Inst *in)
+{
+    memcpy(in->m, in->m0, 64);
+    in->m[12] = in->head.x; in->m[13] = in->head.y; in->m[14] = in->head.z;
+    if (row_turn[in->row] == 2) in->m[12] = 1e9f; /* gone */
+}
+
+static void update_fluffs(void)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->fluff || flf.inst == i) continue;
+        int row = in->row;
+        signed char *ph = &row_turn[row];
+        unsigned short *t = &row_step[row];
+        V3 up = up_at(in->head, v3(in->m0[4], in->m0[5], in->m0[6]));
+        ++*t;
+        if (*ph == 2) { /* FreeWaitInvalid, then FreeBloom at home */
+            if (*t >= 120) { *ph = 0; *t = 0; in->head = v3(in->m0[12], in->m0[13], in->m0[14]); in->hvel = v3(0, 0, 0); }
+            fluff_place(in);
+            continue;
+        }
+        if (mario->spin_timer > 0 && vlen(vsub(c, in->head)) < 150.0f + 100.0f && (*ph == 0 || *t > 60)) {
+            in->hvel = vmul(up, *ph == 0 ? 10.0f : 5.0f); /* receiveMsgPlayerSpinAttack */
+            *ph = 1; *t = 0;
+            printf("fluff row %d: up" "\n", row);
+        }
+        if (*ph == 1) { /* FreeWaitAir */
+            in->hvel = vsub(in->hvel, vmul(up, 0.15f));
+            float down = -vdot(in->hvel, up);
+            if (down > 0.8f) in->hvel = vmul(vnorm(in->hvel), 0.8f);
+            V3 p = vadd(in->head, in->hvel);
+            if (vdot(in->hvel, up) < 0 && collide(&p, up, 50.0f)) { *ph = 2; *t = 0; /* isOnGround, coming down */ printf("fluff row %d: lands, gone" "\n", row); }
+            in->head = p;
+        }
+        fluff_place(in);
+    }
+}
+
+static int fluff_try(Player *m)
+{
+    if (flf.inst >= 0 || m->grounded || m->launch >= 0) return 0;
+    V3 c = vadd(m->pos, vmul(m->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->fluff || row_turn[in->row] != 1 || vlen(vsub(c, in->head)) > 150.0f + HIT_BODY_R * 0.5f) continue;
+        V3 up = up_at(in->head, m->up), v = vadd(m->hvel, vmul(m->up, m->vup));
+        if (vdot(v, up) < 0) v = vtangent(v, up); /* no falling speed */
+        in->hvel = v;
+        flf.inst = i; flf.phase = 1; flf.t = 0; flf.spins = 3;
+        m->hip = 0; m->spin_timer = 0;
+        printf("fluff row %d: Mario takes hold" "\n", in->row);
+        return 1;
+    }
+    return 0;
+}
+
+static void fluff_end(Player *m, float jump)
+{
+    Inst *in = &insts[flf.inst];
+    V3 up = up_at(in->head, m->up), v = vadd(vtangent(in->hvel, up), vmul(up, jump));
+    m->hvel = vtangent(v, m->up); m->vup = jump > 0 ? vdot(v, m->up) : 0;
+    m->grounded = 0; m->jump_kind = 0; m->air_timer = 0; m->spin_used = 0;
+    row_turn[in->row] = 2; row_step[in->row] = 0; /* FreeWaitInvalid */
+    fluff_place(in);
+    printf("fluff row %d: %s" "\n", in->row, jump > 0 ? "jump off" : "let go");
+    flf.inst = -1;
+}
+
+/* returns 1 while Mario rides */
+static int fluff_update(Player *m)
+{
+    Inst *in = &insts[flf.inst];
+    V3 up = up_at(in->head, m->up);
+    flf.t++;
+    if (pad_pressed(PAD_CROSS)) { fluff_end(m, 18.0f); return 0; } /* updateRide: A jumps off */
+    if (flf.phase == 1) { /* RideStart */
+        if (vdot(in->hvel, up) < 15.0f) in->hvel = vadd(in->hvel, vmul(up, 0.2f));
+        if (flf.t >= 40) { flf.phase = 2; flf.t = 0; }
+    }
+    if (flf.phase >= 2 && flf.spins > 0 && (pad_pressed(PAD_SQUARE) || test_sq) && (flf.phase == 2 || flf.t > 60)) { /* trySpinUp */
+        flf.spins--; flf.phase = 3; flf.t = 0;
+        printf("fluff row %d: spin up, %d left" "\n", in->row, flf.spins);
+    }
+    test_sq = 0;
+    if (flf.phase == 3 && flf.t <= 30) in->hvel = vadd(in->hvel, vmul(up, 0.8f));
+    if (flf.phase == 3 && flf.t > 90) { flf.phase = 2; flf.t = 0; }
+    in->hvel = vmul(in->hvel, 0.98f); /* friction, the stick, gravity */
+    V3 cam_fwd = vnorm(vtangent(vsub(m->pos, cam_pos), up)), cam_right = vnorm(vcross(cam_fwd, up));
+    V3 stick = vadd(vmul(cam_right, pad_lx()), vmul(cam_fwd, pad_ly()));
+    if (vlen(stick) > 0.1f) { in->hvel = vadd(in->hvel, vmul(vnorm(stick), 0.2f)); m->face = vnorm(stick); }
+    in->hvel = vsub(in->hvel, vmul(up, 0.15f));
+    V3 h = vtangent(in->hvel, up);
+    if (vlen(h) > 6.0f) in->hvel = vadd(vmul(vnorm(h), 6.0f), vmul(up, vdot(in->hvel, up))); /* restrictVelocity 6 */
+    V3 p = vadd(in->head, in->hvel);
+    int wall = 0;
+    V3 gn, wn, q = vsub(p, vmul(up, 80.0f)); /* initBinder(50, -80) */
+    if (flf.phase >= 2 && (collide_n(&q, up, 50.0f, &gn, &wn, &wall) || wall)) { /* RideStart: offBind */ in->head = p; fluff_end(m, 0); return 0; } /* isBinded */
+    in->head = p;
+    m->pos = vsub(p, vmul(up, 130.0f)); /* hanging under it */
+    m->up = up;
+    m->hvel = v3(0, 0, 0); m->vup = 0; m->grounded = 0;
+    fluff_place(in);
+    return 1;
+}
+
 static void update_mario(void)
 {
     Player *m = mario;
     m->up = up_at(m->pos, m->up);
+    if (flf.inst >= 0 || (warp.from < 0 && jb.inst < 0 && coc.inst < 0 && fluff_try(m))) {
+        if (flf.inst >= 0 && fluff_update(m)) {
+            if (mario_anim) anim_update(mario_anim);
+            return;
+        }
+    }
     if (coc.inst >= 0 || (warp.from < 0 && jb.inst < 0 && cocoon_try(m))) {
         if (coc.inst >= 0 && cocoon_update(m)) {
             if (mario_anim) anim_update(mario_anim);
@@ -5627,6 +5801,7 @@ void game_update(void)
     update_punch();
     update_coconuts();
     update_cocoons();
+    update_fluffs();
     update_pipes();
     update_switches();
     update_pops();

@@ -44,6 +44,8 @@ int game_test_punch(int how);
 int game_test_coco(int how);
 /* Test builds: SpaceCocoon steps (game.c game_test_cocoon) */
 int game_test_cocoon(int phase, float drag);
+/* Test builds: Fluff steps (game.c game_test_fluff) */
+int game_test_fluff(int phase);
 int game_coco_state(int *dist);
 int game_punch_state(int *dist);
 /* Test builds: Mario at the first ungiven DeadLeaves (1, spinning) / Pompon plant (2, into its flower); its row,
