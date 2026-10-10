@@ -35,6 +35,8 @@ int game_test_plant(int k);
 int game_test_steam(void);
 /* Test builds: Mario held in the first LavaGeyser's column (his centre 300 up it); its row or -1 */
 int game_test_geyser(void);
+/* Test builds: Mario put into the first WarpPod that has a pair; its row or -1 */
+int game_test_warppod(void);
 /* Test builds: Mario dropped 600 over the first JumpStand (hip: in a hip drop fall); its row or -1 */
 int game_test_jumpstand(int hip);
 /* Test builds: Mario put 300 over the k-th AssemblyBlock's place; its row or -1. game_assembled: blocks not at home */

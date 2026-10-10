@@ -143,6 +143,7 @@ typedef struct {
     int assembly;    /* AssemblyBlock: floats at its home, flies into place when Mario is near (assembly_place) */
     V3 gup;          /* AssemblyBlock: up at its home (its bobbing) */
     int jstand;      /* JumpStand: holds Mario landing on it, then throws him up (update_jumpstands) */
+    int warppod;     /* WarpPod: takes Mario to its pair (warp_try, warp_update) */
     int shoot;       /* ShootingStar: falls, bursts into star pieces (update_shooting) */
     int plant;       /* PlantGroup (Flower / FlowerBlue / CutBush Group): its model drawn at each member (plants) */
     const unsigned char *railer; /* map part on a rail: its PATH entry; moves along it (update_railers) */
@@ -1199,6 +1200,7 @@ void game_rebind(void)
         in->geyser = strcmp(name, "LavaGeyser") == 0;
         in->assembly = strncmp(name, "AssemblyBlock", 13) == 0;
         in->jstand = strcmp(name, "JumpStand") == 0;
+        in->warppod = strcmp(name, "WarpPod") == 0;
         in->plant = strcmp(name, "FlowerGroup") == 0 || strcmp(name, "FlowerBlueGroup") == 0 || strcmp(name, "CutBushGroup") == 0;
         in->hipsw = strncmp(name, "PicketSwitch", 12) == 0 || strcmp(name, "HipDropSwitch") == 0 ? 1 :
                     strcmp(name, "HipDropTimerSwitch") == 0 ? 2 : 0;
@@ -1479,6 +1481,20 @@ int game_test_jumpstand(int hip)
             mario->hvel = v3(0, 0, 0); mario->vup = 0;
             return -2;
         }
+    return -1;
+}
+
+static int warp_pair(int row);
+static V3 row_axis_y(const Row *r);
+int game_test_warppod(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        if (!insts[i].warppod || warp_pair(insts[i].row) < 0) continue;
+        const Row *r = &sc->objs[insts[i].row];
+        mario->pos = vadd(v3(r->pos[0], r->pos[1], r->pos[2]), vmul(row_axis_y(r), 10.0f - HIT_BODY_H));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return insts[i].row;
+    }
     return -1;
 }
 
@@ -1856,10 +1872,104 @@ static int update_launch(Player *m)
     return 0;
 }
 
+/* WarpPod.cpp / MarioWarp.cpp: a WarpPod pairs with the other one of its GroupId in its zone. Mario touching it
+ * (its eye sensor: 15 x scale, 120 x scale for an invisible one, arg1 0) goes in 60 frames to 160 up its y, then
+ * flies an arc (an angle of pi / 4 each side, max(radius / 25, 120) frames, sine-eased, following at half the gap)
+ * to 160 up the pair, which waits 60 frames (row_step) before it takes him again, longer while he stays within 200.
+ * ponytail: every pod is active (no grand star count, no path flags), no event camera, no pod glow / path drawing */
+static struct { int from, to, t, n; V3 dest, axis, centre, start; float angle; } warp = {.from = -1};
+
+static int warp_pair(int row)
+{
+    const Row *r = &sc->objs[row];
+    if (r->group < 0) return -1;
+    for (u32 i = 0; i < sc->nobjs; i++)
+        if ((int)i != row && sc->objs[i].type == r->type && sc->objs[i].group == r->group && sc->objs[i].zone == r->zone)
+            return (int)i;
+    return -1;
+}
+
+static V3 row_axis_y(const Row *r)
+{
+    float m[16], one[3] = {1, 1, 1};
+    mat_translate_rot_scale(m, r->pos, r->rot, one);
+    return v3(m[4], m[5], m[6]);
+}
+
+static void warp_try(Player *m)
+{
+    V3 c = vadd(m->pos, vmul(m->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->warppod) continue;
+        const Row *r = &sc->objs[in->row];
+        unsigned short *d = &row_step[in->row];
+        float dist = vlen(vsub(m->pos, v3(r->pos[0], r->pos[1], r->pos[2])));
+        if (*d) { /* mDelay: held at 1 while Mario stays within 200 */
+            if (*d > 1 || dist >= 200.0f) --*d;
+            continue;
+        }
+        float rad = (r->arg[1] == 0 ? 120.0f : 15.0f) * r->scale[0] + HIT_BODY_R;
+        if (vlen(vsub(c, v3(r->pos[0], r->pos[1], r->pos[2]))) >= rad) continue;
+        int to = warp_pair(in->row);
+        if (to < 0) continue;
+        const Row *p = &sc->objs[to];
+        warp.from = in->row; warp.to = to; warp.t = 0;
+        warp.dest = vadd(v3(p->pos[0], p->pos[1], p->pos[2]), vmul(row_axis_y(p), 160.0f));
+        m->hvel = v3(0, 0, 0); m->vup = 0; m->hip = 0; m->grounded = 0;
+        printf("warp pod %d -> %d\n", warp.from, warp.to);
+        return;
+    }
+}
+
+/* returns 1 while the warp holds Mario */
+static int warp_update(Player *m)
+{
+    const Row *r = &sc->objs[warp.from];
+    m->hvel = v3(0, 0, 0); m->vup = 0;
+    if (warp.t < 60) { /* to 160 up the pod (displacement x (1 - left / 60)) */
+        V3 to = vadd(v3(r->pos[0], r->pos[1], r->pos[2]), vmul(row_axis_y(r), 160.0f));
+        m->pos = vadd(m->pos, vmul(vsub(to, m->pos), (warp.t + 1) / 60.0f));
+        if (++warp.t == 60) { /* calcAxis */
+            V3 disp = vsub(warp.dest, m->pos);
+            float dist = vlen(disp), a = 0.7853982f;
+            warp.axis = vnorm(vcross(disp, vmul(m->up, -1.0f)));
+            V3 normal = vnorm(vcross(warp.axis, disp));
+            float radius = 0.5f * dist / sinf(a), h = sqrtf(radius * radius - 0.25f * dist * dist);
+            warp.centre = vadd(vadd(m->pos, vmul(disp, 0.5f)), vmul(normal, h));
+            warp.start = vmul(normal, -radius);
+            warp.angle = a;
+            warp.n = (int)(radius / 25.0f) < 120 ? 120 : (int)(radius / 25.0f);
+        }
+        return 1;
+    }
+    int k = warp.t - 60; /* frames flown */
+    if (k >= warp.n) {
+        m->pos = warp.dest;
+        row_step[warp.to] = 60;
+        printf("warp pod %d: arrived at %d\n", warp.from, warp.to);
+        warp.from = -1;
+        return 0;
+    }
+    float p = (1.0f + sinf(((float)k - 0.5f * warp.n) / warp.n * 3.14159265f)) * 0.5f;
+    float ang = -warp.angle * (1.0f - p) + warp.angle * p, c = cosf(ang), s = sinf(ang);
+    V3 a = warp.axis, v = warp.start; /* Rodrigues */
+    V3 rot = vadd(vadd(vmul(v, c), vmul(vcross(a, v), s)), vmul(a, vdot(a, v) * (1.0f - c)));
+    m->pos = vadd(m->pos, vmul(vsub(vadd(warp.centre, rot), m->pos), 0.5f));
+    warp.t++;
+    return 1;
+}
+
 static void update_mario(void)
 {
     Player *m = mario;
     m->up = up_at(m->pos, m->up);
+    if (warp.from >= 0 && warp_update(m)) {
+        if (mario_anim) anim_update(mario_anim);
+        return;
+    }
+    if (m->launch < 0) warp_try(m);
+    if (warp.from >= 0) return;
     for (int i = 0; i < nlaunches; i++)
         if (launches[i].cool) launches[i].cool--;
     if (m->launch >= 0) {

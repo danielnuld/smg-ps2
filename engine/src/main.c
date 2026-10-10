@@ -583,6 +583,15 @@ int main(void)
             printf("jumpstand test f %u: %s\n", frame, d);
         }
 #endif
+#ifdef WARPPOD_TEST
+        if (frame == 120 || frame == 700)
+            printf("warppod test f %u: Mario into row %d\n", frame, game_test_warppod());
+        if (frame > 120 && frame < 1200 && frame % 20 == 0) {
+            char d[128];
+            game_debug(d, sizeof d);
+            printf("warppod test f %u: %s\n", frame, d);
+        }
+#endif
 #ifdef GEYSER_TEST
         if (frame >= 120 && frame <= 1200 && frame % 15 == 0) {
             int row = game_test_geyser();
