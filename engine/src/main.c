@@ -603,6 +603,10 @@ int main(void)
             printf("tsuki test f %u: row %d coord %d, %s\n", frame, row, (int)c, d);
         }
 #endif
+#ifdef KIRAIRA_TEST
+        if (frame >= 120 && frame % 60 == 0)
+            printf("kiraira test f %u: Mario into row %d, life %d\n", frame, game_test_kiraira(), game_life());
+#endif
 #ifdef GEYSER_TEST
         if (frame >= 120 && frame <= 1200 && frame % 15 == 0) {
             int row = game_test_geyser();

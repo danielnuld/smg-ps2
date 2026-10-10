@@ -144,6 +144,7 @@ typedef struct {
     V3 gup;          /* AssemblyBlock: up at its home (its bobbing) */
     int jstand;      /* JumpStand: holds Mario landing on it, then throws him up (update_jumpstands) */
     int warppod;     /* WarpPod: takes Mario to its pair (warp_try, warp_update) */
+    int kiraira;     /* Kiraira: a chained mine, explodes on touch and recovers (update_kiraira, kiraira_pos) */
     const unsigned char *tsuki; /* Tsukidashikun: its PATH entry; pushes along it and back (update_tsuki) */
     int shoot;       /* ShootingStar: falls, bursts into star pieces (update_shooting) */
     int plant;       /* PlantGroup (Flower / FlowerBlue / CutBush Group): its model drawn at each member (plants) */
@@ -1106,6 +1107,47 @@ static void update_tsuki(void)
     }
 }
 
+/* Kiraira.cpp: drifts along gravity (velocity 1.5 sin(45 + 2 t) a frame: 43 (cos 45 - cos(45 + 2 t)) from its place),
+ * turns to Mario within 1500; touching its body (120) explodes it (an explosion attack), SW_B on; Dead 300 frames,
+ * RecoverSign 120, Revival ~60 (KIRA_DOWN in all), then it waits again (SW_B off). row_turn 1 while down, row_step its
+ * frames. ponytail: hidden while Dead (its Down BCK), faces Mario at once, SpaceMine's explosion, no chain, no group
+ * alarm, no KirairaRail */
+#define KIRA_DOWN 480
+static void hurt_mario(V3 from, float speed);
+static V3 kiraira_pos(const Inst *in, V3 *up)
+{
+    V3 p = v3(in->m[12], in->m[13], in->m[14]);
+    *up = up_at(p, v3(in->m[4], in->m[5], in->m[6]));
+    float t = (game_frame * 2.0f + 45.0f) * 0.0174533f;
+    return vsub(p, vmul(*up, 43.0f * (0.7071068f - cosf(t))));
+}
+
+static void update_kiraira(void)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->kiraira) continue;
+        const Row *r = &sc->objs[in->row];
+        unsigned short *t = &row_step[in->row];
+        signed char *ph = &row_turn[in->row];
+        if (*ph) {
+            if (++*t >= KIRA_DOWN) { *ph = 0; *t = 0; if (r->sw[SW_B] >= 0) sw_set(r, SW_B, 0); }
+            continue;
+        }
+        V3 up, p = kiraira_pos(in, &up);
+        if (vlen(vsub(c, p)) >= 120.0f * in->s + HIT_BODY_R) continue;
+        hurt_mario(p, 25.0f);
+        float m[16];
+        memcpy(m, in->m, 64);
+        m[12] = p.x; m[13] = p.y; m[14] = p.z;
+        fx_emit(FX_SPACEMINE_EXPLOSION, m);
+        *ph = 1; *t = 0;
+        if (r->sw[SW_B] >= 0) sw_set(r, SW_B, 1);
+        printf("kiraira %d explodes\n", in->row);
+    }
+}
+
 /* JumpStand.cpp: Mario landing on it is held (bound); TrampleBound throws him at step 5 along -gravity at 26, 32 if
  * he pressed jump in those 5 frames; HipDropBound (a hip drop landing) sinks him 6 - ease a frame for 15 frames, then
  * 43 along its up. row_turn: 0 wait, 1 trample, 2 high trample, 3 hip drop; row_step frames; jstand_pos the held
@@ -1266,6 +1308,7 @@ void game_rebind(void)
         in->assembly = strncmp(name, "AssemblyBlock", 13) == 0;
         in->jstand = strcmp(name, "JumpStand") == 0;
         in->warppod = strcmp(name, "WarpPod") == 0;
+        in->kiraira = strcmp(name, "Kiraira") == 0;
         in->tsuki = scene_blob_g && r->path >= 0 && strcmp(name, "Tsukidashikun") == 0 ?
                     find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->plant = strcmp(name, "FlowerGroup") == 0 || strcmp(name, "FlowerBlueGroup") == 0 || strcmp(name, "CutBushGroup") == 0;
@@ -1581,6 +1624,25 @@ int game_test_tsuki(int drop, float *coord)
         if (strcmp(sc->types + 32 * sc->objs[i].type, "Tsukidashikun") == 0) {
             const Row *r = &sc->objs[i];
             mario->pos = vadd(v3(r->pos[0], r->pos[1], r->pos[2]), vmul(mario->up, 400.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return -2;
+        }
+    return -1;
+}
+
+int game_test_kiraira(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        if (!insts[i].kiraira) continue;
+        V3 up, p = kiraira_pos(&insts[i], &up);
+        mario->pos = vsub(p, vmul(mario->up, HIT_BODY_H));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return insts[i].row;
+    }
+    for (u32 i = 0; i < sc->nobjs; i++) /* not bound yet: Mario over its row, its zone streams in */
+        if (strcmp(sc->types + 32 * sc->objs[i].type, "Kiraira") == 0) {
+            const Row *r = &sc->objs[i];
+            mario->pos = vadd(v3(r->pos[0], r->pos[1], r->pos[2]), vmul(mario->up, 600.0f));
             mario->hvel = v3(0, 0, 0); mario->vup = 0;
             return -2;
         }
@@ -3306,6 +3368,7 @@ void game_update(void)
     update_assembly();
     update_jumpstands();
     update_tsuki();
+    update_kiraira();
     update_pipes();
     update_switches();
     update_pops();
@@ -3457,6 +3520,15 @@ void game_draw(void)
         if (in->assembly && row_turn[in->row] == 4 && row_step[in->row] + 100 >= (sc->objs[in->row].arg[1] > 0 ?
             sc->objs[in->row].arg[1] : 300) && (game_frame & 4))
             continue; /* about to vanish: blinks (ponytail for its Disappear animation) */
+        if (in->kiraira) { /* drifting, facing Mario within 1500; hidden while Dead */
+            if (row_turn[in->row] && row_step[in->row] < 300) continue;
+            V3 up, p = kiraira_pos(in, &up), to = vsub(mario->pos, p), fwd = v3(in->m[8], in->m[9], in->m[10]);
+            float cm[16];
+            basis_matrix(cm, p, up, vdot(to, to) < 1500.0f * 1500.0f ? to : fwd, 0);
+            for (int j = 0; j < 12; j++) if (j % 4 != 3) cm[j] *= in->s;
+            render_model(in->md, cm, 0x70, 0xB0, 0x60);
+            continue;
+        }
         if (in->jstand && row_turn[in->row]) { /* bound: squashed along its y */
             float cm[16], k = jstand_squash(in);
             memcpy(cm, in->m, 64);

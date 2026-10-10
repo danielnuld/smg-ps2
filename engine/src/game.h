@@ -35,6 +35,8 @@ int game_test_plant(int k);
 int game_test_steam(void);
 /* Test builds: Mario held in the first LavaGeyser's column (his centre 300 up it); its row or -1 */
 int game_test_geyser(void);
+/* Test builds: Mario put into the first Kiraira (-2: over its row while its zone streams in); its row or -1 */
+int game_test_kiraira(void);
 /* Test builds: the first Tsukidashikun's row (-1 none) and rail coordinate; drop: Mario put over it */
 int game_test_tsuki(int drop, float *coord);
 /* Test builds: Mario put into the first WarpPod that has a pair; its row or -1 */
