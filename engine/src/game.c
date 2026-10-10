@@ -3157,11 +3157,14 @@ int game_test_launch(int i)
 int game_test_spindriver(int small)
 {
     for (int i = 0; i < nlaunches; i++) { /* a shown one landing by something placed (OceanPhantomCave 1's first one
-                                            * flies to a planet of other scenarios: nothing there, a miss loop) */
+                                            * flies to a planet of other scenarios: nothing there, a miss loop; Phantom 6's
+                                            * lands by areas only) */
         if ((launches[i].start < 45) != small || !row_shown(launches[i].row)) continue;
         V3 e = launch_pos(&launches[i], 1.0f);
         for (u32 k = 0; k < sc->nobjs; k++)
-            if ((int)k != launches[i].row && vlen(vsub(row_pos(&sc->objs[k]), e)) < 3000.0f) return game_test_launch(i);
+            if ((int)k != launches[i].row && vlen(vsub(row_pos(&sc->objs[k]), e)) < 3000.0f &&
+                area_shape(sc->types + 32 * sc->objs[k].type) < 0 && !strstr(sc->types + 32 * sc->objs[k].type, "Gravity"))
+                return game_test_launch(i); /* not an area (a RestartCube, DeathCube...) or a gravity: something solid */
     }
     return -1;
 }

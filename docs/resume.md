@@ -199,8 +199,10 @@ there needs the embedded blob and every pack rebuilt.
    crossed a BlackHoleCube, every respawn flew back into it). Left: AstroDome 1-6, FileSelect, EpilogueDemoStage
    (menus, no map collision) and BattleShip 6 (a hidden star: layer mask 0, no start) should leave the run;
    SurfingLv2 1 (starts on a SurfRay) and KoopaJrShipLv1 1 (starts on KoopaJrSmallShipA at its guide point) need
-   those rides; Phantom 6: gravity points up at restart point 1 (row 57), Mario falls into BlackHole 58 (gravity
-   priority by TeresaHouseZone?); one miss each in BattleShip 3, CannonFleet 2 (death areas), CocoonEx 1,
+   those rides; Phantom 6: not a gravity bug (restart point 1 is upside down in a GlobalPlaneGravityInBox, box as
+   Petari's PlaneInBoxGravityCreator): the cover test's launch star lands by a point gravity whose planet is in other
+   scenarios' layers, Mario falls through RestartCube 57 into BlackHoleCube 58 (the test now ignores areas and
+   gravities when it looks for something by a launch star's landing; this one still passes); one miss each in BattleShip 3, CannonFleet 2 (death areas), CocoonEx 1,
    BreakDownPlanet 1, HoneyBeeEx 1, Phantom 3 (2): after the cover test's flight. Earlier: coverage run done once (136 / 136 play, `out/coverage.md`, `tools/coverage_report.py`), class
    weights (`out/class_coverage.md`); left: the final run on the current build, worst frame on the heaviest scenario,
    videos. Blocking zone loads (a zone wanted before its prefetch ends) are the worst frames (HoneyBee ~0.4 s).
