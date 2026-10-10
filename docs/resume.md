@@ -11,6 +11,10 @@ Last updated 2026-10-09. Detail and numbers: `docs/phase2-report.md`; tasks: `op
 - Task 5.2 in progress. The engine plays any galaxy from its packs:
   - world space; gravities point, plane, plane-in-box / cylinder, cube, disk, segment;
   - 12 camera types;
+  - zone streaming keeps several zone chains full at once (every zone within 1000 of Mario, then those ahead,
+    nearest first, while the stage packs fit 9.01 MB minus the base packs: `target_set` in main.c, sizes read at load);
+    a zone is read at once only when Mario is off every full zone's model (or out of a pipe), else in the background;
+  - collision: an archive's own `<name>.kcl` first, not a `movelimit.kcl` listed before it (PuffballPlanetA had no ground);
   - zone streaming with prefetch and per-zone spheres (a pipe's exit zone is wanted at once), from `host:` or from
     the **disc image** (`tools/disc.py`: one sector-aligned PACKS.BIN + PACKS.TOC, read with libcdvd, prefetch
     asynchronous: no slow frame while streaming; ~1.5-2 MB/s in PCSX2, a zone wanted at once blocks ~1 s);
@@ -168,11 +172,7 @@ there needs the embedded blob and every pack rebuilt.
    pointer stand-in), WaterPlant, BeeFlowerHover, Kinopio (TreasureSpot
    needs the star pointer).
 5. Vertex alpha in VUMD (rgbi has no room: the 4th byte is the index) for SphereAir-like fades.
-6. Bug seen: CosmosGarden 1 / 6, PuffballZone (rows near the origin) goes back to its low pack right after its full
-   one loads with Mario standing there (no collision under its SmallStone). Likely cause: streaming keeps one zone
-   chain full (`chain_of` in main.c, the zone Mario is judged to be in); near the origin several zone spheres overlap and
-   another one wins. A fix: several full chains at once within the budget (every zone whose sphere holds Mario).
-7. Task 5.3 gate: coverage run done once (136 / 136 play, `out/coverage.md`, `tools/coverage_report.py`), class
+6. Task 5.3 gate: coverage run done once (136 / 136 play, `out/coverage.md`, `tools/coverage_report.py`), class
    weights (`out/class_coverage.md`); left: the final run on the current build, worst frame on the heaviest scenario,
    videos. Blocking zone loads (a zone wanted before its prefetch ends) are the worst frames (HoneyBee ~0.4 s).
-8. Last (the user's call): sound effects (AFC -> ADPCM), music on the disc (streams in the ISO), ChangeBgmCube / RestartCube BGM changes.
+7. Last (the user's call): sound effects (AFC -> ADPCM), music on the disc (streams in the ISO), ChangeBgmCube / RestartCube BGM changes.

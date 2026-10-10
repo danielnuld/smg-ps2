@@ -7,10 +7,9 @@ void game_init(const Scene *s, const unsigned char *blob);
 void game_update(void);
 /* After the scene's models changed (zone packs swapped): find every placed model again. */
 void game_rebind(void);
-/* A stage Mario is close to whose pack is only loaded low (zone index), or -1. full[z]: stage z is loaded in full. */
-int game_zone_wanted(const unsigned char *full);
-/* The low-loaded zone Mario is heading for (a launch star's landing point, else the nearest within 5000); -1. */
-int game_zone_next(const unsigned char *full);
+/* full[z]: stage z is loaded in full. need[z]: Mario needs its collision (2: at once); soon[z]: he is heading for it; dist[z]:
+ * its priority (smaller first), for the zones that fit the memory room (main.c stream_update). */
+void game_zone_sets(const unsigned char *full, unsigned char *need, unsigned char *soon, float *dist);
 /* Test builds: put Mario just above the first model of a low-loaded zone. Returns its zone or -1. */
 int game_teleport_low(const unsigned char *full);
 /* Test builds: Mario caught by launch star i as if he spun there. Returns i, or -1 if there is none. */

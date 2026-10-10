@@ -240,7 +240,7 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None):
     without texture / with projected coordinates. skinned: no simplification (vertices of one group sit in different
     joint spaces), per vertex the matrix slot (PNMTXIDX / 3) and the CLR0 colour, and the SKIN entry (skin_entry).
     Static models leave out the shapes on joints hidden_joints gives (bind pose, or the BCK `pose`)."""
-    groups, kcl, sk = [], None, None
+    groups, kcl, sk, kcls = [], None, None, {}
     stats = stats if stats is not None else {}
     files = dict(B.rarc_files(arc.read_bytes()))
     for name, b in files.items():
@@ -354,8 +354,11 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None):
                 groups.append((verts, [remap[v] for v in tri], uvs, t, slots, cols, blend, nrm))
             if skinned:
                 sk = skin_entry(b, bl, gtab)
-        elif n.endswith(".kcl") and kcl is None:
-            kcl = b
+        elif n.endswith(".kcl"):
+            kcls[n.split("/")[-1]] = b
+    # the model's own collision: <archive>.kcl, else the first that is not a MoveLimit boundary (PuffballPlanetA lists
+    # movelimit.kcl first: its ground was a missing invisible wall)
+    kcl = kcls.get(arc.stem.lower() + ".kcl") or next((v for k, v in kcls.items() if not k.startswith("movelimit")), None)
     if kcl and arc.stem in KCL_JOINT:  # collision placed at a joint (initCollisionParts with its joint matrix)
         mb = next(v for k, v in files.items() if k.lower().endswith((".bdl", ".bmd")))
         bl = tex.blocks(mb)

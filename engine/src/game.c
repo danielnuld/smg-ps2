@@ -1703,40 +1703,39 @@ static void zone_grow(const Inst *in)
     if (d > zone_r[in->zone]) zone_r[in->zone] = d;
 }
 
-/* nearest low zone (distance to its sphere's surface) under `limit`, or -1 */
-static int nearest_low_zone(V3 p, const unsigned char *full, float limit)
+/* The zones Mario needs in full (need: within 1000 of a zone's sphere, a full zone whose model he is inside, the exit
+ * pipe's zone; 2: at once, he is out of every full zone's model or came out of a pipe) and soon (on foot within 5000, flying the launch star's landing point within 1500), each with its
+ * priority dist[z] (distance to its sphere, smaller first). main.c keeps as many of their chains full as the memory
+ * room allows: overlapping zones load together (CosmosGarden's PuffballZone sits in other zones' spheres) */
+void game_zone_sets(const unsigned char *full, unsigned char *need, unsigned char *soon, float *dist)
 {
-    int want = -1;
+    V3 fly = mario->launch >= 0 ? launch_pos(&launches[mario->launch], 1.0f) : mario->pos;
     for (int z = 0; z < MAX_ZONES; z++) {
-        if (zone_r[z] < 0 || full[z]) continue;
-        float d = vlen(vsub(p, zone_c[z])) - zone_r[z];
-        if (d < limit) { limit = d; want = z; }
+        need[z] = soon[z] = 0;
+        dist[z] = 1e30f;
+        if (zone_r[z] < 0) continue;
+        float d = vlen(vsub(mario->pos, zone_c[z])) - zone_r[z];
+        dist[z] = d;
+        if (d < 1000.0f) need[z] = 1;
+        if (mario->launch < 0 ? d < 5000.0f : vlen(vsub(fly, zone_c[z])) - zone_r[z] < 1500.0f) soon[z] = 1;
     }
-    return want;
-}
-
-int game_zone_wanted(const unsigned char *full)
-{
-    if (pipe_zone >= 0) { /* came out of a pipe in a low zone: its collision is needed now */
-        if (!full[pipe_zone]) return pipe_zone;
-        pipe_zone = -1;
-    }
-    /* the nearest low zone whose sphere (+1000) Mario is in, once he is out of every full zone's model sphere (else
-     * the zone he stands in would go low and come back each frame). ponytail: proximity only, no visibility */
-    for (int i = 0; i < ninsts; i++) {
+    int on_full = 0;
+    for (int i = 0; i < ninsts; i++) { /* standing in a full zone's model: it stays (no going low and back) */
         const Inst *in = &insts[i];
         V3 d = vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14]));
-        if (in->zone && full[in->zone] && vdot(d, d) < in->reach * in->reach) return -1;
+        if (in->zone < MAX_ZONES && full[in->zone] && vdot(d, d) < in->reach * in->reach) {
+            need[in->zone] = 1;
+            if (dist[in->zone] > 0) dist[in->zone] = 0;
+            on_full = 1;
+        }
     }
-    return nearest_low_zone(mario->pos, full, 1000.0f);
-}
-
-int game_zone_next(const unsigned char *full)
-{
-    if (mario->launch < 0) /* on foot: the nearest low zone within 5000 of its sphere starts reading early */
-        return nearest_low_zone(mario->pos, full, 5000.0f);
-    /* flying: the low zone around the launch star's landing point */
-    return nearest_low_zone(launch_pos(&launches[mario->launch], 1.0f), full, 1500.0f);
+    if (!on_full) /* out of every full model: the zones he is near are wanted at once (2), else read in the background */
+        for (int z = 0; z < MAX_ZONES; z++)
+            if (need[z] && !full[z]) need[z] = 2;
+    if (pipe_zone >= 0 && pipe_zone < MAX_ZONES) { /* came out of a pipe in a low zone: its collision is needed now */
+        if (full[pipe_zone]) pipe_zone = -1;
+        else { need[pipe_zone] = 2; dist[pipe_zone] = -1e30f; }
+    }
 }
 
 int game_test_block(void)

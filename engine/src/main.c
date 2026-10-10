@@ -215,13 +215,15 @@ static const u8 *zone_files[64];      /* the stage packs in use, one per zone */
 static unsigned char zone_full[64];    /* 1: that stage's .bin is in use, 0: its .low.bin */
 static const u8 *scene_blob;
 static u32 nzones, base_models, base_tex, base_kcl;
+static u32 size_full[64], size_low[64], zone_room; /* each stage pack's bytes; what the stage packs may use */
+#define PACK_ROOM 9010000u /* phase 0b: room for scenario data (tools/slice_all.py ROOM) */
 static MemMark base_mark;
 
 /* Next zone's packs, read a slice per frame (a launch star's flight hides it); stages whose pack does not change
  * keep their buffer. ponytail: the old and the new packs are both in RAM until the swap */
 #define READ_STEP (32 << 10) /* ~4.5 ms of host: read per frame; 3 MB fits a 300-frame flight */
 static struct {
-    int zone, active;                  /* target zone */
+    int active;                        /* a target set is being read */
     u32 z;                             /* next stage to read */
     unsigned char full[64];
     const u8 *buf[64];
@@ -253,12 +255,43 @@ static void pend_cancel(void)
     memset(&pend, 0, sizeof pend);
 }
 
-static void pend_start(int zone)
+static void pend_start(const unsigned char *full)
 {
     pend_cancel();
-    pend.zone = zone;
     pend.active = 1;
-    chain_of(zone, pend.full);
+    memcpy(pend.full, full, 64);
+}
+
+static u32 set_cost(const unsigned char *full)
+{
+    u32 c = 0;
+    for (u32 z = 0; z < nzones; z++) c += full[z] ? size_full[z] : size_low[z];
+    return c;
+}
+
+/* The target set: the main stage's chain, then the chains of the zones Mario needs, then of those he is heading for,
+ * nearest first, each kept only if the set still fits zone_room. ponytail: insertion sort over at most 64 zones */
+static void target_set(unsigned char *out)
+{
+    unsigned char need[64], soon[64], chain[64], tmp[64];
+    float dist[64];
+    int order[64], n = 0;
+    game_zone_sets(zone_full, need, soon, dist);
+    chain_of(0, out);
+    for (int pass = 0; pass < 2; pass++) {
+        n = 0;
+        for (u32 z = 0; z < nzones; z++)
+            if (pass ? soon[z] && !need[z] : need[z]) {
+                int k = n++;
+                while (k > 0 && dist[order[k - 1]] > dist[z]) { order[k] = order[k - 1]; k--; }
+                order[k] = z;
+            }
+        for (int k = 0; k < n; k++) {
+            chain_of(order[k], chain);
+            for (int z = 0; z < 64; z++) tmp[z] = out[z] | chain[z];
+            if (set_cost(tmp) <= zone_room) memcpy(out, tmp, 64);
+        }
+    }
 }
 
 /* Read up to `budget` bytes of the pending packs; returns 1 when every stage pack is in memory. */
@@ -352,27 +385,35 @@ static void pend_commit(Scene *s)
     for (u32 z = 0; z < nzones; z++)
         if (blob_add(s, zone_files[z]) != 0) {
             printf("packs: zone pack %u (%s) starts %.4s\n", z, zone_full[z] ? "full" : "low", (const char *)zone_files[z]);
-            printf("packs: zone %d failed" "\n", pend.zone);
+            printf("packs: zone %u failed" "\n", z);
             for (;;) {}
         }
     render_load_textures(s, base_tex, base_models);
     game_rebind();
-    printf("packs: zone %d, %u models, %u textures, %u KB read before, swap %u us" "\n", pend.zone, s->nmodels, s->ntex,
-           pend.bytes >> 10, (u32)((cycles() - t0) / 294.912f));
+    int nfull = 0;
+    for (u32 z = 0; z < nzones; z++) nfull += zone_full[z];
+    printf("packs: %d full zones (%u KB), %u models, %u textures, %u KB read before, swap %u us" "\n", nfull, set_cost(zone_full) >> 10,
+           s->nmodels, s->ntex, pend.bytes >> 10, (u32)((cycles() - t0) / 294.912f));
     memset(&pend, 0, sizeof pend);
 }
 
 /* Per frame: prepare the zone the game expects next, swap when it is wanted (reading the rest at once if needed). */
 static void stream_update(Scene *s)
 {
-    int next = game_zone_next(zone_full), want = game_zone_wanted(zone_full);
-    if (want >= 0 && (!pend.active || pend.zone != want))
-        pend_start(want);
-    else if (want < 0 && next >= 0 && (!pend.active || pend.zone != next))
-        pend_start(next);
-    if (!pend.active)
+    unsigned char target[64], need[64], soon[64];
+    float dist[64];
+    target_set(target);
+    game_zone_sets(zone_full, need, soon, dist);
+    int urgent = 0; /* a zone he needs now is low: read it all at once */
+    for (u32 z = 0; z < nzones; z++)
+        if (target[z] && need[z] == 2 && !zone_full[z]) urgent = 1;
+    if (!memcmp(target, zone_full, nzones)) {
+        if (pend.active) pend_cancel();
         return;
-    if (pend_step(want >= 0 ? 0xFFFFFFFF : READ_STEP) && want >= 0)
+    }
+    if (!pend.active || memcmp(pend.full, target, nzones))
+        pend_start(target);
+    if (pend_step(urgent ? 0xFFFFFFFF : READ_STEP))
         pend_commit(s);
 }
 
@@ -399,6 +440,17 @@ static const u8 *load_packs(Scene *s)
     base_models = s->nmodels;
     base_tex = s->ntex;
     base_kcl = s->nkcl;
+    const u8 *zn = blob_chunk(scene_blob, "ZONE", &sz);
+    for (u32 z = 0; z < nzones; z++) { /* each stage pack's size, full and low (the room check in target_set) */
+        Pack p;
+        for (int lo = 0; lo < 2; lo++) {
+            snprintf(path, sizeof path, "%s/%s%s", scen, (const char *)(zn + 4 + 56 * z), lo ? ".low.bin" : ".bin");
+            u32 *dst = lo ? &size_low[z] : &size_full[z];
+            *dst = pack_open(&p, path) ? p.size : 0;
+            if (p.f) pack_close(&p);
+        }
+    }
+    zone_room = PACK_ROOM > pack_bytes ? PACK_ROOM - pack_bytes : 0;
     printf("packs: %s, %u zones, base %u models, %u textures, %u KB read\n", scen, nzones, s->nmodels, s->ntex,
            pack_bytes >> 10);
     return scene_blob;
@@ -451,7 +503,11 @@ int main(void)
         snprintf(path, sizeof path, "host:music/%s.pcm", track);
         audio_music(path);
     }
-    pend_start(scene_start(&scene)->zone);
+    {
+        unsigned char start[64];
+        chain_of(scene_start(&scene)->zone, start);
+        pend_start(start);
+    }
     pend_step(0xFFFFFFFF);
     pend_commit(&scene);
 #else
