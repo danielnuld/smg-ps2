@@ -741,6 +741,11 @@ int main(void)
         if (frame == 800) printf("mkoopa test: hip drop row %d\n", game_test_enemy(7, 0, 4));
         if (frame == 700 || frame == 900) printf("mkoopa test f %u: %d alive, life %d\n", frame, game_kind_alive(7), game_life());
 #endif
+#ifdef KMINI_TEST
+        if (frame == 120) printf("kmini test: stomp row %d\n", game_test_enemy(9, 0, 0));
+        if (frame == 240) printf("kmini test: spin by row %d\n", game_test_enemy(9, 0, 1));
+        if (frame == 360) printf("kmini test: %d alive\n", game_kind_alive(9));
+#endif
 #ifdef ENEMY_TEST
         if (frame == 120) printf("enemy test: stomp TakoHei row %d\n", game_test_enemy(1, 0, 0));
         if (frame == 240) printf("enemy test: spin by PackunPetit row %d\n", game_test_enemy(2, 0, 1));
