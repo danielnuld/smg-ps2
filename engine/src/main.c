@@ -621,6 +621,10 @@ int main(void)
             if (frame % 120 == 0) printf("killer test f %u: row %d, life %d" "\n", frame, row, game_life());
         }
 #endif
+#ifdef FLOW_TEST
+        if (frame >= 120 && frame % 40 == 0 && frame <= 600)
+            printf("flow test f %u: on piece %d, pieces %d\n", frame, game_test_flow(), game_pieces_out());
+#endif
 #ifdef GEYSER_TEST
         if (frame >= 120 && frame <= 1200 && frame % 15 == 0) {
             int row = game_test_geyser();

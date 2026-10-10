@@ -206,6 +206,10 @@ static const unsigned char *scene_blob_g; /* the scene blob (PATH) for rebinds *
 static int hip_hit, hip_inst;   /* Mario landed a hip drop this frame, on instance hip_inst (-1 none) */
 static int mario_ground = -1;   /* instance Mario stands on this frame, -1 in the air */
 typedef struct { int row; V3 pos, front; } Killer; /* HomingKiller: its bullet (update_killers) */
+typedef struct { int first, n; const float *pts; u32 np; float len, step, speed; } Flow; /* StarPieceFlow (update_flows) */
+#define MAX_FLOWS 64
+static Flow flows[MAX_FLOWS];
+static int nflows;
 #define MAX_KILLERS 32
 static Killer killers[MAX_KILLERS];
 static int nkillers;
@@ -496,7 +500,7 @@ static int coin_group(Pickup *out, const Row *r, const unsigned char *blob)
 
 /* StarPieceGroup (Petari StarPieceGroup.cpp init / placementAllPiece): arg0 pieces (default 6); on a rail, spread by
  * length, or one per rail point when arg2 == 1; else a circle of radius arg1 (default 400) in the placement's X / Z
- * plane, scale included (makeMtxTRS). ponytail: StarPieceFlow (pieces moving along a rail) is not ported. */
+ * plane, scale included (makeMtxTRS). StarPieceFlow rows go through star_flow. */
 static int star_group(Pickup *out, const Row *r, const unsigned char *blob)
 {
     int n = r->arg[0] > 0 ? r->arg[0] : 6;
@@ -526,6 +530,31 @@ static int star_group(Pickup *out, const Row *r, const unsigned char *blob)
             out[i].alive = 1;
         }
     }
+    return n;
+}
+
+/* StarPieceFlow (StarPieceGroup.cpp, Flow): arg1 pieces (default 1) spread along its rail like placementPieceOnRail,
+ * all moving on at arg0 a frame (default 10), round again from the start at the end (exeFlow: repeat). Without out:
+ * the count. ponytail: a closed rail's last segment (back to the start) is not ridden */
+static int star_flow(Pickup *out, int first, const Row *r, const unsigned char *blob)
+{
+    int n = r->arg[1] > 0 ? r->arg[1] : 1;
+    if (!out) return n;
+    u32 np = 0;
+    int closed = 0;
+    const float *pts = r->path >= 0 ? find_rail(blob, r->zone, r->path, &np, &closed) : NULL;
+    if (!pts || np < 2 || nflows == MAX_FLOWS) {
+        for (int i = 0; i < n; i++) { out[i].pos = row_pos(r); out[i].alive = 1; }
+        return n;
+    }
+    Flow *f = &flows[nflows++];
+    f->first = first; f->n = n; f->pts = pts; f->np = np;
+    f->len = 0;
+    for (u32 i = 0; i + 1 < np; i++)
+        f->len += vlen(v3(pts[3 * i + 3] - pts[3 * i], pts[3 * i + 4] - pts[3 * i + 1], pts[3 * i + 5] - pts[3 * i + 2]));
+    f->step = n == 1 ? 0 : f->len / (closed ? n : n - 1.0f);
+    f->speed = r->arg[0] > 0 ? (float)r->arg[0] : 10.0f;
+    place_on_rail(out, pts, np, 0, n);
     return n;
 }
 
@@ -697,10 +726,12 @@ void game_init(const Scene *s, const unsigned char *blob)
     scene_blob_g = blob;
     npurple = count_type("PurpleCoin", 0) + count_type("CirclePurpleCoinGroup", 1) + count_type("PurpleRailCoin", 1);
     npieces = count_type("StarPiece", 0) + box_pieces;
-    int t_spg = scene_type(s, "StarPieceGroup");
+    int t_spg = scene_type(s, "StarPieceGroup"), t_flow = scene_type(s, "StarPieceFlow");
     for (u32 i = 0; i < s->nobjs; i++)
         if (s->objs[i].type == t_spg)
             npieces += star_group(NULL, &s->objs[i], blob);
+        else if (s->objs[i].type == t_flow)
+            npieces += star_flow(NULL, 0, &s->objs[i], blob);
     nkuribo = count_type("Kuribo", 0) + count_type("TakoHei", 0) + count_type("PackunPetit", 0) + count_type("KoteBug", 0) +
               count_type("JumpSpider", 0) + count_type("Meramera", 0) + count_type("Takobo", 0) +
               count_type("MechanicKoopaMini", 0) + count_type("Karikari", 0);
@@ -713,6 +744,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     pops = mem_alloc(MEM_OBJECTS, (box_coins + 1) * sizeof(Pop));
     mario = mem_alloc(MEM_PLAYER, sizeof(Player));
     nkillers = 0;
+    nflows = 0;
     kari_cling = 0;
 
     int ic = 0, ip = 0, is = 0, ik = 0;
@@ -732,6 +764,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         else if (r->type == t_pc) { purple[ip].pos = row_pos(r); purple[ip++].alive = 1; }
         else if (r->type == t_piece) { pieces[is].pos = row_pos(r); pieces[is++].alive = 1; }
         else if (r->type == t_spg) is += star_group(pieces + is, r, blob);
+        else if (r->type == t_flow) is += star_flow(pieces + is, is, r, blob);
         else if (r->type == t_kuribo || r->type == t_tako || r->type == t_packun || r->type == t_kote || r->type == t_spider ||
                  r->type == t_mera || r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari) {
             memset(&kuribo[ik], 0, sizeof(Kuribo));
@@ -1312,6 +1345,19 @@ static void update_killers(void)
     }
 }
 
+static void update_flows(void)
+{
+    for (int i = 0; i < nflows; i++) {
+        const Flow *f = &flows[i];
+        for (int k = 0; k < f->n; k++) {
+            Pickup *p = &pieces[f->first + k];
+            if (p->alive != PICK_ON) continue;
+            float c = fmodf(f->step * k + f->speed * game_frame, f->len);
+            p->pos = rail_at(f->pts, f->np, c);
+        }
+    }
+}
+
 /* JumpStand.cpp: Mario landing on it is held (bound); TrampleBound throws him at step 5 along -gravity at 26, 32 if
  * he pressed jump in those 5 frames; HipDropBound (a hip drop landing) sinks him 6 - ease a frame for 15 frames, then
  * 43 along its up. row_turn: 0 wait, 1 trample, 2 high trample, 3 hip drop; row_step frames; jstand_pos the held
@@ -1424,7 +1470,7 @@ void game_rebind(void)
     m_kari = scene_model(s, "Karikari");
     int t_coin = scene_type(s, "Coin"), t_pc = scene_type(s, "PurpleCoin"), t_circle = scene_type(s, "CirclePurpleCoinGroup");
     int t_rail = scene_type(s, "PurpleRailCoin"), t_piece = scene_type(s, "StarPiece"), t_kuribo = scene_type(s, "Kuribo");
-    int t_spg = scene_type(s, "StarPieceGroup"), t_erail = scene_type(s, "ElectricRail"), t_tako = scene_type(s, "TakoHei"),
+    int t_spg = scene_type(s, "StarPieceGroup"), t_flow = scene_type(s, "StarPieceFlow"), t_erail = scene_type(s, "ElectricRail"), t_tako = scene_type(s, "TakoHei"),
         t_packun = scene_type(s, "PackunPetit"), t_kote = scene_type(s, "KoteBug"),
         t_spider = scene_type(s, "JumpSpider"), t_mera = scene_type(s, "Meramera"), t_takobo = scene_type(s, "Takobo"),
         t_mkoopa = scene_type(s, "MechanicKoopaMini"), t_kari = scene_type(s, "Karikari");
@@ -1439,7 +1485,7 @@ void game_rebind(void)
         if (r->type == t_coin || r->type == t_pc || r->type == t_piece || r->type == t_kuribo || r->type == t_circle ||
             r->type == t_tako || r->type == t_packun || r->type == t_kote || r->type == t_spider || r->type == t_mera ||
             r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari ||
-            r->type == t_rail || r->type == t_spg || r->type == t_erail || r->type == scene_type(s, "RockCreator"))
+            r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == scene_type(s, "RockCreator"))
             continue;
         const char *name = s->types + 32 * r->type;
         const Model *md = scene_model(s, name);
@@ -1870,6 +1916,19 @@ int game_test_killer(void)
             return -2;
         }
     return -1;
+}
+
+int game_test_flow(void)
+{
+    if (!nflows) return -1;
+    const Flow *f = &flows[0];
+    for (int k = 0; k < f->n; k++)
+        if (pieces[f->first + k].alive == PICK_ON) {
+            mario->pos = vsub(pieces[f->first + k].pos, vmul(mario->up, HIT_BODY_H));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return f->first + k;
+        }
+    return -2;
 }
 
 int game_test_geyser(void)
@@ -3776,6 +3835,7 @@ void game_update(void)
     update_kiraira();
     update_meteor();
     update_killers();
+    update_flows();
     update_pipes();
     update_switches();
     update_pops();

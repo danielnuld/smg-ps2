@@ -35,6 +35,8 @@ int game_test_plant(int k);
 int game_test_steam(void);
 /* Test builds: Mario held in the first LavaGeyser's column (his centre 300 up it); its row or -1 */
 int game_test_geyser(void);
+/* Test builds: Mario put on a live piece of the first StarPieceFlow; its piece index, -2 all taken, -1 none */
+int game_test_flow(void);
 /* Test builds: Mario put 1500 in front of the first HomingKiller launcher (-2: at its row while its zone streams
  * in); its row or -1 */
 int game_test_killer(void);
