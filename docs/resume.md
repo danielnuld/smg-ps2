@@ -169,7 +169,9 @@ there needs the embedded blob and every pack rebuilt.
    needs the star pointer).
 5. Vertex alpha in VUMD (rgbi has no room: the 4th byte is the index) for SphereAir-like fades.
 6. Bug seen: CosmosGarden 1 / 6, PuffballZone (rows near the origin) goes back to its low pack right after its full
-   one loads with Mario standing there (no collision under its SmallStone); check its zone sphere / placement.
+   one loads with Mario standing there (no collision under its SmallStone). Likely cause: streaming keeps one zone
+   chain full (`chain_of` in main.c, the zone Mario is judged to be in); near the origin several zone spheres overlap and
+   another one wins. A fix: several full chains at once within the budget (every zone whose sphere holds Mario).
 7. Task 5.3 gate: coverage run done once (136 / 136 play, `out/coverage.md`, `tools/coverage_report.py`), class
    weights (`out/class_coverage.md`); left: the final run on the current build, worst frame on the heaviest scenario,
    videos. Blocking zone loads (a zone wanted before its prefetch ends) are the worst frames (HoneyBee ~0.4 s).
