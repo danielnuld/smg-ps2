@@ -150,6 +150,7 @@ typedef struct {
     const float *meteor; /* MeteorStrike(Environment): its rail's JMap points; meteors fall along them (update_meteor) */
     int killer;      /* HomingKiller launcher: shoots a bullet that may chase Mario (update_killers) */
     int gcap;        /* GCaptureTarget: the pointer (R2) pulls Mario to it (gcap_try, gcap_update) */
+    int tspot;       /* TreasureSpot 1 / CoinFlower 2: a star piece shot pops its coin (update_shots) */
     const unsigned char *tsuki; /* Tsukidashikun: its PATH entry; pushes along it and back (update_tsuki) */
     int shoot;       /* ShootingStar: falls, bursts into star pieces (update_shooting) */
     int plant;       /* PlantGroup (Flower / FlowerBlue / CutBush Group): its model drawn at each member (plants) */
@@ -213,7 +214,7 @@ typedef struct { V3 pos, vel; int t; } Shot; /* star pieces shot at the pointer 
 #define MAX_SHOTS 8
 static Shot shots[MAX_SHOTS];
 static int test_l1; /* test builds: L1 pressed this frame */
-typedef struct { int row; V3 pos, front; } Killer; /* HomingKiller: its bullet (update_killers) */
+typedef struct { int row; V3 pos, front; int freeze; } Killer; /* HomingKiller: its bullet (update_killers) */
 typedef struct { int first, n; const float *pts; u32 np; float len, step, speed; } Flow; /* StarPieceFlow (update_flows) */
 #define MAX_FLOWS 64
 static Flow flows[MAX_FLOWS];
@@ -743,8 +744,9 @@ void game_init(const Scene *s, const unsigned char *blob)
     nkuribo = count_type("Kuribo", 0) + count_type("TakoHei", 0) + count_type("PackunPetit", 0) + count_type("KoteBug", 0) +
               count_type("JumpSpider", 0) + count_type("Meramera", 0) + count_type("Takobo", 0) +
               count_type("MechanicKoopaMini", 0) + count_type("Karikari", 0);
-    box_coins += nkuribo; /* each drops a coin (appearCoinPop) */
-    ncoins += nkuribo;
+    int ntspots = count_type("TreasureSpot", 0) + count_type("CoinFlower", 0); /* a coin each when shot */
+    box_coins += nkuribo + ntspots; /* each drops a coin (appearCoinPop) */
+    ncoins += nkuribo + ntspots;
     coins = mem_alloc(MEM_OBJECTS, ncoins * sizeof(Pickup));
     purple = mem_alloc(MEM_OBJECTS, npurple * sizeof(Pickup));
     pieces = mem_alloc(MEM_OBJECTS, npieces * sizeof(Pickup));
@@ -1290,6 +1292,8 @@ static V3 turn_to(V3 v, V3 to, float cosmax) /* turnVecToVecCos: at most acos(co
     return vnorm(vadd(vmul(v, cosmax), vmul(side, s)));
 }
 
+static int pointer_a(void);
+static int cursor_sees(V3 p, float px);
 static void update_killers(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -1321,6 +1325,15 @@ static void update_killers(void)
         }
         V3 g = up_at(k->pos, up);
         int brk = 0;
+        if (pointer_a() && cursor_sees(k->pos, 40.0f)) { /* tryFreeze: R2 pointing at it */
+            if (!k->freeze) printf("homing killer %d frozen\n", in->row);
+            k->freeze = 20;
+        }
+        if (k->freeze) { /* Freeze: stopped, its timers held (ponytail: no shake) */
+            k->freeze--; --*t;
+            if (vlen(vsub(c, k->pos)) < 70.0f + HIT_BODY_R) { hurt_mario(k->pos, 25.0f); brk = 1; }
+            if (!brk) continue;
+        }
         if (*ph == 1) {
             V3 lvl = vnorm(vtangent(k->front, g));
             if (vlen(lvl) > 0.5f) k->front = turn_to(k->front, lvl, 0.9995f);
@@ -1535,6 +1548,7 @@ void game_rebind(void)
         in->meteor = NULL;
         in->killer = strcmp(name, "HomingKiller") == 0;
         in->gcap = strcmp(name, "GCaptureTarget") == 0;
+        in->tspot = strcmp(name, "TreasureSpot") == 0 ? 1 : strcmp(name, "CoinFlower") == 0 ? 2 : 0;
         if (scene_blob_g && r->path >= 0 && (strcmp(name, "MeteorStrike") == 0 || strcmp(name, "MeteorStrikeEnvironment") == 0)) {
             u32 n; int cl;
             const float *p = find_rail_of(scene_blob_g, r->zone, r->path, &n, &cl, 1);
@@ -1908,6 +1922,26 @@ int game_test_meteor(void)
     return -1;
 }
 
+int game_test_freeze(int on) /* test builds: R2 held with the cursor on the first flying bullet */
+{
+    test_r2 = 0;
+    if (!on) return 0;
+    for (int i = 0; i < nkillers; i++) {
+        const Killer *k = &killers[i];
+        if (row_turn[k->row] != 1 && row_turn[k->row] != 2) continue;
+        V3 ce, cw, cu;
+        float fovy;
+        camera_pose(&ce, &cw, &cu, &fovy);
+        V3 fw = vnorm(vsub(cw, ce)), s = vnorm(vcross(fw, cu)), u = vcross(s, fw), to = vsub(k->pos, ce);
+        float z = vdot(to, fw), f = 224.0f / tanf(fovy * 3.14159265f / 360.0f);
+        if (z <= 0) continue;
+        cur_x = 320.0f + f * vdot(to, s) / z; cur_y = 224.0f - f * vdot(to, u) / z;
+        test_r2 = 1;
+        return k->row;
+    }
+    return -1;
+}
+
 int game_test_killer(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -1989,6 +2023,39 @@ int game_test_shoot(int kind)
         return e->row;
     }
     return -1;
+}
+
+int game_test_tspot(void)
+{
+    for (int i = 0; i < ninsts; i++) { /* Mario 600 from the first unopened one, the cursor on it, L1 */
+        const Inst *in = &insts[i];
+        if (!in->tspot || row_turn[in->row]) continue;
+        V3 p = v3(in->m[12], in->m[13], in->m[14]), up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+        V3 ce, cw, cu;
+        float fovy;
+        camera_pose(&ce, &cw, &cu, &fovy);
+        V3 fw = vnorm(vsub(cw, ce)), s = vnorm(vcross(fw, cu)), u = vcross(s, fw), to = vsub(vadd(p, vmul(up, 50.0f)), ce);
+        float z = vdot(to, fw), f = 224.0f / tanf(fovy * 3.14159265f / 360.0f);
+        if (z <= 0) return -2;
+        cur_x = 320.0f + f * vdot(to, s) / z; cur_y = 224.0f - f * vdot(to, u) / z;
+        if (got_pieces < 1) got_pieces = 1;
+        test_l1 = 1;
+        return in->row;
+    }
+    return -1;
+}
+
+void game_test_tspot_near(void) /* Mario held 600 off the first unopened one (its row while its zone streams in) */
+{
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const char *n = sc->types + 32 * sc->objs[i].type;
+        if ((strcmp(n, "TreasureSpot") && strcmp(n, "CoinFlower")) || row_dead[i] || row_turn[i]) continue;
+        const Row *r = &sc->objs[i];
+        V3 p = v3(r->pos[0], r->pos[1], r->pos[2]), up = up_at(p, mario->up);
+        mario->pos = vadd(vadd(p, vmul(up, 300.0f)), vmul(vnorm(vtangent(v3(1, 0, 0), up)), 600.0f));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return;
+    }
 }
 
 int game_test_geyser(void)
@@ -2462,7 +2529,7 @@ static int warp_update(Player *m)
  * R1 (Wii Z) or coming within arg0 of the target breaks it. phase 0 none, 1 capture, 2 traction, 3 hold. ponytail:
  * no ribbon, no spin, power ramp guessed (sTractionPowerUpSpeed is not in the decompilation), railed targets stay */
 static void cursor_ray(V3 *o, V3 *d);
-static int pointer_a(void) { return pad_held(PAD_R2) || test_r2; }
+static int pointer_a(void) { return pad_held(PAD_R2) || test_r2; } /* the pointer's A */
 
 static int gcap_pick(void) /* the target under the cursor, -1 none */
 {
@@ -4022,6 +4089,17 @@ static void update_shots(void)
             if (sc->objs[in->row].sw[SW_B] >= 0) sw_set(&sc->objs[in->row], SW_B, 1);
             printf("star piece explodes kiraira %d" "\n", in->row);
             hit = 1;
+        }
+        for (int k = 0; k < ninsts && !hit; k++) { /* TreasureSpot.cpp: Spout, Mario within 2000 */
+            const Inst *in = &insts[k];
+            if (!in->tspot || row_turn[in->row]) continue;
+            V3 p = v3(in->m[12], in->m[13], in->m[14]), up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+            if (vlen(vsub(s->pos, vadd(p, vmul(up, 50.0f)))) > 100.0f + 20.0f || vlen(vsub(p, mario->pos)) > 2000.0f) continue;
+            hit = 1;
+            pop_coins(vadd(p, vmul(up, 50.0f)), up, 1);
+            printf("star piece opens %s row %d" "\n", in->tspot == 1 ? "TreasureSpot" : "CoinFlower", in->row);
+            if (in->tspot == 1) { row_kill(in->row); game_rebind(); break; }
+            row_turn[in->row] = 1; /* the flower stays, bloomed */
         }
         if (hit || kcl_query(s->pos, 20.0f, h, 1)) s->t = 0;
     }

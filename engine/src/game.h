@@ -35,6 +35,10 @@ int game_test_plant(int k);
 int game_test_steam(void);
 /* Test builds: Mario held in the first LavaGeyser's column (his centre 300 up it); its row or -1 */
 int game_test_geyser(void);
+/* Test builds: a shot at the first unopened TreasureSpot / CoinFlower (cursor on it, L1): its row, -2 behind the
+ * camera, -1 none; _near: Mario held 600 off it */
+int game_test_tspot(void);
+void game_test_tspot_near(void);
 /* Test builds: the cursor onto the first live walking enemy of a kind and L1 (a star piece shot; one given if
  * none); its row, -2 behind the camera, -1 none */
 int game_test_shoot(int kind);
@@ -49,6 +53,8 @@ int game_test_flow(void);
 /* Test builds: Mario put 1500 in front of the first HomingKiller launcher (-2: at its row while its zone streams
  * in); its row or -1 */
 int game_test_killer(void);
+/* Test builds: R2 held with the cursor on the first flying HomingKiller bullet (its row, -1 none); 0: let go */
+int game_test_freeze(int on);
 /* Test builds: Mario held half way down the first MeteorStrike's rail; its row or -1 */
 int game_test_meteor(void);
 /* Test builds: Mario put into the first Kiraira (-2: over its row while its zone streams in); its row or -1 */

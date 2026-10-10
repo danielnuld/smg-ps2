@@ -614,6 +614,8 @@ int main(void)
         }
 #endif
 #ifdef KILLER_TEST
+        if (frame >= 200 && frame < 260) game_test_freeze(1);
+        if (frame == 260) game_test_freeze(0);
         if (frame >= 120 && frame % 30 == 0) {
             static int bound;
             int row = bound ? -3 : game_test_killer();
@@ -651,6 +653,11 @@ int main(void)
         if (frame == 300) printf("shoot2 test: shot at Takobo row %d\n", game_test_shoot(6));
         if (frame == 330) printf("shoot2 test: stomp it row %d\n", game_test_enemy(6, 0, 0));
         if (frame == 360) printf("shoot2 test: %d Takobo alive\n", game_kind_alive(6));
+#endif
+#ifdef TSPOT_TEST
+        if (frame >= 120 && frame < 300) game_test_tspot_near(); /* the camera settles */
+        if (frame == 300 || frame == 360) printf("tspot test f %u: shot at row %d, coins %d\n", frame, game_test_tspot(), game_coins());
+        if (frame == 340 || frame == 400) printf("tspot test f %u: coins %d\n", frame, game_coins());
 #endif
 #ifdef GEYSER_TEST
         if (frame >= 120 && frame <= 1200 && frame % 15 == 0) {
