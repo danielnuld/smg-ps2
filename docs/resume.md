@@ -148,14 +148,14 @@ there needs the embedded blob and every pack rebuilt.
    then TreasureSpot and the HomingKiller freeze (R2).
 1. Look: more effects (child particles, rotation, other field / shape types; Mario's dust, on his joints).
    Mario has SpinLight, HipDropFlower and Damage (`mario_fx`).
-1. More switch sources and users: Kinopio / Tico.
+2. More switch sources and users: Kinopio / Tico.
    More power star declarers (`STAR_DECLARERS` in slice.py, then the origin in `star_pos`): bosses, Tico
    collecting (チコ集め), Kuribo / SkullShark baby "all dead" checkers, NPC events; PowerStarAppearPoint groups.
-2. Lumas / NPCs (static models today).
-3. More classes by placement count (`out/census.json`, `out/class_coverage.md` top static): GCaptureTarget (needs a
+3. Lumas / NPCs (static models today).
+4. More classes by placement count (`out/census.json`, `out/class_coverage.md` top static): GCaptureTarget (needs a
    pointer stand-in), WaterPlant, BeeFlowerHover, Kinopio (TreasureSpot
    needs the star pointer).
-4. Vertex alpha in VUMD (rgbi has no room: the 4th byte is the index) for SphereAir-like fades.
+5. Vertex alpha in VUMD (rgbi has no room: the 4th byte is the index) for SphereAir-like fades.
 6. Task 5.3 gate: coverage run done once (136 / 136 play, `out/coverage.md`, `tools/coverage_report.py`), class
    weights (`out/class_coverage.md`); left: the final run on the current build, worst frame on the heaviest scenario,
    videos. Blocking zone loads (a zone wanted before its prefetch ends) are the worst frames (HoneyBee ~0.4 s).
