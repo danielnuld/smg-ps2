@@ -687,6 +687,15 @@ int main(void)
         if (frame == 520) printf("takobo test: spin by row %d\n", game_test_enemy(6, 0, 1));
         if (frame == 640) printf("takobo test: %d alive, life %d\n", game_kind_alive(6), game_life());
 #endif
+#ifdef MKOOPA_TEST
+        if (frame >= 120 && frame < 400 && frame % 10 == 0) { /* held 200 off: it hops, closes in, fires */
+            int row = game_test_enemy(7, 0, 3);
+            if (frame % 30 == 0) printf("mkoopa test f %u: by row %d, life %d" "\n", frame, row, game_life());
+        }
+        if (frame == 500) printf("mkoopa test: stomp row %d" "\n", game_test_enemy(7, 0, 0));
+        if (frame == 800) printf("mkoopa test: hip drop row %d\n", game_test_enemy(7, 0, 4));
+        if (frame == 700 || frame == 900) printf("mkoopa test f %u: %d alive, life %d\n", frame, game_kind_alive(7), game_life());
+#endif
 #ifdef ENEMY_TEST
         if (frame == 120) printf("enemy test: stomp TakoHei row %d\n", game_test_enemy(1, 0, 0));
         if (frame == 240) printf("enemy test: spin by PackunPetit row %d\n", game_test_enemy(2, 0, 1));
