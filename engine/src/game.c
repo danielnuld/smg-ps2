@@ -1942,6 +1942,26 @@ int game_test_freeze(int on) /* test builds: R2 held with the cursor on the firs
     return -1;
 }
 
+int game_test_kari_point(int on) /* test builds: R2 with the cursor on the first clinging Karikari */
+{
+    test_r2 = 0;
+    if (!on) return 0;
+    for (int i = 0; i < nkuribo; i++) {
+        const Kuribo *k = &kuribo[i];
+        if (k->kind != WALK_KARIKARI || k->phase != 2 || k->state == KURIBO_DEAD) continue;
+        V3 ce, cw, cu;
+        float fovy;
+        camera_pose(&ce, &cw, &cu, &fovy);
+        V3 fw = vnorm(vsub(cw, ce)), s = vnorm(vcross(fw, cu)), u = vcross(s, fw), to = vsub(k->pos, ce);
+        float z = vdot(to, fw), f = 224.0f / tanf(fovy * 3.14159265f / 360.0f);
+        if (z <= 0) continue;
+        cur_x = 320.0f + f * vdot(to, s) / z; cur_y = 224.0f - f * vdot(to, u) / z;
+        test_r2 = 1;
+        return k->row;
+    }
+    return -1;
+}
+
 int game_test_killer(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -2983,14 +3003,19 @@ static void mkoopa_update(Kuribo *k, V3 to, float d)
  * 10 towards him, gravity 2.4, damp 0.98 in the air, 0.8 on the ground); touching him (80) it clings (5 at most:
  * the others wait). Clinging ones (phase 2) ride him: his jumps fall (2 + n) / 2 times faster (MarioJump.cpp), every
  * 120 frames they bite a life away unless he has one left (Mario::checkKarikariDamage); a hip drop landing throws
- * them off (43 out, 33 up: DPDAttacked). A spin kills a free one. phase 0 wait, 1 pursue, 2 cling,
+ * them off (43 out, 33 up: DPDAttacked), and so does R2 with the pointer on one (one every 10 frames). A spin kills a free one. phase 0 wait, 1 pursue, 2 cling,
  * 3 thrown; timer its frames; dir its cling slot. ponytail: no star pointer, no frozen / tornado states, a thrown one
  * pursues again once it lands, no drops when it dies, cling slots as offsets around Mario (not his joints) */
+static int pointer_a(void);
+static int cursor_sees(V3 p, float px);
 static void kari_update(Kuribo *k, V3 to, float d)
 {
     static const float slot[5][2] = {{150, 0}, {90, 1.2f}, {60, 3.1f}, {110, 4.4f}, {120, 2.2f}}; /* height, angle */
     if (k->phase == 2) {
-        if (hip_hit) {
+        static unsigned release_frame; /* KarikariDirector sNoReleaseTime: one release per 10 frames */
+        int pointed = pointer_a() && game_frame - release_frame >= 10 && cursor_sees(k->pos, 30.0f);
+        if (pointed) release_frame = game_frame; /* requestRelease: R2 on a clinging one throws it off */
+        if (hip_hit || pointed) {
             V3 away = vnorm(vtangent(vsub(k->pos, mario->pos), mario->up));
             k->vel = vadd(vmul(away, 43.0f), vmul(mario->up, 33.0f));
             k->phase = 3; k->timer = 0; kari_cling--;

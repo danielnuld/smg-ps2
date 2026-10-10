@@ -152,7 +152,7 @@ there needs the embedded blob and every pack rebuilt.
 ## Next
 
 0. Star pointer on the right stick (agreed with the user): cursor, GCaptureTarget, shots, TreasureSpot, freeze done;
-   left: Karikari release by pointer (R2 on a clinging one), pointer effect sprite, railed GCaptureTargets.
+   left: pointer effect sprite, railed GCaptureTargets (objinfo rows: no MapPartsRailMover columns).
 1. Look: more effects (child particles, rotation, other field / shape types; Mario's dust, on his joints).
    Mario has SpinLight, HipDropFlower and Damage (`mario_fx`).
 2. More switch sources and users: Kinopio / Tico.

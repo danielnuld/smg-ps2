@@ -55,6 +55,8 @@ int game_test_flow(void);
 int game_test_killer(void);
 /* Test builds: R2 held with the cursor on the first flying HomingKiller bullet (its row, -1 none); 0: let go */
 int game_test_freeze(int on);
+/* Test builds: R2 with the cursor on the first clinging Karikari (its row, -1 none); 0: let go */
+int game_test_kari_point(int on);
 /* Test builds: Mario held half way down the first MeteorStrike's rail; its row or -1 */
 int game_test_meteor(void);
 /* Test builds: Mario put into the first Kiraira (-2: over its row while its zone streams in); its row or -1 */
