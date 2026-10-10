@@ -659,6 +659,12 @@ int main(void)
         if (frame == 300 || frame == 360) printf("tspot test f %u: shot at row %d, coins %d\n", frame, game_test_tspot(), game_coins());
         if (frame == 340 || frame == 400) printf("tspot test f %u: coins %d\n", frame, game_coins());
 #endif
+#ifdef PROM_TEST
+        if (frame >= 120 && frame < 1500 && frame % 10 == 0) {
+            int row = game_test_prom();
+            if (frame % 120 == 0) printf("prom test f %u: row %d, life %d\n", frame, row, game_life());
+        }
+#endif
 #ifdef GEYSER_TEST
         if (frame >= 120 && frame <= 1200 && frame % 15 == 0) {
             int row = game_test_geyser();

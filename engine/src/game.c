@@ -151,6 +151,7 @@ typedef struct {
     int killer;      /* HomingKiller launcher: shoots a bullet that may chase Mario (update_killers) */
     int gcap;        /* GCaptureTarget: the pointer (R2) pulls Mario to it (gcap_try, gcap_update) */
     int tspot;       /* TreasureSpot 1 / CoinFlower 2: a star piece shot pops its coin (update_shots) */
+    const float *prom; u32 prom_n; /* LavaProminence: its rail (polyline); a lava ball rides it (update_prom) */
     const unsigned char *tsuki; /* Tsukidashikun: its PATH entry; pushes along it and back (update_tsuki) */
     int shoot;       /* ShootingStar: falls, bursts into star pieces (update_shooting) */
     int plant;       /* PlantGroup (Flower / FlowerBlue / CutBush Group): its model drawn at each member (plants) */
@@ -1381,6 +1382,58 @@ static void update_flows(void)
     }
 }
 
+/* LavaProminence.cpp: Wait arg0 frames (default 180; SW_A, if it has one, must be on), Sign 90, MoveStartExtra (it
+ * comes in along the rail's start direction from 300 before it at arg1 a frame, default 20), MoveLoop along the rail
+ * to its length - arg3, MoveEndExtra on along the end direction until 300 past the end, hidden, Wait again; its body
+ * (120 x scale) burns Mario. row_turn 0 wait, 1 sign, 2 coming in, 3 on the rail, 4 going out; row_step its frames.
+ * ponytail: no Sign / Start / End / drop effects, the ball not turned to the rail (its front as placed) */
+static float prom_len(const Inst *in)
+{
+    float l = 0;
+    for (u32 i = 0; i + 1 < in->prom_n; i++)
+        l += vlen(v3(in->prom[3 * i + 3] - in->prom[3 * i], in->prom[3 * i + 4] - in->prom[3 * i + 1], in->prom[3 * i + 5] - in->prom[3 * i + 2]));
+    return l;
+}
+
+static V3 prom_pos(const Inst *in)
+{
+    const Row *r = &sc->objs[in->row];
+    const float *p = in->prom;
+    u32 n = in->prom_n;
+    float speed = r->arg[1] > 0 ? (float)r->arg[1] : 20.0f, t = row_step[in->row];
+    V3 a = v3(p[0], p[1], p[2]), b = v3(p[3 * n - 3], p[3 * n - 2], p[3 * n - 1]);
+    switch (row_turn[in->row]) {
+    case 2: return vadd(a, vmul(vnorm(v3(p[3] - p[0], p[4] - p[1], p[5] - p[2])), speed * t - 300.0f));
+    case 3: return rail_at(p, n, speed * t);
+    default: return vadd(b, vmul(vnorm(v3(p[3 * n - 3] - p[3 * n - 6], p[3 * n - 2] - p[3 * n - 5], p[3 * n - 1] - p[3 * n - 4])), speed * t));
+    }
+}
+
+static void update_prom(void)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->prom || !row_shown(in->row)) continue;
+        const Row *r = &sc->objs[in->row];
+        unsigned short *t = &row_step[in->row];
+        signed char *ph = &row_turn[in->row];
+        float speed = r->arg[1] > 0 ? (float)r->arg[1] : 20.0f;
+        if (*ph == 0 && r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) { *t = 0; continue; }
+        ++*t;
+        if (*ph == 0 && *t >= (r->arg[0] > 0 ? r->arg[0] : 180)) { *ph = 1; *t = 0; }
+        else if (*ph == 1 && *t >= 90) { *ph = 2; *t = 0; }
+        else if (*ph == 2 && *t >= (int)(300.0f / speed)) { *ph = 3; *t = 0; }
+        else if (*ph == 3 && speed * *t >= prom_len(in) - (r->arg[3] > 0 ? r->arg[3] : 0)) { *ph = 4; *t = 0; }
+        else if (*ph == 4 && speed * *t > 300.0f) { *ph = 0; *t = 0; }
+        if (*ph < 2) continue;
+        if (vlen(vsub(c, prom_pos(in))) < 120.0f * r->scale[0] + HIT_BODY_R && !mario->hurt_timer) {
+            hurt_mario(prom_pos(in), 15.0f);
+            printf("lava prominence %d burns" "\n", in->row);
+        }
+    }
+}
+
 /* JumpStand.cpp: Mario landing on it is held (bound); TrampleBound throws him at step 5 along -gravity at 26, 32 if
  * he pressed jump in those 5 frames; HipDropBound (a hip drop landing) sinks him 6 - ease a frame for 15 frames, then
  * 43 along its up. row_turn: 0 wait, 1 trample, 2 high trample, 3 hip drop; row_step frames; jstand_pos the held
@@ -1554,6 +1607,12 @@ void game_rebind(void)
         in->killer = strcmp(name, "HomingKiller") == 0;
         in->gcap = strcmp(name, "GCaptureTarget") == 0;
         in->tspot = strcmp(name, "TreasureSpot") == 0 ? 1 : strcmp(name, "CoinFlower") == 0 ? 2 : 0;
+        in->prom = NULL;
+        if (scene_blob_g && r->path >= 0 && strncmp(name, "LavaProminence", 14) == 0 && strcmp(name, "LavaProminenceTriple")) {
+            int cl;
+            in->prom = find_rail(scene_blob_g, r->zone, r->path, &in->prom_n, &cl);
+            if (in->prom_n < 2) in->prom = NULL;
+        }
         if (scene_blob_g && r->path >= 0 && (strcmp(name, "MeteorStrike") == 0 || strcmp(name, "MeteorStrikeEnvironment") == 0)) {
             u32 n; int cl;
             const float *p = find_rail_of(scene_blob_g, r->zone, r->path, &n, &cl, 1);
@@ -2081,6 +2140,26 @@ void game_test_tspot_near(void) /* Mario held 600 off the first unopened one (it
         mario->hvel = v3(0, 0, 0); mario->vup = 0;
         return;
     }
+}
+
+int game_test_prom(void)
+{
+    for (int i = 0; i < ninsts; i++) { /* Mario held on the middle of the first one's rail */
+        const Inst *in = &insts[i];
+        if (!in->prom) continue;
+        V3 p = rail_at(in->prom, in->prom_n, prom_len(in) * 0.5f);
+        mario->pos = vsub(p, vmul(mario->up, HIT_BODY_H));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return in->row;
+    }
+    for (u32 i = 0; i < sc->nobjs; i++) /* not bound yet: Mario at its row, its zone streams in */
+        if (strncmp(sc->types + 32 * sc->objs[i].type, "LavaProminence", 14) == 0) {
+            const Row *r = &sc->objs[i];
+            mario->pos = v3(r->pos[0], r->pos[1], r->pos[2]);
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return -2;
+        }
+    return -1;
 }
 
 int game_test_geyser(void)
@@ -4257,6 +4336,7 @@ void game_update(void)
     update_meteor();
     update_killers();
     update_flows();
+    update_prom();
     update_pipes();
     update_switches();
     update_pops();
@@ -4409,6 +4489,15 @@ void game_draw(void)
         if (in->assembly && row_turn[in->row] == 4 && row_step[in->row] + 100 >= (sc->objs[in->row].arg[1] > 0 ?
             sc->objs[in->row].arg[1] : 300) && (game_frame & 4))
             continue; /* about to vanish: blinks (ponytail for its Disappear animation) */
+        if (in->prom) { /* the ball while it is out */
+            if (row_turn[in->row] < 2) continue;
+            float cm[16];
+            memcpy(cm, in->m, 64);
+            V3 p = prom_pos(in);
+            cm[12] = p.x; cm[13] = p.y; cm[14] = p.z;
+            render_model(in->md, cm, 0x70, 0xB0, 0x60);
+            continue;
+        }
         if (in->killer) { /* its bullet, nose along its front */
             const Killer *k = NULL;
             for (int j = 0; j < nkillers; j++) if (killers[j].row == in->row) k = &killers[j];
