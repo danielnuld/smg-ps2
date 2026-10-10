@@ -193,10 +193,15 @@ there needs the embedded blob and every pack rebuilt.
 6. Task 5.3 gate: 2026-10-10 run with ambient effects and miss counts: 112 play clean, 23 miss, 1 timeout
    (SandClock 1: stuck at boot), worst frame 157.6 ms (CosmosGarden 2) (`out/coverage.md`). The cover test takes a
    shown launch star landing by something placed (OceanPhantomCave 1's first one flew to another scenario's planet).
-   Misses to look at: every frame (901) in AstroDome 1-6 (no map collision), FileSelect / EpilogueDemoStage (menus)
-   and BattleShip 6 (a hidden star: layer mask 0, no start; exclude such scenarios); a few to 119 in OceanRing 4 / 6,
-   BattleShip 3-5, HoneyBeeEx 1, KoopaJrShipLv1 1, Phantom 2 / 3 / 6, SurfingLv2 1, BreakDownPlanet 1, CannonFleet 2,
-   CocoonEx 1 (after the launch star flight, or enemies: check each log). Earlier: coverage run done once (136 / 136 play, `out/coverage.md`, `tools/coverage_report.py`), class
+   Fixed since: the first load also takes what streaming wants around the start (OceanRing 4 / 6 started over a zone
+   only `soon`: a miss a frame for 2 s), off every full model the `soon` zones are urgent too; black holes leave Mario
+   alone in a launch star's flight and a miss ends the flight (BreakDownPlanet, HoneyBeeEx, Phantom 2: the flight
+   crossed a BlackHoleCube, every respawn flew back into it). Left: AstroDome 1-6, FileSelect, EpilogueDemoStage
+   (menus, no map collision) and BattleShip 6 (a hidden star: layer mask 0, no start) should leave the run;
+   SurfingLv2 1 (starts on a SurfRay) and KoopaJrShipLv1 1 (starts on KoopaJrSmallShipA at its guide point) need
+   those rides; Phantom 6: gravity points up at restart point 1 (row 57), Mario falls into BlackHole 58 (gravity
+   priority by TeresaHouseZone?); one miss each in BattleShip 3, CannonFleet 2 (death areas), CocoonEx 1,
+   BreakDownPlanet 1, HoneyBeeEx 1, Phantom 3 (2): after the cover test's flight. Earlier: coverage run done once (136 / 136 play, `out/coverage.md`, `tools/coverage_report.py`), class
    weights (`out/class_coverage.md`); left: the final run on the current build, worst frame on the heaviest scenario,
    videos. Blocking zone loads (a zone wanted before its prefetch ends) are the worst frames (HoneyBee ~0.4 s).
 7. Last (the user's call): sound effects (AFC -> ADPCM), music on the disc (streams in the ISO), ChangeBgmCube / RestartCube BGM changes.

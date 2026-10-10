@@ -2247,9 +2247,11 @@ void game_zone_sets(const unsigned char *full, unsigned char *need, unsigned cha
             on_full = 1;
         }
     }
-    if (!on_full) /* out of every full model: the zones he is near are wanted at once (2), else read in the background */
+    if (!on_full) /* out of every full model: the zones he is near or soon reaches are wanted at once (2), else read in
+                   * the background (OceanRing 4 starts 2000 over a zone only `soon`: no collision until it streamed in,
+                   * a miss a frame) */
         for (int z = 0; z < MAX_ZONES; z++)
-            if (need[z] && !full[z]) need[z] = 2;
+            if ((need[z] || (soon[z] && mario->launch < 0)) && !full[z]) need[z] = 2;
     if (pipe_zone >= 0 && pipe_zone < MAX_ZONES) { /* came out of a pipe in a low zone: its collision is needed now */
         if (full[pipe_zone]) pipe_zone = -1;
         else { need[pipe_zone] = 2; dist[pipe_zone] = -1e30f; }
@@ -3807,6 +3809,7 @@ static void update_mario(void)
 static void miss(void)
 {
     mario->pos = start_pos; mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->hurt_timer = 0; mario->hip = 0;
+    mario->launch = -1; /* out of any launch star's flight (it would carry him back) */
     life = max_life = MAX_LIFE;
     if (--lives < 0) { printf("game over\n"); lives = START_LIVES; }
     printf("miss %d, lives %d\n", ++misses, lives);
@@ -4495,6 +4498,7 @@ static void update_hazards(void)
         V3 p = v3(in->m[12], in->m[13], in->m[14]);
         float r = 100.0f;
         if (in->hazard >= 3) { /* black hole: sphere 500 * scale, or Mario's sensor inside the cube's box */
+            if (mario->launch >= 0) continue; /* carried by a launch star: bound, nothing inhales him */
             const Row *rw = &sc->objs[in->row];
             V3 d = vsub(c, p), x, z;
             row_axes(rw, &x, &z);

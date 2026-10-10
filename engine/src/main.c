@@ -509,8 +509,11 @@ int main(void)
         audio_music(path);
     }
     {
-        unsigned char start[64];
+        unsigned char start[64], near[64]; /* the start zone's chain and what streaming wants around Mario there (OceanRing 4
+                                            * starts over another zone: without it, no ground for 2 s) */
         chain_of(scene_start(&scene)->zone, start);
+        target_set(near);
+        for (int z = 0; z < 64; z++) start[z] |= near[z];
         pend_start(start);
     }
     pend_step(0xFFFFFFFF);
