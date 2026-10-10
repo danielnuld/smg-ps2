@@ -35,6 +35,8 @@ int game_test_plant(int k);
 int game_test_steam(void);
 /* Test builds: Mario held in the first LavaGeyser's column (his centre 300 up it); its row or -1 */
 int game_test_geyser(void);
+/* Test builds: Mario at the first unbroken SmallStone ring (spin: spinning); its row or -1 */
+int game_test_stone(int spin);
 /* Test builds: Mario held half way along the first LavaProminence's rail; its row, -2 streaming, -1 none */
 int game_test_prom(void);
 /* Test builds: a shot at the first unopened TreasureSpot / CoinFlower (cursor on it, L1): its row, -2 behind the

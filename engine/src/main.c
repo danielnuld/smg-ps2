@@ -665,6 +665,10 @@ int main(void)
             if (frame % 120 == 0) printf("prom test f %u: row %d, life %d\n", frame, row, game_life());
         }
 #endif
+#ifdef STONE_TEST
+        if (frame >= 120 && frame < 600 && frame % 60 < 30) game_test_stone(0); /* its zone streams in, the ring drops */
+        if (frame >= 120 && frame < 600 && frame % 60 == 30) printf("stone test f %u: spin at row %d, pieces %d\n", frame, game_test_stone(1), game_pieces_out());
+#endif
 #ifdef GEYSER_TEST
         if (frame >= 120 && frame <= 1200 && frame % 15 == 0) {
             int row = game_test_geyser();

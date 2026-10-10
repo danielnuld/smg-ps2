@@ -386,6 +386,7 @@ static Plant *plants;
 static int *plant_first;           /* per OBJS row: index of its first member in plants, -1 not a group */
 static unsigned char *plant_state; /* per OBJS row */
 static int plant_count(const Row *r);
+static int stone_row(const Row *r);
 static Launch *launches;
 static int nlaunches;
 static int ground_flips, slip_frames;
@@ -715,6 +716,7 @@ void game_init(const Scene *s, const unsigned char *blob)
             if (s->objs[i].arg[2] == 1) box_pieces += s->objs[i].arg[1];
             else { ncoins += s->objs[i].arg[1]; box_coins += s->objs[i].arg[1]; }
         }
+        if (stone_row(&s->objs[i]) && s->objs[i].arg[2] >= 0) box_pieces += 8; /* a star piece per stone */
     }
     row_dead = mem_alloc(MEM_OBJECTS, s->nobjs);
     star_wait = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(short));
@@ -854,13 +856,13 @@ void game_init(const Scene *s, const unsigned char *blob)
         for (u32 i = 0; i < s->nobjs; i++) {
             int t = s->objs[i].type;
             plant_first[i] = -1;
-            if (t == t_fg || t == t_fb || t == t_cb) { plant_first[i] = total; total += plant_count(&s->objs[i]); }
+            if (t == t_fg || t == t_fb || t == t_cb || stone_row(&s->objs[i])) { plant_first[i] = total; total += plant_count(&s->objs[i]); }
         }
         plants = mem_alloc(MEM_OBJECTS, (total + 1) * sizeof(Plant));
         for (u32 i = 0; i < s->nobjs; i++) { /* initMember: the first arg1 hold an item, then shuffled */
             if (plant_first[i] < 0) continue;
             Plant *g = &plants[plant_first[i]];
-            int n = plant_count(&s->objs[i]), items = s->objs[i].arg[1] > 0 ? s->objs[i].arg[1] : 0;
+            int n = plant_count(&s->objs[i]), items = stone_row(&s->objs[i]) ? 0 : s->objs[i].arg[1] > 0 ? s->objs[i].arg[1] : 0;
             for (int k = 0; k < n; k++) g[k].item = k < items;
             for (int k = 0; k < n; k++) {
                 int j = rand() % (k + 1), t = g[k].item;
@@ -1492,7 +1494,16 @@ static void railer_place(Inst *in)
     in->m[12] = p.x; in->m[13] = p.y; in->m[14] = p.z;
 }
 
-static int plant_count(const Row *r) { return r->arg[0] > 0 ? r->arg[0] : 7; }
+/* SmallStone.cpp (SmallStone / CircleShell / CircleStrawberry): 8 members on a ring of 300 around it, each dropped
+ * onto the ground and raised arg0; a spin within 400 of its centre (120 up) breaks them all (star pieces when arg2
+ * is set: one each, ponytail for appearStarPiece's burst). They share the plant groups' members (plants) */
+static int stone_row(const Row *r)
+{
+    const char *n = sc->types + 32 * r->type;
+    return strcmp(n, "SmallStone") == 0 || strcmp(n, "CircleShell") == 0 || strcmp(n, "CircleStrawberry") == 0;
+}
+
+static int plant_count(const Row *r) { return stone_row(r) ? 8 : r->arg[0] > 0 ? r->arg[0] : 7; }
 
 /* the first collision under `from` along -up within len, stepped by spheres of radius 20 */
 static int kcl_query(V3 c, float radius, Hit *out, int max);
@@ -1516,14 +1527,16 @@ static void place_plants(const Inst *in)
     x = vnorm(vtangent(x, up));
     if (vlen(x) < 0.5f) x = vnorm(vtangent(z, up));
     V3 y = vcross(up, x);
-    int ring = 0, n = plant_count(r), hits = 0;
-    float angle = 0, step = 6.2831853f, radius = 0;
+    int ring = 0, n = plant_count(r), hits = 0, stone = stone_row(r);
+    float angle = 0, step = stone ? 6.2831853f / 8 : 6.2831853f, radius = stone ? 300.0f : 0;
     for (int k = 0; k < n; k++) {
         Plant *p = &plants[plant_first[row] + k];
         V3 at = vadd(c, vadd(vmul(x, cosf(angle) * radius), vmul(y, sinf(angle) * radius)));
         p->up = up_at(at, up);
         hits += p->ok = drop_to_ground(vadd(at, vmul(p->up, 100.0f)), p->up, 1000.0f, &p->pos);
+        if (stone && r->arg[0] > 0) p->pos = vadd(p->pos, vmul(p->up, (float)r->arg[0])); /* mPlacementOffset */
         angle += step;
+        if (stone) continue;
         if (angle >= 6.2831f) { ring++; angle = 0; step = 6.2831853f / (ring * 6); radius = 160.0f * ring; }
     }
     plant_state[row] = hits > 0; /* none: its ground is not loaded yet, try again at the next rebind */
@@ -1620,7 +1633,8 @@ void game_rebind(void)
         }
         in->tsuki = scene_blob_g && r->path >= 0 && strcmp(name, "Tsukidashikun") == 0 ?
                     find_path(scene_blob_g, r->zone, r->path) : NULL;
-        in->plant = strcmp(name, "FlowerGroup") == 0 || strcmp(name, "FlowerBlueGroup") == 0 || strcmp(name, "CutBushGroup") == 0;
+        in->plant = strcmp(name, "FlowerGroup") == 0 || strcmp(name, "FlowerBlueGroup") == 0 || strcmp(name, "CutBushGroup") == 0 ||
+                    stone_row(r);
         in->hipsw = strncmp(name, "PicketSwitch", 12) == 0 || strcmp(name, "HipDropSwitch") == 0 ? 1 :
                     strcmp(name, "HipDropTimerSwitch") == 0 ? 2 : 0;
         in->rotor = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->arg[4] != -1 && r->arg[4] != 0; /* -1: not a map part */
@@ -2159,6 +2173,19 @@ int game_test_prom(void)
             mario->hvel = v3(0, 0, 0); mario->vup = 0;
             return -2;
         }
+    return -1;
+}
+
+int game_test_stone(int spin)
+{
+    for (u32 i = 0; i < sc->nobjs; i++) { /* Mario at the first unbroken one, spinning */
+        const Row *r = &sc->objs[i];
+        if (!stone_row(r) || row_dead[i]) continue;
+        mario->pos = vadd(row_pos(r), vmul(mario->up, 50.0f));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        if (spin) mario->spin_timer = SPIN_TIME;
+        return (int)i;
+    }
     return -1;
 }
 
@@ -3902,6 +3929,10 @@ static void update_plants(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     int moving = vdot(mario->hvel, mario->hvel) >= 2.0f || mario->spin_timer > 0;
+    for (int i = 0; i < ninsts; i++) /* groups whose ground was not loaded at their rebind: again while Mario is near */
+        if (insts[i].plant && plant_first[insts[i].row] >= 0 && !plant_state[insts[i].row] &&
+            vlen(vsub(c, v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]))) < 4000.0f)
+            place_plants(&insts[i]);
     for (int i = 0; moving && i < ninsts; i++) {
         const Inst *in = &insts[i];
         if (!in->plant || plant_first[in->row] < 0 || !row_shown(in->row) ||
@@ -3909,6 +3940,27 @@ static void update_plants(void)
             continue;
         const Row *r = &sc->objs[in->row];
         int n = plant_count(r);
+        if (stone_row(r)) { /* SmallStone::tryBreak */
+            if (mario->spin_timer <= 0 || plant_state[in->row] != 1) continue;
+            V3 ctr = v3(0, 0, 0), up = v3(0, 0, 0);
+            int m = 0;
+            for (int k = 0; k < n; k++) {
+                const Plant *p = &plants[plant_first[in->row] + k];
+                if (p->ok) { ctr = vadd(ctr, p->pos); up = p->up; m++; }
+            }
+            if (!m || vlen(vsub(mario->pos, vadd(vmul(ctr, 1.0f / m), vmul(up, 120.0f)))) > 400.0f) continue;
+            for (int k = 0; k < n; k++) {
+                Plant *p = &plants[plant_first[in->row] + k];
+                if (!p->ok) continue;
+                fx_at(FX_PUNCHBOX_BREAK, p->pos, p->up);
+                if (r->arg[2] >= 0) drop_pieces(p->pos, p->up, 1);
+                p->ok = 0;
+            }
+            plant_state[in->row] = 2; /* broken */
+            row_kill(in->row);
+            printf("small stone %d broken" "\n", in->row);
+            continue;
+        }
         for (int k = 0; k < n; k++) {
             Plant *p = &plants[plant_first[in->row] + k];
             if (!p->ok || !p->item || vlen(vsub(c, p->pos)) > 50.0f * r->scale[1] + HIT_BODY_R) continue;
