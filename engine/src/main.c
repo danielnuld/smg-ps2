@@ -746,6 +746,10 @@ int main(void)
         if (frame == 240) printf("kmini test: spin by row %d\n", game_test_enemy(9, 0, 1));
         if (frame == 360) printf("kmini test: %d alive\n", game_kind_alive(9));
 #endif
+#ifdef KARON_TEST
+        if (frame == 120) printf("karon test: stomp row %d\n", game_test_enemy(10, 0, 0));
+        if (frame >= 200 && frame < 600 && frame % 60 == 0) printf("karon test f %u: %d up, life %d\n", frame, game_kind_alive(10), game_life());
+#endif
 #ifdef ENEMY_TEST
         if (frame == 120) printf("enemy test: stomp TakoHei row %d\n", game_test_enemy(1, 0, 0));
         if (frame == 240) printf("enemy test: spin by PackunPetit row %d\n", game_test_enemy(2, 0, 1));
