@@ -974,7 +974,7 @@ void game_init(const Scene *s, const unsigned char *blob)
             const float *e = (const float *)(z + 4 + 56 * i + 32);
             mat_translate_rot_scale(zm[i], e, e + 3, one);
         }
-        CamTarget t = {mario->pos, mario->face, mario->up, 0};
+        CamTarget t = {mario->pos, mario->face, mario->up, 0, 0, {0, 0, 0}};
         camera_init(c ? (const CamParam *)(c + 16) : NULL, c ? *(const int *)c : 0,
                     a ? (const CamArea *)(a + 16) : NULL, a ? *(const int *)a : 0, (const float (*)[16])zm, &t);
     }
@@ -2526,6 +2526,35 @@ static void init_launch(Launch *L, const Row *r, const float *pts, u32 np, int p
 }
 
 /* Mario while a launch star holds him: returns 0 once it lets go */
+/* Mario's pose in a launch star's flight (SuperSpinDriver.cpp / SpinDriver.cpp updateBindActorMatrix): his head (Y)
+ * turns towards the path's direction at 0.4 a frame (turnBindHead), he spins about it (_138: 0 to 2 pi x
+ * floor((t1 - t0) x 0.05 / 2 pi), eased out over t0..t1) and flips over (_148: 0 to pi over t1..t2) before the end;
+ * t0 = the loop clip (flight / 5, at most 90), t1 = flight - 70 (SpaceFlyEnd, 50 frames, + 20), t2 = flight - 20
+ * (Fall) (calcShootMotionTime). fly_on: the draw takes this basis. ponytail: no -75 ring offset, no stick steering */
+static V3 fly_x, fly_y, fly_z; /* the drawn basis */
+static V3 fly_hy, fly_hz;      /* the head's basis before the spin and flip (turned towards the path) */
+static int fly_on;
+
+static void fly_pose(Player *m, V3 dir, int s, int flight)
+{
+    if (s <= 1) { fly_hy = m->up; fly_hz = m->face; }
+    if (vlen(dir) > 1e-3f) fly_hy = vnorm(vadd(fly_hy, vmul(vsub(vnorm(dir), fly_hy), 0.4f)));
+    fly_hz = vnorm(vtangent(fly_hz, fly_hy));
+    if (vlen(fly_hz) < 0.5f) fly_hz = vnorm(vtangent(m->face, fly_hy));
+    V3 hx = vcross(fly_hy, fly_hz);
+    int t1 = flight - 70, t2 = flight - 20, t0 = flight / 5 < 90 ? flight / 5 : 90;
+    if (flight < 70) { t0 = -1; t1 = 0; }
+    if (t1 <= t0) t0 = 0;
+    float spin = 6.2831853f * floorf((t1 - t0) * 0.05f / 6.2831853f), b = 0, a = 0;
+    if (s >= t0 && t1 > t0) { float v = s >= t1 ? 1.0f : (float)(s - t0) / (t1 - t0); b = spin * (1 - (1 - v) * (1 - v)); }
+    if (s >= t1 && t2 > t1) a = 3.14159265f * (s >= t2 ? 1.0f : (float)(s - t1) / (t2 - t1));
+    V3 y = vadd(vmul(fly_hy, cosf(a)), vmul(fly_hz, sinf(a))), z = vsub(vmul(fly_hz, cosf(a)), vmul(fly_hy, sinf(a)));
+    V3 x = vsub(vmul(hx, cosf(b)), vmul(z, sinf(b)));
+    z = vadd(vmul(hx, sinf(b)), vmul(z, cosf(b)));
+    fly_x = x; fly_y = y; fly_z = z;
+    fly_on = 1;
+}
+
 static int update_launch(Player *m)
 {
     Launch *L = &launches[m->launch];
@@ -2545,19 +2574,23 @@ static int update_launch(Player *m)
         return 0;
     }
     float u = (float)s / L->flight;
+    int t0 = L->flight / 5 < 90 ? L->flight / 5 : 90;
     if (s == 1 && mario_anim) mario_play(small ? "spaceflyshortstart" : "spaceflystart", 1.0f, 0);
-    if (s == L->flight / 5 && mario_anim) mario_play(small ? "spaceflyshort" : "spaceflyloop", 1.0f, 1);
+    if (s == t0 && mario_anim) mario_play(small ? "spaceflyshort" : "spaceflyloop", 1.0f, 1);
     if (s == L->flight - 70 && mario_anim) mario_play("spaceflyend", 1.0f, 0);
+    if (s == L->flight - 20 && mario_anim) mario_play("fall", 1.0f, 1);
     V3 p = launch_pos(L, u > 1 ? 1 : u), q = launch_pos(L, u + 0.01f > 1 ? 1 : u + 0.01f);
-    V3 dir = vsub(q, p);
+    V3 dir = vsub(q, p), step = vsub(p, m->pos); /* _D0: this frame's move, kept when he is let go */
     m->pos = p;
     if (vlen(dir) > 1e-3f) m->face = vnorm(vtangent(dir, m->up));
+    fly_pose(m, dir, s, L->flight);
     if (s < L->flight)
         return 1;
-    /* endBind: Mario falls from the path's end; the star rests 60 frames (exeCoolDown) */
+    /* endBindAndSpinDriverJump(_D0): he goes on with the path's last velocity; the star rests 60 frames */
     L->cool = 60;
     m->launch = -1;
-    m->hvel = v3(0, 0, 0); m->vup = 0; m->grounded = 0;
+    fly_on = 0;
+    m->hvel = vtangent(step, m->up); m->vup = vdot(step, m->up); m->grounded = 0;
     m->jump_kind = 0; m->air_timer = DROP_WAIT + 1; m->spin_used = 0;
     return 0;
 }
@@ -4400,7 +4433,7 @@ void game_update(void)
     collect(pieces, npieces, 120.0f, &got_pieces, FX_STARPIECE_STARPIECEGET);
     update_cursor();
     spin_angle += 0.08f;
-    CamTarget t = {mario->pos, mario->face, mario->up, !mario->grounded};
+    CamTarget t = {mario->pos, mario->face, mario->up, !mario->grounded, mario->launch >= 0 && fly_on, fly_hy};
     camera_update(&t);
     V3 w, u;
     float fovy;
@@ -4687,6 +4720,11 @@ void game_draw(void)
         render_model(md, m, kuribo[i].state == KURIBO_STUN ? 0x50 : 0x90, 0x50, 0x20);
     }
     basis_matrix(m, mario->pos, mario->up, mario->face, 0);
+    if (fly_on && mario->launch >= 0) { /* in a launch star's flight: head along the path (fly_pose) */
+        m[0] = fly_x.x; m[1] = fly_x.y; m[2] = fly_x.z;
+        m[4] = fly_y.x; m[5] = fly_y.y; m[6] = fly_y.z;
+        m[8] = fly_z.x; m[9] = fly_z.y; m[10] = fly_z.z;
+    }
     if (m_mario_skin && !(mario->hurt_timer & 4))
         render_skinned(m_mario_skin, m, (const float (*)[16])mario_anim->drw);
     fx_draw();

@@ -20,6 +20,9 @@ Last updated 2026-10-09. Detail and numbers: `docs/phase2-report.md`; tasks: `op
     asynchronous: no slow frame while streaming; ~1.5-2 MB/s in PCSX2, a zone wanted at once blocks ~1 s);
   - texture cache in GS memory, frustum culling, indexed geometry;
   - launch stars: SuperSpinDriver (+ Pink / Green), SpinDriver (rail flight or a throw along its Y axis);
+    in flight Mario's head points along the path (turned 0.4 a frame), he spins and flips before the end
+    (updateBindActorMatrix), the clips follow calcShootMotionTime, he is let go with the path's last velocity, and a
+    chase camera (1300 behind, 400 above, eased) stands in for SpinDriverCamera's event camera;
   - coins: Coin, RailCoin, CircleCoinGroup and the purple ones, StarPiece, StarPieceGroup, StarPieceFlow (arg1 pieces
     riding its rail at arg0, round again); ShootingStar (appears arg2
     up its y, falls, bursts into arg0 of the arg3 star pieces it holds, again every arg1 frames until empty);

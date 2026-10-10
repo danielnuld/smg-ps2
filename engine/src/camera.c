@@ -110,7 +110,8 @@ static void zone_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V
         return;
     }
     const float *m = zones[p->zone];
-    CamTarget l = {to_local(m, t->pos, 1), to_local(m, t->front, 0), to_local(m, t->up, 0), t->jumping};
+    CamTarget l = {to_local(m, t->pos, 1), to_local(m, t->front, 0), to_local(m, t->up, 0), t->jumping, t->flying,
+                   to_local(m, t->fly_dir, 0)};
     V3 se = type_eye, su = type_up;
     type_eye = to_local(m, se, 1);
     type_up = to_local(m, su, 0);
@@ -323,6 +324,12 @@ static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V
         *eye = vadd(*watch, vmul(vnorm(vsub(*eye, *watch)), 300.0f));
 }
 
+/* A launch star's flight: SpinDriverCamera follows its own event camera (the star's camera set in the bcam, not
+ * ported); ponytail: a chase camera 1300 behind Mario along the path and 400 above him, eased 0.1 a frame; once he
+ * lands, the area camera takes over through camint (30 frames). */
+static int was_flying;
+static V3 fly_eye;
+
 void camera_update(const CamTarget *t)
 {
     int a = -1;
@@ -372,6 +379,19 @@ void camera_update(const CamTarget *t)
     f_watch = vadd(vmul(f_watch, 0.7f), vmul(i_watch, 0.3f));
     f_up = vnorm(vadd(vmul(f_up, 0.7f), vmul(i_up, 0.3f)));
     f_fovy = 0.9f * f_fovy + 0.1f * fovy;
+    if (t->flying) {
+        V3 d = vlen(t->fly_dir) > 1e-3f ? vnorm(t->fly_dir) : t->front;
+        V3 want = vadd(vsub(t->pos, vmul(d, 1300.0f)), vmul(t->up, 400.0f));
+        if (!was_flying) fly_eye = f_eye;
+        fly_eye = vadd(fly_eye, vmul(vsub(want, fly_eye), 0.1f));
+        f_eye = fly_eye; f_watch = t->pos; f_up = t->up;
+        i_eye = f_eye; i_watch = f_watch; i_up = f_up;
+        was_flying = 1;
+    } else if (was_flying) { /* landed: blend from the flight pose into the area camera */
+        was_flying = 0;
+        timer = 0;
+        camint = 30;
+    }
 }
 
 void camera_pose(V3 *eye, V3 *watch, V3 *up, float *fovy)
