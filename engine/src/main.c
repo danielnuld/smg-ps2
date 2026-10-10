@@ -563,6 +563,12 @@ int main(void)
             if (frame % 60 == 0) printf("steam test f %u: in row %d, life %d\n", frame, row, game_life());
         }
 #endif
+#ifdef ASSEMBLY_TEST
+        if (frame >= 120 && frame % 30 == 0) {
+            int k = (int)(frame - 120) / 30, row = k < 40 ? game_test_assembly(k / 2) : -1;
+            if (frame % 60 == 0) printf("assembly test f %u: block %d row %d, %d assembled\n", frame, k / 2, row, game_assembled());
+        }
+#endif
 #ifdef GEYSER_TEST
         if (frame >= 120 && frame <= 1200 && frame % 15 == 0) {
             int row = game_test_geyser();

@@ -140,6 +140,8 @@ typedef struct {
     int sky;         /* sky dome (Petari Sky): centred on the camera, drawn first */
     int steam;       /* LavaSteam: vents on a cycle and burns (update_steam) */
     int geyser;      /* LavaGeyser: shoots up on a cycle and burns (update_geyser, geyser_height) */
+    int assembly;    /* AssemblyBlock: floats at its home, flies into place when Mario is near (assembly_place) */
+    V3 gup;          /* AssemblyBlock: up at its home (its bobbing) */
     int shoot;       /* ShootingStar: falls, bursts into star pieces (update_shooting) */
     int plant;       /* PlantGroup (Flower / FlowerBlue / CutBush Group): its model drawn at each member (plants) */
     const unsigned char *railer; /* map part on a rail: its PATH entry; moves along it (update_railers) */
@@ -962,6 +964,81 @@ static void rotor_matrix(Inst *in)
     in->m[12] = r->pos[0]; in->m[13] = r->pos[1]; in->m[14] = r->pos[2];
 }
 
+/* AssemblyBlock.cpp. Its home (slice.py: the linked GeneralPos 合体ブロック故郷点, else 1000 up and along z; args 2-4
+ * position, arg5 rx << 16 | ry, arg6 rz, degrees) and its place (the row). row_turn: 0 Wait (at home, turning 0.1
+ * degree a frame about its local x, y and z: one turn about x + y + z; bobbing sin(step) along gravity a frame), 1
+ * Assemble (home -> place in 10 frames), 2 AssembleWait, 3 Return (10 frames), 4 Timer; row_step its frames.
+ * ponytail: the blend lerps the matrices and re-orthonormalizes, no slerp; collision stays on while it flies */
+static void assembly_home(const Row *r, float m[16])
+{
+    float pos[3] = {(float)r->arg[2], (float)r->arg[3], (float)r->arg[4]};
+    float rot[3] = {(float)(r->arg[5] >> 16 & 0xFFFF), (float)(r->arg[5] & 0xFFFF), (float)r->arg[6]};
+    mat_translate_rot_scale(m, pos, rot, r->scale);
+}
+
+static void assembly_place(Inst *in)
+{
+    const Row *r = &sc->objs[in->row];
+    float h[16], p[16];
+    int st = row_step[in->row], ph = row_turn[in->row];
+    assembly_home(r, h);
+    mat_translate_rot_scale(p, r->pos, r->rot, r->scale);
+    if (ph == 0) { /* Wait */
+        V3 a = vnorm(vadd(vadd(v3(h[0], h[1], h[2]), v3(h[4], h[5], h[6])), v3(h[8], h[9], h[10])));
+        float t = (in->row & 1 ? 0.1732f : -0.1732f) * game_frame * 0.0174533f, c = cosf(t), s = sinf(t), k = 1 - c;
+        float rot[16], base[16];
+        mat_identity(rot);
+        rot[0] = c + a.x * a.x * k;       rot[4] = a.x * a.y * k - a.z * s; rot[8] = a.x * a.z * k + a.y * s;
+        rot[1] = a.y * a.x * k + a.z * s; rot[5] = c + a.y * a.y * k;       rot[9] = a.y * a.z * k - a.x * s;
+        rot[2] = a.z * a.x * k - a.y * s; rot[6] = a.z * a.y * k + a.x * s; rot[10] = c + a.z * a.z * k;
+        memcpy(base, h, 64);
+        base[12] = base[13] = base[14] = 0;
+        mat_mul(in->m, rot, base);
+        V3 hp = v3(h[12], h[13], h[14]), d = vmul(in->gup, -57.3f * (1.0f - cosf(st * 0.0174533f)));
+        in->m[12] = hp.x + d.x; in->m[13] = hp.y + d.y; in->m[14] = hp.z + d.z;
+        return;
+    }
+    if (ph != 1 && ph != 3) { memcpy(in->m, p, 64); return; }
+    float u = st >= 10 ? 1.0f : st / 10.0f;
+    if (ph == 3) u = 1.0f - u;
+    for (int j = 0; j < 16; j++) in->m[j] = h[j] + (p[j] - h[j]) * u;
+    V3 x = vnorm(v3(in->m[0], in->m[1], in->m[2])), y = v3(in->m[4], in->m[5], in->m[6]);
+    y = vnorm(vsub(y, vmul(x, vdot(x, y))));
+    V3 z = vcross(x, y);
+    float sc = r->scale[0];
+    in->m[0] = x.x * sc; in->m[1] = x.y * sc; in->m[2] = x.z * sc;
+    in->m[4] = y.x * sc; in->m[5] = y.y * sc; in->m[6] = y.z * sc;
+    in->m[8] = z.x * sc; in->m[9] = z.y * sc; in->m[10] = z.z * sc;
+}
+
+static void carry(const float old[16], const Inst *in);
+static void update_assembly(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->assembly) continue;
+        const Row *r = &sc->objs[in->row];
+        unsigned short *t = &row_step[in->row];
+        signed char *ph = &row_turn[in->row];
+        float dist = r->arg[0] > 0 ? (float)r->arg[0] : 2.0f * in->reach;
+        float near = vlen(vsub(mario->pos, v3(r->pos[0], r->pos[1], r->pos[2])));
+        int alive = life > 0;
+        float old[16];
+        memcpy(old, in->m, 64);
+        if (*t < 0xFFFF) ++*t;
+        if (*ph == 0 && near < dist && alive) { *ph = 1; *t = 0; }
+        else if (*ph == 1 && *t >= 10) { *ph = r->arg[7] == 0 ? 4 : 2; *t = 0; }
+        else if (*ph == 2 && near > dist + 50.0f && alive) { *ph = 3; *t = 0; }
+        else if (*ph == 3 && *t >= 10) { *ph = 0; *t = 0; }
+        else if (*ph == 4 && *t >= (r->arg[1] > 0 ? r->arg[1] : 300)) {
+            printf("assembly block %d vanishes\n", in->row);
+            row_kill(in->row); game_rebind(); return;
+        }
+        assembly_place(in);
+        if (mario_ground == i) carry(old, in);
+    }
+}
+
 /* a rail-moving part's translation: its rail at row_coord */
 static V3 rail_at(const float *p, u32 n, float d);
 static void railer_place(Inst *in)
@@ -1070,6 +1147,7 @@ void game_rebind(void)
         in->shoot = strcmp(name, "ShootingStar") == 0;
         in->steam = strcmp(name, "LavaSteam") == 0;
         in->geyser = strcmp(name, "LavaGeyser") == 0;
+        in->assembly = strncmp(name, "AssemblyBlock", 13) == 0;
         in->plant = strcmp(name, "FlowerGroup") == 0 || strcmp(name, "FlowerBlueGroup") == 0 || strcmp(name, "CutBushGroup") == 0;
         in->hipsw = strncmp(name, "PicketSwitch", 12) == 0 || strcmp(name, "HipDropSwitch") == 0 ? 1 :
                     strcmp(name, "HipDropTimerSwitch") == 0 ? 2 : 0;
@@ -1089,6 +1167,12 @@ void game_rebind(void)
         in->reach = md->radius * in->s;
         if (in->rotor && row_angle) rotor_matrix(in);
         if (in->railer && row_coord) railer_place(in);
+        if (in->assembly) {
+            float h[16];
+            assembly_home(r, h);
+            in->gup = up_at(v3(h[12], h[13], h[14]), v3(0, 0, 0));
+            if (row_step) assembly_place(in);
+        }
         in->kcl_ready = 0;
         zone_grow(in);
     }
@@ -1303,6 +1387,27 @@ int game_test_steam(void)
         return insts[i].row;
     }
     return -1;
+}
+
+int game_test_assembly(int k)
+{
+    for (int i = 0; i < ninsts; i++) {
+        if (!insts[i].assembly || k-- > 0) continue;
+        const Row *r = &sc->objs[insts[i].row];
+        mario->pos = v3(r->pos[0], r->pos[1], r->pos[2]);
+        mario->pos = vadd(mario->pos, vmul(mario->up, 300.0f));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return insts[i].row;
+    }
+    return -1;
+}
+
+int game_assembled(void)
+{
+    int n = 0;
+    for (int i = 0; i < ninsts; i++)
+        if (insts[i].assembly && row_turn[insts[i].row] >= 1) n++;
+    return n;
 }
 
 int game_test_geyser(void)
@@ -2927,6 +3032,7 @@ void game_update(void)
     update_plants();
     update_steam();
     update_geyser();
+    update_assembly();
     update_pipes();
     update_switches();
     update_pops();
@@ -3075,6 +3181,9 @@ void game_draw(void)
             render_model(in->md, cm, 0x70, 0xB0, 0x60);
             continue;
         }
+        if (in->assembly && row_turn[in->row] == 4 && row_step[in->row] + 100 >= (sc->objs[in->row].arg[1] > 0 ?
+            sc->objs[in->row].arg[1] : 300) && (game_frame & 4))
+            continue; /* about to vanish: blinks (ponytail for its Disappear animation) */
         if (in->geyser) { /* stretched along its y to its height (geyser_height) */
             float k = geyser_height(in) / GEYSER_BIND, cm[16];
             if (k <= 0.0f) continue;

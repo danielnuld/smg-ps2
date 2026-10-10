@@ -77,6 +77,7 @@ EXTRA = {"FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "Fl
 STAR_DECLARERS = {"FlipPanelObserver": 7, "CrystalCageL": 0, "BreakableCage": None, "BreakableCageRotate": None,
                   "BreakableCageL": None}
 COIN100 = "１００枚コイン"
+HOME_POS = "\u5408\u4f53\u30d6\u30ed\u30c3\u30af\u6545\u90f7\u70b9"  # 合体ブロック故郷点: AssemblyBlock's home (Petari sReturnPosName)
 LOGIC = ("TimerSwitch", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
          "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "DeathCube", "DeathSphere",
          "DeathCylinder", "RestartCube", "StarPieceSpot")  # areas (areaobjinfo) travel as OBJS rows too
@@ -161,6 +162,7 @@ def scene(fs, galaxy, scenario):
     zones, objs, starts, paths = [dict(name=galaxy, pos=[0, 0, 0], rot=[0, 0, 0])], [], [], []
     cubes, bcams = [], []  # camera areas (cameracubeinfo rows) and each stage's cameraparam.bcam
     zone_id = {galaxy: 0}
+    homes = {}  # (zone, Obj_ID) -> the GeneralPos HOME_POS linked to that objinfo row
     order = [galaxy] + [s for s in act if s != galaxy]
     for s in order:
         files = stage_files(st / f"{s}.arc")
@@ -180,6 +182,10 @@ def scene(fs, galaxy, scenario):
             mp = files.get(f"{root}/jmp/mapparts/{layer}/mappartsinfo", b"")
             for r in map_parts(mp, rows(mp)):
                 objs.append(dict(r, zone=zid))
+            gp = files.get(f"{root}/jmp/generalpos/{layer}/generalposinfo", b"")
+            for r, pn, oid in zip(rows(gp), B.bcsv_column(gp, "PosName"), int_or(gp, "Obj_ID", len(B.bcsv_column(gp, "name")), -1)):
+                if pn == HOME_POS and oid >= 0:
+                    homes[(zid, oid)] = dict(zone=zid, pos=r["pos"], rot=r["rot"])
             sb = files.get(f"{root}/jmp/start/{layer}/startinfo", b"")
             for r, no in zip(rows(sb), int_or(sb, "MarioNo", len(B.bcsv_column(sb, "name")), 0)):
                 starts.append(dict(r, zone=zid, args=[no] + r["args"][1:]))  # arg0: MarioNo (RestartCube arg0)
@@ -198,6 +204,9 @@ def scene(fs, galaxy, scenario):
                               pts=list(zip(*p0)), cin=list(zip(*p1)) or list(zip(*p0)), cout=list(zip(*p2)) or list(zip(*p0)),
                               stop=int_or(info, "path_arg1", len(ids), -1)[i], arg0=int_or(pts, "point_arg0", npt, -1),
                               arg5=int_or(pts, "point_arg5", npt, -1)))
+    for o in objs:
+        if o["name"].startswith("AssemblyBlock") and (o["zone"], o["l_id"]) in homes:
+            o["home"] = homes[(o["zone"], o["l_id"])]
     return act, zones, objs, starts, paths, cubes, bcams, up
 
 
@@ -415,7 +424,7 @@ def kcl_to_le(b):
             sw16(o + 4 + 2 * k)
     blocks = lambda m: ((~m & 0xFFFFFFFF) >> shift) + 1   # root cells along an axis (mask = ~(extent - 1))
     root = 1 if xshift == -1 and xyshift == -1 else blocks(xmask) * blocks(ymask) * blocks(zmask)
-    seen_nodes, seen_lists = set(), set()
+    seen_nodes, seen_lists, seen_words = set(), set(), set()
     todo = [(octree, root)]
     while todo:
         base, count = todo.pop()
@@ -425,19 +434,19 @@ def kcl_to_le(b):
         for i in range(count):
             e = base + 4 * i
             v = struct.unpack_from(">i", b, e)[0]
-            sw32(e)
+            if e not in seen_words:
+                seen_words.add(e)
+                sw32(e)
             if v >= 0:
                 todo.append((base + v, 8))
             else:
-                lst = base + (v & 0x7FFFFFFF)
-                if lst in seen_lists:
-                    continue
-                seen_lists.add(lst)
-                o = lst
-                sw16(o)
-                o += 2
+                # a list's first u16 is never read (KCollision.cpp: while (*++prismList)) and may be the low half of
+                # a node word (AssemblyBlockPartsB): left alone. Lists overlap, so each u16 swaps once
+                o = base + (v & 0x7FFFFFFF) + 2
                 while True:
-                    sw16(o)
+                    if o not in seen_lists:
+                        seen_lists.add(o)
+                        sw16(o)
                     if struct.unpack_from(">H", b, o)[0] == 0:
                         break
                     o += 2
@@ -797,7 +806,12 @@ def placement(fs, galaxy, scenario):
     # unrotated, transform them in camera.c by the CAMS zone when a galaxy needs it
     zid = {z["name"]: i for i, z in enumerate(zones)}
     up_ids = {zid[z]: zid[p] for z, p in up.items() if z in zid and p in zid and zid[p] != 0}
-    zworld = to_world(zones, up_ids, objs + starts + paths + cubes)
+    zworld = to_world(zones, up_ids, objs + starts + paths + cubes + [o["home"] for o in objs if "home" in o])
+    for o in objs:  # AssemblyBlock: its home point (world) in args 2-6 (assembly_home in game.c)
+        if o["name"].startswith("AssemblyBlock"):
+            h = o.get("home") or dict(pos=[o["pos"][0], o["pos"][1] + 1000.0, o["pos"][2] + 1000.0], rot=[0.0, 0.0, 0.0])
+            rx, ry, rz = (int(round(a)) % 360 for a in h["rot"])
+            o["args"][2:7] = [int(round(x)) for x in h["pos"]] + [rx << 16 | ry, rz]
     fsp = Path(fs)
     planets = B.planet_table(fsp, lambda a: (fsp / "ObjectData" / f"{a}.arc").exists())
     # every class with a model on disc is kept (static until it gets a behaviour), plus gravities

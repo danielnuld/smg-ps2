@@ -28,6 +28,9 @@ Last updated 2026-10-09. Detail and numbers: `docs/phase2-report.md`; tasks: `op
     stomp drops it (SW_A gates the Point; no star pointer freeze); LavaSteam (Sign effect, then 90 frames of
     steam that burn, every 300 frames; SW_A starts it); LavaGeyser (Wait arg0, Sign, a column shooting up to its
     Top joint's height for arg1 frames that burns along its y; ponytail: the bind-pose model stretched, not the BCKs);
+  - AssemblyBlock (PartsA / B / TimerA...): floats and turns at its home (the linked GeneralPos 合体ブロック故郷点,
+    slice.py puts it in args 2-6), flies to its place in 10 frames when Mario comes within arg0, back when he leaves
+    (arg7 0: vanishes arg1 frames after, blinking the last 100);
   - InvisibleWall* collide without being drawn, CollisionBlocker pushes Mario out until its SW_B;
   - areas (areaobjinfo rows in OBJS): Switch Cube / Sphere / Cylinder (SwitchArea rules), Death* (a miss),
     RestartCube (checkpoints: a miss brings Mario back to the start point of its zone with MarioNo arg0; STRT rows
@@ -82,6 +85,8 @@ Last updated 2026-10-09. Detail and numbers: `docs/phase2-report.md`; tasks: `op
   - static models are posed: each vertex goes through its DRW1 draw matrix at the bind pose (Maya scale
     compensation in `skin.world`); rigid shapes keep joint-local positions, so 553 models drew their parts at the
     origin (LavaGeyser's rings in one disc). Those models skip simplification (it runs before posing);
+  - KCL byte-swap (`kcl_to_le`) fixed: a prism list's first u16 (never read) can be the low half of an octree
+    word, and lists overlap; 605 of the 1016 KCLs had corrupt words or lists (AssemblyBlockPartsB crashed the octree walk);
   - lighting: lit materials (colour channel 0 lighting on: WoodBox, Kuribo...) get smooth per-vertex shading from
     their NRM normals (`shade`, half-Lambert, one fixed light in model space), unlit ones none; planets keep the
     vertex colours Nintendo baked (unlit, CLR0);
@@ -103,7 +108,7 @@ Last updated 2026-10-09. Detail and numbers: `docs/phase2-report.md`; tasks: `op
 | Convert everything (packs + table, ~5 min) | `python tools/slice_all.py data/fs/files out/packs 6` then `python tools/vram_need.py out/packs` |
 | Build, embedded Gateway 2 | `wsl.exe -e bash /mnt/d/smg-ps2/engine/build.sh [bench]` → `engine/slice[-bench].elf` |
 | Build from packs | `wsl.exe -e bash /mnt/d/smg-ps2/engine/build.sh MODE out/slice/hd2.bin Galaxy/n` → `out/slice-packs[-MODE].elf` (run from `out/`: `host:packs/`) |
-| Modes | `plain`, `bench`, `slope`, `zone` (first SuperSpinDriver at frame 120), `box` (FlipPanelEx 1: the coin pops and is taken), `collapse`, `hazard` (EggStar 1: third NeedlePlant prick is a miss; BattleShip 2: mine, electric rail, black hole; Factory 1: FireBar), `item` (BattleShip 2; CosmosGarden 1: a QuestionCoin's dead switch brings star pieces), `spin` (BattleShip 2, CannonFleet 1), `pipe` (BattleShip 2), `hip` (Factory 1), `flip` (FlipPanelEx 1: 18 panels, the group completes, its power star comes out and is taken), `cage` (CosmosGarden 3, SandClock 1: two spins at the CrystalCageL, then its star), `restart` (BattleShip 2: a miss after each of two RestartCubes), `spot` (BattleShip 1: cages whose dead switch bursts a StarPieceSpot), `cannon` (CocoonEx 1: Mario in a launcher's line of fire), `shoot` (StarDust 1: ShootingStar bursts), `plant` (EggStar 1: Mario through every member of the plant groups with items), `steam` (IceVolcano 2: Mario in a LavaSteam vent), `geyser` (IceVolcano 2: Mario in a LavaGeyser column) |
+| Modes | `plain`, `bench`, `slope`, `zone` (first SuperSpinDriver at frame 120), `box` (FlipPanelEx 1: the coin pops and is taken), `collapse`, `hazard` (EggStar 1: third NeedlePlant prick is a miss; BattleShip 2: mine, electric rail, black hole; Factory 1: FireBar), `item` (BattleShip 2; CosmosGarden 1: a QuestionCoin's dead switch brings star pieces), `spin` (BattleShip 2, CannonFleet 1), `pipe` (BattleShip 2), `hip` (Factory 1), `flip` (FlipPanelEx 1: 18 panels, the group completes, its power star comes out and is taken), `cage` (CosmosGarden 3, SandClock 1: two spins at the CrystalCageL, then its star), `restart` (BattleShip 2: a miss after each of two RestartCubes), `spot` (BattleShip 1: cages whose dead switch bursts a StarPieceSpot), `cannon` (CocoonEx 1: Mario in a launcher's line of fire), `shoot` (StarDust 1: ShootingStar bursts), `plant` (EggStar 1: Mario through every member of the plant groups with items), `steam` (IceVolcano 2: Mario in a LavaSteam vent), `geyser` (IceVolcano 2: Mario in a LavaGeyser column), `assembly` (StarDust 1: Mario over 20 AssemblyBlock places) |
 | Host tests | `wsl.exe -e bash /mnt/d/smg-ps2/engine/test/run.sh` |
 | Coverage (task 5.3) | `build.sh cover out/slice/hd2.bin BattleShipGalaxy/2` then `tools/coverage.ps1` → `out/coverage.csv` (one ELF, the scenario through `out/boot.txt`; ~1 min each); `python tools/class_coverage.py` → `out/class_coverage.md` (behaviour / static / missing placements) |
 | Disc image | `build.sh MODE out/slice/hd2.bin Galaxy/n disc` (→ `out/disc/SLICE.ELF`) then `python tools/disc.py` → `out/smg-ps2.iso` (819 MB, all 136 scenarios' packs); boot with `tools/run_quiet.ps1 -Iso out/smg-ps2.iso`; a boot menu lists every scenario (D-pad, X; the build's scenario starts after 10 s) |
