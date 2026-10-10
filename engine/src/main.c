@@ -664,6 +664,15 @@ int main(void)
                 printf("flip test: on item %d\n", game_test_item());
         }
 #endif
+#ifdef TAKOBO_TEST
+        if (frame >= 120 && frame < 300 && frame % 10 == 0) { /* held 200 off: it stops and punches */
+            int row = game_test_enemy(6, 0, 3);
+            if (frame % 30 == 0) printf("takobo test f %u: by row %d, life %d\n", frame, row, game_life());
+        }
+        if (frame == 400) printf("takobo test: stomp row %d\n", game_test_enemy(6, 0, 0));
+        if (frame == 520) printf("takobo test: spin by row %d\n", game_test_enemy(6, 0, 1));
+        if (frame == 640) printf("takobo test: %d alive, life %d\n", game_kind_alive(6), game_life());
+#endif
 #ifdef ENEMY_TEST
         if (frame == 120) printf("enemy test: stomp TakoHei row %d\n", game_test_enemy(1, 0, 0));
         if (frame == 240) printf("enemy test: spin by PackunPetit row %d\n", game_test_enemy(2, 0, 1));
