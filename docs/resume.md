@@ -171,9 +171,9 @@ there needs the embedded blob and every pack rebuilt.
    More power star declarers (`STAR_DECLARERS` in slice.py, then the origin in `star_pos`): bosses, Tico
    collecting (チコ集め), Kuribo / SkullShark baby "all dead" checkers, NPC events; PowerStarAppearPoint groups.
 3. Lumas / NPCs (static models today).
-4. More classes by placement count (`out/census.json`, `out/class_coverage.md` top static): GCaptureTarget (needs a
-   pointer stand-in), WaterPlant, BeeFlowerHover, Kinopio (TreasureSpot
-   needs the star pointer).
+4. More classes by placement count (`out/census.json`, `out/class_coverage.md` top static, 2026-10-09: behaviour 70.9 %,
+   static 15.3 %, missing 8.5 % of placements): WaterPlant (hand-drawn quads, loose BTIs), BeeFlowerHover (Bee Mario),
+   Butterfly, SpaceCocoon, CoconutTreeLeaf, PunchingKinoko, TicoRail, JetTurtle, CocoNut, Teresa, Fluff, JumpBranch.
 5. Vertex alpha in VUMD (rgbi has no room: the 4th byte is the index) for SphereAir-like fades.
 6. Task 5.3 gate: coverage run done once (136 / 136 play, `out/coverage.md`, `tools/coverage_report.py`), class
    weights (`out/class_coverage.md`); left: the final run on the current build, worst frame on the heaviest scenario,
