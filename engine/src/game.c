@@ -139,6 +139,7 @@ typedef struct {
     int rotor;       /* map part with a RotateSpeed: turns (rotor_matrix), carries Mario */
     int sky;         /* sky dome (Petari Sky): centred on the camera, drawn first */
     int steam;       /* LavaSteam: vents on a cycle and burns (update_steam) */
+    int geyser;      /* LavaGeyser: shoots up on a cycle and burns (update_geyser, geyser_height) */
     int shoot;       /* ShootingStar: falls, bursts into star pieces (update_shooting) */
     int plant;       /* PlantGroup (Flower / FlowerBlue / CutBush Group): its model drawn at each member (plants) */
     const unsigned char *railer; /* map part on a rail: its PATH entry; moves along it (update_railers) */
@@ -1068,6 +1069,7 @@ void game_rebind(void)
         in->sky = sky_class(name);
         in->shoot = strcmp(name, "ShootingStar") == 0;
         in->steam = strcmp(name, "LavaSteam") == 0;
+        in->geyser = strcmp(name, "LavaGeyser") == 0;
         in->plant = strcmp(name, "FlowerGroup") == 0 || strcmp(name, "FlowerBlueGroup") == 0 || strcmp(name, "CutBushGroup") == 0;
         in->hipsw = strncmp(name, "PicketSwitch", 12) == 0 || strcmp(name, "HipDropSwitch") == 0 ? 1 :
                     strcmp(name, "HipDropTimerSwitch") == 0 ? 2 : 0;
@@ -1297,6 +1299,18 @@ int game_test_steam(void)
         if (!insts[i].steam) continue;
         V3 p = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]);
         mario->pos = vadd(p, vmul(vnorm(v3(insts[i].m[4], insts[i].m[5], insts[i].m[6])), 100.0f - HIT_BODY_H));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return insts[i].row;
+    }
+    return -1;
+}
+
+int game_test_geyser(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        if (!insts[i].geyser) continue;
+        V3 p = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]);
+        mario->pos = vadd(p, vmul(vnorm(v3(insts[i].m[4], insts[i].m[5], insts[i].m[6])), 300.0f - HIT_BODY_H));
         mario->hvel = v3(0, 0, 0); mario->vup = 0;
         return insts[i].row;
     }
@@ -2560,6 +2574,58 @@ static void update_steam(void)
     }
 }
 
+/* LavaGeyser.cpp: WaitSwitch (SW_A off), Wait arg0 frames (default 180), Sign 90 (its effect), ShootUp (BCK
+ * LavaGeyserAppear, 60 frames), ShootKeep arg1 (default 180), ShootDown (LavaGeyserDisappear) hidden, Wait. Burns
+ * along its y up to 100 under its Top joint, in a sphere of 100 x scale y. row_turn: 0 wait, 1 sign, 2 up, 3 keep,
+ * 4 down, 5 waiting for SW_A; row_step its frames. ponytail: the column is the bind-pose model scaled along its y to
+ * Top's height (the BCKs: smoothstep up to 1060, down as 1050 (1 - (t / 52)^2)), not the telescoping joints */
+#define GEYSER_BIND 1145.0f /* Top's height in the bind pose */
+static float geyser_height(const Inst *in)
+{
+    float t = row_step[in->row];
+    switch (row_turn[in->row]) {
+    case 2: t /= 60.0f; return 1060.0f * t * t * (3.0f - 2.0f * t);
+    case 3: return 1060.0f;
+    case 4: t /= 52.0f; return t < 1.0f ? 1050.0f * (1.0f - t * t) : 0.0f;
+    default: return 0.0f;
+    }
+}
+
+static void update_geyser(void)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->geyser || !row_shown(in->row)) continue;
+        const Row *r = &sc->objs[in->row];
+        unsigned short *t = &row_step[in->row];
+        signed char *ph = &row_turn[in->row];
+        int wait = r->arg[0] > 0 ? r->arg[0] : 180, keep = r->arg[1] > 0 ? r->arg[1] : 180;
+        if (*ph == 0 && r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) *ph = 5;
+        if (*ph == 5) {
+            if (!sw_on(r, SW_A)) continue;
+            *ph = 1; *t = 0;
+        }
+        ++*t;
+        if (*ph == 0 && *t >= wait) { *ph = 1; *t = 0; }
+        else if (*ph == 1 && *t >= 90) { *ph = 2; *t = 0; }
+        else if (*ph == 2 && *t >= 60) { *ph = 3; *t = 0; }
+        else if (*ph == 3 && *t >= keep) { *ph = 4; *t = 0; }
+        else if (*ph == 4 && *t >= 60) { *ph = 0; *t = 0; }
+        V3 p = v3(in->m[12], in->m[13], in->m[14]), up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+        if (*ph == 1 && vlen(vsub(p, cam_pos)) < 6000.0f) fx_keep(FX_LAVAGEYSER_SIGN, t, in->m);
+        float top = geyser_height(in) * in->s - 100.0f;
+        if (top < 0.0f) continue;
+        V3 d = vsub(c, p);
+        float h = vdot(d, up);
+        h = h < 0.0f ? 0.0f : h > top ? top : h;
+        if (vlen(vsub(c, vadd(p, vmul(up, h)))) < 0.7f * HIT_BODY_R + 100.0f * r->scale[1] && !mario->hurt_timer) {
+            hurt_mario(p, 15.0f);
+            printf("lava geyser %d burns\n", in->row);
+        }
+    }
+}
+
 static void update_plants(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -2860,6 +2926,7 @@ void game_update(void)
     update_shooting();
     update_plants();
     update_steam();
+    update_geyser();
     update_pipes();
     update_switches();
     update_pops();
@@ -3005,6 +3072,14 @@ void game_draw(void)
             mat_mul(cm, in->m, rot);
             for (int j = 0; j < 12; j++) if (j % 4 != 3) cm[j] *= k;
             cm[12] = p.x; cm[13] = p.y; cm[14] = p.z;
+            render_model(in->md, cm, 0x70, 0xB0, 0x60);
+            continue;
+        }
+        if (in->geyser) { /* stretched along its y to its height (geyser_height) */
+            float k = geyser_height(in) / GEYSER_BIND, cm[16];
+            if (k <= 0.0f) continue;
+            memcpy(cm, in->m, 64);
+            for (int j = 4; j < 7; j++) cm[j] *= k;
             render_model(in->md, cm, 0x70, 0xB0, 0x60);
             continue;
         }

@@ -33,6 +33,8 @@ int game_test_cannon(void);
 int game_test_plant(int k);
 /* Test builds: Mario held in the first LavaSteam's vent (his touch sphere 100 up it); its row or -1 */
 int game_test_steam(void);
+/* Test builds: Mario held in the first LavaGeyser's column (his centre 300 up it); its row or -1 */
+int game_test_geyser(void);
 /* Test builds: Mario spinning on the first breakable whose dead switch makes a StarPieceSpot burst; its row or -1 */
 int game_test_spot(void);
 /* Test builds: Mario jumping into the first ItemBlock from below. Returns its row or -1. */

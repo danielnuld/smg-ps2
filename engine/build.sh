@@ -22,6 +22,7 @@
 # cannon: with packs, Mario held in front of the first IronCannonLauncher(Point) from frame 120 (-DCANNON_TEST)
 # shoot: with packs, star pieces out every 120 frames while the ShootingStars fall (-DSHOOT_TEST)
 # plant: with packs, Mario walks through every member of the plant groups holding items (-DPLANT_TEST)
+# geyser: with packs, Mario held in the first LavaGeyser's column from frame 120 (-DGEYSER_TEST)
 # steam: with packs, Mario held in the first LavaSteam's vent from frame 120 (-DSTEAM_TEST)
 # cage: with packs, Mario spins twice at the cage holding the first event power star, then goes for it (-DCAGE_TEST)
 # flip: with packs, Mario put on each FlipPanel in turn from frame 120 (-DFLIP_TEST)
@@ -40,7 +41,7 @@ cp -r /mnt/d/smg-ps2/engine/src /mnt/d/smg-ps2/engine/Makefile $W/
 cp ${2:-/mnt/d/smg-ps2/out/slice/hd2.bin} $W/data/slice.bin
 cp $PS2SDK/iop/irx/libsd.irx $PS2SDK/iop/irx/audsrv.irx $W/data/
 if [ -n "$3" ]; then echo "#define PACKS \"$3\"" > $W/src/packs_cfg.h; else : > $W/src/packs_cfg.h; fi
-cd $W && B=${1#plain}; F=; [ "$B" = bench ] && F=-DBENCH; [ "$B" = slope ] && F=-DSLOPE_TEST; [ "$B" = zone ] && F=-DZONE_TEST; [ "$B" = box ] && F=-DBOX_TEST; [ "$B" = collapse ] && F=-DCOLLAPSE_TEST; [ "$B" = hazard ] && F=-DHAZARD_TEST; [ "$B" = item ] && F=-DITEM_TEST; [ "$B" = spin ] && F=-DSPIN_TEST; [ "$B" = pipe ] && F=-DPIPE_TEST; [ "$B" = hip ] && F=-DHIP_TEST; [ "$B" = flip ] && F=-DFLIP_TEST; [ "$B" = cage ] && F=-DCAGE_TEST; [ "$B" = steam ] && F=-DSTEAM_TEST; [ "$B" = plant ] && F=-DPLANT_TEST; [ "$B" = shoot ] && F=-DSHOOT_TEST; [ "$B" = cannon ] && F=-DCANNON_TEST; [ "$B" = spot ] && F=-DSPOT_TEST; [ "$B" = restart ] && F=-DRESTART_TEST; [ "$B" = cover ] && F=-DCOVER_TEST; [ "$B" = enemy ] && F=-DENEMY_TEST; [ "$B" = rotor ] && F=-DROTOR_TEST; [ "$B" = rail ] && F=-DRAIL_TEST; [ "$B" = overview ] && F=-DOVERVIEW_TEST; [ "$4" = disc ] && F="$F -DDISC"; [ -n "$TEASER" ] && F="$F -DTEASER"; make -s EXTRA="$F" 2>&1 | grep -v "^$" || true
+cd $W && B=${1#plain}; F=; [ "$B" = bench ] && F=-DBENCH; [ "$B" = slope ] && F=-DSLOPE_TEST; [ "$B" = zone ] && F=-DZONE_TEST; [ "$B" = box ] && F=-DBOX_TEST; [ "$B" = collapse ] && F=-DCOLLAPSE_TEST; [ "$B" = hazard ] && F=-DHAZARD_TEST; [ "$B" = item ] && F=-DITEM_TEST; [ "$B" = spin ] && F=-DSPIN_TEST; [ "$B" = pipe ] && F=-DPIPE_TEST; [ "$B" = hip ] && F=-DHIP_TEST; [ "$B" = flip ] && F=-DFLIP_TEST; [ "$B" = cage ] && F=-DCAGE_TEST; [ "$B" = steam ] && F=-DSTEAM_TEST; [ "$B" = geyser ] && F=-DGEYSER_TEST; [ "$B" = plant ] && F=-DPLANT_TEST; [ "$B" = shoot ] && F=-DSHOOT_TEST; [ "$B" = cannon ] && F=-DCANNON_TEST; [ "$B" = spot ] && F=-DSPOT_TEST; [ "$B" = restart ] && F=-DRESTART_TEST; [ "$B" = cover ] && F=-DCOVER_TEST; [ "$B" = enemy ] && F=-DENEMY_TEST; [ "$B" = rotor ] && F=-DROTOR_TEST; [ "$B" = rail ] && F=-DRAIL_TEST; [ "$B" = overview ] && F=-DOVERVIEW_TEST; [ "$4" = disc ] && F="$F -DDISC"; [ -n "$TEASER" ] && F="$F -DTEASER"; make -s EXTRA="$F" 2>&1 | grep -v "^$" || true
 test -f slice.elf
 cp slice.elf /mnt/d/smg-ps2/engine/slice${B:+-$B}.elf
 [ -n "$3" ] && [ "$4" != disc ] && cp slice.elf /mnt/d/smg-ps2/out/slice-packs${B:+-$B}.elf

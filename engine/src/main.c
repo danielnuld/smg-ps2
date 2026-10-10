@@ -563,6 +563,12 @@ int main(void)
             if (frame % 60 == 0) printf("steam test f %u: in row %d, life %d\n", frame, row, game_life());
         }
 #endif
+#ifdef GEYSER_TEST
+        if (frame >= 120 && frame <= 1200 && frame % 15 == 0) {
+            int row = game_test_geyser();
+            if (frame % 60 == 0) printf("geyser test f %u: in row %d, life %d\n", frame, row, game_life());
+        }
+#endif
 #ifdef CAGE_TEST
         if (frame == 120 || frame == 300 || frame == 380) /* the first: its zone streams in */
             printf("cage test f %u: Mario spins on row %d\n", frame, game_test_cage(0));

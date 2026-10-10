@@ -46,6 +46,7 @@ import budget as B
 import camera
 import geom
 import jpa
+import numpy as np
 import skin
 import tex
 
@@ -236,8 +237,16 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None):
         n = name.lower()
         if n.endswith((".bdl", ".bmd")) and b[:4] == b"J3D2" and not groups:
             got = []
-            geom.model(b, 1.0 if skinned else ratio, None, got)
             bl = tex.blocks(b)
+            hide, gtab_all, drw, posed = set(), {}, [], []
+            if not skinned and b"JNT1" in bl:
+                hide = hidden_joints(b, bl, {k.lower(): v for k, v in files.items()}, pose)
+                gtab_all, drw = skin.group_tables(b, bl), skin.draw_entries(b, bl)
+                posed = skin.draw_mtx(drw, skin.world(skin.joints(b, bl)))  # bind pose, per DRW1 entry
+            # ponytail: models whose draw matrices move vertices are not simplified (the simplifier sees positions
+            # before posing: LavaGeyser's rings, all at 0, came out mangled); posing inside geom.shp1 if it matters
+            moved = any(not np.allclose(m, np.eye(4), atol=1e-3) for m in posed)
+            geom.model(b, 1.0 if skinned or moved else ratio, None, got)
             clr = geom.vtx1_color(b, bl[b"VTX1"])
             nget = geom.vtx1_attr(b, bl[b"VTX1"], 10)
             if skinned:
@@ -247,10 +256,6 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None):
             texs = tex.textures(b, bl[b"TEX1"]) if b"TEX1" in bl else []
             ps2 = {}
             sky = arc.stem in SKY_ARCS or arc.stem.endswith("Sky")  # 8-bit textures (tex.to_ps2 hi)
-            hide, gtab_all, drw = set(), {}, []
-            if not skinned and b"JNT1" in bl:
-                hide = hidden_joints(b, bl, {k.lower(): v for k, v in files.items()}, pose)
-                gtab_all, drw = skin.group_tables(b, bl), skin.draw_entries(b, bl)
             for pos, tri, info in got:
                 if not tri:
                     continue
@@ -260,6 +265,15 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None):
                 used = sorted(set(tri))
                 remap = {v: i for i, v in enumerate(used)}
                 verts = [pos[3 * v:3 * v + 3] for v in used]
+                # static: each vertex through its draw matrix (rigid shapes keep joint-local positions: LavaGeyser's
+                # rings sit at their joints), the PNMTXIDX slot of the group's DRW1 table
+                mats = None
+                tab = gtab_all.get((info["shape"], info["group"]), [])
+                if posed and tab:
+                    at0 = info["at"].get(0)
+                    d = [tab[min(info["keys"][v][at0[0]] // 3 if at0 else 0, len(tab) - 1)] for v in used]
+                    mats = [posed[k] if k < len(posed) else np.eye(4) for k in d]
+                    verts = [tuple(float(x) for x in (m[:3, :3] @ p + m[:3, 3])) for m, p in zip(mats, verts)]
                 mat = shapes.get(info["shape"])
                 mt = tex.material_tex(b, bl[b"MAT3"], mat, bl.get(b"TEX1")) if mat is not None else None
                 get = geom.vtx1_attr(b, bl[b"VTX1"], mt["attr"]) if mt and mt["attr"] in info["at"] else None
@@ -325,6 +339,8 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None):
                     o, w = info["at"][10]
                     nrm = [nget(info["keys"][v][o] if w == 1 else info["keys"][v][o] << 8 | info["keys"][v][o + 1])
                            for v in used]
+                    if mats:
+                        nrm = [tuple(float(x) for x in skin.unit(m[:3, :3] @ n)) for m, n in zip(mats, nrm)]
                 groups.append((verts, [remap[v] for v in tri], uvs, t, slots, cols, blend, nrm))
             if skinned:
                 sk = skin_entry(b, bl, gtab)

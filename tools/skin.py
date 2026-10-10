@@ -51,8 +51,12 @@ def joints(b, bl):
         sc = struct.unpack_from(">3f", b, e + 4)
         r = [x * math.pi / 0x8000 for x in struct.unpack_from(">3h", b, e + 0x10)]
         t = struct.unpack_from(">3f", b, e + 0x18)
-        out.append(dict(name=names[i] if i < len(names) else f"j{i}", parent=-1, scale=sc, rot=r, trans=t))
+        out.append(dict(name=names[i] if i < len(names) else f"j{i}", parent=-1, scale=sc, rot=r, trans=t,
+                        ssc=b[e + 2] == 1))
     inf = bl[b"INF1"]
+    if u16(b, inf + 8) & 0xF != 2:  # scale compensation only under the Maya calc type (INF1 flags)
+        for j in out:
+            j["ssc"] = False
     p, cur, stack = inf + u32(b, inf + 0x14), -1, []
     last = -1
     while True:
@@ -71,12 +75,20 @@ def joints(b, bl):
     return out
 
 
+def unit(v):
+    l = np.linalg.norm(v)
+    return v / l if l > 1e-9 else v
+
+
 def world(js, locals_=None):
     """World matrix per joint (parents come before children in JNT1 order in J3D files; checked)."""
     w = [None] * len(js)
     for i, j in enumerate(js):
         m = locals_[i] if locals_ is not None else local(j["scale"], j["rot"], j["trans"])
         assert j["parent"] < i, "parent after child"
+        if j.get("ssc") and j["parent"] >= 0:  # Maya segment scale compensate: the parent's scale left out
+            m = m.copy()
+            m[:3, :3] = np.diag([1.0 / x for x in js[j["parent"]]["scale"]]) @ m[:3, :3]
         w[i] = m if j["parent"] < 0 else w[j["parent"]] @ m
     return w
 
