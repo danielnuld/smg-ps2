@@ -592,6 +592,17 @@ int main(void)
             printf("warppod test f %u: %s\n", frame, d);
         }
 #endif
+#ifdef TSUKI_TEST
+        if (frame >= 120 && frame % 30 == 0) {
+            float c = 0;
+            static int bound;
+            int row = game_test_tsuki(!bound, &c);
+            if (row >= 0) bound = 1;
+            char d[128];
+            game_debug(d, sizeof d);
+            printf("tsuki test f %u: row %d coord %d, %s\n", frame, row, (int)c, d);
+        }
+#endif
 #ifdef GEYSER_TEST
         if (frame >= 120 && frame <= 1200 && frame % 15 == 0) {
             int row = game_test_geyser();

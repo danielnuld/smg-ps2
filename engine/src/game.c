@@ -144,6 +144,7 @@ typedef struct {
     V3 gup;          /* AssemblyBlock: up at its home (its bobbing) */
     int jstand;      /* JumpStand: holds Mario landing on it, then throws him up (update_jumpstands) */
     int warppod;     /* WarpPod: takes Mario to its pair (warp_try, warp_update) */
+    const unsigned char *tsuki; /* Tsukidashikun: its PATH entry; pushes along it and back (update_tsuki) */
     int shoot;       /* ShootingStar: falls, bursts into star pieces (update_shooting) */
     int plant;       /* PlantGroup (Flower / FlowerBlue / CutBush Group): its model drawn at each member (plants) */
     const unsigned char *railer; /* map part on a rail: its PATH entry; moves along it (update_railers) */
@@ -1041,6 +1042,70 @@ static void update_assembly(void)
     }
 }
 
+/* Tsukidashikun.cpp: on its rail from the nearest point to its placement; Relax until SW_B (if it has one), Wait arg1
+ * frames (default 120), Sign 60, Move at arg0 (default 10) to the rail's end, reverse, Wait, Sign, Move back... row_turn
+ * 0 not started, 1 relax, 2 wait, 3 sign, 4 move; row_rdir its direction (+1 / -1); row_coord, row_step. ponytail: no
+ * Sign shake (its BCK) */
+static float tsuki_len(const unsigned char *e)
+{
+    u32 np = *(const u32 *)(e + 8), nr = *(const u32 *)(e + 12);
+    return *(const float *)(e + 24 + 12 * np + 12 * nr + 12 * (nr - 1));
+}
+
+static void tsuki_place(Inst *in)
+{
+    V3 p = rail_at((const float *)(in->tsuki + 24), *(const u32 *)(in->tsuki + 8), row_coord[in->row]);
+    in->m[12] = p.x; in->m[13] = p.y; in->m[14] = p.z;
+}
+
+static void update_tsuki(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->tsuki) continue;
+        const Row *r = &sc->objs[in->row];
+        int row = in->row;
+        unsigned short *t = &row_step[row];
+        signed char *ph = &row_turn[row];
+        if (!*ph) { /* moveCoordToNearestPos */
+            const float *p = (const float *)(in->tsuki + 24);
+            u32 np = *(const u32 *)(in->tsuki + 8);
+            V3 at = v3(r->pos[0], r->pos[1], r->pos[2]);
+            float best = 1e30f, acc = 0, c = 0;
+            for (u32 k = 0; k + 1 < np; k++) {
+                V3 a = v3(p[3 * k], p[3 * k + 1], p[3 * k + 2]), b = v3(p[3 * k + 3], p[3 * k + 4], p[3 * k + 5]);
+                V3 ab = vsub(b, a);
+                float l = vlen(ab), u = l > 0 ? vdot(vsub(at, a), ab) / (l * l) : 0;
+                u = u < 0 ? 0 : u > 1 ? 1 : u;
+                float d = vlen(vsub(at, vadd(a, vmul(ab, u))));
+                if (d < best) { best = d; c = acc + u * l; }
+                acc += l;
+            }
+            row_coord[row] = c; row_rdir[row] = 1;
+            *ph = r->sw[SW_B] >= 0 ? 1 : 2; *t = 0;
+        }
+        if (*ph == 1) {
+            if (!sw_on(r, SW_B)) continue;
+            *ph = 2; *t = 0;
+        }
+        ++*t;
+        if (*ph == 2 && *t >= (r->arg[1] >= 0 ? r->arg[1] : 120)) { *ph = 3; *t = 0; }
+        else if (*ph == 3 && *t >= 60) { *ph = 4; *t = 0; }
+        else if (*ph == 4) {
+            float old[16], len = tsuki_len(in->tsuki), n = row_coord[row] + (r->arg[0] > 0 ? r->arg[0] : 10) * row_rdir[row];
+            memcpy(old, in->m, 64);
+            if (n >= len || n <= 0) { /* isRailReachedGoal: reverse, wait */
+                n = n >= len ? len : 0;
+                row_rdir[row] = -row_rdir[row];
+                *ph = 2; *t = 0;
+            }
+            row_coord[row] = n;
+            tsuki_place(in);
+            if (mario_ground == i) carry(old, in);
+        }
+    }
+}
+
 /* JumpStand.cpp: Mario landing on it is held (bound); TrampleBound throws him at step 5 along -gravity at 26, 32 if
  * he pressed jump in those 5 frames; HipDropBound (a hip drop landing) sinks him 6 - ease a frame for 15 frames, then
  * 43 along its up. row_turn: 0 wait, 1 trample, 2 high trample, 3 hip drop; row_step frames; jstand_pos the held
@@ -1201,6 +1266,8 @@ void game_rebind(void)
         in->assembly = strncmp(name, "AssemblyBlock", 13) == 0;
         in->jstand = strcmp(name, "JumpStand") == 0;
         in->warppod = strcmp(name, "WarpPod") == 0;
+        in->tsuki = scene_blob_g && r->path >= 0 && strcmp(name, "Tsukidashikun") == 0 ?
+                    find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->plant = strcmp(name, "FlowerGroup") == 0 || strcmp(name, "FlowerBlueGroup") == 0 || strcmp(name, "CutBushGroup") == 0;
         in->hipsw = strncmp(name, "PicketSwitch", 12) == 0 || strcmp(name, "HipDropSwitch") == 0 ? 1 :
                     strcmp(name, "HipDropTimerSwitch") == 0 ? 2 : 0;
@@ -1220,6 +1287,7 @@ void game_rebind(void)
         in->reach = md->radius * in->s;
         if (in->rotor && row_angle) rotor_matrix(in);
         if (in->railer && row_coord) railer_place(in);
+        if (in->tsuki && row_coord && row_turn[i]) tsuki_place(in);
         if (in->assembly) {
             float h[16];
             assembly_home(r, h);
@@ -1495,6 +1563,27 @@ int game_test_warppod(void)
         mario->hvel = v3(0, 0, 0); mario->vup = 0;
         return insts[i].row;
     }
+    return -1;
+}
+
+int game_test_tsuki(int drop, float *coord)
+{
+    for (int i = 0; i < ninsts; i++) {
+        if (!insts[i].tsuki) continue;
+        *coord = row_coord[insts[i].row];
+        if (drop) {
+            mario->pos = vadd(v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]), vmul(mario->up, insts[i].reach + 100.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        }
+        return insts[i].row;
+    }
+    for (u32 i = 0; i < sc->nobjs; i++) /* not bound yet: Mario over its row, its zone streams in */
+        if (strcmp(sc->types + 32 * sc->objs[i].type, "Tsukidashikun") == 0) {
+            const Row *r = &sc->objs[i];
+            mario->pos = vadd(v3(r->pos[0], r->pos[1], r->pos[2]), vmul(mario->up, 400.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return -2;
+        }
     return -1;
 }
 
@@ -3216,6 +3305,7 @@ void game_update(void)
     update_geyser();
     update_assembly();
     update_jumpstands();
+    update_tsuki();
     update_pipes();
     update_switches();
     update_pops();
