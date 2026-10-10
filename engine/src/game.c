@@ -147,6 +147,7 @@ typedef struct {
     int warppod;     /* WarpPod: takes Mario to its pair (warp_try, warp_update) */
     int kiraira;     /* Kiraira: a chained mine, explodes on touch and recovers (update_kiraira, kiraira_pos) */
     const float *meteor; /* MeteorStrike(Environment): its rail's JMap points; meteors fall along them (update_meteor) */
+    int killer;      /* HomingKiller launcher: shoots a bullet that may chase Mario (update_killers) */
     const unsigned char *tsuki; /* Tsukidashikun: its PATH entry; pushes along it and back (update_tsuki) */
     int shoot;       /* ShootingStar: falls, bursts into star pieces (update_shooting) */
     int plant;       /* PlantGroup (Flower / FlowerBlue / CutBush Group): its model drawn at each member (plants) */
@@ -203,6 +204,10 @@ static unsigned short *row_rhold; /* frames it still waits at a rail point */
 static const unsigned char *scene_blob_g; /* the scene blob (PATH) for rebinds */
 static int hip_hit, hip_inst;   /* Mario landed a hip drop this frame, on instance hip_inst (-1 none) */
 static int mario_ground = -1;   /* instance Mario stands on this frame, -1 in the air */
+typedef struct { int row; V3 pos, front; } Killer; /* HomingKiller: its bullet (update_killers) */
+#define MAX_KILLERS 32
+static Killer killers[MAX_KILLERS];
+static int nkillers;
 static int ground_inst = -1;     /* instance under the last collide_n's ground normal, -1 none */
 static void zone_spheres(void);
 static void zone_grow(const Inst *in);
@@ -251,11 +256,16 @@ static unsigned char *row_dead; /* per OBJS row: broken, never comes back (zone 
 static short *star_wait;
 
 /* A row with an appear switch is out only while it is on (syncStageSwitchAppear); a dead row never again */
+#if defined(METEOR_TEST)
+#define TEST_SHOWN "MeteorStrike"
+#elif defined(KILLER_TEST)
+#define TEST_SHOWN "HomingKiller"
+#endif
 static int row_shown(int i)
 {
     const Row *r = &sc->objs[i];
-#ifdef METEOR_TEST /* the meteors come with a boss fight's switch area: out at once in the test */
-    if (strcmp(sc->types + 32 * r->type, "MeteorStrike") == 0) return 1;
+#ifdef TEST_SHOWN /* a test build's class out at once (its appear switch belongs to a fight or an event) */
+    if (strcmp(sc->types + 32 * r->type, TEST_SHOWN) == 0) return 1;
 #endif
     return !row_dead[i] && (r->sw[SW_APPEAR] < 0 || sw_on(r, SW_APPEAR));
 }
@@ -698,6 +708,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     kuribo = mem_alloc(MEM_OBJECTS, nkuribo * sizeof(Kuribo));
     pops = mem_alloc(MEM_OBJECTS, (box_coins + 1) * sizeof(Pop));
     mario = mem_alloc(MEM_PLAYER, sizeof(Player));
+    nkillers = 0;
 
     int ic = 0, ip = 0, is = 0, ik = 0;
     int t_coin = scene_type(s, "Coin"), t_pc = scene_type(s, "PurpleCoin"), t_circle = scene_type(s, "CirclePurpleCoinGroup");
@@ -1205,6 +1216,96 @@ static void update_meteor(void)
     }
 }
 
+/* HomingKiller.cpp (HomingKillerLauncher): the bullet leaves its place along its Z (level with gravity), 200 in 20
+ * frames, shakes 22, stops 30; then flies at 12, kept level (cos 0.9995 a frame); from its 35th frame of flight it
+ * binds (radius 70: the map breaks it) and, unless arg2 (a straight shot), starts chasing when Mario is within arg0
+ * (default 2000) and in front of it (90 degrees each side, every way with arg3): it turns towards 200 up Mario at
+ * cos(1 - arg1 x 0.0001) a frame (arg1 default 3). It breaks on the map, on Mario (an explosion attack), 3000 from him
+ * while chasing, after 600 frames of straight flight; 180 frames later the next one comes out. row_turn 0 appear, 1
+ * move, 2 chase, 3 broken; row_step its frames. ponytail: no star pointer freeze, no roll (rotation z), the
+ * explosion is SpaceMine's, Torpedo / MagnumKiller not handled */
+static void hurt_mario(V3 from, float speed);
+static int kcl_query(V3 c, float radius, Hit *out, int max);
+static Killer *killer_of(int row)
+{
+    for (int i = 0; i < nkillers; i++) if (killers[i].row == row) return &killers[i];
+    if (nkillers == MAX_KILLERS) return NULL;
+    killers[nkillers].row = row;
+    return &killers[nkillers++];
+}
+
+static V3 turn_to(V3 v, V3 to, float cosmax) /* turnVecToVecCos: at most acos(cosmax) towards to */
+{
+    float c = vdot(v, to);
+    if (c >= cosmax) return to;
+    V3 side = vnorm(vsub(to, vmul(v, c)));
+    float s = sqrtf(1.0f - cosmax * cosmax);
+    return vnorm(vadd(vmul(v, cosmax), vmul(side, s)));
+}
+
+static void update_killers(void)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->killer || !row_shown(in->row)) continue;
+        Killer *k = killer_of(in->row);
+        if (!k) continue;
+        const Row *r = &sc->objs[in->row];
+        unsigned short *t = &row_step[in->row];
+        signed char *ph = &row_turn[in->row];
+        V3 base = v3(in->m[12], in->m[13], in->m[14]), up = up_at(base, v3(in->m[4], in->m[5], in->m[6]));
+        ++*t;
+        if (*ph == 3) {
+            if (*t >= 180) { *ph = 0; *t = 0; }
+            continue;
+        }
+        if (*ph == 0) {
+            V3 f = vnorm(vtangent(v3(in->m[8], in->m[9], in->m[10]), up));
+            int s = *t < 20 ? *t : 20;
+            k->front = f;
+            k->pos = vadd(base, vmul(f, 200.0f * s / 20.0f));
+            if (*t > 20 && *t < 42) {
+                int u = *t - 20;
+                k->pos = vadd(k->pos, vmul(f, (22 - u) * sinf(u * 100.0f * 0.0174533f) * 18.0f / 22.0f));
+            }
+            if (*t >= 72) { *ph = 1; *t = 0; }
+            continue;
+        }
+        V3 g = up_at(k->pos, up);
+        int brk = 0;
+        if (*ph == 1) {
+            V3 lvl = vnorm(vtangent(k->front, g));
+            if (vlen(lvl) > 0.5f) k->front = turn_to(k->front, lvl, 0.9995f);
+            if (*t > 600) brk = 1;
+            V3 to = vsub(mario->pos, k->pos);
+            float d = vlen(to), start = r->arg[0] > 0 ? (float)r->arg[0] : 2000.0f;
+            if (*t >= 35 && r->arg[2] <= 0 && d < start && d > 0 &&
+                (r->arg[3] > 0 || vdot(vmul(to, 1.0f / d), k->front) > 0.0f)) { *ph = 2; printf("homing killer %d chases\n", in->row); }
+        } else {
+            V3 aim = vnorm(vsub(vadd(mario->pos, vmul(mario->up, 200.0f)), k->pos));
+            k->front = turn_to(k->front, aim, 1.0f - (r->arg[1] >= 0 ? r->arg[1] : 3) * 0.0001f);
+            if (vlen(vsub(mario->pos, k->pos)) > 3000.0f) brk = 1;
+        }
+        k->pos = vadd(k->pos, vmul(k->front, 12.0f));
+        Hit h[1];
+        if (vlen(vsub(c, k->pos)) < 70.0f + HIT_BODY_R) {
+            hurt_mario(k->pos, 25.0f);
+            printf("homing killer %d hits Mario\n", in->row);
+            brk = 1;
+        } else if ((*ph == 2 || *t >= 35) && kcl_query(k->pos, 70.0f, h, 1)) {
+            printf("homing killer %d breaks on the map\n", in->row);
+            brk = 1;
+        }
+        if (brk) {
+            float m[16];
+            basis_matrix(m, k->pos, g, k->front, 0);
+            fx_emit(FX_SPACEMINE_EXPLOSION, m);
+            *ph = 3; *t = 0;
+        }
+    }
+}
+
 /* JumpStand.cpp: Mario landing on it is held (bound); TrampleBound throws him at step 5 along -gravity at 26, 32 if
  * he pressed jump in those 5 frames; HipDropBound (a hip drop landing) sinks him 6 - ease a frame for 15 frames, then
  * 43 along its up. row_turn: 0 wait, 1 trample, 2 high trample, 3 hip drop; row_step frames; jstand_pos the held
@@ -1369,6 +1470,7 @@ void game_rebind(void)
         in->warppod = strcmp(name, "WarpPod") == 0;
         in->kiraira = strcmp(name, "Kiraira") == 0;
         in->meteor = NULL;
+        in->killer = strcmp(name, "HomingKiller") == 0;
         if (scene_blob_g && r->path >= 0 && (strcmp(name, "MeteorStrike") == 0 || strcmp(name, "MeteorStrikeEnvironment") == 0)) {
             u32 n; int cl;
             const float *p = find_rail_of(scene_blob_g, r->zone, r->path, &n, &cl, 1);
@@ -1730,6 +1832,25 @@ int game_test_meteor(void)
             mario->pos = v3(r->pos[0], r->pos[1], r->pos[2]); /* its zone's full pack streams in */
             mario->hvel = v3(0, 0, 0); mario->vup = 0;
             game_rebind();
+            return -2;
+        }
+    return -1;
+}
+
+int game_test_killer(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        if (!insts[i].killer) continue;
+        V3 p = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]), f = v3(insts[i].m[8], insts[i].m[9], insts[i].m[10]);
+        mario->pos = vadd(p, vmul(vnorm(f), 1500.0f)); /* 1500 in front of the launcher */
+        mario->hvel = v3(0, 0, 0);
+        return insts[i].row;
+    }
+    for (u32 i = 0; i < sc->nobjs; i++) /* not bound yet: Mario at its row, its zone streams in */
+        if (strcmp(sc->types + 32 * sc->objs[i].type, "HomingKiller") == 0) {
+            const Row *r = &sc->objs[i];
+            mario->pos = v3(r->pos[0], r->pos[1], r->pos[2]);
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
             return -2;
         }
     return -1;
@@ -3513,6 +3634,7 @@ void game_update(void)
     update_tsuki();
     update_kiraira();
     update_meteor();
+    update_killers();
     update_pipes();
     update_switches();
     update_pops();
@@ -3664,6 +3786,16 @@ void game_draw(void)
         if (in->assembly && row_turn[in->row] == 4 && row_step[in->row] + 100 >= (sc->objs[in->row].arg[1] > 0 ?
             sc->objs[in->row].arg[1] : 300) && (game_frame & 4))
             continue; /* about to vanish: blinks (ponytail for its Disappear animation) */
+        if (in->killer) { /* its bullet, nose along its front */
+            const Killer *k = NULL;
+            for (int j = 0; j < nkillers; j++) if (killers[j].row == in->row) k = &killers[j];
+            if (!k || row_turn[in->row] == 3) continue;
+            float cm[16];
+            basis_matrix(cm, k->pos, up_at(k->pos, v3(in->m[4], in->m[5], in->m[6])), k->front, 0);
+            for (int j = 0; j < 12; j++) if (j % 4 != 3) cm[j] *= in->s;
+            render_model(in->md, cm, 0x70, 0xB0, 0x60);
+            continue;
+        }
         if (in->meteor) { /* falling along its rail, turning about its x */
             if (row_turn[in->row] != 1) continue;
             V3 dir, p = meteor_pos(in, &dir), up = up_at(p, v3(0, 1, 0));

@@ -613,6 +613,14 @@ int main(void)
             if (frame % 120 == 0) printf("meteor test f %u: in row %d's path, life %d" "\n", frame, row, game_life());
         }
 #endif
+#ifdef KILLER_TEST
+        if (frame >= 120 && frame % 30 == 0) {
+            static int bound;
+            int row = bound ? -3 : game_test_killer();
+            if (row >= 0) bound = 1;
+            if (frame % 120 == 0) printf("killer test f %u: row %d, life %d" "\n", frame, row, game_life());
+        }
+#endif
 #ifdef GEYSER_TEST
         if (frame >= 120 && frame <= 1200 && frame % 15 == 0) {
             int row = game_test_geyser();
