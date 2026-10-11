@@ -260,7 +260,9 @@ static struct {
     V3 pos, vel, up, f;
     int bstate, bt;                /* its tail ball: 0 Wait, 1 Shoot, 2 Charge, 3 Reverse, 4 Rebound */
     V3 bpos, bvel;
-    int act, act_t;                /* a one-shot clip playing (its frames left): damage, attack hit, demos */
+    int seq, nt, dnrv, dt, ddir;   /* DinoPackunVs1's step, its nerve's frames, its damage state, its frames, the hit's side
+                                    * (1 left, 2 right, 3 top) */
+    int prev_nrv, react;           /* the nerve a punch interrupted; a star piece's hit reaction (frames left) */
     V3 chain[9];                   /* its tail: TailRoot .. TailBall, model space (DinoPackunTail) */
     int chain_ok;
     Anim *anim;
@@ -434,6 +436,7 @@ static int demo_camera(const char *name, int frame, const float m[16])
 }
 static int demo_on; /* a demo is running: Mario waits (no input, no hurt) */
 static int dino_demo_on, ota_demo_on; /* whose demo camera runs */
+static int demo_dino_damage; /* tryStartDemoMarioPuppetable "ディノパックンダメージ": Mario waits from Pulled to its damage's end */
 static int star_demo;      /* PowerStar::exeStageClearDemo: frames since a star was taken + 1, 0 none */
 static float star_demo_m[16]; /* its camera's frame: at the star, facing the way Mario looked */
 static int obj_play(const Inst *in, const char *clip, int loop, int interp);
@@ -4887,15 +4890,32 @@ static void update_bubbles(void)
     }
 }
 
-/* DinoPackun (Vs1): SW_A (its planet's SwitchSphere) starts the fight. Egg: in its shell it turns (0.3 a frame for
- * 120) and walks (0.5 for 300), the shell pushes Mario off. Then Lv1 / Lv2 / Lv3: it walks (0.5; 1.3 angry, 180
- * frames) and turns (1 a frame), finds Mario in its sight (1000 / 80 degrees; 1300 / 90 angry), chases him (1.5;
- * 1.8 angry, 240 / 300 frames, a touch hurts) and cools down (90). A spin at its tail ball punches it (Shoot: 40
- * away, 30 frames or 1500 off; Charge: 35 frames x 0.88; Reverse: 8 a frame at its head, x 0.98): the ball hits its
- * head (270), the egg breaks / it is hurt; after the fourth hit it goes down (320 frames) and its power star comes out
- * (the row dies: star_wait). ponytail: no tail chain (the ball held 600 behind it), no animations, no demos (a 120
- * pause), no star pieces (appearStarPiece 8), no footprints, no damage camera; the spin on its body does nothing */
-/* DinoPackun's clips by state (DinoPackunBattle*.cpp, DinoPackunStateDamage.cpp, DinoPackunDemo.cpp) */
+/* DinoPackun, the first fight (Petari Boss/DinoPackun.cpp, DinoPackunVs1.cpp, DinoPackunBattleEgg.cpp,
+ * DinoPackunBattleVs1Lv1.cpp / Lv2.cpp, DinoPackunAction.cpp, DinoPackunStateDamage.cpp, DinoPackunBall.cpp,
+ * DinoPackunDemo.cpp). DinoPackunVs1's sequence (dino.seq): WaitStart until SW_A (listenStageSwitchOnA), OpeningDemo
+ * (360), BattleEgg, CryDemo (150), BattleLv1, AngryDemo (200), BattleLv2 (setMiddleBattle, from the demo: Start),
+ * BattleLv3 (setLastBattle, continued: Find), DownDemo (319, then AppearPowerStar 60). Its battle nerves (dino.nrv):
+ * Start (updateStart 60: Find then Wait), Turn, Walk, Find, Chase, CoolDown, AttackHit, Damage; the egg only Turns
+ * (120, 0.3) and Walks (300, 0.5). Damage (DinoPackunStateDamage, dino.dnrv): Punched (it stops) until the ball's
+ * Charge pulls the tail, Pulled (PunchedTailTop / Right / Left from the ball's side, turning to the tail beyond 800)
+ * until the ball hits its head, then EggBroken (120: the shell breaks at 30, EggDamageTop) / Damage / LastDamage
+ * (the clip of the side). Contact: the egg's shell pushes Mario; Chase sends a blow (Lv1) and the other nerves a hit
+ * (Lv2: Chase and Walk a blow), then AttackHit; a spin on the body flips Mario away (FlipWeakJump), a star piece
+ * stops its chase 15 frames (isHitReaction). ponytail: no damage camera (startDamageCamera), no footprints, no
+ * star pieces (appearStarPiece 8), no Mario puppet clips in the demos, the head sensor at the Head joint only once the
+ * model has streamed in (else 350 up, 200 ahead), velocity kept on the ground by collision (no binder) */
+enum { DSEQ_WAIT, DSEQ_OPENING, DSEQ_EGG, DSEQ_CRY, DSEQ_LV1, DSEQ_ANGRY, DSEQ_LV2, DSEQ_LV3, DSEQ_DOWN, DSEQ_GONE };
+enum { DN_START, DN_TURN, DN_WALK, DN_FIND, DN_CHASE, DN_COOLDOWN, DN_ATTACKHIT, DN_DAMAGE };
+enum { DD_PUNCHED, DD_PULLED, DD_EGGBROKEN, DD_DAMAGE, DD_LASTDAMAGE };
+static const int dseq_len[] = {0, 360, 0, 150, 0, 200, 0, 0, 319 + 60};
+
+/* the old phase codes the test builds read: 0 waiting, 1 egg, 2 battle, 3 damage, 4 demo, 5 down, 6 gone, 7 opening */
+static void dino_phase(void)
+{
+    static const int ph[] = {0, 7, 1, 4, 2, 4, 2, 2, 5, 6};
+    dino.phase = dino.seq != DSEQ_GONE && (dino.seq == DSEQ_EGG || dino.seq >= DSEQ_LV1) && dino.seq <= DSEQ_LV3 && dino.nrv == DN_DAMAGE ? 3 : ph[dino.seq];
+}
+
 /* DinoPackun::startDemoAndReset / resetPosition: back at its placed spot, Mario set at sMarioSetLocalPos (0, -550, 800)
  * in its frame, facing it */
 static void dino_demo_reset(void)
@@ -4911,34 +4931,50 @@ static void dino_demo_reset(void)
     mario->face = vnorm(vtangent(vsub(dino.pos, mario->pos), mario->up));
 }
 
+/* its clip (DinoPackunBattle*.cpp startBck / startAction, DinoPackunStateDamage, DinoPackunDemo) */
 static const char *dino_clip(int *loop)
 {
-    int angry = dino.hits >= 2;
+    static const char *const side[] = {"top", "left", "right", "top"};
+    static char buf[24];
+    int angry = dino.seq >= DSEQ_LV2;
     *loop = 1;
-    switch (dino.phase) {
-    case 0: *loop = 0; return "openingdemo"; /* held at its first frame until the fight (startBck + stopBck) */
-    case 7: *loop = 0; return "openingdemo";
-    case 1: return "eggwalk";
-    case 3: *loop = 0;
-        return dino.bstate >= 2 ? (dino.hits ? "punchedtailtop" : "eggwalk") : (dino.hits ? (angry ? "angrywait" : "wait") : "eggwalk");
-    case 8: *loop = 0; return dino.hits == 1 ? "eggdamagetop" : dino.hits == 4 ? "lastdamagetop" : "damagetop";
-    case 4: *loop = 0; return dino.hits == 1 ? "crydemo" : "angrydemo";
-    case 5: *loop = 0; return "downdemo";
+    switch (dino.seq) {
+    case DSEQ_WAIT: case DSEQ_OPENING: *loop = 0; return "openingdemo";
+    case DSEQ_CRY: *loop = 0; return "crydemo";
+    case DSEQ_ANGRY: *loop = 0; return "angrydemo";
+    case DSEQ_DOWN: case DSEQ_GONE: *loop = 0; return "downdemo";
     default: break;
     }
+    if (dino.nrv == DN_DAMAGE) {
+        *loop = 0;
+        switch (dino.dnrv) {
+        case DD_PUNCHED: break; /* exePunched starts no clip: the one playing goes on */
+        case DD_PULLED: if (dino.seq != DSEQ_EGG) { snprintf(buf, sizeof buf, "punchedtail%s", side[dino.ddir]); return buf; } break;
+        case DD_EGGBROKEN: if (dino.dt >= 30) return "eggdamagetop"; break;
+        case DD_DAMAGE: snprintf(buf, sizeof buf, "damage%s", side[dino.ddir]); return buf;
+        default: snprintf(buf, sizeof buf, "lastdamage%s", side[dino.ddir]); return buf;
+        }
+        dino.nrv = dino.prev_nrv; /* the clip of the nerve it was in */
+        const char *c = dino_clip(loop);
+        dino.nrv = DN_DAMAGE;
+        return c;
+    }
+    if (dino.seq == DSEQ_EGG) return "eggwalk";
     switch (dino.nrv) {
-    case 0: return angry ? "angrywalk" : dino.side > 0 ? "turnright" : "turnleft";
-    case 1: return angry ? "angrywalk" : "walk";
-    case 2: *loop = 0; return "find";
-    case 3: return angry ? "angrychase" : "chase";
-    case 5: *loop = 0; return "attackhit";
+    case DN_START: *loop = 0; return dino.nt < 44 ? "find" : angry ? "angrywait" : "wait";
+    case DN_TURN: return angry ? "angrywalk" : dino.side > 0 ? "turnright" : "turnleft";
+    case DN_WALK: return angry ? "angrywalk" : "walk";
+    case DN_FIND: *loop = 0; return "find";
+    case DN_CHASE: return angry ? "angrychase" : "chase";
+    case DN_ATTACKHIT: *loop = 0; return "attackhit";
     default: *loop = 0; return "cooldown";
     }
 }
 
 /* DinoPackunTail, lean: TailRoot follows its clip, Tail1..7 hang between it and the ball (FABRIK on the clip's link
  * lengths, from last frame's chain), each turned along the chain (turnJointLocalXDir); the ball (its physics) is held
- * within the tail's length. Off (pure clip, the ball on its joint) before the fight and in the demos. */
+ * within the tail's length. Off (pure clip, the ball on its joint) before the fight and in the demos
+ * (mTail->deactivate / startDemoAndReset). */
 static void dino_pose(void)
 {
     Anim *a = dino.anim;
@@ -4947,11 +4983,11 @@ static void dino_pose(void)
     int loop;
     char n[48];
     snprintf(n, sizeof n, "dinopackun/%s", dino_clip(&loop));
-    anim_play(a, n, dino.phase == 0 ? 0.0f : 1.0f, loop, 8);
+    anim_play(a, n, dino.seq == DSEQ_WAIT ? 0.0f : 1.0f, loop, 8);
     anim_pose(a);
     float m[16];
     basis_matrix(m, dino.pos, dino.up, dino.f, 0);
-    int chain = (dino.phase == 1 || dino.phase == 2 || dino.phase == 3 || dino.phase == 8) && a->skin->njoints > 20;
+    int chain = (dino.seq == DSEQ_EGG || (dino.seq >= DSEQ_LV1 && dino.seq <= DSEQ_LV3 && dino.seq != DSEQ_ANGRY)) && a->skin->njoints > 20;
     if (!chain) { /* the ball on its joint */
         float *w = a->world[20];
         V3 lp = v3(w[12], w[13], w[14]);
@@ -5002,21 +5038,57 @@ static void dino_pose(void)
     anim_skin(a);
 }
 
+/* the head sensor (addHitSensorAtJointEnemy "head", joint Head, offset sHeadHitOffset (140, -110, 0), radius 270) */
+static V3 dino_head(void)
+{
+    if (dino.anim && m_dino && dino.anim->skin == m_dino->skin && dino.anim->skin->njoints > 27) {
+        float m[16], jm[16];
+        basis_matrix(m, dino.pos, dino.up, dino.f, 0);
+        mat_mul(jm, m, dino.anim->world[27]);
+        return v3(jm[12] + 140.0f * jm[0] - 110.0f * jm[4], jm[13] + 140.0f * jm[1] - 110.0f * jm[5], jm[14] + 140.0f * jm[2] - 110.0f * jm[6]);
+    }
+    return vadd(dino.pos, vadd(vmul(dino.up, 350.0f), vmul(dino.f, 200.0f)));
+}
+
+static void dino_set_nrv(int n) { dino.nrv = n; dino.nt = 0; }
+
+/* the sequencer's next action once one ends (DinoPackunVs1 exe*: updateActorStateAndNextNerve) */
+static void dino_next_seq(void)
+{
+    dino.seq++; dino.t = 0;
+    if (dino.seq == DSEQ_EGG) dino_set_nrv(DN_TURN); /* DinoPackunBattleEgg::appear */
+    else if (dino.seq == DSEQ_LV1 || dino.seq == DSEQ_LV2) dino_set_nrv(DN_START); /* appear (Lv2: setStartFromDemo) */
+    else if (dino.seq == DSEQ_LV3) dino_set_nrv(DN_FIND); /* setStartContinueBattle */
+    if (dino.seq == DSEQ_OPENING || dino.seq == DSEQ_CRY || dino.seq == DSEQ_ANGRY || dino.seq == DSEQ_DOWN) dino_demo_reset();
+    printf("dino packun: seq %d" "\n", dino.seq);
+}
+
 static void update_dino(void)
 {
-    if (dino.row < 0 || dino.phase == 6 || !row_shown(dino.row)) return;
+    if (dino.row < 0 || dino.seq == DSEQ_GONE || !row_shown(dino.row)) return;
     const Row *r = &sc->objs[dino.row];
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     dino.up = up_at(dino.pos, dino.up);
     dino.f = vnorm(vtangent(dino.f, dino.up));
-    V3 up = dino.up, side = vcross(up, dino.f), body = vadd(dino.pos, vmul(up, 200.0f));
-    V3 head = vadd(dino.pos, vadd(vmul(up, 350.0f), vmul(dino.f, 200.0f)));
-    int angry = dino.hits >= 2;
-    dino.t++;
-    if (dino.phase == 0) {
-        if (r->sw[SW_A] < 0 || sw_on(r, SW_A)) { dino.phase = 7; dino.t = 0; dino_demo_reset(); printf("dino packun: start" "\n"); }
-        dino_pose();
+    V3 up = dino.up, side = vcross(up, dino.f), body = vadd(dino.pos, vmul(up, 200.0f)), head = dino_head();
+    int egg = dino.seq == DSEQ_EGG, lv2 = dino.seq >= DSEQ_LV2;
+    dino.t++; dino.nt++;
+    if (dino.react) dino.react--;
+    if (dino.seq == DSEQ_WAIT) {
+        if (r->sw[SW_A] < 0 || sw_on(r, SW_A)) { printf("dino packun: start" "\n"); dino_next_seq(); }
+        dino_phase(); dino_pose();
         return;
+    }
+    if (dseq_len[dino.seq]) { /* a demo */
+        if (dino.t >= dseq_len[dino.seq]) {
+            if (dino.seq == DSEQ_DOWN) { /* AppearPowerStar: its star, it is gone */
+                dino.seq = DSEQ_GONE; row_kill(dino.row);
+                printf("dino packun: down, its star" "\n");
+                dino_phase();
+                return;
+            }
+            dino_next_seq();
+        }
     }
     float accel = 0;
     V3 to = vtangent(vsub(mario->pos, dino.pos), up);
@@ -5024,127 +5096,159 @@ static void update_dino(void)
     #define DINO_TURN_TO(v, rate) do { V3 tt = (v); if (vlen(tt) > 1e-3f) { \
         float a = atan2f(vdot(tt, side), vdot(tt, dino.f)), mx = (rate) * 0.0174533f; a = a > mx ? mx : a < -mx ? -mx : a; \
         dino.f = vnorm(vadd(vmul(dino.f, cosf(a)), vmul(side, sinf(a)))); } } while (0)
-    if (dino.phase == 1 || dino.phase == 2) {
-        int egg = dino.phase == 1;
-        float range = angry ? 1300.0f : 1000.0f, cone = cosf((angry ? 90.0f : 80.0f) * 0.0174533f);
-        int sees = !egg && dm < range && face > cone;
+    int battle = egg || dino.seq == DSEQ_LV1 || dino.seq == DSEQ_LV2 || dino.seq == DSEQ_LV3;
+    if (battle) {
+        /* tryFind: isInSightConePlayer 1000 / 80 (Lv2 1300 / 90) */
+        int sees = !egg && dm < (lv2 ? 1300.0f : 1000.0f) && face > cosf((lv2 ? 90.0f : 80.0f) * 0.0174533f);
         switch (dino.nrv) {
-        case 0: /* Turn */
+        case DN_START: /* updateStart: 60 frames, then Chase */
+            if (dino.nt >= 60) dino_set_nrv(DN_CHASE);
+            break;
+        case DN_TURN: /* updateTurn(60, 1) / egg (120, 0.3) / Lv2: 1 a frame with 1.3 forward, 30 */
             DINO_TURN_TO(vmul(side, dino.side), egg ? 0.3f : 1.0f);
-            if (angry) accel = 1.3f;
-            if (dino.t >= (egg ? 120 : angry ? 30 : 60)) { dino.nrv = 1; dino.t = 0; }
-            else if (sees) { dino.nrv = 2; dino.t = 0; }
+            if (lv2) accel = 1.3f;
+            if (dino.nt > (egg ? 120 : lv2 ? 30 : 60)) dino_set_nrv(DN_WALK);
+            else if (sees) dino_set_nrv(DN_FIND);
             break;
-        case 1: /* Walk */
-            accel = angry ? 1.3f : 0.5f;
-            if (dino.t >= (egg ? 300 : 180)) { dino.nrv = 0; dino.t = 0; dino.side = (game_frame & 1) ? 1.0f : -1.0f; }
-            else if (sees) { dino.nrv = 2; dino.t = 0; }
+        case DN_WALK: /* updateWalk(180, 0.5) / egg (300, 0.5) / Lv2 (180, 1.3); selectTurnDirection at its end */
+            accel = lv2 ? 1.3f : 0.5f;
+            if (dino.nt > (egg ? 300 : 180)) { dino_set_nrv(DN_TURN); dino.side = (rand() & 1) ? 1.0f : -1.0f; }
+            else if (sees) dino_set_nrv(DN_FIND);
             break;
-        case 2: /* Find */
-            DINO_TURN_TO(to, 1.0f);
-            if (dino.t >= 40) { dino.nrv = 3; dino.t = 0; }
+        case DN_FIND: /* updateFind(14, 1) / Lv2 (14, 4): until its Find clip stops (44) */
+            DINO_TURN_TO(to, lv2 ? 4.0f : 1.0f);
+            if (dino.nt >= 44) dino_set_nrv(DN_CHASE);
             break;
-        case 3: { /* Chase */
-            int len = angry ? 300 : 240, ramp = angry ? 90 : 60;
-            DINO_TURN_TO(to, angry ? 1.3f : 1.0f);
-            accel = (angry ? 1.8f : 1.5f) * (dino.t < ramp ? (float)dino.t / ramp : 1.0f);
-            if (dino.t >= len) { dino.nrv = 4; dino.t = 0; }
+        case DN_CHASE: { /* updateChase(240, 180, 1, 1.5, 60) / Lv2 (300, 180, 1.3, 1.8, 90); a hit reaction: nothing */
+            int len = lv2 ? 300 : 240, ramp = lv2 ? 90 : 60;
+            if (!dino.react) {
+                DINO_TURN_TO(to, lv2 ? 1.3f : 1.0f);
+                accel = (lv2 ? 1.8f : 1.5f) * (dino.nt < ramp ? (float)dino.nt / ramp : 1.0f);
+            }
+            if (dino.nt > len) dino_set_nrv(DN_COOLDOWN);
             break;
         }
-        case 5: /* AttackHit: its glad action */
-            if (dino.t >= 239) { dino.nrv = 0; dino.t = 0; }
+        case DN_ATTACKHIT: /* updateAttackHit: its AttackHit action (239) */
+            if (dino.nt >= 239) dino_set_nrv(DN_TURN);
             break;
-        default: /* CoolDown */
-            if (dino.t >= 90) { dino.nrv = 0; dino.t = 0; }
+        case DN_COOLDOWN: /* updateCoolDown(90) / Lv2 (30) */
+            if (dino.nt > (lv2 ? 30 : 90)) dino_set_nrv(DN_TURN);
+            break;
+        case DN_DAMAGE: /* DinoPackunStateDamage */
+            dino.dt++;
+            if (dino.dnrv == DD_PULLED && vlen(vsub(dino.bpos, dino.pos)) > 800.0f) /* turnDirectionFromTargetDegree, 6 */
+                DINO_TURN_TO(vmul(vtangent(vsub(dino.chain_ok ? dino.bpos : dino.bpos, dino.pos), up), -1.0f), 6.0f);
+            if ((dino.dnrv == DD_EGGBROKEN && dino.dt > 120) || (dino.dnrv == DD_DAMAGE && dino.dt >= 79) ||
+                (dino.dnrv == DD_LASTDAMAGE && dino.dt >= 49)) { /* its state is over: the sequencer's next */
+                demo_dino_damage = 0;
+                dino_next_seq();
+            }
+            break;
         }
+        /* contact (attackSensor) */
         float dist = vlen(vsub(c, body));
-        if (egg && dist < 400.0f + HIT_BODY_R) { /* the shell pushes him off */
+        if (egg && dist < 400.0f + HIT_BODY_R) { /* the shell pushes him off (sendMsgPush) */
             V3 out = vnorm(vtangent(vsub(c, body), up));
             mario->pos = vadd(mario->pos, vmul(out, 400.0f + HIT_BODY_R - dist));
-        } else if (!egg && dist < 200.0f + HIT_BODY_R && !mario->hurt_timer) {
-            hurt_mario(dino.pos, 25.0f);
-            dino.nrv = 5; dino.t = 0; /* AttackHit */
-        }
-    } else if (dino.phase == 7) { /* OpeningDemo, then the egg battle */
-        if (dino.t >= 360) { dino.phase = 1; dino.nrv = 1; dino.t = 0; }
-    } else if (dino.phase == 8) { /* the hit (EggDamageTop / Damage* / LastDamage*), then CryDemo / AngryDemo / Lv3 / Down */
-        if (dino.t >= (dino.hits == 1 ? 99 : dino.hits == 4 ? 49 : 79)) {
-            dino.t = 0;
-            dino.phase = dino.hits == 1 || dino.hits == 2 ? 4 : dino.hits == 3 ? 2 : 5;
-            if (dino.phase == 2) dino.nrv = 2;
-            if (dino.phase == 4 || dino.phase == 5) dino_demo_reset();
-        }
-    } else if (dino.phase == 4) { /* CryDemo (after the egg) / AngryDemo (after Lv1) */
-        if (dino.t >= (dino.hits == 1 ? 150 : 200)) { dino.phase = 2; dino.nrv = dino.hits == 1 ? 3 : 2; dino.t = 0; }
-    } else if (dino.phase == 5) { /* DownDemo, then AppearPowerStar */
-        if (dino.t >= 385 + 60) {
-            dino.phase = 6; row_kill(dino.row);
-            printf("dino packun: down, its star" "\n");
-            return;
+        } else if (!egg && dino.nrv != DN_DAMAGE && dino.nrv != DN_ATTACKHIT && dist < 200.0f + HIT_BODY_R) {
+            if (mario->spin_timer > 0 && !mario->hurt_timer) { /* isMsgPlayerSpinAttack: sendMsgEnemyAttackFlipWeakJump */
+                V3 out = vnorm(vtangent(vsub(c, body), up));
+                mario->hvel = vmul(out, 10.0f); mario->vup = 15.0f; mario->grounded = 0;
+            } else if (!mario->hurt_timer) { /* blow (Chase; Lv2 Walk too) or hit, then AttackHit */
+                int blow = dino.nrv == DN_CHASE || (lv2 && dino.nrv == DN_WALK);
+                hurt_mario(dino.pos, blow ? 25.0f : 15.0f);
+                dino_set_nrv(DN_ATTACKHIT);
+            }
         }
     }
     if (accel > 0) dino.vel = vadd(dino.vel, vmul(dino.f, accel)); /* addVelocityMoveToDirection, updateNormalVelocity */
-    if ((dino.phase != 1 && dino.phase != 2) || dino.nrv == 5) dino.vel = v3(0, 0, 0);
+    if (!battle || dino.nrv == DN_DAMAGE || dino.nrv == DN_ATTACKHIT || dino.nrv == DN_START || dino.nrv == DN_FIND || dino.nrv == DN_COOLDOWN)
+        dino.vel = vmul(dino.vel, 0.9f);
+    if (dino.nrv == DN_DAMAGE) dino.vel = v3(0, 0, 0); /* zeroVelocity */
     dino.vel = vmul(vtangent(dino.vel, up), 0.9f);
     V3 center = vadd(vadd(dino.pos, dino.vel), vmul(up, 150.0f - 4.0f)), gn, wn;
     int wall = 0;
     /* only in the battle it moves (the demos hold it where resetPosition put it); no ground under it (its zone still
      * streaming, the egg's nest) keeps it where it is rather than falling through */
-    if ((dino.phase == 1 || dino.phase == 2) && (r->zone >= 64 || zone_kcl[r->zone]) &&
-        collide_n(&center, up, 150.0f, &gn, &wn, &wall))
+    if (battle && (r->zone >= 64 || zone_kcl[r->zone]) && collide_n(&center, up, 150.0f, &gn, &wn, &wall))
         dino.pos = vsub(center, vmul(up, 150.0f));
 
-    /* the tail ball */
+    /* its tail ball (DinoPackunBall): Wait, Shoot, Charge, Reverse, Rebound */
     V3 rest = vsub(dino.pos, vmul(dino.f, 600.0f)), bup = up_at(dino.bpos, up);
     dino.bt++;
     switch (dino.bstate) {
-    case 0: case 4: /* Wait / Rebound: dragged behind */
-        dino.bvel = vmul(vadd(dino.bvel, vadd(vmul(vsub(rest, dino.bpos), 0.05f), vmul(bup, -1.0f))), 0.9f);
+    case 0: case 4: /* exeWait / exeRebound: gravity 1, x 0.9 (dragged by the tail when it has no chain yet) */
+        dino.bvel = vmul(vadd(dino.bvel, vmul(bup, -1.0f)), 0.9f);
+        if (!dino.chain_ok) dino.bvel = vadd(dino.bvel, vmul(vsub(rest, dino.bpos), 0.05f));
         if (dino.bstate == 4 && dino.bt >= 180) { dino.bstate = 0; dino.bt = 0; }
-        if (dino.bstate == 0 && (dino.phase == 1 || dino.phase == 2) && mario->spin_timer > 0 &&
-            vlen(vsub(c, dino.bpos)) < 135.0f + HIT_BODY_R + 60.0f) { /* requestPunch */
+        if (dino.bstate == 0 && battle && dino.nrv != DN_DAMAGE && mario->spin_timer > 0 &&
+            vlen(vsub(c, dino.bpos)) < 135.0f + HIT_BODY_R + 60.0f) { /* requestPunch: PUNCHED_BALL to the head */
             V3 away = vtangent(vsub(dino.bpos, mario->pos), bup);
             away = vlen(away) > 1e-3f ? vnorm(away) : vmul(dino.f, -1.0f);
-            dino.bvel = vadd(vmul(away, 40.0f), vmul(bup, 20.0f));
-            dino.bstate = 1; dino.bt = 0; dino.phase = 3; dino.t = 0;
+            dino.bvel = vadd(vmul(away, 120.0f), vmul(bup, 40.0f)); /* addVelocitySeparateHV 120, 40 */
+            dino.bstate = 1; dino.bt = 0;
+            dino.prev_nrv = dino.nrv; dino_set_nrv(DN_DAMAGE); dino.dnrv = DD_PUNCHED; dino.dt = 0; /* setNerve Damage */
             printf("dino packun: tail ball punched" "\n");
         }
         break;
-    case 1: /* Shoot */
-        if (dino.bt >= 30 || vlen(vsub(dino.bpos, head)) >= 1500.0f) { dino.bstate = 2; dino.bt = 0; }
+    case 1: { /* exeShoot: addDodgeTargetVelocity, x 1; 30 frames or 1500 from the head */
+        V3 v = vtangent(vsub(dino.bpos, head), up);
+        float dd = vlen(v);
+        if (dd > 1e-3f) {
+            v = vmul(v, 1.0f / dd);
+            float vin = vdot(dino.bvel, v);
+            if (vin < 0) dino.bvel = vsub(dino.bvel, vmul(v, vin * (1.0f - fminf(fmaxf((dd - 500.0f) / 1000.0f, 0.0f), 1.0f))));
+            if (dd < 500.0f) dino.bvel = vadd(dino.bvel, v);
+        }
+        if (dino.bt > 30 || vlen(vsub(dino.bpos, head)) >= 1500.0f) {
+            dino.bstate = 2; dino.bt = 0;
+            if (dino.nrv == DN_DAMAGE && dino.dnrv == DD_PUNCHED) { /* PULLED_TAIL: TryPulledDemo, Pulled */
+                V3 dir = vnorm(vsub(dino.bpos, head));
+                dino.ddir = vdot(up, dir) > 0.7f ? 3 : vdot(side, dir) < 0.0f ? 2 : 1;
+                dino.dnrv = DD_PULLED; dino.dt = 0; demo_dino_damage = 1;
+            }
+        }
         break;
-    case 2: /* Charge */
+    }
+    case 2: /* exeCharge: x 0.88 for 35 */
         dino.bvel = vmul(dino.bvel, 0.88f);
-        if (dino.bt >= 35) { dino.bstate = 3; dino.bt = 0; }
+        if (dino.bt > 35) { dino.bstate = 3; dino.bt = 0; }
         break;
-    case 3: /* Reverse: at its head */
+    case 3: /* exeReverse: 8 a frame at the head, x 0.98, until it hits it (BALL_ATTACK: x 0.3 back, Rebound) */
         dino.bvel = vmul(vadd(dino.bvel, vmul(vnorm(vsub(head, dino.bpos)), 8.0f)), 0.98f);
-        if (vlen(vsub(head, dino.bpos)) < 270.0f + 135.0f) { /* BALL_ATTACK */
+        if (vlen(vsub(head, dino.bpos)) < 270.0f + 135.0f) {
             dino.hits++;
             dino.bvel = vmul(vnorm(vsub(dino.bpos, head)), 0.3f * vlen(dino.bvel));
             dino.bstate = 4; dino.bt = 0;
-            dino.phase = 8; dino.t = 0; dino.vel = v3(0, 0, 0);
+            if (dino.nrv == DN_DAMAGE) { /* DinoPackunStateDamage: EggBroken / Damage / LastDamage */
+                dino.dnrv = egg ? DD_EGGBROKEN : dino.seq == DSEQ_LV3 ? DD_LASTDAMAGE : DD_DAMAGE; dino.dt = 0;
+            }
             printf("dino packun: hit %d" "\n", dino.hits);
-        } else if (dino.bt >= 150) { dino.bstate = 4; dino.bt = 0; dino.phase = dino.hits ? 2 : 1; dino.nrv = 0; dino.t = 0; }
+        } else if (dino.bt >= 150) { /* ponytail: a ball that never reaches the head (Petari's tail chain brings it) */
+            dino.bstate = 4; dino.bt = 0;
+            if (dino.nrv == DN_DAMAGE) { demo_dino_damage = 0; dino_set_nrv(DN_TURN); }
+        }
         break;
     }
     V3 bc = vadd(dino.bpos, dino.bvel);
     if (dino.bstate == 0 || dino.bstate == 4) collide_n(&bc, bup, 135.0f, &gn, &wn, &wall);
     dino.bpos = bc;
     #undef DINO_TURN_TO
+    dino_phase();
     dino_pose();
     { /* its demos' cameras (DinoPackunDemo: OpeningDemo, CryDemo, AngryDemo, DownDemo) */
-        const char *cn = dino.phase == 7 ? "dinopackun/openingdemo" : dino.phase == 4 ? (dino.hits == 1 ? "dinopackun/crydemo" : "dinopackun/angrydemo") :
-                         dino.phase == 5 && dino.t < 385 ? "dinopackun/downdemo" : NULL;
+        const char *cn = dino.seq == DSEQ_OPENING ? "dinopackun/openingdemo" : dino.seq == DSEQ_CRY ? "dinopackun/crydemo" :
+                         dino.seq == DSEQ_ANGRY ? "dinopackun/angrydemo" : dino.seq == DSEQ_DOWN && dino.t < 385 ? "dinopackun/downdemo" : NULL;
         static int was;
         float m[16];
         basis_matrix(m, dino.pos, dino.up, dino.f, 0);
         int on = cn && demo_camera(cn, dino.t, m);
         if (was && !on) camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45);
         was = on;
-        dino_demo_on = on;
+        dino_demo_on = on || demo_dino_damage;
     }
 }
+
 
 /* OtaKing (Lv1): SW_A (a TimerSwitch after the SwitchCylinder round its bath) brings it up. Facing Mario (1 degree a
  * frame) it throws a coconut at him every cWaitFrame 75 (45 after a throw) while he is within cThrowDistance 4000
@@ -8491,13 +8595,15 @@ void game_draw(void)
             float jm[16];
             render_skinned(m_dino, m, (const float (*)[16])dino.anim->drw);
             mat_mul(jm, m, dino.anim->world[2]); /* EggShell */
-            if (dino.hits == 0 && m_degg) render_model(m_degg, jm, 0x80, 0x80, 0x80);
-            else if (dino.hits == 1 && dino.phase == 8 && m_deggbrk) render_model(m_deggbrk, jm, 0x80, 0x80, 0x80);
+            int broke = dino.nrv == DN_DAMAGE && dino.dnrv == DD_EGGBROKEN; /* exeEggBroken: the shell until 30, then Break */
+            if (m_degg && (dino.seq < DSEQ_EGG || (dino.seq == DSEQ_EGG && !(broke && dino.dt >= 30))))
+                render_model(m_degg, jm, 0x80, 0x80, 0x80);
+            else if (m_deggbrk && broke && dino.dt >= 30) render_model(m_deggbrk, jm, 0x80, 0x80, 0x80);
             mat_mul(jm, m, dino.anim->world[20]); /* TailBall */
             if (m_dball) render_model(m_dball, jm, 0x80, 0x80, 0x80);
         } else {
             if (m_dino) render_model(m_dino, m, 0x80, 0x80, 0x80);
-            if (m_degg && dino.hits == 0) render_model(m_degg, m, 0x80, 0x80, 0x80);
+            if (m_degg && dino.seq <= DSEQ_EGG) render_model(m_degg, m, 0x80, 0x80, 0x80);
             basis_matrix(m, dino.bpos, up_at(dino.bpos, dino.up), dino.f, 0);
             if (m_dball) render_model(m_dball, m, 0x80, 0x80, 0x80);
         }

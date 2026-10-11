@@ -2,6 +2,14 @@
 
 Last updated 2026-10-09. Detail and numbers: `docs/phase2-report.md`; tasks: `openspec/changes/phase-2-full-engine/tasks.md`.
 
+## Rules
+
+- Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -
+  constants, reference frames, joints and hit sensors, nerves and their order, timings, clip names. No values
+  guessed from data and no approximate versions where the decompiled code exists; code written before that way is
+  rewritten (Good Egg first). Only where Petari lacks the code (undecompiled functions, commented-out constants,
+  services the PS2 port does not have) is a gap filled, marked `ponytail:` naming it. 30 fps is acceptable.
+
 ## Done
 
 - Milestones 1-4 GO (resident budget, textures, Mario, cameras).
