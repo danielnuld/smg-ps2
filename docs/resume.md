@@ -102,6 +102,8 @@ Last updated 2026-10-09. Detail and numbers: `docs/phase2-report.md`; tasks: `op
     puts it out: its coin or star piece, it stays out);
   - FountainBig (a water column on its 420-frame cycle, grown and shrunk; Mario in it thrown 44 up, once a landing;
     no effects yet);
+  - SimpleBreakableObj kinds in breakable(): IcicleRock, SandUpDownTowerBreakableWallA / B (a spin),
+    TeresaMansionHoleCover (a hip drop); arg3 -1 coins / 3 star pieces by arg6 (`XF=-DBOX_ONLY_NEW` box test);
   - WaterPlant (kept as a logic row): arg0 plants within arg1 dropped onto the ground, camera-facing strips of three
     segments swaying (render_strips), WaterPlantA-D packed after the effects' textures (PTCL header word 2);
   - ambient effect objects (NameObjFactory's *EffectObj*: SnowS, LavaSparksS, AstroTorchLight...; tools/jpa.py AMBIENT,

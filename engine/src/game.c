@@ -292,6 +292,15 @@ static int breakable(const char *name, const Row *r, int *coins, int *pieces)
         if (strstr(name, "Coin")) *coins = n; else *pieces = n;
         return 3;
     }
+    /* SimpleBreakableObj.cpp: IcicleRock and SandUpDownTowerBreakableWallA / B break at a spin (mBreakFlags 2),
+     * TeresaMansionHoleCover at a hip drop (4); arg3 -1 arg6 coins (1), 3 arg6 star pieces (5). ponytail: no
+     * 1-up / power star items, KoopaStatue / ConcreteBlock / SnowBlockA (explosions, ball dash, fire) stay whole */
+    if (strcmp(name, "IcicleRock") == 0 || strncmp(name, "SandUpDownTowerBreakableWall", 28) == 0 ||
+        strcmp(name, "TeresaMansionHoleCover") == 0) {
+        if (r->arg[3] == -1) *coins = r->arg[6] > 0 ? r->arg[6] : 1;
+        else if (r->arg[3] == 3) *pieces = r->arg[6] > 0 ? r->arg[6] : 5;
+        return name[0] == 'T' ? 2 : 1;
+    }
     if (strcmp(name, "HipDropRock") == 0) {
         *coins = r->arg[0] == 0;
         *pieces = r->arg[0] == 1 ? (r->arg[1] >= 0 ? r->arg[1] : 6) : 0;
@@ -2389,6 +2398,9 @@ int game_test_box(void)
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
         if (in->breaks != 1) continue; /* spin-breakable */
+#ifdef BOX_ONLY_NEW /* the SimpleBreakableObj ones only */
+        { const char *n = sc->types + 32 * sc->objs[in->row].type; if (!strncmp(n, "Punch", 5) || !strncmp(n, "Wood", 4) || !strncmp(n, "Crystal", 7)) continue; }
+#endif
         V3 p = v3(in->m[12], in->m[13], in->m[14]), up = up_at(p, v3(0, 1, 0));
         mario->pos = vadd(p, vmul(up, in->reach + 20.0f));
         mario->hvel = v3(0, 0, 0); mario->vup = 0;
