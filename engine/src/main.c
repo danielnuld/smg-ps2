@@ -507,6 +507,14 @@ int main(void)
     render_load_textures(&scene, 0, 0);
     game_init(&scene, blob);
     mem_mark(&base_mark);
+    { /* CometEventKeeper::sTimeLimitInfoTable: the Red / Black comet scenarios' limits (seconds) */
+        static const struct { const char *scen; int secs; } limits[] = {
+            {"EggStarGalaxy/4", 240}, {"StarDustGalaxy/4", 240}, {"SandClockGalaxy/4", 270}, {"CannonFleetGalaxy/4", 360},
+            {"StarDustGalaxy/5", 120}, {"PhantomGalaxy/5", 60}, {"CosmosGardenGalaxy/5", 150}, {"FactoryGalaxy/5", 180},
+            {"ReverseKingdomGalaxy/5", 210}};
+        for (u32 i = 0; i < sizeof limits / sizeof limits[0]; i++)
+            if (!strcmp(limits[i].scen, scen)) { game_set_time_limit(limits[i].secs); printf("time limit %d s\n", limits[i].secs); }
+    }
     {
         /* the scenario's stage BGM (music_tab.h); sequenced ones (LibraryRoom...) are not streams: galaxy 01 */
         const char *track = "SMG_galaxy01_strm";
@@ -1149,6 +1157,11 @@ int main(void)
 #ifdef TEASER /* videos (build.sh with TEASER=1): a plain counter instead of the debug lines */
         snprintf(line, sizeof line, "COINS %d   STAR BITS %d   LIVES %d", game_coins(), game_starpieces(), game_lives());
         render_text(16, 12, line);
+        if (game_time_left() >= 0) {
+            int t = (game_time_left() + 59) / 60;
+            snprintf(line, sizeof line, "TIME %d:%02d", t / 60, t % 60);
+            render_text(16, 26, line);
+        }
 #else
         ms(a, sizeof a, "LOGIC", t_logic);
         ms(b, sizeof b, "DRAW", t_draw);
@@ -1163,6 +1176,11 @@ int main(void)
         snprintf(line, sizeof line, "STARS %d  LIVES %d  CAM %d %s", game_stars(), game_lives(), camera_current(),
                  camera_type_name());
         render_text(16, 40, line);
+        if (game_time_left() >= 0) { /* the comet's time left */
+            int t = (game_time_left() + 59) / 60;
+            snprintf(line, sizeof line, "TIME %d:%02d", t / 60, t % 60);
+            render_text(16, 54, line);
+        }
 #endif
         { /* the star pointer's cursor: a yellow cross, white in the middle */
             float cx, cy;

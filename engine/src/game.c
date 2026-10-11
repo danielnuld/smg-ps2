@@ -270,6 +270,7 @@ static struct {
 static const Model *m_ota, *m_otafoot, *m_coco;
 #define MAX_BUBBLES 8 /* AirBubbleHolder's free bubbles (update_bubbles) */
 static struct { V3 pos, vel; int t, life; } bubbles[MAX_BUBBLES];
+static int time_limit, time_left; /* a Red / Black comet's limit and frames left (CometEventExecutorTimeLimit), 0 none */
 static int swimming, oxygen = 3600; /* Mario in water (swim_update); oxygen left (mOxygenMax 3600) */
 static float swim_pitch; /* his swim direction's angle over the horizontal (radians) */
 static V3 stray_at[64]; /* StrayTico: where the rescued ones are (kept over a rebind), by row % 64 */
@@ -5529,6 +5530,7 @@ static void update_mario(void)
  * animation, the stage is not reset, game over just refills the lives */
 static void miss(void)
 {
+    time_left = time_limit; /* the comet's time starts over with the scenario */
     mario->pos = start_pos; mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->hurt_timer = 0; mario->hip = 0;
     mario->launch = -1; /* out of any launch star's flight (it would carry him back) */
     life = max_life = MAX_LIFE;
@@ -7469,8 +7471,15 @@ static void keep_effects(void)
     }
 }
 
+/* CometEventKeeper (Red / Black comet): the scenario's limit (sTimeLimitInfoTable, seconds) counts down from the start;
+ * at 0 (isReadyToTimeUp) Mario is lost (forceKillPlayerByWaterRace); a power star stops it. ponytail: no countdown
+ * sounds, no TimeLimitLayout (the HUD line) */
+void game_set_time_limit(int seconds) { time_limit = time_left = seconds * 60; }
+int game_time_left(void) { return time_limit ? time_left : -1; }
+
 void game_update(void)
 {
+    if (time_limit && time_left > 0 && !stars && --time_left == 0) { printf("time up" "\n"); miss(); }
     hip_hit = 0;
     game_frame++;
     update_rotors();

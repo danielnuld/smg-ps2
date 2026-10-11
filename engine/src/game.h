@@ -4,6 +4,8 @@
 #include "blob.h"
 
 void game_init(const Scene *s, const unsigned char *blob);
+void game_set_time_limit(int seconds);
+int game_time_left(void);
 void game_update(void);
 /* After the scene's models changed (zone packs swapped): find every placed model again. */
 void game_rebind(void);

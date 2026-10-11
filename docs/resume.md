@@ -127,6 +127,8 @@ Last updated 2026-10-09. Detail and numbers: `docs/phase2-report.md`; tasks: `op
   - OtaKing (Lv1; SW_A from the TimerSwitch after its SwitchCylinder): throws coconuts at Mario (every 75 / 45
     frames within 4000), a spin sends one back; a rally count over its hits hurts it, else it hits it back (15 + 3 x
     rally); three hits: down, its star (declared); no fire balls / bubbles / near attack / magma / demos;
+  - Red / Black comet time limits (CometEventKeeper::sTimeLimitInfoTable, main.c by scenario): TIME m:ss on the HUD,
+    at 0 a miss (the time starts over), a power star stops it;
   - slice.py MODEL_ARC: OtaKing, KoopaJr and Tico take their own archive (NameObjFactory's first was FireBall /
     KoopaJrLow / TicoBaby); a Purple / Black comet scenario's star is the 100-coin one (getAppearPowerStarObjName);
   - SW_SLEEP shows / hides rows like SW_APPEAR (SleepControlFunc); cylinder areas are 500 x scale_y high
