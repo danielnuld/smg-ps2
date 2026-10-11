@@ -248,6 +248,8 @@ static int test_nolost; /* test builds: no miss for falling off (Mario sent to a
 static void notes_spawn(void);
 static int note_rail(const Row *r, const unsigned char **e);
 static int fire_time; /* Fire Mario: frames left (mFireModeTime 1200), 0 normal */
+static int swimming, oxygen = 3600; /* Mario in water (swim_update); oxygen left (mOxygenMax 3600) */
+static float swim_pitch; /* his swim direction's angle over the horizontal (radians) */
 static V3 stray_at[64]; /* StrayTico: where the rescued ones are (kept over a rebind), by row % 64 */
 static int bee_mode, bee_meter; /* Bee Mario (MarioBee.cpp): on until hurt; flight left (mAirWalkTime 180) */
 static float bee_rise, bee_drop; /* -_770 while flying (up to mBeeUpSpeedMax 5), its free drop (to mBeeFreeDropMaxSpd 5) */
@@ -3056,6 +3058,25 @@ int game_fire_state(void)
 }
 
 /* Test builds: Mario onto the first StrayTico not rescued (its row; -1 none left) */
+/* Test builds: Mario 300 under the first water area's surface (its row, -1 none); game_swim_state: swimming x 10000 + oxygen */
+int game_test_swim(void)
+{
+    int t[3] = {scene_type(sc, "WaterCube"), scene_type(sc, "WaterSphere"), scene_type(sc, "WaterCylinder")};
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if (r->type != t[0] && r->type != t[1] && r->type != t[2]) continue;
+        V3 x, z;
+        row_axes(r, &x, &z);
+        mario->pos = r->type == t[1] ? vadd(row_pos(r), vmul(mario->up, 500.0f * r->scale[0] - 300.0f))
+                                     : vadd(row_pos(r), vmul(vcross(z, x), 1000.0f * r->scale[1] - 300.0f));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return (int)i;
+    }
+    return -1;
+}
+
+int game_swim_state(void) { return swimming * 10000 + oxygen; }
+
 int game_test_stray(void)
 {
     for (int i = 0; i < ninsts; i++)
@@ -4722,10 +4743,96 @@ static int fluff_update(Player *m)
     return 1;
 }
 
+/* WaterArea.cpp (WaterCube / WaterSphere / WaterCylinder areas): p in water, *depth how far under its surface (the
+ * box / cylinder top, the sphere's skin along up) */
+static int area_inside(const Row *r, V3 p);
+static int in_water(V3 p, V3 up, float *depth)
+{
+    static int types[3] = {-2, -2, -2};
+    if (types[0] == -2) { types[0] = scene_type(sc, "WaterCube"); types[1] = scene_type(sc, "WaterSphere"); types[2] = scene_type(sc, "WaterCylinder"); }
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if ((r->type != types[0] && r->type != types[1] && r->type != types[2]) || !row_shown(i) || !area_inside(r, p)) continue;
+        if (depth) {
+            if (r->type == types[1]) *depth = 500.0f * r->scale[0] - vdot(vsub(p, row_pos(r)), up) ; /* the sphere's top along up */
+            else {
+                V3 x, z;
+                row_axes(r, &x, &z);
+                *depth = 1000.0f * r->scale[1] - vdot(vsub(p, row_pos(r)), vcross(z, x));
+            }
+        }
+        return 1;
+    }
+    return 0;
+}
+
+/* MarioSwim.cpp, lean: in water (his middle under the surface) he swims: X strokes along his swim direction
+ * (mSwimFrontAcc 4 up to mSwimFrontMaxSpeed 11.5), the stick turns him (left / right) and tilts the direction (up /
+ * down); his speed goes x mSwimFrontIne 0.985 (mSwimStopIne 0.992 still), he floats up (mSwimUpAcc 0.1 to
+ * mSwimUpMaxSpeed 1); within mSwimUpSurfaceDist 100 of the surface he stays at it, and X there jumps out. Under it his
+ * oxygen runs down from mOxygenMax 3600 (60 s); at 0 he loses a life piece every 60 frames; at the surface it fills
+ * back. Returns 1 while swimming. ponytail: no spin dash, no swim animations, no current / drift, no damage swim */
+static void hurt_mario(V3 from, float push);
+static int swim_update(Player *m)
+{
+    float depth = 0;
+    V3 mid = vadd(m->pos, vmul(m->up, 60.0f));
+    if (!in_water(mid, m->up, &depth)) {
+        if (swimming) { swimming = 0; printf("swim: out of the water" "\n"); }
+        oxygen = 3600;
+        return 0;
+    }
+    if (!swimming) { swimming = 1; swim_pitch = 0; m->hip = 0; printf("swim: in the water" "\n"); }
+    V3 cam_fwd = vnorm(vtangent(vsub(m->pos, cam_pos), m->up)), cam_right = vnorm(vcross(cam_fwd, m->up));
+    float sx = pad_lx(), sy = pad_ly();
+    if (fabsf(sx) > 0.1f || fabsf(sy) > 0.1f) { /* steer along the camera's view, tilt with the stick's forward part */
+        V3 want = vnorm(vadd(vmul(cam_right, sx), vmul(cam_fwd, sy)));
+        m->face = vnorm(vadd(vmul(m->face, 0.9f), vmul(want, 0.1f)));
+    }
+    if (pad_held(PAD_R1)) swim_pitch -= 0.04f; /* mSwimRotSpeedX: R1 dives, L1 rises */
+    else if (pad_held(PAD_L1)) swim_pitch += 0.04f;
+    else swim_pitch *= 0.95f;
+    swim_pitch = swim_pitch > 1.3f ? 1.3f : swim_pitch < -1.3f ? -1.3f : swim_pitch;
+    V3 dir = vadd(vmul(m->face, cosf(swim_pitch)), vmul(m->up, sinf(swim_pitch)));
+    V3 v = vadd(m->hvel, vmul(m->up, m->vup));
+    int surface = depth < 100.0f;
+    if (pad_pressed(PAD_CROSS)) {
+        if (surface && swim_pitch >= -0.2f) { /* out of the water */
+            m->vup = 30.0f; m->hvel = vmul(m->face, 6.0f); m->grounded = 0; m->jump_kind = 0; m->air_timer = 0;
+            swimming = 0;
+            printf("swim: jump out" "\n");
+            return 0;
+        }
+        v = vadd(v, vmul(dir, 4.0f)); /* a stroke */
+        if (vlen(v) > 11.5f) v = vmul(vnorm(v), 11.5f);
+    }
+    int idle = fabsf(sx) < 0.1f && fabsf(sy) < 0.1f && !pad_held(PAD_CROSS);
+    v = vmul(v, idle ? 0.992f : 0.985f);
+    float up = vdot(v, m->up);
+    if (up < 1.0f) v = vadd(v, vmul(m->up, 0.1f < 1.0f - up ? 0.1f : 1.0f - up)); /* floating up */
+    if (surface && vdot(v, m->up) > 0 && depth < 60.0f) v = vtangent(v, m->up); /* held at the surface */
+    V3 c = vadd(vadd(m->pos, vmul(m->up, BODY_RADIUS)), v), gn, wn;
+    int wall = 0;
+    collide_n(&c, m->up, BODY_RADIUS, &gn, &wn, &wall);
+    m->pos = vsub(c, vmul(m->up, BODY_RADIUS));
+    m->hvel = vtangent(v, m->up); m->vup = vdot(v, m->up); m->grounded = 0;
+    if (!surface) {
+        if (oxygen > 0) oxygen--;
+        else if (game_frame % 60 == 0) { mario->hurt_timer = 0; hurt_mario(m->pos, 0.0f); }
+    } else oxygen = oxygen + 30 < 3600 ? oxygen + 30 : 3600;
+    if (m->spin_timer) m->spin_timer--;
+    if (m->hurt_timer) m->hurt_timer--;
+    return 1;
+}
+
 static void update_mario(void)
 {
     Player *m = mario;
     m->up = up_at(m->pos, m->up);
+    if (swim_update(m)) {
+        if (mario_anim) anim_update(mario_anim);
+        return;
+    }
     if (flf.inst >= 0 || (warp.from < 0 && jb.inst < 0 && coc.inst < 0 && fluff_try(m))) {
         if (flf.inst >= 0 && fluff_update(m)) {
             if (mario_anim) anim_update(mario_anim);
