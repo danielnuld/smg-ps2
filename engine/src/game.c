@@ -436,9 +436,9 @@ static int demo_on; /* a demo is running: Mario waits (no input, no hurt) */
 static int dino_demo_on, ota_demo_on; /* whose demo camera runs */
 static int obj_play(const Inst *in, const char *clip, int loop, int interp);
 /* Skinned placed models (slice.py SKINNED_OBJ): a pool of poses kept by row across rebinds, the class's "wait" clip
- * (else its first) looping unless its behaviour plays another (obj_play). ponytail: 16 at once, the rest drawn in
+ * (else its first) looping unless its behaviour plays another (obj_play). ponytail: 40 at once (instances and walkers), the rest drawn in
  * the bind pose of the nearest free one's skin is skipped (not drawn) */
-#define MAX_OBJ_ANIM 16
+#define MAX_OBJ_ANIM 40
 static struct { int row; unsigned last; Anim *a; } oanim[MAX_OBJ_ANIM];
 static int ninsts;
 static const Gravity *grav;
@@ -3209,6 +3209,21 @@ int game_test_swim(void)
 }
 
 int game_swim_state(void) { return swimming * 10000 + oxygen; }
+
+/* Test builds: Mario 400 from the k-th live walker of class `cls` (its row; -1 none), looking at it */
+int game_test_walker(const char *cls, int k)
+{
+    int t = scene_type(sc, cls);
+    for (int i = 0; i < nkuribo; i++) {
+        Kuribo *e = &kuribo[i];
+        if (sc->objs[e->row].type != t || e->state == KURIBO_DEAD || k--) continue;
+        V3 side = vnorm(vtangent(vcross(e->up, v3(0.3f, 0.1f, 0.9f)), e->up));
+        mario->pos = vadd(vadd(e->pos, vmul(side, 400.0f)), vmul(e->up, 50.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        mario->face = vmul(side, -1.0f);
+        return e->row;
+    }
+    return -1;
+}
 
 /* Test builds: Mario onto the next purple coin left (purple coins taken; once all are, onto the waiting star:
  * 1000 + its state) */
@@ -8061,6 +8076,30 @@ void game_update(void)
 
 /* --- draw ------------------------------------------------------------------------------------------------ */
 
+/* a walker's clip by kind and state (Kuribo.cpp Walk / Run / Stagger, Takobo.cpp Attack / Stun / Wait, Karikari.cpp
+ * Wait / Jump / Bite, Butterfly.cpp, PackunPetit.cpp Wait / Swoon, KuriboMini.cpp Walk / Run / Stagger) */
+static const char *walker_clip(const Kuribo *k, int *loop)
+{
+    float sp = vlen(vtangent(k->vel, k->up));
+    *loop = 1;
+    switch (k->kind) {
+    case WALK_KURIBO:
+        if (k->state == KURIBO_STUN) return "swoonground";
+        return sp > 4.0f ? "run" : sp > 0.3f ? "walk" : "wait";
+    case WALK_KMINI:
+        if (k->state == KURIBO_STUN) return "stagger";
+        return sp > 3.0f ? "run" : sp > 0.3f ? "walk" : "wait";
+    case WALK_TAKOBO:
+        if (k->phase == 1) { *loop = 0; return "attack"; }
+        return k->phase == 3 ? "stun" : "wait";
+    case WALK_KARIKARI:
+        return k->phase == 2 ? "bite" : k->phase == 1 || k->phase == 3 ? "jump" : "wait";
+    case WALK_BUTTERFLY: return "butterfly";
+    case WALK_PACKUN: return k->state == KURIBO_STUN ? "swoon" : "wait";
+    default: return "wait";
+    }
+}
+
 static void inst_draw(const Inst *in, const Model *md, const float m[16])
 {
     if (md->skin) { if (in->anim && md == in->md) render_skinned(md, m, (const float (*)[16])in->anim->drw); }
@@ -8354,6 +8393,23 @@ void game_draw(void)
             for (int j = 0; j < 12; j++) m[j] *= sc->objs[kuribo[i].row].scale[0] * (kuribo[i].phase == 6 && j >= 4 && j < 8 ? 1.0f - kuribo[i].timer / 40.0f : 1.0f);
         if (kuribo[i].kind == WALK_KARON && kuribo[i].phase == 2) /* a heap of bones (ponytail: squashed) */
             for (int j = 4; j < 7; j++) m[j] *= kuribo[i].timer < 300 ? 0.3f : 0.3f + 0.7f * (kuribo[i].timer - 300) / 60.0f;
+        if (md->skin) { /* animated: the clip of its state (walker_clip), facing its way when it walks */
+            const Kuribo *k = &kuribo[i];
+            const char *cls = sc->types + 32 * sc->objs[k->row].type;
+            Anim *a = obj_anim(k->row, md, cls);
+            if (!a) continue;
+            V3 hv = vtangent(k->vel, k->up);
+            if ((k->kind == WALK_KURIBO || k->kind == WALK_KMINI) && vlen(hv) > 0.5f) basis_matrix(m, k->pos, k->up, hv, 0);
+            int loop;
+            const char *clip = walker_clip(k, &loop);
+            char n[48];
+            snprintf(n, sizeof n, "%s/%s", cls, clip);
+            for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
+            anim_play(a, n, 1.0f, loop, 6);
+            anim_update(a);
+            render_skinned(md, m, (const float (*)[16])a->drw);
+            continue;
+        }
         render_model(md, m, kuribo[i].state == KURIBO_STUN ? 0x50 : 0x90, 0x50, 0x20);
     }
     basis_matrix(m, mario->pos, mario->up, mario->face, 0);

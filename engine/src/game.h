@@ -63,6 +63,7 @@ int game_test_fountain(void);
 int game_test_stray(void);
 int game_test_swim(void);
 int game_swim_state(void);
+int game_test_walker(const char *cls, int k);
 int game_test_route(const char *cls);
 int game_test_star_near(void);
 int game_test_purple(void);

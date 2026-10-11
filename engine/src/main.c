@@ -813,6 +813,12 @@ int main(void)
             if (frame % 120 == 0) printf("fat test f %u: %d\n", frame, st);
         }
 #endif
+#ifdef WALKER_TEST
+        if (frame == 150 || frame == 450 || frame == 750 || frame == 1050) { /* Mario by a Kuribo, a Takobo, a Karikari, a Butterfly */
+            static const char *cls[4] = {"Kuribo", "Takobo", "Karikari", "Butterfly"};
+            printf("walker test f %u: %s row %d\n", frame, cls[frame / 300], game_test_walker(cls[frame / 300], 0));
+        }
+#endif
 #ifdef ROUTE_TEST
         if (frame >= 150) { /* the scenario played through: launch stars to its goal, its action, its star */
             static int phase, last;

@@ -54,8 +54,9 @@ RESIDENT = ("Coin", "StarPiece", "SuperSpinDriver")  # OBJ_TYPES in phase 0b's R
 SKINNED = ("Mario",)
 # placed classes drawn skinned and animated by their own BCKs (the scenario's ANIM chunk, "<class>/<clip>" in
 # lower case); their model archive is the class name
-SKINNED_OBJ = ("DinoPackun", "OtaKing", "OtaKingFoot", "TicoFat", "Tico", "CocoSambo", "CocoSamboHead")
-ANIM_ARC = {"CocoSambo": "CocoSamboBody"}  # where a class's clips are when not in its own-named archive
+SKINNED_OBJ = ("DinoPackun", "OtaKing", "OtaKingFoot", "TicoFat", "Tico", "CocoSambo", "CocoSamboHead", "Kuribo", "Takobo",
+               "Karikari", "Butterfly", "PackunPetit", "KuriboMini")
+ANIM_ARC = {"CocoSambo": "CocoSamboBody", "Karikari": "Karipon"}  # where a class's clips are when not in its own-named archive
 # ponytail: models the renderer cannot reproduce: the atmosphere spheres (*Air: their glow is a TEV rim effect; drawn
 # with their material they flood the screen)
 NO_DRAW = ("SphereAir", "DimensionAir", "HomeAir", "TwilightAir", "DarknessRoomAir", "SunsetAir", "FineAir")   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
@@ -235,6 +236,8 @@ def scene(fs, galaxy, scenario):
 # static models drawn with a BVA's last frame visibility (the shapes it hides there are left out): the egg shell holds
 # its intact and cracked pieces, normal.bva shows the intact ones (DinoPackun::initEggShell)
 VIS = {"DinoPackunEggShell": "normal"}
+# models baked with a BRK's registers at a frame (Tico.cpp: ColorChange at its colour, frame 0 the yellow one)
+BRK_POSE = {"Tico": ("colorchange", 0), "TicoFat": ("colorchange", 0)}
 
 
 def bva_hidden(b, frame=0):
@@ -314,6 +317,9 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None):
             texs = tex.textures(b, bl[b"TEX1"]) if b"TEX1" in bl else []
             ps2 = {}
             sky = arc.stem in SKY_ARCS or arc.stem.endswith("Sky")  # 8-bit textures (tex.to_ps2 hi)
+            lfiles = {k.lower().rsplit("/", 1)[-1]: v for k, v in files.items()}
+            over = tex.brk(lfiles[BRK_POSE[arc.stem][0] + ".brk"], BRK_POSE[arc.stem][1]) if arc.stem in BRK_POSE and \
+                BRK_POSE[arc.stem][0] + ".brk" in lfiles else None
             vis_hide = bva_hidden({k.lower(): v for k, v in files.items()}.get(VIS[arc.stem].lower() + ".bva", b""), 1 << 30) if arc.stem in VIS else set()
             for pos, tri, info in got:
                 if not tri or info["shape"] in vis_hide:
@@ -341,7 +347,7 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None):
                     key = (mt["tex"], mat)  # the material's TEV baked into its texture (tex.tev)
                     if key not in ps2:
                         x = texs[mt["tex"]]
-                        baked = tex.bake(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, mt["tex"])
+                        baked = tex.bake(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, mt["tex"], over)
                         ps2[key] = tex.to_ps2(baked, x["wrap_s"], x["wrap_t"], sky)
                     t = ps2[key]
                     off, w = info["at"][mt["attr"]]
@@ -384,10 +390,17 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None):
                 if skinned:
                     at = info["at"]
                     slots = [info["keys"][v][at[0][0]] // 3 if 0 in at else 0 for v in used]
+                    # untextured: the TEV's constant colour (Tico's yellow), times CLR0 when it has one
+                    flat = (tuple(int(c * 255 + 0.5) for c in tex.tev(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, None, over)[:3])
+                            if t is None and mat is not None else None)
                     if clr and 11 in at:
                         o, w = at[11]
                         cols = [clr(info["keys"][v][o] if w == 1 else info["keys"][v][o] << 8 | info["keys"][v][o + 1])
                                 for v in used]
+                        if flat:
+                            cols = [tuple(f * c // 255 for f, c in zip(flat, cv[:3])) + tuple(cv[3:]) for cv in cols]
+                    elif flat:
+                        cols = [flat] * len(used)
                     gtab.append(tables[(info["shape"], info["group"])])
                 blend = tex.material_blend(b, bl[b"MAT3"], mat) if mat is not None else (0, 1, 255)
                 # per-vertex normals for lit materials (smooth shading), False for unlit ones, None: face normals

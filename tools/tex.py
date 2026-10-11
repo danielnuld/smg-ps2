@@ -264,7 +264,66 @@ def material_tex(b, mat3, m, tex1=None):
 KSEL_FRAC = [1.0, 7 / 8, 6 / 8, 5 / 8, 4 / 8, 3 / 8, 2 / 8, 1 / 8]
 
 
-def tev(b, mat3, m, tex1, texs, base=None):
+def names(b, off):
+    """A J3D string table at `off` -> its names in order."""
+    n = u16(b, off)
+    out = []
+    for k in range(n):
+        o = u16(b, off + 4 + 4 * k + 2)
+        e = b.index(b"\0", off + o)
+        out.append(b[off + o:e].decode("latin-1"))
+    return out
+
+
+def material_name(b, mat3, m):
+    """MAT3 material m's name (its name table at 0x14)."""
+    return names(b, mat3 + u32(b, mat3 + 0x14))[m]
+
+
+def brk(b, frame):
+    """A J3D TEV register animation (J3D1brk1, TRK1) at `frame` -> {material name: {"reg": {id: rgba}, "konst":
+    {id: rgba}}}, rgba floats 0..1 (register values are s16 / 255). Keys: count 1 a constant, else (time, value,
+    tangent) triplets (tangent type 0) or (time, value, in, out) quads, Hermite between them."""
+    t = b.find(b"TRK1")
+    if b[:8] != b"J3D1brk1" or t < 0:
+        return {}
+    h = lambda k: u16(b, t + k)
+    w = lambda k: u32(b, t + k)
+    out = {}
+
+    def herm(f, t0, v0, m0, t1, v1, m1):
+        d = t1 - t0
+        x = (f - t0) / d if d else 0.0
+        x2 = x * x
+        return v0 + x * d * m0 + x2 * (3 * (v1 - v0) - 2 * d * m0 - d * m1) + x2 * x * (2 * (v0 - v1) + d * m0 + d * m1)
+
+    def chan(vals_off, count, index, tan):
+        vals = lambda i: struct.unpack_from(">h", b, t + vals_off + 2 * i)[0]
+        if count == 1:
+            return vals(index)
+        st = 3 if tan == 0 else 4
+        ks = [[vals(index + i * st + j) for j in range(st)] for i in range(count)]
+        if frame <= ks[0][0]:
+            return ks[0][1]
+        if frame >= ks[-1][0]:
+            return ks[-1][1]
+        i = max(j for j in range(count) if ks[j][0] <= frame)
+        a, z = ks[i], ks[i + 1]
+        return herm(frame, a[0], a[1], a[2] if st == 3 else a[3], z[0], z[1], z[2])
+
+    for kind, n, table, name_off, vo in (("reg", h(0x0C), w(0x20), w(0x30), (w(0x38), w(0x3C), w(0x40), w(0x44))),
+                                          ("konst", h(0x0E), w(0x24), w(0x34), (w(0x48), w(0x4C), w(0x50), w(0x54)))):
+        if not n:
+            continue
+        nm = names(b, t + name_off)
+        for i in range(n):
+            e = t + table + 28 * i
+            rgba = [chan(vo[c], u16(b, e + 6 * c), u16(b, e + 6 * c + 2), u16(b, e + 6 * c + 4)) / 255.0 for c in range(4)]
+            out.setdefault(nm[i], {"reg": {}, "konst": {}})[kind][b[e + 24]] = rgba
+    return out
+
+
+def tev(b, mat3, m, tex1, texs, base=None, over=None, max_stages=16):
     """Evaluate material m's TEV stages (GX: d op (a (1 - c) + b c), bias, scale, clamp, into PREV / C0-C2) ->
     RGBA float array in 0..1: per texel of texture `base` (TEX1 index; every stage samples its own texture resized to
     it, as if all shared the UVs), or one colour (shape (4,)) when base is None (texture inputs read 1).
@@ -275,7 +334,7 @@ def tev(b, mat3, m, tex1, texs, base=None):
     stage's texture at the base texture's UVs, swap tables and indirect stages ignored."""
     off = lambda k: mat3 + u32(b, mat3 + k)
     e = off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C
-    ns = b[off(0x58) + b[e + 4]]
+    ns = min(b[off(0x58) + b[e + 4]], max_stages)
     shape = texs[base]["rgba"].shape[:2] if base is not None else ()
 
     def col(table, idx, signed):
@@ -286,9 +345,16 @@ def tev(b, mat3, m, tex1, texs, base=None):
         return np.frombuffer(b, np.uint8, 4, off(table) + 4 * idx).astype(np.float32) / 255.0
 
     regs = [col(0x50, u16(b, e + 0xDC + 2 * k), True) for k in range(4)]   # C0, C1, C2, PREV
+    ov = (over or {}).get(material_name(b, mat3, m), {})  # a BRK's registers at its frame (brk)
+    for k, v in ov.get("reg", {}).items():
+        if k < 4:
+            regs[k] = np.array(v, np.float32)
     regs = [regs[3], regs[0], regs[1], regs[2]]                              # by GX output reg: PREV, C0, C1, C2
     regs = [np.broadcast_to(r, shape + (4,)).copy() for r in regs]
     konst = [col(0x54, u16(b, e + 0x94 + 2 * k), False) for k in range(4)]
+    for k, v in ov.get("konst", {}).items():
+        if k < 4:
+            konst[k] = np.array(v, np.float32)
     mc = u16(b, e + 8)
     ras = col(0x20, mc, False) if mc != 0xFFFF and not vertex_colour(b, mat3, m) else np.ones(4, np.float32)
     tex_cache = {}
@@ -374,14 +440,20 @@ def lit(b, mat3, m):
     return ci != 0xFFFF and b[off(0x28) + 8 * ci] != 0
 
 
-def bake(b, mat3, m, tex1, texs, t):
+def bake(b, mat3, m, tex1, texs, t, over=None):
     """Texture t with material m's TEV baked in (tev), RGBA8, keeping the texture's own alpha (cut-outs; the TEV alpha
     often reads lit channels). ponytail: a result near white where the texture is not (RAS from lit or second colour
     channels, e.g. Coin's env-map stages) falls back to the plain texture; real lighting would fix those."""
     src = texs[t]["rgba"]
-    out = (tev(b, mat3, m, tex1, texs, t) * 255 + 0.5).astype(np.uint8)
+    out = (tev(b, mat3, m, tex1, texs, t, over) * 255 + 0.5).astype(np.uint8)
     out[..., 3] = src[..., 3]
     if out[..., :3].mean() > 240 and src[..., :3].mean() < 200:
+        # saturated by stages that need real lighting (Tico's rim light): with a BRK's registers (its colour) the first
+        # stage alone (TEX x RAS + C0) when that keeps a colour, else the plain texture
+        one = (tev(b, mat3, m, tex1, texs, t, over, 1) * 255 + 0.5).astype(np.uint8) if over else None
+        if one is not None and one[..., :3].mean() <= 240:
+            one[..., 3] = src[..., 3]
+            return one
         return src
     return out
 
