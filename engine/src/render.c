@@ -912,6 +912,54 @@ void render_sprites(const Sprite *sp, int n)
     }
 }
 
+/* WaterPlant strips: a triangle strip of 8 points each, alpha blended, textured (UV), no depth write; a strip with a
+ * point behind the camera or far off screen is left out */
+void render_strips(const Strip *st, int n)
+{
+    for (int i = 0; i < n; i++) {
+        const Strip *s = &st[i];
+        float sx[8], sy[8];
+        u32 sz[8];
+        int ok = 1;
+        for (int v = 0; v < 8 && ok; v++) {
+            const float *p = s->p[3 - v / 2][v & 1]; /* top first: v 0 at the top */
+            float xv = view[0] * p[0] + view[4] * p[1] + view[8] * p[2] + view[12];
+            float yv = view[1] * p[0] + view[5] * p[1] + view[9] * p[2] + view[13];
+            float zv = view[2] * p[0] + view[6] * p[1] + view[10] * p[2] + view[14];
+            if (zv < NEAR || zv > FAR) { ok = 0; break; }
+            float k = 2048.0f / zv;
+            sx[v] = 2048.0f + proj[0] * xv * k;
+            sy[v] = 2048.0f + proj[5] * yv * k;
+            if (sx[v] < 2048 - SCREEN_W || sx[v] > 2048 + SCREEN_W || sy[v] < 2048 - SCREEN_H || sy[v] > 2048 + SCREEN_H) ok = 0;
+            sz[v] = (u32)(((proj[10] * zv + proj[14]) / zv + 1.0f) * (float)(0xFFFFFF / 2));
+        }
+        if (!ok)
+            continue;
+        if (packet2_get_qw_count(vif[cur]) + 16 + TEXP + 4 + 17 > PACKET_QW)
+            flush_vif();
+        set_tex(s->tex);
+        const TexEntry *e = tex_scene->tex[s->tex].e;
+        packet2_chain_open_cnt(vif[cur], 0, 0, 0);
+        packet2_vif_flush(vif[cur], 0);
+        packet2_vif_open_direct(vif[cur], 0);
+        qword_t *tag = (qword_t *)vif[cur]->next;
+        packet2_add_2x_s64(vif[cur], 0, GIF_REG_AD);
+        packet2_add_2x_s64(vif[cur], GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA);
+        packet2_add_2x_s64(vif[cur], GS_SET_TEST(1, ATEST_METHOD_GREATER, 0x10, 0, 0, 0, 1, ZTEST_METHOD_GREATER_EQUAL), GS_REG_TEST);
+        packet2_add_2x_s64(vif[cur], GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 1), GS_REG_ZBUF);
+        packet2_add_2x_s64(vif[cur], GS_SET_PRIM(PRIM_TRIANGLE_STRIP, 0, 1, 0, 1, 0, 1, 0, 0), GS_REG_PRIM);
+        packet2_add_2x_s64(vif[cur], GS_SET_RGBAQ(s->rgba & 0xFF, s->rgba >> 8 & 0xFF, s->rgba >> 16 & 0xFF, s->rgba >> 24, 0x3F800000), GS_REG_RGBAQ);
+        for (int v = 0; v < 8; v++) {
+            packet2_add_2x_s64(vif[cur], GS_SET_UV((v & 1) ? e->w << 4 : 0, (e->h * (v / 2) / 3) << 4), GS_REG_UV);
+            packet2_add_2x_s64(vif[cur], GS_SET_XYZ((int)(sx[v] * 16), (int)(sy[v] * 16), sz[v]), GS_REG_XYZ2);
+        }
+        tag->dw[0] = GIF_SET_TAG(5 + 16, 1, 0, 0, GIF_FLG_PACKED, 1);
+        packet2_vif_close_direct_auto(vif[cur]);
+        packet2_chain_close_tag(vif[cur]);
+        cur_tex = -1; /* ALPHA, TEST, ZBUF changed */
+    }
+}
+
 u32 render_end(void)
 {
     u32 c0 = cycles();

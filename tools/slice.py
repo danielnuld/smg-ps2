@@ -933,7 +933,7 @@ def placement(fs, galaxy, scenario):
     planets = B.planet_table(fsp, lambda a: (fsp / "ObjectData" / f"{a}.arc").exists())
     # every class with a model on disc is kept (static until it gets a behaviour), plus gravities
     arcmap = {n: model_archive(fsp, n, planets) for n in {o["name"] for o in objs}}
-    keep = [o for o in objs if arcmap[o["name"]] or "Gravity" in o["name"] or o["name"] in LOGIC or o["name"] in jpa.AMBIENT]
+    keep = [o for o in objs if arcmap[o["name"]] or "Gravity" in o["name"] or o["name"] in LOGIC or o["name"] in jpa.AMBIENT or o["name"] == "WaterPlant"]
     for o in keep:
         for e in EXTRA.get(o["name"], ()):
             if e[0] == "#":

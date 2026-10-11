@@ -52,6 +52,7 @@ typedef struct {
 static const PtRes *res;
 static const FxDef *defs;
 static u32 nres, ndefs, tex0;
+static int wp_tex = -1; /* the first WaterPlant texture (PTCL header word 2), -1 none */
 static Emitter em[MAX_EMIT];
 static Ptcl pt[MAX_PTCL];
 static u16 freelist[MAX_PTCL], nfree;
@@ -75,6 +76,7 @@ void fx_init(const Scene *s)
         return;
     nres = ((const u32 *)s->ptcl)[0];
     ndefs = ((const u32 *)s->ptcl)[1];
+    wp_tex = ((const int *)s->ptcl)[2];
     defs = (const FxDef *)(s->ptcl + 16);
     res = (const PtRes *)(defs + ndefs);
     tex0 = s->ptcl_tex0;
@@ -350,3 +352,5 @@ void fx_draw(void)
 }
 
 u32 fx_count(void) { return nalive; }
+
+int fx_waterplant_tex(int k) { return res && wp_tex >= 0 ? (int)tex0 + wp_tex + k : -1; }

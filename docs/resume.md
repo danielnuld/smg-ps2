@@ -83,6 +83,8 @@ Last updated 2026-10-09. Detail and numbers: `docs/phase2-report.md`; tasks: `op
     plane; let go 100+ off and he flies off towards its neutral point at 60 for arg0 frames; X lets go; no stalk drawn);
     Fluff (a spin sends it up, it drifts down; Mario in the air takes hold, the stick steers, Square spins up 3 times,
     X jumps off; no FluffWind); a rebind keeps what Mario rides (by its row);
+  - WaterPlant (kept as a logic row): arg0 plants within arg1 dropped onto the ground, camera-facing strips of three
+    segments swaying (render_strips), WaterPlantA-D packed after the effects' textures (PTCL header word 2);
   - ambient effect objects (NameObjFactory's *EffectObj*: SnowS, LavaSparksS, AstroTorchLight...; tools/jpa.py AMBIENT,
     `ambient_effects`): the 12 nearest within 5000 of the camera play their AutoEffectList group, break ones once on
     their switch. (The hang they caused: the 12-nearest insertion read an unset distance and kept a garbage row, whose
@@ -191,8 +193,7 @@ there needs the embedded blob and every pack rebuilt.
    collecting (チコ集め), Kuribo / SkullShark baby "all dead" checkers, NPC events; PowerStarAppearPoint groups.
 3. Lumas / NPCs (static models today).
 4. More classes by placement count (`out/census.json`, `out/class_coverage.md` top static, 2026-10-09: behaviour 70.9 %,
-   static 15.3 %, missing 8.5 % of placements): WaterPlant (hand-drawn quads, loose BTIs), SpaceCocoon,
-   CoconutTreeLeaf, JetTurtle (BeeFlowerHover still lacks Bee Mario); SurfRay waits: Petari's SurfRay.cpp has
+   static 15.3 %, missing 8.5 % of placements): CoconutTreeLeaf, JetTurtle (BeeFlowerHover still lacks Bee Mario); SurfRay waits: Petari's SurfRay.cpp has
    its constants commented out (no values) and it rides water.
 5. Vertex alpha in VUMD (rgbi has no room: the 4th byte is the index) for SphereAir-like fades.
 6. Task 5.3 gate: 2026-10-10 run after the start fix and the repack: 106 play clean, 16 miss, 2 timeouts, 12

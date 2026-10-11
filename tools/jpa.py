@@ -172,7 +172,7 @@ def decode_bti(bti):
 
 def pack(fs):
     """-> (PTCL payload, [tex.to_ps2 dicts]): the FX effects' resources (fx.c PtRes, FxDef) and their textures.
-    PTCL: u32 nres, u32 nfx, 8 pad; nfx x FxDef {u16 n, u16 res[7], f32 off[3], f32 pad}; nres x PtRes."""
+    PTCL: u32 nres, u32 nfx, s32 first WaterPlant texture (-1 none), 4 pad; nfx x FxDef {u16 n, u16 res[7], f32 off[3], f32 pad}; nres x PtRes."""
     import numpy as np
     import tex
     res, texs, names, auto = load(fs)
@@ -236,7 +236,20 @@ def pack(fs):
                                 *(bsp["prm"] if vprm else (255, 255, 255, bsp["prm"][3])),
                                 *[k[0] for k in keys] + [0] * (8 - len(keys)),
                                 *[c for k in keys for c in k[1]] + [0] * 4 * (8 - len(keys))))
-    head = struct.pack("<II8x", len(used), len(defs))
+    # WaterPlant.cpp's loose textures (WaterPlantDrawInit: WaterPlantA-D.bti, one per type), after the effects' ones:
+    # header word 2 = the first one's index (-1 none), halved to 32 x 128
+    from PIL import Image
+    first = -1
+    wp = fs if isinstance(fs, Path) else Path(fs)
+    arc = wp / "ObjectData" / "WaterPlant.arc"
+    if arc.exists():
+        files = {k.lower(): v for k, v in B.rarc_files(arc.read_bytes())}
+        first = len(out_tex)
+        for c in "abcd":
+            img = decode_bti(files[f"waterplant{c}.bti"])
+            img = np.asarray(Image.fromarray(img, "RGBA").resize((img.shape[1] // 2, img.shape[0] // 2), Image.Resampling.BOX)).copy()
+            out_tex.append(tex.to_ps2(img, 0, 0))
+    head = struct.pack("<IIi4x", len(used), len(defs), first)
     return head + b"".join(defs) + b"".join(recs), out_tex
 
 

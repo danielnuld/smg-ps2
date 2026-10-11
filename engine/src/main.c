@@ -771,6 +771,9 @@ int main(void)
             printf("giver test f %u: %s row %d, coins %d, pieces %d\n", frame, frame % 80 ? "leaves" : "pompon",
                    game_test_giver(frame % 80 ? 1 : 2), game_coins(), game_pieces_out());
 #endif
+#ifdef WATERPLANT_TEST
+        if (frame >= 200 && frame % 60 == 20 && frame < 600) printf("waterplant test f %u: %d plants\n", frame, game_test_waterplant());
+#endif
 #ifdef FLUFF_TEST
         { /* a spin by a Fluff (150), Mario jumps into it (190), spins up (230, 330); logged every 10 frames */
             int r = -9;

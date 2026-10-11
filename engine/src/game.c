@@ -235,6 +235,9 @@ typedef struct { V3 pos, vel; int t; } Shot; /* star pieces shot at the pointer 
 static Shot shots[MAX_SHOTS];
 static int test_l1; /* test builds: L1 pressed this frame */
 static int test_sq; /* test builds: Square pressed this frame (Fluff) */
+#define MAX_WPLANTS 1024 /* WaterPlant (place_waterplants, draw_waterplants) */
+static struct { V3 pos, up, dir; float h; short row, type; } wplants[MAX_WPLANTS];
+static int nwplants;
 typedef struct { int row; V3 pos, front; int freeze; } Killer; /* HomingKiller: its bullet (update_killers) */
 typedef struct { int first, n; const float *pts; u32 np; float len, step, speed; } Flow; /* StarPieceFlow (update_flows) */
 #define MAX_FLOWS 64
@@ -1160,6 +1163,7 @@ static void coco_spawn(Inst *in);
 static V3 cocoon_neutral(const Inst *in);
 static void cocoon_place(Inst *in);
 static void fluff_place(Inst *in);
+static void place_waterplants(void);
 static void tsuki_place(Inst *in)
 {
     V3 p = rail_at((const float *)(in->tsuki + 24), *(const u32 *)(in->tsuki + 8), row_coord[in->row]);
@@ -2865,6 +2869,17 @@ int game_test_giver(int kind)
  * phases 1-3; 4 only coc.phase */
 /* Test builds: phase 0 Mario spinning by the first Fluff (its row, -2 streaming, -1 none); 1 Mario jumping into it
  * (its row_turn, or 9 riding); 2 flf.spins (-1 not riding); 3 Square pressed this frame */
+/* Test builds: Mario 300 off the first water plant placed (how many so far, -1 none yet) */
+int game_test_waterplant(void)
+{
+    if (!nwplants) return -1;
+    V3 side = vnorm(vcross(wplants[0].up, wplants[0].dir));
+    mario->up = wplants[0].up;
+    mario->pos = vadd(wplants[0].pos, vmul(side, 300.0f));
+    mario->hvel = v3(0, 0, 0); mario->vup = 0;
+    return nwplants;
+}
+
 int game_test_fluff(int phase)
 {
     if (phase == 2) return flf.inst >= 0 ? flf.spins : -1;
@@ -3284,6 +3299,93 @@ int game_teleport_low(const unsigned char *full)
         return in->zone;
     }
     return -1;
+}
+
+/* WaterPlant.cpp: arg0 (16) water plants scattered within arg1 (500) of the row, each dropped onto the ground under
+ * it (calcMapGround from 500 up, 1000 down; ten tries), a strip 40 wide of three segments at 0.5, 0.8 and 1 of a
+ * height between h and 2h (h by type arg3: 150, 200, 300, 250), texture WaterPlantA-D by type, swaying 20 along a
+ * direction turned 15 degrees per plant (sSwingPos table: one sine, the segments 3 and 6 entries apart). Facing the
+ * camera about the up axis. Placed when the row's zone has its collision (game_rebind), drawn within 5000 of the
+ * camera. ponytail: no spin wave (Mario's spin bending them), no fog, the plants' random spots not Petari's */
+static struct { int row, k, n; unsigned seed; V3 dir; } wpc = {.row = -1}; /* the row being planted, its next plant */
+static unsigned char wp_done[8192];                                     /* rows planted (kept across rebinds) */
+
+/* a few plants a frame (each one's ground search is a dozen KCL queries: all at once took 600 ms in HeavenlyBeach),
+ * rows whose zone has its collision bound */
+static void place_waterplants(void)
+{
+    int t = scene_type(sc, "WaterPlant");
+    if (t < 0 || !row_step) return;
+    for (int budget = 2; budget > 0 && nwplants < MAX_WPLANTS;) {
+        if (wpc.row < 0) { /* the next row to plant */
+            for (u32 i = 0; i < sc->nobjs && i < sizeof wp_done && wpc.row < 0; i++) {
+                const Row *r = &sc->objs[i];
+                if (r->type != t || wp_done[i] || !row_shown(i)) continue;
+                int bound = 0;
+                for (int k = 0; k < ninsts && !bound; k++) bound = insts[k].kcl && insts[k].zone == r->zone;
+                if (!bound) continue;
+                V3 c = row_pos(r), up = up_at(c, v3(0, 1, 0));
+                wpc.row = i; wpc.k = 0; wpc.n = r->arg[0] > 0 ? r->arg[0] : 16; wpc.seed = 2654435761u * (i + 1);
+                wpc.dir = vnorm(vcross(up, fabsf(up.x) < 0.9f ? v3(1, 0, 0) : v3(0, 0, 1)));
+            }
+            if (wpc.row < 0) return;
+        }
+        const Row *r = &sc->objs[wpc.row];
+        int type = r->arg[3] >= 0 && r->arg[3] <= 3 ? r->arg[3] : 0;
+        float rad = r->arg[1] > 0 ? (float)r->arg[1] : 500.0f, h0 = (const float[]){150, 200, 300, 250}[type];
+        V3 c = row_pos(r), up = up_at(c, v3(0, 1, 0)), a = vnorm(vcross(up, fabsf(up.x) < 0.9f ? v3(1, 0, 0) : v3(0, 0, 1)));
+        V3 b = vcross(up, a);
+        budget--;
+        for (int tries = 0; tries < 10; tries++) {
+            wpc.seed = wpc.seed * 1103515245u + 12345u; float u = (wpc.seed >> 8) / 16777216.0f * 2.0f - 1.0f;
+            wpc.seed = wpc.seed * 1103515245u + 12345u; float w = (wpc.seed >> 8) / 16777216.0f * 2.0f - 1.0f;
+            V3 top = vadd(vadd(c, vmul(up, 500.0f)), vadd(vmul(a, u * rad), vmul(b, w * rad)));
+            Hit hits[4];
+            int found = 0;
+            for (float d = 0; d <= 1500.0f && !found; d += 25.0f) /* calcMapGround: down to 1000 under the row */
+                if (kcl_query(vsub(top, vmul(up, d)), 20.0f, hits, 4)) { top = vsub(top, vmul(up, d + 20.0f)); found = 1; }
+            if (!found) continue;
+            wpc.seed = wpc.seed * 1103515245u + 12345u;
+            wplants[nwplants].pos = top; wplants[nwplants].up = up; wplants[nwplants].dir = wpc.dir;
+            wplants[nwplants].h = h0 * (1.0f + (wpc.seed >> 8) / 16777216.0f);
+            wplants[nwplants].row = (short)wpc.row; wplants[nwplants].type = (short)type;
+            nwplants++;
+            break;
+        }
+        float cs = cosf(0.2617994f), sn = sinf(0.2617994f); /* makeMtxRotateY(15) for the next one */
+        wpc.dir = vadd(vmul(wpc.dir, cs), vmul(vcross(up, wpc.dir), sn));
+        if (++wpc.k >= wpc.n) { wp_done[wpc.row] = 1; wpc.row = -1; }
+    }
+}
+
+static void draw_waterplants(void)
+{
+    static Strip st[64];
+    static float angle;
+    int ns = 0;
+    angle += 0.03f; /* sSwingSpeed */
+    for (int i = 0; i < nwplants; i++) {
+        const typeof(wplants[0]) *w = &wplants[i];
+        int tex = fx_waterplant_tex(w->type);
+        if (tex < 0) return;
+        V3 to = vsub(w->pos, cam_pos);
+        if (vdot(to, to) > 5000.0f * 5000.0f) continue;
+        V3 side = vtangent(to, w->up);
+        side = vlen(side) > 1e-3f ? vmul(vnorm(vcross(w->up, side)), 20.0f) : vmul(w->dir, 20.0f);
+        static const float lv[4] = {0, 0.5f, 0.8f, 1.0f};
+        Strip *s = &st[ns++];
+        for (int l = 0; l < 4; l++) {
+            float sw = l ? 20.0f * sinf(angle + i * 0.7f - (3 - l) * 0.3f) * lv[l] : 0;
+            V3 p = vadd(vadd(w->pos, vmul(w->up, w->h * lv[l])), vmul(w->dir, sw));
+            V3 q0 = vsub(p, side), q1 = vadd(p, side);
+            s->p[l][0][0] = q0.x; s->p[l][0][1] = q0.y; s->p[l][0][2] = q0.z;
+            s->p[l][1][0] = q1.x; s->p[l][1][1] = q1.y; s->p[l][1][2] = q1.z;
+        }
+        s->rgba = 0x80808080u;
+        s->tex = (u16)tex;
+        if (ns == 64) { render_strips(st, ns); ns = 0; }
+    }
+    if (ns) render_strips(st, ns);
 }
 
 /* --- update ---------------------------------------------------------------------------------------------- */
@@ -5802,6 +5904,7 @@ void game_update(void)
     update_coconuts();
     update_cocoons();
     update_fluffs();
+    place_waterplants();
     update_pipes();
     update_switches();
     update_pops();
@@ -6117,6 +6220,7 @@ void game_draw(void)
     }
     if (m_mario_skin && !(mario->hurt_timer & 4))
         render_skinned(m_mario_skin, m, (const float (*)[16])mario_anim->drw);
+    draw_waterplants();
     fx_draw();
 }
 

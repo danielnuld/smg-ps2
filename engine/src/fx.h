@@ -16,4 +16,7 @@ void fx_update(void);
 void fx_draw(void);
 u32 fx_count(void); /* live particles */
 
+/* the scene texture of WaterPlant type k (0-3, packed with the effects' textures), -1 none */
+int fx_waterplant_tex(int k);
+
 #endif
