@@ -144,6 +144,7 @@ typedef struct {
     int hipsw;       /* hip drop switch: 1 PicketSwitch(Big) / HipDropSwitch (SW_A for good), 2 HipDropTimerSwitch */
     int rotor;       /* map part with a RotateSpeed: turns (rotor_matrix), carries Mario */
     int sky;         /* sky dome (Petari Sky): centred on the camera, drawn first */
+    int sun;         /* BrightSun: its Sun model far off the camera along its rotation, drawn with the skies */
     int steam;       /* LavaSteam: vents on a cycle and burns (update_steam) */
     int geyser;      /* LavaGeyser: shoots up on a cycle and burns (update_geyser, geyser_height) */
     int assembly;    /* AssemblyBlock: floats at its home, flies into place when Mario is near (assembly_place) */
@@ -2380,6 +2381,7 @@ void game_rebind(void)
         in->fat = strcmp(name, "TicoFat") == 0;
         in->sambo = strcmp(name, "CocoSambo") == 0;
         in->sky = sky_class(name);
+        in->sun = strcmp(name, "BrightSun") == 0;
         in->shoot = strcmp(name, "ShootingStar") == 0;
         in->steam = strcmp(name, "LavaSteam") == 0;
         in->geyser = strcmp(name, "LavaGeyser") == 0;
@@ -8908,10 +8910,28 @@ void game_draw(void)
         inst_draw(in, in->md, cm);
         sky_drawn = 1;
     }
+    for (int i = 0; i < ninsts; i++) { /* BrightSun::control / controlSunModel: the Sun at the camera + its rotation's
+                                         * z x 100000, scale 100, turned from +z to the camera (setRotate: the shortest
+                                         * turn, Y 180 when opposite). ponytail: no lens flare / glare (LensFlare) */
+        const Inst *in = &insts[i];
+        if (!in->sun || !row_shown(in->row)) continue;
+        V3 z = vnorm(v3(in->m[8], in->m[9], in->m[10])), pos = vadd(ce, vmul(z, 100000.0f)), d = vmul(z, -1.0f);
+        float vx = -d.y, vy = d.x, k = d.z < -0.999f ? 0.0f : 1.0f / (1.0f + d.z), cm[16] = {0};
+        if (d.z < -0.999f) { cm[0] = -1; cm[5] = 1; cm[10] = -1; }
+        else {
+            cm[0] = 1 - k * vy * vy; cm[1] = k * vx * vy; cm[2] = -vy;
+            cm[4] = k * vx * vy; cm[5] = 1 - k * vx * vx; cm[6] = vx;
+            cm[8] = vy; cm[9] = -vx; cm[10] = 1 - k * (vx * vx + vy * vy);
+        }
+        for (int j = 0; j < 12; j++) cm[j] *= 100.0f;
+        cm[12] = pos.x; cm[13] = pos.y; cm[14] = pos.z; cm[15] = 1;
+        inst_draw(in, in->md, cm);
+        sky_drawn = 1;
+    }
     if (sky_drawn) render_clear_depth(); /* the sky stays behind whatever its scale put in front */
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
-        if (in->invisible || in->sky) continue;
+        if (in->invisible || in->sky || in->sun) continue;
         if (in->plant) {
             if (plant_first[in->row] < 0) continue;
             int n = plant_count(&sc->objs[in->row]);

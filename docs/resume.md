@@ -171,6 +171,9 @@ Last updated 2026-10-09. Detail and numbers: `docs/phase2-report.md`; tasks: `op
   - BVA visibility for static models (slice.py VIS: the egg shell's intact / cracked pieces, normal.bva's last frame;
     EXTRA "<archive>#<BVA>" bakes another, DinoPackunEggShell#EggBroken: the cracks in exeEggBroken's first 30);
     DinoPackunEggShellBreak skinned on the EggShell joint, its Break clip from step 30 to 120 (BRK Break baked);
+  - BrightSun as Petari (BrightSun::control / controlSunModel): the Sun model at the camera + its rotation's z x
+    100000, scale 100, turned to the camera, drawn with the skies (it sat at its placement: its glow next to the
+    camera, half dropped by the guard-band clip, tinted half the screen); no lens flare;
   - CocoSambo after Petari (body CocoSamboBody + CocoSamboHead): HideWait / Appear within arg0 (1800) / Wait /
     Attack within 700 / AttackInterval / Hide; spine and head sensors at their joints; a coconut on it makes its head
     fall (45 frames, twice the gravity), Land, Swoon 180, SwoonEnd while the body hides and recovers; a stomp presses
