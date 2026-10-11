@@ -50,6 +50,7 @@ int game_test_waterplant(void);
 /* Test builds: StinkBugSmall (game.c game_test_stink) */
 int game_test_stink(int how);
 int game_test_unizo(void);
+int game_test_note(int phase);
 int game_unizo_state(int *dist);
 int game_stink_state(int *dist);
 int game_coco_state(int *dist);

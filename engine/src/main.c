@@ -771,6 +771,15 @@ int main(void)
             printf("giver test f %u: %s row %d, coins %d, pieces %d\n", frame, frame % 80 ? "leaves" : "pompon",
                    game_test_giver(frame % 80 ? 1 : 2), game_coins(), game_pieces_out());
 #endif
+#ifdef NOTE_TEST
+        { /* the first note fairy out (150), Mario onto its notes one after another (from 300) */
+            if (frame == 150) printf("note test f %u: row %d\n", frame, game_test_note(0));
+            if (frame >= 300 && frame < 2400 && frame % 5 == 0) {
+                int left = game_test_note(1);
+                if (frame % 30 == 0) printf("note test f %u: %d left\n", frame, left);
+            }
+        }
+#endif
 #ifdef UNIZO_TEST
         { /* Mario 800 off a Unizo (150): it chases and hits him */
             if (frame == 150) printf("unizo test f %u: row %d\n", frame, game_test_unizo());

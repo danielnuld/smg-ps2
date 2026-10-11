@@ -893,7 +893,11 @@ def declare_stars(keep, scenario, appear, jp):
     marks = []
     for i, r in enumerate(keep):
         k = STAR_DECLARERS.get(r["name"], -1)
-        if k == -1 or (k is None and s32(r["args"][7]) != 7):
+        if r["name"] == "NoteFairy":  # declarePowerStar when arg7 is 1-3
+            k = None if s32(r["args"][7]) > 0 else -1
+        elif k is None and s32(r["args"][7]) != 7:
+            k = -1
+        if k == -1:
             continue
         sid = s32(r["args"][k]) if k is not None else -1
         if r["name"] == "FlipPanelObserver":

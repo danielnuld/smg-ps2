@@ -235,6 +235,11 @@ typedef struct { V3 pos, vel; int t; } Shot; /* star pieces shot at the pointer 
 static Shot shots[MAX_SHOTS];
 static int test_l1; /* test builds: L1 pressed this frame */
 static int test_sq; /* test builds: Square pressed this frame (Fluff) */
+static void notes_spawn(void);
+static int note_rail(const Row *r, const unsigned char **e);
+#define MAX_NOTES 512 /* NoteFairy notes (update_notes) */
+static struct { V3 pos; float coord; short row, alive; } notes[MAX_NOTES];
+static int nnotes;
 #define MAX_WPLANTS 1024 /* WaterPlant (place_waterplants, draw_waterplants) */
 static struct { V3 pos, up, dir; float h; short row, type; } wplants[MAX_WPLANTS];
 static int nwplants;
@@ -348,7 +353,7 @@ static void miss(void);
 static int got_coins, got_purple, got_pieces;
 static float spin_angle;
 static V3 cam_pos;
-static const Model *m_coin, *m_purple, *m_piece, *m_kuribo, *m_takohei, *m_packun, *m_kotebug, *m_spider, *m_meramera, *m_takobo, *m_mkoopa, *m_kari, *m_kmini, *m_karon, *m_teresa, *m_bfly, *m_stink, *m_unizo[3];
+static const Model *m_coin, *m_purple, *m_piece, *m_kuribo, *m_takohei, *m_packun, *m_kotebug, *m_spider, *m_meramera, *m_takobo, *m_mkoopa, *m_kari, *m_kmini, *m_karon, *m_teresa, *m_bfly, *m_stink, *m_unizo[3], *m_note;
 static const Model *m_mario_skin; /* Mario.arc, skinned (SKIN chunk) */
 static Anim *mario_anim;
 /* ElectricRail (Petari ElectricRail.cpp, ElectricRailHolder.cpp): one segment per pair of rail points, arg0 rails
@@ -838,6 +843,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         for (int k = s0; k < is; k++) pieces[k].row = i;
     }
     npurple = ip;
+    notes_spawn();
     ncoins = ic; /* box coins and star pieces are appended as boxes break */
     npieces = is;
     int t_super[3] = {scene_type(s, "SuperSpinDriver"), scene_type(s, "SuperSpinDriverPink"),
@@ -2080,6 +2086,7 @@ void game_rebind(void)
     m_teresa = scene_model(s, "Teresa");
     m_bfly = scene_model(s, "Butterfly");
     m_stink = scene_model(s, "StinkBugSmall");
+    m_note = scene_model(s, "NoteFairy");
     m_unizo[0] = scene_model(s, "Unizo"); m_unizo[1] = scene_model(s, "UnizoLand"); m_unizo[2] = scene_model(s, "UnizoShoal");
     int t_coin = scene_type(s, "Coin"), t_pc = scene_type(s, "PurpleCoin"), t_circle = scene_type(s, "CirclePurpleCoinGroup");
     int t_rail = scene_type(s, "PurpleRailCoin"), t_piece = scene_type(s, "StarPiece"), t_kuribo = scene_type(s, "Kuribo");
@@ -2107,7 +2114,7 @@ void game_rebind(void)
         if (r->type == t_coin || r->type == t_pc || r->type == t_piece || r->type == t_kuribo || r->type == t_circle ||
             r->type == t_tako || r->type == t_packun || r->type == t_kote || r->type == t_spider || r->type == t_mera ||
             r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly ||
-            r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_stink ||
+            r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_stink || r->type == scene_type(s, "NoteFairy") ||
             r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == scene_type(s, "RockCreator"))
             continue;
         const char *name = s->types + 32 * r->type;
@@ -2927,6 +2934,37 @@ int game_test_fluff(int phase)
 /* Test builds: Mario 600 in front of the first live StinkBugSmall (how 0), or in a hip drop over it (1); its row,
  * -1 none. game_stink_state: its phase and distance from home */
 /* Test builds: Mario 800 off the first live Unizo; its row, -1 none. game_unizo_state: its phase, Mario's distance */
+/* Test builds: the first NoteFairy forced out (phase 0; its row, -1 none), Mario onto its k-th live note (phase 1;
+ * the notes left, -1 none) */
+int game_test_note(int phase)
+{
+    int t = scene_type(sc, "NoteFairy");
+    for (u32 i = 0; t >= 0 && i < sc->nobjs; i++) {
+        if (sc->objs[i].type != t) continue;
+        int has = 0;
+        for (int k = 0; k < nnotes; k++) has |= notes[k].row == (short)i;
+        if (!has) continue;
+        if (phase == 0) { /* out now, whatever its appear switch */
+            const unsigned char *e;
+            if (!row_turn[i] && note_rail(&sc->objs[i], &e)) {
+                int n = 0;
+                for (int k = 0; k < nnotes; k++) n += notes[k].row == (short)i;
+                row_turn[i] = 1; row_coord[i] = 0;
+                printf("note test: row %d, %d notes, rail %d long\n", (int)i, n, (int)tsuki_len(e));
+            }
+            return (int)i;
+        }
+        int left = 0;
+        for (int k = 0; k < nnotes; k++) {
+            if (notes[k].row != (short)i || notes[k].alive != 1) continue;
+            if (!left) { mario->pos = vsub(notes[k].pos, vmul(mario->up, HIT_BODY_H)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+            left++;
+        }
+        return left ? left : -row_turn[i];
+    }
+    return -1;
+}
+
 int game_test_unizo(void)
 {
     for (int i = 0; i < nkuribo; i++) {
@@ -5795,6 +5833,82 @@ static V3 star_pos(const Inst *in, int *state)
     return vadd(vadd(a, vmul(d, s)), vmul(up, sinf(s * 3.14159265f) * fminf(fmaxf(h, 300.0f), 5000.0f)));
 }
 
+/* NoteFairy.cpp / Note.cpp: on its appear switch (row_shown) the fairy flies along its rail at arg1 (13) a frame and
+ * its notes come out as it passes them: arg0 notes spread evenly over the rail, one per rail point with -2, else one
+ * every 150 (the rail's point arg0 for -2). Mario touching a note (80) takes it; all taken: its SW_A on and its power
+ * star out (arg7, the row dies: star_wait); arg2 (20) seconds after the last one is out the rest are gone. The notes
+ * turn 8 degrees a frame (NoteGroup). row_turn 0 hidden, 1 coming out, 2 counting down, 3 over; row_coord the fairy's
+ * place on the rail, row_step the countdown. ponytail: no appear demo / camera, no melody, no flashing, a failure is
+ * final (no new try) */
+static int note_rail(const Row *r, const unsigned char **e)
+{
+    *e = scene_blob_g && r->path >= 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
+    return *e != NULL;
+}
+
+static void notes_spawn(void) /* at game_init: every fairy's notes, hidden */
+{
+    nnotes = 0;
+    int t = scene_type(sc, "NoteFairy");
+    for (u32 i = 0; t >= 0 && i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        const unsigned char *e;
+        if (r->type != t || !note_rail(r, &e)) continue;
+        u32 np = *(const u32 *)(e + 8), nr = *(const u32 *)(e + 12);
+        const float *pts = (const float *)(e + 24), *ctl = pts + 3 * np;
+        float len = tsuki_len(e);
+        int n = r->arg[0] > 0 ? r->arg[0] : r->arg[0] == -2 ? (int)nr : (int)(len / 150.0f);
+        const unsigned char *pa = e + 24 + 12 * np + 12 * nr; /* per rail point: its coordinate first */
+        for (int k = 0; k < n && nnotes < MAX_NOTES; k++) {
+            notes[nnotes].coord = r->arg[0] == -2 ? *(const float *)(pa + 12 * k) : r->arg[0] > 0 ? len * k / n : 150.0f * k;
+            notes[nnotes].pos = r->arg[0] == -2 ? v3(ctl[3 * k], ctl[3 * k + 1], ctl[3 * k + 2]) : rail_at(pts, np, notes[nnotes].coord);
+            notes[nnotes].row = (short)i; notes[nnotes].alive = 0;
+            nnotes++;
+        }
+    }
+}
+
+static void update_notes(void)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    int t = scene_type(sc, "NoteFairy");
+    for (u32 i = 0; t >= 0 && i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if (r->type != t || row_turn[i] == 3) continue;
+        const unsigned char *e;
+        if (!note_rail(r, &e)) continue;
+        if (row_turn[i] == 0) {
+            if (!row_shown(i)) continue;
+            row_turn[i] = 1; row_coord[i] = 0;
+            printf("note fairy row %d: notes come out (rail %d long)" "\n", (int)i, (int)tsuki_len(e));
+        }
+        float len = tsuki_len(e), speed = r->arg[1] > 0 ? (float)r->arg[1] : 13.0f;
+        int left = 0, all = 0;
+        if (row_turn[i] == 1) row_coord[i] += r->arg[3] == -1 ? len : speed; /* AppearNote (type -1): all at once */
+        for (int k = 0; k < nnotes; k++) {
+            if (notes[k].row != (short)i) continue;
+            all++;
+            if (row_turn[i] == 1 && notes[k].alive == 0 && row_coord[i] >= notes[k].coord) notes[k].alive = 1; /* the fairy passed it */
+            if (notes[k].alive == 1 && vlen(vsub(c, notes[k].pos)) < 80.0f + HIT_BODY_R) {
+                notes[k].alive = 2; /* taken (addNoteToCounter) */
+                printf("note fairy row %d: note %d taken" "\n", (int)i, k);
+            }
+            left += notes[k].alive != 2;
+        }
+        if (row_turn[i] == 1 && row_coord[i] >= len) { row_turn[i] = 2; row_step[i] = 0; }
+        if (!left) { /* ACTMES_SUCCESS */
+            row_turn[i] = 3;
+            if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
+            row_kill(i); /* its power star comes out (star_wait) */
+            printf("note fairy row %d: all %d notes taken" "\n", (int)i, all);
+        } else if (row_turn[i] == 2 && ++row_step[i] >= 60 * (r->arg[2] > 0 ? r->arg[2] : 20)) { /* failureNoteCollection */
+            row_turn[i] = 3;
+            for (int k = 0; k < nnotes; k++) if (notes[k].row == (short)i && notes[k].alive == 1) notes[k].alive = 0;
+            printf("note fairy row %d: time is up" "\n", (int)i);
+        }
+    }
+}
+
 static void update_items(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -6136,6 +6250,7 @@ void game_update(void)
     update_birikyu();
     update_punch();
     update_coconuts();
+    update_notes();
     update_cocoons();
     update_fluffs();
     place_waterplants();
@@ -6464,6 +6579,11 @@ void game_draw(void)
     }
     if (m_mario_skin && !(mario->hurt_timer & 4))
         render_skinned(m_mario_skin, m, (const float (*)[16])mario_anim->drw);
+    if (m_note) for (int i = 0; i < nnotes; i++) { /* NoteFairy notes, turning 8 degrees a frame */
+        if (notes[i].alive != 1) continue;
+        basis_matrix(m, notes[i].pos, up_at(notes[i].pos, v3(0, 1, 0)), v3(1, 0, 0), game_frame * 0.1396263f);
+        render_model(m_note, m, 0x80, 0x80, 0x80);
+    }
     draw_waterplants();
     fx_draw();
 }
