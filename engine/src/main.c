@@ -799,6 +799,10 @@ int main(void)
             if (frame >= 150 && frame < 600 && frame % 10 == 0) printf("fire test f %u: balls %d\n", frame, game_fire_state());
         }
 #endif
+#ifdef STRAY_TEST
+        if (frame >= 150 && frame < 900 && frame % 40 == 0) /* Mario onto the stray Lumas one after another */
+            printf("stray test f %u: row %d, stars %d\n", frame, game_test_stray(), game_stars());
+#endif
 #ifdef FOUNTAIN_TEST
         if (frame >= 150 && frame < 900 && frame % 60 == 0) { /* Mario back on a fountain's base every second */
             char dd[128];

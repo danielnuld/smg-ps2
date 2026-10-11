@@ -58,6 +58,7 @@ int game_test_jet(int phase);
 int game_test_screw(void);
 int game_test_candle(int how);
 int game_test_fountain(void);
+int game_test_stray(void);
 int game_test_fire(int phase);
 int game_test_bee(int phase);
 void game_test_jump(void);

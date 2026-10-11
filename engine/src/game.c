@@ -162,6 +162,7 @@ typedef struct {
                       * CocoNut: head its centre, m0 its turned rotation */
     float m0[16];
     int coco;        /* CocoNut: a spin / hip drop / kick sends it rolling (update_coconuts) */
+    int stray;       /* StrayTico: touched it follows Mario; all of its zone's: the CollectTico's star (update_strays) */
     int fountain;    /* FountainBig: a water column on a cycle, Mario in it is thrown up (update_fountains); m0 its matrix */
     int snowman;     /* SnowMan: a fire ball melts it (update_snowmen) */
     int candle;      /* PhantomCandlestand 1 / TeresaMansionCandlestand 2: burns Mario, a spin puts it out (update_candles) */
@@ -247,6 +248,7 @@ static int test_nolost; /* test builds: no miss for falling off (Mario sent to a
 static void notes_spawn(void);
 static int note_rail(const Row *r, const unsigned char **e);
 static int fire_time; /* Fire Mario: frames left (mFireModeTime 1200), 0 normal */
+static V3 stray_at[64]; /* StrayTico: where the rescued ones are (kept over a rebind), by row % 64 */
 static int bee_mode, bee_meter; /* Bee Mario (MarioBee.cpp): on until hurt; flight left (mAirWalkTime 180) */
 static float bee_rise, bee_drop; /* -_770 while flying (up to mBeeUpSpeedMax 5), its free drop (to mBeeFreeDropMaxSpd 5) */
 #define MAX_FIREBALLS 3 /* FireMarioBall: MarioActor's _B54 */
@@ -2201,6 +2203,7 @@ void game_rebind(void)
         in->fluff = strcmp(name, "Fluff") == 0;
         in->jet = strcmp(name, "JetTurtle") == 0;
         in->fountain = strcmp(name, "FountainBig") == 0;
+        in->stray = strcmp(name, "StrayTico") == 0;
         in->snowman = strcmp(name, "SnowMan") == 0;
         in->candle = strcmp(name, "PhantomCandlestand") == 0 ? 1 : strcmp(name, "TeresaMansionCandlestand") == 0 ? 2 :
                      strcmp(name, "CandlestandIceVolcano") == 0 ? 3 : 0;
@@ -2244,7 +2247,8 @@ void game_rebind(void)
         if (in->ticorail && row_coord && row_turn[i]) ticorail_place(in);
         if (in->biri && row_coord && row_turn[i]) biri_place(in);
         if (in->coco) coco_spawn(in);
-        if (in->fountain) memcpy(in->m0, in->m, 64);
+        if (in->fountain || in->stray) memcpy(in->m0, in->m, 64);
+        if (in->stray) in->head = row_turn[i] ? (stray_at[i % 64].x || stray_at[i % 64].y || stray_at[i % 64].z ? stray_at[i % 64] : v3(in->m[12], in->m[13], in->m[14])) : v3(in->m[12], in->m[13], in->m[14]);
         if (in->jet) { memcpy(in->m0, in->m, 64); in->head = v3(in->m[12], in->m[13], in->m[14]); in->hvel = v3(0, 0, 0); }
         if (in->fluff) { memcpy(in->m0, in->m, 64); in->head = v3(in->m[12], in->m[13], in->m[14]); in->hvel = v3(0, 0, 0); }
         if (in->cocoon) { /* at rest at its neutral point, arg1 (default 100) up its axis */
@@ -3049,6 +3053,25 @@ int game_fire_state(void)
     int n = 0;
     for (int b = 0; b < MAX_FIREBALLS; b++) n += fireballs[b].t > 0;
     return n;
+}
+
+/* Test builds: Mario onto the first StrayTico not rescued (its row; -1 none left) */
+int game_test_stray(void)
+{
+    for (int i = 0; i < ninsts; i++)
+        if (insts[i].stray && !row_turn[insts[i].row]) {
+            mario->pos = vsub(insts[i].head, vmul(mario->up, HIT_BODY_H));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0; test_nolost = 0;
+            return insts[i].row;
+        }
+    int st = scene_type(sc, "StrayTico");
+    for (u32 i = 0; st >= 0 && i < sc->nobjs; i++) /* not bound yet: to its row, held while its zone streams in */
+        if (sc->objs[i].type == st && !row_turn[i]) {
+            mario->pos = vadd(row_pos(&sc->objs[i]), vmul(mario->up, 200.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0; test_nolost = 1;
+            return -2;
+        }
+    return -1;
 }
 
 int game_test_fountain(void)
@@ -4334,6 +4357,48 @@ static int fireball_hits_snowman(V3 p)
         return 1;
     }
     return 0;
+}
+
+/* CollectTico.cpp / StrayTico.cpp: a stray Luma waits (in its bubble) until Mario touches it (Glad), then follows him
+ * (Chase: behind him, 0.97 friction, warped back when 2000 off). When every StrayTico of a CollectTico's zone is
+ * rescued the CollectTico's power star comes out (the row dies: star_wait). row_turn 1 rescued. ponytail: no bubble,
+ * no complete demo (the ring of Lumas, CollectTicoLight), the star flies from the CollectTico's row, not 300 over
+ * Mario */
+static void update_strays(void)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    int t = scene_type(sc, "CollectTico"), k = 0;
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->stray || row_dead[in->row]) continue;
+        int row = in->row;
+        if (!row_turn[row]) {
+            if (vlen(vsub(c, in->head)) < 60.0f + HIT_BODY_R) {
+                row_turn[row] = 1;
+                printf("stray tico row %d rescued" "\n", row);
+            }
+        } else { /* Chase: a place behind Mario, one after another */
+            V3 at = vadd(vsub(mario->pos, vmul(mario->face, 150.0f + 80.0f * k)), vmul(mario->up, 150.0f));
+            if (vlen(vsub(at, in->head)) > 2000.0f) in->head = at; /* updateWarp */
+            in->head = vadd(in->head, vmul(vsub(at, in->head), 0.08f));
+            k++;
+        }
+        stray_at[row % 64] = in->head;
+        memcpy(in->m, in->m0, 64);
+        in->m[12] = in->head.x; in->m[13] = in->head.y; in->m[14] = in->head.z;
+    }
+    for (u32 j = 0; t >= 0 && j < sc->nobjs; j++) { /* CollectTico::exeWait: all rescued */
+        const Row *r = &sc->objs[j];
+        if (r->type != t || row_dead[j]) continue;
+        int left = 0, any = 0, st = scene_type(sc, "StrayTico");
+        for (u32 q = 0; q < sc->nobjs; q++)
+            if (sc->objs[q].type == st && sc->objs[q].zone == r->zone) { any++; left += !row_turn[q]; }
+        if (any && !left) {
+            if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
+            row_kill(j);
+            printf("collect tico row %d: all %d rescued" "\n", (int)j, any);
+        }
+    }
 }
 
 static void update_fountains(void)
@@ -6876,6 +6941,7 @@ void game_update(void)
     update_screws();
     update_candles();
     update_fountains();
+    update_strays();
     update_fire();
     place_waterplants();
     update_pipes();

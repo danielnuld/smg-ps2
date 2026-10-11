@@ -896,6 +896,8 @@ def declare_stars(keep, scenario, appear, jp):
         k = STAR_DECLARERS.get(r["name"], -1)
         if r["name"] == "NoteFairy":  # declarePowerStar when arg7 is 1-3
             k = None if s32(r["args"][7]) > 0 else -1
+        elif r["name"] == "CollectTico":  # CollectTico::init declarePowerStar, always
+            k = None
         elif k is None and s32(r["args"][7]) != 7:
             k = -1
         if k == -1:
@@ -938,7 +940,7 @@ def placement(fs, galaxy, scenario):
     planets = B.planet_table(fsp, lambda a: (fsp / "ObjectData" / f"{a}.arc").exists())
     # every class with a model on disc is kept (static until it gets a behaviour), plus gravities
     arcmap = {n: model_archive(fsp, n, planets) for n in {o["name"] for o in objs}}
-    keep = [o for o in objs if arcmap[o["name"]] or "Gravity" in o["name"] or o["name"] in LOGIC or o["name"] in jpa.AMBIENT or o["name"] in ("WaterPlant", "PowerStarAppearPoint")]
+    keep = [o for o in objs if arcmap[o["name"]] or "Gravity" in o["name"] or o["name"] in LOGIC or o["name"] in jpa.AMBIENT or o["name"] in ("WaterPlant", "PowerStarAppearPoint", "CollectTico")]
     for o in keep:
         for e in EXTRA.get(o["name"], ()):
             if e[0] == "#":
