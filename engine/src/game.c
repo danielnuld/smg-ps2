@@ -434,6 +434,8 @@ static int demo_camera(const char *name, int frame, const float m[16])
 }
 static int demo_on; /* a demo is running: Mario waits (no input, no hurt) */
 static int dino_demo_on, ota_demo_on; /* whose demo camera runs */
+static int star_demo;      /* PowerStar::exeStageClearDemo: frames since a star was taken + 1, 0 none */
+static float star_demo_m[16]; /* its camera's frame: at the star, facing the way Mario looked */
 static int obj_play(const Inst *in, const char *clip, int loop, int interp);
 /* Skinned placed models (slice.py SKINNED_OBJ): a pool of poses kept by row across rebinds, the class's "wait" clip
  * (else its first) looping unless its behaviour plays another (obj_play). ponytail: 40 at once (instances and walkers), the rest drawn in
@@ -5752,7 +5754,12 @@ static void update_mario(void)
 {
     Player *m = mario;
     m->up = up_at(m->pos, m->up);
-    if (demo_on) { m->hvel = v3(0, 0, 0); if (m->hurt_timer) m->hurt_timer--; if (mario_anim) { mario_play("wait", 1.0f, 1); anim_update(mario_anim); } return; }
+    if (demo_on) { /* a demo: he waits (startBckPlayer PowerStarGet when it is the star's) */
+        m->hvel = v3(0, 0, 0); m->vup = 0;
+        if (m->hurt_timer) m->hurt_timer--;
+        if (mario_anim) { mario_play(star_demo ? "powerstarget" : "wait", 1.0f, !star_demo); anim_update(mario_anim); }
+        return;
+    }
     if (swim_update(m)) {
         if (mario_anim) anim_update(mario_anim);
         return;
@@ -7633,7 +7640,22 @@ static void update_items(void)
         float r;
         V3 p = item_sensor(in, &r);
         if (vlen(vsub(c, p)) > r + HIT_BODY_R) continue;
-        if (in->item == ITEM_STAR) printf("power star %d got\n", ++stars);
+        if (in->item == ITEM_STAR) {
+            printf("power star %d got\n", ++stars);
+            star_demo = 1; /* requestPowerStarGetDemo: the PowerStarGet camera and Mario's clip */
+            /* PowerStar::exeStageClearDemo step 1: mBaseMtx = its posture _B8 (initPosture: up against the gravity at
+             * the star, front its placed Z) at its position, and setPlayerBaseMtx puts Mario there; its
+             * startAnimCameraTargetSelf camera runs in that frame. ponytail: arg4 (_127, the PowerStarAppearPoint's
+             * frame) is not read */
+            const Row *sr = &sc->objs[in->row];
+            V3 sp = v3(in->m[12], in->m[13], in->m[14]), su = up_at(sp, mario->up), sx, sz;
+            row_axes(sr, &sx, &sz);
+            V3 sf = vtangent(sz, su);
+            if (vlen(sf) < 1e-3f) sf = vtangent(sx, su);
+            mario->pos = sp; mario->up = su; mario->face = vnorm(sf);
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            basis_matrix(star_demo_m, sp, su, mario->face, 0);
+        }
         else if (in->item == ITEM_ONEUP) printf("1-up, lives %d\n", ++lives);
         else if (in->item == ITEM_LIFEUP) { life = max_life = 2 * MAX_LIFE; printf("life up\n"); }
         else if (in->item == ITEM_QCOIN) fx_emit(FX_QUESTIONCOIN_GET, in->m);
@@ -8064,7 +8086,11 @@ void game_update(void)
     update_bubbles();
     update_dino();
     update_ota();
-    demo_on = dino_demo_on || ota_demo_on;
+    if (star_demo) { /* its camera ("powerstar/powerstarget"); Mario plays PowerStarGet meanwhile */
+        if (!demo_camera("powerstar/powerstarget", star_demo - 1, star_demo_m)) { star_demo = 0; camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45); }
+        else star_demo++;
+    }
+    demo_on = dino_demo_on || ota_demo_on || star_demo;
     update_fat();
     update_sambos();
     update_fire();
