@@ -799,6 +799,27 @@ int main(void)
             if (frame >= 150 && frame < 600 && frame % 10 == 0) printf("fire test f %u: balls %d\n", frame, game_fire_state());
         }
 #endif
+#ifdef FAT_TEST
+        if (frame >= 150 && frame % 6 == 0) { /* star pieces shot at the TicoFat until it is full */
+            int st = game_test_fat();
+            if (frame % 120 == 0) printf("fat test f %u: %d\n", frame, st);
+        }
+#endif
+#ifdef DINO_TEST
+        if (frame >= 150 && frame % 20 == 0) { /* Mario at DinoPackun's tail ball, spinning, until its star is out */
+            int st = game_test_dino();
+            if (st >= 600) st = 6000 + game_test_cage(1); /* on its star */
+            if (frame % 100 == 0 || st >= 6000) printf("dino test f %u: %d, stars %d\n", frame, st, game_stars());
+        }
+#endif
+#ifdef BUBBLE_TEST
+        { /* Mario held 300 over an AirBubbleGenerator with little oxygen: a bubble fills it */
+            if (frame >= 150 && frame < 600 && frame % 30 == 0) {
+                int row = game_test_bubble();
+                printf("bubble test f %u: row %d, %d\n", frame, row, game_swim_state());
+            }
+        }
+#endif
 #ifdef SWIM_TEST
         { /* Mario dropped in a water area (150): floats up to the surface, stays */
             if (frame == 150) printf("swim test: row %d\n", game_test_swim());

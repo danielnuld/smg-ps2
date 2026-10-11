@@ -162,6 +162,8 @@ typedef struct {
                       * CocoNut: head its centre, m0 its turned rotation */
     float m0[16];
     int coco;        /* CocoNut: a spin / hip drop / kick sends it rolling (update_coconuts) */
+    int fat;         /* TicoFat: fed by star piece shots (update_shots), full: SW_A, the row dies */
+    int bubble;      /* AirBubble 1 (touched: oxygen), AirBubbleGenerator 2 (update_bubbles) */
     int stray;       /* StrayTico: touched it follows Mario; all of its zone's: the CollectTico's star (update_strays) */
     int fountain;    /* FountainBig: a water column on a cycle, Mario in it is thrown up (update_fountains); m0 its matrix */
     int snowman;     /* SnowMan: a fire ball melts it (update_snowmen) */
@@ -194,7 +196,7 @@ static void fx_at(int fx, V3 p, V3 up)
 
 /* Stage switches (Petari StageSwitch.cpp): ids below 1000 belong to the row's zone (128 each), the rest are the
  * galaxy's (id - 1000). One bit each, all off at the start; sw_changed makes the frame rebind what appear switches
- * show. ponytail: no SW_SLEEP, switches are not saved */
+ * show. ponytail: switches are not saved */
 #define SW_PER_ZONE 128
 static unsigned char sw_bits[(MAX_ZONES + 1) * SW_PER_ZONE / 8];
 static int sw_changed;
@@ -248,6 +250,17 @@ static int test_nolost; /* test builds: no miss for falling off (Mario sent to a
 static void notes_spawn(void);
 static int note_rail(const Row *r, const unsigned char **e);
 static int fire_time; /* Fire Mario: frames left (mFireModeTime 1200), 0 normal */
+/* DinoPackun (Petari Boss/DinoPackun*.cpp, the first fight: DinoPackunVs1): one per scene, its state here */
+static struct {
+    int row, phase, nrv, t, hits;  /* phase: 0 wait (SW_A), 1 egg, 2 battle, 3 punched (the ball out), 4 demo, 5 down, 6 gone */
+    float side;                    /* the way it turns (selectTurnDirection) */
+    V3 pos, vel, up, f;
+    int bstate, bt;                /* its tail ball: 0 Wait, 1 Shoot, 2 Charge, 3 Reverse, 4 Rebound */
+    V3 bpos, bvel;
+} dino = {.row = -1};
+static const Model *m_dino, *m_dball, *m_degg;
+#define MAX_BUBBLES 8 /* AirBubbleHolder's free bubbles (update_bubbles) */
+static struct { V3 pos, vel; int t, life; } bubbles[MAX_BUBBLES];
 static int swimming, oxygen = 3600; /* Mario in water (swim_update); oxygen left (mOxygenMax 3600) */
 static float swim_pitch; /* his swim direction's angle over the horizontal (radians) */
 static V3 stray_at[64]; /* StrayTico: where the rescued ones are (kept over a rebind), by row % 64 */
@@ -255,7 +268,7 @@ static int bee_mode, bee_meter; /* Bee Mario (MarioBee.cpp): on until hurt; flig
 static float bee_rise, bee_drop; /* -_770 while flying (up to mBeeUpSpeedMax 5), its free drop (to mBeeFreeDropMaxSpd 5) */
 #define MAX_FIREBALLS 3 /* FireMarioBall: MarioActor's _B54 */
 static struct { V3 pos, vel; int t, wall; } fireballs[MAX_FIREBALLS];
-static const Model *m_fireball;
+static const Model *m_marioball, *m_bubble;
 #define MAX_NOTES 512 /* NoteFairy notes (update_notes) */
 static struct { V3 pos; float coord; short row, alive; } notes[MAX_NOTES];
 static int nnotes;
@@ -340,7 +353,8 @@ static int row_shown(int i)
 #ifdef TEST_SHOWN /* a test build's class out at once (its appear switch belongs to a fight or an event) */
     if (strcmp(sc->types + 32 * r->type, TEST_SHOWN) == 0) return 1;
 #endif
-    return !row_dead[i] && (r->sw[SW_APPEAR] < 0 || sw_on(r, SW_APPEAR));
+    /* SleepControlFunc: SW_SLEEP off makes it dead, on appeared (TicoFat's planet) */
+    return !row_dead[i] && (r->sw[SW_APPEAR] < 0 || sw_on(r, SW_APPEAR)) && (r->sw[SW_SLEEP] < 0 || sw_on(r, SW_SLEEP));
 }
 
 /* The row's object is gone for good: its dead switch goes on */
@@ -808,6 +822,16 @@ void game_init(const Scene *s, const unsigned char *blob)
             row_hold[i] = s->objs[i].arg[3] >= 0 ? s->objs[i].arg[3] : 5;
     scene_blob_g = blob;
     npurple = count_type("PurpleCoin", 0) + count_type("CirclePurpleCoinGroup", 1) + count_type("PurpleRailCoin", 1);
+    memset(&dino, 0, sizeof dino); dino.row = -1;
+    for (u32 i = 0; i < s->nobjs; i++)
+        if (strcmp(s->types + 32 * s->objs[i].type, "DinoPackun") == 0) {
+            V3 x, z;
+            row_axes(&s->objs[i], &x, &z);
+            dino.row = i; dino.pos = row_pos(&s->objs[i]); dino.up = up_at(dino.pos, v3(0, 1, 0));
+            dino.f = vnorm(vtangent(z, dino.up)); dino.side = 1.0f;
+            dino.bpos = vsub(dino.pos, vmul(dino.f, 600.0f));
+            break;
+        }
     npieces = count_type("StarPiece", 0) + box_pieces;
     int t_spg = scene_type(s, "StarPieceGroup"), t_flow = scene_type(s, "StarPieceFlow");
     for (u32 i = 0; i < s->nobjs; i++)
@@ -2121,7 +2145,9 @@ void game_rebind(void)
     m_stink = scene_model(s, "StinkBugSmall");
     m_note = scene_model(s, "NoteFairy");
     m_poihana = scene_model(s, "Poihana");
-    m_fireball = scene_model(s, "MarioFireBall");
+    m_marioball = scene_model(s, "MarioFireBall");
+    m_bubble = scene_model(s, "AirBubble");
+    m_dino = scene_model(s, "DinoPackun"); m_dball = scene_model(s, "DinoPackunTailBall"); m_degg = scene_model(s, "DinoPackunEggShell");
     m_unizo[0] = scene_model(s, "Unizo"); m_unizo[1] = scene_model(s, "UnizoLand"); m_unizo[2] = scene_model(s, "UnizoShoal");
     int t_coin = scene_type(s, "Coin"), t_pc = scene_type(s, "PurpleCoin"), t_circle = scene_type(s, "CirclePurpleCoinGroup");
     int t_rail = scene_type(s, "PurpleRailCoin"), t_piece = scene_type(s, "StarPiece"), t_kuribo = scene_type(s, "Kuribo");
@@ -2150,7 +2176,8 @@ void game_rebind(void)
             r->type == t_tako || r->type == t_packun || r->type == t_kote || r->type == t_spider || r->type == t_mera ||
             r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly ||
             r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_stink || r->type == scene_type(s, "NoteFairy") ||
-            r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == scene_type(s, "RockCreator"))
+            r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == scene_type(s, "RockCreator") ||
+            r->type == scene_type(s, "DinoPackun"))
             continue;
         const char *name = s->types + 32 * r->type;
         const Model *md = scene_model(s, name);
@@ -2183,6 +2210,7 @@ void game_rebind(void)
             in->md_flip[1] = scene_model(sc, v);
         }
         in->npc = npc_class(name);
+        in->fat = strcmp(name, "TicoFat") == 0;
         in->sky = sky_class(name);
         in->shoot = strcmp(name, "ShootingStar") == 0;
         in->steam = strcmp(name, "LavaSteam") == 0;
@@ -2206,6 +2234,7 @@ void game_rebind(void)
         in->jet = strcmp(name, "JetTurtle") == 0;
         in->fountain = strcmp(name, "FountainBig") == 0;
         in->stray = strcmp(name, "StrayTico") == 0;
+        in->bubble = strcmp(name, "AirBubble") == 0 ? 1 : strcmp(name, "AirBubbleGenerator") == 0 ? 2 : 0;
         in->snowman = strcmp(name, "SnowMan") == 0;
         in->candle = strcmp(name, "PhantomCandlestand") == 0 ? 1 : strcmp(name, "TeresaMansionCandlestand") == 0 ? 2 :
                      strcmp(name, "CandlestandIceVolcano") == 0 ? 3 : 0;
@@ -3068,7 +3097,7 @@ int game_test_swim(void)
         V3 x, z;
         row_axes(r, &x, &z);
         mario->pos = r->type == t[1] ? vadd(row_pos(r), vmul(mario->up, 500.0f * r->scale[0] - 300.0f))
-                                     : vadd(row_pos(r), vmul(vcross(z, x), 1000.0f * r->scale[1] - 300.0f));
+                                     : vadd(row_pos(r), vmul(vcross(z, x), (r->type == t[2] ? 500.0f : 1000.0f) * r->scale[1] - 300.0f));
         mario->hvel = v3(0, 0, 0); mario->vup = 0;
         return (int)i;
     }
@@ -3076,6 +3105,70 @@ int game_test_swim(void)
 }
 
 int game_swim_state(void) { return swimming * 10000 + oxygen; }
+
+/* Test builds: Mario 600 in front of the first hungry TicoFat with star pieces, a shot at it (pieces it ate x 1000 +
+ * pieces left; -1 none left) */
+int game_test_fat(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->fat || row_dead[in->row]) continue;
+        V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), z = vnorm(v3(in->m[8], in->m[9], in->m[10]));
+        V3 mid = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(up, 100.0f * in->s));
+        mario->pos = vadd(vadd(mid, vmul(z, 600.0f)), vmul(up, -HIT_BODY_H)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        if (got_pieces < 1) got_pieces = 1;
+        for (int k = 0; k < MAX_SHOTS; k++)
+            if (!shots[k].t) {
+                shots[k].pos = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+                shots[k].vel = vmul(vnorm(vsub(mid, shots[k].pos)), 40.0f);
+                shots[k].t = 1; got_pieces--;
+                break;
+            }
+        return row_turn[in->row] * 1000 + got_pieces;
+    }
+    int t = scene_type(sc, "TicoFat"); /* none loaded: Mario to its row, its zone streams in */
+    for (u32 i = 0; t >= 0 && i < sc->nobjs; i++)
+        if (sc->objs[i].type == t && !row_dead[i]) {
+            mario->pos = row_pos(&sc->objs[i]); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return -2;
+        }
+    static int once; /* all fed: Mario dropped 900 over the planet it became (its SW_SLEEP rows), once */
+    int pd = scene_type(sc, "StarEggRoadEggPlanetD");
+    for (u32 i = 0; pd >= 0 && i < sc->nobjs && !once; i++)
+        if (sc->objs[i].type == pd) {
+            once = 1;
+            mario->pos = vadd(row_pos(&sc->objs[i]), v3(0, 900.0f, 0)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return row_shown(i) ? -3 : -4;
+        }
+    return -1;
+}
+
+/* Test builds: Mario next to DinoPackun's tail ball, on its far side from the head, spinning when it waits there;
+ * game_dino_state: phase x 100 + hits x 10 + ball state (-1 no DinoPackun) */
+int game_test_dino(void)
+{
+    if (dino.row < 0) return -1;
+    if (dino.phase == 0) { mario->pos = vadd(dino.pos, vmul(dino.up, 400.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+    else if ((dino.phase == 1 || dino.phase == 2) && dino.bstate == 0) {
+        V3 out = vnorm(vtangent(vsub(dino.bpos, dino.pos), dino.up));
+        mario->pos = vadd(dino.bpos, vmul(out, 150.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->hurt_timer = 0;
+        mario->spin_timer = SPIN_TIME;
+    }
+    return dino.phase * 100 + dino.hits * 10 + dino.bstate;
+}
+
+/* Test builds: Mario 300 over the first AirBubbleGenerator (its row, -1 none), his oxygen down to 100 */
+int game_test_bubble(void)
+{
+    for (int i = 0; i < ninsts; i++)
+        if (insts[i].bubble == 2) {
+            V3 up = vnorm(v3(insts[i].m[4], insts[i].m[5], insts[i].m[6]));
+            mario->pos = vadd(v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]), vmul(up, 300.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0; oxygen = 100;
+            return insts[i].row;
+        }
+    return -1;
+}
 
 int game_test_stray(void)
 {
@@ -4422,6 +4515,174 @@ static void update_strays(void)
     }
 }
 
+/* AirBubble.cpp: touched by Mario (130 x scale) or a spin within cSwingRange 250 it breaks and fills his oxygen
+ * (incPlayerOxygen 8: all of it), its row dies. AirBubbleGenerator.cpp: every arg0 (180) frames a bubble comes out
+ * 120 along its up and rises (cMoveStartAccel 7 up, then 0.3 a frame, x 0.85) for arg1 (cDefaultLife 360) frames.
+ * row_step the generator's frames. ponytail: no swaying (cCoriolis), no RecoveryBubbleBreak effect, no rail bubbles */
+static void update_bubbles(void)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        int row = in->row;
+        if (!in->bubble || row_dead[row]) continue;
+        const Row *r = &sc->objs[row];
+        V3 p = v3(in->m[12], in->m[13], in->m[14]);
+        if (in->bubble == 1) {
+            float d = vlen(vsub(c, p));
+            if (d < 130.0f * in->s + HIT_BODY_R || (mario->spin_timer > 0 && d < 250.0f)) {
+                oxygen = 3600; row_kill(row);
+                printf("air bubble row %d taken" "\n", row);
+            }
+            continue;
+        }
+        int wait = r->arg[0] > 0 ? r->arg[0] : 180;
+        if (++row_step[row] % wait || !row_shown(row) || vlen(vsub(p, mario->pos)) > 6000.0f) continue;
+        for (int b = 0; b < MAX_BUBBLES; b++) {
+            if (bubbles[b].life) continue;
+            V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+            bubbles[b].pos = vadd(p, vmul(up, 120.0f)); bubbles[b].t = 0;
+            bubbles[b].vel = vmul(up_at(bubbles[b].pos, up), 7.0f);
+            bubbles[b].life = r->arg[1] > 0 ? r->arg[1] : 360;
+            break;
+        }
+    }
+    for (int b = 0; b < MAX_BUBBLES; b++) {
+        if (!bubbles[b].life) continue;
+        V3 up = up_at(bubbles[b].pos, v3(0, 1, 0));
+        bubbles[b].vel = vmul(vadd(bubbles[b].vel, vmul(up, 0.3f)), 0.85f);
+        bubbles[b].pos = vadd(bubbles[b].pos, bubbles[b].vel);
+        if (vlen(vsub(c, bubbles[b].pos)) < 130.0f + HIT_BODY_R) {
+            oxygen = 3600; bubbles[b].life = 0;
+            printf("air bubble taken" "\n");
+        } else if (++bubbles[b].t >= bubbles[b].life) bubbles[b].life = 0;
+    }
+}
+
+/* DinoPackun (Vs1): SW_A (its planet's SwitchSphere) starts the fight. Egg: in its shell it turns (0.3 a frame for
+ * 120) and walks (0.5 for 300), the shell pushes Mario off. Then Lv1 / Lv2 / Lv3: it walks (0.5; 1.3 angry, 180
+ * frames) and turns (1 a frame), finds Mario in its sight (1000 / 80 degrees; 1300 / 90 angry), chases him (1.5;
+ * 1.8 angry, 240 / 300 frames, a touch hurts) and cools down (90). A spin at its tail ball punches it (Shoot: 40
+ * away, 30 frames or 1500 off; Charge: 35 frames x 0.88; Reverse: 8 a frame at its head, x 0.98): the ball hits its
+ * head (270), the egg breaks / it is hurt; after the fourth hit it goes down (320 frames) and its power star comes out
+ * (the row dies: star_wait). ponytail: no tail chain (the ball held 600 behind it), no animations, no demos (a 120
+ * pause), no star pieces (appearStarPiece 8), no footprints, no damage camera; the spin on its body does nothing */
+static void update_dino(void)
+{
+    if (dino.row < 0 || dino.phase == 6 || !row_shown(dino.row)) return;
+    const Row *r = &sc->objs[dino.row];
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    dino.up = up_at(dino.pos, dino.up);
+    dino.f = vnorm(vtangent(dino.f, dino.up));
+    V3 up = dino.up, side = vcross(up, dino.f), body = vadd(dino.pos, vmul(up, 200.0f));
+    V3 head = vadd(dino.pos, vadd(vmul(up, 350.0f), vmul(dino.f, 200.0f)));
+    int angry = dino.hits >= 2;
+    dino.t++;
+    if (dino.phase == 0) {
+        if (r->sw[SW_A] < 0 || sw_on(r, SW_A)) { dino.phase = 1; dino.nrv = 1; dino.t = 0; printf("dino packun: start" "\n"); }
+        return;
+    }
+    float accel = 0;
+    V3 to = vtangent(vsub(mario->pos, dino.pos), up);
+    float dm = vlen(to), face = dm > 1e-3f ? vdot(vnorm(to), dino.f) : 1.0f;
+    #define DINO_TURN_TO(v, rate) do { V3 tt = (v); if (vlen(tt) > 1e-3f) { \
+        float a = atan2f(vdot(tt, side), vdot(tt, dino.f)), mx = (rate) * 0.0174533f; a = a > mx ? mx : a < -mx ? -mx : a; \
+        dino.f = vnorm(vadd(vmul(dino.f, cosf(a)), vmul(side, sinf(a)))); } } while (0)
+    if (dino.phase == 1 || dino.phase == 2) {
+        int egg = dino.phase == 1;
+        float range = angry ? 1300.0f : 1000.0f, cone = cosf((angry ? 90.0f : 80.0f) * 0.0174533f);
+        int sees = !egg && dm < range && face > cone;
+        switch (dino.nrv) {
+        case 0: /* Turn */
+            DINO_TURN_TO(vmul(side, dino.side), egg ? 0.3f : 1.0f);
+            if (angry) accel = 1.3f;
+            if (dino.t >= (egg ? 120 : angry ? 30 : 60)) { dino.nrv = 1; dino.t = 0; }
+            else if (sees) { dino.nrv = 2; dino.t = 0; }
+            break;
+        case 1: /* Walk */
+            accel = angry ? 1.3f : 0.5f;
+            if (dino.t >= (egg ? 300 : 180)) { dino.nrv = 0; dino.t = 0; dino.side = (game_frame & 1) ? 1.0f : -1.0f; }
+            else if (sees) { dino.nrv = 2; dino.t = 0; }
+            break;
+        case 2: /* Find */
+            DINO_TURN_TO(to, 1.0f);
+            if (dino.t >= 40) { dino.nrv = 3; dino.t = 0; }
+            break;
+        case 3: { /* Chase */
+            int len = angry ? 300 : 240, ramp = angry ? 90 : 60;
+            DINO_TURN_TO(to, angry ? 1.3f : 1.0f);
+            accel = (angry ? 1.8f : 1.5f) * (dino.t < ramp ? (float)dino.t / ramp : 1.0f);
+            if (dino.t >= len) { dino.nrv = 4; dino.t = 0; }
+            break;
+        }
+        default: /* CoolDown */
+            if (dino.t >= 90) { dino.nrv = 0; dino.t = 0; }
+        }
+        float dist = vlen(vsub(c, body));
+        if (egg && dist < 400.0f + HIT_BODY_R) { /* the shell pushes him off */
+            V3 out = vnorm(vtangent(vsub(c, body), up));
+            mario->pos = vadd(mario->pos, vmul(out, 400.0f + HIT_BODY_R - dist));
+        } else if (!egg && dist < 200.0f + HIT_BODY_R) {
+            hurt_mario(dino.pos, 25.0f);
+            if (dino.nrv == 3) { dino.nrv = 0; dino.t = 0; } /* AttackHit */
+        }
+    } else if (dino.phase == 4) { /* a demo: cry / angry */
+        if (dino.t >= 120) { dino.phase = 2; dino.nrv = 3; dino.t = 0; }
+    } else if (dino.phase == 5) { /* DownDemo, then AppearPowerStar */
+        if (dino.t >= 320 + 60) {
+            dino.phase = 6; row_kill(dino.row);
+            printf("dino packun: down, its star" "\n");
+            return;
+        }
+    }
+    if (accel > 0) dino.vel = vadd(dino.vel, vmul(dino.f, accel)); /* addVelocityMoveToDirection, updateNormalVelocity */
+    if (dino.phase != 1 && dino.phase != 2) dino.vel = v3(0, 0, 0);
+    dino.vel = vmul(vtangent(dino.vel, up), 0.9f);
+    V3 center = vadd(vadd(dino.pos, dino.vel), vmul(up, 150.0f - 4.0f)), gn, wn;
+    int wall = 0;
+    collide_n(&center, up, 150.0f, &gn, &wn, &wall);
+    dino.pos = vsub(center, vmul(up, 150.0f));
+
+    /* the tail ball */
+    V3 rest = vsub(dino.pos, vmul(dino.f, 600.0f)), bup = up_at(dino.bpos, up);
+    dino.bt++;
+    switch (dino.bstate) {
+    case 0: case 4: /* Wait / Rebound: dragged behind */
+        dino.bvel = vmul(vadd(dino.bvel, vadd(vmul(vsub(rest, dino.bpos), 0.05f), vmul(bup, -1.0f))), 0.9f);
+        if (dino.bstate == 4 && dino.bt >= 180) { dino.bstate = 0; dino.bt = 0; }
+        if (dino.bstate == 0 && (dino.phase == 1 || dino.phase == 2) && mario->spin_timer > 0 &&
+            vlen(vsub(c, dino.bpos)) < 135.0f + HIT_BODY_R + 60.0f) { /* requestPunch */
+            V3 away = vtangent(vsub(dino.bpos, mario->pos), bup);
+            away = vlen(away) > 1e-3f ? vnorm(away) : vmul(dino.f, -1.0f);
+            dino.bvel = vadd(vmul(away, 40.0f), vmul(bup, 20.0f));
+            dino.bstate = 1; dino.bt = 0; dino.phase = 3; dino.t = 0;
+            printf("dino packun: tail ball punched" "\n");
+        }
+        break;
+    case 1: /* Shoot */
+        if (dino.bt >= 30 || vlen(vsub(dino.bpos, head)) >= 1500.0f) { dino.bstate = 2; dino.bt = 0; }
+        break;
+    case 2: /* Charge */
+        dino.bvel = vmul(dino.bvel, 0.88f);
+        if (dino.bt >= 35) { dino.bstate = 3; dino.bt = 0; }
+        break;
+    case 3: /* Reverse: at its head */
+        dino.bvel = vmul(vadd(dino.bvel, vmul(vnorm(vsub(head, dino.bpos)), 8.0f)), 0.98f);
+        if (vlen(vsub(head, dino.bpos)) < 270.0f + 135.0f) { /* BALL_ATTACK */
+            dino.hits++;
+            dino.bvel = vmul(vnorm(vsub(dino.bpos, head)), 0.3f * vlen(dino.bvel));
+            dino.bstate = 4; dino.bt = 0;
+            dino.phase = dino.hits >= 4 ? 5 : 4; dino.t = 0; dino.vel = v3(0, 0, 0);
+            printf("dino packun: hit %d" "\n", dino.hits);
+        } else if (dino.bt >= 150) { dino.bstate = 4; dino.bt = 0; dino.phase = dino.hits ? 2 : 1; dino.nrv = 0; dino.t = 0; }
+        break;
+    }
+    V3 bc = vadd(dino.bpos, dino.bvel);
+    if (dino.bstate == 0 || dino.bstate == 4) collide_n(&bc, bup, 135.0f, &gn, &wn, &wall);
+    dino.bpos = bc;
+    #undef DINO_TURN_TO
+}
+
 static void update_fountains(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -4748,17 +5009,29 @@ static int fluff_update(Player *m)
 static int area_inside(const Row *r, V3 p);
 static int in_water(V3 p, V3 up, float *depth)
 {
-    static int types[3] = {-2, -2, -2};
-    if (types[0] == -2) { types[0] = scene_type(sc, "WaterCube"); types[1] = scene_type(sc, "WaterSphere"); types[2] = scene_type(sc, "WaterCylinder"); }
+    static int types[5] = {-2, -2, -2, -2, -2};
+    if (types[0] == -2) { types[0] = scene_type(sc, "WaterCube"); types[1] = scene_type(sc, "WaterSphere"); types[2] = scene_type(sc, "WaterCylinder");
+        types[3] = scene_type(sc, "OceanSphere"); types[4] = scene_type(sc, "OceanBowl"); }
     for (u32 i = 0; i < sc->nobjs; i++) {
         const Row *r = &sc->objs[i];
+        if ((r->type == types[3] || r->type == types[4]) && row_shown(i)) {
+            /* OceanSphere::isInWater: within 100 x scale; OceanBowl: that and under its plane (its up) */
+            float rad = 100.0f * r->scale[0], d = vlen(vsub(p, row_pos(r)));
+            if (d > rad) continue;
+            V3 x, z;
+            row_axes(r, &x, &z);
+            float over = vdot(vsub(p, row_pos(r)), vcross(z, x));
+            if (r->type == types[4] && over > 0.0f) continue;
+            if (depth) *depth = r->type == types[3] ? rad - d : -over;
+            return 1;
+        }
         if ((r->type != types[0] && r->type != types[1] && r->type != types[2]) || !row_shown(i) || !area_inside(r, p)) continue;
         if (depth) {
             if (r->type == types[1]) *depth = 500.0f * r->scale[0] - vdot(vsub(p, row_pos(r)), up) ; /* the sphere's top along up */
             else {
                 V3 x, z;
                 row_axes(r, &x, &z);
-                *depth = 1000.0f * r->scale[1] - vdot(vsub(p, row_pos(r)), vcross(z, x));
+                *depth = (r->type == types[2] ? 500.0f : 1000.0f) * r->scale[1] - vdot(vsub(p, row_pos(r)), vcross(z, x));
             }
         }
         return 1;
@@ -4770,7 +5043,7 @@ static int in_water(V3 p, V3 up, float *depth)
  * (mSwimFrontAcc 4 up to mSwimFrontMaxSpeed 11.5), the stick turns him (left / right) and tilts the direction (up /
  * down); his speed goes x mSwimFrontIne 0.985 (mSwimStopIne 0.992 still), he floats up (mSwimUpAcc 0.1 to
  * mSwimUpMaxSpeed 1); within mSwimUpSurfaceDist 100 of the surface he stays at it, and X there jumps out. Under it his
- * oxygen runs down from mOxygenMax 3600 (60 s); at 0 he loses a life piece every 60 frames; at the surface it fills
+ * oxygen runs down from mOxygenMax 3600 (60 s; an AirBubble fills it); at 0 he loses a life piece every 60 frames; at the surface it fills
  * back. Returns 1 while swimming. ponytail: no spin dash, no swim animations, no current / drift, no damage swim */
 static void hurt_mario(V3 from, float push);
 static int swim_update(Player *m)
@@ -6061,7 +6334,7 @@ static int area_inside(const Row *r, V3 p)
     row_axes(r, &x, &z);
     V3 y = vcross(z, x);
     float h = vdot(d, y);
-    if (h < 0.0f || h > 1000.0f * r->scale[1]) return 0;
+    if (h < 0.0f || h > (shape == 1 ? 500.0f : 1000.0f) * r->scale[1]) return 0; /* AreaFormCylinder: 500 x scale_y */
     if (shape == 1) return vlen(vtangent(d, y)) < 500.0f * r->scale[0];
     return fabsf(vdot(d, x)) < 500.0f * r->scale[0] && fabsf(vdot(d, z)) < 500.0f * r->scale[2];
 }
@@ -6606,7 +6879,7 @@ static V3 star_pos(const Inst *in, int *state)
         float h = strcmp(name, "CrystalCageL") == 0 ? 250.0f : strncmp(name, "Breakable", 9) == 0 ? 150.0f : 0.0f;
         o = vadd(row_pos(r), vmul(vcross(z, x), h * r->scale[0]));
         if (!row_dead[w - 1]) { *state = h > 0; return o; }
-    } else if (got_coins < 100) {
+    } else if (got_coins < 100 && got_purple < 100) { /* ScenePlayingResult: 100 coins, or 100 purple coins */
         *state = 0;
         return o;
     }
@@ -6832,6 +7105,23 @@ static void update_shots(void)
         if (++s->t > 60) { s->t = 0; continue; }
         s->pos = vadd(s->pos, s->vel);
         int hit = 0;
+        for (int k = 0; k < ninsts && !hit; k++) { /* TicoFat.cpp receiveStarPiece: it eats arg1 (10) pieces, then
+                                                       * (tryMetamorphosis) becomes its planet: SW_A on, the row dies.
+                                                       * row_turn the pieces eaten. ponytail: no growing, no meter, no
+                                                       * flight / planet demo, no item (arg0) */
+            Inst *in = &insts[k];
+            if (!in->fat || row_dead[in->row]) continue;
+            V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), mid = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(up, 100.0f * in->s));
+            if (vlen(vsub(s->pos, mid)) > 110.0f * in->s + 40.0f) continue;
+            hit = 1;
+            const Row *r = &sc->objs[in->row];
+            int want = r->arg[1] > 0 ? r->arg[1] : 10;
+            if (++row_turn[in->row] >= want) {
+                if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
+                row_kill(in->row);
+                printf("tico fat row %d: full (%d), its planet" "\n", in->row, want);
+            }
+        }
         for (int k = 0; k < nkuribo && !hit; k++) {
             Kuribo *e = &kuribo[k];
             if (e->state == KURIBO_DEAD || !row_shown(e->row) || vlen(vsub(s->pos, vadd(e->pos, vmul(e->up, 50.0f)))) > 90.0f) continue;
@@ -7049,6 +7339,8 @@ void game_update(void)
     update_candles();
     update_fountains();
     update_strays();
+    update_bubbles();
+    update_dino();
     update_fire();
     place_waterplants();
     update_pipes();
@@ -7376,10 +7668,22 @@ void game_draw(void)
     }
     if (m_mario_skin && !(mario->hurt_timer & 4))
         render_skinned(m_mario_skin, m, (const float (*)[16])mario_anim->drw);
-    if (m_fireball) for (int b = 0; b < MAX_FIREBALLS; b++) { /* Fire Mario's balls, rolling */
+    if (m_marioball) for (int b = 0; b < MAX_FIREBALLS; b++) { /* Fire Mario's balls, rolling */
         if (!fireballs[b].t) continue;
         basis_matrix(m, fireballs[b].pos, up_at(fireballs[b].pos, v3(0, 1, 0)), fireballs[b].vel, game_frame * 0.5f);
-        render_model(m_fireball, m, 0x80, 0x80, 0x80);
+        render_model(m_marioball, m, 0x80, 0x80, 0x80);
+    }
+    if (dino.row >= 0 && dino.phase < 6 && row_shown(dino.row)) { /* DinoPackun, its egg shell, its tail ball */
+        basis_matrix(m, dino.pos, dino.up, dino.f, 0);
+        if (m_dino) render_model(m_dino, m, 0x80, 0x80, 0x80);
+        if (m_degg && dino.hits == 0) render_model(m_degg, m, 0x80, 0x80, 0x80);
+        basis_matrix(m, dino.bpos, up_at(dino.bpos, dino.up), dino.f, 0);
+        if (m_dball) render_model(m_dball, m, 0x80, 0x80, 0x80);
+    }
+    if (m_bubble) for (int b = 0; b < MAX_BUBBLES; b++) { /* AirBubbleGenerator's bubbles */
+        if (!bubbles[b].life) continue;
+        basis_matrix(m, bubbles[b].pos, up_at(bubbles[b].pos, v3(0, 1, 0)), v3(1, 0, 0), 0);
+        render_model(m_bubble, m, 0x80, 0x80, 0x80);
     }
     if (m_note) for (int i = 0; i < nnotes; i++) { /* NoteFairy notes, turning 8 degrees a frame */
         if (notes[i].alive != 1) continue;
