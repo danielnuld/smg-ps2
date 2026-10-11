@@ -24,7 +24,7 @@ enum { PICK_GONE, PICK_ON, PICK_POP_NEW, PICK_POP_BLINK }; /* alive: popping coi
 typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; float from, to, len; } Kuribo; /* walking
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
-enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO };
+enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA };
 static int kari_cling, kari_timer; /* Karikari clinging to Mario (KarikariDirector: 5 at most), frames to its damage */
 
 typedef struct {
@@ -173,7 +173,7 @@ typedef struct {
     int plant;       /* PlantGroup (Flower / FlowerBlue / CutBush Group): its model drawn at each member (plants) */
     const unsigned char *railer; /* map part on a rail: its PATH entry; moves along it (update_railers) */
 } Inst;
-enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP };
+enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY };
 static V3 firebar_ball(const Inst *in, int j, int k);
 static V3 star_pos(const Inst *in, int *state);
 static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle);
@@ -235,6 +235,8 @@ typedef struct { V3 pos, vel; int t; } Shot; /* star pieces shot at the pointer 
 static Shot shots[MAX_SHOTS];
 static int test_l1; /* test builds: L1 pressed this frame */
 static int test_sq; /* test builds: Square pressed this frame (Fluff) */
+static unsigned char zone_kcl[64]; /* zones with collision bound (game_rebind): walkers wait in the others */
+static int test_nolost; /* test builds: no miss for falling off (Mario sent to a zone still streaming in) */
 static void notes_spawn(void);
 static int note_rail(const Row *r, const unsigned char **e);
 #define MAX_NOTES 512 /* NoteFairy notes (update_notes) */
@@ -353,7 +355,7 @@ static void miss(void);
 static int got_coins, got_purple, got_pieces;
 static float spin_angle;
 static V3 cam_pos;
-static const Model *m_coin, *m_purple, *m_piece, *m_kuribo, *m_takohei, *m_packun, *m_kotebug, *m_spider, *m_meramera, *m_takobo, *m_mkoopa, *m_kari, *m_kmini, *m_karon, *m_teresa, *m_bfly, *m_stink, *m_unizo[3], *m_note;
+static const Model *m_coin, *m_purple, *m_piece, *m_kuribo, *m_takohei, *m_packun, *m_kotebug, *m_spider, *m_meramera, *m_takobo, *m_mkoopa, *m_kari, *m_kmini, *m_karon, *m_teresa, *m_bfly, *m_stink, *m_unizo[3], *m_note, *m_poihana;
 static const Model *m_mario_skin; /* Mario.arc, skinned (SKIN chunk) */
 static Anim *mario_anim;
 /* ElectricRail (Petari ElectricRail.cpp, ElectricRailHolder.cpp): one segment per pair of rail points, arg0 rails
@@ -783,7 +785,7 @@ void game_init(const Scene *s, const unsigned char *blob)
             npieces += star_group(NULL, &s->objs[i], blob);
         else if (s->objs[i].type == t_flow)
             npieces += star_flow(NULL, 0, &s->objs[i], blob);
-    nkuribo = count_type("Unizo", 0) + count_type("UnizoLand", 0) + count_type("UnizoShoal", 0) + count_type("StinkBugSmall", 0) + count_type("Kuribo", 0) + count_type("TakoHei", 0) + count_type("PackunPetit", 0) + count_type("KoteBug", 0) +
+    nkuribo = count_type("Poihana", 0) + count_type("Unizo", 0) + count_type("UnizoLand", 0) + count_type("UnizoShoal", 0) + count_type("StinkBugSmall", 0) + count_type("Kuribo", 0) + count_type("TakoHei", 0) + count_type("PackunPetit", 0) + count_type("KoteBug", 0) +
               count_type("JumpSpider", 0) + count_type("Meramera", 0) + count_type("Takobo", 0) +
               count_type("MechanicKoopaMini", 0) + count_type("Karikari", 0) +
               count_type("KuriboMini", 0) + count_type("Karon", 0) +
@@ -809,7 +811,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     int t_mkoopa = scene_type(s, "MechanicKoopaMini"), t_kari = scene_type(s, "Karikari"), t_kmini = scene_type(s, "KuriboMini");
     int t_karon = scene_type(s, "Karon"), t_teresa = scene_type(s, "Teresa"), t_bfly = scene_type(s, "Butterfly");
     int t_stink = scene_type(s, "StinkBugSmall"), t_uni = scene_type(s, "Unizo"), t_unil = scene_type(s, "UnizoLand"),
-        t_unis = scene_type(s, "UnizoShoal");
+        t_unis = scene_type(s, "UnizoShoal"), t_poi = scene_type(s, "Poihana");
     int t_gcircle = scene_type(s, "CircleCoinGroup"), t_grail = scene_type(s, "RailCoin");
     insts =mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(Inst));
     zone_spheres();
@@ -824,10 +826,10 @@ void game_init(const Scene *s, const unsigned char *blob)
         else if (r->type == t_flow) is += star_flow(pieces + is, is, r, blob);
         else if (r->type == t_kuribo || r->type == t_tako || r->type == t_packun || r->type == t_kote || r->type == t_spider ||
                  r->type == t_mera || r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly || r->type == t_stink ||
-                 r->type == t_uni || r->type == t_unil || r->type == t_unis) {
+                 r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi) {
             memset(&kuribo[ik], 0, sizeof(Kuribo));
             kuribo[ik].dir = r->type == t_unil ? 1 : r->type == t_unis ? 2 : 0; /* Unizo: sea, land, shoal */
-            kuribo[ik].kind = r->type == t_uni || r->type == t_unil || r->type == t_unis ? WALK_UNIZO : r->type == t_stink ? WALK_STINKBUG : r->type == t_bfly ? WALK_BUTTERFLY : r->type == t_teresa ? WALK_TERESA : r->type == t_karon ? WALK_KARON : r->type == t_kmini ? WALK_KMINI : r->type == t_kari ? WALK_KARIKARI : r->type == t_mkoopa ? WALK_MKOOPA : r->type == t_takobo ? WALK_TAKOBO : r->type == t_tako ? WALK_TAKOHEI : r->type == t_packun ? WALK_PACKUN :
+            kuribo[ik].kind = r->type == t_poi ? WALK_POIHANA : r->type == t_uni || r->type == t_unil || r->type == t_unis ? WALK_UNIZO : r->type == t_stink ? WALK_STINKBUG : r->type == t_bfly ? WALK_BUTTERFLY : r->type == t_teresa ? WALK_TERESA : r->type == t_karon ? WALK_KARON : r->type == t_kmini ? WALK_KMINI : r->type == t_kari ? WALK_KARIKARI : r->type == t_mkoopa ? WALK_MKOOPA : r->type == t_takobo ? WALK_TAKOBO : r->type == t_tako ? WALK_TAKOHEI : r->type == t_packun ? WALK_PACKUN :
                               r->type == t_kote ? WALK_KOTEBUG : r->type == t_spider ? WALK_SPIDER :
                               r->type == t_mera ? WALK_MERAMERA : WALK_KURIBO;
             kuribo[ik].pos = row_pos(r);
@@ -2087,6 +2089,7 @@ void game_rebind(void)
     m_bfly = scene_model(s, "Butterfly");
     m_stink = scene_model(s, "StinkBugSmall");
     m_note = scene_model(s, "NoteFairy");
+    m_poihana = scene_model(s, "Poihana");
     m_unizo[0] = scene_model(s, "Unizo"); m_unizo[1] = scene_model(s, "UnizoLand"); m_unizo[2] = scene_model(s, "UnizoShoal");
     int t_coin = scene_type(s, "Coin"), t_pc = scene_type(s, "PurpleCoin"), t_circle = scene_type(s, "CirclePurpleCoinGroup");
     int t_rail = scene_type(s, "PurpleRailCoin"), t_piece = scene_type(s, "StarPiece"), t_kuribo = scene_type(s, "Kuribo");
@@ -2096,7 +2099,7 @@ void game_rebind(void)
         t_mkoopa = scene_type(s, "MechanicKoopaMini"), t_kari = scene_type(s, "Karikari"), t_kmini = scene_type(s, "KuriboMini"),
         t_karon = scene_type(s, "Karon"), t_teresa = scene_type(s, "Teresa"), t_bfly = scene_type(s, "Butterfly"),
         t_stink = scene_type(s, "StinkBugSmall"), t_uni = scene_type(s, "Unizo"), t_unil = scene_type(s, "UnizoLand"),
-        t_unis = scene_type(s, "UnizoShoal");
+        t_unis = scene_type(s, "UnizoShoal"), t_poi = scene_type(s, "Poihana");
     m_erail = scene_model(s, "ElectricRail");
     m_fireball = scene_model(s, "FireBarBall");
     m_rock = scene_model(s, "RockCreator");
@@ -2115,7 +2118,7 @@ void game_rebind(void)
             r->type == t_tako || r->type == t_packun || r->type == t_kote || r->type == t_spider || r->type == t_mera ||
             r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly ||
             r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_stink || r->type == scene_type(s, "NoteFairy") ||
-            r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == scene_type(s, "RockCreator"))
+            r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == scene_type(s, "RockCreator"))
             continue;
         const char *name = s->types + 32 * r->type;
         const Model *md = scene_model(s, name);
@@ -2135,7 +2138,8 @@ void game_rebind(void)
                      strcmp(name, "BlackHole") == 0 ? 3 : strcmp(name, "BlackHoleCube") == 0 ? 4 : 0;
         in->item = strcmp(name, "PowerStar") == 0 ? ITEM_STAR : strcmp(name, "BenefitItemOneUp") == 0 ? ITEM_ONEUP :
                    strcmp(name, "BenefitItemLifeUp") == 0 ? ITEM_LIFEUP : strcmp(name, "QuestionCoin") == 0 ? ITEM_QCOIN :
-                   strcmp(name, "YellowChip") == 0 || strcmp(name, "BlueChip") == 0 ? ITEM_CHIP : 0;
+                   strcmp(name, "YellowChip") == 0 || strcmp(name, "BlueChip") == 0 ? ITEM_CHIP :
+                   strcmp(name, "KeySwitch") == 0 ? ITEM_KEY : 0; /* KeySwitch.cpp: taken (isMsgItemGet), its SW_A on */
         in->firebar = strcmp(name, "FireBar") == 0;
         in->invisible = strncmp(name, "InvisibleWall", 13) == 0 || strcmp(name, "IronCannonLauncherPoint") == 0;
         in->flip = strcmp(name, "FlipPanel") == 0 || strcmp(name, "FlipPanelReverse") == 0;
@@ -2230,6 +2234,8 @@ void game_rebind(void)
     }
     for (int i = 0; plant_first && i < ninsts; i++)
         if (insts[i].plant) { insts[i].kcl_ready = 1; place_plants(&insts[i]); }
+    memset(zone_kcl, 0, sizeof zone_kcl);
+    for (int i = 0; i < ninsts; i++) if (insts[i].kcl && insts[i].zone < 64) zone_kcl[insts[i].zone] = 1;
     flf.inst = coc.inst = jb.inst = coc.wait = -1;
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
@@ -2936,6 +2942,28 @@ int game_test_fluff(int phase)
 /* Test builds: Mario 800 off the first live Unizo; its row, -1 none. game_unizo_state: its phase, Mario's distance */
 /* Test builds: the first NoteFairy forced out (phase 0; its row, -1 none), Mario onto its k-th live note (phase 1;
  * the notes left, -1 none) */
+/* Test builds: Mario onto the first KeySwitch shown (its row; -2 one waits hidden, -1 none); game_key_taken: how
+ * many were taken */
+int game_test_key(void)
+{
+    for (int i = 0; i < ninsts; i++)
+        if (insts[i].item == ITEM_KEY) {
+            mario->pos = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]);
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return insts[i].row;
+        }
+    int t = scene_type(sc, "KeySwitch");
+    for (u32 i = 0; t >= 0 && i < sc->nobjs; i++) if (sc->objs[i].type == t && !row_dead[i]) return -2;
+    return -1;
+}
+
+int game_key_taken(void)
+{
+    int t = scene_type(sc, "KeySwitch"), n = 0;
+    for (u32 i = 0; t >= 0 && i < sc->nobjs; i++) n += sc->objs[i].type == t && row_dead[i];
+    return n;
+}
+
 int game_test_note(int phase)
 {
     int t = scene_type(sc, "NoteFairy");
@@ -2962,6 +2990,31 @@ int game_test_note(int phase)
         }
         return left ? left : -row_turn[i];
     }
+    return -1;
+}
+
+/* Test builds: Mario 600 in front of the first Poihana (how 0) or spinning by it (1); its row, -1 none.
+ * game_poihana_state: its phase */
+int game_test_poihana(int how)
+{
+    for (int i = 0; i < nkuribo; i++) {
+        Kuribo *k = &kuribo[i];
+        if (k->kind != WALK_POIHANA || k->state == KURIBO_DEAD) continue;
+        int bound = 0, zone = sc->objs[k->row].zone;
+        for (int j = 0; j < ninsts && !bound; j++) bound = insts[j].kcl && insts[j].zone == zone;
+        test_nolost = !bound; /* held there (no miss) while its zone streams in */
+        mario->pos = vadd(k->pos, vmul(stink_front(k), how ? 150.0f : 300.0f));
+        mario->up = k->up;
+        if (how) mario->spin_timer = SPIN_TIME;
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return bound ? k->row : -2;
+    }
+    return -1;
+}
+
+int game_poihana_state(void)
+{
+    for (int i = 0; i < nkuribo; i++) if (kuribo[i].kind == WALK_POIHANA) return kuribo[i].phase;
     return -1;
 }
 
@@ -4366,7 +4419,7 @@ static void update_mario(void)
                    (int)m->pos.x, (int)m->pos.y, (int)m->pos.z);
     }
 #endif
-    if (lost(m->pos)) /* fell off */
+    if (!test_nolost && lost(m->pos)) /* fell off */
         miss();
     if (m->hurt_timer) m->hurt_timer--;
 
@@ -4890,6 +4943,85 @@ static void unizo_update(Kuribo *k, V3 to, float d)
     }
 }
 
+/* Poihana.cpp: an ape at its home. Mario within 800 (sSearchRadius) makes it turn to him (4 degrees a frame, 30
+ * frames) and chase him (0.5 a frame up to 10, turning 4); farther than 1100 it walks home (0.5 up to 5). Mario on
+ * the ground within 100 in front is caught (ShootUpCharge, 20 frames) and thrown up at sqrt(2 x arg0) (default 1000);
+ * caught in the air he goes up at once. Idle it walks round home (WalkAround: 120 frames every 180). A spin knocks it
+ * out (Shock, then Swoon 110 frames, Recover 30); a stomp bounces Mario off. Ground friction x 0.95 ahead, x 0.8 to the
+ * side. phase 0 wait, 1 search, 2 chase, 3 charge, 4 back home, 5 walk around, 6 shock / swoon; from its turn from its
+ * front (degrees); timer its frames. ponytail: no sleep, no drowning, no back attack flip, no star pointer swoon */
+static V3 stink_front(const Kuribo *k);
+static void poihana_update(Kuribo *k, V3 to, float d) /* to: unused, Mario is the target */
+{
+    (void)to;
+    const Row *r = &sc->objs[k->row];
+    V3 up = k->up, f = stink_front(k), home = row_pos(r);
+    k->timer++;
+    float speed_max = 0, accel = 0;
+    V3 target = mario->pos;
+    if (k->phase == 6) { /* Shock / Swoon / Recover */
+        if (k->timer >= 12 + 110 + 30) { k->phase = 0; k->timer = 0; }
+    } else if (mario->spin_timer > 0 && d < 250.0f) { /* isMsgPlayerHitAll: tryShock */
+        k->phase = 6; k->timer = 0; k->vel = v3(0, 0, 0);
+        printf("poihana row %d: knocked out" "\n", k->row);
+    }
+    switch (k->phase) {
+    case 0:
+        if (d < 800.0f) { k->phase = 1; k->timer = 0; }
+        else if (k->timer >= 180) { k->phase = 5; k->timer = 0; }
+        break;
+    case 1: if (k->timer >= 30) { k->phase = 2; k->timer = 0; } break;
+    case 2: speed_max = 10.0f; accel = 0.5f; if (d > 1100.0f) { k->phase = 4; k->timer = 0; } break;
+    case 3:
+        if (k->timer >= 20) { /* ShootUp: Mario thrown up */
+            float h = r->arg[0] > 0 ? (float)r->arg[0] : 1000.0f;
+            mario->vup = sqrtf(2.0f * h); mario->hvel = v3(0, 0, 0); mario->grounded = 0; mario->jump_kind = 0;
+            printf("poihana row %d: throws Mario up at %d" "\n", k->row, (int)mario->vup);
+            k->phase = 4; k->timer = 0;
+        } else { mario->pos = vadd(k->pos, vmul(f, 100.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; } /* held */
+        break;
+    case 4: target = home; speed_max = 5.0f; accel = 0.5f;
+        if (vlen(vtangent(vsub(home, k->pos), up)) < 100.0f) { k->phase = 0; k->timer = 0; }
+        else if (d < 800.0f && k->timer > 120) { k->phase = 1; k->timer = 0; }
+        break;
+    case 5: { /* WalkAround: a circle 350 round home */
+        float a = game_frame * 0.02f + k->row;
+        V3 x, z;
+        row_axes(r, &x, &z);
+        target = vadd(home, vadd(vmul(vnorm(vtangent(x, up)), 350.0f * cosf(a)), vmul(vnorm(vtangent(z, up)), 350.0f * sinf(a))));
+        speed_max = 5.0f; accel = 0.5f;
+        if (d < 800.0f) { k->phase = 1; k->timer = 0; } else if (k->timer >= 120) { k->phase = 0; k->timer = 0; }
+        break;
+    }
+    }
+    if (k->phase == 1 || k->phase == 2 || k->phase == 4 || k->phase == 5) { /* turnDirectionToTargetUseGroundNormalDegree */
+        V3 t = vtangent(vsub(target, k->pos), up);
+        if (vlen(t) > 1e-3f) {
+            float turn = atan2f(vdot(t, vcross(up, f)), vdot(t, f)) * 57.29578f, rate = k->phase == 4 || k->phase == 5 ? 2.0f : 4.0f;
+            k->from += turn > rate ? rate : turn < -rate ? -rate : turn;
+            f = stink_front(k);
+        }
+    }
+    if (accel > 0 && vdot(k->vel, f) < speed_max) k->vel = vadd(k->vel, vmul(f, accel));
+    V3 ahead = vmul(f, vdot(k->vel, f)), side = vsub(vtangent(k->vel, up), ahead); /* controlVelocity */
+    k->vel = vadd(vmul(ahead, 0.95f), vmul(side, 0.8f));
+    if (k->phase == 3 || k->phase == 6) k->vel = v3(0, 0, 0);
+    V3 center = vadd(vadd(k->pos, k->vel), vmul(up, 125.0f - 2.0f)), gn, wn;
+    int wall = 0;
+    collide_n(&center, up, 125.0f, &gn, &wn, &wall);
+    k->pos = vsub(center, vmul(up, 125.0f));
+    /* Mario: caught in front, bounced off its head */
+    V3 rel = vsub(mario->pos, k->pos);
+    float above = vdot(rel, up), fw = vdot(rel, f);
+    if ((k->phase == 2 || k->phase == 1) && vlen(vtangent(rel, up)) < 100.0f + HIT_BODY_R && fw > 0 && above < 150.0f && above > -60.0f &&
+        !mario->hurt_timer) { /* AutoRushBegin: on the ground a charge, in the air thrown at once */
+        k->phase = 3; k->timer = mario->grounded ? 0 : 20;
+        printf("poihana row %d: catches Mario" "\n", k->row);
+    } else if (mario->vup < 0 && above > 150.0f && above < 300.0f && vlen(vtangent(rel, up)) < 150.0f) { /* trampled */
+        mario->vup = 15.0f; mario->grounded = 0;
+    }
+}
+
 static void butterfly_update(Kuribo *k)
 {
     const Row *r = &sc->objs[k->row];
@@ -4928,6 +5060,7 @@ static void update_kuribo(void)
         V3 to = vsub(mario->pos, k->pos);
         float d = vlen(to);
         if (d > 3000.0f) continue; /* sActiveDistance: far ones wait (their zone may be loaded low, no collision) */
+        if (sc->objs[k->row].zone < 64 && !zone_kcl[sc->objs[k->row].zone]) continue; /* no ground yet: they would fall */
         int tako = k->kind == WALK_TAKOHEI || k->kind == WALK_MERAMERA || k->kind == WALK_KMINI; /* KuriboMini.cpp:
                                                                              * a spin blows it down (requestBlowDown);
                                                                              * Meramera.cpp: a stomp, hip drop or spin
@@ -4940,6 +5073,7 @@ static void update_kuribo(void)
         if (k->kind == WALK_BUTTERFLY) { butterfly_update(k); continue; }
         if (k->kind == WALK_STINKBUG) { stink_update(k, to, d); continue; }
         if (k->kind == WALK_UNIZO) { unizo_update(k, to, d); continue; }
+        if (k->kind == WALK_POIHANA) { poihana_update(k, to, d); continue; }
         if (k->kind == WALK_SPIDER) { /* JumpSpider.cpp: hops at Mario; ponytail: hop size and rate guessed (Petari's
                                         * hJumpDistance / hWaitTime are not in the decompilation) */
             V3 vu = vmul(k->up, vdot(k->vel, k->up)), vh = vsub(k->vel, vu);
@@ -5796,9 +5930,9 @@ static V3 item_sensor(const Inst *in, float *r)
 {
     int state;
     V3 p = in->item == ITEM_STAR ? star_pos(in, &state) : v3(in->m[12], in->m[13], in->m[14]);
-    *r = (in->item == ITEM_STAR ? 75.0f : in->item == ITEM_QCOIN ? 150.0f : in->item == ITEM_CHIP ? 80.0f : 50.0f) * in->s;
+    *r = (in->item == ITEM_STAR ? 75.0f : in->item == ITEM_QCOIN ? 150.0f : in->item == ITEM_CHIP ? 80.0f : in->item == ITEM_KEY ? 105.0f : 50.0f) * in->s;
     if (in->item == ITEM_STAR || in->item == ITEM_CHIP) return p;
-    return vadd(p, vmul(up_at(p, mario->up), (in->item == ITEM_QCOIN ? 210.0f : 50.0f) * in->s));
+    return vadd(p, vmul(up_at(p, mario->up), (in->item == ITEM_QCOIN ? 210.0f : in->item == ITEM_KEY ? 105.0f : 50.0f) * in->s));
 }
 
 /* An event star (star_wait) waits hidden, or shown inside the cage that declared it (CrystalCageL: 250 up the cage,
@@ -5929,6 +6063,10 @@ static void update_items(void)
         else if (in->item == ITEM_QCOIN) fx_emit(FX_QUESTIONCOIN_GET, in->m);
         else if (in->item == ITEM_CHIP)
             fx_emit(sc->types[32 * sc->objs[in->row].type] == 'Y' ? FX_YELLOWCHIP_GET : FX_BLUECHIP_GET, in->m);
+        else if (in->item == ITEM_KEY) { /* KeySwitch::kill: onSwitchA */
+            if (sc->objs[in->row].sw[SW_A] >= 0) sw_set(&sc->objs[in->row], SW_A, 1);
+            printf("key switch %d taken\n", in->row);
+        }
         row_kill(in->row);
         game_rebind();
         return;
@@ -6049,7 +6187,7 @@ static void update_shots(void)
             else if (e->kind == WALK_MKOOPA) { e->phase = 6; e->timer = 0; }
             else if (e->kind == WALK_KARON) { if (e->phase != 2) { e->phase = 3; e->timer = 0; } }
             else if (e->kind == WALK_BUTTERFLY || e->kind == WALK_TERESA) { hit = 0; continue; }
-            else if (e->kind == WALK_UNIZO) { /* startHitReaction: nothing more */ }
+            else if (e->kind == WALK_UNIZO || e->kind == WALK_POIHANA) { /* isMsgStarPieceAttack: nothing more */ }
             else if (e->kind == WALK_STINKBUG) { if (e->phase != 2 && e->phase != 6) { e->phase = 5; e->timer = 0; } }
             else if (e->kind == WALK_KARIKARI) {
                 if (e->phase == 2) { hit = 0; continue; } /* clinging: passes */
@@ -6549,10 +6687,10 @@ void game_draw(void)
                           kuribo[i].kind == WALK_KARON ? m_karon :
                           kuribo[i].kind == WALK_TERESA ? m_teresa :
                           kuribo[i].kind == WALK_BUTTERFLY ? m_bfly : kuribo[i].kind == WALK_STINKBUG ? m_stink :
-                          kuribo[i].kind == WALK_UNIZO ? m_unizo[kuribo[i].dir] : m_kuribo;
+                          kuribo[i].kind == WALK_UNIZO ? m_unizo[kuribo[i].dir] : kuribo[i].kind == WALK_POIHANA ? m_poihana : m_kuribo;
         if (kuribo[i].state == KURIBO_DEAD || !md || !row_shown(kuribo[i].row)) continue;
         if (kuribo[i].kind == WALK_TERESA && kuribo[i].phase == 4) continue; /* hidden in a wall */
-        basis_matrix(m, kuribo[i].pos, kuribo[i].up, kuribo[i].kind == WALK_STINKBUG ? stink_front(&kuribo[i]) : vsub(mario->pos, kuribo[i].pos), 0);
+        basis_matrix(m, kuribo[i].pos, kuribo[i].up, kuribo[i].kind == WALK_STINKBUG || kuribo[i].kind == WALK_POIHANA ? stink_front(&kuribo[i]) : vsub(mario->pos, kuribo[i].pos), 0);
         if (kuribo[i].kind == WALK_UNIZO) { /* rolled about its side round its centre */
             const Kuribo *k = &kuribo[i];
             V3 f = vtangent(k->vel, k->up);

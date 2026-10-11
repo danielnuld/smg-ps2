@@ -771,12 +771,27 @@ int main(void)
             printf("giver test f %u: %s row %d, coins %d, pieces %d\n", frame, frame % 80 ? "leaves" : "pompon",
                    game_test_giver(frame % 80 ? 1 : 2), game_coins(), game_pieces_out());
 #endif
+#ifdef KEY_TEST
+        if (frame >= 150 && frame < 600 && frame % 30 == 0) /* Mario onto the keys shown, one after another */
+            printf("key test f %u: row %d, taken %d\n", frame, game_test_key(), game_key_taken());
+#endif
 #ifdef NOTE_TEST
         { /* the first note fairy out (150), Mario onto its notes one after another (from 300) */
             if (frame == 150) printf("note test f %u: row %d\n", frame, game_test_note(0));
             if (frame >= 300 && frame < 2400 && frame % 5 == 0) {
                 int left = game_test_note(1);
                 if (frame % 30 == 0) printf("note test f %u: %d left\n", frame, left);
+            }
+        }
+#endif
+#ifdef POIHANA_TEST
+        { /* Mario in front of a Poihana (150): it chases, catches and throws him; a spin by it (600) */
+            static int at;
+            if ((frame >= 150 && !at && (at = game_test_poihana(0) >= 0 ? frame : 0)) || frame == 600) printf("poihana test f %u: row %d\n", frame, game_test_poihana(frame == 600));
+            if (frame >= 150 && frame < 800 && frame % 10 == 0) {
+                char dd[128];
+                game_debug(dd, sizeof dd);
+                printf("poihana test f %u: phase %d %s\n", frame, game_poihana_state(), dd);
             }
         }
 #endif
