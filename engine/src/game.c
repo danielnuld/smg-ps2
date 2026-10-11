@@ -162,6 +162,7 @@ typedef struct {
                       * CocoNut: head its centre, m0 its turned rotation */
     float m0[16];
     int coco;        /* CocoNut: a spin / hip drop / kick sends it rolling (update_coconuts) */
+    int screw;       /* ScrewSwitch 1 / ScrewSwitchReverse 2: a spin on it screws it, then its SW_A (update_screws) */
     int jet;         /* JetTurtle: Mario takes it, a spin throws it (update_jets); head its place, hvel its velocity */
     int fluff;       /* Fluff: head its place, hvel its velocity, m0 its home (update_fluffs, fluff_*) */
     int cocoon;      /* SpaceCocoon: head its cocoon, hvel its spring velocity, m0 its base (update_cocoons, cocoon_*) */
@@ -2175,6 +2176,7 @@ void game_rebind(void)
         in->cocoon = strcmp(name, "SpaceCocoon") == 0;
         in->fluff = strcmp(name, "Fluff") == 0;
         in->jet = strcmp(name, "JetTurtle") == 0;
+        in->screw = strcmp(name, "ScrewSwitch") == 0 ? 1 : strcmp(name, "ScrewSwitchReverse") == 0 ? 2 : 0;
         in->biri_rail = in->biri && scene_blob_g && r->path >= 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->giver = strcmp(name, "DeadLeaves") == 0 ? 1 : strcmp(name, "Pompon2Plant") == 0 || strcmp(name, "Pompon4Plant") == 0 ? 2 : 0;
         in->ticorail = scene_blob_g && r->path >= 0 && strcmp(name, "TicoRail") == 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
@@ -2956,6 +2958,29 @@ int game_test_fluff(int phase)
  * many were taken */
 /* Test builds: phase 0 Mario onto the first JetTurtle (its row, -1 none); 1 a spin (the throw); game_jet_state:
  * jet.phase (0 none) */
+/* Test builds: Mario onto the first waiting screw switch, spinning (its row, -1 none); game_screw_state: the first
+ * one's row_turn */
+void game_test_spin_now(void) { mario->spin_timer = SPIN_TIME; } /* test builds: a spin this frame */
+
+int game_test_screw(void)
+{
+    for (int i = 0; i < ninsts; i++)
+        if (insts[i].screw && !row_turn[insts[i].row]) {
+            V3 up = vnorm(v3(insts[i].m[4], insts[i].m[5], insts[i].m[6]));
+            mario->up = up;
+            mario->pos = vadd(v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]), vmul(up, 160.0f * insts[i].s));
+            mario->hvel = v3(0, 0, 0); mario->vup = -5.0f;
+            return insts[i].row;
+        }
+    return -1;
+}
+
+int game_screw_state(void)
+{
+    for (int i = 0; i < ninsts; i++) if (insts[i].screw) return row_turn[insts[i].row];
+    return -1;
+}
+
 int game_test_jet(int phase)
 {
     if (phase == 1) { mario->spin_timer = SPIN_TIME; return jet.phase; }
@@ -4147,6 +4172,37 @@ static void jet_reset(Inst *in)
     jet_place(in);
     row_turn[in->row] = 30; /* a moment before it can be taken again */
     printf("jet turtle row %d: back home" "\n", in->row);
+}
+
+/* ScrewSwitch.cpp / ScrewSwitchReverse.cpp: Mario standing on the screw (its binder, 150 up) spins: he is drawn
+ * to its middle (Adjust, 3 frames) and held while it screws (ScrewSwitchOn: 34 frames, the reverse one 75), then
+ * its SW_A goes on and he is let go; it stays done. row_turn 0 waiting, 1 screwing, 2 done; row_step its frames.
+ * ponytail: the screw does not go down (no ScrewSwitchOn joint pose), no ScrewSwitchOn animation for Mario */
+static void update_screws(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->screw) continue;
+        int row = in->row;
+        V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), top = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(up, 150.0f * in->s));
+        if (row_turn[row] == 0) {
+            if (mario_ground == i && mario->spin_timer > 0) { row_turn[row] = 1; row_step[row] = 0;
+                printf("screw switch row %d: screwing" "\n", row); }
+            continue;
+        }
+        if (row_turn[row] != 1) continue;
+        int len = in->screw == 1 ? 34 : 75;
+        ++row_step[row];
+        float k = row_step[row] < 3 ? row_step[row] / 3.0f : 1.0f; /* Adjust */
+        V3 at = vsub(top, vmul(up, 1.0f)); /* just on it */
+        mario->pos = vadd(vmul(mario->pos, 1.0f - k), vmul(at, k));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        if (row_step[row] >= 3 + len) {
+            row_turn[row] = 2;
+            if (sc->objs[row].sw[SW_A] >= 0) sw_set(&sc->objs[row], SW_A, 1);
+            printf("screw switch row %d: on" "\n", row);
+        }
+    }
 }
 
 static void update_jets(void)
@@ -6482,6 +6538,7 @@ void game_update(void)
     update_cocoons();
     update_fluffs();
     update_jets();
+    update_screws();
     place_waterplants();
     update_pipes();
     update_switches();

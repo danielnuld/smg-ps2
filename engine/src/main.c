@@ -771,6 +771,13 @@ int main(void)
             printf("giver test f %u: %s row %d, coins %d, pieces %d\n", frame, frame % 80 ? "leaves" : "pompon",
                    game_test_giver(frame % 80 ? 1 : 2), game_coins(), game_pieces_out());
 #endif
+#ifdef SCREW_TEST
+        { /* Mario dropped on a screw switch (150), a spin once he stands on it (180) */
+            if (frame == 150) printf("screw test f %u: row %d\n", frame, game_test_screw());
+            if (frame == 180) game_test_spin_now();
+            if (frame >= 150 && frame < 400 && frame % 10 == 0) printf("screw test f %u: state %d\n", frame, game_screw_state());
+        }
+#endif
 #ifdef JET_TEST
         { /* Mario onto a JetTurtle (150), walking with it, a spin throws it (250) */
             if (frame == 150) printf("jet test f %u: row %d\n", frame, game_test_jet(0));
