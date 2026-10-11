@@ -77,7 +77,7 @@ SKY_TILES = 8
 EXTRA = {"FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
          "MorphItemNeoFire": ("MarioFireBall",), "AirBubbleGenerator": ("AirBubble",),
-         "DinoPackun": ("DinoPackunTailBall", "DinoPackunEggShell", "DinoPackunEggShellBreak"), "OtaKing": ("CocoNut", "OtaKingFoot", "FireBall", "FireBubble")}
+         "DinoPackun": ("DinoPackunTailBall", "DinoPackunEggShell", "DinoPackunEggShellBreak"), "OtaKing": ("CocoNut", "OtaKingFoot", "FireBall", "FireBubble"), "CocoSambo": ("CocoSamboHead",)}
 # model-less classes the engine runs (stage switch logic): kept in OBJS like the classes with a model
 # power stars an event brings out (Petari PowerStarEventKeeper): ScenarioData AppearPowerStarObj names each star's
 # declarer by its ObjNameTable name. The classes the engine runs, with the arg giving an explicit star id (None: the

@@ -249,6 +249,18 @@ static int test_l1; /* test builds: L1 pressed this frame */
 static int test_sq; /* test builds: Square pressed this frame (Fluff) */
 static int test_feed; /* test builds: the pointer on a TicoFat with L1 held */
 static int nfats; /* TicoFats seen (update_ticofat's table) */
+enum { CS_HIDEWAIT, CS_APPEAR, CS_WAIT, CS_HIDE, CS_ATTACK, CS_ATTACKINT, CS_FALLHEAD, CS_FALLHEADHIDE, CS_RECOVERWAIT,
+       CS_RECOVER, CS_PRESSY, CS_BLOW, CS_DEAD };
+enum { CH_CONNECTED, CH_FALL, CH_FALLLAND, CH_SWOON, CH_SWOONEND, CH_BLOW };
+#define MAX_SAMBOS 4
+static struct {
+    int row, nrv, t, hnrv, ht;
+    V3 front, up, pos, hpos, hvel, hfront;
+    float s;
+    Anim *head;
+} sambos[MAX_SAMBOS];
+static int nsambos;
+static const Model *m_sambohead;
 static int test_cross; /* test builds: X held (Bee Mario) */
 static unsigned char zone_kcl[64]; /* zones with collision bound (game_rebind): walkers wait in the others */
 static int test_nolost; /* test builds: no miss for falling off (Mario sent to a zone still streaming in) */
@@ -901,7 +913,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     scene_blob_g = blob;
     npurple = count_type("PurpleCoin", 0) + count_type("CirclePurpleCoinGroup", 1) + count_type("PurpleRailCoin", 1);
     ngroup_wait = 0;
-    nfats = 0; test_feed = 0;
+    nfats = 0; test_feed = 0; nsambos = 0;
     for (u32 i = 0; i < s->nobjs; i++) { /* the spin drivers a TicoFat's group brings out */
         const char *tn = s->types + 32 * s->objs[i].type;
         if (strncmp(tn, "SuperSpinDriver", 15) || s->objs[i].group < 0) continue;
@@ -1346,6 +1358,12 @@ static float tsuki_len(const unsigned char *e)
 static void ticorail_place(Inst *in);
 static void biri_place(Inst *in);
 static void coco_spawn(Inst *in);
+static V3 sambo_joint(int k, const Inst *in, int j, V3 off);
+static V3 sambo_head_pos(int k, const Inst *in);
+static int sambo_try_fall(int k);
+static int sambo_of(int row);
+static int sambo_swoon(int k);
+static V3 sambo_hpos(int k);
 static V3 cocoon_neutral(const Inst *in);
 static void cocoon_place(Inst *in);
 static void fluff_place(Inst *in);
@@ -2123,15 +2141,16 @@ static void update_coconuts(void)
                 printf("coconut %d blows walker row %d" "\n", row, e->row);
                 broken = 1;
             }
-        for (int k = 0; k < ninsts && in->cstrong && !broken; k++) { /* CocoSamboHead::receiveMsgEnemyAttack: tryToFallHead */
-            Inst *b = &insts[k];
-            if (!b->sambo || row_dead[b->row] || row_turn[b->row]) continue;
-            V3 bp = v3(b->m[12], b->m[13], b->m[14]), bu = vnorm(v3(b->m[4], b->m[5], b->m[6])), rel = vsub(in->head, bp);
-            float h = vdot(rel, bu);
-            if (h < -50.0f || h > 500.0f * b->s || vlen(vtangent(rel, bu)) > 100.0f * b->s + rad) continue;
-            row_turn[b->row] = 1; row_step[b->row] = 0;
-            printf("coconut %d knocks coco sambo row %d down" "\n", row, b->row);
-            broken = 1;
+        for (int k = 0; k < nsambos && in->cspd > 1.5f && !broken; k++) { /* CocoSambo(Head)::receiveMsgEnemyAttack: tryToFallHead */
+            const Inst *bi = NULL;
+            for (int q = 0; q < ninsts; q++) if (insts[q].row == sambos[k].row) bi = &insts[q];
+            for (int j = 0; j < 4 && !broken; j++) {
+                V3 sp = j < 3 ? sambo_joint(k, bi, j, v3(40.0f * sambos[k].s, 0, 0)) : sambo_head_pos(k, bi);
+                if (vlen(vsub(in->head, sp)) < (j < 3 ? 80.0f : 100.0f) * sambos[k].s + rad && sambo_try_fall(k)) {
+                    printf("coconut %d knocks coco sambo row %d down" "\n", row, sambos[k].row);
+                    broken = 1;
+                }
+            }
         }
         if (!broken && lost(in->head)) broken = 1; /* tryDisappear */
         for (int k = 0; k < nlogic && !broken; k++)
@@ -2277,6 +2296,7 @@ void game_rebind(void)
     m_bubble = scene_model(s, "AirBubble");
     m_ota = scene_model(s, "OtaKing"); m_otafoot = scene_model(s, "OtaKingFoot"); m_coco = scene_model(s, "CocoNut");
     m_fireball2 = scene_model(s, "FireBall"); m_firebubble = scene_model(s, "FireBubble");
+    m_sambohead = scene_model(s, "CocoSamboHead");
     m_dino = scene_model(s, "DinoPackun"); m_dball = scene_model(s, "DinoPackunTailBall"); m_degg = scene_model(s, "DinoPackunEggShell");
     m_deggbrk = scene_model(s, "DinoPackunEggShellBreak");
     m_unizo[0] = scene_model(s, "Unizo"); m_unizo[1] = scene_model(s, "UnizoLand"); m_unizo[2] = scene_model(s, "UnizoShoal");
@@ -3989,8 +4009,9 @@ static int route_solve(void)
     }
     if (!strcmp(wn, "CocoSambo")) { /* a coconut kicked into it (Mario set behind the nearest one), then a stomp */
         V3 sp = row_pos(wr);
-        if (row_turn[w] == 1) {
-            mario->pos = vadd(sp, vmul(up_at(sp, mario->up), 300.0f * wr->scale[0])); mario->hvel = v3(0, 0, 0); mario->vup = -5.0f;
+        int sk = sambo_of(w);
+        if (sk >= 0 && sambo_swoon(sk)) { /* its head down: a stomp on it */
+            mario->pos = vadd(sambo_hpos(sk), vmul(up_at(sambo_hpos(sk), mario->up), 260.0f * wr->scale[0])); mario->hvel = v3(0, 0, 0); mario->vup = -5.0f;
             mario->grounded = 0;
             return 1;
         }
@@ -5631,35 +5652,194 @@ static void ota_pose(void)
 }
 
 
-/* CocoSambo.cpp: within 700 it attacks (its head swung at Mario: a touch hurts, sendMsgEnemyAttackStrong); a
- * thrown coconut knocks its head down (update_coconuts: FallHead), it swoons cSwoonFrame 180, a stomp / hip drop
- * (tryToPress) or a spin (tryToBlow) on it then kills it (its dead switch), else it recovers (90). row_turn 0 up, 1
- * swooning; row_step its frames. ponytail: never hides underground, no separate head model, no star pointer freeze */
+/* CocoSambo (Petari Enemy/CocoSambo.cpp: CocoSambo and CocoSamboHead): HideWait underground until Mario is within
+ * mPlayerSearchDistance (arg0, 1800), Appear (its clip, turning to him), Wait (1 degree a frame to him): within 700
+ * Attack, then AttackInterval (60), beyond the distance + 100 Hide. Its spines' sensors (Spine1-3, (40, 0, 0), 80 x
+ * scale) and its head's (Head, (60, 0, 0), 100 / trample 150 x scale) hurt Mario (EnemyAttackStrong) unless it is
+ * down. A coconut (or walker) on it in Appear / Wait / Attack / AttackInterval (tryToFallHead): Hit, its head falls
+ * (CocoSamboHead Fall: to its base in cFallFrame 45 under twice the gravity, Land, Swoon cSwoonFrame 180, SwoonEnd,
+ * back on the body) while the body hides (FallHeadHide, RecoverWait 90, Recover, Appear). On the swooning head (Land,
+ * Swoon, SwoonEnd's first 60) a stomp / hip drop presses it (PressY, cPressFrame 35) and a spin blows it away (Blow:
+ * (0, 20, -100) in its frame, cBlowFrame 20): dead, its dead switch. ponytail: no star pointer (DpdPointing), no anim
+ * scale reactions, no needle material hiding, no effects */
+static void sambo_set(int k, int n) { sambos[k].nrv = n; sambos[k].t = 0; }
+static void sambo_hset(int k, int n) { sambos[k].hnrv = n; sambos[k].ht = 0; }
+static int sambo_dying(int k) { return sambos[k].nrv == CS_PRESSY || sambos[k].nrv == CS_BLOW; }
+static int sambo_down(int k) { return sambos[k].nrv == CS_FALLHEAD || sambos[k].nrv == CS_FALLHEADHIDE || sambos[k].nrv == CS_RECOVERWAIT; }
+static int sambo_swoon(int k) /* CocoSamboHead::isNerveSwoon */
+{
+    return sambos[k].hnrv == CH_FALLLAND || sambos[k].hnrv == CH_SWOON || (sambos[k].hnrv == CH_SWOONEND && sambos[k].ht < 60);
+}
+static int sambo_of(int row) { for (int k = 0; k < nsambos; k++) if (sambos[k].row == row) return k; return -1; }
+static V3 sambo_hpos(int k) { return sambos[k].hpos; }
+static void sambo_body_mtx(int k, float m[16]) /* calcAndSetBaseMtx: up / front at its place, its scale */
+{
+    basis_matrix(m, sambos[k].pos, sambos[k].up, sambos[k].front, 0);
+    for (int j = 0; j < 12; j++) m[j] *= sambos[k].s;
+}
+/* a body joint's point (+ local offset), its head's sensor centre */
+static V3 sambo_joint(int k, const Inst *in, int j, V3 off)
+{
+    float m[16];
+    sambo_body_mtx(k, m);
+    if (in && in->anim && (u32)j < in->anim->skin->njoints) {
+        float jm[16];
+        mat_mul(jm, m, in->anim->world[j]);
+        return v3(jm[12] + jm[0] * off.x, jm[13] + jm[1] * off.x, jm[14] + jm[2] * off.x);
+    }
+    return vadd(sambos[k].pos, vmul(sambos[k].up, (100.0f + 120.0f * j) * sambos[k].s));
+}
+static V3 sambo_head_pos(int k, const Inst *in)
+{
+    return sambos[k].hnrv == CH_CONNECTED ? sambo_joint(k, in, 3, v3(60.0f * sambos[k].s, 0, 0)) : vadd(sambos[k].hpos, vmul(sambos[k].up, 60.0f * sambos[k].s));
+}
+static int sambo_try_fall(int k) /* tryToFallHead */
+{
+    int n = sambos[k].nrv;
+    if (n != CS_APPEAR && n != CS_WAIT && n != CS_ATTACK && n != CS_ATTACKINT) return 0;
+    sambo_set(k, CS_FALLHEAD);
+    return 1;
+}
+static void sambo_turn(int k, float deg) /* dirToPlayer */
+{
+    V3 to = vtangent(vsub(mario->pos, sambos[k].pos), sambos[k].up);
+    if (vlen(to) < 1e-3f) return;
+    to = vnorm(to);
+    V3 side = vcross(sambos[k].up, sambos[k].front);
+    float a = atan2f(vdot(to, side), vdot(to, sambos[k].front)), mx = deg * 0.0174533f;
+    a = a > mx ? mx : a < -mx ? -mx : a;
+    sambos[k].front = vnorm(vadd(vmul(sambos[k].front, cosf(a)), vmul(side, sinf(a))));
+}
 static void update_sambos(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
-        if (!in->sambo || row_dead[in->row]) continue;
-        int row = in->row;
-        V3 p = v3(in->m[12], in->m[13], in->m[14]), up = vnorm(v3(in->m[4], in->m[5], in->m[6])), rel = vsub(c, p);
-        float h = vdot(rel, up), side = vlen(vtangent(rel, up)), s = in->s;
-        if (row_turn[row] == 1) {
-            if (++row_step[row] >= 180 + 90) { row_turn[row] = 0; row_step[row] = 0; continue; } /* RecoverWait, Recover */
-            int stomp = mario->vup < 0 && h > 0 && h < 250.0f * s && side < 150.0f * s;
-            int spin = mario->spin_timer > 0 && vlen(rel) < 250.0f * s;
-            if (stomp || spin) {
-                if (stomp) { mario->vup = 15.0f; mario->grounded = 0; }
-                row_kill(row);
-                printf("coco sambo row %d %s" "\n", row, stomp ? "pressed" : "blown away");
+        if (!in->sambo) continue;
+        int k = sambo_of(in->row);
+        const Row *r = &sc->objs[in->row];
+        if (k < 0) { /* init: HideWait */
+            if (nsambos == MAX_SAMBOS) continue;
+            k = nsambos++;
+            memset(&sambos[k], 0, sizeof sambos[k]);
+            V3 x, z;
+            row_axes(r, &x, &z);
+            sambos[k].row = in->row; sambos[k].pos = row_pos(r); sambos[k].up = vnorm(vcross(z, x)); sambos[k].front = z;
+            sambos[k].s = r->scale[0];
+            sambos[k].head = mem_alloc(MEM_OBJECTS, sizeof(Anim)); memset(sambos[k].head, 0, sizeof(Anim));
+        }
+        typeof(&sambos[0]) q = &sambos[k];
+        if (q->nrv == CS_DEAD) continue;
+        q->t++; q->ht++;
+        float search = r->arg[0] > 0 ? (float)r->arg[0] : 1800.0f, dm = vlen(vsub(mario->pos, q->pos));
+        const char *body = NULL, *head = NULL;
+        int bloop = 0;
+        switch (q->nrv) {
+        case CS_HIDEWAIT: body = "hidewait"; bloop = 1; if (dm < search) sambo_set(k, CS_APPEAR); break;
+        case CS_APPEAR: body = "appear"; if (q->t == 1) sambo_turn(k, 180.0f); sambo_turn(k, 1.0f); if (q->t >= 139) sambo_set(k, CS_WAIT); break;
+        case CS_WAIT: body = "wait"; bloop = 1; sambo_turn(k, 1.0f);
+            if (dm < 700.0f) sambo_set(k, CS_ATTACK); else if (dm >= search + 100.0f) sambo_set(k, CS_HIDE);
+            break;
+        case CS_HIDE: body = "hide"; if (q->t >= 99) sambo_set(k, CS_HIDEWAIT); break;
+        case CS_ATTACK: body = "attack"; if (q->t < 30) sambo_turn(k, 1.0f); if (q->t >= 169) sambo_set(k, CS_ATTACKINT); break;
+        case CS_ATTACKINT: body = "wait"; bloop = 1; sambo_turn(k, 1.0f); if (q->t >= 60) sambo_set(k, CS_WAIT); break;
+        case CS_FALLHEAD: /* Hit; its head falls (HeadFall from its Head joint to the base) */
+            body = "hit";
+            if (q->t == 1) {
+                q->hpos = sambo_joint(k, in, 3, v3(0, 0, 0));
+                V3 off = vsub(q->pos, q->hpos), vo = vmul(q->up, vdot(off, q->up)), ho = vtangent(off, q->up);
+                q->hvel = vadd(vmul(ho, 1.0f / 45.0f), vmul(q->up, (2.0f * vdot(vo, q->up) + 2.0f * 45.0f * 45.0f) / (2.0f * 45.0f)));
+                V3 tf = vtangent(vsub(mario->pos, q->hpos), q->up);
+                q->hfront = vlen(tf) > 1e-3f ? vnorm(tf) : q->front;
+                sambo_hset(k, CH_FALL);
+                printf("coco sambo row %d: its head falls" "\n", in->row);
             }
-            continue;
+            if (q->t >= 80) sambo_set(k, CS_FALLHEADHIDE);
+            break;
+        case CS_FALLHEADHIDE: body = "hidewait"; bloop = 1; if (q->hnrv == CH_CONNECTED) sambo_set(k, CS_RECOVERWAIT); break;
+        case CS_RECOVERWAIT: body = "recover"; if (q->t >= 90) sambo_set(k, CS_RECOVER); break;
+        case CS_RECOVER: body = "recover"; head = "recover"; if (q->t == 1) sambo_turn(k, 180.0f); if (q->t >= 89) sambo_set(k, CS_APPEAR); break;
+        case CS_PRESSY: head = "pressy"; if (q->t >= 35) { sambo_set(k, CS_DEAD); row_kill(in->row); } break;
+        case CS_BLOW: if (q->t >= 20) { sambo_set(k, CS_DEAD); row_kill(in->row); } break;
         }
-        if (h > -50.0f && h < 500.0f * s && side < 100.0f * s + HIT_BODY_R) { /* its body / head: pushed, hurt */
-            hurt_mario(p, 20.0f);
-            V3 out = vtangent(rel, up);
-            if (vlen(out) > 1e-3f) mario->pos = vadd(mario->pos, vmul(vnorm(out), 100.0f * s + HIT_BODY_R - side));
+        switch (q->hnrv) { /* CocoSamboHead */
+        case CH_FALL:
+            head = "fall";
+            q->hvel = vadd(q->hvel, vmul(q->up, -2.0f)); /* twice the gravity */
+            q->hpos = vadd(q->hpos, q->hvel);
+            if (q->ht >= 45) { q->hpos = q->pos; q->hvel = v3(0, 0, 0); sambo_hset(k, CH_FALLLAND); }
+            break;
+        case CH_FALLLAND: head = "land"; if (q->ht >= 14) sambo_hset(k, CH_SWOON); break;
+        case CH_SWOON: head = "swoon"; if (q->ht >= 180) sambo_hset(k, CH_SWOONEND); break;
+        case CH_SWOONEND: head = "swoonend"; if (q->ht >= 109) sambo_hset(k, CH_CONNECTED); break;
+        case CH_BLOW: head = "blow"; q->hvel = vadd(q->hvel, vmul(q->up, -1.0f)); q->hpos = vadd(q->hpos, q->hvel); break;
+        default: break;
         }
+        /* the swooning head: a stomp / hip drop presses it, a spin blows it away */
+        if (sambo_swoon(k) && !sambo_dying(k)) {
+            V3 hc = vadd(q->hpos, vmul(q->up, 60.0f * q->s)), rel = vsub(c, hc);
+            float hh = vdot(vsub(mario->pos, hc), q->up), side = vlen(vtangent(rel, q->up));
+            if (mario->vup < 0 && hh > 0 && side < 150.0f * q->s + HIT_BODY_R && hh < 150.0f * q->s + 100.0f) { /* trample / hip drop */
+                mario->vup = 15.0f; mario->grounded = 0;
+                sambo_set(k, CS_PRESSY);
+                printf("coco sambo row %d pressed" "\n", in->row);
+            } else if (mario->spin_timer > 0 && vlen(rel) < 100.0f * q->s + 150.0f) { /* isMsgPlayerHitAll */
+                V3 tf = vtangent(vsub(mario->pos, q->hpos), q->up);
+                q->hfront = vlen(tf) > 1e-3f ? vnorm(tf) : q->hfront;
+                q->hvel = vadd(vmul(q->up, 20.0f), vmul(q->hfront, -100.0f)); /* cBlowVelocity in its frame */
+                sambo_hset(k, CH_BLOW);
+                sambo_set(k, CS_BLOW);
+                printf("coco sambo row %d blown away" "\n", in->row);
+            }
+        }
+        /* its sensors on Mario: EnemyAttackStrong and a push unless it is down or dying */
+        if (!sambo_dying(k) && !sambo_down(k) && q->nrv != CS_HIDEWAIT) {
+            for (int j = 0; j < 4; j++) {
+                V3 sp = j < 3 ? sambo_joint(k, in, j, v3(40.0f * q->s, 0, 0)) : sambo_head_pos(k, in);
+                float rad = (j < 3 ? 80.0f : 100.0f) * q->s, d = vlen(vsub(c, sp));
+                if (d < rad + HIT_BODY_R) {
+                    hurt_mario(sp, 20.0f);
+                    V3 out = vtangent(vsub(c, sp), q->up);
+                    if (vlen(out) > 1e-3f) mario->pos = vadd(mario->pos, vmul(vnorm(out), rad + HIT_BODY_R - d));
+                    break;
+                }
+            }
+        }
+        if (body) obj_play(in, body, bloop, 4);
+        if (q->hnrv == CH_CONNECTED && !head) head = body; /* startBckThisAndHead */
+        if (head && m_sambohead && m_sambohead->skin) {
+            if (q->head->skin != m_sambohead->skin) anim_bind(q->head, m_sambohead->skin);
+            char n[48];
+            snprintf(n, sizeof n, "cocosambohead/%s", head);
+            anim_play(q->head, n, (q->nrv == CS_RECOVERWAIT && q->hnrv == CH_CONNECTED) ? 0.0f : 1.0f, bloop, 4);
+            anim_update(q->head);
+        }
+        float m[16];
+        sambo_body_mtx(k, m);
+        memcpy(in->m, m, 64);
+    }
+}
+
+static void draw_sambo_heads(void)
+{
+    for (int k = 0; m_sambohead && k < nsambos; k++) {
+        if (sambos[k].nrv == CS_DEAD) continue;
+        const Inst *in = NULL;
+        for (int i = 0; i < ninsts; i++) if (insts[i].row == sambos[k].row) in = &insts[i];
+        if (!in) continue;
+        float m[16];
+        if (sambos[k].hnrv == CH_CONNECTED && in->anim) { /* initFixedPosition on Head, rotated (0, -90, -90) */
+            float bm[16], jm[16], r[16];
+            sambo_body_mtx(k, bm);
+            mat_mul(jm, bm, in->anim->world[3]);
+            mat_identity(r); /* (0, -90, -90): x -> -z ... y -> x, z -> -y */
+            r[0] = 0; r[1] = 0; r[2] = -1; r[4] = 1; r[5] = 0; r[6] = 0; r[8] = 0; r[9] = -1; r[10] = 0;
+            mat_mul(m, jm, r);
+        } else {
+            basis_matrix(m, sambos[k].hpos, sambos[k].up, sambos[k].hfront, 0);
+            for (int j = 0; j < 12; j++) m[j] *= sambos[k].s;
+        }
+        if (m_sambohead->skin && sambos[k].head->skin == m_sambohead->skin) render_skinned(m_sambohead, m, (const float (*)[16])sambos[k].head->drw);
     }
 }
 
@@ -8986,6 +9166,7 @@ void game_draw(void)
             basis_matrix(m, fats[k].gift[g].pos, up_at(fats[k].gift[g].pos, v3(0, 1, 0)), v3(0, 0, 1), spin_angle);
             render_model(m_piece, m, 0x60, 0xD0, 0xF0);
         }
+    draw_sambo_heads();
     if (m_bubble) for (int b = 0; b < MAX_BUBBLES; b++) { /* AirBubbleGenerator's bubbles */
         if (!bubbles[b].life) continue;
         basis_matrix(m, bubbles[b].pos, up_at(bubbles[b].pos, v3(0, 1, 0)), v3(1, 0, 0), 0);

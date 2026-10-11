@@ -161,8 +161,10 @@ Last updated 2026-10-09. Detail and numbers: `docs/phase2-report.md`; tasks: `op
     frame (tex.brk, slice.py BRK_POSE: Tico's ColorChange 0, its yellow; a saturated bake then keeps the first
     stage);
   - BVA visibility for static models (slice.py VIS: the egg shell's intact / cracked pieces, normal.bva's last frame);
-  - CocoSambo: a thrown (spun) coconut knocks it down, it swoons 180 frames, a stomp or spin then kills it (its dead
-    switch); it hurts on touch otherwise; no hiding underground, head model or pointer freeze;
+  - CocoSambo after Petari (body CocoSamboBody + CocoSamboHead): HideWait / Appear within arg0 (1800) / Wait /
+    Attack within 700 / AttackInterval / Hide; spine and head sensors at their joints; a coconut on it makes its head
+    fall (45 frames, twice the gravity), Land, Swoon 180, SwoonEnd while the body hides and recovers; a stomp presses
+    (35), a spin blows (20) the swooning head: its dead switch; no star pointer, scale reactions, needle material;
   - Red / Black comet time limits (CometEventKeeper::sTimeLimitInfoTable, main.c by scenario): TIME m:ss on the HUD,
     at 0 a miss (the time starts over), a power star stops it;
   - slice.py MODEL_ARC: OtaKing, KoopaJr and Tico take their own archive (NameObjFactory's first was FireBall /
