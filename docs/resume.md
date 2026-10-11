@@ -127,6 +127,18 @@ Last updated 2026-10-09. Detail and numbers: `docs/phase2-report.md`; tasks: `op
   - OtaKing (Lv1; SW_A from the TimerSwitch after its SwitchCylinder): throws coconuts at Mario (every 75 / 45
     frames within 4000), a spin sends one back; a rally count over its hits hurts it, else it hits it back (15 + 3 x
     rally); three hits: down, its star (declared); no fire balls / bubbles / near attack / magma / demos;
+  - skinned placed objects (slice.py SKINNED_OBJ: DinoPackun, OtaKing, OtaKingFoot, TicoFat, Tico, CocoSambo,
+    CocoSamboHead): drawn with their skeleton, their BCKs in the scenario's ANIM chunk ("<class>/<clip>"); a pose
+    pool by row (obj_anim, the class's wait clip; one-shot clips go back to it); anim_pose / anim_skin split for joint
+    overrides; DinoPackun plays its state clips and demos (opening / cry / angry / down with their lengths), its tail
+    a FABRIK chain between the clip's TailRoot and the ball, shell and ball on their joints; OtaKing and its feet
+    (L / R) play appear / wait / attack / hitback / damage / crowndamage / down; TicoFat eats (eat0-2) and changes
+    (metamorphosis, 80 frames) before its planet;
+  - demo cameras: slice.py bakes each skinned class's .canm (CANM linear / CKAN Hermite, tangents / 30) per frame
+    into CANM; demo_camera plays one in the actor's frame (camera_set_override), Mario waits meanwhile; DinoPackun's
+    demos reset it to its spot and set Mario at (0, -550, 800) (resetPosition); it only moves in the battle and never
+    falls where there is no ground (its nest: it sank to the planet's centre and the camera with it);
+  - BVA visibility for static models (slice.py VIS: the egg shell's intact / cracked pieces, normal.bva's last frame);
   - CocoSambo: a thrown (spun) coconut knocks it down, it swoons 180 frames, a stomp or spin then kills it (its dead
     switch); it hurts on touch otherwise; no hiding underground, head model or pointer freeze;
   - Red / Black comet time limits (CometEventKeeper::sTimeLimitInfoTable, main.c by scenario): TIME m:ss on the HUD,

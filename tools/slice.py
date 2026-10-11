@@ -52,6 +52,10 @@ import tex
 
 RESIDENT = ("Coin", "StarPiece", "SuperSpinDriver")  # OBJ_TYPES in phase 0b's RESIDENT set (out/sets.json): the resident pack
 SKINNED = ("Mario",)
+# placed classes drawn skinned and animated by their own BCKs (the scenario's ANIM chunk, "<class>/<clip>" in
+# lower case); their model archive is the class name
+SKINNED_OBJ = ("DinoPackun", "OtaKing", "OtaKingFoot", "TicoFat", "Tico", "CocoSambo", "CocoSamboHead")
+ANIM_ARC = {"CocoSambo": "CocoSamboBody"}  # where a class's clips are when not in its own-named archive
 # ponytail: models the renderer cannot reproduce: the atmosphere spheres (*Air: their glow is a TEV rim effect; drawn
 # with their material they flood the screen)
 NO_DRAW = ("SphereAir", "DimensionAir", "HomeAir", "TwilightAir", "DarknessRoomAir", "SunsetAir", "FineAir")   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
@@ -72,7 +76,7 @@ SKY_TILES = 8
 EXTRA = {"FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
          "MorphItemNeoFire": ("MarioFireBall",), "AirBubbleGenerator": ("AirBubble",),
-         "DinoPackun": ("DinoPackunTailBall", "DinoPackunEggShell"), "OtaKing": ("CocoNut", "OtaKingFoot")}
+         "DinoPackun": ("DinoPackunTailBall", "DinoPackunEggShell", "DinoPackunEggShellBreak"), "OtaKing": ("CocoNut", "OtaKingFoot")}
 # model-less classes the engine runs (stage switch logic): kept in OBJS like the classes with a model
 # power stars an event brings out (Petari PowerStarEventKeeper): ScenarioData AppearPowerStarObj names each star's
 # declarer by its ObjNameTable name. The classes the engine runs, with the arg giving an explicit star id (None: the
@@ -228,6 +232,25 @@ def scene(fs, galaxy, scenario):
     return act, zones, objs, starts, paths, cubes, bcams, up
 
 
+# static models drawn with a BVA's last frame visibility (the shapes it hides there are left out): the egg shell holds
+# its intact and cracked pieces, normal.bva shows the intact ones (DinoPackun::initEggShell)
+VIS = {"DinoPackunEggShell": "normal"}
+
+
+def bva_hidden(b, frame=0):
+    """Shapes a J3D visibility animation (J3D1bva1, VAF1) hides at `frame`."""
+    if b[:8] != b"J3D1bva1":
+        return set()
+    v = b.find(b"VAF1")
+    n, _, st, tt = struct.unpack(">HHII", b[v + 12:v + 24])
+    out = set()
+    for i in range(n):
+        count, first = struct.unpack(">HH", b[v + st + 4 * i:v + st + 4 * i + 4])
+        if count and not b[v + tt + first + min(frame, count - 1)]:
+            out.add(i)
+    return out
+
+
 def hidden_joints(b, bl, files, pose=None):
     """Joints drawn at scale 0 (a joint or a parent scaled to 0): in the bind pose, or at the last frame of the BCK
     `pose` from the archive's files (FlipPanel: End and Exclamation hidden at rest, Question shown; PanelA shows
@@ -291,8 +314,9 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None):
             texs = tex.textures(b, bl[b"TEX1"]) if b"TEX1" in bl else []
             ps2 = {}
             sky = arc.stem in SKY_ARCS or arc.stem.endswith("Sky")  # 8-bit textures (tex.to_ps2 hi)
+            vis_hide = bva_hidden({k.lower(): v for k, v in files.items()}.get(VIS[arc.stem].lower() + ".bva", b""), 1 << 30) if arc.stem in VIS else set()
             for pos, tri, info in got:
-                if not tri:
+                if not tri or info["shape"] in vis_hide:
                     continue
                 ents = [drw[d] for d in gtab_all.get((info["shape"], info["group"]), []) if d < len(drw)]
                 if hide and ents and all(m is None and j in hide for j, m in ents):
@@ -976,6 +1000,8 @@ def placement(fs, galaxy, scenario):
            chunk(b"OBJS", struct.pack("<I", len(keep)) + b"".join(pack_row(r) for r in keep)),
            chunk(b"STRT", struct.pack("<I", len(starts)) + b"".join(pack_row(r) for r in starts)),
            chunk(b"PATH", struct.pack("<I", len(paths)) + b"".join(path_entry(p) for p in paths))]
+    out.append(obj_anim_chunk(Path(fs), set(types)))
+    out.append(canm_chunk(Path(fs), set(types)))
     grav = [g for g in (grav_record(o) for o in keep) if g]
     out.append(chunk(b"GRAV", struct.pack("<I", len(grav)) + b"".join(grav)))
     out.append(chunk(b"ZPAR", struct.pack(f"<I{len(zones)}i", len(zones),
@@ -1022,7 +1048,7 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
         key = (a, pose, ratio)
         if key not in _model_cache:
             st = {}
-            _model_cache[key] = (model_groups(arc, ratio, st, t in SKINNED, pose or None), st)
+            _model_cache[key] = (model_groups(arc, ratio, st, t in SKINNED or t in SKINNED_OBJ, pose or None), st)
         (groups, kcl, sk), st = _model_cache[key]
         for k, v in st.items():
             stats[k] = stats.get(k, 0) + v
@@ -1077,6 +1103,79 @@ def anim_chunk(fsp):
             clips.append(name32(n.rsplit("/", 1)[-1][:-4].lower()) + struct.pack("<II", len(raw), len(z)) + z +
                          b"\0" * (-len(z) % 4))
     return chunk(b"ANIM", struct.pack("<I", len(clips)) + b"".join(clips))
+
+
+def obj_anim_chunk(fsp, classes):
+    """ANIM for the skinned placed classes among `classes` (and their EXTRA models): "<class>/<clip>" lower case."""
+    clips = []
+    names = [c for c in SKINNED_OBJ if c in classes or any(c in EXTRA.get(k, ()) for k in classes)]
+    for c in names:
+        arc = fsp / "ObjectData" / f"{ANIM_ARC.get(c, c)}.arc"
+        if not arc.exists():
+            continue
+        for n, b in B.rarc_files(arc.read_bytes()):
+            if n.lower().endswith(".bck"):
+                raw = anim_clip(b)
+                z = zlib.compress(raw, 9)
+                clips.append(name32(f"{c.lower()}/{n.rsplit('/', 1)[-1][:-4].lower()}") + struct.pack("<II", len(raw), len(z)) +
+                             z + b"\0" * (-len(z) % 4))
+    return chunk(b"ANIM", struct.pack("<I", len(clips)) + b"".join(clips))
+
+
+def canm_bake(b):
+    """A camera animation (Petari CameraAnim.cpp: ANDO CANM linear per frame, CKAN Hermite keys with tangents / 30)
+    as one (pos xyz, watch xyz, twist, fovy) per frame, in its target actor's frame."""
+    if b[:4] != b"ANDO" or b[4:8] not in (b"CANM", b"CKAN") or struct.unpack(">i", b[8:12])[0] == 0:
+        return []
+    key = b[4:8] == b"CKAN"
+    frames, voff = struct.unpack(">II", b[0x18:0x20])
+    entry = b[0x20:]
+    nval = struct.unpack(">I", entry[voff:voff + 4])[0] // 4
+    vals = struct.unpack(f">{nval}f", entry[voff + 4:voff + 4 + 4 * nval])
+    comps = [struct.unpack(">III" if key else ">II", entry[i * (12 if key else 8):(i + 1) * (12 if key else 8)]) for i in range(8)]
+
+    def herm(f, t0, v0, m0, t1, v1, m1):
+        d = t1 - t0
+        t = (f - t0) / d if d else 0.0
+        t2 = t * t
+        return v0 + t * d * m0 + t2 * (3 * (v1 - v0) - 2 * d * m0 - d * m1) + t2 * t * (2 * (v0 - v1) + d * m0 + d * m1)
+
+    def get(f, c):
+        count, off = c[0], c[1]
+        if not key:
+            k = int(f)
+            r = min(max(f - k, 0.0), 1.0)
+            if k < count - 1:
+                return (1 - r) * vals[off + k] + r * vals[off + k + 1]
+            return vals[off + count - 1]
+        if count == 1:
+            return vals[off]
+        st = 3 if c[2] == 0 else 4
+        ks = [vals[off + i * st:off + i * st + st] for i in range(count)]
+        if f <= ks[0][0]:
+            return ks[0][1]
+        if f >= ks[-1][0]:
+            return ks[-1][1]
+        i = max(j for j in range(count) if ks[j][0] <= f)
+        a, z = ks[i], ks[i + 1]
+        return herm(f, a[0], a[1], (a[2] if st == 3 else a[3]) / 30.0, z[0], z[1], z[2] / 30.0)
+    return [tuple(get(float(f), c) for c in comps) for f in range(frames)]
+
+
+def canm_chunk(fsp, classes):
+    """CANM: the skinned placed classes' camera animations, "<class>/<name>" lower case, baked per frame."""
+    out = []
+    for c in [c for c in SKINNED_OBJ if c in classes] + (["PowerStar"] if "PowerStar" in classes else []):
+        arc = fsp / "ObjectData" / f"{ANIM_ARC.get(c, c)}.arc"
+        if not arc.exists():
+            continue
+        for n, b in B.rarc_files(arc.read_bytes()):
+            if n.lower().endswith(".canm"):
+                fr = canm_bake(b)
+                if fr:
+                    out.append(name32(f"{c.lower()}/{n.rsplit('/', 1)[-1][:-5].lower()}") + struct.pack("<I", len(fr)) +
+                               b"".join(struct.pack("<8f", *f) for f in fr))
+    return chunk(b"CANM", struct.pack("<I", len(out)) + b"".join(out))
 
 
 def blob_of(chunks):

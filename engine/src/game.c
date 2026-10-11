@@ -5,6 +5,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include <string.h>
 
 #include "gravity.h"
@@ -122,6 +123,7 @@ static const Scene *sc;
 /* Placed static models (planets and every class without behaviour yet): drawn, and collided if they have a KCL */
 typedef struct {
     const Model *md;
+    Anim *anim;      /* skinned models (slice.py SKINNED_OBJ): its pose, from obj_anim */
     const unsigned char *kcl;
     float m[16];     /* world matrix (uniform scale s) */
     float s, reach;  /* scale, bounding radius in world units */
@@ -258,12 +260,18 @@ static struct {
     V3 pos, vel, up, f;
     int bstate, bt;                /* its tail ball: 0 Wait, 1 Shoot, 2 Charge, 3 Reverse, 4 Rebound */
     V3 bpos, bvel;
+    int act, act_t;                /* a one-shot clip playing (its frames left): damage, attack hit, demos */
+    V3 chain[9];                   /* its tail: TailRoot .. TailBall, model space (DinoPackunTail) */
+    int chain_ok;
+    Anim *anim;
 } dino = {.row = -1};
-static const Model *m_dino, *m_dball, *m_degg;
+static const Model *m_dino, *m_dball, *m_degg, *m_deggbrk;
 /* OtaKing (Petari Boss/OtaKing.cpp, Enemy/CocoNutBall.cpp): one per scene */
 #define OTA_BALLS 3
 static struct {
-    int row, phase, t, hits, throws; /* phase: 0 wait (SW_A), 1 wait, 2 throw, 3 damage, 4 down, 5 gone */
+    int row, phase, t, hits, throws; /* phase: 0 wait (SW_A), 6 appear, 1 wait, 2 throw, 3 damage, 4 down, 5 gone */
+    int hitback;                     /* frames left of its HitBack (it sent a coconut back) */
+    Anim *anim, *foot[2];            /* its body, its feet (OtaKingFoot, clips ..L / ..R) */
     V3 pos, up, f;
     struct { V3 pos, vel, grav; int state, t, rally; } ball[OTA_BALLS]; /* state: 0 none, 1 Throw, 2 HitBackToHost,
                                                                          * 3 HitBackToPlayer, 4 Rebound */
@@ -396,6 +404,42 @@ typedef struct { int coin, t; V3 vel; } Pop;
 static Pop *pops;
 static int npops, box_coins;
 static Inst *insts;
+static Anim *obj_anim(int row, const Model *md, const char *cls);
+/* A demo's camera (CameraAnim::calc, startAnimCameraTargetSelf): the CANM `name`'s frame in the actor's frame `m`
+ * (side, up, front, position), the roll about the view; 0 once it is over (or missing: no override) */
+static int demo_camera(const char *name, int frame, const float m[16])
+{
+    const u8 *q = sc->canm;
+    for (u32 i = 0; i < sc->ncanm; i++) {
+        u32 n = *(const u32 *)(q + 32);
+        if (!strcmp((const char *)q, name)) {
+            if (frame < 0 || (u32)frame >= n) { camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45); return 0; }
+            const float *f = (const float *)(q + 36) + 8 * frame;
+            V3 ax = v3(m[0], m[1], m[2]), ay = v3(m[4], m[5], m[6]), az = v3(m[8], m[9], m[10]), o = v3(m[12], m[13], m[14]);
+            V3 eye = vadd(o, vadd(vadd(vmul(ax, f[0]), vmul(ay, f[1])), vmul(az, f[2])));
+            V3 watch = vadd(o, vadd(vadd(vmul(ax, f[3]), vmul(ay, f[4])), vmul(az, f[5])));
+            /* CameraAnim: the up is the target's Y (setUpVec), rolled by the twist; a view along it uses its front */
+            V3 fwd = vnorm(vsub(watch, eye)), up0 = vsub(ay, vmul(fwd, vdot(ay, fwd)));
+            if (vlen(up0) < 0.05f) up0 = vsub(vmul(az, -1.0f), vmul(fwd, vdot(vmul(az, -1.0f), fwd)));
+            up0 = vnorm(up0);
+            V3 side = vcross(fwd, up0);
+            float r = f[6] * 0.0174533f;
+            V3 up = vnorm(vadd(vmul(up0, cosf(r)), vmul(side, sinf(r))));
+            camera_set_override(1, eye, watch, up, f[7] > 1.0f ? f[7] : 45.0f);
+            return 1;
+        }
+        q += 36 + 32 * n;
+    }
+    return 0;
+}
+static int demo_on; /* a demo is running: Mario waits (no input, no hurt) */
+static int dino_demo_on, ota_demo_on; /* whose demo camera runs */
+static int obj_play(const Inst *in, const char *clip, int loop, int interp);
+/* Skinned placed models (slice.py SKINNED_OBJ): a pool of poses kept by row across rebinds, the class's "wait" clip
+ * (else its first) looping unless its behaviour plays another (obj_play). ponytail: 16 at once, the rest drawn in
+ * the bind pose of the nearest free one's skin is skipped (not drawn) */
+#define MAX_OBJ_ANIM 16
+static struct { int row; unsigned last; Anim *a; } oanim[MAX_OBJ_ANIM];
 static int ninsts;
 static const Gravity *grav;
 static int ngrav;
@@ -850,6 +894,10 @@ void game_init(const Scene *s, const unsigned char *blob)
                 break;
             }
     }
+    for (int i = 0; i < MAX_OBJ_ANIM; i++) {
+        oanim[i].row = -1;
+        if (!oanim[i].a) oanim[i].a = mem_alloc(MEM_PLAYER, sizeof(Anim));
+    }
     memset(&dino, 0, sizeof dino); dino.row = -1;
     memset(&ota, 0, sizeof ota); ota.row = -1;
     for (u32 i = 0; i < s->nobjs; i++)
@@ -857,6 +905,11 @@ void game_init(const Scene *s, const unsigned char *blob)
             V3 x, z;
             row_axes(&s->objs[i], &x, &z);
             ota.row = i; ota.pos = row_pos(&s->objs[i]); ota.up = up_at(ota.pos, v3(0, 1, 0)); ota.f = vnorm(vtangent(z, ota.up));
+            for (int k = 0; k < 3; k++) {
+                Anim *an = mem_alloc(MEM_PLAYER, sizeof(Anim));
+                memset(an, 0, sizeof(Anim));
+                if (k) ota.foot[k - 1] = an; else ota.anim = an;
+            }
             break;
         }
     for (u32 i = 0; i < s->nobjs; i++)
@@ -866,6 +919,7 @@ void game_init(const Scene *s, const unsigned char *blob)
             dino.row = i; dino.pos = row_pos(&s->objs[i]); dino.up = up_at(dino.pos, v3(0, 1, 0));
             dino.f = vnorm(vtangent(z, dino.up)); dino.side = 1.0f;
             dino.bpos = vsub(dino.pos, vmul(dino.f, 600.0f));
+            dino.anim = mem_alloc(MEM_PLAYER, sizeof(Anim)); memset(dino.anim, 0, sizeof(Anim));
             break;
         }
     npieces = count_type("StarPiece", 0) + box_pieces;
@@ -2195,6 +2249,7 @@ void game_rebind(void)
     m_bubble = scene_model(s, "AirBubble");
     m_ota = scene_model(s, "OtaKing"); m_otafoot = scene_model(s, "OtaKingFoot"); m_coco = scene_model(s, "CocoNut");
     m_dino = scene_model(s, "DinoPackun"); m_dball = scene_model(s, "DinoPackunTailBall"); m_degg = scene_model(s, "DinoPackunEggShell");
+    m_deggbrk = scene_model(s, "DinoPackunEggShellBreak");
     m_unizo[0] = scene_model(s, "Unizo"); m_unizo[1] = scene_model(s, "UnizoLand"); m_unizo[2] = scene_model(s, "UnizoShoal");
     int t_coin = scene_type(s, "Coin"), t_pc = scene_type(s, "PurpleCoin"), t_circle = scene_type(s, "CirclePurpleCoinGroup");
     int t_rail = scene_type(s, "PurpleRailCoin"), t_piece = scene_type(s, "StarPiece"), t_kuribo = scene_type(s, "Kuribo");
@@ -2236,6 +2291,7 @@ void game_rebind(void)
         Inst *in = &insts[ninsts++];
         in->md = md;
         in->row = i;
+        in->anim = md->skin ? obj_anim(i, md, name) : NULL;
         int dc, dp;
         in->breaks = breakable(name, r, &dc, &dp);
         in->collapse = strcmp(name, "CollapsePlane") == 0 ? (r->arg[0] > 0 ? r->arg[0] : 140) : 0;
@@ -3232,7 +3288,7 @@ int game_test_fat(void)
 int game_test_dino(void)
 {
     if (dino.row < 0) return -1;
-    if (dino.phase == 0) { mario->pos = vadd(dino.pos, vmul(dino.up, 400.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+    if (dino.phase == 0) { mario->pos = vadd(dino.pos, vadd(vmul(dino.f, 700.0f), vmul(dino.up, 200.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
     else if ((dino.phase == 1 || dino.phase == 2) && dino.bstate == 0) {
         V3 out = vnorm(vtangent(vsub(dino.bpos, dino.pos), dino.up));
         mario->pos = vadd(dino.bpos, vmul(out, 150.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->hurt_timer = 0;
@@ -4813,6 +4869,113 @@ static void update_bubbles(void)
  * head (270), the egg breaks / it is hurt; after the fourth hit it goes down (320 frames) and its power star comes out
  * (the row dies: star_wait). ponytail: no tail chain (the ball held 600 behind it), no animations, no demos (a 120
  * pause), no star pieces (appearStarPiece 8), no footprints, no damage camera; the spin on its body does nothing */
+/* DinoPackun's clips by state (DinoPackunBattle*.cpp, DinoPackunStateDamage.cpp, DinoPackunDemo.cpp) */
+/* DinoPackun::startDemoAndReset / resetPosition: back at its placed spot, Mario set at sMarioSetLocalPos (0, -550, 800)
+ * in its frame, facing it */
+static void dino_demo_reset(void)
+{
+    const Row *r = &sc->objs[dino.row];
+    V3 x, z;
+    row_axes(r, &x, &z);
+    dino.pos = row_pos(r); dino.up = up_at(dino.pos, dino.up); dino.f = vnorm(vtangent(z, dino.up)); dino.vel = v3(0, 0, 0);
+    dino.chain_ok = 0;
+    mario->pos = vadd(dino.pos, vadd(vmul(dino.up, -550.0f), vmul(dino.f, 800.0f)));
+    mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->launch = -1;
+    mario->up = up_at(mario->pos, mario->up);
+    mario->face = vnorm(vtangent(vsub(dino.pos, mario->pos), mario->up));
+}
+
+static const char *dino_clip(int *loop)
+{
+    int angry = dino.hits >= 2;
+    *loop = 1;
+    switch (dino.phase) {
+    case 0: *loop = 0; return "openingdemo"; /* held at its first frame until the fight (startBck + stopBck) */
+    case 7: *loop = 0; return "openingdemo";
+    case 1: return "eggwalk";
+    case 3: *loop = 0;
+        return dino.bstate >= 2 ? (dino.hits ? "punchedtailtop" : "eggwalk") : (dino.hits ? (angry ? "angrywait" : "wait") : "eggwalk");
+    case 8: *loop = 0; return dino.hits == 1 ? "eggdamagetop" : dino.hits == 4 ? "lastdamagetop" : "damagetop";
+    case 4: *loop = 0; return dino.hits == 1 ? "crydemo" : "angrydemo";
+    case 5: *loop = 0; return "downdemo";
+    default: break;
+    }
+    switch (dino.nrv) {
+    case 0: return angry ? "angrywalk" : dino.side > 0 ? "turnright" : "turnleft";
+    case 1: return angry ? "angrywalk" : "walk";
+    case 2: *loop = 0; return "find";
+    case 3: return angry ? "angrychase" : "chase";
+    case 5: *loop = 0; return "attackhit";
+    default: *loop = 0; return "cooldown";
+    }
+}
+
+/* DinoPackunTail, lean: TailRoot follows its clip, Tail1..7 hang between it and the ball (FABRIK on the clip's link
+ * lengths, from last frame's chain), each turned along the chain (turnJointLocalXDir); the ball (its physics) is held
+ * within the tail's length. Off (pure clip, the ball on its joint) before the fight and in the demos. */
+static void dino_pose(void)
+{
+    Anim *a = dino.anim;
+    if (!a || !m_dino || !m_dino->skin) return;
+    if (a->skin != m_dino->skin) { anim_bind(a, m_dino->skin); dino.chain_ok = 0; }
+    int loop;
+    char n[48];
+    snprintf(n, sizeof n, "dinopackun/%s", dino_clip(&loop));
+    anim_play(a, n, dino.phase == 0 ? 0.0f : 1.0f, loop, 8);
+    anim_pose(a);
+    float m[16];
+    basis_matrix(m, dino.pos, dino.up, dino.f, 0);
+    int chain = (dino.phase == 1 || dino.phase == 2 || dino.phase == 3 || dino.phase == 8) && a->skin->njoints > 20;
+    if (!chain) { /* the ball on its joint */
+        float *w = a->world[20];
+        V3 lp = v3(w[12], w[13], w[14]);
+        dino.bpos = vadd(v3(m[12], m[13], m[14]), vadd(vadd(vmul(v3(m[0], m[1], m[2]), lp.x), vmul(v3(m[4], m[5], m[6]), lp.y)), vmul(v3(m[8], m[9], m[10]), lp.z)));
+        dino.bvel = v3(0, 0, 0);
+        dino.chain_ok = 0;
+        anim_skin(a);
+        return;
+    }
+    V3 org = v3(m[12], m[13], m[14]), ax = v3(m[0], m[1], m[2]), ay = v3(m[4], m[5], m[6]), az = v3(m[8], m[9], m[10]);
+    V3 d = vsub(dino.bpos, org), target = v3(vdot(d, ax), vdot(d, ay), vdot(d, az)); /* the ball, model space */
+    V3 anim_p[9];
+    float len[9], total = 0;
+    for (int i = 0; i < 9; i++) anim_p[i] = v3(a->world[12 + i][12], a->world[12 + i][13], a->world[12 + i][14]);
+    for (int i = 1; i < 9; i++) { len[i] = vlen(vsub(anim_p[i], anim_p[i - 1])); total += len[i]; }
+    if (!dino.chain_ok) { for (int i = 0; i < 9; i++) dino.chain[i] = anim_p[i]; dino.chain_ok = 1; }
+    V3 root = anim_p[0], rt = vsub(target, root);
+    if (vlen(rt) > total * 0.98f) { /* the tail holds the ball */
+        target = vadd(root, vmul(vnorm(rt), total * 0.98f));
+        V3 w = vadd(org, vadd(vadd(vmul(ax, target.x), vmul(ay, target.y)), vmul(az, target.z)));
+        V3 out = vnorm(vsub(dino.bpos, w));
+        float vo = vdot(dino.bvel, out);
+        if (vo > 0) dino.bvel = vsub(dino.bvel, vmul(out, vo));
+        dino.bpos = w;
+    }
+    V3 *p = dino.chain;
+    for (int i = 1; i < 8; i++) p[i] = vadd(p[i], vmul(vsub(anim_p[i], p[i]), 0.05f)); /* keep its bend (sKeepBendPower) */
+    for (int it = 0; it < 4; it++) {
+        p[8] = target;
+        for (int i = 7; i >= 0; i--) p[i] = vadd(p[i + 1], vmul(vnorm(vsub(p[i], p[i + 1])), len[i + 1]));
+        p[0] = root;
+        for (int i = 1; i < 9; i++) p[i] = vadd(p[i - 1], vmul(vnorm(vsub(p[i], p[i - 1])), len[i]));
+    }
+    for (int i = 1; i < 9; i++) { /* Tail1 .. TailBall: at the chain, Tail1 .. Tail7 turned along it */
+        float *w = a->world[12 + i];
+        if (i < 8) {
+            V3 x = vnorm(vsub(p[i + 1], p[i])), z0 = v3(w[8], w[9], w[10]), y = vcross(z0, x);
+            if (vlen(y) < 1e-3f) y = v3(w[4], w[5], w[6]);
+            y = vnorm(y);
+            V3 z = vcross(x, y);
+            float sx = vlen(v3(w[0], w[1], w[2])), sy = vlen(v3(w[4], w[5], w[6])), sz = vlen(v3(w[8], w[9], w[10]));
+            w[0] = x.x * sx; w[1] = x.y * sx; w[2] = x.z * sx;
+            w[4] = y.x * sy; w[5] = y.y * sy; w[6] = y.z * sy;
+            w[8] = z.x * sz; w[9] = z.y * sz; w[10] = z.z * sz;
+        }
+        w[12] = p[i].x; w[13] = p[i].y; w[14] = p[i].z;
+    }
+    anim_skin(a);
+}
+
 static void update_dino(void)
 {
     if (dino.row < 0 || dino.phase == 6 || !row_shown(dino.row)) return;
@@ -4825,7 +4988,8 @@ static void update_dino(void)
     int angry = dino.hits >= 2;
     dino.t++;
     if (dino.phase == 0) {
-        if (r->sw[SW_A] < 0 || sw_on(r, SW_A)) { dino.phase = 1; dino.nrv = 1; dino.t = 0; printf("dino packun: start" "\n"); }
+        if (r->sw[SW_A] < 0 || sw_on(r, SW_A)) { dino.phase = 7; dino.t = 0; dino_demo_reset(); printf("dino packun: start" "\n"); }
+        dino_pose();
         return;
     }
     float accel = 0;
@@ -4861,6 +5025,9 @@ static void update_dino(void)
             if (dino.t >= len) { dino.nrv = 4; dino.t = 0; }
             break;
         }
+        case 5: /* AttackHit: its glad action */
+            if (dino.t >= 239) { dino.nrv = 0; dino.t = 0; }
+            break;
         default: /* CoolDown */
             if (dino.t >= 90) { dino.nrv = 0; dino.t = 0; }
         }
@@ -4868,26 +5035,38 @@ static void update_dino(void)
         if (egg && dist < 400.0f + HIT_BODY_R) { /* the shell pushes him off */
             V3 out = vnorm(vtangent(vsub(c, body), up));
             mario->pos = vadd(mario->pos, vmul(out, 400.0f + HIT_BODY_R - dist));
-        } else if (!egg && dist < 200.0f + HIT_BODY_R) {
+        } else if (!egg && dist < 200.0f + HIT_BODY_R && !mario->hurt_timer) {
             hurt_mario(dino.pos, 25.0f);
-            if (dino.nrv == 3) { dino.nrv = 0; dino.t = 0; } /* AttackHit */
+            dino.nrv = 5; dino.t = 0; /* AttackHit */
         }
-    } else if (dino.phase == 4) { /* a demo: cry / angry */
-        if (dino.t >= 120) { dino.phase = 2; dino.nrv = 3; dino.t = 0; }
+    } else if (dino.phase == 7) { /* OpeningDemo, then the egg battle */
+        if (dino.t >= 360) { dino.phase = 1; dino.nrv = 1; dino.t = 0; }
+    } else if (dino.phase == 8) { /* the hit (EggDamageTop / Damage* / LastDamage*), then CryDemo / AngryDemo / Lv3 / Down */
+        if (dino.t >= (dino.hits == 1 ? 99 : dino.hits == 4 ? 49 : 79)) {
+            dino.t = 0;
+            dino.phase = dino.hits == 1 || dino.hits == 2 ? 4 : dino.hits == 3 ? 2 : 5;
+            if (dino.phase == 2) dino.nrv = 2;
+            if (dino.phase == 4 || dino.phase == 5) dino_demo_reset();
+        }
+    } else if (dino.phase == 4) { /* CryDemo (after the egg) / AngryDemo (after Lv1) */
+        if (dino.t >= (dino.hits == 1 ? 150 : 200)) { dino.phase = 2; dino.nrv = dino.hits == 1 ? 3 : 2; dino.t = 0; }
     } else if (dino.phase == 5) { /* DownDemo, then AppearPowerStar */
-        if (dino.t >= 320 + 60) {
+        if (dino.t >= 385 + 60) {
             dino.phase = 6; row_kill(dino.row);
             printf("dino packun: down, its star" "\n");
             return;
         }
     }
     if (accel > 0) dino.vel = vadd(dino.vel, vmul(dino.f, accel)); /* addVelocityMoveToDirection, updateNormalVelocity */
-    if (dino.phase != 1 && dino.phase != 2) dino.vel = v3(0, 0, 0);
+    if ((dino.phase != 1 && dino.phase != 2) || dino.nrv == 5) dino.vel = v3(0, 0, 0);
     dino.vel = vmul(vtangent(dino.vel, up), 0.9f);
     V3 center = vadd(vadd(dino.pos, dino.vel), vmul(up, 150.0f - 4.0f)), gn, wn;
     int wall = 0;
-    collide_n(&center, up, 150.0f, &gn, &wn, &wall);
-    dino.pos = vsub(center, vmul(up, 150.0f));
+    /* only in the battle it moves (the demos hold it where resetPosition put it); no ground under it (its zone still
+     * streaming, the egg's nest) keeps it where it is rather than falling through */
+    if ((dino.phase == 1 || dino.phase == 2) && (r->zone >= 64 || zone_kcl[r->zone]) &&
+        collide_n(&center, up, 150.0f, &gn, &wn, &wall))
+        dino.pos = vsub(center, vmul(up, 150.0f));
 
     /* the tail ball */
     V3 rest = vsub(dino.pos, vmul(dino.f, 600.0f)), bup = up_at(dino.bpos, up);
@@ -4918,7 +5097,7 @@ static void update_dino(void)
             dino.hits++;
             dino.bvel = vmul(vnorm(vsub(dino.bpos, head)), 0.3f * vlen(dino.bvel));
             dino.bstate = 4; dino.bt = 0;
-            dino.phase = dino.hits >= 4 ? 5 : 4; dino.t = 0; dino.vel = v3(0, 0, 0);
+            dino.phase = 8; dino.t = 0; dino.vel = v3(0, 0, 0);
             printf("dino packun: hit %d" "\n", dino.hits);
         } else if (dino.bt >= 150) { dino.bstate = 4; dino.bt = 0; dino.phase = dino.hits ? 2 : 1; dino.nrv = 0; dino.t = 0; }
         break;
@@ -4927,6 +5106,18 @@ static void update_dino(void)
     if (dino.bstate == 0 || dino.bstate == 4) collide_n(&bc, bup, 135.0f, &gn, &wn, &wall);
     dino.bpos = bc;
     #undef DINO_TURN_TO
+    dino_pose();
+    { /* its demos' cameras (DinoPackunDemo: OpeningDemo, CryDemo, AngryDemo, DownDemo) */
+        const char *cn = dino.phase == 7 ? "dinopackun/openingdemo" : dino.phase == 4 ? (dino.hits == 1 ? "dinopackun/crydemo" : "dinopackun/angrydemo") :
+                         dino.phase == 5 && dino.t < 385 ? "dinopackun/downdemo" : NULL;
+        static int was;
+        float m[16];
+        basis_matrix(m, dino.pos, dino.up, dino.f, 0);
+        int on = cn && demo_camera(cn, dino.t, m);
+        if (was && !on) camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45);
+        was = on;
+        dino_demo_on = on;
+    }
 }
 
 /* OtaKing (Lv1): SW_A (a TimerSwitch after the SwitchCylinder round its bath) brings it up. Facing Mario (1 degree a
@@ -4937,6 +5128,7 @@ static void update_dino(void)
  * After the third hit it goes down (cDownDemoFrame 300) and its power star comes out (the row dies: star_wait). A
  * ball dies on the ground, a wall, or 5000 off. ponytail: no fire balls, bubbles, near attack, magma, long feet,
  * freezing (the pointer), demos (60 frames), star pieces; the body only pushes Mario off */
+static void ota_pose(void);
 static void update_ota(void)
 {
     if (ota.row < 0 || ota.phase == 5 || !row_shown(ota.row)) return;
@@ -4946,10 +5138,13 @@ static void update_ota(void)
     float dm = vlen(vsub(mario->pos, ota.pos));
     ota.t++;
     if (ota.phase == 0) {
-        if (r->sw[SW_A] < 0 || sw_on(r, SW_A)) { ota.phase = 1; ota.t = -60; printf("ota king: appears" "\n"); }
+        if (r->sw[SW_A] < 0 || sw_on(r, SW_A)) { ota.phase = 6; ota.t = 0; printf("ota king: appears" "\n"); }
         return;
     }
-    if (ota.phase == 1 || ota.phase == 2) { /* turn to Mario */
+    if (ota.hitback) ota.hitback--;
+    if (ota.phase == 6) { /* AppearDemo (its Appear clip) */
+        if (ota.t >= 424) { ota.phase = 1; ota.t = 0; }
+    } else if (ota.phase == 1 || ota.phase == 2) { /* turn to Mario */
         V3 to = vtangent(vsub(mario->pos, ota.pos), up);
         if (vlen(to) > 1e-3f) {
             V3 side = vcross(up, ota.f);
@@ -4971,11 +5166,11 @@ static void update_ota(void)
             ota.throws++;
             printf("ota king: coconut thrown" "\n");
         }
-        if (ota.phase == 2 && ota.t >= 100) { ota.phase = 1; ota.t = 0; }
-    } else if (ota.phase == 3) {
-        if (ota.t >= 60) { ota.phase = 1; ota.t = 0; }
+        if (ota.phase == 2 && ota.t >= 171) { ota.phase = 1; ota.t = 0; } /* its Attack clip */
+    } else if (ota.phase == 3) { /* Damage (179) / PowerUp: CrownDamage (256) */
+        if (ota.t >= (ota.hits == 2 ? 256 : 179)) { ota.phase = 1; ota.t = 0; }
     } else if (ota.phase == 4) {
-        if (ota.t >= 300) {
+        if (ota.t >= 204) { /* Down, then DownDemo: requestAppearPowerStar */
             ota.phase = 5; row_kill(ota.row);
             printf("ota king: down, its star" "\n");
             return;
@@ -5022,6 +5217,7 @@ static void update_ota(void)
                 V3 to = vsub(c, k->pos);
                 k->vel = vmul(vnorm(to), 15.0f + 3.0f * k->rally);
                 k->state = 3; k->t = 0;
+                ota.hitback = 103;
                 printf("ota king: hits it back" "\n");
             } else {
                 k->state = 0;
@@ -5036,6 +5232,35 @@ static void update_ota(void)
         if (hit || vlen(vsub(k->pos, ota.pos)) > 5000.0f || k->t > 600 || (k->state == 4 && k->t > 120)) k->state = 0;
     }
     if (ota.phase == 4) for (int b = 0; b < OTA_BALLS; b++) ota.ball[b].state = 0;
+    ota_pose();
+    { /* its demos' cameras (startAnimCameraTargetSelf "Appear" / "Down") */
+        static int was;
+        float m[16];
+        basis_matrix(m, ota.pos, ota.up, ota.f, 0);
+        const char *cn = ota.phase == 6 ? "otaking/appear" : ota.phase == 4 ? "otaking/down" : NULL;
+        int on = cn && demo_camera(cn, ota.t, m);
+        if (was && !on) camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45);
+        was = on;
+        ota_demo_on = on;
+    }
+}
+
+/* OtaKing's clip by state, its feet's the same with L / R (OtaKing.cpp startBckWithFrontFoot) */
+static void ota_pose(void)
+{
+    const char *c = ota.phase == 6 ? "appear" : ota.phase == 2 ? "attack" : ota.phase == 3 ? (ota.hits == 2 ? "crowndamage" : "damage") :
+                    ota.phase == 4 ? "down" : ota.hitback ? "hitback" : "wait";
+    int loop = !strcmp(c, "wait");
+    const Model *mds[3] = {m_ota, m_otafoot, m_otafoot};
+    for (int k = 0; k < 3; k++) {
+        Anim *a = k ? ota.foot[k - 1] : ota.anim;
+        if (!a || !mds[k] || !mds[k]->skin) continue;
+        if (a->skin != mds[k]->skin) anim_bind(a, mds[k]->skin);
+        char n[48];
+        snprintf(n, sizeof n, k ? "otakingfoot/%s%s" : "otaking/%s%s", c, k == 1 ? "l" : k == 2 ? "r" : "");
+        anim_play(a, n, 1.0f, loop, 8);
+        anim_update(a);
+    }
 }
 
 /* CocoSambo.cpp: within 700 it attacks (its head swung at Mario: a touch hurts, sendMsgEnemyAttackStrong); a
@@ -5067,6 +5292,20 @@ static void update_sambos(void)
             V3 out = vtangent(rel, up);
             if (vlen(out) > 1e-3f) mario->pos = vadd(mario->pos, vmul(vnorm(out), 100.0f * s + HIT_BODY_R - side));
         }
+    }
+}
+
+/* TicoFat's metamorphosis (80 frames of its clip), then its planet: SW_A on, the row dies, its group's drivers out */
+static void update_fat(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (in->fat != 2 || row_dead[in->row] || ++row_step[in->row] < 80) continue;
+        const Row *r = &sc->objs[in->row];
+        if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
+        row_kill(in->row);
+        sw_changed = 1;
+        printf("tico fat row %d: its planet" "\n", in->row);
     }
 }
 
@@ -5489,6 +5728,7 @@ static void update_mario(void)
 {
     Player *m = mario;
     m->up = up_at(m->pos, m->up);
+    if (demo_on) { m->hvel = v3(0, 0, 0); if (m->hurt_timer) m->hurt_timer--; if (mario_anim) { mario_play("wait", 1.0f, 1); anim_update(mario_anim); } return; }
     if (swim_update(m)) {
         if (mario_anim) anim_update(mario_anim);
         return;
@@ -7504,11 +7744,17 @@ static void update_shots(void)
             hit = 1;
             const Row *r = &sc->objs[in->row];
             int want = r->arg[1] > 0 ? r->arg[1] : 10;
+            if (in->fat == 2) continue; /* changing already */
+            {
+                char eat[8];
+                snprintf(eat, sizeof eat, "eat%d", (row_turn[in->row] + 1) * 3 / (want + 1)); /* Eat: its size's clip */
+                obj_play(in, eat, 0, 4);
+            }
             if (++row_turn[in->row] >= want) {
-                if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
-                row_kill(in->row);
-                sw_changed = 1; /* callAppearAllGroupMember: its spin drivers come out */
-                printf("tico fat row %d: full (%d), its planet" "\n", in->row, want);
+                in->fat = 2; row_step[in->row] = 0; /* tryMetamorphosis: its clip, then the planet */
+                obj_play(in, "metamorphosis", 0, 4);
+                printf("tico fat row %d: full (%d)" "\n", in->row, want);
+                continue;
             }
         }
         for (int k = 0; k < nkuribo && !hit; k++) {
@@ -7687,8 +7933,57 @@ static void keep_effects(void)
 void game_set_time_limit(int seconds) { time_limit = time_left = seconds * 60; }
 int game_time_left(void) { return time_limit ? time_left : -1; }
 
+/* the pose kept for `row` (a free or stale slot bound to its skin, its wait clip started); NULL when the pool is full */
+static Anim *obj_anim(int row, const Model *md, const char *cls)
+{
+    int k = -1;
+    for (int i = 0; i < MAX_OBJ_ANIM; i++)
+        if (oanim[i].row == row) { k = i; break; }
+    if (k < 0)
+        for (int i = 0; i < MAX_OBJ_ANIM && k < 0; i++)
+            if (oanim[i].row < 0 || game_frame - oanim[i].last > 30) k = i;
+    if (k < 0 || !oanim[k].a) return NULL;
+    oanim[k].last = game_frame;
+    if (oanim[k].row != row || oanim[k].a->skin != md->skin) {
+        char n[48];
+        Anim *a = oanim[k].a;
+        oanim[k].row = row;
+        anim_bind(a, md->skin);
+        snprintf(n, sizeof n, "%s/wait", cls);
+        for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
+        if (!anim_play(a, n, 1.0f, 1, 0)) { /* no wait clip: its first */
+            size_t l = strlen(n) - 4;
+            for (u32 c = 0; c < sc->nclips; c++)
+                if (!strncmp(sc->clips[c].name, n, l)) { anim_play(a, sc->clips[c].name, 1.0f, 1, 0); break; }
+        }
+    }
+    return oanim[k].a;
+}
+
+/* the instance's skinned clip `clip` of its class (no-op if it is playing); 0 if missing */
+static int obj_play(const Inst *in, const char *clip, int loop, int interp)
+{
+    if (in->anim) in->anim->done = 0;
+    if (!in->anim) return 0;
+    char n[48];
+    snprintf(n, sizeof n, "%s/%s", sc->types + 32 * sc->objs[in->row].type, clip);
+    for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
+    return anim_play(in->anim, n, 1.0f, loop, interp);
+}
+
+static void update_obj_anims(void)
+{
+    for (int i = 0; i < ninsts; i++)
+        if (insts[i].anim && vlen(vsub(v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]), cam_pos)) < 8000.0f) {
+            for (int k = 0; k < MAX_OBJ_ANIM; k++) if (oanim[k].a == insts[i].anim) oanim[k].last = game_frame;
+            if (insts[i].anim->done && !insts[i].anim->loop) obj_play(&insts[i], "wait", 1, 8); /* a one-shot clip over */
+            anim_update(insts[i].anim);
+        }
+}
+
 void game_update(void)
 {
+    update_obj_anims();
     if (time_limit && time_left > 0 && !stars && --time_left == 0) { printf("time up" "\n"); miss(); }
     hip_hit = 0;
     game_frame++;
@@ -7738,6 +8033,8 @@ void game_update(void)
     update_bubbles();
     update_dino();
     update_ota();
+    demo_on = dino_demo_on || ota_demo_on;
+    update_fat();
     update_sambos();
     update_fire();
     place_waterplants();
@@ -7763,6 +8060,12 @@ void game_update(void)
 }
 
 /* --- draw ------------------------------------------------------------------------------------------------ */
+
+static void inst_draw(const Inst *in, const Model *md, const float m[16])
+{
+    if (md->skin) { if (in->anim && md == in->md) render_skinned(md, m, (const float (*)[16])in->anim->drw); }
+    else render_model(md, m, 0x70, 0xB0, 0x60);
+}
 
 static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle)
 {
@@ -7839,7 +8142,7 @@ void game_draw(void)
         memcpy(cm, in->m, 64);
         for (int j = 0; j < 12; j++) if (j % 4 != 3) cm[j] *= k;
         cm[12] = ce.x; cm[13] = ce.y; cm[14] = ce.z;
-        render_model(in->md, cm, 0x70, 0xB0, 0x60);
+        inst_draw(in, in->md, cm);
         sky_drawn = 1;
     }
     if (sky_drawn) render_clear_depth(); /* the sky stays behind whatever its scale put in front */
@@ -7854,7 +8157,7 @@ void game_draw(void)
                 if (!p->ok) continue;
                 basis_matrix(m, p->pos, p->up, v3(0, 0, 1), k * 1.3f);
                 for (int j = 0; j < 12; j++) if (j % 4 != 3) m[j] *= in->s;
-                render_model(in->md, m, 0x70, 0xB0, 0x60);
+                inst_draw(in, in->md, m);
             }
             continue;
         }
@@ -7865,7 +8168,7 @@ void game_draw(void)
                 float cm[16];
                 basis_matrix(cm, p, up, to, 0);
                 for (int j = 0; j < 12; j++) if (j % 4 != 3) cm[j] *= in->s;
-                render_model(in->md, cm, 0x70, 0xB0, 0x60);
+                inst_draw(in, in->md, cm);
                 continue;
             }
         }
@@ -7874,7 +8177,7 @@ void game_draw(void)
                                                                     "FlipPanelReverse") == 0);
             const Model *md = (row_step[in->row] & FLIP_DONE) && in->md_flip[1] ? in->md_flip[1] :
                               turned ? in->md_flip[0] : in->md;
-            render_model(md, in->m, 0x70, 0xB0, 0x60);
+            inst_draw(in, md, in->m);
             continue;
         }
         if (in->shoot) { /* spinning about its y, grown by k */
@@ -7887,7 +8190,7 @@ void game_draw(void)
             mat_mul(cm, in->m, rot);
             for (int j = 0; j < 12; j++) if (j % 4 != 3) cm[j] *= k;
             cm[12] = p.x; cm[13] = p.y; cm[14] = p.z;
-            render_model(in->md, cm, 0x70, 0xB0, 0x60);
+            inst_draw(in, in->md, cm);
             continue;
         }
         if (in->assembly && row_turn[in->row] == 4 && row_step[in->row] + 100 >= (sc->objs[in->row].arg[1] > 0 ?
@@ -7900,7 +8203,7 @@ void game_draw(void)
             memcpy(cm, in->m, 64);
             V3 p = prom_pos(in);
             cm[12] = p.x; cm[13] = p.y; cm[14] = p.z;
-            render_model(in->md, cm, 0x70, 0xB0, 0x60);
+            inst_draw(in, in->md, cm);
             continue;
         }
         if (in->killer) { /* its bullet, nose along its front */
@@ -7910,7 +8213,7 @@ void game_draw(void)
             float cm[16];
             basis_matrix(cm, k->pos, up_at(k->pos, v3(in->m[4], in->m[5], in->m[6])), k->front, 0);
             for (int j = 0; j < 12; j++) if (j % 4 != 3) cm[j] *= in->s;
-            render_model(in->md, cm, 0x70, 0xB0, 0x60);
+            inst_draw(in, in->md, cm);
             continue;
         }
         if (in->meteor) { /* falling along its rail, turning about its x */
@@ -7923,7 +8226,7 @@ void game_draw(void)
             rot[6] = sinf(a); rot[9] = -rot[6];
             mat_mul(cm, tmp, rot);
             for (int j = 0; j < 12; j++) if (j % 4 != 3) cm[j] *= in->s;
-            render_model(in->md, cm, 0x70, 0xB0, 0x60);
+            inst_draw(in, in->md, cm);
             continue;
         }
         if (in->kiraira) { /* drifting, facing Mario within 1500; hidden while Dead */
@@ -7932,14 +8235,14 @@ void game_draw(void)
             float cm[16];
             basis_matrix(cm, p, up, vdot(to, to) < 1500.0f * 1500.0f ? to : fwd, 0);
             for (int j = 0; j < 12; j++) if (j % 4 != 3) cm[j] *= in->s;
-            render_model(in->md, cm, 0x70, 0xB0, 0x60);
+            inst_draw(in, in->md, cm);
             continue;
         }
         if (in->jstand && row_turn[in->row]) { /* bound: squashed along its y */
             float cm[16], k = jstand_squash(in);
             memcpy(cm, in->m, 64);
             for (int j = 4; j < 7; j++) cm[j] *= k;
-            render_model(in->md, cm, 0x70, 0xB0, 0x60);
+            inst_draw(in, in->md, cm);
             continue;
         }
         if (in->geyser) { /* stretched along its y to its height (geyser_height) */
@@ -7947,14 +8250,14 @@ void game_draw(void)
             if (k <= 0.0f) continue;
             memcpy(cm, in->m, 64);
             for (int j = 4; j < 7; j++) cm[j] *= k;
-            render_model(in->md, cm, 0x70, 0xB0, 0x60);
+            inst_draw(in, in->md, cm);
             continue;
         }
         if (in->collapse && row_step[in->row]) { /* calcJointPlane: x / z scale 1 - 0.7 step / time */
             float k = 1.0f - 0.7f * row_step[in->row] / in->collapse, cm[16];
             memcpy(cm, in->m, 64);
             for (int j = 0; j < 3; j++) { cm[j] *= k; cm[8 + j] *= k; }
-            render_model(in->md, cm, 0x70, 0xB0, 0x60);
+            inst_draw(in, in->md, cm);
         } else if (in->item == ITEM_STAR) { /* spins about its own up */
             float rot[16], cm[16];
             mat_identity(rot);
@@ -7965,9 +8268,9 @@ void game_draw(void)
             V3 p = star_pos(in, &state);
             if (!state) continue;
             cm[12] = p.x; cm[13] = p.y; cm[14] = p.z;
-            render_model(in->md, cm, 0x70, 0xB0, 0x60);
+            inst_draw(in, in->md, cm);
         } else
-            render_model(in->md, in->m, 0x70, 0xB0, 0x60);
+            inst_draw(in, in->md, in->m);
     }
     for (int i = 0; m_rock && i < nrollers; i++) {
         const Roller *o = &rollers[i];
@@ -8071,10 +8374,13 @@ void game_draw(void)
         basis_matrix(m, fireballs[b].pos, up_at(fireballs[b].pos, v3(0, 1, 0)), fireballs[b].vel, game_frame * 0.5f);
         render_model(m_marioball, m, 0x80, 0x80, 0x80);
     }
-    if (ota.row >= 0 && ota.phase >= 1 && ota.phase < 5 && row_shown(ota.row)) { /* OtaKing, its feet, its coconuts */
+    if (ota.row >= 0 && ota.phase >= 1 && ota.phase != 5 && row_shown(ota.row)) { /* OtaKing, its feet, its coconuts */
         basis_matrix(m, ota.pos, ota.up, ota.f, 0);
-        if (m_ota) render_model(m_ota, m, 0x80, 0x80, 0x80);
-        if (m_otafoot) render_model(m_otafoot, m, 0x80, 0x80, 0x80);
+        if (m_ota && m_ota->skin && ota.anim->skin == m_ota->skin) render_skinned(m_ota, m, (const float (*)[16])ota.anim->drw);
+        else if (m_ota) render_model(m_ota, m, 0x80, 0x80, 0x80);
+        for (int k = 0; k < 2 && m_otafoot; k++)
+            if (m_otafoot->skin && ota.foot[k]->skin == m_otafoot->skin) render_skinned(m_otafoot, m, (const float (*)[16])ota.foot[k]->drw);
+            else if (!k) render_model(m_otafoot, m, 0x80, 0x80, 0x80);
         for (int b = 0; m_coco && b < OTA_BALLS; b++) {
             if (!ota.ball[b].state) continue;
             basis_matrix(m, ota.ball[b].pos, ota.up, v3(1, 0, 0), game_frame * 0.3f);
@@ -8083,10 +8389,20 @@ void game_draw(void)
     }
     if (dino.row >= 0 && dino.phase < 6 && row_shown(dino.row)) { /* DinoPackun, its egg shell, its tail ball */
         basis_matrix(m, dino.pos, dino.up, dino.f, 0);
-        if (m_dino) render_model(m_dino, m, 0x80, 0x80, 0x80);
-        if (m_degg && dino.hits == 0) render_model(m_degg, m, 0x80, 0x80, 0x80);
-        basis_matrix(m, dino.bpos, up_at(dino.bpos, dino.up), dino.f, 0);
-        if (m_dball) render_model(m_dball, m, 0x80, 0x80, 0x80);
+        if (m_dino && m_dino->skin && dino.anim && dino.anim->skin == m_dino->skin) {
+            float jm[16];
+            render_skinned(m_dino, m, (const float (*)[16])dino.anim->drw);
+            mat_mul(jm, m, dino.anim->world[2]); /* EggShell */
+            if (dino.hits == 0 && m_degg) render_model(m_degg, jm, 0x80, 0x80, 0x80);
+            else if (dino.hits == 1 && dino.phase == 8 && m_deggbrk) render_model(m_deggbrk, jm, 0x80, 0x80, 0x80);
+            mat_mul(jm, m, dino.anim->world[20]); /* TailBall */
+            if (m_dball) render_model(m_dball, jm, 0x80, 0x80, 0x80);
+        } else {
+            if (m_dino) render_model(m_dino, m, 0x80, 0x80, 0x80);
+            if (m_degg && dino.hits == 0) render_model(m_degg, m, 0x80, 0x80, 0x80);
+            basis_matrix(m, dino.bpos, up_at(dino.bpos, dino.up), dino.f, 0);
+            if (m_dball) render_model(m_dball, m, 0x80, 0x80, 0x80);
+        }
     }
     if (m_bubble) for (int b = 0; b < MAX_BUBBLES; b++) { /* AirBubbleGenerator's bubbles */
         if (!bubbles[b].life) continue;

@@ -38,6 +38,8 @@ void camera_init(const CamParam *cams, int ncams, const CamArea *areas, int nare
                  const CamTarget *t);
 void camera_update(const CamTarget *t);
 void camera_pose(V3 *eye, V3 *watch, V3 *up, float *fovy);
+/* a demo's animated camera (CameraAnim): this pose until off */
+void camera_set_override(int on, V3 eye, V3 watch, V3 up, float fovy);
 /* Active camera (CAMS index, -1 = default) and its type, for the HUD. */
 int camera_current(void);
 const char *camera_type_name(void);

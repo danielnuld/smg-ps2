@@ -3,8 +3,8 @@
 
 #include "blob.h"
 
-#define ANIM_MAX_JOINTS 32
-#define ANIM_MAX_DRW 64
+#define ANIM_MAX_JOINTS 48 /* DinoPackun 46 */
+#define ANIM_MAX_DRW 160  /* DinoPackun 160 */
 
 /* Skeletal animation of one skinned model instance (tools/skin.py is the reference implementation). */
 typedef struct {
@@ -31,6 +31,9 @@ void anim_bind(Anim *a, const Skin *skin);
 int anim_play(Anim *a, const char *name, float speed, int loop, int interp);
 /* Advance one frame and compute the pose (world + draw matrices). */
 void anim_update(Anim *a);
+/* anim_update in two: the joints' world matrices (which may then be changed), then the draw matrices from them */
+void anim_pose(Anim *a);
+void anim_skin(Anim *a);
 /* Clip frames (frame_max) of the playing clip, 0 if none. */
 int anim_length(const Anim *a);
 u32 anim_cache_bytes(void);

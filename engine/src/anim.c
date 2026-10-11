@@ -13,7 +13,7 @@
  * count 0 is the default (scale 1, rotation 0, translation 0), count 1 a constant. Rotations are s16 << dec_shift,
  * 0x8000 = 180 degrees. Joint local = T * Rz * Ry * Rx * S. */
 
-#define SLOTS 4
+#define SLOTS 8 /* Mario and the animated placed objects near him */
 
 static const Scene *sc;
 static u8 *slot_data[SLOTS];
@@ -144,6 +144,12 @@ static void clip_local(const u8 *c, float f, u32 j, float scale[3], float rot[3]
 
 void anim_update(Anim *a)
 {
+    anim_pose(a);
+    anim_skin(a);
+}
+
+void anim_pose(Anim *a)
+{
     const Skin *k = a->skin;
     a->clip = a->clip_id >= 0 ? clip_data(a->clip_id) : NULL;
     if (a->interp_left > 0) { /* XanimePlayer::updateInterpoleRatio */
@@ -209,6 +215,11 @@ void anim_update(Anim *a)
         else
             mat_mul(a->world[j], a->world[jt->parent], local);
     }
+}
+
+void anim_skin(Anim *a)
+{
+    const Skin *k = a->skin;
     for (u32 d = 0; d < k->ndrw && d < ANIM_MAX_DRW; d++) {
         const SkDrw *dr = &k->drw[d];
         if (!dr->count) {

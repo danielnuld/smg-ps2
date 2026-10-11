@@ -79,6 +79,8 @@ typedef struct {
     const u8 *kcl_chunk[SCENE_MAX_PACKS]; /* KCL chunks: {u32 n}, n x {char[32] model, u32 size, bytes, pad 4} */
     u32 nclips;
     Clip *clips;
+    u32 ncanm;           /* CANM chunk: camera animations, per frame pos xyz, watch xyz, twist, fovy */
+    const u8 *canm;      /* n x {char[32] name, u32 frames, f32[8 x frames]} */
     u32 ntex;
     TexRef *tex;        /* scene-wide texture index -> entry and its TEXT payload (offsets are from there) */
     const u8 *ptcl;     /* PTCL chunk (particle effects, tools/jpa.py pack) of the blob that had one, or NULL */

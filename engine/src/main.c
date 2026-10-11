@@ -828,7 +828,7 @@ int main(void)
             } else if (phase == 1 && frame % (n == 2 ? 6 : n == 3 ? 1 : 20) == 0) {
                 st = n == 2 ? game_test_fat() : n == 3 ? game_test_ota() : game_test_dino();
                 if (n == 2 && (st == -1 || st == -3 || st == -4)) { phase = 3; printf("route: fed, f %u\n", frame); }
-                else if (n != 2 && st >= (n == 3 ? 50 : 600)) { phase = 2; printf("route: boss down, f %u\n", frame); }
+                else if (n != 2 && (n == 3 ? st / 10 == 5 : st / 100 == 6)) { phase = 2; printf("route: boss down, f %u\n", frame); }
             } else if (phase == 2 && frame % 20 == 0) {
                 st = game_test_cage(1);
             } else if (phase == 3) {
@@ -854,14 +854,14 @@ int main(void)
 #ifdef OTA_TEST
         if (frame >= 150) { /* Mario before OtaKing, spinning its coconuts back, until its star is out */
             int st = game_test_ota();
-            if (st >= 50) st = 5000 + game_test_cage(1); /* on its star */
+            if (st / 10 == 5) st = 5000 + game_test_cage(1); /* on its star */
             if (frame % 100 == 0) printf("ota test f %u: %d, stars %d\n", frame, st, game_stars());
         }
 #endif
 #ifdef DINO_TEST
         if (frame >= 150 && frame % 20 == 0) { /* Mario at DinoPackun's tail ball, spinning, until its star is out */
             int st = game_test_dino();
-            if (st >= 600) st = 6000 + game_test_cage(1); /* on its star */
+            if (st / 100 == 6) st = 6000 + game_test_cage(1); /* on its star */
             if (frame % 100 == 0 || st >= 6000) printf("dino test f %u: %d, stars %d\n", frame, st, game_stars());
         }
 #endif

@@ -112,11 +112,15 @@ int blob_add(Scene *s, const u8 *blob)
         }
     }
     const u8 *an = blob_chunk(blob, "ANIM", NULL);
-    if (an && *(const u32 *)an) { /* {u32 n}, n x {char[32] name, u32 raw, u32 zsize, z[zsize], pad 4} */
-        s->nclips = *(const u32 *)an;
+    if (an && *(const u32 *)an) { /* {u32 n}, n x {char[32] name, u32 raw, u32 zsize, z[zsize], pad 4}: added to the
+                                    * clips already there (the scenario's placed classes, then Mario's) */
+        u32 n0 = s->nclips;
+        Clip *old = s->clips;
+        s->nclips += *(const u32 *)an;
         s->clips = mem_alloc(MEM_PLAYER, s->nclips * sizeof(Clip));
+        if (n0) memcpy(s->clips, old, n0 * sizeof(Clip));
         const u8 *q = an + 4;
-        for (u32 i = 0; i < s->nclips; i++) {
+        for (u32 i = n0; i < s->nclips; i++) {
             Clip *c = &s->clips[i];
             c->name = (const char *)q;
             c->raw = *(const u32 *)(q + 32);
@@ -125,6 +129,8 @@ int blob_add(Scene *s, const u8 *blob)
             q += 40 + ((c->zsize + 3) & ~3u);
         }
     }
+    const u8 *ca = blob_chunk(blob, "CANM", NULL);
+    if (ca && *(const u32 *)ca) { s->ncanm = *(const u32 *)ca; s->canm = ca + 4; }
     const u8 *tx = blob_chunk(blob, "TEXT", NULL);
     if (tx) { /* {u32 n, pad}, n x TexEntry, then pixels and CLUTs (offsets from the payload) */
         u32 n = *(const u32 *)tx;

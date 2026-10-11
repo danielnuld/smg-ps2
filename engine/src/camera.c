@@ -394,8 +394,19 @@ void camera_update(const CamTarget *t)
     }
 }
 
+static int ovr;
+static V3 o_eye, o_watch, o_up;
+static float o_fovy;
+void camera_set_override(int on, V3 eye, V3 watch, V3 up, float fovy)
+{
+    ovr = on; o_eye = eye; o_watch = watch; o_up = up; o_fovy = fovy;
+    if (!on) return;
+    f_eye = eye; f_watch = watch; f_up = up; f_fovy = fovy; /* the follow camera starts from there afterwards */
+}
+
 void camera_pose(V3 *eye, V3 *watch, V3 *up, float *fovy)
 {
+    if (ovr) { *eye = o_eye; *watch = o_watch; *up = o_up; *fovy = o_fovy; return; }
     *eye = f_eye; *watch = f_watch; *up = f_up; *fovy = f_fovy;
 }
 
