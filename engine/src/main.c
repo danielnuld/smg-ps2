@@ -776,8 +776,14 @@ int main(void)
 #define TEST_FIRE_KIND 0 /* Kuribo */
 #endif
         { /* Fire Mario by a walker (150), spins every 40 frames */
+#ifdef FIRE_AT_CANDLE
+            if (frame >= 150 && frame < 300 && frame % 30 == 0) printf("fire test f %u: %d\n", frame, game_test_fire(0));
+            if (frame == 300) game_test_fire(2);
+            if (frame >= 320 && frame < 600 && frame % 40 == 0) game_test_fire(1);
+#else
             if (frame == 150) { game_test_fire(0); game_test_enemy(TEST_FIRE_KIND, 0, 3); }
             if (frame > 150 && frame < 600 && frame % 40 == 0) game_test_fire(1);
+#endif
             if (frame >= 150 && frame < 600 && frame % 10 == 0) printf("fire test f %u: balls %d\n", frame, game_fire_state());
         }
 #endif

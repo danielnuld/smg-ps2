@@ -3001,10 +3001,24 @@ int game_test_fire(int phase)
         if (insts[i].candle == 3 && row_turn[insts[i].row] == 3) {
             V3 up = vnorm(v3(insts[i].m[4], insts[i].m[5], insts[i].m[6])), x = vnorm(v3(insts[i].m[0], insts[i].m[1], insts[i].m[2]));
             V3 base = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]);
-            if (phase == 0) { mario->up = up; mario->pos = vadd(base, vmul(x, 400.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+            if (phase == 0) { mario->up = up; mario->pos = vadd(base, vmul(x, 120.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
             mario->face = vmul(x, -1.0f);
+            test_nolost = 0;
+            if (phase == 2) { /* a ball dropped right on its flame */
+                fireballs[0].pos = vadd(base, vmul(up, 220.0f * insts[i].s)); fireballs[0].vel = v3(0, 0, 0);
+                fireballs[0].t = 1; fireballs[0].wall = 0;
+            }
             return fire_time;
         }
+    if (phase == 0) { /* not bound yet: Mario to the first one's row, held while its zone streams in */
+        int t = scene_type(sc, "CandlestandIceVolcano");
+        for (u32 i = 0; t >= 0 && i < sc->nobjs; i++)
+            if (sc->objs[i].type == t && sc->objs[i].sw[SW_A] >= 0) {
+                mario->pos = vadd(row_pos(&sc->objs[i]), vmul(mario->up, 300.0f));
+                mario->hvel = v3(0, 0, 0); mario->vup = 0; test_nolost = 1;
+                return -2;
+            }
+    }
 #endif
     float best = 1e30f; /* facing the nearest live walker */
     for (int i = 0; i < nkuribo; i++) {
@@ -4316,8 +4330,9 @@ static void update_fountains(void)
         memcpy(in->m, in->m0, 64);
         for (int j = 4; j < 7; j++) in->m[j] *= k > 0.01f ? k : 0.01f;
         if (k <= 0) in->m[12] = 1e9f; /* hideModel */
-        if (t >= 120 && t < 200) fx_keep(FX_FOUNTAINBIG_FOUNTAINBIGSIGN, &sc->objs[row], in->m0); /* Sign */
-        if (t >= 230 && t < 410) fx_keep(FX_FOUNTAINBIG_FOUNTAINBIG, (const char *)&sc->objs[row] + 1, in->m0); /* Spout */
+        int near = vlen(vsub(v3(in->m0[12], in->m0[13], in->m0[14]), cam_pos)) < 3000.0f; /* effects for the near ones only */
+        if (near && t >= 120 && t < 200) fx_keep(FX_FOUNTAINBIG_FOUNTAINBIGSIGN, &sc->objs[row], in->m0); /* Sign */
+        if (near && t >= 230 && t < 410) fx_keep(FX_FOUNTAINBIG_FOUNTAINBIG, (const char *)&sc->objs[row] + 1, in->m0); /* Spout */
         if (row_turn[row] && mario->grounded) row_turn[row] = 0;
         if (t < 230 || t >= 410 || row_turn[row]) continue;
         V3 up = vnorm(v3(in->m0[4], in->m0[5], in->m0[6])), base = v3(in->m0[12], in->m0[13], in->m0[14]);
@@ -4345,7 +4360,7 @@ static void update_candles(void)
             if (row_turn[row] == 4) {
                 fx_keep(FX_CANDLESTANDICEVOLCANO_FIRE, r, in->m);
                 if (++row_step[row] >= 60) { row_turn[row] = 0; if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
-                    printf("candlestand row %d lit" "''' + NL + r'''", row); }
+                    printf("candlestand row %d lit\n", row); }
             } else if (row_turn[row] == 5 && ++row_step[row] >= 30) row_turn[row] = 0;
             continue;
         }

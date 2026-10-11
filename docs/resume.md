@@ -99,9 +99,10 @@ Last updated 2026-10-09. Detail and numbers: `docs/phase2-report.md`; tasks: `op
   - PowerStarAppearPoint (kept as a logic row): an event star of a group with appear points comes out at the one
     nearest its declarer (ReverseKingdom 2: the NoteFairy's star);
   - PhantomCandlestand / TeresaMansionCandlestand (burning, their Fire effects kept; the flame burns Mario, a spin
-    puts it out: its coin or star piece, it stays out);
+    puts it out: its coin or star piece, it stays out); CandlestandIceVolcano (unlit with a SW_A until a fire ball
+    lights it, then its SW_A; a spin makes it flicker; `XF=-DFIRE_AT_CANDLE` fire test);
   - FountainBig (a water column on its 420-frame cycle, grown and shrunk; Mario in it thrown 44 up, once a landing;
-    no effects yet);
+    its sign / spout effects within 3000 of the camera: all of HoneyBee's at once made 81 slow frames);
   - SimpleBreakableObj kinds in breakable(): IcicleRock, SandUpDownTowerBreakableWallA / B (a spin),
     TeresaMansionHoleCover (a hip drop); arg3 -1 coins / 3 star pieces by arg6 (`XF=-DBOX_ONLY_NEW` box test);
   - Fire Mario (MorphItemNeoFire: 1200 frames; each spin throws one of 3 fire balls along front + up at 30, gravity
