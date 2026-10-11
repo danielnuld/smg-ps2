@@ -268,17 +268,26 @@ static struct {
     Anim *anim;
 } dino = {.row = -1};
 static const Model *m_dino, *m_dball, *m_degg, *m_deggbrk;
-/* OtaKing (Petari Boss/OtaKing.cpp, Enemy/CocoNutBall.cpp): one per scene */
+/* OtaKing (Petari Boss/OtaKing.cpp, Enemy/CocoNutBall.cpp, Enemy/FireBall.cpp, Enemy/FireBubble.cpp): one per scene */
 #define OTA_BALLS 3
+#define OTA_FIRES 6
+#define OTA_BUBBLES 6
 static struct {
-    int row, phase, t, hits, throws; /* phase: 0 wait (SW_A), 6 appear, 1 wait, 2 throw, 3 damage, 4 down, 5 gone */
-    int hitback;                     /* frames left of its HitBack (it sent a coconut back) */
-    Anim *anim, *foot[2];            /* its body, its feet (OtaKingFoot, clips ..L / ..R) */
-    V3 pos, up, f;
-    struct { V3 pos, vel, grav; int state, t, rally; } ball[OTA_BALLS]; /* state: 0 none, 1 Throw, 2 HitBackToHost,
-                                                                         * 3 HitBackToPlayer, 4 Rebound */
+    int row, nrv, t, hits, ec;       /* its nerve (OTA_*), the nerve's frames, mHits, _EC (coconuts thrown) */
+    float yaw, turn;                 /* mRotation.y from its placed front (degrees), mTurnSpeed */
+    float c0, c4;                    /* the coconuts' throw height range (arg0 _C0 450, arg2 _C4 0) */
+    Anim *anim, *foot[2];            /* its body, its front feet (OtaKingFoot: mFeet[0] the R clips, [1] the L ones) */
+    V3 pos, up, f, f0;               /* f: its front now, f0: its placed front */
+    struct { V3 pos, vel, grav, up; int state, t, rally, alt; } ball[OTA_BALLS]; /* CocoNutBall: 0 dead, 1 Throw, 2
+                                      * HitBackToHost, 3 HitBackToPlayer, 4 Rebound; rally _9C, alt _BD, grav _90 */
+    struct { V3 pos, vel, up; int alive; } fire[OTA_FIRES];                     /* FireBall (Throw) */
+    struct { V3 pos, vel, front; int state, t, act, chase; } bub[OTA_BUBBLES];  /* FireBubble: 0 dead, 1 Appear, 2
+                                      * Wait, 3 Chase, 4 Down */
 } ota = {.row = -1};
-static const Model *m_ota, *m_otafoot, *m_coco;
+enum { OTA_WAITONSWITCH, OTA_APPEARDEMO, OTA_WAIT, OTA_THROWCOCOWAIT, OTA_THROWCOCO, OTA_THROWFIREWAIT, OTA_THROWFIRE,
+       OTA_DAMAGE, OTA_POWERUP, OTA_DOWN, OTA_DOWNDEMO, OTA_APPEARSTAR, OTA_DEAD, OTA_HITBACKSTART, OTA_HITBACK,
+       OTA_NEARATTACK, OTA_BUBBLEATTACK };
+static const Model *m_ota, *m_otafoot, *m_coco, *m_fireball2, *m_firebubble;
 #define MAX_BUBBLES 8 /* AirBubbleHolder's free bubbles (update_bubbles) */
 static struct { V3 pos, vel; int t, life; } bubbles[MAX_BUBBLES];
 static int time_limit, time_left; /* a Red / Black comet's limit and frames left (CometEventExecutorTimeLimit), 0 none */
@@ -910,7 +919,9 @@ void game_init(const Scene *s, const unsigned char *blob)
         if (strcmp(s->types + 32 * s->objs[i].type, "OtaKing") == 0) {
             V3 x, z;
             row_axes(&s->objs[i], &x, &z);
-            ota.row = i; ota.pos = row_pos(&s->objs[i]); ota.up = up_at(ota.pos, v3(0, 1, 0)); ota.f = vnorm(vtangent(z, ota.up));
+            ota.row = i; ota.pos = row_pos(&s->objs[i]); ota.up = up_at(ota.pos, v3(0, 1, 0)); ota.f = ota.f0 = vnorm(vtangent(z, ota.up));
+            ota.c0 = s->objs[i].arg[0] >= 0 ? (float)s->objs[i].arg[0] : 450.0f; /* CocoNutBall _C0 / _C4 from arg0 / arg2 */
+            ota.c4 = s->objs[i].arg[2] >= 0 ? (float)s->objs[i].arg[2] : 0.0f;
             for (int k = 0; k < 3; k++) {
                 Anim *an = mem_alloc(MEM_PLAYER, sizeof(Anim));
                 memset(an, 0, sizeof(Anim));
@@ -2262,6 +2273,7 @@ void game_rebind(void)
     m_marioball = scene_model(s, "MarioFireBall");
     m_bubble = scene_model(s, "AirBubble");
     m_ota = scene_model(s, "OtaKing"); m_otafoot = scene_model(s, "OtaKingFoot"); m_coco = scene_model(s, "CocoNut");
+    m_fireball2 = scene_model(s, "FireBall"); m_firebubble = scene_model(s, "FireBubble");
     m_dino = scene_model(s, "DinoPackun"); m_dball = scene_model(s, "DinoPackunTailBall"); m_degg = scene_model(s, "DinoPackunEggShell");
     m_deggbrk = scene_model(s, "DinoPackunEggShellBreak");
     m_unizo[0] = scene_model(s, "Unizo"); m_unizo[1] = scene_model(s, "UnizoLand"); m_unizo[2] = scene_model(s, "UnizoShoal");
@@ -3259,13 +3271,21 @@ int game_test_purple(void)
 int game_test_ota(void)
 {
     if (ota.row < 0) return -1;
-    V3 at = vadd(ota.pos, vmul(ota.f, ota.phase ? 1500.0f : 300.0f));
-    if (ota.phase == 0) { mario->pos = vadd(at, vmul(ota.up, 200.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+    V3 at = vadd(ota.pos, vmul(ota.f0, 1800.0f)); /* on its bath's rim (1600 - 2000 out, about its base's height) */
+    if (ota.nrv == OTA_WAITONSWITCH) { mario->pos = vadd(at, vmul(ota.up, 300.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+    for (int b = 0; b < OTA_BALLS; b++) /* a ball coming back: he steps onto its line (sideways, as a player would) */
+        if (ota.ball[b].state == 3) {
+            V3 d = vnorm(ota.ball[b].vel), rel = vsub(mario->pos, ota.ball[b].pos);
+            V3 on = vadd(ota.ball[b].pos, vmul(d, vdot(rel, d)));
+            V3 step = vtangent(vsub(on, mario->pos), mario->up);
+            if (vdot(rel, d) > 0 && vlen(step) < 700.0f) mario->pos = vadd(mario->pos, step);
+        }
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     for (int b = 0; b < OTA_BALLS; b++)
-        if ((ota.ball[b].state == 1 || ota.ball[b].state == 3) && vlen(vsub(ota.ball[b].pos, c)) < 300.0f) mario->spin_timer = SPIN_TIME;
-    mario->hurt_timer = 0;
-    return ota.phase * 10 + ota.hits;
+        if ((ota.ball[b].state == 1 || ota.ball[b].state == 3) && vlen(vsub(ota.ball[b].pos, c)) < 380.0f) mario->spin_timer = SPIN_TIME;
+    mario->hurt_timer = 8; /* the test watches the rallies: fire balls and bubbles do not wear him down */
+    { static int f; if ((++f % 15) == 0) { V3 rr = vsub(mario->pos, ota.pos); printf("DBG mario h %d r %d grounded %d nrv %d\n", (int)vdot(rr, ota.up), (int)vlen(vtangent(rr, ota.up)), mario->grounded, ota.nrv); for (int b = 0; b < OTA_BALLS; b++) if (ota.ball[b].state) printf("DBG  ball %d st %d d %d h %d\n", b, ota.ball[b].state, (int)vlen(vsub(ota.ball[b].pos, vadd(mario->pos, vmul(mario->up, HIT_BODY_H)))), (int)vdot(vsub(ota.ball[b].pos, mario->pos), mario->up)); } }
+    return (ota.nrv == OTA_WAITONSWITCH ? 0 : ota.nrv >= OTA_APPEARSTAR && ota.nrv <= OTA_DEAD ? 5 : 1) * 10 + ota.hits;
 }
 
 /* Test builds: Mario 600 in front of the first hungry TicoFat with star pieces, a shot at it (pieces it ate x 1000 +
@@ -5250,124 +5270,342 @@ static void update_dino(void)
 }
 
 
-/* OtaKing (Lv1): SW_A (a TimerSwitch after the SwitchCylinder round its bath) brings it up. Facing Mario (1 degree a
- * frame) it throws a coconut at him every cWaitFrame 75 (45 after a throw) while he is within cThrowDistance 4000
- * (none near the way already): 15 a frame at him, a few degrees aside. A touch hurts Mario and the ball rebounds; a
- * spin within 400 sends it back (HitBackToHost: at its body, 42 a frame flat, gravity 2.2 x 2), its rally count up.
- * At its body (400): a rally count over its hits hurts it (cHP 3), else it hits it back at Mario (15 + 3 x rally).
- * After the third hit it goes down (cDownDemoFrame 300) and its power star comes out (the row dies: star_wait). A
- * ball dies on the ground, a wall, or 5000 off. ponytail: no fire balls, bubbles, near attack, magma, long feet,
- * freezing (the pointer), demos (60 frames), star pieces; the body only pushes Mario off */
-static void ota_pose(void);
-static void update_ota(void)
+/* OtaKing (Lv1), after Petari OtaKing.cpp: WaitOnSwitch until SW_A (startAppearDemo), AppearDemo (its Appear clip, the
+ * "Appear" camera, Mario hidden), then ThrowFireBallWait. Wait (cWaitFrame 75) / ThrowCocoNutWait (45): a coconut when
+ * isValidThrowCocoNut (one free, Mario within cThrowDistance 4000, none already nearer than him + 500), at twice the
+ * wait fire balls when isValidThrowFireBall (three free, within 4000). ThrowCocoNut: Attack, the coconut at
+ * cThrowCocoNutStep 70; ThrowFireBall: FireAttack, three at cThrowFireBallStep 94 (15 a frame, 0 / -30 / +30 degrees).
+ * Coconut rallies (CocoNutBall): a spin within 400 sends it back at its body; one with a rally count up to its hits
+ * makes it HitBack (the ball back at Mario at 15 + 3 x rally), one over them damages it (cHP 3: Damage, PowerUp at its
+ * last point, Down); the face sensor first makes it HitBackStart. A ball's end after a rally (RUSH_END) sends it on to
+ * BubbleAttack / fire balls. A touch in the attacking nerves is a NearAttack (EnemyAttackMaximum). BubbleAttack (one
+ * point left): six FireBubbles at cBubbleAppearStep 100. Down: DownDemo (300, the "Down" camera, its star asked at its
+ * start), AppearStar (gone), Dead. It turns to Mario at cTurnSpeedAccel 0.003 up to cTurnSpeedMax 1 a frame (dirToPlayer).
+ * ponytail: no OtaKingMagma (the bath's ripples), no long feet (OtaKingLongFoot), no star pointer (coconut freeze, fire
+ * reflect, bubble reflect), no star pieces (appearStarPiece), no crown material hiding (PowerUp step 83), no effects */
+static int mario_hidden; /* MR::hidePlayer in a demo */
+static V3 ota_world(const float m[16], V3 l) { return v3(m[12] + m[0] * l.x + m[4] * l.y + m[8] * l.z, m[13] + m[1] * l.x + m[5] * l.y + m[9] * l.z, m[14] + m[2] * l.x + m[6] * l.y + m[10] * l.z); }
+/* a joint's point (its world matrix x the local offset), else the model's base point + offset when not streamed in */
+static V3 ota_joint(int j, V3 off)
 {
-    if (ota.row < 0 || ota.phase == 5 || !row_shown(ota.row)) return;
-    const Row *r = &sc->objs[ota.row];
-    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), up = ota.up;
-    V3 body = vadd(ota.pos, vmul(up, 150.0f)), hand = vadd(ota.pos, vadd(vmul(up, 500.0f), vmul(ota.f, 300.0f)));
-    float dm = vlen(vsub(mario->pos, ota.pos));
-    ota.t++;
-    if (ota.phase == 0) {
-        if (r->sw[SW_A] < 0 || sw_on(r, SW_A)) { ota.phase = 6; ota.t = 0; printf("ota king: appears" "\n"); }
-        return;
+    float m[16];
+    basis_matrix(m, ota.pos, ota.up, ota.f, 0);
+    if (ota.anim && m_ota && ota.anim->skin == m_ota->skin && (u32)j < ota.anim->skin->njoints) {
+        float jm[16];
+        mat_mul(jm, m, ota.anim->world[j]);
+        return ota_world(jm, off);
     }
-    if (ota.hitback) ota.hitback--;
-    if (ota.phase == 6) { /* AppearDemo (its Appear clip) */
-        if (ota.t >= 424) { ota.phase = 1; ota.t = 0; }
-    } else if (ota.phase == 1 || ota.phase == 2) { /* turn to Mario */
-        V3 to = vtangent(vsub(mario->pos, ota.pos), up);
-        if (vlen(to) > 1e-3f) {
-            V3 side = vcross(up, ota.f);
-            float a = atan2f(vdot(to, side), vdot(to, ota.f)), mx = 0.0174533f;
-            a = a > mx ? mx : a < -mx ? -mx : a;
-            ota.f = vnorm(vadd(vmul(ota.f, cosf(a)), vmul(side, sinf(a))));
-        }
-        int free_ball = -1, near = 0;
-        for (int b = 0; b < OTA_BALLS; b++) {
-            if (!ota.ball[b].state) free_ball = free_ball < 0 ? b : free_ball;
-            else if (vlen(vsub(ota.ball[b].pos, ota.pos)) < dm + 500.0f) near = 1; /* cValidThrowCocoNutDistance */
-        }
-        if (ota.phase == 1 && ota.t >= (ota.throws ? 45 : 75) && free_ball >= 0 && !near && dm < 4000.0f) { ota.phase = 2; ota.t = 0; }
-        if (ota.phase == 2 && ota.t == 70 && free_ball >= 0) { /* cThrowCocoNutStep: appearAndThrow */
-            float aside = (ota.throws % 2 == ota.hits % 2 ? 1.0f : -1.0f) * 0.06f;
-            V3 to2 = vsub(c, hand), side = vnorm(vcross(up, vnorm(to2)));
-            ota.ball[free_ball].pos = hand; ota.ball[free_ball].state = 1; ota.ball[free_ball].t = 0; ota.ball[free_ball].rally = 0;
-            ota.ball[free_ball].vel = vmul(vnorm(vadd(vnorm(to2), vmul(side, aside))), 15.0f);
-            ota.throws++;
-            printf("ota king: coconut thrown" "\n");
-        }
-        if (ota.phase == 2 && ota.t >= 171) { ota.phase = 1; ota.t = 0; } /* its Attack clip */
-    } else if (ota.phase == 3) { /* Damage (179) / PowerUp: CrownDamage (256) */
-        if (ota.t >= (ota.hits == 2 ? 256 : 179)) { ota.phase = 1; ota.t = 0; }
-    } else if (ota.phase == 4) {
-        if (ota.t >= 204) { /* Down, then DownDemo: requestAppearPowerStar */
-            ota.phase = 5; row_kill(ota.row);
-            printf("ota king: down, its star" "\n");
-            return;
-        }
+    return ota_world(m, vadd(off, v3(0, 600.0f, 0)));
+}
+static float ota_rnd(float a, float b) { return a + (b - a) * (float)(rand() & 0x7FFF) / 32767.0f; }
+static V3 ota_rot(V3 v, V3 axis, float deg) /* v about axis by deg */
+{
+    float a = deg * 0.0174533f, c = cosf(a), s = sinf(a);
+    return vadd(vadd(vmul(v, c), vmul(vcross(axis, v), s)), vmul(axis, vdot(axis, v) * (1 - c)));
+}
+static int ota_dead_balls(void) { int n = 0; for (int i = 0; i < OTA_BALLS; i++) n += !ota.ball[i].state; return n; }
+static int ota_dead_fires(void) { int n = 0; for (int i = 0; i < OTA_FIRES; i++) n += !ota.fire[i].alive; return n; }
+static int ota_dead_bubbles(void) { int n = 0; for (int i = 0; i < OTA_BUBBLES; i++) n += !ota.bub[i].state; return n; }
+static int ota_valid_coco(void)
+{
+    if (!ota_dead_balls()) return 0;
+    float d = vlen(vsub(mario->pos, ota.pos));
+    if (d > 4000.0f) return 0;
+    for (int i = 0; i < OTA_BALLS; i++)
+        if (ota.ball[i].state && vlen(vsub(ota.ball[i].pos, ota.pos)) < d + 500.0f) return 0;
+    return 1;
+}
+static int ota_valid_fire(void) { return ota_dead_fires() >= 3 && vlen(vsub(mario->pos, ota.pos)) < 4000.0f; }
+static int ota_valid_bubble(void) { return ota_dead_bubbles() == OTA_BUBBLES && ota.hits + 1 >= 3; }
+static int ota_damage_nrv(void) { return ota.nrv == OTA_DAMAGE || ota.nrv == OTA_POWERUP || ota.nrv == OTA_DOWN; }
+static void ota_set(int n) { ota.nrv = n; ota.t = 0; }
+/* the angle (degrees) of Mario about its up from its placed front, nearest its yaw (repeat(.., rotY - 180, 360)) */
+static float ota_player_angle(void)
+{
+    V3 to = vtangent(vsub(mario->pos, ota.pos), ota.up), s0 = vcross(ota.up, ota.f0);
+    float a = atan2f(vdot(to, s0), vdot(to, ota.f0)) * 57.29578f;
+    while (a < ota.yaw - 180.0f) a += 360.0f;
+    while (a >= ota.yaw + 180.0f) a -= 360.0f;
+    return a;
+}
+
+static void ota_damage(void) /* OtaKing::damage */
+{
+    if (ota_damage_nrv()) return;
+    ota.hits++;
+    if (ota.hits < 3) ota_set(ota.hits + 1 >= 3 ? OTA_POWERUP : OTA_DAMAGE);
+    else ota_set(OTA_DOWN);
+    printf("ota king: hit %d" "\n", ota.hits);
+}
+
+/* CocoNutBall::setVelocityToPlayer(speed, angle) with _BE: at Mario turned `deg` about its up, the target height kept
+ * between _C4 and _C0 over its host and raised over the first clear line (getFirstPolyOnLineToMap) */
+static void ota_ball_aim(int b, float speed, float deg)
+{
+    typeof(&ota.ball[0]) k = &ota.ball[b];
+    V3 tgt = vadd(k->pos, ota_rot(vsub(mario->pos, k->pos), k->up, deg));
+    float hy = vdot(ota.pos, k->up), ty = vdot(tgt, k->up), miny = ota.c4 + hy, maxy = ota.c0 + hy;
+    if (ty < miny) { tgt = vadd(tgt, vmul(k->up, miny - ty)); ty = miny; }
+    int clear = 0;
+    while (ty < maxy - 120.0f) {
+        V3 seg = vmul(vsub(tgt, k->pos), 1.5f);
+        Hit h[1];
+        int hit = 0;
+        float l = vlen(seg);
+        for (float s = 60.0f; s < l && !hit; s += 60.0f) hit = kcl_query(vadd(k->pos, vmul(seg, s / l)), 10.0f, h, 1) > 0;
+        if (!hit) { clear = 1; tgt = vadd(tgt, vmul(k->up, 120.0f)); break; }
+        tgt = vadd(tgt, vmul(k->up, 60.0f)); ty += 60.0f;
     }
-    float db = vlen(vsub(c, body));
-    if (db < 400.0f + HIT_BODY_R) { /* sendMsgPush */
-        V3 out = vtangent(vsub(c, body), up);
-        if (vlen(out) > 1e-3f) mario->pos = vadd(mario->pos, vmul(vnorm(out), 400.0f + HIT_BODY_R - db));
-    }
+    if (!clear) tgt = vadd(tgt, vmul(k->up, maxy - vdot(tgt, k->up)));
+    k->vel = vmul(vnorm(vsub(tgt, k->pos)), speed);
+}
+
+static void ota_ball_kill(int b) /* CocoNutBall::kill: a rally's end tells its host (ACTMES_RUSH_END) */
+{
+    int rally = ota.ball[b].rally;
+    ota.ball[b].state = 0;
+    if (rally <= 0 || ota_damage_nrv()) return;
+    if (ota.nrv == OTA_WAIT || ota.nrv == OTA_THROWCOCOWAIT || ota.nrv == OTA_HITBACKSTART)
+        ota_set(ota_valid_bubble() ? OTA_BUBBLEATTACK : ota.hits > 0 && ota_valid_fire() ? OTA_THROWFIRE : OTA_THROWFIREWAIT);
+    else if (ota.nrv == OTA_THROWCOCO || ota.nrv == OTA_HITBACK)
+        ota.ec = 2;
+}
+
+static void update_ota_balls(V3 c, V3 body, V3 face)
+{
     for (int b = 0; b < OTA_BALLS; b++) {
         typeof(&ota.ball[0]) k = &ota.ball[b];
         if (!k->state) continue;
         k->t++;
-        if (k->state == 2) k->vel = vadd(k->vel, k->grav);
-        else if (k->state == 4) k->vel = vadd(vmul(k->vel, 0.98f), vmul(up_at(k->pos, up), -1.0f));
-        V3 p = vadd(k->pos, k->vel), gn, wn;
-        int wall = 0, hit = 0;
-        if (k->state != 2) { /* tryToKill: binded to the map */
-            V3 q = p;
-            hit = collide_n(&q, up_at(p, up), 60.0f, &gn, &wn, &wall) || wall;
-        }
-        k->pos = p;
+        if (k->state == 2 && k->t >= 1) k->vel = vadd(k->vel, k->grav); /* exeHitBackToHost: + _90 */
+        if (k->state == 4) k->vel = vadd(k->vel, vmul(k->up, -2.0f)); /* exeRebound: twice the gravity */
+        k->pos = vadd(k->pos, k->vel);
+        Hit h[1];
+        int bound = k->state != 2 && kcl_query(k->pos, 60.0f, h, 1) > 0; /* tryToKill: binded (offBind going home) */
+        float far = k->state == 1 || k->state == 3 ? vlen(vsub(k->pos, ota.pos)) : vlen(vsub(k->pos, mario->pos));
+        if (bound || far > 5000.0f) { printf("DBG ball %d gone state %d bound %d far %d t %d\n", b, k->state, bound, (int)far, k->t); ota_ball_kill(b); continue; }
+        if ((k->t % 8) == 0) printf("DBG ball %d t %d d %d h %d\n", b, k->t, (int)vlen(vsub(c, k->pos)), (int)vdot(vsub(k->pos, mario->pos), mario->up));
         float dc = vlen(vsub(c, k->pos));
-        if ((k->state == 1 || k->state == 3 || k->state == 4) && mario->spin_timer > 0 && dc < 400.0f && k->t > 4) { /* HitBackToHost */
+        /* isValidReceivePunch: Throw / HitBackToPlayer / Rebound within 400 of his centre: HitBackToHost */
+        if ((k->state == 1 || k->state == 3 || k->state == 4) && mario->spin_timer > 0 && dc < 400.0f && k->t > 1) {
             k->rally++;
-            V3 dst = vadd(body, vmul(up, 100.0f)), d = vsub(dst, k->pos), h = vtangent(d, up);
-            float n = vlen(h) / 42.0f;
-            if (n < 1.0f) n = 1.0f;
-            V3 g = vmul(up, -4.4f);
-            k->grav = g;
-            k->vel = vadd(vmul(vnorm(h), 42.0f), vmul(up, (vdot(d, up) + 2.2f * n * n) / n));
+            V3 hb = vnorm(vtangent(vsub(ota.pos, mario->pos), k->up)), kb = vnorm(vtangent(vsub(k->pos, mario->pos), k->up));
+            int right = vdot(k->up, vcross(hb, kb)) > 0.0f, front = vdot(vmul(hb, -1.0f), kb) < -0.95f;
+            V3 dst = vadd(body, vmul(k->up, 100.0f));
+            if (!front) dst = vadd(dst, vmul(vnorm(vcross(k->up, hb)), right ? 150.0f : -150.0f)); /* calcHitBackDstPos */
+            V3 dir = vsub(dst, k->pos), h = vtangent(dir, k->up);
+            float dv = vdot(dir, k->up), f1 = vlen(h) / 42.0f;
+            if (f1 < 1.0f) f1 = 1.0f;
+            V3 cr = vnorm(vcross(k->up, vnorm(h)));
+            k->grav = vmul(k->up, -2.2f);
+            k->vel = vadd(vmul(vnorm(h), 42.0f), vmul(k->up, dv / f1 + 1.1f * f1)); /* calcHitBackVelocitAndGravity */
+            if (!front) {
+                float sf = right ? 1.2f : -1.2f;
+                k->vel = vadd(k->vel, vmul(cr, sf * f1 / 2.0f));
+                k->grav = vsub(k->grav, vmul(cr, sf));
+            }
             k->state = 2; k->t = 0;
             printf("ota king: coconut hit back (rally %d)" "\n", k->rally);
             continue;
         }
-        if ((k->state == 1 || k->state == 3) && dc < 60.0f + HIT_BODY_R) { /* ENEMY_ATTACK_FLIP_VERYWEAK, Rebound */
-            hurt_mario(k->pos, 10.0f);
-            k->state = 4; k->t = 0; k->vel = vadd(vmul(vnorm(vsub(k->pos, c)), 5.0f), vmul(up, 15.0f));
+        if ((k->state == 1 || k->state == 3) && dc < 40.0f + HIT_BODY_R) { /* FLIP_VERYWEAK (no damage), Rebound */
+            V3 away = vnorm(vtangent(vsub(k->pos, mario->pos), k->up));
+            k->vel = vadd(vmul(k->up, 15.0f), vmul(away, 5.0f)); /* cReboundVelocity (0, 15, 5) */
+            k->state = 4; k->t = 0;
             continue;
         }
-        if (k->state == 2 && vlen(vsub(k->pos, body)) < 400.0f + 60.0f) { /* receiveMsgEnemyAttack on its body */
-            if (k->rally <= ota.hits && ota.phase != 3 && ota.phase != 4) { /* hitBackToPlayer */
-                V3 to = vsub(c, k->pos);
-                k->vel = vmul(vnorm(to), 15.0f + 3.0f * k->rally);
-                k->state = 3; k->t = 0;
-                ota.hitback = 103;
-                printf("ota king: hits it back" "\n");
-            } else {
-                k->state = 0;
-                if (ota.phase != 3 && ota.phase != 4) {
-                    ota.hits++;
-                    ota.phase = ota.hits >= 3 ? 4 : 3; ota.t = 0;
-                    printf("ota king: hit %d" "\n", ota.hits);
+        if (k->state == 2) { /* its host's sensors: face (HitBackStart), body (HitBack or damage) */
+            int b1 = k->rally <= ota.hits;
+            if (vlen(vsub(k->pos, body)) < 400.0f + 40.0f) {
+                if (b1) {
+                    if (ota.nrv != OTA_HITBACK) ota_set(OTA_HITBACK);
+                    float r = ota_rnd(12.5f, 17.5f); /* hitBackToPlayer */
+                    if (k->alt) { r = -r; k->alt = 0; } else k->alt = 1;
+                    ota_ball_aim(b, 3.0f * k->rally + 15.0f, r);
+                    k->state = 3; k->t = 0;
+                    printf("ota king: hits it back" "\n");
+                } else {
+                    ota_damage();
+                    ota_ball_kill(b);
                 }
-            }
-            continue;
+            } else if (vlen(vsub(k->pos, face)) < 400.0f + 40.0f && b1 && ota.nrv != OTA_HITBACKSTART && ota.nrv != OTA_HITBACK)
+                ota_set(OTA_HITBACKSTART);
         }
-        if (hit || vlen(vsub(k->pos, ota.pos)) > 5000.0f || k->t > 600 || (k->state == 4 && k->t > 120)) k->state = 0;
     }
-    if (ota.phase == 4) for (int b = 0; b < OTA_BALLS; b++) ota.ball[b].state = 0;
+}
+
+static void update_ota_fire(V3 c)
+{
+    for (int i = 0; i < OTA_FIRES; i++) { /* FireBall::exeThrow: straight on, gone on the map or 5000 off; a touch burns */
+        if (!ota.fire[i].alive) continue;
+        ota.fire[i].pos = vadd(ota.fire[i].pos, ota.fire[i].vel);
+        Hit h[1];
+        if (kcl_query(ota.fire[i].pos, 60.0f, h, 1) > 0 || vlen(vsub(ota.fire[i].pos, mario->pos)) > 5000.0f) { ota.fire[i].alive = 0; continue; }
+        if (vlen(vsub(c, ota.fire[i].pos)) < 40.0f + HIT_BODY_R) { hurt_mario(ota.fire[i].pos, 20.0f); ota.fire[i].alive = 0; }
+    }
+    for (int i = 0; i < OTA_BUBBLES; i++) { /* FireBubble: Appear (gravity 0.75), Wait, Chase (4, gravity 2), Down */
+        typeof(&ota.bub[0]) q = &ota.bub[i];
+        if (!q->state) continue;
+        q->t++;
+        V3 up = up_at(q->pos, ota.up);
+        if (q->state == 1) q->vel = vadd(q->vel, vmul(up, -0.75f));
+        else if (q->state == 3 || q->state == 4) {
+            V3 to = vtangent(vsub(vadd(mario->pos, vmul(mario->up, 40.0f)), q->pos), up);
+            if (vlen(to) > 1e-3f) { /* updateChaseFrontVec: 1 degree a frame */
+                V3 s = vcross(up, q->front);
+                float a = atan2f(vdot(vnorm(to), s), vdot(vnorm(to), q->front)), mx = 0.0174533f;
+                a = a > mx ? mx : a < -mx ? -mx : a;
+                q->front = vnorm(vadd(vmul(q->front, cosf(a)), vmul(s, sinf(a))));
+            }
+            q->vel = vadd(vmul(q->front, 4.0f), vmul(up, vdot(q->vel, up) - 2.0f));
+        } else q->vel = v3(0, 0, 0);
+        V3 cc = vadd(vadd(q->pos, q->vel), vmul(up, 40.0f)), gn, wn;
+        int wall = 0, ground = collide_n(&cc, up, 40.0f, &gn, &wn, &wall);
+        q->pos = vsub(cc, vmul(up, 40.0f));
+        if (ground) q->vel = vtangent(q->vel, up);
+        if (q->state == 1 && ground && q->t > 2) { q->state = 2; q->t = 0; q->act = (rand() % 121) + 600; }
+        else if (q->state == 2) {
+            if (q->t > 30 && vlen(vsub(q->pos, mario->pos)) < 2000.0f) { q->state = 3; q->t = 0; q->act = (rand() % 121) + 300; q->chase = 0; }
+            else if (q->t >= q->act) { q->state = 4; q->t = 0; }
+        } else if (q->state == 3 && ++q->chase > q->act) { q->state = 4; q->t = 0; }
+        else if (q->state == 4 && q->t >= 60) { q->state = 0; continue; } /* its Down clip, then killOrWaitToApppear */
+        if (q->state != 1 && q->state != 4 && vlen(vsub(c, q->pos)) < 30.0f + HIT_BODY_R) { hurt_mario(q->pos, 20.0f); q->state = 0; }
+    }
+}
+
+static void ota_pose(void);
+static void update_ota(void)
+{
+    if (ota.row < 0 || ota.nrv == OTA_DEAD) return;
+    const Row *r = &sc->objs[ota.row];
+    if (ota.nrv == OTA_WAITONSWITCH) {
+        if (!row_shown(ota.row) || !(r->sw[SW_A] < 0 || sw_on(r, SW_A))) return;
+        ota_set(OTA_APPEARDEMO); ota.yaw = 30.0f; ota.turn = 0; /* cAppearDemoRotate */
+        printf("ota king: appears" "\n");
+    }
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    ota.t++;
+    /* control: dirToPlayer, except in the demos and Down */
+    if (ota.nrv == OTA_DOWN || ota.nrv == OTA_APPEARSTAR || ota.nrv == OTA_APPEARDEMO || ota.nrv == OTA_DOWNDEMO) ota.turn = 0;
+    else {
+        float a = ota_player_angle(), d = a - ota.yaw;
+        if ((d > 0 && ota.turn < d) || (d < 0 && d < ota.turn)) {
+            if (d * ota.turn < 0) ota.turn = 0;
+            ota.yaw += ota.turn;
+            ota.turn = d > 0 ? fminf(ota.turn + 0.003f, 1.0f) : fmaxf(ota.turn - 0.003f, -1.0f);
+        } else { ota.yaw = a; ota.turn = 0; }
+    }
+    ota.f = vnorm(ota_rot(ota.f0, ota.up, ota.yaw));
+    V3 body = vadd(ota.pos, vmul(ota.up, 150.0f)), face = ota_joint(4, v3(0, 0, 0)); /* "body" cSensorOffset, "face" at Face */
+    float throw_ang = ota.yaw - ota_player_angle();
+    switch (ota.nrv) {
+    case OTA_APPEARDEMO:
+        if (ota.t >= 424) { ota.yaw = ota_player_angle(); ota_set(OTA_THROWFIREWAIT); }
+        break;
+    case OTA_WAIT: case OTA_THROWCOCOWAIT: { /* tryThrowCocoNutOrFireBallIfWait */
+        int w = ota.nrv == OTA_WAIT ? 75 : 45;
+        if (ota.t > w && ota_valid_coco()) { if (ota.nrv == OTA_WAIT) ota.ec = 0; ota_set(OTA_THROWCOCO); }
+        else if (ota.t > 2 * w && ota_valid_fire()) ota_set(OTA_THROWFIRE);
+        break;
+    }
+    case OTA_THROWCOCO:
+        if (ota.t == 70) { /* throwCocoNut: from mThrowPos (Lip, -50 0 0) */
+            for (int b = 0; b < OTA_BALLS; b++) if (!ota.ball[b].state) {
+                typeof(&ota.ball[0]) k = &ota.ball[b];
+                k->pos = ota_joint(11, v3(-50.0f, 0, 0)); k->up = up_at(k->pos, ota.up);
+                k->alt = rand() & 1; k->rally = 0; k->t = 0; k->state = 1;
+                float rnd = ota_rnd(2.5f, 5.0f);
+                ota_ball_aim(b, 15.0f, throw_ang + (ota.ec % 2 == ota.hits % 2 ? rnd : -rnd));
+                ota.ec++;
+                printf("ota king: coconut thrown" "\n");
+                break;
+            }
+        }
+        if (ota.t >= 171) {
+            if (ota_valid_bubble()) ota_set(OTA_BUBBLEATTACK);
+            else if (ota.hits > 0) ota_set(ota_valid_fire() ? OTA_THROWFIRE : OTA_THROWFIREWAIT);
+            else ota_set(ota.ec >= 2 ? OTA_THROWFIREWAIT : OTA_THROWCOCOWAIT);
+        }
+        break;
+    case OTA_THROWFIREWAIT:
+        if (ota.t > 60 && ota_valid_fire()) ota_set(OTA_THROWFIRE);
+        break;
+    case OTA_THROWFIRE:
+        if (ota.t == 94) { /* throwFireBall: three, 0 / -30 / +30 */
+            V3 tp = ota_joint(11, v3(-50.0f, 0, 0));
+            for (int i = 0, n = 0; i < OTA_FIRES && n < 3; i++) if (!ota.fire[i].alive) {
+                float off = n == 0 ? 0.0f : (n % 2 == 0 ? 30.0f : -30.0f) * ((n + 1) / 2);
+                V3 up = up_at(tp, ota.up);
+                ota.fire[i].pos = tp; ota.fire[i].up = up; ota.fire[i].alive = 1;
+                ota.fire[i].vel = ota_rot(vmul(vnorm(vsub(vadd(mario->pos, vmul(up, 120.0f)), tp)), 15.0f), up, throw_ang + off);
+                n++;
+            }
+        }
+        if (ota.t >= 155) ota_set(ota_valid_bubble() ? OTA_BUBBLEATTACK : ota.hits > 0 && ota_valid_coco() ? OTA_THROWCOCO : OTA_WAIT);
+        break;
+    case OTA_DAMAGE: case OTA_POWERUP:
+        if (ota.t >= (ota.nrv == OTA_POWERUP ? 256 : 179)) {
+            if (ota.nrv == OTA_POWERUP && r->sw[SW_B] >= 0) sw_set(r, SW_B, 1);
+            ota_set(ota_valid_bubble() ? OTA_BUBBLEATTACK : ota_valid_fire() ? OTA_THROWFIRE : OTA_THROWFIREWAIT);
+        }
+        break;
+    case OTA_DOWN:
+        if (ota.t == 1) {
+            for (int b = 0; b < OTA_BALLS; b++) ota.ball[b].state = 0;
+            for (int i = 0; i < OTA_FIRES; i++) ota.fire[i].alive = 0;
+            for (int i = 0; i < OTA_BUBBLES; i++) ota.bub[i].state = 0;
+        }
+        if (ota.t >= 3) { ota_set(OTA_DOWNDEMO); ota.yaw = 43.0f; row_kill(ota.row); /* requestAppearPowerStar */ }
+        break;
+    case OTA_DOWNDEMO:
+        ota.yaw = 43.0f; /* cDownDemoRotate */
+        if (ota.t >= 300) { ota_set(OTA_APPEARSTAR); printf("ota king: down, its star" "\n"); }
+        break;
+    case OTA_APPEARSTAR:
+        if (ota.t >= 60) ota_set(OTA_DEAD);
+        break;
+    case OTA_HITBACK: case OTA_NEARATTACK:
+        if (ota.t >= 103) {
+            if (ota_valid_bubble()) ota_set(OTA_BUBBLEATTACK);
+            else if (ota.nrv == OTA_NEARATTACK) ota_set(OTA_WAIT);
+            else if (ota.hits > 0) ota_set(ota_valid_fire() ? OTA_THROWFIRE : OTA_THROWFIREWAIT);
+            else ota_set(ota.ec >= 2 ? OTA_THROWFIREWAIT : OTA_THROWCOCOWAIT);
+        }
+        break;
+    case OTA_BUBBLEATTACK:
+        if (ota.t == 100) { /* appearBubble: six round it from mBubbleAppearPos (0, 10, 500) */
+            float m[16];
+            basis_matrix(m, ota.pos, ota.up, ota.f, 0);
+            V3 bp = ota_world(m, v3(0, 10.0f, 500.0f)), d0 = vnorm(vtangent(vsub(bp, ota.pos), ota.up));
+            for (int i = 0, n = 0; i < OTA_BUBBLES; i++) if (!ota.bub[i].state) {
+                V3 fr = ota_rot(d0, ota.up, (n + 0.5f) * 60.0f + ota_rnd(-30.0f, 30.0f));
+                ota.bub[i].pos = bp; ota.bub[i].front = fr; ota.bub[i].state = 1; ota.bub[i].t = 0;
+                ota.bub[i].vel = vadd(vmul(ota.up, 37.5f), vmul(fr, 15.0f)); /* cBubbleAppearVelocity */
+                n++;
+            }
+        }
+        if (ota.t >= 189) ota_set(OTA_WAIT);
+        break;
+    default: break;
+    }
+    mario_hidden = (ota.nrv == OTA_APPEARDEMO || ota.nrv == OTA_DOWNDEMO) && ota.t >= 1;
+    /* attackSensor: body / face touching Mario: NearAttack in the attacking nerves, else a push */
+    float db = vlen(vsub(c, body)), df = vlen(vsub(c, face));
+    if ((db < 400.0f + HIT_BODY_R || df < 400.0f + HIT_BODY_R) && ota.nrv != OTA_DOWNDEMO && ota.nrv != OTA_APPEARSTAR && ota.nrv != OTA_APPEARDEMO) {
+        int near_ok = ota.nrv == OTA_WAIT || ota.nrv == OTA_THROWCOCOWAIT || ota.nrv == OTA_THROWCOCO || ota.nrv == OTA_THROWFIREWAIT ||
+                      ota.nrv == OTA_THROWFIRE || ota.nrv == OTA_BUBBLEATTACK;
+        if (near_ok && !mario->hurt_timer) { hurt_mario(body, 30.0f); ota_set(OTA_NEARATTACK); }
+        V3 out = vtangent(vsub(c, body), ota.up);
+        if (vlen(out) > 1e-3f && db < 400.0f + HIT_BODY_R) mario->pos = vadd(mario->pos, vmul(vnorm(out), 400.0f + HIT_BODY_R - db));
+    }
+    update_ota_balls(c, body, face);
+    update_ota_fire(c);
     ota_pose();
     { /* its demos' cameras (startAnimCameraTargetSelf "Appear" / "Down") */
         static int was;
         float m[16];
         basis_matrix(m, ota.pos, ota.up, ota.f, 0);
-        const char *cn = ota.phase == 6 ? "otaking/appear" : ota.phase == 4 ? "otaking/down" : NULL;
+        const char *cn = ota.nrv == OTA_APPEARDEMO ? "otaking/appear" : ota.nrv == OTA_DOWNDEMO ? "otaking/down" : NULL;
         int on = cn && demo_camera(cn, ota.t, m);
         if (was && !on) camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45);
         was = on;
@@ -5375,11 +5613,13 @@ static void update_ota(void)
     }
 }
 
-/* OtaKing's clip by state, its feet's the same with L / R (OtaKing.cpp startBckWithFrontFoot) */
+/* its clip (startBckWithFrontFoot: the feet the same with R / L; startBckWaitIfNotPlaying) */
 static void ota_pose(void)
 {
-    const char *c = ota.phase == 6 ? "appear" : ota.phase == 2 ? "attack" : ota.phase == 3 ? (ota.hits == 2 ? "crowndamage" : "damage") :
-                    ota.phase == 4 ? "down" : ota.hitback ? "hitback" : "wait";
+    static const char *const clip[] = {"appear", "appear", "wait", "wait", "attack", "wait", "fireattack", "damage",
+                                       "crowndamage", "down", "down", "down", "down", "hitbackstart", "hitback", "hitback",
+                                       "bubbleattack"};
+    const char *c = clip[ota.nrv];
     int loop = !strcmp(c, "wait");
     const Model *mds[3] = {m_ota, m_otafoot, m_otafoot};
     for (int k = 0; k < 3; k++) {
@@ -5387,11 +5627,12 @@ static void ota_pose(void)
         if (!a || !mds[k] || !mds[k]->skin) continue;
         if (a->skin != mds[k]->skin) anim_bind(a, mds[k]->skin);
         char n[48];
-        snprintf(n, sizeof n, k ? "otakingfoot/%s%s" : "otaking/%s%s", c, k == 1 ? "l" : k == 2 ? "r" : "");
-        anim_play(a, n, 1.0f, loop, 8);
+        snprintf(n, sizeof n, k ? "otakingfoot/%s%s" : "otaking/%s%s", c, k == 1 ? "r" : k == 2 ? "l" : "");
+        anim_play(a, n, ota.nrv == OTA_WAITONSWITCH ? 0.0f : 1.0f, loop, 8);
         anim_update(a);
     }
 }
+
 
 /* CocoSambo.cpp: within 700 it attacks (its head swung at Mario: a touch hurts, sendMsgEnemyAttackStrong); a
  * thrown coconut knocks its head down (update_coconuts: FallHead), it swoons cSwoonFrame 180, a stomp / hip drop
@@ -8569,24 +8810,36 @@ void game_draw(void)
         m[4] = fly_y.x; m[5] = fly_y.y; m[6] = fly_y.z;
         m[8] = fly_z.x; m[9] = fly_z.y; m[10] = fly_z.z;
     }
-    if (m_mario_skin && !(mario->hurt_timer & 4))
+    if (m_mario_skin && !(mario->hurt_timer & 4) && !mario_hidden)
         render_skinned(m_mario_skin, m, (const float (*)[16])mario_anim->drw);
     if (m_marioball) for (int b = 0; b < MAX_FIREBALLS; b++) { /* Fire Mario's balls, rolling */
         if (!fireballs[b].t) continue;
         basis_matrix(m, fireballs[b].pos, up_at(fireballs[b].pos, v3(0, 1, 0)), fireballs[b].vel, game_frame * 0.5f);
         render_model(m_marioball, m, 0x80, 0x80, 0x80);
     }
-    if (ota.row >= 0 && ota.phase >= 1 && ota.phase != 5 && row_shown(ota.row)) { /* OtaKing, its feet, its coconuts */
+    if (ota.row >= 0 && ota.nrv != OTA_WAITONSWITCH && ota.nrv != OTA_APPEARSTAR && ota.nrv != OTA_DEAD) { /* OtaKing, its feet */
         basis_matrix(m, ota.pos, ota.up, ota.f, 0);
         if (m_ota && m_ota->skin && ota.anim->skin == m_ota->skin) render_skinned(m_ota, m, (const float (*)[16])ota.anim->drw);
         else if (m_ota) render_model(m_ota, m, 0x80, 0x80, 0x80);
         for (int k = 0; k < 2 && m_otafoot; k++)
             if (m_otafoot->skin && ota.foot[k]->skin == m_otafoot->skin) render_skinned(m_otafoot, m, (const float (*)[16])ota.foot[k]->drw);
             else if (!k) render_model(m_otafoot, m, 0x80, 0x80, 0x80);
+    }
+    if (ota.row >= 0) { /* its coconuts (SpinX), fire balls, fire bubbles */
         for (int b = 0; m_coco && b < OTA_BALLS; b++) {
             if (!ota.ball[b].state) continue;
-            basis_matrix(m, ota.ball[b].pos, ota.up, v3(1, 0, 0), game_frame * 0.3f);
+            basis_matrix(m, ota.ball[b].pos, ota.ball[b].up, ota.ball[b].vel, game_frame * 0.3f);
             render_model(m_coco, m, 0x80, 0x80, 0x80);
+        }
+        for (int i = 0; m_fireball2 && i < OTA_FIRES; i++) {
+            if (!ota.fire[i].alive) continue;
+            basis_matrix(m, ota.fire[i].pos, ota.fire[i].up, ota.fire[i].vel, game_frame * 0.4f);
+            render_model(m_fireball2, m, 0x80, 0x80, 0x80);
+        }
+        for (int i = 0; m_firebubble && i < OTA_BUBBLES; i++) {
+            if (!ota.bub[i].state) continue;
+            basis_matrix(m, ota.bub[i].pos, up_at(ota.bub[i].pos, ota.up), ota.bub[i].front, 0);
+            render_model(m_firebubble, m, 0x80, 0x80, 0x80);
         }
     }
     if (dino.row >= 0 && dino.phase < 6 && row_shown(dino.row)) { /* DinoPackun, its egg shell, its tail ball */
