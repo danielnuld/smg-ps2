@@ -64,6 +64,8 @@ typedef struct {
     V3 py, pz, off;   /* parabola axes / rail start offset */
     float pa, pv, plen, len;
     V3 kick;
+    int starter;      /* ScenarioStarter's flight: no ShootStart, its own motion times and first pose */
+    float initrot;    /* its arg5: the first pose's turn about the path (calcInitPose) */
 } Launch;
 #define LAUNCH_BIND 300.0f
 
@@ -549,6 +551,7 @@ static int stone_row(const Row *r);
 static Launch *launches;
 static int nlaunches;
 static int starter; /* ScenarioStarter's flight (a launch, -1 none): Mario flies it in at the scenario's start */
+static short *row_camset; /* per OBJS row: its CameraSetId (CSET chunk, ActorCameraInfo), -1 none */
 static int ground_flips, slip_frames;
 #ifdef SLOPE_TEST
 V3 slope_n;
@@ -1030,6 +1033,16 @@ void game_init(const Scene *s, const unsigned char *blob)
                                        count_type("SuperSpinDriverGreen", 0) + count_type("SpinDriver", 0) +
                                        count_type("ScenarioStarter", 0) + 1) * sizeof(Launch));
     int t_starter = scene_type(s, "ScenarioStarter");
+    row_camset = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(short));
+    for (u32 i = 0; i < s->nobjs; i++) row_camset[i] = -1;
+    {
+        u32 csz;
+        const unsigned char *cs = blob_chunk(blob, "CSET", &csz);
+        for (u32 i = 0; cs && i < *(const u32 *)cs; i++) {
+            u16 row = *(const u16 *)(cs + 4 + 4 * i);
+            if (row < s->nobjs) row_camset[row] = *(const s16 *)(cs + 6 + 4 * i);
+        }
+    }
     starter = -1;
     for (u32 i = 0; i < s->nobjs; i++) {
         const Row *r = &s->objs[i];
@@ -1044,6 +1057,7 @@ void game_init(const Scene *s, const unsigned char *blob)
             init_launch(L, r, pts, np, nraw <= 2);
             if (r->type == t_starter) { /* ScenarioStarter: its rail as it is (mPosition = the rail's start), from the start */
                 L->pos = v3(pts[0], pts[1], pts[2]); L->off = v3(0, 0, 0);
+                L->starter = 1; L->initrot = r->arg[5] != -1 ? (float)r->arg[5] : 0.0f; /* arg5 mInitalPlayerRotation */
                 starter = nlaunches;
             }
         }
@@ -1056,7 +1070,7 @@ void game_init(const Scene *s, const unsigned char *blob)
             L->pos = row_pos(r);
             L->kick = vmul(vcross(z, x), r->arg[0] > 0 ? (float)r->arg[0] : 40.0f);
         }
-        L->start = super ? 45 : 20;
+        L->start = r->type == t_starter ? 0 : super ? 45 : 20; /* ScenarioStarter flies at once (exeRailMove) */
         L->row = i;
         nlaunches++;
     }
@@ -4280,6 +4294,7 @@ static V3 launch_pos(const Launch *L, float t)
 
 static void init_launch(Launch *L, const Row *r, const float *pts, u32 np, int parab)
 {
+    L->starter = 0; L->initrot = 0;
     L->pos = row_pos(r);
     L->flight = r->arg[0] > 0 ? r->arg[0] : 300;
     L->pts = pts;
@@ -4320,14 +4335,21 @@ static V3 fly_x, fly_y, fly_z; /* the drawn basis */
 static V3 fly_hy, fly_hz;      /* the head's basis before the spin and flip (turned towards the path) */
 static int fly_on;
 
-static void fly_pose(Player *m, V3 dir, int s, int flight)
+static void fly_pose(Player *m, V3 dir, int s, int flight, int t0_in, const Launch *L)
 {
-    if (s <= 1) { fly_hy = m->up; fly_hz = m->face; }
+    if (s <= 1 && L && L->starter) { /* SpinDriverShootPath::calcInitPose: up the path's first direction, front the
+                                    * start-to-end way across it, turned arg5 degrees about it */
+        V3 d0 = vnorm(vsub(launch_pos(L, 0.01f), launch_pos(L, 0.0f))), f0 = vtangent(vsub(launch_pos(L, 1.0f), launch_pos(L, 0.0f)), d0);
+        if (vlen(f0) < 1e-3f) f0 = vtangent(fabsf(d0.y) < 0.9f ? v3(0, 1, 0) : v3(1, 0, 0), d0);
+        f0 = vnorm(f0);
+        float a = L->initrot * 0.0174533f;
+        fly_hy = d0; fly_hz = vnorm(vadd(vmul(f0, cosf(a)), vmul(vcross(d0, f0), sinf(a))));
+    } else if (s <= 1) { fly_hy = m->up; fly_hz = m->face; }
     if (vlen(dir) > 1e-3f) fly_hy = vnorm(vadd(fly_hy, vmul(vsub(vnorm(dir), fly_hy), 0.4f)));
     fly_hz = vnorm(vtangent(fly_hz, fly_hy));
     if (vlen(fly_hz) < 0.5f) fly_hz = vnorm(vtangent(m->face, fly_hy));
     V3 hx = vcross(fly_hy, fly_hz);
-    int t1 = flight - 70, t2 = flight - 20, t0 = flight / 5 < 90 ? flight / 5 : 90;
+    int t1 = flight - 70, t2 = flight - 20, t0 = t0_in;
     if (flight < 70) { t0 = -1; t1 = 0; }
     if (t1 <= t0) t0 = 0;
     float spin = 6.2831853f * floorf((t1 - t0) * 0.05f / 6.2831853f), b = 0, a = 0;
@@ -4349,7 +4371,7 @@ static int update_launch(Player *m)
         m->pos = vadd(m->launch_from, vmul(vsub(L->pos, m->launch_from), k));
         return 1;
     }
-    int small = L->start < 45, s = t - L->start;
+    int small = !L->starter && L->start < 45, s = t - L->start;
     if (!L->pts) { /* SpinDriver without a rail: endBindAndSpinDriverJump with its kick */
         L->cool = 60;
         m->launch = -1;
@@ -4360,6 +4382,12 @@ static int update_launch(Player *m)
     }
     float u = (float)s / L->flight;
     int t0 = L->flight / 5 < 90 ? L->flight / 5 : 90;
+    if (L->starter) { /* ScenarioStarter::calcShootMotionTime: a whole number of SpaceFlyStart (15) within min(0.2 x
+                       * flight, 90); SpaceFlyEnd (50) + 20 before the end, Fall 20 before it */
+        int fly = (int)(0.2f * L->flight) > 90 ? 90 : (int)(0.2f * L->flight);
+        t0 = 15 * (fly / 15);
+        if (L->flight - 70 <= t0) t0 = 0;
+    }
     if (s == 1 && mario_anim) mario_play(small ? "spaceflyshortstart" : "spaceflystart", 1.0f, 0);
     if (s == t0 && mario_anim) mario_play(small ? "spaceflyshort" : "spaceflyloop", 1.0f, 1);
     if (s == L->flight - 70 && mario_anim) mario_play("spaceflyend", 1.0f, 0);
@@ -4368,10 +4396,14 @@ static int update_launch(Player *m)
     V3 dir = vsub(q, p), step = vsub(p, m->pos); /* _D0: this frame's move, kept when he is let go */
     m->pos = p;
     if (vlen(dir) > 1e-3f) m->face = vnorm(vtangent(dir, m->up));
-    fly_pose(m, dir, s, L->flight);
+    fly_pose(m, dir, s, L->flight, t0, L);
+    if (s == 1 && row_camset[L->row] >= 0) /* SpinDriverCamera::start (its target: the flight's first pose) */
+        camera_event_start(camera_class_hash(sc->types + 32 * sc->objs[L->row].type), row_camset[L->row], fly_hy, fly_hz, m->pos);
+    camera_event_target(dir, m->pos); /* SpinDriverCamera::update */
     if (s < L->flight)
         return 1;
     /* endBindAndSpinDriverJump(_D0): he goes on with the path's last velocity; the star rests 60 frames */
+    camera_event_end(); /* SpinDriverCamera::end: endForceAtLanding */
     L->cool = 60;
     m->launch = -1;
     fly_on = 0;
@@ -8677,7 +8709,6 @@ void game_update(void)
     if (starter >= 0 && game_frame == 2) { /* ScenarioStarter::exeRailMove: the flight in (SpinDriverShootPath) */
         mario->pos = launches[starter].pos;
         mario->launch = starter; mario->launch_t = 0; mario->launch_from = mario->pos;
-        if (mario_anim) mario_play("superspindriverstart", 1.0f, 0);
         printf("scenario starter: flight in, %d frames" "\n", launches[starter].flight);
         starter = -1;
     }

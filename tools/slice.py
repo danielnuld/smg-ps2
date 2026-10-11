@@ -144,9 +144,10 @@ def rows(b):
     path = [v - 0x10000 if 0x8000 <= v < 0x10000 else v for v in col(b, "CommonPath_ID", n, -1)]  # SHORT, unsigned in bcsv_column
     sw = {f: int_or(b, f, n, -1) for f in SW_FIELDS}
     group = int_or(b, "GroupId", n, -1)
+    camset = int_or(b, "CameraSetId", n, -1)
     out = []
     for i in range(n):
-        out.append(dict(name=names[i], l_id=lid[i], path=path[i], pos=[fl[f][i] for f in ROW_FIELDS[:3]],
+        out.append(dict(name=names[i], l_id=lid[i], path=path[i], camset=camset[i], pos=[fl[f][i] for f in ROW_FIELDS[:3]],
                         rot=[fl[f][i] for f in ROW_FIELDS[3:6]], scale=[fl[f][i] or 1.0 for f in ROW_FIELDS[6:]],
                         args=[a[i] for a in args], range=(float_column(b, "Range") or [-1.0] * n)[i],
                         distant=(float_column(b, "Distant") or [None] * n)[i],
@@ -1019,7 +1020,10 @@ def placement(fs, galaxy, scenario):
     out.append(chunk(b"GRAV", struct.pack("<I", len(grav)) + b"".join(grav)))
     out.append(chunk(b"ZPAR", struct.pack(f"<I{len(zones)}i", len(zones),
                                           *[-1 if i == 0 else up_ids.get(i, 0) for i in range(len(zones))])))
-    cams, cam_index, cam_types = camera.cameras(bcams, float_column, int_or)
+    jp2en = dict(zip(B.bcsv_column(names, "jp_name"), B.bcsv_column(names, "en_name")))
+    cams, cam_index, cam_types = camera.cameras(bcams, float_column, int_or, jp2en)
+    cset = [(i, r["camset"]) for i, r in enumerate(keep) if r.get("camset", -1) >= 0]  # ActorCameraInfo: CameraSetId
+    out.append(chunk(b"CSET", struct.pack("<I", len(cset)) + b"".join(struct.pack("<Hh", i, v) for i, v in cset)))
     care = [struct.pack("<BBH9f", camera.SHAPES[r["name"]], r["zone"],
                         cam_index.get((r["zone"], "c", r["args"][0] & 0xFFFF), 0xFFFF), *r["pos"], *r["rot"], *r["scale"])
             for r in camera.areas(cubes)]

@@ -19,11 +19,12 @@ typedef struct {
         uplay, lplay;
     int camint, num1, num2, vpanuse;
     float vpanaxis[3];
-    unsigned char pad[4];
-} CamParam; /* 128 bytes */
+    int evfrm;          /* an event camera's frames (getEventCameraFrames), -1 for good */
+    unsigned evclass;   /* an event camera's class (camera.py class_hash), 0 otherwise; num = CameraSetId << 4 | NN */
+} CamParam; /* 132 bytes */
 
 enum { CAM_XZ_PARA, CAM_TOWER, CAM_FOLLOW, CAM_WONDER_PLANET, CAM_EYEPOS_FIX, CAM_POINT_FIX, CAM_EYEPOS_FIX_THERE,
-       CAM_CHARMED_FIX, CAM_TOWER_POS, CAM_FRONT_AND_BACK, CAM_TRUNDLE, CAM_CUBE_PLANET };  /* tools/camera.py TYPES */
+       CAM_CHARMED_FIX, CAM_TOWER_POS, CAM_FRONT_AND_BACK, CAM_TRUNDLE, CAM_CUBE_PLANET, CAM_OBJ_PARALLEL };  /* tools/camera.py TYPES */
 
 /* What the camera follows (Mario): position, facing, up (against gravity), airborne. */
 typedef struct { V3 pos, front, up; int jumping; int flying; V3 fly_dir; } CamTarget; /* flying: a launch star's flight,
@@ -38,6 +39,13 @@ void camera_init(const CamParam *cams, int ncams, const CamArea *areas, int nare
                  const CamTarget *t);
 void camera_update(const CamTarget *t);
 void camera_pose(V3 *eye, V3 *watch, V3 *up, float *fovy);
+/* SpinDriverCamera / MultiEventCamera: the event cameras "<class>:<set>:NN" one after another (evfrm), their
+ * target a matrix (up, front, pos) whose up turns to the flight's direction (updateTargetMatrix); 0 if the class
+ * has no such cameras. end: endForceAtLanding (back to the area camera once the target lands). */
+unsigned camera_class_hash(const char *name);
+int camera_event_start(unsigned cls, int set, V3 up, V3 front, V3 pos);
+void camera_event_target(V3 dir, V3 pos);
+void camera_event_end(void);
 /* a demo's animated camera (CameraAnim): this pose until off */
 void camera_set_override(int on, V3 eye, V3 watch, V3 up, float fovy);
 /* Active camera (CAMS index, -1 = default) and its type, for the HUD. */

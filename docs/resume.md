@@ -155,7 +155,15 @@ Last updated 2026-10-09. Detail and numbers: `docs/phase2-report.md`; tasks: `op
     falls where there is no ground (its nest: it sank to the planet's centre and the camera with it);
   - PowerStar get demo (PowerStar::exeStageClearDemo): the frame _B8 (up against gravity, its placed Z) at the star,
     Mario set there (setPlayerBaseMtx) playing powerstarget, the PowerStarGet .canm camera in it (519 frames);
-  - ScenarioStarter (kept as a logic row): Mario flies its rail in at the scenario's start (a launch, arg0 frames);
+  - ScenarioStarter (kept as a logic row): Mario flies its rail in at the scenario's start, after Petari: no
+    ShootStart, SpaceFlyStart / SpaceFlyLoop (a whole number of 15 within min(0.2 x flight, 90)) / SpaceFlyEnd / Fall,
+    the first pose of SpinDriverShootPath::calcInitPose (arg5 turn);
+  - SpinDriverCamera / MultiEventCamera for every launch flight (ScenarioStarter, SuperSpinDriver*): camera.py keeps
+    the bcam's event cameras "e:<class>:<CameraSetId>:NN" (class hash, set << 4 | NN, evfrm), slice.py the rows'
+    CameraSetId (CSET); the engine runs them one after another over their evfrm with their camint, their target a
+    matrix turned to the flight's direction (updateTargetMatrix), until he lands (endForceAtLanding); new camera type
+    CAM_TYPE_OBJ_PARALLEL (CameraObjParallel); the old made-up flight follow camera is gone. CAMS entries are 132
+    bytes now: every galaxy needs repacking;
   - walkers animated too (Kuribo, Takobo, Karikari, Butterfly, PackunPetit, KuriboMini: walker_clip by kind and
     state, Kuribo facing its way); skinned shapes without texture take the TEV constant colour; BRK registers at a
     frame (tex.brk, slice.py BRK_POSE: Tico's ColorChange 0, its yellow; a saturated bake then keeps the first

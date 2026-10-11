@@ -229,6 +229,15 @@ static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V
         *up = u;
         break;
     }
+    case CAM_OBJ_PARALLEL: { /* CameraObjParallel.cpp: mtx = target (side, up, front) x RotY(angleB) x RotX(angleA);
+                              * the eye dist along its Z from the watch point, its Y the up (dist, angleA, angleB) */
+        V3 y = t->up, z = t->front, x = vcross(y, z);
+        float sa = sinf(p->angle_a), ca = cosf(p->angle_a), sb = sinf(p->angle_b), cb = cosf(p->angle_b);
+        V3 zc = vadd(vadd(vmul(x, ca * sb), vmul(y, -sa)), vmul(z, ca * cb));
+        *eye = vadd(w, vmul(zc, p->dist));
+        *up = vnorm(vadd(vadd(vmul(x, sa * sb), vmul(y, ca)), vmul(z, sa * cb)));
+        break;
+    }
     case CAM_EYEPOS_FIX_THERE: { /* CameraFixedThere.cpp: the eye stays where the last camera left it */
         *eye = type_eye;
         V3 f = vnorm(vsub(w, type_eye));
@@ -327,8 +336,44 @@ static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V
 /* A launch star's flight: SpinDriverCamera follows its own event camera (the star's camera set in the bcam, not
  * ported); ponytail: a chase camera 1300 behind Mario along the path and 400 above him, eased 0.1 a frame; once he
  * lands, the area camera takes over through camint (30 frames). */
-static int was_flying;
-static V3 fly_eye;
+static int ev_on, ev_ending, ev_first, ev_n, ev_i, ev_t; /* the event cameras running (cams[ev_first + i]) */
+static V3 ev_up, ev_front, ev_pos;                         /* their target matrix (CameraTargetMtx) */
+
+unsigned camera_class_hash(const char *name)
+{
+    unsigned h = 0;
+    while (*name) h = h * 31 + (unsigned char)*name++;
+    return h;
+}
+
+int camera_event_start(unsigned cls, int set, V3 up, V3 front, V3 pos)
+{
+    ev_first = -1; ev_n = 0;
+    for (int i = 0; i < ncams; i++)
+        if (cams[i].kind == 'e' && cams[i].evclass == cls && (cams[i].num >> 4) == set) {
+            if (ev_first < 0) ev_first = i;
+            ev_n++;
+        }
+    if (ev_first < 0) return 0;
+    ev_on = 1; ev_ending = 0; ev_i = 0; ev_t = 0;
+    ev_up = vnorm(up); ev_front = vnorm(vsub(front, vmul(ev_up, vdot(front, ev_up)))); ev_pos = pos;
+    cur = -3; /* the camera change: blend over the event camera's camint */
+    timer = 0; camint = cams[ev_first].camint; fresh = 1;
+    type_eye = f_eye; type_up = f_up;
+    return 1;
+}
+
+void camera_event_target(V3 dir, V3 pos) /* SpinDriverCamera::updateTargetMatrix */
+{
+    if (!ev_on || vlen(dir) < 1e-6f) return;
+    V3 d = vnorm(dir);
+    ev_front = rotate_between(ev_up, d, ev_front);
+    ev_up = d;
+    ev_pos = pos;
+}
+
+void camera_event_end(void) { if (ev_on) ev_ending = 1; }
+
 
 void camera_update(const CamTarget *t)
 {
@@ -336,9 +381,36 @@ void camera_update(const CamTarget *t)
     for (int i = nareas - 1; i >= 0; i--)
         if (inside(&areas[i], t->pos)) { a = i; break; }
     /* no area: keep the current camera (the ground-triangle cameras are not ported), the default one at first */
-    int want = a >= 0 && areas[a].cam != 0xFFFF ? areas[a].cam : (cur == -2 ? -1 : cur);
+    int want = a >= 0 && areas[a].cam != 0xFFFF ? areas[a].cam : (cur == -2 || cur == -3 ? -1 : cur);
     V3 move = vsub(t->pos, last_target);
     last_target = t->pos;
+    if (ev_on) { /* MultiEventCamera::update: the next one after its evfrm frames; endForceAtLanding */
+        if (ev_ending && !t->jumping && !t->flying) { ev_on = 0; cur = -3; }
+        else {
+            const CamParam *p = &cams[ev_first + ev_i];
+            if (p->evfrm >= 0 && ev_t >= p->evfrm && ev_i < ev_n - 1) {
+                ev_i++; ev_t = 0;
+                timer = 0; camint = cams[ev_first + ev_i].camint; fresh = 1;
+                type_eye = f_eye; type_up = f_up;
+            }
+            ev_t++;
+            CamTarget et = *t;
+            et.pos = ev_pos; et.up = ev_up; et.front = ev_front; et.flying = 0;
+            V3 e, w, u;
+            zone_pose(&cams[ev_first + ev_i], &et, move, &e, &w, &u);
+            fresh = 0;
+            type_eye = e; type_up = u;
+            float r = 1.0f;
+            if (camint > 0 && timer < camint) { timer++; r = (float)timer / camint; r *= r; }
+            i_eye = vadd(i_eye, vmul(vsub(e, i_eye), r));
+            i_watch = vadd(i_watch, vmul(vsub(w, i_watch), r));
+            i_up = vnorm(vadd(i_up, vmul(vsub(u, i_up), r)));
+            f_eye = vadd(vmul(f_eye, 0.7f), vmul(i_eye, 0.3f));
+            f_watch = vadd(vmul(f_watch, 0.7f), vmul(i_watch, 0.3f));
+            f_up = vnorm(vadd(vmul(f_up, 0.7f), vmul(i_up, 0.3f)));
+            return;
+        }
+    }
     if (want != cur) { /* CameraManGame.cpp:250-285: reset the new camera from the current pose, blend camint */
         int first = cur == -2;
         cur = want;
@@ -379,19 +451,6 @@ void camera_update(const CamTarget *t)
     f_watch = vadd(vmul(f_watch, 0.7f), vmul(i_watch, 0.3f));
     f_up = vnorm(vadd(vmul(f_up, 0.7f), vmul(i_up, 0.3f)));
     f_fovy = 0.9f * f_fovy + 0.1f * fovy;
-    if (t->flying) {
-        V3 d = vlen(t->fly_dir) > 1e-3f ? vnorm(t->fly_dir) : t->front;
-        V3 want = vadd(vsub(t->pos, vmul(d, 1300.0f)), vmul(t->up, 400.0f));
-        if (!was_flying) fly_eye = f_eye;
-        fly_eye = vadd(fly_eye, vmul(vsub(want, fly_eye), 0.1f));
-        f_eye = fly_eye; f_watch = t->pos; f_up = t->up;
-        i_eye = f_eye; i_watch = f_watch; i_up = f_up;
-        was_flying = 1;
-    } else if (was_flying) { /* landed: blend from the flight pose into the area camera */
-        was_flying = 0;
-        timer = 0;
-        camint = 30;
-    }
 }
 
 static int ovr;
@@ -415,7 +474,7 @@ int camera_current(void) { return cur < ncams ? cur : -1; }
 const char *camera_type_name(void)
 {
     static const char *n[] = {"XZ PARA", "TOWER", "FOLLOW", "WONDER PLANET", "EYEPOS FIX", "POINT FIX",
-                              "EYEPOS FIX THERE", "CHARMED FIX", "TOWER POS", "FRONT AND BACK", "TRUNDLE", "CUBE PLANET"};
+                              "EYEPOS FIX THERE", "CHARMED FIX", "TOWER POS", "FRONT AND BACK", "TRUNDLE", "CUBE PLANET", "OBJ PARALLEL"};
     const CamParam *p = param();
     return p->type == 255 ? "OTHER" : n[p->type];
 }

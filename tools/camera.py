@@ -60,7 +60,15 @@ def areas(rows):
 
 TYPES = ("CAM_TYPE_XZ_PARA", "CAM_TYPE_TOWER", "CAM_TYPE_FOLLOW", "CAM_TYPE_WONDER_PLANET", "CAM_TYPE_EYEPOS_FIX",
          "CAM_TYPE_POINT_FIX", "CAM_TYPE_EYEPOS_FIX_THERE", "CAM_TYPE_CHARMED_FIX", "CAM_TYPE_TOWER_POS",
-         "CAM_TYPE_FRONT_AND_BACK", "CAM_TYPE_TRUNDLE", "CAM_TYPE_CUBE_PLANET")
+         "CAM_TYPE_FRONT_AND_BACK", "CAM_TYPE_TRUNDLE", "CAM_TYPE_CUBE_PLANET", "CAM_TYPE_OBJ_PARALLEL")
+
+
+def class_hash(name):
+    """The engine's hash of an (English) class name: h = h x 31 + c over its bytes (camera.c event cameras)."""
+    h = 0
+    for ch in name.encode("ascii", "replace"):
+        h = (h * 31 + ch) & 0xFFFFFFFF
+    return h
 FLAGS = ("noreset", "nofovy", "lofserpoff", "antibluroff", "collisionoff", "subjectiveoff")  # CameraParamChunk.cpp:14
 FLOATS = (("dist", 1200.0), ("angleA", 0.0), ("angleB", 0.3), ("wpoint", (0, 0, 0)), ("axis", (0, 1, 0)),
           ("up", (0, 1, 0)), ("woffset", (0, 100, 0)), ("loffset", 0.0), ("loffsetv", 0.0), ("fovy", 45.0),
@@ -68,7 +76,7 @@ FLOATS = (("dist", 1200.0), ("angleA", 0.0), ("angleB", 0.3), ("wpoint", (0, 0, 
 INTS = (("camint", 120), ("num1", 0), ("num2", 0), ("vpanuse", 1))
 
 
-def cameras(bcams, float_column, int_column):
+def cameras(bcams, float_column, int_column, jp2en=None):
     """bcams: [(zone, bcam bytes)] -> (CAMS entries as bytes, {(zone, kind, num): index}, Counter of types used)."""
     from collections import Counter
     out, index, used = [], {}, Counter()
@@ -86,9 +94,17 @@ def cameras(bcams, float_column, int_column):
             return col[name]
         for i, cid in enumerate(ids):
             kind = cid[:2]
-            if kind not in ("c:", "s:", "o:"):
+            evclass = 0
+            if kind == "e:":  # MultiEventCamera "e:<actor>:<CameraSetId 3 digits>:<NN>番目": its class and set << 4 | NN
+                parts = cid[2:].split(":")
+                en = (jp2en or {}).get(parts[0]) if len(parts) == 3 else None
+                if not en or not parts[1].isdigit() or not parts[2][:2].isdigit():
+                    continue
+                evclass, num = class_hash(en), int(parts[1]) << 4 | int(parts[2][:2])
+            elif kind not in ("c:", "s:", "o:"):
                 continue
-            num = int(cid[2:], 16) if kind != "o:" else 0
+            else:
+                num = int(cid[2:], 16) if kind != "o:" else 0
             t = types[i] if i < len(types) else ""
             used[t] += 1
             fl = []
@@ -104,9 +120,12 @@ def cameras(bcams, float_column, int_column):
             ints = [int(get(name, d)[i]) if get(name, d) else d for name, d in INTS]
             pan = [get(f"vpanaxis.{a}", 0)[i] if get(f"vpanaxis.{a}", 0) else (0, 1, 0)[k] for k, a in enumerate("XYZ")]
             flags = sum((1 << k) for k, f in enumerate(FLAGS) if get(f"flag.{f}", 0) and get(f"flag.{f}", 0)[i])
+            evfrm = get("evfrm", -1)
+            evfrm = int(evfrm[i]) if evfrm else -1
+            evfrm = evfrm - 2**32 if evfrm >= 2**31 else evfrm
             index[(zone, kind[0], num)] = len(out)
-            out.append(struct.pack("<HBBHH22f4i3f4x", zone, ord(kind[0]), TYPES.index(t) if t in TYPES else 255, num,
-                                   flags, *fl, *ints, *pan))
+            out.append(struct.pack("<HBBHH22f4i3fiI", zone, ord(kind[0]), TYPES.index(t) if t in TYPES else 255, num & 0xFFFF,
+                                   flags, *fl, *ints, *pan, evfrm, evclass))
     return out, index, used
 
 
