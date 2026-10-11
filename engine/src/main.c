@@ -771,6 +771,13 @@ int main(void)
             printf("giver test f %u: %s row %d, coins %d, pieces %d\n", frame, frame % 80 ? "leaves" : "pompon",
                    game_test_giver(frame % 80 ? 1 : 2), game_coins(), game_pieces_out());
 #endif
+#ifdef FOUNTAIN_TEST
+        if (frame >= 150 && frame < 900 && frame % 60 == 0) { /* Mario back on a fountain's base every second */
+            char dd[128];
+            game_debug(dd, sizeof dd);
+            printf("fountain test f %u: row %d %s\n", frame, game_test_fountain(), dd);
+        }
+#endif
 #ifdef CANDLE_TEST
         if (frame >= 150 && frame < 600 && frame % 40 == 0) /* into a flame, then a spin by the next, in turn */
             printf("candle test f %u: row %d, life %d, coins %d\n", frame, game_test_candle(frame % 80 == 0), game_life(), game_coins());

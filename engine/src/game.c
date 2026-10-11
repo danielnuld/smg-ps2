@@ -162,6 +162,7 @@ typedef struct {
                       * CocoNut: head its centre, m0 its turned rotation */
     float m0[16];
     int coco;        /* CocoNut: a spin / hip drop / kick sends it rolling (update_coconuts) */
+    int fountain;    /* FountainBig: a water column on a cycle, Mario in it is thrown up (update_fountains); m0 its matrix */
     int candle;      /* PhantomCandlestand 1 / TeresaMansionCandlestand 2: burns Mario, a spin puts it out (update_candles) */
     int screw;       /* ScrewSwitch 1 / ScrewSwitchReverse 2: a spin on it screws it, then its SW_A (update_screws) */
     int jet;         /* JetTurtle: Mario takes it, a spin throws it (update_jets); head its place, hvel its velocity */
@@ -2179,6 +2180,7 @@ void game_rebind(void)
         in->cocoon = strcmp(name, "SpaceCocoon") == 0;
         in->fluff = strcmp(name, "Fluff") == 0;
         in->jet = strcmp(name, "JetTurtle") == 0;
+        in->fountain = strcmp(name, "FountainBig") == 0;
         in->candle = strcmp(name, "PhantomCandlestand") == 0 ? 1 : strcmp(name, "TeresaMansionCandlestand") == 0 ? 2 : 0;
         in->screw = strcmp(name, "ScrewSwitch") == 0 ? 1 : strcmp(name, "ScrewSwitchReverse") == 0 ? 2 : 0;
         in->biri_rail = in->biri && scene_blob_g && r->path >= 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
@@ -2220,6 +2222,7 @@ void game_rebind(void)
         if (in->ticorail && row_coord && row_turn[i]) ticorail_place(in);
         if (in->biri && row_coord && row_turn[i]) biri_place(in);
         if (in->coco) coco_spawn(in);
+        if (in->fountain) memcpy(in->m0, in->m, 64);
         if (in->jet) { memcpy(in->m0, in->m, 64); in->head = v3(in->m[12], in->m[13], in->m[14]); in->hvel = v3(0, 0, 0); }
         if (in->fluff) { memcpy(in->m0, in->m, 64); in->head = v3(in->m[12], in->m[13], in->m[14]); in->hvel = v3(0, 0, 0); }
         if (in->cocoon) { /* at rest at its neutral point, arg1 (default 100) up its axis */
@@ -2967,6 +2970,19 @@ int game_test_fluff(int phase)
 void game_test_spin_now(void) { mario->spin_timer = SPIN_TIME; } /* test builds: a spin this frame */
 
 /* Test builds: Mario by the first burning candlestand, spinning (how 1) or in its flame (0); its row, -1 none */
+/* Test builds: Mario onto the first FountainBig's base (its row, -1 none) */
+int game_test_fountain(void)
+{
+    for (int i = 0; i < ninsts; i++)
+        if (insts[i].fountain) {
+            mario->up = vnorm(v3(insts[i].m0[4], insts[i].m0[5], insts[i].m0[6]));
+            mario->pos = vadd(v3(insts[i].m0[12], insts[i].m0[13], insts[i].m0[14]), vmul(mario->up, 20.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return insts[i].row;
+        }
+    return -1;
+}
+
 int game_test_candle(int how)
 {
     for (int i = 0; i < ninsts; i++)
@@ -4203,6 +4219,33 @@ static void jet_reset(Inst *in)
  * scale puts it out (Extinguish): 15 frames later its item comes out (arg0 -1 a coin, 0 a star piece, at 0 up; 220
  * for TeresaMansion) and it stays out. row_turn 0 burning, 1 going out, 2 out; row_step its frames. ponytail: no
  * fireball relighting (CandlestandIceVolcano's switch kind is not this one) */
+/* FountainBig.cpp: hidden 120 frames (Wait), its sign 80 (Sign), 30 more (SignStop), then the column (Spout, 180
+ * frames; its height scale 0 to 1 over the first 20) and down over 10 (SpoutEnd). Mario within 60 of its axis, 600
+ * up, is thrown up (ACTMES_FOUNTAINJUMP -> MarioFlow: mJumpHeightFlow 18 with mGravityFlow 0.3, about 540 up: here
+ * 44 up with Mario's own gravity, mJumpDistFlow 2 ahead), once until he lands. row_step its cycle frame, row_turn 1
+ * while he flies off it. ponytail: no FountainBigSign / FountainBig effects, no Bee Mario flip */
+static void update_fountains(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->fountain) continue;
+        int row = in->row, t = row_step[row] = (row_step[row] + 1) % 420;
+        float k = t < 230 ? 0 : t < 250 ? (t - 230) / 20.0f : t < 410 ? 1 : 1.0f - (t - 410) / 10.0f;
+        memcpy(in->m, in->m0, 64);
+        for (int j = 4; j < 7; j++) in->m[j] *= k > 0.01f ? k : 0.01f;
+        if (k <= 0) in->m[12] = 1e9f; /* hideModel */
+        if (row_turn[row] && mario->grounded) row_turn[row] = 0;
+        if (t < 230 || t >= 410 || row_turn[row]) continue;
+        V3 up = vnorm(v3(in->m0[4], in->m0[5], in->m0[6])), base = v3(in->m0[12], in->m0[13], in->m0[14]);
+        V3 rel = vsub(mario->pos, base);
+        float along = vdot(rel, up);
+        if (along < -50.0f || along > 600.0f * k || vlen(vtangent(rel, up)) > 60.0f + HIT_BODY_R * 0.5f) continue;
+        mario->vup = 44.0f; mario->hvel = vmul(mario->face, 2.0f); mario->grounded = 0; mario->jump_kind = 0; mario->hip = 0;
+        row_turn[row] = 1;
+        printf("fountain row %d throws Mario up" "\n", row);
+    }
+}
+
 static void update_candles(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -6614,6 +6657,7 @@ void game_update(void)
     update_jets();
     update_screws();
     update_candles();
+    update_fountains();
     place_waterplants();
     update_pipes();
     update_switches();

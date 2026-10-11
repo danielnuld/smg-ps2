@@ -57,6 +57,7 @@ int game_test_key(void);
 int game_test_jet(int phase);
 int game_test_screw(void);
 int game_test_candle(int how);
+int game_test_fountain(void);
 void game_test_spin_now(void);
 int game_screw_state(void);
 int game_jet_state(void);
