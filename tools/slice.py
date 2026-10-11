@@ -68,7 +68,8 @@ SKY_TILES = 8
 # extra models a class draws: a name of its own, or "#<BCK>": the class's archive with that animation's visibility
 # (FlipPanel: "?" at rest, "!" once flipped, the End face when its group is complete)
 EXTRA = {"FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
-         "IronCannonLauncher": ("KoopaJrShipCannonShell",)}
+         "IronCannonLauncher": ("KoopaJrShipCannonShell",),
+         "MorphItemNeoFire": ("MarioFireBall",)}
 # model-less classes the engine runs (stage switch logic): kept in OBJS like the classes with a model
 # power stars an event brings out (Petari PowerStarEventKeeper): ScenarioData AppearPowerStarObj names each star's
 # declarer by its ObjNameTable name. The classes the engine runs, with the arg giving an explicit star id (None: the

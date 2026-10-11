@@ -163,6 +163,7 @@ typedef struct {
     float m0[16];
     int coco;        /* CocoNut: a spin / hip drop / kick sends it rolling (update_coconuts) */
     int fountain;    /* FountainBig: a water column on a cycle, Mario in it is thrown up (update_fountains); m0 its matrix */
+    int snowman;     /* SnowMan: a fire ball melts it (update_snowmen) */
     int candle;      /* PhantomCandlestand 1 / TeresaMansionCandlestand 2: burns Mario, a spin puts it out (update_candles) */
     int screw;       /* ScrewSwitch 1 / ScrewSwitchReverse 2: a spin on it screws it, then its SW_A (update_screws) */
     int jet;         /* JetTurtle: Mario takes it, a spin throws it (update_jets); head its place, hvel its velocity */
@@ -177,7 +178,7 @@ typedef struct {
     int plant;       /* PlantGroup (Flower / FlowerBlue / CutBush Group): its model drawn at each member (plants) */
     const unsigned char *railer; /* map part on a rail: its PATH entry; moves along it (update_railers) */
 } Inst;
-enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY };
+enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE };
 static V3 firebar_ball(const Inst *in, int j, int k);
 static V3 star_pos(const Inst *in, int *state);
 static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle);
@@ -244,6 +245,10 @@ static unsigned char zone_kcl[64]; /* zones with collision bound (game_rebind): 
 static int test_nolost; /* test builds: no miss for falling off (Mario sent to a zone still streaming in) */
 static void notes_spawn(void);
 static int note_rail(const Row *r, const unsigned char **e);
+static int fire_time; /* Fire Mario: frames left (mFireModeTime 1200), 0 normal */
+#define MAX_FIREBALLS 3 /* FireMarioBall: MarioActor's _B54 */
+static struct { V3 pos, vel; int t, wall; } fireballs[MAX_FIREBALLS];
+static const Model *m_fireball;
 #define MAX_NOTES 512 /* NoteFairy notes (update_notes) */
 static struct { V3 pos; float coord; short row, alive; } notes[MAX_NOTES];
 static int nnotes;
@@ -2108,6 +2113,7 @@ void game_rebind(void)
     m_stink = scene_model(s, "StinkBugSmall");
     m_note = scene_model(s, "NoteFairy");
     m_poihana = scene_model(s, "Poihana");
+    m_fireball = scene_model(s, "MarioFireBall");
     m_unizo[0] = scene_model(s, "Unizo"); m_unizo[1] = scene_model(s, "UnizoLand"); m_unizo[2] = scene_model(s, "UnizoShoal");
     int t_coin = scene_type(s, "Coin"), t_pc = scene_type(s, "PurpleCoin"), t_circle = scene_type(s, "CirclePurpleCoinGroup");
     int t_rail = scene_type(s, "PurpleRailCoin"), t_piece = scene_type(s, "StarPiece"), t_kuribo = scene_type(s, "Kuribo");
@@ -2156,7 +2162,7 @@ void game_rebind(void)
         in->item = strcmp(name, "PowerStar") == 0 ? ITEM_STAR : strcmp(name, "BenefitItemOneUp") == 0 ? ITEM_ONEUP :
                    strcmp(name, "BenefitItemLifeUp") == 0 ? ITEM_LIFEUP : strcmp(name, "QuestionCoin") == 0 ? ITEM_QCOIN :
                    strcmp(name, "YellowChip") == 0 || strcmp(name, "BlueChip") == 0 ? ITEM_CHIP :
-                   strcmp(name, "KeySwitch") == 0 ? ITEM_KEY : 0; /* KeySwitch.cpp: taken (isMsgItemGet), its SW_A on */
+                   strcmp(name, "KeySwitch") == 0 ? ITEM_KEY : strcmp(name, "MorphItemNeoFire") == 0 ? ITEM_FIRE : 0; /* KeySwitch.cpp: taken (isMsgItemGet), its SW_A on */
         in->firebar = strcmp(name, "FireBar") == 0;
         in->invisible = strncmp(name, "InvisibleWall", 13) == 0 || strcmp(name, "IronCannonLauncherPoint") == 0;
         in->flip = strcmp(name, "FlipPanel") == 0 || strcmp(name, "FlipPanelReverse") == 0;
@@ -2190,6 +2196,7 @@ void game_rebind(void)
         in->fluff = strcmp(name, "Fluff") == 0;
         in->jet = strcmp(name, "JetTurtle") == 0;
         in->fountain = strcmp(name, "FountainBig") == 0;
+        in->snowman = strcmp(name, "SnowMan") == 0;
         in->candle = strcmp(name, "PhantomCandlestand") == 0 ? 1 : strcmp(name, "TeresaMansionCandlestand") == 0 ? 2 : 0;
         in->screw = strcmp(name, "ScrewSwitch") == 0 ? 1 : strcmp(name, "ScrewSwitchReverse") == 0 ? 2 : 0;
         in->biri_rail = in->biri && scene_blob_g && r->path >= 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
@@ -2983,6 +2990,25 @@ void game_test_spin_now(void) { mario->spin_timer = SPIN_TIME; } /* test builds:
 
 /* Test builds: Mario by the first burning candlestand, spinning (how 1) or in its flame (0); its row, -1 none */
 /* Test builds: Mario onto the first FountainBig's base (its row, -1 none) */
+/* Test builds: Fire Mario now (phase 0), a spin (1); game_fire_state: balls flying */
+int game_test_fire(int phase)
+{
+    if (phase == 0) fire_time = 1200; else mario->spin_timer = SPIN_TIME;
+    float best = 1e30f; /* facing the nearest live walker */
+    for (int i = 0; i < nkuribo; i++) {
+        V3 d = vtangent(vsub(kuribo[i].pos, mario->pos), mario->up);
+        if (kuribo[i].state != KURIBO_DEAD && vlen(d) < best && vlen(d) > 1.0f) { best = vlen(d); mario->face = vnorm(d); }
+    }
+    return fire_time;
+}
+
+int game_fire_state(void)
+{
+    int n = 0;
+    for (int b = 0; b < MAX_FIREBALLS; b++) n += fireballs[b].t > 0;
+    return n;
+}
+
 int game_test_fountain(void)
 {
     for (int i = 0; i < ninsts; i++)
@@ -4236,6 +4262,36 @@ static void jet_reset(Inst *in)
  * up, is thrown up (ACTMES_FOUNTAINJUMP -> MarioFlow: mJumpHeightFlow 18 with mGravityFlow 0.3, about 540 up: here
  * 44 up with Mario's own gravity, mJumpDistFlow 2 ahead), once until he lands. row_step its cycle frame, row_turn 1
  * while he flies off it. ponytail: no FountainBigSign / FountainBig effects, no Bee Mario flip */
+/* SnowMan.cpp: a fire ball on its head or body melts that part (MeltHead / MeltBody: SW_A, SW_B), the second
+ * one brings it down (kill: SW_DEAD). Head sensor 100 at 250 up, body 150 at 100 (scale). row_turn bit 1 head
+ * melted, bit 2 body melted. ponytail: no melting animation (the model squashes as parts go), spins only shake it */
+static int fireball_hits_snowman(V3 p)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->snowman || row_dead[in->row]) continue;
+        const Row *r = &sc->objs[in->row];
+        V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), base = v3(in->m[12], in->m[13], in->m[14]);
+        int head = vlen(vsub(p, vadd(base, vmul(up, 250.0f * in->s)))) < 100.0f * in->s + 80.0f;
+        int body = !head && vlen(vsub(p, vadd(base, vmul(up, 100.0f * in->s)))) < 150.0f * in->s + 80.0f;
+        if (!head && !body) continue;
+        signed char *st = &row_turn[in->row];
+        if (*st) { /* the second part: down */
+            if (r->sw[SW_DEAD] >= 0) sw_set(r, SW_DEAD, 1);
+            row_kill(in->row);
+            printf("snowman row %d melted down" "\n", in->row);
+        } else {
+            *st = head ? 1 : 2;
+            if (head && r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
+            if (!head && r->sw[SW_B] >= 0) sw_set(r, SW_B, 1);
+            for (int j = 4; j < 7; j++) in->m[j] *= 0.6f; /* a part gone */
+            printf("snowman row %d: %s melted" "\n", in->row, head ? "head" : "body");
+        }
+        return 1;
+    }
+    return 0;
+}
+
 static void update_fountains(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -4286,6 +4342,62 @@ static void update_candles(void)
             if (r->arg[0] == -1) pop_coins(at, up, 1); else if (r->arg[0] == 0) drop_pieces(at, up, 1);
             row_turn[row] = 2;
         }
+    }
+}
+
+/* Fire Mario (MarioActorMorph: playerMode 2 for mFireModeTime 1200 frames from a MorphItemNeoFire) and his balls
+ * (MarioActorParts.cpp shootFireBall, FireMarioBall.cpp): each spin throws one of three from his hand along front + up
+ * at cThrowSpeed 30; gravity cGravityAcc 2, the ground and roofs bound it (x cBoundReduction 0.9); a wall touched 3
+ * frames, 3000 from Mario or a hit puts it out. A hit (ACTMES_FIREBALL_ATTACK, sensor 80) kills walkers (a coin;
+ * a Unizo: 6 star pieces), melts SnowMen (update_snowmen). ponytail: Mario keeps his colours (no fire textures),
+ * no fire throw / spin animations, no BGM_FIRE */
+static void fireball_hit_walkers(int b)
+{
+    for (int k = 0; k < nkuribo; k++) {
+        Kuribo *e = &kuribo[k];
+        if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_BUTTERFLY ||
+            vlen(vsub(fireballs[b].pos, vadd(e->pos, vmul(e->up, 60.0f)))) > 80.0f + 60.0f) continue;
+        e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up);
+        if (e->kind == WALK_UNIZO) drop_pieces(e->pos, e->up, 6); else pop_coins(e->pos, e->up, 1);
+        printf("fire ball burns walker row %d" "\n", e->row);
+        fireballs[b].t = 0;
+        return;
+    }
+}
+
+static int fireball_hits_snowman(V3 p); /* update_snowmen */
+static void update_fire(void)
+{
+    if (fire_time > 0) {
+        if (--fire_time == 0) printf("fire mario over" "\n");
+        static int prev_spin;
+        int spin_start = mario->spin_timer > prev_spin; /* a spin begins */
+        prev_spin = mario->spin_timer;
+        if (spin_start) /* a spin: a ball if one is free */
+            for (int b = 0; b < MAX_FIREBALLS; b++)
+                if (!fireballs[b].t) {
+                    V3 dir = vnorm(vadd(mario->face, mario->up));
+                    fireballs[b].pos = vadd(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), vmul(mario->face, 30.0f));
+                    fireballs[b].vel = vmul(dir, 30.0f);
+                    fireballs[b].t = 1; fireballs[b].wall = 0;
+                    printf("fire ball thrown" "\n");
+                    break;
+                }
+    }
+    for (int b = 0; b < MAX_FIREBALLS; b++) {
+        if (!fireballs[b].t) continue;
+        fireballs[b].t++;
+        V3 up = up_at(fireballs[b].pos, mario->up), p = vadd(fireballs[b].pos, fireballs[b].vel), gn, wn;
+        int wall = 0, ground = collide_n(&p, up, 50.0f, &gn, &wn, &wall);
+        fireballs[b].pos = p;
+        if (ground) { /* bound off the ground */
+            float into = vdot(fireballs[b].vel, gn);
+            if (into < 0) fireballs[b].vel = vsub(fireballs[b].vel, vmul(gn, into * (1.0f + 0.9f)));
+        } else fireballs[b].vel = vsub(fireballs[b].vel, vmul(up, 2.0f));
+        fireballs[b].wall = wall ? fireballs[b].wall + 1 : 0;
+        if (fireballs[b].wall >= 3 || vlen(vsub(p, mario->pos)) > 3000.0f || fireballs[b].t > 600) { fireballs[b].t = 0; continue; }
+        fireball_hit_walkers(b);
+        if (fireballs[b].t && fireball_hits_snowman(p)) fireballs[b].t = 0;
     }
 }
 
@@ -6338,6 +6450,7 @@ static void update_items(void)
         else if (in->item == ITEM_QCOIN) fx_emit(FX_QUESTIONCOIN_GET, in->m);
         else if (in->item == ITEM_CHIP)
             fx_emit(sc->types[32 * sc->objs[in->row].type] == 'Y' ? FX_YELLOWCHIP_GET : FX_BLUECHIP_GET, in->m);
+        else if (in->item == ITEM_FIRE) { fire_time = 1200; printf("fire mario\n"); } /* mFireModeTime */
         else if (in->item == ITEM_KEY) { /* KeySwitch::kill: onSwitchA */
             if (sc->objs[in->row].sw[SW_A] >= 0) sw_set(&sc->objs[in->row], SW_A, 1);
             printf("key switch %d taken\n", in->row);
@@ -6670,6 +6783,7 @@ void game_update(void)
     update_screws();
     update_candles();
     update_fountains();
+    update_fire();
     place_waterplants();
     update_pipes();
     update_switches();
@@ -6996,6 +7110,11 @@ void game_draw(void)
     }
     if (m_mario_skin && !(mario->hurt_timer & 4))
         render_skinned(m_mario_skin, m, (const float (*)[16])mario_anim->drw);
+    if (m_fireball) for (int b = 0; b < MAX_FIREBALLS; b++) { /* Fire Mario's balls, rolling */
+        if (!fireballs[b].t) continue;
+        basis_matrix(m, fireballs[b].pos, up_at(fireballs[b].pos, v3(0, 1, 0)), fireballs[b].vel, game_frame * 0.5f);
+        render_model(m_fireball, m, 0x80, 0x80, 0x80);
+    }
     if (m_note) for (int i = 0; i < nnotes; i++) { /* NoteFairy notes, turning 8 degrees a frame */
         if (notes[i].alive != 1) continue;
         basis_matrix(m, notes[i].pos, up_at(notes[i].pos, v3(0, 1, 0)), v3(1, 0, 0), game_frame * 0.1396263f);
