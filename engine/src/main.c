@@ -805,6 +805,19 @@ int main(void)
             if (frame % 120 == 0) printf("fat test f %u: %d\n", frame, st);
         }
 #endif
+#ifdef PURPLE_TEST
+        if (frame >= 150 && frame % 4 == 0) { /* Mario through the purple coins, then onto the 100-coin star */
+            int st = game_test_purple();
+            if (frame % 100 == 0) printf("purple test f %u: %d, stars %d\n", frame, st, game_stars());
+        }
+#endif
+#ifdef OTA_TEST
+        if (frame >= 150) { /* Mario before OtaKing, spinning its coconuts back, until its star is out */
+            int st = game_test_ota();
+            if (st >= 50) st = 5000 + game_test_cage(1); /* on its star */
+            if (frame % 100 == 0) printf("ota test f %u: %d, stars %d\n", frame, st, game_stars());
+        }
+#endif
 #ifdef DINO_TEST
         if (frame >= 150 && frame % 20 == 0) { /* Mario at DinoPackun's tail ball, spinning, until its star is out */
             int st = game_test_dino();

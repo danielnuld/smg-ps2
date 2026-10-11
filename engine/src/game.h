@@ -61,6 +61,8 @@ int game_test_fountain(void);
 int game_test_stray(void);
 int game_test_swim(void);
 int game_swim_state(void);
+int game_test_purple(void);
+int game_test_ota(void);
 int game_test_fat(void);
 int game_test_dino(void);
 int game_test_bubble(void);

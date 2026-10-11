@@ -259,6 +259,15 @@ static struct {
     V3 bpos, bvel;
 } dino = {.row = -1};
 static const Model *m_dino, *m_dball, *m_degg;
+/* OtaKing (Petari Boss/OtaKing.cpp, Enemy/CocoNutBall.cpp): one per scene */
+#define OTA_BALLS 3
+static struct {
+    int row, phase, t, hits, throws; /* phase: 0 wait (SW_A), 1 wait, 2 throw, 3 damage, 4 down, 5 gone */
+    V3 pos, up, f;
+    struct { V3 pos, vel, grav; int state, t, rally; } ball[OTA_BALLS]; /* state: 0 none, 1 Throw, 2 HitBackToHost,
+                                                                         * 3 HitBackToPlayer, 4 Rebound */
+} ota = {.row = -1};
+static const Model *m_ota, *m_otafoot, *m_coco;
 #define MAX_BUBBLES 8 /* AirBubbleHolder's free bubbles (update_bubbles) */
 static struct { V3 pos, vel; int t, life; } bubbles[MAX_BUBBLES];
 static int swimming, oxygen = 3600; /* Mario in water (swim_update); oxygen left (mOxygenMax 3600) */
@@ -347,9 +356,15 @@ static short *star_wait;
 #elif defined(MKOOPA_TEST)
 #define TEST_SHOWN "MechanicKoopaMini"
 #endif
+/* SuperSpinDriver.cpp: one in a group (惑星出現, a TicoFat's) waits dead until the group is called (TicoFat full) */
+#define MAX_GROUP_WAIT 16
+static struct { int row, fat; } group_wait[MAX_GROUP_WAIT];
+static int ngroup_wait;
 static int row_shown(int i)
 {
     const Row *r = &sc->objs[i];
+    for (int k = 0; k < ngroup_wait; k++)
+        if (group_wait[k].row == i && !row_dead[group_wait[k].fat]) return 0;
 #ifdef TEST_SHOWN /* a test build's class out at once (its appear switch belongs to a fight or an event) */
     if (strcmp(sc->types + 32 * r->type, TEST_SHOWN) == 0) return 1;
 #endif
@@ -822,7 +837,26 @@ void game_init(const Scene *s, const unsigned char *blob)
             row_hold[i] = s->objs[i].arg[3] >= 0 ? s->objs[i].arg[3] : 5;
     scene_blob_g = blob;
     npurple = count_type("PurpleCoin", 0) + count_type("CirclePurpleCoinGroup", 1) + count_type("PurpleRailCoin", 1);
+    ngroup_wait = 0;
+    for (u32 i = 0; i < s->nobjs; i++) { /* the spin drivers a TicoFat's group brings out */
+        const char *tn = s->types + 32 * s->objs[i].type;
+        if (strncmp(tn, "SuperSpinDriver", 15) || s->objs[i].group < 0) continue;
+        for (u32 k = 0; k < s->nobjs && ngroup_wait < MAX_GROUP_WAIT; k++)
+            if (s->objs[k].group == s->objs[i].group && s->objs[k].zone == s->objs[i].zone &&
+                strcmp(s->types + 32 * s->objs[k].type, "TicoFat") == 0) {
+                group_wait[ngroup_wait].row = i; group_wait[ngroup_wait++].fat = k;
+                break;
+            }
+    }
     memset(&dino, 0, sizeof dino); dino.row = -1;
+    memset(&ota, 0, sizeof ota); ota.row = -1;
+    for (u32 i = 0; i < s->nobjs; i++)
+        if (strcmp(s->types + 32 * s->objs[i].type, "OtaKing") == 0) {
+            V3 x, z;
+            row_axes(&s->objs[i], &x, &z);
+            ota.row = i; ota.pos = row_pos(&s->objs[i]); ota.up = up_at(ota.pos, v3(0, 1, 0)); ota.f = vnorm(vtangent(z, ota.up));
+            break;
+        }
     for (u32 i = 0; i < s->nobjs; i++)
         if (strcmp(s->types + 32 * s->objs[i].type, "DinoPackun") == 0) {
             V3 x, z;
@@ -2147,6 +2181,7 @@ void game_rebind(void)
     m_poihana = scene_model(s, "Poihana");
     m_marioball = scene_model(s, "MarioFireBall");
     m_bubble = scene_model(s, "AirBubble");
+    m_ota = scene_model(s, "OtaKing"); m_otafoot = scene_model(s, "OtaKingFoot"); m_coco = scene_model(s, "CocoNut");
     m_dino = scene_model(s, "DinoPackun"); m_dball = scene_model(s, "DinoPackunTailBall"); m_degg = scene_model(s, "DinoPackunEggShell");
     m_unizo[0] = scene_model(s, "Unizo"); m_unizo[1] = scene_model(s, "UnizoLand"); m_unizo[2] = scene_model(s, "UnizoShoal");
     int t_coin = scene_type(s, "Coin"), t_pc = scene_type(s, "PurpleCoin"), t_circle = scene_type(s, "CirclePurpleCoinGroup");
@@ -2177,7 +2212,7 @@ void game_rebind(void)
             r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly ||
             r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_stink || r->type == scene_type(s, "NoteFairy") ||
             r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == scene_type(s, "RockCreator") ||
-            r->type == scene_type(s, "DinoPackun"))
+            r->type == scene_type(s, "DinoPackun") || r->type == scene_type(s, "OtaKing"))
             continue;
         const char *name = s->types + 32 * r->type;
         const Model *md = scene_model(s, name);
@@ -2462,7 +2497,7 @@ int game_test_cage(int on_star)
 {
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
-        if (in->item != ITEM_STAR || star_wait[in->row] <= 0) continue;
+        if (in->item != ITEM_STAR || !star_wait[in->row] || (!on_star && star_wait[in->row] < 0)) continue; /* -1: the 100-coin one */
         if (on_star) {
             int state;
             V3 p = star_pos(in, &state);
@@ -3106,10 +3141,42 @@ int game_test_swim(void)
 
 int game_swim_state(void) { return swimming * 10000 + oxygen; }
 
+/* Test builds: Mario onto the next purple coin left (purple coins taken; once all are, onto the waiting star:
+ * 1000 + its state) */
+int game_test_purple(void)
+{
+    for (int i = 0; i < npurple; i++)
+        if (purple[i].alive == PICK_ON) {
+            int z = purple[i].row >= 0 ? sc->objs[purple[i].row].zone : 0;
+            mario->pos = vsub(purple[i].pos, vmul(mario->up, HIT_BODY_H)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            test_nolost = 1; /* some float off any planet (taken in flight): no miss while held there */
+            if (z < 64 && !zone_kcl[z]) return -2;
+            return got_purple;
+        }
+    return 1000 + game_test_cage(1);
+}
+
+/* Test builds: Mario 1500 in front of OtaKing (before it is up: on its SwitchCylinder), spinning when a coconut is
+ * within 300 coming at him; game_ota_state: phase x 10 + hits (-1 no OtaKing) */
+int game_test_ota(void)
+{
+    if (ota.row < 0) return -1;
+    V3 at = vadd(ota.pos, vmul(ota.f, ota.phase ? 1500.0f : 300.0f));
+    if (ota.phase == 0) { mario->pos = vadd(at, vmul(ota.up, 200.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int b = 0; b < OTA_BALLS; b++)
+        if ((ota.ball[b].state == 1 || ota.ball[b].state == 3) && vlen(vsub(ota.ball[b].pos, c)) < 300.0f) mario->spin_timer = SPIN_TIME;
+    mario->hurt_timer = 0;
+    return ota.phase * 10 + ota.hits;
+}
+
 /* Test builds: Mario 600 in front of the first hungry TicoFat with star pieces, a shot at it (pieces it ate x 1000 +
  * pieces left; -1 none left) */
 int game_test_fat(void)
 {
+    static int f0;
+    if (!f0++ || (f0 & 31) == 0)
+        for (int k = 0; k < ngroup_wait; k++) printf("fat test: group spin driver row %d shown %d\n", group_wait[k].row, row_shown(group_wait[k].row));
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
         if (!in->fat || row_dead[in->row]) continue;
@@ -4681,6 +4748,115 @@ static void update_dino(void)
     if (dino.bstate == 0 || dino.bstate == 4) collide_n(&bc, bup, 135.0f, &gn, &wn, &wall);
     dino.bpos = bc;
     #undef DINO_TURN_TO
+}
+
+/* OtaKing (Lv1): SW_A (a TimerSwitch after the SwitchCylinder round its bath) brings it up. Facing Mario (1 degree a
+ * frame) it throws a coconut at him every cWaitFrame 75 (45 after a throw) while he is within cThrowDistance 4000
+ * (none near the way already): 15 a frame at him, a few degrees aside. A touch hurts Mario and the ball rebounds; a
+ * spin within 400 sends it back (HitBackToHost: at its body, 42 a frame flat, gravity 2.2 x 2), its rally count up.
+ * At its body (400): a rally count over its hits hurts it (cHP 3), else it hits it back at Mario (15 + 3 x rally).
+ * After the third hit it goes down (cDownDemoFrame 300) and its power star comes out (the row dies: star_wait). A
+ * ball dies on the ground, a wall, or 5000 off. ponytail: no fire balls, bubbles, near attack, magma, long feet,
+ * freezing (the pointer), demos (60 frames), star pieces; the body only pushes Mario off */
+static void update_ota(void)
+{
+    if (ota.row < 0 || ota.phase == 5 || !row_shown(ota.row)) return;
+    const Row *r = &sc->objs[ota.row];
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), up = ota.up;
+    V3 body = vadd(ota.pos, vmul(up, 150.0f)), hand = vadd(ota.pos, vadd(vmul(up, 500.0f), vmul(ota.f, 300.0f)));
+    float dm = vlen(vsub(mario->pos, ota.pos));
+    ota.t++;
+    if (ota.phase == 0) {
+        if (r->sw[SW_A] < 0 || sw_on(r, SW_A)) { ota.phase = 1; ota.t = -60; printf("ota king: appears" "\n"); }
+        return;
+    }
+    if (ota.phase == 1 || ota.phase == 2) { /* turn to Mario */
+        V3 to = vtangent(vsub(mario->pos, ota.pos), up);
+        if (vlen(to) > 1e-3f) {
+            V3 side = vcross(up, ota.f);
+            float a = atan2f(vdot(to, side), vdot(to, ota.f)), mx = 0.0174533f;
+            a = a > mx ? mx : a < -mx ? -mx : a;
+            ota.f = vnorm(vadd(vmul(ota.f, cosf(a)), vmul(side, sinf(a))));
+        }
+        int free_ball = -1, near = 0;
+        for (int b = 0; b < OTA_BALLS; b++) {
+            if (!ota.ball[b].state) free_ball = free_ball < 0 ? b : free_ball;
+            else if (vlen(vsub(ota.ball[b].pos, ota.pos)) < dm + 500.0f) near = 1; /* cValidThrowCocoNutDistance */
+        }
+        if (ota.phase == 1 && ota.t >= (ota.throws ? 45 : 75) && free_ball >= 0 && !near && dm < 4000.0f) { ota.phase = 2; ota.t = 0; }
+        if (ota.phase == 2 && ota.t == 70 && free_ball >= 0) { /* cThrowCocoNutStep: appearAndThrow */
+            float aside = (ota.throws % 2 == ota.hits % 2 ? 1.0f : -1.0f) * 0.06f;
+            V3 to2 = vsub(c, hand), side = vnorm(vcross(up, vnorm(to2)));
+            ota.ball[free_ball].pos = hand; ota.ball[free_ball].state = 1; ota.ball[free_ball].t = 0; ota.ball[free_ball].rally = 0;
+            ota.ball[free_ball].vel = vmul(vnorm(vadd(vnorm(to2), vmul(side, aside))), 15.0f);
+            ota.throws++;
+            printf("ota king: coconut thrown" "\n");
+        }
+        if (ota.phase == 2 && ota.t >= 100) { ota.phase = 1; ota.t = 0; }
+    } else if (ota.phase == 3) {
+        if (ota.t >= 60) { ota.phase = 1; ota.t = 0; }
+    } else if (ota.phase == 4) {
+        if (ota.t >= 300) {
+            ota.phase = 5; row_kill(ota.row);
+            printf("ota king: down, its star" "\n");
+            return;
+        }
+    }
+    float db = vlen(vsub(c, body));
+    if (db < 400.0f + HIT_BODY_R) { /* sendMsgPush */
+        V3 out = vtangent(vsub(c, body), up);
+        if (vlen(out) > 1e-3f) mario->pos = vadd(mario->pos, vmul(vnorm(out), 400.0f + HIT_BODY_R - db));
+    }
+    for (int b = 0; b < OTA_BALLS; b++) {
+        typeof(&ota.ball[0]) k = &ota.ball[b];
+        if (!k->state) continue;
+        k->t++;
+        if (k->state == 2) k->vel = vadd(k->vel, k->grav);
+        else if (k->state == 4) k->vel = vadd(vmul(k->vel, 0.98f), vmul(up_at(k->pos, up), -1.0f));
+        V3 p = vadd(k->pos, k->vel), gn, wn;
+        int wall = 0, hit = 0;
+        if (k->state != 2) { /* tryToKill: binded to the map */
+            V3 q = p;
+            hit = collide_n(&q, up_at(p, up), 60.0f, &gn, &wn, &wall) || wall;
+        }
+        k->pos = p;
+        float dc = vlen(vsub(c, k->pos));
+        if ((k->state == 1 || k->state == 3 || k->state == 4) && mario->spin_timer > 0 && dc < 400.0f && k->t > 4) { /* HitBackToHost */
+            k->rally++;
+            V3 dst = vadd(body, vmul(up, 100.0f)), d = vsub(dst, k->pos), h = vtangent(d, up);
+            float n = vlen(h) / 42.0f;
+            if (n < 1.0f) n = 1.0f;
+            V3 g = vmul(up, -4.4f);
+            k->grav = g;
+            k->vel = vadd(vmul(vnorm(h), 42.0f), vmul(up, (vdot(d, up) + 2.2f * n * n) / n));
+            k->state = 2; k->t = 0;
+            printf("ota king: coconut hit back (rally %d)" "\n", k->rally);
+            continue;
+        }
+        if ((k->state == 1 || k->state == 3) && dc < 60.0f + HIT_BODY_R) { /* ENEMY_ATTACK_FLIP_VERYWEAK, Rebound */
+            hurt_mario(k->pos, 10.0f);
+            k->state = 4; k->t = 0; k->vel = vadd(vmul(vnorm(vsub(k->pos, c)), 5.0f), vmul(up, 15.0f));
+            continue;
+        }
+        if (k->state == 2 && vlen(vsub(k->pos, body)) < 400.0f + 60.0f) { /* receiveMsgEnemyAttack on its body */
+            if (k->rally <= ota.hits && ota.phase != 3 && ota.phase != 4) { /* hitBackToPlayer */
+                V3 to = vsub(c, k->pos);
+                k->vel = vmul(vnorm(to), 15.0f + 3.0f * k->rally);
+                k->state = 3; k->t = 0;
+                printf("ota king: hits it back" "\n");
+            } else {
+                k->state = 0;
+                if (ota.phase != 3 && ota.phase != 4) {
+                    ota.hits++;
+                    ota.phase = ota.hits >= 3 ? 4 : 3; ota.t = 0;
+                    printf("ota king: hit %d" "\n", ota.hits);
+                }
+            }
+            continue;
+        }
+        if (hit || vlen(vsub(k->pos, ota.pos)) > 5000.0f || k->t > 600 || (k->state == 4 && k->t > 120)) k->state = 0;
+    }
+    if (ota.phase == 4) for (int b = 0; b < OTA_BALLS; b++) ota.ball[b].state = 0;
 }
 
 static void update_fountains(void)
@@ -7119,6 +7295,7 @@ static void update_shots(void)
             if (++row_turn[in->row] >= want) {
                 if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
                 row_kill(in->row);
+                sw_changed = 1; /* callAppearAllGroupMember: its spin drivers come out */
                 printf("tico fat row %d: full (%d), its planet" "\n", in->row, want);
             }
         }
@@ -7341,6 +7518,7 @@ void game_update(void)
     update_strays();
     update_bubbles();
     update_dino();
+    update_ota();
     update_fire();
     place_waterplants();
     update_pipes();
@@ -7672,6 +7850,16 @@ void game_draw(void)
         if (!fireballs[b].t) continue;
         basis_matrix(m, fireballs[b].pos, up_at(fireballs[b].pos, v3(0, 1, 0)), fireballs[b].vel, game_frame * 0.5f);
         render_model(m_marioball, m, 0x80, 0x80, 0x80);
+    }
+    if (ota.row >= 0 && ota.phase >= 1 && ota.phase < 5 && row_shown(ota.row)) { /* OtaKing, its feet, its coconuts */
+        basis_matrix(m, ota.pos, ota.up, ota.f, 0);
+        if (m_ota) render_model(m_ota, m, 0x80, 0x80, 0x80);
+        if (m_otafoot) render_model(m_otafoot, m, 0x80, 0x80, 0x80);
+        for (int b = 0; m_coco && b < OTA_BALLS; b++) {
+            if (!ota.ball[b].state) continue;
+            basis_matrix(m, ota.ball[b].pos, ota.up, v3(1, 0, 0), game_frame * 0.3f);
+            render_model(m_coco, m, 0x80, 0x80, 0x80);
+        }
     }
     if (dino.row >= 0 && dino.phase < 6 && row_shown(dino.row)) { /* DinoPackun, its egg shell, its tail ball */
         basis_matrix(m, dino.pos, dino.up, dino.f, 0);

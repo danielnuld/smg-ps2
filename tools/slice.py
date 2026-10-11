@@ -57,6 +57,8 @@ SKINNED = ("Mario",)
 NO_DRAW = ("SphereAir", "DimensionAir", "HomeAir", "TwilightAir", "DarknessRoomAir", "SunsetAir", "FineAir")   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
 OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup", "PurpleRailCoin", "CircleCoinGroup",
              "RailCoin", "SuperSpinDriver", "StarPieceGroup", "StarPieceFlow")
+# classes whose first NameObjFactory archive is not their model (OtaKing's is FireBall, Tico's TicoBaby): the model
+MODEL_ARC = {"OtaKing": "OtaKing", "KoopaJr": "KoopaJr", "Tico": "Tico"}
 SW_FIELDS = ("SW_APPEAR", "SW_A", "SW_B", "SW_DEAD", "SW_SLEEP")  # stage switch ids: < 1000 the zone's, else global
 ROW_FIELDS = ("pos_x", "pos_y", "pos_z", "dir_x", "dir_y", "dir_z", "scale_x", "scale_y", "scale_z")
 ROW = struct.Struct("<HHii9f8i5hh")
@@ -70,7 +72,7 @@ SKY_TILES = 8
 EXTRA = {"FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
          "MorphItemNeoFire": ("MarioFireBall",), "AirBubbleGenerator": ("AirBubble",),
-         "DinoPackun": ("DinoPackunTailBall", "DinoPackunEggShell")}
+         "DinoPackun": ("DinoPackunTailBall", "DinoPackunEggShell"), "OtaKing": ("CocoNut", "OtaKingFoot")}
 # model-less classes the engine runs (stage switch logic): kept in OBJS like the classes with a model
 # power stars an event brings out (Petari PowerStarEventKeeper): ScenarioData AppearPowerStarObj names each star's
 # declarer by its ObjNameTable name. The classes the engine runs, with the arg giving an explicit star id (None: the
@@ -868,6 +870,8 @@ def model_archive(fsp, name, planets):
         return name
     if name in NO_DRAW:
         return None
+    if name in MODEL_ARC:
+        return MODEL_ARC[name]
     if _factory is None:  # parsing Petari's sources takes minutes on the SD card: cached next to the other outputs
         cache = Path(__file__).parent.parent / "out" / "factory.json"
         if cache.exists():
@@ -897,7 +901,7 @@ def declare_stars(keep, scenario, appear, jp):
         k = STAR_DECLARERS.get(r["name"], -1)
         if r["name"] == "NoteFairy":  # declarePowerStar when arg7 is 1-3
             k = None if s32(r["args"][7]) > 0 else -1
-        elif r["name"] in ("CollectTico", "DinoPackun"):  # their init declarePowerStar, always
+        elif r["name"] in ("CollectTico", "DinoPackun", "OtaKing"):  # their init declarePowerStar, always
             k = None
         elif k is None and s32(r["args"][7]) != 7:
             k = -1
@@ -951,7 +955,14 @@ def placement(fs, galaxy, scenario):
     sd = {n.lower(): d for n, d in B.rarc_files((fsp / "StageData" / galaxy / f"{galaxy}Scenario.arc").read_bytes())}
     sd = sd["scenariodata.bcsv"]
     names = next(B.rarc_files((fsp / "StageData" / "ObjNameTable.arc").read_bytes()))[1]
-    declare_stars(keep, scenario, dict(zip(B.bcsv_column(sd, "ScenarioNo"), B.bcsv_column(sd, "AppearPowerStarObj"))),
+    try:
+        comet = B.bcsv_column(sd, "Comet")
+    except Exception:
+        comet = []
+    # GalaxyStatusAccessor::getAppearPowerStarObjName: a Purple / Black comet scenario's star is the 100-coin one
+    appear = {n: COIN100 if i < len(comet) and comet[i] in ("Purple", "Black") else a
+              for i, (n, a) in enumerate(zip(B.bcsv_column(sd, "ScenarioNo"), B.bcsv_column(sd, "AppearPowerStarObj")))}
+    declare_stars(keep, scenario, appear,
                   dict(zip(B.bcsv_column(names, "en_name"), B.bcsv_column(names, "jp_name"))))
     types = sorted({o["name"] for o in keep} | {s["name"] for s in starts})
     tid = {t: i for i, t in enumerate(types)}
