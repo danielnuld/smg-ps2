@@ -178,7 +178,7 @@ typedef struct {
     int plant;       /* PlantGroup (Flower / FlowerBlue / CutBush Group): its model drawn at each member (plants) */
     const unsigned char *railer; /* map part on a rail: its PATH entry; moves along it (update_railers) */
 } Inst;
-enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE };
+enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE };
 static V3 firebar_ball(const Inst *in, int j, int k);
 static V3 star_pos(const Inst *in, int *state);
 static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle);
@@ -241,11 +241,14 @@ typedef struct { V3 pos, vel; int t; } Shot; /* star pieces shot at the pointer 
 static Shot shots[MAX_SHOTS];
 static int test_l1; /* test builds: L1 pressed this frame */
 static int test_sq; /* test builds: Square pressed this frame (Fluff) */
+static int test_cross; /* test builds: X held (Bee Mario) */
 static unsigned char zone_kcl[64]; /* zones with collision bound (game_rebind): walkers wait in the others */
 static int test_nolost; /* test builds: no miss for falling off (Mario sent to a zone still streaming in) */
 static void notes_spawn(void);
 static int note_rail(const Row *r, const unsigned char **e);
 static int fire_time; /* Fire Mario: frames left (mFireModeTime 1200), 0 normal */
+static int bee_mode, bee_meter; /* Bee Mario (MarioBee.cpp): on until hurt; flight left (mAirWalkTime 180) */
+static float bee_rise, bee_drop; /* -_770 while flying (up to mBeeUpSpeedMax 5), its free drop (to mBeeFreeDropMaxSpd 5) */
 #define MAX_FIREBALLS 3 /* FireMarioBall: MarioActor's _B54 */
 static struct { V3 pos, vel; int t, wall; } fireballs[MAX_FIREBALLS];
 static const Model *m_fireball;
@@ -1516,7 +1519,7 @@ static void update_prom(void)
 }
 
 /* BeeFlowerHover.cpp: turns arg0 / 100 degrees a frame about its Y (default 0.5); Mario touching it from above when he
- * is not a bee (never, here: no Bee Mario) is HardTouch: its collision goes at once, it shows ThroughMario (~30
+ * is not a bee (Bee Mario stands on it) is HardTouch: its collision goes at once, it shows ThroughMario (~30
  * frames, ponytail: it just shows on), hides, and 60 frames later Appears (~30) with its collision back. row_turn 1
  * while gone, row_step its frames. ponytail: no rail mover, no low model LOD */
 static void carry(const float old[16], const Inst *in);
@@ -1530,7 +1533,7 @@ static void update_beeflowers(void)
         signed char *ph = &row_turn[in->row];
         if (*ph) {
             if (++*t >= 120) { *ph = 0; *t = 0; }
-        } else if (mario_ground == i) { /* isMsgFloorTouch, not a bee */
+        } else if (mario_ground == i && !bee_mode) { /* isMsgFloorTouch, not a bee */
             *ph = 1; *t = 0;
             printf("bee flower %d: Mario goes through" "\n", in->row);
         }
@@ -2163,7 +2166,8 @@ void game_rebind(void)
         in->item = strcmp(name, "PowerStar") == 0 ? ITEM_STAR : strcmp(name, "BenefitItemOneUp") == 0 ? ITEM_ONEUP :
                    strcmp(name, "BenefitItemLifeUp") == 0 ? ITEM_LIFEUP : strcmp(name, "QuestionCoin") == 0 ? ITEM_QCOIN :
                    strcmp(name, "YellowChip") == 0 || strcmp(name, "BlueChip") == 0 ? ITEM_CHIP :
-                   strcmp(name, "KeySwitch") == 0 ? ITEM_KEY : strcmp(name, "MorphItemNeoFire") == 0 ? ITEM_FIRE : 0; /* KeySwitch.cpp: taken (isMsgItemGet), its SW_A on */
+                   strcmp(name, "KeySwitch") == 0 ? ITEM_KEY : strcmp(name, "MorphItemNeoFire") == 0 ? ITEM_FIRE :
+                   strcmp(name, "MorphItemNeoBee") == 0 ? ITEM_BEE : 0; /* KeySwitch.cpp: taken (isMsgItemGet), its SW_A on */
         in->firebar = strcmp(name, "FireBar") == 0;
         in->invisible = strncmp(name, "InvisibleWall", 13) == 0 || strcmp(name, "IronCannonLauncherPoint") == 0;
         in->flip = strcmp(name, "FlipPanel") == 0 || strcmp(name, "FlipPanelReverse") == 0;
@@ -2993,6 +2997,18 @@ void game_test_spin_now(void) { mario->spin_timer = SPIN_TIME; } /* test builds:
 /* Test builds: Mario by the first burning candlestand, spinning (how 1) or in its flame (0); its row, -1 none */
 /* Test builds: Mario onto the first FountainBig's base (its row, -1 none) */
 /* Test builds: Fire Mario now (phase 0), a spin (1); game_fire_state: balls flying */
+/* Test builds: Bee Mario now (phase 0), A held (1) or let go (2) for the next frames; game_bee_state: flight left */
+void game_test_jump(void) { mario->vup = 20.0f; mario->grounded = 0; mario->air_timer = 0; mario->jump_kind = 0; }
+
+int game_test_bee(int phase)
+{
+    if (phase == 0) { bee_mode = 1; bee_meter = 180; }
+    test_cross = phase == 1;
+    return bee_mode;
+}
+
+int game_bee_state(void) { return bee_mode ? bee_meter : -1; }
+
 int game_test_fire(int phase)
 {
     if (phase == 0) fire_time = 1200; else mario->spin_timer = SPIN_TIME;
@@ -4760,6 +4776,7 @@ static void update_mario(void)
         m->land_timer++;
         if (pad_pressed(PAD_CROSS)) try_jump(m, ratio);
         else if (pad_pressed(PAD_SQUARE) && m->spin_timer == 0) m->spin_timer = SPIN_TIME;
+        bee_meter = 180; bee_rise = bee_drop = 0; /* landing refills the flight */
     } else {
         m->air_timer++;
         /* air steering; front speed decays after a while (mJumpFrontReduction / mSquatJumpFrontReduction) */
@@ -4791,6 +4808,19 @@ static void update_mario(void)
         }
         float g = m->low_grav > 0 ? JUMP_GRAV[8] : JUMP_GRAV[m->jump_kind >= 0 ? m->jump_kind : 0];
         if (m->low_grav > 0) m->low_grav--;
+        /* MarioBee.cpp: A held after mBeeAirWalkInhibitTime (30) with flight left lifts him (mBeeFlyConstantFactor 5 x
+         * mBeeAccelRatio 0.02 a frame up to mBeeUpSpeedMax 5, his own rise x mBeePushRiseGravityEraser 0.9); let go
+         * he drops slowly (mBeeFreeDropAcc 0.1 to 5). ponytail: no wall walk, no honey walls, no bee animations */
+        if (bee_mode && (pad_held(PAD_CROSS) || test_cross) && m->air_timer > 30 && bee_meter > 0) {
+            bee_meter--; bee_drop = 0;
+            bee_rise += 5.0f * 0.02f;
+            if (bee_rise > 5.0f) bee_rise = 5.0f;
+            m->vup = m->vup > bee_rise ? m->vup * 0.9f : bee_rise;
+        } else if (bee_mode && m->vup <= 0) {
+            bee_rise = 0;
+            if (bee_drop < 5.0f) bee_drop += 0.1f;
+            m->vup = -bee_drop;
+        } else
         m->vup -= g * (2.0f + kari_cling) * 0.5f; /* Karikari clinging: (2 + n) / 2 */
         if (m->vup < -MAX_DROP) m->vup = -MAX_DROP;
     }
@@ -4898,6 +4928,7 @@ static void mario_fx(int fx, float k)
 static void hurt_mario(V3 from, float push)
 {
     if (mario->hurt_timer) return;
+    if (bee_mode) { bee_mode = 0; printf("bee mario lost\n"); } /* the bee suit goes at a hit */
     mario_fx(FX_MARIO_DAMAGE, 1.0f);
     if (--life <= 0) { miss(); return; }
     V3 away = vtangent(vsub(mario->pos, from), mario->up);
@@ -6511,7 +6542,8 @@ static void update_items(void)
         else if (in->item == ITEM_QCOIN) fx_emit(FX_QUESTIONCOIN_GET, in->m);
         else if (in->item == ITEM_CHIP)
             fx_emit(sc->types[32 * sc->objs[in->row].type] == 'Y' ? FX_YELLOWCHIP_GET : FX_BLUECHIP_GET, in->m);
-        else if (in->item == ITEM_FIRE) { fire_time = 1200; printf("fire mario\n"); } /* mFireModeTime */
+        else if (in->item == ITEM_FIRE) { fire_time = 1200; bee_mode = 0; printf("fire mario\n"); } /* mFireModeTime */
+        else if (in->item == ITEM_BEE) { bee_mode = 1; fire_time = 0; bee_meter = 180; printf("bee mario\n"); }
         else if (in->item == ITEM_KEY) { /* KeySwitch::kill: onSwitchA */
             if (sc->objs[in->row].sw[SW_A] >= 0) sw_set(&sc->objs[in->row], SW_A, 1);
             printf("key switch %d taken\n", in->row);

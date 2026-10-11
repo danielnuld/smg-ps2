@@ -771,6 +771,18 @@ int main(void)
             printf("giver test f %u: %s row %d, coins %d, pieces %d\n", frame, frame % 80 ? "leaves" : "pompon",
                    game_test_giver(frame % 80 ? 1 : 2), game_coins(), game_pieces_out());
 #endif
+#ifdef BEE_TEST
+        { /* Bee Mario jumps (150), A held from 190 to 400 (flies, runs out), let go */
+            if (frame == 150) { game_test_bee(0); game_test_jump(); }
+            if (frame == 190) game_test_bee(1);
+            if (frame == 400) game_test_bee(2);
+            if (frame >= 150 && frame < 600 && frame % 10 == 0) {
+                char dd[128];
+                game_debug(dd, sizeof dd);
+                printf("bee test f %u: flight %d %s\n", frame, game_bee_state(), dd);
+            }
+        }
+#endif
 #ifdef FIRE_TEST
 #ifndef TEST_FIRE_KIND
 #define TEST_FIRE_KIND 0 /* Kuribo */
