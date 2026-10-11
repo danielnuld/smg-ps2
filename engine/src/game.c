@@ -162,6 +162,7 @@ typedef struct {
                       * CocoNut: head its centre, m0 its turned rotation */
     float m0[16];
     int coco;        /* CocoNut: a spin / hip drop / kick sends it rolling (update_coconuts) */
+    int jet;         /* JetTurtle: Mario takes it, a spin throws it (update_jets); head its place, hvel its velocity */
     int fluff;       /* Fluff: head its place, hvel its velocity, m0 its home (update_fluffs, fluff_*) */
     int cocoon;      /* SpaceCocoon: head its cocoon, hvel its spring velocity, m0 its base (update_cocoons, cocoon_*) */
     V3 cfront;       /* CocoNut: _94 its rolling direction, cspd _8C its speed, cfall _90 its fall speed */
@@ -228,6 +229,7 @@ static float cur_x = 320, cur_y = 224; /* the star pointer's stand-in, moved by 
 static struct { int phase, t, target; V3 vel; float power; } gcap; /* GCapture (gcap_update) */
 static int test_r2; /* test builds: R2 held */
 static struct { int inst, cool; V3 pt, vel, side, front; } jb = {.inst = -1}; /* JumpBranch (jbranch_update) */
+static struct { int inst, phase, t; } jet = {.inst = -1}; /* the JetTurtle Mario holds or threw (update_jets) */
 static struct { int inst, phase, t, spins; } flf = {.inst = -1}; /* the Fluff Mario rides (fluff_update) */
 static struct { int inst, phase, t, wait; V3 vel; } coc = {.inst = -1, .wait = -1}; /* SpaceCocoon Mario hangs on (cocoon_update) */
 typedef struct { V3 pos, vel; int t; } Shot; /* star pieces shot at the pointer (update_shots) */
@@ -1177,6 +1179,7 @@ static void coco_spawn(Inst *in);
 static V3 cocoon_neutral(const Inst *in);
 static void cocoon_place(Inst *in);
 static void fluff_place(Inst *in);
+static void jet_place(Inst *in);
 static V3 stink_front(const Kuribo *k);
 static void place_waterplants(void);
 static void tsuki_place(Inst *in)
@@ -2171,6 +2174,7 @@ void game_rebind(void)
         in->coco = strcmp(name, "CocoNut") == 0;
         in->cocoon = strcmp(name, "SpaceCocoon") == 0;
         in->fluff = strcmp(name, "Fluff") == 0;
+        in->jet = strcmp(name, "JetTurtle") == 0;
         in->biri_rail = in->biri && scene_blob_g && r->path >= 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->giver = strcmp(name, "DeadLeaves") == 0 ? 1 : strcmp(name, "Pompon2Plant") == 0 || strcmp(name, "Pompon4Plant") == 0 ? 2 : 0;
         in->ticorail = scene_blob_g && r->path >= 0 && strcmp(name, "TicoRail") == 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
@@ -2210,6 +2214,7 @@ void game_rebind(void)
         if (in->ticorail && row_coord && row_turn[i]) ticorail_place(in);
         if (in->biri && row_coord && row_turn[i]) biri_place(in);
         if (in->coco) coco_spawn(in);
+        if (in->jet) { memcpy(in->m0, in->m, 64); in->head = v3(in->m[12], in->m[13], in->m[14]); in->hvel = v3(0, 0, 0); }
         if (in->fluff) { memcpy(in->m0, in->m, 64); in->head = v3(in->m[12], in->m[13], in->m[14]); in->hvel = v3(0, 0, 0); }
         if (in->cocoon) { /* at rest at its neutral point, arg1 (default 100) up its axis */
             memcpy(in->m0, in->m, 64);
@@ -2236,7 +2241,12 @@ void game_rebind(void)
         if (insts[i].plant) { insts[i].kcl_ready = 1; place_plants(&insts[i]); }
     memset(zone_kcl, 0, sizeof zone_kcl);
     for (int i = 0; i < ninsts; i++) if (insts[i].kcl && insts[i].zone < 64) zone_kcl[insts[i].zone] = 1;
+    int jet_row = jet.inst >= 0 ? insts[jet.inst].row : -1;
+    V3 jet_head = jet.inst >= 0 ? insts[jet.inst].head : v3(0, 0, 0), jet_vel = jet.inst >= 0 ? insts[jet.inst].hvel : v3(0, 0, 0);
     flf.inst = coc.inst = jb.inst = coc.wait = -1;
+    jet.inst = -1;
+    for (int i = 0; i < ninsts && jet_row >= 0; i++)
+        if (insts[i].row == jet_row) { jet.inst = i; insts[i].head = jet_head; insts[i].hvel = jet_vel; jet_place(&insts[i]); }
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
         if (in->row == ride_row[0]) { flf.inst = i; in->head = ride_head[0]; in->hvel = ride_vel[0]; fluff_place(in); }
@@ -2944,6 +2954,22 @@ int game_test_fluff(int phase)
  * the notes left, -1 none) */
 /* Test builds: Mario onto the first KeySwitch shown (its row; -2 one waits hidden, -1 none); game_key_taken: how
  * many were taken */
+/* Test builds: phase 0 Mario onto the first JetTurtle (its row, -1 none); 1 a spin (the throw); game_jet_state:
+ * jet.phase (0 none) */
+int game_test_jet(int phase)
+{
+    if (phase == 1) { mario->spin_timer = SPIN_TIME; return jet.phase; }
+    for (int i = 0; i < ninsts; i++)
+        if (insts[i].jet) {
+            mario->pos = vsub(insts[i].head, vmul(mario->up, 20.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return insts[i].row;
+        }
+    return -1;
+}
+
+int game_jet_state(void) { return jet.phase; }
+
 int game_test_key(void)
 {
     for (int i = 0; i < ninsts; i++)
@@ -4104,6 +4130,70 @@ static int cocoon_update(Player *m)
  * 0.15); a spin lifts him (RideSpinUp: +0.8 a frame for 30 frames, 3 times; after the last it falls turning), X jumps
  * off (18 up), touching the map lets go. row_turn 0 on its leaf, 1 floating, 2 gone; flf.phase 1 start, 2 fly, 3 spin
  * up; row_step its frames. ponytail: no FluffWind, no leaf model, no Bloom / Spin animations, Mario hangs 130 under it */
+/* JetTurtle.cpp (on land): a Koopa shell waiting at its home. Mario touching it takes it (TakenStart: held in front
+ * of him); a spin throws it along his front (Throwing) at sThrowSpdStraight (30, arg1 0: 20) a frame; it blows away the
+ * walkers it touches (JetTurtleAttack: Unizos too) and is gone (reset) on a wall, after sResetStep (300, arg1 0: 480)
+ * frames or 10000 from home; then it is back at home (Restart). jet.phase 1 held, 2 thrown. ponytail: no water jet
+ * (swimming), no homing on enemies, no bounding off rebound walls, no gravity in its flight */
+static void jet_place(Inst *in)
+{
+    memcpy(in->m, in->m0, 64);
+    in->m[12] = in->head.x; in->m[13] = in->head.y; in->m[14] = in->head.z;
+}
+
+static void jet_reset(Inst *in)
+{
+    in->head = v3(in->m0[12], in->m0[13], in->m0[14]); in->hvel = v3(0, 0, 0);
+    jet_place(in);
+    row_turn[in->row] = 30; /* a moment before it can be taken again */
+    printf("jet turtle row %d: back home" "\n", in->row);
+}
+
+static void update_jets(void)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->jet) continue;
+        if (row_turn[in->row] > 0) row_turn[in->row]--;
+        const Row *r = &sc->objs[in->row];
+        int type = r->arg[1] + 1 >= 0 && r->arg[1] + 1 <= 2 ? r->arg[1] + 1 : 0;
+        if (jet.inst == i && jet.phase == 1) { /* held: in front of him at his hands */
+            in->head = vadd(vadd(mario->pos, vmul(mario->face, 70.0f)), vmul(mario->up, 60.0f));
+            if (mario->spin_timer > 0) { /* thrown */
+                in->hvel = vmul(mario->face, (const float[]){30, 20, 30}[type]);
+                jet.phase = 2; jet.t = 0;
+                printf("jet turtle row %d: thrown" "\n", in->row);
+            }
+            jet_place(in);
+            continue;
+        }
+        if (jet.inst == i && jet.phase == 2) { /* Throwing */
+            V3 p = vadd(in->head, in->hvel), up = up_at(p, mario->up), gn, wn;
+            int wall = 0;
+            collide_n(&p, up, 60.0f, &gn, &wn, &wall);
+            in->head = p;
+            int gone = wall || ++jet.t >= (const int[]){300, 480, 300}[type] ||
+                       vlen(vsub(p, v3(in->m0[12], in->m0[13], in->m0[14]))) > 10000.0f;
+            for (int k = 0; k < nkuribo; k++) { /* ACTMES_JET_TURTLE_ATTACK */
+                Kuribo *e = &kuribo[k];
+                if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_BUTTERFLY ||
+                    vlen(vsub(p, vadd(e->pos, vmul(e->up, 60.0f)))) > 60.0f + 80.0f) continue;
+                e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up);
+                if (e->kind == WALK_UNIZO) drop_pieces(e->pos, e->up, 6); else pop_coins(e->pos, e->up, 1);
+                printf("jet turtle row %d blows walker row %d" "\n", in->row, e->row);
+            }
+            if (gone) { jet.inst = -1; jet.phase = 0; jet_reset(in); continue; }
+            jet_place(in);
+            continue;
+        }
+        if (jet.inst < 0 && !row_turn[in->row] && vlen(vsub(c, vadd(in->head, vmul(mario->up, 50.0f)))) < 80.0f + HIT_BODY_R) {
+            jet.inst = i; jet.phase = 1; jet.t = 0; /* TakenStart */
+            printf("jet turtle row %d: taken" "\n", in->row);
+        }
+    }
+}
+
 static void fluff_place(Inst *in)
 {
     memcpy(in->m, in->m0, 64);
@@ -6391,6 +6481,7 @@ void game_update(void)
     update_notes();
     update_cocoons();
     update_fluffs();
+    update_jets();
     place_waterplants();
     update_pipes();
     update_switches();

@@ -771,6 +771,13 @@ int main(void)
             printf("giver test f %u: %s row %d, coins %d, pieces %d\n", frame, frame % 80 ? "leaves" : "pompon",
                    game_test_giver(frame % 80 ? 1 : 2), game_coins(), game_pieces_out());
 #endif
+#ifdef JET_TEST
+        { /* Mario onto a JetTurtle (150), walking with it, a spin throws it (250) */
+            if (frame == 150) printf("jet test f %u: row %d\n", frame, game_test_jet(0));
+            if (frame == 250) game_test_jet(1);
+            if (frame >= 150 && frame < 700 && frame % 20 == 0) printf("jet test f %u: phase %d\n", frame, game_jet_state());
+        }
+#endif
 #ifdef KEY_TEST
         if (frame >= 150 && frame < 600 && frame % 30 == 0) /* Mario onto the keys shown, one after another */
             printf("key test f %u: row %d, taken %d\n", frame, game_test_key(), game_key_taken());

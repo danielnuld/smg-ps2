@@ -54,6 +54,8 @@ int game_test_poihana(int how);
 int game_poihana_state(void);
 int game_test_note(int phase);
 int game_test_key(void);
+int game_test_jet(int phase);
+int game_jet_state(void);
 int game_key_taken(void);
 int game_unizo_state(int *dist);
 int game_stink_state(int *dist);
