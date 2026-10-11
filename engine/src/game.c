@@ -281,9 +281,9 @@ static struct {
     int prev_nrv, react;           /* the nerve a punch interrupted; a star piece's hit reaction (frames left) */
     V3 chain[9];                   /* its tail: TailRoot .. TailBall, model space (DinoPackunTail) */
     int chain_ok;
-    Anim *anim;
+    Anim *anim, *brk;              /* its pose; its egg shell break model's (mShellBreakModel) */
 } dino = {.row = -1};
-static const Model *m_dino, *m_dball, *m_degg, *m_deggbrk;
+static const Model *m_dino, *m_dball, *m_degg, *m_deggcrack, *m_deggbrk;
 /* OtaKing (Petari Boss/OtaKing.cpp, Enemy/CocoNutBall.cpp, Enemy/FireBall.cpp, Enemy/FireBubble.cpp): one per scene */
 #define OTA_BALLS 3
 #define OTA_FIRES 6
@@ -955,6 +955,7 @@ void game_init(const Scene *s, const unsigned char *blob)
             dino.f = vnorm(vtangent(z, dino.up)); dino.side = 1.0f;
             dino.bpos = vsub(dino.pos, vmul(dino.f, 600.0f));
             dino.anim = mem_alloc(MEM_PLAYER, sizeof(Anim)); memset(dino.anim, 0, sizeof(Anim));
+            dino.brk = mem_alloc(MEM_PLAYER, sizeof(Anim)); memset(dino.brk, 0, sizeof(Anim));
             break;
         }
     npieces = count_type("StarPiece", 0) + box_pieces;
@@ -2312,7 +2313,7 @@ void game_rebind(void)
     m_fireball2 = scene_model(s, "FireBall"); m_firebubble = scene_model(s, "FireBubble");
     m_sambohead = scene_model(s, "CocoSamboHead");
     m_dino = scene_model(s, "DinoPackun"); m_dball = scene_model(s, "DinoPackunTailBall"); m_degg = scene_model(s, "DinoPackunEggShell");
-    m_deggbrk = scene_model(s, "DinoPackunEggShellBreak");
+    m_deggbrk = scene_model(s, "DinoPackunEggShellBreak"); m_deggcrack = scene_model(s, "DinoPackunEggShell#EggBroken");
     m_unizo[0] = scene_model(s, "Unizo"); m_unizo[1] = scene_model(s, "UnizoLand"); m_unizo[2] = scene_model(s, "UnizoShoal");
     int t_coin = scene_type(s, "Coin"), t_pc = scene_type(s, "PurpleCoin"), t_circle = scene_type(s, "CirclePurpleCoinGroup");
     int t_rail = scene_type(s, "PurpleRailCoin"), t_piece = scene_type(s, "StarPiece"), t_kuribo = scene_type(s, "Kuribo");
@@ -5048,6 +5049,11 @@ static const char *dino_clip(int *loop)
  * (mTail->deactivate / startDemoAndReset). */
 static void dino_pose(void)
 {
+    if (dino.brk && m_deggbrk && m_deggbrk->skin && dino.nrv == DN_DAMAGE && dino.dnrv == DD_EGGBROKEN && dino.dt >= 30) {
+        if (dino.brk->skin != m_deggbrk->skin) anim_bind(dino.brk, m_deggbrk->skin);
+        anim_play(dino.brk, "dinopackuneggshellbreak/break", 1.0f, 0, 0); /* exeEggBroken step 30: startBck Break */
+        anim_update(dino.brk);
+    }
     Anim *a = dino.anim;
     if (!a || !m_dino || !m_dino->skin) return;
     if (a->skin != m_dino->skin) { anim_bind(a, m_dino->skin); dino.chain_ok = 0; }
@@ -9181,8 +9187,11 @@ void game_draw(void)
             mat_mul(jm, m, dino.anim->world[2]); /* EggShell */
             int broke = dino.nrv == DN_DAMAGE && dino.dnrv == DD_EGGBROKEN; /* exeEggBroken: the shell until 30, then Break */
             if (m_degg && (dino.seq < DSEQ_EGG || (dino.seq == DSEQ_EGG && !(broke && dino.dt >= 30))))
-                render_model(m_degg, jm, 0x80, 0x80, 0x80);
-            else if (m_deggbrk && broke && dino.dt >= 30) render_model(m_deggbrk, jm, 0x80, 0x80, 0x80);
+                render_model(broke && m_deggcrack ? m_deggcrack : m_degg, jm, 0x80, 0x80, 0x80); /* startBva EggBroken */
+            else if (m_deggbrk && broke && dino.dt >= 30 && dino.dt <= 120) { /* killed after step 120 */
+                if (m_deggbrk->skin && dino.brk->skin == m_deggbrk->skin) render_skinned(m_deggbrk, jm, (const float (*)[16])dino.brk->drw);
+                else render_model(m_deggbrk, jm, 0x80, 0x80, 0x80);
+            }
             mat_mul(jm, m, dino.anim->world[20]); /* TailBall */
             if (m_dball) render_model(m_dball, jm, 0x80, 0x80, 0x80);
         } else {

@@ -168,7 +168,9 @@ Last updated 2026-10-09. Detail and numbers: `docs/phase2-report.md`; tasks: `op
     state, Kuribo facing its way); skinned shapes without texture take the TEV constant colour; BRK registers at a
     frame (tex.brk, slice.py BRK_POSE: Tico's ColorChange 0, its yellow; a saturated bake then keeps the first
     stage);
-  - BVA visibility for static models (slice.py VIS: the egg shell's intact / cracked pieces, normal.bva's last frame);
+  - BVA visibility for static models (slice.py VIS: the egg shell's intact / cracked pieces, normal.bva's last frame;
+    EXTRA "<archive>#<BVA>" bakes another, DinoPackunEggShell#EggBroken: the cracks in exeEggBroken's first 30);
+    DinoPackunEggShellBreak skinned on the EggShell joint, its Break clip from step 30 to 120 (BRK Break baked);
   - CocoSambo after Petari (body CocoSamboBody + CocoSamboHead): HideWait / Appear within arg0 (1800) / Wait /
     Attack within 700 / AttackInterval / Hide; spine and head sensors at their joints; a coconut on it makes its head
     fall (45 frames, twice the gravity), Land, Swoon 180, SwoonEnd while the body hides and recovers; a stomp presses

@@ -55,7 +55,7 @@ SKINNED = ("Mario",)
 # placed classes drawn skinned and animated by their own BCKs (the scenario's ANIM chunk, "<class>/<clip>" in
 # lower case); their model archive is the class name
 SKINNED_OBJ = ("DinoPackun", "OtaKing", "OtaKingFoot", "TicoFat", "Tico", "CocoSambo", "CocoSamboHead", "Kuribo", "Takobo",
-               "Karikari", "Butterfly", "PackunPetit", "KuriboMini")
+               "Karikari", "Butterfly", "PackunPetit", "KuriboMini", "DinoPackunEggShellBreak")
 ANIM_ARC = {"CocoSambo": "CocoSamboBody", "Karikari": "Karipon"}  # where a class's clips are when not in its own-named archive
 # ponytail: models the renderer cannot reproduce: the atmosphere spheres (*Air: their glow is a TEV rim effect; drawn
 # with their material they flood the screen)
@@ -73,11 +73,12 @@ SKY_ARCS = ("VROrbit", "VRDarkSpace", "VRSandwichSun", "GalaxySky", "MilkyWaySky
 SKY_TILES = 8
 # second models a class draws besides its own (FireBar.cpp: FireBarBall around the FireBarCore)
 # extra models a class draws: a name of its own, or "#<BCK>": the class's archive with that animation's visibility
+# ("<archive>#<BVA>": another archive with that BVA's last-frame visibility: the cracked egg shell)
 # (FlipPanel: "?" at rest, "!" once flipped, the End face when its group is complete)
 EXTRA = {"FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
          "MorphItemNeoFire": ("MarioFireBall",), "AirBubbleGenerator": ("AirBubble",),
-         "DinoPackun": ("DinoPackunTailBall", "DinoPackunEggShell", "DinoPackunEggShellBreak"), "OtaKing": ("CocoNut", "OtaKingFoot", "FireBall", "FireBubble"), "CocoSambo": ("CocoSamboHead",)}
+         "DinoPackun": ("DinoPackunTailBall", "DinoPackunEggShell", "DinoPackunEggShell#EggBroken", "DinoPackunEggShellBreak"), "OtaKing": ("CocoNut", "OtaKingFoot", "FireBall", "FireBubble"), "CocoSambo": ("CocoSamboHead",)}
 # model-less classes the engine runs (stage switch logic): kept in OBJS like the classes with a model
 # power stars an event brings out (Petari PowerStarEventKeeper): ScenarioData AppearPowerStarObj names each star's
 # declarer by its ObjNameTable name. The classes the engine runs, with the arg giving an explicit star id (None: the
@@ -238,7 +239,7 @@ def scene(fs, galaxy, scenario):
 # its intact and cracked pieces, normal.bva shows the intact ones (DinoPackun::initEggShell)
 VIS = {"DinoPackunEggShell": "normal"}
 # models baked with a BRK's registers at a frame (Tico.cpp: ColorChange at its colour, frame 0 the yellow one)
-BRK_POSE = {"Tico": ("colorchange", 0), "TicoFat": ("normal", 0)}  # TicoFat: startBrk Normal, frame 0 (ponytail: FatRed as it grows)
+BRK_POSE = {"Tico": ("colorchange", 0), "TicoFat": ("normal", 0), "DinoPackunEggShellBreak": ("break", 0)}  # TicoFat: startBrk Normal, frame 0 (ponytail: FatRed as it grows)
 
 
 def bva_hidden(b, frame=0):
@@ -261,7 +262,7 @@ def hidden_joints(b, bl, files, pose=None):
     Exclamation). Static models drop the shapes on them."""
     js = skin.joints(b, bl)
     scales = [j["scale"] for j in js]
-    if pose:
+    if pose and pose.lower() + ".bck" in files:
         bck = files[pose.lower() + ".bck"]
         clip = anim_clip(bck)
         scales = [p[0] for p in skin.clip_pose(clip, struct.unpack_from("<H", clip, 0)[0], None)]
@@ -321,7 +322,8 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None):
             lfiles = {k.lower().rsplit("/", 1)[-1]: v for k, v in files.items()}
             over = tex.brk(lfiles[BRK_POSE[arc.stem][0] + ".brk"], BRK_POSE[arc.stem][1]) if arc.stem in BRK_POSE and \
                 BRK_POSE[arc.stem][0] + ".brk" in lfiles else None
-            vis_hide = bva_hidden({k.lower(): v for k, v in files.items()}.get(VIS[arc.stem].lower() + ".bva", b""), 1 << 30) if arc.stem in VIS else set()
+            bva = pose if pose and pose.lower() + ".bva" in lfiles else VIS.get(arc.stem)
+            vis_hide = bva_hidden(lfiles.get(bva.lower() + ".bva", b""), 1 << 30) if bva else set()
             for pos, tri, info in got:
                 if not tri or info["shape"] in vis_hide:
                     continue
@@ -989,7 +991,7 @@ def placement(fs, galaxy, scenario):
             if e[0] == "#":
                 arcmap.setdefault(o["name"] + e, arcmap[o["name"]] + e if arcmap[o["name"]] else None)
             else:
-                arcmap.setdefault(e, e if (fsp / "ObjectData" / f"{e}.arc").exists() else None)
+                arcmap.setdefault(e, e if (fsp / "ObjectData" / f"{e.partition('#')[0]}.arc").exists() else None)
     sd = {n.lower(): d for n, d in B.rarc_files((fsp / "StageData" / galaxy / f"{galaxy}Scenario.arc").read_bytes())}
     sd = sd["scenariodata.bcsv"]
     names = next(B.rarc_files((fsp / "StageData" / "ObjNameTable.arc").read_bytes()))[1]
