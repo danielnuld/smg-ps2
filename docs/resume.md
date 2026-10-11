@@ -96,6 +96,8 @@ Last updated 2026-10-09. Detail and numbers: `docs/phase2-report.md`; tasks: `op
     Unizos too, gone on a wall or after 300 / 480 frames, back home; no water jet, no homing);
   - ScrewSwitch / ScrewSwitchReverse (a spin on it: Mario held while it screws, 34 / 75 frames, then its SW_A; the
     screw itself does not move);
+  - PowerStarAppearPoint (kept as a logic row): an event star of a group with appear points comes out at the one
+    nearest its declarer (ReverseKingdom 2: the NoteFairy's star);
   - WaterPlant (kept as a logic row): arg0 plants within arg1 dropped onto the ground, camera-facing strips of three
     segments swaying (render_strips), WaterPlantA-D packed after the effects' textures (PTCL header word 2);
   - ambient effect objects (NameObjFactory's *EffectObj*: SnowS, LavaSparksS, AstroTorchLight...; tools/jpa.py AMBIENT,

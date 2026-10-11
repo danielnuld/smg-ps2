@@ -6086,6 +6086,24 @@ static V3 item_sensor(const Inst *in, float *r)
  * (its own place for the hundred coins) 300 up its own y (ease out over 60 frames), at frame 80 off to its place in
  * 120 frames on an arc as high as half the distance across its up (300 to 5000); taken from frame 210. *state: 0
  * hidden, 1 waiting in its cage, 2 appearing, 3 can be taken. ponytail: no demo camera, the stage goes on */
+/* PowerStar::setDemoAppearPos: an event star whose group (GroupId) has PowerStarAppearPoints comes out at the one
+ * nearest its declarer, not at its own place */
+static V3 star_appear_point(const Inst *in, V3 from, V3 own)
+{
+    const Row *s = &sc->objs[in->row];
+    int t = scene_type(sc, "PowerStarAppearPoint");
+    if (t < 0 || s->group < 0) return own;
+    float best = 1e30f;
+    V3 p = own;
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if (r->type != t || r->group != s->group || r->zone != s->zone) continue;
+        float d = vlen(vsub(row_pos(r), from));
+        if (d < best) { best = d; p = row_pos(r); }
+    }
+    return p;
+}
+
 static V3 star_pos(const Inst *in, int *state)
 {
     V3 p = v3(in->m[12], in->m[13], in->m[14]);
@@ -6094,6 +6112,7 @@ static V3 star_pos(const Inst *in, int *state)
     if (!w) return p;
     V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), o = p;
     if (w > 0) {
+        p = star_appear_point(in, row_pos(&sc->objs[w - 1]), p);
         const Row *r = &sc->objs[w - 1];
         const char *name = sc->types + 32 * r->type;
         V3 x, z;
