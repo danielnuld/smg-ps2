@@ -162,6 +162,7 @@ typedef struct {
                       * CocoNut: head its centre, m0 its turned rotation */
     float m0[16];
     int coco;        /* CocoNut: a spin / hip drop / kick sends it rolling (update_coconuts) */
+    int candle;      /* PhantomCandlestand 1 / TeresaMansionCandlestand 2: burns Mario, a spin puts it out (update_candles) */
     int screw;       /* ScrewSwitch 1 / ScrewSwitchReverse 2: a spin on it screws it, then its SW_A (update_screws) */
     int jet;         /* JetTurtle: Mario takes it, a spin throws it (update_jets); head its place, hvel its velocity */
     int fluff;       /* Fluff: head its place, hvel its velocity, m0 its home (update_fluffs, fluff_*) */
@@ -753,6 +754,9 @@ void game_init(const Scene *s, const unsigned char *blob)
         if (stone_row(&s->objs[i]) && s->objs[i].arg[2] >= 0) box_pieces += 8; /* a star piece per stone */
         if (!strcmp(tn, "Butterfly") && s->objs[i].arg[1] < 0) box_pieces++; /* the pointer brings one out */
         if (!strcmp(tn, "StinkBugSmall")) box_pieces += 3; /* declareStarPiece(3) */
+        if (!strcmp(tn, "PhantomCandlestand") || !strcmp(tn, "TeresaMansionCandlestand")) { /* arg0 -1 a coin, 0 a star piece */
+            if (s->objs[i].arg[0] == -1) { ncoins++; box_coins++; } else if (s->objs[i].arg[0] == 0) box_pieces++;
+        }
         if (!strncmp(tn, "Unizo", 5) && strcmp(tn, "UnizoLauncher")) box_pieces += 6; /* sStarPieceNum */
         if (!strcmp(tn, "DeadLeaves")) { /* arg0 0 a coin, 1 three star pieces */
             if (s->objs[i].arg[0] == 0) { ncoins++; box_coins++; } else if (s->objs[i].arg[0] == 1) box_pieces += 3;
@@ -2175,6 +2179,7 @@ void game_rebind(void)
         in->cocoon = strcmp(name, "SpaceCocoon") == 0;
         in->fluff = strcmp(name, "Fluff") == 0;
         in->jet = strcmp(name, "JetTurtle") == 0;
+        in->candle = strcmp(name, "PhantomCandlestand") == 0 ? 1 : strcmp(name, "TeresaMansionCandlestand") == 0 ? 2 : 0;
         in->screw = strcmp(name, "ScrewSwitch") == 0 ? 1 : strcmp(name, "ScrewSwitchReverse") == 0 ? 2 : 0;
         in->biri_rail = in->biri && scene_blob_g && r->path >= 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->giver = strcmp(name, "DeadLeaves") == 0 ? 1 : strcmp(name, "Pompon2Plant") == 0 || strcmp(name, "Pompon4Plant") == 0 ? 2 : 0;
@@ -2960,6 +2965,22 @@ int game_test_fluff(int phase)
 /* Test builds: Mario onto the first waiting screw switch, spinning (its row, -1 none); game_screw_state: the first
  * one's row_turn */
 void game_test_spin_now(void) { mario->spin_timer = SPIN_TIME; } /* test builds: a spin this frame */
+
+/* Test builds: Mario by the first burning candlestand, spinning (how 1) or in its flame (0); its row, -1 none */
+int game_test_candle(int how)
+{
+    for (int i = 0; i < ninsts; i++)
+        if (insts[i].candle && !row_turn[insts[i].row]) {
+            V3 up = vnorm(v3(insts[i].m[4], insts[i].m[5], insts[i].m[6])), x = vnorm(v3(insts[i].m[0], insts[i].m[1], insts[i].m[2]));
+            V3 base = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]);
+            mario->up = up;
+            mario->pos = how ? vadd(base, vmul(x, 200.0f)) : vsub(vadd(base, vmul(up, (insts[i].candle == 1 ? 220.0f : 300.0f) * insts[i].s)), vmul(up, HIT_BODY_H));
+            if (how) mario->spin_timer = SPIN_TIME;
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return insts[i].row;
+        }
+    return -1;
+}
 
 int game_test_screw(void)
 {
@@ -4177,6 +4198,42 @@ static void jet_reset(Inst *in)
  * to its middle (Adjust, 3 frames) and held while it screws (ScrewSwitchOn: 34 frames, the reverse one 75), then
  * its SW_A goes on and he is let go; it stays done. row_turn 0 waiting, 1 screwing, 2 done; row_step its frames.
  * ponytail: the screw does not go down (no ScrewSwitchOn joint pose), no ScrewSwitchOn animation for Mario */
+/* Candlestand.cpp (PhantomCandlestand, TeresaMansionCandlestand): a candle burning (Burn, its Fire effect / Fire01
+ * and Fire02); its flame (sensor 50 x scale at 220 up; 70 at 300) burns Mario (EnemyAttackFire). A spin within 350 x
+ * scale puts it out (Extinguish): 15 frames later its item comes out (arg0 -1 a coin, 0 a star piece, at 0 up; 220
+ * for TeresaMansion) and it stays out. row_turn 0 burning, 1 going out, 2 out; row_step its frames. ponytail: no
+ * fireball relighting (CandlestandIceVolcano's switch kind is not this one) */
+static void update_candles(void)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->candle) continue;
+        int row = in->row;
+        const Row *r = &sc->objs[row];
+        V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), base = v3(in->m[12], in->m[13], in->m[14]);
+        float s = in->s, h = in->candle == 1 ? 220.0f : 300.0f, rad = (in->candle == 1 ? 50.0f : 70.0f) * s;
+        if (row_turn[row] == 0) {
+            if (in->candle == 1) fx_keep(FX_PHANTOMCANDLESTAND_FIRE, r, in->m);
+            else { fx_keep(FX_TERESAMANSIONCANDLESTAND_FIRE01, r, in->m); fx_keep(FX_TERESAMANSIONCANDLESTAND_FIRE02, (const char *)r + 1, in->m); }
+            V3 flame = vadd(base, vmul(up, h * s));
+            if (vlen(vsub(c, flame)) < rad + HIT_BODY_R && !mario->hurt_timer) { /* sendMsgEnemyAttackFire */
+                hurt_mario(flame, 20.0f);
+                printf("candlestand row %d burns Mario" "\n", row);
+            }
+            if (mario->spin_timer > 0 && vlen(vsub(c, vadd(base, vmul(up, 100.0f * s)))) < 350.0f * s) { /* isInSpinStormRange */
+                row_turn[row] = 1; row_step[row] = 0;
+                fx_emit(in->candle == 1 ? FX_PHANTOMCANDLESTAND_EXTINGUISH : FX_TERESAMANSIONCANDLESTAND_EXTINGUISH01, in->m);
+                printf("candlestand row %d: put out" "\n", row);
+            }
+        } else if (row_turn[row] == 1 && ++row_step[row] >= 15) { /* appearItem */
+            V3 at = vadd(base, vmul(up, in->candle == 1 ? 0.0f : 220.0f * s));
+            if (r->arg[0] == -1) pop_coins(at, up, 1); else if (r->arg[0] == 0) drop_pieces(at, up, 1);
+            row_turn[row] = 2;
+        }
+    }
+}
+
 static void update_screws(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -6556,6 +6613,7 @@ void game_update(void)
     update_fluffs();
     update_jets();
     update_screws();
+    update_candles();
     place_waterplants();
     update_pipes();
     update_switches();
