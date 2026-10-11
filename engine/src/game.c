@@ -24,7 +24,7 @@ enum { PICK_GONE, PICK_ON, PICK_POP_NEW, PICK_POP_BLINK }; /* alive: popping coi
 typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; float from, to, len; } Kuribo; /* walking
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
-enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG };
+enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO };
 static int kari_cling, kari_timer; /* Karikari clinging to Mario (KarikariDirector: 5 at most), frames to its damage */
 
 typedef struct {
@@ -348,7 +348,7 @@ static void miss(void);
 static int got_coins, got_purple, got_pieces;
 static float spin_angle;
 static V3 cam_pos;
-static const Model *m_coin, *m_purple, *m_piece, *m_kuribo, *m_takohei, *m_packun, *m_kotebug, *m_spider, *m_meramera, *m_takobo, *m_mkoopa, *m_kari, *m_kmini, *m_karon, *m_teresa, *m_bfly, *m_stink;
+static const Model *m_coin, *m_purple, *m_piece, *m_kuribo, *m_takohei, *m_packun, *m_kotebug, *m_spider, *m_meramera, *m_takobo, *m_mkoopa, *m_kari, *m_kmini, *m_karon, *m_teresa, *m_bfly, *m_stink, *m_unizo[3];
 static const Model *m_mario_skin; /* Mario.arc, skinned (SKIN chunk) */
 static Anim *mario_anim;
 /* ElectricRail (Petari ElectricRail.cpp, ElectricRailHolder.cpp): one segment per pair of rail points, arg0 rails
@@ -743,6 +743,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         if (stone_row(&s->objs[i]) && s->objs[i].arg[2] >= 0) box_pieces += 8; /* a star piece per stone */
         if (!strcmp(tn, "Butterfly") && s->objs[i].arg[1] < 0) box_pieces++; /* the pointer brings one out */
         if (!strcmp(tn, "StinkBugSmall")) box_pieces += 3; /* declareStarPiece(3) */
+        if (!strncmp(tn, "Unizo", 5) && strcmp(tn, "UnizoLauncher")) box_pieces += 6; /* sStarPieceNum */
         if (!strcmp(tn, "DeadLeaves")) { /* arg0 0 a coin, 1 three star pieces */
             if (s->objs[i].arg[0] == 0) { ncoins++; box_coins++; } else if (s->objs[i].arg[0] == 1) box_pieces += 3;
         }
@@ -777,7 +778,7 @@ void game_init(const Scene *s, const unsigned char *blob)
             npieces += star_group(NULL, &s->objs[i], blob);
         else if (s->objs[i].type == t_flow)
             npieces += star_flow(NULL, 0, &s->objs[i], blob);
-    nkuribo = count_type("StinkBugSmall", 0) + count_type("Kuribo", 0) + count_type("TakoHei", 0) + count_type("PackunPetit", 0) + count_type("KoteBug", 0) +
+    nkuribo = count_type("Unizo", 0) + count_type("UnizoLand", 0) + count_type("UnizoShoal", 0) + count_type("StinkBugSmall", 0) + count_type("Kuribo", 0) + count_type("TakoHei", 0) + count_type("PackunPetit", 0) + count_type("KoteBug", 0) +
               count_type("JumpSpider", 0) + count_type("Meramera", 0) + count_type("Takobo", 0) +
               count_type("MechanicKoopaMini", 0) + count_type("Karikari", 0) +
               count_type("KuriboMini", 0) + count_type("Karon", 0) +
@@ -802,7 +803,8 @@ void game_init(const Scene *s, const unsigned char *blob)
     int t_spider = scene_type(s, "JumpSpider"), t_mera = scene_type(s, "Meramera"), t_takobo = scene_type(s, "Takobo");
     int t_mkoopa = scene_type(s, "MechanicKoopaMini"), t_kari = scene_type(s, "Karikari"), t_kmini = scene_type(s, "KuriboMini");
     int t_karon = scene_type(s, "Karon"), t_teresa = scene_type(s, "Teresa"), t_bfly = scene_type(s, "Butterfly");
-    int t_stink = scene_type(s, "StinkBugSmall");
+    int t_stink = scene_type(s, "StinkBugSmall"), t_uni = scene_type(s, "Unizo"), t_unil = scene_type(s, "UnizoLand"),
+        t_unis = scene_type(s, "UnizoShoal");
     int t_gcircle = scene_type(s, "CircleCoinGroup"), t_grail = scene_type(s, "RailCoin");
     insts =mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(Inst));
     zone_spheres();
@@ -816,9 +818,11 @@ void game_init(const Scene *s, const unsigned char *blob)
         else if (r->type == t_spg) is += star_group(pieces + is, r, blob);
         else if (r->type == t_flow) is += star_flow(pieces + is, is, r, blob);
         else if (r->type == t_kuribo || r->type == t_tako || r->type == t_packun || r->type == t_kote || r->type == t_spider ||
-                 r->type == t_mera || r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly || r->type == t_stink) {
+                 r->type == t_mera || r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly || r->type == t_stink ||
+                 r->type == t_uni || r->type == t_unil || r->type == t_unis) {
             memset(&kuribo[ik], 0, sizeof(Kuribo));
-            kuribo[ik].kind = r->type == t_stink ? WALK_STINKBUG : r->type == t_bfly ? WALK_BUTTERFLY : r->type == t_teresa ? WALK_TERESA : r->type == t_karon ? WALK_KARON : r->type == t_kmini ? WALK_KMINI : r->type == t_kari ? WALK_KARIKARI : r->type == t_mkoopa ? WALK_MKOOPA : r->type == t_takobo ? WALK_TAKOBO : r->type == t_tako ? WALK_TAKOHEI : r->type == t_packun ? WALK_PACKUN :
+            kuribo[ik].dir = r->type == t_unil ? 1 : r->type == t_unis ? 2 : 0; /* Unizo: sea, land, shoal */
+            kuribo[ik].kind = r->type == t_uni || r->type == t_unil || r->type == t_unis ? WALK_UNIZO : r->type == t_stink ? WALK_STINKBUG : r->type == t_bfly ? WALK_BUTTERFLY : r->type == t_teresa ? WALK_TERESA : r->type == t_karon ? WALK_KARON : r->type == t_kmini ? WALK_KMINI : r->type == t_kari ? WALK_KARIKARI : r->type == t_mkoopa ? WALK_MKOOPA : r->type == t_takobo ? WALK_TAKOBO : r->type == t_tako ? WALK_TAKOHEI : r->type == t_packun ? WALK_PACKUN :
                               r->type == t_kote ? WALK_KOTEBUG : r->type == t_spider ? WALK_SPIDER :
                               r->type == t_mera ? WALK_MERAMERA : WALK_KURIBO;
             kuribo[ik].pos = row_pos(r);
@@ -2076,6 +2080,7 @@ void game_rebind(void)
     m_teresa = scene_model(s, "Teresa");
     m_bfly = scene_model(s, "Butterfly");
     m_stink = scene_model(s, "StinkBugSmall");
+    m_unizo[0] = scene_model(s, "Unizo"); m_unizo[1] = scene_model(s, "UnizoLand"); m_unizo[2] = scene_model(s, "UnizoShoal");
     int t_coin = scene_type(s, "Coin"), t_pc = scene_type(s, "PurpleCoin"), t_circle = scene_type(s, "CirclePurpleCoinGroup");
     int t_rail = scene_type(s, "PurpleRailCoin"), t_piece = scene_type(s, "StarPiece"), t_kuribo = scene_type(s, "Kuribo");
     int t_spg = scene_type(s, "StarPieceGroup"), t_flow = scene_type(s, "StarPieceFlow"), t_erail = scene_type(s, "ElectricRail"), t_tako = scene_type(s, "TakoHei"),
@@ -2083,7 +2088,8 @@ void game_rebind(void)
         t_spider = scene_type(s, "JumpSpider"), t_mera = scene_type(s, "Meramera"), t_takobo = scene_type(s, "Takobo"),
         t_mkoopa = scene_type(s, "MechanicKoopaMini"), t_kari = scene_type(s, "Karikari"), t_kmini = scene_type(s, "KuriboMini"),
         t_karon = scene_type(s, "Karon"), t_teresa = scene_type(s, "Teresa"), t_bfly = scene_type(s, "Butterfly"),
-        t_stink = scene_type(s, "StinkBugSmall");
+        t_stink = scene_type(s, "StinkBugSmall"), t_uni = scene_type(s, "Unizo"), t_unil = scene_type(s, "UnizoLand"),
+        t_unis = scene_type(s, "UnizoShoal");
     m_erail = scene_model(s, "ElectricRail");
     m_fireball = scene_model(s, "FireBarBall");
     m_rock = scene_model(s, "RockCreator");
@@ -2101,7 +2107,8 @@ void game_rebind(void)
         if (r->type == t_coin || r->type == t_pc || r->type == t_piece || r->type == t_kuribo || r->type == t_circle ||
             r->type == t_tako || r->type == t_packun || r->type == t_kote || r->type == t_spider || r->type == t_mera ||
             r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly ||
-            r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_stink || r->type == scene_type(s, "RockCreator"))
+            r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_stink ||
+            r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == scene_type(s, "RockCreator"))
             continue;
         const char *name = s->types + 32 * r->type;
         const Model *md = scene_model(s, name);
@@ -2919,6 +2926,33 @@ int game_test_fluff(int phase)
 
 /* Test builds: Mario 600 in front of the first live StinkBugSmall (how 0), or in a hip drop over it (1); its row,
  * -1 none. game_stink_state: its phase and distance from home */
+/* Test builds: Mario 800 off the first live Unizo; its row, -1 none. game_unizo_state: its phase, Mario's distance */
+int game_test_unizo(void)
+{
+    for (int i = 0; i < nkuribo; i++) {
+        Kuribo *k = &kuribo[i];
+        if (k->kind != WALK_UNIZO || k->state == KURIBO_DEAD) continue;
+        V3 x, z;
+        row_axes(&sc->objs[k->row], &x, &z);
+        mario->up = k->up;
+        mario->pos = vadd(k->pos, vmul(vnorm(vtangent(z, k->up)), 800.0f));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return k->row;
+    }
+    return -1;
+}
+
+int game_unizo_state(int *dist)
+{
+    for (int i = 0; i < nkuribo; i++) {
+        const Kuribo *k = &kuribo[i];
+        if (k->kind != WALK_UNIZO) continue;
+        *dist = (int)vlen(vsub(k->pos, mario->pos));
+        return k->state == KURIBO_DEAD ? 9 : k->phase;
+    }
+    return -1;
+}
+
 int game_test_stink(int how)
 {
     for (int i = 0; i < nkuribo; i++) {
@@ -4754,6 +4788,70 @@ static void stink_update(Kuribo *k, V3 to, float d)
     }
 }
 
+/* Unizo.cpp (Unizo, UnizoLand, UnizoShoal): a rolling sea urchin (radius 126.36). Mario within 1500 (on the ground,
+ * not hurt) makes it jump (sqrt(2 x 70 x gravity rate) up; rate 0.15 at sea, 0.8 on land) and chase him: 0.1 a frame
+ * towards him turned +-45 degrees by sin(frame / 20), up to 4 (12 in all); on the ground x 0.96 chasing, x 0.9 else;
+ * gravity 0.2 on the ground, 0.8 in the air (the jump's rate while jumping, floor rebound 0.6). Touching Mario hurts
+ * him (EnemyAttackStrong) and bounces it (5 up, 1 back), then it rests 120 frames (CollidePlayer). Stomps and spins
+ * do nothing; a star piece only shakes it; enemy attacks (PunchingKinoko, CocoNut) break it: 6 star pieces. phase 0
+ * wait, 1 jump, 2 chase, 3 collide; timer its frames; to its roll angle. ponytail: no damage-floor JumpDown, no spin
+ * drift, no shoal water ripples, the roll turns about the current velocity (no quaternion kept) */
+static void unizo_update(Kuribo *k, V3 to, float d)
+{
+    const float R = 126.36f, rate = k->dir == 1 ? 0.8f : 0.15f;
+    V3 up = k->up, c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), center = vadd(k->pos, vmul(up, R));
+    k->timer++;
+    int grounded = 0;
+    { /* on the ground? a sphere a little lower touches */
+        V3 probe = vsub(center, vmul(up, 4.0f));
+        Hit h[4];
+        grounded = kcl_query(probe, R, h, 4) > 0;
+    }
+    switch (k->phase) {
+    case 0: /* Wait */
+        if (d < 1500.0f && grounded && !mario->hurt_timer) {
+            k->vel = vadd(k->vel, vmul(up, sqrtf(2.0f * 70.0f * rate)));
+            k->phase = 1; k->timer = 0;
+        }
+        break;
+    case 1: if (k->timer >= 60) { k->phase = 2; k->timer = 0; } /* Jump (its Search animation) */
+        /* fall through */
+    case 2: { /* Chase */
+        if (k->phase == 1 && k->timer < 20) break;
+        V3 dir = vtangent(to, up);
+        if (vlen(dir) > 1e-3f) {
+            dir = vnorm(dir);
+            float sp = vlen(vtangent(k->vel, up)), cr = sinf(game_frame / 20.0f) * (sp / 4.0f < 1.0f ? sp / 4.0f : 1.0f);
+            float a = 0.0174533f * 45.0f * cr;
+            dir = vadd(vmul(dir, cosf(a)), vmul(vcross(up, dir), sinf(a)));
+            if (vdot(dir, k->vel) <= 0 || sp < 4.0f) k->vel = vadd(k->vel, vmul(dir, 0.1f));
+        }
+        if (k->phase == 2 && d > 1500.0f) { k->phase = 0; k->timer = 0; }
+        break;
+    }
+    default: if (k->timer > 120) { k->phase = 2; k->timer = 0; } break; /* CollidePlayer */
+    }
+    /* udpateInfluence: gravity, ground brake, the move */
+    k->vel = vsub(k->vel, vmul(up, k->phase == 1 ? rate : grounded ? 0.2f : 0.8f));
+    if (grounded) k->vel = vmul(k->vel, k->phase == 2 || k->phase == 1 ? 0.96f : 0.9f);
+    if (vlen(k->vel) > 12.0f) k->vel = vmul(vnorm(k->vel), 12.0f);
+    if (k->phase != 2 && k->phase != 1 && grounded && vlen(k->vel) < 0.5f) k->vel = v3(0, 0, 0);
+    V3 nc = vadd(center, k->vel), gn, wn;
+    int wall = 0;
+    int g2 = collide_n(&nc, up, R, &gn, &wn, &wall);
+    if (g2 && vdot(k->vel, gn) < 0) k->vel = vsub(k->vel, vmul(gn, vdot(k->vel, gn) * (k->phase == 1 ? 1.6f : 1.0f)));
+    if (wall && vdot(k->vel, wn) < 0) k->vel = vsub(k->vel, vmul(wn, vdot(k->vel, wn)));
+    k->to += vlen(vtangent(vsub(nc, center), up)) / R; /* rotateQuatRollBall */
+    k->pos = vsub(nc, vmul(up, R));
+    if (vlen(vsub(c, vadd(k->pos, vmul(up, R)))) < 115.2f + HIT_BODY_R && !mario->hurt_timer && k->phase != 3) {
+        hurt_mario(vadd(k->pos, vmul(up, R)), 25.0f); /* sendMsgEnemyAttackStrong, doAttack */
+        V3 away = vtangent(vsub(k->pos, mario->pos), up);
+        k->vel = vadd(vmul(up, 5.0f), vlen(away) > 1e-3f ? vnorm(away) : v3(0, 0, 0));
+        k->phase = 3; k->timer = 0;
+        printf("unizo row %d hits Mario" "\n", k->row);
+    }
+}
+
 static void butterfly_update(Kuribo *k)
 {
     const Row *r = &sc->objs[k->row];
@@ -4803,6 +4901,7 @@ static void update_kuribo(void)
         if (k->kind == WALK_TERESA) { teresa_update(k, to, d); continue; }
         if (k->kind == WALK_BUTTERFLY) { butterfly_update(k); continue; }
         if (k->kind == WALK_STINKBUG) { stink_update(k, to, d); continue; }
+        if (k->kind == WALK_UNIZO) { unizo_update(k, to, d); continue; }
         if (k->kind == WALK_SPIDER) { /* JumpSpider.cpp: hops at Mario; ponytail: hop size and rate guessed (Petari's
                                         * hJumpDistance / hWaitTime are not in the decompilation) */
             V3 vu = vmul(k->up, vdot(k->vel, k->up)), vh = vsub(k->vel, vu);
@@ -5836,6 +5935,7 @@ static void update_shots(void)
             else if (e->kind == WALK_MKOOPA) { e->phase = 6; e->timer = 0; }
             else if (e->kind == WALK_KARON) { if (e->phase != 2) { e->phase = 3; e->timer = 0; } }
             else if (e->kind == WALK_BUTTERFLY || e->kind == WALK_TERESA) { hit = 0; continue; }
+            else if (e->kind == WALK_UNIZO) { /* startHitReaction: nothing more */ }
             else if (e->kind == WALK_STINKBUG) { if (e->phase != 2 && e->phase != 6) { e->phase = 5; e->timer = 0; } }
             else if (e->kind == WALK_KARIKARI) {
                 if (e->phase == 2) { hit = 0; continue; } /* clinging: passes */
@@ -6333,10 +6433,18 @@ void game_draw(void)
                           kuribo[i].kind == WALK_KMINI ? m_kmini :
                           kuribo[i].kind == WALK_KARON ? m_karon :
                           kuribo[i].kind == WALK_TERESA ? m_teresa :
-                          kuribo[i].kind == WALK_BUTTERFLY ? m_bfly : kuribo[i].kind == WALK_STINKBUG ? m_stink : m_kuribo;
+                          kuribo[i].kind == WALK_BUTTERFLY ? m_bfly : kuribo[i].kind == WALK_STINKBUG ? m_stink :
+                          kuribo[i].kind == WALK_UNIZO ? m_unizo[kuribo[i].dir] : m_kuribo;
         if (kuribo[i].state == KURIBO_DEAD || !md || !row_shown(kuribo[i].row)) continue;
         if (kuribo[i].kind == WALK_TERESA && kuribo[i].phase == 4) continue; /* hidden in a wall */
         basis_matrix(m, kuribo[i].pos, kuribo[i].up, kuribo[i].kind == WALK_STINKBUG ? stink_front(&kuribo[i]) : vsub(mario->pos, kuribo[i].pos), 0);
+        if (kuribo[i].kind == WALK_UNIZO) { /* rolled about its side round its centre */
+            const Kuribo *k = &kuribo[i];
+            V3 f = vtangent(k->vel, k->up);
+            f = vlen(f) > 1e-3f ? vnorm(f) : vnorm(vtangent(vsub(mario->pos, k->pos), k->up));
+            V3 u2 = vadd(vmul(k->up, cosf(k->to)), vmul(f, sinf(k->to))), f2 = vsub(vmul(f, cosf(k->to)), vmul(k->up, sinf(k->to)));
+            basis_matrix(m, vsub(vadd(k->pos, vmul(k->up, 126.36f)), vmul(u2, 126.36f)), u2, f2, 0);
+        }
         if (kuribo[i].kind == WALK_STINKBUG) /* its scale; flattened while dying */
             for (int j = 0; j < 12; j++) m[j] *= sc->objs[kuribo[i].row].scale[0] * (kuribo[i].phase == 6 && j >= 4 && j < 8 ? 1.0f - kuribo[i].timer / 40.0f : 1.0f);
         if (kuribo[i].kind == WALK_KARON && kuribo[i].phase == 2) /* a heap of bones (ponytail: squashed) */
