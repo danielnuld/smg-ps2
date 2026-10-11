@@ -3284,7 +3284,6 @@ int game_test_ota(void)
     for (int b = 0; b < OTA_BALLS; b++)
         if ((ota.ball[b].state == 1 || ota.ball[b].state == 3) && vlen(vsub(ota.ball[b].pos, c)) < 380.0f) mario->spin_timer = SPIN_TIME;
     mario->hurt_timer = 8; /* the test watches the rallies: fire balls and bubbles do not wear him down */
-    { static int f; if ((++f % 15) == 0) { V3 rr = vsub(mario->pos, ota.pos); printf("DBG mario h %d r %d grounded %d nrv %d\n", (int)vdot(rr, ota.up), (int)vlen(vtangent(rr, ota.up)), mario->grounded, ota.nrv); for (int b = 0; b < OTA_BALLS; b++) if (ota.ball[b].state) printf("DBG  ball %d st %d d %d h %d\n", b, ota.ball[b].state, (int)vlen(vsub(ota.ball[b].pos, vadd(mario->pos, vmul(mario->up, HIT_BODY_H)))), (int)vdot(vsub(ota.ball[b].pos, mario->pos), mario->up)); } }
     return (ota.nrv == OTA_WAITONSWITCH ? 0 : ota.nrv >= OTA_APPEARSTAR && ota.nrv <= OTA_DEAD ? 5 : 1) * 10 + ota.hits;
 }
 
@@ -5383,8 +5382,7 @@ static void update_ota_balls(V3 c, V3 body, V3 face)
         Hit h[1];
         int bound = k->state != 2 && kcl_query(k->pos, 60.0f, h, 1) > 0; /* tryToKill: binded (offBind going home) */
         float far = k->state == 1 || k->state == 3 ? vlen(vsub(k->pos, ota.pos)) : vlen(vsub(k->pos, mario->pos));
-        if (bound || far > 5000.0f) { printf("DBG ball %d gone state %d bound %d far %d t %d\n", b, k->state, bound, (int)far, k->t); ota_ball_kill(b); continue; }
-        if ((k->t % 8) == 0) printf("DBG ball %d t %d d %d h %d\n", b, k->t, (int)vlen(vsub(c, k->pos)), (int)vdot(vsub(k->pos, mario->pos), mario->up));
+        if (bound || far > 5000.0f) { ota_ball_kill(b); continue; }
         float dc = vlen(vsub(c, k->pos));
         /* isValidReceivePunch: Throw / HitBackToPlayer / Rebound within 400 of his centre: HitBackToHost */
         if ((k->state == 1 || k->state == 3 || k->state == 4) && mario->spin_timer > 0 && dc < 400.0f && k->t > 1) {
