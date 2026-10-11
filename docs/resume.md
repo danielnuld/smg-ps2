@@ -138,6 +138,7 @@ Last updated 2026-10-09. Detail and numbers: `docs/phase2-report.md`; tasks: `op
     into CANM; demo_camera plays one in the actor's frame (camera_set_override), Mario waits meanwhile; DinoPackun's
     demos reset it to its spot and set Mario at (0, -550, 800) (resetPosition); it only moves in the battle and never
     falls where there is no ground (its nest: it sank to the planet's centre and the camera with it);
+  - ScenarioStarter (kept as a logic row): Mario flies its rail in at the scenario's start (a launch, arg0 frames);
   - walkers animated too (Kuribo, Takobo, Karikari, Butterfly, PackunPetit, KuriboMini: walker_clip by kind and
     state, Kuribo facing its way); skinned shapes without texture take the TEV constant colour; BRK registers at a
     frame (tex.brk, slice.py BRK_POSE: Tico's ColorChange 0, its yellow; a saturated bake then keeps the first

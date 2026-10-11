@@ -520,6 +520,7 @@ static int plant_count(const Row *r);
 static int stone_row(const Row *r);
 static Launch *launches;
 static int nlaunches;
+static int starter; /* ScenarioStarter's flight (a launch, -1 none): Mario flies it in at the scenario's start */
 static int ground_flips, slip_frames;
 #ifdef SLOPE_TEST
 V3 slope_n;
@@ -995,18 +996,26 @@ void game_init(const Scene *s, const unsigned char *blob)
     int t_super[3] = {scene_type(s, "SuperSpinDriver"), scene_type(s, "SuperSpinDriverPink"),
                       scene_type(s, "SuperSpinDriverGreen")}, t_spin = scene_type(s, "SpinDriver");
     launches = mem_alloc(MEM_OBJECTS, (count_type("SuperSpinDriver", 0) + count_type("SuperSpinDriverPink", 0) +
-                                       count_type("SuperSpinDriverGreen", 0) + count_type("SpinDriver", 0) + 1) * sizeof(Launch));
+                                       count_type("SuperSpinDriverGreen", 0) + count_type("SpinDriver", 0) +
+                                       count_type("ScenarioStarter", 0) + 1) * sizeof(Launch));
+    int t_starter = scene_type(s, "ScenarioStarter");
+    starter = -1;
     for (u32 i = 0; i < s->nobjs; i++) {
         const Row *r = &s->objs[i];
-        int super = r->type == t_super[0] || r->type == t_super[1] || r->type == t_super[2];
+        int super = r->type == t_super[0] || r->type == t_super[1] || r->type == t_super[2] || r->type == t_starter;
         if (!super && r->type != t_spin) continue;
         u32 np = 0; int closed;
         const float *pts = r->path >= 0 ? find_rail(blob, r->zone, r->path, &np, &closed) : NULL;
         Launch *L = &launches[nlaunches];
         u32 nraw = 0;
         if (pts) find_rail_of(blob, r->zone, r->path, &nraw, &closed, 1);
-        if (pts && np >= 2)
+        if (pts && np >= 2) {
             init_launch(L, r, pts, np, nraw <= 2);
+            if (r->type == t_starter) { /* ScenarioStarter: its rail as it is (mPosition = the rail's start), from the start */
+                L->pos = v3(pts[0], pts[1], pts[2]); L->off = v3(0, 0, 0);
+                starter = nlaunches;
+            }
+        }
         else if (super)
             continue;
         else { /* SpinDriver without a rail: thrown along its Y axis at arg0 */
@@ -7998,6 +8007,13 @@ static void update_obj_anims(void)
 
 void game_update(void)
 {
+    if (starter >= 0 && game_frame == 2) { /* ScenarioStarter::exeRailMove: the flight in (SpinDriverShootPath) */
+        mario->pos = launches[starter].pos;
+        mario->launch = starter; mario->launch_t = 0; mario->launch_from = mario->pos;
+        if (mario_anim) mario_play("superspindriverstart", 1.0f, 0);
+        printf("scenario starter: flight in, %d frames" "\n", launches[starter].flight);
+        starter = -1;
+    }
     update_obj_anims();
     if (time_limit && time_left > 0 && !stars && --time_left == 0) { printf("time up" "\n"); miss(); }
     hip_hit = 0;
