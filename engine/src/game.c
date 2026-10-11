@@ -769,7 +769,8 @@ void game_init(const Scene *s, const unsigned char *blob)
         if (stone_row(&s->objs[i]) && s->objs[i].arg[2] >= 0) box_pieces += 8; /* a star piece per stone */
         if (!strcmp(tn, "Butterfly") && s->objs[i].arg[1] < 0) box_pieces++; /* the pointer brings one out */
         if (!strcmp(tn, "StinkBugSmall")) box_pieces += 3; /* declareStarPiece(3) */
-        if (!strcmp(tn, "PhantomCandlestand") || !strcmp(tn, "TeresaMansionCandlestand")) { /* arg0 -1 a coin, 0 a star piece */
+        if (!strcmp(tn, "PhantomCandlestand") || !strcmp(tn, "TeresaMansionCandlestand") || !strcmp(tn, "CandlestandIceVolcano")) {
+            /* arg0 -1 a coin, 0 a star piece */
             if (s->objs[i].arg[0] == -1) { ncoins++; box_coins++; } else if (s->objs[i].arg[0] == 0) box_pieces++;
         }
         if (!strncmp(tn, "Unizo", 5) && strcmp(tn, "UnizoLauncher")) box_pieces += 6; /* sStarPieceNum */
@@ -2197,7 +2198,8 @@ void game_rebind(void)
         in->jet = strcmp(name, "JetTurtle") == 0;
         in->fountain = strcmp(name, "FountainBig") == 0;
         in->snowman = strcmp(name, "SnowMan") == 0;
-        in->candle = strcmp(name, "PhantomCandlestand") == 0 ? 1 : strcmp(name, "TeresaMansionCandlestand") == 0 ? 2 : 0;
+        in->candle = strcmp(name, "PhantomCandlestand") == 0 ? 1 : strcmp(name, "TeresaMansionCandlestand") == 0 ? 2 :
+                     strcmp(name, "CandlestandIceVolcano") == 0 ? 3 : 0;
         in->screw = strcmp(name, "ScrewSwitch") == 0 ? 1 : strcmp(name, "ScrewSwitchReverse") == 0 ? 2 : 0;
         in->biri_rail = in->biri && scene_blob_g && r->path >= 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->giver = strcmp(name, "DeadLeaves") == 0 ? 1 : strcmp(name, "Pompon2Plant") == 0 || strcmp(name, "Pompon4Plant") == 0 ? 2 : 0;
@@ -2994,6 +2996,16 @@ void game_test_spin_now(void) { mario->spin_timer = SPIN_TIME; } /* test builds:
 int game_test_fire(int phase)
 {
     if (phase == 0) fire_time = 1200; else mario->spin_timer = SPIN_TIME;
+#ifdef FIRE_AT_CANDLE /* Mario 400 off the first unlit CandlestandIceVolcano, facing it */
+    for (int i = 0; i < ninsts; i++)
+        if (insts[i].candle == 3 && row_turn[insts[i].row] == 3) {
+            V3 up = vnorm(v3(insts[i].m[4], insts[i].m[5], insts[i].m[6])), x = vnorm(v3(insts[i].m[0], insts[i].m[1], insts[i].m[2]));
+            V3 base = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]);
+            if (phase == 0) { mario->up = up; mario->pos = vadd(base, vmul(x, 400.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+            mario->face = vmul(x, -1.0f);
+            return fire_time;
+        }
+#endif
     float best = 1e30f; /* facing the nearest live walker */
     for (int i = 0; i < nkuribo; i++) {
         V3 d = vtangent(vsub(kuribo[i].pos, mario->pos), mario->up);
@@ -4255,13 +4267,15 @@ static void jet_reset(Inst *in)
 /* Candlestand.cpp (PhantomCandlestand, TeresaMansionCandlestand): a candle burning (Burn, its Fire effect / Fire01
  * and Fire02); its flame (sensor 50 x scale at 220 up; 70 at 300) burns Mario (EnemyAttackFire). A spin within 350 x
  * scale puts it out (Extinguish): 15 frames later its item comes out (arg0 -1 a coin, 0 a star piece, at 0 up; 220
- * for TeresaMansion) and it stays out. row_turn 0 burning, 1 going out, 2 out; row_step its frames. ponytail: no
- * fireball relighting (CandlestandIceVolcano's switch kind is not this one) */
+ * for TeresaMansion) and it stays out. CandlestandIceVolcano (mCanUseSwitch, sensor 150 at 220): with a SW_A it
+ * waits unlit (WaitFire) until a fire ball within 150 x scale lights it (Fire: 60 frames, then its SW_A, Burn); a
+ * spin only makes it flicker (30 frames). row_turn 0 burning, 1 going out, 2 out, 3 unlit, 4 lighting, 5 flicker;
+ * row_step its frames */
 /* FountainBig.cpp: hidden 120 frames (Wait), its sign 80 (Sign), 30 more (SignStop), then the column (Spout, 180
  * frames; its height scale 0 to 1 over the first 20) and down over 10 (SpoutEnd). Mario within 60 of its axis, 600
  * up, is thrown up (ACTMES_FOUNTAINJUMP -> MarioFlow: mJumpHeightFlow 18 with mGravityFlow 0.3, about 540 up: here
  * 44 up with Mario's own gravity, mJumpDistFlow 2 ahead), once until he lands. row_step its cycle frame, row_turn 1
- * while he flies off it. ponytail: no FountainBigSign / FountainBig effects, no Bee Mario flip */
+ * while he flies off it; its FountainBigSign and FountainBig effects. ponytail: no Bee Mario flip */
 /* SnowMan.cpp: a fire ball on its head or body melts that part (MeltHead / MeltBody: SW_A, SW_B), the second
  * one brings it down (kill: SW_DEAD). Head sensor 100 at 250 up, body 150 at 100 (scale). row_turn bit 1 head
  * melted, bit 2 body melted. ponytail: no melting animation (the model squashes as parts go), spins only shake it */
@@ -4302,6 +4316,8 @@ static void update_fountains(void)
         memcpy(in->m, in->m0, 64);
         for (int j = 4; j < 7; j++) in->m[j] *= k > 0.01f ? k : 0.01f;
         if (k <= 0) in->m[12] = 1e9f; /* hideModel */
+        if (t >= 120 && t < 200) fx_keep(FX_FOUNTAINBIG_FOUNTAINBIGSIGN, &sc->objs[row], in->m0); /* Sign */
+        if (t >= 230 && t < 410) fx_keep(FX_FOUNTAINBIG_FOUNTAINBIG, (const char *)&sc->objs[row] + 1, in->m0); /* Spout */
         if (row_turn[row] && mario->grounded) row_turn[row] = 0;
         if (t < 230 || t >= 410 || row_turn[row]) continue;
         V3 up = vnorm(v3(in->m0[4], in->m0[5], in->m0[6])), base = v3(in->m0[12], in->m0[13], in->m0[14]);
@@ -4323,9 +4339,19 @@ static void update_candles(void)
         int row = in->row;
         const Row *r = &sc->objs[row];
         V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), base = v3(in->m[12], in->m[13], in->m[14]);
-        float s = in->s, h = in->candle == 1 ? 220.0f : 300.0f, rad = (in->candle == 1 ? 50.0f : 70.0f) * s;
+        float s = in->s, h = in->candle == 2 ? 300.0f : 220.0f, rad = (in->candle == 1 ? 50.0f : in->candle == 2 ? 70.0f : 150.0f) * s;
+        if (in->candle == 3 && row_turn[row] == 0 && !row_step[row] && r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) row_turn[row] = 3; /* WaitFire */
+        if (row_turn[row] == 3 || row_turn[row] == 4 || row_turn[row] == 5) {
+            if (row_turn[row] == 4) {
+                fx_keep(FX_CANDLESTANDICEVOLCANO_FIRE, r, in->m);
+                if (++row_step[row] >= 60) { row_turn[row] = 0; if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
+                    printf("candlestand row %d lit" "''' + NL + r'''", row); }
+            } else if (row_turn[row] == 5 && ++row_step[row] >= 30) row_turn[row] = 0;
+            continue;
+        }
         if (row_turn[row] == 0) {
-            if (in->candle == 1) fx_keep(FX_PHANTOMCANDLESTAND_FIRE, r, in->m);
+            if (in->candle == 3) fx_keep(FX_CANDLESTANDICEVOLCANO_FIRE, r, in->m);
+            else if (in->candle == 1) fx_keep(FX_PHANTOMCANDLESTAND_FIRE, r, in->m);
             else { fx_keep(FX_TERESAMANSIONCANDLESTAND_FIRE01, r, in->m); fx_keep(FX_TERESAMANSIONCANDLESTAND_FIRE02, (const char *)r + 1, in->m); }
             V3 flame = vadd(base, vmul(up, h * s));
             if (vlen(vsub(c, flame)) < rad + HIT_BODY_R && !mario->hurt_timer) { /* sendMsgEnemyAttackFire */
@@ -4333,6 +4359,7 @@ static void update_candles(void)
                 printf("candlestand row %d burns Mario" "\n", row);
             }
             if (mario->spin_timer > 0 && vlen(vsub(c, vadd(base, vmul(up, 100.0f * s)))) < 350.0f * s) { /* isInSpinStormRange */
+                if (in->candle == 3) { row_turn[row] = 5; row_step[row] = 0; continue; } /* Flicker */
                 row_turn[row] = 1; row_step[row] = 0;
                 fx_emit(in->candle == 1 ? FX_PHANTOMCANDLESTAND_EXTINGUISH : FX_TERESAMANSIONCANDLESTAND_EXTINGUISH01, in->m);
                 printf("candlestand row %d: put out" "\n", row);
@@ -4366,6 +4393,20 @@ static void fireball_hit_walkers(int b)
 }
 
 static int fireball_hits_snowman(V3 p); /* update_snowmen */
+static int fireball_lights_candle(V3 p) /* Candlestand::receiveMsgPlayerAttack: a WaitFire one within 150 x scale */
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (in->candle != 3 || row_turn[in->row] != 3) continue;
+        V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), flame = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(up, 220.0f * in->s));
+        if (vlen(vsub(p, flame)) > 150.0f * in->s + 80.0f) continue;
+        row_turn[in->row] = 4; row_step[in->row] = 1;
+        fx_emit(FX_CANDLESTANDICEVOLCANO_IGNITION, in->m);
+        return 1;
+    }
+    return 0;
+}
+
 static void update_fire(void)
 {
     if (fire_time > 0) {
@@ -4395,9 +4436,14 @@ static void update_fire(void)
             if (into < 0) fireballs[b].vel = vsub(fireballs[b].vel, vmul(gn, into * (1.0f + 0.9f)));
         } else fireballs[b].vel = vsub(fireballs[b].vel, vmul(up, 2.0f));
         fireballs[b].wall = wall ? fireballs[b].wall + 1 : 0;
-        if (fireballs[b].wall >= 3 || vlen(vsub(p, mario->pos)) > 3000.0f || fireballs[b].t > 600) { fireballs[b].t = 0; continue; }
+        if (fireballs[b].wall >= 3 || vlen(vsub(p, mario->pos)) > 3000.0f || fireballs[b].t > 600) { fx_at(FX_MARIOFIREBALL_BREAK, p, up); fireballs[b].t = 0; continue; }
         fireball_hit_walkers(b);
-        if (fireballs[b].t && fireball_hits_snowman(p)) fireballs[b].t = 0;
+        if (fireballs[b].t && (fireball_hits_snowman(p) || fireball_lights_candle(p))) fireballs[b].t = 0;
+        if (fireballs[b].t) { /* its Fire trail */
+            float fm[16];
+            basis_matrix(fm, p, up, fireballs[b].vel, 0);
+            fx_keep(FX_MARIOFIREBALL_FIRE, &fireballs[b], fm);
+        }
     }
 }
 
