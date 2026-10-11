@@ -21,6 +21,9 @@ ROOT = Path(__file__).parent.parent
 def engine_classes():
     src = (ROOT / "engine/src/game.c").read_text(encoding="utf-8")
     names = set(re.findall(r'"([A-Z][A-Za-z0-9]+)"', src))  # every class name game.c spells (calls and tables)
+    tab = (ROOT / "engine/src/fx_tab.h").read_text(encoding="utf-8")  # the ambient effect objects (fx_ambient)
+    names |= set(re.findall(r'"([A-Z][A-Za-z0-9]+)"', tab[tab.find("fx_ambient"):]))
+    names |= set(S.ASTRO_MODELS)  # drawn with their dome's model (slice.py renames the rows)
     prefixes = set(re.findall(r'strncmp\(name, "([A-Za-z0-9]+)", \d+\)', src))
     return names, prefixes
 
