@@ -47,6 +47,9 @@ int game_test_cocoon(int phase, float drag);
 /* Test builds: Fluff steps (game.c game_test_fluff) */
 int game_test_fluff(int phase);
 int game_test_waterplant(void);
+/* Test builds: StinkBugSmall (game.c game_test_stink) */
+int game_test_stink(int how);
+int game_stink_state(int *dist);
 int game_coco_state(int *dist);
 int game_punch_state(int *dist);
 /* Test builds: Mario at the first ungiven DeadLeaves (1, spinning) / Pompon plant (2, into its flower); its row,

@@ -771,6 +771,16 @@ int main(void)
             printf("giver test f %u: %s row %d, coins %d, pieces %d\n", frame, frame % 80 ? "leaves" : "pompon",
                    game_test_giver(frame % 80 ? 1 : 2), game_coins(), game_pieces_out());
 #endif
+#ifdef STINK_TEST
+        { /* Mario in front of a stink bug (150, 300), then a hip drop on it (500) */
+            if (frame == 150 || frame == 300 || frame == 500)
+                printf("stink test f %u: row %d\n", frame, game_test_stink(frame == 500));
+            if (frame >= 150 && frame < 600 && frame % 10 == 0) {
+                int dist = 0, st = game_stink_state(&dist);
+                printf("stink test f %u: phase %d dist %d life %d\n", frame, st, dist, game_life());
+            }
+        }
+#endif
 #ifdef WATERPLANT_TEST
         if (frame >= 200 && frame % 60 == 20 && frame < 600) printf("waterplant test f %u: %d plants\n", frame, game_test_waterplant());
 #endif
