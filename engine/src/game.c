@@ -2126,7 +2126,6 @@ void game_rebind(void)
             continue;
         const char *name = s->types + 32 * r->type;
         const Model *md = scene_model(s, name);
-        if (!strcmp(name, "PhantomShipBridge")) printf("DBG bridge row %u md %p shown %d\n", i, (const void *)md, row_dead ? row_shown(i) : -1);
         if (!md || (row_dead && !row_shown(i))) continue;
         if (row_step && (r->arg[2] == 1 || r->arg[2] == 2) && !row_step[i] && strcmp(name, "EarthenPipe") == 0)
             continue; /* a hidden pipe (EarthenPipeNrvHide) */
@@ -4594,7 +4593,6 @@ static void update_mario(void)
  * animation, the stage is not reset, game over just refills the lives */
 static void miss(void)
 {
-    { static int n_; if (!n_++) for (int i = 0; i < ninsts; i++) { float dd = vlen(vsub(v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]), mario->pos)); if (dd < 4000.0f) printf("DBG near %s row %d d %d kcl %d reach %d shown %d pos %d %d %d\n", sc->types + 32 * sc->objs[insts[i].row].type, insts[i].row, (int)dd, insts[i].kcl != NULL, (int)insts[i].reach, row_shown(insts[i].row), (int)insts[i].m[12], (int)insts[i].m[13], (int)insts[i].m[14]); } }
     mario->pos = start_pos; mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->hurt_timer = 0; mario->hip = 0;
     mario->launch = -1; /* out of any launch star's flight (it would carry him back) */
     life = max_life = MAX_LIFE;
