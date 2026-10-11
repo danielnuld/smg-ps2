@@ -162,6 +162,7 @@ typedef struct {
                       * CocoNut: head its centre, m0 its turned rotation */
     float m0[16];
     int coco;        /* CocoNut: a spin / hip drop / kick sends it rolling (update_coconuts) */
+    int sambo;       /* CocoSambo: a thrown coconut knocks its head down, then a stomp / spin (update_sambos) */
     int fat;         /* TicoFat: fed by star piece shots (update_shots), full: SW_A, the row dies */
     int bubble;      /* AirBubble 1 (touched: oxygen), AirBubbleGenerator 2 (update_bubbles) */
     int stray;       /* StrayTico: touched it follows Mario; all of its zone's: the CollectTico's star (update_strays) */
@@ -2040,6 +2041,16 @@ static void update_coconuts(void)
                 printf("coconut %d blows walker row %d" "\n", row, e->row);
                 broken = 1;
             }
+        for (int k = 0; k < ninsts && in->cstrong && !broken; k++) { /* CocoSamboHead::receiveMsgEnemyAttack: tryToFallHead */
+            Inst *b = &insts[k];
+            if (!b->sambo || row_dead[b->row] || row_turn[b->row]) continue;
+            V3 bp = v3(b->m[12], b->m[13], b->m[14]), bu = vnorm(v3(b->m[4], b->m[5], b->m[6])), rel = vsub(in->head, bp);
+            float h = vdot(rel, bu);
+            if (h < -50.0f || h > 500.0f * b->s || vlen(vtangent(rel, bu)) > 100.0f * b->s + rad) continue;
+            row_turn[b->row] = 1; row_step[b->row] = 0;
+            printf("coconut %d knocks coco sambo row %d down" "\n", row, b->row);
+            broken = 1;
+        }
         if (!broken && lost(in->head)) broken = 1; /* tryDisappear */
         for (int k = 0; k < nlogic && !broken; k++)
             if (logic[k].kind == LOGIC_DEATH && row_shown(logic[k].row) && area_inside(&sc->objs[logic[k].row], in->head)) broken = 1;
@@ -2247,6 +2258,7 @@ void game_rebind(void)
         }
         in->npc = npc_class(name);
         in->fat = strcmp(name, "TicoFat") == 0;
+        in->sambo = strcmp(name, "CocoSambo") == 0;
         in->sky = sky_class(name);
         in->shoot = strcmp(name, "ShootingStar") == 0;
         in->steam = strcmp(name, "LavaSteam") == 0;
@@ -3173,6 +3185,9 @@ int game_test_ota(void)
 
 /* Test builds: Mario 600 in front of the first hungry TicoFat with star pieces, a shot at it (pieces it ate x 1000 +
  * pieces left; -1 none left) */
+static int test_fat_nodrop; /* the route test flies there by the pink spin driver instead */
+void game_test_fat_nodrop(void) { test_fat_nodrop = 1; }
+
 int game_test_fat(void)
 {
     static int f0;
@@ -3201,6 +3216,7 @@ int game_test_fat(void)
             return -2;
         }
     static int once; /* all fed: Mario dropped 900 over the planet it became (its SW_SLEEP rows), once */
+    once |= test_fat_nodrop;
     int pd = scene_type(sc, "StarEggRoadEggPlanetD");
     for (u32 i = 0; pd >= 0 && i < sc->nobjs && !once; i++)
         if (sc->objs[i].type == pd) {
@@ -3817,6 +3833,168 @@ int game_test_spindriver(int small)
 }
 
 int game_launch_state(void) { return mario->launch; }
+
+/* Test builds, a mission played through: Mario from where he is to the first row of class `cls` by launch stars, as a
+ * player would. Each hop: the shown launch star within 6000 of him (on his planet) whose landing comes nearest the
+ * goal, at least 500 nearer than he is (he is set on it and flies its real path). None: a hidden one that would come
+ * nearer, and the row its appear switch waits for (a chip group, a cage's dead switch...) becomes the goal first
+ * (a stack: that row may itself be far, behind other hidden stars); by it, it is done (route_solve), then that star
+ * is taken. 1 on the way, 0 there (within 2500), -1 no way found */
+#define ROUTE_DEPTH 6
+static struct { int writer, launch; } route_stack[ROUTE_DEPTH];
+static int route_n, route_last = -1;
+
+/* the stack's top done as a player would: a chip group's chips taken one by one (Mario set on each), else a spin by
+ * the row every 40 frames (a cage, a box: its dead switch) */
+/* the zone of the planet under Mario (the nearest collision instance), -1 none: a goal in it (not the galaxy's
+ * own zone) is walked to, planet to planet */
+static int route_zone(void)
+{
+    int z = -1;
+    float bd = 1e9f;
+    for (int i = 0; i < ninsts; i++) {
+        if (!insts[i].kcl) continue;
+        float d = vlen(vsub(mario->pos, v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]))) - insts[i].reach;
+        if (d < bd) { bd = d; z = insts[i].zone; }
+    }
+    return z;
+}
+
+static int route_solve(void)
+{
+    static int t;
+    int w = route_stack[route_n - 1].writer, l = route_stack[route_n - 1].launch;
+    if (row_shown(launches[l].row)) { /* out: walked to it and taken */
+        printf("route: launch %d out" "\n", l);
+        route_n--; route_last = l; test_nolost = 0;
+        game_test_launch(l);
+        return 1;
+    }
+    if (++t % 40) return 1;
+    const Row *wr = &sc->objs[w];
+    const char *wn = sc->types + 32 * wr->type;
+    test_nolost = 1;
+    if (!strcmp(wn, "YellowChipGroup") || !strcmp(wn, "BlueChipGroup")) {
+        for (int i = 0; i < ninsts; i++) {
+            const Inst *in = &insts[i];
+            if (in->item != ITEM_CHIP || sc->objs[in->row].zone != wr->zone || sc->types[32 * sc->objs[in->row].type] != wn[0]) continue;
+            V3 cp = v3(in->m[12], in->m[13], in->m[14]);
+            mario->pos = vadd(cp, vmul(up_at(cp, mario->up), -HIT_BODY_H)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return 1;
+        }
+        return 1;
+    }
+    if (!strcmp(wn, "CocoSambo")) { /* a coconut kicked into it (Mario set behind the nearest one), then a stomp */
+        V3 sp = row_pos(wr);
+        if (row_turn[w] == 1) {
+            mario->pos = vadd(sp, vmul(up_at(sp, mario->up), 300.0f * wr->scale[0])); mario->hvel = v3(0, 0, 0); mario->vup = -5.0f;
+            mario->grounded = 0;
+            return 1;
+        }
+        int best = -1;
+        float bd = 1e9f;
+        for (int i = 0; i < ninsts; i++)
+            if (insts[i].coco && row_turn[insts[i].row] == 0 && vlen(vsub(insts[i].head, sp)) < bd) { bd = vlen(vsub(insts[i].head, sp)); best = i; }
+        if (best >= 0) {
+            V3 su = up_at(sp, mario->up), dir = vnorm(vtangent(vsub(insts[best].head, sp), su));
+            if (bd > 500.0f) { /* rolled over by him first: 450 off its base */
+                insts[best].head = vadd(vadd(sp, vmul(dir, 450.0f)), vmul(su, 60.0f));
+                coco_place(&insts[best]);
+                return 1;
+            }
+            V3 cp = insts[best].head, up = up_at(cp, mario->up), back = vnorm(vtangent(vsub(cp, sp), up));
+            mario->pos = vadd(vsub(cp, vmul(up, HIT_BODY_H)), vmul(back, 120.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            mario->spin_timer = SPIN_TIME;
+        }
+        return 1;
+    }
+    for (int i = 0; i < ninsts; i++)
+        if (insts[i].row == w) {
+            V3 cp = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]), up = up_at(cp, mario->up);
+            mario->pos = vadd(cp, vmul(up, insts[i].reach + 20.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            mario->spin_timer = SPIN_TIME;
+            return 1;
+        }
+    return 1;
+}
+
+int game_test_route(const char *cls)
+{
+    static int wait;
+    int t = scene_type(sc, cls);
+    if (t < 0) return -1;
+    V3 goal = v3(0, 0, 0);
+    u32 k = 0;
+    for (; k < sc->nobjs; k++) if (sc->objs[k].type == t && !row_dead[k]) { goal = row_pos(&sc->objs[k]); break; }
+    if (k == sc->nobjs) return -1;
+    if (mario->launch >= 0) { wait = 0; return 1; }
+    for (int j = 0; j < route_n - 1; j++) /* a deeper goal at hand: the ones above it are not needed any more */
+        if (vlen(vsub(mario->pos, row_pos(&sc->objs[route_stack[j].writer]))) < 6000.0f || row_shown(launches[route_stack[j].launch].row) ||
+            (sc->objs[route_stack[j].writer].zone > 0 && sc->objs[route_stack[j].writer].zone == route_zone())) {
+            printf("route: back to goal %d" "\n", j); route_n = j + 1; break;
+        }
+    if (route_n && row_shown(launches[route_stack[route_n - 1].launch].row) && vlen(vsub(mario->pos, launches[route_stack[route_n - 1].launch].pos)) > 6000.0f)
+        route_n--; /* out, but far from him: route to the goal again */
+    if (route_n) goal = row_pos(&sc->objs[route_stack[route_n - 1].writer]);
+    float d = vlen(vsub(mario->pos, goal));
+    int wz = route_n ? sc->objs[route_stack[route_n - 1].writer].zone : -1;
+    if (route_n && (d < 6000.0f || (wz > 0 && wz == route_zone()))) return route_solve();
+    if (!route_n && d < 2500.0f) return 0;
+    if (!mario->grounded && wait++ < 240) return 1; /* landing first */
+    wait = 0;
+    int best = -1;
+    float bd = d - 500.0f;
+    for (int i = 0; i < nlaunches; i++) {
+        if (!row_shown(launches[i].row) || vlen(vsub(launches[i].pos, mario->pos)) > 6000.0f || i == route_last) continue;
+        float e = vlen(vsub(launch_pos(&launches[i], 1.0f), goal));
+        if (e < bd) { bd = e; best = i; }
+    }
+    if (best >= 0) {
+        printf("route: launch %d (row %d), %d to go, lands %d off" "\n", best, launches[best].row, (int)d, (int)bd);
+        game_test_launch(best);
+        route_last = best; test_nolost = 0;
+        return 1;
+    }
+    if (route_n == ROUTE_DEPTH) return -1;
+    int hw = -1, hl = -1; /* a hidden one coming nearer: what its appear switch waits for */
+    float hd = d - 500.0f;
+    for (int i = 0; i < nlaunches; i++) {
+        const Row *lr = &sc->objs[launches[i].row];
+        if (row_shown(launches[i].row) || lr->sw[SW_APPEAR] < 0) continue;
+        float e = vlen(vsub(launch_pos(&launches[i], 1.0f), goal));
+        if (e >= hd) continue;
+        for (u32 w = 0; w < sc->nobjs; w++) {
+            const Row *wr = &sc->objs[w];
+            if ((int)w == launches[i].row || row_dead[w] || (lr->sw[SW_APPEAR] < 1000 && wr->zone != lr->zone)) continue;
+            if (wr->sw[SW_A] == lr->sw[SW_APPEAR] || wr->sw[SW_DEAD] == lr->sw[SW_APPEAR]) { hd = e; hw = w; hl = i; }
+        }
+    }
+    if (hw < 0) return -1;
+    printf("route: launch %d waits for row %d (%s)" "\n", hl, hw, sc->types + 32 * sc->objs[hw].type);
+    route_stack[route_n].writer = hw; route_stack[route_n++].launch = hl;
+    return 1;
+}
+
+
+/* Test builds: Mario onto the nearest shown power star (its distance, -1 none) */
+int game_test_star_near(void)
+{
+    int best = -1;
+    float bd = 1e9f;
+    V3 bp = v3(0, 0, 0);
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (in->item != ITEM_STAR || !row_shown(in->row)) continue;
+        int state;
+        V3 p = star_pos(in, &state);
+        if (star_wait[in->row] && !state) continue;
+        float d = vlen(vsub(p, mario->pos));
+        if (d < bd) { bd = d; best = i; bp = p; }
+    }
+    if (best < 0) return -1;
+    mario->pos = vadd(bp, vmul(up_at(bp, mario->up), -HIT_BODY_H)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+    return (int)bd;
+}
 
 int game_teleport_low(const unsigned char *full)
 {
@@ -4858,6 +5036,38 @@ static void update_ota(void)
         if (hit || vlen(vsub(k->pos, ota.pos)) > 5000.0f || k->t > 600 || (k->state == 4 && k->t > 120)) k->state = 0;
     }
     if (ota.phase == 4) for (int b = 0; b < OTA_BALLS; b++) ota.ball[b].state = 0;
+}
+
+/* CocoSambo.cpp: within 700 it attacks (its head swung at Mario: a touch hurts, sendMsgEnemyAttackStrong); a
+ * thrown coconut knocks its head down (update_coconuts: FallHead), it swoons cSwoonFrame 180, a stomp / hip drop
+ * (tryToPress) or a spin (tryToBlow) on it then kills it (its dead switch), else it recovers (90). row_turn 0 up, 1
+ * swooning; row_step its frames. ponytail: never hides underground, no separate head model, no star pointer freeze */
+static void update_sambos(void)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->sambo || row_dead[in->row]) continue;
+        int row = in->row;
+        V3 p = v3(in->m[12], in->m[13], in->m[14]), up = vnorm(v3(in->m[4], in->m[5], in->m[6])), rel = vsub(c, p);
+        float h = vdot(rel, up), side = vlen(vtangent(rel, up)), s = in->s;
+        if (row_turn[row] == 1) {
+            if (++row_step[row] >= 180 + 90) { row_turn[row] = 0; row_step[row] = 0; continue; } /* RecoverWait, Recover */
+            int stomp = mario->vup < 0 && h > 0 && h < 250.0f * s && side < 150.0f * s;
+            int spin = mario->spin_timer > 0 && vlen(rel) < 250.0f * s;
+            if (stomp || spin) {
+                if (stomp) { mario->vup = 15.0f; mario->grounded = 0; }
+                row_kill(row);
+                printf("coco sambo row %d %s" "\n", row, stomp ? "pressed" : "blown away");
+            }
+            continue;
+        }
+        if (h > -50.0f && h < 500.0f * s && side < 100.0f * s + HIT_BODY_R) { /* its body / head: pushed, hurt */
+            hurt_mario(p, 20.0f);
+            V3 out = vtangent(rel, up);
+            if (vlen(out) > 1e-3f) mario->pos = vadd(mario->pos, vmul(vnorm(out), 100.0f * s + HIT_BODY_R - side));
+        }
+    }
 }
 
 static void update_fountains(void)
@@ -7528,6 +7738,7 @@ void game_update(void)
     update_bubbles();
     update_dino();
     update_ota();
+    update_sambos();
     update_fire();
     place_waterplants();
     update_pipes();

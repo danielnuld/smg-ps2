@@ -813,6 +813,38 @@ int main(void)
             if (frame % 120 == 0) printf("fat test f %u: %d\n", frame, st);
         }
 #endif
+#ifdef ROUTE_TEST
+        if (frame >= 150) { /* the scenario played through: launch stars to its goal, its action, its star */
+            static int phase, last;
+            int n = scen[strlen(scen) - 1] - '0';
+            const char *goal = n == 2 ? "TicoFat" : n == 3 ? "OtaKing" : "DinoPackun";
+            int st = 0;
+            if (n == 2) game_test_fat_nodrop();
+            if (game_stars()) phase = 10; /* done */
+            if (phase == 0) {
+                st = game_test_route(goal);
+                if (st == 0) { phase = 1; printf("route: at the %s, f %u\n", goal, frame); }
+                else if (st < 0) { phase = 9; printf("route: stuck on the way to the %s\n", goal); }
+            } else if (phase == 1 && frame % (n == 2 ? 6 : n == 3 ? 1 : 20) == 0) {
+                st = n == 2 ? game_test_fat() : n == 3 ? game_test_ota() : game_test_dino();
+                if (n == 2 && (st == -1 || st == -3 || st == -4)) { phase = 3; printf("route: fed, f %u\n", frame); }
+                else if (n != 2 && st >= (n == 3 ? 50 : 600)) { phase = 2; printf("route: boss down, f %u\n", frame); }
+            } else if (phase == 2 && frame % 20 == 0) {
+                st = game_test_cage(1);
+            } else if (phase == 3) {
+                st = game_test_route("StarEggRoadEggPlanetD");
+                if (st == 0) phase = 4;
+            } else if (phase == 4 && frame % 20 == 0) {
+                st = game_test_star_near();
+            }
+            if (game_stars() != last) { last = game_stars(); printf("route: star got, f %u\n", frame); }
+            if (frame % 200 == 0) {
+                char dd[128];
+                game_debug(dd, sizeof dd);
+                printf("route f %u: phase %d st %d stars %d %s\n", frame, phase, st, game_stars(), dd);
+            }
+        }
+#endif
 #ifdef PURPLE_TEST
         if (frame >= 150 && frame % 4 == 0) { /* Mario through the purple coins, then onto the 100-coin star */
             int st = game_test_purple();
