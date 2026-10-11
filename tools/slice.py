@@ -237,7 +237,7 @@ def scene(fs, galaxy, scenario):
 # its intact and cracked pieces, normal.bva shows the intact ones (DinoPackun::initEggShell)
 VIS = {"DinoPackunEggShell": "normal"}
 # models baked with a BRK's registers at a frame (Tico.cpp: ColorChange at its colour, frame 0 the yellow one)
-BRK_POSE = {"Tico": ("colorchange", 0), "TicoFat": ("colorchange", 0)}
+BRK_POSE = {"Tico": ("colorchange", 0), "TicoFat": ("normal", 0)}  # TicoFat: startBrk Normal, frame 0 (ponytail: FatRed as it grows)
 
 
 def bva_hidden(b, frame=0):
@@ -1126,12 +1126,20 @@ def obj_anim_chunk(fsp, classes):
         arc = fsp / "ObjectData" / f"{ANIM_ARC.get(c, c)}.arc"
         if not arc.exists():
             continue
-        for n, b in B.rarc_files(arc.read_bytes()):
-            if n.lower().endswith(".bck"):
+        files = {n.rsplit("/", 1)[-1].lower(): b for n, b in B.rarc_files(arc.read_bytes())}
+        packed = {}
+        for n, b in files.items():
+            if n.endswith(".bck"):
                 raw = anim_clip(b)
                 z = zlib.compress(raw, 9)
-                clips.append(name32(f"{c.lower()}/{n.rsplit('/', 1)[-1][:-4].lower()}") + struct.pack("<II", len(raw), len(z)) +
-                             z + b"\0" * (-len(z) % 4))
+                packed[n[:-4]] = struct.pack("<II", len(raw), len(z)) + z + b"\0" * (-len(z) % 4)
+                clips.append(name32(f"{c.lower()}/{n[:-4]}") + packed[n[:-4]])
+        # ActorAnimKeeper (actoranimctrl.bcsv): an action whose BckName is another clip plays that one (startAction)
+        ctl = files.get("actoranimctrl.bcsv", b"")
+        for act, bck in zip(B.bcsv_column(ctl, "ActorAnimName"), B.bcsv_column(ctl, "BckName")):
+            a, k = act.lower(), (bck or "").lower()
+            if k and k != a and k in packed and a not in packed and a.isascii():
+                clips.append(name32(f"{c.lower()}/{a}") + packed[k])
     return chunk(b"ANIM", struct.pack("<I", len(clips)) + b"".join(clips))
 
 

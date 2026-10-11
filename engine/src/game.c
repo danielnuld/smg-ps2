@@ -247,6 +247,8 @@ typedef struct { V3 pos, vel; int t; } Shot; /* star pieces shot at the pointer 
 static Shot shots[MAX_SHOTS];
 static int test_l1; /* test builds: L1 pressed this frame */
 static int test_sq; /* test builds: Square pressed this frame (Fluff) */
+static int test_feed; /* test builds: the pointer on a TicoFat with L1 held */
+static int nfats; /* TicoFats seen (update_ticofat's table) */
 static int test_cross; /* test builds: X held (Bee Mario) */
 static unsigned char zone_kcl[64]; /* zones with collision bound (game_rebind): walkers wait in the others */
 static int test_nolost; /* test builds: no miss for falling off (Mario sent to a zone still streaming in) */
@@ -899,6 +901,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     scene_blob_g = blob;
     npurple = count_type("PurpleCoin", 0) + count_type("CirclePurpleCoinGroup", 1) + count_type("PurpleRailCoin", 1);
     ngroup_wait = 0;
+    nfats = 0; test_feed = 0;
     for (u32 i = 0; i < s->nobjs; i++) { /* the spin drivers a TicoFat's group brings out */
         const char *tn = s->types + 32 * s->objs[i].type;
         if (strncmp(tn, "SuperSpinDriver", 15) || s->objs[i].group < 0) continue;
@@ -3292,27 +3295,23 @@ int game_test_ota(void)
 static int test_fat_nodrop; /* the route test flies there by the pink spin driver instead */
 void game_test_fat_nodrop(void) { test_fat_nodrop = 1; }
 
+static int fat_state(int row); /* update_ticofat's table: eaten x 1000 + its nerve */
 int game_test_fat(void)
 {
     static int f0;
     if (!f0++ || (f0 & 31) == 0)
         for (int k = 0; k < ngroup_wait; k++) printf("fat test: group spin driver row %d shown %d\n", group_wait[k].row, row_shown(group_wait[k].row));
-    for (int i = 0; i < ninsts; i++) {
+    for (int i = 0; i < ninsts; i++) { /* Mario 200 in front (its talk distance), the pointer on it, L1 held */
         Inst *in = &insts[i];
         if (!in->fat || row_dead[in->row]) continue;
         V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), z = vnorm(v3(in->m[8], in->m[9], in->m[10]));
-        V3 mid = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(up, 100.0f * in->s));
-        mario->pos = vadd(vadd(mid, vmul(z, 600.0f)), vmul(up, -HIT_BODY_H)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
-        if (got_pieces < 1) got_pieces = 1;
-        for (int k = 0; k < MAX_SHOTS; k++)
-            if (!shots[k].t) {
-                shots[k].pos = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-                shots[k].vel = vmul(vnorm(vsub(mid, shots[k].pos)), 40.0f);
-                shots[k].t = 1; got_pieces--;
-                break;
-            }
-        return row_turn[in->row] * 1000 + got_pieces;
+        V3 base = v3(in->m[12], in->m[13], in->m[14]);
+        if (fat_state(in->row) % 1000 < 5 && (vlen(vsub(mario->pos, base)) > 400.0f || fat_state(in->row) % 1000 == 0)) { /* while it eats */ mario->pos = vadd(vadd(base, vmul(z, 240.0f)), vmul(up, 40.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+        if (got_pieces < 3) got_pieces = 3;
+        test_feed = 1;
+        return fat_state(in->row);
     }
+    test_feed = 0;
     int t = scene_type(sc, "TicoFat"); /* none loaded: Mario to its row, its zone streams in */
     for (u32 i = 0; t >= 0 && i < sc->nobjs; i++)
         if (sc->objs[i].type == t && !row_dead[i]) {
@@ -5664,18 +5663,165 @@ static void update_sambos(void)
     }
 }
 
-/* TicoFat's metamorphosis (80 frames of its clip), then its planet: SW_A on, the row dies, its group's drivers out */
-static void update_fat(void)
+/* TicoFat (Petari NPC/TicoFat.cpp), a hungry Luma: Prep until it may eat (startEat: its talk's event, or arg2 set),
+ * then Wait / Point (Excite) while the pointer is on it near Mario (updateGuidance _174 8 within its talk distance
+ * 280 x min(scale, 1.5), updatePointing _178 4); B (L1 here) held while pointing gifts a star piece every _1F0 5
+ * frames (giftStarPieceToTarget: one flies to its Mouth), each eaten (receiveStarPiece) makes it Eat (EatStart then
+ * Eat) and grow (calcScale 1 + 0.9 x eaten / arg1, default 10); none left in flight: Chem, then Point / Wait. All
+ * eaten: Test, Fullness (Joy), tryMetamorphosis: arg0 -1 Demo (its Demo clip, hidden at 90), Fly along its rail
+ * (SpinDriverShootPath, eased, _1FC = arg4 (100) a frame), WipeOut / WipeIn (60 each: SW_A on, it is gone), Info,
+ * After (60): disappear (its group's members appear); else Meta. Clips by its size (getActionName: ..0 / ..1 / ..2
+ * past 1.3 / 1.6) through its ActorAnimCtrl actions. ponytail: no talk messages (the talk's end taken at once), no
+ * fullness meter, no "変身" / "飛行" multi-actor cameras, no white wipes or information message (their frames only),
+ * no TicoSeedGuidance, no item (arg0 0 / 1), no FatRed BRK, no BVA eyes */
+#define MAX_FATS 4
+static struct {
+    int row, nrv, t, left, total, inflight, eat, g174, g178, item, has_rail;
+    float scale, flyd, flylen, m0[16]; /* m0: its matrix without its scale (setScale works on it) */
+    Launch fly;
+    struct { V3 pos; int on; } gift[8];
+} fats[MAX_FATS];
+enum { TF_PREP, TF_WAIT, TF_POINT, TF_EAT, TF_CHEM, TF_TEST, TF_FULLNESS, TF_DEMO, TF_FLY, TF_WIPEOUT, TF_WIPEIN, TF_INFO,
+       TF_AFTER, TF_META, TF_GONE };
+static const char *fat_size(const char *base, float scale) /* getActionName */
+{
+    static char buf[24];
+    snprintf(buf, sizeof buf, "%s%d", base, scale > 1.6f ? 2 : scale > 1.3f ? 1 : 0);
+    return buf;
+}
+static void fat_set(int k, int n) { fats[k].nrv = n; fats[k].t = 0; }
+static void update_ticofat(void)
 {
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
-        if (in->fat != 2 || row_dead[in->row] || ++row_step[in->row] < 80) continue;
+        if (!in->fat) continue;
+        int k = 0;
+        while (k < nfats && fats[k].row != in->row) k++;
         const Row *r = &sc->objs[in->row];
-        if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
-        row_kill(in->row);
-        sw_changed = 1;
-        printf("tico fat row %d: its planet" "\n", in->row);
+        if (k == nfats) { /* TicoFat::init */
+            if (nfats == MAX_FATS) continue;
+            memset(&fats[k], 0, sizeof fats[k]);
+            fats[k].row = in->row; nfats++;
+            fats[k].total = fats[k].left = r->arg[1] > 0 ? r->arg[1] : 10;
+            fats[k].item = r->arg[0];
+            fats[k].eat = r->arg[2] != -1;
+            fats[k].scale = 1.0f;
+            memcpy(fats[k].m0, in->m, 64);
+            u32 np = 0; int closed;
+            const float *pts = r->path >= 0 ? find_rail(scene_blob_g, r->zone, r->path, &np, &closed) : NULL;
+            if (pts && np >= 2) { /* SpinDriverShootPath::initUsingParabolic from its place */
+                u32 nraw = 0;
+                find_rail_of(scene_blob_g, r->zone, r->path, &nraw, &closed, 1);
+                init_launch(&fats[k].fly, r, pts, np, nraw <= 2);
+                fats[k].has_rail = 1;
+                V3 prev = launch_pos(&fats[k].fly, 0.0f);
+                for (int s = 1; s <= 32; s++) { V3 q = launch_pos(&fats[k].fly, s / 32.0f); fats[k].flylen += vlen(vsub(q, prev)); prev = q; }
+            }
+        }
+        typeof(&fats[0]) f = &fats[k];
+        if (f->nrv == TF_GONE) continue;
+        f->t++;
+        V3 up = vnorm(v3(f->m0[4], f->m0[5], f->m0[6])), base = v3(f->m0[12], f->m0[13], f->m0[14]);
+        V3 front = vnorm(v3(f->m0[8], f->m0[9], f->m0[10]));
+        V3 mid = vadd(base, vmul(up, 100.0f * f->scale)), mouth = vadd(base, vadd(vmul(up, 130.0f * f->scale), vmul(front, 60.0f * f->scale)));
+        /* TalkMessageCtrl::isNearPlayer: within the talk distance across the gravity and along it, from his centre */
+        V3 rc = vsub(base, vadd(mario->pos, vmul(mario->up, HIT_BODY_H)));
+        float talk = 280.0f * fminf(f->scale, 1.5f), dm = fabsf(vdot(rc, up)) <= talk ? vlen(vtangent(rc, up)) : 1e9f;
+        /* updateGuidance / updatePointing (the pointer: the cursor's ray within 110 x scale of it) */
+        if (dm < talk) f->g174 = 8; else if (f->g174 > 0) f->g174--;
+        int pointing = 0;
+        if (f->g174 > 0) {
+            V3 o, d;
+            cursor_ray(&o, &d);
+            V3 to = vsub(mid, o);
+            float z = vdot(to, d);
+            pointing = (z > 0 && vlen(vsub(to, vmul(d, z))) < 110.0f * f->scale) || test_feed;
+        }
+        if (pointing) f->g178 = 4; else if (f->g178 > 0) f->g178--;
+        int feeding = f->eat && f->left > 0 && f->nrv <= TF_CHEM;
+        if (feeding && f->g178 > 0 && (pad_held(PAD_L1) || test_feed) && f->t % 5 == 0 && got_pieces > 0) /* shootStarPiece */
+            for (int g = 0; g < 8; g++) if (!f->gift[g].on) {
+                f->gift[g].on = 1; f->gift[g].pos = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+                got_pieces--; f->inflight++;
+                break;
+            }
+        for (int g = 0; g < 8; g++) { /* the gifted pieces, flying to its Mouth */
+            if (!f->gift[g].on) continue;
+            V3 to = vsub(mouth, f->gift[g].pos);
+            if (vlen(to) < 40.0f) { /* receiveStarPiece(1) */
+                f->gift[g].on = 0; f->inflight--;
+                if (f->left > 0) f->left--;
+                f->scale = 1.0f + (float)(f->total - f->left) / f->total * 0.9f;
+                if (f->nrv != TF_EAT) fat_set(k, TF_EAT);
+                continue;
+            }
+            f->gift[g].pos = vadd(f->gift[g].pos, vmul(vnorm(to), fminf(40.0f, vlen(to))));
+        }
+        const char *clip = NULL;
+        int loop = 1;
+        switch (f->nrv) {
+        case TF_PREP: /* the talk (onRootNodeAutomatic, in front) starts the eating at its end */
+            clip = fat_size("wait", f->scale);
+            if (!f->eat && dm < talk && vdot(vsub(mario->pos, base), front) > 0) { f->eat = 1; printf("tico fat row %d: eats" "\n", in->row); }
+            if (f->eat) fat_set(k, TF_WAIT);
+            break;
+        case TF_WAIT: clip = fat_size("wait", f->scale); if (f->g178 > 0) fat_set(k, TF_POINT); break;
+        case TF_POINT: clip = fat_size("excite", f->scale); if (f->g178 <= 0) fat_set(k, TF_WAIT); break;
+        case TF_EAT: clip = f->t < 41 ? fat_size("eatstart", f->scale) : fat_size("eat", f->scale); if (!f->inflight) fat_set(k, TF_CHEM); break;
+        case TF_CHEM:
+            clip = "chem";
+            if (f->t >= 76) { if (f->g178 > 0) { f->g174 = 8; fat_set(k, TF_POINT); } else { f->g174 = 0; fat_set(k, TF_WAIT); } }
+            break;
+        case TF_TEST: clip = fat_size("excite", f->scale); fat_set(k, TF_FULLNESS); break;
+        case TF_FULLNESS: /* Joy; its talk at its end (tryTalkForceWithoutDemoAtEnd) */
+            clip = fat_size("joy", f->scale);
+            if (f->t >= 41) fat_set(k, f->item == -1 ? TF_DEMO : TF_META);
+            break;
+        case TF_DEMO: clip = "demo"; loop = 0;
+            if (f->t >= 96) fat_set(k, f->item == -1 && f->has_rail ? TF_FLY : TF_WIPEOUT);
+            break;
+        case TF_FLY: { /* exeFly */
+            clip = "fly";
+            f->flyd += 100.0f;
+            float v = f->flylen > 0 ? fminf(f->flyd / f->flylen, 1.0f) : 1.0f, e;
+            if (v < 0.5f) { float x = 2 * v * 2 * v; e = 0.5f * x; } /* getEaseInValue(x, 0, 0.5, 1) */
+            else { float x = 2 * (1 - v); x *= x; e = 1.0f - 0.5f * x; }
+            V3 p = launch_pos(&f->fly, e), dir = vsub(launch_pos(&f->fly, fminf(e + 0.01f, 1.0f)), p);
+            f->m0[12] = p.x; f->m0[13] = p.y; f->m0[14] = p.z;
+            if (vlen(dir) > 1e-3f) { V3 fz = vnorm(dir); f->m0[8] = fz.x; f->m0[9] = fz.y; f->m0[10] = fz.z; }
+            if (e >= 1.0f) fat_set(k, TF_WIPEOUT);
+            break;
+        }
+        case TF_WIPEOUT: clip = "fly"; if (f->t >= 60) fat_set(k, TF_WIPEIN); break;
+        case TF_WIPEIN:
+            if (f->t == 60 && r->sw[SW_A] >= 0) { sw_set(r, SW_A, 1); printf("tico fat row %d: its planet" "\n", in->row); }
+            if (f->t >= 120) fat_set(k, TF_INFO);
+            break;
+        case TF_INFO: fat_set(k, TF_AFTER); break;
+        case TF_AFTER:
+            if (f->t >= 60) { row_kill(in->row); sw_changed = 1; fat_set(k, TF_GONE); } /* disappear: its group appears */
+            break;
+        case TF_META: clip = "metamorphosis"; loop = 0;
+            if (f->t >= 80) { row_kill(in->row); sw_changed = 1; fat_set(k, TF_GONE); }
+            break;
+        }
+        if (f->eat && f->left == 0 && f->nrv <= TF_CHEM && !f->inflight) { fat_set(k, TF_TEST); printf("tico fat row %d: full (%d)" "\n", in->row, f->total); }
+        if (clip) obj_play(in, clip, loop, 6);
+        /* setScale; hidden from Demo's frame 90 (hideModelAndOnCalcAnim) */
+        float sc_ = (f->nrv == TF_DEMO && f->t >= 90) || f->nrv >= TF_WIPEIN ? 0.0f : f->scale;
+        memcpy(in->m, f->m0, 64);
+        for (int j = 0; j < 12; j++) in->m[j] *= sc_;
     }
+}
+static int fat_state(int row)
+{
+    for (int k = 0; k < nfats; k++) if (fats[k].row == row) return (fats[k].total - fats[k].left) * 1000 + fats[k].nrv;
+    return 0;
+}
+static int fat_demo(void) /* Test .. After: Mario waits (its demo) */
+{
+    for (int k = 0; k < nfats; k++) if (fats[k].nrv >= TF_TEST && fats[k].nrv <= TF_AFTER) return 1;
+    return 0;
 }
 
 static void update_fountains(void)
@@ -8122,30 +8268,6 @@ static void update_shots(void)
         if (++s->t > 60) { s->t = 0; continue; }
         s->pos = vadd(s->pos, s->vel);
         int hit = 0;
-        for (int k = 0; k < ninsts && !hit; k++) { /* TicoFat.cpp receiveStarPiece: it eats arg1 (10) pieces, then
-                                                       * (tryMetamorphosis) becomes its planet: SW_A on, the row dies.
-                                                       * row_turn the pieces eaten. ponytail: no growing, no meter, no
-                                                       * flight / planet demo, no item (arg0) */
-            Inst *in = &insts[k];
-            if (!in->fat || row_dead[in->row]) continue;
-            V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), mid = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(up, 100.0f * in->s));
-            if (vlen(vsub(s->pos, mid)) > 110.0f * in->s + 40.0f) continue;
-            hit = 1;
-            const Row *r = &sc->objs[in->row];
-            int want = r->arg[1] > 0 ? r->arg[1] : 10;
-            if (in->fat == 2) continue; /* changing already */
-            {
-                char eat[8];
-                snprintf(eat, sizeof eat, "eat%d", (row_turn[in->row] + 1) * 3 / (want + 1)); /* Eat: its size's clip */
-                obj_play(in, eat, 0, 4);
-            }
-            if (++row_turn[in->row] >= want) {
-                in->fat = 2; row_step[in->row] = 0; /* tryMetamorphosis: its clip, then the planet */
-                obj_play(in, "metamorphosis", 0, 4);
-                printf("tico fat row %d: full (%d)" "\n", in->row, want);
-                continue;
-            }
-        }
         for (int k = 0; k < nkuribo && !hit; k++) {
             Kuribo *e = &kuribo[k];
             if (e->state == KURIBO_DEAD || !row_shown(e->row) || vlen(vsub(s->pos, vadd(e->pos, vmul(e->up, 50.0f)))) > 90.0f) continue;
@@ -8433,8 +8555,8 @@ void game_update(void)
         if (!demo_camera("powerstar/powerstarget", star_demo - 1, star_demo_m)) { star_demo = 0; camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45); }
         else star_demo++;
     }
-    demo_on = dino_demo_on || ota_demo_on || star_demo;
-    update_fat();
+    demo_on = dino_demo_on || ota_demo_on || star_demo || fat_demo();
+    update_ticofat();
     update_sambos();
     update_fire();
     place_waterplants();
@@ -8859,6 +8981,11 @@ void game_draw(void)
             if (m_dball) render_model(m_dball, m, 0x80, 0x80, 0x80);
         }
     }
+    for (int k = 0; m_piece && k < nfats; k++) /* TicoFat's gifted star pieces */
+        for (int g = 0; g < 8; g++) if (fats[k].gift[g].on) {
+            basis_matrix(m, fats[k].gift[g].pos, up_at(fats[k].gift[g].pos, v3(0, 1, 0)), v3(0, 0, 1), spin_angle);
+            render_model(m_piece, m, 0x60, 0xD0, 0xF0);
+        }
     if (m_bubble) for (int b = 0; b < MAX_BUBBLES; b++) { /* AirBubbleGenerator's bubbles */
         if (!bubbles[b].life) continue;
         basis_matrix(m, bubbles[b].pos, up_at(bubbles[b].pos, v3(0, 1, 0)), v3(1, 0, 0), 0);
