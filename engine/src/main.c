@@ -634,6 +634,12 @@ int main(void)
             if (frame % 50 == 0) printf("ibubble test f %u: row %d pieces out %d\n", frame, row, game_pieces_out());
         }
 #endif
+#ifdef SEESAW_TEST
+        if (frame >= 400 && frame < 1400) { /* Mario on a PhantomShipHandle's side, then a hip drop on its other side */
+            int st = game_test_seesaw(frame >= 900);
+            if (frame % 20 == 0) printf("seesaw test f %u: %d\n", frame, st);
+        }
+#endif
 #ifdef PETARI_TEST
         if (frame >= 400 && frame < 2400) { /* a Petari: it comes, surfaces, a spin swoons it, a trample smashes it */
             int st = game_test_petari();

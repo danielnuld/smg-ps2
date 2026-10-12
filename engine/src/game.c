@@ -147,6 +147,7 @@ typedef struct {
     int npc;         /* talking NPC (npc_class): turns to face Mario when he is near */
     int hipsw;       /* hip drop switch: 1 PicketSwitch(Big) / HipDropSwitch (SW_A for good), 2 HipDropTimerSwitch */
     int rotor;       /* map part with a RotateSpeed: turns (rotor_matrix), carries Mario */
+    int seesaw;      /* PhantomShipHandle: MapPartsSeesaw1AxisRotator, turned by Mario's weight (update_seesaws) */
     int sky;         /* sky dome (Petari Sky): centred on the camera, drawn first */
     int sun;         /* BrightSun: its Sun model far off the camera along its rotation, drawn with the skies */
     int steam;       /* LavaSteam: vents on a cycle and burns (update_steam) */
@@ -343,6 +344,11 @@ static struct {
     V3 pos, up, f; /* _94, _A0 */
 } hhps[MAX_HHPS];
 static int nhhps;
+static void seesaw_matrix(Inst *in);
+static int nseesaws;
+#define MAX_SEESAWS 8
+static struct { int row, nrv, step, hip; float vel, angle; } seesaws[MAX_SEESAWS];
+static int seesaw_of(int row);
 #define MAX_VINES 4
 #define VINE_PTS 256
 #define VINE_LEAVES 32
@@ -1094,6 +1100,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     norocks = 0;
     nhhps = 0;
     nvines = 0; vine_ride = -1;
+    nseesaws = 0;
     nflows = 0;
     kari_cling = 0;
     for (int i = 0; i < 5; i++) kari_slot[i] = -1;
@@ -2820,6 +2827,8 @@ void game_rebind(void)
         in->hipsw = strncmp(name, "PicketSwitch", 12) == 0 || strcmp(name, "HipDropSwitch") == 0 ? 1 :
                     strcmp(name, "HipDropTimerSwitch") == 0 ? 2 : 0;
         in->rotor = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->arg[4] != -1 && r->arg[4] != 0; /* -1: not a map part */
+        in->seesaw = strcmp(name, "PhantomShipHandle") == 0;
+        if (in->seesaw) { in->rotor = 0; seesaw_matrix(in); }
         in->railer = scene_blob_g && r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->path >= 0 ?
                      find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->kcl = scene_kcl(s, name);
@@ -3239,6 +3248,37 @@ int game_test_petari(void) /* the first Petari: Mario 800 off it (it comes, wait
         }
         return k->nrv * 1000 + (k->step > 999 ? 999 : k->step) + (k->phase ? 100000 : 0);
     }
+    return -1;
+}
+
+int game_test_seesaw(int phase) /* the first PhantomShipHandle: Mario dropped 150 along its X (phase 0) or onto it in a
+                                 * hip drop (phase 1); its zone first */
+{
+    test_nolost = 1;
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->seesaw) continue;
+        int k = seesaw_of(in->row);
+        if (k < 0) return -1;
+        V3 pos = v3(in->m[12], in->m[13], in->m[14]), up = up_at(pos, mario->up);
+        V3 x = vnorm(v3(in->m[0], in->m[1], in->m[2]));
+        static int last = -1;
+        if (phase != last) {
+            last = phase;
+            mario->up = up; mario->pos = vadd(vadd(pos, vmul(x, phase ? -150.0f : 150.0f)), vmul(up, 400.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
+            if (phase) { mario->hip = HIP_START; mario->hip_t = 0; }
+        }
+        if (game_frame % 20 == 0) printf("seesaw: nrv %d angle %d vel x100 %d on %d hip %d\n", seesaws[k].nrv, (int)seesaws[k].angle, (int)(seesaws[k].vel * 100), mario_ground == i, mario->hip);
+        return seesaws[k].nrv;
+    }
+    int ty = scene_type(sc, "PhantomShipHandle");
+    for (u32 i = 0; i < sc->nobjs; i++)
+        if (sc->objs[i].type == ty) {
+            V3 p = row_pos(&sc->objs[i]);
+            mario->up = up_at(p, mario->up); mario->pos = vadd(p, vmul(mario->up, 400.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return -2;
+        }
     return -1;
 }
 
@@ -11365,6 +11405,81 @@ static int mp_running(const Row *r, int row)
     return r->sw[SW_B] < 0 || sw_on(r, SW_B);
 }
 
+
+/* PhantomShipHandle.cpp / MapPartsSeesaw1AxisRotator.cpp: turned about its Z by Mario's weight. Stay until he stands
+ * on it, then each frame his torque about the axis (sign of (his place - its) x gravity) adds 0.001 x his distance
+ * along its X / (0.1 x inertia: RotateAccelType, 1000 unset); after 2 frames the restoring force (RotateStopTime x
+ * 0.01 towards its first up; slower than 0.1 and upright: stopped) and friction 0.99; clamped to RotateSpeed x 0.01
+ * a frame; RotateAngle > 0 limits it (bounced back x -0.5). A hip drop on it adds 40 x that. Stopped: Stay. */
+enum { SS_STAY, SS_MOVESTART, SS_MOVE, SS_HIPDROP };
+static int seesaw_of(int row)
+{
+    for (int i = 0; i < nseesaws; i++) if (seesaws[i].row == row) return i;
+    if (nseesaws == MAX_SEESAWS) return -1;
+    memset(&seesaws[nseesaws], 0, sizeof seesaws[0]);
+    seesaws[nseesaws].row = row; seesaws[nseesaws].step = -1; /* start(): Stay */
+    return nseesaws++;
+}
+static void seesaw_matrix(Inst *in) /* its placement turned `angle` about its own Z */
+{
+    const Row *r = &sc->objs[in->row];
+    int k = seesaw_of(in->row);
+    float base[16], rz[16], a = k >= 0 ? seesaws[k].angle * 0.0174533f : 0;
+    mat_translate_rot_scale(base, r->pos, r->rot, r->scale);
+    mat_identity(rz);
+    rz[0] = cosf(a); rz[1] = sinf(a); rz[4] = -sinf(a); rz[5] = cosf(a);
+    mat_mul(in->m, base, rz);
+}
+static void update_seesaws(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->seesaw) continue;
+        int k = seesaw_of(in->row);
+        if (k < 0) continue;
+        typeof(&seesaws[0]) o = &seesaws[k];
+        const Row *r = &sc->objs[in->row];
+        int packed = r->arg[7] > 0 ? r->arg[7] : 0, acc = packed >> 4 & 15, stop = packed >> 12 & 0x3FFF;
+        float vmax = r->arg[4] != -1 ? r->arg[4] * 0.01f : 0, limit = r->arg[5] > 0 ? (float)r->arg[5] : 0;
+        float inertia = 0.1f * (acc > 0 ? (float)acc : 1000.0f);
+        V3 pos = v3(in->m[12], in->m[13], in->m[14]), ax = vnorm(v3(in->m[8], in->m[9], in->m[10]));
+        V3 x = vnorm(v3(in->m[0], in->m[1], in->m[2])), up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+        V3 g = vmul(up_at(pos, v3(0, 1, 0)), -1.0f), off = vsub(mario->pos, pos);
+        float dist = 0.001f * fabsf(vdot(x, off)), sgn = vdot(vcross(off, g), ax) < 0 ? -1.0f : 1.0f;
+        int on = mario_ground == i;
+        if (hip_hit && hip_inst == i) { o->nrv = SS_HIPDROP; o->step = -1; o->hip = 1; } /* tryHipDrop */
+        int st = ++o->step;
+        if (o->nrv == SS_STAY) {
+            if (on) { o->nrv = SS_MOVESTART; o->step = -1; }
+            continue;
+        }
+        if (o->nrv == SS_MOVESTART && fabsf(o->vel) > 0.1f) { o->nrv = SS_MOVE; o->step = -1; continue; }
+        if (o->nrv == SS_HIPDROP && st == 0) o->vel += sgn * 40.0f * dist / inertia; /* addForceHipDrop */
+        /* rotate: updateVelocity */
+        if (on) o->vel += sgn * dist / inertia;
+        if (o->nrv != SS_MOVESTART && st > 2) {
+            V3 up0 = up_at(pos, v3(0, 1, 0)); /* ponytail: its first up taken as against gravity (placements are upright) */
+            float force = vdot(vcross(up, up0), ax);
+            if (fabsf(force) < 1e-6f && fabsf(o->vel) <= 0.1f) o->vel = 0;
+            else o->vel += (force < 0 ? -1.0f : 1.0f) * 0.01f * stop / inertia;
+            o->vel *= 0.99f;
+        }
+        o->vel = o->vel < -vmax ? -vmax : o->vel > vmax ? vmax : o->vel;
+        if (o->nrv == SS_HIPDROP) { if (!o->hip) { o->nrv = SS_MOVE; o->step = -1; } o->hip = 0; }
+        if (o->vel == 0) { o->nrv = SS_STAY; o->step = -1; continue; }
+        if (limit > 0) { /* isGoingToReachTargetAngle */
+            V3 nu = vadd(vmul(up, cosf(o->vel * 0.0174533f)), vmul(vcross(ax, up), sinf(o->vel * 0.0174533f)));
+            float c = vdot(vnorm(nu), vmul(g, -1.0f));
+            if (acosf(c > 1 ? 1 : c < -1 ? -1 : c) * 57.29578f >= limit) { o->vel *= -0.5f; continue; }
+        }
+        float old[16];
+        memcpy(old, in->m, 64);
+        o->angle += o->vel;
+        seesaw_matrix(in);
+        if (on) carry(old, in);
+    }
+}
+
 static void update_rotors(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -13004,6 +13119,7 @@ void game_update(void)
     update_rotors();
     update_railers();
     update_mario();
+    update_seesaws(); /* after Mario: his hip drop (hip_hit) this frame */
     if (mario->spin_timer == SPIN_TIME - 1) mario_fx(FX_MARIO_SPINLIGHT, 1.0f); /* a spin started this frame */
     if (hip_hit) mario_fx(FX_MARIO_HIPDROPFLOWER, 0.0f);
     update_launched_pieces();
