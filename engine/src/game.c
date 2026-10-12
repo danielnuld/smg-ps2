@@ -153,6 +153,7 @@ typedef struct {
     int kgun;        /* KillerGunnerSingle: charges and fires its shell (update_kgunners) */
     int orock;       /* OtaRock: throws coconuts and fire balls, down by a coconut sent back (update_orocks) */
     int hhp;         /* HammerHeadPackun: swings its head at Mario, down by a stomp in its chance (update_hhps) */
+    int vine;        /* Plant (the beanstalk): its seed; the stalk grows and Mario climbs it (update_vines) */
     int ibubble;     /* ItemBubble: bobs holding coins / star pieces, bursts at a touch or a shot (update_ibubbles) */
     const float *meteor; /* MeteorStrike(Environment): its rail's JMap points; meteors fall along them (update_meteor) */
     int killer;      /* HomingKiller launcher: shoots a bullet that may chase Mario (update_killers) */
@@ -336,6 +337,26 @@ static struct {
     V3 pos, up, f; /* _94, _A0 */
 } hhps[MAX_HHPS];
 static int nhhps;
+#define MAX_VINES 4
+#define VINE_PTS 256
+#define VINE_LEAVES 32
+enum { VN_WAITFAR, VN_SEEDWAIT, VN_WAITDEMO, VN_DEMOWAIT, VN_GROWUP, VN_HANGWAITGROW, VN_HANGUPGROW, VN_GROWTHSTOP,
+       VN_GROWTHWAIT, VN_GROWTHWAITINVALID, VN_HANGSTART, VN_HANGUP, VN_HANGDOWN };
+typedef struct { V3 pos, side, up, front; float thick; } VPoint;
+static struct {
+    int row, nrv, step, alive, demo, top_on, rider, grabbed_top, accel_t, n, ngrown, nleaves, rail_n, grow_t, seeded;
+    const float *rail;
+    float len, coord, ride_coord, ride_vel, stalk_len, growth, grow_speed, jump, jump_oy;
+    int dir;
+    V3 pos, up, front, base;
+    float seed_m[16]; /* mSeedMtx */
+    VPoint info[VINE_PTS], stalk[VINE_PTS];
+    struct { float coord, size, spring, sspeed; V3 pos, side, up, front; float m[16]; } leaf[VINE_LEAVES];
+} vines[MAX_VINES];
+static int nvines, vine_ride = -1, vine_test_sq;
+static const Model *m_vtop, *m_vleaf;
+static int vine_try(Player *m);
+static int vine_hold(Player *m);
 static const Model *m_ota, *m_otafoot, *m_coco, *m_fireball2, *m_firebubble, *m_otamagma, *m_otalfoot;
 /* OtaKingMagma's clip (startBckThisAndBloomModel); one-shots go back to Wait (Down: EndWait) at their end */
 void ota_lfoot_mtx(int k, float out[16]);
@@ -1066,6 +1087,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nkillers = 0;
     norocks = 0;
     nhhps = 0;
+    nvines = 0; vine_ride = -1;
     nflows = 0;
     kari_cling = 0;
     for (int i = 0; i < 5; i++) kari_slot[i] = -1;
@@ -2663,6 +2685,7 @@ void game_rebind(void)
     m_ota = scene_model(s, "OtaKing"); m_otafoot = scene_model(s, "OtaKingFoot"); m_coco = scene_model(s, "CocoNut");
     m_otamagma = scene_model(s, "OtaKingMagma"); m_otalfoot = scene_model(s, "OtaKingLongFoot");
     m_pleaf = scene_model(s, "PackunLeaf");
+    m_vtop = scene_model(s, "PlantTop"); m_vleaf = scene_model(s, "PlantLeaf");
     m_fireball2 = scene_model(s, "FireBall"); m_firebubble = scene_model(s, "FireBubble");
     m_sambohead = scene_model(s, "CocoSamboHead");
     m_dino = scene_model(s, "DinoPackun"); m_dball = scene_model(s, "DinoPackunTailBall"); m_degg = scene_model(s, "DinoPackunEggShell");
@@ -2703,7 +2726,7 @@ void game_rebind(void)
             continue;
         const char *name = s->types + 32 * r->type;
         const Model *md = scene_model(s, name);
-        if (!md || (row_dead && !row_shown(i))) continue;
+        if (!md || (row_dead && !row_shown(i) && strcmp(name, "Plant"))) continue; /* Plant: its seed (a PartsModel) stays */
         if (row_step && (r->arg[2] == 1 || r->arg[2] == 2) && !row_step[i] && strcmp(name, "EarthenPipe") == 0)
             continue; /* a hidden pipe (EarthenPipeNrvHide) */
         if (logic && (strcmp(name, "YellowChip") == 0 || strcmp(name, "BlueChip") == 0) && !chip_group_out(r, name))
@@ -2747,6 +2770,7 @@ void game_rebind(void)
         in->kgun = strcmp(name, "KillerGunnerSingle") == 0;
         in->orock = strcmp(name, "OtaRock") == 0;
         in->hhp = strcmp(name, "HammerHeadPackun") == 0;
+        in->vine = strcmp(name, "Plant") == 0;
         in->ibubble = strcmp(name, "ItemBubble") == 0;
         if (in->ibubble) in->head = row_pos(r); /* its items' frame (_CC) trails the bubble */
         in->meteor = NULL;
@@ -3147,6 +3171,38 @@ int game_test_hhp(void) /* the HammerHeadPackun: Mario 650 in front until its Re
             mario->hvel = v3(0, 0, 0); mario->vup = 0;
             return -2;
         }
+    return -1;
+}
+
+int game_test_vine(void) /* the Plant at the HammerHeadPackun: its appear switch on, grown Mario jumps into it a third
+                          * of the way up and spins up it every 8 frames until he leaves it at the top */
+{
+    test_nolost = 1;
+    int ty = scene_type(sc, "Plant");
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if (r->type != ty || r->sw[SW_APPEAR] < 0 || r->sw[SW_APPEAR] != 3) continue;
+        int k = -1;
+        for (int j = 0; j < nvines; j++) if (vines[j].row == (int)i) k = j;
+        if (k < 0) { /* its zone first */
+            V3 p = row_pos(r);
+            mario->up = up_at(p, mario->up);
+            mario->pos = vadd(p, vmul(mario->up, 300.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return -2;
+        }
+        typeof(&vines[0]) o = &vines[k];
+        if (!sw_on(r, SW_APPEAR)) { sw_set((Row *)r, SW_APPEAR, 1); return -3; }
+        static int done, wait;
+        if (vine_ride == k) { if (game_frame % 8 == 0) vine_test_sq = 1; wait = 0; }
+        else if ((o->nrv == VN_GROWTHSTOP || o->nrv == VN_GROWTHWAIT) && !done) { /* in the air beside it */
+            const VPoint *q = &o->info[o->n / 3];
+            mario->up = up_at(q->pos, mario->up);
+            mario->pos = vadd(vsub(q->pos, vmul(mario->up, HIT_BODY_H)), vmul(q->side, 60.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = 5.0f; mario->grounded = 0;
+        } else if (o->nrv == VN_GROWTHWAITINVALID) done = 1;
+        if (done && ++wait == 90) printf("vine test: Mario %d %d %d after the jump\n", (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z);
+        return o->nrv * 10000 + (int)o->coord;
+    }
     return -1;
 }
 
@@ -8135,6 +8191,12 @@ static void update_mario(void)
             return;
         }
     }
+    if (vine_ride >= 0 || (warp.from < 0 && jb.inst < 0 && coc.inst < 0 && flf.inst < 0 && vine_try(m))) { /* Plant */
+        if (vine_hold(m)) {
+            if (mario_anim) anim_update(mario_anim);
+            return;
+        }
+    }
     if (jb.inst >= 0 || (warp.from < 0 && gcap.phase < 2 && jbranch_try(m))) {
         if (jb.inst >= 0 && jbranch_update(m)) {
             if (mario_anim) anim_update(mario_anim);
@@ -8932,6 +8994,509 @@ static int mario_offence(V3 c, float r, V3 grav)
         if (mario->spin_timer > 0 && mario_touch(c, r)) return MSG_HITALL;                     /* sendBodyAttack */
     }
     return MSG_NONE;
+}
+
+/* Plant.cpp, PlantStalk.cpp, PlantLeaf.cpp, PlantRailInfo.cpp, PlantPoint.cpp after Petari (the beanstalk; "vine"
+ * here, FlowerGroup's members being Plant). Its rail is the stalk: PlantRailInfo points every 30 along it (the last at
+ * its end), PlantStalk the same reversed (0 the tip, thickness easing out 0.45 to 1). The seed (PlantSeed, at the
+ * rail's start on the map) waits (WaitFar) until Mario is within 700, buds (SeedWait: pushes him at 50); a spin on it
+ * (300, 50 up) or its appear switch makes it grow: with arg2 a demo (60: Bud, 90: GrowUp) holding Mario, the stalk
+ * growing at 15-100 (x 0.95, +15-30 every 5-30 frames) to the rail's length, PlantTop at its tip scaled by the growth,
+ * the leaves ((L - 300) / 200 + 2 of them from L - 100 down, 100-300 apart, x 1-1.5, turned 90-270 degrees about Y in
+ * turn) growing with it. Mario touching its bind sensor (100, at the nearest stalk point) in the air or spinning takes
+ * hold (AutoRushBegin): HangStart (GrowPlantCatch, rising at his speed clamped 15-35 unless he fell faster than 2,
+ * or held near the top), HangUp (gravity 0.3, a spin +1 at least 10, turning round it 1.3 x speed, at most 30),
+ * HangDown (back down at most 20, a spin climbs again at 10), at the top a jump along the tip's up at arg0 (30)
+ * (endBindAndPlayerForceWeakGravityJump), at the foot he lets go; then it ignores him 60 frames or until he lands.
+ * Leaves near him spring (0.02 x his speed). Taken while growing (no demo) he rides it up (HangWaitGrowUp /
+ * HangUpGrowUp). ponytail: no demo or catch cameras (multi-actor cameras), no rail clipping, no items taken by its
+ * Ride sensor, no rush cancel; the stalk's three faces each one colour (the mean of their two vertex colours), drawn
+ * through render_strips one segment a strip */
+static float frand(float a, float b) { return a + (b - a) * (rand() % 10001) / 10000.0f; }
+
+/* the rail (its Bezier polyline) by length: position, direction to its end */
+static V3 vrail_pos(int k, float d) { return rail_at(vines[k].rail, vines[k].rail_n, d < 0 ? 0 : d); }
+static V3 vrail_tan(int k, float d)
+{
+    const float *p = vines[k].rail;
+    for (int i = 0; i + 1 < vines[k].rail_n; i++) {
+        V3 a = v3(p[3 * i], p[3 * i + 1], p[3 * i + 2]), b = v3(p[3 * i + 3], p[3 * i + 4], p[3 * i + 5]);
+        float l = vlen(vsub(b, a));
+        if (d <= l || i + 2 == vines[k].rail_n) return l > 0 ? vmul(vsub(b, a), 1.0f / l) : v3(0, 1, 0);
+        d -= l;
+    }
+    return v3(0, 1, 0);
+}
+static float vrail_nearest(int k, V3 q) /* moveCoordAndTransToNearestRailPos */
+{
+    const float *p = vines[k].rail;
+    float best = 1e30f, at = 0, run = 0;
+    for (int i = 0; i + 1 < vines[k].rail_n; i++) {
+        V3 a = v3(p[3 * i], p[3 * i + 1], p[3 * i + 2]), ab = vsub(v3(p[3 * i + 3], p[3 * i + 4], p[3 * i + 5]), a);
+        float l = vlen(ab), t = l > 0 ? vdot(vsub(q, a), ab) / (l * l) : 0;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        float dd = vlen(vsub(q, vadd(a, vmul(ab, t))));
+        if (dd < best) { best = dd; at = run + t * l; }
+        run += l;
+    }
+    return at;
+}
+static V3 vrail_dir(int k) { return vmul(vrail_tan(k, vines[k].coord), (float)vines[k].dir); } /* getRailDirection */
+static void vrail_move(int k, float v) /* moveCoordAndFollowTrans */
+{
+    typeof(&vines[0]) o = &vines[k];
+    o->coord += o->dir * v;
+    o->coord = o->coord < 0 ? 0 : o->coord > o->len ? o->len : o->coord;
+    o->pos = vrail_pos(k, o->coord);
+}
+
+static void vpoint(VPoint *p, V3 pos, V3 up, float thick) /* PlantPoint::PlantPoint */
+{
+    p->pos = pos; p->up = up; p->side = v3(1, 0, 0); p->front = v3(0, 0, 1); p->thick = thick;
+    V3 f = vcross(p->side, up);
+    if (vlen(f) < 1e-6f) { p->side = vnorm(vcross(up, p->front)); p->front = vcross(p->side, up); } /* makeAxisUpFront */
+    else { p->front = vnorm(vcross(p->side, up)); p->side = vcross(up, p->front); }        /* makeAxisUpSide */
+}
+
+static void vinfo_at(int k, float coord, V3 *pos, V3 *up) /* PlantRailInfo::calcPosAndAxisY */
+{
+    typeof(&vines[0]) o = &vines[k];
+    float nm = coord / o->len * o->n;
+    int s = (int)nm, e = s + 1;
+    if (s >= o->n) s = o->n - 1;
+    if (e >= o->n) e = o->n - 1;
+    float t = nm - s;
+    *pos = vadd(vmul(o->info[s].pos, 1.0f - t), vmul(o->info[e].pos, t));
+    *up = vnorm(vadd(vmul(o->info[s].up, 1.0f - t), vmul(o->info[e].up, t)));
+}
+
+static void vleaf_mtx(float m[16], V3 side, V3 up, V3 front, float s, V3 pos) /* setXYZDir, scale, setTrans */
+{
+    mat_identity(m);
+    m[0] = side.x * s; m[1] = side.y * s; m[2] = side.z * s;
+    m[4] = up.x * s; m[5] = up.y * s; m[6] = up.z * s;
+    m[8] = front.x * s; m[9] = front.y * s; m[10] = front.z * s;
+    m[12] = pos.x; m[13] = pos.y; m[14] = pos.z;
+}
+
+static int vine_of(int row)
+{
+    for (int i = 0; i < nvines; i++) if (vines[i].row == row) return i;
+    if (nvines == MAX_VINES) return -1;
+    const Row *r = &sc->objs[row];
+    u32 np = 0;
+    int closed = 0;
+    const float *pts = r->path >= 0 ? find_rail(scene_blob_g, r->zone, r->path, &np, &closed) : NULL;
+    if (!pts || np < 2) return -1;
+    int k = nvines;
+    typeof(&vines[0]) o = &vines[k];
+    memset(o, 0, sizeof *o);
+    o->row = row; o->rail = pts; o->rail_n = (int)np; o->dir = 1;
+    for (u32 i = 0; i + 1 < np; i++) o->len += vlen(vsub(v3(pts[3 * i + 3], pts[3 * i + 4], pts[3 * i + 5]), v3(pts[3 * i], pts[3 * i + 1], pts[3 * i + 2])));
+    o->jump = r->arg[0] != -1 ? (float)r->arg[0] : 30.0f; /* getJMapInfoArg0NoInit */
+    o->jump_oy = r->arg[1] != -1 ? (float)r->arg[1] : 0.0f;
+    o->demo = r->arg[2] != -1;
+    o->grow_speed = frand(15.0f, 100.0f); o->grow_t = (int)frand(5.0f, 30.0f);
+    o->pos = o->base = vrail_pos(k, 0); /* calcRailStartPointPos */
+    o->up = v3(0, 1, 0); o->front = v3(0, 0, 1);
+    /* PlantRailInfo (speed 30) */
+    o->n = (int)(o->len / 30.0f) + 2;
+    if (o->n > VINE_PTS) o->n = VINE_PTS; /* ponytail: rails over 7600 cut */
+    for (int i = 0; i < o->n - 1; i++) vpoint(&o->info[i], vrail_pos(k, 30.0f * i), vrail_tan(k, 30.0f * i), 1.0f);
+    vpoint(&o->info[o->n - 1], vrail_pos(k, o->len), o->info[o->n - 2].up, 1.0f);
+    o->info[0].side = o->info[o->n - 2].side; o->info[0].up = o->info[o->n - 2].up; o->info[0].front = o->info[o->n - 2].front;
+    /* PlantStalk */
+    for (int i = 0; i < o->n; i++) {
+        const VPoint *q = &o->info[o->n - 1 - i];
+        vpoint(&o->stalk[i], q->pos, q->up, 0.45f + 0.55f * sinf((float)i / o->n * 1.5707963f));
+    }
+    o->stalk[0].pos = o->pos;
+    /* initLeaf */
+    o->nleaves = (int)((o->len - 100.0f - 200.0f) / (300.0f - 100.0f)) + 2;
+    if (o->nleaves > VINE_LEAVES) o->nleaves = VINE_LEAVES;
+    V3 base = v3(0, 0, 1);
+    float lp = o->len - 100.0f;
+    for (int i = 0; i < o->nleaves; i++) {
+        float ratio = (float)i / o->nleaves;
+        V3 rd = vrail_tan(k, lp), g = base;
+        float d = vdot(g, rd);
+        if (fabsf(d) > 0.7f) g = vnorm(d > 0 ? vcross(v3(0, 1, 0), rd) : vcross(rd, v3(0, 1, 0)));
+        typeof(&o->leaf[0]) L = &o->leaf[i];
+        L->coord = lp; L->size = 1.0f + 0.5f * sinf(ratio * 1.5707963f); L->front = g; L->pos = o->pos;
+        L->side = vnorm(vcross(v3(0, 1, 0), g)); L->up = vcross(g, L->side); /* makeAxisFrontUp */
+        vleaf_mtx(L->m, L->side, L->up, L->front, L->size * 0.0001f, L->pos);
+        lp -= 100.0f + 200.0f * ratio;
+        float a = frand(90.0f, 270.0f) * 0.0174533f;
+        base = v3(base.x * cosf(a) + base.z * sinf(a), base.y, -base.x * sinf(a) + base.z * cosf(a)); /* about Y */
+    }
+    o->alive = r->sw[SW_APPEAR] < 0; /* useStageSwitchReadAppear: dead until it */
+    o->nrv = VN_WAITFAR; o->step = -1;
+    return nvines++;
+}
+
+static void vine_set(int k, int nrv) { vines[k].nrv = nrv; vines[k].step = -1; }
+static void vine_seed(const Inst *in, const char *clip)
+{
+    char n[48];
+    snprintf(n, sizeof n, "plant/%s", clip);
+    if (in->anim) anim_start(in->anim, n, 0);
+}
+static void vine_start_grow(int k) { vine_set(k, vines[k].demo ? VN_WAITDEMO : VN_GROWUP); } /* startGrowUp */
+
+static int vstalk_grow(int k) /* PlantStalk::updateGrowUp */
+{
+    typeof(&vines[0]) o = &vines[k];
+    if (--o->grow_t <= 0) { o->grow_speed += frand(15.0f, 30.0f); o->grow_t = (int)frand(5.0f, 30.0f); }
+    o->stalk_len += o->grow_speed;
+    if (o->stalk_len <= 0) { o->stalk_len = 0; o->grow_speed = 0; }
+    o->grow_speed *= 0.95f;
+    o->grow_speed = o->grow_speed < 15.0f ? 15.0f : o->grow_speed > 100.0f ? 100.0f : o->grow_speed;
+    o->growth = o->stalk_len / o->len;
+    o->growth = o->growth < 0 ? 0 : o->growth > 1 ? 1 : o->growth;
+    if (o->stalk_len >= o->len) { o->stalk_len = o->len; o->growth = 1.0f; o->ngrown = o->n; return 1; }
+    o->ngrown = (int)(o->stalk_len / 30.0f);
+    o->ngrown = o->ngrown < 2 ? 2 : o->ngrown > o->n ? o->n : o->ngrown;
+    V3 pos, ay;
+    vinfo_at(k, o->stalk_len, &pos, &ay);
+    V3 fr = vnorm(vcross(v3(1, 0, 0), ay)), sd = vcross(ay, fr); /* makeAxisUpSide */
+    o->stalk[0].side = sd; o->stalk[0].up = ay; o->stalk[0].front = fr; o->stalk[0].pos = pos;
+    for (int i = 1; i < o->ngrown; i++) {
+        const VPoint *q = &o->info[o->ngrown - 1 - i];
+        o->stalk[i].side = q->side; o->stalk[i].up = q->up; o->stalk[i].front = q->front; o->stalk[i].pos = q->pos;
+    }
+    return 0;
+}
+
+static int vleaf_spring(int k, int i, float growth) /* PlantLeaf::updateSpring */
+{
+    typeof(&vines[0].leaf[0]) L = &vines[k].leaf[i];
+    L->sspeed -= L->spring * 0.1f;
+    L->sspeed = L->sspeed < -0.5f ? -0.5f : L->sspeed > 0.5f ? 0.5f : L->sspeed;
+    L->spring += L->sspeed;
+    L->spring = L->spring < -0.9f ? -0.9f : L->spring > 0.9f ? 0.9f : L->spring;
+    L->sspeed *= 0.9f;
+    if (fabsf(L->spring) < 0.01f && fabsf(L->sspeed) < 0.001f) {
+        L->spring = 0; L->sspeed = 0;
+        L->side = vnorm(vcross(L->up, L->front)); L->up = vcross(L->front, L->side);
+        vleaf_mtx(L->m, L->side, L->up, L->front, L->size * growth, L->pos);
+        return 1;
+    }
+    V3 s = L->front;
+    s.y += L->spring;
+    s = vnorm(s);
+    V3 f = vnorm(vcross(L->up, s)), u = vcross(s, f);
+    vleaf_mtx(L->m, f, u, s, L->size * growth, L->pos);
+    return 0;
+}
+
+static void vine_bind_leaves(int k) /* updateBindLeaf */
+{
+    typeof(&vines[0]) o = &vines[k];
+    float power = o->dir > 0 ? o->ride_vel : -o->ride_vel;
+    V3 at = vadd(vmul(vrail_dir(k), o->dir > 0 ? -20.0f : 20.0f), o->pos);
+    for (int i = 0; i < o->nleaves; i++) {
+        if (vlen(vsub(o->leaf[i].pos, at)) < 50.0f) o->leaf[i].sspeed += power * 0.02f;
+        vleaf_spring(k, i, o->growth);
+    }
+}
+
+static int vine_grow(int k) /* Plant::updateGrowUp */
+{
+    typeof(&vines[0]) o = &vines[k];
+    int done = vstalk_grow(k);
+    for (int i = 0; i < o->nleaves; i++) { /* PlantLeaf::updateGrowUp(offset 10) */
+        typeof(&o->leaf[0]) L = &o->leaf[i];
+        V3 pos, ay;
+        vinfo_at(k, L->coord * o->growth, &pos, &ay);
+        L->pos = vadd(pos, vmul(L->front, 10.0f));
+        float t = o->growth * o->growth;
+        V3 up = v3(ay.x * (1 - t), ay.y * (1 - t) + t, ay.z * (1 - t));
+        L->side = vnorm(vcross(up, L->front)); L->up = vcross(L->front, L->side);
+        vleaf_mtx(L->m, L->side, L->up, L->front, L->size * o->growth, L->pos);
+    }
+    if (!done) return 0;
+    if (o->rider) {
+        o->coord = vrail_nearest(k, o->pos); o->pos = vrail_pos(k, o->coord);
+        if (o->nrv == VN_HANGUPGROW) { o->dir = 1; vine_set(k, VN_HANGUP); }
+        else { o->dir = -1; vine_set(k, VN_HANGDOWN); }
+    } else vine_set(k, VN_GROWTHWAIT);
+    printf("plant %d grown\n", o->row);
+    return 1;
+}
+
+static int vine_demo_on(void) /* 伸び植物（成長）: from the demo's start to the stalk's end */
+{
+    for (int k = 0; k < nvines; k++)
+        if (vines[k].alive && vines[k].demo && (vines[k].nrv == VN_WAITDEMO || vines[k].nrv == VN_DEMOWAIT || vines[k].nrv == VN_GROWUP))
+            return 1;
+    return 0;
+}
+
+static void vine_release(int k, V3 v, int top) /* endBindAndPlayerJump / ...ForceWeakGravityJump */
+{
+    vines[k].rider = 0; vine_ride = -1;
+    if (mario_anim) mario_play("growplantjump", 1.0f, 0);
+    if (top) m_power_jump(mario, v);
+    else { mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0; mario->jump_kind = 0; mario->air_timer = 0; }
+    vine_set(k, VN_GROWTHWAITINVALID);
+    printf("plant %d: let go%s\n", vines[k].row, top ? " at the top" : "");
+}
+
+static int vine_hang_up(int k, float rate) /* updateHangUp */
+{
+    typeof(&vines[0]) o = &vines[k];
+    o->ride_vel -= 0.3f;
+    o->ride_vel = o->ride_vel < 0 ? 0 : o->ride_vel > 35.0f ? 35.0f : o->ride_vel;
+    vine_bind_leaves(k);
+    if (o->ride_vel <= 0) { o->dir = -1; vine_set(k, VN_HANGDOWN); return 1; }
+    vrail_move(k, o->ride_vel);
+    o->up = vrail_dir(k);
+    o->front = rot_axis(o->front, o->up, rate * 0.0174533f);
+    return 0;
+}
+
+static void vine_accel(int k, int swing) /* tryAccelHangUp */
+{
+    typeof(&vines[0]) o = &vines[k];
+    if (o->accel_t > 0 || !swing) return;
+    o->accel_t = 0;
+    o->ride_vel += 1.0f;
+    if (o->ride_vel < 10.0f) o->ride_vel = 10.0f;
+}
+
+/* AutoRushBegin: Mario's touch on its bind sensor */
+static int vine_try(Player *m)
+{
+    if (m->launch >= 0) return 0;
+    V3 c = vadd(m->pos, vmul(m->up, HIT_BODY_H));
+    for (int k = 0; k < nvines; k++) {
+        typeof(&vines[0]) o = &vines[k];
+        int n = o->nrv;
+        if (!o->alive || n == VN_WAITFAR || n == VN_SEEDWAIT || n == VN_GROWTHWAITINVALID) continue;
+        if ((m->spin_timer <= 0 && m->grounded) || (n == VN_GROWUP && m->grounded)) continue;
+        if (o->demo && (n == VN_GROWUP || n == VN_WAITDEMO || n == VN_DEMOWAIT)) continue;
+        int best = 0;
+        float bd = 1e30f;
+        for (int i = 3; i < o->n - 3; i++) { /* calcNearestPointPos(3) */
+            float d = vlen(vsub(o->info[i].pos, m->pos));
+            if (d < bd) { bd = d; best = i; }
+        }
+        if (vlen(vsub(o->info[best].pos, c)) > 100.0f + HIT_BODY_R) continue;
+        o->rider = 1; vine_ride = k;
+        o->coord = vrail_nearest(k, m->pos); o->pos = vrail_pos(k, o->coord);
+        o->front = m->face;
+        o->ride_vel = m->vup;
+        int cl = 0; /* PlantStalk::calcPlayerCoord */
+        bd = 1e30f;
+        for (int i = 0; i < o->ngrown; i++) { float d = vlen(vsub(o->stalk[i].pos, c)); if (d < bd) { bd = d; cl = i; } }
+        if (o->stalk_len > 15.0f) {
+            o->ride_coord = (o->ngrown - cl) * 30.0f / o->stalk_len * o->len;
+            o->ride_coord = o->ride_coord < 0 ? 0 : o->ride_coord > o->len ? o->len : o->ride_coord;
+        } else o->ride_coord = o->len;
+        if (n == VN_GROWUP) { o->ride_vel = 0; vine_set(k, VN_HANGWAITGROW); }
+        else if (o->coord >= o->len - 150.0f) {
+            o->ride_vel = 0; o->ride_coord = o->len - 150.0f; o->dir = -1; o->grabbed_top = 1; vine_set(k, VN_HANGSTART);
+        } else if (o->ride_vel >= -2.0f) {
+            o->ride_vel = o->ride_vel < 15.0f ? 15.0f : o->ride_vel > 35.0f ? 35.0f : o->ride_vel;
+            o->dir = 1; vine_set(k, VN_HANGSTART);
+        } else { o->ride_vel = 0; o->dir = -1; vine_set(k, VN_HANGSTART); }
+        m->hip = 0; m->spin_timer = 0; m->hvel = v3(0, 0, 0); m->vup = 0;
+        printf("plant %d: taken at %d of %d\n", o->row, (int)o->coord, (int)o->len);
+        return 1;
+    }
+    return 0;
+}
+
+/* while Mario hangs: its base matrix (isMsgUpdateBaseMtx) */
+static int vine_hold(Player *m)
+{
+    if (vine_ride < 0) return 0;
+    typeof(&vines[0]) o = &vines[vine_ride];
+    V3 f = vtangent(o->front, o->up);
+    m->pos = o->pos; m->up = o->up; m->hvel = v3(0, 0, 0); m->vup = 0; m->grounded = 0;
+    if (vlen(f) > 1e-3f) m->face = vnorm(f);
+    return 1;
+}
+
+static void update_vines(void)
+{
+    int swing = pad_pressed(PAD_SQUARE) || vine_test_sq; /* isPadSwing */
+    vine_test_sq = 0;
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->vine) continue;
+        int k = vine_of(in->row);
+        if (k < 0) continue;
+        typeof(&vines[0]) o = &vines[k];
+        const Row *r = &sc->objs[in->row];
+        if (in->md && in->md->skin) in->anim = obj_anim(in->row, in->md, "Plant");
+        if (!o->seeded && in->kcl_ready) { /* initAfterPlacement: makeMtxOnMapCollision(1000) */
+            V3 up = up_at(o->base, v3(0, 1, 0)), hit;
+            o->seeded = 1;
+            if (drop_to_ground(o->base, up, 1000.0f, &hit)) basis_matrix(o->seed_m, hit, up, v3(0, 0, 1), 0);
+            else basis_matrix(o->seed_m, o->base, up, v3(0, 0, 1), 0);
+        }
+        if (o->seeded) memcpy(in->m, o->seed_m, 64);
+        if (!o->alive) {
+            if (sw_on(r, SW_APPEAR)) { /* appear */
+                o->alive = 1; o->top_on = 1;
+                vine_start_grow(k);
+                printf("plant %d appears\n", in->row);
+            } else continue;
+        }
+        int st = ++o->step;
+        switch (o->nrv) {
+        case VN_WAITFAR:
+            if (!st) vine_seed(in, "wait");
+            if (vlen(vsub(mario->pos, o->pos)) < 700.0f) vine_set(k, VN_SEEDWAIT);
+            break;
+        case VN_SEEDWAIT: {
+            if (!st) { vine_seed(in, "bud"); o->top_on = 0; }
+            V3 seed = vadd(o->pos, vmul(up_at(o->pos, mario->up), 50.0f));
+            float d = vlen(vsub(c, seed));
+            if (d < 50.0f + HIT_BODY_R && d > 1e-3f) /* attackSensor: sendMsgPush at 50 */
+                mario->pos = vadd(mario->pos, vmul(vtangent(vsub(c, seed), mario->up), (50.0f + HIT_BODY_R - d) / d));
+            if (mario_offence(seed, 300.0f, vmul(up_at(o->pos, mario->up), -1.0f)) == MSG_HITALL) { /* a spin */
+                o->top_on = 1;
+                vine_start_grow(k);
+                printf("plant %d spun: grows\n", in->row);
+            }
+            break;
+        }
+        case VN_WAITDEMO: /* tryStartDemoWithoutCinemaFrame */
+            vine_set(k, VN_DEMOWAIT);
+            break;
+        case VN_DEMOWAIT:
+            if (st == 60) vine_seed(in, "bud");
+            if (st == 90) vine_set(k, VN_GROWUP);
+            break;
+        case VN_GROWUP:
+            if (!st) vine_seed(in, "growup");
+            vine_grow(k);
+            break;
+        case VN_HANGWAITGROW:
+            if (!st && mario_anim) mario_play("growplantcatch", 1.0f, 0);
+            if (vine_grow(k)) break;
+            vinfo_at(k, o->ride_coord * o->growth, &o->pos, &o->up);
+            if (swing && o->ride_coord < o->len) vine_set(k, VN_HANGUPGROW);
+            break;
+        case VN_HANGUPGROW: {
+            if (!st) { if (mario_anim) mario_play("growplanthangup", 1.0f, 0); o->accel_t = 0; o->ride_vel = 10.0f; }
+            if (vine_grow(k)) break;
+            o->accel_t--;
+            vine_accel(k, swing);
+            o->ride_vel -= 0.3f;
+            if (o->ride_vel <= 0) {
+                o->ride_vel = 0;
+                if (mario_anim) mario_play("growplanthangdown", 1.0f, 0);
+                vine_set(k, VN_HANGWAITGROW);
+                break;
+            }
+            o->ride_coord += o->ride_vel;
+            if (o->ride_coord > o->len) o->ride_coord = o->len;
+            vinfo_at(k, o->ride_coord * o->growth, &o->pos, &o->up);
+            float rs = 1.3f * o->ride_vel;
+            o->front = rot_axis(o->front, o->up, (rs >= 30.0f ? 30.0f : rs) * 0.0174533f);
+            vine_bind_leaves(k);
+            if (o->ride_coord >= o->len) { o->ride_coord = o->len; o->ride_vel = 0; vine_set(k, VN_HANGWAITGROW); }
+            break;
+        }
+        case VN_GROWTHSTOP:
+            break;
+        case VN_GROWTHWAIT: {
+            int rest = 0;
+            for (int j = 0; j < o->nleaves; j++) rest += vleaf_spring(k, j, 1.0f);
+            if (rest == o->nleaves) vine_set(k, VN_GROWTHSTOP);
+            break;
+        }
+        case VN_GROWTHWAITINVALID:
+            for (int j = 0; j < o->nleaves; j++) vleaf_spring(k, j, 1.0f);
+            if (st == 60 || mario->grounded) vine_set(k, VN_GROWTHWAIT);
+            break;
+        case VN_HANGSTART:
+            if (!st && mario_anim) mario_play("growplantcatch", 1.0f, 0);
+            if (!vine_hang_up(k, 15.0f) && (!mario_anim || mario_anim->done)) vine_set(k, VN_HANGUP);
+            break;
+        case VN_HANGUP: {
+            if (!st) { if (mario_anim) mario_play("growplanthangup", 1.0f, 0); o->dir = 1; o->accel_t = 0; }
+            float rs = o->ride_vel * 1.3f;
+            if (vine_hang_up(k, rs >= 30.0f ? 30.0f : rs)) break;
+            if (o->dir > 0 && o->coord >= o->len) { /* tryReachGoal */
+                o->coord = o->len; o->pos = vrail_pos(k, o->len);
+                mario->pos = o->pos;
+                const VPoint *tip = &o->stalk[0];
+                V3 g = vmul(up_at(o->pos, tip->up), -1.0f), ef = vtangent(tip->up, g);
+                if (vlen(ef) > 1e-3f) mario->face = vnorm(ef);
+                vine_release(k, vadd(vmul(tip->up, o->jump), vmul(g, -o->jump_oy)), 1);
+                break;
+            }
+            o->accel_t--;
+            vine_accel(k, swing);
+            break;
+        }
+        case VN_HANGDOWN: {
+            if (!st) { if (mario_anim) mario_play("growplanthangdown", 1.0f, 0); o->dir = -1; }
+            if (!swing) o->grabbed_top = 0; /* tryHangUp */
+            else if (!o->grabbed_top) { o->dir = -o->dir; o->ride_vel = 10.0f; vine_set(k, VN_HANGUP); break; }
+            o->ride_vel += 0.3f;
+            o->ride_vel = o->ride_vel < 0 ? 0 : o->ride_vel > 20.0f ? 20.0f : o->ride_vel;
+            vine_bind_leaves(k);
+            if (o->dir < 0 ? o->coord <= 10.0f : o->coord >= o->len - 10.0f) { vine_release(k, v3(0, 0, 0), 0); break; }
+            vrail_move(k, o->ride_vel);
+            V3 rd = vrail_dir(k);
+            o->up = vmul(rd, -1.0f);
+            float rs = o->ride_vel * 1.3f;
+            o->front = rot_axis(o->front, rd, (rs >= 20.0f ? 20.0f : rs) * 0.0174533f);
+            break;
+        }
+        }
+    }
+}
+
+static void draw_vines(void)
+{
+    static Strip st[48];
+    int tex = fx_plantstalk_tex(), ns = 0;
+    /* sColorPlusZ ff, sColorPlusX 64, sColorMinusX 96: each face's two, averaged (GS 0x80 = 1) */
+    static const u32 face_rgba[3] = {0x80595959u, 0x80656565u, 0x803F3F3Fu};
+    for (int k = 0; k < nvines; k++) {
+        typeof(&vines[0]) o = &vines[k];
+        if (vlen(vsub(o->pos, cam_pos)) > 12000.0f) continue;
+        for (int i = 0; tex >= 0 && i + 1 < o->ngrown; i++) { /* drawGrowUp: three faces, one segment a strip */
+            V3 e[2][3];
+            for (int j = 0; j < 2; j++) {
+                const VPoint *p = &o->stalk[i + j];
+                V3 sd = vmul(p->side, p->thick * 10.0f), fr = vmul(p->front, p->thick * 10.0f);
+                e[j][0] = vadd(p->pos, fr);              /* +Z */
+                e[j][1] = vsub(vadd(p->pos, sd), fr);    /* +X */
+                e[j][2] = vsub(vsub(p->pos, sd), fr);    /* -X */
+            }
+            static const int fa[3][2] = {{0, 1}, {2, 0}, {1, 2}};
+            for (int f = 0; f < 3; f++) {
+                Strip *s = &st[ns++];
+                for (int l = 0; l < 4; l++) { /* level 0 (v 1) at point i + 1, level 3 (v 0) at point i */
+                    float t = 1.0f - l / 3.0f;
+                    for (int side = 0; side < 2; side++) {
+                        V3 q = vadd(vmul(e[0][fa[f][side]], 1.0f - t), vmul(e[1][fa[f][side]], t));
+                        s->p[l][side][0] = q.x; s->p[l][side][1] = q.y; s->p[l][side][2] = q.z;
+                    }
+                }
+                s->rgba = face_rgba[f];
+                s->tex = (u16)tex;
+                if (ns == 48) { render_strips(st, ns); ns = 0; }
+            }
+        }
+        if (!o->alive || o->nrv == VN_WAITFAR || o->nrv == VN_SEEDWAIT) continue;
+        if (m_vleaf) for (int i = 0; i < o->nleaves; i++) render_model(m_vleaf, o->leaf[i].m, 0x80, 0x80, 0x80);
+        if (m_vtop && o->top_on && o->ngrown > 0) { /* mTopMtx at the tip, mScale the growth */
+            const VPoint *p = &o->stalk[0];
+            float m[16];
+            vleaf_mtx(m, p->side, p->up, p->front, o->growth, p->pos);
+            render_model(m_vtop, m, 0x80, 0x80, 0x80);
+        }
+    }
+    if (ns) render_strips(st, ns);
 }
 
 /* HammerHeadPackun.cpp after Petari (PackunFlower, its leaf PackunLeaf a PartsModel at Spin1 turned (0, -90, -90),
@@ -12160,7 +12725,7 @@ static void update_obj_anims(void)
         if (insts[i].anim && vlen(vsub(v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]), cam_pos)) < 8000.0f) {
             for (int k = 0; k < MAX_OBJ_ANIM; k++) if (oanim[k].a == insts[i].anim) oanim[k].last = game_frame;
             if (insts[i].punch) { anim_pose(insts[i].anim); punch_ball(&insts[i], insts[i].anim); anim_skin(insts[i].anim); continue; }
-            if (insts[i].anim->done && !insts[i].anim->loop && !obj_play(&insts[i], sc->types + 32 * sc->objs[insts[i].row].type, 1, 0))
+            if (insts[i].anim->done && !insts[i].anim->loop && !insts[i].vine && !obj_play(&insts[i], sc->types + 32 * sc->objs[insts[i].row].type, 1, 0))
                 obj_play(&insts[i], "wait", 1, 8); /* a one-shot clip over: back to its own clip (tryStartAllAnim), else Wait */
             anim_update(insts[i].anim);
         }
@@ -12210,6 +12775,7 @@ void game_update(void)
     update_kgunners();
     update_orocks();
     update_hhps();
+    update_vines();
     update_ibubbles();
     update_meteor();
     update_killers();
@@ -12236,7 +12802,7 @@ void game_update(void)
         if (!demo_camera("powerstar/powerstarget", star_demo - 1, star_demo_m)) { star_demo = 0; camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45); }
         else star_demo++;
     }
-    demo_on = dino_demo_on || ota_demo_on || star_demo || fat_demo();
+    demo_on = dino_demo_on || ota_demo_on || star_demo || fat_demo() || vine_demo_on();
     update_ticofat();
     update_sambos();
     update_fire();
@@ -12746,6 +13312,7 @@ void game_draw(void)
         }
     }
     draw_hhp_leaves();
+    draw_vines();
     for (int k = 0; k < norocks; k++) { /* OtaRocks' coconuts and fire balls */
         for (int b = 0; m_coco && b < 4; b++) {
             if (!orocks[k].ball[b].state) continue;

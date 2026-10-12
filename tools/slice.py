@@ -58,7 +58,7 @@ SKINNED_OBJ = ("DinoPackun", "OtaKing", "OtaKingFoot", "TicoFat", "Tico", "CocoS
                "Karikari", "Butterfly", "PackunPetit", "KuriboMini", "DinoPackunEggShellBreak", "PackunPetitHead",
                "RockBreak", "WanwanRollingBreak", "PunchingKinoko", "OtaKingMagma", "OtaKingLongFoot", "WoodBoxBreak",
                "CrystalCageSBreak", "BenefitItemOneUp", "BenefitItemLifeUp", "FlipPanel", "FlipPanelReverse", "OtaRock",
-               "HammerHeadPackun", "PackunLeaf")
+               "HammerHeadPackun", "PackunLeaf", "Plant")
 # MapObjActor::initialize (tryStartAllAnim): a placed class whose model archive holds a BCK of the archive's name
 # plays it from the start; such classes are drawn skinned too (AUTO_SKINNED, class -> archive, filled by placement)
 AUTO_SKINNED = {}
@@ -75,14 +75,14 @@ def auto_anim(fsp, arc):
 
 
 ANIM_ARC = {"CocoSambo": "CocoSamboBody", "Karikari": "Karipon", "BenefitItemOneUp": "KinokoOneUp",
-            "BenefitItemLifeUp": "KinokoLifeUp", "HammerHeadPackun": "PackunFlower"}  # where a class's clips are when not in its own-named archive
+            "BenefitItemLifeUp": "KinokoLifeUp", "HammerHeadPackun": "PackunFlower", "Plant": "PlantSeed"}  # where a class's clips are when not in its own-named archive
 # ponytail: models the renderer cannot reproduce: the atmosphere spheres (*Air: their glow is a TEV rim effect; drawn
 # with their material they flood the screen)
 NO_DRAW = ("SphereAir", "DimensionAir", "HomeAir", "TwilightAir", "DarknessRoomAir", "SunsetAir", "FineAir")   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
 OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup", "PurpleRailCoin", "CircleCoinGroup",
              "RailCoin", "SuperSpinDriver", "StarPieceGroup", "StarPieceFlow")
 # classes whose first NameObjFactory archive is not their model (OtaKing's is FireBall, Tico's TicoBaby): the model
-MODEL_ARC = {"OtaKing": "OtaKing", "KoopaJr": "KoopaJr", "Tico": "Tico"}
+MODEL_ARC = {"OtaKing": "OtaKing", "KoopaJr": "KoopaJr", "Tico": "Tico", "Plant": "PlantSeed"}
 SW_FIELDS = ("SW_APPEAR", "SW_A", "SW_B", "SW_DEAD", "SW_SLEEP")  # stage switch ids: < 1000 the zone's, else global
 ROW_FIELDS = ("pos_x", "pos_y", "pos_z", "dir_x", "dir_y", "dir_z", "scale_x", "scale_y", "scale_z")
 ROW = struct.Struct("<HHii9f8i5hh")
@@ -97,7 +97,7 @@ SKY_TILES = 8
 EXTRA = {"FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
          "MorphItemNeoFire": ("MarioFireBall",), "AirBubbleGenerator": ("AirBubble",),
-         "DinoPackun": ("DinoPackunTailBall", "DinoPackunEggShell", "DinoPackunEggShell#EggBroken", "DinoPackunEggShellBreak"), "OtaKing": ("CocoNut", "OtaKingFoot", "FireBall", "FireBubble", "OtaKingMagma", "OtaKingLongFoot"), "OtaRock": ("CocoNut", "FireBall"), "HammerHeadPackun": ("PackunLeaf",), "CocoSambo": ("CocoSamboHead",), "PackunPetit": ("PackunPetitHead",),
+         "DinoPackun": ("DinoPackunTailBall", "DinoPackunEggShell", "DinoPackunEggShell#EggBroken", "DinoPackunEggShellBreak"), "OtaKing": ("CocoNut", "OtaKingFoot", "FireBall", "FireBubble", "OtaKingMagma", "OtaKingLongFoot"), "OtaRock": ("CocoNut", "FireBall"), "HammerHeadPackun": ("PackunLeaf",), "Plant": ("PlantTop", "PlantLeaf"), "CocoSambo": ("CocoSamboHead",), "PackunPetit": ("PackunPetitHead",),
          "RockCreator": ("RockBreak",), "WanwanRolling": ("WanwanRollingBreak",),
          "WoodBox": ("#WoodBox", "WoodBoxBreak"), "CrystalCageS": ("#CrystalCageS", "CrystalCageSBreak"),
          "CrystalCageM": ("#CrystalCageM", "CrystalCageSBreak")}

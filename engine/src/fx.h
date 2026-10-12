@@ -18,5 +18,7 @@ u32 fx_count(void); /* live particles */
 
 /* the scene texture of WaterPlant type k (0-3, packed with the effects' textures), -1 none */
 int fx_waterplant_tex(int k);
+/* Plant's stalk texture (PlantStalk.bti, after the WaterPlant ones), -1 none */
+int fx_plantstalk_tex(void);
 
 #endif

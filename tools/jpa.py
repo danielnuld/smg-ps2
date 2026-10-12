@@ -260,6 +260,9 @@ def pack(fs):
             img = decode_bti(files[f"waterplant{c}.bti"])
             img = np.asarray(Image.fromarray(img, "RGBA").resize((img.shape[1] // 2, img.shape[0] // 2), Image.Resampling.BOX)).copy()
             out_tex.append(tex.to_ps2(img, 0, 0))
+        # PlantStalkDrawInit: Plant.arc's PlantStalk.bti right after them (fx_plantstalk_tex)
+        img = decode_bti({k.lower(): v for k, v in B.rarc_files((wp / "ObjectData" / "Plant.arc").read_bytes())}["plantstalk.bti"])
+        out_tex.append(tex.to_ps2(np.ascontiguousarray(img), 0, 0))
     head = struct.pack("<IIi4x", len(used), len(defs), first)
     return head + b"".join(defs) + b"".join(recs), out_tex
 
