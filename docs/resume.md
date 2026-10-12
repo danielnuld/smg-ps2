@@ -318,17 +318,22 @@ there needs the embedded blob and every pack rebuilt.
 
 ## Next
 
-**Where the 2026-10-12 session stopped (resume here):** the fidelity rewrite of Good Egg, part 1 above, was built
-and tested on EggStar only (dino, route 1-4 ...; see the commit). The user's order: first finish every improvised
+**Where the 2026-10-12 session stopped (resume here):** the Good Egg fidelity rewrite, parts 1 and 2 (Mario's
+movement), then launch stars, plants, spin rates, ShootingStar, map part switches, and the first classes of b
+(KillerGunnerSingle, ItemBubble, OtaRock, TakoBarrelA), all tested (EggStar 1-4 `route` get their stars; EggStar packs
+repacked 2026-10-12, the other galaxies' packs are older: item d). The user's order: first finish every improvised
 part, test, then add the missing systems. Left, in order:
   a. Improvised still: Mario's slope slide (SLIP_ACCEL: MarioSlip.cpp slopeMove needs the KCL floor codes in
      collide_n, and isSlipFloorCode decompiles inverted: true for code 0), Plant / FlowerGroup clips (drawn still;
      the nerves, push / spin-storm shake by distance, hint every 300 and items by touch only are ported),
      QuestionCoin's throw (arg0 > 0: only GhostShipCaveZone, Phantom; its Appear effect is not in the FX table), TicoFat / Tico talk, CollapsePlane collision shrink (non-uniform KCL),
      OtaKingMagma collision / BTK, Rock BTK size frame, the walkers' shadows.
-  b. Classes Good Egg places that have no behaviour (KillerGunnerSingle, ItemBubble, OtaRock, TakoBarrelA done): HammerHeadPackun, Petari (the enemy),
-     DropOfWater, PhantomShip parts, SideSpikeMoveStepA, BroadBeanMoveStep,
-     MysteryGravityRoomBridgeA, SignBoard, TimerPieceBlock (check), DeathCube etc.
+  b. Classes Good Egg places that have no behaviour (KillerGunnerSingle, ItemBubble, OtaRock, TakoBarrelA done; SideSpikeMoveStepA / BroadBeanMoveStep are their
+     generic MapPartsRailMover in 1P): next HammerHeadPackun and Petari (the enemy) (EggStar 1 / 4 SoramameZone), Plant
+     (Ride/Plant.cpp, EggStar 1 / 4), PhantomShipHandle / Propellers (AnmModelSwitchMove), RGTowerPressGroundA
+     (RailMoveObjPress), StarPieceFollowGroup, CoinReplica, PowerStarHalo, BenefitItemInvincible, DimensionAir, SignBoard
+     (talk, item c), DropOfWater. List them again with the scene() / class_coverage snippet: classes of EggStar 1-5
+     whose name game.c does not spell.
   c. Systems: talk / messages, sound effects, real lighting, wipes, multi-actor cameras (Dino damage camera),
      footprints (FootPrint decals), looping / attached effects (Smoke trails, Glow), BTK / BRK animation at run time
      (lava, water, per-instance colours: Butterfly arg0), bloom models, shadows.
