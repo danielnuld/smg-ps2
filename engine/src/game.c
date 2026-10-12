@@ -40,7 +40,7 @@ typedef struct {
     V3 pos, up, hvel, face, ground_n, wall_n;
     float vup;
     int grounded, spin_timer, hurt_timer; /* mMovementStates._1; the punch hit timer (setPunchHitTimer) */
-    int jump_kind;      /* _430: 0-2 jump / 2nd / 3rd, 4 turn, 5 long jump, 6 back flip, 7 wall, 8 spin */
+    int jump_kind;      /* _430: 0-2 jump / 2nd / 3rd, 4 turn, 5 long jump, 6 back flip, 7 wall, 8 spin, 13 launched */
     int land_timer;     /* _3CE: frames on the ground since landing */
     int air_timer;      /* _3BC: frames since take-off */
     int squat, wall;    /* mMovementStates._A; touching a wall this frame (wall_n valid) */
@@ -63,7 +63,7 @@ typedef struct {
     int brake1, brake2; /* _71E, _71F */
     int drop_grace;     /* _3C0 */
     int connect, spin_lock, squat_lock, slip_front, squat_walk; /* mMovementStates._5, _2B, _21, _9, _26 */
-    int keep_jump, digital, neutral, wall_hit; /* _13, _E, _1D, _10._E */
+    int keep_jump, digital, neutral, wall_hit, no_air_walk, drop_free, wall_free; /* _13, _E, _1D, _10._E, _2F, _20, _22 */
     int fall_t, back_t, air_walk_t, air_spin, air_lock, spin_kind, zero_gr; /* _3BE, _3CA, _3CC, _402, _428, _42A, _424 */
     int hip_still;      /* _422 */
     V3 hip_jv, jump_from, last_pos; /* _2F8, _4B0 */
@@ -80,9 +80,10 @@ typedef struct {
  * ShootStart 45 frames (Mario pulled to the centre over 15), then Shoot along the path for mFlightTime (arg0,
  * default 300). Path: rails of at most 2 points are a parabola from the star to the rail's end whose top is the
  * rail's start (initFromMaxHeight); longer rails are followed by length with the star's offset eased out over the
- * first half. ponytail: rails are straight segments between control points (the game's are Bezier), no camera of
- * its own, no pull-in (arg2), no operate ring. SuperSpinDriverPink / Green are the same class (Green needs no star).
- * SpinDriver (SpinDriver.cpp): bind radius 300, ShootStart 20 frames; on a rail the same path for arg0 frames (default
+ * first half. The operate ring never moves Mario (SuperSpinDriver _17D is never set: radius rate 0, no -75 offset, no
+ * pointer steering). ponytail: rails are straight segments between control points (the game's are Bezier), no camera
+ * of its own, no pull-in (arg2). SuperSpinDriverPink / Green are the same class (Green needs no star).
+ * SpinDriver (SpinDriver.cpp): bind radius 300, ShootStart 20 frames (a dip 200 under it along its up); on a rail the same path for arg0 frames (default
  * 300), else Mario is thrown along its Y axis at arg0 (default 40) */
 typedef struct {
     V3 pos;
@@ -94,7 +95,7 @@ typedef struct {
     int parab;
     V3 py, pz, off;   /* parabola axes / rail start offset */
     float pa, pv, plen, len;
-    V3 kick;
+    V3 kick, up;      /* up: its Y axis (SpinDriver's wind-up) */
     int starter;      /* ScenarioStarter's flight: no ShootStart, its own motion times and first pose */
     float initrot;    /* its arg5: the first pose's turn about the path (calcInitPose) */
 } Launch;
@@ -1116,6 +1117,7 @@ void game_init(const Scene *s, const unsigned char *blob)
             L->kick = vmul(vcross(z, x), r->arg[0] > 0 ? (float)r->arg[0] : 40.0f);
         }
         L->start = r->type == t_starter ? 0 : super ? 45 : 20; /* ScenarioStarter flies at once (exeRailMove) */
+        { V3 x, z; row_axes(r, &x, &z); L->up = vnorm(vcross(z, x)); } /* MR::calcUpVec */
         L->row = i;
         nlaunches++;
     }
@@ -4494,7 +4496,7 @@ static void init_launch(Launch *L, const Row *r, const float *pts, u32 np, int p
  * turns towards the path's direction at 0.4 a frame (turnBindHead), he spins about it (_138: 0 to 2 pi x
  * floor((t1 - t0) x 0.05 / 2 pi), eased out over t0..t1) and flips over (_148: 0 to pi over t1..t2) before the end;
  * t0 = the loop clip (flight / 5, at most 90), t1 = flight - 70 (SpaceFlyEnd, 50 frames, + 20), t2 = flight - 20
- * (Fall) (calcShootMotionTime). fly_on: the draw takes this basis. ponytail: no -75 ring offset, no stick steering */
+ * (Fall) (calcShootMotionTime). fly_on: the draw takes this basis (the ring's -75 x radius rate is 0: never set) */
 static V3 fly_x, fly_y, fly_z; /* the drawn basis */
 static V3 fly_hy, fly_hz;      /* the head's basis before the spin and flip (turned towards the path) */
 static int fly_on;
@@ -4526,21 +4528,29 @@ static void fly_pose(Player *m, V3 dir, int s, int flight, int t0_in, const Laun
     fly_on = 1;
 }
 
+static void m_power_jump(Player *m, V3 v);
+
 static int update_launch(Player *m)
 {
     Launch *L = &launches[m->launch];
     int t = ++m->launch_t;
-    if (t <= L->start) { /* exeShootStart: to the centre over 15 frames, then the wind-up */
-        float k = t < 15 ? t / 15.0f : 1.0f;
-        m->pos = vadd(m->launch_from, vmul(vsub(L->pos, m->launch_from), k));
+    if (t <= L->start) {
+        if (L->start < 45) { /* SpinDriver::exeShootStart: from where he was to 200 under the star along its up and back
+                              * ((2 (p - 0.5))^4 over 20 frames), the blend complete at half way */
+            float p = fminf((t - 1) / 20.0f, 1.0f), h = 2.0f * (p - 0.5f), v = h * h * h * h, v2 = fminf(2.0f * p, 1.0f);
+            V3 dip = vsub(L->pos, vmul(L->up, 200.0f * (1.0f - v)));
+            m->pos = vadd(vmul(m->launch_from, 1.0f - v2), vmul(dip, v2));
+        } else { /* SuperSpinDriver::exeShootStart: to the centre over 15 frames */
+            float k = fminf((t - 1) / 15.0f, 1.0f);
+            m->pos = vadd(m->launch_from, vmul(vsub(L->pos, m->launch_from), k));
+        }
         return 1;
     }
     int small = !L->starter && L->start < 45, s = t - L->start;
     if (!L->pts) { /* SpinDriver without a rail: endBindAndSpinDriverJump with its kick */
         L->cool = 60;
         m->launch = -1;
-        m->vup = vdot(L->kick, m->up); m->hvel = vtangent(L->kick, m->up); m->grounded = 0;
-        m->jump_kind = 0; m->air_timer = 0; m->spin_lock = 0;
+        m_power_jump(m, L->kick);
         if (mario_anim) mario_play("spaceflyshortstart", 1.0f, 0);
         return 0;
     }
@@ -4571,8 +4581,7 @@ static int update_launch(Player *m)
     L->cool = 60;
     m->launch = -1;
     fly_on = 0;
-    m->hvel = vtangent(step, m->up); m->vup = vdot(step, m->up); m->grounded = 0;
-    m->jump_kind = 0; m->air_timer = 0; m->spin_lock = 0; m->jumping = 1; m->digital = 1; m->jump_from = m->pos;
+    m_power_jump(m, step);
     return 0;
 }
 
@@ -7173,9 +7182,25 @@ static void m_try_wall_jump(Player *m, V3 v) /* tryWallJump(v, true) */
     m_stop_walk(m);
 }
 
+/* endBindAndSpinDriverJump (RushEndInfo 3, flags 0xC0000000) -> tryForcePowerJump: kind 13, digital, no air walk
+ * (_2F) until the next jump */
+static void m_power_jump(Player *m, V3 v)
+{
+    m->jump_kind = 13;
+    m->jumping = 1; m->grounded = 0; m->connect = 0; m->digital = 1; m->hip = 0; m->walling = 0; m->magic = 0;
+    m_set_jv(m, v);
+    m->air_timer = 0; m->back_t = 0; m->air_walk_t = 0; m->fall_t = 0; m->keep_jump = 1;
+    m->jump_from = m->pos;
+    m->air_spin = MC.mAirWalkTime;
+    m->spin_lock = 0;
+    m->no_air_walk = 1;
+    m->drop_free = vdot(v, m->up) < 0; /* _20: no drop speed cap */
+    m->wall_free = 1;                  /* _22: walls leave the jump vector alone */
+}
+
 static void m_init_jump(Player *m) /* initJumpParam */
 {
-    m->keep_jump = 1; m->wall_hit = 0;
+    m->keep_jump = 1; m->wall_hit = 0; m->no_air_walk = 0; m->drop_free = 0; m->wall_free = 0;
     m->air_timer = 0; m->back_t = 0; m->air_walk_t = 0; m->fall_t = 0;
     m->turn_neutral = 0; m->turn_brake = 0; m->u_turn = 0; m->turn_ready = 0; m->turn_slip = 0; m->land_timer = 0;
     if (m->jump_kind != 5) m->squat = 0;
@@ -7185,6 +7210,7 @@ static void m_init_jump(Player *m) /* initJumpParam */
 static int m_jump_to_hip_drop(Player *m) /* jumpToHipDrop */
 {
     if (m->hip || m->jump_kind == 5) return 0;
+    if ((m->jump_kind == 9 || m->jump_kind >= 11) && m_rising(m)) return 0;
     if (m->height < MC.mHipDropLimitHeight) return 0;
     if (m->jump_kind == 8) m_cancel_tornado(m);
     m->hip = HIP_START; m->hip_still = 0;
@@ -7257,7 +7283,7 @@ static void m_hip_land(Player *m) /* procHipDrop's first frame on the ground */
  * decays after mJumpFrontReductionBeginTime, the stick pushes mWalkSpeed x mAirWalkTimerFact1 / (t + Fact2) */
 static void m_air_walk(Player *m)
 {
-    if (m->jump_kind == 3) return;
+    if (m->jump_kind == 3 || m->no_air_walk) return;
     if (m->neutral) { if (m->air_timer > MC.mWaitNeutralTimer) m->neutral = 0; return; }
     if (m->air_lock) { m->air_lock--; return; }
     V3 md = vtangent(m_move_dir(m_sx, m_sy), m->up), side;
@@ -7301,6 +7327,7 @@ static void m_proc_jump(Player *m, int a1)
     int rising = m_rising(m);
     int conn = a1 || m->keep_jump || m->digital || !rising || m->jump_kind == 2;
     float gs = conn ? MC.mGravityRatioA : 1.0f;
+    if (m->jump_kind == 13 && (m->digital || !rising)) gs = 1.0f;
     if (a1) m_init_jump(m);
     else if (pad_pressed(PAD_R1) && m_jump_to_hip_drop(m)) return;
     if (!rising) {
@@ -7313,7 +7340,7 @@ static void m_proc_jump(Player *m, int a1)
         if (m->air_spin) m->air_spin--;
         if (!m->air_spin) { m_cancel_tornado(m); m->air_spin = MC.mAirWalkTime; }
     }
-    float acc = MC.mGravityJumping[m->jump_kind];
+    float acc = m->jump_kind == 12 ? 1.8f : MC.mGravityJumping[m->jump_kind == 13 ? 9 : m->jump_kind];
     if (m->jump_kind == 8 && m->spin_kind == 1) acc = MC.mSpinJumpGravity;
     if (m->jump_kind == 8 && !m_rising(m)) acc *= 0.25f;
     if (kari_cling) acc *= (2.0f + kari_cling) / 2.0f;
@@ -7329,7 +7356,7 @@ static void m_proc_jump(Player *m, int a1)
             m->spin_lock = 1; m->air_spin = 0; m->air_lock = 60;
         }
     }
-    if (-m->vup >= MC.mMaxDropSpeed[0]) m->vup = -MC.mMaxDropSpeed[0];
+    if (!(m->jump_kind == 13 && m->drop_free) && -m->vup >= MC.mMaxDropSpeed[0]) m->vup = -MC.mMaxDropSpeed[0];
     m_air_walk(m);
     m->air_timer++;
 }
@@ -7441,8 +7468,8 @@ static void m_do_landing(Player *m)
     }
     if (m->jump_kind == 4) m_front(m, vmul(m->turn_from, -1.0f));
     if (m->slip_keep) {
-        static const char *land[12] = {"land", "jump2land", "jumprollland", "", "jumpturnland", "jumpbroadland",
-                                       "jumpbackland", "land", "land", "land", "", "land"};
+        static const char *land[14] = {"land", "jump2land", "jumprollland", "", "jumpturnland", "jumpbroadland",
+                                       "jumpbackland", "land", "land", "land", "", "land", "land", "land"};
         int k = m->jump_kind;
         if (k == 5 && !m_check_squat(m, 0)) m->squat = 0;
         if (k == 3 || k == 10) m_clip_stop();
@@ -7779,7 +7806,7 @@ static void update_mario(void)
     if (m->wall) m->wall_n = wn;
     m->pos = vsub(center, vmul(m->up, BODY_RADIUS));
     /* writeBackPhyisicalVector: a wall halves the jump's part into it; on the ground walking into one slows the walk */
-    if (m->wall && m->jumping) {
+    if (m->wall && m->jumping && !m->wall_free) {
         float into = vdot(m_jv(m), m->wall_n);
         if (into <= 0) m_set_jv(m, vsub(m_jv(m), vmul(m->wall_n, into * 0.5f)));
     } else if (m->wall && !m->jumping && vdot(m->vel, m->wall_n) < 0) {
@@ -11951,6 +11978,8 @@ void game_debug(char *out, int n)
     snprintf(out, n, "mario %d %d %d up %d %d %d cam %d %d %d flips %d slip %d", (int)mario->pos.x, (int)mario->pos.y,
              (int)mario->pos.z, (int)(mario->up.x * 100), (int)(mario->up.y * 100), (int)(mario->up.z * 100), (int)cam_pos.x, (int)cam_pos.y,
              (int)cam_pos.z, ground_flips, slip_frames);
+    size_t l = strlen(out);
+    snprintf(out + l, n - l, " camtype %s", camera_type_name());
 }
 
 int game_coins(void) { return got_coins; }

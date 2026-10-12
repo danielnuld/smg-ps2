@@ -294,6 +294,9 @@ Last updated 2026-10-09. Detail and numbers: `docs/phase2-report.md`; tasks: `op
   Tested: EggStar 1-4 `route` (all four stars), `hip` (Factory 1), `walker`, `bench` on EggStar packs.
   ponytail gaps: our collision for the Binder (no ceiling, height by probe), no 2D / skate / ice / sand / slider /
   side step / slip up / cliff hold, the standing turn snaps (no drawn ease), one clip of each blend.
+  Launch stars: SpinDriver's ShootStart dip (200 under it along its up, (2 (p - 0.5))^4 over 20 frames); every release
+  is endBindAndSpinDriverJump = tryForcePowerJump (kind 13, gravity mGravityJumping[9] x 1, no air walk, no drop cap
+  if kicked down, walls leave the vector). SuperSpinDriver's operate ring never moves Mario (_17D is never set).
 
 ## How to run
 
@@ -318,7 +321,8 @@ there needs the embedded blob and every pack rebuilt.
 **Where the 2026-10-12 session stopped (resume here):** the fidelity rewrite of Good Egg, part 1 above, was built
 and tested on EggStar only (dino, route 1-4 ...; see the commit). The user's order: first finish every improvised
 part, test, then add the missing systems. Left, in order:
-  a. Improvised still: Mario's slope slide (SLIP_ACCEL: Petari's slopeMove / MarioSlip not ported), Plant / FlowerGroup spin wave, SpinDriver (-75 ring offset, stick steering), QuestionCoin, ShootingStar's thrown
+  a. Improvised still: Mario's slope slide (SLIP_ACCEL: MarioSlip.cpp slopeMove needs the KCL floor codes in
+     collide_n, and isSlipFloorCode decompiles inverted: true for code 0), Plant / FlowerGroup spin wave, QuestionCoin, ShootingStar's thrown
      pieces now launched but its timing to check, TicoFat / Tico talk, CollapsePlane collision shrink (non-uniform KCL),
      OtaKingMagma collision / BTK, Rock BTK size frame, the walkers' shadows.
   b. Classes Good Egg places that have no behaviour: HammerHeadPackun, Petari (the enemy), KillerGunnerSingle,
@@ -327,6 +331,8 @@ part, test, then add the missing systems. Left, in order:
   c. Systems: talk / messages, sound effects, real lighting, wipes, multi-actor cameras (Dino damage camera),
      footprints (FootPrint decals), looping / attached effects (Smoke trails, Glow), BTK / BRK animation at run time
      (lava, water, per-instance colours: Butterfly arg0), bloom models, shadows.
+  Known: the camera goes to (0, 0, 0) in some zones (Factory 1 `hip`, CannonFleet 1 `spin`, before part 2 too): XZ_PARA
+     there, likely a zero zone matrix in zone_pose's to_world (game_debug now prints camtype).
   d. Full repack of every galaxy (PATH record, FX ids, ANIM / SKIN changes), then the coverage run (task 5.3).
 
 0. Star pointer on the right stick (agreed with the user): cursor, GCaptureTarget, shots, TreasureSpot, freeze done;
