@@ -116,7 +116,15 @@ FX = [("Coin", "CoinGet"), ("PurpleCoin", "CoinGet"), ("StarPiece", "StarPieceLi
       ("Mario", "Damage"), ("LavaGeyser", "Sign"), ("PhantomCandlestand", "Fire"), ("PhantomCandlestand", "Extinguish"),
       ("TeresaMansionCandlestand", "Fire01"), ("TeresaMansionCandlestand", "Fire02"),
       ("TeresaMansionCandlestand", "Extinguish01"), ("CandlestandIceVolcano", "Fire"), ("CandlestandIceVolcano", "Ignition"),
-      ("FountainBig", "FountainBig"), ("FountainBig", "FountainBigSign"), ("MarioFireBall", "Fire"), ("MarioFireBall", "Break")]
+      ("FountainBig", "FountainBig"), ("FountainBig", "FountainBigSign"), ("MarioFireBall", "Fire"), ("MarioFireBall", "Break"),
+      ("KuriboMini", "Death"), ("Takobo", "TakoboDeath"), ("Takobo", "Hit"),
+      ("Karipon", "Death"), ("Karipon", "SmokeLand"), ("Karipon", "Hit"), ("Karipon", "Touch"),
+      ("PackunPetit", "Death"), ("PackunPetit", "DeathPress"), ("PackunPetitHead", "Death"),
+      ("Birikyu", "Hit"), ("Birikyu", "Clash"),
+      ("HomingKiller", "Explosion"), ("HomingKiller", "Shoot"), ("HomingKiller", "SandColumn"),
+      ("CocoNut", "CocoNutBreak"), ("CocoNut", "SpinHitMark"),
+      ("Rock", "LandAttrDefault"), ("Rock", "Touch"), ("WanwanRolling", "Land"), ("WanwanRolling", "Touch"),
+      ("WanwanRolling", "MiniBreak"), ("NeedlePlant", "Break"), ("CollapsePlane", "Vanish"), ("WoodBoxBreak", "Break")]
 # Placed effect objects (NameObjFactory's *EffectObj* classes: SnowS, LavaSparksS...): each plays its AutoEffectList group
 # (the first row of GroupName = its name); FX_AMBIENT_FIRST + k in fx_tab.h, names in fx_ambient (game.c ambient_fx)
 AMBIENT = ("AstroTorchLightBlue", "AstroTorchLightRed", "BattleShipExplosionMetal", "BattleShipExplosionRock",

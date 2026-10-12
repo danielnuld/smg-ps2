@@ -34,6 +34,11 @@ void anim_update(Anim *a);
 /* anim_update in two: the joints' world matrices (which may then be changed), then the draw matrices from them */
 void anim_pose(Anim *a);
 void anim_skin(Anim *a);
+/* MR::startBck: the clip from frame 0 (even if it is playing), no interpolation (ModelManager::startBck; interp > 0:
+ * startBckWithInterpole), looping as its own BCK says; 0 if missing */
+int anim_start(Anim *a, const char *name, int interp);
+/* a clip's frame_max and J3D loop mode (0 once, 1 once and reset, 2 loop, 3 mirror once, 4 mirror loop); -1 if missing */
+int anim_clip_info(const char *name, int *mode);
 /* Clip frames (frame_max) of the playing clip, 0 if none. */
 int anim_length(const Anim *a);
 u32 anim_cache_bytes(void);

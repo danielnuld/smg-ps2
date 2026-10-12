@@ -264,6 +264,23 @@ Last updated 2026-10-09. Detail and numbers: `docs/phase2-report.md`; tasks: `op
   - Mario: slopes as in Petari (confirmed by the user), hip drop, life 3 (6 after a life-up), a coin gives one back,
     lives 4, a miss (0 life, fell into space, black hole) costs one and restarts at the start; HUD LIFE / STARS / LIVES.
 - Every other placed class with a model is drawn and collided as a static instance.
+- Good Egg fidelity rewrite, part 1 (2026-10-12; improvised code redone after Petari, first tested together):
+  - walker kit (`w_*`: Spine nerve stepping, Binder sphere, turnVecToVecCosOnPlane, sight fan, isFallNextMove by
+    stepped spheres, WalkerState Wander / FindPlayer / Chase / Stagger, Mario's offence by his sensor cylinder
+    `mario_offence` / `mario_touch`, MR::startAction with the clip's own loop mode: `anim_start`, `act_rate`);
+    Kuribo, KuriboMini, Takobo (SpinHitController), Karikari (KarikariDirector, clinging at Mario's joints),
+    PackunPetit (its blown head), Butterfly ported literally; star piece shots, coconuts, rocks, killer explosions
+    reach them through `walker_blow`; `scene_stop` (MR::stopScene);
+  - launched star pieces (`launch_pieces` / `drop_pieces`: StarPiece::launch / exeFall; 256 extra slots reused);
+  - Rock / RockCreator / WanwanRolling (nerves, rail point arg0..2: PATH records now carry arg1 / arg2), break models;
+  - DinoPackunTail physics (nodes, keep distance / bend / to the clip, locks), 8 star pieces per battle, stop scenes;
+  - OtaKingMagma (its clips at the ripple steps) and the four OtaKingLongFoot; hits x 8 star pieces;
+  - HomingKiller roll / up / chase height / own effects / explosion on walkers; Birikyu group stop and face;
+    CocoNut water and effects; NeedlePlant Shake and break; PunchingKinoko's Ball joint; BlackHole SW_A and inhaling;
+    ElectricRail SW_A; CollapsePlane Vanish; WoodBox / CrystalCage break models and leftovers (`wrecks`, VIS frames);
+    BenefitItem turn / appear-ground / escape; EarthenPipe bound sequence (`pipe_bind`); FlipPanel clips;
+  - tryStartAllAnim: placed classes whose archive holds `<archive>.bck` are drawn skinned playing it (`AUTO_SKINNED`);
+  - effects added to `tools/jpa.py` FX (fx_tab.h regenerated): every pack needs a repack.
 
 ## How to run
 
@@ -284,6 +301,21 @@ The OBJS row format (`ROW` in `tools/slice.py`, `Row` in `engine/src/blob.h`) ch
 there needs the embedded blob and every pack rebuilt.
 
 ## Next
+
+**Where the 2026-10-12 session stopped (resume here):** the fidelity rewrite of Good Egg, part 1 above, was built
+and tested on EggStar only (dino, route 1-4 ...; see the commit). The user's order: first finish every improvised
+part, test, then add the missing systems. Left, in order:
+  a. Improvised still: Mario himself (movement constants / states are ours, not MarioActor's: the biggest one),
+     Plant / FlowerGroup spin wave, SpinDriver (-75 ring offset, stick steering), QuestionCoin, ShootingStar's thrown
+     pieces now launched but its timing to check, TicoFat / Tico talk, CollapsePlane collision shrink (non-uniform KCL),
+     OtaKingMagma collision / BTK, Rock BTK size frame, the walkers' shadows.
+  b. Classes Good Egg places that have no behaviour: HammerHeadPackun, Petari (the enemy), KillerGunnerSingle,
+     OtaRock, ItemBubble, TakoBarrelA, DropOfWater, PhantomShip parts, SideSpikeMoveStepA, BroadBeanMoveStep,
+     MysteryGravityRoomBridgeA, SignBoard, TimerPieceBlock (check), DeathCube etc.
+  c. Systems: talk / messages, sound effects, real lighting, wipes, multi-actor cameras (Dino damage camera),
+     footprints (FootPrint decals), looping / attached effects (Smoke trails, Glow), BTK / BRK animation at run time
+     (lava, water, per-instance colours: Butterfly arg0), bloom models, shadows.
+  d. Full repack of every galaxy (PATH record, FX ids, ANIM / SKIN changes), then the coverage run (task 5.3).
 
 0. Star pointer on the right stick (agreed with the user): cursor, GCaptureTarget, shots, TreasureSpot, freeze done;
    left: pointer effect sprite, railed GCaptureTargets (objinfo rows: no MapPartsRailMover columns).

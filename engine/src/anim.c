@@ -56,6 +56,38 @@ static const u8 *clip_data(int id)
     return slot_data[lru];
 }
 
+static short *info_frames;
+static signed char *info_mode;
+
+int anim_clip_info(const char *name, int *mode)
+{
+    if (!info_frames) {
+        info_frames = mem_alloc(MEM_PLAYER, sc->nclips * sizeof(short));
+        info_mode = mem_alloc(MEM_PLAYER, sc->nclips);
+        for (u32 i = 0; i < sc->nclips; i++) info_frames[i] = -2;
+    }
+    for (u32 i = 0; i < sc->nclips; i++)
+        if (strcmp(sc->clips[i].name, name) == 0) {
+            if (info_frames[i] == -2) {
+                const u8 *c = clip_data(i);
+                info_frames[i] = c ? *(const short *)c : -1;
+                info_mode[i] = c ? (signed char)c[2] : 0;
+            }
+            if (mode) *mode = info_mode[i];
+            return info_frames[i];
+        }
+    if (mode) *mode = 0;
+    return -1;
+}
+
+int anim_start(Anim *a, const char *name, int interp)
+{
+    int mode;
+    if (anim_clip_info(name, &mode) < 0) return 0;
+    a->clip_id = -1;
+    return anim_play(a, name, 1.0f, mode == 2 || mode == 4, interp);
+}
+
 void anim_bind(Anim *a, const Skin *skin)
 {
     memset(a, 0, sizeof *a);

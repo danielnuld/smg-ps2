@@ -22,9 +22,9 @@ Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
           ROW = {u16 type, u16 zone, s32 l_id, s32 path_id, f32 pos[3], f32 rot[3], f32 scale[3], s32 arg[8],
                  s16 sw[5] (SW_FIELDS, -1 none), s16 group (GroupId, -1 none)}  (92 B)
   'PATH'  u32 n, n × {u16 zone, u16 closed, s32 id, u32 npts, u32 nraw, s32 stop_type (path_arg1), s32 pad,
-          f32 pts[npts][3], f32 raw[nraw][3], nraw × {f32 coord, s32 arg0, s32 arg5}}: pts the rail as a polyline
-          (Bezier parts sampled, bezier_polyline), raw its JMap points (pnt0), each with its distance along pts and its
-          point_arg0 / point_arg5 (map parts: speed, stop time)
+          f32 pts[npts][3], f32 raw[nraw][3], nraw × {f32 coord, s32 arg0, s32 arg5}, nraw × {s32 arg1, s32 arg2}}:
+          pts the rail as a polyline (Bezier parts sampled, bezier_polyline), raw its JMap points (pnt0), each with its
+          distance along pts and its point_arg0 / point_arg5 (map parts: speed, stop time), point_arg1 / 2 (Rock)
   'MODL'  u32 n, n × {char[32] name, f32 bounding radius}
   'KCL '  u32 n, n × {char[32] model, u32 size, bytes[size] (little-endian KCL, kcl_to_le), pad to 4}
   'VUMD'  u32 n, 12 pad, n × {char[32] name, u32 ngroups, f32 qscale, 8 pad, ngroups × {u32 nverts (3 per
@@ -55,8 +55,26 @@ SKINNED = ("Mario",)
 # placed classes drawn skinned and animated by their own BCKs (the scenario's ANIM chunk, "<class>/<clip>" in
 # lower case); their model archive is the class name
 SKINNED_OBJ = ("DinoPackun", "OtaKing", "OtaKingFoot", "TicoFat", "Tico", "CocoSambo", "CocoSamboHead", "Kuribo", "Takobo",
-               "Karikari", "Butterfly", "PackunPetit", "KuriboMini", "DinoPackunEggShellBreak")
-ANIM_ARC = {"CocoSambo": "CocoSamboBody", "Karikari": "Karipon"}  # where a class's clips are when not in its own-named archive
+               "Karikari", "Butterfly", "PackunPetit", "KuriboMini", "DinoPackunEggShellBreak", "PackunPetitHead",
+               "RockBreak", "WanwanRollingBreak", "PunchingKinoko", "OtaKingMagma", "OtaKingLongFoot", "WoodBoxBreak",
+               "CrystalCageSBreak", "BenefitItemOneUp", "BenefitItemLifeUp", "FlipPanel", "FlipPanelReverse")
+# MapObjActor::initialize (tryStartAllAnim): a placed class whose model archive holds a BCK of the archive's name
+# plays it from the start; such classes are drawn skinned too (AUTO_SKINNED, class -> archive, filled by placement)
+AUTO_SKINNED = {}
+_auto_anim = {}
+
+
+def auto_anim(fsp, arc):
+    """The archive holds <arc>.bck (tryStartAllAnim's own-named clip)."""
+    if arc not in _auto_anim:
+        p = Path(fsp) / "ObjectData" / f"{arc}.arc"
+        _auto_anim[arc] = p.exists() and any(n.rsplit("/", 1)[-1].lower() == arc.lower() + ".bck"
+                                             for n, _ in B.rarc_files(p.read_bytes()))
+    return _auto_anim[arc]
+
+
+ANIM_ARC = {"CocoSambo": "CocoSamboBody", "Karikari": "Karipon", "BenefitItemOneUp": "KinokoOneUp",
+            "BenefitItemLifeUp": "KinokoLifeUp"}  # where a class's clips are when not in its own-named archive
 # ponytail: models the renderer cannot reproduce: the atmosphere spheres (*Air: their glow is a TEV rim effect; drawn
 # with their material they flood the screen)
 NO_DRAW = ("SphereAir", "DimensionAir", "HomeAir", "TwilightAir", "DarknessRoomAir", "SunsetAir", "FineAir")   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
@@ -78,7 +96,10 @@ SKY_TILES = 8
 EXTRA = {"FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
          "MorphItemNeoFire": ("MarioFireBall",), "AirBubbleGenerator": ("AirBubble",),
-         "DinoPackun": ("DinoPackunTailBall", "DinoPackunEggShell", "DinoPackunEggShell#EggBroken", "DinoPackunEggShellBreak"), "OtaKing": ("CocoNut", "OtaKingFoot", "FireBall", "FireBubble"), "CocoSambo": ("CocoSamboHead",)}
+         "DinoPackun": ("DinoPackunTailBall", "DinoPackunEggShell", "DinoPackunEggShell#EggBroken", "DinoPackunEggShellBreak"), "OtaKing": ("CocoNut", "OtaKingFoot", "FireBall", "FireBubble", "OtaKingMagma", "OtaKingLongFoot"), "CocoSambo": ("CocoSamboHead",), "PackunPetit": ("PackunPetitHead",),
+         "RockCreator": ("RockBreak",), "WanwanRolling": ("WanwanRollingBreak",),
+         "WoodBox": ("#WoodBox", "WoodBoxBreak"), "CrystalCageS": ("#CrystalCageS", "CrystalCageSBreak"),
+         "CrystalCageM": ("#CrystalCageM", "CrystalCageSBreak")}
 # model-less classes the engine runs (stage switch logic): kept in OBJS like the classes with a model
 # power stars an event brings out (Petari PowerStarEventKeeper): ScenarioData AppearPowerStarObj names each star's
 # declarer by its ObjNameTable name. The classes the engine runs, with the arg giving an explicit star id (None: the
@@ -228,16 +249,18 @@ def scene(fs, galaxy, scenario):
             paths.append(dict(zone=zid, id=pid, closed=int(str(closed[i] if i < len(closed) else "").lower() == "close"),
                               pts=list(zip(*p0)), cin=list(zip(*p1)) or list(zip(*p0)), cout=list(zip(*p2)) or list(zip(*p0)),
                               stop=int_or(info, "path_arg1", len(ids), -1)[i], arg0=int_or(pts, "point_arg0", npt, -1),
-                              arg5=int_or(pts, "point_arg5", npt, -1)))
+                              arg5=int_or(pts, "point_arg5", npt, -1), arg1=int_or(pts, "point_arg1", npt, -1),
+                              arg2=int_or(pts, "point_arg2", npt, -1)))
     for o in objs:
         if o["name"].startswith("AssemblyBlock") and (o["zone"], o["l_id"]) in homes:
             o["home"] = homes[(o["zone"], o["l_id"])]
     return act, zones, objs, starts, paths, cubes, bcams, up
 
 
-# static models drawn with a BVA's last frame visibility (the shapes it hides there are left out): the egg shell holds
-# its intact and cracked pieces, normal.bva shows the intact ones (DinoPackun::initEggShell)
-VIS = {"DinoPackunEggShell": "normal"}
+# static models drawn with a BVA's visibility at a frame (the shapes it hides there are left out; None: its last):
+# the egg shell holds its intact and cracked pieces, normal.bva shows the intact ones (DinoPackun::initEggShell);
+# CrystalCage::init startBva(obj_name) at 0 (whole; its last frame is the broken cage)
+VIS = {"DinoPackunEggShell": ("normal", None), "CrystalCageS": ("CrystalCageS", 0), "CrystalCageM": ("CrystalCageM", 0)}
 # models baked with a BRK's registers at a frame (Tico.cpp: ColorChange at its colour, frame 0 the yellow one)
 BRK_POSE = {"Tico": ("colorchange", 0), "TicoFat": ("normal", 0), "DinoPackunEggShellBreak": ("break", 0)}  # TicoFat: startBrk Normal, frame 0 (ponytail: FatRed as it grows)
 
@@ -322,8 +345,8 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None):
             lfiles = {k.lower().rsplit("/", 1)[-1]: v for k, v in files.items()}
             over = tex.brk(lfiles[BRK_POSE[arc.stem][0] + ".brk"], BRK_POSE[arc.stem][1]) if arc.stem in BRK_POSE and \
                 BRK_POSE[arc.stem][0] + ".brk" in lfiles else None
-            bva = pose if pose and pose.lower() + ".bva" in lfiles else VIS.get(arc.stem)
-            vis_hide = bva_hidden(lfiles.get(bva.lower() + ".bva", b""), 1 << 30) if bva else set()
+            bva, vframe = (pose, None) if pose and pose.lower() + ".bva" in lfiles else VIS.get(arc.stem, (None, None))
+            vis_hide = bva_hidden(lfiles.get(bva.lower() + ".bva", b""), 1 << 30 if vframe is None else vframe) if bva else set()
             for pos, tri, info in got:
                 if not tri or info["shape"] in vis_hide:
                     continue
@@ -801,10 +824,11 @@ def path_entry(p):
     for i in range(1, len(dense)):
         along.append(along[-1] + math.dist(dense[i - 1], dense[i]))
     n = len(p["pts"])
-    a0, a5 = p.get("arg0", [-1] * n), p.get("arg5", [-1] * n)
+    a0, a5, a1, a2 = (p.get(k, [-1] * n) for k in ("arg0", "arg5", "arg1", "arg2"))
     return (struct.pack("<HHiIIii", p["zone"], p["closed"], p["id"], len(dense), n, p.get("stop", -1), 0) +
             b"".join(struct.pack("<3f", *pt) for pt in dense) + b"".join(struct.pack("<3f", *pt) for pt in p["pts"]) +
-            b"".join(struct.pack("<fii", along[marks[i]] if i < len(marks) else along[-1], a0[i], a5[i]) for i in range(n)))
+            b"".join(struct.pack("<fii", along[marks[i]] if i < len(marks) else along[-1], a0[i], a5[i]) for i in range(n)) +
+            b"".join(struct.pack("<ii", a1[i], a2[i]) for i in range(n)))
 
 
 def to_world(zones, up_ids, items):
@@ -1016,6 +1040,8 @@ def placement(fs, galaxy, scenario):
            chunk(b"OBJS", struct.pack("<I", len(keep)) + b"".join(pack_row(r) for r in keep)),
            chunk(b"STRT", struct.pack("<I", len(starts)) + b"".join(pack_row(r) for r in starts)),
            chunk(b"PATH", struct.pack("<I", len(paths)) + b"".join(path_entry(p) for p in paths))]
+    AUTO_SKINNED.update({t: arcmap[t] for t in types if t not in planets and t not in SKINNED_OBJ and arcmap.get(t)
+                         and "#" not in arcmap[t] and auto_anim(fs, arcmap[t])})
     out.append(obj_anim_chunk(Path(fs), set(types)))
     out.append(canm_chunk(Path(fs), set(types)))
     grav = [g for g in (grav_record(o) for o in keep) if g]
@@ -1067,7 +1093,7 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
         key = (a, pose, ratio)
         if key not in _model_cache:
             st = {}
-            _model_cache[key] = (model_groups(arc, ratio, st, t in SKINNED or t in SKINNED_OBJ, pose or None), st)
+            _model_cache[key] = (model_groups(arc, ratio, st, t in SKINNED or t in SKINNED_OBJ or t in AUTO_SKINNED, pose or None), st)
         (groups, kcl, sk), st = _model_cache[key]
         for k, v in st.items():
             stats[k] = stats.get(k, 0) + v
@@ -1128,8 +1154,9 @@ def obj_anim_chunk(fsp, classes):
     """ANIM for the skinned placed classes among `classes` (and their EXTRA models): "<class>/<clip>" lower case."""
     clips = []
     names = [c for c in SKINNED_OBJ if c in classes or any(c in EXTRA.get(k, ()) for k in classes)]
+    names += [c for c in AUTO_SKINNED if c in classes and c not in names]
     for c in names:
-        arc = fsp / "ObjectData" / f"{ANIM_ARC.get(c, c)}.arc"
+        arc = fsp / "ObjectData" / f"{AUTO_SKINNED.get(c) or ANIM_ARC.get(c, c)}.arc"
         if not arc.exists():
             continue
         files = {n.rsplit("/", 1)[-1].lower(): b for n, b in B.rarc_files(arc.read_bytes())}
