@@ -634,6 +634,12 @@ int main(void)
             if (frame % 50 == 0) printf("ibubble test f %u: row %d pieces out %d\n", frame, row, game_pieces_out());
         }
 #endif
+#ifdef PETARI_TEST
+        if (frame >= 400 && frame < 2400) { /* a Petari: it comes, surfaces, a spin swoons it, a trample smashes it */
+            int st = game_test_petari();
+            if (frame % 25 == 0) printf("petari test f %u: %d\n", frame, st);
+        }
+#endif
 #ifdef VINE_TEST
         if (frame >= 400 && frame < 3000) { /* the Plant grown, Mario up it and off its top */
             int st = game_test_vine();

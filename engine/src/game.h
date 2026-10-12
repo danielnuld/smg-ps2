@@ -36,6 +36,7 @@ int game_test_kgun(void);
 int game_test_orock(void);
 int game_test_hhp(void);
 int game_test_vine(void);
+int game_test_petari(void);
 int game_test_ibubble(int touch);
 int game_test_kgun_state(void);
 /* Test builds: Mario held in the first LavaSteam's vent (his touch sphere 100 up it); its row or -1 */

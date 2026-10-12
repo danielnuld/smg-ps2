@@ -32,7 +32,13 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
     V3 bpos, bvel; int bshow; /* a second model it throws (PackunPetit's blown head) */ } Kuribo; /* walking
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
-enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA };
+enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI };
+/* Petari.cpp's nerves (petari_update) */
+enum { PT_LURK, PT_JUMPOUT, PT_WAIT, PT_APPROACH, PT_ESCAPE, PT_SWOONSTART, PT_SWOON, PT_SWOONEND, PT_LAND, PT_SMASH,
+       PT_SPINOUT, PT_KICKOUT };
+static int petari_solid(const Kuribo *k);
+static void petari_blow(Kuribo *k, V3 from, int nrv);
+static int walker_blow(Kuribo *e, V3 from);
 static int kari_slot[5];
 static int kari_cling, kari_timer; /* Karikari clinging to Mario (KarikariDirector: 5 at most), frames to its damage */
 
@@ -563,7 +569,7 @@ static int got_coins, got_purple, got_pieces;
 static float coin_rot, qcoin_rot, piece_rot, star_rot;
 static V3 cam_pos;
 static const Model *m_packunhead;
-static const Model *m_coin, *m_purple, *m_piece, *m_kuribo, *m_takohei, *m_packun, *m_kotebug, *m_spider, *m_meramera, *m_takobo, *m_mkoopa, *m_kari, *m_kmini, *m_karon, *m_teresa, *m_bfly, *m_stink, *m_unizo[3], *m_note, *m_poihana;
+static const Model *m_coin, *m_purple, *m_piece, *m_kuribo, *m_takohei, *m_packun, *m_kotebug, *m_spider, *m_meramera, *m_takobo, *m_mkoopa, *m_kari, *m_kmini, *m_karon, *m_teresa, *m_bfly, *m_stink, *m_unizo[3], *m_note, *m_poihana, *m_petari;
 static const Model *m_mario_skin; /* Mario.arc, skinned (SKIN chunk) */
 static Anim *mario_anim;
 /* ElectricRail (Petari ElectricRail.cpp, ElectricRailHolder.cpp): one segment per pair of rail points, arg0 rails
@@ -1064,7 +1070,7 @@ void game_init(const Scene *s, const unsigned char *blob)
             npieces += star_group(NULL, &s->objs[i], blob);
         else if (s->objs[i].type == t_flow)
             npieces += star_flow(NULL, 0, &s->objs[i], blob);
-    nkuribo = count_type("Poihana", 0) + count_type("Unizo", 0) + count_type("UnizoLand", 0) + count_type("UnizoShoal", 0) + count_type("StinkBugSmall", 0) + count_type("Kuribo", 0) + count_type("TakoHei", 0) + count_type("PackunPetit", 0) + count_type("KoteBug", 0) +
+    nkuribo = count_type("Petari", 0) + count_type("Poihana", 0) + count_type("Unizo", 0) + count_type("UnizoLand", 0) + count_type("UnizoShoal", 0) + count_type("StinkBugSmall", 0) + count_type("Kuribo", 0) + count_type("TakoHei", 0) + count_type("PackunPetit", 0) + count_type("KoteBug", 0) +
               count_type("JumpSpider", 0) + count_type("Meramera", 0) + count_type("Takobo", 0) +
               count_type("MechanicKoopaMini", 0) + count_type("Karikari", 0) +
               count_type("KuriboMini", 0) + count_type("Karon", 0) +
@@ -1100,7 +1106,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     int t_mkoopa = scene_type(s, "MechanicKoopaMini"), t_kari = scene_type(s, "Karikari"), t_kmini = scene_type(s, "KuriboMini");
     int t_karon = scene_type(s, "Karon"), t_teresa = scene_type(s, "Teresa"), t_bfly = scene_type(s, "Butterfly");
     int t_stink = scene_type(s, "StinkBugSmall"), t_uni = scene_type(s, "Unizo"), t_unil = scene_type(s, "UnizoLand"),
-        t_unis = scene_type(s, "UnizoShoal"), t_poi = scene_type(s, "Poihana");
+        t_unis = scene_type(s, "UnizoShoal"), t_poi = scene_type(s, "Poihana"), t_petari = scene_type(s, "Petari");
     int t_gcircle = scene_type(s, "CircleCoinGroup"), t_grail = scene_type(s, "RailCoin");
     insts =mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(Inst));
     zone_spheres();
@@ -1115,10 +1121,10 @@ void game_init(const Scene *s, const unsigned char *blob)
         else if (r->type == t_flow) is += star_flow(pieces + is, is, r, blob);
         else if (r->type == t_kuribo || r->type == t_tako || r->type == t_packun || r->type == t_kote || r->type == t_spider ||
                  r->type == t_mera || r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly || r->type == t_stink ||
-                 r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi) {
+                 r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == t_petari) {
             memset(&kuribo[ik], 0, sizeof(Kuribo));
             kuribo[ik].dir = r->type == t_unil ? 1 : r->type == t_unis ? 2 : 0; /* Unizo: sea, land, shoal */
-            kuribo[ik].kind = r->type == t_poi ? WALK_POIHANA : r->type == t_uni || r->type == t_unil || r->type == t_unis ? WALK_UNIZO : r->type == t_stink ? WALK_STINKBUG : r->type == t_bfly ? WALK_BUTTERFLY : r->type == t_teresa ? WALK_TERESA : r->type == t_karon ? WALK_KARON : r->type == t_kmini ? WALK_KMINI : r->type == t_kari ? WALK_KARIKARI : r->type == t_mkoopa ? WALK_MKOOPA : r->type == t_takobo ? WALK_TAKOBO : r->type == t_tako ? WALK_TAKOHEI : r->type == t_packun ? WALK_PACKUN :
+            kuribo[ik].kind = r->type == t_petari ? WALK_PETARI : r->type == t_poi ? WALK_POIHANA : r->type == t_uni || r->type == t_unil || r->type == t_unis ? WALK_UNIZO : r->type == t_stink ? WALK_STINKBUG : r->type == t_bfly ? WALK_BUTTERFLY : r->type == t_teresa ? WALK_TERESA : r->type == t_karon ? WALK_KARON : r->type == t_kmini ? WALK_KMINI : r->type == t_kari ? WALK_KARIKARI : r->type == t_mkoopa ? WALK_MKOOPA : r->type == t_takobo ? WALK_TAKOBO : r->type == t_tako ? WALK_TAKOHEI : r->type == t_packun ? WALK_PACKUN :
                               r->type == t_kote ? WALK_KOTEBUG : r->type == t_spider ? WALK_SPIDER :
                               r->type == t_mera ? WALK_MERAMERA : WALK_KURIBO;
             kuribo[ik].pos = row_pos(r);
@@ -2368,6 +2374,7 @@ static void update_punch(void)
                 if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_PACKUN || e->kind == WALK_SPIDER ||
                     e->kind == WALK_BUTTERFLY || e->kind == WALK_TERESA || e->kind == WALK_KARON ||
                     vlen(vsub(in->head, vadd(e->pos, vmul(e->up, 50.0f)))) > 70.0f + 60.0f) continue;
+                if (e->kind == WALK_PETARI) { walker_blow(e, in->head); continue; } /* isMsgToEnemyAttackBlow */
                 e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up); pop_coins(e->pos, e->up, 1);
                 printf("punching kinoko %d blows walker row %d" "\n", row, e->row);
             }
@@ -2679,7 +2686,7 @@ void game_rebind(void)
     m_bfly = scene_model(s, "Butterfly");
     m_stink = scene_model(s, "StinkBugSmall");
     m_note = scene_model(s, "NoteFairy");
-    m_poihana = scene_model(s, "Poihana");
+    m_poihana = scene_model(s, "Poihana"); m_petari = scene_model(s, "Petari");
     m_marioball = scene_model(s, "MarioFireBall");
     m_bubble = scene_model(s, "AirBubble");
     m_ota = scene_model(s, "OtaKing"); m_otafoot = scene_model(s, "OtaKingFoot"); m_coco = scene_model(s, "CocoNut");
@@ -2720,7 +2727,7 @@ void game_rebind(void)
             r->type == t_tako || r->type == t_packun || r->type == t_kote || r->type == t_spider || r->type == t_mera ||
             r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly ||
             r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_stink || r->type == scene_type(s, "NoteFairy") ||
-            r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == scene_type(s, "RockCreator") || r->type == scene_type(s, "WanwanRolling") ||
+            r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == scene_type(s, "Petari") || r->type == scene_type(s, "RockCreator") || r->type == scene_type(s, "WanwanRolling") ||
             r->type == scene_type(s, "WanwanRollingMini") || r->type == scene_type(s, "WanwanRollingGold") ||
             r->type == scene_type(s, "DinoPackun") || r->type == scene_type(s, "OtaKing"))
             continue;
@@ -3202,6 +3209,35 @@ int game_test_vine(void) /* the Plant at the HammerHeadPackun: its appear switch
         } else if (o->nrv == VN_GROWTHWAITINVALID) done = 1;
         if (done && ++wait == 90) printf("vine test: Mario %d %d %d after the jump\n", (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z);
         return o->nrv * 10000 + (int)o->coord;
+    }
+    return -1;
+}
+
+int game_test_petari(void) /* the first Petari: Mario 800 off it (it comes, waits, surfaces), then beside it spinning,
+                            * then onto it while it swoons */
+{
+    test_nolost = 1;
+    for (int i = 0; i < nkuribo; i++) {
+        Kuribo *k = &kuribo[i];
+        if (k->kind != WALK_PETARI) continue;
+        if (k->state == KURIBO_DEAD) return -3;
+        V3 up = vmul(k->grav, -1.0f);
+        if (!k->front.x && !k->front.y && !k->front.z) up = up_at(k->pos, mario->up);
+        static int placed;
+        if (!placed) { /* 800 off along its front */
+            V3 f = vnorm(vtangent(v3(1, 0, 0), up));
+            mario->up = up; mario->pos = vadd(vadd(k->pos, vmul(f, 800.0f)), vmul(up, 50.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            placed = 1;
+        } else if (k->nrv == PT_WAIT && !k->phase && k->step > 70 && !mario->spin_timer) { /* beside it, a spin */
+            mario->up = up; mario->pos = vadd(k->pos, vmul(vnorm(vtangent(vsub(mario->pos, k->pos), up)), 80.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            mario->spin_timer = SPIN_TIME;
+        } else if (k->nrv == PT_SWOON && k->step == 40) { /* onto it */
+            mario->up = up; mario->pos = vadd(k->pos, vmul(up, 200.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = -5.0f; mario->grounded = 0; mario->hip = 0;
+        }
+        return k->nrv * 1000 + (k->step > 999 ? 999 : k->step) + (k->phase ? 100000 : 0);
     }
     return -1;
 }
@@ -6958,6 +6994,10 @@ static void fireball_hit_walkers(int b)
         Kuribo *e = &kuribo[k];
         if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_BUTTERFLY ||
             vlen(vsub(fireballs[b].pos, vadd(e->pos, vmul(e->up, 60.0f)))) > 80.0f + 60.0f) continue;
+        if (e->kind == WALK_PETARI) { /* isMsgFireBallAttack while solid: KickOut */
+            if (!petari_solid(e)) continue;
+            petari_blow(e, fireballs[b].pos, PT_KICKOUT); fireballs[b].t = 0; return;
+        }
         e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up);
         if (e->kind == WALK_UNIZO) drop_pieces(e->pos, e->up, 6); else pop_coins(e->pos, e->up, 1);
         printf("fire ball burns walker row %d" "\n", e->row);
@@ -7079,6 +7119,7 @@ static void update_jets(void)
                 Kuribo *e = &kuribo[k];
                 if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_BUTTERFLY ||
                     vlen(vsub(p, vadd(e->pos, vmul(e->up, 60.0f)))) > 60.0f + 80.0f) continue;
+                if (e->kind == WALK_PETARI) { if (petari_solid(e)) petari_blow(e, p, PT_KICKOUT); continue; } /* KickOut */
                 e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up);
                 if (e->kind == WALK_UNIZO) drop_pieces(e->pos, e->up, 6); else pop_coins(e->pos, e->up, 1);
                 printf("jet turtle row %d blows walker row %d" "\n", in->row, e->row);
@@ -10793,8 +10834,216 @@ static void butterfly_update(Kuribo *k)
 
 /* a ported walker's isMsgToEnemyAttackBlow / isMsgExplosionAttack from `from`: 1 if it took it, -1 if it is not
  * ported (the caller's old handling), 0 if it ignored it */
+
+/* Petari.cpp after Petari (the hiding star-piece mole): hidden (Lurk) until Mario is within 1500 and it is on the
+ * screen, then Wait (it surfaces at 60: Wait clip), Approach (hidden, 0.5 towards him) beyond 700 until within 600,
+ * Escape (hidden, from him meandering -90..90 every 60-120 frames, turning away when he runs at it, off walls within
+ * 600, 0.45 boosted by 0.5 x min(1, 4 / (d / 100)^2), damp 0.97) within 500 until beyond 710; moveAndTurnToDirection
+ * (gravity 1.3, turning 3 degrees, 180 the first escaping frame). Its spin sensor (100) takes a spin in Wait / Escape:
+ * SwoonStart (Appearance, 5 off Mario), Swoon 180 (a star piece restarts it), SwoonEnd (Hide), Land 45 then Escape.
+ * Swooning, a spin: SpinOut (Damage, blown 10 away), a trample or hip drop: Smash (Press); both throw its star pieces
+ * (arg1, 20) 2 every 5 frames from Head3 (20, 40), the rest at the end, then kill (its dead switch). Its body (60, 60
+ * up) pushes Mario while shown (isSolidBody); a jet turtle or fire ball then: KickOut, an enemy's blow: SpinOut.
+ * Its up turns 0.1 a frame to the ground's normal (control). ponytail: no 2P pointer (Freeze), no kick, no
+ * footprints (FootPrint decals) or smoke effects, no push from enemies, no move limit collision, no AnimScaleController
+ * (hit reaction); Mario's spin hits once a spin */
+/* Kuribo fields: phase hidden (hideModel), timer star pieces left, sstep mMeanderStep, to mMeanderAngle, ttarget
+ * mTargetDir, tcenter mBodyCenter, bshow its spin latch */
+static int petari_solid(const Kuribo *k) /* isSolidBody */
+{
+    return !k->phase && (k->nrv == PT_SWOONSTART || k->nrv == PT_SWOON || k->nrv == PT_SWOONEND || k->nrv == PT_WAIT);
+}
+static void petari_move(Kuribo *k, V3 dir, float speed, float grav, float damp, float deg) /* moveAndTurnToDirection */
+{
+    turn_on_plane(&k->front, dir, k->grav, cosf(deg * 0.0174533f));
+    V3 g = k->on_ground ? vmul(k->gn, -1.0f) : k->grav; /* turnDirectionToGround */
+    V3 f = vnorm(vtangent(k->front, g));
+    if (vlen(f) > 0.5f) k->front = f;
+    if (!k->on_ground) speed = 0; /* their callers: no push off the ground */
+    w_add_move(k, k->front, speed);
+    k->vel = vmul(k->vel, damp);
+    if (k->on_wall == 2 && vdot(k->vel, k->wn) < 0) k->vel = vsub(k->vel, vmul(k->wn, vdot(k->vel, k->wn))); /* rebound 0, 0, 1 */
+    k->vel = k->on_ground ? vsub(k->vel, vmul(k->gn, grav)) : vadd(k->vel, vmul(k->grav, grav)); /* addVelocityToGravityOrGround */
+}
+static void petari_blow(Kuribo *k, V3 from, int nrv) /* setVelocityBlowAttack 10, 0 */
+{
+    V3 h = vtangent(vsub(k->pos, from), k->grav);
+    k->vel = vlen(h) > 1e-3f ? vmul(vnorm(h), 10.0f) : v3(0, 0, 0);
+    if (vlen(vsub(mario->pos, k->pos)) < 1000.0f) scene_stop = 4; /* stopSceneForDefaultHit */
+    w_nrv(k, nrv);
+}
+static void petari_pieces(Kuribo *k, int all) /* appearStarPieceGradually / All */
+{
+    V3 up = vmul(k->grav, -1.0f);
+    if (all) { if (k->timer > 0) launch_pieces(k->pos, up, k->timer, 20.0f, 40.0f); return; }
+    if (k->step % 5) return;
+    int n = k->timer < 2 ? k->timer : 2;
+    if (n > 0) launch_pieces(w_joint(k, m_petari, 5, v3(0, 0, 0)), up, n, 20.0f, 40.0f);
+    k->timer -= n;
+}
+static void petari_escape_dir(Kuribo *k) /* calcEscapeDirection, meander, avoidPlayer, avoidWall */
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), d = vsub(k->tcenter, c);
+    k->ttarget = vlen(d) > 1e-3f ? vnorm(d) : k->front;
+    if (k->step == k->sstep) { k->to = frand(-90.0f, 90.0f); k->sstep = k->step + 60 + rand() % 61; }
+    k->ttarget = rot_axis(k->ttarget, vmul(k->grav, -1.0f), k->to * 0.0174533f);
+    float sign = vdot(vcross(k->ttarget, k->front), k->grav) < 0 ? -1.0f : 1.0f;
+    V3 tp = vsub(c, k->tcenter);
+    if (vlen(tp) > 1e-3f) {
+        float w = 3.0f / vdot(vmul(tp, 0.01f), vmul(tp, 0.01f));
+        w = w > 1 ? 1 : w;
+        V3 mv = vadd(mario->hvel, vmul(mario->up, mario->vup));
+        float ap = vlen(mv) > 1e-6f ? vdot(vmul(vnorm(tp), -1.0f), vnorm(mv)) : 0.0f;
+        w *= ap < 0 ? 0 : ap;
+        k->ttarget = rot_axis(k->ttarget, k->grav, w * 90.0f * sign * 0.0174533f);
+    }
+    V3 pd = vtangent(k->ttarget, k->grav);
+    if (vlen(pd) > 1e-3f) {
+        pd = vnorm(pd);
+        for (float t = 25.0f; t <= 600.0f; t += 25.0f) { /* getFirstPolyOnLineToMap (stepped spheres) */
+            Hit h[1];
+            V3 p = vadd(k->tcenter, vmul(pd, t));
+            if (!kcl_query(p, 15.0f, h, 1)) continue;
+            V3 wn = vtangent(h[0].n, k->grav);
+            if (vlen(wn) > 1e-3f) {
+                wn = vnorm(wn);
+                float pr = 1.0f - t / 600.0f;
+                pr = pr < 0 ? 0 : pr > 1 ? 1 : pr;
+                k->ttarget = vsub(k->ttarget, vmul(wn, vdot(wn, k->ttarget) * 2.0f * pr * pr * 2.0f));
+            }
+            break;
+        }
+    }
+}
+static void petari_update(Kuribo *k)
+{
+    const Row *r = &sc->objs[k->row];
+    if (!k->front.x && !k->front.y && !k->front.z) { /* init */
+        V3 x, z;
+        row_axes(r, &x, &z);
+        k->front = z; k->ttarget = v3(0, 0, 1);
+        k->grav = vmul(up_at(k->pos, vmul(z, 0.0f)), -1.0f);
+        k->qy = vmul(k->grav, -1.0f); k->qz = vnorm(vtangent(z, k->qy));
+        k->timer = r->arg[1] != -1 ? r->arg[1] : 20; /* initStarPiece */
+        k->phase = 1; /* makeActorAppeared: hideModel */
+        w_nrv(k, PT_LURK); k->step = 0;
+    }
+    k->grav = vmul(up_at(k->pos, vmul(k->grav, -1.0f)), -1.0f); /* onCalcGravity */
+    int st = k->step;
+    float dm = vlen(vsub(mario->pos, k->pos));
+    k->tcenter = vsub(k->pos, vmul(k->grav, 60.0f)); /* calcCenter */
+    switch (k->nrv) {
+    case PT_LURK: {
+        if (st == 0) k->vel = v3(0, 0, 0);
+        float sx, sy;
+        if (dm < 1500.0f && screen_pos(k->pos, &sx, &sy) && sx >= 0 && sx < 640 && sy >= 0 && sy < 448) w_nrv(k, PT_JUMPOUT);
+        break;
+    }
+    case PT_JUMPOUT:
+        w_nrv(k, PT_WAIT);
+        break;
+    case PT_WAIT:
+        if (st == 0) k->vel = v3(0, 0, 0);
+        petari_move(k, k->ttarget, 0.0f, 1.3f, 0.92f, 3.0f);
+        if (st == 60) {
+            if (k->phase) { k->phase = 0; w_act(k, "Wait"); }
+            else { w_act(k, "Wait"); k->act_interp = 30; }
+        }
+        if (dm > 700.0f) w_nrv(k, PT_APPROACH);
+        else if (dm < 500.0f) w_nrv(k, PT_ESCAPE);
+        break;
+    case PT_APPROACH: {
+        if (st == 0) k->phase = 1;
+        V3 d = vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), k->tcenter);
+        k->ttarget = vlen(d) > 1e-3f ? vnorm(d) : k->front; /* calcApproachDirection */
+        petari_move(k, k->ttarget, 0.5f, 1.3f, 0.92f, 3.0f);
+        if (dm < 600.0f) w_nrv(k, PT_WAIT);
+        break;
+    }
+    case PT_ESCAPE: case PT_LAND: {
+        if (st == 0) { if (k->nrv == PT_ESCAPE) k->phase = 1; k->sstep = 0; }
+        petari_escape_dir(k);
+        float dc = vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), k->tcenter)) * 0.01f, b = 4.0f / (dc * dc);
+        b = b > 1 ? 1 : b;
+        if (k->nrv == PT_ESCAPE) petari_move(k, k->ttarget, 0.45f + 0.45f * 0.5f * b, 1.3f, 0.97f, st == 0 ? 180.0f : 10.0f);
+        else petari_move(k, k->ttarget, 1.0f, 1.3f, 0.99f, st == 0 ? 180.0f : 10.0f);
+        if (k->nrv == PT_ESCAPE && dm > 710.0f) w_nrv(k, PT_WAIT);
+        if (k->nrv == PT_LAND && st == 45) w_nrv(k, PT_ESCAPE);
+        break;
+    }
+    case PT_SWOONSTART:
+        if (st == 0) { /* calcSpinOutVelocity(5) */
+            V3 d = vtangent(vsub(k->tcenter, vadd(mario->pos, vmul(mario->up, HIT_BODY_H))), k->grav);
+            if (vlen(d) > 1e-3f) { k->front = vnorm(vmul(d, -1.0f)); k->vel = vmul(vnorm(d), 5.0f); }
+            k->phase = 0; w_act(k, "Appearance");
+        }
+        petari_move(k, k->ttarget, 0.0f, 1.3f, 0.985f, 3.0f);
+        if (w_bck_stopped(k)) w_nrv(k, PT_SWOON);
+        break;
+    case PT_SWOON:
+        if (st == 0) { k->vel = v3(0, 0, 0); w_act(k, "Swoon"); }
+        petari_move(k, k->ttarget, 0.0f, 1.3f, 0.0f, 3.0f);
+        if (st == 180) w_nrv(k, PT_SWOONEND);
+        break;
+    case PT_SWOONEND:
+        if (st == 0) w_act(k, "Hide");
+        petari_move(k, k->ttarget, 0.0f, 1.3f, 0.0f, 3.0f);
+        if (w_bck_stopped(k)) { k->phase = 1; w_nrv(k, PT_LAND); }
+        break;
+    case PT_SMASH:
+        if (st == 0) { k->phase = 0; w_act(k, "Press"); }
+        petari_pieces(k, 0);
+        if (w_bck_stopped(k)) { petari_pieces(k, 1); k->state = KURIBO_DEAD; row_kill(k->row); printf("petari %d smashed\n", k->row); return; }
+        break;
+    case PT_SPINOUT: case PT_KICKOUT: {
+        if (st == 0) { k->phase = 0; w_act(k, "Damage"); }
+        turn_on_plane(&k->front, vmul(k->vel, -1.0f), k->grav, -1.0f); /* turnDirectionDegree 180 */
+        V3 g = w_on_ground(k) ? vmul(k->gn, -1.0f) : k->grav;
+        k->vel = vadd(vsub(k->vel, vmul(g, vdot(g, k->vel))), vmul(g, 1.3f));
+        petari_pieces(k, 0);
+        if (w_bck_stopped(k)) { petari_pieces(k, 1); k->state = KURIBO_DEAD; row_kill(k->row); printf("petari %d spun out\n", k->row); return; }
+        break;
+    }
+    }
+    k->step++;
+    k->act_t += k->act_rate;
+    /* control: its up 0.1 of the way to the ground's normal (or against gravity), front kept */
+    V3 to = w_on_ground(k) ? k->gn : vmul(k->grav, -1.0f), ax = vcross(k->qy, to);
+    if (vlen(ax) > 1e-6f) {
+        float c = vdot(k->qy, to);
+        k->qy = vnorm(rot_axis(k->qy, vnorm(ax), acosf(c > 1 ? 1 : c < -1 ? -1 : c) * 0.1f));
+    }
+    V3 qz = vnorm(vtangent(k->front, k->qy));
+    if (vlen(qz) > 0.5f) k->qz = qz;
+    w_bind(k, 60.0f);
+    k->up = k->qy;
+    /* sensors */
+    if (mario->spin_timer <= 0) k->bshow = 0;
+    V3 body = vadd(k->pos, vmul(k->qy, 60.0f)), c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    int msg = mario_offence(body, 60.0f, k->grav);
+    if (k->nrv == PT_SWOON && msg == MSG_HITALL && !k->bshow) { k->bshow = 1; petari_blow(k, mario->pos, PT_SPINOUT); return; }
+    if (k->nrv == PT_SWOON && (msg == MSG_TRAMPLE || msg == MSG_HIPDROP)) {
+        if (msg == MSG_TRAMPLE) { mario->vup = 15.0f; mario->grounded = 0; }
+        w_nrv(k, PT_SMASH);
+        return;
+    }
+    if ((k->nrv == PT_WAIT || k->nrv == PT_ESCAPE) && !k->bshow && mario->spin_timer > 0 && mario_touch(k->pos, 100.0f)) {
+        k->bshow = 1; w_nrv(k, PT_SWOONSTART); /* receivePlayerAttackAtSpin */
+        printf("petari %d spun: swoons\n", k->row);
+        return;
+    }
+    float d = vlen(vsub(c, body));
+    if (petari_solid(k) && d < 60.0f + HIT_BODY_R && d > 1e-3f) /* attackSensor: sendMsgPush */
+        mario->pos = vadd(mario->pos, vmul(vtangent(vsub(c, body), mario->up), (60.0f + HIT_BODY_R - d) / d));
+}
+
 static int walker_blow(Kuribo *e, V3 from)
 {
+    if (e->kind == WALK_PETARI) { /* receiveMsgEnemyAttack: isMsgToEnemyAttackBlow while solid */
+        if (!petari_solid(e)) return 0;
+        petari_blow(e, from, PT_SPINOUT);
+        return 1;
+    }
     if (e->kind == WALK_PACKUN) { /* punchDown */
         if (e->nrv == PN_TRAMPLEDOWN || e->nrv == PN_PUNCHDOWN) return 0;
         packun_punch(e, from);
@@ -10840,6 +11089,10 @@ static void update_kuribo(void)
         k->up = up_at(k->pos, k->up);
         V3 to = vsub(mario->pos, k->pos);
         float d = vlen(to);
+        if (k->kind == WALK_PETARI) { /* ponytail: still while its zone has no collision (streaming) */
+            if (sc->objs[k->row].zone >= 64 || zone_kcl[sc->objs[k->row].zone]) petari_update(k);
+            continue;
+        }
         if (k->kind == WALK_KURIBO || k->kind == WALK_KMINI || k->kind == WALK_PACKUN) { /* ported after Petari (their own NonActive);
                                        * ponytail: still while its zone has no collision (streaming) */
             if (sc->objs[k->row].zone >= 64 || zone_kcl[sc->objs[k->row].zone]) {
@@ -12503,6 +12756,10 @@ static void update_shots(void)
             else if (e->kind == WALK_MKOOPA) { e->phase = 6; e->timer = 0; }
             else if (e->kind == WALK_KARON) { if (e->phase != 2) { e->phase = 3; e->timer = 0; } }
             else if (e->kind == WALK_BUTTERFLY || e->kind == WALK_TERESA) { hit = 0; continue; }
+            else if (e->kind == WALK_PETARI) { /* isMsgStarPieceAttack: a hit reaction; Swoon starts over */
+                if (e->phase) { hit = 0; continue; }
+                if (e->nrv == PT_SWOON) w_nrv(e, PT_SWOON);
+            }
             else if (e->kind == WALK_UNIZO || e->kind == WALK_POIHANA) { /* isMsgStarPieceAttack: nothing more */ }
             else if (e->kind == WALK_STINKBUG) { if (e->phase != 2 && e->phase != 6) { e->phase = 5; e->timer = 0; } }
             else if (e->kind == WALK_KARIKARI) kari_blowout(e, s->pos, 1); /* isMsgStarPieceAttack: BlowOutStarPiece */
@@ -13217,9 +13474,10 @@ void game_draw(void)
                           kuribo[i].kind == WALK_KARON ? m_karon :
                           kuribo[i].kind == WALK_TERESA ? m_teresa :
                           kuribo[i].kind == WALK_BUTTERFLY ? m_bfly : kuribo[i].kind == WALK_STINKBUG ? m_stink :
-                          kuribo[i].kind == WALK_UNIZO ? m_unizo[kuribo[i].dir] : kuribo[i].kind == WALK_POIHANA ? m_poihana : m_kuribo;
+                          kuribo[i].kind == WALK_UNIZO ? m_unizo[kuribo[i].dir] : kuribo[i].kind == WALK_POIHANA ? m_poihana : kuribo[i].kind == WALK_PETARI ? m_petari : m_kuribo;
         if (kuribo[i].state == KURIBO_DEAD || !md || !row_shown(kuribo[i].row)) continue;
         if (kuribo[i].kind == WALK_TERESA && kuribo[i].phase == 4) continue; /* hidden in a wall */
+        if (kuribo[i].kind == WALK_PETARI && kuribo[i].phase) continue; /* hideModel */
         basis_matrix(m, kuribo[i].pos, kuribo[i].up, kuribo[i].kind == WALK_STINKBUG || kuribo[i].kind == WALK_POIHANA ? stink_front(&kuribo[i]) : vsub(mario->pos, kuribo[i].pos), 0);
         if (kuribo[i].kind == WALK_UNIZO) { /* rolled about its side round its centre */
             const Kuribo *k = &kuribo[i];
