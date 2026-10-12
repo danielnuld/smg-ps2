@@ -147,6 +147,7 @@ typedef struct {
     int npc;         /* talking NPC (npc_class): turns to face Mario when he is near */
     int hipsw;       /* hip drop switch: 1 PicketSwitch(Big) / HipDropSwitch (SW_A for good), 2 HipDropTimerSwitch */
     int rotor;       /* map part with a RotateSpeed: turns (rotor_matrix), carries Mario */
+    int halo;        /* ZoneHalo 1 / PowerStarHalo 2: shown only from afar (update_halos) */
     int seesaw;      /* PhantomShipHandle: MapPartsSeesaw1AxisRotator, turned by Mario's weight (update_seesaws) */
     int sky;         /* sky dome (Petari Sky): centred on the camera, drawn first */
     int sun;         /* BrightSun: its Sun model far off the camera along its rotation, drawn with the skies */
@@ -2839,6 +2840,7 @@ void game_rebind(void)
                     strcmp(name, "HipDropTimerSwitch") == 0 ? 2 : 0;
         in->rotor = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->arg[4] != -1 && r->arg[4] != 0; /* -1: not a map part */
         in->seesaw = strcmp(name, "PhantomShipHandle") == 0;
+        in->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 : 0;
         if (in->seesaw) { in->rotor = 0; seesaw_matrix(in); }
         in->railer = scene_blob_g && r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->path >= 0 ?
                      find_path(scene_blob_g, r->zone, r->path) : NULL;
@@ -11630,6 +11632,28 @@ static void update_seesaws(void)
     }
 }
 
+
+/* Halo.cpp (ZoneHalo, PowerStarHalo): Appear while the distance (to Mario; PowerStarHalo: to the camera) is over arg0
+ * (70) x 100 + 2000, Disappear under arg0 x 100; it starts hidden when already within (appear). row_turn 1 hidden.
+ * PowerStarHalo waits for the scenario opening camera's end (none here: at once). ponytail: no Appear / Disappear
+ * BRK fade (BRK at run time is item c): shown and hidden at once */
+static void update_halos(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->halo) continue;
+        const Row *r = &sc->objs[in->row];
+        float far = r->arg[0] != -1 ? (float)r->arg[0] : 70.0f;
+        V3 p = v3(in->m[12], in->m[13], in->m[14]);
+        float d = vlen(vsub(p, in->halo == 2 ? cam_pos : mario->pos)), near = far * 100.0f, out = (far + 20.0f) * 100.0f;
+        signed char *hidden = &row_turn[in->row];
+        if (!*hidden && (near < out ? d < near : near < d)) *hidden = 1;       /* isDistanceDisappear */
+        else if (*hidden && (near < out ? out < d : d < out)) *hidden = 0;     /* isDistanceAppear */
+        if (in->invisible != *hidden) printf("halo %d %s at %d\n", in->row, *hidden ? "hidden" : "shown", (int)d);
+        in->invisible = *hidden;
+    }
+}
+
 static void update_rotors(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -13267,6 +13291,7 @@ void game_update(void)
     hip_hit = 0;
     game_frame++;
     update_rotors();
+    update_halos();
     update_railers();
     update_mario();
     update_seesaws(); /* after Mario: his hip drop (hip_hit) this frame */
