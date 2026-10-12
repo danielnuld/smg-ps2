@@ -150,6 +150,7 @@ typedef struct {
     int jstand;      /* JumpStand: holds Mario landing on it, then throws him up (update_jumpstands) */
     int warppod;     /* WarpPod: takes Mario to its pair (warp_try, warp_update) */
     int kiraira;     /* Kiraira: a chained mine, explodes on touch and recovers (update_kiraira, kiraira_pos) */
+    int kgun;        /* KillerGunnerSingle: charges and fires its shell (update_kgunners) */
     const float *meteor; /* MeteorStrike(Environment): its rail's JMap points; meteors fall along them (update_meteor) */
     int killer;      /* HomingKiller launcher: shoots a bullet that may chase Mario (update_killers) */
     int gcap;        /* GCaptureTarget: the pointer (R2) pulls Mario to it (gcap_try, gcap_update) */
@@ -1528,6 +1529,38 @@ static V3 kiraira_pos(const Inst *in, V3 *up)
     return vsub(p, vmul(*up, 43.0f * (0.7071068f - cosf(t))));
 }
 
+/* KillerGunnerSingle.cpp: Wait 120 frames, Charge until its KillerGunnerSingleCharge BTK stops (99 frames), Shoot
+ * playing KillerGunnerSingleShoot: its "shell" sensor, 250 at (0, 0, 700) in its frame, valid from step 0 to 40,
+ * hurts Mario (sendMsgEnemyAttackMaximum: damageLarge) and the nerve turns Attack; the BCK's end (59) back to Wait.
+ * row_turn the nerve (0 Wait, 1 Charge, 2 Shoot, 3 Attack), row_step its step. ponytail: the charge BTK is not shown,
+ * no KillerGunnerSingleSmoke effect (not in the FX table) */
+static void update_kgunners(void)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->kgun || !row_shown(in->row)) continue;
+        unsigned short *t = &row_step[in->row];
+        signed char *ph = &row_turn[in->row];
+        if (*ph == 0 && *t == 120) { *ph = 1; *t = 0; }
+        else if (*ph == 1 && *t >= 99) { /* isBtkStopped */
+            obj_play(in, "killergunnersingleshoot", 0, 0);
+            *ph = 2; *t = 0;
+        } else if (*ph == 2 || *ph == 3) {
+            if (*ph == 2 && *t < 40 && !mario->hurt_timer) {
+                V3 shell = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(vnorm(v3(in->m[8], in->m[9], in->m[10])), 700.0f));
+                if (vlen(vsub(c, shell)) < 250.0f) {
+                    hurt_mario(shell, MC.mJumpDistLargeDamage);
+                    *ph = 3;
+                    printf("killer gunner %d hits\n", in->row);
+                }
+            }
+            if (*t >= 59 || (in->anim && in->anim->done)) { *ph = 0; *t = 0; continue; } /* isBckStopped */
+        }
+        ++*t;
+    }
+}
+
 static void update_kiraira(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -2608,6 +2641,7 @@ void game_rebind(void)
         in->jstand = strcmp(name, "JumpStand") == 0;
         in->warppod = strcmp(name, "WarpPod") == 0;
         in->kiraira = strcmp(name, "Kiraira") == 0;
+        in->kgun = strcmp(name, "KillerGunnerSingle") == 0;
         in->meteor = NULL;
         in->killer = strcmp(name, "HomingKiller") == 0;
         in->gcap = strcmp(name, "GCaptureTarget") == 0;
@@ -2893,6 +2927,36 @@ int game_test_spot(void)
             return i;
         }
     }
+    return -1;
+}
+
+int game_test_kgun(void)
+{
+    test_nolost = 1;
+    for (int i = 0; i < ninsts; i++) { /* the first KillerGunnerSingle: Mario 700 along its Z (its shell sensor), still */
+        const Inst *in = &insts[i];
+        if (!in->kgun) continue;
+        V3 z = vnorm(v3(in->m[8], in->m[9], in->m[10])), p = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(z, 700.0f));
+        mario->up = up_at(p, mario->up);
+        mario->pos = vsub(p, vmul(mario->up, HIT_BODY_H));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->walk = 0;
+        return in->row;
+    }
+    int ty = scene_type(sc, "KillerGunnerSingle"); /* its zone not in yet: Mario by its row, the zone streams in */
+    for (u32 i = 0; i < sc->nobjs; i++)
+        if (sc->objs[i].type == ty) {
+            V3 p = row_pos(&sc->objs[i]);
+            mario->up = up_at(p, mario->up);
+            mario->pos = vadd(p, vmul(mario->up, 300.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return -2;
+        }
+    return -1;
+}
+
+int game_test_kgun_state(void)
+{
+    for (int i = 0; i < ninsts; i++) if (insts[i].kgun) return row_turn[insts[i].row] * 1000 + row_step[insts[i].row];
     return -1;
 }
 
@@ -11478,6 +11542,7 @@ void game_update(void)
     update_jumpstands();
     update_tsuki();
     update_kiraira();
+    update_kgunners();
     update_meteor();
     update_killers();
     update_flows();

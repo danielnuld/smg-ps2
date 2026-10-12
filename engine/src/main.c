@@ -628,6 +628,12 @@ int main(void)
         if (frame % 120 == 0 && frame <= 1800)
             printf("shoot test f %u: star pieces out %d\n", frame, game_pieces_out());
 #endif
+#ifdef KGUN_TEST
+        if (frame >= 400 && frame < 1200 && frame % 10 == 0) { /* Mario held at the first KillerGunnerSingle's shell */
+            int row = game_test_kgun();
+            if (frame % 50 == 0) printf("kgun test f %u: row %d state %d life %d misses %d\n", frame, row, game_test_kgun_state(), game_life(), game_misses());
+        }
+#endif
 #ifdef PLANT_TEST
         if (frame >= 400 && frame % 10 == 0) { /* after the ScenarioStarter flight (350) */
             static int k;

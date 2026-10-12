@@ -32,6 +32,8 @@ int game_test_cannon(void);
 /* Test builds: Mario walking through the k-th member of the plant groups holding items, its group row; -2 the group's
  * members are not placed yet (Mario put over it), -1 no more */
 int game_test_plant(int k);
+int game_test_kgun(void);
+int game_test_kgun_state(void);
 /* Test builds: Mario held in the first LavaSteam's vent (his touch sphere 100 up it); its row or -1 */
 int game_test_steam(void);
 /* Test builds: Mario held in the first LavaGeyser's column (his centre 300 up it); its row or -1 */
