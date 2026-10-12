@@ -634,6 +634,12 @@ int main(void)
             if (frame % 50 == 0) printf("ibubble test f %u: row %d pieces out %d\n", frame, row, game_pieces_out());
         }
 #endif
+#ifdef HHP_TEST
+        if (frame >= 400 && frame < 2400) { /* Mario before the HammerHeadPackun, a spin in its Rest, a trample */
+            int st = game_test_hhp();
+            if (frame % 50 == 0) printf("hhp test f %u: %d\n", frame, st);
+        }
+#endif
 #ifdef OROCK_TEST
         if (frame >= 400 && frame < 2400 && frame % 2 == 0) { /* Mario before the OtaRocks, spinning coconuts back */
             int st = game_test_orock();

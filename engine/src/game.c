@@ -152,6 +152,7 @@ typedef struct {
     int kiraira;     /* Kiraira: a chained mine, explodes on touch and recovers (update_kiraira, kiraira_pos) */
     int kgun;        /* KillerGunnerSingle: charges and fires its shell (update_kgunners) */
     int orock;       /* OtaRock: throws coconuts and fire balls, down by a coconut sent back (update_orocks) */
+    int hhp;         /* HammerHeadPackun: swings its head at Mario, down by a stomp in its chance (update_hhps) */
     int ibubble;     /* ItemBubble: bobs holding coins / star pieces, bursts at a touch or a shot (update_ibubbles) */
     const float *meteor; /* MeteorStrike(Environment): its rail's JMap points; meteors fall along them (update_meteor) */
     int killer;      /* HomingKiller launcher: shoots a bullet that may chase Mario (update_killers) */
@@ -323,6 +324,18 @@ static struct {
 } orocks[MAX_OROCKS];
 static int norocks;
 static int orock_of(int row);
+static int hhp_blow(V3 p, float rad);
+static int hhp_of(int row);
+static V3 hhp_joint(const Inst *in, int k, int j, float x);
+static const Model *m_pleaf; /* HammerHeadPackun's leaf */
+#define MAX_HHPS 4
+enum { HH_WAIT, HH_SEARCH, HH_ATTACK, HH_REST, HH_RECOVER, HH_DAMAGE, HH_RISE, HH_HIT, HH_CROW, HH_SMASHKILL,
+       HH_BLOWKILL };
+static struct {
+    int row, nrv, step, imm, ct, clen, spun;
+    V3 pos, up, f; /* _94, _A0 */
+} hhps[MAX_HHPS];
+static int nhhps;
 static const Model *m_ota, *m_otafoot, *m_coco, *m_fireball2, *m_firebubble, *m_otamagma, *m_otalfoot;
 /* OtaKingMagma's clip (startBckThisAndBloomModel); one-shots go back to Wait (Down: EndWait) at their end */
 void ota_lfoot_mtx(int k, float out[16]);
@@ -1052,6 +1065,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     mario = mem_alloc(MEM_PLAYER, sizeof(Player));
     nkillers = 0;
     norocks = 0;
+    nhhps = 0;
     nflows = 0;
     kari_cling = 0;
     for (int i = 0; i < 5; i++) kari_slot[i] = -1;
@@ -2467,7 +2481,7 @@ static void update_coconuts(void)
                 memcpy(in->m0, rm, 48);
             }
         }
-        int broken = 0;
+        int broken = in->cstrong && hhp_blow(in->head, rad); /* HammerHeadPackun: isMsgToEnemyAttackBlow */
         if (in->cstrong) /* sendMsgToEnemyAttackBlow */
             for (int k = 0; k < nkuribo && !broken; k++) {
                 Kuribo *e = &kuribo[k];
@@ -2648,6 +2662,7 @@ void game_rebind(void)
     m_bubble = scene_model(s, "AirBubble");
     m_ota = scene_model(s, "OtaKing"); m_otafoot = scene_model(s, "OtaKingFoot"); m_coco = scene_model(s, "CocoNut");
     m_otamagma = scene_model(s, "OtaKingMagma"); m_otalfoot = scene_model(s, "OtaKingLongFoot");
+    m_pleaf = scene_model(s, "PackunLeaf");
     m_fireball2 = scene_model(s, "FireBall"); m_firebubble = scene_model(s, "FireBubble");
     m_sambohead = scene_model(s, "CocoSamboHead");
     m_dino = scene_model(s, "DinoPackun"); m_dball = scene_model(s, "DinoPackunTailBall"); m_degg = scene_model(s, "DinoPackunEggShell");
@@ -2731,6 +2746,7 @@ void game_rebind(void)
         in->kiraira = strcmp(name, "Kiraira") == 0;
         in->kgun = strcmp(name, "KillerGunnerSingle") == 0;
         in->orock = strcmp(name, "OtaRock") == 0;
+        in->hhp = strcmp(name, "HammerHeadPackun") == 0;
         in->ibubble = strcmp(name, "ItemBubble") == 0;
         if (in->ibubble) in->head = row_pos(r); /* its items' frame (_CC) trails the bubble */
         in->meteor = NULL;
@@ -3088,6 +3104,43 @@ int game_test_orock(void) /* the first OtaRock: Mario 700 in front, spinning at 
     int ty = scene_type(sc, "OtaRock");
     for (u32 i = 0; i < sc->nobjs; i++)
         if (sc->objs[i].type == ty && !row_dead[i]) {
+            V3 p = row_pos(&sc->objs[i]);
+            mario->up = up_at(p, mario->up);
+            mario->pos = vadd(p, vmul(mario->up, 300.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return -2;
+        }
+    return -1;
+}
+
+int game_test_hhp(void) /* the HammerHeadPackun: Mario 650 in front until its Rest, then a spin on its head, then a
+                         * trample onto it in Damage; its zone first */
+{
+    test_nolost = 1;
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->hhp || row_dead[in->row]) continue;
+        int k = hhp_of(in->row);
+        if (k < 0) return -1;
+        typeof(&hhps[0]) o = &hhps[k];
+        V3 head = hhp_joint(in, k, 5, 120.0f);
+        if (o->nrv == HH_REST && o->step >= 10 && !o->spun && !mario->spin_timer) { /* beside its head, a spin */
+            mario->pos = vadd(vsub(head, vmul(o->up, vdot(vsub(head, o->pos), o->up))), vmul(vnorm(vcross(o->up, o->f)), 150.0f));
+            mario->up = o->up; mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            mario->spin_timer = SPIN_TIME;
+        } else if (o->nrv == HH_DAMAGE && o->step == 30) { /* over its head, falling */
+            mario->pos = vadd(head, vmul(o->up, 150.0f));
+            mario->up = o->up; mario->hvel = v3(0, 0, 0); mario->vup = -5.0f; mario->grounded = 0; mario->hip = 0;
+        } else if (o->nrv != HH_REST && o->nrv != HH_DAMAGE && o->nrv < HH_SMASHKILL) {
+            V3 at = vadd(o->pos, vmul(o->f, 650.0f));
+            if (vlen(vsub(mario->pos, at)) > 300.0f) { mario->pos = vadd(at, vmul(o->up, 100.0f)); mario->up = o->up; mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+        }
+        return o->nrv * 1000 + (o->step > 999 ? 999 : o->step);
+    }
+    int ty = scene_type(sc, "HammerHeadPackun");
+    for (u32 i = 0; i < sc->nobjs; i++)
+        if (sc->objs[i].type == ty) {
+            if (row_dead[i]) return -3;
             V3 p = row_pos(&sc->objs[i]);
             mario->up = up_at(p, mario->up);
             mario->pos = vadd(p, vmul(mario->up, 300.0f));
@@ -6844,6 +6897,7 @@ static void update_candles(void)
  * no fire throw / spin animations, no BGM_FIRE */
 static void fireball_hit_walkers(int b)
 {
+    if (hhp_blow(fireballs[b].pos, 80.0f)) { fireballs[b].t = 0; return; } /* HammerHeadPackun: isMsgFireBallAttack */
     for (int k = 0; k < nkuribo; k++) {
         Kuribo *e = &kuribo[k];
         if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_BUTTERFLY ||
@@ -6964,6 +7018,7 @@ static void update_jets(void)
             in->head = p;
             int gone = wall || ++jet.t >= (const int[]){300, 480, 300}[type] ||
                        vlen(vsub(p, v3(in->m0[12], in->m0[13], in->m0[14]))) > 10000.0f;
+            hhp_blow(p, 60.0f); /* HammerHeadPackun: isMsgJetTurtleAttack */
             for (int k = 0; k < nkuribo; k++) { /* ACTMES_JET_TURTLE_ATTACK */
                 Kuribo *e = &kuribo[k];
                 if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_BUTTERFLY ||
@@ -8877,6 +8932,279 @@ static int mario_offence(V3 c, float r, V3 grav)
         if (mario->spin_timer > 0 && mario_touch(c, r)) return MSG_HITALL;                     /* sendBodyAttack */
     }
     return MSG_NONE;
+}
+
+/* HammerHeadPackun.cpp after Petari (PackunFlower, its leaf PackunLeaf a PartsModel at Spin1 turned (0, -90, -90),
+ * 100 along it with arg0 > 0): Wait until Mario (his up along its own) is within 800, Search turning its front 1
+ * degree a frame to him (on its plane) until he is within 30 degrees of it, Attack (178: turning to him the first 60
+ * frames), Rest (Chance, 90), Recover (Recovery, 185), Wait. Its body sensor (Head + (120, 0, 0), 130) hurts Mario
+ * strongly while isAttackSensorValid (in Attack: Hit, then Crow 150), its stem sensors (blow at Spin1 120, push1-4
+ * at Spin2 / Spin3 45-60) hurt him; else they push him out. On its body while isChance (Rest, Damage, Recover <= 50,
+ * Rise <= 30): a hip drop (Mario sent off) or a trample, SmashKill (Down 36); a spin, Damage (SwoonStart 92, Swoon,
+ * Rise at 180: SwoonEnd 185) or Rise after 3 (mImmunityTime, reset in Rest). A PunchingKinoko on its blow sensor, a
+ * jet turtle, a fire ball or a blow from an enemy: BlowKill (BlowDown 60, stopScene 8). kill: its dead switch, 9
+ * star pieces from its Head (10, 40). A star piece is reflected. ponytail: no 2P pointer (Numb), no JointRumbler,
+ * no camera shake / rumble / sound, no hit or PointerTouchManual effects, no shadow; Mario's spin hits it once a
+ * spin (his sensor messages are not per frame here) */
+
+static int hhp_of(int row)
+{
+    for (int i = 0; i < nhhps; i++) if (hhps[i].row == row) return i;
+    if (nhhps == MAX_HHPS) return -1;
+    typeof(&hhps[0]) o = &hhps[nhhps];
+    memset(o, 0, sizeof *o);
+    const Row *r = &sc->objs[row];
+    float m[16], one[3] = {1, 1, 1};
+    mat_translate_rot_scale(m, r->pos, r->rot, one); /* initPosture: makeMtxTR, its Y and Z */
+    o->row = row; o->pos = row_pos(r); o->up = vnorm(v3(m[4], m[5], m[6])); o->f = vnorm(v3(m[8], m[9], m[10]));
+    o->nrv = HH_WAIT; o->step = -1;
+    return nhhps++;
+}
+
+static void hhp_set(int k, int nrv) { hhps[k].nrv = nrv; hhps[k].step = -1; }
+
+static const char *const hhp_clips[] = {"wait", "attack", "chance", "recovery", "swoonstart", "swoon", "swoonend",
+                                        "crow", "down", "blowdown"};
+static const short hhp_lens[] = {121, 178, 48, 185, 92, 65, 185, 150, 36, 60};
+static void hhp_bck(const Inst *in, int k, int c) /* startBck on it and its leaf */
+{
+    char n[48];
+    hhps[k].ct = 0; hhps[k].clen = hhp_lens[c];
+    if (in->anim) { snprintf(n, sizeof n, "hammerheadpackun/%s", hhp_clips[c]); anim_start(in->anim, n, 0); }
+    Anim *la = m_pleaf && m_pleaf->skin ? obj_anim((int)sc->nobjs + in->row, m_pleaf, "PackunLeaf") : NULL;
+    if (la) { snprintf(n, sizeof n, "packunleaf/%s", hhp_clips[c]); anim_start(la, n, 0); }
+}
+#define HHP_STOPPED(o) ((o)->ct >= (o)->clen)
+
+static V3 hhp_joint(const Inst *in, int k, int j, float x) /* joint j's world place + (x, 0, 0) on it */
+{
+    if (in->anim && in->anim->skin && j < in->anim->skin->njoints) {
+        float jm[16];
+        mat_mul(jm, in->m, in->anim->world[j]);
+        return v3(jm[12] + jm[0] * x, jm[13] + jm[1] * x, jm[14] + jm[2] * x);
+    }
+    return vadd(hhps[k].pos, vmul(hhps[k].up, 115.0f * (j - 1) + x));
+}
+
+static int hhp_in_range(int k) /* isTargetInRange */
+{
+    return vdot(mario->up, hhps[k].up) > 0.0f && vlen(vsub(mario->pos, hhps[k].pos)) < 800.0f;
+}
+
+static int hhp_player_dir(int k, V3 *d) /* calcPlayerDir */
+{
+    V3 v = vtangent(vsub(mario->pos, hhps[k].pos), hhps[k].up);
+    if (vlen(v) < 1e-3f) return 0;
+    *d = vnorm(v);
+    return 1;
+}
+
+static void hhp_turn_to(int k, V3 d, float deg) /* turnTo: at most deg, then verticalizeFrontVec */
+{
+    typeof(&hhps[0]) o = &hhps[k];
+    float c = vdot(o->f, d), a = acosf(c > 1.0f ? 1.0f : c < -1.0f ? -1.0f : c), mx = deg * 3.14159265f / 180.0f;
+    V3 ax = vcross(o->f, d);
+    ax = vlen(ax) > 1e-6f ? vnorm(ax) : o->up;
+    o->f = rot_axis(o->f, ax, a > mx ? mx : a);
+    o->f = vnorm(vtangent(o->f, o->up));
+}
+
+static int hhp_attack_valid(int k) /* isAttackSensorValid */
+{
+    int n = hhps[k].nrv, s = hhps[k].step;
+    return !(n == HH_ATTACK && s < 0) && n != HH_REST && !(n == HH_RECOVER && s <= 40) && n != HH_DAMAGE &&
+           !(n == HH_RISE && s < 60) && n != HH_SMASHKILL && n != HH_BLOWKILL;
+}
+
+static int hhp_chance(int k) /* isChance */
+{
+    int n = hhps[k].nrv, s = hhps[k].step;
+    return (n == HH_REST && s >= 0) || n == HH_DAMAGE || (n == HH_RECOVER && s <= 50) || (n == HH_RISE && s <= 30);
+}
+
+/* its six sensors: body, blow, push1-4 (initSensor) */
+static void hhp_sensors(const Inst *in, int k, V3 p[6], float r[6])
+{
+    p[0] = hhp_joint(in, k, 5, 120.0f); r[0] = 130.0f;
+    p[1] = hhp_joint(in, k, 2, 0.0f);   r[1] = 120.0f;
+    p[2] = hhp_joint(in, k, 3, 0.0f);   r[2] = 45.0f;
+    p[3] = hhp_joint(in, k, 3, 50.0f);  r[3] = 45.0f;
+    p[4] = hhp_joint(in, k, 4, 0.0f);   r[4] = 45.0f;
+    p[5] = hhp_joint(in, k, 4, 80.0f);  r[5] = 60.0f;
+}
+
+/* receiveMsgEnemyAttack (isMsgToEnemyAttackBlow) / receiveMsgPlayerAttack (jet turtle, fire ball): something of
+ * radius rad at p on any of its sensors blows it down; 1 if one took it */
+static int hhp_blow(V3 p, float rad)
+{
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->hhp || row_dead[in->row]) continue;
+        int k = hhp_of(in->row);
+        if (k < 0 || hhps[k].nrv == HH_SMASHKILL || hhps[k].nrv == HH_BLOWKILL) continue;
+        V3 sp[6];
+        float sr[6];
+        hhp_sensors(in, k, sp, sr);
+        for (int s = 0; s < 6; s++)
+            if (vlen(vsub(p, sp[s])) < sr[s] + rad) {
+                scene_stop = 8;
+                hhp_set(k, HH_BLOWKILL);
+                printf("hammer head packun %d blown\n", in->row);
+                return 1;
+            }
+    }
+    return 0;
+}
+
+static int hhp_reflects(V3 p, float rad) /* isMsgStarPieceReflect on any of its sensors */
+{
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->hhp || row_dead[in->row]) continue;
+        int k = hhp_of(in->row);
+        if (k < 0) continue;
+        V3 sp[6];
+        float sr[6];
+        hhp_sensors(in, k, sp, sr);
+        for (int s = 0; s < 6; s++) if (vlen(vsub(p, sp[s])) < sr[s] + rad) return 1;
+    }
+    return 0;
+}
+
+static void update_hhps(void)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->hhp || row_dead[in->row]) continue;
+        int k = hhp_of(in->row);
+        if (k < 0) continue;
+        typeof(&hhps[0]) o = &hhps[k];
+        if (in->md && in->md->skin) in->anim = obj_anim(in->row, in->md, "HammerHeadPackun");
+        Anim *la = m_pleaf && m_pleaf->skin ? obj_anim((int)sc->nobjs + in->row, m_pleaf, "PackunLeaf") : NULL;
+        int st = ++o->step;
+        o->ct++;
+        V3 d;
+        switch (o->nrv) {
+        case HH_WAIT:
+            if (!st) hhp_bck(in, k, 0);
+            if (hhp_in_range(k)) hhp_set(k, HH_SEARCH);
+            break;
+        case HH_SEARCH:
+            if (hhp_player_dir(k, &d)) {
+                hhp_turn_to(k, d, 1.0f);
+                if (vdot(d, o->f) >= cosf(30.0f * 3.14159265f / 180.0f)) hhp_set(k, HH_ATTACK); /* isInFieldOfView */
+            }
+            break;
+        case HH_ATTACK:
+            if (!st) hhp_bck(in, k, 1);
+            if (st <= 60 && hhp_player_dir(k, &d)) hhp_turn_to(k, d, 1.0f); /* turnToAttackVec(60): never past 60 */
+            if (HHP_STOPPED(o)) hhp_set(k, HH_REST);
+            break;
+        case HH_REST:
+            if (!st) { hhp_bck(in, k, 2); o->imm = 0; }
+            if (st == 90) hhp_set(k, HH_RECOVER);
+            break;
+        case HH_RECOVER:
+            if (!st) hhp_bck(in, k, 3);
+            if (HHP_STOPPED(o)) hhp_set(k, HH_WAIT);
+            break;
+        case HH_DAMAGE:
+            if (!st) { hhp_bck(in, k, 4); o->imm++; }
+            if (o->clen == hhp_lens[4] && HHP_STOPPED(o)) hhp_bck(in, k, 5); /* isBckOneTimeAndStopped: Swoon */
+            if (st == 180) hhp_set(k, HH_RISE);
+            break;
+        case HH_RISE:
+            if (!st) hhp_bck(in, k, 6);
+            if (HHP_STOPPED(o)) {
+                if (hhp_in_range(k)) { hhp_bck(in, k, 0); hhp_set(k, HH_SEARCH); }
+                else hhp_set(k, HH_WAIT);
+            }
+            break;
+        case HH_HIT:
+            if (HHP_STOPPED(o)) hhp_set(k, HH_CROW); /* the Attack clip runs on */
+            break;
+        case HH_CROW:
+            if (!st) hhp_bck(in, k, 7);
+            if (HHP_STOPPED(o)) hhp_set(k, HH_WAIT);
+            break;
+        case HH_SMASHKILL: case HH_BLOWKILL:
+            if (!st) { hhp_bck(in, k, o->nrv == HH_SMASHKILL ? 8 : 9); printf("hammer head packun %d down\n", in->row); }
+            if (HHP_STOPPED(o)) { /* kill */
+                launch_pieces(hhp_joint(in, k, 5, 0.0f), o->up, 9, 10.0f, 40.0f);
+                row_kill(in->row);
+                game_rebind();
+                return;
+            }
+            break;
+        }
+        if (la) anim_update(la);
+        basis_matrix(in->m, o->pos, o->up, o->f, 0); /* calcAndSetBaseMtx */
+        const float *s3 = sc->objs[in->row].scale;
+        for (int j = 0; j < 3; j++) { in->m[j] *= s3[0]; in->m[4 + j] *= s3[1]; in->m[8 + j] *= s3[2]; }
+        V3 sp[6];
+        float sr[6];
+        hhp_sensors(in, k, sp, sr);
+        int killing = o->nrv == HH_SMASHKILL || o->nrv == HH_BLOWKILL;
+        for (int j = 0; j < ninsts && !killing; j++) /* attackSensor: its blow sensor on a PunchingKinoko */
+            if (insts[j].punch && !row_dead[insts[j].row] && vlen(vsub(insts[j].head, sp[1])) < sr[1] + 70.0f) {
+                scene_stop = 8;
+                hhp_set(k, HH_BLOWKILL);
+                printf("punching kinoko %d blows hammer head packun %d\n", insts[j].row, in->row);
+                killing = 1;
+            }
+        if (mario->spin_timer <= 0) o->spun = 0;
+        /* Mario's attacks on its body (receiveMsgPlayerAttack) */
+        int msg = mario_offence(sp[0], sr[0], vmul(o->up, -1.0f));
+        if (killing) {
+            if (msg == MSG_TRAMPLE) { mario->vup = 15.0f; mario->grounded = 0; }
+        } else if (hhp_chance(k) && msg == MSG_HIPDROP) { /* sendMsgAwayJump */
+            hhp_set(k, HH_SMASHKILL);
+            mario->hip = 0; mario->vup = 20.0f; mario->grounded = 0;
+            mario->hvel = vmul(vnorm(vtangent(vsub(mario->pos, sp[0]), mario->up)), 5.0f);
+            continue;
+        } else if (hhp_chance(k) && msg == MSG_TRAMPLE) {
+            hhp_set(k, HH_SMASHKILL);
+            mario->vup = 15.0f; mario->grounded = 0;
+            continue;
+        } else if (hhp_chance(k) && msg == MSG_HITALL && !o->spun) {
+            o->spun = 1;
+            hhp_set(k, o->imm >= 3 ? HH_RISE : HH_DAMAGE);
+            printf("hammer head packun %d spun (%d)\n", in->row, o->imm);
+            continue;
+        }
+        /* its sensors on Mario (attackSensor) */
+        for (int s = 0; s < 6; s++) {
+            float dist = vlen(vsub(c, sp[s]));
+            if (dist >= sr[s] + HIT_BODY_R) continue;
+            if (s && !mario->hurt_timer) hurt_mario(sp[s], 15.0f); /* sendMsgEnemyAttack */
+            else if (!s && !killing && hhp_attack_valid(k) && !mario->hurt_timer) { /* sendMsgEnemyAttackStrong */
+                hurt_mario(sp[0], 25.0f);
+                if (o->nrv == HH_ATTACK && o->step >= 0) hhp_set(k, HH_HIT);
+            } else { /* sendMsgPush */
+                V3 out = vtangent(vsub(c, sp[s]), mario->up);
+                float l = vlen(out);
+                if (l > 1e-3f) mario->pos = vadd(mario->pos, vmul(out, (sr[s] + HIT_BODY_R - dist) / l));
+            }
+        }
+    }
+}
+
+static void draw_hhp_leaves(void) /* PartsModel PackunLeaf: Spin1 x makeMtxTR((100 with arg0 > 0, 0, 0), (0, -90, -90)) */
+{
+    if (!m_pleaf || !m_pleaf->skin) return;
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->hhp || row_dead[in->row] || !in->anim || !in->anim->skin || in->anim->skin->njoints < 3) continue;
+        Anim *la = obj_anim((int)sc->nobjs + in->row, m_pleaf, "PackunLeaf");
+        if (!la) continue;
+        float jm[16], fx[16], m[16], one[3] = {1, 1, 1}, rot[3] = {0, -90.0f, -90.0f};
+        float tr[3] = {sc->objs[in->row].arg[0] > 0 ? 100.0f : 0.0f, 0, 0};
+        mat_mul(jm, in->m, in->anim->world[2]);
+        mat_translate_rot_scale(fx, tr, rot, one);
+        mat_mul(m, jm, fx);
+        render_skinned(m_pleaf, m, (const float (*)[16])la->drw);
+    }
 }
 
 /* ---- WalkerStateWander (TerritoryMover 500): Wait mWaitTime, Walk at most mWalkTime to a random point ---- */
@@ -11632,6 +11960,7 @@ static void update_shots(void)
             printf("star piece explodes kiraira %d" "\n", in->row);
             hit = 1;
         }
+        if (!hit && hhp_reflects(s->pos, 30.0f)) hit = 1; /* HammerHeadPackun: isMsgStarPieceReflect */
         for (int k = 0; k < ninsts && !hit; k++) { /* ItemBubble: isMsgStarPieceAttack bursts it */
             Inst *in = &insts[k];
             if (!in->ibubble || !row_shown(in->row) || vlen(vsub(s->pos, bubble_pos(in))) > 120.0f * 1.2f * sc->objs[in->row].scale[0]) continue;
@@ -11880,6 +12209,7 @@ void game_update(void)
     update_kiraira();
     update_kgunners();
     update_orocks();
+    update_hhps();
     update_ibubbles();
     update_meteor();
     update_killers();
@@ -12415,6 +12745,7 @@ void game_draw(void)
             render_skinned(m_otalfoot, m, (const float (*)[16])ota.lfoot[k]->drw);
         }
     }
+    draw_hhp_leaves();
     for (int k = 0; k < norocks; k++) { /* OtaRocks' coconuts and fire balls */
         for (int b = 0; m_coco && b < 4; b++) {
             if (!orocks[k].ball[b].state) continue;
