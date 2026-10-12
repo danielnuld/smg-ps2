@@ -10290,8 +10290,8 @@ static V3 firebar_ball(const Inst *in, int j, int k)
 /* ShootingStar.cpp: it appears arg2 (default 2000) up its y from its place, growing for 20 frames, then falls 25 a
  * frame spinning 10 degrees a frame; on the ground it bursts into arg0 star pieces (default 5) of the arg3 it holds
  * (default 5), hides for arg1 frames (default 240) and starts over until it holds none; after 360 frames of falling it
- * starts over. row_turn: 0 appearing, 1 falling, 2 waiting; row_step its frames; row_hold the pieces left.
- * ponytail: the pieces are dropped in a ring (drop_pieces), not thrown */
+ * starts over. row_turn: 0 appearing, 1 falling, 2 waiting; row_step its frames; row_hold the pieces left. The burst
+ * is appearStarPiece(arg0, 15, sLaunchYVel 40). ponytail: the binder's NoAction wall filter is not applied */
 static V3 shoot_pos(const Inst *in, float *k)
 {
     const Row *r = &sc->objs[in->row];
@@ -10322,7 +10322,7 @@ static void update_shooting(void)
             if (!collide_n(&q, up, 100.0f, &gn, &wn, &wall) && !wall) continue;
             int n = r->arg[0] >= 0 ? r->arg[0] : 5;
             if (n > row_hold[row]) n = row_hold[row];
-            drop_pieces(p, up, n);
+            launch_pieces(p, up, n, 15.0f, 40.0f);
             row_hold[row] -= n;
             *ph = 2; *t = 0;
             if (!row_hold[row]) row_dead[row] = 1;

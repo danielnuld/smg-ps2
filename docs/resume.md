@@ -324,8 +324,7 @@ part, test, then add the missing systems. Left, in order:
   a. Improvised still: Mario's slope slide (SLIP_ACCEL: MarioSlip.cpp slopeMove needs the KCL floor codes in
      collide_n, and isSlipFloorCode decompiles inverted: true for code 0), Plant / FlowerGroup clips (drawn still;
      the nerves, push / spin-storm shake by distance, hint every 300 and items by touch only are ported),
-     QuestionCoin's throw (arg0 > 0: only GhostShipCaveZone, Phantom; its Appear effect is not in the FX table), ShootingStar's thrown
-     pieces now launched but its timing to check, TicoFat / Tico talk, CollapsePlane collision shrink (non-uniform KCL),
+     QuestionCoin's throw (arg0 > 0: only GhostShipCaveZone, Phantom; its Appear effect is not in the FX table), TicoFat / Tico talk, CollapsePlane collision shrink (non-uniform KCL),
      OtaKingMagma collision / BTK, Rock BTK size frame, the walkers' shadows.
   b. Classes Good Egg places that have no behaviour: HammerHeadPackun, Petari (the enemy), KillerGunnerSingle,
      OtaRock, ItemBubble, TakoBarrelA, DropOfWater, PhantomShip parts, SideSpikeMoveStepA, BroadBeanMoveStep,
