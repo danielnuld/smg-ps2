@@ -506,7 +506,8 @@ static V3 start_pos;
 static int life = MAX_LIFE, max_life = MAX_LIFE, misses, lives = START_LIVES, stars;
 static void miss(void);
 static int got_coins, got_purple, got_pieces;
-static float spin_angle;
+/* CoinRotater (degrees a frame): coins 8, QuestionCoin its in-water matrix 4; StarPiece 15; PowerStar::processWait 3 */
+static float coin_rot, qcoin_rot, piece_rot, star_rot;
 static V3 cam_pos;
 static const Model *m_packunhead;
 static const Model *m_coin, *m_purple, *m_piece, *m_kuribo, *m_takohei, *m_packun, *m_kotebug, *m_spider, *m_meramera, *m_takobo, *m_mkoopa, *m_kari, *m_kmini, *m_karon, *m_teresa, *m_bfly, *m_stink, *m_unizo[3], *m_note, *m_poihana;
@@ -11518,7 +11519,10 @@ void game_update(void)
     collect(purple, npurple, 100.0f, &got_purple, FX_PURPLECOIN_COINGET);
     collect(pieces, npieces, 120.0f, &got_pieces, FX_STARPIECE_STARPIECEGET);
     update_cursor();
-    spin_angle += 0.08f;
+    coin_rot = fmodf(coin_rot + 8.0f * 0.0174533f, 6.2831853f);
+    qcoin_rot = fmodf(qcoin_rot + 4.0f * 0.0174533f, 6.2831853f);
+    piece_rot = fmodf(piece_rot + 15.0f * 0.0174533f, 6.2831853f);
+    star_rot = fmodf(star_rot + 3.0f * 0.0174533f, 6.2831853f);
     CamTarget t = {mario->pos, mario->face, mario->up, !mario->grounded, mario->launch >= 0 && fly_on, fly_hy};
     camera_update(&t);
     V3 w, u;
@@ -11574,14 +11578,14 @@ static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle)
     m[12] = pos.x; m[13] = pos.y; m[14] = pos.z;
 }
 
-static void draw_pickups(const Pickup *p, int n, const Model *md, u8 r, u8 g, u8 b)
+static void draw_pickups(const Pickup *p, int n, const Model *md, u8 r, u8 g, u8 b, float rot)
 {
     float m[16];
     if (!md) return;
     for (int i = 0; i < n; i++) {
         if (!pickup_shown(&p[i])) continue;
         V3 up = up_at(p[i].pos, v3(0, 1, 0));
-        basis_matrix(m, p[i].pos, up, v3(0, 0, 1), spin_angle);
+        basis_matrix(m, p[i].pos, up, v3(0, 0, 1), rot);
         render_model(md, m, r, g, b);
     }
 }
@@ -11777,13 +11781,20 @@ void game_draw(void)
         } else if (in->item == ITEM_STAR) { /* spins about its own up */
             float rot[16], cm[16];
             mat_identity(rot);
-            rot[0] = rot[10] = cosf(spin_angle);
-            rot[8] = sinf(spin_angle); rot[2] = -rot[8];
+            rot[0] = rot[10] = cosf(star_rot);
+            rot[8] = sinf(star_rot); rot[2] = -rot[8];
             mat_mul(cm, in->m, rot);
             int state;
             V3 p = star_pos(in, &state);
             if (!state) continue;
             cm[12] = p.x; cm[13] = p.y; cm[14] = p.z;
+            inst_draw(in, in->md, cm);
+        } else if (in->item == ITEM_QCOIN) { /* its base matrix x the CoinRotater's in-water Y turn */
+            float rot[16], cm[16];
+            mat_identity(rot);
+            rot[0] = rot[10] = cosf(qcoin_rot);
+            rot[8] = sinf(qcoin_rot); rot[2] = -rot[8];
+            mat_mul(cm, in->m, rot);
             inst_draw(in, in->md, cm);
         } else
             inst_draw(in, in->md, in->m);
@@ -11867,9 +11878,9 @@ void game_draw(void)
             render_model(m_erail, m, 0x70, 0xB0, 0x60);
         }
     }
-    draw_pickups(coins, ncoins, m_coin, 0xF0, 0xD0, 0x30);
-    draw_pickups(purple, npurple, m_purple, 0xB0, 0x50, 0xF0);
-    draw_pickups(pieces, npieces, m_piece, 0x60, 0xD0, 0xF0);
+    draw_pickups(coins, ncoins, m_coin, 0xF0, 0xD0, 0x30, coin_rot);
+    draw_pickups(purple, npurple, m_purple, 0xB0, 0x50, 0xF0, coin_rot);
+    draw_pickups(pieces, npieces, m_piece, 0x60, 0xD0, 0xF0, piece_rot);
     for (int i = 0; m_piece && i < MAX_SHOTS; i++)
         if (shots[i].t) {
             basis_matrix(m, shots[i].pos, up_at(shots[i].pos, v3(0, 1, 0)), shots[i].vel, game_frame * 0.5f);
@@ -12019,7 +12030,7 @@ void game_draw(void)
     }
     for (int k = 0; m_piece && k < nfats; k++) /* TicoFat's gifted star pieces */
         for (int g = 0; g < 8; g++) if (fats[k].gift[g].on) {
-            basis_matrix(m, fats[k].gift[g].pos, up_at(fats[k].gift[g].pos, v3(0, 1, 0)), v3(0, 0, 1), spin_angle);
+            basis_matrix(m, fats[k].gift[g].pos, up_at(fats[k].gift[g].pos, v3(0, 1, 0)), v3(0, 0, 1), piece_rot);
             render_model(m_piece, m, 0x60, 0xD0, 0xF0);
         }
     draw_sambo_heads();
