@@ -346,6 +346,10 @@ static struct {
 static int nhhps;
 static void seesaw_matrix(Inst *in);
 static int nseesaws;
+static int nfollows;
+#define MAX_FOLLOWS 8
+#define FOLLOW_N 16
+static struct { int row, nrv, step, n, slot[FOLLOW_N], alive; float angle; V3 x, y, z, off[FOLLOW_N], vel[FOLLOW_N]; } follows[MAX_FOLLOWS];
 #define MAX_SEESAWS 8
 static struct { int row, nrv, step, hip; float vel, angle; } seesaws[MAX_SEESAWS];
 static int seesaw_of(int row);
@@ -1101,6 +1105,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nhhps = 0;
     nvines = 0; vine_ride = -1;
     nseesaws = 0;
+    nfollows = 0;
     nflows = 0;
     kari_cling = 0;
     for (int i = 0; i < 5; i++) kari_slot[i] = -1;
@@ -3279,6 +3284,29 @@ int game_test_seesaw(int phase) /* the first PhantomShipHandle: Mario dropped 15
             mario->up = up_at(p, mario->up); mario->pos = vadd(p, vmul(mario->up, 400.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
             return -2;
         }
+    return -1;
+}
+
+int game_test_follow(int phase) /* the first StarPieceFollowGroup: its SW_A on (phase 0), Mario still; phase 1: Mario put
+                                 * on its first piece left; returns pieces out << 8 | taken */
+{
+    test_nolost = 1;
+    int ty = scene_type(sc, "StarPieceFollowGroup");
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if (r->type != ty || r->sw[SW_A] < 0) continue;
+        if (phase == 0 && !sw_on(r, SW_A)) sw_set(r, SW_A, 1);
+        int out = 0;
+        for (int j = 0; j < nfollows; j++)
+            if (follows[j].row == (int)i)
+                for (int q = 0; q < follows[j].n; q++)
+                    if (pieces[follows[j].slot[q]].alive != PICK_GONE) {
+                        out++;
+                        if (phase == 1 && out == 1) { mario->pos = vsub(pieces[follows[j].slot[q]].pos, vmul(mario->up, 50.0f)); }
+                    }
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return out << 8 | got_pieces;
+    }
     return -1;
 }
 
@@ -11241,6 +11269,107 @@ static void launch_pieces(V3 p, V3 up, int n, float h, float v)
 /* StarPiece::exeFall: x 0.97 then gravity 1 a frame; off the ground (binder 40) it keeps only its upward part, at
  * least 20 (it hops in place); taken after 25 frames (mGettableDelayCounter), gone after 600 or in a death area */
 static int in_death(V3 p);
+
+/* StarPieceFollowGroup.cpp: dead until its SW_A comes on (a SwitchCube); then, unless its SW_B is on, arg0 (6) star
+ * pieces (in EggStar 2 at most 100 minus Mario's: isStageStarPieceFollowGroupLimit) appear on a ring of arg2 (350)
+ * round it and follow Mario (FollowToPlayer): their axes eased 0.25 a frame to his side / front / up, each piece set to
+ * his place + 10 x his velocity + its ring point (cos / sin of its angle, the ring turning 0.025 a frame) x (1 + 0.25
+ * cos 3 x angle); taken at a touch. After arg1 (1200) frames FollowEnd: after 20 they drift out (0.05 x their ring
+ * offset) and along his way (10); at 120 the rest vanish and its SW_A goes off; all taken but one: it dies.
+ * ponytail: no StarPieceFlyingBlur effect; the pieces' velocity is their move (no binder, as in FollowPlayer) */
+static int follow_limit;
+void game_set_piece_follow_limit(int on) { follow_limit = on; }
+static void update_follow_groups(void)
+{
+    int ty = scene_type(sc, "StarPieceFollowGroup");
+    if (ty < 0) return;
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if (r->type != ty || r->sw[SW_A] < 0 || row_dead[i]) continue;
+        int k = -1;
+        for (int j = 0; j < nfollows; j++) if (follows[j].row == (int)i) k = j;
+        if (k < 0) {
+            if (nfollows == MAX_FOLLOWS || !sw_on(r, SW_A)) continue;
+            k = nfollows++;
+            memset(&follows[k], 0, sizeof follows[0]);
+            follows[k].row = (int)i;
+        }
+        typeof(&follows[0]) o = &follows[k];
+        V3 side = vnorm(vcross(mario->up, mario->face)), up = mario->up, fr = mario->face;
+        float rad = r->arg[2] != -1 ? (float)r->arg[2] : 350.0f;
+        int limit = r->arg[1] != -1 ? r->arg[1] : 1200;
+        if (!o->alive) { /* onSwitchA: beginFollowPieces */
+            if (!sw_on(r, SW_A)) continue;
+            if (r->sw[SW_B] >= 0 && sw_on(r, SW_B)) { row_dead[i] = 1; continue; }
+            int n = r->arg[0] != -1 ? r->arg[0] : 6;
+            if (follow_limit) { if (got_pieces >= 100) { row_dead[i] = 1; continue; } if (n > 100 - got_pieces) n = 100 - got_pieces; }
+            if (n > FOLLOW_N) n = FOLLOW_N;
+            float m[16];
+            mat_translate_rot_scale(m, r->pos, r->rot, r->scale);
+            V3 x = v3(m[0], m[1], m[2]), z = v3(m[8], m[9], m[10]);
+            o->n = 0;
+            if (!pieces_base) pieces_base = npieces;
+            for (int j = 0; j < n; j++) { /* placementPiece */
+                int slot = -1;
+                for (int q = pieces_base; q < npieces && slot < 0; q++) if (pieces[q].alive == PICK_GONE && pieces[q].row < 0 && !piece_t[q]) slot = q;
+                if (slot < 0) { if (npieces >= pieces_cap) break; slot = npieces++; }
+                float a = 6.2831853f * j / n;
+                pieces[slot].pos = vadd(row_pos(r), vadd(vmul(z, cosf(a) * rad), vmul(x, sinf(a) * rad)));
+                pieces[slot].row = -1; pieces[slot].alive = PICK_ON; piece_t[slot] = 0;
+                o->slot[o->n++] = slot;
+            }
+            o->alive = 1; o->nrv = 0; o->step = -1; o->angle = 0;
+            printf("star piece follow group %u: %d pieces\n", i, o->n);
+        }
+        int st = ++o->step, left = 0;
+        for (int j = 0; j < o->n; j++) left += pieces[o->slot[j]].alive != PICK_GONE;
+        V3 mv = vadd(mario->hvel, vmul(mario->up, mario->vup));
+        if (o->nrv == 0) { /* FollowToPlayer */
+            if (st == 0) { o->x = side; o->z = fr; o->y = up; }
+            V3 *ax[3] = {&o->x, &o->z, &o->y}, to[3] = {side, fr, up}; /* updateAxises 0.25 */
+            for (int a = 0; a < 3; a++) {
+                V3 c = vcross(*ax[a], to[a]);
+                float d = vdot(*ax[a], to[a]);
+                if (vlen(c) > 1e-6f) *ax[a] = vnorm(rot_axis(*ax[a], vnorm(c), acosf(d > 1 ? 1 : d < -1 ? -1 : d) * 0.25f));
+            }
+            V3 at = vadd(mario->pos, vmul(mv, 10.0f));
+            float a = o->angle;
+            int gone = 0;
+            for (int j = 0; j < o->n; j++) {
+                a += 6.2831853f / o->n;
+                Pickup *pc = &pieces[o->slot[j]];
+                if (pc->alive == PICK_GONE) { if (++gone == o->n - 1) left = 0; continue; }
+                V3 v = vadd(vmul(o->x, cosf(a) * rad), vmul(o->z, sinf(a) * rad));
+                o->off[j] = v;
+                o->vel[j] = vsub(vadd(at, vmul(v, 1.0f + 0.25f * cosf(3.0f * a))), pc->pos);
+                pc->pos = vadd(pc->pos, o->vel[j]);
+            }
+            o->angle += 0.025f;
+            if (st > limit) { o->nrv = 1; o->step = -1; }
+        } else { /* FollowEnd */
+            V3 way = vlen(mv) > 1e-6f ? vnorm(mv) : v3(0, 0, 0);
+            int gone = 0;
+            for (int j = 0; j < o->n; j++) {
+                Pickup *pc = &pieces[o->slot[j]];
+                if (pc->alive == PICK_GONE) { if (++gone == o->n - 1) left = 0; continue; }
+                if (st > 20) o->vel[j] = vadd(o->vel[j], vmul(o->off[j], 0.05f));
+                o->vel[j] = vadd(o->vel[j], vmul(way, 10.0f));
+                pc->pos = vadd(pc->pos, o->vel[j]);
+            }
+            if (st > 120) { /* kill, offSwitchA, allKillPieces */
+                sw_set(r, SW_A, 0);
+                for (int j = 0; j < o->n; j++) pieces[o->slot[j]].alive = PICK_GONE;
+                left = 0;
+            }
+        }
+        if (!left) { /* kill */
+            for (int j = 0; j < o->n; j++) pieces[o->slot[j]].alive = PICK_GONE;
+            o->alive = 0; o->n = 0;
+            printf("star piece follow group %u over\n", i);
+        }
+    }
+}
+
 static void update_launched_pieces(void)
 {
     for (int i = pieces_base; pieces_base && i < npieces; i++) {
@@ -13123,6 +13252,7 @@ void game_update(void)
     if (mario->spin_timer == SPIN_TIME - 1) mario_fx(FX_MARIO_SPINLIGHT, 1.0f); /* a spin started this frame */
     if (hip_hit) mario_fx(FX_MARIO_HIPDROPFLOWER, 0.0f);
     update_launched_pieces();
+    update_follow_groups();
     update_wrecks();
     update_kuribo();
     kari_director();

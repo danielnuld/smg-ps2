@@ -507,6 +507,7 @@ int main(void)
     render_load_textures(&scene, 0, 0);
     game_init(&scene, blob);
     mem_mark(&base_mark);
+    game_set_piece_follow_limit(!strcmp(scen, "EggStarGalaxy/2"));
     { /* CometEventKeeper::sTimeLimitInfoTable: the Red / Black comet scenarios' limits (seconds) */
         static const struct { const char *scen; int secs; } limits[] = {
             {"EggStarGalaxy/4", 240}, {"StarDustGalaxy/4", 240}, {"SandClockGalaxy/4", 270}, {"CannonFleetGalaxy/4", 360},
@@ -632,6 +633,12 @@ int main(void)
         if (frame >= 400 && frame < 1100 && frame % 10 == 0) { /* off the first ItemBubble until 700, then into each */
             int row = game_test_ibubble(frame >= 700);
             if (frame % 50 == 0) printf("ibubble test f %u: row %d pieces out %d\n", frame, row, game_pieces_out());
+        }
+#endif
+#ifdef FOLLOW_TEST
+        if (frame >= 400 && frame < 1000) { /* a StarPieceFollowGroup round Mario, then he takes its pieces one by one */
+            int st = game_test_follow(frame >= 480 && frame % 10 == 0);
+            if (frame % 20 == 0) printf("follow test f %u: out %d, Mario's pieces %d\n", frame, st >> 8, st & 255);
         }
 #endif
 #ifdef SEESAW_TEST

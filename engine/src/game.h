@@ -38,6 +38,9 @@ int game_test_hhp(void);
 int game_test_vine(void);
 int game_test_petari(void);
 int game_test_seesaw(int phase);
+int game_test_follow(int phase);
+/* EggStar 2 (isStageStarPieceFollowGroupLimit): StarPieceFollowGroups give at most 100 minus Mario's star pieces */
+void game_set_piece_follow_limit(int on);
 int game_test_ibubble(int touch);
 int game_test_kgun_state(void);
 /* Test builds: Mario held in the first LavaSteam's vent (his touch sphere 100 up it); its row or -1 */
