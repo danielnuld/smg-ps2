@@ -332,6 +332,8 @@ part, test, then add the missing systems. Left, in order:
   c. Systems: talk / messages, sound effects, real lighting, wipes, multi-actor cameras (Dino damage camera),
      footprints (FootPrint decals), looping / attached effects (Smoke trails, Glow), BTK / BRK animation at run time
      (lava, water, per-instance colours: Butterfly arg0), bloom models, shadows.
+  Known: our collision can hold Mario airborne in a crevice between faces too steep for ground (EggStar 3 bath
+     rim, seen in `route`: jumping, nearly still); Petari's Binder would slide him out.
   Known: the camera goes to (0, 0, 0) in some zones (Factory 1 `hip`, CannonFleet 1 `spin`, before part 2 too): XZ_PARA
      there, likely a zero zone matrix in zone_pose's to_world (game_debug now prints camtype).
   d. Full repack of every galaxy (PATH record, FX ids, ANIM / SKIN changes), then the coverage run (task 5.3).

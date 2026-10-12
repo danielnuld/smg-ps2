@@ -233,6 +233,7 @@ static signed char *row_turn;    /* per OBJS row: its direction (+1 / -1, 0 not 
 static unsigned short *row_hold; /* frames it still holds at the end of its turn */
 static float *row_coord, *row_speed; /* per OBJS row: a rail-moving map part's distance along its rail, its speed */
 static signed char *row_rdir;    /* its direction (+1 / -1; 0 not started, 2 stopped) */
+static unsigned char *row_mp_a;  /* per OBJS row: its SW_A came on once (MapObjActor::exeWait started its parts) */
 static unsigned short *row_rhold; /* frames it still waits at a rail point */
 static const unsigned char *scene_blob_g; /* the scene blob (PATH) for rebinds */
 static int hip_hit, hip_inst;   /* Mario landed a hip drop this frame, on instance hip_inst (-1 none) */
@@ -955,6 +956,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     row_coord = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(float));
     row_speed = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(float));
     row_rdir = mem_alloc(MEM_OBJECTS, s->nobjs);
+    row_mp_a = mem_alloc(MEM_OBJECTS, s->nobjs);
     row_rhold = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(unsigned short));
     for (u32 i = 0; i < s->nobjs; i++) /* ShootingStar: star pieces it still holds (declareStarPiece arg3) */
         if (strcmp(s->types + 32 * s->objs[i].type, "ShootingStar") == 0)
@@ -3596,6 +3598,11 @@ int game_test_ota(void)
     if (ota.row < 0) return -1;
     V3 at = vadd(ota.pos, vmul(ota.f0, 1800.0f)); /* on its bath's rim (1600 - 2000 out, about its base's height) */
     if (ota.nrv == OTA_WAITONSWITCH) { mario->pos = vadd(at, vmul(ota.up, 300.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+    int back = 0;
+    for (int b = 0; b < OTA_BALLS; b++) back |= ota.ball[b].state == 3;
+    if (!back && ota.nrv != OTA_WAITONSWITCH && (vlen(vsub(mario->pos, at)) > 900.0f || (mario->jumping && mario->air_timer > 300))) { /* a rally lost: back to the rim */
+        mario->pos = vadd(at, vmul(ota.up, 300.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+    }
     for (int b = 0; b < OTA_BALLS; b++) /* a ball coming back: he steps onto its line (sideways, as a player would) */
         if (ota.ball[b].state == 3) {
             V3 d = vnorm(ota.ball[b].vel), rel = vsub(mario->pos, ota.ball[b].pos);
@@ -9891,6 +9898,19 @@ static void carry(const float old[16], const Inst *in)
  * turns that far, holds RotateStopTime frames, then RotateType 0 stops, 1 swings back, 2 goes on; MoveConditionType
  * other than 0 waits for Mario on it. Mario standing on one (last frame's ground) is carried along. ponytail: constant
  * speed (no RotateAccelType easing), no start sign motion */
+/* MapObjActor's map parts functions (rotator, rail mover): with SW_A they wait in exeWait until it comes on, then run
+ * on; with SW_B they run only while it is on (listenStageSwitchOnOffB: start / endMapPartsFunctions); without either
+ * they start at init. SideSpikeMoveStep's star pointer stop (WalkerStateBindStarPointer) is the 2P pointer's only
+ * (isStarPointerPointing2POnPressButton), so a "SideSpikeMoveStepA" is its rail mover alone in one-player */
+static int mp_running(const Row *r, int row)
+{
+    if (r->sw[SW_A] >= 0 && !row_mp_a[row]) {
+        if (!sw_on(r, SW_A)) return 0;
+        row_mp_a[row] = 1;
+    }
+    return r->sw[SW_B] < 0 || sw_on(r, SW_B);
+}
+
 static void update_rotors(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -9898,6 +9918,7 @@ static void update_rotors(void)
         if (!in->rotor) continue;
         const Row *r = &sc->objs[in->row];
         int row = in->row, packed = r->arg[7], type = packed & 15, cond = packed >> 8 & 15, hold = packed >> 12 & 0x3FFF;
+        if (!mp_running(r, row)) continue;
         if (!row_turn[row]) {
             if (cond && mario_ground != i) continue;
             row_turn[row] = 1;
@@ -9935,6 +9956,7 @@ static void update_railers(void)
         const Row *r = &sc->objs[in->row];
         const unsigned char *e = in->railer;
         int row = in->row, cond = r->arg[7] >> 8 & 15, stop = *(const int *)(e + 16);
+        if (!mp_running(r, row)) continue;
         u32 np = *(const u32 *)(e + 8), nr = *(const u32 *)(e + 12);
         const unsigned char *pa = e + 24 + 12 * np + 12 * nr; /* nr x {f32 coord, s32 arg0, s32 arg5} */
         float len = *(const float *)(pa + 12 * (nr - 1));
@@ -12119,7 +12141,8 @@ void game_debug(char *out, int n)
              (int)mario->pos.z, (int)(mario->up.x * 100), (int)(mario->up.y * 100), (int)(mario->up.z * 100), (int)cam_pos.x, (int)cam_pos.y,
              (int)cam_pos.z, ground_flips, slip_frames);
     size_t l = strlen(out);
-    snprintf(out + l, n - l, " camtype %s", camera_type_name());
+    snprintf(out + l, n - l, " camtype %s g%d j%d k%d h%d w%d m%d", camera_type_name(), mario->grounded, mario->jumping,
+             mario->jump_kind, mario->hip, mario->walling, mario->magic);
 }
 
 int game_coins(void) { return got_coins; }
