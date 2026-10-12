@@ -629,7 +629,7 @@ int main(void)
             printf("shoot test f %u: star pieces out %d\n", frame, game_pieces_out());
 #endif
 #ifdef PLANT_TEST
-        if (frame >= 120 && frame % 10 == 0) {
+        if (frame >= 400 && frame % 10 == 0) { /* after the ScenarioStarter flight (350) */
             static int k;
             int row = game_test_plant(k);
             if (row >= 0) k++;

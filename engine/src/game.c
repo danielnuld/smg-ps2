@@ -574,9 +574,14 @@ static int nlogic; /* pipe_zone: the exit pipe's zone, wanted in full */
  * the ground along gravity (a 1000 ray from 100 above), dropped when nothing is under it. Placed once per group, the
  * first rebind its zone has collision (plant_row; plant_state 0 not yet, 1 placed). arg1 of the members (shuffled)
  * hide a coin, or a star piece when arg2 is 1: Mario moving through one (within 50 * scale_y of his touch sphere,
- * PlantMember::tryPush) or spinning by it brings it out (update_plants). ponytail: the ray is stepped spheres; no
- * shaking, the star piece is dropped, not thrown */
-typedef struct { V3 pos, up; int ok, item; } Plant;
+ * PlantMember::tryPush) shakes it; a member shaken by a touch gives its item (update_plants). Mario's spin within the
+ * group's sensor + 600 (ACTMES_SPIN_STORM_RANGE) shakes the members by distance but gives nothing. Every 300 frames
+ * one member with an item plays HintShake. ponytail: the ray is stepped spheres; the members are drawn still (their
+ * Wait / Shake / HintShake clips are not played) and the HintShakeLeaf effect is not in the FX table */
+typedef struct { V3 pos, up; int ok, item; short nrv, step; char touch; } Plant;
+enum { PL_WAIT, PL_HINT, PL_WEAK, PL_MIDDLE, PL_STRONG }; /* PlantMember nerves */
+typedef struct { V3 c; float r; int hint_t, hint_i; } PlantGroupS; /* its bounding centre, sensor radius, hint timer */
+static PlantGroupS *pgroups; /* per OBJS row */
 static Plant *plants;
 static int *plant_first;           /* per OBJS row: index of its first member in plants, -1 not a group */
 static unsigned char *plant_state; /* per OBJS row */
@@ -1146,6 +1151,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         int total = 0;
         plant_first = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(int));
         plant_state = mem_alloc(MEM_OBJECTS, s->nobjs);
+        pgroups = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(PlantGroupS));
         for (u32 i = 0; i < s->nobjs; i++) {
             int t = s->objs[i].type;
             plant_first[i] = -1;
@@ -1161,6 +1167,9 @@ void game_init(const Scene *s, const unsigned char *blob)
                 int j = rand() % (k + 1), t = g[k].item;
                 g[k].item = g[j].item; g[j].item = t;
             }
+            for (int k = 0; k < n; k++) { g[k].nrv = PL_WAIT; g[k].step = 0; g[k].touch = 3; }
+            pgroups[i].hint_t = (3 + rand() % 7) * 10; /* MR::getRandom(3, 10) * 10 */
+            pgroups[i].hint_i = 0;
         }
     }
     shells = mem_alloc(MEM_OBJECTS, ((count_type("IronCannonLauncherPoint", 0) + count_type("IronCannonLauncher", 0)) *
@@ -2477,6 +2486,18 @@ static void place_plants(const Inst *in)
         if (angle >= 6.2831f) { ring++; angle = 0; step = 6.2831853f / (ring * 6); radius = 160.0f * ring; }
     }
     plant_state[row] = hits > 0; /* none: its ground is not loaded yet, try again at the next rebind */
+    V3 lo = c, hi = c; /* calcBoundingSphereRadius: the box of the placed members from the centre (its else-if kept) */
+    for (int k = 0; k < n; k++) {
+        const Plant *p = &plants[plant_first[row] + k];
+        if (!p->ok) continue;
+        if (p->pos.x < lo.x) lo.x = p->pos.x; else if (hi.x < p->pos.x) hi.x = p->pos.x;
+        if (p->pos.y < lo.y) lo.y = p->pos.y; else if (hi.y < p->pos.y) hi.y = p->pos.y;
+        if (p->pos.z < lo.z) lo.z = p->pos.z; else if (hi.z < p->pos.z) hi.z = p->pos.z;
+    }
+    V3 sz = vsub(hi, lo);
+    float br = (sz.x < sz.y ? (sz.y < sz.z ? sz.z : sz.y) : (sz.x < sz.z ? sz.z : sz.x)) / 2.0f;
+    pgroups[row].c = vmul(vadd(hi, lo), 0.5f);
+    pgroups[row].r = 160.0f + br * r->scale[1]; /* sSize + radius x scale */
 }
 
 void game_rebind(void)
@@ -2889,8 +2910,8 @@ int game_test_plant(int k)
             if (!m->ok || k--) continue;
             mario->pos = m->pos;
             mario->up = m->up;
-            mario->hvel = vmul(vnorm(vtangent(v3(1, 0, 0), m->up)), 2.0f);
-            mario->vup = 0;
+            mario->face = vnorm(vtangent(v3(1, 0, 0), m->up));
+            mario->walk = 0.2f; mario->vup = 0; /* walking through it (a move of 2.6 a frame) */
             return i;
         }
     }
@@ -10397,15 +10418,18 @@ static void update_geyser(void)
     }
 }
 
+/* PlantMember's clip lengths (Flower / FlowerBlue / CutBush archives): Shake 39 frames played from hShakeStartFrame 3
+ * at hWeakRate 0.5 / hMiddleRate 1 / hStrongRate 1.5, HintShake 92 */
+static int plant_clip_len(int nrv) { return nrv == PL_HINT ? 92 : nrv == PL_WEAK ? 72 : nrv == PL_MIDDLE ? 36 : 24; }
+
 static void update_plants(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    int moving = vdot(mario->hvel, mario->hvel) >= 2.0f || mario->spin_timer > 0;
     for (int i = 0; i < ninsts; i++) /* groups whose ground was not loaded at their rebind: again while Mario is near */
         if (insts[i].plant && plant_first[insts[i].row] >= 0 && !plant_state[insts[i].row] &&
             vlen(vsub(c, v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]))) < 4000.0f)
             place_plants(&insts[i]);
-    for (int i = 0; moving && i < ninsts; i++) {
+    for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
         if (!in->plant || plant_first[in->row] < 0 || !row_shown(in->row) ||
             vlen(vsub(c, v3(in->m[12], in->m[13], in->m[14]))) > in->reach + 1000.0f)
@@ -10433,14 +10457,54 @@ static void update_plants(void)
             printf("small stone %d broken" "\n", in->row);
             continue;
         }
-        for (int k = 0; k < n; k++) {
-            Plant *p = &plants[plant_first[in->row] + k];
-            if (!p->ok || !p->item || vlen(vsub(c, p->pos)) > 50.0f * r->scale[1] + HIT_BODY_R) continue;
-            p->item = 0;
-            if (r->arg[2] == 1) drop_pieces(p->pos, p->up, 1);
-            else pop_coins(p->pos, p->up, 1);
-            printf("plant group %d: item out\n", in->row);
+        if (plant_state[in->row] != 1) continue;
+        PlantGroupS *g = &pgroups[in->row];
+        Plant *mb = &plants[plant_first[in->row]];
+        for (int k = 0; k < n; k++) { /* PlantGroup::control: animControl, then the nerve */
+            Plant *p = &mb[k];
+            if (!p->ok) continue;
+            if (p->item && ((p->nrv == PL_WEAK && p->touch == 1) ||
+                            ((p->nrv == PL_MIDDLE || p->nrv == PL_STRONG) && (p->touch == 1 || p->touch == 2)))) {
+                p->item = 0; /* generateItem: a coin pop, or a star piece (appearStarPiece 10, 40) */
+                if (r->arg[2] == 1) drop_pieces(p->pos, p->up, 1);
+                else pop_coins(p->pos, p->up, 1);
+                printf("plant group %d: item out\n", in->row);
+            }
+            p->step++;
+            if (p->nrv != PL_WAIT && p->step >= plant_clip_len(p->nrv)) { p->nrv = PL_WAIT; p->step = 0; } /* isBckStopped */
         }
+        if (--g->hint_t <= 0) { /* emitHintEffect */
+            g->hint_t = 300;
+            int idx = (n + g->hint_i) % n;
+            do {
+                if (mb[idx].ok && mb[idx].item && mb[idx].nrv == PL_WAIT) {
+                    mb[idx].nrv = PL_HINT; mb[idx].step = 0;
+                    g->hint_i = (idx + n + 1) % n;
+                    break;
+                }
+                idx = (idx + n + 1) % n;
+            } while (idx != g->hint_i);
+        }
+        float gd = vlen(vsub(c, g->c));
+        if (mario->spin_timer > 0 && mario->spin_t < 15 && gd < g->r + 600.0f) /* ACTMES_SPIN_STORM_RANGE: tryShake */
+            for (int k = 0; k < n; k++) {
+                Plant *p = &mb[k];
+                if (!p->ok || (p->nrv >= PL_WEAK && p->step < 20)) continue; /* hIsShakableStep */
+                float d = vlen(vtangent(vsub(c, p->pos), p->up));
+                int nv = d < 100.0f ? PL_STRONG : d < 300.0f ? PL_MIDDLE : d < 500.0f ? PL_WEAK : -1;
+                if (nv >= 0) { p->nrv = (short)nv; p->step = 0; }
+            }
+        V3 mv = vtangent(mario->vel, mario->up);
+        if (gd < g->r + 100.0f && vdot(mv, mv) >= 2.0f) /* attackSensor: Mario's body sensor (100) moving: tryPush */
+            for (int k = 0; k < n; k++) {
+                Plant *p = &mb[k];
+                if (!p->ok || (p->nrv >= PL_WEAK && p->step < 20)) continue;
+                float rr = 100.0f + 50.0f * r->scale[1]; /* + sCollisionRadius x scale */
+                if (vdot(vsub(c, p->pos), vsub(c, p->pos)) >= rr * rr) continue;
+                p->touch = 1;
+                p->nrv = p->nrv <= PL_HINT ? PL_WEAK : p->nrv == PL_WEAK ? PL_MIDDLE : PL_STRONG;
+                p->step = 0;
+            }
     }
 }
 
