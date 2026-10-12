@@ -281,6 +281,19 @@ Last updated 2026-10-09. Detail and numbers: `docs/phase2-report.md`; tasks: `op
     BenefitItem turn / appear-ground / escape; EarthenPipe bound sequence (`pipe_bind`); FlipPanel clips;
   - tryStartAllAnim: placed classes whose archive holds `<archive>.bck` are drawn skinned playing it (`AUTO_SKINNED`);
   - effects added to `tools/jpa.py` FX (fx_tab.h regenerated): every pack needs a repack.
+- Good Egg fidelity rewrite, part 2 (2026-10-12): Mario's movement after Petari (`m_*` in game.c): every constant from
+  gMarioConstDefault (`tools/mario_const.py vendor/Petari engine/src/mario_const.h`, struct MC with Petari's names);
+  inputStick (x 1.5, angle snap), mainMove (standing turn over 10 degrees, turn speeds by walk speed, weak turn,
+  U-turn arc, turn ready / ターンブレーキ, stick margins, wall push), decideWalkSpeed / updateWalkSpeed / decideInertia
+  (sSpeedTable / sWalkTargetTable, slow start, start spin), decideWalkAnimation (基本 blend: heaviest of WalkSoft /
+  Walk / Run / Wait, its speed from the foot steps, RunEnd brake, DamageWait), squat walk; tryJump (1st / 2nd / 3rd,
+  turn, long, back), tryDrop (mDropWaitTime grace), procJump (mGravityJumping x mGravityRatioA 0.5 while A is held or
+  falling: a single jump now reaches ~270, airborne ~49 frames), doAirWalk, the spin jump (mSpinJumpGravity, 24
+  frames) and 空パンチ, MarioMagic's ground spin, jumpToHipDrop / procHipDrop, MarioWall (stick, slide, kick with the
+  triangle-jump mirror), doLanding (run on, hard landing, landing clips); interpolation frames from marioAnimeTable.
+  Tested: EggStar 1-4 `route` (all four stars), `hip` (Factory 1), `walker`, `bench` on EggStar packs.
+  ponytail gaps: our collision for the Binder (no ceiling, height by probe), no 2D / skate / ice / sand / slider /
+  side step / slip up / cliff hold, the standing turn snaps (no drawn ease), one clip of each blend.
 
 ## How to run
 
@@ -305,8 +318,7 @@ there needs the embedded blob and every pack rebuilt.
 **Where the 2026-10-12 session stopped (resume here):** the fidelity rewrite of Good Egg, part 1 above, was built
 and tested on EggStar only (dino, route 1-4 ...; see the commit). The user's order: first finish every improvised
 part, test, then add the missing systems. Left, in order:
-  a. Improvised still: Mario himself (movement constants / states are ours, not MarioActor's: the biggest one),
-     Plant / FlowerGroup spin wave, SpinDriver (-75 ring offset, stick steering), QuestionCoin, ShootingStar's thrown
+  a. Improvised still: Mario's slope slide (SLIP_ACCEL: Petari's slopeMove / MarioSlip not ported), Plant / FlowerGroup spin wave, SpinDriver (-75 ring offset, stick steering), QuestionCoin, ShootingStar's thrown
      pieces now launched but its timing to check, TicoFat / Tico talk, CollapsePlane collision shrink (non-uniform KCL),
      OtaKingMagma collision / BTK, Rock BTK size frame, the walkers' shadows.
   b. Classes Good Egg places that have no behaviour: HammerHeadPackun, Petari (the enemy), KillerGunnerSingle,

@@ -14,6 +14,7 @@
 #include "pad.h"
 #include "render.h"
 #include "vmath.h"
+#include "mario_const.h"
 
 /* Gameplay subset of HeavensDoorGalaxy scenario 2, data-oriented: one compact array per type, sized at load,
  * no allocation per object. Behaviour follows Petari where noted; differences are listed in docs/phase1-report.md. */
@@ -38,15 +39,38 @@ static int kari_cling, kari_timer; /* Karikari clinging to Mario (KarikariDirect
 typedef struct {
     V3 pos, up, hvel, face, ground_n, wall_n;
     float vup;
-    int grounded, spin_timer, spin_used, hurt_timer;
-    int jump_kind;      /* Petari's _430: 0-2 jump / 2nd / 3rd, 5 long jump, 6 back flip, 8 spin; -1 on ground */
-    int land_timer;     /* frames since landing (_3CE), for the 2nd / 3rd jump window */
-    int air_timer;      /* frames since take-off */
-    int last_jump;      /* jump_kind of the last jump, kept after landing */
-    int squat, wall;    /* squatting; touching a wall this frame (wall_n valid) */
-    int wall_timer;     /* frames since the last wall contact */
-    int low_grav;       /* frames left at the spin's low gravity */
+    int grounded, spin_timer, hurt_timer; /* mMovementStates._1; the punch hit timer (setPunchHitTimer) */
+    int jump_kind;      /* _430: 0-2 jump / 2nd / 3rd, 4 turn, 5 long jump, 6 back flip, 7 wall, 8 spin */
+    int land_timer;     /* _3CE: frames on the ground since landing */
+    int air_timer;      /* _3BC: frames since take-off */
+    int squat, wall;    /* mMovementStates._A; touching a wall this frame (wall_n valid) */
     int slip_keep;      /* frames Mario may still stand on a 60-85 degree slope before it slips (Petari _41C) */
+    /* Petari Mario's movement state (the Mario fields named after it) */
+    int jumping;        /* mMovementStates.jumping */
+    float walk;         /* mWalkSpeed (of MC.mWalkSpeed) */
+    int tsi;            /* mTargetWalkSpeedIndex */
+    float height;       /* mVerticalSpeed: height over the ground */
+    V3 vel, vel_after;  /* mVelocity, mVelocityAfter: this frame's move */
+    V3 sd, last_sd, move_dir, move_dir_keep; /* _22C, _238, _328, _334 */
+    V3 turn_cross, turn_cross3, turn_ready_front, turn_from; /* _244, _3D8, _3E4, _220 */
+    float stick_z0, stick_ang, stick_ang0, last_rx, last_ry; /* _38, _528, _524, _250 */
+    float retain_ang, start_spin_ratio; /* _2B4, _3F4 */
+    int retain_t, retain_a, retain_b; /* _40E, _10._A, _10._B */
+    int turning, u_turn, u_side, weak_turn; /* mMovementStates.turning, _10._C, _274, _3D4 */
+    int turn_ready, turn_slip, turn_brake, turn_neutral; /* _3D2, _3D0, mMovementStates._4, _10 */
+    int stand_neutral, stand_turn; /* _40C, _750 */
+    int slow_start, start_spin, start_spin2; /* _404, _3FA, _3FC */
+    int brake1, brake2; /* _71E, _71F */
+    int drop_grace;     /* _3C0 */
+    int connect, spin_lock, squat_lock, slip_front, squat_walk; /* mMovementStates._5, _2B, _21, _9, _26 */
+    int keep_jump, digital, neutral, wall_hit; /* _13, _E, _1D, _10._E */
+    int fall_t, back_t, air_walk_t, air_spin, air_lock, spin_kind, zero_gr; /* _3BE, _3CA, _3CC, _402, _428, _42A, _424 */
+    int hip_still;      /* _422 */
+    V3 hip_jv, jump_from, last_pos; /* _2F8, _4B0 */
+    int spin_cool, spin_t, magic; /* MarioActor _946, _945; MarioMagic active */
+    int walling, wall_t, wall_pull, wall_cancel; /* MarioWall: active, _14, _18, _1C */
+    float wall_drop;    /* MarioWall _20 */
+    V3 wall_jv0, wall_cancel_n; /* MarioWall _30, _24 */
     int launch, launch_t; /* launch star carrying Mario (-1 none) and frames since it caught him */
     int hip, hip_t;     /* hip drop: HIP_START / HIP_FALL / HIP_LAND (0 none), frames in that phase */
     V3 launch_from;     /* where Mario was caught */
@@ -79,49 +103,15 @@ typedef struct {
 static void init_launch(Launch *L, const Row *r, const float *pts, u32 np, int parab);
 static V3 launch_pos(const Launch *L, float t);
 
-/* Mario constants from Petari MarioConst.cpp gMarioConstDefault (units per frame at 60 Hz). Indices of the arrays
- * are the jump kinds of MarioJump.cpp (tryJump _430, trySquatJump 5, tryBackJump 6, trySpinJump / tryTornadoJump 8) */
-static const float JUMP_HEIGHT[9] = {22.0f, 26.0f, 36.0f, 24.0f, 32.0f, 15.0f, 32.0f, 22.0f, 1.0f}; /* mJumpHeight */
-static const float JUMP_GRAV[12] = {1.8f, 1.8f, 1.8f, 1.8f, 1.8f, 0.95f, 1.8f, 2.2f, 0.4f, 0.9f, 1.8f, 0.5f}; /* mGravityJumping */
-#define WALK_SPEED 13.0f          /* mWalkSpeed: full stick on the ground */
-#define INERTIA_MAX 0.9f          /* mInertiaStandardMax: while the stick is held */
-#define INERTIA_STOP 0.94f        /* mInertiaStandardStop: stick released */
-#define INERTIA_SQUAT 0.95f       /* mInertiaSquat */
-#define SQUAT_WALK 0.2f           /* mSquatWalkMaxSpeed (ratio of WALK_SPEED) */
-#define JUMP_FRONT 12.5f          /* mJumpFrontSpeed (times the walk ratio) */
-#define JUMP_CONNECT_TIME 7       /* mJumpConnectTime */
-#define JUMP_CONNECT_SPEED 0.6f   /* mJumpConnectSpeed (walk ratio needed for the 3rd jump) */
-#define SQUAT_JUMP_FRONT 16.5f    /* mSquatJumpFrontSpeed (long jump) */
-#define SQUAT_JUMP_BACK 5.0f      /* mSquatJumpBackSpeed (back flip) */
-#define LONG_JUMP_MIN 0.3f        /* trySquatJump when mWalkSpeed > 0.3 (MarioJump.cpp tryJump) */
-#define JUMP_FRONT_RED 0.98f      /* mJumpFrontReduction, from mJumpFrontReductionBeginTime */
-#define JUMP_FRONT_RED_T 15
-#define SQUAT_FRONT_RED 0.99f     /* mSquatJumpFrontReduction, from mSquatJumpFrontReductionBTime */
-#define SQUAT_FRONT_RED_T 30
-#define MAX_DROP 35.0f            /* mMaxDropSpeed[0] */
-#define MAX_JUMP_SPEED 32.0f      /* mMaxJumpSpeed: horizontal cap in the air */
-#define TORNADO_FRONT 5.0f        /* mJumpTornadoSpeed */
-#define SPIN_HEIGHT 12.0f         /* mSpinJumpHeight */
-#define SPIN_AIR_TIME 24          /* mAirWalkTimeSpin: frames at the spin's gravity */
-#define SPIN_TIME 30              /* mStartSpinTime: ground spin / cooldown */
-#define WALL_JUMP_XZ 13.0f        /* mWallJumpPowerXZ */
-#define WALL_JUMP_Y 30.0f         /* mWallJumpPowerY */
+/* Mario constants: MC (Petari MarioConst.cpp gMarioConstDefault, tools/mario_const.py) */
+#define SPIN_TIME 25              /* setPunchHitTimer(0x19): the spin's hit frames */
 #define SLIP_ANGLE_COS 0.5f       /* mSlipAngle 60: steeper ground is a slope Mario slips down */
 #define WALL_ANGLE_COS 0.087f     /* mForceWallAngle 85: steeper faces are walls; up to here they are ground */
 #define SLIP_KEEP 15              /* Mario::updateFloorCode: frames on a slope before its floor code turns slip */
 #define SLIP_ACCEL 1.2f           /* ponytail: slide speed gain per frame x sin(slope); Petari's slip move is not
                                    * ported, tune by eye */
 #define SLIP_MAX 30.0f
-#define WALL_KEEP 6               /* frames a wall contact stays valid (wall slide clip, wall kick) */
 #define GROUNDING 20.0f           /* mGravityGrounding: downward step while on the ground keeps Mario on crests */
-#define DROP_WAIT 5               /* mDropWaitTime: frames in the air before the fall clip (MarioMove.cpp:138) */
-#define TURN_STAND 0.9f           /* mTurnAngleSpeed (rad per frame, standing) */
-#define TURN_MOVE 0.15f           /* mTurnAngleSpeed2, above mFastTurnSpeed 0.1 (MarioMove.cpp:368-373) */
-#define AIR_CONTROL 0.1f          /* ponytail: one air steering factor instead of Petari's air-walk timers */
-#define GRAVITY_HIP_DROP 12.0f    /* mGravityHipDrop */
-#define LIMIT_SPEED_HIP_DROP 150.0f /* mLimitSpeedHipDrop */
-#define HIP_DROP_LIMIT_HEIGHT 100.0f /* mHipDropLimitHeight: no hip drop closer to the ground */
-#define HIP_DROP_ZERO_GR_TIME 2   /* mHipDropZeroGrTime: frames hanging after the start clip */
 enum { HIP_START = 1, HIP_FALL, HIP_LAND };
 #define BODY_RADIUS 50.0f        /* ponytail: one sphere for Mario's body; SMG uses several collision checks */
 #define HIT_BODY_H 80.0f          /* Mario's hit sensor for touches: centre this high, radius HIT_BODY_R (the
@@ -600,17 +590,22 @@ static int ground_flips, slip_frames;
 V3 slope_n;
 #endif /* bench: ground <-> air changes (flicker) and frames spent slipping */
 
-/* Interpolation frames per clip from Petari's marioAnimeTable (MarioAnimatorData.hpp, XanimeGroupInfo _8):
- * locomotion (基本) and squat 6, fall 15, long jump and its landing 6, back flip and its landing 6, triple-jump
- * landing 6, wall slide 10; jumps, plain landings, spins and the wall kick snap (0). */
+/* Interpolation frames per clip from Petari's marioAnimeTable (MarioAnimatorData.hpp, XanimeGroupInfo _8); one-shot
+ * clips start over when played again (changeAnimation) */
 static void mario_play(const char *clip, float speed, int loop)
 {
     static const struct { const char *clip; int frames; } t[] = {
-        {"wait", 6}, {"walk", 6}, {"run", 6}, {"squatwait", 6}, {"squatwalk", 6}, {"fall", 15}, {"jumpbroad", 6},
-        {"jumpbroadland", 6}, {"jumpback", 6}, {"jumpbackland", 6}, {"jumprollland", 6}, {"wallslide", 10}, {"slidehipforward", 6}};
+        {"wait", 6}, {"walk", 6}, {"walksoft", 6}, {"run", 6}, {"damagewait", 6}, {"squatwait", 2}, {"squatwalk", 2},
+        {"fall", 15}, {"jumpbroad", 6}, {"jumpbroadland", 6}, {"jumpback", 6}, {"jumpbackland", 6}, {"jumprollland", 6},
+        {"jumpturn", 6}, {"wallslide", 10}, {"slidehipforward", 6}, {"hipdropstart", 2}, {"hipdropland", 6},
+        {"brake", 4}, {"runend", 4}, {"wallhit", 6}, {"push", 6}, {"spin2nd", 1}, {"squatend", 6}};
     int f = 0;
     for (unsigned i = 0; i < sizeof t / sizeof t[0]; i++)
         if (strcmp(t[i].clip, clip) == 0) f = t[i].frames;
+    if (!loop && mario_anim->clip_id >= 0 && strcmp(sc->clips[mario_anim->clip_id].name, clip) == 0) {
+        mario_anim->frame = 0; mario_anim->done = 0; mario_anim->speed = speed; mario_anim->loop = 0;
+        return;
+    }
     anim_play(mario_anim, clip, speed, loop, f);
 }
 
@@ -1272,8 +1267,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     mario->pos = start_pos;
     mario->up = up_at(mario->pos, v3(0, 1, 0));
     mario->face = vnorm(vtangent(v3(0, 0, 1), mario->up));
-    mario->jump_kind = mario->last_jump = -1;
-    mario->wall_timer = 1000;
+    mario->jump_kind = 0; mario->stand_neutral = 10;
     mario->slip_keep = SLIP_KEEP;
     mario->launch = -1;
     cam_pos = vadd(mario->pos, vadd(vmul(mario->up, 500), vmul(mario->face, -1000)));
@@ -3999,7 +3993,7 @@ int game_test_hip(void)
     mario->up = up_at(p, mario->up);
     mario->pos = vadd(p, vmul(mario->up, in->reach + 500.0f));
     mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
-    mario->hip = HIP_START; mario->hip_t = 0; /* as if R1 was pressed up there */
+    mario->hip = HIP_START; mario->hip_t = 0; mario->jumping = 1; mario->zero_gr = MC.mHipDropZeroGrTime; /* as if R1 was pressed up there */
     if (mario_anim) mario_play("hipdropstart", 1.0f, 0);
     return in->row;
 }
@@ -4440,40 +4434,6 @@ static void draw_waterplants(void)
 
 /* --- update ---------------------------------------------------------------------------------------------- */
 
-static void start_jump(Player *m, int kind, V3 hvel, float vup, const char *clip)
-{
-    m->jump_kind = m->last_jump = kind;
-    m->hvel = hvel;
-    m->vup = vup;
-    m->grounded = 0;
-    m->air_timer = 0;
-    m->squat = 0;
-    if (mario_anim) mario_play(clip, 1.0f, 0);
-#ifdef BENCH
-    printf("jump %s\n", clip);
-#endif
-}
-
-/* Petari MarioJump.cpp: tryJump (2nd / 3rd jump within mJumpConnectTime of landing, the 3rd only above
- * mJumpConnectSpeed), trySquatJump (long jump), tryBackJump (back flip), trySpinJump, tryWallJump. */
-static void try_jump(Player *m, float ratio)
-{
-    if (m->squat) {
-        if (ratio > LONG_JUMP_MIN)
-            start_jump(m, 5, vmul(m->face, SQUAT_JUMP_FRONT), JUMP_HEIGHT[5], "jumpbroad");
-        else
-            start_jump(m, 6, vmul(m->face, -SQUAT_JUMP_BACK), JUMP_HEIGHT[6], "jumpback");
-        return;
-    }
-    int k = 0;
-    if (m->land_timer <= JUMP_CONNECT_TIME && m->last_jump >= 0 && m->last_jump < 2)
-        k = m->last_jump + 1;
-    if (k == 2 && ratio < JUMP_CONNECT_SPEED)
-        k = 0;
-    static const char *clips[3] = {"jump", "jump2", "jumproll"};
-    start_jump(m, k, vmul(m->face, ratio * JUMP_FRONT), JUMP_HEIGHT[k], clips[k]);
-}
-
 /* point at length d along a polyline */
 static V3 rail_at(const float *p, u32 n, float d)
 {
@@ -4580,7 +4540,7 @@ static int update_launch(Player *m)
         L->cool = 60;
         m->launch = -1;
         m->vup = vdot(L->kick, m->up); m->hvel = vtangent(L->kick, m->up); m->grounded = 0;
-        m->jump_kind = 0; m->air_timer = 0; m->spin_used = 0;
+        m->jump_kind = 0; m->air_timer = 0; m->spin_lock = 0;
         if (mario_anim) mario_play("spaceflyshortstart", 1.0f, 0);
         return 0;
     }
@@ -4612,7 +4572,7 @@ static int update_launch(Player *m)
     m->launch = -1;
     fly_on = 0;
     m->hvel = vtangent(step, m->up); m->vup = vdot(step, m->up); m->grounded = 0;
-    m->jump_kind = 0; m->air_timer = DROP_WAIT + 1; m->spin_used = 0;
+    m->jump_kind = 0; m->air_timer = 0; m->spin_lock = 0; m->jumping = 1; m->digital = 1; m->jump_from = m->pos;
     return 0;
 }
 
@@ -4838,7 +4798,7 @@ static int jbranch_update(Player *m)
         float proj = vlen(stick) > 0.1f ? vdot(vnorm(stick), jb.front) : 0.0f;
         V3 v = jump ? vadd(vmul(jb.front, 10.0f * proj), vmul(m->up, 16.0f)) : v3(0, 0, 0);
         m->hvel = vtangent(v, m->up); m->vup = vdot(v, m->up);
-        m->grounded = 0; m->jump_kind = 0; m->air_timer = 0; m->spin_used = 0;
+        m->grounded = 0; m->jump_kind = 0; m->air_timer = 0; m->spin_lock = 0;
         if (mario_anim) mario_play(jump ? "jumpspin" : "fall", 1.0f, 0);
         printf("jump branch row %d: %s" "\n", in->row, jump ? "jump" : "let go");
         jb.inst = -1; jb.cool = 30;
@@ -4939,7 +4899,7 @@ static int cocoon_try(Player *m)
 static void cocoon_release(Player *m, V3 v)
 {
     m->hvel = vtangent(v, m->up); m->vup = vdot(v, m->up);
-    m->grounded = 0; m->jump_kind = 0; m->air_timer = 0; m->spin_used = 0;
+    m->grounded = 0; m->jump_kind = 0; m->air_timer = 0; m->spin_lock = 0;
     coc.wait = coc.inst; coc.inst = -1; coc.phase = 0;
 }
 
@@ -6683,7 +6643,7 @@ static void fluff_end(Player *m, float jump)
     Inst *in = &insts[flf.inst];
     V3 up = up_at(in->head, m->up), v = vadd(vtangent(in->hvel, up), vmul(up, jump));
     m->hvel = vtangent(v, m->up); m->vup = jump > 0 ? vdot(v, m->up) : 0;
-    m->grounded = 0; m->jump_kind = 0; m->air_timer = 0; m->spin_used = 0;
+    m->grounded = 0; m->jump_kind = 0; m->air_timer = 0; m->spin_lock = 0;
     row_turn[in->row] = 2; row_step[in->row] = 0; /* FreeWaitInvalid */
     fluff_place(in);
     printf("fluff row %d: %s" "\n", in->row, jump > 0 ? "jump off" : "let go");
@@ -6821,6 +6781,854 @@ static int swim_update(Player *m)
     return 1;
 }
 
+/* --- Mario's movement --------------------------------------------------------------------------------------
+ * After Petari: Mario.cpp (update, actionMain, inputStick, writeBackPhyisicalVector, setFrontVecKeepUp), MarioMove.cpp
+ * (mainMove, decideInertia, calcShadowDir, retainMoveDir, isEnableTurn), MarioWalk.cpp (getTargetWalkSpeed,
+ * decideSquatWalkAnimation, decideWalkSpeed, decideWalkAnimation, updateBrakeAnimation, updateWalkSpeed, stopWalk),
+ * MarioJump.cpp (tryJump, tryTurnJump, trySquatJump, tryBackJump, trySpinJump, tryWallJump, tryDrop, initJumpParam,
+ * procJump, checkWallJumpHit, jumpToHipDrop, procHipDrop, doAirWalk, cancelTornadoJump, doLanding), MarioWall.cpp
+ * (checkWallStick, isEnableStickWall, MarioWall::start / update / startJump, moveWallSlide), MarioMagic.cpp (the ground
+ * spin), MarioActor.cpp updateSwingAction / MarioActorPunch.cpp trySpinPunch; constants MC (tools/mario_const.py).
+ * The gravity is -up; mJumpVec is hvel + up x vup. m->vel is the frame's move (mVelocity).
+ * ponytail: our collision (collide_n) stands in for the Binder / checkGround / checkAllWall: no distance to the ceiling
+ * (no ceiling hits, no squat uppercut), the height over the ground is a probe; no 2D, skate, ice, sand, slider, bee wall
+ * walk, slip up, side step, cliff hold, rabbit; the standing turn snaps (no drawn _74C ease); the quad walk blend
+ * (基本: WalkSoft / Walk / Run / Wait at sWeightTable) and その場足踏み (Run / Wait) play their heaviest clip */
+static V3 m_cx, m_cy;          /* the camera's axes on the plane under Mario (calcMoveDir) */
+static float m_sx, m_sy, m_sz; /* mStickPos */
+static float m_rx, m_ry;       /* the raw stick (MarioActor::getStickValue) */
+static V3 m_pad;               /* mWorldPadDir */
+static int m_req_jump;         /* isRequestJump: A this frame */
+static int m_draw_d;           /* mDrawStates._D: the stick held still (retainMoveDir) */
+
+static float ang_abs(V3 a, V3 b) /* MR::diffAngleAbs */
+{
+    float la = vlen(a), lb = vlen(b);
+    if (la == 0 || lb == 0) return 0;
+    float x = vdot(a, b) / (la * lb);
+    return x >= 1.0f ? 0.0f : x <= -1.0f ? 3.14159265f : acosf(x);
+}
+
+static float ang_abs_h(V3 a, V3 b, V3 up) { return ang_abs(vtangent(a, up), vtangent(b, up)); } /* diffAngleAbsHorizontal */
+
+static int blend_sphere(V3 a, V3 b, V3 *o, float t) /* MR::vecBlendSphere */
+{
+    float la = vlen(a), lb = vlen(b), d = la == 0 || lb == 0 ? 0 : ang_abs(a, b), l = la * (1 - t) + lb * t;
+    if (d < 0.1f) { *o = vmul(vnorm(vadd(vmul(vnorm(a), 1 - t), vmul(vnorm(b), t))), l); return 1; }
+    if (d >= 3.14159265f) return 0;
+    *o = vmul(vnorm(vadd(vmul(a, sinf(d * (1 - t))), vmul(b, sinf(d * t)))), l);
+    return 1;
+}
+
+static V3 rot_toward(V3 from, V3 to, V3 axis, float ang) /* MR::vecRotAxis */
+{
+    float d = ang_abs(from, to);
+    if (d == 0 || d <= ang) return to;
+    if (d < 3.14159265f && vdot(vcross(from, to), axis) < 0) ang = -ang;
+    return rot_axis(from, axis, ang);
+}
+
+static float clamp01(float f) { return f < 0 ? 0 : f > 1 ? 1 : f; }
+
+static V3 m_jv(const Player *m) { return vadd(m->hvel, vmul(m->up, m->vup)); }
+static void m_set_jv(Player *m, V3 j) { m->vup = vdot(j, m->up); m->hvel = vtangent(j, m->up); }
+static int m_rising(const Player *m) { return m->vup > 0; } /* isRising */
+
+static int m_clip_is(const char *name)
+{
+    return mario_anim && mario_anim->clip_id >= 0 && strcmp(sc->clips[mario_anim->clip_id].name, name) == 0;
+}
+static int m_clip_on(const char *name) { return m_clip_is(name) && (mario_anim->loop || !mario_anim->done); }
+static void m_clip_stop(void) { if (mario_anim && !mario_anim->loop) mario_anim->done = 1; } /* stopAnimation(nullptr) */
+
+static V3 m_move_dir(float x, float y) { return vadd(vmul(m_cx, x), vmul(m_cy, y)); } /* calcMoveDir */
+
+static V3 m_shadow(const Player *m, V3 v) /* calcShadowDir: v on the plane under Mario */
+{
+    V3 d = vnorm(v), n = m->up;
+    if (fabsf(vdot(d, n)) > fabsf(vdot(d, m->ground_n))) n = m->ground_n;
+    return vnorm(vcross(vcross(n, d), n));
+}
+
+static void m_front(Player *m, V3 v) /* setFrontVecKeepUp */
+{
+    V3 f = vtangent(v, m->up);
+    if (vlen(f) > 1e-4f) m->face = vnorm(f);
+    m->sd = m->face;
+}
+
+static int m_stick_front_back(const Player *m) /* checkStickFrontBack */
+{
+    if (m_sz != 0) {
+        float d = vdot(m_pad, vmul(m->face, -1.0f));
+        if (d < -0.5f) return 1;
+        if (d > 0.5f && !m->neutral) return 2;
+    }
+    return 0;
+}
+
+static int m_check_squat(Player *m, int a1) /* MarioModule::checkSquat: Z (R1) */
+{
+    if (kari_cling) return 0;
+    if (m->squat_lock) { if (!pad_held(PAD_R1)) m->squat_lock = 0; return 0; }
+    if (!a1 && !m->grounded && m->height > 100.0f) return 0;
+    return pad_held(PAD_R1);
+}
+
+/* Mario::inputStick: x 1.5, clamped, |stick| under 0.01 is 0, angles within mStickAngleMargin of an axis snap to it */
+static void m_input_stick(Player *m)
+{
+    float x = pad_lx(), y = pad_ly();
+    if (pad_held(PAD_UP)) y += 1.0f;
+    if (pad_held(PAD_DOWN)) y -= 1.0f;
+    if (pad_held(PAD_RIGHT)) x += 1.0f;
+    if (pad_held(PAD_LEFT)) x -= 1.0f;
+    m_rx = x; m_ry = y;
+    x = fminf(fmaxf(1.5f * x, -1.0f), 1.0f);
+    y = fminf(fmaxf(1.5f * y, -1.0f), 1.0f);
+    m->stick_z0 = m_sz;
+    float z = fminf(sqrtf(x * x + y * y), 1.0f);
+    if (z < 0.01f) z = 0;
+    float a = atan2f(y, x), q = 1.5707963f, mg = MC.mStickAngleMargin, r;
+    while (a < 0) a += 6.2831853f;
+    int quot = 0;
+    while (a > q) { a -= q; quot++; }
+    r = a >= q - mg ? q : a <= mg ? 0.0f : q / (q - 2.0f * mg) * (a - mg);
+    r += q * quot;
+    m_sx = z * cosf(r); m_sy = z * sinf(r); m_sz = z;
+    m->stick_ang0 = m->stick_ang; m->stick_ang = r;
+    if (z <= 0.01f) m->neutral = 0; /* _1D */
+    m_pad = vnorm(m_move_dir(m_sx, m_sy));
+}
+
+/* retainMoveDir: _D once the stick has kept its angle 30 frames (_40E) */
+static void m_retain(Player *m)
+{
+    float ang = atan2f(m_sy, m_sx), diff = fabsf(ang - m->retain_ang);
+    if (diff > 3.14159265f) diff = 6.2831853f - diff;
+    if (m_clip_on("run") && m->stand_turn) diff = 1.0f; /* その場足踏み */
+    if (m_clip_on("turn")) diff = 1.0f;
+    float limit = m->land_timer < 2 ? 0.1f : 0.06f;
+    if (m->retain_b) { if (m_sz != 0) m->retain_b = 0; diff = 1.0f; }
+    int retain = !(m->jumping && !m->retain_a) && !(m->jumping && m->wall);
+    m_draw_d = 0;
+    if (diff < limit && m_sz != 0 && retain) {
+        if (!m->retain_t || (m->retain_a && m->jumping)) { m_draw_d = 1; m->retain_t = 0; }
+        else m->retain_t--;
+    } else {
+        if (m->jumping) { if (m_sz != 0) m->retain_a = 0; }
+        else m->retain_a = 1;
+        if (!m->retain_t) m->weak_turn = 0;
+        m->retain_t = 30;
+        if (m_sz == 0) m->retain_b = 1;
+    }
+    m->retain_ang = ang;
+}
+
+static int m_enable_turn(const Player *m) /* isEnableTurn */
+{
+    return m->grounded && !m->turn_brake && m->slip_keep && !m->squat && !m->magic && !m->hip && !m->spin_timer;
+}
+
+static void m_stop_walk(Player *m) /* stopWalk (cancelSquatMode, the brake clips stopped) */
+{
+    m->tsi = 0; m->walk = 0; m->brake1 = m->brake2 = 0; m->weak_turn = 0;
+    m->turn_neutral = 0; m->squat = 0; m->turning = 0; m->turn_ready = 0; m->start_spin_ratio = 0;
+    if (m_clip_is("runend") || m_clip_is("brake")) m_clip_stop();
+}
+
+static float m_target_walk(const Player *m) /* getTargetWalkSpeed (sWalkTargetTable) */
+{
+    static const float t[8] = {0.0f, 0.15f, 0.25f, 0.4f, 0.5f, 0.6f, 0.8f, 1.0f};
+    return m->squat ? 0.0f : t[m->tsi];
+}
+
+static float m_inertia(Player *m, float speed) /* decideInertia */
+{
+    if (m->walk > 1.0f) return MC.mInertiaOverSpeed;
+    float in = (1.0f - m->walk) * MC.mInertiaStandardStop + m->walk * MC.mInertiaStandardMax;
+    in = (1.0f - m->start_spin_ratio) * in + m->start_spin_ratio * MC.mInertiaStartSpin;
+    if (speed == 0.0f) {
+        in = MC.mInertiaStop;
+        if (m->turn_neutral) in = MC.mInertiaTurnSlip;
+        if (m->turn_brake) in = MC.mInertiaTurning;
+        if (m->land_timer < 30) in = MC.mInertiaJumpFinish;
+        if (m->squat) in = MC.mInertiaSquat;
+    }
+    if (m->walk < 0.08f && m->land_timer > 10 && speed > 0.5f && m->squat) { m->start_spin = MC.mStartSpinTime; m->walk = 0.08f; }
+    if (m->start_spin) { m->start_spin--; in = MC.mInertiaStartSpin; if (!m->start_spin) m->start_spin2 = 60; }
+    if (m->start_spin2) m->start_spin2--;
+    return in;
+}
+
+static void m_update_walk_speed(Player *m) /* updateWalkSpeed */
+{
+    float t = m_target_walk(m), f2 = 1.0f;
+    if (t == 0.0f) m->slow_start = MC.mSlowStartTime;
+    if (m->slow_start) { f2 = (float)(MC.mSlowStartTime - m->slow_start) / MC.mSlowStartTime; m->slow_start--; }
+    t *= f2 * f2;
+    m->squat = 0;
+    if (m_check_squat(m, 0)) {
+        m->squat = 1;
+        if (m->wall) { m->tsi = 0; m->walk = 0; }
+    }
+    if (m->turn_slip || m->turn_neutral) t = 0.0f;
+    float in = m_inertia(m, t);
+    m->walk = m->walk * in + t * (1.0f - in);
+}
+
+static void m_decide_walk_speed(Player *m) /* decideWalkSpeed: the stick picks mTargetWalkSpeedIndex */
+{
+    static const float a[7] = {0.15f, 0.3f, 0.45f, 0.6f, 0.7f, 0.85f, 0.99f}, b[7] = {0.02f, 0.2f, 0.4f, 0.5f, 0.65f, 0.75f, 0.98f};
+    int dec = m->tsi && m_sz < b[m->tsi - 1], i;
+    for (i = 0; i < 7 && m_sz >= a[i]; i++) ;
+    if (m->tsi <= i || dec) m->tsi = i;
+    int n = kari_cling > 5 ? 5 : kari_cling;
+    if (n && m->tsi > 5 - n) m->tsi = 5 - n;
+}
+
+/* doBrakingAnimation / updateBrakeAnimation: 歩行制動ブレーキ (RunEnd) after a run let go; its end stops the walk */
+static void m_update_brake(Player *m)
+{
+    if (m->brake2) {
+        if (!m_clip_on("runend")) m->brake2 = 0;
+        else {
+            m->brake2--;
+            if (m_sz != 0) m->brake2 = 0;
+            if (!m->brake2) { m_clip_stop(); m_stop_walk(m); }
+        }
+    } else if (m_clip_on("runend") && (mario_anim->done || m->tsi)) m_clip_stop();
+}
+
+/* decideWalkAnimation: the 基本 blend by mTargetWalkSpeedIndex, its speed from the foot steps, the start-spin ratio, the
+ * brake timers; DamageWait for the wait at 1 life of more than 2 */
+static void m_decide_walk_anim(Player *m)
+{
+    static const float W[8][4] = {{0, 0, 0, 1}, {1, 0, 0, 0}, {0.75f, 0.25f, 0, 0}, {0.25f, 0.75f, 0, 0},
+                                  {0, 1, 0, 0}, {0, 0.75f, 0.25f, 0}, {0, 0.25f, 0.75f, 0}, {0, 0, 1, 0}};
+    static const float step[4] = {1.2f, 1.5f, 1.3f, 0.0f}, tt[8] = {0.0f, 0.15f, 0.25f, 0.4f, 0.5f, 0.6f, 0.8f, 1.0f};
+    static const char *Q[4] = {"walksoft", "walk", "run", "wait"};
+    int best = 0;
+    for (int i = 1; i < 4; i++) if (W[m->tsi][i] > W[m->tsi][best]) best = i;
+    const char *clip = best == 3 && life == 1 && max_life > 2 ? "damagewait" : Q[best];
+    if (m->tsi == 0 && m->walk < 0.2f) /* controlWaitAnimation (ponytail: no special waits) */
+        mario_play(clip, 1.0f, 1);
+    else {
+        float f3 = 0;
+        for (int i = 0; i < 4; i++) f3 += step[i] * W[m->tsi][i];
+        float sp = f3 == 0.0f ? 0.33f : 0.5f * (60.0f * (0.01f * (m->walk * MC.mWalkSpeed) / f3));
+        float target = m_target_walk(m), d = target - m->walk;
+        if (m->walk > tt[5]) { float k = (m->walk - tt[5]) / (1.0f - tt[5]); d = d * (1.0f - k) + d * d * k; }
+        else if (m->walk < tt[3]) { float k = (tt[3] - m->walk) / tt[3]; d = d * k + sqrtf(fmaxf(d, 0.0f)) * (1.0f - k); }
+        float f5 = fminf(fmaxf(1.0f + 4.0f * d, 1.0f), 2.0f);
+        if (target < tt[6]) f5 = 1.0f;
+        float f6 = MC.mStartSpinAnimeRatio * (0.5f * (60.0f * (target * MC.mWalkSpeed * 0.01f / step[2]))), k2 = 2.0f - f5;
+        if (sp < f6) sp = sp * k2 + f6 * (1.0f - k2);
+        m->start_spin_ratio = f5 - 1.0f;
+        mario_play(clip, sp, 1);
+    }
+    if (m->tsi > 5 && m->walk > 0.9f && !m->turn_brake) m->brake1 = MC.mBrakeFirstTimer;
+    if (m->brake1) m->brake1--;
+    if (m->tsi == 0) {
+        if (m->brake1 && m->slip_keep) { mario_play("runend", 1.0f, 0); m->brake2 = MC.mBrakeSecondTimer; }
+        m->brake1 = 0;
+    }
+}
+
+/* decideSquatWalkAnimation: しゃがみ基本 (SquatWait / SquatWalk), squat walking at mSquatWalkMin..MaxSpeed */
+static void m_squat_anim(Player *m)
+{
+    m->start_spin_ratio = 0;
+    if (m->walk < MC.mSpeedSquatWalkLower) {
+        if (m_sz != 0) { m->walk = MC.mSquatWalkMinSpeed; m->tsi = 1; m->squat_walk = 1; }
+        else { m->tsi = 0; m->squat_walk = 0; }
+    } else if (m_sz == 0) m->tsi = 0;
+    else if (m->squat_walk) { m->walk = (MC.mSquatWalkMaxSpeed - MC.mSquatWalkMinSpeed) * m_sz + MC.mSquatWalkMinSpeed; m->tsi = 1; }
+    if (m->tsi) mario_play("squatwalk", m->squat_walk ? 60.0f / MC.mSquatWalkStep * m->walk : 1.0f, 1);
+    else mario_play("squatwait", 1.0f, 1);
+}
+
+static void m_proc_jump(Player *m, int a1);
+static void m_init_jump(Player *m);
+
+static void m_try_turn_jump(Player *m) /* tryTurnJump */
+{
+    m->jump_kind = 4;
+    V3 h;
+    if (m->turn_ready) {
+        h = vnorm(vtangent(m->turn_ready_front, m->up));
+        m_front(m, vmul(m->turn_ready_front, -1.0f));
+        m->turn_from = m->turn_ready_front;
+    } else h = vnorm(vtangent(m->turn_from, m->up));
+    m_set_jv(m, vadd(vmul(h, -MC.mTurnJumpFrontSpeed), vmul(m->up, MC.mJumpHeight[4])));
+    m->digital = 1; m->grounded = 0;
+    m_proc_jump(m, 1);
+    mario_play("jumpturn", 1.0f, 0);
+#ifdef BENCH
+    printf("jump jumpturn\n");
+#endif
+    m->turn_slip = 0; m->jumping = 1; m->turn_brake = 0; m->connect = 0; m->walk = 0; m->retain_a = 0;
+}
+
+static void m_try_squat_jump(Player *m) /* trySquatJump: the long jump */
+{
+    m->squat_lock = 0;
+    m->jump_kind = 5;
+    m_set_jv(m, vadd(vmul(m->face, MC.mSquatJumpFrontSpeed), vmul(m->up, MC.mJumpHeight[5])));
+    m->digital = 1; m->grounded = 0;
+    m_proc_jump(m, 1);
+    mario_play("jumpbroad", 1.0f, 0);
+#ifdef BENCH
+    printf("jump jumpbroad\n");
+#endif
+    m->jumping = 1; m->turn_slip = 0; m->connect = 0; m->turn_brake = 0;
+}
+
+static void m_try_back_jump(Player *m) /* tryBackJump: the back flip */
+{
+    m->squat_lock = 1; m->squat = 0;
+    m->jump_kind = 6;
+    m_set_jv(m, vadd(vmul(m->face, -MC.mSquatJumpBackSpeed), vmul(m->up, MC.mJumpHeight[6])));
+    m->digital = 1; m->grounded = 0;
+    m_proc_jump(m, 1);
+    mario_play("jumpback", 1.0f, 0);
+#ifdef BENCH
+    printf("jump jumpback\n");
+#endif
+    m->walk = 0; m->jumping = 1; m->turn_slip = 0; m->turn_brake = 0; m->connect = 0;
+}
+
+static void m_try_jump(Player *m) /* tryJump: 1st / 2nd / 3rd jump, or the turn, long and back jumps */
+{
+    if (m->jumping) return;
+    int squat = m_check_squat(m, 1);
+    m->squat_lock = 1;
+    if (m->land_timer > MC.mJumpConnectTime || !m->connect) m->jump_kind = 0;
+    else m->jump_kind = m->jump_kind + 1;
+    if (m->jump_kind > 2) m->jump_kind = 0;
+    if (m->jump_kind == 2 && m->walk < MC.mJumpConnectSpeed) m->jump_kind = 0;
+    if (m->turn_brake || (m->turn_ready && m_stick_front_back(m) == 2)) {
+        if (MC.mTurnSlipTime - m->turn_slip >= MC.mTurnJumpInhibitTime) { m_try_turn_jump(m); return; }
+        m->turn_slip = 0; m->turn_brake = 0;
+    }
+    m->slip_front = !m->wall; /* checkWallRiseAndSlipFront */
+    if (m->wall) m->walk = 0;
+    if (squat && m->walk > 0.3f) { m_try_squat_jump(m); return; }
+    if (m->squat) { m_try_back_jump(m); return; }
+    m_set_jv(m, vadd(vmul(m->face, m->walk * MC.mJumpFrontSpeed), vmul(m->up, MC.mJumpHeight[m->jump_kind])));
+    m->digital = 0; m->grounded = 0;
+    m_proc_jump(m, 1);
+    m->jumping = 1;
+    static const char *clips[3] = {"jump", "jump2", "jumproll"};
+    mario_play(clips[m->jump_kind], 1.0f, 0);
+    m->connect = 1;
+#ifdef BENCH
+    printf("jump %s\n", clips[m->jump_kind]);
+#endif
+}
+
+static void m_try_drop(Player *m) /* tryDrop: off a ledge (cDropFrontSpeed 2) */
+{
+    m->squat_lock = 1;
+    m_set_jv(m, vmul(m->face, m->walk * 2.0f));
+    m->jump_kind = 0;
+    m_proc_jump(m, 1);
+    m->jumping = 1; m->connect = 0; m->digital = 1;
+    if (m->wall) m_stop_walk(m);
+}
+
+static void m_cancel_tornado(Player *m) /* cancelTornadoJump */
+{
+    m->jump_kind = 0;
+    if (m_clip_is("spin")) m_clip_stop();
+    m->jump_from = m->pos;
+    m->spin_lock = 1;
+}
+
+static void m_try_spin_jump(Player *m) /* trySpinJump (_42A 1: the button, not a shake) */
+{
+    if (m->hip || m->jump_kind == 8) return;
+    m->jump_kind = 8; m->spin_kind = 1;
+    m_set_jv(m, vadd(vmul(m->face, m->walk * MC.mJumpTornadoSpeed), vmul(m->up, MC.mSpinJumpHeight)));
+    m->digital = 0;
+    m->air_spin = MC.mAirWalkTimeSpin;
+    m_proc_jump(m, 1);
+    mario_play("spin", 1.0f, 0);
+    m->jumping = 1; m->turn_brake = 0; m->connect = 0; m->neutral = 0; m->turn_slip = 0; m->walk = 0;
+#ifdef BENCH
+    printf("jump spin\n");
+#endif
+}
+
+static void m_try_wall_jump(Player *m, V3 v) /* tryWallJump(v, true) */
+{
+    m->jump_kind = 7;
+    m->jumping = 1; m->connect = 0; m->digital = 1; m->hip = 0; m->slip_front = 1;
+    m_set_jv(m, v);
+    m->jump_from = m->pos;
+    m->air_timer = 0; m->keep_jump = 1; m->back_t = 0; m->air_walk_t = 0; m->fall_t = 0;
+    m->neutral = 1;
+    mario_play("walljump", 1.0f, 0);
+    m_front(m, v);
+    m_stop_walk(m);
+}
+
+static void m_init_jump(Player *m) /* initJumpParam */
+{
+    m->keep_jump = 1; m->wall_hit = 0;
+    m->air_timer = 0; m->back_t = 0; m->air_walk_t = 0; m->fall_t = 0;
+    m->turn_neutral = 0; m->turn_brake = 0; m->u_turn = 0; m->turn_ready = 0; m->turn_slip = 0; m->land_timer = 0;
+    if (m->jump_kind != 5) m->squat = 0;
+    m->jump_from = m->pos;
+}
+
+static int m_jump_to_hip_drop(Player *m) /* jumpToHipDrop */
+{
+    if (m->hip || m->jump_kind == 5) return 0;
+    if (m->height < MC.mHipDropLimitHeight) return 0;
+    if (m->jump_kind == 8) m_cancel_tornado(m);
+    m->hip = HIP_START; m->hip_still = 0;
+    m->squat_lock = 0;
+    m->hvel = v3(0, 0, 0); m->vup = 0;
+    if (m->jump_kind == 4) { m_front(m, vmul(m->turn_from, -1.0f)); m->jump_kind = 0; }
+    mario_play("hipdropstart", 1.0f, 0);
+    m->zero_gr = MC.mHipDropZeroGrTime;
+    return 1;
+}
+
+/* procHipDrop: still while HipDropStart plays and mHipDropZeroGrTime after, then down at mGravityHipDrop x a rate
+ * falling to 0.1 near mLimitSpeedHipDrop; the landing (HipDropLand) ends at its end, the stick after 15, A after 5 */
+static void m_proc_hip(Player *m)
+{
+    if (m->hip == HIP_START) {
+        if (mario_anim && !mario_anim->done) return;
+        if (m->zero_gr) { m->zero_gr--; return; }
+        m->hip = HIP_FALL;
+        mario_play("hipdrop", 1.0f, 1);
+        return;
+    }
+    if (m->zero_gr) { m->zero_gr--; return; }
+    if (m->hip == HIP_LAND) {
+        int end = 0;
+        if (!m->grounded && m->air_timer > 3 && m->height > 10.0f) { /* off the ground again: falling on */
+            m->hip = HIP_FALL; mario_play("hipdrop", 1.0f, 1);
+            m_set_jv(m, m->hip_jv);
+        } else {
+            if (m->land_timer > 15 && m_sz != 0) end = 1;
+            if (m->land_timer > 5 && m_req_jump) end = 1;
+            if ((mario_anim && mario_anim->done) || end) {
+                m->jumping = 0; m->hip = 0;
+                m_clip_stop();
+                if (m_req_jump) { m_try_jump(m); return; }
+            }
+            m->walk = 0;
+            m->hvel = v3(0, 0, 0); m->vup = 0;
+            m->vel = v3(0, 0, 0);
+            return;
+        }
+    } else {
+        m->air_timer++;
+        if (vlen(vsub(m->pos, m->last_pos)) < 0.001f && ++m->hip_still == 15) { /* stuck */
+            m->jumping = 0; m->hip = 0; m->hvel = v3(0, 0, 0); m->vup = 0; m->grounded = 1;
+            return;
+        }
+    }
+    m->vel = m_jv(m);
+    float rate = clamp01(0.1f + (1.0f - vlen(m_jv(m)) / MC.mLimitSpeedHipDrop));
+    m->vup -= MC.mGravityHipDrop * rate;
+    if (vlen(m->hvel) > 10.0f) m->hvel = vmul(m->hvel, 0.5f);
+    V3 j = m_jv(m);
+    if (vlen(j) > MC.mLimitSpeedHipDrop) m_set_jv(m, vmul(vnorm(j), MC.mLimitSpeedHipDrop));
+}
+
+static void m_hip_land(Player *m) /* procHipDrop's first frame on the ground */
+{
+    m->land_timer = 0; m->walk = 0; m->brake1 = 0;
+    hip_hit = 1; hip_inst = ground_inst; /* tell the objects under Mario */
+    kari_cling = 0;                      /* MR::removeAllClingingKarikari */
+    m->hip = HIP_LAND;
+    mario_play("hipdropland", 1.0f, 0);
+    m->hip_jv = m_jv(m);
+    m->air_timer = 0;
+    m->hvel = v3(0, 0, 0); m->vup = 0;
+}
+
+/* doAirWalk: the stick in the air; pulling back brakes (mBackJumpRatio over mBackJumpLimitFrame), the front speed
+ * decays after mJumpFrontReductionBeginTime, the stick pushes mWalkSpeed x mAirWalkTimerFact1 / (t + Fact2) */
+static void m_air_walk(Player *m)
+{
+    if (m->jump_kind == 3) return;
+    if (m->neutral) { if (m->air_timer > MC.mWaitNeutralTimer) m->neutral = 0; return; }
+    if (m->air_lock) { m->air_lock--; return; }
+    V3 md = vtangent(m_move_dir(m_sx, m_sy), m->up), side;
+    int inhibit = 0;
+    float fd = vdot(md, m->face);
+    side = vsub(md, vmul(m->face, fd));
+    if (m->jump_kind == 8) inhibit = 1;
+    else if (fd >= 0) {
+        float red = m->jump_kind == 5 ? MC.mSquatJumpFrontReduction : MC.mJumpFrontReduction;
+        int begin = m->jump_kind == 5 ? MC.mSquatJumpFrontReductionBTime : MC.mJumpFrontReductionBeginTime;
+        if (m->air_timer > begin) m->hvel = vmul(m->hvel, red);
+    } else {
+        if (!m_rising(m) && m->height < MC.mLandTurnHeight) m->turn_neutral = 1;
+        else m->back_t++;
+        float killer = m_clip_on("jumpturn") ? (m->back_t = 0, 0.1f)
+                     : m->back_t < MC.mBackJumpLimitFrame ? MC.mBackJumpRatio * ((float)(MC.mBackJumpLimitFrame - m->back_t) / MC.mBackJumpLimitFrame)
+                     : 0.0f;
+        md = vadd(side, vmul(m->face, fd * killer));
+        float back = -vdot(md, m->face);
+        if (back > MC.mMaxBackJumpSpeed) md = vmul(vnorm(md), MC.mMaxBackJumpSpeed);
+        else if (back < 0 && m->back_t < MC.mBackJumpLimitFrame) m->air_walk_t = 10;
+    }
+    if (!inhibit) {
+        float al = vdot(vnorm(md), vnorm(m_jv(m)));
+        if (al < 0) m->hvel = vadd(m->hvel, vmul(m->hvel, MC.mAirWalkSpeedKiller * al));
+    }
+    if (m->jump_kind == 8) m->hvel = vadd(m->hvel, vmul(md, MC.mWalkSpeed * 5.0f / MC.mAirWalkTimerFact2));
+    else m->hvel = vadd(m->hvel, vmul(md, MC.mWalkSpeed * MC.mAirWalkTimerFact1 / (m->air_timer + MC.mAirWalkTimerFact2)));
+    if (!m_rising(m)) m->vel = vadd(m->vel, vmul(md, MC.mWalkSpeed * MC.mAirWalkTimerFact3));
+    float cap = m->jump_kind == 8 ? 6.0f : MC.mMaxJumpSpeed;
+    if (vlen(m->hvel) > cap) m->hvel = vmul(vnorm(m->hvel), cap);
+}
+
+/* procJump: the jump vector moves Mario, then falls at mGravityJumping[kind] x 0.5 (mGravityRatioA) while A is held,
+ * the jump is "digital" or he is falling, x 1 once A is let go rising; Karikari clinging x (2 + n) / 2 */
+static void m_proc_jump(Player *m, int a1)
+{
+    if (m->hip) { m_proc_hip(m); return; }
+    if (m->zero_gr) { m->zero_gr--; return; }
+    if (!pad_held(PAD_CROSS)) m->keep_jump = 0;
+    int rising = m_rising(m);
+    int conn = a1 || m->keep_jump || m->digital || !rising || m->jump_kind == 2;
+    float gs = conn ? MC.mGravityRatioA : 1.0f;
+    if (a1) m_init_jump(m);
+    else if (pad_pressed(PAD_R1) && m_jump_to_hip_drop(m)) return;
+    if (!rising) {
+        if (m_clip_on("jump2")) m_clip_stop();
+        m->fall_t++;
+    }
+    int was_air_walk = 0;
+    if (m->air_walk_t) { was_air_walk = 1; m->air_walk_t--; }
+    if (m->jump_kind == 8 && m->spin_kind) {
+        if (m->air_spin) m->air_spin--;
+        if (!m->air_spin) { m_cancel_tornado(m); m->air_spin = MC.mAirWalkTime; }
+    }
+    float acc = MC.mGravityJumping[m->jump_kind];
+    if (m->jump_kind == 8 && m->spin_kind == 1) acc = MC.mSpinJumpGravity;
+    if (m->jump_kind == 8 && !m_rising(m)) acc *= 0.25f;
+    if (kari_cling) acc *= (2.0f + kari_cling) / 2.0f;
+    if (was_air_walk) acc = MC.mGravityAirWalk;
+    m->vel = m_jv(m);
+    m->vup -= acc * gs;
+    /* checkWallJumpHit: a long jump into a wall bounces off it (ponytail: no MarioBlown) */
+    if (m->jump_kind == 5 && m->wall) {
+        float into = vdot(m->hvel, m->wall_n);
+        if (into < 0) {
+            m->hvel = vsub(m->hvel, vmul(m->wall_n, into));
+            if (vlen(m->hvel) > 1e-3f) m_front(m, vmul(m->hvel, -1.0f));
+            m->spin_lock = 1; m->air_spin = 0; m->air_lock = 60;
+        }
+    }
+    if (-m->vup >= MC.mMaxDropSpeed[0]) m->vup = -MC.mMaxDropSpeed[0];
+    m_air_walk(m);
+    m->air_timer++;
+}
+
+/* checkWallStick / isEnableStickWall: falling against a wall (not in a hip drop, the spin's first 25 frames, Karikari
+ * clinging, the wall left at the same angle) Mario sticks to it. ponytail: the wall contact stands for the 120 probe */
+static void m_check_wall_stick(Player *m)
+{
+    if (!m->jumping || m->grounded || m->hip || !m->wall || m_rising(m) || kari_cling) return;
+    if (m->wall_cancel && vdot(m->wall_cancel_n, m->wall_n) < MC.mWallStickCancelAngle) m->wall_cancel = 0;
+    if (m->wall_cancel) return;
+    if (vdot(m->face, m->wall_n) > 0) return; /* a back wall needs the stick into it */
+    if (m->height < MC.mWallStickGrHeight) return;
+    if (m_clip_on("spin") && m->spin_t < 25) return;
+    if (!m_clip_on("walljump") && !m->slip_front && !(m_sz != 0 && vdot(m_pad, m->wall_n) < -0.5f)) return;
+    m->walling = 1; m->wall_t = 0; m->wall_drop = 0; m->wall_pull = 0;
+    m->wall_jv0 = vnorm(m->hvel); /* initTriangleJump */
+    mario_play("wallkeep", 1.0f, 1);
+    m_stop_walk(m);
+    m->jumping = 0; m->hip = 0;
+    m_front(m, vmul(m->wall_n, -1.0f));
+}
+
+/* MarioWall::update: slides down (mWallDropSpeedNormal after mWallStickTime), A kicks off (startJump: the wall's normal
+ * x mWallJumpPowerXZ + up x mWallJumpPowerY, mirrored off the way he came in within 15 frames), let go after
+ * mWallReleaseTime + mWallStickTime, off the wall or on the ground */
+static int m_wall_update(Player *m)
+{
+    int release = 0;
+    m->wall_t++;
+    if (m->grounded) {
+        if (m->slip_keep) { m_front(m, m->wall_n); mario_play("land", 1.0f, 0); }
+        release = 1;
+    }
+    if (m->wall_t >= MC.mWallReleaseTime + MC.mWallStickTime) release = 1;
+    if (m->wall_t >= 3 && !m->wall) release = 1;
+    if (release) {
+        if (!m->grounded) { m->wall_cancel = 1; m->wall_cancel_n = m->wall_n; m_front(m, vmul(m->wall_n, -1.0f)); }
+        m->vel_after = vmul(m->wall_n, m->slip_keep ? 30.0f : 10.0f);
+        m->walling = 0;
+        return 0;
+    }
+    if (m_req_jump) {
+        V3 v = m->wall_n;
+        float d = vdot(v, vmul(m->wall_jv0, -1.0f));
+        if (m->wall_t < 15 && vlen(m->wall_jv0) > 0 && d < MC.mWallTriJumpMargin && d > 0) {
+            V3 ax = vnorm(vcross(vmul(m->wall_jv0, -1.0f), v));
+            v = rot_axis(v, ax, acosf(d));
+        }
+        m->walling = 0;
+        m->wall_cancel = 1; m->wall_cancel_n = m->wall_n;
+        m_try_wall_jump(m, vadd(vmul(v, MC.mWallJumpPowerXZ), vmul(m->up, MC.mWallJumpPowerY)));
+        m->spin_lock = 0;
+        return 0;
+    }
+    float blend = 0.9f, speed = MC.mWallDropSpeedNormal;
+    int side = m_sz != 0 && vdot(m_pad, m->wall_n) > 0.5f && !m->neutral ? 2 : 0; /* checkStickWallSide (1 counts as 0) */
+    if (side == 2) { if (m->wall_t < 165) m->wall_t = 165; if (!m->wall_pull) m->wall_pull = 1; }
+    else if (m->wall_t >= MC.mWallStickTime && !m_clip_on("wallkeep")) mario_play("wallslide", 1.0f, 1);
+    if (m->wall_pull) m->wall_pull++;
+    if (m->wall_t < MC.mWallStickTime) blend = 1.0f;
+    m->wall_drop = m->wall_drop * blend + speed * (1.0f - blend);
+    m->vel = vmul(m->up, -m->wall_drop);
+    if (m->wall_t >= MC.mWallStickTime && m_clip_is("wallkeep") && mario_anim->loop) mario_play("wallslide", 1.0f, 1);
+    float ratio = m->wall_t < MC.mWallStickTime ? 0.0f : 1.0f - (m->wall_t - MC.mWallStickTime) * MC.mWallSideMoveRatio;
+    V3 c = vnorm(vcross(vmul(m->up, -1.0f), m->wall_n)); /* moveWallSlide */
+    if (m_sz != 0 && vlen(c) > 0) {
+        float d = vdot(c, m_pad);
+        if (fabsf(d) > 0.2f) {
+            d = d < -0.2f ? (0.2f + d) / 0.8f : (d - 0.2f) / 0.8f;
+            m->vel = vadd(m->vel, vmul(c, 10.0f * d * clamp01(ratio)));
+        }
+    }
+    return 1;
+}
+
+/* doLanding: the landing clip by the jump, a run on (the stick full, or more than 6 forward kept as walk speed), the
+ * hard landing over mHardLandingHeight */
+static void m_do_landing(Player *m)
+{
+    int hard = 0, keep = 0;
+    m->jumping = 0; m->land_timer = 0;
+    m->spin_lock = 0; /* ponytail: Petari's _2B clear on the ground was not found; one spin per jump */
+    V3 jv = m_jv(m);
+    if (m->air_timer <= 3 && fabsf(vdot(vsub(m->pos, m->jump_from), m->up)) < 1.0f && vlen(jv) < 10.0f) {
+        m_clip_stop();
+        return;
+    }
+    m->squat_lock = 0;
+    m->air_spin = MC.mAirWalkTime;
+    if (vdot(vsub(m->jump_from, m->pos), m->up) > MC.mHardLandingHeight) hard = 1;
+    if (!hard && m->slip_keep) {
+        if (m->jump_kind == 5 && m_check_squat(m, 0)) { m->squat = 1; m->walk = 1.0f; m_clip_stop(); return; }
+        if ((m_sz > 0.9f && m->back_t == 0) || (!m->hip && m_check_squat(m, 0))) {
+            m_clip_stop();
+            if (!m->retain_a) { m->turn_ready_front = m->face; m->turn_ready = MC.mTurnReadyTime; } /* recordTurnSlipAngle */
+            if (m->jump_kind == 5) m->squat = 0;
+            return;
+        }
+        switch (m->jump_kind) { case 2: case 4: case 5: case 6: case 8: case 11: keep = 1; }
+        float fd = vdot(m->face, jv);
+        if (fd > 6.0f && !keep) {
+            m->walk = fminf(fmaxf(fd / MC.mJumpFrontSpeed, 0.0f), 2.0f);
+            m_clip_stop();
+            m->start_spin = 0; m->brake1 = 0;
+            if (!m->retain_a) { m->turn_ready_front = m->face; m->turn_ready = MC.mTurnReadyTime; }
+            return;
+        }
+    }
+    if (m->jump_kind == 4) m_front(m, vmul(m->turn_from, -1.0f));
+    if (m->slip_keep) {
+        static const char *land[12] = {"land", "jump2land", "jumprollland", "", "jumpturnland", "jumpbroadland",
+                                       "jumpbackland", "land", "land", "land", "", "land"};
+        int k = m->jump_kind;
+        if (k == 5 && !m_check_squat(m, 0)) m->squat = 0;
+        if (k == 3 || k == 10) m_clip_stop();
+        else mario_play(land[k], 1.0f, 0);
+        m_stop_walk(m);
+        if (hard) { mario_play("landstiffen", 1.0f, 0); m->land_timer += 16; }
+    } else {
+        mario_play("landslope", 1.0f, 0);
+        m->brake1 = 0;
+    }
+}
+
+/* mainMove: the ground move. The stick turns Mario (on the spot over 10 degrees from still, at mTurnAngleSpeed /
+ * Speed2 / SlowWalk running, weakened for mWeakTurnTime, a U-turn arc at 0.12 a frame), pulling it back from a run
+ * brakes and turns (ターンブレーキ), then he moves mWalkSpeed x his walk speed along the ground */
+static void m_main_move(Player *m)
+{
+    int a1 = 0;
+    V3 dir = m->move_dir;
+    int dir_set = 0;
+    if (m_req_jump) { m_try_jump(m); return; }
+    if (!m->grounded) {
+        if (m->drop_grace) m->drop_grace--;
+        else { m_try_drop(m); return; }
+    } else if (m_sz < MC.mWallBackHangStickPower) m->drop_grace = 0;
+    else if (m->drop_grace < MC.mDropWaitTime) m->drop_grace = MC.mDropWaitTime;
+    /* MarioAnimator::setWalkMode */
+    if (m->turn_neutral && !m->squat && m_stick_front_back(m) == 2 && !m->magic) mario_play("brake", 1.0f, 0);
+    else if (m_clip_on("brake")) { mario_play("runend", 1.0f, 0); m->brake2 = 0; m->tsi = 0; }
+    if (m_sz == 0) {
+        m->move_dir = m->move_dir_keep;
+        if (vlen(m->move_dir) < 1e-4f) m->move_dir = m->face;
+        dir = m->move_dir; dir_set = 1;
+        m->sd = m_shadow(m, m->move_dir);
+        m->stand_neutral = 10;
+    } else if (!m_clip_on("brake") && !m_clip_on("turn") && !m->turn_neutral && m->walk < 0.05f) {
+        int a3 = 1;
+        if (m->stand_neutral) {
+            if (m_sz < 0.75f) { a3 = 0; m->stand_neutral--; m_sx = m_sy = m_sz = 0; }
+            else m->stand_neutral = 0;
+        }
+        if (a3) {
+            dir = m_move_dir(m_sx, m_sy); dir_set = 1;
+            m->sd = m_shadow(m, dir);
+            if (ang_abs_h(m_shadow(m, m->face), m->sd, m->up) > 3.14159265f * 10.0f / 180.0f) {
+                m_front(m, m->sd);
+                m->stand_turn = MC.mStandingTurnTime; /* setFrontVecKeepUp(_22C, mStandingTurnTime) */
+                return;
+            }
+            m_front(m, m->sd);
+        } else dir = m->move_dir;
+    } else {
+        float x = m_sx, y = m_sy;
+        if (fabsf(y) > MC.mStickMarginYstart) {
+            if (fabsf(x) < MC.mStickMarginX) x = 0;
+            else x = x > 0 ? (x - MC.mStickMarginX) / (1.0f - MC.mStickMarginX) : (x + MC.mStickMarginX) / (1.0f - MC.mStickMarginX);
+        } else if (fabsf(x) > MC.mStickMarginXstart) {
+            if (fabsf(y) < MC.mStickMarginY) y = 0;
+            else y = y > 0 ? (y - MC.mStickMarginY) / (1.0f - MC.mStickMarginY) : (y + MC.mStickMarginY) / (1.0f - MC.mStickMarginY);
+        }
+        dir = m_move_dir(x, y); dir_set = 1;
+        m->sd = m_shadow(m, dir);
+    }
+    V3 fs = m_shadow(m, m->face);
+    float dot = vdot(fs, m->sd), dot2 = m->turn_ready ? vdot(m->turn_ready_front, m->sd) : dot;
+    if (dot >= cosf(MC.mTurnSlipAngle) && !m->turn_brake && m->walk > MC.mSlipSpeed && m->stick_z0 > m_sz && !m_draw_d) {
+        m->turn_ready_front = m->face; m->turn_ready = MC.mTurnReadyTime; /* recordTurnSlipAngle */
+    } else if (m->turn_ready) m->turn_ready--;
+    if (m->turn_ready) {
+        if (m_sz < MC.mTurnSlipNeutral) m->turn_neutral = 1;
+        if (m->walk < 0.1f) { m->turn_ready = 0; m->walk = 0; }
+        if (m_clip_on("brake") || m->turn_neutral) a1 = 1;
+    } else {
+        if (!m->squat && m->turn_neutral && dot2 < cosf(MC.mTurnSlipAngle) && !m->turn_brake) {
+            m->turn_from = m->turn_ready_front;
+            m_front(m, vmul(m->turn_from, -1.0f));
+            m->turn_slip = MC.mTurnSlipTime; m->turn_brake = 1; m->walk = 0;
+            mario_play("turn", 1.0f, 0);
+        }
+        m->turn_neutral = 0;
+    }
+    if (m->turn_slip) { m->turn_slip--; m->walk = 0; }
+    if (!m->turn_slip && m->turn_brake) {
+        if (m_sz != 0 && ang_abs_h(m_pad, m->face, m->up) > 3.14159265f * 0.5f) {
+            m_clip_stop(); m_front(m, vmul(m->face, -1.0f)); m->turn_brake = 0;
+        }
+        if (m_clip_is("turn") && mario_anim->done) {
+            m->turn_brake = 0;
+            if (m_sz < 0.1f) m_stop_walk(m);
+        }
+    }
+    float ts = MC.mTurnAngleSpeed;
+    if (m->walk > MC.mFastTurnSpeed) { ts = MC.mTurnAngleSpeed2; if (m->tsi < 5) ts = MC.mTurnAngleSpeedSlowWalk; }
+    fs = m_shadow(m, m->face);
+    if (!m->turn_brake) {
+        V3 cross = vcross(m->last_sd, m->sd);
+        do {
+            if (m_sz == 0) { m->u_turn = 0; m->turning = 0; break; }
+            if (vlen(m->turn_cross) < 1e-6f) {
+                if (fabsf(m->last_rx - m_rx) > 1e-6f || fabsf(m->last_ry - m_ry) > 1e-6f) { m->turning = 1; break; }
+            } else if (vdot(cross, m->turn_cross) > 0) { m->turning = 1; break; }
+            if (m->turn_slip) { m->u_turn = 0; m->turning = 0; }
+            if (ang_abs(fs, m->sd) <= 0.707f) {
+                V3 c2 = vcross(fs, m->sd);
+                if (m->u_side ? vdot(c2, m->up) > 0 : vdot(c2, m->up) < 0) m->u_turn = 0;
+            }
+        } while (0);
+        m->last_rx = m_rx; m->last_ry = m_ry;
+        if (m->turning) {
+            V3 c3 = vcross(fs, m->sd);
+            if (vdot(c3, m->turn_cross3) < 0) {
+                if (!(vdot(cross, m->turn_cross) > 0) && !(vdot(fs, m->sd) < 0)) m->weak_turn = 0;
+            } else if (m->weak_turn < MC.mWeakTurnTime) m->weak_turn++;
+            m->turn_cross3 = c3; m->turn_cross = cross; m->last_sd = m->sd;
+            float f1 = 1.0f;
+            if (m->weak_turn < MC.mWeakTurnTime && m->tsi > 4) f1 = (float)m->weak_turn / MC.mWeakTurnTime;
+            ts *= sqrtf(f1);
+        } else {
+            if (m->weak_turn) m->weak_turn--;
+            if (!m->weak_turn) { ts *= 0.01f; m->turn_cross = v3(0, 0, 0); m->turn_cross3 = vcross(fs, m->sd); }
+            m->last_sd = m->sd;
+        }
+        V3 v2 = m->face;
+        if (m->u_turn) v2 = rot_axis(fs, m->up, m->u_side ? 0.12f : -0.12f);
+        else if (ang_abs(m->face, m->sd) < 0.1f) v2 = m->stick_ang0 == m->stick_ang ? m->sd : m->face;
+        else {
+            float d = ang_abs(m->face, m->sd);
+            if (!blend_sphere(m->face, m->sd, &v2, clamp01(ts / d))) {
+                m->weak_turn = 0;
+                v2 = rot_toward(fs, m->sd, m->up, 22.5f * 3.14159265f / 180.0f);
+            }
+            if (d > 2.5f && m->weak_turn == MC.mWeakTurnTime && !m_draw_d) {
+                m->u_side = vdot(vcross(fs, v2), m->up) > 0;
+                m->u_turn = 1;
+            }
+        }
+        m->turning = 1;
+        if (!(m->stand_turn && m_clip_on("run")) && dot > 0.99f) m->turning = 0;
+        if (!a1) m_front(m, v2);
+    } else {
+        if (!m->turn_slip) {
+            V3 b;
+            if (!blend_sphere(fs, m->sd, &b, ts)) b = rot_toward(fs, m->sd, m->up, 22.5f * 3.14159265f / 180.0f);
+            if (!a1) m_front(m, b);
+        }
+        m->u_turn = 0; m->turning = 0;
+    }
+    if (m->tsi) m->stand_turn = 0; /* stopAnimation("その場足踏み") */
+    V3 v = vmul(m->face, MC.mWalkSpeed * m->walk);
+    m->move_dir = dir_set ? dir : m->move_dir;
+    if (m->squat) { if (m->tsi && dir_set) m->move_dir_keep = dir; }
+    else if (!m->turn_ready && dir_set) m->move_dir_keep = dir;
+    if (m->wall && vdot(v, m->wall_n) < 0 && -vdot(m->face, m->wall_n) < cosf(MC.mWallPushAngleRange * 3.14159265f / 180.0f))
+        v = vtangent(v, m->wall_n);
+    float sp = vlen(v); /* along the ground: (_368 x v) x _368 at v's length */
+    V3 c = vnorm(vcross(m->ground_n, vnorm(v)));
+    m->vel = vmul(vcross(c, m->ground_n), sp);
+}
+
+/* the spin (MarioActor::updateSwingAction): in the air trySpinJump once a jump (then 空パンチ), on the ground
+ * MarioMagic's 地上ひねり; mSpinIntervalTime + 34 frames before the next on the ground */
+static void m_swing(Player *m)
+{
+    if (m->jumping) m->spin_cool = 0;
+    if (m->spin_cool) m->spin_cool--;
+    if (!pad_pressed(PAD_SQUARE) || m->spin_cool || m->walling) return;
+    if (m->jumping && !m->spin_lock && !m->hip) {
+        m_try_spin_jump(m);
+        m->spin_timer = 25; m->spin_t = 0; /* setPunchHitTimer(0x19) */
+    } else if (!m_clip_on("spinground")) {
+        if (m->jumping) { /* trySpinPunch in the air: 空パンチ */
+            if (m->hip) return;
+            mario_play("spin2nd", 1.0f, 0);
+            m->spin_timer = 15; m->spin_t = 0; m->walk = 0;
+        } else if (!m->squat && m->slip_keep) { /* startMagic (ponytail: no サマーソルト from a squat) */
+            m->magic = 1;
+            mario_play("spinground", 1.0f, 0);
+#ifdef BENCH
+            printf("spin ground\n");
+#endif
+            m->spin_timer = 25; m->spin_t = 0;
+        } else return;
+    } else return;
+    m->spin_cool = MC.mSpinIntervalTime + 0x22;
+}
+
 static void update_mario(void)
 {
     Player *m = mario;
@@ -6886,127 +7694,77 @@ static void update_mario(void)
                 return;
             }
     }
-    /* camera-relative stick on the plane under Mario */
-    V3 cam_fwd = vnorm(vtangent(vsub(m->pos, cam_pos), m->up));
-    V3 cam_right = vnorm(vcross(cam_fwd, m->up));
-    V3 want = vadd(vmul(cam_right, pad_lx()), vmul(cam_fwd, pad_ly()));
+    /* Mario::update from inputStick on: actionMain (a status: MarioWall / MarioMagic; procJump; or mainMove and
+     * updateWalkSpeed), the move against the map, writeBackPhyisicalVector, doLanding, then MarioAnimator::update */
+    m_cy = vnorm(vtangent(vsub(m->pos, cam_pos), m->up));
+    m_cx = vnorm(vcross(m_cy, m->up));
+    m_input_stick(m);
 #ifdef SLOPE_TEST
     { /* push into the 77 degree face slope_test() chose for 240 frames, then let go */
         static int t;
         extern V3 slope_n;
-        want = ++t < 240 ? vmul(vnorm(vtangent(vmul(slope_n, -1.0f), m->up)), 0.6f) : v3(0, 0, 0);
+        V3 w = ++t < 240 ? vmul(vnorm(vtangent(vmul(slope_n, -1.0f), m->up)), 0.6f) : v3(0, 0, 0);
+        m_sx = vdot(w, m_cx); m_sy = vdot(w, m_cy); m_sz = vlen(w); m_pad = vnorm(w);
     }
 #endif
-    if (pad_held(PAD_UP)) want = vadd(want, cam_fwd);
-    if (pad_held(PAD_DOWN)) want = vsub(want, cam_fwd);
-    if (pad_held(PAD_RIGHT)) want = vadd(want, cam_right);
-    if (pad_held(PAD_LEFT)) want = vsub(want, cam_right);
-    if (vlen(want) > 1.0f) want = vnorm(want);
-    float stick = vlen(want);
-    m->hvel = vtangent(m->hvel, m->up);
-    float ratio = vlen(m->hvel) / WALK_SPEED;
+    m_req_jump = pad_pressed(PAD_CROSS);
+    m->height = 0; /* mVerticalSpeed: the height over the ground, probed in 20s up to 160 */
+    if (!m->grounded) {
+        Hit h[1];
+        m->height = 1000.0f;
+        for (float d = 20.0f; d <= 160.0f; d += 20.0f)
+            if (kcl_query(vsub(m->pos, vmul(m->up, d)), 20.0f, h, 1)) { m->height = d; break; }
+    }
+    m->vel = v3(0, 0, 0); m->vel_after = v3(0, 0, 0);
+    if (!m->grounded && !m->jumping && !m->walling && m->vup != 0) { /* thrown by an object: a free jump */
+        m->jumping = 1; m->digital = 1; m->keep_jump = 1; m->jump_from = m->pos; m->hip = 0;
+    }
+    m_retain(m);
+    m_swing(m);
+    if (m->spin_timer) m->spin_timer--;
+    m->spin_t++;
 
-    int slipping = m->grounded && m->slip_keep == 0;
-    if (slipping) { /* slide down the slope (hip slide), facing downhill; jumping still works */
+    int slipping = m->grounded && !m->jumping && m->slip_keep == 0, done = 0;
+    if (m->magic) { /* MarioMagic::update */
+        if (m_req_jump) { m->magic = 0; m_try_jump(m); done = 1; }
+        else if (!m_clip_on("spinground") || m->jumping || slipping) m->magic = 0;
+        else { m_main_move(m); m_update_walk_speed(m); done = 1; }
+    }
+    if (done) ;
+    else if (m->walling) m_wall_update(m);
+    else if (m->jumping) { m_proc_jump(m, 0); m_check_wall_stick(m); }
+    else if (slipping) { /* slide down the slope (hip slide), facing downhill; jumping still works */
         V3 downhill = vtangent(vmul(m->up, -1.0f), m->ground_n);
         float sn = vlen(downhill);
+        m->hvel = vtangent(m->hvel, m->up);
         if (sn > 1e-3f) {
             downhill = vmul(downhill, 1.0f / sn);
             m->hvel = vadd(vmul(m->hvel, 0.98f), vmul(downhill, SLIP_ACCEL * sn));
             if (vlen(m->hvel) > SLIP_MAX) m->hvel = vmul(vnorm(m->hvel), SLIP_MAX);
             m->face = vnorm(vtangent(downhill, m->up));
         }
-        if (pad_pressed(PAD_CROSS)) try_jump(m, ratio);
-    } else if (m->hip == HIP_LAND) { /* procHipDrop landing: stuck until the clip ends, the stick (after 15) or A (5) */
-        m->hvel = v3(0, 0, 0);
-        m->hip_t++;
-        if (pad_pressed(PAD_CROSS) && m->hip_t > 5) { m->hip = 0; try_jump(m, 0); }
-        else if ((m->hip_t > 15 && stick > 0.1f) || (mario_anim && mario_anim->done) || m->hip_t > 60) m->hip = 0;
-    } else if (m->hip) { /* jumpToHipDrop: hang while the start clip plays (+2 frames), then fall straight down */
-        m->hvel = v3(0, 0, 0);
-        m->hip_t++;
-        if (m->hip == HIP_START) {
-            m->vup = 0;
-            if ((!mario_anim || mario_anim->done || m->hip_t > 30) && m->hip_t > HIP_DROP_ZERO_GR_TIME) {
-                m->hip = HIP_FALL; m->hip_t = 0;
-                if (mario_anim) mario_play("hipdrop", 1.0f, 1);
-            }
-        } else {
-            float rate = fminf(fmaxf(1.1f - fabsf(m->vup) / LIMIT_SPEED_HIP_DROP, 0.0f), 1.0f);
-            m->vup = fmaxf(m->vup - GRAVITY_HIP_DROP * rate, -LIMIT_SPEED_HIP_DROP);
-        }
-    } else if (m->grounded) {
-        if (stick > 0.1f) { /* turn towards the stick at most TURN_* radians per frame */
-            float lim = ratio > 0.1f ? TURN_MOVE : TURN_STAND;
-            V3 f = vnorm(vtangent(m->face, m->up));
-            float c = vdot(f, want) / stick;
-            if (c > cosf(lim)) m->face = vnorm(want);
-            else {
-                V3 side = vnorm(vtangent(want, f)); /* in-plane direction from f towards want */
-                if (vlen(side) < 0.5f) side = vcross(m->up, f); /* want is straight behind: pick a side */
-                m->face = vnorm(vadd(vmul(f, cosf(lim)), vmul(side, sinf(lim))));
-            }
-        }
-        m->squat = pad_held(PAD_R1); /* Wii Z */
-        float top = m->squat ? SQUAT_WALK : 1.0f;
-        float in = stick > 0.1f ? (m->squat ? INERTIA_SQUAT : INERTIA_MAX) : (m->squat ? INERTIA_SQUAT : INERTIA_STOP);
-        m->hvel = vadd(vmul(m->hvel, in), vmul(m->face, stick * top * WALK_SPEED * (1.0f - in)));
-        m->land_timer++;
-        if (pad_pressed(PAD_CROSS)) try_jump(m, ratio);
-        else if (pad_pressed(PAD_SQUARE) && m->spin_timer == 0) m->spin_timer = SPIN_TIME;
-        bee_meter = 180; bee_rise = bee_drop = 0; /* landing refills the flight */
-    } else {
-        m->air_timer++;
-        /* air steering; front speed decays after a while (mJumpFrontReduction / mSquatJumpFrontReduction) */
-        m->hvel = vadd(m->hvel, vmul(want, AIR_CONTROL * WALK_SPEED * 0.1f));
-        if (m->jump_kind == 5 ? m->air_timer > SQUAT_FRONT_RED_T : m->air_timer > JUMP_FRONT_RED_T)
-            m->hvel = vmul(m->hvel, m->jump_kind == 5 ? SQUAT_FRONT_RED : JUMP_FRONT_RED);
-        if (vlen(m->hvel) > MAX_JUMP_SPEED) m->hvel = vmul(vnorm(m->hvel), MAX_JUMP_SPEED);
-        if (stick > 0.1f && m->jump_kind != 6) m->face = vnorm(vadd(vmul(m->face, 0.9f), vmul(want, 0.1f)));
-        Hit h[1];
-        if (pad_pressed(PAD_R1) && m->jump_kind != 5 && /* jumpToHipDrop: not from a long jump, not near the ground */
-            !kcl_query(vsub(m->pos, vmul(m->up, HIP_DROP_LIMIT_HEIGHT * 0.5f)), HIP_DROP_LIMIT_HEIGHT * 0.5f, h, 1)) {
-            m->hip = HIP_START; m->hip_t = 0;
-            m->hvel = v3(0, 0, 0); m->vup = 0; m->low_grav = 0;
-            if (mario_anim) mario_play("hipdropstart", 1.0f, 0);
-        } else if (m->wall_timer <= WALL_KEEP && pad_pressed(PAD_CROSS)) { /* wall kick: away from the wall (tryWallJump) */
-            m->face = vnorm(vtangent(m->wall_n, m->up));
-            start_jump(m, 0, vmul(m->face, WALL_JUMP_XZ), WALL_JUMP_Y, "walljump");
-        } else if (pad_pressed(PAD_SQUARE) && !m->spin_used && m->spin_timer == 0) { /* trySpinJump */
-            m->spin_used = 1;
-            m->spin_timer = SPIN_TIME;
-            m->low_grav = SPIN_AIR_TIME;
-            m->jump_kind = 8;
-            m->vup = SPIN_HEIGHT;
-            m->hvel = vadd(m->hvel, vmul(m->face, ratio * TORNADO_FRONT));
-            if (mario_anim) mario_play("spin", 1.0f, 0);
-#ifdef BENCH
-            printf("jump spin\n");
-#endif
-        }
-        float g = m->low_grav > 0 ? JUMP_GRAV[8] : JUMP_GRAV[m->jump_kind >= 0 ? m->jump_kind : 0];
-        if (m->low_grav > 0) m->low_grav--;
-        /* MarioBee.cpp: A held after mBeeAirWalkInhibitTime (30) with flight left lifts him (mBeeFlyConstantFactor 5 x
-         * mBeeAccelRatio 0.02 a frame up to mBeeUpSpeedMax 5, his own rise x mBeePushRiseGravityEraser 0.9); let go
-         * he drops slowly (mBeeFreeDropAcc 0.1 to 5). ponytail: no wall walk, no honey walls, no bee animations */
-        if (bee_mode && (pad_held(PAD_CROSS) || test_cross) && m->air_timer > 30 && bee_meter > 0) {
+        m->vel = m->hvel; m->walk = 0; m->tsi = 0;
+        if (m_req_jump) m_try_jump(m);
+    } else { m_main_move(m); m_update_walk_speed(m); }
+    /* MarioBee.cpp: A held after mBeeAirWalkInhibitTime (30) with flight left lifts him (mBeeFlyConstantFactor 5 x
+     * mBeeAccelRatio 0.02 a frame up to mBeeUpSpeedMax 5, his own rise x mBeePushRiseGravityEraser 0.9); let go
+     * he drops slowly (mBeeFreeDropAcc 0.1 to 5). ponytail: no wall walk, no honey walls, no bee animations */
+    if (bee_mode && m->jumping && !m->hip) {
+        if ((pad_held(PAD_CROSS) || test_cross) && m->air_timer > 30 && bee_meter > 0) {
             bee_meter--; bee_drop = 0;
             bee_rise += 5.0f * 0.02f;
             if (bee_rise > 5.0f) bee_rise = 5.0f;
             m->vup = m->vup > bee_rise ? m->vup * 0.9f : bee_rise;
-        } else if (bee_mode && m->vup <= 0) {
+        } else if (m->vup <= 0) {
             bee_rise = 0;
             if (bee_drop < 5.0f) bee_drop += 0.1f;
             m->vup = -bee_drop;
-        } else
-        m->vup -= g * (2.0f + kari_cling) * 0.5f; /* Karikari clinging: (2 + n) / 2 */
-        if (m->vup < -MAX_DROP) m->vup = -MAX_DROP;
+        }
     }
-    if (m->spin_timer) m->spin_timer--;
     if (slipping) slip_frames++;
 
-    float down = m->grounded ? -GROUNDING : m->vup; /* on the ground: step down to follow the floor */
-    V3 move = vadd(m->hvel, vmul(m->up, down)), center = vadd(m->pos, vmul(m->up, BODY_RADIUS));
+    V3 move = vadd(m->vel, m->vel_after), center = vadd(m->pos, vmul(m->up, BODY_RADIUS));
+    if (m->grounded && !m->jumping && !m->walling) move = vadd(move, vmul(m->up, -GROUNDING)); /* follow the floor */
     V3 gn = m->up;
     int was_ground = m->grounded;
     V3 wn = m->wall_n;
@@ -7018,33 +7776,28 @@ static void update_mario(void)
     }
     if (ground && ground_inst >= 0 && insts[ground_inst].collapse && !row_step[insts[ground_inst].row])
         row_step[insts[ground_inst].row] = 1; /* CollapsePlane::exeWait: Mario on it starts the collapse */
-    if (m->wall) { m->wall_n = wn; m->wall_timer = 0; } else if (m->wall_timer < 1000) m->wall_timer++;
+    if (m->wall) m->wall_n = wn;
     m->pos = vsub(center, vmul(m->up, BODY_RADIUS));
-    if (ground && m->vup <= 0) {
-        if (m->hip == HIP_FALL) { /* hip drop landing: hip_hit tells the objects under Mario this frame */
-            m->hip = HIP_LAND; m->hip_t = 0;
-            hip_hit = 1; hip_inst = ground_inst;
-            if (mario_anim) mario_play("hipdropland", 1.0f, 0);
-        } else if (!was_ground && (m->jump_kind > 0 || m->last_jump >= 0 || m->air_timer > DROP_WAIT)) {
-            /* landing from a jump or a real fall: keep the jump kind for the 2nd / 3rd jump window */
-            static const char *land[9] = {"land", "jump2land", "jumprollland", "land", "land", "jumpbroadland",
-                                          "jumpbackland", "land", "land"};
-            m->land_timer = 0;
-            if (mario_anim && m->jump_kind >= 0) mario_play(land[m->jump_kind], 1.0f, 0);
-        }
-        m->grounded = 1; m->vup = 0; m->spin_used = 0; m->jump_kind = -1; m->low_grav = 0;
+    /* writeBackPhyisicalVector: a wall halves the jump's part into it; on the ground walking into one slows the walk */
+    if (m->wall && m->jumping) {
+        float into = vdot(m_jv(m), m->wall_n);
+        if (into <= 0) m_set_jv(m, vsub(m_jv(m), vmul(m->wall_n, into * 0.5f)));
+    } else if (m->wall && !m->jumping && vdot(m->vel, m->wall_n) < 0) {
+        float slow = 1.0f - clamp01((-vdot(m->wall_n, m->face) - 0.3f) * 1.4285715f);
+        m->tsi = 0;
+        m->walk *= slow;
+    }
+    if (ground && (!m->jumping || m->vup <= 0)) {
+        m->grounded = 1;
         m->ground_n = gn;
-        m->hvel = vtangent(m->hvel, gn); /* walk along the slope */
+        if (m->jumping && m->hip == HIP_FALL) m_hip_land(m);
+        else if (m->jumping && !m->hip) m_do_landing(m);
+        if (!m->hip) { m->vup = 0; m->hvel = vtangent(m->vel, m->up); }
         if (vdot(gn, m->up) < SLIP_ANGLE_COS) { if (m->slip_keep) m->slip_keep--; }
         else m->slip_keep = SLIP_KEEP;
-    } else if (!ground) {
-        if (m->grounded) { m->jump_kind = 0; m->air_timer = 0; m->last_jump = -1; }
-        m->grounded = 0;
-    }
-    if (m->wall && !m->grounded) { /* stop pushing into the wall */
-        float into = vdot(m->hvel, m->wall_n);
-        if (into < 0) m->hvel = vsub(m->hvel, vmul(m->wall_n, into));
-    }
+        bee_meter = 180; bee_rise = bee_drop = 0; /* landing refills the flight */
+    } else if (!ground) m->grounded = 0;
+    if (m->grounded && !m->jumping) m->land_timer++; /* updateTimers: _3CE */
     mario_ground = m->grounded ? ground_inst : -1;
     if (m->grounded != was_ground) ground_flips++;
 #ifdef SLOPE_TEST
@@ -7061,25 +7814,27 @@ static void update_mario(void)
         miss();
     if (m->hurt_timer) m->hurt_timer--;
 
-    if (mario_anim) { /* animation: the one-shot clip of a move plays out, then the state picks a loop */
-        float sp = vlen(m->hvel) / WALK_SPEED;
+    if (mario_anim) { /* MarioAnimator::update: one-shot clips play out, then the state's default */
         int busy = mario_anim->clip_id >= 0 && !mario_anim->loop && !mario_anim->done;
-        if (m->hip) ; /* the hip drop plays its own clips */
-        else if (m->grounded && m->slip_keep == 0) mario_play("slidehipforward", 1.0f, 1); /* 坂すべり下向きあおむけ */
-        else if (m->grounded && m->spin_timer > 0) mario_play("spinground", 1.0f, 0);
-        else if (m->grounded && (!busy || stick > 0.1f)) { /* moving cancels a landing */
-            if (m->squat) mario_play(sp > 0.05f ? "squatwalk" : "squatwait", 1.0f, 1);
-            else if (sp > 0.6f || (sp > 0.5f && mario_anim->clip_id >= 0 && mario_anim->loop && anim_length(mario_anim) &&
-                                   strcmp(sc->clips[mario_anim->clip_id].name, "run") == 0))
-                mario_play("run", sp, 1); /* hysteresis: run above 0.6, back to walk below 0.5 */
-            else if (sp > 0.05f) mario_play("walk", 0.5f + sp, 1);
-            else mario_play("wait", 1.0f, 1);
-        } else if (!m->grounded && !busy && m->air_timer > DROP_WAIT) {
-            if (m->wall_timer <= WALL_KEEP && m->vup < 0) mario_play("wallslide", 1.0f, 1);
-            else mario_play("fall", 1.0f, 1);
-        }
+        if (m->hip || m->magic || m->walling) ; /* their own clips */
+        else if (m->grounded && !m->jumping && m->slip_keep == 0) mario_play("slidehipforward", 1.0f, 1); /* 坂すべり下向きあおむけ */
+        else if (m->grounded && !m->jumping) {
+            if (m->squat) m_squat_anim(m);
+            else {
+                static const char *cancel[] = {"land", "jump2land", "jumprollland", "jumpturnland", "jumpbroadland",
+                                               "jumpbackland", "landslope", "squatend"}; /* isCancelableAnimationRun */
+                int can = 0;
+                for (unsigned i = 0; i < sizeof cancel / sizeof cancel[0]; i++) can |= m_clip_is(cancel[i]);
+                if (busy && can) { m_decide_walk_speed(m); if (m->tsi) { m_clip_stop(); busy = 0; } }
+                if (m->stand_turn && m->tsi == 0 && m_enable_turn(m)) mario_play("run", 1.0f, 1); /* その場足踏み */
+                else if (!busy) { m_decide_walk_speed(m); m_decide_walk_anim(m); }
+                else { if (m->turning || m->turn_brake) m_decide_walk_speed(m); m_update_brake(m); }
+            }
+        } else if (!m->grounded && !busy && (m->jumping || !m->drop_grace)) mario_play("fall", 1.0f, 1); /* 落下 */
         anim_update(mario_anim);
     }
+    if (m->stand_turn) m->stand_turn--;
+    m->last_pos = m->pos;
 }
 
 /* A miss (no life left, or fell into space): one Mario less, back to the start with 3 life. ponytail: no miss
