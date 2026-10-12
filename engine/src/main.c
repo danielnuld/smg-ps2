@@ -634,6 +634,12 @@ int main(void)
             if (frame % 50 == 0) printf("ibubble test f %u: row %d pieces out %d\n", frame, row, game_pieces_out());
         }
 #endif
+#ifdef OROCK_TEST
+        if (frame >= 400 && frame < 2400 && frame % 2 == 0) { /* Mario before the OtaRocks, spinning coconuts back */
+            int st = game_test_orock();
+            if (frame % 100 == 0) printf("orock test f %u: %d\n", frame, st);
+        }
+#endif
 #ifdef KGUN_TEST
         if (frame >= 400 && frame < 1200 && frame % 10 == 0) { /* Mario held at the first KillerGunnerSingle's shell */
             int row = game_test_kgun();
