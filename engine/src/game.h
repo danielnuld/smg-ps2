@@ -33,6 +33,7 @@ int game_test_cannon(void);
  * members are not placed yet (Mario put over it), -1 no more */
 int game_test_plant(int k);
 int game_test_kgun(void);
+int game_test_ibubble(int touch);
 int game_test_kgun_state(void);
 /* Test builds: Mario held in the first LavaSteam's vent (his touch sphere 100 up it); its row or -1 */
 int game_test_steam(void);

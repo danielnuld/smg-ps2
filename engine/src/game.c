@@ -151,6 +151,7 @@ typedef struct {
     int warppod;     /* WarpPod: takes Mario to its pair (warp_try, warp_update) */
     int kiraira;     /* Kiraira: a chained mine, explodes on touch and recovers (update_kiraira, kiraira_pos) */
     int kgun;        /* KillerGunnerSingle: charges and fires its shell (update_kgunners) */
+    int ibubble;     /* ItemBubble: bobs holding coins / star pieces, bursts at a touch or a shot (update_ibubbles) */
     const float *meteor; /* MeteorStrike(Environment): its rail's JMap points; meteors fall along them (update_meteor) */
     int killer;      /* HomingKiller launcher: shoots a bullet that may chase Mario (update_killers) */
     int gcap;        /* GCaptureTarget: the pointer (R2) pulls Mario to it (gcap_try, gcap_update) */
@@ -1019,6 +1020,8 @@ void game_init(const Scene *s, const unsigned char *blob)
               count_type("KuriboMini", 0) + count_type("Karon", 0) +
               count_type("Teresa", 0) + count_type("Butterfly", 0);
     int ntspots = count_type("TreasureSpot", 0) + count_type("CoinFlower", 0); /* a coin each when shot */
+    for (u32 i = 0, tb = scene_type(s, "ItemBubble"); i < s->nobjs; i++) /* ItemBubble's coins (arg0 0, arg1 of them) */
+        if (s->objs[i].type == (int)tb && s->objs[i].arg[0] <= 0) ntspots += s->objs[i].arg[1] > 1 ? s->objs[i].arg[1] : 1;
     box_coins += nkuribo + ntspots; /* each drops a coin (appearCoinPop) */
     ncoins += nkuribo + ntspots;
     coins = mem_alloc(MEM_OBJECTS, ncoins * sizeof(Pickup));
@@ -1560,6 +1563,72 @@ static void update_kgunners(void)
             if (*t >= 59 || (in->anim && in->anim->done)) { *ph = 0; *t = 0; continue; } /* isBckStopped */
         }
         ++*t;
+    }
+}
+
+static void pop_coins(V3 p, V3 up, int n);
+/* ItemBubble.cpp: scale x 1.2, faces the camera; bobs 30 along the world's Y (sin over 120 frames) with its items'
+ * frame (_CC) trailing at 0.1; arg0 0: arg1 coins (1 to 3 at fixed spots, more in a ring of 60 about Z, 60 lower),
+ * 1: arg1 star pieces (one at its centre, more in the ring); the items turn 8 degrees a frame. Mario's body sensor (100)
+ * on its sensor (120 x scale) or a star piece shot bursts it (kill: the dead switch, the coins appearCoinFix, the star
+ * pieces launched 24 against the gravity). ponytail: the coins pop instead of appearing fixed, no rail (Good Egg's
+ * have none), no BubbleBreak effect (not in the FX table) */
+static int bubble_items(const Row *r, V3 *off)
+{
+    int type = r->arg[0] > 0 ? r->arg[0] : 0, n = r->arg[1] > 1 ? r->arg[1] : 1;
+    if (n > 16) n = 16;
+    static const float c1[1][2] = {{0, -67.38f}}, c2[2][2] = {{-55.66f, -92.29f}, {55.66f, -43.95f}},
+                       c3[3][2] = {{0, -19.04f}, {-55.66f, -130.37f}, {67.38f, -130.37f}};
+    for (int i = 0; i < n; i++) {
+        if (type == 0 && n <= 3) {
+            const float *q = n == 1 ? c1[i] : n == 2 ? c2[i] : c3[i];
+            off[i] = v3(q[0], q[1], 0);
+        } else if (type == 1 && n == 1) off[i] = v3(0, 0, 0);
+        else { /* (0, 60, 0) turned 2 pi / n about Z each, (0, -60, 0) below for coins */
+            float a = 6.2831853f * i / n;
+            off[i] = v3(-60.0f * sinf(a), 60.0f * cosf(a) + (type == 0 ? -60.0f : 0.0f), 0);
+        }
+    }
+    return n;
+}
+
+static V3 bubble_item_pos(const Inst *in, V3 off)
+{
+    const Row *r = &sc->objs[in->row];
+    float a = r->rot[2] * 0.0174533f, k = 1.2f * r->scale[0];
+    return vadd(in->head, v3((off.x * cosf(a) - off.y * sinf(a)) * k, (off.x * sinf(a) + off.y * cosf(a)) * k, off.z * k));
+}
+
+static V3 bubble_pos(const Inst *in)
+{
+    const Row *r = &sc->objs[in->row];
+    return vadd(row_pos(r), v3(0, 30.0f * sinf(2.0f * (row_step[in->row] / 120.0f) * 3.14159265f), 0));
+}
+
+static void bubble_burst(Inst *in)
+{
+    const Row *r = &sc->objs[in->row];
+    V3 off[16];
+    int n = bubble_items(r, off);
+    for (int i = 0; i < n; i++) {
+        V3 p = bubble_item_pos(in, off[i]), up = up_at(p, mario->up);
+        if (r->arg[0] == 1) launch_pieces(p, up, 1, 0.0f, 24.0f);
+        else pop_coins(p, up, 1);
+    }
+    row_kill(in->row);
+    printf("item bubble %d bursts\n", in->row);
+}
+
+static void update_ibubbles(void)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->ibubble || !row_shown(in->row)) continue;
+        row_step[in->row]++;
+        V3 p = bubble_pos(in);
+        in->head = vadd(in->head, vmul(vsub(p, in->head), 0.1f)); /* blendMtx(_CC, _9C, 0.1) */
+        if (vlen(vsub(c, p)) < 120.0f * 1.2f * sc->objs[in->row].scale[0] + 100.0f) bubble_burst(in); /* receiveMsgPush */
     }
 }
 
@@ -2644,6 +2713,8 @@ void game_rebind(void)
         in->warppod = strcmp(name, "WarpPod") == 0;
         in->kiraira = strcmp(name, "Kiraira") == 0;
         in->kgun = strcmp(name, "KillerGunnerSingle") == 0;
+        in->ibubble = strcmp(name, "ItemBubble") == 0;
+        if (in->ibubble) in->head = row_pos(r); /* its items' frame (_CC) trails the bubble */
         in->meteor = NULL;
         in->killer = strcmp(name, "HomingKiller") == 0;
         in->gcap = strcmp(name, "GCaptureTarget") == 0;
@@ -2947,6 +3018,30 @@ int game_test_kgun(void)
     int ty = scene_type(sc, "KillerGunnerSingle"); /* its zone not in yet: Mario by its row, the zone streams in */
     for (u32 i = 0; i < sc->nobjs; i++)
         if (sc->objs[i].type == ty) {
+            V3 p = row_pos(&sc->objs[i]);
+            mario->up = up_at(p, mario->up);
+            mario->pos = vadd(p, vmul(mario->up, 300.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return -2;
+        }
+    return -1;
+}
+
+int game_test_ibubble(int touch) /* the first ItemBubble: Mario 600 off it (touch 0) or in it (1); its zone first */
+{
+    test_nolost = 1;
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->ibubble || row_dead[in->row]) continue;
+        V3 p = bubble_pos(in), up = up_at(p, mario->up);
+        mario->up = up;
+        mario->pos = vsub(vadd(p, vmul(vnorm(vtangent(v3(1, 0, 0), up)), touch ? 0.0f : 600.0f)), vmul(up, HIT_BODY_H));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->walk = 0;
+        return in->row;
+    }
+    int ty = scene_type(sc, "ItemBubble");
+    for (u32 i = 0; i < sc->nobjs; i++)
+        if (sc->objs[i].type == ty && !row_dead[i]) {
             V3 p = row_pos(&sc->objs[i]);
             mario->up = up_at(p, mario->up);
             mario->pos = vadd(p, vmul(mario->up, 300.0f));
@@ -11324,6 +11419,12 @@ static void update_shots(void)
             printf("star piece explodes kiraira %d" "\n", in->row);
             hit = 1;
         }
+        for (int k = 0; k < ninsts && !hit; k++) { /* ItemBubble: isMsgStarPieceAttack bursts it */
+            Inst *in = &insts[k];
+            if (!in->ibubble || !row_shown(in->row) || vlen(vsub(s->pos, bubble_pos(in))) > 120.0f * 1.2f * sc->objs[in->row].scale[0]) continue;
+            bubble_burst(in);
+            hit = 1;
+        }
         for (int k = 0; k < ninsts && !hit; k++) { /* SpaceCocoon: a star piece pushes the cocoon 5 */
             Inst *in = &insts[k];
             if (!in->cocoon || vlen(vsub(s->pos, in->head)) > 100.0f) continue;
@@ -11565,6 +11666,7 @@ void game_update(void)
     update_tsuki();
     update_kiraira();
     update_kgunners();
+    update_ibubbles();
     update_meteor();
     update_killers();
     update_flows();
@@ -11781,6 +11883,29 @@ void game_draw(void)
             const Model *md = (row_step[in->row] & FLIP_DONE) && in->md_flip[1] ? in->md_flip[1] :
                               turned ? in->md_flip[0] : in->md;
             inst_draw(in, md, in->m);
+            continue;
+        }
+        if (in->ibubble) { /* ItemBubble::calcAndSetBaseMtx: Z to the camera, Y the camera's up; its items inside */
+            if (row_dead[in->row]) continue;
+            const Row *r = &sc->objs[in->row];
+            V3 p = bubble_pos(in), ce, cw, cu, z = vnorm(vsub(cam_pos, p));
+            float fovy, cm[16], k = 1.2f * r->scale[0];
+            camera_pose(&ce, &cw, &cu, &fovy);
+            V3 x = vnorm(vcross(cu, z)), y = vcross(z, x);
+            float ax[3][3] = {{x.x, x.y, x.z}, {y.x, y.y, y.z}, {z.x, z.y, z.z}};
+            mat_identity(cm);
+            for (int a = 0; a < 3; a++) for (int j = 0; j < 3; j++) cm[4 * a + j] = ax[a][j] * k;
+            cm[12] = p.x; cm[13] = p.y; cm[14] = p.z;
+            V3 off[16];
+            int n = bubble_items(r, off);
+            const Model *im = r->arg[0] == 1 ? m_piece : m_coin;
+            for (int q = 0; im && q < n; q++) {
+                float am[16];
+                basis_matrix(am, bubble_item_pos(in, off[q]), v3(0, 1, 0), v3(0, 0, 1), row_step[in->row] * 8.0f * 0.0174533f);
+                if (r->arg[0] == 1) render_model(im, am, 0x60, 0xD0, 0xF0);
+                else render_model(im, am, 0xF0, 0xD0, 0x30);
+            }
+            inst_draw(in, in->md, cm);
             continue;
         }
         if (in->shoot) { /* spinning about its y, grown by k */

@@ -628,6 +628,12 @@ int main(void)
         if (frame % 120 == 0 && frame <= 1800)
             printf("shoot test f %u: star pieces out %d\n", frame, game_pieces_out());
 #endif
+#ifdef IBUBBLE_TEST
+        if (frame >= 400 && frame < 1100 && frame % 10 == 0) { /* off the first ItemBubble until 700, then into each */
+            int row = game_test_ibubble(frame >= 700);
+            if (frame % 50 == 0) printf("ibubble test f %u: row %d pieces out %d\n", frame, row, game_pieces_out());
+        }
+#endif
 #ifdef KGUN_TEST
         if (frame >= 400 && frame < 1200 && frame % 10 == 0) { /* Mario held at the first KillerGunnerSingle's shell */
             int row = game_test_kgun();
