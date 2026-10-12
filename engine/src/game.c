@@ -502,9 +502,14 @@ static void row_kill(int i)
 }
 
 /* Coins (Coin.cpp, CoinGroup.cpp) also go when their SW_B turns on. take: can Mario take it now (else: is it drawn) */
+/* CoinReplica.cpp: its coin appears NonActive (drawn, no sensor) and is Fix (taken at a touch) while its SW_A is on;
+ * its SW_B removes it. ponytail: arg0 (activeCoinWithGravity: the coin hops 30 and falls) is taken as plain Fix */
+static int t_replica = -1;
 static int pickup_on(const Pickup *p, int take)
 {
     if (p->alive == PICK_GONE || p->alive == (take ? PICK_POP_NEW : PICK_POP_BLINK)) return 0;
+    if (p->row >= 0 && take && sc->objs[p->row].type == t_replica && sc->objs[p->row].sw[SW_A] >= 0 && !sw_on(&sc->objs[p->row], SW_A))
+        return 0;
     return p->row < 0 || (row_shown(p->row) && !sw_on(&sc->objs[p->row], SW_B));
 }
 #define pickup_shown(p) pickup_on(p, 0)
@@ -977,7 +982,8 @@ void game_init(const Scene *s, const unsigned char *blob)
         m_mario_skin = NULL;
     }
 
-    ncoins = count_type("Coin", 0) + count_type("CircleCoinGroup", 1) + count_type("RailCoin", 1);
+    t_replica = scene_type(s, "CoinReplica");
+    ncoins = count_type("Coin", 0) + count_type("CoinReplica", 0) + count_type("CircleCoinGroup", 1) + count_type("RailCoin", 1);
     for (u32 i = 0; i < s->nobjs; i++) { /* room for what breakables drop */
         int c, p;
         if (breakable(s->types + 32 * s->objs[i].type, &s->objs[i], &c, &p)) {
@@ -1126,7 +1132,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     for (u32 i = 0; i < s->nobjs; i++) {
         const Row *r = &s->objs[i];
         int c0 = ic, p0 = ip, s0 = is;
-        if (r->type == t_coin) { coins[ic].pos = row_pos(r); coins[ic++].alive = 1; }
+        if (r->type == t_coin || r->type == t_replica) { coins[ic].pos = row_pos(r); coins[ic++].alive = 1; }
         else if (r->type == t_pc) { purple[ip].pos = row_pos(r); purple[ip++].alive = 1; }
         else if (r->type == t_piece) { pieces[is].pos = row_pos(r); pieces[is++].alive = 1; }
         else if (r->type == t_spg) is += star_group(pieces + is, r, blob);
@@ -3306,6 +3312,21 @@ int game_test_follow(int phase) /* the first StarPieceFollowGroup: its SW_A on (
                     }
         mario->hvel = v3(0, 0, 0); mario->vup = 0;
         return out << 8 | got_pieces;
+    }
+    return -1;
+}
+
+int game_test_replica(int phase) /* Mario held on the first CoinReplica's coin; phase 1 turns its SW_A on; returns its
+                                  * coin's state (0 gone) */
+{
+    test_nolost = 1;
+    for (int i = 0; i < ncoins; i++) {
+        if (coins[i].row < 0 || sc->objs[coins[i].row].type != t_replica) continue;
+        const Row *r = &sc->objs[coins[i].row];
+        if (phase && r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) sw_set(r, SW_A, 1);
+        mario->up = up_at(coins[i].pos, mario->up);
+        mario->pos = vsub(coins[i].pos, vmul(mario->up, 50.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return coins[i].alive;
     }
     return -1;
 }

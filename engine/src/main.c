@@ -635,6 +635,12 @@ int main(void)
             if (frame % 50 == 0) printf("ibubble test f %u: row %d pieces out %d\n", frame, row, game_pieces_out());
         }
 #endif
+#ifdef REPLICA_TEST
+        if (frame >= 400 && frame < 700) { /* Mario on a CoinReplica: not taken until its SW_A is on (frame 550) */
+            int st = game_test_replica(frame >= 550);
+            if (frame % 25 == 0) printf("replica test f %u: coin %d, coins %d\n", frame, st, game_coins());
+        }
+#endif
 #ifdef FOLLOW_TEST
         if (frame >= 400 && frame < 1000) { /* a StarPieceFollowGroup round Mario, then he takes its pieces one by one */
             int st = game_test_follow(frame >= 480 && frame % 10 == 0);
