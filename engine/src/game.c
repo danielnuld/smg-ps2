@@ -80,7 +80,14 @@ typedef struct {
     int launch, launch_t; /* launch star carrying Mario (-1 none) and frames since it caught him */
     int hip, hip_t;     /* hip drop: HIP_START / HIP_FALL / HIP_LAND (0 none), frames in that phase */
     V3 launch_from;     /* where Mario was caught */
+    /* MarioSlip.cpp: _960 the floor code, mDrawStates._C on a slip polygon, _23 sliding, _8F0 its build-up, _8F8 the
+     * slide's velocity, _910 skating, _280 / _284 the side move, _904 downhill, _1A8, _3C2 frames sliding, _3C4, _3FE
+     * slope dash frames, _8F4, mDrawStates._4 the slope dash; _16C last frame's velocity, getLastMove */
+    int floor, slip_poly, s23, s3C2, s3C4, s3FE, s_dash;
+    float s8F0, s280, s8F4;
+    V3 s8F8, s910, s284, s904, s1A8, prev_vel, last_move;
 } Player;
+static float angle_d(const Player *m, V3 n);
 
 /* SuperSpinDriver (Petari SuperSpinDriver.cpp, SpinDriverShootPath.cpp, ParabolicPath.cpp): bind radius 300,
  * ShootStart 45 frames (Mario pulled to the centre over 15), then Shoot along the path for mFlightTime (arg0,
@@ -115,9 +122,6 @@ static V3 launch_pos(const Launch *L, float t);
 #define SLIP_ANGLE_COS 0.5f       /* mSlipAngle 60: steeper ground is a slope Mario slips down */
 #define WALL_ANGLE_COS 0.087f     /* mForceWallAngle 85: steeper faces are walls; up to here they are ground */
 #define SLIP_KEEP 15              /* Mario::updateFloorCode: frames on a slope before its floor code turns slip */
-#define SLIP_ACCEL 1.2f           /* ponytail: slide speed gain per frame x sin(slope); Petari's slip move is not
-                                   * ported, tune by eye */
-#define SLIP_MAX 30.0f
 #define GROUNDING 20.0f           /* mGravityGrounding: downward step while on the ground keeps Mario on crests */
 enum { HIP_START = 1, HIP_FALL, HIP_LAND };
 #define BODY_RADIUS 50.0f        /* ponytail: one sphere for Mario's body; SMG uses several collision checks */
@@ -415,6 +419,7 @@ static int nflows;
 static Killer killers[MAX_KILLERS];
 static int nkillers;
 static int ground_inst = -1;     /* instance under the last collide_n's ground normal, -1 none */
+static int ground_attr;          /* its face's codes (slice.py kcl_codes): Floor_code in bits 0-7 */
 static void zone_spheres(void);
 static void zone_grow(const Inst *in);
 
@@ -869,7 +874,7 @@ static V3 up_at(V3 p, V3 prev)
 /* Push a sphere out of the KCL; returns 1 if it rests on ground (a face within 60 degrees of up). */
 unsigned int game_kcl_cycles;
 
-typedef struct { V3 n; float dist; int inst; } Hit; /* world normal, penetration, instance */
+typedef struct { V3 n; float dist; int inst, attr; } Hit; /* world normal, penetration, instance, KCL codes (kcl_codes) */
 
 /* Sphere against every placed KCL: the sphere goes to the instance's object space (KCL data is in model space),
  * normals and depths come back to world. ponytail: uniform scale only (scale.x), like every planet seen so far. */
@@ -894,6 +899,7 @@ static int kcl_query(V3 c, float radius, Hit *out, int max)
                         vmul(v3(m[8], m[9], m[10]), fn[2]));
             out[n].n = vmul(w, 1.0f / in->s);
             out[n].inst = i;
+            out[n].attr = kcl_attribute(in->kcl, h[j].prism);
             out[n++].dist = h[j].dist * in->s;
         }
     }
@@ -916,7 +922,7 @@ static int collide_n(V3 *center, V3 up, float radius, V3 *ground_n, V3 *wall_n, 
 {
     unsigned int c0 = cycles();
     int ground = 0;
-    ground_inst = -1;
+    ground_inst = -1; ground_attr = 0;
     float flat = WALL_ANGLE_COS; /* ground normal = the flattest ground face touched: it is what holds Mario up, and
                                   * taking the deepest one flipped between the two faces of a crease */
     if (wall) *wall = 0;
@@ -934,7 +940,7 @@ static int collide_n(V3 *center, V3 up, float radius, V3 *ground_n, V3 *wall_n, 
                 flat = di;
                 ground = 1;
                 if (ground_n) *ground_n = hits[i].n;
-                ground_inst = hits[i].inst;
+                ground_inst = hits[i].inst; ground_attr = hits[i].attr;
             }
         }
         V3 nrm = hits[deepest].n;
@@ -957,7 +963,7 @@ static int collide_n(V3 *center, V3 up, float radius, V3 *ground_n, V3 *wall_n, 
                 flat = vdot(hits[i].n, up);
                 ground = 1;
                 if (ground_n) *ground_n = hits[i].n;
-                ground_inst = hits[i].inst;
+                ground_inst = hits[i].inst; ground_attr = hits[i].attr;
             }
     }
     game_kcl_cycles += cycles() - c0;
@@ -3370,6 +3376,40 @@ int game_test_invinc(void) /* the BenefitItemInvincible: its appear switch on, M
         done = 1;
     }
     return invincible_time << 8 | life;
+}
+
+int game_test_slip(void) /* Mario dropped at random points within 2500 of the start until he stands on a 46-58 degree
+                          * slip polygon, then left there still: he should slide down it (MarioSlip) */
+{
+    static int phase, t, tries;
+    static V3 at;
+    test_nolost = 1;
+    t++;
+    if (phase == 0) {
+        if (t == 1 || t > 90) { /* a new spot */
+            float a = (rand() % 6283) / 1000.0f, r = 300.0f + rand() % 2200;
+            V3 c0 = start_pos; /* DiskGardenPlanet has Slip floors (code 2) */
+            for (u32 i = 0; i < sc->nobjs; i++) if (sc->objs[i].type == scene_type(sc, "DiskGardenPlanet")) c0 = row_pos(&sc->objs[i]);
+            V3 up = up_at(vadd(c0, v3(0, 3000, 0)), v3(0, 1, 0)), x = vnorm(vtangent(v3(1, 0, 0), up)), z = vcross(x, up);
+            mario->pos = vadd(vadd(c0, vmul(vadd(vmul(x, cosf(a)), vmul(z, sinf(a))), r)), vmul(up, 1500.0f));
+            mario->up = up_at(mario->pos, up); mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
+            t = 2; tries++;
+            return -tries;
+        }
+        if (mario->grounded && t > 20) {
+            float ang = angle_d(mario, mario->ground_n);
+            if (mario->slip_poly && (mario->floor == 2 || (ang >= 46.0f && ang <= 58.0f))) {
+                phase = 1; t = 0; at = mario->pos;
+                printf("slip test: on a %d degree slope, floor %d, after %d tries" "\n", (int)ang, mario->floor, tries);
+            } else { if (tries < 40) printf("slip test: landed on %d degrees, floor %d, slip poly %d\n", (int)ang, mario->floor, mario->slip_poly); t = 91; }
+        }
+        return -tries;
+    }
+    if (t % 3 == 0 && t <= 90)
+        printf("slip test t %d: grounded %d jumping %d slide %d build %d speed %d moved %d clip %s" "\n", t, mario->grounded, mario->jumping, mario->s23, (int)mario->s8F0,
+               (int)vlen(mario->s8F8), (int)vlen(vsub(mario->pos, at)),
+               mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-");
+    return mario->s23;
 }
 
 int game_test_kgun_state(void)
@@ -8164,6 +8204,7 @@ static void m_do_landing(Player *m)
 static void m_main_move(Player *m)
 {
     int a1 = 0;
+    if (m->s23) { m->tsi = 0; m->walk = 0; a1 = 1; } /* sliding: 坂滑り */
     V3 dir = m->move_dir;
     int dir_set = 0;
     if (m_req_jump) { m_try_jump(m); return; }
@@ -8239,6 +8280,8 @@ static void m_main_move(Player *m)
     }
     float ts = MC.mTurnAngleSpeed;
     if (m->walk > MC.mFastTurnSpeed) { ts = MC.mTurnAngleSpeed2; if (m->tsi < 5) ts = MC.mTurnAngleSpeedSlowWalk; }
+    if (m->s23) ts = MC.mTurnAngleSpeed3;
+    if (m->slip_poly) ts *= ang_abs_h(m->s8F8, vmul(m->face, -1.0f), m->up) < 3.14159265f * 45.0f / 180.0f ? 0.1f : 0.3f;
     fs = m_shadow(m, m->face);
     if (!m->turn_brake) {
         V3 cross = vcross(m->last_sd, m->sd);
@@ -8303,6 +8346,222 @@ static void m_main_move(Player *m)
     float sp = vlen(v); /* along the ground: (_368 x v) x _368 at v's length */
     V3 c = vnorm(vcross(m->ground_n, vnorm(v)));
     m->vel = vmul(vcross(c, m->ground_n), sp);
+}
+
+
+/* MarioSlip.cpp after Petari (slopeMove, moveSlopeSlide, isEnableSlopeMove, clearSlope; MarioModule isSlipFloorCode /
+ * isSlipPolygon, ported as decompiled: every floor code but NoSlip, Sand, the water bottoms and NoStampSand slips; a
+ * Slip floor over 3 degrees, any other from mFlatAngle - 0.5). On a slip polygon the build-up _8F0 grows 0.3 x
+ * angle / 90 a frame (at once standing or at speed index 0, not while dashing up a slope of 25 and more: がんばり走り),
+ * at 10 (or at once from mSlipAngle) Mario slides (_23): along the slope at mSlopeAccel x angle a frame, curving
+ * downhill (mSlopeCurveAssist), face down (坂すべり下向きあおむけ) or up (上向きうつぶせ) it, the stick steering
+ * sideways (moveSlopeSlide); off the slip polygon it brakes 0.4 / 0.8 a frame, then the slide's speed fades
+ * (mSlopeFinishInertia, mSlopeCancelInertia with the stick) into the end clips. ponytail: no wall-slope push
+ * (mDrawStates._17 / _2C4: our collision has no strike list), skating stands for スケーティング, no 共通スリップ坂制動
+ * effect or 坂滑り sound, MarioStatus kinds are none or magic */
+static int slip_code(int c) /* isSlipFloorCode */
+{
+    switch (c) {
+    case 2: return 1;
+    case 3: case 0xD: case 0x14: case 0x15: case 0x16: case 0x1E: return 0;
+    }
+    return 1;
+}
+static float angle_d(const Player *m, V3 n) /* calcAngleD: from against the gravity, snapped within 1 of 0 and 90 */
+{
+    float c = vdot(m->up, n), a = acosf(c > 1 ? 1 : c < -1 ? -1 : c) * 57.29578f;
+    if (fabsf(a) < 1.0f) a = 0;
+    if (fabsf(a - 90.0f) < 1.0f) a = 90.0f;
+    return a;
+}
+static int slip_polygon(const Player *m, int code, V3 n) /* isSlipPolygon */
+{
+    switch (code) {
+    case 2: return !(angle_d(m, n) <= 3.0f);
+    case 3: case 0xD: case 0x14: case 0x15: case 0x16: case 0x1E: return 0;
+    }
+    return angle_d(m, n) >= MC.mFlatAngle - 0.5f;
+}
+static V3 kill_elem(V3 a, V3 b, float *d) { *d = vdot(a, b); return vsub(a, vmul(b, *d)); } /* vecKillElement */
+static int near0(V3 v) { return vdot(v, v) < 1e-12f; }
+static void m_front_blend(Player *m, V3 f, float t) /* setFrontVecKeepUp(v, rate) */
+{
+    if (near0(f)) return;
+    V3 nf = vnorm(f), b;
+    float d = ang_abs(m->face, nf);
+    if (!(d < 1.5707963f && blend_sphere(m->face, nf, &b, t))) b = rot_toward(m->face, nf, m->up, d * t);
+    m_front(m, b);
+}
+static void m_front_angle(Player *m, V3 f, float ang) /* setFrontVecKeepUpAngle */
+{
+    if (near0(f)) return;
+    float d = ang_abs(m->face, f);
+    if (d == 0) return;
+    if (d < ang) m_front(m, f); else m_front_blend(m, f, ang / d);
+}
+static void m_clear_slope(Player *m) /* clearSlope */
+{
+    m->s8F0 = 0; m->s23 = 0; m->s8F8 = v3(0, 0, 0); m->s280 = 0; m->s910 = v3(0, 0, 0); m->s284 = v3(0, 0, 0);
+    m->s3C2 = 0; m->s3C4 = 0; m->s904 = v3(0, 0, 0);
+}
+static void m_cam_axes(V3 *y, V3 *z)
+{
+    V3 ce, cw, cu;
+    float fovy;
+    camera_pose(&ce, &cw, &cu, &fovy);
+    *z = vnorm(vsub(cw, ce)); *y = vnorm(cu);
+}
+static void m_slope_slide(Player *m) /* moveSlopeSlide */
+{
+    V3 n = m->ground_n, g = vmul(m->up, -1.0f);
+    int stick = m_sz > 0;
+    if (angle_d(m, n) < 5.8f) {
+        if (m->slip_poly) {
+            float sp = vlen(m->prev_vel);
+            if (vlen(m->s910) < sp) m->s910 = m->prev_vel;
+            m->s910 = vadd(m->s910, vmul(m_pad, 0.5f));
+            if (vlen(m->s910) > 15.0f) m->s910 = vmul(vnorm(m->s910), 15.0f);
+            m->vel = vadd(m->vel, m->s910);
+        }
+    } else if (m_clip_is("skatel") || m_clip_is("slidestmach") || m_clip_is("slidehipforward")) {
+        V3 c20 = vcross(g, n);
+        c20 = near0(c20) ? c20 : vnorm(c20);
+        if (fabsf(m->s280) < 1e-6f) m->s284 = c20;
+        if (stick && m->s3C4 == 0) {
+            float d = vdot(m->s284, m_pad);
+            if (fabsf(d) > 0.2f) m->s280 = m->s280 * MC.mSlopeSideMoveInertia + d * (1.0f - MC.mSlopeSideMoveInertia);
+            else m->s280 *= MC.mSlopeSideStopInertia;
+        } else m->s280 *= MC.mSlopeSideStopInertia;
+        V3 c14 = vcross(m->s284, n);
+        m->s284 = vcross(n, c14);
+        m->vel = vadd(m->vel, vmul(m->s284, m->s280 * MC.mSlopeSideMoveSpeed));
+    }
+}
+static void m_slope_move(Player *m) /* slopeMove */
+{
+    V3 n = m->ground_n, g = vmul(m->up, -1.0f), c17C = v3(0, 0, 0), c188;
+    float blend_rate = clamp01(m->walk), d;
+    int stick = m_sz > 0;
+    V3 c170 = vcross(n, g);
+    if (!near0(c170)) c170 = vnorm(c170);
+    if (near0(c170)) m->s904 = v3(0, 0, 0);
+    else { c17C = vnorm(vcross(n, c170)); m->s904 = c17C; }
+    if (vdot(vnorm(c17C), vnorm(g)) > 0.9999f || vdot(vnorm(c17C), vnorm(g)) < -0.9999f) { m->s23 = 0; m->s904 = v3(0, 0, 0); c17C = v3(0, 0, 0); }
+    float slope = angle_d(m, n);
+    if (!m->slip_poly) {
+        blend_rate = 1.0f;
+        if (m->s23) {
+            m->s8F0 -= slope >= 15.0f ? 0.4f : 0.8f;
+            if (m->s8F0 < 0) { m->s8F0 = 0; m->s23 = 0; }
+            m->vel = v3(0, 0, 0);
+        } else m->s8F0 = 0;
+    } else if (!m->s23) {
+        if (slope >= MC.mSlipAngle) {
+            kill_elem(m->vel, c17C, &d);
+            m->s8F8 = d < 0 ? m->vel : v3(0, 0, 0);
+            m->vel = v3(0, 0, 0); m->s23 = 1; m->s8F0 = 10.0f;
+            return;
+        }
+        float side;
+        V3 c158 = kill_elem(m->vel, c17C, &side);
+        if (m->walk < 0.1f) m->s8F0 = 10.0f;
+        if (m->tsi == 0 && !m_clip_on("landslope")) m->s8F0 = 10.0f;
+        if (slope >= 25.0f && stick) {
+            V3 cy, cz, c14C;
+            m_cam_axes(&cy, &cz);
+            c14C = kill_elem(c17C, cy, &d);
+            if (near0(c14C)) c14C = kill_elem(c17C, cz, &d);
+            c14C = vnorm(c14C);
+            if (vdot(c14C, m_pad) < 0 && vdot(m->face, c14C) < 0) m->s_dash = 1;
+        }
+        if (!m->s_dash) m->s8F0 += 0.3f * (slope / 90.0f);
+        if (m->s8F0 >= 10.0f) {
+            kill_elem(m->last_move, c17C, &d);
+            m->s8F8 = d < 0 ? m->last_move : v3(0, 0, 0);
+            m->s23 = 1; m->s8F0 = 10.0f; m->vel = v3(0, 0, 0); m->s_dash = 0;
+        } else if (!m->s_dash && side > 0) {
+            float t = m->s8F0 / 10.0f;
+            m->vel = vadd(c158, vmul(c17C, side * (1.0f - t)));
+        }
+        blend_rate *= 1.0f - m->s8F0 / 10.0f;
+        if (m->s_dash) {
+            if (++m->s3FE > MC.mSlopeDashAccelTime) m->s3FE = MC.mSlopeDashAccelTime;
+            m->s8F4 = slope / MC.mSlopeDashAngleFactor * ((float)m->s3FE / MC.mSlopeDashAccelTime);
+            m->s8F4 = 1.0f + m->s8F4 * MC.mSlopeDashSpeedFactor;
+            float acc = 1.0f + (m->s8F4 - 1.0f) * MC.mSlopeDashAccelFactor;
+            m->vel = vadd(m->vel, vmul(m->s904, -acc));
+            if (m_clip_is("runslope")) m_clip_stop();
+        }
+    }
+    m->s8F8 = kill_elem(m->s8F8, n, &d);
+    if (m->s23) {
+        m->brake1 = 0;
+        float move_ang = angle_d(m, n);
+        if (m->slip_poly) {
+            m->vel = vadd(kill_elem(m->vel, c17C, &d), m->s8F8);
+            m->s8F8 = vadd(m->s8F8, vmul(c17C, -slope * MC.mSlopeAccel));
+        } else {
+            if (!near0(m->s8F8)) m->vel = kill_elem(m->vel, vnorm(m->s8F8), &d);
+            m->vel = vadd(m->vel, m->s8F8);
+        }
+        if (near0(m->s8F8) && !m->slip_poly) { m->s23 = 0; return; }
+        if (move_ang > 0) {
+            V3 c134 = kill_elem(vmul(c17C, -1.0f), g, &d);
+            if (near0(c17C) || (near0(c134) && !m->slip_poly)) { m->s23 = 0; return; }
+            float sp = vlen(m->s8F8), ratio = clamp01(move_ang / 30.0f);
+            V3 dir = near0(m->s8F8) ? m->s8F8 : vnorm(m->s8F8), out;
+            if (blend_sphere(dir, vmul(c17C, -1.0f), &out, ratio * MC.mSlopeCurveAssist)) m->s8F8 = near0(out) ? out : vmul(vnorm(out), sp);
+        }
+        if (near0(m->s8F8)) { m->s23 = 0; m_slope_slide(m); return; }
+        if (!(vdot(m->s8F8, c17C) > 0)) {
+            if (vdot(c17C, m->up) > 0.05f) {
+                V3 c128 = vnorm(kill_elem(m->face, n, &d)), c11C = vnorm(m->s8F8);
+                float turn = cosf(1.0471976f);
+                if (m_clip_is("slidestmach")) turn = cosf(1.4959966f);
+                if (m_clip_is("skatel") && vdot(m->s910, c17C) > 0) { if (vlen(m->s910) > 2.0f) m->s8F8 = m->s910; m->s910 = v3(0, 0, 0); }
+                if (vdot(c128, c17C) < turn) {
+                    m_front_blend(m, c11C, 0.1f);
+                    if (!m_clip_is("slidestmach")) mario_play("slidehipforward", 1.0f, 1);
+                    if (stick && vdot(m->prev_vel, c11C) > 0 && ang_abs_h(c11C, m->face, m->up) < 0.5235988f)
+                        m_front_angle(m, m->prev_vel, MC.mSlipMoveTurnAngleRad);
+                } else {
+                    if (!m_clip_is("slidehipforward")) mario_play("slidestmach", 1.0f, 1);
+                    m_front_blend(m, vmul(c11C, -1.0f), m->s3C2 < 5 ? 0.5f : 0.1f);
+                    if (m->s3C2 > 10 && stick && vdot(m->prev_vel, c11C) > 0 && ang_abs_h(vmul(c11C, -1.0f), m->face, m->up) < 0.5235988f)
+                        m_front_angle(m, vmul(m->prev_vel, -1.0f), MC.mSlipMoveTurnAngleRad);
+                }
+            } else if (m->slip_poly) {
+                if (!m_clip_is("skatel")) { m->s910 = m->s8F8; m->s8F8 = v3(0, 0, 0); }
+                mario_play("skatel", 1.0f, 1);
+            }
+        }
+        if (stick && !near0(c17C) && m->s3C4 == 0) {
+            V3 cy, cz, c110 = c17C;
+            m_cam_axes(&cy, &cz);
+            c17C = kill_elem(c17C, cy, &d);
+            if (near0(c17C)) c17C = kill_elem(c110, cz, &d);
+            c17C = vnorm(c17C);
+            if (vdot(c17C, m_pad) > 0.15f) m->turn_slip = MC.mTurnSlipTime; /* _3D0 */
+        }
+        m->s1A8 = vmul(m->s1A8, 0.9f);
+        V3 c104 = kill_elem(m->s1A8, c17C, &d);
+        if (d >= 0) c104 = m->s1A8;
+        m->vel = vadd(m->vel, c104);
+    } else {
+        m->vel = vadd(m->vel, m->s8F8);
+        m->s8F8 = vmul(m->s8F8, stick && m->s3C4 == 0 ? MC.mSlopeCancelInertia : MC.mSlopeFinishInertia);
+        if (vlen(m->s8F8) < MC.mSlopeAnimeFinishSpeed) {
+            if (m_clip_is("slidestmach")) mario_play("slidestmachend", 1.0f, 0);
+            if (m_clip_is("slidehipforward")) mario_play("slidehipend", 1.0f, 0);
+            if (m_clip_is("skatel")) m_clip_stop();
+            if (stick && m->s8F0 == 0 && (m_clip_is("slidestmachend") || m_clip_is("slidehipend"))) m_clip_stop();
+        }
+    }
+    float smax = m->turn_slip ? MC.mSlopeSpeedMaxBraking : MC.mSlopeSpeedMax, ss = vlen(m->s8F8);
+    if (ss > smax) m->s8F8 = vmul(vnorm(m->s8F8), 0.8f * ss + 0.2f * smax);
+    if (!blend_sphere(vmul(m->up, -1.0f), vmul(n, -1.0f), &c188, blend_rate)) { m->s23 = 0; m_try_drop(m); return; }
+    if (m->wall && vdot(m->vel, m->face) > 0) m->vel = kill_elem(m->vel, m->face, &d); /* mMovementStates._8 */
+    m_slope_slide(m);
 }
 
 /* the spin (MarioActor::updateSwingAction): in the air trySpinJump once a jump (then 空パンチ), on the ground
@@ -8424,6 +8683,7 @@ static void update_mario(void)
         for (float d = 20.0f; d <= 160.0f; d += 20.0f)
             if (kcl_query(vsub(m->pos, vmul(m->up, d)), 20.0f, h, 1)) { m->height = d; break; }
     }
+    m->prev_vel = m->vel;
     m->vel = v3(0, 0, 0); m->vel_after = v3(0, 0, 0);
     if (!m->grounded && !m->jumping && !m->walling && m->vup != 0) { /* thrown by an object: a free jump */
         m->jumping = 1; m->digital = 1; m->keep_jump = 1; m->jump_from = m->pos; m->hip = 0;
@@ -8433,7 +8693,8 @@ static void update_mario(void)
     if (m->spin_timer) m->spin_timer--;
     m->spin_t++;
 
-    int slipping = m->grounded && !m->jumping && m->slip_keep == 0, done = 0;
+    int slipping = m->s23, done = 0;
+    m->s_dash = 0; /* mDrawStates reset */
     if (m->magic) { /* MarioMagic::update */
         if (m_req_jump) { m->magic = 0; m_try_jump(m); done = 1; }
         else if (!m_clip_on("spinground") || m->jumping || slipping) m->magic = 0;
@@ -8442,19 +8703,13 @@ static void update_mario(void)
     if (done) ;
     else if (m->walling) m_wall_update(m);
     else if (m->jumping) { m_proc_jump(m, 0); m_check_wall_stick(m); }
-    else if (slipping) { /* slide down the slope (hip slide), facing downhill; jumping still works */
-        V3 downhill = vtangent(vmul(m->up, -1.0f), m->ground_n);
-        float sn = vlen(downhill);
-        m->hvel = vtangent(m->hvel, m->up);
-        if (sn > 1e-3f) {
-            downhill = vmul(downhill, 1.0f / sn);
-            m->hvel = vadd(vmul(m->hvel, 0.98f), vmul(downhill, SLIP_ACCEL * sn));
-            if (vlen(m->hvel) > SLIP_MAX) m->hvel = vmul(vnorm(m->hvel), SLIP_MAX);
-            m->face = vnorm(vtangent(downhill, m->up));
-        }
-        m->vel = m->hvel; m->walk = 0; m->tsi = 0;
-        if (m_req_jump) m_try_jump(m);
-    } else { m_main_move(m); m_update_walk_speed(m); }
+    else { m_main_move(m); m_update_walk_speed(m); }
+    if (!m->s23) { m->s1A8 = m->vel; m->s3C2 = 0; m->s280 = 0; m->s284 = v3(0, 0, 0); } else m->s3C2++;
+    if (m->s3C4) m->s3C4--;
+    if (m->grounded && !m->jumping && !m->walling && !done) { /* isEnableSlopeMove: MarioStatus none */
+        if (!(!slip_code(m->floor) && !m->s23 && near0(m->s8F8)) && !m->magic) m_slope_move(m); else m_clear_slope(m);
+    }
+    if (!m->s_dash) m->s3FE = 0;
     /* MarioBee.cpp: A held after mBeeAirWalkInhibitTime (30) with flight left lifts him (mBeeFlyConstantFactor 5 x
      * mBeeAccelRatio 0.02 a frame up to mBeeUpSpeedMax 5, his own rise x mBeePushRiseGravityEraser 0.9); let go
      * he drops slowly (mBeeFreeDropAcc 0.1 to 5). ponytail: no wall walk, no honey walls, no bee animations */
@@ -8502,10 +8757,15 @@ static void update_mario(void)
         if (m->jumping && m->hip == HIP_FALL) m_hip_land(m);
         else if (m->jumping && !m->hip) m_do_landing(m);
         if (!m->hip) { m->vup = 0; m->hvel = vtangent(m->vel, m->up); }
-        if (vdot(gn, m->up) < SLIP_ANGLE_COS) { if (m->slip_keep) m->slip_keep--; }
-        else m->slip_keep = SLIP_KEEP;
+        m->floor = ground_attr & 0xFF; /* updateFloorCode: _960, _41C */
+        if (angle_d(m, gn) > MC.mSlipAngle) {
+            if (angle_d(m, gn) > MC.mForceWallAngle) m->slip_keep = 0;
+            if (m->slip_keep) m->slip_keep--;
+            if (!m->slip_keep) m->floor = 0x80;
+        } else if (!slip_code(m->floor)) m->slip_keep = SLIP_KEEP;
         bee_meter = 180; bee_rise = bee_drop = 0; /* landing refills the flight */
     } else if (!ground) m->grounded = 0;
+    m->slip_poly = m->grounded && slip_polygon(m, ground_attr & 0xFF, m->ground_n); /* updateGroundInfo: mDrawStates._C */
     if (m->grounded && !m->jumping) m->land_timer++; /* updateTimers: _3CE */
     mario_ground = m->grounded ? ground_inst : -1;
     if (m->grounded != was_ground) ground_flips++;
@@ -8513,10 +8773,10 @@ static void update_mario(void)
     {
         static int f;
         if (++f % 10 == 0 && f <= 400)
-            printf("slope f %d grounded %d slip_keep %d flips %d wall %d d %.2f clip %s pos %d %d %d\n", f, m->grounded,
+            printf("slope f %d grounded %d slip_keep %d flips %d wall %d d %.2f clip %s pos %d %d %d floor %d slippoly %d slide %d build %d v8F8 %d\n", f, m->grounded,
                    m->slip_keep, ground_flips, m->wall, vdot(m->ground_n, m->up),
                    mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-",
-                   (int)m->pos.x, (int)m->pos.y, (int)m->pos.z);
+                   (int)m->pos.x, (int)m->pos.y, (int)m->pos.z, m->floor, m->slip_poly, m->s23, (int)m->s8F0, (int)vlen(m->s8F8));
     }
 #endif
     if (!test_nolost && lost(m->pos)) /* fell off */
@@ -8526,7 +8786,7 @@ static void update_mario(void)
     if (mario_anim) { /* MarioAnimator::update: one-shot clips play out, then the state's default */
         int busy = mario_anim->clip_id >= 0 && !mario_anim->loop && !mario_anim->done;
         if (m->hip || m->magic || m->walling) ; /* their own clips */
-        else if (m->grounded && !m->jumping && m->slip_keep == 0) mario_play("slidehipforward", 1.0f, 1); /* 坂すべり下向きあおむけ */
+        else if (m->grounded && !m->jumping && (m->s23 || (busy && (m_clip_is("slidehipend") || m_clip_is("slidestmachend"))))) ; /* slopeMove's clips */
         else if (m->grounded && !m->jumping) {
             if (m->squat) m_squat_anim(m);
             else {
@@ -8543,6 +8803,7 @@ static void update_mario(void)
         anim_update(mario_anim);
     }
     if (m->stand_turn) m->stand_turn--;
+    m->last_move = vsub(m->pos, m->last_pos); /* getLastMove */
     m->last_pos = m->pos;
 }
 

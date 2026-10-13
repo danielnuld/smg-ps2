@@ -446,6 +446,8 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None):
                 sk = skin_entry(b, bl, gtab)
         elif n.endswith(".kcl"):
             kcls[n.split("/")[-1]] = b
+    for kn in list(kcls):  # each prism's attribute resolved through its .pa (kcl_codes)
+        kcls[kn] = kcl_codes(kcls[kn], next((v for k, v in files.items() if k.lower().split("/")[-1] == kn[:-4] + ".pa"), b""))
     # the model's own collision: <archive>.kcl, else the first that is not a MoveLimit boundary (PuffballPlanetA lists
     # movelimit.kcl first: its ground was a missing invisible wall)
     kcl = kcls.get(arc.stem.lower() + ".kcl") or next((v for k, v in kcls.items() if not k.startswith("movelimit")), None)
@@ -508,6 +510,20 @@ def anim_clip(bck):
     out += rot + b"\0" * (-len(rot) % 4)
     out += struct.pack(f"<{nt}f", *struct.unpack_from(f">{nt}f", bck, to))
     return out
+
+
+def kcl_codes(b, pa):
+    """Big-endian KCL with each prism's attribute (a row of its .pa, KCollisionServer / CollisionCode.cpp) replaced by
+    that row's codes: Floor_code in bits 0-7, Wall_code in 8-11, Camera_through in bit 12 (kcl.h KCL_FLOOR...). A
+    KCL without a .pa keeps 0 (Normal)."""
+    out = bytearray(b)
+    cols = [B.bcsv_column(pa, f) for f in ("Floor_code", "Wall_code", "Camera_through")]
+    pos, nrm, prism, octree = struct.unpack_from(">4I", b, 0)
+    for o in range(prism + 0x10, octree, 0x10):
+        at = struct.unpack_from(">H", b, o + 0xE)[0]
+        f, w, c = (col[at] if at < len(col) else 0 for col in cols)
+        struct.pack_into(">H", out, o + 0xE, (f & 0xFF) | (w & 0xF) << 8 | (c & 1) << 12)
+    return bytes(out)
 
 
 def kcl_tris(b):

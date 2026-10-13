@@ -111,22 +111,27 @@ int blob_add(Scene *s, const u8 *blob)
             q = r;
         }
     }
-    const u8 *an = blob_chunk(blob, "ANIM", NULL);
-    if (an && *(const u32 *)an) { /* {u32 n}, n x {char[32] name, u32 raw, u32 zsize, z[zsize], pad 4}: added to the
-                                    * clips already there (the scenario's placed classes, then Mario's) */
-        u32 n0 = s->nclips;
-        Clip *old = s->clips;
-        s->nclips += *(const u32 *)an;
-        s->clips = mem_alloc(MEM_PLAYER, s->nclips * sizeof(Clip));
-        if (n0) memcpy(s->clips, old, n0 * sizeof(Clip));
-        const u8 *q = an + 4;
-        for (u32 i = n0; i < s->nclips; i++) {
-            Clip *c = &s->clips[i];
-            c->name = (const char *)q;
-            c->raw = *(const u32 *)(q + 32);
-            c->zsize = *(const u32 *)(q + 36);
-            c->z = q + 40;
-            q += 40 + ((c->zsize + 3) & ~3u);
+    /* every ANIM chunk in turn: an embedded blob holds the placed classes' clips, then Mario's */
+    const u8 *cp = blob + 16;
+    for (u32 ci = 0, cn = *(const u32 *)(blob + 8); ci < cn; ci++, cp += 16 + *(const u32 *)(cp + 4)) {
+        if (memcmp(cp, "ANIM", 4)) continue;
+        const u8 *an = cp + 16;
+        if (*(const u32 *)an) { /* {u32 n}, n x {char[32] name, u32 raw, u32 zsize, z[zsize], pad 4}: added to the
+                                * clips already there (the scenario's placed classes, then Mario's) */
+            u32 n0 = s->nclips;
+            Clip *old = s->clips;
+            s->nclips += *(const u32 *)an;
+            s->clips = mem_alloc(MEM_PLAYER, s->nclips * sizeof(Clip));
+            if (n0) memcpy(s->clips, old, n0 * sizeof(Clip));
+            const u8 *q = an + 4;
+            for (u32 i = n0; i < s->nclips; i++) {
+                Clip *c = &s->clips[i];
+                c->name = (const char *)q;
+                c->raw = *(const u32 *)(q + 32);
+                c->zsize = *(const u32 *)(q + 36);
+                c->z = q + 40;
+                q += 40 + ((c->zsize + 3) & ~3u);
+            }
         }
     }
     const u8 *ca = blob_chunk(blob, "CANM", NULL);

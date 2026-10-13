@@ -635,6 +635,9 @@ int main(void)
             if (frame % 50 == 0) printf("ibubble test f %u: row %d pieces out %d\n", frame, row, game_pieces_out());
         }
 #endif
+#ifdef SLIP_TEST
+        if (frame >= 300 && frame < 2400) game_test_slip(); /* Mario left still on a steep slope */
+#endif
 #ifdef INVINC_TEST
         if (frame >= 400 && frame < 1700) { /* Mario takes the rainbow star, walks into a walker, is hit for nothing */
             int st = game_test_invinc();
