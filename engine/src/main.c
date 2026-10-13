@@ -635,6 +635,12 @@ int main(void)
             if (frame % 50 == 0) printf("ibubble test f %u: row %d pieces out %d\n", frame, row, game_pieces_out());
         }
 #endif
+#ifdef INVINC_TEST
+        if (frame >= 400 && frame < 1700) { /* Mario takes the rainbow star, walks into a walker, is hit for nothing */
+            int st = game_test_invinc();
+            if (frame % 50 == 0) printf("invinc test f %u: invincible %d, life %d\n", frame, st >> 8, st & 255);
+        }
+#endif
 #ifdef REPLICA_TEST
         if (frame >= 400 && frame < 700) { /* Mario on a CoinReplica: not taken until its SW_A is on (frame 550) */
             int st = game_test_replica(frame >= 550);

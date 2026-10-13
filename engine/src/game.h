@@ -40,6 +40,7 @@ int game_test_petari(void);
 int game_test_seesaw(int phase);
 int game_test_follow(int phase);
 int game_test_replica(int phase);
+int game_test_invinc(void);
 /* EggStar 2 (isStageStarPieceFollowGroupLimit): StarPieceFollowGroups give at most 100 minus Mario's star pieces */
 void game_set_piece_follow_limit(int on);
 int game_test_ibubble(int touch);

@@ -198,7 +198,7 @@ typedef struct {
     int plant;       /* PlantGroup (Flower / FlowerBlue / CutBush Group): its model drawn at each member (plants) */
     const unsigned char *railer; /* map part on a rail: its PATH entry; moves along it (update_railers) */
 } Inst;
-enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE };
+enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
 static V3 firebar_ball(const Inst *in, int j, int k);
 static V3 star_pos(const Inst *in, int *state);
 static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle);
@@ -283,6 +283,10 @@ static int test_nolost; /* test builds: no miss for falling off (Mario sent to a
 static void notes_spawn(void);
 static int note_rail(const Row *r, const unsigned char **e);
 static int fire_time; /* Fire Mario: frames left (mFireModeTime 1200), 0 normal */
+/* Invincible Mario (BenefitItemInvincible: changePlayerItemStatus 7, PlayerMode_Invincible): frames left (mMetalHoldTime
+ * 1200, updatePlayerMode). No damage (isInvincible); his body and tramples send ACTMES_INVINCIBLE_ATTACK. ponytail:
+ * no rainbow BRK / Invincible effect / BGM_MUTEKI_A, no invincible run jump (_430 1) */
+static int invincible_time;
 /* DinoPackun (Petari Boss/DinoPackun*.cpp, the first fight: DinoPackunVs1): one per scene, its state here */
 static struct {
     int row, phase, nrv, t, hits;  /* phase: 0 wait (SW_A), 1 egg, 2 battle, 3 punched (the ball out), 4 demo, 5 down, 6 gone */
@@ -2767,7 +2771,7 @@ void game_rebind(void)
         in->hazard = strcmp(name, "SpaceMine") == 0 ? 1 : strcmp(name, "NeedlePlant") == 0 ? 2 :
                      strcmp(name, "BlackHole") == 0 ? 3 : strcmp(name, "BlackHoleCube") == 0 ? 4 : 0;
         in->item = strcmp(name, "PowerStar") == 0 ? ITEM_STAR : strcmp(name, "BenefitItemOneUp") == 0 ? ITEM_ONEUP :
-                   strcmp(name, "BenefitItemLifeUp") == 0 ? ITEM_LIFEUP : strcmp(name, "QuestionCoin") == 0 ? ITEM_QCOIN :
+                   strcmp(name, "BenefitItemLifeUp") == 0 ? ITEM_LIFEUP : strcmp(name, "BenefitItemInvincible") == 0 ? ITEM_INVINCIBLE : strcmp(name, "QuestionCoin") == 0 ? ITEM_QCOIN :
                    strcmp(name, "YellowChip") == 0 || strcmp(name, "BlueChip") == 0 ? ITEM_CHIP :
                    strcmp(name, "KeySwitch") == 0 ? ITEM_KEY : strcmp(name, "MorphItemNeoFire") == 0 ? ITEM_FIRE :
                    strcmp(name, "MorphItemNeoBee") == 0 ? ITEM_BEE : 0; /* KeySwitch.cpp: taken (isMsgItemGet), its SW_A on */
@@ -3331,6 +3335,41 @@ int game_test_replica(int phase) /* Mario held on the first CoinReplica's coin; 
         return coins[i].alive;
     }
     return -1;
+}
+
+int game_test_invinc(void) /* the BenefitItemInvincible: its appear switch on, Mario onto it; then beside the nearest
+                            * walker, and a hit on him; returns invincible frames << 8 | life */
+{
+    test_nolost = 1;
+    int ty = scene_type(sc, "BenefitItemInvincible");
+    if (!invincible_time) {
+        for (u32 i = 0; i < sc->nobjs; i++) {
+            const Row *r = &sc->objs[i];
+            if (r->type != ty || row_dead[i]) continue;
+            if (r->sw[SW_APPEAR] >= 0 && !sw_on(r, SW_APPEAR)) sw_set(r, SW_APPEAR, 1);
+            V3 p = row_pos(r);
+            mario->up = up_at(p, mario->up); mario->pos = p; mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return -2;
+        }
+        return -1;
+    }
+    static int done;
+    if (!done) {
+        int best = -1;
+        float bd = 1e30f;
+        for (int k = 0; k < nkuribo; k++) {
+            if (kuribo[k].state == KURIBO_DEAD || !row_shown(kuribo[k].row) || kuribo[k].kind == WALK_BUTTERFLY) continue;
+            float d = vlen(vsub(kuribo[k].pos, mario->pos));
+            if (d < bd) { bd = d; best = k; }
+        }
+        if (best >= 0) {
+            mario->up = kuribo[best].up; mario->pos = kuribo[best].pos; mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            printf("invinc test: onto walker row %d (kind %d)\n", kuribo[best].row, kuribo[best].kind);
+        }
+        hurt_mario(vadd(mario->pos, mario->face), 15.0f);
+        done = 1;
+    }
+    return invincible_time << 8 | life;
 }
 
 int game_test_kgun_state(void)
@@ -8531,7 +8570,7 @@ static void mario_fx(int fx, float k)
 
 static void hurt_mario(V3 from, float push)
 {
-    if (mario->hurt_timer) return;
+    if (mario->hurt_timer || invincible_time) return;
     if (bee_mode) { bee_mode = 0; printf("bee mario lost\n"); } /* the bee suit goes at a hit */
     mario_fx(FX_MARIO_DAMAGE, 1.0f);
     if (--life <= 0) { miss(); return; }
@@ -11393,6 +11432,26 @@ static void update_follow_groups(void)
     }
 }
 
+
+/* Invincible Mario's body on the walkers (ACTMES_INVINCIBLE_ATTACK): Petari's KickOut while solid, the others their
+ * blow (walker_blow) or, without one, killed with their coin. ponytail: each enemy's own reaction to the message is
+ * its blow here */
+static void update_invincible(void)
+{
+    if (!invincible_time) return;
+    if (--invincible_time == 0) printf("invincible mario over\n");
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int k = 0; k < nkuribo; k++) {
+        Kuribo *e = &kuribo[k];
+        if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_BUTTERFLY ||
+            vlen(vsub(c, vadd(e->pos, vmul(e->up, 60.0f)))) > 60.0f + HIT_BODY_R) continue;
+        if (e->kind == WALK_PETARI) { if (petari_solid(e)) petari_blow(e, mario->pos, PT_KICKOUT); continue; }
+        int took = walker_blow(e, mario->pos);
+        if (took < 0) { e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up); pop_coins(e->pos, e->up, 1); }
+        if (took) printf("invincible mario hits walker row %d\n", e->row);
+    }
+}
+
 static void update_launched_pieces(void)
 {
     for (int i = pieces_base; pieces_base && i < npieces; i++) {
@@ -12744,9 +12803,9 @@ static V3 item_sensor(const Inst *in, float *r)
 {
     int state;
     V3 p = in->item == ITEM_STAR ? star_pos(in, &state) : v3(in->m[12], in->m[13], in->m[14]);
-    *r = (in->item == ITEM_STAR ? 75.0f : in->item == ITEM_QCOIN ? 150.0f : in->item == ITEM_CHIP ? 80.0f : in->item == ITEM_KEY ? 105.0f : 50.0f) * in->s;
+    *r = (in->item == ITEM_INVINCIBLE ? 60.0f : in->item == ITEM_STAR ? 75.0f : in->item == ITEM_QCOIN ? 150.0f : in->item == ITEM_CHIP ? 80.0f : in->item == ITEM_KEY ? 105.0f : 50.0f) * in->s;
     if (in->item == ITEM_STAR || in->item == ITEM_CHIP) return p;
-    return vadd(p, vmul(up_at(p, mario->up), (in->item == ITEM_QCOIN ? 210.0f : in->item == ITEM_KEY ? 105.0f : 50.0f) * in->s));
+    return vadd(p, vmul(up_at(p, mario->up), (in->item == ITEM_QCOIN ? 210.0f : in->item == ITEM_KEY ? 105.0f : in->item == ITEM_INVINCIBLE ? 60.0f : 50.0f) * in->s));
 }
 
 /* An event star (star_wait) waits hidden, or shown inside the cage that declared it (CrystalCageL: 250 up the cage,
@@ -12887,7 +12946,7 @@ static void update_items(void)
             star_pos(in, &state);
             if (state < 3) { row_step[in->row] += state == 2; continue; } /* row_step: its appear demo */
         }
-        if (in->item == ITEM_ONEUP || in->item == ITEM_LIFEUP) { benefit_update(in); if (in->invisible && row_turn[in->row] == 1) continue; }
+        if (in->item == ITEM_ONEUP || in->item == ITEM_LIFEUP || in->item == ITEM_INVINCIBLE) { benefit_update(in); if (in->invisible && row_turn[in->row] == 1) continue; }
         float r;
         V3 p = item_sensor(in, &r);
         if (vlen(vsub(c, p)) > r + HIT_BODY_R) continue;
@@ -12909,6 +12968,7 @@ static void update_items(void)
         }
         else if (in->item == ITEM_ONEUP) printf("1-up, lives %d\n", ++lives);
         else if (in->item == ITEM_LIFEUP) { life = max_life = 2 * MAX_LIFE; printf("life up\n"); }
+        else if (in->item == ITEM_INVINCIBLE) { invincible_time = 1200; fire_time = 0; bee_mode = 0; printf("invincible mario\n"); }
         else if (in->item == ITEM_QCOIN) fx_emit(FX_QUESTIONCOIN_GET, in->m);
         else if (in->item == ITEM_CHIP)
             fx_emit(sc->types[32 * sc->objs[in->row].type] == 'Y' ? FX_YELLOWCHIP_GET : FX_BLUECHIP_GET, in->m);
@@ -13298,6 +13358,7 @@ void game_update(void)
     if (mario->spin_timer == SPIN_TIME - 1) mario_fx(FX_MARIO_SPINLIGHT, 1.0f); /* a spin started this frame */
     if (hip_hit) mario_fx(FX_MARIO_HIPDROPFLOWER, 0.0f);
     update_launched_pieces();
+    update_invincible();
     update_follow_groups();
     update_wrecks();
     update_kuribo();
