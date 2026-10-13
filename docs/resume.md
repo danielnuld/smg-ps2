@@ -322,9 +322,9 @@ there needs the embedded blob and every pack rebuilt.
 slide (KCL floor codes + MarioSlip.cpp, commit 550f1d1); EggStar 1-4 `route` get their stars, host tests pass
 (EggStar packs repacked 2026-10-12, the other galaxies' are older: item d). The user's last instruction: do the rest
 of item a (Plant groups' clips done 2026-10-12: members posed by their nerve's clip, turned at random;
-next: QuestionCoin's throw) **without running the PCSX2 tests** (build only). Order: first finish
+QuestionCoin's throw done: bind 3 steps at the binder, then its Y x arg0; next: TicoFat / Tico talk) **without running the PCSX2 tests** (build only). Order: first finish
 every improvised part, then add the missing systems. Left, in order:
-  a. Improvised still: QuestionCoin's throw (arg0 > 0: only GhostShipCaveZone, Phantom; its Appear effect is not in the FX table), TicoFat / Tico talk, CollapsePlane collision shrink (non-uniform KCL),
+  a. Improvised still: TicoFat / Tico talk, CollapsePlane collision shrink (non-uniform KCL),
      OtaKingMagma collision / BTK, Rock BTK size frame, the walkers' shadows.
   b. Classes of Good Egg: done (KillerGunnerSingle, ItemBubble, OtaRock, TakoBarrelA, HammerHeadPackun, Plant,
      Petari, PhantomShipHandle / Propellers, StarPieceFollowGroup, CoinReplica, PowerStarHalo / ZoneHalo,

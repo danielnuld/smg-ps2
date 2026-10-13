@@ -645,6 +645,7 @@ static int npipes, pipe_wait, pipe_zone = -1;
 static int pipe_seq, pipe_from, pipe_t; /* bound in a pipe: 1 Ready, 2 PlayerIn, 3 TargetPipeShowUp, 4 PlayerOut */
 static V3 pipe_p0, pipe_u0, pipe_f0;  /* Mario's matrix as he was bound (_120) */
 static int pipe_bind(Player *m);
+static int qcoin_bind(Player *m);
 /* Switch logic rows (no model): TimerSwitch, SwitchSynchronizerReverse, GroupSwitchWatcher */
 enum { LOGIC_TIMER = 1, LOGIC_REVERSE, LOGIC_GROUP, LOGIC_BLOCKER, LOGIC_FLIPS, LOGIC_CHIPS, LOGIC_SWAREA, LOGIC_DEATH, LOGIC_RESTART, LOGIC_PIECESPOT };
 static int area_shape(const char *name);
@@ -8603,7 +8604,7 @@ static void update_mario(void)
         if (mario_anim) { mario_play(star_demo ? "powerstarget" : "wait", 1.0f, !star_demo); anim_update(mario_anim); }
         return;
     }
-    if (pipe_bind(m)) {
+    if (pipe_bind(m) || qcoin_bind(m)) {
         if (mario_anim) anim_update(mario_anim);
         return;
     }
@@ -13068,6 +13069,7 @@ static V3 item_sensor(const Inst *in, float *r)
     V3 p = in->item == ITEM_STAR ? star_pos(in, &state) : v3(in->m[12], in->m[13], in->m[14]);
     *r = (in->item == ITEM_INVINCIBLE ? 60.0f : in->item == ITEM_STAR ? 75.0f : in->item == ITEM_QCOIN ? 150.0f : in->item == ITEM_CHIP ? 80.0f : in->item == ITEM_KEY ? 105.0f : 50.0f) * in->s;
     if (in->item == ITEM_STAR || in->item == ITEM_CHIP) return p;
+    if (in->item == ITEM_QCOIN && in_water(p, up_at(p, mario->up), NULL)) *r *= 2.0f; /* sInWaterScale */
     return vadd(p, vmul(up_at(p, mario->up), (in->item == ITEM_QCOIN ? 210.0f : in->item == ITEM_KEY ? 105.0f : in->item == ITEM_INVINCIBLE ? 60.0f : 50.0f) * in->s));
 }
 
@@ -13198,12 +13200,32 @@ static void update_notes(void)
     }
 }
 
+/* QuestionCoin::exeThrowActor: Mario held at the binder (sBindStartBlendFrame 0: at once) in mLaunchQuat (the coin's
+ * up and side) until step sBindAnimFrame 3, then QuestionCoinJump with its Y x arg0 and the coin is killed.
+ * ponytail: endBindAndPlayerJump and ...ForceWeakGravityJump (arg1 0) are both m_power_jump, as the port's other
+ * binds; no actor camera, no SE */
+static struct { int row, t; V3 pos, up, face, vel; } qth = {.row = -1};
+
+static int qcoin_bind(Player *m)
+{
+    if (qth.row < 0) return 0;
+    m->pos = qth.pos; m->up = qth.up; m->face = qth.face; /* setBaseTRMtx(mBoundActor) at the binder */
+    m->hvel = v3(0, 0, 0); m->vup = 0; m->grounded = 0;
+    if (++qth.t < 3) return 1;
+    m_power_jump(m, qth.vel);
+    if (mario_anim) mario_play("questioncoinjump", 1.0f, 0);
+    row_kill(qth.row);
+    qth.row = -1;
+    game_rebind();
+    return 0;
+}
+
 static void update_items(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
-        if (!in->item) continue;
+        if (!in->item || (in->item == ITEM_QCOIN && in->row == qth.row)) continue;
         if (in->item == ITEM_STAR && star_wait[in->row]) {
             int state;
             star_pos(in, &state);
@@ -13232,7 +13254,21 @@ static void update_items(void)
         else if (in->item == ITEM_ONEUP) printf("1-up, lives %d\n", ++lives);
         else if (in->item == ITEM_LIFEUP) { life = max_life = 2 * MAX_LIFE; printf("life up\n"); }
         else if (in->item == ITEM_INVINCIBLE) { invincible_time = 1200; fire_time = 0; bee_mode = 0; printf("invincible mario\n"); }
-        else if (in->item == ITEM_QCOIN) fx_emit(FX_QUESTIONCOIN_GET, in->m);
+        else if (in->item == ITEM_QCOIN) {
+            fx_emit(FX_QUESTIONCOIN_GET, in->m);
+            if (sc->objs[in->row].arg[0] > 0) { /* isThrowActor: ACTMES_AUTO_RUSH_BEGIN binds Mario (exeThrowActor) */
+                const Row *qr = &sc->objs[in->row];
+                V3 x, z;
+                row_axes(qr, &x, &z);
+                qth.row = in->row; qth.t = 0; qth.pos = p;
+                qth.up = vnorm(vcross(z, x)); qth.face = vnorm(vcross(x, qth.up)); /* mLaunchQuat: makeMtxUpSide */
+                qth.vel = vmul(qth.up, (float)qr->arg[0]);                      /* getYDir x mLaunchSpeed */
+                in->invisible = 1;                                               /* hideModel */
+                if (mario_anim) mario_play("questioncoinjumpstart", 1.0f, 0);
+                printf("question coin %d: throws Mario\n", in->row);
+                return;
+            }
+        }
         else if (in->item == ITEM_CHIP)
             fx_emit(sc->types[32 * sc->objs[in->row].type] == 'Y' ? FX_YELLOWCHIP_GET : FX_BLUECHIP_GET, in->m);
         else if (in->item == ITEM_FIRE) { fire_time = 1200; bee_mode = 0; printf("fire mario\n"); } /* mFireModeTime */
@@ -13523,7 +13559,8 @@ static void keep_effects(void)
         }
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
-        if (!in->item || !row_shown(in->row) || vlen(vsub(v3(in->m[12], in->m[13], in->m[14]), cam_pos)) > 4000.0f)
+        if (!in->item || !row_shown(in->row) || in->row == qth.row ||
+            vlen(vsub(v3(in->m[12], in->m[13], in->m[14]), cam_pos)) > 4000.0f)
             continue;
         const char *name = sc->types + 32 * sc->objs[in->row].type;
         int fx = in->item == ITEM_STAR ? FX_POWERSTAR_LIGHT : in->item == ITEM_QCOIN ? FX_QUESTIONCOIN_LIGHT :
