@@ -318,7 +318,8 @@ there needs the embedded blob and every pack rebuilt.
 
 ## Next
 
-**Where the 2026-10-12 session stopped (resume here):** items a and b are done; next is c, from MarioPress. EggStar
+**Where the 2026-10-12 session stopped (resume here):** items a and b are done; c's MarioPress is in (build only,
+unverified: checkVerticalPress / setPress after Petari, side presses not), next talk / messages. EggStar
 1-4 `route` got their stars before the a commits below; host tests pass (EggStar packs repacked 2026-10-12, the other
 galaxies' are older: item d). The user's last instruction: finish item a **without running the PCSX2 tests** (build
 only), so these a commits are unverified in PCSX2: slope slide (550f1d1), Plant groups' clips (members posed by their
@@ -337,8 +338,9 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
      light: item c) or need item c: SignBoard / LuigiEvent (talk), DimensionAir / HomeAir (TEV rim material, NO_DRAW),
      ShootingStarArea (RandomEffectObj: random effects in an area). The other Plant grows on its PackunPetit's dead
      switch 4. Next is a.
-  c. Systems: MarioPress (crushed between the map and a press object: RGTowerPressGroundA, Dossun, RailBlock),
-     talk / messages, sound effects, real lighting, wipes, multi-actor cameras (Dino damage camera),
+  c. Systems: MarioPress done (MarioPress.cpp checkVerticalPress, setPress 0 / 4 after Petari: press objects are the
+     RailMoveObjPress classes; Dossun / RailBlock / TripodBossFixParts are not in the port; checkSidePressPre /
+     checkSidePress need front / back walls and face velocities the port's collision lacks), talk / messages, sound effects, real lighting, wipes, multi-actor cameras (Dino damage camera),
      footprints (FootPrint decals), looping / attached effects (Smoke trails, Glow), BTK / BRK animation at run time
      (lava, water, per-instance colours: Butterfly arg0), bloom models, shadows.
   Known: the skinned-object anim pool (MAX_OBJ_ANIM 40) can be full at a rebind, leaving an inst without its Anim

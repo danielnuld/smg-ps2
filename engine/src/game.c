@@ -86,6 +86,8 @@ typedef struct {
     int floor, slip_poly, s23, s3C2, s3C4, s3FE, s_dash;
     float s8F0, s280, s8F4;
     V3 s8F8, s910, s284, s904, s1A8, prev_vel, last_move;
+    int press, press_t; /* MarioActor::setPress: _39C + 1 (0 none), frames to the game over (_FB8) */
+    float press_s;      /* _3B0: his height's scale while pressed */
 } Player;
 static float angle_d(const Player *m, V3 n);
 
@@ -201,6 +203,7 @@ typedef struct {
     int shoot;       /* ShootingStar: falls, bursts into star pieces (update_shooting) */
     int plant;       /* PlantGroup (Flower / FlowerBlue / CutBush Group): its model drawn at each member (plants) */
     const unsigned char *railer; /* map part on a rail: its PATH entry; moves along it (update_railers) */
+    int press;       /* RailMoveObjPress (RGTowerPressGroundA, ReverseGravityRoomPressGroundA / B): ATYPE_MAP_OBJ_PRESS */
     int otamagma;    /* OtaKingMagma's collision (initCollisionParts "OtaKingMagma"): drawn with OtaKing (ota) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
@@ -2860,6 +2863,8 @@ void game_rebind(void)
                     strcmp(name, "HipDropTimerSwitch") == 0 ? 2 : 0;
         in->rotor = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->arg[4] != -1 && r->arg[4] != 0; /* -1: not a map part */
         in->seesaw = strcmp(name, "PhantomShipHandle") == 0;
+        in->press = strcmp(name, "RGTowerPressGroundA") == 0 || strcmp(name, "ReverseGravityRoomPressGroundA") == 0 ||
+                    strcmp(name, "ReverseGravityRoomPressGroundB") == 0;
         in->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 : 0;
         if (in->seesaw) { in->rotor = 0; seesaw_matrix(in); }
         in->railer = scene_blob_g && r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->path >= 0 ?
@@ -8618,6 +8623,95 @@ static void m_swing(Player *m)
  * (forceKill), DamageNormal (4), DamageFire (10: doFireDanceWithInitialDamage) and DamageElectric (15: doParalyze)
  * a hit. ponytail: MarioFireDance / MarioParalyze are not decompiled: each is an ordinary hurt (hurt_mario), as the
  * port's other burns; checkCurrentFloorCodeSevere's shadow test not done */
+/* MR::getFirstPolyOnLineToMap: the first face met from `from` along d facing against it (its point, normal, inst).
+ * ponytail: stepped spheres of 10 every 10, as drop_to_ground; no polygon-exact ray in kcl.c */
+static int map_line(V3 from, V3 d, V3 *hp, V3 *n, int *inst)
+{
+    float len = vlen(d);
+    if (len < 1e-3f) return 0;
+    V3 u = vmul(d, 1.0f / len);
+    Hit h[8];
+    for (float t = 0; t <= len; t += 10.0f) {
+        V3 p = vadd(from, vmul(u, t));
+        int k = kcl_query(p, 10.0f, h, 8), b = -1;
+        for (int i = 0; i < k; i++)
+            if (vdot(h[i].n, u) < 0 && (b < 0 || vdot(h[i].n, u) < vdot(h[b].n, u))) b = i;
+        if (b < 0) continue;
+        *hp = vsub(p, vmul(h[b].n, 10.0f - h[b].dist)); *n = h[b].n; *inst = h[b].inst;
+        return 1;
+    }
+    return 0;
+}
+
+static int press_at(int inst) { return inst >= 0 && insts[inst].press; }
+
+/* Mario::calcDistToCeil(false): the first face up from 30 under him within 230; one under his feet that is no press
+ * (sensor, Press floor code 29, nor his ground's) is looked for again from 10 over him; none: 200 */
+static float m_dist_to_ceil(Player *m)
+{
+    float off = 30.0f;
+    for (;;) {
+        V3 hp, n;
+        int ci;
+        if (!map_line(vsub(m->pos, vmul(m->up, off)), vmul(m->up, 200.0f + off), &hp, &n, &ci)) return 200.0f;
+        if (!press_at(ci) && !press_at(mario_ground) && m->floor != 29 && vdot(vsub(hp, m->pos), m->up) <= 0.0f) {
+            if (off <= 1.0f) return 200.0f;
+            off = -10.0f;
+            continue;
+        }
+        return vlen(vsub(hp, m->pos));
+    }
+}
+
+/* Mario::checkVerticalPress: a face over him within 160 (80 squatting) from 10 under, then from it (from him when it
+ * is 150 or more up) along its normal another within that: two collisions, one a press object, squeeze him. Checked
+ * at where he moves to; there and not where he is: he stops. ponytail: the push off a press with nothing under it
+ * (vecBlendSphere of the two normals) is not done; Hang is not in the port */
+static int m_vertical_press(Player *m, int at_cur)
+{
+    V3 pos = at_cur ? m->pos : vadd(m->pos, m->vel), up = m->up, hp, cn, fp, fn;
+    float height = m->squat ? 80.0f : 160.0f;
+    int ci, fi;
+    if (!map_line(vsub(pos, vmul(up, 10.0f)), vmul(up, height), &hp, &cn, &ci)) return 0;
+    float dist = vdot(up, vsub(hp, pos));
+    V3 origin = dist < 150.0f ? hp : pos;
+    if (map_line(vsub(origin, vmul(cn, 10.0f)), vmul(cn, height), &fp, &fn, &fi)) {
+        if (ci != fi && (press_at(ci) || press_at(fi))) {
+            if (!at_cur && !m_vertical_press(m, 1)) { m->hvel = v3(0, 0, 0); m->vup = 0; m->vel = v3(0, 0, 0); return 0; }
+            return 1;
+        }
+    } else if (!at_cur && press_at(ci) && m->grounded && mario_ground != ci)
+        return 1; /* on other ground than the press over him */
+    return 0;
+}
+
+/* MarioActor::setPress: Mario squashed, his life gone (decLife x 6), the game over 60 frames on (_FB8). Type 0
+ * (vertical) is not taken with 160 or more to the ceiling */
+static void m_set_press(Player *m, int type)
+{
+    if (m->press || (type == 0 && m_dist_to_ceil(m) >= 160.0f)) return;
+    m->press = type + 1; m->press_t = 60; m->press_s = 1.0f;
+    m->hvel = v3(0, 0, 0); m->vup = 0; m->jumping = 0; m->grounded = 1;
+    life = 0;
+    printf("mario pressed (%d)" "\n", type);
+}
+
+/* Mario::checkPressDamage: a vertical press (setPress 0), or a wall with the Press floor code while on other ground
+ * (setPress 4, 120). Only near a press object (the checks need one). ponytail: checkSidePressPre / checkSidePress
+ * (front and back walls, the moving faces' velocities) and the push off walls closer than 200 (_72C) are not in the
+ * port's collision */
+static int m_check_press(Player *m)
+{
+    if (m->launch >= 0) return 0;
+    int near = 0;
+    for (int i = 0; i < ninsts && !near; i++)
+        if (insts[i].press && vlen(vsub(m->pos, v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]))) < insts[i].reach + 300.0f)
+            near = 1;
+    if (near && m_vertical_press(m, 0)) { m_set_press(m, 0); return m->press != 0; }
+    if (m->wall && (wall_attr & 0xFF) == 29 && m->grounded && m->floor != 29) { m_set_press(m, 4); return 1; }
+    return 0;
+}
+
 static void hurt_mario(V3 from, float push);
 static void m_damage_floor(Player *m)
 {
@@ -8630,6 +8724,16 @@ static void update_mario(void)
 {
     Player *m = mario;
     m->up = up_at(m->pos, m->up);
+    if (m->press) { /* pressed: still, his height to the ceiling's (doPressing, the _3B0 scale), the game over */
+        m->hvel = v3(0, 0, 0); m->vup = 0;
+        float k;
+        if (m->press == 5) { float t = 120.0f - (60 - m->press_t); k = 1.0f - cosf(0.5f * (t / 120.0f) * 3.1415927f); }
+        else k = fminf(fmaxf(m_dist_to_ceil(m) / 150.0f, 0.2f), 1.0f);
+        if (k < m->press_s) m->press_s = k;
+        if (--m->press_t <= 0) { m->press = 0; m->press_s = 1.0f; miss(); }
+        if (mario_anim) anim_update(mario_anim);
+        return;
+    }
     if (demo_on) { /* a demo: he waits (startBckPlayer PowerStarGet when it is the star's) */
         m->hvel = v3(0, 0, 0); m->vup = 0;
         if (m->hurt_timer) m->hurt_timer--;
@@ -8804,6 +8908,7 @@ static void update_mario(void)
     m->slip_poly = m->grounded && slip_polygon(m, ground_attr & 0xFF, m->ground_n); /* updateGroundInfo: mDrawStates._C */
     if (m->grounded && !m->jumping) m->land_timer++; /* updateTimers: _3CE */
     mario_ground = m->grounded ? ground_inst : -1;
+    if (m_check_press(m)) return;
     if (m->grounded != was_ground) ground_flips++;
 #ifdef SLOPE_TEST
     {
@@ -14249,6 +14354,7 @@ void game_draw(void)
         m[4] = fly_y.x; m[5] = fly_y.y; m[6] = fly_y.z;
         m[8] = fly_z.x; m[9] = fly_z.y; m[10] = fly_z.z;
     }
+    if (mario->press) for (int j = 4; j < 7; j++) m[j] *= mario->press_s; /* _3B0: squashed along his up */
     if (m_mario_skin && !(mario->hurt_timer & 4) && !mario_hidden)
         render_skinned(m_mario_skin, m, (const float (*)[16])mario_anim->drw);
     if (m_marioball) for (int b = 0; b < MAX_FIREBALLS; b++) { /* Fire Mario's balls, rolling */
