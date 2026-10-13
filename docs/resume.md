@@ -352,6 +352,12 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
      checkSidePress need front / back walls and face velocities the port's collision lacks), talk / messages, sound effects, real lighting, wipes, multi-actor cameras (Dino damage camera),
      footprints (FootPrint decals), looping / attached effects (Smoke trails, Glow), BTK / BRK animation at run time
      (lava, water, per-instance colours: Butterfly arg0), bloom models, shadows.
+  To fix (seen in the 2026-10-12 video demos, `TEASER=1` builds of talk / fat / vine / dino / ota):
+     - Plant (beanstalk) climbing: Mario looks glitched while he climbs / scales it (his pose on the stalk); the
+       clip was left out of the video. Check the Hang / HangUp pose and matrix in vine_hold against Petari.
+     - OtaKing's bath (EggStar 3): Mario dropped on the rim ends inside the rock (the crevice below), the camera
+       with him: the fight could not be recorded naturally (game_demo_ota).
+     - game_demo_dino does not take the PowerStar after the down (demo_star finds nothing to walk to).
   Known: the skinned-object anim pool (MAX_OBJ_ANIM 40) can be full at a rebind, leaving an inst without its Anim
      (in->anim NULL, drawn and posed static); OtaRock re-asks every frame (obj_anim), others should too (KillerGunnerSingle).
   Known: damage floors (Death 1, DamageNormal 4, DamageFire 10, DamageElectric 15) act on the .pa codes: packs older
