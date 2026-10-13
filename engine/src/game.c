@@ -890,11 +890,14 @@ static int kcl_query(V3 c, float radius, Hit *out, int max)
         V3 d = vsub(c, v3(in->m[12], in->m[13], in->m[14]));
         if (vdot(d, d) > (in->reach + radius) * (in->reach + radius)) continue;
         const float *m = in->m;
-        float k = 1.0f / (in->s * in->s); /* columns are R * s */
+        /* u: CollapsePlane's collision (initCollisionPartsAutoEqualScale) at the mean of its joint's x / y / z scale
+         * (CollisionParts::makeEqualScale: (2 xz + 1) / 3), about its position */
+        float u = in->collapse && row_step[in->row] ? (3.0f - 1.4f * row_step[in->row] / in->collapse) / 3.0f : 1.0f;
+        float k = 1.0f / (in->s * in->s * u); /* columns are R * s */
         float lc[3] = {vdot(d, v3(m[0], m[1], m[2])) * k, vdot(d, v3(m[4], m[5], m[6])) * k,
                        vdot(d, v3(m[8], m[9], m[10])) * k};
         KclHit h[16];
-        int got = kcl_check_sphere(in->kcl, lc, radius / in->s, h, max - n < 16 ? max - n : 16);
+        int got = kcl_check_sphere(in->kcl, lc, radius / (in->s * u), h, max - n < 16 ? max - n : 16);
         for (int j = 0; j < got; j++) {
             const float *fn = kcl_face_normal(in->kcl, h[j].prism);
             V3 w = vadd(vadd(vmul(v3(m[0], m[1], m[2]), fn[0]), vmul(v3(m[4], m[5], m[6]), fn[1])),
@@ -902,7 +905,7 @@ static int kcl_query(V3 c, float radius, Hit *out, int max)
             out[n].n = vmul(w, 1.0f / in->s);
             out[n].inst = i;
             out[n].attr = kcl_attribute(in->kcl, h[j].prism);
-            out[n++].dist = h[j].dist * in->s;
+            out[n++].dist = h[j].dist * in->s * u;
         }
     }
     return n;
@@ -12088,8 +12091,8 @@ static void update_flips(void)
 }
 
 /* CollapsePlane (Petari CollapsePlane.cpp): once stood on, the plane shrinks in x / z (1 - 0.7 step / time) and after
- * `time` frames vanishes with its collision (Vanish), for good. ponytail: the collision keeps its full size while
- * shrinking (the KCL takes uniform scale only), no star pointer stop */
+ * `time` frames vanishes with its collision (Vanish), for good; its collision shrinks uniformly (kcl_query).
+ * ponytail: no star pointer stop */
 static void update_collapse(void)
 {
     for (int i = 0; i < ninsts; i++) {
