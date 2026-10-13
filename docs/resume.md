@@ -318,16 +318,16 @@ there needs the embedded blob and every pack rebuilt.
 
 ## Next
 
-**Where the 2026-10-12 session stopped (resume here):** item b (Good Egg's classes) is done, and from a the slope
-slide (KCL floor codes + MarioSlip.cpp, commit 550f1d1); EggStar 1-4 `route` get their stars, host tests pass
-(EggStar packs repacked 2026-10-12, the other galaxies' are older: item d). The user's last instruction: do the rest
-of item a (Plant groups' clips done 2026-10-12: members posed by their nerve's clip, turned at random;
-QuestionCoin's throw done: bind 3 steps at the binder, then its Y x arg0; CollapsePlane's collision shrinks at makeEqualScale's mean scale; TicoFat / Tico talk moved to c (talk system);
-OtaKingMagma's collision (an inst at OtaKing's placement, DamageFire floor) and Mario::damageFloorCheck /
-damageWallCheck (Death a miss; DamageNormal / Fire / Electric a hurt), unverified in PCSX2 (`ota`, `route` 3);
-the magma's BTK goes with c; next: Rock BTK size frame) **without running the PCSX2 tests** (build only). Order: first finish
-every improvised part, then add the missing systems. Left, in order:
-  a. Improvised still: Rock BTK size frame, the walkers' shadows.
+**Where the 2026-10-12 session stopped (resume here):** items a and b are done; next is c, from MarioPress. EggStar
+1-4 `route` got their stars before the a commits below; host tests pass (EggStar packs repacked 2026-10-12, the other
+galaxies' are older: item d). The user's last instruction: finish item a **without running the PCSX2 tests** (build
+only), so these a commits are unverified in PCSX2: slope slide (550f1d1), Plant groups' clips (members posed by their
+nerve's clip, turned at random), QuestionCoin's throw (bound 3 steps at the binder, then its Y x arg0),
+CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collision + Mario's damage floors (`ota`,
+`route` 3 worth a run). Order: first every improvised part, then the missing systems. Left, in order:
+  a. Improvised: done. Moved to c, as they need a system: TicoFat / Tico talk (talk), OtaKingMagma's BTK and Rock's
+     Size BTK frame (BTK at run time; Rock's only scales its environment map: no texgen in the renderer), the
+     walkers' shadows (shadows).
   b. Classes of Good Egg: done (KillerGunnerSingle, ItemBubble, OtaRock, TakoBarrelA, HammerHeadPackun, Plant,
      Petari, PhantomShipHandle / Propellers, StarPieceFollowGroup, CoinReplica, PowerStarHalo / ZoneHalo,
      BenefitItemInvincible). The rest of the EggStar 1-5 classes game.c does not spell are planets (planet table),
