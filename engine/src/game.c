@@ -201,6 +201,7 @@ typedef struct {
     int shoot;       /* ShootingStar: falls, bursts into star pieces (update_shooting) */
     int plant;       /* PlantGroup (Flower / FlowerBlue / CutBush Group): its model drawn at each member (plants) */
     const unsigned char *railer; /* map part on a rail: its PATH entry; moves along it (update_railers) */
+    int otamagma;    /* OtaKingMagma's collision (initCollisionParts "OtaKingMagma"): drawn with OtaKing (ota) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
 static V3 firebar_ball(const Inst *in, int j, int k);
@@ -420,6 +421,7 @@ static Killer killers[MAX_KILLERS];
 static int nkillers;
 static int ground_inst = -1;     /* instance under the last collide_n's ground normal, -1 none */
 static int ground_attr;          /* its face's codes (slice.py kcl_codes): Floor_code in bits 0-7 */
+static int wall_attr;            /* the last collide_n wall's codes */
 static void zone_spheres(void);
 static void zone_grow(const Inst *in);
 
@@ -887,6 +889,7 @@ static int kcl_query(V3 c, float radius, Hit *out, int max)
         const Inst *in = &insts[i];
         if (!in->kcl) continue;
         if (in->beeflower && row_turn && row_turn[in->row]) continue; /* BeeFlowerHover gone through */
+        if (in->otamagma && ota.nrv == OTA_DEAD) continue;            /* drawn till then (game_draw) */
         V3 d = vsub(c, v3(in->m[12], in->m[13], in->m[14]));
         if (vdot(d, d) > (in->reach + radius) * (in->reach + radius)) continue;
         const float *m = in->m;
@@ -957,6 +960,7 @@ static int collide_n(V3 *center, V3 up, float radius, V3 *ground_n, V3 *wall_n, 
         if (d > -0.3f && d < WALL_ANGLE_COS && wall) {
             *wall = 1;
             *wall_n = nrm;
+            wall_attr = hits[deepest].attr;
         }
     }
     if (!ground) { /* resting check: a sphere a little lower touches ground */
@@ -2900,6 +2904,19 @@ void game_rebind(void)
             if (row_step) assembly_place(in);
         }
         in->kcl_ready = 0;
+        zone_grow(in);
+    }
+    if (ota.row >= 0 && m_otamagma && scene_kcl(s, "OtaKingMagma") && ninsts < (int)s->nobjs) { /* OtaKing's own row has no inst */
+        /* OtaKingMagma: a PartsModel at OtaKing's placement (its own matrix), its collision there */
+        const Row *r = &s->objs[ota.row];
+        Inst *in = &insts[ninsts++];
+        memset(in, 0, sizeof *in);
+        in->md = m_otamagma; in->row = ota.row; in->zone = r->zone;
+        in->kcl = scene_kcl(s, "OtaKingMagma");
+        in->otamagma = in->invisible = 1;
+        mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
+        in->s = r->scale[0];
+        in->reach = m_otamagma->radius * in->s;
         zone_grow(in);
     }
     for (int i = 0; plant_first && i < ninsts; i++)
@@ -6160,7 +6177,7 @@ static void update_dino(void)
  * start), AppearStar (gone), Dead. It turns to Mario at cTurnSpeedAccel 0.003 up to cTurnSpeedMax 1 a frame (dirToPlayer).
  * OtaKingMagma (its clips at the ripples) and the four OtaKingLongFoot (burning Mario) with it; hits x 8 star pieces
  * at each Damage / PowerUp. ponytail: no star pointer (coconut freeze, fire reflect, bubble reflect), no crown material
- * hiding (PowerUp step 83), the magma's BTK flow / bloom / collision, no effects */
+ * hiding (PowerUp step 83), the magma's BTK flow / bloom, no effects; its collision is an inst (otamagma) */
 static int mario_hidden; /* MR::hidePlayer in a demo */
 static V3 ota_world(const float m[16], V3 l) { return v3(m[12] + m[0] * l.x + m[4] * l.y + m[8] * l.z, m[13] + m[1] * l.x + m[5] * l.y + m[9] * l.z, m[14] + m[2] * l.x + m[6] * l.y + m[10] * l.z); }
 /* a joint's point (its world matrix x the local offset), else the model's base point + offset when not streamed in */
@@ -8597,6 +8614,18 @@ static void m_swing(Player *m)
     m->spin_cool = MC.mSpinIntervalTime + 0x22;
 }
 
+/* Mario::damageFloorCheck / damageWallCheck: the ground's (_960) or a wall's floor code: Death (1) a miss
+ * (forceKill), DamageNormal (4), DamageFire (10: doFireDanceWithInitialDamage) and DamageElectric (15: doParalyze)
+ * a hit. ponytail: MarioFireDance / MarioParalyze are not decompiled: each is an ordinary hurt (hurt_mario), as the
+ * port's other burns; checkCurrentFloorCodeSevere's shadow test not done */
+static void hurt_mario(V3 from, float push);
+static void m_damage_floor(Player *m)
+{
+    int f = m->grounded ? m->floor : -1, w = m->wall ? wall_attr & 0xFF : -1;
+    if (f == 1 || w == 1) { printf("death floor\n"); miss(); return; }
+    if (f == 4 || f == 10 || f == 15 || w == 4 || w == 10 || w == 15) hurt_mario(vadd(m->pos, m->face), 15.0f);
+}
+
 static void update_mario(void)
 {
     Player *m = mario;
@@ -8770,6 +8799,7 @@ static void update_mario(void)
             if (!m->slip_keep) m->floor = 0x80;
         } else if (!slip_code(m->floor)) m->slip_keep = SLIP_KEEP;
         bee_meter = 180; bee_rise = bee_drop = 0; /* landing refills the flight */
+        m_damage_floor(m);
     } else if (!ground) m->grounded = 0;
     m->slip_poly = m->grounded && slip_polygon(m, ground_attr & 0xFF, m->ground_n); /* updateGroundInfo: mDrawStates._C */
     if (m->grounded && !m->jumping) m->land_timer++; /* updateTimers: _3CE */

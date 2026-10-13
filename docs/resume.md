@@ -323,9 +323,11 @@ slide (KCL floor codes + MarioSlip.cpp, commit 550f1d1); EggStar 1-4 `route` get
 (EggStar packs repacked 2026-10-12, the other galaxies' are older: item d). The user's last instruction: do the rest
 of item a (Plant groups' clips done 2026-10-12: members posed by their nerve's clip, turned at random;
 QuestionCoin's throw done: bind 3 steps at the binder, then its Y x arg0; CollapsePlane's collision shrinks at makeEqualScale's mean scale; TicoFat / Tico talk moved to c (talk system);
-next: OtaKingMagma collision / BTK) **without running the PCSX2 tests** (build only). Order: first finish
+OtaKingMagma's collision (an inst at OtaKing's placement, DamageFire floor) and Mario::damageFloorCheck /
+damageWallCheck (Death a miss; DamageNormal / Fire / Electric a hurt), unverified in PCSX2 (`ota`, `route` 3);
+the magma's BTK goes with c; next: Rock BTK size frame) **without running the PCSX2 tests** (build only). Order: first finish
 every improvised part, then add the missing systems. Left, in order:
-  a. Improvised still: OtaKingMagma collision / BTK, Rock BTK size frame, the walkers' shadows.
+  a. Improvised still: Rock BTK size frame, the walkers' shadows.
   b. Classes of Good Egg: done (KillerGunnerSingle, ItemBubble, OtaRock, TakoBarrelA, HammerHeadPackun, Plant,
      Petari, PhantomShipHandle / Propellers, StarPieceFollowGroup, CoinReplica, PowerStarHalo / ZoneHalo,
      BenefitItemInvincible). The rest of the EggStar 1-5 classes game.c does not spell are planets (planet table),
@@ -341,6 +343,8 @@ every improvised part, then add the missing systems. Left, in order:
      (lava, water, per-instance colours: Butterfly arg0), bloom models, shadows.
   Known: the skinned-object anim pool (MAX_OBJ_ANIM 40) can be full at a rebind, leaving an inst without its Anim
      (in->anim NULL, drawn and posed static); OtaRock re-asks every frame (obj_anim), others should too (KillerGunnerSingle).
+  Known: damage floors (Death 1, DamageNormal 4, DamageFire 10, DamageElectric 15) act on the .pa codes: packs older
+     than 2026-10-12 (raw .pa indices) can kill or hurt Mario on ordinary ground until repacked (item d).
   Known: KCL prism attributes are now the .pa codes (slice.py kcl_codes: Floor_code bits 0-7, Wall_code 8-11,
      Camera_through 12; collide_n ground_attr); packs older than 2026-10-12 still hold raw .pa indices (item d), so
      their floor codes are wrong until repacked. Mario's slope slide is MarioSlip.cpp (isSlipFloorCode as decompiled:
