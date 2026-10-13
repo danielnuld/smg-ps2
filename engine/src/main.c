@@ -636,7 +636,7 @@ int main(void)
         }
 #endif
 #ifdef TALK_TEST
-        if (frame >= 200 && frame < 3000) game_test_talk((int)frame); /* SignBoard, then Tico: A opens, A pages */
+        if (frame >= 600 && frame < 3400) game_test_talk((int)frame); /* after the flight in: SignBoard, then Tico */
 #endif
 #ifdef SLIP_TEST
         if (frame >= 300 && frame < 2400) game_test_slip(); /* Mario left still on a steep slope */

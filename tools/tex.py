@@ -323,7 +323,7 @@ def brk(b, frame):
     return out
 
 
-def tev(b, mat3, m, tex1, texs, base=None, over=None, max_stages=16):
+def tev(b, mat3, m, tex1, texs, base=None, over=None, max_stages=16, ras_k=1.0):
     """Evaluate material m's TEV stages (GX: d op (a (1 - c) + b c), bias, scale, clamp, into PREV / C0-C2) ->
     RGBA float array in 0..1: per texel of texture `base` (TEX1 index; every stage samples its own texture resized to
     it, as if all shared the UVs), or one colour (shape (4,)) when base is None (texture inputs read 1).
@@ -357,6 +357,7 @@ def tev(b, mat3, m, tex1, texs, base=None, over=None, max_stages=16):
             konst[k] = np.array(v, np.float32)
     mc = u16(b, e + 8)
     ras = col(0x20, mc, False) if mc != 0xFFFF and not vertex_colour(b, mat3, m) else np.ones(4, np.float32)
+    ras = ras * np.array([ras_k, ras_k, ras_k, 1.0], np.float32)  # a lit channel's light level (bake)
     tex_cache = {}
     order = lambda stage: u16(b, e + 0xBC + 2 * stage)
     sampled = lambda oi: u16(b, off(0x48) + 2 * u16(b, e + 0x84 + 2 * b[off(0x4C) + 4 * oi + 1]))
@@ -446,6 +447,16 @@ def bake(b, mat3, m, tex1, texs, t, over=None):
     channels, e.g. Coin's env-map stages) falls back to the plain texture; real lighting would fix those."""
     src = texs[t]["rgba"]
     out = (tev(b, mat3, m, tex1, texs, t, over) * 255 + 0.5).astype(np.uint8)
+    if lit(b, mat3, m):
+        # lit channels: the converter shades lit materials per vertex (shade), so the TEV is baked at a neutral light.
+        # SMG's actor shaders double the light (TEX x RAS x 2: Mario's skin, cap, overalls), so RAS 0.5 gives back the
+        # texture where RAS 1 saturates it to white; the level whose result is nearer the texture is kept (shaders
+        # without the doubling stay at 1). ponytail: real lighting replaces this
+        half = (tev(b, mat3, m, tex1, texs, t, over, ras_k=0.5) * 255 + 0.5).astype(np.uint8)
+        d1 = abs(out[..., :3].astype(np.float32).mean() - src[..., :3].mean())
+        d2 = abs(half[..., :3].astype(np.float32).mean() - src[..., :3].mean())
+        if d2 < d1:
+            out = half
     out[..., 3] = src[..., 3]
     if out[..., :3].mean() > 240 and src[..., :3].mean() < 200:
         # saturated by stages that need real lighting (Tico's rim light): with a BRK's registers (its colour) the first

@@ -7791,7 +7791,7 @@ int game_test_talk(int frame) /* Mario 150 in front of the first SignBoard (fram
 {
     static int last_row = -1, t;
     char lab[32];
-    const char *want = frame < 900 ? "SignBoard" : "Tico";
+    const char *want = frame < 1300 ? "SignBoard" : "Tico";
     int row = -1;
     for (int i = 0; i < ninsts && row < 0; i++)
         if (!strcmp(sc->types + 32 * sc->objs[insts[i].row].type, want) && talk_row_label(insts[i].row, lab)) row = i;
@@ -9639,7 +9639,11 @@ static void update_mario(void)
     if (demo_on) { /* a demo: he waits (startBckPlayer PowerStarGet when it is the star's) */
         m->hvel = v3(0, 0, 0); m->vup = 0;
         if (m->hurt_timer) m->hurt_timer--;
-        if (mario_anim) { mario_play(star_demo ? "powerstarget" : "wait", 1.0f, !star_demo); anim_update(mario_anim); }
+        if (mario_anim) { /* PowerStarGet once (mario_play restarts a one-shot clip, as startBck does) */
+            if (!star_demo) mario_play("wait", 1.0f, 1);
+            else if (mario_anim->clip_id < 0 || strcmp(sc->clips[mario_anim->clip_id].name, "powerstarget")) mario_play("powerstarget", 1.0f, 0);
+            anim_update(mario_anim);
+        }
         return;
     }
     if (pipe_bind(m) || qcoin_bind(m)) {
