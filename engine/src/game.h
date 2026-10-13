@@ -43,6 +43,12 @@ int game_test_replica(int phase);
 int game_test_invinc(void);
 int game_test_slip(void);
 int game_test_talk(int frame);
+/* video demos (TEASER builds): Mario played through the pad only */
+int game_demo_walk1(int frame);
+int game_demo_fat(int frame);
+int game_demo_vine(int frame);
+int game_demo_dino(int frame);
+int game_demo_ota(int frame);
 /* EggStar 2 (isStageStarPieceFollowGroupLimit): StarPieceFollowGroups give at most 100 minus Mario's star pieces */
 void game_set_piece_follow_limit(int on);
 int game_test_ibubble(int touch);

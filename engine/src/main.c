@@ -635,8 +635,21 @@ int main(void)
             if (frame % 50 == 0) printf("ibubble test f %u: row %d pieces out %d\n", frame, row, game_pieces_out());
         }
 #endif
-#ifdef TALK_TEST
-        if (frame >= 600 && frame < 3400) game_test_talk((int)frame); /* after the flight in: SignBoard, then Tico */
+#ifdef TEASER /* video demos: Mario through the pad only, every frame */
+#if defined(TALK_TEST)
+        if (frame >= 200 && frame < 3000) game_demo_walk1((int)frame);
+#elif defined(FAT_TEST)
+        if (frame >= 150) game_demo_fat((int)frame);
+#elif defined(VINE_TEST)
+        if (frame >= 300) game_demo_vine((int)frame);
+#elif defined(DINO_TEST)
+        if (frame >= 150) game_demo_dino((int)frame);
+#elif defined(OTA_TEST)
+        if (frame >= 150) game_demo_ota((int)frame);
+#endif
+#endif
+#if defined(TALK_TEST) && !defined(TEASER)
+        if (frame >= 200 && frame < 2400) game_test_talk((int)frame); /* walks to the first SignBoard and reads it */
 #endif
 #ifdef SLIP_TEST
         if (frame >= 300 && frame < 2400) game_test_slip(); /* Mario left still on a steep slope */
@@ -671,7 +684,7 @@ int main(void)
             if (frame % 25 == 0) printf("petari test f %u: %d\n", frame, st);
         }
 #endif
-#ifdef VINE_TEST
+#if defined(VINE_TEST) && !defined(TEASER)
         if (frame >= 400 && frame < 3000) { /* the Plant grown, Mario up it and off its top */
             int st = game_test_vine();
             if (frame % 25 == 0) printf("vine test f %u: %d\n", frame, st);
@@ -874,7 +887,7 @@ int main(void)
             if (frame >= 150 && frame < 600 && frame % 10 == 0) printf("fire test f %u: balls %d\n", frame, game_fire_state());
         }
 #endif
-#ifdef FAT_TEST
+#if defined(FAT_TEST) && !defined(TEASER)
         if (frame >= 150 && frame % 6 == 0) { /* star pieces shot at the TicoFat until it is full */
             int st = game_test_fat();
             if (frame % 120 == 0) printf("fat test f %u: %d\n", frame, st);
@@ -924,14 +937,14 @@ int main(void)
             if (frame % 100 == 0) printf("purple test f %u: %d, stars %d\n", frame, st, game_stars());
         }
 #endif
-#ifdef OTA_TEST
+#if defined(OTA_TEST) && !defined(TEASER)
         if (frame >= 150) { /* Mario before OtaKing, spinning its coconuts back, until its star is out */
             int st = game_test_ota();
             if (st / 10 == 5) st = 5000 + game_test_cage(1); /* on its star */
             if (frame % 100 == 0) printf("ota test f %u: %d, stars %d\n", frame, st, game_stars());
         }
 #endif
-#ifdef DINO_TEST
+#if defined(DINO_TEST) && !defined(TEASER)
         if (frame >= 150 && frame % 20 == 0) { /* Mario at DinoPackun's tail ball, spinning, until its star is out */
             int st = game_test_dino();
             if (st / 100 == 6) st = 6000 + game_test_cage(1); /* on its star */

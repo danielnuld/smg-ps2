@@ -7,6 +7,7 @@ static u32 held, prev, pressed;
 static float lx, ly, rx, ry;
 static int analog_set;
 u32 pad_force; /* test builds: buttons held as well as the pad's */
+int pad_force_stick; float pad_force_lx, pad_force_ly; /* test builds: the left stick instead of the pad's */
 
 int pad_init(void)
 {
@@ -42,6 +43,7 @@ void pad_update(void)
         ry = -axis(st.rjoy_v);
     }
     held |= pad_force;
+    if (pad_force_stick) { lx = pad_force_lx; ly = pad_force_ly; }
     pressed = held & ~prev;
 #ifdef BENCH
     /* fixed path, 30 s (milestone 3): forward with chained jumps (X every 4 frames for 85 frames out of 180: the
