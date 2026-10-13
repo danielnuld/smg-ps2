@@ -661,9 +661,10 @@ static int nlogic; /* pipe_zone: the exit pipe's zone, wanted in full */
  * hide a coin, or a star piece when arg2 is 1: Mario moving through one (within 50 * scale_y of his touch sphere,
  * PlantMember::tryPush) shakes it; a member shaken by a touch gives its item (update_plants). Mario's spin within the
  * group's sensor + 600 (ACTMES_SPIN_STORM_RANGE) shakes the members by distance but gives nothing. Every 300 frames
- * one member with an item plays HintShake. ponytail: the ray is stepped spheres; the members are drawn still (their
- * Wait / Shake / HintShake clips are not played) and the HintShakeLeaf effect is not in the FX table */
-typedef struct { V3 pos, up; int ok, item; short nrv, step; char touch; } Plant;
+ * one member with an item plays HintShake. Each member is turned a random angle about its gravity (initPosture) and
+ * drawn posed by its nerve's clip (plant_pose). ponytail: the ray is stepped spheres; the HintShakeLeaf effect is not
+ * in the FX table */
+typedef struct { V3 pos, up; float rot; int ok, item; short nrv; unsigned short step; char touch; } Plant;
 enum { PL_WAIT, PL_HINT, PL_WEAK, PL_MIDDLE, PL_STRONG }; /* PlantMember nerves */
 typedef struct { V3 c; float r; int hint_t, hint_i; } PlantGroupS; /* its bounding centre, sensor radius, hint timer */
 static PlantGroupS *pgroups; /* per OBJS row */
@@ -2674,6 +2675,7 @@ static void place_plants(const Inst *in)
         V3 at = vadd(c, vadd(vmul(x, cosf(angle) * radius), vmul(y, sinf(angle) * radius)));
         p->up = up_at(at, up);
         hits += p->ok = drop_to_ground(vadd(at, vmul(p->up, 100.0f)), p->up, 1000.0f, &p->pos);
+        p->rot = stone ? k * 1.3f : (rand() % 10001) / 10000.0f * 6.2831853f - 3.1415927f; /* MR::getRandom(-PI, PI) */
         if (stone && r->arg[0] > 0) p->pos = vadd(p->pos, vmul(p->up, (float)r->arg[0])); /* mPlacementOffset */
         angle += step;
         if (stone) continue;
@@ -2770,7 +2772,7 @@ void game_rebind(void)
         Inst *in = &insts[ninsts++];
         in->md = md;
         in->row = i;
-        in->anim = md->skin ? obj_anim(i, md, name) : NULL;
+        in->anim = md->skin && !(plant_first && plant_first[i] >= 0) ? obj_anim(i, md, name) : NULL; /* plants: plant_pose */
         int dc, dp;
         in->breaks = breakable(name, r, &dc, &dp);
         in->collapse = strcmp(name, "CollapsePlane") == 0 ? (r->arg[0] > 0 ? r->arg[0] : 140) : 0;
@@ -13734,6 +13736,25 @@ static void inst_draw(const Inst *in, const Model *md, const float m[16])
     else render_model(md, m, 0x70, 0xB0, 0x60);
 }
 
+/* PlantMember's pose: the clip its nerve started (exeWait Wait, exeHint HintShake, exeShake* Shake from
+ * hShakeStartFrame 3 at the nerve's rate) at its step, on one shared Anim (the members are posed one at a time) */
+static Anim *plant_pose(const Inst *in, const Plant *p)
+{
+    static Anim a;
+    static const char *clip[] = {"wait", "hintshake", "shake", "shake", "shake"};
+    static const float rate[] = {1.0f, 1.0f, 0.5f, 1.0f, 1.5f}; /* hWeakRate, hMiddleRate, hStrongRate */
+    char n[48];
+    snprintf(n, sizeof n, "%s/%s", sc->types + 32 * sc->objs[in->row].type, clip[p->nrv]);
+    for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
+    if (a.skin != in->md->skin) anim_bind(&a, in->md->skin);
+    anim_start(&a, n, 0);
+    a.phase = -1.0f;
+    a.speed = 0.0f;
+    a.frame = p->nrv >= PL_WEAK ? 3.0f + p->step * rate[p->nrv] : (float)p->step;
+    anim_update(&a);
+    return &a;
+}
+
 static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle)
 {
     V3 f = vnorm(vtangent(fwd, up));
@@ -13840,9 +13861,11 @@ void game_draw(void)
             for (int k = 0; k < n; k++) {
                 const Plant *p = &plants[plant_first[in->row] + k];
                 if (!p->ok) continue;
-                basis_matrix(m, p->pos, p->up, v3(0, 0, 1), k * 1.3f);
+                /* calcMtxFromGravityAndZAxis: z along x, or y when gravity is along x (isSameDirection 0.01) */
+                basis_matrix(m, p->pos, p->up, fabsf(p->up.x) > 0.99995f ? v3(0, 1, 0) : v3(1, 0, 0), p->rot);
                 for (int j = 0; j < 12; j++) if (j % 4 != 3) m[j] *= in->s;
-                inst_draw(in, in->md, m);
+                if (in->md->skin) render_skinned(in->md, m, (const float (*)[16])plant_pose(in, p)->drw);
+                else inst_draw(in, in->md, m);
             }
             continue;
         }
