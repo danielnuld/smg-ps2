@@ -46,6 +46,7 @@ import budget as B
 import camera
 import geom
 import jpa
+import msg
 import numpy as np
 import skin
 import tex
@@ -170,6 +171,7 @@ def rows(b):
     sw = {f: int_or(b, f, n, -1) for f in SW_FIELDS}
     group = int_or(b, "GroupId", n, -1)
     camset = int_or(b, "CameraSetId", n, -1)
+    mid = int_or(b, "MessageId", n, -1)
     out = []
     for i in range(n):
         out.append(dict(name=names[i], l_id=lid[i], path=path[i], camset=camset[i], pos=[fl[f][i] for f in ROW_FIELDS[:3]],
@@ -177,7 +179,7 @@ def rows(b):
                         args=[a[i] for a in args], range=(float_column(b, "Range") or [-1.0] * n)[i],
                         distant=(float_column(b, "Distant") or [None] * n)[i],
                         priority=int_or(b, "Priority", n, 0)[i], inverse=int_or(b, "Inverse", n, 0)[i],
-                        sw=[sw[f][i] for f in SW_FIELDS], group=group[i]))
+                        sw=[sw[f][i] for f in SW_FIELDS], group=group[i], mid=mid[i]))
     return out
 
 
@@ -1088,6 +1090,12 @@ def placement(fs, galaxy, scenario):
         per_stage[st].sort(key=lambda n: (n not in planets, n))
     info = dict(stages=act, types=types, objs=len(keep), starts=len(starts), paths=len(paths), cameras=len(cams),
                 areas=len(care), camera_types=dict(cam_types))
+    # TALK: the messages of the rows with a MessageId (TalkNodeCtrl::createFlowNode: <zone>_<class><id %03d>) and
+    # the classes' direct Common_ ones
+    ctls = [(f"{zones[r['zone']]['name']}_{r['name']}{r['mid']:03d}", i) for i, r in enumerate(keep) if r.get("mid", -1) >= 0]
+    ctls += [(lab, None) for c in sorted(msg.COMMON) if c in types for lab in msg.COMMON[c]]
+    ctls += [(lab, None) for lab in msg.SYSTEM]
+    out.append(chunk(b"TALK", msg.talk_chunk(fsp, ctls)))
     return out, info, dict(planets=planets, per_stage=per_stage, up=up, arcmap=arcmap)
 
 
@@ -1103,7 +1111,11 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
     texts, tex_id, ptcl = [], {}, []
     if fx:
         payload, texts = jpa.pack(fsp)
-        ptcl = [chunk(b"PTCL", payload)]
+        fpay, ftex, _ = msg.font_chunk(fsp)  # the talk font's atlases right after the effects' textures
+        ft0 = len(texts)
+        texts = texts + ftex
+        fpay = fpay[:4] + struct.pack("<HH", ft0, ft0 + 1) + fpay[8:]
+        ptcl = [chunk(b"PTCL", payload), chunk(b"FONT", fpay)]
     for t, a in models:
         a, _, pose = a.partition("#")  # "<archive>#<BCK>": the model with that animation's last-frame visibility
         arc = fsp / "ObjectData" / f"{a}.arc"

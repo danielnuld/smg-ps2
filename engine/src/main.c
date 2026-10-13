@@ -635,6 +635,9 @@ int main(void)
             if (frame % 50 == 0) printf("ibubble test f %u: row %d pieces out %d\n", frame, row, game_pieces_out());
         }
 #endif
+#ifdef TALK_TEST
+        if (frame >= 200 && frame < 3000) game_test_talk((int)frame); /* SignBoard, then Tico: A opens, A pages */
+#endif
 #ifdef SLIP_TEST
         if (frame >= 300 && frame < 2400) game_test_slip(); /* Mario left still on a steep slope */
 #endif

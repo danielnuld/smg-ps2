@@ -166,14 +166,54 @@ static int one(const Gravity *g, const float p[3], float v[3])
     return 1;
 }
 
+/* A sphere outside which a gravity is never in range (in_range: distance < range + distant from its point, cube,
+ * disk rim or segment), so most gravities of a galaxy are passed over with one distance test. r2 < 0: no bound
+ * (unlimited range, or the plane kinds, whose own test is as cheap) */
+#define MAX_BOUNDS 2048
+static const Gravity *bound_of;
+static int bound_n;
+static float bound_c[MAX_BOUNDS][3], bound_r2[MAX_BOUNDS];
+
+void gravity_reset(void) { bound_of = 0; bound_n = 0; }
+
+static void bounds(const Gravity *g, int n)
+{
+    bound_of = g; bound_n = n;
+    for (int i = 0; i < n && i < MAX_BOUNDS; i++) {
+        const Gravity *q = &g[i];
+        float R = q->range + q->distant, r = -1.0f;
+        bound_c[i][0] = q->m[3][0]; bound_c[i][1] = q->m[3][1]; bound_c[i][2] = q->m[3][2];
+        if (q->range >= 0) {
+            if (q->kind == GRAV_POINT) r = R;
+            else if (q->kind == GRAV_CUBE) r = R + sqrtf(dot(q->m[0], q->m[0]) + dot(q->m[1], q->m[1]) + dot(q->m[2], q->m[2]));
+            else if (q->kind == GRAV_DISK) r = R + q->p[0];
+            else if (q->kind == GRAV_SEGMENT) {
+                for (int k = 0; k < 3; k++) bound_c[i][k] += q->m[1][k] * q->p[0] * 0.5f;
+                r = R + q->p[0] * 0.5f;
+            }
+        }
+        bound_r2[i] = r < 0 ? -1.0f : r * r;
+    }
+}
+
 int gravity_at(const Gravity *g, int n, const float p[3], float out[3])
 {
     /* PlanetGravityManager::calcTotalGravityVector: highest priority in range wins, equal priorities add up. */
     float total[3] = {0, 0, 0};
     int best = -1, any = 0;
+    if (g != bound_of || n != bound_n)
+        bounds(g, n);
     for (int i = 0; i < n; i++) {
         float v[3];
-        if (g[i].priority < best || !one(&g[i], p, v))
+        if (g[i].priority < best)
+            continue;
+        if (i < MAX_BOUNDS && bound_r2[i] >= 0) {
+            float d[3];
+            sub(d, p, bound_c[i]);
+            if (dot(d, d) >= bound_r2[i])
+                continue;
+        }
+        if (!one(&g[i], p, v))
             continue;
         if (g[i].priority > best) {
             best = g[i].priority;

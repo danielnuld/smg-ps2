@@ -85,6 +85,9 @@ typedef struct {
     TexRef *tex;        /* scene-wide texture index -> entry and its TEXT payload (offsets are from there) */
     const u8 *ptcl;     /* PTCL chunk (particle effects, tools/jpa.py pack) of the blob that had one, or NULL */
     u32 ptcl_tex0;      /* that blob's first scene texture: PTCL texture indices are relative to it */
+    const u8 *font;     /* FONT chunk (tools/msg.py: the talk font's glyphs) of the blob that had one, or NULL */
+    u32 font_tex0;      /* that blob's first scene texture */
+    const u8 *talk;     /* TALK chunk (tools/msg.py: the scenario's talk messages), or NULL */
 } Scene;
 
 /* Placement chunks (TYPE OBJS STRT) and the blob's assets. The scene must start zeroed. */

@@ -16,5 +16,7 @@ typedef struct {
 
 /* Unit gravity direction at p (zero vector if no gravity reaches p). Returns 1 if any gravity applied. */
 int gravity_at(const Gravity *g, int n, const float p[3], float out[3]);
+/* Forget the bounding spheres gravity_at keeps for the last gravity array (a new scene) */
+void gravity_reset(void);
 
 #endif

@@ -29,6 +29,10 @@ void render_sprites(const Sprite *sp, int n);
 /* a vertical textured strip: 4 levels of 2 points (left, right; bottom first), v 1 at the bottom, 0 at the top */
 typedef struct { float p[4][2][3]; u32 rgba; u16 tex; u16 pad; } Strip;
 void render_strips(const Strip *st, int n);
+/* 2D quads over the frame, drawn after everything else in the chain (before the HUD text): x 0..640, y 0..448,
+ * u / v / uw / vh in texels, colour 0xAABBGGRR (0x80 = 1.0) modulating the texture, tex NO_TEX for flat */
+typedef struct { float x, y, w, h, u, v, uw, vh; u32 rgba; u16 tex, pad; } Quad;
+void render_quads(const Quad *q, int n);
 /* Finish the frame (VIF chain, HUD, wait for the GS) and flip; returns EE cycles spent before the vsync wait. */
 u32 render_end(void);
 /* Depth reset to far over the screen (after the sky): later draws always cover what is there */

@@ -6,6 +6,7 @@ static struct padButtonStatus st;
 static u32 held, prev, pressed;
 static float lx, ly, rx, ry;
 static int analog_set;
+u32 pad_force; /* test builds: buttons held as well as the pad's */
 
 int pad_init(void)
 {
@@ -40,6 +41,7 @@ void pad_update(void)
         rx = axis(st.rjoy_h);
         ry = -axis(st.rjoy_v);
     }
+    held |= pad_force;
     pressed = held & ~prev;
 #ifdef BENCH
     /* fixed path, 30 s (milestone 3): forward with chained jumps (X every 4 frames for 85 frames out of 180: the
@@ -64,6 +66,7 @@ void pad_update(void)
 
 int pad_held(u32 m) { return (held & m) != 0; }
 int pad_pressed(u32 m) { return (pressed & m) != 0; }
+void pad_eat(u32 m) { pressed &= ~m; }
 float pad_lx(void) { return lx; }
 float pad_ly(void) { return ly; }
 float pad_rx(void) { return rx; }

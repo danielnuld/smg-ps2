@@ -19,8 +19,10 @@
 /* Gameplay subset of HeavensDoorGalaxy scenario 2, data-oriented: one compact array per type, sized at load,
  * no allocation per object. Behaviour follows Petari where noted; differences are listed in docs/phase1-report.md. */
 
-typedef struct { V3 pos; short alive, row; } Pickup;             /* 16 B: Coin, PurpleCoin, StarPiece; row: the
-                                                                  * placement it came from, -1 a drop */
+typedef struct { V3 pos; short alive, row; V3 up, at; } Pickup;  /* Coin, PurpleCoin, StarPiece; row: the placement it
+                                                                  * came from, -1 a drop; up: the gravity's at `at` */
+static V3 pick_up(const Pickup *cp);
+static V3 walker_up(void *k, V3 prev);
 enum { PICK_GONE, PICK_ON, PICK_POP_NEW, PICK_POP_BLINK }; /* alive: popping coins cannot be taken while new and
                                                              * are not drawn on their blink frames */
 typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; float from, to, len;
@@ -29,7 +31,8 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
     int nrv, step, snrv, sstep, sdead, on_ground, on_wall, bind_off, item;
     V3 front, qy, qz, grav, gn, wn, tcenter, ttarget, velh;
     char act[20]; int act_seq, act_drawn, act_frames, act_mode, act_interp; float act_t, act_rate;
-    V3 bpos, bvel; int bshow; /* a second model it throws (PackunPetit's blown head) */ } Kuribo; /* walking
+    V3 bpos, bvel; int bshow; /* a second model it throws (PackunPetit's blown head) */
+    V3 gpos, gup; int gok; /* walker_up: the gravity's up at gpos */ } Kuribo; /* walking
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI };
@@ -204,6 +207,7 @@ typedef struct {
     int plant;       /* PlantGroup (Flower / FlowerBlue / CutBush Group): its model drawn at each member (plants) */
     const unsigned char *railer; /* map part on a rail: its PATH entry; moves along it (update_railers) */
     int press;       /* RailMoveObjPress (RGTowerPressGroundA, ReverseGravityRoomPressGroundA / B): ATYPE_MAP_OBJ_PRESS */
+    int talkcls;     /* SignBoard 1, Tico 2, Kinopio 3: update_talkers */
     int otamagma;    /* OtaKingMagma's collision (initCollisionParts "OtaKingMagma"): drawn with OtaKing (ota) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
@@ -651,6 +655,10 @@ static int pipe_seq, pipe_from, pipe_t; /* bound in a pipe: 1 Ready, 2 PlayerIn,
 static V3 pipe_p0, pipe_u0, pipe_f0;  /* Mario's matrix as he was bound (_120) */
 static int pipe_bind(Player *m);
 static int qcoin_bind(Player *m);
+static int amb_stale = 1; /* ambient_effects' per-type table to be rebuilt (a new scene) */
+static void talk_init(const Scene *s);
+static int talk_demo(void);
+static int talk_active(void);
 /* Switch logic rows (no model): TimerSwitch, SwitchSynchronizerReverse, GroupSwitchWatcher */
 enum { LOGIC_TIMER = 1, LOGIC_REVERSE, LOGIC_GROUP, LOGIC_BLOCKER, LOGIC_FLIPS, LOGIC_CHIPS, LOGIC_SWAREA, LOGIC_DEATH, LOGIC_RESTART, LOGIC_PIECESPOT };
 static int area_shape(const char *name);
@@ -990,9 +998,12 @@ void game_init(const Scene *s, const unsigned char *blob)
 {
     sc = s;
     fx_init(s);
+    talk_init(s);
     u32 gsz;
     const unsigned char *g = blob_chunk(blob, "GRAV", &gsz);
     ngrav = *(const int *)g;
+    gravity_reset();
+    amb_stale = 1;
     grav = (const Gravity *)(g + 4);
     m_mario_skin = scene_model(s, "Mario");
     if (m_mario_skin && m_mario_skin->skin) {
@@ -2863,6 +2874,7 @@ void game_rebind(void)
                     strcmp(name, "HipDropTimerSwitch") == 0 ? 2 : 0;
         in->rotor = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->arg[4] != -1 && r->arg[4] != 0; /* -1: not a map part */
         in->seesaw = strcmp(name, "PhantomShipHandle") == 0;
+        in->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 ? 3 : 0;
         in->press = strcmp(name, "RGTowerPressGroundA") == 0 || strcmp(name, "ReverseGravityRoomPressGroundA") == 0 ||
                     strcmp(name, "ReverseGravityRoomPressGroundB") == 0;
         in->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 : 0;
@@ -4117,9 +4129,10 @@ int game_test_fat(void)
         if (!in->fat || row_dead[in->row]) continue;
         V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), z = vnorm(v3(in->m[8], in->m[9], in->m[10]));
         V3 base = v3(in->m[12], in->m[13], in->m[14]);
-        if (fat_state(in->row) % 1000 < 5 && (vlen(vsub(mario->pos, base)) > 400.0f || fat_state(in->row) % 1000 == 0)) { /* while it eats */ mario->pos = vadd(vadd(base, vmul(z, 240.0f)), vmul(up, 40.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+        if (fat_state(in->row) % 1000 < 5 && (vlen(vsub(mario->pos, base)) > 400.0f || vlen(vsub(mario->pos, base)) < 150.0f)) { /* while it eats */ mario->pos = vadd(vadd(base, vmul(vnorm(vtangent(z, up)), 240.0f)), vmul(up, 40.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
         if (got_pieces < 3) got_pieces = 3;
         test_feed = 1;
+        pad_force = talk_active() && (f0 & 3) == 0 ? PAD_CROSS : 0; /* its talks' pages: A held 6 frames in 24 */
         return fat_state(in->row);
     }
     test_feed = 0;
@@ -6951,6 +6964,859 @@ static void draw_sambo_heads(void)
     }
 }
 
+/* --- talk (Petari TalkMessageCtrl.cpp, TalkNodeCtrl.cpp, TalkDirector.cpp, TalkState.cpp, TalkBalloon.cpp,
+ * TalkTextFormer.cpp, CustomTagProcessor.cpp, IconAButton.cpp) ---------------------------------------------------
+ * The scenario's messages and flow nodes come in the TALK chunk (tools/msg.py), the font in resident's FONT. A
+ * talker is a TalkMessageCtrl: its node walk (rootNodePre / Eve / Pst), the director picks the nearest requester
+ * (two-frame hand over _40 -> _3C -> mMsgCtrl) and runs Prep (the A button over Mario: Normal talks start on A with
+ * the stick still and Mario on the ground), Talk (the balloon's text fading in, A for the next page), Next (event
+ * nodes: switches, the owner's event function), Term. Normal / event talks are a demo (Mario waits).
+ * ponytail: the balloons are drawn as flat panes at their BRLYT places and sizes (no window textures, no beak, the
+ * Appear / End animations a 21-frame fade), no talk cameras, no sounds, no yes / no selector (a select talk goes on
+ * as if Yes), no MessageArea, the already-read flags are not saved */
+typedef struct { char label[32]; u16 row, node, msg, pad; } TkCtl;
+typedef struct { u8 type, group; u16 index, next, t0, t1, pad; } TkNode;
+typedef struct { u32 off; u16 cam; u8 snd, camtype, talk, balloon; s8 a, b; } TkMsg;
+typedef struct { u16 code, u, v; u8 w, h; s8 left; u8 gw; s8 cw; u8 pad; } TkGlyph;
+#define TK_NONE 0xFFFF
+static const TkCtl *tk_ctl;
+static const TkNode *tk_node;
+static const TkMsg *tk_msg;
+static const u16 *tk_text;
+static int tk_nctl;
+static const TkGlyph *tk_glyph, *tk_icon;
+static int tk_nglyph, tk_nicon, tk_ttex = -1, tk_itex = -1, tk_lf = 33, tk_asc = 26;
+
+#define MAX_TALKERS 32
+typedef struct {
+    int ctl, row;
+    float m[16];                 /* the host's base matrix (its owner sets it every frame: talk_place) */
+    float offy, dist;            /* mMsgBalloonFollowOffs.y, mTalkDistance */
+    u8 front, root_auto, read_auto, done, state; /* mIsStartOnlyFront, mIsOnRootNodeAuto, mIsOnReadNodeAuto, _3C, _18 */
+    u16 root, cur, flow;         /* TalkNodeCtrl _38, mCurrentNode, mFlowNode */
+    int msg, msg_idx, node_data; /* mMessageInfo (its message, -1 none: _0 = 0), mCurrentNodeIdx, mNodeData */
+    u8 talk, balloon;            /* mMessageInfo.mTalkType (history may zero it), mBalloonType */
+    s8 b_flag;                   /* mMessageInfo._B */
+    int arg;                     /* mTagArg (an int) */
+    u16 hist[16];
+    int nhist;
+    int (*event)(int t, u32 v);  /* mEventFunc; kill: mKillFunc */
+    int (*kill)(int t, u32 v);
+    float sx, sy, sz;            /* _1C: the balloon's screen place (z > 0: behind the camera) */
+} Talker;
+static Talker talkers[MAX_TALKERS];
+static int ntalkers;
+
+static V3 tk_pos(const Talker *t) { return v3(t->m[12], t->m[13], t->m[14]); }
+
+/* TalkNodeCtrl::updateMessage */
+static void tk_update_message(Talker *t)
+{
+    if (t->cur != TK_NONE) {
+        const TkNode *n = &tk_node[t->cur];
+        if (n->type != 1) t->msg = -1;
+        else {
+            const TkMsg *m = &tk_msg[n->index];
+            t->msg = n->index; t->talk = m->talk; t->balloon = m->balloon; t->b_flag = m->b;
+            t->msg_idx = n->index;
+            const TkNode *nx = n->next != TK_NONE ? &tk_node[n->next] : NULL;
+            t->node_data = nx && nx->type == 2 ? nx->index : -1;
+        }
+    }
+    if (t->talk == 2)
+        for (int i = 0; i < t->nhist; i++)
+            if (t->hist[i] == t->msg_idx) t->talk = 0;
+}
+static int tk_next_node(const Talker *t) /* getNextNode */
+{
+    if (t->cur == TK_NONE) return TK_NONE;
+    const TkNode *n = &tk_node[t->cur];
+    return n->type == 1 ? n->next : n->type == 3 ? n->t0 : TK_NONE;
+}
+static void tk_forward(Talker *t) /* forwardFlowNode */
+{
+    if (t->cur == TK_NONE) return;
+    const TkNode *n = &tk_node[t->cur];
+    if (n->type == 1) t->cur = n->next;
+    else if (n->type == 3) t->cur = n->t0;
+    tk_update_message(t);
+}
+static void tk_reset_flow(Talker *t) { if (t->cur != t->root) { t->cur = t->flow = t->root; tk_update_message(t); } }
+static void tk_reset_temp(Talker *t) { if (t->cur != t->flow) { t->cur = t->flow; tk_update_message(t); } }
+static void tk_branch(Talker *t, int yes) { t->cur = yes ? tk_node[t->cur].t0 : tk_node[t->cur].t1; tk_update_message(t); }
+static int tk_event_node(const Talker *t) { return t->cur != TK_NONE && tk_node[t->cur].type == 3; }
+static int tk_message_id(const Talker *t)
+{
+    return t->cur != TK_NONE && tk_node[t->cur].type == 1 ? tk_node[t->cur].index : t->msg_idx;
+}
+
+static int talk_ctl(const char *label, int row)
+{
+    for (int i = 0; i < tk_nctl; i++)
+        if ((row < 0 || tk_ctl[i].row == row) && strcmp(tk_ctl[i].label, label) == 0) return i;
+    return -1;
+}
+
+/* createTalkCtrl(Direct): the talker of `label` (row -1: a Common_ one) for host row `row`, -1 if not in TALK.
+ * Kept across rebinds (found again by its host and label) */
+static int talk_new(const char *label, int ctlrow, int row, float offy, float dist)
+{
+    int c = talk_ctl(label, ctlrow);
+    if (c < 0) return -1;
+    for (int i = 0; i < ntalkers; i++)
+        if (talkers[i].ctl == c && talkers[i].row == row) return i;
+    if (ntalkers == MAX_TALKERS) return -1;
+    Talker *t = &talkers[ntalkers];
+    memset(t, 0, sizeof *t);
+    t->ctl = c; t->row = row; t->offy = offy; t->dist = dist;
+    t->read_auto = 1; t->msg = -1; t->msg_idx = -1; t->node_data = -1; t->b_flag = -1;
+    t->root = t->cur = t->flow = tk_ctl[c].node;
+    if (t->cur == TK_NONE) { /* getMessageDirect */
+        const TkMsg *m = &tk_msg[tk_ctl[c].msg];
+        t->msg = tk_ctl[c].msg; t->talk = m->talk; t->balloon = m->balloon; t->b_flag = m->b;
+        t->done = 1;
+    } else tk_update_message(t);
+    if (t->talk == 4) { tk_forward(t); t->root = t->flow = t->cur; } /* isFlowTalk */
+    if (ctlrow < 0) t->done = 1; /* createMessageDirect */
+    tk_reset_flow(t);
+    return ntalkers++;
+}
+static void talk_place(int k, const float m[16]) { if (k >= 0) memcpy(talkers[k].m, m, 64); }
+
+/* TalkMessageCtrl::isNearPlayer(distance) */
+static int tk_near(const Talker *t, float dist)
+{
+    if (t->talk == 5) return 0;
+    if (t->dist < 0) return 1;
+    if (dist <= 0) dist = t->talk == 3 ? 2.0f * t->dist : t->dist;
+    V3 p = tk_pos(t), up = up_at(p, v3(t->m[4], t->m[5], t->m[6]));
+    V3 d = vsub(p, vadd(mario->pos, vmul(mario->up, HIT_BODY_H)));
+    float along = vdot(d, up);
+    V3 across = vsub(d, vmul(up, along));
+    if (fabsf(along) > dist || vdot(across, across) >= dist * dist) return 0;
+    if (t->front || t->balloon == 4) /* in front of its z */
+        return vdot(vsub(mario->pos, p), v3(t->m[8], t->m[9], t->m[10])) > 0.0f;
+    return 1;
+}
+static int tk_nearer(const Talker *t, int other) /* isNearPlayer(const TalkMessageCtrl *) */
+{
+    if (other < 0) return 1;
+    V3 a = vsub(tk_pos(t), mario->pos), b = vsub(tk_pos(&talkers[other]), mario->pos);
+    return vdot(a, a) < vdot(b, b);
+}
+
+static int tk_continue(const Talker *t) /* isCurrentNodeContinue: event groups 0, 2, 4 */
+{
+    if (!tk_event_node(t)) return 0;
+    int g = tk_node[t->cur].group;
+    return g <= 4 && (1 << g & 0x15);
+}
+static void tk_root_pst(Talker *t) /* rootNodePst */
+{
+    if (tk_next_node(t) == TK_NONE) tk_reset_flow(t); else tk_forward(t);
+    t->flow = t->cur;
+}
+static void tk_root_pre(Talker *t, int arg) /* rootNodePre: branches taken by their condition */
+{
+    tk_reset_temp(t);
+    for (;;) {
+        if (t->cur == TK_NONE || tk_node[t->cur].type != 2) {
+            if (arg || !tk_continue(t)) return;
+            tk_forward(t);
+            continue;
+        }
+        const TkNode *n = &tk_node[t->cur];
+        const Row *r = t->row >= 0 ? &sc->objs[t->row] : NULL;
+        int cond = 0;
+        switch (n->index) {
+        case 0: return; /* a selection */
+        case 1: cond = 1; break; /* mBranchFunc: none registered here */
+        case 2: cond = tk_near(t, t->dist); break;
+        case 3: cond = r && sw_on(r, SW_A); break;
+        case 4: cond = r && sw_on(r, SW_B); break;
+        case 5: cond = !bee_mode; break;
+        case 6: cond = bee_mode; break;
+        case 9: cond = t->done != 0; break;
+        default: cond = 0; /* Boo, star appeared, Luigi, time-keep demo, already read, LED, astro results */
+        }
+        tk_branch(t, cond);
+    }
+}
+static int tk_root_eve(int k) /* rootNodeEve: 1 when the event part is over */
+{
+    Talker *t = &talkers[k];
+    if (!tk_event_node(t)) return 1;
+    const TkNode *n = &tk_node[t->cur];
+    u32 var = (u32)n->next << 16 | n->t1;
+    const Row *r = t->row >= 0 ? &sc->objs[t->row] : NULL;
+    if (n->group <= 1) {
+        if (!t->event) return 1;
+        if (!t->event(k, var)) return 0;
+    } else if (n->group == 4) return 1; /* mAnimeFunc: none here */
+    else if (n->group == 3) { tk_root_pst(t); return 1; }
+    else if (n->group == 5) { if (r) sw_set(r, SW_A, 1); }
+    else if (n->group == 6) { if (r) sw_set(r, SW_B, 1); }
+    else if (n->group == 7) { if (t->kill && !t->kill(k, var)) return 0; }
+    int cond = tk_next_node(t) != TK_NONE;
+    tk_root_pst(t);
+    return !(cond && tk_event_node(t));
+}
+static void tk_read(Talker *t) /* readMessage */
+{
+    if (!t->read_auto) return;
+    if (t->talk == 2) {
+        int seen = 0;
+        for (int i = 0; i < t->nhist; i++) seen |= t->hist[i] == t->msg_idx;
+        if (!seen && t->nhist < 16) t->hist[t->nhist++] = (u16)t->msg_idx;
+        t->talk = 0;
+    }
+}
+static int tk_select(const Talker *t) { return t->node_data == 0; }
+static const u16 *tk_message(const Talker *t) { return t->msg >= 0 ? tk_text + tk_msg[t->msg].off : NULL; }
+
+/* MessageUtil: a tag's length in units, the next page, the characters of a page (countMessageChar) */
+static int tk_tag_len(const u16 *s) { return 4 + (s[3] + 1) / 2; }
+static const u16 *tk_next_page(const u16 *s)
+{
+    for (; s && *s;) {
+        if (*s == 0x1A) {
+            int page = s[1] == 1 && s[2] == 1;
+            s += tk_tag_len(s);
+            if (page) return *s == '\n' ? s + 1 : s;
+        } else s++;
+    }
+    return NULL;
+}
+/* CustomTagAlphaCtrl: character i shows at alpha speed (frame - waits so far) - i interval */
+typedef struct { int on, frame, count, wait; float speed, interval; } TkAlpha;
+static int tk_alpha_end(const TkAlpha *a) { return !a->on || a->frame >= (int)((1.0f + a->count * a->interval) / a->speed) + a->wait; }
+static void tk_alpha_step(TkAlpha *a)
+{
+    if (!a->on) return;
+    int end = (int)((1.0f + a->count * a->interval) / a->speed) + a->wait;
+    if (++a->frame > end) a->frame = end;
+}
+
+/* --- the font and the text writer: HUD units (x 0..640, y 0..448) from layout units (608 x 456, y up) --- */
+#define TK_KX (640.0f / 608.0f)
+#define TK_KY (448.0f / 456.0f)
+static float tk_hx(float lx) { return 320.0f + lx * TK_KX; }
+static float tk_hy(float ly) { return 224.0f - ly * TK_KY; }
+static const TkGlyph *tk_find(const TkGlyph *g, int n, int code)
+{
+    int lo = 0, hi = n - 1;
+    while (lo <= hi) {
+        int mid = (lo + hi) / 2;
+        if (g[mid].code == code) return &g[mid];
+        if (g[mid].code < code) lo = mid + 1; else hi = mid - 1;
+    }
+    return NULL;
+}
+#define MAX_TKQ 640
+static Quad tkq[MAX_TKQ];
+static int ntkq;
+static void tk_quad(float x, float y, float w, float h, u32 rgba, int tex, float u, float v, float uw, float vh)
+{
+    if (ntkq == MAX_TKQ || (rgba >> 24) == 0) return;
+    Quad *q = &tkq[ntkq++];
+    q->x = x; q->y = y; q->w = w; q->h = h; q->u = u; q->v = v; q->uw = uw; q->vh = vh; q->rgba = rgba;
+    q->tex = tex < 0 ? NO_TEX : (u16)tex;
+    if (tex < 0) /* untextured: the GS takes the colour as it is (no 0x80 = 1.0 modulation) */
+        for (int c = 0; c < 24; c += 8) {
+            u32 v = (rgba >> c & 0xFF) * 2;
+            q->rgba = (q->rgba & ~(0xFFu << c)) | (v > 255 ? 255 : v) << c;
+        }
+}
+static u32 tk_rgba(int r, int g, int b, float a) /* 0..255 colour, alpha 0..1 -> GS 0x80 = 1.0 */
+{
+    int A = (int)(a * 128.0f);
+    return (u32)(r >> 1) | (u32)(g >> 1) << 8 | (u32)(b >> 1) << 16 | (u32)(A < 0 ? 0 : A > 128 ? 128 : A) << 24;
+}
+/* sTextColor (index 0: the text box's own colour) */
+static const u8 tk_colors[12][3] = {{255, 255, 255}, {220, 130, 130}, {80, 170, 80}, {80, 140, 210}, {235, 200, 0},
+                                    {180, 110, 200}, {255, 190, 190}, {110, 243, 70}, {120, 255, 255}, {255, 255, 80},
+                                    {251, 188, 250}, {190, 190, 200}};
+typedef struct { float x, y, sx, sy, cs, alpha; int r, g, b, shadow, arg, draw; const TkAlpha *ac; } TkWriter;
+static const u16 *tk_player_name(void)
+{
+    static u16 fallback[] = {'M', 'a', 'r', 'i', 'o', 0};
+    int c = talk_ctl("System_PlayerName000", -1);
+    return c >= 0 ? tk_text + tk_msg[tk_ctl[c].msg].off : fallback;
+}
+/* one page from s (to its end or a page tag): -> its width; *lines, *count, *wait: countMessageChar and the waits */
+static float tk_write(TkWriter *w, const u16 *s, int *lines, int *count, int *wait)
+{
+    float x0 = w->x, x = x0, y = w->y, wmax = 0, size = 1.0f;
+    int ci = 0, wt = 0, nl = 1, col = 0;
+    const u16 *stack = NULL;
+    while (s) {
+        if (!*s) { if (stack) { s = stack; stack = NULL; continue; } break; }
+        int code = *s;
+        if (code == 0x1A) {
+            int g = s[1], ty = s[2];
+            const u8 *par = (const u8 *)(s + 4);
+            s += tk_tag_len(s);
+            if (g == 1 && ty == 1) break;                                        /* page end */
+            if (g == 1 && ty == 0) { wt += par[0] << 8 | par[1]; continue; }      /* wait (frames) */
+            if (g == 4) { size = ty == 0 ? 0.75f : ty == 2 ? 1.5f : 1.0f; continue; }
+            if (g == 0xFF && ty == 0) { col = par[0] < 12 ? par[0] : 0; continue; } /* system colour */
+            if (g == 5 && ty == 0 && !stack) { stack = s; s = tk_player_name(); ci += 3; continue; } /* player name */
+            if (g == 6) { /* number: the message argument */
+                char num[12];
+                int n = snprintf(num, sizeof num, "%d", w->arg);
+                for (int i = 0; i < n; i++) {
+                    const TkGlyph *gl = tk_find(tk_glyph, tk_nglyph, num[i]);
+                    if (!gl) continue;
+                    if (w->draw) {
+                        float a = w->ac && w->ac->on ? fminf(fmaxf(w->ac->speed * (w->ac->frame - wt) - ci * w->ac->interval, 0), 1) : 1.0f;
+                        u32 rgba = w->shadow ? tk_rgba(0, 0, 128, a * w->alpha * 60 / 255.0f) :
+                                   col ? tk_rgba(tk_colors[col][0], tk_colors[col][1], tk_colors[col][2], a * w->alpha) :
+                                         tk_rgba(w->r, w->g, w->b, a * w->alpha);
+                        tk_quad(x + gl->left * w->sx * size, y, gl->w * w->sx * size, gl->h * w->sy * size, rgba, tk_ttex, gl->u, gl->v, gl->w, gl->h);
+                    }
+                    x += (gl->cw * size + w->cs) * w->sx;
+                    ci++;
+                }
+                continue;
+            }
+            if (g == 3) { /* a picture (the picture font, at the writer's size) */
+                const TkGlyph *gl = tk_find(tk_icon, tk_nicon, ty);
+                if (gl) {
+                    float k = 33.0f / 32.0f * size;
+                    if (w->draw && !w->shadow) {
+                        float a = w->ac && w->ac->on ? fminf(fmaxf(w->ac->speed * (w->ac->frame - wt) - ci * w->ac->interval, 0), 1) : 1.0f;
+                        tk_quad(x + gl->left * w->sx * k, y - 2.0f * w->sy, gl->w * w->sx * k, gl->h * w->sy * k,
+                                tk_rgba(255, 255, 255, a * w->alpha), tk_itex, gl->u, gl->v, gl->w, gl->h);
+                    }
+                    x += (gl->cw * k + w->cs) * w->sx;
+                }
+                ci++;
+                continue;
+            }
+            continue; /* sound, ruby, offsets, centring: not shown */
+        }
+        s++;
+        if (code == '\n') { if (x - x0 > wmax) wmax = x - x0; x = x0; y += tk_lf * w->sy * size; nl++; continue; }
+        const TkGlyph *gl = tk_find(tk_glyph, tk_nglyph, code);
+        if (!gl) gl = tk_find(tk_glyph, tk_nglyph, '?');
+        if (gl && w->draw) {
+            float a = w->ac && w->ac->on ? fminf(fmaxf(w->ac->speed * (w->ac->frame - wt) - ci * w->ac->interval, 0), 1) : 1.0f;
+            u32 rgba = w->shadow ? tk_rgba(0, 0, 128, a * w->alpha * 60 / 255.0f) :
+                       col ? tk_rgba(tk_colors[col][0], tk_colors[col][1], tk_colors[col][2], a * w->alpha) :
+                             tk_rgba(w->r, w->g, w->b, a * w->alpha);
+            tk_quad(x + gl->left * w->sx * size, y, gl->w * w->sx * size, gl->h * w->sy * size, rgba, tk_ttex, gl->u, gl->v, gl->w, gl->h);
+        }
+        if (gl) x += (gl->cw * size + w->cs) * w->sx;
+        if (!stack) ci++;
+    }
+    if (x - x0 > wmax) wmax = x - x0;
+    if (lines) *lines = nl;
+    if (count) *count = ci;
+    if (wait) *wait = wt;
+    return wmax;
+}
+/* a page in the box (HUD x, y top-left, w, h) left aligned and centred down it (text position 3), the shadow 2 x 2
+ * under it; colour 77 grey (the balloons' TxtText00 material) */
+static void tk_text_box(const u16 *s, float bx, float by, float bh, float alpha, const TkAlpha *ac, int arg, int centre)
+{
+    TkWriter w = {0};
+    int lines, count, wait;
+    w.sx = 24.3f / 27.0f * TK_KX; w.sy = TK_KY; w.cs = 2.0f; w.arg = arg;
+    float tw = tk_write(&w, s, &lines, &count, &wait);
+    float th = lines * tk_lf * w.sy;
+    w.draw = 1; w.alpha = alpha; w.ac = ac; w.r = w.g = w.b = 77;
+    w.x = centre ? bx - tw / 2 : bx; w.y = by + (bh - th) / 2;
+    TkWriter sh = w;
+    sh.shadow = 1; sh.x += 2.0f * TK_KX; sh.y += 2.0f * TK_KY;
+    tk_write(&sh, s, NULL, NULL, NULL);
+    tk_write(&w, s, NULL, NULL, NULL);
+}
+
+/* --- balloons (TalkBalloonEvent / Sign / Short) and the A button (IconAButton) --- */
+enum { BL_DEAD, BL_WAIT, BL_OPEN, BL_TALK, BL_CLOSE };
+typedef struct { int nrv, step, talker, kind, interval, mode; const u16 *page; TkAlpha ac; float fade; } TkBalloon;
+enum { BK_EVENT, BK_SIGN, BK_SHORT };
+static TkBalloon tk_bev, tk_bsign, tk_bshort[4];
+static int tk_short_i;
+static struct { int nrv, step, read, plain; float x, y; } tk_abtn; /* nrv: BL_DEAD, BL_OPEN (appear), BL_TALK (open), BL_CLOSE */
+
+static void tk_former(TkBalloon *b, const u16 *page) /* TalkTextFormer::formMessage + initTagProcessorRecursive */
+{
+    b->page = page;
+    TkWriter w = {0};
+    int count, wait;
+    w.sx = w.sy = 1.0f;
+    tk_write(&w, page, NULL, &count, &wait);
+    b->ac.on = b->mode != 2;
+    b->ac.speed = b->mode == 0 ? 0.8f * 1.25f : 0.35f * 1.25f;
+    b->ac.interval = 0.9f;
+    b->ac.frame = 0; b->ac.count = count; b->ac.wait = wait;
+}
+static void tk_abtn_open(int read, int plain) { if (tk_abtn.nrv == BL_DEAD || tk_abtn.nrv == BL_CLOSE) { tk_abtn.nrv = BL_OPEN; tk_abtn.step = 0; } tk_abtn.read = read; tk_abtn.plain = plain; }
+static void tk_abtn_term(void) { if (tk_abtn.nrv == BL_OPEN || tk_abtn.nrv == BL_TALK) { tk_abtn.nrv = BL_CLOSE; tk_abtn.step = 0; } }
+static void tk_balloon_open(TkBalloon *b, int k)
+{
+    b->talker = k; b->step = 0; b->fade = 0;
+    const u16 *m = tk_message(&talkers[k]);
+    tk_former(b, m);
+    if (b->kind == BK_SHORT) b->nrv = BL_OPEN;
+    else { b->nrv = BL_WAIT; tk_abtn.nrv = BL_DEAD; }
+}
+static void tk_balloon_close(TkBalloon *b)
+{
+    b->nrv = BL_CLOSE; b->step = 0;
+    if (b->kind != BK_SHORT) tk_abtn_term();
+}
+static int tk_appeared(const TkBalloon *b) { return tk_alpha_end(&b->ac) && (b->kind == BK_SHORT || b->nrv == BL_TALK); }
+static int tk_turn_page(TkBalloon *b) /* TalkBalloonEvent::turnPage */
+{
+    const u16 *n = tk_next_page(b->page);
+    if (!n) return 0;
+    tk_former(b, n);
+    tk_abtn_term();
+    return 1;
+}
+static void tk_balloon_update(TkBalloon *b)
+{
+    if (b->nrv == BL_DEAD) return;
+    b->step++;
+    switch (b->nrv) {
+    case BL_WAIT: if (b->step > 1) { b->nrv = BL_OPEN; b->step = 0; } break; /* no talk camera to wait for */
+    case BL_OPEN:
+        if (b->kind == BK_SHORT) tk_alpha_step(&b->ac);
+        if (b->step >= 21) { b->nrv = BL_TALK; b->step = 0; }
+        break;
+    case BL_TALK:
+        tk_alpha_step(&b->ac);
+        if (b->kind == BK_SHORT) {
+            if (b->interval && b->step == b->interval) b->fade = 1; /* End */
+            else if (b->interval && b->step > b->interval + 30) tk_balloon_open(b, b->talker);
+        } else if (tk_alpha_end(&b->ac) && tk_abtn.nrv == BL_DEAD && talkers[b->talker].balloon != 3 &&
+                   (!tk_select(&talkers[b->talker]) || tk_next_page(b->page)))
+            tk_abtn_open(0, 1);
+        break;
+    case BL_CLOSE: if (b->step >= 21) b->nrv = BL_DEAD; break;
+    }
+}
+static TkBalloon *tk_get_balloon(const Talker *t) /* TalkBalloonHolder::getBalloon */
+{
+    TkBalloon *b = NULL;
+    int interval = -1;
+    if (t->talk == 0 || t->talk == 2 || t->talk == 3) b = &tk_bev;
+    else if (t->talk == 1) { b = &tk_bshort[tk_short_i]; interval = 0; }
+    if (t->balloon == 5 || t->balloon == 3) b = &tk_bev; /* Info: the information message, drawn as an event one */
+    else if (t->balloon == 4) b = &tk_bsign;
+    else if (t->balloon == 2 || t->balloon == 6) { b = &tk_bshort[tk_short_i]; interval = t->balloon == 2 ? 120 : 0; }
+    if (b == &tk_bshort[tk_short_i]) { b->interval = interval; tk_short_i = (tk_short_i + 1) % 4; }
+    return b;
+}
+
+/* --- TalkState and TalkDirector --- */
+enum { TS_BASE, TS_NORMAL, TS_SHORT, TS_EVENT };
+enum { TD_WAIT, TD_PREP, TD_TALK, TD_NEXT, TD_TERM };
+static struct {
+    int nrv, step, msgctrl, c3C, c40, c44, demo, f4C, f4D, f4E, f50, f58, f59;
+    int st, st_kind, st_msgid, s10, s14, s1C, pages; /* mTalkState: its talker, kind, mMessageID and fields */
+    TkBalloon *bl;
+} td = {.msgctrl = -1, .c3C = -1, .c40 = -1, .c44 = -1, .st = -1};
+static int talk_demo(void) { return td.demo == 1 && td.st >= 0 && (td.nrv == TD_TALK || td.nrv == TD_NEXT); }
+static int talk_active(void) { return td.st >= 0 && td.nrv == TD_TALK && td.st_kind != TS_SHORT; } /* a balloon waiting for A */
+
+static int ts_lost(int p) { return p < 0 || p != td.st || tk_message_id(&talkers[td.st]) != td.st_msgid; }
+static int ts_self(int p) { return p >= 0 && p == td.st && tk_message_id(&talkers[td.st]) != td.st_msgid; }
+static int player_ok_event(void) { return mario->grounded && mario->launch < 0; } /* isEnableTalkPlayerStateEvent */
+static int player_ok_normal(void) { return pad_lx() == 0.0f && pad_ly() == 0.0f && player_ok_event(); }
+static void ts_update_button(void) /* TalkStateNormal::updateButton: over Mario on the screen */
+{
+    V3 ce, cw, cu;
+    float fovy;
+    camera_pose(&ce, &cw, &cu, &fovy);
+    V3 f = vnorm(vsub(cw, ce)), c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    float k = 224.0f / tanf(fovy * 0.5f * 0.0174533f), z = vdot(vsub(c, ce), f);
+    if (z < 1.0f) return;
+    V3 r = vnorm(vcross(f, cu)), u = vcross(r, f);
+    float x = 320.0f + vdot(vsub(c, ce), r) / z * k, y = 224.0f - vdot(vsub(c, ce), u) / z * k;
+    float f1 = fabsf(vdot(f, mario->up)), f2 = vdot(u, mario->up);
+    V3 hd = vadd(c, vmul(mario->up, 1000.0f));
+    float zh = vdot(vsub(hd, ce), f);
+    float hx = zh > 1.0f ? vdot(vsub(hd, ce), r) / zh * k + 320.0f - x : 0, hy = zh > 1.0f ? 224.0f - vdot(vsub(hd, ce), u) / zh * k - y : -1;
+    float hl = sqrtf(hx * hx + hy * hy);
+    if (hl > 1e-3f) { hx /= hl; hy /= hl; }
+    tk_abtn.x = x + hx * 60.0f * f2;
+    tk_abtn.y = y - 40.0f * f1 * f1 + hy * 60.0f * f2;
+}
+static int ts_prep(int p)
+{
+    if (td.st_kind == TS_BASE) return 1;
+    if (td.st_kind != TS_NORMAL) return !ts_lost(p);
+    if (ts_lost(p)) { tk_abtn_term(); return 0; }
+    ts_update_button();
+    if (!player_ok_normal()) tk_abtn_term();
+    else if (!pad_pressed(PAD_CROSS)) { if (tk_abtn.nrv != BL_OPEN && tk_abtn.nrv != BL_TALK) tk_abtn_open(talkers[td.st].balloon == 4, 0); }
+    else tk_abtn_term();
+    return 1;
+}
+static int ts_test(void)
+{
+    if (td.st_kind == TS_EVENT) return player_ok_event();
+    if (td.st_kind == TS_NORMAL) return player_ok_normal() && pad_pressed(PAD_CROSS) && player_ok_event();
+    return 1;
+}
+static void ts_open(void)
+{
+    if (td.st_kind == TS_EVENT || td.st_kind == TS_NORMAL) { td.s1C = 1; td.pages = 0; td.s10 = 0; }
+    if (td.bl && td.st_kind != TS_BASE) tk_balloon_open(td.bl, td.st);
+}
+static void ts_clos(void)
+{
+    if (td.st_kind == TS_NORMAL) tk_abtn_term();
+    if (td.bl && td.st_kind != TS_BASE) tk_balloon_close(td.bl);
+}
+static int ts_talk(void)
+{
+    if (td.st_kind == TS_BASE) return 1;
+    if (td.st_kind == TS_SHORT) return 0;
+    if (pad_held(PAD_CROSS)) { if (td.s10++ > 10) for (int i = 0; i < 2; i++) if (td.bl->nrv == BL_TALK) tk_alpha_step(&td.bl->ac); }
+    else td.s10 = 0;
+    if (!tk_appeared(td.bl)) return 0;
+    int turn = 0;
+    if (td.s1C) td.s1C = pad_held(PAD_CROSS);
+    else if (pad_held(PAD_CROSS) && !pad_pressed(PAD_CROSS)) { td.s1C = 1; turn = 1; }
+    if (tk_select(&talkers[td.st]) && !tk_next_page(td.bl->page)) return 1;
+    if (turn) { td.pages++; return !tk_turn_page(td.bl); }
+    return 0;
+}
+static int ts_term(int p)
+{
+    if (td.st_kind == TS_NORMAL) {
+        if (p >= 0 && p != td.st) return 1;
+        if (p >= 0 && talkers[p].talk == 1) return 1;
+    }
+    if (td.st_kind == TS_NORMAL || td.st_kind == TS_EVENT) { if (td.s14++ > 30) { td.s14 = 0; return 1; } return 0; }
+    return 1;
+}
+static void td_init_state(int k) /* initState: TalkStateHolder::getState and the balloon */
+{
+    const Talker *t = &talkers[k];
+    td.st = k;
+    td.st_kind = t->talk == 0 || t->talk == 3 ? TS_NORMAL : t->talk == 1 ? TS_SHORT : t->talk == 2 ? TS_EVENT : TS_BASE;
+    td.bl = tk_get_balloon(t);
+    td.st_msgid = tk_message_id(t);
+}
+static void td_set(int n) { td.nrv = n; td.step = 0; }
+static int td_demo_type(const Talker *t, int demo) { return t->talk == 1 || !demo ? 0 : 1; } /* getDemoType */
+static int td_invalid(void) { return td.f4E || mario_hidden || star_demo; }
+
+static int talk_request(int k, int force) /* TalkDirector::request */
+{
+    Talker *t = &talkers[k];
+    int near_more = 0;
+    td.f4D = 0; td.f4C = 0;
+    if (td_invalid()) return 0;
+    if (t->root_auto) {
+        if (t->talk == 1) { if (td.nrv != TD_NEXT) tk_root_pre(t, 0); }
+        else if (td.nrv != TD_TALK && td.nrv != TD_NEXT) tk_root_pre(t, 0);
+    }
+    if (td.nrv == TD_TALK && td.st >= 0 && talkers[td.st].talk != 1) {
+        if (td.st == k) near_more = 1; else return 0;
+    }
+    if (t->state == 0) t->state = 1;
+    if (force) {
+        if (t->talk == 1) { if (tk_nearer(t, td.c40)) td.c40 = k; }
+        else { td.c40 = td.c3C = td.msgctrl = k; }
+    } else {
+        if (!tk_near(t, (near_more ? 1.2f : 1.0f) * t->dist)) return 0;
+        if (tk_nearer(t, td.c40)) td.c40 = k;
+    }
+    if (td.msgctrl != k) return 0;
+    if (td.nrv != TD_WAIT) return td.st == k;
+    td_init_state(k);
+    td_set(TD_PREP);
+    return 1;
+}
+static int talk_start(int k, int force, int demo) /* TalkDirector::start (test, prepTalk) */
+{
+    Talker *t = &talkers[k];
+    if (td_invalid() || td.msgctrl != k) return 0;
+    if (td.nrv == TD_TALK) return 1;
+    if (td.nrv != TD_PREP) return 0;
+    if (!force && !ts_test()) return 0;
+    if (td.st_kind == TS_NORMAL) pad_eat(PAD_CROSS); /* the A that started it: no jump */
+    tk_root_pre(t, 1);
+    td.f58 = force; td.f4C = 1;
+    td.demo = td_demo_type(t, demo);
+    if (tk_event_node(t)) td_set(TD_NEXT);
+    else { ts_open(); td_set(TD_TALK); }
+    return 1;
+}
+static void td_term_talk(void) { td.f4D = 1; td.demo = 0; }
+static int talk_end(int k) { return talkers[k].state == 4; } /* endTalk: isTalkEnableEnd */
+/* MR::tryTalkNearPlayer / ...AtEnd / tryTalkForce(WithoutDemo)(AtEnd) */
+static int talk_near(int k) { return k >= 0 && talk_request(k, 0) && talk_start(k, 0, 1); }
+static int talk_near_at_end(int k)
+{
+    if (k < 0) return 0;
+    if (talk_end(k)) return 1;
+    if (talk_request(k, 0)) talk_start(k, 0, 1);
+    return 0;
+}
+static int talk_force(int k, int demo) { return k >= 0 && talk_request(k, 1) && talk_start(k, 1, demo); }
+static int talk_force_at_end(int k, int demo)
+{
+    if (k < 0) return 0;
+    if (talk_end(k)) return 1;
+    if (talk_request(k, 1)) talk_start(k, 1, demo);
+    return 0;
+}
+static void talk_reset_node(int k) { talkers[k].state = 0; tk_reset_flow(&talkers[k]); } /* MR::resetNode */
+static void talk_forward_node(int k) /* MR::forwardNode */
+{
+    talkers[k].state = 0;
+    tk_forward(&talkers[k]);
+    talkers[k].flow = talkers[k].cur;
+}
+
+static void td_exe_next(void);
+static void td_exe_talk(void)
+{
+    int k = td.st;
+    talkers[k].state = 3;
+    int cond = td.demo == 0 ? ts_lost(td.msgctrl) : 0;
+    if (!cond) {
+        if (!ts_talk()) return;
+        tk_read(&talkers[k]);
+    }
+    ts_clos(); /* (a select talk: no selector, it goes on as Yes would after rootNodeSel) */
+    td.f50 = 0;
+    if (talkers[k].root_auto && !ts_self(td.c44)) tk_root_pst(&talkers[k]);
+    td_set(TD_NEXT);
+    td_exe_next();
+}
+static void td_exe_next(void)
+{
+    int k = td.st;
+    Talker *t = &talkers[k];
+    int cond = tk_continue(t);
+    if (!tk_root_eve(k)) return;
+    td.f50 |= cond;
+    if (td.f50) {
+        if (t->talk == 1) td_term_talk();
+        tk_root_pre(t, 1);
+        td_init_state(k);
+        ts_open();
+        td_set(TD_TALK);
+        return;
+    }
+    td_term_talk();
+    t->state = 4;
+    td_set(TD_TERM);
+}
+
+/* TalkDirector::movement: updateMessage (the hand over), then its nerve */
+static void update_talk_director(void)
+{
+    for (int i = 0; i < ntalkers; i++) if (talkers[i].state == 1) talkers[i].state = 0;
+    if (td.nrv == TD_WAIT || td.nrv == TD_PREP) { td.msgctrl = td.c3C; td.c3C = td.c40; }
+    else { td.msgctrl = td.c40; td.c3C = td.msgctrl; }
+    td.c40 = -1;
+    if (td.msgctrl >= 0) td.c44 = td.msgctrl;
+    if (star_demo) { td.msgctrl = -1; td.f4E = 1; } /* isPowerStarGetDemoActive */
+    td.step++;
+    switch (td.nrv) {
+    case TD_PREP:
+        if (ts_prep(td.msgctrl)) talkers[td.st].state = 2;
+        else { talkers[td.st].state = 0; td.st = -1; td_set(TD_WAIT); }
+        break;
+    case TD_TALK: td_exe_talk(); break;
+    case TD_NEXT: td_exe_next(); break;
+    case TD_TERM:
+        if (!td.f58 && !ts_term(td.msgctrl)) break;
+        talkers[td.st].state = 0;
+        td.st = -1;
+        td_set(TD_WAIT);
+        break;
+    }
+    tk_balloon_update(&tk_bev);
+    tk_balloon_update(&tk_bsign);
+    for (int i = 0; i < 4; i++) tk_balloon_update(&tk_bshort[i]);
+    if (tk_abtn.nrv != BL_DEAD) {
+        tk_abtn.step++;
+        if (tk_abtn.nrv == BL_OPEN && tk_abtn.step >= 16) { tk_abtn.nrv = BL_TALK; tk_abtn.step = 0; }
+        if (tk_abtn.nrv == BL_CLOSE && tk_abtn.step >= 16) tk_abtn.nrv = BL_DEAD;
+    }
+}
+
+/* the scenario's talk data and the font (game_init) */
+static void talk_init(const Scene *s)
+{
+    ntalkers = 0; tk_nctl = 0;
+    memset(&td, 0, sizeof td);
+    td.msgctrl = td.c3C = td.c40 = td.c44 = td.st = -1;
+    memset(&tk_bev, 0, sizeof tk_bev); memset(&tk_bsign, 0, sizeof tk_bsign); memset(tk_bshort, 0, sizeof tk_bshort);
+    tk_bev.kind = BK_EVENT; tk_bev.mode = 1;
+    tk_bsign.kind = BK_SIGN; tk_bsign.mode = 2;
+    for (int i = 0; i < 4; i++) { tk_bshort[i].kind = BK_SHORT; tk_bshort[i].mode = 0; }
+    tk_abtn.nrv = BL_DEAD;
+    if (s->talk) {
+        const u8 *p = s->talk;
+        tk_nctl = *(const u16 *)p;
+        int nn = *(const u16 *)(p + 2), nm = *(const u16 *)(p + 4);
+        tk_ctl = (const TkCtl *)(p + 16);
+        tk_node = (const TkNode *)(tk_ctl + tk_nctl);
+        tk_msg = (const TkMsg *)(tk_node + nn);
+        tk_text = (const u16 *)(tk_msg + nm);
+    }
+    if (s->font) {
+        const u8 *p = s->font;
+        tk_nglyph = *(const u16 *)p; tk_nicon = *(const u16 *)(p + 2);
+        tk_ttex = (int)s->font_tex0 + *(const u16 *)(p + 4);
+        tk_itex = (int)s->font_tex0 + *(const u16 *)(p + 6);
+        tk_lf = (s8)p[8]; tk_asc = p[9];
+        tk_glyph = (const TkGlyph *)(p + 16);
+        tk_icon = tk_glyph + tk_nglyph;
+    }
+    printf("talk: %d talk entries, font %d glyphs %d pictures\n", tk_nctl, tk_nglyph, tk_nicon);
+}
+
+/* the talkers placed in the scene (SignBoard, Tico, Kinopio: their wait nerves' talk) */
+static int talk_row_label(int row, char *out) /* the TALK entry of a row: its <zone>_<class><id> */
+{
+    for (int i = 0; i < tk_nctl; i++)
+        if (tk_ctl[i].row == row) { strcpy(out, tk_ctl[i].label); return 1; }
+    return 0;
+}
+static int tico_kill(int k, u32 v) { (void)v; if (talkers[k].row >= 0) row_kill(talkers[k].row); return 1; } /* killFunc: Meta */
+static void update_talkers(void)
+{
+    if (!tk_nctl) return;
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        int sign = in->talkcls == 1, tico = in->talkcls == 2;
+        if (!in->talkcls || !row_shown(in->row)) continue;
+        char lab[32];
+        if (!talk_row_label(in->row, lab)) continue;
+        /* SignBoard: NPCActor caps (talk 240, its balloon 150 up); Tico::initMessage (350, 120 up); Kinopio (122 x 1.2 up) */
+        int k = talk_new(lab, in->row, in->row, sign ? 150.0f : tico ? 120.0f : 122.0f * 1.2f, tico ? 350.0f : 240.0f);
+        if (k < 0) continue;
+        Talker *t = &talkers[k];
+        if (!t->root_auto) { t->root_auto = 1; if (tico) t->kill = tico_kill; } /* onRootNodeAutomatic (NPCActor::initTalkCtrl) */
+        float m[16];
+        memcpy(m, in->m, 64);
+        for (int j = 0; j < 12; j++) m[j] /= in->s;
+        talk_place(k, m);
+        if (tico && sc->objs[in->row].arg[1] == 3) { /* Tico::exeTalk: at its talk's end Meta (gone) */
+            if (talk_near_at_end(k)) row_kill(in->row);
+        } else talk_near(k); /* exeWait: tryTalkNearPlayer (Tico / Kinopio: ...AndStartTalkAction) */
+    }
+}
+
+/* the balloon's screen place: its host + the follow offset along the camera's axes (updateBalloonPos) */
+static void tk_balloon_pos(Talker *t)
+{
+    V3 ce, cw, cu;
+    float fovy;
+    camera_pose(&ce, &cw, &cu, &fovy);
+    V3 f = vnorm(vsub(cw, ce)), r = vnorm(vcross(f, cu)), u = vcross(r, f);
+    V3 p = vadd(tk_pos(t), vmul(u, t->offy));
+    float z = vdot(vsub(p, ce), f), k = 224.0f / tanf(fovy * 0.5f * 0.0174533f);
+    t->sz = z > 1.0f ? -1.0f : 1.0f;
+    if (z < 1.0f) z = 1.0f;
+    t->sx = 320.0f + vdot(vsub(p, ce), r) / z * k;
+    t->sy = 224.0f - vdot(vsub(p, ce), u) / z * k;
+}
+static float tk_fade(const TkBalloon *b) /* Appear / End (21 frames) as a fade */
+{
+    return b->nrv == BL_OPEN ? b->step / 21.0f : b->nrv == BL_CLOSE ? 1.0f - b->step / 21.0f :
+           b->nrv == BL_WAIT ? 0.0f : 1.0f;
+}
+static void tk_draw_abtn(float x, float y)
+{
+    float a = tk_abtn.nrv == BL_OPEN ? tk_abtn.step / 16.0f : tk_abtn.nrv == BL_CLOSE ? 1.0f - tk_abtn.step / 16.0f : 1.0f;
+    const TkGlyph *gl = tk_find(tk_icon, tk_nicon, 0); /* the A icon (PicIconA, 48 x 48) */
+    if (gl) tk_quad(x - 24.0f * TK_KX, y - 24.0f * TK_KY, 48.0f * TK_KX, 48.0f * TK_KY, tk_rgba(255, 255, 255, a), tk_itex, gl->u, gl->v, gl->w, gl->h);
+    if (tk_abtn.plain) return;
+    int c = talk_ctl(tk_abtn.read ? "Layout_SystemRead" : "Layout_SystemTalk", -1);
+    if (c < 0) return;
+    /* PicPlate (98 x 18, (0, 170, 255) at 200) 31 over it, TxtIconA white at 18.9 x 23.1 */
+    tk_quad(x - 49.0f * TK_KX, y - 40.0f * TK_KY, 98.0f * TK_KX, 18.0f * TK_KY, tk_rgba(0, 170, 255, a * 200 / 255.0f), -1, 0, 0, 0, 0);
+    TkWriter w = {0};
+    w.sx = 18.9f / 27.0f * TK_KX; w.sy = 23.1f / 33.0f * TK_KY; w.cs = 1.0f;
+    float tw = tk_write(&w, tk_text + tk_msg[tk_ctl[c].msg].off, NULL, NULL, NULL);
+    w.draw = 1; w.alpha = a; w.r = w.g = w.b = 255;
+    w.x = x - tw / 2; w.y = y - 31.0f * TK_KY - 23.1f * TK_KY / 2 - 4.0f;
+    tk_write(&w, tk_text + tk_msg[tk_ctl[c].msg].off, NULL, NULL, NULL);
+}
+static void talk_draw(void)
+{
+    ntkq = 0;
+    if (tk_ttex < 0) return;
+    for (int i = 0; i < 4; i++) { /* TalkBalloonStretch: over the talker, its width the text's */
+        TkBalloon *b = &tk_bshort[i];
+        if (b->nrv == BL_DEAD || !b->page) continue;
+        Talker *t = &talkers[b->talker];
+        tk_balloon_pos(t);
+        if (t->sz > 0) continue;
+        float a = tk_fade(b);
+        if (b->fade) a = 0;
+        TkWriter w = {0};
+        int lines;
+        w.sx = 24.3f / 27.0f * TK_KX; w.sy = TK_KY; w.cs = 2.0f;
+        float tw = tk_write(&w, b->page, &lines, NULL, NULL);
+        float bw = tw + 40.0f, bh = lines * (tk_lf - 2) * TK_KY + 26.0f, cx = t->sx, cy = t->sy - 48.0f * TK_KY;
+        tk_quad(cx - bw / 2 + 1, cy - bh / 2 + 3, bw, bh, tk_rgba(0, 0, 0, a * 100 / 255.0f), -1, 0, 0, 0, 0);
+        tk_quad(cx - bw / 2, cy - bh / 2, bw, bh, tk_rgba(255, 255, 255, a * 230 / 255.0f), -1, 0, 0, 0, 0);
+        tk_text_box(b->page, cx, cy - bh / 2, bh, a, &b->ac, t->arg, 1);
+    }
+    if (tk_bev.nrv != BL_DEAD && tk_bev.page) { /* TalkBalloonEvent: WinBalloon 570 x 120 at (0, 144), its text (-16, 144) */
+        float a = tk_fade(&tk_bev);
+        tk_quad(tk_hx(-285 + 3), tk_hy(144 + 60 - 5), 570 * TK_KX, 120 * TK_KY, tk_rgba(0, 0, 0, a * 100 / 255.0f), -1, 0, 0, 0, 0);
+        tk_quad(tk_hx(-285), tk_hy(144 + 60), 570 * TK_KX, 120 * TK_KY, tk_rgba(255, 255, 255, a * 230 / 255.0f), -1, 0, 0, 0, 0);
+        tk_text_box(tk_bev.page, tk_hx(-16 - 240), tk_hy(144 + 50), 100 * TK_KY, a, &tk_bev.ac, talkers[tk_bev.talker].arg, 0);
+        if (tk_abtn.nrv != BL_DEAD && tk_abtn.plain) tk_draw_abtn(tk_hx(253), tk_hy(64 + 49));
+    }
+    if (tk_bsign.nrv != BL_DEAD && tk_bsign.page) { /* SignBoardBalloon: the board 640 x 160, the paper 530 x 120 */
+        float a = tk_fade(&tk_bsign);
+        tk_quad(tk_hx(-320), tk_hy(137 + 80), 640 * TK_KX, 160 * TK_KY, tk_rgba(130, 75, 10, a * 210 / 255.0f), -1, 0, 0, 0, 0);
+        tk_quad(tk_hx(-265 + 8), tk_hy(132 + 60), 530 * TK_KX, 120 * TK_KY, tk_rgba(0, 0, 0, a * 100 / 255.0f), -1, 0, 0, 0, 0);
+        tk_quad(tk_hx(-265), tk_hy(141 + 60), 530 * TK_KX, 120 * TK_KY, tk_rgba(250, 250, 255, a), -1, 0, 0, 0, 0);
+        tk_text_box(tk_bsign.page, tk_hx(-14 - 240), tk_hy(140 + 50), 100 * TK_KY, a, &tk_bsign.ac, 0, 0);
+        if (tk_abtn.nrv != BL_DEAD && tk_abtn.plain) tk_draw_abtn(tk_hx(253), tk_hy(140 - 25));
+    }
+    if (tk_abtn.nrv != BL_DEAD && !tk_abtn.plain) tk_draw_abtn(tk_abtn.x, tk_abtn.y);
+    render_quads(tkq, ntkq);
+}
+
+int game_test_talk(int frame) /* Mario 150 in front of the first SignBoard (frames 200-900), then of the first
+                                * Tico (900-3000), grounded; A every 60 frames from 80 frames on */
+{
+    static int last_row = -1, t;
+    char lab[32];
+    const char *want = frame < 900 ? "SignBoard" : "Tico";
+    int row = -1;
+    for (int i = 0; i < ninsts && row < 0; i++)
+        if (!strcmp(sc->types + 32 * sc->objs[insts[i].row].type, want) && talk_row_label(insts[i].row, lab)) row = i;
+    pad_force = 0;
+    if (row < 0) return -1;
+    const Inst *in = &insts[row];
+    test_nolost = 1;
+    if (in->row != last_row) { last_row = in->row; t = 0; }
+    t++;
+    V3 p = v3(in->m[12], in->m[13], in->m[14]), up = vnorm(v3(in->m[4], in->m[5], in->m[6])), z = vnorm(v3(in->m[8], in->m[9], in->m[10]));
+    if (t < 30) { /* dropped in front, facing it */
+        mario->up = up; mario->pos = vadd(vadd(p, vmul(z, 150.0f)), vmul(up, 60.0f));
+        mario->face = vmul(z, -1.0f); mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->launch = -1;
+    }
+    if (t >= 80 && t % 60 < 5) pad_force = PAD_CROSS; /* a press held 5 frames (a page turns on A held, not just pressed) */
+    if (frame % 30 == 0)
+        printf("talk test f %d: %s row %d, director %d, talker %d, balloon %d/%d/%d, abtn %d\n", frame, want, in->row, td.nrv,
+               td.st, tk_bev.nrv, tk_bsign.nrv, tk_bshort[0].nrv, tk_abtn.nrv);
+    if (frame % 30 == 0)
+        printf("talk test: mario %d from it, %d in front, %d up, grounded %d, near %d\n", (int)vlen(vsub(mario->pos, p)),
+               (int)vdot(vsub(mario->pos, p), z), (int)vdot(vsub(mario->pos, p), up), mario->grounded,
+               talkers[0].ctl >= 0 && ntalkers ? tk_near(&talkers[0], talkers[0].dist) : -1);
+    return in->row;
+}
+
 /* TicoFat (Petari NPC/TicoFat.cpp), a hungry Luma: Prep until it may eat (startEat: its talk's event, or arg2 set),
  * then Wait / Point (Excite) while the pointer is on it near Mario (updateGuidance _174 8 within its talk distance
  * 280 x min(scale, 1.5), updatePointing _178 4); B (L1 here) held while pointing gifts a star piece every _1F0 5
@@ -6959,12 +7825,14 @@ static void draw_sambo_heads(void)
  * eaten: Test, Fullness (Joy), tryMetamorphosis: arg0 -1 Demo (its Demo clip, hidden at 90), Fly along its rail
  * (SpinDriverShootPath, eased, _1FC = arg4 (100) a frame), WipeOut / WipeIn (60 each: SW_A on, it is gone), Info,
  * After (60): disappear (its group's members appear); else Meta. Clips by its size (getActionName: ..0 / ..1 / ..2
- * past 1.3 / 1.6) through its ActorAnimCtrl actions. ponytail: no talk messages (the talk's end taken at once), no
+ * past 1.3 / 1.6) through its ActorAnimCtrl actions. Its talks: Common_TicoFat001 (Prep: tryTalkNearPlayer, its
+ * event node starts the eating: eventFunc 0) and Common_TicoFat000 (setMessage: Wait 1 by how much is left, Point 0,
+ * Test 2; the end of Fullness' talk is the metamorphosis), 280 to talk, 220 x scale up, in front. ponytail: no
  * fullness meter, no "変身" / "飛行" multi-actor cameras, no white wipes or information message (their frames only),
  * no TicoSeedGuidance, no item (arg0 0 / 1), no FatRed BRK, no BVA eyes */
 #define MAX_FATS 4
 static struct {
-    int row, nrv, t, left, total, inflight, eat, g174, g178, item, has_rail;
+    int row, nrv, t, left, total, inflight, eat, g174, g178, item, has_rail, tk1, tk0; /* mMsgCtrl, _16C */
     float scale, flyd, flylen, m0[16]; /* m0: its matrix without its scale (setScale works on it) */
     Launch fly;
     struct { V3 pos; int on; } gift[8];
@@ -6978,6 +7846,22 @@ static const char *fat_size(const char *base, float scale) /* getActionName */
     return buf;
 }
 static void fat_set(int k, int n) { fats[k].nrv = n; fats[k].t = 0; }
+static int fat_event(int t, u32 v) /* TicoFat::eventFunc: 0 startEat, 1 not yet */
+{
+    for (int k = 0; k < nfats; k++)
+        if (fats[k].tk1 == t) { if (v == 1) return 0; if (v == 0) fats[k].eat = 1; }
+    return 1;
+}
+static void fat_message(int k, int msg) /* TicoFat::setMessage */
+{
+    int n = 0, tk = fats[k].tk0;
+    float v5 = (float)fats[k].left / fats[k].total;
+    if (tk < 0) return;
+    talk_reset_node(tk);
+    if (msg == 1) n = v5 == 1.0f ? 1 : v5 >= 0.5f ? 2 : v5 >= 0.25f ? 3 : v5 >= 0.05f ? 4 : 5;
+    else if (msg == 2) n = 6;
+    for (int i = 0; i < n; i++) talk_forward_node(tk);
+}
 static void update_ticofat(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -6995,6 +7879,10 @@ static void update_ticofat(void)
             fats[k].eat = r->arg[2] != -1;
             fats[k].scale = 1.0f;
             memcpy(fats[k].m0, in->m, 64);
+            fats[k].tk1 = talk_new("Common_TicoFat001", -1, in->row, 220.0f, 280.0f);
+            fats[k].tk0 = talk_new("Common_TicoFat000", -1, in->row, 220.0f, 280.0f);
+            if (fats[k].tk1 >= 0) { talkers[fats[k].tk1].event = fat_event; talkers[fats[k].tk1].root_auto = 1; talkers[fats[k].tk1].front = 1; talkers[fats[k].tk1].arg = fats[k].total; }
+            if (fats[k].tk0 >= 0) { talkers[fats[k].tk0].front = 1; talkers[fats[k].tk0].arg = fats[k].total; }
             u32 np = 0; int closed;
             const float *pts = r->path >= 0 ? find_rail(scene_blob_g, r->zone, r->path, &np, &closed) : NULL;
             if (pts && np >= 2) { /* SpinDriverShootPath::initUsingParabolic from its place */
@@ -7009,6 +7897,12 @@ static void update_ticofat(void)
         typeof(&fats[0]) f = &fats[k];
         if (f->nrv == TF_GONE) continue;
         f->t++;
+        for (int c = 0; c < 2; c++) { /* its talks follow it: base matrix, 220 x scale up (setScale) */
+            int tk = c ? f->tk1 : f->tk0;
+            if (tk < 0) continue;
+            talk_place(tk, f->m0);
+            talkers[tk].offy = 220.0f * f->scale;
+        }
         V3 up = vnorm(v3(f->m0[4], f->m0[5], f->m0[6])), base = v3(f->m0[12], f->m0[13], f->m0[14]);
         V3 front = vnorm(v3(f->m0[8], f->m0[9], f->m0[10]));
         V3 mid = vadd(base, vmul(up, 100.0f * f->scale)), mouth = vadd(base, vadd(vmul(up, 130.0f * f->scale), vmul(front, 60.0f * f->scale)));
@@ -7048,22 +7942,30 @@ static void update_ticofat(void)
         const char *clip = NULL;
         int loop = 1;
         switch (f->nrv) {
-        case TF_PREP: /* the talk (onRootNodeAutomatic, in front) starts the eating at its end */
+        case TF_PREP: /* its talk (onRootNodeAutomatic, in front): the event node starts the eating */
             clip = fat_size("wait", f->scale);
-            if (!f->eat && dm < talk && vdot(vsub(mario->pos, base), front) > 0) { f->eat = 1; printf("tico fat row %d: eats" "\n", in->row); }
-            if (f->eat) fat_set(k, TF_WAIT);
+            if (f->eat) { fat_set(k, TF_WAIT); printf("tico fat row %d: eats" "\n", in->row); }
+            else talk_near(f->tk1);
             break;
-        case TF_WAIT: clip = fat_size("wait", f->scale); if (f->g178 > 0) fat_set(k, TF_POINT); break;
-        case TF_POINT: clip = fat_size("excite", f->scale); if (f->g178 <= 0) fat_set(k, TF_WAIT); break;
+        case TF_WAIT:
+            clip = fat_size("wait", f->scale);
+            if (f->t == 1) fat_message(k, 1);
+            if (f->g178 > 0) fat_set(k, TF_POINT); else talk_near(f->tk0);
+            break;
+        case TF_POINT:
+            clip = fat_size("excite", f->scale);
+            if (f->t == 1) fat_message(k, 0);
+            if (f->g178 <= 0) fat_set(k, TF_WAIT); else talk_force(f->tk0, 1);
+            break;
         case TF_EAT: clip = f->t < 41 ? fat_size("eatstart", f->scale) : fat_size("eat", f->scale); if (!f->inflight) fat_set(k, TF_CHEM); break;
         case TF_CHEM:
             clip = "chem";
             if (f->t >= 76) { if (f->g178 > 0) { f->g174 = 8; fat_set(k, TF_POINT); } else { f->g174 = 0; fat_set(k, TF_WAIT); } }
             break;
-        case TF_TEST: clip = fat_size("excite", f->scale); fat_set(k, TF_FULLNESS); break;
-        case TF_FULLNESS: /* Joy; its talk at its end (tryTalkForceWithoutDemoAtEnd) */
+        case TF_TEST: clip = fat_size("excite", f->scale); fat_message(k, 2); talk_force(f->tk0, 0); fat_set(k, TF_FULLNESS); break;
+        case TF_FULLNESS: /* Joy; its talk's end: tryMetamorphosis (tryTalkForceWithoutDemoAtEnd) */
             clip = fat_size("joy", f->scale);
-            if (f->t >= 41) fat_set(k, f->item == -1 ? TF_DEMO : TF_META);
+            if (f->tk0 < 0 ? f->t >= 41 : talk_force_at_end(f->tk0, 0)) fat_set(k, f->item == -1 ? TF_DEMO : TF_META);
             break;
         case TF_DEMO: clip = "demo"; loop = 0;
             if (f->t >= 96) fat_set(k, f->item == -1 && f->has_rail ? TF_FLY : TF_WIPEOUT);
@@ -10515,7 +11417,7 @@ static void kuribo_update(Kuribo *k)
 {
     float s = w_scale(k);
     if (!k->front.x && !k->front.y && !k->front.z) kuribo_init(k);
-    k->grav = vmul(up_at(k->pos, vmul(k->grav, -1.0f)), -1.0f); /* onCalcGravity */
+    k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f); /* onCalcGravity */
     int st = k->step;
     switch (k->nrv) {
     case KN_WANDER:
@@ -10625,7 +11527,7 @@ static void kmini_update(Kuribo *k)
 {
     if (!k->front.x && !k->front.y && !k->front.z) { kuribo_init(k); w_nrv(k, KN_WANDER); k->step = 0; }
     if (sw_on(&sc->objs[k->row], SW_B)) { k->state = KURIBO_DEAD; return; } /* listenStageSwitchOnB: makeActorDead */
-    k->grav = vmul(up_at(k->pos, vmul(k->grav, -1.0f)), -1.0f);
+    k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f);
     int st = k->step;
     float depth;
     int deadmap = in_death(k->pos) || in_water(k->pos, vmul(k->grav, -1.0f), &depth); /* tryDeadMap */
@@ -10963,7 +11865,7 @@ static void kari_update(Kuribo *k, V3 to, float d)
         w_nrv(k, RN_FALL); k->step = 0;
     }
     if (k->nrv != RN_CLING && k->nrv != RN_PRECLING && k->nrv != RN_NOCALCWAIT)
-        k->grav = vmul(up_at(k->pos, vmul(k->grav, -1.0f)), -1.0f);
+        k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f);
     float depth;
     if (in_death(k->pos) || in_water(k->pos, vmul(k->grav, -1.0f), &depth)) { kari_dead(k, 0); return; } /* control */
     int st = k->step;
@@ -11313,7 +12215,7 @@ static void butterfly_update(Kuribo *k)
         w_act(k, "Butterfly");
         w_nrv(k, BN_WAIT); k->step = 0;
     }
-    k->grav = vmul(up_at(k->pos, vmul(k->grav, -1.0f)), -1.0f);
+    k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f);
     /* control: updatePosture, tryAppearStarPeace */
     V3 vh = vtangent(k->vel, k->grav);
     if (vlen(k->vel) >= 0.5f && vlen(vh) > 1e-6f) {
@@ -11460,7 +12362,7 @@ static void petari_update(Kuribo *k)
         k->phase = 1; /* makeActorAppeared: hideModel */
         w_nrv(k, PT_LURK); k->step = 0;
     }
-    k->grav = vmul(up_at(k->pos, vmul(k->grav, -1.0f)), -1.0f); /* onCalcGravity */
+    k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f); /* onCalcGravity */
     int st = k->step;
     float dm = vlen(vsub(mario->pos, k->pos));
     k->tcenter = vsub(k->pos, vmul(k->grav, 60.0f)); /* calcCenter */
@@ -11618,7 +12520,7 @@ static void update_kuribo(void)
     for (int i = 0; i < nkuribo; i++) {
         Kuribo *k = &kuribo[i];
         if (k->state == KURIBO_DEAD || !row_shown(k->row)) continue;
-        k->up = up_at(k->pos, k->up);
+        k->up = walker_up(k, k->up);
         V3 to = vsub(mario->pos, k->pos);
         float d = vlen(to);
         if (k->kind == WALK_PETARI) { /* ponytail: still while its zone has no collision (streaming) */
@@ -13641,21 +14543,32 @@ static int ambient_fx(const char *name)
     for (int k = 0; k < FX_AMBIENT_N; k++) if (strcmp(name, fx_ambient[k]) == 0) return FX_AMBIENT_FIRST + k;
     return -1;
 }
-
-static void ambient_effects(void)
+/* per scene type: its ambient effect (-1 none) and whether it plays once; filled at the first frame of a scene */
+static short amb_fx[1024];
+static unsigned char amb_once[1024];
+static void ambient_types(void)
 {
     static const char *const once[] = {"IceLayerBreak", "WaterLayerBreak", "StarPieceClusterBreak", "BattleShipExplosionMetal",
                                        "BattleShipExplosionRock", "LavaVolcanoEruption"};
+    amb_stale = 0;
+    for (u32 t = 0; t < sc->ntypes && t < 1024; t++) {
+        const char *name = sc->types + 32 * t;
+        amb_fx[t] = (short)ambient_fx(name);
+        amb_once[t] = 0;
+        for (unsigned k = 0; k < sizeof once / sizeof once[0]; k++) amb_once[t] |= strcmp(name, once[k]) == 0;
+    }
+}
+
+static void ambient_effects(void)
+{
     int best[12], nb = 0;
     float bd[12];
+    if (amb_stale) ambient_types();
     for (u32 i = 0; i < sc->nobjs; i++) {
         const Row *r = &sc->objs[i];
-        const char *name = sc->types + 32 * r->type;
-        int fx = ambient_fx(name);
+        int fx = r->type < 1024 ? amb_fx[r->type] : -1;
         if (fx < 0 || !row_shown(i)) continue;
-        int one = 0;
-        for (unsigned k = 0; k < sizeof once / sizeof once[0]; k++) one |= strcmp(name, once[k]) == 0;
-        if (one) { /* once, when its switch comes on (row_turn: played) */
+        if (amb_once[r->type]) { /* once, when its switch comes on (row_turn: played) */
             if (r->sw[SW_A] >= 0 && sw_on(r, SW_A) && !row_turn[i]) {
                 float m[16];
                 mat_translate_rot_scale(m, r->pos, r->rot, r->scale);
@@ -13676,7 +14589,7 @@ static void ambient_effects(void)
         const Row *r = &sc->objs[best[k]];
         float m[16];
         mat_translate_rot_scale(m, r->pos, r->rot, r->scale);
-        fx_keep(ambient_fx(sc->types + 32 * r->type), r, m);
+        fx_keep(amb_fx[r->type], r, m);
     }
 }
 
@@ -13686,7 +14599,7 @@ static void keep_effects(void)
     float m[16];
     for (int i = 0; i < npieces; i++)
         if (pickup_shown(&pieces[i]) && vlen(vsub(pieces[i].pos, cam_pos)) < 4000.0f) {
-            basis_matrix(m, pieces[i].pos, up_at(pieces[i].pos, mario->up), v3(0, 0, 1), 0);
+            basis_matrix(m, pieces[i].pos, pick_up(&pieces[i]), v3(0, 0, 1), 0);
             fx_keep(FX_STARPIECE_STARPIECELIGHT, &pieces[i], m);
         }
     for (int i = 0; i < nlaunches; i++)
@@ -13791,6 +14704,8 @@ void game_update(void)
     update_rotors();
     update_halos();
     update_railers();
+    update_talkers();
+    update_talk_director();
     update_mario();
     update_seesaws(); /* after Mario: his hip drop (hip_hit) this frame */
     if (mario->spin_timer == SPIN_TIME - 1) mario_fx(FX_MARIO_SPINLIGHT, 1.0f); /* a spin started this frame */
@@ -13850,7 +14765,7 @@ void game_update(void)
         if (!demo_camera("powerstar/powerstarget", star_demo - 1, star_demo_m)) { star_demo = 0; camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45); }
         else star_demo++;
     }
-    demo_on = dino_demo_on || ota_demo_on || star_demo || fat_demo() || vine_demo_on();
+    demo_on = dino_demo_on || ota_demo_on || star_demo || fat_demo() || vine_demo_on() || talk_demo();
     update_ticofat();
     update_sambos();
     update_fire();
@@ -13916,17 +14831,26 @@ static void inst_draw(const Inst *in, const Model *md, const float m[16])
 static Anim *plant_pose(const Inst *in, const Plant *p)
 {
     static Anim a;
+    static int last_type = -1, last_nrv = -1;
+    static float last_frame = -1;
+    static unsigned last_game_frame;
     static const char *clip[] = {"wait", "hintshake", "shake", "shake", "shake"};
     static const float rate[] = {1.0f, 1.0f, 0.5f, 1.0f, 1.5f}; /* hWeakRate, hMiddleRate, hStrongRate */
+    int type = sc->objs[in->row].type;
+    float frame = p->nrv >= PL_WEAK ? 3.0f + p->step * rate[p->nrv] : (float)p->step;
+    /* members in the same nerve at the same frame share the pose (the Wait ones mostly): posed once */
+    if (a.skin == in->md->skin && type == last_type && p->nrv == last_nrv && frame == last_frame && last_game_frame == game_frame)
+        return &a;
     char n[48];
-    snprintf(n, sizeof n, "%s/%s", sc->types + 32 * sc->objs[in->row].type, clip[p->nrv]);
+    snprintf(n, sizeof n, "%s/%s", sc->types + 32 * type, clip[p->nrv]);
     for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
     if (a.skin != in->md->skin) anim_bind(&a, in->md->skin);
-    anim_start(&a, n, 0);
+    if (type != last_type || p->nrv != last_nrv) anim_start(&a, n, 0);
     a.phase = -1.0f;
     a.speed = 0.0f;
-    a.frame = p->nrv >= PL_WEAK ? 3.0f + p->step * rate[p->nrv] : (float)p->step;
+    a.frame = frame;
     anim_update(&a);
+    last_type = type; last_nrv = p->nrv; last_frame = frame; last_game_frame = game_frame;
     return &a;
 }
 
@@ -13944,13 +14868,37 @@ static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle)
     m[12] = pos.x; m[13] = pos.y; m[14] = pos.z;
 }
 
+/* a walker's up against gravity, kept while it stands still (NonActive ones, waiting ones): one gravity_at per
+ * move instead of two a frame */
+static V3 walker_up(void *kv, V3 prev)
+{
+    Kuribo *k = kv;
+    if (!k->gok || k->gpos.x != k->pos.x || k->gpos.y != k->pos.y || k->gpos.z != k->pos.z) {
+        k->gup = up_at(k->pos, prev);
+        k->gpos = k->pos; k->gok = 1;
+    }
+    return k->gup;
+}
+
+/* a pickup's up (against gravity), kept while it has not moved: most of them never do, and gravity_at is the
+ * frame's dearest call */
+static V3 pick_up(const Pickup *cp)
+{
+    Pickup *p = (Pickup *)cp;
+    if (p->at.x != p->pos.x || p->at.y != p->pos.y || p->at.z != p->pos.z || (p->up.x == 0 && p->up.y == 0 && p->up.z == 0)) {
+        p->up = up_at(p->pos, v3(0, 1, 0));
+        p->at = p->pos;
+    }
+    return p->up;
+}
+
 static void draw_pickups(const Pickup *p, int n, const Model *md, u8 r, u8 g, u8 b, float rot)
 {
     float m[16];
     if (!md) return;
     for (int i = 0; i < n; i++) {
         if (!pickup_shown(&p[i])) continue;
-        V3 up = up_at(p[i].pos, v3(0, 1, 0));
+        V3 up = pick_up(&p[i]);
         basis_matrix(m, p[i].pos, up, v3(0, 0, 1), rot);
         render_model(md, m, r, g, b);
     }
@@ -14453,6 +15401,7 @@ void game_draw(void)
     }
     draw_waterplants();
     fx_draw();
+    talk_draw();
 }
 
 void game_debug(char *out, int n)

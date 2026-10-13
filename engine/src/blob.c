@@ -155,6 +155,13 @@ int blob_add(Scene *s, const u8 *blob)
         s->ptcl = pt;
         s->ptcl_tex0 = tex0;
     }
+    const u8 *fo = blob_chunk(blob, "FONT", NULL), *tk = blob_chunk(blob, "TALK", NULL);
+    if (fo) {
+        s->font = fo;
+        s->font_tex0 = tex0;
+    }
+    if (tk)
+        s->talk = tk;
     return 0;
 }
 

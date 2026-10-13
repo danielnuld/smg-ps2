@@ -912,6 +912,57 @@ void render_sprites(const Sprite *sp, int n)
     }
 }
 
+/* 2D quads (talk balloons and their text), queued and sent after the translucent models (render_end): HUD units,
+ * no depth, alpha blended, textured with modulate or flat */
+#define MAX_QUADS 1024
+static Quad quads[MAX_QUADS];
+static int nquads;
+
+void render_quads(const Quad *q, int n)
+{
+    for (int i = 0; i < n && nquads < MAX_QUADS; i++)
+        quads[nquads++] = q[i];
+}
+
+static void draw_quads(void)
+{
+    for (int i = 0; i < nquads;) {
+        u32 t = quads[i].tex;
+        int j = i;
+        while (j < nquads && j - i < 64 && quads[j].tex == t)
+            j++;
+        if (packet2_get_qw_count(vif[cur]) + 16 + TEXP + 4 + (j - i) * 5 > PACKET_QW)
+            flush_vif();
+        set_tex(t);
+        packet2_chain_open_cnt(vif[cur], 0, 0, 0);
+        packet2_vif_flush(vif[cur], 0);
+        packet2_vif_open_direct(vif[cur], 0);
+        qword_t *tag = (qword_t *)vif[cur]->next;
+        packet2_add_2x_s64(vif[cur], 0, GIF_REG_AD);
+        packet2_add_2x_s64(vif[cur], GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA);
+        packet2_add_2x_s64(vif[cur], GS_SET_TEST(1, ATEST_METHOD_GREATER, 0, 0, 0, 0, 1, ZTEST_METHOD_ALLPASS), GS_REG_TEST);
+        packet2_add_2x_s64(vif[cur], GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 1), GS_REG_ZBUF);
+        packet2_add_2x_s64(vif[cur], GS_SET_PRIM(PRIM_SPRITE, 0, t != NO_TEX, 0, 1, 0, 1, 0, 0), GS_REG_PRIM);
+        u32 regs = 4;
+        for (; i < j; i++) {
+            const Quad *q = &quads[i];
+            float x0 = 2048.0f - SCREEN_W / 2 + q->x, y0 = 2048.0f - SCREEN_H / 2 + q->y * YS;
+            float x1 = x0 + q->w, y1 = y0 + q->h * YS;
+            packet2_add_2x_s64(vif[cur], GS_SET_RGBAQ(q->rgba & 0xFF, q->rgba >> 8 & 0xFF, q->rgba >> 16 & 0xFF, q->rgba >> 24, 0x3F800000), GS_REG_RGBAQ);
+            packet2_add_2x_s64(vif[cur], GS_SET_UV((int)(q->u * 16), (int)(q->v * 16)), GS_REG_UV);
+            packet2_add_2x_s64(vif[cur], GS_SET_XYZ((int)(x0 * 16), (int)(y0 * 16), 0), GS_REG_XYZ2);
+            packet2_add_2x_s64(vif[cur], GS_SET_UV((int)((q->u + q->uw) * 16), (int)((q->v + q->vh) * 16)), GS_REG_UV);
+            packet2_add_2x_s64(vif[cur], GS_SET_XYZ((int)(x1 * 16), (int)(y1 * 16), 0), GS_REG_XYZ2);
+            regs += 5;
+        }
+        tag->dw[0] = GIF_SET_TAG(regs, 1, 0, 0, GIF_FLG_PACKED, 1);
+        packet2_vif_close_direct_auto(vif[cur]);
+        packet2_chain_close_tag(vif[cur]);
+        cur_tex = -1;
+    }
+    nquads = 0;
+}
+
 /* WaterPlant strips: a triangle strip of 8 points each, alpha blended, textured (UV), no depth write; a strip with a
  * point behind the camera or far off screen is left out */
 void render_strips(const Strip *st, int n)
@@ -968,6 +1019,7 @@ u32 render_end(void)
         call_chain(xlu[i].md->chain_xlu, xlu[i].m);
     }
     nxlu = 0;
+    draw_quads();
     flush_vif();
     dma_channel_wait(DMA_CHANNEL_VIF1, 0);
     if (text_open) {
