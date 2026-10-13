@@ -320,7 +320,7 @@ there needs the embedded blob and every pack rebuilt.
 
 **Where the 2026-10-12 session stopped (resume here):** the Good Egg fidelity rewrite, parts 1 and 2 (Mario's
 movement), then launch stars, plants, spin rates, ShootingStar, map part switches, and the first classes of b
-(KillerGunnerSingle, ItemBubble, OtaRock, TakoBarrelA, HammerHeadPackun, Plant, Petari, PhantomShipHandle / Propellers, StarPieceFollowGroup, CoinReplica, PowerStarHalo, BenefitItemInvincible), all tested (EggStar 1-4 `route` get their stars; EggStar packs
+(all of b), all tested (EggStar 1-4 `route` get their stars; EggStar packs
 repacked 2026-10-12, the other galaxies' packs are older: item d). The user's order: first finish every improvised
 part, test, then add the missing systems. Left, in order:
   a. Improvised still: Mario's slope slide (SLIP_ACCEL: MarioSlip.cpp slopeMove needs the KCL floor codes in
@@ -328,11 +328,15 @@ part, test, then add the missing systems. Left, in order:
      the nerves, push / spin-storm shake by distance, hint every 300 and items by touch only are ported),
      QuestionCoin's throw (arg0 > 0: only GhostShipCaveZone, Phantom; its Appear effect is not in the FX table), TicoFat / Tico talk, CollapsePlane collision shrink (non-uniform KCL),
      OtaKingMagma collision / BTK, Rock BTK size frame, the walkers' shadows.
-  b. Classes Good Egg places that have no behaviour (KillerGunnerSingle, ItemBubble, OtaRock, TakoBarrelA, HammerHeadPackun, Plant, Petari, PhantomShipHandle / Propellers, StarPieceFollowGroup, CoinReplica, PowerStarHalo / ZoneHalo, BenefitItemInvincible (Invincible Mario) done; RGTowerPressGroundA is the generic
-     railer (RailMoveObjPress: only its body sensor's press type differs, MarioPress is item c); SideSpikeMoveStepA / BroadBeanMoveStep are their
-     generic MapPartsRailMover in 1P; the other Plant grows on its PackunPetit's dead switch 4): next DimensionAir, SignBoard
-     (talk, item c), DropOfWater. List them again with the scene() / class_coverage snippet: classes of EggStar 1-5
-     whose name game.c does not spell.
+  b. Classes of Good Egg: done (KillerGunnerSingle, ItemBubble, OtaRock, TakoBarrelA, HammerHeadPackun, Plant,
+     Petari, PhantomShipHandle / Propellers, StarPieceFollowGroup, CoinReplica, PowerStarHalo / ZoneHalo,
+     BenefitItemInvincible). The rest of the EggStar 1-5 classes game.c does not spell are planets (planet table),
+     SimpleMapObj / SimpleEnvironmentObj (static or their own-name BCK: DropOfWaterCore, MysteryGravityRoomBridgeA,
+     ReverseGravityTowerInside, AsteroidB), generic railers (RGTowerPressGroundA: RailMoveObjPress, only its body
+     sensor's press type differs; BroadBeanMoveStepA / B, SideSpikeMoveStepA), areas (camera, sound, bloom, messages,
+     light: item c) or need item c: SignBoard / LuigiEvent (talk), DimensionAir / HomeAir (TEV rim material, NO_DRAW),
+     ShootingStarArea (RandomEffectObj: random effects in an area). The other Plant grows on its PackunPetit's dead
+     switch 4. Next is a.
   c. Systems: MarioPress (crushed between the map and a press object: RGTowerPressGroundA, Dossun, RailBlock),
      talk / messages, sound effects, real lighting, wipes, multi-actor cameras (Dino damage camera),
      footprints (FootPrint decals), looping / attached effects (Smoke trails, Glow), BTK / BRK animation at run time
