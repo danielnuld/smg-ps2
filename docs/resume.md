@@ -326,7 +326,9 @@ matrix at VU mem 5..7; EggStar packs and resident.bin repacked; OtaKingMagma, El
 DorayakiFortressPlanet scroll), drop shadows (a9c2f2e: render_shadow disc, draw_shadow after ShadowController,
 Mario and the walkers), WipeFade (9ad2d54: TicoFat), actor event cameras (e1a4c0b: camera.py "<actor>固有<event><set>",
 camera_actor_start; Dino ダメージ, Plant 出現デモ / 掴まり, TicoFat 変身 / 飛行), animation-driven effects (34f49ac:
-AutoEffectList rows with AnimName, fx_anim from draw_skin; resident.bin +95 KB). Good Egg packs and resident.bin
+AutoEffectList rows with AnimName, fx_anim from draw_skin; resident.bin +95 KB), Dino's footprints (c43f791),
+Butterfly colours (5ba9db0: slice.py BRK_ARG, "<class>~<frame>" models), named effects (ca83e30: fx_named;
+KillerGunnerSingle, ItemBubble, OtaKing, OtaKingMagma, CocoSambo, Dino's Hit / TailDrag). Good Egg packs and resident.bin
 repacked (the disc image is stale). Check in PCSX2: `vine` (Mario's pose on the stalk, its cameras), `dino` / `ota`
 TEASER demos (Dino's damage camera, foot smoke), `fat` (wipe, cameras), lava / rails scrolling, shadows on slopes,
 no other model's UVs broken (the microcode change touches every draw), particle counts with many walkers.
@@ -360,7 +362,9 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
      by msg.LANG; game.c: TalkNodeCtrl / TalkMessageCtrl / TalkDirector / TalkState / balloons / IconAButton after
      Petari, the balloons flat panes at their BRLYT places; SignBoard, Tico, Kinopio, TicoFat use it; ponytail: no
      window textures / beak / brlan curves, no talk camera, no sounds, no yes / no selector, no LuigiEvent),
-     BTK at run time, shadows, wipes (WipeFade), actor cameras and animation effects done 2026-10-14 (unrun; see above).
+     BTK at run time, shadows, wipes (WipeFade), actor cameras, animation / named effects, footprints and BRK-by-arg
+     colours done 2026-10-14 (unrun; see above). Left for Good Egg: real lighting (TicoFat's pink), bloom models
+     (OtaKingMagmaBloom), TicoFat's FatRed / 喜び camera / screen effects, OtaKing's LavaColumn / AngrySmoke, sound.
      MarioPress done (MarioPress.cpp checkVerticalPress, setPress 0 / 4 after Petari: press objects are the
      RailMoveObjPress classes; Dossun / RailBlock / TripodBossFixParts are not in the port; checkSidePressPre /
      checkSidePress need front / back walls and face velocities the port's collision lacks), talk / messages, sound effects, real lighting, wipes, multi-actor cameras (Dino damage camera),
