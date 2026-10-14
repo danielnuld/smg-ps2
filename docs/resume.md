@@ -323,8 +323,13 @@ fixes below were tried blind (b935237: the Plant's front kept orthogonal as make
 difference from Petari found statically; demo_star takes the nearest shown star, no 3000 limit; game_demo_ota
 picks flat rim ground only), then c's BTK at run time (79e5410: tex.btk, slice.py BTK chunk, anim_btk, VU1 UV
 matrix at VU mem 5..7; EggStar packs and resident.bin repacked; OtaKingMagma, ElectricRail, CocoTwin,
-DorayakiFortressPlanet scroll). Check in PCSX2: `vine` (Mario's pose on the stalk), `dino` / `ota` TEASER
-demos, lava / rails scrolling and no other model's UVs broken (the microcode change touches every draw).
+DorayakiFortressPlanet scroll), drop shadows (a9c2f2e: render_shadow disc, draw_shadow after ShadowController,
+Mario and the walkers), WipeFade (9ad2d54: TicoFat), actor event cameras (e1a4c0b: camera.py "<actor>固有<event><set>",
+camera_actor_start; Dino ダメージ, Plant 出現デモ / 掴まり, TicoFat 変身 / 飛行), animation-driven effects (34f49ac:
+AutoEffectList rows with AnimName, fx_anim from draw_skin; resident.bin +95 KB). Good Egg packs and resident.bin
+repacked (the disc image is stale). Check in PCSX2: `vine` (Mario's pose on the stalk, its cameras), `dino` / `ota`
+TEASER demos (Dino's damage camera, foot smoke), `fat` (wipe, cameras), lava / rails scrolling, shadows on slopes,
+no other model's UVs broken (the microcode change touches every draw), particle counts with many walkers.
 
 **Where the 2026-10-12 session stopped (resume here):** items a and b are done; c's MarioPress is in (build only,
 unverified: checkVerticalPress / setPress after Petari, side presses not); c's talk / messages are in for Good Egg
@@ -355,6 +360,7 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
      by msg.LANG; game.c: TalkNodeCtrl / TalkMessageCtrl / TalkDirector / TalkState / balloons / IconAButton after
      Petari, the balloons flat panes at their BRLYT places; SignBoard, Tico, Kinopio, TicoFat use it; ponytail: no
      window textures / beak / brlan curves, no talk camera, no sounds, no yes / no selector, no LuigiEvent),
+     BTK at run time, shadows, wipes (WipeFade), actor cameras and animation effects done 2026-10-14 (unrun; see above).
      MarioPress done (MarioPress.cpp checkVerticalPress, setPress 0 / 4 after Petari: press objects are the
      RailMoveObjPress classes; Dossun / RailBlock / TripodBossFixParts are not in the port; checkSidePressPre /
      checkSidePress need front / back walls and face velocities the port's collision lacks), talk / messages, sound effects, real lighting, wipes, multi-actor cameras (Dino damage camera),
