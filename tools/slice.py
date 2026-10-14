@@ -305,6 +305,31 @@ def hidden_joints(b, bl, files, pose=None):
     return out
 
 
+def btk_entry(anim, material, mt, t, group):
+    """A BTK chunk entry (after its model name) for VUMD group `group` whose material's texture matrix the BTK animates,
+    or None: {u32 size, u16 group, u16 frames, u8 loop, u8 maya, 2x, f32 uv scale[2], f32 static matrix inverse[6]
+    (rows), f32 centre[2], 5 x {u16 count, u16 tangent type, u16 first key, 2x}, f32 keys}. The stored UVs went through
+    the static matrix and the scale: the engine undoes both (anim_btk). ponytail: vu_groups moves each triangle's UVs
+    by whole texture repeats, exact only while the BTK's scale / rotation equal the static ones (scrolls; OtaKingMagma);
+    a group whose BTK scales or turns its texture would need that shift left out."""
+    hit = next((x for x in anim["mats"] if x[0] == material and x[1] == mt["slot"]), None)
+    if not hit:
+        return None
+    (a, b_, c), (d, e, f) = mt["mtx"]
+    det = a * e - b_ * d
+    if abs(det) < 1e-8:
+        return None
+    ia, ib, id_, ie = e / det, -b_ / det, -d / det, a / det
+    inv = (ia, ib, -(ia * c + ib * f), id_, ie, -(id_ * c + ie * f))
+    tracks, keys = b"", []
+    for count, tan, k in hit[3]:
+        tracks += struct.pack("<HHH2x", count, tan, len(keys))
+        keys += k
+    body = struct.pack("<HHBB2x2f6f2f", group, anim["frames"], anim["loop"], mt.get("maya", 0), t["u_scale"], t["v_scale"],
+                       *inv, *hit[2]) + tracks + struct.pack(f"<{len(keys)}f", *keys)
+    return struct.pack("<I", len(body)) + body
+
+
 def model_groups(arc, ratio, stats=None, skinned=False, pose=None):
     """-> (groups [(verts, tris, uvs or None, texture or None, slots or None, colours or None, blend)], kcl bytes or
     None,
@@ -350,6 +375,9 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None):
             lfiles = {k.lower().rsplit("/", 1)[-1]: v for k, v in files.items()}
             over = tex.brk(lfiles[BRK_POSE[arc.stem][0] + ".brk"], BRK_POSE[arc.stem][1]) if arc.stem in BRK_POSE and \
                 BRK_POSE[arc.stem][0] + ".brk" in lfiles else None
+            # MapObjActor::init (tryStartAllAnim(mObjectName)), OtaKingMagma (startBtk): the model's own-name BTK, played
+            # at run time (anim_btk). ponytail: every model's, not only those classes'
+            anim_tex = tex.btk(lfiles[arc.stem.lower() + ".btk"]) if arc.stem.lower() + ".btk" in lfiles else None
             bva, vframe = (pose, None) if pose and pose.lower() + ".bva" in lfiles else VIS.get(arc.stem, (None, None))
             vis_hide = bva_hidden(lfiles.get(bva.lower() + ".bva", b""), 1 << 30 if vframe is None else vframe) if bva else set()
             for pos, tri, info in got:
@@ -391,6 +419,10 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None):
                             su, sv = (m[0][0] * su + m[0][1] * sv + m[0][2], m[1][0] * su + m[1][1] * sv + m[1][2])
                         uvs.append((su * t["u_scale"], sv * t["v_scale"]))
                     stats["projected"] = stats.get("projected", 0) + mt["projected"]
+                    if anim_tex and m:
+                        e = btk_entry(anim_tex, tex.material_name(b, bl[b"MAT3"], mat), mt, t, len(groups))
+                        if e:
+                            stats.setdefault("_btk", []).append(e)
                 elif mt and mt["projected"] and arc.stem in SKY_ARCS and mt["tex"] < len(texs):
                     # ponytail: a sky's texture projected from vertex positions (texgen POS + texture matrix) gets
                     # spherical UVs from each vertex's direction instead (the stars tile SKY_TILES times around)
@@ -1103,11 +1135,11 @@ _model_cache = {}
 
 
 def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=False):
-    """Asset chunks (TEXT MODL SKIN VUMD KCL) for [(model name, archive name)]: textures deduplicated within the pack.
+    """Asset chunks (TEXT MODL SKIN VUMD KCL BTK) for [(model name, archive name)]: textures deduplicated within the pack.
     KCL for planets when `collision`. Converted models are cached per process (one archive, many scenarios). fx: also
     the particle effects (PTCL, tools/jpa.py pack), their textures first in TEXT."""
     stats = stats if stats is not None else {}
-    models_, kcls, vumd, skins = [], [], [], []
+    models_, kcls, vumd, skins, btks = [], [], [], [], []
     texts, tex_id, ptcl = [], {}, []
     if fx:
         payload, texts = jpa.pack(fsp)
@@ -1127,7 +1159,9 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
             _model_cache[key] = (model_groups(arc, ratio, st, t in SKINNED or t in SKINNED_OBJ or t in AUTO_SKINNED, pose or None), st)
         (groups, kcl, sk), st = _model_cache[key]
         for k, v in st.items():
-            stats[k] = stats.get(k, 0) + v
+            if not k.startswith("_"):
+                stats[k] = stats.get(k, 0) + v
+        btks += [name32(t) + e for e in st.get("_btk", [])]
         if sk:
             skins.append(name32(t) + sk)
         # MODL keeps only the bounding radius (culling): drawing uses VUMD, collision KCL
@@ -1167,7 +1201,8 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
             chunk(b"MODL", struct.pack("<I", len(models_)) + b"".join(models_)),
             chunk(b"SKIN", struct.pack("<I", len(skins)) + b"".join(skins)),
             chunk(b"VUMD", struct.pack("<I12x", len(vumd)) + b"".join(vumd)),
-            chunk(b"KCL ", struct.pack("<I", len(kcls)) + b"".join(kcls))] + ptcl
+            chunk(b"KCL ", struct.pack("<I", len(kcls)) + b"".join(kcls)),
+            chunk(b"BTK ", struct.pack("<I", len(btks)) + b"".join(btks))] + ptcl
 
 
 def anim_chunk(fsp):

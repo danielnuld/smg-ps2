@@ -249,11 +249,13 @@ def material_tex(b, mat3, m, tex1=None):
             continue
         ci = u16(b, e + 0x28 + 2 * coord)
         src, mtx = b[off(0x38) + 4 * ci + 1], b[off(0x38) + 4 * ci + 2]
-        res = dict(tex=tex, attr=13 + src - 4 if 4 <= src <= 11 else None, mtx=None, projected=False)
+        res = dict(tex=tex, attr=13 + src - 4 if 4 <= src <= 11 else None, mtx=None, projected=False, slot=None)
         if mtx != 60:
+            res["slot"] = (mtx - 30) // 3  # the material's texture matrix a BTK names (texMtxIndex)
             mi = u16(b, e + 0x48 + 2 * ((mtx - 30) // 3))
             if mi != 0xFFFF:
                 res["mtx"] = tex_mtx(b, off(0x40) + 0x64 * mi)
+                res["maya"] = b[off(0x40) + 0x64 * mi + 1] >> 7
                 res["projected"] = res["mtx"] is None
         best, area = res, a
         if tex1 is None:
@@ -321,6 +323,37 @@ def brk(b, frame):
             rgba = [chan(vo[c], u16(b, e + 6 * c), u16(b, e + 6 * c + 2), u16(b, e + 6 * c + 4)) / 255.0 for c in range(4)]
             out.setdefault(nm[i], {"reg": {}, "konst": {}})[kind][b[e + 24]] = rgba
     return out
+
+
+def btk(b):
+    """A J3D texture SRT animation (J3D1btk1, TTK1) -> dict(frames, loop, mats: [(material name, texMtxIndex, (cx, cy),
+    [scale U, scale V, rotation W, translation U, translation V])]), each track (count, tangent type, keys: floats,
+    count 1 a constant else (time, value, tangent) triplets / (time, value, in, out) quads), rotations in degrees
+    (s16 << rotationDecimal, 0x8000 a half turn). None if it is not one."""
+    t = b.find(b"TTK1")
+    if b[:8] != b"J3D1btk1" or t < 0:
+        return None
+    h = lambda k: u16(b, t + k)
+    w = lambda k: u32(b, t + k)
+    shift, n = b[t + 9], h(0x0C) // 3
+    nm = names(b, t + w(0x1C))
+    rk = (1 << shift) * 180.0 / 0x8000
+    mats = []
+    for i in range(n):
+        e = t + w(0x14) + 0x36 * i
+        tracks = []
+        for comp, table in ((0x00, 0x28), (0x12, 0x28), (0x24 + 0x06, 0x2C), (0x0C, 0x30), (0x12 + 0x0C, 0x30)):
+            count, index, tan = u16(b, e + comp), u16(b, e + comp + 2), u16(b, e + comp + 4)
+            st = 1 if count == 1 else (3 if tan == 0 else 4)
+            if table == 0x2C:
+                vals = [struct.unpack_from(">h", b, t + w(table) + 2 * (index + j))[0] for j in range(count * st)]
+                keys = [float(v) if count > 1 and j % st == 0 else v * rk for j, v in enumerate(vals)]
+            else:
+                keys = list(struct.unpack_from(f">{count * st}f", b, t + w(table) + 4 * index))
+            tracks.append((count, tan, keys))
+        cx, cy = struct.unpack_from(">2f", b, t + w(0x24) + 0x0C * i)
+        mats.append((nm[i], b[t + w(0x20) + i], (cx, cy), tracks))
+    return dict(frames=h(0x0A), loop=b[t + 8], mats=mats)
 
 
 def tev(b, mat3, m, tex1, texs, base=None, over=None, max_stages=16, ras_k=1.0):

@@ -153,6 +153,42 @@ static float hermite(float f, float t0, float v0, float m0, float t1, float v1, 
 KEY_FN(key_f, float)
 KEY_FN(key_s, s16)
 
+/* J3DAnmTextureSRTKey at `frame` for one VUMD group (tools/slice.py btk_entry) -> the UV matrix applied to its stored
+ * UVs (columns s, t, 1 in qwords: render.c uploads it): S Mt M0^-1 S^-1, S the texture's UV scale, M0 the static
+ * texture matrix baked into them, Mt J3DGetTextureMtx(Maya) of the animated scale U / V, rotation W, translation U / V
+ * about the BTK's centre (tools/tex.py tex_mtx). The translation is kept in [0, 1): textures repeat. */
+void anim_btk(const u8 *e, float frame, float uvm[12])
+{
+    u32 frames = *(const u16 *)(e + 2), loop = e[4], maya = e[5];
+    const float *S = (const float *)(e + 8), *inv = (const float *)(e + 16), *c = (const float *)(e + 40);
+    const u16 *tr = (const u16 *)(e + 48);
+    const float *keys = (const float *)(e + 88);
+    if (frames) {
+        if (loop == 2) frame = fmodf(frame, (float)frames);
+        else if (loop >= 3) { frame = fmodf(frame, 2.0f * frames); if (frame > frames) frame = 2.0f * frames - frame; }
+        else if (frame > frames) frame = (float)frames;
+    }
+    float v[5];
+    for (int i = 0; i < 5; i++)
+        v[i] = key_f(frame, tr[4 * i], tr[4 * i + 1], keys + tr[4 * i + 2]);
+    float sx = v[0], sy = v[1], r = v[2] * (3.14159265f / 180.0f), tx = v[3], ty = v[4];
+    float cr = cosf(r), sr = sinf(r), m[2][3];
+    if (maya) { /* J3DGetTextureMtxMaya */
+        m[0][0] = sx * cr; m[0][1] = sy * sr; m[0][2] = (tx - 0.5f) * cr - sr * (ty - 0.5f + sy) + 0.5f;
+        m[1][0] = -sx * sr; m[1][1] = sy * cr; m[1][2] = -(tx - 0.5f) * sr - cr * (ty - 0.5f + sy) + 0.5f;
+    } else { /* J3DGetTextureMtx */
+        m[0][0] = sx * cr; m[0][1] = -sx * sr; m[0][2] = -sx * cr * c[0] + sx * sr * c[1] + c[0] + tx;
+        m[1][0] = sy * sr; m[1][1] = sy * cr; m[1][2] = -sy * sr * c[0] - sy * cr * c[1] + c[1] + ty;
+    }
+    for (int i = 0; i < 2; i++) {
+        float a = m[i][0] * inv[0] + m[i][1] * inv[3], b = m[i][0] * inv[1] + m[i][1] * inv[4];
+        float t = (m[i][0] * inv[2] + m[i][1] * inv[5] + m[i][2]) * S[i];
+        uvm[i] = a * S[i] / S[0];     /* column s */
+        uvm[4 + i] = b * S[i] / S[1]; /* column t */
+        uvm[8 + i] = t - floorf(t);
+    }
+}
+
 static void clip_local(const u8 *c, float f, u32 j, float scale[3], float rot[3], float trans[3])
 {
     const u16 *h = (const u16 *)c;

@@ -42,5 +42,7 @@ int anim_clip_info(const char *name, int *mode);
 /* Clip frames (frame_max) of the playing clip, 0 if none. */
 int anim_length(const Anim *a);
 u32 anim_cache_bytes(void);
+/* a VUMD group's BTK (VuGroup.btk) at `frame` -> its UV matrix (3 qwords: columns s, t, 1) */
+void anim_btk(const u8 *btk, float frame, float uvm[12]);
 
 #endif

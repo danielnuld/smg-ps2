@@ -5,6 +5,7 @@
 ;
 ; VU mem 0      : scale (2048, 2048, 0xFFFFFF / 32), written once at init (outside the double buffers)
 ; VU mem 1..4   : the matrix of a static model instance (prebuilt chains, written after a FLUSHE)
+; VU mem 5..7   : UV matrix, columns s, t, 1 (identity; a BTK group's own around its batches, anim_btk)
 ; batch at TOP  : +0 int x = emitted vertex count ne, int y = 4 * matrix count m, int z = absolute matrix base (0: the
 ;                 m matrices that follow in the batch; 1: the static instance matrix at VU mem 1, then m = 0),
 ;                 int w = unique vertex count nu
@@ -23,6 +24,9 @@
         .global VU1Tex_CodeEnd
 VU1Tex_CodeStart:
         NOP                                 lq.xyz        VF05,0(VI00)
+        NOP                                 lq            VF10,5(VI00)
+        NOP                                 lq            VF11,6(VI00)
+        NOP                                 lq            VF12,7(VI00)
         NOP                                 xtop          VI02
         NOP                                 fcset         0
         NOP                                 ilw.x         VI07,0(VI02)
@@ -68,6 +72,12 @@ vertexLoop:
         maddaz        ACC,VF03,VF07z        NOP
         maddw         VF07,VF04,VF00w       NOP
         itof12        VF09,VF09             NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        mulax         ACC,VF10,VF09x        NOP
+        madday        ACC,VF11,VF09y        NOP
+        maddw         VF09,VF12,VF00w       NOP
         NOP                                 NOP
         NOP                                 NOP
         clipw.xyz     VF07xyz,VF07w         div           Q,VF00w,VF07w

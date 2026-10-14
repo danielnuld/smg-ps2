@@ -58,6 +58,7 @@ static qword_t *headers;         /* [mode][matrices 1..MAX_MAT][count 3..BATCH]:
                                   * bit 0 textured, bit 1 alpha blended (group_mode) */
 #define MODES 4
 static qword_t scale_qw __attribute__((aligned(16)));
+static float uv_ident[12] __attribute__((aligned(16))) = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0}; /* VU mem 5..7 */
 #define HDRS(t, n) (headers_static + 2 * ((t) * (BATCH / 3 + 1) + (n) / 3))
 static qword_t *headers_static;  /* [mode][count]: {n, 0, matrix base 1} + GIF tag, for prebuilt chains */
 static u32 tris_drawn;
@@ -181,8 +182,9 @@ void render_init(void)
     ((float *)&scale_qw)[0] = 2048.0f;
     ((float *)&scale_qw)[1] = 2048.0f;
     ((float *)&scale_qw)[2] = (float)0xFFFFFF / 32.0f;
-    p = packet2_create(4, P2_TYPE_NORMAL, P2_MODE_CHAIN, 1);
+    p = packet2_create(6, P2_TYPE_NORMAL, P2_MODE_CHAIN, 1);
     packet2_utils_vu_add_unpack_data(p, 0, &scale_qw, 1, 0);
+    packet2_utils_vu_add_unpack_data(p, 5, uv_ident, 3, 0); /* the UV matrix, identity */
     packet2_utils_vu_add_end_tag(p);
     send_vif_wait(p);
     packet2_free(p);
@@ -594,18 +596,31 @@ static void emit_group(packet2_t *pk, const VuGroup *vg)
     packet2_vif_close_direct_manual(pk, 4);
 }
 
-/* the prebuilt chain of a model's opaque groups (xlu 0) or of its blended ones (xlu 1); NULL when it has none */
+/* a UV matrix to VU mem 5..7 (columns s, t, 1): FLUSHE first, the running batch may still be starting (it loads them) */
+static void add_uvm(packet2_t *pk, const float *m)
+{
+    packet2_chain_open_cnt(pk, 0, 0, 0);
+    packet2_vif_flushe(pk, 0);
+    packet2_vif_nop(pk, 0);
+    packet2_chain_close_tag(pk);
+    packet2_utils_vu_add_unpack_data(pk, 5, (void *)m, 3, 0);
+}
+
+/* the prebuilt chain of a model's opaque groups (xlu 0) or of its blended ones (xlu 1); NULL when it has none. A BTK
+ * group's batches run between its own UV matrix (VuGroup.uvm, refreshed each frame: game_draw, anim_btk) and the
+ * identity again */
 static packet2_t *build_chain_pass(Model *md, int xlu)
 {
-    u32 batches = 0, groups = 0;
+    u32 batches = 0, groups = 0, btks = 0;
     for (u32 g = 0; g < md->vu_ngroups; g++)
         if ((group_mode(&md->vu[g]) >= 2) == xlu) {
             batches += md->vu[g].nbatch;
             groups++;
+            btks += md->vu[g].uvm != NULL;
         }
     if (!groups)
         return NULL;
-    u32 qw = batches * 9 + groups * 4 + 4;
+    u32 qw = batches * 9 + groups * 4 + btks * 8 + 4;
     packet2_t *pk = packet2_create(qw, P2_TYPE_NORMAL, P2_MODE_CHAIN, 1);
     mem_charge(MEM_RENDER, qw * 16);
     for (u32 g = 0; g < md->vu_ngroups; g++) {
@@ -613,6 +628,8 @@ static packet2_t *build_chain_pass(Model *md, int xlu)
         int mode = group_mode(vg);
         if ((mode >= 2) != xlu) continue;
         emit_group(pk, vg);
+        if (vg->uvm)
+            add_uvm(pk, vg->uvm);
         const u8 *d = vg->data;
         for (u32 b = 0; b < vg->nbatch; b++) {
             u32 ne = vg->batch[2 * b], nu = vg->batch[2 * b + 1];
@@ -620,6 +637,8 @@ static packet2_t *build_chain_pass(Model *md, int xlu)
             add_batch(pk, &d, ne, nu, vg->tex != NO_TEX, 2);
             packet2_utils_vu_add_start_program(pk, 0);
         }
+        if (vg->uvm)
+            add_uvm(pk, uv_ident);
     }
     packet2_chain_ret(pk, 0, 0);
     packet2_vif_nop(pk, 0);
@@ -716,15 +735,16 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
             tris_drawn += md->vu[g].nverts / 3;
         return;
     }
-    u32 need = drw ? 0 : 1, batches = 0;
+    u32 need = drw ? 0 : 1, batches = 0, btks = 0;
     for (u32 g = 0; g < md->vu_ngroups; g++) {
         batches += md->vu[g].nbatch;
+        btks += md->vu[g].uvm != NULL;
         if (drw)
             need += md->skin->groups[g].nmat;
     }
     if (nmats + need > MAX_INST)
         return;
-    if (packet2_get_qw_count(vif[cur]) + 8 + batches * 10 + md->vu_ngroups * 2 > PACKET_QW)
+    if (packet2_get_qw_count(vif[cur]) + 8 + batches * 10 + md->vu_ngroups * 2 + btks * 8 > PACKET_QW)
         flush_vif();
     float (*gm)[16] = mats + nmats; /* this group's matrices */
     u32 m = 1;
@@ -753,6 +773,8 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
         int mode = group_mode(vg);
         u32 base = 2 + 4 * m;
         const u8 *d = vg->data;
+        if (vg->uvm)
+            add_uvm(vif[cur], vg->uvm);
         for (u32 b = 0; b < vg->nbatch; b++) {
             u32 ne = vg->batch[2 * b], nu = vg->batch[2 * b + 1];
             add_header(vif[cur], HDR(mode, m, ne), nu);
@@ -761,6 +783,8 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
             packet2_utils_vu_add_start_program(vif[cur], 0);
             tris_drawn += ne / 3;
         }
+        if (vg->uvm)
+            add_uvm(vif[cur], uv_ident);
     }
 }
 

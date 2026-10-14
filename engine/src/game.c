@@ -14955,6 +14955,11 @@ void game_draw(void)
     float eye[3] = {ce.x, ce.y, ce.z}, target[3] = {cw.x, cw.y, cw.z}, up[3] = {cu.x, cu.y, cu.z};
     float m[16];
     render_begin(eye, target, up);
+    /* BTK texture scrolls (lava, water): every model's at the game's frame. ponytail: one frame for all instances,
+     * started with the scene, not each actor's own startBtk */
+    for (u32 i = 0; i < sc->nmodels; i++)
+        for (u32 g = 0; g < sc->models[i].vu_ngroups; g++)
+            if (sc->models[i].vu[g].btk) anim_btk(sc->models[i].vu[g].btk, (float)game_frame, sc->models[i].vu[g].uvm);
     int sky_drawn = 0;
     for (int i = 0; i < ninsts; i++) { /* skies first, at the camera; ponytail: scaled to fit inside the far plane
                                          * (render.c FAR 120000) so the rest of the scene draws over them by depth */

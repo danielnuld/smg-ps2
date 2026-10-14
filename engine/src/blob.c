@@ -91,6 +91,22 @@ int blob_add(Scene *s, const u8 *blob)
             }
         }
     }
+    const u8 *bt = blob_chunk(blob, "BTK ", NULL);
+    if (bt) { /* {u32 n}, n x {char[32] model, u32 size, u16 group, ...} (tools/slice.py btk_entry) */
+        const u8 *q = bt + 4;
+        for (u32 i = 0, n = *(const u32 *)bt; i < n; i++) {
+            u32 size = *(const u32 *)(q + 32);
+            u16 g = *(const u16 *)(q + 36);
+            for (u32 j = first; j < s->nmodels; j++)
+                if (strcmp(s->models[j].name, (const char *)q) == 0 && g < s->models[j].vu_ngroups) {
+                    VuGroup *vg = &s->models[j].vu[g];
+                    vg->btk = q + 36;
+                    vg->uvm = mem_alloc(MEM_RENDER, 48);
+                    vg->uvm[0] = vg->uvm[5] = 1.0f; /* identity until the first anim_btk */
+                }
+            q += 36 + size;
+        }
+    }
     const u8 *sk = blob_chunk(blob, "SKIN", NULL);
     if (sk) { /* {u32 n}, n x {char[32] model, u16 njoints, ndrw, ngroups, nmix, joints, drw, mix, groups, pad 4} */
         u32 n = *(const u32 *)sk;

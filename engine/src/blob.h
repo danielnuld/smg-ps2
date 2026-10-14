@@ -23,6 +23,8 @@ typedef struct {
     const u8 *data;      /* per batch: s16 pos[unique][4] (x, y, z in steps of Model.qscale, w = 4 * matrix slot),
                           * s16 uv[unique][2] (12 fraction bits) if textured, u8 rgbi[emitted][4] (colour + unique
                           * index), each padded to 16 (tools/slice.py index_batches) */
+    const u8 *btk;       /* its BTK chunk entry (tools/slice.py btk_entry: after the size word), NULL if none */
+    float *uvm;          /* with btk: the UV matrix the chain uploads (3 qwords: columns s, t, 1; anim_btk) */
 } VuGroup;
 
 #define NO_TEX 0xFFFF
