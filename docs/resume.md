@@ -318,6 +318,14 @@ there needs the embedded blob and every pack rebuilt.
 
 ## Next
 
+**2026-10-14 session (build only, nothing run: the user's call; test all of it first next session):** the video
+fixes below were tried blind (b935237: the Plant's front kept orthogonal as makeAxisUpFront does, the only
+difference from Petari found statically; demo_star takes the nearest shown star, no 3000 limit; game_demo_ota
+picks flat rim ground only), then c's BTK at run time (79e5410: tex.btk, slice.py BTK chunk, anim_btk, VU1 UV
+matrix at VU mem 5..7; EggStar packs and resident.bin repacked; OtaKingMagma, ElectricRail, CocoTwin,
+DorayakiFortressPlanet scroll). Check in PCSX2: `vine` (Mario's pose on the stalk), `dino` / `ota` TEASER
+demos, lava / rails scrolling and no other model's UVs broken (the microcode change touches every draw).
+
 **Where the 2026-10-12 session stopped (resume here):** items a and b are done; c's MarioPress is in (build only,
 unverified: checkVerticalPress / setPress after Petari, side presses not); c's talk / messages are in for Good Egg
 (checked in PCSX2: `talk` EggStar 1 SignBoard + Tico, `fat` EggStar 2 TicoFat's talks to its planet). 60 fps: one
@@ -354,7 +362,9 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
      (lava, water, per-instance colours: Butterfly arg0), bloom models, shadows.
   To fix (seen in the 2026-10-12 video demos, `TEASER=1` builds of talk / fat / vine / dino / ota):
      - Plant (beanstalk) climbing: Mario looks glitched while he climbs / scales it (his pose on the stalk); the
-       clip was left out of the video. Check the Hang / HangUp pose and matrix in vine_hold against Petari.
+       clip was left out of the video. Nerves, constants and isMsgUpdateBaseMtx match Petari; the front is now
+       written back (b935237). If it still looks wrong, compare the GrowPlant* clips' root against Petari's player
+       base matrix (the stalk's centre line is Mario's origin).
      - OtaKing's bath (EggStar 3): Mario dropped on the rim ends inside the rock (the crevice below), the camera
        with him: the fight could not be recorded naturally (game_demo_ota).
      - game_demo_dino does not take the PowerStar after the down (demo_star finds nothing to walk to).
