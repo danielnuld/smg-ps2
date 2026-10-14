@@ -10800,7 +10800,7 @@ static int vine_hold(Player *m)
     typeof(&vines[0]) o = &vines[vine_ride];
     V3 f = vtangent(o->front, o->up);
     m->pos = o->pos; m->up = o->up; m->hvel = v3(0, 0, 0); m->vup = 0; m->grounded = 0;
-    if (vlen(f) > 1e-3f) m->face = vnorm(f);
+    if (vlen(f) > 1e-3f) o->front = m->face = vnorm(f); /* makeAxisUpFront(&side, &mFront, mUp, mFront): in place */
     return 1;
 }
 
@@ -15434,16 +15434,18 @@ static int demo_walk(V3 to, float stop)
 static void demo_press(u32 b, int on) { if (on && (game_frame & 3) < 2) pad_force |= b; } /* a press, released between */
 static int demo_star(void) /* a power star that can be taken: he walks under it and jumps; 1 while there is one */
 {
-    for (int i = 0; i < ninsts; i++) {
+    float bd = 1e30f;
+    V3 bp = v3(0, 0, 0);
+    for (int i = 0; i < ninsts; i++) { /* the nearest: the star flies from its declarer to its place, maybe far */
         const Inst *in = &insts[i];
         int state;
-        if (in->item != ITEM_STAR || row_dead[in->row]) continue;
+        if (in->item != ITEM_STAR || row_dead[in->row] || !row_shown(in->row)) continue;
         V3 p = star_pos(in, &state);
-        if (state != 3 || vlen(vsub(p, mario->pos)) > 3000.0f) continue;
-        if (demo_walk(p, 40.0f) || vlen(vtangent(vsub(p, mario->pos), mario->up)) < 120.0f) demo_press(PAD_CROSS, mario->grounded);
-        return 1;
+        if (state == 3 && vlen(vsub(p, mario->pos)) < bd) { bd = vlen(vsub(p, mario->pos)); bp = p; }
     }
-    return 0;
+    if (bd >= 1e30f) return 0;
+    if (demo_walk(bp, 40.0f) || vlen(vtangent(vsub(bp, mario->pos), mario->up)) < 120.0f) demo_press(PAD_CROSS, mario->grounded);
+    return 1;
 }
 static void demo_place(V3 p, V3 face)
 {
@@ -15566,9 +15568,11 @@ int game_demo_ota(int frame) /* EggStar 3: on the bath's rim; onto a coconut's l
         at = vadd(ota.pos, vmul(dir, 2000.0f));
         for (float d = 1200.0f; d <= 3200.0f; d += 100.0f) {
             V3 from = vadd(vadd(ota.pos, vmul(dir, d)), vmul(ota.up, 2500.0f));
-            if (drop_to_ground(from, ota.up, 5000.0f, &hit) && vdot(vsub(hit, ota.pos), ota.up) > best) {
-                best = vdot(vsub(hit, ota.pos), ota.up); at = hit;
-            }
+            if (!drop_to_ground(from, ota.up, 5000.0f, &hit) || vdot(vsub(hit, ota.pos), ota.up) <= best) continue;
+            Hit hh[8]; /* flat ground only: a crevice between steep faces held him inside the rock */
+            int nh = kcl_query(vadd(hit, vmul(ota.up, 60.0f)), 70.0f, hh, 8), flat = nh > 0;
+            for (int j = 0; j < nh; j++) if (vdot(hh[j].n, ota.up) < 0.8f) flat = 0;
+            if (flat) { best = vdot(vsub(hit, ota.pos), ota.up); at = hit; }
         }
         printf("ota demo: rim %d out, %d up\n", (int)vlen(vtangent(vsub(at, ota.pos), ota.up)), (int)best);
         placed = 1; demo_place(vadd(at, vmul(ota.up, 100.0f)), vsub(ota.pos, at));
