@@ -10,6 +10,12 @@ Last updated 2026-10-09. Detail and numbers: `docs/phase2-report.md`; tasks: `op
   rewritten (Good Egg first). Only where Petari lacks the code (undecompiled functions, commented-out constants,
   services the PS2 port does not have) is a gap filled, marked `ponytail:` naming it. 30 fps is acceptable.
 
+Petari (vendor/Petari, not tracked here) updated 2026-10-14 to 601f78c (2026-10-13): decomp.dev reports it 100 %
+decompiled (68.75 % linked). Commented constants without values (SurfRay, Begoman...) are still unknown. Our disc is
+RMGE01 (US): where Petari has `#if VERSION` branches, port the RMGE01 one. To check against it in PCSX2: the talk
+text's picture offset (`y - 2` in the tag loop; US: -ascent, no mPictureFontOffset) and the character spacing
+after tags (US: mNoCharSpace starts true, font size tags return NO_CHAR_SPACE when measuring).
+
 ## Done
 
 - Milestones 1-4 GO (resident budget, textures, Mario, cameras).
