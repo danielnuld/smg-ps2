@@ -7819,7 +7819,7 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
  * past 1.3 / 1.6) through its ActorAnimCtrl actions. Its talks: Common_TicoFat001 (Prep: tryTalkNearPlayer, its
  * event node starts the eating: eventFunc 0) and Common_TicoFat000 (setMessage: Wait 1 by how much is left, Point 0,
  * Test 2; the end of Fullness' talk is the metamorphosis), 280 to talk, 220 x scale up, in front. ponytail: no
- * fullness meter, no "変身" / "飛行" multi-actor cameras, no white wipes or information message (their frames only),
+ * fullness meter, no "変身" / "飛行" multi-actor cameras, no information message (its frame only),
  * no TicoSeedGuidance, no item (arg0 0 / 1), no FatRed BRK, no BVA eyes */
 #define MAX_FATS 4
 static struct {
@@ -7836,6 +7836,22 @@ static const char *fat_size(const char *base, float scale) /* getActionName */
     snprintf(buf, sizeof buf, "%s%d", base, scale > 1.6f ? 2 : scale > 1.3f ? 1 : 0);
     return buf;
 }
+/* WipeFade (closeWipeWhiteFade / openWipeWhiteFade): the screen fills with white over `frames` (close) or clears
+ * (open); isWipeActive while it runs. One wipe, stepped once a frame where it is drawn (WipeFade::control) */
+static struct { int close, frames, step; } wipe;
+static void wipe_start(int close, int frames) { wipe.close = close; wipe.frames = frames > 0 ? frames : 1; wipe.step = 0; }
+static int wipe_active(void) { return wipe.frames && wipe.step < wipe.frames; }
+static void wipe_draw(void)
+{
+    if (!wipe.frames) return;
+    if (wipe.step < wipe.frames) wipe.step++;
+    if (!wipe.close && wipe.step >= wipe.frames) { wipe.frames = 0; return; } /* open: killed */
+    float a = (float)wipe.step / wipe.frames;
+    if (!wipe.close) a = 1.0f - a;
+    Quad q = {0, 0, 640, 448, 0, 0, 0, 0, (u32)(a * 0x80) << 24 | 0x808080u, NO_TEX, 0};
+    render_quads(&q, 1);
+}
+
 static void fat_set(int k, int n) { fats[k].nrv = n; fats[k].t = 0; }
 static int fat_event(int t, u32 v) /* TicoFat::eventFunc: 0 startEat, 1 not yet */
 {
@@ -7973,10 +7989,16 @@ static void update_ticofat(void)
             if (e >= 1.0f) fat_set(k, TF_WIPEOUT);
             break;
         }
-        case TF_WIPEOUT: clip = "fly"; if (f->t >= 60) fat_set(k, TF_WIPEIN); break;
+        case TF_WIPEOUT: clip = "fly"; /* closeWipeWhiteFade(60) */
+            if (f->t == 1) wipe_start(1, 60);
+            else if (!wipe_active()) fat_set(k, TF_WIPEIN);
+            break;
         case TF_WIPEIN:
-            if (f->t == 60 && r->sw[SW_A] >= 0) { sw_set(r, SW_A, 1); printf("tico fat row %d: its planet" "\n", in->row); }
-            if (f->t >= 120) fat_set(k, TF_INFO);
+            if (f->t == 60) { /* onSwitchA, openWipeWhiteFade(60) */
+                if (r->sw[SW_A] >= 0) { sw_set(r, SW_A, 1); printf("tico fat row %d: its planet" "\n", in->row); }
+                wipe_start(0, 60);
+            }
+            if (f->t >= 60 && !wipe_active()) fat_set(k, TF_INFO);
             break;
         case TF_INFO: fat_set(k, TF_AFTER); break;
         case TF_AFTER:
@@ -15472,6 +15494,7 @@ void game_draw(void)
     draw_waterplants();
     fx_draw();
     talk_draw();
+    wipe_draw();
 }
 
 /* --- video demos (TEASER builds): Mario played through the pad only, the stick toward a point (test_walk_to) and
