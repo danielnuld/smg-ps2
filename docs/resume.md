@@ -364,7 +364,7 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
      window textures / beak / brlan curves, no talk camera, no sounds, no yes / no selector, no LuigiEvent),
      BTK at run time, shadows, wipes (WipeFade), actor cameras, animation / named effects, footprints and BRK-by-arg
      colours done 2026-10-14 (unrun; see above). Left for Good Egg: real lighting (TicoFat's pink), bloom models
-     (OtaKingMagmaBloom), TicoFat's FatRed / 喜び camera / screen effects, OtaKing's LavaColumn / AngrySmoke, sound.
+     (OtaKingMagmaBloom), TicoFat's FatRed / 喜び camera / screen effects, sound. (OtaKing's LavaColumn / AngrySmoke / Appear are animation-driven: fx_anim covers them.) Next step: real lighting, after the PCSX2 checks above.
      MarioPress done (MarioPress.cpp checkVerticalPress, setPress 0 / 4 after Petari: press objects are the
      RailMoveObjPress classes; Dossun / RailBlock / TripodBossFixParts are not in the port; checkSidePressPre /
      checkSidePress need front / back walls and face velocities the port's collision lacks), talk / messages, sound effects, real lighting, wipes, multi-actor cameras (Dino damage camera),
