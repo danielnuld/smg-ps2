@@ -20,6 +20,8 @@ typedef struct {
     float fq[ANIM_MAX_JOINTS][4], ft[ANIM_MAX_JOINTS][3], fs[ANIM_MAX_JOINTS][3];  /* frozen pose */
     float world[ANIM_MAX_JOINTS][16];  /* joint world matrices (model space), column-major */
     float drw[ANIM_MAX_DRW][16];       /* draw matrices: rigid = joint world, envelope = sum w * world * invbind */
+    int fx_seen;                       /* clip_id + 1 whose effects were last checked (game.c draw_skin), 0 none */
+    float fx_frame;                    /* its frame then */
 } Anim;
 
 /* Allocate the clip cache (sized from the scene's largest clip). */

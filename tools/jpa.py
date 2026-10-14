@@ -183,15 +183,16 @@ def decode_bti(bti):
 
 def pack(fs):
     """-> (PTCL payload, [tex.to_ps2 dicts]): the FX effects' resources (fx.c PtRes, FxDef) and their textures.
-    PTCL: u32 nres, u32 nfx, s32 first WaterPlant texture (-1 none), 4 pad; nfx x FxDef {u16 n, u16 res[7], f32 off[3], f32 pad}; nres x PtRes."""
+    PTCL: u32 nres, u32 nfx, s32 first WaterPlant texture (-1 none), u32 nauto; nfx x FxDef {u16 n, u16 res[7], f32 off[3],
+    f32 pad}; nres x PtRes; nauto x the animation effects (anim_effects)."""
     import numpy as np
     import tex
     res, texs, names, auto = load(fs)
     rows = list(zip(B.bcsv_column(auto, "GroupName"), B.bcsv_column(auto, "UniqueName"),
                     B.bcsv_column(auto, "EffectName")))
     used, defs, out_tex, tex_key = [], [], [], {}
-    for g, u in FX:
-        e = next((r[2] for r in rows if r[0] == g and (u is None or r[1] == u)), "")
+
+    def add_def(e):
         ids = [names[n] for n in e.split() if n in names] or effect_ids(names, e)
         idx = []
         for i in ids[:FX_RES]:
@@ -199,6 +200,10 @@ def pack(fs):
                 used.append(i)
             idx.append(used.index(i))
         defs.append(struct.pack("<H7H4f", len(idx), *(idx + [0] * (FX_RES - len(idx))), 0, 0, 0, 0))
+        return len(defs) - 1
+    for g, u in FX:
+        add_def(next((r[2] for r in rows if r[0] == g and (u is None or r[1] == u)), ""))
+    autos = anim_effects(fs, auto, add_def)
     recs = []
     for i in used:
         d = describe(res[i])
@@ -263,8 +268,46 @@ def pack(fs):
         # PlantStalkDrawInit: Plant.arc's PlantStalk.bti right after them (fx_plantstalk_tex)
         img = decode_bti({k.lower(): v for k, v in B.rarc_files((wp / "ObjectData" / "Plant.arc").read_bytes())}["plantstalk.bti"])
         out_tex.append(tex.to_ps2(np.ascontiguousarray(img), 0, 0))
-    head = struct.pack("<IIi4x", len(used), len(defs), first)
-    return head + b"".join(defs) + b"".join(recs), out_tex
+    head = struct.pack("<IIiI", len(used), len(defs), first, len(autos))
+    return head + b"".join(defs) + b"".join(recs) + b"".join(autos), out_tex
+
+
+def anim_effects(fs, auto, add_def):
+    """EffectKeeper's animation-driven AutoEffectList rows (AnimName set) of the skinned placed classes (slice.py
+    SKINNED_OBJ, their clips "<class>/<clip>"): each {char class[24], char clip[24] (lower case), u16 start, u16 end
+    (0xFFFF: one shot at start, else kept from start to end), u16 effect (FxDef index, added after FX's), s16 joint (the
+    model's JNT1 index, -1 its base), f32 offset[3] (joint space), f32 scale}. ponytail: no PrmColor / EnvColor, no
+    Follow (a one-shot stays where it was emitted)."""
+    import slice as S
+    import skin
+    import tex
+    col = lambda c: B.bcsv_column(auto, c)
+    g, u, e, an, jn = col("GroupName"), col("UniqueName"), col("EffectName"), col("AnimName"), col("JointName")
+    num = lambda c: S.float_column(auto, c) or [0.0] * len(g)
+    ox, oy, oz, sv = num("OffsetX"), num("OffsetY"), num("OffsetZ"), num("ScaleValue")
+    st, en = B.bcsv_column(auto, "StartFrame"), B.bcsv_column(auto, "EndFrame")
+    out, def_of, joints_of = [], {}, {}
+    for c in S.SKINNED_OBJ:
+        arcname = S.ANIM_ARC.get(c, c)
+        if c not in joints_of:
+            arc = Path(fs) / "ObjectData" / f"{arcname}.arc"
+            names_ = []
+            if arc.exists():
+                mb = next((v for k, v in B.rarc_files(arc.read_bytes()) if k.lower().endswith((".bdl", ".bmd"))), None)
+                if mb:
+                    names_ = [j["name"] for j in skin.joints(mb, tex.blocks(mb))]
+            joints_of[c] = names_
+        for i in range(len(g)):
+            if g[i] not in (c, arcname) or not an[i] or not e[i]:
+                continue
+            if e[i] not in def_of:
+                def_of[e[i]] = add_def(e[i])
+            j = joints_of[c].index(jn[i]) if jn[i] in joints_of[c] else -1
+            end = 0xFFFF if en[i] in (None, -1, 0xFFFFFFFF) or en[i] >= 0xFFFF else en[i]
+            for clip in an[i].lower().split():  # "Eat2 Excite2 Joy2": each of them
+                out.append(struct.pack("<24s24sHHHh4f", c.lower().encode()[:23], clip.encode()[:23],
+                                       min(int(st[i] or 0), 0xFFFE), end, def_of[e[i]], j, ox[i], oy[i], oz[i], sv[i] or 1.0))
+    return out
 
 
 def header(path):

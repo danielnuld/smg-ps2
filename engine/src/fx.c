@@ -52,6 +52,10 @@ typedef struct {
 static const PtRes *res;
 static const FxDef *defs;
 static u32 nres, ndefs, tex0;
+/* EffectKeeper's animation-driven AutoEffectList rows (tools/jpa.py anim_effects): 72 bytes each */
+typedef struct { char cls[24], clip[24]; u16 start, end, fx; s16 joint; float off[3], scale; } FxAuto;
+static const FxAuto *autos;
+static u32 nautos;
 static int wp_tex = -1; /* the first WaterPlant texture (PTCL header word 2), -1 none */
 static Emitter em[MAX_EMIT];
 static Ptcl pt[MAX_PTCL];
@@ -79,6 +83,8 @@ void fx_init(const Scene *s)
     wp_tex = ((const int *)s->ptcl)[2];
     defs = (const FxDef *)(s->ptcl + 16);
     res = (const PtRes *)(defs + ndefs);
+    nautos = ((const u32 *)s->ptcl)[3];
+    autos = (const FxAuto *)(res + nres);
     tex0 = s->ptcl_tex0;
     printf("fx: %u effects, %u particle resources\n", ndefs, nres);
 }
@@ -202,6 +208,31 @@ void fx_emit(int fx, const float m[16])
     const FxDef *d = &defs[fx];
     for (int i = 0; i < d->n; i++)
         new_emitter(&res[d->res[i]], NULL, m, d->off);
+}
+
+void fx_anim(const char *clip, float from, float to, const float m[16], const float (*world)[16], const void *key)
+{
+    const char *slash = strchr(clip, '/');
+    if (!res || !slash) return;
+    u32 nc = (u32)(slash - clip);
+    for (u32 i = 0; i < nautos; i++) {
+        const FxAuto *a = &autos[i];
+        if (strncmp(a->cls, clip, nc) || a->cls[nc] || strcmp(a->clip, slash + 1)) continue;
+        float st = a->start;
+        int on;
+        if (a->end != 0xFFFF) on = to >= st && to <= a->end;      /* kept from its start to its end frame */
+        else if (to >= from) on = from < st && st <= to;           /* one shot as the clip passes its start */
+        else on = st > from || st <= to;                           /* the clip went round (or restarted) */
+        if (!on) continue;
+        float e[16], j[16], o[16];
+        if (a->joint >= 0) mat_mul(j, m, world[a->joint]);
+        else memcpy(j, m, sizeof j);
+        mat_identity(o);
+        for (int k = 0; k < 3; k++) { o[5 * k] = a->scale; o[12 + k] = a->off[k]; }
+        mat_mul(e, j, o);
+        if (a->end != 0xFFFF) fx_keep(a->fx, (const char *)key + i, e);
+        else fx_emit(a->fx, e);
+    }
 }
 
 void fx_keep(int fx, const void *key, const float m[16])

@@ -11,6 +11,10 @@ void fx_emit(int fx, const float m[16]);
 /* Looping effect owned by `key` (e.g. an instance): call every frame it should run; its emitters stop emitting the
  * first frame it is not kept, and go once their particles are gone. */
 void fx_keep(int fx, const void *key, const float m[16]);
+/* A skinned instance's clip ("<class>/<clip>") went from frame `from` (-1: it just started) to `to`: the effects its
+ * AutoEffectList ties to that clip (EffectKeeper: AnimName, StartFrame / EndFrame, JointName, Offset, ScaleValue) at
+ * m * world[joint]; key: the instance (kept effects) */
+void fx_anim(const char *clip, float from, float to, const float m[16], const float (*world)[16], const void *key);
 /* Step every emitter and particle one frame (60 Hz), then draw them (after the models). */
 void fx_update(void);
 void fx_draw(void);

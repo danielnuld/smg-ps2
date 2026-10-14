@@ -214,6 +214,17 @@ enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, 
 static V3 firebar_ball(const Inst *in, int j, int k);
 static V3 star_pos(const Inst *in, int *state);
 static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle);
+/* a skinned model drawn with its anim's pose, after the effects its clip passed this frame (EffectKeeper: fx_anim) */
+static void draw_skin(const Model *md, const float m[16], Anim *a)
+{
+    if (a->clip_id >= 0) {
+        fx_anim(sc->clips[a->clip_id].name, a->fx_seen == a->clip_id + 1 ? a->fx_frame : -1.0f, a->frame, m,
+                (const float (*)[16])a->world, a);
+        a->fx_seen = a->clip_id + 1;
+        a->fx_frame = a->frame;
+    }
+    render_skinned(md, m, (const float (*)[16])a->drw);
+}
 /* a one-shot effect standing on `up` at p */
 static void fx_at(int fx, V3 p, V3 up)
 {
@@ -6977,7 +6988,7 @@ static void draw_sambo_heads(void)
             basis_matrix(m, sambos[k].hpos, sambos[k].up, sambos[k].hfront, 0);
             for (int j = 0; j < 12; j++) m[j] *= sambos[k].s;
         }
-        if (m_sambohead->skin && sambos[k].head->skin == m_sambohead->skin) render_skinned(m_sambohead, m, (const float (*)[16])sambos[k].head->drw);
+        if (m_sambohead->skin && sambos[k].head->skin == m_sambohead->skin) draw_skin(m_sambohead, m, sambos[k].head);
     }
 }
 
@@ -11307,7 +11318,7 @@ static void draw_hhp_leaves(void) /* PartsModel PackunLeaf: Spin1 x makeMtxTR((1
         mat_mul(jm, in->m, in->anim->world[2]);
         mat_translate_rot_scale(fx, tr, rot, one);
         mat_mul(m, jm, fx);
-        render_skinned(m_pleaf, m, (const float (*)[16])la->drw);
+        draw_skin(m_pleaf, m, la);
     }
 }
 
@@ -14886,7 +14897,7 @@ static const char *walker_clip(const Kuribo *k, int *loop)
 
 static void inst_draw(const Inst *in, const Model *md, const float m[16])
 {
-    if (md->skin) { if (in->anim && md == in->md) render_skinned(md, m, (const float (*)[16])in->anim->drw); }
+    if (md->skin) { if (in->anim && md == in->md) draw_skin(md, m, in->anim); }
     else render_model(md, m, 0x70, 0xB0, 0x60);
 }
 
@@ -15107,7 +15118,7 @@ void game_draw(void)
                 /* calcMtxFromGravityAndZAxis: z along x, or y when gravity is along x (isSameDirection 0.01) */
                 basis_matrix(m, p->pos, p->up, fabsf(p->up.x) > 0.99995f ? v3(0, 1, 0) : v3(1, 0, 0), p->rot);
                 for (int j = 0; j < 12; j++) if (j % 4 != 3) m[j] *= in->s;
-                if (in->md->skin) render_skinned(in->md, m, (const float (*)[16])plant_pose(in, p)->drw);
+                if (in->md->skin) draw_skin(in->md, m, plant_pose(in, p));
                 else inst_draw(in, in->md, m);
             }
             continue;
@@ -15269,7 +15280,7 @@ void game_draw(void)
         if (w->t <= 1) anim_start(ba, box ? "woodboxbreak/break" : "crystalcagesbreak/break", 0);
         anim_update(ba);
         if (ba->done && w->t > 16) { w->t = -1; continue; } /* isBckStopped: kill */
-        render_skinned(w->brk, w->m, (const float (*)[16])ba->drw);
+        draw_skin(w->brk, w->m, ba);
     }
     for (int i = 0; i < nrocks; i++) { /* Rock::calcBaseMtx: up against gravity, its front, turned rotx about its x */
         Rock *o = &rocks[i];
@@ -15286,7 +15297,7 @@ void game_draw(void)
                 if (!ba) continue;
                 if (o->bt <= 1) { anim_start(ba, c->type == 0 ? "rockbreak/break" : "wanwanrollingbreak/break", 0); }
                 anim_update(ba);
-                render_skinned(bm, m, (const float (*)[16])ba->drw);
+                draw_skin(bm, m, ba);
             } else render_model(bm, m, 0x80, 0x80, 0x80);
             continue;
         }
@@ -15386,14 +15397,14 @@ void game_draw(void)
                 basis_matrix(m, k->pos, k->qy, k->qz, 0);
                 const float *sc3 = sc->objs[k->row].scale;
                 for (int j = 0; j < 3; j++) { m[j] *= sc3[0]; m[4 + j] *= sc3[1]; m[8 + j] *= sc3[2]; }
-                render_skinned(md, m, (const float (*)[16])a->drw);
+                draw_skin(md, m, a);
                 if (k->kind == WALK_PACKUN && k->bshow == 1 && m_packunhead && m_packunhead->skin) { /* mBlownModel: BlowHead */
                     Anim *ha = obj_anim((int)sc->nobjs + k->row, m_packunhead, "PackunPetitHead");
                     if (ha) {
                         anim_update(ha);
                         basis_matrix(m, k->bpos, k->qy, k->qz, 0);
                         for (int j = 0; j < 3; j++) { m[j] *= sc3[0]; m[4 + j] *= sc3[1]; m[8 + j] *= sc3[2]; }
-                        render_skinned(m_packunhead, m, (const float (*)[16])ha->drw);
+                        draw_skin(m_packunhead, m, ha);
                     }
                 }
                 continue;
@@ -15407,7 +15418,7 @@ void game_draw(void)
             for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
             anim_play(a, n, 1.0f, loop, 6);
             anim_update(a);
-            render_skinned(md, m, (const float (*)[16])a->drw);
+            draw_skin(md, m, a);
             continue;
         }
         render_model(md, m, kuribo[i].state == KURIBO_STUN ? 0x50 : 0x90, 0x50, 0x20);
@@ -15427,7 +15438,7 @@ void game_draw(void)
     if (!mario_hidden) /* ponytail: MarioShadow's volume (his posed model) as an oval of its bind pose's extent */
         draw_shadow(mario->pos, mario->up, mario->face, 34.0f, 37.0f, 8.0f, 50.0f, 1000.0f);
     if (m_mario_skin && !(mario->hurt_timer & 4) && !mario_hidden)
-        render_skinned(m_mario_skin, m, (const float (*)[16])mario_anim->drw);
+        draw_skin(m_mario_skin, m, mario_anim);
     if (m_marioball) for (int b = 0; b < MAX_FIREBALLS; b++) { /* Fire Mario's balls, rolling */
         if (!fireballs[b].t) continue;
         basis_matrix(m, fireballs[b].pos, up_at(fireballs[b].pos, v3(0, 1, 0)), fireballs[b].vel, game_frame * 0.5f);
@@ -15435,22 +15446,22 @@ void game_draw(void)
     }
     if (ota.row >= 0 && ota.nrv != OTA_WAITONSWITCH && ota.nrv != OTA_APPEARSTAR && ota.nrv != OTA_DEAD) { /* OtaKing, its feet */
         basis_matrix(m, ota.pos, ota.up, ota.f, 0);
-        if (m_ota && m_ota->skin && ota.anim->skin == m_ota->skin) render_skinned(m_ota, m, (const float (*)[16])ota.anim->drw);
+        if (m_ota && m_ota->skin && ota.anim->skin == m_ota->skin) draw_skin(m_ota, m, ota.anim);
         else if (m_ota) render_model(m_ota, m, 0x80, 0x80, 0x80);
         for (int k = 0; k < 2 && m_otafoot; k++)
-            if (m_otafoot->skin && ota.foot[k]->skin == m_otafoot->skin) render_skinned(m_otafoot, m, (const float (*)[16])ota.foot[k]->drw);
+            if (m_otafoot->skin && ota.foot[k]->skin == m_otafoot->skin) draw_skin(m_otafoot, m, ota.foot[k]);
             else if (!k) render_model(m_otafoot, m, 0x80, 0x80, 0x80);
     }
     if (ota.row >= 0 && ota.nrv != OTA_DEAD) { /* OtaKingMagma (initDefaultPos: its placement), mLongFeet */
         if (m_otamagma && m_otamagma->skin && ota.magma && ota.magma->skin == m_otamagma->skin) {
             const Row *orow = &sc->objs[ota.row];
             mat_translate_rot_scale(m, orow->pos, orow->rot, orow->scale);
-            render_skinned(m_otamagma, m, (const float (*)[16])ota.magma->drw);
+            draw_skin(m_otamagma, m, ota.magma);
         }
         for (int k = 0; k < 4 && m_otalfoot && m_otalfoot->skin && ota.nrv != OTA_APPEARSTAR; k++) {
             if (!ota.lnrv[k] || !ota.lfoot[k] || ota.lfoot[k]->skin != m_otalfoot->skin) continue; /* hideModel */
             ota_lfoot_mtx(k, m);
-            render_skinned(m_otalfoot, m, (const float (*)[16])ota.lfoot[k]->drw);
+            draw_skin(m_otalfoot, m, ota.lfoot[k]);
         }
     }
     draw_hhp_leaves();
@@ -15488,13 +15499,13 @@ void game_draw(void)
         basis_matrix(m, dino.pos, dino.up, dino.f, 0);
         if (m_dino && m_dino->skin && dino.anim && dino.anim->skin == m_dino->skin) {
             float jm[16];
-            render_skinned(m_dino, m, (const float (*)[16])dino.anim->drw);
+            draw_skin(m_dino, m, dino.anim);
             mat_mul(jm, m, dino.anim->world[2]); /* EggShell */
             int broke = dino.nrv == DN_DAMAGE && dino.dnrv == DD_EGGBROKEN; /* exeEggBroken: the shell until 30, then Break */
             if (m_degg && (dino.seq < DSEQ_EGG || (dino.seq == DSEQ_EGG && !(broke && dino.dt >= 30))))
                 render_model(broke && m_deggcrack ? m_deggcrack : m_degg, jm, 0x80, 0x80, 0x80); /* startBva EggBroken */
             else if (m_deggbrk && broke && dino.dt >= 30 && dino.dt <= 120) { /* killed after step 120 */
-                if (m_deggbrk->skin && dino.brk->skin == m_deggbrk->skin) render_skinned(m_deggbrk, jm, (const float (*)[16])dino.brk->drw);
+                if (m_deggbrk->skin && dino.brk->skin == m_deggbrk->skin) draw_skin(m_deggbrk, jm, dino.brk);
                 else render_model(m_deggbrk, jm, 0x80, 0x80, 0x80);
             }
             mat_mul(jm, m, dino.anim->world[20]); /* TailBall */
