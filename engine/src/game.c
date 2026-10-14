@@ -399,6 +399,10 @@ static struct {
 } vines[MAX_VINES];
 static int nvines, vine_ride = -1, vine_test_sq;
 static int dino_cam; /* its damage camera is on (startDamageCamera .. endDamageCamera) */
+#define FOOT_MAX 32
+static struct { V3 pos, front, n; int t, valid, right; } foot[FOOT_MAX];
+static int foot_rot, foot_num, foot_cleared;
+static V3 foot_last; /* FootPrint (DinoPackun's): foot_add */
 static const Model *m_vtop, *m_vleaf;
 static int vine_try(Player *m);
 static int vine_hold(Player *m);
@@ -1158,6 +1162,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nhhps = 0;
     nvines = 0; vine_ride = -1;
     dino_cam = 0;
+    foot_num = foot_rot = 0;
     nseesaws = 0;
     nfollows = 0;
     nflows = 0;
@@ -5774,6 +5779,7 @@ static void dino_demo_reset(void)
     row_axes(r, &x, &z);
     dino.pos = row_pos(r); dino.up = up_at(dino.pos, dino.up); dino.f = vnorm(vtangent(z, dino.up)); dino.vel = v3(0, 0, 0);
     dino.chain_ok = 0;
+    foot_cleared = 1; /* mFootPrint->clear() */
     mario->pos = vadd(dino.pos, vadd(vmul(dino.up, -550.0f), vmul(dino.f, 800.0f)));
     mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->launch = -1;
     mario->up = up_at(mario->pos, mario->up);
@@ -6000,6 +6006,66 @@ static void dino_next_seq(void)
     printf("dino packun: seq %d" "\n", dino.seq);
 }
 
+/* FootPrint (DinoPackun's 足跡, 32 prints, DinoPackunFootprint.bti, 100 x 100, side offset 0, mMinPrintDistance 10):
+ * addPrint keeps a ring of prints; movement fades the 10 oldest from the ring's index (sFadeBufferCount) over 60 frames
+ * (sFadeOutTime), all of them once cleared; draw: each a 100 x 100 quad 5 over its face, along its front, black with
+ * alpha 255 x time left / 60, mirrored for a right foot */
+static int map_drop(V3 pos, V3 up, float start, float len, V3 *at, V3 *n);
+
+static void foot_add(V3 p, V3 front, V3 n, int right)
+{
+    foot_cleared = 0;
+    if (foot_num > 0 && vlen(vsub(p, foot_last)) < 10.0f) return;
+    foot_last = p;
+    foot[foot_rot].pos = p; foot[foot_rot].front = front; foot[foot_rot].n = n;
+    foot[foot_rot].t = 60; foot[foot_rot].valid = 1; foot[foot_rot].right = right;
+    if (++foot_rot >= FOOT_MAX) foot_rot -= FOOT_MAX;
+    if (++foot_num > FOOT_MAX) foot_num = FOOT_MAX;
+}
+
+static void foot_update(void) /* FootPrint::movement */
+{
+    for (int i = 0; i < (foot_cleared ? foot_num : 10); i++) {
+        int k = foot_cleared ? i : (foot_rot + i) % FOOT_MAX;
+        if (foot[k].valid && --foot[k].t <= 0) foot[k].valid = 0;
+    }
+}
+
+static void foot_draw(void)
+{
+    static Strip st[FOOT_MAX];
+    int tex = fx_dinofoot_tex(), ns = 0;
+    if (tex < 0) return;
+    for (int i = 0; i < foot_num; i++) {
+        if (!foot[i].valid || vlen(vsub(foot[i].pos, cam_pos)) > 6000.0f) continue;
+        V3 f = vnorm(vtangent(foot[i].front, foot[i].n)), sd = vcross(f, foot[i].n); /* _C x _18 */
+        if (foot[i].right) sd = vmul(sd, -1.0f);
+        V3 c = vadd(foot[i].pos, vmul(foot[i].n, 5.0f));
+        Strip *q = &st[ns++];
+        for (int l = 0; l < 4; l++) {
+            V3 a = vadd(c, vmul(f, 100.0f * (l / 3.0f - 0.5f)));
+            V3 L = vsub(a, vmul(sd, 50.0f)), R = vadd(a, vmul(sd, 50.0f));
+            q->p[l][0][0] = L.x; q->p[l][0][1] = L.y; q->p[l][0][2] = L.z;
+            q->p[l][1][0] = R.x; q->p[l][1][1] = R.y; q->p[l][1][2] = R.z;
+        }
+        q->rgba = (u32)(foot[i].t * 0x80 / 60) << 24;
+        q->tex = (u16)tex;
+    }
+    render_strips(st, ns);
+}
+
+/* updateFootPrintNerve(step, period): the left foot at step % period 0, the right at period / 2, each dropped 200 along
+ * the gravity from 100 up beside it (side x -+100) */
+static void dino_foot(int step, int period)
+{
+    V3 side = vcross(dino.up, dino.f), at, n;
+    if (step < 0 || period <= 0) return;
+    int right = step % period == period / 2;
+    if (step % period && !right) return;
+    V3 from = vadd(vadd(dino.pos, vmul(side, right ? 100.0f : -100.0f)), vmul(dino.up, 100.0f));
+    if (map_drop(from, dino.up, 0.0f, 200.0f, &at, &n)) foot_add(at, dino.f, n, right);
+}
+
 /* updateCameraInfo: 300 up its _BC, blended 0.6 towards the tail's end (_108 is 1 from onAimTailBall(-1) in Punched
  * through the damage camera). ponytail: the tail ball's position for the tail's end */
 static V3 dino_cam_at(void)
@@ -6010,6 +6076,7 @@ static V3 dino_cam_at(void)
 
 static void update_dino(void)
 {
+    foot_update();
     if (dino_cam && (dino.row < 0 || dino.nrv != DN_DAMAGE)) { camera_event_stop(); dino_cam = 0; }
     if (dino.row < 0 || dino.seq == DSEQ_GONE || !row_shown(dino.row)) return;
     const Row *r = &sc->objs[dino.row];
@@ -6051,6 +6118,7 @@ static void update_dino(void)
             if (dino.nt >= 60) dino_set_nrv(DN_CHASE);
             break;
         case DN_TURN: /* updateTurn(60, 1) / egg (120, 0.3) / Lv2: 1 a frame with 1.3 forward, 30 */
+            if (lv2) dino_foot(dino.nt - 1, 50); /* DinoPackunBattleVs1Lv2::exeTurn */
             DINO_TURN_TO(vmul(side, dino.side), egg ? 0.3f : 1.0f);
             if (lv2) accel = 1.3f;
             if (dino.nt > (egg ? 120 : lv2 ? 30 : 60)) dino_set_nrv(DN_WALK);
@@ -6058,6 +6126,7 @@ static void update_dino(void)
             break;
         case DN_WALK: /* updateWalk(180, 0.5) / egg (300, 0.5) / Lv2 (180, 1.3); selectTurnDirection at its end */
             accel = lv2 ? 1.3f : 0.5f;
+            dino_foot(dino.nt - 1, lv2 ? 50 : 91); /* updateWalk's footprint period */
             if (dino.nt > (egg ? 300 : 180)) { dino_set_nrv(DN_TURN); dino.side = (rand() & 1) ? 1.0f : -1.0f; }
             else if (sees) dino_set_nrv(DN_FIND);
             break;
@@ -6067,6 +6136,7 @@ static void update_dino(void)
             break;
         case DN_CHASE: { /* updateChase(240, 180, 1, 1.5, 60) / Lv2 (300, 180, 1.3, 1.8, 90); a hit reaction: nothing */
             int len = lv2 ? 300 : 240, ramp = lv2 ? 90 : 60;
+            dino_foot(dino.nt - 1, 46);
             if (!dino.react) {
                 DINO_TURN_TO(to, lv2 ? 1.3f : 1.0f);
                 accel = (lv2 ? 1.8f : 1.5f) * (dino.nt < ramp ? (float)dino.nt / ramp : 1.0f);
@@ -14983,22 +15053,33 @@ static void draw_pickups(const Pickup *p, int n, const Model *md, u8 r, u8 g, u8
  * `len` (setDropLength 1000) onto the map, a volume shadow there: rs across, rf along `front`, `off` ahead.
  * ponytail: a half-dark disc flat on the face it hits (render_shadow), not a volume shading the ground's shape; the
  * drop found by sphere steps (30, then halved 4 times); only within 3000 of the camera */
+/* the map along -up from `start` above pos to `len` below (getFirstPolyOnLineToMap): sphere steps of 30, then halved 4
+ * times; the face's point and normal */
+static int map_drop(V3 pos, V3 up, float start, float len, V3 *at, V3 *n)
+{
+    Hit h[1];
+    float lo = -start, d = -start;
+    for (; d <= len && !kcl_query(vsub(pos, vmul(up, d)), 20.0f, h, 1); d += 30.0f) lo = d;
+    if (d > len) return 0;
+    for (int k = 0; k < 4; k++) {
+        float mid = (lo + d) * 0.5f;
+        if (kcl_query(vsub(pos, vmul(up, mid)), 20.0f, h, 1)) d = mid; else lo = mid;
+    }
+    if (!kcl_query(vsub(pos, vmul(up, d)), 20.0f, h, 1)) return 0;
+    *n = h[0].n;
+    *at = vsub(vsub(pos, vmul(up, d)), vmul(h[0].n, 20.0f));
+    return 1;
+}
+
 static void draw_shadow(V3 pos, V3 up, V3 front, float rs, float rf, float off, float start, float len)
 {
     front = vnorm(vtangent(front, up));
     if (vlen(front) < 0.5f) front = vnorm(vtangent(v3(1, 0, 0), up));
     pos = vadd(pos, vmul(front, off));
     if (vlen(vsub(pos, cam_pos)) > 3000.0f) return;
-    Hit h[1];
-    float lo = -start, d = -start;
-    for (; d <= len && !kcl_query(vsub(pos, vmul(up, d)), 20.0f, h, 1); d += 30.0f) lo = d;
-    if (d > len) return;
-    for (int k = 0; k < 4; k++) {
-        float mid = (lo + d) * 0.5f;
-        if (kcl_query(vsub(pos, vmul(up, mid)), 20.0f, h, 1)) d = mid; else lo = mid;
-    }
-    if (!kcl_query(vsub(pos, vmul(up, d)), 20.0f, h, 1)) return;
-    V3 n = h[0].n, at = vadd(vsub(vsub(pos, vmul(up, d)), vmul(n, 20.0f)), vmul(n, 3.0f));
+    V3 n, at;
+    if (!map_drop(pos, up, start, len, &at, &n)) return;
+    at = vadd(at, vmul(n, 3.0f));
     float m[16];
     basis_matrix(m, at, n, front, 0);
     for (int j = 0; j < 3; j++) { m[j] *= rs; m[8 + j] *= rf; }
@@ -15534,6 +15615,7 @@ void game_draw(void)
         render_model(m_note, m, 0x80, 0x80, 0x80);
     }
     draw_waterplants();
+    foot_draw();
     fx_draw();
     talk_draw();
     wipe_draw();

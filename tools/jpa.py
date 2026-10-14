@@ -268,6 +268,9 @@ def pack(fs):
         # PlantStalkDrawInit: Plant.arc's PlantStalk.bti right after them (fx_plantstalk_tex)
         img = decode_bti({k.lower(): v for k, v in B.rarc_files((wp / "ObjectData" / "Plant.arc").read_bytes())}["plantstalk.bti"])
         out_tex.append(tex.to_ps2(np.ascontiguousarray(img), 0, 0))
+        # DinoPackun's FootPrint texture (getTexFromArc DinoPackunFootprint.bti) after it (fx_dinofoot_tex)
+        img = decode_bti({k.lower(): v for k, v in B.rarc_files((wp / "ObjectData" / "DinoPackun.arc").read_bytes())}["dinopackunfootprint.bti"])
+        out_tex.append(tex.to_ps2(np.ascontiguousarray(img), 0, 0))
     head = struct.pack("<IIiI", len(used), len(defs), first, len(autos))
     return head + b"".join(defs) + b"".join(recs) + b"".join(autos), out_tex
 

@@ -24,5 +24,7 @@ u32 fx_count(void); /* live particles */
 int fx_waterplant_tex(int k);
 /* Plant's stalk texture (PlantStalk.bti, after the WaterPlant ones), -1 none */
 int fx_plantstalk_tex(void);
+/* DinoPackun's footprint texture (DinoPackunFootprint.bti, after PlantStalk's), -1 none */
+int fx_dinofoot_tex(void);
 
 #endif

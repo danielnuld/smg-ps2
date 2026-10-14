@@ -386,3 +386,4 @@ u32 fx_count(void) { return nalive; }
 
 int fx_waterplant_tex(int k) { return res && wp_tex >= 0 ? (int)tex0 + wp_tex + k : -1; }
 int fx_plantstalk_tex(void) { return fx_waterplant_tex(4); }
+int fx_dinofoot_tex(void) { return fx_waterplant_tex(5); }
