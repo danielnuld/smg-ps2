@@ -181,6 +181,19 @@ def decode_bti(bti):
     return rgba
 
 
+def tile_texture(rgba, bti, bsp):
+    """JPABaseShape getTilingS / T (BSP1 flags bits 25 / 26): the quad's coordinates run 0..2 on that axis (jpa_crd),
+    wrapped by the BTI's mode (0x06 / 0x07: 0 clamp, 1 repeat, 2 mirror). The sprites here run 0..1 over a clamped
+    texture, so the texture is laid out twice along each tiled axis."""
+    import numpy as np
+    for axis, bit, wrap in ((1, 25, bti[6]), (0, 26, bti[7])):
+        if bsp["flags"] >> bit & 1:
+            second = np.flip(rgba, axis) if wrap == 2 else rgba if wrap == 1 else np.repeat(
+                np.take(rgba, [-1], axis), rgba.shape[axis], axis)
+            rgba = np.concatenate((rgba, second), axis)
+    return rgba
+
+
 def pack(fs):
     """-> (PTCL payload, [tex.to_ps2 dicts]): the FX effects' resources (fx.c PtRes, FxDef) and their textures.
     PTCL: u32 nres, u32 nfx, s32 first WaterPlant texture (-1 none), u32 nauto; nfx x FxDef {u16 n, u16 res[7], f32 off[3],
@@ -219,7 +232,7 @@ def pack(fs):
         if bsp["tex_idx"] < len(tdb):
             from PIL import Image
             ti = tdb[bsp["tex_idx"]]
-            baked, vprm = bake_texture(decode_bti(texs[ti][1]), bsp)
+            baked, vprm = bake_texture(tile_texture(decode_bti(texs[ti][1]), texs[ti][1], bsp), bsp)
             sec = None
             for magic, b in res[i]:  # ETX1 second texture: TEV stage 1 multiplies colour and alpha by it
                 if magic == "ETX1" and struct.unpack_from(">I", b, 8)[0] & 0x100 and b[0x26] < len(tdb):
@@ -227,7 +240,8 @@ def pack(fs):
             side = min(32, baked.shape[1]), min(32, baked.shape[0])  # particles are small on screen: 32 texels
             baked = np.asarray(Image.fromarray(baked, "RGBA").resize(side, Image.Resampling.BOX)).copy()
             if sec is not None:
-                s2 = np.asarray(Image.fromarray(decode_bti(texs[sec][1]), "RGBA").resize(side, Image.Resampling.BOX))
+                s2 = np.asarray(Image.fromarray(tile_texture(decode_bti(texs[sec][1]), texs[sec][1], bsp), "RGBA")
+                                .resize(side, Image.Resampling.BOX))
                 baked = (baked.astype(np.uint16) * s2 // 255).astype(np.uint8)
             key = (ti, sec, colour_mode(bsp), bsp["prm"], bsp["env"]) if not vprm else (ti, sec, colour_mode(bsp)[1])
             if key not in tex_key:
@@ -350,6 +364,9 @@ def selftest():
     out, vprm = bake_texture(t, bsp)
     assert out[0, 0, :3].tolist() == [0, 0, 255] and out[0, 1, :3].tolist() == [255, 0, 0] and not vprm
     assert bake_texture(t, dict(flags=1 << 15, prm=(1, 2, 3, 4), env=(0, 0, 0, 0)))[1]  # mode 1: prm in vertices
+    bti = bytes(6) + bytes([2, 0])  # S mirror, T clamp
+    m = tile_texture(t, bti, dict(flags=1 << 25 | 1 << 26))
+    assert m.shape == (2, 4, 4) and m[0, :, 0].tolist() == [0, 255, 255, 0] and m[1].tolist() == m[0].tolist()
     print("selftest ok")
 
 
