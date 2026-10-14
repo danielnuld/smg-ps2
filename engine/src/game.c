@@ -387,6 +387,7 @@ static struct {
     struct { float coord, size, spring, sspeed; V3 pos, side, up, front; float m[16]; } leaf[VINE_LEAVES];
 } vines[MAX_VINES];
 static int nvines, vine_ride = -1, vine_test_sq;
+static int dino_cam; /* its damage camera is on (startDamageCamera .. endDamageCamera) */
 static const Model *m_vtop, *m_vleaf;
 static int vine_try(Player *m);
 static int vine_hold(Player *m);
@@ -1145,6 +1146,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     norocks = 0;
     nhhps = 0;
     nvines = 0; vine_ride = -1;
+    dino_cam = 0;
     nseesaws = 0;
     nfollows = 0;
     nflows = 0;
@@ -5737,11 +5739,12 @@ static void update_bubbles(void)
  * (the clip of the side). Contact: the egg's shell pushes Mario; Chase sends a blow (Lv1) and the other nerves a hit
  * (Lv2: Chase and Walk a blow), then AttackHit; a spin on the body flips Mario away (FlipWeakJump), a star piece
  * stops its chase 15 frames (isHitReaction); 8 star pieces from its Head as each battle starts. ponytail: no damage
- * camera (startDamageCamera), no footprints, no Mario puppet clips in the demos, the head sensor at the Head joint only once the
+ * no footprints, no Mario puppet clips in the demos, the head sensor at the Head joint only once the
  * model has streamed in (else 350 up, 200 ahead), velocity kept on the ground by collision (no binder) */
 enum { DSEQ_WAIT, DSEQ_OPENING, DSEQ_EGG, DSEQ_CRY, DSEQ_LV1, DSEQ_ANGRY, DSEQ_LV2, DSEQ_LV3, DSEQ_DOWN, DSEQ_GONE };
 enum { DN_START, DN_TURN, DN_WALK, DN_FIND, DN_CHASE, DN_COOLDOWN, DN_ATTACKHIT, DN_DAMAGE };
 enum { DD_PUNCHED, DD_PULLED, DD_EGGBROKEN, DD_DAMAGE, DD_LASTDAMAGE };
+static V3 dino_cam_at(void);
 static const int dseq_len[] = {0, 360, 0, 150, 0, 200, 0, 0, 319 + 60};
 
 /* the old phase codes the test builds read: 0 waiting, 1 egg, 2 battle, 3 damage, 4 demo, 5 down, 6 gone, 7 opening */
@@ -5986,8 +5989,17 @@ static void dino_next_seq(void)
     printf("dino packun: seq %d" "\n", dino.seq);
 }
 
+/* updateCameraInfo: 300 up its _BC, blended 0.6 towards the tail's end (_108 is 1 from onAimTailBall(-1) in Punched
+ * through the damage camera). ponytail: the tail ball's position for the tail's end */
+static V3 dino_cam_at(void)
+{
+    V3 a = vadd(dino.pos, vmul(dino.up, 300.0f));
+    return vadd(a, vmul(vsub(dino.bpos, a), 0.6f));
+}
+
 static void update_dino(void)
 {
+    if (dino_cam && (dino.row < 0 || dino.nrv != DN_DAMAGE)) { camera_event_stop(); dino_cam = 0; }
     if (dino.row < 0 || dino.seq == DSEQ_GONE || !row_shown(dino.row)) return;
     const Row *r = &sc->objs[dino.row];
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -6059,11 +6071,13 @@ static void update_dino(void)
             break;
         case DN_DAMAGE: /* DinoPackunStateDamage */
             dino.dt++;
+            if (dino_cam) camera_event_target(up, dino_cam_at()); /* updateCameraInfo: mCamTargetMtx */
             if (dino.dnrv == DD_PULLED && vlen(vsub(dino.bpos, dino.pos)) > 800.0f) /* turnDirectionFromTargetDegree, 6 */
                 DINO_TURN_TO(vmul(vtangent(vsub(dino.chain_ok ? dino.bpos : dino.bpos, dino.pos), up), -1.0f), 6.0f);
             if ((dino.dnrv == DD_EGGBROKEN && dino.dt > 120) || (dino.dnrv == DD_DAMAGE && dino.dt >= 79) ||
                 (dino.dnrv == DD_LASTDAMAGE && dino.dt >= 49)) { /* its state is over: the sequencer's next */
                 demo_dino_damage = 0;
+                if (dino_cam) { camera_event_stop(); dino_cam = 0; } /* endDamageCamera */
                 dino_next_seq();
             }
             break;
@@ -6111,6 +6125,8 @@ static void update_dino(void)
             dino.bvel = vadd(vmul(away, 120.0f), vmul(bup, 40.0f)); /* addVelocitySeparateHV 120, 40 */
             dino.bstate = 1; dino.bt = 0; scene_stop = 3; /* exeShoot: stopScene(3) */
             dino.prev_nrv = dino.nrv; dino_set_nrv(DN_DAMAGE); dino.dnrv = DD_PUNCHED; dino.dt = 0; /* setNerve Damage */
+            if (row_camset[dino.row] != -1) /* exePunched: startDamageCamera ("ダメージ", target mCamTargetMtx) */
+                dino_cam = camera_actor_start("DinoPackun", "ダメージ", (unsigned short)row_camset[dino.row], dino.up, dino.f, dino_cam_at());
             printf("dino packun: tail ball punched" "\n");
         }
         break;
@@ -7819,7 +7835,7 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
  * past 1.3 / 1.6) through its ActorAnimCtrl actions. Its talks: Common_TicoFat001 (Prep: tryTalkNearPlayer, its
  * event node starts the eating: eventFunc 0) and Common_TicoFat000 (setMessage: Wait 1 by how much is left, Point 0,
  * Test 2; the end of Fullness' talk is the metamorphosis), 280 to talk, 220 x scale up, in front. ponytail: no
- * fullness meter, no "変身" / "飛行" multi-actor cameras, no information message (its frame only),
+ * fullness meter, no "喜び" camera, no information message (its frame only),
  * no TicoSeedGuidance, no item (arg0 0 / 1), no FatRed BRK, no BVA eyes */
 #define MAX_FATS 4
 static struct {
@@ -7853,6 +7869,8 @@ static void wipe_draw(void)
 }
 
 static void fat_set(int k, int n) { fats[k].nrv = n; fats[k].t = 0; }
+/* startMultiActorCameraTargetSelf: its event camera, the target its base matrix */
+#define fat_cam(f, row, event) do { if (row_camset[row] != -1) camera_actor_start("TicoFat", event, (unsigned short)row_camset[row],     v3((f)->m0[4], (f)->m0[5], (f)->m0[6]), v3((f)->m0[8], (f)->m0[9], (f)->m0[10]), v3((f)->m0[12], (f)->m0[13], (f)->m0[14])); } while (0)
 static int fat_event(int t, u32 v) /* TicoFat::eventFunc: 0 startEat, 1 not yet */
 {
     for (int k = 0; k < nfats; k++)
@@ -7975,10 +7993,12 @@ static void update_ticofat(void)
             if (f->tk0 < 0 ? f->t >= 41 : talk_force_at_end(f->tk0, 0)) fat_set(k, f->item == -1 ? TF_DEMO : TF_META);
             break;
         case TF_DEMO: clip = "demo"; loop = 0;
-            if (f->t >= 96) fat_set(k, f->item == -1 && f->has_rail ? TF_FLY : TF_WIPEOUT);
+            if (f->t == 1) fat_cam(f, in->row, "変身"); /* startMultiActorCameraTargetSelf */
+            if (f->t >= 96) { camera_event_stop(); fat_set(k, f->item == -1 && f->has_rail ? TF_FLY : TF_WIPEOUT); }
             break;
         case TF_FLY: { /* exeFly */
             clip = "fly";
+            if (f->t == 1) fat_cam(f, in->row, "飛行");
             f->flyd += 100.0f;
             float v = f->flylen > 0 ? fminf(f->flyd / f->flylen, 1.0f) : 1.0f, e;
             if (v < 0.5f) { float x = 2 * v * 2 * v; e = 0.5f * x; } /* getEaseInValue(x, 0, 0.5, 1) */
@@ -7986,6 +8006,7 @@ static void update_ticofat(void)
             V3 p = launch_pos(&f->fly, e), dir = vsub(launch_pos(&f->fly, fminf(e + 0.01f, 1.0f)), p);
             f->m0[12] = p.x; f->m0[13] = p.y; f->m0[14] = p.z;
             if (vlen(dir) > 1e-3f) { V3 fz = vnorm(dir); f->m0[8] = fz.x; f->m0[9] = fz.y; f->m0[10] = fz.z; }
+            camera_event_target(v3(f->m0[4], f->m0[5], f->m0[6]), p); /* its target: itself */
             if (e >= 1.0f) fat_set(k, TF_WIPEOUT);
             break;
         }
@@ -8002,7 +8023,7 @@ static void update_ticofat(void)
             break;
         case TF_INFO: fat_set(k, TF_AFTER); break;
         case TF_AFTER:
-            if (f->t >= 60) { row_kill(in->row); sw_changed = 1; fat_set(k, TF_GONE); } /* disappear: its group appears */
+            if (f->t >= 60) { camera_event_stop(); row_kill(in->row); sw_changed = 1; fat_set(k, TF_GONE); } /* 飛行 ends; disappear: its group appears */
             break;
         case TF_META: clip = "metamorphosis"; loop = 0;
             if (f->t >= 80) { row_kill(in->row); sw_changed = 1; fat_set(k, TF_GONE); }
@@ -10722,7 +10743,11 @@ static int vine_grow(int k) /* Plant::updateGrowUp */
         L->side = vnorm(vcross(up, L->front)); L->up = vcross(L->front, L->side);
         vleaf_mtx(L->m, L->side, L->up, L->front, L->size * o->growth, L->pos);
     }
-    if (!done) return 0;
+    if (!done) {
+        if (o->demo && o->ngrown > 0) camera_event_target(o->stalk[0].up, o->stalk[0].pos); /* its top (mTopPartsModel) */
+        return 0;
+    }
+    if (o->demo) camera_event_stop(); /* endMultiActorCamera 出現デモ */
     if (o->rider) {
         o->coord = vrail_nearest(k, o->pos); o->pos = vrail_pos(k, o->coord);
         if (o->nrv == VN_HANGUPGROW) { o->dir = 1; vine_set(k, VN_HANGUP); }
@@ -10743,6 +10768,7 @@ static int vine_demo_on(void) /* 伸び植物（成長）: from the demo's start
 static void vine_release(int k, V3 v, int top) /* endBindAndPlayerJump / ...ForceWeakGravityJump */
 {
     vines[k].rider = 0; vine_ride = -1;
+    camera_event_end(); /* endMultiActorCameraAtLanding 掴まり */
     if (mario_anim) mario_play("growplantjump", 1.0f, 0);
     if (top) m_power_jump(mario, v);
     else { mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0; mario->jump_kind = 0; mario->air_timer = 0; }
@@ -10809,6 +10835,8 @@ static int vine_try(Player *m)
             o->dir = 1; vine_set(k, VN_HANGSTART);
         } else { o->ride_vel = 0; o->dir = -1; vine_set(k, VN_HANGSTART); }
         m->hip = 0; m->spin_timer = 0; m->hvel = v3(0, 0, 0); m->vup = 0;
+        if (row_camset[o->row] != -1) /* startMultiActorCameraNoTarget 掴まり: the player's */
+            camera_actor_start("Plant", "掴まり", (unsigned short)row_camset[o->row], m->up, m->face, m->pos);
         printf("plant %d: taken at %d of %d\n", o->row, (int)o->coord, (int)o->len);
         return 1;
     }
@@ -10821,6 +10849,7 @@ static int vine_hold(Player *m)
     if (vine_ride < 0) return 0;
     typeof(&vines[0]) o = &vines[vine_ride];
     V3 f = vtangent(o->front, o->up);
+    camera_event_target(o->up, o->pos); /* 掴まり: no target, the player's */
     m->pos = o->pos; m->up = o->up; m->hvel = v3(0, 0, 0); m->vup = 0; m->grounded = 0;
     if (vlen(f) > 1e-3f) o->front = m->face = vnorm(f); /* makeAxisUpFront(&side, &mFront, mUp, mFront): in place */
     return 1;
@@ -10872,7 +10901,9 @@ static void update_vines(void)
             }
             break;
         }
-        case VN_WAITDEMO: /* tryStartDemoWithoutCinemaFrame */
+        case VN_WAITDEMO: /* tryStartDemoWithoutCinemaFrame, startMultiActorCameraTargetOther 出現デモ (its top) */
+            if (row_camset[o->row] != -1)
+                camera_actor_start("Plant", "出現デモ", (unsigned short)row_camset[o->row], up_at(o->pos, mario->up), mario->face, o->pos);
             vine_set(k, VN_DEMOWAIT);
             break;
         case VN_DEMOWAIT:

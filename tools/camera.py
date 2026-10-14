@@ -23,6 +23,7 @@ XZ_PARA like CameraHolder's default), u16 num (hex id, 0 for "o:"), u16 flags (b
 angleA, angleB, wpoint[3], axis[3], up[3], woffset[3], loffset, loffsetv, fovy, upper, lower, uplay, lplay,
 s32 camint, num1, num2, vpanuse, f32 vpanaxis[3], pad}.
 """
+import re
 import struct
 import sys
 from pathlib import Path
@@ -69,6 +70,16 @@ def class_hash(name):
     for ch in name.encode("ascii", "replace"):
         h = (h * 31 + ch) & 0xFFFFFFFF
     return h
+ACTOR_CAM = re.compile(r"(.+?)(固有|共通)(\D*)(\d+)$")
+
+
+def actor_hash(en, mark, event):
+    """An actor camera's class: the hash of "<English class><固有 | 共通><event>" over its UTF-8 bytes (camera.c
+    camera_actor_start hashes the same string)."""
+    h = 0
+    for ch in (en + mark + event).encode("utf-8"):
+        h = (h * 31 + ch) & 0xFFFFFFFF
+    return h
 FLAGS = ("noreset", "nofovy", "lofserpoff", "antibluroff", "collisionoff", "subjectiveoff")  # CameraParamChunk.cpp:14
 FLOATS = (("dist", 1200.0), ("angleA", 0.0), ("angleB", 0.3), ("wpoint", (0, 0, 0)), ("axis", (0, 1, 0)),
           ("up", (0, 1, 0)), ("woffset", (0, 100, 0)), ("loffset", 0.0), ("loffsetv", 0.0), ("fovy", 45.0),
@@ -95,7 +106,13 @@ def cameras(bcams, float_column, int_column, jp2en=None):
         for i, cid in enumerate(ids):
             kind = cid[:2]
             evclass = 0
-            if kind == "e:":  # MultiEventCamera "e:<actor>:<CameraSetId 3 digits>:<NN>番目": its class and set << 4 | NN
+            if kind == "e:" and ACTOR_CAM.match(cid[2:]):  # actor cameras "e:<actor>固有|共通<event><CameraSetId>"
+                actor, mark, event, digits = ACTOR_CAM.match(cid[2:]).groups()  # (ActorCameraUtil createMultiActorCameraName)
+                en = (jp2en or {}).get(actor)
+                if not en:
+                    continue
+                evclass, num = actor_hash(en, mark, event), int(digits) + (0x8000 if mark == "共通" else 0)
+            elif kind == "e:":  # MultiEventCamera "e:<actor>:<CameraSetId 3 digits>:<NN>番目": its class and set << 4 | NN
                 parts = cid[2:].split(":")
                 en = (jp2en or {}).get(parts[0]) if len(parts) == 3 else None
                 if not en or not parts[1].isdigit() or not parts[2][:2].isdigit():

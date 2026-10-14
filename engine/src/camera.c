@@ -346,11 +346,12 @@ unsigned camera_class_hash(const char *name)
     return h;
 }
 
-int camera_event_start(unsigned cls, int set, V3 up, V3 front, V3 pos)
+/* the event cameras of class cls whose num, shifted right by `shift`, is set: one after another from the first */
+static int ev_begin(unsigned cls, int set, int shift, V3 up, V3 front, V3 pos)
 {
     ev_first = -1; ev_n = 0;
     for (int i = 0; i < ncams; i++)
-        if (cams[i].kind == 'e' && cams[i].evclass == cls && (cams[i].num >> 4) == set) {
+        if (cams[i].kind == 'e' && cams[i].evclass == cls && (cams[i].num >> shift) == set) {
             if (ev_first < 0) ev_first = i;
             ev_n++;
         }
@@ -372,7 +373,18 @@ void camera_event_target(V3 dir, V3 pos) /* SpinDriverCamera::updateTargetMatrix
     ev_pos = pos;
 }
 
+int camera_event_start(unsigned cls, int set, V3 up, V3 front, V3 pos) { return ev_begin(cls, set, 4, up, front, pos); }
+
+int camera_actor_start(const char *cls, const char *event, int set, V3 up, V3 front, V3 pos)
+{
+    char name[96];
+    snprintf(name, sizeof name, "%s%s%s", cls, set & 0x8000 ? "共通" : "固有", event);
+    return ev_begin(camera_class_hash(name), set, 0, up, front, pos);
+}
+
 void camera_event_end(void) { if (ev_on) ev_ending = 1; }
+
+void camera_event_stop(void) { if (ev_on) { ev_on = 0; cur = -3; } }
 
 
 void camera_update(const CamTarget *t)

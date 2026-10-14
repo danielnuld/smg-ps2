@@ -46,6 +46,11 @@ unsigned camera_class_hash(const char *name);
 int camera_event_start(unsigned cls, int set, V3 up, V3 front, V3 pos);
 void camera_event_target(V3 dir, V3 pos);
 void camera_event_end(void);
+/* an actor's camera (ActorCameraUtil startMultiActorCameraTargetOther): "<class>固有|共通<event><CameraSetId>" (camera.py
+ * actor_hash; 共通 when the set has 0x8000), its target the matrix (up, front, pos) moved by camera_event_target;
+ * stop: endMultiActorCamera, at once (the area camera blends back) */
+int camera_actor_start(const char *cls, const char *event, int set, V3 up, V3 front, V3 pos);
+void camera_event_stop(void);
 /* a demo's animated camera (CameraAnim): this pose until off */
 void camera_set_override(int on, V3 eye, V3 watch, V3 up, float fovy);
 /* Active camera (CAMS index, -1 = default) and its type, for the HUD. */
