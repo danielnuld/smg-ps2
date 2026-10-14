@@ -381,6 +381,23 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
      (OtaKingMagmaBloom), TicoFat's FatRed / 喜び camera / screen effects, sound. (OtaKing's LavaColumn / AngrySmoke / Appear are animation-driven: fx_anim covers them.) Star piece colours done 2026-10-15 (bc84fdb, checked in
      `fat`: slice.py MAT_COLOR "StarPiece@k" in resident.bin, material colour 0 = initColors[k] plus the environment
      map's mean (no texgen); placed arg3 / random, groups random, StarPieceDirector's in turn). Next: real lighting.
+     Real lighting plan (2026-10-15, after Petari LightFunction / LightDataHolder / LightZoneDataHolder /
+     ActorLightCtrl / LightUtil / SceneNameObjListExecutor cDrawBufferListInitTable):
+     data: ObjectData/LightData.arc LightData.bcsv rows (AreaLightName, Interpolate, Fix, and for Player / Strong /
+     Weak / Planet: Light0 / Light1 {Color RGBA, Pos XYZ, FollowCamera}, Alpha2, Ambient RGBA), Light<Zone>.bcsv
+     (LightID -> AreaLightName; -1 the zone's default), LightCtrlCube areas (arg0 = LightID, ZoneLightID). The stage
+     default (mDefaultAreaLight) = zone 0's LightID -1 name (else the first row, デフォルト). MR::loadLight(type):
+     Strong / Weak / Planet from the default area light; Player through its ActorLightCtrl (area by position, blend
+     over Interpolate frames, 30 default). Light type per class: its connectToScene* draw buffer ->
+     cDrawBufferListInitTable (Planet / MapObj / ClippedMapParts: Planet; NPC / Enemy / Ride / *StrongLight: Strong;
+     *WeakLight: Weak; Player / PlayerDecoration / CrystalBox: Player). GX: diffuse clamp, attenuation off (lights at
+     1e5 are directional), FollowCamera positions are in view space, else world; channel = ambient + sum lights.
+     Engine plan: A) slice.py vu_groups writes per unique vertex normals (V4-8) for lit materials and leaves their
+     colours unshaded (lit flag + gain 1 / 2 from bake's RAS 1 / 0.5 choice), BATCH 60 (7n + 6m + 2 <= 496); each
+     matrix carries 2 more qwords, the two light directions in its local space (CPU: R^T l), and the draw's light
+     colours + ambient sit at VU mem 8..10; vu1_tex.vsm: colour x gain x clamp(amb + sum max(0, n . l_i) col_i).
+     B) light type per class (a table from the classes' connectToScene* calls). C) LightCtrlCube areas and the
+     player's ActorLightCtrl blend. Then a full repack (VUMD changes).
      MarioPress done (MarioPress.cpp checkVerticalPress, setPress 0 / 4 after Petari: press objects are the
      RailMoveObjPress classes; Dossun / RailBlock / TripodBossFixParts are not in the port; checkSidePressPre /
      checkSidePress need front / back walls and face velocities the port's collision lacks), talk / messages, sound effects, real lighting, wipes, multi-actor cameras (Dino damage camera),
