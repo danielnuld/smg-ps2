@@ -214,6 +214,15 @@ enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, 
 static V3 firebar_ball(const Inst *in, int j, int k);
 static V3 star_pos(const Inst *in, int *state);
 static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle);
+/* slice.py BRK_ARG: a class whose colour is its BRK stopped at the frame one of its args gives (setBrkFrameAndStop) draws
+ * the model baked at that frame, "<class>~<frame>" (NoInit: -1 is frame 0) */
+static const Model *brk_model(int row, const char *cls, int arg)
+{
+    char n[40];
+    int v = sc->objs[row].arg[arg];
+    snprintf(n, sizeof n, "%s~%d", cls, v >= 0 ? v : 0);
+    return scene_model(sc, n);
+}
 /* a skinned model drawn with its anim's pose, after the effects its clip passed this frame (EffectKeeper: fx_anim) */
 static void draw_skin(const Model *md, const float m[16], Anim *a)
 {
@@ -619,7 +628,7 @@ static int got_coins, got_purple, got_pieces;
 static float coin_rot, qcoin_rot, piece_rot, star_rot;
 static V3 cam_pos;
 static const Model *m_packunhead;
-static const Model *m_coin, *m_purple, *m_piece, *m_kuribo, *m_takohei, *m_packun, *m_kotebug, *m_spider, *m_meramera, *m_takobo, *m_mkoopa, *m_kari, *m_kmini, *m_karon, *m_teresa, *m_bfly, *m_stink, *m_unizo[3], *m_note, *m_poihana, *m_petari;
+static const Model *m_coin, *m_purple, *m_piece, *m_kuribo, *m_takohei, *m_packun, *m_kotebug, *m_spider, *m_meramera, *m_takobo, *m_mkoopa, *m_kari, *m_kmini, *m_karon, *m_teresa, *m_stink, *m_unizo[3], *m_note, *m_poihana, *m_petari;
 static const Model *m_mario_skin; /* Mario.arc, skinned (SKIN chunk) */
 static Anim *mario_anim;
 /* ElectricRail (Petari ElectricRail.cpp, ElectricRailHolder.cpp): one segment per pair of rail points, arg0 rails
@@ -2755,7 +2764,6 @@ void game_rebind(void)
     m_kmini = scene_model(s, "KuriboMini");
     m_karon = scene_model(s, "Karon");
     m_teresa = scene_model(s, "Teresa");
-    m_bfly = scene_model(s, "Butterfly");
     m_stink = scene_model(s, "StinkBugSmall");
     m_note = scene_model(s, "NoteFairy");
     m_poihana = scene_model(s, "Poihana"); m_petari = scene_model(s, "Petari");
@@ -7951,7 +7959,12 @@ static void wipe_draw(void)
 
 static void fat_set(int k, int n) { fats[k].nrv = n; fats[k].t = 0; }
 /* startMultiActorCameraTargetSelf: its event camera, the target its base matrix */
-#define fat_cam(f, row, event) do { if (row_camset[row] != -1) camera_actor_start("TicoFat", event, (unsigned short)row_camset[row],     v3((f)->m0[4], (f)->m0[5], (f)->m0[6]), v3((f)->m0[8], (f)->m0[9], (f)->m0[10]), v3((f)->m0[12], (f)->m0[13], (f)->m0[14])); } while (0)
+static void fat_cam(const float *m0, int row, const char *event)
+{
+    if (row_camset[row] != -1)
+        camera_actor_start("TicoFat", event, (unsigned short)row_camset[row], v3(m0[4], m0[5], m0[6]), v3(m0[8], m0[9], m0[10]),
+                           v3(m0[12], m0[13], m0[14]));
+}
 static int fat_event(int t, u32 v) /* TicoFat::eventFunc: 0 startEat, 1 not yet */
 {
     for (int k = 0; k < nfats; k++)
@@ -8074,12 +8087,12 @@ static void update_ticofat(void)
             if (f->tk0 < 0 ? f->t >= 41 : talk_force_at_end(f->tk0, 0)) fat_set(k, f->item == -1 ? TF_DEMO : TF_META);
             break;
         case TF_DEMO: clip = "demo"; loop = 0;
-            if (f->t == 1) fat_cam(f, in->row, "変身"); /* startMultiActorCameraTargetSelf */
+            if (f->t == 1) fat_cam(f->m0, in->row, "変身"); /* startMultiActorCameraTargetSelf */
             if (f->t >= 96) { camera_event_stop(); fat_set(k, f->item == -1 && f->has_rail ? TF_FLY : TF_WIPEOUT); }
             break;
         case TF_FLY: { /* exeFly */
             clip = "fly";
-            if (f->t == 1) fat_cam(f, in->row, "飛行");
+            if (f->t == 1) fat_cam(f->m0, in->row, "飛行");
             f->flyd += 100.0f;
             float v = f->flylen > 0 ? fminf(f->flyd / f->flylen, 1.0f) : 1.0f, e;
             if (v < 0.5f) { float x = 2 * v * 2 * v; e = 0.5f * x; } /* getEaseInValue(x, 0, 0.5, 1) */
@@ -15445,7 +15458,7 @@ void game_draw(void)
                           kuribo[i].kind == WALK_KMINI ? m_kmini :
                           kuribo[i].kind == WALK_KARON ? m_karon :
                           kuribo[i].kind == WALK_TERESA ? m_teresa :
-                          kuribo[i].kind == WALK_BUTTERFLY ? m_bfly : kuribo[i].kind == WALK_STINKBUG ? m_stink :
+                          kuribo[i].kind == WALK_BUTTERFLY ? brk_model(kuribo[i].row, "Butterfly", 0) : kuribo[i].kind == WALK_STINKBUG ? m_stink :
                           kuribo[i].kind == WALK_UNIZO ? m_unizo[kuribo[i].dir] : kuribo[i].kind == WALK_POIHANA ? m_poihana : kuribo[i].kind == WALK_PETARI ? m_petari : m_kuribo;
         if (kuribo[i].state == KURIBO_DEAD || !md || !row_shown(kuribo[i].row)) continue;
         if (kuribo[i].kind == WALK_TERESA && kuribo[i].phase == 4) continue; /* hidden in a wall */

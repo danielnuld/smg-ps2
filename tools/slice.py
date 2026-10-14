@@ -267,6 +267,9 @@ def scene(fs, galaxy, scenario):
 # CrystalCage::init startBva(obj_name) at 0 (whole; its last frame is the broken cage)
 VIS = {"DinoPackunEggShell": ("normal", None), "CrystalCageS": ("CrystalCageS", 0), "CrystalCageM": ("CrystalCageM", 0)}
 # models baked with a BRK's registers at a frame (Tico.cpp: ColorChange at its colour, frame 0 the yellow one)
+# startBrk + setBrkFrameAndStop(argN): one model per frame its rows use, "<class>~<frame>" baked at that frame (game.c
+# brk_model picks it by the row's arg). Butterfly: startBrk Butterfly, frame mColorIndex = arg0 (NoInit: 0)
+BRK_ARG = {"Butterfly": ("butterfly", 0)}
 BRK_POSE = {"Tico": ("colorchange", 0), "TicoFat": ("normal", 0), "DinoPackunEggShellBreak": ("break", 0)}  # TicoFat: startBrk Normal, frame 0 (ponytail: FatRed as it grows)
 
 
@@ -330,7 +333,7 @@ def btk_entry(anim, material, mt, t, group):
     return struct.pack("<I", len(body)) + body
 
 
-def model_groups(arc, ratio, stats=None, skinned=False, pose=None):
+def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None):
     """-> (groups [(verts, tris, uvs or None, texture or None, slots or None, colours or None, blend)], kcl bytes or
     None,
     skin chunk entry or None) for the first J3D model of an archive. texture = tex.to_ps2 dict of the group's material
@@ -373,8 +376,8 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None):
             ps2 = {}
             sky = arc.stem in SKY_ARCS or arc.stem.endswith("Sky")  # 8-bit textures (tex.to_ps2 hi)
             lfiles = {k.lower().rsplit("/", 1)[-1]: v for k, v in files.items()}
-            over = tex.brk(lfiles[BRK_POSE[arc.stem][0] + ".brk"], BRK_POSE[arc.stem][1]) if arc.stem in BRK_POSE and \
-                BRK_POSE[arc.stem][0] + ".brk" in lfiles else None
+            bp = brk or BRK_POSE.get(arc.stem)  # a BRK_ARG variant's (name, frame) first
+            over = tex.brk(lfiles[bp[0] + ".brk"], bp[1]) if bp and bp[0] + ".brk" in lfiles else None
             # MapObjActor::init (tryStartAllAnim(mObjectName)), OtaKingMagma (startBtk): the model's own-name BTK, played
             # at run time (anim_btk). ponytail: every model's, not only those classes'
             anim_tex = tex.btk(lfiles[arc.stem.lower() + ".btk"]) if arc.stem.lower() + ".btk" in lfiles else None
@@ -1115,7 +1118,11 @@ def placement(fs, galaxy, scenario):
     per_stage = {st: [] for st in act}
     for o in keep:
         n = o["name"]
-        for m in (n,) + tuple(n + e if e[0] == "#" else e for e in EXTRA.get(n, ())):
+        if n in BRK_ARG and arcmap.get(n):  # its colour's model instead (BRK_ARG)
+            v = o["args"][BRK_ARG[n][1]]
+            n = f"{n}~{v if v >= 0 else 0}"
+            arcmap.setdefault(n, f"{arcmap[o['name']]}~{BRK_ARG[o['name']][0]}:{n.partition('~')[2]}")
+        for m in (n,) + tuple(n + e if e[0] == "#" else e for e in EXTRA.get(o["name"], ())):
             if arcmap[m] and m not in per_stage[names[o["zone"]]]:
                 per_stage[names[o["zone"]]].append(m)
     for st in per_stage:
@@ -1150,13 +1157,17 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
         ptcl = [chunk(b"PTCL", payload), chunk(b"FONT", fpay)]
     for t, a in models:
         a, _, pose = a.partition("#")  # "<archive>#<BCK>": the model with that animation's last-frame visibility
+        a, _, bv = a.partition("~")  # "<archive>~<BRK>:<frame>": baked at that BRK frame (BRK_ARG)
+        brk = (bv.split(":")[0], int(bv.split(":")[1])) if bv else None
+        cls = t.partition("~")[0]
         arc = fsp / "ObjectData" / f"{a}.arc"
         if not arc.exists():
             continue
-        key = (a, pose, ratio)
+        key = (a, pose, ratio, brk)
         if key not in _model_cache:
             st = {}
-            _model_cache[key] = (model_groups(arc, ratio, st, t in SKINNED or t in SKINNED_OBJ or t in AUTO_SKINNED, pose or None), st)
+            _model_cache[key] = (model_groups(arc, ratio, st, cls in SKINNED or cls in SKINNED_OBJ or cls in AUTO_SKINNED,
+                                              pose or None, brk), st)
         (groups, kcl, sk), st = _model_cache[key]
         for k, v in st.items():
             if not k.startswith("_"):
