@@ -338,6 +338,14 @@ KillerGunnerSingle, ItemBubble, OtaKing, OtaKingMagma, CocoSambo, Dino's Hit / T
 repacked (the disc image is stale). Check in PCSX2: `vine` (Mario's pose on the stalk, its cameras), `dino` / `ota`
 TEASER demos (Dino's damage camera, foot smoke), `fat` (wipe, cameras), lava / rails scrolling, shadows on slopes,
 no other model's UVs broken (the microcode change touches every draw), particle counts with many walkers.
+Checked 2026-10-15 in PCSX2: `vine` (grows, Mario spins up it and jumps off its top, over and over; the camera is
+far, his pose on the stalk not judged), `fat` (talks, 100 pieces, its flight camera, wipe, planet D; the flight
+camera looks steeply down where the sky dome is dark: black there, the sky is drawn), `ota` (rallies, hits,
+LavaColumn drops, smoke), `dino` (fight, camera, the star taken), `walker` (Butterfly colours, shadows on flat
+ground), no broken UVs seen. Fixed: JPA tiling (05c34d3, BSP1 bits 25 / 26: UV 0..2 by the BTI wrap; smoke showed a
+hard-edged quarter). Seen, not fixed: the TEASER `vine` demo walks Mario into black hole 364 (video only); the
+DropOfWater drops are pale capsules (env-mapped material: no texgen); OtaKingMagma is flat pale yellow (its
+material / lighting), so its BTK scroll cannot be seen; TicoFat pale (lighting).
 
 **Where the 2026-10-12 session stopped (resume here):** items a and b are done; c's MarioPress is in (build only,
 unverified: checkVerticalPress / setPress after Petari, side presses not); c's talk / messages are in for Good Egg
