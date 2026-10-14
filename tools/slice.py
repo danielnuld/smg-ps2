@@ -270,6 +270,11 @@ VIS = {"DinoPackunEggShell": ("normal", None), "CrystalCageS": ("CrystalCageS", 
 # startBrk + setBrkFrameAndStop(argN): one model per frame its rows use, "<class>~<frame>" baked at that frame (game.c
 # brk_model picks it by the row's arg). Butterfly: startBrk Butterfly, frame mColorIndex = arg0 (NoInit: 0)
 BRK_ARG = {"Butterfly": ("butterfly", 0)}
+# MR::initDLMakerMatColor0 per instance: one model per colour, "<class>@<k>" with material colour 0 = the k-th colour
+# (game.c picks it). StarPiece.cpp initColors (arg3 if 0..5, else random; StarPieceDirector's pieces in turn).
+# ponytail: StarPiece1_v is RAS + an environment map (no texgen here): the map's mean colour stands in (env_mean)
+MAT_COLOR = {"StarPiece": ("StarPiece1_v", [(0x80, 0x00, 0x99), (0xE6, 0xA0, 0x00), (0x46, 0xA1, 0x08),
+                                            (0x37, 0x5A, 0xA0), (0xBE, 0x33, 0x0B), (0x80, 0x80, 0x80)])}
 BRK_POSE = {"Tico": ("colorchange", 0), "TicoFat": ("normal", 0), "DinoPackunEggShellBreak": ("break", 0)}  # TicoFat: startBrk Normal, frame 0 (ponytail: FatRed as it grows)
 
 
@@ -333,7 +338,7 @@ def btk_entry(anim, material, mt, t, group):
     return struct.pack("<I", len(body)) + body
 
 
-def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None):
+def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat=None):
     """-> (groups [(verts, tris, uvs or None, texture or None, slots or None, colours or None, blend)], kcl bytes or
     None,
     skin chunk entry or None) for the first J3D model of an archive. texture = tex.to_ps2 dict of the group's material
@@ -378,6 +383,9 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None):
             lfiles = {k.lower().rsplit("/", 1)[-1]: v for k, v in files.items()}
             bp = brk or BRK_POSE.get(arc.stem)  # a BRK_ARG variant's (name, frame) first
             over = tex.brk(lfiles[bp[0] + ".brk"], bp[1]) if bp and bp[0] + ".brk" in lfiles else None
+            if mat:  # MAT_COLOR: (material, rgb)
+                over = dict(over or {})
+                over[mat[0]] = dict(over.get(mat[0], {}), mat=[c / 255 for c in mat[1]] + [1.0], env_mean=True)
             # MapObjActor::init (tryStartAllAnim(mObjectName)), OtaKingMagma (startBtk): the model's own-name BTK, played
             # at run time (anim_btk). ponytail: every model's, not only those classes'
             anim_tex = tex.btk(lfiles[arc.stem.lower() + ".btk"]) if arc.stem.lower() + ".btk" in lfiles else None
@@ -445,7 +453,7 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None):
                     stats["untextured"] = stats.get("untextured", 0) + 1
                 slots = cols = None
                 if t is None and mat is not None and not skinned:  # untextured: the TEV's constant colour
-                    cols = tuple(int(c * 255 + 0.5) for c in tex.tev(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs)[:3])
+                    cols = tuple(int(c * 255 + 0.5) for c in tex.tev(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, None, over)[:3])
                 if not skinned and clr and 11 in info["at"] and mat is not None and tex.vertex_colour(b, bl[b"MAT3"], mat):
                     # unlit, coloured per vertex (VROrbit's cloud layers fade to black): CLR0 times the flat colour
                     o, w = info["at"][11]
@@ -1159,15 +1167,17 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
         a, _, pose = a.partition("#")  # "<archive>#<BCK>": the model with that animation's last-frame visibility
         a, _, bv = a.partition("~")  # "<archive>~<BRK>:<frame>": baked at that BRK frame (BRK_ARG)
         brk = (bv.split(":")[0], int(bv.split(":")[1])) if bv else None
+        a, _, mk = a.partition("@")  # "<archive>@<k>": material colour k (MAT_COLOR)
+        mc = (MAT_COLOR[a][0], tuple(MAT_COLOR[a][1][int(mk)])) if mk else None
         cls = t.partition("~")[0]
         arc = fsp / "ObjectData" / f"{a}.arc"
         if not arc.exists():
             continue
-        key = (a, pose, ratio, brk)
+        key = (a, pose, ratio, brk, mc)
         if key not in _model_cache:
             st = {}
             _model_cache[key] = (model_groups(arc, ratio, st, cls in SKINNED or cls in SKINNED_OBJ or cls in AUTO_SKINNED,
-                                              pose or None, brk), st)
+                                              pose or None, brk, mc), st)
         (groups, kcl, sk), st = _model_cache[key]
         for k, v in st.items():
             if not k.startswith("_"):
@@ -1372,7 +1382,8 @@ def resident_pack(fs, ratio=0.99):
     """Models every scenario shares (phase 0b RESIDENT set, the ones the converter knows) + Mario + his clips."""
     fsp = Path(fs)
     names = list(RESIDENT) + list(SKINNED)
-    return blob_of(assets(fsp, [(t, t) for t in names], {}, ratio, fx=True) + [anim_chunk(fsp)]), set(names)
+    models = [(t, t) for t in names] + [(f"{c}@{k}", f"{c}@{k}") for c in MAT_COLOR for k in range(len(MAT_COLOR[c][1]))]
+    return blob_of(assets(fsp, models, {}, ratio, fx=True) + [anim_chunk(fsp)]), set(names)
 
 
 def read_chunks(blob):

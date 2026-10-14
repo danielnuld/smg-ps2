@@ -378,7 +378,7 @@ def tev(b, mat3, m, tex1, texs, base=None, over=None, max_stages=16, ras_k=1.0):
         return np.frombuffer(b, np.uint8, 4, off(table) + 4 * idx).astype(np.float32) / 255.0
 
     regs = [col(0x50, u16(b, e + 0xDC + 2 * k), True) for k in range(4)]   # C0, C1, C2, PREV
-    ov = (over or {}).get(material_name(b, mat3, m), {})  # a BRK's registers at its frame (brk)
+    ov = over.get(material_name(b, mat3, m), {}) if over else {}  # a BRK's registers at its frame (brk)
     for k, v in ov.get("reg", {}).items():
         if k < 4:
             regs[k] = np.array(v, np.float32)
@@ -390,6 +390,8 @@ def tev(b, mat3, m, tex1, texs, base=None, over=None, max_stages=16, ras_k=1.0):
             konst[k] = np.array(v, np.float32)
     mc = u16(b, e + 8)
     ras = col(0x20, mc, False) if mc != 0xFFFF and not vertex_colour(b, mat3, m) else np.ones(4, np.float32)
+    if "mat" in ov:  # MR::initDLMakerMatColor0: the actor's material colour 0
+        ras = np.array(ov["mat"], np.float32)
     ras = ras * np.array([ras_k, ras_k, ras_k, 1.0], np.float32)  # a lit channel's light level (bake)
     tex_cache = {}
     order = lambda stage: u16(b, e + 0xBC + 2 * stage)
@@ -400,9 +402,12 @@ def tev(b, mat3, m, tex1, texs, base=None, over=None, max_stages=16, ras_k=1.0):
     def texel(stage):
         oi = order(stage)
         tmap = b[off(0x4C) + 4 * oi + 1] if oi != 0xFFFF else 0xFF
-        if tmap == 0xFF or base is None:
+        if tmap == 0xFF or (base is None and not ov.get("env_mean")):
             return np.ones(shape + (4,), np.float32)
         t = sampled(oi)
+        if base is None:  # env_mean: a texgen'd (environment) texture on an untextured group, its mean colour
+            x = texs[t]["rgba"] if t < len(texs) else np.full((1, 4), 255, np.uint8)
+            return x.reshape(-1, 4).mean(0).astype(np.float32) / 255.0
         # a texture on other coordinates than the base's (environment maps, scrolling sparkles, projections) cannot
         # be laid over the base's texels: its mean colour stands in
         other = t != base and b[off(0x4C) + 4 * oi] != base_coord

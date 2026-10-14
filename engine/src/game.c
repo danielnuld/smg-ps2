@@ -290,7 +290,7 @@ static struct { int inst, cool; V3 pt, vel, side, front; } jb = {.inst = -1}; /*
 static struct { int inst, phase, t; } jet = {.inst = -1}; /* the JetTurtle Mario holds or threw (update_jets) */
 static struct { int inst, phase, t, spins; } flf = {.inst = -1}; /* the Fluff Mario rides (fluff_update) */
 static struct { int inst, phase, t, wait; V3 vel; } coc = {.inst = -1, .wait = -1}; /* SpaceCocoon Mario hangs on (cocoon_update) */
-typedef struct { V3 pos, vel; int t; } Shot; /* star pieces shot at the pointer (update_shots) */
+typedef struct { V3 pos, vel; int t, col; } Shot; /* star pieces shot at the pointer (update_shots); col: piece_col */
 #define MAX_SHOTS 8
 static Shot shots[MAX_SHOTS];
 static int test_l1; /* test builds: L1 pressed this frame */
@@ -561,6 +561,14 @@ static int box_pieces;          /* star pieces WoodBoxes hold (arg2) */
 static int pieces_cap, pieces_base; /* star piece slots: the placed ones, then launched ones (reused once gone) */
 static V3 *piece_vel;           /* a launched star piece's velocity (StarPiece::exeFall) */
 static short *piece_t;          /* its frames since launch, 0 a placed one */
+/* StarPiece.cpp initColors: a piece's colour k, drawn with the "StarPiece@k" model (slice.py MAT_COLOR, material colour 0
+ * of StarPiece1_v). Placed: arg3 if 0..5, else random; StarPieceDirector::getDeadStarPiece's pieces take mColorIndex,
+ * 0..5 in turn (piece_next) */
+#define PIECE_COLOURS 6
+static signed char *piece_col;
+static int piece_next;
+static const Model *m_pieces[PIECE_COLOURS];
+static int piece_colour_next(void) { int k = piece_next; piece_next = (piece_next + 1) % PIECE_COLOURS; return k; }
 #define MAX_WRECKS 16           /* break models / broken objects left (break_inst, update_wrecks) */
 static struct { const Model *brk, *left; float m[16]; int t, coins, pieces, row; V3 p, up; } wrecks[MAX_WRECKS];
 static int nwrecks;
@@ -1163,6 +1171,8 @@ void game_init(const Scene *s, const unsigned char *blob)
     piece_vel = mem_alloc(MEM_OBJECTS, pieces_cap * sizeof(V3));
     piece_t = mem_alloc(MEM_OBJECTS, pieces_cap * sizeof(short));
     memset(piece_t, 0, pieces_cap * sizeof(short));
+    piece_col = mem_alloc(MEM_OBJECTS, pieces_cap);
+    piece_next = 0;
     kuribo = mem_alloc(MEM_OBJECTS, nkuribo * sizeof(Kuribo));
     pops = mem_alloc(MEM_OBJECTS, (box_coins + 1) * sizeof(Pop));
     mario = mem_alloc(MEM_PLAYER, sizeof(Player));
@@ -1217,7 +1227,10 @@ void game_init(const Scene *s, const unsigned char *blob)
             ic += coin_group(coins + ic, r, blob);
         for (int k = c0; k < ic; k++) coins[k].row = i;
         for (int k = p0; k < ip; k++) purple[k].row = i;
-        for (int k = s0; k < is; k++) pieces[k].row = i;
+        for (int k = s0; k < is; k++) { /* placed: arg3 or random; a group's (new StarPiece, no arg3): random */
+            pieces[k].row = i;
+            piece_col[k] = r->type == t_piece && r->arg[3] >= 0 && r->arg[3] < PIECE_COLOURS ? r->arg[3] : rand() % PIECE_COLOURS;
+        }
     }
     npurple = ip;
     notes_spawn();
@@ -2757,6 +2770,11 @@ void game_rebind(void)
     m_coin = scene_model(s, "Coin");
     m_purple = scene_model(s, "PurpleCoin");
     m_piece = scene_model(s, "StarPiece");
+    for (int k = 0; k < PIECE_COLOURS; k++) {
+        char n[16];
+        snprintf(n, sizeof n, "StarPiece@%d", k);
+        m_pieces[k] = scene_model(s, n) ? scene_model(s, n) : m_piece;
+    }
     m_kuribo = scene_model(s, "Kuribo");
     m_takohei = scene_model(s, "TakoHei");
     m_packun = scene_model(s, "PackunPetit"); m_packunhead = scene_model(s, "PackunPetitHead");
@@ -7982,7 +8000,7 @@ static struct {
     int row, nrv, t, left, total, inflight, eat, g174, g178, item, has_rail, tk1, tk0; /* mMsgCtrl, _16C */
     float scale, flyd, flylen, m0[16]; /* m0: its matrix without its scale (setScale works on it) */
     Launch fly;
-    struct { V3 pos; int on; } gift[8];
+    struct { V3 pos; int on, col; } gift[8];
 } fats[MAX_FATS];
 enum { TF_PREP, TF_WAIT, TF_POINT, TF_EAT, TF_CHEM, TF_TEST, TF_FULLNESS, TF_DEMO, TF_FLY, TF_WIPEOUT, TF_WIPEIN, TF_INFO,
        TF_AFTER, TF_META, TF_GONE };
@@ -8094,6 +8112,7 @@ static void update_ticofat(void)
         if (feeding && f->g178 > 0 && (pad_held(PAD_L1) || test_feed) && f->t % 5 == 0 && got_pieces > 0) /* shootStarPiece */
             for (int g = 0; g < 8; g++) if (!f->gift[g].on) {
                 f->gift[g].on = 1; f->gift[g].pos = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+                f->gift[g].col = piece_colour_next(); /* giftToTarget: getDeadStarPiece */
                 got_pieces--; f->inflight++;
                 break;
             }
@@ -12836,6 +12855,7 @@ static void launch_pieces(V3 p, V3 up, int n, float h, float v)
         pieces[slot].pos = p;
         pieces[slot].row = -1;
         pieces[slot].alive = PICK_POP_NEW;
+        piece_col[slot] = piece_colour_next();
         piece_vel[slot] = vadd(vmul(vnorm(up), v), rnd);
         piece_t[slot] = 1;
     }
@@ -12891,6 +12911,7 @@ static void update_follow_groups(void)
                 float a = 6.2831853f * j / n;
                 pieces[slot].pos = vadd(row_pos(r), vadd(vmul(z, cosf(a) * rad), vmul(x, sinf(a) * rad)));
                 pieces[slot].row = -1; pieces[slot].alive = PICK_ON; piece_t[slot] = 0;
+                piece_col[slot] = rand() % PIECE_COLOURS; /* its own StarPiece, random */
                 o->slot[o->n++] = slot;
             }
             o->alive = 1; o->nrv = 0; o->step = -1; o->angle = 0;
@@ -14624,6 +14645,7 @@ static void shoot_piece(void)
             shots[i].pos = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
             shots[i].vel = vmul(vnorm(vsub(aim, shots[i].pos)), 40.0f);
             shots[i].t = 1;
+            shots[i].col = piece_colour_next(); /* MarioAccess: MR::getDeadStarPiece */
             got_pieces--;
             printf("star piece shot (%d left)" "\n", got_pieces);
             return;
@@ -15305,7 +15327,8 @@ void game_draw(void)
             for (int q = 0; im && q < n; q++) {
                 float am[16];
                 basis_matrix(am, bubble_item_pos(in, off[q]), v3(0, 1, 0), v3(0, 0, 1), row_step[in->row] * 8.0f * 0.0174533f);
-                if (r->arg[0] == 1) render_model(im, am, 0x60, 0xD0, 0xF0);
+                /* ponytail: its pieces' random colours (new StarPiece at init) fixed by row and slot */
+                if (r->arg[0] == 1) render_model(m_pieces[(in->row * 7 + q) % PIECE_COLOURS], am, 0x60, 0xD0, 0xF0);
                 else render_model(im, am, 0xF0, 0xD0, 0x30);
             }
             inst_draw(in, in->md, cm);
@@ -15495,11 +15518,15 @@ void game_draw(void)
     }
     draw_pickups(coins, ncoins, m_coin, 0xF0, 0xD0, 0x30, coin_rot);
     draw_pickups(purple, npurple, m_purple, 0xB0, 0x50, 0xF0, coin_rot);
-    draw_pickups(pieces, npieces, m_piece, 0x60, 0xD0, 0xF0, piece_rot);
+    for (int i = 0; m_piece && i < npieces; i++) {
+        if (!pickup_shown(&pieces[i])) continue;
+        basis_matrix(m, pieces[i].pos, pick_up(&pieces[i]), v3(0, 0, 1), piece_rot);
+        render_model(m_pieces[piece_col[i]], m, 0x60, 0xD0, 0xF0);
+    }
     for (int i = 0; m_piece && i < MAX_SHOTS; i++)
         if (shots[i].t) {
             basis_matrix(m, shots[i].pos, up_at(shots[i].pos, v3(0, 1, 0)), shots[i].vel, game_frame * 0.5f);
-            render_model(m_piece, m, 0x60, 0xD0, 0xF0);
+            render_model(m_pieces[shots[i].col], m, 0x60, 0xD0, 0xF0);
         }
     for (int i = 0; i < nkuribo; i++) {
         const Model *md = kuribo[i].kind == WALK_TAKOHEI ? m_takohei : kuribo[i].kind == WALK_PACKUN ? m_packun :
@@ -15667,7 +15694,7 @@ void game_draw(void)
     for (int k = 0; m_piece && k < nfats; k++) /* TicoFat's gifted star pieces */
         for (int g = 0; g < 8; g++) if (fats[k].gift[g].on) {
             basis_matrix(m, fats[k].gift[g].pos, up_at(fats[k].gift[g].pos, v3(0, 1, 0)), v3(0, 0, 1), piece_rot);
-            render_model(m_piece, m, 0x60, 0xD0, 0xF0);
+            render_model(m_pieces[fats[k].gift[g].col], m, 0x60, 0xD0, 0xF0);
         }
     draw_sambo_heads();
     if (m_bubble) for (int b = 0; b < MAX_BUBBLES; b++) { /* AirBubbleGenerator's bubbles */
