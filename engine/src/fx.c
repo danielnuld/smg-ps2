@@ -2,6 +2,7 @@
 
 #include "render.h"
 
+#include <ctype.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -217,7 +218,7 @@ void fx_anim(const char *clip, float from, float to, const float m[16], const fl
     u32 nc = (u32)(slash - clip);
     for (u32 i = 0; i < nautos; i++) {
         const FxAuto *a = &autos[i];
-        if (strncmp(a->cls, clip, nc) || a->cls[nc] || strcmp(a->clip, slash + 1)) continue;
+        if (a->start == 0xFFFF || strncmp(a->cls, clip, nc) || a->cls[nc] || strcmp(a->clip, slash + 1)) continue;
         float st = a->start;
         int on;
         if (a->end != 0xFFFF) on = to >= st && to <= a->end;      /* kept from its start to its end frame */
@@ -233,6 +234,30 @@ void fx_anim(const char *clip, float from, float to, const float m[16], const fl
         if (a->end != 0xFFFF) fx_keep(a->fx, (const char *)key + i, e);
         else fx_emit(a->fx, e);
     }
+}
+
+int fx_named(const char *cls, const char *name, const float m[16], const float (*world)[16], const void *key)
+{
+    char c[24], n[24];
+    int k = 0, hit = 0;
+    for (; cls[k] && k < 23; k++) c[k] = (char)tolower((unsigned char)cls[k]);
+    c[k] = 0;
+    for (k = 0; name[k] && k < 23; k++) n[k] = (char)tolower((unsigned char)name[k]);
+    n[k] = 0;
+    for (u32 i = 0; res && i < nautos; i++) {
+        const FxAuto *a = &autos[i];
+        if (a->start != 0xFFFF || strcmp(a->cls, c) || strcmp(a->clip, n)) continue;
+        float e[16], j[16], o[16];
+        if (a->joint >= 0 && world) mat_mul(j, m, world[a->joint]);
+        else memcpy(j, m, sizeof j);
+        mat_identity(o);
+        for (int q = 0; q < 3; q++) { o[5 * q] = a->scale; o[12 + q] = a->off[q]; }
+        mat_mul(e, j, o);
+        if (key) fx_keep(a->fx, (const char *)key + i, e);
+        else fx_emit(a->fx, e);
+        hit = 1;
+    }
+    return hit;
 }
 
 void fx_keep(int fx, const void *key, const float m[16])

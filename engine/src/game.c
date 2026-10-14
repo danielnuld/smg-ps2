@@ -1676,8 +1676,7 @@ static V3 kiraira_pos(const Inst *in, V3 *up)
 /* KillerGunnerSingle.cpp: Wait 120 frames, Charge until its KillerGunnerSingleCharge BTK stops (99 frames), Shoot
  * playing KillerGunnerSingleShoot: its "shell" sensor, 250 at (0, 0, 700) in its frame, valid from step 0 to 40,
  * hurts Mario (sendMsgEnemyAttackMaximum: damageLarge) and the nerve turns Attack; the BCK's end (59) back to Wait.
- * row_turn the nerve (0 Wait, 1 Charge, 2 Shoot, 3 Attack), row_step its step. ponytail: the charge BTK is not shown,
- * no KillerGunnerSingleSmoke effect (not in the FX table) */
+ * row_turn the nerve (0 Wait, 1 Charge, 2 Shoot, 3 Attack), row_step its step. ponytail: the charge BTK is not shown */
 static void update_kgunners(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -1689,6 +1688,7 @@ static void update_kgunners(void)
         if (*ph == 0 && *t == 120) { *ph = 1; *t = 0; }
         else if (*ph == 1 && *t >= 99) { /* isBtkStopped */
             obj_play(in, "killergunnersingleshoot", 0, 0);
+            fx_named("KillerGunnerSingle", "KillerGunnerSingleSmoke", in->m, in->anim ? (const float (*)[16])in->anim->world : NULL, NULL);
             *ph = 2; *t = 0;
         } else if (*ph == 2 || *ph == 3) {
             if (*ph == 2 && *t < 40 && !mario->hurt_timer) {
@@ -1711,7 +1711,7 @@ static void pop_coins(V3 p, V3 up, int n);
  * 1: arg1 star pieces (one at its centre, more in the ring); the items turn 8 degrees a frame. Mario's body sensor (100)
  * on its sensor (120 x scale) or a star piece shot bursts it (kill: the dead switch, the coins appearCoinFix, the star
  * pieces launched 24 against the gravity). ponytail: the coins pop instead of appearing fixed, no rail (Good Egg's
- * have none), no BubbleBreak effect (not in the FX table) */
+ * have none) */
 static int bubble_items(const Row *r, V3 *off)
 {
     int type = r->arg[0] > 0 ? r->arg[0] : 0, n = r->arg[1] > 1 ? r->arg[1] : 1;
@@ -1754,6 +1754,11 @@ static void bubble_burst(Inst *in)
         if (r->arg[0] == 1) launch_pieces(p, up, 1, 0.0f, 24.0f);
         else pop_coins(p, up, 1);
     }
+    float m[16]; /* exeBreak: emitEffect BubbleBreak */
+    memcpy(m, in->m, sizeof m);
+    V3 bp = bubble_pos(in);
+    m[12] = bp.x; m[13] = bp.y; m[14] = bp.z;
+    fx_named("ItemBubble", "BubbleBreak", m, NULL, NULL);
     row_kill(in->row);
     printf("item bubble %d bursts\n", in->row);
 }
@@ -6249,6 +6254,9 @@ static void update_dino(void)
             dino.bvel = vmul(vnorm(vsub(dino.bpos, head)), 0.3f * vlen(dino.bvel));
             dino.bstate = 4; dino.bt = 0;
             if (dino.nrv == DN_DAMAGE) { /* DinoPackunStateDamage: EggBroken / Damage / LastDamage */
+                float hm[16]; /* emitEffectHitBetweenSensors(Hit): between the ball and the head */
+                basis_matrix(hm, vmul(vadd(head, dino.bpos), 0.5f), up, dino.f, 0);
+                fx_named("DinoPackun", "Hit", hm, NULL, NULL);
                 dino.dnrv = egg ? DD_EGGBROKEN : dino.seq == DSEQ_LV3 ? DD_LASTDAMAGE : DD_DAMAGE; dino.dt = 0;
                 scene_stop = egg ? 5 : 15; /* exeEggBroken stopScene(5) / updateDamage stopScene(15) */
             }
@@ -6257,11 +6265,18 @@ static void update_dino(void)
         break;
     }
     V3 bc = vadd(dino.bpos, dino.bvel);
+    int bground = 0;
     if (dino.bstate != 5 && collide_n(&bc, bup, 135.0f, &gn, &wn, &wall)) { /* reboundVelocityFromCollision 0, 0, 1 */
         float into = vdot(dino.bvel, gn);
         if (into < 0) dino.bvel = vsub(dino.bvel, vmul(gn, into));
+        bground = vdot(gn, bup) > 0.5f;
     }
     dino.bpos = bc;
+    if (dino.bstate == 0 && bground && vlen(dino.bvel) > 5.0f) { /* exeWait: TailDrag while it drags on the ground */
+        float bm[16];
+        basis_matrix(bm, dino.bpos, bup, dino.bvel, 0);
+        fx_named("DinoPackunBall", "TailDrag", bm, NULL, &dino.bvel);
+    }
     /* the tail's locks (DinoPackunBattleEgg::appear, StateDamage exePunched: node 1; exeEggBroken: the end until 30;
      * updateDamage unlocks node 1) and _18 (DinoPackunStateAwake: 0.015 x the ease-out over 30 during Find) */
     dino.tlock1 = (egg && !(dino.nrv == DN_DAMAGE && dino.dnrv == DD_EGGBROKEN && dino.dt >= 30)) ||
@@ -6301,10 +6316,18 @@ static void update_dino(void)
  * start), AppearStar (gone), Dead. It turns to Mario at cTurnSpeedAccel 0.003 up to cTurnSpeedMax 1 a frame (dirToPlayer).
  * OtaKingMagma (its clips at the ripples) and the four OtaKingLongFoot (burning Mario) with it; hits x 8 star pieces
  * at each Damage / PowerUp. ponytail: no star pointer (coconut freeze, fire reflect, bubble reflect), no crown material
- * hiding (PowerUp step 83), the magma's BTK flow / bloom, no effects; its collision is an inst (otamagma) */
+ * hiding (PowerUp step 83), the magma's bloom, no LavaColumn / AngrySmoke effects; its collision is an inst (otamagma) */
 static int mario_hidden; /* MR::hidePlayer in a demo */
 static V3 ota_world(const float m[16], V3 l) { return v3(m[12] + m[0] * l.x + m[4] * l.y + m[8] * l.z, m[13] + m[1] * l.x + m[5] * l.y + m[9] * l.z, m[14] + m[2] * l.x + m[6] * l.y + m[10] * l.z); }
 /* a joint's point (its world matrix x the local offset), else the model's base point + offset when not streamed in */
+static void ota_fx(const char *name) /* MR::emitEffect(this, name): its row's joint and offset */
+{
+    float m[16];
+    basis_matrix(m, ota.pos, ota.up, ota.f, 0);
+    int posed = ota.anim && m_ota && ota.anim->skin == m_ota->skin;
+    fx_named("OtaKing", name, m, posed ? (const float (*)[16])ota.anim->world : NULL, NULL);
+}
+
 static V3 ota_joint(int j, V3 off)
 {
     float m[16];
@@ -6699,6 +6722,7 @@ static void update_ota(void)
                 float rnd = ota_rnd(2.5f, 5.0f);
                 ota_ball_aim(b, 15.0f, throw_ang + (ota.ec % 2 == ota.hits % 2 ? rnd : -rnd));
                 ota.ec++;
+                ota_fx("OtaKingCocoAttack");
                 printf("ota king: coconut thrown" "\n");
                 break;
             }
@@ -6716,6 +6740,7 @@ static void update_ota(void)
         if (ota.t == 31) ota_magma("fireattack"); /* cFireBallRippleStep */
         if (ota.t == 94) { /* throwFireBall: three, 0 / -30 / +30 */
             V3 tp = ota_joint(11, v3(-50.0f, 0, 0));
+            ota_fx("OtaKingFireAttack");
             for (int i = 0, n = 0; i < OTA_FIRES && n < 3; i++) if (!ota.fire[i].alive) {
                 float off = n == 0 ? 0.0f : (n % 2 == 0 ? 30.0f : -30.0f) * ((n + 1) / 2);
                 V3 up = up_at(tp, ota.up);
@@ -6920,6 +6945,32 @@ static V3 sambo_head_pos(int k, const Inst *in)
 {
     return sambos[k].hnrv == CH_CONNECTED ? sambo_joint(k, in, 3, v3(60.0f * sambos[k].s, 0, 0)) : vadd(sambos[k].hpos, vmul(sambos[k].up, 60.0f * sambos[k].s));
 }
+static void sambo_head_mtx(int k, const Inst *in, float m[16]) /* CocoSamboHead's base matrix */
+{
+    if (sambos[k].hnrv == CH_CONNECTED && in->anim) { /* initFixedPosition on Head, rotated (0, -90, -90) */
+        float bm[16], jm[16], r[16];
+        sambo_body_mtx(k, bm);
+        mat_mul(jm, bm, in->anim->world[3]);
+        mat_identity(r); /* (0, -90, -90): x -> -z ... y -> x, z -> -y */
+        r[0] = 0; r[1] = 0; r[2] = -1; r[4] = 1; r[5] = 0; r[6] = 0; r[8] = 0; r[9] = -1; r[10] = 0;
+        mat_mul(m, jm, r);
+    } else {
+        basis_matrix(m, sambos[k].hpos, sambos[k].up, sambos[k].hfront, 0);
+        for (int j = 0; j < 12; j++) m[j] *= sambos[k].s;
+    }
+}
+static void sambo_fx(int k, const Inst *in, const char *name) /* MR::emitEffect(this, name) */
+{
+    float m[16];
+    sambo_body_mtx(k, m);
+    fx_named("CocoSambo", name, m, in->anim ? (const float (*)[16])in->anim->world : NULL, NULL);
+}
+static void sambo_head_fx(int k, const Inst *in, const char *name) /* MR::emitEffect(mHead, name) */
+{
+    float m[16];
+    sambo_head_mtx(k, in, m);
+    fx_named("CocoSamboHead", name, m, sambos[k].head ? (const float (*)[16])sambos[k].head->world : NULL, NULL);
+}
 static int sambo_try_fall(int k) /* tryToFallHead */
 {
     int n = sambos[k].nrv;
@@ -6963,16 +7014,23 @@ static void update_sambos(void)
         int bloop = 0;
         switch (q->nrv) {
         case CS_HIDEWAIT: body = "hidewait"; bloop = 1; if (dm < search) sambo_set(k, CS_APPEAR); break;
-        case CS_APPEAR: body = "appear"; if (q->t == 1) sambo_turn(k, 180.0f); sambo_turn(k, 1.0f); if (q->t >= 139) sambo_set(k, CS_WAIT); break;
+        case CS_APPEAR: body = "appear"; if (q->t == 1) sambo_turn(k, 180.0f); sambo_turn(k, 1.0f);
+            if (q->t == 61) sambo_fx(k, in, "CocoSamboSmoke"); /* cAppearUpFrame 60 */
+            if (q->t >= 139) sambo_set(k, CS_WAIT);
+            break;
         case CS_WAIT: body = "wait"; bloop = 1; sambo_turn(k, 1.0f);
             if (dm < 700.0f) sambo_set(k, CS_ATTACK); else if (dm >= search + 100.0f) sambo_set(k, CS_HIDE);
             break;
-        case CS_HIDE: body = "hide"; if (q->t >= 99) sambo_set(k, CS_HIDEWAIT); break;
-        case CS_ATTACK: body = "attack"; if (q->t < 30) sambo_turn(k, 1.0f); if (q->t >= 169) sambo_set(k, CS_ATTACKINT); break;
+        case CS_HIDE: body = "hide"; if (q->t == 66) sambo_fx(k, in, "CocoSamboSmoke"); if (q->t >= 99) sambo_set(k, CS_HIDEWAIT); break;
+        case CS_ATTACK: body = "attack"; if (q->t < 30) sambo_turn(k, 1.0f);
+            if (q->t == 116) sambo_head_fx(k, in, "CocoSamboAttack"); /* checkPassBckFrame(115) */
+            if (q->t >= 169) sambo_set(k, CS_ATTACKINT);
+            break;
         case CS_ATTACKINT: body = "wait"; bloop = 1; sambo_turn(k, 1.0f); if (q->t >= 60) sambo_set(k, CS_WAIT); break;
         case CS_FALLHEAD: /* Hit; its head falls (HeadFall from its Head joint to the base) */
             body = "hit";
             if (q->t == 1) {
+                sambo_fx(k, in, "Hit");
                 q->hpos = sambo_joint(k, in, 3, v3(0, 0, 0));
                 V3 off = vsub(q->pos, q->hpos), vo = vmul(q->up, vdot(off, q->up)), ho = vtangent(off, q->up);
                 q->hvel = vadd(vmul(ho, 1.0f / 45.0f), vmul(q->up, (2.0f * vdot(vo, q->up) + 2.0f * 45.0f * 45.0f) / (2.0f * 45.0f)));
@@ -6981,13 +7039,16 @@ static void update_sambos(void)
                 sambo_hset(k, CH_FALL);
                 printf("coco sambo row %d: its head falls" "\n", in->row);
             }
-            if (q->t >= 80) sambo_set(k, CS_FALLHEADHIDE);
+            if (q->t >= 80) { /* isBckStopped */
+                sambo_fx(k, in, "DeathSmokeSpine1"); sambo_fx(k, in, "DeathSmokeSpine2"); sambo_fx(k, in, "DeathSmokeSpine3");
+                sambo_set(k, CS_FALLHEADHIDE);
+            }
             break;
         case CS_FALLHEADHIDE: body = "hidewait"; bloop = 1; if (q->hnrv == CH_CONNECTED) sambo_set(k, CS_RECOVERWAIT); break;
         case CS_RECOVERWAIT: body = "recover"; if (q->t >= 90) sambo_set(k, CS_RECOVER); break;
         case CS_RECOVER: body = "recover"; head = "recover"; if (q->t == 1) sambo_turn(k, 180.0f); if (q->t >= 89) sambo_set(k, CS_APPEAR); break;
-        case CS_PRESSY: head = "pressy"; if (q->t >= 35) { sambo_set(k, CS_DEAD); row_kill(in->row); } break;
-        case CS_BLOW: if (q->t >= 20) { sambo_set(k, CS_DEAD); row_kill(in->row); } break;
+        case CS_PRESSY: head = "pressy"; if (q->t >= 35) { sambo_head_fx(k, in, "DeathSmokeHead"); sambo_set(k, CS_DEAD); row_kill(in->row); } break;
+        case CS_BLOW: if (q->t >= 20) { sambo_head_fx(k, in, "DeathSmokeHead"); sambo_set(k, CS_DEAD); row_kill(in->row); } break;
         }
         switch (q->hnrv) { /* CocoSamboHead */
         case CH_FALL:
@@ -7055,17 +7116,7 @@ static void draw_sambo_heads(void)
         for (int i = 0; i < ninsts; i++) if (insts[i].row == sambos[k].row) in = &insts[i];
         if (!in) continue;
         float m[16];
-        if (sambos[k].hnrv == CH_CONNECTED && in->anim) { /* initFixedPosition on Head, rotated (0, -90, -90) */
-            float bm[16], jm[16], r[16];
-            sambo_body_mtx(k, bm);
-            mat_mul(jm, bm, in->anim->world[3]);
-            mat_identity(r); /* (0, -90, -90): x -> -z ... y -> x, z -> -y */
-            r[0] = 0; r[1] = 0; r[2] = -1; r[4] = 1; r[5] = 0; r[6] = 0; r[8] = 0; r[9] = -1; r[10] = 0;
-            mat_mul(m, jm, r);
-        } else {
-            basis_matrix(m, sambos[k].hpos, sambos[k].up, sambos[k].hfront, 0);
-            for (int j = 0; j < 12; j++) m[j] *= sambos[k].s;
-        }
+        sambo_head_mtx(k, in, m);
         if (m_sambohead->skin && sambos[k].head->skin == m_sambohead->skin) draw_skin(m_sambohead, m, sambos[k].head);
     }
 }
@@ -15551,6 +15602,8 @@ void game_draw(void)
             const Row *orow = &sc->objs[ota.row];
             mat_translate_rot_scale(m, orow->pos, orow->rot, orow->scale);
             draw_skin(m_otamagma, m, ota.magma);
+            fx_named("OtaKingMagma", "Steam", m, (const float (*)[16])ota.magma->world, &ota.magma); /* exeWait's, looping */
+            fx_named("OtaKingMagma", "BloomMagma", m, (const float (*)[16])ota.magma->world, &ota.magma);
         }
         for (int k = 0; k < 4 && m_otalfoot && m_otalfoot->skin && ota.nrv != OTA_APPEARSTAR; k++) {
             if (!ota.lnrv[k] || !ota.lfoot[k] || ota.lfoot[k]->skin != m_otalfoot->skin) continue; /* hideModel */

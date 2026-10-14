@@ -275,12 +275,17 @@ def pack(fs):
     return head + b"".join(defs) + b"".join(recs) + b"".join(autos), out_tex
 
 
+# classes whose emitEffect calls game.c makes by name (fx_named), besides the skinned ones (their joints: -1)
+NAMED = ("KillerGunnerSingle", "ItemBubble", "DinoPackunBall")
+
+
 def anim_effects(fs, auto, add_def):
-    """EffectKeeper's animation-driven AutoEffectList rows (AnimName set) of the skinned placed classes (slice.py
-    SKINNED_OBJ, their clips "<class>/<clip>"): each {char class[24], char clip[24] (lower case), u16 start, u16 end
-    (0xFFFF: one shot at start, else kept from start to end), u16 effect (FxDef index, added after FX's), s16 joint (the
-    model's JNT1 index, -1 its base), f32 offset[3] (joint space), f32 scale}. ponytail: no PrmColor / EnvColor, no
-    Follow (a one-shot stays where it was emitted)."""
+    """EffectKeeper's AutoEffectList rows of the skinned placed classes (slice.py SKINNED_OBJ) and NAMED: each
+    {char class[24], char clip[24], u16 start, u16 end, u16 effect (FxDef index, added after FX's), s16 joint (the
+    model's JNT1 index, -1 its base), f32 offset[3] (joint space), f32 scale}. Animation-driven rows (AnimName set):
+    clip its lower-case clip ("<class>/<clip>"), start its StartFrame, end 0xFFFF (one shot at start) or its EndFrame
+    (kept from start to end). The others (emitEffect by name: fx_named): clip their UniqueName in lower case, start
+    0xFFFF. ponytail: no PrmColor / EnvColor, no Follow (a one-shot stays where it was emitted)."""
     import slice as S
     import skin
     import tex
@@ -290,7 +295,7 @@ def anim_effects(fs, auto, add_def):
     ox, oy, oz, sv = num("OffsetX"), num("OffsetY"), num("OffsetZ"), num("ScaleValue")
     st, en = B.bcsv_column(auto, "StartFrame"), B.bcsv_column(auto, "EndFrame")
     out, def_of, joints_of = [], {}, {}
-    for c in S.SKINNED_OBJ:
+    for c in tuple(S.SKINNED_OBJ) + NAMED:
         arcname = S.ANIM_ARC.get(c, c)
         if c not in joints_of:
             arc = Path(fs) / "ObjectData" / f"{arcname}.arc"
@@ -301,11 +306,15 @@ def anim_effects(fs, auto, add_def):
                     names_ = [j["name"] for j in skin.joints(mb, tex.blocks(mb))]
             joints_of[c] = names_
         for i in range(len(g)):
-            if g[i] not in (c, arcname) or not an[i] or not e[i]:
+            if g[i] not in (c, arcname) or not e[i]:
                 continue
             if e[i] not in def_of:
                 def_of[e[i]] = add_def(e[i])
             j = joints_of[c].index(jn[i]) if jn[i] in joints_of[c] else -1
+            if not an[i]:  # emitEffect(<UniqueName>)
+                out.append(struct.pack("<24s24sHHHh4f", c.lower().encode()[:23], u[i].lower().encode()[:23], 0xFFFF,
+                                       0xFFFF, def_of[e[i]], j, ox[i], oy[i], oz[i], sv[i] or 1.0))
+                continue
             end = 0xFFFF if en[i] in (None, -1, 0xFFFFFFFF) or en[i] >= 0xFFFF else en[i]
             for clip in an[i].lower().split():  # "Eat2 Excite2 Joy2": each of them
                 out.append(struct.pack("<24s24sHHHh4f", c.lower().encode()[:23], clip.encode()[:23],

@@ -15,6 +15,10 @@ void fx_keep(int fx, const void *key, const float m[16]);
  * AutoEffectList ties to that clip (EffectKeeper: AnimName, StartFrame / EndFrame, JointName, Offset, ScaleValue) at
  * m * world[joint]; key: the instance (kept effects) */
 void fx_anim(const char *clip, float from, float to, const float m[16], const float (*world)[16], const void *key);
+/* emitEffect(actor, name): the AutoEffectList row of class `cls` (any case) with that UniqueName, at m * world[its joint]
+ * (world NULL: m) and its offset / scale; key NULL a one-shot, else kept while called each frame (deleteEffect: stop
+ * calling). 0 if the pack has no such row (tools/jpa.py anim_effects: skinned classes and NAMED) */
+int fx_named(const char *cls, const char *name, const float m[16], const float (*world)[16], const void *key);
 /* Step every emitter and particle one frame (60 Hz), then draw them (after the models). */
 void fx_update(void);
 void fx_draw(void);
