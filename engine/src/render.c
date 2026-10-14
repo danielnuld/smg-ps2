@@ -788,6 +788,40 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
     }
 }
 
+/* A drop shadow: a black disc of radius 1 in its XZ plane, blended half dark (ShadowSurface* draw at alpha 0x80), no
+ * depth written; built once as a one-batch static model and drawn with the blended instances. */
+#define SHADOW_SEG 16
+static Model shadow_md;
+static VuGroup shadow_vg;
+static u16 shadow_batch[2] = {3 * SHADOW_SEG, SHADOW_SEG + 1};
+static u8 shadow_data[((8 * (SHADOW_SEG + 1) + 15) & ~15) + 4 * 3 * SHADOW_SEG] __attribute__((aligned(16)));
+
+void render_shadow(const float world[16])
+{
+    if (!shadow_md.chain_xlu) {
+        s16 *pos = (s16 *)shadow_data; /* centre, then the ring, in steps of 1 / 4096 */
+        for (int i = 0; i < SHADOW_SEG; i++) {
+            float a = 6.2831853f * i / SHADOW_SEG;
+            pos[4 * (i + 1)] = (s16)(cosf(a) * 4096.0f);
+            pos[4 * (i + 1) + 2] = (s16)(sinf(a) * 4096.0f);
+        }
+        u8 *col = shadow_data + ((8 * (SHADOW_SEG + 1) + 15) & ~15);
+        for (int i = 0; i < SHADOW_SEG; i++) { /* black, the unique index in byte 3 */
+            col[12 * i + 3] = 0;
+            col[12 * i + 7] = 1 + i;
+            col[12 * i + 11] = 1 + (i + 1) % SHADOW_SEG;
+        }
+        shadow_vg.nverts = 3 * SHADOW_SEG; shadow_vg.tex = NO_TEX; shadow_vg.nbatch = 1;
+        shadow_vg.blend = 1; shadow_vg.zwrite = 0; shadow_vg.alpha = 0x80;
+        shadow_vg.batch = shadow_batch; shadow_vg.data = shadow_data;
+        shadow_md.name = "shadow"; shadow_md.vu_ngroups = 1; shadow_md.vu = &shadow_vg;
+        shadow_md.radius = 1.0f; shadow_md.qscale = 1.0f / 4096.0f;
+        FlushCache(0);
+        build_chain(&shadow_md);
+    }
+    draw_model(&shadow_md, world, NULL);
+}
+
 /* Depth back to "far" over the whole screen, colour untouched: what was drawn so far (the sky) stays behind
  * everything drawn after. In the VIF1 chain: FLUSH (VU1 and PATH1 done), then DIRECT a sprite with the colour masked,
  * the depth test off and z 0, then the frame mask and depth test back. */

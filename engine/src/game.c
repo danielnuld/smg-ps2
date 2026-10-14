@@ -14915,6 +14915,57 @@ static void draw_pickups(const Pickup *p, int n, const Model *md, u8 r, u8 g, u8
     }
 }
 
+/* ShadowController (createShadowControllerVolumeParam): from `start` above the drop position along the gravity, down
+ * `len` (setDropLength 1000) onto the map, a volume shadow there: rs across, rf along `front`, `off` ahead.
+ * ponytail: a half-dark disc flat on the face it hits (render_shadow), not a volume shading the ground's shape; the
+ * drop found by sphere steps (30, then halved 4 times); only within 3000 of the camera */
+static void draw_shadow(V3 pos, V3 up, V3 front, float rs, float rf, float off, float start, float len)
+{
+    front = vnorm(vtangent(front, up));
+    if (vlen(front) < 0.5f) front = vnorm(vtangent(v3(1, 0, 0), up));
+    pos = vadd(pos, vmul(front, off));
+    if (vlen(vsub(pos, cam_pos)) > 3000.0f) return;
+    Hit h[1];
+    float lo = -start, d = -start;
+    for (; d <= len && !kcl_query(vsub(pos, vmul(up, d)), 20.0f, h, 1); d += 30.0f) lo = d;
+    if (d > len) return;
+    for (int k = 0; k < 4; k++) {
+        float mid = (lo + d) * 0.5f;
+        if (kcl_query(vsub(pos, vmul(up, mid)), 20.0f, h, 1)) d = mid; else lo = mid;
+    }
+    if (!kcl_query(vsub(pos, vmul(up, d)), 20.0f, h, 1)) return;
+    V3 n = h[0].n, at = vadd(vsub(vsub(pos, vmul(up, d)), vmul(n, 20.0f)), vmul(n, 3.0f));
+    float m[16];
+    basis_matrix(m, at, n, front, 0);
+    for (int j = 0; j < 3; j++) { m[j] *= rs; m[8 + j] *= rf; }
+    render_shadow(m);
+}
+
+/* the walkers' shadows (their init: initShadowVolumeSphere / Oval, Shadow.bcsv's first row) */
+static void walker_shadow(const Kuribo *k)
+{
+    const Row *r = &sc->objs[k->row];
+    float rs = 0, rf = 0, off = 0, start = 50.0f, len = 1000.0f;
+    switch (k->kind) {
+    case WALK_KURIBO: case WALK_KARON: rs = 60.0f; break;
+    case WALK_TAKOHEI: rs = 60.0f; break;                   /* sShadowRadius */
+    case WALK_PACKUN: rs = 50.0f; break;                    /* Shadow.bcsv PackunPetit */
+    case WALK_KOTEBUG: case WALK_TAKOBO: rs = 70.0f * r->scale[1]; break;
+    case WALK_SPIDER: rs = 90.0f; off = -39.0625f; break;   /* Shadow.bcsv, DropOffsetZ */
+    case WALK_MERAMERA: rs = 50.0f * r->scale[0]; break;    /* 地面用: mScale.x * sShadowRadius */
+    case WALK_MKOOPA: rs = 115.0f; rf = 120.0f; off = 30.0f; break; /* Shadow.bcsv VolumeOval Size, DropOffsetZ */
+    case WALK_KARIKARI: rs = 30.0f; break;                  /* sSize */
+    case WALK_KMINI: rs = 40.0f; break;
+    case WALK_TERESA: rs = 80.0f * r->scale[0]; break;      /* onShadowFollowHostScale */
+    case WALK_UNIZO: rs = 106.36f; break;                   /* x sRadiusScale 1 */
+    case WALK_POIHANA: rs = 80.0f; break;
+    case WALK_PETARI: rs = 80.0f; start = 80.0f; break;     /* Shadow.bcsv DropStart */
+    default: return;                                        /* Butterfly, StinkBugSmall: none */
+    }
+    if (k->kind == WALK_TERESA && strcmp(sc->types + 32 * r->type, "TeresaChief") == 0) len = 3000.0f;
+    draw_shadow(k->pos, k->up, k->front, rs, rf > 0 ? rf : rs, off, start, len);
+}
+
 void game_draw(void)
 {
     V3 ce, cw, cu;
@@ -15254,6 +15305,7 @@ void game_draw(void)
         if (kuribo[i].state == KURIBO_DEAD || !md || !row_shown(kuribo[i].row)) continue;
         if (kuribo[i].kind == WALK_TERESA && kuribo[i].phase == 4) continue; /* hidden in a wall */
         if (kuribo[i].kind == WALK_PETARI && kuribo[i].phase) continue; /* hideModel */
+        walker_shadow(&kuribo[i]);
         basis_matrix(m, kuribo[i].pos, kuribo[i].up, kuribo[i].kind == WALK_STINKBUG || kuribo[i].kind == WALK_POIHANA ? stink_front(&kuribo[i]) : vsub(mario->pos, kuribo[i].pos), 0);
         if (kuribo[i].kind == WALK_UNIZO) { /* rolled about its side round its centre */
             const Kuribo *k = &kuribo[i];
@@ -15319,6 +15371,8 @@ void game_draw(void)
         m[8] = fly_z.x; m[9] = fly_z.y; m[10] = fly_z.z;
     }
     if (mario->press) for (int j = 4; j < 7; j++) m[j] *= mario->press_s; /* _3B0: squashed along his up */
+    if (!mario_hidden) /* ponytail: MarioShadow's volume (his posed model) as an oval of its bind pose's extent */
+        draw_shadow(mario->pos, mario->up, mario->face, 34.0f, 37.0f, 8.0f, 50.0f, 1000.0f);
     if (m_mario_skin && !(mario->hurt_timer & 4) && !mario_hidden)
         render_skinned(m_mario_skin, m, (const float (*)[16])mario_anim->drw);
     if (m_marioball) for (int b = 0; b < MAX_FIREBALLS; b++) { /* Fire Mario's balls, rolling */

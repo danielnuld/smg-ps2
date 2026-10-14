@@ -33,6 +33,8 @@ void render_strips(const Strip *st, int n);
  * u / v / uw / vh in texels, colour 0xAABBGGRR (0x80 = 1.0) modulating the texture, tex NO_TEX for flat */
 typedef struct { float x, y, w, h, u, v, uw, vh; u32 rgba; u16 tex, pad; } Quad;
 void render_quads(const Quad *q, int n);
+/* a drop shadow: a half-dark disc of radius 1 in the matrix's XZ plane (drawn with the blended instances) */
+void render_shadow(const float world[16]);
 /* Finish the frame (VIF chain, HUD, wait for the GS) and flip; returns EE cycles spent before the vsync wait. */
 u32 render_end(void);
 /* Depth reset to far over the screen (after the sky): later draws always cover what is there */
