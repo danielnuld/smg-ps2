@@ -364,7 +364,11 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
      window textures / beak / brlan curves, no talk camera, no sounds, no yes / no selector, no LuigiEvent),
      BTK at run time, shadows, wipes (WipeFade), actor cameras, animation / named effects, footprints and BRK-by-arg
      colours done 2026-10-14 (unrun; see above). Left for Good Egg: real lighting (TicoFat's pink), bloom models
-     (OtaKingMagmaBloom), TicoFat's FatRed / 喜び camera / screen effects, sound. (OtaKing's LavaColumn / AngrySmoke / Appear are animation-driven: fx_anim covers them.) Next step: real lighting, after the PCSX2 checks above.
+     (OtaKingMagmaBloom), TicoFat's FatRed / 喜び camera / screen effects, sound. (OtaKing's LavaColumn / AngrySmoke / Appear are animation-driven: fx_anim covers them.) Next step after the PCSX2 checks: star piece colours (the user
+     noticed they are all grey: StarPiece.cpp initColors[6] {80 00 99, E6 A0 00, 46 A1 08, 37 5A A0, BE 33 0B, 80 80 80},
+     arg3 if 0..5 else random, initDLMakerMatColor0 on StarPiece1_v; the bake uses the default and render_model ignores
+     its colour: six "StarPiece~k" models baked with MatColor0 = initColors[k], as BRK_ARG, each piece keeping its k),
+     then real lighting.
      MarioPress done (MarioPress.cpp checkVerticalPress, setPress 0 / 4 after Petari: press objects are the
      RailMoveObjPress classes; Dossun / RailBlock / TripodBossFixParts are not in the port; checkSidePressPre /
      checkSidePress need front / back walls and face velocities the port's collision lacks), talk / messages, sound effects, real lighting, wipes, multi-actor cameras (Dino damage camera),
