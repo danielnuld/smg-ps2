@@ -343,8 +343,12 @@ blend state can stall for a while (Vulkan pipelines compiling): not a hang.
 Dino, Tico's eyes, TicoFat, FlipPanel; OtaKing's env stages come first, not covered). The Plant climb pose follows
 Petari (base matrix up along the rail, GrowPlantHangUp swings his body out from its frame 18: SMG's spiral climb);
 `vine` with XF=-DVINE_CLOSE puts the camera 450 from him.
-Left for Good Egg, in order: OtaKing's bath rim crevice,
-talk balloon window textures / beak, TicoFat's fullness meter and info message, sound last (the user's call).
+cfde7b6 layouts (tools/layout.py: BRLYT pic / window panes with their TPL textures, nine-piece frames, alpha down
+the pane tree, groups; LAYO in the FONT chunk): TalkBalloonEvent and SignBoardBalloon drawn from them (`talk`
+EggStar 1 SignBoard and Tico checked). 6b89acc TicoFat's Info: InformationPlanet in InformationWindow until A
+(`fat`). The fullness meter needs BRLAN (StarPieceTargetCounter slides in from x 500 in Appear; the meter's fill
+is a masked texture animation): next, a brlan reader (pai1: RLPA pane SRT / alpha at a frame, RLTS texture SRT).
+Left for Good Egg, in order: the fullness meter (brlan), OtaKing's bath rim crevice, the short (stretch) balloon's layout, sound last (the user's call).
 
 **Parked 2026-10-14 (the user's call: Good Egg first), resume later:** the coverage-run session stopped mid-work.
 f8ff9e6 (untested, committed as it stood): gravities follow their switches (GlobalGravityObj::updateSwitch; SW_SLEEP
