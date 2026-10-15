@@ -3401,7 +3401,13 @@ int game_test_orock(void) /* the first OtaRock: Mario 700 in front, spinning at 
         if (!in->orock || row_dead[in->row]) continue;
         int k = orock_of(in->row);
         if (k < 0) return -1;
-        V3 at = vadd(orocks[k].pos, vmul(vnorm(vtangent(v3(in->m[8], in->m[9], in->m[10]), orocks[k].up)), 700.0f));
+        V3 dir = vnorm(vtangent(v3(in->m[8], in->m[9], in->m[10]), orocks[k].up));
+        for (int j = 0; j < ninsts; j++) /* a raised PhantomShipBridge between them (OceanTwinPirates): from its side */
+            if (insts[j].bridge == 1 && vlen(vsub(v3(insts[j].m[12], insts[j].m[13], insts[j].m[14]), orocks[k].pos)) < 1500.0f) {
+                V3 away = vtangent(vsub(orocks[k].pos, v3(insts[j].m[12], insts[j].m[13], insts[j].m[14])), orocks[k].up);
+                if (vlen(away) > 1e-3f) dir = vnorm(away);
+            }
+        V3 at = vadd(orocks[k].pos, vmul(dir, 700.0f));
         if (vlen(vsub(mario->pos, at)) > 300.0f) { mario->pos = vadd(at, vmul(orocks[k].up, 100.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
         V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
         for (int b = 0; b < 4; b++)
