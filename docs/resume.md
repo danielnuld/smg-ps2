@@ -402,8 +402,12 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
      host tests pass): tools/light.py (LGHT), tools/lighttype.py -> light_types.json (TLGT), VUMD lit byte + normals,
      BATCH 60, VU1Lit program, VU mem: double buffers from 16, UV matrix 8..10, light colours 11..14. Full repack
      2026-10-15 (the disc image is stale). ponytail left: Alpha2 / coin specular / point lights, non-player actors
-     switch area at once, bake gain heuristic (RAS 1 or 0.5) still decides the texture's level. Next: TicoFat's pink
-     (FatRed BRK as it grows), bloom, the TEASER demos (vine black hole).
+     switch area at once, bake gain heuristic (RAS 1 or 0.5) still decides the texture's level.
+     TicoFat's pink done (d747526, checked in `fat`): slice.py BRK_STEPS "TicoFat~0..3" (FatRed frames 0 / 20 / 39 /
+     59), game.c fat_model by setScale. With it: materials whose RAS is CLR0 get per vertex the TEV at their CLR0
+     (ras_colour, textures read 1) and the texture divided by that factor at the mean (exact for TEX x f(RAS):
+     PeanutPlanet, the egg planets); it changed every pack (full repack 2026-10-15). Next: bloom (OtaKingMagmaBloom,
+     BloomCube), the TEASER demos (vine black hole), DropOfWater's env map.
      MarioPress done (MarioPress.cpp checkVerticalPress, setPress 0 / 4 after Petari: press objects are the
      RailMoveObjPress classes; Dossun / RailBlock / TripodBossFixParts are not in the port; checkSidePressPre /
      checkSidePress need front / back walls and face velocities the port's collision lacks), talk / messages, sound effects, real lighting, wipes, multi-actor cameras (Dino damage camera),
