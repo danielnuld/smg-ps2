@@ -1919,6 +1919,7 @@ static void bubble_burst(Inst *in)
     V3 bp = bubble_pos(in);
     m[12] = bp.x; m[13] = bp.y; m[14] = bp.z;
     fx_named("ItemBubble", "BubbleBreak", m, NULL, NULL);
+    { float at[3] = {bp.x, bp.y, bp.z}; se_start(SE_OJ_ITEM_BUBBLE_BREAK, at); if (r->arg[0] == 1) se_start(SE_OJ_STAR_PIECE_BURST, at); }
     row_kill(in->row);
     printf("item bubble %d bursts\n", in->row);
 }
@@ -10788,6 +10789,7 @@ static void hurt_mario(V3 from, float push)
 /* n coins popping out at p (CoinHolder::appearCoinPop): 25 against gravity, randomized by 4 when several */
 static void pop_coins(V3 p, V3 up, int n)
 {
+    if (n > 0) se_start(SE_SY_COIN_APPEAR_S, NULL); /* CoinHolder addToCoinHolder (ME_COIN_APPEAR_S's alternative) */
     for (int k = 0; k < n; k++) {
         V3 rnd = n > 1 ? v3((rand() % 801 - 400) / 100.0f, (rand() % 801 - 400) / 100.0f, (rand() % 801 - 400) / 100.0f)
                        : v3(0, 0, 0);
@@ -13737,6 +13739,15 @@ static void break_inst(const Inst *in, int drops)
     V3 up = up_at(p, mario->up);
     const char *name = sc->types + 32 * r->type;
     int box = strcmp(name, "WoodBox") == 0, cage = strcmp(name, "CrystalCageS") == 0 || strcmp(name, "CrystalCageM") == 0;
+    { /* their break sounds: WoodBox::doHit (and its explosion out of water), PunchBox, CrystalCage::exeBreak (L its own) */
+        float at[3] = {p.x, p.y, p.z}, depth;
+        int wet = in_water(p, up, &depth);
+        if (box) { se_start(wet ? SE_OJ_WOOD_BOX_BREAK_W : SE_OJ_WOOD_BOX_BREAK, at); if (!wet) se_start(SE_EM_EXPLODE_S, at); }
+        else if (!strcmp(name, "PunchBox")) se_start(wet ? SE_OJ_PUNCH_BOX_BREAK_W : SE_OJ_PUNCH_BOX_BREAK, at);
+        else if (cage) se_start(SE_OJ_CRYSTAL_CAGE_S_BREAK, at);
+        else if (!strcmp(name, "CrystalCageL")) se_start(SE_OJ_CRYSTAL_CAGE_L_BREAK, at);
+        if ((box || !strcmp(name, "PunchBox")) && sp) se_start(SE_OJ_STAR_PIECE_BURST, at);
+    }
     if ((box || cage) && nwrecks < MAX_WRECKS) {
         char v[48];
         snprintf(v, sizeof v, "%s#%s", name, name);
