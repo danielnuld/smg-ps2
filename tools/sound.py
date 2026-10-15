@@ -947,7 +947,36 @@ def mario_table(out_h):
     return len(rows)
 
 
-def pack(fs, out_bin, ids_h, sources, cap=16000, budget=1850000):
+def scene_types(scene_bin):
+    """the placed class names of a scene.bin (its TYPE chunk: u32 n, n x name[32])"""
+    b = Path(scene_bin).read_bytes()
+    o = 16
+    while o < len(b):
+        tag, size = b[o:o + 4], struct.unpack_from("<I", b, o + 4)[0]
+        if tag == b"TYPE":  # chunks: tag, u32 size, 8 pad, the payload (16-aligned): tools/slice.py chunk()
+            n = struct.unpack_from("<I", b, o + 16)[0]
+            return {b[o + 20 + 32 * i:o + 52 + 32 * i].split(b"\0")[0].decode() for i in range(n)}
+        o += 16 + size
+    return set()
+
+
+def scenario_keep(placed):
+    """the SE names a scenario may play, by phase 0c's rule (tools/sfxcut.py: Petari's code per class, placement):
+    -> (names some placed class or global code names, every name some class file names). A name no placed class
+    and no global code names, but some class does, is left out; a name no file names (sound tables) stays."""
+    import sfxcut as C
+    cut = C.Cutter()
+    files = cut.files_for(placed)
+    keep = set(cut.global_names)
+    for f in files:
+        keep |= cut.sounds[f]
+    for n in placed:
+        keep |= cut.stage_fx.get(n, set())
+    known = set().union(*cut.sounds.values())
+    return keep, known
+
+
+def pack(fs, out_bin, ids_h, sources, cap=16000, budget=1850000, scene=None):
     """sound.bin for the engine (se.c) and se_ids.h (every SE name -> its JAISoundID):
     'SNDB', then u32 pairs (offset, count / size): BSC bytes, banks {u16 bank, u16 wsys, u32 IBNK offset} (8 B),
     SEs {u32 id, u32 sequence offset in the BSC, u8 priority, u8 volume (x 255), u16 pad} (12 B, sorted by id),
@@ -964,9 +993,14 @@ def pack(fs, out_bin, ids_h, sources, cap=16000, budget=1850000):
     d = baa.d
     mario_h = Path(ids_h).with_name("mario_snd.h")
     mario_table(mario_h)
-    sources = list(sources) + [mario_h]
     names = {n for src in sources for n in re.findall(r"\bSE_[A-Z0-9_]+\b", Path(src).read_text(errors="ignore"))
              if n in baa.ids and baa.ids[n][0] == 0}
+    # Mario's table: only the entries the sources play (mario_sound("<key>"), its 声 voice, its water companion)
+    keys = {k for src in sources for k in re.findall(r'mario_sound\("([^"]+)"\)', Path(src).read_text("utf-8", "ignore"))}
+    for key, se, kind, comp in re.findall(r'\{"([^"]+)", (SE_[A-Z0-9_]+), (\d+), ("[^"]*"|NULL)\}',
+                                          mario_h.read_text("utf-8")):
+        if key in keys or (key.startswith("声") and key[1:] in keys):
+            names.add(se)
     bas = {}  # "<archive>/<clip>" lower case -> the .bas bytes' entries (0x20 each, big-endian as on disc)
     from budget import rarc_files
     for arc in BAS_ARCS:
@@ -979,6 +1013,14 @@ def pack(fs, out_bin, ids_h, sources, cap=16000, budget=1850000):
                     nm = baa.names.get((w >> 24, (w >> 16) & 0xFF, w & 0xFFFF))
                     if nm and w >> 24 == 0:
                         names.add(nm)
+    if scene:  # a scenario's own pack: SYSTEM / PLAYER sounds always, the rest when a placed class may play them
+        placed = scene_types(scene)
+        keep, known = scenario_keep(placed)
+        placed_l = {t.lower() for t in placed}
+        bas = {k: v for k, v in bas.items() if k.split("/")[0] in placed_l or k.startswith("marioanime/")}
+        bas_names = {baa.names.get((U32(v, 0x20 * i) >> 24, (U32(v, 0x20 * i) >> 16) & 0xFF, U32(v, 0x20 * i) & 0xFFFF))
+                     for v in bas.values() for i in range(len(v) // 0x20)}
+        names = {n for n in names if baa.ids[n][1] in (0, 1, 2) or n in keep or n not in known or n in bas_names}
     names = sorted(names)
     Path(ids_h).write_text("/* SE names -> JAISoundID (section << 24 | group << 16 | index), tools/sound.py pack */\n"
                            "#ifndef SE_IDS_H\n#define SE_IDS_H\n" +
@@ -1008,7 +1050,16 @@ def pack(fs, out_bin, ids_h, sources, cap=16000, budget=1850000):
     blob, wrows = bytearray(), []
     for ws, wid in sorted(waves):
         pcm, rate, base, loop = info[(ws, wid)]
-        adp, r2, n, ls = ps2_wave(pcm, rate, loop, waves[(ws, wid)] * scale)
+        c = round(waves[(ws, wid)] * scale)
+        cf = Path("out/sound_cache") / f"{ws}_{wid}_{c}.bin"
+        if cf.exists():
+            d_ = cf.read_bytes()
+            r2, n, ls = struct.unpack_from("<fIi", d_, 0)
+            adp, ls = d_[12:], (None if ls < 0 else ls)
+        else:
+            adp, r2, n, ls = ps2_wave(pcm, rate, loop, c)
+            cf.parent.mkdir(parents=True, exist_ok=True)
+            cf.write_bytes(struct.pack("<fIi", r2, n, -1 if ls is None else ls) + adp)
         wrows.append(struct.pack("<HHIIIfB3x", ws, wid, len(blob), n, 0xFFFFFFFF if ls is None else ls, r2, base))
         blob += adp
     banks = sorted(baa.banks.items())
@@ -1080,10 +1131,14 @@ if __name__ == "__main__":
     if sys.argv[1] == "--selftest":
         selftest()
         sys.exit(0)
-    if sys.argv[1] == "--pack":  # --pack fs out/packs/sound.bin engine/src/se_ids.h [cap Hz] sources...
+    if sys.argv[1] == "--pack":  # --pack fs out.bin engine/src/se_ids.h [cap Hz] [--scene scene.bin] sources...
         a = sys.argv[2:]
+        scene = None
+        if "--scene" in a:
+            scene = a[a.index("--scene") + 1]
+            a = [x for x in a if x not in ("--scene", scene)]
         cap = int(a[3]) if a[3].isdigit() else 16000
-        pack(a[0], a[1], a[2], [x for x in a[3:] if not x.isdigit()], cap)
+        pack(a[0], a[1], a[2], [x for x in a[3:] if not x.isdigit()], cap, scene=scene)
         sys.exit(0)
     args = sys.argv[2:]
     out = Path("out/sound")

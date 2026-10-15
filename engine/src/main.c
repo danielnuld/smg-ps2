@@ -443,7 +443,13 @@ static const u8 *load_packs(Scene *s)
     u32 before_resident = pack_bytes;
     if (blob_add(s, load_file("resident.bin")) != 0)
         return NULL;
-    se_load(load_file("sound.bin"));
+    { /* the scenario's sound pack (tools/sound.py --pack --scene), else the shared one */
+        Pack sp;
+        snprintf(path, sizeof path, "%s/sound.bin", scen);
+        int own = pack_open(&sp, path);
+        if (own) pack_close(&sp);
+        se_load(load_file(own ? path : "sound.bin"));
+    }
     resident_bytes = pack_bytes - before_resident; /* its own budget (milestone 1), not the scenario room */
     snprintf(path, sizeof path, "%s/common.bin", scen);
     if (blob_add(s, load_file(path)) != 0)
