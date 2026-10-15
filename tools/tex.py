@@ -479,10 +479,12 @@ def lit(b, mat3, m):
     return ci != 0xFFFF and b[off(0x28) + 8 * ci] != 0
 
 
-def bake(b, mat3, m, tex1, texs, t, over=None):
+def bake(b, mat3, m, tex1, texs, t, over=None, info=None):
     """Texture t with material m's TEV baked in (tev), RGBA8, keeping the texture's own alpha (cut-outs; the TEV alpha
     often reads lit channels). ponytail: a result near white where the texture is not (RAS from lit or second colour
-    channels, e.g. Coin's env-map stages) falls back to the plain texture; real lighting would fix those."""
+    channels, e.g. Coin's env-map stages) falls back to the plain texture; real lighting would fix those.
+    info (a dict) gets "gain": the light level the texture stands for is RAS 1 (gain 1) or RAS 0.5 (gain 2: the
+    engine's lighting doubles the channel colour, as the shaders' TEX x RAS x 2 do)."""
     src = texs[t]["rgba"]
     out = (tev(b, mat3, m, tex1, texs, t, over) * 255 + 0.5).astype(np.uint8)
     if lit(b, mat3, m):
@@ -495,11 +497,15 @@ def bake(b, mat3, m, tex1, texs, t, over=None):
         d2 = abs(half[..., :3].astype(np.float32).mean() - src[..., :3].mean())
         if d2 < d1:
             out = half
+            if info is not None:
+                info["gain"] = 2
     out[..., 3] = src[..., 3]
     if out[..., :3].mean() > 240 and src[..., :3].mean() < 200:
         # saturated by stages that need real lighting (Tico's rim light): with a BRK's registers (its colour) the first
         # stage alone (TEX x RAS + C0) when that keeps a colour, else the plain texture
         one = (tev(b, mat3, m, tex1, texs, t, over, 1) * 255 + 0.5).astype(np.uint8) if over else None
+        if info is not None:
+            info["gain"] = 1
         if one is not None and one[..., :3].mean() <= 240:
             one[..., 3] = src[..., 3]
             return one

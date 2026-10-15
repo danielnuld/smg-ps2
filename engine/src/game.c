@@ -224,8 +224,131 @@ static const Model *brk_model(int row, const char *cls, int arg)
     return scene_model(sc, n);
 }
 /* a skinned model drawn with its anim's pose, after the effects its clip passed this frame (EffectKeeper: fx_anim) */
+static const Model *m_mario_skin; /* Mario.arc, skinned (SKIN chunk) */
+/* LightFunction / LightDataHolder / LightZoneDataHolder / LightAreaHolder / ActorLightCtrl after Petari (tools/light.py
+ * LGHT): area lights, each with its actor light types (getTargetActorLight: 0 Player, 1 Strong, 2 Weak, 3 Planet) as
+ * render lights, positions in the world (FollowCamera ones are in view space: through the camera each frame,
+ * calcLightWorldPos). An actor's area light: the first LightCtrlCube / Cylinder holding it (sorted by arg1), its
+ * zone's LightID arg0 (Light<Zone>.bcsv), else デフォルト; outside every area the stage's default. Each class's type
+ * is its draw buffer's (TLGT, tools/lighttype.py); classes not found there: skinned Strong, static Planet. The
+ * player's light blends to a new area over its Interpolate frames (30 if -1; updateLightBlend).
+ * ponytail: other actors switch area at once (their area looked up every 30 frames), the blend mixes world positions
+ * (blendActorLightPos mixes view-space ones when FollowCamera differs), no area switches, no Alpha2 / coin / point
+ * lights */
+enum { LIGHT_PLAYER, LIGHT_STRONG, LIGHT_WEAK, LIGHT_PLANET };
+static const unsigned char *lght;
+static u32 nlarea;               /* LGHT area lights */
+static RenderLight *alights;     /* per area light its 4 types, this frame */
+static int *lareas, nlareas;     /* LightCtrlCube / Cylinder rows, by arg1 (LightAreaHolder::sort) */
+static signed char *row_larea;   /* per row its area light (-1 not looked up), and the frame it was */
+static unsigned *row_larea_t;
+static struct { int area, from, t, n; RenderLight cur; } plight; /* the player's ActorLightCtrl (area -1: none yet) */
+static int area_inside(const Row *r, V3 p);
+static unsigned game_frame;
+static void lights_init(void)
+{
+    nlarea = lght ? *(const u32 *)lght : 0;
+    alights = mem_alloc(MEM_SCENE, (nlarea ? nlarea : 1) * 4 * sizeof(RenderLight));
+    memset(alights, 0, (nlarea ? nlarea : 1) * 4 * sizeof(RenderLight));
+    int tc = scene_type(sc, "LightCtrlCube"), ty = scene_type(sc, "LightCtrlCylinder");
+    nlareas = 0;
+    for (u32 i = 0; i < sc->nobjs; i++) nlareas += sc->objs[i].type == tc || sc->objs[i].type == ty;
+    lareas = mem_alloc(MEM_SCENE, (nlareas + 1) * sizeof(int));
+    nlareas = 0;
+    for (u32 i = 0; i < sc->nobjs; i++) if (sc->objs[i].type == tc || sc->objs[i].type == ty) lareas[nlareas++] = i;
+    for (int i = 0; i < nlareas - 1; i++) { /* LightAreaHolder::sort: selection by arg1, swapping */
+        int sel = i;
+        for (int j = i + 1; j < nlareas; j++) if (sc->objs[lareas[sel]].arg[1] > sc->objs[lareas[j]].arg[1]) sel = j;
+        int t = lareas[i]; lareas[i] = lareas[sel]; lareas[sel] = t;
+    }
+    row_larea = mem_alloc(MEM_SCENE, sc->nobjs + 1);
+    memset(row_larea, -1, sc->nobjs + 1);
+    row_larea_t = mem_alloc(MEM_SCENE, (sc->nobjs + 1) * sizeof(unsigned));
+    plight.area = -1;
+}
+
+/* tryFindLightID + getAreaLightNameInZoneData + findAreaLight: the area light at p */
+static int light_area_at(V3 p)
+{
+    if (!lght) return 0;
+    for (int i = 0; i < nlareas; i++) {
+        const Row *r = &sc->objs[lareas[i]];
+        if (!area_inside(r, p)) continue;
+        const unsigned char *z = lght + 16 + 208 * nlarea;
+        for (u32 k = 0, nz = *(const u32 *)(lght + 8); k < nz; k++) {
+            u32 n = *(const u32 *)z;
+            if (k == r->zone)
+                for (u32 j = 0; j < n; j++)
+                    if (*(const s32 *)(z + 4 + 8 * j) == r->arg[0]) return (int)*(const u32 *)(z + 8 + 8 * j);
+            z += 4 + 8 * n;
+        }
+        return (int)*(const u32 *)(lght + 12);
+    }
+    return (int)*(const u32 *)(lght + 4);
+}
+
+static void blend_light(RenderLight *o, const RenderLight *a, const RenderLight *b, float k)
+{
+    for (int c = 0; c < 3; c++) {
+        for (int l = 0; l < 2; l++) {
+            o->col[l][c] = a->col[l][c] + (b->col[l][c] - a->col[l][c]) * k;
+            o->pos[l][c] = a->pos[l][c] + (b->pos[l][c] - a->pos[l][c]) * k;
+        }
+        o->amb[c] = a->amb[c] + (b->amb[c] - a->amb[c]) * k;
+    }
+}
+
+static void lights_update(V3 eye, V3 target, V3 up, V3 player)
+{
+    if (!lght) return;
+    V3 back = vnorm(vsub(eye, target)), right = vnorm(vcross(up, back)), u = vcross(back, right);
+    for (u32 ar = 0; ar < nlarea; ar++)
+        for (int t = 0; t < 4; t++) {
+            const unsigned char *ty = lght + 16 + 208 * ar + 16 + 48 * t;
+            RenderLight *L = &alights[4 * ar + t];
+            for (int k = 0; k < 2; k++) {
+                const unsigned char *l = ty + 20 * k;
+                const float *pos = (const float *)(l + 4);
+                V3 w = *(const u32 *)(l + 16) ? vadd(eye, vadd(vadd(vmul(right, pos[0]), vmul(u, pos[1])), vmul(back, pos[2])))
+                                             : v3(pos[0], pos[1], pos[2]);
+                L->pos[k][0] = w.x; L->pos[k][1] = w.y; L->pos[k][2] = w.z;
+                for (int c = 0; c < 3; c++) L->col[k][c] = l[c] / 255.0f;
+            }
+            for (int c = 0; c < 3; c++) L->amb[c] = ty[40 + c] / 255.0f;
+        }
+    /* the player: tryFindNewAreaLight, then updateLightBlend from the old area's light to the new one */
+    int a = light_area_at(player);
+    if (a != plight.area) {
+        int it = *(const s32 *)(lght + 16 + 208 * a);
+        plight.from = plight.area; plight.t = 0;
+        plight.n = plight.area < 0 || it == 0 ? 0 : it < 0 ? 30 : it;
+        plight.area = a;
+    }
+    const RenderLight *to = &alights[4 * a + LIGHT_PLAYER];
+    if (plight.n && ++plight.t < plight.n) blend_light(&plight.cur, &alights[4 * plight.from + LIGHT_PLAYER], to, (float)plight.t / plight.n);
+    else { plight.n = 0; plight.cur = *to; }
+}
+
+static const RenderLight *default_light(int t)
+{
+    return &alights[4 * (lght ? *(const u32 *)(lght + 4) : 0) + t];
+}
+
+/* the light of a placed row's class (TLGT; `dflt` when its class is not known) in the area light holding p */
+static void use_row_light(int row, V3 p, int dflt)
+{
+    if (row < 0) { render_light(default_light(dflt)); return; }
+    int t = sc->type_light ? sc->type_light[sc->objs[row].type] : 255;
+    if (row_larea[row] < 0 || game_frame - row_larea_t[row] >= 30) {
+        row_larea[row] = (signed char)light_area_at(p);
+        row_larea_t[row] = game_frame;
+    }
+    render_light(&alights[4 * row_larea[row] + (t < 4 ? t : dflt)]);
+}
+
 static void draw_skin(const Model *md, const float m[16], Anim *a)
 {
+    if (md == m_mario_skin) render_light(&plight.cur);
     if (a->clip_id >= 0) {
         fx_anim(sc->clips[a->clip_id].name, a->fx_seen == a->clip_id + 1 ? a->fx_frame : -1.0f, a->frame, m,
                 (const float (*)[16])a->world, a);
@@ -637,7 +760,6 @@ static float coin_rot, qcoin_rot, piece_rot, star_rot;
 static V3 cam_pos;
 static const Model *m_packunhead;
 static const Model *m_coin, *m_purple, *m_piece, *m_kuribo, *m_takohei, *m_packun, *m_kotebug, *m_spider, *m_meramera, *m_takobo, *m_mkoopa, *m_kari, *m_kmini, *m_karon, *m_teresa, *m_stink, *m_unizo[3], *m_note, *m_poihana, *m_petari;
-static const Model *m_mario_skin; /* Mario.arc, skinned (SKIN chunk) */
 static Anim *mario_anim;
 /* ElectricRail (Petari ElectricRail.cpp, ElectricRailHolder.cpp): one segment per pair of rail points, arg0 rails
  * stacked 100 apart against gravity (default 1) */
@@ -1443,6 +1565,8 @@ void game_init(const Scene *s, const unsigned char *blob)
     cam_pos = vadd(mario->pos, vadd(vmul(mario->up, 500), vmul(mario->face, -1000)));
     {   /* SMG cameras: CAMS + CARE chunks (tools/camera.py), each camera in its zone's frame (ZONE: world placement) */
         u32 sz;
+        lght = blob_chunk(blob, "LGHT", &sz);
+        lights_init();
         const unsigned char *c = blob_chunk(blob, "CAMS", &sz), *a = blob_chunk(blob, "CARE", &sz);
         const unsigned char *z = blob_chunk(blob, "ZONE", &sz);
         u32 nz = *(const u32 *)z;
@@ -15053,6 +15177,7 @@ static const char *walker_clip(const Kuribo *k, int *loop)
 
 static void inst_draw(const Inst *in, const Model *md, const float m[16])
 {
+    use_row_light(in->row, v3(m[12], m[13], m[14]), md->skin ? LIGHT_STRONG : LIGHT_PLANET);
     if (md->skin) { if (in->anim && md == in->md) draw_skin(md, m, in->anim); }
     else render_model(md, m, 0x70, 0xB0, 0x60);
 }
@@ -15202,6 +15327,8 @@ void game_draw(void)
     V3 ce, cw, cu;
     float fovy;
     camera_pose(&ce, &cw, &cu, &fovy);
+    lights_update(ce, cw, cu, mario->pos);
+    render_light(default_light(LIGHT_PLANET));
 #ifdef OVERVIEW_TEST
     { /* the whole galaxy: a camera orbiting the box of the placed objects (the middle 90 % on each axis, so a far
        * stray row does not shrink the rest), a third of a turn every 20 s */
@@ -15516,8 +15643,10 @@ void game_draw(void)
             render_model(m_erail, m, 0x70, 0xB0, 0x60);
         }
     }
+    render_light(default_light(LIGHT_STRONG)); /* Coin: connectToSceneItemStrongLight. ponytail: the default area */
     draw_pickups(coins, ncoins, m_coin, 0xF0, 0xD0, 0x30, coin_rot);
     draw_pickups(purple, npurple, m_purple, 0xB0, 0x50, 0xF0, coin_rot);
+    render_light(default_light(LIGHT_PLANET)); /* StarPiece: its class's draw buffer */
     for (int i = 0; m_piece && i < npieces; i++) {
         if (!pickup_shown(&pieces[i])) continue;
         basis_matrix(m, pieces[i].pos, pick_up(&pieces[i]), v3(0, 0, 1), piece_rot);
@@ -15529,6 +15658,7 @@ void game_draw(void)
             render_model(m_pieces[shots[i].col], m, 0x60, 0xD0, 0xF0);
         }
     for (int i = 0; i < nkuribo; i++) {
+        use_row_light(kuribo[i].row, kuribo[i].pos, LIGHT_STRONG);
         const Model *md = kuribo[i].kind == WALK_TAKOHEI ? m_takohei : kuribo[i].kind == WALK_PACKUN ? m_packun :
                           kuribo[i].kind == WALK_KOTEBUG ? m_kotebug : kuribo[i].kind == WALK_SPIDER ? m_spider :
                           kuribo[i].kind == WALK_MERAMERA ? m_meramera : kuribo[i].kind == WALK_TAKOBO ? m_takobo :

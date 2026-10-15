@@ -28,9 +28,12 @@ Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
   'MODL'  u32 n, n × {char[32] name, f32 bounding radius}
   'KCL '  u32 n, n × {char[32] model, u32 size, bytes[size] (little-endian KCL, kcl_to_le), pad to 4}
   'VUMD'  u32 n, 12 pad, n × {char[32] name, u32 ngroups, f32 qscale, 8 pad, ngroups × {u32 nverts (3 per
-          triangle), u16 tex, u16 nbatch, u8 blend (0 opaque, 1 blended, 2 additive), u8 z_write, u8 alpha, 5 pad, nbatch × {u16 emitted, u16 unique} padded to 16, then per batch
-          (index_batches): s16 pos[unique][4] (x, y, z in steps of qscale, w = 4 * matrix slot), s16 uv[unique][2]
-          if textured, u8 rgbi[emitted][4] (colour + unique index), each array padded to 16}}
+          triangle), u16 tex, u16 nbatch, u8 blend (0 opaque, 1 blended, 2 additive), u8 z_write, u8 alpha, u8 lit,
+          4 pad, nbatch × {u16 emitted, u16 unique} padded to 16, then per batch (index_batches): s16 pos[unique][4]
+          (x, y, z in steps of qscale, w = 7 * matrix slot), s16 uv[unique][2] if textured, s8 normal[unique][4] if
+          lit (x 127), u8 rgbi[emitted][4] (colour + unique index), each array padded to 16}}
+  'LGHT'  the scenario's area lights and its zones' LightID tables (tools/light.py)
+  'TLGT'  u8 per TYPE: its actor light type (tools/lighttype.py, light_types.json: 0 Player 1 Strong 2 Weak 3 Planet, 255)
   'GRAV'  u32 n, n × {u16 kind, u16 flags, s32 priority, s32 inverse, f32 range, f32 distant, f32 m[12] (x, y, z
           axes and translation, world), f32 p[4]}  (84 B): grav_record, Petari GravityCreator.cpp per kind
 """
@@ -46,6 +49,7 @@ import budget as B
 import camera
 import geom
 import jpa
+import light
 import msg
 import numpy as np
 import skin
@@ -378,7 +382,7 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 gtab = []
             shapes = tex.shape_materials(b, bl[b"INF1"])
             texs = tex.textures(b, bl[b"TEX1"]) if b"TEX1" in bl else []
-            ps2 = {}
+            ps2, gains = {}, {}
             sky = arc.stem in SKY_ARCS or arc.stem.endswith("Sky")  # 8-bit textures (tex.to_ps2 hi)
             lfiles = {k.lower().rsplit("/", 1)[-1]: v for k, v in files.items()}
             bp = brk or BRK_POSE.get(arc.stem)  # a BRK_ARG variant's (name, frame) first
@@ -413,13 +417,17 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 mt = tex.material_tex(b, bl[b"MAT3"], mat, bl.get(b"TEX1")) if mat is not None else None
                 get = geom.vtx1_attr(b, bl[b"VTX1"], mt["attr"]) if mt and mt["attr"] in info["at"] else None
                 uvs = t = None
+                gain = 1
                 if get and mt["tex"] < len(texs):
                     key = (mt["tex"], mat)  # the material's TEV baked into its texture (tex.tev)
                     if key not in ps2:
                         x = texs[mt["tex"]]
-                        baked = tex.bake(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, mt["tex"], over)
+                        binfo = {}
+                        baked = tex.bake(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, mt["tex"], over, binfo)
                         ps2[key] = tex.to_ps2(baked, x["wrap_s"], x["wrap_t"], sky)
+                        gains[key] = binfo.get("gain", 1)
                     t = ps2[key]
+                    gain = gains[key]
                     off, w = info["at"][mt["attr"]]
                     m = mt["mtx"]
                     uvs = []
@@ -477,17 +485,18 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                         cols = [flat] * len(used)
                     gtab.append(tables[(info["shape"], info["group"])])
                 blend = tex.material_blend(b, bl[b"MAT3"], mat) if mat is not None else (0, 1, 255)
-                # per-vertex normals for lit materials (smooth shading), False for unlit ones, None: face normals
+                # per-vertex normals for lit materials (lit by the engine, vu_groups), False for unlit ones, None: lit
+                # without normals (face normals)
                 nrm = None
-                if not skinned and mat is not None and not tex.lit(b, bl[b"MAT3"], mat):
+                if mat is None or not tex.lit(b, bl[b"MAT3"], mat):
                     nrm = False
-                elif not skinned and nget and 10 in info["at"]:
+                elif nget and 10 in info["at"]:
                     o, w = info["at"][10]
                     nrm = [nget(info["keys"][v][o] if w == 1 else info["keys"][v][o] << 8 | info["keys"][v][o + 1])
                            for v in used]
                     if mats:
                         nrm = [tuple(float(x) for x in skin.unit(m[:3, :3] @ n)) for m, n in zip(mats, nrm)]
-                groups.append((verts, [remap[v] for v in tri], uvs, t, slots, cols, blend, nrm))
+                groups.append((verts, [remap[v] for v in tri], uvs, t, slots, cols, blend, nrm, gain))
             if skinned:
                 sk = skin_entry(b, bl, gtab)
         elif n.endswith(".kcl"):
@@ -695,9 +704,9 @@ def kcl_to_le(b):
     return bytes(out)
 
 
+LIGHT_TYPES = json.loads((Path(__file__).resolve().parent / "light_types.json").read_text())
 BASE_COLOUR = {"Coin": (240, 208, 48), "PurpleCoin": (176, 80, 240), "StarPiece": (96, 208, 240),
                "Kuribo": (144, 80, 32)}
-LIGHT = (0.35, 0.75, -0.55)
 
 
 # pixels per world unit at depth 1: render.c's fovy 45 over 448 lines (f = 224 / tan 22.5), geometric mean of the
@@ -730,14 +739,6 @@ def lod_sums(verts, tris, uvs, t):
     return num, den
 
 
-def shade(n, L):
-    """Light factor of a vertex normal: half-Lambert (the side away from LIGHT keeps 0.35, as planets' undersides are
-    walked on; ponytail: one fixed light in model space, not the zone's LightData nor the camera's)."""
-    nl = math.sqrt(sum(x * x for x in n)) or 1.0
-    h = 0.5 + 0.5 * sum(n[j] * L[j] for j in range(3)) / nl
-    return 0.35 + 0.65 * h * h
-
-
 UV_ONE = 4096  # UVs as s16 with 12 fraction bits (VU1 itof12): -8 .. +8 per triangle
 
 
@@ -748,42 +749,44 @@ def pos_scale(groups):
 
 
 def vu_groups(groups, base, stats=None, qs=1.0):
-    """Indexed groups -> [(pos s16x4, colour u8x4, uv s16x2)] per group, shading: per-vertex normals (shade), unlit
-    materials k = 1, without normals flat k = 0.25 + 0.75 |n . L|.
-    Positions are x, y, z in steps of qs (the engine folds qs into the matrix) and w = 4 * matrix slot (0: static).
+    """Indexed groups -> [(pos s16x4, colour u8x4, uv s16x2, normal s8x4 or b"")] per group. Lit materials (normals
+    list, or None: face normals) are lit on VU1 (render.c): their colour is stored x gain / 2 (the engine multiplies
+    by 2 x the light, clamped at 2) with the unit normal x 127 per vertex; unlit ones keep k = 1.
+    Positions are x, y, z in steps of qs (the engine folds qs into the matrix) and w = 7 * matrix slot (0: static).
     Textured groups get grey 0x80 * k (the GS modulates: 0x80 = 1.0), untextured ones base * k. Each triangle's UVs
     are shifted by whole repeats towards 0 on repeating axes so they fit s16; triangles still wider than 8 repeats
     are clamped and counted in stats["uv_clamped"]. Colour and UV arrays are padded to 16 bytes (DMA)."""
-    ll = math.sqrt(sum(c * c for c in LIGHT))
-    L = [c / ll for c in LIGHT]
     pad = lambda x: bytes(x) + b"\0" * (-len(x) % 16)
     out = []
-    for verts, tris, uvs, t, slots, cols, _, nrm in groups:
-        pos, col, uv = bytearray(), bytearray(), bytearray()
+    for verts, tris, uvs, t, slots, cols, _, nrm, gain in groups:
+        pos, col, uv, nb = bytearray(), bytearray(), bytearray(), bytearray()
         rgb = (0x80, 0x80, 0x80) if t else cols if slots is None and isinstance(cols, tuple) else base
         vcol = slots is None and isinstance(cols, list)  # unlit vertex colours (0..255; textured: times 0x80 / 255)
+        lit = nrm is not False
+        lk = gain / 2.0 if lit else 1.0  # lit: stored x gain / 2 (VU1 multiplies by 2 x the light)
         for i in range(0, len(tris), 3):
             a, b, c = (verts[tris[i + k]] for k in range(3))
             e1 = [b[j] - a[j] for j in range(3)]
             e2 = [c[j] - a[j] for j in range(3)]
             n = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]]
             nl = math.sqrt(sum(x * x for x in n)) or 1.0
-            k = 1.0 if nrm is False else 0.25 + 0.75 * abs(sum(n[j] * L[j] for j in range(3))) / nl
-            rgba = struct.pack("<4B", int(rgb[0] * k), int(rgb[1] * k), int(rgb[2] * k), 0x80)
+            rgba = struct.pack("<4B", *(min(255, int(x * lk)) for x in rgb), 0x80)
             for q in range(3):
                 vi = tris[i + q]
                 v = verts[vi]
-                if nrm:
-                    k = shade(nrm[vi], L)
-                    rgba = struct.pack("<4B", int(rgb[0] * k), int(rgb[1] * k), int(rgb[2] * k), 0x80)
                 p = [max(-32767, min(32767, round(c / qs))) for c in v]
                 if slots is None:   # static: slot 0
                     pos += struct.pack("<4h", *p, 0)
-                    col += struct.pack("<4B", *(x * 0x80 // 255 if t else x for x in cols[vi][:3]), 0x80) if vcol else rgba
-                else:               # skinned: w = 4 * matrix slot; colour = CLR0 scaled to 0x80, unlit
-                    pos += struct.pack("<4h", *p, 4 * slots[vi])
+                    col += struct.pack("<4B", *(min(255, int((x * 0x80 // 255 if t else x) * lk)) for x in cols[vi][:3]),
+                                       0x80) if vcol else rgba
+                else:               # skinned: w = 7 * matrix slot; colour = CLR0 scaled to 0x80
+                    pos += struct.pack("<4h", *p, 7 * slots[vi])
                     cc = cols[vi] if cols else (255, 255, 255, 255)
-                    col += struct.pack("<4B", *(x * 0x80 // 255 for x in cc[:3]), 0x80)
+                    col += struct.pack("<4B", *(min(255, int(x * 0x80 // 255 * lk)) for x in cc[:3]), 0x80)
+                if lit:
+                    nv = nrm[vi] if nrm else [x / nl for x in n]
+                    ln = math.sqrt(sum(x * x for x in nv)) or 1.0
+                    nb += struct.pack("<4b", *(max(-127, min(127, round(127 * x / ln))) for x in nv), 0)
             if uvs:
                 tri = [uvs[tris[i + k]] for k in range(3)]
                 du = 0 if t["clamp_s"] else math.floor(min(x[0] for x in tri))
@@ -793,33 +796,35 @@ def vu_groups(groups, base, stats=None, qs=1.0):
                     if not all(-32768 <= x < 32768 for x in q) and stats is not None:
                         stats["uv_clamped"] = stats.get("uv_clamped", 0) + 1
                     uv += struct.pack("<2h", *(max(-32768, min(32767, x)) for x in q))
-        out.append((pad(pos), pad(col), pad(uv)))
+        out.append((pad(pos), pad(col), pad(uv), bytes(nb)))
     return out
 
 
-BATCH = 72  # emitted vertices per VU1 batch (engine render.c BATCH)
+BATCH = 60  # emitted vertices per VU1 batch (engine render.c BATCH)
 
 
-def index_batches(pos, col, uv, n):
+def index_batches(pos, col, uv, n, nrm=b""):
     """De-indexed group arrays (vu_groups) -> (batch table, data) of the indexed VUMD layout: per batch of BATCH
-    emitted vertices, the unique (position, uv) pairs once, then per emitted vertex its colour with the unique index
-    in the 4th byte (the alpha, always 0x80, is put back on VU1). -> (nbatch, bytes)."""
+    emitted vertices, the unique (position, uv, normal) triples once, then per emitted vertex its colour with the
+    unique index in the 4th byte (the alpha, always 0x80, is put back on VU1). -> (nbatch, bytes)."""
     pad = lambda x: bytes(x) + b"\0" * (-len(x) % 16)
     table, data = b"", b""
     for o in range(0, n, BATCH):
         ne = min(BATCH, n - o)
-        keys, upos, uuv, cols = {}, bytearray(), bytearray(), bytearray()
+        keys, upos, uuv, unrm, cols = {}, bytearray(), bytearray(), bytearray(), bytearray()
         for e in range(o, o + ne):
             p = pos[8 * e:8 * e + 8]
             t = uv[4 * e:4 * e + 4] if uv else b""
-            if p + t not in keys:
-                keys[p + t] = len(keys)
+            r = nrm[4 * e:4 * e + 4] if nrm else b""
+            if p + t + r not in keys:
+                keys[p + t + r] = len(keys)
                 upos += p
                 uuv += t
-            k = keys[p + t]
+                unrm += r
+            k = keys[p + t + r]
             cols += col[4 * e:4 * e + 3] + bytes((k,))
         table += struct.pack("<HH", ne, len(keys))
-        data += pad(upos) + (pad(uuv) if uv else b"") + pad(cols)
+        data += pad(upos) + (pad(uuv) if uv else b"") + (pad(unrm) if nrm else b"") + pad(cols)
     return len(table) // 4, pad(table) + data
 
 
@@ -1073,7 +1078,7 @@ def placement(fs, galaxy, scenario):
     planets = B.planet_table(fsp, lambda a: (fsp / "ObjectData" / f"{a}.arc").exists())
     # every class with a model on disc is kept (static until it gets a behaviour), plus gravities
     arcmap = {n: model_archive(fsp, n, planets) for n in {o["name"] for o in objs}}
-    keep = [o for o in objs if arcmap[o["name"]] or "Gravity" in o["name"] or o["name"] in LOGIC or o["name"] in jpa.AMBIENT or o["name"] in ("WaterPlant", "PowerStarAppearPoint", "CollectTico", "OceanBowl", "ScenarioStarter", "StarPieceFollowGroup", "CoinReplica")]
+    keep = [o for o in objs if arcmap[o["name"]] or "Gravity" in o["name"] or o["name"] in LOGIC or o["name"] in jpa.AMBIENT or o["name"] in ("WaterPlant", "PowerStarAppearPoint", "CollectTico", "OceanBowl", "ScenarioStarter", "StarPieceFollowGroup", "CoinReplica", "LightCtrlCube", "LightCtrlCylinder")]
     for o in keep:
         for e in EXTRA.get(o["name"], ()):
             if e[0] == "#":
@@ -1143,6 +1148,9 @@ def placement(fs, galaxy, scenario):
     ctls += [(lab, None) for c in sorted(msg.COMMON) if c in types for lab in msg.COMMON[c]]
     ctls += [(lab, None) for lab in msg.SYSTEM]
     out.append(chunk(b"TALK", msg.talk_chunk(fsp, ctls)))
+    out.append(chunk(b"LGHT", light.chunk_payload(fsp, [z["name"] for z in zones])[0]))  # tools/light.py
+    # TLGT: per TYPE its actor light type (tools/lighttype.py: 0 Player, 1 Strong, 2 Weak, 3 Planet, 255 unknown)
+    out.append(chunk(b"TLGT", bytes(LIGHT_TYPES.get(t, 255) for t in types)))
     return out, info, dict(planets=planets, per_stage=per_stage, up=up, arcmap=arcmap)
 
 
@@ -1189,7 +1197,7 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
         models_.append(name32(t) + struct.pack("<f", math.sqrt(max((sum(c * c for c in v) for verts, *_ in groups
                                                                     for v in verts), default=0.0))))
         vg, qs = b"", pos_scale(groups)
-        for (verts, tris, uvs, tx, _, _, bl, _), (pos, col, uv) in zip(groups, vu_groups(groups, BASE_COLOUR.get(t, (112, 176, 96)),
+        for (verts, tris, uvs, tx, _, _, bl, _, _), (pos, col, uv, nb) in zip(groups, vu_groups(groups, BASE_COLOUR.get(t, (112, 176, 96)),
                                                                              stats, qs)):
             ti = 0xFFFF
             if tx:
@@ -1198,8 +1206,8 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
                 if ti == len(texts):
                     texts.append(dict(tx, lod=[0.0, 0.0]))
                 texts[ti]["lod"] = [a + b for a, b in zip(texts[ti]["lod"], lod_sums(verts, tris, uvs, tx))]
-            nb, body = index_batches(pos, col, uv, len(tris))
-            vg += struct.pack("<IHHBBB5x", len(tris), ti, nb, *bl) + body
+            nbt, body = index_batches(pos, col, uv, len(tris), nb)
+            vg += struct.pack("<IHHBBBB4x", len(tris), ti, nbt, *bl, 1 if nb else 0) + body
         vumd.append(name32(t) + struct.pack("<If8x", len(groups), qs) + vg)
         if kcl and collision:
             kcl = kcl_to_le(kcl)
@@ -1399,7 +1407,6 @@ def read_chunks(blob):
 
 
 def selftest():
-    L = (0.0, 1.0, 0.0)
     fp = Path(__file__).resolve().parent.parent / "data/fs/files/ObjectData/FlipPanel.arc"
     if fp.exists():  # its three faces overlap: the one its joints show (rest: "?", PanelA: "!", PanelEnd: End)
         faces = lambda pose: [len(g[1]) // 3 for g in model_groups(fp, 1.0, pose=pose)[0]]
@@ -1413,7 +1420,6 @@ def selftest():
     tiny = lod_sums(sq, [0, 1, 2], [(0, 0), (0.01, 0), (0, 0.01)], {"w": 64, "h": 64})
     both = [x + y for x, y in zip(full, tiny)]
     assert lod_k(tiny) < lod_k(both) < lod_k(full), (lod_k(tiny), lod_k(both), lod_k(full))
-    assert shade((0, 2, 0), L) == 1.0 and abs(shade((0, -1, 0), L) - 0.35) < 1e-9 and 0.35 < shade((1, 0, 0), L) < 1
     # BCSV with name (string) + pos_x (float) + Obj_arg0 (long): 2 rows
     fields = [("name", 0, 6), ("pos_x", 4, 2), ("Obj_arg0", 8, 0)]
     hdr = struct.pack(">4I", 2, 3, 16 + 36, 12) + b"".join(

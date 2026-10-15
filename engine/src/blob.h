@@ -19,10 +19,12 @@ typedef struct {
     u16 tex;             /* TEXT index, NO_TEX for untextured */
     u16 nbatch;
     u8 blend, zwrite, alpha; /* material: 0 opaque, 1 blended, 2 additive; depth written; constant alpha 0..255 */
+    u8 lit;              /* lit material: per-vertex normals, lit on VU1 (render_light) */
     const u16 *batch;    /* nbatch x {emitted, unique} */
-    const u8 *data;      /* per batch: s16 pos[unique][4] (x, y, z in steps of Model.qscale, w = 4 * matrix slot),
-                          * s16 uv[unique][2] (12 fraction bits) if textured, u8 rgbi[emitted][4] (colour + unique
-                          * index), each padded to 16 (tools/slice.py index_batches) */
+    const u8 *data;      /* per batch: s16 pos[unique][4] (x, y, z in steps of Model.qscale, w = 7 * matrix slot),
+                          * s16 uv[unique][2] (12 fraction bits) if textured, s8 normal[unique][4] (x 127) if lit,
+                          * u8 rgbi[emitted][4] (colour + unique index), each padded to 16 (tools/slice.py
+                          * index_batches) */
     const u8 *btk;       /* its BTK chunk entry (tools/slice.py btk_entry: after the size word), NULL if none */
     float *uvm;          /* with btk: the UV matrix the chain uploads (3 qwords: columns s, t, 1; anim_btk) */
 } VuGroup;
@@ -62,6 +64,7 @@ typedef struct {
     VuGroup *vu;
     float radius; /* bounding sphere around the origin, for culling */
     float qscale; /* position quantisation step, folded into the matrices */
+    int lit;      /* some group is lit (VuGroup.lit): its matrices carry light matrices */
     void *chain;  /* static models: prebuilt VIF chain of the opaque batches, ends with RET (render.c) */
     void *chain_xlu; /* the same for the alpha-blended batches, drawn after the opaque ones */
 } Model;
@@ -74,6 +77,7 @@ typedef struct { const TexEntry *e; const u8 *base; } TexRef;
 typedef struct {
     u32 ntypes;
     const char *types; /* ntypes * 32 */
+    const u8 *type_light; /* TLGT: per type its actor light type (0 Player .. 3 Planet, 255 unknown), or NULL */
     u32 nobjs, nstarts, nmodels;
     const Row *objs, *starts;
     Model *models;

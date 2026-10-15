@@ -30,6 +30,7 @@ int blob_load(Scene *s, const u8 *blob)
     const u8 *t = blob_chunk(blob, "TYPE", NULL), *o = blob_chunk(blob, "OBJS", NULL), *st = blob_chunk(blob, "STRT", NULL);
     s->ntypes = *(const u32 *)t;
     s->types = (const char *)(t + 4);
+    s->type_light = blob_chunk(blob, "TLGT", NULL);
     s->nobjs = *(const u32 *)o;
     s->objs = (const Row *)(o + 4);
     s->nstarts = *(const u32 *)st;
@@ -68,6 +69,7 @@ int blob_add(Scene *s, const u8 *blob)
         for (u32 i = first; i < first + nv && i < s->nmodels; i++) {
             Model *md = &s->models[i];
             md->vu_ngroups = *(const u32 *)(q + 32);
+            md->lit = 0;
             md->qscale = *(const float *)(q + 36);
             md->vu = mem_alloc(MEM_RENDER, md->vu_ngroups * sizeof(VuGroup));
             q += 48;
@@ -79,12 +81,15 @@ int blob_add(Scene *s, const u8 *blob)
                 vg->blend = q[8];
                 vg->zwrite = q[9];
                 vg->alpha = q[10];
+                vg->lit = q[11];
+                md->lit |= vg->lit;
                 vg->batch = (const u16 *)(q + 16);
                 vg->data = q + 16 + ((4 * vg->nbatch + 15) & ~15u);
                 q = vg->data;
                 for (u32 b = 0; b < vg->nbatch; b++) {
                     u32 ne = vg->batch[2 * b], nu = vg->batch[2 * b + 1];
-                    q += ((8 * nu + 15) & ~15u) + (vg->tex != NO_TEX ? (4 * nu + 15) & ~15u : 0) + ((4 * ne + 15) & ~15u);
+                    q += ((8 * nu + 15) & ~15u) + (vg->tex != NO_TEX ? (4 * nu + 15) & ~15u : 0) +
+                         (vg->lit ? (4 * nu + 15) & ~15u : 0) + ((4 * ne + 15) & ~15u);
                 }
                 if (vg->tex != NO_TEX)
                     vg->tex += tex0;

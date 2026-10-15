@@ -26,6 +26,8 @@
 
 extern u32 VU1Tex_CodeStart __attribute__((section(".vudata")));
 extern u32 VU1Tex_CodeEnd __attribute__((section(".vudata")));
+extern u32 VU1Lit_Start __attribute__((section(".vudata")));
+#define LIT_PROGRAM ((u32)((u8 *)&VU1Lit_Start - (u8 *)&VU1Tex_CodeStart) / 8) /* MSCAL address of the lit batches */
 
 #define SCREEN_W 640
 /* 640 x 224 buffers shown in FRAME mode (each field reads every line): the picture is the same on both fields, so it
@@ -34,9 +36,9 @@ extern u32 VU1Tex_CodeEnd __attribute__((section(".vudata")));
 #define SCREEN_H 224
 #define DISP_H 448
 #define YS ((float)SCREEN_H / DISP_H)
-#define BATCH 72           /* vertices per VU1 batch: 6n + 4m + 2 qwords (m <= 10 matrices) must fit a 496-qword
-                            * buffer, and n a multiple of 12 so the 4-byte colour and UV arrays of the next batch
-                            * start on a qword */
+#define BATCH 60           /* vertices per VU1 batch: 7n + 7m + 2 qwords (lit, m <= 10 matrices) must fit a 496-qword
+                            * buffer, and n a multiple of 12 so the 4-byte colour, UV and normal arrays of the next
+                            * batch start on a qword */
 #define NEAR 50.0f
 #define FAR 120000.0f
 #define MAX_INST 1024
@@ -50,7 +52,8 @@ static packet2_t *vif[2], *gif;
 static int cur;
 static float view[16], proj[16];
 static float frustum[4];        /* side planes in view space: x n, z n for |x| and |y| (render_set_fovy) */
-static float (*mats)[16];        /* one matrix per instance this frame, read by DMA */
+#define MAT_FL 28                /* a matrix as VU1 reads it: 4 columns local -> clip, then the light matrix's 3 */
+static float (*mats)[MAT_FL];    /* one matrix per instance this frame, read by DMA */
 static int nmats;
 #define MAX_MAT 10               /* matrices per batch (a J3D matrix group holds up to 10) */
 #define HDR(t, m, n) (headers + 2 * (((t) * MAX_MAT + (m) - 1) * (BATCH / 3 + 1) + (n) / 3))
@@ -58,7 +61,9 @@ static qword_t *headers;         /* [mode][matrices 1..MAX_MAT][count 3..BATCH]:
                                   * bit 0 textured, bit 1 alpha blended (group_mode) */
 #define MODES 4
 static qword_t scale_qw __attribute__((aligned(16)));
-static float uv_ident[12] __attribute__((aligned(16))) = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0}; /* VU mem 5..7 */
+static float uv_ident[12] __attribute__((aligned(16))) = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0}; /* VU mem 8..10 */
+static float light_qw[16] __attribute__((aligned(16)));          /* VU mem 11..14: render_light */
+static const RenderLight *light, *light_sent;                     /* the current light, the one VU mem holds */
 #define HDRS(t, n) (headers_static + 2 * ((t) * (BATCH / 3 + 1) + (n) / 3))
 static qword_t *headers_static;  /* [mode][count]: {n, 0, matrix base 1} + GIF tag, for prebuilt chains */
 static u32 tris_drawn;
@@ -120,7 +125,7 @@ void render_init(void)
     dma_channel_fast_waits(DMA_CHANNEL_GIF);
     dma_channel_fast_waits(DMA_CHANNEL_VIF1);
 
-    /* microprogram + double buffer (base 8, 496 qwords each), as in the ps2sdk sample */
+    /* microprogram + double buffer (base 16, 496 qwords each; ps2sdk's sample has 8: VU mem 1..14 hold constants) */
     u32 sz = packet2_utils_get_packet_size_for_program(&VU1Tex_CodeStart, &VU1Tex_CodeEnd) + 1;
     packet2_t *p = packet2_create(sz, P2_TYPE_NORMAL, P2_MODE_CHAIN, 1);
     packet2_vif_add_micro_program(p, 0, &VU1Tex_CodeStart, &VU1Tex_CodeEnd);
@@ -128,7 +133,7 @@ void render_init(void)
     send_vif_wait(p);
     packet2_free(p);
     p = packet2_create(2, P2_TYPE_NORMAL, P2_MODE_CHAIN, 1);
-    packet2_utils_vu_add_double_buffer(p, 8, 496);
+    packet2_utils_vu_add_double_buffer(p, 16, 496);
     packet2_utils_vu_add_end_tag(p);
     send_vif_wait(p);
     packet2_free(p);
@@ -158,14 +163,14 @@ void render_init(void)
     vif[1] = packet2_create(PACKET_QW, P2_TYPE_NORMAL, P2_MODE_CHAIN, 1);
     gif = packet2_create(GIF_QW, P2_TYPE_NORMAL, P2_MODE_NORMAL, 0);
     mem_charge(MEM_RENDER, 2 * PACKET_QW * 16 + GIF_QW * 16);
-    mats = mem_alloc(MEM_RENDER, MAX_INST * 64);
+    mats = mem_alloc(MEM_RENDER, MAX_INST * MAT_FL * 4);
     headers = mem_alloc(MEM_RENDER, MODES * MAX_MAT * (BATCH / 3 + 1) * 2 * 16);
     for (int t = 0; t < MODES; t++)
         for (int m = 1; m <= MAX_MAT; m++)
             for (int n = 3; n <= BATCH; n += 3) {
                 qword_t *h = HDR(t, m, n);
                 h->sw[0] = n;
-                h->sw[1] = 4 * m;
+                h->sw[1] = 7 * m;
                 h[1].dw[0] = GIF_SET_TAG(n, 1, 1, GS_SET_PRIM(PRIM_TRIANGLE, 1, t & 1, 0, t >> 1, 0, 0, 0, 0), GIF_FLG_PACKED, 3);
                 h[1].dw[1] = (u64)GIF_REG_ST | (u64)GIF_REG_RGBAQ << 4 | (u64)GIF_REG_XYZ2 << 8; /* ST first: Q */
             }
@@ -184,7 +189,7 @@ void render_init(void)
     ((float *)&scale_qw)[2] = (float)0xFFFFFF / 32.0f;
     p = packet2_create(6, P2_TYPE_NORMAL, P2_MODE_CHAIN, 1);
     packet2_utils_vu_add_unpack_data(p, 0, &scale_qw, 1, 0);
-    packet2_utils_vu_add_unpack_data(p, 5, uv_ident, 3, 0); /* the UV matrix, identity */
+    packet2_utils_vu_add_unpack_data(p, 8, uv_ident, 3, 0); /* the UV matrix, identity */
     packet2_utils_vu_add_end_tag(p);
     send_vif_wait(p);
     packet2_free(p);
@@ -239,6 +244,7 @@ void render_begin(const float eye[3], const float target[3], const float up[3])
     packet2_reset(vif[cur], 0);
     nmats = 0;
     tris_drawn = 0;
+    light_sent = NULL; /* its colours may have changed (blends): sent again on the first lit draw */
     cur_tex = -1;
 }
 
@@ -534,8 +540,9 @@ static void add_header(packet2_t *pk, const qword_t *tmpl, u32 nu)
     packet2_utils_vu_close_unpack(pk);
 }
 
-/* one indexed batch from `base` on (after the matrices): positions, UVs, colours; advances *p past its data */
-static void add_batch(packet2_t *pk, const u8 **p, u32 ne, u32 nu, int textured, u32 base)
+/* one indexed batch from `base` on (after the matrices): positions, UVs, normals if lit, colours; advances *p past
+ * its data */
+static void add_batch(packet2_t *pk, const u8 **p, u32 ne, u32 nu, int textured, int lit, u32 base)
 {
     const u8 *d = *p;
     unpack_narrow_to(pk, d, 8 * nu, base, nu, P2_UNPACK_V4_16, 0);
@@ -544,7 +551,11 @@ static void add_batch(packet2_t *pk, const u8 **p, u32 ne, u32 nu, int textured,
         unpack_narrow_to(pk, d, 4 * nu, base + nu, nu, P2_UNPACK_V2_16, 0);
         d += (4 * nu + 15) & ~15u;
     }
-    unpack_narrow_to(pk, d, 4 * ne, base + 2 * nu, ne, P2_UNPACK_V4_8, 1);
+    if (lit) {
+        unpack_narrow_to(pk, d, 4 * nu, base + 2 * nu, nu, P2_UNPACK_V4_8, 0);
+        d += (4 * nu + 15) & ~15u;
+    }
+    unpack_narrow_to(pk, d, 4 * ne, base + (lit ? 3 : 2) * nu, ne, P2_UNPACK_V4_8, 1);
     d += (4 * ne + 15) & ~15u;
     *p = d;
 }
@@ -596,14 +607,60 @@ static void emit_group(packet2_t *pk, const VuGroup *vg)
     packet2_vif_close_direct_manual(pk, 4);
 }
 
-/* a UV matrix to VU mem 5..7 (columns s, t, 1): FLUSHE first, the running batch may still be starting (it loads them) */
+/* a UV matrix to VU mem 8..10 (columns s, t, 1): FLUSHE first, the running batch may still be starting (it loads them) */
 static void add_uvm(packet2_t *pk, const float *m)
 {
     packet2_chain_open_cnt(pk, 0, 0, 0);
     packet2_vif_flushe(pk, 0);
     packet2_vif_nop(pk, 0);
     packet2_chain_close_tag(pk);
-    packet2_utils_vu_add_unpack_data(pk, 5, (void *)m, 3, 0);
+    packet2_utils_vu_add_unpack_data(pk, 8, (void *)m, 3, 0);
+}
+
+/* GX lit channel (LightFunction::loadActorLightInfo: lights 0 and 1, attenuation off, the ambient register): colours
+ * to VU mem 11..14 x 2 / 1 (vu1_tex.vsm doubles; the converter stores colours x gain / 2), after a FLUSHE */
+static void send_light(const RenderLight *l)
+{
+    if (!l || l == light_sent)
+        return;
+    for (int k = 0; k < 3; k++) {
+        light_qw[k] = 2.0f * l->col[0][k];
+        light_qw[4 + k] = 2.0f * l->col[1][k];
+        light_qw[8 + k] = 2.0f * l->amb[k];
+        light_qw[12 + k] = 2.0f;
+    }
+    light_qw[15] = 255.0f;
+    packet2_chain_open_cnt(vif[cur], 0, 0, 0);
+    packet2_vif_flushe(vif[cur], 0);
+    packet2_vif_nop(vif[cur], 0);
+    packet2_chain_close_tag(vif[cur]);
+    packet2_utils_vu_open_unpack(vif[cur], 11, 0);
+    for (int i = 0; i < 4; i++)
+        packet2_add_2x_s64(vif[cur], ((s64 *)light_qw)[2 * i], ((s64 *)light_qw)[2 * i + 1]);
+    packet2_utils_vu_close_unpack(vif[cur]);
+    light_sent = l;
+}
+
+void render_light(const RenderLight *l) { light = l; }
+
+/* the light matrix of a matrix `w` (local -> world) at m[16..27]: per light the direction from the instance to the
+ * light (world), into w's local space (w^T d, normalised: w is a rotation times a scale), x 1 / 127 (the normals'
+ * scale); columns x, y, z of (light 0, light 1). ponytail: one direction per instance, not per vertex */
+static void light_matrix(float *m, const float w[16], const float at[3])
+{
+    memset(m + 16, 0, 48);
+    if (!light)
+        return;
+    for (int k = 0; k < 2; k++) {
+        float d[3] = {light->pos[k][0] - at[0], light->pos[k][1] - at[1], light->pos[k][2] - at[2]}, v[3];
+        for (int i = 0; i < 3; i++)
+            v[i] = w[4 * i] * d[0] + w[4 * i + 1] * d[1] + w[4 * i + 2] * d[2];
+        float l = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        if (l < 1e-6f)
+            continue;
+        for (int i = 0; i < 3; i++)
+            m[16 + 4 * i + k] = v[i] / (l * 127.0f);
+    }
 }
 
 /* the prebuilt chain of a model's opaque groups (xlu 0) or of its blended ones (xlu 1); NULL when it has none. A BTK
@@ -634,8 +691,8 @@ static packet2_t *build_chain_pass(Model *md, int xlu)
         for (u32 b = 0; b < vg->nbatch; b++) {
             u32 ne = vg->batch[2 * b], nu = vg->batch[2 * b + 1];
             add_header(pk, HDRS(mode, ne), nu);
-            add_batch(pk, &d, ne, nu, vg->tex != NO_TEX, 2);
-            packet2_utils_vu_add_start_program(pk, 0);
+            add_batch(pk, &d, ne, nu, vg->tex != NO_TEX, vg->lit, 2);
+            packet2_utils_vu_add_start_program(pk, vg->lit ? LIT_PROGRAM : 0);
         }
         if (vg->uvm)
             add_uvm(pk, uv_ident);
@@ -680,16 +737,17 @@ static void scale_cols(float m[16], float s)
 
 /* Draw a model: drw = NULL for a static model (one matrix, proj * view * world), else the draw matrices of a
  * skinned instance (anim.c), each group getting its SKIN table's matrices premultiplied by proj * view * world. */
-/* a prebuilt chain for one instance: FLUSHE (the previous instance stops reading VU mem 1..4), its matrix, CALL */
+/* a prebuilt chain for one instance: FLUSHE (the previous instance stops reading VU mem 1..7), its matrix and light
+ * matrix, CALL */
 static void call_chain(void *chain, float *m)
 {
-    if (packet2_get_qw_count(vif[cur]) + 8 > PACKET_QW)
+    if (packet2_get_qw_count(vif[cur]) + 16 > PACKET_QW)
         flush_vif();
     packet2_chain_open_cnt(vif[cur], 0, 0, 0);
     packet2_vif_flushe(vif[cur], 0);
     packet2_vif_nop(vif[cur], 0);
     packet2_chain_close_tag(vif[cur]);
-    packet2_utils_vu_add_unpack_data(vif[cur], 1, m, 4, 0);
+    packet2_utils_vu_add_unpack_data(vif[cur], 1, m, 7, 0);
     packet2_chain_call(vif[cur], ((packet2_t *)chain)->base, 0, 0, 0);
     packet2_vif_nop(vif[cur], 0);
     packet2_vif_nop(vif[cur], 0);
@@ -700,7 +758,7 @@ static void call_chain(void *chain, float *m)
 /* blended instances of the frame, drawn after everything opaque (render_end), farthest first. ponytail: sorted per
  * instance, not per triangle; skinned models blend in place */
 #define MAX_XLU 128
-static struct { const Model *md; float *m; float depth; } xlu[MAX_XLU];
+static struct { const Model *md; float *m; float depth; const RenderLight *light; } xlu[MAX_XLU];
 static int nxlu;
 
 static void draw_model(const Model *md, const float world[16], const float (*drw)[16])
@@ -716,6 +774,10 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
     if (frustum[0] * fabsf(mv[12]) - frustum[1] * mv[14] > rad || frustum[2] * fabsf(mv[13]) - frustum[3] * mv[14] > rad)
         return;
     mat_mul(pvw, proj, mv);
+    if (md->lit && packet2_get_qw_count(vif[cur]) + 16 > PACKET_QW)
+        flush_vif();
+    if (md->lit)
+        send_light(light);
     if (!drw && (md->chain || md->chain_xlu)) {
         if (nmats >= MAX_INST)
             return;
@@ -723,13 +785,15 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
         float *m = mats[nmats++];
         memcpy(m, pvw, 64);
         scale_cols(m, md->qscale);
+        if (md->lit)
+            light_matrix(m, world, world + 12);
         if (md->chain)
             call_chain(md->chain, m);
         if (md->chain_xlu && nxlu < MAX_XLU) { /* blended groups wait for the end of the frame, far ones first */
             int k = nxlu++;
             for (; k > 0 && xlu[k - 1].depth < mv[14]; k--)
                 xlu[k] = xlu[k - 1];
-            xlu[k].md = md; xlu[k].m = m; xlu[k].depth = mv[14];
+            xlu[k].md = md; xlu[k].m = m; xlu[k].depth = mv[14]; xlu[k].light = light;
         }
         for (u32 g = 0; g < md->vu_ngroups; g++)
             tris_drawn += md->vu[g].nverts / 3;
@@ -746,11 +810,13 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
         return;
     if (packet2_get_qw_count(vif[cur]) + 8 + batches * 10 + md->vu_ngroups * 2 + btks * 8 > PACKET_QW)
         flush_vif();
-    float (*gm)[16] = mats + nmats; /* this group's matrices */
+    float (*gm)[MAT_FL] = mats + nmats; /* this group's matrices */
     u32 m = 1;
     if (!drw) {
         memcpy(gm, pvw, 64);
         scale_cols(gm[0], md->qscale);
+        if (md->lit)
+            light_matrix(gm[0], world, world + 12);
         nmats++;
     }
     for (u32 g = 0; g < md->vu_ngroups; g++) {
@@ -762,6 +828,11 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
             for (u32 i = 0; i < m; i++) {
                 mat_mul(gm[i], pvw, drw[sg->drw[i]]);
                 scale_cols(gm[i], md->qscale);
+                if (md->lit) {
+                    float wd[16];
+                    mat_mul(wd, world, drw[sg->drw[i]]);
+                    light_matrix(gm[i], wd, world + 12);
+                }
             }
             nmats += m;
         }
@@ -771,16 +842,16 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
             cur_tex = -1; /* the next group's texture packet puts the opaque state back */
         }
         int mode = group_mode(vg);
-        u32 base = 2 + 4 * m;
+        u32 base = 2 + 7 * m;
         const u8 *d = vg->data;
         if (vg->uvm)
             add_uvm(vif[cur], vg->uvm);
         for (u32 b = 0; b < vg->nbatch; b++) {
             u32 ne = vg->batch[2 * b], nu = vg->batch[2 * b + 1];
             add_header(vif[cur], HDR(mode, m, ne), nu);
-            packet2_utils_vu_add_unpack_data(vif[cur], 2, gm, 4 * m, 1);
-            add_batch(vif[cur], &d, ne, nu, vg->tex != NO_TEX, base);
-            packet2_utils_vu_add_start_program(vif[cur], 0);
+            packet2_utils_vu_add_unpack_data(vif[cur], 2, gm, 7 * m, 1);
+            add_batch(vif[cur], &d, ne, nu, vg->tex != NO_TEX, vg->lit, base);
+            packet2_utils_vu_add_start_program(vif[cur], vg->lit ? LIT_PROGRAM : 0);
             tris_drawn += ne / 3;
         }
         if (vg->uvm)
@@ -1074,6 +1145,8 @@ u32 render_end(void)
     u32 c0 = cycles();
     for (int i = 0; i < nxlu; i++) {
         model_textures(xlu[i].md);
+        if (xlu[i].md->lit)
+            send_light(xlu[i].light);
         call_chain(xlu[i].md->chain_xlu, xlu[i].m);
     }
     nxlu = 0;

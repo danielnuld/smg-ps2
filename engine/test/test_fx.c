@@ -8,6 +8,20 @@
 #include "../src/fx.h"
 #include "../src/render.h"
 
+void mat_identity(float m[16])
+{
+    for (int i = 0; i < 16; i++) m[i] = i % 5 == 0;
+}
+
+void mat_mul(float out[16], const float a[16], const float b[16])
+{
+    float r[16];
+    for (int c = 0; c < 4; c++)
+        for (int k = 0; k < 4; k++)
+            r[4 * c + k] = a[k] * b[4 * c] + a[4 + k] * b[4 * c + 1] + a[8 + k] * b[4 * c + 2] + a[12 + k] * b[4 * c + 3];
+    for (int i = 0; i < 16; i++) out[i] = r[i];
+}
+
 static int drawn;
 void render_sprites(const Sprite *sp, int n)
 {
