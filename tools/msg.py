@@ -2,7 +2,7 @@
 
 FONT chunk (resident.bin, after the effects' textures in its TEXT):
   u16 ntext, u16 nicon, u16 text_tex, u16 icon_tex (TEXT indices in that blob), s8 line_feed, u8 ascent, u8 cell_h,
-  u8 icon_cell_h, 4 pad; then ntext + nicon x Glyph {u16 code, u16 u, u16 v, u8 w, u8 h, s8 left, u8 glyph_w,
+  u8 icon_cell_h, u32 LAYO offset (tools/layout.py, the talk balloons); then ntext + nicon x Glyph {u16 code, u16 u, u16 v, u8 w, u8 h, s8 left, u8 glyph_w,
   s8 char_w, u8 pad} (sorted by code within each set; icons by their tag id, picture font code - '0').
   The text atlas is PSMT8 256 x 256, its CLUT white with the I4 intensity as alpha (tint by vertex colour); the icons' a hi
   to_ps2 texture.
@@ -23,6 +23,7 @@ from pathlib import Path
 import numpy as np
 
 import budget as B
+import layout
 
 LANG = "UsSpanish"  # MessageData language (UsEnglish / UsFrench / UsSpanish)
 # IconAButton openWithTalk / openWithRead, the player name tag (ReplaceTagProcessor: System_PlayerName0<form>)
@@ -231,10 +232,12 @@ def font_chunk(fsp, lang=LANG):
     ttex = dict(w=256, h=256, psm=tex.PSMT8, clamp_s=1, clamp_t=1, alpha=2, pix=idx.tobytes(), clut=clut.tobytes(),
                 u_scale=1.0, v_scale=1.0)
     ptex = tex.to_ps2(pimg, 0, 0, hi=True)
-    head = struct.pack("<HHHHbBBB4x", len(tg), len(pg), 0, 1, text["line_feed"], text["ascent"], text["cell_h"],
-                       pic["cell_h"])
     glyphs = b"".join(struct.pack("<HHHBBbBbx", *g) for g in tg + pg)
-    return head + glyphs, [ttex, ptex], (timg, pimg)
+    glyphs += b"\0" * (-len(glyphs) % 4)
+    lay, ltex, _ = layout.section(fsp, 2)  # the talk balloons' layouts (tools/layout.py), their textures after the font's
+    head = struct.pack("<HHHHbBBBI", len(tg), len(pg), 0, 1, text["line_feed"], text["ascent"], text["cell_h"],
+                       pic["cell_h"], 16 + len(glyphs))
+    return head + glyphs + lay, [ttex, ptex] + ltex, (timg, pimg)
 
 
 if __name__ == "__main__":  # python tools/msg.py data/fs/files: the atlases as PNGs in out/ (to look at)

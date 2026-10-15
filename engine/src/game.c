@@ -7521,8 +7521,8 @@ static void draw_sambo_heads(void)
  * the stick still and Mario on the ground), Talk (the balloon's text fading in, A for the next page), Next (event
  * nodes: switches, the owner's event function), Term. Normal / event talks are a demo (Mario waits) and start their
  * message's camera (CameraTalk, or its 会話 multi-actor camera).
- * ponytail: the balloons are drawn as flat panes at their BRLYT places and sizes (no window textures, no beak, the
- * Appear / End animations a 21-frame fade), no sounds, no yes / no selector (a select talk goes on
+ * The event and sign balloons are their layouts (tools/layout.py: BRLYT panes, TPL textures, window frames, the beak).
+ * ponytail: the short (stretch) balloon a flat pane, the Appear / End animations a 21-frame fade, no sounds, no yes / no selector (a select talk goes on
  * as if Yes), no MessageArea, the already-read flags are not saved */
 typedef struct { char label[32]; u16 row, node, msg, pad; } TkCtl;
 typedef struct { u8 type, group; u16 index, next, t0, t1, pad; } TkNode;
@@ -7536,6 +7536,10 @@ static const u16 *tk_text;
 static int tk_nctl;
 static const TkGlyph *tk_glyph, *tk_icon;
 static int tk_nglyph, tk_nicon, tk_ttex = -1, tk_itex = -1, tk_lf = 33, tk_asc = 26;
+/* the talk balloons' layouts (tools/layout.py LAYO, after the FONT glyphs): quads in layout units, textures counted
+ * from the font's text texture */
+typedef struct { s16 x, y, w, h; u16 tex; u8 rgba[4]; s16 u, v, uw, vh; u16 pad; } LayQuad;
+static const u8 *tk_lay;
 
 #define MAX_TALKERS 32
 typedef struct {
@@ -8252,6 +8256,7 @@ static void talk_init(const Scene *s)
         tk_lf = (s8)p[8]; tk_asc = p[9];
         tk_glyph = (const TkGlyph *)(p + 16);
         tk_icon = tk_glyph + tk_nglyph;
+        tk_lay = *(const u32 *)(p + 12) ? p + *(const u32 *)(p + 12) : NULL;
     }
     printf("talk: %d talk entries, font %d glyphs %d pictures\n", tk_nctl, tk_nglyph, tk_nicon);
 }
@@ -8302,6 +8307,25 @@ static void tk_balloon_pos(Talker *t)
     t->sx = 320.0f + vdot(vsub(p, ce), r) / z * k;
     t->sy = 224.0f - vdot(vsub(p, ce), u) / z * k;
 }
+/* a layout's panes (tools/layout.py) at their places, alpha x a */
+static void lay_draw(const char *name, float a)
+{
+    if (!tk_lay) return;
+    const u8 *q = tk_lay + 4;
+    for (int i = 0, n = *(const u16 *)tk_lay; i < n; i++) {
+        int nq = *(const u16 *)(q + 24);
+        const LayQuad *l = (const LayQuad *)(q + 28);
+        if (!strcmp((const char *)q, name)) {
+            for (int k = 0; k < nq; k++, l++) {
+                u32 rgba = l->rgba[0] | l->rgba[1] << 8 | l->rgba[2] << 16 | (u32)(l->rgba[3] * a) << 24;
+                tk_quad(tk_hx(l->x), tk_hy(l->y), l->w * TK_KX, l->h * TK_KY, rgba,
+                        l->tex == 0xFFFF ? -1 : tk_ttex + l->tex, l->u / 16.0f, l->v / 16.0f, l->uw / 16.0f, l->vh / 16.0f);
+            }
+            return;
+        }
+        q += 28 + nq * sizeof(LayQuad);
+    }
+}
 static float tk_fade(const TkBalloon *b) /* Appear / End (21 frames) as a fade */
 {
     return b->nrv == BL_OPEN ? b->step / 21.0f : b->nrv == BL_CLOSE ? 1.0f - b->step / 21.0f :
@@ -8347,16 +8371,13 @@ static void talk_draw(void)
     }
     if (tk_bev.nrv != BL_DEAD && tk_bev.page) { /* TalkBalloonEvent: WinBalloon 570 x 120 at (0, 144), its text (-16, 144) */
         float a = tk_fade(&tk_bev);
-        tk_quad(tk_hx(-285 + 3), tk_hy(144 + 60 - 5), 570 * TK_KX, 120 * TK_KY, tk_rgba(0, 0, 0, a * 100 / 255.0f), -1, 0, 0, 0, 0);
-        tk_quad(tk_hx(-285), tk_hy(144 + 60), 570 * TK_KX, 120 * TK_KY, tk_rgba(255, 255, 255, a * 230 / 255.0f), -1, 0, 0, 0, 0);
+        lay_draw("TalkBalloonEvent", a);
         tk_text_box(tk_bev.page, tk_hx(-16 - 240), tk_hy(144 + 50), 100 * TK_KY, a, &tk_bev.ac, talkers[tk_bev.talker].arg, 0);
         if (tk_abtn.nrv != BL_DEAD && tk_abtn.plain) tk_draw_abtn(tk_hx(253), tk_hy(64 + 49));
     }
     if (tk_bsign.nrv != BL_DEAD && tk_bsign.page) { /* SignBoardBalloon: the board 640 x 160, the paper 530 x 120 */
         float a = tk_fade(&tk_bsign);
-        tk_quad(tk_hx(-320), tk_hy(137 + 80), 640 * TK_KX, 160 * TK_KY, tk_rgba(130, 75, 10, a * 210 / 255.0f), -1, 0, 0, 0, 0);
-        tk_quad(tk_hx(-265 + 8), tk_hy(132 + 60), 530 * TK_KX, 120 * TK_KY, tk_rgba(0, 0, 0, a * 100 / 255.0f), -1, 0, 0, 0, 0);
-        tk_quad(tk_hx(-265), tk_hy(141 + 60), 530 * TK_KX, 120 * TK_KY, tk_rgba(250, 250, 255, a), -1, 0, 0, 0, 0);
+        lay_draw("SignBoardBalloon", a);
         tk_text_box(tk_bsign.page, tk_hx(-14 - 240), tk_hy(140 + 50), 100 * TK_KY, a, &tk_bsign.ac, 0, 0);
         if (tk_abtn.nrv != BL_DEAD && tk_abtn.plain) tk_draw_abtn(tk_hx(253), tk_hy(140 - 25));
     }
