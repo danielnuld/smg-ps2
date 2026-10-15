@@ -35,7 +35,8 @@ Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
   'LGHT'  the scenario's area lights and its zones' LightID tables (tools/light.py)
   'TLGT'  u8 per TYPE: its actor light type (tools/lighttype.py, light_types.json: 0 Player 1 Strong 2 Weak 3 Planet, 255)
   'GRAV'  u32 n, n × {u16 kind, u16 flags, s32 priority, s32 inverse, f32 range, f32 distant, f32 m[12] (x, y, z
-          axes and translation, world), f32 p[4]}  (84 B): grav_record, Petari GravityCreator.cpp per kind
+          axes and translation, world), f32 p[4]}  (84 B): grav_record, Petari GravityCreator.cpp per kind; then
+          the wires' points, f32 xyz each
 """
 import json
 import math
@@ -986,7 +987,7 @@ def to_world(zones, up_ids, items):
 
 GRAV_KINDS = {"GlobalPointGravity": 0, "GlobalPlaneGravity": 1, "GlobalPlaneGravityInBox": 2,
               "GlobalPlaneGravityInCylinder": 3, "GlobalCubeGravity": 4, "GlobalDiskGravity": 5,
-              "GlobalSegmentGravity": 6}
+              "GlobalSegmentGravity": 6, "GlobalDiskTorusGravity": 7, "GlobalConeGravity": 8, "GlobalWireGravity": 9}
 
 
 def rotate_about(v, axis, deg):
@@ -1003,14 +1004,18 @@ def unit(v):
     return [x / n for x in v] if n > 1e-9 else [0.0, 0.0, 0.0]
 
 
-def grav_record(o):
+def grav_record(o, paths=(), wire=None):
     """One gravity row -> GRAV bytes, or None for kinds the engine has no evaluator for (Petari GravityCreator.cpp:
     settingFromSRT / settingFromJMapArgs, the world matrix baked in). m = x, y, z axes + translation; p, flags:
     plane (1-3): p0 base distance; box: m = range box (axes scaled to the half extents), flags = distance calc type
     (0 X, 1 Y, 2 Z, 3 default); cylinder: p1 radius, p2 height. cube (4): m = cube (axes = half extents), flags =
     active faces. disk (5): m.t centre, m.y normal, m.x the valid-sector direction, p0 radius, p1 valid cos, flags
     bit 0 both sides, bit 1 edge gravity. segment (6): m.t point 0, m.y unit axis, m.x valid-side direction, p0 axis
-    length, p1 valid cos, flags bit 0/1 = edge 0/1 valid."""
+    length, p1 valid cos, flags bit 0/1 = edge 0/1 valid. torus (7): m.t centre, m.y unit axis, p0 radius, p1 disk
+    radius, flags bit 0 both sides, bits 1-2 edge type. cone (8): m = TRS axes x 500 scale (y up to the apex), p0 top
+    cut rate, flags bit 0 bottom on. wire (9): p0 its first point in `wire` (the points after the records), p1 how
+    many: WireGravityCreator::settingFromJMapOtherParam, arg0 + 2 points (arg0 20 if -1) spaced evenly along its rail,
+    the last (the rail's end) left out as Petari does."""
     kind = GRAV_KINDS.get(o["name"])
     if kind is None:
         return None
@@ -1039,6 +1044,30 @@ def grav_record(o):
         m[0] = rotate_about(side, ax[1], 0.5 * deg)
         pr[:2] = [500.0 * max(sc), math.cos(math.radians(0.5 * deg))]
         flags = (a[0] != 0) | (a[1] != 0) << 1
+    elif kind == 7:
+        pr[:2] = [500.0 * max(sc), max(float(a[2]), 0.0)]
+        flags = (a[0] != 0) | (a[1] if a[1] in (0, 1, 2) else 3) << 1
+    elif kind == 8:
+        m = [[c * 500.0 * sc[k] for c in ax[k]] for k in range(3)] + [t]
+        pr[0], flags = min(max(a[1] / 1000.0, 0.0), 1.0), int(a[0] != 0)
+    elif kind == 9:
+        rail = next((q for q in paths if q["zone"] == o["zone"] and q["id"] == o["path"]), None)
+        if rail is None:
+            return None
+        dense = bezier_polyline(rail["pts"], rail.get("cin", rail["pts"]), rail.get("cout", rail["pts"]), rail["closed"])
+        if rail["closed"]:
+            dense = dense + [dense[0]]
+        along = [0.0]
+        for i in range(1, len(dense)):
+            along.append(along[-1] + math.dist(dense[i - 1], dense[i]))
+        n = (a[0] if a[0] != -1 else 20) + 2
+        pr[:2] = [len(wire) // 3, n - 1]
+        for i in range(n - 1):
+            c, j = i * along[-1] / (n - 1), 1
+            while j < len(along) - 1 and along[j] < c:
+                j += 1
+            f = (c - along[j - 1]) / max(along[j] - along[j - 1], 1e-9)
+            wire += [dense[j - 1][k] + (dense[j][k] - dense[j - 1][k]) * f for k in range(3)]
     elif kind == 6:  # TRS: the axis is 1000 * scale.y long, the side vector the (unit) X axis
         deg = float(a[1]) if a[1] >= 0 else 360.0
         side = unit([ax[0][i] - ax[1][i] * sum(ax[0][j] * ax[1][j] for j in range(3)) for i in range(3)])
@@ -1170,8 +1199,9 @@ def placement(fs, galaxy, scenario):
                          and "#" not in arcmap[t] and auto_anim(fs, arcmap[t])})
     out.append(obj_anim_chunk(Path(fs), set(types)))
     out.append(canm_chunk(Path(fs), set(types)))
-    grav = [g for g in (grav_record(o) for o in keep) if g]
-    out.append(chunk(b"GRAV", struct.pack("<I", len(grav)) + b"".join(grav)))
+    wire = []
+    grav = [g for g in (grav_record(o, paths, wire) for o in keep) if g]
+    out.append(chunk(b"GRAV", struct.pack("<I", len(grav)) + b"".join(grav) + struct.pack(f"<{len(wire)}f", *wire)))
     out.append(chunk(b"ZPAR", struct.pack(f"<I{len(zones)}i", len(zones),
                                           *[-1 if i == 0 else up_ids.get(i, 0) for i in range(len(zones))])))
     jp2en = dict(zip(B.bcsv_column(names, "jp_name"), B.bcsv_column(names, "en_name")))

@@ -59,6 +59,29 @@ int main(void)
     assert(gravity_at(&seg, 1, (float[3]){0, 1500, 0}, v) && near3(v, 0, -1, 0));
     seg.flags = 1; /* top edge off */
     assert(!gravity_at(&seg, 1, (float[3]){0, 1500, 0}, v));
+    /* torus: radius 1000, disk 400 (inner rim 600), axis +Y, both sides, both edges */
+    Gravity tor = mk(GRAV_TORUS, 1 | 3 << 1, 0, -1, 1, 1, 1, 0, 0, 0);
+    tor.p[0] = 1000; tor.p[1] = 400;
+    assert(gravity_at(&tor, 1, (float[3]){800, 300, 0}, v) && near3(v, 0, -1, 0));   /* over the ring */
+    assert(gravity_at(&tor, 1, (float[3]){800, -300, 0}, v) && near3(v, 0, 1, 0));   /* under it */
+    assert(gravity_at(&tor, 1, (float[3]){1500, 0, 0}, v) && near3(v, -1, 0, 0));    /* outer edge */
+    assert(gravity_at(&tor, 1, (float[3]){200, 0, 0}, v) && near3(v, 1, 0, 0));      /* inner edge */
+    tor.flags = 0; /* one side, no edges */
+    assert(!gravity_at(&tor, 1, (float[3]){800, -300, 0}, v) && !gravity_at(&tor, 1, (float[3]){1500, 10, 0}, v));
+    /* cone: base radius 1000 at the origin, apex at y 1000, bottom on */
+    Gravity con = mk(GRAV_CONE, 1, 0, -1, 1000, 1000, 1000, 0, 0, 0);
+    con.p[0] = 0;
+    assert(gravity_at(&con, 1, (float[3]){0, 1500, 0}, v) && near3(v, 0, -1, 0));    /* above the apex */
+    assert(gravity_at(&con, 1, (float[3]){500, -200, 0}, v) && near3(v, 0, 1, 0));   /* under the base */
+    assert(gravity_at(&con, 1, (float[3]){1000, 1000, 0}, v) && near3(v, -0.7071068f, -0.7071068f, 0)); /* side */
+    con.flags = 0;
+    assert(!gravity_at(&con, 1, (float[3]){500, -200, 0}, v));
+    /* wire: an L of 3 points after the record, range 1000 */
+    struct { Gravity g; float pts[9]; } wire = {mk(GRAV_WIRE, 0, 0, 1000, 1, 1, 1, 0, 0, 0), {0, 0, 0, 1000, 0, 0, 1000, 1000, 0}};
+    wire.g.p[0] = 0; wire.g.p[1] = 3;
+    assert(gravity_at(&wire.g, 1, (float[3]){500, 300, 0}, v) && near3(v, 0, -1, 0));
+    assert(gravity_at(&wire.g, 1, (float[3]){1300, 500, 0}, v) && near3(v, -1, 0, 0));
+    assert(!gravity_at(&wire.g, 1, (float[3]){500, 2500, 0}, v)); /* 1000+ from both segments */
     puts("test_gravity ok");
     return 0;
 }

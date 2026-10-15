@@ -2,9 +2,11 @@
 #define GRAVITY_H
 
 /* Planet gravity as SMG computes it (Petari Game/Gravity: PlanetGravity.cpp, PointGravity.cpp, ParallelGravity.cpp,
- * CubeGravity.cpp, DiskGravity.cpp, SegmentGravity.cpp, PlanetGravityManager.cpp). The converter bakes each
- * creator's matrix (tools/slice.py grav_record); kinds without an evaluator (wire, torus, cone) are not written. */
-enum { GRAV_POINT, GRAV_PLANE, GRAV_PLANE_BOX, GRAV_PLANE_CYLINDER, GRAV_CUBE, GRAV_DISK, GRAV_SEGMENT };
+ * CubeGravity.cpp, DiskGravity.cpp, SegmentGravity.cpp, DiskTorusGravity.cpp, ConeGravity.cpp, WireGravity.cpp,
+ * PlanetGravityManager.cpp). The converter bakes each creator's matrix (tools/slice.py grav_record). A wire's points
+ * follow the n records (p0 its first point, p1 how many). */
+enum { GRAV_POINT, GRAV_PLANE, GRAV_PLANE_BOX, GRAV_PLANE_CYLINDER, GRAV_CUBE, GRAV_DISK, GRAV_SEGMENT, GRAV_TORUS, GRAV_CONE,
+       GRAV_WIRE };
 
 typedef struct {
     unsigned short kind, flags;

@@ -10415,6 +10415,7 @@ static void miss(void)
 {
     time_left = time_limit; /* the comet's time starts over with the scenario */
     mario->pos = start_pos; mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->hurt_timer = 0; mario->hip = 0;
+    mario->up = up_at(mario->pos, v3(0, 1, 0)); /* placed anew, as at the start (not his up where he fell) */
     mario->launch = -1; /* out of any launch star's flight (it would carry him back) */
     life = max_life = MAX_LIFE;
     if (--lives < 0) { printf("game over\n"); lives = START_LIVES; }
@@ -13769,7 +13770,7 @@ static void update_hazards(void)
                                           : fabsf(vdot(d, x)) < 500.0f * rw->scale[0] &&
                                                 fabsf(vdot(d, vcross(z, x))) < 500.0f * rw->scale[1] &&
                                                 fabsf(vdot(d, z)) < 500.0f * rw->scale[2];
-            if (in_hole) { printf("black hole %d\n", in->row); miss(); return; }
+            if (in_hole) { printf("black hole %d at %d %d %d up %.2f %.2f %.2f\n", in->row, (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z, mario->up.x, mario->up.y, mario->up.z); miss(); return; }
             continue;
         }
         if (in->hazard == 2) {

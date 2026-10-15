@@ -74,6 +74,88 @@ static int cube(const Gravity *g, const float p[3], float dir[3], float *dist)
     return in_range(g, *dist);
 }
 
+/* MR::calcPerpendicFootToLineInside: the point of segment a-b nearest p */
+static void foot(float o[3], const float p[3], const float a[3], const float b[3])
+{
+    float ab[3], ap[3];
+    sub(ab, b, a); sub(ap, p, a);
+    float t = dot(ap, ab) / dot(ab, ab);
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    o[0] = a[0] + ab[0] * t; o[1] = a[1] + ab[1] * t; o[2] = a[2] + ab[2] * t;
+}
+
+/* ConeGravity::calcOwnGravityVector: m = base axes (x radius, y up to the apex), m[3] the base centre, p0 the top cut
+ * rate, flags bit 0 the bottom on */
+static int cone(const Gravity *g, const float p[3], float dir[3], float *dist)
+{
+    const float *ax = g->m[1], *base = g->m[3];
+    float u[3], rel[3], pb[3], q[3], d[3];
+    float h = split(u, ax), R = len(g->m[0]), cut = g->p[0];
+    sub(rel, p, base);
+    float y = dot(rel, u);
+    pb[0] = rel[0] - u[0] * y; pb[1] = rel[1] - u[1] * y; pb[2] = rel[2] - u[2] * y;
+    if (dot(pb, pb) < 1e-6f) { /* on the axis */
+        *dist = fabsf(y);
+        if (y > 0 && (*dist -= h * (1.0f - cut)) < 0) *dist = 0;
+        if (!in_range(g, *dist)) return 0;
+        float s = y > 0 ? -1.0f : 1.0f;
+        dir[0] = u[0] * s; dir[1] = u[1] * s; dir[2] = u[2] * s;
+        return 1;
+    }
+    float r = len(pb);
+    int inside = h > 1e-3f && R > 1e-3f && r < R - y * (R / h);
+    float rim[3] = {base[0] + pb[0] * R / r, base[1] + pb[1] * R / r, base[2] + pb[2] * R / r};
+    float apex[3] = {base[0] + ax[0], base[1] + ax[1], base[2] + ax[2]};
+    if (y < 0) { /* under the base */
+        if (!(g->flags & 1)) return 0;
+        foot(q, p, base, rim);
+        sub(d, q, p);
+        if (dot(d, d) < 1e-6f) { dir[0] = -u[0]; dir[1] = -u[1]; dir[2] = -u[2]; *dist = 0; return 1; }
+        return towards(g, q, p, dir, dist);
+    }
+    if (cut < 0.01f)
+        foot(q, p, rim, apex);
+    else {
+        float top[3], fb[3], a[3], b[3];
+        for (int k = 0; k < 3; k++) {
+            top[k] = apex[k] * (1.0f - cut) + rim[k] * cut;
+            fb[k] = base[k] + ax[k] * (1.0f - cut);
+        }
+        sub(a, p, top); sub(b, top, fb);
+        if (dot(a, b) <= 0) { /* over the cut top: straight down onto it */
+            sub(a, p, fb);
+            *dist = dot(u, a);
+            if (*dist < 0) *dist = 0;
+            if (!in_range(g, *dist)) return 0;
+            dir[0] = -u[0]; dir[1] = -u[1]; dir[2] = -u[2];
+            return 1;
+        }
+        foot(q, p, rim, top);
+    }
+    sub(d, q, p);
+    if (dot(d, d) < 1e-6f) { /* on the surface: -pb without its part along the generatrix */
+        float gd[3], e[3];
+        sub(e, apex, rim);
+        split(gd, e);
+        float t = -dot(pb, gd);
+        e[0] = -pb[0] - gd[0] * t; e[1] = -pb[1] - gd[1] * t; e[2] = -pb[2] - gd[2] * t;
+        if (dot(e, e) < 1e-6f) { dir[0] = -u[0]; dir[1] = -u[1]; dir[2] = -u[2]; }
+        else split(dir, e);
+        *dist = 0;
+        return 1;
+    }
+    if (inside) { /* inside the cone: pushed out, from q (as Petari, no range test) */
+        float o[3];
+        sub(o, p, q);
+        split(dir, o);
+        *dist = 0;
+        return 1;
+    }
+    return towards(g, q, p, dir, dist);
+}
+
+static const float *wire_pts; /* the wires' points, after the records */
+
 /* One gravity's raw vector (direction * 4e6 / r^2), PlanetGravity::calcGravity. Returns 0 when out of range. */
 static int one(const Gravity *g, const float p[3], float v[3])
 {
@@ -155,6 +237,52 @@ static int one(const Gravity *g, const float p[3], float v[3])
         if (!towards(g, q, p, dir, &radius)) return 0;
         break;
     }
+    case GRAV_TORUS: { /* DiskTorusGravity::calcOwnGravityVector: m[1] the axis, p0 radius, p1 disk radius, flags bit 0
+                        * both sides, bits 1-2 the edge type (0 no edge, 1 inner only, 2 outer only, 3 both) */
+        const float *ax = g->m[1];
+        int edge = g->flags >> 1 & 3;
+        sub(rel, p, g->m[3]);
+        float y = dot(rel, ax), side[3] = {rel[0] - ax[0] * y, rel[1] - ax[1] * y, rel[2] - ax[2] * y}, ds[3];
+        if (!(g->flags & 1) && y < 0) return 0;
+        float r = split(ds, side), inner = g->p[0] - g->p[1], edge_r;
+        if (r < 1e-3f) { /* MR::makeAxisVerticalZX: any direction in the plane */
+            float z[3] = {0, 0, 1}, t = dot(z, ax);
+            float w[3] = {z[0] - ax[0] * t, z[1] - ax[1] * t, z[2] - ax[2] * t};
+            if (dot(w, w) < 1e-6f) { w[0] = 1; w[1] = 0; w[2] = 0; }
+            split(ds, w);
+        }
+        if (r < inner) {
+            if (edge == 0 || edge == 2) return 0;
+            edge_r = inner;
+        } else if (r > g->p[0]) {
+            if (edge == 0 || edge == 1) return 0;
+            edge_r = g->p[0];
+        } else {
+            float s = y >= 0 ? -1.0f : 1.0f;
+            dir[0] = ax[0] * s; dir[1] = ax[1] * s; dir[2] = ax[2] * s;
+            radius = fabsf(y);
+            if (!in_range(g, radius)) return 0;
+            break;
+        }
+        float q[3] = {g->m[3][0] + ds[0] * edge_r, g->m[3][1] + ds[1] * edge_r, g->m[3][2] + ds[2] * edge_r};
+        if (!towards(g, q, p, dir, &radius)) return 0;
+        break;
+    }
+    case GRAV_CONE:
+        if (!cone(g, p, dir, &radius)) return 0;
+        break;
+    case GRAV_WIRE: { /* WireGravity::calcOwnGravityVector: the nearest point of its polyline */
+        const float *w = wire_pts + 3 * (int)g->p[0];
+        float best = -1.0f, q[3], d[3];
+        for (int i = 0; i + 1 < (int)g->p[1]; i++) {
+            float f[3];
+            foot(f, p, w + 3 * i, w + 3 * i + 3);
+            sub(d, f, p);
+            if (dot(d, d) < best || best < 0) { best = dot(d, d); q[0] = f[0]; q[1] = f[1]; q[2] = f[2]; }
+        }
+        if (best < 0 || !towards(g, q, p, dir, &radius)) return 0;
+        break;
+    }
     default:
         return 0;
     }
@@ -179,6 +307,7 @@ void gravity_reset(void) { bound_of = 0; bound_n = 0; }
 static void bounds(const Gravity *g, int n)
 {
     bound_of = g; bound_n = n;
+    wire_pts = (const float *)(g + n);
     for (int i = 0; i < n && i < MAX_BOUNDS; i++) {
         const Gravity *q = &g[i];
         float R = q->range + q->distant, r = -1.0f;
@@ -186,7 +315,15 @@ static void bounds(const Gravity *g, int n)
         if (q->range >= 0) {
             if (q->kind == GRAV_POINT) r = R;
             else if (q->kind == GRAV_CUBE) r = R + sqrtf(dot(q->m[0], q->m[0]) + dot(q->m[1], q->m[1]) + dot(q->m[2], q->m[2]));
-            else if (q->kind == GRAV_DISK) r = R + q->p[0];
+            else if (q->kind == GRAV_DISK || q->kind == GRAV_TORUS) r = R + q->p[0];
+            else if (q->kind == GRAV_CONE) r = R + len(q->m[0]) + len(q->m[1]);
+            else if (q->kind == GRAV_WIRE) { /* around its first point, out to its farthest */
+                const float *w = (const float *)(g + n) + 3 * (int)q->p[0];
+                float far = 0, d[3];
+                for (int k = 0; k < (int)q->p[1]; k++) { sub(d, w + 3 * k, w); if (dot(d, d) > far) far = dot(d, d); }
+                bound_c[i][0] = w[0]; bound_c[i][1] = w[1]; bound_c[i][2] = w[2];
+                r = R + sqrtf(far);
+            }
             else if (q->kind == GRAV_SEGMENT) {
                 for (int k = 0; k < 3; k++) bound_c[i][k] += q->m[1][k] * q->p[0] * 0.5f;
                 r = R + q->p[0] * 0.5f;
