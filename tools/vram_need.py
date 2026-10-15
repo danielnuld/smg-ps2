@@ -2,7 +2,7 @@
 every other stage low, as the engine uploads them (render.c: PSMT4 rows of 128 pixels per level (base + nmip mips)
 + a 64-word CLUT, each rounded to 64-word blocks).
 
-usage: python tools/vram_need.py out/packs [free KB, default 2416: 4 MB minus the 640 x 224 frame buffers and Z]
+usage: python tools/vram_need.py out/packs [free KB, default 2304: 4 MB minus the 640 x 224 frame buffers, Z and the bloom buffers]
 """
 import csv
 import struct
@@ -47,7 +47,7 @@ def tex_words(blob):
     return words
 
 
-def main(packs, free_kb=2416):
+def main(packs, free_kb=2304):
     packs = Path(packs)
     base = tex_words((packs / "resident.bin").read_bytes())
     rows = []
@@ -90,4 +90,4 @@ if __name__ == "__main__":
     if sys.argv[1:] == ["--selftest"]:
         selftest()
         sys.exit()
-    main(sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 2416)
+    main(sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 2304)

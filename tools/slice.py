@@ -104,7 +104,7 @@ SKY_TILES = 8
 EXTRA = {"FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
          "MorphItemNeoFire": ("MarioFireBall",), "AirBubbleGenerator": ("AirBubble",),
-         "DinoPackun": ("DinoPackunTailBall", "DinoPackunEggShell", "DinoPackunEggShell#EggBroken", "DinoPackunEggShellBreak"), "OtaKing": ("CocoNut", "OtaKingFoot", "FireBall", "FireBubble", "OtaKingMagma", "OtaKingLongFoot"), "OtaRock": ("CocoNut", "FireBall"), "HammerHeadPackun": ("PackunLeaf",), "Plant": ("PlantTop", "PlantLeaf"), "CocoSambo": ("CocoSamboHead",), "PackunPetit": ("PackunPetitHead",),
+         "DinoPackun": ("DinoPackunTailBall", "DinoPackunEggShell", "DinoPackunEggShell#EggBroken", "DinoPackunEggShellBreak"), "OtaKing": ("CocoNut", "OtaKingFoot", "FireBall", "FireBubble", "OtaKingMagma", "OtaKingLongFoot", "OtaKingMagmaBloom"), "OtaRock": ("CocoNut", "FireBall"), "HammerHeadPackun": ("PackunLeaf",), "Plant": ("PlantTop", "PlantLeaf"), "CocoSambo": ("CocoSamboHead",), "PackunPetit": ("PackunPetitHead",),
          "RockCreator": ("RockBreak",), "WanwanRolling": ("WanwanRollingBreak",),
          "WoodBox": ("#WoodBox", "WoodBoxBreak"), "CrystalCageS": ("#CrystalCageS", "CrystalCageSBreak"),
          "CrystalCageM": ("#CrystalCageM", "CrystalCageSBreak")}
@@ -323,6 +323,16 @@ def hidden_joints(b, bl, files, pose=None):
 _ras_cache = {}
 
 
+def separable(b, bl, mat, texs, over, name):
+    """True when material `mat`'s TEV (at the RAS `over` sets) is its textures times a colour: the textures read 0.5
+    give half what they give read 1."""
+    o = dict(over or {})
+    o1, oh = dict(o.get(name, {}), tex_level=1.0), dict(o.get(name, {}), tex_level=0.5)
+    one = tex.tev(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, None, dict(o, **{name: o1}))[:3]
+    half = tex.tev(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, None, dict(o, **{name: oh}))[:3]
+    return bool(np.all(np.abs(half - 0.5 * one) < 0.03)) and bool(np.all(one < 0.99))
+
+
 def ras_colour(b, bl, mat, texs, over, name, clr0):
     """Material `mat`'s TEV with its textures read as 1 and RAS = clr0 (quantised to 4) -> rgb 0..255."""
     q = tuple(c // 4 * 4 for c in clr0[:3])
@@ -399,7 +409,7 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 gtab = []
             shapes = tex.shape_materials(b, bl[b"INF1"])
             texs = tex.textures(b, bl[b"TEX1"]) if b"TEX1" in bl else []
-            ps2, gains = {}, {}
+            ps2, gains, ras_split = {}, {}, {}
             sky = arc.stem in SKY_ARCS or arc.stem.endswith("Sky")  # 8-bit textures (tex.to_ps2 hi)
             lfiles = {k.lower().rsplit("/", 1)[-1]: v for k, v in files.items()}
             bp = brk or BRK_POSE.get(arc.stem)  # a BRK_ARG variant's (name, frame) first
@@ -434,7 +444,7 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 mt = tex.material_tex(b, bl[b"MAT3"], mat, bl.get(b"TEX1")) if mat is not None else None
                 get = geom.vtx1_attr(b, bl[b"VTX1"], mt["attr"]) if mt and mt["attr"] in info["at"] else None
                 uvs = t = None
-                gain = 1
+                gain, split = 1, True
                 # a material whose rasterized colour is CLR0 (its TEV may use RAS other than as a factor: PeanutPlanet's
                 # TEX x clamp(4 lerp(K, C0, RAS)), TicoFat's lerp(C1, TEX, RAS) + C0): per vertex the TEV with the
                 # texture read as 1 at its own CLR0 (ras_colour), the texture the TEV at the group's mean CLR0 divided
@@ -456,7 +466,10 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                             o2 = dict(over or {})
                             o2[mn] = dict(o2.get(mn, {}), mat=[c / 255 for c in ras_mean] + [1.0])
                         baked = tex.bake(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, mt["tex"], o2, binfo)
-                        if ras_mean:
+                        if ras_mean and not separable(b, bl, mat, texs, o2, mn):
+                            ras_split[key] = False  # not TEX x f(RAS): baked at the mean, vertices CLR0 / mean
+                        elif ras_mean:
+                            ras_split[key] = True
                             g0 = np.maximum(tex.tev(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, None, o2)[:3], 1 / 255)
                             baked = baked.copy()
                             baked[..., :3] = np.clip(baked[..., :3] / g0 + 0.5, 0, 255).astype(np.uint8)
@@ -464,6 +477,7 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                         gains[key] = binfo.get("gain", 1)
                     t = ps2[key]
                     gain = gains[key]
+                    split = ras_split.get(key, True)
                     off, w = info["at"][mt["attr"]]
                     m = mt["mtx"]
                     uvs = []
@@ -534,9 +548,11 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                            for v in used]
                     if mats:
                         nrm = [tuple(float(x) for x in skin.unit(m[:3, :3] @ n)) for m, n in zip(mats, nrm)]
-                if ras_mean and isinstance(cols, list):  # per vertex the TEV's factor at its CLR0 (ras_colour)
+                if ras_mean and isinstance(cols, list) and split:  # per vertex the TEV's factor at its CLR0 (ras_colour)
                     mn = tex.material_name(b, bl[b"MAT3"], mat)
                     cols = [ras_colour(b, bl, mat, texs, over, mn, cv) + tuple(c[3:]) for cv, c in zip(vc, cols)]
+                elif ras_mean and isinstance(cols, list):  # baked at the mean: CLR0 / mean left (at most 1)
+                    cols = [tuple(min(255, c[k] * 255 // ras_mean[k]) for k in range(3)) + tuple(c[3:]) for c in cols]
                 groups.append((verts, [remap[v] for v in tri], uvs, t, slots, cols, blend, nrm, gain))
             if skinned:
                 sk = skin_entry(b, bl, gtab)
@@ -1119,7 +1135,7 @@ def placement(fs, galaxy, scenario):
     planets = B.planet_table(fsp, lambda a: (fsp / "ObjectData" / f"{a}.arc").exists())
     # every class with a model on disc is kept (static until it gets a behaviour), plus gravities
     arcmap = {n: model_archive(fsp, n, planets) for n in {o["name"] for o in objs}}
-    keep = [o for o in objs if arcmap[o["name"]] or "Gravity" in o["name"] or o["name"] in LOGIC or o["name"] in jpa.AMBIENT or o["name"] in ("WaterPlant", "PowerStarAppearPoint", "CollectTico", "OceanBowl", "ScenarioStarter", "StarPieceFollowGroup", "CoinReplica", "LightCtrlCube", "LightCtrlCylinder")]
+    keep = [o for o in objs if arcmap[o["name"]] or "Gravity" in o["name"] or o["name"] in LOGIC or o["name"] in jpa.AMBIENT or o["name"] in ("WaterPlant", "PowerStarAppearPoint", "CollectTico", "OceanBowl", "ScenarioStarter", "StarPieceFollowGroup", "CoinReplica", "LightCtrlCube", "LightCtrlCylinder") or o["name"].startswith(("BloomCube", "BloomSphere", "BloomCylinder", "SimpleBloom", "ScreenBlur", "DepthOfField"))]
     for o in keep:
         for e in EXTRA.get(o["name"], ()):
             if e[0] == "#":
@@ -1176,6 +1192,11 @@ def placement(fs, galaxy, scenario):
             v = o["args"][BRK_ARG[n][1]]
             n = f"{n}~{v if v >= 0 else 0}"
             arcmap.setdefault(n, f"{arcmap[o['name']]}~{BRK_ARG[o['name']][0]}:{n.partition('~')[2]}")
+        bn = n + "Bloom"  # PlanetMap::initBloomModel / a class's bloom model: "<name>Bloom" drawn in the bloom pass
+        if arcmap.get(n) and (fsp / "ObjectData" / f"{bn}.arc").exists():
+            arcmap.setdefault(bn, bn)
+            if bn not in per_stage[names[o["zone"]]]:
+                per_stage[names[o["zone"]]].append(bn)
         if n in BRK_STEPS and arcmap.get(n):  # its BRK frames' models (BRK_STEPS)
             for k, fr in enumerate(BRK_STEPS[n][1]):
                 arcmap.setdefault(f"{n}~{k}", f"{arcmap[n]}~{BRK_STEPS[n][0]}:{fr}")

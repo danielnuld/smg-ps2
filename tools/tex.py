@@ -402,8 +402,10 @@ def tev(b, mat3, m, tex1, texs, base=None, over=None, max_stages=16, ras_k=1.0):
     def texel(stage):
         oi = order(stage)
         tmap = b[off(0x4C) + 4 * oi + 1] if oi != 0xFFFF else 0xFF
-        if tmap == 0xFF or (base is None and not ov.get("env_mean")):
+        if tmap == 0xFF:
             return np.ones(shape + (4,), np.float32)
+        if base is None and not ov.get("env_mean"):  # texture inputs read tex_level (default 1)
+            return np.full(shape + (4,), ov.get("tex_level", 1.0), np.float32)
         t = sampled(oi)
         if base is None:  # env_mean: a texgen'd (environment) texture on an untextured group, its mean colour
             x = texs[t]["rgba"] if t < len(texs) else np.full((1, 4), 255, np.uint8)

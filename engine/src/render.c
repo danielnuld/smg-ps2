@@ -51,6 +51,7 @@ static packet2_t *vif[2], *gif;
 #define GIF_QW 8192             /* HUD text: one sprite per lit font pixel (the boot menu fills it) */
 static int cur;
 static float view[16], proj[16];
+static u32 bloom_q, bloom_q2, bloom_e; /* VRAM (words) of the bloom buffers: 160 x 56 (FBW 3), again, 80 x 28 (FBW 2) */
 static float frustum[4];        /* side planes in view space: x n, z n for |x| and |y| (render_set_fovy) */
 #define MAT_FL 28                /* a matrix as VU1 reads it: 4 columns local -> clip, then the light matrix's 3 */
 static float (*mats)[MAT_FL];    /* one matrix per instance this frame, read by DMA */
@@ -144,6 +145,9 @@ void render_init(void)
     }
     zbuf.enable = DRAW_ENABLE; zbuf.mask = 0; zbuf.method = ZTEST_METHOD_GREATER_EQUAL; zbuf.zsm = GS_ZBUF_24;
     zbuf.address = graph_vram_allocate(SCREEN_W, SCREEN_H, GS_ZBUF_24, GRAPH_ALIGN_PAGE);
+    bloom_q = graph_vram_allocate(192, 64, GS_PSM_32, GRAPH_ALIGN_PAGE);  /* bloom: a quarter, its blur, an eighth */
+    bloom_q2 = graph_vram_allocate(192, 64, GS_PSM_32, GRAPH_ALIGN_PAGE);
+    bloom_e = graph_vram_allocate(128, 32, GS_PSM_32, GRAPH_ALIGN_PAGE);
     graph_initialize(frame[0].address, SCREEN_W, SCREEN_H, GS_PSM_32, 0, 0);
     graph_set_mode(GRAPH_MODE_INTERLACED, graph_get_region(), GRAPH_MODE_FRAME, GRAPH_DISABLE);
     graph_set_screen(0, 16, SCREEN_W, DISP_H);
@@ -760,6 +764,7 @@ static void call_chain(void *chain, float *m)
 #define MAX_XLU 128
 static struct { const Model *md; float *m; float depth; const RenderLight *light; } xlu[MAX_XLU];
 static int nxlu;
+static int bloom_drawing; /* bloom_pass: blended groups drawn at once */
 
 static void draw_model(const Model *md, const float world[16], const float (*drw)[16])
 {
@@ -789,7 +794,9 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
             light_matrix(m, world, world + 12);
         if (md->chain)
             call_chain(md->chain, m);
-        if (md->chain_xlu && nxlu < MAX_XLU) { /* blended groups wait for the end of the frame, far ones first */
+        if (md->chain_xlu && bloom_drawing)
+            call_chain(md->chain_xlu, m);
+        else if (md->chain_xlu && nxlu < MAX_XLU) { /* blended groups wait for the end of the frame, far ones first */
             int k = nxlu++;
             for (; k > 0 && xlu[k - 1].depth < mv[14]; k--)
                 xlu[k] = xlu[k - 1];
@@ -1140,6 +1147,136 @@ void render_strips(const Strip *st, int n)
     }
 }
 
+/* BloomEffect after Petari, on the GS without a capture of the frame (no VRAM for one): the frame's alpha cleared,
+ * the bloom models drawn into it only (FBMSK the colour; the scene's depth hides them), then the frame times that
+ * alpha box-filtered to a quarter (preDraw's capture and the 4 x downsample), blurred there (sL1RadAndOfs: radii 0.01
+ * and 0.02, 6 taps each at intensity1 / 255) and from that at an eighth (sL2RadAndOfs: 0.04, 0.07, 0.09, 12 taps at
+ * intensity2 / 255), both added to the frame at intensity / 255. ponytail: the bloom takes the scene's colour under
+ * its models (not the models' own), no threshold mask (sMaskThreshold), aspect 4 / 3 */
+#define MAX_BLOOM 32
+static struct { const Model *md; float m[16]; } bloom_list[MAX_BLOOM];
+static int nbloom;
+static u8 bloom_k, bloom_k1, bloom_k2;
+
+void render_bloom_model(const Model *md, const float world[16])
+{
+    if (md && nbloom < MAX_BLOOM) { bloom_list[nbloom].md = md; memcpy(bloom_list[nbloom].m, world, 64); nbloom++; }
+}
+
+void render_bloom(u8 intensity, u8 intensity1, u8 intensity2) { bloom_k = intensity; bloom_k1 = intensity1; bloom_k2 = intensity2; }
+
+/* a DIRECT A+D list in the VIF chain for at most n registers; ad_close sets its GIF tag's count */
+static qword_t *ad_tag;
+static void ad_open(int n)
+{
+    if (packet2_get_qw_count(vif[cur]) + n + 8 > PACKET_QW)
+        flush_vif();
+    packet2_chain_open_cnt(vif[cur], 0, 0, 0);
+    packet2_vif_flush(vif[cur], 0);
+    packet2_vif_open_direct(vif[cur], 0);
+    ad_tag = (qword_t *)vif[cur]->next;
+    packet2_add_2x_s64(vif[cur], 0, GIF_REG_AD);
+}
+#define AD(v, r) packet2_add_2x_s64(vif[cur], (v), (r))
+static void ad_close(void)
+{
+    ad_tag->dw[0] = GIF_SET_TAG((qword_t *)vif[cur]->next - ad_tag - 1, 1, 0, 0, GIF_FLG_PACKED, 1);
+    packet2_vif_close_direct_auto(vif[cur]);
+    packet2_chain_close_tag(vif[cur]);
+}
+
+/* a textured sprite from (x0, y0)-(x1, y1) of the bound buffer with texels (u0, v0)-(u1, v1), colour c (A 0x80) */
+static void ad_sprite(float x0, float y0, float x1, float y1, float u0, float v0, float u1, float v1, int c)
+{
+    AD(GS_SET_PRIM(PRIM_SPRITE, 0, 1, 0, 1, 0, 1, 0, 0), GS_REG_PRIM);
+    AD(GS_SET_RGBAQ(c, c, c, 0x80, 0x3F800000), GS_REG_RGBAQ);
+    AD(GS_SET_UV((int)(u0 * 16), (int)(v0 * 16)), GS_REG_UV);
+    AD(GS_SET_XYZ((int)((2048 - SCREEN_W / 2 + x0) * 16), (int)((2048 - SCREEN_H / 2 + y0) * 16), 0), GS_REG_XYZ2);
+    AD(GS_SET_UV((int)(u1 * 16), (int)(v1 * 16)), GS_REG_UV);
+    AD(GS_SET_XYZ((int)((2048 - SCREEN_W / 2 + x1) * 16), (int)((2048 - SCREEN_H / 2 + y1) * 16), 0), GS_REG_XYZ2);
+}
+/* a buffer to draw into, an untextured clear of (w, h) in black */
+static void ad_target(u32 addr, int fbw, int w, int h)
+{
+    AD(GS_SET_FRAME(addr >> 11, fbw, GS_PSM_32, 0), GS_REG_FRAME);
+    AD(GS_SET_PRIM(PRIM_SPRITE, 0, 0, 0, 0, 0, 0, 0, 0), GS_REG_PRIM);
+    AD(GS_SET_RGBAQ(0, 0, 0, 0, 0x3F800000), GS_REG_RGBAQ);
+    AD(GS_SET_XYZ((2048 - SCREEN_W / 2) << 4, (2048 - SCREEN_H / 2) << 4, 0), GS_REG_XYZ2);
+    AD(GS_SET_XYZ((2048 - SCREEN_W / 2 + w) << 4, (2048 - SCREEN_H / 2 + h) << 4, 0), GS_REG_XYZ2);
+}
+/* a buffer as the texture (bilinear, clamped to w x h, tcc: its alpha too) */
+static void ad_source(u32 addr, int tbw, int tw, int th, int w, int h, int tcc)
+{
+    AD(0, GS_REG_TEXFLUSH);
+    AD(GS_SET_TEX0(addr >> 6, tbw, GS_PSM_32, tw, th, tcc, 0, 0, 0, 0, 0, 0), GS_REG_TEX0);
+    AD(GS_SET_TEX1(1, 0, 1, 1, 0, 0, 0), GS_REG_TEX1);
+    AD(GS_SET_CLAMP(2, 2, 0, w - 1, 0, h - 1), GS_REG_CLAMP);
+}
+
+static void bloom_pass(void)
+{
+    if (!bloom_k || !nbloom) { nbloom = 0; return; }
+    u32 fb = frame[back].address, fw = SCREEN_W >> 6;
+    /* the frame's alpha to 0, then the bloom models into it alone */
+    ad_open(6);
+    AD(GS_SET_FRAME(fb >> 11, fw, GS_PSM_32, 0x00FFFFFF), GS_REG_FRAME);
+    AD(GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, ZTEST_METHOD_ALLPASS), GS_REG_TEST);
+    AD(GS_SET_PRIM(PRIM_SPRITE, 0, 0, 0, 0, 0, 0, 0, 0), GS_REG_PRIM);
+    AD(GS_SET_RGBAQ(0, 0, 0, 0, 0x3F800000), GS_REG_RGBAQ);
+    AD(GS_SET_XYZ((2048 - SCREEN_W / 2) << 4, (2048 - SCREEN_H / 2) << 4, 0), GS_REG_XYZ2);
+    AD(GS_SET_XYZ((2048 + SCREEN_W / 2) << 4, (2048 + SCREEN_H / 2) << 4, 0), GS_REG_XYZ2);
+    ad_close();
+    cur_tex = -1;
+    bloom_drawing = 1;
+    for (int i = 0; i < nbloom; i++)
+        draw_model(bloom_list[i].md, bloom_list[i].m, NULL);
+    bloom_drawing = 0;
+    nbloom = 0;
+    /* the frame x its alpha to a quarter: 4 bilinear taps 1 texel off each way (a 4 x 4 box) */
+    const float aspect = 4.0f / 3.0f;
+    ad_open(400);
+    ad_target(bloom_q, 3, 160, 56);
+    AD(GS_SET_ALPHA(0, 2, 0, 1, 0), GS_REG_ALPHA);           /* Cs As + Cd */
+    AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 1), GS_REG_ZBUF);
+    ad_source(fb, fw, 10, 8, SCREEN_W, SCREEN_H, 1);
+    for (int k = 0; k < 4; k++) {
+        float du = (k & 1) ? 1.0f : -1.0f, dv = (k & 2) ? 1.0f : -1.0f;
+        ad_sprite(0, 0, 160, 56, du, dv, SCREEN_W + du, SCREEN_H + dv, 0x20);
+    }
+    /* L1 at the quarter: blurTexture(sL1RadAndOfs), each tap at intensity1 */
+    ad_target(bloom_q2, 3, 160, 56);
+    AD(GS_SET_ALPHA(0, 2, 2, 1, 0x80), GS_REG_ALPHA);        /* Cs + Cd */
+    ad_source(bloom_q, 3, 8, 6, 160, 56, 0);
+    static const float r1[2][2] = {{0.01f, 0.0f}, {0.02f, 0.52f}}, r2[3] = {0.04f, 0.07f, 0.09f};
+    int c1 = bloom_k1 * 0x80 / 255, c2 = bloom_k2 * 0x80 / 255;
+    for (int r = 0; r < 2; r++)
+        for (int i = 0; i < 6; i++) {
+            float a = r1[r][1] + i * 6.2831853f / 6, du = -r1[r][0] / aspect * cosf(a) * 160, dv = -r1[r][0] * sinf(a) * 56;
+            ad_sprite(0, 0, 160, 56, du, dv, 160 + du, 56 + dv, c1);
+        }
+    /* L2 at an eighth from L1: sL2RadAndOfs, 12 taps each at intensity2 */
+    ad_target(bloom_e, 2, 80, 28);
+    ad_source(bloom_q2, 3, 8, 6, 160, 56, 0);
+    for (int r = 0; r < 3; r++)
+        for (int i = 0; i < 12; i++) {
+            float a = i * 6.2831853f / 12, du = -r2[r] / aspect * cosf(a) * 160, dv = -r2[r] * sinf(a) * 56;
+            ad_sprite(0, 0, 80, 28, du, dv, 160 + du, 56 + dv, c2);
+        }
+    /* both added to the frame at intensity */
+    AD(GS_SET_FRAME(fb >> 11, fw, GS_PSM_32, 0), GS_REG_FRAME);
+    int c = bloom_k * 0x80 / 255;
+    ad_source(bloom_q2, 3, 8, 6, 160, 56, 0);
+    ad_sprite(0, 0, SCREEN_W, SCREEN_H, 0, 0, 160, 56, c);
+    ad_source(bloom_e, 2, 7, 5, 80, 28, 0);
+    ad_sprite(0, 0, SCREEN_W, SCREEN_H, 0, 0, 80, 28, c);
+    AD(test_z, GS_REG_TEST);
+    AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 0), GS_REG_ZBUF);
+    AD(GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA);
+    AD(0, GS_REG_TEXFLUSH);
+    ad_close();
+    cur_tex = -1;
+}
+
 u32 render_end(void)
 {
     u32 c0 = cycles();
@@ -1150,6 +1287,7 @@ u32 render_end(void)
         call_chain(xlu[i].md->chain_xlu, xlu[i].m);
     }
     nxlu = 0;
+    bloom_pass();
     draw_quads();
     flush_vif();
     dma_channel_wait(DMA_CHANNEL_VIF1, 0);

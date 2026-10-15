@@ -208,6 +208,7 @@ typedef struct {
     const unsigned char *railer; /* map part on a rail: its PATH entry; moves along it (update_railers) */
     int press;       /* RailMoveObjPress (RGTowerPressGroundA, ReverseGravityRoomPressGroundA / B): ATYPE_MAP_OBJ_PRESS */
     int talkcls;     /* SignBoard 1, Tico 2, Kinopio 3: update_talkers */
+    const Model *md_bloom; /* its "<model>Bloom" model (PlanetMap::initBloomModel, createModelObjBloomModel) or NULL */
     int otamagma;    /* OtaKingMagma's collision (initCollisionParts "OtaKingMagma"): drawn with OtaKing (ota) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
@@ -538,7 +539,7 @@ static V3 foot_last; /* FootPrint (DinoPackun's): foot_add */
 static const Model *m_vtop, *m_vleaf;
 static int vine_try(Player *m);
 static int vine_hold(Player *m);
-static const Model *m_ota, *m_otafoot, *m_coco, *m_fireball2, *m_firebubble, *m_otamagma, *m_otalfoot;
+static const Model *m_ota, *m_otafoot, *m_coco, *m_fireball2, *m_firebubble, *m_otamagma, *m_otalfoot, *m_otabloom;
 /* OtaKingMagma's clip (startBckThisAndBloomModel); one-shots go back to Wait (Down: EndWait) at their end */
 void ota_lfoot_mtx(int k, float out[16]);
 static int lstep_of(int k) { static const int st[4] = {3, 8, 14, 18}; return st[k]; }
@@ -2918,6 +2919,7 @@ void game_rebind(void)
     m_bubble = scene_model(s, "AirBubble");
     m_ota = scene_model(s, "OtaKing"); m_otafoot = scene_model(s, "OtaKingFoot"); m_coco = scene_model(s, "CocoNut");
     m_otamagma = scene_model(s, "OtaKingMagma"); m_otalfoot = scene_model(s, "OtaKingLongFoot");
+    m_otabloom = scene_model(s, "OtaKingMagmaBloom");
     m_pleaf = scene_model(s, "PackunLeaf");
     m_vtop = scene_model(s, "PlantTop"); m_vleaf = scene_model(s, "PlantLeaf");
     m_fireball2 = scene_model(s, "FireBall"); m_firebubble = scene_model(s, "FireBubble");
@@ -3052,6 +3054,7 @@ void game_rebind(void)
         in->press = strcmp(name, "RGTowerPressGroundA") == 0 || strcmp(name, "ReverseGravityRoomPressGroundA") == 0 ||
                     strcmp(name, "ReverseGravityRoomPressGroundB") == 0;
         in->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 : 0;
+        { char bn[40]; snprintf(bn, sizeof bn, "%sBloom", name); in->md_bloom = scene_model(s, bn); }
         if (in->seesaw) { in->rotor = 0; seesaw_matrix(in); }
         in->railer = scene_blob_g && r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->path >= 0 ?
                      find_path(scene_blob_g, r->zone, r->path) : NULL;
@@ -15192,6 +15195,7 @@ static const char *walker_clip(const Kuribo *k, int *loop)
 static const Model *fat_model(const Inst *in);
 static void inst_draw(const Inst *in, const Model *md, const float m[16])
 {
+    if (in->md_bloom && md == in->md) render_bloom_model(in->md_bloom, m);
     if (in->fat && md == in->md) { /* its FatRed frame's model, posed by its own Anim (the same skin) */
         const Model *fm = fat_model(in);
         if (fm && fm->skin && in->anim) { use_row_light(in->row, v3(m[12], m[13], m[14]), LIGHT_STRONG); draw_skin(fm, m, in->anim); return; }
@@ -15341,12 +15345,39 @@ static void walker_shadow(const Kuribo *k)
     draw_shadow(k->pos, k->up, k->front, rs, rf > 0 ? rf : rs, off, start, len);
 }
 
+/* ImageEffectDirector::updateAuto: the first ImageEffectArea holding Mario; a Bloom one (BloomCube / Sphere /
+ * Cylinder: arg0 intensity 255, arg2 / arg3 blur intensities, else 42 / 21) turns the bloom on. StateBloomNormal moves
+ * its values a tenth of the way each frame, ImageEffectBase fades the effect in or out by 1 / 15 a frame.
+ * ponytail: SimpleBloom / ScreenBlur / DepthOfField areas only turn it off; no threshold (arg1) */
+static void bloom_update(void)
+{
+    static float fade, k, k1, k2;
+    static const char *const kinds[] = {"BloomCube", "BloomSphere", "BloomCylinder", "SimpleBloomCube", "SimpleBloomSphere",
+                                        "SimpleBloomCylinder", "ScreenBlurCube", "ScreenBlurSphere", "ScreenBlurCylinder",
+                                        "DepthOfFieldCube", "DepthOfFieldSphere", "DepthOfFieldCylinder"};
+    static int ty[12] = {-2};
+    if (ty[0] == -2) for (int i = 0; i < 12; i++) ty[i] = scene_type(sc, kinds[i]);
+    const Row *area = NULL;
+    int kind = -1;
+    for (u32 i = 0; i < sc->nobjs && !area; i++)
+        for (int j = 0; j < 12; j++)
+            if (ty[j] >= 0 && sc->objs[i].type == ty[j] && row_shown(i) && area_inside(&sc->objs[i], mario->pos)) { area = &sc->objs[i]; kind = j; break; }
+    int on = area && kind < 3;
+    if (on) {
+        float t = area->arg[0] >= 0 ? area->arg[0] : 255, t1 = area->arg[2] >= 0 ? area->arg[2] : 42, t2 = area->arg[3] >= 0 ? area->arg[3] : 21;
+        k += (t + 0.5f - k) * 0.1f; k1 += (t1 + 0.5f - k1) * 0.1f; k2 += (t2 + 0.5f - k2) * 0.1f;
+    }
+    fade = on ? fminf(fade + 1.0f / 15.0f, 1.0f) : fmaxf(fade - 1.0f / 15.0f, 0.0f);
+    render_bloom((u8)fminf(k * fade, 255.0f), (u8)fminf(k1, 255.0f), (u8)fminf(k2, 255.0f));
+}
+
 void game_draw(void)
 {
     V3 ce, cw, cu;
     float fovy;
     camera_pose(&ce, &cw, &cu, &fovy);
     lights_update(ce, cw, cu, mario->pos);
+    bloom_update();
     render_light(default_light(LIGHT_PLANET));
 #ifdef OVERVIEW_TEST
     { /* the whole galaxy: a camera orbiting the box of the placed objects (the middle 90 % on each axis, so a far
@@ -15780,6 +15811,12 @@ void game_draw(void)
             draw_skin(m_otamagma, m, ota.magma);
             fx_named("OtaKingMagma", "Steam", m, (const float (*)[16])ota.magma->world, &ota.magma); /* exeWait's, looping */
             fx_named("OtaKingMagma", "BloomMagma", m, (const float (*)[16])ota.magma->world, &ota.magma);
+            if (m_otabloom) { /* mBloomModel: its position + (0, 10, 0) (cBloomModelOffset). ponytail: not posed by its BCK */
+                float bm[16];
+                memcpy(bm, m, 64);
+                bm[13] += 10.0f;
+                render_bloom_model(m_otabloom, bm);
+            }
         }
         for (int k = 0; k < 4 && m_otalfoot && m_otalfoot->skin && ota.nrv != OTA_APPEARSTAR; k++) {
             if (!ota.lnrv[k] || !ota.lfoot[k] || ota.lfoot[k]->skin != m_otalfoot->skin) continue; /* hideModel */

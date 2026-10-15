@@ -23,6 +23,10 @@ void render_skinned(const Model *md, const float world[16], const float (*drw)[1
  * positions (each draw takes its direction from the instance), their colours and the ambient, 0..1 */
 typedef struct { float pos[2][3], col[2][3], amb[3]; } RenderLight;
 void render_light(const RenderLight *l);
+/* BloomEffect (Petari): the frame's bloom models (DrawBufferType_BloomModel) and its strength this frame (BloomArea:
+ * intensity 0 off, blur intensities 1 / 2), drawn at render_end */
+void render_bloom_model(const Model *md, const float world[16]);
+void render_bloom(u8 intensity, u8 intensity1, u8 intensity2);
 void render_text(float x, float y, const char *s);
 /* A filled rectangle over everything, in the HUD's units (x 0..640, y 0..448) */
 void render_rect(float x, float y, float w, float h, u8 r, u8 g, u8 b);
