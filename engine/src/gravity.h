@@ -14,9 +14,13 @@ typedef struct {
     float range, distant;      /* range < 0: unlimited */
     float m[4][3];             /* x, y, z axes and translation (meaning per kind: slice.py grav_record) */
     float p[4];
-} Gravity;                     /* 84 bytes, matches slice.py GRAV */
+    int row;                   /* its OBJS row (switches) */
+} Gravity;                     /* 88 bytes, matches slice.py GRAV */
 
-/* Unit gravity direction at p (zero vector if no gravity reaches p). Returns 1 if any gravity applied. */
+/* GlobalGravityObj::updateSwitch: gravity_off[i] set leaves gravity i out (NULL: all on) */
+extern const unsigned char *gravity_off;
+
+/* Unit gravity direction at p (zero vector if no gravity reaches p or the pulls cancel). Returns 1 if it has one. */
 int gravity_at(const Gravity *g, int n, const float p[3], float out[3]);
 /* Forget the bounding spheres gravity_at keeps for the last gravity array (a new scene) */
 void gravity_reset(void);

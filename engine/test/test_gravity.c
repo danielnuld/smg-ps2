@@ -82,6 +82,12 @@ int main(void)
     assert(gravity_at(&wire.g, 1, (float[3]){500, 300, 0}, v) && near3(v, 0, -1, 0));
     assert(gravity_at(&wire.g, 1, (float[3]){1300, 500, 0}, v) && near3(v, -1, 0, 0));
     assert(!gravity_at(&wire.g, 1, (float[3]){500, 2500, 0}, v)); /* 1000+ from both segments */
+    /* two equal pulls that cancel give no direction; a gravity switched off is left out */
+    assert(!gravity_at(two, 2, (float[3]){0, 0, 0}, v));
+    unsigned char off[2] = {1, 0};
+    gravity_off = off;
+    assert(gravity_at(two, 2, (float[3]){0, 0, 0}, v) && near3(v, 1, 0, 0));
+    gravity_off = 0;
     puts("test_gravity ok");
     return 0;
 }

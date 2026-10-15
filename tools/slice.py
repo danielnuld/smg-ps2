@@ -35,7 +35,7 @@ Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
   'LGHT'  the scenario's area lights and its zones' LightID tables (tools/light.py)
   'TLGT'  u8 per TYPE: its actor light type (tools/lighttype.py, light_types.json: 0 Player 1 Strong 2 Weak 3 Planet, 255)
   'GRAV'  u32 n, n × {u16 kind, u16 flags, s32 priority, s32 inverse, f32 range, f32 distant, f32 m[12] (x, y, z
-          axes and translation, world), f32 p[4]}  (84 B): grav_record, Petari GravityCreator.cpp per kind; then
+          axes and translation, world), f32 p[4], s32 OBJS row}  (88 B): grav_record, Petari GravityCreator.cpp per kind; then
           the wires' points, f32 xyz each
 """
 import json
@@ -184,6 +184,7 @@ def rows(b):
                         args=[a[i] for a in args], range=(float_column(b, "Range") or [-1.0] * n)[i],
                         distant=(float_column(b, "Distant") or [None] * n)[i],
                         priority=int_or(b, "Priority", n, 0)[i], inverse=int_or(b, "Inverse", n, 0)[i],
+                        gtype=(B.bcsv_column(b, "Gravity_type") or ["Normal"] * n)[i],
                         sw=[sw[f][i] for f in SW_FIELDS], group=group[i], mid=mid[i]))
     return out
 
@@ -1004,7 +1005,7 @@ def unit(v):
     return [x / n for x in v] if n > 1e-9 else [0.0, 0.0, 0.0]
 
 
-def grav_record(o, paths=(), wire=None):
+def grav_record(o, paths=(), wire=None, row=0):
     """One gravity row -> GRAV bytes, or None for kinds the engine has no evaluator for (Petari GravityCreator.cpp:
     settingFromSRT / settingFromJMapArgs, the world matrix baked in). m = x, y, z axes + translation; p, flags:
     plane (1-3): p0 base distance; box: m = range box (axes scaled to the half extents), flags = distance calc type
@@ -1017,14 +1018,14 @@ def grav_record(o, paths=(), wire=None):
     many: WireGravityCreator::settingFromJMapOtherParam, arg0 + 2 points (arg0 20 if -1) spaced evenly along its rail,
     the last (the rail's end) left out as Petari does."""
     kind = GRAV_KINDS.get(o["name"])
-    if kind is None:
+    if kind is None or o.get("gtype") in ("Shadow", "Magnet"):  # Shadow / Magnet: not what Mario falls by
         return None
     r, t, sc = rot_mtx(o["rot"]), list(o["pos"]), o["scale"]
     ax = [[r[i][k] for i in range(3)] for k in range(3)]  # unit axes x, y, z
     a = [x if -2**31 <= x < 2**31 else -1 for x in o["args"]]
     m, pr, flags = ax + [t], [0.0] * 4, 0
-    distant = o["distant"]
-    if distant is None:
+    distant = o["distant"]  # getJMapInfoArgPlus: a negative Distant / Range / Priority keeps the default
+    if distant is None or distant < 0:
         distant = 500.0 * sc[0] if kind == 0 else 0.0
     base = 2000.0 if a[0] < 0 else float(a[0])
     if kind == 1:
@@ -1074,8 +1075,8 @@ def grav_record(o, paths=(), wire=None):
         m[0] = rotate_about(side, ax[1], 0.5 * deg)
         pr[:2] = [1000.0 * abs(sc[1]), math.cos(math.radians(0.5 * deg))]
         flags = {0: 0, 1: 1, 2: 2}.get(a[0], 3)
-    return struct.pack("<HHiiff12f4f", kind, flags, o["priority"], 1 if o["inverse"] == 1 else 0, o["range"], distant,
-                       *[x for v in m for x in v], *pr)
+    return struct.pack("<HHiiff12f4fi", kind, flags, max(o["priority"], 0), 1 if o["inverse"] == 1 else 0, o["range"],
+                       distant, *[x for v in m for x in v], *pr, row)
 
 
 _factory = None
@@ -1200,7 +1201,7 @@ def placement(fs, galaxy, scenario):
     out.append(obj_anim_chunk(Path(fs), set(types)))
     out.append(canm_chunk(Path(fs), set(types)))
     wire = []
-    grav = [g for g in (grav_record(o, paths, wire) for o in keep) if g]
+    grav = [g for g in (grav_record(o, paths, wire, i) for i, o in enumerate(keep)) if g]
     out.append(chunk(b"GRAV", struct.pack("<I", len(grav)) + b"".join(grav) + struct.pack(f"<{len(wire)}f", *wire)))
     out.append(chunk(b"ZPAR", struct.pack(f"<I{len(zones)}i", len(zones),
                                           *[-1 if i == 0 else up_ids.get(i, 0) for i in range(len(zones))])))
@@ -1546,7 +1547,7 @@ def selftest():
     assert abs(it[0]["rot"][1] - 90) < 1e-6 and abs(it[1]["pts"][0][0] - 110) < 1e-6, it
     g = grav_record(dict(name="GlobalCubeGravity", pos=[0, 0, 0], rot=[0, 0, 0], scale=[2, 1, 1], args=[3, 1, 2, -1],
                          distant=None, range=-1.0, priority=0, inverse=0))
-    v = struct.unpack("<HHiiff12f4f", g)
+    v = struct.unpack("<HHiiff12f4fi", g)
     assert v[1] == 0b100111 and v[6:9] == (1000.0, 0.0, 0.0) and v[15:18] == (0.0, 500.0, 0.0), v
     # two triangles sharing an edge: 6 emitted, 4 unique; colours keep their rgb, the 4th byte is the index
     P = [struct.pack("<4h", *v, 0) for v in ((0, 0, 0), (1, 0, 0), (0, 1, 0), (1, 0, 0), (0, 1, 0), (1, 1, 0))]

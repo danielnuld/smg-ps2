@@ -155,6 +155,7 @@ static int cone(const Gravity *g, const float p[3], float dir[3], float *dist)
 }
 
 static const float *wire_pts; /* the wires' points, after the records */
+const unsigned char *gravity_off;
 
 /* One gravity's raw vector (direction * 4e6 / r^2), PlanetGravity::calcGravity. Returns 0 when out of range. */
 static int one(const Gravity *g, const float p[3], float v[3])
@@ -342,7 +343,7 @@ int gravity_at(const Gravity *g, int n, const float p[3], float out[3])
         bounds(g, n);
     for (int i = 0; i < n; i++) {
         float v[3];
-        if (g[i].priority < best)
+        if (g[i].priority < best || (gravity_off && gravity_off[i]))
             continue;
         if (i < MAX_BOUNDS && bound_r2[i] >= 0) {
             float d[3];
@@ -363,5 +364,5 @@ int gravity_at(const Gravity *g, int n, const float p[3], float out[3])
     float l = sqrtf(total[0] * total[0] + total[1] * total[1] + total[2] * total[2]);
     float inv = l > 0 ? 1.0f / l : 0.0f;
     out[0] = total[0] * inv; out[1] = total[1] * inv; out[2] = total[2] * inv;
-    return any;
+    return any && l > 0; /* pulls that cancel: no direction (MarioActor::updateGravityVec keeps the last) */
 }

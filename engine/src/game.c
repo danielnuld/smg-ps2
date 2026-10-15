@@ -13816,8 +13816,16 @@ static int area_inside(const Row *r, V3 p)
  * (Reverse): SW_A follows the opposite of SW_B. GroupSwitchWatcher.cpp: SW_A on once all (arg1 -1) or any one (arg1
  * 0) of the arg0 switches from SW_B on are on; action arg2 -1 does it once, else SW_A follows the group. Then a
  * changed switch rebinds the instances its appear switch shows or hides. */
+static unsigned char grav_off[2048];
+
 static void update_switches(void)
 {
+    for (int i = 0; i < ngrav && i < 2048; i++) { /* GlobalGravityObj::updateSwitch: SW_A on, SW_B off.
+                                                   * ponytail: SW_SLEEP (useStageSwitchSleep) not honoured */
+        const Row *r = &sc->objs[grav[i].row];
+        grav_off[i] = (r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) || (r->sw[SW_B] >= 0 && sw_on(r, SW_B));
+    }
+    gravity_off = grav_off;
     for (int i = 0; i < nlogic; i++) {
         int row = logic[i].row;
         const Row *r = &sc->objs[row];
