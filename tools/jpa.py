@@ -285,6 +285,28 @@ def pack(fs):
         # DinoPackun's FootPrint texture (getTexFromArc DinoPackunFootprint.bti) after it (fx_dinofoot_tex)
         img = decode_bti({k.lower(): v for k, v in B.rarc_files((wp / "ObjectData" / "DinoPackun.arc").read_bytes())}["dinopackunfootprint.bti"])
         out_tex.append(tex.to_ps2(np.ascontiguousarray(img), 0, 0))
+        # OceanSphere (WaterWave.arc) after it (fx_ocean_tex 0, 1): its face TEV baked with one sample of OceanSphere.bti
+        # for both scrolled stages, lerp(C1 00 51 70, C2 white, clamp(2 x K0 78 FF FF x T x T)), alpha A1 6F; its back
+        # lerp(C0 00 69 B8, C1 black, OceanSphereEnvRef.bti), the env map mirrored twice over (its wrap 2)
+        ww = {k.lower(): v for k, v in B.rarc_files((wp / "ObjectData" / "WaterWave.arc").read_bytes())}
+        t = decode_bti(ww["oceansphere.bti"]).astype(np.float32) / 255
+        t = np.asarray(Image.fromarray((t * 255).astype(np.uint8), "RGBA").resize((64, 64), Image.Resampling.BOX)).astype(np.float32) / 255
+        k0 = np.array([0x78, 0xFF, 0xFF], np.float32) / 255
+        c1 = np.array([0x00, 0x51, 0x70], np.float32) / 255
+        v = np.clip(2 * k0 * t[..., :3] * t[..., :3], 0, 1)
+        face = np.zeros((64, 64, 4), np.uint8)
+        face[..., :3] = ((c1 + (1 - c1) * v) * 255 + 0.5).astype(np.uint8)
+        face[..., 3] = 0x6F
+        out_tex.append(tex.to_ps2(face, 1, 1))
+        e = decode_bti(ww["oceansphereenvref.bti"]).astype(np.float32) / 255
+        e = np.concatenate((e[:, ::-1], e), 1)
+        e = np.concatenate((e[::-1], e), 0)
+        e = np.asarray(Image.fromarray((e * 255).astype(np.uint8), "RGBA").resize((64, 64), Image.Resampling.BOX)).astype(np.float32) / 255
+        c0 = np.array([0x00, 0x69, 0xB8], np.float32) / 255
+        back = np.zeros((64, 64, 4), np.uint8)
+        back[..., :3] = ((c0 * (1 - e[..., :3])) * 255 + 0.5).astype(np.uint8)
+        back[..., 3] = 255
+        out_tex.append(tex.to_ps2(back, 0, 0))
     head = struct.pack("<IIiI", len(used), len(defs), first, len(autos))
     return head + b"".join(defs) + b"".join(recs) + b"".join(autos), out_tex
 

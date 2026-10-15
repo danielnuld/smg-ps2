@@ -4218,7 +4218,17 @@ int game_fire_state(void)
 /* Test builds: Mario 300 under the first water area's surface (its row, -1 none); game_swim_state: swimming x 10000 + oxygen */
 int game_test_swim(void)
 {
-    int t[3] = {scene_type(sc, "WaterCube"), scene_type(sc, "WaterSphere"), scene_type(sc, "WaterCylinder")};
+    int t[3] = {scene_type(sc, "WaterCube"), scene_type(sc, "WaterSphere"), scene_type(sc, "WaterCylinder")}, os = scene_type(sc, "OceanSphere");
+    for (u32 i = 0; os >= 0 && i < sc->nobjs; i++) /* an OceanSphere first: Mario 300 over its surface (not lost there) */
+        if (sc->objs[i].type == os) {
+            test_nolost = 1;
+            mario->up = up_at(row_pos(&sc->objs[i]), mario->up);
+            mario->pos = vadd(row_pos(&sc->objs[i]), vmul(mario->up, 100.0f * sc->objs[i].scale[0] + 300.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            printf("swim test: OceanSphere at %d %d %d, Mario %d %d %d\n", (int)sc->objs[i].pos[0], (int)sc->objs[i].pos[1],
+                   (int)sc->objs[i].pos[2], (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z);
+            return (int)i;
+        }
     for (u32 i = 0; i < sc->nobjs; i++) {
         const Row *r = &sc->objs[i];
         if (r->type != t[0] && r->type != t[1] && r->type != t[2]) continue;
@@ -5168,6 +5178,177 @@ static void place_waterplants(void)
         float cs = cosf(0.2617994f), sn = sinf(0.2617994f); /* makeMtxRotateY(15) for the next one */
         wpc.dir = vadd(vmul(wpc.dir, cs), vmul(vcross(up, wpc.dir), sn));
         if (++wpc.k >= wpc.n) { wp_done[wpc.row] = 1; wpc.row = -1; }
+    }
+}
+
+/* OceanSphere.cpp / OceanSpherePoint.cpp after Petari: a water ball of radius 100 x scale. Its points: the six axis
+ * ones, four quarter planes (OceanSpherePlane: rows rotated about axis 2, columns about axis 1) and eight edges, each
+ * at its normal x (radius + sin(t1 + 0.8 w1) x 10 + sin(t2 + w2) x 5), t1, t2 -0.1 a frame; drawSphere's strips.
+ * Outside it, its back first (loadMaterialBack: the far half, opaque, the env map from the view-space normal x
+ * 0.779175), then its face (loadMaterialFace: the near half, blended, its texture scrolled by 0.0008 a frame);
+ * inside, the face's far half only. ponytail: one texture sample for the face's two stages (tools/jpa.py), culling by
+ * facing the centre, no TearDrop / SkullShark colours or start camera, no RiseUp demo, always the real drawing */
+typedef struct { V3 n; float w1, w2, u, v; } OsPoint;
+typedef struct { int row, n, npts, ntri; OsPoint *pt; u16 *tri; float (*pos)[3], (*uv)[2]; } OSphere;
+static OSphere *ospheres;
+static int nospheres;
+static const Scene *ospheres_sc;
+
+static V3 os_rot(V3 v, V3 axis, float a) /* TRot3f::setRotate: about a unit axis, right-handed */
+{
+    float c = cosf(a), s = sinf(a);
+    return vadd(vadd(vmul(v, c), vmul(vcross(axis, v), s)), vmul(axis, vdot(axis, v) * (1.0f - c)));
+}
+
+static void os_build(OSphere *o)
+{
+    const Row *r = &sc->objs[o->row];
+    float rad = 100.0f * r->scale[0];
+    int n = rad <= 300.0f ? 8 : rad <= 500.0f ? 10 : rad <= 1000.0f ? 15 : 20, A = n - 2;
+    o->n = n;
+    o->npts = 6 + 4 * A * A + 8 * A;
+    o->pt = mem_alloc(MEM_SCENE, o->npts * sizeof(OsPoint));
+    memset(o->pt, 0, o->npts * sizeof(OsPoint));
+    V3 X = v3(1, 0, 0), Y = v3(0, 1, 0), Z = v3(0, 0, 1), mX = v3(-1, 0, 0), mY = v3(0, -1, 0), mZ = v3(0, 0, -1);
+    /* axis points 0..5: PX NX PY NY PZ NZ */
+    static const float axt[6][2] = {{1, 0}, {0, 1}, {0.5f, 0.5f}, {0.5f, 0.5f}, {1, 1}, {0, 0}};
+    V3 axn[6] = {X, mX, Y, mY, Z, mZ};
+    for (int i = 0; i < 6; i++) { o->pt[i].n = axn[i]; o->pt[i].u = axt[i][0]; o->pt[i].v = axt[i][1]; }
+    /* planes LU RU LL RL at 6 + k A A */
+    V3 pa1[4] = {Y, Y, mY, mY}, pa2[4] = {mX, X, mX, X};
+    static const float pt1[4][2] = {{0, 1}, {1, 0}, {0, 1}, {1, 0}}, pt2[4][2] = {{0, 0}, {1, 1}, {1, 1}, {0, 0}},
+                       pt3[4][2] = {{1, 1}, {0, 0}, {0, 0}, {1, 1}};
+    for (int k = 0; k < 4; k++) {
+        OsPoint *pl = o->pt + 6 + k * A * A;
+        for (int row = 1; row < n - 1; row++) {
+            V3 vec = os_rot(pa1[k], pa2[k], (float)row / (n - 1) * 1.5707964f);
+            float rr = (float)row / (n - 1);
+            float ta[2], tb[2], tc[2];
+            for (int c = 0; c < 2; c++) {
+                ta[c] = 0.5f * (1.0f - rr) + pt1[k][c] * rr;
+                tb[c] = 0.5f * (1.0f - rr) + pt2[k][c] * rr;
+                tc[c] = 0.5f * (1.0f - rr) + pt3[k][c] * rr;
+            }
+            for (int col = 1; col < 2 * row; col++) {
+                V3 nn = os_rot(vec, pa1[k], (float)col / (2 * row) * 3.1415927f);
+                int index;
+                float t[2];
+                if (col <= row) {
+                    index = (row - 1) * A + col - 1;
+                    float rate = (float)col / row;
+                    for (int c = 0; c < 2; c++) t[c] = tb[c] * (1.0f - rate) + ta[c] * rate;
+                } else {
+                    index = (row - 1) * (A + 1) - A * (col - row);
+                    float rate = (float)(col - row) / row;
+                    for (int c = 0; c < 2; c++) t[c] = ta[c] * (1.0f - rate) + tc[c] * rate;
+                }
+                if (index < 0 || index >= A * A) continue;
+                pl[index].n = nn; pl[index].w1 = (float)row; pl[index].w2 = (float)col; pl[index].u = t[0]; pl[index].v = t[1];
+            }
+        }
+    }
+    /* edges 0..7 at 6 + 4 A A + k A */
+    V3 ea1[8] = {Y, Y, mY, mY, Z, Z, mZ, mZ}, ea2[8] = {Z, mZ, Z, mZ, mX, X, mX, X};
+    static const float et1[8][2] = {{0.5f, 0.5f}, {0.5f, 0.5f}, {0.5f, 0.5f}, {0.5f, 0.5f}, {1, 1}, {1, 1}, {0, 0}, {0, 0}},
+                       et2[8][2] = {{1, 1}, {0, 0}, {1, 1}, {0, 0}, {0, 1}, {1, 0}, {0, 1}, {1, 0}};
+    for (int k = 0; k < 8; k++) {
+        OsPoint *ed = o->pt + 6 + 4 * A * A + k * A;
+        V3 axis = vnorm(vcross(ea1[k], ea2[k])), vec = ea1[k];
+        for (int i = 0; i < A; i++) {
+            vec = os_rot(vec, axis, 1.0f / (n - 1) * 1.5707964f);
+            float rate = (float)(i + 1) / (n - 1);
+            ed[i].n = vec; ed[i].w1 = ed[i].w2 = (float)i;
+            ed[i].u = et1[k][0] * (1.0f - rate) + et2[k][0] * rate; ed[i].v = et1[k][1] * (1.0f - rate) + et2[k][1] * rate;
+        }
+    }
+    /* drawSphere's strips as triangles */
+    o->tri = mem_alloc(MEM_SCENE, 4 * (n - 1) * 2 * (2 * n) * 3 * sizeof(u16));
+    o->ntri = 0;
+    u16 strip[64];
+    for (int i = 0; i < n - 1; i++)
+        for (int q = 0; q < 4; q++)
+            for (int half = 0; half < 2; half++) {
+                int m = 0;
+                extern int os_point(const OSphere *, int, int, int);
+                if (!half) {
+                    strip[m++] = (u16)os_point(o, q, i, i);
+                    for (int j = i + 1; j < n; j++) { strip[m++] = (u16)os_point(o, q, i + 1, j); strip[m++] = (u16)os_point(o, q, i, j); }
+                } else {
+                    for (int j = 0; j < n - i - 1; j++) { strip[m++] = (u16)os_point(o, q, n - 1 - j, i); strip[m++] = (u16)os_point(o, q, n - 1 - j, i + 1); }
+                    strip[m++] = (u16)os_point(o, q, i, i);
+                }
+                for (int t = 0; t + 2 < m; t++) {
+                    u16 *tr = o->tri + 3 * o->ntri++;
+                    tr[0] = strip[t + (t & 1)]; tr[1] = strip[t + 1 - (t & 1)]; tr[2] = strip[t + 2];
+                }
+            }
+    o->pos = mem_alloc(MEM_SCENE, o->npts * sizeof(*o->pos));
+    o->uv = mem_alloc(MEM_SCENE, o->npts * sizeof(*o->uv));
+}
+
+/* getPlanePointLeftUpper / RightUpper / LeftLower / RightLower: quarter q's (row, col) as a point index */
+int os_point(const OSphere *o, int q, int row, int col)
+{
+    int n = o->n, A = n - 2, max = n - 1, E = 6 + 4 * A * A;
+    enum { PX, NX, PY, NY, PZ, NZ };
+    if (row != 0 && col != 0 && row != max && col != max) return 6 + q * A * A + A * (col - 1) + (row - 1);
+    static const int c00[4] = {PY, PY, NY, NY}, c0m[4] = {NZ, PZ, PZ, NZ}, e0[4] = {1, 0, 2, 3}, cm0[4] = {PZ, NZ, NZ, PZ},
+                     ec0[4] = {0, 1, 3, 2}, cmm[4] = {NX, PX, NX, PX}, em[4] = {4, 7, 6, 5}, eo[4] = {6, 5, 4, 7};
+    if (row == 0) return col == 0 ? c00[q] : col == max ? c0m[q] : E + e0[q] * A + col - 1;
+    if (col == 0) return row == max ? cm0[q] : E + ec0[q] * A + row - 1;
+    if (row == max) return col == max ? cmm[q] : E + em[q] * A + col - 1;
+    return E + eo[q] * A + row - 1;
+}
+
+static void draw_oceanspheres(V3 eye, V3 right, V3 cup)
+{
+    if (ospheres_sc != sc) { /* the scene's spheres, built once */
+        int ty = scene_type(sc, "OceanSphere");
+        ospheres_sc = sc; nospheres = 0;
+        for (u32 i = 0; i < sc->nobjs; i++) nospheres += sc->objs[i].type == ty;
+        ospheres = mem_alloc(MEM_SCENE, (nospheres + 1) * sizeof(OSphere));
+        nospheres = 0;
+        for (u32 i = 0; ty >= 0 && i < sc->nobjs; i++)
+            if (sc->objs[i].type == ty) { ospheres[nospheres].row = i; os_build(&ospheres[nospheres]); nospheres++; }
+    }
+    if (fx_ocean_tex(0) < 0) return;
+    float t1 = -0.1f * game_frame, off = 0.0008f * game_frame;
+    off -= floorf(off);
+    static u16 keep[3 * 6 * 1024];
+    for (int k = 0; k < nospheres; k++) {
+        OSphere *o = &ospheres[k];
+        if (!row_shown(o->row)) continue;
+        const Row *r = &sc->objs[o->row];
+        V3 c = row_pos(r);
+        float rad = 100.0f * r->scale[0];
+        V3 to = vsub(eye, c), fwd = vcross(right, cup);
+        int inside = vlen(to) <= rad;
+        /* ponytail: left out when behind the camera or past 30000 (Petari draws it, far ones from a display list) */
+        if (!inside && (vdot(vmul(to, -1.0f), fwd) < -rad || vlen(to) - rad > 30000.0f)) continue;
+        for (int i = 0; i < o->npts; i++) { /* OceanSpherePoint::updatePos */
+            const OsPoint *pt = &o->pt[i];
+            float h = sinf(t1 + 0.8f * pt->w1) * 10.0f + sinf(t1 + pt->w2) * 5.0f;
+            V3 p = vadd(c, vmul(pt->n, rad + h));
+            o->pos[i][0] = p.x; o->pos[i][1] = p.y; o->pos[i][2] = p.z;
+        }
+        for (int pass = inside; pass < 2; pass++) { /* 0 the back (env map, far half), 1 the face */
+            int n = 0, far_half = pass == 0 || inside;
+            for (int t = 0; t < o->ntri && n < 6 * 1024; t++) {
+                const u16 *tr = o->tri + 3 * t;
+                V3 m = v3((o->pos[tr[0]][0] + o->pos[tr[1]][0] + o->pos[tr[2]][0]) / 3, (o->pos[tr[0]][1] + o->pos[tr[1]][1] + o->pos[tr[2]][1]) / 3,
+                          (o->pos[tr[0]][2] + o->pos[tr[1]][2] + o->pos[tr[2]][2]) / 3);
+                int facing = vdot(vsub(m, c), vsub(eye, m)) > 0.0f;
+                if (facing == far_half) continue;
+                memcpy(keep + 3 * n++, tr, 6);
+            }
+            for (int i = 0; i < o->npts; i++) {
+                if (pass == 0) { /* GX_TG_NRM through the view rotation x 0.779175, the mirrored map over -1..1 */
+                    o->uv[i][0] = (0.779175f * vdot(o->pt[i].n, right) + 1.0f) * 0.5f;
+                    o->uv[i][1] = (0.779175f * vdot(o->pt[i].n, cup) + 1.0f) * 0.5f;
+                } else { o->uv[i][0] = o->pt[i].u + off; o->uv[i][1] = o->pt[i].v + off; }
+            }
+            render_mesh((const float (*)[3])o->pos, (const float (*)[2])o->uv, o->npts, keep, n, (u16)fx_ocean_tex(pass == 0 ? 1 : 0), pass);
+        }
     }
 }
 
@@ -15894,6 +16075,10 @@ void game_draw(void)
         render_model(m_note, m, 0x80, 0x80, 0x80);
     }
     draw_waterplants();
+    {
+        V3 back = vnorm(vsub(ce, cw)), right = vnorm(vcross(cu, back));
+        draw_oceanspheres(ce, right, vcross(back, right));
+    }
     foot_draw();
     fx_draw();
     talk_draw();

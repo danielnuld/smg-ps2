@@ -961,8 +961,8 @@ int main(void)
 #endif
 #ifdef SWIM_TEST
         { /* Mario dropped in a water area (150): floats up to the surface, stays */
-            if (frame == 150) printf("swim test: row %d\n", game_test_swim());
-            if (frame >= 150 && frame < 700 && frame % 20 == 0) {
+            if (frame == 150 || frame == 450) printf("swim test: row %d\n", game_test_swim()); /* 450: after the flight */
+            if (frame >= 150 && frame < 1000 && frame % 20 == 0) {
                 char dd[128];
                 game_debug(dd, sizeof dd);
                 printf("swim test f %u: %d %s\n", frame, game_swim_state(), dd);

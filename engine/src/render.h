@@ -27,6 +27,10 @@ void render_light(const RenderLight *l);
  * intensity 0 off, blur intensities 1 / 2), drawn at render_end */
 void render_bloom_model(const Model *md, const float world[16]);
 void render_bloom(u8 intensity, u8 intensity1, u8 intensity2);
+/* a textured triangle list projected on the EE (OceanSphere): world positions, texture coordinates (0..1 over the
+ * texture, repeating if it does), ntri x 3 indices; blend: 0 opaque writing depth, 1 alpha blended without depth
+ * writes; triangles with a corner behind the camera are left out */
+void render_mesh(const float (*pos)[3], const float (*uv)[2], int nvert, const u16 *idx, int ntri, u16 tex, int blend);
 void render_text(float x, float y, const char *s);
 /* A filled rectangle over everything, in the HUD's units (x 0..640, y 0..448) */
 void render_rect(float x, float y, float w, float h, u8 r, u8 g, u8 b);

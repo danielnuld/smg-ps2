@@ -1277,6 +1277,52 @@ static void bloom_pass(void)
     cur_tex = -1;
 }
 
+#define MESH_MAX 2048
+void render_mesh(const float (*pos)[3], const float (*uv)[2], int nvert, const u16 *idx, int ntri, u16 tex, int blend)
+{
+    static float msx[MESH_MAX], msy[MESH_MAX];
+    static u32 msz[MESH_MAX];
+    static u8 mok[MESH_MAX];
+    const TexEntry *e = tex_scene->tex[tex].e;
+    if (nvert > MESH_MAX) nvert = MESH_MAX;
+    for (int v = 0; v < nvert; v++) { /* each vertex once: screen x, y, depth; mok 0 behind the camera or far off */
+        const float *p = pos[v];
+        float xv = view[0] * p[0] + view[4] * p[1] + view[8] * p[2] + view[12];
+        float yv = view[1] * p[0] + view[5] * p[1] + view[9] * p[2] + view[13];
+        float zv = view[2] * p[0] + view[6] * p[1] + view[10] * p[2] + view[14];
+        mok[v] = zv >= NEAR && zv <= FAR;
+        if (!mok[v]) continue;
+        float k = 2048.0f / zv;
+        msx[v] = 2048.0f + proj[0] * xv * k;
+        msy[v] = 2048.0f + proj[5] * yv * k;
+        mok[v] = msx[v] >= 0 && msx[v] <= 4095 && msy[v] >= 0 && msy[v] <= 4095;
+        msz[v] = (u32)(((proj[10] * zv + proj[14]) / zv + 1.0f) * (float)(0xFFFFFF / 2));
+    }
+    for (int t0 = 0; t0 < ntri; t0 += 40) { /* 40 triangles a GIF packet */
+        int n = ntri - t0 < 40 ? ntri - t0 : 40;
+        if (packet2_get_qw_count(vif[cur]) + 16 + TEXP + 6 * 3 * n + 8 > PACKET_QW)
+            flush_vif();
+        set_tex(tex);
+        ad_open(0);
+        AD(GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA);
+        AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, blend ? 1 : 0), GS_REG_ZBUF);
+        AD(GS_SET_PRIM(PRIM_TRIANGLE, 0, 1, 0, blend ? 1 : 0, 0, 1, 0, 0), GS_REG_PRIM);
+        AD(GS_SET_RGBAQ(0x80, 0x80, 0x80, 0x80, 0x3F800000), GS_REG_RGBAQ);
+        for (int t = t0; t < t0 + n; t++) {
+            const u16 *ix = idx + 3 * t;
+            if (ix[0] >= nvert || ix[1] >= nvert || ix[2] >= nvert || !mok[ix[0]] || !mok[ix[1]] || !mok[ix[2]]) continue;
+            for (int v = 0; v < 3; v++) {
+                const float *q = uv[ix[v]];
+                AD(GS_SET_UV((int)(q[0] * e->w * 16) & 0x3FFF, (int)(q[1] * e->h * 16) & 0x3FFF), GS_REG_UV);
+                AD(GS_SET_XYZ((int)(msx[ix[v]] * 16), (int)(msy[ix[v]] * 16), msz[ix[v]]), GS_REG_XYZ2);
+            }
+        }
+        AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 0), GS_REG_ZBUF);
+        ad_close();
+        cur_tex = -1; /* ALPHA, ZBUF changed */
+    }
+}
+
 u32 render_end(void)
 {
     u32 c0 = cycles();
