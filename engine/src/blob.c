@@ -82,7 +82,13 @@ int blob_add(Scene *s, const u8 *blob)
                 vg->zwrite = q[9];
                 vg->alpha = q[10];
                 vg->lit = q[11];
-                md->lit |= vg->lit;
+                md->lit |= vg->lit == 1;
+                vg->env = vg->lit == 2 ? (const float *)(q + 16) : NULL;
+                if (vg->env) { /* its 12-float matrix after the header (tools/slice.py assets) */
+                    q += 48;
+                    vg->uvm = mem_alloc(MEM_RENDER, 64);
+                    memset(vg->uvm, 0, 64);
+                }
                 vg->batch = (const u16 *)(q + 16);
                 vg->data = q + 16 + ((4 * vg->nbatch + 15) & ~15u);
                 q = vg->data;
@@ -103,7 +109,8 @@ int blob_add(Scene *s, const u8 *blob)
             u32 size = *(const u32 *)(q + 32);
             u16 g = *(const u16 *)(q + 36);
             for (u32 j = first; j < s->nmodels; j++)
-                if (strcmp(s->models[j].name, (const char *)q) == 0 && g < s->models[j].vu_ngroups) {
+                if (strcmp(s->models[j].name, (const char *)q) == 0 && g < s->models[j].vu_ngroups &&
+                    !s->models[j].vu[g].env) {
                     VuGroup *vg = &s->models[j].vu[g];
                     vg->btk = q + 36;
                     vg->uvm = mem_alloc(MEM_RENDER, 48);

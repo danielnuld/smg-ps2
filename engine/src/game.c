@@ -15807,6 +15807,7 @@ void game_draw(void)
     float eye[3] = {ce.x, ce.y, ce.z}, target[3] = {cw.x, cw.y, cw.z}, up[3] = {cu.x, cu.y, cu.z};
     float m[16];
     render_begin(eye, target, up);
+    render_env(sc);
     /* BTK texture scrolls (lava, water): every model's at the game's frame. ponytail: one frame for all instances,
      * started with the scene, not each actor's own startBtk */
     for (u32 i = 0; i < sc->nmodels; i++)

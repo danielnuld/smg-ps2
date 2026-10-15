@@ -18,15 +18,19 @@ typedef struct {
     u32 nverts;          /* 3 per triangle */
     u16 tex;             /* TEXT index, NO_TEX for untextured */
     u16 nbatch;
-    u8 blend, zwrite, alpha; /* material: 0 opaque, 1 blended, 2 additive; depth written; constant alpha 0..255 */
-    u8 lit;              /* lit material: per-vertex normals, lit on VU1 (render_light) */
+    u8 blend, zwrite, alpha; /* material: 0 opaque, 1 blended, 2 additive, 3 the frame buffer x alpha (a screen copy
+                              * seen through a tint); depth written; constant alpha 0..255 */
+    u8 lit;              /* 1 lit material: per-vertex normals, lit on VU1 (render_light); 2 environment-mapped: per-vertex
+                          * normals, UVs from them on VU1 (VU1Env, env) */
     const u16 *batch;    /* nbatch x {emitted, unique} */
     const u8 *data;      /* per batch: s16 pos[unique][4] (x, y, z in steps of Model.qscale, w = 7 * matrix slot),
                           * s16 uv[unique][2] (12 fraction bits) if textured, s8 normal[unique][4] (x 127) if lit,
                           * u8 rgbi[emitted][4] (colour + unique index), each padded to 16 (tools/slice.py
                           * index_batches) */
     const u8 *btk;       /* its BTK chunk entry (tools/slice.py btk_entry: after the size word), NULL if none */
-    float *uvm;          /* with btk: the UV matrix the chain uploads (3 qwords: columns s, t, 1; anim_btk) */
+    float *uvm;          /* with btk: the UV matrix the chain uploads (3 qwords: columns s, t, 1; anim_btk); env: 4
+                          * qwords (VU mem 8..10 and 15, render_env) */
+    const float *env;    /* lit 2: rows s, t, q of the texgen on the view normal, columns n.x, n.y, n.z, 1 (tex.env_mtx) */
 } VuGroup;
 
 #define NO_TEX 0xFFFF

@@ -28,6 +28,9 @@ extern u32 VU1Tex_CodeStart __attribute__((section(".vudata")));
 extern u32 VU1Tex_CodeEnd __attribute__((section(".vudata")));
 extern u32 VU1Lit_Start __attribute__((section(".vudata")));
 #define LIT_PROGRAM ((u32)((u8 *)&VU1Lit_Start - (u8 *)&VU1Tex_CodeStart) / 8) /* MSCAL address of the lit batches */
+extern u32 VU1Env_Start __attribute__((section(".vudata")));
+#define ENV_PROGRAM ((u32)((u8 *)&VU1Env_Start - (u8 *)&VU1Tex_CodeStart) / 8) /* environment-mapped batches */
+#define PROGRAM(vg) ((vg)->lit == 2 ? ENV_PROGRAM : (vg)->lit ? LIT_PROGRAM : 0)
 
 #define SCREEN_W 640
 /* 640 x 224 buffers shown in FRAME mode (each field reads every line): the picture is the same on both fields, so it
@@ -582,24 +585,25 @@ static int group_mode(const VuGroup *vg)
 /* GS state of a blended material, after its texture packet: ALPHA (Cs - Cd) A + Cd, or Cs A + Cd when additive, with
  * A the texture alpha when it has one, else the material alpha (FIX, 16 steps); ZBUF writes depth only if the
  * material does; TEST without the alpha cut. Prebuilt per (additive, z write, texture alpha, alpha / 16). */
-#define BLEND_STATES (2 * 2 * 2 * 16)
+#define BLEND_STATES (3 * 2 * 2 * 16)
 static qword_t *blend_states;
 
 static const qword_t *blend_state(const VuGroup *vg)
 {
     int as = vg->tex != NO_TEX && tex_scene->tex[vg->tex].e->alpha;
-    return blend_states + 4 * ((((vg->blend == 2) * 2 + !!vg->zwrite) * 2 + as) * 16 + (vg->alpha >> 4));
+    return blend_states + 4 * ((((vg->blend >= 2 ? vg->blend - 1 : 0) * 2 + !!vg->zwrite) * 2 + as) * 16 + (vg->alpha >> 4));
 }
 
 static void init_blend_states(void)
 {
     blend_states = mem_alloc(MEM_RENDER, BLEND_STATES * 4 * 16);
     for (int i = 0; i < BLEND_STATES; i++) {
-        int add = i >> 6 & 1, zw = i >> 5 & 1, as = i >> 4 & 1, a = (i & 15) * 0x11 >> 1; /* FIX: 0..0x80 */
+        int kind = i >> 6, zw = i >> 5 & 1, as = i >> 4 & 1, a = (i & 15) * 0x11 >> 1; /* FIX: 0..0x80 */
         qword_t *p = blend_states + 4 * i;
         p[0].dw[0] = GIF_SET_TAG(3, 1, 0, 0, GIF_FLG_PACKED, 1);
         p[0].dw[1] = GIF_REG_AD;
-        p[1].dw[0] = GS_SET_ALPHA(0, add ? 2 : 1, as ? 0 : 2, 1, a);
+        p[1].dw[0] = kind == 2 ? GS_SET_ALPHA(1, 2, 2, 2, a) /* Cd x FIX */
+                               : GS_SET_ALPHA(0, kind ? 2 : 1, as ? 0 : 2, 1, a);
         p[1].dw[1] = GS_REG_ALPHA;
         p[2].dw[0] = GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, !zw);
         p[2].dw[1] = GS_REG_ZBUF;
@@ -628,6 +632,37 @@ static void add_uvm(packet2_t *pk, const float *m)
     packet2_vif_nop(pk, 0);
     packet2_chain_close_tag(pk);
     packet2_utils_vu_add_unpack_data(pk, 8, (void *)m, 3, 0);
+}
+
+/* an environment-mapped group's matrix (render_env): columns to VU mem 8..10, its constant to 15 */
+static void add_envm(packet2_t *pk, const float *m)
+{
+    add_uvm(pk, m);
+    packet2_utils_vu_add_unpack_data(pk, 15, (void *)(m + 12), 1, 0);
+}
+
+/* VU1Env's matrix per environment-mapped group, after the projection is set (render_set_fovy / shake): the normal
+ * through the clip matrix's columns (x 127 x the model's quantisation step) gives (p0 x + p8 z, p5 y + p9 z, ., z) of
+ * the view normal (z away from the viewer); undone here and composed with the group's texgen (GX: z to the viewer).
+ * ponytail: an instance's own scale scales its normals (the UVs spread with it) */
+void render_env(const Scene *s)
+{
+    for (u32 i = 0; i < s->nmodels; i++) {
+        const Model *md = &s->models[i];
+        for (u32 g = 0; g < md->vu_ngroups; g++) {
+            const VuGroup *vg = &md->vu[g];
+            if (!vg->env) continue;
+            float k = md->qscale * 127.0f, *u = vg->uvm;
+            for (int r = 0; r < 3; r++) {
+                float ex = vg->env[r], ey = vg->env[3 + r], ez = vg->env[6 + r];
+                u[r] = ex / (proj[0] * k);
+                u[4 + r] = ey / (proj[5] * k);
+                u[8 + r] = (-ex * proj[8] / proj[0] - ey * proj[9] / proj[5] - ez) / k;
+                u[12 + r] = vg->env[9 + r];
+            }
+            u[3] = u[7] = u[11] = u[15] = 0.0f;
+        }
+    }
 }
 
 /* GX lit channel (LightFunction::loadActorLightInfo: lights 0 and 1, attenuation off, the ambient register): colours
@@ -690,7 +725,7 @@ static packet2_t *build_chain_pass(Model *md, int xlu)
         }
     if (!groups)
         return NULL;
-    u32 qw = batches * 9 + groups * 4 + btks * 8 + 4;
+    u32 qw = batches * 9 + groups * 4 + btks * 12 + 4;
     packet2_t *pk = packet2_create(qw, P2_TYPE_NORMAL, P2_MODE_CHAIN, 1);
     mem_charge(MEM_RENDER, qw * 16);
     for (u32 g = 0; g < md->vu_ngroups; g++) {
@@ -698,14 +733,16 @@ static packet2_t *build_chain_pass(Model *md, int xlu)
         int mode = group_mode(vg);
         if ((mode >= 2) != xlu) continue;
         emit_group(pk, vg);
-        if (vg->uvm)
+        if (vg->env)
+            add_envm(pk, vg->uvm);
+        else if (vg->uvm)
             add_uvm(pk, vg->uvm);
         const u8 *d = vg->data;
         for (u32 b = 0; b < vg->nbatch; b++) {
             u32 ne = vg->batch[2 * b], nu = vg->batch[2 * b + 1];
             add_header(pk, HDRS(mode, ne), nu);
             add_batch(pk, &d, ne, nu, vg->tex != NO_TEX, vg->lit, 2);
-            packet2_utils_vu_add_start_program(pk, vg->lit ? LIT_PROGRAM : 0);
+            packet2_utils_vu_add_start_program(pk, PROGRAM(vg));
         }
         if (vg->uvm)
             add_uvm(pk, uv_ident);
@@ -824,7 +861,7 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
     }
     if (nmats + need > MAX_INST)
         return;
-    if (packet2_get_qw_count(vif[cur]) + 8 + batches * 10 + md->vu_ngroups * 2 + btks * 8 > PACKET_QW)
+    if (packet2_get_qw_count(vif[cur]) + 8 + batches * 10 + md->vu_ngroups * 2 + btks * 12 > PACKET_QW)
         flush_vif();
     float (*gm)[MAT_FL] = mats + nmats; /* this group's matrices */
     u32 m = 1;
@@ -860,14 +897,16 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
         int mode = group_mode(vg);
         u32 base = 2 + 7 * m;
         const u8 *d = vg->data;
-        if (vg->uvm)
+        if (vg->env)
+            add_envm(vif[cur], vg->uvm);
+        else if (vg->uvm)
             add_uvm(vif[cur], vg->uvm);
         for (u32 b = 0; b < vg->nbatch; b++) {
             u32 ne = vg->batch[2 * b], nu = vg->batch[2 * b + 1];
             add_header(vif[cur], HDR(mode, m, ne), nu);
             packet2_utils_vu_add_unpack_data(vif[cur], 2, gm, 7 * m, 1);
             add_batch(vif[cur], &d, ne, nu, vg->tex != NO_TEX, vg->lit, base);
-            packet2_utils_vu_add_start_program(vif[cur], vg->lit ? LIT_PROGRAM : 0);
+            packet2_utils_vu_add_start_program(vif[cur], PROGRAM(vg));
             tris_drawn += ne / 3;
         }
         if (vg->uvm)

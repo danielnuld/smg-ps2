@@ -25,12 +25,16 @@
 ;                 ST comes before RGBAQ so the GS takes Q from it (ps2sdk draw3d.h, DRAW_STQ2_REGLIST note).
 ; Lit batches start at VU1Lit (render.c): GX's lit channel, colour x clamp(ambient + sum max(0, n . l) colour) x 2
 ; (the colours are stored x gain / 2: tools/slice.py vu_groups).
+; Environment-mapped batches start at VU1Env (render.c): laid out as lit ones (their UVs unused), unlit; each normal
+; through the clip matrix's columns, then the group's texgen matrix (VU mem 8..10 columns, 15 its constant: render_env)
+; gives s, t, q, and STQ = (s, t, q) / w (q in Q: the GS divides, as GX does for a 3x4 texgen).
 ; The matrices ride in the double buffer: a batch never reads a matrix the VIF is overwriting for the next one.
         .vu
         .align 4
         .global VU1Tex_CodeStart
         .global VU1Tex_CodeEnd
         .global VU1Lit_Start
+        .global VU1Env_Start
 VU1Tex_CodeStart:
         NOP                                 lq.xyz        VF05,0(VI00)
         NOP                                 lq            VF10,8(VI00)
@@ -214,6 +218,92 @@ litLoop:
         NOP                                 iaddiu        VI06,VI06,3
         NOP                                 isubiu        VI07,VI07,1
         NOP                                 ibne          VI07,VI02,litLoop
+        NOP                                 NOP
+        NOP                                 xgkick        VI05
+        NOP[E]                              NOP
+        NOP                                 NOP
+VU1Env_Start:
+        NOP                                 lq.xyz        VF05,0(VI00)
+        NOP                                 lq            VF10,8(VI00)
+        NOP                                 lq            VF11,9(VI00)
+        NOP                                 lq            VF12,10(VI00)
+        NOP                                 lq            VF24,15(VI00)
+        NOP                                 xtop          VI02
+        NOP                                 fcset         0
+        NOP                                 ilw.x         VI07,0(VI02)
+        NOP                                 ilw.y         VI10,0(VI02)
+        NOP                                 ilw.z         VI12,0(VI02)
+        NOP                                 ilw.w         VI13,0(VI02)
+        NOP                                 lq            VF06,1(VI02)
+        NOP                                 iaddiu        VI11,VI02,2
+        NOP                                 iadd          VI03,VI11,VI10
+        NOP                                 ibeq          VI12,VI00,envMatInBatch
+        NOP                                 NOP
+        NOP                                 iadd          VI11,VI12,VI00
+envMatInBatch:
+        NOP                                 iadd          VI08,VI03,VI13
+        NOP                                 iadd          VI14,VI08,VI13
+        NOP                                 iadd          VI04,VI14,VI13
+        NOP                                 iadd          VI05,VI04,VI07
+        NOP                                 iadd          VI06,VI05,VI00
+        NOP                                 sqi           VF06,(VI06++)
+        NOP                                 iadd          VI07,VI02,VI07
+        NOP                                 iaddiu        VI10,VI00,0x80
+envLoop:
+        NOP                                 lq            VF08,0(VI04)
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 mtir          VI12,VF08w
+        NOP                                 iadd          VI13,VI03,VI12
+        NOP                                 iadd          VI15,VI14,VI12
+        NOP                                 lq            VF07,0(VI13)
+        NOP                                 lq            VF13,0(VI15)
+        NOP                                 NOP
+        NOP                                 NOP
+        itof0.xyz     VF07,VF07             mtir          VI09,VF07w
+        itof0.xyz     VF13,VF13             iadd          VI09,VI09,VI11
+        NOP                                 lq            VF01,0(VI09)
+        NOP                                 lq            VF02,1(VI09)
+        NOP                                 lq            VF03,2(VI09)
+        NOP                                 lq            VF04,3(VI09)
+        NOP                                 mfir.w        VF08,VI10
+        mulax         ACC,VF01,VF07x        NOP
+        madday        ACC,VF02,VF07y        NOP
+        maddaz        ACC,VF03,VF07z        NOP
+        maddw         VF07,VF04,VF00w       NOP
+        mulax         ACC,VF01,VF13x        NOP
+        madday        ACC,VF02,VF13y        NOP
+        maddz         VF17,VF03,VF13z       NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        mulax.xyz     ACC,VF10,VF17x        NOP
+        madday.xyz    ACC,VF11,VF17y        NOP
+        maddaw.xyz    ACC,VF12,VF17w        NOP
+        maddw.xyz     VF09,VF24,VF00w       NOP
+        clipw.xyz     VF07xyz,VF07w         div           Q,VF00w,VF07w
+        NOP                                 waitq
+        mulq.xyz      VF07,VF07,Q           NOP
+        mulq.xyz      VF09,VF09,Q           NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        mulaw.xyz     ACC,VF05,VF00w        NOP
+        madd.xyz      VF07,VF07,VF05        NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        ftoi4.xyz     VF07,VF07             fcand         VI01,262143
+        NOP                                 iaddiu        VI01,VI01,0x00007fff
+        NOP                                 sq            VF09,0(VI06)
+        NOP                                 sq            VF08,1(VI06)
+        NOP                                 NOP
+        NOP                                 sq.xyz        VF07,2(VI06)
+        NOP                                 isw.w         VI01,2(VI06)
+        NOP                                 iaddiu        VI04,VI04,1
+        NOP                                 iaddiu        VI06,VI06,3
+        NOP                                 isubiu        VI07,VI07,1
+        NOP                                 ibne          VI07,VI02,envLoop
         NOP                                 NOP
         NOP                                 xgkick        VI05
         NOP[E]                              NOP

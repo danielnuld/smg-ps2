@@ -10,6 +10,8 @@ void render_init(void);
 void render_set_fovy(float deg);
 /* the projection translated by (x, y) in normalized device units, y up (camera shakes) */
 void render_set_shake(float x, float y);
+/* the environment-mapped groups' VU1Env matrices for this frame's projection (after render_set_fovy / shake) */
+void render_env(const Scene *s);
 /* Upload the scene's textures from index first_tex on to VRAM (their GS state packets too) and build the prebuilt
  * chains of the models from first_model on. Call after blob_load / blob_add (0, 0 the first time). */
 void render_load_textures(const Scene *s, u32 first_tex, u32 first_model);

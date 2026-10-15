@@ -460,7 +460,10 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                     vc = [clr(info["keys"][v][o11] if w11 == 1 else info["keys"][v][o11] << 8 | info["keys"][v][o11 + 1])
                           for v in used]
                     ras_mean = tuple(max(1, round(sum(c[k] for c in vc) / len(vc) / 8) * 8) for k in range(3))
-                if get and mt["tex"] < len(texs):
+                # an environment-mapped texture (texgen from normals, tex.env_mtx): baked as any, its UVs made on VU1
+                # from the view-space normal (VU1Env)
+                env = mt["env"] if mt and mt.get("env") and nget and 10 in info["at"] and not get else None
+                if (get or env) and mt["tex"] < len(texs):
                     key = (mt["tex"], mat, ras_mean)  # the material's TEV baked into its texture (tex.tev)
                     if key not in ps2:
                         x = texs[mt["tex"]]
@@ -483,6 +486,11 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                     t = ps2[key]
                     gain = gains[key]
                     split = ras_split.get(key, True)
+                if env and mt["tex"] < len(texs):  # rows s, t times the texture's UV scales
+                    t = dict(t, env=[e * (t["u_scale"], t["v_scale"], 1.0)[i % 3] for i, e in enumerate(env)])
+                    uvs = [(0.0, 0.0)] * len(used)
+                    stats["env"] = stats.get("env", 0) + 1
+                elif get and mt["tex"] < len(texs):
                     off, w = info["at"][mt["attr"]]
                     m = mt["mtx"]
                     uvs = []
@@ -542,10 +550,16 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                         cols = [flat] * len(used)
                     gtab.append(tables[(info["shape"], info["group"])])
                 blend = tex.material_blend(b, bl[b"MAT3"], mat) if mat is not None else (0, 1, 255)
+                if mat is not None and tex.samples_named(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), "IndDummy"):
+                    # the screen behind, through its TEV's tint (CrystalCage's IndTex refracts a screen copy): kind 3,
+                    # the frame buffer times the tint's mean. ponytail: no bend (indirect texture), one grey tint
+                    tint = tex.tev(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, None, over)[:3]
+                    blend = (3, blend[1], max(0, min(255, round(255 * float(sum(tint)) / 3))))
+                    t, uvs, cols = None, None, None if skinned else (255, 255, 255)
                 # per-vertex normals for lit materials (lit by the engine, vu_groups), False for unlit ones, None: lit
                 # without normals (face normals)
                 nrm = None
-                if mat is None or not tex.lit(b, bl[b"MAT3"], mat):
+                if (mat is None or not tex.lit(b, bl[b"MAT3"], mat)) and not (t and t.get("env")):
                     nrm = False
                 elif nget and 10 in info["at"]:
                     o, w = info["at"][10]
@@ -824,7 +838,8 @@ def vu_groups(groups, base, stats=None, qs=1.0):
         pos, col, uv, nb = bytearray(), bytearray(), bytearray(), bytearray()
         rgb = (0x80, 0x80, 0x80) if t else cols if slots is None and isinstance(cols, tuple) else base
         vcol = slots is None and isinstance(cols, list)  # unlit vertex colours (0..255; textured: times 0x80 / 255)
-        lit = nrm is not False
+        env = bool(t and t.get("env"))  # environment-mapped: its normals, unlit (VU1Env)
+        lit = nrm is not False and not env
         lk = gain / 2.0 if lit else 1.0  # lit: stored x gain / 2 (VU1 multiplies by 2 x the light)
         for i in range(0, len(tris), 3):
             a, b, c = (verts[tris[i + k]] for k in range(3))
@@ -845,7 +860,7 @@ def vu_groups(groups, base, stats=None, qs=1.0):
                     pos += struct.pack("<4h", *p, 7 * slots[vi])
                     cc = cols[vi] if cols else (255, 255, 255, 255)
                     col += struct.pack("<4B", *(min(255, int(x * 0x80 // 255 * lk)) for x in cc[:3]), 0x80)
-                if lit:
+                if lit or env:
                     nv = nrm[vi] if nrm else [x / nl for x in n]
                     ln = math.sqrt(sum(x * x for x in nv)) or 1.0
                     nb += struct.pack("<4b", *(max(-127, min(127, round(127 * x / ln))) for x in nv), 0)
@@ -1308,7 +1323,9 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
                     texts.append(dict(tx, lod=[0.0, 0.0]))
                 texts[ti]["lod"] = [a + b for a, b in zip(texts[ti]["lod"], lod_sums(verts, tris, uvs, tx))]
             nbt, body = index_batches(pos, col, uv, len(tris), nb)
-            vg += struct.pack("<IHHBBBB4x", len(tris), ti, nbt, *bl, 1 if nb else 0) + body
+            env = tx.get("env") if tx else None  # lit byte 2: VU1Env, its 12-float matrix (tex.env_mtx) after the header
+            vg += struct.pack("<IHHBBBB4x", len(tris), ti, nbt, *bl, 2 if env else 1 if nb else 0) + \
+                (struct.pack("<12f", *env) if env else b"") + body
         vumd.append(name32(t) + struct.pack("<If8x", len(groups), qs) + vg)
         if kcl and collision:
             kcl = kcl_to_le(kcl)

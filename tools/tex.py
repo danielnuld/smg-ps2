@@ -257,10 +257,39 @@ def material_tex(b, mat3, m, tex1=None):
                 res["mtx"] = tex_mtx(b, off(0x40) + 0x64 * mi)
                 res["maya"] = b[off(0x40) + 0x64 * mi + 1] >> 7
                 res["projected"] = res["mtx"] is None
+                if src == 1:  # GX_TG_NRM: an environment map (env_mtx)
+                    res["env"] = env_mtx(b, off(0x40) + 0x64 * mi, b[off(0x38) + 4 * ci])
         best, area = res, a
         if tex1 is None:
             break
     return best
+
+
+def env_mtx(b, t, typ):
+    """A normal texgen's matrix (J3DTexMtx::calcTexMtx, modes 6 and 7 without Maya SRT) on the view-space normal (GX:
+    x right, y up, z to the viewer) -> 12 floats, columns n.x, n.y, n.z, 1 of rows s, t, q. Mode 6:
+    J3DGetTextureMtxOld x qMtx2 (0.5, -0.5 and +0.5); mode 7: J3DGetTextureMtx (translation on z) x qMtx (projective).
+    typ 1 (GX_TG_MTX2x4) leaves q = 1, typ 0 (MTX3x4) keeps the matrix's third row. None for the other modes."""
+    info = b[t + 1]
+    mode = info & 0x3F
+    if mode not in (6, 7) or info >> 7:
+        return None
+    cxc, cyc, _ = struct.unpack_from(">3f", b, t + 4)
+    sx_, sy_ = struct.unpack_from(">2f", b, t + 0x10)
+    rot = struct.unpack_from(">h", b, t + 0x18)[0] * math.pi / 32768
+    tx, ty = struct.unpack_from(">2f", b, t + 0x1C)
+    cx, sx, sy, cy = sx_ * math.cos(rot), sx_ * math.sin(rot), sy_ * math.sin(rot), sy_ * math.cos(rot)
+    t0 = -cx * cxc + sx * cyc + cxc + tx
+    t1 = -sy * cxc - cy * cyc + cyc + ty
+    col_x = [0.5 * cx, 0.5 * sy, 0.0]
+    col_y = [0.5 * sx, -0.5 * cy, 0.0]
+    if mode == 6:
+        col_z, col_c = [0.0, 0.0, 1.0], [0.5 * cx - 0.5 * sx + t0, 0.5 * sy + 0.5 * cy + t1, 0.0]
+    else:
+        col_z, col_c = [0.5 * cx - 0.5 * sx + t0, 0.5 * sy + 0.5 * cy + t1, 1.0], [0.0, 0.0, 0.0]
+    if typ != 0:  # MTX2x4: q = 1
+        col_x[2], col_y[2], col_z[2], col_c[2] = 0.0, 0.0, 0.0, 1.0
+    return col_x + col_y + col_z + col_c
 
 
 KSEL_FRAC = [1.0, 7 / 8, 6 / 8, 5 / 8, 4 / 8, 3 / 8, 2 / 8, 1 / 8]
@@ -513,6 +542,24 @@ def bake(b, mat3, m, tex1, texs, t, over=None, info=None):
             return one
         return src
     return out
+
+
+def samples_named(b, mat3, m, tex1, name):
+    """Whether a TEV stage of material m samples the TEX1 texture called `name` (IndDummy: the screen copy J3D puts
+    there at run time for indirect refraction, CrystalCage's IndTex)."""
+    if tex1 is None:
+        return False
+    nm = names(b, tex1 + u32(b, tex1 + 0x10))
+    off = lambda k: mat3 + u32(b, mat3 + k)
+    e = off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C
+    for k in range(b[off(0x58) + b[e + 4]]):
+        oi = u16(b, e + 0xBC + 2 * k)
+        if oi == 0xFFFF or b[off(0x4C) + 4 * oi + 1] == 0xFF:
+            continue
+        t = u16(b, off(0x48) + 2 * u16(b, e + 0x84 + 2 * b[off(0x4C) + 4 * oi + 1]))
+        if t < len(nm) and nm[t] == name:
+            return True
+    return False
 
 
 def material_blend(b, mat3, m):
