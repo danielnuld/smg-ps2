@@ -3,14 +3,16 @@
 LAYO section (in resident's FONT chunk, msg.font_chunk): u16 nlayouts, u16 pad; then per layout: char name[24],
 u16 nquads, u16 pad, nquads x Quad {s16 x, y (top left, layout units: the screen centre the origin, y up), s16 w, h,
 u16 tex (index among the FONT chunk's textures, 0xFFFF none), u8 rgba[4] (0x80 = 1.0 for colour and alpha), s16 u, v,
-uw, vh (texels of the PS2 texture x 16; negative widths flip), 2 pad} (24 B), in drawing order.
+uw, vh (texels of the PS2 texture x 16; negative widths flip), u8 group (which child of the root pane it is under:
+lay_draw draws one group or all), pad} (24 B), in drawing order.
 Panes: pic1 a quad of its first material texture; wnd1 nine (lyt::Window with one frame texture: corners at the
 texture's size, flipped round, edges stretching its inner column / row, the content in between); pan1 / txt1 / bnd1
 nothing (their children are walked). A pane's translation is in its parent's space (scaled by the parents' scales),
 its origin (0..8: x left / centre / right, y top / centre / bottom) places its size; alpha multiplies down the tree
 where a pane influences its children's alpha (flags bit 1). Materials: the texture through lerp(black colour C0,
 white colour C1, texel) (lyt's default TEV for one texture; I formats are their intensity in every channel); without
-a texture the colour is the pane's vertex colours. ponytail: no rotation, no texture SRT or projections, a second
+a texture the colour is the pane's vertex colours. A child of the root pane whose alpha is 0 is taken as shown (its
+appear animation brings it in: InformationWindow, StarPieceTargetCounter). ponytail: no rotation, no texture SRT or projections, a second
 texture (a beak's mask) dropped, vertex colours averaged, the brlan animations not played.
 """
 import struct
@@ -96,18 +98,23 @@ def quads(files, name):
             images.append((np.clip(img, 0, 1) * 255 + 0.5).astype(np.uint8))
         return baked[mi]
 
-    absolute = []  # per pane: its origin's position, its scale, its alpha, shown
+    groups = [i for i, p in enumerate(panes) if p["parent"] == 0]  # the root pane's children
+    for i in groups:
+        if panes[i]["alpha"] == 0:
+            panes[i]["alpha"] = 1.0
+    absolute = []  # per pane: its origin's position, its scale, its alpha, shown, group
     for p in panes:
         if p["parent"] is None:
-            pos, sc, al, shown = (0.0, 0.0), (1.0, 1.0), 1.0, True
+            pos, sc, al, shown, grp = (0.0, 0.0), (1.0, 1.0), 1.0, True, 0
         else:
-            ppos, psc, pal, pshown = absolute[p["parent"]]
+            ppos, psc, pal, pshown, pgrp = absolute[p["parent"]]
             par = panes[p["parent"]]
             pos = (ppos[0] + p["t"][0] * psc[0], ppos[1] + p["t"][1] * psc[1])
             sc = (psc[0] * p["s"][0], psc[1] * p["s"][1])
             al = pal * (par["alpha"] if par["flags"] & 2 else 1.0)
             shown = pshown and bool(par["flags"] & 1)
-        absolute.append((pos, sc, al, shown))
+            grp = groups.index(len(absolute)) if p["parent"] == 0 else pgrp
+        absolute.append((pos, sc, al, shown, grp))
         if not (shown and p["flags"] & 1) or p["kind"] not in ("pic1", "wnd1") or p["mat"] is None or p["mat"] >= len(mats):
             continue
         w, h = p["size"][0] * sc[0], p["size"][1] * sc[1]
@@ -123,31 +130,32 @@ def quads(files, name):
         col0 = np.mean(np.array(p["colours"], np.float32), 0) / 255  # the frames' (textured) vertex colour
         if p["kind"] == "pic1":
             uv = p["uv"]
-            out.append((x0, y0, w, h, ti, rgba, uv[0], uv[1], uv[6], uv[7]))
+            out.append((x0, y0, w, h, ti, rgba, uv[0], uv[1], uv[6], uv[7], grp))
             continue
         fr = p["wnd"]["frames"]
         fi = image(fr[0][0]) if fr and fr[0][0] < len(mats) else None
         if fi is None:
-            out.append((x0, y0, w, h, ti, rgba, 0, 0, 1, 1))
+            out.append((x0, y0, w, h, ti, rgba, 0, 0, 1, 1, grp))
             continue
         fh_, fw_ = images[fi].shape[:2]
         fw, fh = min(fw_, w / 2), min(fh_, h / 2)
         iu, iv = 1 - 0.5 / fw_, 1 - 0.5 / fh_  # the corner texture's inner column / row
         if rgba[3]:
-            out.append((x0 + fw, y0 - fh, w - 2 * fw, h - 2 * fh, ti, rgba, 0, 0, 1, 1))  # content
+            out.append((x0 + fw, y0 - fh, w - 2 * fw, h - 2 * fh, ti, rgba, 0, 0, 1, 1, grp))  # content
         rgba = tuple(int(min(255, c * 128 + 0.5)) for c in (col0[0], col0[1], col0[2], col0[3] * a))
-        out += [(x0, y0, fw, fh, fi, rgba, 0, 0, 1, 1),                                  # corners
-                (x0 + w - fw, y0, fw, fh, fi, rgba, 1, 0, 0, 1),
-                (x0, y0 - h + fh, fw, fh, fi, rgba, 0, 1, 1, 0),
-                (x0 + w - fw, y0 - h + fh, fw, fh, fi, rgba, 1, 1, 0, 0),
-                (x0 + fw, y0, w - 2 * fw, fh, fi, rgba, iu, 0, iu, 1),                   # top, bottom edges
-                (x0 + fw, y0 - h + fh, w - 2 * fw, fh, fi, rgba, iu, 1, iu, 0),
-                (x0, y0 - fh, fw, h - 2 * fh, fi, rgba, 0, iv, 1, iv),                   # left, right edges
-                (x0 + w - fw, y0 - fh, fw, h - 2 * fh, fi, rgba, 1, iv, 0, iv)]
+        out += [(x0, y0, fw, fh, fi, rgba, 0, 0, 1, 1, grp),                                  # corners
+                (x0 + w - fw, y0, fw, fh, fi, rgba, 1, 0, 0, 1, grp),
+                (x0, y0 - h + fh, fw, fh, fi, rgba, 0, 1, 1, 0, grp),
+                (x0 + w - fw, y0 - h + fh, fw, fh, fi, rgba, 1, 1, 0, 0, grp),
+                (x0 + fw, y0, w - 2 * fw, fh, fi, rgba, iu, 0, iu, 1, grp),                   # top, bottom edges
+                (x0 + fw, y0 - h + fh, w - 2 * fw, fh, fi, rgba, iu, 1, iu, 0, grp),
+                (x0, y0 - fh, fw, h - 2 * fh, fi, rgba, 0, iv, 1, iv, grp),                   # left, right edges
+                (x0 + w - fw, y0 - fh, fw, h - 2 * fh, fi, rgba, 1, iv, 0, iv, grp)]
     return out, images
 
 
-LAYOUTS = ("TalkBalloonEvent", "SignBoardBalloon")  # drawn by game.c talk_draw (lay_draw)
+# drawn by game.c lay_draw: the talk balloons (talk_draw), InformationWindow (group 0 InfoWindowUp: TicoFat's Info)
+LAYOUTS = ("TalkBalloonEvent", "SignBoardBalloon", "InformationWindow")
 
 
 def section(fsp, first_tex):
@@ -162,12 +170,13 @@ def section(fsp, first_tex):
         ps2 += [tex.to_ps2(im, 0, 0, hi=True) for im in imgs]
         images += imgs
         body += struct.pack("<24sHH", name.encode(), len(qs), 0)
-        for x, y, w, h, ti, rgba, u0, v0, u1, v1 in qs:
+        for x, y, w, h, ti, rgba, u0, v0, u1, v1, grp in qs:
             t = ps2[base + ti] if ti is not None else None
             sw, sh = (t["w"] * t["u_scale"], t["h"] * t["v_scale"]) if t else (0, 0)
-            body += struct.pack("<4hH4B4h2x", round(x), round(y), round(w), round(h),
+            body += struct.pack("<4hH4B4hBx", round(x), round(y), round(w), round(h),
                                 0xFFFF if ti is None else first_tex + base + ti, *rgba,
-                                round(16 * u0 * sw), round(16 * v0 * sh), round(16 * (u1 - u0) * sw), round(16 * (v1 - v0) * sh))
+                                round(16 * u0 * sw), round(16 * v0 * sh), round(16 * (u1 - u0) * sw), round(16 * (v1 - v0) * sh),
+                                grp)
     return head + body, ps2, images
 
 

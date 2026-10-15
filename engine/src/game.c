@@ -4347,6 +4347,7 @@ int game_test_ota(void)
 static int test_fat_nodrop; /* the route test flies there by the pink spin driver instead */
 void game_test_fat_nodrop(void) { test_fat_nodrop = 1; }
 
+static const char *info_label; /* (talk_draw) */
 static int fat_state(int row); /* update_ticofat's table: eaten x 1000 + its nerve */
 int game_test_fat(void)
 {
@@ -4361,7 +4362,8 @@ int game_test_fat(void)
         if (fat_state(in->row) % 1000 < 5 && (vlen(vsub(mario->pos, base)) > 400.0f || vlen(vsub(mario->pos, base)) < 150.0f)) { /* while it eats */ mario->pos = vadd(vadd(base, vmul(vnorm(vtangent(z, up)), 240.0f)), vmul(up, 40.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
         if (got_pieces < 3) got_pieces = 3;
         test_feed = 1;
-        pad_force = talk_active() && (f0 & 3) == 0 ? PAD_CROSS : 0; /* its talks' pages: A held 6 frames in 24 */
+        pad_force = (talk_active() || info_label) && (f0 & 3) == 0 ? PAD_CROSS : 0; /* its talks' pages, the info:
+                                                                                      * A held 6 frames in 24 */
         return fat_state(in->row);
     }
     test_feed = 0;
@@ -7538,7 +7540,7 @@ static const TkGlyph *tk_glyph, *tk_icon;
 static int tk_nglyph, tk_nicon, tk_ttex = -1, tk_itex = -1, tk_lf = 33, tk_asc = 26;
 /* the talk balloons' layouts (tools/layout.py LAYO, after the FONT glyphs): quads in layout units, textures counted
  * from the font's text texture */
-typedef struct { s16 x, y, w, h; u16 tex; u8 rgba[4]; s16 u, v, uw, vh; u16 pad; } LayQuad;
+typedef struct { s16 x, y, w, h; u16 tex; u8 rgba[4]; s16 u, v, uw, vh; u8 group, pad; } LayQuad;
 static const u8 *tk_lay;
 
 #define MAX_TALKERS 32
@@ -7871,6 +7873,7 @@ static float tk_write(TkWriter *w, const u16 *s, int *lines, int *count, int *wa
 }
 /* a page in the box (HUD x, y top-left, w, h) left aligned and centred down it (text position 3), the shadow 2 x 2
  * under it; colour 77 grey (the balloons' TxtText00 material) */
+static int tk_text_grey = 77; /* the text colour (TxtText00's material 0.3 grey; InformationWindow's white) */
 static void tk_text_box(const u16 *s, float bx, float by, float bh, float alpha, const TkAlpha *ac, int arg, int centre)
 {
     TkWriter w = {0};
@@ -7878,7 +7881,7 @@ static void tk_text_box(const u16 *s, float bx, float by, float bh, float alpha,
     w.sx = 24.3f / 27.0f * TK_KX; w.sy = TK_KY; w.cs = 2.0f; w.arg = arg;
     float tw = tk_write(&w, s, &lines, &count, &wait);
     float th = lines * tk_lf * w.sy;
-    w.draw = 1; w.alpha = alpha; w.ac = ac; w.r = w.g = w.b = 77;
+    w.draw = 1; w.alpha = alpha; w.ac = ac; w.r = w.g = w.b = tk_text_grey;
     w.x = centre ? bx - tw / 2 : bx; w.y = by + (bh - th) / 2;
     TkWriter sh = w;
     sh.shadow = 1; sh.x += 2.0f * TK_KX; sh.y += 2.0f * TK_KY;
@@ -7891,6 +7894,7 @@ enum { BL_DEAD, BL_WAIT, BL_OPEN, BL_TALK, BL_CLOSE };
 typedef struct { int nrv, step, talker, kind, interval, mode; const u16 *page; TkAlpha ac; float fade; } TkBalloon;
 enum { BK_EVENT, BK_SIGN, BK_SHORT };
 static TkBalloon tk_bev, tk_bsign, tk_bshort[4];
+static const char *info_label; /* MR::appearInformationMessage's message (TALK label) while it shows, NULL none */
 static int tk_short_i;
 static struct { int nrv, step, read, plain; float x, y; } tk_abtn; /* nrv: BL_DEAD, BL_OPEN (appear), BL_TALK (open), BL_CLOSE */
 
@@ -8307,8 +8311,8 @@ static void tk_balloon_pos(Talker *t)
     t->sx = 320.0f + vdot(vsub(p, ce), r) / z * k;
     t->sy = 224.0f - vdot(vsub(p, ce), u) / z * k;
 }
-/* a layout's panes (tools/layout.py) at their places, alpha x a */
-static void lay_draw(const char *name, float a)
+/* a layout's panes (tools/layout.py) at their places, alpha x a; group: one child of its root pane, -1 all */
+static void lay_draw(const char *name, int group, float a)
 {
     if (!tk_lay) return;
     const u8 *q = tk_lay + 4;
@@ -8317,6 +8321,7 @@ static void lay_draw(const char *name, float a)
         const LayQuad *l = (const LayQuad *)(q + 28);
         if (!strcmp((const char *)q, name)) {
             for (int k = 0; k < nq; k++, l++) {
+                if (group >= 0 && l->group != group) continue;
                 u32 rgba = l->rgba[0] | l->rgba[1] << 8 | l->rgba[2] << 16 | (u32)(l->rgba[3] * a) << 24;
                 tk_quad(tk_hx(l->x), tk_hy(l->y), l->w * TK_KX, l->h * TK_KY, rgba,
                         l->tex == 0xFFFF ? -1 : tk_ttex + l->tex, l->u / 16.0f, l->v / 16.0f, l->uw / 16.0f, l->vh / 16.0f);
@@ -8371,17 +8376,29 @@ static void talk_draw(void)
     }
     if (tk_bev.nrv != BL_DEAD && tk_bev.page) { /* TalkBalloonEvent: WinBalloon 570 x 120 at (0, 144), its text (-16, 144) */
         float a = tk_fade(&tk_bev);
-        lay_draw("TalkBalloonEvent", a);
+        lay_draw("TalkBalloonEvent", -1, a);
         tk_text_box(tk_bev.page, tk_hx(-16 - 240), tk_hy(144 + 50), 100 * TK_KY, a, &tk_bev.ac, talkers[tk_bev.talker].arg, 0);
         if (tk_abtn.nrv != BL_DEAD && tk_abtn.plain) tk_draw_abtn(tk_hx(253), tk_hy(64 + 49));
     }
     if (tk_bsign.nrv != BL_DEAD && tk_bsign.page) { /* SignBoardBalloon: the board 640 x 160, the paper 530 x 120 */
         float a = tk_fade(&tk_bsign);
-        lay_draw("SignBoardBalloon", a);
+        lay_draw("SignBoardBalloon", -1, a);
         tk_text_box(tk_bsign.page, tk_hx(-14 - 240), tk_hy(140 + 50), 100 * TK_KY, a, &tk_bsign.ac, 0, 0);
         if (tk_abtn.nrv != BL_DEAD && tk_abtn.plain) tk_draw_abtn(tk_hx(253), tk_hy(140 - 25));
     }
     if (tk_abtn.nrv != BL_DEAD && !tk_abtn.plain) tk_draw_abtn(tk_abtn.x, tk_abtn.y);
+    if (info_label) { /* InformationMessage (appearInformationMessage, not centred): InfoWindowUp, its text at ConfirmU
+                       * (-256, 162: top left), its A button at AButtonPosU (251, 137) */
+        int c = talk_ctl(info_label, -1);
+        lay_draw("InformationWindow", 0, 1.0f);
+        tk_text_grey = 255;
+        if (c >= 0) tk_text_box(tk_text + tk_msg[tk_ctl[c].msg].off, tk_hx(-256), tk_hy(162), tk_lf * TK_KY, 1.0f, NULL, 0, 0);
+        tk_text_grey = 77;
+        int plain = tk_abtn.plain;
+        tk_abtn.plain = 1;
+        tk_draw_abtn(tk_hx(251), tk_hy(137));
+        tk_abtn.plain = plain;
+    }
     render_quads(tkq, ntkq);
 }
 
@@ -8435,7 +8452,7 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
  * event node starts the eating: eventFunc 0) and Common_TicoFat000 (setMessage: Wait 1 by how much is left, Point 0,
  * Test 2; the end of Fullness' talk is the metamorphosis), 280 to talk, 220 x scale up, in front. WipeOut shakes the
  * camera and shows its screen effects. The "喜び" camera only runs for arg7 6 (Good Egg's has -1). ponytail: no
- * fullness meter, no information message (its frame only), no TicoSeedGuidance, no item (arg0 0 / 1), no BVA eyes */
+ * fullness meter, no TicoSeedGuidance, no item (arg0 0 / 1), no BVA eyes. Info shows InformationPlanet until A */
 #define MAX_FATS 4
 static struct {
     int row, nrv, t, left, total, inflight, eat, g174, g178, item, has_rail, tk1, tk0; /* mMsgCtrl, _16C */
@@ -8627,7 +8644,10 @@ static void update_ticofat(void)
             }
             if (f->t >= 60 && !wipe_active()) fat_set(k, TF_INFO);
             break;
-        case TF_INFO: fat_set(k, TF_AFTER); break;
+        case TF_INFO: /* exeInfo: InformationPlanet until A */
+            info_label = "InformationPlanet";
+            if (f->t > 1 && pad_pressed(PAD_CROSS)) { pad_eat(PAD_CROSS); info_label = NULL; fat_set(k, TF_AFTER); }
+            break;
         case TF_AFTER:
             if (f->t >= 60) { camera_event_stop(); row_kill(in->row); sw_changed = 1; fat_set(k, TF_GONE); } /* 飛行 ends; disappear: its group appears */
             break;

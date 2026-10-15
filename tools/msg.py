@@ -28,7 +28,8 @@ import layout
 LANG = "UsSpanish"  # MessageData language (UsEnglish / UsFrench / UsSpanish)
 # IconAButton openWithTalk / openWithRead, the player name tag (ReplaceTagProcessor: System_PlayerName0<form>)
 SYSTEM = ("Layout_SystemTalk", "Layout_SystemRead", "System_PlayerName000")
-COMMON = {"Tico": ("Common_Tico000",), "TicoFat": ("Common_TicoFat000", "Common_TicoFat001")}  # createTalkCtrlDirect
+# createTalkCtrlDirect; TicoFat's InformationPlanet (appearInformation: getGameMessageDirect)
+COMMON = {"Tico": ("Common_Tico000",), "TicoFat": ("Common_TicoFat000", "Common_TicoFat001", "InformationPlanet")}
 
 
 def _arc(fsp, rel):
