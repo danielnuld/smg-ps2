@@ -8347,14 +8347,31 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
     static int phase, t;
     char lab[32];
     int row = -1;
+#ifndef TALK_CLS
+#define TALK_CLS 1 /* the talker class to read (XF=-DTALK_CLS=3: the first Kinopio) */
+#endif
     for (int i = 0; i < ninsts && row < 0; i++)
-        if (insts[i].talkcls == 1 && talk_row_label(insts[i].row, lab)) row = i;
+        if (insts[i].talkcls == TALK_CLS && talk_row_label(insts[i].row, lab)) row = i;
     pad_force = 0;
+    if (row < 0 && TALK_CLS == 3) { /* the Kinopios wait for their appear switch: on */
+        int ty = scene_type(sc, "Kinopio");
+        for (u32 i = 0; i < sc->nobjs; i++)
+            if ((int)sc->objs[i].type == ty && sc->objs[i].sw[SW_APPEAR] >= 0 && !sw_on(&sc->objs[i], SW_APPEAR)) {
+                sw_set(&sc->objs[i], SW_APPEAR, 1); sw_changed = 1;
+                printf("talk test: Kinopio row %u appears" "\n", i);
+                break;
+            }
+    }
+    if (row < 0 && frame % 120 == 0) printf("talk test f %d: no talker of class %d" "\n", frame, TALK_CLS);
     if (row < 0 || mario->launch >= 0) return -1;
     const Inst *in = &insts[row];
     V3 p = v3(in->m[12], in->m[13], in->m[14]), z = vnorm(v3(in->m[8], in->m[9], in->m[10]));
     t++;
-    if (phase == 0 && test_walk_to(vadd(p, vmul(z, 170.0f)), 60.0f)) { phase = 1; t = 0; }
+    if (phase == 0 && TALK_CLS != 1 && t < 300) { /* another class: Mario put 170 in front of it, then left to land */
+        V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+        mario->pos = vadd(vadd(p, vmul(z, 170.0f)), vmul(up, 30.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+    }
+    if (phase == 0 && (TALK_CLS != 1 ? t > 360 : test_walk_to(vadd(p, vmul(z, 170.0f)), 60.0f))) { phase = 1; t = 0; }
     if (phase == 1 && t > 25 && (t - 25) % 45 < 5) pad_force = PAD_CROSS;
     if (frame % 30 == 0)
         printf("talk test f %d: phase %d sign row %d, mario %d from it, director %d, balloon %d, abtn %d\n", frame, phase,

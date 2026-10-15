@@ -27,7 +27,8 @@
 # fire: with packs, Fire Mario spinning fire balls at a walker (-DFIRE_TEST)
 # fat: with packs, star pieces shot at a TicoFat until it is full (-DFAT_TEST)
 # walker: with packs, Mario by a Kuribo, Takobo, Karikari, Butterfly in turn (-DWALKER_TEST)
-# talk: with packs, Mario before the first SignBoard, then the first Tico: A opens their talk, A turns its pages (-DTALK_TEST)
+# talk: with packs, Mario before the first SignBoard, then the first Tico: A opens their talk, A turns its pages (-DTALK_TEST;
+#   XF=-DTALK_CLS=3: the first Kinopio instead, its appear switch on, Mario put before it)
 # route: with packs, the scenario played through: launch stars to its goal (EggStar 1-4), its action, its star (-DROUTE_TEST)
 # purple: with packs, Mario takes every purple coin, then the 100-coin star (-DPURPLE_TEST)
 # ota: with packs, Mario spins OtaKing's coconuts back until it goes down and takes its star (-DOTA_TEST)
