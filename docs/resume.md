@@ -398,6 +398,12 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
      colours + ambient sit at VU mem 8..10; vu1_tex.vsm: colour x gain x clamp(amb + sum max(0, n . l_i) col_i).
      B) light type per class (a table from the classes' connectToScene* calls). C) LightCtrlCube areas and the
      player's ActorLightCtrl blend. Then a full repack (VUMD changes).
+     Done 2026-10-15 (d9c94d7; A, B, C; checked in PCSX2 `walker` EggStar 1: smooth shading, Mario and walkers lit;
+     host tests pass): tools/light.py (LGHT), tools/lighttype.py -> light_types.json (TLGT), VUMD lit byte + normals,
+     BATCH 60, VU1Lit program, VU mem: double buffers from 16, UV matrix 8..10, light colours 11..14. Full repack
+     2026-10-15 (the disc image is stale). ponytail left: Alpha2 / coin specular / point lights, non-player actors
+     switch area at once, bake gain heuristic (RAS 1 or 0.5) still decides the texture's level. Next: TicoFat's pink
+     (FatRed BRK as it grows), bloom, the TEASER demos (vine black hole).
      MarioPress done (MarioPress.cpp checkVerticalPress, setPress 0 / 4 after Petari: press objects are the
      RailMoveObjPress classes; Dossun / RailBlock / TripodBossFixParts are not in the port; checkSidePressPre /
      checkSidePress need front / back walls and face velocities the port's collision lacks), talk / messages, sound effects, real lighting, wipes, multi-actor cameras (Dino damage camera),
