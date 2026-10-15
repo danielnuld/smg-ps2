@@ -1284,7 +1284,7 @@ int main(void)
         }
         se_update();
         se_flush();
-#if defined(ROUTE_TEST) || defined(SND_TEST)
+#if defined(ROUTE_TEST) || defined(SND_TEST) || defined(WALKER_TEST)
         if (frame % 5 == 0) {
             int ns, nc, nv;
             se_stats(&ns, &nc, &nv);

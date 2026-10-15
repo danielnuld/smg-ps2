@@ -921,6 +921,12 @@ def ps2_wave(pcm, rate, loop, cap):
     return spu_adpcm(out, lp), rate * r, (lp[1] if lp else len(out)), (lp[0] if lp else None)
 
 
+# archives whose animation sound tables (.bas) go into sound.bin: Mario's and Good Egg's actors' (resident ones too)
+BAS_ARCS = ("MarioAnime", "Butler", "CocoSamboBody", "CocoSamboHead", "DinoPackun", "GrandStar", "Karipon", "Kinopio",
+            "Kuribo", "KuriboMini", "OtaKing", "OtaKingLv2", "PackunFlower", "PackunPetit", "SpinTico", "Takobo", "Tico",
+            "TicoBaby", "TicoComet", "TicoFat")
+
+
 def mario_table(out_h):
     """Petari Player/MarioSound.cpp `soundlist` (key, SE, flags, the companion key played under water) ->
     engine/src/mario_snd.h for Mario::playSoundJ: kind = flags byte 0 (& 3: 0 on Mario, 1 level on Mario, 2 system,
@@ -941,22 +947,39 @@ def mario_table(out_h):
     return len(rows)
 
 
-def pack(fs, out_bin, ids_h, sources, cap=16000):
+def pack(fs, out_bin, ids_h, sources, cap=16000, budget=1850000):
     """sound.bin for the engine (se.c) and se_ids.h (every SE name -> its JAISoundID):
     'SNDB', then u32 pairs (offset, count / size): BSC bytes, banks {u16 bank, u16 wsys, u32 IBNK offset} (8 B),
     SEs {u32 id, u32 sequence offset in the BSC, u8 priority, u8 volume (x 255), u16 pad} (12 B, sorted by id),
     waves {u16 wsys, u16 wave id, u32 SPU offset, u32 samples, u32 loop start (0xFFFFFFFF none), f32 rate,
-    u8 base key, 3 pad} (24 B, sorted by wsys << 16 | id), the ADPCM blob (uploaded to SPU RAM as one).
+    u8 base key, 3 pad} (24 B, sorted by wsys << 16 | id), the ADPCM blob (uploaded to SPU RAM as one), then
+    (offset, count) of the animation sound index {char "<archive>/<clip>"[32], u32 offset, u32 entries} (40 B,
+    sorted) and the offset of its entries (JAUSoundAnimationSound, 0x20 B each, big-endian as in the .bas).
     IBNK / BSC stay big-endian. The SEs are the names written in `sources`; their waves are every one their
-    sequences reach (bms analysis, all variants of keys read from registers)."""
+    sequences reach (bms analysis, all variants of keys read from registers), resampled to at most `cap` Hz for
+    SYSTEM / PLAYER sounds and cap x 11025 / 16000 for the rest, all scaled down until the ADPCM fits `budget` bytes
+    of SPU RAM (2 MB less audsrv's area under 0x10000 and some room)."""
     import audio as A
     baa = Baa(fs)
     d = baa.d
     mario_h = Path(ids_h).with_name("mario_snd.h")
     mario_table(mario_h)
     sources = list(sources) + [mario_h]
-    names = sorted({n for src in sources for n in re.findall(r"\bSE_[A-Z0-9_]+\b", Path(src).read_text(errors="ignore"))
-                    if n in baa.ids and baa.ids[n][0] == 0})
+    names = {n for src in sources for n in re.findall(r"\bSE_[A-Z0-9_]+\b", Path(src).read_text(errors="ignore"))
+             if n in baa.ids and baa.ids[n][0] == 0}
+    bas = {}  # "<archive>/<clip>" lower case -> the .bas bytes' entries (0x20 each, big-endian as on disc)
+    from budget import rarc_files
+    for arc in BAS_ARCS:
+        for n, b in rarc_files((Path(fs) / "ObjectData" / f"{arc}.arc").read_bytes()):
+            if n.lower().endswith(".bas"):
+                cnt = U16(b, 0)
+                bas[f"{arc.lower()}/{n.rsplit('/', 1)[-1][:-4].lower()}"] = b[8:8 + 0x20 * cnt]
+                for k in range(cnt):
+                    w = U32(b, 8 + 0x20 * k)
+                    nm = baa.names.get((w >> 24, (w >> 16) & 0xFF, w & 0xFFFF))
+                    if nm and w >> 24 == 0:
+                        names.add(nm)
+    names = sorted(names)
     Path(ids_h).write_text("/* SE names -> JAISoundID (section << 24 | group << 16 | index), tools/sound.py pack */\n"
                            "#ifndef SE_IDS_H\n#define SE_IDS_H\n" +
                            "".join(f"#define {n} 0x{s << 24 | g << 16 | i:08X}u\n" for (s, g, i), n in
@@ -965,18 +988,27 @@ def pack(fs, out_bin, ids_h, sources, cap=16000):
     inst = A.instruments(d)
     A.DYN_KEY = "all"
     bsc = d[baa.bsc:U32(d, baa.bsc + 4) + baa.bsc]
-    waves = set()
+    waves = {}  # (wsys, wave id) -> its rate cap: the highest of its sounds' categories (SYSTEM / PLAYER_* high)
     se_rows = []
     for n in names:
         sid = baa.ids[n]
         off = baa.se_seq(sid)
-        waves |= A.reached([(bsc, off)], inst)[0]
+        c = cap if sid[1] in (0, 1, 2) else cap * 11025 // 16000
+        for w in A.reached([(bsc, off)], inst)[0]:
+            waves[w] = max(waves.get(w, 0), c)
         pr, vol = baa.se_item(sid)
         se_rows.append((sid[1] << 16 | sid[2], off, pr, round(vol * 255)))
+    info = {w: baa.wave(*w) for w in waves}
+
+    def est(k):  # SPU ADPCM bytes with every cap scaled by k
+        return sum(len(info[w][0]) * min(1.0, waves[w] * k / info[w][1]) / 28 * 16 for w in waves)
+    scale = 1.0
+    while est(scale) > budget and scale > 0.3:
+        scale *= 0.95
     blob, wrows = bytearray(), []
     for ws, wid in sorted(waves):
-        pcm, rate, base, loop = baa.wave(ws, wid)
-        adp, r2, n, ls = ps2_wave(pcm, rate, loop, cap)
+        pcm, rate, base, loop = info[(ws, wid)]
+        adp, r2, n, ls = ps2_wave(pcm, rate, loop, waves[(ws, wid)] * scale)
         wrows.append(struct.pack("<HHIIIfB3x", ws, wid, len(blob), n, 0xFFFFFFFF if ls is None else ls, r2, base))
         blob += adp
     banks = sorted(baa.banks.items())
@@ -991,10 +1023,19 @@ def pack(fs, out_bin, ids_h, sources, cap=16000):
     o_ibnk = o_bank + 8 * len(brows) + (-(8 * len(brows)) % 16)
     o_se = o_ibnk + len(ib_blob)
     o_wv = o_se + 12 * len(se_rows) + (-(12 * len(se_rows)) % 16)
-    o_adp = o_wv + 24 * len(wrows) + (-(24 * len(wrows)) % 64)
+    o_bas = o_wv + 24 * len(wrows) + (-(24 * len(wrows)) % 16)
+    bkeys = sorted(bas)
+    o_basent = o_bas + 40 * len(bkeys)
+    basent = b"".join(bas[k] for k in bkeys)
+    o_adp = o_basent + len(basent) + (-(o_basent + len(basent)) % 64)
     out = bytearray(o_adp + len(blob))
-    struct.pack_into("<4s10I", out, 0, b"SNDB", o_bsc, len(bsc), o_bank, len(brows), o_se, len(se_rows), o_wv,
-                     len(wrows), o_adp, len(blob))
+    struct.pack_into("<4s13I", out, 0, b"SNDB", o_bsc, len(bsc), o_bank, len(brows), o_se, len(se_rows), o_wv,
+                     len(wrows), o_adp, len(blob), o_bas, len(bkeys), o_basent)
+    at = 0
+    for k, key in enumerate(bkeys):
+        struct.pack_into("<32sII", out, o_bas + 40 * k, key.encode(), at, len(bas[key]) // 0x20)
+        at += len(bas[key])
+    out[o_basent:o_basent + len(basent)] = basent
     out[o_bsc:o_bsc + len(bsc)] = bsc
     for k, (bno, ws, io) in enumerate(brows):
         struct.pack_into("<HHI", out, o_bank + 8 * k, bno, ws, o_ibnk + io)
@@ -1006,7 +1047,8 @@ def pack(fs, out_bin, ids_h, sources, cap=16000):
         out[o_wv + 24 * k:o_wv + 24 * k + 24] = r
     out[o_adp:] = blob
     Path(out_bin).write_bytes(out)
-    print(f"sound.bin: {len(names)} SEs, {len(wrows)} waves, ADPCM {len(blob) / 1e6:.2f} MB (cap {cap} Hz), "
+    print(f"sound.bin: {len(names)} SEs, {len(wrows)} waves, ADPCM {len(blob) / 1e6:.2f} MB (caps x {scale:.2f}: system "
+          f"and Mario {cap * scale:.0f} Hz, the rest {cap * 11025 // 16000 * scale:.0f} Hz), "
           f"EE {o_adp / 1e3:.0f} KB")
 
 

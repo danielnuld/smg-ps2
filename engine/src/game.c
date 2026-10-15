@@ -357,6 +357,14 @@ static void draw_skin(const Model *md, const float m[16], Anim *a)
     if (a->clip_id >= 0) {
         fx_anim(sc->clips[a->clip_id].name, a->fx_seen == a->clip_id + 1 ? a->fx_frame : -1.0f, a->frame, m,
                 (const float (*)[16])a->world, a);
+        { /* its animation sounds (.bas: MR::startBas / actorSoundMovement); Mario's clips are MarioAnime's.
+           * ponytail: only while drawn */
+            char key[48];
+            const char *cn = sc->clips[a->clip_id].name;
+            snprintf(key, sizeof key, strchr(cn, '/') ? "%s" : "marioanime/%s", cn);
+            float at[3] = {m[12], m[13], m[14]};
+            se_anim(key, a->fx_seen == a->clip_id + 1 ? a->fx_frame : -1.0f, a->frame, at, a);
+        }
         a->fx_seen = a->clip_id + 1;
         a->fx_frame = a->frame;
     }

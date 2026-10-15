@@ -36,7 +36,10 @@ static const u8 *snd, *bsc;
 static const BankRow *banks;
 static const SeRow *ses;
 static const WaveRow *waves;
-static u32 nbanks, nses, nwaves;
+static u32 nbanks, nses, nwaves, nbas;
+typedef struct { char key[32]; u32 off, n; } BasRow;
+static const BasRow *bas;
+static const u8 *basent;
 static struct { const u8 *ib, *envt, *osct, *list; u16 wsys; } bk[256];
 
 /* envelope data (JASOscillator::Data): a table of BE points {mode, time, value} */
@@ -74,7 +77,7 @@ struct Sound {
     u8 used, has_pos, level_seen, stopping;
     u32 id, handle;
     u8 prio;
-    float vol, acc, pos[3];
+    float vol, pitch, acc, pos[3];
     Track *root;
 };
 static Chan ch[MAX_CH];
@@ -109,6 +112,7 @@ int se_load(const u8 *b)
     banks = (const BankRow *)(b + h[2]); nbanks = h[3];
     ses = (const SeRow *)(b + h[4]); nses = h[5];
     waves = (const WaveRow *)(b + h[6]); nwaves = h[7];
+    bas = (const BasRow *)(b + h[10]); nbas = h[11]; basent = b + h[12];
     for (u32 i = 0; i < nbanks && banks[i].bank < 256; i++) {
         const u8 *ib = b + banks[i].off;
         u32 size = be32(ib + 4);
@@ -680,7 +684,7 @@ u32 se_start(u32 id, const float *pos)
         if (!so[i].used) {
             Sound *s = &so[i];
             memset(s, 0, sizeof *s);
-            s->used = 1; s->id = id; s->handle = next_handle++; s->prio = r->prio; s->vol = r->vol / 255.0f;
+            s->used = 1; s->id = id; s->handle = next_handle++; s->prio = r->prio; s->vol = r->vol / 255.0f; s->pitch = 1;
             s->acc = 1.0f;
             if (pos) { s->has_pos = 1; s->pos[0] = pos[0]; s->pos[1] = pos[1]; s->pos[2] = pos[2]; }
             s->root = track_new(s, NULL, r->seq);
@@ -716,6 +720,52 @@ void se_port(u32 handle, int port, u16 value)
         if (so[i].used && so[i].handle == handle && so[i].root) so[i].root->ports[port & 15] = value;
 }
 
+void se_volpitch(u32 handle, float vol, float pitch) /* JAISound volume / pitch on a playing sound */
+{
+    for (int i = 0; i < MAX_SND; i++)
+        if (so[i].used && so[i].handle == handle) { so[i].vol *= vol; so[i].pitch *= pitch; }
+}
+
+/* JAUSoundAnimator::updateAnimSound over sound.bin's .bas tables: clip "<archive>/<clip>" went from frame `from`
+ * (-1: just started) to `to`; an entry plays as the clip passes its note-on frame (round the loop too), at its
+ * base volume (/ 127) and pitch; flag 0x40 holds it as a level sound from note-on to note-off. owner: the animation
+ * (the level sounds' handles are kept per owner and entry). ponytail: the direction / once / stop flags, deltas and
+ * repeat are not looked at */
+static struct { const void *owner; u32 entry, handle; } anim_lv[32];
+void se_anim(const char *clip, float from, float to, const float pos[3], const void *owner)
+{
+    int lo = 0, hi = (int)nbas - 1, at = -1;
+    while (lo <= hi) {
+        int m = (lo + hi) / 2, c = strcmp(bas[m].key, clip);
+        if (!c) { at = m; break; }
+        if (c < 0) lo = m + 1; else hi = m - 1;
+    }
+    if (at < 0) return;
+    for (u32 k = 0; k < bas[at].n; k++) {
+        const u8 *e = basent + bas[at].off + 0x20 * k;
+        u32 id = be32(e), flags = be32(e + 0x10);
+        float on = bef(e + 4), off = bef(e + 8), vol = e[0x14] / 127.0f, pitch = bef(e + 0x0C);
+        if (pitch <= 0) pitch = 1;
+        if (flags & 0x40) {
+            if (to < on || to > off) continue;
+            int slot = -1;
+            for (int i = 0; i < 32; i++)
+                if (anim_lv[i].owner == owner && anim_lv[i].entry == k + at * 64u) { slot = i; break; }
+            for (int i = 0; i < 32 && slot < 0; i++)
+                if (!anim_lv[i].owner) { slot = i; anim_lv[i].owner = owner; anim_lv[i].entry = k + at * 64u; anim_lv[i].handle = 0; }
+            if (slot < 0) continue;
+            u32 h0 = anim_lv[slot].handle;
+            anim_lv[slot].handle = se_level(id, pos, h0);
+            if (anim_lv[slot].handle != h0) se_volpitch(anim_lv[slot].handle, vol, pitch);
+            continue;
+        }
+        int hit = from < 0 ? on <= to : (to >= from ? from < on && on <= to : on > from || on <= to);
+        if (!hit) continue;
+        u32 h = se_start(id, pos);
+        if (h) se_volpitch(h, vol, pitch);
+    }
+}
+
 void se_listener(const float eye[3], const float r[3])
 {
     for (int k = 0; k < 3; k++) { listener[k] = eye[k]; right[k] = r[k]; }
@@ -743,6 +793,12 @@ static void voice_off(int v)
 void se_update(void)
 {
     if (!snd) return;
+    for (int i = 0; i < 32; i++) /* animation level sounds that ended free their slot */
+        if (anim_lv[i].owner) {
+            int alive = 0;
+            for (int k = 0; k < MAX_SND && !alive; k++) alive = so[k].used && so[k].handle == anim_lv[i].handle;
+            if (!alive) anim_lv[i].owner = NULL;
+        }
     /* level sounds not asked for this frame stop */
     for (int i = 0; i < MAX_SND; i++)
         if (so[i].used && so[i].level_seen && --so[i].level_seen == 0) se_stop(so[i].handle);
@@ -790,7 +846,7 @@ void se_update(void)
         place(t->snd, &dv, &pan);
         float amp = (c->vel / 127.0f) * (c->vel / 127.0f) * c->vol * vol * t->mix_vol * dv;
         if (amp < 0) amp = 0;
-        float rate = c->w->rate * c->mul * pitch * powf(2.0f, t->mix_oct + (c->key + c->sweep) / 12.0f);
+        float rate = c->w->rate * c->mul * pitch * t->snd->pitch * powf(2.0f, t->mix_oct + (c->key + c->sweep) / 12.0f);
         u32 p = (u32)(rate * 4096.0f / 48000.0f);
         if (p > 0x3FFF) p = 0x3FFF;
         float l = amp * sinf((1.0f - pan) * 1.5707963f), r = amp * sinf(pan * 1.5707963f);
