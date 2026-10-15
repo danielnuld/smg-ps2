@@ -16009,9 +16009,15 @@ int game_demo_vine(int frame) /* EggStar 1: the Plant by the HammerHeadPackun gr
         int k = -1;
         for (int j = 0; j < nvines; j++) if (vines[j].row == (int)i) k = j;
         V3 p = row_pos(r), up = up_at(p, mario->up);
-        if (k < 0) { if (!placed) demo_place(vadd(p, vmul(up, 300.0f)), mario->face); return -2; }
+        static int misses = -1;
+        if (misses != game_misses()) { misses = game_misses(); placed = 0; } /* after a miss: put back by it */
+        if (!placed) { /* on the ground 250 to its side, facing it (above the seed, or 700 off, he fell off the disk) */
+            V3 side = vnorm(vtangent(v3(1, 0, 0), up)), at = vadd(p, vmul(side, 250.0f)), hit;
+            if (drop_to_ground(vadd(at, vmul(up, 400.0f)), up, 1200.0f, &hit)) at = hit;
+            placed = 1; demo_place(vadd(at, vmul(up, 20.0f)), vmul(side, -1.0f));
+        }
+        if (k < 0) return -2;
         typeof(&vines[0]) o = &vines[k];
-        if (!placed) { placed = 1; demo_place(vadd(vadd(p, vmul(vnorm(vtangent(v3(1, 0, 0), up)), 700.0f)), vmul(up, 60.0f)), vmul(up, 1.0f)); }
         if (!sw_on(r, SW_APPEAR)) { sw_set((Row *)r, SW_APPEAR, 1); return -3; }
         if (vine_ride == k) { test_walk_to(mario->pos, 1e9f); demo_press(PAD_SQUARE, 1); }
         else if (o->nrv == VN_GROWTHSTOP || o->nrv == VN_GROWTHWAIT) {
