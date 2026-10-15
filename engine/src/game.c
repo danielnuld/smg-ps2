@@ -7978,7 +7978,10 @@ static void tk_balloon_open(TkBalloon *b, int k)
 static void tk_balloon_close(TkBalloon *b)
 {
     b->nrv = BL_CLOSE; b->step = 0;
-    if (b->kind != BK_SHORT) tk_abtn_term();
+    if (b->kind != BK_SHORT) {
+        tk_abtn_term();
+        if (!tk_select(&talkers[b->talker])) se_start(SE_SY_TALK_OK, NULL); /* TalkBalloonEvent::close */
+    }
 }
 static int tk_appeared(const TkBalloon *b) { return tk_alpha_end(&b->ac) && (b->kind == BK_SHORT || b->nrv == BL_TALK); }
 static int tk_turn_page(TkBalloon *b) /* TalkBalloonEvent::turnPage */
@@ -7986,6 +7989,7 @@ static int tk_turn_page(TkBalloon *b) /* TalkBalloonEvent::turnPage */
     const u16 *n = tk_next_page(b->page);
     if (!n) return 0;
     tk_former(b, n);
+    se_start(SE_SY_TALK_FOCUS_ITEM, NULL);
     tk_abtn_term();
     return 1;
 }
@@ -8013,6 +8017,7 @@ static void tk_balloon_update(TkBalloon *b)
 {
     if (b->nrv == BL_DEAD) return;
     b->step++;
+    if (b->kind != BK_SHORT && b->nrv == BL_OPEN && b->step == 1) se_start(SE_SM_TALKBLN_OPEN, NULL); /* exeOpen */
     if (b->kind == BK_EVENT && (b->nrv == BL_OPEN || b->nrv == BL_TALK)) {
         if (b->nrv == BL_OPEN && b->step == 1) { /* updateBeak: shown while the talker is on screen, below y 120 */
             Talker *t = &talkers[b->talker];
@@ -8096,8 +8101,9 @@ static int ts_prep(int p)
     if (ts_lost(p)) { tk_abtn_term(); return 0; }
     ts_update_button();
     if (!player_ok_normal()) tk_abtn_term();
-    else if (!pad_pressed(PAD_CROSS)) { if (tk_abtn.nrv != BL_OPEN && tk_abtn.nrv != BL_TALK) tk_abtn_open(talkers[td.st].balloon == 4, 0); }
-    else tk_abtn_term();
+    else if (!pad_pressed(PAD_CROSS)) {
+        if (tk_abtn.nrv != BL_OPEN && tk_abtn.nrv != BL_TALK) { tk_abtn_open(talkers[td.st].balloon == 4, 0); se_start(SE_SM_TALK_BUTTON_APPEAR, NULL); }
+    } else { tk_abtn_term(); se_start(SE_SY_TALK_START, NULL); }
     return 1;
 }
 static int ts_test(void)
@@ -8611,9 +8617,11 @@ static void fat_message(int k, int msg) /* TicoFat::setMessage */
     else if (msg == 2) n = 6;
     for (int i = 0; i < n; i++) talk_forward_node(tk);
 }
+static int meter_was; /* the meter was shown last frame (2) */
 static void update_ticofat(void)
 {
     meter_eaten = -1;
+    if (meter_was) meter_was--;
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
         if (!in->fat) continue;
@@ -8676,6 +8684,7 @@ static void update_ticofat(void)
                 f->gift[g].on = 1; f->gift[g].pos = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
                 f->gift[g].col = piece_colour_next(); /* giftToTarget: getDeadStarPiece */
                 got_pieces--; f->inflight++;
+                se_start(SE_SY_CS_FEED_PIECE, NULL);
                 break;
             }
         for (int g = 0; g < 8; g++) { /* the gifted pieces, flying to its Mouth */
@@ -8759,7 +8768,11 @@ static void update_ticofat(void)
             break;
         }
         if (f->eat && f->left == 0 && f->nrv <= TF_CHEM && !f->inflight) { fat_set(k, TF_TEST); printf("tico fat row %d: full (%d)" "\n", in->row, f->total); }
-        if (f->g178 > 0 && f->nrv <= TF_CHEM) { meter_eaten = f->total - f->left; meter_total = f->total; } /* requestAppear */
+        if (f->g178 > 0 && f->nrv <= TF_CHEM) { /* requestAppear (its SE when it was hidden) */
+            if (!meter_was) se_start(SE_SY_TICOFAT_POINT, NULL);
+            meter_was = 2;
+            meter_eaten = f->total - f->left; meter_total = f->total;
+        }
         if (f->nrv == TF_WIPEOUT) { /* emitScreenEffect / updateScreenEffect: facing the camera, 500 before it toward
                                       * Tico, and at Tico; deleteEffect(TicoFatScreenEffect) once the wipe is closed */
             V3 e, w, u, at = v3(f->m0[12], f->m0[13], f->m0[14]);
@@ -15228,6 +15241,7 @@ static void update_items(void)
         if (vlen(vsub(c, p)) > r + HIT_BODY_R) continue;
         if (in->item == ITEM_STAR) {
             printf("power star %d got\n", ++stars);
+            se_start(SE_SY_STAR_GET, NULL); /* PowerStar::receiveOtherMsg */
             star_demo = 1; /* requestPowerStarGetDemo: the PowerStarGet camera and Mario's clip */
             /* PowerStar::exeStageClearDemo step 1: mBaseMtx = its posture _B8 (initPosture: up against the gravity at
              * the star, front its placed Z) at its position, and setPlayerBaseMtx puts Mario there; its
@@ -15343,6 +15357,7 @@ static void update_cursor(void)
             pieces[i].alive = PICK_GONE;
             got_pieces++;
             fx_at(FX_STARPIECE_STARPIECEGET, pieces[i].pos, up_at(pieces[i].pos, mario->up));
+            se_start(SE_SY_STAR_PIECE_GET, NULL);
         }
 }
 
@@ -15354,7 +15369,7 @@ static void update_cursor(void)
  * are left, PackunPetit and JumpSpider ignore it */
 static void shoot_piece(void)
 {
-    if (got_pieces <= 0) return;
+    if (got_pieces <= 0) { se_start(SE_SY_CS_NO_PIECE, NULL); return; } /* CS_NO_SPIECE's fallback */
     V3 o, d;
     cursor_ray(&o, &d);
     V3 aim = vadd(o, vmul(d, 3000.0f));
@@ -15368,6 +15383,7 @@ static void shoot_piece(void)
             shots[i].t = 1;
             shots[i].col = piece_colour_next(); /* MarioAccess: MR::getDeadStarPiece */
             got_pieces--;
+            se_start(SE_SY_CS_STAR_PIECE_SHOOT, NULL); /* CS_STARDUST_SHOOT's fallback */
             printf("star piece shot (%d left)" "\n", got_pieces);
             return;
         }
@@ -15472,7 +15488,7 @@ static void update_shots(void)
 void game_cursor(float *x, float *y) { *x = cur_x; *y = cur_y; }
 void game_set_cursor(float x, float y) { cur_x = x; cur_y = y; }
 
-static void collect(Pickup *p, int n, float reach, int *counter, int fx)
+static void collect(Pickup *p, int n, float reach, int *counter, int fx, u32 se)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, BODY_RADIUS));
     for (int i = 0; i < n; i++)
@@ -15480,6 +15496,7 @@ static void collect(Pickup *p, int n, float reach, int *counter, int fx)
             p[i].alive = PICK_GONE;
             (*counter)++;
             fx_at(fx, p[i].pos, up_at(p[i].pos, mario->up));
+            se_start(se, NULL); /* a system SE */
         }
 }
 
@@ -15727,12 +15744,12 @@ void game_update(void)
     update_switches();
     update_pops();
     int had = got_coins;
-    collect(coins, ncoins, 100.0f, &got_coins, FX_COIN_COINGET);
+    collect(coins, ncoins, 100.0f, &got_coins, FX_COIN_COINGET, SE_SY_COIN); /* Coin::noticeGetCoin */
     life += got_coins - had;
     if (life > max_life) life = max_life;
     if (got_coins / 50 > had / 50) lives++; /* every 50 coins a 1-up */
-    collect(purple, npurple, 100.0f, &got_purple, FX_PURPLECOIN_COINGET);
-    collect(pieces, npieces, 120.0f, &got_pieces, FX_STARPIECE_STARPIECEGET);
+    collect(purple, npurple, 100.0f, &got_purple, FX_PURPLECOIN_COINGET, SE_SY_PURPLE_COIN);
+    collect(pieces, npieces, 120.0f, &got_pieces, FX_STARPIECE_STARPIECEGET, SE_SY_STAR_PIECE_GET); /* gotByPlayer */
     update_cursor();
     coin_rot = fmodf(coin_rot + 8.0f * 0.0174533f, 6.2831853f);
     qcoin_rot = fmodf(qcoin_rot + 4.0f * 0.0174533f, 6.2831853f);
