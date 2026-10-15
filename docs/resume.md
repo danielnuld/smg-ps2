@@ -339,8 +339,11 @@ lit byte 2 + its matrix, VU1Env, render_env; coins, star pieces, spin drivers, p
 highlights; IndDummy materials (CrystalCage's refraction) blend kind 3: frame buffer x tint mean). Checked: `talk`
 EggStar 3 (the cage is see-through), `purple` (100 coins, the star), `walker`. The first PCSX2 run after a new GS
 blend state can stall for a while (Vulkan pipelines compiling): not a hang.
-Left for Good Egg, in order: env maps on a second coordinate over a base texture (Dino, OtaKing, Tico's eyes, TicoFat:
-the env texture's mean is baked in; needs a second, blended pass), the Plant climb pose, OtaKing's bath rim crevice,
+21ec942 env layers (tex.env_layer: PREV + K x TEXC over a base texture drawn as a second additive VU1Env group;
+Dino, Tico's eyes, TicoFat, FlipPanel; OtaKing's env stages come first, not covered). The Plant climb pose follows
+Petari (base matrix up along the rail, GrowPlantHangUp swings his body out from its frame 18: SMG's spiral climb);
+`vine` with XF=-DVINE_CLOSE puts the camera 450 from him.
+Left for Good Egg, in order: OtaKing's bath rim crevice,
 talk balloon window textures / beak, TicoFat's fullness meter and info message, sound last (the user's call).
 
 **Parked 2026-10-14 (the user's call: Good Egg first), resume later:** the coverage-run session stopped mid-work.

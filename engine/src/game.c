@@ -3483,7 +3483,15 @@ int game_test_vine(void) /* the Plant at the HammerHeadPackun: its appear switch
         typeof(&vines[0]) o = &vines[k];
         if (!sw_on(r, SW_APPEAR)) { sw_set((Row *)r, SW_APPEAR, 1); return -3; }
         static int done, wait;
-        if (vine_ride == k) { if (game_frame % 8 == 0) vine_test_sq = 1; wait = 0; }
+        if (vine_ride == k) {
+            if (game_frame % 8 == 0) vine_test_sq = 1;
+            wait = 0;
+#ifdef VINE_CLOSE /* XF=-DVINE_CLOSE: the camera 450 from Mario, level with him, to judge his pose on the stalk */
+            V3 sd = vnorm(vcross(mario->up, mario->face));
+            camera_set_override(1, vadd(vadd(mario->pos, vmul(sd, 450.0f)), vmul(mario->up, 150.0f)),
+                                vadd(mario->pos, vmul(mario->up, 80.0f)), mario->up, 45.0f);
+#endif
+        }
         else if ((o->nrv == VN_GROWTHSTOP || o->nrv == VN_GROWTHWAIT) && !done) { /* in the air beside it */
             const VPoint *q = &o->info[o->n / 3];
             mario->up = up_at(q->pos, mario->up);
