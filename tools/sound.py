@@ -967,6 +967,10 @@ def scenario_keep(placed):
     import sfxcut as C
     cut = C.Cutter()
     files = cut.files_for(placed)
+    # a class's helper files (its states, demos, parts: DinoPackunStateDamage.cpp) share its name's start; sfxcut only
+    # follows `new`, which misses members built other ways
+    classes = {cut.classes[n.lower()] for n in placed if n.lower() in cut.classes} | set(placed)
+    files |= {f for f in cut.sounds if any(f.rsplit("/", 1)[-1].startswith(c) for c in classes)}
     keep = set(cut.global_names)
     for f in files:
         keep |= cut.sounds[f]

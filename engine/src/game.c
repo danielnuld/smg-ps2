@@ -6512,6 +6512,25 @@ static void update_dino(void)
     int egg = dino.seq == DSEQ_EGG, lv2 = dino.seq >= DSEQ_LV2;
     dino.t++; dino.nt++;
     if (dino.react) dino.react--;
+    { /* its sounds at its body (Petari's step n is dino.t n + 1 here): DinoPackunDemo's demos, the egg's turn */
+        float at[3] = {body.x, body.y, body.z};
+        int t = dino.t;
+        static u32 angry_lv;
+        if (dino.seq == DSEQ_OPENING) {
+            if (t == 29) { se_start(SE_DM_MEET_BOSS, NULL); se_start(SE_BV_D_PAKKUN_EGG_CREAK, at); se_start(SE_BM_D_PAKKUN_SLAVER, at); se_start(SE_BM_D_PAKKUN_EGG_CREAK, at); }
+            if (t == 119) { se_start(SE_BM_D_PAKKUN_EGG_DIG_OUT, at); se_start(SE_BV_D_PAKKUN_EGG_GROAN, at); se_start(SE_BM_D_PAKKUN_SLAVER, at); }
+            if (t == 246) se_start(SE_BM_D_PAKKUN_TAIL_ATTACK, at);
+        } else if (dino.seq == DSEQ_ANGRY) {
+            if (t == 1) { se_start(SE_BV_D_PAKKUN_EGG_GROAN, at); se_start(SE_BM_D_PAKKUN_SLAVER, at); }
+            if (t < 206) angry_lv = se_level(SE_BM_LV_D_PAKKUN_ANGRY, at, angry_lv);
+        } else if (dino.seq == DSEQ_DOWN) {
+            if (t == 1) { se_start(SE_BV_D_PAKKUN_DIE, at); se_start(SE_BM_D_PAKKUN_SLAVER, at); }
+            if (t == 320) se_start(SE_BM_D_PAKKUN_FALL_DOWN, at);
+            if (t == 385) se_start(SE_BM_D_PAKKUN_EXPLODE, at); /* its BCK stopped */
+        } else if (dino.seq == DSEQ_EGG && dino.nrv == DN_TURN && dino.nt == 1) { /* DinoPackunBattleEgg::exeTurn */
+            se_start(SE_BV_D_PAKKUN_EGG_WALK, at); se_start(SE_BM_D_PAKKUN_SLAVER, at);
+        }
+    }
     if (dino.seq == DSEQ_WAIT) {
         if (r->sw[SW_A] < 0 || sw_on(r, SW_A)) { printf("dino packun: start" "\n"); dino_next_seq(); }
         dino_phase(); dino_pose();
@@ -6577,7 +6596,10 @@ static void update_dino(void)
             break;
         case DN_DAMAGE: /* DinoPackunStateDamage */
             dino.dt++;
-            if (dino.dnrv == DD_EGGBROKEN && dino.dt == 30) camera_shake(SHAKE_STRONG); /* the shell breaks */
+            if (dino.dnrv == DD_EGGBROKEN && dino.dt == 30) { camera_shake(SHAKE_STRONG); /* the shell breaks */
+                float at[3] = {body.x, body.y, body.z};
+                se_start(SE_BM_D_PAKKUN_HEAD_EGG_BRK, at);
+            }
             if (dino_cam) camera_event_target(up, dino_cam_at()); /* updateCameraInfo: mCamTargetMtx */
             if (dino.dnrv == DD_PULLED && vlen(vsub(dino.bpos, dino.pos)) > 800.0f) /* turnDirectionFromTargetDegree, 6 */
                 DINO_TURN_TO(vmul(vtangent(vsub(dino.chain_ok ? dino.bpos : dino.bpos, dino.pos), up), -1.0f), 6.0f);
@@ -6634,6 +6656,9 @@ static void update_dino(void)
             dino.prev_nrv = dino.nrv; dino_set_nrv(DN_DAMAGE); dino.dnrv = DD_PUNCHED; dino.dt = 0; /* setNerve Damage */
             if (row_camset[dino.row] != -1) /* exePunched: startDamageCamera ("ダメージ", target mCamTargetMtx) */
                 dino_cam = camera_actor_start("DinoPackun", "ダメージ", (unsigned short)row_camset[dino.row], dino.up, dino.f, dino_cam_at());
+            { float at[3] = {dino.bpos.x, dino.bpos.y, dino.bpos.z}, bt[3] = {body.x, body.y, body.z};
+              se_start(SE_PM_SPIN_HIT, at); /* DinoPackunBall::exeShoot: startBlowHitSound */
+              se_start(SE_BV_D_PAKKUN_SPIN_HIT, bt); se_start(SE_BM_D_PAKKUN_SLAVER, bt); } /* DinoPackunStateDamage: punched */
             printf("dino packun: tail ball punched" "\n");
         }
         break;
@@ -6657,8 +6682,13 @@ static void update_dino(void)
         break;
     }
     case 2: /* exeCharge: x 0.88 for 35 */
+        { static u32 crg; float at[3] = {dino.bpos.x, dino.bpos.y, dino.bpos.z};
+          if (dino.bt == 1) se_start(SE_BM_D_PAKKUN_TAIL_CRG_ST, at);
+          crg = se_level(SE_BM_LV_D_PAKKUN_TAIL_CRG, at, crg); }
         dino.bvel = vmul(dino.bvel, 0.88f);
-        if (dino.bt > 35) { dino.bstate = 3; dino.bt = 0; }
+        if (dino.bt > 35) { dino.bstate = 3; dino.bt = 0;
+            float at[3] = {dino.bpos.x, dino.bpos.y, dino.bpos.z};
+            se_start(SE_BM_D_PAKKUN_TAIL_REV, at); } /* exeReverse's first step */
         break;
     case 3: /* exeReverse: 8 a frame at the head, x 0.98, until it hits it (BALL_ATTACK: x 0.3 back, Rebound) */
         dino.bvel = vmul(vadd(dino.bvel, vmul(vnorm(vsub(head, dino.bpos)), 8.0f)), 0.98f);
@@ -6671,6 +6701,11 @@ static void update_dino(void)
                 basis_matrix(hm, vmul(vadd(head, dino.bpos), 0.5f), up, dino.f, 0);
                 fx_named("DinoPackun", "Hit", hm, NULL, NULL);
                 dino.dnrv = egg ? DD_EGGBROKEN : dino.seq == DSEQ_LV3 ? DD_LASTDAMAGE : DD_DAMAGE; dino.dt = 0;
+                { float at[3] = {body.x, body.y, body.z}; /* exeEggBroken / exeDamage / exeLastDamage first steps */
+                  if (egg) { se_start(SE_SY_VS_BOSS_DAMAGE_1, NULL); se_start(SE_BM_D_PAKKUN_EGG_BRK_HIT, at); se_start(SE_BV_D_PAKKUN_EGG_BREAK, at); }
+                  else if (dino.dnrv == DD_LASTDAMAGE) { se_start(SE_SY_VS_BOSS_LAST_HIT, NULL); se_start(SE_BM_D_PAKKUN_LAST_DAMAGE, at); se_start(SE_BV_D_PAKKUN_LAST_DAMAGE, at); }
+                  else { se_start(SE_SY_VS_BOSS_DAMAGE_1, NULL); se_start(SE_BM_D_PAKKUN_DAMAGE, at); se_start(SE_BV_D_PAKKUN_DAMAGE, at); }
+                  se_start(SE_BM_D_PAKKUN_SLAVER, at); }
                 scene_stop = egg ? 5 : 15; /* exeEggBroken stopScene(5) / updateDamage stopScene(15) */
                 camera_shake(egg ? SHAKE_STRONG : SHAKE_NORMAL_STRONG);
             }
@@ -6686,6 +6721,11 @@ static void update_dino(void)
         bground = vdot(gn, bup) > 0.5f;
     }
     dino.bpos = bc;
+    if (dino.bstate == 0 && bground && vlen(dino.bvel) > 5.0f) { /* DinoPackunBall::control: its drag level sound */
+        static u32 drag;
+        float at[3] = {dino.bpos.x, dino.bpos.y, dino.bpos.z};
+        drag = se_level(SE_BM_LV_D_PAKKUN_TAIL_DRAG, at, drag);
+    }
     if (dino.bstate == 0 && bground && vlen(dino.bvel) > 5.0f) { /* exeWait: TailDrag while it drags on the ground */
         float bm[16];
         basis_matrix(bm, dino.bpos, bup, dino.bvel, 0);
