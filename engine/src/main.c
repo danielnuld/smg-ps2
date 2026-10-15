@@ -1284,6 +1284,13 @@ int main(void)
         }
         se_update();
         se_flush();
+#if defined(ROUTE_TEST) || defined(SND_TEST)
+        if (frame % 5 == 0) {
+            int ns, nc, nv;
+            se_stats(&ns, &nc, &nv);
+            if (ns) printf("se: frame %d sounds %d chans %d voices %d\n", frame, ns, nc, nv);
+        }
+#endif
         u32 t1 = cycles();
         game_draw();
         u32 t2 = cycles();

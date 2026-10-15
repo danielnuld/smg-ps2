@@ -1,3 +1,6 @@
+#include "se.h"
+#include "se_ids.h"
+#include "mario_snd.h"
 #include "game.h"
 #include "anim.h"
 #include "fx.h"
@@ -9282,6 +9285,28 @@ static V3 rot_toward(V3 from, V3 to, V3 axis, float ang) /* MR::vecRotAxis */
 
 static float clamp01(float f) { return f < 0 ? 0 : f > 1 ? 1 : f; }
 
+/* Mario::playSoundJ (MarioSound.cpp): the key's entry in soundlist (mario_snd.h) by its kind (0 on Mario, 1 a level
+ * sound on Mario, 2 system, 3 system level), its companion under water, then "声" + key (his voice) on him.
+ * ponytail: under water never (the companion entries wait for the swim states) */
+static u32 mario_lv[256];
+static void mario_sound(const char *key)
+{
+    float at[3] = {mario->pos.x, mario->pos.y, mario->pos.z};
+    char voice[96];
+    snprintf(voice, sizeof voice, "声%s", key);
+    for (unsigned i = 0; i < sizeof mario_snd / sizeof mario_snd[0]; i++) {
+        if (!strcmp(mario_snd[i].key, key)) {
+            switch (mario_snd[i].kind & 3) {
+            case 0: se_start(mario_snd[i].id, at); break;
+            case 1: mario_lv[i] = se_level(mario_snd[i].id, at, mario_lv[i]); break;
+            case 2: se_start(mario_snd[i].id, NULL); break;
+            case 3: mario_lv[i] = se_level(mario_snd[i].id, NULL, mario_lv[i]); break;
+            }
+        }
+        if (!strcmp(mario_snd[i].key, voice)) se_start(mario_snd[i].id, at);
+    }
+}
+
 static V3 m_jv(const Player *m) { return vadd(m->hvel, vmul(m->up, m->vup)); }
 static void m_set_jv(Player *m, V3 j) { m->vup = vdot(j, m->up); m->hvel = vtangent(j, m->up); }
 static int m_rising(const Player *m) { return m->vup > 0; } /* isRising */
@@ -9516,6 +9541,7 @@ static void m_try_turn_jump(Player *m) /* tryTurnJump */
     m->digital = 1; m->grounded = 0;
     m_proc_jump(m, 1);
     mario_play("jumpturn", 1.0f, 0);
+    mario_sound("後ジャンプ"); mario_sound("声後ジャンプ"); mario_sound("ジャンプ踏切");
 #ifdef BENCH
     printf("jump jumpturn\n");
 #endif
@@ -9530,6 +9556,7 @@ static void m_try_squat_jump(Player *m) /* trySquatJump: the long jump */
     m->digital = 1; m->grounded = 0;
     m_proc_jump(m, 1);
     mario_play("jumpbroad", 1.0f, 0);
+    mario_sound("幅ジャンプ"); mario_sound("声幅ジャンプ"); mario_sound("ジャンプ踏切");
 #ifdef BENCH
     printf("jump jumpbroad\n");
 #endif
@@ -9544,6 +9571,7 @@ static void m_try_back_jump(Player *m) /* tryBackJump: the back flip */
     m->digital = 1; m->grounded = 0;
     m_proc_jump(m, 1);
     mario_play("jumpback", 1.0f, 0);
+    mario_sound("後ジャンプ"); mario_sound("声後ジャンプ"); mario_sound("ジャンプ踏切");
 #ifdef BENCH
     printf("jump jumpback\n");
 #endif
@@ -9573,6 +9601,9 @@ static void m_try_jump(Player *m) /* tryJump: 1st / 2nd / 3rd jump, or the turn,
     m->jumping = 1;
     static const char *clips[3] = {"jump", "jump2", "jumproll"};
     mario_play(clips[m->jump_kind], 1.0f, 0);
+    if (m->jump_kind == 0) { mario_sound("小ジャンプ"); mario_sound("声小ジャンプ"); mario_sound("ジャンプ踏切"); }
+    else if (m->jump_kind == 1) { mario_sound("中ジャンプ"); mario_sound("声中ジャンプ"); mario_sound("ジャンプ踏切"); }
+    else { mario_sound("大ジャンプ"); mario_sound("声大ジャンプ"); mario_sound("ジャンプ踏切"); }
     m->connect = 1;
 #ifdef BENCH
     printf("jump %s\n", clips[m->jump_kind]);
@@ -9606,6 +9637,7 @@ static void m_try_spin_jump(Player *m) /* trySpinJump (_42A 1: the button, not a
     m->air_spin = MC.mAirWalkTimeSpin;
     m_proc_jump(m, 1);
     mario_play("spin", 1.0f, 0);
+    mario_sound("声スピン"); mario_sound("スピンジャンプ");
     m->jumping = 1; m->turn_brake = 0; m->connect = 0; m->neutral = 0; m->turn_slip = 0; m->walk = 0;
 #ifdef BENCH
     printf("jump spin\n");
@@ -9621,6 +9653,7 @@ static void m_try_wall_jump(Player *m, V3 v) /* tryWallJump(v, true) */
     m->air_timer = 0; m->keep_jump = 1; m->back_t = 0; m->air_walk_t = 0; m->fall_t = 0;
     m->neutral = 1;
     mario_play("walljump", 1.0f, 0);
+    mario_sound("ジャンプ踏切"); mario_sound("声小ジャンプ");
     m_front(m, v);
     m_stop_walk(m);
 }
@@ -9661,6 +9694,7 @@ static int m_jump_to_hip_drop(Player *m) /* jumpToHipDrop */
     m->hvel = v3(0, 0, 0); m->vup = 0;
     if (m->jump_kind == 4) { m_front(m, vmul(m->turn_from, -1.0f)); m->jump_kind = 0; }
     mario_play("hipdropstart", 1.0f, 0);
+    mario_sound("尻ドロップ回転"); mario_sound("声尻ドロップ");
     m->zero_gr = MC.mHipDropZeroGrTime;
     return 1;
 }
@@ -9717,6 +9751,7 @@ static void m_hip_land(Player *m) /* procHipDrop's first frame on the ground */
     kari_cling = 0;                      /* MR::removeAllClingingKarikari */
     m->hip = HIP_LAND;
     mario_play("hipdropland", 1.0f, 0);
+    mario_sound("尻ドロップ着地"); mario_sound("声尻ドロップ着地");
     camera_shake(SHAKE_NORMAL); /* startCamVib(0) */
     m->hip_jv = m_jv(m);
     m->air_timer = 0;
@@ -9889,6 +9924,7 @@ static void m_do_landing(Player *m)
         m_clip_stop();
         return;
     }
+    mario_sound("着地");
     m->squat_lock = 0;
     m->air_spin = MC.mAirWalkTime;
     if (vdot(vsub(m->jump_from, m->pos), m->up) > MC.mHardLandingHeight) hard = 1;
@@ -9919,7 +9955,10 @@ static void m_do_landing(Player *m)
         if (k == 3 || k == 10) m_clip_stop();
         else mario_play(land[k], 1.0f, 0);
         m_stop_walk(m);
-        if (hard) { mario_play("landstiffen", 1.0f, 0); m->land_timer += 16; camera_shake(SHAKE_STRONG); } /* startCamVib(4) */
+        if (hard) { /* startCamVib(4) */
+            mario_play("landstiffen", 1.0f, 0); m->land_timer += 16; camera_shake(SHAKE_STRONG);
+            mario_sound("重い着地"); mario_sound("声着地停止");
+        }
     } else {
         mario_play("landslope", 1.0f, 0);
         m->brake1 = 0;

@@ -921,6 +921,26 @@ def ps2_wave(pcm, rate, loop, cap):
     return spu_adpcm(out, lp), rate * r, (lp[1] if lp else len(out)), (lp[0] if lp else None)
 
 
+def mario_table(out_h):
+    """Petari Player/MarioSound.cpp `soundlist` (key, SE, flags, the companion key played under water) ->
+    engine/src/mario_snd.h for Mario::playSoundJ: kind = flags byte 0 (& 3: 0 on Mario, 1 level on Mario, 2 system,
+    3 system level; & 0xC: the companion too under water)"""
+    src = (Path(__file__).resolve().parent.parent / "vendor/Petari/src/Game/Player/MarioSound.cpp").read_text("utf-8")
+    body = src[src.index("SoundList soundlist[] = {"):]
+    body = body[:body.index("\n};")]
+    ents = re.findall(r'\{\s*"([^"]*)",\s*//[^\n]*\n\s*([A-Za-z0-9_]+),[^\n]*\n\s*([^,]+),[^\n]*\n\s*([^,]+),', body)
+    rows = []
+    for key, se, flags, comp in ents:
+        if not key:
+            continue
+        comp = comp.strip()
+        rows.append(f'    {{"{key}", {se}, {int(flags, 0) >> 24}, {comp if comp != "0" else "NULL"}}},\n')
+    Path(out_h).write_text("/* Mario's sound table, Petari Player/MarioSound.cpp soundlist (tools/sound.py pack) */\n"
+                           "static const struct { const char *key; u32 id; u8 kind; const char *water; } mario_snd[] = {\n"
+                           + "".join(rows) + "};\n", "utf-8")
+    return len(rows)
+
+
 def pack(fs, out_bin, ids_h, sources, cap=16000):
     """sound.bin for the engine (se.c) and se_ids.h (every SE name -> its JAISoundID):
     'SNDB', then u32 pairs (offset, count / size): BSC bytes, banks {u16 bank, u16 wsys, u32 IBNK offset} (8 B),
@@ -932,6 +952,9 @@ def pack(fs, out_bin, ids_h, sources, cap=16000):
     import audio as A
     baa = Baa(fs)
     d = baa.d
+    mario_h = Path(ids_h).with_name("mario_snd.h")
+    mario_table(mario_h)
+    sources = list(sources) + [mario_h]
     names = sorted({n for src in sources for n in re.findall(r"\bSE_[A-Z0-9_]+\b", Path(src).read_text(errors="ignore"))
                     if n in baa.ids and baa.ids[n][0] == 0})
     Path(ids_h).write_text("/* SE names -> JAISoundID (section << 24 | group << 16 | index), tools/sound.py pack */\n"
