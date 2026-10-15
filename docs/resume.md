@@ -355,6 +355,13 @@ emits the masked panes (LayQuad fill 1 + k, white texture) and bakes static text
 mirrored, it drew a quarter); game.c meter_fill turns Meter.tpl by count.brlan's keys at FullnessMeter::setNumber's
 frame and draws the half MeterMask shows; render.c Quad vw / uh: skewed quads as ST triangle strips (UV is unsigned:
 rotated corners fell off the texture). ponytail: Shine / Flash animations.
+The event balloon's beak after Petari (TalkBalloon::updateBalloon / TalkBalloonEvent::updateBeak; checked in `talk`
+XF=-DTALK_CLS=3 EggStar 3: it points at Kinopio): layout.py masked panes are generic (any picture whose material has
+a mask texture: the rectangle the mask shows through its SRT 1, coordinates before the SRT 0 rotation, its centre and
+translation in LayQuad, now 32 B), game.c lay_turned draws them turned (the meter by count.brlan, the beak by
+beak.brlan's -50..50 at the Beak frame aimed at the talker, 10-frame hysteresis; hidden off screen or above y 120).
+Known: `talk` (class 1, EggStar 1) no longer reaches its SignBoard (it picks row 98, 2800 off, Mario stuck against
+the ground: before these changes too); the Kinopio variant works.
 Left for Good Egg: sound (the user's call: last; AFC -> ADPCM, SE tables), OtaKing's bath
 rim crevice (only from a test's artificial drop), the short (stretch) balloon's layout (no Good Egg message uses it).
 

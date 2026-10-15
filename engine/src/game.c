@@ -7540,7 +7540,7 @@ static const TkGlyph *tk_glyph, *tk_icon;
 static int tk_nglyph, tk_nicon, tk_ttex = -1, tk_itex = -1, tk_lf = 33, tk_asc = 26;
 /* the talk balloons' layouts (tools/layout.py LAYO, after the FONT glyphs): quads in layout units, textures counted
  * from the font's text texture */
-typedef struct { s16 x, y, w, h; u16 tex; u8 rgba[4]; s16 u, v, uw, vh; u8 group, fill; } LayQuad;
+typedef struct { s16 x, y, w, h; u16 tex; u8 rgba[4]; s16 u, v, uw, vh; u8 group, fill; s16 cu, cv, tu, tv; } LayQuad;
 static const u8 *tk_lay;
 
 #define MAX_TALKERS 32
@@ -7775,7 +7775,7 @@ static void tk_quad(float x, float y, float w, float h, u32 rgba, int tex, float
 {
     if (ntkq == MAX_TKQ || (rgba >> 24) == 0) return;
     Quad *q = &tkq[ntkq++];
-    q->x = x; q->y = y; q->w = w; q->h = h; q->u = u; q->v = v; q->uw = uw; q->vh = vh; q->rgba = rgba; q->vw = q->uh = 0;
+    q->x = x; q->y = y; q->w = w; q->h = h; q->u = u; q->v = v; q->uw = uw; q->vh = vh; q->rgba = rgba; q->vw = q->uh = 0; q->pad = 0;
     q->tex = tex < 0 ? NO_TEX : (u16)tex;
     if (tex < 0) /* untextured: the GS takes the colour as it is (no 0x80 = 1.0 modulation) */
         for (int c = 0; c < 24; c += 8) {
@@ -7891,30 +7891,33 @@ static void tk_text_box(const u16 *s, float bx, float by, float bh, float alpha,
 
 /* --- balloons (TalkBalloonEvent / Sign / Short) and the A button (IconAButton) --- */
 enum { BL_DEAD, BL_WAIT, BL_OPEN, BL_TALK, BL_CLOSE };
-typedef struct { int nrv, step, talker, kind, interval, mode; const u16 *page; TkAlpha ac; float fade; } TkBalloon;
+typedef struct { int nrv, step, talker, kind, interval, mode; const u16 *page; TkAlpha ac; float fade, beak; int beak_on, beak_vis; } TkBalloon;
 enum { BK_EVENT, BK_SIGN, BK_SHORT };
 static TkBalloon tk_bev, tk_bsign, tk_bshort[4];
 static const char *info_label; /* MR::appearInformationMessage's message (TALK label) while it shows, NULL none */
 static int meter_eaten = -1, meter_total; /* FullnessMeter (TicoFat's): shown while pointed at (-1 hidden), its numbers */
+/* a masked pane (tools/layout.py: the part its mask shows) at screen (x, y), its texture SRT turned by deg degrees
+ * about its centre (in texels: the textures are square) */
+static void lay_turned(const LayQuad *l, float x, float y, float deg, u32 rgba)
+{
+    float sn = sinf(deg * (float)M_PI / 180.0f), c = cosf(deg * (float)M_PI / 180.0f);
+    float du = l->uw / 16.0f, dv = l->vh / 16.0f, u = l->u / 16.0f, v = l->v / 16.0f, cu = l->cu / 16.0f, cv = l->cv / 16.0f;
+    int n = ntkq;
+    tk_quad(x, y, l->w * TK_KX, l->h * TK_KY, rgba, tk_ttex + l->tex, cu + l->tu / 16.0f + c * (u - cu) - sn * (v - cv),
+            cv + l->tv / 16.0f + sn * (u - cu) + c * (v - cv), c * du, c * dv);
+    if (ntkq > n) { tkq[n].vw = sn * du; tkq[n].uh = -sn * dv; tkq[n].pad = 1; }
+}
 /* StarPieceTargetMeter's fill pane k (PicMeterR 0, PicMeterL 1) at count.brlan frame f (FullnessMeter::setNumber:
  * 128 - (u16)(128 x (1 - eaten / total))): RLVI shown from frame 1 / 65; RLTS rotation of Meter.tpl's SRT, linear
  * keys -180 at -3 to 0 at 64 / 180 at 64 to 0 at 131; RLMC black and white g 90 -> 50, b 255 -> 215 over frames
- * 50..128 (Hermite, flat ends). MeterMask (its SRT scale -1) shows the half where the pane's u is under 0.5. The
- * rotation is about the texture's centre, in texels (Meter.tpl is square) */
+ * 50..128 (Hermite, flat ends); MeterMask shows the half where the pane's u is under 0.5 */
 static void meter_fill(const LayQuad *l, float x, float y, float f, float a)
 {
     int k = l->fill - 1;
     if (f < (k ? 65 : 1)) return;
     float deg = k ? (f < 64 ? 180.0f : 180.0f - 180.0f * (f - 64) / 67.0f) : (f >= 64 ? 0.0f : -180.0f + 180.0f * (f + 3) / 67.0f);
     float t = f <= 50 ? 0.0f : (f - 50) / 78.0f, h = t * t * (3.0f - 2.0f * t);
-    float sn = sinf(deg * (float)M_PI / 180.0f), c = cosf(deg * (float)M_PI / 180.0f);
-    float du = l->uw / 16.0f, dv = l->vh / 16.0f, cu = l->u / 16.0f + du / 2, cv = l->v / 16.0f + dv / 2;
-    float xa = du < 0 ? 0.5f : 0.0f; /* the shown half: u under the centre */
-    float up = l->u / 16.0f + xa * du, vp = l->v / 16.0f; /* its top left in the pane's texels, turned */
-    int n = ntkq;
-    tk_quad(x + xa * l->w * TK_KX, y, l->w * TK_KX / 2, l->h * TK_KY, tk_rgba(0, (int)(90 - 40 * h), (int)(255 - 40 * h), a),
-            tk_ttex + l->tex, cu + c * (up - cu) - sn * (vp - cv), cv + sn * (up - cu) + c * (vp - cv), c * du / 2, c * dv);
-    if (ntkq > n) { tkq[n].vw = sn * du / 2; tkq[n].uh = -sn * dv; }
+    lay_turned(l, x, y, deg, tk_rgba(0, (int)(90 - 40 * h), (int)(255 - 40 * h), a));
 }
 static float meter_frame;
 static void meter_number(int v, float x, float y, float size, int right) /* a count at its text box's bottom corner */
@@ -7975,10 +7978,40 @@ static int tk_turn_page(TkBalloon *b) /* TalkBalloonEvent::turnPage */
     tk_abtn_term();
     return 1;
 }
+static void tk_balloon_pos(Talker *t);
+/* TalkBalloon::updateBalloon: the Beak frame (0..121) turned towards the talker's screen position from PicBeak's
+ * (layout (0, 111)), half the frames straight down, in Wii screen units (608 x 456, y down); it follows only once
+ * 10 frames off, then to 1 short of the aim until within 2 */
+static void tk_beak_update(TkBalloon *b)
+{
+    Talker *t = &talkers[b->talker];
+    tk_balloon_pos(t);
+    float dx = (t->sx - 320.0f) / TK_KX, dy = (t->sy - 224.0f) / TK_KY + 228.0f - (228.0f - 111.0f), d = sqrtf(dx * dx + dy * dy);
+    if (d > 0) { dx /= d; dy /= d; }
+    float ang = acosf(dy < -1 ? -1 : dy > 1 ? 1 : dy) * 180.0f / (float)M_PI, max = 121.0f;
+    float aim = dx > 0 ? fminf(max, max * 0.5f + ang) : fmaxf(0.0f, max * 0.5f - ang);
+    if (!b->beak_on) {
+        if (fabsf(b->beak - aim) < 10.0f) return;
+        b->beak_on = 1;
+    }
+    aim += b->beak > aim ? 1.0f : -1.0f;
+    if (fabsf(b->beak - aim) < 2.0f) b->beak_on = 0;
+    b->beak = aim;
+}
 static void tk_balloon_update(TkBalloon *b)
 {
     if (b->nrv == BL_DEAD) return;
     b->step++;
+    if (b->kind == BK_EVENT && (b->nrv == BL_OPEN || b->nrv == BL_TALK)) {
+        if (b->nrv == BL_OPEN && b->step == 1) { /* updateBeak: shown while the talker is on screen, below y 120 */
+            Talker *t = &talkers[b->talker];
+            tk_balloon_pos(t);
+            float wx = (t->sx - 320.0f) / TK_KX + 304.0f, wy = (t->sy - 224.0f) / TK_KY + 228.0f;
+            b->beak_vis = t->sz < 0 && wx >= 0 && wx < 608.0f && wy >= 120.0f && wy < 456.0f;
+            b->beak = 0; b->beak_on = 0; /* TalkBalloon::open: the Beak animation from frame 0 */
+        }
+        tk_beak_update(b);
+    }
     switch (b->nrv) {
     case BL_WAIT: if (b->step > 1) { b->nrv = BL_OPEN; b->step = 0; } break; /* no talk camera to wait for */
     case BL_OPEN:
@@ -8364,7 +8397,13 @@ static void lay_draw(const char *name, int group, float a, float dx, float dy)
         if (!strcmp((const char *)q, name)) {
             for (int k = 0; k < nq; k++, l++) {
                 if (group >= 0 && l->group != group) continue;
-                if (l->fill) { meter_fill(l, tk_hx(l->x + dx), tk_hy(l->y + dy), meter_frame, a); continue; }
+                if (l->fill) {
+                    if (!strcmp(name, "StarPieceTargetMeter")) meter_fill(l, tk_hx(l->x + dx), tk_hy(l->y + dy), meter_frame, a);
+                    else if (tk_bev.beak_vis) /* the beak and its shadow: beak.brlan's RLTS, -50 at 0 to 50 at 100 */
+                        lay_turned(l, tk_hx(l->x + dx), tk_hy(l->y + dy), (tk_bev.beak < 100 ? tk_bev.beak : 100) - 50.0f,
+                                   l->rgba[0] | l->rgba[1] << 8 | l->rgba[2] << 16 | (u32)(l->rgba[3] * a) << 24);
+                    continue;
+                }
                 u32 rgba = l->rgba[0] | l->rgba[1] << 8 | l->rgba[2] << 16 | (u32)(l->rgba[3] * a) << 24;
                 tk_quad(tk_hx(l->x + dx), tk_hy(l->y + dy), l->w * TK_KX, l->h * TK_KY, rgba,
                         l->tex == 0xFFFF ? -1 : tk_ttex + l->tex, l->u / 16.0f, l->v / 16.0f, l->uw / 16.0f, l->vh / 16.0f);

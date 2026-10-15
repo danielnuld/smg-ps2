@@ -1131,7 +1131,7 @@ static void draw_quads(void)
             const Quad *q = &quads[i];
             float x0 = 2048.0f - SCREEN_W / 2 + q->x, y0 = 2048.0f - SCREEN_H / 2 + q->y * YS;
             float x1 = x0 + q->w, y1 = y0 + q->h * YS;
-            int skew = q->vw != 0.0f || q->uh != 0.0f;
+            int skew = q->vw != 0.0f || q->uh != 0.0f || q->pad;
             skew &= t != NO_TEX; /* skewed: ST (floats: its corners may fall off the texture, clamped there) */
             packet2_add_2x_s64(vif[cur], GS_SET_PRIM(skew ? PRIM_TRIANGLE_STRIP : PRIM_SPRITE, 0, t != NO_TEX, 0, 1, 0, !skew, 0, 0), GS_REG_PRIM);
             packet2_add_2x_s64(vif[cur], GS_SET_RGBAQ(q->rgba & 0xFF, q->rgba >> 8 & 0xFF, q->rgba >> 16 & 0xFF, q->rgba >> 24, 0x3F800000), GS_REG_RGBAQ);
