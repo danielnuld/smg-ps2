@@ -387,8 +387,29 @@ void camera_event_end(void) { if (ev_on) ev_ending = 1; }
 void camera_event_stop(void) { if (ev_on) { ev_on = 0; cur = -3; } }
 
 
+static int shake_frame[7] = {25, 25, 25, 25, 25, 25, 25}; /* sSinglyMaxFrame 25: ended */
+static float shake_off;
+
+void camera_shake(int power) { if (shake_frame[power] >= 25) shake_frame[power] = 0; }
+
+float camera_shake_y(void) { return shake_off; }
+
+static void shake_update(void) /* CameraShaker::movement: CameraShakeTask::movement, CameraShakePatternSingly::update */
+{
+    static const float intensity[7] = {0.08f, 0.2f, 0.5f, 1.0f, 3.0f, 6.0f, 9.0f};
+    float y = 0.0f;
+    for (int i = 0; i < 7; i++) {
+        if (shake_frame[i] >= 25) continue;
+        int left = 25 - ++shake_frame[i]; /* at 25 the task ends: no offset */
+        if (left > 0)
+            y += intensity[i] * sinf(3.1415927f * 4.0f * left / 25) * sinf(3.1415927f * 0.5f * left / 25);
+    }
+    shake_off = y * 30.0f / 456.0f;
+}
+
 void camera_update(const CamTarget *t)
 {
+    shake_update();
     int a = -1;
     for (int i = nareas - 1; i >= 0; i--)
         if (inside(&areas[i], t->pos)) { a = i; break; }

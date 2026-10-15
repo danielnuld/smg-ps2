@@ -53,6 +53,13 @@ int camera_actor_start(const char *cls, const char *event, int set, V3 up, V3 fr
 void camera_event_stop(void);
 /* a demo's animated camera (CameraAnim): this pose until off */
 void camera_set_override(int on, V3 eye, V3 watch, V3 up, float fovy);
+/* CameraShaker::shakeVertical (MR::shakeCameraVeryWeak .. VeryStrong): one CameraShakePatternSingly of that power, not
+ * restarted while it runs; camera_update moves them, camera_shake_y is their summed offset, adjusted to the screen
+ * (adjustOffsetToScreen: x 30 / 456), for the projection's translation (CameraContext::updateProjectionMtx).
+ * ponytail: no horizontal or infinity shakes (nothing in Good Egg starts them) */
+enum { SHAKE_VERY_WEAK, SHAKE_WEAK, SHAKE_NORMAL_WEAK, SHAKE_NORMAL, SHAKE_NORMAL_STRONG, SHAKE_STRONG, SHAKE_VERY_STRONG };
+void camera_shake(int power);
+float camera_shake_y(void);
 /* Active camera (CAMS index, -1 = default) and its type, for the HUD. */
 int camera_current(void);
 const char *camera_type_name(void);

@@ -49,6 +49,20 @@ int main(void)
             }
         }
     }
+    { /* a shake: 24 frames of offsets (CameraShakePatternSingly), none at the 25th; not restarted while it runs */
+        CamTarget t = {v3(1000, 0, 0), v3(0, 0, 1), v3(0, 1, 0), 0};
+        float most = 0;
+        camera_shake(SHAKE_NORMAL);
+        for (int f = 1; f <= 25; f++) {
+            if (f == 10) camera_shake(SHAKE_NORMAL);
+            camera_update(&t);
+            most = fmaxf(most, fabsf(camera_shake_y()));
+            assert(f < 25 || camera_shake_y() == 0.0f);
+        }
+        assert(most > 0.03f && most < 30.0f / 456.0f);
+        camera_update(&t);
+        assert(camera_shake_y() == 0.0f);
+    }
     printf("test_camera ok\n");
     return 0;
 }

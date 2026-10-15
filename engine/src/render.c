@@ -51,6 +51,7 @@ static packet2_t *vif[2], *gif;
 #define GIF_QW 8192             /* HUD text: one sprite per lit font pixel (the boot menu fills it) */
 static int cur;
 static float view[16], proj[16];
+static float shake_x, shake_y; /* render_set_shake, in pixels */
 static u32 bloom_q, bloom_q2, bloom_e; /* VRAM (words) of the bloom buffers: 160 x 56 (FBW 3), again, 80 x 28 (FBW 2) */
 static float frustum[4];        /* side planes in view space: x n, z n for |x| and |y| (render_set_fovy) */
 #define MAT_FL 28                /* a matrix as VU1 reads it: 4 columns local -> clip, then the light matrix's 3 */
@@ -213,9 +214,17 @@ void render_set_fovy(float deg)
     proj[5] = -f * YS / 2048.0f;
     proj[10] = A; proj[11] = 1.0f;
     proj[14] = B;
+    proj[8] = shake_x / 2048.0f; proj[9] = shake_y / 2048.0f; /* x / w gains the shift (w = view z) */
     float lx = sqrtf(f * f + (SCREEN_W / 2) * (SCREEN_W / 2)), ly = sqrtf(f * f + (DISP_H / 2) * (DISP_H / 2));
     frustum[0] = f / lx; frustum[1] = (SCREEN_W / 2) / lx;
     frustum[2] = f / ly; frustum[3] = (DISP_H / 2) / ly;
+}
+
+void render_set_shake(float x, float y)
+{
+    shake_x = x * (SCREEN_W / 2);
+    shake_y = -y * (SCREEN_H / 2);
+    proj[8] = shake_x / 2048.0f; proj[9] = shake_y / 2048.0f;
 }
 
 void render_begin(const float eye[3], const float target[3], const float up[3])
@@ -1024,7 +1033,7 @@ void render_sprites(const Sprite *sp, int n)
             float zv = view[2] * s->pos[0] + view[6] * s->pos[1] + view[10] * s->pos[2] + view[14];
             if (zv < NEAR || zv > FAR)
                 continue;
-            float k = 2048.0f / zv, sx = 2048.0f + proj[0] * xv * k, sy = 2048.0f + proj[5] * yv * k;
+            float k = 2048.0f / zv, sx = 2048.0f + shake_x + proj[0] * xv * k, sy = 2048.0f + shake_y + proj[5] * yv * k;
             float hx = proj[0] * s->half * k, hy = -proj[5] * s->half * k;
             /* wider than the screen (a big emitter's scale, or right at the camera): skipped. Its corners would leave
              * the GS's 0..4095 range and wrap, and a few such sprites stall the GS for seconds (ambient effects) */
@@ -1115,8 +1124,8 @@ void render_strips(const Strip *st, int n)
             float zv = view[2] * p[0] + view[6] * p[1] + view[10] * p[2] + view[14];
             if (zv < NEAR || zv > FAR) { ok = 0; break; }
             float k = 2048.0f / zv;
-            sx[v] = 2048.0f + proj[0] * xv * k;
-            sy[v] = 2048.0f + proj[5] * yv * k;
+            sx[v] = 2048.0f + shake_x + proj[0] * xv * k;
+            sy[v] = 2048.0f + shake_y + proj[5] * yv * k;
             if (sx[v] < 2048 - SCREEN_W || sx[v] > 2048 + SCREEN_W || sy[v] < 2048 - SCREEN_H || sy[v] > 2048 + SCREEN_H) ok = 0;
             sz[v] = (u32)(((proj[10] * zv + proj[14]) / zv + 1.0f) * (float)(0xFFFFFF / 2));
         }
@@ -1293,8 +1302,8 @@ void render_mesh(const float (*pos)[3], const float (*uv)[2], int nvert, const u
         mok[v] = zv >= NEAR && zv <= FAR;
         if (!mok[v]) continue;
         float k = 2048.0f / zv;
-        msx[v] = 2048.0f + proj[0] * xv * k;
-        msy[v] = 2048.0f + proj[5] * yv * k;
+        msx[v] = 2048.0f + shake_x + proj[0] * xv * k;
+        msy[v] = 2048.0f + shake_y + proj[5] * yv * k;
         mok[v] = msx[v] >= 0 && msx[v] <= 4095 && msy[v] >= 0 && msy[v] <= 4095;
         msz[v] = (u32)(((proj[10] * zv + proj[14]) / zv + 1.0f) * (float)(0xFFFFFF / 2));
     }

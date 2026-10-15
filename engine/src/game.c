@@ -5517,6 +5517,7 @@ static int update_launch(Player *m)
         return 1;
     }
     int small = !L->starter && L->start < 45, s = t - L->start;
+    if (s == 1 && !L->starter) camera_shake(L->start < 45 ? SHAKE_NORMAL : SHAKE_STRONG); /* exeShoot */
     if (!L->pts) { /* SpinDriver without a rail: endBindAndSpinDriverJump with its kick */
         L->cool = 60;
         m->launch = -1;
@@ -6513,6 +6514,7 @@ static void update_dino(void)
             break;
         case DN_DAMAGE: /* DinoPackunStateDamage */
             dino.dt++;
+            if (dino.dnrv == DD_EGGBROKEN && dino.dt == 30) camera_shake(SHAKE_STRONG); /* the shell breaks */
             if (dino_cam) camera_event_target(up, dino_cam_at()); /* updateCameraInfo: mCamTargetMtx */
             if (dino.dnrv == DD_PULLED && vlen(vsub(dino.bpos, dino.pos)) > 800.0f) /* turnDirectionFromTargetDegree, 6 */
                 DINO_TURN_TO(vmul(vtangent(vsub(dino.chain_ok ? dino.bpos : dino.bpos, dino.pos), up), -1.0f), 6.0f);
@@ -6607,6 +6609,7 @@ static void update_dino(void)
                 fx_named("DinoPackun", "Hit", hm, NULL, NULL);
                 dino.dnrv = egg ? DD_EGGBROKEN : dino.seq == DSEQ_LV3 ? DD_LASTDAMAGE : DD_DAMAGE; dino.dt = 0;
                 scene_stop = egg ? 5 : 15; /* exeEggBroken stopScene(5) / updateDamage stopScene(15) */
+                camera_shake(egg ? SHAKE_STRONG : SHAKE_NORMAL_STRONG);
             }
             printf("dino packun: hit %d" "\n", dino.hits);
         }
@@ -6967,6 +6970,7 @@ static void update_orocks(void)
                 printf("ota rock %d down\n", in->row);
             }
             if (st == 2) scene_stop = 16;
+            if (st == 3) camera_shake(SHAKE_NORMAL);
             if (st >= 34) { orock_set(k, OR_DEAD); row_kill(in->row); game_rebind(); return; } /* Death 34: kill */
             break;
         case OR_HIDE:
@@ -7052,6 +7056,9 @@ static void update_ota(void)
         if (ota.t == 1) for (int k = 0; k < 4; k++) ota_lfoot(k, 3, "appear"); /* mLongFeet startAppearDemo */
         if (ota.t == 41) ota_magma("attack");                                   /* cAppearDemoRippleStepS */
         if (ota.t == 191) ota_magma("down");                                    /* appearDemo (Down), then Wait */
+        if (ota.t == 51 || ota.t == 161) camera_shake(SHAKE_NORMAL);           /* cAppearDemoRumblePad01 / 03 */
+        if (ota.t == 131) camera_shake(SHAKE_WEAK);                             /* 02 */
+        if (ota.t == 201) camera_shake(SHAKE_STRONG);                           /* 04 */
         if (ota.t >= 424) { ota.yaw = ota_player_angle(); for (int k = 0; k < 4; k++) ota_lfoot(k, 1, "wait"); ota_set(OTA_THROWFIREWAIT); }
         break;
     case OTA_WAIT: case OTA_THROWCOCOWAIT: { /* tryThrowCocoNutOrFireBallIfWait */
@@ -7103,6 +7110,8 @@ static void update_ota(void)
         if (ota.t == 1 || (ota.nrv == OTA_POWERUP && (ota.t == 74 || ota.t == 176))) ota_magma("damage"); /* cDamageCrownFallFrame, cBlurStartStep */
         if (ota.t == 1) launch_pieces(vadd(ota.pos, v3(0, 300.0f, 0)), ota.up, ota.hits * 8, 60.0f, 50.0f); /* appearStarPiece */
         if (ota.t == 3) scene_stop = 16; /* stopScene (Lv1) */
+        if (ota.t == 4) camera_shake(SHAKE_NORMAL_STRONG);
+        if (ota.nrv == OTA_POWERUP && (ota.t == 74 || ota.t == 176 || ota.t == 196 || ota.t == 216)) camera_shake(SHAKE_NORMAL);
         if (ota.t >= (ota.nrv == OTA_POWERUP ? 256 : 179)) {
             if (ota.nrv == OTA_POWERUP && r->sw[SW_B] >= 0) sw_set(r, SW_B, 1);
             ota_set(ota_valid_bubble() ? OTA_BUBBLEATTACK : ota_valid_fire() ? OTA_THROWFIRE : OTA_THROWFIREWAIT);
@@ -7121,6 +7130,8 @@ static void update_ota(void)
         ota.yaw = 43.0f; /* cDownDemoRotate */
         if (ota.t == 1) ota_magma("damage");
         if (ota.t == 91) ota_magma("down"); /* cDownRippleStep: Down, then EndWait */
+        if (ota.t == 1) camera_shake(SHAKE_STRONG);
+        if (ota.t == 106 || ota.t == 151) camera_shake(SHAKE_NORMAL); /* cDownDemoRumbleFrame1 / 2 */
         if (ota.t >= 300) { ota_set(OTA_APPEARSTAR); printf("ota king: down, its star" "\n"); }
         break;
     case OTA_APPEARSTAR:
@@ -7136,7 +7147,8 @@ static void update_ota(void)
         }
         break;
     case OTA_BUBBLEATTACK:
-        if (ota.t == 100) { /* appearBubble: six round it from mBubbleAppearPos (0, 10, 500) */
+        if (ota.t == 101) { /* cBubbleAppearStep 100: appearBubble, six round it from mBubbleAppearPos (0, 10, 500) */
+            camera_shake(SHAKE_NORMAL);
             float m[16];
             basis_matrix(m, ota.pos, ota.up, ota.f, 0);
             V3 bp = ota_world(m, v3(0, 10.0f, 500.0f)), d0 = vnorm(vtangent(vsub(bp, ota.pos), ota.up));
@@ -7364,15 +7376,16 @@ static void update_sambos(void)
         switch (q->nrv) {
         case CS_HIDEWAIT: body = "hidewait"; bloop = 1; if (dm < search) sambo_set(k, CS_APPEAR); break;
         case CS_APPEAR: body = "appear"; if (q->t == 1) sambo_turn(k, 180.0f); sambo_turn(k, 1.0f);
-            if (q->t == 61) sambo_fx(k, in, "CocoSamboSmoke"); /* cAppearUpFrame 60 */
+            if (q->t == 61) { sambo_fx(k, in, "CocoSamboSmoke"); camera_shake(SHAKE_NORMAL); } /* cAppearUpFrame 60 */
+            if (q->t == 106) camera_shake(SHAKE_WEAK); /* cAppearLandFrame 105 */
             if (q->t >= 139) sambo_set(k, CS_WAIT);
             break;
         case CS_WAIT: body = "wait"; bloop = 1; sambo_turn(k, 1.0f);
             if (dm < 700.0f) sambo_set(k, CS_ATTACK); else if (dm >= search + 100.0f) sambo_set(k, CS_HIDE);
             break;
-        case CS_HIDE: body = "hide"; if (q->t == 66) sambo_fx(k, in, "CocoSamboSmoke"); if (q->t >= 99) sambo_set(k, CS_HIDEWAIT); break;
+        case CS_HIDE: body = "hide"; if (q->t == 66) { sambo_fx(k, in, "CocoSamboSmoke"); camera_shake(SHAKE_WEAK); } if (q->t >= 99) sambo_set(k, CS_HIDEWAIT); break;
         case CS_ATTACK: body = "attack"; if (q->t < 30) sambo_turn(k, 1.0f);
-            if (q->t == 116) sambo_head_fx(k, in, "CocoSamboAttack"); /* checkPassBckFrame(115) */
+            if (q->t == 116) { sambo_head_fx(k, in, "CocoSamboAttack"); camera_shake(SHAKE_NORMAL); } /* checkPassBckFrame(115) */
             if (q->t >= 169) sambo_set(k, CS_ATTACKINT);
             break;
         case CS_ATTACKINT: body = "wait"; bloop = 1; sambo_turn(k, 1.0f); if (q->t >= 60) sambo_set(k, CS_WAIT); break;
@@ -7388,6 +7401,8 @@ static void update_sambos(void)
                 sambo_hset(k, CH_FALL);
                 printf("coco sambo row %d: its head falls" "\n", in->row);
             }
+            if (q->t == 3) scene_stop = 10; /* stopScene(10) at step 2 */
+            if (q->t == 4) camera_shake(SHAKE_NORMAL);
             if (q->t >= 80) { /* isBckStopped */
                 sambo_fx(k, in, "DeathSmokeSpine1"); sambo_fx(k, in, "DeathSmokeSpine2"); sambo_fx(k, in, "DeathSmokeSpine3");
                 sambo_set(k, CS_FALLHEADHIDE);
@@ -7397,7 +7412,9 @@ static void update_sambos(void)
         case CS_RECOVERWAIT: body = "recover"; if (q->t >= 90) sambo_set(k, CS_RECOVER); break;
         case CS_RECOVER: body = "recover"; head = "recover"; if (q->t == 1) sambo_turn(k, 180.0f); if (q->t >= 89) sambo_set(k, CS_APPEAR); break;
         case CS_PRESSY: head = "pressy"; if (q->t >= 35) { sambo_head_fx(k, in, "DeathSmokeHead"); sambo_set(k, CS_DEAD); row_kill(in->row); } break;
-        case CS_BLOW: if (q->t >= 20) { sambo_head_fx(k, in, "DeathSmokeHead"); sambo_set(k, CS_DEAD); row_kill(in->row); } break;
+        case CS_BLOW: if (q->t == 2) scene_stop = 6; /* stopScene(6) at step 1, shakeCameraNormal at 2 */
+            if (q->t == 3) camera_shake(SHAKE_NORMAL);
+            if (q->t >= 20) { sambo_head_fx(k, in, "DeathSmokeHead"); sambo_set(k, CS_DEAD); row_kill(in->row); } break;
         }
         switch (q->hnrv) { /* CocoSamboHead */
         case CH_FALL:
@@ -7406,9 +7423,12 @@ static void update_sambos(void)
             q->hpos = vadd(q->hpos, q->hvel);
             if (q->ht >= 45) { q->hpos = q->pos; q->hvel = v3(0, 0, 0); sambo_hset(k, CH_FALLLAND); }
             break;
-        case CH_FALLLAND: head = "land"; if (q->ht >= 14) sambo_hset(k, CH_SWOON); break;
+        case CH_FALLLAND: head = "land"; if (q->ht == 1) camera_shake(SHAKE_WEAK); if (q->ht >= 14) sambo_hset(k, CH_SWOON); break;
         case CH_SWOON: head = "swoon"; if (q->ht >= 180) sambo_hset(k, CH_SWOONEND); break;
-        case CH_SWOONEND: head = "swoonend"; if (q->ht >= 109) sambo_hset(k, CH_CONNECTED); break;
+        case CH_SWOONEND: head = "swoonend";
+            if (q->ht == 96) camera_shake(SHAKE_NORMAL); /* cSwoonEndDamagedFrame 95 */
+            if (q->ht >= 109) sambo_hset(k, CH_CONNECTED);
+            break;
         case CH_BLOW: head = "blow"; q->hvel = vadd(q->hvel, vmul(q->up, -1.0f)); q->hpos = vadd(q->hpos, q->hvel); break;
         default: break;
         }
@@ -8323,13 +8343,14 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
  * After (60): disappear (its group's members appear); else Meta. Clips by its size (getActionName: ..0 / ..1 / ..2
  * past 1.3 / 1.6) through its ActorAnimCtrl actions. Its talks: Common_TicoFat001 (Prep: tryTalkNearPlayer, its
  * event node starts the eating: eventFunc 0) and Common_TicoFat000 (setMessage: Wait 1 by how much is left, Point 0,
- * Test 2; the end of Fullness' talk is the metamorphosis), 280 to talk, 220 x scale up, in front. ponytail: no
- * fullness meter, no "喜び" camera, no information message (its frame only),
- * no TicoSeedGuidance, no item (arg0 0 / 1), no FatRed BRK, no BVA eyes */
+ * Test 2; the end of Fullness' talk is the metamorphosis), 280 to talk, 220 x scale up, in front. WipeOut shakes the
+ * camera and shows its screen effects. The "喜び" camera only runs for arg7 6 (Good Egg's has -1). ponytail: no
+ * fullness meter, no information message (its frame only), no TicoSeedGuidance, no item (arg0 0 / 1), no BVA eyes */
 #define MAX_FATS 4
 static struct {
     int row, nrv, t, left, total, inflight, eat, g174, g178, item, has_rail, tk1, tk0; /* mMsgCtrl, _16C */
     float scale, flyd, flylen, m0[16]; /* m0: its matrix without its scale (setScale works on it) */
+    float scr[16], lit[16]; /* _17C, _1AC: its screen effects' host matrices (updateScreenEffect) */
     Launch fly;
     struct { V3 pos; int on, col; } gift[8];
 } fats[MAX_FATS];
@@ -8353,7 +8374,7 @@ static void wipe_draw(void)
     if (!wipe.close && wipe.step >= wipe.frames) { wipe.frames = 0; return; } /* open: killed */
     float a = (float)wipe.step / wipe.frames;
     if (!wipe.close) a = 1.0f - a;
-    Quad q = {0, 0, 640, 448, 0, 0, 0, 0, (u32)(a * 0x80) << 24 | 0x808080u, NO_TEX, 0};
+    Quad q = {0, 0, 640, 448, 0, 0, 0, 0, (u32)(a * 0x80) << 24 | 0xFFFFFFu, NO_TEX, 0}; /* untextured: white is 0xFF */
     render_quads(&q, 1);
 }
 
@@ -8506,7 +8527,7 @@ static void update_ticofat(void)
             break;
         }
         case TF_WIPEOUT: clip = "fly"; /* closeWipeWhiteFade(60) */
-            if (f->t == 1) wipe_start(1, 60);
+            if (f->t == 1) { wipe_start(1, 60); camera_shake(SHAKE_NORMAL); }
             else if (!wipe_active()) fat_set(k, TF_WIPEIN);
             break;
         case TF_WIPEIN:
@@ -8525,6 +8546,20 @@ static void update_ticofat(void)
             break;
         }
         if (f->eat && f->left == 0 && f->nrv <= TF_CHEM && !f->inflight) { fat_set(k, TF_TEST); printf("tico fat row %d: full (%d)" "\n", in->row, f->total); }
+        if (f->nrv == TF_WIPEOUT) { /* emitScreenEffect / updateScreenEffect: facing the camera, 500 before it toward
+                                      * Tico, and at Tico; deleteEffect(TicoFatScreenEffect) once the wipe is closed */
+            V3 e, w, u, at = v3(f->m0[12], f->m0[13], f->m0[14]);
+            float fv;
+            camera_pose(&e, &w, &u, &fv);
+            V3 fw = vnorm(vsub(w, e)), to = vsub(at, e);
+            basis_matrix(f->scr, vadd(e, vlen(to) > 1e-3f ? vmul(vnorm(to), 500.0f) : v3(0, 0, 0)), u, fw, 0);
+            basis_matrix(f->lit, at, u, fw, 0);
+            fx_named("TicoFat", "TicoFatScreenEffect", f->scr, NULL, &fats[k]);
+        }
+        if (f->nrv >= TF_WIPEOUT && f->nrv <= TF_AFTER) /* its light stays where it was until the kill */
+            fx_named("TicoFat", "TicoFatScreenEffectLight", f->lit, NULL, &fats[k]);
+        if (f->nrv >= TF_WIPEIN && f->nrv <= TF_AFTER) /* exeWipeOut's end: TicoFatScreenEffectFog at _17C */
+            fx_named("TicoFat", "TicoFatScreenEffectFog", f->scr, NULL, &fats[k]);
         if (clip) obj_play(in, clip, loop, 6);
         /* setScale; hidden from Demo's frame 90 (hideModelAndOnCalcAnim) */
         float sc_ = (f->nrv == TF_DEMO && f->t >= 90) || f->nrv >= TF_WIPEIN ? 0.0f : f->scale;
@@ -9479,6 +9514,7 @@ static void m_hip_land(Player *m) /* procHipDrop's first frame on the ground */
     kari_cling = 0;                      /* MR::removeAllClingingKarikari */
     m->hip = HIP_LAND;
     mario_play("hipdropland", 1.0f, 0);
+    camera_shake(SHAKE_NORMAL); /* startCamVib(0) */
     m->hip_jv = m_jv(m);
     m->air_timer = 0;
     m->hvel = v3(0, 0, 0); m->vup = 0;
@@ -9680,7 +9716,7 @@ static void m_do_landing(Player *m)
         if (k == 3 || k == 10) m_clip_stop();
         else mario_play(land[k], 1.0f, 0);
         m_stop_walk(m);
-        if (hard) { mario_play("landstiffen", 1.0f, 0); m->land_timer += 16; }
+        if (hard) { mario_play("landstiffen", 1.0f, 0); m->land_timer += 16; camera_shake(SHAKE_STRONG); } /* startCamVib(4) */
     } else {
         mario_play("landslope", 1.0f, 0);
         m->brake1 = 0;
@@ -11716,6 +11752,7 @@ static void update_hhps(void)
         case HH_ATTACK:
             if (!st) hhp_bck(in, k, 1);
             if (st <= 60 && hhp_player_dir(k, &d)) hhp_turn_to(k, d, 1.0f); /* turnToAttackVec(60): never past 60 */
+            if (st == 156) camera_shake(SHAKE_NORMAL_STRONG);
             if (HHP_STOPPED(o)) hhp_set(k, HH_REST);
             break;
         case HH_REST:
@@ -11728,11 +11765,13 @@ static void update_hhps(void)
             break;
         case HH_DAMAGE:
             if (!st) { hhp_bck(in, k, 4); o->imm++; }
+            if (st == 76) camera_shake(SHAKE_NORMAL);
             if (o->clen == hhp_lens[4] && HHP_STOPPED(o)) hhp_bck(in, k, 5); /* isBckOneTimeAndStopped: Swoon */
             if (st == 180) hhp_set(k, HH_RISE);
             break;
         case HH_RISE:
             if (!st) hhp_bck(in, k, 6);
+            if (st == 56) camera_shake(SHAKE_NORMAL_WEAK);
             if (HHP_STOPPED(o)) {
                 if (hhp_in_range(k)) { hhp_bck(in, k, 0); hhp_set(k, HH_SEARCH); }
                 else hhp_set(k, HH_WAIT);
@@ -11743,6 +11782,7 @@ static void update_hhps(void)
             break;
         case HH_CROW:
             if (!st) hhp_bck(in, k, 7);
+            if (st == 45) camera_shake(SHAKE_NORMAL_WEAK);
             if (HHP_STOPPED(o)) hhp_set(k, HH_WAIT);
             break;
         case HH_SMASHKILL: case HH_BLOWKILL:
@@ -11797,6 +11837,7 @@ static void update_hhps(void)
             if (s && !mario->hurt_timer) hurt_mario(sp[s], 15.0f); /* sendMsgEnemyAttack */
             else if (!s && !killing && hhp_attack_valid(k) && !mario->hurt_timer) { /* sendMsgEnemyAttackStrong */
                 hurt_mario(sp[0], 25.0f);
+                camera_shake(SHAKE_NORMAL);
                 if (o->nrv == HH_ATTACK && o->step >= 0) hhp_set(k, HH_HIT);
             } else { /* sendMsgPush */
                 V3 out = vtangent(vsub(c, sp[s]), mario->up);
@@ -15627,6 +15668,7 @@ void game_draw(void)
     }
 #endif
     render_set_fovy(fovy);
+    render_set_shake(0.0f, camera_shake_y());
     float eye[3] = {ce.x, ce.y, ce.z}, target[3] = {cw.x, cw.y, cw.z}, up[3] = {cu.x, cu.y, cu.z};
     float m[16];
     render_begin(eye, target, up);
