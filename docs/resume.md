@@ -406,8 +406,14 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
      TicoFat's pink done (d747526, checked in `fat`): slice.py BRK_STEPS "TicoFat~0..3" (FatRed frames 0 / 20 / 39 /
      59), game.c fat_model by setScale. With it: materials whose RAS is CLR0 get per vertex the TEV at their CLR0
      (ras_colour, textures read 1) and the texture divided by that factor at the mean (exact for TEX x f(RAS):
-     PeanutPlanet, the egg planets); it changed every pack (full repack 2026-10-15). Next: bloom (OtaKingMagmaBloom,
-     BloomCube), the TEASER demos (vine black hole), DropOfWater's env map.
+     PeanutPlanet, the egg planets); it changed every pack (full repack 2026-10-15). Non-separable TEVs (OtaKingBath's
+     ColdLava adds other textures) keep the bake at the mean CLR0 and CLR0 / mean in the vertices (slice.separable).
+     Bloom done 2026-10-15 (checked in `ota`): render.c bloom_pass after BloomEffect (bloom models into the frame's
+     alpha only, frame x alpha to a 160 x 56 quarter, sL1 / sL2 blurs, added at the BloomArea intensity; VRAM 112 KB
+     for its buffers, vram_need default 2304 KB), game.c bloom_update (ImageEffectArea, 1 / 15 fade, 0.1 approach),
+     "<class>Bloom" models (PlanetMap::initBloomModel) and OtaKingMagmaBloom. ponytail: scene colour under the bloom
+     models, no threshold, OtaKingMagmaBloom unposed. Next: the TEASER demos (vine black hole), DropOfWater's env map
+     (texgen), then item d (coverage run) and the disc image.
      MarioPress done (MarioPress.cpp checkVerticalPress, setPress 0 / 4 after Petari: press objects are the
      RailMoveObjPress classes; Dossun / RailBlock / TripodBossFixParts are not in the port; checkSidePressPre /
      checkSidePress need front / back walls and face velocities the port's collision lacks), talk / messages, sound effects, real lighting, wipes, multi-actor cameras (Dino damage camera),
