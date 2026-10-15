@@ -790,7 +790,7 @@ static void voice_off(int v)
     voice_of[v] = -1;
 }
 
-void se_update(void)
+void se_update(int steps)
 {
     if (!snd) return;
     for (int i = 0; i < 32; i++) /* animation level sounds that ended free their slot */
@@ -802,7 +802,7 @@ void se_update(void)
     /* level sounds not asked for this frame stop */
     for (int i = 0; i < MAX_SND; i++)
         if (so[i].used && so[i].level_seen && --so[i].level_seen == 0) se_stop(so[i].handle);
-    sub_acc += SUBS_PER_FRAME;
+    sub_acc += SUBS_PER_FRAME * steps;
     while (sub_acc >= 1.0f) {
         sub_acc -= 1.0f;
         for (int i = 0; i < MAX_SND; i++) {

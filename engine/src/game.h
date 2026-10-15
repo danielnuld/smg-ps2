@@ -199,6 +199,7 @@ int game_test_hole(void);
 int game_hurt_timer(void);
 int game_test_collapse_step(int row);
 void game_draw(void);
+void game_set_draw_steps(int n); /* logic steps the next draw follows (main's catch-up; 1 otherwise) */
 /* HUD numbers */
 int game_coins(void);
 int game_life(void);

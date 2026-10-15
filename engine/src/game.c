@@ -8697,10 +8697,13 @@ static const char *fat_size(const char *base, float scale) /* getActionName */
 static struct { int close, frames, step; } wipe;
 static void wipe_start(int close, int frames) { wipe.close = close; wipe.frames = frames > 0 ? frames : 1; wipe.step = 0; }
 static int wipe_active(void) { return wipe.frames && wipe.step < wipe.frames; }
+static int draw_steps = 1; /* logic steps since the last draw (game_set_draw_steps) */
+void game_set_draw_steps(int n) { draw_steps = n; }
 static void wipe_draw(void)
 {
     if (!wipe.frames) return;
-    if (wipe.step < wipe.frames) wipe.step++;
+    wipe.step += draw_steps;
+    if (wipe.step > wipe.frames) wipe.step = wipe.frames;
     if (!wipe.close && wipe.step >= wipe.frames) { wipe.frames = 0; return; } /* open: killed */
     float a = (float)wipe.step / wipe.frames;
     if (!wipe.close) a = 1.0f - a;
@@ -15810,6 +15813,14 @@ static void update_obj_anims(void)
         }
 }
 
+#ifdef BENCH
+u32 lprof[74]; /* game_update's calls (EE cycles, profiling) */
+const char *const lprof_name[74] = {"update_obj_anims", "update_rotors", "update_halos", "update_railers", "update_talkers", "update_talk_director", "update_mario", "update_seesaws", "update_bridges", "update_launched_pieces", "update_invincible", "update_follow_groups", "update_wrecks", "update_kuribo", "kari_director", "kari_bite", "break_boxes", "update_collapse", "update_flips", "update_hip_switches", "update_hazards", "update_items", "update_electric", "update_firebars", "update_rocks", "update_shells", "update_shooting", "update_plants", "update_steam", "update_geyser", "update_assembly", "update_jumpstands", "update_tsuki", "update_kiraira", "update_kgunners", "update_orocks", "update_hhps", "update_vines", "update_ibubbles", "update_meteor", "update_killers", "update_flows", "update_prom", "update_beeflowers", "update_ticorails", "update_givers", "update_birikyu", "update_punch", "update_coconuts", "update_notes", "update_cocoons", "update_fluffs", "update_jets", "update_screws", "update_candles", "update_fountains", "update_strays", "update_bubbles", "update_dino", "update_ota", "update_ticofat", "update_sambos", "update_fire", "place_waterplants", "update_pipes", "update_switches", "update_pops", "collect", "collect", "collect", "update_cursor", "camera_update", "keep_effects", "fx_update"};
+const int lprof_n = 74;
+#define LQ(k, stmt) do { u32 c_ = cycles(); stmt; lprof[k] += cycles() - c_; } while (0)
+#else
+#define LQ(k, stmt) stmt
+#endif
 void game_update(void)
 {
     if (scene_stop > 0) { scene_stop--; return; } /* SceneFunction stopScene: everything holds */
@@ -15819,103 +15830,103 @@ void game_update(void)
         printf("scenario starter: flight in, %d frames" "\n", launches[starter].flight);
         starter = -1;
     }
-    update_obj_anims();
+    LQ(0, update_obj_anims());
     if (time_limit && time_left > 0 && !stars && --time_left == 0) { printf("time up" "\n"); miss(); }
     hip_hit = 0;
     game_frame++;
-    update_rotors();
-    update_halos();
-    update_railers();
-    update_talkers();
-    update_talk_director();
-    update_mario();
-    update_seesaws(); /* after Mario: his hip drop (hip_hit) this frame */
-    update_bridges();
+    LQ(1, update_rotors());
+    LQ(2, update_halos());
+    LQ(3, update_railers());
+    LQ(4, update_talkers());
+    LQ(5, update_talk_director());
+    LQ(6, update_mario());
+    LQ(7, update_seesaws()); /* after Mario: his hip drop (hip_hit) this frame */
+    LQ(8, update_bridges());
     if (mario->spin_timer == SPIN_TIME - 1) mario_fx(FX_MARIO_SPINLIGHT, 1.0f); /* a spin started this frame */
     if (hip_hit) mario_fx(FX_MARIO_HIPDROPFLOWER, 0.0f);
-    update_launched_pieces();
-    update_invincible();
-    update_follow_groups();
-    update_wrecks();
-    update_kuribo();
-    kari_director();
-    kari_bite();
-    break_boxes();
-    update_collapse();
-    update_flips();
-    update_hip_switches();
-    update_hazards();
-    update_items();
-    update_electric();
-    update_firebars();
-    update_rocks();
-    update_shells();
-    update_shooting();
-    update_plants();
-    update_steam();
-    update_geyser();
-    update_assembly();
-    update_jumpstands();
-    update_tsuki();
-    update_kiraira();
-    update_kgunners();
-    update_orocks();
-    update_hhps();
-    update_vines();
-    update_ibubbles();
-    update_meteor();
-    update_killers();
-    update_flows();
-    update_prom();
-    update_beeflowers();
-    update_ticorails();
-    update_givers();
-    update_birikyu();
-    update_punch();
-    update_coconuts();
-    update_notes();
-    update_cocoons();
-    update_fluffs();
-    update_jets();
-    update_screws();
-    update_candles();
-    update_fountains();
-    update_strays();
-    update_bubbles();
-    update_dino();
-    update_ota();
+    LQ(9, update_launched_pieces());
+    LQ(10, update_invincible());
+    LQ(11, update_follow_groups());
+    LQ(12, update_wrecks());
+    LQ(13, update_kuribo());
+    LQ(14, kari_director());
+    LQ(15, kari_bite());
+    LQ(16, break_boxes());
+    LQ(17, update_collapse());
+    LQ(18, update_flips());
+    LQ(19, update_hip_switches());
+    LQ(20, update_hazards());
+    LQ(21, update_items());
+    LQ(22, update_electric());
+    LQ(23, update_firebars());
+    LQ(24, update_rocks());
+    LQ(25, update_shells());
+    LQ(26, update_shooting());
+    LQ(27, update_plants());
+    LQ(28, update_steam());
+    LQ(29, update_geyser());
+    LQ(30, update_assembly());
+    LQ(31, update_jumpstands());
+    LQ(32, update_tsuki());
+    LQ(33, update_kiraira());
+    LQ(34, update_kgunners());
+    LQ(35, update_orocks());
+    LQ(36, update_hhps());
+    LQ(37, update_vines());
+    LQ(38, update_ibubbles());
+    LQ(39, update_meteor());
+    LQ(40, update_killers());
+    LQ(41, update_flows());
+    LQ(42, update_prom());
+    LQ(43, update_beeflowers());
+    LQ(44, update_ticorails());
+    LQ(45, update_givers());
+    LQ(46, update_birikyu());
+    LQ(47, update_punch());
+    LQ(48, update_coconuts());
+    LQ(49, update_notes());
+    LQ(50, update_cocoons());
+    LQ(51, update_fluffs());
+    LQ(52, update_jets());
+    LQ(53, update_screws());
+    LQ(54, update_candles());
+    LQ(55, update_fountains());
+    LQ(56, update_strays());
+    LQ(57, update_bubbles());
+    LQ(58, update_dino());
+    LQ(59, update_ota());
     if (star_demo) { /* its camera ("powerstar/powerstarget"); Mario plays PowerStarGet meanwhile */
         if (!demo_camera("powerstar/powerstarget", star_demo - 1, star_demo_m)) { star_demo = 0; camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45); }
         else star_demo++;
     }
     demo_on = dino_demo_on || ota_demo_on || star_demo || fat_demo() || vine_demo_on() || talk_demo();
-    update_ticofat();
-    update_sambos();
-    update_fire();
-    place_waterplants();
-    update_pipes();
-    update_switches();
-    update_pops();
+    LQ(60, update_ticofat());
+    LQ(61, update_sambos());
+    LQ(62, update_fire());
+    LQ(63, place_waterplants());
+    LQ(64, update_pipes());
+    LQ(65, update_switches());
+    LQ(66, update_pops());
     int had = got_coins;
-    collect(coins, ncoins, 100.0f, &got_coins, FX_COIN_COINGET, SE_SY_COIN); /* Coin::noticeGetCoin */
+    LQ(67, collect(coins, ncoins, 100.0f, &got_coins, FX_COIN_COINGET, SE_SY_COIN)); /* Coin::noticeGetCoin */
     if (got_coins > had && life < max_life) mario_sound("ライフ回復"); /* MarioActor::incLife */
     life += got_coins - had;
     if (life > max_life) life = max_life;
     if (got_coins / 50 > had / 50) lives++; /* every 50 coins a 1-up */
-    collect(purple, npurple, 100.0f, &got_purple, FX_PURPLECOIN_COINGET, SE_SY_PURPLE_COIN);
-    collect(pieces, npieces, 120.0f, &got_pieces, FX_STARPIECE_STARPIECEGET, SE_SY_STAR_PIECE_GET); /* gotByPlayer */
-    update_cursor();
+    LQ(68, collect(purple, npurple, 100.0f, &got_purple, FX_PURPLECOIN_COINGET, SE_SY_PURPLE_COIN));
+    LQ(69, collect(pieces, npieces, 120.0f, &got_pieces, FX_STARPIECE_STARPIECEGET, SE_SY_STAR_PIECE_GET)); /* gotByPlayer */
+    LQ(70, update_cursor());
     coin_rot = fmodf(coin_rot + 8.0f * 0.0174533f, 6.2831853f);
     qcoin_rot = fmodf(qcoin_rot + 4.0f * 0.0174533f, 6.2831853f);
     piece_rot = fmodf(piece_rot + 15.0f * 0.0174533f, 6.2831853f);
     star_rot = fmodf(star_rot + 3.0f * 0.0174533f, 6.2831853f);
     CamTarget t = {mario->pos, mario->face, mario->up, !mario->grounded, mario->launch >= 0 && fly_on, fly_hy};
-    camera_update(&t);
+    LQ(71, camera_update(&t));
     V3 w, u;
     float fovy;
     camera_pose(&cam_pos, &w, &u, &fovy); /* cam_pos also steers the stick (camera-relative) */
-    keep_effects();
-    fx_update();
+    LQ(72, keep_effects());
+    LQ(73, fx_update());
 }
 
 /* --- draw ------------------------------------------------------------------------------------------------ */

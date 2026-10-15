@@ -35,6 +35,7 @@ int anim_play(Anim *a, const char *name, float speed, int loop, int interp);
 void anim_update(Anim *a);
 /* Advance one frame only (its model not drawn this frame: its clip's timing goes on, the pose is not computed) */
 void anim_advance(Anim *a);
+extern float anim_rate; /* logic steps one update stands for (1; main's catch-up sets it around game_draw) */
 /* anim_update in two: the joints' world matrices (which may then be changed), then the draw matrices from them */
 void anim_pose(Anim *a);
 void anim_skin(Anim *a);

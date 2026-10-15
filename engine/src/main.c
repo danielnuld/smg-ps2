@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "anim.h"
 #include "audio.h"
 #include "blob.h"
 #include "camera.h"
@@ -496,6 +497,11 @@ static void ms(char *out, int n, const char *label, u32 c)
     snprintf(out, n, "%s %u.%02u", label, us / 1000, (us % 1000) / 10);
 }
 
+#ifdef CATCHUP
+static volatile u32 vblanks; /* vblank starts (INTC_VBLANK_S) */
+static int vblank_tick(int cause) { (void)cause; vblanks++; ExitHandler(); return 0; }
+#endif
+
 int main(void)
 {
     load_modules();
@@ -558,9 +564,25 @@ int main(void)
     u32 top[5] = {0};
 #endif
     char line[128], a[24], b[24], c[24];
+#ifdef CATCHUP
+    /* the game's logic at a fixed 60 Hz (Petari's frame): every vblank since the last frame is one logic step (at most
+     * 2: a longer frame is let go), the pad read before each (its presses count once); then one draw, its clips,
+     * sounds and wipe advancing those steps */
+    AddIntcHandler(INTC_VBLANK_S, vblank_tick, 0);
+    EnableIntc(INTC_VBLANK_S);
+    u32 last_vb = vblanks;
+#endif
     for (;;) {
         u32 t0 = cycles();
         game_kcl_cycles = 0;
+        int steps = 1;
+#ifdef CATCHUP
+        steps = (int)(vblanks - last_vb);
+        last_vb = vblanks;
+        if (steps < 1) steps = 1;
+        if (steps > 2) steps = 2; /* a longer frame slows the game a moment rather than spiralling */
+        for (int s = 1; s < steps; s++) { pad_update(); game_update(); }
+#endif
         pad_update();
         game_update();
 #ifdef PACKS
@@ -1288,7 +1310,7 @@ int main(void)
             float e[3] = {eye.x, eye.y, eye.z}, rr[3] = {r.x, r.y, r.z};
             se_listener(e, rr);
         }
-        se_update();
+        se_update(steps);
         se_flush();
 #if defined(ROUTE_TEST) || defined(SND_TEST) || defined(WALKER_TEST) || defined(FAT_TEST)
         if (frame % 5 == 0) {
@@ -1298,7 +1320,9 @@ int main(void)
         }
 #endif
         u32 t1 = cycles();
+        anim_rate = (float)steps; game_set_draw_steps(steps); /* draw-time clips after `steps` logic steps */
         game_draw();
+        anim_rate = 1.0f;
         u32 t2 = cycles();
         t_logic = t1 - t0;
         t_draw = t2 - t1;
@@ -1347,6 +1371,7 @@ int main(void)
             printf("frame %u: logic %u us, draw %u us, worst %u us, tris %u\n", frame, (u32)(t_logic / EE_MHZ),
                    (u32)(t_draw / EE_MHZ), (u32)(worst / EE_MHZ), render_tris_drawn());
         u32 vwait = render_wait_cycles(); /* blocked on the VIF in game_draw */
+        (void)vwait;
 #ifdef SAMPLE_PROF
         { extern void prof_start(void), prof_dump(void); if (frame == 60) prof_start(); if (frame == 1861) prof_dump(); }
 #endif
@@ -1364,6 +1389,14 @@ int main(void)
                                       (u32)(rsum[0] / 1800 / EE_MHZ), (u32)(rsum[1] / 1800 / EE_MHZ), (u32)(rsum[2] / 1800 / EE_MHZ),
                                       (u32)(rsum[3] / 1800 / EE_MHZ), (u32)(rsum[4] / 1800 / EE_MHZ), (u32)(rsum[5] / 1800 / EE_MHZ),
                                       (u32)(rsum[6] / 1800 / EE_MHZ), (u32)(rsum[7] / 1800 / EE_MHZ));
+            {
+                extern u32 lprof[]; extern const char *const lprof_name[]; extern const int lprof_n;
+                static u32 lsum[96];
+                for (int i = 0; i < lprof_n && i < 96; i++) { if (frame > 60 && frame <= 1860) lsum[i] += lprof[i]; lprof[i] = 0; }
+                if (frame == 1861)
+                    for (int i = 0; i < lprof_n && i < 96; i++)
+                        if (lsum[i] / 1800 / EE_MHZ >= 100) printf("bench logic %-24s %u us" "\n", lprof_name[i], (u32)(lsum[i] / 1800 / EE_MHZ));
+            }
             static u32 fsum[2];
             if (frame > 60 && frame <= 1860) { fsum[0] += prof_fxa; fsum[1] += prof_shadow; }
             prof_fxa = prof_shadow = 0;
@@ -1377,6 +1410,9 @@ int main(void)
             prof_pose = prof_skin = prof_draw = game_kcl_draw = 0;
             if (frame == 1861) printf("bench parts: pose %u skin %u draw_model %u kcl-in-draw %u us\n", (u32)(qsum[0] / 1800 / EE_MHZ),
                                       (u32)(qsum[1] / 1800 / EE_MHZ), (u32)(qsum[2] / 1800 / EE_MHZ), (u32)(qsum[3] / 1800 / EE_MHZ));
+            static u32 pmax[9];
+            if (frame > 60 && frame <= 1860) for (int i = 0; i < 8; i++) if (game_prof[i] > pmax[i]) pmax[i] = game_prof[i];
+            if (frame == 1861) for (int i = 0; i < 8; i++) printf("bench draw max %d %u us" "\n", i, (u32)(pmax[i] / EE_MHZ));
             if (frame > 60 && frame <= 1860) { for (int i = 0; i < 8; i++) psum[i] += game_prof[i]; psum[8] += vwait; }
             extern u32 anim_inflates, anim_inflated; extern u32 anim_cache_bytes(void);
             if (frame == 60) anim_inflates = anim_inflated = 0;

@@ -231,6 +231,7 @@ static float clip_len(int id)
     }
     return (float)(u16)info_frames[id];
 }
+float anim_rate = 1.0f; /* logic steps an update stands for (main's catch-up: draw-time updates after 2 or 3 steps) */
 /* the frame and the cross-fade one step on, no pose (the model is not drawn: its timing goes on) */
 void anim_advance(Anim *a)
 {
@@ -244,7 +245,7 @@ void anim_advance(Anim *a)
             a->frame = a->phase * len;
             a->phase = -1.0f;
         }
-        a->frame += a->speed;
+        a->frame += a->speed * anim_rate;
         if (a->frame >= len) {
             if (a->loop)
                 a->frame = fmodf(a->frame, len);
@@ -270,7 +271,7 @@ void anim_pose(Anim *a)
             a->frame = a->phase * len;
             a->phase = -1.0f;
         }
-        a->frame += a->speed;
+        a->frame += a->speed * anim_rate;
         if (a->frame >= len) {
             if (a->loop)
                 a->frame = fmodf(a->frame, len);

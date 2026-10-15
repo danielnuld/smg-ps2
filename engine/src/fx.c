@@ -347,6 +347,15 @@ void fx_update(void)
         }
         e->tick++;
     }
+    static float eg[MAX_EMIT][3]; /* each emitter's gravity through its matrix (unscaled), once a frame */
+    for (int i = 0; i < MAX_EMIT; i++) {
+        if (!em[i].live) continue;
+        float m1[16];
+        memcpy(m1, em[i].m, sizeof m1);
+        for (int k = 0; k < 12; k++)
+            m1[k] /= em[i].s;
+        rot(m1, em[i].r->grav, eg[i]);
+    }
     for (int i = 0; i < nalive;) {
         Ptcl *p = &pt[alive[i]];
         Emitter *e = &em[p->em];
@@ -359,11 +368,7 @@ void fx_update(void)
         }
         if (r->follow)
             emitter_pos(e, p->off);
-        float g[3], m1[16];
-        memcpy(m1, e->m, sizeof m1);
-        for (int k = 0; k < 12; k++)
-            m1[k] /= e->s;
-        rot(m1, r->grav, g);
+        const float *g = eg[p->em];
         for (int k = 0; k < 3; k++) {
             p->v0[k] += g[k];
             p->v1[k] *= r->air;
