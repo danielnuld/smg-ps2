@@ -16,6 +16,7 @@
 #include "mem.h"
 #include "pad.h"
 #include "render.h"
+#include "se.h"
 
 #include "fx.h"
 #include "music_tab.h"
@@ -491,6 +492,7 @@ int main(void)
 {
     load_modules();
     audio_init();
+    se_init();
     render_init();
     pad_init();
 #ifdef PACKS
@@ -1267,6 +1269,10 @@ int main(void)
         stream_update(&scene);
         audio_update();
 #endif
+#ifdef SND_TEST
+        se_test(frame);
+#endif
+        se_flush();
         u32 t1 = cycles();
         game_draw();
         u32 t2 = cycles();

@@ -830,6 +830,73 @@ def write_wav(path, pcm, rate=32000):
         w.writeframes(s.tobytes())
 
 
+SPU_FILTERS = ((0, 0), (60, 0), (115, -52), (98, -55), (122, -60))  # psx-spx SPU ADPCM filters (/ 64)
+
+
+def spu_adpcm(pcm, loop=None):
+    """float PCM -> SPU ADPCM blocks (16 bytes: shift | filter << 4, flags, 28 nibbles low first) (refs/psx-spx-spu.md
+    "SPU ADPCM Samples"): per block the filter with the smallest peak prediction residual, the smallest shift that
+    holds it, encoded with the decoder's own history. loop (start, end) in samples, multiples of 28: the start block
+    flagged 4, the last 3 (end + repeat); one-shot: the last block 1 (end + mute), after one silent block so the
+    end flag does not cut the sound's tail. -> bytes"""
+    s = np.round(np.clip(pcm, -1, 1) * 32767).astype(np.int64)
+    if loop:
+        s = s[:loop[1]]
+    else:
+        s = np.concatenate([s, np.zeros(28, np.int64)])
+    s = np.concatenate([s, np.zeros(-len(s) % 28, np.int64)])
+    out = bytearray()
+    h1 = h2 = 0
+    nb = len(s) // 28
+    for b in range(nb):
+        x = s[28 * b:28 * b + 28]
+        best = None
+        for fi, (f0, f1) in enumerate(SPU_FILTERS):
+            xp = np.concatenate([[h2, h1], x])  # residual against the original signal (an estimate)
+            res = x - (xp[1:29] * f0 + xp[0:28] * f1) / 64
+            peak = np.abs(res).max()
+            if best is None or peak < best[0]:
+                best = (peak, fi)
+        fi = best[1]
+        peak = best[0]
+        shift = 12
+        while shift > 0 and peak > 7 << (12 - shift):
+            shift -= 1
+        f0, f1 = SPU_FILTERS[fi]
+        nib = []
+        for v in x:
+            pred = (h1 * f0 + h2 * f1 + 32) >> 6
+            q = int(round((v - pred) * (1 << shift) / 4096.0))
+            q = -8 if q < -8 else 7 if q > 7 else q
+            d = ((q << 12) >> shift) + pred
+            d = -32768 if d < -32768 else 32767 if d > 32767 else d
+            h2, h1 = h1, d
+            nib.append(q & 0xF)
+        flags = 0
+        if loop and b == loop[0] // 28:
+            flags |= 4
+        if b == nb - 1:
+            flags |= 3 if loop else 1
+        out += bytes([shift | fi << 4, flags]) + bytes(nib[2 * i] | nib[2 * i + 1] << 4 for i in range(14))
+    return bytes(out)
+
+
+def spu_decode(b):
+    """SPU ADPCM -> int samples (for the selftest)"""
+    out, h1, h2 = [], 0, 0
+    for o in range(0, len(b), 16):
+        shift, fi = b[o] & 0xF, b[o] >> 4
+        f0, f1 = SPU_FILTERS[fi]
+        for i in range(28):
+            q = (b[o + 2 + i // 2] >> (4 * (i & 1))) & 0xF
+            q = q - 16 if q >= 8 else q
+            d = ((q << 12) >> shift) + ((h1 * f0 + h2 * f1 + 32) >> 6)
+            d = -32768 if d < -32768 else 32767 if d > 32767 else d
+            h2, h1 = h1, d
+            out.append(d)
+    return out
+
+
 CURVES = _curves()
 
 
@@ -843,6 +910,14 @@ def selftest():
     for _ in range(int(DAC / SUB) + 2):  # 1 s and a bit
         o.inc(48000.0 / DAC)
     assert o.state == 2 and abs(o.value() - 1.0) < 1e-3, (o.state, o.value())
+    # SPU ADPCM round trip: a 440 Hz tone at 8 kHz comes back within 2 % of full scale; flags end / loop
+    t = 0.5 * np.sin(np.arange(2800) * 2 * np.pi * 440 / 8000)
+    b = spu_adpcm(t)
+    back = np.array(spu_decode(b)[:2800]) / 32767
+    assert np.abs(back - t).max() < 0.02, np.abs(back - t).max()
+    assert b[-15] == 1 and len(b) % 16 == 0
+    b = spu_adpcm(t, (280, 2800))
+    assert b[16 * 10 + 1] == 4 and b[-15] == 3
     print("sound selftest ok")
 
 

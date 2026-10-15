@@ -20,3 +20,9 @@ audsrv_irx:
     .incbin "data/audsrv.irx"
     .global audsrv_irx_end
 audsrv_irx_end:
+    .balign 16
+    .global sndvoice_irx
+sndvoice_irx:
+    .incbin "data/sndvoice.irx"
+    .global sndvoice_irx_end
+sndvoice_irx_end:
