@@ -760,6 +760,8 @@ static void build_chain(Model *md)
     md->chain_xlu = build_chain_pass(md, 1);
 }
 
+static u32 vif_wait; /* EE cycles spent waiting for the previous chain this frame (render_wait_cycles) */
+u32 render_wait_cycles(void) { u32 w = vif_wait; vif_wait = 0; return w; }
 static void flush_vif(void)
 {
     /* FLUSH: the chain only ends once VU1 has finished and PATH1 has delivered its last XGKICK, so whatever is
@@ -769,7 +771,11 @@ static void flush_vif(void)
     packet2_vif_nop(vif[cur], 0); /* two VIF codes keep the CNT tag 16-byte aligned */
     packet2_chain_close_tag(vif[cur]);
     packet2_utils_vu_add_end_tag(vif[cur]);
+    u32 w0, w1;
+    asm volatile("mfc0 %0, $9" : "=r"(w0)); /* the COP0 Count (game.h cycles) */
     dma_channel_wait(DMA_CHANNEL_VIF1, 0);
+    asm volatile("mfc0 %0, $9" : "=r"(w1));
+    vif_wait += w1 - w0;
     done_seq = chain_seq - 1;         /* the previous chain has completed (it ends with FLUSH) */
     flush_uploads();
     dma_channel_send_packet2(vif[cur], DMA_CHANNEL_VIF1, 1);
@@ -812,7 +818,16 @@ static struct { const Model *md; float *m; float depth; const RenderLight *light
 static int nxlu;
 static int bloom_drawing; /* bloom_pass: blended groups drawn at once */
 
+static inline u32 cy_(void) { u32 c; __asm__ volatile("mfc0 %0, $9" : "=r"(c)); return c; }
+u32 prof_draw; /* EE cycles in draw_model (profiling) */
+static void draw_model_(const Model *md, const float world[16], const float (*drw)[16]);
 static void draw_model(const Model *md, const float world[16], const float (*drw)[16])
+{
+    u32 c0 = cy_();
+    draw_model_(md, world, drw);
+    prof_draw += cy_() - c0;
+}
+static void draw_model_(const Model *md, const float world[16], const float (*drw)[16])
 {
     if (!md->vu_ngroups)
         return;
@@ -1415,6 +1430,15 @@ u32 render_end(void)
 }
 
 u32 render_tris_drawn(void) { return tris_drawn; }
+
+int render_visible(const float p[3], float rad) /* draw_model's test: a sphere in front of the eye, in the frustum */
+{
+    float x = view[0] * p[0] + view[4] * p[1] + view[8] * p[2] + view[12];
+    float y = view[1] * p[0] + view[5] * p[1] + view[9] * p[2] + view[13];
+    float z = view[2] * p[0] + view[6] * p[1] + view[10] * p[2] + view[14];
+    if (z + rad < NEAR || z - rad > FAR) return 0;
+    return !(frustum[0] * fabsf(x) - frustum[1] * z > rad || frustum[2] * fabsf(y) - frustum[3] * z > rad);
+}
 
 void render_tex_stats(u32 *misses, u32 *overflow, u32 *syncs)
 {

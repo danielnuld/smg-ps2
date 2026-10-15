@@ -58,6 +58,9 @@ u32 render_end(void);
 /* Depth reset to far over the screen (after the sky): later draws always cover what is there */
 void render_clear_depth(void);
 u32 render_tris_drawn(void);
+/* a world-space sphere within the camera's view (the test draw_model culls by) */
+int render_visible(const float p[3], float rad);
+u32 render_wait_cycles(void); /* EE cycles blocked on the VIF chain since the last call (profiling) */
 /* Texture cache counters since boot: uploads (misses), textures that found no GS memory, chains waited on for room. */
 void render_tex_stats(u32 *misses, u32 *overflow, u32 *syncs);
 

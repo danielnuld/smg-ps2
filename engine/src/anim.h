@@ -33,6 +33,8 @@ void anim_bind(Anim *a, const Skin *skin);
 int anim_play(Anim *a, const char *name, float speed, int loop, int interp);
 /* Advance one frame and compute the pose (world + draw matrices). */
 void anim_update(Anim *a);
+/* Advance one frame only (its model not drawn this frame: its clip's timing goes on, the pose is not computed) */
+void anim_advance(Anim *a);
 /* anim_update in two: the joints' world matrices (which may then be changed), then the draw matrices from them */
 void anim_pose(Anim *a);
 void anim_skin(Anim *a);

@@ -5,6 +5,7 @@
 #include <ctype.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* A lean port of JParticle (Petari src/JSystem/JParticle): per resource one emitter (JPADynamicsBlock::create: rate,
@@ -57,6 +58,20 @@ static u32 nres, ndefs, tex0;
 typedef struct { char cls[24], clip[24]; u16 start, end, fx; s16 joint; float off[3], scale; } FxAuto;
 static const FxAuto *autos;
 static u32 nautos;
+static u16 *auto_ix; /* autos by (cls, clip) (fx_anim's lookup) */
+static int auto_cmp(const FxAuto *a, const FxAuto *b)
+{
+    int c = strcmp(a->cls, b->cls);
+    return c ? c : strcmp(a->clip, b->clip);
+}
+/* its order against "cls/clip" (cls nc characters long) */
+static int auto_key(const FxAuto *a, const char *cls, u32 nc, const char *clip)
+{
+    int c = strncmp(a->cls, cls, nc);
+    if (c) return c;
+    if (a->cls[nc]) return 1;
+    return strcmp(a->clip, clip);
+}
 static int wp_tex = -1; /* the first WaterPlant texture (PTCL header word 2), -1 none */
 static Emitter em[MAX_EMIT];
 static Ptcl pt[MAX_PTCL];
@@ -86,6 +101,12 @@ void fx_init(const Scene *s)
     res = (const PtRes *)(defs + ndefs);
     nautos = ((const u32 *)s->ptcl)[3];
     autos = (const FxAuto *)(res + nres);
+    auto_ix = malloc(sizeof *auto_ix * (nautos + 1));
+    for (u32 i = 0; auto_ix && i < nautos; i++) { /* insertion sort: a few thousand rows, once */
+        u32 j = i;
+        while (j > 0 && auto_cmp(&autos[auto_ix[j - 1]], &autos[i]) > 0) { auto_ix[j] = auto_ix[j - 1]; j--; }
+        auto_ix[j] = (u16)i;
+    }
     tex0 = s->ptcl_tex0;
     printf("fx: %u effects, %u particle resources\n", ndefs, nres);
 }
@@ -216,9 +237,16 @@ void fx_anim(const char *clip, float from, float to, const float m[16], const fl
     const char *slash = strchr(clip, '/');
     if (!res || !slash) return;
     u32 nc = (u32)(slash - clip);
-    for (u32 i = 0; i < nautos; i++) {
+    if (!auto_ix) return;
+    int lo = 0, hi = (int)nautos; /* the first row not before cls/clip */
+    while (lo < hi) {
+        int mid = (lo + hi) / 2;
+        if (auto_key(&autos[auto_ix[mid]], clip, nc, slash + 1) < 0) lo = mid + 1; else hi = mid;
+    }
+    for (u32 k = (u32)lo; k < nautos && !auto_key(&autos[auto_ix[k]], clip, nc, slash + 1); k++) {
+        u32 i = auto_ix[k];
         const FxAuto *a = &autos[i];
-        if (a->start == 0xFFFF || strncmp(a->cls, clip, nc) || a->cls[nc] || strcmp(a->clip, slash + 1)) continue;
+        if (a->start == 0xFFFF) continue;
         float st = a->start;
         int on;
         if (a->end != 0xFFFF) on = to >= st && to <= a->end;      /* kept from its start to its end frame */

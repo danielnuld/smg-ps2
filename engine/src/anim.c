@@ -19,6 +19,7 @@ static const Scene *sc;
 static u8 *slot_data[SLOTS];
 static int slot_clip[SLOTS], slot_age[SLOTS], age;
 static u32 slot_size;
+u32 anim_inflates, anim_inflated; /* clips inflated, and their bytes (profiling) */
 static short *info_frames;
 static signed char *info_mode;
 
@@ -53,6 +54,7 @@ static const u8 *clip_data(int id)
             lru = i;
     }
     uLongf len = slot_size;
+    anim_inflates++; anim_inflated += sc->clips[id].raw;
     if (uncompress(slot_data[lru], &len, sc->clips[id].z, sc->clips[id].zsize) != Z_OK) {
         printf("anim: inflate failed for %s\n", sc->clips[id].name);
         return NULL;
@@ -208,10 +210,50 @@ static void clip_local(const u8 *c, float f, u32 j, float scale[3], float rot[3]
     }
 }
 
+static inline u32 cy_(void) { u32 c; __asm__ volatile("mfc0 %0, $9" : "=r"(c)); return c; }
+u32 prof_pose, prof_skin; /* EE cycles in anim_pose / anim_skin (profiling) */
 void anim_update(Anim *a)
 {
+    u32 c0 = cy_();
     anim_pose(a);
+    u32 c1 = cy_();
     anim_skin(a);
+    prof_pose += c1 - c0; prof_skin += cy_() - c1;
+}
+
+/* a clip's frame_max without inflating it once known (info_frames) */
+static float clip_len(int id)
+{
+    if (info_frames[id] == -2) {
+        const u8 *c = clip_data(id);
+        info_frames[id] = c ? *(const short *)c : -1;
+        info_mode[id] = c ? (signed char)c[2] : 0;
+    }
+    return (float)(u16)info_frames[id];
+}
+/* the frame and the cross-fade one step on, no pose (the model is not drawn: its timing goes on) */
+void anim_advance(Anim *a)
+{
+    if (a->interp_left > 0) { /* XanimePlayer::updateInterpoleRatio */
+        a->interp += (1.0f - a->interp) / a->interp_left;
+        if (--a->interp_left == 0) a->interp = 1.0f;
+    }
+    if (a->clip_id >= 0 && info_frames[a->clip_id] != -1) {
+        float len = clip_len(a->clip_id);
+        if (a->phase >= 0) {
+            a->frame = a->phase * len;
+            a->phase = -1.0f;
+        }
+        a->frame += a->speed;
+        if (a->frame >= len) {
+            if (a->loop)
+                a->frame = fmodf(a->frame, len);
+            else {
+                a->frame = len;
+                a->done = 1;
+            }
+        }
+    }
 }
 
 void anim_pose(Anim *a)

@@ -1346,8 +1346,46 @@ int main(void)
         if ((frame++ & 255) == 0)
             printf("frame %u: logic %u us, draw %u us, worst %u us, tris %u\n", frame, (u32)(t_logic / EE_MHZ),
                    (u32)(t_draw / EE_MHZ), (u32)(worst / EE_MHZ), render_tris_drawn());
+        u32 vwait = render_wait_cycles(); /* blocked on the VIF in game_draw */
+#ifdef SAMPLE_PROF
+        { extern void prof_start(void), prof_dump(void); if (frame == 60) prof_start(); if (frame == 1861) prof_dump(); }
+#endif
         t_gs = render_end();
 #ifdef BENCH
+        {
+            extern u32 game_prof[8];
+            static u32 psum[9];
+            extern u32 prof_pose, prof_skin, prof_draw, game_kcl_draw, game_kcl_drawn, prof_kq, prof_kqn, prof_fxa, prof_shadow;
+            extern u32 prof_rest[8];
+            static u32 rsum[8];
+            if (frame > 60 && frame <= 1860) for (int i = 0; i < 8; i++) rsum[i] += prof_rest[i];
+            for (int i = 0; i < 8; i++) prof_rest[i] = 0;
+            if (frame == 1861) printf("bench rest: leaves %u vines %u ota %u dino %u sambo %u wplant %u osphere %u foot %u us" "\n",
+                                      (u32)(rsum[0] / 1800 / EE_MHZ), (u32)(rsum[1] / 1800 / EE_MHZ), (u32)(rsum[2] / 1800 / EE_MHZ),
+                                      (u32)(rsum[3] / 1800 / EE_MHZ), (u32)(rsum[4] / 1800 / EE_MHZ), (u32)(rsum[5] / 1800 / EE_MHZ),
+                                      (u32)(rsum[6] / 1800 / EE_MHZ), (u32)(rsum[7] / 1800 / EE_MHZ));
+            static u32 fsum[2];
+            if (frame > 60 && frame <= 1860) { fsum[0] += prof_fxa; fsum[1] += prof_shadow; }
+            prof_fxa = prof_shadow = 0;
+            if (frame == 1861) printf("bench fxanim %u shadow %u us" "\n", (u32)(fsum[0] / 1800 / EE_MHZ), (u32)(fsum[1] / 1800 / EE_MHZ));
+            static u32 ksum[3];
+            if (frame > 60 && frame <= 1860) { ksum[0] += prof_kq; ksum[1] += prof_kqn; ksum[2] += game_kcl_drawn; }
+            prof_kq = prof_kqn = game_kcl_drawn = 0;
+            if (frame == 1861) printf("bench kcl_query: %u us a frame, %u calls (%u in draw)\n", (u32)(ksum[0] / 1800 / EE_MHZ), ksum[1] / 1800, ksum[2] / 1800);
+            static u32 qsum[4];
+            if (frame > 60 && frame <= 1860) { qsum[0] += prof_pose; qsum[1] += prof_skin; qsum[2] += prof_draw; qsum[3] += game_kcl_draw; }
+            prof_pose = prof_skin = prof_draw = game_kcl_draw = 0;
+            if (frame == 1861) printf("bench parts: pose %u skin %u draw_model %u kcl-in-draw %u us\n", (u32)(qsum[0] / 1800 / EE_MHZ),
+                                      (u32)(qsum[1] / 1800 / EE_MHZ), (u32)(qsum[2] / 1800 / EE_MHZ), (u32)(qsum[3] / 1800 / EE_MHZ));
+            if (frame > 60 && frame <= 1860) { for (int i = 0; i < 8; i++) psum[i] += game_prof[i]; psum[8] += vwait; }
+            extern u32 anim_inflates, anim_inflated; extern u32 anim_cache_bytes(void);
+            if (frame == 60) anim_inflates = anim_inflated = 0;
+            if (frame == 1861) printf("bench anim: %u inflates, %u KB in 1800 frames, slot %u B\n", anim_inflates, anim_inflated >> 10, anim_cache_bytes() / 8);
+            if (frame == 1861) {
+                static const char *pn[9] = {"setup", "skies", "insts", "pickups", "mario", "rest", "fx", "2d", "vifwait"};
+                for (int i = 0; i < 9; i++) printf("bench draw %-8s avg %u us\n", pn[i], (u32)(psum[i] / 1800 / EE_MHZ));
+            }
+        }
         if (frame > 60 && frame <= 1860) {
             u32 v[5] = {t_logic - game_kcl_cycles, game_kcl_cycles, t_draw, t_gs, t_logic + t_draw + t_gs};
             for (int i = 0; i < 5; i++) {

@@ -352,9 +352,11 @@ static void use_row_light(int row, V3 p, int dflt)
     render_light(&alights[4 * row_larea[row] + (t < 4 ? t : dflt)]);
 }
 
+u32 prof_fxa, prof_shadow; /* fx_anim + se_anim in draw_skin; walker shadows (profiling) */
 static void draw_skin(const Model *md, const float m[16], Anim *a)
 {
     if (md == m_mario_skin) render_light(&plight.cur);
+    u32 c0 = cycles();
     if (a->clip_id >= 0) {
         fx_anim(sc->clips[a->clip_id].name, a->fx_seen == a->clip_id + 1 ? a->fx_frame : -1.0f, a->frame, m,
                 (const float (*)[16])a->world, a);
@@ -366,6 +368,7 @@ static void draw_skin(const Model *md, const float m[16], Anim *a)
             float at[3] = {m[12], m[13], m[14]};
             se_anim(key, a->fx_seen == a->clip_id + 1 ? a->fx_frame : -1.0f, a->frame, at, a);
         }
+        prof_fxa += cycles() - c0;
         a->fx_seen = a->clip_id + 1;
         a->fx_frame = a->frame;
     }
@@ -1071,7 +1074,16 @@ typedef struct { V3 n; float dist; int inst, attr; } Hit; /* world normal, penet
 
 /* Sphere against every placed KCL: the sphere goes to the instance's object space (KCL data is in model space),
  * normals and depths come back to world. ponytail: uniform scale only (scale.x), like every planet seen so far. */
+u32 prof_kq, prof_kqn; /* kcl_query cycles and calls (profiling) */
+static int kcl_query_(V3 c, float radius, Hit *out, int max);
 static int kcl_query(V3 c, float radius, Hit *out, int max)
+{
+    u32 c0 = cycles();
+    int n = kcl_query_(c, radius, out, max);
+    prof_kq += cycles() - c0; prof_kqn++;
+    return n;
+}
+static int kcl_query_(V3 c, float radius, Hit *out, int max)
 {
     int n = 0;
     for (int i = 0; i < ninsts && n < max; i++) {
@@ -5382,7 +5394,10 @@ static void draw_oceanspheres(V3 eye, V3 right, V3 cup)
     if (fx_ocean_tex(0) < 0) return;
     float t1 = -0.1f * game_frame, off = 0.0008f * game_frame;
     off -= floorf(off);
-    static u16 keep[3 * 6 * 1024];
+    static u16 keep[2][3 * 6 * 1024];
+    /* the wave's two terms by a point's w1 / w2 (whole numbers 0 .. n): a table a frame instead of two sines a point */
+    float s1[24], s2[24];
+    for (int w = 0; w < 24; w++) { s1[w] = sinf(t1 + 0.8f * w) * 10.0f; s2[w] = sinf(t1 + w) * 5.0f; }
     for (int k = 0; k < nospheres; k++) {
         OSphere *o = &ospheres[k];
         if (!row_shown(o->row)) continue;
@@ -5395,27 +5410,28 @@ static void draw_oceanspheres(V3 eye, V3 right, V3 cup)
         if (!inside && (vdot(vmul(to, -1.0f), fwd) < -rad || vlen(to) - rad > 30000.0f)) continue;
         for (int i = 0; i < o->npts; i++) { /* OceanSpherePoint::updatePos */
             const OsPoint *pt = &o->pt[i];
-            float h = sinf(t1 + 0.8f * pt->w1) * 10.0f + sinf(t1 + pt->w2) * 5.0f;
+            float h = s1[(int)pt->w1 & 23] + s2[(int)pt->w2 & 23];
             V3 p = vadd(c, vmul(pt->n, rad + h));
             o->pos[i][0] = p.x; o->pos[i][1] = p.y; o->pos[i][2] = p.z;
         }
+        int nk[2] = {0, 0}; /* the triangles facing away (0) and facing the eye (1), sorted once for both passes */
+        for (int t = 0; t < o->ntri; t++) {
+            const u16 *tr = o->tri + 3 * t;
+            V3 m = v3((o->pos[tr[0]][0] + o->pos[tr[1]][0] + o->pos[tr[2]][0]) / 3, (o->pos[tr[0]][1] + o->pos[tr[1]][1] + o->pos[tr[2]][1]) / 3,
+                      (o->pos[tr[0]][2] + o->pos[tr[1]][2] + o->pos[tr[2]][2]) / 3);
+            int facing = vdot(vsub(m, c), vsub(eye, m)) > 0.0f;
+            if (nk[facing] < 6 * 1024) memcpy(keep[facing] + 3 * nk[facing]++, tr, 6);
+        }
         for (int pass = inside; pass < 2; pass++) { /* 0 the back (env map, far half), 1 the face */
-            int n = 0, far_half = pass == 0 || inside;
-            for (int t = 0; t < o->ntri && n < 6 * 1024; t++) {
-                const u16 *tr = o->tri + 3 * t;
-                V3 m = v3((o->pos[tr[0]][0] + o->pos[tr[1]][0] + o->pos[tr[2]][0]) / 3, (o->pos[tr[0]][1] + o->pos[tr[1]][1] + o->pos[tr[2]][1]) / 3,
-                          (o->pos[tr[0]][2] + o->pos[tr[1]][2] + o->pos[tr[2]][2]) / 3);
-                int facing = vdot(vsub(m, c), vsub(eye, m)) > 0.0f;
-                if (facing == far_half) continue;
-                memcpy(keep + 3 * n++, tr, 6);
-            }
+            int far_half = pass == 0 || inside, n = nk[!far_half];
+            const u16 *kept = keep[!far_half];
             for (int i = 0; i < o->npts; i++) {
                 if (pass == 0) { /* GX_TG_NRM through the view rotation x 0.779175, the mirrored map over -1..1 */
                     o->uv[i][0] = (0.779175f * vdot(o->pt[i].n, right) + 1.0f) * 0.5f;
                     o->uv[i][1] = (0.779175f * vdot(o->pt[i].n, cup) + 1.0f) * 0.5f;
                 } else { o->uv[i][0] = o->pt[i].u + off; o->uv[i][1] = o->pt[i].v + off; }
             }
-            render_mesh((const float (*)[3])o->pos, (const float (*)[2])o->uv, o->npts, keep, n, (u16)fx_ocean_tex(pass == 0 ? 1 : 0), pass);
+            render_mesh((const float (*)[3])o->pos, (const float (*)[2])o->uv, o->npts, kept, n, (u16)fx_ocean_tex(pass == 0 ? 1 : 0), pass);
         }
     }
 }
@@ -16107,10 +16123,17 @@ static void bloom_update(void)
     render_bloom((u8)fminf(k * fade, 255.0f), (u8)fminf(k1, 255.0f), (u8)fminf(k2, 255.0f));
 }
 
+u32 prof_rest[8]; /* the rest phase's parts: leaves, vines, OtaKing's, Dino, ..., sambo, waterplants, oceanspheres, foot */
+u32 game_prof[8]; /* game_draw's phases this frame (EE cycles): setup, skies, instances, pickups, Mario, the rest, fx, 2D */
+static u32 prof_t;
+#define PROF(k) do { u32 c_ = cycles(); game_prof[k] = c_ - prof_t; prof_t = c_; } while (0)
+u32 game_kcl_draw, game_kcl_drawn; /* kcl_query cycles / calls inside game_draw (profiling) */
 void game_draw(void)
 {
     V3 ce, cw, cu;
     float fovy;
+    u32 kcl0 = prof_kq, kn0 = prof_kqn;
+    prof_t = cycles();
     camera_pose(&ce, &cw, &cu, &fovy);
     lights_update(ce, cw, cu, mario->pos);
     bloom_update();
@@ -16150,6 +16173,7 @@ void game_draw(void)
     render_set_shake(0.0f, camera_shake_y());
     float eye[3] = {ce.x, ce.y, ce.z}, target[3] = {cw.x, cw.y, cw.z}, up[3] = {cu.x, cu.y, cu.z};
     float m[16];
+    PROF(0);
     render_begin(eye, target, up);
     render_env(sc);
     /* BTK texture scrolls (lava, water): every model's at the game's frame. ponytail: one frame for all instances,
@@ -16188,6 +16212,7 @@ void game_draw(void)
         sky_drawn = 1;
     }
     if (sky_drawn) render_clear_depth(); /* the sky stays behind whatever its scale put in front */
+    PROF(1);
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
         if (in->invisible || in->sky || in->sun) continue;
@@ -16431,6 +16456,7 @@ void game_draw(void)
             render_model(m_erail, m, 0x70, 0xB0, 0x60);
         }
     }
+    PROF(2);
     render_light(default_light(LIGHT_STRONG)); /* Coin: connectToSceneItemStrongLight. ponytail: the default area */
     draw_pickups(coins, ncoins, m_coin, 0xF0, 0xD0, 0x30, coin_rot);
     draw_pickups(purple, npurple, m_purple, 0xB0, 0x50, 0xF0, coin_rot);
@@ -16459,7 +16485,11 @@ void game_draw(void)
         if (kuribo[i].state == KURIBO_DEAD || !md || !row_shown(kuribo[i].row)) continue;
         if (kuribo[i].kind == WALK_TERESA && kuribo[i].phase == 4) continue; /* hidden in a wall */
         if (kuribo[i].kind == WALK_PETARI && kuribo[i].phase) continue; /* hideModel */
-        walker_shadow(&kuribo[i]);
+        /* out of the view: no shadow, no pose, not drawn; its clip's time goes on (anim_advance) */
+        const float *wsc = sc->objs[kuribo[i].row].scale;
+        float wr = md->radius * fmaxf(fmaxf(wsc[0], wsc[1]), wsc[2]) + 100.0f, wp[3] = {kuribo[i].pos.x, kuribo[i].pos.y, kuribo[i].pos.z};
+        int wvis = render_visible(wp, wr);
+        if (wvis) { u32 c1 = cycles(); walker_shadow(&kuribo[i]); prof_shadow += cycles() - c1; }
         basis_matrix(m, kuribo[i].pos, kuribo[i].up, kuribo[i].kind == WALK_STINKBUG || kuribo[i].kind == WALK_POIHANA ? stink_front(&kuribo[i]) : vsub(mario->pos, kuribo[i].pos), 0);
         if (kuribo[i].kind == WALK_UNIZO) { /* rolled about its side round its centre */
             const Kuribo *k = &kuribo[i];
@@ -16483,6 +16513,7 @@ void game_draw(void)
                 for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
                 if (k->act_drawn != k->act_seq || a->clip_id < 0 || strcmp(sc->clips[a->clip_id].name, n)) { anim_start(a, n, k->act_interp); k->act_drawn = k->act_seq; }
                 a->speed = k->act_rate; /* setBckRate */
+                if (!wvis) { anim_advance(a); continue; }
                 anim_update(a);
                 basis_matrix(m, k->pos, k->qy, k->qz, 0);
                 const float *sc3 = sc->objs[k->row].scale;
@@ -16507,12 +16538,15 @@ void game_draw(void)
             snprintf(n, sizeof n, "%s/%s", cls, clip);
             for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
             anim_play(a, n, 1.0f, loop, 6);
+            if (!wvis) { anim_advance(a); continue; }
             anim_update(a);
             draw_skin(md, m, a);
             continue;
         }
+        if (!wvis) continue;
         render_model(md, m, kuribo[i].state == KURIBO_STUN ? 0x50 : 0x90, 0x50, 0x20);
     }
+    PROF(3);
     basis_matrix(m, mario->pos, mario->up, mario->face, 0);
     if (jb.inst >= 0) { /* swinging round a JumpBranch: his head towards it */
         const Inst *in = &insts[jb.inst];
@@ -16562,8 +16596,13 @@ void game_draw(void)
             draw_skin(m_otalfoot, m, ota.lfoot[k]);
         }
     }
+    PROF(4);
+    u32 rq = cycles();
+#define RESTQ(k) do { u32 c_ = cycles(); prof_rest[k] += c_ - rq; rq = c_; } while (0)
     draw_hhp_leaves();
+    RESTQ(0);
     draw_vines();
+    RESTQ(1);
     for (int k = 0; k < norocks; k++) { /* OtaRocks' coconuts and fire balls */
         for (int b = 0; m_coco && b < 4; b++) {
             if (!orocks[k].ball[b].state) continue;
@@ -16593,6 +16632,7 @@ void game_draw(void)
             render_model(m_firebubble, m, 0x80, 0x80, 0x80);
         }
     }
+    RESTQ(2);
     if (dino.row >= 0 && dino.phase < 6 && row_shown(dino.row)) { /* DinoPackun, its egg shell, its tail ball */
         basis_matrix(m, dino.pos, dino.up, dino.f, 0);
         if (m_dino && m_dino->skin && dino.anim && dino.anim->skin == m_dino->skin) {
@@ -16615,12 +16655,14 @@ void game_draw(void)
             if (m_dball) render_model(m_dball, m, 0x80, 0x80, 0x80);
         }
     }
+    RESTQ(3);
     for (int k = 0; m_piece && k < nfats; k++) /* TicoFat's gifted star pieces */
         for (int g = 0; g < 8; g++) if (fats[k].gift[g].on) {
             basis_matrix(m, fats[k].gift[g].pos, up_at(fats[k].gift[g].pos, v3(0, 1, 0)), v3(0, 0, 1), piece_rot);
             render_model(m_pieces[fats[k].gift[g].col], m, 0x60, 0xD0, 0xF0);
         }
     draw_sambo_heads();
+    RESTQ(4);
     if (m_bubble) for (int b = 0; b < MAX_BUBBLES; b++) { /* AirBubbleGenerator's bubbles */
         if (!bubbles[b].life) continue;
         basis_matrix(m, bubbles[b].pos, up_at(bubbles[b].pos, v3(0, 1, 0)), v3(1, 0, 0), 0);
@@ -16632,14 +16674,21 @@ void game_draw(void)
         render_model(m_note, m, 0x80, 0x80, 0x80);
     }
     draw_waterplants();
+    RESTQ(5);
     {
         V3 back = vnorm(vsub(ce, cw)), right = vnorm(vcross(cu, back));
         draw_oceanspheres(ce, right, vcross(back, right));
     }
+    RESTQ(6);
     foot_draw();
+    RESTQ(7);
+    PROF(5);
     fx_draw();
+    PROF(6);
     talk_draw();
     wipe_draw();
+    PROF(7);
+    game_kcl_draw += prof_kq - kcl0; game_kcl_drawn += prof_kqn - kn0;
 }
 
 /* --- video demos (TEASER builds): Mario played through the pad only, the stick toward a point (test_walk_to) and
