@@ -19,6 +19,8 @@ static const Scene *sc;
 static u8 *slot_data[SLOTS];
 static int slot_clip[SLOTS], slot_age[SLOTS], age;
 static u32 slot_size;
+static short *info_frames;
+static signed char *info_mode;
 
 void anim_init(const Scene *s)
 {
@@ -31,6 +33,10 @@ void anim_init(const Scene *s)
         slot_data[i] = mem_alloc(MEM_PLAYER, slot_size);
         slot_clip[i] = -1;
     }
+    /* here, below the zone packs' arena mark (allocated at the first anim_clip_info, a zone swap released it) */
+    info_frames = mem_alloc(MEM_PLAYER, s->nclips * sizeof(short));
+    info_mode = mem_alloc(MEM_PLAYER, s->nclips);
+    for (u32 i = 0; i < s->nclips; i++) info_frames[i] = -2;
 }
 
 u32 anim_cache_bytes(void) { return SLOTS * slot_size; }
@@ -56,16 +62,8 @@ static const u8 *clip_data(int id)
     return slot_data[lru];
 }
 
-static short *info_frames;
-static signed char *info_mode;
-
 int anim_clip_info(const char *name, int *mode)
 {
-    if (!info_frames) {
-        info_frames = mem_alloc(MEM_PLAYER, sc->nclips * sizeof(short));
-        info_mode = mem_alloc(MEM_PLAYER, sc->nclips);
-        for (u32 i = 0; i < sc->nclips; i++) info_frames[i] = -2;
-    }
     for (u32 i = 0; i < sc->nclips; i++)
         if (strcmp(sc->clips[i].name, name) == 0) {
             if (info_frames[i] == -2) {

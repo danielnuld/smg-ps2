@@ -1157,6 +1157,8 @@ static int collide(V3 *center, V3 up, float radius) { return collide_n(center, u
 
 /* --- init ------------------------------------------------------------------------------------------------ */
 
+static void os_init(void);
+
 void game_init(const Scene *s, const unsigned char *blob)
 {
     sc = s;
@@ -1592,6 +1594,7 @@ void game_init(const Scene *s, const unsigned char *blob)
            game_kind_alive(WALK_TAKOHEI), game_kind_alive(WALK_PACKUN));
     printf("game: %d static instances, coins %d, purple %d, star pieces %d, kuribo %d, start (%d %d %d)\n", ninsts,
            ncoins, npurple, npieces, nkuribo, (int)start_pos.x, (int)start_pos.y, (int)start_pos.z);
+    os_init();
 }
 
 /* a chip's group (same arg0, ChipHolder) waiting for its appear switch keeps the chip hidden */
@@ -5208,7 +5211,6 @@ typedef struct { V3 n; float w1, w2, u, v; } OsPoint;
 typedef struct { int row, n, npts, ntri; OsPoint *pt; u16 *tri; float (*pos)[3], (*uv)[2]; } OSphere;
 static OSphere *ospheres;
 static int nospheres;
-static const Scene *ospheres_sc;
 
 static V3 os_rot(V3 v, V3 axis, float a) /* TRot3f::setRotate: about a unit axis, right-handed */
 {
@@ -5316,17 +5318,21 @@ int os_point(const OSphere *o, int q, int row, int col)
     return E + eo[q] * A + row - 1;
 }
 
+/* the scene's spheres, from game_init: below the zone packs' arena mark (built at the first draw, a zone swap
+ * released them) */
+static void os_init(void)
+{
+    int ty = scene_type(sc, "OceanSphere");
+    nospheres = 0;
+    for (u32 i = 0; i < sc->nobjs; i++) nospheres += sc->objs[i].type == ty;
+    ospheres = mem_alloc(MEM_SCENE, (nospheres + 1) * sizeof(OSphere));
+    nospheres = 0;
+    for (u32 i = 0; ty >= 0 && i < sc->nobjs; i++)
+        if (sc->objs[i].type == ty) { ospheres[nospheres].row = i; os_build(&ospheres[nospheres]); nospheres++; }
+}
+
 static void draw_oceanspheres(V3 eye, V3 right, V3 cup)
 {
-    if (ospheres_sc != sc) { /* the scene's spheres, built once */
-        int ty = scene_type(sc, "OceanSphere");
-        ospheres_sc = sc; nospheres = 0;
-        for (u32 i = 0; i < sc->nobjs; i++) nospheres += sc->objs[i].type == ty;
-        ospheres = mem_alloc(MEM_SCENE, (nospheres + 1) * sizeof(OSphere));
-        nospheres = 0;
-        for (u32 i = 0; ty >= 0 && i < sc->nobjs; i++)
-            if (sc->objs[i].type == ty) { ospheres[nospheres].row = i; os_build(&ospheres[nospheres]); nospheres++; }
-    }
     if (fx_ocean_tex(0) < 0) return;
     float t1 = -0.1f * game_frame, off = 0.0008f * game_frame;
     off -= floorf(off);
@@ -7346,7 +7352,8 @@ static void update_sambos(void)
             row_axes(r, &x, &z);
             sambos[k].row = in->row; sambos[k].pos = row_pos(r); sambos[k].up = vnorm(vcross(z, x)); sambos[k].front = z;
             sambos[k].s = r->scale[0];
-            sambos[k].head = mem_alloc(MEM_OBJECTS, sizeof(Anim)); memset(sambos[k].head, 0, sizeof(Anim));
+            static Anim heads[MAX_SAMBOS]; /* not mem_alloc: a zone swap releases what comes after game_init */
+            sambos[k].head = &heads[k]; memset(sambos[k].head, 0, sizeof(Anim));
         }
         typeof(&sambos[0]) q = &sambos[k];
         if (q->nrv == CS_DEAD) continue;
