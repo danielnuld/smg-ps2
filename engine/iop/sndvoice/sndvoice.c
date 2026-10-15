@@ -44,8 +44,8 @@ static void *handler(int fn, void *data, int size)
         }
         p[0] = sceSdGetSwitch(0 | SD_SWITCH_ENDX);
         p[1] = sceSdGetSwitch(1 | SD_SWITCH_ENDX);
-        p[2] = sceSdGetParam(SD_VOICE(0, 5) | SD_VPARAM_ENVX); /* voice 0's envelope and address (diagnostics) */
-        p[3] = sceSdGetAddr(SD_VOICE(0, 5) | SD_VADDR_NAX);
+        p[2] = sceSdGetParam(SD_VOICE(0, 0) | SD_VPARAM_ENVX); /* voice 0's envelope and address (diagnostics) */
+        p[3] = sceSdGetAddr(SD_VOICE(0, 0) | SD_VADDR_NAX);
     } else if (fn == 3) { /* read back: u32 SPU address -> 64 bytes (diagnostics) */
         sceSdVoiceTrans(0, SD_TRANS_READ | SD_TRANS_MODE_DMA, (u8 *)(p + 16), (u32 *)p[0], 64);
         sceSdVoiceTransStatus(0, 1);

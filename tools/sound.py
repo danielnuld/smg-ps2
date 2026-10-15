@@ -897,6 +897,96 @@ def spu_decode(b):
     return out
 
 
+def ps2_wave(pcm, rate, loop, cap):
+    """a wave for SPU2: resampled to at most `cap` Hz (scipy resample_poly), a loop's length made a multiple of 28
+    samples (the rate kept exact: the stored rate is the effective one) and its start moved onto a block by leading
+    silence -> (adpcm bytes, rate, samples, loop start or None)"""
+    from fractions import Fraction
+    from scipy.signal import resample_poly
+    r = min(1.0, cap / rate)
+    if loop and loop[1] > loop[0]:
+        ln = loop[1] - loop[0]
+        r = max(28, round(ln * r / 28) * 28) / ln
+    fr = Fraction(r).limit_denominator(512)
+    out = resample_poly(pcm, fr.numerator, fr.denominator).astype(np.float32) if fr != 1 else pcm
+    r = fr.numerator / fr.denominator
+    lp = None
+    if loop and loop[1] > loop[0]:
+        ls, le = round(loop[0] * r), round(loop[0] * r) + round((loop[1] - loop[0]) * r / 28) * 28
+        pad = -ls % 28
+        out = np.concatenate([np.zeros(pad, np.float32), out])
+        if len(out) < le + pad:
+            out = np.concatenate([out, np.zeros(le + pad - len(out), np.float32)])
+        lp = (ls + pad, le + pad)
+    return spu_adpcm(out, lp), rate * r, (lp[1] if lp else len(out)), (lp[0] if lp else None)
+
+
+def pack(fs, out_bin, ids_h, sources, cap=16000):
+    """sound.bin for the engine (se.c) and se_ids.h (every SE name -> its JAISoundID):
+    'SNDB', then u32 pairs (offset, count / size): BSC bytes, banks {u16 bank, u16 wsys, u32 IBNK offset} (8 B),
+    SEs {u32 id, u32 sequence offset in the BSC, u8 priority, u8 volume (x 255), u16 pad} (12 B, sorted by id),
+    waves {u16 wsys, u16 wave id, u32 SPU offset, u32 samples, u32 loop start (0xFFFFFFFF none), f32 rate,
+    u8 base key, 3 pad} (24 B, sorted by wsys << 16 | id), the ADPCM blob (uploaded to SPU RAM as one).
+    IBNK / BSC stay big-endian. The SEs are the names written in `sources`; their waves are every one their
+    sequences reach (bms analysis, all variants of keys read from registers)."""
+    import audio as A
+    baa = Baa(fs)
+    d = baa.d
+    names = sorted({n for src in sources for n in re.findall(r"\bSE_[A-Z0-9_]+\b", Path(src).read_text(errors="ignore"))
+                    if n in baa.ids and baa.ids[n][0] == 0})
+    Path(ids_h).write_text("/* SE names -> JAISoundID (section << 24 | group << 16 | index), tools/sound.py pack */\n"
+                           "#ifndef SE_IDS_H\n#define SE_IDS_H\n" +
+                           "".join(f"#define {n} 0x{s << 24 | g << 16 | i:08X}u\n" for (s, g, i), n in
+                                   sorted(baa.names.items()) if s == 0 and re.fullmatch(r"SE_[A-Z0-9_]+", n)) +
+                           "#endif\n")
+    inst = A.instruments(d)
+    A.DYN_KEY = "all"
+    bsc = d[baa.bsc:U32(d, baa.bsc + 4) + baa.bsc]
+    waves = set()
+    se_rows = []
+    for n in names:
+        sid = baa.ids[n]
+        off = baa.se_seq(sid)
+        waves |= A.reached([(bsc, off)], inst)[0]
+        pr, vol = baa.se_item(sid)
+        se_rows.append((sid[1] << 16 | sid[2], off, pr, round(vol * 255)))
+    blob, wrows = bytearray(), []
+    for ws, wid in sorted(waves):
+        pcm, rate, base, loop = baa.wave(ws, wid)
+        adp, r2, n, ls = ps2_wave(pcm, rate, loop, cap)
+        wrows.append(struct.pack("<HHIIIfB3x", ws, wid, len(blob), n, 0xFFFFFFFF if ls is None else ls, r2, base))
+        blob += adp
+    banks = sorted(baa.banks.items())
+    ib_blob, brows = bytearray(), []
+    for bno, (off, ws) in banks:
+        size = U32(d, off + 4)
+        brows.append((bno, ws, len(ib_blob)))
+        ib_blob += d[off:off + size] + bytes(-size % 16)
+    head = 64
+    o_bsc = head
+    o_bank = o_bsc + len(bsc) + (-len(bsc) % 16)
+    o_ibnk = o_bank + 8 * len(brows) + (-(8 * len(brows)) % 16)
+    o_se = o_ibnk + len(ib_blob)
+    o_wv = o_se + 12 * len(se_rows) + (-(12 * len(se_rows)) % 16)
+    o_adp = o_wv + 24 * len(wrows) + (-(24 * len(wrows)) % 64)
+    out = bytearray(o_adp + len(blob))
+    struct.pack_into("<4s10I", out, 0, b"SNDB", o_bsc, len(bsc), o_bank, len(brows), o_se, len(se_rows), o_wv,
+                     len(wrows), o_adp, len(blob))
+    out[o_bsc:o_bsc + len(bsc)] = bsc
+    for k, (bno, ws, io) in enumerate(brows):
+        struct.pack_into("<HHI", out, o_bank + 8 * k, bno, ws, o_ibnk + io)
+    out[o_ibnk:o_ibnk + len(ib_blob)] = ib_blob
+    se_rows.sort()
+    for k, r in enumerate(se_rows):
+        struct.pack_into("<IIBBxx", out, o_se + 12 * k, *r)
+    for k, r in enumerate(wrows):
+        out[o_wv + 24 * k:o_wv + 24 * k + 24] = r
+    out[o_adp:] = blob
+    Path(out_bin).write_bytes(out)
+    print(f"sound.bin: {len(names)} SEs, {len(wrows)} waves, ADPCM {len(blob) / 1e6:.2f} MB (cap {cap} Hz), "
+          f"EE {o_adp / 1e3:.0f} KB")
+
+
 CURVES = _curves()
 
 
@@ -924,6 +1014,11 @@ def selftest():
 if __name__ == "__main__":
     if sys.argv[1] == "--selftest":
         selftest()
+        sys.exit(0)
+    if sys.argv[1] == "--pack":  # --pack fs out/packs/sound.bin engine/src/se_ids.h [cap Hz] sources...
+        a = sys.argv[2:]
+        cap = int(a[3]) if a[3].isdigit() else 16000
+        pack(a[0], a[1], a[2], [x for x in a[3:] if not x.isdigit()], cap)
         sys.exit(0)
     args = sys.argv[2:]
     out = Path("out/sound")

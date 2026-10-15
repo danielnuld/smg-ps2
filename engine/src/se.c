@@ -95,36 +95,21 @@ void se_flush(void)
 u32 se_endx(void) { return endx; }
 
 #ifdef SND_TEST
-/* a 1 s 880 Hz tone (sound.py spu_adpcm, 22050 Hz, one-shot) at SPU 0x20000 on voice 0, every 2 s */
-#include <stdlib.h>
+#include "se_ids.h"
+/* the SEs of sound.bin's test set, one every 90 frames, not placed; logs the voices in use */
 void se_test(int frame)
 {
-    static int loaded;
-    if (!loaded) {
-        FILE *f = fopen("host:sndtest.adp", "rb");
-        if (!f) { printf("se test: no host:sndtest.adp\n"); loaded = -1; return; }
-        static u8 data[64 * 1024] __attribute__((aligned(64)));
-        int n = fread(data, 1, sizeof data, f);
-        fclose(f);
-        se_upload(0x20000, data, n);
-        loaded = 1;
-        printf("se test: %d bytes uploaded\n", n);
-        upbuf[0] = 0x20000;
-        SifCallRpc(&cd, 3, 0, upbuf, 64, recvbuf, 64, NULL, NULL);
-        printf("se test: SPU 0x20000 reads %08x %08x %08x %08x, sent %08x %08x %08x %08x\n", recvbuf[0], recvbuf[1],
-               recvbuf[2], recvbuf[3], ((u32 *)data)[0], ((u32 *)data)[1], ((u32 *)data)[2], ((u32 *)data)[3]);
+    static const u32 ids[] = {SE_SY_COIN, SE_SY_STAR_PIECE_GET, SE_PV_JUMP_S, SE_PM_JUMP_M, SE_SY_TALK_OK,
+                              SE_SM_TALKBLN_OPEN, SE_EM_KURIBO_STEP1, SE_SY_TICOFAT_POINT};
+    if (frame % 90 == 30) {
+        u32 id = ids[(frame / 90) % (sizeof ids / sizeof ids[0])];
+        u32 h = se_start(id, NULL);
+        printf("se test: frame %d start %08x -> handle %u\n", frame, id, h);
     }
-    if (loaded < 0) return;
-    if (frame % 120 == 10) {
-        se_param(SD_VOICE(0, 5) | SD_VPARAM_VOLL, 0x3FFF);
-        se_param(SD_VOICE(0, 5) | SD_VPARAM_VOLR, 0x3FFF);
-        se_param(SD_VOICE(0, 5) | SD_VPARAM_PITCH, 22050 * 4096 / 48000);
-        se_param(SD_VOICE(0, 5) | SD_VPARAM_ADSR1, 0x000F);
-        se_param(SD_VOICE(0, 5) | SD_VPARAM_ADSR2, 0x1FC0);
-        se_addr(SD_VOICE(0, 5) | SD_VADDR_SSA, 0x20000);
-        se_switch(0 | SD_SWITCH_KON, 1 << 5);
-        printf("se test: key on at frame %d\n", frame);
+    if (frame % 90 >= 30 && frame % 90 <= 60 && frame % 5 == 0) {
+        int ns, nc, nv;
+        se_stats(&ns, &nc, &nv);
+        printf("se test: frame %d sounds %d chans %d voices %d ENDX %06x ENVX %04x\n", frame, ns, nc, nv, se_endx(), recvbuf[2]);
     }
-    if (frame % 120 == 30 || frame % 120 == 100) printf("se test: frame %d ENDX %06x ENVX %04x NAX %06x\n", frame, se_endx(), recvbuf[2], recvbuf[3]);
 }
 #endif

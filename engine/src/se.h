@@ -12,6 +12,15 @@ void se_switch(u16 entry, u32 value);                 /* sceSdSetSwitch */
 void se_addr(u16 entry, u32 value);                   /* sceSdSetAddr */
 void se_flush(void);                                  /* per frame: send the queue (waits for the last one) */
 u32 se_endx(void);                                    /* core 0 voices that reached a sample end (last flush) */
+/* the sequencer (se_seq.c, JAudio2 after Petari) on sound.bin (tools/sound.py pack); ids from se_ids.h */
+int se_load(const u8 *sound_bin);                     /* tables in EE, the waves uploaded to SPU RAM */
+u32 se_start(u32 id, const float *pos);               /* a one-shot SE (pos NULL: not placed) -> handle, 0 none */
+u32 se_level(u32 id, const float *pos, u32 handle);   /* a level SE: kept while asked each frame -> its handle */
+void se_stop(u32 handle);
+void se_port(u32 handle, int port, u16 value);        /* a sequence port (JAISound::setPort) */
+void se_listener(const float eye[3], const float right[3]);
+void se_update(void);
+void se_stats(int *sounds, int *chans, int *voices);                                 /* per frame: 400.36 / 60 sub-frames, then the voices */
 #ifdef SND_TEST
 void se_test(int frame);                              /* a tone on voice 0 every 2 s; logs ENDX */
 #endif

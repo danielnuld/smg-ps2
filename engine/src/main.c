@@ -17,6 +17,7 @@
 #include "pad.h"
 #include "render.h"
 #include "se.h"
+#include "vmath.h"
 
 #include "fx.h"
 #include "music_tab.h"
@@ -137,7 +138,7 @@ static void toc_load(void)
     size_t lp = strlen(scen);
     for (u32 i = 0; i < n; i++) {
         const TocEntry *e = (const TocEntry *)(t + 4 + i * sizeof(TocEntry));
-        if ((strncmp(e->path, scen, lp) == 0 && e->path[lp] == '/') || strcmp(e->path, "resident.bin") == 0) {
+        if ((strncmp(e->path, scen, lp) == 0 && e->path[lp] == '/') || strcmp(e->path, "resident.bin") == 0 || strcmp(e->path, "sound.bin") == 0) {
             if (ntoc == (int)(sizeof toc / sizeof toc[0])) { printf("packs: TOC full\n"); for (;;) {} }
             memcpy(&toc[ntoc++], e, sizeof *e);
         }
@@ -442,6 +443,7 @@ static const u8 *load_packs(Scene *s)
     u32 before_resident = pack_bytes;
     if (blob_add(s, load_file("resident.bin")) != 0)
         return NULL;
+    se_load(load_file("sound.bin"));
     resident_bytes = pack_bytes - before_resident; /* its own budget (milestone 1), not the scenario room */
     snprintf(path, sizeof path, "%s/common.bin", scen);
     if (blob_add(s, load_file(path)) != 0)
@@ -1272,6 +1274,15 @@ int main(void)
 #ifdef SND_TEST
         se_test(frame);
 #endif
+        {
+            V3 eye, watch, up;
+            float fovy;
+            camera_pose(&eye, &watch, &up, &fovy);
+            V3 r = vnorm(vcross(vsub(watch, eye), up));
+            float e[3] = {eye.x, eye.y, eye.z}, rr[3] = {r.x, r.y, r.z};
+            se_listener(e, rr);
+        }
+        se_update();
         se_flush();
         u32 t1 = cycles();
         game_draw();
