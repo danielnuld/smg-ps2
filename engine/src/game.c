@@ -12639,20 +12639,24 @@ static void takobo_update(Kuribo *k, V3 to, float d)
     case TN_PRESS:
         if (st == 0) w_act(k, "Press");
         if (st > 30) { pop_coins(vsub(k->pos, vmul(k->grav, 80.0f)), vmul(k->grav, -1.0f), 1); /* generateCoin */
+                       w_se(k, SE_EM_EXPLODE_S); /* Takobo::kill */
                        k->state = KURIBO_DEAD; row_kill(k->row); fx_at(FX_TAKOBO_TAKOBODEATH, k->pos, k->qy); return; }
         break;
     case TN_HITPUNCH:
-        if (st == 0) { w_act(k, "HitPunch"); k->bind_off = 0; }
+        if (st == 0) { w_act(k, "HitPunch"); k->bind_off = 0; w_se(k, SE_EM_TAKOBO_HITPUNCH); w_se(k, SE_PM_SPIN_HIT); }
         if (spin_hit_exec(k, 22, 21, 3, 1.5f, 3, 0, k->timer)) {
+            w_se(k, SE_EM_EXPLODE_S);
             k->state = KURIBO_DEAD; row_kill(k->row); fx_at(FX_TAKOBO_TAKOBODEATH, k->pos, k->qy); return;
         }
         break;
     case TN_STUNSTART:
-        if (st == 0) { w_act(k, "StunStart"); k->act_rate = 2.0f; fx_at(FX_TAKOBO_HIT, vsub(k->pos, vmul(k->grav, 70.0f * s)), k->qy); k->vel = v3(0, 0, 0); }
+        if (st == 0) { w_act(k, "StunStart"); k->act_rate = 2.0f; fx_at(FX_TAKOBO_HIT, vsub(k->pos, vmul(k->grav, 70.0f * s)), k->qy); k->vel = v3(0, 0, 0);
+                       w_se(k, SE_EM_TAKOBO_STARPIECE_HIT); }
         if (w_bck_stopped(k)) w_nrv(k, TN_STUN);
         break;
     case TN_STUN:
         if (st == 0) w_act(k, "Stun");
+        w_se_lv(k, SE_EM_LV_SWOON_S);
         if (st > 120) w_nrv(k, TN_STUNEND);
         break;
     case TN_STUNEND: case TN_HITREACTION:
@@ -12671,6 +12675,7 @@ static void takobo_update(Kuribo *k, V3 to, float d)
     int msg = mario_offence(c, 70.0f * s, k->grav);
     if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) {
         w_nrv(k, TN_PRESS);
+        w_se(k, SE_EM_TAKOBO_STOMPED); /* tryPress */
         if (msg == MSG_TRAMPLE) { mario->vup = 15.0f; mario->grounded = 0; }
     } else if (msg == MSG_HITALL) {
         spin_hit_start(k, mario->pos, 20.0f, 35.0f); k->timer = 1; w_nrv(k, TN_HITPUNCH); k->item = 1;
@@ -12826,7 +12831,7 @@ static void kari_update(Kuribo *k, V3 to, float d)
         if (w_on_ground(k)) w_nrv(k, RN_NOCALCWAIT);
         break;
     case RN_PREPURSUE:
-        if (st == 0) { k->bind_off = 0; w_act(k, "Search"); }
+        if (st == 0) { k->bind_off = 0; w_act(k, "Search"); w_se(k, SE_EM_KARIKARI_FIND); }
         kari_env(k); k->vel = vadd(k->vel, vmul(k->grav, g));
         if (kari_dpd(k)) break;
         if (st < 11) { kari_turn(k, vsub(mario->pos, k->pos), 0.25f); break; }
@@ -12838,7 +12843,7 @@ static void kari_update(Kuribo *k, V3 to, float d)
         kari_env(k); k->vel = vadd(k->vel, vmul(k->grav, g));
         if (kari_dpd(k)) break;
         if (st < 11) { kari_turn(k, toh, 0.25f); break; }
-        if (st == 11) { k->vel = vadd(vsub(k->vel, vmul(k->grav, 33.0f)), vmul(toh, 10.0f)); break; }
+        if (st == 11) { k->vel = vadd(vsub(k->vel, vmul(k->grav, 33.0f)), vmul(toh, 10.0f)); w_se(k, SE_EM_KARIKARI_JUMP2); break; }
         if (w_on_ground(k)) {
             fx_at(FX_KARIPON_SMOKELAND, k->pos, vmul(k->grav, -1.0f));
             if (kari_cling == 5) { w_nrv(k, RN_WATCHFOR); break; }
@@ -12862,6 +12867,7 @@ static void kari_update(Kuribo *k, V3 to, float d)
         break;
     case RN_PRECLING: {
         if (st == 0) { k->bind_off = 1; w_act(k, "Wait"); }
+        w_se_lv(k, SE_EM_LV_KARIKARI_CLING);
         if (kari_dpd(k)) break;
         float m[16], t = st / 3.0f;
         kari_cling_mtx(k->dir, m);
@@ -12870,7 +12876,8 @@ static void kari_update(Kuribo *k, V3 to, float d)
         break;
     }
     case RN_CLING: {
-        if (st == 0) { k->bind_off = 1; w_act(k, "Bite"); k->vel = v3(0, 0, 0); if (kari_cling == 1) kari_timer = 120; }
+        if (st == 0) { k->bind_off = 1; w_act(k, "Bite"); k->vel = v3(0, 0, 0); if (kari_cling == 1) kari_timer = 120; w_se(k, SE_EM_KARIKARI_TOUCH); }
+        w_se_lv(k, SE_EM_LV_KARIKARI_CLING);
         if (kari_dpd(k)) break;
         float m[16];
         kari_cling_mtx(k->dir, m);
@@ -12879,12 +12886,13 @@ static void kari_update(Kuribo *k, V3 to, float d)
         break;
     }
     case RN_DPDATTACKED:
-        if (st == 0) { k->bind_off = 0; w_act(k, "SpinX"); k->act_rate = 2.0f; }
+        if (st == 0) { k->bind_off = 0; w_act(k, "SpinX"); k->act_rate = 2.0f; w_se(k, SE_EM_KARIKARI_RELEASE); }
         kari_env(k); k->vel = vadd(k->vel, vmul(k->grav, 2.4f));
         if (w_on_ground(k)) { fx_at(FX_KARIPON_SMOKELAND, k->pos, vmul(k->grav, -1.0f)); w_nrv(k, RN_LAND); }
         break;
     case RN_BLOWOUT: case RN_BLOWOUTSTARPIECE:
-        if (st == 0) { k->bind_off = 0; w_act(k, "SpinX"); k->act_rate = 2.0f; }
+        if (st == 0) { k->bind_off = 0; w_act(k, "SpinX"); k->act_rate = 2.0f;
+                       if (k->nrv == RN_BLOWOUT) { w_se(k, SE_EM_KARIKARI_BLOW); w_se(k, SE_PM_SPIN_HIT); } } /* exeBlowOut */
         kari_env(k); k->vel = vadd(k->vel, vmul(k->grav, 1.3f));
         if (((k->on_ground || k->on_wall) && st > 0) || st > 60) { kari_dead(k, k->nrv == RN_BLOWOUT ? 1 : 3); return; }
         break;
