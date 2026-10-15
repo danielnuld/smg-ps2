@@ -1,6 +1,6 @@
 # Task 5.3 coverage run: every scenario of out/packs/scenarios.csv booted in PCSX2 with one ELF
 # (engine/build.sh cover out/slice/hd2.bin <any Galaxy/n> -> out/slice-packs-cover.elf), the scenario chosen through
-# out/boot.txt (host:boot.txt). Each run ends at its "cover:" line (frame 900), a pack error, or the timeout.
+# out/boot.txt (host:boot.txt). Each run ends at its "cover:" line (frame 1200), a pack error, or the timeout.
 # Writes out/coverage.csv: galaxy, scenario, result (ok / fail / timeout), slow frames, worst frame us, runtime KB,
 # last log line. usage: tools/coverage.ps1 [-Only Galaxy] [-Timeout 45] [-Resume] (keep the rows of an earlier run)
 param([string]$Only = "", [int]$Timeout = 45, [switch]$Resume)

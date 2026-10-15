@@ -1083,8 +1083,14 @@ static int kcl_query(V3 c, float radius, Hit *out, int max)
 }
 
 /* Fell into space: farther than 4000 from every collision mesh's bounding sphere */
+static V3 zone_c[MAX_ZONES];
+static float zone_r[MAX_ZONES];
+static int zone_wait; /* a zone Mario needs or soon reaches is still low (game_zone_sets): its collision is on its way */
+/* fell off: no collision model within 4000 of p, unless a zone he needs or soon reaches is still low (ScenarioStarter's
+ * flight, a restart or a launch star lands him in one before it streamed in) */
 static int lost(V3 p)
 {
+    if (zone_wait) return 0;
     for (int i = 0; i < ninsts; i++) {
         if (!insts[i].kcl) continue;
         float r = insts[i].reach + 4000.0f;
@@ -3137,13 +3143,21 @@ void game_rebind(void)
 static V3 zone_c[MAX_ZONES];
 static float zone_r[MAX_ZONES];
 
+/* rows drawn at the camera (BrightSun: 74000 up in HeavenlyBeach; skies) say nothing about where a zone is */
+static int sky_class(const char *name);
+static int zone_free_row(const Row *r)
+{
+    const char *n = sc->types + 32 * r->type;
+    return strcmp(n, "BrightSun") == 0 || sky_class(n);
+}
+
 static void zone_spheres(void)
 {
     V3 lo[MAX_ZONES], hi[MAX_ZONES];
     int seen[MAX_ZONES] = {0};
     for (u32 i = 0; i < sc->nobjs; i++) {
         const Row *r = &sc->objs[i];
-        if (r->zone >= MAX_ZONES) continue;
+        if (r->zone >= MAX_ZONES || zone_free_row(r)) continue;
         V3 p = row_pos(r);
         if (!seen[r->zone]) { lo[r->zone] = hi[r->zone] = p; seen[r->zone] = 1; }
         lo[r->zone] = v3(fminf(lo[r->zone].x, p.x), fminf(lo[r->zone].y, p.y), fminf(lo[r->zone].z, p.z));
@@ -3155,7 +3169,7 @@ static void zone_spheres(void)
     }
     for (u32 i = 0; i < sc->nobjs; i++) {
         const Row *r = &sc->objs[i];
-        if (r->zone >= MAX_ZONES) continue;
+        if (r->zone >= MAX_ZONES || zone_free_row(r)) continue;
         float d = vlen(vsub(row_pos(r), zone_c[r->zone])) + 500.0f;
         if (d > zone_r[r->zone]) zone_r[r->zone] = d;
     }
@@ -3163,7 +3177,7 @@ static void zone_spheres(void)
 
 static void zone_grow(const Inst *in)
 {
-    if (in->zone >= MAX_ZONES || zone_r[in->zone] < 0) return;
+    if (in->zone >= MAX_ZONES || zone_r[in->zone] < 0 || in->sky || in->sun || zone_free_row(&sc->objs[in->row])) return;
     float d = vlen(vsub(v3(in->m[12], in->m[13], in->m[14]), zone_c[in->zone])) + in->reach;
     if (d > zone_r[in->zone]) zone_r[in->zone] = d;
 }
@@ -3203,6 +3217,8 @@ void game_zone_sets(const unsigned char *full, unsigned char *need, unsigned cha
         if (full[pipe_zone]) pipe_zone = -1;
         else { need[pipe_zone] = 2; dist[pipe_zone] = -1e30f; }
     }
+    zone_wait = 0;
+    for (int z = 0; z < MAX_ZONES; z++) zone_wait |= (need[z] || soon[z]) && !full[z];
 }
 
 int game_test_block(void)
@@ -10168,7 +10184,7 @@ static void update_mario(void)
         if (m->press == 5) { float t = 120.0f - (60 - m->press_t); k = 1.0f - cosf(0.5f * (t / 120.0f) * 3.1415927f); }
         else k = fminf(fmaxf(m_dist_to_ceil(m) / 150.0f, 0.2f), 1.0f);
         if (k < m->press_s) m->press_s = k;
-        if (--m->press_t <= 0) { m->press = 0; m->press_s = 1.0f; miss(); }
+        if (--m->press_t <= 0) { m->press = 0; m->press_s = 1.0f; printf("pressed\n"); miss(); }
         if (mario_anim) anim_update(mario_anim);
         return;
     }
@@ -10362,8 +10378,11 @@ static void update_mario(void)
                    (int)m->pos.x, (int)m->pos.y, (int)m->pos.z, m->floor, m->slip_poly, m->s23, (int)m->s8F0, (int)vlen(m->s8F8));
     }
 #endif
-    if (!test_nolost && lost(m->pos)) /* fell off */
-        miss();
+    { /* fell off: lost 30 frames running (a landing frame comes before its zone is asked for) */
+        static int lost_n;
+        lost_n = !test_nolost && lost(m->pos) ? lost_n + 1 : 0;
+        if (lost_n > 30) { lost_n = 0; printf("lost at %d %d %d\n", (int)m->pos.x, (int)m->pos.y, (int)m->pos.z); miss(); }
+    }
     if (m->hurt_timer) m->hurt_timer--;
 
     if (mario_anim) { /* MarioAnimator::update: one-shot clips play out, then the state's default */
@@ -10417,7 +10436,7 @@ static void hurt_mario(V3 from, float push)
     if (mario->hurt_timer || invincible_time) return;
     if (bee_mode) { bee_mode = 0; printf("bee mario lost\n"); } /* the bee suit goes at a hit */
     mario_fx(FX_MARIO_DAMAGE, 1.0f);
-    if (--life <= 0) { miss(); return; }
+    if (--life <= 0) { printf("no life left\n"); miss(); return; }
     V3 away = vtangent(vsub(mario->pos, from), mario->up);
     if (vlen(away) < 1e-3f) away = mario->face;
     mario->hvel = vmul(vnorm(away), push);

@@ -12,7 +12,7 @@
 # collapse: with packs, Mario dropped onto the first CollapsePlane at frame 120 (-DCOLLAPSE_TEST)
 # box: with packs, Mario spinning on the first breakable box at frame 120 (-DBOX_TEST)
 # spin: with packs, Mario caught by the first SpinDriver at frame 120 (-DSPIN_TEST)
-# cover: with packs, a launch star at frame 60, one "cover:" line at frame 900 (tools/coverage.ps1, -DCOVER_TEST)
+# cover: with packs, a launch star at frame 400, one "cover:" line at frame 1200 (tools/coverage.ps1, -DCOVER_TEST)
 # enemy: with packs, Mario stomps the first TakoHei (120), spins by a PackunPetit (240), stands by one (360) (-DENEMY_TEST)
 # overview: with packs, the camera orbits the whole galaxy (-DOVERVIEW_TEST; for pictures and videos)
 # rail: with packs, Mario dropped onto the first rail-moving map part at frame 120 (-DRAIL_TEST)

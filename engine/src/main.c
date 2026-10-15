@@ -1251,14 +1251,15 @@ int main(void)
         }
 #endif
 #ifdef COVER_TEST
-        /* coverage run (tools/coverage.ps1): a launch star at frame 60 if there is one, then one line at 900 */
-        if (frame == 60)
+        /* coverage run (tools/coverage.ps1): a launch star at frame 400 (after the ScenarioStarter flight) if there is
+         * one, then one line at 1200 */
+        if (frame == 400)
             game_test_spindriver(0);
         {
             static u32 prev, slow;
             if (frame > 120 && prev && t0 - prev > (u32)(20000 * EE_MHZ)) slow++;
             prev = t0;
-            if (frame == 900)
+            if (frame == 1200)
                 printf("cover: %s ok, slow %u, worst %u us, runtime %u KB, lives %d, misses %d\n", scen, slow,
                        (u32)(worst / EE_MHZ), mem_total() >> 10, game_lives(), game_misses());
         }
