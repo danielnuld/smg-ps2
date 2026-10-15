@@ -380,8 +380,8 @@ packs per scenario (EggStar caps 14-16 / 10-11 kHz), 78c3098 DinoPackun, 7a7d9f1
 message), KuriboMini, PackunPetit, HammerHeadPackun, Petari, CocoSambo, KillerGunnerSingle, OtaRock, Plant, Butterfly,
 NeedlePlant, CollapsePlane, QuestionCoin, BenefitItem, StageEffectDataTable movers, Mario's remaining table keys
 (swim, slip, wall, hang...), ports 11 / 12 for the floor's sound code (footstep surfaces), JAIAudience 3D, voice
-stealing by priority. The inventory per class lives in the 2026-10-15 session's scratchpad (goodegg_sounds.md); redo
-it with grep over vendor/Petari if lost. Known: `talk` (class 1) no longer reaches its SignBoard (Mario stuck 2800 off, before
+stealing by priority. References: docs/jaudio2-formats.md (the JAudio2 formats and rules, from Petari's
+JAudio2 decomp), docs/goodegg-sounds.md (every Good Egg class's Petari sound calls, Mario's table, the .bas tables). Known: `talk` (class 1) no longer reaches its SignBoard (Mario stuck 2800 off, before
 these changes too).
 Left for Good Egg: sound (see above), OtaKing's bath
 rim crevice (only from a test's artificial drop), the short (stretch) balloon's layout (no Good Egg message uses it).
