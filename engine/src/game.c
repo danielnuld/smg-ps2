@@ -7540,7 +7540,7 @@ static const TkGlyph *tk_glyph, *tk_icon;
 static int tk_nglyph, tk_nicon, tk_ttex = -1, tk_itex = -1, tk_lf = 33, tk_asc = 26;
 /* the talk balloons' layouts (tools/layout.py LAYO, after the FONT glyphs): quads in layout units, textures counted
  * from the font's text texture */
-typedef struct { s16 x, y, w, h; u16 tex; u8 rgba[4]; s16 u, v, uw, vh; u8 group, pad; } LayQuad;
+typedef struct { s16 x, y, w, h; u16 tex; u8 rgba[4]; s16 u, v, uw, vh; u8 group, fill; } LayQuad;
 static const u8 *tk_lay;
 
 #define MAX_TALKERS 32
@@ -7775,7 +7775,7 @@ static void tk_quad(float x, float y, float w, float h, u32 rgba, int tex, float
 {
     if (ntkq == MAX_TKQ || (rgba >> 24) == 0) return;
     Quad *q = &tkq[ntkq++];
-    q->x = x; q->y = y; q->w = w; q->h = h; q->u = u; q->v = v; q->uw = uw; q->vh = vh; q->rgba = rgba;
+    q->x = x; q->y = y; q->w = w; q->h = h; q->u = u; q->v = v; q->uw = uw; q->vh = vh; q->rgba = rgba; q->vw = q->uh = 0;
     q->tex = tex < 0 ? NO_TEX : (u16)tex;
     if (tex < 0) /* untextured: the GS takes the colour as it is (no 0x80 = 1.0 modulation) */
         for (int c = 0; c < 24; c += 8) {
@@ -7896,6 +7896,27 @@ enum { BK_EVENT, BK_SIGN, BK_SHORT };
 static TkBalloon tk_bev, tk_bsign, tk_bshort[4];
 static const char *info_label; /* MR::appearInformationMessage's message (TALK label) while it shows, NULL none */
 static int meter_eaten = -1, meter_total; /* FullnessMeter (TicoFat's): shown while pointed at (-1 hidden), its numbers */
+/* StarPieceTargetMeter's fill pane k (PicMeterR 0, PicMeterL 1) at count.brlan frame f (FullnessMeter::setNumber:
+ * 128 - (u16)(128 x (1 - eaten / total))): RLVI shown from frame 1 / 65; RLTS rotation of Meter.tpl's SRT, linear
+ * keys -180 at -3 to 0 at 64 / 180 at 64 to 0 at 131; RLMC black and white g 90 -> 50, b 255 -> 215 over frames
+ * 50..128 (Hermite, flat ends). MeterMask (its SRT scale -1) shows the half where the pane's u is under 0.5. The
+ * rotation is about the texture's centre, in texels (Meter.tpl is square) */
+static void meter_fill(const LayQuad *l, float x, float y, float f, float a)
+{
+    int k = l->fill - 1;
+    if (f < (k ? 65 : 1)) return;
+    float deg = k ? (f < 64 ? 180.0f : 180.0f - 180.0f * (f - 64) / 67.0f) : (f >= 64 ? 0.0f : -180.0f + 180.0f * (f + 3) / 67.0f);
+    float t = f <= 50 ? 0.0f : (f - 50) / 78.0f, h = t * t * (3.0f - 2.0f * t);
+    float sn = sinf(deg * (float)M_PI / 180.0f), c = cosf(deg * (float)M_PI / 180.0f);
+    float du = l->uw / 16.0f, dv = l->vh / 16.0f, cu = l->u / 16.0f + du / 2, cv = l->v / 16.0f + dv / 2;
+    float xa = du < 0 ? 0.5f : 0.0f; /* the shown half: u under the centre */
+    float up = l->u / 16.0f + xa * du, vp = l->v / 16.0f; /* its top left in the pane's texels, turned */
+    int n = ntkq;
+    tk_quad(x + xa * l->w * TK_KX, y, l->w * TK_KX / 2, l->h * TK_KY, tk_rgba(0, (int)(90 - 40 * h), (int)(255 - 40 * h), a),
+            tk_ttex + l->tex, cu + c * (up - cu) - sn * (vp - cv), cv + sn * (up - cu) + c * (vp - cv), c * du / 2, c * dv);
+    if (ntkq > n) { tkq[n].vw = sn * du / 2; tkq[n].uh = -sn * dv; }
+}
+static float meter_frame;
 static void meter_number(int v, float x, float y, float size, int right) /* a count at its text box's bottom corner */
 {
     u16 buf[8];
@@ -8343,6 +8364,7 @@ static void lay_draw(const char *name, int group, float a, float dx, float dy)
         if (!strcmp((const char *)q, name)) {
             for (int k = 0; k < nq; k++, l++) {
                 if (group >= 0 && l->group != group) continue;
+                if (l->fill) { meter_fill(l, tk_hx(l->x + dx), tk_hy(l->y + dy), meter_frame, a); continue; }
                 u32 rgba = l->rgba[0] | l->rgba[1] << 8 | l->rgba[2] << 16 | (u32)(l->rgba[3] * a) << 24;
                 tk_quad(tk_hx(l->x + dx), tk_hy(l->y + dy), l->w * TK_KX, l->h * TK_KY, rgba,
                         l->tex == 0xFFFF ? -1 : tk_ttex + l->tex, l->u / 16.0f, l->v / 16.0f, l->uw / 16.0f, l->vh / 16.0f);
@@ -8422,7 +8444,8 @@ static void talk_draw(void)
     }
     if (meter_eaten >= 0) { /* FullnessMeter: StarPieceTargetMeter at the pointer (control: setTrans), the counter
                             * (its Appear's end: SPTargetCounter at (276, -82)): TxtNumber's bottom right (193, -98),
-                            * TxtNumberMax's bottom left (208, -97). ponytail: the meter's fill (masked halves) */
+                            * TxtNumberMax's bottom left (208, -97); the fill at its Count frame */
+        meter_frame = (float)(128 - (u16)(128.0f * (1.0f - (float)meter_eaten / meter_total)));
         lay_draw("StarPieceTargetMeter", 0, 1.0f, (cur_x - 320.0f) / TK_KX, (224.0f - cur_y) / TK_KY);
         lay_draw("StarPieceTargetCounter", -1, 1.0f, 0, 0);
         meter_number(meter_eaten, 193, -98, 32.0f, 1);
@@ -8481,7 +8504,7 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
  * event node starts the eating: eventFunc 0) and Common_TicoFat000 (setMessage: Wait 1 by how much is left, Point 0,
  * Test 2; the end of Fullness' talk is the metamorphosis), 280 to talk, 220 x scale up, in front. WipeOut shakes the
  * camera and shows its screen effects. The "喜び" camera only runs for arg7 6 (Good Egg's has -1). ponytail: no
- * meter fill (FullnessMeter: the counter and the meter's frame at the pointer), no TicoSeedGuidance, no item (arg0 0 / 1), no BVA eyes. Info shows InformationPlanet until A */
+ * FullnessMeter's Shine / Flash, no TicoSeedGuidance, no item (arg0 0 / 1), no BVA eyes. Info shows InformationPlanet until A */
 #define MAX_FATS 4
 static struct {
     int row, nrv, t, left, total, inflight, eat, g174, g178, item, has_rail, tk1, tk0; /* mMsgCtrl, _16C */
@@ -8510,7 +8533,7 @@ static void wipe_draw(void)
     if (!wipe.close && wipe.step >= wipe.frames) { wipe.frames = 0; return; } /* open: killed */
     float a = (float)wipe.step / wipe.frames;
     if (!wipe.close) a = 1.0f - a;
-    Quad q = {0, 0, 640, 448, 0, 0, 0, 0, (u32)(a * 0x80) << 24 | 0xFFFFFFu, NO_TEX, 0}; /* untextured: white is 0xFF */
+    Quad q = {0, 0, 640, 448, 0, 0, 0, 0, (u32)(a * 0x80) << 24 | 0xFFFFFFu, NO_TEX, 0, 0, 0}; /* untextured: white is 0xFF */
     render_quads(&q, 1);
 }
 

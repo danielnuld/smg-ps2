@@ -1051,7 +1051,7 @@ void render_sprites(const Sprite *sp, int n)
         int add = sp[i].add, j = i;
         while (j < n && j - i < 64 && sp[j].tex == t && sp[j].add == add)
             j++;
-        if (packet2_get_qw_count(vif[cur]) + 16 + TEXP + 4 + (j - i) * 5 > PACKET_QW) /* state, its texture change */
+        if (packet2_get_qw_count(vif[cur]) + 16 + TEXP + 4 + (j - i) * 10 > PACKET_QW) /* state, its texture change */
             flush_vif();
         set_tex(t);
         const TexEntry *e = tex_scene->tex[t].e;
@@ -1115,7 +1115,7 @@ static void draw_quads(void)
         int j = i;
         while (j < nquads && j - i < 64 && quads[j].tex == t)
             j++;
-        if (packet2_get_qw_count(vif[cur]) + 16 + TEXP + 4 + (j - i) * 5 > PACKET_QW)
+        if (packet2_get_qw_count(vif[cur]) + 16 + TEXP + 4 + (j - i) * 10 > PACKET_QW)
             flush_vif();
         set_tex(t);
         packet2_chain_open_cnt(vif[cur], 0, 0, 0);
@@ -1126,18 +1126,33 @@ static void draw_quads(void)
         packet2_add_2x_s64(vif[cur], GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA);
         packet2_add_2x_s64(vif[cur], GS_SET_TEST(1, ATEST_METHOD_GREATER, 0, 0, 0, 0, 1, ZTEST_METHOD_ALLPASS), GS_REG_TEST);
         packet2_add_2x_s64(vif[cur], GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 1), GS_REG_ZBUF);
-        packet2_add_2x_s64(vif[cur], GS_SET_PRIM(PRIM_SPRITE, 0, t != NO_TEX, 0, 1, 0, 1, 0, 0), GS_REG_PRIM);
-        u32 regs = 4;
+        u32 regs = 3;
         for (; i < j; i++) {
             const Quad *q = &quads[i];
             float x0 = 2048.0f - SCREEN_W / 2 + q->x, y0 = 2048.0f - SCREEN_H / 2 + q->y * YS;
             float x1 = x0 + q->w, y1 = y0 + q->h * YS;
+            int skew = q->vw != 0.0f || q->uh != 0.0f;
+            skew &= t != NO_TEX; /* skewed: ST (floats: its corners may fall off the texture, clamped there) */
+            packet2_add_2x_s64(vif[cur], GS_SET_PRIM(skew ? PRIM_TRIANGLE_STRIP : PRIM_SPRITE, 0, t != NO_TEX, 0, 1, 0, !skew, 0, 0), GS_REG_PRIM);
             packet2_add_2x_s64(vif[cur], GS_SET_RGBAQ(q->rgba & 0xFF, q->rgba >> 8 & 0xFF, q->rgba >> 16 & 0xFF, q->rgba >> 24, 0x3F800000), GS_REG_RGBAQ);
+            regs += 2;
+            if (skew) { /* top left, top right, bottom left, bottom right */
+                const TexEntry *e = tex_scene->tex[t].e;
+                float kw = 1.0f / (float)(1 << e->tw), kh = 1.0f / (float)(1 << e->th);
+                for (int c = 0; c < 4; c++) {
+                    float fx = (float)(c & 1), fy = (float)(c >> 1);
+                    union { float f; u32 u; } S = {(q->u + fx * q->uw + fy * q->uh) * kw}, T = {(q->v + fx * q->vw + fy * q->vh) * kh};
+                    packet2_add_2x_s64(vif[cur], (u64)T.u << 32 | S.u, GS_REG_ST);
+                    packet2_add_2x_s64(vif[cur], GS_SET_XYZ((int)((fx ? x1 : x0) * 16), (int)((fy ? y1 : y0) * 16), 0), GS_REG_XYZ2);
+                }
+                regs += 8;
+                continue;
+            }
             packet2_add_2x_s64(vif[cur], GS_SET_UV((int)(q->u * 16), (int)(q->v * 16)), GS_REG_UV);
             packet2_add_2x_s64(vif[cur], GS_SET_XYZ((int)(x0 * 16), (int)(y0 * 16), 0), GS_REG_XYZ2);
             packet2_add_2x_s64(vif[cur], GS_SET_UV((int)((q->u + q->uw) * 16), (int)((q->v + q->vh) * 16)), GS_REG_UV);
             packet2_add_2x_s64(vif[cur], GS_SET_XYZ((int)(x1 * 16), (int)(y1 * 16), 0), GS_REG_XYZ2);
-            regs += 5;
+            regs += 4;
         }
         tag->dw[0] = GIF_SET_TAG(regs, 1, 0, 0, GIF_FLG_PACKED, 1);
         packet2_vif_close_direct_auto(vif[cur]);

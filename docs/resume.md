@@ -350,7 +350,12 @@ EggStar 1 SignBoard and Tico checked). 6b89acc TicoFat's Info: InformationPlanet
 is a masked texture animation): next, a brlan reader (pai1: RLPA pane SRT / alpha at a frame, RLTS texture SRT).
 a86f326 the fullness meter (counter at its Appear's end, the meter's frame at the pointer; its masked fill not drawn).
 Regression 2026-10-15: `route` EggStar 1-4 all get their stars with every change above.
-Left for Good Egg: sound (the user's call: last; AFC -> ADPCM, SE tables), the meter's masked fill, OtaKing's bath
+The meter's fill done (checked in `fat`: right half, then left, clockwise to a full disc in the reticle): layout.py
+emits the masked panes (LayQuad fill 1 + k, white texture) and bakes static texture SRTs (the reticle frame: scale 2
+mirrored, it drew a quarter); game.c meter_fill turns Meter.tpl by count.brlan's keys at FullnessMeter::setNumber's
+frame and draws the half MeterMask shows; render.c Quad vw / uh: skewed quads as ST triangle strips (UV is unsigned:
+rotated corners fell off the texture). ponytail: Shine / Flash animations.
+Left for Good Egg: sound (the user's call: last; AFC -> ADPCM, SE tables), OtaKing's bath
 rim crevice (only from a test's artificial drop), the short (stretch) balloon's layout (no Good Egg message uses it).
 
 **Parked 2026-10-14 (the user's call: Good Egg first), resume later:** the coverage-run session stopped mid-work.

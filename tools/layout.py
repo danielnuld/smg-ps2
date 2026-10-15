@@ -4,7 +4,8 @@ LAYO section (in resident's FONT chunk, msg.font_chunk): u16 nlayouts, u16 pad; 
 u16 nquads, u16 pad, nquads x Quad {s16 x, y (top left, layout units: the screen centre the origin, y up), s16 w, h,
 u16 tex (index among the FONT chunk's textures, 0xFFFF none), u8 rgba[4] (0x80 = 1.0 for colour and alpha), s16 u, v,
 uw, vh (texels of the PS2 texture x 16; negative widths flip), u8 group (which child of the root pane it is under:
-lay_draw draws one group or all), pad} (24 B), in drawing order.
+lay_draw draws one group or all), u8 fill (0, or 1 + k: the k-th masked fill pane, its UVs set by the engine)} (24 B),
+in drawing order.
 Panes: pic1 a quad of its first material texture; wnd1 nine (lyt::Window with one frame texture: corners at the
 texture's size, flipped round, edges stretching its inner column / row, the content in between); pan1 / txt1 / bnd1
 nothing (their children are walked). A pane's translation is in its parent's space (scaled by the parents' scales),
@@ -14,8 +15,11 @@ white colour C1, texel) (lyt's default TEV for one texture; I formats are their 
 a texture the colour is the pane's vertex colours. A layout with an appear.brlan is taken at its last frame (RLPA
 translation / scale / size, RLVC alpha: StarPieceTargetCounter slides in from x 500 to 276); a group pane (pan1, a
 child of the root pane) at alpha 0 otherwise is taken as shown (its appear animation brings it in:
-InformationWindow). Panes whose material masks a second texture (StarPieceTargetMeter's fill halves) are left out.
-ponytail: no rotation, no texture SRT or projections, a second
+InformationWindow). A pane rotated 180 about y is mirrored. Panes whose material masks a second texture
+(StarPieceTargetMeter's fill halves: Meter.tpl through a rotating texture SRT, MeterMask showing the half where the
+pane's u is under 0.5) go out whole with fill set and their texture white (the engine colours, turns and halves them).
+A material's texture SRT is baked into its image (StarPieceTargetMeter's frame: scale 2 mirrored, a whole ring).
+ponytail: no other rotation, no animated texture SRT or projections, a second
 texture (a beak's mask) dropped, vertex colours averaged, the brlan animations not played.
 """
 import struct
@@ -54,13 +58,17 @@ def parse(b):
                 mo = o + u32(b, o + 12 + 4 * i)
                 c0 = np.clip(np.array(struct.unpack_from(">4h", b, mo + 0x14), np.float32) / 255, 0, 1)
                 c1 = np.clip(np.array(struct.unpack_from(">4h", b, mo + 0x1C), np.float32) / 255, 0, 1)
-                nt = u32(b, mo + 0x3C) & 0xF
+                nt, ns = u32(b, mo + 0x3C) & 0xF, u32(b, mo + 0x3C) >> 4 & 0xF
+                so = mo + 0x40 + 4 * nt
                 mats.append(dict(name=b[mo:mo + 20].split(b"\0")[0].decode().strip(), c0=c0, c1=c1,
-                                 tex=[u16(b, mo + 0x40 + 4 * k) for k in range(nt)]))
+                                 tex=[u16(b, mo + 0x40 + 4 * k) for k in range(nt)],
+                                 wrap=b[mo + 0x42:mo + 0x44] if nt else b"\0\0",
+                                 srt=struct.unpack_from(">5f", b, so) if ns else (0, 0, 0, 1, 1)))
         elif kind in (b"pan1", b"pic1", b"wnd1", b"txt1", b"bnd1"):
             p = dict(kind=kind.decode(), name=b[o + 12:o + 28].split(b"\0")[0].decode(), flags=b[o + 8], origin=b[o + 9],
                      alpha=b[o + 10] / 255, t=struct.unpack_from(">2f", b, o + 0x24), s=struct.unpack_from(">2f", b, o + 0x3C),
-                     size=struct.unpack_from(">2f", b, o + 0x44), parent=stack[-1] if stack else None, mat=None,
+                     size=struct.unpack_from(">2f", b, o + 0x44), ry=struct.unpack_from(">f", b, o + 0x34)[0],
+                     parent=stack[-1] if stack else None, mat=None,
                      colours=None, wnd=None)
             if kind == b"pic1":
                 p["colours"] = [struct.unpack_from(">4B", b, o + 0x4C + 4 * k) for k in range(4)]
@@ -120,6 +128,24 @@ def brlan_end(b):
     return out
 
 
+def srt_bake(t, srt, wrap):
+    """a texture (h, w, 4) seen through its texture SRT (tx, ty, rotation degrees, sx, sy: nw4r lyt CalcTextureMtx
+    about the centre) over the pane's uv 0..1 -> an image of (h, w) x the scale, nearest texels; wrap per axis 0 clamp,
+    1 repeat, 2 mirror"""
+    tx, ty, r, sx, sy = srt
+    h, w = t.shape[:2]
+    oh, ow = max(1, round(h * abs(sy))), max(1, round(w * abs(sx)))
+    v, u = np.meshgrid((np.arange(oh) + 0.5) / oh - 0.5, (np.arange(ow) + 0.5) / ow - 0.5, indexing="ij")
+    c, sn = np.cos(np.radians(r)), np.sin(np.radians(r))
+    s_, t_ = 0.5 + tx + c * sx * u - sn * sy * v, 0.5 + ty + sn * sx * u + c * sy * v
+
+    def wr(x, mode):
+        return x % 1 if mode == 1 else 1 - np.abs(x % 2 - 1) if mode == 2 else np.clip(x, 0, 1)
+    xi = np.clip((wr(s_, wrap[0]) * w).astype(int), 0, w - 1)
+    yi = np.clip((wr(t_, wrap[1]) * h).astype(int), 0, h - 1)
+    return t[yi, xi]
+
+
 def quads(files, name):
     """Layout `name` of an archive's files ({lower name: bytes}) -> ([quad tuples], [RGBA textures]): quad (x, y, w,
     h, tex, rgba, u0, v0, u1, v1) in layout units, tex an index into the textures list."""
@@ -137,14 +163,18 @@ def quads(files, name):
             elif target in (8, 9):
                 p["size"] = tuple(v if k == target - 8 else p["size"][k] for k in range(2))
 
-    def image(mi):
-        """material mi's first texture through lerp(C0, C1, texel) -> index in images (None: no texture)"""
+    def image(mi, white=False):
+        """material mi's first texture through lerp(C0, C1, texel) (white: lerp(white at alpha 0, white)) -> index in
+        images (None: no texture)"""
         m = mats[mi]
         if not m["tex"] or m["tex"][0] >= len(texs):
             return None
         if mi not in baked:
             t = tpl(files[texs[m["tex"][0]].lower()]).astype(np.float32) / 255
-            img = m["c0"] + (m["c1"] - m["c0"]) * t
+            c0, c1 = (np.array([1, 1, 1, 0], np.float32), np.ones(4, np.float32)) if white else (m["c0"], m["c1"])
+            if not white and tuple(m["srt"]) != (0, 0, 0, 1, 1):
+                t = srt_bake(t, m["srt"], m["wrap"])
+            img = c0 + (c1 - c0) * t
             baked[mi] = len(images)
             images.append((np.clip(img, 0, 1) * 255 + 0.5).astype(np.uint8))
         return baked[mi]
@@ -153,6 +183,7 @@ def quads(files, name):
     for i in groups:
         if panes[i]["alpha"] == 0 and panes[i]["kind"] == "pan1" and panes[i]["name"] not in end:
             panes[i]["alpha"] = 1.0
+    nfill = 0
     absolute = []  # per pane: its origin's position, its scale, its alpha, shown, group
     for p in panes:
         if p["parent"] is None:
@@ -168,42 +199,46 @@ def quads(files, name):
         absolute.append((pos, sc, al, shown, grp))
         if not (shown and p["flags"] & 1) or p["kind"] not in ("pic1", "wnd1") or p["mat"] is None or p["mat"] >= len(mats):
             continue
-        if len(mats[p["mat"]]["tex"]) > 1 and p["kind"] == "pic1" and "Meter" in p["name"]:
-            continue  # a masked fill (a second texture's mask): not drawn (ponytail)
+        fill = len(mats[p["mat"]]["tex"]) > 1 and p["kind"] == "pic1" and "Meter" in p["name"]
+        nfill += fill
         w, h = p["size"][0] * sc[0], p["size"][1] * sc[1]
         ox, oy = p["origin"] % 3, p["origin"] // 3
+        mirror = abs(abs(p["ry"]) - 180) < 1e-3
+        if mirror:
+            ox = 2 - ox
         x0 = pos[0] - w * ox / 2
         y0 = pos[1] + h * oy / 2  # top (y up)
         a = al * p["alpha"]
         col = np.mean(np.array(p["colours"], np.float32), 0) / 255
-        ti = image(p["mat"])
+        ti = image(p["mat"], fill)
         if ti is None:  # no texture: the white colour times the vertex colours
             col = col * mats[p["mat"]]["c1"]
         rgba = tuple(int(min(255, c * 128 + 0.5)) for c in (col[0], col[1], col[2], col[3] * a))
         col0 = np.mean(np.array(p["colours"], np.float32), 0) / 255  # the frames' (textured) vertex colour
         if p["kind"] == "pic1":
             uv = p["uv"]
-            out.append((x0, y0, w, h, ti, rgba, uv[0], uv[1], uv[6], uv[7], grp))
+            u0, u1 = (uv[2], uv[0]) if mirror else (uv[0], uv[2])
+            out.append((x0, y0, w, h, ti, rgba, u0, uv[1], u1, uv[7], grp, nfill if fill else 0))
             continue
         fr = p["wnd"]["frames"]
         fi = image(fr[0][0]) if fr and fr[0][0] < len(mats) else None
         if fi is None:
-            out.append((x0, y0, w, h, ti, rgba, 0, 0, 1, 1, grp))
+            out.append((x0, y0, w, h, ti, rgba, 0, 0, 1, 1, grp, 0))
             continue
         fh_, fw_ = images[fi].shape[:2]
         fw, fh = min(fw_, w / 2), min(fh_, h / 2)
         iu, iv = 1 - 0.5 / fw_, 1 - 0.5 / fh_  # the corner texture's inner column / row
         if rgba[3]:
-            out.append((x0 + fw, y0 - fh, w - 2 * fw, h - 2 * fh, ti, rgba, 0, 0, 1, 1, grp))  # content
+            out.append((x0 + fw, y0 - fh, w - 2 * fw, h - 2 * fh, ti, rgba, 0, 0, 1, 1, grp, 0))  # content
         rgba = tuple(int(min(255, c * 128 + 0.5)) for c in (col0[0], col0[1], col0[2], col0[3] * a))
-        out += [(x0, y0, fw, fh, fi, rgba, 0, 0, 1, 1, grp),                                  # corners
-                (x0 + w - fw, y0, fw, fh, fi, rgba, 1, 0, 0, 1, grp),
-                (x0, y0 - h + fh, fw, fh, fi, rgba, 0, 1, 1, 0, grp),
-                (x0 + w - fw, y0 - h + fh, fw, fh, fi, rgba, 1, 1, 0, 0, grp),
-                (x0 + fw, y0, w - 2 * fw, fh, fi, rgba, iu, 0, iu, 1, grp),                   # top, bottom edges
-                (x0 + fw, y0 - h + fh, w - 2 * fw, fh, fi, rgba, iu, 1, iu, 0, grp),
-                (x0, y0 - fh, fw, h - 2 * fh, fi, rgba, 0, iv, 1, iv, grp),                   # left, right edges
-                (x0 + w - fw, y0 - fh, fw, h - 2 * fh, fi, rgba, 1, iv, 0, iv, grp)]
+        out += [(x0, y0, fw, fh, fi, rgba, 0, 0, 1, 1, grp, 0),                                  # corners
+                (x0 + w - fw, y0, fw, fh, fi, rgba, 1, 0, 0, 1, grp, 0),
+                (x0, y0 - h + fh, fw, fh, fi, rgba, 0, 1, 1, 0, grp, 0),
+                (x0 + w - fw, y0 - h + fh, fw, fh, fi, rgba, 1, 1, 0, 0, grp, 0),
+                (x0 + fw, y0, w - 2 * fw, fh, fi, rgba, iu, 0, iu, 1, grp, 0),                   # top, bottom edges
+                (x0 + fw, y0 - h + fh, w - 2 * fw, fh, fi, rgba, iu, 1, iu, 0, grp, 0),
+                (x0, y0 - fh, fw, h - 2 * fh, fi, rgba, 0, iv, 1, iv, grp, 0),                   # left, right edges
+                (x0 + w - fw, y0 - fh, fw, h - 2 * fh, fi, rgba, 1, iv, 0, iv, grp, 0)]
     return out, images
 
 
@@ -224,13 +259,13 @@ def section(fsp, first_tex):
         ps2 += [tex.to_ps2(im, 0, 0, hi=True) for im in imgs]
         images += imgs
         body += struct.pack("<24sHH", name.encode(), len(qs), 0)
-        for x, y, w, h, ti, rgba, u0, v0, u1, v1, grp in qs:
+        for x, y, w, h, ti, rgba, u0, v0, u1, v1, grp, fill in qs:
             t = ps2[base + ti] if ti is not None else None
             sw, sh = (t["w"] * t["u_scale"], t["h"] * t["v_scale"]) if t else (0, 0)
-            body += struct.pack("<4hH4B4hBx", round(x), round(y), round(w), round(h),
+            body += struct.pack("<4hH4B4h2B", round(x), round(y), round(w), round(h),
                                 0xFFFF if ti is None else first_tex + base + ti, *rgba,
                                 round(16 * u0 * sw), round(16 * v0 * sh), round(16 * (u1 - u0) * sw), round(16 * (v1 - v0) * sh),
-                                grp)
+                                grp, fill)
     return head + body, ps2, images
 
 
