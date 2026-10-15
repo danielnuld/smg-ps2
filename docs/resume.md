@@ -348,7 +348,10 @@ the pane tree, groups; LAYO in the FONT chunk): TalkBalloonEvent and SignBoardBa
 EggStar 1 SignBoard and Tico checked). 6b89acc TicoFat's Info: InformationPlanet in InformationWindow until A
 (`fat`). The fullness meter needs BRLAN (StarPieceTargetCounter slides in from x 500 in Appear; the meter's fill
 is a masked texture animation): next, a brlan reader (pai1: RLPA pane SRT / alpha at a frame, RLTS texture SRT).
-Left for Good Egg, in order: the fullness meter (brlan), OtaKing's bath rim crevice, the short (stretch) balloon's layout, sound last (the user's call).
+a86f326 the fullness meter (counter at its Appear's end, the meter's frame at the pointer; its masked fill not drawn).
+Regression 2026-10-15: `route` EggStar 1-4 all get their stars with every change above.
+Left for Good Egg: sound (the user's call: last; AFC -> ADPCM, SE tables), the meter's masked fill, OtaKing's bath
+rim crevice (only from a test's artificial drop), the short (stretch) balloon's layout (no Good Egg message uses it).
 
 **Parked 2026-10-14 (the user's call: Good Egg first), resume later:** the coverage-run session stopped mid-work.
 f8ff9e6 (untested, committed as it stood): gravities follow their switches (GlobalGravityObj::updateSwitch; SW_SLEEP
