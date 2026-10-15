@@ -372,10 +372,16 @@ sound.bin (`sound.py --pack`: the SEs game.c names, their waves at caps scaled t
 Mario's sounds (mario_sound = Mario::playSoundJ over mario_snd.h from MarioSound.cpp; MarioJump.cpp's calls: jumps,
 hip drop, landings); d1112e7 animation sounds (.bas of MarioAnime and Good Egg's actors via draw_skin: footsteps,
 Dino, Kinopio...). Checked in PCSX2 by voices in use / ENDX (`snd`, `route`, `walker` log `se:` lines), not by ear:
-the user should listen. Next for sound: system SEs (coins, star pieces, talk balloons and talk sounds, the pointer,
-power star), then each Good Egg class's startSound / startLevelSound calls (inventory in the 2026-10-15 session:
-Petari call sites per class), ports 11 / 12 for the floor's sound code (footstep surfaces), JAIAudience 3D,
-voice stealing by priority. Known: `talk` (class 1) no longer reaches its SignBoard (Mario stuck 2800 off, before
+the user should listen. Then (all after Petari's call sites): 769bc7d system sounds (pickups, star, shots, TicoFat's
+meter / gifts, talk A button / start / balloon open / close / page), db8ab7a Mario's spins / damage / life and the
+launch stars, 5af640d Kuribo, b072583 Takobo / Karikari, 4954408 breakables / ItemBubble / coin pops, 7010b10 sound
+packs per scenario (EggStar caps 14-16 / 10-11 kHz), 78c3098 DinoPackun, 7a7d9f1 OtaKing / magma / coconuts (`dino`,
+`ota` fights still end with their stars). Next for sound: TicoFat, Tico / Kinopio talk sounds (startTalkSound by
+message), KuriboMini, PackunPetit, HammerHeadPackun, Petari, CocoSambo, KillerGunnerSingle, OtaRock, Plant, Butterfly,
+NeedlePlant, CollapsePlane, QuestionCoin, BenefitItem, StageEffectDataTable movers, Mario's remaining table keys
+(swim, slip, wall, hang...), ports 11 / 12 for the floor's sound code (footstep surfaces), JAIAudience 3D, voice
+stealing by priority. The inventory per class lives in the 2026-10-15 session's scratchpad (goodegg_sounds.md); redo
+it with grep over vendor/Petari if lost. Known: `talk` (class 1) no longer reaches its SignBoard (Mario stuck 2800 off, before
 these changes too).
 Left for Good Egg: sound (see above), OtaKing's bath
 rim crevice (only from a test's artificial drop), the short (stretch) balloon's layout (no Good Egg message uses it).
