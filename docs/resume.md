@@ -412,8 +412,13 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
      alpha only, frame x alpha to a 160 x 56 quarter, sL1 / sL2 blurs, added at the BloomArea intensity; VRAM 112 KB
      for its buffers, vram_need default 2304 KB), game.c bloom_update (ImageEffectArea, 1 / 15 fade, 0.1 approach),
      "<class>Bloom" models (PlanetMap::initBloomModel) and OtaKingMagmaBloom. ponytail: scene colour under the bloom
-     models, no threshold, OtaKingMagmaBloom unposed. Next: the TEASER demos (vine black hole), DropOfWater's env map
-     (texgen), then item d (coverage run) and the disc image.
+     models, no threshold, OtaKingMagmaBloom unposed. TEASER vine demo fixed (4d186b8: Mario on the ground beside
+     the stalk). The "pale capsule" was DropOfWaterCore (opaque stone); its water is OceanSphere, done 2026-10-15
+     (b6cce1f, checked in `swim` EggStar 1, now on its biggest OceanSphere): game.c os_build / os_point /
+     draw_oceanspheres after OceanSphere.cpp, render.c render_mesh (EE-projected textured triangles), jpa.py bakes its
+     face and env textures into resident.bin (fx_ocean_tex). ponytail: one texture sample for the face's two stages,
+     culling by facing, spheres behind the camera or past 30000 skipped. Next: item d (coverage run) and the disc
+     image, then the rest of Next.
      MarioPress done (MarioPress.cpp checkVerticalPress, setPress 0 / 4 after Petari: press objects are the
      RailMoveObjPress classes; Dossun / RailBlock / TripodBossFixParts are not in the port; checkSidePressPre /
      checkSidePress need front / back walls and face velocities the port's collision lacks), talk / messages, sound effects, real lighting, wipes, multi-actor cameras (Dino damage camera),
