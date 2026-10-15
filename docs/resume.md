@@ -324,6 +324,14 @@ there needs the embedded blob and every pack rebuilt.
 
 ## Next
 
+**Parked 2026-10-14 (the user's call: Good Egg first), resume later:** the coverage-run session stopped mid-work.
+f8ff9e6 (untested, committed as it stood): gravities follow their switches (GlobalGravityObj::updateSwitch; SW_SLEEP
+not honoured), Shadow / Magnet gravity types left out, negative Distant keeps the default, cancelling pulls give no
+direction. GRAV records grew to 88 B (OBJS row): the full repack was killed partway, so the packs of Phantom,
+ReverseKingdom, SandClock, StarDust, TearDrop, TeresaMario2D, TransformationEx and TriLegLv1 are still 84 B (stale,
+broken with this engine); rerun `python tools/slice_all.py data/fs/files out/packs 6`, run the host tests
+(engine/test/run.sh, slice.py selftest), then the coverage run (out/coverage.csv held 110 of 136 when stopped).
+
 **2026-10-14 session (build only, nothing run: the user's call; test all of it first next session):** the video
 fixes below were tried blind (b935237: the Plant's front kept orthogonal as makeAxisUpFront does, the only
 difference from Petari found statically; demo_star takes the nearest shown star, no 3000 limit; game_demo_ota
