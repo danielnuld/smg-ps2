@@ -556,7 +556,15 @@ static const Model *m_ota, *m_otafoot, *m_coco, *m_fireball2, *m_firebubble, *m_
 /* OtaKingMagma's clip (startBckThisAndBloomModel); one-shots go back to Wait (Down: EndWait) at their end */
 void ota_lfoot_mtx(int k, float out[16]);
 static int lstep_of(int k) { static const int st[4] = {3, 8, 14, 18}; return st[k]; }
-static void ota_magma(const char *clip) { snprintf(ota.mact, sizeof ota.mact, "%s", clip); ota.mseq++; }
+static void ota_se(u32 id) { float at[3] = {ota.pos.x, ota.pos.y + 0.0f, ota.pos.z}; se_start(id, at); } /* on it */
+static void ota_magma(const char *clip) /* OtaKingMagma's nerve: its clip and its sound (exeAttack / exeFireAttack /
+                                         * exeHitBack / exeDamage / exeDown first steps) */
+{
+    snprintf(ota.mact, sizeof ota.mact, "%s", clip); ota.mseq++;
+    if (!strcmp(clip, "attack") || !strcmp(clip, "fireattack")) ota_se(SE_BM_OTAKING_MAGMA_ATTACK);
+    else if (!strcmp(clip, "hitback")) ota_se(SE_BM_OTAKING_MAGMA_HITBACK);
+    else if (!strcmp(clip, "damage") || !strcmp(clip, "down")) ota_se(SE_BM_OTAKING_MAGMA_DAMAGE);
+}
 static void ota_lfoot(int k, int nrv, const char *clip)
 {
     ota.lnrv[k] = nrv; ota.lt[k] = 0;
@@ -6829,6 +6837,10 @@ static void ota_damage(void) /* OtaKing::damage */
 {
     if (ota_damage_nrv()) return;
     ota.hits++;
+    if (ota.hits < 3) {
+        static const u32 jingle[3] = {SE_SY_VS_BOSS_DAMAGE_3, SE_SY_VS_BOSS_DAMAGE_1, SE_SY_VS_BOSS_DAMAGE_2};
+        ota_se(SE_BV_OTAKING_DAMAGE); ota_se(SE_BM_OTAKING_DAMAGE); se_start(jingle[ota.hits % 3], NULL);
+    }
     if (ota.hits < 3) ota_set(ota.hits + 1 >= 3 ? OTA_POWERUP : OTA_DAMAGE);
     else ota_set(OTA_DOWN);
     printf("ota king: hit %d" "\n", ota.hits);
@@ -6859,6 +6871,7 @@ static void ota_ball_aim(int b, float speed, float deg)
 static void ota_ball_kill(int b) /* CocoNutBall::kill: a rally's end tells its host (ACTMES_RUSH_END) */
 {
     int rally = ota.ball[b].rally;
+    { float at[3] = {ota.ball[b].pos.x, ota.ball[b].pos.y, ota.ball[b].pos.z}; se_start(SE_OJ_COCONUT_BALL_BREAK, at); }
     ota.ball[b].state = 0;
     if (rally <= 0 || ota_damage_nrv()) return;
     if (ota.nrv == OTA_WAIT || ota.nrv == OTA_THROWCOCOWAIT || ota.nrv == OTA_HITBACKSTART)
@@ -6907,6 +6920,7 @@ static void update_ota_balls(V3 c, V3 body, V3 face)
             k->rally++;
             coco_hitback(k->pos, k->up, ota.pos, body, &k->vel, &k->grav);
             k->state = 2; k->t = 0;
+            { float at[3] = {k->pos.x, k->pos.y, k->pos.z}; se_start(SE_OJ_COCONUT_BALL_VOLLEY, at); } /* exeHitBackToHost (startSpinHitSound: CS only) */
             printf("ota king: coconut hit back (rally %d)" "\n", k->rally);
             continue;
         }
@@ -6925,6 +6939,7 @@ static void update_ota_balls(V3 c, V3 body, V3 face)
                     if (k->alt) { r = -r; k->alt = 0; } else k->alt = 1;
                     ota_ball_aim(b, 3.0f * k->rally + 15.0f, r);
                     k->state = 3; k->t = 0;
+                    { float at[3] = {k->pos.x, k->pos.y, k->pos.z}; se_start(SE_OJ_COCONUT_BALL_VOLLEY, at); } /* exeHitBackToPlayer */
                     printf("ota king: hits it back" "\n");
                 } else {
                     ota_damage();
@@ -7157,6 +7172,8 @@ static void update_ota(void)
     switch (ota.nrv) {
     case OTA_APPEARDEMO:
         if (ota.t == 1) for (int k = 0; k < 4; k++) ota_lfoot(k, 3, "appear"); /* mLongFeet startAppearDemo */
+        if (ota.t == 11 || ota.t == 101 || ota.t == 231) ota_se(SE_BM_OTAKING_MAGMA_HITBACK); /* cAppearSeStep0 / 3 / 2 */
+        if (ota.t == 206) ota_se(SE_BM_OTAKING_MAGMA_DAMAGE);                                  /* cAppearSeStep1 */
         if (ota.t == 41) ota_magma("attack");                                   /* cAppearDemoRippleStepS */
         if (ota.t == 191) ota_magma("down");                                    /* appearDemo (Down), then Wait */
         if (ota.t == 51 || ota.t == 161) camera_shake(SHAKE_NORMAL);           /* cAppearDemoRumblePad01 / 03 */
@@ -7171,6 +7188,7 @@ static void update_ota(void)
         break;
     }
     case OTA_THROWCOCO:
+        if (ota.t == 1) ota_se(SE_BV_OTAKING_PRE_RALLYBALL);
         if (ota.t == 31) ota_magma("attack"); /* cCocoNutRippleStep */
         if (ota.t == 70) { /* throwCocoNut: from mThrowPos (Lip, -50 0 0) */
             for (int b = 0; b < OTA_BALLS; b++) if (!ota.ball[b].state) {
@@ -7181,6 +7199,7 @@ static void update_ota(void)
                 ota_ball_aim(b, 15.0f, throw_ang + (ota.ec % 2 == ota.hits % 2 ? rnd : -rnd));
                 ota.ec++;
                 ota_fx("OtaKingCocoAttack");
+                { float at[3] = {k->pos.x, k->pos.y, k->pos.z}; se_start(SE_OJ_COCONUT_BALL_SPIT_OUT, at); } /* CocoNutBall::exeThrow */
                 printf("ota king: coconut thrown" "\n");
                 break;
             }
@@ -7195,6 +7214,9 @@ static void update_ota(void)
         if (ota.t > 60 && ota_valid_fire()) ota_set(OTA_THROWFIRE);
         break;
     case OTA_THROWFIRE:
+        if (ota.t == 1) ota_se(SE_BV_OTAKING_PRE_FIREBALL);
+        { static u32 pre; float at[3] = {ota.pos.x, ota.pos.y, ota.pos.z}; pre = se_level(SE_BM_LV_OTAKING_PRE_FIRE, at, pre); }
+        if (ota.t == 95) ota_se(SE_BM_OTAKING_FIRE_OUT); /* cThrowFireBallStep */
         if (ota.t == 31) ota_magma("fireattack"); /* cFireBallRippleStep */
         if (ota.t == 94) { /* throwFireBall: three, 0 / -30 / +30 */
             V3 tp = ota_joint(11, v3(-50.0f, 0, 0));
@@ -7215,12 +7237,14 @@ static void update_ota(void)
         if (ota.t == 3) scene_stop = 16; /* stopScene (Lv1) */
         if (ota.t == 4) camera_shake(SHAKE_NORMAL_STRONG);
         if (ota.nrv == OTA_POWERUP && (ota.t == 74 || ota.t == 176 || ota.t == 196 || ota.t == 216)) camera_shake(SHAKE_NORMAL);
+        if (ota.nrv == OTA_POWERUP && ota.t == 74) ota_se(SE_BM_OTAKING_CROWN_FALL); /* cDamageCrownFallFrame */
         if (ota.t >= (ota.nrv == OTA_POWERUP ? 256 : 179)) {
             if (ota.nrv == OTA_POWERUP && r->sw[SW_B] >= 0) sw_set(r, SW_B, 1);
             ota_set(ota_valid_bubble() ? OTA_BUBBLEATTACK : ota_valid_fire() ? OTA_THROWFIRE : OTA_THROWFIREWAIT);
         }
         break;
     case OTA_DOWN:
+        if (ota.t == 1) { ota_se(SE_BM_OTAKING_LAST_DAMAGE); ota_se(SE_BM_OTAKING_DIE); ota_se(SE_BV_OTAKING_DIE); se_start(SE_SY_VS_BOSS_LAST_HIT, NULL); }
         if (ota.t == 1) {
             for (int k = 0; k < 4; k++) ota_lfoot(k, 4, NULL); /* mLongFeet startDownDemo */
             for (int b = 0; b < OTA_BALLS; b++) ota.ball[b].state = 0;
@@ -7231,6 +7255,7 @@ static void update_ota(void)
         break;
     case OTA_DOWNDEMO:
         ota.yaw = 43.0f; /* cDownDemoRotate */
+        if (ota.t > 81) { static u32 sink; float at[3] = {ota.pos.x, ota.pos.y, ota.pos.z}; sink = se_level(SE_BM_LV_OTAKING_SINK, at, sink); } /* cDownSinkStartStep */
         if (ota.t == 1) ota_magma("damage");
         if (ota.t == 91) ota_magma("down"); /* cDownRippleStep: Down, then EndWait */
         if (ota.t == 1) camera_shake(SHAKE_STRONG);
@@ -7250,6 +7275,8 @@ static void update_ota(void)
         }
         break;
     case OTA_BUBBLEATTACK:
+        if (ota.t == 1) ota_se(SE_BV_OTAKING_PRE_FIREBALL);
+        if (ota.t == 86) ota_se(SE_BM_OTAKING_MAGMA_BEAT); /* cBubbleAttackRippleStep */
         if (ota.t == 101) { /* cBubbleAppearStep 100: appearBubble, six round it from mBubbleAppearPos (0, 10, 500) */
             camera_shake(SHAKE_NORMAL);
             float m[16];
@@ -7267,6 +7294,11 @@ static void update_ota(void)
     default: break;
     }
     mario_hidden = (ota.nrv == OTA_APPEARDEMO || ota.nrv == OTA_DOWNDEMO) && ota.t >= 1;
+    if (ota.nrv != OTA_DEAD) { /* OtaKingMagma's wind (every nerve of it) */
+        static u32 wind;
+        float at[3] = {ota.pos.x, ota.pos.y, ota.pos.z};
+        wind = se_level(SE_AT_LV_MAGMA_WIND, at, wind);
+    }
     /* OtaKingLongFoot (mLongFeet, not Lv2): hidden until the appear demo (Appear held at 0 until its step 3 / 8 / 14 / 18,
      * then played), Wait (from a random frame), Damage when its foot sensors (Foot14 / 12 / 10 / 08 / 06 / 05, 50 to 150)
      * burn Mario (sendMsgEnemyAttackFire), Down at its step in the down demo, gone with the star */
