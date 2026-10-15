@@ -210,6 +210,7 @@ typedef struct {
     int talkcls;     /* SignBoard 1, Tico 2, Kinopio 3: update_talkers */
     const Model *md_bloom; /* its "<model>Bloom" model (PlanetMap::initBloomModel, createModelObjBloomModel) or NULL */
     int otamagma;    /* OtaKingMagma's collision (initCollisionParts "OtaKingMagma"): drawn with OtaKing (ota) */
+    int bridge;      /* PhantomShipBridge 1; its Move collision part 2 + the bridge's inst index (update_bridges) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
 static V3 firebar_ball(const Inst *in, int j, int k);
@@ -3059,6 +3060,7 @@ void game_rebind(void)
                     strcmp(name, "HipDropTimerSwitch") == 0 ? 2 : 0;
         in->rotor = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->arg[4] != -1 && r->arg[4] != 0; /* -1: not a map part */
         in->seesaw = strcmp(name, "PhantomShipHandle") == 0;
+        in->bridge = strcmp(name, "PhantomShipBridge") == 0;
         in->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 ? 3 : 0;
         in->press = strcmp(name, "RGTowerPressGroundA") == 0 || strcmp(name, "ReverseGravityRoomPressGroundA") == 0 ||
                     strcmp(name, "ReverseGravityRoomPressGroundB") == 0;
@@ -3122,6 +3124,13 @@ void game_rebind(void)
         in->reach = m_otamagma->radius * in->s;
         zone_grow(in);
     }
+    for (int i = 0, n = ninsts; i < n; i++) /* PhantomShipBridge's "Move" collision on its joint (update_bridges) */
+        if (insts[i].bridge == 1 && scene_kcl(s, "PhantomShipBridge#Move") && ninsts < (int)s->nobjs) {
+            Inst *in = &insts[ninsts++];
+            *in = insts[i];
+            in->bridge = 2 + i; in->invisible = 1; in->anim = NULL;
+            in->kcl = scene_kcl(s, "PhantomShipBridge#Move");
+        }
     for (int i = 0; plant_first && i < ninsts; i++)
         if (insts[i].plant) { insts[i].kcl_ready = 1; place_plants(&insts[i]); }
     memset(zone_kcl, 0, sizeof zone_kcl);
@@ -13611,6 +13620,79 @@ static void seesaw_matrix(Inst *in) /* its placement turned `angle` about its ow
     rz[0] = cosf(a); rz[1] = sinf(a); rz[4] = -sinf(a); rz[5] = cosf(a);
     mat_mul(in->m, base, rz);
 }
+/* PhantomShipBridge.cpp: with SW_A it waits (no BCK: its bind pose) until SW_A turns on, then MoveA; SW_B on:
+ * MoveB; without SW_A it is at MoveA's end at once (setStateMoveA). Step 55 of either: shakeCameraNormal. Its Move
+ * collision follows the Move joint (joint 1); the body's stays. ponytail: no sounds */
+#define MAX_BRIDGES 4
+static struct { int row, nrv, t; } bridges[MAX_BRIDGES];
+static int nbridges;
+enum { BR_WAIT, BR_MOVEA, BR_MOVEB };
+static void update_bridges(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (in->bridge != 1 || !in->md || !in->md->skin) continue;
+        const Row *r = &sc->objs[in->row];
+        int k = 0;
+        while (k < nbridges && bridges[k].row != in->row) k++;
+        if (k == nbridges) {
+            if (nbridges == MAX_BRIDGES) continue;
+            nbridges++;
+            bridges[k].row = in->row; bridges[k].t = 1000;
+            bridges[k].nrv = r->sw[SW_A] >= 0 ? BR_WAIT : BR_MOVEA;
+        }
+        typeof(&bridges[0]) b = &bridges[k];
+        if (b->nrv == BR_WAIT && r->sw[SW_A] >= 0 && sw_on(r, SW_A)) { /* startMoveA */
+            b->nrv = BR_MOVEA; b->t = 0; printf("bridge row %d: MoveA" "\n", in->row);
+        }
+        if (b->nrv != BR_MOVEB && r->sw[SW_B] >= 0 && sw_on(r, SW_B)) { /* startMoveB */
+            b->nrv = BR_MOVEB; b->t = 0; printf("bridge row %d: MoveB" "\n", in->row);
+        }
+        if (b->nrv != BR_WAIT && b->t < 1000) b->t++;
+        if (b->nrv != BR_WAIT && b->t == 56) camera_shake(SHAKE_NORMAL);
+        in->anim = obj_anim(in->row, in->md, "PhantomShipBridge");
+        Anim *a = in->anim;
+        if (!a) continue;
+        if (b->nrv == BR_WAIT) { a->clip = NULL; a->clip_id = -1; }
+        else {
+            anim_play(a, b->nrv == BR_MOVEA ? "phantomshipbridge/movea" : "phantomshipbridge/moveb", 0.0f, 0, 0);
+            int len = anim_length(a);
+            a->frame = (float)(b->t - 1 < len ? b->t - 1 : len); /* its frame, held at the end */
+        }
+    }
+#ifdef BRIDGE_TEST /* XF=-DBRIDGE_TEST: Mario held over the first bridge's row (its zone streams in); its SW_A on at
+                    * frame 900 */
+    {
+        int ty = scene_type(sc, "PhantomShipBridge");
+        for (u32 i = 0; ty >= 0 && i < sc->nobjs; i++)
+            if ((int)sc->objs[i].type == ty) {
+                const Row *r = &sc->objs[i];
+                if (game_frame >= 300 && game_frame < 1500) {
+                    test_nolost = 1;
+                    mario->pos = vadd(row_pos(r), v3(0, 900.0f, 1500.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+                }
+                if (game_frame == 900 && r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
+                const Inst *bi = NULL;
+                for (int j = 0; j < ninsts && !bi; j++) if (insts[j].bridge == 1 && insts[j].row == (int)i) bi = &insts[j];
+                const Inst *pi = NULL;
+                for (int j = 0; j < ninsts && !pi; j++) if (insts[j].bridge >= 2 && insts[j].row == (int)i) pi = &insts[j];
+                if (game_frame % 60 == 0)
+                    printf("bridge test f %d: inst %d frame %d, part %d at %d %d %d up %d %d %d" "\n", game_frame,
+                           bi != NULL, bi && bi->anim ? (int)bi->anim->frame : -1, pi != NULL, pi ? (int)pi->m[12] : 0,
+                           pi ? (int)pi->m[13] : 0, pi ? (int)pi->m[14] : 0, pi ? (int)(100 * pi->m[4]) : 0,
+                           pi ? (int)(100 * pi->m[5]) : 0, pi ? (int)(100 * pi->m[6]) : 0);
+                break;
+            }
+    }
+#endif
+    for (int i = 0; i < ninsts; i++) { /* the Move part: the bridge's matrix x its Move joint's (last pose) */
+        Inst *p = &insts[i];
+        if (p->bridge < 2) continue;
+        const Inst *in = &insts[p->bridge - 2];
+        if (in->anim && in->anim->skin && in->anim->skin->njoints > 1) mat_mul(p->m, in->m, in->anim->world[1]);
+    }
+}
+
 static void update_seesaws(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -15383,6 +15465,7 @@ void game_update(void)
     update_talk_director();
     update_mario();
     update_seesaws(); /* after Mario: his hip drop (hip_hit) this frame */
+    update_bridges();
     if (mario->spin_timer == SPIN_TIME - 1) mario_fx(FX_MARIO_SPINLIGHT, 1.0f); /* a spin started this frame */
     if (hip_hit) mario_fx(FX_MARIO_HIPDROPFLOWER, 0.0f);
     update_launched_pieces();

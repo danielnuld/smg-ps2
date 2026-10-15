@@ -65,7 +65,7 @@ SKINNED_OBJ = ("FlowerGroup", "FlowerBlueGroup", "CutBushGroup", "DinoPackun", "
                "RockBreak", "WanwanRollingBreak", "PunchingKinoko", "OtaKingMagma", "OtaKingLongFoot", "WoodBoxBreak",
                "CrystalCageSBreak", "BenefitItemOneUp", "BenefitItemLifeUp", "FlipPanel", "FlipPanelReverse", "OtaRock",
                "HammerHeadPackun", "PackunLeaf", "Plant", "Petari",
-               "PhantomShipPropellerSmall", "PhantomShipPropellerBig")  # AnmModelSwitchMove without SW_A: Move at once (obj_anim: its only clip)
+               "PhantomShipPropellerSmall", "PhantomShipPropellerBig", "PhantomShipBridge")  # AnmModelSwitchMove without SW_A: Move at once (obj_anim: its only clip)
 # MapObjActor::initialize (tryStartAllAnim): a placed class whose model archive holds a BCK of the archive's name
 # plays it from the start; such classes are drawn skinned too (AUTO_SKINNED, class -> archive, filled by placement)
 AUTO_SKINNED = {}
@@ -120,7 +120,7 @@ COIN100 = "１００枚コイン"
 KCL_JOINT = {"JumpStand": "JumpStandJoint03"}  # collision at that joint's (bind pose) place
 # drawn and collided at the last frame of a BCK, the named KCLs added at their joint (PhantomShipBridge.cpp:
 # setStateMoveA, the bridge down without SW_A; createCollisionPartsFromLiveActor "Move" on joint Move).
-# ponytail: the end pose for good (no MoveA / MoveB playing on the switches)
+# ponytail: the end pose for good (no MoveA / MoveB playing on the switches); PhantomShipBridge itself moves (KCL_PARTS)
 # AstroMapObjFunction::getModelName: these classes take their model from a table by arg0 (the dome, 1-6)
 ASTRO_MODELS = {
     "AstroDome": ("AstroDomeObservatory", "AstroDomeWell", "AstroDomeKitchen", "AstroDomeBedRoom", "AstroDomeMachine",
@@ -130,7 +130,10 @@ ASTRO_MODELS = {
                           "AstroDomeEntranceBedRoom", "AstroDomeEntranceMachine", "AstroDomeEntranceTower"),
     "AstroStarPlate": ("AstroStarPlateObservatory", "AstroStarPlateWell", "AstroStarPlateKitchen", "AstroStarPlateBedRoom",
                        "AstroStarPlateMachine", "AstroStarPlateTower")}
-POSE = {"PhantomShipBridge": ("MoveA", {"move.kcl": "Move"}), "NutShipFleetBridge": ("MoveA", {"move.kcl": "Move"})}
+POSE = {"NutShipFleetBridge": ("MoveA", {"move.kcl": "Move"})}
+# collisions on a joint of a skinned model (createCollisionPartsFromLiveActor with getJointMtx): KCL "<class>#<joint>"
+# in that joint's space, the engine moves it with the joint (PhantomShipBridge.cpp: "Move" on joint Move)
+KCL_PARTS = {"PhantomShipBridge": {"move.kcl": "Move"}}
 HOME_POS = "\u5408\u4f53\u30d6\u30ed\u30c3\u30af\u6545\u90f7\u70b9"  # 合体ブロック故郷点: AssemblyBlock's home (Petari sReturnPosName)
 LOGIC = ("TimerSwitch", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
          "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "DeathCube", "DeathSphere",
@@ -1154,7 +1157,7 @@ def placement(fs, galaxy, scenario):
         if o["name"] in ASTRO_MODELS and 1 <= o["args"][0] <= 6:
             o["name"] = ASTRO_MODELS[o["name"]][o["args"][0] - 1]
     for o in objs:  # POSE classes are LiveActors with a BCK, not MapPartsRotators: their mappartsinfo columns unused
-        if o["name"] in POSE:
+        if o["name"] in POSE or o["name"] in KCL_PARTS:
             o["args"][4:8] = [-1, -1, -1, -1]
     for o in objs:  # AssemblyBlock: its home point (world) in args 2-6 (assembly_home in game.c)
         if o["name"].startswith("AssemblyBlock"):
@@ -1310,6 +1313,12 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
         if kcl and collision:
             kcl = kcl_to_le(kcl)
             kcls.append(name32(t) + struct.pack("<I", len(kcl)) + kcl + b"\0" * (-len(kcl) % 4))
+        if collision and cls in KCL_PARTS:  # its joint collisions (KCL_PARTS)
+            fl = {k.lower().rsplit("/", 1)[-1]: v for k, v in B.rarc_files(arc.read_bytes())}
+            for kn, jn in KCL_PARTS[cls].items():
+                if kn in fl:
+                    pk = kcl_to_le(kcl_codes(fl[kn], fl.get(kn[:-4] + ".pa", b"")))
+                    kcls.append(name32(f"{t}#{jn}") + struct.pack("<I", len(pk)) + pk + b"\0" * (-len(pk) % 4))
     head, data = bytearray(), bytearray()
     base = 16 + 32 * len(texts)
     for tx in texts:
