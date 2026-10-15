@@ -5536,10 +5536,22 @@ static void fly_pose(Player *m, V3 dir, int s, int flight, int t0_in, const Laun
 
 static void m_power_jump(Player *m, V3 v);
 
+/* the stars' sounds (SpinDriver / SuperSpinDriver): its spot or Mario's; the CS (remote speaker) ones play their SE
+ * fallbacks, ME_MAGIC its SE_SY_S_SPIN_DRV_ME_ALT */
+static u32 launch_fly_snd;
+static void launch_sound(const Launch *L, u32 id) { float at[3] = {L->pos.x, L->pos.y, L->pos.z}; se_start(id, at); }
+static void mario_se(u32 id) { float at[3] = {mario->pos.x, mario->pos.y, mario->pos.z}; se_start(id, at); }
+
 static int update_launch(Player *m)
 {
     Launch *L = &launches[m->launch];
     int t = ++m->launch_t;
+    if (t == 1 && L->start >= 45) { /* SuperSpinDriver::exeShootStart */
+        mario_se(SE_PM_SPIN_ATTACK);
+        se_start(SE_SY_CS_S_SPIN_DRV_START, NULL);
+        launch_sound(L, SE_OJ_S_SPIN_DRV_PREP_JUMP);
+    }
+    if (t == 4 && L->start < 45) se_start(SE_SY_CS_SPIN_DRV_START, NULL); /* SpinDriver::exeShootStart step 4 */
     if (t <= L->start) {
         if (L->start < 45) { /* SpinDriver::exeShootStart: from where he was to 200 under the star along its up and back
                               * ((2 (p - 0.5))^4 over 20 frames), the blend complete at half way */
@@ -5554,6 +5566,19 @@ static int update_launch(Player *m)
     }
     int small = !L->starter && L->start < 45, s = t - L->start;
     if (s == 1 && !L->starter) camera_shake(L->start < 45 ? SHAKE_NORMAL : SHAKE_STRONG); /* exeShoot */
+    if (s == 1 && !L->starter) { /* exeShoot's first step */
+        se_start(SE_SY_S_SPIN_DRV_ME_ALT, NULL);
+        launch_sound(L, L->start < 45 ? SE_OJ_SPIN_DRV_JUMP : SE_OJ_S_SPIN_DRV_JUMP);
+        mario_se(SE_PV_JUMP_JOY);
+    }
+    if (!L->starter && L->pts) { /* the flight's level sound (SpinDriver: until _130, SuperSpinDriver: until _158) and
+                                  * SuperSpinDriver's cool down at _158 (calcShootMotionTime) */
+        int big = L->start >= 45, until = big ? (L->flight >= 70 ? L->flight - 70 : -1)
+                                              : (L->flight < 70 ? L->flight : L->flight - 20);
+        float at[3] = {m->pos.x, m->pos.y, m->pos.z};
+        if (s < until) launch_fly_snd = se_level(big ? SE_PM_LV_S_SPIN_DRV_FLY : SE_PM_LV_SPIN_DRV_FLY, at, launch_fly_snd);
+        if (big && s == until) { mario_se(SE_PM_S_SPIN_DRV_COOL_DOWN); mario_se(SE_PV_JUMP_S); }
+    }
     if (!L->pts) { /* SpinDriver without a rail: endBindAndSpinDriverJump with its kick */
         L->cool = 60;
         m->launch = -1;
@@ -10366,10 +10391,13 @@ static void m_swing(Player *m)
         if (m->jumping) { /* trySpinPunch in the air: 空パンチ */
             if (m->hip) return;
             mario_play("spin2nd", 1.0f, 0);
+            mario_sound("パンチ風切り"); /* updateSwingAction: the upper animation changed */
             m->spin_timer = 15; m->spin_t = 0; m->walk = 0;
         } else if (!m->squat && m->slip_keep) { /* startMagic (ponytail: no サマーソルト from a squat) */
             m->magic = 1;
             mario_play("spinground", 1.0f, 0);
+            mario_sound("声スピン"); mario_sound("スピンジャンプ"); /* MarioMagic::start */
+            mario_sound("パンチ風切り");
 #ifdef BENCH
             printf("spin ground\n");
 #endif
@@ -10557,6 +10585,11 @@ static void update_mario(void)
         for (int i = 0; i < nlaunches; i++)
             if (!launches[i].cool && row_shown(launches[i].row) && vlen(vsub(vadd(m->pos, vmul(m->up, BODY_RADIUS)), launches[i].pos)) < LAUNCH_BIND) {
                 m->launch = i; m->launch_t = 0; m->launch_from = m->pos; m->hip = 0;
+                if (launches[i].start < 45) { /* SpinDriver::startBind (a swing) */
+                    se_start(SE_SY_S_SPIN_DRV_ME_ALT, NULL);
+                    float at[3] = {m->pos.x, m->pos.y, m->pos.z};
+                    se_start(SE_PM_SPIN_ATTACK, at);
+                }
                 if (mario_anim) mario_play(launches[i].start < 45 ? "spin" : "superspindriverstart", 1.0f, 0);
 #ifdef BENCH
                 printf("launch %d\n", i);
@@ -10743,6 +10776,7 @@ static void hurt_mario(V3 from, float push)
     if (mario->hurt_timer || invincible_time) return;
     if (bee_mode) { bee_mode = 0; printf("bee mario lost\n"); } /* the bee suit goes at a hit */
     mario_fx(FX_MARIO_DAMAGE, 1.0f);
+    mario_sound("声小ダメージ"); mario_sound("ダメージ"); /* MarioDamage::start */
     if (--life <= 0) { printf("no life left\n"); miss(); return; }
     V3 away = vtangent(vsub(mario->pos, from), mario->up);
     if (vlen(away) < 1e-3f) away = mario->face;
@@ -15745,6 +15779,7 @@ void game_update(void)
     update_pops();
     int had = got_coins;
     collect(coins, ncoins, 100.0f, &got_coins, FX_COIN_COINGET, SE_SY_COIN); /* Coin::noticeGetCoin */
+    if (got_coins > had && life < max_life) mario_sound("ライフ回復"); /* MarioActor::incLife */
     life += got_coins - had;
     if (life > max_life) life = max_life;
     if (got_coins / 50 > had / 50) lives++; /* every 50 coins a 1-up */
