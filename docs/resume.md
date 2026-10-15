@@ -325,6 +325,25 @@ there needs the embedded blob and every pack rebuilt.
 
 ## Next
 
+**Frame rate, 2026-10-15 (the user: "optimizarlo para que sea 60fps, o minimo 30"; resume here):** EggStar 1
+bench (scripted path, `build.sh bench`) 29.3 -> 16.5 ms avg, worst 45 -> 32.6 ms; start view (XF=-DBENCH_STILL)
+19.7 ms avg (logic 5.8, draw 12.1, gs 1.2), worst 29.4. Normal builds now run 60 Hz logic with catch-up
+(-DCATCHUP, any build without a test mode: up to 2 logic steps a frame, draw-time clips / sounds / wipe advance
+those steps): the game keeps its speed at 30 fps; at the start ~29 fps, 60 needs the start view under 16.7 ms.
+Done: f0e7798 fx_anim index, ocean sphere sines / facing sort, walkers out of view skip pose / shadow / draw
+(anim_advance, render_visible); 88d4bb6 catch-up loop, fx_update gravity per emitter; a420f07 walkers clipped
+out of view stop moving (Petari startClipped), kcl_query over a list of collision instances; 6b78f6e mat_mul on
+VU0, skinned draw matrices once a draw; 2232d91 BENCH_STILL. All checked: takobo / karikari tests as before, route
+EggStar 1 star at the same frame. Bench output: draw phases (setup, skies, insts, pickups = walkers, mario, rest,
+fx, 2d) avg and worst, VIF wait (~0: EE-bound, not GS-bound), pose / skin / draw_model, kcl_query, fx_anim,
+walker cost by kind, game_update calls over 100 us, rest parts. Start view now: walkers 3.6 ms, ocean spheres
+2.8 (render_mesh EE projection, 2 passes), insts 2.7, fx draw 1.5, mario 0.9, draw_model 3.7 total (219 calls, 68
+culled), pose 1.6; logic: fx_update 1.16, update_kuribo 1.0, update_mario 0.7, obj_anims 0.5, launched pieces 0.5.
+Next ideas: ocean spheres (project once for both passes, LOD by distance), anim_pose sin / cos (euler -> quat per
+joint: a table or VU0), clip cache (8 slots thrash: ~7 inflates a frame), fx_update / fx_draw particle cost,
+clipping for other actors (Petari: every LiveActor), draw_model per call (light_matrix, chain building), Mario's
+logic. prof.c (Timer 1 sampler) does not work: EPC in the handler is the kernel's (0x81fe0).
+
 **Good Egg, 2026-10-15 session (the first goal; only Good Egg until the user says otherwise):** EggStar packs and
 resident.bin repacked with the 88 B GRAV. Done and checked in PCSX2: b4686ad zone-swap memory (OceanSpheres, anim
 clip info and CocoSambo heads were allocated above the arena mark: route EggStar 1 crashed in draw_oceanspheres; now
