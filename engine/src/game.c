@@ -36,7 +36,8 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
     char act[20]; int act_seq, act_drawn, act_frames, act_mode, act_interp; float act_t, act_rate;
     V3 bpos, bvel; int bshow; /* a second model it throws (PackunPetit's blown head) */
     V3 gpos, gup; int gok; /* walker_up: the gravity's up at gpos */
-    u32 lv; /* its level sound's handle (se_level) */ } Kuribo; /* walking
+    u32 lv; /* its level sound's handle (se_level) */
+    u8 clipped; /* out of the view at the last draw (ClippingJudge: LiveActor::startClipped stops its movement) */ } Kuribo; /* walking
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI };
@@ -1083,10 +1084,25 @@ static int kcl_query(V3 c, float radius, Hit *out, int max)
     prof_kq += cycles() - c0; prof_kqn++;
     return n;
 }
+/* the instances with collision, in instance order (kcl_list_build once a logic step and a draw: rebinds change insts) */
+static short *kcl_list;
+static int nkcl_list, kcl_list_cap, kcl_list_ninsts = -1;
+static void kcl_list_build(void)
+{
+    kcl_list_ninsts = ninsts;
+    if (kcl_list_cap < ninsts) {
+        kcl_list_cap = ninsts + 64;
+        kcl_list = realloc(kcl_list, kcl_list_cap * sizeof *kcl_list);
+    }
+    nkcl_list = 0;
+    for (int i = 0; i < ninsts; i++) if (insts[i].kcl) kcl_list[nkcl_list++] = (short)i;
+}
 static int kcl_query_(V3 c, float radius, Hit *out, int max)
 {
     int n = 0;
-    for (int i = 0; i < ninsts && n < max; i++) {
+    if (kcl_list_ninsts != ninsts) kcl_list_build(); /* init, a rebind: the list follows the instances */
+    for (int li = 0; li < nkcl_list && n < max; li++) {
+        int i = kcl_list[li];
         const Inst *in = &insts[i];
         if (!in->kcl) continue;
         if (in->beeflower && row_turn && row_turn[in->row]) continue; /* BeeFlowerHover gone through */
@@ -13543,17 +13559,28 @@ static void walker_explosion(V3 from)
     }
 }
 
+u32 kprof[20], kprof_n[20]; /* update_kuribo's cycles and walkers by kind (profiling) */
+static void update_kuribo_one(Kuribo *k);
 static void update_kuribo(void)
 {
     for (int i = 0; i < nkuribo; i++) {
         Kuribo *k = &kuribo[i];
         if (k->state == KURIBO_DEAD || !row_shown(k->row)) continue;
+        if (k->clipped && k->kind != WALK_KARIKARI) continue; /* clipped: no movement (Karikari may ride on Mario) */
+        u32 c0 = cycles();
+        update_kuribo_one(k);
+        kprof[k->kind] += cycles() - c0; kprof_n[k->kind]++;
+    }
+}
+static void update_kuribo_one(Kuribo *k)
+{
+    {
         k->up = walker_up(k, k->up);
         V3 to = vsub(mario->pos, k->pos);
         float d = vlen(to);
         if (k->kind == WALK_PETARI) { /* ponytail: still while its zone has no collision (streaming) */
             if (sc->objs[k->row].zone >= 64 || zone_kcl[sc->objs[k->row].zone]) petari_update(k);
-            continue;
+            return;
         }
         if (k->kind == WALK_KURIBO || k->kind == WALK_KMINI || k->kind == WALK_PACKUN) { /* ported after Petari (their own NonActive);
                                        * ponytail: still while its zone has no collision (streaming) */
@@ -13562,23 +13589,23 @@ static void update_kuribo(void)
                 else if (k->kind == WALK_PACKUN) packun_update(k);
                 else if (d < 3000.0f) kmini_update(k); /* ponytail: far ones wait (no clipping system) */
             }
-            continue;
+            return;
         }
-        if (d > 3000.0f) continue; /* sActiveDistance: far ones wait (their zone may be loaded low, no collision) */
-        if (sc->objs[k->row].zone < 64 && !zone_kcl[sc->objs[k->row].zone]) continue; /* no ground yet: they would fall */
+        if (d > 3000.0f) return; /* sActiveDistance: far ones wait (their zone may be loaded low, no collision) */
+        if (sc->objs[k->row].zone < 64 && !zone_kcl[sc->objs[k->row].zone]) return; /* no ground yet: they would fall */
         int tako = k->kind == WALK_TAKOHEI || k->kind == WALK_MERAMERA || k->kind == WALK_KMINI; /* KuriboMini.cpp:
                                                                              * a spin blows it down (requestBlowDown);
                                                                              * Meramera.cpp: a stomp, hip drop or spin
                                                                              * kills it, a touch burns (requestAttack) */
-        if (k->kind == WALK_TAKOBO) { takobo_update(k, to, d); continue; }
-        if (k->kind == WALK_MKOOPA) { mkoopa_update(k, to, d); continue; }
-        if (k->kind == WALK_KARIKARI) { kari_update(k, to, d); continue; }
-        if (k->kind == WALK_KARON) { karon_update(k, to, d); continue; }
-        if (k->kind == WALK_TERESA) { teresa_update(k, to, d); continue; }
-        if (k->kind == WALK_BUTTERFLY) { butterfly_update(k); continue; }
-        if (k->kind == WALK_STINKBUG) { stink_update(k, to, d); continue; }
-        if (k->kind == WALK_UNIZO) { unizo_update(k, to, d); continue; }
-        if (k->kind == WALK_POIHANA) { poihana_update(k, to, d); continue; }
+        if (k->kind == WALK_TAKOBO) { takobo_update(k, to, d); return; }
+        if (k->kind == WALK_MKOOPA) { mkoopa_update(k, to, d); return; }
+        if (k->kind == WALK_KARIKARI) { kari_update(k, to, d); return; }
+        if (k->kind == WALK_KARON) { karon_update(k, to, d); return; }
+        if (k->kind == WALK_TERESA) { teresa_update(k, to, d); return; }
+        if (k->kind == WALK_BUTTERFLY) { butterfly_update(k); return; }
+        if (k->kind == WALK_STINKBUG) { stink_update(k, to, d); return; }
+        if (k->kind == WALK_UNIZO) { unizo_update(k, to, d); return; }
+        if (k->kind == WALK_POIHANA) { poihana_update(k, to, d); return; }
         if (k->kind == WALK_SPIDER) { /* JumpSpider.cpp: hops at Mario; ponytail: hop size and rate guessed (Petari's
                                         * hJumpDistance / hWaitTime are not in the decompilation) */
             V3 vu = vmul(k->up, vdot(k->vel, k->up)), vh = vsub(k->vel, vu);
@@ -13602,7 +13629,7 @@ static void update_kuribo(void)
                 k->state = KURIBO_DEAD; row_kill(k->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, k->pos, k->up); pop_coins(k->pos, k->up, 1);
             } else if (d < 110.0f && above <= 40.0f && !ground) /* hurts while jumping, pushes otherwise */
                 hurt_mario(k->pos, 15.0f);
-            continue;
+            return;
         }
         if (k->state == KURIBO_STUN) {
             if (--k->timer <= 0) k->state = KURIBO_WALK;
@@ -13626,7 +13653,7 @@ static void update_kuribo(void)
         if (d < (tako ? 170.0f : 130.0f) && mario->vup < 0 && above > 40.0f) {
             if (kote && k->state == KURIBO_WALK && mario->hip != HIP_FALL) { k->state = KURIBO_STUN; k->timer = 240; }
             else if (kote && k->state == KURIBO_STUN && k->timer > 210 && mario->hip != HIP_FALL)
-                continue; /* the bounce off the first stomp lands on it again: not a second stomp yet, no bounce */
+                return; /* the bounce off the first stomp lands on it again: not a second stomp yet, no bounce */
             else { k->state = KURIBO_DEAD; row_kill(k->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, k->pos, k->up); pop_coins(k->pos, k->up, 1); }
             mario->vup = 15.0f; mario->grounded = 0;
         } else if (d < 170.0f && mario->spin_timer > 0 && (k->state == KURIBO_WALK || (kote && k->timer < 230))) {
@@ -15830,6 +15857,7 @@ void game_update(void)
         printf("scenario starter: flight in, %d frames" "\n", launches[starter].flight);
         starter = -1;
     }
+    kcl_list_build();
     LQ(0, update_obj_anims());
     if (time_limit && time_left > 0 && !stars && --time_left == 0) { printf("time up" "\n"); miss(); }
     hip_hit = 0;
@@ -16144,6 +16172,7 @@ void game_draw(void)
     V3 ce, cw, cu;
     float fovy;
     u32 kcl0 = prof_kq, kn0 = prof_kqn;
+    kcl_list_build();
     prof_t = cycles();
     camera_pose(&ce, &cw, &cu, &fovy);
     lights_update(ce, cw, cu, mario->pos);
@@ -16500,6 +16529,7 @@ void game_draw(void)
         const float *wsc = sc->objs[kuribo[i].row].scale;
         float wr = md->radius * fmaxf(fmaxf(wsc[0], wsc[1]), wsc[2]) + 100.0f, wp[3] = {kuribo[i].pos.x, kuribo[i].pos.y, kuribo[i].pos.z};
         int wvis = render_visible(wp, wr);
+        kuribo[i].clipped = !wvis;
         if (wvis) { u32 c1 = cycles(); walker_shadow(&kuribo[i]); prof_shadow += cycles() - c1; }
         basis_matrix(m, kuribo[i].pos, kuribo[i].up, kuribo[i].kind == WALK_STINKBUG || kuribo[i].kind == WALK_POIHANA ? stink_front(&kuribo[i]) : vsub(mario->pos, kuribo[i].pos), 0);
         if (kuribo[i].kind == WALK_UNIZO) { /* rolled about its side round its centre */

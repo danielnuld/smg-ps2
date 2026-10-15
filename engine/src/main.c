@@ -1397,6 +1397,14 @@ int main(void)
                     for (int i = 0; i < lprof_n && i < 96; i++)
                         if (lsum[i] / 1800 / EE_MHZ >= 100) printf("bench logic %-24s %u us" "\n", lprof_name[i], (u32)(lsum[i] / 1800 / EE_MHZ));
             }
+            {
+                extern u32 kprof[20], kprof_n[20];
+                static u32 ks[20], kn[20];
+                for (int i = 0; i < 20; i++) { if (frame > 60 && frame <= 1860) { ks[i] += kprof[i]; kn[i] += kprof_n[i]; } kprof[i] = kprof_n[i] = 0; }
+                if (frame == 1861)
+                    for (int i = 0; i < 20; i++)
+                        if (kn[i]) printf("bench walker kind %d: %u us, %u a frame" "\n", i, (u32)(ks[i] / 1800 / EE_MHZ), kn[i] / 1800);
+            }
             static u32 fsum[2];
             if (frame > 60 && frame <= 1860) { fsum[0] += prof_fxa; fsum[1] += prof_shadow; }
             prof_fxa = prof_shadow = 0;
