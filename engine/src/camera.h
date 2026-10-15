@@ -51,6 +51,11 @@ void camera_event_end(void);
  * stop: endMultiActorCamera, at once (the area camera blends back) */
 int camera_actor_start(const char *cls, const char *event, int set, V3 up, V3 front, V3 pos);
 void camera_event_stop(void);
+/* CameraDirector::startTalkCamera / endTalkCamera: CameraTalk ("共通会話カメラ", camint 120) about the target and the
+ * talker at pos: up blended halfway to the target's, half way between them, turned 0.7 (or 90 degrees) round and
+ * 0.12 up, dist back and height up */
+void camera_talk_start(V3 pos, V3 up, float height, float dist);
+void camera_talk_end(void);
 /* a demo's animated camera (CameraAnim): this pose until off */
 void camera_set_override(int on, V3 eye, V3 watch, V3 up, float fovy);
 /* CameraShaker::shakeVertical (MR::shakeCameraVeryWeak .. VeryStrong): one CameraShakePatternSingly of that power, not

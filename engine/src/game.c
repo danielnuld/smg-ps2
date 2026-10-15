@@ -7496,9 +7496,10 @@ static void draw_sambo_heads(void)
  * talker is a TalkMessageCtrl: its node walk (rootNodePre / Eve / Pst), the director picks the nearest requester
  * (two-frame hand over _40 -> _3C -> mMsgCtrl) and runs Prep (the A button over Mario: Normal talks start on A with
  * the stick still and Mario on the ground), Talk (the balloon's text fading in, A for the next page), Next (event
- * nodes: switches, the owner's event function), Term. Normal / event talks are a demo (Mario waits).
+ * nodes: switches, the owner's event function), Term. Normal / event talks are a demo (Mario waits) and start their
+ * message's camera (CameraTalk, or its 会話 multi-actor camera).
  * ponytail: the balloons are drawn as flat panes at their BRLYT places and sizes (no window textures, no beak, the
- * Appear / End animations a 21-frame fade), no talk cameras, no sounds, no yes / no selector (a select talk goes on
+ * Appear / End animations a 21-frame fade), no sounds, no yes / no selector (a select talk goes on
  * as if Yes), no MessageArea, the already-read flags are not saved */
 typedef struct { char label[32]; u16 row, node, msg, pad; } TkCtl;
 typedef struct { u8 type, group; u16 index, next, t0, t1, pad; } TkNode;
@@ -7943,6 +7944,7 @@ enum { TD_WAIT, TD_PREP, TD_TALK, TD_NEXT, TD_TERM };
 static struct {
     int nrv, step, msgctrl, c3C, c40, c44, demo, f4C, f4D, f4E, f50, f58, f59;
     int st, st_kind, st_msgid, s10, s14, s1C, pages; /* mTalkState: its talker, kind, mMessageID and fields */
+    int cam_on;                                         /* the camera startCamera began: 1 talk, 2 multi-actor */
     TkBalloon *bl;
 } td = {.msgctrl = -1, .c3C = -1, .c40 = -1, .c44 = -1, .st = -1};
 static int talk_demo(void) { return td.demo == 1 && td.st >= 0 && (td.nrv == TD_TALK || td.nrv == TD_NEXT); }
@@ -7988,9 +7990,30 @@ static int ts_test(void)
     if (td.st_kind == TS_NORMAL) return player_ok_normal() && pad_pressed(PAD_CROSS) && player_ok_event();
     return 1;
 }
+/* TalkMessageCtrl::startCamera: CameraNormal startNPCTalkCamera (NPCUtil: between the talker and Mario, its distance
+ * x atan2(1, cos 67.5) x max((height + offset y) / distance / 0.75, 1), twice that back, at least 450, height / 6 +
+ * offset y up), CameraEvent its "会話" multi-actor camera of the message's camera set */
+static void tk_start_camera(int k)
+{
+    const Talker *t = &talkers[k];
+    if (t->msg < 0) return;
+    const TkMsg *mi = &tk_msg[t->msg];
+    if (mi->camtype == 0) {
+        V3 ap = v3(t->m[12], t->m[13], t->m[14]), up = vlen(mario->up) > 1e-6f ? vnorm(mario->up) : v3(0, 1, 0);
+        float dist = vlen(vsub(mario->pos, ap)), h = vdot(vsub(ap, mario->pos), up);
+        float sc_ = dist > 1e-3f ? (h + t->offy) / dist / 0.75f : 1.0f;
+        dist *= atan2f(1.0f, cosf(67.5f * 0.0174533f)) * (sc_ >= 1.0f ? sc_ : 1.0f);
+        float cd = 2.0f * dist;
+        camera_talk_start(ap, up, h / 6.0f + t->offy, cd >= 450.0f ? cd : 450.0f);
+        td.cam_on = 1;
+    } else if (mi->camtype == 1 && mi->cam && t->row >= 0) { /* startMultiActorCameraNoTarget: Mario's */
+        if (camera_actor_start(sc->types + 32 * sc->objs[t->row].type, "会話", mi->cam, mario->up, mario->face, mario->pos))
+            td.cam_on = 2;
+    }
+}
 static void ts_open(void)
 {
-    if (td.st_kind == TS_EVENT || td.st_kind == TS_NORMAL) { td.s1C = 1; td.pages = 0; td.s10 = 0; }
+    if (td.st_kind == TS_EVENT || td.st_kind == TS_NORMAL) { td.s1C = 1; td.pages = 0; td.s10 = 0; tk_start_camera(td.st); }
     if (td.bl && td.st_kind != TS_BASE) tk_balloon_open(td.bl, td.st);
 }
 static void ts_clos(void)
@@ -8075,7 +8098,13 @@ static int talk_start(int k, int force, int demo) /* TalkDirector::start (test, 
     else { ts_open(); td_set(TD_TALK); }
     return 1;
 }
-static void td_term_talk(void) { td.f4D = 1; td.demo = 0; }
+static void td_term_talk(void) /* termTalk: endNPCTalkCamera / endMultiActorCamera 会話 */
+{
+    td.f4D = 1; td.demo = 0;
+    if (td.cam_on == 1) camera_talk_end();
+    else if (td.cam_on == 2) camera_event_stop();
+    td.cam_on = 0;
+}
 static int talk_end(int k) { return talkers[k].state == 4; } /* endTalk: isTalkEnableEnd */
 /* MR::tryTalkNearPlayer / ...AtEnd / tryTalkForce(WithoutDemo)(AtEnd) */
 static int talk_near(int k) { return k >= 0 && talk_request(k, 0) && talk_start(k, 0, 1); }

@@ -386,6 +386,55 @@ void camera_event_end(void) { if (ev_on) ev_ending = 1; }
 
 void camera_event_stop(void) { if (ev_on) { ev_on = 0; cur = -3; } }
 
+static int tk_on;
+static V3 tk_pos, tk_up, tk_eye;
+static float tk_h, tk_d;
+
+void camera_talk_start(V3 pos, V3 up, float height, float dist)
+{
+    tk_pos = pos; tk_up = vnorm(up); tk_h = height; tk_d = dist;
+    if (tk_on) return;
+    tk_on = 1; tk_eye = f_eye; /* reset: from the camera man's position */
+    cur = -3; timer = 0; camint = 120; fresh = 1; /* CameraParamChunkExParam's camint */
+    type_eye = f_eye; type_up = f_up;
+}
+
+void camera_talk_end(void) { if (tk_on) { tk_on = 0; cur = -3; } }
+
+static int talk_pose(const CamTarget *t, V3 *eye, V3 *watch, V3 *up) /* CameraTalk::calc */
+{
+    V3 u = rotate_part(tk_up, t->up, tk_up, 0.5f);
+    V3 pos = vadd(vmul(t->pos, 0.5f), vmul(tk_pos, 0.5f)), front = vsub(t->pos, tk_pos);
+    front = vlen(front) > 1e-6f ? vnorm(front) : v3(0, 0, 1);
+    V3 side = vcross(u, front);
+    if (vlen(side) < 1e-6f) return 0;
+    side = vnorm(side);
+    front = vcross(side, u);
+    V3 diff = vsub(tk_eye, t->pos);
+    float orient = vdot(vcross(diff, front), u);
+    float b = vdot(front, diff) >= 0.0f ? (orient >= 0.0f ? -0.7f : 0.7f) : (orient >= 0.0f ? -PI / 2 : PI / 2);
+    /* mtx (side, up, front, pos) x rotY(b) x rotX(-x axis, 0.12) x trans(0, 0, dist) */
+    V3 v = v3(tk_d * cosf(0.12f) * sinf(b), tk_d * sinf(0.12f), tk_d * cosf(0.12f) * cosf(b));
+    V3 base = vadd(pos, vadd(vadd(vmul(side, v.x), vmul(u, v.y)), vmul(front, v.z)));
+    *watch = vadd(pos, vmul(u, tk_h));
+    *eye = vadd(base, vmul(u, tk_h));
+    *up = u;
+    tk_eye = *eye;
+    return 1;
+}
+
+static void blend_to(V3 e, V3 w, V3 u) /* CameraViewInterpolator: (timer / camint)^2, then the 0.3 smoothing */
+{
+    float r = 1.0f;
+    if (camint > 0 && timer < camint) { timer++; r = (float)timer / camint; r *= r; }
+    i_eye = vadd(i_eye, vmul(vsub(e, i_eye), r));
+    i_watch = vadd(i_watch, vmul(vsub(w, i_watch), r));
+    i_up = vnorm(vadd(i_up, vmul(vsub(u, i_up), r)));
+    f_eye = vadd(vmul(f_eye, 0.7f), vmul(i_eye, 0.3f));
+    f_watch = vadd(vmul(f_watch, 0.7f), vmul(i_watch, 0.3f));
+    f_up = vnorm(vadd(vmul(f_up, 0.7f), vmul(i_up, 0.3f)));
+}
+
 
 static int shake_frame[7] = {25, 25, 25, 25, 25, 25, 25}; /* sSinglyMaxFrame 25: ended */
 static float shake_off;
@@ -417,6 +466,13 @@ void camera_update(const CamTarget *t)
     int want = a >= 0 && areas[a].cam != 0xFFFF ? areas[a].cam : (cur == -2 || cur == -3 ? -1 : cur);
     V3 move = vsub(t->pos, last_target);
     last_target = t->pos;
+    if (tk_on) {
+        V3 e, w, u;
+        if (talk_pose(t, &e, &w, &u)) { type_eye = e; type_up = u; fresh = 0; }
+        else { e = i_eye; w = i_watch; u = i_up; }
+        blend_to(e, w, u);
+        return;
+    }
     if (ev_on) { /* MultiEventCamera::update: the next one after its evfrm frames; endForceAtLanding */
         if (ev_ending && !t->jumping && !t->flying) { ev_on = 0; cur = -3; }
         else {
@@ -433,14 +489,7 @@ void camera_update(const CamTarget *t)
             zone_pose(&cams[ev_first + ev_i], &et, move, &e, &w, &u);
             fresh = 0;
             type_eye = e; type_up = u;
-            float r = 1.0f;
-            if (camint > 0 && timer < camint) { timer++; r = (float)timer / camint; r *= r; }
-            i_eye = vadd(i_eye, vmul(vsub(e, i_eye), r));
-            i_watch = vadd(i_watch, vmul(vsub(w, i_watch), r));
-            i_up = vnorm(vadd(i_up, vmul(vsub(u, i_up), r)));
-            f_eye = vadd(vmul(f_eye, 0.7f), vmul(i_eye, 0.3f));
-            f_watch = vadd(vmul(f_watch, 0.7f), vmul(i_watch, 0.3f));
-            f_up = vnorm(vadd(vmul(f_up, 0.7f), vmul(i_up, 0.3f)));
+            blend_to(e, w, u);
             return;
         }
     }
