@@ -279,6 +279,9 @@ BRK_ARG = {"Butterfly": ("butterfly", 0)}
 # ponytail: StarPiece1_v is RAS + an environment map (no texgen here): the map's mean colour stands in (env_mean)
 MAT_COLOR = {"StarPiece": ("StarPiece1_v", [(0x80, 0x00, 0x99), (0xE6, 0xA0, 0x00), (0x46, 0xA1, 0x08),
                                             (0x37, 0x5A, 0xA0), (0xBE, 0x33, 0x0B), (0x80, 0x80, 0x80)])}
+# a BRK stopped at a frame the actor sets at run time: its model baked at these frames, "<class>~<k>" (game.c picks k).
+# TicoFat::setScale: FatRed at (scale - 1) / 0.9 of its frame max (59); Normal frame 0 has the same colours as FatRed 0
+BRK_STEPS = {"TicoFat": ("fatred", (0, 20, 39, 59))}
 BRK_POSE = {"Tico": ("colorchange", 0), "TicoFat": ("normal", 0), "DinoPackunEggShellBreak": ("break", 0)}  # TicoFat: startBrk Normal, frame 0 (ponytail: FatRed as it grows)
 
 
@@ -315,6 +318,20 @@ def hidden_joints(b, bl, files, pose=None):
         if k >= 0:
             out.add(i)
     return out
+
+
+_ras_cache = {}
+
+
+def ras_colour(b, bl, mat, texs, over, name, clr0):
+    """Material `mat`'s TEV with its textures read as 1 and RAS = clr0 (quantised to 4) -> rgb 0..255."""
+    q = tuple(c // 4 * 4 for c in clr0[:3])
+    key = (id(b), mat, q)
+    if key not in _ras_cache:
+        o = dict(over or {})
+        o[name] = dict(o.get(name, {}), mat=[c / 255 for c in q] + [1.0])
+        _ras_cache[key] = tuple(int(c * 255 + 0.5) for c in tex.tev(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, None, o)[:3])
+    return _ras_cache[key]
 
 
 def btk_entry(anim, material, mt, t, group):
@@ -418,12 +435,31 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 get = geom.vtx1_attr(b, bl[b"VTX1"], mt["attr"]) if mt and mt["attr"] in info["at"] else None
                 uvs = t = None
                 gain = 1
+                # a material whose rasterized colour is CLR0 (its TEV may use RAS other than as a factor: PeanutPlanet's
+                # TEX x clamp(4 lerp(K, C0, RAS)), TicoFat's lerp(C1, TEX, RAS) + C0): per vertex the TEV with the
+                # texture read as 1 at its own CLR0 (ras_colour), the texture the TEV at the group's mean CLR0 divided
+                # by that factor there (exact when the TEV is TEX x f(RAS), near the mean otherwise)
+                ras_mean = None
+                if clr and 11 in info["at"] and mat is not None and tex.vertex_colour(b, bl[b"MAT3"], mat):
+                    o11, w11 = info["at"][11]
+                    vc = [clr(info["keys"][v][o11] if w11 == 1 else info["keys"][v][o11] << 8 | info["keys"][v][o11 + 1])
+                          for v in used]
+                    ras_mean = tuple(max(1, round(sum(c[k] for c in vc) / len(vc) / 8) * 8) for k in range(3))
                 if get and mt["tex"] < len(texs):
-                    key = (mt["tex"], mat)  # the material's TEV baked into its texture (tex.tev)
+                    key = (mt["tex"], mat, ras_mean)  # the material's TEV baked into its texture (tex.tev)
                     if key not in ps2:
                         x = texs[mt["tex"]]
                         binfo = {}
-                        baked = tex.bake(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, mt["tex"], over, binfo)
+                        o2 = over
+                        if ras_mean:
+                            mn = tex.material_name(b, bl[b"MAT3"], mat)
+                            o2 = dict(over or {})
+                            o2[mn] = dict(o2.get(mn, {}), mat=[c / 255 for c in ras_mean] + [1.0])
+                        baked = tex.bake(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, mt["tex"], o2, binfo)
+                        if ras_mean:
+                            g0 = np.maximum(tex.tev(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, None, o2)[:3], 1 / 255)
+                            baked = baked.copy()
+                            baked[..., :3] = np.clip(baked[..., :3] / g0 + 0.5, 0, 255).astype(np.uint8)
                         ps2[key] = tex.to_ps2(baked, x["wrap_s"], x["wrap_t"], sky)
                         gains[key] = binfo.get("gain", 1)
                     t = ps2[key]
@@ -459,6 +495,8 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                         uvs.append((su * t["u_scale"], sv * t["v_scale"]))
                 else:
                     stats["untextured"] = stats.get("untextured", 0) + 1
+                if t is None:
+                    ras_mean = None  # untextured: the flat colour times CLR0 as before
                 slots = cols = None
                 if t is None and mat is not None and not skinned:  # untextured: the TEV's constant colour
                     cols = tuple(int(c * 255 + 0.5) for c in tex.tev(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, None, over)[:3])
@@ -496,6 +534,9 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                            for v in used]
                     if mats:
                         nrm = [tuple(float(x) for x in skin.unit(m[:3, :3] @ n)) for m, n in zip(mats, nrm)]
+                if ras_mean and isinstance(cols, list):  # per vertex the TEV's factor at its CLR0 (ras_colour)
+                    mn = tex.material_name(b, bl[b"MAT3"], mat)
+                    cols = [ras_colour(b, bl, mat, texs, over, mn, cv) + tuple(c[3:]) for cv, c in zip(vc, cols)]
                 groups.append((verts, [remap[v] for v in tri], uvs, t, slots, cols, blend, nrm, gain))
             if skinned:
                 sk = skin_entry(b, bl, gtab)
@@ -1135,6 +1176,11 @@ def placement(fs, galaxy, scenario):
             v = o["args"][BRK_ARG[n][1]]
             n = f"{n}~{v if v >= 0 else 0}"
             arcmap.setdefault(n, f"{arcmap[o['name']]}~{BRK_ARG[o['name']][0]}:{n.partition('~')[2]}")
+        if n in BRK_STEPS and arcmap.get(n):  # its BRK frames' models (BRK_STEPS)
+            for k, fr in enumerate(BRK_STEPS[n][1]):
+                arcmap.setdefault(f"{n}~{k}", f"{arcmap[n]}~{BRK_STEPS[n][0]}:{fr}")
+                if f"{n}~{k}" not in per_stage[names[o["zone"]]]:
+                    per_stage[names[o["zone"]]].append(f"{n}~{k}")
         for m in (n,) + tuple(n + e if e[0] == "#" else e for e in EXTRA.get(o["name"], ())):
             if arcmap[m] and m not in per_stage[names[o["zone"]]]:
                 per_stage[names[o["zone"]]].append(m)

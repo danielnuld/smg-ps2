@@ -8325,6 +8325,20 @@ static void update_ticofat(void)
         for (int j = 0; j < 12; j++) in->m[j] *= sc_;
     }
 }
+/* TicoFat::setScale: startBrk FatRed, setBrkFrameAndStop((scale - 1) / 0.9 x max), its frame 0 from Demo's step 89;
+ * slice.py BRK_STEPS bakes 4 frames (0, 20, 39, 59): the nearest */
+static const Model *fat_model(const Inst *in)
+{
+    for (int k = 0; k < nfats; k++) {
+        if (fats[k].row != in->row) continue;
+        float v = fminf((fats[k].scale - 1.0f) / 0.9f, 1.0f);
+        int step = fats[k].nrv == TF_DEMO && fats[k].t >= 89 ? 0 : (int)(v * 3.0f + 0.5f);
+        char n[24];
+        snprintf(n, sizeof n, "TicoFat~%d", step < 0 ? 0 : step);
+        return scene_model(sc, n);
+    }
+    return NULL;
+}
 static int fat_state(int row)
 {
     for (int k = 0; k < nfats; k++) if (fats[k].row == row) return (fats[k].total - fats[k].left) * 1000 + fats[k].nrv;
@@ -15175,8 +15189,13 @@ static const char *walker_clip(const Kuribo *k, int *loop)
     }
 }
 
+static const Model *fat_model(const Inst *in);
 static void inst_draw(const Inst *in, const Model *md, const float m[16])
 {
+    if (in->fat && md == in->md) { /* its FatRed frame's model, posed by its own Anim (the same skin) */
+        const Model *fm = fat_model(in);
+        if (fm && fm->skin && in->anim) { use_row_light(in->row, v3(m[12], m[13], m[14]), LIGHT_STRONG); draw_skin(fm, m, in->anim); return; }
+    }
     use_row_light(in->row, v3(m[12], m[13], m[14]), md->skin ? LIGHT_STRONG : LIGHT_PLANET);
     if (md->skin) { if (in->anim && md == in->md) draw_skin(md, m, in->anim); }
     else render_model(md, m, 0x70, 0xB0, 0x60);
