@@ -11,8 +11,11 @@ nothing (their children are walked). A pane's translation is in its parent's spa
 its origin (0..8: x left / centre / right, y top / centre / bottom) places its size; alpha multiplies down the tree
 where a pane influences its children's alpha (flags bit 1). Materials: the texture through lerp(black colour C0,
 white colour C1, texel) (lyt's default TEV for one texture; I formats are their intensity in every channel); without
-a texture the colour is the pane's vertex colours. A child of the root pane whose alpha is 0 is taken as shown (its
-appear animation brings it in: InformationWindow, StarPieceTargetCounter). ponytail: no rotation, no texture SRT or projections, a second
+a texture the colour is the pane's vertex colours. A layout with an appear.brlan is taken at its last frame (RLPA
+translation / scale / size, RLVC alpha: StarPieceTargetCounter slides in from x 500 to 276); a group pane (pan1, a
+child of the root pane) at alpha 0 otherwise is taken as shown (its appear animation brings it in:
+InformationWindow). Panes whose material masks a second texture (StarPieceTargetMeter's fill halves) are left out.
+ponytail: no rotation, no texture SRT or projections, a second
 texture (a beak's mask) dropped, vertex colours averaged, the brlan animations not played.
 """
 import struct
@@ -80,11 +83,59 @@ def parse(b):
     return texs, mats, panes
 
 
+def brlan_end(b):
+    """A BRLAN's panes at its last frame -> {pane name: {target: value}}: RLPA (0..9: translation x y z, rotation x y
+    z, scale x y, size w h) and RLVC 16 (alpha 0..255); Hermite keys {frame, value, slope}, the value held past the
+    last key (nw4r lyt AnimTransformBasic)."""
+    out = {}
+    o = u16(b, 0xC)
+    for _ in range(u16(b, 0xE)):
+        kind, size = b[o:o + 4], u32(b, o + 4)
+        if kind == b"pai1":
+            frames, nent, eoff = u16(b, o + 8), u16(b, o + 14), u32(b, o + 16)
+            for e in range(nent):
+                eo = o + u32(b, o + eoff + 4 * e)
+                name = b[eo:eo + 20].split(b"\0")[0].decode()
+                if b[eo + 21]:  # a material's
+                    continue
+                for t in range(b[eo + 20]):
+                    to = eo + u32(b, eo + 24 + 4 * t)
+                    tag = b[to:to + 4]
+                    for i in range(b[to + 4]):
+                        io = to + u32(b, to + 8 + 4 * i)
+                        target, ctype, nk = b[io + 1], b[io + 2], u16(b, io + 4)
+                        ko = io + u32(b, io + 8)
+                        if ctype != 2 or not nk or (tag == b"RLVC" and target != 16) or tag not in (b"RLPA", b"RLVC"):
+                            continue
+                        keys = [struct.unpack_from(">3f", b, ko + 12 * k) for k in range(nk)]
+                        val = keys[-1][1]
+                        for (f0, v0, s0), (f1, v1, s1) in zip(keys, keys[1:]):
+                            if f0 <= frames <= f1 and f1 > f0:  # Hermite between the two keys at the end frame
+                                t_ = (frames - f0) / (f1 - f0)
+                                h1, h2 = 2 * t_ ** 3 - 3 * t_ ** 2 + 1, -2 * t_ ** 3 + 3 * t_ ** 2
+                                h3, h4 = t_ ** 3 - 2 * t_ ** 2 + t_, t_ ** 3 - t_ ** 2
+                                val = h1 * v0 + h2 * v1 + (h3 * s0 + h4 * s1) * (f1 - f0)
+                        out.setdefault(name, {})[(tag, target)] = val
+        o += size
+    return out
+
+
 def quads(files, name):
     """Layout `name` of an archive's files ({lower name: bytes}) -> ([quad tuples], [RGBA textures]): quad (x, y, w,
     h, tex, rgba, u0, v0, u1, v1) in layout units, tex an index into the textures list."""
     texs, mats, panes = parse(files[name.lower() + ".brlyt"])
     out, images, baked = [], [], {}
+    end = brlan_end(files["appear.brlan"]) if "appear.brlan" in files else {}
+    for p in panes:
+        for (tag, target), v in end.get(p["name"], {}).items():
+            if tag == b"RLVC":
+                p["alpha"] = max(0.0, min(1.0, v / 255))
+            elif target in (0, 1):
+                p["t"] = tuple(v if k == target else p["t"][k] for k in range(2))
+            elif target in (6, 7):
+                p["s"] = tuple(v if k == target - 6 else p["s"][k] for k in range(2))
+            elif target in (8, 9):
+                p["size"] = tuple(v if k == target - 8 else p["size"][k] for k in range(2))
 
     def image(mi):
         """material mi's first texture through lerp(C0, C1, texel) -> index in images (None: no texture)"""
@@ -100,7 +151,7 @@ def quads(files, name):
 
     groups = [i for i, p in enumerate(panes) if p["parent"] == 0]  # the root pane's children
     for i in groups:
-        if panes[i]["alpha"] == 0:
+        if panes[i]["alpha"] == 0 and panes[i]["kind"] == "pan1" and panes[i]["name"] not in end:
             panes[i]["alpha"] = 1.0
     absolute = []  # per pane: its origin's position, its scale, its alpha, shown, group
     for p in panes:
@@ -117,6 +168,8 @@ def quads(files, name):
         absolute.append((pos, sc, al, shown, grp))
         if not (shown and p["flags"] & 1) or p["kind"] not in ("pic1", "wnd1") or p["mat"] is None or p["mat"] >= len(mats):
             continue
+        if len(mats[p["mat"]]["tex"]) > 1 and p["kind"] == "pic1" and "Meter" in p["name"]:
+            continue  # a masked fill (a second texture's mask): not drawn (ponytail)
         w, h = p["size"][0] * sc[0], p["size"][1] * sc[1]
         ox, oy = p["origin"] % 3, p["origin"] // 3
         x0 = pos[0] - w * ox / 2
@@ -154,8 +207,9 @@ def quads(files, name):
     return out, images
 
 
-# drawn by game.c lay_draw: the talk balloons (talk_draw), InformationWindow (group 0 InfoWindowUp: TicoFat's Info)
-LAYOUTS = ("TalkBalloonEvent", "SignBoardBalloon", "InformationWindow")
+# drawn by game.c lay_draw: the talk balloons (talk_draw), InformationWindow (group 0 InfoWindowUp: TicoFat's Info),
+# TicoFat's FullnessMeter (StarPieceTargetMeter group 0 at the pointer, StarPieceTargetCounter)
+LAYOUTS = ("TalkBalloonEvent", "SignBoardBalloon", "InformationWindow", "StarPieceTargetMeter", "StarPieceTargetCounter")
 
 
 def section(fsp, first_tex):
