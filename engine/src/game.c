@@ -1393,7 +1393,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         u32 nraw = 0;
         if (pts) find_rail_of(blob, r->zone, r->path, &nraw, &closed, 1);
         if (pts && np >= 2) {
-            init_launch(L, r, pts, np, nraw <= 2);
+            init_launch(L, r, pts, np, nraw <= 2 && r->type != t_starter); /* ScenarioStarter: SpinDriverShootPath::init, never parabolic */
             if (r->type == t_starter) { /* ScenarioStarter: its rail as it is (mPosition = the rail's start), from the start */
                 L->pos = v3(pts[0], pts[1], pts[2]); L->off = v3(0, 0, 0);
                 L->starter = 1; L->initrot = r->arg[5] != -1 ? (float)r->arg[5] : 0.0f; /* arg5 mInitalPlayerRotation */
