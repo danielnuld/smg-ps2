@@ -324,6 +324,19 @@ there needs the embedded blob and every pack rebuilt.
 
 ## Next
 
+**Good Egg, 2026-10-15 session (the first goal; only Good Egg until the user says otherwise):** EggStar packs and
+resident.bin repacked with the 88 B GRAV. Done and checked in PCSX2: b4686ad zone-swap memory (OceanSpheres, anim
+clip info and CocoSambo heads were allocated above the arena mark: route EggStar 1 crashed in draw_oceanspheres; now
+`route` EggStar 1-4 all get their stars); 43f8cd1 camera shakes (CameraShaker vertical tasks: Mario hip drop / hard
+landing, spin drivers, Dino, OtaKing, OtaRock, CocoSambo with its FallHead / Blow scene stops, HammerHeadPackun,
+TicoFat), TicoFat's WipeOut screen effects, the white wipe really white (`fat`, `ota`); e804311 talk cameras
+(CameraTalk for CameraNormal messages, 会話 multi-actor for CameraEvent; `talk`); 0002de2 `talk` with
+XF=-DTALK_CLS=3 (Kinopio, EggStar 3). TicoFat's 喜び camera needs arg7 6: Good Egg's has -1, nothing to do.
+Left for Good Egg, in order: env-mapped materials (CrystalCageS / DropOfWater draw flat pale: GX_TG_NRM texgen in
+VU1), PhantomShipBridge (OceanTwinPirates: waits up until SW_A 107, then MoveA; slice.py POSE keeps it down, needs
+its Move collision on the animated joint), the Plant climb pose, OtaKing's bath rim crevice, talk balloon window
+textures / beak, TicoFat's fullness meter and info message, sound last (the user's call).
+
 **Parked 2026-10-14 (the user's call: Good Egg first), resume later:** the coverage-run session stopped mid-work.
 f8ff9e6 (untested, committed as it stood): gravities follow their switches (GlobalGravityObj::updateSwitch; SW_SLEEP
 not honoured), Shadow / Magnet gravity types left out, negative Distant keeps the default, cancelling pulls give no
