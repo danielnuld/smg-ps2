@@ -89,7 +89,7 @@ void mat_identity(float m[16])
     m[0] = m[5] = m[10] = m[15] = 1.0f;
 }
 
-void mat_mul(float out[16], const float a[16], const float b[16])
+void mat_mul_c(float out[16], const float a[16], const float b[16]) /* the plain C one (mat_mul's check) */
 {
     float r[16];
     for (int c = 0; c < 4; c++)
@@ -97,6 +97,46 @@ void mat_mul(float out[16], const float a[16], const float b[16])
             r[c * 4 + rr] = a[0 * 4 + rr] * b[c * 4 + 0] + a[1 * 4 + rr] * b[c * 4 + 1] +
                             a[2 * 4 + rr] * b[c * 4 + 2] + a[3 * 4 + rr] * b[c * 4 + 3];
     memcpy(out, r, 64);
+}
+
+/* out = a b (column-major) on VU0 in macro mode: each of b's columns as a's columns weighted by its x y z w (ACC);
+ * through 16-byte aligned copies (lqc2 / sqc2) */
+void mat_mul(float out[16], const float a[16], const float b[16])
+{
+    float A[16] __attribute__((aligned(16))), B[16] __attribute__((aligned(16))), R[16] __attribute__((aligned(16)));
+    memcpy(A, a, 64);
+    memcpy(B, b, 64);
+    __asm__ volatile(
+        "lqc2 $vf1, 0(%1)\n"
+        "lqc2 $vf2, 16(%1)\n"
+        "lqc2 $vf3, 32(%1)\n"
+        "lqc2 $vf4, 48(%1)\n"
+        "lqc2 $vf5, 0(%2)\n"
+        "lqc2 $vf6, 16(%2)\n"
+        "lqc2 $vf7, 32(%2)\n"
+        "lqc2 $vf8, 48(%2)\n"
+        "vmulax.xyzw $ACC, $vf1, $vf5x\n"
+        "vmadday.xyzw $ACC, $vf2, $vf5y\n"
+        "vmaddaz.xyzw $ACC, $vf3, $vf5z\n"
+        "vmaddw.xyzw $vf5, $vf4, $vf5w\n"
+        "vmulax.xyzw $ACC, $vf1, $vf6x\n"
+        "vmadday.xyzw $ACC, $vf2, $vf6y\n"
+        "vmaddaz.xyzw $ACC, $vf3, $vf6z\n"
+        "vmaddw.xyzw $vf6, $vf4, $vf6w\n"
+        "vmulax.xyzw $ACC, $vf1, $vf7x\n"
+        "vmadday.xyzw $ACC, $vf2, $vf7y\n"
+        "vmaddaz.xyzw $ACC, $vf3, $vf7z\n"
+        "vmaddw.xyzw $vf7, $vf4, $vf7w\n"
+        "vmulax.xyzw $ACC, $vf1, $vf8x\n"
+        "vmadday.xyzw $ACC, $vf2, $vf8y\n"
+        "vmaddaz.xyzw $ACC, $vf3, $vf8z\n"
+        "vmaddw.xyzw $vf8, $vf4, $vf8w\n"
+        "sqc2 $vf5, 0(%0)\n"
+        "sqc2 $vf6, 16(%0)\n"
+        "sqc2 $vf7, 32(%0)\n"
+        "sqc2 $vf8, 48(%0)\n"
+        : : "r"(R), "r"(A), "r"(B) : "memory");
+    memcpy(out, R, 64);
 }
 
 /* SMG placement: translation, then rotation Z * Y * X (degrees), then scale. */
@@ -819,14 +859,18 @@ static int nxlu;
 static int bloom_drawing; /* bloom_pass: blended groups drawn at once */
 
 static inline u32 cy_(void) { u32 c; __asm__ volatile("mfc0 %0, $9" : "=r"(c)); return c; }
-u32 prof_draw; /* EE cycles in draw_model (profiling) */
+u32 prof_draw, prof_dcalls, prof_dculled; /* EE cycles in draw_model, its calls, those culled (profiling) */
 static void draw_model_(const Model *md, const float world[16], const float (*drw)[16]);
 static void draw_model(const Model *md, const float world[16], const float (*drw)[16])
 {
     u32 c0 = cy_();
+    prof_dcalls++;
     draw_model_(md, world, drw);
     prof_draw += cy_() - c0;
 }
+#define DRW_CACHE 192 /* a skinned draw's matrices by draw index (anim.h ANIM_MAX_DRW 160) */
+static float dcache[DRW_CACHE][MAT_FL];
+static u32 dstamp[DRW_CACHE], dseq = 1;
 static void draw_model_(const Model *md, const float world[16], const float (*drw)[16])
 {
     if (!md->vu_ngroups)
@@ -837,8 +881,10 @@ static void draw_model_(const Model *md, const float world[16], const float (*dr
     if (mv[14] + rad < NEAR || mv[14] - rad > FAR) /* whole model behind the camera or past the far plane */
         return;
     /* side planes through the eye: f x = (w/2) z etc., normals unit (frustum[]); outside by more than rad: culled */
-    if (frustum[0] * fabsf(mv[12]) - frustum[1] * mv[14] > rad || frustum[2] * fabsf(mv[13]) - frustum[3] * mv[14] > rad)
+    if (frustum[0] * fabsf(mv[12]) - frustum[1] * mv[14] > rad || frustum[2] * fabsf(mv[13]) - frustum[3] * mv[14] > rad) {
+        prof_dculled++;
         return;
+    }
     mat_mul(pvw, proj, mv);
     if (md->lit && packet2_get_qw_count(vif[cur]) + 16 > PACKET_QW)
         flush_vif();
@@ -879,6 +925,7 @@ static void draw_model_(const Model *md, const float world[16], const float (*dr
     if (packet2_get_qw_count(vif[cur]) + 8 + batches * 10 + md->vu_ngroups * 2 + btks * 12 > PACKET_QW)
         flush_vif();
     float (*gm)[MAT_FL] = mats + nmats; /* this group's matrices */
+    dseq++; /* a new draw: the cached draw matrices are stale */
     u32 m = 1;
     if (!drw) {
         memcpy(gm, pvw, 64);
@@ -893,14 +940,17 @@ static void draw_model_(const Model *md, const float world[16], const float (*dr
             const SkGroup *sg = &md->skin->groups[g];
             gm = mats + nmats;
             m = sg->nmat;
-            for (u32 i = 0; i < m; i++) {
-                mat_mul(gm[i], pvw, drw[sg->drw[i]]);
+            for (u32 i = 0; i < m; i++) { /* each draw matrix once a draw, though several groups use it */
+                u32 di = sg->drw[i];
+                if (di < DRW_CACHE && dstamp[di] == dseq) { memcpy(gm[i], dcache[di], sizeof gm[i]); continue; }
+                mat_mul(gm[i], pvw, drw[di]);
                 scale_cols(gm[i], md->qscale);
                 if (md->lit) {
                     float wd[16];
-                    mat_mul(wd, world, drw[sg->drw[i]]);
+                    mat_mul(wd, world, drw[di]);
                     light_matrix(gm[i], wd, world + 12);
                 }
+                if (di < DRW_CACHE) { memcpy(dcache[di], gm[i], sizeof gm[i]); dstamp[di] = dseq; }
             }
             nmats += m;
         }

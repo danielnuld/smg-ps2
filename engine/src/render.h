@@ -66,6 +66,7 @@ void render_tex_stats(u32 *misses, u32 *overflow, u32 *syncs);
 
 void mat_identity(float m[16]);
 void mat_translate_rot_scale(float m[16], const float pos[3], const float rot_deg[3], const float scale[3]);
-void mat_mul(float out[16], const float a[16], const float b[16]);
+void mat_mul(float out[16], const float a[16], const float b[16]);   /* on VU0 */
+void mat_mul_c(float out[16], const float a[16], const float b[16]); /* in C (its check) */
 
 #endif

@@ -564,6 +564,17 @@ int main(void)
     u32 top[5] = {0};
 #endif
     char line[128], a[24], b[24], c[24];
+#ifdef BENCH
+    { /* mat_mul on VU0 against the C one */
+        float x[16], y[16], r1[16], r2[16], worst = 0;
+        for (int t = 0; t < 200; t++) {
+            for (int i = 0; i < 16; i++) { x[i] = (float)((t * 7 + i * 13) % 97) / 9.0f - 5.0f; y[i] = (float)((t * 11 + i * 5) % 89) / 7.0f - 6.0f; }
+            mat_mul(r1, x, y); mat_mul_c(r2, x, y);
+            for (int i = 0; i < 16; i++) { float d = fabsf(r1[i] - r2[i]) / (1.0f + fabsf(r2[i])); if (d > worst) worst = d; }
+        }
+        printf("bench mat_mul VU0 vs C: worst relative difference %f" "\n", worst);
+    }
+#endif
 #ifdef CATCHUP
     /* the game's logic at a fixed 60 Hz (Petari's frame): every vblank since the last frame is one logic step (at most
      * 2: a longer frame is let go), the pad read before each (its presses count once); then one draw, its clips,
@@ -1404,6 +1415,13 @@ int main(void)
                 if (frame == 1861)
                     for (int i = 0; i < 20; i++)
                         if (kn[i]) printf("bench walker kind %d: %u us, %u a frame" "\n", i, (u32)(ks[i] / 1800 / EE_MHZ), kn[i] / 1800);
+            }
+            {
+                extern u32 prof_dcalls, prof_dculled;
+                static u32 dc, du;
+                if (frame > 60 && frame <= 1860) { dc += prof_dcalls; du += prof_dculled; }
+                prof_dcalls = prof_dculled = 0;
+                if (frame == 1861) printf("bench draw_model calls %u a frame, %u culled" "\n", dc / 1800, du / 1800);
             }
             static u32 fsum[2];
             if (frame > 60 && frame <= 1860) { fsum[0] += prof_fxa; fsum[1] += prof_shadow; }
