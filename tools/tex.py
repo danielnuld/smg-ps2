@@ -265,6 +265,42 @@ def material_tex(b, mat3, m, tex1=None):
     return best
 
 
+def env_layer(b, mat3, m, tex1, texs, over=None):
+    """Material m's last TEV stage when it adds an environment map over the rest: PREV + K x TEXC (a ZERO, d CPREV,
+    no bias / scale, into PREV) with its texture on a normal texgen (env_mtx) of another coordinate than stage 0's ->
+    dict(coord, tex (TEX1 index), k (RGB: the TEV with that coordinate read as 1 minus as 0), env), else None. Its
+    layer is drawn as a second, additive pass (tools/slice.py); the base is baked with it at 0 (zero_coord)."""
+    off = lambda k: mat3 + u32(b, mat3 + k)
+    e = off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C
+    ns = b[off(0x58) + b[e + 4]]
+    if ns < 2:
+        return None
+    oi, oi0 = u16(b, e + 0xBC + 2 * (ns - 1)), u16(b, e + 0xBC)
+    if oi == 0xFFFF or oi0 == 0xFFFF:
+        return None
+    coord, tmap = b[off(0x4C) + 4 * oi], b[off(0x4C) + 4 * oi + 1]
+    if tmap == 0xFF or coord == b[off(0x4C) + 4 * oi0]:
+        return None
+    st = b[off(0x5C) + 20 * u16(b, e + 0xE4 + 2 * (ns - 1)):][:20]
+    if not (st[1] == 15 and st[4] == 0 and st[5] == 0 and st[6] == 0 and st[7] == 0 and (st[2] == 8 or st[3] == 8)
+            and st[9] & 3 == 0):
+        return None
+    ci = u16(b, e + 0x28 + 2 * coord)
+    if ci == 0xFFFF or b[off(0x38) + 4 * ci + 1] != 1:
+        return None
+    mtx = b[off(0x38) + 4 * ci + 2]
+    mi = u16(b, e + 0x48 + 2 * ((mtx - 30) // 3)) if mtx != 60 else 0xFFFF
+    env = env_mtx(b, off(0x40) + 0x64 * mi, b[off(0x38) + 4 * ci]) if mi != 0xFFFF else None
+    if env is None:
+        return None
+    mn = material_name(b, mat3, m)
+    zero = dict(over or {})
+    zero[mn] = dict(zero.get(mn, {}), zero_coord=coord)
+    k = np.clip(tev(b, mat3, m, tex1, texs, None, over)[:3] - tev(b, mat3, m, tex1, texs, None, zero)[:3], 0, 4)
+    t = u16(b, off(0x48) + 2 * u16(b, e + 0x84 + 2 * tmap))
+    return dict(coord=coord, tex=t, k=k, env=env, name=mn)
+
+
 def env_mtx(b, t, typ):
     """A normal texgen's matrix (J3DTexMtx::calcTexMtx, modes 6 and 7 without Maya SRT) on the view-space normal (GX:
     x right, y up, z to the viewer) -> 12 floats, columns n.x, n.y, n.z, 1 of rows s, t, q. Mode 6:
@@ -433,6 +469,8 @@ def tev(b, mat3, m, tex1, texs, base=None, over=None, max_stages=16, ras_k=1.0):
         tmap = b[off(0x4C) + 4 * oi + 1] if oi != 0xFFFF else 0xFF
         if tmap == 0xFF:
             return np.ones(shape + (4,), np.float32)
+        if ov.get("zero_coord") is not None and b[off(0x4C) + 4 * oi] == ov["zero_coord"]:
+            return np.zeros(shape + (4,), np.float32)  # a layer drawn apart (env_layer): left out here
         if base is None and not ov.get("env_mean"):  # texture inputs read tex_level (default 1)
             return np.full(shape + (4,), ov.get("tex_level", 1.0), np.float32)
         t = sampled(oi)

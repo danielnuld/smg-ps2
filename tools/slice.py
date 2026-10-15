@@ -463,12 +463,19 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 # an environment-mapped texture (texgen from normals, tex.env_mtx): baked as any, its UVs made on VU1
                 # from the view-space normal (VU1Env)
                 env = mt["env"] if mt and mt.get("env") and nget and 10 in info["at"] and not get else None
+                # an environment map added over a textured material (tex.env_layer: Dino, Tico's eyes): the base baked
+                # without it, the layer a second, additive group (after this one)
+                layer = (tex.env_layer(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, over)
+                         if get and mat is not None and nget and 10 in info["at"] else None)
                 if (get or env) and mt["tex"] < len(texs):
                     key = (mt["tex"], mat, ras_mean)  # the material's TEV baked into its texture (tex.tev)
                     if key not in ps2:
                         x = texs[mt["tex"]]
                         binfo = {}
                         o2 = over
+                        if layer:  # its env layer drawn apart: read as 0 here
+                            o2 = dict(o2 or {})
+                            o2[layer["name"]] = dict(o2.get(layer["name"], {}), zero_coord=layer["coord"])
                         if ras_mean:
                             mn = tex.material_name(b, bl[b"MAT3"], mat)
                             o2 = dict(over or {})
@@ -573,6 +580,28 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 elif ras_mean and isinstance(cols, list):  # baked at the mean: CLR0 / mean left (at most 1)
                     cols = [tuple(min(255, c[k] * 255 // ras_mean[k]) for k in range(3)) + tuple(c[3:]) for c in cols]
                 groups.append((verts, [remap[v] for v in tri], uvs, t, slots, cols, blend, nrm, gain))
+                if layer and t is not None and layer["tex"] < len(texs):
+                    lkey = ("layer", layer["tex"], mat)
+                    if lkey not in ps2:
+                        x = texs[layer["tex"]]
+                        lt = x["rgba"].astype(np.float32)
+                        lt[..., :3] = np.clip(lt[..., :3] * layer["k"], 0, 255)
+                        lt[..., 3] = 255  # added whole (K x TEXC): no texture alpha, the blend's FIX 1
+                        ps2[lkey] = tex.to_ps2(lt.astype(np.uint8), x["wrap_s"], x["wrap_t"], sky)
+                    lt = ps2[lkey]
+                    lt = dict(lt, env=[e * (lt["u_scale"], lt["v_scale"], 1.0)[i % 3] for i, e in enumerate(layer["env"])])
+                    ln = nrm if isinstance(nrm, list) else None
+                    if ln is None:  # an unlit material's normals, for the layer only
+                        o, w = info["at"][10]
+                        ln = [nget(info["keys"][v][o] if w == 1 else info["keys"][v][o] << 8 | info["keys"][v][o + 1])
+                              for v in used]
+                        if mats:
+                            ln = [tuple(float(x) for x in skin.unit(m_[:3, :3] @ n)) for m_, n in zip(mats, ln)]
+                    groups.append((verts, [remap[v] for v in tri], [(0.0, 0.0)] * len(used), lt, slots, None,
+                                   (2, 0, 255), ln, 1))
+                    if skinned:
+                        gtab.append(tables[(info["shape"], info["group"])])
+                    stats["env_layer"] = stats.get("env_layer", 0) + 1
             if skinned:
                 sk = skin_entry(b, bl, gtab)
         elif n.endswith(".kcl"):
@@ -1533,7 +1562,8 @@ def read_chunks(blob):
 def selftest():
     fp = Path(__file__).resolve().parent.parent / "data/fs/files/ObjectData/FlipPanel.arc"
     if fp.exists():  # its three faces overlap: the one its joints show (rest: "?", PanelA: "!", PanelEnd: End)
-        faces = lambda pose: [len(g[1]) // 3 for g in model_groups(fp, 1.0, pose=pose)[0]]
+        faces = lambda pose: [len(g[1]) // 3 for g in model_groups(fp, 1.0, pose=pose)[0]
+                              if not (g[3] and g[3].get("env"))]  # env layers (tex.env_layer) aside
         assert len(faces(None)) == len(faces("PanelA")) == len(faces("PanelEnd")) == 2
         assert len({faces(None)[1], faces("PanelA")[1], faces("PanelEnd")[1]}) == 3
     # a unit right triangle mapped onto a 64 x 64 texture: 64 texels per unit -> K = 16 log2(64 / LOD_F)
