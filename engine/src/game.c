@@ -35,7 +35,8 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
     V3 front, qy, qz, grav, gn, wn, tcenter, ttarget, velh;
     char act[20]; int act_seq, act_drawn, act_frames, act_mode, act_interp; float act_t, act_rate;
     V3 bpos, bvel; int bshow; /* a second model it throws (PackunPetit's blown head) */
-    V3 gpos, gup; int gok; /* walker_up: the gravity's up at gpos */ } Kuribo; /* walking
+    V3 gpos, gup; int gok; /* walker_up: the gravity's up at gpos */
+    u32 lv; /* its level sound's handle (se_level) */ } Kuribo; /* walking
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI };
@@ -12290,9 +12291,13 @@ static void ap_find(Kuribo *k) { w_snrv(k, WF_FIND); k->sstep = 0; }
 static void ap_chase(Kuribo *k) { w_snrv(k, WC_START); k->sstep = 0; }
 static void ap_stagger(Kuribo *k) { w_snrv(k, WS_STAGGER); k->sstep = 0; }
 
+static void w_se(Kuribo *k, u32 id) { float at[3] = {k->pos.x, k->pos.y, k->pos.z}; se_start(id, at); } /* MR::startSound */
+static void w_se_lv(Kuribo *k, u32 id) { float at[3] = {k->pos.x, k->pos.y, k->pos.z}; k->lv = se_level(id, at, k->lv); }
+
 /* The walker kit's kill: DeathSmokeKuribo, its switch, its item (ItemGenerator: 1 a coin, 2 three star pieces) */
 static void w_kill(Kuribo *k)
 {
+    if (k->kind == WALK_KURIBO) w_se(k, SE_EM_EXPLODE_S); /* Kuribo::kill */
     k->state = KURIBO_DEAD; row_kill(k->row);
     fx_at(k->kind == WALK_KMINI ? FX_KURIBOMINI_DEATH : FX_KURIBO_DEATHSMOKEKURIBO, k->pos, vmul(k->grav, -1.0f));
     if (k->item == 1) pop_coins(k->pos, vmul(k->grav, -1.0f), 1);
@@ -12344,16 +12349,21 @@ static void kuribo_update(Kuribo *k)
     case KN_FINDPLAYER:
         w_state(k, ap_find);
         ws_find(k, KB_G, 20.0f, 5.0f);
+        if (k->snrv == WF_JUMP && k->sstep == 1) w_se(k, SE_EM_KURIBO_FIND); /* isFindJumpBegin */
         if (k->sdead) w_nrv(k, KN_CHASE);
         break;
     case KN_CHASE:
         w_state(k, ap_chase);
         ws_chase(k, KB_G, 0.4f, 1000.0f, 70.0f, 30.0f);
+        if (k->snrv == WC_START && k->on_ground) w_se_lv(k, SE_EM_LV_KURIBO_DASH1); /* isRunning */
         if (k->sdead) { w_nrv(k, KN_WANDER); k->tcenter = k->pos; } /* setWanderCenter */
         break;
     case KN_STAGGER:
         if (st == 0 && k->snrv != WS_STAGGER) ap_stagger(k);
         ws_stagger(k, KB_G);
+        if (k->snrv == WS_STAGGER && k->sstep == 2) { w_se(k, SE_EM_CRASH_S); w_se(k, SE_PM_SPIN_HIT); } /* isStaggerStart, startBlowHitSound */
+        if (k->snrv == WS_STAGGER && k->sstep >= 16) w_se_lv(k, SE_EM_LV_SWOON_S); /* isSwooning(15) */
+        if (k->snrv == WS_STAGGEREND && k->sstep == 1) w_se(k, SE_EM_KURIBO_SWOON_RECOVER); /* isRecoverStart */
         if (k->sdead) w_nrv(k, KN_WANDER);
         break;
     case KN_NONACTIVE:
@@ -12385,11 +12395,11 @@ static void kuribo_update(Kuribo *k)
         if (st > 60) w_nrv(k, KN_WANDER);
         break;
     case KN_HIPDROPDOWN: case KN_FLATDOWN: case KN_PRESSDOWN:
-        if (st == 0) k->vel = v3(0, 0, 0);
+        if (st == 0) { k->vel = v3(0, 0, 0); w_se(k, SE_EM_CRASH_S); }
         if (st > (k->nrv == KN_FLATDOWN ? 20 : k->nrv == KN_HIPDROPDOWN ? 40 : 180)) { w_kill(k); return; }
         break;
     case KN_BLOWDOWN:
-        if (st == 0) w_act(k, "Blow");
+        if (st == 0) { w_act(k, "Blow"); w_se(k, SE_EM_CRASH_S); }
         if (!w_on_ground(k)) k->vel = vadd(k->vel, vmul(k->grav, 1.5f));
         k->vel = vmul(k->vel, w_on_ground(k) ? 0.93f : 0.99f);
         if (k->on_wall == 2) rebound_hv(&k->vel, k->wn, 0.2f, 0.7f);
@@ -12416,9 +12426,11 @@ static void kuribo_update(Kuribo *k)
     int upside = k->nrv == KN_STAGGER && !(k->snrv == WS_STAGGEREND && k->sstep - 1 > 15); /* isUpsideDown */
     if (msg == MSG_TRAMPLE && enable_stamp && !dying) {
         w_act(k, upside ? "FlatDownReverse" : "FlatDown"); w_nrv(k, KN_FLATDOWN); k->bind_off = 1; k->item = 1;
+        w_se(k, SE_EM_STOMPED_S); /* requestFlatDown */
         mario->vup = 15.0f; mario->grounded = 0; /* doTrampleJump */
     } else if (msg == MSG_HIPDROP && !dying) {
         w_act(k, upside ? "HipDropDownReverse" : "HipDropDown"); w_nrv(k, KN_HIPDROPDOWN); k->bind_off = 1; k->item = 1;
+        w_se(k, SE_EM_STOMPED_S); /* requestHipDropDown */
     } else if (msg == MSG_HITALL && enable_punch) {
         if (!kick) { if (k->nrv != KN_STAGGER || k->snrv != WS_STAGGER || k->sstep > 1) { ws_stagger_punch(k, mario->pos); w_nrv(k, KN_STAGGER); ap_stagger(k); } }
         else { /* requestBlowDown: setVelocityBlowAttack 36 / 30 */
