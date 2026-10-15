@@ -332,10 +332,16 @@ landing, spin drivers, Dino, OtaKing, OtaRock, CocoSambo with its FallHead / Blo
 TicoFat), TicoFat's WipeOut screen effects, the white wipe really white (`fat`, `ota`); e804311 talk cameras
 (CameraTalk for CameraNormal messages, 会話 multi-actor for CameraEvent; `talk`); 0002de2 `talk` with
 XF=-DTALK_CLS=3 (Kinopio, EggStar 3). TicoFat's 喜び camera needs arg7 6: Good Egg's has -1, nothing to do.
-Left for Good Egg, in order: env-mapped materials (CrystalCageS / DropOfWater draw flat pale: GX_TG_NRM texgen in
-VU1), PhantomShipBridge (OceanTwinPirates: waits up until SW_A 107, then MoveA; slice.py POSE keeps it down, needs
-its Move collision on the animated joint), the Plant climb pose, OtaKing's bath rim crevice, talk balloon window
-textures / beak, TicoFat's fullness meter and info message, sound last (the user's call).
+Then bd4d04d PhantomShipBridge (skinned; waits up with SW_A, MoveA / MoveB, its Move collision on the joint:
+slice.py KCL_PARTS; `BRIDGE_TEST`; 8f40a79 `orock` puts Mario on the far side: the raised bridge stands between
+OceanTwinPirates' OtaRocks) and 184c1a5 environment maps (tex.env_mtx: J3DTexMtx modes 6 / 7 on GX_TG_NRM, VUMD
+lit byte 2 + its matrix, VU1Env, render_env; coins, star pieces, spin drivers, pipes, power star, crystal
+highlights; IndDummy materials (CrystalCage's refraction) blend kind 3: frame buffer x tint mean). Checked: `talk`
+EggStar 3 (the cage is see-through), `purple` (100 coins, the star), `walker`. The first PCSX2 run after a new GS
+blend state can stall for a while (Vulkan pipelines compiling): not a hang.
+Left for Good Egg, in order: env maps on a second coordinate over a base texture (Dino, OtaKing, Tico's eyes, TicoFat:
+the env texture's mean is baked in; needs a second, blended pass), the Plant climb pose, OtaKing's bath rim crevice,
+talk balloon window textures / beak, TicoFat's fullness meter and info message, sound last (the user's call).
 
 **Parked 2026-10-14 (the user's call: Good Egg first), resume later:** the coverage-run session stopped mid-work.
 f8ff9e6 (untested, committed as it stood): gravities follow their switches (GlobalGravityObj::updateSwitch; SW_SLEEP
