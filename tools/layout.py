@@ -25,6 +25,7 @@ A material's texture SRT is baked into its image (StarPieceTargetMeter's frame: 
 ponytail: no other rotation, no other animated texture SRT or projections, vertex colours averaged, the brlan
 animations not played (but appear's end and the masked panes' angles).
 """
+import math
 import struct
 from pathlib import Path
 
@@ -85,6 +86,10 @@ def parse(b):
                 p["colours"] = [struct.unpack_from(">4B", b, co + 4 * k) for k in range(4)]
                 p["mat"] = u16(b, co + 16)
                 p["wnd"] = dict(inflate=struct.unpack_from(">4f", b, o + 0x4C), frames=frames)
+            elif kind == b"txt1":  # lyt::TextBox: its material, text position (0..8), font size, character space
+                p["mat"] = u16(b, o + 0x50)
+                p["txt"] = dict(pos=b[o + 0x54], size=struct.unpack_from(">2f", b, o + 0x64),
+                                space=struct.unpack_from(">f", b, o + 0x6C)[0])
             panes.append(p)
             last = len(panes) - 1
         elif kind == b"pas1":
@@ -219,6 +224,17 @@ def quads(files, name):
             shown = pshown and bool(par["flags"] & 1)
             grp = groups.index(len(absolute)) if p["parent"] == 0 else pgrp
         absolute.append((pos, sc, al, shown, grp))
+        if p["kind"] == "txt1" and shown and p["flags"] & 1 and p["mat"] < len(mats):
+            # a text box (the engine writes its number): fill 255, its box, the material's white colour (lerp(C0,
+            # C1, glyph) with C0 clear: the glyph times C1), font size, character space and text position
+            w, h = p["size"][0] * sc[0], p["size"][1] * sc[1]
+            ox, oy = p["origin"] % 3, p["origin"] // 3
+            c1 = mats[p["mat"]]["c1"]
+            rgba = tuple(int(min(255, c * 128 + 0.5)) for c in (c1[0], c1[1], c1[2], c1[3] * al * p["alpha"]))
+            t = p["txt"]
+            out.append((pos[0] - w * ox / 2, pos[1] + h * oy / 2, w, h, None, rgba, t["size"][0] * sc[0],
+                        t["size"][1] * sc[1], t["space"], t["pos"], grp, 255, 0, 0, 0, 0))
+            continue
         if not (shown and p["flags"] & 1) or p["kind"] not in ("pic1", "wnd1") or p["mat"] is None or p["mat"] >= len(mats):
             continue
         m = mats[p["mat"]]
@@ -276,9 +292,138 @@ def quads(files, name):
     return out, images
 
 
+def anim_at(b, frame):
+    """A BRLAN's values at a frame -> {(pane name, is material, tag, target): value}: the last key at or before the
+    frame (step keys: their later twin), Hermite between two distinct key frames."""
+    out = {}
+    o = u16(b, 0xC)
+    for _ in range(u16(b, 0xE)):
+        kind, size = b[o:o + 4], u32(b, o + 4)
+        if kind == b"pai1":
+            nent, eoff = u16(b, o + 14), u32(b, o + 16)
+            for e in range(nent):
+                eo = o + u32(b, o + eoff + 4 * e)
+                name = b[eo:eo + 20].split(b"\0")[0].decode()
+                for t in range(b[eo + 20]):
+                    to = eo + u32(b, eo + 24 + 4 * t)
+                    tag = b[to:to + 4]
+                    for i in range(b[to + 4]):
+                        io = to + u32(b, to + 8 + 4 * i)
+                        target, ctype, nk = b[io + 1], b[io + 2], u16(b, io + 4)
+                        ko = io + u32(b, io + 8)
+                        if ctype == 1:  # step keys (RLVI)
+                            keys = [struct.unpack_from(">fH", b, ko + 8 * k) for k in range(nk)]
+                            val = keys[0][1]
+                            for f, v in keys:
+                                if f <= frame:
+                                    val = v
+                        else:
+                            keys = [struct.unpack_from(">3f", b, ko + 12 * k) for k in range(nk)]
+                            val = keys[0][1]
+                            for (f0, v0, s0), (f1, v1, s1) in zip(keys, keys[1:]):
+                                if f0 <= frame < f1:
+                                    t_ = (frame - f0) / (f1 - f0)
+                                    h1, h2 = 2 * t_ ** 3 - 3 * t_ ** 2 + 1, -2 * t_ ** 3 + 3 * t_ ** 2
+                                    val = h1 * v0 + h2 * v1 + ((t_ ** 3 - 2 * t_ ** 2 + t_) * s0 + (t_ ** 3 - t_ ** 2) * s1) * (f1 - f0)
+                            if frame >= keys[-1][0]:
+                                val = keys[-1][1]
+                        out[(name, bool(b[eo + 21]), tag, target)] = val
+        o += size
+    return out
+
+
+def bake_meter(fsp):
+    """HitPointMeter (MeterLayout) for life 0..3 as images: its HitPoint pane (shadow, base, the three pieces shown
+    and coloured by count.brlan at the life, the highlight) and the LIFE title (MenuFont64), drawn in software with
+    the panes' rotations -> ([RGBA images], (left, top) of the images in layout units, the number's text boxes as
+    quads.py text records). ponytail: the 4..6 (LifeUp) W meter, the Danger / Damage animations"""
+    import msg
+    files = {k.lower().rsplit("/", 1)[-1]: v for k, v in
+             B.rarc_files((Path(fsp) / "LayoutData" / "HitPointMeter.arc").read_bytes())}
+    b = files["hitpointmeter.brlyt"]
+    texs, mats, panes = parse(b)
+    rz, o = [], u16(b, 0xC)  # each pane's z rotation (file order, as parse)
+    for _ in range(u16(b, 0xE)):
+        kind, size = b[o:o + 4], u32(b, o + 4)
+        if kind in (b"pan1", b"pic1", b"wnd1", b"txt1", b"bnd1"):
+            rz.append(struct.unpack_from(">f", b, o + 0x38)[0])
+        o += size
+    W, H, X0, Y0 = 128, 128, 223 - 64, 139 + 70  # around HitPoint (223, 139), the title above
+    font = msg.rfnt(msg._arc(fsp, "LayoutData/Font.arc")["menufont64.brfnt"])
+    imgs = []
+    for life in range(4):
+        an = anim_at(files["count.brlan"], life)
+        canvas = np.zeros((H, W, 4), np.float32)
+        mtx = []  # per pane: 2x3 affine (layout units), visible, alpha
+        for i, p in enumerate(panes):
+            vis = an.get((p["name"], False, b"RLVI", 0), p["flags"] & 1)
+            a = math.radians(rz[i])
+            m = np.array([[math.cos(a) * p["s"][0], -math.sin(a) * p["s"][1], p["t"][0]],
+                          [math.sin(a) * p["s"][0], math.cos(a) * p["s"][1], p["t"][1]]])
+            if p["parent"] is not None:
+                pm, pvis = mtx[p["parent"]]
+                m = pm @ np.vstack([m, [0, 0, 1]])
+                vis = vis and pvis
+            mtx.append((m, vis))
+            under = i
+            while under is not None and panes[under]["name"] not in ("HitPoint", "Font"):
+                under = panes[under]["parent"]
+            if not vis or under is None or p["kind"] not in ("pic1", "txt1") or p["name"].endswith("W"):
+                continue
+            mt = mats[p["mat"]]
+            c0, c1 = mt["c0"].copy(), mt["c1"].copy()
+            for k in range(4):
+                c1[k] = an.get((p["name"], True, b"RLMC", 8 + k), c1[k] * 255) / 255
+            if p["kind"] == "pic1":
+                t = tpl(files[texs[mt["tex"][0]].lower()]).astype(np.float32) / 255
+                if tuple(mt["srt"]) != (0, 0, 0, 1, 1):  # the pieces: s mirrored round its middle (wedge)
+                    t = srt_bake(t, mt["srt"], mt["wrap"])
+                img = c0 + (c1 - c0) * t
+                ox, oy = p["origin"] % 3, p["origin"] // 3
+                w, h = p["size"]
+                _blit(canvas, img, m, -w * ox / 2, h * oy / 2, w, h, X0, Y0)
+            elif p["name"] == "TxtTitle":  # "LIFE", centred, 64 px glyphs, -3 spacing; colours top white, bottom 120
+                gl = [(font["cmap"][ord(ch)], font["widths"].get(font["cmap"][ord(ch)], font["default"])) for ch in "LIFE"]
+                tw = sum(cw for _, (_, _, cw) in gl) - 3 * (len(gl) - 1)
+                x = -tw / 2
+                for gi, (left, gw, cw) in gl:
+                    g = msg.glyph_image(font, gi)[:, :max(gw, 1)].astype(np.float32) / 255
+                    ramp = np.linspace(1.0, 120 / 255, g.shape[0])[:, None, None]
+                    col = (c0 + (c1 - c0) * g) * np.concatenate([np.repeat(ramp, 3, 2), np.ones_like(ramp)], 2)
+                    _blit(canvas, col, m, x + left, 32, g.shape[1], g.shape[0], X0, Y0)
+                    x += cw - 3
+        imgs.append((np.clip(canvas, 0, 1) * 255 + 0.5).astype(np.uint8))
+    return imgs, (X0, Y0)
+
+
+def _blit(canvas, img, m, x, y, w, h, X0, Y0):
+    """Composite img (RGBA 0..1) as the pane-local rectangle (x, y) top left, w x h (y up) under affine m onto the
+    canvas (top left at layout (X0, Y0)), bilinear, over."""
+    H, W = canvas.shape[:2]
+    inv = np.linalg.inv(np.vstack([m, [0, 0, 1]]))
+    jj, ii = np.mgrid[0:H, 0:W]
+    X, Y = X0 + ii + 0.5, Y0 - jj - 0.5
+    lx = inv[0, 0] * X + inv[0, 1] * Y + inv[0, 2]
+    ly = inv[1, 0] * X + inv[1, 1] * Y + inv[1, 2]
+    u = (lx - x) / w * img.shape[1] - 0.5
+    v = (y - ly) / h * img.shape[0] - 0.5
+    ins = (u > -1) & (v > -1) & (u < img.shape[1]) & (v < img.shape[0])
+    u0, v0 = np.floor(u).astype(int), np.floor(v).astype(int)
+    fu, fv = (u - u0)[..., None], (v - v0)[..., None]
+    def at(a, b_):
+        return img[np.clip(b_, 0, img.shape[0] - 1), np.clip(a, 0, img.shape[1] - 1)] * \
+            ((a >= 0) & (a < img.shape[1]) & (b_ >= 0) & (b_ < img.shape[0]))[..., None]
+    s = (at(u0, v0) * (1 - fu) * (1 - fv) + at(u0 + 1, v0) * fu * (1 - fv) + at(u0, v0 + 1) * (1 - fu) * fv +
+         at(u0 + 1, v0 + 1) * fu * fv) * ins[..., None]
+    a = s[..., 3:4]
+    canvas[..., :3] = s[..., :3] * a + canvas[..., :3] * (1 - a)
+    canvas[..., 3:4] = a + canvas[..., 3:4] * (1 - a)
+
+
 # drawn by game.c lay_draw: the talk balloons (talk_draw), InformationWindow (group 0 InfoWindowUp: TicoFat's Info),
-# TicoFat's FullnessMeter (StarPieceTargetMeter group 0 at the pointer, StarPieceTargetCounter)
-LAYOUTS = ("TalkBalloonEvent", "SignBoardBalloon", "InformationWindow", "StarPieceTargetMeter", "StarPieceTargetCounter")
+# TicoFat's FullnessMeter (StarPieceTargetMeter group 0 at the pointer, StarPieceTargetCounter), the HUD counters
+LAYOUTS = ("TalkBalloonEvent", "SignBoardBalloon", "InformationWindow", "StarPieceTargetMeter", "StarPieceTargetCounter",
+           "StarCounter", "CoinCounter", "StarPieceCounter", "PlayerLeft", "HitPointMeter")  # the HUD: game.c hud_draw
 
 
 def section(fsp, first_tex):
@@ -289,11 +434,21 @@ def section(fsp, first_tex):
         files = {k.lower().rsplit("/", 1)[-1]: v for k, v in
                  B.rarc_files((Path(fsp) / "LayoutData" / f"{name}.arc").read_bytes())}
         qs, imgs = quads(files, name)
+        if name == "HitPointMeter":  # baked per life (group = life), its number's text boxes (not LIFE's) group 15
+            meter, (x0, y0) = bake_meter(fsp)
+            qs = [(x0, y0, im.shape[1], im.shape[0], k, (128, 128, 128, 128), 0, 0, 1, 1, k, 0, 0, 0, 0, 0)
+                  for k, im in enumerate(meter)] +                  [q[:5] + (q[5][:3] + (128 if q[5][0] else 50,),) + q[6:10] + (15,) + q[11:]  # HPMeter's alpha 0:
+                  for q in qs if q[11] == 255 and q[7] > 40]  # ShowHide drives the alpha; the number (32 x 1.4), not LIFE
+            imgs = meter
         base = len(ps2)
         ps2 += [tex.to_ps2(im, 0, 0, hi=True) for im in imgs]
         images += imgs
         body += struct.pack("<24sHH", name.encode(), len(qs), 0)
         for x, y, w, h, ti, rgba, u0, v0, u1, v1, grp, fill, cu, cv, tu, tv in qs:
+            if fill == 255:  # a text box: u v the font size x 16, uw the character space x 16, vh the text position
+                body += struct.pack("<4hH4B4h2B4h", round(x), round(y), round(w), round(h), 0xFFFF, *rgba,
+                                    round(16 * u0), round(16 * v0), round(16 * u1), v1, grp, fill, 0, 0, 0, 0)
+                continue
             t = ps2[base + ti] if ti is not None else None
             sw, sh = (t["w"] * t["u_scale"], t["h"] * t["v_scale"]) if t else (0, 0)
             body += struct.pack("<4hH4B4h2B4h", round(x), round(y), round(w), round(h),

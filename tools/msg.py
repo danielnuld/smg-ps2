@@ -223,6 +223,12 @@ def font_chunk(fsp, lang=LANG):
     icons = {p + 0x30 for p in pics}
     pimg, pg = atlas(pic, icons, (256, 256))
     pg = [(g[0] - 0x30,) + tuple(g[1:]) for g in pg]
+    # NumberFont's digits (the HUD counters' text boxes) under the pictures, codes 0x1000 + character
+    num = rfnt(f["numberfont.brfnt"])
+    y0 = max(g[2] + g[4] for g in pg) + 2 if pg else 0
+    nimg, ng = atlas(num, set(range(0x30, 0x3A)), (256, 256 - y0))
+    pimg[y0:] = np.maximum(pimg[y0:], nimg)
+    pg += [(0x1000 + g[0], g[1], g[2] + y0) + tuple(g[3:]) for g in ng]
     # the text atlas: PSMT8, CLUT white with alpha = I4 intensity (16 levels), CSM1 order
     idx = (timg[:, :, 0] >> 4).astype(np.uint8)
     pal = np.zeros((256, 4), np.uint32)

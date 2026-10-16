@@ -57,6 +57,7 @@ typedef struct {
     int grounded, spin_timer, hurt_timer; /* mMovementStates._1; the punch hit timer (setPunchHitTimer) */
     int jump_kind;      /* _430: 0-2 jump / 2nd / 3rd, 4 turn, 5 long jump, 6 back flip, 7 wall, 8 spin, 13 launched */
     int land_timer;     /* _3CE: frames on the ground since landing */
+    int land_type;      /* _3E: 2 after the ScenarioStarter's flight (ステージインB landing) */
     int air_timer;      /* _3BC: frames since take-off */
     int squat, wall;    /* mMovementStates._A; touching a wall this frame (wall_n valid) */
     int slip_keep;      /* frames Mario may still stand on a 60-85 degree slope before it slips (Petari _41C) */
@@ -5712,7 +5713,16 @@ static int update_launch(Player *m)
     L->cool = 60;
     m->launch = -1;
     fly_on = 0;
+    /* ponytail: after the ScenarioStarter's flight the Wii (Dolphin, RAM read at EggStar 1's control) has Mario at the
+     * path's end straight down to the ground, none of the last step across: kept along gravity only; where Petari
+     * drops it (endRush with ATYPE_SCENARIO_STARTER_BIND) was not traced */
+    if (L->starter) step = vmul(m->up, vdot(step, m->up));
     m_power_jump(m, step);
+    if (L->starter) m->land_type = 2; /* MarioActor::endRush: ATYPE_SCENARIO_STARTER_BIND */
+
+#ifdef REPLAY
+    printf("launch end: pos %d %d %d step %.1f %.1f %.1f\n", (int)m->pos.x, (int)m->pos.y, (int)m->pos.z, step.x, step.y, step.z);
+#endif
     return 0;
 }
 
@@ -8679,6 +8689,30 @@ static void tk_balloon_pos(Talker *t)
     t->sx = 320.0f + vdot(vsub(p, ce), r) / z * k;
     t->sy = 224.0f - vdot(vsub(p, ce), u) / z * k;
 }
+/* a text box (layout.py fill 255) with the number n in NumberFont (setTextBoxNumberRecursive): its font size, the
+ * character space, the text position (0..8: x left / centre / right, y top / centre / bottom) in the box */
+static void lay_text(const LayQuad *l, float dx, float dy, float a, int n)
+{
+    char s[12];
+    int len = snprintf(s, sizeof s, "%d", n);
+    float sx = l->u / 16.0f / 32.0f, sy = l->v / 16.0f / 32.0f, sp = l->uw / 16.0f, tw = 0; /* NumberFont: 32 x 32 cells */
+    for (int i = 0; i < len; i++) {
+        const TkGlyph *gl = tk_find(tk_icon, tk_nicon, 0x1000 + s[i]);
+        if (gl) tw += gl->cw * sx + (i ? sp : 0);
+    }
+    int hp = l->vh % 3, vp = l->vh / 3;
+    float x = l->x + (hp == 0 ? 0 : hp == 1 ? (l->w - tw) / 2 : l->w - tw);
+    float top = vp == 0 ? l->y : vp == 1 ? l->y - (l->h - 32.0f * sy) / 2 : l->y - l->h + 32.0f * sy;
+    u32 rgba = l->rgba[0] | l->rgba[1] << 8 | l->rgba[2] << 16 | (u32)(l->rgba[3] * a) << 24;
+    for (int i = 0; i < len; i++) {
+        const TkGlyph *gl = tk_find(tk_icon, tk_nicon, 0x1000 + s[i]);
+        if (!gl) continue;
+        tk_quad(tk_hx(x + gl->left * sx + dx), tk_hy(top + dy), gl->w * sx * TK_KX, gl->h * sy * TK_KY, rgba, tk_itex,
+                gl->u, gl->v, gl->w, gl->h);
+        x += gl->cw * sx + sp;
+    }
+}
+static int lay_num = -1; /* lay_draw: the number its text boxes show (-1 none) */
 /* a layout's panes (tools/layout.py) at their places moved by (dx, dy) (layout units, y up), alpha x a; group: one
  * child of its root pane, -1 all */
 static void lay_draw(const char *name, int group, float a, float dx, float dy)
@@ -8691,6 +8725,7 @@ static void lay_draw(const char *name, int group, float a, float dx, float dy)
         if (!strcmp((const char *)q, name)) {
             for (int k = 0; k < nq; k++, l++) {
                 if (group >= 0 && l->group != group) continue;
+                if (l->fill == 255) { if (lay_num >= 0) lay_text(l, dx, dy, a, lay_num); continue; }
                 if (l->fill) {
                     if (!strcmp(name, "StarPieceTargetMeter")) meter_fill(l, tk_hx(l->x + dx), tk_hy(l->y + dy), meter_frame, a);
                     else if (tk_bev.beak_vis) /* the beak and its shadow: beak.brlan's RLTS, -50 at 0 to 50 at 100 */
@@ -8706,6 +8741,145 @@ static void lay_draw(const char *name, int group, float a, float dx, float dy)
         }
         q += 28 + nq * sizeof(LayQuad);
     }
+}
+/* The HUD counters after Petari's CounterLayoutController: StarCounter, CoinCounter, StarPieceCounter, PlayerLeft,
+ * each a LayoutActor with a CounterLayoutAppearer (Appear: the appear.brlan alpha over its 21 frames while the
+ * layout comes in from its offset by the ease-out rate; End the same back, ease-in) and its counter's nerves; the
+ * controller shows them all once the player has not moved for 60 frames (PlayerNotMoving) and hides them after 240
+ * once he moves; a counter whose number goes up appears by itself, counts up one every 3 frames and goes after 240
+ * frames of Wait. setFollowPos: the counter's pane at Position001 / 010 / 100 by its digits (CoinCounter,
+ * StarPieceCounter). ponytail: no Flash / Wait animations, no CountUpPaneRumbler, no counter light effects, no
+ * TicoEat total mode, the LIFE meter (MarioMeter) apart */
+enum { HC_HIDE, HC_APPEAR, HC_WAIT, HC_COUNTUP, HC_DISAPPEAR };
+enum { AP_HIDE, AP_APPEAR, AP_SHOW, AP_DISAPPEAR };
+typedef struct {
+    const char *lay; int group; float offx, offy; /* the layout, the group drawn, the appearer's offset (screen, y down) */
+    int nrv, step, disp, num, forced, wait_cd, ap, ap_step; float follow;
+} HudCounter;
+static HudCounter hud[4] = { /* StarCounter, CoinCounter, StarPieceCounter (normal), PlayerLeft (normal) */
+    {.lay = "StarCounter", .group = 0, .offx = -50.0f}, {.lay = "CoinCounter", .group = 0, .offx = 50.0f},
+    {.lay = "StarPieceCounter", .group = 1, .offy = 30.0f}, {.lay = "PlayerLeft", .group = 0, .offx = -50.0f}};
+static struct { int nrv, step, still; } hudc; /* CounterLayoutController: 0 PlayerMoving, 1 PlayerNotMoving */
+static int hud_on; /* forceAppearDefaultGameLayout has run (ScenarioStarter's Welcome, step 90) */
+static void hud_set(HudCounter *c, int n) { c->nrv = n; c->step = 0; }
+static void hud_ap(HudCounter *c, int n) { c->ap = n; c->ap_step = 0; }
+static int hud_value(int k)
+{
+    return k == 0 ? stars : k == 1 ? got_coins : k == 2 ? got_pieces : lives;
+}
+static void hud_force_appear(HudCounter *c) /* CoinCounter / StarPieceCounter / PlayerLeft::forceAppear */
+{
+    if (c->nrv != HC_WAIT) { hud_set(c, HC_APPEAR); hud_ap(c, AP_APPEAR); }
+    c->forced = 1;
+}
+static void hud_disappear(HudCounter *c) { c->forced = 0; hud_set(c, HC_DISAPPEAR); hud_ap(c, AP_DISAPPEAR); }
+static int hud_hidden_or_wait(const HudCounter *c) { return c->nrv == HC_HIDE || c->nrv == HC_WAIT; }
+/* MarioMeter's HitPointMeter (MeterLayout): Wait (with 3: _4C down 0.05 a frame while the player moves, up while he
+ * is still; below 3 it stays at 1), the ShowHide alpha at _4C x 20 and 50 to the right by getEaseInOutValue(_4C, 1,
+ * 0); a change of life: Damage / Recover, then WaitStart (240 frames at 1). ponytail: no Danger pulse, no Damage
+ * shake, no Break / Zero meter, no 4..6 (LifeUp) meter, no pointer fade (mAlpha) */
+enum { HM_WAIT, HM_WAITSTART };
+static struct { int nrv, step, count; float k; } hpm = {HM_WAIT, 0, 3, 0.0f};
+static void hpm_update(int stopped)
+{
+    hpm.step++;
+    if (life != hpm.count) { hpm.count = life; hpm.nrv = HM_WAITSTART; hpm.step = 0; hpm.k = 1.0f; } /* setCount */
+    if (hpm.nrv == HM_WAITSTART) { hpm.k = 1.0f; if (hpm.step > 240) { hpm.nrv = HM_WAIT; hpm.step = 0; } return; }
+    if (hpm.count == 3) hpm.k = fminf(fmaxf(hpm.k + (stopped ? 0.05f : -0.05f), 0.0f), 1.0f);
+    else hpm.k = 1.0f;
+}
+static int hud_welcome, hud_had_starter; /* frames since the ScenarioStarter's landing (ShowWelcomeLayout's step); a flight in */
+static void hud_update(void)
+{
+    if (!hud_on && (hud_welcome ? ++hud_welcome > 91 : game_frame > 2 && !hud_had_starter)) {
+        hud_on = 1; /* forceAppearDefaultGameLayout: the controller's PlayerNotMoving */
+        for (int k = 0; k < 4; k++) hud[k].disp = hud_value(k);
+        hudc.nrv = 1; hudc.step = 0;
+    }
+    if (!hud_on) return;
+    int busy = mario->launch >= 0 || talk_active(); /* isInvalidSystemStateShowCounter: in a bind, talking */
+    for (int k = 0; k < 4; k++) {
+        HudCounter *c = &hud[k];
+        c->num = hud_value(k);
+        c->step++;
+        if (k == 0) { /* StarCounter: Appear, Wait, CountUp, Disappear (killed) */
+            if (c->nrv == HC_APPEAR && c->ap == AP_SHOW) hud_set(c, HC_WAIT);
+            else if (c->nrv == HC_WAIT && c->disp < c->num) hud_set(c, HC_COUNTUP);
+            else if (c->nrv == HC_COUNTUP) { if (c->step == 1) c->disp++; if (c->step > 21) hud_set(c, HC_WAIT); }
+            else if (c->nrv == HC_DISAPPEAR && c->ap == AP_HIDE) hud_set(c, HC_HIDE);
+        } else { /* Coin / StarPiece / PlayerLeft: updateCounter, then their nerves */
+            if (k == 3) { /* PlayerLeft: more lives make it appear; its number follows while shown */
+                if (c->nrv == HC_HIDE && c->num > c->disp) { hud_set(c, HC_APPEAR); hud_ap(c, AP_APPEAR); }
+                if (c->nrv != HC_HIDE) c->disp = c->num;
+            } else if (c->nrv != HC_DISAPPEAR || k == 1) {
+                if (c->wait_cd > 0) c->wait_cd--;
+                else if (c->disp < c->num) {
+                    if (c->nrv == HC_WAIT) { c->wait_cd = 3; c->disp++; }
+                    if (c->nrv != HC_APPEAR) { if (c->nrv != HC_WAIT) { hud_set(c, HC_APPEAR); hud_ap(c, AP_APPEAR); } else hud_set(c, HC_WAIT); }
+                } else if (k == 2 && c->disp > c->num) c->disp = c->num; /* pieces spent */
+            }
+            if (c->nrv == HC_APPEAR && c->ap == AP_SHOW) hud_set(c, HC_WAIT);
+            else if (c->nrv == HC_WAIT && !c->forced && c->disp == c->num && (c->step > 240 || busy)) hud_disappear(c);
+            else if (c->nrv == HC_DISAPPEAR && c->ap == AP_HIDE) hud_set(c, HC_HIDE);
+        }
+        c->ap_step++;
+        if (c->ap == AP_APPEAR && c->ap_step > 21) hud_ap(c, AP_SHOW);
+        if (c->ap == AP_DISAPPEAR && c->ap_step > 21) hud_ap(c, AP_HIDE);
+    }
+    /* the controller */
+    int moving = !mario->grounded || pad_lx() != 0.0f || pad_ly() != 0.0f || pad_held(0xFFFF) || busy;
+    int all = 1;
+    for (int k = 0; k < 4; k++) all &= hud_hidden_or_wait(&hud[k]);
+    if (hudc.nrv == 0 && !all) moving = 1;
+    hudc.step++;
+    hpm_update(hudc.nrv == 1); /* requestPlayerMoving / requestPlayerStopped */
+    if (hudc.nrv == 0) {
+        if (!moving) { if (++hudc.still > 60) { hudc.nrv = 1; hudc.step = 0; } } else hudc.still = 0;
+    }
+    if (hudc.nrv == 1 && hudc.step == 1) { /* showAllLayout */
+        for (int k = 1; k < 4; k++) hud_force_appear(&hud[k]);
+        hud[0].disp = hud[0].num; hud_set(&hud[0], HC_APPEAR); hud_ap(&hud[0], AP_APPEAR);
+    } else if (hudc.nrv == 1 && moving && hudc.step > 240) { /* hideAllLayout */
+        for (int k = 0; k < 4; k++) if (hud[k].nrv != HC_HIDE) hud_disappear(&hud[k]);
+        hudc.nrv = 0; hudc.step = 0; hudc.still = 0;
+    }
+}
+static float hud_hermite(float f, float f0, float v0, float s0, float f1, float v1, float s1)
+{
+    float t = (f - f0) / (f1 - f0), t2 = t * t, t3 = t2 * t;
+    return (2 * t3 - 3 * t2 + 1) * v0 + (-2 * t3 + 3 * t2) * v1 + ((t3 - 2 * t2 + t) * s0 + (t3 - t2) * s1) * (f1 - f0);
+}
+static void hud_draw(void)
+{
+    for (int k = 0; k < 4; k++) {
+        const HudCounter *c = &hud[k];
+        if (c->ap == AP_HIDE) continue;
+        float f = (float)c->ap_step, a = 1.0f, r = 1.0f;
+        if (c->ap == AP_APPEAR) { /* appear.brlan RLVC: (2, 0, 0) (20, 255, 38.79); the ease-out rate */
+            a = f <= 2 ? 0.0f : f >= 20 ? 1.0f : hud_hermite(f, 2, 0, 0, 20, 255, 38.79f) / 255.0f;
+            r = sinf(fminf(f / 21.0f, 1.0f) * 1.5707963f);
+        } else if (c->ap == AP_DISAPPEAR) { /* end.brlan: (2, 255, -24.58) (20, 0, 0); 1 - the ease-in rate */
+            a = f <= 2 ? 1.0f : f >= 20 ? 0.0f : hud_hermite(f, 2, 255, -24.58f, 20, 0, 0) / 255.0f;
+            r = 1.0f - (1.0f - cosf(fminf(f / 21.0f, 1.0f) * 1.5707963f));
+        }
+        a = fminf(fmaxf(a, 0.0f), 1.0f);
+        float dx = c->offx * (1.0f - r), dy = -c->offy * (1.0f - r); /* screen offsets (y down) in layout units */
+        if (k == 1 || k == 2) /* setFollowPos: Position001 / 010 / 100 (x 52 / 26 / 0 past the counter's own place) */
+            dx += c->disp >= 100 ? 0.0f : c->disp >= 10 ? 26.0f : 52.0f;
+        lay_num = c->disp;
+        lay_draw(c->lay, c->group, a, dx, dy);
+        lay_num = -1;
+    }
+    if (hud_on) { /* the life meter */
+        float f = hpm.k * 20.0f, a = hud_hermite(f, 0, 0, 0, 20, 255, 0) / 255.0f;
+        float dx = 50.0f * (1.0f - (1.0f - cosf(3.14159265f * hpm.k)) / 2.0f);
+        int n = hpm.count < 0 ? 0 : hpm.count > 3 ? 3 : hpm.count;
+        lay_draw("HitPointMeter", n, a, dx, 0);
+        lay_num = hpm.count;
+        lay_draw("HitPointMeter", 15, a, dx, 0);
+        lay_num = -1;
+    }
+
 }
 static float tk_fade(const TkBalloon *b) /* Appear / End (21 frames) as a fade */
 {
@@ -8733,6 +8907,7 @@ static void talk_draw(void)
 {
     ntkq = 0;
     if (tk_ttex < 0) return;
+    hud_draw(); /* under the balloons */
     for (int i = 0; i < 4; i++) { /* TalkBalloonStretch: over the talker, its width the text's */
         TkBalloon *b = &tk_bshort[i];
         if (b->nrv == BL_DEAD || !b->page) continue;
@@ -9671,9 +9846,12 @@ static int m_stick_front_back(const Player *m) /* checkStickFrontBack */
     return 0;
 }
 
+/* MarioModule::isInputDisable: the pad is not read while these landings run (ハード着地, ステージインB) */
+static int m_input_off(void) { return m_clip_on("landstiffen") || m_clip_on("landscenariostart"); }
+
 static int m_check_squat(Player *m, int a1) /* MarioModule::checkSquat: Z (R1) */
 {
-    if (kari_cling) return 0;
+    if (kari_cling || m_input_off()) return 0;
     if (m->squat_lock) { if (!pad_held(PAD_R1)) m->squat_lock = 0; return 0; }
     if (!a1 && !m->grounded && m->height > 100.0f) return 0;
     return pad_held(PAD_R1);
@@ -9687,6 +9865,7 @@ static void m_input_stick(Player *m)
     if (pad_held(PAD_DOWN)) y -= 1.0f;
     if (pad_held(PAD_RIGHT)) x += 1.0f;
     if (pad_held(PAD_LEFT)) x -= 1.0f;
+    if (m_input_off()) x = y = 0.0f; /* getStickValue */
     m_rx = x; m_ry = y;
     x = fminf(fmaxf(1.5f * x, -1.0f), 1.0f);
     y = fminf(fmaxf(1.5f * y, -1.0f), 1.0f);
@@ -10252,6 +10431,15 @@ static void m_do_landing(Player *m)
         return;
     }
     mario_sound("着地");
+    if (m->land_type == 2) { /* ScenarioStarter: stopWalk, the stage-in landing */
+        m->land_type = 0;
+        m_stop_walk(m);
+        mario_sound("重い着地"); mario_sound("声ステージイン着地");
+        mario_play("landscenariostart", 1.0f, 0);
+        camera_shake(SHAKE_STRONG); /* startCamVib(4) */
+        hud_welcome = 1; /* ScenarioStarter::exeShowWelcomeLayout's first step */
+        return;
+    }
     m->squat_lock = 0;
     m->air_spin = MC.mAirWalkTime;
     if (vdot(vsub(m->jump_from, m->pos), m->up) > MC.mHardLandingHeight) hard = 1;
@@ -10664,7 +10852,7 @@ static void m_swing(Player *m)
 {
     if (m->jumping) m->spin_cool = 0;
     if (m->spin_cool) m->spin_cool--;
-    if (!pad_pressed(PAD_SQUARE) || m->spin_cool || m->walling) return;
+    if (!pad_pressed(PAD_SQUARE) || m->spin_cool || m->walling || m_input_off()) return;
     if (m->jumping && !m->spin_lock && !m->hip) {
         m_try_spin_jump(m);
         m->spin_timer = 25; m->spin_t = 0; /* setPunchHitTimer(0x19) */
@@ -10907,7 +11095,7 @@ static void update_mario(void)
         m_sx = vdot(w, m_cx); m_sy = vdot(w, m_cy); m_sz = vlen(w); m_pad = vnorm(w);
     }
 #endif
-    m_req_jump = pad_pressed(PAD_CROSS);
+    m_req_jump = pad_pressed(PAD_CROSS) && !m_input_off();
     m->height = 0; /* mVerticalSpeed: the height over the ground, probed in 20s up to 160 */
     if (!m->grounded) {
         Hit h[1];
@@ -16261,11 +16449,12 @@ void game_update(void)
         mario->pos = launches[starter].pos;
         mario->launch = starter; mario->launch_t = 0; mario->launch_from = mario->pos;
         printf("scenario starter: flight in, %d frames" "\n", launches[starter].flight);
+        hud_had_starter = 1;
         starter = -1;
     }
 #ifdef REPLAY
     static int replay_g = -1; /* the replay's frame: g = 0 the first frame the player is free */
-    if (replay_g < 0 && game_frame > 3 && mario->launch < 0 && mario->grounded) {
+    if (replay_g < 0 && game_frame > 3 && mario->launch < 0 && mario->grounded && !m_input_off()) {
         pad_replay_begin();
         replay_g = 0;
         printf("replay: control at game frame %d\n", game_frame);
@@ -16283,6 +16472,8 @@ void game_update(void)
     LQ(2, update_halos());
     LQ(3, update_railers());
     LQ(4, update_talkers());
+    hud_update();
+
     LQ(5, update_talk_director());
     LQ(6, update_mario());
     LQ(7, update_seesaws()); /* after Mario: his hip drop (hip_hit) this frame */

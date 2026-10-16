@@ -491,11 +491,13 @@ static void load_modules(void)
     SifLoadModule("rom0:PADMAN", 0, NULL);
 }
 
+#if defined(TEASER) || defined(BENCH) || defined(DEBUG_HUD) || !defined(CATCHUP) /* the text lines */
 static void ms(char *out, int n, const char *label, u32 c)
 {
     u32 us = (u32)(c / EE_MHZ);
     snprintf(out, n, "%s %u.%02u", label, us / 1000, (us % 1000) / 10);
 }
+#endif
 
 #ifdef CATCHUP
 static volatile u32 vblanks; /* vblank starts (INTC_VBLANK_S) */
@@ -557,13 +559,15 @@ int main(void)
 #endif
     mem_report();
 
-    u32 t_logic = 0, t_draw = 0, t_gs = 0, worst = 0, frame = 0;
+    u32 t_logic = 0, t_draw = 0, t_gs = 0, worst = 0, frame = 0; (void)t_gs;
 #ifdef BENCH
     /* frames 60..1859 of the scripted path: sums and worsts of logic (minus KCL), KCL, draw, GS finish, total */
     u64 sum[5] = {0};
     u32 top[5] = {0};
 #endif
+#if defined(TEASER) || defined(BENCH) || defined(DEBUG_HUD) || !defined(CATCHUP) /* the text lines */
     char line[128], a[24], b[24], c[24];
+#endif
 #ifdef BENCH
     { /* mat_mul on VU0 against the C one */
         float x[16], y[16], r1[16], r2[16], worst = 0;
@@ -1346,7 +1350,7 @@ int main(void)
             snprintf(line, sizeof line, "TIME %d:%02d", t / 60, t % 60);
             render_text(16, 26, line);
         }
-#else
+#elif defined(BENCH) || defined(DEBUG_HUD) || !defined(CATCHUP) /* tests and bench: the debug lines (normal builds: the game's HUD, game.c hud_draw) */
         ms(a, sizeof a, "LOGIC", t_logic);
         ms(b, sizeof b, "DRAW", t_draw);
         ms(c, sizeof c, "GS", t_gs);

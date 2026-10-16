@@ -100,5 +100,13 @@ if __name__ == "__main__":
     elif cmd == "find":
         ram = Ram()
         print([f"{a:08X}" for a in find(ram, sys.argv[2].encode())][:20])
+    elif cmd == "near":  # near X Y Z R: big-endian float triples within R of (X, Y, Z) (Mario's position...)
+        import numpy as np
+        ram, c, r = Ram(), np.array([float(v) for v in sys.argv[2:5]]), float(sys.argv[5])
+        for base, data in ram.blocks():
+            f = np.frombuffer(data[:len(data) // 4 * 4], ">f4").astype(np.float64)
+            d = (f[:-2] - c[0]) ** 2 + (f[1:-1] - c[1]) ** 2 + (f[2:] - c[2]) ** 2
+            for i in np.nonzero(d < r * r)[0][:40]:
+                print(f"{base + 4 * i:08X} {f[i]:.1f} {f[i + 1]:.1f} {f[i + 2]:.1f}")
     elif cmd == "warp":
         warp(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]) if len(sys.argv) > 4 else 120)
