@@ -325,6 +325,18 @@ there needs the embedded blob and every pack rebuilt.
 
 ## Next
 
+**Night of 2026-10-16 (the user: comparison video, demo, short, then "continua con el resto de los detalles del port
+para ps2 hasta las 7 am"):** videos/2026-10-16_cmp-goodegg-final.mp4 (Wii | PS2, same inputs), _demo-goodegg.mp4,
+_short-goodegg.mp4, titles and tags in videos/youtube_2026-10-16.md. Done after Petari, each checked in PCSX2 (route
+EggStar 1 star, takobo / walker / karikari / ota tests, bench 16.9 ms): 1fa6980 actors move through the scenario
+opening and a 156-frame loading pre-roll (the Takobos' patrols match the Wii's RAM), ClippingJudge clipping (300,
+near 500, far 10000), SpinLight on the hand; 5b05ea7 fx 256 emitters (the 128 were full: new effects failed
+silently); 55ccbbd LensFlare (LensFlareDirector, BrightSun visibility against the map, ring / glow; no GlareLine,
+glow without its falloff stage: FLARE_GLOW_SIZE); 8f13321 VROrbit's cloud scroll (its BTK on the Projmap SRT);
+2145a5d Mario's common smokes (cSmokeTable). Left from the comparison: the spin light's stripes drawn as sprites,
+GlareLine, the glass capsule's env map, the Wii's 16:9 view (the port is 4:3), the ~44 opening frames the Wii may run
+under the loading black, the Takobo meeting at g ~780 (a frame or two apart).
+
 **Wii comparison, 2026-10-15 (the user: "compara el primer nivel con la versión de Wii ... gameplay idéntico en
 ambos"; resume here):** Good Egg's sounds are all in (613da57) and route EggStar 1-4 still get their stars. The same
 input timeline now drives Dolphin (a generated .dtm from boot, Gecko warp to EggStarGalaxy 1) and the port (`build.sh
