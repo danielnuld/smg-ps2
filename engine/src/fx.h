@@ -24,6 +24,8 @@ void fx_update(void);
 void fx_draw(void);
 u32 fx_count(void); /* live particles */
 
+/* LensFlareDirector's models (tools/jpa.py flare) and the scene texture their tex indices start at; NULL none */
+const u8 *fx_flare(u32 *first_tex);
 /* the scene texture of WaterPlant type k (0-3, packed with the effects' textures), -1 none */
 int fx_waterplant_tex(int k);
 /* Plant's stalk texture (PlantStalk.bti, after the WaterPlant ones), -1 none */

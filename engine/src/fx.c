@@ -55,6 +55,7 @@ typedef struct {
 static const PtRes *res;
 static const FxDef *defs;
 static u32 nres, ndefs, tex0;
+static const u8 *flr; /* FLR1 block (fx_flare) */
 /* EffectKeeper's animation-driven AutoEffectList rows (tools/jpa.py anim_effects): 72 bytes each */
 typedef struct { char cls[24], clip[24]; u16 start, end, fx; s16 joint; float off[3], scale; } FxAuto;
 static const FxAuto *autos;
@@ -109,7 +110,9 @@ void fx_init(const Scene *s)
         auto_ix[j] = (u16)i;
     }
     tex0 = s->ptcl_tex0;
-    printf("fx: %u effects, %u particle resources\n", ndefs, nres);
+    flr = (const u8 *)(autos + nautos); /* tools/jpa.py flare: the lens flare's meshes after the rows */
+    if (memcmp(flr, "FLR1", 4)) flr = NULL;
+    printf("fx: %u effects, %u particle resources%s\n", ndefs, nres, flr ? ", lens flare" : "");
 }
 
 /* m * v (rotation and scale only) */
@@ -449,6 +452,7 @@ void fx_draw(void)
 
 u32 fx_count(void) { return nalive; }
 
+const u8 *fx_flare(u32 *first_tex) { *first_tex = tex0; return res ? flr : NULL; }
 int fx_waterplant_tex(int k) { return res && wp_tex >= 0 ? (int)tex0 + wp_tex + k : -1; }
 int fx_plantstalk_tex(void) { return fx_waterplant_tex(4); }
 int fx_dinofoot_tex(void) { return fx_waterplant_tex(5); }

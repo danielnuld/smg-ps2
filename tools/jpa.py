@@ -307,8 +307,93 @@ def pack(fs):
         back[..., :3] = ((c0 * (1 - e[..., :3])) * 255 + 0.5).astype(np.uint8)
         back[..., 3] = 255
         out_tex.append(tex.to_ps2(back, 0, 0))
+    flr = flare(wp, out_tex)
     head = struct.pack("<IIiI", len(used), len(defs), first, len(autos))
-    return head + b"".join(defs) + b"".join(recs) + b"".join(autos), out_tex
+    return head + b"".join(defs) + b"".join(recs) + b"".join(autos) + flr, out_tex
+
+
+FLARE = ("LensFlare", "GlareGlow", "GlareLine")  # LensFlareRing / Glow / Line's archives (LensFlare.cpp)
+
+
+def flare(fs, out_tex):
+    """LensFlareDirector's three models as flat meshes (their 2D model space: x right, y up, z dropped) after the effects'
+    textures: b"FLR1", u32 nmodel; each model u16 nshape, u16 njoint, njoint x {f32 y_end, f32 scale} (LensFlare.bck:
+    a joint slides from 0 to y_end along -y and shrinks from scale to 0, linear in the frame 0..99), then each shape
+    {u16 tex (PTCL-relative), u16 nvert, u16 ntri, u16 pad, f32 alpha[9] (the BRK's konst alpha at frames end x i / 8),
+    f32 btk_turn (texture turn a frame, GlareGlow.btk's stage 0), nvert x {f32 x, y, u, v, joint}, ntri x 3 u16 (padded
+    to 4 bytes)}. ponytail: only the first TEV stage's texture and matrix, additive, white"""
+    import numpy as np
+    import geom
+    import skin
+    import tex
+    out = [b"FLR1", struct.pack("<I", 0)]
+    n, seen = 0, {}
+    for name in FLARE:
+        arc = Path(fs) / "ObjectData" / f"{name}.arc"
+        if not arc.exists():
+            break
+        f = {k.lower(): v for k, v in B.rarc_files(arc.read_bytes())}
+        b = f[name.lower() + ".bdl"]
+        bl = tex.blocks(b)
+        js = skin.joints(b, bl)
+        drw = skin.draw_entries(b, bl)
+        tables = skin.group_tables(b, bl)
+        joints = []
+        if name.lower() + ".bck" in f:
+            import slice as S
+            clip = S.anim_clip(f[name.lower() + ".bck"])
+            bind = [(j["scale"], j["rot"], j["trans"]) for j in js]
+            fmax = struct.unpack_from("<H", clip, 0)[0]
+            p0, p1 = skin.clip_pose(clip, 0, bind), skin.clip_pose(clip, fmax, bind)
+            joints = [(p1[k][2][1], p0[k][0][0]) for k in range(len(js))]
+        brk = f.get(name.lower() + ".brk", b"")
+        t = brk.find(b"TRK1")
+        end = struct.unpack_from(">H", brk, t + 0x0A)[0] if t >= 0 else 0
+        alpha_at = [tex.brk(brk, end * i / 8) for i in range(9)]
+        btk = tex.btk(f[name.lower() + ".btk"]) if name.lower() + ".btk" in f else None
+        texs = tex.textures(b, bl[b"TEX1"])
+        shapes = tex.shape_materials(b, bl[b"INF1"])
+        col = []
+        geom.model(b, collect=col)
+        recs = []
+        for pos, tri, info in col:
+            mat = shapes.get(info["shape"])
+            mt = tex.material_tex(b, bl[b"MAT3"], mat, bl.get(b"TEX1"))
+            mname = tex.material_name(b, bl[b"MAT3"], mat)
+            x = texs[mt["tex"]]
+            t2 = tex.to_ps2(x["rgba"], x["wrap_s"], x["wrap_t"], True)
+            if (name, mt["tex"]) not in seen:
+                seen[(name, mt["tex"])] = len(out_tex)
+                out_tex.append(t2)
+            ti = seen[(name, mt["tex"])]
+            get = geom.vtx1_attr(b, bl[b"VTX1"], mt["attr"])
+            o, w = info["at"][mt["attr"]]
+            tab = tables.get((info["shape"], info["group"]), [])
+            at0 = info["at"].get(0)
+            used = sorted(set(tri))
+            remap = {v: i for i, v in enumerate(used)}
+            vs = []
+            for v in used:
+                k = info["keys"][v]
+                su, sv = get(k[o] if w == 1 else k[o] << 8 | k[o + 1])
+                if mt["mtx"]:
+                    (a0, a1, a2), (b0, b1, b2) = mt["mtx"]
+                    su, sv = a0 * su + a1 * sv + a2, b0 * su + b1 * sv + b2
+                j = drw[tab[min(k[at0[0]] // 3, len(tab) - 1)]][0] if tab and at0 else 0
+                vs.append(struct.pack("<5f", pos[3 * v], pos[3 * v + 1], su * t2["u_scale"], sv * t2["v_scale"], float(j)))
+            al = [a.get(mname, {}).get("konst", {}).get(0, [1, 1, 1, 1])[3] for a in alpha_at]
+            turn = 0.0
+            if btk:
+                for m_, slot, _c, tr in btk["mats"]:
+                    if m_ == mname and slot == 0 and tr[2][0] == 2:
+                        turn = tr[2][2][5] / tr[2][2][4] * np.pi / 180  # degrees at the last key / its frame
+            idx = b"".join(struct.pack("<3H", *(remap[v] for v in tri[i:i + 3])) for i in range(0, len(tri), 3))
+            idx += b"\0" * (-len(idx) % 4)
+            recs.append(struct.pack("<4H9ff", ti, len(vs), len(tri) // 3, 0, *al, turn) + b"".join(vs) + idx)
+        out.append(struct.pack("<HH", len(recs), len(joints)) + b"".join(struct.pack("<2f", *jt) for jt in joints) + b"".join(recs))
+        n += 1
+    out[1] = struct.pack("<I", n)
+    return b"".join(out)
 
 
 # classes whose emitEffect calls game.c makes by name (fx_named), besides the skinned ones (their joints: -1)

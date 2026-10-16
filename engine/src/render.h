@@ -35,6 +35,9 @@ void render_bloom(u8 intensity, u8 intensity1, u8 intensity2);
  * texture, repeating if it does), ntri x 3 indices; blend: 0 opaque writing depth, 1 alpha blended without depth
  * writes; triangles with a corner behind the camera are left out */
 void render_mesh(const float (*pos)[3], const float (*uv)[2], int nvert, const u16 *idx, int ntri, u16 tex, int blend);
+/* render_mesh on the screen: x 0..640, y 0..448 (HUD units), over everything; colour 0xAABBGGRR (0x80 = 1.0)
+ * modulating the texture, additive (Cs x As + Cd) or blended */
+void render_mesh2d(const float (*xy)[2], const float (*uv)[2], int nvert, const u16 *idx, int ntri, u16 tex, u32 rgba, int add);
 void render_text(float x, float y, const char *s);
 /* A filled rectangle over everything, in the HUD's units (x 0..640, y 0..448) */
 void render_rect(float x, float y, float w, float h, u8 r, u8 g, u8 b);

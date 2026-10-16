@@ -16930,6 +16930,182 @@ u32 game_prof[8]; /* game_draw's phases this frame (EE cycles): setup, skies, in
 static u32 prof_t;
 #define PROF(k) do { u32 c_ = cycles(); game_prof[k] = c_ - prof_t; prof_t = c_; } while (0)
 u32 game_kcl_draw, game_kcl_drawn; /* kcl_query cycles / calls inside game_draw (profiling) */
+/* LensFlare.cpp after Petari: LensFlareDirector (its LensFlareArea's arg0 bits 1 ring, 2 glow, 3 line; -1 all) with
+ * the BrightSun's visibility (BrightObj.cpp: the sun 100000 off the camera along its rotation, 17 points of its
+ * 3000 disc), and the three models LensFlareRing / Glow / Line drawn flat on the screen (tools/jpa.py flare): each
+ * fades in over 20 frames when the area turns on (notifyInArea), shows / hides at once with the sun, its BRK frame
+ * (1 - bright x level) x end; the ring's BCK frame is the sun's distance from the screen centre (its joints slide
+ * from the sun through the centre), turned to face it. ponytail: the sun's points are tested against the map's
+ * collision (the Wii reads its sphere's alpha back from the frame buffer: models hide it there too); no TEV beyond the
+ * first texture, additive white */
+typedef struct { float level, k; int nrv, t1, t2; } FlareModel; /* _90, _8C, nerve, TriggerChecker levels */
+enum { FL_KILL, FL_HIDE, FL_SHOW, FL_FADEIN, FL_FADEOUT };
+static FlareModel flares[3];
+static float flare_ring_rate, flare_rot; /* LensFlareRing::_A0, mRotation.z (radians) */
+static float flare_x, flare_y;           /* its place, screen units (HUD 640 x 448) */
+
+static void flare_model_update(FlareModel *f, int in_area, int bright) /* LensFlareModel::update */
+{
+    int on1 = in_area && !f->t1, off1 = !in_area && f->t1;
+    f->t1 = in_area;
+    if (on1) { /* notifyInArea: appear */
+        f->nrv = (bright && in_area) ? FL_FADEIN : FL_HIDE;
+        if (f->nrv == FL_HIDE) f->level = 0.0f;
+    } else if (off1) f->nrv = FL_FADEOUT;
+    int b = bright && in_area, on2 = b && !f->t2, off2 = !b && f->t2;
+    f->t2 = b;
+    if (on2) { if (f->nrv == FL_HIDE) { f->nrv = FL_SHOW; f->level = 1.0f; } }
+    else if (off2 && (f->nrv == FL_SHOW || f->nrv == FL_FADEIN)) { f->nrv = FL_HIDE; f->level = 0.0f; }
+    if (f->nrv == FL_FADEIN && (f->level += 0.05f) >= 1.0f) { f->level = 1.0f; f->nrv = FL_SHOW; }
+    if (f->nrv == FL_FADEOUT && (f->level -= 0.05f) <= 0.0f) { f->level = 0.0f; f->nrv = FL_KILL; }
+}
+
+/* a line from the eye to p meets a collision mesh: the meshes whose reach the line crosses, stepped spheres along
+ * the crossing (ponytail: as map_line; no polygon-exact ray in kcl.c) */
+static int flare_occluded(V3 e, V3 p)
+{
+    V3 d = vsub(p, e);
+    float len = vlen(d);
+    V3 u = vmul(d, 1.0f / len);
+    for (int li = 0; li < nkcl_list; li++) {
+        const Inst *in = &insts[kcl_list[li]];
+        if (!in->kcl) continue;
+        V3 c = vsub(v3(in->m[12], in->m[13], in->m[14]), e);
+        float t = vdot(c, u), h2 = vdot(c, c) - t * t, r = in->reach;
+        if (h2 > r * r) continue;
+        float half = sqrtf(r * r - h2), t0 = fmaxf(t - half, 0.0f), t1 = fminf(t + half, len);
+        float step = fminf(fmaxf(r / 12.0f, 40.0f), 300.0f), k = 1.0f / (in->s * in->s);
+        for (float s = t0; s <= t1; s += step) {
+            V3 q = vsub(vadd(e, vmul(u, s)), v3(in->m[12], in->m[13], in->m[14]));
+            const float *m = in->m;
+            float lc[3] = {vdot(q, v3(m[0], m[1], m[2])) * k, vdot(q, v3(m[4], m[5], m[6])) * k, vdot(q, v3(m[8], m[9], m[10])) * k};
+            KclHit hit[1];
+            if (kcl_check_sphere(in->kcl, lc, step * 0.6f / in->s, hit, 1)) return 1;
+        }
+    }
+    return 0;
+}
+
+/* HUD units (640 x 448) of p in the view (render_begin's axes, render_set_fovy's f); 0 off the screen or behind */
+static int flare_screen(V3 p, V3 e, V3 fw, V3 s, V3 u, float f, float *x, float *y)
+{
+    V3 d = vsub(p, e);
+    float z = vdot(d, fw);
+    if (z <= 1.0f) { *x = *y = 0; return 0; }
+    *x = 320.0f + f * vdot(d, s) / z;
+    *y = 224.0f - f * vdot(d, u) / z;
+    return *x >= 0.0f && *x <= 640.0f && *y >= 0.0f && *y <= 448.0f;
+}
+
+#define FLARE_GLOW_SIZE 0.2f /* calibration knob: the glow's radius against its mesh (1078) */
+static void lens_flare_draw(V3 ce, V3 cw, V3 cu, float fovy)
+{
+    u32 t0;
+    const u8 *q = fx_flare(&t0);
+    static int ty = -2;
+    if (ty == -2) ty = scene_type(sc, "LensFlareArea");
+    if (!q || ty < 0) return;
+    static short rows[8];
+    static int nrows = -1;
+    if (nrows < 0) for (u32 i = nrows = 0; i < sc->nobjs && nrows < 8; i++) if (sc->objs[i].type == ty) rows[nrows++] = (short)i;
+    int area = 0; /* checkArea: arg0 of the area round Mario, -1 all */
+    for (int i = 0; i < nrows; i++)
+        if (row_shown(rows[i]) && area_inside(&sc->objs[rows[i]], mario->pos)) {
+            area = sc->objs[rows[i]].arg[0] == -1 ? 0xFFFF : sc->objs[rows[i]].arg[0];
+            break;
+        }
+    V3 fw = vnorm(vsub(cw, ce)), s = vnorm(vcross(fw, cu)), u = vcross(s, fw);
+    float f = 224.0f / tanf(fovy * 3.14159265f / 360.0f);
+    /* checkBrightObj: the BrightSun (BrightObjBase::checkVisibilityOfSphere: its centre, 8 points at 0.4 and 8 at 0.7
+     * of its 3000 radius on the disc facing the camera; a point counts on the screen and not behind the map) */
+    float bright = 0.0f, bx = 0, by = 0, cx = 0, cy = 0;
+    int have = 0;
+    for (int i = 0; i < ninsts && area && !have; i++) {
+        const Inst *in = &insts[i];
+        if (!in->sun || !row_shown(in->row)) continue;
+        V3 z = vnorm(v3(in->m[8], in->m[9], in->m[10])), pos = vadd(ce, vmul(z, 100000.0f));
+        V3 dd = vnorm(vsub(ce, pos)), a = vnorm(vcross(u, dd)), bvec = vcross(dd, a);
+        int got = 0, all = 0;
+        float sx, sy;
+        static u8 vis[17]; /* each point's last answer: 3 points tested a draw, all 17 in 6 (the Wii reads its
+                            * BrightInfo 2-3 frames late too) */
+        static int next;
+        flare_screen(pos, ce, fw, s, u, f, &cx, &cy);
+        for (int k = 0; k < 17; k++) {
+            float r = k == 0 ? 0.0f : k <= 8 ? 0.4f * 3000.0f : 0.7f * 3000.0f;
+            float an = k == 0 ? 0.0f : k <= 8 ? (k - 1) * 3.14159265f / 4.0f : (k - 9 + 0.5f) * 3.14159265f / 4.0f;
+            V3 p = vadd(pos, vadd(vmul(a, cosf(an) * r), vmul(bvec, sinf(an) * r)));
+            all++;
+            int on = flare_screen(p, ce, fw, s, u, f, &sx, &sy);
+            if (!on) vis[k] = 0;
+            else if ((k - next + 17) % 17 < 3) vis[k] = !flare_occluded(ce, p);
+            if (on && vis[k]) { got++; bx += sx; by += sy; }
+        }
+        next = (next + 3) % 17;
+        bright = (float)got / all;
+        if (got) { bx /= got; by /= got; have = bright > 0.0f; }
+    }
+    /* controlFlare */
+    for (int k = 0; k < 3; k++) flare_model_update(&flares[k], area >> (k + 1) & 1, have);
+    if (!have || !area) { if (!flares[0].level && !flares[1].level && !flares[2].level) return; }
+    else {
+        flare_x = bx; flare_y = by; /* _60 - _6C + _74: the bright points' mean (the centre read now as then) */
+        float ox = 320.0f - flare_x, oy = 224.0f - flare_y, rad = sqrtf(320.0f * 320.0f + 224.0f * 224.0f);
+        float dist = sqrtf(ox * ox + oy * oy) / rad;
+        flare_rot = (ox * ox + oy * oy) < 1e-6f ? 0.0f : atan2f(ox, oy); /* calcRotateY(direction) */
+        flare_ring_rate = fminf(dist, 1.0f);
+        float kk = fminf(fmaxf((1.0f - dist) * bright, 0.0f), 1.0f);
+        for (int k = 0; k < 3; k++) flares[k].k = kk;
+    }
+    /* draw: each model flat at the flare's place; the ring turned toward the screen centre, its joints slid along
+     * its -y by the rate and shrunk (LensFlare.bck), scaled 0.135; the others at scale 1 unturned */
+    q += 8;
+    float cr = cosf(flare_rot), sr = sinf(flare_rot);
+    for (int k = 0; k < (int)((const u32 *)fx_flare(&t0))[1] && k < 3; k++) {
+        u16 nshape = ((const u16 *)q)[0], njoint = ((const u16 *)q)[1];
+        const float *jt = (const float *)(q + 4);
+        q += 4 + 8 * njoint;
+        for (int sh = 0; sh < nshape; sh++) {
+            const u16 *h = (const u16 *)q;
+            u16 tex = h[0], nv = h[1], nt = h[2];
+            const float *al = (const float *)(q + 8), turn = al[9];
+            const float *vx = al + 10;
+            const u16 *ix = (const u16 *)(vx + 5 * nv);
+            q = (const u8 *)(ix + 3 * nt);
+            q += (-(int)(3 * nt * 2)) & 3;
+            const FlareModel *fm = &flares[k];
+            if (fm->nrv == FL_KILL || fm->nrv == FL_HIDE || fm->level <= 0.0f || k == 2) continue; /* ponytail: no
+                                                                                     * GlareLine (its streak UVs) */
+            float fr = (1.0f - fm->k * fm->level) * 8.0f; /* the BRK frame, in its 9 samples */
+            int i0 = (int)fr; if (i0 > 7) i0 = 7;
+            float a = al[i0] + (al[i0 + 1] - al[i0]) * (fr - i0);
+            static float xy[256][2], uv[256][2];
+            if (nv > 256) continue;
+            float tr = turn * (float)game_frame; /* GlareGlow's BTK turn (ponytail: about the texture's centre) */
+            for (int v = 0; v < nv; v++) {
+                const float *p = vx + 5 * v;
+                float mx = p[0], my = p[1], rot = 0.0f;
+                if (k == 0) { /* LensFlareRing */
+                    int j = (int)p[4];
+                    float jy = j < njoint ? jt[2 * j] * flare_ring_rate : 0.0f, js = j < njoint ? jt[2 * j + 1] * (1.0f - flare_ring_rate) : 1.0f;
+                    mx = mx * js * 0.135f; my = (my * js + jy) * 0.135f;
+                    rot = 1.0f;
+                } else if (k == 1) { /* GlareGlow: ponytail: its second stage (a radial falloff texture) not drawn;
+                                      * the starburst at the Wii's visible size instead */
+                    mx *= FLARE_GLOW_SIZE; my *= FLARE_GLOW_SIZE;
+                }
+                float X = rot ? mx * cr - my * sr : mx, Y = rot ? mx * sr + my * cr : my;
+                xy[v][0] = flare_x + X; xy[v][1] = flare_y - Y;
+                float uu = p[2], vv = p[3];
+                if (turn != 0.0f) { float c2 = cosf(tr), s2 = sinf(tr), du = uu - 0.5f, dv = vv - 0.5f; uu = 0.5f + du * c2 - dv * s2; vv = 0.5f + du * s2 + dv * c2; }
+                uv[v][0] = uu; uv[v][1] = vv;
+            }
+            u32 aa = (u32)fminf(a * 128.0f, 128.0f); /* the konst alpha weighs colour and alpha (additive) */
+            render_mesh2d((const float (*)[2])xy, (const float (*)[2])uv, nv, ix, nt, (u16)(t0 + tex), aa | aa << 8 | aa << 16 | aa << 24, 1);
+        }
+    }
+}
+
 void game_draw(void)
 {
     V3 ce, cw, cu;
@@ -17489,6 +17665,9 @@ void game_draw(void)
     RESTQ(7);
     PROF(5);
     fx_draw();
+#ifndef NO_FLARE
+    lens_flare_draw(ce, cw, cu, fovy);
+#endif
     PROF(6);
     talk_draw();
     wipe_draw();
