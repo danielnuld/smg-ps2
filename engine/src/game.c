@@ -431,6 +431,11 @@ static int hip_hit, hip_inst;   /* Mario landed a hip drop this frame, on instan
 static int mario_ground = -1;   /* instance Mario stands on this frame, -1 in the air */
 static float cur_x = 320, cur_y = 224; /* the star pointer's stand-in, moved by the right stick (HUD units) */
 static float cur_vx, cur_vy;            /* its screen velocity (getStarPointerScreenVelocity) */
+#ifdef CATCHUP
+static int cur_idle = 1000;             /* frames since the pointer was last used (300: not pointing) */
+#else
+static int cur_idle;                    /* test builds: always pointing */
+#endif
 static struct { int phase, t, target; V3 vel; float power; } gcap; /* GCapture (gcap_update) */
 static int test_r2; /* test builds: R2 held */
 static struct { int inst, cool; V3 pt, vel, side, front; } jb = {.inst = -1}; /* JumpBranch (jbranch_update) */
@@ -849,6 +854,8 @@ static int amb_stale = 1; /* ambient_effects' per-type table to be rebuilt (a ne
 static void talk_init(const Scene *s);
 static int talk_demo(void);
 static int talk_active(void);
+static void stitle_start(void);
+static int draw_steps; /* logic steps since the last draw (game_set_draw_steps; 1 at start) */
 /* Switch logic rows (no model): TimerSwitch, SwitchSynchronizerReverse, GroupSwitchWatcher */
 enum { LOGIC_TIMER = 1, LOGIC_REVERSE, LOGIC_GROUP, LOGIC_BLOCKER, LOGIC_FLIPS, LOGIC_CHIPS, LOGIC_SWAREA, LOGIC_DEATH, LOGIC_RESTART, LOGIC_PIECESPOT };
 static int area_shape(const char *name);
@@ -5664,6 +5671,8 @@ static int update_launch(Player *m)
         return 1;
     }
     int small = !L->starter && L->start < 45, s = t - L->start;
+    if (L->starter && s == 10) stitle_start(); /* ScenarioStarter::exeRailMove step 10: its ScenarioTitle */
+
     if (s == 1 && !L->starter) camera_shake(L->start < 45 ? SHAKE_NORMAL : SHAKE_STRONG); /* exeShoot */
     if (s == 1 && !L->starter) { /* exeShoot's first step */
         se_start(SE_SY_S_SPIN_DRV_ME_ALT, NULL);
@@ -8791,7 +8800,8 @@ static void hpm_update(int stopped)
 static int hud_welcome, hud_had_starter; /* frames since the ScenarioStarter's landing (ShowWelcomeLayout's step); a flight in */
 static void hud_update(void)
 {
-    if (!hud_on && (hud_welcome ? ++hud_welcome > 91 : game_frame > 2 && !hud_had_starter)) {
+    if (hud_welcome && hud_welcome < 1000) hud_welcome++;
+    if (!hud_on && (hud_welcome ? hud_welcome > 91 : game_frame > 2 && !hud_had_starter)) {
         hud_on = 1; /* forceAppearDefaultGameLayout: the controller's PlayerNotMoving */
         for (int k = 0; k < 4; k++) hud[k].disp = hud_value(k);
         hudc.nrv = 1; hudc.step = 0;
@@ -8870,7 +8880,13 @@ static void hud_draw(void)
         lay_draw(c->lay, c->group, a, dx, dy);
         lay_num = -1;
     }
+    if (hud_welcome > 1 && hud_welcome <= 132) { /* Welcome表示: appear.brlan RLVC (0, 0) (60, 255) (100, 255) (130, 0, -23.6) */
+        float f = (float)(hud_welcome - 2);
+        float a = f < 60 ? hud_hermite(f, 0, 0, 0, 60, 255, 0) : f < 100 ? 255.0f : hud_hermite(f, 100, 255, 0, 130, 0, -23.6f);
+        lay_draw("Welcome", 0, fminf(fmaxf(a / 255.0f, 0.0f), 1.0f), 0, 0);
+    }
     if (hud_on) { /* the life meter */
+
         float f = hpm.k * 20.0f, a = hud_hermite(f, 0, 0, 0, 20, 255, 0) / 255.0f;
         float dx = 50.0f * (1.0f - (1.0f - cosf(3.14159265f * hpm.k)) / 2.0f);
         int n = hpm.count < 0 ? 0 : hpm.count > 3 ? 3 : hpm.count;
@@ -8880,6 +8896,42 @@ static void hud_draw(void)
         lay_num = -1;
     }
 
+}
+/* ScenarioTitle (StageTitle layout): the galaxy's and the scenario's names (GalaxyName_<galaxy>, ScenarioName_<galaxy>
+ * <n>, in the scene's TALK) centred in their text boxes, MessageFont26 at 21.6 x 26.4 / 24.3 x 29.7, white over a
+ * black 0.39 shadow 2 right and 2 down; Appear / End fade the StageTitle pane over 30 frames */
+static struct { int nrv, step; } stitle; /* 0 dead, 1 appear, 2 wait, 3 end */
+static void stitle_start(void) { stitle.nrv = 1; stitle.step = 0; }
+static void stitle_end(void) { if (stitle.nrv == 1 || stitle.nrv == 2) { stitle.nrv = 3; stitle.step = 0; } }
+static const u16 *tk_label_prefix(const char *prefix)
+{
+    for (int i = 0; i < tk_nctl; i++)
+        if (!strncmp(tk_ctl[i].label, prefix, strlen(prefix))) return tk_text + tk_msg[tk_ctl[i].msg].off;
+    return NULL;
+}
+static void stitle_line(const u16 *s, float cy, float fsx, float fsy, float a)
+{
+    if (!s) return;
+    for (int sh = 1; sh >= 0; sh--) {
+        TkWriter w = {0};
+        w.sx = fsx / 27.0f * TK_KX; w.sy = fsy / 33.0f * TK_KY; w.cs = 1.0f;
+        float tw = tk_write(&w, s, NULL, NULL, NULL);
+        w.draw = 1; w.alpha = a * (sh ? 0.39f : 1.0f);
+        w.r = w.g = w.b = sh ? 0 : 255;
+        w.x = 320.0f - tw / 2 + (sh ? 2.0f * TK_KX : 0); w.y = tk_hy(cy) - fsy * TK_KY / 2 + (sh ? 2.0f * TK_KY : 0);
+        tk_write(&w, s, NULL, NULL, NULL);
+    }
+}
+static void stitle_draw(void)
+{
+    if (!stitle.nrv) return;
+    stitle.step += draw_steps;
+    float a = 1.0f;
+    if (stitle.nrv == 1) { a = stitle.step / 30.0f; if (stitle.step >= 30) stitle.nrv = 2; }
+    else if (stitle.nrv == 3) { a = 1.0f - stitle.step / 30.0f; if (stitle.step >= 30) { stitle.nrv = 0; return; } }
+    a = fminf(fmaxf(a, 0.0f), 1.0f);
+    stitle_line(tk_label_prefix("GalaxyName_"), 170.0f, 21.6f, 26.4f, a);   /* Galaxy (0, 170) */
+    stitle_line(tk_label_prefix("ScenarioName_"), 127.0f, 24.3f, 29.7f, a); /* Scenario (0, 131), its text 4 down */
 }
 static float tk_fade(const TkBalloon *b) /* Appear / End (21 frames) as a fade */
 {
@@ -8908,6 +8960,7 @@ static void talk_draw(void)
     ntkq = 0;
     if (tk_ttex < 0) return;
     hud_draw(); /* under the balloons */
+    stitle_draw();
     for (int i = 0; i < 4; i++) { /* TalkBalloonStretch: over the talker, its width the text's */
         TkBalloon *b = &tk_bshort[i];
         if (b->nrv == BL_DEAD || !b->page) continue;
@@ -10437,7 +10490,8 @@ static void m_do_landing(Player *m)
         mario_sound("重い着地"); mario_sound("声ステージイン着地");
         mario_play("landscenariostart", 1.0f, 0);
         camera_shake(SHAKE_STRONG); /* startCamVib(4) */
-        hud_welcome = 1; /* ScenarioStarter::exeShowWelcomeLayout's first step */
+        hud_welcome = 1; /* ScenarioStarter::exeShowWelcomeLayout's first step: its title ends */
+        stitle_end();
         return;
     }
     m->squat_lock = 0;
@@ -16094,6 +16148,7 @@ static void cursor_ray(V3 *o, V3 *d)
 
 static int cursor_sees(V3 p, float px) /* p shows within px pixels of the cursor */
 {
+    if (cur_idle >= 300) return 0; /* not pointing */
     V3 o, d;
     cursor_ray(&o, &d);
     V3 to = vsub(p, o);
@@ -16111,6 +16166,12 @@ static void update_shots(void);
 static void update_cursor(void)
 {
     float x = pad_rx(), y = pad_ry(), k = 6.0f + 10.0f * sqrtf(x * x + y * y), px = cur_x, py = cur_y;
+    /* the Wii remote points at the screen or not: here the right stick (or a pointer button) shows the pointer,
+     * 300 frames untouched hide it (ponytail: the PS2 stand-in for "not pointing") */
+    if (x != 0.0f || y != 0.0f || pad_held(PAD_L1) || pad_held(PAD_R2) || pad_pressed(PAD_R3)) cur_idle = 0;
+#ifdef CATCHUP
+    else if (cur_idle < 1000) cur_idle++;
+#endif
     cur_x += x * k; cur_y -= y * k;
     if (pad_pressed(PAD_R3)) { cur_x = 320; cur_y = 224; }
     if (pad_pressed(PAD_L1) || test_l1) { test_l1 = 0; shoot_piece(); }
@@ -16118,7 +16179,7 @@ static void update_cursor(void)
     cur_x = cur_x < 0 ? 0 : cur_x > 639 ? 639 : cur_x;
     cur_y = cur_y < 0 ? 0 : cur_y > 447 ? 447 : cur_y;
     cur_vx = cur_x - px; cur_vy = cur_y - py;
-    for (int i = 0; i < npieces; i++)
+    for (int i = 0; i < npieces && cur_idle < 300; i++)
         if (pickup_on(&pieces[i], 1) && cursor_sees(pieces[i].pos, 24.0f)) {
             pieces[i].alive = PICK_GONE;
             got_pieces++;
@@ -16259,7 +16320,7 @@ static void update_shots(void)
     }
 }
 
-void game_cursor(float *x, float *y) { *x = cur_x; *y = cur_y; }
+int game_cursor(float *x, float *y) { *x = cur_x; *y = cur_y; return cur_idle < 300; } /* 0: not pointing */
 void game_set_cursor(float x, float y) { cur_x = x; cur_y = y; }
 
 static void collect(Pickup *p, int n, float reach, int *counter, int fx, u32 se)
@@ -16445,6 +16506,30 @@ const int lprof_n = 74;
 void game_update(void)
 {
     if (scene_stop > 0) { scene_stop--; return; } /* SceneFunction stopScene: everything holds */
+    /* GameSceneScenarioOpeningCameraState: the stage's StartScenario<n>.canm (CANM "stage/startscenario", world
+     * space), the scene stopped and Mario hidden, ScenarioTitle on until 60 frames before its end; then the
+     * ScenarioStarter flies Mario in. ponytail: no cinema frame, no BGM_START_DEMO, no skip */
+    static int opening = -2, opening_n;
+    if (opening == -2) {
+        opening = -1;
+        const u8 *q = sc->canm;
+        for (u32 i = 0; i < sc->ncanm; i++, q += 36 + 32 * *(const u32 *)(q + 32))
+            if (!strcmp((const char *)q, "stage/startscenario")) { opening = 0; opening_n = (int)*(const u32 *)(q + 32); }
+#ifndef CATCHUP
+        opening = -1; /* test builds start in play */
+#endif
+        if (opening >= 0) { mario_hidden = 1; stitle_start(); }
+    }
+    if (opening >= 0) {
+        static const float id[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        demo_camera("stage/startscenario", opening, id);
+        if (opening == opening_n - 60) stitle_end();
+        if (++opening >= opening_n) {
+            opening = -1; mario_hidden = 0;
+            camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45);
+        }
+        return;
+    }
     if (starter >= 0 && game_frame == 2) { /* ScenarioStarter::exeRailMove: the flight in (SpinDriverShootPath) */
         mario->pos = launches[starter].pos;
         mario->launch = starter; mario->launch_t = 0; mario->launch_from = mario->pos;

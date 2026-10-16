@@ -136,7 +136,7 @@ int game_test_shoot(int kind);
  * else R2 let go, returns the capture phase */
 int game_test_gcap(int hold);
 /* The star pointer's cursor (right stick), HUD units (x 0..640, y 0..448); set: test builds */
-void game_cursor(float *x, float *y);
+int game_cursor(float *x, float *y); /* 0: not pointing (hidden) */
 void game_set_cursor(float x, float y);
 /* Test builds: Mario put on a live piece of the first StarPieceFlow; its piece index, -2 all taken, -1 none */
 int game_test_flow(void);

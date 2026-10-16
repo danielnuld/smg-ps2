@@ -42,3 +42,23 @@ duration - video duration). Mapping Wii -> PS2: A CROSS, B L1, Z R1, shake SQUAR
   counter) and the scenario intro (GalaxyNamePlate, ScenarioTitle, "Welcome").
 - Collision of the flower beds' rims (compare with KCL / Mario's step-up height).
 - Hide the pointer while it is not used.
+
+## Second run (after the fixes, 2026-10-15 evening): videos/2026-10-15_cmp-goodegg-moves2.mp4
+
+Both in Spanish now (the movie's SYSCONF language 4, the port's UsSpanish). Fixed since the first run: the landing
+after the ScenarioStarter flight (Mario stops at the path's end on the stone circle, LandScenarioStart, input
+locked while it plays), the HUD (counters, ENERGÍA meter, show / hide rules), the opening camera with the galaxy and
+scenario names, "¡Bienvenido a la Galaxia!", the pointer hidden while unused.
+
+Result with the same inputs: the two Marios walk the same path from g 0 to ~300 (past the flower bed, into the
+bushes), drift apart by up to a few metres between 300 and 700, and end at the same place facing the same way at
+g 1000-1230. Left:
+
+1. **Takobo hits**: around g 800 the port's Mario is hit by a Takobo (ENERGÍA 2); the Wii's is not.
+2. **Sky**: the Wii's backdrop is a dark blue gradient with a darker sea of clouds; the port's sky texture is
+   lighter and streakier (render the sky's materials / layers as the Wii does).
+3. **Start camera at the landing**: the Wii shows the planet from far (startStartPosCamera) while the welcome text
+   is up; the port's camera is already close behind Mario.
+4. **Control after the landing**: the port gives control ~90 frames after touching down; the Wii a little sooner
+   (its welcome text is still fully up at g 29), so the HUD shows earlier in the port.
+5. Star counter 0 (no save) against the Wii save's 121; no sun flare / bloom in the port.

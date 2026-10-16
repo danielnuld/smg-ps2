@@ -74,6 +74,19 @@ class Bmg:
             out.append(c)
             p += 2
 
+    def text(self, label):
+        """A message's plain text (tags left out), None if the label is missing."""
+        if label not in self.index:
+            return None
+        u, k, s = self.units(self.index[label]), 0, ""
+        while k < len(u):
+            if u[k] == 0x1A:
+                k += 4 + (u[k + 3] + 1) // 2
+            else:
+                s += chr(u[k])
+                k += 1
+        return s
+
     def chars(self, i):
         """Plain characters and picture ids of message i."""
         u, k, ch, pic = self.units(i), 0, set(), set()

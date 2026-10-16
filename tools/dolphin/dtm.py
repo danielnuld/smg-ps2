@@ -64,7 +64,7 @@ DEFAULT_HEADER = dict(
     bEFBEmulateFormatChanges=0, bImmediateXFB=0, bSkipXFBCopyToRam=1,
     memcards=0, bClearSave=0,    # 0: the User folder's save (a 121-star file) copied to the session NAND
     bongos=0, bSyncGPU=0, bNetPlay=0, bPAL60=0,
-    language=1,                  # SYSCONF English
+    language=4,                  # SYSCONF Spanish (the port shows UsSpanish messages: tools/msg.py LANG)
     bFollowBranch=1, bUseFMA=1, GBAControllers=0, bWidescreen=1,
     countryCode=49,              # SYSCONF country USA
     tickCount=(1 << 63) - 1,     # playback ends when ticks > tickCount: must not be 0

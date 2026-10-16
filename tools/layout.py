@@ -382,8 +382,10 @@ def bake_meter(fsp):
                 ox, oy = p["origin"] % 3, p["origin"] // 3
                 w, h = p["size"]
                 _blit(canvas, img, m, -w * ox / 2, h * oy / 2, w, h, X0, Y0)
-            elif p["name"] == "TxtTitle":  # "LIFE", centred, 64 px glyphs, -3 spacing; colours top white, bottom 120
-                gl = [(font["cmap"][ord(ch)], font["widths"].get(font["cmap"][ord(ch)], font["default"])) for ch in "LIFE"]
+            elif p["name"] == "TxtTitle":  # Layout_HitPointMeterLife ("LIFE"), centred, 64 px glyphs, -3 spacing; colours top white, bottom 120
+                title = msg.Bmg(fsp, msg.LANG).text("Layout_HitPointMeterLife") or "LIFE"  # ENERGÍA in UsSpanish
+                gl = [(font["cmap"][ord(ch)], font["widths"].get(font["cmap"][ord(ch)], font["default"])) for ch in title
+                      if ord(ch) in font["cmap"]]
                 tw = sum(cw for _, (_, _, cw) in gl) - 3 * (len(gl) - 1)
                 x = -tw / 2
                 for gi, (left, gw, cw) in gl:
@@ -394,6 +396,64 @@ def bake_meter(fsp):
                     x += cw - 3
         imgs.append((np.clip(canvas, 0, 1) * 255 + 0.5).astype(np.uint8))
     return imgs, (X0, Y0)
+
+
+def bake_text(fsp, arc, names, X0, Y0, W, H):
+    """Static text boxes of a layout (`names`, in order) rendered into one W x H image whose top left is layout (X0,
+    Y0): each its BRLYT string in its font (fnl1, Font.arc), font size and character space, one line placed by its
+    text position in its box, glyphs through lerp(material C0, C1) times the top / bottom vertex colours.
+    ponytail: one line, no tags"""
+    import msg
+    files = {k.lower().rsplit("/", 1)[-1]: v for k, v in
+             B.rarc_files((Path(fsp) / "LayoutData" / f"{arc}.arc").read_bytes())}
+    b = files[arc.lower() + ".brlyt"]
+    texs, mats, panes = parse(b)
+    fonts, info, o = [], {}, u16(b, 0xC)
+    for _ in range(u16(b, 0xE)):
+        kind, size = b[o:o + 4], u32(b, o + 4)
+        if kind == b"fnl1":
+            fonts = [b[o + 12 + u32(b, o + 12 + 8 * i):].split(b"\0")[0].decode() for i in range(u16(b, o + 8))]
+        elif kind == b"txt1":
+            so = u32(b, o + 0x58)
+            info[b[o + 12:o + 28].split(b"\0")[0].decode()] = dict(
+                font=u16(b, o + 0x52), cols=struct.unpack_from(">8B", b, o + 0x5C),
+                text=b[o + so:o + so + u16(b, o + 0x4E)].decode("utf-16-be").rstrip("\0"))
+        o += size
+    fa = msg._arc(fsp, "LayoutData/Font.arc")
+    canvas = np.zeros((H, W, 4), np.float32)
+    absolute = []
+    for p in panes:
+        if p["parent"] is None:
+            absolute.append(((0.0, 0.0), (1.0, 1.0)))
+        else:
+            (px, py), (sx, sy) = absolute[p["parent"]]
+            absolute.append(((px + p["t"][0] * sx, py + p["t"][1] * sy), (sx * p["s"][0], sy * p["s"][1])))
+    for name in names:
+        i = next(k for k, p in enumerate(panes) if p["name"] == name)
+        p, (pos, sc), inf = panes[i], absolute[i], info[name]
+        font = msg.rfnt(fa[fonts[inf["font"]].lower()])
+        mt = mats[p["mat"]]
+        fsx, fsy = p["txt"]["size"][0] * sc[0] / font["cell_w"], p["txt"]["size"][1] * sc[1] / font["cell_h"]
+        gl = [font["cmap"].get(ord(c), font["cmap"].get(0x20)) for c in inf["text"]]
+        adv = [font["widths"].get(g, font["default"]) for g in gl]
+        tw = sum(cw * fsx for _, _, cw in adv) + p["txt"]["space"] * (len(gl) - 1)
+        w, h = p["size"][0] * sc[0], p["size"][1] * sc[1]
+        ox, oy = p["origin"] % 3, p["origin"] // 3
+        bx, by = pos[0] - w * ox / 2, pos[1] + h * oy / 2  # the box's top left
+        hp, vp = p["txt"]["pos"] % 3, p["txt"]["pos"] // 3
+        x = bx + (0 if hp == 0 else (w - tw) / 2 if hp == 1 else w - tw)
+        lh = font["cell_h"] * fsy
+        top = by if vp == 0 else by - (h - lh) / 2 if vp == 1 else by - h + lh
+        c0, c1 = mt["c0"], mt["c1"]
+        ct, cb = np.array(inf["cols"][:4], np.float32) / 255, np.array(inf["cols"][4:], np.float32) / 255
+        for g, (left, gwid, cw) in zip(gl, adv):
+            img = msg.glyph_image(font, g)[:, :max(gwid, 1)].astype(np.float32) / 255
+            ramp = np.linspace(0, 1, img.shape[0])[:, None, None]
+            col = (c0 + (c1 - c0) * img) * (ct + (cb - ct) * ramp)
+            m = np.array([[fsx, 0, x + left * fsx], [0, fsy, top]], np.float64)
+            _blit(canvas, col, m, 0, 0, img.shape[1], img.shape[0], X0, Y0)
+            x += cw * fsx + p["txt"]["space"]
+    return (np.clip(canvas, 0, 1) * 255 + 0.5).astype(np.uint8)
 
 
 def _blit(canvas, img, m, x, y, w, h, X0, Y0):
@@ -423,7 +483,7 @@ def _blit(canvas, img, m, x, y, w, h, X0, Y0):
 # drawn by game.c lay_draw: the talk balloons (talk_draw), InformationWindow (group 0 InfoWindowUp: TicoFat's Info),
 # TicoFat's FullnessMeter (StarPieceTargetMeter group 0 at the pointer, StarPieceTargetCounter), the HUD counters
 LAYOUTS = ("TalkBalloonEvent", "SignBoardBalloon", "InformationWindow", "StarPieceTargetMeter", "StarPieceTargetCounter",
-           "StarCounter", "CoinCounter", "StarPieceCounter", "PlayerLeft", "HitPointMeter")  # the HUD: game.c hud_draw
+           "StarCounter", "CoinCounter", "StarPieceCounter", "PlayerLeft", "HitPointMeter", "Welcome")  # the HUD: game.c hud_draw
 
 
 def section(fsp, first_tex):
@@ -440,6 +500,12 @@ def section(fsp, first_tex):
                   for k, im in enumerate(meter)] +                  [q[:5] + (q[5][:3] + (128 if q[5][0] else 50,),) + q[6:10] + (15,) + q[11:]  # HPMeter's alpha 0:
                   for q in qs if q[11] == 255 and q[7] > 40]  # ShowHide drives the alpha; the number (32 x 1.4), not LIFE
             imgs = meter
+        if name == "Welcome":  # ScenarioStarter's Welcome表示: the language's text baked, one quad (appear.brlan: alpha)
+            import msg
+            suf = {"UsSpanish": "UsSp", "UsEnglish": "UsEn"}.get(msg.LANG, "")
+            im = bake_text(fsp, "Welcome", ["ShaWelcome" + suf, "TxtWelcome" + suf], -320, 98 + 32, 640, 64)
+            imgs = [im[:, :320], im[:, 320:]]  # two halves: the GS's 256 texels each keep the letters
+            qs = [(-320 + 320 * k, 98 + 32, 320, 64, k, (128, 128, 128, 128), 0, 0, 1, 1, 0, 0, 0, 0, 0, 0) for k in range(2)]
         base = len(ps2)
         ps2 += [tex.to_ps2(im, 0, 0, hi=True) for im in imgs]
         images += imgs

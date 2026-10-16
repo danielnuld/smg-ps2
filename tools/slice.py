@@ -1246,7 +1246,7 @@ def placement(fs, galaxy, scenario):
     AUTO_SKINNED.update({t: arcmap[t] for t in types if t not in planets and t not in SKINNED_OBJ and arcmap.get(t)
                          and "#" not in arcmap[t] and auto_anim(fs, arcmap[t])})
     out.append(obj_anim_chunk(Path(fs), set(types)))
-    out.append(canm_chunk(Path(fs), set(types)))
+    out.append(canm_chunk(Path(fs), set(types), galaxy, scenario))
     wire = []
     grav = [g for g in (grav_record(o, paths, wire, i) for i, o in enumerate(keep)) if g]
     out.append(chunk(b"GRAV", struct.pack("<I", len(grav)) + b"".join(grav) + struct.pack(f"<{len(wire)}f", *wire)))
@@ -1292,6 +1292,7 @@ def placement(fs, galaxy, scenario):
     ctls = [(f"{zones[r['zone']]['name']}_{r['name']}{r['mid']:03d}", i) for i, r in enumerate(keep) if r.get("mid", -1) >= 0]
     ctls += [(lab, None) for c in sorted(msg.COMMON) if c in types for lab in msg.COMMON[c]]
     ctls += [(lab, None) for lab in msg.SYSTEM]
+    ctls += [(f"GalaxyName_{galaxy}", None), (f"ScenarioName_{galaxy}{scenario}", None)]  # ScenarioTitle (StageTitle)
     out.append(chunk(b"TALK", msg.talk_chunk(fsp, ctls)))
     out.append(chunk(b"LGHT", light.chunk_payload(fsp, [z["name"] for z in zones])[0]))  # tools/light.py
     # TLGT: per TYPE its actor light type (tools/lighttype.py: 0 Player, 1 Strong, 2 Weak, 3 Planet, 255 unknown)
@@ -1464,9 +1465,19 @@ def canm_bake(b):
     return [tuple(get(float(f), c) for c in comps) for f in range(frames)]
 
 
-def canm_chunk(fsp, classes):
-    """CANM: the skinned placed classes' camera animations, "<class>/<name>" lower case, baked per frame."""
+def canm_chunk(fsp, classes, galaxy=None, scenario=None):
+    """CANM: the skinned placed classes' camera animations, "<class>/<name>" lower case, baked per frame; and the
+    scenario's opening camera (CameraDirector::createStartAnimCamera: StartScenario<n>.canm of the stage archive) as
+    "stage/startscenario"."""
     out = []
+    sa = fsp / "StageData" / f"{galaxy}.arc"
+    if galaxy and sa.exists():
+        for n, b in B.rarc_files(sa.read_bytes()):
+            if n.lower().rsplit("/", 1)[-1] == f"startscenario{scenario}.canm":
+                fr = canm_bake(b)
+                if fr:
+                    out.append(name32("stage/startscenario") + struct.pack("<I", len(fr)) +
+                               b"".join(struct.pack("<8f", *f) for f in fr))
     for c in [c for c in SKINNED_OBJ if c in classes] + (["PowerStar"] if "PowerStar" in classes else []):
         arc = fsp / "ObjectData" / f"{ANIM_ARC.get(c, c)}.arc"
         if not arc.exists():
