@@ -1657,7 +1657,7 @@ void game_init(const Scene *s, const unsigned char *blob)
             const float *e = (const float *)(z + 4 + 56 * i + 32);
             mat_translate_rot_scale(zm[i], e, e + 3, one);
         }
-        CamTarget t = {mario->pos, mario->face, mario->up, 0, 0, {0, 0, 0}};
+        CamTarget t = {mario->pos, mario->face, mario->up, 0, 0, {0, 0, 0}, NULL};
         camera_init(c ? (const CamParam *)(c + 16) : NULL, c ? *(const int *)c : 0,
                     a ? (const CamArea *)(a + 16) : NULL, a ? *(const int *)a : 0, (const float (*)[16])zm, &t);
     }
@@ -16577,6 +16577,8 @@ void game_update(void)
         printf("replay g %d: mario %d %d %d launch %d stars %d life %d cam %d %d %d watch %d %d %d\n", replay_g - 1,
                (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z, mario->launch, stars, life, (int)ce.x, (int)ce.y,
                (int)ce.z, (int)cw.x, (int)cw.y, (int)cw.z);
+        printf("replay g %d: face %.3f %.3f %.3f jumping %d grounded %d\n", replay_g - 1, mario->face.x, mario->face.y,
+               mario->face.z, mario->jumping, mario->grounded);
     }
 #endif
     { /* CameraDirector::checkStartCondition: the start camera ends once the player moves */
@@ -16678,7 +16680,9 @@ void game_update(void)
     qcoin_rot = fmodf(qcoin_rot + 4.0f * 0.0174533f, 6.2831853f);
     piece_rot = fmodf(piece_rot + 15.0f * 0.0174533f, 6.2831853f);
     star_rot = fmodf(star_rot + 3.0f * 0.0174533f, 6.2831853f);
-    CamTarget t = {mario->pos, mario->face, mario->up, !mario->grounded, mario->launch >= 0 && fly_on, fly_hy};
+    /* CameraTargetPlayer::isJumping (MarioActor.cpp:2484-2497): walling, or in a jump off the ground */
+    CamTarget t = {mario->pos, mario->face, mario->up, mario->walling || (mario->jumping && !mario->grounded),
+                   mario->launch >= 0 && fly_on, fly_hy, line_hits};
     LQ(71, camera_update(&t));
     V3 w, u;
     float fovy;

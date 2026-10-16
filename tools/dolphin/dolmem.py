@@ -113,5 +113,12 @@ if __name__ == "__main__":
         ram = Ram()
         for a in sys.argv[2:]:
             print(a, struct.unpack(">3f", ram.read(int(a, 16), 12)))
+    elif cmd == "units":  # units ADDR BYTES: unit-length float triples (4-aligned) in that range (direction vectors)
+        ram, a0, n = Ram(), int(sys.argv[2], 16), int(sys.argv[3])
+        d = ram.read(a0, n)
+        for o in range(0, n - 11, 4):
+            v = struct.unpack_from(">3f", d, o)
+            if all(abs(x) < 1.01 for x in v) and abs(sum(x * x for x in v) - 1) < 1e-3:
+                print(f"{a0 + o:08X} {v[0]:.4f} {v[1]:.4f} {v[2]:.4f}")
     elif cmd == "warp":
         warp(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]) if len(sys.argv) > 4 else 120)

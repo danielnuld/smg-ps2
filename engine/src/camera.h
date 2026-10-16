@@ -26,9 +26,11 @@ typedef struct {
 enum { CAM_XZ_PARA, CAM_TOWER, CAM_FOLLOW, CAM_WONDER_PLANET, CAM_EYEPOS_FIX, CAM_POINT_FIX, CAM_EYEPOS_FIX_THERE,
        CAM_CHARMED_FIX, CAM_TOWER_POS, CAM_FRONT_AND_BACK, CAM_TRUNDLE, CAM_CUBE_PLANET, CAM_OBJ_PARALLEL };  /* tools/camera.py TYPES */
 
-/* What the camera follows (Mario): position, facing, up (against gravity), airborne. */
-typedef struct { V3 pos, front, up; int jumping; int flying; V3 fly_dir; } CamTarget; /* flying: a launch star's flight,
-                                                                                   * fly_dir its path's direction */
+/* What the camera follows (Mario): position, facing, up (against gravity), airborne (CameraTargetPlayer::isJumping). */
+typedef struct { V3 pos, front, up; int jumping; int flying; V3 fly_dir; /* flying: a launch star's flight, fly_dir
+                                                                          * its path's direction */
+    int (*map_line)(V3 a, V3 b); /* Collision::checkStrikeLineToMap on the segment a-b (world), NULL: none given */
+} CamTarget;
 
 /* Index of the last area (in the blob's priority order) that contains p, or -1 (AreaObjMgr::find_in). */
 int camera_area_at(const CamArea *a, int n, V3 p);

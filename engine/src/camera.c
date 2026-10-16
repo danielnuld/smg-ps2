@@ -42,9 +42,9 @@ static const float (*zones)[16];
 static int cur = -2;                  /* active CAMS index, -1 = default (null) camera, -2 = none yet */
 static CamParam null_cam;             /* CameraHolder default: XZ_PARA with CameraParamChunk defaults */
 static V3 look_off, last_target;      /* smoothed loffset / loffsetv (makeWatchPoint) */
-static float vpan_h;                  /* smoothed watch height along the vpan axis */
-static int vpan_init;
-static V3 type_eye, type_up;          /* the type camera's own previous output (Tower, Follow, WonderPlanet read it) */
+static V3 type_eye, type_up;          /* the type camera's own previous output (Tower, WonderPlanet read it) */
+static V3 type_watch;                 /* the camera man's watch point at a camera change (CameraFollow::reset) */
+static const CamTarget *world_t;      /* the target in the world (map checks) */
 static int fresh;                     /* first frame of a camera (its reset()) */
 static V3 cube_up;                    /* CameraCubePlanet::mUp */
 static V3 i_eye, i_watch, i_up;       /* interpolated towards the type camera over camint frames */
@@ -105,19 +105,23 @@ static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V
 /* type_pose in the camera's zone frame: target and the type's previous output in, the pose back out */
 static void zone_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V3 *watch, V3 *up)
 {
+    world_t = t;
     if (!zones || p->zone == 0) {
         type_pose(p, t, move, eye, watch, up);
         return;
     }
     const float *m = zones[p->zone];
-    CamTarget l = {to_local(m, t->pos, 1), to_local(m, t->front, 0), to_local(m, t->up, 0), t->jumping, t->flying,
-                   to_local(m, t->fly_dir, 0)};
-    V3 se = type_eye, su = type_up;
+    CamTarget l = *t;
+    l.pos = to_local(m, t->pos, 1); l.front = to_local(m, t->front, 0); l.up = to_local(m, t->up, 0);
+    l.fly_dir = to_local(m, t->fly_dir, 0);
+    V3 se = type_eye, su = type_up, sw = type_watch;
     type_eye = to_local(m, se, 1);
     type_up = to_local(m, su, 0);
+    type_watch = to_local(m, sw, 1);
     type_pose(p, &l, to_local(m, move, 0), eye, watch, up);
     type_eye = se;
     type_up = su;
+    type_watch = sw;
     *eye = to_world(m, *eye, 1);
     *watch = to_world(m, *watch, 1);
     *up = to_world(m, *up, 0);
@@ -127,7 +131,8 @@ void camera_init(const CamParam *c, int nc, const CamArea *a, int na, const floa
 {
     cams = c; ncams = nc; areas = a; nareas = na; zones = z;
     null_cam.type = CAM_XZ_PARA; null_cam.dist = 1200.0f; null_cam.angle_b = 0.3f; null_cam.fovy = 45.0f;
-    null_cam.camint = 0; null_cam.vpanuse = 1; null_cam.vpanaxis[1] = 1.0f; null_cam.uplay = 300.0f;
+    null_cam.camint = 0; null_cam.vpanuse = 1; null_cam.vpanaxis[1] = 1.0f; /* setNullCamera: resetParameter */
+    null_cam.upper = 0.3f; null_cam.lower = 0.1f; null_cam.uplay = 500.0f; null_cam.lplay = 800.0f;
     last_target = t->pos;
     camera_update(t);
 }
@@ -142,18 +147,198 @@ static V3 watch_point(const CamParam *p, const CamTarget *t, V3 move)
     return vadd(vadd(t->pos, vec(p->woffset)), look_off);
 }
 
-/* CameraHeightArrange, reduced: the watch height along vpanaxis is frozen while jumping and eased at 0.05.
- * ponytail: the upper / lower screen pushes are one clamp at uplay instead of the push state machine. */
-static V3 vertical_pan(const CamParam *p, const CamTarget *t, V3 w)
+/* CameraHeightArrange (CameraHeightArrange.cpp), the mVPan of the types that createVPanObj (Parallel, Tower, Follow).
+ * Run in the zone frame, its global axis there vpanaxis (getGlobalAxis: the zone x vpanaxis in the world); the up
+ * vectors pass through (arrangeHeight's blendRate 1). Params as CameraManGame::applyParameter (upper, lower, uplay,
+ * lplay, vpanuse, vpanaxis). ponytail: gndint / pushdelay / pushdelaylow / udown are not in CAMS: their chunk defaults
+ * (ExParam::init 160 / 120 / 120 / 120); isFastRise / isFastDrop (MarioActor) are not decompiled: false; one state for
+ * every camera (each Petari camera keeps its own mRiseEaseTime over a reset) */
+enum { JUMP_NOMOVE, JUMP_RISE, JUMP_FALL };
+#define VP_GNDINT 160
+#define VP_RISE_DELAY 120
+#define VP_DROP_DELAY 120
+#define VP_MAX_RISE_EASE 120
+static struct {
+    int jumping, start_jump, end_jump;
+    V3 next_watch, next_pos, cur_watch, cur_pos; /* mNextParam, mCurrParam */
+    float base_h, target_h, watch_h, pos_h, watch_off, pos_off;
+    int state, state_time, catchup, chase_time, rise_time, drop_time, rise_ease_time;
+} vp;
+
+static int near_zero(V3 v) /* MR::isNearZero (0.001) */
 {
-    if (!p->vpanuse) return w;
-    V3 g = vnorm(vec(p->vpanaxis));
-    if (vlen(g) < 0.5f) g = v3(0, 1, 0);
-    float h = vdot(g, w);
-    if (!vpan_init) { vpan_h = h; vpan_init = 1; }
-    if (!t->jumping) vpan_h += 0.05f * (h - vpan_h);
-    vpan_h = clampf(vpan_h, h - p->uplay, h + p->uplay);
-    return vadd(w, vmul(g, vpan_h - h));
+    return fabsf(v.x) <= 0.001f && fabsf(v.y) <= 0.001f && fabsf(v.z) <= 0.001f;
+}
+static V3 at_height(V3 v, V3 g, float h) { return vadd(vsub(v, vmul(g, vdot(g, v))), vmul(g, h)); }
+
+static void vp_reset_jump(void) { vp.jumping = vp.start_jump = vp.end_jump = 0; } /* resetJump */
+
+static void vp_update_jump(const CamTarget *t) /* updateJump */
+{
+    vp.start_jump = !vp.jumping && t->jumping;
+    vp.end_jump = vp.jumping && !t->jumping;
+    vp.jumping = t->jumping;
+}
+
+static V3 vp_watch_pos(const CamParam *p, V3 w) /* calcWatchPos: the watch height along the axis kept while jumping */
+{
+    V3 g = vec(p->vpanaxis);
+    if (!(p->vpanuse && vp.jumping)) vp.base_h = vdot(g, w);
+    return at_height(w, g, vp.base_h);
+}
+
+static void vp_reset(const CamParam *p, const CamTarget *t, V3 move, V3 eye, V3 watch) /* reset */
+{
+    V3 g = vec(p->vpanaxis);
+    vp.base_h = vdot(g, watch);
+    vp.target_h = vdot(g, t->pos);
+    vp.pos_h = vdot(g, eye);
+    vp.watch_h = vp.base_h;
+    vp.watch_off = vp.pos_off = 0.0f;
+    vp.state = JUMP_NOMOVE;
+    vp.state_time = vp.catchup = vp.chase_time = vp.rise_time = vp.drop_time = 0;
+    vp.next_watch = vp.cur_watch = watch;
+    vp.next_pos = vp.cur_pos = eye;
+    if (t->jumping) vp.state = vdot(g, move) >= 0.0f ? JUMP_RISE : JUMP_FALL;
+}
+
+static void vp_calc_pose(V3 g) /* calcPose */
+{
+    vp.cur_watch = at_height(vp.next_watch, g, vp.watch_h + vp.watch_off);
+    vp.cur_pos = at_height(vp.next_pos, g, vp.pos_h + vp.pos_off);
+}
+
+static void vp_height_and_offset(V3 g) /* updateHeightAndOffset: sLocalOffsetRateScale 0.05 (vpanuse) */
+{
+    vp.watch_off += -vp.watch_off * 0.05f;
+    vp.pos_off += -vp.pos_off * 0.05f;
+    vp.watch_h += 0.05f * (vdot(g, vp.next_watch) - vp.watch_h);
+    vp.pos_h += 0.05f * (vdot(g, vp.next_pos) - vp.pos_h);
+}
+
+/* calcOffset: how far along the axis the target is past the screen line at focal scale s (+ above, - below) */
+static float vp_offset(const CamParam *p, const CamTarget *t, V3 g, float s)
+{
+    float fovy = p->flags & 2 ? p->fovy : 45.0f;
+    float ang = atan2f(tanf(fovy * PI * 0.5f / 180.0f) * s, 1.0f);
+    V3 front = vsub(vp.cur_watch, vp.cur_pos);
+    if (near_zero(front)) return 0.0f;
+    front = vnorm(front);
+    V3 up = vnorm(g), side = vcross(up, front);
+    if (near_zero(side)) return 0.0f;
+    side = vnorm(side);
+    up = vcross(front, side);
+    float c = vdot(up, g);
+    if (fabsf(c) < 0.1f) return 0.0f;
+    V3 to = vsub(t->pos, vp.cur_pos);
+    return (vdot(up, to) - vdot(front, to) * tanf(ang)) / c;
+}
+
+static void vp_upper(const CamParam *p, const CamTarget *t, V3 g) /* updateUpper */
+{
+    float k = (float)vp.rise_ease_time / VP_MAX_RISE_EASE;
+    if (k > 1.0f) k = 1.0f;
+    k = clampf((sinf(k * PI + PI / 2) + 1.0f) * 0.5f, 0.0f, 1.0f);
+    float off = vp_offset(p, t, g, p->upper * k);
+    if (off > 0.0f) {
+        float rate = VP_RISE_DELAY > 0 ? (float)vp.rise_time / VP_RISE_DELAY : 1.0f;
+        float wo = vp.watch_off + off * rate, lag = wo - vp.pos_off;
+        vp.watch_off = wo;
+        if (lag > p->uplay) vp.pos_off += lag - p->uplay;
+        vp_calc_pose(g);
+        vp.catchup = 1;
+        if (++vp.rise_time > VP_RISE_DELAY) vp.rise_time = VP_RISE_DELAY;
+    } else if (--vp.rise_time < 0) {
+        vp.rise_time = 0;
+        vp.rise_ease_time = 0;
+    }
+    if (vp.rise_time > 0) vp.rise_ease_time++;
+    if (vp.rise_ease_time > VP_MAX_RISE_EASE) vp.rise_ease_time = VP_MAX_RISE_EASE;
+}
+
+static void vp_lower(const CamParam *p, const CamTarget *t, V3 g) /* updateLower */
+{
+    float off = vp_offset(p, t, g, -p->lower);
+    if (off < 0.0f) {
+        if (vp.catchup || vp.target_h > vdot(g, t->pos)) {
+            float rate = VP_DROP_DELAY > 0 ? (float)vp.drop_time / VP_DROP_DELAY : 1.0f;
+            float wo = vp.watch_off + off * rate, lag = vp.pos_off - wo;
+            vp.watch_off = wo;
+            if (lag > p->lplay) vp.pos_off -= lag - p->lplay;
+            vp_calc_pose(g);
+            if (++vp.drop_time > VP_DROP_DELAY) vp.drop_time = VP_DROP_DELAY;
+        }
+    } else if (--vp.drop_time < 0) {
+        vp.drop_time = 0;
+    }
+}
+
+/* arrange: checkState, arrangeHeight (the type's pose in mNextParam), arrangeVPan; the pose out of mCurrParam */
+static void vp_arrange(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V3 *watch)
+{
+    if (!p->vpanuse) return;
+    V3 g = vec(p->vpanaxis);
+    float lm = vdot(g, move); /* getLastMove */
+    switch (vp.state) {
+    case JUMP_NOMOVE:
+        if (vp.start_jump) { vp.state = JUMP_RISE; vp.state_time = 0; }
+        break;
+    case JUMP_RISE:
+        if (!vp.jumping) { vp.state = JUMP_NOMOVE; vp.state_time = 0; }
+        else if (lm < 0.0f) { vp.state = JUMP_FALL; vp.state_time = 0; }
+        break;
+    case JUMP_FALL:
+        if (!vp.jumping) { vp.state = JUMP_NOMOVE; vp.state_time = 0; }
+        else if (lm > 0.0f) { vp.state = JUMP_RISE; vp.state_time = 0; }
+        break;
+    }
+    vp.next_watch = *watch;
+    vp.next_pos = *eye;
+    if (vp.state == JUMP_NOMOVE) {
+        if (vp.state_time == 0) vp.chase_time = 0;
+        vp.catchup = 0;
+        if ((float)vp.chase_time / VP_GNDINT > 0.5f) vp.rise_ease_time = 0; /* chase */
+        vp_height_and_offset(g);
+        vp.target_h = vdot(g, t->pos);
+    } else {
+        vp_height_and_offset(g);
+    }
+    vp_calc_pose(g);
+    vp_upper(p, t, g);
+    vp_lower(p, t, g);
+    vp.state_time++;
+    vp.chase_time++;
+    *watch = vp.cur_watch;
+    *eye = vp.cur_pos;
+}
+
+/* CameraFollow's own state: mPos / mWatchPos (zone frame, before the arrange), mAngleXSpeed */
+static V3 fl_pos, fl_watch;
+static float fl_pitch_speed;
+#define LOOK_DOWN (75.0f * PI / 180.0f) /* sLookDownAngle */
+
+static int map_line(V3 from, V3 dir) /* Collision::checkStrikeLineToMap (world); none given: a hit */
+{
+    return !world_t->map_line || world_t->map_line(from, vadd(from, dir));
+}
+
+/* CameraFollow::arrangeHeight (CameraFollow.cpp:248-325): reflectRotOffset, then mAngleXSpeed eased towards looking
+ * down 75 degrees while no wall is ahead (isWallForward) and no ground 500 ahead (checkDescent); else it fades 0.99.
+ * ponytail: polar angles in the zone frame (Petari: the world's; the same in zone 0) */
+static void follow_height(const CamParam *p, const CamTarget *t, V3 w, V3 *eye)
+{
+    V3 d = vsub(*eye, w);
+    float len = vlen(d), ax = atan2f(d.y, sqrtf(d.x * d.x + d.z * d.z)) + fl_pitch_speed, ay = atan2f(d.x, d.z);
+    if (ax > LOOK_DOWN) ax = LOOK_DOWN;
+    *eye = vadd(w, polar(len, ax, ay));
+    const CamTarget *wt = world_t;
+    if (p->num1 <= 0 || vdot(vsub(w, *eye), t->front) < 0.0f ||
+        map_line(vadd(wt->pos, vmul(wt->up, 100.0f)), vmul(wt->front, 500.0f)) || /* sColCheckHeight, sSlopeFrontDist */
+        map_line(vadd(wt->pos, vadd(vmul(wt->front, 500.0f), vmul(wt->up, 100.0f))), vmul(wt->up, -500.0f)) ||
+        ax > LOOK_DOWN)
+        fl_pitch_speed *= 0.99f;
+    else
+        fl_pitch_speed += (LOOK_DOWN - ax - fl_pitch_speed) * 0.02f;
 }
 
 static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V3 *watch, V3 *up)
@@ -161,9 +346,22 @@ static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V
     V3 Y = v3(0, 1, 0);
     V3 w = watch_point(p, t, move);
     int type = p->type == 255 ? CAM_XZ_PARA : p->type;
-    int still = type == CAM_WONDER_PLANET || type == CAM_EYEPOS_FIX || type == CAM_POINT_FIX ||
-                type == CAM_EYEPOS_FIX_THERE || type == CAM_CHARMED_FIX || type == CAM_CUBE_PLANET;
-    if (!still) w = vertical_pan(p, t, w);
+    int vpan = type == CAM_XZ_PARA || type == CAM_TOWER || type == CAM_FOLLOW; /* the types with createVPanObj */
+    if (vpan && fresh) { /* reset (CameraParallel / CameraTower: resetJump, calcWatchPos; CameraFollow.cpp:45-64) */
+        vp_reset_jump();
+        if (type == CAM_FOLLOW) {
+            fl_pitch_speed = 0.0f;
+            fl_pos = type_eye;
+            fl_watch = type_watch;
+            vp_reset(p, t, move, type_eye, type_watch);
+        } else {
+            vp_watch_pos(p, w);
+        }
+    }
+    if (vpan) { /* calc: updateJump, calcWatchPos */
+        vp_update_jump(t);
+        w = vp_watch_pos(p, w);
+    }
     *watch = w;
     *up = Y;
     switch (type) {
@@ -184,21 +382,25 @@ static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V
         *eye = v3(w.x + sinf(yaw) * hl, ideal.y, w.z + cosf(yaw) * hl);
         break;
     }
-    case CAM_FOLLOW: { /* CameraFollow.cpp:102-225 (no C-stick rounding, no wall / height arrange) */
+    case CAM_FOLLOW: { /* CameraFollow.cpp:66-130, 179-227 from mPos (no C-stick rounding: calcRotPos), arrangeHeight */
         float dmax = p->axis[0], dmin = p->axis[1];
-        V3 r = vsub(type_eye, w);
-        float d = vlen(r), pitch = atan2f(r.y, sqrtf(r.x * r.x + r.z * r.z)), yaw = atan2f(r.x, r.z);
-        if (d < dmin) d = dmin;
-        else if (d >= dmax) d = dmax + (d - dmax) * 0.5f;
+        V3 r = vsub(fl_pos, w); /* constrainDistance */
+        float d = vlen(r);
+        if (d < dmin) r = vmul(vnorm(near_zero(r) ? vsub(fl_pos, fl_watch) : r), dmin);
+        else if (d >= dmax) r = vmul(vnorm(r), dmax + (d - dmax) * 0.5f);
+        d = vlen(r);
+        float pitch = atan2f(r.y, sqrtf(r.x * r.x + r.z * r.z)), yaw = atan2f(r.x, r.z);
         float top = p->angle_a + p->angle_b;
         if (pitch > top) pitch += (top - pitch) * 0.5f;
         if (pitch < p->angle_a) pitch += (p->angle_a - pitch) * 0.5f;
         V3 back = vmul(t->front, -1.0f);
         float behind = atan2f(back.x, back.z);
-        V3 hm = v3(move.x, 0, move.z);
+        V3 hm = vsub(move, vmul(t->up, vdot(move, t->up))); /* CameraFollow.cpp:221: the move off the target's up */
         float speed = t->jumping ? 0.0f : p->dist * (PI / 180.0f) * clampf(vlen(hm) / 15.0f, 0.0f, 1.0f);
         yaw += clampf(wrap_pi(behind - yaw), -speed, speed);
-        *eye = vadd(w, polar(d, pitch, yaw));
+        fl_pos = *eye = vadd(w, polar(d, pitch, yaw));
+        fl_watch = w;
+        follow_height(p, t, w, eye);
         break;
     }
     case CAM_WONDER_PLANET: { /* CameraWonderPlanet.cpp:52-109: dragged along in the target frame */
@@ -329,6 +531,10 @@ static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V
         *eye = vadd(w, polar(p->dist < 300.0f ? 300.0f : p->dist, p->angle_b, p->angle_a - PI * 0.5f));
         break;
     }
+    if (vpan) { /* mVPan->arrange (CameraParallel / CameraTower reset it from their first pose) */
+        if (fresh && type != CAM_FOLLOW) vp_reset(p, t, move, *eye, *watch);
+        vp_arrange(p, t, move, eye, watch);
+    }
     if (vlen(vsub(*eye, *watch)) < 300.0f) /* OnlyCamera.cpp:80-95: keep the watch point 300 away */
         *eye = vadd(*watch, vmul(vnorm(vsub(*eye, *watch)), 300.0f));
 }
@@ -360,7 +566,7 @@ static int ev_begin(unsigned cls, int set, int shift, V3 up, V3 front, V3 pos)
     ev_up = vnorm(up); ev_front = vnorm(vsub(front, vmul(ev_up, vdot(front, ev_up)))); ev_pos = pos;
     cur = -3; /* the camera change: blend over the event camera's camint */
     timer = 0; camint = cams[ev_first].camint; fresh = 1;
-    type_eye = f_eye; type_up = f_up;
+    type_eye = f_eye; type_watch = f_watch; type_up = f_up;
     return 1;
 }
 
@@ -396,7 +602,7 @@ void camera_talk_start(V3 pos, V3 up, float height, float dist)
     if (tk_on) return;
     tk_on = 1; tk_eye = f_eye; /* reset: from the camera man's position */
     cur = -3; timer = 0; camint = 120; fresh = 1; /* CameraParamChunkExParam's camint */
-    type_eye = f_eye; type_up = f_up;
+    type_eye = f_eye; type_watch = f_watch; type_up = f_up;
 }
 
 void camera_talk_end(void) { if (tk_on) { tk_on = 0; cur = -3; } }
@@ -488,7 +694,7 @@ void camera_update(const CamTarget *t)
             if (p->evfrm >= 0 && ev_t >= p->evfrm && ev_i < ev_n - 1) {
                 ev_i++; ev_t = 0;
                 timer = 0; camint = cams[ev_first + ev_i].camint; fresh = 1;
-                type_eye = f_eye; type_up = f_up;
+                type_eye = f_eye; type_watch = f_watch; type_up = f_up;
             }
             ev_t++;
             CamTarget et = *t;
@@ -514,11 +720,12 @@ void camera_update(const CamTarget *t)
             V3 e, w, u;
             type_eye = vadd(t->pos, vadd(vmul(t->up, 600.0f), vmul(t->front, -1200.0f)));
             type_up = t->up;
+            type_watch = t->pos;
             zone_pose(param(), t, move, &e, &w, &u);
             i_eye = f_eye = e; i_watch = f_watch = w; i_up = f_up = u;
             type_eye = e; type_up = u;
         } else {
-            type_eye = f_eye;
+            type_eye = f_eye; type_watch = f_watch;
             type_up = f_up;
         }
     }
