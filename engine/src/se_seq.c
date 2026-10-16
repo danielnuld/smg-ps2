@@ -676,6 +676,9 @@ static void track_stop(Track *t) /* every track done, its notes released (the sl
 }
 
 /* ---- sounds ---- */
+static int map_code = -1; /* the player's ground sound code (se_map_code) */
+void se_map_code(int code) { map_code = code; }
+
 u32 se_start(u32 id, const float *pos)
 {
     const SeRow *r = se_row(id);
@@ -684,7 +687,7 @@ u32 se_start(u32 id, const float *pos)
         if (d[0] * d[0] + d[1] * d[1] + d[2] * d[2] > 5000.0f * 5000.0f) return 0;
     }
 #ifdef SE_LOG
-    printf("se%c %08x\n", r ? '+' : '?', id); /* tests: started, or not in this sound.bin */
+    printf("se%c %08x map %d\n", r ? '+' : '?', id, map_code); /* tests: started, or not in this sound.bin */
 #endif
     if (!r) return 0;
     for (int i = 0; i < MAX_SND; i++)
@@ -695,6 +698,14 @@ u32 se_start(u32 id, const float *pos)
             s->acc = 1.0f;
             if (pos) { s->has_pos = 1; s->pos[0] = pos[0]; s->pos[1] = pos[1]; s->pos[2] = pos[2]; }
             s->root = track_new(s, NULL, r->seq);
+            if (s->root && map_code > 0) /* AudSoundObject::setMapCodeToPort: the surface sounds read ports 11 / 12 */
+                switch (id) { /* SE_PM_ HIPDROP, FALLDOWN_S / M, FOOTNOTE_L / R, SUB_L / R, JUMP, LAND, HAND, LAND_HEAVY */
+                case 0x00020006u: case 0x00020013u: case 0x00020017u: case 0x00020025u: case 0x00020026u:
+                case 0x00020027u: case 0x00020028u: case 0x00020029u: case 0x0002002Au: case 0x0002002Bu:
+                case 0x00020038u:
+                    s->root->ports[12] = (u16)((map_code - 1) / 7);
+                    s->root->ports[11] = (u16)(((map_code - 1) % 7) * 12);
+                }
             if (!s->root) {
 #ifdef SE_LOG
                 printf("se! %08x no track\n", id);

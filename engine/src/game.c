@@ -618,7 +618,8 @@ static int nflows;
 static Killer killers[MAX_KILLERS];
 static int nkillers;
 static int ground_inst = -1;     /* instance under the last collide_n's ground normal, -1 none */
-static int ground_attr;          /* its face's codes (slice.py kcl_codes): Floor_code in bits 0-7 */
+static int ground_attr;          /* its face's codes (slice.py kcl_codes): Floor_code in bits 0-5, Sound_code 11-14 */
+#define KCL_SOUND(a) ((a) >> 11 & 0xF)
 static int wall_attr;            /* the last collide_n wall's codes */
 static void zone_spheres(void);
 static void zone_grow(const Inst *in);
@@ -11040,14 +11041,14 @@ static int m_check_press(Player *m)
         if (insts[i].press && vlen(vsub(m->pos, v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]))) < insts[i].reach + 300.0f)
             near = 1;
     if (near && m_vertical_press(m, 0)) { m_set_press(m, 0); return m->press != 0; }
-    if (m->wall && (wall_attr & 0xFF) == 29 && m->grounded && m->floor != 29) { m_set_press(m, 4); return 1; }
+    if (m->wall && (wall_attr & 0x3F) == 29 && m->grounded && m->floor != 29) { m_set_press(m, 4); return 1; }
     return 0;
 }
 
 static void hurt_mario(V3 from, float push);
 static void m_damage_floor(Player *m)
 {
-    int f = m->grounded ? m->floor : -1, w = m->wall ? wall_attr & 0xFF : -1;
+    int f = m->grounded ? m->floor : -1, w = m->wall ? wall_attr & 0x3F : -1;
     if (f == 1 || w == 1) { printf("death floor\n"); miss(); return; }
     if (f == 4 || f == 10 || f == 15 || w == 4 || w == 10 || w == 15) hurt_mario(vadd(m->pos, m->face), 15.0f);
 }
@@ -11268,10 +11269,11 @@ static void update_mario(void)
     if (ground && (!m->jumping || m->vup <= 0)) {
         m->grounded = 1;
         m->ground_n = gn;
+        se_map_code(KCL_SOUND(ground_attr)); /* the landing's sounds read this ground's code */
         if (m->jumping && m->hip == HIP_FALL) m_hip_land(m);
         else if (m->jumping && !m->hip) m_do_landing(m);
         if (!m->hip) { m->vup = 0; m->hvel = vtangent(m->vel, m->up); }
-        m->floor = ground_attr & 0xFF; /* updateFloorCode: _960, _41C */
+        m->floor = ground_attr & 0x3F; /* updateFloorCode: _960, _41C */
         if (angle_d(m, gn) > MC.mSlipAngle) {
             if (angle_d(m, gn) > MC.mForceWallAngle) m->slip_keep = 0;
             if (m->slip_keep) m->slip_keep--;
@@ -11280,7 +11282,7 @@ static void update_mario(void)
         bee_meter = 180; bee_rise = bee_drop = 0; /* landing refills the flight */
         m_damage_floor(m);
     } else if (!ground) m->grounded = 0;
-    m->slip_poly = m->grounded && slip_polygon(m, ground_attr & 0xFF, m->ground_n); /* updateGroundInfo: mDrawStates._C */
+    m->slip_poly = m->grounded && slip_polygon(m, ground_attr & 0x3F, m->ground_n); /* updateGroundInfo: mDrawStates._C */
     if (m->grounded && !m->jumping) m->land_timer++; /* updateTimers: _3CE */
     mario_ground = m->grounded ? ground_inst : -1;
     if (m_check_press(m)) return;
@@ -16678,6 +16680,8 @@ void game_update(void)
     LQ(5, update_talk_director());
     if (!opening_on) {
         LQ(6, update_mario());
+        /* MR::getMapSoundCodeFoot: the ground's (else the wall's) sound code for Mario's surface sounds; -1 none */
+        se_map_code(mario->grounded ? KCL_SOUND(ground_attr) : mario->wall ? KCL_SOUND(wall_attr) : -1);
         /* MarioActor::updateEffect: 共通砂煙レベル while the turn brake runs or a dash starts on the ground (_3F4) */
         if (mario->grounded && !mario->jumping && !mario->drop_grace && (mario->turn_brake || mario->start_spin_ratio > 0.1f))
             mario_smoke(SMOKE_DUST);

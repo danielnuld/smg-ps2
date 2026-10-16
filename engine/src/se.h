@@ -17,6 +17,7 @@ int se_load(const u8 *sound_bin);                     /* tables in EE, the waves
 u32 se_start(u32 id, const float *pos);               /* a one-shot SE (pos NULL: not placed) -> handle, 0 none */
 u32 se_level(u32 id, const float *pos, u32 handle);   /* a level SE: kept while asked each frame -> its handle */
 void se_stop(u32 handle);
+void se_map_code(int code); /* the player's ground sound code (AudSoundObject::getMapCode), -1 none */
 void se_port(u32 handle, int port, u16 value);        /* a sequence port (JAISound::setPort) */
 void se_listener(const float eye[3], const float right[3]);
 void se_volpitch(u32 handle, float vol, float pitch); /* scale a playing sound's volume and pitch */

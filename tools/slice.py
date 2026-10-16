@@ -730,15 +730,15 @@ def anim_clip(bck):
 
 def kcl_codes(b, pa):
     """Big-endian KCL with each prism's attribute (a row of its .pa, KCollisionServer / CollisionCode.cpp) replaced by
-    that row's codes: Floor_code in bits 0-7, Wall_code in 8-11, Camera_through in bit 12 (kcl.h KCL_FLOOR...). A
-    KCL without a .pa keeps 0 (Normal)."""
+    that row's codes: Floor_code in bits 0-5 (34 the most in the game), Wall_code in 6-9, Camera_through in bit 10,
+    Sound_code in 11-14 (15 the most; game.c KCL_SOUND). A KCL without a .pa keeps 0 (Normal)."""
     out = bytearray(b)
-    cols = [B.bcsv_column(pa, f) for f in ("Floor_code", "Wall_code", "Camera_through")]
+    cols = [B.bcsv_column(pa, f) for f in ("Floor_code", "Wall_code", "Camera_through", "Sound_code")]
     pos, nrm, prism, octree = struct.unpack_from(">4I", b, 0)
     for o in range(prism + 0x10, octree, 0x10):
         at = struct.unpack_from(">H", b, o + 0xE)[0]
-        f, w, c = (col[at] if at < len(col) else 0 for col in cols)
-        struct.pack_into(">H", out, o + 0xE, (f & 0xFF) | (w & 0xF) << 8 | (c & 1) << 12)
+        f, w, c, snd = (col[at] if at < len(col) and isinstance(col[at], int) else 0 for col in cols)
+        struct.pack_into(">H", out, o + 0xE, (f & 0x3F) | (w & 0xF) << 6 | (c & 1) << 10 | (snd & 0xF) << 11)
     return bytes(out)
 
 
