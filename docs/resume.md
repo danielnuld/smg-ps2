@@ -325,6 +325,16 @@ there needs the embedded blob and every pack rebuilt.
 
 ## Next
 
+**Resume here (2026-10-16 morning, stopped by the user mid-investigation):** a longer Wii comparison, from the start
+to the first launch star (the SuperSpinDriver under the start planet, at -4631 -17641 -16400, the bottom of the tower
+that hangs under it). tools/dolphin/play/launch1.json: stick (0, -1) from g 90 runs Mario back over the wooden rim;
+in the port he wraps to the underside by g 250 (up 0 -1 0) and walks inward until he stops against the tower at
+-4094 -14328 -16222 from g 350. The Wii, same inputs (probe.ps1, Mario at 810B59A8): g 350 at -3802 -14219 -16207
+(300 off the port), g 600 at -2292 -13628 -16389 (elsewhere). Next: probe the Wii at g 150 / 200 / 250 (with the camera,
+8087B1B8) to find where the rim wrap parts (the gravity at the rim or the camera through the flip), fix it after
+Petari, then go on down the tower to the launch star (a spin by it) and record both. The replay log now prints Mario's
+up. The pipe on the house's roof (-5551 -12109 -17737) leads into the house, not under the planet.
+
 **Night of 2026-10-16 (the user: comparison video, demo, short, then "continua con el resto de los detalles del port
 para ps2 hasta las 7 am"):** videos/2026-10-16_cmp-goodegg-final.mp4 (Wii | PS2, same inputs), _demo-goodegg.mp4,
 _short-goodegg.mp4, titles and tags in videos/youtube_2026-10-16.md. Done after Petari, each checked in PCSX2 (route

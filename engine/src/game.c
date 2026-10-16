@@ -16668,8 +16668,8 @@ void game_update(void)
         printf("replay g %d: mario %d %d %d launch %d stars %d life %d cam %d %d %d watch %d %d %d\n", replay_g - 1,
                (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z, mario->launch, stars, life, (int)ce.x, (int)ce.y,
                (int)ce.z, (int)cw.x, (int)cw.y, (int)cw.z);
-        printf("replay g %d: face %.3f %.3f %.3f jumping %d grounded %d\n", replay_g - 1, mario->face.x, mario->face.y,
-               mario->face.z, mario->jumping, mario->grounded);
+        printf("replay g %d: face %.3f %.3f %.3f up %.2f %.2f %.2f jumping %d grounded %d\n", replay_g - 1, mario->face.x,
+               mario->face.y, mario->face.z, mario->up.x, mario->up.y, mario->up.z, mario->jumping, mario->grounded);
         if ((replay_g - 1) % 100 == 0 || replay_g - 1 < 600)
             for (int i = 0; i < nkuribo; i++)
                 if (kuribo[i].kind == WALK_TAKOBO)
