@@ -58,6 +58,9 @@ void camera_talk_start(V3 pos, V3 up, float height, float dist);
 void camera_talk_end(void);
 /* a demo's animated camera (CameraAnim): this pose until off */
 void camera_set_override(int on, V3 eye, V3 watch, V3 up, float fovy);
+/* CameraManGame::startStartPosCamera: the start's camera ("s:" Camera_id of its zone) until camera_start_pos_end */
+void camera_start_pos(int zone, int id);
+void camera_start_pos_end(void);
 /* CameraShaker::shakeVertical (MR::shakeCameraVeryWeak .. VeryStrong): one CameraShakePatternSingly of that power, not
  * restarted while it runs; camera_update moves them, camera_shake_y is their summed offset, adjusted to the screen
  * (adjustOffsetToScreen: x 30 / 456), for the projection's translation (CameraContext::updateProjectionMtx).

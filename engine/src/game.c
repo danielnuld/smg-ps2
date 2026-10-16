@@ -855,6 +855,7 @@ static void talk_init(const Scene *s);
 static int talk_demo(void);
 static int talk_active(void);
 static void stitle_start(void);
+static int start_pos_cam; /* the start's camera is on (camera_start_pos) */
 static int draw_steps; /* logic steps since the last draw (game_set_draw_steps; 1 at start) */
 /* Switch logic rows (no model): TimerSwitch, SwitchSynchronizerReverse, GroupSwitchWatcher */
 enum { LOGIC_TIMER = 1, LOGIC_REVERSE, LOGIC_GROUP, LOGIC_BLOCKER, LOGIC_FLIPS, LOGIC_CHIPS, LOGIC_SWAREA, LOGIC_DEATH, LOGIC_RESTART, LOGIC_PIECESPOT };
@@ -10490,8 +10491,13 @@ static void m_do_landing(Player *m)
         mario_sound("重い着地"); mario_sound("声ステージイン着地");
         mario_play("landscenariostart", 1.0f, 0);
         camera_shake(SHAKE_STRONG); /* startCamVib(4) */
-        hud_welcome = 1; /* ScenarioStarter::exeShowWelcomeLayout's first step: its title ends */
+        hud_welcome = 1; /* ScenarioStarter::exeShowWelcomeLayout's first step: its title ends, startStartPosCamera */
         stitle_end();
+        for (u32 k = 0; k < sc->nstarts; k++) /* the start (MarioNo 0 of zone 0): its Camera_id */
+            if (sc->starts[k].zone == 0 && sc->starts[k].arg[0] == 0 && sc->starts[k].arg[1] >= 0) {
+                camera_start_pos(0, sc->starts[k].arg[1]);
+                start_pos_cam = 1;
+            }
         return;
     }
     m->squat_lock = 0;
@@ -16548,8 +16554,14 @@ void game_update(void)
         printf("replay g %d: mario %d %d %d launch %d stars %d life %d\n", replay_g - 1, (int)mario->pos.x,
                (int)mario->pos.y, (int)mario->pos.z, mario->launch, stars, life);
 #endif
+    { /* CameraDirector::checkStartCondition: the start camera ends once the player moves */
+        static V3 last;
+        if (start_pos_cam && vlen(vsub(mario->pos, last)) > 0.5f && !m_input_off()) { start_pos_cam = 0; camera_start_pos_end(); }
+        last = mario->pos;
+    }
     kcl_list_build();
     LQ(0, update_obj_anims());
+
     if (time_limit && time_left > 0 && !stars && --time_left == 0) { printf("time up" "\n"); miss(); }
     hip_hit = 0;
     game_frame++;

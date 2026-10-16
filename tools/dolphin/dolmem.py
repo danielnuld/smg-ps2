@@ -102,11 +102,16 @@ if __name__ == "__main__":
         print([f"{a:08X}" for a in find(ram, sys.argv[2].encode())][:20])
     elif cmd == "near":  # near X Y Z R: big-endian float triples within R of (X, Y, Z) (Mario's position...)
         import numpy as np
-        ram, c, r = Ram(), np.array([float(v) for v in sys.argv[2:5]]), float(sys.argv[5])
+        a = " ".join(sys.argv[2:]).replace(",", " ").split()  # "x y z" as one argument too
+        ram, c, r = Ram(), np.array([float(v) for v in a[:3]]), float(a[3])
         for base, data in ram.blocks():
             f = np.frombuffer(data[:len(data) // 4 * 4], ">f4").astype(np.float64)
             d = (f[:-2] - c[0]) ** 2 + (f[1:-1] - c[1]) ** 2 + (f[2:] - c[2]) ** 2
-            for i in np.nonzero(d < r * r)[0][:40]:
+            for i in np.nonzero(d < r * r)[0][:400]:
                 print(f"{base + 4 * i:08X} {f[i]:.1f} {f[i + 1]:.1f} {f[i + 2]:.1f}")
+    elif cmd == "read3":  # read3 ADDR...: big-endian float triples at those addresses
+        ram = Ram()
+        for a in sys.argv[2:]:
+            print(a, struct.unpack(">3f", ram.read(int(a, 16), 12)))
     elif cmd == "warp":
         warp(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]) if len(sys.argv) > 4 else 120)

@@ -456,6 +456,14 @@ static void shake_update(void) /* CameraShaker::movement: CameraShakeTask::movem
     shake_off = y * 30.0f / 456.0f;
 }
 
+static int start_cam = -1; /* tryStartPosCamera: its CAMS index while on */
+void camera_start_pos(int zone, int id)
+{
+    start_cam = -1;
+    for (int i = 0; i < ncams; i++)
+        if (cams[i].kind == 's' && cams[i].zone == zone && cams[i].num == (unsigned)(id & 0xFFFF)) start_cam = i;
+}
+void camera_start_pos_end(void) { start_cam = -1; }
 void camera_update(const CamTarget *t)
 {
     shake_update();
@@ -463,7 +471,7 @@ void camera_update(const CamTarget *t)
     for (int i = nareas - 1; i >= 0; i--)
         if (inside(&areas[i], t->pos)) { a = i; break; }
     /* no area: keep the current camera (the ground-triangle cameras are not ported), the default one at first */
-    int want = a >= 0 && areas[a].cam != 0xFFFF ? areas[a].cam : (cur == -2 || cur == -3 ? -1 : cur);
+    int want = start_cam >= 0 ? start_cam : a >= 0 && areas[a].cam != 0xFFFF ? areas[a].cam : (cur == -2 || cur == -3 ? -1 : cur);
     V3 move = vsub(t->pos, last_target);
     last_target = t->pos;
     if (tk_on) {

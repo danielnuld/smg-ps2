@@ -44,7 +44,7 @@ def states(play):
     return out
 
 
-def to_dtm(play):
+def to_dtm(play, tail=120):
     tl = list(MENU)
     for e in sorted(play, key=lambda k: k["g"]):
         m = {"frame": CONTROL_T + e["g"]}
@@ -59,7 +59,7 @@ def to_dtm(play):
         if b != prev:
             tl.append({"frame": CONTROL_T + g, "buttons": b})
             prev = b
-    tl.append({"frame": CONTROL_T + len(states(play)) + 120})
+    tl.append({"frame": CONTROL_T + len(states(play)) - 1 + tail})  # the movie ends (Dolphin pauses) tail frames on
     return dtm.build(tl)
 
 
@@ -85,8 +85,9 @@ def _selfcheck():
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 4:
+    if len(sys.argv) in (4, 5):  # dtm play out [tail frames, 120]
         play = json.load(open(sys.argv[2]))
-        Path(sys.argv[3]).write_bytes(to_dtm(play) if sys.argv[1] == "dtm" else to_bin(play))
+        tail = int(sys.argv[4]) if len(sys.argv) == 5 else 120
+        Path(sys.argv[3]).write_bytes(to_dtm(play, tail) if sys.argv[1] == "dtm" else to_bin(play))
     else:
         _selfcheck()
