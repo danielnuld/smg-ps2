@@ -13,7 +13,8 @@
  * (JPABaseParticle::init_p / calc_p: omni / axis / direction cone / random velocities, air resistance, gravity
  * fields, follow), drawn as billboards with JPAExtraShape's scale and alpha curves and the BSP1 colour keys.
  * ponytail: no child particles, rotation, texture animation, other field types, other shape types (all
- * billboards), emitter local rotation; colour combine baked into the textures by the converter. */
+ * billboards: stripes too), emitter local rotation; colour combine baked into the textures by the converter.
+ * Joint-held effects (fx_named) take the joint's place and turn at the host's size. */
 
 typedef struct {
     float rate, rate_rndm, life_rndm, vol_size, min_rad, sweep;
@@ -32,8 +33,8 @@ typedef struct {
 
 typedef struct { u16 n, res[7]; float off[3], pad; } FxDef; /* 32 bytes */
 
-#define MAX_EMIT 128
-#define MAX_PTCL 1024
+#define MAX_EMIT 256
+#define MAX_PTCL 1536
 
 typedef struct {
     const PtRes *r;
@@ -276,8 +277,14 @@ int fx_named(const char *cls, const char *name, const float m[16], const float (
         const FxAuto *a = &autos[i];
         if (a->start != 0xFFFF || strcmp(a->cls, c) || strcmp(a->clip, n)) continue;
         float e[16], j[16], o[16];
-        if (a->joint >= 0 && world) mat_mul(j, m, world[a->joint]);
-        else memcpy(j, m, sizeof j);
+        if (a->joint >= 0 && world) {
+            mat_mul(j, m, world[a->joint]);
+            for (int c = 0; c < 3; c++) { /* the joint's place and turn; the size is the host's (m), not the bone's */
+                float l = sqrtf(j[4 * c] * j[4 * c] + j[4 * c + 1] * j[4 * c + 1] + j[4 * c + 2] * j[4 * c + 2]);
+                float h = sqrtf(m[4 * c] * m[4 * c] + m[4 * c + 1] * m[4 * c + 1] + m[4 * c + 2] * m[4 * c + 2]);
+                if (l > 1e-6f) for (int r = 0; r < 3; r++) j[4 * c + r] *= h / l;
+            }
+        } else memcpy(j, m, sizeof j);
         mat_identity(o);
         for (int q = 0; q < 3; q++) { o[5 * q] = a->scale; o[12 + q] = a->off[q]; }
         mat_mul(e, j, o);
