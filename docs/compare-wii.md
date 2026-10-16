@@ -113,3 +113,8 @@ Fixed after the RAM probes:
 
 Same path to g ~780; at the house Mario and the Takobo meet in both, the PS2's spin hits it first (a star piece)
 while on the Wii it punches Mario: a frame or two of difference, the runs part there.
+
+Cutting a new side by side: `python tools/dolphin/align.py <wii avi> <ps2 mp4> 69.91 15 19` prints the PS2 capture's
+g 0 (motion correlation from g 90; 0.9 and over is a match); cut the Wii at 68.91 and the PS2 one second before its
+g 0. videos/2026-10-16_cmp-goodegg-final2.mp4 (build 6158efa: Mario's smokes, the spin's swirl, the lens flare) is
+cut that way (PS2 -ss 14.50).
