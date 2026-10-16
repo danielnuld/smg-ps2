@@ -1,0 +1,44 @@
+# Good Egg (EggStarGalaxy 1): Wii vs PS2 port with the same inputs
+
+2026-10-15. Both games are driven by one input timeline (`tools/dolphin/play/moves.json`): frames `g` at 60 Hz counted
+from the first frame Mario is free. Result: `videos/2026-10-15_cmp-goodegg-moves.mp4` (videos/ is not in git) —
+Wii (Dolphin 2609a) on the left, PS2 port (PCSX2) on the right; audio left channel Wii, right channel PS2.
+
+## How it is made
+
+| Step | Wii (Dolphin, `D:\dolphin`, own User folder `D:\dolphin-script\User`) | PS2 port |
+|---|---|---|
+| Input | `python tools/replay.py dtm play.json out.dtm`: a .dtm movie from boot (tools/dolphin/dtm.py: one entry per Wiimote poll, 187.5 Hz; Wiimote + Nunchuk) | `python tools/replay.py bin play.json out/replay.bin` (u16 buttons, s8 sticks per logic step) |
+| To the level | the movie presses A+B at the title, points at file 1 (the RMGE01 121-star save), Play This File; the Gecko code `tools/dolphin/RMGE01.ini` turns the scene request {Game, AstroGalaxy} at 809A9148 into EggStarGalaxy 1 | the build's scenario |
+| g = 0 | timeline frame `CONTROL_T` (4155) in `tools/replay.py` | `build.sh replay ...`: pad.c reads host:replay.bin from the first frame Mario is grounded after the ScenarioStarter flight |
+| Run | `tools/dolphin/play.ps1 out.dtm 170 -Out dir` (window off screen, frame + audio dump) | `tools/record.ps1 name out/slice-packs-replay.elf 40` |
+
+Notes: Dolphin's AVI is variable frame rate (its timestamps are VI time, frames are skipped in loads), so cut it by
+time (`-ss`), not by frame index. The DSP audio dump and the video end together: audio time = video time + (audio
+duration - video duration). Mapping Wii -> PS2: A CROSS, B L1, Z R1, shake SQUARE, D-pad, stick. Pointer calibration
+(Dolphin's emulated IR): cursor x = 0.5 + 0.88 px, y = 0.32 - 0.6 py.
+
+## Differences seen (moves.json, g 0..1230)
+
+1. **HUD**: the Wii draws the star counter, LIFE meter, lives, coins and star bits; the port only its debug text.
+   The "Welcome to the Galaxy!" banner and the galaxy / scenario name plates of the intro are missing too.
+2. **Scenario start**: the Wii runs the intro camera tour with the galaxy name (~20 s) before the flight in; the port
+   flies Mario in at once. Mario lands in the middle of the stone circle on the Wii; in the port he ends just north
+   of it. From there on the same stick input takes him on a parallel but shifted path.
+3. **Path divergence** (a result of 2 and of collision): by g = 200 the port's Mario walks into the rim of the
+   flower bed and gets slowed by it; the Wii's passes beside it. Later (g ~ 700) the port's Mario reaches the house
+   and the A press reads its sign (a talk), the Wii's is elsewhere: the two runs never meet again.
+4. **Pointer**: the port always draws the star pointer (green star, at screen centre); the Wii shows it only when the
+   remote points at the screen (the movie leaves IR off in play).
+5. **Look**: the Wii's sun has its lens flare / bloom, the port none; the port's colours are flatter (lighting, no
+   specular), the sky backdrop lighter; Takobo pale.
+6. **Same**: the start camera (behind Mario facing the house), the planet, house, flower beds, Takobo placement and
+   their chase, Mario's run speed and jump heights look alike while the paths are close (g 90..200).
+
+## Next (to make the runs match)
+
+- The flight's landing point (ScenarioStarter path end / Mario's landing): he must stop on the stone circle.
+- The HUD (CounterLayoutController: PowerStarCounter, CoinCounter, StarPieceCounter, PlayerLife / LifeMeter, stock
+  counter) and the scenario intro (GalaxyNamePlate, ScenarioTitle, "Welcome").
+- Collision of the flower beds' rims (compare with KCL / Mario's step-up height).
+- Hide the pointer while it is not used.

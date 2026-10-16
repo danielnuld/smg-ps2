@@ -1,4 +1,6 @@
 #include "pad.h"
+#include <stdio.h>
+#include <stdlib.h>
 
 /* Same libpad use as D:\ps2\ps2-platformer\src\pad.c, plus analog mode for the left stick. */
 static char pad_buf[256] __attribute__((aligned(64)));
@@ -6,6 +8,24 @@ static struct padButtonStatus st;
 static u32 held, prev, pressed;
 static float lx, ly, rx, ry;
 static int analog_set;
+#ifdef REPLAY
+static unsigned char *rep;
+static int rep_n, rep_i, rep_on;
+void pad_replay_begin(void) /* the game hands control to the player: records from here (u16 buttons, s8 lx ly rx ry) */
+{
+    if (rep_on) return;
+    FILE *f = fopen("host:replay.bin", "rb");
+    if (!f) { printf("replay: no host:replay.bin\n"); return; }
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    rep = malloc(n);
+    rep_n = rep && fread(rep, 1, n, f) == (size_t)n ? (int)(n / 6) : 0;
+    fclose(f);
+    rep_on = 1;
+    printf("replay: %d records\n", rep_n);
+}
+#endif
 u32 pad_force; /* test builds: buttons held as well as the pad's */
 int pad_force_stick; float pad_force_lx, pad_force_ly; /* test builds: the left stick instead of the pad's */
 
@@ -45,6 +65,16 @@ void pad_update(void)
     held |= pad_force;
     if (pad_force_stick) { lx = pad_force_lx; ly = pad_force_ly; }
     pressed = held & ~prev;
+#ifdef REPLAY
+    if (rep_on && rep && rep_i < rep_n) { /* host:replay.bin (tools/replay.py): one record a logic step */
+        const unsigned char *e = rep + 6 * rep_i++;
+        held = e[0] | e[1] << 8;
+        lx = (signed char)e[2] / 127.0f; ly = (signed char)e[3] / 127.0f;
+        rx = (signed char)e[4] / 127.0f; ry = (signed char)e[5] / 127.0f;
+        pressed = held & ~prev;
+        if (rep_i == rep_n) printf("replay: end at record %d\n", rep_i);
+    }
+#endif
 #if defined(BENCH) && !defined(BENCH_STILL) /* BENCH_STILL: the same counts with Mario left at the start */
     /* fixed path, 30 s (milestone 3): forward with chained jumps (X every 4 frames for 85 frames out of 180: the
      * 2nd and 3rd jumps), a right-hand circle with spins and a long jump every 2 s (R1 + X), forward-left with a

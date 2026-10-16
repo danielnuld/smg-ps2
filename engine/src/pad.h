@@ -19,5 +19,6 @@ float pad_ly(void);
 /* Right stick, same convention: the star pointer's stand-in (game.c cursor) */
 float pad_rx(void);
 float pad_ry(void);
+void pad_replay_begin(void); /* REPLAY builds: host:replay.bin drives the pad from now on */
 
 #endif

@@ -325,6 +325,15 @@ there needs the embedded blob and every pack rebuilt.
 
 ## Next
 
+**Wii comparison, 2026-10-15 (the user: "compara el primer nivel con la versión de Wii ... gameplay idéntico en
+ambos"; resume here):** Good Egg's sounds are all in (613da57) and route EggStar 1-4 still get their stars. The same
+input timeline now drives Dolphin (a generated .dtm from boot, Gecko warp to EggStarGalaxy 1) and the port (`build.sh
+replay`, host:replay.bin): see docs/compare-wii.md for the method, the calibration numbers and the differences found.
+First side by side: videos/2026-10-15_cmp-goodegg-moves.mp4. Next, in order: Mario's landing point after the
+ScenarioStarter flight (the stone circle), the HUD (counters, life meter) and the scenario intro (name plates,
+Welcome), the flower beds' rim collision, the pointer only when used; then a longer common route (to the first
+launch star, SuperSpinDriver row 59 under DiskGarden) and a re-run of the comparison.
+
 **Frame rate, 2026-10-15 (the user: "optimizarlo para que sea 60fps, o minimo 30"; resume here):** EggStar 1
 bench (scripted path, `build.sh bench`) 29.3 -> 16.5 ms avg, worst 45 -> 32.6 ms; start view (XF=-DBENCH_STILL)
 19.7 ms avg (logic 5.8, draw 12.1, gs 1.2), worst 29.4. Normal builds now run 60 Hz logic with catch-up

@@ -16264,7 +16264,15 @@ void game_update(void)
         starter = -1;
     }
 #ifdef REPLAY
-    if (game_frame > 3 && mario->launch < 0 && mario->grounded) pad_replay_begin(); /* the player's control: g = 0 */
+    static int replay_g = -1; /* the replay's frame: g = 0 the first frame the player is free */
+    if (replay_g < 0 && game_frame > 3 && mario->launch < 0 && mario->grounded) {
+        pad_replay_begin();
+        replay_g = 0;
+        printf("replay: control at game frame %d\n", game_frame);
+    }
+    if (replay_g >= 0 && replay_g++ % 10 == 0)
+        printf("replay g %d: mario %d %d %d launch %d stars %d life %d\n", replay_g - 1, (int)mario->pos.x,
+               (int)mario->pos.y, (int)mario->pos.z, mario->launch, stars, life);
 #endif
     kcl_list_build();
     LQ(0, update_obj_anims());
