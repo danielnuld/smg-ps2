@@ -10004,6 +10004,7 @@ static void m_update_walk_speed(Player *m) /* updateWalkSpeed */
     if (t == 0.0f) m->slow_start = MC.mSlowStartTime;
     if (m->slow_start) { f2 = (float)(MC.mSlowStartTime - m->slow_start) / MC.mSlowStartTime; m->slow_start--; }
     t *= f2 * f2;
+    if (m->magic) t *= MC.mTornadoMultiply; /* mMovementStates._F || isStatusActive(MarioStatus_Magic). ponytail: no tornado (_F) */
     m->squat = 0;
     if (m_check_squat(m, 0)) {
         m->squat = 1;
@@ -10626,7 +10627,7 @@ static void m_main_move(Player *m)
     if (m->slip_poly) ts *= ang_abs_h(m->s8F8, vmul(m->face, -1.0f), m->up) < 3.14159265f * 45.0f / 180.0f ? 0.1f : 0.3f;
     fs = m_shadow(m, m->face);
     if (!m->turn_brake) {
-        V3 cross = vcross(m->last_sd, m->sd);
+        V3 cross = v3(0, 0, m->last_rx * m_ry - m->last_ry * m_rx); /* PSVECCrossProduct(_250, stick): the raw sticks' (x, y, 0) */
         do {
             if (m_sz == 0) { m->u_turn = 0; m->turning = 0; break; }
             if (vlen(m->turn_cross) < 1e-6f) {
@@ -11144,8 +11145,27 @@ static void update_mario(void)
     }
     /* Mario::update from inputStick on: actionMain (a status: MarioWall / MarioMagic; procJump; or mainMove and
      * updateWalkSpeed), the move against the map, writeBackPhyisicalVector, doLanding, then MarioAnimator::update */
-    m_cy = vnorm(vtangent(vsub(m->pos, cam_pos), m->up));
-    m_cx = vnorm(vcross(m_cy, m->up));
+    { /* Mario::calcMoveDir: the camera's view axes (last frame's, MarioActor mCamDirX / Y / Z) onto _398, an up
+       * eased 0.1 a frame towards -gravity; moveDir = groundX x stick x - groundY x stick y */
+        static V3 up398 = {0, 1, 0};
+        V3 ce, cw, cu;
+        float fv;
+        camera_pose(&ce, &cw, &cu, &fv);
+        V3 fw = vnorm(vsub(cw, ce)), sx = vnorm(vcross(fw, cu)), sy = vcross(sx, fw);
+        V3 sz = vmul(fw, -1.0f); /* screenZDir = -getCamDirZ: getCamDirZ looks forward in SMG's frame */
+        if (vdot(up398, m->up) <= 0.0f) up398 = m->up;
+        else blend_sphere(up398, m->up, &up398, 0.1f);
+        up398 = vnorm(up398);
+        float my = vdot(sy, up398), mz = vdot(sz, up398);
+        V3 gyo, gx, gy;
+        if (fabsf(mz) > fabsf(my)) { gyo = mz < 0.0f ? vmul(sy, -1.0f) : sy; gx = vcross(gyo, up398); }
+        else if (my < 0.0f) { gyo = sz; gx = vcross(sz, up398); }
+        else { gyo = vmul(sz, -1.0f); gx = vcross(vmul(sz, -1.0f), up398); }
+        gy = vcross(sx, up398);
+        gx = vlen(gx) > 1e-6f ? vnorm(gx) : sx;
+        gy = vlen(gy) > 1e-6f ? vnorm(gy) : gyo;
+        m_cx = gx; m_cy = vmul(gy, -1.0f);
+    }
     m_input_stick(m);
 #ifdef SLOPE_TEST
     { /* push into the 77 degree face slope_test() chose for 240 frames, then let go */

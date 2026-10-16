@@ -63,10 +63,17 @@ def to_dtm(play, tail=120):
     return dtm.build(tl)
 
 
+SHAKE_DELAY = 5  # frames the Wii takes to see a shake as a swing (Dolphin RAM, 2026-10-15: the spin's slowdown
+                 # starts ~5 frames after the movie's shake starts); the PS2 spin button comes that much later
+
+
 def to_bin(play):
     out = bytearray()
-    for s in states(play):
-        b = sum(v for k, v in PS2.items() if s[k]) | sum(PS2_DPAD[d] for d in s["dpad"])
+    st = states(play)
+    for g, s in enumerate(st):
+        shake = st[g - SHAKE_DELAY]["shake"] if g >= SHAKE_DELAY else False
+        b = sum(v for k, v in PS2.items() if k != "shake" and s[k]) | (PS2["shake"] if shake else 0)
+        b |= sum(PS2_DPAD[d] for d in s["dpad"])
         q = lambda v: max(-127, min(127, round(v * 127)))  # noqa: E731
         out += struct.pack("<Hbbbb", b, q(s["stick"][0]), q(s["stick"][1]), 0, 0)
     return bytes(out)
@@ -78,7 +85,7 @@ def _selfcheck():
     b = to_bin(play)
     assert len(b) == 6 * 27
     assert struct.unpack_from("<Hbb", b, 6 * 10) == (0x4000, 0, 127)
-    assert struct.unpack_from("<H", b, 6 * 20)[0] == 0x8000 and struct.unpack_from("<bb", b, 6 * 26 + 2) == (0, 0)
+    assert struct.unpack_from("<H", b, 6 * (20 + SHAKE_DELAY))[0] == 0x8000 and struct.unpack_from("<bb", b, 6 * 26 + 2) == (0, 0)
     m = to_dtm(play)
     assert m[:4] == b"DTM\x1a"
     print("ok")
