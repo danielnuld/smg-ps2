@@ -82,6 +82,7 @@ int blob_add(Scene *s, const u8 *blob)
                 vg->zwrite = q[9];
                 vg->alpha = q[10];
                 vg->lit = q[11];
+                vg->nswap = 0;
                 md->lit |= vg->lit == 1;
                 vg->env = vg->lit == 2 ? (const float *)(q + 16) : NULL;
                 if (vg->env) { /* its 12-float matrix after the header (tools/slice.py assets) */
@@ -117,6 +118,22 @@ int blob_add(Scene *s, const u8 *blob)
                     vg->uvm[0] = vg->uvm[5] = 1.0f; /* identity until the first anim_btk */
                 }
             q += 36 + size;
+        }
+    }
+    const u8 *sw = blob_chunk(blob, "SWAP", NULL);
+    if (sw) { /* {u32 n}, n x {char[32] model, u16 group, u16 count, u16 texture[count], pad to 8} (tools/slice.py) */
+        const u8 *q = sw + 4;
+        for (u32 i = 0, n = *(const u32 *)sw; i < n; i++) {
+            u16 g = *(const u16 *)(q + 32), cnt = *(const u16 *)(q + 34);
+            const u16 *ids = (const u16 *)(q + 36);
+            for (u32 j = first; j < s->nmodels; j++)
+                if (strcmp(s->models[j].name, (const char *)q) == 0 && g < s->models[j].vu_ngroups) {
+                    VuGroup *vg = &s->models[j].vu[g];
+                    vg->nswap = cnt > 4 ? 4 : cnt;
+                    for (u32 k = 0; k < vg->nswap; k++) vg->swap[k] = (u16)(ids[k] + tex0);
+                }
+            u32 len = 36 + 2u * cnt;
+            q += len + (-len & 7); /* the entry's padding (to 8) */
         }
     }
     const u8 *sk = blob_chunk(blob, "SKIN", NULL);

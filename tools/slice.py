@@ -500,6 +500,16 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                     t = ps2[key]
                     gain = gains[key]
                     split = ras_split.get(key, True)
+                    if (arc.stem == "Mario" and tex.material_name(b, bl[b"MAT3"], mat) == "EyeLid_v" and
+                            mt["tex"] + 2 < len(texs)):
+                        # MarioActor::swapTextureInit: mario_eyeLid.0 .. .2 (open, half, shut), the blink's
+                        # (updateBlink) swaps, baked through the same material (SWAP chunk)
+                        alts = []
+                        for d in (1, 2):
+                            x2 = texs[mt["tex"] + d]
+                            alts.append(tex.to_ps2(tex.bake(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, mt["tex"] + d,
+                                                            over, {}), x2["wrap_s"], x2["wrap_t"], sky))
+                        t = dict(t, alts=alts)
                 if env and mt["tex"] < len(texs):  # rows s, t times the texture's UV scales
                     t = dict(t, env=[e * (t["u_scale"], t["v_scale"], 1.0)[i % 3] for i, e in enumerate(env)])
                     uvs = [(0.0, 0.0)] * len(used)
@@ -1364,7 +1374,7 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
     KCL for planets when `collision`. Converted models are cached per process (one archive, many scenarios). fx: also
     the particle effects (PTCL, tools/jpa.py pack), their textures first in TEXT."""
     stats = stats if stats is not None else {}
-    models_, kcls, vumd, skins, btks = [], [], [], [], []
+    models_, kcls, vumd, skins, btks, swaps = [], [], [], [], [], []
     texts, tex_id, ptcl = [], {}, []
     if fx:
         payload, texts = jpa.pack(fsp)
@@ -1399,8 +1409,8 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
         models_.append(name32(t) + struct.pack("<f", math.sqrt(max((sum(c * c for c in v) for verts, *_ in groups
                                                                     for v in verts), default=0.0))))
         vg, qs = b"", pos_scale(groups)
-        for (verts, tris, uvs, tx, _, _, bl, _, _), (pos, col, uv, nb) in zip(groups, vu_groups(groups, BASE_COLOUR.get(t, (112, 176, 96)),
-                                                                             stats, qs)):
+        for gi, ((verts, tris, uvs, tx, _, _, bl, _, _), (pos, col, uv, nb)) in enumerate(zip(groups, vu_groups(groups, BASE_COLOUR.get(t, (112, 176, 96)),
+                                                                             stats, qs))):
             ti = 0xFFFF
             if tx:
                 key = tx["pix"] + tx["clut"] + bytes((tx["clamp_s"], tx["clamp_t"]))
@@ -1408,6 +1418,16 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
                 if ti == len(texts):
                     texts.append(dict(tx, lod=[0.0, 0.0]))
                 texts[ti]["lod"] = [a + b for a, b in zip(texts[ti]["lod"], lod_sums(verts, tris, uvs, tx))]
+                ids = []
+                for a_ in tx.get("alts", []):  # SWAP: {char model[32], u16 group, u16 n, u16 texture[n] (scene-relative), pad}
+                    k2 = a_["pix"] + a_["clut"] + bytes((a_["clamp_s"], a_["clamp_t"]))
+                    t2 = tex_id.setdefault(k2, len(texts))
+                    if t2 == len(texts):
+                        texts.append(dict(a_, lod=list(texts[ti]["lod"])))
+                    ids.append(t2)
+                if ids:
+                    sw = struct.pack("<HH", gi, len(ids) + 1) + struct.pack(f"<{len(ids) + 1}H", ti, *ids)
+                    swaps.append(name32(t) + sw + b"\0" * (-len(sw) % 8))
             nbt, body = index_batches(pos, col, uv, len(tris), nb)
             env = tx.get("env") if tx else None  # lit byte 2: VU1Env, its 12-float matrix (tex.env_mtx) after the header
             vg += struct.pack("<IHHBBBB4x", len(tris), ti, nbt, *bl, 2 if env else 1 if nb else 0) + \
@@ -1441,7 +1461,8 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
             chunk(b"SKIN", struct.pack("<I", len(skins)) + b"".join(skins)),
             chunk(b"VUMD", struct.pack("<I12x", len(vumd)) + b"".join(vumd)),
             chunk(b"KCL ", struct.pack("<I", len(kcls)) + b"".join(kcls)),
-            chunk(b"BTK ", struct.pack("<I", len(btks)) + b"".join(btks))] + ptcl
+            chunk(b"BTK ", struct.pack("<I", len(btks)) + b"".join(btks)),
+            chunk(b"SWAP", struct.pack("<I", len(swaps)) + b"".join(swaps))] + ptcl
 
 
 def anim_chunk(fsp):

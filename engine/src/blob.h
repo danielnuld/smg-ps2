@@ -31,6 +31,7 @@ typedef struct {
     float *uvm;          /* with btk: the UV matrix the chain uploads (3 qwords: columns s, t, 1; anim_btk); env: 4
                           * qwords (VU mem 8..10 and 15, render_env) */
     const float *env;    /* lit 2: rows s, t, q of the texgen on the view normal, columns n.x, n.y, n.z, 1 (tex.env_mtx) */
+    u16 swap[4], nswap;  /* its swappable textures (SWAP chunk: Mario's eyelids; [0] its own), scene indices */
 } VuGroup;
 
 #define NO_TEX 0xFFFF

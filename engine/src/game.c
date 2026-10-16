@@ -17609,6 +17609,20 @@ void game_draw(void)
     if (mario->press) for (int j = 4; j < 7; j++) m[j] *= mario->press_s; /* _3B0: squashed along his up */
     if (!mario_hidden) /* ponytail: MarioShadow's volume (his posed model) as an oval of its bind pose's extent */
         draw_shadow(mario->pos, mario->up, mario->face, 34.0f, 37.0f, 8.0f, 50.0f, 1000.0f);
+    {
+        /* MarioActor::updateBlink / swapTexture("EyeLid_v"): a blink every 60..359 frames (MR::getRandom), 10 frames of
+         * sBlinkStates (0 open, 1 half, 2 shut). ponytail: the clips' own eye patterns (BTP, setBlink) not played */
+        static const u8 states[10] = {0, 1, 2, 2, 2, 2, 1, 1, 0, 0};
+        static int left, wait, eye;
+        static unsigned last, seed = 1;
+        if (last != game_frame) { /* once a logic frame; its own generator (the game's rand() untouched) */
+            last = game_frame;
+            if (left) { left--; eye = states[9 - left]; seed = seed * 1103515245u + 12345u; wait = 60 + (int)(seed >> 16) % 300; }
+            else { if (wait) wait--; if (!wait) left = 10; }
+        }
+        for (u32 g = 0; m_mario_skin && g < m_mario_skin->vu_ngroups; g++)
+            if (m_mario_skin->vu[g].nswap > eye) ((Model *)m_mario_skin)->vu[g].tex = m_mario_skin->vu[g].swap[eye];
+    }
     if (m_mario_skin && !(mario->hurt_timer & 4) && !mario_hidden)
         draw_skin(m_mario_skin, m, mario_anim);
     if (m_marioball) for (int b = 0; b < MAX_FIREBALLS; b++) { /* Fire Mario's balls, rolling */
