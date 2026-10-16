@@ -124,7 +124,11 @@ FX = [("Coin", "CoinGet"), ("PurpleCoin", "CoinGet"), ("StarPiece", "StarPieceLi
       ("HomingKiller", "Explosion"), ("HomingKiller", "Shoot"), ("HomingKiller", "SandColumn"),
       ("CocoNut", "CocoNutBreak"), ("CocoNut", "SpinHitMark"),
       ("Rock", "LandAttrDefault"), ("Rock", "Touch"), ("WanwanRolling", "Land"), ("WanwanRolling", "Touch"),
-      ("WanwanRolling", "MiniBreak"), ("NeedlePlant", "Break"), ("CollapsePlane", "Vanish"), ("WoodBoxBreak", "Break")]
+      ("WanwanRolling", "MiniBreak"), ("NeedlePlant", "Break"), ("CollapsePlane", "Vanish"), ("WoodBoxBreak", "Break"),
+      # MarioActor::initCommonEffect's smoke effects (cSmokeTable: registerEffectWithoutSRT by effect name): "JPA" rows
+      # are particle effect names, not AutoEffectList rows
+      ("JPA", "SmokeCircle"), ("JPA", "SmokeCircleFollow"), ("JPA", "SmokeSphereLoop"), ("JPA", "SmokeSphereFollow1Time"),
+      ("JPA", "SandCircle"), ("JPA", "SandSphereLoop"), ("JPA", "WaterCircle"), ("JPA", "WaterSphereLoop")]
 # Placed effect objects (NameObjFactory's *EffectObj* classes: SnowS, LavaSparksS...): each plays its AutoEffectList group
 # (the first row of GroupName = its name); FX_AMBIENT_FIRST + k in fx_tab.h, names in fx_ambient (game.c ambient_fx)
 AMBIENT = ("AstroTorchLightBlue", "AstroTorchLightRed", "BattleShipExplosionMetal", "BattleShipExplosionRock",
@@ -215,7 +219,7 @@ def pack(fs):
         defs.append(struct.pack("<H7H4f", len(idx), *(idx + [0] * (FX_RES - len(idx))), 0, 0, 0, 0))
         return len(defs) - 1
     for g, u in FX:
-        add_def(next((r[2] for r in rows if r[0] == g and (u is None or r[1] == u)), ""))
+        add_def(u if g == "JPA" else next((r[2] for r in rows if r[0] == g and (u is None or r[1] == u)), ""))
     autos = anim_effects(fs, auto, add_def)
     recs = []
     for i in used:

@@ -793,6 +793,9 @@ static V3 start_pos;
 #define START_LIVES 4
 static int life = MAX_LIFE, max_life = MAX_LIFE, misses, lives = START_LIVES, stars;
 static void miss(void);
+static void mario_smoke(int k); /* cSmokeTable's entries: */
+enum { SMOKE_LAND, SMOKE_LAND_BIG, SMOKE_WALL_JUMP, SMOKE_DAMAGE_LAND, SMOKE_SPIN, SMOKE_BRAKE, SMOKE_HIGH_JUMP, SMOKE_JUMP,
+       SMOKE_DUST, SMOKE_N };
 static int got_coins, got_purple, got_pieces;
 /* CoinRotater (degrees a frame): coins 8, QuestionCoin its in-water matrix 4; StarPiece 15; PowerStar::processWait 3 */
 static float coin_rot, qcoin_rot, piece_rot, star_rot;
@@ -10104,6 +10107,7 @@ static void m_try_turn_jump(Player *m) /* tryTurnJump */
     m_proc_jump(m, 1);
     mario_play("jumpturn", 1.0f, 0);
     mario_sound("後ジャンプ"); mario_sound("声後ジャンプ"); mario_sound("ジャンプ踏切");
+    mario_smoke(SMOKE_HIGH_JUMP);
 #ifdef BENCH
     printf("jump jumpturn\n");
 #endif
@@ -10134,6 +10138,7 @@ static void m_try_back_jump(Player *m) /* tryBackJump: the back flip */
     m_proc_jump(m, 1);
     mario_play("jumpback", 1.0f, 0);
     mario_sound("後ジャンプ"); mario_sound("声後ジャンプ"); mario_sound("ジャンプ踏切");
+    mario_smoke(SMOKE_HIGH_JUMP);
 #ifdef BENCH
     printf("jump jumpback\n");
 #endif
@@ -10165,7 +10170,7 @@ static void m_try_jump(Player *m) /* tryJump: 1st / 2nd / 3rd jump, or the turn,
     mario_play(clips[m->jump_kind], 1.0f, 0);
     if (m->jump_kind == 0) { mario_sound("小ジャンプ"); mario_sound("声小ジャンプ"); mario_sound("ジャンプ踏切"); }
     else if (m->jump_kind == 1) { mario_sound("中ジャンプ"); mario_sound("声中ジャンプ"); mario_sound("ジャンプ踏切"); }
-    else { mario_sound("大ジャンプ"); mario_sound("声大ジャンプ"); mario_sound("ジャンプ踏切"); }
+    else { mario_sound("大ジャンプ"); mario_sound("声大ジャンプ"); mario_sound("ジャンプ踏切"); mario_smoke(SMOKE_HIGH_JUMP); }
     m->connect = 1;
 #ifdef BENCH
     printf("jump %s\n", clips[m->jump_kind]);
@@ -10215,6 +10220,7 @@ static void m_try_wall_jump(Player *m, V3 v) /* tryWallJump(v, true) */
     m->air_timer = 0; m->keep_jump = 1; m->back_t = 0; m->air_walk_t = 0; m->fall_t = 0;
     m->neutral = 1;
     mario_play("walljump", 1.0f, 0);
+    mario_smoke(SMOKE_WALL_JUMP); /* 共通壁ジャンプ */
     mario_sound("ジャンプ踏切"); mario_sound("声小ジャンプ");
     m_front(m, v);
     m_stop_walk(m);
@@ -10502,6 +10508,7 @@ static void m_do_landing(Player *m)
             }
         return;
     }
+    if (m->air_timer > 10) mario_smoke(SMOKE_LAND); /* 共通着地普通 */
     m->squat_lock = 0;
     m->air_spin = MC.mAirWalkTime;
     if (vdot(vsub(m->jump_from, m->pos), m->up) > MC.mHardLandingHeight) hard = 1;
@@ -10609,6 +10616,7 @@ static void m_main_move(Player *m)
             m_front(m, vmul(m->turn_from, -1.0f));
             m->turn_slip = MC.mTurnSlipTime; m->turn_brake = 1; m->walk = 0;
             mario_play("turn", 1.0f, 0);
+            mario_smoke(SMOKE_BRAKE); /* 共通ブレーキ */
         }
         m->turn_neutral = 0;
     }
@@ -10927,6 +10935,7 @@ static void m_swing(Player *m)
         } else if (!m->squat && m->slip_keep) { /* startMagic (ponytail: no サマーソルト from a squat) */
             m->magic = 1;
             mario_play("spinground", 1.0f, 0);
+            mario_smoke(SMOKE_SPIN); /* MarioMagic::start: 共通地上スピン */
             mario_sound("声スピン"); mario_sound("スピンジャンプ"); /* MarioMagic::start */
             mario_sound("パンチ風切り");
 #ifdef BENCH
@@ -11334,6 +11343,52 @@ static void mario_fx(int fx, float k)
     float m[16];
     basis_matrix(m, vadd(mario->pos, vmul(mario->up, k * BODY_RADIUS)), mario->up, mario->face, 0);
     fx_emit(fx, m);
+}
+
+/* MarioActor::playCommonEffect (MarioEffect.cpp cSmokeTable, initCommonEffect): a common smoke by its table entry:
+ * the variant by its type (0 / 6 sphere, 1 / 2 / 7 sphere loop, 3 / 8 circle, 4 / 5 / 9 circle loop; 6..9 the
+ * Follow ones on plain ground), the floor's material (getFloorMaterialIndex: water codes 0x14..0x17, sand 0x0D /
+ * 0x1E), at Mario facing his up, its scale; the loops (types 2, 5) last their interval. ponytail: no flower, snow,
+ * mud or honey variants, no moving-ground follow, no rate */
+static const struct { u8 type, water_only, interval; float scale; } smoke_tab[SMOKE_N] = {
+    {8, 0, 0, 1.0f}, {3, 0, 0, 1.5f}, {3, 0, 0, 1.0f}, {3, 0, 0, 1.0f}, {3, 0, 0, 0.9f}, /* 共通着地普通 着地大 壁ジャンプ ダメージ着地 地上スピン */
+    {2, 0, 15, 0.65f}, {2, 0, 6, 0.65f}, {8, 1, 0, 1.0f}, {7, 0, 0, 0.65f}};             /* 共通ブレーキ ハイジャンプ 跳躍 砂煙レベル */
+static int smoke_left[SMOKE_N]; /* the loops' frames left */
+static int smoke_fx(int k, int *loop)
+{
+    int t = smoke_tab[k].type, v = t == 0 || t == 6 ? 0 : t == 1 || t == 2 || t == 7 ? 1 : t == 3 || t == 8 ? 2 : 3;
+    int c = mario->floor, mat = c >= 0x14 && c <= 0x17 ? 1 : c == 0x0D || c == 0x1E ? 3 : 0;
+    *loop = t == 1 || t == 2 || t == 4 || t == 5;
+    if (smoke_tab[k].water_only && mat != 1) return -1;
+    if (mat == 1) return v & 1 ? FX_JPA_WATERSPHERELOOP : FX_JPA_WATERCIRCLE;
+    if (mat == 3) return v & 1 ? FX_JPA_SANDSPHERELOOP : FX_JPA_SANDCIRCLE;
+    if (v & 1) return t >= 6 ? FX_JPA_SMOKESPHEREFOLLOW1TIME : FX_JPA_SMOKESPHERELOOP;
+    return t >= 6 ? FX_JPA_SMOKECIRCLEFOLLOW : FX_JPA_SMOKECIRCLE;
+}
+static void smoke_matrix(int k, float m[16])
+{
+    basis_matrix(m, mario->pos, mario->grounded ? mario->ground_n : mario->up, mario->face, 0);
+    for (int j = 0; j < 12; j++) if (j % 4 != 3) m[j] *= smoke_tab[k].scale;
+}
+static void mario_smoke(int k)
+{
+    int loop, fx = smoke_fx(k, &loop);
+    if (fx < 0) return;
+    if (loop) { smoke_left[k] = smoke_tab[k].interval ? smoke_tab[k].interval : 1; return; }
+    float m[16];
+    smoke_matrix(k, m);
+    fx_emit(fx, m);
+}
+static void mario_smoke_update(void) /* the loops kept while they last (their entries' timers) */
+{
+    for (int k = 0; k < SMOKE_N; k++)
+        if (smoke_left[k] > 0) {
+            int loop, fx = smoke_fx(k, &loop);
+            float m[16];
+            smoke_matrix(k, m);
+            if (fx >= 0) fx_keep(fx, &smoke_left[k], m);
+            smoke_left[k]--;
+        }
 }
 
 static void hurt_mario(V3 from, float push)
@@ -16617,7 +16672,13 @@ void game_update(void)
     hud_update();
 
     LQ(5, update_talk_director());
-    if (!opening_on) LQ(6, update_mario());
+    if (!opening_on) {
+        LQ(6, update_mario());
+        /* MarioActor::updateEffect: 共通砂煙レベル while the turn brake runs or a dash starts on the ground (_3F4) */
+        if (mario->grounded && !mario->jumping && !mario->drop_grace && (mario->turn_brake || mario->start_spin_ratio > 0.1f))
+            mario_smoke(SMOKE_DUST);
+        mario_smoke_update();
+    }
     LQ(7, update_seesaws()); /* after Mario: his hip drop (hip_hit) this frame */
     LQ(8, update_bridges());
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
