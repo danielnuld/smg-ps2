@@ -223,6 +223,39 @@ def tex_mtx(b, e):
             (sy * sr, sy * cr, -sy * sr * cx - sy * cr * cy + cy + ty))
 
 
+def projmap(b, mat3, m, slot):
+    """Material m's texture matrix `slot` when it projects positions (J3DTexMtx mode 8, Projmap: J3DTevs.cpp) -> the
+    3x4 rows SRT x Q x effect (s, t, q of a model-space position with the camera at the origin: uv = (s, t) / q),
+    else None."""
+    off = lambda k: mat3 + u32(b, mat3 + k)
+    e = off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C
+    mi = u16(b, e + 0x48 + 2 * slot)
+    if mi == 0xFFFF:
+        return None
+    t = off(0x40) + 0x64 * mi
+    if b[t + 1] & 0x3F != 8:
+        return None
+    eff = np.array(struct.unpack_from(">16f", b, t + 0x24), np.float64).reshape(4, 4)
+    cx, cy = struct.unpack_from(">2f", b, t + 4)[:2]
+    sx, sy = struct.unpack_from(">2f", b, t + 0x10)
+    rot = struct.unpack_from(">h", b, t + 0x18)[0] * math.pi / 0x8000
+    tx, ty = struct.unpack_from(">2f", b, t + 0x1C)
+    sr, cr = math.sin(rot), math.cos(rot)
+    srt = np.eye(4)
+    srt[0, :3] = (sx * cr, -sx * sr, -sx * cr * cx + sx * sr * cy + cx + tx)
+    srt[1, :3] = (sy * sr, sy * cr, -sy * sr * cx - sy * cr * cy + cy + ty)
+    q = np.array([[0.5, 0, 0.5, 0], [0, -0.5, 0.5, 0], [0, 0, 1, 0], [0, 0, 0, 1]], np.float64)
+    return (srt @ q @ eff)[:3]
+
+
+def mtx_slot(b, mat3, m, slot):
+    """Material m's texture matrix `slot` as tex_mtx gives it (2x3, None if projected or absent)."""
+    off = lambda k: mat3 + u32(b, mat3 + k)
+    e = off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C
+    mi = u16(b, e + 0x48 + 2 * slot)
+    return None if mi == 0xFFFF else tex_mtx(b, off(0x40) + 0x64 * mi)
+
+
 def material_tex(b, mat3, m, tex1=None):
     """Material m -> dict(tex = TEX1 index, attr = VTX1 attribute of its coords (13 = TEX0), mtx = 2x3 or None,
     projected = bool), or None when no TEV stage samples a texture. With tex1 (TEX1 block offset) a colour texture wins

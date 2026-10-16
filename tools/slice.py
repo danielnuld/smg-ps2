@@ -98,6 +98,10 @@ ROW = struct.Struct("<HHii9f8i5hh")
 SKY_ARCS = ("VROrbit", "VRDarkSpace", "VRSandwichSun", "GalaxySky", "MilkyWaySky", "HalfGalaxySky", "PhantomSky",
             "KoopaVS1Sky", "KoopaVS2Sky", "StarrySky", "RockPlanetOrbitSky", "GreenPlanetOrbitSky")
 SKY_TILES = 8
+# VROrbit's sea materials (their MAT3: EarthNightMat_v K0 + lerp(C0 0, TEX, RAS) + RAS x TEX; EarthFar_v RAS x TEX +
+# lerp(C1, K1, EarthFarK) + RAS x TEX): (flat base or None, base texture TEX1 index, its matrix slot, C1, K1)
+SKY_SEA = {"EarthNightMat_v": ((0, 25, 52), None), "EarthFar_v": (None, 7, 1, (0, 25, 52), (0, 151, 230))}
+
 # second models a class draws besides its own (FireBar.cpp: FireBarBall around the FireBarCore)
 # extra models a class draws: a name of its own, or "#<BCK>": the class's archive with that animation's visibility
 # ("<archive>#<BVA>": another archive with that BVA's last-frame visibility: the cracked egg shell)
@@ -451,6 +455,8 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 get = geom.vtx1_attr(b, bl[b"VTX1"], mt["attr"]) if mt and mt["attr"] in info["at"] else None
                 uvs = t = None
                 gain, split = 1, True
+                sea_add = False
+                get0 = geom.vtx1_attr(b, bl[b"VTX1"], 13) if 13 in info["at"] else None  # TEX0, for SKY_SEA's base
                 # a material whose rasterized colour is CLR0 (its TEV may use RAS other than as a factor: PeanutPlanet's
                 # TEX x clamp(4 lerp(K, C0, RAS)), TicoFat's lerp(C1, TEX, RAS) + C0): per vertex the TEV with the
                 # texture read as 1 at its own CLR0 (ras_colour), the texture the TEV at the group's mean CLR0 divided
@@ -513,6 +519,48 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                         e = btk_entry(anim_tex, tex.material_name(b, bl[b"MAT3"], mat), mt, t, len(groups))
                         if e:
                             stats.setdefault("_btk", []).append(e)
+                elif (mt and mt["projected"] and arc.stem in SKY_ARCS and mt["tex"] < len(texs) and
+                      tex.material_name(b, bl[b"MAT3"], mat) in SKY_SEA and get0 is not None):
+                    # VROrbit's sea (EarthNightMat_v floor, EarthFar_v wall): base + CLR0 x Cloud01k on the Wii's
+                    # Projmap UVs (tex.projmap, camera at the sky's origin): the base a group of its own, the clouds
+                    # this one, added (blend 2), coloured by CLR0. ponytail: EarthKsMM (CLR0 x its corner glow) left
+                    # out, the clouds' BTK scroll (10000 frames) not played, uv = st / q per vertex (the wall's q
+                    # changes across a triangle)
+                    sea = SKY_SEA[tex.material_name(b, bl[b"MAT3"], mat)]
+                    pm = tex.projmap(b, bl[b"MAT3"], mat, mt["slot"])
+                    x = texs[mt["tex"]]
+                    key = ("sea", mt["tex"])
+                    if key not in ps2:
+                        ps2[key] = tex.to_ps2(x["rgba"], x["wrap_s"], x["wrap_t"], sky)
+                    t = ps2[key]
+                    uvs = []
+                    for p in verts:
+                        s_, t_, q_ = pm @ np.array([p[0], p[1], p[2], 1.0])
+                        q_ = q_ if abs(q_) > 1e-6 else 1e-6
+                        uvs.append((s_ / q_ * t["u_scale"], t_ / q_ * t["v_scale"]))
+                    ras_mean, sea_add = None, True
+                    if sea[1] is None:  # the floor: K0 flat
+                        groups.append((verts, [remap[v] for v in tri], None, None, None, sea[0], (0, 1, 255), False, 1))
+                    else:  # the wall: lerp(C1, K1, EarthFarK) on its own UVs (TEX0 through texture matrix 1)
+                        bt, bslot, c1, k1 = sea[1:]
+                        bkey = ("seabase", bt)
+                        if bkey not in ps2:
+                            y = texs[bt]["rgba"].astype(np.float32) / 255
+                            img = np.array(c1 + (255,), np.float32) / 255 + (np.array(k1 + (255,), np.float32) / 255 -
+                                                                         np.array(c1 + (255,), np.float32) / 255) * y
+                            img[..., 3] = 1.0
+                            ps2[bkey] = tex.to_ps2((img * 255 + 0.5).astype(np.uint8), texs[bt]["wrap_s"], texs[bt]["wrap_t"], sky)
+                        bt2 = ps2[bkey]
+                        bm = tex.mtx_slot(b, bl[b"MAT3"], mat, bslot)
+                        o0, w0 = info["at"][13]
+                        buv = []
+                        for v in used:
+                            k = info["keys"][v]
+                            su, sv = get0(k[o0] if w0 == 1 else k[o0] << 8 | k[o0 + 1])
+                            if bm:
+                                su, sv = (bm[0][0] * su + bm[0][1] * sv + bm[0][2], bm[1][0] * su + bm[1][1] * sv + bm[1][2])
+                            buv.append((su * bt2["u_scale"], sv * bt2["v_scale"]))
+                        groups.append((verts, [remap[v] for v in tri], buv, bt2, None, None, (0, 1, 255), False, 1))
                 elif mt and mt["projected"] and arc.stem in SKY_ARCS and mt["tex"] < len(texs):
                     # ponytail: a sky's texture projected from vertex positions (texgen POS + texture matrix) gets
                     # spherical UVs from each vertex's direction instead (the stars tile SKY_TILES times around)
@@ -558,6 +606,8 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                         cols = [flat] * len(used)
                     gtab.append(tables[(info["shape"], info["group"])])
                 blend = tex.material_blend(b, bl[b"MAT3"], mat) if mat is not None else (0, 1, 255)
+                if sea_add:
+                    blend = (2, 0, 255)
                 if mat is not None and tex.samples_named(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), "IndDummy"):
                     # the screen behind, through its TEV's tint (CrystalCage's IndTex refracts a screen copy): kind 3,
                     # the frame buffer times the tint's mean. ponytail: no bend (indirect texture), one grey tint
