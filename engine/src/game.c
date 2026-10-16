@@ -71,6 +71,7 @@ typedef struct {
     V3 turn_cross, turn_cross3, turn_ready_front, turn_from; /* _244, _3D8, _3E4, _220 */
     float stick_z0, stick_ang, stick_ang0, last_rx, last_ry; /* _38, _528, _524, _250 */
     float retain_ang, start_spin_ratio; /* _2B4, _3F4 */
+    int sleep;          /* MarioWait: 0 none, 1 特殊ウエイト1A (sleep), 2 1B (sleeplie) */
     int retain_t, retain_a, retain_b; /* _40E, _10._A, _10._B */
     int turning, u_turn, u_side, weak_turn; /* mMovementStates.turning, _10._C, _274, _3D4 */
     int turn_ready, turn_slip, turn_brake, turn_neutral; /* _3D2, _3D0, mMovementStates._4, _10 */
@@ -11304,9 +11305,25 @@ static void update_mario(void)
     }
     if (m->hurt_timer) m->hurt_timer--;
 
+    { /* MarioWait (checkStart / update / close): 1800 frames still on the ground (no stick, A, Z, walk speed, jump,
+       * slide, squat, spin; not on floor codes 27 / 28) start 特殊ウエイト1A (sleep), 1800 more 1B (sleeplie); the stick,
+       * A or Z ends it. ponytail: no NonSleepCube (戦闘ウエイト), each clip holds its last frame (the Xanime table's
+       * chaining is not decompiled) */
+        static int still_t;
+        int still = m->grounded && !m->jumping && !m->magic && !m->s23 && !m->squat && !m->walling && m_sz == 0 &&
+                    fabsf(m->walk) < 1e-4f && !pad_held(PAD_CROSS) && !pad_held(PAD_R1) && m->floor != 27 &&
+                    m->floor != 28 && !talk_active() && !m_input_off();
+        if (!still) {
+            if (m->sleep) { m->sleep = 0; m_clip_stop(); }
+            still_t = 0;
+        } else if (++still_t == 1800) {
+            still_t = 0;
+            if (m->sleep < 2) { m->sleep++; mario_play(m->sleep == 1 ? "sleep" : "sleeplie", 1.0f, 0); }
+        }
+    }
     if (mario_anim) { /* MarioAnimator::update: one-shot clips play out, then the state's default */
         int busy = mario_anim->clip_id >= 0 && !mario_anim->loop && !mario_anim->done;
-        if (m->hip || m->magic || m->walling) ; /* their own clips */
+        if (m->hip || m->magic || m->walling || m->sleep) ; /* their own clips */
         else if (m->grounded && !m->jumping && (m->s23 || (busy && (m_clip_is("slidehipend") || m_clip_is("slidestmachend"))))) ; /* slopeMove's clips */
         else if (m->grounded && !m->jumping) {
             if (m->squat) m_squat_anim(m);
