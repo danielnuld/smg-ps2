@@ -17083,6 +17083,8 @@ static int flare_screen(V3 p, V3 e, V3 fw, V3 s, V3 u, float f, float *x, float 
     return *x >= 0.0f && *x <= 640.0f && *y >= 0.0f && *y <= 448.0f;
 }
 
+#define FLARE_GLARE_GAIN 0.5f /* calibration knob: the glow's and the lines' strength (their TEV beyond the two
+                               * textures is not ported; at 1 they washed the screen out) */
 #define FLARE_GLOW_SIZE 1.0f /* the glow's size against its mesh (1078): its falloff stage is baked in (jpa.py flare) */
 static void lens_flare_draw(V3 ce, V3 cw, V3 cu, float fovy)
 {
@@ -17184,6 +17186,7 @@ static void lens_flare_draw(V3 ce, V3 cw, V3 cu, float fovy)
                 if (turn != 0.0f) { float c2 = cosf(tr), s2 = sinf(tr), du = uu - 0.5f, dv = vv - 0.5f; uu = 0.5f + du * c2 - dv * s2; vv = 0.5f + du * s2 + dv * c2; }
                 uv[v][0] = uu; uv[v][1] = vv;
             }
+            if (k) a *= FLARE_GLARE_GAIN;
             u32 aa = (u32)fminf(a * 128.0f, 128.0f); /* the konst alpha weighs colour and alpha (additive) */
             render_mesh2d((const float (*)[2])xy, (const float (*)[2])uv, nv, ix, nt, (u16)(t0 + tex), aa | aa << 8 | aa << 16 | aa << 24, 1);
         }
