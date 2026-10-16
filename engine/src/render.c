@@ -1408,6 +1408,11 @@ static void bloom_pass(void)
 #define MESH_MAX 2048
 void render_mesh(const float (*pos)[3], const float (*uv)[2], int nvert, const u16 *idx, int ntri, u16 tex, int blend)
 {
+    render_mesh_c(pos, uv, nvert, idx, ntri, tex, blend, 0x80808080u);
+}
+
+void render_mesh_c(const float (*pos)[3], const float (*uv)[2], int nvert, const u16 *idx, int ntri, u16 tex, int blend, u32 rgba)
+{
     static float msx[MESH_MAX], msy[MESH_MAX];
     static u32 msz[MESH_MAX];
     static u8 mok[MESH_MAX];
@@ -1432,10 +1437,10 @@ void render_mesh(const float (*pos)[3], const float (*uv)[2], int nvert, const u
             flush_vif();
         set_tex(tex);
         ad_open(0);
-        AD(GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA);
+        AD(blend == 2 ? GS_SET_ALPHA(0, 2, 0, 1, 0) : GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA); /* 2: Cs x As + Cd */
         AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, blend ? 1 : 0), GS_REG_ZBUF);
         AD(GS_SET_PRIM(PRIM_TRIANGLE, 0, 1, 0, blend ? 1 : 0, 0, 1, 0, 0), GS_REG_PRIM);
-        AD(GS_SET_RGBAQ(0x80, 0x80, 0x80, 0x80, 0x3F800000), GS_REG_RGBAQ);
+        AD(GS_SET_RGBAQ(rgba & 0xFF, rgba >> 8 & 0xFF, rgba >> 16 & 0xFF, rgba >> 24, 0x3F800000), GS_REG_RGBAQ);
         for (int t = t0; t < t0 + n; t++) {
             const u16 *ix = idx + 3 * t;
             if (ix[0] >= nvert || ix[1] >= nvert || ix[2] >= nvert || !mok[ix[0]] || !mok[ix[1]] || !mok[ix[2]]) continue;

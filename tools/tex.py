@@ -258,6 +258,30 @@ def mtx_slot(b, mat3, m, slot):
     return None if mi == 0xFFFF else tex_mtx(b, off(0x40) + 0x64 * mi)
 
 
+def material_stages(b, mat3, m):
+    """Material m's texture stages in order -> [(TEX1 index, 2x3 texture matrix or None)] (material_tex's reading of
+    each TEV order that samples a texture)."""
+    off = lambda k: mat3 + u32(b, mat3 + k)
+    e = off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C
+    out = []
+    for k in range(b[off(0x58) + b[e + 4]]):
+        oi = u16(b, e + 0xBC + 2 * k)
+        if oi == 0xFFFF:
+            continue
+        coord, tmap = b[off(0x4C) + 4 * oi], b[off(0x4C) + 4 * oi + 1]
+        if tmap == 0xFF:
+            continue
+        tx = u16(b, off(0x48) + 2 * u16(b, e + 0x84 + 2 * tmap))
+        ci = u16(b, e + 0x28 + 2 * coord)
+        mtx = b[off(0x38) + 4 * ci + 2]
+        mm = None
+        if mtx != 60:
+            mi = u16(b, e + 0x48 + 2 * ((mtx - 30) // 3))
+            mm = tex_mtx(b, off(0x40) + 0x64 * mi) if mi != 0xFFFF else None
+        out.append((tx, mm))
+    return out
+
+
 def material_tex(b, mat3, m, tex1=None):
     """Material m -> dict(tex = TEX1 index, attr = VTX1 attribute of its coords (13 = TEX0), mtx = 2x3 or None,
     projected = bool), or None when no TEV stage samples a texture. With tex1 (TEX1 block offset) a colour texture wins

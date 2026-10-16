@@ -29,7 +29,8 @@ typedef struct {
     u8 prm[4];
     s16 key_frame[8];
     u8 key_rgba[8][4];
-} PtRes; /* 228 bytes: tools/jpa.py pack */
+    u8 shape, pad3[3]; /* JPABaseShape type: 5 Stripe, 6 StripeCross (a strip through the emitter's particles) */
+} PtRes; /* 232 bytes: tools/jpa.py pack */
 
 typedef struct { u16 n, res[7]; float off[3], pad; } FxDef; /* 32 bytes */
 
@@ -236,6 +237,16 @@ void fx_emit(int fx, const float m[16])
         new_emitter(&res[d->res[i]], NULL, m, d->off);
 }
 
+/* a joint's matrix j at the host's size: the joint's place and turn, not the bone's scale (Mario's hands: 2.48) */
+static void host_size(float j[16], const float m[16])
+{
+    for (int c = 0; c < 3; c++) {
+        float l = sqrtf(j[4 * c] * j[4 * c] + j[4 * c + 1] * j[4 * c + 1] + j[4 * c + 2] * j[4 * c + 2]);
+        float h = sqrtf(m[4 * c] * m[4 * c] + m[4 * c + 1] * m[4 * c + 1] + m[4 * c + 2] * m[4 * c + 2]);
+        if (l > 1e-6f) for (int r = 0; r < 3; r++) j[4 * c + r] *= h / l;
+    }
+}
+
 void fx_anim(const char *clip, float from, float to, const float m[16], const float (*world)[16], const void *key)
 {
     const char *slash = strchr(clip, '/');
@@ -258,7 +269,7 @@ void fx_anim(const char *clip, float from, float to, const float m[16], const fl
         else on = st > from || st <= to;                           /* the clip went round (or restarted) */
         if (!on) continue;
         float e[16], j[16], o[16];
-        if (a->joint >= 0) mat_mul(j, m, world[a->joint]);
+        if (a->joint >= 0) { mat_mul(j, m, world[a->joint]); host_size(j, m); }
         else memcpy(j, m, sizeof j);
         mat_identity(o);
         for (int k = 0; k < 3; k++) { o[5 * k] = a->scale; o[12 + k] = a->off[k]; }
@@ -280,14 +291,8 @@ int fx_named(const char *cls, const char *name, const float m[16], const float (
         const FxAuto *a = &autos[i];
         if (a->start != 0xFFFF || strcmp(a->cls, c) || strcmp(a->clip, n)) continue;
         float e[16], j[16], o[16];
-        if (a->joint >= 0 && world) {
-            mat_mul(j, m, world[a->joint]);
-            for (int c = 0; c < 3; c++) { /* the joint's place and turn; the size is the host's (m), not the bone's */
-                float l = sqrtf(j[4 * c] * j[4 * c] + j[4 * c + 1] * j[4 * c + 1] + j[4 * c + 2] * j[4 * c + 2]);
-                float h = sqrtf(m[4 * c] * m[4 * c] + m[4 * c + 1] * m[4 * c + 1] + m[4 * c + 2] * m[4 * c + 2]);
-                if (l > 1e-6f) for (int r = 0; r < 3; r++) j[4 * c + r] *= h / l;
-            }
-        } else memcpy(j, m, sizeof j);
+        if (a->joint >= 0 && world) { mat_mul(j, m, world[a->joint]); host_size(j, m); }
+        else memcpy(j, m, sizeof j);
         mat_identity(o);
         for (int q = 0; q < 3; q++) { o[5 * q] = a->scale; o[12 + q] = a->off[q]; }
         mat_mul(e, j, o);
@@ -407,14 +412,89 @@ static void key_colour(const PtRes *r, int f, u8 out[4])
         out[c] = (u8)(r->key_rgba[k][c] + t * (r->key_rgba[k + 1][c] - r->key_rgba[k][c]));
 }
 
+static float eye_pos[3];
+void fx_set_eye(const float e[3]) { memcpy(eye_pos, e, sizeof eye_pos); }
+
+/* a particle's place, half size, colour (0xAABBGGRR, 0x80 = 1.0); 0 when it is not drawn */
+static int ptcl_look(const Ptcl *p, float pos[3], float *half, u32 *rgba);
+
+/* JPA Stripe / StripeCross (JPAStripeDrawer): one strip through an emitter's particles from the oldest, its width
+ * each particle's size, across its way and the view (StripeCross: a second strip across the first); u across, v
+ * along. ponytail: the particles' own axes are not kept (camera-facing), one colour per strip */
+#define STRIP_MAX 48
+static short strip_head[MAX_EMIT], strip_next[MAX_PTCL]; /* each strip emitter's particles (fx_draw's one pass) */
+static void draw_strips(int ei)
+{
+    const Emitter *e = &em[ei];
+    const PtRes *r = e->r;
+    static float pos[STRIP_MAX][3], half[STRIP_MAX], vp[4 * STRIP_MAX][3], vu[4 * STRIP_MAX][2];
+    static u16 order[STRIP_MAX], age[STRIP_MAX], ix[12 * STRIP_MAX];
+    int n = 0;
+    u32 rgba = 0, a_sum = 0;
+    for (int pi = strip_head[ei]; pi >= 0 && n < STRIP_MAX; pi = strip_next[pi]) {
+        const Ptcl *p = &pt[pi];
+        float q[3], h;
+        u32 c;
+        if (!ptcl_look(p, q, &h, &c)) continue;
+        int k = n++;
+        while (k > 0 && age[k - 1] < p->age) { /* the oldest first */
+            age[k] = age[k - 1]; order[k] = order[k - 1]; half[k] = half[k - 1];
+            memcpy(pos[k], pos[k - 1], sizeof pos[k]);
+            k--;
+        }
+        age[k] = p->age; half[k] = h; memcpy(pos[k], q, sizeof q);
+        rgba = c; a_sum += c >> 24;
+    }
+    if (n < 2) return;
+    rgba = (rgba & 0x00FFFFFFu) | (a_sum / n) << 24;
+    int strips = r->shape == 6 ? 2 : 1, nv = 0, nt = 0;
+    for (int sx = 0; sx < strips; sx++)
+        for (int i = 0; i < n; i++) {
+            const float *a0 = pos[i > 0 ? i - 1 : 0], *a1 = pos[i < n - 1 ? i + 1 : n - 1];
+            float t[3] = {a1[0] - a0[0], a1[1] - a0[1], a1[2] - a0[2]};
+            float v[3] = {eye_pos[0] - pos[i][0], eye_pos[1] - pos[i][1], eye_pos[2] - pos[i][2]};
+            float side[3] = {t[1] * v[2] - t[2] * v[1], t[2] * v[0] - t[0] * v[2], t[0] * v[1] - t[1] * v[0]};
+            if (sx) { /* across the first strip */
+                float c2[3] = {t[1] * side[2] - t[2] * side[1], t[2] * side[0] - t[0] * side[2], t[0] * side[1] - t[1] * side[0]};
+                memcpy(side, c2, sizeof side);
+            }
+            norm_to(side, half[i]);
+            for (int k = 0; k < 2; k++) {
+                float sg = k ? 1.0f : -1.0f;
+                vp[nv][0] = pos[i][0] + sg * side[0]; vp[nv][1] = pos[i][1] + sg * side[1]; vp[nv][2] = pos[i][2] + sg * side[2];
+                vu[nv][0] = (float)k; vu[nv][1] = (float)i / (n - 1);
+                nv++;
+            }
+            if (i) {
+                u16 b = (u16)(nv - 4);
+                ix[3 * nt] = b; ix[3 * nt + 1] = b + 1; ix[3 * nt + 2] = b + 2; nt++;
+                ix[3 * nt] = b + 1; ix[3 * nt + 1] = b + 3; ix[3 * nt + 2] = b + 2; nt++;
+            }
+        }
+    render_mesh_c((const float (*)[3])vp, (const float (*)[2])vu, nv, ix, nt, (u16)(tex0 + r->tex), r->add ? 2 : 1, rgba);
+}
+
 void fx_draw(void)
 {
-    int n = 0;
+    int n = 0, strips = 0;
+    for (int i = 0; i < MAX_EMIT; i++) {
+        strip_head[i] = -1;
+        strips |= em[i].live && em[i].nptcl > 1 && (em[i].r->shape == 5 || em[i].r->shape == 6) && em[i].r->tex != 0xFFFF;
+    }
+    if (strips) {
+        for (int i = nalive - 1; i >= 0; i--) {
+            int pi = alive[i];
+            const PtRes *r = em[pt[pi].em].r;
+            if (r->shape == 5 || r->shape == 6) { strip_next[pi] = strip_head[pt[pi].em]; strip_head[pt[pi].em] = (short)pi; }
+        }
+        for (int i = 0; i < MAX_EMIT; i++)
+            if (strip_head[i] >= 0 && em[i].live && em[i].r->tex != 0xFFFF) draw_strips(i);
+    }
     for (int i = 0; i < nalive; i++) {
         const Ptcl *p = &pt[alive[i]];
         const Emitter *e = &em[p->em];
         const PtRes *r = e->r;
-        if (r->tex == 0xFFFF)
+        if (r->tex == 0xFFFF || r->shape == 5 || r->shape == 6)
             continue;
         float t = (float)p->age / p->life, sc = p->scale, a = 1.0f;
         if (r->esp & 1) { /* JPACalcScaleX */
@@ -448,6 +528,31 @@ void fx_draw(void)
         s->add = r->add;
     }
     render_sprites(spr, n);
+}
+
+static int ptcl_look(const Ptcl *p, float pos[3], float *half, u32 *rgba)
+{
+    const Emitter *e = &em[p->em];
+    const PtRes *r = e->r;
+    float t = (float)p->age / p->life, sc = p->scale, a = 1.0f;
+    if (r->esp & 1) {
+        if (t < r->sc_in_t) sc *= (1.0f - r->sc_in_x) / r->sc_in_t * t + r->sc_in_x;
+        else if (t > r->sc_out_t && r->sc_out_t != 1.0f) sc *= (r->sc_out_x - 1.0f) / (1.0f - r->sc_out_t) * (t - r->sc_out_t) + 1.0f;
+    }
+    if (r->esp & 2) {
+        if (t < r->al_in_t) a = r->al_in + (r->al_base - r->al_in) / r->al_in_t * t;
+        else if (t > r->al_out_t && r->al_out_t != 1.0f) a = r->al_base + (r->al_out - r->al_base) / (1.0f - r->al_out_t) * (t - r->al_out_t);
+        else a = r->al_base;
+    }
+    u8 c[4];
+    if (r->nkeys) key_colour(r, p->age, c);
+    else memcpy(c, r->prm, 4);
+    float al = c[3] * a * (128.0f / 255.0f);
+    if (al < 1.0f || sc <= 0.0f) return 0;
+    for (int k = 0; k < 3; k++) pos[k] = p->off[k] + p->loc[k] * e->s;
+    *half = 25.0f * r->size[0] * sc * e->s;
+    *rgba = (c[0] * 128 / 255) | (c[1] * 128 / 255) << 8 | (c[2] * 128 / 255) << 16 | (u32)(al > 128 ? 128 : al) << 24;
+    return 1;
 }
 
 u32 fx_count(void) { return nalive; }

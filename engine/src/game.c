@@ -365,8 +365,12 @@ static void draw_skin(const Model *md, const float m[16], Anim *a)
     if (md == m_mario_skin) render_light(&plight.cur);
     u32 c0 = cycles();
     if (a->clip_id >= 0) {
-        fx_anim(sc->clips[a->clip_id].name, a->fx_seen == a->clip_id + 1 ? a->fx_frame : -1.0f, a->frame, m,
-                (const float (*)[16])a->world, a);
+        { /* EffectKeeper's animation rows; Mario's clips are his group's ("mario/<clip>", tools/jpa.py NAMED_ANIMS) */
+            char fk[48];
+            const char *cn = sc->clips[a->clip_id].name;
+            snprintf(fk, sizeof fk, strchr(cn, '/') ? "%s" : "mario/%s", cn);
+            fx_anim(fk, a->fx_seen == a->clip_id + 1 ? a->fx_frame : -1.0f, a->frame, m, (const float (*)[16])a->world, a);
+        }
         { /* its animation sounds (.bas: MR::startBas / actorSoundMovement); Mario's clips are MarioAnime's.
            * ponytail: only while drawn */
             char key[48];
@@ -16998,7 +17002,7 @@ u32 game_kcl_draw, game_kcl_drawn; /* kcl_query cycles / calls inside game_draw 
  * (1 - bright x level) x end; the ring's BCK frame is the sun's distance from the screen centre (its joints slide
  * from the sun through the centre), turned to face it. ponytail: the sun's points are tested against the map's
  * collision (the Wii reads its sphere's alpha back from the frame buffer: models hide it there too); no TEV beyond the
- * first texture, additive white */
+ * first texture (GlareGlow's two stages baked as one), additive white */
 typedef struct { float level, k; int nrv, t1, t2; } FlareModel; /* _90, _8C, nerve, TriggerChecker levels */
 enum { FL_KILL, FL_HIDE, FL_SHOW, FL_FADEIN, FL_FADEOUT };
 static FlareModel flares[3];
@@ -17058,7 +17062,7 @@ static int flare_screen(V3 p, V3 e, V3 fw, V3 s, V3 u, float f, float *x, float 
     return *x >= 0.0f && *x <= 640.0f && *y >= 0.0f && *y <= 448.0f;
 }
 
-#define FLARE_GLOW_SIZE 0.2f /* calibration knob: the glow's radius against its mesh (1078) */
+#define FLARE_GLOW_SIZE 1.0f /* the glow's size against its mesh (1078): its falloff stage is baked in (jpa.py flare) */
 static void lens_flare_draw(V3 ce, V3 cw, V3 cu, float fovy)
 {
     u32 t0;
@@ -17135,8 +17139,7 @@ static void lens_flare_draw(V3 ce, V3 cw, V3 cu, float fovy)
             q = (const u8 *)(ix + 3 * nt);
             q += (-(int)(3 * nt * 2)) & 3;
             const FlareModel *fm = &flares[k];
-            if (fm->nrv == FL_KILL || fm->nrv == FL_HIDE || fm->level <= 0.0f || k == 2) continue; /* ponytail: no
-                                                                                     * GlareLine (its streak UVs) */
+            if (fm->nrv == FL_KILL || fm->nrv == FL_HIDE || fm->level <= 0.0f) continue;
             float fr = (1.0f - fm->k * fm->level) * 8.0f; /* the BRK frame, in its 9 samples */
             int i0 = (int)fr; if (i0 > 7) i0 = 7;
             float a = al[i0] + (al[i0 + 1] - al[i0]) * (fr - i0);
@@ -17151,8 +17154,7 @@ static void lens_flare_draw(V3 ce, V3 cw, V3 cu, float fovy)
                     float jy = j < njoint ? jt[2 * j] * flare_ring_rate : 0.0f, js = j < njoint ? jt[2 * j + 1] * (1.0f - flare_ring_rate) : 1.0f;
                     mx = mx * js * 0.135f; my = (my * js + jy) * 0.135f;
                     rot = 1.0f;
-                } else if (k == 1) { /* GlareGlow: ponytail: its second stage (a radial falloff texture) not drawn;
-                                      * the starburst at the Wii's visible size instead */
+                } else if (k == 1) { /* GlareGlow */
                     mx *= FLARE_GLOW_SIZE; my *= FLARE_GLOW_SIZE;
                 }
                 float X = rot ? mx * cr - my * sr : mx, Y = rot ? mx * sr + my * cr : my;
@@ -17725,6 +17727,7 @@ void game_draw(void)
     foot_draw();
     RESTQ(7);
     PROF(5);
+    { float e3[3] = {ce.x, ce.y, ce.z}; fx_set_eye(e3); }
     fx_draw();
 #ifndef NO_FLARE
     lens_flare_draw(ce, cw, cu, fovy);

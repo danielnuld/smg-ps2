@@ -22,6 +22,7 @@ int fx_named(const char *cls, const char *name, const float m[16], const float (
 /* Step every emitter and particle one frame (60 Hz), then draw them (after the models). */
 void fx_update(void);
 void fx_draw(void);
+void fx_set_eye(const float e[3]); /* the camera, for the strips (fx_draw) */
 u32 fx_count(void); /* live particles */
 
 /* LensFlareDirector's models (tools/jpa.py flare) and the scene texture their tex indices start at; NULL none */

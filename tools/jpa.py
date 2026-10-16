@@ -236,7 +236,16 @@ def pack(fs):
         if bsp["tex_idx"] < len(tdb):
             from PIL import Image
             ti = tdb[bsp["tex_idx"]]
-            baked, vprm = bake_texture(tile_texture(decode_bti(texs[ti][1]), texs[ti][1], bsp), bsp)
+            img = tile_texture(decode_bti(texs[ti][1]), texs[ti][1], bsp)
+            if bsp["prm_anm"] and colour_mode(bsp)[0] in (2, 3, 4):
+                # an animated prm mixed in (MarioSpinLight's cyan stripes): the texture times the keys' colour.
+                # ponytail: env x (1 - t) and the like left out
+                baked, vprm = img, True
+                if colour_mode(bsp)[1] == 1:
+                    baked = img.copy()
+                    baked[..., 3] = 255
+            else:
+                baked, vprm = bake_texture(img, bsp)
             sec = None
             for magic, b in res[i]:  # ETX1 second texture: TEV stage 1 multiplies colour and alpha by it
                 if magic == "ETX1" and struct.unpack_from(">I", b, 8)[0] & 0x100 and b[0x26] < len(tdb):
@@ -258,7 +267,7 @@ def pack(fs):
                         scale_rndm=0, alpha_in_t=0, alpha_out_t=1, alpha_in=1, alpha_base=1, alpha_out=1, flags=0)
         ef = (e["flags"] & 1) | (e["flags"] >> 16 & 1) << 1 | (e["flags"] >> 1 & 1) << 2
         d2 = [c / 32767 for c in bem["dir"]]
-        recs.append(struct.pack("<6f8f12f2f7f5f4hHBBBBBB4B8h32B",
+        recs.append(struct.pack("<6f8f12f2f7f5f4hHBBBBBB4B8h32B4B",
                                 bem["rate"], bem["rate_rndm"], bem["life_rndm"], bem["vol_size"], bem["min_rad"],
                                 bem["sweep"], bem["vel_omni"], bem["vel_axis"], bem["vel_dir"], bem["vel_rndm"],
                                 bem["spread"], bem["vel_ratio"], bem["air"], bem["moment"], *bem["trs"], *d2,
@@ -269,7 +278,8 @@ def pack(fs):
                                 bem["rate_step"], ef, 1 if bem["flags"] & 8 else 0, len(keys),
                                 *(bsp["prm"] if vprm else (255, 255, 255, bsp["prm"][3])),
                                 *[k[0] for k in keys] + [0] * (8 - len(keys)),
-                                *[c for k in keys for c in k[1]] + [0] * 4 * (8 - len(keys))))
+                                *[c for k in keys for c in k[1]] + [0] * 4 * (8 - len(keys)),
+                                bsp["type"], 0, 0, 0))  # JPABaseShape type (5 Stripe, 6 StripeCross: fx_draw's strips)
     # WaterPlant.cpp's loose textures (WaterPlantDrawInit: WaterPlantA-D.bti, one per type), after the effects' ones:
     # header word 2 = the first one's index (-1 none), halved to 32 x 128
     from PIL import Image
@@ -325,7 +335,8 @@ def flare(fs, out_tex):
     a joint slides from 0 to y_end along -y and shrinks from scale to 0, linear in the frame 0..99), then each shape
     {u16 tex (PTCL-relative), u16 nvert, u16 ntri, u16 pad, f32 alpha[9] (the BRK's konst alpha at frames end x i / 8),
     f32 btk_turn (texture turn a frame, GlareGlow.btk's stage 0), nvert x {f32 x, y, u, v, joint}, ntri x 3 u16 (padded
-    to 4 bytes)}. ponytail: only the first TEV stage's texture and matrix, additive, white"""
+    to 4 bytes)}. Two-stage materials (GlareGlow, GlareLine) are baked as their stages' product. ponytail: no TEV beyond that;
+    additive, white"""
     import numpy as np
     import geom
     import skin
@@ -364,14 +375,39 @@ def flare(fs, out_tex):
             mat = shapes.get(info["shape"])
             mt = tex.material_tex(b, bl[b"MAT3"], mat, bl.get(b"TEX1"))
             mname = tex.material_name(b, bl[b"MAT3"], mat)
-            x = texs[mt["tex"]]
-            t2 = tex.to_ps2(x["rgba"], x["wrap_s"], x["wrap_t"], True)
-            if (name, mt["tex"]) not in seen:
-                seen[(name, mt["tex"])] = len(out_tex)
-                out_tex.append(t2)
-            ti = seen[(name, mt["tex"])]
             get = geom.vtx1_attr(b, bl[b"VTX1"], mt["attr"])
             o, w = info["at"][mt["attr"]]
+            stages = tex.material_stages(b, bl[b"MAT3"], mat)
+            raw = None
+            if len(stages) >= 2:
+                # two stages multiplied (GlareGlow: the starburst x the falloff; GlareLine: the streak x its colour
+                # ramp), baked in the mesh's own UV space
+                uv0 = [get(info["keys"][v][o] if w == 1 else info["keys"][v][o] << 8 | info["keys"][v][o + 1]) for v in sorted(set(tri))]
+                lo, hi = np.min(uv0, 0), np.max(uv0, 0)
+                raw = (lo, hi)
+                g = np.mgrid[0:128, 0:128].astype(np.float64)
+                uu = lo[0] + (g[1] + 0.5) / 128 * (hi[0] - lo[0])
+                vv = lo[1] + (g[0] + 0.5) / 128 * (hi[1] - lo[1])
+                img = np.ones((128, 128, 4), np.float64)
+                for txi, m2 in stages[:2]:
+                    xt = texs[txi]
+                    su_ = m2[0][0] * uu + m2[0][1] * vv + m2[0][2] if m2 else uu
+                    sv_ = m2[1][0] * uu + m2[1][1] * vv + m2[1][2] if m2 else vv
+                    def wrap(c, mode):
+                        return np.clip(c, 0, 1) if mode == 0 else c % 1.0 if mode == 1 else 1 - np.abs((c % 2.0) - 1)
+                    sx_ = (wrap(su_, xt["wrap_s"]) * (xt["w"] - 1) + 0.5).astype(int)
+                    sy_ = (wrap(sv_, xt["wrap_t"]) * (xt["h"] - 1) + 0.5).astype(int)
+                    img *= xt["rgba"][sy_, sx_].astype(np.float64) / 255
+                x = dict(rgba=(img * 255 + 0.5).astype(np.uint8), wrap_s=0, wrap_t=0)
+                key = (name, "baked", mat)
+            else:
+                x = texs[mt["tex"]]
+                key = (name, mt["tex"])
+            t2 = tex.to_ps2(x["rgba"], x["wrap_s"], x["wrap_t"], True)
+            if key not in seen:
+                seen[key] = len(out_tex)
+                out_tex.append(t2)
+            ti = seen[key]
             tab = tables.get((info["shape"], info["group"]), [])
             at0 = info["at"].get(0)
             used = sorted(set(tri))
@@ -380,7 +416,9 @@ def flare(fs, out_tex):
             for v in used:
                 k = info["keys"][v]
                 su, sv = get(k[o] if w == 1 else k[o] << 8 | k[o + 1])
-                if mt["mtx"]:
+                if raw is not None:  # the baked product's own space
+                    su, sv = (su - raw[0][0]) / (raw[1][0] - raw[0][0]), (sv - raw[0][1]) / (raw[1][1] - raw[0][1])
+                elif mt["mtx"]:
                     (a0, a1, a2), (b0, b1, b2) = mt["mtx"]
                     su, sv = a0 * su + a1 * sv + a2, b0 * su + b1 * sv + b2
                 j = drw[tab[min(k[at0[0]] // 3, len(tab) - 1)]][0] if tab and at0 else 0
@@ -403,6 +441,9 @@ def flare(fs, out_tex):
 # classes whose emitEffect calls game.c makes by name (fx_named), besides the skinned ones (their joints: -1)
 NAMED = ("KillerGunnerSingle", "ItemBubble", "DinoPackunBall", "Mario")
 NAMED_ONLY = {"Mario": ("SpinLight", "SpinLightBurst")}  # of a big group only the rows the engine plays
+# and its animation rows for these clips (game.c draw_skin: Mario's clips as "mario/<clip>")
+NAMED_ANIMS = {"Mario": ("spaceflystart", "spaceflyloop", "spaceflyend", "spaceflyshort", "spaceflyshortstart",
+                         "landscenariostart", "powerstarget", "sleep", "sleeplie", "spinlow")}
 
 
 def anim_effects(fs, auto, add_def):
@@ -432,7 +473,10 @@ def anim_effects(fs, auto, add_def):
                     names_ = [j["name"] for j in skin.joints(mb, tex.blocks(mb))]
             joints_of[c] = names_
         for i in range(len(g)):
-            if g[i] not in (c, arcname) or not e[i] or (c in NAMED_ONLY and u[i] not in NAMED_ONLY[c]):
+            if g[i] not in (c, arcname) or not e[i]:
+                continue
+            if c in NAMED_ONLY and (not any(x in NAMED_ANIMS.get(c, ()) for x in an[i].lower().split()) if an[i]
+                                    else u[i] not in NAMED_ONLY[c]):
                 continue
             if e[i] not in def_of:
                 def_of[e[i]] = add_def(e[i])
