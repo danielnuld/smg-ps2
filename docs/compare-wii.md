@@ -94,3 +94,22 @@ Cut so that g 0 is at 1.0 s on both sides: Wii AVI -ss 68.90 (g 0 at 69.90), PS2
   the Wii's after the second triple-jump landing (Mario faces ~3 degrees off at g 390, and constrainAngleY turns
   the camera the other way near 180 degrees). From there on the run drifts (by g 900 Mario is elsewhere).
 - Missing: the spin's sparkle trail (Wii effect on the ground spin), sun flare, cloud scroll.
+
+## Fourth run (2026-10-16 night): videos/2026-10-16_cmp-goodegg-final.mp4
+
+Cut: Wii AVI (tools/dolphin/out/moves4) -ss 68.91, PS2 (videos/2026-10-16_0045_cmp-final-ps2_9655cc0.mp4) -ss 14.15.
+moves.json now holds the stick at (0.4, -1) from g 320: straight back (0, -1) runs Mario at the camera, where
+CameraFollow's constrainAngleY aims 180 degrees round and the Wii (179.85) and the port (180.11) turned opposite
+ways from a tenth of a degree; on the diagonal both turn the same way.
+
+Fixed after the RAM probes:
+- The actors move during the scenario opening (GameScene::exeScenarioOpeningCamera runs executeMovementList), and
+  already while the stage finishes loading (GameScene starts in that nerve, its camera state waiting):
+  OPENING_PREROLL 156 frames, measured on the Takobo patrols (now within ~3 units of the Wii's at g 0 / 40).
+- Walkers clip as ClippingJudge: a sphere of 300 (ClippingActorInfo's default) off the view with its near plane at
+  500 and far at 10000; Takobo 6 freezes at the Wii's exact place (-4977, -16402).
+- SpinLight follows Mario's HandL while the spin clips run (MarioAnimator spinEntry / spinUpdate, MarioMagic: frame
+  25 ends it in SpinLightBurst).
+
+Same path to g ~780; at the house Mario and the Takobo meet in both, the PS2's spin hits it first (a star piece)
+while on the Wii it punches Mario: a frame or two of difference, the runs part there.

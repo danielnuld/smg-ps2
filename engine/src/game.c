@@ -5551,6 +5551,7 @@ static void draw_waterplants(void)
 /* point at length d along a polyline */
 static V3 rail_at(const float *p, u32 n, float d)
 {
+    if (!p || !n) return v3(0, 0, 0); /* no rail (a launch without a path: the route test asks every launch) */
     for (u32 i = 0; i + 1 < n; i++) {
         V3 a = v3(p[3 * i], p[3 * i + 1], p[3 * i + 2]), b = v3(p[3 * i + 3], p[3 * i + 4], p[3 * i + 5]);
         float l = vlen(vsub(b, a));
@@ -14103,7 +14104,7 @@ static void update_kuribo(void)
     for (int i = 0; i < nkuribo; i++) {
         Kuribo *k = &kuribo[i];
         if (k->state == KURIBO_DEAD || !row_shown(k->row)) continue;
-        if (k->clipped && k->kind != WALK_KARIKARI) continue; /* clipped: no movement (Karikari may ride on Mario) */
+        if (k->clipped && k->kind != WALK_KARIKARI) continue; /* startClipped: no movement (Karikari may ride on Mario) */
         u32 c0 = cycles();
         update_kuribo_one(k);
         kprof[k->kind] += cycles() - c0; kprof_n[k->kind]++;
@@ -16529,13 +16530,18 @@ const int lprof_n = 74;
 #else
 #define LQ(k, stmt) stmt
 #endif
+#define OPENING_PREROLL 156
 void game_update(void)
 {
     if (scene_stop > 0) { scene_stop--; return; } /* SceneFunction stopScene: everything holds */
     /* GameSceneScenarioOpeningCameraState: the stage's StartScenario<n>.canm (CANM "stage/startscenario", world
-     * space), the scene stopped and Mario hidden, ScenarioTitle on until 60 frames before its end; then the
-     * ScenarioStarter flies Mario in. ponytail: no cinema frame, no BGM_START_DEMO, no skip */
-    static int opening = -2, opening_n;
+     * space), Mario hidden, ScenarioTitle on until 60 frames before its end; then the ScenarioStarter flies Mario
+     * in. The other actors move meanwhile (GameScene::exeScenarioOpeningCamera: executeMovementList). ponytail: no
+     * cinema frame, no BGM_START_DEMO, no skip. GameScene starts in that nerve with the camera state waiting, so
+     * the actors already move while the stage finishes loading (black): OPENING_PREROLL frames, run at once.
+     * ponytail: the count is Dolphin's (EggStar 1, Takobo patrols matched to its RAM), loading time on a real Wii */
+    static int opening = -2, opening_n, prerolling;
+    int opening_on = 0;
     if (opening == -2) {
         opening = -1;
         const u8 *q = sc->canm;
@@ -16544,9 +16550,16 @@ void game_update(void)
 #ifndef CATCHUP
         opening = -1; /* test builds start in play */
 #endif
-        if (opening >= 0) { mario_hidden = 1; stitle_start(); }
+        if (opening >= 0) {
+            mario_hidden = 1;
+            prerolling = 1;
+            for (int i = 0; i < OPENING_PREROLL; i++) game_update();
+            prerolling = 0;
+            stitle_start();
+        }
     }
-    if (opening >= 0) {
+    if (prerolling) opening_on = 1;
+    else if (opening >= 0) {
         static const float id[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
         demo_camera("stage/startscenario", opening, id);
         if (opening == opening_n - 60) stitle_end();
@@ -16554,9 +16567,9 @@ void game_update(void)
             opening = -1; mario_hidden = 0;
             camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45);
         }
-        return;
+        opening_on = 1;
     }
-    if (starter >= 0 && game_frame == 2) { /* ScenarioStarter::exeRailMove: the flight in (SpinDriverShootPath) */
+    if (!opening_on && starter >= 0 && game_frame == 2) { /* ScenarioStarter::exeRailMove: the flight in (SpinDriverShootPath) */
         mario->pos = launches[starter].pos;
         mario->launch = starter; mario->launch_t = 0; mario->launch_from = mario->pos;
         printf("scenario starter: flight in, %d frames" "\n", launches[starter].flight);
@@ -16565,7 +16578,7 @@ void game_update(void)
     }
 #ifdef REPLAY
     static int replay_g = -1; /* the replay's frame: g = 0 the first frame the player is free */
-    if (replay_g < 0 && game_frame > 3 && mario->launch < 0 && mario->grounded && !m_input_off()) {
+    if (replay_g < 0 && !opening_on && game_frame > 3 && mario->launch < 0 && mario->grounded && !m_input_off()) {
         pad_replay_begin();
         replay_g = 0;
         printf("replay: control at game frame %d\n", game_frame);
@@ -16579,6 +16592,11 @@ void game_update(void)
                (int)ce.z, (int)cw.x, (int)cw.y, (int)cw.z);
         printf("replay g %d: face %.3f %.3f %.3f jumping %d grounded %d\n", replay_g - 1, mario->face.x, mario->face.y,
                mario->face.z, mario->jumping, mario->grounded);
+        if ((replay_g - 1) % 100 == 0 || replay_g - 1 < 600)
+            for (int i = 0; i < nkuribo; i++)
+                if (kuribo[i].kind == WALK_TAKOBO)
+                    printf("replay g %d: takobo %d %d %d %d nrv %d step %d clip %d\n", replay_g - 1, i, (int)kuribo[i].pos.x,
+                           (int)kuribo[i].pos.y, (int)kuribo[i].pos.z, kuribo[i].nrv, kuribo[i].step, kuribo[i].clipped);
     }
 #endif
     { /* CameraDirector::checkStartCondition: the start camera ends once the player moves */
@@ -16589,9 +16607,9 @@ void game_update(void)
     kcl_list_build();
     LQ(0, update_obj_anims());
 
-    if (time_limit && time_left > 0 && !stars && --time_left == 0) { printf("time up" "\n"); miss(); }
+    if (!opening_on && time_limit && time_left > 0 && !stars && --time_left == 0) { printf("time up" "\n"); miss(); }
     hip_hit = 0;
-    game_frame++;
+    if (!opening_on) game_frame++; /* frames of play: the starter flight begins at 2 */
     LQ(1, update_rotors());
     LQ(2, update_halos());
     LQ(3, update_railers());
@@ -16599,10 +16617,21 @@ void game_update(void)
     hud_update();
 
     LQ(5, update_talk_director());
-    LQ(6, update_mario());
+    if (!opening_on) LQ(6, update_mario());
     LQ(7, update_seesaws()); /* after Mario: his hip drop (hip_hit) this frame */
     LQ(8, update_bridges());
-    if (mario->spin_timer == SPIN_TIME - 1) mario_fx(FX_MARIO_SPINLIGHT, 1.0f); /* a spin started this frame */
+    { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
+       * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
+       * スピンライト消去 (SpinLightBurst at the hip) */
+        static int spin_light; /* 1 air, 2 ground */
+        float f = mario_anim ? mario_anim->frame : 0.0f, m[16];
+        int on = m_clip_on("spin") && f <= 30.0f ? 1 : m_clip_on("spinground") && f < 25.0f ? 2 : 0;
+        const float (*w)[16] = mario_anim && mario_anim->skin ? (const float (*)[16])mario_anim->world : NULL;
+        basis_matrix(m, mario->pos, mario->up, mario->face, 0);
+        if (on) fx_named("Mario", "SpinLight", m, w, &spin_light);
+        else if (spin_light == 2) fx_named("Mario", "SpinLightBurst", m, w, NULL);
+        spin_light = on;
+    }
     if (hip_hit) mario_fx(FX_MARIO_HIPDROPFLOWER, 0.0f);
     LQ(9, update_launched_pieces());
     LQ(10, update_invincible());
@@ -16668,13 +16697,13 @@ void game_update(void)
     LQ(65, update_switches());
     LQ(66, update_pops());
     int had = got_coins;
-    LQ(67, collect(coins, ncoins, 100.0f, &got_coins, FX_COIN_COINGET, SE_SY_COIN)); /* Coin::noticeGetCoin */
+    if (!opening_on) LQ(67, collect(coins, ncoins, 100.0f, &got_coins, FX_COIN_COINGET, SE_SY_COIN)); /* Coin::noticeGetCoin */
     if (got_coins > had && life < max_life) mario_sound("ライフ回復"); /* MarioActor::incLife */
     life += got_coins - had;
     if (life > max_life) life = max_life;
     if (got_coins / 50 > had / 50) lives++; /* every 50 coins a 1-up */
-    LQ(68, collect(purple, npurple, 100.0f, &got_purple, FX_PURPLECOIN_COINGET, SE_SY_PURPLE_COIN));
-    LQ(69, collect(pieces, npieces, 120.0f, &got_pieces, FX_STARPIECE_STARPIECEGET, SE_SY_STAR_PIECE_GET)); /* gotByPlayer */
+    if (!opening_on) LQ(68, collect(purple, npurple, 100.0f, &got_purple, FX_PURPLECOIN_COINGET, SE_SY_PURPLE_COIN));
+    if (!opening_on) LQ(69, collect(pieces, npieces, 120.0f, &got_pieces, FX_STARPIECE_STARPIECEGET, SE_SY_STAR_PIECE_GET)); /* gotByPlayer */
     LQ(70, update_cursor());
     coin_rot = fmodf(coin_rot + 8.0f * 0.0174533f, 6.2831853f);
     qcoin_rot = fmodf(qcoin_rot + 4.0f * 0.0174533f, 6.2831853f);
@@ -17263,7 +17292,8 @@ void game_draw(void)
         const float *wsc = sc->objs[kuribo[i].row].scale;
         float wr = md->radius * fmaxf(fmaxf(wsc[0], wsc[1]), wsc[2]) + 100.0f, wp[3] = {kuribo[i].pos.x, kuribo[i].pos.y, kuribo[i].pos.z};
         int wvis = render_visible(wp, wr);
-        kuribo[i].clipped = !wvis;
+        kuribo[i].clipped = (u8)render_clip_judge(wp, 300.0f); /* ClippingActorInfo's default sphere, 300 about it, off
+                                                               * ClippingJudge's volume (this view) */
         if (wvis) { u32 c1 = cycles(); walker_shadow(&kuribo[i]); prof_shadow += cycles() - c1; }
         basis_matrix(m, kuribo[i].pos, kuribo[i].up, kuribo[i].kind == WALK_STINKBUG || kuribo[i].kind == WALK_POIHANA ? stink_front(&kuribo[i]) : vsub(mario->pos, kuribo[i].pos), 0);
         if (kuribo[i].kind == WALK_UNIZO) { /* rolled about its side round its centre */

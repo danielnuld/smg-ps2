@@ -11,7 +11,9 @@ $cfg = @('Dolphin.Movie.DumpFrames=True', 'Dolphin.Movie.DumpFramesSilent=True',
          'Dolphin.General.ShowFrameCount=True', 'Dolphin.Display.RenderWindowAutoSize=False',
          'Dolphin.Display.RenderWindowXPos=-2400', 'Dolphin.Display.RenderWindowYPos=0',
          'Dolphin.Display.RenderWindowWidth=640', 'Dolphin.Display.RenderWindowHeight=480',
-         'Dolphin.Core.EnableCheats=True', 'Graphics.Settings.InternalResolution=1')
+         'Dolphin.Core.EnableCheats=True', 'Graphics.Settings.InternalResolution=1',
+         'Graphics.Settings.MSAA=1', 'Graphics.Settings.SSAA=False', 'Graphics.Enhancements.MaxAnisotropy=0',
+         'Graphics.Settings.ShaderCompilationMode=1', 'Graphics.Settings.WaitForShadersBeforeStarting=True')
 $args_ = @('-u', $user, '-b', '-m', $Movie, '-e', 'D:/smg-ps2/data/fs/sys/main.dol') + ($cfg | ForEach-Object { '-C', $_ })
 $p = Start-Process -FilePath "D:\dolphin\Dolphin.exe" -ArgumentList $args_ -WindowStyle Minimized -PassThru
 Start-Sleep $Seconds

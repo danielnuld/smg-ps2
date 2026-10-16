@@ -312,7 +312,8 @@ def pack(fs):
 
 
 # classes whose emitEffect calls game.c makes by name (fx_named), besides the skinned ones (their joints: -1)
-NAMED = ("KillerGunnerSingle", "ItemBubble", "DinoPackunBall")
+NAMED = ("KillerGunnerSingle", "ItemBubble", "DinoPackunBall", "Mario")
+NAMED_ONLY = {"Mario": ("SpinLight", "SpinLightBurst")}  # of a big group only the rows the engine plays
 
 
 def anim_effects(fs, auto, add_def):
@@ -342,7 +343,7 @@ def anim_effects(fs, auto, add_def):
                     names_ = [j["name"] for j in skin.joints(mb, tex.blocks(mb))]
             joints_of[c] = names_
         for i in range(len(g)):
-            if g[i] not in (c, arcname) or not e[i]:
+            if g[i] not in (c, arcname) or not e[i] or (c in NAMED_ONLY and u[i] not in NAMED_ONLY[c]):
                 continue
             if e[i] not in def_of:
                 def_of[e[i]] = add_def(e[i])

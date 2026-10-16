@@ -59,6 +59,7 @@ u32 render_end(void);
 void render_clear_depth(void);
 u32 render_tris_drawn(void);
 /* a world-space sphere within the camera's view (the test draw_model culls by) */
+int render_clip_judge(const float p[3], float rad); /* off ClippingJudge's volume (near 500, far 10000) */
 int render_visible(const float p[3], float rad);
 u32 render_wait_cycles(void); /* EE cycles blocked on the VIF chain since the last call (profiling) */
 /* Texture cache counters since boot: uploads (misses), textures that found no GS memory, chains waited on for room. */
