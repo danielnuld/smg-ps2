@@ -62,3 +62,24 @@ g 1000-1230. Left:
 4. **Control after the landing**: the port gives control ~90 frames after touching down; the Wii a little sooner
    (its welcome text is still fully up at g 29), so the HUD shows earlier in the port.
 5. Star counter 0 (no save) against the Wii save's 121; no sun flare / bloom in the port.
+
+## Exact comparison through the Wii's RAM (2026-10-15 night)
+
+`tools/dolphin/probe.ps1 -Play play.json -G g -Read <addresses>` plays the movie up to frame g (Dolphin pauses at
+the movie's end) and reads float triples from the Wii's RAM (`dolmem.py read3`; `-Near "x,y,z" -R r` lists the triples
+near a place to find addresses). In this movie (Spanish, moves.json) Mario's position is at 810B59A8 and the camera's
+eye at 8087B1B8. The port logs both every 5 frames in `replay` builds. Findings and fixes, all after Petari:
+
+| g | Wii Mario (x, z) | port before | port after the fixes |
+|---|---|---|---|
+| 120 | -3386, -15437 | -3382, -15432 | same |
+| 200 | -4087, -16156 | -4090, -16160 | same |
+| 215 | -4103, -16327 | -4123, -16332 | -4124, -16332 |
+| 280 | -3342, -16362 | -3329, -16414 | -3367, -16383 |
+| 300 | -3224, -16274 | -3119, -16264 | -3248, -16299 |
+
+- The stick's frame: Mario::calcMoveDir uses the camera's view axes on an eased up (_398), not the camera-to-Mario
+  direction (the running turn was too wide).
+- The ground spin halves the target walk speed (updateWalkSpeed's mTornadoMultiply while MarioMagic runs).
+- The Wii sees a shake as a swing ~5 frames after it starts: replay.py presses the PS2 spin button that much later.
+- Left: the first 15 frames of a running turn are ~1.5 frames behind the Wii's (~20 units), carried on after it.
