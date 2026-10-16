@@ -223,7 +223,7 @@ def tex_mtx(b, e):
             (sy * sr, sy * cr, -sy * sr * cx - sy * cr * cy + cy + ty))
 
 
-def projmap(b, mat3, m, slot):
+def projmap(b, mat3, m, slot, srt_only=False):
     """Material m's texture matrix `slot` when it projects positions (J3DTexMtx mode 8, Projmap: J3DTevs.cpp) -> the
     3x4 rows SRT x Q x effect (s, t, q of a model-space position with the camera at the origin: uv = (s, t) / q),
     else None."""
@@ -244,6 +244,8 @@ def projmap(b, mat3, m, slot):
     srt = np.eye(4)
     srt[0, :3] = (sx * cr, -sx * sr, -sx * cr * cx + sx * sr * cy + cx + tx)
     srt[1, :3] = (sy * sr, sy * cr, -sy * sr * cx - sy * cr * cy + cy + ty)
+    if srt_only:  # its SRT as a 2x3 on (s, t) / q: the translation stays a uniform shift after the divide
+        return (tuple(srt[0, :3]), tuple(srt[1, :3]))
     q = np.array([[0.5, 0, 0.5, 0], [0, -0.5, 0.5, 0], [0, 0, 1, 0], [0, 0, 0, 1]], np.float64)
     return (srt @ q @ eff)[:3]
 

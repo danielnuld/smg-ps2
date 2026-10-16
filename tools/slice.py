@@ -524,8 +524,7 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                     # VROrbit's sea (EarthNightMat_v floor, EarthFar_v wall): base + CLR0 x Cloud01k on the Wii's
                     # Projmap UVs (tex.projmap, camera at the sky's origin): the base a group of its own, the clouds
                     # this one, added (blend 2), coloured by CLR0. ponytail: EarthKsMM (CLR0 x its corner glow) left
-                    # out, the clouds' BTK scroll (10000 frames) not played, uv = st / q per vertex (the wall's q
-                    # changes across a triangle)
+                    # out, uv = st / q per vertex (the wall's q changes across a triangle)
                     sea = SKY_SEA[tex.material_name(b, bl[b"MAT3"], mat)]
                     pm = tex.projmap(b, bl[b"MAT3"], mat, mt["slot"])
                     x = texs[mt["tex"]]
@@ -539,6 +538,12 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                         q_ = q_ if abs(q_) > 1e-6 else 1e-6
                         uvs.append((s_ / q_ * t["u_scale"], t_ / q_ * t["v_scale"]))
                     ras_mean, sea_add = None, True
+                    if anim_tex:  # VROrbit.btk: the clouds' SRT; its translation scrolls them (anim_btk)
+                        e = btk_entry(anim_tex, tex.material_name(b, bl[b"MAT3"], mat),
+                                      dict(mt, mtx=tex.projmap(b, bl[b"MAT3"], mat, mt["slot"], True)), t,
+                                      len(groups) + 1)  # after its base group
+                        if e:
+                            stats.setdefault("_btk", []).append(e)
                     if sea[1] is None:  # the floor: K0 flat
                         groups.append((verts, [remap[v] for v in tri], None, None, None, sea[0], (0, 1, 255), False, 1))
                     else:  # the wall: lerp(C1, K1, EarthFarK) on its own UVs (TEX0 through texture matrix 1)
