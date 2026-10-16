@@ -16550,9 +16550,14 @@ void game_update(void)
         replay_g = 0;
         printf("replay: control at game frame %d\n", game_frame);
     }
-    if (replay_g >= 0 && replay_g++ % 10 == 0)
-        printf("replay g %d: mario %d %d %d launch %d stars %d life %d\n", replay_g - 1, (int)mario->pos.x,
-               (int)mario->pos.y, (int)mario->pos.z, mario->launch, stars, life);
+    if (replay_g >= 0 && replay_g++ % 5 == 0) {
+        V3 ce, cw, cu;
+        float fv;
+        camera_pose(&ce, &cw, &cu, &fv);
+        printf("replay g %d: mario %d %d %d launch %d stars %d life %d cam %d %d %d watch %d %d %d\n", replay_g - 1,
+               (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z, mario->launch, stars, life, (int)ce.x, (int)ce.y,
+               (int)ce.z, (int)cw.x, (int)cw.y, (int)cw.z);
+    }
 #endif
     { /* CameraDirector::checkStartCondition: the start camera ends once the player moves */
         static V3 last;
