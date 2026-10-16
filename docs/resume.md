@@ -333,7 +333,12 @@ opening and a 156-frame loading pre-roll (the Takobos' patrols match the Wii's R
 near 500, far 10000), SpinLight on the hand; 5b05ea7 fx 256 emitters (the 128 were full: new effects failed
 silently); 55ccbbd LensFlare (LensFlareDirector, BrightSun visibility against the map, ring / glow; no GlareLine,
 glow without its falloff stage: FLARE_GLOW_SIZE); 8f13321 VROrbit's cloud scroll (its BTK on the Projmap SRT);
-2145a5d Mario's common smokes (cSmokeTable). Left from the comparison: the spin light's stripes drawn as sprites,
+2145a5d Mario's common smokes (cSmokeTable); 6158efa JPA stripes (the spin's cyan swirl), LensFlare's two-stage
+materials baked (glow falloff, GlareLine back), Mario's animation effects (flight lines, NAMED_ANIMS); 3a86604
+surface sounds (KCL Sound_code -> ports 11 / 12; the KCL attribute layout changed: floor 0-5, wall 6-9, camera 10,
+sound 11-14, so other galaxies' packs need a repack before their sounds are right). Bench EggStar 1: 18.3 ms (the
+flights' effects). videos/2026-10-16_cmp-goodegg-final2.mp4: the comparison with all of it (cut with
+tools/dolphin/align.py). Left from the comparison: the spin light's stripes drawn as sprites,
 GlareLine, the glass capsule's env map, the Wii's 16:9 view (the port is 4:3), the ~44 opening frames the Wii may run
 under the loading black, the Takobo meeting at g ~780 (a frame or two apart).
 
