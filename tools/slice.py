@@ -501,11 +501,11 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                     gain = gains[key]
                     split = ras_split.get(key, True)
                     if (arc.stem == "Mario" and tex.material_name(b, bl[b"MAT3"], mat) == "EyeLid_v" and
-                            mt["tex"] + 2 < len(texs)):
+                            mt["tex"] + 3 < len(texs)):
                         # MarioActor::swapTextureInit: mario_eyeLid.0 .. .2 (open, half, shut), the blink's
                         # (updateBlink) swaps, baked through the same material (SWAP chunk)
                         alts = []
-                        for d in (1, 2):
+                        for d in (1, 2, 3):
                             x2 = texs[mt["tex"] + d]
                             alts.append(tex.to_ps2(tex.bake(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, mt["tex"] + d,
                                                             over, {}), x2["wrap_s"], x2["wrap_t"], sky))
@@ -1476,6 +1476,35 @@ def anim_chunk(fsp):
     return chunk(b"ANIM", struct.pack("<I", len(clips)) + b"".join(clips))
 
 
+def eye_chunk(fsp):
+    """EYEP: Mario's eye patterns (MarioActor::setBlink: the BTP of a clip's name, J3D1btp1 / TPT1), the EyeLid_v
+    material's texture each frame as 0..3 over mario_eyeLid.0: {u32 n}, n x {char clip[32], u16 frames, u8 loop
+    (2 = repeat: its own frame count; else the clip's frame), u8 pad, u8 eyelid[frames], padded to 4}."""
+    import tex
+    mb = next(v for k, v in B.rarc_files((fsp / "ObjectData" / "Mario.arc").read_bytes()) if k.lower().endswith(".bdl"))
+    bl = tex.blocks(mb)
+    tnames = tex.names(mb, bl[b"TEX1"] + tex.u32(mb, bl[b"TEX1"] + 0x10))
+    base = tnames.index("mario_eyeLid.0")
+    out = []
+    for n, b in B.rarc_files((fsp / "ObjectData" / "MarioAnime.arc").read_bytes()):
+        if not n.lower().endswith(".btp") or b[:8] != b"J3D1btp1":
+            continue
+        t = b.find(b"TPT1")
+        loop, fmax, nmat = b[t + 8], struct.unpack_from(">H", b, t + 0xA)[0], struct.unpack_from(">H", b, t + 0xC)[0]
+        mt_off, ix_off, nm_off = (struct.unpack_from(">I", b, t + k)[0] for k in (0x10, 0x14, 0x1C))
+        mats = tex.names(b, t + nm_off)
+        if "EyeLid_v" not in mats:
+            continue
+        m = mats.index("EyeLid_v")
+        cnt, first = struct.unpack_from(">HH", b, t + mt_off + 8 * m)
+        keys = [struct.unpack_from(">H", b, t + ix_off + 2 * (first + k))[0] for k in range(cnt)]
+        frames = max(fmax, 1)
+        eye = bytes(min(max(keys[min(f, cnt - 1)] - base, 0), 3) if cnt else 0 for f in range(frames))
+        out.append(name32(n.rsplit("/", 1)[-1][:-4].lower()) + struct.pack("<HBB", frames, loop, 0) + eye +
+                   b"\0" * (-len(eye) % 4))
+    return chunk(b"EYEP", struct.pack("<I", len(out)) + b"".join(out))
+
+
 def obj_anim_chunk(fsp, classes):
     """ANIM for the skinned placed classes among `classes` (and their EXTRA models): "<class>/<clip>" lower case."""
     clips = []
@@ -1632,7 +1661,7 @@ def resident_pack(fs, ratio=0.99):
     fsp = Path(fs)
     names = list(RESIDENT) + list(SKINNED)
     models = [(t, t) for t in names] + [(f"{c}@{k}", f"{c}@{k}") for c in MAT_COLOR for k in range(len(MAT_COLOR[c][1]))]
-    return blob_of(assets(fsp, models, {}, ratio, fx=True) + [anim_chunk(fsp)]), set(names)
+    return blob_of(assets(fsp, models, {}, ratio, fx=True) + [anim_chunk(fsp), eye_chunk(fsp)]), set(names)
 
 
 def read_chunks(blob):

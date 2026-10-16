@@ -195,6 +195,8 @@ int blob_add(Scene *s, const u8 *blob)
     }
     if (k && *(const u32 *)k)
         s->kcl_chunk[s->nkcl++] = k;
+    const u8 *ey = blob_chunk(blob, "EYEP", NULL);
+    if (ey) { s->neyep = *(const u32 *)ey; s->eyep = ey + 4; }
     const u8 *pt = blob_chunk(blob, "PTCL", NULL);
     if (pt) {
         s->ptcl = pt;

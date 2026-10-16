@@ -17610,15 +17610,32 @@ void game_draw(void)
     if (!mario_hidden) /* ponytail: MarioShadow's volume (his posed model) as an oval of its bind pose's extent */
         draw_shadow(mario->pos, mario->up, mario->face, 34.0f, 37.0f, 8.0f, 50.0f, 1000.0f);
     {
-        /* MarioActor::updateBlink / swapTexture("EyeLid_v"): a blink every 60..359 frames (MR::getRandom), 10 frames of
-         * sBlinkStates (0 open, 1 half, 2 shut). ponytail: the clips' own eye patterns (BTP, setBlink) not played */
+        /* MarioActor::updateBlink / swapTexture("EyeLid_v"): the clip's own eye pattern if it has one (setBlink: its
+         * BTP, EYEP; a looping one on its own frame count, else at the clip's frame), else a blink every 60..359
+         * frames (MR::getRandom), 10 frames of sBlinkStates (0 open, 1 half, 2 shut) */
         static const u8 states[10] = {0, 1, 2, 2, 2, 2, 1, 1, 0, 0};
-        static int left, wait, eye;
+        static int left, wait, eye, pat_clip = -2, pat_frame;
+        static const u8 *pat;
         static unsigned last, seed = 1;
+        if (mario_anim && mario_anim->clip_id != pat_clip) { /* setBlink(the clip's name) */
+            pat_clip = mario_anim->clip_id; pat = NULL; pat_frame = 0;
+            const u8 *q = sc->eyep;
+            for (u32 i = 0; q && pat_clip >= 0 && i < sc->neyep; i++) {
+                u16 n = *(const u16 *)(q + 32);
+                if (!strcmp((const char *)q, sc->clips[pat_clip].name)) { pat = q; break; }
+                q += 36 + n + (-(int)n & 3);
+            }
+        }
         if (last != game_frame) { /* once a logic frame; its own generator (the game's rand() untouched) */
             last = game_frame;
-            if (left) { left--; eye = states[9 - left]; seed = seed * 1103515245u + 12345u; wait = 60 + (int)(seed >> 16) % 300; }
-            else { if (wait) wait--; if (!wait) left = 10; }
+            if (pat) {
+                u16 n = *(const u16 *)(pat + 32);
+                int f = pat[34] == 2 ? (pat_frame + 1 >= n - 1 ? 0 : pat_frame + 1) : (int)mario_anim->frame;
+                pat_frame = f;
+                eye = pat[36 + (f < 0 ? 0 : f >= n ? n - 1 : f)];
+                left = 0; seed = seed * 1103515245u + 12345u; wait = 60 + (int)(seed >> 16) % 300; /* _B68: reset */
+            } else if (left) { left--; eye = states[9 - left]; seed = seed * 1103515245u + 12345u; wait = 60 + (int)(seed >> 16) % 300; }
+            else { eye = 0; if (wait) wait--; if (!wait) left = 10; }
         }
         for (u32 g = 0; m_mario_skin && g < m_mario_skin->vu_ngroups; g++)
             if (m_mario_skin->vu[g].nswap > eye) ((Model *)m_mario_skin)->vu[g].tex = m_mario_skin->vu[g].swap[eye];
