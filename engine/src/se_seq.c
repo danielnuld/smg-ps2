@@ -20,8 +20,8 @@
 #define SPU_BASE 0x10000u
 #define NVOICE 24
 #define MAX_CH 48
-#define MAX_TR 96
-#define MAX_SND 32
+#define MAX_TR 192
+#define MAX_SND 64
 
 static u16 be16(const u8 *p) { return (u16)(p[0] << 8 | p[1]); }
 static s16 bes16(const u8 *p) { return (s16)be16(p); }
@@ -77,7 +77,7 @@ struct Sound {
     u8 used, has_pos, level_seen, stopping;
     u32 id, handle;
     u8 prio;
-    float vol, pitch, acc, pos[3];
+    float vol, pitch, acc, pos[3], base; /* base: the table's volume */
     Track *root;
 };
 static Chan ch[MAX_CH];
@@ -679,18 +679,33 @@ static void track_stop(Track *t) /* every track done, its notes released (the sl
 u32 se_start(u32 id, const float *pos)
 {
     const SeRow *r = se_row(id);
+    if (pos) { /* past place()'s silence (5000): no slot for it */
+        float d[3] = {pos[0] - listener[0], pos[1] - listener[1], pos[2] - listener[2]};
+        if (d[0] * d[0] + d[1] * d[1] + d[2] * d[2] > 5000.0f * 5000.0f) return 0;
+    }
+#ifdef SE_LOG
+    printf("se%c %08x\n", r ? '+' : '?', id); /* tests: started, or not in this sound.bin */
+#endif
     if (!r) return 0;
     for (int i = 0; i < MAX_SND; i++)
         if (!so[i].used) {
             Sound *s = &so[i];
             memset(s, 0, sizeof *s);
-            s->used = 1; s->id = id; s->handle = next_handle++; s->prio = r->prio; s->vol = r->vol / 255.0f; s->pitch = 1;
+            s->used = 1; s->id = id; s->handle = next_handle++; s->prio = r->prio; s->vol = s->base = r->vol / 255.0f; s->pitch = 1;
             s->acc = 1.0f;
             if (pos) { s->has_pos = 1; s->pos[0] = pos[0]; s->pos[1] = pos[1]; s->pos[2] = pos[2]; }
             s->root = track_new(s, NULL, r->seq);
-            if (!s->root) { s->used = 0; return 0; }
+            if (!s->root) {
+#ifdef SE_LOG
+                printf("se! %08x no track\n", id);
+#endif
+                s->used = 0; return 0;
+            }
             return s->handle;
         }
+#ifdef SE_LOG
+    printf("se! %08x no slot\n", id);
+#endif
     return 0;
 }
 void se_stop(u32 handle)
@@ -720,10 +735,10 @@ void se_port(u32 handle, int port, u16 value)
         if (so[i].used && so[i].handle == handle && so[i].root) so[i].root->ports[port & 15] = value;
 }
 
-void se_volpitch(u32 handle, float vol, float pitch) /* JAISound volume / pitch on a playing sound */
+void se_volpitch(u32 handle, float vol, float pitch) /* JAISound volume / pitch on a playing sound (set, not added up) */
 {
     for (int i = 0; i < MAX_SND; i++)
-        if (so[i].used && so[i].handle == handle) { so[i].vol *= vol; so[i].pitch *= pitch; }
+        if (so[i].used && so[i].handle == handle) { so[i].vol = so[i].base * vol; so[i].pitch = pitch; }
 }
 
 /* JAUSoundAnimator::updateAnimSound over sound.bin's .bas tables: clip "<archive>/<clip>" went from frame `from`

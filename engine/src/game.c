@@ -36,6 +36,7 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
     char act[20]; int act_seq, act_drawn, act_frames, act_mode, act_interp; float act_t, act_rate;
     V3 bpos, bvel; int bshow; /* a second model it throws (PackunPetit's blown head) */
     V3 gpos, gup; int gok; /* walker_up: the gravity's up at gpos */
+    u32 lv2[2]; int lvt[3]; float lva[2]; /* Unizo: its land / wall-hit level sounds (kept 30 frames: frames left, levelA), the roll's sRollSoundTime */
     u32 lv; /* its level sound's handle (se_level) */
     u8 clipped; /* out of the view at the last draw (ClippingJudge: LiveActor::startClipped stops its movement) */ } Kuribo; /* walking
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
@@ -121,6 +122,8 @@ typedef struct {
     V3 kick, up;      /* up: its Y axis (SpinDriver's wind-up) */
     int starter;      /* ScenarioStarter's flight: no ShootStart, its own motion times and first pose */
     float initrot;    /* its arg5: the first pose's turn about the path (calcInitPose) */
+    int shown, shine; /* shown last frame (-1 unknown: its Appear); _13C: frames Mario's sensor was last on it */
+    u32 lv;           /* its shine's level sound */
 } Launch;
 #define LAUNCH_BIND 300.0f
 
@@ -211,8 +214,10 @@ typedef struct {
     int shoot;       /* ShootingStar: falls, bursts into star pieces (update_shooting) */
     int plant;       /* PlantGroup (Flower / FlowerBlue / CutBush Group): its model drawn at each member (plants) */
     const unsigned char *railer; /* map part on a rail: its PATH entry; moves along it (update_railers) */
+    u8 rwork;        /* RailMoveObj _D0: its rail mover worked last frame (update_railers' StageEffect SEs) */
     int press;       /* RailMoveObjPress (RGTowerPressGroundA, ReverseGravityRoomPressGroundA / B): ATYPE_MAP_OBJ_PRESS */
     int talkcls;     /* SignBoard 1, Tico 2, Kinopio 3: update_talkers */
+    u32 lv[2];       /* its level sounds' handles (Tico's wait / float) */
     const Model *md_bloom; /* its "<model>Bloom" model (PlanetMap::initBloomModel, createModelObjBloomModel) or NULL */
     int otamagma;    /* OtaKingMagma's collision (initCollisionParts "OtaKingMagma"): drawn with OtaKing (ota) */
     int bridge;      /* PhantomShipBridge 1; its Move collision part 2 + the bridge's inst index (update_bridges) */
@@ -520,6 +525,7 @@ enum { HH_WAIT, HH_SEARCH, HH_ATTACK, HH_REST, HH_RECOVER, HH_DAMAGE, HH_RISE, H
 static struct {
     int row, nrv, step, imm, ct, clen, spun;
     V3 pos, up, f; /* _94, _A0 */
+    u32 lv; /* its level sound */
 } hhps[MAX_HHPS];
 static int nhhps;
 static void seesaw_matrix(Inst *in);
@@ -546,6 +552,7 @@ static struct {
     float seed_m[16]; /* mSeedMtx */
     VPoint info[VINE_PTS], stalk[VINE_PTS];
     struct { float coord, size, spring, sspeed; V3 pos, side, up, front; float m[16]; } leaf[VINE_LEAVES];
+    u32 lv; /* SE_OJ_LV_PLANT_GROW */
 } vines[MAX_VINES];
 static int nvines, vine_ride = -1, vine_test_sq;
 static int dino_cam; /* its damage camera is on (startDamageCamera .. endDamageCamera) */
@@ -789,7 +796,7 @@ static const Model *m_coin, *m_purple, *m_piece, *m_kuribo, *m_takohei, *m_packu
 static Anim *mario_anim;
 /* ElectricRail (Petari ElectricRail.cpp, ElectricRailHolder.cpp): one segment per pair of rail points, arg0 rails
  * stacked 100 apart against gravity (default 1) */
-typedef struct { V3 a, b; int h, row; } Spark;
+typedef struct { V3 a, b, c; int h, row, on; u32 lv; } Spark; /* c: its rail's box centre (calcRailClippingInfo), its sound's place */
 static Spark *erails;
 static int nerails;
 static const Model *m_erail, *m_fireball, *m_rock;
@@ -1463,6 +1470,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         L->start = r->type == t_starter ? 0 : super ? 45 : 20; /* ScenarioStarter flies at once (exeRailMove) */
         { V3 x, z; row_axes(r, &x, &z); L->up = vnorm(vcross(z, x)); } /* MR::calcUpVec */
         L->row = i;
+        L->shown = -1; L->shine = 0; L->lv = 0;
         nlaunches++;
     }
     int t_erail = scene_type(s, "ElectricRail");
@@ -1473,6 +1481,11 @@ void game_init(const Scene *s, const unsigned char *blob)
             u32 np; int closed;
             const float *pts = r->type == t_erail ? find_rail(blob, r->zone, r->path, &np, &closed) : NULL;
             if (!pts || np < 2) continue;
+            V3 lo = v3(pts[0], pts[1], pts[2]), hi = lo;
+            for (u32 k = 1; k < np; k++) {
+                lo = v3(fminf(lo.x, pts[3 * k]), fminf(lo.y, pts[3 * k + 1]), fminf(lo.z, pts[3 * k + 2]));
+                hi = v3(fmaxf(hi.x, pts[3 * k]), fmaxf(hi.y, pts[3 * k + 1]), fmaxf(hi.z, pts[3 * k + 2]));
+            }
             for (u32 k = 0; k < (closed ? np : np - 1); k++, n++) {
                 if (!pass) continue;
                 const float *a = pts + 3 * k, *b = pts + 3 * ((k + 1) % np);
@@ -1480,6 +1493,7 @@ void game_init(const Scene *s, const unsigned char *blob)
                 erails[n].b = v3(b[0], b[1], b[2]);
                 erails[n].h = r->arg[0] > 0 ? (r->arg[0] < 8 ? r->arg[0] : 8) : 1;
                 erails[n].row = i;
+                erails[n].c = vmul(vadd(lo, hi), 0.5f); erails[n].on = 0; erails[n].lv = 0;
             }
         }
         if (!pass) erails = mem_alloc(MEM_OBJECTS, (n + 1) * sizeof(Spark));
@@ -1881,8 +1895,10 @@ static void update_kgunners(void)
         if (!in->kgun || !row_shown(in->row)) continue;
         unsigned short *t = &row_step[in->row];
         signed char *ph = &row_turn[in->row];
+        if (*ph == 1) insts[i].lv[0] = se_level(SE_OJ_LV_K_GUNNER_CHARGE, &in->m[12], insts[i].lv[0]); /* exeCharge */
         if (*ph == 0 && *t == 120) { *ph = 1; *t = 0; }
         else if (*ph == 1 && *t >= 99) { /* isBtkStopped */
+            se_start(SE_OJ_K_GUNNER_FIRE, &in->m[12]);
             obj_play(in, "killergunnersingleshoot", 0, 0);
             fx_named("KillerGunnerSingle", "KillerGunnerSingleSmoke", in->m, in->anim ? (const float (*)[16])in->anim->world : NULL, NULL);
             *ph = 2; *t = 0;
@@ -2106,7 +2122,7 @@ static void update_killers(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     for (int i = 0; i < ninsts; i++) {
-        const Inst *in = &insts[i];
+        Inst *in = &insts[i];
         if (!in->killer || !row_shown(in->row)) continue;
         Killer *k = killer_of(in->row);
         if (!k) continue;
@@ -2124,6 +2140,8 @@ static void update_killers(void)
             int s = *t < 20 ? *t : 20;
             k->front = f; k->up = up; k->rotz = 0; k->freeze = 0;
             k->pos = vadd(base, vmul(f, 200.0f * s / 20.0f));
+            if (*t < 20) in->lv[0] = se_level(SE_EM_LV_KILLER_STANDBY, &k->pos.x, in->lv[0]); /* isLessStep(cAppearMoveFrame) */
+            if (*t == 20) se_start(SE_EM_KILLER_STANDBY_END, &k->pos.x);
             if (*t > 20 && *t < 42) {
                 int u = *t - 20;
                 k->pos = vadd(k->pos, vmul(f, (22 - u) * sinf(u * 100.0f * 0.0174533f) * 18.0f / 22.0f));
@@ -2132,6 +2150,7 @@ static void update_killers(void)
                 float m[16];
                 basis_matrix(m, k->pos, k->up, k->front, 0);
                 fx_emit(FX_HOMINGKILLER_SHOOT, m);
+                se_start(SE_EM_KILLER_FIRING, &k->pos.x);
                 *ph = 1; *t = 0;
             }
             continue;
@@ -2140,11 +2159,13 @@ static void update_killers(void)
         int brk = 0;
         if (!k->freeze && pointer_a() && cursor_sees(k->pos, 40.0f)) { /* tryFreeze */
             k->freeze = 1; k->fpos = k->pos;
+            se_start(SE_SY_DPD_HIT, NULL); /* exeFreeze: startDPDHitSound (mFreezeTime 0; no ME) */
             printf("homing killer %d frozen\n", in->row);
         }
         if (k->freeze) { /* exeFreeze: still, shaking along the camera's X, its timers held */
             --*t;
             k->ftime++;
+            in->lv[1] = se_level(SE_EM_LV_DPD_POINT, &k->pos.x, in->lv[1]); /* startDPDFreezeLevelSound */
             V3 ce, cw, cu;
             float fovy;
             camera_pose(&ce, &cw, &cu, &fovy);
@@ -2164,9 +2185,11 @@ static void update_killers(void)
             V3 to = vsub(mario->pos, k->pos);
             float d = vlen(to), start = r->arg[0] > 0 ? (float)r->arg[0] : 2000.0f;
             if (*t >= 35 && r->arg[2] <= 0 && d < start && d > 0 &&
-                (r->arg[3] > 0 || vdot(vmul(to, 1.0f / d), k->front) > 0.0f)) { *ph = 2; printf("homing killer %d chases\n", in->row); }
+                (r->arg[3] > 0 || vdot(vmul(to, 1.0f / d), k->front) > 0.0f)) { *ph = 2; se_start(SE_EM_KILLER_JET, &k->pos.x); printf("homing killer %d chases\n", in->row); } /* exeChaseStart */
             k->up = vmul(g, -1.0f);
+            in->lv[0] = se_level(SE_EM_LV_KILLER_FLY, &k->pos.x, in->lv[0]); /* processMove: startMoveLevelSound */
         } else if (!brk) { /* processChase */
+            in->lv[0] = se_level(SE_EM_LV_KILLER_FLY, &k->pos.x, in->lv[0]); /* startMoveLevelSound(true): its alarm a Torpedo's */
             V3 tg = killer_target(k, g);
             k->front = turn_to(k->front, tg, 1.0f - (r->arg[1] >= 0 ? r->arg[1] : 3) * 0.0001f);
             killer_rotz(k, tg, g);
@@ -2189,6 +2212,7 @@ static void update_killers(void)
             float m[16];
             basis_matrix(m, k->pos, vmul(g, -1.0f), k->front, 0);
             fx_emit(FX_HOMINGKILLER_EXPLOSION, m);
+            se_start(SE_EM_KILLER_EXPLOSION, &k->pos.x);
             if (ground) fx_emit(FX_HOMINGKILLER_SANDCOLUMN, m);
             walker_explosion(k->pos);
             needle_attacked(k->pos, 250.0f);
@@ -2517,7 +2541,7 @@ static void update_birikyu(void)
             const unsigned char *pa = e + 24 + 12 * np + 12 * nr;
             int wait = *(const int *)(pa + 12 * (row_coord[row] > 0 ? nr - 1 : 0) + 4);
             if (*t >= wait) { *ph = 1; *t = 0; }
-        } else if (pointer_a() && cursor_sees(p, 30.0f)) { *ph = 5; *t = 0; biri_group(in, 0); } /* tryStopPointing */
+        } else if (pointer_a() && cursor_sees(p, 30.0f)) { *ph = 5; *t = 0; biri_group(in, 0); se_start(SE_SY_DPD_HIT, NULL); } /* tryStopPointing; exeStopPointing: startDPDHitSound (no ME) */
         else {
             if (in->biri_rail) {
                 const unsigned char *e = in->biri_rail;
@@ -2536,6 +2560,8 @@ static void update_birikyu(void)
         }
         biri_place(in);
         p = v3(in->m[12], in->m[13], in->m[14]);
+        if (*ph == 5) in->lv[1] = se_level(SE_EM_LV_DPD_POINT, &in->m[12], in->lv[1]); /* exeStopPointing: startDPDFreezeLevelSound */
+        else if (*ph != 4) in->lv[0] = se_level(SE_OJ_LV_BIRIKYU_MOVE, &in->m[12], in->lv[0]); /* exeMove / MoveCircle / WaitAtEdge / Attack */
         if (*ph != 2 && vlen(vsub(c, p)) < rad + HIT_BODY_R && !mario->hurt_timer) { /* sendMsgEnemyAttackElectric */
             hurt_mario(p, 15.0f);
             *ph = 2; *t = 0;
@@ -2620,9 +2646,11 @@ static void update_punch(void)
             dir = vlen(dir) > 1e-3f ? vnorm(dir) : vnorm(vtangent(mario->face, up));
             in->hvel = vadd(in->hvel, vmul(dir, 50.0f));
             *ph = 2; *t = 0;
+            se_start(SE_PM_SPIN_HIT, &in->m0[12]); /* startBlowHitSound */
             printf("punching kinoko %d punched" "\n", row);
         } else if ((*ph == 0 || *ph == 5) && mario->hip == HIP_FALL && d < 70.0f + HIT_BODY_R && vdot(to, up) < 0) { /* requestCrush */
             *ph = 4; *t = 0; mario->hip = HIP_LAND; mario->hip_t = 0; mario->vup = 0;
+            se_start(SE_OJ_PNC_KINOKO_CRASH, &in->m0[12]); /* exeCrushed */
             printf("punching kinoko %d crushed" "\n", row);
             punch_place(in);
             continue;
@@ -2633,10 +2661,12 @@ static void update_punch(void)
         switch (*ph) {
         case 0: case 5: /* Wait, CrushedEnd */
             in->hvel = vmul(vadd(in->hvel, vmul(off, 0.008f)), 0.94f);
+            if (*ph == 5 && *t == 10) se_start(SE_OJ_PNC_KINOKO_RECOVER, &in->m0[12]); /* exeCrushedEnd: step 10 */
             if (*ph == 5 && *t >= 60) { *ph = 0; *t = 0; }
             break;
         case 1: /* Swing */
             in->hvel = vmul(vadd(in->hvel, vmul(off, 0.008f)), 0.97f);
+            if (speed < 20.0f && vlen(in->hvel) >= 20.0f) se_start(SE_OJ_PNC_KINOKO_BOUND, &in->m0[12]); /* exeSwing: passing 20 */
             if (vlen(in->hvel) < 40.0f && vlen(off) < 50.0f) { *ph = 0; *t = 0; }
             break;
         default: { /* Punched, PunchedBrake: keep the height over the base plane */
@@ -2644,8 +2674,9 @@ static void update_punch(void)
             dv = dv > 60.0f ? 60.0f : dv < -60.0f ? -60.0f : dv;
             in->hvel = vadd(vtangent(in->hvel, up), vmul(up, dv));
             in->hvel = vmul(in->hvel, *ph == 2 ? 0.99f : 0.9f);
+            in->lv[0] = se_level(SE_OJ_LV_PNC_KINOKO_PUNCHED, &in->m0[12], in->lv[0]); /* exePunched / exePunchedBrake */
             if (*ph == 2 && *t > 5) { *ph = 3; *t = 0; }
-            else if (*ph == 3 && *t > 40) { *ph = 1; *t = 0; }
+            else if (*ph == 3 && *t > 40) { *ph = 1; *t = 0; se_start(SE_OJ_PNC_KINOKO_RETURN, &in->m0[12]); }
             break;
         }
         }
@@ -2663,6 +2694,7 @@ static void update_punch(void)
         }
         if (*ph == 1 && speed >= 15.0f && vlen(vsub(c, in->head)) < 70.0f + HIT_BODY_R && !mario->hurt_timer) { /* isEnableHitPlayer */
             hurt_mario(in->head, speed >= 30.0f ? 25.0f : 12.0f);
+            if (speed >= 30.0f) se_start(SE_PM_WALL_HIT_BODY, &mario->pos.x); /* attackSensor: startSoundPlayer */
             in->hvel = vmul(in->hvel, 0.3f);
             *ph = 0; *t = 0;
             printf("punching kinoko %d hits Mario" "\n", row);
@@ -2678,7 +2710,7 @@ static void update_punch(void)
  * on the ground the speed goes x 0.925; a wall reflects its direction (x 0.8); slower than 1.5 on the ground it stops.
  * It turns as it rolls (updateRotate). A walker hit, a death area, the void or water (ponytail: not checked) bring it
  * back to its place after a break (60 frames hidden). row_turn 0 wait, 1 move, 2 broken; row_step its frames.
- * ponytail: no effects or sounds, no coconut-to-coconut hits, no breakables, no moving ground (velocity areas) */
+ * ponytail: no water ground (the _WATER sounds), no coconut-to-coconut hits, no breakables, no moving ground (velocity areas) */
 static int area_inside(const Row *r, V3 p);
 static int in_water(V3 p, V3 up, float *depth);
 static int walker_blow(Kuribo *e, V3 from);
@@ -2709,6 +2741,14 @@ static void coco_hit(Inst *in, V3 dir, float spd, float fall, V3 up)
     row_turn[in->row] = 1; row_step[in->row] = 0;
 }
 
+/* SE_OJ_COCONUT_BOUND with level A (modifySe_Kawamura: volume (A / 100)^2 x 2, at most 1) */
+static void coco_bound(const Inst *in, int lv)
+{
+    float v = lv / 100.0f;
+    v = v * v * 2.0f;
+    se_volpitch(se_start(SE_OJ_COCONUT_BOUND, &in->head.x), v > 1.0f ? 1.0f : v, 1.0f);
+}
+
 static void update_coconuts(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -2732,9 +2772,11 @@ static void update_coconuts(void)
                 coco_hit(in, to, 35.0f, -20.0f, up);
                 in->cstrong = 1;
                 fx_at(FX_COCONUT_SPINHITMARK, in->head, up);
+                se_start(SE_PM_SPIN_HIT, &in->head.x); se_start(SE_OJ_COCONUT_LAUNCH, &in->head.x); /* receiveMsgPlayerAttack */
                 printf("coconut %d spun" "\n", row);
             } else if (mario->hip == HIP_FALL && d < rad + HIT_BODY_R) { /* isMsgPlayerHipDrop: sendMsgAwayJump */
                 coco_hit(in, to, 25.0f, -15.0f, up);
+                se_start(SE_OJ_COCONUT_FLIP_M, &in->head.x);
                 mario->hip = 0; mario->vup = 20.0f; mario->hvel = vmul(vnorm(vtangent(vmul(to, -1.0f), up)), 5.0f);
                 printf("coconut %d hip dropped" "\n", row);
             } else if (d < rad + HIT_BODY_R * 0.6f) {
@@ -2744,6 +2786,7 @@ static void update_coconuts(void)
                 if (in->cfall >= 0 && ms > 1.0f && ms >= cs && along >= 0.7071f) { /* isValidPushedFromPlayer: a kick */
                     float k = ms; /* _94 . his velocity, _94 being his direction */
                     coco_hit(in, mv, k * 1.1f > 18.0f ? k * 1.1f : 18.0f, -0.7f * k, up);
+                    se_start(SE_OJ_COCONUT_FLIP_S, &in->head.x); /* receiveOtherMsg */
                     printf("coconut %d kicked" "\n", row);
                 } else { /* sendMsgPush: Mario is pushed out */
                     V3 out = vtangent(vmul(to, -1.0f), up);
@@ -2762,8 +2805,15 @@ static void update_coconuts(void)
         int ground = collide_n(&center, up, rad, &gn, &wn, &wall);
         in->head = center;
         if (ground && in->cfall > 0) {
-            if (in->cfall > 2.5f) in->cfall *= -0.5f; /* bounce */
+            int lv = (int)(100.0f * (in->cspd / 35.0f)); /* calcMoveSpeed: the sounds' level */
+            if (lv > 100) lv = 100;
+            if (in->cfall > 2.5f) { in->cfall *= -0.5f; if (lv > 0) coco_bound(in, lv); } /* bounce */
             else in->cfall = 0;
+            if (lv >= 10) { /* SE_OJ_LV_COCONUT_ROLL, level A: pitch t / 2 + 0.5, volume t^2 */
+                float t1 = lv / 100.0f;
+                in->lv[0] = se_level(SE_OJ_LV_COCONUT_ROLL, &in->head.x, in->lv[0]);
+                if (in->lv[0]) se_volpitch(in->lv[0], t1 * t1, t1 * 0.5f + 0.5f);
+            }
             in->cspd *= 0.925f;
             in->cstrong = 0;
         }
@@ -2771,6 +2821,7 @@ static void update_coconuts(void)
             V3 n = vnorm(vtangent(wn, up));
             in->cfront = vnorm(vsub(in->cfront, vmul(n, 2.0f * vdot(in->cfront, n))));
             in->cspd *= 0.8f;
+            coco_bound(in, (int)(100.0f * (in->cspd / 35.0f)));
         }
         float fall = in->cfall + (in->cstrong ? 0.4f : 1.0f); /* updateGravity */
         in->cfall = fall > 25.0f ? 25.0f : fall;
@@ -2793,6 +2844,7 @@ static void update_coconuts(void)
             }
         }
         int broken = in->cstrong && hhp_blow(in->head, rad); /* HammerHeadPackun: isMsgToEnemyAttackBlow */
+        if (broken) se_start(SE_OJ_COCONUT_HIT, &in->head.x); /* attackSensor */
         if (in->cstrong) /* sendMsgToEnemyAttackBlow */
             for (int k = 0; k < nkuribo && !broken; k++) {
                 Kuribo *e = &kuribo[k];
@@ -2801,6 +2853,7 @@ static void update_coconuts(void)
                 int took = walker_blow(e, in->head);
                 if (!took) continue;
                 if (took < 0) { e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up); pop_coins(e->pos, e->up, 1); }
+                se_start(SE_OJ_COCONUT_HIT, &in->head.x); /* attackSensor */
                 printf("coconut %d blows walker row %d" "\n", row, e->row);
                 broken = 1;
             }
@@ -2810,6 +2863,7 @@ static void update_coconuts(void)
             for (int j = 0; j < 4 && !broken; j++) {
                 V3 sp = j < 3 ? sambo_joint(k, bi, j, v3(40.0f * sambos[k].s, 0, 0)) : sambo_head_pos(k, bi);
                 if (vlen(vsub(in->head, sp)) < (j < 3 ? 80.0f : 100.0f) * sambos[k].s + rad && sambo_try_fall(k)) {
+                    se_start(SE_OJ_COCONUT_HIT, &in->head.x); /* attackSensor */
                     printf("coconut %d knocks coco sambo row %d down" "\n", row, sambos[k].row);
                     broken = 1;
                 }
@@ -2817,7 +2871,8 @@ static void update_coconuts(void)
         }
         if (in->cstrong) needle_attacked(in->head, rad); /* sendMsgToEnemyAttackBlow */
         float depth;
-        if (!broken && (lost(in->head) || in_water(in->head, up, &depth))) broken = 1; /* tryDisappear */
+        if (!broken && in_water(in->head, up, &depth)) { se_start(SE_OJ_FALL_IN_WATER_M, &in->head.x); broken = 1; } /* tryDisappear: exeInWater */
+        if (!broken && lost(in->head)) broken = 1;
         for (int k = 0; k < nlogic && !broken; k++)
             if (logic[k].kind == LOGIC_DEATH && row_shown(logic[k].row) && area_inside(&sc->objs[logic[k].row], in->head)) broken = 1;
         if (broken) { fx_at(FX_COCONUT_COCONUTBREAK, in->head, up); *ph = 2; *t = 0; in->m[12] = 1e9f; continue; } /* hidden until it comes back */
@@ -5592,6 +5647,7 @@ static int update_launch(Player *m)
         mario_se(SE_PM_SPIN_ATTACK);
         se_start(SE_SY_CS_S_SPIN_DRV_START, NULL);
         launch_sound(L, SE_OJ_S_SPIN_DRV_PREP_JUMP);
+        if (in_water(L->pos, L->up, NULL)) launch_sound(L, SE_PM_SPIN_DRV_IN_WATER_1);
     }
     if (t == 4 && L->start < 45) se_start(SE_SY_CS_SPIN_DRV_START, NULL); /* SpinDriver::exeShootStart step 4 */
     if (t <= L->start) {
@@ -5612,6 +5668,7 @@ static int update_launch(Player *m)
         se_start(SE_SY_S_SPIN_DRV_ME_ALT, NULL);
         launch_sound(L, L->start < 45 ? SE_OJ_SPIN_DRV_JUMP : SE_OJ_S_SPIN_DRV_JUMP);
         mario_se(SE_PV_JUMP_JOY);
+        if (in_water(L->pos, L->up, NULL)) launch_sound(L, SE_PM_SPIN_DIV_IN_WATER_2);
     }
     if (!L->starter && L->pts) { /* the flight's level sound (SpinDriver: until _130, SuperSpinDriver: until _158) and
                                   * SuperSpinDriver's cool down at _158 (calcShootMotionTime) */
@@ -5803,6 +5860,17 @@ static int gcap_update(Player *m)
     const Row *r = &sc->objs[in->row];
     V3 tp = v3(in->m[12], in->m[13], in->m[14]);
     gcap.t++;
+    { /* GCaptureTarget::exeActive (decidedTarget: from phase 1); PULL's level A the distance to Mario
+       * (AudSoundObject_Takezawa: volume 1 -> 0.8 over 100..1500, pitch 0.5 -> 2 squared over 100..2000) */
+        u32 *lv = insts[gcap.target].lv;
+        int d = (int)vlen(vsub(tp, m->pos));
+        float k = (d - 100) / 1900.0f;
+        if (gcap.phase == 1 && gcap.t == 1) se_start(SE_OJ_MAGIC_PNT_G_ON, &tp.x);
+        lv[0] = se_level(SE_OJ_LV_MAGIC_PNT_G_PULL, &tp.x, lv[0]);
+        if (lv[0]) se_volpitch(lv[0], d <= 100 ? 1.0f : d >= 1500 ? 0.8f : 1.0f - 0.2f * (d - 100) / 1400.0f,
+                               d <= 100 ? 0.5f : d >= 2000 ? 2.0f : 0.5f + 1.5f * k * k);
+        lv[1] = se_level(SE_OJ_LV_MAGIC_PNT_G_POINT, &tp.x, lv[1]);
+    }
     if (gcap.phase == 1) { /* the ribbon on its way: Mario still free */
         if (!a && gcap.t > 30) { gcap.phase = 0; return 0; }
         if (gcap.t >= 30) { gcap.phase = 2; gcap.t = 0; gcap.vel = v3(0, 0, 0); m->hip = 0; } /* requestBind: zeroVelocity */
@@ -5810,7 +5878,10 @@ static int gcap_update(Player *m)
     }
     if (trig && gcap.phase == 3) { /* tryRecapture */
         int t = gcap_pick();
-        if (t >= 0) { gcap.target = t; gcap.phase = 2; gcap.t = 0; return 1; }
+        if (t >= 0) {
+            if (t != gcap.target) se_start(SE_OJ_MAGIC_PNT_G_ON, &insts[t].m[12]); /* decidedTarget: exeActive first step */
+            gcap.target = t; gcap.phase = 2; gcap.t = 0; return 1;
+        }
     }
     if (pad_pressed(PAD_R1) || (r->arg[0] >= 0 && vlen(vsub(tp, m->pos)) <= r->arg[0])) { gcap_release(m); return 0; }
     V3 c = vadd(m->pos, vmul(m->up, BODY_RADIUS));
@@ -6567,8 +6638,11 @@ static void update_dino(void)
             if (t == 1) { se_start(SE_BV_D_PAKKUN_DIE, at); se_start(SE_BM_D_PAKKUN_SLAVER, at); }
             if (t == 320) se_start(SE_BM_D_PAKKUN_FALL_DOWN, at);
             if (t == 385) se_start(SE_BM_D_PAKKUN_EXPLODE, at); /* its BCK stopped */
-        } else if (dino.seq == DSEQ_EGG && dino.nrv == DN_TURN && dino.nt == 1) { /* DinoPackunBattleEgg::exeTurn */
+        } else if ((dino.seq == DSEQ_EGG || dino.seq == DSEQ_LV1 || dino.seq == DSEQ_LV2 || dino.seq == DSEQ_LV3) &&
+                   dino.nrv == DN_TURN && dino.nt == 1) { /* DinoPackunBattleEgg / Vs1Lv1 / Vs1Lv2::exeTurn */
             se_start(SE_BV_D_PAKKUN_EGG_WALK, at); se_start(SE_BM_D_PAKKUN_SLAVER, at);
+        } else if ((dino.seq == DSEQ_LV1 || dino.seq == DSEQ_LV2 || dino.seq == DSEQ_LV3) && dino.nrv == DN_CHASE && dino.nt == 1) {
+            se_start(SE_BV_D_PAKKUN_CHASE, at); se_start(SE_BM_D_PAKKUN_SLAVER, at); /* Vs1Lv1 / Vs1Lv2::exeChase */
         }
     }
     if (dino.seq == DSEQ_WAIT) {
@@ -6989,8 +7063,9 @@ static void update_ota_fire(V3 c)
         if (!ota.fire[i].alive) continue;
         ota.fire[i].pos = vadd(ota.fire[i].pos, ota.fire[i].vel);
         Hit h[1];
-        if (kcl_query(ota.fire[i].pos, 60.0f, h, 1) > 0 || vlen(vsub(ota.fire[i].pos, mario->pos)) > 5000.0f) { ota.fire[i].alive = 0; continue; }
-        if (vlen(vsub(c, ota.fire[i].pos)) < 40.0f + HIT_BODY_R) { hurt_mario(ota.fire[i].pos, 20.0f); ota.fire[i].alive = 0; }
+        if (kcl_query(ota.fire[i].pos, 60.0f, h, 1) > 0 || vlen(vsub(ota.fire[i].pos, mario->pos)) > 5000.0f) {
+            se_start(SE_OJ_FIRE_BALL_BREAK, &ota.fire[i].pos.x); ota.fire[i].alive = 0; continue; } /* FireBall::kill */
+        if (vlen(vsub(c, ota.fire[i].pos)) < 40.0f + HIT_BODY_R) { hurt_mario(ota.fire[i].pos, 20.0f); se_start(SE_OJ_FIRE_BALL_BREAK, &ota.fire[i].pos.x); ota.fire[i].alive = 0; }
     }
     for (int i = 0; i < OTA_BUBBLES; i++) { /* FireBubble: Appear (gravity 0.75), Wait, Chase (4, gravity 2), Down */
         typeof(&ota.bub[0]) q = &ota.bub[i];
@@ -7012,11 +7087,12 @@ static void update_ota_fire(V3 c)
         int wall = 0, ground = collide_n(&cc, up, 40.0f, &gn, &wn, &wall);
         q->pos = vsub(cc, vmul(up, 40.0f));
         if (ground) q->vel = vtangent(q->vel, up);
-        if (q->state == 1 && ground && q->t > 2) { q->state = 2; q->t = 0; q->act = (rand() % 121) + 600; }
+        if (q->state == 1 && ground && q->t > 2) { q->state = 2; q->t = 0; q->act = (rand() % 121) + 600; se_start(SE_EM_FIRE_BUBBLE_JUMP, &q->pos.x); } /* exeAppear */
         else if (q->state == 2) {
-            if (q->t > 30 && vlen(vsub(q->pos, mario->pos)) < 2000.0f) { q->state = 3; q->t = 0; q->act = (rand() % 121) + 300; q->chase = 0; }
-            else if (q->t >= q->act) { q->state = 4; q->t = 0; }
-        } else if (q->state == 3 && ++q->chase > q->act) { q->state = 4; q->t = 0; }
+            if (q->t > 30 && vlen(vsub(q->pos, mario->pos)) < 2000.0f) { q->state = 3; q->t = 0; q->act = (rand() % 121) + 300; q->chase = 0; se_start(SE_EM_FIRE_BUBBLE_JUMP, &q->pos.x); } /* exeWait */
+            else if (q->t >= q->act) { q->state = 4; q->t = 0; se_start(SE_EM_FIRE_BUBBLE_DIE, &q->pos.x); } /* exeDown */
+        } else if (q->state == 3 && ++q->chase > q->act) { q->state = 4; q->t = 0; se_start(SE_EM_FIRE_BUBBLE_DIE, &q->pos.x); }
+        else if (q->state == 3 && q->t % 39 == 0) se_start(SE_EM_FIRE_BUBBLE_JUMP, &q->pos.x); /* exeChase: its Wait clip (39 frames) passing 0 */
         else if (q->state == 4 && q->t >= 60) { q->state = 0; continue; } /* its Down clip, then killOrWaitToApppear */
         if (q->state != 1 && q->state != 4 && vlen(vsub(c, q->pos)) < 30.0f + HIT_BODY_R) { hurt_mario(q->pos, 20.0f); q->state = 0; }
     }
@@ -7089,14 +7165,16 @@ static void update_orocks(void)
             }
             break;
         case OR_THROWCOCO: case OR_THROWFIRE:
-            if (!st) obj_play(in, "attack", 0, 0);
+            if (!st) { obj_play(in, "attack", 0, 0); se_start(o->nrv == OR_THROWCOCO ? SE_EV_OTAROCK_PRE_RALLYBALL : SE_EV_OTAROCK_PRE_HOTBALL, &o->pos.x); }
             if (st == 40) {
                 V3 m = orock_mouth(in, k);
+                if (o->nrv == OR_THROWFIRE) se_start(SE_EM_OTAROCK_FIRE_OUT, &o->pos.x);
                 if (o->nrv == OR_THROWCOCO) { /* throwCocoNut: appearAndThrow(mouth, +-5..10) */
                     for (int b = 0; b < 4; b++) if (!o->ball[b].state) {
                         typeof(&o->ball[0]) q = &o->ball[b];
                         float a = (5.0f + (rand() % 1000) * 0.005f) * (rand() & 1 ? 1.0f : -1.0f) * 0.0174533f;
                         q->pos = m; q->up = up_at(m, o->up); q->state = 1; q->t = 0; q->rally = 0;
+                        se_start(SE_OJ_COCONUT_BALL_SPIT_OUT, &m.x); /* CocoNutBall::exeThrow */
                         V3 tg = vadd(mario->pos, vmul(q->up, 120.0f)), d = rot_axis(vsub(tg, m), q->up, a);
                         q->vel = vmul(vnorm(d), 15.0f); /* setVelocityToPlayer(15, angle) */
                         break;
@@ -7115,16 +7193,17 @@ static void update_orocks(void)
         case OR_DOWN:
             if (!st) {
                 obj_play(in, "death", 0, 0);
+                se_start(SE_EM_OTAROCK_LAST_DAMAGE, &o->pos.x); se_start(SE_EV_OTAROCK_DIE, &o->pos.x);
                 for (int b = 0; b < 4; b++) o->ball[b].state = 0;
                 for (int f = 0; f < 3; f++) o->fire[f].alive = 0;
                 printf("ota rock %d down\n", in->row);
             }
             if (st == 2) scene_stop = 16;
             if (st == 3) camera_shake(SHAKE_NORMAL);
-            if (st >= 34) { orock_set(k, OR_DEAD); row_kill(in->row); game_rebind(); return; } /* Death 34: kill */
+            if (st >= 34) { se_start(SE_EM_OTAROCK_DIE, &o->pos.x); orock_set(k, OR_DEAD); row_kill(in->row); game_rebind(); return; } /* Death 34: kill */
             break;
         case OR_HIDE:
-            if (!st) obj_play(in, "hide", 0, 0);
+            if (!st) { obj_play(in, "hide", 0, 0); se_start(SE_EM_OTAROCK_HIDE, &o->pos.x); }
             if (st >= 29) orock_set(k, OR_HIDEWAIT);
             break;
         case OR_HIDEWAIT:
@@ -7132,7 +7211,8 @@ static void update_orocks(void)
             if (swa ? sw_on(r, SW_A) : dm < 3800.0f) orock_set(k, OR_SHOW);
             break;
         case OR_SHOW:
-            if (!st) obj_play(in, "show", 0, 0);
+            if (!st) { obj_play(in, "show", 0, 0); se_start(SE_EM_OTAROCK_APPEAR, &o->pos.x); }
+
             if (st >= 59) orock_set(k, OR_WAIT);
             break;
         }
@@ -7146,12 +7226,13 @@ static void update_orocks(void)
             Hit h[1];
             int bound = q->state != 2 && kcl_query(q->pos, 60.0f, h, 1) > 0;
             float far = q->state == 1 ? vlen(vsub(q->pos, o->pos)) - 10000.0f : vlen(vsub(q->pos, mario->pos)) - 5000.0f;
-            if (bound || far > 0) { q->state = 0; continue; }
+            if (bound || far > 0) { se_start(SE_OJ_COCONUT_BALL_BREAK, &q->pos.x); q->state = 0; continue; } /* tryToKill: kill */
             float dc = vlen(vsub(c, q->pos));
             if ((q->state == 1 || q->state == 4) && mario->spin_timer > 0 && dc < 400.0f && q->t > 1) { /* HitBackToHost */
                 q->rally++;
                 coco_hitback(q->pos, q->up, o->pos, body, &q->vel, &q->grav);
                 q->state = 2; q->t = 0;
+                se_start(SE_OJ_COCONUT_BALL_VOLLEY, &q->pos.x); /* exeHitBackToHost */
                 printf("ota rock %d: coconut hit back\n", in->row);
                 continue;
             }
@@ -7162,6 +7243,7 @@ static void update_orocks(void)
                 continue;
             }
             if (q->state == 2 && vlen(vsub(q->pos, body)) < 300.0f + 40.0f && o->nrv != OR_DOWN) { /* sendMsgEnemyAttack */
+                se_start(SE_OJ_COCONUT_BALL_BREAK, &q->pos.x); /* kill */
                 q->state = 0;
                 orock_set(k, OR_DOWN);
             }
@@ -7170,8 +7252,9 @@ static void update_orocks(void)
             if (!o->fire[f].alive) continue;
             o->fire[f].pos = vadd(o->fire[f].pos, o->fire[f].vel);
             Hit h[1];
-            if (kcl_query(o->fire[f].pos, 60.0f, h, 1) > 0 || vlen(vsub(o->fire[f].pos, mario->pos)) > 5000.0f) { o->fire[f].alive = 0; continue; }
-            if (vlen(vsub(c, o->fire[f].pos)) < 40.0f + HIT_BODY_R) { hurt_mario(o->fire[f].pos, 20.0f); o->fire[f].alive = 0; }
+            if (kcl_query(o->fire[f].pos, 60.0f, h, 1) > 0 || vlen(vsub(o->fire[f].pos, mario->pos)) > 5000.0f) {
+                se_start(SE_OJ_FIRE_BALL_BREAK, &o->fire[f].pos.x); o->fire[f].alive = 0; continue; } /* FireBall::kill */
+            if (vlen(vsub(c, o->fire[f].pos)) < 40.0f + HIT_BODY_R) { hurt_mario(o->fire[f].pos, 20.0f); se_start(SE_OJ_FIRE_BALL_BREAK, &o->fire[f].pos.x); o->fire[f].alive = 0; }
         }
     }
 }
@@ -7231,7 +7314,7 @@ static void update_ota(void)
                 ota_ball_aim(b, 15.0f, throw_ang + (ota.ec % 2 == ota.hits % 2 ? rnd : -rnd));
                 ota.ec++;
                 ota_fx("OtaKingCocoAttack");
-                { float at[3] = {k->pos.x, k->pos.y, k->pos.z}; se_start(SE_OJ_COCONUT_BALL_SPIT_OUT, at); } /* CocoNutBall::exeThrow */
+                { float at[3] = {k->pos.x, k->pos.y, k->pos.z}; se_start(SE_BM_OTAKING_SPIT_RALLY_BALL, at); } /* CocoNutBall::exeThrow: OtaKing's (_D8) */
                 printf("ota king: coconut thrown" "\n");
                 break;
             }
@@ -7318,6 +7401,7 @@ static void update_ota(void)
                 V3 fr = ota_rot(d0, ota.up, (n + 0.5f) * 60.0f + ota_rnd(-30.0f, 30.0f));
                 ota.bub[i].pos = bp; ota.bub[i].front = fr; ota.bub[i].state = 1; ota.bub[i].t = 0;
                 ota.bub[i].vel = vadd(vmul(ota.up, 37.5f), vmul(fr, 15.0f)); /* cBubbleAppearVelocity */
+                se_start(SE_EM_FIRE_BUBBLE_LAUNCH, &bp.x); /* FireBubble::exeAppear */
                 n++;
             }
         }
@@ -7543,14 +7627,14 @@ static void update_sambos(void)
         switch (q->nrv) {
         case CS_HIDEWAIT: body = "hidewait"; bloop = 1; if (dm < search) sambo_set(k, CS_APPEAR); break;
         case CS_APPEAR: body = "appear"; if (q->t == 1) sambo_turn(k, 180.0f); sambo_turn(k, 1.0f);
-            if (q->t == 61) { sambo_fx(k, in, "CocoSamboSmoke"); camera_shake(SHAKE_NORMAL); } /* cAppearUpFrame 60 */
+            if (q->t == 61) { sambo_fx(k, in, "CocoSamboSmoke"); camera_shake(SHAKE_NORMAL); se_start(SE_EM_SFSAMBO_APPEAR, &q->pos.x); } /* cAppearUpFrame 60 */
             if (q->t == 106) camera_shake(SHAKE_WEAK); /* cAppearLandFrame 105 */
             if (q->t >= 139) sambo_set(k, CS_WAIT);
             break;
         case CS_WAIT: body = "wait"; bloop = 1; sambo_turn(k, 1.0f);
             if (dm < 700.0f) sambo_set(k, CS_ATTACK); else if (dm >= search + 100.0f) sambo_set(k, CS_HIDE);
             break;
-        case CS_HIDE: body = "hide"; if (q->t == 66) { sambo_fx(k, in, "CocoSamboSmoke"); camera_shake(SHAKE_WEAK); } if (q->t >= 99) sambo_set(k, CS_HIDEWAIT); break;
+        case CS_HIDE: body = "hide"; if (q->t == 66) { sambo_fx(k, in, "CocoSamboSmoke"); camera_shake(SHAKE_WEAK); se_start(SE_EM_SFSAMBO_HIDE, &q->pos.x); } if (q->t >= 99) sambo_set(k, CS_HIDEWAIT); break;
         case CS_ATTACK: body = "attack"; if (q->t < 30) sambo_turn(k, 1.0f);
             if (q->t == 116) { sambo_head_fx(k, in, "CocoSamboAttack"); camera_shake(SHAKE_NORMAL); } /* checkPassBckFrame(115) */
             if (q->t >= 169) sambo_set(k, CS_ATTACKINT);
@@ -7560,6 +7644,7 @@ static void update_sambos(void)
             body = "hit";
             if (q->t == 1) {
                 sambo_fx(k, in, "Hit");
+                se_start(SE_EM_SFSAMBO_DAMAGE, &q->pos.x); se_start(SE_EM_SFSAMBO_BLOW_HEAD, &q->pos.x);
                 q->hpos = sambo_joint(k, in, 3, v3(0, 0, 0));
                 V3 off = vsub(q->pos, q->hpos), vo = vmul(q->up, vdot(off, q->up)), ho = vtangent(off, q->up);
                 q->hvel = vadd(vmul(ho, 1.0f / 45.0f), vmul(q->up, (2.0f * vdot(vo, q->up) + 2.0f * 45.0f * 45.0f) / (2.0f * 45.0f)));
@@ -7572,16 +7657,19 @@ static void update_sambos(void)
             if (q->t == 4) camera_shake(SHAKE_NORMAL);
             if (q->t >= 80) { /* isBckStopped */
                 sambo_fx(k, in, "DeathSmokeSpine1"); sambo_fx(k, in, "DeathSmokeSpine2"); sambo_fx(k, in, "DeathSmokeSpine3");
+                se_start(SE_EM_EXPLODE_S, &q->pos.x);
                 sambo_set(k, CS_FALLHEADHIDE);
             }
             break;
         case CS_FALLHEADHIDE: body = "hidewait"; bloop = 1; if (q->hnrv == CH_CONNECTED) sambo_set(k, CS_RECOVERWAIT); break;
         case CS_RECOVERWAIT: body = "recover"; if (q->t >= 90) sambo_set(k, CS_RECOVER); break;
         case CS_RECOVER: body = "recover"; head = "recover"; if (q->t == 1) sambo_turn(k, 180.0f); if (q->t >= 89) sambo_set(k, CS_APPEAR); break;
-        case CS_PRESSY: head = "pressy"; if (q->t >= 35) { sambo_head_fx(k, in, "DeathSmokeHead"); sambo_set(k, CS_DEAD); row_kill(in->row); } break;
+        case CS_PRESSY: head = "pressy"; if (q->t == 1) se_start(SE_EM_STOMPED_S, &q->pos.x);
+            if (q->t >= 35) { sambo_head_fx(k, in, "DeathSmokeHead"); se_start(SE_EM_EXPLODE_S, &q->hpos.x); sambo_set(k, CS_DEAD); row_kill(in->row); } break;
         case CS_BLOW: if (q->t == 2) scene_stop = 6; /* stopScene(6) at step 1, shakeCameraNormal at 2 */
+            if (q->t == 1) se_start(SE_PM_SPIN_HIT, &q->pos.x); /* startBlowHitSound */
             if (q->t == 3) camera_shake(SHAKE_NORMAL);
-            if (q->t >= 20) { sambo_head_fx(k, in, "DeathSmokeHead"); sambo_set(k, CS_DEAD); row_kill(in->row); } break;
+            if (q->t >= 20) { sambo_head_fx(k, in, "DeathSmokeHead"); se_start(SE_EM_EXPLODE_S, &q->hpos.x); sambo_set(k, CS_DEAD); row_kill(in->row); } break;
         }
         switch (q->hnrv) { /* CocoSamboHead */
         case CH_FALL:
@@ -7590,7 +7678,9 @@ static void update_sambos(void)
             q->hpos = vadd(q->hpos, q->hvel);
             if (q->ht >= 45) { q->hpos = q->pos; q->hvel = v3(0, 0, 0); sambo_hset(k, CH_FALLLAND); }
             break;
-        case CH_FALLLAND: head = "land"; if (q->ht == 1) camera_shake(SHAKE_WEAK); if (q->ht >= 14) sambo_hset(k, CH_SWOON); break;
+        case CH_FALLLAND: head = "land"; if (q->ht == 1) { camera_shake(SHAKE_WEAK); se_start(SE_EM_SFSAMBO_HEAD_LAND, &q->hpos.x); }
+            if (q->ht >= 14) sambo_hset(k, CH_SWOON);
+            break;
         case CH_SWOON: head = "swoon"; if (q->ht >= 180) sambo_hset(k, CH_SWOONEND); break;
         case CH_SWOONEND: head = "swoonend";
             if (q->ht == 96) camera_shake(SHAKE_NORMAL); /* cSwoonEndDamagedFrame 95 */
@@ -8264,8 +8354,57 @@ static void tk_start_camera(int k)
             td.cam_on = 2;
     }
 }
+/* AudTalkSoundData cTalkSoundList: MR::startTalkSound's numbers (a message's info byte 6) */
+static const u32 talk_snd[] = {
+    0xFFFFFFFFu, SE_SV_KINOPIO_TALK_HEY, SE_SV_KINOPIO_TALK_YAHOO, SE_SV_KINOPIO_TALK_ANGRY, SE_SV_KINOPIO_TALK_SAD,
+    SE_SV_KINOPIO_TALK_HAPPY, SE_SV_KINOPIO_TALK_SLEEP, SE_SV_RABBIT_TALK_NORMAL, SE_SV_RABBIT_TALK_CAUGHT,
+    SE_SV_RABBIT_TALK_THATS, SE_SV_RABBIT_TALK_HELP, SE_SV_RABBIT_TALK_THANKS, SE_SV_PENGUIN_L_TALK_NORMAL,
+    SE_SV_PENGUIN_L_TALK_PLEASED, SE_SV_PENGUIN_L_TALK_NG, SE_SV_PENGUIN_L_TALK_QUESTION,
+    SE_SV_PENGUIN_L_TALK_DISTANT, SE_SV_PENGUIN_L_TALK_NORMAL_L, SE_SV_PENGUIN_L_TALK_PLEASED_L,
+    SE_SV_PENGUIN_L_TALK_NG_L, SE_SV_PENGUIN_L_TALK_QUESTION_L, SE_SV_PENGUIN_L_TALK_OH, SE_SV_PENGUIN_S_TALK_NORMAL,
+    SE_SV_PENGUIN_S_TALK_GLAD, SE_SV_PENGUIN_S_TALK_GLAD_HIGH, SE_SV_PENGUIN_S_TALK_ANGRY, SE_SV_PENGUIN_S_TALK_SAD,
+    SE_SV_PENGUIN_S_TALK_HAPPY, SE_SV_PENGUIN_S_TALK_STRONG, SE_SV_PENGUIN_S_TALK_NORMAL_W,
+    SE_SV_PENGUIN_S_TALK_GREET, SE_SV_PENGUIN_S_TALK_WIN, SE_SV_PENGUIN_S_TALK_LOSE, SE_SV_PENGUIN_S_TALK_OUCH,
+    SE_SV_PENGUIN_ACE_TALK_NORMAL, SE_SV_PENGUIN_ACE_TALK_GREET, SE_SV_PENGUIN_ACE_TALK_WIN,
+    SE_SV_PENGUIN_ACE_TALK_LOSE, SE_SV_SYATI_TALK_NORMAL, SE_SV_SYATI_TALK_RING_MEET, SE_SV_SYATI_TALK_RING_WIN,
+    SE_SV_SYATI_TALK_RING_LOSE, SE_SV_SYATI_TALK_PHAN_MEET, SE_SV_SYATI_TALK_PHAN_WIN, SE_SV_SYATI_TALK_PHAN_LOSE,
+    SE_SV_PENGUIN_SS_HAPPY, SE_SV_PENGUIN_SS_GREET, SE_SV_PENGUIN_SS_DAMAGE, SE_SV_PENGUIN_SS_DISAPPOINTED,
+    SE_SV_PENGUIN_SS_PLEASED, SE_SV_PENGUIN_SS_ANGRY, SE_SV_HONEYBEE_TALK_NORMAL, SE_SV_HONEYBEE_TALK_CONFUSION,
+    SE_SV_HONEYBEE_TALK_QUESTION, SE_SV_HONEYBEE_TALK_SURPRISE, SE_SV_HONEYBEE_TALK_ORDER, SE_SV_HONEYBEE_TALK_LAUGH,
+    SE_SV_HONEYBEE_TALK_GLAD, SE_SV_TICO_TALK_NORMAL, SE_SV_TICO_TALK_GLAD, SE_SV_TICO_TALK_ANGRY,
+    SE_SV_TICO_TALK_SAD, SE_SV_TICO_TALK_HAPPY, 0xFFFFFFFFu, SE_SV_TICO_TICO, SE_SV_TICO_TALK_CONFUSION,
+    SE_SV_TICO_TALK_THANKS, SE_SV_LUIGI_MARIO, SE_SV_LUIGI_FRIGHTENED, SE_SV_LUIGI_SORRY, SE_SV_LUIGI_THANKS,
+    SE_SV_LUIGI_HEY, SE_DM_KINOPIO_CHIEF, SE_SV_TERERACER_TALK_NORMAL, SE_SV_TERERACER_TALK_LAUGH,
+    SE_SV_TERERACER_TALK_REGRET, SE_SV_CARETAKER_SHORT, SE_SV_CARETAKER_NORMAL, SE_SV_CARETAKER_LONG,
+    SE_SV_CARETAKER_REPEAT, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu,
+    SE_SV_HONEYQUEEN_TALK_SURPRISE, SE_SV_HONEYQUEEN_TALK_THANKS, SE_SV_HONEYQUEEN_TALK_WORRY,
+    SE_SV_HONEYQUEEN_TALK_AA, SE_SV_HONEYQUEEN_TALK_AN, SE_SV_HONEYQUEEN_TALK_UFUFU, SE_SV_KINOPIO_TALK_WELCOME,
+    SE_SV_KINOPIO_TALK_BEAUTIFUL, SE_SV_KINOPIO_TALK_SURPRISE, SE_SV_KINOPIO_PUHA, SE_SV_KINOPIO_TALK_HELP,
+    SE_SV_KINOPIO_TALK_TREMBLE, SE_SV_KINOPIO_TALK_STRONG, SE_SV_KINOPIO_TALK_LOOK_OUT, SE_SV_KINOPIO_TALK_WOW,
+    SE_SV_PEACH_TALK_HELP, SE_SV_ROSETTA_TALK_NORMAL, SE_SV_ROSETTA_TALK_SURPRISE, SE_SV_ROSETTA_TALK_SMILE,
+    SE_SV_ROSETTA_TALK_WAITING, SE_SV_ROSETTA_TALK_WORRIED, SE_SV_TICOFAT_TALK_NORMAL, SE_SV_TICOFAT_TALK_KITA,
+    SE_SV_TICOFAT_META, SE_SV_KINOPIOCHIEF_TALK_HEY, SE_SV_KINOPIOCHIEF_TALK_LAUGH, SE_SV_KINOPIOCHIEF_TALK_YAHOO,
+    SE_SV_TICOFAT_TALK_GIVE_ME, SE_SV_TICOFAT_TALK_WAKU, SE_SV_BUTLER_TALK_SURPRISE, SE_SV_BUTLER_TALK_AGREE,
+    SE_SV_BUTLER_TALK_WORRIED, SE_SV_BUTLER_TALK_NORMAL, SE_SV_PENGUIN_OLD_GREET, SE_SV_PENGUIN_OLD_GRAD,
+    SE_SV_PENGUIN_OLD_SAD, SE_SV_PENGUIN_OLD_NORMAL, SE_SV_LUIGI_TALK_TIRE, SE_SV_LUIGI_TALK_YAH,
+    SE_SV_LUIGI_TALK_HELP, SE_SV_LUIGI_TALK_OH_YEAH, SE_SV_BUTLER_TALK_QUESTION, SE_SV_ROSETTA_TALK_LETS_START,
+    SE_SV_ROSETTA_TALK_SOMUCH_TODAY, SE_SV_PENGUIN_OLD_SCARED, SE_SV_TICOCOMET_TALK_PURURIN, SE_SV_TICOCOMET_TALK_DON,
+    SE_SV_KINOPIO_TALK_WATER, SE_SV_KINOPIO_TALK_HEY_SNOR, SE_SV_KINOPIO_TALK_SAD_SNOR, SE_SV_TICOSHOP_TALK_PIKARIN,
+    SE_SV_TICOSHOP_TALK_KITA, SE_BV_KOOPAJR_TLK_PROVOKE, SE_BV_KOOPA_TLK_LAUGH, SE_BV_KOOPA_TLK_NORMAL,
+    SE_BV_KOOPA_TLK_REGRET, SE_BV_KOOPA_TLK_CALM, SE_BV_KOOPA_TLK_EXCITED, SE_SV_TICOFAT_TALK_YEAH,
+    SE_SV_ROSETTA_TALK_THATS_ALL, SE_SV_CARE_TAKER_TRAMPLE, SE_SV_KINOPIO_NO_MAIL, SE_SV_KINOPIO_LOOK_MAIL,
+    SE_SV_KINOPIO_TALK_SHOUT, SE_SV_KINOPIOCHIEF_TALK_EVASIVE, SE_SV_ROSETTA_TALK_SO, SE_SV_ROSETTA_TALK_LOOK,
+    SE_SM_SIGNBOARD_HEY, SE_SV_ROSETTA_TALK_PLEASE, SE_SV_ROSETTA_TALK_FU, SE_SV_ROSETTA_TALK_TROUBLE,
+    SE_SV_ROSETTA_TALK_SIGH, SE_SV_ROSETTA_TALK_QUESTION, SE_SV_ROSETTA_TALK_SMILE_EP_B, SE_SV_HONEYBEE_TALK_SLEEP,
+    SE_SV_KINOPIO_TALK_TIRED, SE_SV_CARETAKER_ANGRY_FAST,
+};
 static void ts_open(void)
 {
+    if (td.st_kind != TS_BASE) { /* TalkStateShort::open / TalkStateEvent::open: MR::startTalkSound(info->_6, host) */
+        const Talker *t = &talkers[td.st];
+        u8 n = t->msg >= 0 ? tk_msg[t->msg].snd : 0;
+        if (n < sizeof talk_snd / sizeof *talk_snd && talk_snd[n] != 0xFFFFFFFFu) se_start(talk_snd[n], &t->m[12]);
+    }
     if (td.st_kind == TS_EVENT || td.st_kind == TS_NORMAL) { td.s1C = 1; td.pages = 0; td.s10 = 0; tk_start_camera(td.st); }
     if (td.bl && td.st_kind != TS_BASE) tk_balloon_open(td.bl, td.st);
 }
@@ -8513,8 +8652,15 @@ static void update_talkers(void)
         memcpy(m, in->m, 64);
         for (int j = 0; j < 12; j++) m[j] /= in->s;
         talk_place(k, m);
+        if (tico) { /* Tico::control: SE_SM_LV_TICO_FLOAT's level A 100 x getLinerValueFromMinMax(its move, 1, 11, 0.2, 1):
+                     * volume A / 100 (AudSoundObject_Takezawa); ours never moves: 0.2 */
+            Inst *w = &insts[i];
+            w->lv[0] = se_level(SE_SM_LV_TICO_WAIT, &m[12], w->lv[0]);
+            w->lv[1] = se_level(SE_SM_LV_TICO_FLOAT, &m[12], w->lv[1]);
+            if (w->lv[1]) se_volpitch(w->lv[1], 0.2f, 1.0f);
+        }
         if (tico && sc->objs[in->row].arg[1] == 3) { /* Tico::exeTalk: at its talk's end Meta (gone) */
-            if (talk_near_at_end(k)) row_kill(in->row);
+            if (talk_near_at_end(k)) { se_start(SE_SM_METAMORPHOSE_SMOKE, &m[12]); row_kill(in->row); } /* exeMeta */
         } else talk_near(k); /* exeWait: tryTalkNearPlayer (Tico / Kinopio: ...AndStartTalkAction) */
     }
 }
@@ -8699,6 +8845,7 @@ static struct {
     float scr[16], lit[16]; /* _17C, _1AC: its screen effects' host matrices (updateScreenEffect) */
     Launch fly;
     struct { V3 pos; int on, col; } gift[8];
+    int absorb, chem; u32 lv, lv2; /* _204 (startAbsorbSound), _200 (Chem's eating sound), level sound handles */
 } fats[MAX_FATS];
 enum { TF_PREP, TF_WAIT, TF_POINT, TF_EAT, TF_CHEM, TF_TEST, TF_FULLNESS, TF_DEMO, TF_FLY, TF_WIPEOUT, TF_WIPEIN, TF_INFO,
        TF_AFTER, TF_META, TF_GONE };
@@ -8728,6 +8875,12 @@ static void wipe_draw(void)
 }
 
 static void fat_set(int k, int n) { fats[k].nrv = n; fats[k].t = 0; }
+static void fat_dance_se(int k, u32 id) /* startLevelSound(id, getDanceSeTranspose()): port 11 (AudSoundObject_Takezawa) */
+{
+    int v = (fats[k].total - fats[k].left - 1) / 50;
+    fats[k].lv2 = se_level(id, &fats[k].m0[12], fats[k].lv2);
+    if (fats[k].lv2) se_port(fats[k].lv2, 11, v < 0 ? 0 : v > 32 ? 32 : v);
+}
 /* startMultiActorCameraTargetSelf: its event camera, the target its base matrix */
 static void fat_cam(const float *m0, int row, const char *event)
 {
@@ -8828,6 +8981,7 @@ static void update_ticofat(void)
                 f->gift[g].on = 0; f->inflight--;
                 if (f->left > 0) f->left--;
                 f->scale = 1.0f + (float)(f->total - f->left) / f->total * 0.9f;
+                if (f->absorb <= 0) { se_start(SE_SM_TICOFAT_ABSORB, &f->m0[12]); f->absorb = 5; } /* startAbsorbSound */
                 if (f->nrv != TF_EAT) fat_set(k, TF_EAT);
                 continue;
             }
@@ -8835,6 +8989,9 @@ static void update_ticofat(void)
         }
         const char *clip = NULL;
         int loop = 1;
+        f->absorb--;
+        if (f->nrv <= TF_CHEM || f->nrv == TF_FULLNESS || f->nrv == TF_DEMO) /* TicoFat::control */
+            f->lv = se_level(SE_SM_LV_TICO_WAIT, &f->m0[12], f->lv);
         switch (f->nrv) {
         case TF_PREP: /* its talk (onRootNodeAutomatic, in front): the event node starts the eating */
             clip = fat_size("wait", f->scale);
@@ -8851,23 +9008,31 @@ static void update_ticofat(void)
             if (f->t == 1) fat_message(k, 0);
             if (f->g178 <= 0) fat_set(k, TF_WAIT); else talk_force(f->tk0, 1);
             break;
-        case TF_EAT: clip = f->t < 41 ? fat_size("eatstart", f->scale) : fat_size("eat", f->scale); if (!f->inflight) fat_set(k, TF_CHEM); break;
+        case TF_EAT: clip = f->t < 41 ? fat_size("eatstart", f->scale) : fat_size("eat", f->scale);
+            fat_dance_se(k, SE_SM_LV_TICOFAT_EATING);
+            if (!f->inflight) fat_set(k, TF_CHEM);
+            break;
         case TF_CHEM:
             clip = "chem";
+            if (f->t == 1) f->chem = 5;
+            if (f->chem > 0) { f->chem--; fat_dance_se(k, SE_SM_LV_TICOFAT_EATING); }
             if (f->t >= 76) { if (f->g178 > 0) { f->g174 = 8; fat_set(k, TF_POINT); } else { f->g174 = 0; fat_set(k, TF_WAIT); } }
             break;
         case TF_TEST: clip = fat_size("excite", f->scale); fat_message(k, 2); talk_force(f->tk0, 0); fat_set(k, TF_FULLNESS); break;
         case TF_FULLNESS: /* Joy; its talk's end: tryMetamorphosis (tryTalkForceWithoutDemoAtEnd) */
             clip = fat_size("joy", f->scale);
+            if (f->t == 1) se_start(SE_SM_TICOFAT_MAX, &f->m0[12]);
+            fat_dance_se(k, SE_SM_LV_TICOFAT_GLAD);
             if (f->tk0 < 0 ? f->t >= 41 : talk_force_at_end(f->tk0, 0)) fat_set(k, f->item == -1 ? TF_DEMO : TF_META);
             break;
         case TF_DEMO: clip = "demo"; loop = 0;
-            if (f->t == 1) fat_cam(f->m0, in->row, "変身"); /* startMultiActorCameraTargetSelf */
+            if (f->t == 1) { fat_cam(f->m0, in->row, "変身"); se_start(SE_SM_TICOFAT_META, &f->m0[12]); } /* startMultiActorCameraTargetSelf */
+            if (f->t == 91) se_start(SE_SM_METAMORPHOSE_SMOKE, &f->m0[12]); /* isStep(90) */
             if (f->t >= 96) { camera_event_stop(); fat_set(k, f->item == -1 && f->has_rail ? TF_FLY : TF_WIPEOUT); }
             break;
         case TF_FLY: { /* exeFly */
             clip = "fly";
-            if (f->t == 1) fat_cam(f->m0, in->row, "飛行");
+            if (f->t == 1) { fat_cam(f->m0, in->row, "飛行"); se_start(SE_DM_TICOFAT_MORPH_FLY, &f->m0[12]); }
             f->flyd += 100.0f;
             float v = f->flylen > 0 ? fminf(f->flyd / f->flylen, 1.0f) : 1.0f, e;
             if (v < 0.5f) { float x = 2 * v * 2 * v; e = 0.5f * x; } /* getEaseInValue(x, 0, 0.5, 1) */
@@ -8880,10 +9045,11 @@ static void update_ticofat(void)
             break;
         }
         case TF_WIPEOUT: clip = "fly"; /* closeWipeWhiteFade(60) */
-            if (f->t == 1) { wipe_start(1, 60); camera_shake(SHAKE_NORMAL); }
+            if (f->t == 1) { wipe_start(1, 60); camera_shake(SHAKE_NORMAL); se_start(SE_DM_TICOFAT_MORPH_WIPE_OUT, NULL); }
             else if (!wipe_active()) fat_set(k, TF_WIPEIN);
             break;
         case TF_WIPEIN:
+            if (f->t == 1) se_start(SE_DM_TICOFAT_MORPH_WIPE_IN, NULL);
             if (f->t == 60) { /* onSwitchA, openWipeWhiteFade(60) */
                 if (r->sw[SW_A] >= 0) { sw_set(r, SW_A, 1); printf("tico fat row %d: its planet" "\n", in->row); }
                 wipe_start(0, 60);
@@ -8892,13 +9058,14 @@ static void update_ticofat(void)
             break;
         case TF_INFO: /* exeInfo: InformationPlanet until A */
             info_label = "InformationPlanet";
-            if (f->t > 1 && pad_pressed(PAD_CROSS)) { pad_eat(PAD_CROSS); info_label = NULL; fat_set(k, TF_AFTER); }
+            if (f->t > 1 && pad_pressed(PAD_CROSS)) { pad_eat(PAD_CROSS); se_start(SE_SY_TALK_OK, NULL); info_label = NULL; fat_set(k, TF_AFTER); }
             break;
         case TF_AFTER:
             if (f->t >= 60) { camera_event_stop(); row_kill(in->row); sw_changed = 1; fat_set(k, TF_GONE); } /* 飛行 ends; disappear: its group appears */
             break;
         case TF_META: clip = "metamorphosis"; loop = 0;
-            if (f->t >= 80) { row_kill(in->row); sw_changed = 1; fat_set(k, TF_GONE); }
+            if (f->t == 1) { se_start(SE_SM_TICOFAT_META, &f->m0[12]); se_start(SE_SM_TICOFAT_META_ITEM, &f->m0[12]); }
+            if (f->t >= 80) { se_start(SE_SM_METAMORPHOSE_SMOKE, &f->m0[12]); row_kill(in->row); sw_changed = 1; fat_set(k, TF_GONE); }
             break;
         }
         if (f->eat && f->left == 0 && f->nrv <= TF_CHEM && !f->inflight) { fat_set(k, TF_TEST); printf("tico fat row %d: full (%d)" "\n", in->row, f->total); }
@@ -9038,7 +9205,10 @@ static void fireball_hit_walkers(int b)
             petari_blow(e, fireballs[b].pos, PT_KICKOUT); fireballs[b].t = 0; return;
         }
         e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up);
-        if (e->kind == WALK_UNIZO) drop_pieces(e->pos, e->up, 6); else pop_coins(e->pos, e->up, 1);
+        if (e->kind == WALK_UNIZO) { /* doBreak (Unizo) / doFireDown */
+            drop_pieces(e->pos, e->up, 6); se_start(SE_OJ_STAR_PIECE_BURST, &e->pos.x);
+            if (e->dir != 1) se_start(SE_EM_UNIZO_BREAK, &e->pos.x); /* not a UnizoLand's FireDown */
+        } else pop_coins(e->pos, e->up, 1);
         printf("fire ball burns walker row %d" "\n", e->row);
         fireballs[b].t = 0;
         return;
@@ -9160,7 +9330,9 @@ static void update_jets(void)
                     vlen(vsub(p, vadd(e->pos, vmul(e->up, 60.0f)))) > 60.0f + 80.0f) continue;
                 if (e->kind == WALK_PETARI) { if (petari_solid(e)) petari_blow(e, p, PT_KICKOUT); continue; } /* KickOut */
                 e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up);
-                if (e->kind == WALK_UNIZO) drop_pieces(e->pos, e->up, 6); else pop_coins(e->pos, e->up, 1);
+                if (e->kind == WALK_UNIZO) { /* doBreak */
+                    drop_pieces(e->pos, e->up, 6); se_start(SE_OJ_STAR_PIECE_BURST, &e->pos.x); se_start(SE_EM_UNIZO_BREAK, &e->pos.x);
+                } else pop_coins(e->pos, e->up, 1);
                 printf("jet turtle row %d blows walker row %d" "\n", in->row, e->row);
             }
             if (gone) { jet.inst = -1; jet.phase = 0; jet_reset(in); continue; }
@@ -10683,8 +10855,22 @@ static void update_mario(void)
     }
     if (m->launch < 0) warp_try(m);
     if (warp.from >= 0) return;
-    for (int i = 0; i < nlaunches; i++)
-        if (launches[i].cool) launches[i].cool--;
+    for (int i = 0; i < nlaunches; i++) {
+        Launch *L = &launches[i];
+        if (L->cool) L->cool--;
+        if (L->starter) continue;
+        int on = row_shown(L->row);
+        if (on && !L->shown && sc->objs[L->row].arg[4] != 1) { /* exeAppear / exeEmptyAppear first step (arg4 1: no jingle) */
+            se_start(SE_SY_SPIN_DRIVER_APPEAR, NULL);
+            launch_sound(L, L->start < 45 ? SE_OJ_SPIN_DRV_APPEAR : SE_OJ_S_SPIN_DRV_APPEAR);
+        }
+        L->shown = on;
+        /* receiveOtherMsg (Mario's sensor on its bind one): _13C 60, counted down in control; exeWait's shine */
+        if (on && m->launch != i && vlen(vsub(vadd(m->pos, vmul(m->up, BODY_RADIUS)), L->pos)) < LAUNCH_BIND) L->shine = 60;
+        else if (L->shine) L->shine--;
+        if (on && !L->cool && m->launch != i && L->shine)
+            L->lv = se_level(L->start < 45 ? SE_OJ_LV_SPIN_DRV_SHINE : SE_OJ_LV_S_SPIN_DRV_SHINE, &L->pos.x, L->lv);
+    }
     if (m->launch >= 0) {
         if (update_launch(m)) {
             if (mario_anim) anim_update(mario_anim);
@@ -10698,6 +10884,7 @@ static void update_mario(void)
                     se_start(SE_SY_S_SPIN_DRV_ME_ALT, NULL);
                     float at[3] = {m->pos.x, m->pos.y, m->pos.z};
                     se_start(SE_PM_SPIN_ATTACK, at);
+                    if (in_water(launches[i].pos, launches[i].up, NULL)) launch_sound(&launches[i], SE_PM_SPIN_DRV_IN_WATER_1);
                 }
                 if (mario_anim) mario_play(launches[i].start < 45 ? "spin" : "superspindriverstart", 1.0f, 0);
 #ifdef BENCH
@@ -11176,6 +11363,46 @@ static void stink_update(Kuribo *k, V3 to, float d)
  * do nothing; a star piece only shakes it; enemy attacks (PunchingKinoko, CocoNut) break it: 6 star pieces. phase 0
  * wait, 1 jump, 2 chase, 3 collide; timer its frames; to its roll angle. ponytail: no damage-floor JumpDown, no spin
  * drift, no shoal water ripples, the roll turns about the current velocity (no quaternion kept) */
+static float liner(float v, float lo, float hi, float a, float b) /* AudUtil::linerMinMax */
+{
+    return v <= lo ? a : v >= hi ? b : a + (b - a) * (v - lo) / (hi - lo);
+}
+static void se_level_vp(u32 *h, u32 id, const float *pos, float vol, float pitch) /* a level SE and its levelA's
+                                                                                      * volume / pitch (modifySe) */
+{
+    *h = se_level(id, pos, *h);
+    if (*h) se_volpitch(*h, vol, pitch);
+}
+/* Unizo::udpateInfluence's sounds (levelA 100 x speed, AudSoundObject_Takezawa): a rebound upwards at 2 or more
+ * (sLandSoundLandSpeed) lands, on a wall at 3 or more (startWallHitSound: sWallHitSoundSpeed), each kept 30 frames;
+ * rolling at 2 or more (sRollSoundSpeed) within 20 frames of the ground (sRollSoundTime). c: its centre */
+static void unizo_sounds(Kuribo *k, int reb, int wall, int ground, V3 c, V3 up)
+{
+    float dep, vs = vdot(k->vel, up), sp = vlen(k->vel), at[3] = {c.x, c.y, c.z};
+    int wet = in_water(c, up, &dep);
+    if (reb && vs >= 2.0f) { k->lvt[0] = 30; k->lva[0] = 100.0f * vs; }
+    if (reb && wall && sp >= 3.0f) { k->lvt[1] = 30; k->lva[1] = 100.0f * sp; }
+    if (k->lvt[0] > 0) {
+        float a = k->lva[0];
+        k->lvt[0]--;
+        se_level_vp(&k->lv2[0], wet ? SE_EM_LV_UNIZO_LAND_WATER : SE_EM_LV_UNIZO_LAND, at,
+                    a >= 50.0f ? liner(a, 50.0f, 200.0f, 0.3f, 1.0f) : 0.0f, liner(a, 5.0f, 100.0f, 0.9f, 1.0f));
+    }
+    if (k->lvt[1] > 0) {
+        float a = k->lva[1];
+        k->lvt[1]--;
+        se_level_vp(&k->lv2[1], wet ? SE_EM_LV_UNIZO_COLLISION_WATER : SE_EM_LV_UNIZO_COLLISION, at,
+                    a >= 100.0f ? liner(a, 100.0f, 800.0f, 0.5f, 1.0f) : 0.0f, liner(a, 100.0f, 800.0f, 0.9f, 1.0f));
+    }
+    if (ground) k->lvt[2] = 20;
+    if (k->lvt[2] > 0) {
+        float a = 100.0f * sp;
+        k->lvt[2]--;
+        if (sp >= 2.0f)
+            se_level_vp(&k->lv, wet ? SE_EM_LV_UNIZO_ROLL_WATER : SE_EM_LV_UNIZO_ROLL_GROUND, at,
+                        a >= 200.0f ? liner(a, 200.0f, 700.0f, 0.1f, 1.0f) : 0.0f, liner(a, 50.0f, 1000.0f, wet ? 0.8f : 0.9f, 1.0f));
+    }
+}
 static void unizo_update(Kuribo *k, V3 to, float d)
 {
     const float R = 126.36f, rate = k->dir == 1 ? 0.8f : 0.15f;
@@ -11192,6 +11419,7 @@ static void unizo_update(Kuribo *k, V3 to, float d)
         if (d < 1500.0f && grounded && !mario->hurt_timer) {
             k->vel = vadd(k->vel, vmul(up, sqrtf(2.0f * 70.0f * rate)));
             k->phase = 1; k->timer = 0;
+            se_start(SE_EM_UNIZO_NEEDLE, &k->pos.x); /* exeJump: sStartSearch 0 */
         }
         break;
     case 1: if (k->timer >= 60) { k->phase = 2; k->timer = 0; } /* Jump (its Search animation) */
@@ -11219,12 +11447,15 @@ static void unizo_update(Kuribo *k, V3 to, float d)
     V3 nc = vadd(center, k->vel), gn, wn;
     int wall = 0;
     int g2 = collide_n(&nc, up, R, &gn, &wn, &wall);
-    if (g2 && vdot(k->vel, gn) < 0) k->vel = vsub(k->vel, vmul(gn, vdot(k->vel, gn) * (k->phase == 1 ? 1.6f : 1.0f)));
-    if (wall && vdot(k->vel, wn) < 0) k->vel = vsub(k->vel, vmul(wn, vdot(k->vel, wn)));
+    int reb = 0; /* reboundVelocityFromCollision's result */
+    if (g2 && vdot(k->vel, gn) < 0) { k->vel = vsub(k->vel, vmul(gn, vdot(k->vel, gn) * (k->phase == 1 ? 1.6f : 1.0f))); reb = 1; }
+    if (wall && vdot(k->vel, wn) < 0) { k->vel = vsub(k->vel, vmul(wn, vdot(k->vel, wn))); reb = 1; }
+    unizo_sounds(k, reb, wall, g2, nc, up);
     k->to += vlen(vtangent(vsub(nc, center), up)) / R; /* rotateQuatRollBall */
     k->pos = vsub(nc, vmul(up, R));
     if (vlen(vsub(c, vadd(k->pos, vmul(up, R)))) < 115.2f + HIT_BODY_R && !mario->hurt_timer && k->phase != 3) {
         hurt_mario(vadd(k->pos, vmul(up, R)), 25.0f); /* sendMsgEnemyAttackStrong, doAttack */
+        se_start(SE_EM_UNIZO_NEEDLE, &k->pos.x); se_start(SE_EM_UNIZO_STICK, &k->pos.x); /* exeAttack's first step */
         V3 away = vtangent(vsub(k->pos, mario->pos), up);
         k->vel = vadd(vmul(up, 5.0f), vlen(away) > 1e-3f ? vnorm(away) : v3(0, 0, 0));
         k->phase = 3; k->timer = 0;
@@ -11689,6 +11920,7 @@ static int vine_grow(int k) /* Plant::updateGrowUp */
 {
     typeof(&vines[0]) o = &vines[k];
     int done = vstalk_grow(k);
+    o->lv = se_level(SE_OJ_LV_PLANT_GROW, &o->pos.x, o->lv);
     for (int i = 0; i < o->nleaves; i++) { /* PlantLeaf::updateGrowUp(offset 10) */
         typeof(&o->leaf[0]) L = &o->leaf[i];
         V3 pos, ay;
@@ -11741,7 +11973,9 @@ static int vine_hang_up(int k, float rate) /* updateHangUp */
     if (o->ride_vel <= 0) { o->dir = -1; vine_set(k, VN_HANGDOWN); return 1; }
     vrail_move(k, o->ride_vel);
     o->up = vrail_dir(k);
+    float z = o->front.z;
     o->front = rot_axis(o->front, o->up, rate * 0.0174533f);
+    if (z < 0.0f && o->front.z >= 0.0f) se_start(SE_OJ_PLANT_MARIO_UP, &mario->pos.x);
     return 0;
 }
 
@@ -11791,6 +12025,7 @@ static int vine_try(Player *m)
             o->dir = 1; vine_set(k, VN_HANGSTART);
         } else { o->ride_vel = 0; o->dir = -1; vine_set(k, VN_HANGSTART); }
         m->hip = 0; m->spin_timer = 0; m->hvel = v3(0, 0, 0); m->vup = 0;
+        se_start(SE_PM_GRAB_OBJ, &m->pos.x); se_start(SE_PV_CATCH, &m->pos.x);
         if (row_camset[o->row] != -1) /* startMultiActorCameraNoTarget 掴まり: the player's */
             camera_actor_start("Plant", "掴まり", (unsigned short)row_camset[o->row], m->up, m->face, m->pos);
         printf("plant %d: taken at %d of %d\n", o->row, (int)o->coord, (int)o->len);
@@ -11845,7 +12080,7 @@ static void update_vines(void)
             if (vlen(vsub(mario->pos, o->pos)) < 700.0f) vine_set(k, VN_SEEDWAIT);
             break;
         case VN_SEEDWAIT: {
-            if (!st) { vine_seed(in, "bud"); o->top_on = 0; }
+            if (!st) { vine_seed(in, "bud"); o->top_on = 0; se_start(SE_OJ_PLANT_BUD, &o->pos.x); }
             V3 seed = vadd(o->pos, vmul(up_at(o->pos, mario->up), 50.0f));
             float d = vlen(vsub(c, seed));
             if (d < 50.0f + HIT_BODY_R && d > 1e-3f) /* attackSensor: sendMsgPush at 50 */
@@ -11863,11 +12098,14 @@ static void update_vines(void)
             vine_set(k, VN_DEMOWAIT);
             break;
         case VN_DEMOWAIT:
-            if (st == 60) vine_seed(in, "bud");
+            if (st == 60) { vine_seed(in, "bud"); se_start(SE_OJ_PLANT_BUD, &o->pos.x); } /* sStepDemoAppearEffect */
             if (st == 90) vine_set(k, VN_GROWUP);
             break;
         case VN_GROWUP:
-            if (!st) vine_seed(in, "growup");
+            if (!st) {
+                vine_seed(in, "growup");
+                se_start(SE_OJ_PLANT_SEED_BREAK, &o->pos.x); se_start(SE_SY_ITEM_APPEAR, NULL); se_start(SE_OJ_PLANT_GROW_START, &o->pos.x);
+            }
             vine_grow(k);
             break;
         case VN_HANGWAITGROW:
@@ -11891,8 +12129,9 @@ static void update_vines(void)
             o->ride_coord += o->ride_vel;
             if (o->ride_coord > o->len) o->ride_coord = o->len;
             vinfo_at(k, o->ride_coord * o->growth, &o->pos, &o->up);
-            float rs = 1.3f * o->ride_vel;
+            float rs = 1.3f * o->ride_vel, z = o->front.z;
             o->front = rot_axis(o->front, o->up, (rs >= 30.0f ? 30.0f : rs) * 0.0174533f);
+            if (z < 0.0f && o->front.z >= 0.0f) se_start(SE_OJ_PLANT_MARIO_UP, &mario->pos.x);
             vine_bind_leaves(k);
             if (o->ride_coord >= o->len) { o->ride_coord = o->len; o->ride_vel = 0; vine_set(k, VN_HANGWAITGROW); }
             break;
@@ -11923,6 +12162,7 @@ static void update_vines(void)
                 const VPoint *tip = &o->stalk[0];
                 V3 g = vmul(up_at(o->pos, tip->up), -1.0f), ef = vtangent(tip->up, g);
                 if (vlen(ef) > 1e-3f) mario->face = vnorm(ef);
+                se_start(SE_PM_JUMP_L, &mario->pos.x); se_start(SE_PV_JUMP_JOY, &mario->pos.x); /* tryReachGoal */
                 vine_release(k, vadd(vmul(tip->up, o->jump), vmul(g, -o->jump_oy)), 1);
                 break;
             }
@@ -11941,8 +12181,10 @@ static void update_vines(void)
             vrail_move(k, o->ride_vel);
             V3 rd = vrail_dir(k);
             o->up = vmul(rd, -1.0f);
-            float rs = o->ride_vel * 1.3f;
+            float rs = o->ride_vel * 1.3f, z = o->front.z;
             o->front = rot_axis(o->front, rd, (rs >= 20.0f ? 20.0f : rs) * 0.0174533f);
+            if (z < 0.0f && o->front.z >= 0.0f) se_start(SE_OJ_PLANT_MARIO_DOWN, &mario->pos.x);
+
             break;
         }
         }
@@ -12126,7 +12368,7 @@ static int hhp_reflects(V3 p, float rad) /* isMsgStarPieceReflect on any of its 
         V3 sp[6];
         float sr[6];
         hhp_sensors(in, k, sp, sr);
-        for (int s = 0; s < 6; s++) if (vlen(vsub(p, sp[s])) < sr[s] + rad) return 1;
+        for (int s = 0; s < 6; s++) if (vlen(vsub(p, sp[s])) < sr[s] + rad) { se_start(SE_EM_STARPIECE_REFRECT_PLIABLE, &hhps[k].pos.x); return 1; }
     }
     return 0;
 }
@@ -12168,10 +12410,12 @@ static void update_hhps(void)
             break;
         case HH_RECOVER:
             if (!st) hhp_bck(in, k, 3);
+            o->lv = se_level(SE_EM_LV_HHPACKUN_RECOVERY, &o->pos.x, o->lv);
             if (HHP_STOPPED(o)) hhp_set(k, HH_WAIT);
             break;
         case HH_DAMAGE:
-            if (!st) { hhp_bck(in, k, 4); o->imm++; }
+            if (!st) { hhp_bck(in, k, 4); o->imm++; se_start(SE_PM_SPIN_HIT, &o->pos.x); } /* startBlowHitSound */
+            if (st >= 60) o->lv = se_level(SE_EM_LV_SWOON_S, &o->pos.x, o->lv);
             if (st == 76) camera_shake(SHAKE_NORMAL);
             if (o->clen == hhp_lens[4] && HHP_STOPPED(o)) hhp_bck(in, k, 5); /* isBckOneTimeAndStopped: Swoon */
             if (st == 180) hhp_set(k, HH_RISE);
@@ -12193,8 +12437,13 @@ static void update_hhps(void)
             if (HHP_STOPPED(o)) hhp_set(k, HH_WAIT);
             break;
         case HH_SMASHKILL: case HH_BLOWKILL:
+            if (!st) {
+                if (o->nrv == HH_SMASHKILL) { se_start(SE_EM_HHPACKUN_STOMPED, &o->pos.x); se_start(SE_EM_STOMPED_S, &o->pos.x); }
+                else { se_start(SE_EM_HHPACKUN_HIT_PUNCH, &o->pos.x); se_start(SE_EV_HHPACKUN_DEAD, &o->pos.x); }
+            }
             if (!st) { hhp_bck(in, k, o->nrv == HH_SMASHKILL ? 8 : 9); printf("hammer head packun %d down\n", in->row); }
             if (HHP_STOPPED(o)) { /* kill */
+                se_start(SE_EM_HHPACKUN_DEAD, &o->pos.x); se_start(SE_OJ_STAR_PIECE_BURST, &o->pos.x);
                 launch_pieces(hhp_joint(in, k, 5, 0.0f), o->up, 9, 10.0f, 40.0f);
                 row_kill(in->row);
                 game_rebind();
@@ -12406,11 +12655,11 @@ static void w_se_lv(Kuribo *k, u32 id) { float at[3] = {k->pos.x, k->pos.y, k->p
 /* The walker kit's kill: DeathSmokeKuribo, its switch, its item (ItemGenerator: 1 a coin, 2 three star pieces) */
 static void w_kill(Kuribo *k)
 {
-    if (k->kind == WALK_KURIBO) w_se(k, SE_EM_EXPLODE_S); /* Kuribo::kill */
+    if (k->kind == WALK_KURIBO || k->kind == WALK_KMINI) w_se(k, SE_EM_EXPLODE_S); /* Kuribo::kill, KuriboMini::kill */
     k->state = KURIBO_DEAD; row_kill(k->row);
     fx_at(k->kind == WALK_KMINI ? FX_KURIBOMINI_DEATH : FX_KURIBO_DEATHSMOKEKURIBO, k->pos, vmul(k->grav, -1.0f));
     if (k->item == 1) pop_coins(k->pos, vmul(k->grav, -1.0f), 1);
-    else if (k->item == 2) drop_pieces(k->pos, vmul(k->grav, -1.0f), 3);
+    else if (k->item == 2) { drop_pieces(k->pos, vmul(k->grav, -1.0f), 3); w_se(k, SE_OJ_STAR_PIECE_BURST); } /* ItemGenerator::generate (_F: KoopaBattleVs2Galaxy) */
 }
 
 /* Kuribo.cpp after Petari: KuriboParam (gravity 1.5, air 0.99, ground 0.93, sight 1000 / 70 / 30 degrees, wander 0.2
@@ -12577,18 +12826,23 @@ static void kmini_update(Kuribo *k)
     case KN_FINDPLAYER:
         w_state(k, ap_find);
         ws_find(k, KB_G, 20.0f, 5.0f);
+        if (k->snrv == WF_JUMP && k->sstep == 1) w_se(k, SE_EM_KURIBOMINI_FIND); /* isFindJumpBegin */
         if (k->sdead) w_nrv(k, KN_CHASE);
         else if (deadmap) { k->item = 0; w_kill(k); return; }
         break;
     case KN_CHASE:
         w_state(k, ap_chase);
         ws_chase(k, KB_G, 0.2f, 1000.0f, 70.0f, 30.0f);
+        if (k->snrv == WC_START && k->on_ground) w_se_lv(k, SE_EM_LV_KURIBOMINI_DASH); /* isRunning */
         if (k->sdead) { w_nrv(k, KN_WANDER); k->tcenter = k->pos; }
         if (deadmap) { k->item = 0; w_kill(k); return; }
         break;
     case KN_STAGGER:
         if (st == 0 && k->snrv != WS_STAGGER) ap_stagger(k);
         ws_stagger(k, KB_G);
+        if (k->snrv == WS_STAGGER && k->sstep == 2) { w_se(k, SE_EM_CRASH_S); w_se(k, SE_PM_SPIN_HIT); } /* isStaggerStart, startBlowHitSound */
+        if (k->snrv == WS_STAGGER && k->sstep >= 16) w_se_lv(k, SE_EM_LV_SWOON_S); /* isSwooning(15) */
+        if (k->snrv == WS_STAGGEREND && k->sstep == 1) w_se(k, SE_EM_KURIBO_SWOON_RECOVER); /* isRecoverStart */
         if (k->sdead) w_nrv(k, KN_WANDER);
         else if (deadmap) { k->item = 0; w_kill(k); return; }
         break;
@@ -12602,11 +12856,11 @@ static void kmini_update(Kuribo *k)
         if (st > 60) w_nrv(k, KN_WANDER);
         break;
     case KN_HIPDROPDOWN: case KN_FLATDOWN: case KN_PRESSDOWN:
-        if (st == 0) k->vel = v3(0, 0, 0);
+        if (st == 0) { k->vel = v3(0, 0, 0); w_se(k, SE_EM_CRASH_S); }
         if (st > (k->nrv == KN_FLATDOWN ? 20 : k->nrv == KN_HIPDROPDOWN ? 40 : 180)) { w_kill(k); return; }
         break;
     case KN_BLOWDOWN:
-        if (st == 0) w_act(k, "BlowDown");
+        if (st == 0) { w_act(k, "BlowDown"); w_se(k, SE_EM_CRASH_S); w_se(k, SE_PM_SPIN_HIT); }
         if (!w_on_ground(k)) k->vel = vadd(k->vel, vmul(k->grav, 1.5f));
         k->vel = vmul(k->vel, w_on_ground(k) ? 0.93f : 0.99f);
         if (k->on_wall == 2) rebound_hv(&k->vel, k->wn, 0.2f, 0.7f);
@@ -12626,9 +12880,11 @@ static void kmini_update(Kuribo *k)
     int msg = mario_offence(c, 60.0f, k->grav);
     if (msg == MSG_TRAMPLE) {
         w_act(k, "FlatDown"); w_nrv(k, KN_FLATDOWN); k->bind_off = 1; k->item = 1;
+        w_se(k, SE_EM_STOMPED_S); /* requestFlatDown */
         mario->vup = 15.0f; mario->grounded = 0;
     } else if (msg == MSG_HIPDROP) {
         w_act(k, "FlatDown"); w_nrv(k, KN_HIPDROPDOWN); k->bind_off = 1; k->item = 1;
+        w_se(k, SE_EM_STOMPED_S); /* requestHipDropDown */
     } else if (msg == MSG_HITALL) { /* requestBlowDown 22 / 25 (a kick while staggering: three star pieces) */
         V3 h = vnorm(vtangent(vsub(k->pos, mario->pos), k->grav));
         k->item = k->nrv == KN_STAGGER ? 2 : 1;
@@ -12842,8 +13098,9 @@ static void kari_dead(Kuribo *k, int pieces) /* kill (Death) or makeActorDead, i
 {
     if (k->nrv == RN_PRECLING || k->nrv == RN_CLING) kari_unregist(k);
     V3 up = vmul(k->grav, -1.0f);
-    if (pieces) drop_pieces(vadd(k->pos, vmul(up, 80.0f)), up, pieces);
+    if (pieces) { drop_pieces(vadd(k->pos, vmul(up, 80.0f)), up, pieces); w_se(k, SE_OJ_STAR_PIECE_BURST); } /* generateItem */
     fx_at(FX_KARIPON_DEATH, k->pos, up);
+    w_se(k, SE_EM_EXPLODE_S); /* kill */
     k->state = KURIBO_DEAD; row_kill(k->row);
 }
 static int kari_blowout(Kuribo *k, V3 from, int star) /* tryBlowOut */
@@ -12877,8 +13134,8 @@ static int kari_dpd(Kuribo *k) /* tryDPDAttacked: R2 with the pointer on it */
 {
     if (!pointer_a() || !cursor_sees(k->pos, 30.0f)) return 0;
     if (k->nrv == RN_PRECLING || k->nrv == RN_CLING) { /* requestRelease */
-        if (game_frame >= kari_norelease) { kari_release(k, 0); kari_norelease = game_frame + 10; }
-    } else { kari_release(k, 0); fx_at(FX_KARIPON_TOUCH, k->pos, vmul(k->grav, -1.0f)); }
+        if (game_frame >= kari_norelease) { kari_release(k, 0); kari_norelease = game_frame + 10; se_start(SE_SY_DPD_HIT, NULL); }
+    } else { kari_release(k, 0); fx_at(FX_KARIPON_TOUCH, k->pos, vmul(k->grav, -1.0f)); se_start(SE_SY_DPD_HIT, NULL); } /* startDPDHitSound (no ME) */
     return 1;
 }
 /* KarikariDirector cling_data: a slot's matrix, Mario's joint x (pos, rot degrees) */
@@ -13006,7 +13263,7 @@ static void kari_update(Kuribo *k, V3 to, float d)
         if (((k->on_ground || k->on_wall) && st > 0) || st > 60) { kari_dead(k, k->nrv == RN_BLOWOUT ? 1 : 3); return; }
         break;
     case RN_PRESS:
-        if (st == 0) { k->bind_off = 0; w_act(k, "Press"); }
+        if (st == 0) { k->bind_off = 0; w_act(k, "Press"); w_se(k, SE_EM_KARIKARI_STOMPED); }
         kari_env(k); k->vel = vadd(k->vel, vmul(k->grav, g));
         if (st > 40) { kari_dead(k, 0); return; }
         break;
@@ -13077,10 +13334,11 @@ static void packun_select_wait(Kuribo *k) /* selectNrvWait */
 static void packun_kill(Kuribo *k)
 {
     V3 up = vmul(k->grav, -1.0f);
-    if (k->bshow == 1) { fx_at(FX_PACKUNPETITHEAD_DEATH, k->bpos, up); drop_pieces(k->bpos, up, 3); }
+    if (k->bshow == 1) { fx_at(FX_PACKUNPETITHEAD_DEATH, k->bpos, up); drop_pieces(k->bpos, up, 3); se_start(SE_OJ_STAR_PIECE_BURST, &k->bpos.x); }
     else if (!k->bshow && sc->objs[k->row].sw[SW_DEAD] < 0) pop_coins(k->pos, up, 1); /* no blown model, no dead switch */
     k->bshow = 0;
     fx_at(FX_PACKUNPETIT_DEATH, k->pos, up);
+    w_se(k, SE_EM_EXPLODE_S);
     k->state = KURIBO_DEAD; row_kill(k->row);
 }
 static void packun_punch(Kuribo *k, V3 from) /* punchDown */
@@ -13120,6 +13378,7 @@ static void packun_update(Kuribo *k)
         break;
     case PN_THREAT:
         if (st == 0) w_act(k, "Threat");
+        w_se_lv(k, SE_EM_LV_PACKUNPETIT_THREAT);
         if (r->arg[0] <= 0) {
             if (packun_turn(k)) break;
             w_turn_to(k, mario->pos, 2.0f);
@@ -13153,7 +13412,7 @@ static void packun_update(Kuribo *k)
         if (w_bck_stopped(k) && !packun_turn(k)) packun_select_wait(k);
         break;
     case PN_TRAMPLEDOWN:
-        if (st == 0) w_act(k, "Press");
+        if (st == 0) { w_act(k, "Press"); w_se(k, SE_EM_STOMPED_S); }
         if (w_bck_stopped(k)) { packun_kill(k); return; }
         break;
     case PN_PUNCHDOWN:
@@ -13161,6 +13420,7 @@ static void packun_update(Kuribo *k)
             k->bshow = 1;
             k->bpos = w_joint(k, m_packun, 5, v3(0, 0, 0)); /* copyJointPos Head */
             w_act(k, "Blow");
+            w_se(k, SE_PM_SPIN_HIT);                         /* startBlowHitSound */
             scene_stop = 5;                                  /* stopSceneForDefaultHit (the spin) */
         }
         k->bvel = vadd(k->bvel, vmul(k->grav, 2.5f));
@@ -13171,6 +13431,7 @@ static void packun_update(Kuribo *k)
                 V3 up = vmul(k->grav, -1.0f);
                 fx_at(FX_PACKUNPETITHEAD_DEATH, k->bpos, up);
                 drop_pieces(k->bpos, up, 3);
+                w_se(k, SE_OJ_STAR_PIECE_BURST);
                 k->bshow = 2; /* hidden */
             }
         }
@@ -13182,6 +13443,7 @@ static void packun_update(Kuribo *k)
         break;
     case PN_SWOON:
         if (st == 0) w_act(k, "Swoon");
+        w_se_lv(k, SE_EM_LV_SWOON_S);
         if (st == 250) packun_select_wait(k);
         break;
     case PN_SWOONTOTHREAT:
@@ -13353,10 +13615,10 @@ static void petari_blow(Kuribo *k, V3 from, int nrv) /* setVelocityBlowAttack 10
 static void petari_pieces(Kuribo *k, int all) /* appearStarPieceGradually / All */
 {
     V3 up = vmul(k->grav, -1.0f);
-    if (all) { if (k->timer > 0) launch_pieces(k->pos, up, k->timer, 20.0f, 40.0f); return; }
+    if (all) { if (k->timer > 0) { launch_pieces(k->pos, up, k->timer, 20.0f, 40.0f); w_se(k, SE_OJ_STAR_PIECE_BURST); } return; }
     if (k->step % 5) return;
     int n = k->timer < 2 ? k->timer : 2;
-    if (n > 0) launch_pieces(w_joint(k, m_petari, 5, v3(0, 0, 0)), up, n, 20.0f, 40.0f);
+    if (n > 0) { launch_pieces(w_joint(k, m_petari, 5, v3(0, 0, 0)), up, n, 20.0f, 40.0f); w_se(k, SE_OJ_STAR_PIECE_BURST); }
     k->timer -= n;
 }
 static void petari_escape_dir(Kuribo *k) /* calcEscapeDirection, meander, avoidPlayer, avoidWall */
@@ -13426,15 +13688,19 @@ static void petari_update(Kuribo *k)
         if (st == 60) {
             if (k->phase) { k->phase = 0; w_act(k, "Wait"); }
             else { w_act(k, "Wait"); k->act_interp = 30; }
+            w_se(k, SE_EM_PETARI_WAIT_APPEAR);
         }
-        if (dm > 700.0f) w_nrv(k, PT_APPROACH);
-        else if (dm < 500.0f) w_nrv(k, PT_ESCAPE);
+        if (dm > 700.0f || dm < 500.0f) { /* tryShiftApproach / tryShiftEscape; shown: hides */
+            if (!k->phase) w_se(k, SE_EM_PETARI_WAIT_HIDE);
+            w_nrv(k, dm > 700.0f ? PT_APPROACH : PT_ESCAPE);
+        }
         break;
     case PT_APPROACH: {
         if (st == 0) k->phase = 1;
         V3 d = vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), k->tcenter);
         k->ttarget = vlen(d) > 1e-3f ? vnorm(d) : k->front; /* calcApproachDirection */
         petari_move(k, k->ttarget, 0.5f, 1.3f, 0.92f, 3.0f);
+        w_se_lv(k, SE_EM_LV_PETARI_RUN);
         if (dm < 600.0f) w_nrv(k, PT_WAIT);
         break;
     }
@@ -13443,7 +13709,7 @@ static void petari_update(Kuribo *k)
         petari_escape_dir(k);
         float dc = vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), k->tcenter)) * 0.01f, b = 4.0f / (dc * dc);
         b = b > 1 ? 1 : b;
-        if (k->nrv == PT_ESCAPE) petari_move(k, k->ttarget, 0.45f + 0.45f * 0.5f * b, 1.3f, 0.97f, st == 0 ? 180.0f : 10.0f);
+        if (k->nrv == PT_ESCAPE) { petari_move(k, k->ttarget, 0.45f + 0.45f * 0.5f * b, 1.3f, 0.97f, st == 0 ? 180.0f : 10.0f); w_se_lv(k, SE_EM_LV_PETARI_RUN); }
         else petari_move(k, k->ttarget, 1.0f, 1.3f, 0.99f, st == 0 ? 180.0f : 10.0f);
         if (k->nrv == PT_ESCAPE && dm > 710.0f) w_nrv(k, PT_WAIT);
         if (k->nrv == PT_LAND && st == 45) w_nrv(k, PT_ESCAPE);
@@ -13454,6 +13720,7 @@ static void petari_update(Kuribo *k)
             V3 d = vtangent(vsub(k->tcenter, vadd(mario->pos, vmul(mario->up, HIT_BODY_H))), k->grav);
             if (vlen(d) > 1e-3f) { k->front = vnorm(vmul(d, -1.0f)); k->vel = vmul(vnorm(d), 5.0f); }
             k->phase = 0; w_act(k, "Appearance");
+            w_se(k, SE_PM_SPIN_HIT); w_se(k, SE_EM_PETARI_APPEAR); /* startBlowHitSound */
         }
         petari_move(k, k->ttarget, 0.0f, 1.3f, 0.985f, 3.0f);
         if (w_bck_stopped(k)) w_nrv(k, PT_SWOON);
@@ -13461,25 +13728,27 @@ static void petari_update(Kuribo *k)
     case PT_SWOON:
         if (st == 0) { k->vel = v3(0, 0, 0); w_act(k, "Swoon"); }
         petari_move(k, k->ttarget, 0.0f, 1.3f, 0.0f, 3.0f);
+        w_se_lv(k, SE_EM_LV_SWOON_S);
         if (st == 180) w_nrv(k, PT_SWOONEND);
         break;
     case PT_SWOONEND:
-        if (st == 0) w_act(k, "Hide");
+        if (st == 0) { w_act(k, "Hide"); w_se(k, SE_EM_PETARI_WAKE_UP); }
+        if (k->act_t >= 60.0f && k->act_t - k->act_rate < 60.0f) w_se(k, SE_EM_PETARI_JUMP); /* checkPassBckFrame(60) */
         petari_move(k, k->ttarget, 0.0f, 1.3f, 0.0f, 3.0f);
-        if (w_bck_stopped(k)) { k->phase = 1; w_nrv(k, PT_LAND); }
+        if (w_bck_stopped(k)) { w_se(k, SE_EM_CHANGE_SMOKE); k->phase = 1; w_nrv(k, PT_LAND); }
         break;
     case PT_SMASH:
-        if (st == 0) { k->phase = 0; w_act(k, "Press"); }
+        if (st == 0) { k->phase = 0; w_act(k, "Press"); w_se(k, SE_EM_STOMPED_S); w_se(k, SE_OJ_STAR_PIECE_BURST); }
         petari_pieces(k, 0);
-        if (w_bck_stopped(k)) { petari_pieces(k, 1); k->state = KURIBO_DEAD; row_kill(k->row); printf("petari %d smashed\n", k->row); return; }
+        if (w_bck_stopped(k)) { petari_pieces(k, 1); w_se(k, SE_EM_EXPLODE_S); k->state = KURIBO_DEAD; row_kill(k->row); printf("petari %d smashed\n", k->row); return; }
         break;
     case PT_SPINOUT: case PT_KICKOUT: {
-        if (st == 0) { k->phase = 0; w_act(k, "Damage"); }
+        if (st == 0) { k->phase = 0; w_act(k, "Damage"); w_se(k, SE_PM_SPIN_HIT); w_se(k, SE_OJ_STAR_PIECE_BURST); }
         turn_on_plane(&k->front, vmul(k->vel, -1.0f), k->grav, -1.0f); /* turnDirectionDegree 180 */
         V3 g = w_on_ground(k) ? vmul(k->gn, -1.0f) : k->grav;
         k->vel = vadd(vsub(k->vel, vmul(g, vdot(g, k->vel))), vmul(g, 1.3f));
         petari_pieces(k, 0);
-        if (w_bck_stopped(k)) { petari_pieces(k, 1); k->state = KURIBO_DEAD; row_kill(k->row); printf("petari %d spun out\n", k->row); return; }
+        if (w_bck_stopped(k)) { petari_pieces(k, 1); w_se(k, SE_EM_EXPLODE_S); k->state = KURIBO_DEAD; row_kill(k->row); printf("petari %d spun out\n", k->row); return; }
         break;
     }
     }
@@ -13813,6 +14082,12 @@ static void update_invincible(void)
     }
 }
 
+static void piece_break(V3 p) /* StarPiece::kill */
+{
+    float d;
+    se_start(in_water(p, up_at(p, mario->up), &d) ? SE_OJ_STAR_PIECE_BREAK_W : SE_OJ_STAR_PIECE_BREAK, &p.x);
+}
+
 static void update_launched_pieces(void)
 {
     for (int i = pieces_base; pieces_base && i < npieces; i++) {
@@ -13824,12 +14099,16 @@ static void update_launched_pieces(void)
         pieces[i].pos = c;
         if (ground || wall) { /* reboundVelocityFromCollision 0.99 */
             float into = vdot(piece_vel[i], ground ? gn : wn);
-            if (into < 0) piece_vel[i] = vsub(piece_vel[i], vmul(ground ? gn : wn, 1.99f * into));
+            if (into < 0) { /* exeFall: reboundVelocityFromCollision took */
+                float d;
+                piece_vel[i] = vsub(piece_vel[i], vmul(ground ? gn : wn, 1.99f * into));
+                se_start(in_water(pieces[i].pos, up, &d) ? SE_OJ_STAR_PIECE_HIT_W : SE_OJ_STAR_PIECE_HIT, &pieces[i].pos.x);
+            }
             if (ground && !wall) piece_vel[i] = vmul(up, vdot(up, piece_vel[i]));
             if (vdot(piece_vel[i], piece_vel[i]) < 400.0f) piece_vel[i] = vmul(vlen(piece_vel[i]) > 1e-3f ? vnorm(piece_vel[i]) : up, 20.0f);
         }
         if (++piece_t[i] > 25 && pieces[i].alive == PICK_POP_NEW) pieces[i].alive = PICK_ON;
-        if (piece_t[i] > 600 || in_death(pieces[i].pos)) { pieces[i].alive = PICK_GONE; piece_t[i] = 0; }
+        if (piece_t[i] > 600 || in_death(pieces[i].pos)) { pieces[i].alive = PICK_GONE; piece_t[i] = 0; piece_break(pieces[i].pos); }
     }
 }
 
@@ -13862,7 +14141,12 @@ static void break_inst(const Inst *in, int drops)
         int wet = in_water(p, up, &depth);
         if (box) { se_start(wet ? SE_OJ_WOOD_BOX_BREAK_W : SE_OJ_WOOD_BOX_BREAK, at); if (!wet) se_start(SE_EM_EXPLODE_S, at); }
         else if (!strcmp(name, "PunchBox")) se_start(wet ? SE_OJ_PUNCH_BOX_BREAK_W : SE_OJ_PUNCH_BOX_BREAK, at);
-        else if (cage) se_start(SE_OJ_CRYSTAL_CAGE_S_BREAK, at);
+        else if (cage) { /* exeBreak: arg1 the riddle SE, arg7 its DummyDisplayModel (5 a Tico, 1 a Kinopio) */
+            se_start(SE_OJ_CRYSTAL_CAGE_S_BREAK, at);
+            if (r->arg[1] != -1) se_start(SE_SY_READ_RIDDLE_S, NULL);
+            if (r->arg[7] == 5) se_start(SE_OJ_CRY_CAGE_MV_TICO_APR, at);
+            if (r->arg[7] == 1) se_start(SE_SV_KINOPIO_PUHA, at);
+        }
         else if (!strcmp(name, "CrystalCageL")) se_start(SE_OJ_CRYSTAL_CAGE_L_BREAK, at);
         if ((box || !strcmp(name, "PunchBox")) && sp) se_start(SE_OJ_STAR_PIECE_BURST, at);
     }
@@ -13926,6 +14210,7 @@ static void break_boxes(void)
         unsigned short *hit = &row_step[in->row]; /* CrystalCageL: 0x8000 hit once, low bits frames until the next */
         if (strcmp(sc->types + 32 * sc->objs[in->row].type, "CrystalCageL") == 0 && !(*hit & 0x8000)) {
             *hit = 0x8000 | (SPIN_TIME + 20);
+            se_start(SE_OJ_CRYSTAL_CAGE_L_DAMAGE, &in->m[12]); /* receiveMsgPlayerAttack */
             printf("CrystalCageL %d hit\n", in->row);
             continue;
         }
@@ -14013,7 +14298,8 @@ static void seesaw_matrix(Inst *in) /* its placement turned `angle` about its ow
 }
 /* PhantomShipBridge.cpp: with SW_A it waits (no BCK: its bind pose) until SW_A turns on, then MoveA; SW_B on:
  * MoveB; without SW_A it is at MoveA's end at once (setStateMoveA). Step 55 of either: shakeCameraNormal. Its Move
- * collision follows the Move joint (joint 1); the body's stays. ponytail: no sounds */
+ * collision follows the Move joint (joint 1); the body's stays. Not a NutShipFleetBridge: its FALL_BRIDGE sounds; the
+ * riddle SE plays even with Mario dead */
 #define MAX_BRIDGES 4
 static struct { int row, nrv, t; } bridges[MAX_BRIDGES];
 static int nbridges;
@@ -14040,6 +14326,14 @@ static void update_bridges(void)
             b->nrv = BR_MOVEB; b->t = 0; printf("bridge row %d: MoveB" "\n", in->row);
         }
         if (b->nrv != BR_WAIT && b->t < 1000) b->t++;
+        if (b->nrv != BR_WAIT && b->t < 1000) { /* exeMoveA / exeMoveB (step n: t n + 1) */
+            if (b->t == 1) {
+                if (b->nrv == BR_MOVEA) se_start(SE_SY_READ_RIDDLE_S, NULL);
+                else se_start(SE_OJ_PTM_SHIP_BRIDGE_FALL, &in->m[12]);
+            }
+            if (b->t <= 55) in->lv[0] = se_level(SE_OJ_LV_FALL_BRIDGE_FALL, &in->m[12], in->lv[0]); /* isLessStep(55) */
+            if (b->t == 56) se_start(SE_OJ_FALL_BRIDGE_LAND, &in->m[12]);
+        }
         if (b->nrv != BR_WAIT && b->t == 56) camera_shake(SHAKE_NORMAL);
         in->anim = obj_anim(in->row, in->md, "PhantomShipBridge");
         Anim *a = in->anim;
@@ -14119,6 +14413,8 @@ static void update_seesaws(void)
             o->vel *= 0.99f;
         }
         o->vel = o->vel < -vmax ? -vmax : o->vel > vmax ? vmax : o->vel;
+        if ((o->nrv == SS_MOVESTART || o->nrv == SS_MOVE) && fabsf(o->vel) > 0.1f) /* exeMove: mMoveSoundSpeed 0.1 */
+            in->lv[0] = se_level(SE_OJ_LV_P_SHIP_HANDLE_MOVE, &in->m[12], in->lv[0]);
         if (o->nrv == SS_HIPDROP) { if (!o->hip) { o->nrv = SS_MOVE; o->step = -1; } o->hip = 0; }
         if (o->vel == 0) { o->nrv = SS_STAY; o->step = -1; continue; }
         if (limit > 0) { /* isGoingToReachTargetAngle */
@@ -14193,6 +14489,16 @@ static void update_rotors(void)
  * waits point_arg5 frames at a point, and at an end MoveStopType (path_arg1, default 1): 0 stops, 1 turns back, 2
  * starts over, 3 vanishes; MoveConditionType other than 0 waits for Mario on it. It carries Mario like a rotating
  * part. ponytail: no acceleration (point_arg1), no time-based speed (point_arg7), no rail posture */
+/* StageEffectDataTable.cpp's start / moving / stop SEs of the rail movers: RailMoveObj::exeMove plays the start one as
+ * its rail mover starts working (startMoveInner), the moving one while it works, the stop one at an end
+ * (doAtEndPoint); SideSpikeMoveStep::exeWait the moving / stop ones. ponytail: MapObjActor::appear's start SE (at
+ * the scene's start) not played */
+static const struct { const char *name; u32 st, mv, ed; } rail_se[] = {
+    {"SideSpikeMoveStepA", 0, SE_OJ_LV_SIDE_SPIKE_STEP_MV, SE_OJ_SIDE_SPIKE_STEP_ED},
+    {"BroadBeanMoveStepA", SE_OJ_STONE_FLOOR_S_START, SE_OJ_LV_STONE_FLOOR_S_MOVE, SE_OJ_STONE_FLOOR_S_END},
+    {"BroadBeanMoveStepB", SE_OJ_STONE_FLOOR_S_START, SE_OJ_LV_STONE_FLOOR_S_MOVE, SE_OJ_STONE_FLOOR_S_END},
+    {"RGTowerPressGroundA", SE_OJ_STONE_FLOOR_S_START, SE_OJ_LV_STONE_FLOOR_S_MOVE, SE_OJ_STONE_FLOOR_S_END},
+};
 static void update_railers(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -14200,6 +14506,8 @@ static void update_railers(void)
         if (!in->railer) continue;
         const Row *r = &sc->objs[in->row];
         const unsigned char *e = in->railer;
+        int was = in->rwork; /* RailMoveObj _D0 */
+        in->rwork = 0;
         int row = in->row, cond = r->arg[7] >> 8 & 15, stop = *(const int *)(e + 16);
         if (!mp_running(r, row)) continue;
         u32 np = *(const u32 *)(e + 8), nr = *(const u32 *)(e + 12);
@@ -14211,6 +14519,13 @@ static void update_railers(void)
         }
         if (row_rdir[row] == 2) continue;
         if (row_rhold[row]) { row_rhold[row]--; continue; }
+        int se = -1; /* isRailMoverWorking: its SEs by name */
+        for (int k = 0; k < (int)(sizeof rail_se / sizeof *rail_se); k++) if (!strcmp(rail_se[k].name, sc->types + 32 * r->type)) se = k;
+        in->rwork = 1;
+        if (se >= 0) {
+            if (!was && rail_se[se].st) se_start(rail_se[se].st, &in->m[12]); /* startMoveInner: tryStageEffectStart */
+            in->lv[0] = se_level(rail_se[se].mv, &in->m[12], in->lv[0]);   /* move: tryStageEffectMoving */
+        }
         float c = row_coord[row];
         int dir = row_rdir[row];
         for (u32 k = 0; k < nr; k++) /* the speed of the last point behind it that sets one */
@@ -14224,6 +14539,7 @@ static void update_railers(void)
             if (hold > 0 && ((c < pc && n >= pc) || (c > pc && n <= pc))) { n = pc; row_rhold[row] = hold; break; }
         }
         if (n >= len || n <= 0) { /* an end */
+            if (se >= 0) se_start(rail_se[se].ed, &in->m[12]); /* doAtEndPoint: tryStageEffectStop */
             int type = stop >= 0 ? stop : 1;
             n = n >= len ? len : 0;
             int hold = *(const int *)(pa + 12 * (n > 0 ? nr - 1 : 0) + 8);
@@ -14251,7 +14567,10 @@ static void update_flips(void)
                 in->anim->frame = (float)anim_length(in->anim);
                 in->flip = 2;
             }
-            if ((*st & FLIP_DONE) && in->flip >= 2 && in->flip < 22 && ++in->flip == 22) obj_play(in, "panelend", 0, 0); /* EndPrepare 20, End */
+            if ((*st & FLIP_DONE) && in->flip >= 2 && in->flip < 22 && ++in->flip == 22) { /* EndPrepare 20, End */
+                obj_play(in, "panelend", 0, 0);
+                se_start(SE_OJ_FLIP_PANEL_COMPLETE, NULL); /* exeEnd */
+            }
         }
         if (*st & FLIP_DONE) continue;
         /* on it: grounded over its footprint (ground_inst may be the planet under a flush panel) */
@@ -14263,6 +14582,7 @@ static void update_flips(void)
         if (*st / FLIP_STEP < 2) { *st += FLIP_STEP; continue; }
         *st = ((*st & FLIP_BACK) ^ FLIP_BACK) | FLIP_LOCK;
         if (in->anim && in->md && in->md->skin) obj_play(in, (*st & FLIP_BACK) ? "panela" : "panelb", 0, 0); /* BackLand / FrontLand */
+        se_start(SE_OJ_FLIP_PANEL_CHANGE, &in->m[12]); /* exeBackLand / exeFrontLand */
     }
 }
 
@@ -14274,7 +14594,9 @@ static void update_collapse(void)
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
         if (!in->collapse || !row_step[in->row]) continue;
-        if (++row_step[in->row] >= in->collapse) {
+        if (++row_step[in->row] == 3) se_start(SE_OJ_COLLAPSE_PLANE_SHRINK, &in->m[12]); /* exeCollapse: mCollapseStep 1 */
+        if (row_step[in->row] >= in->collapse) {
+            se_start(SE_OJ_COLLAPSE_PLANE_VANISH, &in->m[12]);
             fx_at(FX_COLLAPSEPLANE_VANISH, v3(in->m[12], in->m[13], in->m[14]), vnorm(v3(in->m[4], in->m[5], in->m[6])));
             row_dead[in->row] = 1;
             game_rebind();
@@ -14300,7 +14622,8 @@ static void needle_attacked(V3 p, float r)
         if (vlen(vsub(c, p)) > 180.0f * in->s + r) continue;
         fx_at(FX_NEEDLEPLANT_BREAK, c, up);
         int a0 = sc->objs[in->row].arg[0];
-        if (a0 == 0) drop_pieces(b, up, 3); else if (a0 == -1) pop_coins(b, up, 1);
+        se_start(SE_OJ_NEEDLE_PLANT_BREAK, &b.x); /* kill */
+        if (a0 == 0) { se_start(SE_OJ_STAR_PIECE_BURST, &b.x); drop_pieces(b, up, 3); } else if (a0 == -1) pop_coins(b, up, 1);
         row_kill(in->row);
         printf("needle plant %d breaks" "\n", in->row);
     }
@@ -14317,6 +14640,7 @@ static void update_hazards(void)
         if (in->hazard >= 3) { /* black hole: sphere 500 * scale, or Mario's sensor inside the cube's box */
             const Row *rw = &sc->objs[in->row];
             if (!row_shown(in->row)) continue;
+            in->lv[0] = se_level(SE_OJ_LV_BLACK_HOLE, &in->m[12], in->lv[0]); /* BlackHole::exeWait */
             if (rw->sw[SW_A] >= 0 && sw_on(rw, SW_A)) { row_kill(in->row); continue; } /* exeWait: SW_A kills it */
             V3 x, z;
             row_axes(rw, &x, &z);
@@ -14346,7 +14670,7 @@ static void update_hazards(void)
         }
         if (vlen(vsub(c, p)) > r + HIT_BODY_R || (in->hazard == 2 && mario->hurt_timer)) continue;
         hurt_mario(p, in->hazard == 1 ? 25.0f : 15.0f);
-        if (in->hazard == 2) obj_play(in, "shake", 0, 0); /* sendMsgEnemyAttack: Shake */
+        if (in->hazard == 2) { obj_play(in, "shake", 0, 0); se_start(SE_OJ_LEAVES_SWING, &in->m[12]); } /* sendMsgEnemyAttack: Shake */
         if (in->hazard == 1) {
             fx_emit(FX_SPACEMINE_EXPLOSION, in->m);
             row_kill(in->row);
@@ -14433,6 +14757,11 @@ static void update_switches(void)
         }
         if (logic[i].kind == LOGIC_CHIPS) { /* ChipGroup.cpp: SW_A once every chip of its arg0 is taken */
             const char *chip = sc->types[32 * r->type] == 'Y' ? "YellowChip" : "BlueChip";
+            int yel = chip[0] == 'Y';
+            if (r->sw[SW_APPEAR] >= 0 && row_shown(row) && !(row_step[row] & 0x8000)) { /* receiveAppearRequest */
+                row_step[row] |= 0x8000;
+                se_start(yel ? SE_OJ_YELLOWCHIP_APPEAR : SE_OJ_BLUECHIP_APPEAR, NULL);
+            }
             int n = 0, got = 0;
             for (u32 k = 0; k < sc->nobjs; k++)
                 if (sc->objs[k].arg[0] == r->arg[0] && strcmp(sc->types + 32 * sc->objs[k].type, chip) == 0) {
@@ -14440,6 +14769,8 @@ static void update_switches(void)
                     got += row_dead[k];
                 }
             if (n && got == n) {
+                u32 h = se_start(yel ? SE_OJ_YELLOWCHIP_COMPLETE : SE_OJ_BLUECHIP_COMPLETE, NULL); /* noticeGet */
+                if (h) se_port(h, 11, n > 12 ? 12 : n); /* modifySe_Takezawa: port 11 the chip count */
                 sw_set(r, SW_A, 1);
                 row_dead[row] = 1;
                 printf("%s %d complete\n", sc->types + 32 * r->type, r->arg[0]);
@@ -14448,6 +14779,11 @@ static void update_switches(void)
         }
         if (logic[i].kind == LOGIC_FLIPS) { /* FlipPanelObserver: all its group's panels on their back side */
             if (!row_shown(row) || r->group < 0) continue;
+            if (r->sw[SW_APPEAR] >= 0 && !(row_step[row] & 0x8000)) { /* exeWait: first step after its appear switch */
+                V3 op = row_pos(r);
+                row_step[row] |= 0x8000;
+                se_start(SE_OJ_FLIP_PANEL_APPEAR, &op.x);
+            }
             int n = 0, back = 0;
             for (u32 k = 0; k < sc->nobjs; k++) {
                 const Row *q = &sc->objs[k];
@@ -14491,6 +14827,14 @@ static void update_switches(void)
     }
     if (sw_changed) {
         sw_changed = 0;
+        for (u32 i = 0; i < sc->nobjs; i++) { /* StarPieceGroup::appear (Group / Flow) on its appear switch; row_turn: appeared */
+            const Row *r = &sc->objs[i];
+            const char *tn = sc->types + 32 * r->type;
+            if (r->sw[SW_APPEAR] < 0 || row_turn[i] || (strcmp(tn, "StarPieceGroup") && strcmp(tn, "StarPieceFlow")) || !row_shown(i)) continue;
+            row_turn[i] = 1;
+            V3 p = row_pos(r);
+            se_start(SE_OJ_STAR_PIECE_BURST, &p.x);
+        }
         for (int i = 0; i < ninsts; i++) { /* PunchBox::kill / CrystalCage::forceBreak on SW_A */
             const Row *r = &sc->objs[insts[i].row];
             if (insts[i].breaks && r->sw[SW_A] >= 0 && sw_on(r, SW_A) && !row_dead[insts[i].row] &&
@@ -14524,6 +14868,7 @@ static int pipe_bind(Player *m)
         m->face = vnorm(vtangent(vadd(vmul(pipe_f0, 1.0f - u), vmul(cf, u)), m->up));
         if (!mario_anim || (mario_anim->done && pipe_t > 1)) { pipe_seq = 2; pipe_t = 0; if (mario_anim) mario_play("earthenpipein", 1.0f, 0); }
     } else if (pipe_seq == 2) {
+        if (pipe_t == 1) se_start(SE_DM_DOKAN_WARP, NULL); /* exePlayerIn first step */
         if (!mario_anim || (mario_anim->done && pipe_t > 1)) {
             pipe_zone = o->zone;
             if (o->mode == 1 || o->mode == 2) { /* tryShowUp: the hidden partner rises (WaitToShowUp 20, ShowUp 30) */
@@ -14535,10 +14880,14 @@ static int pipe_bind(Player *m)
             pipe_t = 0;
         }
     } else if (pipe_seq == 3) { /* exeTargetPipeShowUp: hidden until the partner is up */
+        static u32 lv;
         mario_hidden = 1;
         m->pos = o->top;
+        if (pipe_t == 21) se_start(SE_SY_ITEM_APPEAR, NULL); /* the partner's exeShowUp first step (after WaitToShowUp 20) */
+        if (pipe_t >= 21) lv = se_level(SE_OJ_LV_PIPE_APPEAR_MAGMA, &o->top.x, lv); /* its isLessStep 30 */
         if (pipe_t >= 50) { pipe_seq = 4; pipe_t = 0; }
     } else if (pipe_seq == 4) { /* exePlayerOut: at the partner's base matrix */
+        if (pipe_t == 1) se_start(SE_DM_DOKAN_WARP, NULL); /* exePlayerOut first step */
         if (pipe_t == 1 && mario_anim) mario_play("earthenpipeout", 1.0f, 0);
         m->pos = o->top; m->up = o->up;
         if (vlen(vtangent(o->front, o->up)) > 1e-3f) m->face = vnorm(vtangent(o->front, o->up));
@@ -14548,6 +14897,7 @@ static int pipe_bind(Player *m)
             m->hvel = in_water(o->top, o->up, &depth) ? v3(0, 0, 0) : vmul(vtangent(o->front, o->up), o->hf);
             m->grounded = 0; m->jump_kind = 0; m->air_timer = 0; m->hip = 0;
             if (vlen(m->hvel) > 0.1f) m->face = vnorm(m->hvel);
+            mario_se(SE_PM_JUMP_M); mario_se(SE_PV_JUMP_JOY); /* exePlayerOut: the bck stopped */
             if (mario_anim) mario_play("earthenpipejump", 1.0f, 0);
             pipe_seq = 0; pipe_wait = 1;
         }
@@ -14592,6 +14942,14 @@ static int erail_on(const Spark *e)
 }
 static void update_electric(void)
 {
+    for (int i = 0; i < nerails; i++) { /* per rail (its first segment): exeWait's hum, exeDisappear's first step */
+        Spark *e = &erails[i];
+        if (i && erails[i - 1].row == e->row) continue;
+        int on = erail_on(e);
+        if (on) e->lv = se_level(SE_OJ_LV_ELEC_RAIL_HAM, &e->c.x, e->lv);
+        else if (e->on && row_shown(e->row)) se_start(SE_OJ_ELEC_RAIL_VANISH, &e->c.x);
+        e->on = on;
+    }
     if (mario->squat) return;
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     for (int i = 0; i < nerails; i++) {
@@ -14644,7 +15002,7 @@ static V3 shoot_pos(const Inst *in, float *k)
 static void update_shooting(void)
 {
     for (int i = 0; i < ninsts; i++) {
-        const Inst *in = &insts[i];
+        Inst *in = &insts[i];
         if (!in->shoot || !row_shown(in->row)) continue;
         int row = in->row;
         const Row *r = &sc->objs[row];
@@ -14654,14 +15012,16 @@ static void update_shooting(void)
         if (*ph == 0 && *t > 20) { *ph = 1; *t = 0; }
         else if (*ph == 2 && *t > (r->arg[1] >= 0 ? r->arg[1] : 240)) { *ph = 0; *t = 0; }
         else if (*ph == 1) {
-            if (*t > 360) { *ph = 0; *t = 0; continue; }
             float k;
             V3 p = shoot_pos(in, &k), q = p, up = up_at(p, mario->up), gn = up, wn;
+            in->lv[0] = se_level(SE_OJ_LV_STAR_PIECE_FALL, &p.x, in->lv[0]); /* exeShooting */
+            if (*t > 360) { *ph = 0; *t = 0; continue; }
             int wall;
             if (!collide_n(&q, up, 100.0f, &gn, &wn, &wall) && !wall) continue;
             int n = r->arg[0] >= 0 ? r->arg[0] : 5;
             if (n > row_hold[row]) n = row_hold[row];
             launch_pieces(p, up, n, 15.0f, 40.0f);
+            se_start(n > 0 ? SE_OJ_STAR_PIECE_BURST : SE_OJ_STAR_PIECE_NOT_BURST, &p.x);
             row_hold[row] -= n;
             *ph = 2; *t = 0;
             if (!row_hold[row]) row_dead[row] = 1;
@@ -14790,6 +15150,8 @@ static void update_plants(void)
                 if (!p->ok) continue;
                 fx_at(FX_PUNCHBOX_BREAK, p->pos, p->up);
                 if (r->arg[2] >= 0) drop_pieces(p->pos, p->up, 1);
+                se_start(strcmp(sc->types + 32 * r->type, "CircleStrawberry") ? SE_OJ_SMALL_STONE_BREAK : SE_OJ_STRAWBERRY_BREAK, &p->pos.x); /* SmallStoneMember::doBreak */
+                se_start(SE_OJ_STAR_PIECE_BURST, &p->pos.x);
                 p->ok = 0;
             }
             plant_state[in->row] = 2; /* broken */
@@ -14806,10 +15168,11 @@ static void update_plants(void)
             if (p->item && ((p->nrv == PL_WEAK && p->touch == 1) ||
                             ((p->nrv == PL_MIDDLE || p->nrv == PL_STRONG) && (p->touch == 1 || p->touch == 2)))) {
                 p->item = 0; /* generateItem: a coin pop, or a star piece (appearStarPiece 10, 40) */
-                if (r->arg[2] == 1) drop_pieces(p->pos, p->up, 1);
+                if (r->arg[2] == 1) { se_start(SE_OJ_STAR_PIECE_BURST, &in->m[12]); drop_pieces(p->pos, p->up, 1); } /* on pGroup */
                 else pop_coins(p->pos, p->up, 1);
                 printf("plant group %d: item out\n", in->row);
             }
+            if (p->nrv >= PL_WEAK && p->step == 0) se_start(SE_OJ_LEAVES_SWING, &p->pos.x); /* exeShake*: first step */
             p->step++;
             if (p->nrv != PL_WAIT && p->step >= plant_clip_len(p->nrv)) { p->nrv = PL_WAIT; p->step = 0; } /* isBckStopped */
         }
@@ -15346,6 +15709,7 @@ static void notes_spawn(void) /* at game_init: every fairy's notes, hidden */
     }
 }
 
+static u32 note_lv[3], note_tm_id; /* NoteFairy level sounds: fairy move, fanfare, timer. ponytail: one set for all fairies (one runs at a time) */
 static void update_notes(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -15358,11 +15722,13 @@ static void update_notes(void)
         if (row_turn[i] == 0) {
             if (!row_shown(i)) continue;
             row_turn[i] = 1; row_coord[i] = 0;
+            if (r->arg[3] != 6) se_start(SE_SY_READ_RIDDLE_S, NULL); /* exeHide */
             printf("note fairy row %d: notes come out (rail %d long)" "\n", (int)i, (int)tsuki_len(e));
         }
         float len = tsuki_len(e), speed = r->arg[1] > 0 ? (float)r->arg[1] : 13.0f;
         int left = 0, all = 0;
         if (row_turn[i] == 1) row_coord[i] += r->arg[3] == -1 ? len : speed; /* AppearNote (type -1): all at once */
+        V3 fp = rail_at((const float *)(e + 24), *(const u32 *)(e + 8), row_coord[i]); /* the fairy */
         for (int k = 0; k < nnotes; k++) {
             if (notes[k].row != (short)i) continue;
             all++;
@@ -15376,14 +15742,31 @@ static void update_notes(void)
         if (row_turn[i] == 1 && row_coord[i] >= len) { row_turn[i] = 2; row_step[i] = 0; }
         if (!left) { /* ACTMES_SUCCESS */
             row_turn[i] = 3;
+            if (r->arg[5] == 0) se_start(SE_SY_TOTAL_COMPLETE, &fp.x); /* receiveOtherMsg: mCompletionJingle 0 */
             if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
             row_kill(i); /* its power star comes out (star_wait) */
             printf("note fairy row %d: all %d notes taken" "\n", (int)i, all);
         } else if (row_turn[i] == 2 && ++row_step[i] >= 60 * (r->arg[2] > 0 ? r->arg[2] : 20)) { /* failureNoteCollection */
             row_turn[i] = 3;
-            for (int k = 0; k < nnotes; k++) if (notes[k].row == (short)i && notes[k].alive == 1) notes[k].alive = 0;
+            for (int k = 0; k < nnotes; k++)
+                if (notes[k].row == (short)i && notes[k].alive == 1) { /* Note::exeCountDown */
+                    notes[k].alive = 0;
+                    se_start(SE_OJ_MUSICAL_NOTE_BREAK, &notes[k].pos.x);
+                }
             printf("note fairy row %d: time is up" "\n", (int)i);
         }
+        if (row_turn[i] == 1 && r->arg[3] != -1) /* exeAppearNoteBloom */
+            note_lv[0] = se_level(SE_OJ_LV_FLOWER_FAIRY_MOVE, &fp.x, note_lv[0]);
+        if (row_turn[i] == 2) { /* exeEndWait: timeLeft = mTimeLimit - step */
+            int tl = 60 * (r->arg[2] > 0 ? r->arg[2] : 20), rem = tl - row_step[i];
+            u32 id = rem <= 170 ? SE_RS_LV_NOTE_TIMER_FAST : rem <= tl / 2 ? SE_RS_LV_NOTE_TIMER_MIDDLE : SE_RS_LV_NOTE_TIMER_SLOW;
+            note_lv[1] = se_level(SE_SY_NO_SOUND_FANFARE, &fp.x, note_lv[1]);
+            if (id != note_tm_id) note_lv[2] = 0;
+            note_tm_id = id;
+            note_lv[2] = se_level(id, NULL, note_lv[2]); /* startSystemLevelSE, levelA to port 13 (modifySe_Takezawa) */
+            se_port(note_lv[2], 13, id == SE_RS_LV_NOTE_TIMER_FAST ? 0 : id == SE_RS_LV_NOTE_TIMER_MIDDLE ? 30 : 85);
+        }
+
     }
 }
 
@@ -15413,11 +15796,17 @@ static void update_items(void)
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
         if (!in->item || (in->item == ITEM_QCOIN && in->row == qth.row)) continue;
-        if (in->item == ITEM_STAR && star_wait[in->row]) {
-            int state;
-            star_pos(in, &state);
+        if (in->item == ITEM_STAR) {
+            int state = 3, t = row_step[in->row];
+            V3 sp = star_wait[in->row] ? star_pos(in, &state) : v3(in->m[12], in->m[13], in->m[14]);
+            int w = state >= 2 && in_water(sp, up_at(sp, mario->up), NULL);
+            if (state == 2 && t == 80) se_start(SE_SY_POW_STAR_APPEAR, &sp.x); /* exeAppearDemoMove first step */
+            if (state == 2 && t == 200) se_start(w ? SE_OJ_POW_STAR_MOVE_END_W : SE_OJ_POW_STAR_MOVE_END, &sp.x); /* its step 120 */
+            if (state == 3 || (state == 2 && (t < 80 || t >= 200))) /* processWait, exeAppearDemoRise, Move from step 120 */
+                in->lv[0] = se_level(w ? SE_OJ_LV_POW_STAR_EXIST_W : SE_OJ_LV_POW_STAR_EXIST, &sp.x, in->lv[0]);
             if (state < 3) { row_step[in->row] += state == 2; continue; } /* row_step: its appear demo */
         }
+
         if (in->item == ITEM_ONEUP || in->item == ITEM_LIFEUP || in->item == ITEM_INVINCIBLE) { benefit_update(in); if (in->invisible && row_turn[in->row] == 1) continue; }
         float r;
         V3 p = item_sensor(in, &r);
@@ -15441,9 +15830,10 @@ static void update_items(void)
         }
         else if (in->item == ITEM_ONEUP) printf("1-up, lives %d\n", ++lives);
         else if (in->item == ITEM_LIFEUP) { life = max_life = 2 * MAX_LIFE; printf("life up\n"); }
-        else if (in->item == ITEM_INVINCIBLE) { invincible_time = 1200; fire_time = 0; bee_mode = 0; printf("invincible mario\n"); }
+        else if (in->item == ITEM_INVINCIBLE) { se_start(SE_SY_POWER_UP_2, NULL); /* exeCatch */ invincible_time = 1200; fire_time = 0; bee_mode = 0; printf("invincible mario\n"); }
         else if (in->item == ITEM_QCOIN) {
             fx_emit(FX_QUESTIONCOIN_GET, in->m);
+            se_start(SE_SY_QUESTION_COIN, NULL); /* exeThrowActor / exeCaught */
             if (sc->objs[in->row].arg[0] > 0) { /* isThrowActor: ACTMES_AUTO_RUSH_BEGIN binds Mario (exeThrowActor) */
                 const Row *qr = &sc->objs[in->row];
                 V3 x, z;
@@ -15453,6 +15843,7 @@ static void update_items(void)
                 qth.vel = vmul(qth.up, (float)qr->arg[0]);                      /* getYDir x mLaunchSpeed */
                 in->invisible = 1;                                               /* hideModel */
                 if (mario_anim) mario_play("questioncoinjumpstart", 1.0f, 0);
+                se_start(SE_PV_JUMP_JOY, &mario->pos.x);
                 printf("question coin %d: throws Mario\n", in->row);
                 return;
             }
@@ -15486,6 +15877,10 @@ static void update_pops(void)
         c->pos = center;
         if (ground) { /* calcRebouond */
             float into = -vdot(q->vel, gn);
+            if (into >= 2.0f) { /* SE_OJ_COIN_BOUND, level A 100 x into / 30 (into at most 30) over 5: volume A / 100 */
+                int a = (int)(100.0f * (into > 30.0f ? 30.0f : into) / 30.0f);
+                if (a > 5) se_volpitch(se_start(SE_OJ_COIN_BOUND, &c->pos.x), a / 100.0f, 1.0f);
+            }
             if (into > 0) q->vel = vadd(q->vel, vmul(gn, into * (into >= 2.0f ? 1.75f : 1.0f)));
         }
         q->vel = vmul(q->vel, ground ? 0.9f : 0.995f);
@@ -15578,7 +15973,7 @@ static void update_shots(void)
     for (int i = 0; i < MAX_SHOTS; i++) {
         Shot *s = &shots[i];
         if (!s->t) continue;
-        if (++s->t > 60) { s->t = 0; continue; }
+        if (++s->t > 60) { s->t = 0; piece_break(s->pos); continue; } /* exeThrowFall: kill */
         s->pos = vadd(s->pos, s->vel);
         int hit = 0;
         for (int k = 0; k < nkuribo && !hit; k++) {
@@ -15621,7 +16016,7 @@ static void update_shots(void)
             printf("star piece explodes kiraira %d" "\n", in->row);
             hit = 1;
         }
-        if (!hit && hhp_reflects(s->pos, 30.0f)) hit = 1; /* HammerHeadPackun: isMsgStarPieceReflect */
+        if (!hit && hhp_reflects(s->pos, 30.0f)) hit = 2; /* HammerHeadPackun: isMsgStarPieceReflect */
         for (int k = 0; k < ninsts && !hit; k++) { /* ItemBubble: isMsgStarPieceAttack bursts it */
             Inst *in = &insts[k];
             if (!in->ibubble || !row_shown(in->row) || vlen(vsub(s->pos, bubble_pos(in))) > 120.0f * 1.2f * sc->objs[in->row].scale[0]) continue;
@@ -15638,20 +16033,22 @@ static void update_shots(void)
             Inst *in = &insts[k];
             if (!in->coco || row_turn[in->row] == 2 || vlen(vsub(s->pos, in->head)) > 55.0f * in->s + 30.0f) continue;
             coco_hit(in, s->vel, 10.0f, -5.0f, up_at(in->head, mario->up));
-            hit = 1;
+            se_start(SE_OJ_COCONUT_FLIP_S, &in->head.x); /* CocoNut::receiveMsgPlayerAttack */
+            hit = 2;
         }
         for (int k = 0; k < ninsts && !hit; k++) { /* PunchingKinoko: isMsgStarPieceAttack pushes its head 15 */
             Inst *in = &insts[k];
             if (!in->punch || row_turn[in->row] == 4 || vlen(vsub(s->pos, in->head)) > 70.0f + 30.0f) continue;
             V3 dir = vnorm(s->vel);
             if (vdot(in->hvel, dir) < 15.0f) in->hvel = vadd(in->hvel, vmul(dir, 15.0f));
+            se_start(SE_OJ_PNC_KINOKO_BOUND, &in->m0[12]);
             hit = 1;
         }
         for (int k = 0; k < ninsts && !hit; k++) { /* PomponPlant: isMsgStarPieceReflect swings it */
             const Inst *in = &insts[k];
             if (in->giver != 2 || row_turn[in->row] || vlen(vsub(s->pos, giver_sensor(in))) > 90.0f) continue;
             giver_give(in, giver_sensor(in), vnorm(v3(in->m[4], in->m[5], in->m[6])));
-            hit = 1;
+            hit = 2;
         }
         for (int k = 0; k < ninsts && !hit; k++) { /* TreasureSpot.cpp: Spout, Mario within 2000 */
             const Inst *in = &insts[k];
@@ -15662,9 +16059,15 @@ static void update_shots(void)
             pop_coins(vadd(p, vmul(up, 50.0f)), up, 1);
             printf("star piece opens %s row %d" "\n", in->tspot == 1 ? "TreasureSpot" : "CoinFlower", in->row);
             if (in->tspot == 1) { row_kill(in->row); game_rebind(); break; }
+            se_start(SE_OJ_COIN_FLOWER_BLOOM, &in->m[12]); /* exeSpout */
             row_turn[in->row] = 1; /* the flower stays, bloomed */
         }
-        if (hit || kcl_query(s->pos, 20.0f, h, 1)) s->t = 0;
+        if (hit || kcl_query(s->pos, 20.0f, h, 1)) { /* StarPiece::exeThrow: setReflect (hit 2), else kill */
+            float d;
+            if (hit == 2) se_start(in_water(s->pos, up_at(s->pos, mario->up), &d) ? SE_OJ_STAR_PIECE_REFLECT_W : SE_OJ_STAR_PIECE_REFLECT, &s->pos.x);
+            else { if (hit) se_start(SE_OJ_STAR_PIECE_HIT_ENEMY, &s->pos.x); piece_break(s->pos); }
+            s->t = 0;
+        }
     }
 }
 
@@ -15833,6 +16236,9 @@ static void update_obj_anims(void)
     for (int i = 0; i < ninsts; i++)
         if (insts[i].anim && vlen(vsub(v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]), cam_pos)) < 8000.0f) {
             for (int k = 0; k < MAX_OBJ_ANIM; k++) if (oanim[k].a == insts[i].anim) oanim[k].last = game_frame;
+            if (!strncmp(sc->types + 32 * sc->objs[insts[i].row].type, "PhantomShipPropeller", 20)) /* AnmModelObj::exeMove: its moving SE */
+                insts[i].lv[0] = se_level(sc->types[32 * sc->objs[insts[i].row].type + 20] == 'B' ? SE_OJ_LV_P_SHIP_PROPELLER_L : SE_OJ_LV_P_SHIP_PROPELLER_S,
+                                          &insts[i].m[12], insts[i].lv[0]);
             if (insts[i].punch) { anim_pose(insts[i].anim); punch_ball(&insts[i], insts[i].anim); anim_skin(insts[i].anim); continue; }
             if (insts[i].anim->done && !insts[i].anim->loop && !insts[i].vine && !obj_play(&insts[i], sc->types + 32 * sc->objs[insts[i].row].type, 1, 0))
                 obj_play(&insts[i], "wait", 1, 8); /* a one-shot clip over: back to its own clip (tryStartAllAnim), else Wait */
@@ -15857,6 +16263,9 @@ void game_update(void)
         printf("scenario starter: flight in, %d frames" "\n", launches[starter].flight);
         starter = -1;
     }
+#ifdef REPLAY
+    if (game_frame > 3 && mario->launch < 0 && mario->grounded) pad_replay_begin(); /* the player's control: g = 0 */
+#endif
     kcl_list_build();
     LQ(0, update_obj_anims());
     if (time_limit && time_left > 0 && !stars && --time_left == 0) { printf("time up" "\n"); miss(); }

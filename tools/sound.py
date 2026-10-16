@@ -960,6 +960,20 @@ def scene_types(scene_bin):
     return set()
 
 
+def scene_talk_sounds(scene_bin):
+    """the talk sound numbers (Msg info byte 6) of a scene.bin's TALK chunk (tools/msg.py)"""
+    b = Path(scene_bin).read_bytes()
+    o = 16
+    while o < len(b):
+        tag, size = b[o:o + 4], struct.unpack_from("<I", b, o + 4)[0]
+        if tag == b"TALK":
+            nctl, nnode, nmsg = struct.unpack_from("<HHH", b, o + 16)
+            m = o + 32 + 40 * nctl + 12 * nnode
+            return {b[m + 12 * i + 6] for i in range(nmsg)}
+        o += 16 + size
+    return set()
+
+
 def scenario_keep(placed):
     """the SE names a scenario may play, by phase 0c's rule (tools/sfxcut.py: Petari's code per class, placement):
     -> (names some placed class or global code names, every name some class file names). A name no placed class
@@ -1005,6 +1019,15 @@ def pack(fs, out_bin, ids_h, sources, cap=16000, budget=1850000, scene=None):
                                           mario_h.read_text("utf-8")):
         if key in keys or (key.startswith("声") and key[1:] in keys):
             names.add(se)
+    # MR::startTalkSound's table (game.c talk_snd, cTalkSoundList order): only the numbers a scenario's messages use
+    talk = []
+    for src in sources:
+        m = re.search(r"talk_snd\[\] = \{(.*?)\};", Path(src).read_text("utf-8", "ignore"), re.S)
+        if m:
+            talk = [t.strip() for t in m.group(1).split(",") if t.strip()]
+    names -= set(talk)
+    if scene:
+        names |= {talk[n] for n in scene_talk_sounds(scene) if n < len(talk) and talk[n] in baa.ids}
     bas = {}  # "<archive>/<clip>" lower case -> the .bas bytes' entries (0x20 each, big-endian as on disc)
     from budget import rarc_files
     for arc in BAS_ARCS:
@@ -1024,7 +1047,8 @@ def pack(fs, out_bin, ids_h, sources, cap=16000, budget=1850000, scene=None):
         bas = {k: v for k, v in bas.items() if k.split("/")[0] in placed_l or k.startswith("marioanime/")}
         bas_names = {baa.names.get((U32(v, 0x20 * i) >> 24, (U32(v, 0x20 * i) >> 16) & 0xFF, U32(v, 0x20 * i) & 0xFFFF))
                      for v in bas.values() for i in range(len(v) // 0x20)}
-        names = {n for n in names if baa.ids[n][1] in (0, 1, 2) or n in keep or n not in known or n in bas_names}
+        names = {n for n in names if baa.ids[n][1] in (0, 1, 2) or n in keep or n not in known or n in bas_names
+                 or n in talk}
     names = sorted(names)
     Path(ids_h).write_text("/* SE names -> JAISoundID (section << 24 | group << 16 | index), tools/sound.py pack */\n"
                            "#ifndef SE_IDS_H\n#define SE_IDS_H\n" +
