@@ -83,3 +83,14 @@ eye at 8087B1B8. The port logs both every 5 frames in `replay` builds. Findings 
 - The ground spin halves the target walk speed (updateWalkSpeed's mTornadoMultiply while MarioMagic runs).
 - The Wii sees a shake as a swing ~5 frames after it starts: replay.py presses the PS2 spin button that much later.
 - Left: the first 15 frames of a running turn are ~1.5 frames behind the Wii's (~20 units), carried on after it.
+
+## Third run (after the camera's height arrange): videos/2026-10-15_cmp-goodegg-moves3.mp4
+
+Cut so that g 0 is at 1.0 s on both sides: Wii AVI -ss 68.90 (g 0 at 69.90), PS2 capture
+(videos/2026-10-15_2256_cmp-moves3-ps2_6f1893d.mp4) -ss 13.83 (g 0 at 14.83; found by the motion onset at g 90).
+
+- The camera follows the triple jump's rise as the Wii's (height within ~20 units at g 350, was 79).
+- Mario within ~15-20 units of the Wii's to g 400; then ~95 by g 450: the camera's horizontal swings away from
+  the Wii's after the second triple-jump landing (Mario faces ~3 degrees off at g 390, and constrainAngleY turns
+  the camera the other way near 180 degrees). From there on the run drifts (by g 900 Mario is elsewhere).
+- Missing: the spin's sparkle trail (Wii effect on the ground spin), sun flare, cloud scroll.
