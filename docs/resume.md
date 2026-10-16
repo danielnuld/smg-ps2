@@ -338,7 +338,7 @@ materials baked (glow falloff, GlareLine back), Mario's animation effects (fligh
 surface sounds (KCL Sound_code -> ports 11 / 12; the KCL attribute layout changed: floor 0-5, wall 6-9, camera 10,
 sound 11-14, so other galaxies' packs need a repack before their sounds are right). Bench EggStar 1: 18.3 ms (the
 flights' effects); 8982dcb / 051a1b0 Mario blinks and plays his clips' eye patterns (updateBlink, setBlink: SWAP and
-EYEP chunks). videos/2026-10-16_cmp-goodegg-final2.mp4: the comparison with all of it (cut with
+EYEP chunks); 72e5cac MarioWait (1800 still frames: sleep, then sleeplie). videos/2026-10-16_cmp-goodegg-final2.mp4: the comparison with all of it (cut with
 tools/dolphin/align.py). Left from the comparison: the spin light's stripes drawn as sprites,
 GlareLine, the glass capsule's env map, the Wii's 16:9 view (the port is 4:3), the ~44 opening frames the Wii may run
 under the loading black, the Takobo meeting at g ~780 (a frame or two apart).
