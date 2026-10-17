@@ -1149,7 +1149,8 @@ typedef struct { V3 n; float dist; int inst, attr, sub; } Hit; /* world normal, 
 static int nlfs, ground_sub, mario_ground_sub; static int lf_mats(const Inst *in, const float (**mats)[16], const int **coll);
 static void update_leaves(void), leaf_joints(Inst *in);
 static int npls; static void update_palms(void), pl_place(Inst *in);
-static const Model *m_fish[6]; static int nfgs; static void update_fishes(void), draw_fishes(void);
+static const Model *m_fish[6], *m_gull; static int nggs; static void update_gulls(void), draw_gulls(void);
+static int nfgs; static void update_fishes(void), draw_fishes(void);
 
 /* Sphere against every placed KCL: the sphere goes to the instance's object space (KCL data is in model space),
  * normals and depths come back to world. ponytail: uniform scale only (scale.x), like every planet seen so far. */
@@ -1450,7 +1451,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nvines = 0; vine_ride = -1;
     pole_init();
     nrbms = 0;
-    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0; nfgs = 0;
+    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0; nfgs = 0; nggs = 0;
     dino_cam = 0;
     foot_num = foot_rot = 0;
     nseesaws = 0;
@@ -3123,6 +3124,7 @@ void game_rebind(void)
     m_pleaf = scene_model(s, "PackunLeaf");
     m_rbeam = scene_model(s, "JumpBeamerBeam"); m_ebeam = scene_model(s, "EyeBeamerBeam");
     { static const char *fn[6] = {"FishA", "FishB", "FishC", "FishD", "FishE", "FishF"}; for (int f = 0; f < 6; f++) m_fish[f] = scene_model(s, fn[f]); }
+    m_gull = scene_model(s, "SeaGull");
     t_whirl = scene_type(s, "WhirlPoolAccelerator");
     m_wbullet = scene_model(s, "WaterBullet");
     m_mogustone = scene_model(s, "MoguStone"); m_moguhole = scene_model(s, "MoguHole");
@@ -18858,6 +18860,128 @@ static void draw_fishes(void)
     }
 }
 
+/* SeaGull.cpp after Petari (SeaGullGroup): arg0 (10) gulls flying round targets 500 apart along the group's rail
+ * (each from a random place, a random way; its next target every 180 frames). HoverFront (its bank easing 0.995)
+ * for 0..60 frames, then banks left / right (0.1 a frame for 60..120) while its target is over 500 off; the bank
+ * (within 30) tilts its up about its front and turns it (0.01 of it) about the world up. 0.05 along its front a frame,
+ * lift 0.04 along its banked up for 30..180 frames once it is over 500 under its target or its 60..300 glide is done,
+ * else 0.005 down; damped 0.99, at most 10. Its CHIRP every 60..480. ponytail: one Fly pose a group, drawn within
+ * 8000 of the camera only, 16 a group */
+#define MAX_GGROUPS 8
+#define GG_BIRDS 16
+#define GG_POINTS 64
+enum { GU_FRONT, GU_LEFT, GU_RIGHT };
+static struct {
+    int row, init, n, npts; V3 pts[GG_POINTS];
+    V3 pos[GG_BIRDS], vel[GG_BIRDS], up[GG_BIRDS], front[GG_BIRDS], bup[GG_BIRDS], side[GG_BIRDS];
+    int pt[GG_BIRDS], rev[GG_BIRDS], tupd[GG_BIRDS], nrv[GG_BIRDS], step[GG_BIRDS], hover[GG_BIRDS], glide[GG_BIRDS], lift[GG_BIRDS], chirp[GG_BIRDS];
+    float bank[GG_BIRDS];
+} ggs[MAX_GGROUPS];
+static int gg_next(int k, int b) /* updatePosInfo */
+{
+    typeof(&ggs[0]) g = &ggs[k];
+    if (g->rev[b]) { if (--g->pt[b] <= 0) g->pt[b] = g->npts - 1; }
+    else if (++g->pt[b] >= g->npts) g->pt[b] = 0;
+    return g->pt[b];
+}
+static void gu_set(int k, int b, int n) { ggs[k].nrv[b] = n; ggs[k].step[b] = -1; }
+static void update_gulls(void)
+{
+    for (u32 row = 0; row < sc->nobjs; row++) {
+        const Row *r = &sc->objs[row];
+        if (strcmp(sc->types + 32 * r->type, "SeaGullGroup") || !row_shown((int)row) || r->path < 0 || !scene_blob_g) continue;
+        u32 rn = 0; int cl = 0;
+        const float *rail = find_rail(scene_blob_g, r->zone, r->path, &rn, &cl);
+        if (!rail) continue;
+        int k = -1;
+        for (int i = 0; i < nggs && k < 0; i++) if (ggs[i].row == (int)row) k = i;
+        if (k < 0) { if (nggs == MAX_GGROUPS) continue; k = nggs++; memset(&ggs[k], 0, sizeof ggs[0]); ggs[k].row = (int)row; }
+        typeof(&ggs[0]) g = &ggs[k];
+        if (!g->init) {
+            float len = w_rail_len(rail, rn);
+            g->init = 1;
+            g->n = r->arg[0] > 0 ? (r->arg[0] > GG_BIRDS ? GG_BIRDS : r->arg[0]) : 10;
+            g->npts = (int)(len / 500.0f) + 1;
+            if (g->npts > GG_POINTS) g->npts = GG_POINTS;
+            for (int i = 0; i < g->npts; i++) g->pts[i] = rail_at(rail, rn, len / g->npts * i);
+            V3 x, z;
+            row_axes(r, &x, &z);
+            x = vnorm(x); z = vnorm(z);
+            for (int b = 0; b < g->n; b++) {
+                float c = frand(1.0f, len - 1.0f);
+                g->pt[b] = (int)(c / 500.0f);
+                if (g->pt[b] >= g->npts) g->pt[b] = g->npts - 1;
+                g->pos[b] = rail_at(rail, rn, c);
+                g->rev[b] = rand() & 1;
+                gg_next(k, b);
+                g->tupd[b] = rand() % 181;
+                g->side[b] = x; g->bup[b] = vnorm(vcross(z, x)); g->up[b] = g->bup[b];
+                V3 f = vadd(vmul(x, frand(-1, 1)), vmul(z, frand(-1, 1)));
+                g->front[b] = vlen(f) < 1e-4f ? v3(0, 0, 1) : vnorm(f);
+                g->chirp[b] = 60 + rand() % 421;
+                gu_set(k, b, GU_FRONT);
+            }
+        }
+        for (int b = 0; b < g->n; b++) {
+            V3 tgt = g->pts[g->pt[b]];
+            int st = ++g->step[b];
+            switch (g->nrv[b]) {
+            case GU_FRONT:
+                if (st == 0) g->hover[b] = rand() % 61;
+                g->bank[b] *= 0.995f;
+                if (g->hover[b] >= 0) g->hover[b]--;
+                else if (vlen(vsub(g->pos[b], tgt)) > 500.0f) gu_set(k, b, vdot(g->side[b], vsub(tgt, g->pos[b])) > 0 ? GU_LEFT : GU_RIGHT);
+                break;
+            case GU_LEFT: case GU_RIGHT:
+                if (st == 0) g->hover[b] = 60 + rand() % 61;
+                g->bank[b] += g->nrv[b] == GU_LEFT ? -0.1f : 0.1f;
+                if (st == g->hover[b]) gu_set(k, b, GU_FRONT);
+                break;
+            }
+            if (fabsf(g->bank[b]) > 0.01f) { /* updateHover */
+                g->up[b] = v3(0, 1, 0); /* -mGravity */
+                g->bank[b] = g->bank[b] < -30.0f ? -30.0f : g->bank[b] > 30.0f ? 30.0f : g->bank[b];
+                g->bup[b] = rot_axis(g->up[b], g->front[b], g->bank[b] * 0.0174533f);
+                g->front[b] = rot_axis(g->front[b], g->up[b], -0.01f * g->bank[b] * 0.0174533f);
+            }
+            g->vel[b] = vadd(g->vel[b], vmul(g->front[b], 0.05f));
+            if (g->lift[b] > 0) {
+                g->vel[b] = vadd(g->vel[b], vmul(g->bup[b], 0.04f));
+                if (--g->lift[b] <= 0) g->glide[b] = 60 + rand() % 241;
+            } else {
+                g->vel[b].y -= 0.005f;
+                float h = vdot(vsub(tgt, g->pos[b]), g->up[b]);
+                if (h < 500.0f) g->glide[b] = 300;
+                else if (--g->glide[b], h > 500.0f || g->glide[b] <= 0) g->lift[b] = 30 + rand() % 151;
+            }
+            g->vel[b] = vmul(g->vel[b], 0.99f); /* control */
+            if (vlen(g->vel[b]) > 10.0f) g->vel[b] = vmul(vnorm(g->vel[b]), 10.0f);
+            g->side[b] = vnorm(vcross(g->bup[b], g->front[b]));
+            g->bup[b] = vnorm(vcross(g->front[b], g->side[b]));
+            if (--g->tupd[b] <= 0) { gg_next(k, b); g->tupd[b] = 180; }
+            if (g->chirp[b] <= 0) { se_start(SE_OJ_SEAGULL_CHIRP, &g->pos[b].x); g->chirp[b] = 60 + rand() % 421; }
+            else g->chirp[b]--;
+            g->pos[b] = vadd(g->pos[b], g->vel[b]);
+        }
+    }
+}
+static void draw_gulls(void)
+{
+    if (!m_gull || !m_gull->skin) return;
+    for (int k = 0; k < nggs; k++) {
+        typeof(&ggs[0]) g = &ggs[k];
+        if (!g->init || !row_shown(g->row)) continue;
+        Anim *a = NULL;
+        for (int b = 0; b < g->n; b++) {
+            if (vlen(vsub(g->pos[b], cam_pos)) > 8000.0f) continue;
+            if (!a) { if (!(a = obj_anim(11 * (int)sc->nobjs + g->row, m_gull, "SeaGull"))) break; anim_update(a); }
+            V3 x = g->side[b], y = g->bup[b], z = g->front[b], p = g->pos[b];
+            float m[16] = {x.x, x.y, x.z, 0, y.x, y.y, y.z, 0, z.x, z.y, z.z, 0, p.x, p.y, p.z, 1};
+            draw_skin(m_gull, m, a);
+        }
+    }
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -20699,6 +20823,7 @@ void game_update(void)
     update_leaves();
     update_palms();
     update_fishes();
+    update_gulls();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
@@ -21705,6 +21830,7 @@ void game_draw(void)
     draw_trapeze_ropes();
     draw_eyebeams();
     draw_fishes();
+    draw_gulls();
     RESTQ(0);
     draw_vines();
     RESTQ(1);
