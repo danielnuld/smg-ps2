@@ -245,6 +245,7 @@ typedef struct {
     int fpressure;   /* FirePressureRadiate: a flame on a cycle (update_fpressures, fpr_joints) */
     int spmother;    /* StarPieceMother: its star pieces at a touch, or along its rail (update_spmothers) */
     int leakpipe;    /* WaterLeakPipe: stretched to its height, leaking (update_leakpipes, leak_joints) */
+    int eyebeamer;   /* EyeBeamer: turns, goes to its rail and patrols it, its beam burning (update_eyebeamers) */
     int kstair;      /* KoopaBattleMapStair(Big / Turn): breaks and falls after its switch (update_stairs) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
@@ -615,6 +616,7 @@ static int nonis, nfprs; static void oni_place(Inst *in), update_onimasu(void), 
 static int nspms; static void update_spmothers(void);
 static void update_leakpipes(void), leak_joints(Inst *in);
 static int nkss; static void update_stairs(void), ks_place(Inst *in);
+static int nebs; static const Model *m_ebeam; static int eb_patrol(int row); static void update_eyebeamers(void), eb_place(Inst *in), draw_eyebeams(void);
 static int nmhills; static const Model *m_mhole, *m_mhill[3];
 static void sbm_place(Inst *in), sbm_joints(Inst *in);
 static int pole_try(Player *m), pole_hold(Player *m);
@@ -1433,7 +1435,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nvines = 0; vine_ride = -1;
     pole_init();
     nrbms = 0;
-    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0;
+    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0;
     dino_cam = 0;
     foot_num = foot_rot = 0;
     nseesaws = 0;
@@ -3104,7 +3106,7 @@ void game_rebind(void)
     m_otamagma = scene_model(s, "OtaKingMagma"); m_otalfoot = scene_model(s, "OtaKingLongFoot");
     m_otabloom = scene_model(s, "OtaKingMagmaBloom");
     m_pleaf = scene_model(s, "PackunLeaf");
-    m_rbeam = scene_model(s, "JumpBeamerBeam");
+    m_rbeam = scene_model(s, "JumpBeamerBeam"); m_ebeam = scene_model(s, "EyeBeamerBeam");
     t_whirl = scene_type(s, "WhirlPoolAccelerator");
     m_wbullet = scene_model(s, "WaterBullet");
     m_mogustone = scene_model(s, "MoguStone"); m_moguhole = scene_model(s, "MoguHole");
@@ -3248,6 +3250,7 @@ void game_rebind(void)
         in->fpressure = strcmp(name, "FirePressureRadiate") == 0;
         in->spmother = strcmp(name, "StarPieceMother") == 0;
         in->leakpipe = strcmp(name, "WaterLeakPipe") == 0;
+        in->eyebeamer = strcmp(name, "EyeBeamer") == 0;
         in->kstair = strncmp(name, "KoopaBattleMapStair", 19) == 0 && strcmp(name, "KoopaBattleMapStairTurnAppear") != 0;
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
@@ -3257,7 +3260,7 @@ void game_rebind(void)
         in->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 : 0;
         { char bn[40]; snprintf(bn, sizeof bn, "%sBloom", name); in->md_bloom = scene_model(s, bn); }
         if (in->seesaw) { in->rotor = 0; seesaw_matrix(in); }
-        in->railer = scene_blob_g && r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->path >= 0 ?
+        in->railer = scene_blob_g && ((r->arg[7] > 0 && (r->arg[7] >> 30 & 1)) || in->eyebeamer) && r->path >= 0 ?
                      find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->kcl = scene_kcl(s, name);
         in->zone = r->zone;
@@ -3277,6 +3280,7 @@ void game_rebind(void)
         if (in->biri && row_coord && row_turn[i]) biri_place(in);
         if (in->dossun && row_turn) dossun_place(in);
         if (in->sbeamer) sbm_place(in);
+        if (in->eyebeamer) eb_place(in);
         if (in->trapeze) tz_place(in);
         if (in->onimasu) oni_place(in);
         if (in->kstair) ks_place(in);
@@ -16839,7 +16843,7 @@ static void update_railers(void)
         int was = in->rwork; /* RailMoveObj _D0 */
         in->rwork = 0;
         int row = in->row, cond = r->arg[7] >> 8 & 15, stop = *(const int *)(e + 16);
-        if (!mp_running(r, row)) continue;
+        if (in->eyebeamer ? !eb_patrol(row) : !mp_running(r, row)) continue;
         u32 np = *(const u32 *)(e + 8), nr = *(const u32 *)(e + 12);
         const unsigned char *pa = e + 24 + 12 * np + 12 * nr; /* nr x {f32 coord, s32 arg0, s32 arg5} */
         float len = *(const float *)(pa + 12 * (nr - 1));
@@ -18396,6 +18400,122 @@ static void update_stairs(void)
         }
         ks_place(in);
         if (mario_ground == i) carry(old, in);
+    }
+}
+
+/* EyeBeamer.cpp after Petari: a lamp shining its beam (arg0 2000 long) down its -Y from its Beam joint. arg2 0 starts
+ * on Patrol, else it Waits; its SW_A turns it half round its X over 300 frames (Turn, eased), then it goes to its
+ * rail's start over 500 (GotoPatrol, eased), and Patrols along the rail (MapPartsRailMover: the railer). Its beam is
+ * on while it Waits or Patrols: Mario within 140 of its line burns (EnemyAttackHeatBeam). With arg1 (>= 0) its
+ * BeamSurface effect sits on the water arg1 under its rail's start. The beam (EyeBeamerBeam) is drawn at the Beam
+ * joint stretched by arg0 / 2000. ponytail: no MercatorCube, no demo casts, no beam volume / bloom models, a burn is
+ * a hurt */
+#define MAX_EYEBS 16
+enum { EB_WAIT, EB_TURN, EB_GOTO, EB_PATROL };
+static struct { int row, nrv, step, init; Quat cc, dc; V3 ec, f8, p104; u32 lv; } ebs[MAX_EYEBS];
+
+static int eb_of(int row)
+{
+    for (int i = 0; i < nebs; i++) if (ebs[i].row == row) return i;
+    if (nebs == MAX_EYEBS) return -1;
+    memset(&ebs[nebs], 0, sizeof ebs[0]);
+    ebs[nebs].row = row;
+    return nebs++;
+}
+static int eb_patrol(int row) { int k = eb_of(row); return k >= 0 && ebs[k].init && ebs[k].nrv == EB_PATROL; }
+static float eb_len(const Row *r) { return r->arg[0] != -1 ? (float)r->arg[0] : 2000.0f; }
+static void eb_set(int k, int n) { ebs[k].nrv = n; ebs[k].step = -1; }
+static void eb_place(Inst *in) /* updatePoseAndTrans */
+{
+    int k = eb_of(in->row);
+    if (k < 0 || !ebs[k].init) return;
+    V3 x, y, z;
+    q_axes(ebs[k].dc, &x, &y, &z);
+    const float *s3 = sc->objs[in->row].scale;
+    float m[16] = {x.x * s3[0], x.y * s3[0], x.z * s3[0], 0, y.x * s3[1], y.y * s3[1], y.z * s3[1], 0, z.x * s3[2], z.y * s3[2], z.z * s3[2], 0, ebs[k].ec.x, ebs[k].ec.y, ebs[k].ec.z, 1};
+    memcpy(in->m, m, 64);
+}
+static int eb_beam_mtx(const Inst *in, float out[16]) /* calcAnim: _9C, the Beam joint pre-scaled by arg0 / 2000 */
+{
+    if (!in->anim || !in->anim->skin || in->anim->skin->njoints < 2) return 0;
+    float s[16] = {1, 0, 0, 0, 0, eb_len(&sc->objs[in->row]) / 2000.0f, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}, j[16];
+    mat_mul(j, in->m, in->anim->world[1]);
+    mat_mul(out, j, s);
+    return 1;
+}
+static void update_eyebeamers(void)
+{
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->eyebeamer || !row_shown(in->row)) continue;
+        int k = eb_of(in->row);
+        if (k < 0) continue;
+        typeof(&ebs[0]) o = &ebs[k];
+        const Row *r = &sc->objs[in->row];
+        if (!o->init) {
+            float one[3] = {1, 1, 1}, m[16];
+            mat_translate_rot_scale(m, r->pos, r->rot, one);
+            o->init = 1; o->dc = o->cc = q_from_axes(v3(m[0], m[1], m[2]), v3(m[4], m[5], m[6]), v3(m[8], m[9], m[10]));
+            o->ec = o->f8 = o->p104 = row_pos(r);
+            if (in->railer) { const unsigned char *e = in->railer; o->p104 = rail_at((const float *)(e + 24), *(const u32 *)(e + 8), 0); } /* calcRailStartPos */
+            eb_set(k, r->arg[2] == 0 ? EB_PATROL : EB_WAIT); /* initStartNerve */
+        }
+        int st = ++o->step;
+        V3 xd;
+        q_axes(o->cc, &xd, NULL, NULL);
+        switch (o->nrv) {
+        case EB_WAIT:
+            if (r->sw[SW_A] >= 0 && sw_on(r, SW_A)) eb_set(k, EB_TURN); /* requestStartPatrol */
+            break;
+        case EB_TURN: {
+            if (st == 0) se_start(SE_OJ_EYE_BEAMER_TURN, &in->m[12]);
+            float t = st >= 300 ? 1.0f : st / 300.0f, e = (1.0f - cosf(3.14159265f * t)) * 0.5f; /* calcNerveEaseInOutRate */
+            o->dc = q_mul(q_axis(xd, 3.14159265f * e), o->cc);
+            if (st > 300) eb_set(k, EB_GOTO); /* tryGotoPatrol: isGreaterStep */
+            break;
+        }
+        case EB_GOTO: {
+            float t = st >= 500 ? 1.0f : st / 500.0f, e = (1.0f - cosf(3.14159265f * t)) * 0.5f;
+            o->ec = vadd(o->f8, vmul(vsub(o->p104, o->f8), e)); /* vecBlend */
+            if (st > 500) eb_set(k, EB_PATROL);
+            break;
+        }
+        case EB_PATROL:
+            if (st == 0) o->dc = q_mul(q_axis(xd, 3.14159265f), o->cc);
+            if (in->railer && row_coord) { const unsigned char *e = in->railer; o->ec = rail_at((const float *)(e + 24), *(const u32 *)(e + 8), row_coord[in->row]); }
+            break;
+        }
+        eb_place(in);
+        o->lv = se_level(SE_OJ_LV_EYE_BEAMER_MOVE, &in->m[12], o->lv); /* control */
+        if (r->arg[1] >= 0 && o->nrv == EB_PATROL) { /* updateWaterSurfaceMtx, BeamSurface */
+            V3 y;
+            q_axes(o->dc, NULL, &y, NULL);
+            V3 p = vsub(o->ec, vmul(y, (float)r->arg[1] + vdot(y, vsub(o->ec, o->p104))));
+            float m[16];
+            memcpy(m, in->m, 64);
+            m[12] = p.x; m[13] = p.y; m[14] = p.z;
+            fx_named("EyeBeamer", "BeamSurface", m, NULL, &ebs[k]);
+        }
+        float bm[16];
+        if (o->nrv != EB_WAIT && o->nrv != EB_PATROL) continue; /* isOnBeam */
+        if (!eb_beam_mtx(in, bm)) continue;
+        V3 dn = vmul(vnorm(v3(in->m[4], in->m[5], in->m[6])), -1.0f), b = v3(bm[12], bm[13], bm[14]); /* isInBeamRange */
+        float d = vdot(dn, vsub(mc, b));
+        if (d >= 0 && d <= eb_len(r) && vlen(vsub(mc, vadd(b, vmul(dn, d)))) < 140.0f) hurt_mario(vadd(b, vmul(dn, d)), 25.0f);
+    }
+}
+static void draw_eyebeams(void)
+{
+    if (!m_ebeam || !m_ebeam->skin) return;
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        float m[16];
+        if (!in->eyebeamer || !row_shown(in->row) || !eb_beam_mtx(in, m)) continue;
+        Anim *a = obj_anim(2 * (int)sc->nobjs + in->row, m_ebeam, "EyeBeamerBeam");
+        if (!a) continue;
+        anim_update(a);
+        draw_skin(m_ebeam, m, a);
     }
 }
 
@@ -20234,6 +20354,7 @@ void game_update(void)
     update_spmothers();
     update_leakpipes();
     update_stairs();
+    update_eyebeamers();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
@@ -21238,6 +21359,7 @@ void game_draw(void)
     draw_whirls();
     draw_wbullets();
     draw_trapeze_ropes();
+    draw_eyebeams();
     RESTQ(0);
     draw_vines();
     RESTQ(1);
