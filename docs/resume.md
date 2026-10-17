@@ -325,6 +325,34 @@ there needs the embedded blob and every pack rebuilt.
 
 ## Next
 
+**Menus and game flow (the user, 2026-10-17: "quiero que metas todo esto que falta ... para que el release sea lo mas
+fiel al original"): resume here.** Everything outside the levels, after Petari (all of it is decompiled: ~35k lines;
+two tables are compiled into the DOL, not on the disc: cGalaxyInfoTable, cStoryProgressTable) with the disc's
+LayoutData layouts. Order by dependency:
+1. Done fd5b997: scenes change in place (game_request_scene; engine/linkfile .gamedata / .gamebss reset, pack region).
+2. Runtime layouts: tools/layout.py converts a layout's pane tree (pan1 / pic1 / wnd1 / txt1 / bnd1: transform, alpha,
+   visibility, materials) and its BRLANs (pai1: RLPA / RLVC / RLVI pane tracks, RLMC / RLTS / RLTP material tracks,
+   Hermite and step keys); the engine plays them like LayoutActor / LayoutManager (MR::startAnim per channel,
+   MR::startPaneAnim on a pane's subtree, frame control, isAnimStopped), panes found by name (MR::showPane /
+   hidePane / setTextBoxMessage...), windows' nine pieces at their animated size, text boxes from messages.
+3. Messages for menus: a resident table of the System / Layout / PauseMenu / FileSelect / Scenario / Galaxy names
+   labels (tools/msg.py), CustomTagProcessor's tags (numbers, pictures, player name).
+4. Widgets: ButtonPaneController (Appear / Wait / SelectIn / SelectOut / Decide / End), IconAButton, BackButton,
+   SysInfoWindow (Key / YesNo), wipes (WipeRing / WipeKoopa / fades), SaveIcon.
+5. Progress and save: GameDataHolder / GameDataAllGalaxyStorage / GameEventFlagTable / GalaxyStatusAccessor (the
+   ScenarioData.bcsv fields), the two DOL tables extracted (Petari config/RMGE01 config.yml extract: offsets in
+   main.dol), save on the memory card (libmc) as SaveDataHandleSequence asks; host builds a host: file.
+6. Sequence: GameSequenceProgress / StorySequenceExecutor (the next stage after a star, a miss, game over),
+   LogoScene (strap / censorship screens), Title (TitleSequenceProduct: TitleLogo / PressStart), FileSelector (the
+   FileSelect stage: files, Mario / Luigi icons; Mii parts left out).
+7. In a galaxy: GamePauseSequence (PauseMenu, PowerStarList AllStarList), miss / game over (TooBad, GameOver wipe,
+   PlayerLeft), CometRetryButton, GameStageClearSequence after a star.
+8. The hub: AstroGalaxy / AstroDome objects (AstroDome, AstroDomeSky, AstroDomeGalaxySelector, MiniatureGalaxy,
+   AstroChangeStageCube, AstroCountDownPlate), ScenarioSelectScene + ScenarioSelectLayout / Star (ScenarioSelect),
+   StageTitle, StarReturnDemoStarter + StageResultInformer (ResultWindow), GalaxyMapController (Map* layouts).
+Then phase 1 (Good Egg vs Wii: the rim step's ground check, below), sound last. The disc ISO over ~1 GB does not boot
+in PCSX2 (taken for a DVD: open fail; a CD-sized image boots); the user's way of loading it on the PS2 was asked.
+
 **Release push (the user, 2026-10-16 night): resume here.** Order: phase 0 (done: 92f184e; videos published by the
 user), phase 3 (all galaxies), phase 2 (60 fps), phase 1 (Good Egg against the Wii), sound last (may be disabled for
 now). Port everything first, **no PCSX2 / route / coverage runs until the porting is finished**; every commit builds
