@@ -42,10 +42,11 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
-       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW };
+       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD };
 /* walkers ported in the release push: their classes (counted, placed and drawn through this table) */
 static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}, {"BasaBasa", WALK_BASABASA}, {"BasaBasaIce", WALK_BASABASA}, {"Jellyfish", WALK_JELLYFISH},
-                                                                    {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}, {"Mogu", WALK_MOGU}, {"Mogucchi", WALK_MOGUCCHI}, {"Metbo", WALK_METBO}, {"TeresaWater", WALK_TERESAW}};
+                                                                    {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}, {"Mogu", WALK_MOGU}, {"Mogucchi", WALK_MOGUCCHI}, {"Metbo", WALK_METBO}, {"TeresaWater", WALK_TERESAW},
+                                                                    {"Snakehead", WALK_SNAKEHEAD}, {"SnakeheadSmall", WALK_SNAKEHEAD}};
 #define NEW_WALKERS ((int)(sizeof new_walkers / sizeof new_walkers[0]))
 static const Model *m_wnew[NEW_WALKERS];
 static int walker_new_kind(const char *cls)
@@ -16259,6 +16260,90 @@ static void tw_update(Kuribo *k)
     }
 }
 
+/* Snakehead.cpp after Petari (Snakehead big, SnakeheadSmall; arg3 1: the race ones): an eel on its rail from 300,
+ * facing the rail's end. Waiting ones hide (Waylay at frame 0) until Mario is within arg2 (1000) of the rail, then
+ * come out (StraightAppear); moving ones Wait 30 / 60 (small) first. MoveForward at arg0 (15; a waiting one at
+ * arg0 / 1.5 within 300 of the end) to the end, Rest 100 / 120, MoveBack at arg1 (10) to 300, Wait (until Mario is
+ * near again, unless it moves on its own). Its head / jaws (small: head 100 at (140, -70, 0) of Head; big: upper jaw
+ * 250 at (100, 0, 0) of UpperJaw, lower jaw 200 at (250, 0, 0) of LowerJaw) hurt Mario strongly, its body (within 100
+ * / 300 of the rail's line) hurts or pushes. Only a shell (JetTurtle) kills it. ponytail: no shell kill (TurtleDown:
+ * its 9 star pieces / 1-up), no star pointer swoon, no anim scale, no smoke effect */
+enum { SN_WAYLAY, SN_WAIT, SN_FORWARD, SN_REST, SN_BACK };
+static const char *sn_clip(const Kuribo *k, int type, const char *what)
+{
+    static const char *tb[4][4] = {{"StraightAppear", "StraightWait", "StraightForward", "StraightBack"},
+                                   {"StraightAppear", "Wait", "StraightForward", "StraightBack"},
+                                   {NULL, "Wait", "Forward", "Back"}, {NULL, "Wait", "Forward", "Back"}};
+    (void)k;
+    int c = !strcmp(what, "Waylay") ? 0 : !strcmp(what, "Wait") ? 1 : !strcmp(what, "Forward") ? 2 : 3;
+    return tb[type][c];
+}
+static void snake_update(Kuribo *k)
+{
+    const Row *r = &sc->objs[k->row];
+    int small = !strcmp(walker_cls(k), "SnakeheadSmall"), type = small + (r->arg[3] > 0 ? r->arg[3] : 0) * 2, move = type >= 2;
+    if (type > 3) type = 3;
+    u32 rn; int rcl;
+    const float *rail = w_rail(k, &rn, &rcl);
+    if (!rail) return;
+    float len = w_rail_len(rail, rn), fsp = r->arg[0] != -1 ? (float)r->arg[0] : 15.0f, bsp = r->arg[1] != -1 ? (float)r->arg[1] : 10.0f;
+    float act = r->arg[2] != -1 ? (float)r->arg[2] : 1000.0f;
+    if (!k->front.x && !k->front.y && !k->front.z) { /* init: setRailCoord 300, moveTransToCurrentRailPos */
+        k->lva[1] = 300.0f;
+        k->pos = rail_at(rail, rn, k->lva[1]);
+        V3 e = vsub(rail_at(rail, rn, len), rail_at(rail, rn, len - 1.0f)); /* calcRailEndPointDirection */
+        k->front = vlen(e) > 1e-4f ? vnorm(e) : v3(0, 0, 1);
+        if (move) w_nrv(k, SN_WAIT);
+        else { w_nrv(k, SN_WAYLAY); k->phase = 1; } /* hideModel */
+    }
+    k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f);
+    V3 near = rail_at(rail, rn, w_rail_nearest(rail, rn, mario->pos));
+    int nearp = vlen(vsub(near, mario->pos)) <= act; /* isNearPlayerFromRail */
+    int st = ++k->step;
+    const char *c;
+    switch (k->nrv) {
+    case SN_WAYLAY:
+        if (st == 0) { w_act(k, sn_clip(k, type, "Waylay")); k->act_rate = 0; } /* setBckFrameAndStop 0 */
+        if (k->phase && nearp) { k->phase = 0; k->act_rate = 1.0f; k->act_t = 1.0f; } /* showModel, setBckFrame 1 */
+        if (!k->phase && w_bck_stopped(k)) w_nrv(k, SN_FORWARD);
+        break;
+    case SN_WAIT:
+        if (st == 0 && (c = sn_clip(k, type, "Wait"))) w_act(k, c);
+        if (st >= (small ? 60 : 30) && (move || nearp)) w_nrv(k, SN_FORWARD);
+        break;
+    case SN_FORWARD:
+        if (st == 0) { if ((c = sn_clip(k, type, "Forward"))) w_act(k, c); w_se(k, SE_EM_SNAKEHEAD_FORWARD); }
+        k->lva[1] += !move && k->lva[1] >= len - 300.0f ? fsp / 1.5f : fsp; /* moveCoordAndFollowTrans */
+        if (k->lva[1] >= len) { k->lva[1] = len; w_nrv(k, SN_REST); }
+        break;
+    case SN_REST:
+        if (st == (small ? 120 : 100)) w_nrv(k, SN_BACK);
+        break;
+    case SN_BACK:
+        if (st == 0) { if ((c = sn_clip(k, type, "Back"))) w_act(k, c); w_se(k, SE_EM_SNAKEHEAD_BACKWARD); }
+        k->lva[1] -= bsp;
+        if (k->lva[1] <= 300.0f) { k->lva[1] = 300.0f; w_nrv(k, SN_WAIT); } /* isRailReachedNearGoal(300) */
+        break;
+    }
+    k->act_t += k->act_rate;
+    k->pos = rail_at(rail, rn, k->lva[1]);
+    k->qy = k->up = vmul(k->grav, -1.0f); k->qz = vnorm(vtangent(k->front, k->qy)); /* makeMtxFrontUpPos */
+    if (vlen(k->qz) < 1e-3f) k->qz = k->front;
+    if (k->phase || mario->hurt_timer) return;
+    const Model *md = walker_new_model(k->row);
+    V3 heads[2];
+    float hr[2];
+    int nh;
+    if (small) { heads[0] = w_joint(k, md, 6, v3(140.0f, -70.0f, 0)); hr[0] = 100.0f; nh = 1; }
+    else { heads[0] = w_joint(k, md, 11, v3(100.0f, 0, 0)); hr[0] = 250.0f; heads[1] = w_joint(k, md, 8, v3(250.0f, 0, 0)); hr[1] = 200.0f; nh = 2; }
+    for (int h = 0; h < nh; h++) if (mario_touch(heads[h], hr[h])) { hurt_mario(heads[h], 25.0f); return; } /* sendMsgEnemyAttackStrong */
+    V3 a = rail_at(rail, rn, 0), b = rail_at(rail, rn, len), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), d = vsub(b, a); /* the body */
+    float t = vdot(d, d) > 1e-6f ? vdot(vsub(mc, a), d) / vdot(d, d) : 0;
+    V3 foot = vadd(a, vmul(d, t < 0 ? 0 : t > 1 ? 1 : t));
+    V3 body = w_joint(k, md, 3, v3(0, 0, 0));
+    if (mario_touch(body, small ? 300.0f : 600.0f) && vlen(vsub(mc, foot)) <= (small ? 100.0f : 300.0f)) hurt_mario(foot, 25.0f);
+}
+
 static void update_kuribo_one(Kuribo *k);
 static void update_kuribo(void)
 {
@@ -16287,6 +16372,7 @@ static void update_kuribo_one(Kuribo *k)
             else if (k->kind == WALK_MOGUCCHI) mogucchi_update(k);
             else if (k->kind == WALK_METBO) metbo_update(k);
             else if (k->kind == WALK_TERESAW) tw_update(k);
+            else if (k->kind == WALK_SNAKEHEAD) snake_update(k);
             return;
         }
         if (k->kind == WALK_PETARI) { /* ponytail: still while its zone has no collision (streaming) */
@@ -20686,6 +20772,7 @@ static void update_shots(void)
             else if (e->kind == WALK_GESSO) { if (e->nrv != GE_PUNCHDOWN) w_nrv(e, GE_ROTATE); } /* isMsgStarPieceAttack: Rotate */
             else if (e->kind == WALK_METBO) { w_se(e, SE_EM_METBO_TRAMPLE); if (!mb_swoon(e) && e->nrv != MB_RECOVER && !mb_down(e)) w_nrv(e, MB_GUARD); } /* isMsgStarPieceReflect */
             else if (e->kind == WALK_TERESAW) w_nrv(e, TW_STUN); /* isMsgStarPieceAttack: Stun */
+            else if (e->kind == WALK_SNAKEHEAD) { if (e->phase) { hit = 0; continue; } } /* isMsgStarPieceReflect: nothing more (Waylay: not there) */
             else if (e->kind == WALK_MOGUCCHI) { if (e->nrv != MC_SCATTER && e->nrv != MC_DIE) w_nrv(e, MC_APPEARDOWN); } /* isMsgStarPieceAttack */
             else if (e->kind == WALK_MOGU) { /* isMsgStarPieceAttack: up, it flips (SwoonStart) */
                 if (e->nrv == MG_APPEAR || e->nrv == MG_SEARCH || e->nrv == MG_TURN || e->nrv == MG_THROW) { if (e->bshow == 1) e->bshow = 0; w_nrv(e, MG_SWOONSTART); }
@@ -21925,6 +22012,7 @@ void game_draw(void)
         if (kuribo[i].state == KURIBO_DEAD || !md || !row_shown(kuribo[i].row)) continue;
         if (kuribo[i].kind == WALK_TERESA && kuribo[i].phase == 4) continue; /* hidden in a wall */
         if (kuribo[i].kind == WALK_PETARI && kuribo[i].phase) continue; /* hideModel */
+        if (kuribo[i].kind == WALK_SNAKEHEAD && kuribo[i].phase) continue; /* Waylay: hideModel */
         /* out of the view: no shadow, no pose, not drawn; its clip's time goes on (anim_advance) */
         const float *wsc = sc->objs[kuribo[i].row].scale;
         float wr = md->radius * fmaxf(fmaxf(wsc[0], wsc[1]), wsc[2]) + 100.0f, wp[3] = {kuribo[i].pos.x, kuribo[i].pos.y, kuribo[i].pos.z};
