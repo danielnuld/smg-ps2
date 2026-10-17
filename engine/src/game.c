@@ -5938,8 +5938,8 @@ static int update_launch(Player *m)
     m->launch = -1;
     fly_on = 0;
     /* ponytail: after the ScenarioStarter's flight the Wii (Dolphin, RAM read at EggStar 1's control) has Mario at the
-     * path's end straight down to the ground, none of the last step across: kept along gravity only; where Petari
-     * drops it (endRush with ATYPE_SCENARIO_STARTER_BIND) was not traced */
+     * path's end straight down to the ground, none of the last step across: he drops from rest; where Petari drops it
+     * (endRush with ATYPE_SCENARIO_STARTER_BIND) was not traced */
     if (L->starter) step = v3(0, 0, 0); /* Dolphin: Mario stops at the path's end; from rest (the step along gravity, ~100 a
                                          * frame, went through TamakoroExLv2's ground at its end) */
     /* ponytail: the path can end with his feet under a raised ground (HeavenlyBeach 2: 10 under, then through it):
