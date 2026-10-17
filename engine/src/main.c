@@ -210,7 +210,8 @@ static void toc_select(void)
     for (u32 i = 0; i < toc_n; i++) {
         const TocEntry *e = (const TocEntry *)(toc_all + 4 + i * sizeof(TocEntry));
         if ((strncmp(e->path, scen, lp) == 0 && e->path[lp] == '/') || strcmp(e->path, "resident.bin") == 0 || strcmp(e->path, "sound.bin") == 0 ||
-            strcmp(e->path, "menus.bin") == 0 || strcmp(e->path, "menus3d.bin") == 0) {
+            strcmp(e->path, "menus.bin") == 0 || strcmp(e->path, "menus3d.bin") == 0 ||
+            ((strcmp(e->path, "title.bin") == 0 || strcmp(e->path, "title3d.bin") == 0) && strncmp(scen, "FileSelect/", 11) == 0)) {
             if (ntoc == (int)(sizeof toc / sizeof toc[0])) { printf("packs: TOC full\n"); for (;;) {} }
             memcpy(&toc[ntoc++], e, sizeof *e);
         }
@@ -531,8 +532,9 @@ static const u8 *load_packs(Scene *s)
         return NULL;
     { /* the menus' layouts (tools/lyt.py), when built: outside the scenario room */
         Pack mp;
-        static const char *const mp_names[2] = {"menus.bin", "menus3d.bin"}; /* layouts / messages, their 3D models */
-        for (int k = 0; k < 2; k++)
+        static const char *const mp_names[4] = {"menus.bin", "menus3d.bin", "title.bin", "title3d.bin"}; /* layouts /
+                                                    * messages, their 3D models; the title and file select's (FileSelect) */
+        for (int k = 0; k < (strncmp(scen, "FileSelect/", 11) == 0 ? 4 : 2); k++)
             if (pack_open(&mp, mp_names[k])) {
                 pack_close(&mp);
                 u32 before = pack_bytes;
@@ -756,6 +758,18 @@ int main(void)
         if (frame == 200) { /* the first grand star (the first dome open), Mario in a dome's entrance cube */
             gd_set_star("HeavensDoorGalaxy", 1);
             printf("astro test: grand star 1 %d, cube row %d\n", gd_flag_is_on("SpecialStarGrand1"), game_test_astro_cube(5));
+        }
+#endif
+#if defined(PACKS) && defined(TITLE_TEST)
+        { /* the title: A+B, file 1 (new): Yes, then Start */
+            pad_force = 0;
+            if (frame >= 400 && frame < 420) pad_force = PAD_CROSS | PAD_CIRCLE;
+            if (frame == 600) printf("title test f %u: pointer on file 1 %d\n", frame, menu_test_point_file(0, NULL));
+            if (frame == 620) pad_force = PAD_CROSS;
+            if (frame == 800) printf("title test f %u: pointer on BoxRight %d\n", frame, menu_test_point_file(0, "BoxRight"));
+            if (frame == 820) pad_force = PAD_CROSS;
+            if (frame == 1150) printf("title test f %u: pointer on BoxStartButton %d\n", frame, menu_test_point_file(0, "BoxStartButton"));
+            if (frame == 1170) pad_force = PAD_CROSS;
         }
 #endif
 #if defined(PACKS) && defined(MISS_TEST)

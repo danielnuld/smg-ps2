@@ -21,6 +21,10 @@ static void ss_init(const Scene *s);
 static void dmu_init(void);
 static void dmu_update(void);
 static void mlay_init(void);
+static void fs_init(const Scene *s);
+static void fs_update(void);
+static void fs_draw(void);
+int menu_file_selecting(void);
 static void mlay_update(void);
 static void mlay_draw(void);
 static void ss_update(void);
@@ -438,6 +442,7 @@ void menu_init(const Scene *s)
     ss_init(s);
     dmu_init();
     mlay_init();
+    fs_init(s);
     u32 rgb;
     int open = seq_take_open_wipe(&rgb); /* the wipe the last scene closed opens on this one */
     if (open) wipe_start(open, 0, rgb);
@@ -461,6 +466,7 @@ int menu_update(void)
     dmu_update();
     mlay_update();
     if (menu_scenario_selecting()) { game_cursor_menu(); ss_update(); return 1; }
+    if (menu_file_selecting()) { game_cursor_menu(); fs_update(); return 1; }
     if (!pm.alive) { /* GameScenePauseControl: Plus (START) where GameScene::isPermitToPauseMenu */
         if (!pm.l || !pad_pressed(PAD_START) || !game_pause_permitted()) return 0;
         pad_eat(PAD_START);
@@ -969,6 +975,7 @@ static void wipe_draw_quad(void)
 
 int menu_draw_screen(void)
 {
+    if (menu_file_selecting()) { fs_draw(); return 1; }
     if (!ss.alive) return 0;
     float eye[3] = {0, 0, 1000.0f}, target[3] = {0, 0, 0}, up[3] = {0, 1.0f, 0};
     render_set_fovy(45.0f);
@@ -1283,6 +1290,520 @@ int menu_test_point_dome(const char *pane) /* tests: the pointer on a pane of th
     if (!lyt_pane_center(dmu.conf_alive ? dmu.conf : dmu.back_l, pane, &x, &y)) return 0;
     game_set_cursor(x, y);
     return 1;
+}
+
+/* the save made after a change of the files (SaveDataHandleSequence's save all): the memory card (main.c) */
+static int save_requested;
+void menu_save_request(void) { save_requested = 1; }
+int menu_take_save_request(void) { int r = save_requested; save_requested = 0; return r; }
+
+/* --- FileSelector (the FileSelect stage): TitleSequenceProduct, FileSelectItem, FileSelectCameraController,
+ * FileSelectSky, FileSelectInfo, FileSelectNumber, FileSelectButton, BackButton after Petari, as a whole-screen menu
+ * (its stage's world not drawn: FileSelector draws everything it shows). A+B is X+Circle held; the pointer is the
+ * right stick, X decides, Circle / Triangle is B. ponytail: no Mii / icon select (a new file is Mario's), no
+ * Copy / Mii / Manual buttons, no BrosButton (no Luigi), no blink / morph blur / effects / ME / BGM, no swipe
+ * spin, the save's date not shown */
+enum { FS_OFF, FS_TITLE, FS_TITLEEND, FS_SELECTSTART, FS_SELECT, FS_CONFIRMSTART, FS_CONFIRM, FS_DEMOSTARTWAIT,
+       FS_CREATECONFIRMSTART, FS_CREATECONFIRM, FS_CREATE, FS_DELETECONFIRMSTART, FS_DELETECONFIRM, FS_DELETE };
+enum { TS_LOGOFADEIN, TS_LOGOWAIT, TS_LOGODISPLAY, TS_DECIDE, TS_DEAD };
+enum { FC_TITLE, FC_MOVEFAR, FC_FAR, FC_MOVENEAR, FC_NEAR };
+enum { FI_NEW, FI_EXIST, FI_FORMAT, FI_CHANGE };
+enum { FB_START, FB_DELETE, FB_N };
+static const int fs_order[6] = {1, 2, 4, 6, 5, 3}; /* sIndexOrder: slot i shows file fs_order[i] */
+static const float fs_theta_off[6] = {10, -10, 0, 0, 0, 0}; /* sItemThetaOffset */
+static const char *const fs_fellow[5] = {"FileSelectDataMario", "FileSelectDataLuigi", "FileSelectDataYoshi",
+                                         "FileSelectDataKinopio", "FileSelectDataPeach"};
+
+typedef struct {
+    int file;                           /* 1..6 */
+    float pos[3], target[3], rot_y, speed, scale, scale_from;
+    int scale_goal, scale_step;         /* ScaleController: 1 ToBig, 0 ToSmall, -1 idle */
+    int selectable, pointed, rotate_on, front_step, front_n;
+    int model, icon;                    /* FI_*: what it shows; its fellow (icon 1..5) */
+    Nrv n;
+    LytInst *num;                       /* FileSelectNumber */
+    int num_on, num_end;
+} FsItem;
+
+static struct {
+    Nrv n, title, cam;
+    LytInst *logo, *press, *info, *op, *back_l;
+    int logo_on, press_on, a_prev, b_prev;
+    FsItem item[6];
+    int sel, hover, pointed;            /* _B4 the chosen slot, _BC hovered, _C0 this frame's (-1 none) */
+    float tgt[3], eye[3], fovy, ptgt[3], pfovy, near_tgt[3];
+    int sky_step; float sky_x, sky_y;
+    const Model *m_planet, *m_fellow[5], *m_sky;
+    Btn btn[FB_N], back; u8 back_clicked, op_on, back_on;
+    int info_on, info_dir;
+    SysInfo win;
+} fsl;
+
+static void fs_v3(float *d, float x, float y, float z) { d[0] = x; d[1] = y; d[2] = z; }
+
+static void fs_base_pos(float off) /* calcBasePos: the ring, tilted 20 degrees about X, the chosen one left out */
+{
+    float c = cosf(20.0f * 0.017453293f), s = sinf(20.0f * 0.017453293f);
+    for (int i = 0; i < 6; i++) {
+        if (i == fsl.sel) continue;
+        float th = -(i + 4) * (6.2831853f / 6) - fs_theta_off[i] * 0.017453293f, x = 5000.0f * cosf(th), z = 5000.0f * sinf(th);
+        fs_v3(fsl.item[i].target, x, -s * z + off, c * z);
+    }
+}
+
+static void fs_to_screen(const float p[3], float *x, float *y, float *z) /* calcScreenPosition with this camera */
+{
+    float f[3] = {fsl.ptgt[0] - fsl.eye[0], fsl.ptgt[1] - fsl.eye[1], fsl.ptgt[2] - fsl.eye[2]};
+    float fl = sqrtf(f[0] * f[0] + f[1] * f[1] + f[2] * f[2]);
+    for (int k = 0; k < 3; k++) f[k] /= fl;
+    float r[3] = {f[1] * 0 - f[2] * 1, f[2] * 0 - f[0] * 0, f[0] * 1 - f[1] * 0}; /* f x up(0, 1, 0) */
+    float rl = sqrtf(r[0] * r[0] + r[1] * r[1] + r[2] * r[2]);
+    for (int k = 0; k < 3; k++) r[k] /= rl;
+    float u[3] = {r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]};
+    float d[3] = {p[0] - fsl.eye[0], p[1] - fsl.eye[1], p[2] - fsl.eye[2]};
+    float zz = d[0] * f[0] + d[1] * f[1] + d[2] * f[2], k = 224.0f / tanf(fsl.pfovy * 3.14159265f / 360.0f);
+    *z = zz;
+    if (zz < 1) zz = 1;
+    *x = 320.0f + (d[0] * r[0] + d[1] * r[1] + d[2] * r[2]) * k / zz;
+    *y = 224.0f - (d[0] * u[0] + d[1] * u[1] + d[2] * u[2]) * k / zz;
+}
+
+/* --- FileSelectCameraController --- */
+static void fs_cam_move(const float tgt[3], const float eye[3], float fovy)
+{
+    float t = fsl.cam.step / 60.0f;
+    t = t * t > 1 ? 1 : t * t;
+    for (int k = 0; k < 3; k++) { fsl.tgt[k] += (tgt[k] - fsl.tgt[k]) * t; fsl.eye[k] += (eye[k] - fsl.eye[k]) * t; }
+    fsl.fovy += (fovy - fsl.fovy) * t;
+}
+static void fs_cam_update(void)
+{
+    static const float far_t[3] = {0, 800, 0}, far_e[3] = {0, 0, 15000};
+    float ne[3] = {fsl.near_tgt[0], fsl.near_tgt[1], fsl.near_tgt[2] + 4800.0f};
+    switch (nrv_begin(&fsl.cam)) {
+    case FC_TITLE: fs_v3(fsl.tgt, 0, 15800, 0); fs_v3(fsl.eye, 0, 15800, 15000); fsl.fovy = 60; break;
+    case FC_MOVEFAR: fs_cam_move(far_t, far_e, 40); if (fsl.cam.step == 60) nrv_set(&fsl.cam, FC_FAR); break;
+    case FC_FAR: memcpy(fsl.tgt, far_t, 12); memcpy(fsl.eye, far_e, 12); fsl.fovy = 40; break;
+    case FC_MOVENEAR: fs_cam_move(fsl.near_tgt, ne, 50); if (fsl.cam.step == 60) nrv_set(&fsl.cam, FC_NEAR); break;
+    case FC_NEAR: fsl.fovy = 50; memcpy(fsl.eye, ne, 12); break;
+    }
+    nrv_end(&fsl.cam);
+}
+static void fs_far(void) { fsl.cam.next = -1; nrv_set(&fsl.cam, FC_MOVEFAR); }
+static void fs_near(void) /* goToNearPoint: the rest drop 16000, the camera to the chosen one */
+{
+    fs_base_pos(-16000.0f);
+    const float *p = fsl.item[fsl.sel].target;
+    fs_v3(fsl.near_tgt, p[0], p[1] + 1100.0f, p[2]);
+    nrv_set(&fsl.cam, FC_MOVENEAR);
+}
+static int fs_cam_at(int nrv) { return nrv_is(&fsl.cam, nrv); }
+
+/* --- FileSelectItem --- */
+static void fs_item_scale(FsItem *it, int big) { it->scale_goal = big; it->scale_step = 0; it->scale_from = it->scale; }
+static void fs_item_offpoint(FsItem *it)
+{
+    if (!it->pointed) return;
+    it->pointed = 0;
+    if (it->num) lyt_start(it->num, "SelectOut", 1);
+    fs_item_scale(it, 0);
+}
+static void fs_item_onpoint(FsItem *it) /* onPointing */
+{
+    if (!it->selectable || it->pointed) return;
+    it->pointed = 1;
+    if (it->num) lyt_start(it->num, "SelectIn", 1);
+    fs_item_scale(it, 1);
+}
+static void fs_item_invalidate(FsItem *it) { fs_item_offpoint(it); it->selectable = 0; }
+static void fs_items_select(int on) { for (int i = 0; i < 6; i++) { if (on) fsl.item[i].selectable = 1; else fs_item_invalidate(&fsl.item[i]); } }
+static void fs_numbers(int on)
+{
+    for (int i = 0; i < 6; i++) {
+        FsItem *it = &fsl.item[i];
+        if (!it->num) continue;
+        if (on) { it->num_on = 1; it->num_end = 0; lyt_start(it->num, "Appear", 0); lyt_start(it->num, "SelectOut", 1); lyt_set_frame(it->num, 1, lyt_anim_frames(it->num, "SelectOut") - 1); }
+        else if (it->num_on) { it->num_end = 1; lyt_start(it->num, "End", 0); }
+    }
+}
+static void fs_item_update(FsItem *it, int slot)
+{
+    switch (nrv_begin(&it->n)) {
+    case FI_FORMAT: /* format: the fellow vanishes at 40, the planet back */
+        if (it->n.step == 40) { se_start(SE_SY_FILE_SEL_MORPH_DUMMY, NULL); it->model = FI_NEW; }
+        if (it->n.step >= 40) { it->rot_y = 0; it->speed = 0; }
+        if (it->n.step == 60) nrv_set(&it->n, FI_NEW);
+        break;
+    case FI_CHANGE: /* change: the fellow out of the planet at 40 */
+        if (it->n.step == 40) { se_start(SE_SY_FILE_SEL_MORPH_MARIO, NULL); it->model = FI_EXIST; }
+        if (it->n.step >= 40) { it->rot_y = 0; it->speed = 0; }
+        if (it->n.step == 150) nrv_set(&it->n, FI_EXIST);
+        break;
+    }
+    nrv_end(&it->n);
+    /* control: updatePointing, updateRotate, the scale controller, its number's place */
+    for (int k = 0; k < 3; k++) it->pos[k] = it->target[k] * 0.05f + it->pos[k] * 0.95f;
+    if (it->front_n) { /* turnToFront */
+        float r = (float)++it->front_step / it->front_n, a = fmodf(it->rot_y + 180.0f, 360.0f);
+        if (a < 0) a += 360.0f;
+        a -= 180.0f;
+        r = r * r > 1 ? 1 : r * r;
+        it->rot_y = a - a * r; it->speed = 0;
+        if (it->front_step >= it->front_n) it->front_n = 0;
+    } else if (it->rotate_on) {
+        it->speed *= 0.98f;
+        if (it->speed >= 0 && it->speed < 0.5f) it->speed = 0.5f;
+        else if (it->speed < 0 && it->speed > -0.5f) it->speed = -0.5f;
+        it->rot_y = fmodf(it->rot_y + it->speed + 360.0f, 360.0f);
+    }
+    if (it->scale_goal >= 0) {
+        float goal = it->scale_goal ? 1.2f : 1.0f;
+        it->scale_step++;
+        it->scale += (it->scale_step / 30.0f) * (goal - it->scale);
+        if (it->scale_step >= 30) { it->scale = goal; it->scale_goal = -1; }
+    }
+    if (it->num) {
+        float p[3] = {it->pos[0], it->pos[1] + 2150.0f, it->pos[2]}, x, y, z;
+        fs_to_screen(p, &x, &y, &z);
+        lyt_set_pos(it->num, (x - 320.0f) * (608.0f / 640.0f), (224.0f - y) * (456.0f / 448.0f));
+        lyt_set_number_rec(it->num, "FileNumber", it->file);
+        if (it->num_on) {
+            if (lyt_stopped(it->num, 0) && !it->num_end) lyt_start(it->num, "Wait", 0);
+            if (it->num_end && lyt_stopped(it->num, 0)) it->num_on = 0;
+            lyt_update(it->num);
+        }
+    }
+    (void)slot;
+}
+static int fs_item_pointing(const FsItem *it) /* the star pointer within 1000 x scale round (0, 900, 0) up */
+{
+    float cx, cy, x, y, z;
+    if (!game_cursor(&cx, &cy)) return 0;
+    float p[3] = {it->pos[0], it->pos[1] + 900.0f * it->scale, it->pos[2]};
+    fs_to_screen(p, &x, &y, &z);
+    if (z <= 0) return 0;
+    float r = 1000.0f * it->scale * (224.0f / tanf(fsl.pfovy * 3.14159265f / 360.0f)) / z;
+    return (x - cx) * (x - cx) + (y - cy) * (y - cy) < r * r;
+}
+
+/* --- FileSelectInfo --- */
+static void fs_info_set(int slot) /* setFileInfo */
+{
+    FsItem *it = &fsl.item[slot];
+    int stars, pieces, ne, ce;
+    gd_file_info(it->file - 1, &stars, &pieces, &ne, &ce);
+    char label[40];
+    snprintf(label, sizeof label, "System_FileSelect_Icon%03d", gd_file_icon(it->file - 1) > 0 ? gd_file_icon(it->file - 1) - 1 : 0);
+    lyt_set_number_rec(fsl.info, "FileNumber", it->file);
+    lyt_set_text_rec(fsl.info, "FileName", msg_get(label));
+    lyt_set_number_rec(fsl.info, "Star", stars);
+    lyt_set_number_rec(fsl.info, "StarPiece", pieces);
+    lyt_set_text_rec(fsl.info, "TxtDay", NULL);
+    lyt_set_text_rec(fsl.info, "TxtTime", NULL);
+    lyt_show_rec(fsl.info, "MissCounter", 0);
+    lyt_show_rec(fsl.info, "Complete1", ne);
+    lyt_show_rec(fsl.info, "Complete2", ce);
+    lyt_show_rec(fsl.info, "BrosIcon", 0);
+}
+static void fs_info_appear(void)
+{
+    if (!fsl.info) return;
+    if (!fsl.info_on) { lyt_start(fsl.info, "Appear", 0); lyt_start(fsl.info, "MarioWait", 2); lyt_start(fsl.info, "ButtonAppear", 1); lyt_set_frame(fsl.info, 1, 0); lyt_set_rate(fsl.info, 1, 0); }
+    else lyt_set_rate(fsl.info, 0, 1.0f);
+    fsl.info_on = 1; fsl.info_dir = 1;
+}
+static void fs_info_disappear(void) /* the Appear animation backward at a quarter (sDisappearAnimRate) */
+{
+    if (!fsl.info_on) return;
+    fsl.info_dir = -1;
+    lyt_set_frame(fsl.info, 0, lyt_frame(fsl.info, 0));
+    lyt_set_rate(fsl.info, 0, -0.25f);
+}
+static void fs_info_update(void)
+{
+    if (!fsl.info_on) return;
+    lyt_update(fsl.info);
+    if (fsl.info_dir < 0 && lyt_frame(fsl.info, 0) <= 0.25f) fsl.info_on = 0;
+}
+
+static void fs_update_file_info(void) /* updateFileInfo: the hovered file's info */
+{
+    if (fsl.pointed >= 0 && fsl.pointed != fsl.hover) {
+        if (fsl.hover >= 0) { fs_item_offpoint(&fsl.item[fsl.hover]); fs_info_disappear(); }
+        if (gd_file_created(fsl.item[fsl.pointed].file - 1)) { fs_info_set(fsl.pointed); fs_info_appear(); }
+        fsl.hover = fsl.pointed;
+        fs_item_onpoint(&fsl.item[fsl.hover]);
+    } else if (fsl.pointed < 0 && fsl.hover >= 0) {
+        fs_item_offpoint(&fsl.item[fsl.hover]); fs_info_disappear(); fsl.hover = -1;
+    }
+}
+static void fs_clear_pointing(void) { if (fsl.hover >= 0) fs_item_offpoint(&fsl.item[fsl.hover]); fsl.hover = -1; }
+
+static void fs_layouts_out(void) /* disappearAllLayout */
+{
+    if (fsl.op_on) { for (int b = 0; b < FB_N; b++) btn_disappear(&fsl.btn[b]); lyt_start(fsl.info, "ButtonEnd", 1); }
+    fs_info_disappear();
+    if (fsl.back_on && !fsl.back_clicked) btn_disappear(&fsl.back);
+}
+static int fs_layouts_hidden(void)
+{
+    for (int b = 0; b < FB_N; b++) if (fsl.op_on && !btn_hidden(&fsl.btn[b])) return 0;
+    return !fsl.info_on && (!fsl.back_on || btn_hidden(&fsl.back));
+}
+static int fs_back_selected(void) /* checkSelectedBackButton */
+{
+    if (!fsl.back_on || btn_hidden(&fsl.back)) return 0;
+    if (fsl.back_clicked) return 1;
+    if (pad_pressed(PAD_CIRCLE) || pad_pressed(PAD_TRIANGLE)) { se_start(SE_SY_GALAXY_DECIDE_CANCEL, NULL); btn_disappear(&fsl.back); return 1; }
+    return 0;
+}
+
+static void fs_title_update(void) /* TitleSequenceProduct */
+{
+    int a = pad_held(PAD_CROSS), b = pad_held(PAD_CIRCLE);
+    switch (nrv_begin(&fsl.title)) {
+    case TS_LOGOFADEIN:
+        if (FIRST(&fsl.title)) { fsl.logo_on = 1; lyt_start(fsl.logo, "Appear", 0); }
+        if (lyt_stopped(fsl.logo, 0)) nrv_set(&fsl.title, TS_LOGOWAIT);
+        break;
+    case TS_LOGOWAIT:
+        if (FIRST(&fsl.title)) lyt_start(fsl.logo, "Wait", 0);
+        if (fsl.title.step == 25) nrv_set(&fsl.title, TS_LOGODISPLAY); /* sPressABAppearFrame */
+        break;
+    case TS_LOGODISPLAY:
+        if (FIRST(&fsl.title)) { fsl.press_on = 1; lyt_start(fsl.press, "Appear", 0); }
+        if (lyt_stopped(fsl.press, 0)) lyt_start(fsl.press, "Wait", 0);
+        if (a && b) {
+            se_start(SE_SY_GAME_START, NULL);
+            nrv_set(&fsl.title, TS_DECIDE);
+            break;
+        }
+        if (a && !fsl.a_prev) { lyt_start(fsl.logo, "ReactionA", 1); lyt_set_frame(fsl.logo, 1, 0); lyt_set_rate(fsl.logo, 1, 0); }
+        else if (!a && fsl.a_prev) lyt_start(fsl.logo, "ReactionA", 1);
+        if (b && !fsl.b_prev) { lyt_start(fsl.logo, "ReactionB", 1); lyt_set_frame(fsl.logo, 1, 0); lyt_set_rate(fsl.logo, 1, 0); }
+        else if (!b && fsl.b_prev) lyt_start(fsl.logo, "ReactionB", 1);
+        if ((a && !fsl.a_prev) || (b && !fsl.b_prev)) lyt_start(fsl.press, "ButtonReaction", 0);
+        break;
+    case TS_DECIDE:
+        if (FIRST(&fsl.title)) { lyt_start(fsl.logo, "Decide", 0); lyt_start(fsl.press, "End", 0); }
+        if (lyt_stopped(fsl.logo, 0) && lyt_stopped(fsl.press, 0)) nrv_set(&fsl.title, TS_DEAD);
+        break;
+    case TS_DEAD:
+        if (FIRST(&fsl.title)) fsl.logo_on = fsl.press_on = 0;
+        break;
+    }
+    nrv_end(&fsl.title);
+    fsl.a_prev = a; fsl.b_prev = b;
+    if (fsl.logo_on) lyt_update(fsl.logo);
+    if (fsl.press_on) lyt_update(fsl.press);
+}
+
+static void fs_update(void)
+{
+    /* the hovered item: the pointed selectable one with the smallest file number (notifyItem 0) */
+    fsl.pointed = -1;
+    for (int i = 0; i < 6; i++)
+        if (fsl.item[i].selectable && fs_item_pointing(&fsl.item[i]) && !(fsl.back_on && pointing_on(fsl.back_l, "BoxButton")) &&
+            (fsl.pointed < 0 || fsl.item[i].file < fsl.item[fsl.pointed].file))
+            fsl.pointed = i;
+    switch (nrv_begin(&fsl.n)) {
+    case FS_TITLE:
+        fs_title_update();
+        if (nrv_is(&fsl.title, TS_DEAD)) nrv_set(&fsl.n, FS_TITLEEND);
+        break;
+    case FS_TITLEEND:
+        if (FIRST(&fsl.n)) { fs_far(); fs_base_pos(0); fs_items_select(0); }
+        if (fs_cam_at(FC_FAR)) { for (int i = 0; i < 6; i++) fsl.item[i].rotate_on = 1; nrv_set(&fsl.n, FS_SELECT); }
+        break;
+    case FS_SELECTSTART:
+        if (FIRST(&fsl.n)) { fsl.sel = -1; fs_far(); fs_base_pos(0); }
+        if (fs_cam_at(FC_FAR)) nrv_set(&fsl.n, FS_SELECT);
+        break;
+    case FS_SELECT:
+        if (FIRST(&fsl.n)) { fs_items_select(1); fs_numbers(1); }
+        else fs_update_file_info();
+        if (fsl.hover >= 0 && fsl.item[fsl.hover].pointed && pad_pressed(PAD_CROSS)) { /* onSelect */
+            fsl.sel = fsl.hover;
+            se_start(SE_SY_GALAXY_SELECTED, NULL);
+            fs_item_scale(&fsl.item[fsl.sel], 0);
+            nrv_set(&fsl.n, gd_file_created(fsl.item[fsl.sel].file - 1) ? FS_CONFIRMSTART : FS_CREATECONFIRMSTART);
+        }
+        break;
+    case FS_CONFIRMSTART:
+        if (FIRST(&fsl.n)) { fs_near(); fs_items_select(0); fs_numbers(0); fsl.item[fsl.sel].front_n = 40; fsl.item[fsl.sel].front_step = 0; }
+        if (fs_cam_at(FC_NEAR)) nrv_set(&fsl.n, FS_CONFIRM);
+        break;
+    case FS_CONFIRM:
+        if (FIRST(&fsl.n)) {
+            btn_appear(&fsl.btn[FB_START]); btn_appear(&fsl.btn[FB_DELETE]); fsl.op_on = 1;
+            btn_appear(&fsl.back); fsl.back_on = 1; fsl.back_clicked = 0;
+            if (!fsl.info_on) { fs_info_set(fsl.sel); fs_info_appear(); }
+            lyt_start(fsl.info, "ButtonAppear", 1); /* slide */
+        }
+        if (fs_back_selected()) { fs_layouts_out(); fs_clear_pointing(); nrv_set(&fsl.n, FS_SELECTSTART); break; }
+        for (int b = 0; b < FB_N; b++) if (btn_pointing_trigger(&fsl.btn[b])) se_start(SE_SY_BUTTON_CURSOR_ON, NULL);
+        if (btn_try_select(&fsl.btn[FB_START])) nrv_set(&fsl.n, FS_DEMOSTARTWAIT);
+        else if (btn_try_select(&fsl.btn[FB_DELETE])) nrv_set(&fsl.n, FS_DELETECONFIRMSTART);
+        break;
+    case FS_DEMOSTARTWAIT:
+        if (FIRST(&fsl.n)) { se_start(SE_SY_FILE_SELECTED, NULL); fs_layouts_out(); wipe_start(60, 1, 0); }
+        if (!wipe_active() && fsl.n.step > 60) { /* Demo: startGameDataLoadSequence, requestChangeStageInGameAfterLoadingGameData */
+            gd_file_load(fsl.item[fsl.sel].file - 1);
+            seq_set_open_wipe(30, 0);
+            seq_galaxy_move(SEQ_AFTER_LOADING, NULL, 1, -1, 0);
+            nrv_set(&fsl.n, FS_OFF);
+        }
+        break;
+    case FS_CREATECONFIRMSTART:
+        if (FIRST(&fsl.n)) { fs_near(); fs_items_select(0); fs_numbers(0); }
+        if (fs_cam_at(FC_NEAR)) nrv_set(&fsl.n, FS_CREATECONFIRM);
+        break;
+    case FS_CREATECONFIRM:
+        if (FIRST(&fsl.n)) si_appear(&fsl.win, "System_FileSelect001", SI_YESNO);
+        if (!fsl.win.alive && fsl.n.step > 0) {
+            if (yn_yes(&fsl.win.yn)) { se_start(SE_SY_FILE_SEL_NEW_FILE, NULL); nrv_set(&fsl.n, FS_CREATE); }
+            else { fs_clear_pointing(); nrv_set(&fsl.n, FS_SELECTSTART); }
+        }
+        break;
+    case FS_CREATE: /* Create, the icon (Mario), MiiCreateDemo's change */
+        if (FIRST(&fsl.n)) {
+            FsItem *it = &fsl.item[fsl.sel];
+            gd_file_create(it->file - 1, 1);
+            menu_save_request();
+            it->icon = 1; it->n.next = -1; nrv_set(&it->n, FI_CHANGE);
+        }
+        if (nrv_is(&fsl.item[fsl.sel].n, FI_EXIST)) { fs_info_set(fsl.sel); nrv_set(&fsl.n, FS_CONFIRM); }
+        break;
+    case FS_DELETECONFIRMSTART:
+        if (FIRST(&fsl.n)) { se_start(SE_SY_FILE_SEL_UPPER_DECIDE, NULL); fs_layouts_out(); }
+        if (fs_layouts_hidden()) nrv_set(&fsl.n, FS_DELETECONFIRM);
+        break;
+    case FS_DELETECONFIRM:
+        if (FIRST(&fsl.n)) si_appear(&fsl.win, "System_FileSelect007", SI_YESNO);
+        if (!fsl.win.alive && fsl.n.step > 0) {
+            if (yn_yes(&fsl.win.yn)) { se_start(SE_SY_FILE_SEL_DELETE, NULL); nrv_set(&fsl.n, FS_DELETE); }
+            else nrv_set(&fsl.n, FS_CONFIRM);
+        }
+        break;
+    case FS_DELETE:
+        if (FIRST(&fsl.n)) {
+            FsItem *it = &fsl.item[fsl.sel];
+            gd_file_delete(it->file - 1);
+            menu_save_request();
+            it->n.next = -1; nrv_set(&it->n, FI_FORMAT);
+        }
+        if (nrv_is(&fsl.item[fsl.sel].n, FI_NEW) && fsl.n.step > 0) { fs_clear_pointing(); nrv_set(&fsl.n, FS_SELECTSTART); }
+        break;
+    }
+    nrv_end(&fsl.n);
+    /* control */
+    for (int i = 0; i < 6; i++) fs_item_update(&fsl.item[i], i);
+    fs_cam_update();
+    for (int b = 0; b < FB_N; b++) btn_update(&fsl.btn[b]);
+    if (fsl.op_on) { lyt_update(fsl.op); int all = 1; for (int b = 0; b < FB_N; b++) all &= btn_hidden(&fsl.btn[b]); if (all && !nrv_is(&fsl.n, FS_CONFIRM)) fsl.op_on = 0; }
+    if (fsl.back_on) { /* BackButton::control */
+        if (btn_pointing_trigger(&fsl.back)) se_start(SE_SY_BUTTON_CURSOR_ON, NULL);
+        if (btn_try_select(&fsl.back)) { if (!fsl.back_clicked) se_start(SE_SY_GALAXY_DECIDE_CANCEL, NULL); fsl.back_clicked = 1; }
+        btn_update(&fsl.back);
+        lyt_update(fsl.back_l);
+        if (btn_hidden(&fsl.back) && !btn_appearing(&fsl.back) && !nrv_is(&fsl.n, FS_CONFIRM)) fsl.back_on = 0;
+    }
+    fs_info_update();
+    si_update(&fsl.win);
+    /* FileSelectSky::exeWait */
+    fsl.sky_step++;
+    fsl.sky_x = 0.5f * (1.0f - cosf(fsl.sky_step * 3.14159265f / 3000.0f)) * 3.14159265f * 0.75f;
+    fsl.sky_y += 0.001f;
+}
+
+static void fs_init(const Scene *s)
+{
+    memset(&fsl, 0, sizeof fsl);
+    if (strncmp(game_stage_name, "FileSelect/", 11)) return;
+    fsl.logo = lyt_new("TitleLogo"); fsl.press = lyt_new("PressStart"); fsl.info = lyt_new("FileInfo");
+    fsl.op = lyt_new("FileSelect"); fsl.back_l = lyt_new("BackButton");
+    fsl.m_planet = scene_model(s, "FileSelectDataPlanet");
+    fsl.m_sky = scene_model(s, "CometNearOrbitSky");
+    for (int i = 0; i < 5; i++) fsl.m_fellow[i] = scene_model(s, fs_fellow[i]);
+    if (!fsl.logo || !fsl.press || !fsl.op || !fsl.back_l || !fsl.info) { printf("file select: layouts missing\n"); return; }
+    lyt_hide_for_good(fsl.logo, "PicLogoGalaxy"); /* ponytail: its space through the letters' mask shows as a box */
+    btn_init(&fsl.btn[FB_START], fsl.op, "StartButton", "BoxStartButton", 0, 1);
+    btn_init(&fsl.btn[FB_DELETE], fsl.op, "DeleteButton", "PicDelete", 0, 1);
+    lyt_show_pane(fsl.op, "CopyButton", 0); lyt_show_pane(fsl.op, "MiiButton", 0); lyt_show_pane(fsl.op, "P2ManualButton", 0);
+    btn_init(&fsl.back, fsl.back_l, "Back", "BoxButton", 0, 1);
+    si_init(&fsl.win);
+    for (int i = 0; i < 6; i++) {
+        FsItem *it = &fsl.item[i];
+        it->file = fs_order[i];
+        it->scale = 1.0f; it->scale_goal = -1;
+        it->model = gd_file_created(it->file - 1) ? FI_EXIST : FI_NEW;
+        it->icon = gd_file_icon(it->file - 1);
+        it->n.next = -1; nrv_set(&it->n, it->model);
+        it->num = lyt_new("FileNumber");
+    }
+    fsl.sel = fsl.hover = -1;
+    fs_base_pos(0);
+    for (int i = 0; i < 6; i++) memcpy(fsl.item[i].pos, fsl.item[i].target, 12);
+    fsl.n.next = -1; nrv_set(&fsl.n, FS_TITLE);
+    fsl.title.next = -1; nrv_set(&fsl.title, TS_LOGOFADEIN);
+    fsl.cam.next = -1; nrv_set(&fsl.cam, FC_TITLE);
+    fs_v3(fsl.tgt, 0, 15800, 0); fs_v3(fsl.eye, 0, 15800, 15000); fsl.fovy = 60;
+    memcpy(fsl.ptgt, fsl.tgt, 12); fsl.pfovy = 60;
+    wipe_start(30, 0, 0); /* openWipeFade(30) */
+    printf("file select: %d files\n", gd_file_created(0) + gd_file_created(1) + gd_file_created(2) + gd_file_created(3) + gd_file_created(4) + gd_file_created(5));
+}
+int menu_test_point_file(int slot, const char *pane) /* tests: the pointer on file slot `slot` (pane NULL) or a pane */
+{
+    float x, y, z;
+    if (!pane) {
+        const FsItem *it = &fsl.item[slot];
+        float p[3] = {it->pos[0], it->pos[1] + 900.0f * it->scale, it->pos[2]};
+        fs_to_screen(p, &x, &y, &z);
+    } else if (!lyt_pane_center(fsl.win.alive ? fsl.win.l : fsl.op, pane, &x, &y)) return 0;
+    game_set_cursor(x, y);
+    return 1;
+}
+int menu_file_selecting(void) { return fsl.n.cur != FS_OFF || fsl.n.next > FS_OFF; }
+
+static void fs_draw_model(const Model *md, const float pos[3], float rot_y, float scale)
+{
+    if (!md) return;
+    float m[16], r[3] = {0, rot_y, 0}, k[3] = {scale, scale, scale};
+    mat_translate_rot_scale(m, pos, r, k);
+    render_model(md, m, 0x80, 0x80, 0x80);
+}
+static void fs_draw(void)
+{
+    float up[3] = {0, 1, 0};
+    render_set_fovy(fsl.pfovy);
+    render_set_shake(0, 0);
+    render_begin(fsl.eye, fsl.ptgt, up);
+    if (fsl.m_sky && fsl.m_sky->radius > 0) { /* FileSelectSky: inverse(RotY RotX), at the camera, fitted inside the far plane */
+        float m[16], cy = cosf(-fsl.sky_y), sy = sinf(-fsl.sky_y), cx = cosf(-fsl.sky_x), sx = sinf(-fsl.sky_x), k = 108000.0f / fsl.m_sky->radius;
+        mat_identity(m); /* (RotY RotX)^-1 = RotX(-x) RotY(-y) */
+        m[0] = cy * k; m[1] = sx * sy * k; m[2] = -cx * sy * k;
+        m[4] = 0; m[5] = cx * k; m[6] = sx * k;
+        m[8] = sy * k; m[9] = -sx * cy * k; m[10] = cx * cy * k;
+        m[12] = fsl.eye[0]; m[13] = fsl.eye[1]; m[14] = fsl.eye[2];
+        render_model(fsl.m_sky, m, 0x80, 0x80, 0x80);
+    }
+    for (int i = 0; i < 6; i++) {
+        const FsItem *it = &fsl.item[i];
+        if (it->model == FI_NEW) { float p[3] = {it->pos[0], it->pos[1] + 900.0f * it->scale, it->pos[2]}; fs_draw_model(fsl.m_planet, p, it->rot_y, 30.0f * it->scale); }
+        else fs_draw_model(fsl.m_fellow[it->icon >= 1 && it->icon <= 5 ? it->icon - 1 : 0], it->pos, it->rot_y, 30.0f * it->scale);
+    }
+    render_world_done();
+    for (int i = 0; i < 6; i++) if (fsl.item[i].num_on) lyt_draw(fsl.item[i].num);
+    if (fsl.info_on) lyt_draw(fsl.info);
+    if (fsl.op_on) lyt_draw(fsl.op);
+    if (fsl.back_on) lyt_draw(fsl.back_l);
+    if (fsl.logo_on) lyt_draw(fsl.logo);
+    if (fsl.press_on) lyt_draw(fsl.press);
+    if (fsl.win.alive) lyt_draw(fsl.win.l);
+    wipe_draw_quad();
+    fade_draw();
+    /* the camera's target and fovy a frame late (setProgrammableCameraParam with the previous ones) */
+    memcpy(fsl.ptgt, fsl.tgt, 12); fsl.pfovy = fsl.fovy;
 }
 
 /* --- MissLayout ("TooBad"), WipeKoopa, WipeGameOver ("GameOver"): the miss / game over sequences' (game.c) ----- */

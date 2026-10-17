@@ -227,6 +227,7 @@ void lyt_update(LytInst *l)
 }
 
 void lyt_show_pane(LytInst *l, const char *pane, int show) { int p = lyt_pane(l, pane); if (p >= 0 && !l->ps[p].lang_off) l->ps[p].vis = show != 0; }
+void lyt_hide_for_good(LytInst *l, const char *pane) { int p = lyt_pane(l, pane); if (p >= 0) { l->ps[p].vis = 0; l->ps[p].lang_off = 1; } }
 int lyt_pane_shown(const LytInst *l, const char *pane) { int p = lyt_pane(l, pane); return p >= 0 && l->ps[p].vis; }
 void lyt_set_text(LytInst *l, const char *pane, const u16 *text) { int p = lyt_pane(l, pane); if (p >= 0) l->text[p] = text; }
 void lyt_set_pos(LytInst *l, float x, float y) { if (l) { l->ox = x; l->oy = y; } }

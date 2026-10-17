@@ -222,6 +222,52 @@ int gd_stocked_star_pieces(void) { return (int)gd.pieces; }
 void gd_add_stocked_star_pieces(int n) { int v = (int)gd.pieces + n; gd.pieces = (u32)(v < 0 ? 0 : v > 9999 ? 9999 : v); }
 
 /* the file: "SMGD", a version, the struct (ponytail: not GameDataHolder's BinaryDataChunkHolder chunks) */
+/* SaveDataHandleSequence's image of the save (config%d + mario%d per UserFile 1..6): each file a serialized gd, created
+ * or not, its icon (FileSelectIconID: 1 Mario .. 5 Peach) and a modification count for its date. ponytail: no Luigi
+ * data (luigi%d), no sysconf; the memory card writes this image (gd_image) */
+#define GD_FILES 6
+static struct { u8 created, icon, pad[2]; u32 modified; u8 data[8 + sizeof gd]; } files[GD_FILES];
+static int cur_file = -1;
+static u32 modify_count;
+
+int gd_file_created(int i) { return i >= 0 && i < GD_FILES && files[i].created; }
+int gd_file_icon(int i) { return gd_file_created(i) ? files[i].icon : 0; }
+u32 gd_file_modified(int i) { return gd_file_created(i) ? files[i].modified : 0; }
+static void file_store(int i) { gd_serialize(files[i].data, sizeof files[i].data); files[i].modified = ++modify_count; }
+void gd_file_create(int i, int icon) /* SaveDataHandler: resetAllData, setCreated, updateLastModified */
+{
+    if (i < 0 || i >= GD_FILES) return;
+    char keep[sizeof gd];
+    memcpy(keep, &gd, sizeof gd);
+    gd_reset();
+    files[i].created = 1; files[i].icon = (u8)icon;
+    file_store(i);
+    memcpy(&gd, keep, sizeof gd);
+}
+void gd_file_delete(int i) { if (i >= 0 && i < GD_FILES) memset(&files[i], 0, sizeof files[i]); }
+void gd_file_set_icon(int i, int icon) { if (gd_file_created(i)) { files[i].icon = (u8)icon; files[i].modified = ++modify_count; } }
+int gd_file_load(int i) /* restoreUserFile into the current data (startGameDataLoadSequence) */
+{
+    if (!gd_file_created(i) || !gd_deserialize(files[i].data, sizeof files[i].data)) return 0;
+    cur_file = i;
+    return 1;
+}
+void gd_file_save(void) { if (cur_file >= 0) file_store(cur_file); } /* the current game into its file */
+int gd_file_current(void) { return cur_file; }
+void gd_file_info(int i, int *stars, int *pieces, int *normal_end, int *complete_end) /* FileSelector::setFileInfo */
+{
+    static char keep[sizeof gd];
+    memcpy(keep, &gd, sizeof gd);
+    *stars = *pieces = *normal_end = *complete_end = 0;
+    if (gd_file_created(i) && gd_deserialize(files[i].data, sizeof files[i].data)) {
+        *stars = gd_star_num(); *pieces = (int)gd.pieces;
+        *normal_end = gd_flag_is_on("ViewNormalEnding"); *complete_end = gd_flag_is_on("ViewCompleteEnding");
+    }
+    memcpy(&gd, keep, sizeof gd);
+}
+u8 *gd_image(int *size) { *size = (int)sizeof files; return (u8 *)files; } /* the whole save, for the memory card */
+void gd_image_loaded(void) { for (int i = 0; i < GD_FILES; i++) if (files[i].modified > modify_count) modify_count = files[i].modified; }
+
 int gd_serialize(u8 *buf, int size)
 {
     int n = 8 + (int)sizeof gd;

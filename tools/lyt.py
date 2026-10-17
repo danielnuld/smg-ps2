@@ -200,13 +200,22 @@ def convert(files, name, texts):
     live = {e[0] for _, a in anims for e in a["entries"] if e[1] and any(t[0] == 3 and 4 <= t[2] < 12 for t in e[2])}
     images, img_ix = [], {}
 
-    def image(texname, c0, c1, wrap):
-        key = (texname, c0, c1, wrap)
+    def image(texname, c0, c1, wrap, mask=None):
+        key = (texname, c0, c1, wrap, mask)
         if key not in img_ix:
             f = files.get(texname.lower())
             if f is None:
                 return -1
             rgba = tpl(f).astype(np.float32) / 255
+            if mask and mask.lower() in files:  # a second map as its mask (TitleLogo's PicLogoGalaxy: the space through
+                # the letters): baked at the mask's size, the first one's colour over it, the mask's alpha.
+                # ponytail: the first map's scroll (its SRT) is lost
+                mk = tpl(files[mask.lower()]).astype(np.float32) / 255
+                h, w = mk.shape[:2]
+                ys = (np.arange(h) * rgba.shape[0] // h)[:, None]
+                xs = (np.arange(w) * rgba.shape[1] // w)[None, :]
+                rgba = rgba[ys, xs].copy()
+                rgba[..., 3] *= mk[..., 3] if mk[..., 3].min() < 1 else mk[..., :3].mean(-1)
             if c0 is not None:  # lyt's default TEV for one texture: lerp(c0, c1, texel)
                 a, b_ = np.array(c0, np.float32) / 255, np.array(c1, np.float32) / 255
                 rgba = np.clip(a + (b_ - a) * rgba, 0, 1)
@@ -222,14 +231,18 @@ def convert(files, name, texts):
             bake = not plain and m["name"] not in live
             c0 = tuple(max(0, min(255, v)) for v in m["c0"])
             c1 = tuple(max(0, min(255, v)) for v in m["c1"])
-            texi[k] = image(texs[ti], c0 if bake else None, c1 if bake else None, (ws, wt)) if ti < len(texs) else -1
+            mask = texs[m["maps"][1][0]] if len(m["maps"]) > 1 and m["maps"][1][0] < len(texs) else None
+            texi[k] = image(texs[ti], c0 if bake else None, c1 if bake else None, (ws, wt), mask) if ti < len(texs) else -1
             wraps[2 * k:2 * k + 2] = [ws, wt]
             if ti < len(texs) and texs[ti].lower() in files:
-                tsz = tpl(files[texs[ti].lower()]).shape[1::-1]
+                tsz = tpl(files[(mask if mask and mask.lower() in files else texs[ti]).lower()]).shape[1::-1]
+            if mask:
+                wraps[2 * k:2 * k + 2] = [0, 0]  # the mask's clamp
             baked = 1 if bake else baked
         c0 = bytes(max(0, min(255, v)) for v in m["c0"])
         c1 = bytes(max(0, min(255, v)) for v in m["c1"])
-        mrecs.append(struct.pack("<20s2h4B5f4s4sB3xHH", m["name"].encode()[:20], *texi, *wraps, *m["srt"], c0, c1, baked, *tsz))
+        srt = (0, 0, 0, 1, 1) if len(m["maps"]) > 1 else m["srt"]  # a masked one: the mask's place, not the scroll
+        mrecs.append(struct.pack("<20s2h4B5f4s4sB3xHH", m["name"].encode()[:20], *texi, *wraps, *srt, c0, c1, baked, *tsz))
     strings = []
     precs = []
     for p in panes:
@@ -422,6 +435,31 @@ def build_3d(fsp):
     return SL.blob_of(chunks)
 
 
+# the title and file select's (FileSelector, TitleSequenceProduct): title.bin (layouts) and title3d.bin (FileSelectItem's
+# planet and fellows, FileSelectSky), loaded in the FileSelect stage only
+TITLE = ("TitleLogo", "PressStart", "FileSelect", "FileInfo", "FileNumber")
+TITLE_3D = (("FileSelectDataPlanet", "FileSelectDataPlanet"), ("FileSelectDataMario", "FileSelectDataMario"),
+            ("FileSelectDataLuigi", "FileSelectDataLuigi"), ("FileSelectDataYoshi", "FileSelectDataYoshi"),
+            ("FileSelectDataKinopio", "FileSelectDataKinopio"), ("FileSelectDataPeach", "FileSelectDataPeach"),
+            ("CometNearOrbitSky", "CometNearOrbitSky"), ("MiniatureGalaxySelect", "MiniatureGalaxySelect"))
+
+
+def build_title(fsp):
+    from slice import blob_of, chunk
+    import slice as SL
+    texts, bodies = [], []
+    for n in TITLE:
+        files = {k.lower().rsplit("/", 1)[-1]: v for k, v in
+                 B.rarc_files((Path(fsp) / "LayoutData" / f"{n}.arc").read_bytes())}
+        bodies.append(convert(files, n, texts))
+    offs, o = [], 16 + 4 * len(bodies)
+    for bd in bodies:
+        offs.append(o)
+        o += len(bd)
+    lytr = struct.pack("<I12x", len(bodies)) + struct.pack(f"<{len(offs)}I", *offs) + b"".join(bodies)
+    return blob_of([chunk(b"LYTR", lytr), text_chunk(texts)]), SL.blob_of(SL.assets(Path(fsp), list(TITLE_3D), {}, 0.99, {}, collision=False))
+
+
 def selftest(fsp="data/fs/files"):
     """PauseMenu parses: its root, the button boxes, appear's tracks on its panes, a record per pane"""
     files = {k.lower().rsplit("/", 1)[-1]: v for k, v in
@@ -448,3 +486,7 @@ if __name__ == "__main__":  # python tools/lyt.py data/fs/files [out/packs/menus
     d3.write_bytes(build_3d(fsp))
     print(f"{d3}: {d3.stat().st_size / 1024:.0f} KB")
     print(f"{dst}: {len(blob) / 1024:.0f} KB, {len(COMMON)} layouts, {nt} textures")
+    t2, t3 = build_title(fsp)
+    dst.with_name("title.bin").write_bytes(t2)
+    dst.with_name("title3d.bin").write_bytes(t3)
+    print(f"title.bin {len(t2) / 1024:.0f} KB, title3d.bin {len(t3) / 1024:.0f} KB")

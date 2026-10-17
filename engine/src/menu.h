@@ -30,10 +30,14 @@ void menu_miss_start(void);          /* MissLayout ("TooBad") */
 void menu_wipe_koopa(int frames);    /* WipeKoopa: closes over frames (<= 0: 90) */
 int menu_wipe_koopa_closed(void);
 void menu_wipe_gameover(void);       /* WipeGameOver ("GameOver") */
+int menu_file_selecting(void);       /* the FileSelect stage's FileSelector running */
+void menu_save_request(void);        /* the files changed: the save is to be written */
+int menu_take_save_request(void);    /* main.c: 1 once per request */
 int menu_draw_screen(void); /* game_draw: 1 when a whole-screen menu (the scenario select) drew the frame */
 const u16 *msg_get(const char *label); /* MR::getLayoutMessageDirect / getGameMessageDirect (MSGS chunk), NULL none */
 int menu_test_point_scenario(const char *pane);
 int menu_test_point_dome(const char *pane);
+int menu_test_point_file(int slot, const char *pane);
 int menu_test_point(const char *pane); /* tests: the pointer on a pane of the open pause menu / its window */
 
 /* game.c */

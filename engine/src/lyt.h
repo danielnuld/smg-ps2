@@ -24,6 +24,7 @@ void lyt_draw(LytInst *l);
 int lyt_pane(const LytInst *l, const char *pane);                    /* its index, -1 none */
 void lyt_show_pane(LytInst *l, const char *pane, int show);          /* MR::showPane / hidePane */
 int lyt_pane_shown(const LytInst *l, const char *pane);             /* !MR::isHiddenPane */
+void lyt_hide_for_good(LytInst *l, const char *pane);          /* hidden, its animations' visibility ignored */
 void lyt_set_text(LytInst *l, const char *pane, const u16 *text);    /* MR::setTextBoxMessage... (kept: not copied) */
 int lyt_pane_center(LytInst *l, const char *pane, float *x, float *y); /* its centre on the screen (0..640, 0..448) */
 void lyt_set_pos(LytInst *l, float x, float y);                      /* the root's offset in layout units */

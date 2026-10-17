@@ -44,6 +44,19 @@ void gd_add_player_left(int n);
 int gd_stocked_star_pieces(void);
 void gd_add_stocked_star_pieces(int n);
 
+/* UserFiles 0..5 (FileSelector's 1..6): created, icon (1 Mario, 2 Luigi, 3 Yoshi, 4 Kinopio, 5 Peach), modified count */
+int gd_file_created(int i);
+int gd_file_icon(int i);
+u32 gd_file_modified(int i);
+void gd_file_create(int i, int icon);
+void gd_file_delete(int i);
+void gd_file_set_icon(int i, int icon);
+int gd_file_load(int i);          /* the file becomes the current game data */
+void gd_file_save(void);          /* the current game data into its file */
+int gd_file_current(void);        /* -1 none loaded */
+void gd_file_info(int i, int *stars, int *pieces, int *normal_end, int *complete_end);
+u8 *gd_image(int *size);          /* the six files as one image (the memory card's save) */
+void gd_image_loaded(void);       /* after the image was read back */
 /* the file as bytes (the memory card's save) and back; 0 when the bytes are not a file */
 int gd_serialize(u8 *buf, int size);
 int gd_deserialize(const u8 *buf, int size);
