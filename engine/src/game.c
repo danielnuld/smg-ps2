@@ -238,6 +238,7 @@ typedef struct {
     int dossun;      /* Dossun: falls and rises on a cycle, a press (update_dossuns, dossun_place) */
     int rbeamer;     /* RingBeamer: its group shoots rings at Mario (update_rbeamers, draw_rbeams) */
     int sbeamer;     /* SearchBeamer: aims its beam at Mario (update_sbeamers, sbm_place, sbm_joints) */
+    int pressure;    /* WaterPressure: shoots water bullets that catch Mario (update_pressures, pr_joints) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
 static V3 firebar_ball(const Inst *in, int j, int k);
@@ -595,6 +596,12 @@ static int nrbms, nsbms; static const Model *m_rbeam, *m_mogustone, *m_moguhole;
 const char *game_stage_name = ""; /* the galaxy being played (main.c: its pack name) */
 static void draw_mogu_extras(void), draw_mogucchi_extras(void), draw_whirls(void), update_whirls(void);
 static int t_whirl = -1;
+#define MAX_WBULLETS 16
+static struct { int alive, host, step, spin, grav, nospin; V3 pos, vel, front, side; } wbs[MAX_WBULLETS];
+static int nprs, wb_ride = -1; /* the water bullet Mario is in, -1 none */
+static const Model *m_wbullet;
+static void pr_joints(Inst *in), draw_wbullets(void), update_pressures(void);
+static int wb_hold(Player *m);
 static int nmhills; static const Model *m_mhole, *m_mhill[3];
 static void sbm_place(Inst *in), sbm_joints(Inst *in);
 static int pole_try(Player *m), pole_hold(Player *m);
@@ -1413,7 +1420,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nvines = 0; vine_ride = -1;
     pole_init();
     nrbms = 0;
-    nsbms = 0; nmhills = 0;
+    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs);
     dino_cam = 0;
     foot_num = foot_rot = 0;
     nseesaws = 0;
@@ -3086,6 +3093,7 @@ void game_rebind(void)
     m_pleaf = scene_model(s, "PackunLeaf");
     m_rbeam = scene_model(s, "JumpBeamerBeam");
     t_whirl = scene_type(s, "WhirlPoolAccelerator");
+    m_wbullet = scene_model(s, "WaterBullet");
     m_mogustone = scene_model(s, "MoguStone"); m_moguhole = scene_model(s, "MoguHole");
     m_mhole = scene_model(s, "MogucchiHole"); m_mhill[0] = scene_model(s, "MogucchiHillA"); m_mhill[1] = scene_model(s, "MogucchiHillB"); m_mhill[2] = scene_model(s, "MogucchiHillC");
     for (int i = 0; i < NEW_WALKERS; i++) m_wnew[i] = scene_model(s, new_walkers[i].cls);
@@ -3222,6 +3230,7 @@ void game_rebind(void)
         in->dossun = strcmp(name, "Dossun") == 0;
         in->rbeamer = strcmp(name, "RingBeamer") == 0;
         in->sbeamer = strcmp(name, "SearchBeamer") == 0;
+        in->pressure = strcmp(name, "WaterPressure") == 0;
         in->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 ? 3 : 0;
         in->press = strcmp(name, "RGTowerPressGroundA") == 0 || strcmp(name, "ReverseGravityRoomPressGroundA") == 0 ||
                     strcmp(name, "ReverseGravityRoomPressGroundB") == 0 || in->dossun;
@@ -11241,6 +11250,10 @@ static void update_mario(void)
             return;
         }
     }
+    if (wb_hold(m)) { /* in a water bullet */
+        if (mario_anim) anim_update(mario_anim);
+        return;
+    }
     if (pole_ride >= 0 || (warp.from < 0 && jb.inst < 0 && coc.inst < 0 && flf.inst < 0 && vine_ride < 0 && pole_try(m))) { /* Pole */
         if (pole_hold(m)) {
             if (mario_anim) anim_update(mario_anim);
@@ -17291,6 +17304,233 @@ static void sbm_joints(Inst *in)
     }
 }
 
+/* PressureBase.cpp / WaterPressure.cpp / WaterPressureBullet.cpp after Petari: a cannon (its Cannon1 joint, joint 1,
+ * turned arg0 degrees about its Z; -45 relaxed). FirstWait arg1 (300) frames, PrepareToShot (ShotStart, 80), Shot
+ * (Shot, or ShortShot when arg1 is under ShotStart's 80: the bullet at step 16 / 54, arg2 (30) a frame along the
+ * joint's X from 200 out), then Wait (ShotStart again so the next shot falls arg1 after) or, in a group, SyncWait
+ * until its first member's messenger restarts them all every (their longest arg1 + 60) frames. With SW_A it waits
+ * relaxed (Relax) until it comes on (WaitStart: SwitchOn, 20 frames bouncing the cannon up), and relaxes when it goes
+ * off (SwitchOff). Its body (70 at 30 up) and cannon push Mario. The bullet (WaterBullet, Shot then Move) flies 180
+ * frames (300 with arg7), with 0.4 gravity for arg3 0; the map or water pops it. Mario touching it is caught inside
+ * (WaterBulletStart / Wait, the cannon's actor camera) unless he is on the ground and it falls at him within 60 of
+ * gravity (it pops, flipping him); a spin (not with arg7) lets him out (Spin2nd, a jump); popping with him inside
+ * throws him out at its velocity (GCaptureBreak). Its front turns 2.5 a frame to its velocity. ponytail: the cannon's
+ * children joints not moved with it, AimTurn's front unused (as in Petari), no 2P pointer pop, no sand slide, no
+ * fire balls popping it */
+#define MAX_PRESSURES 64
+enum { PB_RELAXSTART, PB_WAITSTART, PB_RELAX, PB_SYNCWAIT, PB_FIRSTWAIT, PB_WAIT, PB_PREPARE, PB_SHOT };
+static struct { int row, nrv, step, init, msg_step; float relax; } prs[MAX_PRESSURES];
+static int pr_of(int row)
+{
+    for (int i = 0; i < nprs; i++) if (prs[i].row == row) return i;
+    if (nprs == MAX_PRESSURES) return -1;
+    memset(&prs[nprs], 0, sizeof prs[0]);
+    prs[nprs].row = row;
+    return nprs++;
+}
+static void pr_set(int k, int n) { prs[k].nrv = n; prs[k].step = -1; }
+static int pr_wait(const Row *r) { return r->arg[1] != -1 ? r->arg[1] : 300; }
+static int pr_short(const Row *r) { return pr_wait(r) < 80; } /* mIsShortShot: under ShotStart's frames */
+static int pr_relaxed(int k) { return prs[k].nrv == PB_RELAXSTART || prs[k].nrv == PB_RELAX; }
+static int pr_leader(int row) /* the group's first member (getActor(0)) */
+{
+    const Row *r = &sc->objs[row];
+    if (r->group < 0) return 0;
+    for (u32 i = 0; i < (u32)row; i++) if (sc->objs[i].type == r->type && sc->objs[i].group == r->group && sc->objs[i].zone == r->zone) return 0;
+    return 1;
+}
+static void pr_muzzle(const Inst *in, V3 *pos, V3 *dir) /* calcGunPointFromCannon */
+{
+    float jm[16];
+    if (in->anim && in->anim->skin && in->anim->skin->njoints > 1) mat_mul(jm, in->m, in->anim->world[1]);
+    else memcpy(jm, in->m, 64);
+    V3 x = vnorm(v3(jm[0], jm[1], jm[2]));
+    *dir = x; *pos = vadd(v3(jm[12], jm[13], jm[14]), vmul(x, 200.0f));
+}
+static void wb_shot(const Inst *in) /* WaterPressure::shotBullet */
+{
+    const Row *r = &sc->objs[in->row];
+    for (int b = 0; b < MAX_WBULLETS; b++) {
+        if (wbs[b].alive) continue;
+        V3 p, d;
+        pr_muzzle(in, &p, &d);
+        float jm[16];
+        if (in->anim && in->anim->skin && in->anim->skin->njoints > 1) mat_mul(jm, in->m, in->anim->world[1]); else memcpy(jm, in->m, 64);
+        V3 up = vnorm(v3(jm[4], jm[5], jm[6]));
+        wbs[b] = (typeof(wbs[0])){.alive = 1, .host = in->row, .grav = r->arg[3] == 0 || r->arg[3] == -1, .nospin = r->arg[7] != -1,
+                                  .pos = p, .front = d, .side = vnorm(vcross(up, d)), .vel = vmul(d, r->arg[2] != -1 ? (float)r->arg[2] : 30.0f)};
+        wbs[b].step = -1;
+        return;
+    }
+}
+static void wb_release(int b, V3 v, int roll) /* endBindAndPlayerJump(WithRollLanding) */
+{
+    if (wb_ride != b) return;
+    wb_ride = -1;
+    camera_event_end(); /* endHostCamera */
+    mario->up = up_at(mario->pos, mario->up);
+    m_power_jump(mario, v);
+    if (mario_anim) mario_play(roll ? "gcapturebreak" : "spin2nd", 1.0f, 0);
+}
+static void wb_kill(int b)
+{
+    if (wb_ride == b) wb_release(b, wbs[b].vel, 1);
+    float m[16];
+    basis_matrix(m, wbs[b].pos, vcross(wbs[b].front, wbs[b].side), wbs[b].front, 0);
+    fx_named("WaterBullet", "Break", m, NULL, NULL);
+    se_start(SE_OJ_W_PRESS_BUBBLE_BREAK, &wbs[b].pos.x);
+    wbs[b].alive = 0;
+}
+static void update_wbullets(void)
+{
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int b = 0; b < MAX_WBULLETS; b++) {
+        typeof(&wbs[0]) o = &wbs[b];
+        if (!o->alive) continue;
+        int st = ++o->step;
+        if (o->spin) { /* exeSpinKill */
+            V3 z = v3(0, 0, 0);
+            wb_release(b, z, 0);
+            wb_kill(b);
+            continue;
+        }
+        V3 g = vmul(up_at(o->pos, v3(0, 1, 0)), -1.0f);
+        if (wb_ride == b) { static u32 lv; lv = se_level(SE_OJ_LV_W_PRESS_BUBBLE_SUS, &o->pos.x, lv); }
+        if (o->grav) o->vel = vadd(o->vel, vmul(g, 0.4f));
+        if (wb_ride == b && pad_pressed(PAD_SQUARE) && !o->nospin) { /* isPadSwing */
+            se_start(SE_PV_TWIST_START, &mario->pos.x); se_start(SE_PM_SPIN_ATTACK, &mario->pos.x);
+            o->spin = 1;
+            continue;
+        }
+        o->pos = vadd(o->pos, o->vel);
+        float dep;
+        Hit h[1];
+        if (kcl_query(o->pos, 100.0f, h, 1) || in_water(o->pos, vmul(g, -1.0f), &dep)) { wb_kill(b); continue; } /* isBinded / isInWater */
+        if (st >= (o->nospin ? 300 : 180)) { wb_kill(b); continue; }
+        /* control(): the front turned 2.5 a frame to its velocity on the side's plane */
+        turn_on_plane(&o->front, vlen(o->vel) > 1e-6f ? o->vel : g, o->side, cosf(2.5f * 0.0174533f));
+        /* AutoRushBegin: Mario touching it */
+        if (wb_ride < 0 && vlen(vsub(mc, o->pos)) < 100.0f + HIT_BODY_R && mario->launch < 0 && pole_ride < 0) {
+            float c = vlen(o->vel) > 1e-6f ? vdot(vnorm(o->vel), g) : 0.0f;
+            if (mario->grounded && c > cosf(60.0f * 0.0174533f)) { /* isNearAngleDegree(velocity, gravity, 60): it pops */
+                V3 away = vtangent(vsub(mario->pos, o->pos), mario->up);
+                if (vlen(away) > 1e-3f) { mario->hvel = vmul(vnorm(away), 5.0f); mario->vup = 15.0f; mario->grounded = 0; } /* FLIP_VERYWEAK */
+                wb_kill(b);
+                continue;
+            }
+            wb_ride = b;
+            mario->hip = 0; mario->spin_timer = 0; mario->jumping = 0;
+            se_start(SE_OJ_W_PRESS_BUBBLE_IN, &o->pos.x); se_start(SE_PV_CATCH, &mario->pos.x);
+            if (mario_anim) mario_play("waterbulletstart", 1.0f, 0);
+            if (row_camset[o->host] != -1) /* startHostCamera: its actor camera */
+                camera_actor_start(sc->types + 32 * sc->objs[o->host].type, "", (unsigned short)row_camset[o->host], mario->up, mario->face, mario->pos);
+        }
+    }
+}
+/* while Mario is in a bullet: its base matrix (makeMtxFrontSidePos) */
+static int wb_hold(Player *m)
+{
+    if (wb_ride < 0) return 0;
+    typeof(&wbs[0]) o = &wbs[wb_ride];
+    m->pos = vsub(o->pos, vmul(vnorm(vcross(o->front, o->side)), HIT_BODY_H));
+    m->up = vnorm(vcross(o->front, o->side)); m->face = o->front;
+    m->hvel = v3(0, 0, 0); m->vup = 0; m->grounded = 0;
+    if (mario_anim && mario_anim->done && m_clip_is("waterbulletstart")) mario_play("waterbulletwait", 1.0f, 1);
+    return 1;
+}
+static void update_pressures(void)
+{
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->pressure || !row_shown(in->row)) continue;
+        int k = pr_of(in->row);
+        if (k < 0) continue;
+        typeof(&prs[0]) o = &prs[k];
+        const Row *r = &sc->objs[in->row];
+        if (!o->init) { o->init = 1; pr_set(k, r->sw[SW_A] >= 0 ? PB_RELAX : PB_FIRSTWAIT); }
+        if (r->sw[SW_A] >= 0) { /* listenStageSwitchOnOffA: startWait / startRelax */
+            if (sw_on(r, SW_A) && o->nrv == PB_RELAX) pr_set(k, PB_WAITSTART);
+            else if (!sw_on(r, SW_A) && !pr_relaxed(k)) { se_start(SE_OJ_W_PRESS_HEAD_OFF, &in->m[12]); pr_set(k, PB_RELAXSTART); }
+        }
+        int st = ++o->step;
+        float base = r->arg[0] != -1 ? (float)r->arg[0] : 0.0f;
+        switch (o->nrv) {
+        case PB_RELAXSTART: case PB_WAITSTART: { /* exeBound */
+            if (st == 0) obj_play(in, o->nrv == PB_RELAXSTART ? "SwitchOff" : "SwitchOn", 0, 0);
+            float rate = st / 20.0f > 1.0f ? 1.0f : st / 20.0f, sc_; /* getScaleWithReactionValueZeroToOne(rate, 1, -0.2) */
+            if (rate < 0.5f) sc_ = sinf(rate * 2.0f * 1.5707963f);
+            else { float t = (rate - 0.5f) * 2.0f; sc_ = 1.0f + (1.0f - cosf(3.1415927f * t)) * (1.0f - t) * -0.2f; }
+            sc_ *= (-45.0f - base);
+            o->relax = o->nrv == PB_RELAXSTART ? base + sc_ : -45.0f - sc_;
+            if (st == 20) pr_set(k, o->nrv == PB_RELAXSTART ? PB_RELAX : PB_WAIT);
+            break;
+        }
+        case PB_RELAX: if (st == 0) o->relax = -45.0f; break;
+        case PB_SYNCWAIT: break;
+        case PB_FIRSTWAIT: if (st == pr_wait(r)) pr_set(k, PB_PREPARE); break;
+        case PB_WAIT:
+            if (pr_wait(r) == 80 + st) pr_set(k, PB_PREPARE);
+            else if (st == pr_wait(r)) pr_set(k, PB_SHOT);
+            break;
+        case PB_PREPARE:
+            if (st == 0) obj_play(in, "ShotStart", 0, 0);
+            if (st >= 80) pr_set(k, PB_SHOT); /* isBckStopped */
+            break;
+        case PB_SHOT:
+            if (st == 0) obj_play(in, pr_short(r) ? "ShortShot" : "Shot", 0, 0);
+            if (st == (pr_short(r) ? 54 : 16)) wb_shot(in);
+            if (st >= (pr_short(r) ? 88 : 58)) pr_set(k, r->group >= 0 ? PB_SYNCWAIT : PB_WAIT);
+            break;
+        }
+        if (r->group >= 0 && pr_leader(in->row)) { /* PressureMessenger::exeSync */
+            int mx = -1;
+            for (u32 j = 0; j < sc->nobjs; j++)
+                if (sc->objs[j].type == r->type && sc->objs[j].group == r->group && sc->objs[j].zone == r->zone && pr_wait(&sc->objs[j]) > mx) mx = pr_wait(&sc->objs[j]);
+            if (++o->msg_step >= mx + 60) {
+                o->msg_step = 0;
+                for (int j = 0; j < nprs; j++) {
+                    const Row *q = &sc->objs[prs[j].row];
+                    if (q->type == r->type && q->group == r->group && q->zone == r->zone && !pr_relaxed(j)) pr_set(j, PB_WAIT);
+                }
+            }
+        }
+        /* body (70 at 30 up) and cannon push Mario */
+        V3 body = vadd(row_pos(r), vmul(vnorm(v3(in->m[4], in->m[5], in->m[6])), 30.0f)), out = vtangent(vsub(mc, body), mario->up);
+        float l = vlen(out), want = 70.0f + HIT_BODY_R * 0.6f;
+        if (vlen(vsub(mc, body)) < 70.0f + HIT_BODY_R && l > 1e-3f && l < want) mario->pos = vadd(mario->pos, vmul(out, (want - l) / l));
+    }
+    update_wbullets();
+}
+static void pr_joints(Inst *in) /* calcJointCannonV: Cannon1 turned about its Z */
+{
+    int k = pr_of(in->row);
+    Anim *a = in->anim;
+    if (k < 0 || !a || !a->skin || a->skin->njoints < 2) return;
+    int rel = prs[k].nrv == PB_RELAXSTART || prs[k].nrv == PB_RELAX || prs[k].nrv == PB_WAITSTART;
+    float ang = (rel ? prs[k].relax : (sc->objs[in->row].arg[0] != -1 ? (float)sc->objs[in->row].arg[0] : 0.0f)) * 0.0174533f;
+    float rz[16], tmp[16], c = cosf(ang), s = sinf(ang);
+    mat_identity(rz);
+    rz[0] = c; rz[1] = s; rz[4] = -s; rz[5] = c;
+    mat_mul(tmp, a->world[1], rz);
+    memcpy(a->world[1], tmp, 64);
+}
+static void draw_wbullets(void)
+{
+    if (!m_wbullet || !m_wbullet->skin) return;
+    for (int b = 0; b < MAX_WBULLETS; b++) {
+        if (!wbs[b].alive) continue;
+        Anim *a = obj_anim(4 * (int)sc->nobjs + b, m_wbullet, "WaterBullet");
+        if (!a) continue;
+        const char *want = wbs[b].step < 40 ? "waterbullet/shot" : "waterbullet/move";
+        if (a->clip_id < 0 || strcmp(sc->clips[a->clip_id].name, want)) anim_start(a, want, 0);
+        anim_update(a);
+        float m[16];
+        basis_matrix(m, wbs[b].pos, vnorm(vcross(wbs[b].front, wbs[b].side)), wbs[b].front, 0);
+        draw_skin(m_wbullet, m, a);
+    }
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -18998,6 +19238,7 @@ static void update_obj_anims(void)
                                           &insts[i].m[12], insts[i].lv[0]);
             if (insts[i].punch) { anim_pose(insts[i].anim); punch_ball(&insts[i], insts[i].anim); anim_skin(insts[i].anim); continue; }
             if (insts[i].sbeamer) { anim_pose(insts[i].anim); sbm_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
+            if (insts[i].pressure) { anim_pose(insts[i].anim); pr_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].anim->done && !insts[i].anim->loop && !insts[i].vine && !obj_play(&insts[i], sc->types + 32 * sc->objs[insts[i].row].type, 1, 0))
                 obj_play(&insts[i], "wait", 1, 8); /* a one-shot clip over: back to its own clip (tryStartAllAnim), else Wait */
             anim_update(insts[i].anim);
@@ -19115,6 +19356,7 @@ void game_update(void)
     update_rbeamers();
     update_sbeamers();
     update_whirls();
+    update_pressures();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
@@ -20117,6 +20359,7 @@ void game_draw(void)
     draw_mogu_extras();
     draw_mogucchi_extras();
     draw_whirls();
+    draw_wbullets();
     RESTQ(0);
     draw_vines();
     RESTQ(1);
