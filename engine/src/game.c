@@ -3325,7 +3325,7 @@ void game_rebind(void)
         in->dland = strcmp(name, "DesertMovingLand") == 0;
         in->bigfan = strcmp(name, "BigFan") == 0 || strcmp(name, "BigFanNoLeg") == 0;
         in->eball = strcmp(name, "ElectricBall") == 0;
-        in->arrow = strcmp(name, "ArrowSwitch") == 0;
+        in->arrow = strcmp(name, "ArrowSwitch") == 0 ? 1 : strcmp(name, "ArrowSwitchMulti") == 0 ? 2 : 0;
         in->kstair = strncmp(name, "KoopaBattleMapStair", 19) == 0 && strcmp(name, "KoopaBattleMapStairTurnAppear") != 0;
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
@@ -20271,8 +20271,19 @@ static void draw_eballs(void)
  * plus, 3 half minus, 0 quarter plus, 1 quarter minus, each with its limits). Mario's spin on its sensor (100 at (0, 50,
  * 250)) turns it a step (6 a frame) the way his hit pushes it (its side . (it - Mario) > 0: plus), within its limits;
  * at the target its SW_A goes on (not up) / off (up) with GRAVITY_SWITCHED; arg1 locks it after one turn (no sensor,
- * no collision). Its SW_A turned on / off from elsewhere turns it too (unless locked). It pushes Mario. ponytail: no
- * On / Off BTKs, no PlaneModeCube variant */
+ * no collision). Its SW_A turned on / off from elsewhere turns it too (unless locked). It pushes Mario.
+ * ArrowSwitchMulti.cpp (arrow 2): always a quarter plus; at each target the ArrowSwitchTarget of its arg0 (same zone)
+ * with arg1 the old index goes off (SW_A off, SW_B on), the new one's on (SW_A on, SW_B off). ponytail: no On / Off
+ * BTKs, no PlaneModeCube variant */
+static void as_target(const Row *m, int idx, int on) /* ArrowSwitchTarget::onTarget / offTarget */
+{
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        Row *t = (Row *)&sc->objs[i];
+        if (strcmp(sc->types + 32 * t->type, "ArrowSwitchTarget") || t->arg[0] != m->arg[0] || t->zone != m->zone || t->arg[1] != idx) continue;
+        if (t->sw[SW_A] >= 0) sw_set(t, SW_A, on);
+        if (t->sw[SW_B] >= 0) sw_set(t, SW_B, !on);
+    }
+}
 #define MAX_ARROWS 32
 enum { AS_WAIT, AS_ROTATE, AS_LOCK };
 static const float as_targets[4] = {0.0f, 90.0f, 180.0f, -90.0f};
@@ -20313,16 +20324,16 @@ static void update_arrows(void)
         if (k < 0) continue;
         typeof(&ass[0]) o = &ass[k];
         const Row *r = &sc->objs[in->row];
-        int t = r->arg[0], lock = r->arg[1] > 0;
+        int multi = in->arrow == 2, t = multi ? 0 : r->arg[0], lock = !multi && r->arg[1] > 0;
         int sa = r->sw[SW_A] >= 0 && sw_on(r, SW_A);
-        if (!o->init) { o->init = 1; o->sa = sa; }
-        if (!lock && sa != o->sa && o->nrv != AS_ROTATE) { /* listenOnSwitch / listenOffSwitch */
+        if (!o->init) { o->init = 1; o->sa = multi ? 0 : sa; }
+        if (!multi && !lock && sa != o->sa && o->nrv != AS_ROTATE) { /* listenOnSwitch / listenOffSwitch */
             if (sa && o->idx == 0) {
                 if (t == -1 || t == 2) as_turn(k, 2, 1); else if (t == 3) as_turn(k, 2, 0);
                 else if (t == 0) as_turn(k, 1, 1); else if (t == 1) as_turn(k, 3, 0);
             } else if (!sa && o->idx != 0) as_turn(k, 0, !(t == -1 || t == 0 || t == 2));
         }
-        o->sa = sa;
+        if (!multi) o->sa = sa;
         int st = ++o->step;
         float old[16];
         memcpy(old, in->m, 64);
@@ -20330,7 +20341,7 @@ static void update_arrows(void)
             V3 sp = v3(in->m[4] * 50.0f + in->m[8] * 250.0f + in->m[12], in->m[5] * 50.0f + in->m[9] * 250.0f + in->m[13], in->m[6] * 50.0f + in->m[10] * 250.0f + in->m[14]);
             if (mario_touch(sp, 100.0f)) {
                 V3 side = vnorm(v3(in->m[0], in->m[1], in->m[2])), dir = vsub(sp, mc);
-                int plus = as_plus_limit(t, o->idx) ? 0 : as_minus_limit(t, o->idx) ? 1 : vdot(side, dir) > 0.0f;
+                int plus = multi ? 1 : as_plus_limit(t, o->idx) ? 0 : as_minus_limit(t, o->idx) ? 1 : vdot(side, dir) > 0.0f;
                 o->punch = 1;
                 as_turn(k, ((o->idx + (plus ? as_step(t) : -as_step(t))) % 4 + 4) % 4, plus);
                 st = ++o->step;
@@ -20343,7 +20354,8 @@ static void update_arrows(void)
             float diff = fmodf(as_targets[o->idx] - o->ang + 180.0f + 720.0f, 360.0f) - 180.0f;
             if ((o->plus && diff < 0.0f) || (!o->plus && diff > 0.0f)) {
                 o->ang = as_targets[o->idx]; o->speed = 0;
-                if (r->sw[SW_A] >= 0 && o->punch) { sw_set((Row *)r, SW_A, o->idx != 0); o->sa = o->idx != 0; se_start(SE_SY_GRAVITY_SWITCHED, NULL); }
+                if (multi) { as_target(r, o->sa, 0); as_target(r, o->idx, 1); o->sa = o->idx; se_start(SE_SY_GRAVITY_SWITCHED, NULL); } /* mActiveTargetIndex in sa */
+                else if (r->sw[SW_A] >= 0 && o->punch) { sw_set((Row *)r, SW_A, o->idx != 0); o->sa = o->idx != 0; se_start(SE_SY_GRAVITY_SWITCHED, NULL); }
                 se_start(SE_OJ_ARROW_SWITCH_STOP, &in->m[12]);
                 o->punch = 0;
                 o->nrv = lock ? AS_LOCK : AS_WAIT; o->step = -1;
