@@ -243,6 +243,7 @@ typedef struct {
     int onimasu;     /* Onimasu / OnimasuPivot: a block tumbling along its rail, a press (update_onimasu, oni_place) */
     int lavarock;    /* LavaStrangeRock 1 / L 2 / Table 3: breaks under a launch or pushes Mario (update_lavarocks) */
     int fpressure;   /* FirePressureRadiate: a flame on a cycle (update_fpressures, fpr_joints) */
+    int spmother;    /* StarPieceMother: its star pieces at a touch, or along its rail (update_spmothers) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
 static V3 firebar_ball(const Inst *in, int j, int k);
@@ -609,6 +610,7 @@ static int wb_hold(Player *m), tz_hold(Player *m);
 static void tz_place(Inst *in), update_trapezes(void), draw_trapeze_ropes(void);
 static int ntzs, tz_ride = -1; /* the Trapeze Mario holds, -1 none */
 static int nonis, nfprs; static void oni_place(Inst *in), update_onimasu(void), update_lavarocks(void), update_fpressures(void), fpr_joints(Inst *in);
+static int nspms; static void update_spmothers(void);
 static int nmhills; static const Model *m_mhole, *m_mhill[3];
 static void sbm_place(Inst *in), sbm_joints(Inst *in);
 static int pole_try(Player *m), pole_hold(Player *m);
@@ -1427,7 +1429,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nvines = 0; vine_ride = -1;
     pole_init();
     nrbms = 0;
-    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0;
+    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0;
     dino_cam = 0;
     foot_num = foot_rot = 0;
     nseesaws = 0;
@@ -3240,6 +3242,7 @@ void game_rebind(void)
         in->sbeamer = strcmp(name, "SearchBeamer") == 0;
         in->pressure = strcmp(name, "WaterPressure") == 0;
         in->fpressure = strcmp(name, "FirePressureRadiate") == 0;
+        in->spmother = strcmp(name, "StarPieceMother") == 0;
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
         in->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 ? 3 : 0;
@@ -18222,6 +18225,82 @@ static void fpr_joints(Inst *in) /* calcJointCannon: Cannon1 turned arg0 about i
     memcpy(a->world[1], tmp, 64);
 }
 
+/* StarPieceMother.cpp after Petari: a star piece bundle turning 10 degrees a frame. Without a rail it waits; Mario
+ * touching it (100; its SW_A on, if any) gets its arg0 (6) pieces (they fly to him) and it goes (SW_DEAD). With a rail
+ * it appears with its switch at the rail's start and runs along it at arg2 (10) a frame, letting its pieces out where
+ * they lie (evenly from arg1 to the end), and goes at the end. ponytail: the flying pieces are taken at once */
+#define MAX_SPMOTHERS 16
+#define SPM_PIECES 32
+static struct { int row, init, next, n; float coord, at[SPM_PIECES]; u32 lv; } spms[MAX_SPMOTHERS];
+static int spm_of(int row)
+{
+    for (int i = 0; i < nspms; i++) if (spms[i].row == row) return i;
+    if (nspms == MAX_SPMOTHERS) return -1;
+    memset(&spms[nspms], 0, sizeof spms[0]);
+    spms[nspms].row = row;
+    return nspms++;
+}
+static void spm_piece(V3 p) /* a StarPiece floating there (appear) */
+{
+    if (!pieces_base) pieces_base = npieces;
+    int slot = -1;
+    for (int i = pieces_base; i < npieces && slot < 0; i++) if (pieces[i].alive == PICK_GONE && pieces[i].row < 0) slot = i;
+    if (slot < 0) { if (npieces >= pieces_cap) return; slot = npieces++; }
+    pieces[slot].pos = p; pieces[slot].row = -1; pieces[slot].alive = PICK_ON;
+    piece_col[slot] = piece_colour_next(); piece_vel[slot] = v3(0, 0, 0); piece_t[slot] = 0;
+}
+static void spm_kill(Inst *in)
+{
+    const Row *r = &sc->objs[in->row];
+    se_start(SE_OJ_STAR_PIECE_MO_ED, &in->m[12]);
+    if (r->sw[SW_DEAD] >= 0) sw_set((Row *)r, SW_DEAD, 1);
+    row_kill(in->row);
+}
+static void update_spmothers(void)
+{
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->spmother || !row_shown(in->row)) continue;
+        int k = spm_of(in->row);
+        if (k < 0) continue;
+        typeof(&spms[0]) o = &spms[k];
+        const Row *r = &sc->objs[in->row];
+        u32 rn = 0; int cl = 0;
+        const float *rail = r->path >= 0 && scene_blob_g ? find_rail(scene_blob_g, r->zone, r->path, &rn, &cl) : NULL;
+        int n = r->arg[0] != -1 ? r->arg[0] : 6;
+        if (n > SPM_PIECES) n = SPM_PIECES;
+        if (!o->init) {
+            o->init = 1; o->n = n;
+            if (rail) { /* placementPieceOnRail */
+                float d = r->arg[1] != -1 ? (float)r->arg[1] : 0.0f, len = w_rail_len(rail, rn), diff = len - d, stp = n > 1 ? diff / (n - 1.0f) : 0;
+                o->at[0] = d;
+                for (int j = 1; j < n; j++) { d += stp; o->at[j] = d >= diff ? diff : d; }
+                se_start(SE_OJ_STAR_PIECE_MO_ST, r->pos);
+            }
+        }
+        V3 p = row_pos(r);
+        if (rail) { /* exeMoveOnRail */
+            float len = w_rail_len(rail, rn), sp = r->arg[2] != -1 && r->arg[2] != 0 ? (float)r->arg[2] : 10.0f;
+            o->lv = se_level(SE_OJ_LV_STAR_PIECE_MO_MV, &in->m[12], o->lv);
+            o->coord += sp;
+            if (o->coord > len) o->coord = len;
+            p = rail_at(rail, rn, o->coord);
+            while (o->next < o->n && o->at[o->next] <= o->coord) {
+                spm_piece(rail_at(rail, rn, o->at[o->next])); se_start(SE_OJ_STAR_PIECE_BURST, &p.x); o->next++;
+            }
+            if (o->coord >= len) { spm_kill(in); game_rebind(); return; }
+        } else if (vlen(vsub(mc, p)) < 100.0f + HIT_BODY_R && (r->sw[SW_A] < 0 || sw_on(r, SW_A))) { /* emitStarPieces */
+            got_pieces += o->n; se_start(SE_SY_STAR_PIECE_GET, NULL);
+            spm_kill(in); game_rebind();
+            return;
+        }
+        float rm[16], ry = fmodf(10.0f * game_frame, 360.0f), rot[3] = {r->rot[0], r->rot[1] + ry, r->rot[2]}, pp[3] = {p.x, p.y, p.z};
+        mat_translate_rot_scale(rm, pp, rot, r->scale); /* control(): mRotation.y + 10 */
+        memcpy(in->m, rm, 64);
+    }
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -20053,6 +20132,7 @@ void game_update(void)
     update_onimasu();
     update_lavarocks();
     update_fpressures();
+    update_spmothers();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
