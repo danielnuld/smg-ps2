@@ -5,6 +5,7 @@
 #include "gamedata.h"
 #include "sequence.h"
 #include "lyt.h"
+#include "mc.h"
 #include "mem.h"
 #include "pad.h"
 #include "render.h"
@@ -16,6 +17,7 @@
 #include <string.h>
 
 static void fade_update(void);
+static int sv_prompt; /* frames to the save prompt a stage clear left for this scene, 0 none */
 static void fade_draw(void);
 static void ss_init(const Scene *s);
 static void dmu_init(void);
@@ -292,8 +294,63 @@ static void si_update(SysInfo *w)
     lyt_update(w->l);
 }
 
+static void si_disappear(SysInfo *w) { if (w->alive) nrv_set(&w->n, SI_DISAPPEAR); } /* SysInfoWindow::disappear */
+
+/* --- SaveDataHandleSequence (startSave): "save?" (System_Save00, or System_Save07 save and quit), the save with
+ * System_Save01 for at least 120 frames, System_Save02; with confirm-remind a No asks ConfirmEndGame. The current
+ * game goes into its file (gd_file_save) and the files to the memory card (main.c, mc.c) --------------------------- */
+enum { SV_OFF, SV_CONFIRM, SV_SAVE, SV_WINDOWOUT, SV_DONE, SV_REMIND };
+static struct { Nrv n; SysInfo win; int remind, quit, result; u32 lv; } sv;
+static int save_requested;
+void menu_save_request(void) { save_requested = 1; }
+int menu_take_save_request(void) { int r = save_requested; save_requested = 0; return r; }
+void menu_save_start(int confirm, int remind, int quit)
+{
+    sv.remind = remind; sv.quit = quit; sv.result = 0;
+    sv.n.next = -1;
+    nrv_set(&sv.n, confirm ? SV_CONFIRM : SV_SAVE);
+}
+int menu_saving(void) { return sv.n.cur != SV_OFF || sv.n.next > SV_OFF; }
+int menu_save_result(void) { return sv.result; } /* 2 saved (or quit without), 3 not saved */
+static void sv_update(void)
+{
+    if (!menu_saving()) return;
+    switch (nrv_begin(&sv.n)) {
+    case SV_CONFIRM:
+        if (FIRST(&sv.n)) si_appear(&sv.win, sv.quit ? "System_Save07" : "System_Save00", SI_YESNO);
+        if (!sv.win.alive && sv.n.step > 0) {
+            if (yn_yes(&sv.win.yn)) nrv_set(&sv.n, SV_SAVE);
+            else if (sv.remind) nrv_set(&sv.n, SV_REMIND);
+            else { sv.result = 3; nrv_set(&sv.n, SV_OFF); }
+        }
+        break;
+    case SV_SAVE: /* trySave */
+        if (FIRST(&sv.n)) { gd_file_save(); menu_save_request(); si_appear(&sv.win, "System_Save01", SI_BLOCKING); }
+        if (sv.n.step > 20) sv.lv = se_level(SE_SY_LV_SAVING, NULL, sv.lv);
+        if (sv.n.step > 120 && !mc_busy()) nrv_set(&sv.n, SV_WINDOWOUT);
+        break;
+    case SV_WINDOWOUT:
+        if (FIRST(&sv.n)) si_disappear(&sv.win);
+        if (!sv.win.alive) nrv_set(&sv.n, SV_DONE);
+        break;
+    case SV_DONE: /* tryProcessDoneKeyWait */
+        if (FIRST(&sv.n)) si_appear(&sv.win, "System_Save02", SI_KEY);
+        if (!sv.win.alive && sv.n.step > 0) { sv.result = 2; nrv_set(&sv.n, SV_OFF); }
+        break;
+    case SV_REMIND:
+        if (FIRST(&sv.n)) si_appear(&sv.win, "ConfirmEndGame", SI_YESNO);
+        if (!sv.win.alive && sv.n.step > 0) {
+            if (yn_yes(&sv.win.yn)) { sv.result = 2; nrv_set(&sv.n, SV_OFF); }
+            else nrv_set(&sv.n, SV_CONFIRM);
+        }
+        break;
+    }
+    nrv_end(&sv.n);
+    si_update(&sv.win);
+}
+
 /* --- PauseMenu ------------------------------------------------------------------------------------------------- */
-enum { PM_SELECTING, PM_DECIDED, PM_DISAPPEAR, PM_CONFIRM };
+enum { PM_SELECTING, PM_DECIDED, PM_DISAPPEAR, PM_CONFIRM, PM_SAVE };
 static struct {
     LytInst *l;
     Btn up, down;
@@ -409,11 +466,15 @@ static void pm_update(void)
         if (pm.up.selected) {
             if (btn_selected_se(&pm.up)) se_start(SE_SY_PAUSE_OFF, NULL);
             if (btn_decided_wait(&pm.up)) nrv_set(&pm.n, PM_DISAPPEAR);
-        } else if (pm.down.selected && btn_decided_wait(&pm.down)) nrv_set(&pm.n, PM_CONFIRM); /* ponytail: no save first */
+        } else if (pm.down.selected && btn_decided_wait(&pm.down)) nrv_set(&pm.n, pm_invalid_back() ? PM_SAVE : PM_CONFIRM);
         break;
     case PM_DISAPPEAR:
         if (FIRST(&pm.n)) { pm_anim_without_button("End"); btn_disappear(&pm.up); btn_disappear(&pm.down); }
         if (pm_stopped_without_button() && btn_hidden(&pm.up) && btn_hidden(&pm.down)) pm.alive = 0;
+        break;
+    case PM_SAVE: /* exeGameDataSave: startGameDataSaveSequence(false, true) */
+        if (FIRST(&pm.n)) menu_save_start(1, 0, 1);
+        else if (!menu_saving()) nrv_set(&pm.n, PM_CONFIRM);
         break;
     case PM_CONFIRM:
         if (FIRST(&pm.n)) si_appear(&pm.win, pm_invalid_back() ? "PauseMenu_ConfirmEndGame" : "PauseMenu_ConfirmBackAstroDome", SI_YESNO);
@@ -440,6 +501,8 @@ void menu_init(const Scene *s)
     msgs = s->msgs;
     pm_init();
     ss_init(s);
+    si_init(&sv.win);
+    sv_prompt = seq_take_save_prompt() ? 90 : 0;
     dmu_init();
     mlay_init();
     fs_init(s);
@@ -453,7 +516,7 @@ int menu_paused(void) { return pm.alive; }
 int menu_test_point(const char *pane)
 {
     float x, y;
-    LytInst *l = pm.win.alive && lyt_pane(pm.win.l, pane) >= 0 ? pm.win.l : pm.l;
+    LytInst *l = sv.win.alive ? sv.win.l : pm.win.alive && lyt_pane(pm.win.l, pane) >= 0 ? pm.win.l : pm.l;
     if (!lyt_pane_center(l, pane, &x, &y)) return 0;
     game_set_cursor(x, y);
     return 1;
@@ -465,6 +528,8 @@ int menu_update(void)
     wipe_update();
     dmu_update();
     mlay_update();
+    if (sv_prompt && --sv_prompt == 0) menu_save_start(1, 0, 0); /* StorySequenceExecutor::tryStartSave after a clear */
+    if (menu_saving()) { game_cursor_menu(); sv_update(); if (!pm.alive) return 1; }
     if (menu_scenario_selecting()) { game_cursor_menu(); ss_update(); return 1; }
     if (menu_file_selecting()) { game_cursor_menu(); fs_update(); return 1; }
     if (!pm.alive) { /* GameScenePauseControl: Plus (START) where GameScene::isPermitToPauseMenu */
@@ -1292,11 +1357,6 @@ int menu_test_point_dome(const char *pane) /* tests: the pointer on a pane of th
     return 1;
 }
 
-/* the save made after a change of the files (SaveDataHandleSequence's save all): the memory card (main.c) */
-static int save_requested;
-void menu_save_request(void) { save_requested = 1; }
-int menu_take_save_request(void) { int r = save_requested; save_requested = 0; return r; }
-
 /* --- FileSelector (the FileSelect stage): TitleSequenceProduct, FileSelectItem, FileSelectCameraController,
  * FileSelectSky, FileSelectInfo, FileSelectNumber, FileSelectButton, BackButton after Petari, as a whole-screen menu
  * (its stage's world not drawn: FileSelector draws everything it shows). A+B is X+Circle held; the pointer is the
@@ -1862,6 +1922,7 @@ static void wipe_update(void)
 
 void menu_draw(void)
 {
+    if (sv.win.alive) { render_world_done(); lyt_draw(sv.win.l); }
     if (dmu.on) { render_world_done(); dmu_draw(); }
     mlay_draw();
     wipe_draw_quad();

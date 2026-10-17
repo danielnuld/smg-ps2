@@ -24,6 +24,7 @@
 #include "lyt.h"
 #include "menu.h"
 #include "gamedata.h"
+#include "mc.h"
 #include "music_tab.h"
 #include "packs_cfg.h" /* written by build.sh: PACKS = "<Galaxy>/<scenario>", or empty */
 
@@ -576,6 +577,11 @@ static void load_modules(void)
     sbv_patch_disable_prefix_check();
     SifLoadModule("rom0:SIO2MAN", 0, NULL);
     SifLoadModule("rom0:PADMAN", 0, NULL);
+    if (mc_init() == 0) { /* LogoScene MountGameData: startPreLoadSaveDataSequence */
+        int sz;
+        u8 *img = gd_image(&sz);
+        if (mc_load(img, sz)) gd_image_loaded();
+    }
 }
 
 #if !defined(TEASER) && (defined(BENCH) || defined(DEBUG_HUD) || !defined(CATCHUP)) /* the text lines */
@@ -745,6 +751,8 @@ int main(void)
 #endif
         pad_update();
         game_update();
+        if (menu_take_save_request()) { int sz; mc_save(gd_image(&sz), sz); } /* SaveDataHandleSequence: save all */
+        mc_poll();
 #ifdef PACKS
         if (scene_next[0]) {
             scene_switch();
@@ -777,6 +785,9 @@ int main(void)
             printf("miss test f %u: lives %d\n", frame, game_lives());
             game_test_miss(frame == 900);
         }
+        pad_force = 0;
+        if (frame == 1340) printf("miss test f %u: save window, pointer on BoxRight %d\n", frame, menu_test_point("BoxRight"));
+        if (frame == 1360 || frame == 1660) pad_force = PAD_CROSS; /* Yes, then the done window's key */
 #endif
 #if defined(PACKS) && defined(DOME_TEST)
         { /* the dome: R2 at the blue star, Good Egg opened (New), then chosen and confirmed, its scenario 1 */

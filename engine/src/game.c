@@ -11797,10 +11797,11 @@ static void miss_event_update(void)
     if (mev.over) {
         if (f == 60) dome_layout_off = 1; /* closeDefaultLayout */
         if (f == 160) menu_wipe_gameover(); /* reqLayout */
-        if (f == 420) { /* finish: SaveAfterGameOver, requestChangeSceneAfterGameOver */
-            gd_add_player_left(4 - gd_player_left());
-            seq_galaxy_move(SEQ_TITLE, NULL, 1, -1, 0);
+        if (f == 420) { /* finish: SaveAfterGameOver (startGameDataSaveSequence(true, true)) */
+            lives = 4; /* resetSystemAndGameStatus: the file's lives back to 4 (synced into the game data) */
+            menu_save_start(1, 1, 1);
         }
+        if (f > 420 && !menu_saving()) { seq_galaxy_move(SEQ_TITLE, NULL, 1, -1, 0); mev.on = 0; } /* requestChangeSceneAfterGameOver */
     } else {
         if (f == 30) dome_layout_off = 1;
         if (f == 45) { menu_miss_start(); next = 1; }

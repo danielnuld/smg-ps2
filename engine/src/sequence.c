@@ -13,9 +13,11 @@ static struct {
     int cleared;      /* the star id the last stage clear gave */
     int start_id, start_zone, start_set;
     int open_frames;  /* the next scene's opening wipe */
+    int save_prompt;  /* a stage clear: the next scene asks to save */
     unsigned open_rgb;
 } sq;
 
+int seq_take_save_prompt(void) { int r = sq.save_prompt; sq.save_prompt = 0; return r; }
 void seq_set_open_wipe(int frames, unsigned rgb) { sq.open_frames = frames; sq.open_rgb = rgb; }
 int seq_take_open_wipe(unsigned *rgb) { int f = sq.open_frames; *rgb = sq.open_rgb; sq.open_frames = 0; return f; }
 
@@ -63,7 +65,7 @@ void seq_galaxy_move(int type, const char *stage, int scenario, int start_id, in
         if (!strcmp(sq.before, "HeavensDoorGalaxy")) { snprintf(st, sizeof st, "AstroGalaxy"); no = astro_galaxy_no(); sq.start_set = 1; sq.start_id = 100; sq.start_zone = 0; }
         else goto astro_or_dome;
         break;
-    case SEQ_STAGE_CLEAR: /* decideNextEventForClearGalaxy: the grand stars and the story's demos go to the
+    case SEQ_STAGE_CLEAR: /* the clear's demo sequence ends with the save (tryStartSave); decideNextEventForClearGalaxy: the grand stars and the story's demos go to the
                            * Observatory; a power star back to its dome. ponytail: the demos themselves not played */
         if (!strcmp(sq.before, "HeavensDoorGalaxy") || gd_is_grand_star(sq.before, sq.before_no) ||
             !strcmp(sq.before, "TriLegLv1Galaxy") || !strcmp(sq.before, "KoopaBattleVs1Galaxy") ||
@@ -90,6 +92,7 @@ void seq_galaxy_move(int type, const char *stage, int scenario, int start_id, in
         break;
     case SEQ_MISS: stage_of(st, sizeof st, &no); break;
     }
+    if (type == SEQ_STAGE_CLEAR) sq.save_prompt = 1;
     if (!st[0] || no < 1) return;
     char next[48];
     snprintf(next, sizeof next, "%s/%d", st, no);

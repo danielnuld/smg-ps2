@@ -381,8 +381,12 @@ LayoutData layouts. Order by dependency:
    card). `title` test: A+B (X+Circle), file 1 new, Yes, Start -> PeachCastleGardenGalaxy/1. A release disc boots
    FileSelect/1 (build.sh ... FileSelect/1 disc). Left: icon select (Mii / fellows), Copy, Luigi, the date, the
    PicLogoGalaxy mask (hidden), blink / morph effects.
-   Next: the memory card (menu_take_save_request -> write gd_image; read it at boot), the save prompts (after a star,
-   game over), StageResultInformer.
+   Done (next commit): the memory card (mc.c: rom0 MCMAN / MCSERV, mc0:/SMGPS2/save.dat = gd_image, read at boot,
+   written in steps polled by main.c) and SaveDataHandleSequence (menu.c sv_*: System_Save00 / 07, Save01 >= 120
+   frames, Save02, ConfirmEndGame remind) after a stage clear (sequence.c save prompt, 90 frames into the next scene:
+   untested), the pause menu's Save and Quit in the Observatory (untested), game over (tested: miss test). Left: no
+   icon.sys (the browser shows no picture), port 0 only, no full-card / no-card windows.
+   Next: StageResultInformer, galaxy pictures, icon select, the dome / Observatory demos.
 Then phase 1 (Good Egg vs Wii: the rim step's ground check, below), sound last. The disc ISO over ~1 GB does not boot
 in PCSX2 (taken for a DVD: open fail; a CD-sized image boots); the user's way of loading it on the PS2 was asked.
 
