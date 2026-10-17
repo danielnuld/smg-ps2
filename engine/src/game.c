@@ -574,6 +574,9 @@ static V3 foot_last; /* FootPrint (DinoPackun's): foot_add */
 static const Model *m_vtop, *m_vleaf;
 static int vine_try(Player *m);
 static int vine_hold(Player *m);
+static void pole_init(void);
+static int pole_try(Player *m), pole_hold(Player *m);
+static int pole_ride = -1; /* the Pole Mario holds (poles), -1 none */
 static const Model *m_ota, *m_otafoot, *m_coco, *m_fireball2, *m_firebubble, *m_otamagma, *m_otalfoot, *m_otabloom;
 /* OtaKingMagma's clip (startBckThisAndBloomModel); one-shots go back to Wait (Down: EndWait) at their end */
 void ota_lfoot_mtx(int k, float out[16]);
@@ -1385,6 +1388,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     norocks = 0;
     nhhps = 0;
     nvines = 0; vine_ride = -1;
+    pole_init();
     dino_cam = 0;
     foot_num = foot_rot = 0;
     nseesaws = 0;
@@ -11107,6 +11111,12 @@ static void update_mario(void)
             return;
         }
     }
+    if (pole_ride >= 0 || (warp.from < 0 && jb.inst < 0 && coc.inst < 0 && flf.inst < 0 && vine_ride < 0 && pole_try(m))) { /* Pole */
+        if (pole_hold(m)) {
+            if (mario_anim) anim_update(mario_anim);
+            return;
+        }
+    }
     if (vine_ride >= 0 || (warp.from < 0 && jb.inst < 0 && coc.inst < 0 && flf.inst < 0 && vine_try(m))) { /* Plant */
         if (vine_hold(m)) {
             if (mario_anim) anim_update(mario_anim);
@@ -12400,6 +12410,265 @@ static int vine_hold(Player *m)
     m->pos = o->pos; m->up = o->up; m->hvel = v3(0, 0, 0); m->vup = 0; m->grounded = 0;
     if (vlen(f) > 1e-3f) o->front = m->face = vnorm(f); /* makeAxisUpFront(&side, &mFront, mUp, mFront): in place */
     return 1;
+}
+
+/* Pole.cpp after Petari (Pole, PoleNoModel, PoleSquare, PoleSquareNoModel, TreeCube): its height 100 x scale y
+ * (TreeCube 800); arg0 no handstand, arg1 the stick inverted, Square: no handstand, 90-degree sides. Free: its point
+ * the foot from Mario's centre on its line (its binder, 60); Mario in the air touching it takes hold (AutoRushBegin:
+ * not when rising straight up), BindStart (TreeClimbStart, turning 5 / 9 eased) or Wait; the stick climbs (6 a frame,
+ * TreeClimb at 1.75) or slides down (0.3 a frame to 15, turning 0.8 x speed; Square 0.5 to 18), aside turns (2.5 x
+ * stick; Square TurnL / TurnR by 90); at the top a handstand (TreeHandstand*); A jumps off (10 out, 25 up, WallJump /
+ * TreeHandStandJump); at 120 from its foot (Square 50) he lets go standing 30 off it. Mario's frame its axes turned
+ * by its rotation y. ponytail: no DemoAppear (demo casts), no push sensor, no enemy hit releasing him, its top joint
+ * not moved (the model drawn as placed), NoModel ones have no collision */
+#define MAX_POLES 64
+enum { PO_FREE, PO_FREEINVALID, PO_START, PO_STARTFAST, PO_WAIT, PO_TURNL, PO_TURNR, PO_TURNEND, PO_CLIMB, PO_FALL,
+       PO_HSSTART, PO_HSWAIT, PO_HSEND, PO_HSTURN };
+static struct { int row, nrv, step, square, nohs, invert; V3 base, top, side, up, front, pos; float height, coord, speed, roty; u32 lv; } poles[MAX_POLES];
+static int npoles;
+
+static int pole_class(const char *name)
+{
+    return !strcmp(name, "Pole") || !strcmp(name, "PoleNoModel") || !strcmp(name, "PoleSquare") ||
+           !strcmp(name, "PoleSquareNoModel") || !strcmp(name, "TreeCube");
+}
+
+static void pole_init(void)
+{
+    npoles = 0; pole_ride = -1;
+    for (u32 i = 0; i < sc->nobjs && npoles < MAX_POLES; i++) {
+        const Row *r = &sc->objs[i];
+        const char *name = sc->types + 32 * r->type;
+        if (!pole_class(name)) continue;
+        typeof(&poles[0]) o = &poles[npoles++];
+        memset(o, 0, sizeof *o);
+        float m[16], one[3] = {1, 1, 1};
+        mat_translate_rot_scale(m, r->pos, r->rot, one); /* makeMtxTR, its scale back to 1 */
+        o->row = i; o->base = row_pos(r);
+        o->side = vnorm(v3(m[0], m[1], m[2])); o->up = vnorm(v3(m[4], m[5], m[6])); o->front = vnorm(v3(m[8], m[9], m[10]));
+        o->height = !strcmp(name, "TreeCube") ? 800.0f : 100.0f * r->scale[1];
+        o->nohs = r->arg[0] != -1; o->invert = r->arg[1] != -1;
+        o->square = strstr(name, "Square") != NULL;
+        if (o->square) o->nohs = 1;
+        o->top = vadd(o->base, vmul(o->up, o->height + (o->square ? 100.0f : 0.0f))); /* updateTopPos */
+        o->pos = o->base;
+    }
+}
+
+static void pole_set(int k, int n) { poles[k].nrv = n; poles[k].step = -1; }
+static float pole_sx(int k) { return poles[k].invert ? -pad_lx() : pad_lx(); }
+static float pole_sy(int k) { return poles[k].invert ? -pad_ly() : pad_ly(); }
+static int pole_turn_ok(int k) { return fabsf(pole_sx(k)) > 0.8f; } /* isEnableTurn: sTurnStickMin */
+
+static void pole_frame(int k, V3 *x, V3 *z) /* calcGravityMtx: up against its gravity, its front */
+{
+    V3 up = up_at(poles[k].pos, poles[k].up), f = vtangent(poles[k].front, up);
+    *z = vlen(f) > 1e-3f ? vnorm(f) : poles[k].front;
+    *x = vcross(up, *z);
+}
+
+static void pole_bind_trans(int k) { poles[k].pos = vadd(poles[k].base, vmul(poles[k].up, poles[k].coord)); }
+
+static void pole_release(int k, int nrv)
+{
+    pole_ride = -1;
+    camera_event_end(); /* endActorCamera */
+    pole_set(k, nrv);
+}
+
+static int pole_jump(int k, int handstand, float rot) /* tryJump */
+{
+    if (!pad_pressed(PAD_CROSS)) return 0;
+    typeof(&poles[0]) o = &poles[k];
+    V3 x, z;
+    pole_frame(k, &x, &z);
+    float a = fmodf(rot + o->roty + 180.0f + 720.0f, 360.0f) * 0.0174533f;
+    V3 jf = vadd(vmul(x, sinf(a)), vmul(z, cosf(a))), up = vcross(z, x);
+    if (handstand) jf = vmul(jf, -1.0f);
+    V3 jv = vadd(vmul(jf, 10.0f), vmul(up, 25.0f)); /* sJumpSpeedXZ, sJumpSpeedY */
+    mario->face = jf; /* setPlayerFrontTargetVec */
+    if (o->square) mario->pos = vadd(mario->pos, vmul(jf, 50.0f)); /* sSquareJumpPosOffset */
+    se_start(SE_PM_JUMP_M, &mario->pos.x); se_start(SE_PV_JUMP_JOY, &mario->pos.x);
+    pole_release(k, PO_FREEINVALID);
+    m_power_jump(mario, jv); /* endBindAndPlayerJump (the port's binds: m_power_jump) */
+    if (mario_anim) mario_play(handstand ? "treehandstandjump" : "walljump", 1.0f, 0);
+    return 1;
+}
+
+static int pole_try_turn(int k)
+{
+    if (!pole_turn_ok(k)) return 0;
+    pole_set(k, pole_sx(k) > 0.0f ? PO_TURNR : PO_TURNL);
+    return 1;
+}
+static int pole_try_climb(int k) { if (pole_sy(k) > 0.0f) { pole_set(k, PO_CLIMB); return 1; } return 0; }
+static int pole_try_fall(int k) { if (pole_sy(k) < 0.0f) { pole_set(k, PO_FALL); return 1; } return 0; }
+static int pole_try_hsturn(int k) { if (pole_turn_ok(k)) { pole_set(k, PO_HSTURN); return 1; } return 0; }
+
+static void pole_play(const char *clip, int loop) { if (mario_anim) mario_play(clip, 1.0f, loop); }
+
+static void pole_step(int k) /* its nerve while Mario holds it */
+{
+    typeof(&poles[0]) o = &poles[k];
+    int first = ++o->step == 0;
+    int stopped = !mario_anim || mario_anim->done;
+    switch (o->nrv) {
+    case PO_START: case PO_STARTFAST:
+        if (first) pole_play(o->square ? "squarepolestart" : "treeclimbstart", 0);
+        if (!o->square && mario_anim) {
+            int end = anim_length(mario_anim);
+            float t = end > 0 ? 1.0f - (float)o->step / end : 0.0f, e = 1.0f - (1.0f - t) * (1.0f - t); /* getEaseOutValue */
+            o->roty += (o->nrv == PO_STARTFAST ? 9.0f : 5.0f) * e;
+        }
+        if (!pole_jump(k, 0, 0.0f) && stopped) pole_set(k, PO_WAIT);
+        break;
+    case PO_WAIT: case PO_TURNEND:
+        if (first) {
+            if (!o->square) pole_play("treewait", 1);
+            else if (!m_clip_is("squarepolewait")) pole_play("squarepolewait", 1);
+            o->speed = 0.0f;
+        }
+        if (pole_jump(k, 0, 0.0f)) break;
+        if (o->nrv != PO_TURNEND) { if (pole_try_turn(k)) break; }
+        else if (!pole_turn_ok(k)) { pole_set(k, PO_WAIT); break; }
+        if (!pole_try_climb(k)) pole_try_fall(k);
+        break;
+    case PO_TURNL: case PO_TURNR: {
+        if (first) pole_play(o->square ? (o->nrv == PO_TURNL ? "squarepoleturnl" : "squarepoleturnr") : "climbturn", o->square ? 0 : 1);
+        if (!o->square) o->roty = fmodf(o->roty + 2.5f * pole_sx(k) + 360.0f, 360.0f); /* sRotateSpeedRate */
+        float jump = 0.0f;
+        if (o->square && o->step > 7) jump = o->nrv == PO_TURNL ? -90.0f : 90.0f; /* sStepSquareJumpChangeDir */
+        if (pole_jump(k, 0, jump)) break;
+        if (o->square) {
+            if (!stopped) break;
+            o->roty = fmodf(o->roty + (o->nrv == PO_TURNR ? 90.0f : -90.0f) + 360.0f, 360.0f);
+            pole_play("squarepolewait", 1); /* startBckPlayer("SquarePoleWait", "SquarePoleTurnEnd") */
+            pole_set(k, PO_TURNEND);
+        } else if (!pole_turn_ok(k)) pole_set(k, PO_WAIT);
+        break;
+    }
+    case PO_CLIMB:
+        if (first) {
+            if (mario_anim) mario_play(o->square ? "squarepoleclimb" : "treeclimb", o->square ? 1.6f : 1.75f, 1);
+            o->speed = 0.0f;
+        }
+        if (pole_jump(k, 0, 0.0f) || pole_try_turn(k) || pole_try_fall(k)) break;
+        if (pole_sy(k) == 0.0f) { pole_set(k, PO_WAIT); break; }
+        o->coord += 6.0f; /* sClimbUpSpeedRate */
+        if (o->coord > o->height) {
+            o->coord = o->height;
+            if (!o->nohs) { pole_bind_trans(k); pole_set(k, PO_HSSTART); break; }
+            if (o->square && !m_clip_is("squarepolepushwait")) pole_play("squarepolepushwait", 1);
+        }
+        pole_bind_trans(k);
+        break;
+    case PO_FALL: {
+        if (first) pole_play(o->square ? "squarepolefall" : "treefall", 1);
+        float acc = o->square ? 0.5f : 0.3f, mx = o->square ? 18.0f : 15.0f;
+        o->speed -= acc;
+        if (o->speed < -mx) o->speed = -mx;
+        o->coord += o->speed;
+        if (!o->square) o->roty += 0.8f * o->speed; /* sFallDownRotateSpeedRate */
+        pole_bind_trans(k);
+        o->lv = se_level(SE_PM_LV_POLE_SLIDE, &mario->pos.x, o->lv);
+        if (o->coord <= (o->square ? 50.0f : 120.0f)) { /* sLandingHeightMin(Square): standing 30 off it */
+            V3 x, z;
+            pole_frame(k, &x, &z);
+            float a = o->roty * 0.0174533f;
+            V3 f = vadd(vmul(x, sinf(a)), vmul(z, cosf(a)));
+            mario->pos = vadd(o->base, vmul(f, -30.0f)); mario->face = f;
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            pole_release(k, PO_FREEINVALID); /* endBindAndPlayerWait */
+            if (mario_anim) mario_play("wait", 1.0f, 1);
+            break;
+        }
+        if (!pole_jump(k, 0, 0.0f) && !pole_try_turn(k) && !pole_try_climb(k) && pole_sy(k) == 0.0f) pole_set(k, PO_WAIT);
+        break;
+    }
+    case PO_HSSTART:
+        if (first) { pole_play("treehandstandstart", 0); se_start(SE_PM_POLE_STAND, &mario->pos.x); se_start(SE_PV_LIFT_UP, &mario->pos.x); }
+        if (pole_jump(k, o->step >= 25, 0.0f)) break; /* sStepJumpReverseHandstandStart */
+        if (!pole_try_hsturn(k) && stopped) pole_set(k, PO_HSWAIT);
+        break;
+    case PO_HSWAIT:
+        if (first) pole_play("treehandstandwait", 1);
+        if (!pole_jump(k, 1, 0.0f) && !pole_try_hsturn(k) && pole_sy(k) < -0.8f) pole_set(k, PO_HSEND); /* sEndHandstandStickY */
+        break;
+    case PO_HSEND:
+        if (first) pole_play("treehandstandend", 0);
+        if (pole_jump(k, o->step < 25, 0.0f)) break; /* sStepJumpReverseHandstandEnd */
+        if (!pole_try_turn(k) && stopped) pole_set(k, PO_WAIT);
+        break;
+    case PO_HSTURN:
+        if (first) pole_play("treehandstandturn", 1);
+        o->roty = fmodf(o->roty + 2.5f * pole_sx(k) + 360.0f, 360.0f);
+        if (!pole_jump(k, 1, 0.0f) && !pole_turn_ok(k)) pole_set(k, PO_HSWAIT);
+        break;
+    }
+}
+
+/* AutoRushBegin: Mario's touch on its binder (60 at its point) in the air */
+static int pole_try(Player *m)
+{
+    if (m->launch >= 0 || m->grounded) return 0;
+    V3 c = vadd(m->pos, vmul(m->up, HIT_BODY_H));
+    for (int k = 0; k < npoles; k++) {
+        typeof(&poles[0]) o = &poles[k];
+        if (o->nrv != PO_FREE || !row_shown(o->row)) continue;
+        if (vlen(vsub(o->pos, c)) > 60.0f + HIT_BODY_R) continue;
+        V3 vel = vadd(m->hvel, vmul(m->up, m->vup)), vxz = vtangent(vel, o->up);
+        float sxz = vlen(vxz), sy = vdot(o->up, vel);
+        if (sxz < 5.0f && sy > 1.0f) continue; /* sInvalidPlayerSpeedMaxXZ / MinY: rising straight up */
+        V3 f = vtangent(vsub(o->pos, m->pos), o->up);
+        f = vlen(f) > 1e-3f ? vnorm(f) : o->front;
+        float lx = vdot(f, o->side), lz = vdot(f, o->front); /* mPosMtx: into its frame */
+        o->roty = (lx == 0.0f && lz == 0.0f) ? 0.0f : atan2f(lx, lz) * 57.29578f; /* calcRotateY */
+        if (o->roty < 0.0f) o->roty += 360.0f;
+        if (o->square) o->roty = 90.0f * (int)((45.0f + o->roty) / 90.0f);
+        o->coord = vdot(vsub(o->pos, o->base), o->up);
+        o->coord = o->coord < 120.0f ? 120.0f : o->coord > o->height ? o->height : o->coord;
+        o->speed = 0.0f;
+        pole_bind_trans(k);
+        pole_ride = k;
+        m->hip = 0; m->spin_timer = 0; m->hvel = v3(0, 0, 0); m->vup = 0; m->jumping = 0;
+        se_start(SE_PM_GRAB_OBJ, &m->pos.x); se_start(SE_PV_LIFT_UP, &m->pos.x);
+        if (row_camset[o->row] != -1) /* startActorCameraNoTarget */
+            camera_actor_start(sc->types + 32 * sc->objs[o->row].type, "", (unsigned short)row_camset[o->row], m->up, m->face, m->pos);
+        pole_set(k, sxz > 10.0f ? PO_STARTFAST : sxz > 6.0f ? PO_START : PO_WAIT); /* sPlayerSpeedToCatchMax / Min */
+        return 1;
+    }
+    return 0;
+}
+
+/* while Mario holds it: its nerve, then his base matrix (isMsgUpdateBaseMtx: its axes turned by its rotation y) */
+static int pole_hold(Player *m)
+{
+    if (pole_ride < 0) return 0;
+    int k = pole_ride;
+    pole_step(k);
+    if (pole_ride < 0) return 0; /* let go: he moves on from here this frame */
+    typeof(&poles[0]) o = &poles[k];
+    float a = o->roty * 0.0174533f;
+    m->pos = o->pos; m->up = o->up;
+    m->face = vadd(vmul(o->side, sinf(a)), vmul(o->front, cosf(a)));
+    m->hvel = v3(0, 0, 0); m->vup = 0; m->grounded = 0;
+    return 1;
+}
+
+static void update_poles(void) /* Free / FreeInvalid: its point follows Mario's centre along it */
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int k = 0; k < npoles; k++) {
+        typeof(&poles[0]) o = &poles[k];
+        if (k == pole_ride) continue;
+        o->step++;
+        V3 d = vsub(o->top, o->base);
+        float l2 = vdot(d, d), t = l2 > 0 ? vdot(vsub(c, o->base), d) / l2 : 0.0f; /* calcPerpendicFootToLineInside */
+        o->pos = vadd(o->base, vmul(d, t < 0 ? 0 : t > 1 ? 1 : t));
+        if (o->nrv == PO_FREEINVALID && (mario->grounded || vlen(vsub(o->pos, mario->pos)) > 300.0f || o->step > 45))
+            pole_set(k, PO_FREE); /* sPlayerDistanceToValid, sStepInvalid */
+        else if (o->nrv != PO_FREEINVALID) o->nrv = PO_FREE;
+    }
 }
 
 static void update_vines(void)
@@ -16704,6 +16973,7 @@ void game_update(void)
     hud_update();
 
     LQ(5, update_talk_director());
+    update_poles();
     if (!opening_on) {
         LQ(6, update_mario());
         /* MR::getMapSoundCodeFoot: the ground's (else the wall's) sound code for Mario's surface sounds; -1 none */

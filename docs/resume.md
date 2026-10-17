@@ -325,7 +325,16 @@ there needs the embedded blob and every pack rebuilt.
 
 ## Next
 
-**Resume here (2026-10-16 morning, stopped by the user mid-investigation):** a longer Wii comparison, from the start
+**Release push (the user, 2026-10-16 night): resume here.** Order: phase 0 (done: 92f184e; videos published by the
+user), phase 3 (all galaxies), phase 2 (60 fps), phase 1 (Good Egg against the Wii), sound last (may be disabled for
+now). Port everything first, **no PCSX2 / route / coverage runs until the porting is finished**; every commit builds
+and says it is untested. Phase 3 steps: repack every galaxy (the 8 stale 84 B GRAV packs), then the top static
+classes of `out/class_coverage.md` (regenerated 2026-10-16: behaviour 84.9 %, static 8.8 %, missing 1.0 %) after
+Petari, Lumas / NPCs, then the misses from the 2026-10-10 coverage run. To check in the test campaign (append as
+you go): route EggStar 1-4 after the air-velocity change (92f184e); OtaKing's hit-back coconuts pass ~650 over Mario
+on the rim (ota_ball_aim, Petari CocoNutBall::setVelocityToPlayer _BE: compare with the Wii).
+
+**Earlier (2026-10-16 morning, stopped by the user mid-investigation):** a longer Wii comparison, from the start
 to the first launch star (the SuperSpinDriver under the start planet, at -4631 -17641 -16400, the bottom of the tower
 that hangs under it). tools/dolphin/play/launch1.json: stick (0, -1) from g 90 runs Mario back over the wooden rim;
 in the port he wraps to the underside by g 250 (up 0 -1 0) and walks inward until he stops against the tower at
