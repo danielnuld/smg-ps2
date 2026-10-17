@@ -402,8 +402,11 @@ LayoutData layouts. Order by dependency:
    stage result; the dome's confirm -> the comet's scenario decided, the scenario select's comet warning; `comet` test).
    The save format is v2 (comets): v1 saves are dropped. The disc ISO (1.15 GB) still does not boot in PCSX2 ("open
    fail SLICE.ELF;1"): OPL on the PS2 should load it; PCSX2 runs out/slice-packs.elf with host: packs.
-   Next: icon select (MiiSelect fellows), the Observatory / dome demos (butler lectures, AstroDomeComet), comet
-   icons on the map / dome info, Luigi; then phase 1, sound.
+   Done since: icon select (MiiSelect fellows, `title` test goes through it), the dome info's comet window, the save
+   window over the pause menu, the pause test answers Save and Quit. Release rebuilt 2026-10-17 15:40 (out/smg-ps2.iso,
+   out/slice-packs.elf boot the title).
+   Next: the Observatory / dome demos (butler lectures, AstroDomeComet, Mario's jump out), comet / Tico icons on the
+   map, Luigi; then phase 1, sound.
 Then phase 1 (Good Egg vs Wii: the rim step's ground check, below), sound last. The disc ISO over ~1 GB does not boot
 in PCSX2 (taken for a DVD: open fail; a CD-sized image boots); the user's way of loading it on the PS2 was asked.
 
