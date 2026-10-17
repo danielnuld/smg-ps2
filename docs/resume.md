@@ -330,6 +330,11 @@ fiel al original"): resume here.** Everything outside the levels, after Petari (
 two tables are compiled into the DOL, not on the disc: cGalaxyInfoTable, cStoryProgressTable) with the disc's
 LayoutData layouts. Order by dependency:
 1. Done fd5b997: scenes change in place (game_request_scene; engine/linkfile .gamedata / .gamebss reset, pack region).
+   Done a287978: runtime layouts (tools/lyt.py -> out/packs/menus.bin: LYTR + TEXT + MSGS; engine lyt.c) and the pause
+   menu (menu.c: ButtonPaneController, YesNoController, SysInfoWindow, PauseMenu, START; `pause` test: EggStar 1 ->
+   pause -> Volver al Planetarium -> Sí -> AstroGalaxy 1). Pointer: the right stick, X decides (A). Left for the pause
+   menu: the star row (game data), Luigi's letter, save before End Game, IconAButton; the stage title / counters'
+   follow positions (setFollowPos).
 2. Runtime layouts: tools/layout.py converts a layout's pane tree (pan1 / pic1 / wnd1 / txt1 / bnd1: transform, alpha,
    visibility, materials) and its BRLANs (pai1: RLPA / RLVC / RLVI pane tracks, RLMC / RLTS / RLTP material tracks,
    Hermite and step keys); the engine plays them like LayoutActor / LayoutManager (MR::startAnim per channel,
