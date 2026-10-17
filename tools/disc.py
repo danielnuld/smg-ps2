@@ -19,7 +19,8 @@ PATH_LEN = 88
 
 
 def build(packs, disc):
-    files = sorted(p for p in packs.rglob("*") if p.is_file() and p.suffix == ".bin")
+    files = sorted(p for p in packs.rglob("*") if p.is_file() and (p.suffix == ".bin" or
+                   (p.suffix == ".smv" and not p.stem.endswith("Luigi"))))  # movies (tools/movies.py); no Luigi yet
     toc, off = [], 0
     with open(disc / "PACKS.BIN", "wb") as out:
         for p in files:

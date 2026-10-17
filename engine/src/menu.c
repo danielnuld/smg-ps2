@@ -641,6 +641,7 @@ static void pm_update(void)
 }
 
 /* --- GamePauseSequence ----------------------------------------------------------------------------------------- */
+static char select_after[32]; /* MoviePlayingSequence (FinalBattle): the scenario select opened over the stage */
 void menu_init(const Scene *s)
 {
     msgs = s->msgs;
@@ -658,6 +659,7 @@ void menu_init(const Scene *s)
     u32 rgb;
     int open = seq_take_open_wipe(&rgb); /* the wipe the last scene closed opens on this one */
     if (open) wipe_start(open, 0, rgb);
+    seq_take_select_after(select_after, sizeof select_after);
 }
 
 int menu_paused(void) { return pm.alive; }
@@ -673,6 +675,7 @@ int menu_test_point(const char *pane)
 
 int menu_update(void)
 {
+    if (select_after[0]) { menu_scenario_select(select_after, 0); select_after[0] = 0; }
     fade_update();
     wipe_update();
     dmu_update();

@@ -46,6 +46,8 @@ int audio_music(const char *path)
     return 0;
 }
 
+int audio_ready(void) { return ready; }
+
 void audio_stop(void)
 {
     if (music) fclose(music);

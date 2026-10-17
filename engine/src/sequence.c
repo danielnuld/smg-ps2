@@ -21,6 +21,9 @@ static SeqResult result;
 static int result_set;
 void seq_set_result(const SeqResult *r) { result = *r; result_set = 1; }
 int seq_take_result(SeqResult *r) { if (!result_set) return 0; *r = result; result_set = 0; return 1; }
+static char select_after[32];
+void seq_set_select_after(const char *galaxy) { snprintf(select_after, sizeof select_after, "%s", galaxy); }
+int seq_take_select_after(char *galaxy, int n) { snprintf(galaxy, n, "%s", select_after); int r = select_after[0] != 0; select_after[0] = 0; return r; }
 int seq_take_save_prompt(void) { int r = sq.save_prompt; sq.save_prompt = 0; return r; }
 void seq_set_open_wipe(int frames, unsigned rgb) { sq.open_frames = frames; sq.open_rgb = rgb; }
 int seq_take_open_wipe(unsigned *rgb) { int f = sq.open_frames; *rgb = sq.open_rgb; sq.open_frames = 0; return f; }
@@ -78,7 +81,13 @@ void seq_galaxy_move(int type, const char *stage, int scenario, int start_id, in
             snprintf(st, sizeof st, "AstroGalaxy"); no = astro_galaxy_no();
             break;
         }
-        if (!strcmp(sq.before, "KoopaBattleVs3Galaxy")) { snprintf(st, sizeof st, "EpilogueDemoStage"); no = 1; break; }
+        if (!strcmp(sq.before, "KoopaBattleVs3Galaxy")) { /* cDemoEpilogueNormal / cDemoEpilogueComplete, then the title.
+            * ponytail: EpilogueDemoStage's "エピローグデモ" and the staff roll not played (the movies only); complete
+            * as 120 stars */
+            game_request_movie(gd_star_num() >= 120 ? "EpilogueA,EndingA,EndingB" : "EpilogueA,EndingA");
+            snprintf(st, sizeof st, "FileSelect"); no = 1; type = SEQ_TITLE;
+            break;
+        }
     astro_or_dome: /* setNextStageToAstroGalaxyOrDome */
         no = astro_dome_no();
         if (no >= 1 && no <= 6) snprintf(st, sizeof st, "AstroDome");

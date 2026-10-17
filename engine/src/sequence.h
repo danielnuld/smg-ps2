@@ -25,6 +25,8 @@ void seq_set_result(const SeqResult *r);
 int seq_take_result(SeqResult *r);
 int seq_take_save_prompt(void);  /* after a stage clear the next scene asks to save (tryStartSave) */
 void seq_set_open_wipe(int frames, unsigned rgb);
+void seq_set_select_after(const char *galaxy);  /* the next scene opens this galaxy's scenario select (FinalBattle's end) */
+int seq_take_select_after(char *galaxy, int n);
 int seq_take_open_wipe(unsigned *rgb);
 
 #endif

@@ -20881,26 +20881,37 @@ static int area_shape(const char *name)
  * 1 the Gateway (scenario 2; its scenario select once Rosetta told about the Tico), 3 the library, 5 the dome arg2.
  * ponytail: a fade for the circle wipe; the children's room by the grand stars (calcOpenedAstroDomeNum), the library
  * by PictureBookA */
-/* MovieStarter.cpp: its appear switch starts its movie (arg0 0 PrologueA: the story's "クッパ襲来後", once; 1
- * PrologueB: "ピーチ城浮上後", then MoviePlayingSequence's stage HeavensDoorGalaxy 1); at the movie's end its dead
- * switch. ponytail: no THP player: the movie is a fade to black held 120 frames (its play wait 75 + the end) */
+/* MovieStarter.cpp: its appear switch starts its movie (arg0: 0 PrologueA, the story's "クッパ襲来後", once; 1
+ * PrologueB, "ピーチ城浮上後"; 2 FinalBattle). MoviePlayingSequence: black at once (exePlayWait's
+ * forceCloseWipeFade), the play after mPlayWaitTime; main.c plays it between this scene and the next: PrologueB's
+ * stage HeavensDoorGalaxy 1 (requestChangeStageInGameMoving), FinalBattle's scenario select of KoopaBattleVs3Galaxy
+ * over this stage again, PrologueA's the garden again with Mario at "リスタート" (start id 1, as
+ * overwriteGalaxyNameAfterLoading puts him once the story is past it). ponytail: the scene reloaded after the movie
+ * (it needs the memory), Mario at its start; no STM_PROLOGUE_05 */
 static int mv_row = -1, mv_t;
 static void movie_starter(int row, const Row *r)
 {
+    static const struct { const char *name; int wait; } mv[3] = {{"PrologueA", 75}, {"PrologueB", 75}, {"FinalBattle", 0}};
     if (mv_row == row) {
-        if (++mv_t == 120 + 60) { /* isEndMovie */
-            if (r->arg[0] == 1) { menu_fade_move(1, SEQ_MOVE, "HeavensDoorGalaxy", 1, -1, 0); return; } /* requestChangeStageInGameMoving */
-            sw_set(r, SW_DEAD, 1); row_dead[row] = 1; mv_row = -1;
-            menu_fade_open(60);
+        if (mv_t++ != mv[r->arg[0]].wait) return;
+        game_request_movie(mv[r->arg[0]].name);
+        if (r->arg[0] == 1) menu_fade_move(1, SEQ_MOVE, "HeavensDoorGalaxy", 1, -1, 0);
+        else if (r->arg[0] == 0) menu_fade_move(1, SEQ_MOVE, "PeachCastleGardenGalaxy", 1, 1, 0);
+        else { /* requestStartScenarioSelect after the scene is back */
+            char st[32];
+            const char *sl = strchr(game_stage_name, '/');
+            snprintf(st, sizeof st, "%.*s", sl ? (int)(sl - game_stage_name) : 31, game_stage_name);
+            seq_set_select_after("KoopaBattleVs3Galaxy");
+            menu_fade_move(1, SEQ_MOVE, st, sl ? atoi(sl + 1) : 1, -1, 0);
         }
         return;
     }
-    if (mv_row >= 0 || row_dead[row] || r->sw[SW_APPEAR] < 0 || !sw_on(r, SW_APPEAR)) return;
+    if (mv_row >= 0 || row_dead[row] || r->sw[SW_APPEAR] < 0 || !sw_on(r, SW_APPEAR) || r->arg[0] > 2) return;
     if (r->arg[0] == 0 && gd_story_passed("クッパ襲来後")) { sw_set(r, SW_DEAD, 1); row_dead[row] = 1; return; }
-    gd_story_follow(r->arg[0] == 0 ? "クッパ襲来後" : "ピーチ城浮上後");
+    if (r->arg[0] < 2) gd_story_follow(r->arg[0] == 0 ? "クッパ襲来後" : "ピーチ城浮上後");
     printf("movie starter row %d: movie %d\n", row, r->arg[0]);
     mv_row = row; mv_t = 0;
-    menu_fade_hold(60); /* the movie's wipe (WipeFade) */
+    menu_fade_hold(1);
 }
 
 int game_test_movie(int which) /* tests: the appear switch of the MovieStarter of arg0 `which` on; its row */

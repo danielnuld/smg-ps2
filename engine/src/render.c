@@ -1538,6 +1538,50 @@ u32 render_end(void)
     return busy;
 }
 
+/* movie.c: the texture cache's VRAM (its first block), free while no scene is loaded */
+u32 render_free_block(void) { return block_first; }
+
+/* a decoded movie picture (w x h, its upload chain already built for render_free_block) on black, scaled to the
+ * frame's width and letterboxed; covered by `fade` (0xAABBGGRR, A 0x80 opaque) */
+void render_picture(const void *upload, int w, int h, u32 fade)
+{
+    int dh = h * SCREEN_W / w / 2, y0 = (SCREEN_H - dh) / 2; /* the frame is half the display's lines */
+    dma_channel_wait(DMA_CHANNEL_VIF1, 0);
+    dma_channel_wait(DMA_CHANNEL_GIF, 0);
+    dma_channel_send_chain(DMA_CHANNEL_GIF, (void *)upload, 0, 0, 0);
+    dma_channel_wait(DMA_CHANNEL_GIF, 0);
+    packet2_reset(gif, 0);
+    packet2_update(gif, draw_setup_environment(gif->next, 0, &frame[back], &zbuf));
+    packet2_update(gif, draw_primitive_xyoffset(gif->next, 0, 2048 - SCREEN_W / 2, 2048 - SCREEN_H / 2));
+    packet2_update(gif, draw_disable_tests(gif->next, 0, &zbuf));
+    packet2_update(gif, draw_clear(gif->next, 0, 2048.0f - SCREEN_W / 2, 2048.0f - SCREEN_H / 2, SCREEN_W, SCREEN_H, 0, 0, 0));
+    packet2_update(gif, draw_finish(gif->next));
+    dma_channel_send_packet2(gif, DMA_CHANNEL_GIF, 1);
+    draw_wait_finish();
+    packet2_reset(vif[cur], 0);
+    ad_open(20);
+    AD(GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA);
+    ad_source((u32)block_first << 6, SCREEN_W >> 6, 10, 9, w, h, 0);
+    ad_sprite(0, y0, SCREEN_W, y0 + dh, 0, 0, w, h, 0x80);
+    if (fade >> 24) {
+        AD(GS_SET_PRIM(PRIM_SPRITE, 0, 0, 0, 1, 0, 0, 0, 0), GS_REG_PRIM);
+        AD(GS_SET_RGBAQ(fade & 0xFF, (fade >> 8) & 0xFF, (fade >> 16) & 0xFF, fade >> 24, 0x3F800000), GS_REG_RGBAQ);
+        AD(GS_SET_XYZ((2048 - SCREEN_W / 2) << 4, (2048 - SCREEN_H / 2) << 4, 0), GS_REG_XYZ2);
+        AD(GS_SET_XYZ((2048 + SCREEN_W / 2) << 4, (2048 + SCREEN_H / 2) << 4, 0), GS_REG_XYZ2);
+    }
+    ad_close();
+    flush_vif();
+    dma_channel_wait(DMA_CHANNEL_VIF1, 0);
+    cur_tex = -1;
+}
+
+/* the frame drawn shown now (movie.c, at a vblank of its own pacing) */
+void render_show(void)
+{
+    graph_set_framebuffer(0, frame[back].address, SCREEN_W, GS_PSM_32, 0, 0);
+    back ^= 1;
+}
+
 u32 render_tris_drawn(void) { return tris_drawn; }
 
 int render_visible(const float p[3], float rad) /* draw_model's test: a sphere in front of the eye, in the frustum */

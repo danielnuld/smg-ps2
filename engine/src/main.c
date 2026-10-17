@@ -25,6 +25,7 @@
 #include "menu.h"
 #include "gamedata.h"
 #include "mc.h"
+#include "movie.h"
 #include "sequence.h"
 #include "music_tab.h"
 #include "packs_cfg.h" /* written by build.sh: PACKS = "<Galaxy>/<scenario>", or empty */
@@ -80,6 +81,21 @@ static void pk_init(void)
     printf("packs: %u KB region\n", pk_size >> 10);
 }
 
+static void *pk_alloc(u32 n);
+static void pk_free(const void *p);
+
+/* a movie (movie.c, between two scenes: no pack loaded) takes its memory and libmpeg's from the packs' region:
+ * memalign / free wrapped (Makefile), so the heap above it stays as it was and the region whole after */
+static int pk_movie;
+void *__real_memalign(size_t align, size_t n);
+void __real_free(void *p);
+void *__wrap_memalign(size_t align, size_t n) { return pk_movie && align <= 64 ? pk_alloc(n) : __real_memalign(align, n); }
+void __wrap_free(void *p)
+{
+    if (pk_movie && (u8 *)p >= pk_base && (u8 *)p < pk_base + pk_size) pk_free(p);
+    else __real_free(p);
+}
+
 static void *pk_alloc(u32 n)
 {
     n = (n + 63) & ~63u;
@@ -121,7 +137,7 @@ static void pk_free(const void *p)
 #define SECTOR 2048
 #define PACK_ALLOC(n) (((n) + SECTOR - 1) & ~(SECTOR - 1))
 typedef struct { char path[88]; u32 off, size; } TocEntry;
-static TocEntry toc[72];
+static TocEntry toc[96];
 static int ntoc;
 static u8 *toc_all; /* the whole PACKS.TOC, kept (toc_select picks a scene's entries) */
 static u32 toc_n;
@@ -215,7 +231,8 @@ static void toc_select(void)
             strcmp(e->path, "menus.bin") == 0 || strcmp(e->path, "menus3d.bin") == 0 ||
             ((strcmp(e->path, "title.bin") == 0 || strcmp(e->path, "title3d.bin") == 0) && strncmp(scen, "FileSelect/", 11) == 0) ||
             (strcmp(e->path, "dome.bin") == 0 && strncmp(scen, "AstroDome/", 10) == 0) ||
-            (strcmp(e->path, "map.bin") == 0 && strncmp(scen, "AstroGalaxy/", 12) == 0)) {
+            (strcmp(e->path, "map.bin") == 0 && strncmp(scen, "AstroGalaxy/", 12) == 0) ||
+            strncmp(e->path, "movies/", 7) == 0) { /* any scene may end in one */
             if (ntoc == (int)(sizeof toc / sizeof toc[0])) { printf("packs: TOC full\n"); for (;;) {} }
             memcpy(&toc[ntoc++], e, sizeof *e);
         }
@@ -275,6 +292,42 @@ static void pack_close(Pack *p)
 #endif
     p->f = NULL;
 }
+
+/* movie.c's reads: in order from one pack (DISC: asynchronous, whole sectors) */
+static Pack mv_pack;
+#ifdef DISC
+static u8 *mv_dst;
+static u32 mv_n;
+#endif
+static int mv_open(const char *path, u32 *size)
+{
+    if (!pack_open(&mv_pack, path)) return 0;
+    *size = mv_pack.size;
+    return 1;
+}
+static void mv_start(u8 *dst, u32 n)
+{
+#ifdef DISC
+    mv_dst = cd_read(mv_pack.base + mv_pack.pos / SECTOR, PACK_ALLOC(n) / SECTOR, dst, 0) ? dst : NULL;
+    mv_n = PACK_ALLOC(n);
+    mv_pack.pos += n;
+#else
+    pack_read(&mv_pack, dst, n);
+#endif
+}
+static int mv_done(void)
+{
+#ifdef DISC
+    if (mv_dst) {
+        if (sceCdSync(1)) return 0;
+        InvalidDCache(mv_dst, mv_dst + mv_n - 1);
+        mv_dst = NULL;
+    }
+#endif
+    return 1;
+}
+static void mv_close(void) { pack_close(&mv_pack); }
+static const MovieIo mv_io = {mv_open, mv_start, mv_done, mv_close};
 
 static const u8 *load_file(const char *path)
 {
@@ -610,6 +663,9 @@ static int vblank_tick(int cause) { (void)cause; vblanks++; ExitHandler(); retur
 /* the next scene asked by the game (game.h game_request_scene: "<Galaxy>/<n>"); taken at the end of the frame's update */
 static char scene_next[64];
 void game_request_scene(const char *next) { snprintf(scene_next, sizeof scene_next, "%s", next); }
+/* a movie played before the next scene loads (MoviePlayingSequence: game.h game_request_movie) */
+static char movie_next[64]; /* names, ',' between */
+void game_request_movie(const char *name) { snprintf(movie_next, sizeof movie_next, "%s", name); }
 
 #ifdef PACKS
 /* A scene in place (MR::requestChangeScene / StorySequenceExecutor: the next stage): the game modules' static state
@@ -644,6 +700,12 @@ static void scene_switch(void)
     memset(__start_gamebss, 0, __stop_gamebss - __start_gamebss);
     strcpy(scen, scene_next);
     scene_next[0] = 0;
+    if (movie_next[0]) {
+        pk_movie = 1;
+        for (char *m = strtok(movie_next, ","); m; m = strtok(NULL, ",")) movie_play(m, &mv_io);
+        pk_movie = 0;
+        movie_next[0] = 0;
+    }
     scene_load();
 }
 #endif
@@ -797,6 +859,10 @@ int main(void)
                 printf("result test f %u: X, result %d saving %d\n", frame, menu_result_showing(), menu_saving());
             }
         }
+#endif
+#if defined(PACKS) && defined(FINALMOVIE_TEST) /* AstroGalaxy/5: the FinalBattle MovieStarter, then the scenario select */
+        if (frame == 200) printf("finalmovie test: movie starter %d\n", game_test_movie(2));
+        if (frame == 400) printf("finalmovie test: scenario select %d\n", menu_scenario_selecting());
 #endif
 #if defined(PACKS) && defined(PROLOGUE_TEST)
         if (frame == 300 || frame == 700) printf("prologue test f %u: movie starter %d\n", frame, game_test_movie(frame == 700));
@@ -1791,3 +1857,10 @@ int main(void)
     }
     return 0;
 }
+
+#ifndef PACKS
+void *__real_memalign(size_t align, size_t n);
+void __real_free(void *p);
+void *__wrap_memalign(size_t align, size_t n) { return __real_memalign(align, n); }
+void __wrap_free(void *p) { __real_free(p); }
+#endif
