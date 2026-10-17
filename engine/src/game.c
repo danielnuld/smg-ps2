@@ -22882,6 +22882,7 @@ void game_draw(void)
         if (kuribo[i].kind == WALK_TERESA && kuribo[i].phase == 4) continue; /* hidden in a wall */
         if (kuribo[i].kind == WALK_PETARI && kuribo[i].phase) continue; /* hideModel */
         if (kuribo[i].kind == WALK_SNAKEHEAD && kuribo[i].phase) continue; /* Waylay: hideModel */
+        if (kuribo[i].kind == WALK_BOMBHEI && (kuribo[i].nrv == BH_GONE || kuribo[i].nrv == BH_EXPLODE)) continue; /* a launcher's bomb not out; exeExplode: hideModel */
         /* out of the view: no shadow, no pose, not drawn; its clip's time goes on (anim_advance) */
         const float *wsc = sc->objs[kuribo[i].row].scale;
         float wr = md->radius * fmaxf(fmaxf(wsc[0], wsc[1]), wsc[2]) + 100.0f, wp[3] = {kuribo[i].pos.x, kuribo[i].pos.y, kuribo[i].pos.z};
