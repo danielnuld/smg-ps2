@@ -242,6 +242,7 @@ typedef struct {
     int trapeze;     /* Trapeze: a bar on ropes Mario swings on (update_trapezes, tz_hold, tz_place) */
     int onimasu;     /* Onimasu / OnimasuPivot: a block tumbling along its rail, a press (update_onimasu, oni_place) */
     int lavarock;    /* LavaStrangeRock 1 / L 2 / Table 3: breaks under a launch or pushes Mario (update_lavarocks) */
+    int fpressure;   /* FirePressureRadiate: a flame on a cycle (update_fpressures, fpr_joints) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
 static V3 firebar_ball(const Inst *in, int j, int k);
@@ -607,7 +608,7 @@ static void pr_joints(Inst *in), draw_wbullets(void), update_pressures(void);
 static int wb_hold(Player *m), tz_hold(Player *m);
 static void tz_place(Inst *in), update_trapezes(void), draw_trapeze_ropes(void);
 static int ntzs, tz_ride = -1; /* the Trapeze Mario holds, -1 none */
-static int nonis; static void oni_place(Inst *in), update_onimasu(void), update_lavarocks(void);
+static int nonis, nfprs; static void oni_place(Inst *in), update_onimasu(void), update_lavarocks(void), update_fpressures(void), fpr_joints(Inst *in);
 static int nmhills; static const Model *m_mhole, *m_mhill[3];
 static void sbm_place(Inst *in), sbm_joints(Inst *in);
 static int pole_try(Player *m), pole_hold(Player *m);
@@ -1426,7 +1427,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nvines = 0; vine_ride = -1;
     pole_init();
     nrbms = 0;
-    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0;
+    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0;
     dino_cam = 0;
     foot_num = foot_rot = 0;
     nseesaws = 0;
@@ -3238,6 +3239,7 @@ void game_rebind(void)
         in->rbeamer = strcmp(name, "RingBeamer") == 0;
         in->sbeamer = strcmp(name, "SearchBeamer") == 0;
         in->pressure = strcmp(name, "WaterPressure") == 0;
+        in->fpressure = strcmp(name, "FirePressureRadiate") == 0;
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
         in->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 ? 3 : 0;
@@ -18113,6 +18115,113 @@ static void update_lavarocks(void)
     }
 }
 
+/* FirePressureRadiate.cpp after Petari (its FirePressure model, Cannon1 turned arg0 about its Z): Wait arg1 (300),
+ * PrepareToRadiate (FireShotStart, 34), Radiate (FireShot; its sensor on from step 25, the flame growing from 51 to
+ * 500 over 70 frames along Cannon3's X from 50 out) for arg2 (300), RadiateMargin (FireShotEnd, 50, the sensor off),
+ * then Wait, or in a group SyncWait: the member with the longest wait stops the others and restarts them 60 later.
+ * With SW_A it rests (Relax) while it is off. The flame (50 about the foot of Mario on it) burns him
+ * (EnemyAttackFire); the body pushes. ponytail: its Fire / FireInd effects only through its clips' rows, a burn is a
+ * hurt */
+#define MAX_FPRS 32
+enum { FR_RELAX, FR_SYNCWAIT, FR_WAIT, FR_PREPARE, FR_RADIATE, FR_MARGIN };
+static struct { int row, nrv, step, init, grow; float len; u32 lv; } fprs[MAX_FPRS];
+static int fpr_of(int row)
+{
+    for (int i = 0; i < nfprs; i++) if (fprs[i].row == row) return i;
+    if (nfprs == MAX_FPRS) return -1;
+    memset(&fprs[nfprs], 0, sizeof fprs[0]);
+    fprs[nfprs].row = row; fprs[nfprs].grow = -1;
+    return nfprs++;
+}
+static void fpr_set(int k, int n) { fprs[k].nrv = n; fprs[k].step = -1; }
+static int fpr_wait(const Row *r) { return r->arg[1] != -1 ? r->arg[1] : 300; }
+static int fpr_leader(int row) /* _DC: the group member with the longest wait (the last of equals) */
+{
+    const Row *r = &sc->objs[row];
+    int best = -1, bw = -1;
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *q = &sc->objs[i];
+        if (q->type == r->type && q->group == r->group && q->zone == r->zone && fpr_wait(q) >= bw) { bw = fpr_wait(q); best = (int)i; }
+    }
+    return best == row;
+}
+static void fpr_group(int row, int nrv)
+{
+    const Row *r = &sc->objs[row];
+    for (int j = 0; j < nfprs; j++) {
+        const Row *q = &sc->objs[fprs[j].row];
+        if (q->type == r->type && q->group == r->group && q->zone == r->zone) fpr_set(j, nrv);
+    }
+}
+static void update_fpressures(void)
+{
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->fpressure || !row_shown(in->row)) continue;
+        int k = fpr_of(in->row);
+        if (k < 0) continue;
+        typeof(&fprs[0]) o = &fprs[k];
+        const Row *r = &sc->objs[in->row];
+        if (!o->init) { o->init = 1; fpr_set(k, r->sw[SW_A] >= 0 ? FR_RELAX : FR_WAIT); }
+        if (r->sw[SW_A] >= 0) {
+            if (!sw_on(r, SW_A) && o->nrv != FR_RELAX) fpr_set(k, FR_RELAX);
+            else if (sw_on(r, SW_A) && o->nrv == FR_RELAX) fpr_set(k, FR_WAIT);
+        }
+        int st = ++o->step;
+        switch (o->nrv) {
+        case FR_RELAX: if (st == 0) { obj_play(in, "FireShotStart", 0, 0); if (in->anim) { in->anim->frame = 0; in->anim->speed = 0; } } break;
+        case FR_SYNCWAIT: if (r->group >= 0 && fpr_leader(in->row) && st == 60) fpr_group(in->row, FR_WAIT); break;
+        case FR_WAIT: if (st == fpr_wait(r)) fpr_set(k, FR_PREPARE); break;
+        case FR_PREPARE:
+            if (st == 0) obj_play(in, "FireShotStart", 0, 0);
+            if (st == 34) fpr_set(k, FR_RADIATE);
+            break;
+        case FR_RADIATE:
+            o->lv = se_level(SE_OJ_LV_F_PRESSURE_RADIATE, &in->m[12], o->lv);
+            if (in->anim && in->anim->done) obj_play(in, "FireShot", 1, 0);
+            if (st == 25) o->grow = 0;
+            if (st >= (r->arg[2] != -1 ? r->arg[2] : 300)) fpr_set(k, FR_MARGIN);
+            break;
+        case FR_MARGIN:
+            if (st == 0) obj_play(in, "FireShotEnd", 0, 0);
+            if (st == 50) {
+                o->grow = -1; o->len = 0;
+                fpr_set(k, r->group >= 0 ? FR_SYNCWAIT : FR_WAIT);
+                if (r->group >= 0 && fpr_leader(in->row)) fpr_group(in->row, FR_SYNCWAIT); /* ACTMES_GROUP_MOVE_STOP */
+            }
+            break;
+        }
+        if (o->grow >= 0) { /* control(): the flame's length */
+            if (o->grow < 70) { o->len = 51.0f + (500.0f - 51.0f) * (o->grow / 70.0f); o->grow++; }
+            else { o->grow = -1; o->len = 500.0f; }
+        }
+        int hot = (o->nrv == FR_RADIATE && st >= 25) || (o->nrv == FR_MARGIN && st < 50);
+        if (hot && in->anim && in->anim->skin && in->anim->skin->njoints > 3 && !mario->hurt_timer) { /* updateHitSensor */
+            float jm[16];
+            mat_mul(jm, in->m, in->anim->world[3]);
+            V3 x = vnorm(v3(jm[0], jm[1], jm[2])), a = vadd(v3(jm[12], jm[13], jm[14]), vmul(x, 50.0f)), b = vadd(a, vmul(x, o->len - 50.0f)), d = vsub(b, a);
+            float t = vdot(d, d) > 0 ? vdot(vsub(mario->pos, a), d) / vdot(d, d) : 0;
+            V3 foot = vadd(a, vmul(d, t < 0 ? 0 : t > 1 ? 1 : t));
+            if (vlen(vsub(mc, foot)) < 50.0f + HIT_BODY_R) hurt_mario(foot, 20.0f); /* sendMsgEnemyAttackFire */
+        }
+        V3 body = vadd(row_pos(r), vmul(vnorm(v3(in->m[4], in->m[5], in->m[6])), 30.0f)), out = vtangent(vsub(mc, body), mario->up);
+        float l = vlen(out), want = 70.0f + HIT_BODY_R * 0.6f;
+        if (vlen(vsub(mc, body)) < 70.0f + HIT_BODY_R && l > 1e-3f && l < want) mario->pos = vadd(mario->pos, vmul(out, (want - l) / l));
+    }
+}
+static void fpr_joints(Inst *in) /* calcJointCannon: Cannon1 turned arg0 about its Z */
+{
+    Anim *a = in->anim;
+    if (!a || !a->skin || a->skin->njoints < 2) return;
+    float ang = (sc->objs[in->row].arg[0] != -1 ? (float)sc->objs[in->row].arg[0] : 0.0f) * 0.0174533f;
+    float rz[16], tmp[16], c = cosf(ang), s = sinf(ang);
+    mat_identity(rz);
+    rz[0] = c; rz[1] = s; rz[4] = -s; rz[5] = c;
+    mat_mul(tmp, a->world[1], rz);
+    memcpy(a->world[1], tmp, 64);
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -19821,6 +19930,7 @@ static void update_obj_anims(void)
             if (insts[i].punch) { anim_pose(insts[i].anim); punch_ball(&insts[i], insts[i].anim); anim_skin(insts[i].anim); continue; }
             if (insts[i].sbeamer) { anim_pose(insts[i].anim); sbm_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].pressure) { anim_pose(insts[i].anim); pr_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
+            if (insts[i].fpressure) { anim_pose(insts[i].anim); fpr_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].anim->done && !insts[i].anim->loop && !insts[i].vine && !obj_play(&insts[i], sc->types + 32 * sc->objs[insts[i].row].type, 1, 0))
                 obj_play(&insts[i], "wait", 1, 8); /* a one-shot clip over: back to its own clip (tryStartAllAnim), else Wait */
             anim_update(insts[i].anim);
@@ -19942,6 +20052,7 @@ void game_update(void)
     update_trapezes();
     update_onimasu();
     update_lavarocks();
+    update_fpressures();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
