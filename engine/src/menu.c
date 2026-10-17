@@ -1323,7 +1323,19 @@ static void dmu_info_fill(LytInst *l, const char *g, int state) /* GalaxyInfoLay
         snprintf(mn, sizeof mn, "%.20s", state == 3 ? g : "GalaxyInfoTextureUnknown");
         lyt_replace_pane_texture(l, "PicDummy", lyt_material_texture(l, mn));
     }
-    lyt_set_pane_frame_stop(l, "CometWindow", 1, 0); /* hideCometWindow */
+    { /* showCometWindow (a comet landed on an open galaxy: GalaxyInfo_CometAppear with its name) / hideCometWindow */
+        static u16 ctext[96];
+        int cs = state == 3 ? gd_comet_star(g) : 0;
+        lyt_start(l, "CometWindow", 1);
+        lyt_set_frame(l, 1, cs ? 1.0f : 0.0f); lyt_set_rate(l, 1, 0);
+        if (cs) {
+            char id[40];
+            snprintf(id, sizeof id, "CometName_%s", gd_scenario_comet(g, cs));
+            const u16 *args[1] = {msg_get(id)};
+            msg_with_args(ctext, 96, msg_get("GalaxyInfo_CometAppear"), args, 1);
+        } else ctext[0] = 0;
+        lyt_set_text_rec(l, "CometName", ctext);
+    }
 }
 static void dmu_info_update(const char *g, int state) { dmu_info_fill(dmu.info, g, state); }
 
