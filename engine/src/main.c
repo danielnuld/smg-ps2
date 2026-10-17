@@ -586,7 +586,11 @@ static void load_modules(void)
     if (mc_init() == 0) { /* LogoScene MountGameData: startPreLoadSaveDataSequence */
         int sz;
         u8 *img = gd_image(&sz);
+#ifndef TITLE_TEST /* (the title test starts from no files) */
         if (mc_load(img, sz)) gd_image_loaded();
+#else
+        (void)img; (void)sz;
+#endif
     }
 }
 
@@ -832,8 +836,12 @@ int main(void)
             if (frame == 620) pad_force = PAD_CROSS;
             if (frame == 800) printf("title test f %u: pointer on BoxRight %d\n", frame, menu_test_point_file(0, "BoxRight"));
             if (frame == 820) pad_force = PAD_CROSS;
-            if (frame == 1150) printf("title test f %u: pointer on BoxStartButton %d\n", frame, menu_test_point_file(0, "BoxStartButton"));
+            if (frame == 1000) printf("title test f %u: pointer on Mii09 %d\n", frame, menu_test_point_file(0, "Mii09"));
+            if (frame == 1020) pad_force = PAD_CROSS;
+            if (frame == 1150) printf("title test f %u: pointer on BoxRight %d\n", frame, menu_test_point_file(0, "BoxRight"));
             if (frame == 1170) pad_force = PAD_CROSS;
+            if (frame == 1450) printf("title test f %u: pointer on BoxStartButton %d\n", frame, menu_test_point_file(0, "BoxStartButton"));
+            if (frame == 1470) pad_force = PAD_CROSS;
         }
 #endif
 #if defined(PACKS) && defined(MISS_TEST)

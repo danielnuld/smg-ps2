@@ -1570,16 +1570,16 @@ int menu_test_point_dome(const char *pane) /* tests: the pointer on a pane of th
 /* --- FileSelector (the FileSelect stage): TitleSequenceProduct, FileSelectItem, FileSelectCameraController,
  * FileSelectSky, FileSelectInfo, FileSelectNumber, FileSelectButton, BackButton after Petari, as a whole-screen menu
  * (its stage's world not drawn: FileSelector draws everything it shows). A+B is X+Circle held; the pointer is the
- * right stick, X decides, Circle / Triangle is B. ponytail: no Mii / icon select (a new file is Mario's), no
- * Mii / Manual buttons, no copy source marker (FileSelectEffect), no BrosButton (no Luigi), no blink / morph blur / effects / ME / BGM, no swipe
+ * right stick, X decides, Circle / Triangle is B. ponytail: fellows only (no Miis), no Manual button, no copy source marker (FileSelectEffect), no BrosButton (no Luigi), no blink / morph blur / effects / ME / BGM, no swipe
  * spin, the save's date not shown */
 enum { FS_OFF, FS_TITLE, FS_TITLEEND, FS_SELECTSTART, FS_SELECT, FS_CONFIRMSTART, FS_CONFIRM, FS_DEMOSTARTWAIT,
        FS_CREATECONFIRMSTART, FS_CREATECONFIRM, FS_CREATE, FS_DELETECONFIRMSTART, FS_DELETECONFIRM, FS_DELETE,
-       FS_COPYWAIT, FS_COPYSELECT, FS_COPYCONFIRMSTART, FS_COPYCONFIRM, FS_COPYDEMO };
+       FS_COPYWAIT, FS_COPYSELECT, FS_COPYCONFIRMSTART, FS_COPYCONFIRM, FS_COPYDEMO,
+       FS_MIIWAIT, FS_MIISELECT, FS_MIICONFIRMWAIT, FS_MIICONFIRM, FS_MIIDEMO };
 enum { TS_LOGOFADEIN, TS_LOGOWAIT, TS_LOGODISPLAY, TS_DECIDE, TS_DEAD };
 enum { FC_TITLE, FC_MOVEFAR, FC_FAR, FC_MOVENEAR, FC_NEAR };
 enum { FI_NEW, FI_EXIST, FI_FORMAT, FI_CHANGE };
-enum { FB_START, FB_DELETE, FB_COPY, FB_N };
+enum { FB_START, FB_DELETE, FB_COPY, FB_MII, FB_N };
 static const int fs_order[6] = {1, 2, 4, 6, 5, 3}; /* sIndexOrder: slot i shows file fs_order[i] */
 static const float fs_theta_off[6] = {10, -10, 0, 0, 0, 0}; /* sItemThetaOffset */
 static const char *const fs_fellow[5] = {"FileSelectDataMario", "FileSelectDataLuigi", "FileSelectDataYoshi",
@@ -1611,6 +1611,79 @@ static struct {
     int info_on, info_dir;
     SysInfo win;
 } fsl;
+
+
+/* MiiSelect with its fellows only (FileSelectIconID 0 Mario, 1 Luigi, 2 Yoshi, 3 Kinopio, 4 Peach; Luigi once
+ * isUserFileAppearLuigi), one page (Mii01..08 while it appears, Mii09..16 after: setCurrentPageGroupA / B), each a
+ * MiiIcon at its "Character" frame (sCharacterTexFrame); X on one selects it. ponytail: no Miis, no page scroll,
+ * no MiiConfirmIcon (the window alone) */
+static const float mii_frame[5] = {0, 4, 3, 2, 1};
+static struct { LytInst *l, *icon[5]; Btn b[5]; int fellow[5], n, on, selected, first, prohibit, nrv_end, waiting; Nrv n2; } mii;
+
+static void mii_appear(int first, int prohibit)
+{
+    if (!mii.l) return;
+    mii.first = first; mii.prohibit = prohibit; mii.selected = -1; mii.n = 0;
+    int luigi = gd_flag_is_on("ViewCompleteEnding"); /* isUserFileAppearLuigi */
+    for (int f = 0; f < 5; f++) if (f != 1 || luigi) mii.fellow[mii.n++] = f;
+    for (int i = 0; i < 5; i++) {
+        if (!mii.icon[i]) continue;
+        lyt_start(mii.icon[i], "Character", 0);
+        if (i < mii.n) { lyt_set_frame(mii.icon[i], 0, mii_frame[mii.fellow[i]]); lyt_start_pane(mii.icon[i], "MarioIcon", "Character", 1); lyt_set_pane_frame_stop(mii.icon[i], "MarioIcon", 1, mii_frame[mii.fellow[i]]); }
+        lyt_set_rate(mii.icon[i], 0, 0);
+        lyt_show_pane(mii.icon[i], "ShaMii", 0); lyt_show_pane(mii.icon[i], "PicMii", 0); lyt_show_pane(mii.icon[i], "PicMiiShine", 0);
+        btn_appear(&mii.b[i]);
+        lyt_set_alpha(mii.icon[i], i < mii.n && mii.fellow[i] + 1 == prohibit ? 0.4f : 1.0f); /* prohibitIcon */
+    }
+    lyt_start(mii.l, "Appear", 0);
+    lyt_set_text_rec(mii.l, "TxtName", NULL);
+    lyt_show_rec(mii.l, "Arrow", 0); lyt_show_rec(mii.l, "PageNumber", 0);
+    se_start(SE_SY_FILE_SEL_MIISEL_OPEN, NULL);
+    mii.on = 1; mii.nrv_end = 0; mii.waiting = 0;
+}
+static void mii_update(void)
+{
+    if (!mii.on) return;
+    if (!mii.waiting && !mii.nrv_end && lyt_stopped(mii.l, 0)) { mii.waiting = 1; lyt_start(mii.l, "Wait", 0); } /* exeWait */
+    int appearing = !mii.waiting;
+    for (int i = 0; i < mii.n; i++) {
+        char pane[8];
+        float p[3];
+        snprintf(pane, sizeof pane, "Mii%02d", i + (appearing ? 1 : 9));
+        lyt_evaluate(mii.l);
+        lyt_pane_place(mii.l, pane, p);
+        lyt_set_pos(mii.icon[i], p[0] - 304.0f, 228.0f - p[1]);
+        if (!mii.nrv_end && !appearing && mii.selected < 0 && mii.fellow[i] + 1 != mii.prohibit) {
+            if (btn_pointing_trigger(&mii.b[i])) {
+                char label[40];
+                snprintf(label, sizeof label, "System_FileSelect_Icon%03d", mii.fellow[i]);
+                lyt_set_text_rec(mii.l, "TxtName", msg_get(label));
+                se_start(SE_SY_BUTTON_CURSOR_ON, NULL);
+            }
+            if (btn_try_select(&mii.b[i])) { mii.selected = mii.fellow[i]; se_start(SE_SY_FILE_SEL_MII_SELECTED, NULL); }
+        }
+        btn_update(&mii.b[i]);
+        lyt_update(mii.icon[i]);
+    }
+    lyt_update(mii.l);
+    if (mii.nrv_end && lyt_stopped(mii.l, 0)) mii.on = 0;
+}
+static void mii_disappear(void) { if (mii.on && !mii.nrv_end) { lyt_start(mii.l, "End", 0); mii.nrv_end = 1; } }
+static void mii_draw(void)
+{
+    if (!mii.on) return;
+    lyt_draw(mii.l);
+    for (int i = 0; i < mii.n; i++) lyt_draw(mii.icon[i]);
+}
+static void mii_init(void)
+{
+    memset(&mii, 0, sizeof mii);
+    if (!(mii.l = lyt_new("MiiSelect"))) return;
+    for (int i = 0; i < 5; i++) {
+        if (!(mii.icon[i] = lyt_new("MiiIcon"))) { mii.l = NULL; return; }
+        btn_init(&mii.b[i], mii.icon[i], "MarioIcon", "PicMario", 0, 0);
+    }
+}
 
 static void fs_v3(float *d, float x, float y, float z) { d[0] = x; d[1] = y; d[2] = z; }
 
@@ -1908,7 +1981,7 @@ static void fs_update(void)
         break;
     case FS_CONFIRM:
         if (FIRST(&fsl.n)) {
-            btn_appear(&fsl.btn[FB_START]); btn_appear(&fsl.btn[FB_DELETE]); btn_appear(&fsl.btn[FB_COPY]); fsl.op_on = 1;
+            btn_appear(&fsl.btn[FB_START]); btn_appear(&fsl.btn[FB_DELETE]); btn_appear(&fsl.btn[FB_COPY]); btn_appear(&fsl.btn[FB_MII]); fsl.op_on = 1;
             btn_appear(&fsl.back); fsl.back_on = 1; fsl.back_clicked = 0;
             if (!fsl.info_on) { fs_info_set(fsl.sel); fs_info_appear(); }
             lyt_start(fsl.info, "ButtonAppear", 1); /* slide */
@@ -1918,6 +1991,7 @@ static void fs_update(void)
         if (btn_try_select(&fsl.btn[FB_START])) nrv_set(&fsl.n, FS_DEMOSTARTWAIT);
         else if (btn_try_select(&fsl.btn[FB_DELETE])) nrv_set(&fsl.n, FS_DELETECONFIRMSTART);
         else if (btn_try_select(&fsl.btn[FB_COPY])) nrv_set(&fsl.n, FS_COPYWAIT);
+        else if (btn_try_select(&fsl.btn[FB_MII])) { fs_layouts_out(); fs_items_select(0); nrv_set(&fsl.n, FS_MIIWAIT); }
         break;
     case FS_DEMOSTARTWAIT:
         if (FIRST(&fsl.n)) { se_start(SE_SY_FILE_SELECTED, NULL); fs_layouts_out(); wipe_start(60, 1, 0); }
@@ -1939,14 +2013,36 @@ static void fs_update(void)
             else { fs_clear_pointing(); nrv_set(&fsl.n, FS_SELECTSTART); }
         }
         break;
-    case FS_CREATE: /* Create, the icon (Mario), MiiCreateDemo's change */
-        if (FIRST(&fsl.n)) {
-            FsItem *it = &fsl.item[fsl.sel];
-            gd_file_create(it->file - 1, 1);
-            menu_save_request();
-            it->icon = 1; it->n.next = -1; nrv_set(&it->n, FI_CHANGE);
+    case FS_CREATE: /* Create (the file saved), then its icon chosen: MiiSelectStartFirst */
+        if (FIRST(&fsl.n)) { gd_file_create(fsl.item[fsl.sel].file - 1, 1); menu_save_request(); mii_appear(1, 0); }
+        nrv_set(&fsl.n, FS_MIISELECT);
+        break;
+    case FS_MIIWAIT:
+        if (FIRST(&fsl.n)) se_start(SE_SY_FILE_SEL_UPPER_DECIDE, NULL);
+        if (fs_layouts_hidden()) { mii_appear(0, gd_file_icon(fsl.item[fsl.sel].file - 1)); nrv_set(&fsl.n, FS_MIISELECT); }
+        break;
+    case FS_MIISELECT:
+        if (FIRST(&fsl.n) && !mii.first) { btn_appear(&fsl.back); fsl.back_on = 1; fsl.back_clicked = 0; }
+        if (mii.selected >= 0 && fsl.n.step > 0) { mii_disappear(); if (fsl.back_on) btn_disappear(&fsl.back); nrv_set(&fsl.n, FS_MIICONFIRMWAIT); }
+        else if (!mii.first && fs_back_selected()) { mii_disappear(); nrv_set(&fsl.n, FS_CONFIRM); } /* MiiCancel */
+        break;
+    case FS_MIICONFIRMWAIT:
+        if (!mii.on) nrv_set(&fsl.n, FS_MIICONFIRM);
+        break;
+    case FS_MIICONFIRM: /* "this icon?" (013 the first time, 005 a change) */
+        if (FIRST(&fsl.n)) si_appear(&fsl.win, mii.first ? "System_FileSelect013" : "System_FileSelect005", SI_YESNO);
+        if (!fsl.win.alive && fsl.n.step > 0) {
+            if (yn_yes(&fsl.win.yn)) { /* MiiCreateWait: store the icon, save all */
+                se_start(SE_SY_FILE_SEL_MII_CHANGE, NULL);
+                gd_file_set_icon(fsl.item[fsl.sel].file - 1, mii.selected + 1);
+                menu_save_request();
+                nrv_set(&fsl.n, FS_MIIDEMO);
+            } else { mii_appear(mii.first, mii.prohibit); nrv_set(&fsl.n, FS_MIISELECT); }
         }
-        if (nrv_is(&fsl.item[fsl.sel].n, FI_EXIST)) { fs_info_set(fsl.sel); nrv_set(&fsl.n, FS_CONFIRM); }
+        break;
+    case FS_MIIDEMO: /* MiiCreateDemo: the change morph */
+        if (FIRST(&fsl.n)) { FsItem *it = &fsl.item[fsl.sel]; it->icon = mii.selected + 1; it->n.next = -1; nrv_set(&it->n, FI_CHANGE); }
+        if (nrv_is(&fsl.item[fsl.sel].n, FI_EXIST) && fsl.n.step > 0) { fs_info_set(fsl.sel); nrv_set(&fsl.n, FS_CONFIRM); }
         break;
     case FS_DELETECONFIRMSTART:
         if (FIRST(&fsl.n)) { se_start(SE_SY_FILE_SEL_UPPER_DECIDE, NULL); fs_layouts_out(); }
@@ -2041,6 +2137,7 @@ static void fs_update(void)
         if (btn_hidden(&fsl.back) && !btn_appearing(&fsl.back) && !nrv_is(&fsl.n, FS_CONFIRM)) fsl.back_on = 0;
     }
     fs_info_update();
+    mii_update();
     si_update(&fsl.win);
     /* FileSelectSky::exeWait */
     fsl.sky_step++;
@@ -2062,7 +2159,8 @@ static void fs_init(const Scene *s)
     btn_init(&fsl.btn[FB_START], fsl.op, "StartButton", "BoxStartButton", 0, 1);
     btn_init(&fsl.btn[FB_DELETE], fsl.op, "DeleteButton", "PicDelete", 0, 1);
     btn_init(&fsl.btn[FB_COPY], fsl.op, "CopyButton", "PicCopy", 0, 1);
-    lyt_show_pane(fsl.op, "MiiButton", 0); lyt_show_pane(fsl.op, "P2ManualButton", 0);
+    btn_init(&fsl.btn[FB_MII], fsl.op, "MiiButton", "PicMii", 0, 1);
+    mii_init(); lyt_show_pane(fsl.op, "P2ManualButton", 0);
     btn_init(&fsl.back, fsl.back_l, "Back", "BoxButton", 0, 1);
     si_init(&fsl.win);
     for (int i = 0; i < 6; i++) {
@@ -2092,7 +2190,7 @@ int menu_test_point_file(int slot, const char *pane) /* tests: the pointer on fi
         const FsItem *it = &fsl.item[slot];
         float p[3] = {it->pos[0], it->pos[1] + 900.0f * it->scale, it->pos[2]};
         fs_to_screen(p, &x, &y, &z);
-    } else if (!lyt_pane_center(fsl.win.alive ? fsl.win.l : fsl.op, pane, &x, &y)) return 0;
+    } else if (!lyt_pane_center(fsl.win.alive ? fsl.win.l : mii.on ? mii.l : fsl.op, pane, &x, &y)) return 0;
     game_set_cursor(x, y);
     return 1;
 }
@@ -2132,6 +2230,7 @@ static void fs_draw(void)
     if (fsl.back_on) lyt_draw(fsl.back_l);
     if (fsl.logo_on) lyt_draw(fsl.logo);
     if (fsl.press_on) lyt_draw(fsl.press);
+    mii_draw();
     if (fsl.win.alive) lyt_draw(fsl.win.l);
     wipe_draw_quad();
     fade_draw();

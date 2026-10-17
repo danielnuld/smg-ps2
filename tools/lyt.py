@@ -282,7 +282,12 @@ def convert(files, name, texts, extra=None):
         precs.append(rec)
     arecs, abody = [], []
     for an, a in anims:
-        tmap = [image(tn, None, None, (0, 0)) for tn in a["textures"]]
+        wrap = (0, 0)  # its patterns wrap as the material they go on (a mirrored one doubled: MiiIcon's faces)
+        for ename, is_mat, trs in a["entries"]:
+            if is_mat and ename in midx and mats[midx[ename]]["maps"] and any(t[0] == 5 for t in trs):
+                wrap = tuple(mats[midx[ename]]["maps"][0][1:3])
+                break
+        tmap = [image(tn, None, None, wrap) for tn in a["textures"]]
         tracks, keys = [], []
         for ename, is_mat, trs in a["entries"]:
             target = (midx if is_mat else pidx).get(ename)
@@ -455,7 +460,7 @@ def build_3d(fsp):
 
 # the title and file select's (FileSelector, TitleSequenceProduct): title.bin (layouts) and title3d.bin (FileSelectItem's
 # planet and fellows, FileSelectSky), loaded in the FileSelect stage only
-TITLE = ("TitleLogo", "PressStart", "FileSelect", "FileInfo", "FileNumber")
+TITLE = ("TitleLogo", "PressStart", "FileSelect", "FileInfo", "FileNumber", "MiiSelect", "MiiIcon")
 TITLE_3D = (("FileSelectDataPlanet", "FileSelectDataPlanet"), ("FileSelectDataMario", "FileSelectDataMario"),
             ("FileSelectDataLuigi", "FileSelectDataLuigi"), ("FileSelectDataYoshi", "FileSelectDataYoshi"),
             ("FileSelectDataKinopio", "FileSelectDataKinopio"), ("FileSelectDataPeach", "FileSelectDataPeach"),
