@@ -3369,7 +3369,8 @@ void game_rebind(void)
         in->kstair = strncmp(name, "KoopaBattleMapStair", 19) == 0 && strcmp(name, "KoopaBattleMapStairTurnAppear") != 0;
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
-        in->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 ? 3 : 0;
+        in->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 ? 3 :
+                      strcmp(name, "ButlerMap") == 0 ? 4 : 0;
         in->press = strcmp(name, "RGTowerPressGroundA") == 0 || strcmp(name, "ReverseGravityRoomPressGroundA") == 0 ||
                     strcmp(name, "ReverseGravityRoomPressGroundB") == 0 || in->dossun || in->onimasu;
         in->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 : 0;
@@ -8943,7 +8944,9 @@ static void update_talkers(void)
             w->lv[1] = se_level(SE_SM_LV_TICO_FLOAT, &m[12], w->lv[1]);
             if (w->lv[1]) se_volpitch(w->lv[1], 0.2f, 1.0f);
         }
-        if (tico && sc->objs[in->row].arg[1] == 3) { /* Tico::exeTalk: at its talk's end Meta (gone) */
+        if (in->talkcls == 4) { /* ButlerMap::exeTalk: at its talk's end the map (obj_arg0: the Grand Galaxy's) */
+            if (talk_near_at_end(k)) menu_galaxy_map(sc->objs[in->row].arg[0] > 0);
+        } else if (tico && sc->objs[in->row].arg[1] == 3) { /* Tico::exeTalk: at its talk's end Meta (gone) */
             if (talk_near_at_end(k)) { se_start(SE_SM_METAMORPHOSE_SMOKE, &m[12]); row_kill(in->row); } /* exeMeta */
         } else talk_near(k); /* exeWait: tryTalkNearPlayer (Tico / Kinopio: ...AndStartTalkAction) */
     }

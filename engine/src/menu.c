@@ -26,6 +26,11 @@ static void mlay_init(void);
 static void fs_init(const Scene *s);
 static void fs_update(void);
 static void fs_draw(void);
+static void gm_init(void);
+static void gm_update(void);
+static void gm_draw(void);
+static int gm_screen(void);
+int menu_galaxy_map_active(void);
 int menu_file_selecting(void);
 static void mlay_update(void);
 static void mlay_draw(void);
@@ -648,6 +653,7 @@ void menu_init(const Scene *s)
     dmu_init();
     mlay_init();
     fs_init(s);
+    gm_init();
     u32 rgb;
     int open = seq_take_open_wipe(&rgb); /* the wipe the last scene closed opens on this one */
     if (open) wipe_start(open, 0, rgb);
@@ -678,6 +684,7 @@ int menu_update(void)
     if (menu_saving()) { game_cursor_menu(); sv_update(); if (!pm.alive) return 1; }
     if (menu_scenario_selecting()) { game_cursor_menu(); ss_update(); return 1; }
     if (menu_file_selecting()) { game_cursor_menu(); fs_update(); return 1; }
+    if (menu_galaxy_map_active()) { game_cursor_menu(); gm_update(); return 1; } /* GameScene::exeGalaxyMap */
     if (!pm.alive) { /* GameScenePauseControl: Plus (START) where GameScene::isPermitToPauseMenu */
         if (!pm.l || !pad_pressed(PAD_START) || !game_pause_permitted()) return 0;
         pad_eat(PAD_START);
@@ -1186,6 +1193,13 @@ static void wipe_draw_quad(void)
 
 int menu_draw_screen(void)
 {
+    if (gm_screen()) { /* deactivateGameSceneDraw3D */
+        float eye[3] = {0, 0, 1000.0f}, target[3] = {0, 0, 0}, up[3] = {0, 1.0f, 0};
+        render_begin(eye, target, up);
+        gm_draw();
+        wipe_draw_quad();
+        return 1;
+    }
     if (menu_file_selecting()) { fs_draw(); return 1; }
     if (!ss.alive) return 0;
     float eye[3] = {0, 0, 1000.0f}, target[3] = {0, 0, 0}, up[3] = {0, 1.0f, 0};
@@ -1241,17 +1255,17 @@ static void dmu_star_add(u16 **base, u16 **icon, const char *g, int no) /* addPi
     *icon = pic_add(*icon, 'R');
 }
 
-static void dmu_info_update(const char *g, int state) /* GalaxyInfoLayoutSetter::updateInfo */
+static void dmu_info_fill(LytInst *l, const char *g, int state) /* GalaxyInfoLayoutSetter::updateInfo */
 {
     static const char *const unknown[3] = {"GalaxyInfo_Hatena", "GalaxyInfo_Unknown", "GalaxyInfo_New"};
     char label[64];
-    if (state < 3) lyt_set_text_rec(dmu.info, "Unknown", msg_get(unknown[state]));
-    else { snprintf(label, sizeof label, "GalaxyName_%s", g); lyt_set_text_rec(dmu.info, "GalaxyName", msg_get(label)); }
-    if (state == 3) lyt_set_text_rec(dmu.info, "Unknown", NULL); else lyt_set_text_rec(dmu.info, "GalaxyName", NULL);
+    if (state < 3) lyt_set_text_rec(l, "Unknown", msg_get(unknown[state]));
+    else { snprintf(label, sizeof label, "GalaxyName_%s", g); lyt_set_text_rec(l, "GalaxyName", msg_get(label)); }
+    if (state == 3) lyt_set_text_rec(l, "Unknown", NULL); else lyt_set_text_rec(l, "GalaxyName", NULL);
     if (state != 3) {
-        lyt_set_text_rec(dmu.info, "StarIcon", NULL);
-        lyt_set_text_rec(dmu.info, "TxtStarBase", NULL);
-        lyt_show_rec(dmu.info, "Complete", 0);
+        lyt_set_text_rec(l, "StarIcon", NULL);
+        lyt_set_text_rec(l, "TxtStarBase", NULL);
+        lyt_show_rec(l, "Complete", 0);
     } else { /* setTextBoxStarNum: its buffers crossed as Petari has them (the base string into StarIcon) */
         u16 *base = dmu.star_icon, *icon = dmu.star_base;
         int nn = 0, power = gd_power_star_num(g), complete = 1, normal_done = 1;
@@ -1262,23 +1276,24 @@ static void dmu_info_update(const char *g, int state) /* GalaxyInfoLayoutSetter:
         for (int i = 1; i <= nn && base < dmu.star_icon + 40; i++)
             if (gd_has_star(g, i)) dmu_star_add(&base, &icon, g, i);
             else { base = pic_add(base, 'R'); icon = pic_add(icon, '7'); }
-        lyt_show_rec(dmu.info, "Complete", complete);
+        lyt_show_rec(l, "Complete", complete);
         for (int i = nn + 1; i <= power && base < dmu.star_icon + 40; i++) {
             if (complete || gd_has_star(g, i)) { dmu_star_add(&base, &icon, g, i); continue; }
             if (!normal_done) continue;
             if (gd_scenario_comet(g, i)[0]) { base = pic_add(base, 'R'); icon = pic_add(icon, 'e'); }
             else { base = pic_add(base, 'Z'); icon = pic_add(icon, '7'); } /* ponytail: no Luigi / comet-appear checks */
         }
-        lyt_set_text_rec(dmu.info, "StarIcon", dmu.star_icon);
-        lyt_set_text_rec(dmu.info, "TxtStarBase", dmu.star_base);
+        lyt_set_text_rec(l, "StarIcon", dmu.star_icon);
+        lyt_set_text_rec(l, "TxtStarBase", dmu.star_base);
     }
     { /* replaceTexture: "<galaxy>.bti" of GalaxyInfoTexture (its material in dome.bin), the unknown one before open */
         char mn[24];
         snprintf(mn, sizeof mn, "%.20s", state == 3 ? g : "GalaxyInfoTextureUnknown");
-        lyt_replace_pane_texture(dmu.info, "PicDummy", lyt_material_texture(dmu.info, mn));
+        lyt_replace_pane_texture(l, "PicDummy", lyt_material_texture(l, mn));
     }
-    lyt_set_pane_frame_stop(dmu.info, "CometWindow", 1, 0); /* hideCometWindow */
+    lyt_set_pane_frame_stop(l, "CometWindow", 1, 0); /* hideCometWindow */
 }
+static void dmu_info_update(const char *g, int state) { dmu_info_fill(dmu.info, g, state); }
 
 void menu_dome_info(const char *g, int state) /* GalaxySelectInfo::show */
 {
@@ -2080,6 +2095,417 @@ static void fs_draw(void)
     memcpy(fsl.ptgt, fsl.tgt, 12); fsl.pfovy = fsl.fovy;
 }
 
+/* --- GalaxyMapController, GalaxyMap, its icons and PowerStarList after Petari (map.bin: the Observatory's), opened by
+ * ButlerMap's talk (startGalaxyMapLayout / startAstroMapLayout); the world frozen while it shows. The pointer is the
+ * right stick, X is A (an icon: its detail; empty space: the other view), Circle / Triangle is B. ponytail: the
+ * normal modes only (no discover / Tico / dome lecture modes), no Tico / comet icons, no Mario icons, no AstroMapBoard
+ * capture, the star list without its separators (belts), page turns or capture */
+enum { GM_OFF, GM_READY, GM_FADEIN, GM_DISPLAY, GM_APPEARVIEW, GM_READYLIST, GM_APPEARLIST, GM_DISPLAYLIST, GM_DISAPPEARLIST,
+       GM_FADEOUT, GM_READYGAME };
+enum { MV_IDLE, MV_FOCUSIN, MV_FOCUSOUT, MV_FADEIN, MV_DETAIL };
+#define GM_ICONS 56
+typedef struct { LytInst *l; char gal[32], pane[16]; int status; float l_scale; Btn b; } GmIcon;
+static struct {
+    Nrv n, mv, list_n;
+    LytInst *map, *bg, *title, *btn_l, *back_l, *detail, *plate, *list, *dome[6];
+    GmIcon icon[GM_ICONS];
+    int nicon, view, next_view, mode, pointing, detail_on, detail_new, list_on, page, npages, plate_show;
+    Btn button, back, up, down;
+    u8 back_clicked;
+    u16 plate_txt[64];
+    const char *list_gal[64]; int nlist;
+    u16 col[5][8][128];               /* the star list's columns: stage 8 panes, star / coin / comp / time 4 */
+} gm;
+
+static int gm_status(const char *g) /* GalaxyMapIcon::examineIconStatus: 0 closed, 1 new, 2 opened, 3 completed */
+{
+    if (!gd_galaxy_appear(g)) return 0;
+    int n = gd_power_star_num(g);
+    if (n > 0 && gd_star_num_galaxy(g) == n) return 3;
+    if (n == 0 || gd_flag_is_on(g)) return 2;
+    return gd_flag_can_on(g) ? 1 : 0;
+}
+
+static void gm_sync_icons(void)
+{
+    for (int i = 0; i < gm.nicon; i++) { /* syncStatus */
+        GmIcon *ic = &gm.icon[i];
+        ic->status = gm_status(ic->gal);
+        if (!ic->status) continue;
+        lyt_start(ic->l, "Status", 0);
+        lyt_set_frame(ic->l, 0, (float)ic->status); lyt_set_rate(ic->l, 0, 0);
+        lyt_start(ic->l, ic->status == 1 ? "NewBlink" : "NewWait", 1);
+    }
+    for (int d = 0; d < 6; d++) { /* GalaxyMapDomeIcon::calcDomeStatus */
+        if (!gm.dome[d]) continue;
+        char key[12], grand[24];
+        int complete = 1, isnew = 0;
+        snprintf(key, sizeof key, "Galaxy%d", d + 1);
+        for (int i = 0; i < gm.nicon; i++) {
+            if (!strstr(gm.icon[i].pane, key)) continue;
+            const char *g = gm.icon[i].gal;
+            int n = gd_power_star_num(g);
+            if (n && gd_star_num_galaxy(g) != n) complete = 0;
+            if (gd_flag_can_on(g) && !gd_flag_is_on(g)) isnew = 1;
+        }
+        snprintf(grand, sizeof grand, "SpecialStarGrand%d", d + 1);
+        int st = complete ? 3 : isnew ? 1 : gd_flag_is_on(grand) ? 2 : 0;
+        char base[8];
+        snprintf(base, sizeof base, "Base%d", d + 1);
+        lyt_show_pane(gm.map, base, st != 0);
+        lyt_start(gm.dome[d], "DomeColor", 0); lyt_set_frame(gm.dome[d], 0, (float)d);
+        lyt_start(gm.dome[d], "Status", 0); lyt_set_frame(gm.dome[d], 0, (float)st); lyt_set_rate(gm.dome[d], 0, 0);
+        lyt_start(gm.dome[d], "Wait", 1);
+        lyt_set_alpha(gm.dome[d], st ? 1.0f : 0.0f);
+    }
+}
+
+static void gm_follow(LytInst *l, const char *pane) /* setLayoutScalePosAtPaneScaleTrans (the map evaluated this frame) */
+{
+    float p[3];
+    lyt_pane_place(gm.map, pane, p);
+    lyt_set_pos(l, p[0] - 304.0f, 228.0f - p[1]);
+    lyt_set_scale(l, p[2]);
+}
+
+static void gm_title(int galaxy_view)
+{
+    lyt_set_text_rec(gm.title, "TextTitle", msg_get(galaxy_view ? "GalaxyMap_GrandGalaxyMap" : "GalaxyMap_AstroMap"));
+    lyt_start(gm.title, "TitleAppear", 0);
+}
+
+static void gm_force_view(int galaxy_view) /* forceToGalaxyMap / forceToAstroMap: the transition at its end */
+{
+    const char *a = galaxy_view ? "DomeIn" : "DomeOut";
+    lyt_start(gm.map, a, 0);
+    lyt_set_frame(gm.map, 0, lyt_anim_frames(gm.map, a)); lyt_set_rate(gm.map, 0, 0);
+    gm.view = galaxy_view;
+    gm_title(galaxy_view);
+    gm.mv.next = -1; nrv_set(&gm.mv, MV_IDLE);
+}
+
+/* the hover plate: "?" unopened, else its short name and its stars (GalaxyMapGalaxyPlain::show) */
+static void gm_plate(int i)
+{
+    const GmIcon *ic = &gm.icon[i];
+    int n = 0;
+    if (!gd_flag_is_on(ic->gal)) gm.plate_txt[n++] = '?';
+    else {
+        char label[48];
+        snprintf(label, sizeof label, "GalaxyNameShort_%s", ic->gal);
+        for (const u16 *s = msg_get(label); s && *s && n < 40; s++) gm.plate_txt[n++] = *s;
+        gm.plate_txt[n++] = ' ';
+        int got = gd_star_num_galaxy(ic->gal);
+        if (got == gd_power_star_num(ic->gal)) { u16 t[4] = {0x1A, 3, 80, 0}; memcpy(gm.plate_txt + n, t, 8); n += 4; }
+        else {
+            u16 t[8] = {0x1A, 3, 55, 0, 0x1A, 3, 64, 0};
+            memcpy(gm.plate_txt + n, t, 16); n += 8;
+            char d[8];
+            snprintf(d, sizeof d, "%d", got);
+            for (char *c = d; *c; c++) { u16 nt[4] = {0x1A, 3, (u16)(0x1000 + *c), 0}; memcpy(gm.plate_txt + n, nt, 8); n += 4; }
+        }
+    }
+    gm.plate_txt[n] = 0;
+    float p[3];
+    lyt_pane_place(gm.map, ic->pane, p);
+    lyt_set_pos(gm.plate, p[0] - 304.0f, 228.0f - p[1]);
+    lyt_show_rec(gm.plate, "GalaxyNamePlate", 1); lyt_show_rec(gm.plate, "GalaxyNamePlateU", 0);
+    lyt_hide_for_good(gm.plate, "ShaBeak"); lyt_hide_for_good(gm.plate, "PicBeak");
+    lyt_set_text_rec(gm.plate, "GalaxyName", gm.plate_txt);
+    lyt_set_frame(gm.plate, 2, lyt_text_width(gm.plate, "TxtGalaxyName")); lyt_set_rate(gm.plate, 2, 0);
+    lyt_start(gm.plate, "Unknown", 1); lyt_set_frame(gm.plate, 1, 2); lyt_set_rate(gm.plate, 1, 0);
+    if (!gm.plate_show) lyt_start(gm.plate, "Appear", 0);
+    gm.plate_show = 2;
+}
+
+static int gm_pointed_icon(void) /* tryFocusIn: the first icon pointed (shown, its pane not scaled to nothing) */
+{
+    float x, y;
+    game_cursor(&x, &y);
+    for (int i = 0; i < gm.nicon; i++)
+        if (gm.icon[i].status && gm.icon[i].l_scale > 0.01f && lyt_pane_hit(gm.icon[i].l, "GalaxyIcon", x, y)) return i;
+    return -1;
+}
+
+static void gm_map_update(void) /* GalaxyMap's nerves */
+{
+    switch (nrv_begin(&gm.mv)) {
+    case MV_IDLE: case MV_FOCUSIN: case MV_FOCUSOUT: {
+        if (!nrv_is(&gm.n, GM_DISPLAY)) break;
+        int p = gm_pointed_icon();
+        if (p != gm.pointing) {
+            if (p >= 0) se_start(SE_SY_GALAMAP_ICON_POINT, NULL);
+            gm.pointing = p;
+            nrv_set(&gm.mv, p >= 0 ? MV_FOCUSIN : MV_FOCUSOUT);
+        } else if (p >= 0 && pad_pressed(PAD_CROSS)) {
+            pad_eat(PAD_CROSS);
+            nrv_set(&gm.mv, MV_DETAIL);
+        }
+        if (gm.pointing >= 0) { btn_try_pointing(&gm.icon[gm.pointing].b, 1); gm.icon[gm.pointing].b.pointing = 1; gm_plate(gm.pointing); }
+        break;
+    }
+    case MV_FADEIN:
+        if (FIRST(&gm.mv)) { lyt_start(gm.map, gm.next_view ? "DomeIn" : "DomeOut", 0); gm_title(gm.next_view); }
+        if (lyt_stopped(gm.map, 0)) { gm.view = gm.next_view; gm.pointing = -1; nrv_set(&gm.mv, MV_IDLE); }
+        break;
+    case MV_DETAIL: /* GalaxyMapGalaxyDetail */
+        if (FIRST(&gm.mv)) {
+            const GmIcon *ic = &gm.icon[gm.pointing];
+            dmu_info_fill(gm.detail, ic->gal, ic->status == 1 ? 2 : 3);
+            lyt_set_number_rec(gm.detail, "ShaCoinNum", gd_max_coins(ic->gal, 1));
+            lyt_start(gm.detail, "Appear", 0);
+            se_start(SE_SY_GALAMAP_WINDOW_OPEN, NULL);
+            gm.detail_on = 1;
+        }
+        if (gm.detail_on == 1 && lyt_stopped(gm.detail, 0)) { lyt_start(gm.detail, "Wait", 0); gm.detail_on = 2; }
+        if (gm.detail_on == 2 && pad_pressed(PAD_CROSS)) { pad_eat(PAD_CROSS); lyt_start(gm.detail, "End", 0); se_start(SE_SY_GALAMAP_WINDOW_CLOSE, NULL); gm.detail_on = 3; }
+        if (gm.detail_on == 3 && lyt_stopped(gm.detail, 0)) { gm.detail_on = 0; nrv_set(&gm.mv, MV_IDLE); }
+        break;
+    }
+    nrv_end(&gm.mv);
+}
+
+/* PowerStarList: the opened galaxies (sorted by their kind), a row each: short name, its stars got, best coins, crown */
+static int gm_prio(const char *g)
+{
+    int nn = 0;
+    for (int i = 1; i <= gd_scenario_num(g); i++) nn += !gd_scenario_comet(g, i)[0];
+    if (nn == 3) return 1;
+    if (!strcmp(g, "HeavensDoorGalaxy")) return 2;
+    for (int i = 1; i <= gd_power_star_num(g); i++) if (gd_is_grand_star(g, i)) return 3;
+    char ap[48];
+    snprintf(ap, sizeof ap, "Appear%s", g);
+    return gd_flag_known(ap) ? 4 : 5;
+}
+static void gm_list_build(void)
+{
+    gm.nlist = 0;
+    for (int i = 0; i < gm.nicon && gm.nlist < 64; i++) /* (the table's order: ScenarioData's) */
+        if (gd_power_star_num(gm.icon[i].gal) && gd_flag_is_on(gm.icon[i].gal)) gm.list_gal[gm.nlist++] = gm.icon[i].gal;
+    for (int i = 1; i < gm.nlist; i++) /* a stable insertion sort by priority */
+        for (int k = i; k > 0 && gm_prio(gm.list_gal[k]) < gm_prio(gm.list_gal[k - 1]); k--) {
+            const char *t = gm.list_gal[k]; gm.list_gal[k] = gm.list_gal[k - 1]; gm.list_gal[k - 1] = t;
+        }
+    gm.npages = gm.nlist ? (gm.nlist - 1) / 15 + 1 : 1;
+}
+static void gm_col_add(u16 *col, int *n, const u16 *s, int newline)
+{
+    if (newline && *n < 126) col[(*n)++] = 0x0A;
+    for (; s && *s && *n < 126; s++) col[(*n)++] = *s;
+    col[*n] = 0;
+}
+static void gm_list_fill(void) /* updateList: two pages, rows 0..29 */
+{
+    static const char *const stage[8] = {"TxtStage1", "TxtStage2", "TxtStage3", "TxtStage4", "TxtStage5", "TxtStage6", "TxtStage7", "TxtStage8"};
+    static const char *const star[4] = {"TxtStar1", "TxtStar2", "TxtStar3", "TxtStar4"}, *const coin[4] = {"TxtCoinPiece1", "TxtCoinPiece2", "TxtCoinPiece3", "TxtCoinPiece4"},
+                             *const comp[4] = {"TxtComp1", "TxtComp2", "TxtComp3", "TxtComp4"}, *const tm[4] = {"TxtTime1", "TxtTime2", "TxtTime3", "TxtTime4"};
+    int len[5][8];
+    memset(len, 0, sizeof len);
+    for (int c = 0; c < 5; c++) for (int k = 0; k < 8; k++) gm.col[c][k][0] = 0;
+    int odd = gm.page % 2;
+    for (int r = odd; r < 30 + odd; r++) {
+        int it = gm.page * 15 + r - odd;
+        if (it >= gm.nlist) break;
+        const char *g = gm.list_gal[it];
+        char label[48];
+        u16 buf[40];
+        int si = r / 4, ci = r / 8, sl = r % 4, cl = r % 8, n = 0;
+        if (si >= 8 || ci >= 4) break;
+        snprintf(label, sizeof label, "GalaxyNameShort_%s", g);
+        gm_col_add(gm.col[0][si], &len[0][si], msg_get(label), sl != 0);
+        for (int s = 1; s <= gd_power_star_num(g) && n < 36; s++)
+            if (gd_has_star(g, s)) {
+                int code = gd_is_grand_star(g, s) ? 'K' : gd_scenario_comet(g, s)[0] ? 'e' : '7';
+                buf[n++] = 0x1A; buf[n++] = 3; buf[n++] = (u16)(code - '0'); buf[n++] = 0;
+            }
+        buf[n] = 0;
+        gm_col_add(gm.col[1][ci], &len[1][ci], buf, cl != 0);
+        n = 0;
+        buf[n++] = 0x1A; buf[n++] = 3; buf[n++] = 'A' - '0'; buf[n++] = 0;
+        int best = gd_max_coins(g, 1);
+        for (int d = 100; d; d /= 10) buf[n++] = (u16)('0' + best / d % 10);
+        buf[n] = 0;
+        gm_col_add(gm.col[2][ci], &len[2][ci], buf, cl != 0);
+        n = 0;
+        if (gd_star_num_galaxy(g) == gd_power_star_num(g)) { buf[n++] = 0x1A; buf[n++] = 3; buf[n++] = 'P' - '0'; buf[n++] = 0; }
+        buf[n] = 0;
+        gm_col_add(gm.col[3][ci], &len[3][ci], buf, cl != 0);
+        gm_col_add(gm.col[4][ci], &len[4][ci], NULL, cl != 0);
+    }
+    for (int k = 0; k < 8; k++) lyt_set_text_rec(gm.list, stage[k], gm.col[0][k]);
+    for (int k = 0; k < 4; k++) {
+        lyt_set_text_rec(gm.list, star[k], gm.col[1][k]); lyt_set_text_rec(gm.list, coin[k], gm.col[2][k]);
+        lyt_set_text_rec(gm.list, comp[k], gm.col[3][k]); lyt_set_text_rec(gm.list, tm[k], gm.col[4][k]);
+    }
+    for (int k = 1; k <= 4; k++) { char b[12]; snprintf(b, sizeof b, "PicBelt%d", k); lyt_show_pane(gm.list, b, 0); }
+    lyt_set_text_rec(gm.list, "Title", msg_get("AllStarList_Title"));
+    lyt_show_rec(gm.list, "Capture", 0); lyt_show_rec(gm.list, "Photo", 0);
+    int one = gm.npages == 1; /* updateButtonAppearance */
+    lyt_show_rec(gm.list, "ArrowUpButton", !one && gm.page > 0);
+    lyt_show_rec(gm.list, "ArrowDownButton", !one && gm.page < gm.npages - 1);
+    lyt_show_rec(gm.list, "PageNumber", !one);
+    lyt_set_text_rec(gm.list, "PageNumber", NULL);
+}
+
+int menu_test_point_map(const char *pane) /* tests: the pointer on the map's select button / back button */
+{
+    float x, y;
+    if (!lyt_pane_center(!strcmp(pane, "BoxLButton") ? gm.btn_l : gm.back_l, pane, &x, &y)) return 0;
+    game_set_cursor(x, y);
+    return 1;
+}
+void menu_galaxy_map(int galaxy_view) /* startGalaxyMapLayout (1) / startAstroMapLayout (0) */
+{
+    if (!gm.map || !nrv_is(&gm.n, GM_OFF)) return;
+    gm.mode = galaxy_view;
+    gm.n.next = -1; nrv_set(&gm.n, GM_READY);
+}
+int menu_galaxy_map_active(void) { return !nrv_is(&gm.n, GM_OFF); }
+
+static int gm_back(void) /* tryPushBackButton */
+{
+    if (gm.back_clicked) return 1;
+    if (pad_pressed(PAD_CIRCLE) || pad_pressed(PAD_TRIANGLE)) { se_start(SE_SY_GALAXY_DECIDE_CANCEL, NULL); return 1; }
+    return 0;
+}
+
+static void gm_update(void)
+{
+    switch (nrv_begin(&gm.n)) {
+    case GM_READY:
+        if (FIRST(&gm.n)) wipe_start(12, 1, 0);
+        if (!wipe_active()) nrv_set(&gm.n, GM_FADEIN);
+        break;
+    case GM_FADEIN:
+        if (FIRST(&gm.n)) {
+            wipe_start(12, 0, 0);
+            btn_appear(&gm.back); gm.back_clicked = 0;
+            btn_appear(&gm.button);
+            gm_sync_icons();
+            gm_force_view(gm.mode);
+            lyt_start(gm.bg, "Wait", 0);
+            lyt_set_number_rec(gm.map, "Star", gd_star_num());
+            gm.pointing = -1; gm.list_on = 0;
+        }
+        if (!wipe_active()) nrv_set(&gm.n, GM_DISPLAY);
+        break;
+    case GM_DISPLAY:
+        if (!gm.detail_on && gm_back()) { nrv_set(&gm.n, GM_FADEOUT); break; }
+        if (btn_is(&gm.button, BP_DECIDEDWAIT) && gm.button.selected) { gm.button.selected = 0; nrv_set(&gm.n, GM_READYLIST); break; } /* isDecidedList */
+        if (btn_pointing_trigger(&gm.button)) se_start(SE_SY_GALAMAP_CURSOR_ON, NULL);
+        if (btn_try_select(&gm.button)) se_start(SE_SY_GALAMAP_DECIDE, NULL);
+        else if (!gm.detail_on && gm.pointing < 0 && !pointing_on(gm.back_l, "BoxButton") && !pointing_on(gm.btn_l, "BoxLButton") &&
+                 nrv_is(&gm.mv, MV_IDLE) + nrv_is(&gm.mv, MV_FOCUSOUT) && pad_pressed(PAD_CROSS)) { /* tryChangeMode */
+            se_start(SE_SY_GALAMAP_PAGE_CHANGE, NULL);
+            se_start(gm.view ? SE_SY_GALAMAP_CH_PITCH_DOWN : SE_SY_GALAMAP_CH_PITCH_UP, NULL);
+            gm.next_view = !gm.view;
+            nrv_set(&gm.mv, MV_FADEIN);
+        }
+        break;
+    case GM_READYLIST:
+        if (FIRST(&gm.n)) { wipe_start(12, 1, 0); btn_disappear(&gm.button); }
+        if (!wipe_active()) nrv_set(&gm.n, GM_APPEARLIST);
+        break;
+    case GM_APPEARLIST:
+        if (FIRST(&gm.n)) {
+            wipe_start(12, 0, 0);
+            gm.page = 0; gm_list_build(); gm_list_fill();
+            lyt_start(gm.list, "Appear", 0);
+            gm.list_on = 1;
+        }
+        if (!wipe_active() && lyt_stopped(gm.list, 0)) nrv_set(&gm.n, GM_DISPLAYLIST);
+        break;
+    case GM_DISPLAYLIST:
+        if (FIRST(&gm.n)) { lyt_start(gm.list, gm.page % 2 ? "TurnOverPage2" : "TurnOverPage1", 0); lyt_set_frame(gm.list, 0, 0); lyt_set_rate(gm.list, 0, 0); }
+        if (gm_back()) { gm.mode = 0; nrv_set(&gm.n, GM_DISAPPEARLIST); break; }
+        if (gm.page < gm.npages - 1 && (pad_pressed(PAD_DOWN) || btn_try_select(&gm.down))) { gm.page++; se_start(SE_SY_GALAMAP_SCROLL, NULL); gm_list_fill(); }
+        else if (gm.page > 0 && (pad_pressed(PAD_UP) || btn_try_select(&gm.up))) { gm.page--; se_start(SE_SY_GALAMAP_SCROLL, NULL); gm_list_fill(); }
+        break;
+    case GM_DISAPPEARLIST: /* back to the Astro map */
+        if (FIRST(&gm.n)) wipe_start(12, 1, 0);
+        if (!wipe_active()) { gm.list_on = 0; nrv_set(&gm.n, GM_FADEIN); }
+        break;
+    case GM_FADEOUT:
+        if (FIRST(&gm.n)) wipe_start(12, 1, 0);
+        if (!wipe_active()) nrv_set(&gm.n, GM_READYGAME);
+        break;
+    case GM_READYGAME:
+        if (FIRST(&gm.n)) wipe_start(12, 0, 0);
+        if (!wipe_active()) nrv_set(&gm.n, GM_OFF);
+        break;
+    }
+    nrv_end(&gm.n);
+    if (nrv_is(&gm.n, GM_OFF) || nrv_is(&gm.n, GM_READY)) return;
+    if (!gm.list_on) {
+        gm_map_update();
+        lyt_update(gm.map); lyt_update(gm.bg); lyt_update(gm.title);
+        lyt_evaluate(gm.map);
+        for (int i = 0; i < gm.nicon; i++) {
+            if (!gm.icon[i].status) continue;
+            float p[3];
+            lyt_pane_place(gm.map, gm.icon[i].pane, p);
+            gm.icon[i].l_scale = p[2];
+            gm_follow(gm.icon[i].l, gm.icon[i].pane); btn_update(&gm.icon[i].b); lyt_update(gm.icon[i].l);
+        }
+        for (int d = 0; d < 6; d++) if (gm.dome[d]) { char p[8]; snprintf(p, sizeof p, "Dome%d", d + 1); gm_follow(gm.dome[d], p); lyt_update(gm.dome[d]); }
+        if (gm.plate_show) { lyt_update(gm.plate); gm.plate_show--; }
+        if (gm.detail_on) lyt_update(gm.detail);
+        btn_update(&gm.button); lyt_update(gm.btn_l);
+    } else { btn_update(&gm.up); btn_update(&gm.down); lyt_update(gm.list); }
+    if (btn_pointing_trigger(&gm.back)) se_start(SE_SY_BUTTON_CURSOR_ON, NULL);
+    if (btn_try_select(&gm.back)) { if (!gm.back_clicked) se_start(SE_SY_GALAXY_DECIDE_CANCEL, NULL); gm.back_clicked = 1; }
+    btn_update(&gm.back); lyt_update(gm.back_l);
+    if (gm.back_clicked && (nrv_is(&gm.n, GM_DISPLAYLIST) || nrv_is(&gm.n, GM_DISAPPEARLIST))) gm.back_clicked = nrv_is(&gm.n, GM_DISPLAYLIST);
+}
+
+static int gm_screen(void) { return menu_galaxy_map_active() && !nrv_is(&gm.n, GM_READY) && !nrv_is(&gm.n, GM_READYGAME); }
+static void gm_draw(void)
+{
+    if (nrv_is(&gm.n, GM_OFF) || nrv_is(&gm.n, GM_READY)) return;
+    render_world_done();
+    if (gm.list_on) lyt_draw(gm.list);
+    else {
+        lyt_draw(gm.bg); lyt_draw(gm.map);
+        for (int d = 0; d < 6; d++) if (gm.dome[d]) lyt_draw(gm.dome[d]);
+        for (int i = 0; i < gm.nicon; i++) if (gm.icon[i].status && gm.icon[i].l_scale > 0.01f && i != gm.pointing) lyt_draw(gm.icon[i].l);
+        if (gm.pointing >= 0) lyt_draw(gm.icon[gm.pointing].l); /* order 3: over the rest */
+        lyt_draw(gm.title);
+        lyt_draw(gm.btn_l);
+        if (gm.plate_show) lyt_draw(gm.plate);
+        if (gm.detail_on) lyt_draw(gm.detail);
+    }
+    lyt_draw(gm.back_l);
+}
+
+static void gm_init(void)
+{
+    memset(&gm, 0, sizeof gm);
+    gm.map = lyt_new("MapGrandGalaxy");
+    if (!gm.map) return;
+    gm.bg = lyt_new("MapGalaxyBg"); gm.title = lyt_new("MapTitle"); gm.btn_l = lyt_new("MapButton"); gm.back_l = lyt_new("BackButton");
+    gm.detail = lyt_new("GalaxyDetail"); gm.plate = lyt_new("GalaxyNamePlate"); gm.list = lyt_new("AllStarList");
+    if (!gm.bg || !gm.title || !gm.btn_l || !gm.back_l || !gm.detail || !gm.plate || !gm.list) { gm.map = NULL; return; }
+    lyt_start(gm.plate, "OneLine", 2);
+    btn_init(&gm.button, gm.btn_l, "MapList", "BoxLButton", 0, 1); gm.button.end_disappear = 0; /* _22 false: DecidedWait */
+    btn_init(&gm.back, gm.back_l, "Back", "BoxButton", 0, 1);
+    btn_init(&gm.up, gm.list, "ArrowUpButton", "BoxButton1_00", 0, 0);
+    btn_init(&gm.down, gm.list, "ArrowDownButton", "BoxButton1_01", 0, 0);
+    for (int i = 0; i < gd_galaxy_count() && gm.nicon < GM_ICONS; i++) { /* initPaneCtrlPointing: cGalaxyInfoTable's MapPaneName */
+        const char *g, *pane;
+        gd_galaxy_at(i, &g, &pane);
+        if (!pane || !pane[0] || !strcmp(pane, "dummy") || lyt_pane(gm.map, pane) < 0) continue;
+        GmIcon *ic = &gm.icon[gm.nicon];
+        if (!(ic->l = lyt_new("MapGalaxyIcon"))) break;
+        snprintf(ic->gal, sizeof ic->gal, "%s", g); snprintf(ic->pane, sizeof ic->pane, "%s", pane);
+        btn_init(&ic->b, ic->l, "GalaxyIcon", "GalaxyIcon", 0, 0); ic->b.pointing_kept = 1;
+        btn_appear(&ic->b);
+        gm.nicon++;
+    }
+    for (int d = 0; d < 6; d++) gm.dome[d] = lyt_new("MapDomeIcon");
+    gm.pointing = -1;
+    printf("galaxy map: %d galaxy icons\n", gm.nicon);
+}
+
 /* --- MissLayout ("TooBad"), WipeKoopa, WipeGameOver ("GameOver"): the miss / game over sequences' (game.c) ----- */
 static struct { LytInst *toobad, *koopa, *gameover; u8 tb_on, ko_on, go_on; } mlay;
 
@@ -2140,6 +2566,7 @@ void menu_draw(void)
     if (sv.win.alive) { render_world_done(); lyt_draw(sv.win.l); }
     if (dmu.on) { render_world_done(); dmu_draw(); }
     mlay_draw();
+    gm_draw();
     wipe_draw_quad();
     fade_draw();
     if (!pm.alive) return;

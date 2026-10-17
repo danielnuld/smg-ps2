@@ -390,8 +390,15 @@ LayoutData layouts. Order by dependency:
    scenario names (message string arguments put in by msg_with_args), the count up, a new coin record, the star
    pieces into the stock; then the save prompt. sequence.c keeps the cleared stage's result (seq_set_result at the
    star's touch). `result` test: a faked EggStar clear -> AstroDome/1, the result, record, pieces, save.
-   Next: galaxy pictures (GalaxyInfoTexture), icon select / Copy in the file select, the dome / Observatory demos,
-   the galaxy map (GalaxyMapController), PowerStarList, comets; then phase 1, sound.
+   Done since: galaxy pictures in the dome's GalaxyInfo (dome.bin), file select Copy, the pause menu's follow
+   positions, the galaxy map (menu.c gm_*: GalaxyMapController normal modes, GalaxyMap Astro / Grand Galaxy views
+   with DomeIn / DomeOut, galaxy icons by MapPaneName (GDAT), dome icons, hover name plate, GalaxyDetail, MapButton ->
+   PowerStarList pages; map.bin in the AstroGalaxy stages; opened by ButlerMap's talk (talkcls 4, untested in play);
+   `map` test opens it directly). All packs repacked 2026-10-17 (simplify / PowerStar VIS fixes; 136 fit).
+   Left on the map: discover / Tico / dome-lecture modes, Tico / comet / Mario icons, the list's belts / page turns,
+   GalaxyDetail pictures (no room in the Observatory: AstroGalaxy streams 8.4 MB).
+   Next: icon select (MiiSelect fellows), the Observatory / dome demos (butler lectures), comets, the prologue; then
+   phase 1, sound.
 Then phase 1 (Good Egg vs Wii: the rim step's ground check, below), sound last. The disc ISO over ~1 GB does not boot
 in PCSX2 (taken for a DVD: open fail; a CD-sized image boots); the user's way of loading it on the PS2 was asked.
 

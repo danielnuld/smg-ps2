@@ -328,10 +328,13 @@ def convert(files, name, texts, extra=None):
 
 # the layouts every scene may show (menus.bin, loaded with each scene)
 COMMON = ("PauseMenu", "SysInfoWindow", "SysInfoWindowMini", "GameOver", "TooBad", "StageTitle", "IconAButton",
-          "BackButton", "AllStarList", "ScenarioSelect", "WipeKoopa", "ResultWindow")
+          "BackButton", "ScenarioSelect", "WipeKoopa", "ResultWindow")
 # the dome's galaxy select's (AstroDomeGalaxySelector): dome.bin, loaded in the AstroDome stages only; GalaxyInfo with
 # the galaxies' pictures (GalaxyInfoTexture.arc) as materials named by galaxy (20 characters)
 DOME = ("GalaxySelect", "GalaxyInfo", "GalaxyNamePlate")
+# the Observatory's (GalaxyMapController, PowerStarList: ButlerMap's map): map.bin, in the AstroGalaxy stages only;
+MAP = ("MapGrandGalaxy", "MapGalaxyIcon", "MapDomeIcon", "MapTitle", "MapGalaxyBg", "MapButton", "GalaxyDetail", "IconMario",
+       "GalaxyNamePlate", "AllStarList")
 
 
 # the messages menus and screens look up by label (MR::getLayoutMessageDirect / getGameMessageDirect): MSGS chunk
@@ -459,15 +462,15 @@ TITLE_3D = (("FileSelectDataPlanet", "FileSelectDataPlanet"), ("FileSelectDataMa
             ("CometNearOrbitSky", "CometNearOrbitSky"), ("MiniatureGalaxySelect", "MiniatureGalaxySelect"))
 
 
-def build_dome(fsp):
+def build_dome(fsp, names=DOME, with_pics="GalaxyInfo"):
     from slice import blob_of, chunk
     pics = {n.rsplit("/", 1)[-1][:-4][:20]: b for n, b in B.rarc_files((Path(fsp) / "ObjectData" / "GalaxyInfoTexture.arc").read_bytes())
             if n.lower().endswith(".bti")}
     texts, bodies = [], []
-    for n in DOME:
+    for n in names:
         files = {k.lower().rsplit("/", 1)[-1]: v for k, v in
                  B.rarc_files((Path(fsp) / "LayoutData" / f"{n}.arc").read_bytes())}
-        bodies.append(convert(files, n, texts, pics if n == "GalaxyInfo" else None))
+        bodies.append(convert(files, n, texts, pics if n == with_pics else None))
     offs, o = [], 16 + 4 * len(bodies)
     for bd in bodies:
         offs.append(o)
@@ -519,6 +522,9 @@ if __name__ == "__main__":  # python tools/lyt.py data/fs/files [out/packs/menus
     print(f"{d3}: {d3.stat().st_size / 1024:.0f} KB")
     print(f"{dst}: {len(blob) / 1024:.0f} KB, {len(COMMON)} layouts, {nt} textures")
     dst.with_name("dome.bin").write_bytes(build_dome(fsp))
+    dst.with_name("map.bin").write_bytes(build_dome(fsp, MAP, None))  # ponytail: no pictures in GalaxyDetail (the
+    # Observatory's pack leaves no room for them)
+    print(f"map.bin {dst.with_name('map.bin').stat().st_size / 1024:.0f} KB")
     print(f"dome.bin {dst.with_name('dome.bin').stat().st_size / 1024:.0f} KB")
     t2, t3 = build_title(fsp)
     dst.with_name("title.bin").write_bytes(t2)

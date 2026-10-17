@@ -29,6 +29,9 @@ void lyt_set_text(LytInst *l, const char *pane, const u16 *text);    /* MR::setT
 int lyt_pane_center(LytInst *l, const char *pane, float *x, float *y); /* its centre on the screen (0..640, 0..448) */
 void lyt_set_pos(LytInst *l, float x, float y);                      /* the root's offset in layout units */
 void lyt_set_alpha(LytInst *l, float a);                             /* the whole layout's alpha (0..1) */
+void lyt_set_scale(LytInst *l, float s);                              /* the whole layout's scale */
+float lyt_pane_scale(LytInst *l, const char *pane);                  /* its global scale */
+float lyt_pane_alpha(LytInst *l, const char *pane);                  /* its global alpha (0 hidden) */
 void lyt_show_rec(LytInst *l, const char *pane, int show);           /* MR::showPaneRecursive / hidePaneRecursive */
 void lyt_set_text_rec(LytInst *l, const char *pane, const u16 *text); /* MR::setTextBoxMessageRecursive */
 void lyt_set_number_rec(LytInst *l, const char *pane, int n);        /* MR::setTextBoxNumberRecursive */
@@ -40,6 +43,8 @@ int lyt_pane_hit(LytInst *l, const char *pane, float x, float y);    /* the scre
 /* MR::setFollowPos + setFollowTypeReplace (add 0: the pane's place is *pos) / setFollowTypeAdd (1: moved by *pos);
  * *pos in the layout's screen units (608 x 456, top left 0, y down), read each frame; NULL stops following */
 void lyt_follow(LytInst *l, const char *pane, const float *pos, int add);
+void lyt_evaluate(LytInst *l);                                        /* its panes' places now (for lyt_pane_place) */
+void lyt_pane_place(const LytInst *l, const char *pane, float out[3]); /* place and scale as last evaluated */
 void lyt_copy_pane_trans(LytInst *l, const char *pane, float out[2]); /* MR::copyPaneTrans: its place, those units */
 float lyt_text_height(LytInst *l, const char *pane);                /* its text boxes' tallest text (layout units) */
 int lyt_material_texture(const LytInst *l, const char *mat);         /* its texture (scene index), -1 none */

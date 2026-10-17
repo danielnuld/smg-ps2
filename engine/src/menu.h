@@ -30,6 +30,9 @@ void menu_miss_start(void);          /* MissLayout ("TooBad") */
 void menu_wipe_koopa(int frames);    /* WipeKoopa: closes over frames (<= 0: 90) */
 int menu_wipe_koopa_closed(void);
 void menu_wipe_gameover(void);       /* WipeGameOver ("GameOver") */
+void menu_galaxy_map(int galaxy_view);  /* GalaxyMapController: the Grand Galaxy (1) or the Observatory (0) map */
+int menu_galaxy_map_active(void);
+int menu_test_point_map(const char *pane);
 int menu_file_selecting(void);       /* the FileSelect stage's FileSelector running */
 void menu_save_request(void);        /* the files changed: the save is to be written */
 void menu_save_start(int confirm, int remind, int quit); /* SaveDataHandleSequence::startSave */

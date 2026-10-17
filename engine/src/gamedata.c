@@ -153,6 +153,13 @@ static int galaxy_open_by_flags(const char *g)
 }
 static int open_stars(const char *g) { const GInfo *gi = find_info(g); return gi ? gi->open_stars : 0; }
 
+int gd_flag_known(const char *name) { return find_flag(name) >= 0; }
+int gd_galaxy_count(void) { return ninfo; }
+void gd_galaxy_at(int i, const char **name, const char **map_pane) /* cGalaxyInfoTable's row i: name, MapPaneName */
+{
+    *name = i >= 0 && i < ninfo ? info[i].name : "";
+    *map_pane = i >= 0 && i < ninfo ? info[i].pane : "";
+}
 int gd_flag_can_on(const char *name) /* GameEventFlagChecker::canOn */
 {
     int i = find_flag(name);

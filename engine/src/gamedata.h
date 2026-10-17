@@ -27,6 +27,9 @@ void gd_set_visited(const char *galaxy, int scenario);
 void gd_update_max_coins(const char *galaxy, int scenario, int coins);
 int gd_max_coins(const char *galaxy, int scenario);
 
+int gd_flag_known(const char *name);            /* a flag of the table */
+int gd_galaxy_count(void);                      /* cGalaxyInfoTable's rows */
+void gd_galaxy_at(int i, const char **name, const char **map_pane);
 int gd_flag_can_on(const char *name);           /* GameEventFlagChecker */
 int gd_flag_is_on(const char *name);
 int gd_flag_try_on(const char *name);

@@ -57,7 +57,7 @@ struct LytInst {
     PState *ps;
     MState *ms;
     PWorld *pw;
-    float ox, oy, alpha;
+    float ox, oy, alpha, scale; /* the root's offset, alpha, scale (setLayoutScalePosAtPaneScaleTrans) */
 };
 
 void lyt_init(const Scene *s)
@@ -85,6 +85,7 @@ int lyt_pane(const LytInst *l, const char *name)
 }
 
 static void reset_state(LytInst *l);
+static void evaluate(LytInst *l);
 
 /* panes for one language (a name ending in its code: TxtConfirmJpJa) show for it alone; the plain one when the
  * language has none of its own. ponytail: the language is the build's (tools/msg.py LANG UsSpanish: UsSp) */
@@ -148,7 +149,7 @@ LytInst *lyt_new(const char *name)
                     l->text[k] = msg_get(lb);
                 }
             }
-            l->alpha = 1.0f;
+            l->alpha = 1.0f; l->scale = 1.0f;
             reset_state(l);
             hide_other_languages(l);
             return l;
@@ -233,6 +234,21 @@ int lyt_pane_shown(const LytInst *l, const char *pane) { int p = lyt_pane(l, pan
 void lyt_set_text(LytInst *l, const char *pane, const u16 *text) { int p = lyt_pane(l, pane); if (p >= 0) l->text[p] = text; }
 void lyt_set_pos(LytInst *l, float x, float y) { if (l) { l->ox = x; l->oy = y; } }
 void lyt_set_alpha(LytInst *l, float a) { if (l) l->alpha = a; }
+void lyt_set_scale(LytInst *l, float s) { if (l) l->scale = s; }
+float lyt_pane_scale(LytInst *l, const char *pane) /* its global scale (x), 0 none */
+{
+    int i = lyt_pane(l, pane);
+    if (i < 0) return 0;
+    evaluate(l);
+    return sqrtf(l->pw[i].m[0] * l->pw[i].m[0] + l->pw[i].m[3] * l->pw[i].m[3]);
+}
+float lyt_pane_alpha(LytInst *l, const char *pane) /* its global alpha 0..1 and visibility */
+{
+    int i = lyt_pane(l, pane);
+    if (i < 0) return 0;
+    evaluate(l);
+    return l->pw[i].vis ? l->pw[i].alpha : 0;
+}
 
 /* nw4r lyt AnimTransformBasic: a step curve holds its last key at or before f; a Hermite one interpolates between
  * the keys round f with their slopes, holding the first / last value outside */
@@ -344,6 +360,7 @@ static void evaluate(LytInst *l)
         float lm[6] = {c * sx, -sn * sy, s->t[0], sn * sx, c * sy, s->t[1]};
         int par = l->pane[i].parent;
         if (par < 0) {
+            for (int k = 0; k < 6; k++) lm[k] *= l->scale;
             lm[2] += l->ox; lm[5] += l->oy;
             memcpy(w->m, lm, sizeof lm);
             w->alpha = s->alpha / 255.0f * l->alpha;
@@ -630,6 +647,17 @@ void lyt_follow(LytInst *l, const char *pane, const float *pos, int add)
     if (i >= 0) { l->follow[i] = pos; l->follow_add[i] = (u8)add; }
 }
 
+void lyt_evaluate(LytInst *l) { if (l) evaluate(l); }
+void lyt_pane_place(const LytInst *l, const char *pane, float out[3]) /* as of the last evaluation: x, y (608 x 456,
+                                                                          * top left, y down), scale */
+{
+    int i = lyt_pane(l, pane);
+    out[0] = out[1] = out[2] = 0;
+    if (i < 0) return;
+    out[0] = l->pw[i].m[2] + 304.0f;
+    out[1] = 228.0f - l->pw[i].m[5];
+    out[2] = sqrtf(l->pw[i].m[0] * l->pw[i].m[0] + l->pw[i].m[3] * l->pw[i].m[3]);
+}
 void lyt_copy_pane_trans(LytInst *l, const char *pane, float out[2])
 {
     int i = lyt_pane(l, pane);

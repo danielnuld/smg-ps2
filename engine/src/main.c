@@ -214,7 +214,8 @@ static void toc_select(void)
         if ((strncmp(e->path, scen, lp) == 0 && e->path[lp] == '/') || strcmp(e->path, "resident.bin") == 0 || strcmp(e->path, "sound.bin") == 0 ||
             strcmp(e->path, "menus.bin") == 0 || strcmp(e->path, "menus3d.bin") == 0 ||
             ((strcmp(e->path, "title.bin") == 0 || strcmp(e->path, "title3d.bin") == 0) && strncmp(scen, "FileSelect/", 11) == 0) ||
-            (strcmp(e->path, "dome.bin") == 0 && strncmp(scen, "AstroDome/", 10) == 0)) {
+            (strcmp(e->path, "dome.bin") == 0 && strncmp(scen, "AstroDome/", 10) == 0) ||
+            (strcmp(e->path, "map.bin") == 0 && strncmp(scen, "AstroGalaxy/", 12) == 0)) {
             if (ntoc == (int)(sizeof toc / sizeof toc[0])) { printf("packs: TOC full\n"); for (;;) {} }
             memcpy(&toc[ntoc++], e, sizeof *e);
         }
@@ -536,9 +537,10 @@ static const u8 *load_packs(Scene *s)
     { /* the menus' layouts (tools/lyt.py), when built: outside the scenario room */
         Pack mp;
         /* layouts / messages, their 3D models; the title and file select's (FileSelect); the dome's (AstroDome) */
-        static const char *const mp_names[5] = {"menus.bin", "menus3d.bin", "title.bin", "title3d.bin", "dome.bin"};
-        for (int k = 0; k < 5; k++)
-            if (k >= 2 && strncmp(scen, k == 4 ? "AstroDome/" : "FileSelect/", k == 4 ? 10 : 11)) continue;
+        static const char *const mp_names[6] = {"menus.bin", "menus3d.bin", "title.bin", "title3d.bin", "dome.bin", "map.bin"};
+        static const char *const mp_scene[6] = {"", "", "FileSelect/", "FileSelect/", "AstroDome/", "AstroGalaxy/"};
+        for (int k = 0; k < 6; k++)
+            if (strncmp(scen, mp_scene[k], strlen(mp_scene[k]))) continue; /* (the empty prefix: every scene) */
             else
             if (pack_open(&mp, mp_names[k])) {
                 pack_close(&mp);
@@ -790,6 +792,19 @@ int main(void)
                 pad_force = PAD_CROSS;
                 printf("result test f %u: X, result %d saving %d\n", frame, menu_result_showing(), menu_saving());
             }
+        }
+#endif
+#if defined(PACKS) && defined(MAP_TEST)
+        { /* the Observatory's map: open, the other view (X on nothing), the star list, back, close */
+            pad_force = 0;
+            if (frame == 200) { gd_set_star("EggStarGalaxy", 1); gd_flag_try_on("EggStarGalaxy"); }
+            if (frame == 300) { menu_galaxy_map(0); printf("map test f %u: open %d\n", frame, menu_galaxy_map_active()); }
+            if (frame == 420) game_set_cursor(40, 40);
+            if (frame == 440) pad_force = PAD_CROSS;
+            if (frame == 640) printf("map test f %u: pointer on MapList %d\n", frame, menu_test_point_map("BoxLButton"));
+            if (frame == 660) pad_force = PAD_CROSS;
+            if (frame == 900 || frame == 1100) pad_force = PAD_CIRCLE;
+            if (frame == 1200) printf("map test f %u: open %d\n", frame, menu_galaxy_map_active());
         }
 #endif
 #if defined(PACKS) && defined(COPY_TEST)
