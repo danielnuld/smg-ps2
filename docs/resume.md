@@ -348,7 +348,12 @@ booster), Snakehead (82d7b10), Kabokuri (115d815: KabokuriFire), Pukupuku (44e06
 TypicalDoor family (52504dc: <class>#Open KCL), LotusLeaf (cdd9d14), MeteorCannon / IceMeramera (ec30854),
 ChooChooTrain (76cc3cb: car instances, insts_cap) / LavaHomeVolcanoFlow, DesertMovingLand (4221141), BigFan
 (56e57a0), ElectricBall (0846644), BombHei / launchers (3f0cbb0, 2a9496d: walker_acls), JumpBeamer (9434051: the
-RingBeamer port's rbeamer 2). Left as static on purpose: Flag* (a cloth renderer), StringSpider / SpiderMapBlock / SpiderCoin (the
+RingBeamer port's rbeamer 2), ArrowSwitch / Multi (110fefc, 15c552a: ArrowSwitchTarget rows kept), AnmModelObj
+family (25d882c: 19 classes; MapObjActor collision on the Move joint, SKIN pad 1, Inst.kmove), SpinLeverSwitch /
+LavaBreakColumn (f8b655f), ValveSwitch (4bc40ae: the screw port), DesertLandDownSwitch (a6b27c7: '<class>#Move'
+KCL parts as invisible instances, Inst.kparent), Torpedo (5412934), TreasureBox* (beca05a: jet turtle / explosion).
+Phase 3 porting stopped at 89.9 % behaviour (class_coverage, 2026-10-17); next is the test campaign (repack all,
+then PCSX2 per class above), then phase 2. Left as static on purpose: Flag* (a cloth renderer), StringSpider / SpiderMapBlock / SpiderCoin (the
 SpiderThread system), MorphItemNeoIce / Hopper (Mario forms), KoopaStatue (explosions only). New walkers go through
 new_walkers[] (count / placement / model by class); their star piece reactions in update_shots. Every pack must be
 rebuilt before the test campaign (slice.py SKINNED_OBJ / EXTRA / keep list and jpa.py changed; OceanPhantomCave 1
