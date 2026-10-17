@@ -42,11 +42,11 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
-       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI };
+       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU };
 /* walkers ported in the release push: their classes (counted, placed and drawn through this table) */
 static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}, {"BasaBasa", WALK_BASABASA}, {"BasaBasaIce", WALK_BASABASA}, {"Jellyfish", WALK_JELLYFISH},
                                                                     {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}, {"Mogu", WALK_MOGU}, {"Mogucchi", WALK_MOGUCCHI}, {"Metbo", WALK_METBO}, {"TeresaWater", WALK_TERESAW},
-                                                                    {"Snakehead", WALK_SNAKEHEAD}, {"SnakeheadSmall", WALK_SNAKEHEAD}, {"Kabokuri", WALK_KABOKURI}};
+                                                                    {"Snakehead", WALK_SNAKEHEAD}, {"SnakeheadSmall", WALK_SNAKEHEAD}, {"Kabokuri", WALK_KABOKURI}, {"Pukupuku", WALK_PUKUPUKU}};
 #define NEW_WALKERS ((int)(sizeof new_walkers / sizeof new_walkers[0]))
 static const Model *m_wnew[NEW_WALKERS];
 static int walker_new_kind(const char *cls)
@@ -16470,6 +16470,156 @@ static void kabo_update(Kuribo *k)
     if (enable_attack && !mario->hurt_timer && mario->hip != HIP_FALL && mario_touch(att, 70.0f * sy)) { hurt_mario(att, 15.0f); w_nrv(k, KB_ATTACKSUCCESS); } /* sendMsgEnemyAttack */
 }
 
+/* Pukupuku.cpp after Petari (walker kit): a fish on its rail (from the nearest place). In water it swims along it at
+ * 5 a frame (Swim), its pose slerped 0.08 to the rail's way; at a rail point whose arg0 is 1 it jumps out
+ * (JumpFromWater: FlyStart, a parabola 500 over to the next point at 15 a frame, its pose turned half round its Z),
+ * then bounds from point to point on land (MoveLand: Bound, 300 high, Land SE) until a point whose arg0 is 1 sends it
+ * back (JumpFromLand: FlyEnd, 500) into the water (SwimStart, turned back). Out of the water at the start it starts
+ * bounding. Its body (60 at Center) hurts Mario strongly (BodyAttack in water) or pushes; a trample or hip drop
+ * flattens it (Flat 30 frames: a coin), a spin blows it off (Rotate 15 frames, 35 / 20, x 0.6 in water: three star
+ * pieces). ponytail: ParabolicPath as a lerp plus 4 h t (1 - t) along the up (its speed from the chord + 2 h), no
+ * binder on the jumps, no eye BTPs, no WaterColumn / Land effects, no star pointer bind, no Pukupuku-on-Pukupuku hits */
+enum { PK_WAIT, PK_WATER, PK_WATERAFTER, PK_LAND, PK_JUMPWATER, PK_JUMPLAND, PK_TRAMPLED, PK_BLOWN };
+static int pk_point_arg0(const unsigned char *e, int k)
+{
+    u32 np = *(const u32 *)(e + 8), nr = *(const u32 *)(e + 12);
+    if (k < 0 || (u32)k >= nr) return -1;
+    return *(const int *)(e + 24 + 12 * np + 12 * nr + 12 * k + 4);
+}
+static float pk_point_coord(const unsigned char *e, int k)
+{
+    u32 np = *(const u32 *)(e + 8), nr = *(const u32 *)(e + 12);
+    return *(const float *)(e + 24 + 12 * np + 12 * nr + 12 * ((u32)k < nr ? (u32)k : nr - 1));
+}
+static int pk_current_point(const unsigned char *e, float c) /* getCurrentRailPointNo: the last point passed */
+{
+    u32 nr = *(const u32 *)(e + 12);
+    int cur = 0;
+    for (u32 k = 0; k < nr; k++) if (pk_point_coord(e, (int)k) <= c + 0.01f) cur = (int)k;
+    return cur;
+}
+static void pk_jump_setup(Kuribo *k, const unsigned char *e, const float *rail, u32 rn, float h) /* setupJumping */
+{
+    u32 nr = *(const u32 *)(e + 12);
+    int cur = pk_current_point(e, k->lva[1]), nx = (u32)(cur + 1) < nr ? cur + 1 : cur;
+    V3 cp = rail_at(rail, rn, pk_point_coord(e, cur)), up = vmul(k->grav, -1.0f);
+    float above = vdot(up, vsub(k->pos, cp));
+    if (above > 0) h -= above;
+    k->tcenter = k->pos; k->ttarget = rail_at(rail, rn, pk_point_coord(e, nx)); k->from = h;
+    float len = vlen(vsub(k->ttarget, k->tcenter)) + 2.0f * (h > 0 ? h : 0);
+    k->len = len / 15.0f < 1.0f ? 1.0f : len / 15.0f; k->to = 0; /* calcPathSpeedFromAverageSpeed; ValueControl frames */
+    k->timer = nx;
+}
+static V3 pk_path(const Kuribo *k, float t)
+{
+    V3 up = vmul(k->grav, -1.0f);
+    return vadd(vadd(k->tcenter, vmul(vsub(k->ttarget, k->tcenter), t)), vmul(up, 4.0f * k->from * t * (1.0f - t)));
+}
+static void pk_pose(Kuribo *k, V3 front, V3 up, float rate) /* _A8.slerp(makeQuatFromVec(front, up), rate) */
+{
+    if (vlen(front) < 1e-4f) return;
+    V3 z = vnorm(front), y = vtangent(up, z);
+    if (vlen(y) < 1e-4f) return;
+    y = vnorm(y);
+    k->qz = vnorm(vadd(vmul(k->qz, 1.0f - rate), vmul(z, rate)));
+    k->qy = vnorm(vtangent(vadd(vmul(k->qy, 1.0f - rate), vmul(y, rate)), k->qz));
+}
+static void puku_update(Kuribo *k)
+{
+    const Row *r = &sc->objs[k->row];
+    const unsigned char *e = r->path >= 0 && scene_blob_g ? find_path(scene_blob_g, r->zone, r->path) : NULL;
+    u32 rn = 0; int rcl;
+    const float *rail = w_rail(k, &rn, &rcl);
+    if (!rail || !e) return;
+    float len = w_rail_len(rail, rn), dep;
+    V3 up = vmul(k->grav, -1.0f);
+    if (!k->front.x && !k->front.y && !k->front.z) { /* init */
+        V3 x, z;
+        row_axes(r, &x, &z);
+        k->front = vnorm(z); k->qz = k->front; k->qy = vnorm(vcross(z, x)); k->dir = 1;
+        k->lva[1] = w_rail_nearest(rail, rn, k->pos); k->pos = rail_at(rail, rn, k->lva[1]);
+        w_nrv(k, PK_WAIT);
+    }
+    k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f);
+    up = vmul(k->grav, -1.0f);
+    int wet = in_water(k->pos, up, &dep), st = ++k->step;
+    V3 rdir = vsub(rail_at(rail, rn, k->lva[1] + 1.0f), rail_at(rail, rn, k->lva[1]));
+    switch (k->nrv) {
+    case PK_WAIT:
+        if (wet) w_nrv(k, PK_WATER);
+        else { pk_jump_setup(k, e, rail, rn, 300.0f); w_nrv(k, PK_LAND); }
+        break;
+    case PK_WATER: case PK_WATERAFTER:
+        if (st == 0) {
+            if (k->nrv == PK_WATER) w_act(k, "Swim");
+            else { w_act(k, "SwimStart"); k->qy = vmul(k->qy, -1.0f); w_se(k, SE_EM_PUKUPUKU_WATER_IN); } /* rotatePoseByLocalZ */
+        }
+        if (k->nrv == PK_WATER) w_se_lv(k, SE_EM_LV_PUKUPUKU_SWIM);
+        if (k->nrv == PK_WATER && !strcmp(k->act, "BodyAttack") && w_bck_stopped(k)) w_act(k, "Swim");
+        k->lva[1] += 5.0f; /* exeMoveWaterCommon */
+        if (k->lva[1] > len) k->lva[1] = rcl ? fmodf(k->lva[1], len) : len;
+        k->pos = rail_at(rail, rn, k->lva[1]);
+        pk_pose(k, rdir, k->qy, 0.08f); /* updatePoseByRail */
+        if (pk_point_arg0(e, pk_current_point(e, k->lva[1])) == 1) { pk_jump_setup(k, e, rail, rn, 500.0f); w_nrv(k, PK_JUMPWATER); break; }
+        if (k->nrv == PK_WATERAFTER && w_bck_stopped(k)) w_nrv(k, PK_WATER);
+        break;
+    case PK_LAND: case PK_JUMPWATER: case PK_JUMPLAND:
+        if (st == 0) {
+            if (k->nrv == PK_LAND) { w_act(k, "Bound"); w_se(k, SE_EM_PUKUPUKU_LAND); }
+            else if (k->nrv == PK_JUMPWATER) { w_act(k, "FlyStart"); k->qy = vmul(k->qy, -1.0f); w_se(k, SE_EM_PUKUPUKU_WATER_OUT); }
+            else { w_act(k, "FlyEnd"); w_se(k, SE_EM_PUKUPUKU_WING); w_se(k, SE_EM_PUKUPUKU_LAND); }
+        }
+        k->to += 1.0f / k->len; /* mValueCtrl->update */
+        if (k->to > 1.0f) k->to = 1.0f;
+        { V3 np = pk_path(k, k->to), d = vsub(pk_path(k, k->to + 0.01f), np);
+          k->pos = np;
+          if (k->nrv == PK_LAND) pk_pose(k, rdir, up, 0.08f); /* updatePoseByRailIgnoreUpScale */
+          else pk_pose(k, d, up, 0.15f); } /* updatePoseByJumpPath */
+        if (k->to >= 1.0f) {
+            k->lva[1] = pk_point_coord(e, k->timer); /* moveCoordToRailPoint(next) */
+            if (k->nrv == PK_JUMPLAND) { w_nrv(k, PK_WATERAFTER); break; }
+            k->vel = v3(0, 0, 0);
+            if (pk_point_arg0(e, k->timer) == 1) { pk_jump_setup(k, e, rail, rn, 500.0f); w_nrv(k, PK_JUMPLAND); } /* isReadyToJumpFromLand */
+            else { pk_jump_setup(k, e, rail, rn, 300.0f); w_nrv(k, PK_LAND); }
+        }
+        break;
+    case PK_TRAMPLED:
+        if (st == 0) { w_act(k, "Flat"); w_se(k, SE_EM_STOMPED_S); k->vel = vmul(k->grav, 10.0f); }
+        else k->vel = vmul(k->vel, 0.89f);
+        k->pos = vadd(k->pos, k->vel);
+        if (st == 30) { pop_coins(k->pos, up, 1); goto dead; }
+        break;
+    case PK_BLOWN:
+        if (st == 0) { w_act(k, "Rotate"); w_se(k, SE_PM_SPIN_HIT); } /* startBlowHitSound */
+        else k->vel = vadd(k->vel, vmul(k->grav, wet ? 0.6f : 1.0f));
+        k->pos = vadd(k->pos, k->vel);
+        if (st == 15) { launch_pieces(k->pos, up, 3, 10.0f, 40.0f); w_se(k, wet ? SE_OJ_STAR_PIECE_BURST_W : SE_OJ_STAR_PIECE_BURST); goto dead; }
+        break;
+    }
+    k->act_t += k->act_rate;
+    k->up = k->qy;
+    if (k->nrv == PK_TRAMPLED || k->nrv == PK_BLOWN) return;
+    {
+        V3 c = w_joint(k, walker_new_model(k->row), 1, v3(0, 0, 0));
+        int msg = mario_offence(c, 60.0f, k->grav);
+        if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) { if (msg == MSG_TRAMPLE) { mario->vup = 15.0f; mario->grounded = 0; } w_nrv(k, PK_TRAMPLED); return; }
+        if (msg == MSG_HITALL) { /* setVelocityBlowAttack 35 / 20 */
+            float rt = wet ? 0.6f : 1.0f;
+            V3 h = vtangent(vsub(k->pos, mario->pos), up);
+            k->vel = vadd(vmul(vlen(h) > 1e-3f ? vnorm(h) : k->qz, 35.0f * rt), vmul(up, 20.0f * rt));
+            w_nrv(k, PK_BLOWN); scene_stop = 4;
+            return;
+        }
+        if (!mario->hurt_timer && mario_touch(c, 60.0f)) { hurt_mario(c, 25.0f); if (k->nrv == PK_WATER) w_act(k, "BodyAttack"); }
+    }
+    return;
+dead:
+    fx_named("Pukupuku", wet ? "DeathWater" : "Death", (const float[16]){1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, k->pos.x, k->pos.y, k->pos.z, 1}, NULL, NULL);
+    w_se(k, wet ? SE_EM_EXPLODE_UNDER_WATER : SE_EM_EXPLODE_S);
+    if (r->sw[SW_DEAD] >= 0) sw_set((Row *)r, SW_DEAD, 1);
+    k->state = KURIBO_DEAD; row_kill(k->row);
+}
+
 static void update_kuribo_one(Kuribo *k);
 static void update_kuribo(void)
 {
@@ -16500,6 +16650,7 @@ static void update_kuribo_one(Kuribo *k)
             else if (k->kind == WALK_TERESAW) tw_update(k);
             else if (k->kind == WALK_SNAKEHEAD) snake_update(k);
             else if (k->kind == WALK_KABOKURI) kabo_update(k);
+            else if (k->kind == WALK_PUKUPUKU) puku_update(k);
             return;
         }
         if (k->kind == WALK_PETARI) { /* ponytail: still while its zone has no collision (streaming) */
@@ -20898,6 +21049,7 @@ static void update_shots(void)
                                                                                                   * (Jellyfish: its anim scale hit reaction) */ }
             else if (e->kind == WALK_GESSO) { if (e->nrv != GE_PUNCHDOWN) w_nrv(e, GE_ROTATE); } /* isMsgStarPieceAttack: Rotate */
             else if (e->kind == WALK_METBO) { w_se(e, SE_EM_METBO_TRAMPLE); if (!mb_swoon(e) && e->nrv != MB_RECOVER && !mb_down(e)) w_nrv(e, MB_GUARD); } /* isMsgStarPieceReflect */
+            else if (e->kind == WALK_PUKUPUKU) { } /* isMsgStarPieceReflect: nothing more */
             else if (e->kind == WALK_KABOKURI) w_nrv(e, KB_STARPIECE); /* requestStarPieceHitted */
             else if (e->kind == WALK_TERESAW) w_nrv(e, TW_STUN); /* isMsgStarPieceAttack: Stun */
             else if (e->kind == WALK_SNAKEHEAD) { if (e->phase) { hit = 0; continue; } } /* isMsgStarPieceReflect: nothing more (Waylay: not there) */
