@@ -196,7 +196,7 @@ typedef struct {
     int ibubble;     /* ItemBubble: bobs holding coins / star pieces, bursts at a touch or a shot (update_ibubbles) */
     const float *meteor; /* MeteorStrike(Environment): its rail's JMap points; meteors fall along them (update_meteor) */
     int killer;      /* HomingKiller launcher: shoots a bullet that may chase Mario (update_killers) */
-    int gcap;        /* GCaptureTarget: the pointer (R2) pulls Mario to it (gcap_try, gcap_update) */
+    int gcap;        /* GCaptureTarget 1, BlueStarCupsulePlanet 2, UFOBlueStarCupsule 3: the pointer (R2) pulls Mario to it (gcap_update) */
     int tspot;       /* TreasureSpot 1 / CoinFlower 2: a star piece shot pops its coin (update_shots) */
     int beeflower;   /* BeeFlowerHover: turns; Mario (never a bee here) stepping on it goes through (update_beeflowers) */
     const unsigned char *ticorail; /* TicoRail: its PATH entry; the Luma strolls along it (update_ticorails) */
@@ -3202,7 +3202,7 @@ void game_rebind(void)
         if (in->ibubble) in->head = row_pos(r); /* its items' frame (_CC) trails the bubble */
         in->meteor = NULL;
         in->killer = strcmp(name, "HomingKiller") == 0;
-        in->gcap = strcmp(name, "GCaptureTarget") == 0;
+        in->gcap = strcmp(name, "GCaptureTarget") == 0 ? 1 : strcmp(name, "BlueStarCupsulePlanet") == 0 ? 2 : strcmp(name, "UFOBlueStarCupsule") == 0 ? 3 : 0;
         in->tspot = strcmp(name, "TreasureSpot") == 0 ? 1 : strcmp(name, "CoinFlower") == 0 ? 2 : 0;
         in->prom = NULL;
         in->beeflower = strcmp(name, "BeeFlowerHover") == 0;
@@ -5922,6 +5922,15 @@ static int warp_update(Player *m)
 static void cursor_ray(V3 *o, V3 *d);
 static int pointer_a(void) { return pad_held(PAD_R2) || test_r2; } /* the pointer's A */
 
+/* BlueStarCupsulePlanet.cpp after Petari: a target at its Root joint (UFOBlueStarCupsule's 300 up), StarPointer radius
+ * 500 (the UFO's 200), pointable within 3400 (sPointableRange; the UFO only from above its plane), never released by
+ * nearness (isReleaseForce: isNearPlayer 0); its rail mover / rotator are the map parts'. ponytail: no React clip, no
+ * TargetLight / Touch / Active effects, no UFO move SE */
+static V3 gcap_pos(const Inst *in)
+{
+    float y = in->gcap == 3 ? 300.0f : 0.0f;
+    return v3(in->m[12] + in->m[4] * y, in->m[13] + in->m[5] * y, in->m[14] + in->m[6] * y);
+}
 static int gcap_pick(void) /* the target under the cursor, -1 none */
 {
     V3 o, d;
@@ -5932,9 +5941,10 @@ static int gcap_pick(void) /* the target under the cursor, -1 none */
         const Inst *in = &insts[i];
         if (!in->gcap || !row_shown(in->row)) continue;
         const Row *r = &sc->objs[in->row];
-        V3 p = v3(in->m[12], in->m[13], in->m[14]), to = vsub(p, o);
-        float z = vdot(to, d), range = r->arg[1] > 0 ? (float)r->arg[1] : 2500.0f;
-        if (z <= 0 || vlen(vsub(to, vmul(d, z))) > 200.0f || vlen(vsub(p, mario->pos)) > range || z >= bz) continue;
+        V3 p = gcap_pos(in), to = vsub(p, o);
+        float z = vdot(to, d), range = in->gcap > 1 ? 3400.0f : r->arg[1] > 0 ? (float)r->arg[1] : 2500.0f, rad = in->gcap == 2 ? 500.0f : 200.0f;
+        if (in->gcap == 3 && vdot(v3(in->m[4], in->m[5], in->m[6]), vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14]))) <= 0) continue;
+        if (z <= 0 || vlen(vsub(to, vmul(d, z))) > rad || vlen(vsub(p, mario->pos)) > range || z >= bz) continue;
         bz = z; best = i;
     }
     return best;
@@ -5965,7 +5975,7 @@ static int gcap_update(Player *m)
     if (gcap.target >= ninsts || !insts[gcap.target].gcap) { gcap.phase = 0; return 0; } /* rebound away */
     const Inst *in = &insts[gcap.target];
     const Row *r = &sc->objs[in->row];
-    V3 tp = v3(in->m[12], in->m[13], in->m[14]);
+    V3 tp = gcap_pos(in);
     gcap.t++;
     { /* GCaptureTarget::exeActive (decidedTarget: from phase 1); PULL's level A the distance to Mario
        * (AudSoundObject_Takezawa: volume 1 -> 0.8 over 100..1500, pitch 0.5 -> 2 squared over 100..2000) */
@@ -5990,7 +6000,7 @@ static int gcap_update(Player *m)
             gcap.target = t; gcap.phase = 2; gcap.t = 0; return 1;
         }
     }
-    if (pad_pressed(PAD_R1) || (r->arg[0] >= 0 && vlen(vsub(tp, m->pos)) <= r->arg[0])) { gcap_release(m); return 0; }
+    if (pad_pressed(PAD_R1) || (in->gcap == 1 && r->arg[0] >= 0 && vlen(vsub(tp, m->pos)) <= r->arg[0])) { gcap_release(m); return 0; }
     V3 c = vadd(m->pos, vmul(m->up, BODY_RADIUS));
     if (gcap.phase == 2) {
         V3 to = vsub(tp, c);
