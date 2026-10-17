@@ -562,3 +562,4 @@ int fx_waterplant_tex(int k) { return res && wp_tex >= 0 ? (int)tex0 + wp_tex + 
 int fx_plantstalk_tex(void) { return fx_waterplant_tex(4); }
 int fx_dinofoot_tex(void) { return fx_waterplant_tex(5); }
 int fx_ocean_tex(int k) { return fx_waterplant_tex(6 + k); }
+int fx_whirl_tex(void) { return fx_waterplant_tex(8); }

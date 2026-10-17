@@ -593,7 +593,8 @@ static void pole_init(void);
 static void dossun_place(Inst *in);
 static int nrbms, nsbms; static const Model *m_rbeam, *m_mogustone, *m_moguhole;
 const char *game_stage_name = ""; /* the galaxy being played (main.c: its pack name) */
-static void draw_mogu_extras(void), draw_mogucchi_extras(void);
+static void draw_mogu_extras(void), draw_mogucchi_extras(void), draw_whirls(void), update_whirls(void);
+static int t_whirl = -1;
 static int nmhills; static const Model *m_mhole, *m_mhill[3];
 static void sbm_place(Inst *in), sbm_joints(Inst *in);
 static int pole_try(Player *m), pole_hold(Player *m);
@@ -3084,6 +3085,7 @@ void game_rebind(void)
     m_otabloom = scene_model(s, "OtaKingMagmaBloom");
     m_pleaf = scene_model(s, "PackunLeaf");
     m_rbeam = scene_model(s, "JumpBeamerBeam");
+    t_whirl = scene_type(s, "WhirlPoolAccelerator");
     m_mogustone = scene_model(s, "MoguStone"); m_moguhole = scene_model(s, "MoguHole");
     m_mhole = scene_model(s, "MogucchiHole"); m_mhill[0] = scene_model(s, "MogucchiHillA"); m_mhill[1] = scene_model(s, "MogucchiHillB"); m_mhill[2] = scene_model(s, "MogucchiHillC");
     for (int i = 0; i < NEW_WALKERS; i++) m_wnew[i] = scene_model(s, new_walkers[i].cls);
@@ -9773,6 +9775,97 @@ static int in_water(V3 p, V3 up, float *depth)
  * oxygen runs down from mOxygenMax 3600 (60 s; an AirBubble fills it); at 0 he loses a life piece every 60 frames; at the surface it fills
  * back. Returns 1 while swimming. ponytail: no spin dash, no swim animations, no current / drift, no damage swim */
 static void hurt_mario(V3 from, float push);
+/* WhirlPoolAccelerator.cpp after Petari: a cylinder (radius 100 x scale x, height 100 x scale y along its Y) that
+ * turns Mario swimming in it: 3 a frame round its axis (calcInfo); drawn as six bands round it, a point every 50 down
+ * from its top (radius eased from 1 to 0.6 of it, the first and last two fading), each band offset 30 turning 25
+ * degrees a point and the whole turning -10 a frame, Whirlpool.bti through its TEV. ponytail: its swim push is
+ * added to the frame's move, the texture does not scroll (strips carry fixed UVs) */
+static V3 whirl_axis(const Row *r)
+{
+    float m[16], one[3] = {1, 1, 1};
+    mat_translate_rot_scale(m, r->pos, r->rot, one);
+    return vnorm(v3(m[4], m[5], m[6]));
+}
+static int whirl_acc(V3 p, V3 *acc) /* calcInfo */
+{
+    for (u32 i = 0; t_whirl >= 0 && i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if (r->type != t_whirl || !row_shown(i)) continue;
+        V3 ax = whirl_axis(r), rel = vsub(p, row_pos(r));
+        float h = vdot(ax, rel);
+        if (h < 0.0f || h > 100.0f * r->scale[1]) continue;
+        V3 hz = vtangent(rel, ax);
+        if (vlen(hz) > 100.0f * r->scale[0] || vlen(hz) < 1e-6f) continue;
+        *acc = vmul(vnorm(vcross(hz, ax)), 3.0f);
+        return 1;
+    }
+    return 0;
+}
+static void update_whirls(void) /* movement(): its level SE */
+{
+    static u32 lv[8];
+    int n = 0;
+    for (u32 i = 0; t_whirl >= 0 && i < sc->nobjs && n < 8; i++) {
+        const Row *r = &sc->objs[i];
+        if (r->type != t_whirl || !row_shown(i) || vlen(vsub(row_pos(r), mario->pos)) > 3000.0f) continue;
+        lv[n] = se_level(SE_AT_LV_WHIRL_POOL, r->pos, lv[n]);
+        n++;
+    }
+}
+static void draw_whirls(void)
+{
+    int tex = fx_whirl_tex();
+    if (t_whirl < 0 || tex < 0) return;
+    static const float pl[6][4] = {{0.5f, 0.70710677f, -0.5f, 0.70710677f}, {-0.5f, 0.70710677f, -1.0f, 0.0f},
+                                   {-1.0f, 0.0f, -0.5f, -0.70710677f}, {-0.5f, -0.70710677f, 0.5f, -0.70710677f},
+                                   {0.5f, -0.70710677f, 1.0f, 0.0f}, {1.0f, 0.0f, 0.5f, 0.70710677f}};
+    float rot = fmodf(-10.0f * game_frame, 360.0f) * 0.0174533f;
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if (r->type != t_whirl || !row_shown(i)) continue;
+        float R = 100.0f * r->scale[0], H = 100.0f * r->scale[1];
+        int n = (int)(H / 50.0f) + 1;
+        if (n > 64) n = 64;
+        V3 ax = whirl_axis(r), dir = vmul(ax, -1.0f), nrm = v3(0, 0, 1), pos[64], side[64], up[64];
+        float rad[64], alpha[64];
+        for (int j = 0; j < n; j++) { /* initPoints */
+            pos[j] = vadd(row_pos(r), vmul(ax, H - 50.0f * j));
+            float x = (float)(n - j) / n, rate = 1.0f - cosf(x * 1.5707963f);
+            rad[j] = R * (rate + 0.6f * (1.0f - rate));
+            alpha[j] = j < 2 ? 50.0f + 205.0f * (j / 2.0f) : j >= n - 2 ? 50.0f + 205.0f * ((n - 1 - j) / 2.0f) : 255.0f;
+            V3 s = vcross(nrm, dir);
+            side[j] = vlen(s) > 1e-6f ? vnorm(s) : v3(1, 0, 0);
+            up[j] = vnorm(vcross(dir, side[j]));
+            float c = cosf(-10.0f * 0.0174533f), sn = sinf(-10.0f * 0.0174533f); /* makeMtxRotate(0, -10, 0) */
+            nrm = v3(nrm.x * c + nrm.z * sn, nrm.y, -nrm.x * sn + nrm.z * c);
+        }
+        for (int p = 0; p < 6; p++) {
+            V3 off = v3(30.0f * sinf(rot), 0, 30.0f * cosf(rot)), lv[64][2];
+            for (int j = 0; j < n; j++) {
+                V3 b = vadd(pos[j], off);
+                lv[j][0] = vadd(b, vadd(vmul(side[j], rad[j] * pl[p][0]), vmul(up[j], rad[j] * pl[p][1])));
+                lv[j][1] = vadd(b, vadd(vmul(side[j], rad[j] * pl[p][2]), vmul(up[j], rad[j] * pl[p][3])));
+                float c = cosf(25.0f * 0.0174533f), sn = sinf(25.0f * 0.0174533f);
+                off = v3(off.x * c + off.z * sn, off.y, -off.x * sn + off.z * c);
+            }
+            Strip st[24];
+            int ns = 0;
+            for (int j = n - 1; j > 0 && ns < 24; j -= 3) { /* 4 levels a strip, bottom first */
+                Strip *s = &st[ns++];
+                float al = 255.0f;
+                for (int l = 0; l < 4; l++) {
+                    int q = j - l < 0 ? 0 : j - l;
+                    for (int e = 0; e < 2; e++) { s->p[l][e][0] = lv[q][e].x; s->p[l][e][1] = lv[q][e].y; s->p[l][e][2] = lv[q][e].z; }
+                    if (alpha[q] < al) al = alpha[q];
+                }
+                s->rgba = 0x808080u | (u32)(al * 128.0f / 255.0f) << 24;
+                s->tex = (u16)tex; s->pad = 0;
+            }
+            render_strips(st, ns);
+        }
+    }
+}
+
 static int swim_update(Player *m)
 {
     float depth = 0;
@@ -9812,6 +9905,8 @@ static int swim_update(Player *m)
     if (up < 1.0f) v = vadd(v, vmul(m->up, 0.1f < 1.0f - up ? 0.1f : 1.0f - up)); /* floating up */
     if (surface && vdot(v, m->up) > 0 && depth < 60.0f) v = vtangent(v, m->up); /* held at the surface */
     V3 c = vadd(vadd(m->pos, vmul(m->up, BODY_RADIUS)), v), gn, wn;
+    V3 wa;
+    if (whirl_acc(mid, &wa)) c = vadd(c, wa); /* WhirlPoolAccelerator::calcInfo */
     int wall = 0;
     collide_n(&c, m->up, BODY_RADIUS, &gn, &wn, &wall);
     m->pos = vsub(c, vmul(m->up, BODY_RADIUS));
@@ -19019,6 +19114,7 @@ void game_update(void)
     update_dossuns();
     update_rbeamers();
     update_sbeamers();
+    update_whirls();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
@@ -20020,6 +20116,7 @@ void game_draw(void)
     draw_rbeams();
     draw_mogu_extras();
     draw_mogucchi_extras();
+    draw_whirls();
     RESTQ(0);
     draw_vines();
     RESTQ(1);

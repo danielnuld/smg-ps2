@@ -34,5 +34,6 @@ int fx_plantstalk_tex(void);
 /* DinoPackun's footprint texture (DinoPackunFootprint.bti, after PlantStalk's), -1 none */
 int fx_dinofoot_tex(void);
 int fx_ocean_tex(int k); /* OceanSphere's face (0) and back (1) textures (tools/jpa.py) */
+int fx_whirl_tex(void); /* WhirlPoolAccelerator's texture (Whirlpool.bti, its TEV baked), -1 none */
 
 #endif

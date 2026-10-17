@@ -321,6 +321,15 @@ def pack(fs):
         back[..., :3] = ((c0 * (1 - e[..., :3])) * 255 + 0.5).astype(np.uint8)
         back[..., 3] = 255
         out_tex.append(tex.to_ps2(back, 0, 0))
+        # WhirlPoolAccelerator (Whirlpool.arc) after them (fx_whirl_tex): its TEV lerp(C0 00 34 52, C1 7C A9 BD, T)
+        # baked, alpha 255 (the points' vertex alpha comes in the strip colour)
+        wl = decode_bti({k.lower(): v for k, v in B.rarc_files((wp / "ObjectData" / "Whirlpool.arc").read_bytes())}["whirlpool.bti"]).astype(np.float32) / 255
+        c0 = np.array([0x00, 0x34, 0x52], np.float32) / 255
+        c1 = np.array([0x7C, 0xA9, 0xBD], np.float32) / 255
+        wt = np.zeros(wl.shape[:2] + (4,), np.uint8)
+        wt[..., :3] = ((c0 + (c1 - c0) * wl[..., :3]) * 255 + 0.5).astype(np.uint8)
+        wt[..., 3] = 255
+        out_tex.append(tex.to_ps2(wt, 1, 1))
     flr = flare(wp, out_tex)
     head = struct.pack("<IIiI", len(used), len(defs), first, len(autos))
     return head + b"".join(defs) + b"".join(recs) + b"".join(autos) + flr, out_tex
