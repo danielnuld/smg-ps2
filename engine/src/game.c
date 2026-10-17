@@ -245,6 +245,7 @@ typedef struct {
     int fpressure;   /* FirePressureRadiate: a flame on a cycle (update_fpressures, fpr_joints) */
     int spmother;    /* StarPieceMother: its star pieces at a touch, or along its rail (update_spmothers) */
     int leakpipe;    /* WaterLeakPipe: stretched to its height, leaking (update_leakpipes, leak_joints) */
+    int kstair;      /* KoopaBattleMapStair(Big / Turn): breaks and falls after its switch (update_stairs) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
 static V3 firebar_ball(const Inst *in, int j, int k);
@@ -613,6 +614,7 @@ static int ntzs, tz_ride = -1; /* the Trapeze Mario holds, -1 none */
 static int nonis, nfprs; static void oni_place(Inst *in), update_onimasu(void), update_lavarocks(void), update_fpressures(void), fpr_joints(Inst *in);
 static int nspms; static void update_spmothers(void);
 static void update_leakpipes(void), leak_joints(Inst *in);
+static int nkss; static void update_stairs(void), ks_place(Inst *in);
 static int nmhills; static const Model *m_mhole, *m_mhill[3];
 static void sbm_place(Inst *in), sbm_joints(Inst *in);
 static int pole_try(Player *m), pole_hold(Player *m);
@@ -1431,7 +1433,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nvines = 0; vine_ride = -1;
     pole_init();
     nrbms = 0;
-    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0;
+    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0;
     dino_cam = 0;
     foot_num = foot_rot = 0;
     nseesaws = 0;
@@ -3246,6 +3248,7 @@ void game_rebind(void)
         in->fpressure = strcmp(name, "FirePressureRadiate") == 0;
         in->spmother = strcmp(name, "StarPieceMother") == 0;
         in->leakpipe = strcmp(name, "WaterLeakPipe") == 0;
+        in->kstair = strncmp(name, "KoopaBattleMapStair", 19) == 0 && strcmp(name, "KoopaBattleMapStairTurnAppear") != 0;
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
         in->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 ? 3 : 0;
@@ -3276,6 +3279,7 @@ void game_rebind(void)
         if (in->sbeamer) sbm_place(in);
         if (in->trapeze) tz_place(in);
         if (in->onimasu) oni_place(in);
+        if (in->kstair) ks_place(in);
         if (in->coco) coco_spawn(in);
         if (in->fountain || in->stray) memcpy(in->m0, in->m, 64);
         if (in->stray) in->head = row_turn[i] ? (stray_at[i % 64].x || stray_at[i % 64].y || stray_at[i % 64].z ? stray_at[i % 64] : v3(in->m[12], in->m[13], in->m[14])) : v3(in->m[12], in->m[13], in->m[14]);
@@ -18326,6 +18330,75 @@ static void leak_joints(Inst *in) /* initPipeHeight: Top at its height (model sp
     a->world[0][12] = 0; a->world[0][13] = r->scale[1] > 0 ? h / r->scale[1] : h; a->world[0][14] = 0;
 }
 
+/* KoopaBattleMapStair.cpp after Petari (KoopaBattleMapStair / Big / Turn): waits for its SW_A (Wait), then arg0 (300)
+ * frames (WaitKoopaFire), shakes for arg3 (60) (WaitFall: STAIR_BREAK_START, the break level SE), falls for arg4
+ * (240) along its gravity adding 0.03 a frame up to 1.5 (Fall; STAIR_BREAK_END), then goes on falling while its
+ * Disappear brk plays at 0.25 and is killed. ponytail: Koopa's fire requests (registerBattleMapStair) and the
+ * Disappear fade (its brk is baked, the stair goes after 4 x 30 frames) */
+#define MAX_STAIRS 48
+enum { KS_WAITSWITCH, KS_WAITFIRE, KS_WAITFALL, KS_FALL, KS_DISAPPEAR };
+static struct { int row, nrv, step, init; V3 pos, vel; u32 lv; } kss[MAX_STAIRS];
+static int ks_of(int row)
+{
+    for (int i = 0; i < nkss; i++) if (kss[i].row == row) return i;
+    if (nkss == MAX_STAIRS) return -1;
+    memset(&kss[nkss], 0, sizeof kss[0]);
+    kss[nkss].row = row;
+    return nkss++;
+}
+static void ks_set(int k, int n) { kss[k].nrv = n; kss[k].step = -1; }
+static void ks_place(Inst *in)
+{
+    int k = ks_of(in->row);
+    if (k < 0 || !kss[k].init) return;
+    in->m[12] = kss[k].pos.x; in->m[13] = kss[k].pos.y; in->m[14] = kss[k].pos.z;
+}
+static void update_stairs(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->kstair || !row_shown(in->row)) continue;
+        int k = ks_of(in->row);
+        if (k < 0) continue;
+        typeof(&kss[0]) o = &kss[k];
+        const Row *r = &sc->objs[in->row];
+        if (!o->init) { o->init = 1; o->pos = row_pos(r); ks_set(k, KS_WAITSWITCH); }
+        int st = ++o->step;
+        int tbreak = r->arg[0] != -1 ? r->arg[0] : 300, twait = r->arg[3] != -1 ? r->arg[3] : 60, tfall = r->arg[4] != -1 ? r->arg[4] : 240;
+        float old[16];
+        memcpy(old, in->m, 64);
+        switch (o->nrv) {
+        case KS_WAITSWITCH:
+            if (st == 0) obj_play(in, "Wait", 1, 0);
+            if (r->sw[SW_A] >= 0 && sw_on(r, SW_A)) ks_set(k, KS_WAITFIRE);
+            break;
+        case KS_WAITFIRE:
+            if (st == tbreak) ks_set(k, KS_WAITFALL);
+            break;
+        case KS_WAITFALL:
+            if (st == 0) { se_start(SE_OJ_STAIR_BREAK_START, &in->m[12]); obj_play(in, "WaitFall", 1, 0); }
+            o->lv = se_level(SE_OJ_LV_STAIR_BREAK, &in->m[12], o->lv);
+            if (st == twait) { o->vel = v3(0, 0, 0); ks_set(k, KS_FALL); }
+            break;
+        case KS_FALL:
+        case KS_DISAPPEAR: {
+            if (o->nrv == KS_FALL && st == 0) obj_play(in, "Fall", 1, 0);
+            V3 g = vmul(up_at(o->pos, v3(in->m[4], in->m[5], in->m[6])), -1.0f); /* addVelocityToGravity, restrictVelocity */
+            o->vel = vadd(o->vel, vmul(g, 0.03f));
+            if (vlen(o->vel) > 1.5f) o->vel = vmul(vnorm(o->vel), 1.5f);
+            o->pos = vadd(o->pos, o->vel);
+            if (o->nrv == KS_FALL) {
+                o->lv = se_level(SE_OJ_LV_STAIR_BREAK, &in->m[12], o->lv);
+                if (st == tfall) { se_start(SE_OJ_STAIR_BREAK_END, &in->m[12]); ks_set(k, KS_DISAPPEAR); }
+            } else if (st == 120) { row_kill(in->row); game_rebind(); return; }
+            break;
+        }
+        }
+        ks_place(in);
+        if (mario_ground == i) carry(old, in);
+    }
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -20160,6 +20233,7 @@ void game_update(void)
     update_fpressures();
     update_spmothers();
     update_leakpipes();
+    update_stairs();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
