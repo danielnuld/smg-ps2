@@ -197,6 +197,15 @@ int gd_flag_try_on(const char *name) /* GameEventFlagChecker::tryOn */
     return 1;
 }
 
+int gd_grand_galaxy_no(const char *g) { const GInfo *gi = find_info(g); return gi ? gi->grand : 0; }
+int gd_is_grand_star(const char *g, int star) /* isPowerStarSpecial(..., "SpecialStarGrand") */
+{
+    for (int i = 0; i < NFLAGS; i++)
+        if (gd_flags[i].type == GT_SPECIALSTAR && gd_flags[i].c1 == star && gd_flags[i].s1 && !strcmp(gd_flags[i].s1, g) &&
+            strstr(gd_flags[i].name, "SpecialStarGrand"))
+            return 1;
+    return 0;
+}
 int gd_galaxy_open(const char *g) { return !gd_power_star_num(g) || gd_flag_is_on(g); }
 int gd_galaxy_appear(const char *g)
 {

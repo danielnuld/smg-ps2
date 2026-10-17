@@ -1,4 +1,5 @@
 #include "blob.h"
+#include "sequence.h"
 #include "mem.h"
 
 #include <math.h>
@@ -223,8 +224,12 @@ int blob_add(Scene *s, const u8 *blob)
 const Row *scene_start(const Scene *s)
 {
     /* SceneUtil.cpp cInitializeStartIdInfo(0, 0): entering a galaxy, Mario starts at MarioNo 0 (arg0) of zone 0
-     * (StageDataHolder::makeMarioJMapInfoIter); else the first MarioNo 0, else the first */
+     * (StageDataHolder::makeMarioJMapInfoIter); the sequence's JMapIdInfo (sequence.c) when it gave one; else the
+     * first MarioNo 0, else the first */
     const Row *any = NULL;
+    int zone, id = seq_start_id(&zone);
+    for (u32 i = 0; id >= 0 && i < s->nstarts; i++)
+        if (s->starts[i].arg[0] == id && (int)s->starts[i].zone == zone) return &s->starts[i];
     for (u32 i = 0; i < s->nstarts; i++)
         if (s->starts[i].arg[0] == 0) {
             if (s->starts[i].zone == 0) return &s->starts[i];

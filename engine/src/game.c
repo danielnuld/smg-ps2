@@ -7,6 +7,7 @@
 #include "lyt.h"
 #include "menu.h"
 #include "gamedata.h"
+#include "sequence.h"
 #include "camera.h"
 
 #include <stdio.h>
@@ -942,7 +943,8 @@ static void stitle_start(void);
 static int start_pos_cam; /* the start's camera is on (camera_start_pos) */
 static int draw_steps; /* logic steps since the last draw (game_set_draw_steps; 1 at start) */
 /* Switch logic rows (no model): TimerSwitch, SwitchSynchronizerReverse, GroupSwitchWatcher */
-enum { LOGIC_TIMER = 1, LOGIC_REVERSE, LOGIC_GROUP, LOGIC_BLOCKER, LOGIC_FLIPS, LOGIC_CHIPS, LOGIC_SWAREA, LOGIC_DEATH, LOGIC_RESTART, LOGIC_PIECESPOT };
+enum { LOGIC_TIMER = 1, LOGIC_REVERSE, LOGIC_GROUP, LOGIC_BLOCKER, LOGIC_FLIPS, LOGIC_CHIPS, LOGIC_SWAREA, LOGIC_DEATH, LOGIC_RESTART, LOGIC_PIECESPOT,
+       LOGIC_ASTROCUBE };
 static int area_shape(const char *name);
 /* FlipPanel (Petari FlipPanel.cpp): row_step bits. Back = flipped (ACTMES_SUCCESS to the observer); a flip locks the
  * panel until Mario stood on other ground; it flips once he has stood on it 3 frames (checkPlayerOnTop). Done: the
@@ -1730,7 +1732,7 @@ void game_init(const Scene *s, const unsigned char *blob)
                                     count_type("SwitchSphere", 0) + count_type("SwitchCylinder", 0) +
                                     count_type("DeathCube", 0) + count_type("DeathSphere", 0) +
                                     count_type("DeathCylinder", 0) + count_type("RestartCube", 0) +
-                                    count_type("StarPieceSpot", 0) + 1) *
+                                    count_type("StarPieceSpot", 0) + count_type("AstroChangeStageCube", 0) + 1) *
                                        sizeof(Logic));
     int t_timer = scene_type(s, "TimerSwitch"), t_rev = scene_type(s, "SwitchSynchronizerReverse"),
         t_group = scene_type(s, "GroupSwitchWatcher"), t_block = scene_type(s, "CollisionBlocker"),
@@ -1742,6 +1744,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         int k = strncmp(tn, "Switch", 6) == 0 && area_shape(tn) >= 0 ? LOGIC_SWAREA :
                 strncmp(tn, "Death", 5) == 0 && area_shape(tn) >= 0 ? LOGIC_DEATH :
                 strcmp(tn, "RestartCube") == 0 ? LOGIC_RESTART : strcmp(tn, "StarPieceSpot") == 0 ? LOGIC_PIECESPOT :
+                strcmp(tn, "AstroChangeStageCube") == 0 ? LOGIC_ASTROCUBE :
                 t == t_timer ? LOGIC_TIMER : t == t_rev ? LOGIC_REVERSE : t == t_group ? LOGIC_GROUP :
                 t == t_block ? LOGIC_BLOCKER : t == t_flipobs ? LOGIC_FLIPS : t == t_ychips || t == t_bchips ? LOGIC_CHIPS : 0;
         if (k) { logic[nlogic].row = i; logic[nlogic++].kind = k; }
@@ -20803,6 +20806,52 @@ static int area_shape(const char *name)
     return !f ? -1 : f[1] == 'u' ? 0 : f[1] == 'y' ? 1 : 2;
 }
 
+/* AstroChangeStageCube.cpp: Mario in it (not bound, no demo, its SW_A not on; arg0 5 needs grand star arg2, 1 the
+ * children's room open, 3 the library) stops the BGM and plays the wipe SE; 5 frames on the wipe closes (110) and
+ * the stage changes: arg0 0 / 4 the Observatory at start id (0: this scenario's number, else arg1), 2 AstroGalaxy 1,
+ * 1 the Gateway (scenario 2; its scenario select once Rosetta told about the Tico), 3 the library, 5 the dome arg2.
+ * ponytail: a fade for the circle wipe; the children's room by the grand stars (calcOpenedAstroDomeNum), the library
+ * by PictureBookA */
+static int ac_row = -1, ac_wait;
+int game_test_astro_cube(int mode) /* tests: Mario put in the first AstroChangeStageCube of arg0 `mode`; its row */
+{
+    for (int i = 0; i < nlogic; i++) {
+        const Row *r = &sc->objs[logic[i].row];
+        if (logic[i].kind != LOGIC_ASTROCUBE || r->arg[0] != mode) continue;
+        mario->pos = row_pos(r); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return logic[i].row;
+    }
+    return -1;
+}
+static void astro_cube(int row, const Row *r)
+{
+    int id = r->arg[0] == 0 ? (game_stage_name[strlen(game_stage_name) - 1] - '0') : r->arg[1];
+    if (ac_row >= 0) {
+        if (row != ac_row || ac_wait++ != 5) return;
+        switch (r->arg[0]) {
+        case 0: case 4: menu_fade_move(110, SEQ_MOVE, "AstroGalaxy", -1, id, 0); break;
+        case 2: menu_fade_move(110, SEQ_MOVE, "AstroGalaxy", 1, id, 0); break;
+        case 1:
+            if (gd_flag_is_on("RosettaTalkAboutTico")) menu_fade_move(110, SEQ_SCENARIO_SELECT, "HeavensDoorGalaxy", -1, -1, 0);
+            else menu_fade_move(110, SEQ_MOVE, "HeavensDoorGalaxy", 2, id, 0);
+            break;
+        case 3: menu_fade_move(110, SEQ_MOVE, "LibraryRoom", 1, id, 0); break;
+        case 5: menu_fade_move(110, SEQ_MOVE, "AstroDome", r->arg[2], id, 0); break;
+        }
+        return;
+    }
+    if (mario->launch >= 0 || demo_on || in_opening || menu_fading() || (r->sw[SW_A] >= 0 && sw_on(r, SW_A))) return;
+    char grand[24];
+    snprintf(grand, sizeof grand, "SpecialStarGrand%d", r->arg[2]);
+    if (r->arg[0] == 5 && !gd_flag_is_on(grand)) return;
+    if (r->arg[0] == 1 && !gd_flag_is_on("SpecialStarGrand6")) return;
+    if (r->arg[0] == 3 && !gd_flag_is_on("PictureBookA")) return;
+    if (!area_inside(r, mario->pos)) return;
+    ac_row = row; ac_wait = 0;
+    se_start(r->arg[0] == 0 || r->arg[0] == 2 || r->arg[0] == 4 ? SE_DM_ASTRO_WIPE_OUT : SE_DM_ASTRO_WIPE_IN, NULL);
+    printf("astro change stage cube row %d: arg0 %d arg1 %d arg2 %d\n", row, r->arg[0], r->arg[1], r->arg[2]);
+}
+
 static int area_inside(const Row *r, V3 p)
 {
     V3 d = vsub(p, row_pos(r)), x, z;
@@ -20859,6 +20908,7 @@ static void update_switches(void)
             if (row_shown(row) && (r->sw[SW_A] < 0 || sw_on(r, SW_A)) && r->arg[0] == -1 && mario->launch < 0 && area_inside(r, mario->pos)) { printf("death area %d\n", row); miss(); }
             continue;
         }
+        if (logic[i].kind == LOGIC_ASTROCUBE) { astro_cube(row, r); continue; }
         if (logic[i].kind == LOGIC_PIECESPOT) { /* StarPieceSpot.cpp: arg0 star pieces (default 5) burst out when its
                                                   * appear switch goes on, or without one at a spin within 150 */
             V3 p = row_pos(r);
@@ -21936,6 +21986,7 @@ static void update_items(void)
                 snprintf(gal, sizeof gal, "%.*s", sl ? (int)(sl - game_stage_name) : (int)strlen(game_stage_name), game_stage_name);
                 if (id <= 0 && sl) id = atoi(sl + 1);
                 gd_set_star(gal, id);
+                seq_set_cleared(id); /* GameSequenceFunction::getClearedPowerStarId */
             }
             se_start(SE_SY_STAR_GET, NULL); /* PowerStar::receiveOtherMsg */
             star_demo = 1; /* requestPowerStarGetDemo: the PowerStarGet camera and Mario's clip */
@@ -22629,7 +22680,13 @@ void game_update(void)
     LQ(58, update_dino());
     LQ(59, update_ota());
     if (star_demo) { /* its camera ("powerstar/powerstarget"); Mario plays PowerStarGet meanwhile */
-        if (!demo_camera("powerstar/powerstarget", star_demo - 1, star_demo_m)) { star_demo = 0; camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45); }
+        if (!demo_camera("powerstar/powerstarget", star_demo - 1, star_demo_m)) {
+            star_demo = 0; camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45);
+#ifdef CATCHUP /* GameStageClearSequence: after the PowerStarGet demo, requestChangeStageAfterStageClear (play builds;
+                * the tests stay in the galaxy) */
+            menu_fade_move(60, SEQ_STAGE_CLEAR, NULL, 1, -1, 0);
+#endif
+        }
         else star_demo++;
     }
     demo_on = dino_demo_on || ota_demo_on || star_demo || fat_demo() || vine_demo_on() || talk_demo();

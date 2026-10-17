@@ -10,6 +10,9 @@ void menu_init(const Scene *s);
 int menu_update(void);
 void menu_draw(void);
 int menu_paused(void);
+/* a fade to black over `frames`, then seq_galaxy_move (closeSystemWipe*, then the request) */
+void menu_fade_move(int frames, int type, const char *stage, int scenario, int start_id, int start_zone);
+int menu_fading(void);
 const u16 *msg_get(const char *label); /* MR::getLayoutMessageDirect / getGameMessageDirect (MSGS chunk), NULL none */
 int menu_test_point(const char *pane); /* tests: the pointer on a pane of the open pause menu / its window */
 

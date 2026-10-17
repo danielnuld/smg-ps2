@@ -2,6 +2,7 @@
 
 #include "game.h"
 #include "gamedata.h"
+#include "sequence.h"
 #include "lyt.h"
 #include "mem.h"
 #include "pad.h"
@@ -11,6 +12,8 @@
 
 #include <stdio.h>
 #include <string.h>
+
+static void fade_update(void);
 
 /* --- messages (tools/lyt.py MSGS) ------------------------------------------------------------------------------ */
 static const u8 *msgs;
@@ -404,9 +407,10 @@ static void pm_update(void)
     btn_update(&pm.down);
     lyt_update(pm.l);
     si_update(&pm.win);
-    if (pm.fade && ++pm.fade > 90) /* requestChangeStageGoBackAstroDome / requestChangeSceneTitle. ponytail: the
-                                    * Observatory's first scenario; the title is the FileSelect stage */
-        game_request_scene(pm_invalid_back() ? "FileSelect/1" : "AstroGalaxy/1");
+    if (pm.fade == 1) { /* closeSystemWipeFadeWithCaptureScreen(90), then requestChangeSceneTitle / ...GoBackAstroDome */
+        pm.fade = 0;
+        menu_fade_move(90, pm_invalid_back() ? SEQ_TITLE : SEQ_GALAXY_OUT, NULL, 1, -1, 0);
+    }
 }
 
 /* --- GamePauseSequence ----------------------------------------------------------------------------------------- */
@@ -429,6 +433,7 @@ int menu_test_point(const char *pane)
 
 int menu_update(void)
 {
+    fade_update();
     if (!pm.alive) { /* GameScenePauseControl: Plus (START) where GameScene::isPermitToPauseMenu */
         if (!pm.l || !pad_pressed(PAD_START) || !game_pause_permitted()) return 0;
         pad_eat(PAD_START);
@@ -439,15 +444,38 @@ int menu_update(void)
     return 1;
 }
 
+/* the system wipe: black over `frames`, then the sequence's move */
+static struct { int t, frames, type, scenario, id, zone; char stage[32]; } fade;
+
+void menu_fade_move(int frames, int type, const char *stage, int scenario, int start_id, int start_zone)
+{
+    if (fade.frames) return;
+    fade.t = 0; fade.frames = frames < 1 ? 1 : frames; fade.type = type; fade.scenario = scenario;
+    fade.id = start_id; fade.zone = start_zone;
+    snprintf(fade.stage, sizeof fade.stage, "%s", stage ? stage : "");
+}
+int menu_fading(void) { return fade.frames != 0; }
+
+static void fade_update(void)
+{
+    if (!fade.frames) return;
+    if (++fade.t == fade.frames + 2) seq_galaxy_move(fade.type, fade.stage[0] ? fade.stage : NULL, fade.scenario, fade.id, fade.zone);
+}
+
+static void fade_draw(void)
+{
+    if (!fade.frames) return;
+    int a = fade.t * 128 / fade.frames;
+    Quad q = {0, 0, 640, 448, 0, 0, 0, 0, (u32)(a > 128 ? 128 : a) << 24, NO_TEX, 0, 0, 0}; /* after the glyphs */
+    render_quads(&q, 1);
+}
+
 void menu_draw(void)
 {
+    fade_draw();
     if (!pm.alive) return;
     render_world_done(); /* the scene under the menu (LayoutOnPause draws after everything) */
     lyt_draw(pm.l);
     if (pm.win.alive) lyt_draw(pm.win.l);
-    if (pm.fade) { /* the fade to black: a quad queued after the text boxes' glyphs (render_quads) */
-        int a = pm.fade * 128 / 90;
-        Quad q = {0, 0, 640, 448, 0, 0, 0, 0, (u32)(a > 128 ? 128 : a) << 24, NO_TEX, 0, 0, 0};
-        render_quads(&q, 1);
-    }
+
 }

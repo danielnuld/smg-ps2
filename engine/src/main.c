@@ -23,6 +23,7 @@
 #include "fx.h"
 #include "lyt.h"
 #include "menu.h"
+#include "gamedata.h"
 #include "music_tab.h"
 #include "packs_cfg.h" /* written by build.sh: PACKS = "<Galaxy>/<scenario>", or empty */
 
@@ -747,6 +748,12 @@ int main(void)
             last_vb = vblanks;
 #endif
             continue;
+        }
+#endif
+#if defined(PACKS) && defined(ASTRO_TEST)
+        if (frame == 200) { /* the first grand star (the first dome open), Mario in a dome's entrance cube */
+            gd_set_star("HeavensDoorGalaxy", 1);
+            printf("astro test: grand star 1 %d, cube row %d\n", gd_flag_is_on("SpecialStarGrand1"), game_test_astro_cube(5));
         }
 #endif
 #if defined(PACKS) && defined(PAUSE_TEST)

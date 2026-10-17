@@ -28,6 +28,8 @@ int gd_max_coins(const char *galaxy, int scenario);
 int gd_flag_can_on(const char *name);           /* GameEventFlagChecker */
 int gd_flag_is_on(const char *name);
 int gd_flag_try_on(const char *name);
+int gd_grand_galaxy_no(const char *galaxy);     /* GameDataConst::getIncludedGrandGalaxyId (its dome) */
+int gd_is_grand_star(const char *galaxy, int star); /* GameDataConst::isGrandStar */
 int gd_galaxy_open(const char *galaxy);         /* GalaxyStatusAccessor::isOpened (no stars: open) */
 int gd_galaxy_appear(const char *galaxy);       /* GameDataHolder::isAppearGalaxy */
 int gd_story_passed(const char *event);         /* isPassedStoryEvent */
