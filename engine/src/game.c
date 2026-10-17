@@ -875,6 +875,7 @@ static V3 start_pos;
 #define START_LIVES 4
 static int life = MAX_LIFE, max_life = MAX_LIFE, misses, lives = START_LIVES, stars;
 static void miss(void);
+static int miss_running(void);
 static void mario_smoke(int k); /* cSmokeTable's entries: */
 enum { SMOKE_LAND, SMOKE_LAND_BIG, SMOKE_WALL_JUMP, SMOKE_DAMAGE_LAND, SMOKE_SPIN, SMOKE_BRAKE, SMOKE_HIGH_JUMP, SMOKE_JUMP,
        SMOKE_DUST, SMOKE_N };
@@ -1349,6 +1350,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     lyt_init(s);
     gd_attach(s);
     menu_init(s);
+    lives = gd_player_left();
     u32 gsz;
     const unsigned char *g = blob_chunk(blob, "GRAV", &gsz);
     ngrav = *(const int *)g;
@@ -11451,6 +11453,7 @@ static void m_damage_floor(Player *m)
 
 static void update_mario(void)
 {
+    if (miss_running()) { if (mario_anim) anim_update(mario_anim); return; } /* the down / game over demo holds him */
     Player *m = mario;
     V3 up0 = m->up;
     m->up = up_at(m->pos, m->up);
@@ -11777,8 +11780,53 @@ static void update_mario(void)
 
 /* A miss (no life left, or fell into space): one Mario less, back to the start with 3 life. ponytail: no miss
  * animation, the stage is not reset, game over just refills the lives */
+/* PlayerEvent.cpp EventSequencer after Petari: a miss runs EventDown (Mario's down clip; 30 the HUD out; 45 MissLayout; 100 WipeKoopa closes over 90 frames; 120 a life gone; 30 frames after the wipe
+ * requestEndMissDemo: the stage again, requestChangeStageAfterMiss), with no lives left EventGameOver (60 the HUD
+ * out; 160 WipeGameOver; 420 the title, resetSystemAndGameStatus: lives back to 4). Release builds (CATCHUP) and the
+ * miss test; the other tests keep the instant reset. ponytail: no voices / BGM, no CometRetryButton, the game over
+ * save not made (SaveAfterGameOver), the down clip picked from swimming only, no darkening round Mario (drawPreWipe) */
+#if defined(CATCHUP) || defined(MISS_TEST)
+#define MISS_EVENTS 1
+#endif
+static struct { int on, f, phase, pf, wipe_f, over; } mev;
+static int miss_running(void) { return mev.on; }
+static void miss_event_update(void)
+{
+    if (!mev.on) return;
+    int f = mev.f, next = 0;
+    if (mev.over) {
+        if (f == 60) dome_layout_off = 1; /* closeDefaultLayout */
+        if (f == 160) menu_wipe_gameover(); /* reqLayout */
+        if (f == 420) { /* finish: SaveAfterGameOver, requestChangeSceneAfterGameOver */
+            gd_add_player_left(4 - gd_player_left());
+            seq_galaxy_move(SEQ_TITLE, NULL, 1, -1, 0);
+        }
+    } else {
+        if (f == 30) dome_layout_off = 1;
+        if (f == 45) { menu_miss_start(); next = 1; }
+        if (f >= 100 && f <= 600) { /* doCloseWipe */
+            if (mev.wipe_f++ == 0) menu_wipe_koopa(-1);
+            else if (menu_wipe_koopa_closed()) mev.phase = 2;
+        }
+        if (f == 120) { lives--; printf("miss %d, lives %d" "\n", ++misses, lives); } /* decLeft */
+        if (mev.phase == 2 && mev.pf++ == 30) seq_galaxy_move(SEQ_MISS, NULL, -1, -1, 0); /* doWaitAfterWipe */
+    }
+    if (next) mev.phase++;
+    mev.f++;
+}
+
 static void miss(void)
 {
+#ifdef MISS_EVENTS
+    if (mev.on) return;
+    memset(&mev, 0, sizeof mev);
+    mev.on = 1;
+    mev.over = lives <= 0; /* MarioActor::exeGameOver: getPlayerLeft() == 0 */
+    mario->hvel = v3(0, 0, 0); mario->vup = 0;
+    if (mario_anim) mario_play(swimming ? "deathwater" : "down", 1.0f, 0); /* changeGameOverAnimation */
+    printf("%s" "\n", mev.over ? "game over" : "mario down");
+    return;
+#endif
     time_left = time_limit; /* the comet's time starts over with the scenario */
     mario->pos = start_pos; mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->hurt_timer = 0; mario->hip = 0;
     mario->up = up_at(mario->pos, v3(0, 1, 0)); /* placed anew, as at the start (not his up where he fell) */
@@ -23132,6 +23180,7 @@ static void dome_draw(void) /* AstroDomeOrbit's rings (additive), the pointed ga
     }
 }
 
+void game_test_miss(int over) { if (over) lives = 0; miss(); } /* tests: a miss (over: with no lives left) */
 int game_test_dome(int what, int on) /* test builds: the cursor on the dome's blue star (0, R2 held while on) or on its
                                      * Good Egg's galaxy (what 1); its state, -1 none */
 {
@@ -23309,6 +23358,8 @@ void game_update(void)
     hud_update();
 
     LQ(5, update_talk_director());
+    miss_event_update();
+    if (lives != gd_player_left()) gd_add_player_left(lives - gd_player_left()); /* GameDataPlayerStatus: kept over scenes */
     dome_update();
     update_poles();
     if (!opening_on) {

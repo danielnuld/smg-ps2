@@ -303,7 +303,7 @@ def convert(files, name, texts):
 
 # the layouts every scene may show (menus.bin, loaded with each scene)
 COMMON = ("PauseMenu", "SysInfoWindow", "SysInfoWindowMini", "GameOver", "TooBad", "StageTitle", "IconAButton",
-          "BackButton", "AllStarList", "ScenarioSelect", "GalaxySelect", "GalaxyInfo", "GalaxyNamePlate")
+          "BackButton", "AllStarList", "ScenarioSelect", "GalaxySelect", "GalaxyInfo", "GalaxyNamePlate", "WipeKoopa")
 
 
 # the messages menus and screens look up by label (MR::getLayoutMessageDirect / getGameMessageDirect): MSGS chunk

@@ -758,6 +758,12 @@ int main(void)
             printf("astro test: grand star 1 %d, cube row %d\n", gd_flag_is_on("SpecialStarGrand1"), game_test_astro_cube(5));
         }
 #endif
+#if defined(PACKS) && defined(MISS_TEST)
+        if (frame == 300 || frame == 900) { /* a miss (the stage again, a life less), then a game over (the title) */
+            printf("miss test f %u: lives %d\n", frame, game_lives());
+            game_test_miss(frame == 900);
+        }
+#endif
 #if defined(PACKS) && defined(DOME_TEST)
         { /* the dome: R2 at the blue star, Good Egg opened (New), then chosen and confirmed, its scenario 1 */
             pad_force = 0;

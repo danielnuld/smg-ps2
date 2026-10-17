@@ -370,8 +370,13 @@ LayoutData layouts. Order by dependency:
    MINI_EXTRA (the factory listed the unknown one first); AstroDome repacked (slice_all.py takes a galaxy filter).
    `dome` test: grand star 1, R2 on the blue star, Good Egg opened (New), chosen, Start, Star1 -> EggStarGalaxy/1.
    A cancelled scenario select reloads the stage left. Left: galaxy pictures (ObjectData/GalaxyInfoTexture, 42 x
-   256 x 72), IconComet, star number plates, the demos (lectures, Mario's jump out), comets. Next: StageResultInformer,
-   title / FileSelect, save, game over.
+   256 x 72), IconComet, star number plates, the demos (lectures, Mario's jump out), comets.
+   Done (next commit): the miss / game over sequences (game.c miss_event_update: EventDown, EventGameOver; menu.c
+   TooBad, WipeKoopa, GameOver layouts; lives kept in the game data over scenes). Release builds (CATCHUP) and the
+   `miss` test (EggStar: a miss reloads the stage with a life less, a game over goes to FileSelect/1).
+   Next: title + FileSelect (a spec of FileSelector / FileSelectItem / camera / TitleSequenceProduct / FileSelectInfo
+   / Number / Button was read 2026-10-17: scratchpad filesel_spec.md if still there, else re-read Petari), save,
+   StageResultInformer.
 Then phase 1 (Good Egg vs Wii: the rim step's ground check, below), sound last. The disc ISO over ~1 GB does not boot
 in PCSX2 (taken for a DVD: open fail; a CD-sized image boots); the user's way of loading it on the PS2 was asked.
 

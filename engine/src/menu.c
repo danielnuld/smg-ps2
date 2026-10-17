@@ -20,6 +20,9 @@ static void fade_draw(void);
 static void ss_init(const Scene *s);
 static void dmu_init(void);
 static void dmu_update(void);
+static void mlay_init(void);
+static void mlay_update(void);
+static void mlay_draw(void);
 static void ss_update(void);
 static void wipe_update(void);
 static void wipe_draw_quad(void);
@@ -434,6 +437,7 @@ void menu_init(const Scene *s)
     pm_init();
     ss_init(s);
     dmu_init();
+    mlay_init();
     u32 rgb;
     int open = seq_take_open_wipe(&rgb); /* the wipe the last scene closed opens on this one */
     if (open) wipe_start(open, 0, rgb);
@@ -455,6 +459,7 @@ int menu_update(void)
     fade_update();
     wipe_update();
     dmu_update();
+    mlay_update();
     if (menu_scenario_selecting()) { game_cursor_menu(); ss_update(); return 1; }
     if (!pm.alive) { /* GameScenePauseControl: Plus (START) where GameScene::isPermitToPauseMenu */
         if (!pm.l || !pad_pressed(PAD_START) || !game_pause_permitted()) return 0;
@@ -1280,6 +1285,53 @@ int menu_test_point_dome(const char *pane) /* tests: the pointer on a pane of th
     return 1;
 }
 
+/* --- MissLayout ("TooBad"), WipeKoopa, WipeGameOver ("GameOver"): the miss / game over sequences' (game.c) ----- */
+static struct { LytInst *toobad, *koopa, *gameover; u8 tb_on, ko_on, go_on; } mlay;
+
+void menu_miss_start(void) /* MissLayout::start: Appear (its TooBad effect not shown) */
+{
+    if (!mlay.toobad || mlay.tb_on) return;
+    mlay.tb_on = 1;
+    lyt_start(mlay.toobad, "Appear", 0);
+}
+void menu_wipe_koopa(int frames) /* WipeKoopa::wipe: "out" over `frames` (sAnimFrame 90) */
+{
+    if (!mlay.koopa) return;
+    mlay.ko_on = 1;
+    lyt_start(mlay.koopa, "out", 0);
+    float end = lyt_anim_frames(mlay.koopa, "out");
+    if (frames <= 0) frames = 90;
+    lyt_set_rate(mlay.koopa, 0, end / frames);
+}
+int menu_wipe_koopa_closed(void) { return !mlay.koopa || (mlay.ko_on && lyt_stopped(mlay.koopa, 0)); } /* !isWipeActive */
+void menu_wipe_gameover(void) /* WipeGameOver::exeActive: its GameOver animation */
+{
+    if (!mlay.gameover || mlay.go_on) return;
+    mlay.go_on = 1;
+    lyt_start(mlay.gameover, "GameOver", 0);
+}
+static void mlay_init(void)
+{
+    memset(&mlay, 0, sizeof mlay);
+    mlay.toobad = lyt_new("TooBad");
+    mlay.koopa = lyt_new("WipeKoopa");
+    mlay.gameover = lyt_new("GameOver");
+}
+static void mlay_update(void)
+{
+    if (mlay.tb_on) lyt_update(mlay.toobad);
+    if (mlay.ko_on) lyt_update(mlay.koopa);
+    if (mlay.go_on) lyt_update(mlay.gameover);
+}
+static void mlay_draw(void)
+{
+    if (!mlay.tb_on && !mlay.ko_on && !mlay.go_on) return;
+    render_world_done();
+    if (mlay.tb_on) lyt_draw(mlay.toobad);
+    if (mlay.ko_on) lyt_draw(mlay.koopa);
+    if (mlay.go_on) lyt_draw(mlay.gameover);
+}
+
 static void wipe_update(void)
 {
     if (!wipe.frames) return;
@@ -1290,6 +1342,7 @@ static void wipe_update(void)
 void menu_draw(void)
 {
     if (dmu.on) { render_world_done(); dmu_draw(); }
+    mlay_draw();
     wipe_draw_quad();
     fade_draw();
     if (!pm.alive) return;

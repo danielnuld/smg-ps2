@@ -25,6 +25,11 @@ int menu_dome_back_state(int q);     /* 0 isPointing, 1 isAppearing, 2 isDisappe
 void menu_dome_confirm_appear(void); /* GalaxyConfirmLayout */
 int menu_dome_confirm(void);         /* 0 choosing, 1 yes, 2 no */
 void menu_dome_plate(int i, const char *galaxy, int type, int immediate, float x, float y); /* GalaxyNamePlate */
+/* the miss / game over sequences' layouts (game.c miss_*) */
+void menu_miss_start(void);          /* MissLayout ("TooBad") */
+void menu_wipe_koopa(int frames);    /* WipeKoopa: closes over frames (<= 0: 90) */
+int menu_wipe_koopa_closed(void);
+void menu_wipe_gameover(void);       /* WipeGameOver ("GameOver") */
 int menu_draw_screen(void); /* game_draw: 1 when a whole-screen menu (the scenario select) drew the frame */
 const u16 *msg_get(const char *label); /* MR::getLayoutMessageDirect / getGameMessageDirect (MSGS chunk), NULL none */
 int menu_test_point_scenario(const char *pane);
