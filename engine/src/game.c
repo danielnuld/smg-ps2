@@ -262,7 +262,9 @@ typedef struct {
     int arrow;       /* ArrowSwitch: a spin turns it a step, its SW_A (update_arrows) */
     int anmmodel;    /* the AnmModelObj family (anm_kind; update_anmmodels) */
     int kmove;       /* the model's Move joint (SKIN pad 1), its collision on it (kcl_query), -1 none */
+    int kparent;     /* a "<class>#Move" collision's instance: its owner (whose pose and matrix it follows), -1 none */
     int lever;       /* SpinLeverSwitch (update_levers) */
+    int dswitch, dsinit; /* DesertLandDownSwitch (update_dswitches) */
     int kstair;      /* KoopaBattleMapStair(Big / Turn): breaks and falls after its switch (update_stairs) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
@@ -1168,7 +1170,7 @@ static int npls; static void update_palms(void), pl_place(Inst *in);
 static int nlls; static void update_lotus(void), ll_place(Inst *in);
 #define TRAIN_CARS 8
 #define TRAIN_CARS_ROOM TRAIN_CARS
-static void update_levers(void);
+static void update_levers(void), update_dswitches(void);
 static int anm_kind(const char *n); static void update_anmmodels(void);
 static int nass; static void update_arrows(void), as_place(Inst *in);
 static int nebl; static void update_eballs(void), draw_eballs(void);
@@ -1221,7 +1223,8 @@ static int kcl_query_(V3 c, float radius, Hit *out, int max)
         const int *lcoll = NULL;
         int nm = in->leaves ? lf_mats(in, &mats, &lcoll) : 0;
         float kmm[16];
-        if (!nm && in->kmove >= 0 && in->anim && in->anim->skin == in->md->skin) { mat_mul(kmm, in->m, in->anim->world[in->kmove]); nm = 1; mats = (const float (*)[16])kmm; lcoll = NULL; }
+        const Inst *kown = in->kparent >= 0 ? &insts[in->kparent] : in; /* a #Move part follows its owner's pose */
+        if (!nm && in->kmove >= 0 && kown->anim && kown->anim->skin == kown->md->skin) { mat_mul(kmm, kown->m, kown->anim->world[in->kmove]); nm = 1; mats = (const float (*)[16])kmm; lcoll = NULL; }
         if (!nm) { nm = 1; mats = (const float (*)[16])in->m; lcoll = NULL; }
         for (int sub = 0; sub < nm && n < max; sub++) {
         if (lcoll && !lcoll[sub]) continue;
@@ -1501,7 +1504,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     int t_stink = scene_type(s, "StinkBugSmall"), t_uni = scene_type(s, "Unizo"), t_unil = scene_type(s, "UnizoLand"),
         t_unis = scene_type(s, "UnizoShoal"), t_poi = scene_type(s, "Poihana"), t_petari = scene_type(s, "Petari");
     int t_gcircle = scene_type(s, "CircleCoinGroup"), t_grail = scene_type(s, "RailCoin");
-    insts_cap = (int)s->nobjs + TRAIN_CARS_ROOM * count_type("ChooChooTrain", 0); /* room for ChooChooTrain's cars */
+    insts_cap = (int)s->nobjs + TRAIN_CARS_ROOM * count_type("ChooChooTrain", 0) + 32; /* room for ChooChooTrain's cars, #Move parts */
     insts =mem_alloc(MEM_OBJECTS, insts_cap * sizeof(Inst));
     zone_spheres();
     game_rebind();
@@ -3335,6 +3338,7 @@ void game_rebind(void)
         in->arrow = strcmp(name, "ArrowSwitch") == 0 ? 1 : strcmp(name, "ArrowSwitchMulti") == 0 ? 2 : 0;
         in->anmmodel = anm_kind(name);
         in->lever = strcmp(name, "SpinLeverSwitch") == 0;
+        in->dswitch = strcmp(name, "DesertLandDownSwitch") == 0;
         in->kstair = strncmp(name, "KoopaBattleMapStair", 19) == 0 && strcmp(name, "KoopaBattleMapStairTurnAppear") != 0;
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
@@ -3347,8 +3351,8 @@ void game_rebind(void)
         in->railer = scene_blob_g && ((r->arg[7] > 0 && (r->arg[7] >> 30 & 1)) || in->eyebeamer) && r->path >= 0 ?
                      find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->kcl = scene_kcl(s, name);
-        in->kmove = -1;
-        if (in->kcl && in->anim && md->skin) /* MapObjActor: the collision on the Move joint (slice.py marks it: pad 1) */
+        in->kmove = -1; in->kparent = -1;
+        if (in->kcl && in->anim && md->skin && !in->dswitch) /* MapObjActor: the collision on the Move joint (slice.py marks it: pad 1); DesertLandMoveSwitch keeps its own still */
             for (int j = 0; j < md->skin->njoints; j++) if (md->skin->joints[j].pad == 1) { in->kmove = j; break; }
         if (in->tdoor) { char kn[48]; snprintf(kn, sizeof kn, "%s#Open", name); in->kcl_close = in->kcl; in->kcl_open = scene_kcl(s, kn); }
         in->zone = r->zone;
@@ -3425,6 +3429,22 @@ void game_rebind(void)
             in->kcl = scene_kcl(s, "PhantomShipBridge#Move");
         }
     m_trainbody = scene_model(s, "ChooChooTrainBody"); m_bfwind = scene_model(s, "BigFanWind");
+    for (int i = 0, n = ninsts; i < n; i++) { /* a "<class>#Move" collision (slice.py KCL_PARTS) on its Move joint: an
+                                               * invisible instance following its owner (kcl_query) */
+        const Inst *o = &insts[i];
+        char kn[48];
+        if (!o->md || !o->md->skin || !o->anim || o->bridge || ninsts >= insts_cap) continue;
+        snprintf(kn, sizeof kn, "%s#Move", s->types + 32 * s->objs[o->row].type);
+        const unsigned char *k = scene_kcl(s, kn);
+        int mj = -1;
+        for (int j = 0; k && j < o->md->skin->njoints; j++) if (o->md->skin->joints[j].pad == 1) { mj = j; break; }
+        if (mj < 0) continue;
+        Inst *in = &insts[ninsts++];
+        memset(in, 0, sizeof *in);
+        in->md = o->md; in->row = o->row; in->zone = o->zone; in->s = o->s; in->reach = o->reach;
+        memcpy(in->m, o->m, sizeof in->m);
+        in->kcl = k; in->kmove = mj; in->kparent = i; in->invisible = 1; in->railer = NULL;
+    }
     for (int i = 0, n = ninsts; i < n; i++) /* ChooChooTrain's cars (update_trains) */
         if (insts[i].train == 1 && m_trainbody)
             for (int c = 0; c < tr_cars(&s->objs[insts[i].row]) && ninsts < insts_cap; c++) {
@@ -20484,6 +20504,51 @@ static void update_levers(void)
     }
 }
 
+/* DesertLandMoveSwitch.cpp after Petari (DesertLandDownSwitch): a hip drop switch: its button (the Move collision on
+ * its Move joint) springs down under Mario landing (a spring 0.35 / 0.75 kicked -10, not drawn here); a hip drop on it
+ * presses it (SwitchDown: On clip from step 6, at its end HIPDROP_SWITCH_ON and a shake), its SW_A on; with arg0 it
+ * comes back after that many frames (the timer SEs every second, faster at the end), else when its SW_A goes off
+ * (Return clip). arg1 set: it starts on. row_turn 0 Wait / 1 SwitchDown / 2 On / 3 Return, row_step its step.
+ * ponytail: no spring sag of the button, no SandClockGalaxy timer offset */
+static void update_dswitches(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->dswitch || !row_shown(in->row)) continue;
+        const Row *r = &sc->objs[in->row];
+        signed char *n = &row_turn[in->row];
+        unsigned short *st = &row_step[in->row];
+        int t = r->arg[0] > 0 ? r->arg[0] : 0;
+        if (*st < 0xFFFF) ++*st;
+        if (!in->dsinit) { in->dsinit = 1; if (r->arg[1] != -1) { *n = 2; *st = 0; obj_play(in, "On", 0, 0); if (in->anim) in->anim->frame = (float)anim_length(in->anim); } }
+        int on_me = mario_ground >= 0 && insts[mario_ground].row == in->row, hip = hip_hit && on_me;
+        switch (*n) {
+        case 0: case 3:
+            if (*st == 1) obj_play(in, *n == 0 ? "Wait" : "Return", *n == 0, 0);
+            if (*n == 3 && *st == 1) { if (r->sw[SW_A] >= 0) sw_set((Row *)r, SW_A, 0); }
+            if (hip) { *n = 1; *st = 0; break; } /* trySwitchDown */
+            if (*n == 3 && *st > 1 && (!in->anim || in->anim->done)) { *n = 0; *st = 0; }
+            break;
+        case 1:
+            if (*st == 6) obj_play(in, "On", 0, 0);
+            if (*st > 6 && (!in->anim || in->anim->done)) { /* tryOn */
+                se_start(SE_OJ_HIPDROP_SWITCH_ON, &in->m[12]); camera_shake(SHAKE_NORMAL_WEAK);
+                *n = 2; *st = 0;
+            }
+            break;
+        case 2:
+            if (*st == 1 && r->sw[SW_A] >= 0) sw_set((Row *)r, SW_A, 1);
+            if (t > 0) {
+                int left = t - *st; /* updateTimerSE */
+                if (*st == t) se_start(SE_SY_TIMER_A_0, NULL);
+                else if (left > 0 && left % 60 == 0) se_start(left > 600 ? SE_SY_TIMER_A_2 : left > 120 ? SE_SY_TIMER_A_1 : SE_SY_TIMER_A_QUASI_0, NULL);
+                if (*st >= t) { *n = 3; *st = 0; }
+            } else if (*st > 1 && r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) { *n = 3; *st = 0; }
+            break;
+        }
+    }
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -22342,6 +22407,7 @@ void game_update(void)
     update_arrows();
     update_anmmodels();
     update_levers();
+    update_dswitches();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
