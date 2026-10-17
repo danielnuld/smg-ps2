@@ -42,10 +42,10 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
-       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO };
+       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW };
 /* walkers ported in the release push: their classes (counted, placed and drawn through this table) */
 static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}, {"BasaBasa", WALK_BASABASA}, {"BasaBasaIce", WALK_BASABASA}, {"Jellyfish", WALK_JELLYFISH},
-                                                                    {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}, {"Mogu", WALK_MOGU}, {"Mogucchi", WALK_MOGUCCHI}, {"Metbo", WALK_METBO}};
+                                                                    {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}, {"Mogu", WALK_MOGU}, {"Mogucchi", WALK_MOGUCCHI}, {"Metbo", WALK_METBO}, {"TeresaWater", WALK_TERESAW}};
 #define NEW_WALKERS ((int)(sizeof new_walkers / sizeof new_walkers[0]))
 static const Model *m_wnew[NEW_WALKERS];
 static int walker_new_kind(const char *cls)
@@ -16179,6 +16179,53 @@ static void metbo_update(Kuribo *k)
     }
 }
 
+/* TeresaWater.cpp after Petari: a Boo swimming between its place and arg0 (800) along its front (moveAndTurnToTarget
+ * 0.5, no gravity, 0.9, 1.5 degrees; its side velocity halved), turning back within 30 of either. Its body (60) hurts
+ * Mario strongly (Hit: stops, ATTACK_SUCCESS, back to Move at its clip's end; else it pushes); a star piece stuns it
+ * (Reaction). Only a searchlight kills it. ponytail: no star pointer swoon (DPDSwoon), no anim scale */
+enum { TW_MOVE, TW_HIT, TW_STUN };
+static void tw_update(Kuribo *k)
+{
+    const Row *r = &sc->objs[k->row];
+    if (!k->front.x && !k->front.y && !k->front.z) { /* init: _AC its place, _A0 arg0 along its front */
+        V3 x, z;
+        row_axes(r, &x, &z);
+        k->front = vnorm(z); k->dir = 1;
+        k->tcenter = k->pos; k->ttarget = vadd(k->pos, vmul(k->front, r->arg[0] != -1 ? (float)r->arg[0] : 800.0f));
+        w_nrv(k, TW_MOVE);
+    }
+    k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f);
+    V3 tgt;
+    int st = ++k->step;
+    switch (k->nrv) {
+    case TW_MOVE:
+        if (st == 0) w_act(k, "Wait");
+        tgt = k->dir > 0 ? k->ttarget : k->tcenter;
+        w_move_turn(k, vsub(tgt, k->pos), 0.5f, 0.0f, 0.9f, 1.5f);
+        { V3 f = vnorm(k->front); k->vel = vadd(vmul(f, vdot(k->vel, f)), vmul(vsub(k->vel, vmul(f, vdot(k->vel, f))), 0.5f)); } /* attenuateVelocityExceptDirection */
+        if (vlen(vsub(k->pos, tgt)) < 30.0f) k->dir = -k->dir; /* isNear */
+        w_se_lv(k, SE_EM_LV_TERESA_MOVE);
+        break;
+    case TW_HIT:
+        if (st == 0) { w_act(k, "Hit"); k->vel = v3(0, 0, 0); w_se(k, SE_EV_TERESA_ATTACK_SUCCESS); }
+        if (w_bck_stopped(k)) w_nrv(k, TW_MOVE);
+        break;
+    case TW_STUN:
+        if (st == 0) w_act(k, "Reaction");
+        if (w_bck_stopped(k)) w_nrv(k, TW_MOVE);
+        break;
+    }
+    k->act_t += k->act_rate;
+    k->pos = vadd(k->pos, k->vel);
+    k->qy = k->up = vmul(k->grav, -1.0f); k->qz = vnorm(vtangent(k->front, k->qy)); /* calcMtxFromGravityAndZAxis */
+    if (vlen(k->qz) < 1e-3f) k->qz = k->front;
+    if (k->nrv == TW_HIT) return;
+    if (mario_touch(k->pos, 60.0f)) { /* attackSensor */
+        if (!mario->hurt_timer) { hurt_mario(k->pos, 25.0f); w_nrv(k, TW_HIT); }
+        else { V3 d = vtangent(vsub(mario->pos, k->pos), mario->up); if (vlen(d) > 1e-3f) mario->pos = vadd(mario->pos, vmul(vnorm(d), 5.0f)); } /* sendMsgPush */
+    }
+}
+
 static void update_kuribo_one(Kuribo *k);
 static void update_kuribo(void)
 {
@@ -16206,6 +16253,7 @@ static void update_kuribo_one(Kuribo *k)
             else if (k->kind == WALK_MOGU) mogu_update(k);
             else if (k->kind == WALK_MOGUCCHI) mogucchi_update(k);
             else if (k->kind == WALK_METBO) metbo_update(k);
+            else if (k->kind == WALK_TERESAW) tw_update(k);
             return;
         }
         if (k->kind == WALK_PETARI) { /* ponytail: still while its zone has no collision (streaming) */
@@ -20150,6 +20198,7 @@ static void update_shots(void)
                                                                                                   * (Jellyfish: its anim scale hit reaction) */ }
             else if (e->kind == WALK_GESSO) { if (e->nrv != GE_PUNCHDOWN) w_nrv(e, GE_ROTATE); } /* isMsgStarPieceAttack: Rotate */
             else if (e->kind == WALK_METBO) { w_se(e, SE_EM_METBO_TRAMPLE); if (!mb_swoon(e) && e->nrv != MB_RECOVER && !mb_down(e)) w_nrv(e, MB_GUARD); } /* isMsgStarPieceReflect */
+            else if (e->kind == WALK_TERESAW) w_nrv(e, TW_STUN); /* isMsgStarPieceAttack: Stun */
             else if (e->kind == WALK_MOGUCCHI) { if (e->nrv != MC_SCATTER && e->nrv != MC_DIE) w_nrv(e, MC_APPEARDOWN); } /* isMsgStarPieceAttack */
             else if (e->kind == WALK_MOGU) { /* isMsgStarPieceAttack: up, it flips (SwoonStart) */
                 if (e->nrv == MG_APPEAR || e->nrv == MG_SEARCH || e->nrv == MG_TURN || e->nrv == MG_THROW) { if (e->bshow == 1) e->bshow = 0; w_nrv(e, MG_SWOONSTART); }
