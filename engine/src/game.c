@@ -240,6 +240,7 @@ typedef struct {
     int sbeamer;     /* SearchBeamer: aims its beam at Mario (update_sbeamers, sbm_place, sbm_joints) */
     int pressure;    /* WaterPressure: shoots water bullets that catch Mario (update_pressures, pr_joints) */
     int trapeze;     /* Trapeze: a bar on ropes Mario swings on (update_trapezes, tz_hold, tz_place) */
+    int onimasu;     /* Onimasu / OnimasuPivot: a block tumbling along its rail, a press (update_onimasu, oni_place) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
 static V3 firebar_ball(const Inst *in, int j, int k);
@@ -605,6 +606,7 @@ static void pr_joints(Inst *in), draw_wbullets(void), update_pressures(void);
 static int wb_hold(Player *m), tz_hold(Player *m);
 static void tz_place(Inst *in), update_trapezes(void), draw_trapeze_ropes(void);
 static int ntzs, tz_ride = -1; /* the Trapeze Mario holds, -1 none */
+static int nonis; static void oni_place(Inst *in), update_onimasu(void);
 static int nmhills; static const Model *m_mhole, *m_mhill[3];
 static void sbm_place(Inst *in), sbm_joints(Inst *in);
 static int pole_try(Player *m), pole_hold(Player *m);
@@ -1423,7 +1425,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nvines = 0; vine_ride = -1;
     pole_init();
     nrbms = 0;
-    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1;
+    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0;
     dino_cam = 0;
     foot_num = foot_rot = 0;
     nseesaws = 0;
@@ -3231,13 +3233,14 @@ void game_rebind(void)
         in->seesaw = strcmp(name, "PhantomShipHandle") == 0;
         in->bridge = strcmp(name, "PhantomShipBridge") == 0;
         in->dossun = strcmp(name, "Dossun") == 0;
+        in->onimasu = strcmp(name, "Onimasu") == 0 || strcmp(name, "OnimasuPivot") == 0;
         in->rbeamer = strcmp(name, "RingBeamer") == 0;
         in->sbeamer = strcmp(name, "SearchBeamer") == 0;
         in->pressure = strcmp(name, "WaterPressure") == 0;
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 ? 3 : 0;
         in->press = strcmp(name, "RGTowerPressGroundA") == 0 || strcmp(name, "ReverseGravityRoomPressGroundA") == 0 ||
-                    strcmp(name, "ReverseGravityRoomPressGroundB") == 0 || in->dossun;
+                    strcmp(name, "ReverseGravityRoomPressGroundB") == 0 || in->dossun || in->onimasu;
         in->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 : 0;
         { char bn[40]; snprintf(bn, sizeof bn, "%sBloom", name); in->md_bloom = scene_model(s, bn); }
         if (in->seesaw) { in->rotor = 0; seesaw_matrix(in); }
@@ -3262,6 +3265,7 @@ void game_rebind(void)
         if (in->dossun && row_turn) dossun_place(in);
         if (in->sbeamer) sbm_place(in);
         if (in->trapeze) tz_place(in);
+        if (in->onimasu) oni_place(in);
         if (in->coco) coco_spawn(in);
         if (in->fountain || in->stray) memcpy(in->m0, in->m, 64);
         if (in->stray) in->head = row_turn[i] ? (stray_at[i % 64].x || stray_at[i % 64].y || stray_at[i % 64].z ? stray_at[i % 64] : v3(in->m[12], in->m[13], in->m[14])) : v3(in->m[12], in->m[13], in->m[14]);
@@ -17831,6 +17835,252 @@ static void draw_trapeze_ropes(void)
     }
 }
 
+/* JGeometry TQuat4f's basics (x, y, z, w): setRotate (axis, angle / from one vector to another), mult (this x q),
+ * slerp, getQuat (from axes), its X / Y / Z directions */
+typedef struct { float x, y, z, w; } Quat;
+static Quat q_ident(void) { return (Quat){0, 0, 0, 1}; }
+static Quat q_axis(V3 a, float ang) { a = vnorm(a); float s = sinf(ang * 0.5f); return (Quat){a.x * s, a.y * s, a.z * s, cosf(ang * 0.5f)}; }
+static Quat q_mul(Quat a, Quat b)
+{
+    return (Quat){a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y, a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+                  a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w, a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z};
+}
+static Quat q_norm(Quat q) { float l = sqrtf(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w); return l > 1e-9f ? (Quat){q.x / l, q.y / l, q.z / l, q.w / l} : q_ident(); }
+static Quat q_between(V3 a, V3 b) /* setRotate(from, to) */
+{
+    a = vnorm(a); b = vnorm(b);
+    float c = vdot(a, b);
+    V3 ax = vcross(a, b);
+    if (c < -0.99999f) { ax = vcross(a, v3(1, 0, 0)); if (vlen(ax) < 1e-3f) ax = vcross(a, v3(0, 1, 0)); return q_axis(ax, 3.14159265f); }
+    return q_norm((Quat){ax.x, ax.y, ax.z, 1.0f + c});
+}
+static Quat q_slerp(Quat a, Quat b, float t)
+{
+    float c = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
+    if (c < 0) { b = (Quat){-b.x, -b.y, -b.z, -b.w}; c = -c; }
+    float ka = 1.0f - t, kb = t;
+    if (c < 0.9999f) { float th = acosf(c), s = sinf(th); ka = sinf((1.0f - t) * th) / s; kb = sinf(t * th) / s; }
+    return q_norm((Quat){a.x * ka + b.x * kb, a.y * ka + b.y * kb, a.z * ka + b.z * kb, a.w * ka + b.w * kb});
+}
+static void q_axes(Quat q, V3 *x, V3 *y, V3 *z)
+{
+    float xx = q.x * q.x, yy = q.y * q.y, zz = q.z * q.z, xy = q.x * q.y, xz = q.x * q.z, yz = q.y * q.z, wx = q.w * q.x, wy = q.w * q.y, wz = q.w * q.z;
+    if (x) *x = v3(1 - 2 * (yy + zz), 2 * (xy + wz), 2 * (xz - wy));
+    if (y) *y = v3(2 * (xy - wz), 1 - 2 * (xx + zz), 2 * (yz + wx));
+    if (z) *z = v3(2 * (xz + wy), 2 * (yz - wx), 1 - 2 * (xx + yy));
+}
+static Quat q_from_axes(V3 x, V3 y, V3 z) /* getQuat */
+{
+    float t = x.x + y.y + z.z;
+    Quat q;
+    if (t > 0) { float s = sqrtf(t + 1.0f) * 2; q = (Quat){(y.z - z.y) / s, (z.x - x.z) / s, (x.y - y.x) / s, 0.25f * s}; }
+    else if (x.x > y.y && x.x > z.z) { float s = sqrtf(1 + x.x - y.y - z.z) * 2; q = (Quat){0.25f * s, (y.x + x.y) / s, (z.x + x.z) / s, (y.z - z.y) / s}; }
+    else if (y.y > z.z) { float s = sqrtf(1 + y.y - x.x - z.z) * 2; q = (Quat){(y.x + x.y) / s, 0.25f * s, (z.y + y.z) / s, (z.x - x.z) / s}; }
+    else { float s = sqrtf(1 + z.z - x.x - y.y) * 2; q = (Quat){(z.x + x.z) / s, (z.y + y.z) / s, 0.25f * s, (x.y - y.x) / s}; }
+    return q_norm(q);
+}
+static Quat q_front_up(V3 f, V3 up) /* makeQuatFromVec: makeMtxFrontUp */
+{
+    V3 z = vnorm(f), x = vcross(up, z);
+    x = vlen(x) > 1e-6f ? vnorm(x) : v3(1, 0, 0);
+    return q_from_axes(x, vcross(z, x), z);
+}
+
+/* Onimasu.cpp / OnimasuJump.cpp / OnimasuPivot.cpp after Petari (Onimasu: jumps point to point; OnimasuPivot: turns
+ * over the odd points' pivots, 400 x sqrt 2 out): a block on its rail (its JMap points). It waits 90 frames (its SW_A
+ * on, if any), then in 30 it moves to the next point turning a quarter about its axis (_BC: between the points' ground
+ * normals, or by the point's arg0: 0 / 1 half / back a quarter turn, 2 a stamp on the spot), lands (Move effect, SE,
+ * a shake within 3500). OnimasuJump's velocity reaches the point under 1.6 gravity along its normal. A press; Mario on
+ * it is carried. ponytail: no quick comet, no BaseMatrixFollowTarget, its ground probe a line along gravity (2000) */
+#define MAX_ONIMASU 32
+#define ONI_PTS 32
+enum { ON_WAITSW, ON_WAIT, ON_WAITSTAMP, ON_JUMP, ON_STAMP };
+static struct { int row, nrv, step, init, cur, np; V3 pos, vel, bc, nrm[ONI_PTS]; Quat c8, d8, e8, p110, p120; } onis[MAX_ONIMASU];
+static int oni_of(int row)
+{
+    for (int i = 0; i < nonis; i++) if (onis[i].row == row) return i;
+    if (nonis == MAX_ONIMASU) return -1;
+    memset(&onis[nonis], 0, sizeof onis[0]);
+    onis[nonis].row = row;
+    return nonis++;
+}
+static const unsigned char *oni_path(int k, u32 *nraw)
+{
+    const Row *r = &sc->objs[onis[k].row];
+    const unsigned char *e = r->path >= 0 && scene_blob_g ? find_path(scene_blob_g, r->zone, r->path) : NULL;
+    if (!e) return NULL;
+    *nraw = *(const u32 *)(e + 12);
+    return e;
+}
+static V3 oni_pt(int k, int i) /* calcRailPointPos */
+{
+    u32 nr;
+    const unsigned char *e = oni_path(k, &nr);
+    if (!e || nr == 0) return onis[k].pos;
+    u32 np = *(const u32 *)(e + 8);
+    const float *raw = (const float *)(e + 24 + 12 * np);
+    i = ((i % (int)nr) + (int)nr) % (int)nr;
+    return v3(raw[3 * i], raw[3 * i + 1], raw[3 * i + 2]);
+}
+static int oni_pt_arg0(int k, int i) /* getCurrentRailPointArg0 */
+{
+    u32 nr;
+    const unsigned char *e = oni_path(k, &nr);
+    if (!e || nr == 0) return -1;
+    u32 np = *(const u32 *)(e + 8);
+    const unsigned char *pa = e + 24 + 12 * np + 12 * nr;
+    i = ((i % (int)nr) + (int)nr) % (int)nr;
+    return *(const int *)(pa + 12 * i + 4);
+}
+static int oni_pivot(int k) { return !strcmp(sc->types + 32 * sc->objs[onis[k].row].type, "OnimasuPivot"); }
+static int oni_count(int k) { u32 nr = 0; oni_path(k, &nr); return oni_pivot(k) ? (int)nr / 2 : (int)nr; }
+static int oni_last(int k) { int n = onis[k].cur - 1; return n < 0 ? oni_count(k) - 1 : n; }
+static int oni_next_no(int k) { return oni_pivot(k) ? onis[k].cur * 2 : onis[k].cur; }
+static int oni_last_no(int k) { return oni_pivot(k) ? oni_last(k) * 2 : oni_last(k); }
+static int oni_turn(int k, int pt, float *dir) /* calcTurnDirection: arg0 of the point it is at */
+{
+    int a = oni_pt_arg0(k, pt);
+    if (a == 0) { *dir = 0.5f; return 1; }
+    if (a == 1) { *dir = -0.5f; return 1; }
+    if (a == 2) { *dir = -1.0f; return 1; }
+    return 0;
+}
+static void oni_init(int k, Inst *in)
+{
+    typeof(&onis[0]) o = &onis[k];
+    const Row *r = &sc->objs[o->row];
+    o->np = oni_count(k) > ONI_PTS ? ONI_PTS : oni_count(k);
+    for (int i = 0; i < o->np; i++) { /* collectRailPointInfo: the ground's normal under each point */
+        V3 p = oni_pt(k, oni_pivot(k) ? i * 2 : i), up = up_at(p, v3(0, 1, 0));
+        o->nrm[i] = up;
+        for (float d = 0; d <= 2000.0f; d += 20.0f) {
+            Hit h[4];
+            V3 q = vsub(p, vmul(up, d));
+            int nh = kcl_query(q, 15.0f, h, 4), got = 0;
+            for (int j = 0; j < nh; j++) if (h[j].inst != (int)(in - insts)) { o->nrm[i] = h[j].n; got = 1; break; }
+            if (got) break;
+        }
+    }
+    o->cur = 0; o->pos = oni_pt(k, 0); /* moveCoordAndTransToRailStartPoint */
+    float m[16], one[3] = {1, 1, 1};
+    mat_translate_rot_scale(m, r->pos, r->rot, one);
+    o->c8 = o->d8 = o->e8 = q_from_axes(vnorm(v3(m[0], m[1], m[2])), vnorm(v3(m[4], m[5], m[6])), vnorm(v3(m[8], m[9], m[10])));
+    o->bc = v3(1, 0, 0);
+    if (!strncmp(game_stage_name, "FactoryGalaxy", 13)) o->bc = vnorm(v3(m[0], m[1], m[2]));
+    float td;
+    o->init = 1; o->nrv = r->sw[SW_A] >= 0 ? ON_WAITSW : (oni_turn(k, 0, &td) && td == -1.0f && !strncmp(game_stage_name, "FactoryGalaxy", 13)) ? ON_WAITSTAMP : ON_WAIT;
+    o->step = -1;
+}
+static void oni_target_pose(int k) /* calcTargetPose */
+{
+    typeof(&onis[0]) o = &onis[k];
+    V3 ln = o->nrm[oni_last(k) % (o->np ? o->np : 1)], nn = o->nrm[o->cur % (o->np ? o->np : 1)];
+    Quat change = q_ident();
+    if (vdot(ln, nn) > 0.999f) { /* isSameDirection */
+        float td;
+        if (oni_turn(k, oni_last_no(k), &td)) o->bc = vnorm(rot_axis(o->bc, vnorm(ln), 3.14159265f * td));
+        else {
+            V3 rd = vnorm(vsub(oni_pt(k, oni_next_no(k)), oni_pt(k, oni_last_no(k))));
+            o->bc = vnorm(vcross(rd, vmul(nn, -1.0f)));
+        }
+    } else {
+        change = q_between(ln, nn);
+        V3 ax = v3(change.x, change.y, change.z);
+        if (vlen(ax) > 1e-6f) o->bc = vnorm(ax); /* getRotate */
+    }
+    o->c8 = o->d8;
+    change = q_mul(change, q_axis(o->bc, 3.14159265f / 2.0f));
+    o->d8 = q_norm(q_mul(o->d8, change));
+    V3 sf, tf;
+    q_axes(o->c8, NULL, NULL, &sf); q_axes(o->d8, NULL, NULL, &tf);
+    if (vdot(sf, tf) > 0.999f) o->c8 = q_mul(o->c8, q_axis(o->bc, 3.14159265f * 0.001f));
+}
+static void oni_land(int k, Inst *in)
+{
+    typeof(&onis[0]) o = &onis[k];
+    V3 p = oni_pt(k, oni_next_no(k)), nn = o->nrm[o->cur % (o->np ? o->np : 1)];
+    V3 ep = vadd(p, vmul(nn, -400.0f)); /* emitEffectLand: half the sensor radius under */
+    float m[16];
+    basis_matrix(m, ep, nn, o->bc, 0);
+    fx_named("Onimasu", "Move", m, NULL, NULL);
+    se_start(SE_OJ_ONIMASU_LAND, &p.x);
+    if (vlen(vsub(mario->pos, p)) < 3500.0f) camera_shake(SHAKE_NORMAL_WEAK);
+    o->pos = p; o->vel = v3(0, 0, 0);
+    (void)in;
+}
+static void update_onimasu(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->onimasu || !row_shown(in->row)) continue;
+        int k = oni_of(in->row);
+        if (k < 0) continue;
+        typeof(&onis[0]) o = &onis[k];
+        const Row *r = &sc->objs[in->row];
+        if (!o->init) oni_init(k, in);
+        if (o->np < 2) continue;
+        float old[16];
+        memcpy(old, in->m, 64);
+        int st = ++o->step;
+        float td;
+        V3 nn = o->nrm[o->cur % o->np];
+        switch (o->nrv) {
+        case ON_WAITSW:
+            if (sw_on(r, SW_A)) { o->nrv = oni_turn(k, oni_next_no(k), &td) && td == -1.0f ? ON_WAITSTAMP : ON_WAIT; o->step = -1; }
+            break;
+        case ON_WAIT: case ON_WAITSTAMP:
+            if (st == 90) { o->nrv = o->nrv == ON_WAITSTAMP ? ON_STAMP : ON_JUMP; o->step = -1; }
+            break;
+        case ON_JUMP:
+            if (st == 0) {
+                se_start(SE_OJ_ONIMASU_JUMP, &o->pos.x);
+                o->cur = (o->cur + 1) % oni_count(k); /* incrementNextPoint */
+                nn = o->nrm[o->cur % o->np];
+                oni_target_pose(k);
+                if (oni_pivot(k)) { /* startMoveInner */
+                    V3 pv = oni_pt(k, oni_last_no(k) + 1), tl = vsub(oni_pt(k, oni_last_no(k)), pv), tn = vsub(oni_pt(k, oni_next_no(k)), pv);
+                    if (vdot(vnorm(tl), vnorm(tn)) > 0.999f) tl = rot_axis(tl, o->bc, 3.14159265f * 0.001f);
+                    o->p110 = q_front_up(tl, o->bc); o->p120 = q_front_up(tn, o->bc);
+                } else { /* OnimasuJump::calcJumpVelocity */
+                    V3 tp = oni_pt(k, o->cur), d = vsub(tp, o->pos);
+                    float per = vlen(d) / 30.0f, jump = 0.5f * (1.6f * 30.0f);
+                    o->vel = vadd(vmul(vlen(d) > 1e-6f ? vnorm(d) : v3(0, 0, 0), per), vmul(nn, jump));
+                }
+            }
+            { float t = st / 30.0f > 1.0f ? 1.0f : st / 30.0f; o->e8 = q_slerp(o->c8, o->d8, t); /* updatePose */
+              if (oni_pivot(k)) { Quat q = q_slerp(o->p110, o->p120, t); V3 z; q_axes(q, NULL, NULL, &z); o->pos = vadd(oni_pt(k, oni_last_no(k) + 1), vmul(vnorm(z), 565.6854f)); }
+              else { o->vel = vadd(o->vel, vmul(nn, -1.6f)); o->pos = vadd(o->pos, o->vel); } }
+            if (st == 30) {
+                oni_land(k, in);
+                o->nrv = oni_turn(k, oni_next_no(k), &td) && td == -1.0f ? ON_WAITSTAMP : ON_WAIT; o->step = -1;
+            }
+            break;
+        case ON_STAMP:
+            if (st == 0) { se_start(SE_OJ_ONIMASU_JUMP, &o->pos.x); o->vel = vmul(nn, 1.6f * 30.0f * 0.5f); } /* updateStompVelocity */
+            o->vel = vadd(o->vel, vmul(nn, -1.6f));
+            o->pos = vadd(o->pos, o->vel);
+            if (st == 30) { oni_land(k, in); o->nrv = ON_WAIT; o->step = -1; }
+            break;
+        }
+        V3 x, y, z; /* setQT */
+        q_axes(o->e8, &x, &y, &z);
+        const float *s3 = r->scale;
+        float m[16] = {x.x * s3[0], x.y * s3[0], x.z * s3[0], 0, y.x * s3[1], y.y * s3[1], y.z * s3[1], 0, z.x * s3[2], z.y * s3[2], z.z * s3[2], 0, o->pos.x, o->pos.y, o->pos.z, 1};
+        memcpy(in->m, m, 64);
+        if (mario_ground == i) carry(old, in);
+    }
+}
+static void oni_place(Inst *in) /* its pose after a rebind */
+{
+    int k = oni_of(in->row);
+    if (k < 0 || !onis[k].init) return;
+    V3 x, y, z;
+    q_axes(onis[k].e8, &x, &y, &z);
+    const float *s3 = sc->objs[in->row].scale;
+    float m[16] = {x.x * s3[0], x.y * s3[0], x.z * s3[0], 0, y.x * s3[1], y.y * s3[1], y.z * s3[1], 0, z.x * s3[2], z.y * s3[2], z.z * s3[2], 0, onis[k].pos.x, onis[k].pos.y, onis[k].pos.z, 1};
+    memcpy(in->m, m, 64);
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -19658,6 +19908,7 @@ void game_update(void)
     update_whirls();
     update_pressures();
     update_trapezes();
+    update_onimasu();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
