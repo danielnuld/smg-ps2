@@ -333,6 +333,15 @@ classes of `out/class_coverage.md` (regenerated 2026-10-16: behaviour 84.9 %, st
 Petari, Lumas / NPCs, then the misses from the 2026-10-10 coverage run. To check in the test campaign (append as
 you go): route EggStar 1-4 after the air-velocity change (92f184e); OtaKing's hit-back coconuts pass ~650 over Mario
 on the rim (ota_ball_aim, Petari CocoNutBall::setVelocityToPlayer _BE: compare with the Wii).
+Ported in the push, all untested (build only; check each in PCSX2 in the test campaign, in a galaxy that has it):
+Pole / PoleSquare / NoModel / TreeCube (b504c11: grab, climb, handstand, jump off), Dossun (54857c5: press, carry),
+RingBeamer (5028a31: group rings, JumpBeamerBeam Spread frame), SearchBeamer (0deccc6: beam joints, stop when stood
+on), Gesso (ec36be2), BasaBasa / Ice (92fee2b), Jellyfish (3d84949: rail), Kanina / Red (c202214: blue 1-up given
+at once), Mogu (520592e: stone, hole), Mogucchi (58e507c: rail, mounds), Metbo (2f37776), WhirlPoolAccelerator
+(0aa7722: swim push, bands; jpa.py texture 8), WaterPressure (d741cb8: bullets catch Mario). New walkers go through
+new_walkers[] (count / placement / model by class); their star piece reactions in update_shots. Every pack must be
+rebuilt before the test campaign (slice.py SKINNED_OBJ / EXTRA / keep list and jpa.py changed; OceanPhantomCave 1
+is 9.03 MB streaming, over the 9.01 budget: check after the repack).
 
 **Earlier (2026-10-16 morning, stopped by the user mid-investigation):** a longer Wii comparison, from the start
 to the first launch star (the SuperSpinDriver under the start planet, at -4631 -17641 -16400, the bottom of the tower
