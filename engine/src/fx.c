@@ -1,5 +1,6 @@
 #include "fx.h"
 
+#include "mem.h"
 #include "render.h"
 
 #include <ctype.h>
@@ -104,7 +105,7 @@ void fx_init(const Scene *s)
     res = (const PtRes *)(defs + ndefs);
     nautos = ((const u32 *)s->ptcl)[3];
     autos = (const FxAuto *)(res + nres);
-    auto_ix = malloc(sizeof *auto_ix * (nautos + 1));
+    auto_ix = mem_alloc(MEM_SCENE, sizeof *auto_ix * (nautos + 1)); /* the arena: freed with the scene */
     for (u32 i = 0; auto_ix && i < nautos; i++) { /* insertion sort: a few thousand rows, once */
         u32 j = i;
         while (j > 0 && auto_cmp(&autos[auto_ix[j - 1]], &autos[i]) > 0) { auto_ix[j] = auto_ix[j - 1]; j--; }

@@ -55,12 +55,71 @@ static void pick_scenario(void)
 }
 typedef struct { u32 base, size, pos; FILE *f; } Pack; /* DISC: base = first sector, f unused but non-NULL while open */
 
+/* The packs' buffers come from one region taken at boot (first fit, neighbours merged when freed): the libraries'
+ * small heap blocks (stdio FILEs, the music's buffer) can not split it, so after a scene change it is whole again
+ * and the next scene's big stage packs fit as at boot */
+#define PK_BLOCKS 160
+static u8 *pk_base;
+static u32 pk_size;
+static struct { u32 off, size; u8 used; } pk_blk[PK_BLOCKS];
+static int pk_n;
+
+static void pk_init(void)
+{
+    for (pk_size = 24u << 20; pk_size >= (4u << 20); pk_size -= 256u << 10) /* all the heap has but ~1.5 MB */
+        if ((pk_base = memalign(64, pk_size + (1536u << 10)))) break;
+    free(pk_base);
+    pk_base = memalign(64, pk_size);
+    pk_blk[0].off = 0; pk_blk[0].size = pk_size; pk_blk[0].used = 0;
+    pk_n = 1;
+    printf("packs: %u KB region\n", pk_size >> 10);
+}
+
+static void *pk_alloc(u32 n)
+{
+    n = (n + 63) & ~63u;
+    for (int i = 0; i < pk_n; i++) {
+        if (pk_blk[i].used || pk_blk[i].size < n) continue;
+        if (pk_blk[i].size > n && pk_n < PK_BLOCKS) { /* the rest stays free after it */
+            memmove(&pk_blk[i + 2], &pk_blk[i + 1], (pk_n - i - 1) * sizeof pk_blk[0]);
+            pk_blk[i + 1].off = pk_blk[i].off + n; pk_blk[i + 1].size = pk_blk[i].size - n; pk_blk[i + 1].used = 0;
+            pk_blk[i].size = n;
+            pk_n++;
+        }
+        pk_blk[i].used = 1;
+        return pk_base + pk_blk[i].off;
+    }
+    return NULL;
+}
+
+static void pk_free(const void *p)
+{
+    if (!p) return;
+    for (int i = 0; i < pk_n; i++) {
+        if (pk_base + pk_blk[i].off != p) continue;
+        pk_blk[i].used = 0;
+        if (i + 1 < pk_n && !pk_blk[i + 1].used) { /* merge the next */
+            pk_blk[i].size += pk_blk[i + 1].size;
+            memmove(&pk_blk[i + 1], &pk_blk[i + 2], (pk_n - i - 2) * sizeof pk_blk[0]);
+            pk_n--;
+        }
+        if (i > 0 && !pk_blk[i - 1].used) { /* into the previous */
+            pk_blk[i - 1].size += pk_blk[i].size;
+            memmove(&pk_blk[i], &pk_blk[i + 1], (pk_n - i - 1) * sizeof pk_blk[0]);
+            pk_n--;
+        }
+        return;
+    }
+}
+
 #ifdef DISC
 #define SECTOR 2048
 #define PACK_ALLOC(n) (((n) + SECTOR - 1) & ~(SECTOR - 1))
 typedef struct { char path[88]; u32 off, size; } TocEntry;
 static TocEntry toc[72];
 static int ntoc;
+static u8 *toc_all; /* the whole PACKS.TOC, kept (toc_select picks a scene's entries) */
+static u32 toc_n;
 static u32 bin_lsn;
 static sceCdRMode cd_mode = {5, SCECdSpinNom, SCECdSecS2048, 0};
 
@@ -122,6 +181,7 @@ static void disc_menu(const u8 *entries, u32 n)
 static void toc_load(void)
 {
     sceCdlFILE ft, fb;
+    if (toc_all) return;
     sceCdInit(SCECdINoD);
     sceCdMmode(SCECdMmodeDvd);
     if (!sceCdSearchFile(&ft, "\\PACKS.TOC;1") || !sceCdSearchFile(&fb, "\\PACKS.BIN;1")) {
@@ -134,18 +194,24 @@ static void toc_load(void)
         printf("packs: cannot read PACKS.TOC\n");
         for (;;) {}
     }
-    u32 n = *(const u32 *)t;
-    disc_menu(t + 4, n);
+    toc_all = t;
+    toc_n = *(const u32 *)t;
+    disc_menu(t + 4, toc_n);
+}
+
+/* this scenario's entries and the shared packs from the whole TOC (each scene) */
+static void toc_select(void)
+{
     size_t lp = strlen(scen);
-    for (u32 i = 0; i < n; i++) {
-        const TocEntry *e = (const TocEntry *)(t + 4 + i * sizeof(TocEntry));
+    ntoc = 0;
+    for (u32 i = 0; i < toc_n; i++) {
+        const TocEntry *e = (const TocEntry *)(toc_all + 4 + i * sizeof(TocEntry));
         if ((strncmp(e->path, scen, lp) == 0 && e->path[lp] == '/') || strcmp(e->path, "resident.bin") == 0 || strcmp(e->path, "sound.bin") == 0) {
             if (ntoc == (int)(sizeof toc / sizeof toc[0])) { printf("packs: TOC full\n"); for (;;) {} }
             memcpy(&toc[ntoc++], e, sizeof *e);
         }
     }
-    free(t);
-    printf("packs: disc TOC %u entries, %d for %s\n", n, ntoc, scen);
+    printf("packs: disc TOC %u entries, %d for %s\n", toc_n, ntoc, scen);
 }
 #else
 #define PACK_ALLOC(n) (n)
@@ -208,7 +274,7 @@ static const u8 *load_file(const char *path)
         printf("packs: missing %s\n", path);
         for (;;) {}
     }
-    u8 *b = memalign(64, PACK_ALLOC(p.size));
+    u8 *b = pk_alloc(PACK_ALLOC(p.size));
     if (!b || !pack_read(&p, b, p.size)) {
         printf("packs: cannot read %s (%u B)\n", path, p.size);
         for (;;) {}
@@ -257,9 +323,9 @@ static void pend_cancel(void)
     if (pend.flight) sceCdSync(0); /* the read in progress must land before its buffer goes */
 #endif
     if (pend.f.f) pack_close(&pend.f);
-    if (pend.cur) free(pend.cur);
+    if (pend.cur) pk_free(pend.cur);
     for (u32 z = 0; z < pend.z && z < nzones; z++)
-        if (pend.buf[z] && pend.buf[z] != zone_files[z]) free((void *)pend.buf[z]);
+        if (pend.buf[z] && pend.buf[z] != zone_files[z]) pk_free(pend.buf[z]);
     memset(&pend, 0, sizeof pend);
 }
 
@@ -326,7 +392,7 @@ static int pend_step(u32 budget)
                 for (;;) {}
             }
             pend.size = pend.f.size;
-            pend.cur = memalign(64, PACK_ALLOC(pend.size));
+            pend.cur = pk_alloc(PACK_ALLOC(pend.size));
             if (!pend.cur) {
                 printf("packs: no memory for %s (%u KB)\n", path, pend.size >> 10);
                 for (;;) {}
@@ -387,7 +453,7 @@ static void pend_commit(Scene *s)
     u32 t0 = cycles();
     render_release(s, base_tex, base_models);
     for (u32 z = 0; z < nzones; z++) {
-        if (zone_files[z] && zone_files[z] != pend.buf[z]) free((void *)zone_files[z]);
+        if (zone_files[z] && zone_files[z] != pend.buf[z]) pk_free(zone_files[z]);
         zone_files[z] = pend.buf[z];
     }
     memcpy(zone_full, pend.full, sizeof zone_full);
@@ -430,30 +496,34 @@ static void stream_update(Scene *s)
         pend_commit(s);
 }
 
+static const u8 *base_bufs[4]; /* scene.bin, resident.bin, sound.bin, common.bin: freed at a scene change */
+static int nbase;
+static const u8 *load_base(const char *path) { return base_bufs[nbase++] = load_file(path); }
+
 static const u8 *load_packs(Scene *s)
 {
     char path[160];
-    pick_scenario();
 #ifdef DISC
     toc_load();
+    toc_select();
 #endif
     snprintf(path, sizeof path, "%s/scene.bin", scen);
-    scene_blob = load_file(path);
+    scene_blob = load_base(path);
     if (blob_load(s, scene_blob) != 0)
         return NULL;
     u32 before_resident = pack_bytes;
-    if (blob_add(s, load_file("resident.bin")) != 0)
+    if (blob_add(s, load_base("resident.bin")) != 0)
         return NULL;
     { /* the scenario's sound pack (tools/sound.py --pack --scene), else the shared one */
         Pack sp;
         snprintf(path, sizeof path, "%s/sound.bin", scen);
         int own = pack_open(&sp, path);
         if (own) pack_close(&sp);
-        se_load(load_file(own ? path : "sound.bin"));
+        se_load(load_base(own ? path : "sound.bin"));
     }
     resident_bytes = pack_bytes - before_resident; /* its own budget (milestone 1), not the scenario room */
     snprintf(path, sizeof path, "%s/common.bin", scen);
-    if (blob_add(s, load_file(path)) != 0)
+    if (blob_add(s, load_base(path)) != 0)
         return NULL;
     u32 sz;
     nzones = *(const u32 *)blob_chunk(scene_blob, "ZONE", &sz);
@@ -504,23 +574,55 @@ static volatile u32 vblanks; /* vblank starts (INTC_VBLANK_S) */
 static int vblank_tick(int cause) { (void)cause; vblanks++; ExitHandler(); return 0; }
 #endif
 
-int main(void)
-{
-    load_modules();
-    audio_init();
-    se_init();
-    render_init();
-    pad_init();
+/* the next scene asked by the game (game.h game_request_scene: "<Galaxy>/<n>"); taken at the end of the frame's update */
+static char scene_next[64];
+void game_request_scene(const char *next) { snprintf(scene_next, sizeof scene_next, "%s", next); }
+
 #ifdef PACKS
-    const u8 *blob = load_packs(&scene);
-#else
-    const u8 *blob = blob_load(&scene, slice_blob) == 0 ? slice_blob : NULL;
+/* A scene in place (MR::requestChangeScene / StorySequenceExecutor: the next stage): the game modules' static state
+ * back to the ELF's (their gamedata restored from the boot copy, gamebss cleared: Makefile GAME_OBJS), the arena back to
+ * the boot mark, every pack and texture let go; then the scene of `scen` loads as at boot */
+extern char __start_gamedata[], __stop_gamedata[], __start_gamebss[], __stop_gamebss[];
+static char *gamedata_boot;
+static MemMark boot_mark;
+static void scene_load(void);
+static void pend_cancel(void);
+
+static void scene_switch(void)
+{
+    printf("scene: %s -> %s\n", scen, scene_next);
+    se_silence();
+    audio_stop(); /* its FILE sits above the base packs: freed before they go (the heap stays whole) */
+    if (pend.active) pend_cancel();
+    render_release(&scene, 0, 0);
+    for (u32 z = 0; z < 64; z++) {
+        pk_free(zone_files[z]);
+        zone_files[z] = NULL;
+    }
+    for (int i = 0; i < nbase; i++) pk_free(base_bufs[i]);
+    nbase = 0;
+    memset(&scene, 0, sizeof scene);
+    memset(zone_full, 0, sizeof zone_full);
+    scene_blob = NULL;
+    nzones = base_models = base_tex = base_kcl = 0;
+    pack_bytes = resident_bytes = 0;
+    mem_release(&boot_mark);
+    memcpy(__start_gamedata, gamedata_boot, __stop_gamedata - __start_gamedata);
+    memset(__start_gamebss, 0, __stop_gamebss - __start_gamebss);
+    strcpy(scen, scene_next);
+    scene_next[0] = 0;
+    scene_load();
+}
 #endif
+
+#ifdef PACKS
+static void scene_load(void)
+{
+    const u8 *blob = load_packs(&scene);
     if (!blob) {
         printf("slice: bad blob\n");
         for (;;) {}
     }
-#ifdef PACKS
     /* base packs first, then the game (its allocations stay), then the zone packs above the mark */
     render_load_textures(&scene, 0, 0);
     game_stage_name = scen;
@@ -554,10 +656,35 @@ int main(void)
     }
     pend_step(0xFFFFFFFF);
     pend_commit(&scene);
+}
+#endif
+
+int main(void)
+{
+#ifdef PACKS
+    gamedata_boot = malloc(__stop_gamedata - __start_gamedata); /* before anything writes it */
+    memcpy(gamedata_boot, __start_gamedata, __stop_gamedata - __start_gamedata);
+#endif
+    load_modules();
+    audio_init();
+    se_init();
+    render_init();
+    pad_init();
+#ifdef PACKS
+    pick_scenario();
+    pk_init();
+    mem_mark(&boot_mark);
+    scene_load();
 #else
+    const u8 *blob = blob_load(&scene, slice_blob) == 0 ? slice_blob : NULL;
+    if (!blob) {
+        printf("slice: bad blob\n");
+        for (;;) {}
+    }
     render_load_textures(&scene, 0, 0);
     game_init(&scene, blob);
 #endif
+
     mem_report();
 
     u32 t_logic = 0, t_draw = 0, t_gs = 0, worst = 0, frame = 0; (void)t_gs;
@@ -601,6 +728,24 @@ int main(void)
 #endif
         pad_update();
         game_update();
+#ifdef PACKS
+        if (scene_next[0]) {
+            scene_switch();
+#ifdef CATCHUP
+            last_vb = vblanks;
+#endif
+            continue;
+        }
+#endif
+#if defined(PACKS) && defined(SCENE_TEST)
+        if (frame == 500 || frame == 1000 || frame == 1500) { /* scenes in place, one after another */
+            static const char *next[3] = {"EggStarGalaxy/2", "AstroGalaxy/1", "EggStarGalaxy/1"};
+            printf("scene test f %u: stars %d lives %d mem %u KB, to %s\n", frame, game_stars(), game_lives(), mem_total() >> 10,
+                   next[frame / 500 - 1]);
+            game_request_scene(next[frame / 500 - 1]);
+        }
+        if (frame == 1990) printf("scene test end: %s mem %u KB\n", scen, mem_total() >> 10);
+#endif
 #ifdef PACKS
 #ifdef HAZARD_TEST
         if (frame == 120)

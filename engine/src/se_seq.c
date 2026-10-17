@@ -817,6 +817,14 @@ static void voice_off(int v)
     voice_of[v] = -1;
 }
 
+/* every voice off and flushed (a scene change: main.c clears this module's state next) */
+void se_silence(void)
+{
+    for (int v = 0; v < NVOICE; v++) voice_off(v);
+    se_flush();
+    se_wait();
+}
+
 void se_update(int steps)
 {
     if (!snd) return;

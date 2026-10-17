@@ -92,6 +92,10 @@ void se_flush(void)
     q.n = 0;
 }
 
+void se_wait(void) /* the last command batch answered (before a scene change lets its buffers go) */
+{
+    if (pending) { while (SifCheckStatRpc(&cd)) {} endx = recvbuf[0]; pending = 0; }
+}
 u32 se_endx(void) { return endx; }
 
 #ifdef SND_TEST

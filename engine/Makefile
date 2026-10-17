@@ -11,6 +11,12 @@ all: $(EE_BIN)
 
 src/assets.o: src/assets.S data/slice.bin data/libsd.irx data/audsrv.irx
 
+# The game modules' static state (.data / .bss) in sections of their own (linkfile: .gamedata / .gamebss): main.c
+# restores the one and clears the other to change scenes in place, as a fresh boot would leave them
+EE_LINKFILE = linkfile
+GAME_OBJS = src/game.o src/anim.o src/camera.o src/gravity.o src/kcl.o src/fx.o src/blob.o src/se_seq.o
+$(GAME_OBJS): EE_CFLAGS += -fno-common
+
 # VU1 microprogram (ps2sdk's sample Makefile does the same with dvp-as)
 %.o: %.vsm
 	dvp-as -o $@ $<

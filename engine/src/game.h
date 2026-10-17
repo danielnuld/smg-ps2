@@ -223,4 +223,7 @@ static inline unsigned int cycles(void)
     return c;
 }
 
+/* main.c: change to scene "<Galaxy>/<n>" at the end of this update (the game modules restart as at boot) */
+void game_request_scene(const char *next);
+
 #endif

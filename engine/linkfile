@@ -1,0 +1,136 @@
+/*
+# _____     ___ ____     ___ ____
+#  ____|   |    ____|   |        | |____|
+# |     ___|   |____ ___|    ____| |    \    PS2DEV Open Source Project.
+#-----------------------------------------------------------------------
+# Copyright 2001-2004, ps2dev - http://www.ps2dev.org
+# Licenced under Academic Free License version 2.0
+# Review ps2sdk README & LICENSE files for further details.
+#
+# Linkfile script for ee-ld (ps2sdk ee/startup/linkfile with .gamedata / .gamebss for smg-ps2)
+*/
+
+ENTRY(__start);
+
+PHDRS {
+  text PT_LOAD;
+}
+
+SECTIONS {
+	.text 0x00100000: {
+		_ftext = . ;
+		*(.text)
+		*(.text.*)
+		*(.gnu.linkonce.t*)
+		KEEP(*(.init))
+		KEEP(*(.fini))
+		QUAD(0)
+	} :text
+
+	PROVIDE(_etext = .);
+	PROVIDE(etext = .);
+
+	/* Global/static constructors and deconstructors. */
+	.ctors ALIGN(16): {
+		KEEP(*crtbegin*.o(.ctors))
+		KEEP(*(EXCLUDE_FILE(*crtend*.o) .ctors))
+		KEEP(*(SORT(.ctors.*)))
+		KEEP(*(.ctors))
+	}
+	.dtors ALIGN(16): {
+		KEEP(*crtbegin*.o(.dtors))
+		KEEP(*(EXCLUDE_FILE(*crtend*.o) .dtors))
+		KEEP(*(SORT(.dtors.*)))
+		KEEP(*(.dtors))
+	}
+
+	.reginfo : { *(.reginfo) }
+
+	/* smg-ps2: the game modules' static state on its own (main.c scene_switch restores .gamedata from a boot copy
+	 * and clears .gamebss: a scene changes in place as at boot) */
+	.gamedata ALIGN(128): {
+		__start_gamedata = . ;
+		*game.o(.data .data.*)
+		*anim.o(.data .data.*)
+		*camera.o(.data .data.*)
+		*gravity.o(.data .data.*)
+		*kcl.o(.data .data.*)
+		*fx.o(.data .data.*)
+		*blob.o(.data .data.*)
+		*se_seq.o(.data .data.*)
+		__stop_gamedata = . ;
+	}
+
+	.data ALIGN(128): {
+		_fdata = . ;
+		*(.data)
+		*(.data.*)
+		*(.gnu.linkonce.d*)
+		SORT(CONSTRUCTORS)
+	}
+
+	/* Static data.  */
+	.rodata ALIGN(128): {
+		*(.rodata)
+		*(.rodata.*)
+		*(.gnu.linkonce.r*)
+	}
+
+	.rdata ALIGN(128): { *(.rdata) }
+	.gcc_except_table ALIGN(128): { *(.gcc_except_table) }
+
+	_gp = ALIGN(128) + 0x7ff0;
+	.lit4 ALIGN(128): { *(.lit4) }
+	.lit8 ALIGN(128): { *(.lit8) }
+
+	.sdata ALIGN(128): {
+		*(.sdata)
+		*(.sdata.*)
+		*(.gnu.linkonce.s*)
+	}
+
+	_edata = .;
+	PROVIDE(edata = .);
+
+	/* Uninitialized data.  */
+	.sbss ALIGN(128) : {
+		_fbss = . ;
+		*(.sbss)
+		*(.sbss.*)
+		*(.gnu.linkonce.sb*)
+		*(.scommon)
+	}
+
+	.gamebss ALIGN(128) : {
+		__start_gamebss = . ;
+		*game.o(.bss .bss.* COMMON)
+		*anim.o(.bss .bss.* COMMON)
+		*camera.o(.bss .bss.* COMMON)
+		*gravity.o(.bss .bss.* COMMON)
+		*kcl.o(.bss .bss.* COMMON)
+		*fx.o(.bss .bss.* COMMON)
+		*blob.o(.bss .bss.* COMMON)
+		*se_seq.o(.bss .bss.* COMMON)
+		__stop_gamebss = . ;
+	}
+
+	.bss ALIGN(128) : {
+		*(.bss)
+		*(.bss.*)
+		*(.gnu.linkonce.b*)
+		*(COMMON)
+	}
+	_end_bss = .;
+
+	_end = . ;
+	PROVIDE(end = .);
+
+	.spad 0x70000000: {
+		*(.spad)
+	}
+
+	/* Symbols needed by crt0.s.  */
+	PROVIDE(_heap_size = -1);
+	PROVIDE(_stack = -1);
+	PROVIDE(_stack_size = 128 * 1024);
+}

@@ -22,6 +22,8 @@ void se_port(u32 handle, int port, u16 value);        /* a sequence port (JAISou
 void se_listener(const float eye[3], const float right[3]);
 void se_volpitch(u32 handle, float vol, float pitch); /* scale a playing sound's volume and pitch */
 /* animation sounds (.bas): clip "<archive>/<clip>" lower case went from frame `from` (-1 just started) to `to` */
+void se_wait(void);    /* the last se_flush answered */
+void se_silence(void); /* every voice off (before a scene change) */
 int se_anim(const char *clip, float from, float to, const float pos[3], const void *owner);
 void se_update(int steps);
 void se_stats(int *sounds, int *chans, int *voices);                                 /* per frame: 400.36 / 60 sub-frames, then the voices */

@@ -163,6 +163,8 @@ static void send_vif_wait(packet2_t *p)
 
 static void init_blend_states(void);
 
+static void shadow_build(void);
+
 void render_init(void)
 {
     dma_channel_initialize(DMA_CHANNEL_GIF, NULL, 0);
@@ -243,6 +245,8 @@ void render_init(void)
     packet2_free(p);
     test_z = GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, ZTEST_METHOD_GREATER_EQUAL);
     init_blend_states();
+    { static Scene none; render_load_textures(&none, 0, 0); } /* the texture slots, once */
+    shadow_build();
 
     render_set_fovy(45.0f);
 }
@@ -481,7 +485,8 @@ void render_load_textures(const Scene *s, u32 first_tex, u32 first_model)
 {
     u32 ntex = s->ntex;
     tex_scene = s;
-    if (!tex_packets) { /* fixed slots: prebuilt chains point into them; the NO_TEX packet sits after the last */
+    if (!tex_packets) { /* fixed slots (render_init: below main.c's scene mark): prebuilt chains point into them; the
+                         * NO_TEX packet sits after the last */
         tex_packets = mem_alloc(MEM_RENDER, (TEXP * SCENE_MAX_TEX + 3) * 16);
         block_tex = mem_alloc(MEM_RENDER, TEX_BLOCKS * sizeof(s16));
         upload_chain = mem_alloc(MEM_RENDER, (MAX_UPLOADS * 5 * 16 + 4) * 16); /* base, 3 mips, CLUT */
@@ -987,9 +992,9 @@ static VuGroup shadow_vg;
 static u16 shadow_batch[2] = {3 * SHADOW_SEG, SHADOW_SEG + 1};
 static u8 shadow_data[((8 * (SHADOW_SEG + 1) + 15) & ~15) + 4 * 3 * SHADOW_SEG] __attribute__((aligned(16)));
 
-void render_shadow(const float world[16])
+static void shadow_build(void) /* once, from render_init: its chain stays below the scenes' heap blocks */
 {
-    if (!shadow_md.chain_xlu) {
+    {
         s16 *pos = (s16 *)shadow_data; /* centre, then the ring, in steps of 1 / 4096 */
         for (int i = 0; i < SHADOW_SEG; i++) {
             float a = 6.2831853f * i / SHADOW_SEG;
@@ -1010,6 +1015,10 @@ void render_shadow(const float world[16])
         FlushCache(0);
         build_chain(&shadow_md);
     }
+}
+
+void render_shadow(const float world[16])
+{
     draw_model(&shadow_md, world, NULL);
 }
 
