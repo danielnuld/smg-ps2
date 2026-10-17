@@ -47,8 +47,12 @@ def main():
         sys.exit(f"{disc / 'SLICE.ELF'} missing: engine/build.sh MODE blob Galaxy/n disc")
     n, size = build(packs, disc)
     print(f"PACKS.BIN: {n} packs, {size / 2**20:.0f} MB")
+    # the boot files first (SYSTEM.CNF, SLICE.ELF, then PACKS.TOC) at the start of the disc
+    order = disc / "order.txt"
+    order.write_bytes("".join(f"{wsl_path(disc / f)} {w}\n" for f, w in
+                              (("SYSTEM.CNF", 300), ("SLICE.ELF", 200), ("PACKS.TOC", 100))).encode())
     subprocess.run(["wsl.exe", "-e", "mkisofs", "-quiet", "-iso-level", "1", "-V", "SMGPS2", "-sysid", "PLAYSTATION",
-                    "-o", wsl_path(iso), wsl_path(disc)], check=True)
+                    "-sort", wsl_path(order), "-m", "order.txt", "-o", wsl_path(iso), wsl_path(disc)], check=True)
     print(f"{iso}: {iso.stat().st_size / 2**20:.0f} MB")
 
 
