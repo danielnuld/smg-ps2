@@ -244,6 +244,12 @@ void gd_file_create(int i, int icon) /* SaveDataHandler: resetAllData, setCreate
     file_store(i);
     memcpy(&gd, keep, sizeof gd);
 }
+void gd_file_copy(int dst, int src) /* copyUserFileMemory: every entry of src into dst */
+{
+    if (dst < 0 || dst >= GD_FILES || !gd_file_created(src)) return;
+    memcpy(&files[dst], &files[src], sizeof files[dst]);
+    files[dst].modified = ++modify_count;
+}
 void gd_file_delete(int i) { if (i >= 0 && i < GD_FILES) memset(&files[i], 0, sizeof files[i]); }
 void gd_file_set_icon(int i, int icon) { if (gd_file_created(i)) { files[i].icon = (u8)icon; files[i].modified = ++modify_count; } }
 int gd_file_load(int i) /* restoreUserFile into the current data (startGameDataLoadSequence) */

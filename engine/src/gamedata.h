@@ -50,6 +50,7 @@ int gd_file_icon(int i);
 u32 gd_file_modified(int i);
 void gd_file_create(int i, int icon);
 void gd_file_delete(int i);
+void gd_file_copy(int dst, int src);
 void gd_file_set_icon(int i, int icon);
 int gd_file_load(int i);          /* the file becomes the current game data */
 void gd_file_save(void);          /* the current game data into its file */

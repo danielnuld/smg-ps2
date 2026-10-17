@@ -364,7 +364,7 @@ static void msg_with_args(u16 *out, int cap, const u16 *src, const u16 *const *a
     while (src && *src && n < cap - 1) {
         if (*src == 0x1A) {
             int len = 4 + (src[3] + 1) / 2;
-            if (src[1] == 7) {
+            if (src[1] == 7 || src[1] == 6) { /* a string or a number (given as its string) */
                 u16 last = src[len - 1];
                 int idx = (last >> 8 | (last & 0xFF) << 8);
                 for (const u16 *a = idx < nargs ? args[idx] : NULL; a && *a && n < cap - 1; a++) out[n++] = *a;
@@ -489,6 +489,7 @@ static struct {
     int fade; /* closeSystemWipeFadeWithCaptureScreen: frames into the fade before the scene changes */
     Nrv n;
     u16 piece_msg[3];
+    float coin_pos[2], piece_pos[2], title_off[2]; /* setFollowPos: Coin, Piece (replace), ShaStageTitle (add) */
 } pm;
 
 static int stage_astro(void) /* MR::isStageAstroLocation */
@@ -512,6 +513,9 @@ static void pm_init(void)
     if (!pm.l) return;
     btn_init(&pm.up, pm.l, "NBackUp", "BoxButton1", 0, 1); pm.up.end_disappear = 0;
     btn_init(&pm.down, pm.l, "NBackDown", "BoxButton2", 0, 1); pm.down.end_disappear = 0;
+    lyt_follow(pm.l, "Coin", pm.coin_pos, 0);
+    lyt_follow(pm.l, "Piece", pm.piece_pos, 0);
+    if (pm_hide_scenario()) { pm.title_off[0] = 0; pm.title_off[1] = 39.0f; lyt_follow(pm.l, "ShaStageTitle", pm.title_off, 1); } /* mStageTitleOffset */
     lyt_set_text_rec(pm.l, "NBackDown", msg_get(pm_invalid_back() ? "PauseMenu_ButtonEndGame" : "PauseMenu_ButtonBackAstroDome"));
     char gal[48], lbl[80];
     const char *slash = strchr(game_stage_name, '/');
@@ -574,6 +578,11 @@ static void pm_appear(void)
     pm.piece_msg[0] = pm_hide_scenario() ? 0x57 : 0x3B; pm.piece_msg[1] = 0x40; pm.piece_msg[2] = 0;
     lyt_set_text_rec(pm.l, "ShaPiece", pm.piece_msg);
     pm_anim_without_button("Appear");
+    { /* the counters at the places their digits need (CPosition1..3, PPosition1..4) */
+        int c = game_coins(), sp = game_starpieces();
+        lyt_copy_pane_trans(pm.l, c >= 100 ? "CPosition3" : c >= 10 ? "CPosition2" : "CPosition1", pm.coin_pos);
+        lyt_copy_pane_trans(pm.l, sp >= 1000 ? "PPosition4" : sp >= 100 ? "PPosition3" : sp >= 10 ? "PPosition2" : "PPosition1", pm.piece_pos);
+    }
     btn_appear(&pm.up);
     btn_appear(&pm.down);
     nrv_set(&pm.n, PM_SELECTING);
@@ -1503,14 +1512,15 @@ int menu_test_point_dome(const char *pane) /* tests: the pointer on a pane of th
  * FileSelectSky, FileSelectInfo, FileSelectNumber, FileSelectButton, BackButton after Petari, as a whole-screen menu
  * (its stage's world not drawn: FileSelector draws everything it shows). A+B is X+Circle held; the pointer is the
  * right stick, X decides, Circle / Triangle is B. ponytail: no Mii / icon select (a new file is Mario's), no
- * Copy / Mii / Manual buttons, no BrosButton (no Luigi), no blink / morph blur / effects / ME / BGM, no swipe
+ * Mii / Manual buttons, no copy source marker (FileSelectEffect), no BrosButton (no Luigi), no blink / morph blur / effects / ME / BGM, no swipe
  * spin, the save's date not shown */
 enum { FS_OFF, FS_TITLE, FS_TITLEEND, FS_SELECTSTART, FS_SELECT, FS_CONFIRMSTART, FS_CONFIRM, FS_DEMOSTARTWAIT,
-       FS_CREATECONFIRMSTART, FS_CREATECONFIRM, FS_CREATE, FS_DELETECONFIRMSTART, FS_DELETECONFIRM, FS_DELETE };
+       FS_CREATECONFIRMSTART, FS_CREATECONFIRM, FS_CREATE, FS_DELETECONFIRMSTART, FS_DELETECONFIRM, FS_DELETE,
+       FS_COPYWAIT, FS_COPYSELECT, FS_COPYCONFIRMSTART, FS_COPYCONFIRM, FS_COPYDEMO };
 enum { TS_LOGOFADEIN, TS_LOGOWAIT, TS_LOGODISPLAY, TS_DECIDE, TS_DEAD };
 enum { FC_TITLE, FC_MOVEFAR, FC_FAR, FC_MOVENEAR, FC_NEAR };
 enum { FI_NEW, FI_EXIST, FI_FORMAT, FI_CHANGE };
-enum { FB_START, FB_DELETE, FB_N };
+enum { FB_START, FB_DELETE, FB_COPY, FB_N };
 static const int fs_order[6] = {1, 2, 4, 6, 5, 3}; /* sIndexOrder: slot i shows file fs_order[i] */
 static const float fs_theta_off[6] = {10, -10, 0, 0, 0, 0}; /* sItemThetaOffset */
 static const char *const fs_fellow[5] = {"FileSelectDataMario", "FileSelectDataLuigi", "FileSelectDataYoshi",
@@ -1533,6 +1543,8 @@ static struct {
     int logo_on, press_on, a_prev, b_prev;
     FsItem item[6];
     int sel, hover, pointed;            /* _B4 the chosen slot, _BC hovered, _C0 this frame's (-1 none) */
+    int src;                            /* _B8 the copy's source slot */
+    u16 wtext[200], num[2][4];
     float tgt[3], eye[3], fovy, ptgt[3], pfovy, near_tgt[3];
     int sky_step; float sky_x, sky_y;
     const Model *m_planet, *m_fellow[5], *m_sky;
@@ -1837,7 +1849,7 @@ static void fs_update(void)
         break;
     case FS_CONFIRM:
         if (FIRST(&fsl.n)) {
-            btn_appear(&fsl.btn[FB_START]); btn_appear(&fsl.btn[FB_DELETE]); fsl.op_on = 1;
+            btn_appear(&fsl.btn[FB_START]); btn_appear(&fsl.btn[FB_DELETE]); btn_appear(&fsl.btn[FB_COPY]); fsl.op_on = 1;
             btn_appear(&fsl.back); fsl.back_on = 1; fsl.back_clicked = 0;
             if (!fsl.info_on) { fs_info_set(fsl.sel); fs_info_appear(); }
             lyt_start(fsl.info, "ButtonAppear", 1); /* slide */
@@ -1846,6 +1858,7 @@ static void fs_update(void)
         for (int b = 0; b < FB_N; b++) if (btn_pointing_trigger(&fsl.btn[b])) se_start(SE_SY_BUTTON_CURSOR_ON, NULL);
         if (btn_try_select(&fsl.btn[FB_START])) nrv_set(&fsl.n, FS_DEMOSTARTWAIT);
         else if (btn_try_select(&fsl.btn[FB_DELETE])) nrv_set(&fsl.n, FS_DELETECONFIRMSTART);
+        else if (btn_try_select(&fsl.btn[FB_COPY])) nrv_set(&fsl.n, FS_COPYWAIT);
         break;
     case FS_DEMOSTARTWAIT:
         if (FIRST(&fsl.n)) { se_start(SE_SY_FILE_SELECTED, NULL); fs_layouts_out(); wipe_start(60, 1, 0); }
@@ -1896,6 +1909,64 @@ static void fs_update(void)
         }
         if (nrv_is(&fsl.item[fsl.sel].n, FI_NEW) && fsl.n.step > 0) { fs_clear_pointing(); nrv_set(&fsl.n, FS_SELECTSTART); }
         break;
+    case FS_COPYWAIT: /* the source kept, the ring again */
+        if (FIRST(&fsl.n)) {
+            se_start(SE_SY_FILE_SEL_UPPER_DECIDE, NULL);
+            fsl.src = fsl.sel; fs_layouts_out(); fs_clear_pointing();
+            fsl.sel = -1; fs_far(); fs_base_pos(0);
+        }
+        if (fs_cam_at(FC_FAR)) nrv_set(&fsl.n, FS_COPYSELECT);
+        break;
+    case FS_COPYSELECT:
+        if (FIRST(&fsl.n)) {
+            fs_items_select(1); fs_item_invalidate(&fsl.item[fsl.src]);
+            btn_appear(&fsl.back); fsl.back_on = 1; fsl.back_clicked = 0;
+            fs_numbers(1);
+        }
+        fs_update_file_info();
+        if (fs_back_selected()) { /* back: zoom on the source again */
+            fs_items_select(0); fs_info_disappear();
+            fsl.sel = fsl.src; nrv_set(&fsl.n, FS_CONFIRMSTART);
+            break;
+        }
+        if (fsl.hover >= 0 && fsl.item[fsl.hover].pointed && pad_pressed(PAD_CROSS)) {
+            fsl.sel = fsl.hover;
+            se_start(SE_SY_GALAXY_SELECTED, NULL);
+            nrv_set(&fsl.n, FS_COPYCONFIRMSTART);
+        }
+        break;
+    case FS_COPYCONFIRMSTART:
+        if (FIRST(&fsl.n)) { fs_layouts_out(); fs_items_select(0); }
+        if (fs_layouts_hidden()) nrv_set(&fsl.n, FS_COPYCONFIRM);
+        break;
+    case FS_COPYCONFIRM:
+        if (FIRST(&fsl.n)) { /* "copy file <src> to <dst>?" (016 to a new one, 014 over one) */
+            const char *label = gd_file_created(fsl.item[fsl.sel].file - 1) ? "System_FileSelect014" : "System_FileSelect016";
+            const u16 *args[2] = {fsl.num[0], fsl.num[1]};
+            fs_clear_pointing();
+            fsl.num[0][0] = (u16)('0' + fsl.item[fsl.src].file); fsl.num[0][1] = 0;
+            fsl.num[1][0] = (u16)('0' + fsl.item[fsl.sel].file); fsl.num[1][1] = 0;
+            si_appear(&fsl.win, label, SI_YESNO);
+            msg_with_args(fsl.wtext, 200, msg_get(label), args, 2);
+            lyt_set_text_rec(fsl.win.l, "InfoWindow", fsl.wtext);
+        }
+        if (!fsl.win.alive && fsl.n.step > 0) {
+            if (yn_yes(&fsl.win.yn)) { /* CopySave: copyUserFileMemory + save all */
+                gd_file_copy(fsl.item[fsl.sel].file - 1, fsl.item[fsl.src].file - 1);
+                menu_save_request();
+                nrv_set(&fsl.n, FS_COPYDEMO);
+            } else nrv_set(&fsl.n, FS_COPYSELECT);
+        }
+        break;
+    case FS_COPYDEMO:
+        if (FIRST(&fsl.n)) {
+            FsItem *it = &fsl.item[fsl.sel];
+            se_start(SE_SY_FILE_SEL_COPY, NULL);
+            it->icon = gd_file_icon(it->file - 1); it->n.next = -1; nrv_set(&it->n, FI_CHANGE);
+            if (fsl.back_on) btn_disappear(&fsl.back);
+        }
+        if (nrv_is(&fsl.item[fsl.sel].n, FI_EXIST) && fsl.n.step > 0) { fs_clear_pointing(); fsl.sel = -1; nrv_set(&fsl.n, FS_SELECT); }
+        break;
     }
     nrv_end(&fsl.n);
     /* control */
@@ -1931,7 +2002,8 @@ static void fs_init(const Scene *s)
     lyt_hide_for_good(fsl.logo, "PicLogoGalaxy"); /* ponytail: its space through the letters' mask shows as a box */
     btn_init(&fsl.btn[FB_START], fsl.op, "StartButton", "BoxStartButton", 0, 1);
     btn_init(&fsl.btn[FB_DELETE], fsl.op, "DeleteButton", "PicDelete", 0, 1);
-    lyt_show_pane(fsl.op, "CopyButton", 0); lyt_show_pane(fsl.op, "MiiButton", 0); lyt_show_pane(fsl.op, "P2ManualButton", 0);
+    btn_init(&fsl.btn[FB_COPY], fsl.op, "CopyButton", "PicCopy", 0, 1);
+    lyt_show_pane(fsl.op, "MiiButton", 0); lyt_show_pane(fsl.op, "P2ManualButton", 0);
     btn_init(&fsl.back, fsl.back_l, "Back", "BoxButton", 0, 1);
     si_init(&fsl.win);
     for (int i = 0; i < 6; i++) {

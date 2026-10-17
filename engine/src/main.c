@@ -792,6 +792,20 @@ int main(void)
             }
         }
 #endif
+#if defined(PACKS) && defined(COPY_TEST)
+        { /* the file select with file 1 saved: file 1, Copy, file 2, Yes */
+            static const struct { u32 f; int slot; const char *pane; u32 btn; } st[] = {
+                {400, -1, NULL, PAD_CROSS | PAD_CIRCLE}, {600, 0, NULL, 0}, {620, -1, NULL, PAD_CROSS}, {820, -1, "PicCopy", 0},
+                {840, -1, NULL, PAD_CROSS}, {1000, 1, NULL, 0}, {1020, -1, NULL, PAD_CROSS}, {1150, -1, "BoxRight", 0},
+                {1170, -1, NULL, PAD_CROSS}};
+            pad_force = 0;
+            for (unsigned k = 0; k < sizeof st / sizeof st[0]; k++)
+                if (frame >= st[k].f && frame < st[k].f + (st[k].btn == (PAD_CROSS | PAD_CIRCLE) ? 20 : 1)) {
+                    if (st[k].slot >= 0 || st[k].pane) printf("copy test f %u: pointer %d\n", frame, menu_test_point_file(st[k].slot, st[k].pane));
+                    pad_force = st[k].btn;
+                }
+        }
+#endif
 #if defined(PACKS) && defined(TITLE_TEST)
         { /* the title: A+B, file 1 (new): Yes, then Start */
             pad_force = 0;
