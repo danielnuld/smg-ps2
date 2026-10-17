@@ -246,6 +246,7 @@ typedef struct {
     int spmother;    /* StarPieceMother: its star pieces at a touch, or along its rail (update_spmothers) */
     int leakpipe;    /* WaterLeakPipe: stretched to its height, leaking (update_leakpipes, leak_joints) */
     int eyebeamer;   /* EyeBeamer: turns, goes to its rail and patrols it, its beam burning (update_eyebeamers) */
+    int leaves;      /* CoconutTreeLeaf: its leaves sway, each with its collision (update_leaves, leaf_joints, lf_mats) */
     int kstair;      /* KoopaBattleMapStair(Big / Turn): breaks and falls after its switch (update_stairs) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
@@ -1143,7 +1144,9 @@ static V3 up_at(V3 p, V3 prev)
 /* Push a sphere out of the KCL; returns 1 if it rests on ground (a face within 60 degrees of up). */
 unsigned int game_kcl_cycles;
 
-typedef struct { V3 n; float dist; int inst, attr; } Hit; /* world normal, penetration, instance, KCL codes (kcl_codes) */
+typedef struct { V3 n; float dist; int inst, attr, sub; } Hit; /* world normal, penetration, instance, KCL codes (kcl_codes), its leaf (lf_mats) */
+static int nlfs, ground_sub, mario_ground_sub; static int lf_mats(const Inst *in, const float (**mats)[16], const int **coll);
+static void update_leaves(void), leaf_joints(Inst *in);
 
 /* Sphere against every placed KCL: the sphere goes to the instance's object space (KCL data is in model space),
  * normals and depths come back to world. ponytail: uniform scale only (scale.x), like every planet seen so far. */
@@ -1181,7 +1184,14 @@ static int kcl_query_(V3 c, float radius, Hit *out, int max)
         if (in->otamagma && ota.nrv == OTA_DEAD) continue;            /* drawn till then (game_draw) */
         V3 d = vsub(c, v3(in->m[12], in->m[13], in->m[14]));
         if (vdot(d, d) > (in->reach + radius) * (in->reach + radius)) continue;
-        const float *m = in->m;
+        const float (*mats)[16] = (const float (*)[16])in->m;
+        const int *lcoll = NULL;
+        int nm = in->leaves ? lf_mats(in, &mats, &lcoll) : 0;
+        if (!nm) { nm = 1; mats = (const float (*)[16])in->m; lcoll = NULL; }
+        for (int sub = 0; sub < nm && n < max; sub++) {
+        if (lcoll && !lcoll[sub]) continue;
+        const float *m = mats[sub];
+        d = vsub(c, v3(m[12], m[13], m[14]));
         /* u: CollapsePlane's collision (initCollisionPartsAutoEqualScale) at the mean of its joint's x / y / z scale
          * (CollisionParts::makeEqualScale: (2 xz + 1) / 3), about its position */
         float u = in->collapse && row_step[in->row] ? (3.0f - 1.4f * row_step[in->row] / in->collapse) / 3.0f : 1.0f;
@@ -1197,7 +1207,9 @@ static int kcl_query_(V3 c, float radius, Hit *out, int max)
             out[n].n = vmul(w, 1.0f / in->s);
             out[n].inst = i;
             out[n].attr = kcl_attribute(in->kcl, h[j].prism);
+            out[n].sub = sub;
             out[n++].dist = h[j].dist * in->s * u;
+        }
         }
     }
     return n;
@@ -1243,7 +1255,7 @@ static int collide_n(V3 *center, V3 up, float radius, V3 *ground_n, V3 *wall_n, 
                 flat = di;
                 ground = 1;
                 if (ground_n) *ground_n = hits[i].n;
-                ground_inst = hits[i].inst; ground_attr = hits[i].attr;
+                ground_inst = hits[i].inst; ground_attr = hits[i].attr; ground_sub = hits[i].sub;
             }
         }
         V3 nrm = hits[deepest].n;
@@ -1267,7 +1279,7 @@ static int collide_n(V3 *center, V3 up, float radius, V3 *ground_n, V3 *wall_n, 
                 flat = vdot(hits[i].n, up);
                 ground = 1;
                 if (ground_n) *ground_n = hits[i].n;
-                ground_inst = hits[i].inst; ground_attr = hits[i].attr;
+                ground_inst = hits[i].inst; ground_attr = hits[i].attr; ground_sub = hits[i].sub;
             }
     }
     game_kcl_cycles += cycles() - c0;
@@ -1435,7 +1447,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nvines = 0; vine_ride = -1;
     pole_init();
     nrbms = 0;
-    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0;
+    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0;
     dino_cam = 0;
     foot_num = foot_rot = 0;
     nseesaws = 0;
@@ -3251,6 +3263,7 @@ void game_rebind(void)
         in->spmother = strcmp(name, "StarPieceMother") == 0;
         in->leakpipe = strcmp(name, "WaterLeakPipe") == 0;
         in->eyebeamer = strcmp(name, "EyeBeamer") == 0;
+        in->leaves = strcmp(name, "CoconutTreeLeaf") == 0;
         in->kstair = strncmp(name, "KoopaBattleMapStair", 19) == 0 && strcmp(name, "KoopaBattleMapStairTurnAppear") != 0;
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
@@ -11488,7 +11501,7 @@ static void update_mario(void)
     } else if (!ground) m->grounded = 0;
     m->slip_poly = m->grounded && slip_polygon(m, ground_attr & 0x3F, m->ground_n); /* updateGroundInfo: mDrawStates._C */
     if (m->grounded && !m->jumping) m->land_timer++; /* updateTimers: _3CE */
-    mario_ground = m->grounded ? ground_inst : -1;
+    mario_ground = m->grounded ? ground_inst : -1; mario_ground_sub = ground_sub;
     if (m_check_press(m)) return;
     if (m->grounded != was_ground) ground_flips++;
 #ifdef SLOPE_TEST
@@ -18529,6 +18542,117 @@ static void draw_eyebeams(void)
     }
 }
 
+/* CoconutTreeLeaf.cpp after Petari (CoconutTreeLeafGroup): each leaf joint (1..) a spring: its tip 100 along its Z
+ * pulled back to rest (0.001, friction 0.99, gravity 0.005 down its rest up; Mario on it: 0.01, 0.95, 0.2, the wind
+ * waiting 120), wind gusts along the group's (0, 0, 1) for 10..30 frames every 15..150 (0.02 / 0.03 / 0.05 with a
+ * random 0.005 / 0.01 / 0.03 along its up: Mario within 1000 / beyond 5000 / between), its up leaning 0.01 into the
+ * wind; a hip drop on it pushes 0.1 down. Each leaf carries its own collision (the leaf KCL at its joint), on only
+ * while Mario is within 1000 and on the ground or not rising along it. ponytail: Mario on a leaf is not carried */
+#define MAX_LEAFGROUPS 32
+#define LEAVES 9
+static struct {
+    int row, init, nl;
+    V3 pos[LEAVES], tip[LEAVES], rest[LEAVES], up0[LEAVES], ax[LEAVES], ay[LEAVES], az[LEAVES], vel[LEAVES], wacc[LEAVES];
+    int wstep[LEAVES], wstart[LEAVES], coll[LEAVES];
+    float mat[LEAVES][16];
+} lfs[MAX_LEAFGROUPS];
+static int lf_of(int row)
+{
+    for (int i = 0; i < nlfs; i++) if (lfs[i].row == row) return i;
+    if (nlfs == MAX_LEAFGROUPS) return -1;
+    memset(&lfs[nlfs], 0, sizeof lfs[0]);
+    lfs[nlfs].row = row;
+    return nlfs++;
+}
+static void lf_mat(int k, int l, float s) /* setMtxAxisXYZ, at the instance's scale (kcl_query's columns R * s) */
+{
+    typeof(&lfs[0]) o = &lfs[k];
+    V3 x = vmul(o->ax[l], s), y = vmul(o->ay[l], s), z = vmul(o->az[l], s);
+    float m[16] = {x.x, x.y, x.z, 0, y.x, y.y, y.z, 0, z.x, z.y, z.z, 0, o->pos[l].x, o->pos[l].y, o->pos[l].z, 1};
+    memcpy(o->mat[l], m, 64);
+}
+static int lf_mats(const Inst *in, const float (**mats)[16], const int **coll) /* its leaves' collision matrices */
+{
+    int k = lf_of(in->row);
+    if (k < 0 || !lfs[k].init) return 0;
+    *mats = (const float (*)[16])lfs[k].mat; *coll = lfs[k].coll;
+    return lfs[k].nl;
+}
+static void leaf_joints(Inst *in) /* after the pose: the rest from the bind pose once, then each leaf's matrix */
+{
+    Anim *a = in->anim;
+    if (!a || !a->skin) return;
+    int k = lf_of(in->row);
+    if (k < 0) return;
+    typeof(&lfs[0]) o = &lfs[k];
+    const float *M = in->m;
+    float s = in->s > 0 ? in->s : 1.0f;
+    V3 X = vmul(v3(M[0], M[1], M[2]), 1.0f / s), Y = vmul(v3(M[4], M[5], M[6]), 1.0f / s), Z = vmul(v3(M[8], M[9], M[10]), 1.0f / s), T = v3(M[12], M[13], M[14]);
+    if (!o->init) {
+        o->init = 1;
+        o->nl = a->skin->njoints - 1 > LEAVES ? LEAVES : a->skin->njoints - 1;
+        for (int l = 0; l < o->nl; l++) {
+            const float *w = a->world[l + 1];
+            #define LW(c) vnorm(vadd(vadd(vmul(X, w[c]), vmul(Y, w[c + 1])), vmul(Z, w[c + 2])))
+            o->ax[l] = LW(0); o->ay[l] = LW(4); o->az[l] = LW(8);
+            #undef LW
+            o->up0[l] = o->ay[l];
+            o->pos[l] = vadd(T, vadd(vadd(vmul(X, w[12] * s), vmul(Y, w[13] * s)), vmul(Z, w[14] * s)));
+            o->rest[l] = o->tip[l] = vadd(o->pos[l], vmul(o->az[l], 100.0f)); /* sPointInterval */
+            o->wstart[l] = 15 + rand() % 136;
+            lf_mat(k, l, s);
+        }
+    }
+    for (int l = 0; l < o->nl; l++) { /* model space: the world axes back through the instance's rotation */
+        float *w = a->world[l + 1];
+        V3 ax = o->ax[l], ay = o->ay[l], az = o->az[l], d = vmul(vsub(o->pos[l], T), 1.0f / s);
+        float m[16] = {vdot(ax, X), vdot(ax, Y), vdot(ax, Z), 0, vdot(ay, X), vdot(ay, Y), vdot(ay, Z), 0,
+                       vdot(az, X), vdot(az, Y), vdot(az, Z), 0, vdot(d, X), vdot(d, Y), vdot(d, Z), 1};
+        memcpy(w, m, 64);
+    }
+}
+static void update_leaves(void)
+{
+    const V3 wind = v3(0, 0, 1);
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->leaves || !row_shown(in->row)) continue;
+        int k = lf_of(in->row);
+        if (k < 0 || !lfs[k].init) continue;
+        typeof(&lfs[0]) o = &lfs[k];
+        float dist = vlen(vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14]))); /* control */
+        float wa = dist < 1000.0f ? 0.02f : dist > 5000.0f ? 0.05f : 0.03f, wr = dist < 1000.0f ? 0.005f : dist > 5000.0f ? 0.03f : 0.01f;
+        V3 mv = vadd(mario->hvel, vmul(mario->up, mario->vup));
+        for (int l = 0; l < o->nl; l++) {
+            float spring = 0.001f, fric = 0.99f, grav = 0.005f;
+            if (mario_ground == i && mario_ground_sub == l) { /* isOnPlayer */
+                o->wstep[l] = 0; o->wstart[l] = 120;
+                spring = 0.01f; fric = 0.95f; grav = 0.2f;
+                if (hip_hit && hip_inst == i) o->vel[l] = vadd(o->vel[l], vmul(o->up0[l], -0.1f)); /* receiveMsgPlayerAttack */
+            } else if (o->wstep[l] > 0) {
+                o->vel[l] = vadd(o->vel[l], o->wacc[l]);
+                if (--o->wstep[l] <= 0) o->wstart[l] = 15 + rand() % 136;
+            } else if (--o->wstart[l] <= 0) {
+                o->wacc[l] = vadd(vmul(wind, wa), vmul(o->up0[l], wr * (rand() / (float)RAND_MAX * 2.0f - 1.0f)));
+                o->wstep[l] = 10 + rand() % 21;
+            }
+            o->vel[l] = vadd(o->vel[l], vmul(o->up0[l], -grav));
+            V3 sp = vsub(o->rest[l], o->tip[l]);
+            float lean = -vdot(sp, wind);
+            o->vel[l] = vmul(vadd(o->vel[l], vmul(sp, spring)), fric);
+            o->tip[l] = vadd(o->tip[l], o->vel[l]);
+            V3 z = vsub(o->tip[l], o->pos[l]);
+            if (vlen(z) > 1e-3f) o->az[l] = vnorm(z);
+            if (lean < 0) lean = 0;
+            V3 up = vadd(vmul(wind, 0.01f * lean), o->up0[l]), x = vcross(up, o->az[l]);
+            if (vlen(x) > 1e-3f) o->ax[l] = vnorm(x);
+            o->ay[l] = vnorm(vcross(o->az[l], o->ax[l]));
+            lf_mat(k, l, in->s > 0 ? in->s : 1.0f);
+            o->coll[l] = dist < 1000.0f && (mario->grounded || vdot(mv, o->ay[l]) <= 0.0f);
+        }
+    }
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -20238,6 +20362,7 @@ static void update_obj_anims(void)
             if (insts[i].sbeamer) { anim_pose(insts[i].anim); sbm_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].pressure) { anim_pose(insts[i].anim); pr_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].fpressure) { anim_pose(insts[i].anim); fpr_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
+            if (insts[i].leaves) { anim_pose(insts[i].anim); leaf_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].leakpipe) { anim_pose(insts[i].anim); leak_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].anim->done && !insts[i].anim->loop && !insts[i].vine && !obj_play(&insts[i], sc->types + 32 * sc->objs[insts[i].row].type, 1, 0))
                 obj_play(&insts[i], "wait", 1, 8); /* a one-shot clip over: back to its own clip (tryStartAllAnim), else Wait */
@@ -20365,6 +20490,7 @@ void game_update(void)
     update_leakpipes();
     update_stairs();
     update_eyebeamers();
+    update_leaves();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
