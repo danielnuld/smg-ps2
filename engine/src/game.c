@@ -42,11 +42,11 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
-       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD };
+       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI };
 /* walkers ported in the release push: their classes (counted, placed and drawn through this table) */
 static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}, {"BasaBasa", WALK_BASABASA}, {"BasaBasaIce", WALK_BASABASA}, {"Jellyfish", WALK_JELLYFISH},
                                                                     {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}, {"Mogu", WALK_MOGU}, {"Mogucchi", WALK_MOGUCCHI}, {"Metbo", WALK_METBO}, {"TeresaWater", WALK_TERESAW},
-                                                                    {"Snakehead", WALK_SNAKEHEAD}, {"SnakeheadSmall", WALK_SNAKEHEAD}};
+                                                                    {"Snakehead", WALK_SNAKEHEAD}, {"SnakeheadSmall", WALK_SNAKEHEAD}, {"Kabokuri", WALK_KABOKURI}};
 #define NEW_WALKERS ((int)(sizeof new_walkers / sizeof new_walkers[0]))
 static const Model *m_wnew[NEW_WALKERS];
 static int walker_new_kind(const char *cls)
@@ -1151,6 +1151,7 @@ typedef struct { V3 n; float dist; int inst, attr, sub; } Hit; /* world normal, 
 static int nlfs, ground_sub, mario_ground_sub; static int lf_mats(const Inst *in, const float (**mats)[16], const int **coll);
 static void update_leaves(void), leaf_joints(Inst *in);
 static int npls; static void update_palms(void), pl_place(Inst *in);
+static void update_kfires(void), kfires_reset(void);
 static int nsss, ss_ride = -1; static const Model *m_sstrap; static void ss_reset(void); static void update_storms(void), ss_place(Inst *in), draw_storm_traps(void); static int ss_hold(Player *m);
 static const Model *m_fish[6], *m_gull; static int nggs; static void update_gulls(void), draw_gulls(void);
 static int nfgs; static void update_fishes(void), draw_fishes(void);
@@ -1454,7 +1455,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nvines = 0; vine_ride = -1;
     pole_init();
     nrbms = 0;
-    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0; nfgs = 0; nggs = 0; nsss = 0; ss_ride = -1; ss_reset();
+    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0; nfgs = 0; nggs = 0; nsss = 0; ss_ride = -1; ss_reset(); kfires_reset();
     dino_cam = 0;
     foot_num = foot_rot = 0;
     nseesaws = 0;
@@ -16344,6 +16345,131 @@ static void snake_update(Kuribo *k)
     if (mario_touch(body, small ? 300.0f : 600.0f) && vlen(vsub(mc, foot)) <= (small ? 100.0f : 300.0f)) hurt_mario(foot, 25.0f);
 }
 
+/* Kabokuri.cpp / KabokuriFire.cpp after Petari (walker kit): a pumpkin walking its rail (from the nearest place): Wait
+ * 60, Walk (turning 2 degrees a frame to the rail point 50 ahead, 0.2 towards it while within 0.4 of its front; damped
+ * 0.9, 0.2 gravity in the air; binder 90): at a rail point whose arg0 is not 0 it stops on it (within 25) and
+ * DropFires: a KabokuriFire there (16 at most) burns for 320 frames, Mario within 40 (90 up) burns (EnemyAttackFire),
+ * his spin within 350 puts it out. Its attack (70 at 70 up) hurts Mario (Attacksuccess); a trample: Trampled; a star
+ * piece: StarPieceHit; a hip drop or a spin breaks it (the Kuribo inside out). arg0: it floats (gravity its -up).
+ * ponytail: the Kuribo inside is not spawned (its coin pops at once), no KabokuriBreak model, no swoon / anim scale */
+enum { KB_WAIT, KB_WALK, KB_DROPFIRE, KB_ATTACKSUCCESS, KB_TRAMPLED, KB_STARPIECE };
+#define MAX_KFIRES 16
+static struct { int alive, t; V3 pos, up; u32 lv; } kfs[MAX_KFIRES];
+static void kfire_start(V3 p, V3 up) /* KabokuriFireHolderFunc::generateFire */
+{
+    for (int i = 0; i < MAX_KFIRES; i++)
+        if (!kfs[i].alive) { kfs[i].alive = 1; kfs[i].t = 0; kfs[i].pos = p; kfs[i].up = up; kfs[i].lv = 0; return; }
+}
+static void kfires_reset(void) { memset(kfs, 0, sizeof kfs); }
+static void update_kfires(void)
+{
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < MAX_KFIRES; i++) {
+        if (!kfs[i].alive) continue;
+        float m[16];
+        basis_matrix(m, kfs[i].pos, kfs[i].up, v3(0, 0, 1), 0); /* makeMtxUpNoSupport */
+        if (mario->spin_timer > 0 && vlen(vsub(mario->pos, kfs[i].pos)) < 350.0f) { /* isInSpinStormRange */
+            se_start(SE_OJ_PHANTOM_TOACH_OFF, &kfs[i].pos.x); kfs[i].alive = 0; continue;
+        }
+        fx_named("KabokuriFire", "KabokuriFire", m, NULL, &kfs[i]);
+        kfs[i].lv = se_level(SE_OJ_LV_PHANTOM_TOACH_BURN, &kfs[i].pos.x, kfs[i].lv);
+        V3 c = vadd(kfs[i].pos, vmul(kfs[i].up, 90.0f));
+        if (!mario->hurt_timer && vlen(vsub(mc, c)) < 40.0f + HIT_BODY_R) hurt_mario(c, 25.0f); /* sendMsgEnemyAttackFire */
+        if (++kfs[i].t > 320) kfs[i].alive = 0;
+    }
+}
+static int kb_next_point(const unsigned char *e, float c, int dir, float *pc, int *arg0) /* the next rail point that way */
+{
+    u32 np = *(const u32 *)(e + 8), nr = *(const u32 *)(e + 12);
+    const unsigned char *pa = e + 24 + 12 * np + 12 * nr;
+    int best = -1;
+    for (u32 k = 0; k < nr; k++) {
+        float q = *(const float *)(pa + 12 * k);
+        if (dir > 0 ? q > c + 0.01f && (best < 0 || q < *pc) : q < c - 0.01f && (best < 0 || q > *pc)) { best = (int)k; *pc = q; *arg0 = *(const int *)(pa + 12 * k + 4); }
+    }
+    return best;
+}
+static void kabo_update(Kuribo *k)
+{
+    const Row *r = &sc->objs[k->row];
+    const unsigned char *e = r->path >= 0 && scene_blob_g ? find_path(scene_blob_g, r->zone, r->path) : NULL;
+    u32 rn = 0; int rcl;
+    const float *rail = w_rail(k, &rn, &rcl);
+    float sy = r->scale[1] > 0 ? r->scale[1] : 1.0f;
+    int floating = r->arg[0] > 0;
+    if (!k->front.x && !k->front.y && !k->front.z) { /* init */
+        V3 x, z;
+        row_axes(r, &x, &z);
+        k->front = vnorm(z); k->dir = 1; k->qy = vnorm(vcross(z, x));
+        if (rail) { k->lva[1] = w_rail_nearest(rail, rn, k->pos); k->pos = rail_at(rail, rn, k->lva[1]); } /* moveCoordAndTransToNearestRailPos */
+        if (floating) k->grav = vmul(k->qy, -1.0f);
+        w_nrv(k, KB_WAIT);
+    }
+    if (!floating) k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f);
+    V3 rp = rail ? rail_at(rail, rn, k->lva[1]) : k->pos;
+    float hz = vlen(vtangent(vsub(rp, k->pos), k->grav)); /* isRailReachedHorizonCurrentPos */
+    int st = ++k->step;
+    switch (k->nrv) {
+    case KB_WAIT:
+        if (st == 0) { w_act(k, "Wait"); k->vel = v3(0, 0, 0); }
+        if (st > 60) w_nrv(k, KB_WALK);
+        break;
+    case KB_WALK:
+        if (st == 0) { w_act(k, "Walk"); k->item = 0; }
+        turn_on_plane(&k->front, vsub(rp, k->pos), k->grav, cosf(2.0f * 0.0174533f));
+        if (rail && e && hz < 50.0f && !k->item) { /* addVelocityToRailPoint */
+            float len = w_rail_len(rail, rn);
+            k->lva[1] += 50.0f * k->dir;
+            if (k->lva[1] < 0) k->lva[1] = 0;
+            if (k->lva[1] > len) k->lva[1] = len;
+            float pc = 0; int a0 = -1;
+            if (kb_next_point(e, k->lva[1] - 50.0f * k->dir, k->dir, &pc, &a0) >= 0 && a0 != 0 && fabsf(pc - k->lva[1]) < 50.0f) { k->lva[1] = pc; k->item = 1; }
+            if (k->lva[1] <= 0 || k->lva[1] >= len) k->dir = -k->dir; /* isRailReachedEdge */
+            rp = rail_at(rail, rn, k->lva[1]);
+        }
+        { V3 to = vtangent(vsub(rp, k->pos), k->grav);
+          if (vlen(to) > 1e-3f && vdot(vnorm(to), k->front) > 0.4f) k->vel = vadd(k->vel, vmul(vnorm(to), 0.2f)); }
+        if (k->item && vlen(vtangent(vsub(rp, k->pos), k->grav)) < 25.0f) w_nrv(k, KB_DROPFIRE);
+        break;
+    case KB_DROPFIRE:
+        if (st == 0) { w_act(k, "DropFire"); k->vel = v3(0, 0, 0); w_se(k, SE_EM_KABOKURI_DROP_FIRE); }
+        if (w_bck_stopped(k)) { w_nrv(k, KB_WALK); kfire_start(k->pos, vmul(k->grav, -1.0f)); }
+        break;
+    case KB_ATTACKSUCCESS: case KB_TRAMPLED: case KB_STARPIECE:
+        if (st == 0) {
+            w_act(k, k->nrv == KB_ATTACKSUCCESS ? "Attacksuccess" : k->nrv == KB_TRAMPLED ? "Trampled" : "StarPieceHit");
+            if (k->nrv == KB_TRAMPLED) w_se(k, SE_EM_KABOKURI_TRAMPLE);
+            k->vel = v3(0, 0, 0);
+        }
+        if (w_bck_stopped(k)) w_nrv(k, KB_WALK);
+        break;
+    }
+    k->act_t += k->act_rate;
+    if (k->on_ground) k->vel = vmul(k->vel, 0.9f); /* addVelocityBase */
+    else { k->vel = vadd(k->vel, vmul(k->grav, 0.2f)); k->vel = vmul(k->vel, 0.9f); }
+    if (k->on_ground && vdot(k->vel, k->gn) < 0) k->vel = vtangent(k->vel, k->gn);
+    w_bind(k, 90.0f * sy);
+    V3 tu = k->on_ground ? k->gn : vmul(k->grav, -1.0f); /* blendQuatUpFront 0.1 / 0.2 */
+    k->qy = vnorm(vadd(vmul(k->qy, 0.9f), vmul(tu, 0.1f)));
+    V3 f = vtangent(k->front, k->qy);
+    if (vlen(f) > 1e-3f) k->qz = vnorm(vadd(vmul(k->qz, 0.8f), vmul(vnorm(f), 0.2f)));
+    k->qz = vnorm(vtangent(k->qz, k->qy));
+    k->up = k->qy;
+    int enable_attack = k->nrv == KB_WAIT || k->nrv == KB_WALK || k->nrv == KB_DROPFIRE; /* isEnableAttack (isEnableTrampled: all of ours) */
+    V3 body = vadd(k->pos, vmul(k->qy, 100.0f * sy)), att = vadd(k->pos, vmul(k->qy, 70.0f * sy));
+    int msg = mario_offence(body, 100.0f * sy, k->grav);
+    if (msg == MSG_HIPDROP || msg == MSG_HITALL) { /* requestHipDropped / requestHitAttacked: Break */
+        if (msg == MSG_HIPDROP) w_se(k, SE_EM_STOMPED_S);
+        w_se(k, SE_EM_KABOKURI_BREAK_PUMP); /* exeBreak */
+        pop_coins(k->pos, k->qy, 1);
+        if (r->sw[SW_DEAD] >= 0) sw_set((Row *)r, SW_DEAD, 1);
+        k->state = KURIBO_DEAD; row_kill(k->row);
+        return;
+    }
+    if (msg == MSG_TRAMPLE) { w_nrv(k, KB_TRAMPLED); mario->vup = 15.0f; mario->grounded = 0; return; }
+    if (enable_attack && !mario->hurt_timer && mario->hip != HIP_FALL && mario_touch(att, 70.0f * sy)) { hurt_mario(att, 15.0f); w_nrv(k, KB_ATTACKSUCCESS); } /* sendMsgEnemyAttack */
+}
+
 static void update_kuribo_one(Kuribo *k);
 static void update_kuribo(void)
 {
@@ -16373,6 +16499,7 @@ static void update_kuribo_one(Kuribo *k)
             else if (k->kind == WALK_METBO) metbo_update(k);
             else if (k->kind == WALK_TERESAW) tw_update(k);
             else if (k->kind == WALK_SNAKEHEAD) snake_update(k);
+            else if (k->kind == WALK_KABOKURI) kabo_update(k);
             return;
         }
         if (k->kind == WALK_PETARI) { /* ponytail: still while its zone has no collision (streaming) */
@@ -20771,6 +20898,7 @@ static void update_shots(void)
                                                                                                   * (Jellyfish: its anim scale hit reaction) */ }
             else if (e->kind == WALK_GESSO) { if (e->nrv != GE_PUNCHDOWN) w_nrv(e, GE_ROTATE); } /* isMsgStarPieceAttack: Rotate */
             else if (e->kind == WALK_METBO) { w_se(e, SE_EM_METBO_TRAMPLE); if (!mb_swoon(e) && e->nrv != MB_RECOVER && !mb_down(e)) w_nrv(e, MB_GUARD); } /* isMsgStarPieceReflect */
+            else if (e->kind == WALK_KABOKURI) w_nrv(e, KB_STARPIECE); /* requestStarPieceHitted */
             else if (e->kind == WALK_TERESAW) w_nrv(e, TW_STUN); /* isMsgStarPieceAttack: Stun */
             else if (e->kind == WALK_SNAKEHEAD) { if (e->phase) { hit = 0; continue; } } /* isMsgStarPieceReflect: nothing more (Waylay: not there) */
             else if (e->kind == WALK_MOGUCCHI) { if (e->nrv != MC_SCATTER && e->nrv != MC_DIE) w_nrv(e, MC_APPEARDOWN); } /* isMsgStarPieceAttack */
@@ -21165,6 +21293,7 @@ void game_update(void)
     update_fishes();
     update_gulls();
     update_storms();
+    update_kfires();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
