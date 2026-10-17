@@ -338,7 +338,14 @@ Pole / PoleSquare / NoModel / TreeCube (b504c11: grab, climb, handstand, jump of
 RingBeamer (5028a31: group rings, JumpBeamerBeam Spread frame), SearchBeamer (0deccc6: beam joints, stop when stood
 on), Gesso (ec36be2), BasaBasa / Ice (92fee2b), Jellyfish (3d84949: rail), Kanina / Red (c202214: blue 1-up given
 at once), Mogu (520592e: stone, hole), Mogucchi (58e507c: rail, mounds), Metbo (2f37776), WhirlPoolAccelerator
-(0aa7722: swim push, bands; jpa.py texture 8), WaterPressure (d741cb8: bullets catch Mario). New walkers go through
+(0aa7722: swim push, bands; jpa.py texture 8), WaterPressure (d741cb8: bullets catch Mario), Trapeze (b23375d),
+Onimasu / Pivot (e6b407e), LavaStrangeRock / L / Table (9372c0f), FirePressureRadiate (5b7a98d), StarPieceMother
+(45e2cc7), WaterLeakPipe (9d9fc50: Top joint height), KoopaBattleMapStair (9ea461a), EyeBeamer (15ae558: railer gated
+to Patrol, beam model), BlueStarCupsulePlanet / UFO (2c8b4f2: GCapture targets), CoconutTreeLeaf (79cc555: per-leaf
+KCL in kcl_query, Hit.sub), PalmIsland (393fe60), TeresaWater (ea6ff0e), FishGroup A-F (8ba6ead: rows kept without a
+model), SeaGullGroup (4bec260), KirairaRail (ab0860c), SunakazeKun / TwisterSan (3b537ac: Mario bind, tornado jump
+booster). Left as static on purpose: Flag* (a cloth renderer), StringSpider / SpiderMapBlock / SpiderCoin (the
+SpiderThread system), MorphItemNeoIce / Hopper (Mario forms), KoopaStatue (explosions only). New walkers go through
 new_walkers[] (count / placement / model by class); their star piece reactions in update_shots. Every pack must be
 rebuilt before the test campaign (slice.py SKINNED_OBJ / EXTRA / keep list and jpa.py changed; OceanPhantomCave 1
 is 9.03 MB streaming, over the 9.01 budget: check after the repack).
