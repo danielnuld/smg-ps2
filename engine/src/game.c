@@ -259,6 +259,7 @@ typedef struct {
     int dland;       /* DesertMovingLand: up / down by its switches (update_dlands) */
     int bigfan;      /* BigFan / BigFanNoLeg: its clips and wind model (update_bigfans, draw_bigfan_winds) */
     int eball;       /* ElectricBall: its ring of balls (update_eballs, draw_eballs; the instance itself not drawn) */
+    int arrow;       /* ArrowSwitch: a spin turns it a step, its SW_A (update_arrows) */
     int kstair;      /* KoopaBattleMapStair(Big / Turn): breaks and falls after its switch (update_stairs) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
@@ -1164,6 +1165,7 @@ static int npls; static void update_palms(void), pl_place(Inst *in);
 static int nlls; static void update_lotus(void), ll_place(Inst *in);
 #define TRAIN_CARS 8
 #define TRAIN_CARS_ROOM TRAIN_CARS
+static int nass; static void update_arrows(void), as_place(Inst *in);
 static int nebl; static void update_eballs(void), draw_eballs(void);
 static const Model *m_bfwind; static void update_bigfans(void), draw_bigfan_winds(void);
 static int ndls; static void update_dlands(void), dl_place(Inst *in);
@@ -1473,7 +1475,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nvines = 0; vine_ride = -1;
     pole_init();
     nrbms = 0;
-    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0; nfgs = 0; nggs = 0; nsss = 0; ss_ride = -1; ss_reset(); kfires_reset(); nlls = 0; ndls = 0; nebl = 0;
+    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0; nfgs = 0; nggs = 0; nsss = 0; ss_ride = -1; ss_reset(); kfires_reset(); nlls = 0; ndls = 0; nebl = 0; nass = 0;
     dino_cam = 0;
     foot_num = foot_rot = 0;
     nseesaws = 0;
@@ -3323,6 +3325,7 @@ void game_rebind(void)
         in->dland = strcmp(name, "DesertMovingLand") == 0;
         in->bigfan = strcmp(name, "BigFan") == 0 || strcmp(name, "BigFanNoLeg") == 0;
         in->eball = strcmp(name, "ElectricBall") == 0;
+        in->arrow = strcmp(name, "ArrowSwitch") == 0;
         in->kstair = strncmp(name, "KoopaBattleMapStair", 19) == 0 && strcmp(name, "KoopaBattleMapStairTurnAppear") != 0;
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
@@ -3358,6 +3361,7 @@ void game_rebind(void)
         if (in->tdoor) door_place(in);
         if (in->lotus) ll_place(in);
         if (in->dland) dl_place(in);
+        if (in->arrow) as_place(in);
         if (in->sstorm) ss_place(in);
         if (in->trapeze) tz_place(in);
         if (in->onimasu) oni_place(in);
@@ -20263,6 +20267,93 @@ static void draw_eballs(void)
     }
 }
 
+/* ArrowSwitch.cpp after Petari: an arrow turning about its Y in steps (targets 0 / 90 / 180 / -90; arg0 -1 / 2 half
+ * plus, 3 half minus, 0 quarter plus, 1 quarter minus, each with its limits). Mario's spin on its sensor (100 at (0, 50,
+ * 250)) turns it a step (6 a frame) the way his hit pushes it (its side . (it - Mario) > 0: plus), within its limits;
+ * at the target its SW_A goes on (not up) / off (up) with GRAVITY_SWITCHED; arg1 locks it after one turn (no sensor,
+ * no collision). Its SW_A turned on / off from elsewhere turns it too (unless locked). It pushes Mario. ponytail: no
+ * On / Off BTKs, no PlaneModeCube variant */
+#define MAX_ARROWS 32
+enum { AS_WAIT, AS_ROTATE, AS_LOCK };
+static const float as_targets[4] = {0.0f, 90.0f, 180.0f, -90.0f};
+static struct { int row, init, nrv, step, idx, plus, punch, sa; float ang, speed; } ass[MAX_ARROWS];
+static int as_of(int row)
+{
+    for (int i = 0; i < nass; i++) if (ass[i].row == row) return i;
+    if (nass == MAX_ARROWS) return -1;
+    memset(&ass[nass], 0, sizeof ass[0]);
+    ass[nass].row = row; ass[nass].plus = 1;
+    return nass++;
+}
+static int as_step(int t) { return t == -1 || t == 2 || t == 3 ? 2 : t == 0 || t == 1 ? 1 : 0; } /* getOneStep */
+static int as_plus_limit(int t, int i) { return t == 2 ? i == 2 : t == 0 ? i == 1 : t == 1 ? i == 0 : t == 3 ? i == 0 : 0; }
+static int as_minus_limit(int t, int i) { return t == 2 ? i == 0 : t == 0 ? i == 0 : t == 1 ? i == 3 : t == 3 ? i == 2 : 0; }
+static void as_place(Inst *in)
+{
+    int k = as_of(in->row);
+    if (k < 0) return;
+    const Row *r = &sc->objs[in->row];
+    float rot[3] = {r->rot[0], r->rot[1], r->rot[2]}, base[16], ry[16], one[3] = {1, 1, 1};
+    mat_translate_rot_scale(base, r->pos, rot, one);
+    float c = cosf(ass[k].ang * 0.0174533f), sn = sinf(ass[k].ang * 0.0174533f);
+    float rm[16] = {c, 0, -sn, 0, 0, 1, 0, 0, sn, 0, c, 0, 0, 0, 0, 1}; /* setEulerY */
+    memcpy(ry, rm, 64);
+    mat_mul(in->m, base, ry);
+    V3 p = row_pos(r);
+    in->m[12] = p.x; in->m[13] = p.y; in->m[14] = p.z;
+}
+static void as_turn(int k, int idx, int plus) { ass[k].idx = idx; ass[k].plus = plus; ass[k].speed = plus ? 6.0f : -6.0f; ass[k].nrv = AS_ROTATE; ass[k].step = -1; }
+static void update_arrows(void)
+{
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->arrow || !row_shown(in->row)) continue;
+        int k = as_of(in->row);
+        if (k < 0) continue;
+        typeof(&ass[0]) o = &ass[k];
+        const Row *r = &sc->objs[in->row];
+        int t = r->arg[0], lock = r->arg[1] > 0;
+        int sa = r->sw[SW_A] >= 0 && sw_on(r, SW_A);
+        if (!o->init) { o->init = 1; o->sa = sa; }
+        if (!lock && sa != o->sa && o->nrv != AS_ROTATE) { /* listenOnSwitch / listenOffSwitch */
+            if (sa && o->idx == 0) {
+                if (t == -1 || t == 2) as_turn(k, 2, 1); else if (t == 3) as_turn(k, 2, 0);
+                else if (t == 0) as_turn(k, 1, 1); else if (t == 1) as_turn(k, 3, 0);
+            } else if (!sa && o->idx != 0) as_turn(k, 0, !(t == -1 || t == 0 || t == 2));
+        }
+        o->sa = sa;
+        int st = ++o->step;
+        float old[16];
+        memcpy(old, in->m, 64);
+        if (o->nrv == AS_WAIT && mario->spin_timer > 0) { /* requestPunch */
+            V3 sp = v3(in->m[4] * 50.0f + in->m[8] * 250.0f + in->m[12], in->m[5] * 50.0f + in->m[9] * 250.0f + in->m[13], in->m[6] * 50.0f + in->m[10] * 250.0f + in->m[14]);
+            if (mario_touch(sp, 100.0f)) {
+                V3 side = vnorm(v3(in->m[0], in->m[1], in->m[2])), dir = vsub(sp, mc);
+                int plus = as_plus_limit(t, o->idx) ? 0 : as_minus_limit(t, o->idx) ? 1 : vdot(side, dir) > 0.0f;
+                o->punch = 1;
+                as_turn(k, ((o->idx + (plus ? as_step(t) : -as_step(t))) % 4 + 4) % 4, plus);
+                st = ++o->step;
+            }
+        }
+        if (o->nrv == AS_ROTATE) {
+            if (st == 0) se_start(SE_OJ_ARROW_SWITCH_ON, &in->m[12]);
+            in->lv[0] = se_level(SE_OJ_LV_ARROW_SWITCH_MOVE, &in->m[12], in->lv[0]);
+            o->ang = fmodf(o->ang + o->speed + 180.0f + 720.0f, 360.0f) - 180.0f; /* repeat(-180, 360) */
+            float diff = fmodf(as_targets[o->idx] - o->ang + 180.0f + 720.0f, 360.0f) - 180.0f;
+            if ((o->plus && diff < 0.0f) || (!o->plus && diff > 0.0f)) {
+                o->ang = as_targets[o->idx]; o->speed = 0;
+                if (r->sw[SW_A] >= 0 && o->punch) { sw_set((Row *)r, SW_A, o->idx != 0); o->sa = o->idx != 0; se_start(SE_SY_GRAVITY_SWITCHED, NULL); }
+                se_start(SE_OJ_ARROW_SWITCH_STOP, &in->m[12]);
+                o->punch = 0;
+                o->nrv = lock ? AS_LOCK : AS_WAIT; o->step = -1;
+            }
+        }
+        as_place(in);
+        if (mario_ground == i) carry(old, in);
+    }
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -22118,6 +22209,7 @@ void game_update(void)
     update_dlands();
     update_bigfans();
     update_eballs();
+    update_arrows();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
