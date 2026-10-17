@@ -758,6 +758,22 @@ int main(void)
             printf("astro test: grand star 1 %d, cube row %d\n", gd_flag_is_on("SpecialStarGrand1"), game_test_astro_cube(5));
         }
 #endif
+#if defined(PACKS) && defined(DOME_TEST)
+        { /* the dome: R2 at the blue star, Good Egg opened (New), then chosen and confirmed, its scenario 1 */
+            pad_force = 0;
+            if (frame == 200) gd_set_star("HeavensDoorGalaxy", 1); /* the Gateway's grand star: Good Egg can open */
+            if (frame >= 300 && frame < 345) { int r = game_test_dome(0, 1); if (frame == 300) printf("dome test f %u: blue star %d\n", frame, r); }
+            if (frame == 345) game_test_dome(0, 0);
+            if (frame >= 600 && frame <= 620) { int st = game_test_dome(1, 0); if (frame == 600) printf("dome test f %u: galaxy 0 state %d\n", frame, st); }
+            if (frame == 620) pad_force = PAD_CROSS;
+            if (frame >= 820 && frame <= 840) { int st = game_test_dome(1, 0); if (frame == 820) printf("dome test f %u: galaxy 0 state %d\n", frame, st); }
+            if (frame == 840) pad_force = PAD_CROSS;
+            if (frame == 960) printf("dome test f %u: pointer on BoxStartButton %d\n", frame, menu_test_point_dome("BoxStartButton"));
+            if (frame == 980) pad_force = PAD_CROSS;
+            if (frame == 1400) printf("dome test f %u: pointer on Star1 %d, selecting %d\n", frame, menu_test_point_scenario("Star1"), menu_scenario_selecting());
+            if (frame == 1420) pad_force = PAD_CROSS;
+        }
+#endif
 #if defined(PACKS) && defined(SCENSEL_TEST)
         { /* the scenario select of EggStar with its first star: the pointer on Star2 (the new one), X: its scenario 2 */
             pad_force = 0;

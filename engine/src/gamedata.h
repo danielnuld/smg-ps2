@@ -21,6 +21,8 @@ void gd_set_star(const char *galaxy, int star);
 int gd_star_num(void);                          /* calcCurrentPowerStarNum */
 int gd_star_num_galaxy(const char *galaxy);     /* getPowerStarNumOwned */
 int gd_visited(const char *galaxy, int scenario);
+int gd_visited_any(const char *galaxy);          /* isAlreadyVisitedStage */
+int gd_stars_to_open(const char *galaxy);        /* GameDataConst::getPowerStarNumToOpenGalaxy */
 void gd_set_visited(const char *galaxy, int scenario);
 void gd_update_max_coins(const char *galaxy, int scenario, int coins);
 int gd_max_coins(const char *galaxy, int scenario);

@@ -362,10 +362,16 @@ LayoutData layouts. Order by dependency:
    Star2 -> EggStarGalaxy/2. Fixed on the way: lyt setAnimFrameAndStop is rate 0 (isStop: ended or rate 0; ScenarioSelect
    Appear never played), other languages' panes stay hidden (lang_off), simplify.py rounds its target (at 0.99 every
    small mesh lost a triangle: the select sky's quad; **every pack needs a repack** for it and for slice.py VIS
-   PowerStar: frame 0, the clear shell no longer drawn over the stars). Next: the dome's galaxy select (the spec of
-   SphereSelector / Handle, MiniatureGalaxy(+Holder), AstroDomeOrbit, AstroDomeCameraController,
-   AstroDomeGalaxySelector, GalaxySelectInfo, GalaxyNamePlate, GalaxyConfirmLayout, GalaxySelectBackButton was read
-   from Petari 2026-10-17), then StageResultInformer, title / FileSelect, save, game over.
+   PowerStar: frame 0, the clear shell no longer drawn over the stars).
+   Done (next commit): the dome's galaxy select (game.c dome_*: AstroDomeBlueStar as gcap 4, SphereSelector, Handle,
+   MiniatureGalaxy (+Holder index, AstroDomeOrbit rings), AstroDomeCameraController, AstroDomeGalaxySelector; menu.c
+   menu_dome_*: GalaxySelectInfo, GalaxySelectBackButton, GalaxyConfirmLayout, GalaxyNamePlate). The blue star's
+   appear switch is forced on (its lecture demo not ported). slice.py: Mini<Galaxy> draw their own model plus
+   MINI_EXTRA (the factory listed the unknown one first); AstroDome repacked (slice_all.py takes a galaxy filter).
+   `dome` test: grand star 1, R2 on the blue star, Good Egg opened (New), chosen, Start, Star1 -> EggStarGalaxy/1.
+   A cancelled scenario select reloads the stage left. Left: galaxy pictures (ObjectData/GalaxyInfoTexture, 42 x
+   256 x 72), IconComet, star number plates, the demos (lectures, Mario's jump out), comets. Next: StageResultInformer,
+   title / FileSelect, save, game over.
 Then phase 1 (Good Egg vs Wii: the rim step's ground check, below), sound last. The disc ISO over ~1 GB does not boot
 in PCSX2 (taken for a DVD: open fail; a CD-sized image boots); the user's way of loading it on the PS2 was asked.
 

@@ -276,6 +276,7 @@ enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, 
 static V3 firebar_ball(const Inst *in, int j, int k);
 static V3 star_pos(const Inst *in, int *state);
 static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle);
+static void dome_init(void);
 /* slice.py BRK_ARG: a class whose colour is its BRK stopped at the frame one of its args gives (setBrkFrameAndStop) draws
  * the model baked at that frame, "<class>~<frame>" (NoInit: -1 is frame 0) */
 static const Model *brk_model(int row, const char *cls, int arg)
@@ -1794,6 +1795,12 @@ void game_init(const Scene *s, const unsigned char *blob)
     printf("game: %d static instances, coins %d, purple %d, star pieces %d, kuribo %d, start (%d %d %d)\n", ninsts,
            ncoins, npurple, npieces, nkuribo, (int)start_pos.x, (int)start_pos.y, (int)start_pos.z);
     os_init();
+    { /* GameDataHolder: this galaxy's scenario visited (setAlreadyVisitedStage) */
+        char gal[48];
+        const char *sl = strchr(game_stage_name, '/');
+        snprintf(gal, sizeof gal, "%.*s", sl ? (int)(sl - game_stage_name) : (int)strlen(game_stage_name), game_stage_name);
+        if (sl) gd_set_visited(gal, atoi(sl + 1));
+    }
 }
 
 /* a chip's group (same arg0, ChipHolder) waiting for its appear switch keeps the chip hidden */
@@ -3292,7 +3299,8 @@ void game_rebind(void)
         if (in->ibubble) in->head = row_pos(r); /* its items' frame (_CC) trails the bubble */
         in->meteor = NULL;
         in->killer = strcmp(name, "HomingKiller") == 0 ? 1 : strcmp(name, "Torpedo") == 0 ? 2 : 0; /* Torpedo: HomingKiller's Type_Torpedo */
-        in->gcap = strcmp(name, "GCaptureTarget") == 0 ? 1 : strcmp(name, "BlueStarCupsulePlanet") == 0 ? 2 : strcmp(name, "UFOBlueStarCupsule") == 0 ? 3 : 0;
+        in->gcap = strcmp(name, "GCaptureTarget") == 0 ? 1 : strcmp(name, "BlueStarCupsulePlanet") == 0 ? 2 : strcmp(name, "UFOBlueStarCupsule") == 0 ? 3 :
+                   strcmp(name, "AstroDomeBlueStar") == 0 ? 4 : 0;
         in->tspot = strcmp(name, "TreasureSpot") == 0 ? 1 : strcmp(name, "CoinFlower") == 0 ? 2 : 0;
         in->prom = NULL;
         in->beeflower = strcmp(name, "BeeFlowerHover") == 0;
@@ -6073,6 +6081,9 @@ static int warp_update(Player *m)
  * R1 (Wii Z) or coming within arg0 of the target breaks it. phase 0 none, 1 capture, 2 traction, 3 hold. ponytail:
  * no ribbon, no spin, power ramp guessed (sTractionPowerUpSpeed is not in the decompilation), railed targets stay */
 static void cursor_ray(V3 *o, V3 *d);
+static void dome_bind(void);
+static int dome_hold(Player *m);
+static int dome_busy(void);
 static int pointer_a(void) { return pad_held(PAD_R2) || test_r2; } /* the pointer's A */
 
 /* BlueStarCupsulePlanet.cpp after Petari: a target at its Root joint (UFOBlueStarCupsule's 300 up), StarPointer radius
@@ -6119,7 +6130,7 @@ static int gcap_update(Player *m)
     int a = pointer_a(), trig = a && !prev_a;
     prev_a = a;
     if (!gcap.phase) {
-        if (trig) {
+        if (trig && !dome_busy()) {
             int t = gcap_pick();
             if (t >= 0) { gcap.phase = 1; gcap.t = 0; gcap.target = t; gcap.power = 0; printf("gcapture: target row %d" "\n", insts[t].row); }
         }
@@ -6143,6 +6154,7 @@ static int gcap_update(Player *m)
     }
     if (gcap.phase == 1) { /* the ribbon on its way: Mario still free */
         if (!a && gcap.t > 30) { gcap.phase = 0; return 0; }
+        if (gcap.t >= 30 && in->gcap == 4) { gcap.phase = 0; dome_bind(); return 0; } /* AstroDomeBlueStar: its own bind */
         if (gcap.t >= 30) { gcap.phase = 2; gcap.t = 0; gcap.vel = v3(0, 0, 0); m->hip = 0; } /* requestBind: zeroVelocity */
         return 0;
     }
@@ -9021,6 +9033,7 @@ static HudCounter hud[4] = { /* StarCounter, CoinCounter, StarPieceCounter (norm
     {.lay = "StarPieceCounter", .group = 1, .offy = 30.0f}, {.lay = "PlayerLeft", .group = 0, .offx = -50.0f}};
 static struct { int nrv, step, still; } hudc; /* CounterLayoutController: 0 PlayerMoving, 1 PlayerNotMoving */
 static int hud_on; /* forceAppearDefaultGameLayout has run (ScenarioStarter's Welcome, step 90) */
+static int dome_layout_off; /* the dome's SphereSelector: deactivateDefaultGameLayout while it runs */
 static void hud_set(HudCounter *c, int n) { c->nrv = n; c->step = 0; }
 static void hud_ap(HudCounter *c, int n) { c->ap = n; c->ap_step = 0; }
 static int hud_value(int k)
@@ -9112,7 +9125,7 @@ static float hud_hermite(float f, float f0, float v0, float s0, float f1, float 
 }
 static void hud_draw(void)
 {
-    if (menu_paused()) return; /* PauseMenu::appear: deactivateDefaultGameLayout */
+    if (menu_paused() || dome_layout_off) return; /* PauseMenu::appear / SphereSelector::appear: deactivateDefaultGameLayout */
     for (int k = 0; k < 4; k++) {
         const HudCounter *c = &hud[k];
         if (c->ap == AP_HIDE) continue;
@@ -11512,6 +11525,10 @@ static void update_mario(void)
             if (mario_anim) anim_update(mario_anim);
             return;
         }
+    }
+    if (dome_hold(m)) { /* the dome's blue star holds him */
+        if (mario_anim) anim_update(mario_anim);
+        return;
     }
     if (jb.inst >= 0 || (warp.from < 0 && gcap.phase < 2 && jbranch_try(m))) {
         if (jb.inst >= 0 && jbranch_update(m)) {
@@ -21986,6 +22003,7 @@ static void update_items(void)
                 snprintf(gal, sizeof gal, "%.*s", sl ? (int)(sl - game_stage_name) : (int)strlen(game_stage_name), game_stage_name);
                 if (id <= 0 && sl) id = atoi(sl + 1);
                 gd_set_star(gal, id);
+                gd_update_max_coins(gal, sl ? atoi(sl + 1) : 1, got_coins); /* the coin best score */
                 seq_set_cleared(id); /* GameSequenceFunction::getClearedPowerStarId */
             }
             se_start(SE_SY_STAR_GET, NULL); /* PowerStar::receiveOtherMsg */
@@ -22413,6 +22431,726 @@ static void keep_effects(void)
 void game_set_time_limit(int seconds) { time_limit = time_left = seconds * 60; }
 int game_time_left(void) { return time_limit ? time_left : -1; }
 
+/* --- the dome's galaxy select ---------------------------------------------------------------------------------------
+ * AstroDomeBlueStar, SphereSelector, SphereSelectorHandle, MiniatureGalaxy(Holder), AstroDomeOrbit,
+ * AstroDomeCameraController and AstroDomeGalaxySelector after Petari (their layouts: menu.c menu_dome_*). The pointer
+ * is the right stick, the pointer's A R2 at the blue star (gcap_pick, as GCaptureTarget) and X in the select (the
+ * menus' decide; held with the pointer off the galaxies it drags the globe), B Circle / Triangle. ponytail: no
+ * capture ribbon / effects, no star counter, no demos (ドームレクチャー２, マリオ飛び出し, GalaxyMoveLecture), no comet
+ * galaxy, no BGM states / rumble, no shadows / star number plates, the select ring without its BRK fade */
+typedef struct { V3 x, y, z, p; } Mx; /* columns, translation */
+static V3 mx_rot(const Mx *m, V3 v) { return vadd(vadd(vmul(m->x, v.x), vmul(m->y, v.y)), vmul(m->z, v.z)); }
+static V3 mx_ap(const Mx *m, V3 v) { return vadd(mx_rot(m, v), m->p); }
+static Mx mx_mul(const Mx *a, const Mx *b) { Mx r = {mx_rot(a, b->x), mx_rot(a, b->y), mx_rot(a, b->z), mx_ap(a, b->p)}; return r; }
+static Mx mx_up_front(V3 up, V3 front, V3 pos) /* makeMtxUpFrontPos */
+{
+    V3 y = vnorm(up), x = vnorm(vcross(y, front)), z = vcross(x, y);
+    Mx r = {x, y, z, pos};
+    return r;
+}
+static Mx mx_front_up(V3 front, V3 up, V3 pos) /* makeMtxFrontUpPos */
+{
+    V3 z = vnorm(front), x = vnorm(vcross(up, z)), y = vcross(z, x);
+    Mx r = {x, y, z, pos};
+    return r;
+}
+static Mx mx_rot_xyz(V3 d) /* makeMtxRotate: Rz Ry Rx, degrees */
+{
+    float cx = cosf(d.x * 0.017453293f), sx = sinf(d.x * 0.017453293f), cy = cosf(d.y * 0.017453293f), sy = sinf(d.y * 0.017453293f);
+    float cz = cosf(d.z * 0.017453293f), sz = sinf(d.z * 0.017453293f);
+    Mx r = {v3(cz * cy, sz * cy, -sy), v3(cz * sy * sx - sz * cx, sz * sy * sx + cz * cx, cy * sx),
+            v3(cz * sy * cx + sz * sx, sz * sy * cx - cz * sx, cy * cx), v3(0, 0, 0)};
+    return r;
+}
+static V3 rot_deg(V3 v, V3 axis, float deg) /* rotateVecDegree */
+{
+    V3 a = vnorm(axis);
+    float r = deg * 0.017453293f, c = cosf(r), s = sinf(r);
+    return vadd(vadd(vmul(v, c), vmul(vcross(a, v), s)), vmul(a, vdot(a, v) * (1.0f - c)));
+}
+static float rep_deg(float v) { v = fmodf(v, 360.0f); return v < 0 ? v + 360.0f : v; }
+static float clampf(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
+static float rate_n(int step, int n) { return n <= 0 ? 1.0f : clampf((float)step / n, 0, 1); } /* calcNerveRate */
+static float ease_in_f(float t) { return 1.0f - cosf(t * 1.5707963f); }
+static float ease_out_f(float t) { return sinf(t * 1.5707963f); }
+static float ease_in_out_f(float t) { return (1.0f - cosf(t * 3.14159265f)) * 0.5f; }
+static float reaction_f(float x, float freq, float amp) /* getScaleWithReactionValueZeroToOne */
+{
+    if (x < 0.5f) return sinf(x * 3.14159265f);
+    float t = (x - 0.5f) * 2.0f;
+    return 1.0f + (1.0f - cosf(3.14159265f * freq * t)) * (1.0f - t) * amp;
+}
+
+/* nerves as Spine runs them (menu.c's): setNerve takes effect after the update, step 0 first */
+typedef struct { int cur, next, step; } Dn;
+static void dn_set(Dn *n, int v) { n->next = v; n->step = -1; }
+static void dn_change(Dn *n) { if (n->next >= 0) { n->cur = n->next; n->next = -1; n->step = 0; } }
+static int dn_begin(Dn *n) { dn_change(n); return n->cur; }
+static void dn_end(Dn *n) { n->step++; dn_change(n); }
+static int dn_is(const Dn *n, int v) { return (n->next >= 0 ? n->next : n->cur) == v; }
+static void dn_init(Dn *n, int v) { n->cur = v; n->next = -1; n->step = 0; }
+#define FIRST(n) ((n)->step == 0)
+
+enum { BS_WAIT, BS_TRACTION, BS_HOLD, BS_SELECT, BS_CONFIRMSTART, BS_CONFIRM, BS_CONFIRMCANCEL, BS_BINDEND };
+enum { SS2_NONE, SS2_SELECTSTART, SS2_SELECTWAIT, SS2_SELECTCANCEL, SS2_CONFIRMSTART, SS2_CONFIRMWAIT, SS2_CONFIRMCANCEL, SS2_CONFIRMED };
+enum { HD_DEAD, HD_WAIT, HD_HOLD, HD_SPIN, HD_DISAPPEAR, HD_CONFIRMSTART, HD_CONFIRMWAIT, HD_CONFIRMCANCEL, HD_INVALID };
+enum { MG_DEAD, MG_WAIT, MG_SELECTED, MG_NOTSELECTED, MG_CONFIRMED, MG_OPEN };
+enum { CC_DEAD, CC_SELECTSTART, CC_SELECT, CC_CONFIRMSTART, CC_CONFIRM, CC_CONFIRMCANCEL };
+enum { GS_DEAD, GS_SELECTSTART, GS_SELECT, GS_SELECTCANCEL, GS_CONFIRMSTART, GS_CONFIRM, GS_CONFIRMCANCEL, GS_JUMPOUT };
+enum { T_NONE, T_HANDLE, T_BACK, T_GALAXY }; /* pointing / selected targets (T_GALAXY + i) */
+#define DOME_MAX 8
+
+static struct {
+    int on;                          /* the blue star placed: a dome */
+    /* AstroDomeBlueStar */
+    int bs_row; V3 bs_home, bs_pos, bs_zoom; Dn bs; Mx bs_start, host;
+    /* SphereSelector */
+    Dn sel; int cand, pointing, selected, invalid; u32 cand_d; int prev_a;
+    /* SphereSelectorHandle */
+    Dn hd; V3 hpos, c0, dc, e8; float rot_y, speed, prev_y, xs, prev_x, vh[3][2], last_cx, last_cy; int idle; Mx base;
+    /* MiniatureGalaxy, AstroDomeOrbit */
+    int ng;
+    struct { int row, type, state, idx, zoom_out, level; float scale, rot_y, radius, angle; V3 orbit_rot, pos; Dn n;
+             char name[32]; const Model *md, *unknown, *koopa; } g[DOME_MAX];
+    const Model *m_select;
+    /* AstroDomeCameraController */
+    Dn cc; V3 start; V3 zs, ze, zc, ts, te, tc, us, ue, uc; float ease;
+    /* AstroDomeGalaxySelector */
+    Dn gs; int back_on;
+} dm;
+static Inst *dm_inst(int row) /* its instance now (game_rebind renumbers them) */
+{
+    for (int i = 0; i < ninsts; i++) if (insts[i].row == row) return &insts[i];
+    return NULL;
+}
+
+static V3 dm_cam_y(void) { V3 e, w, u; float f; camera_pose(&e, &w, &u, &f); V3 fw = vnorm(vsub(w, e)), s = vnorm(vcross(fw, u)); return vcross(s, fw); }
+static V3 dm_cam_z(void) { V3 e, w, u; float f; camera_pose(&e, &w, &u, &f); return vnorm(vsub(e, w)); } /* getCamZdir: back */
+static V3 dm_cam_pos(void) { V3 e, w, u; float f; camera_pose(&e, &w, &u, &f); return e; }
+
+static const Mx *dm_handle_mtx(void) /* calcHandledRotateMtx(0): the handle's base, identity when it is dead */
+{
+    static const Mx id = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}, {0, 0, 0}};
+    return dn_is(&dm.hd, HD_DEAD) ? &id : &dm.base;
+}
+
+/* SphereSelector messages to the registered actors (handle, galaxies, camera, galaxy selector, blue star) */
+static void dm_msg(int msg);
+enum { M_SELECT_START, M_SELECT_END, M_CONFIRM_START, M_CONFIRM_CANCEL, M_CONFIRMED };
+
+static void dm_galaxy_appear(int i);
+static int dm_galaxy_selected(int i);
+static int dm_handle_selected(void);
+
+/* SphereSelector::registerPointingTarget: the nearest by view depth; the handle last (0xFFFFFFFF), the back button first */
+static void dm_register(int target, u32 d)
+{
+    if (dm.invalid || !dn_is(&dm.sel, SS2_SELECTWAIT)) return;
+    if (!dm.cand || d < dm.cand_d) { dm.cand = target; dm.cand_d = d; }
+}
+static int dm_send_selected(int t) /* sendMsg(TARGET_SELECTED): stored when the target takes it */
+{
+    int ok = t == T_HANDLE ? dm_handle_selected() : t == T_BACK ? 1 : t >= T_GALAXY ? dm_galaxy_selected(t - T_GALAXY) : 0;
+    if (t == T_BACK) { /* AstroDomeGalaxySelector: backButton.decide, selectCancel */
+        menu_dome_back(2);
+        dn_set(&dm.sel, SS2_SELECTCANCEL);
+        dn_set(&dm.gs, GS_SELECTCANCEL);
+    }
+    if (ok) dm.selected = t;
+    return ok;
+}
+
+static void dm_selector_update(void)
+{
+    if (dn_is(&dm.sel, SS2_NONE)) return;
+    int a = pad_pressed(PAD_CROSS), held = pad_held(PAD_CROSS);
+    switch (dn_begin(&dm.sel)) {
+    case SS2_SELECTSTART:
+        if (FIRST(&dm.sel)) dm_msg(M_SELECT_START);
+        if (dm.sel.step == 60) dn_set(&dm.sel, SS2_SELECTWAIT); /* getSelectStartFrame */
+        break;
+    case SS2_SELECTWAIT:
+        if (FIRST(&dm.sel)) { dm.pointing = dm.cand = 0; }
+        if (dm.pointing && a && !demo_on) dm_send_selected(dm.pointing);
+        else if (held && !demo_on && dm.hd.cur != HD_DEAD) dm_send_selected(T_HANDLE); /* isPadButton, handle.isPointing */
+        dm.pointing = dm.cand; dm.cand = 0; /* the pointing result a frame late */
+        break;
+    case SS2_SELECTCANCEL:
+        if (FIRST(&dm.sel)) se_start(SE_SY_GALAXY_DECIDE_CANCEL, NULL);
+        break;
+    case SS2_CONFIRMSTART:
+        if (FIRST(&dm.sel)) { dm_msg(M_CONFIRM_START); se_start(SE_SY_GALAXY_SELECTED, NULL); }
+        if (dm.sel.step == 45) dn_set(&dm.sel, SS2_CONFIRMWAIT); /* getConfirmStartCancelFrame */
+        break;
+    case SS2_CONFIRMWAIT: break;
+    case SS2_CONFIRMCANCEL:
+        if (FIRST(&dm.sel)) { dm_msg(M_CONFIRM_CANCEL); dm.selected = dm.pointing = 0; }
+        if (dm.sel.step == 45) dn_set(&dm.sel, SS2_SELECTWAIT);
+        break;
+    case SS2_CONFIRMED:
+        if (FIRST(&dm.sel)) dm_msg(M_CONFIRMED);
+        break;
+    }
+    dn_end(&dm.sel);
+    (void)dm.prev_a;
+}
+
+static void dm_select_end(void) /* SphereSelector::kill: SELECT_END to all, the HUD back */
+{
+    dm_msg(M_SELECT_END);
+    dn_init(&dm.sel, SS2_NONE);
+    dome_layout_off = 0;
+    menu_dome_close();
+}
+
+/* --- SphereSelectorHandle --- */
+static void dm_handle_reset(void) { dm.speed = dm.prev_y = dm.xs = dm.prev_x = 0; }
+static void dm_handle_appear(void)
+{
+    V3 c = vmul(dm_cam_z(), -1.0f);
+    c.y = 0;
+    dm.c0 = vnorm(c);
+    dm_handle_reset();
+    dm.idle = 0;
+    memset(dm.vh, 0, sizeof dm.vh);
+    dm.rot_y = 0;
+    dm.dc = vcross(v3(0, 1, 0), dm.c0);
+    dm.e8 = vnorm(rot_deg(v3(0, 1, 0), dm.dc, 40.0f)); /* cRotateAppearX */
+    dn_init(&dm.hd, HD_WAIT); dm.hd.step = -1; dm.hd.next = HD_WAIT;
+}
+static int dm_handle_selected(void)
+{
+    if (!dn_is(&dm.hd, HD_WAIT) && !dn_is(&dm.hd, HD_SPIN)) return 0;
+    dn_set(&dm.hd, HD_HOLD);
+    return 1;
+}
+static void dm_handle_update(void)
+{
+    if (dn_is(&dm.hd, HD_DEAD)) return;
+    float cx, cy;
+    game_cursor(&cx, &cy);
+    float vx = (cx - dm.last_cx) * (608.0f / 640.0f), vy = (cy - dm.last_cy) * (456.0f / 448.0f); /* getStarPointerScreenVelocity */
+    dm.last_cx = cx; dm.last_cy = cy;
+    switch (dn_begin(&dm.hd)) {
+    case HD_WAIT:
+        if (FIRST(&dm.hd)) dm_handle_reset();
+        dm_register(T_HANDLE, 0xFFFFFFFFu);
+        break;
+    case HD_HOLD: {
+        if (FIRST(&dm.hd)) { dm_handle_reset(); memset(dm.vh, 0, sizeof dm.vh); se_start(SE_DM_ASTRO_HANDLE_GRAB, NULL); }
+        dm.vh[2][0] = dm.vh[1][0]; dm.vh[2][1] = dm.vh[1][1];
+        dm.vh[1][0] = dm.vh[0][0]; dm.vh[1][1] = dm.vh[0][1];
+        dm.vh[0][0] = vx; dm.vh[0][1] = vy;
+        int k = 0;
+        for (int i = 1; i < 3; i++)
+            if (dm.vh[i][0] * dm.vh[i][0] + dm.vh[i][1] * dm.vh[i][1] > dm.vh[k][0] * dm.vh[k][0] + dm.vh[k][1] * dm.vh[k][1]) k = i;
+        dm.speed = 0.2f * dm.vh[k][0]; /* cHoldRotateRateY */
+        if (dm.speed * dm.prev_y < 0 || fabsf(dm.speed) < fabsf(dm.prev_y)) dm.speed += (dm.prev_y - dm.speed) * 0.9f;
+        dm.xs = 0.075f * dm.vh[k][1]; /* cHoldRotateRateX */
+        if (dm.xs * dm.prev_x < 0 || fabsf(dm.xs) < fabsf(dm.prev_x)) dm.xs += (dm.prev_x - dm.xs) * 0.9f;
+        if (!(pad_held(PAD_CROSS) && !demo_on)) dn_set(&dm.hd, HD_SPIN);
+        break;
+    }
+    case HD_SPIN:
+        dm.speed *= 0.95f; dm.xs *= 0.95f; /* cSpinReduceRate */
+        dm_register(T_HANDLE, 0xFFFFFFFFu);
+        if (fabsf(dm.speed) < 0.001f && fabsf(dm.xs) < 0.001f) dn_set(&dm.hd, HD_WAIT);
+        break;
+    case HD_DISAPPEAR:
+        if (FIRST(&dm.hd)) dm_handle_reset();
+        if (dm.hd.step == 90) { dn_init(&dm.hd, HD_DEAD); return; }
+        break;
+    case HD_CONFIRMSTART:
+        if (FIRST(&dm.hd)) dm_handle_reset();
+        if (dm.hd.step == 45) dn_set(&dm.hd, HD_CONFIRMWAIT);
+        break;
+    case HD_CONFIRMWAIT: break;
+    case HD_CONFIRMCANCEL:
+        if (dm.hd.step == 45) dn_set(&dm.hd, HD_WAIT);
+        break;
+    case HD_INVALID:
+        if (FIRST(&dm.hd)) dm_handle_reset();
+        break;
+    }
+    dn_end(&dm.hd);
+    /* control: rotateAxisY, rotateAxisX (cRotateSpeedChangeMax 0.2, max Y 5 / X 2, -15..80 degrees), updateBaseMtx */
+    dm.speed = clampf(clampf(dm.speed, dm.prev_y - 0.2f, dm.prev_y + 0.2f), -5.0f, 5.0f);
+    dm.prev_y = dm.speed;
+    dm.rot_y = rep_deg(dm.rot_y + dm.speed);
+    dm.xs = clampf(clampf(dm.xs, dm.prev_x - 0.2f, dm.prev_x + 0.2f), -2.0f, 2.0f);
+    dm.prev_x = dm.xs;
+    dm.e8 = vnorm(rot_deg(dm.e8, dm.dc, dm.xs));
+    V3 mn = rot_deg(v3(0, 1, 0), dm.dc, -15.0f), mxu = rot_deg(v3(0, 1, 0), dm.dc, 80.0f);
+    if (vdot(dm.e8, dm.c0) < vdot(mn, dm.c0)) dm.e8 = mn;
+    else if (vdot(mxu, dm.c0) < vdot(dm.e8, dm.c0)) dm.e8 = mxu;
+    Mx uf = mx_up_front(dm.e8, dm.c0, v3(0, 0, 0)), ry = mx_rot_xyz(v3(0, dm.rot_y, 0));
+    dm.base = mx_mul(&uf, &ry);
+    dm.base.p = dm.hpos;
+    if (fabsf(dm.xs) > 0.03f || fabsf(dm.speed) > 0.03f) { /* playRotateSE */
+        static u32 lv;
+        lv = se_level(SE_AT_LV_ASTRO_DOME_WIND_1, NULL, lv);
+    }
+}
+
+/* --- MiniatureGalaxy, AstroDomeOrbit --- */
+static V3 dm_galaxy_pos(int i) /* AstroDomeOrbit::calcGalaxyPos */
+{
+    float a = rep_deg(dm.g[i].angle) * 0.017453293f;
+    V3 p = vadd(vmul(v3(cosf(a), 0, sinf(a)), dm.g[i].radius), dm.hpos);
+    Mx r = mx_rot_xyz(dm.g[i].orbit_rot), m = mx_mul(dm_handle_mtx(), &r);
+    return mx_ap(&m, p);
+}
+static void dm_galaxy_scale(int i, float s) { dm.g[i].scale = s; }
+static int dm_galaxy_pointed(void) { return dm.pointing >= T_GALAXY ? dm.pointing - T_GALAXY : -1; }
+
+static void dm_galaxy_appear(int i) /* MiniatureGalaxy::appear */
+{
+    static const float rot[5] = {0, 210, 80, 330, 130};
+    typeof(&dm.g[0]) g = &dm.g[i];
+    char flag[48];
+    g->rot_y = rot[g->idx < 5 ? g->idx : 4];
+    g->zoom_out = 1; g->level = 20;
+    dm_galaxy_scale(i, 0.65f); /* cZoomOutScale */
+    snprintf(flag, sizeof flag, "%s", g->name);
+    g->state = !gd_galaxy_appear(g->name) ? 0 : gd_flag_is_on(flag) ? 3 : gd_flag_can_on(flag) ? 2 : 1;
+    dn_init(&g->n, MG_WAIT); g->n.step = -1; g->n.next = MG_WAIT;
+}
+
+static int dm_galaxy_selected(int i) /* receive TARGET_SELECTED in Wait */
+{
+    typeof(&dm.g[0]) g = &dm.g[i];
+    if (!dn_is(&g->n, MG_WAIT)) return 0;
+    if (g->state == 2) { /* New: invalidatePointing, Open */
+        dm.invalid = 1;
+        dn_set(&dm.hd, HD_INVALID);
+        dn_set(&g->n, MG_OPEN);
+        return 0;
+    }
+    if (g->state == 3) { dn_set(&dm.sel, SS2_CONFIRMSTART); dn_set(&g->n, MG_SELECTED); return 1; }
+    return 0;
+}
+
+static void dm_galaxy_zoom_in(int i) { if (dm.g[i].zoom_out && dm.g[i].level == 20) { dm.g[i].zoom_out = 0; dm.g[i].level = 0; } }
+static void dm_galaxy_zoom_out(int i) { if (!dm.g[i].zoom_out && dm.g[i].level == 20) { dm.g[i].zoom_out = 1; dm.g[i].level = 0; } }
+
+static void dm_galaxy_update(int i)
+{
+    typeof(&dm.g[0]) g = &dm.g[i];
+    if (dn_is(&g->n, MG_DEAD)) return;
+    switch (dn_begin(&g->n)) {
+    case MG_WAIT: {
+        /* tryRegisterPointingTarget (prio 0): the pointer within its radius (2500 x scale) round it, by view depth */
+        if (!dn_is(&dm.hd, HD_HOLD)) {
+            float sx, sy, cx, cy;
+            V3 ce = dm_cam_pos(), e, w, u; float fov;
+            camera_pose(&e, &w, &u, &fov);
+            float f = 224.0f / tanf(fov * 3.14159265f / 360.0f), z = vdot(vsub(g->pos, ce), vnorm(vsub(w, e)));
+            if (game_cursor(&cx, &cy) && screen_pos(g->pos, &sx, &sy) && z > 0) {
+                float r = 2500.0f * g->scale * f / z;
+                if ((sx - cx) * (sx - cx) + (sy - cy) * (sy - cy) < r * r) dm_register(T_GALAXY + i, (u32)z);
+            }
+        }
+        if (dm.pointing == T_GALAXY + i) dm_galaxy_zoom_in(i); else dm_galaxy_zoom_out(i);
+        g->angle = rep_deg(g->angle - 0.05f); /* AstroDomeOrbit::moveCoord */
+        break;
+    }
+    case MG_SELECTED: dm_galaxy_zoom_in(i); break;
+    case MG_NOTSELECTED: case MG_CONFIRMED: break;
+    case MG_OPEN:
+        if (FIRST(&g->n)) {
+            char flag[48];
+            snprintf(flag, sizeof flag, "%s", g->name);
+            se_start(SE_SY_NEW_GALAXY_OPEN_SIGN, NULL);
+            g->zoom_out = 0; g->level = 20; dm_galaxy_scale(i, 1.0f);
+            gd_flag_try_on(flag); /* onGameEventFlagGalaxyOpen */
+        }
+        if (g->n.step < 45) { static u32 lv; lv = se_level(SE_SY_LV_NEW_GALAXY_OPENING, NULL, lv); }
+        if (g->n.step == 45) { se_start(SE_SY_NEW_GALAXY_OPEN, NULL); camera_shake(1); }
+        if (g->n.step == 75) { g->state = 3; g->zoom_out = 1; g->level = 20; dm_galaxy_scale(i, 0.65f); }
+        if (g->n.step == 150) { dm.invalid = 0; dn_set(&dm.hd, HD_WAIT); dn_set(&g->n, MG_WAIT); } /* validatePointing */
+        break;
+    }
+    dn_end(&g->n);
+    /* control: updateZoomInOut, the orbit's place, its turn */
+    if (g->level < 20) {
+        g->level++;
+        float r = g->level / 20.0f;
+        if (!g->zoom_out) {
+            dm_galaxy_scale(i, 0.65f + 0.35f * reaction_f(r, 1.5f, -0.08f));
+            if (g->level == 1) se_start(g->state < 2 ? SE_SY_CURSOR_1 : SE_SY_CURSOR_1, NULL); /* ponytail: its ME (voice) */
+        } else dm_galaxy_scale(i, 1.0f + (0.65f - 1.0f) * sinf(r * 1.5707963f));
+    }
+    g->pos = dm_galaxy_pos(i);
+    g->rot_y = rep_deg(g->rot_y + 0.4f); /* cRotateSpeedY */
+    /* calcAndSetBaseMtx: the handle's turn, its own Y turn, at its place; the unknown / koopa model by its state */
+    Inst *in = dm_inst(g->row);
+    if (!in) return;
+    Mx ry = mx_rot_xyz(v3(0, g->rot_y, 0)), b = mx_mul(dm_handle_mtx(), &ry);
+    float s = g->scale;
+    in->m[0] = b.x.x * s; in->m[1] = b.x.y * s; in->m[2] = b.x.z * s; in->m[3] = 0;
+    in->m[4] = b.y.x * s; in->m[5] = b.y.y * s; in->m[6] = b.y.z * s; in->m[7] = 0;
+    in->m[8] = b.z.x * s; in->m[9] = b.z.y * s; in->m[10] = b.z.z * s; in->m[11] = 0;
+    in->m[12] = g->pos.x; in->m[13] = g->pos.y; in->m[14] = g->pos.z; in->m[15] = 1;
+    in->s = s;
+    in->md = g->state < 3 && g->unknown && !dn_is(&g->n, MG_OPEN) ? g->unknown :
+             dn_is(&g->n, MG_OPEN) && g->n.step < 75 && g->unknown ? g->unknown : g->koopa ? g->koopa : g->md;
+    in->invisible = dn_is(&g->n, MG_NOTSELECTED);
+}
+
+/* --- AstroDomeCameraController --- */
+static V3 dm_cam_zoom_out(void) /* calcOffsetPos(0, (0, 0, -22000), front -mStartPos, up Y) */
+{
+    V3 f = vmul(dm.start, -1.0f);
+    f.y = 0;
+    f = vlen(f) < 1e-3f ? v3(0, 0, 1) : vnorm(f);
+    Mx m = mx_up_front(v3(0, 1, 0), f, v3(0, 0, 0));
+    return mx_ap(&m, v3(0, 0, -22000.0f));
+}
+static V3 dm_sel_pos(void) { return dm.selected >= T_GALAXY ? dm.g[dm.selected - T_GALAXY].pos : v3(0, 0, 0); }
+static V3 dm_cam_zoom_in_target(void) { return vadd(dm_sel_pos(), vmul(dm_handle_mtx()->y, 200.0f)); }
+static V3 dm_cam_zoom_in_pos(void)
+{
+    V3 sp = dm_sel_pos(), f = vnorm(vsub(sp, dm_cam_zoom_out()));
+    Mx m = mx_up_front(dm_handle_mtx()->y, f, sp);
+    return mx_ap(&m, v3(0, 3000.0f, -8500.0f)); /* cZoomInPos */
+}
+static void dm_camera_update(void)
+{
+    if (dn_is(&dm.cc, CC_DEAD)) return;
+    switch (dn_begin(&dm.cc)) {
+    case CC_SELECTSTART:
+        if (FIRST(&dm.cc)) { dm.zs = dm.zc; dm.ze = dm_cam_zoom_out(); dm.ts = dm.tc; dm.te = v3(0, 0, 0); }
+        dm.ease = ease_in_out_f(rate_n(dm.cc.step, 60));
+        if (dm.cc.step == 60) dn_set(&dm.cc, CC_SELECT);
+        break;
+    case CC_SELECT:
+        if (FIRST(&dm.cc)) dm.ease = 1;
+        dm.zs = dm.ze = dm.zc = dm_cam_zoom_out(); dm.ts = dm.te = dm.tc = v3(0, 0, 0);
+        break;
+    case CC_CONFIRMSTART:
+        if (FIRST(&dm.cc)) { dm.ts = dm.tc; dm.te = dm_cam_zoom_in_target(); dm.zs = dm.zc; dm.ze = dm_cam_zoom_in_pos(); dm.us = dm.uc; dm.ue = dm_handle_mtx()->y; }
+        dm.ease = ease_out_f(rate_n(dm.cc.step, 45));
+        dm.te = dm_cam_zoom_in_target();
+        if (dm.cc.step == 45) dn_set(&dm.cc, CC_CONFIRM);
+        break;
+    case CC_CONFIRM:
+        if (FIRST(&dm.cc)) dm.ease = 1;
+        dm.zs = dm.ze = dm.zc = dm_cam_zoom_in_pos(); dm.ts = dm.te = dm.tc = dm_cam_zoom_in_target();
+        break;
+    case CC_CONFIRMCANCEL:
+        if (FIRST(&dm.cc)) { dm.zs = dm.zc; dm.ze = dm_cam_zoom_out(); dm.ts = dm.tc; dm.te = v3(0, 0, 0); dm.us = dm.uc; dm.ue = v3(0, 1, 0); }
+        dm.ease = ease_in_f(rate_n(dm.cc.step, 45));
+        if (dm.cc.step == 45) dn_set(&dm.cc, CC_SELECT);
+        break;
+    }
+    dn_end(&dm.cc);
+    dm.zc = vadd(dm.zs, vmul(vsub(dm.ze, dm.zs), dm.ease));
+    dm.tc = vadd(dm.ts, vmul(vsub(dm.te, dm.ts), dm.ease));
+    dm.uc = vadd(dm.us, vmul(vsub(dm.ue, dm.us), dm.ease));
+    camera_set_override(1, dm.zc, dm.tc, vnorm(dm.uc), 60.0f); /* cFovy */
+}
+
+/* --- AstroDomeGalaxySelector --- */
+static void dm_galaxy_info(int i) { if (i >= 0) menu_dome_info(dm.g[i].name, dm.g[i].state); } /* showGalaxyInfo */
+static void dm_selector_actor_update(void)
+{
+    if (dn_is(&dm.gs, GS_DEAD)) return;
+    switch (dn_begin(&dm.gs)) {
+    case GS_SELECTSTART:
+        if (dn_is(&dm.sel, SS2_SELECTWAIT)) dn_set(&dm.gs, GS_SELECT); /* ponytail: ドームレクチャー２ not played */
+        break;
+    case GS_SELECT: {
+        static int was_on;
+        if (FIRST(&dm.gs)) menu_dome_back(0);
+        if (!dm.invalid && (pad_pressed(PAD_CIRCLE) || pad_pressed(PAD_TRIANGLE))) { /* B */
+            se_start(SE_SY_GALAXY_DECIDE_CANCEL, NULL);
+            menu_dome_back(1);
+            dn_set(&dm.sel, SS2_SELECTCANCEL);
+            dn_set(&dm.gs, GS_SELECTCANCEL);
+            break;
+        }
+        int on = !dn_is(&dm.hd, HD_HOLD) && menu_dome_back_state(0);
+        if (on) { dm_register(T_BACK, 0); if (!was_on) se_start(SE_SY_BUTTON_CURSOR_ON, NULL); }
+        was_on = on;
+        if (dm.pointing == T_BACK) menu_dome_back(3);
+        dm_galaxy_info(dm_galaxy_pointed());
+        break;
+    }
+    case GS_SELECTCANCEL:
+        if (menu_dome_back_state(2)) { dm_select_end(); dn_init(&dm.gs, GS_DEAD); return; }
+        break;
+    case GS_CONFIRMSTART:
+        if (FIRST(&dm.gs)) menu_dome_back(1);
+        dm_galaxy_info(dm.selected - T_GALAXY);
+        if (dn_is(&dm.sel, SS2_CONFIRMWAIT)) dn_set(&dm.gs, GS_CONFIRM);
+        break;
+    case GS_CONFIRM:
+        if (FIRST(&dm.gs)) menu_dome_confirm_appear();
+        dm_galaxy_info(dm.selected - T_GALAXY);
+        if (menu_dome_confirm() == 1) { dn_set(&dm.sel, SS2_CONFIRMED); dn_set(&dm.gs, GS_JUMPOUT); }
+        else if (menu_dome_confirm() == 2) { dn_set(&dm.sel, SS2_CONFIRMCANCEL); dn_set(&dm.gs, GS_CONFIRMCANCEL); }
+        break;
+    case GS_CONFIRMCANCEL:
+        if (dn_is(&dm.sel, SS2_SELECTWAIT)) dn_set(&dm.gs, GS_SELECT);
+        break;
+    case GS_JUMPOUT: /* ponytail: マリオ飛び出し not played: straight to requestStartScenarioSelect */
+        if (dm.gs.step == 30) {
+            int i = dm.selected - T_GALAXY;
+            printf("dome: %s chosen\n", dm.g[i].name);
+            dm_select_end();
+            camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45.0f);
+            seq_galaxy_move(SEQ_SCENARIO_SELECT, dm.g[i].name, -1, -1, 0);
+            dn_init(&dm.gs, GS_DEAD);
+            return;
+        }
+        break;
+    }
+    dn_end(&dm.gs);
+}
+
+static void dm_msg(int msg)
+{
+    switch (msg) {
+    case M_SELECT_START:
+        dm_handle_appear();
+        for (int i = 0; i < dm.ng; i++) dm_galaxy_appear(i);
+        dm.start = dm_cam_pos(); dm.zs = dm.ze = dm.zc = dm.start; dm.ts = dm.te = dm.tc = v3(0, 0, 0);
+        dm.us = dm.ue = dm.uc = v3(0, 1, 0);
+        dn_init(&dm.cc, CC_SELECTSTART); dm.cc.step = -1; dm.cc.next = CC_SELECTSTART;
+        dn_init(&dm.gs, GS_SELECTSTART); dm.gs.step = -1; dm.gs.next = GS_SELECTSTART;
+        menu_dome_open();
+        break;
+    case M_SELECT_END:
+        dn_set(&dm.hd, HD_DISAPPEAR);
+        for (int i = 0; i < dm.ng; i++) dn_init(&dm.g[i].n, MG_DEAD);
+        dn_init(&dm.cc, CC_DEAD);
+        camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45.0f);
+        dn_set(&dm.bs, BS_BINDEND);
+        break;
+    case M_CONFIRM_START:
+        dn_set(&dm.hd, HD_CONFIRMSTART);
+        for (int i = 0; i < dm.ng; i++) if (!dn_is(&dm.g[i].n, MG_SELECTED)) dn_set(&dm.g[i].n, MG_NOTSELECTED);
+        dn_set(&dm.cc, CC_CONFIRMSTART);
+        dn_set(&dm.gs, GS_CONFIRMSTART);
+        dn_set(&dm.bs, BS_CONFIRMSTART);
+        break;
+    case M_CONFIRM_CANCEL:
+        dn_set(&dm.hd, HD_CONFIRMCANCEL);
+        for (int i = 0; i < dm.ng; i++) dn_set(&dm.g[i].n, MG_WAIT);
+        dn_set(&dm.cc, CC_CONFIRMCANCEL);
+        dn_set(&dm.bs, BS_CONFIRMCANCEL);
+        break;
+    case M_CONFIRMED:
+        for (int i = 0; i < dm.ng; i++) if (dn_is(&dm.g[i].n, MG_SELECTED)) dn_set(&dm.g[i].n, MG_CONFIRMED);
+        break;
+    }
+}
+
+/* --- AstroDomeBlueStar: Mario held at its host matrix (TryStartBind's ribbon: gcap phase 1) --- */
+static V3 dm_bs_zoom_pos(void) /* calcZoomInPos: cZoomInOffset (400, 2550, -7600) off the selected galaxy */
+{
+    V3 sp = dm_sel_pos(), rel = vsub(sp, dm_cam_pos());
+    V3 f = vnorm(rel), up = dm_handle_mtx()->y;
+    if (vlen(f) < 1e-3f || vlen(vcross(f, up)) < 1e-3f) f = v3(0, 0, 1);
+    Mx m = mx_up_front(up, f, sp);
+    return mx_ap(&m, v3(400.0f, 2550.0f, -7600.0f));
+}
+static void dome_bind(void) /* tryStartBind: the capture reached Mario */
+{
+    dm.bs_start = mx_up_front(mario->up, mario->face, mario->pos);
+    dn_set(&dm.bs, BS_TRACTION);
+    dn_change(&dm.bs);
+}
+
+static void dm_bluestar_update(void)
+{
+    switch (dn_begin(&dm.bs)) {
+    case BS_WAIT: break;
+    case BS_TRACTION: {
+        if (FIRST(&dm.bs) && mario_anim) mario_play("spacestruggle", 1.0f, 1);
+        float t = ease_in_out_f((float)dm.bs.step / 90.0f); /* cBindTractionFrame */
+        dm.host = dm.bs_start;
+        dm.host.p = vadd(dm.bs_start.p, vmul(vsub(dm.bs_home, dm.bs_start.p), t));
+        if (dm.bs.step == 90) dn_set(&dm.bs, BS_HOLD);
+        break;
+    }
+    case BS_HOLD:
+        if (FIRST(&dm.bs)) {
+            if (mario_anim) mario_play("spacewait", 1.0f, 1);
+            dn_init(&dm.sel, SS2_SELECTSTART); dm.sel.step = -1; dm.sel.next = SS2_SELECTSTART; /* selectStart */
+            dm.invalid = 0; dm.selected = dm.pointing = 0;
+            dome_layout_off = 1;
+        }
+        {
+            Mx fm = mx_up_front(dm_cam_y(), dm_cam_z(), dm.bs_home); /* ponytail: no slerp from the bind start */
+            dm.host = fm;
+        }
+        if (dm.bs.step == 45) dn_set(&dm.bs, BS_SELECT);
+        break;
+    case BS_SELECT:
+        if (FIRST(&dm.bs)) dm.bs_pos = v3(0, 0, 0);
+        break;
+    case BS_CONFIRMSTART:
+        dm.bs_zoom = dm_bs_zoom_pos();
+        dm.bs_pos = vmul(dm.bs_zoom, ease_out_f(rate_n(dm.bs.step, 45)));
+        if (dm.bs.step == 45) dn_set(&dm.bs, BS_CONFIRM);
+        break;
+    case BS_CONFIRM:
+        dm.bs_zoom = dm_bs_zoom_pos();
+        dm.bs_pos = dm.bs_zoom;
+        break;
+    case BS_CONFIRMCANCEL:
+        dm.bs_pos = vmul(dm.bs_zoom, 1.0f - ease_in_f(rate_n(dm.bs.step, 45)));
+        if (dm.bs.step == 45) dn_set(&dm.bs, BS_SELECT);
+        break;
+    case BS_BINDEND: /* endBindAndPlayerWeakGravityLimitJump */
+        mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
+        mario->up = v3(0, 1, 0);
+        dn_set(&dm.bs, BS_WAIT);
+        break;
+    }
+    dn_end(&dm.bs);
+    if (dn_is(&dm.bs, BS_SELECT) || dn_is(&dm.bs, BS_CONFIRMSTART) || dn_is(&dm.bs, BS_CONFIRM) || dn_is(&dm.bs, BS_CONFIRMCANCEL))
+        dm.host = mx_up_front(dm_cam_y(), dm_cam_z(), dm.bs_pos);
+}
+
+static int dome_busy(void) { return dm.on && (!dn_is(&dm.bs, BS_WAIT) || demo_on); } /* !isValidBindStart */
+
+/* Mario held by the blue star: 1 while bound (update_mario skips his own move) */
+static int dome_hold(Player *m)
+{
+    if (!dm.on || dn_is(&dm.bs, BS_WAIT) || dn_is(&dm.bs, BS_BINDEND)) return 0;
+    m->pos = dm.host.p;
+    m->up = vnorm(dm.host.y);
+    m->face = vnorm(dm.host.z);
+    m->hvel = v3(0, 0, 0); m->vup = 0; m->grounded = 0;
+    return 1;
+}
+
+static void dome_init(void)
+{
+    memset(&dm, 0, sizeof dm);
+    dm.bs_row = -1;
+    dn_init(&dm.bs, BS_WAIT); dn_init(&dm.sel, SS2_NONE); dn_init(&dm.hd, HD_DEAD); dn_init(&dm.cc, CC_DEAD); dn_init(&dm.gs, GS_DEAD);
+    for (u32 r = 0; r < sc->nobjs; r++) /* listenStageSwitchOnAppear: ponytail, its demo (ドームレクチャー１) not played: out */
+        if (!strcmp(sc->types + 32 * sc->objs[r].type, "AstroDomeBlueStar")) {
+            dm.bs_row = (int)r; dm.bs_home = row_pos(&sc->objs[r]);
+            if (sc->objs[r].sw[SW_APPEAR] >= 0 && !sw_on(&sc->objs[r], SW_APPEAR)) { sw_set(&sc->objs[r], SW_APPEAR, 1); game_rebind(); }
+        }
+    for (int i = 0; i < ninsts; i++) {
+        const char *n = sc->types + 32 * sc->objs[insts[i].row].type;
+        size_t l = strlen(n);
+        if (!strncmp(n, "Mini", 4) && l > 10 && !strcmp(n + l - 6, "Galaxy") && dm.ng < DOME_MAX) {
+            typeof(&dm.g[0]) g = &dm.g[dm.ng++];
+            g->row = insts[i].row;
+            snprintf(g->name, sizeof g->name, "%s", n + 4);
+            g->type = sc->objs[insts[i].row].arg[0];
+            g->md = insts[i].md;
+            g->unknown = scene_model(sc, g->type == 1 ? "MiniHatenaGalaxy" : g->type == 2 ? "MiniatureGalaxyUnknownKoopa" : "MiniatureGalaxyUnknown");
+            g->koopa = g->type == 2 && (strstr(n, "KoopaBattleVs") || !gd_visited_any(g->name)) ? scene_model(sc, "MiniKoopaGalaxy") : NULL;
+            dn_init(&g->n, MG_DEAD);
+        }
+    }
+    for (int i = 0; i < ninsts; i++) /* SphereSelectorHandle: its place */
+        if (!strcmp(sc->types + 32 * sc->objs[insts[i].row].type, "SphereSelectorHandle")) dm.hpos = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]);
+    for (int i = 0; i < dm.ng; i++) { /* MiniatureGalaxyHolder::calcIndex: by the stars to open, a Koopa one last */
+        int s = gd_stars_to_open(dm.g[i].name), idx = 0;
+        for (int k = 0; k < dm.ng; k++) {
+            if (k == i || dm.g[k].type == 2) continue;
+            if (dm.g[i].type == 2 || gd_stars_to_open(dm.g[k].name) < s) idx++;
+        }
+        static const float r5[5] = {4000, 6200, 8100, 10300, 12000}, r4[4] = {4000, 6700, 9100, 11800};
+        dm.g[i].idx = idx;
+        dm.g[i].radius = dm.ng == 5 ? r5[idx < 5 ? idx : 4] : r4[idx < 4 ? idx : 3]; /* AstroDomeOrbit::setup */
+        dm.g[i].angle = 230.0f * idx;
+        dm.g[i].orbit_rot = idx >= 4 ? v3(20, 45, 0) : v3(0, 0, 0);
+    }
+    dm.on = dm.bs_row >= 0 && dm.ng > 0;
+    dm.m_select = scene_model(sc, "MiniatureGalaxySelect");
+    if (dm.on) printf("dome: blue star row %d, %d galaxies\n", dm.bs_row, dm.ng);
+}
+
+static void dome_update(void)
+{
+    static int ready; /* in the game sections: 0 again at each scene */
+    if (!ready && ninsts) { dome_init(); ready = 1; } /* its zone's instances are bound after game_init */
+    if (!dm.on) return;
+    if (dn_is(&dm.sel, SS2_SELECTWAIT) || dn_is(&dm.sel, SS2_SELECTSTART)) game_cursor_menu(); /* SphereSelectorFinger */
+    dm_bluestar_update();
+    dm_selector_update();
+    dm_handle_update();
+    for (int i = 0; i < dm.ng; i++) dm_galaxy_update(i);
+    dm_camera_update();
+    dm_selector_actor_update();
+    for (int i = 0; i < dm.ng; i++) { /* dead until the select starts */
+        Inst *in = dm_inst(dm.g[i].row);
+        if (in && dn_is(&dm.g[i].n, MG_DEAD)) in->invisible = 1;
+    }
+    { Inst *in = dm_inst(dm.bs_row); if (in) in->invisible = !dn_is(&dm.bs, BS_WAIT) && !dn_is(&dm.bs, BS_TRACTION); } /* BindHold: hideModel */
+    if (!dn_is(&dm.sel, SS2_NONE)) { /* the name plates over the galaxies (showNamePlate) */
+        int any = dm_galaxy_pointed() >= 0;
+        for (int i = 0; i < dm.ng; i++) {
+            float x, y;
+            if (!dn_is(&dm.g[i].n, MG_WAIT) || !screen_pos(vadd(dm.g[i].pos, v3(0, 1500.0f, 0)), &x, &y)) continue;
+            int pointed = dm.pointing == T_GALAXY + i;
+            if (!pointed && (any || !dn_is(&dm.sel, SS2_SELECTWAIT) || dm.invalid)) continue;
+            menu_dome_plate(i, dm.g[i].name, dm.g[i].state < 2 ? 0 : dm.g[i].state == 2 ? 1 : 2, pointed, x, y);
+        }
+    }
+}
+
+static void dome_draw(void) /* AstroDomeOrbit's rings (additive), the pointed galaxy's select ring */
+{
+    if (!dm.on || dn_is(&dm.sel, SS2_NONE)) return;
+    static float pos[2 * 65][3];
+    static u16 idx[64 * 6];
+    for (int i = 0; i < dm.ng; i++) {
+        if (dn_is(&dm.g[i].n, MG_DEAD) || dn_is(&dm.g[i].n, MG_NOTSELECTED)) continue;
+        Mx r = mx_rot_xyz(dm.g[i].orbit_rot), m = mx_mul(dm_handle_mtx(), &r);
+        for (int k = 0; k <= 64; k++) {
+            float a = k * 6.2831853f / 64;
+            V3 c = v3(cosf(a), 0, sinf(a)), p0 = mx_ap(&m, vmul(c, dm.g[i].radius - 50.0f)), p1 = mx_ap(&m, vmul(c, dm.g[i].radius + 50.0f));
+            pos[2 * k][0] = p0.x; pos[2 * k][1] = p0.y; pos[2 * k][2] = p0.z;
+            pos[2 * k + 1][0] = p1.x; pos[2 * k + 1][1] = p1.y; pos[2 * k + 1][2] = p1.z;
+        }
+        for (int k = 0; k < 64; k++) {
+            u16 a = (u16)(2 * k);
+            u16 *q = idx + 6 * k;
+            q[0] = a; q[1] = a + 1; q[2] = a + 2; q[3] = a + 1; q[4] = a + 3; q[5] = a + 2;
+        }
+        render_mesh_c((const float (*)[3])pos, NULL, 130, idx, 128, NO_TEX, 2, 0x80FFB113u); /* 0x13B1FF */
+    }
+    int p = dm_galaxy_pointed();
+    if (p >= 0 && dm.m_select && dn_is(&dm.g[p].n, MG_WAIT)) { /* mPosMtx: facing the camera */
+        float mm[16];
+        V3 cpos = dm_cam_pos(), f = vnorm(vsub(cpos, dm.g[p].pos));
+        Mx b = mx_front_up(f, dm_cam_y(), dm.g[p].pos);
+        mat_identity(mm);
+        mm[0] = b.x.x; mm[1] = b.x.y; mm[2] = b.x.z; mm[4] = b.y.x; mm[5] = b.y.y; mm[6] = b.y.z;
+        mm[8] = b.z.x; mm[9] = b.z.y; mm[10] = b.z.z; mm[12] = b.p.x; mm[13] = b.p.y; mm[14] = b.p.z;
+        render_model(dm.m_select, mm, 0x80, 0x80, 0x80);
+    }
+}
+
+int game_test_dome(int what, int on) /* test builds: the cursor on the dome's blue star (0, R2 held while on) or on its
+                                     * Good Egg's galaxy (what 1); its state, -1 none */
+{
+    V3 p;
+    test_r2 = 0;
+    if (!dm.on) return -1;
+    if (what == 0) { p = dm.bs_home; test_r2 = on; }
+    else { /* Good Egg's */
+        what = 0;
+        for (int i = 0; i < dm.ng; i++) if (!strcmp(dm.g[i].name, "EggStarGalaxy")) what = i + 1;
+        if (!what) return -1;
+        p = dm.g[what - 1].pos;
+    }
+    float x, y;
+    if (!screen_pos(p, &x, &y)) return -1;
+    cur_x = x; cur_y = y;
+    return what == 0 ? dm.bs_row : dm.g[what - 1].state;
+}
+
 /* the pose kept for `row` (a free or stale slot bound to its skin, its wait clip started); NULL when the pool is full */
 static Anim *obj_anim(int row, const Model *md, const char *cls)
 {
@@ -22571,6 +23309,7 @@ void game_update(void)
     hud_update();
 
     LQ(5, update_talk_director());
+    dome_update();
     update_poles();
     if (!opening_on) {
         LQ(6, update_mario());
@@ -23707,6 +24446,7 @@ void game_draw(void)
         render_model(m_note, m, 0x80, 0x80, 0x80);
     }
     draw_waterplants();
+    dome_draw();
     RESTQ(5);
     {
         V3 back = vnorm(vsub(ce, cw)), right = vnorm(vcross(cu, back));

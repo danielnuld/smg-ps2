@@ -91,6 +91,9 @@ OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup
              "RailCoin", "SuperSpinDriver", "StarPieceGroup", "StarPieceFlow")
 # classes whose first NameObjFactory archive is not their model (OtaKing's is FireBall, Tico's TicoBaby): the model
 MODEL_ARC = {"OtaKing": "OtaKing", "KoopaJr": "KoopaJr", "Tico": "Tico", "Plant": "PlantSeed"}
+# ponytail: no MiniatureGalaxyStarNumber (its digits are texture matrices per material), no MiniatureGalaxyShadow
+MINI_EXTRA = ("MiniatureGalaxyUnknown", "MiniHatenaGalaxy", "MiniatureGalaxyUnknownKoopa", "MiniKoopaGalaxy",
+              "MiniatureGalaxySelect")
 SW_FIELDS = ("SW_APPEAR", "SW_A", "SW_B", "SW_DEAD", "SW_SLEEP")  # stage switch ids: < 1000 the zone's, else global
 ROW_FIELDS = ("pos_x", "pos_y", "pos_z", "dir_x", "dir_y", "dir_z", "scale_x", "scale_y", "scale_z")
 ROW = struct.Struct("<HHii9f8i5hh")
@@ -1210,6 +1213,8 @@ def model_archive(fsp, name, planets):
         return None
     if name in MODEL_ARC:
         return MODEL_ARC[name]
+    if name.startswith("Mini") and name.endswith("Galaxy") and (fsp / "ObjectData" / f"{name}.arc").exists():
+        return name  # MiniatureGalaxy: its own model (the factory lists the unknown one first); MINI_EXTRA the rest
     if _factory is None:  # parsing Petari's sources takes minutes on the SD card: cached next to the other outputs
         cache = Path(__file__).parent.parent / "out" / "factory.json"
         if cache.exists():
@@ -1284,6 +1289,9 @@ def placement(fs, galaxy, scenario):
     # every class with a model on disc is kept (static until it gets a behaviour), plus gravities
     arcmap = {n: model_archive(fsp, n, planets) for n in {o["name"] for o in objs}}
     keep = [o for o in objs if arcmap[o["name"]] or "Gravity" in o["name"] or o["name"] in LOGIC or o["name"] in jpa.AMBIENT or o["name"] in ("WaterPlant", "PowerStarAppearPoint", "CollectTico", "OceanBowl", "ScenarioStarter", "StarPieceFollowGroup", "CoinReplica", "PoleNoModel", "PoleSquareNoModel", "WhirlPoolAccelerator", "ArrowSwitchTarget", "LightCtrlCube", "LightCtrlCylinder", "LensFlareArea") or o["name"].startswith(("FishGroup", "SeaGullGroup", "BloomCube", "BloomSphere", "BloomCylinder", "SimpleBloom", "ScreenBlur", "DepthOfField"))]
+    for o in keep:  # MiniatureGalaxy::initPartsModel: its unknown / hatena / select ring / star number parts
+        if o["name"].startswith("Mini") and o["name"].endswith("Galaxy"):
+            EXTRA.setdefault(o["name"], MINI_EXTRA)
     for o in keep:
         for e in EXTRA.get(o["name"], ()):
             if e[0] == "#":

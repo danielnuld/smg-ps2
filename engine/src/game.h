@@ -226,5 +226,6 @@ static inline unsigned int cycles(void)
 /* main.c: change to scene "<Galaxy>/<n>" at the end of this update (the game modules restart as at boot) */
 void game_request_scene(const char *next);
 int game_test_astro_cube(int mode);
+int game_test_dome(int what, int on);
 
 #endif

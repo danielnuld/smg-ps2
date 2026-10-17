@@ -112,6 +112,8 @@ int gd_star_num(void)
     return n;
 }
 int gd_visited(const char *g, int sc) { int i = find_gal(g); return i < 0 || (sc >= 1 && sc <= 8 && (gd.gal[i].visited >> (sc - 1) & 1)); }
+int gd_visited_any(const char *g) { int i = find_gal(g); return i < 0 || gd.gal[i].visited != 0; }
+int gd_stars_to_open(const char *g) { const GInfo *gi = find_info(g); return gi ? gi->open_stars : 0; }
 void gd_set_visited(const char *g, int sc) { int i = find_gal(g); if (i >= 0 && sc >= 1 && sc <= 8) gd.gal[i].visited |= (u8)(1 << (sc - 1)); }
 int gd_max_coins(const char *g, int sc) { int i = find_gal(g); return i >= 0 && sc >= 1 && sc <= 8 ? gd.gal[i].max_coin[sc - 1] : 0; }
 void gd_update_max_coins(const char *g, int sc, int coins)

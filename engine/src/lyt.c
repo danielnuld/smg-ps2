@@ -98,10 +98,16 @@ static void hide_other_languages(LytInst *l)
         for (unsigned c = 0; c < sizeof codes / sizeof codes[0]; c++) {
             if (strncmp(n + len - 4, codes[c], 4)) continue;
             if (strcmp(codes[c], cur)) { l->ps[i].vis = 0; l->ps[i].lang_off = 1; break; }
-            char base[16]; /* this language's own: the plain one hides */
-            memcpy(base, n, len - 4); base[len - 4] = 0;
-            int b = lyt_pane(l, base);
-            if (b >= 0) { l->ps[b].vis = 0; l->ps[b].lang_off = 1; }
+            /* this language's own: the plain one hides (its name may be cut to 16: "ShaGalaxyNamUsSp" for
+             * "ShaGalaxyName"): a sibling starting the same without a language code */
+            for (int k = 0; k < l->h->npanes; k++) {
+                const char *m = l->pane[k].name;
+                size_t lk = strnlen(m, 16);
+                if (k == i || l->pane[k].parent != l->pane[i].parent || lk < len - 4 || strncmp(m, n, len - 4)) continue;
+                int coded = 0;
+                for (unsigned d = 0; d < sizeof codes / sizeof codes[0] && lk > 4; d++) coded |= !strncmp(m + lk - 4, codes[d], 4);
+                if (!coded) { l->ps[k].vis = 0; l->ps[k].lang_off = 1; }
+            }
             break;
         }
     }
@@ -469,6 +475,19 @@ static void draw_text(const LytInst *l, int i, const PWorld *w, float x0, float 
     (void)r; (void)g; (void)b;
     u32 rgb = (u32)tc[0] << 16 | (u32)tc[1] << 8 | (u32)tc[2];
     game_text(s, p->font_idx, x, y, fsx, fsy, p->space * sx, rgb, w->alpha * ta * (a / 4.0f / 255.0f), 1);
+}
+
+float lyt_text_width(LytInst *l, const char *pane) /* getTextDrawRectRecursive's width: its text boxes' widest line */
+{
+    int r = lyt_pane(l, pane);
+    float w = 0;
+    for (int i = r; r >= 0 && i < l->h->npanes; i++) {
+        const LytPane *p = &l->pane[i];
+        if (p->kind != K_TXT || !under(l, i, r) || !l->text[i] || !l->text[i][0]) continue;
+        float tw = game_text(l->text[i], p->font_idx, 0, 0, p->font[0], p->font[1], p->space, 0, 0, 0) / LYT_KX;
+        if (tw > w) w = tw;
+    }
+    return w;
 }
 
 void lyt_draw(LytInst *l)

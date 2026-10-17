@@ -1428,7 +1428,7 @@ void render_mesh_c(const float (*pos)[3], const float (*uv)[2], int nvert, const
     static float msx[MESH_MAX], msy[MESH_MAX];
     static u32 msz[MESH_MAX];
     static u8 mok[MESH_MAX];
-    const TexEntry *e = tex_scene->tex[tex].e;
+    const TexEntry *e = tex == NO_TEX ? NULL : tex_scene->tex[tex].e; /* NO_TEX: flat, the colour alone */
     if (nvert > MESH_MAX) nvert = MESH_MAX;
     for (int v = mesh_same ? nvert : 0; v < nvert; v++) { /* each vertex once: screen x, y, depth; mok 0 behind the camera or far off */
         const float *p = pos[v];
@@ -1452,14 +1452,14 @@ void render_mesh_c(const float (*pos)[3], const float (*uv)[2], int nvert, const
         ad_open(0);
         AD(blend == 2 ? GS_SET_ALPHA(0, 2, 0, 1, 0) : GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA); /* 2: Cs x As + Cd */
         AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, blend ? 1 : 0), GS_REG_ZBUF);
-        AD(GS_SET_PRIM(PRIM_TRIANGLE, 0, 1, 0, blend ? 1 : 0, 0, 1, 0, 0), GS_REG_PRIM);
+        AD(GS_SET_PRIM(PRIM_TRIANGLE, 0, e != NULL, 0, blend ? 1 : 0, 0, 1, 0, 0), GS_REG_PRIM);
         AD(GS_SET_RGBAQ(rgba & 0xFF, rgba >> 8 & 0xFF, rgba >> 16 & 0xFF, rgba >> 24, 0x3F800000), GS_REG_RGBAQ);
         for (int t = t0; t < t0 + n; t++) {
             const u16 *ix = idx + 3 * t;
             if (ix[0] >= nvert || ix[1] >= nvert || ix[2] >= nvert || !mok[ix[0]] || !mok[ix[1]] || !mok[ix[2]]) continue;
             for (int v = 0; v < 3; v++) {
-                const float *q = uv[ix[v]];
-                AD(GS_SET_UV((int)(q[0] * e->w * 16) & 0x3FFF, (int)(q[1] * e->h * 16) & 0x3FFF), GS_REG_UV);
+                const float *q = e ? uv[ix[v]] : NULL;
+                if (e) AD(GS_SET_UV((int)(q[0] * e->w * 16) & 0x3FFF, (int)(q[1] * e->h * 16) & 0x3FFF), GS_REG_UV);
                 AD(GS_SET_XYZ((int)(msx[ix[v]] * 16), (int)(msy[ix[v]] * 16), msz[ix[v]]), GS_REG_XYZ2);
             }
         }

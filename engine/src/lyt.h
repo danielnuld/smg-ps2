@@ -40,6 +40,7 @@ int lyt_pane_hit(LytInst *l, const char *pane, float x, float y);    /* the scre
  * *pos in the layout's screen units (608 x 456, top left 0, y down), read each frame; NULL stops following */
 void lyt_follow(LytInst *l, const char *pane, const float *pos, int add);
 void lyt_copy_pane_trans(LytInst *l, const char *pane, float out[2]); /* MR::copyPaneTrans: its place, those units */
+float lyt_text_width(LytInst *l, const char *pane);                 /* its text boxes' widest text (layout units) */
 
 /* game.c: a string's width (draw 0) or the string drawn at screen (x, y top) in a font (0 MessageFont26, 1 NumberFont,
  * 2 PictureFont: each character its icon) and size (layout units), its colour 0xRRGGBB and alpha 0..1 */

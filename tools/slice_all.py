@@ -1,6 +1,6 @@
 """Convert every galaxy/scenario into the streaming layout (slice.py packs) and report the bytes per scenario.
 
-usage: python tools/slice_all.py data/fs/files out/packs [jobs]
+usage: python tools/slice_all.py data/fs/files out/packs [jobs] [Galaxy,Galaxy...: only those repacked]
 writes <out>/resident.bin, <out>/<Galaxy>/<n>/{scene,common,<Stage>,<Stage>.low}.bin and <out>/scenarios.csv:
   whole   every pack of the scenario in full (no streaming)
   stream  the most loaded at once with streaming (worst stage: its chain in full, other stages low)
@@ -74,12 +74,14 @@ if __name__ == "__main__":
     (out / "resident.bin").write_bytes(res)
     print(f"resident.bin {len(res) / 1e6:.2f} MB ({', '.join(sorted(names))} + clips)", flush=True)
     gs = sorted(p.name for p in (Path(fs) / "StageData").iterdir() if (p / f"{p.name}Scenario.arc").exists())
+    if len(sys.argv) > 4:
+        gs = [g for g in gs if g in sys.argv[4].split(",")]
     rows = []
     with ProcessPoolExecutor(jobs) as ex:
         for r in ex.map(galaxy, *zip(*[(fs, str(out), g, names) for g in gs])):
             rows += r
     rows.sort(key=lambda r: -r["stream"])
-    with open(out / "scenarios.csv", "w", newline="") as f:
+    with open(out / ("scenarios.csv" if len(sys.argv) <= 4 else "scenarios_some.csv"), "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=rows[0].keys())
         w.writeheader()
         w.writerows(rows)

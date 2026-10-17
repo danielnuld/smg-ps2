@@ -16,9 +16,19 @@ int menu_fading(void);
 /* ScenarioSelectScene: the galaxy's scenario chosen over the frozen stage, then the move there (sequence.c) */
 void menu_scenario_select(const char *galaxy);
 int menu_scenario_selecting(void);
+/* AstroDomeGalaxySelector's layouts, driven by game.c's dome select */
+void menu_dome_open(void);
+void menu_dome_close(void);
+void menu_dome_info(const char *galaxy, int state);  /* GalaxySelectInfo::show (state 0 hatena .. 3 open), each frame */
+void menu_dome_back(int op);         /* GalaxySelectBackButton: 0 appear, 1 disappear, 2 decide, 3 tryPointing */
+int menu_dome_back_state(int q);     /* 0 isPointing, 1 isAppearing, 2 isDisappearing (or gone), 3 gone */
+void menu_dome_confirm_appear(void); /* GalaxyConfirmLayout */
+int menu_dome_confirm(void);         /* 0 choosing, 1 yes, 2 no */
+void menu_dome_plate(int i, const char *galaxy, int type, int immediate, float x, float y); /* GalaxyNamePlate */
 int menu_draw_screen(void); /* game_draw: 1 when a whole-screen menu (the scenario select) drew the frame */
 const u16 *msg_get(const char *label); /* MR::getLayoutMessageDirect / getGameMessageDirect (MSGS chunk), NULL none */
 int menu_test_point_scenario(const char *pane);
+int menu_test_point_dome(const char *pane);
 int menu_test_point(const char *pane); /* tests: the pointer on a pane of the open pause menu / its window */
 
 /* game.c */

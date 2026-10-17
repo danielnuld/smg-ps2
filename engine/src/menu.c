@@ -18,6 +18,8 @@
 static void fade_update(void);
 static void fade_draw(void);
 static void ss_init(const Scene *s);
+static void dmu_init(void);
+static void dmu_update(void);
 static void ss_update(void);
 static void wipe_update(void);
 static void wipe_draw_quad(void);
@@ -431,6 +433,7 @@ void menu_init(const Scene *s)
     msgs = s->msgs;
     pm_init();
     ss_init(s);
+    dmu_init();
     u32 rgb;
     int open = seq_take_open_wipe(&rgb); /* the wipe the last scene closed opens on this one */
     if (open) wipe_start(open, 0, rgb);
@@ -451,6 +454,7 @@ int menu_update(void)
 {
     fade_update();
     wipe_update();
+    dmu_update();
     if (menu_scenario_selecting()) { game_cursor_menu(); ss_update(); return 1; }
     if (!pm.alive) { /* GameScenePauseControl: Plus (START) where GameScene::isPermitToPauseMenu */
         if (!pm.l || !pad_pressed(PAD_START) || !game_pause_permitted()) return 0;
@@ -890,8 +894,13 @@ static void ss_update(void)
         ss_update_text();
         if (btn_hidden(&ss.back)) { wipe_start(90, 1, 0); nrv_set(&ss.n, SS_CANCELFADE); }
         break;
-    case SS_CANCELFADE: /* ponytail: back to the stage left, still loaded (the dome's selector not ported yet) */
-        if (!wipe_active()) { ss.alive = 0; wipe_start(30, 0, 0); }
+    case SS_CANCELFADE: /* the stage left again (ScenarioSelectScene's cancel: back to the dome), a fade open there */
+        if (!wipe_active() && ss.n.step == 0) {
+            static char again[48];
+            snprintf(again, sizeof again, "%s", game_stage_name);
+            seq_set_open_wipe(30, 0);
+            game_request_scene(again);
+        }
         break;
     }
     nrv_end(&ss.n);
@@ -976,6 +985,301 @@ int menu_draw_screen(void)
     return 1;
 }
 
+/* --- AstroDomeGalaxySelector's layouts (game.c's dome select drives them): GalaxySelectInfo, GalaxySelectBackButton,
+ * GalaxyConfirmLayout, GalaxyNamePlate. ponytail: no galaxy picture (PicDummy keeps its texture), no IconComet /
+ * comet window, no green / red star icons (isPowerStarGreen / Red tables), plates not sorted by depth, no
+ * GalaxyNamePlateNew effect */
+enum { GI_WAIT, GI_DISAPPEAR };
+enum { GB_APPEAR, GB_WAIT, GB_DISAPPEAR, GB_DECIDE, GB_DEAD };
+enum { GC_SELECTING, GC_SELECTEDBACK, GC_SELECTED };
+enum { NP_APPEARREADY, NP_APPEAR, NP_WAIT };
+#define DOME_PLATES 8
+typedef struct { LytInst *l; u8 alive, shown, last_immediate, type, layout_shown; Nrv n; } DomePlate;
+static struct {
+    u8 on;
+    LytInst *info, *back_l, *conf, *conf_back_l;
+    /* GalaxySelectInfo */
+    u8 info_alive, info_shown; int info_frame, info_dir; char info_name[32]; Nrv info_n;
+    u16 star_icon[48], star_base[48];
+    /* GalaxySelectBackButton */
+    Btn back; u8 back_alive; Nrv back_n;
+    /* GalaxyConfirmLayout and its BackButton */
+    Btn start, conf_back; u8 conf_alive, conf_back_clicked; Nrv conf_n;
+    /* GalaxyNamePlate */
+    DomePlate plate[DOME_PLATES];
+} dmu;
+
+static u16 *pic_add(u16 *p, int code) { p[0] = 0x1A; p[1] = 3; p[2] = (u16)(code - '0'); p[3] = 0; p[4] = 0; return p + 4; } /* addPictureFontCode */
+
+static void dmu_star_add(u16 **base, u16 **icon, const char *g, int no) /* addPictureFontStar */
+{
+    int code = gd_is_grand_star(g, no) ? 'K' : gd_scenario_comet(g, no)[0] ? 'e' : '7';
+    *base = pic_add(*base, code);
+    *icon = pic_add(*icon, 'R');
+}
+
+static void dmu_info_update(const char *g, int state) /* GalaxyInfoLayoutSetter::updateInfo */
+{
+    static const char *const unknown[3] = {"GalaxyInfo_Hatena", "GalaxyInfo_Unknown", "GalaxyInfo_New"};
+    char label[64];
+    if (state < 3) lyt_set_text_rec(dmu.info, "Unknown", msg_get(unknown[state]));
+    else { snprintf(label, sizeof label, "GalaxyName_%s", g); lyt_set_text_rec(dmu.info, "GalaxyName", msg_get(label)); }
+    if (state == 3) lyt_set_text_rec(dmu.info, "Unknown", NULL); else lyt_set_text_rec(dmu.info, "GalaxyName", NULL);
+    if (state != 3) {
+        lyt_set_text_rec(dmu.info, "StarIcon", NULL);
+        lyt_set_text_rec(dmu.info, "TxtStarBase", NULL);
+        lyt_show_rec(dmu.info, "Complete", 0);
+    } else { /* setTextBoxStarNum: its buffers crossed as Petari has them (the base string into StarIcon) */
+        u16 *base = dmu.star_icon, *icon = dmu.star_base;
+        int nn = 0, power = gd_power_star_num(g), complete = 1, normal_done = 1;
+        dmu.star_icon[0] = dmu.star_base[0] = 0;
+        for (int i = 1; i <= gd_scenario_num(g); i++) nn += !gd_scenario_comet(g, i)[0];
+        for (int i = 1; i <= power; i++) complete &= gd_has_star(g, i) != 0;
+        for (int i = 1; i <= nn; i++) normal_done &= gd_has_star(g, i) != 0;
+        for (int i = 1; i <= nn && base < dmu.star_icon + 40; i++)
+            if (gd_has_star(g, i)) dmu_star_add(&base, &icon, g, i);
+            else { base = pic_add(base, 'R'); icon = pic_add(icon, '7'); }
+        lyt_show_rec(dmu.info, "Complete", complete);
+        for (int i = nn + 1; i <= power && base < dmu.star_icon + 40; i++) {
+            if (complete || gd_has_star(g, i)) { dmu_star_add(&base, &icon, g, i); continue; }
+            if (!normal_done) continue;
+            if (gd_scenario_comet(g, i)[0]) { base = pic_add(base, 'R'); icon = pic_add(icon, 'e'); }
+            else { base = pic_add(base, 'Z'); icon = pic_add(icon, '7'); } /* ponytail: no Luigi / comet-appear checks */
+        }
+        lyt_set_text_rec(dmu.info, "StarIcon", dmu.star_icon);
+        lyt_set_text_rec(dmu.info, "TxtStarBase", dmu.star_base);
+    }
+    lyt_set_pane_frame_stop(dmu.info, "CometWindow", 1, 0); /* hideCometWindow */
+}
+
+void menu_dome_info(const char *g, int state) /* GalaxySelectInfo::show */
+{
+    if (!dmu.info) return;
+    dmu.info_shown = 1;
+    if (dmu.info_alive && !strcmp(dmu.info_name, g)) return;
+    dmu_info_update(g, state);
+    snprintf(dmu.info_name, sizeof dmu.info_name, "%s", g);
+    dmu.info_dir = 1;
+    dmu.info_n.next = -1;
+    nrv_set(&dmu.info_n, GI_WAIT);
+    lyt_start(dmu.info, "Appear", 0);
+    dmu.info_alive = 1;
+}
+
+static void dmu_info_movement(void)
+{
+    if (!dmu.info_alive) return;
+    switch (nrv_begin(&dmu.info_n)) {
+    case GI_WAIT: if (!dmu.info_shown) { dmu.info_dir = -1; nrv_set(&dmu.info_n, GI_DISAPPEAR); } break;
+    case GI_DISAPPEAR: if (!dmu.info_frame) dmu.info_alive = 0; break;
+    }
+    nrv_end(&dmu.info_n);
+    /* control: ValueControl(cFadeinoutFrame 5) */
+    dmu.info_shown = 0;
+    dmu.info_frame += dmu.info_dir;
+    dmu.info_frame = dmu.info_frame < 0 ? 0 : dmu.info_frame > 5 ? 5 : dmu.info_frame;
+    if (!dmu.info_frame) dmu.info_alive = 0;
+    lyt_set_alpha(dmu.info, dmu.info_frame / 5.0f);
+    lyt_update(dmu.info);
+}
+
+/* GalaxySelectBackButton: its pointing driven from outside (_23) */
+void menu_dome_back(int op)
+{
+    if (!dmu.back_l) return;
+    if (op == 0) { dmu.back_alive = 1; dmu.back_n.next = -1; nrv_set(&dmu.back_n, GB_APPEAR); }
+    else if (op == 1) nrv_set(&dmu.back_n, GB_DISAPPEAR);
+    else if (op == 2) nrv_set(&dmu.back_n, GB_DECIDE);
+    else if (op == 3) { dmu.back.pointing = 1; btn_try_pointing(&dmu.back, 1); } /* onPointing */
+}
+int menu_dome_back_state(int q)
+{
+    if (!dmu.back_l) return q >= 2;
+    switch (q) {
+    case 0: return dmu.back_alive && pointing_on(dmu.back_l, "BoxButton"); /* isPointing */
+    case 1: return dmu.back_alive && btn_appearing(&dmu.back);
+    case 2: return !dmu.back_alive || btn_is(&dmu.back, BP_DISAPPEAR) || btn_is(&dmu.back, BP_TODISAPPEAR) || btn_hidden(&dmu.back);
+    default: return !dmu.back_alive;
+    }
+}
+static void dmu_back_movement(void)
+{
+    if (!dmu.back_alive) return;
+    switch (nrv_begin(&dmu.back_n)) {
+    case GB_APPEAR: if (FIRST(&dmu.back_n)) btn_appear(&dmu.back); if (!btn_appearing(&dmu.back)) nrv_set(&dmu.back_n, GB_WAIT); break;
+    case GB_WAIT: break;
+    case GB_DISAPPEAR:
+        if (FIRST(&dmu.back_n)) btn_disappear(&dmu.back);
+        if (btn_hidden(&dmu.back) && dmu.back_n.step > 0) dmu.back_alive = 0;
+        break;
+    case GB_DECIDE:
+        if (FIRST(&dmu.back_n)) { dmu.back.selected = 1; nrv_set(&dmu.back.n, BP_DECIDED); }
+        if (btn_hidden(&dmu.back) && dmu.back_n.step > 0) dmu.back_alive = 0;
+        break;
+    }
+    nrv_end(&dmu.back_n);
+    btn_update(&dmu.back);
+    lyt_update(dmu.back_l);
+}
+
+/* GalaxyConfirmLayout ("GalaxySelect": its StartButton and a BackButton) */
+void menu_dome_confirm_appear(void)
+{
+    if (!dmu.conf) return;
+    btn_appear(&dmu.start);
+    btn_appear(&dmu.conf_back);
+    dmu.conf_back_clicked = 0;
+    dmu.conf_alive = 1;
+    dmu.conf_n.next = -1;
+    nrv_set(&dmu.conf_n, GC_SELECTING);
+}
+int menu_dome_confirm(void) /* isSelected: 1 Yes (isSelectedYes), 2 No; 0 still choosing */
+{
+    if (!dmu.conf) return 1;
+    if (!nrv_is(&dmu.conf_n, GC_SELECTED) && !nrv_is(&dmu.conf_n, GC_SELECTEDBACK)) return 0;
+    return dmu.start.selected ? 1 : 2;
+}
+static void dmu_conf_movement(void)
+{
+    if (!dmu.conf_alive) return;
+    switch (nrv_begin(&dmu.conf_n)) {
+    case GC_SELECTING:
+        if (dmu.conf_back_clicked) { nrv_set(&dmu.conf_n, GC_SELECTEDBACK); break; }
+        if (btn_pointing_trigger(&dmu.start)) se_start(SE_SY_BUTTON_CURSOR_ON, NULL);
+        if (btn_try_select(&dmu.start)) {
+            se_start(SE_SY_GALAXY_DECIDE_OK, NULL);
+            btn_disappear(&dmu.conf_back);
+            nrv_set(&dmu.conf_n, GC_SELECTED);
+        } else if (!btn_appearing(&dmu.start) && !btn_appearing(&dmu.conf_back) && (pad_pressed(PAD_CIRCLE) || pad_pressed(PAD_TRIANGLE))) {
+            se_start(SE_SY_GALAXY_DECIDE_CANCEL, NULL); /* B */
+            btn_disappear(&dmu.start);
+            btn_disappear(&dmu.conf_back);
+            nrv_set(&dmu.conf_n, GC_SELECTED);
+        }
+        break;
+    case GC_SELECTEDBACK:
+        if (btn_is(&dmu.conf_back, BP_DISAPPEAR) || btn_hidden(&dmu.conf_back)) { btn_disappear(&dmu.start); nrv_set(&dmu.conf_n, GC_SELECTED); }
+        break;
+    case GC_SELECTED:
+        if (btn_hidden(&dmu.start) && btn_hidden(&dmu.conf_back) && dmu.conf_n.step > 0) dmu.conf_alive = 0;
+        break;
+    }
+    nrv_end(&dmu.conf_n);
+    btn_update(&dmu.start);
+    lyt_update(dmu.conf);
+    /* its BackButton::control */
+    if (btn_pointing_trigger(&dmu.conf_back)) se_start(SE_SY_BUTTON_CURSOR_ON, NULL);
+    if (btn_try_select(&dmu.conf_back)) {
+        if (!dmu.conf_back_clicked) se_start(SE_SY_GALAXY_DECIDE_CANCEL, NULL);
+        dmu.conf_back_clicked = 1;
+    }
+    btn_update(&dmu.conf_back);
+    lyt_update(dmu.conf_back_l);
+}
+
+/* GalaxyNamePlate::show / showUnknown / showNew / showOpen (type 0 / 1 / 2) and setPos3D (x, y on the screen) */
+void menu_dome_plate(int i, const char *g, int type, int immediate, float x, float y)
+{
+    if (i < 0 || i >= DOME_PLATES || !dmu.plate[i].l) return;
+    DomePlate *p = &dmu.plate[i];
+    char label[64];
+    if (!p->alive) {
+        p->alive = 1; p->n.next = -1;
+        nrv_set(&p->n, immediate ? NP_APPEAR : NP_APPEARREADY);
+    } else if (immediate) {
+        if (nrv_is(&p->n, NP_APPEARREADY)) nrv_set(&p->n, NP_APPEAR);
+    } else if (p->last_immediate) nrv_set(&p->n, NP_APPEARREADY);
+    lyt_show_rec(p->l, "GalaxyNamePlate", 1);
+    lyt_show_rec(p->l, "GalaxyNamePlateU", 0);
+    if (type == 2) snprintf(label, sizeof label, "GalaxyNameShort_%s", g);
+    lyt_set_text_rec(p->l, "GalaxyName", msg_get(type == 0 ? "GalaxyNameShort_Unknown" : type == 1 ? "GalaxyNameShort_New" : label));
+    lyt_set_frame(p->l, 2, lyt_text_width(p->l, "TxtGalaxyName")); /* setAnimFrameAndStopAdjustTextWidth (OneLine) */
+    lyt_set_rate(p->l, 2, 0);
+    lyt_start(p->l, "Unknown", 1);
+    lyt_set_frame(p->l, 1, (float)type);
+    lyt_set_rate(p->l, 1, 0);
+    lyt_set_pos(p->l, (x - 320.0f) * (608.0f / 640.0f), (224.0f - y) * (456.0f / 448.0f));
+    p->last_immediate = (u8)immediate; p->shown = 1; p->type = (u8)type;
+}
+
+static void dmu_plate_movement(int i)
+{
+    DomePlate *p = &dmu.plate[i];
+    if (!p->alive) return;
+    switch (nrv_begin(&p->n)) {
+    case NP_APPEARREADY:
+        if (FIRST(&p->n)) p->layout_shown = 0;
+        if (!p->shown) p->alive = 0;
+        else if (p->n.step == 40) nrv_set(&p->n, NP_APPEAR); /* cAppearReadyFrame */
+        break;
+    case NP_APPEAR:
+        if (FIRST(&p->n)) { lyt_start(p->l, "Appear", 0); p->layout_shown = 1; }
+        if (!p->shown) p->alive = 0;
+        else if (lyt_stopped(p->l, 0)) nrv_set(&p->n, NP_WAIT);
+        break;
+    case NP_WAIT:
+        if (FIRST(&p->n)) lyt_start(p->l, "Wait", 0);
+        if (!p->shown) p->alive = 0;
+        break;
+    }
+    nrv_end(&p->n);
+    p->shown = 0; /* control */
+    lyt_update(p->l);
+}
+
+void menu_dome_open(void)
+{
+    dmu.on = 1;
+    dmu.info_alive = dmu.back_alive = dmu.conf_alive = 0;
+    dmu.info_frame = 0;
+    for (int i = 0; i < DOME_PLATES; i++) dmu.plate[i].alive = 0;
+}
+void menu_dome_close(void) { dmu.on = 0; }
+
+static void dmu_init(void)
+{
+    memset(&dmu, 0, sizeof dmu);
+    dmu.info = lyt_new("GalaxyInfo");
+    dmu.back_l = lyt_new("BackButton");
+    dmu.conf = lyt_new("GalaxySelect");
+    dmu.conf_back_l = lyt_new("BackButton");
+    if (dmu.back_l) { btn_init(&dmu.back, dmu.back_l, "Back", "BoxButton", 0, 1); dmu.back.pointing_kept = 1; }
+    if (dmu.conf && dmu.conf_back_l) {
+        btn_init(&dmu.start, dmu.conf, "StartButton", "BoxStartButton", 0, 1);
+        btn_init(&dmu.conf_back, dmu.conf_back_l, "Back", "BoxButton", 0, 1);
+        lyt_show_rec(dmu.conf, "Counter", 0); /* ponytail: the file select's star counter, the dome has its own */
+    } else dmu.conf = NULL;
+    if (!dmu.info) return;
+    for (int i = 0; i < DOME_PLATES; i++)
+        if ((dmu.plate[i].l = lyt_new("GalaxyNamePlate"))) lyt_start(dmu.plate[i].l, "OneLine", 2);
+}
+
+static void dmu_update(void)
+{
+    if (!dmu.on) return;
+    dmu_info_movement();
+    dmu_back_movement();
+    dmu_conf_movement();
+    for (int i = 0; i < DOME_PLATES; i++) dmu_plate_movement(i);
+}
+
+static void dmu_draw(void)
+{
+    if (!dmu.on) return;
+    for (int i = 0; i < DOME_PLATES; i++) if (dmu.plate[i].alive && dmu.plate[i].layout_shown) lyt_draw(dmu.plate[i].l);
+    if (dmu.info_alive) lyt_draw(dmu.info);
+    if (dmu.back_alive) lyt_draw(dmu.back_l);
+    if (dmu.conf_alive) { lyt_draw(dmu.conf); lyt_draw(dmu.conf_back_l); }
+}
+
+int menu_test_point_dome(const char *pane) /* tests: the pointer on a pane of the dome's confirm / back button */
+{
+    float x, y;
+    if (!lyt_pane_center(dmu.conf_alive ? dmu.conf : dmu.back_l, pane, &x, &y)) return 0;
+    game_set_cursor(x, y);
+    return 1;
+}
+
 static void wipe_update(void)
 {
     if (!wipe.frames) return;
@@ -985,6 +1289,7 @@ static void wipe_update(void)
 
 void menu_draw(void)
 {
+    if (dmu.on) { render_world_done(); dmu_draw(); }
     wipe_draw_quad();
     fade_draw();
     if (!pm.alive) return;
