@@ -1149,6 +1149,7 @@ typedef struct { V3 n; float dist; int inst, attr, sub; } Hit; /* world normal, 
 static int nlfs, ground_sub, mario_ground_sub; static int lf_mats(const Inst *in, const float (**mats)[16], const int **coll);
 static void update_leaves(void), leaf_joints(Inst *in);
 static int npls; static void update_palms(void), pl_place(Inst *in);
+static const Model *m_fish[6]; static int nfgs; static void update_fishes(void), draw_fishes(void);
 
 /* Sphere against every placed KCL: the sphere goes to the instance's object space (KCL data is in model space),
  * normals and depths come back to world. ponytail: uniform scale only (scale.x), like every planet seen so far. */
@@ -1449,7 +1450,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nvines = 0; vine_ride = -1;
     pole_init();
     nrbms = 0;
-    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0;
+    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0; nfgs = 0;
     dino_cam = 0;
     foot_num = foot_rot = 0;
     nseesaws = 0;
@@ -3121,6 +3122,7 @@ void game_rebind(void)
     m_otabloom = scene_model(s, "OtaKingMagmaBloom");
     m_pleaf = scene_model(s, "PackunLeaf");
     m_rbeam = scene_model(s, "JumpBeamerBeam"); m_ebeam = scene_model(s, "EyeBeamerBeam");
+    { static const char *fn[6] = {"FishA", "FishB", "FishC", "FishD", "FishE", "FishF"}; for (int f = 0; f < 6; f++) m_fish[f] = scene_model(s, fn[f]); }
     t_whirl = scene_type(s, "WhirlPoolAccelerator");
     m_wbullet = scene_model(s, "WaterBullet");
     m_mogustone = scene_model(s, "MoguStone"); m_moguhole = scene_model(s, "MoguHole");
@@ -18587,7 +18589,7 @@ static void draw_eyebeams(void)
         const Inst *in = &insts[i];
         float m[16];
         if (!in->eyebeamer || !row_shown(in->row) || !eb_beam_mtx(in, m)) continue;
-        Anim *a = obj_anim(2 * (int)sc->nobjs + in->row, m_ebeam, "EyeBeamerBeam");
+        Anim *a = obj_anim(9 * (int)sc->nobjs + in->row, m_ebeam, "EyeBeamerBeam");
         if (!a) continue;
         anim_update(a);
         draw_skin(m_ebeam, m, a);
@@ -18745,6 +18747,114 @@ static void update_palms(void)
         o->pos = vadd(o->pos, vmul(up_at(o->pos, v3(in->m[4], in->m[5], in->m[6])), -v)); /* mVelocity = gravity x value */
         pl_place(in);
         if (mario_ground == i) carry(old, in);
+    }
+}
+
+/* FishGroup.cpp after Petari (FishGroupA..F: FishA..F): arg0 (10) fish follow a point running along the group's rail
+ * at 5 a frame (from the nearest place), each its own offset (+-150 a side) from it. A fish Wanders (1 along its
+ * front every 60..180 frames) until it is farther than its 100..500 from its point, then Approaches (5 every 5..30,
+ * its front turned 0.2 of the way unless within 0.9), back to Wander once near; with arg1 it Escapes Mario (5 away
+ * every 5..20, until 600 off) found within 150 every 5..10 frames, or within 500 of his spin. Velocity damped 0.95;
+ * its up the group's (arg2: against the gravity, else (0, 1, 0)). ponytail: one Swim pose per group (no per-fish
+ * rate), drawn within 5000 of the camera only (Petari hides past 300 m), 16 fish a group at most */
+#define MAX_FGROUPS 24
+#define FG_FISH 16
+enum { FI_WANDER, FI_APPROACH, FI_ESCAPE };
+static struct {
+    int row, init, n, type; float coord; V3 up;
+    V3 pos[FG_FISH], vel[FG_FISH], front[FG_FISH], off[FG_FISH], esc[FG_FISH];
+    float dappr[FG_FISH]; int tsearch[FG_FISH], tmove[FG_FISH], nrv[FG_FISH];
+} fgs[MAX_FGROUPS];
+static int fg_type(const char *n) { return !strncmp(n, "FishGroup", 9) && n[9] >= 'A' && n[9] <= 'F' && !n[10] ? n[9] - 'A' : -1; }
+static void update_fishes(void)
+{
+    V3 mp = mario->pos;
+    for (u32 row = 0; row < sc->nobjs; row++) {
+        const Row *r = &sc->objs[row];
+        int ty = fg_type(sc->types + 32 * r->type);
+        if (ty < 0 || !row_shown((int)row) || r->path < 0 || !scene_blob_g) continue;
+        u32 rn = 0; int cl = 0;
+        const float *rail = find_rail(scene_blob_g, r->zone, r->path, &rn, &cl);
+        if (!rail) continue;
+        int k = -1;
+        for (int i = 0; i < nfgs && k < 0; i++) if (fgs[i].row == (int)row) k = i;
+        if (k < 0) { if (nfgs == MAX_FGROUPS) continue; k = nfgs++; memset(&fgs[k], 0, sizeof fgs[0]); fgs[k].row = (int)row; }
+        typeof(&fgs[0]) g = &fgs[k];
+        float len = w_rail_len(rail, rn);
+        V3 x, z;
+        row_axes(r, &x, &z);
+        if (!g->init) {
+            g->init = 1; g->type = ty;
+            g->n = r->arg[0] > 0 ? (r->arg[0] > FG_FISH ? FG_FISH : r->arg[0]) : 10;
+            g->coord = w_rail_nearest(rail, rn, row_pos(r)); /* moveCoordToNearestPos */
+            g->up = vnorm(vcross(z, x)); /* calcActorAxisY */
+            V3 rp = rail_at(rail, rn, g->coord), d = vsub(rail_at(rail, rn, g->coord + 1.0f), rp);
+            for (int f = 0; f < g->n; f++) {
+                g->off[f] = v3(frand(-150, 150), frand(-150, 150), frand(-150, 150));
+                g->dappr[f] = frand(100, 500); g->tsearch[f] = 5 + rand() % 6;
+                g->pos[f] = vadd(rp, g->off[f]); g->front[f] = vlen(d) > 1e-4f ? vnorm(d) : v3(1, 0, 0); /* getRailDirection */
+            }
+        }
+        g->up = r->arg[2] > 0 ? up_at(rail_at(rail, rn, g->coord), g->up) : v3(0, 1, 0); /* control: -mGravity */
+        g->coord += 5.0f; /* moveCoordAndFollowTrans */
+        if (g->coord > len) g->coord = cl ? fmodf(g->coord, len) : len;
+        V3 follow = rail_at(rail, rn, g->coord);
+        int spin = mario->spin_timer > 0;
+        for (int f = 0; f < g->n; f++) {
+            V3 fp = vadd(follow, g->off[f]), *p = &g->pos[f], *v = &g->vel[f], *fr = &g->front[f];
+            float dd = vlen(vsub(fp, *p));
+            int esc = 0;
+            if (g->nrv[f] != FI_ESCAPE && r->arg[1] > 0 && --g->tsearch[f] <= 0) { /* tryEscapeFromPlayer */
+                if (vlen(vsub(mp, *p)) < 150.0f) esc = 1;
+                else g->tsearch[f] = 5 + rand() % 6;
+            }
+            if (esc) { g->esc[f] = mp; g->nrv[f] = FI_ESCAPE; g->tmove[f] = 0; }
+            else if (g->nrv[f] == FI_WANDER) {
+                if (--g->tmove[f] <= 0) { *v = vadd(*v, *fr); g->tmove[f] = 60 + rand() % 121; }
+                if (dd > g->dappr[f]) { g->nrv[f] = FI_APPROACH; g->tmove[f] = 0; }
+            } else if (g->nrv[f] == FI_APPROACH) {
+                if (--g->tmove[f] <= 0) {
+                    V3 to = vlen(vsub(fp, *p)) > 1e-4f ? vnorm(vsub(fp, *p)) : *fr;
+                    if (vdot(*fr, to) > 0.9f) *fr = to;
+                    else { V3 b = vadd(vmul(*fr, 0.8f), vmul(to, 0.2f)); *fr = vlen(b) < 0.01f ? to : vnorm(b); }
+                    *v = vadd(*v, vmul(*fr, 5.0f)); g->tmove[f] = 5 + rand() % 26;
+                }
+                if (dd < g->dappr[f]) { g->nrv[f] = FI_WANDER; g->tmove[f] = 0; }
+            } else {
+                if (--g->tmove[f] <= 0) {
+                    V3 a = vsub(*p, g->esc[f]);
+                    if (vlen(a) > 1e-4f) *v = vadd(*v, vmul(vnorm(a), 5.0f));
+                    if (vlen(*v) > 1e-4f) *fr = vnorm(*v);
+                    g->tmove[f] = 5 + rand() % 16;
+                }
+                if (vlen(vsub(g->esc[f], *p)) > 600.0f) { g->nrv[f] = FI_APPROACH; g->tmove[f] = 0; }
+            }
+            *v = vmul(*v, 0.95f); /* control */
+            if (r->arg[1] > 0 && spin && g->nrv[f] != FI_ESCAPE && vlen(vsub(mp, *p)) < 500.0f) { g->esc[f] = mp; g->nrv[f] = FI_ESCAPE; g->tmove[f] = 0; }
+            if (vlen(*fr) < 1e-4f) *fr = vlen(*v) < 1e-4f ? v3(1, 0, 0) : vnorm(*v);
+            if (fabsf(fr->y) > 0.99f) { fr->x += fr->x > 0 ? 0.1f : -0.1f; *fr = vnorm(*fr); }
+            *p = vadd(*p, *v);
+        }
+    }
+}
+static void draw_fishes(void)
+{
+    for (int k = 0; k < nfgs; k++) {
+        typeof(&fgs[0]) g = &fgs[k];
+        const Model *md = g->init ? m_fish[g->type] : NULL;
+        if (!md || !md->skin || !row_shown(g->row)) continue;
+        Anim *a = NULL;
+        for (int f = 0; f < g->n; f++) {
+            if (vlen(vsub(g->pos[f], cam_pos)) > 5000.0f) continue;
+            if (!a) {
+                static const char *cls[6] = {"FishA", "FishB", "FishC", "FishD", "FishE", "FishF"};
+                if (!(a = obj_anim(10 * (int)sc->nobjs + g->row, md, cls[g->type]))) break;
+                anim_update(a);
+            }
+            float m[16];
+            basis_matrix(m, g->pos[f], g->up, g->front[f], 0); /* makeMtxFrontUp */
+            draw_skin(md, m, a);
+        }
     }
 }
 
@@ -20588,6 +20698,7 @@ void game_update(void)
     update_eyebeamers();
     update_leaves();
     update_palms();
+    update_fishes();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
@@ -21593,6 +21704,7 @@ void game_draw(void)
     draw_wbullets();
     draw_trapeze_ropes();
     draw_eyebeams();
+    draw_fishes();
     RESTQ(0);
     draw_vines();
     RESTQ(1);
