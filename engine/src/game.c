@@ -255,6 +255,7 @@ typedef struct {
     int lotus;       /* LotusLeaf: shakes under Mario (update_lotus) */
     int train;       /* ChooChooTrain 1, its cars 2 + n (update_trains) */
     int vflow;       /* LavaHomeVolcanoFlow (update_volcanoflows) */
+    int dland;       /* DesertMovingLand: up / down by its switches (update_dlands) */
     int kstair;      /* KoopaBattleMapStair(Big / Turn): breaks and falls after its switch (update_stairs) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
@@ -1160,6 +1161,7 @@ static int npls; static void update_palms(void), pl_place(Inst *in);
 static int nlls; static void update_lotus(void), ll_place(Inst *in);
 #define TRAIN_CARS 8
 #define TRAIN_CARS_ROOM TRAIN_CARS
+static int ndls; static void update_dlands(void), dl_place(Inst *in);
 static int insts_cap; static const Model *m_trainbody; static void update_trains(void), update_volcanoflows(void); static int tr_cars(const Row *r);
 static void update_kfires(void), kfires_reset(void), update_doors(void), door_place(Inst *in); static int door_solid(const Inst *in);
 static int nsss, ss_ride = -1; static const Model *m_sstrap; static void ss_reset(void); static void update_storms(void), ss_place(Inst *in), draw_storm_traps(void); static int ss_hold(Player *m);
@@ -1466,7 +1468,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nvines = 0; vine_ride = -1;
     pole_init();
     nrbms = 0;
-    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0; nfgs = 0; nggs = 0; nsss = 0; ss_ride = -1; ss_reset(); kfires_reset(); nlls = 0;
+    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0; nfgs = 0; nggs = 0; nsss = 0; ss_ride = -1; ss_reset(); kfires_reset(); nlls = 0; ndls = 0;
     dino_cam = 0;
     foot_num = foot_rot = 0;
     nseesaws = 0;
@@ -3313,6 +3315,7 @@ void game_rebind(void)
         in->lotus = strcmp(name, "LotusLeaf") == 0;
         in->train = strcmp(name, "ChooChooTrain") == 0;
         in->vflow = strcmp(name, "LavaHomeVolcanoFlow") == 0;
+        in->dland = strcmp(name, "DesertMovingLand") == 0;
         in->kstair = strncmp(name, "KoopaBattleMapStair", 19) == 0 && strcmp(name, "KoopaBattleMapStairTurnAppear") != 0;
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
@@ -3347,6 +3350,7 @@ void game_rebind(void)
         if (in->palm) pl_place(in);
         if (in->tdoor) door_place(in);
         if (in->lotus) ll_place(in);
+        if (in->dland) dl_place(in);
         if (in->sstorm) ss_place(in);
         if (in->trapeze) tz_place(in);
         if (in->onimasu) oni_place(in);
@@ -19809,6 +19813,82 @@ static void update_volcanoflows(void)
     }
 }
 
+/* DesertMovingLand.cpp after Petari: a land arg0 (2000) tall along its up. With an SW_A it starts at the top (its
+ * place) and the switch sends it down (arg1, 720 frames), else it starts at the bottom (its place) and its SW_B sends
+ * it up (arg2, 720): MoveSign (Vibration clip, camera shake) first, then the move at a steady speed (MOVE_ST / the
+ * move level SE / MOVE_ED), turning its switch off at the end (down: SW_B, up: SW_A). Its collision (Move) and Mario
+ * on it go with it. ponytail: no demo player holding (砂漠ＵＦＯ上昇), no BGM changes, no press stop */
+#define MAX_DLANDS 4
+enum { DL_WAITTOP, DL_WAITBOTTOM, DL_SIGNDOWN, DL_SIGNUP, DL_DOWN, DL_UP };
+static struct { int row, init, nrv, step; V3 top, bottom, pos; } dls[MAX_DLANDS];
+static int dl_of(int row)
+{
+    for (int i = 0; i < ndls; i++) if (dls[i].row == row) return i;
+    if (ndls == MAX_DLANDS) return -1;
+    memset(&dls[ndls], 0, sizeof dls[0]);
+    dls[ndls].row = row;
+    return ndls++;
+}
+static void dl_set(int k, int n) { dls[k].nrv = n; dls[k].step = -1; }
+static void dl_place(Inst *in)
+{
+    int k = dl_of(in->row);
+    if (k < 0 || !dls[k].init) return;
+    in->m[12] = dls[k].pos.x; in->m[13] = dls[k].pos.y; in->m[14] = dls[k].pos.z;
+}
+static void update_dlands(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->dland || !row_shown(in->row)) continue;
+        int k = dl_of(in->row);
+        if (k < 0) continue;
+        typeof(&dls[0]) o = &dls[k];
+        const Row *r = &sc->objs[in->row];
+        int sa = r->sw[SW_A] >= 0;
+        if (!o->init) {
+            V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+            float h = r->arg[0] != -1 ? (float)r->arg[0] : 2000.0f;
+            o->init = 1; o->pos = row_pos(r);
+            if (sa) { o->top = o->pos; o->bottom = vsub(o->pos, vmul(up, h)); dl_set(k, DL_WAITTOP); }
+            else { o->bottom = o->pos; o->top = vadd(o->pos, vmul(up, h)); dl_set(k, DL_WAITBOTTOM); }
+        }
+        int st = ++o->step, tdown = r->arg[1] > 0 ? r->arg[1] : 720, tup = r->arg[2] > 0 ? r->arg[2] : 720;
+        float old[16];
+        memcpy(old, in->m, 64);
+        switch (o->nrv) {
+        case DL_WAITTOP:
+            if (sa && sw_on(r, SW_A)) dl_set(k, DL_SIGNDOWN);
+            break;
+        case DL_WAITBOTTOM:
+            if (r->sw[SW_B] >= 0 && sw_on(r, SW_B)) dl_set(k, DL_SIGNUP);
+            break;
+        case DL_SIGNDOWN: case DL_SIGNUP:
+            if (st == 0) { obj_play(in, "Vibration", 0, 0); camera_shake(SHAKE_NORMAL_WEAK); }
+            if ((in->anim ? in->anim->done && st > 0 : st >= 60)) dl_set(k, o->nrv == DL_SIGNUP ? DL_UP : DL_DOWN); /* isBckStopped */
+            break;
+        case DL_DOWN: case DL_UP: {
+            int n = o->nrv == DL_DOWN ? tdown : tup;
+            V3 a = o->nrv == DL_DOWN ? o->top : o->bottom, b = o->nrv == DL_DOWN ? o->bottom : o->top;
+            if (st == 0) se_start(SE_OJ_DESERT_LAND_MOVE_ST, NULL);
+            in->lv[1] = se_level(SE_OJ_LV_DESERT_LAND_MOVE, NULL, in->lv[1]);
+            o->pos = vadd(o->pos, vmul(vsub(b, a), 1.0f / n));
+            if (st + 1 >= n) {
+                o->pos = b;
+                if (o->nrv == DL_DOWN) { if (r->sw[SW_B] >= 0) sw_set((Row *)r, SW_B, 0); }
+                else if (sa) sw_set((Row *)r, SW_A, 0);
+                se_start(SE_OJ_DESERT_LAND_MOVE_ED, NULL);
+                dl_set(k, o->nrv == DL_DOWN ? DL_WAITBOTTOM : DL_WAITTOP);
+            }
+            break;
+        }
+        }
+        in->lv[0] = se_level(SE_AT_LV_WIND_MOVING_DESERT, &in->m[12], in->lv[0]);
+        dl_place(in);
+        if (mario_ground == i) carry(old, in);
+    }
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -21660,6 +21740,7 @@ void game_update(void)
     update_lotus();
     update_trains();
     update_volcanoflows();
+    update_dlands();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
