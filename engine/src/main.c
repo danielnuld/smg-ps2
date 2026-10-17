@@ -523,6 +523,7 @@ int main(void)
 #ifdef PACKS
     /* base packs first, then the game (its allocations stay), then the zone packs above the mark */
     render_load_textures(&scene, 0, 0);
+    game_stage_name = scen;
     game_init(&scene, blob);
     mem_mark(&base_mark);
     game_set_piece_follow_limit(!strcmp(scen, "EggStarGalaxy/2"));

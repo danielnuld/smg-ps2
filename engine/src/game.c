@@ -42,10 +42,10 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
-       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA };
+       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU };
 /* walkers ported in the release push: their classes (counted, placed and drawn through this table) */
 static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}, {"BasaBasa", WALK_BASABASA}, {"BasaBasaIce", WALK_BASABASA}, {"Jellyfish", WALK_JELLYFISH},
-                                                                    {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}};
+                                                                    {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}, {"Mogu", WALK_MOGU}};
 #define NEW_WALKERS ((int)(sizeof new_walkers / sizeof new_walkers[0]))
 static const Model *m_wnew[NEW_WALKERS];
 static int walker_new_kind(const char *cls)
@@ -591,7 +591,9 @@ static int vine_try(Player *m);
 static int vine_hold(Player *m);
 static void pole_init(void);
 static void dossun_place(Inst *in);
-static int nrbms, nsbms; static const Model *m_rbeam;
+static int nrbms, nsbms; static const Model *m_rbeam, *m_mogustone, *m_moguhole;
+const char *game_stage_name = ""; /* the galaxy being played (main.c: its pack name) */
+static void draw_mogu_extras(void);
 static void sbm_place(Inst *in), sbm_joints(Inst *in);
 static int pole_try(Player *m), pole_hold(Player *m);
 static int pole_ride = -1; /* the Pole Mario holds (poles), -1 none */
@@ -3081,6 +3083,7 @@ void game_rebind(void)
     m_otabloom = scene_model(s, "OtaKingMagmaBloom");
     m_pleaf = scene_model(s, "PackunLeaf");
     m_rbeam = scene_model(s, "JumpBeamerBeam");
+    m_mogustone = scene_model(s, "MoguStone"); m_moguhole = scene_model(s, "MoguHole");
     for (int i = 0; i < NEW_WALKERS; i++) m_wnew[i] = scene_model(s, new_walkers[i].cls);
     m_vtop = scene_model(s, "PlantTop"); m_vleaf = scene_model(s, "PlantLeaf");
     m_fireball2 = scene_model(s, "FireBall"); m_firebubble = scene_model(s, "FireBubble");
@@ -15355,6 +15358,246 @@ static void kanina_update(Kuribo *k)
     }
 }
 
+/* Mogu.cpp / MoguStone.cpp after Petari: a mole in its hole (MoguHole), its up fixed. Hidden (HideWait), it comes up
+ * (Appear: the hole opens, it turns to Mario) after 120 frames when he is 400-2000 off and not 0.75 under it; it goes
+ * down (Hide, faster when he comes at it or within 200) when he is within 400 or above it within 400, or past 2000.
+ * Search (Wait; Turn within 900 (CannonFleet 1500), turning 0.03 a frame to him): with its SW_A on (if any), him in its
+ * sight (that range, 10 / 90) and its stone gone, after 45 it throws (Throw, at step 47 from its right hand at 15 a
+ * frame: flat along the ground with gravity unless arg0 is set, else straight at him; 100 frames, then 60 falling).
+ * The stone hurts Mario (EnemyAttack) and breaks; a spin or star piece breaks it. Mario's hip drop landing 130-1500
+ * off flips it (SwoonStart, Swoon 120, SwoonEnd back into the hole); a trample or hip drop on it then: StampDeath
+ * (60: Death, a coin, SW_DEAD), a spin: HitBlow (30 away, 50 up, 20: three star pieces); a star piece while it is
+ * up flips it. Its body (150 at its head) pushes Mario. ponytail: no 2P pointer, no hit-reaction scale, the stone's
+ * spin only its Rotate clip */
+enum { MG_HIDEWAIT, MG_HIDE, MG_APPEAR, MG_SEARCH, MG_TURN, MG_THROW, MG_SWOONSTART, MG_SWOONEND, MG_SWOON, MG_HIPREACT,
+       MG_STAMPDEATH, MG_HITBLOW };
+enum { MH_NONE, MH_OPEN, MH_HIDE, MH_CLOSE, MH_BREAK, MH_DOWN };
+static const char *const mogu_hole_clips[] = {NULL, "open", "hide", "close", "break", "down"};
+static void mg_hole(Kuribo *k, int c) { k->dir = c; k->phase++; } /* startAction(mHole, ...) */
+static int mg_cannonfleet(void) { return !strncmp(game_stage_name, "CannonFleetGalaxy", 17); } /* isEqualStageName */
+static int mg_hip_near(const Kuribo *k) /* isNearPlayerHipDrop: his hip drop landing 130-1500 off */
+{
+    float d = vlen(vsub(mario->pos, k->pos));
+    return mario->hip == HIP_LAND && mario->hip_t == 0 && d > 130.0f && d < 1500.0f;
+}
+static int mg_player_up(const Kuribo *k) /* isPlayerExistUp */
+{
+    V3 c = vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), k->pos);
+    if (vdot(k->qy, c) < 0.0f) return 0;
+    return vlen(vtangent(c, mario->up)) < 400.0f;
+}
+static int mg_sight(const Kuribo *k, float dist) /* isInSightFanPlayer(mSight, dist, 10, 90) */
+{
+    V3 to = vsub(mario->pos, k->pos);
+    if (vlen(to) >= dist || vlen(to) < 1e-6f) return 0;
+    V3 h = vtangent(to, k->grav);
+    return vlen(h) > 1e-6f && vdot(vnorm(h), vnorm(vtangent(k->front, k->grav))) >= cosf(5.0f * 0.0174533f);
+}
+static void mg_stone_break(Kuribo *k, u32 se)
+{
+    float m[16];
+    basis_matrix(m, k->bpos, k->qy, k->ttarget, 0);
+    fx_named("MoguStone", "Break", m, NULL, NULL);
+    se_start(se, &k->bpos.x);
+    k->bshow = 0;
+}
+static void mg_stone(Kuribo *k) /* MoguStone: Taken (in its hand), Throw, Fall */
+{
+    if (k->bshow < 2) return;
+    V3 up = vmul(k->grav, -1.0f);
+    k->lvt[0]++;
+    if (k->bshow == 2) { /* exeThrow / doBehavior */
+        k->lv2[0] = se_level(SE_EM_LV_MOGU_SPANA_FLY, &k->bpos.x, k->lv2[0]);
+        if (k->lvt[1]) { V3 gs = vmul(up_at(k->bpos, up), -1.0f); V3 h = vtangent(k->ttarget, gs); if (vlen(h) > 1e-6f) k->ttarget = vnorm(h); }
+        k->bvel = vmul(k->ttarget, k->lva[1]);
+        if (k->lvt[0] > 100) k->bshow = 3, k->lvt[0] = 0; /* Fall */
+    } else { /* exeFall: applyVelocityDampAndGravity 2 */
+        V3 gs = vmul(up_at(k->bpos, up), -1.0f);
+        k->bvel = vadd(vmul(k->bvel, 0.98f), vmul(gs, 2.0f));
+        if (k->lvt[0] > 60) { mg_stone_break(k, SE_EM_MOGU_SPANA_BREAK); return; }
+    }
+    k->bpos = vadd(k->bpos, k->bvel);
+    Hit h[1];
+    if (kcl_query(k->bpos, 40.0f, h, 1)) { mg_stone_break(k, SE_EM_MOGU_SPANA_BREAK); return; } /* isBinded */
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    if (k->bshow == 2 && mario_offence(k->bpos, 80.0f, k->grav) == MSG_HITALL) { mg_stone_break(k, SE_BM_ICEMERAKING_STONE_BREAK); return; }
+    if (vlen(vsub(mc, k->bpos)) < 80.0f + HIT_BODY_R && !mario->hurt_timer) { /* attackSensor: sendMsgEnemyAttack */
+        hurt_mario(k->bpos, 15.0f);
+        mg_stone_break(k, SE_BM_ICEMERAKING_STONE_BREAK);
+    }
+}
+static void mg_blow(Kuribo *k) /* tryPunchHitted: 30 away, 50 up */
+{
+    V3 d = vtangent(vsub(k->pos, mario->pos), k->grav);
+    if (vlen(d) < 1e-6f) { w_nrv(k, MG_STAMPDEATH); return; }
+    k->vel = vsub(vmul(vnorm(d), 30.0f), vmul(k->grav, 50.0f));
+    if (k->on_ground) k->pos = vadd(k->pos, vmul(k->grav, -5.0f));
+    w_nrv(k, MG_HITBLOW);
+}
+static void mogu_update(Kuribo *k)
+{
+    const Row *r = &sc->objs[k->row];
+    float sy = r->scale[1];
+    if (!k->front.x && !k->front.y && !k->front.z) { /* init */
+        V3 x, z;
+        row_axes(r, &x, &z);
+        float m[16], one[3] = {1, 1, 1};
+        mat_translate_rot_scale(m, r->pos, r->rot, one);
+        k->qy = vnorm(v3(m[4], m[5], m[6])); k->front = vnorm(z); k->grav = vmul(k->qy, -1.0f);
+        k->lvt[1] = r->arg[0] == -1; /* _B4: the stone keeps to the ground */
+        w_nrv(k, MG_SEARCH);
+    }
+    float near = vlen(vsub(mario->pos, k->pos)), sight = mg_cannonfleet() ? 1500.0f : 900.0f;
+    int st = ++k->step;
+    switch (k->nrv) {
+    case MG_HIDEWAIT: {
+        V3 tp = vsub(mario->pos, k->pos);
+        if (vlen(tp) > 1e-6f && vdot(k->grav, vnorm(tp)) < -0.75f) break;
+        if (st > 120 && near > 400.0f && near < 2000.0f) w_nrv(k, MG_APPEAR);
+        break;
+    }
+    case MG_HIDE:
+        if (st == 0) {
+            w_act(k, "Hide"); mg_hole(k, MH_HIDE); w_se(k, SE_EM_MOGU_HIDE);
+            V3 v = vsub(k->pos, vadd(mario->pos, vmul(mario->up, HIT_BODY_H)));
+            float len = vlen(v);
+            V3 h = vtangent(v, k->grav);
+            float dot = vlen(h) > 1e-6f ? vdot(vadd(mario->hvel, vmul(mario->up, mario->vup)), vnorm(h)) : 0.0f;
+            if (dot > 8.0f || len < 200.0f) k->act_rate = 1.5f;
+        }
+        if (w_bck_stopped(k)) { w_se(k, SE_EM_MOGUHOLE_CLOSE); w_nrv(k, MG_HIDEWAIT); }
+        break;
+    case MG_APPEAR:
+        if (st == 0) {
+            w_act(k, "Appear"); mg_hole(k, MH_OPEN); w_se(k, SE_EM_MOGUHOLE_OPEN); w_se(k, SE_EM_MOGU_APPEAR);
+            V3 h = vtangent(vsub(mario->pos, k->pos), k->qy);
+            if (vlen(h) > 1e-6f) k->front = vnorm(h); /* turnVecToVecRadian(pi): at once */
+        }
+        if (st > 30 && mg_hip_near(k)) { w_nrv(k, MG_SWOONSTART); break; }
+        if (near < 400.0f || mg_player_up(k)) { w_nrv(k, MG_HIDE); break; }
+        if (w_bck_stopped(k)) w_nrv(k, MG_SEARCH);
+        break;
+    case MG_SEARCH: case MG_TURN:
+        if (st == 0) w_act(k, k->nrv == MG_TURN ? "Turn" : "Wait");
+        if (mg_hip_near(k)) { w_nrv(k, MG_SWOONSTART); break; }
+        if (k->nrv == MG_TURN) { V3 h = vtangent(vsub(mario->pos, k->pos), k->qy); if (vlen(h) > 1e-6f) turn_on_plane(&k->front, h, k->qy, cosf(0.03f)); }
+        if (near < 400.0f || mg_player_up(k) || near > 2000.0f) { w_nrv(k, MG_HIDE); break; }
+        if (k->nrv == MG_SEARCH && near < sight) { if (r->sw[SW_A] < 0 || sw_on(r, SW_A)) { w_nrv(k, MG_TURN); break; } }
+        else if (k->nrv == MG_TURN && near > sight) { w_nrv(k, MG_SEARCH); break; }
+        if ((r->sw[SW_A] < 0 || sw_on(r, SW_A)) && mg_sight(k, sight) && st > 45 && !k->bshow) w_nrv(k, MG_THROW);
+        break;
+    case MG_THROW:
+        if (st == 0) { w_act(k, "Throw"); k->bshow = 1; w_se(k, SE_EM_MOGU_TAKE_ITEM); }
+        if (k->bshow == 1) k->bpos = w_joint(k, walker_new_model(k->row), 9, v3(67.38f, 0, 0)); /* FixedPosition ArmR2 */
+        if (mg_hip_near(k)) { if (k->bshow == 1) k->bshow = 0; w_nrv(k, MG_SWOONSTART); break; }
+        if (st == 47 && k->bshow == 1) { /* emit at 15 */
+            V3 up = k->qy, c = vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), k->bpos), h = vtangent(c, up);
+            V3 to = vadd(vadd(k->bpos, vmul(k->front, vlen(h))), vmul(up, vdot(up, c)));
+            V3 v = vsub(to, k->bpos);
+            if (k->lvt[1]) v = vtangent(v, vmul(up_at(k->bpos, up), -1.0f));
+            k->ttarget = vlen(v) > 1e-6f ? vnorm(v) : k->front;
+            k->lva[1] = 15.0f; k->bshow = 2; k->lvt[0] = 0; k->bvel = v3(0, 0, 0);
+            w_se(k, SE_EM_MOGU_THROW);
+        }
+        if (near < 400.0f || mg_player_up(k) || near > 2000.0f) { if (k->bshow == 1) k->bshow = 0; w_nrv(k, MG_HIDE); break; } /* endThrow */
+        if (w_bck_stopped(k)) { if (k->bshow == 1) k->bshow = 0; w_nrv(k, MG_SEARCH); }
+        break;
+    case MG_SWOONSTART:
+        if (st == 0) { w_se(k, SE_EM_MOGU_TURNOVER); w_se(k, SE_EV_MOGU_TURNOVER); w_act(k, "SwoonStart"); if (k->dir != MH_OPEN) mg_hole(k, MH_BREAK); }
+        w_se_lv(k, SE_EM_LV_SWOON_S);
+        if (w_bck_stopped(k)) w_nrv(k, MG_SWOON);
+        break;
+    case MG_SWOON:
+        if (st == 0) w_act(k, "Swoon");
+        w_se_lv(k, SE_EM_LV_SWOON_S);
+        if (mg_hip_near(k)) { w_nrv(k, MG_HIPREACT); break; }
+        if (st > 120) w_nrv(k, MG_SWOONEND);
+        break;
+    case MG_HIPREACT:
+        if (st == 0) w_act(k, "HipDropReaction");
+        if (w_bck_stopped(k)) w_nrv(k, MG_SWOON);
+        break;
+    case MG_SWOONEND:
+        if (st == 0) w_act(k, "SwoonEnd");
+        w_se_lv(k, SE_EM_LV_MOGU_SWOON_RECOVER);
+        if (w_bck_stopped(k)) { mg_hole(k, MH_CLOSE); w_se(k, SE_EM_MOGUHOLE_CLOSE); w_nrv(k, MG_HIDEWAIT); }
+        break;
+    case MG_STAMPDEATH:
+        if (st == 0) { w_act(k, "Down"); mg_hole(k, MH_CLOSE); w_se(k, SE_EM_STOMPED_S); }
+        if (st > 60) {
+            float m[16];
+            basis_matrix(m, k->pos, k->qy, k->front, 0);
+            fx_named("Mogu", "Death", m, NULL, NULL);
+            w_se(k, SE_EM_EXPLODE_S); mg_hole(k, MH_DOWN);
+            pop_coins(k->pos, k->qy, 1); w_se(k, SE_OJ_STAR_PIECE_BURST);
+            if (r->sw[SW_DEAD] >= 0) sw_set((Row *)r, SW_DEAD, 1);
+            k->state = KURIBO_DEAD; k->act[0] = 0; /* its hole stays (drawn by itself) */
+            return;
+        }
+        break;
+    case MG_HITBLOW:
+        if (st == 0) {
+            w_act(k, "PunchDown"); mg_hole(k, MH_CLOSE); w_se(k, SE_EM_MOGUHOLE_CLOSE); w_se(k, SE_PM_SPIN_HIT);
+            V3 h = vtangent(vsub(mario->pos, k->pos), k->qy);
+            if (vlen(h) > 1e-6f) k->front = vnorm(h);
+        }
+        k->vel = vadd(vmul(k->vel, 0.98f), vmul(k->grav, 2.0f)); /* applyVelocityDampAndGravity */
+        k->pos = vadd(k->pos, k->vel);
+        if (st > 20) {
+            w_se(k, SE_EM_EXPLODE_S); mg_hole(k, MH_DOWN);
+            drop_pieces(k->pos, k->qy, 3); w_se(k, SE_OJ_STAR_PIECE_BURST);
+            if (r->sw[SW_DEAD] >= 0) sw_set((Row *)r, SW_DEAD, 1);
+            float m[16];
+            basis_matrix(m, k->pos, k->qy, k->front, 0);
+            fx_named("Mogu", "Death", m, NULL, NULL);
+            k->state = KURIBO_DEAD; k->act[0] = 0;
+            return;
+        }
+        break;
+    }
+    k->act_t += k->act_rate;
+    mg_stone(k);
+    k->up = k->qy; k->qz = k->front;
+    /* sensors: body (150 x scale at its head, (-55, 0, 13) on it) pushes Mario; Mario's offence while it swoons */
+    int hidden = k->nrv == MG_HIDEWAIT || k->nrv == MG_HIDE || k->nrv == MG_STAMPDEATH || k->nrv == MG_HITBLOW;
+    if (hidden) return;
+    V3 head = w_joint(k, walker_new_model(k->row), 10, vmul(v3(-55.0f, 0, 13.0f), sy));
+    int swoon = k->nrv == MG_SWOONSTART || k->nrv == MG_SWOONEND || k->nrv == MG_SWOON || k->nrv == MG_HIPREACT;
+    int msg = mario_offence(head, 150.0f * sy, k->grav);
+    if (invincible_time && mario_touch(head, 150.0f * sy)) { mg_blow(k); return; } /* isMsgInvincibleAttack */
+    if (swoon && (msg == MSG_TRAMPLE || msg == MSG_HIPDROP)) { w_nrv(k, MG_STAMPDEATH); if (msg == MSG_TRAMPLE) { mario->vup = 15.0f; mario->grounded = 0; } return; }
+    if (swoon && msg == MSG_HITALL) { mg_blow(k); return; }
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), out = vtangent(vsub(mc, head), mario->up);
+    float l = vlen(out), want = 150.0f * sy + HIT_BODY_R * 0.6f;
+    if (vlen(vsub(mc, head)) < 150.0f * sy + HIT_BODY_R && l > 1e-3f && l < want) mario->pos = vadd(mario->pos, vmul(out, (want - l) / l));
+}
+static void draw_mogu_extras(void) /* its hole (MoguHole) and its stone (MoguStone) */
+{
+    for (int i = 0; i < nkuribo; i++) {
+        Kuribo *k = &kuribo[i];
+        if (k->kind != WALK_MOGU || !row_shown(k->row)) continue;
+        const Row *r = &sc->objs[k->row];
+        float m[16];
+        if (m_moguhole && m_moguhole->skin) {
+            Anim *a = obj_anim(2 * (int)sc->nobjs + k->row, m_moguhole, "MoguHole");
+            if (a) {
+                if (k->dir && k->lvt[2] != k->phase) { char n[32]; snprintf(n, sizeof n, "moguhole/%s", mogu_hole_clips[k->dir]); anim_start(a, n, 0); k->lvt[2] = k->phase; }
+                anim_update(a);
+                mat_translate_rot_scale(m, r->pos, r->rot, r->scale);
+                draw_skin(m_moguhole, m, a);
+            }
+        }
+        if (k->bshow && m_mogustone && m_mogustone->skin) {
+            Anim *a = obj_anim(3 * (int)sc->nobjs + k->row, m_mogustone, "MoguStone");
+            if (a) {
+                anim_update(a);
+                basis_matrix(m, k->bpos, k->qy, k->bshow >= 2 ? k->ttarget : k->front, 0);
+                draw_skin(m_mogustone, m, a);
+            }
+        }
+    }
+}
+
 static void update_kuribo_one(Kuribo *k);
 static void update_kuribo(void)
 {
@@ -15379,6 +15622,7 @@ static void update_kuribo_one(Kuribo *k)
             else if (k->kind == WALK_BASABASA) basa_update(k);
             else if (k->kind == WALK_JELLYFISH) jelly_update(k);
             else if (k->kind == WALK_KANINA) kanina_update(k);
+            else if (k->kind == WALK_MOGU) mogu_update(k);
             return;
         }
         if (k->kind == WALK_PETARI) { /* ponytail: still while its zone has no collision (streaming) */
@@ -17984,6 +18228,10 @@ static void update_shots(void)
             else if (e->kind == WALK_UNIZO || e->kind == WALK_POIHANA || e->kind == WALK_JELLYFISH) { /* isMsgStarPieceAttack: nothing more
                                                                                                   * (Jellyfish: its anim scale hit reaction) */ }
             else if (e->kind == WALK_GESSO) { if (e->nrv != GE_PUNCHDOWN) w_nrv(e, GE_ROTATE); } /* isMsgStarPieceAttack: Rotate */
+            else if (e->kind == WALK_MOGU) { /* isMsgStarPieceAttack: up, it flips (SwoonStart) */
+                if (e->nrv == MG_APPEAR || e->nrv == MG_SEARCH || e->nrv == MG_TURN || e->nrv == MG_THROW) { if (e->bshow == 1) e->bshow = 0; w_nrv(e, MG_SWOONSTART); }
+                else if (e->nrv == MG_HIDEWAIT || e->nrv == MG_HIDE) { hit = 0; continue; }
+            }
             else if (e->kind == WALK_KANINA) { /* isMsgStarPieceReflect: Guard */
                 if (e->nrv != KA_DAMAGEFB && e->nrv != KA_DAMAGEHIP && e->nrv != KA_UNDER && e->nrv != KA_DIG) w_nrv(e, KA_GUARD);
             }
@@ -19351,6 +19599,7 @@ void game_draw(void)
 #define RESTQ(k) do { u32 c_ = cycles(); prof_rest[k] += c_ - rq; rq = c_; } while (0)
     draw_hhp_leaves();
     draw_rbeams();
+    draw_mogu_extras();
     RESTQ(0);
     draw_vines();
     RESTQ(1);

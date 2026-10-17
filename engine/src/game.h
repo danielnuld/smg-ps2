@@ -3,6 +3,7 @@
 
 #include "blob.h"
 
+extern const char *game_stage_name; /* set before game_init: "<Galaxy>/<n>" */
 void game_init(const Scene *s, const unsigned char *blob);
 void game_set_time_limit(int seconds);
 int game_time_left(void);

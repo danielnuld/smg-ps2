@@ -60,7 +60,7 @@ RESIDENT = ("Coin", "StarPiece", "SuperSpinDriver")  # OBJ_TYPES in phase 0b's R
 SKINNED = ("Mario",)
 # placed classes drawn skinned and animated by their own BCKs (the scenario's ANIM chunk, "<class>/<clip>" in
 # lower case); their model archive is the class name
-SKINNED_OBJ = ("Kanina", "KaninaRed", "Jellyfish", "BasaBasa", "BasaBasaIce", "Gesso", "SearchBeamer", "RingBeamer", "JumpBeamerBeam", "FlowerGroup", "FlowerBlueGroup", "CutBushGroup", "DinoPackun", "OtaKing", "OtaKingFoot", "TicoFat", "Tico", "CocoSambo", "CocoSamboHead", "Kuribo", "Takobo",
+SKINNED_OBJ = ("Mogu", "MoguStone", "MoguHole", "Kanina", "KaninaRed", "Jellyfish", "BasaBasa", "BasaBasaIce", "Gesso", "SearchBeamer", "RingBeamer", "JumpBeamerBeam", "FlowerGroup", "FlowerBlueGroup", "CutBushGroup", "DinoPackun", "OtaKing", "OtaKingFoot", "TicoFat", "Tico", "CocoSambo", "CocoSamboHead", "Kuribo", "Takobo",
                "Karikari", "Butterfly", "PackunPetit", "KuriboMini", "DinoPackunEggShellBreak", "PackunPetitHead",
                "RockBreak", "WanwanRollingBreak", "PunchingKinoko", "OtaKingMagma", "OtaKingLongFoot", "WoodBoxBreak",
                "CrystalCageSBreak", "BenefitItemOneUp", "BenefitItemLifeUp", "FlipPanel", "FlipPanelReverse", "OtaRock",
@@ -112,7 +112,7 @@ EXTRA = {"FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "Fl
          "DinoPackun": ("DinoPackunTailBall", "DinoPackunEggShell", "DinoPackunEggShell#EggBroken", "DinoPackunEggShellBreak"), "OtaKing": ("CocoNut", "OtaKingFoot", "FireBall", "FireBubble", "OtaKingMagma", "OtaKingLongFoot", "OtaKingMagmaBloom"), "OtaRock": ("CocoNut", "FireBall"), "HammerHeadPackun": ("PackunLeaf",), "Plant": ("PlantTop", "PlantLeaf"), "CocoSambo": ("CocoSamboHead",), "PackunPetit": ("PackunPetitHead",),
          "RockCreator": ("RockBreak",), "WanwanRolling": ("WanwanRollingBreak",),
          "WoodBox": ("#WoodBox", "WoodBoxBreak"), "CrystalCageS": ("#CrystalCageS", "CrystalCageSBreak"),
-         "CrystalCageM": ("#CrystalCageM", "CrystalCageSBreak"), "RingBeamer": ("JumpBeamerBeam",)}
+         "CrystalCageM": ("#CrystalCageM", "CrystalCageSBreak"), "RingBeamer": ("JumpBeamerBeam",), "Mogu": ("MoguStone", "MoguHole")}
 # model-less classes the engine runs (stage switch logic): kept in OBJS like the classes with a model
 # power stars an event brings out (Petari PowerStarEventKeeper): ScenarioData AppearPowerStarObj names each star's
 # declarer by its ObjNameTable name. The classes the engine runs, with the arg giving an explicit star id (None: the
