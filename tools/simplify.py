@@ -44,8 +44,8 @@ def simplify(indices, positions, ratio, target_error=1.0):
     """indices: flat triangle list; positions: flat xyz floats. -> (new indices, achieved relative error).
     target_error 1.0 = no error cap, so the triangle target decides (ratio is what the sweep varies)."""
     n = len(indices)
-    target = max(3, int(n * ratio) // 3 * 3)
-    if ratio >= 1 or n <= 3:
+    target = max(3, int(round(n * ratio / 3)) * 3)  # rounded: a small mesh at 0.99 keeps every triangle (the sky's quad)
+    if ratio >= 1 or n <= 3 or target >= n:
         return list(indices), 0.0
     idx = (ctypes.c_uint * n)(*indices)
     pos = (ctypes.c_float * len(positions))(*positions)

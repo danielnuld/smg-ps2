@@ -303,7 +303,7 @@ def convert(files, name, texts):
 
 # the layouts every scene may show (menus.bin, loaded with each scene)
 COMMON = ("PauseMenu", "SysInfoWindow", "SysInfoWindowMini", "GameOver", "TooBad", "StageTitle", "IconAButton",
-          "BackButton", "AllStarList")
+          "BackButton", "AllStarList", "ScenarioSelect", "GalaxySelect", "GalaxyInfo")
 
 
 # the messages menus and screens look up by label (MR::getLayoutMessageDirect / getGameMessageDirect): MSGS chunk
@@ -404,6 +404,24 @@ def build(fsp, names=COMMON):
     return blob_of([chunk(b"LYTR", lytr), text_chunk(texts), msgs_chunk(fsp), gdat_chunk(fsp)]), len(texts)
 
 
+# the 3D models the menus show (menus3d.bin, a blob of its own: its TEXT apart from menus.bin's): ScenarioSelectStar's
+# PowerStar (skinned, its ScenarioAppear / ScenarioHide clips as "selectpowerstar/<clip>"), ScenarioSelectSky (its BTK)
+# ScenarioSelectStar::appear setBvaFrameAndStop(status 0 ? 1 : 0): the coloured star (frame 0, slice.py VIS) and the
+# empty one of a scenario not cleared ("#PowerStar": its last frame)
+MODELS_3D = (("SelectPowerStar", "PowerStar"), ("SelectPowerStarEmpty", "PowerStar#PowerStar"),
+             ("ScenarioSelectSky", "ScenarioSelectSky"))
+
+
+def build_3d(fsp):
+    import slice as SL
+    for name, arc in MODELS_3D:
+        if name.startswith("SelectPowerStar"):
+            SL.AUTO_SKINNED[name] = arc.partition("#")[0]
+    chunks = SL.assets(Path(fsp), list(MODELS_3D), {}, 0.99, {}, collision=False)
+    chunks.append(SL.obj_anim_chunk(Path(fsp), ["SelectPowerStar", "ScenarioSelectSky"]))  # one set of clips for both
+    return SL.blob_of(chunks)
+
+
 def selftest(fsp="data/fs/files"):
     """PauseMenu parses: its root, the button boxes, appear's tracks on its panes, a record per pane"""
     files = {k.lower().rsplit("/", 1)[-1]: v for k, v in
@@ -426,4 +444,7 @@ if __name__ == "__main__":  # python tools/lyt.py data/fs/files [out/packs/menus
     dst = Path(sys.argv[2] if len(sys.argv) > 2 else "out/packs/menus.bin")
     blob, nt = build(fsp)
     dst.write_bytes(blob)
+    d3 = dst.with_name("menus3d.bin")
+    d3.write_bytes(build_3d(fsp))
+    print(f"{d3}: {d3.stat().st_size / 1024:.0f} KB")
     print(f"{dst}: {len(blob) / 1024:.0f} KB, {len(COMMON)} layouts, {nt} textures")

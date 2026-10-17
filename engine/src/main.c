@@ -210,7 +210,7 @@ static void toc_select(void)
     for (u32 i = 0; i < toc_n; i++) {
         const TocEntry *e = (const TocEntry *)(toc_all + 4 + i * sizeof(TocEntry));
         if ((strncmp(e->path, scen, lp) == 0 && e->path[lp] == '/') || strcmp(e->path, "resident.bin") == 0 || strcmp(e->path, "sound.bin") == 0 ||
-            strcmp(e->path, "menus.bin") == 0) {
+            strcmp(e->path, "menus.bin") == 0 || strcmp(e->path, "menus3d.bin") == 0) {
             if (ntoc == (int)(sizeof toc / sizeof toc[0])) { printf("packs: TOC full\n"); for (;;) {} }
             memcpy(&toc[ntoc++], e, sizeof *e);
         }
@@ -500,7 +500,7 @@ static void stream_update(Scene *s)
         pend_commit(s);
 }
 
-static const u8 *base_bufs[6]; /* scene.bin, resident.bin, sound.bin, common.bin, menus.bin: freed at a scene change */
+static const u8 *base_bufs[8]; /* scene.bin, resident.bin, sound.bin, common.bin, menus(3d).bin: freed at a scene change */
 static int nbase;
 static const u8 *load_base(const char *path) { return base_bufs[nbase++] = load_file(path); }
 
@@ -531,12 +531,14 @@ static const u8 *load_packs(Scene *s)
         return NULL;
     { /* the menus' layouts (tools/lyt.py), when built: outside the scenario room */
         Pack mp;
-        if (pack_open(&mp, "menus.bin")) {
-            pack_close(&mp);
-            u32 before = pack_bytes;
-            if (blob_add(s, load_base("menus.bin")) != 0) return NULL;
-            resident_bytes += pack_bytes - before; /* its own budget, as resident.bin's */
-        }
+        static const char *const mp_names[2] = {"menus.bin", "menus3d.bin"}; /* layouts / messages, their 3D models */
+        for (int k = 0; k < 2; k++)
+            if (pack_open(&mp, mp_names[k])) {
+                pack_close(&mp);
+                u32 before = pack_bytes;
+                if (blob_add(s, load_base(mp_names[k])) != 0) return NULL;
+                resident_bytes += pack_bytes - before; /* its own budget, as resident.bin's */
+            }
     }
     u32 sz;
     nzones = *(const u32 *)blob_chunk(scene_blob, "ZONE", &sz);
@@ -754,6 +756,14 @@ int main(void)
         if (frame == 200) { /* the first grand star (the first dome open), Mario in a dome's entrance cube */
             gd_set_star("HeavensDoorGalaxy", 1);
             printf("astro test: grand star 1 %d, cube row %d\n", gd_flag_is_on("SpecialStarGrand1"), game_test_astro_cube(5));
+        }
+#endif
+#if defined(PACKS) && defined(SCENSEL_TEST)
+        { /* the scenario select of EggStar with its first star: the pointer on Star2 (the new one), X: its scenario 2 */
+            pad_force = 0;
+            if (frame == 300) { gd_set_star("EggStarGalaxy", 1); menu_scenario_select("EggStarGalaxy"); }
+            if (frame == 700) printf("scensel test f %u: pointer on Star2 %d\n", frame, menu_test_point_scenario("Star2"));
+            if (frame == 730) { pad_force = PAD_CROSS; printf("scensel test f %u: X, selecting %d\n", frame, menu_scenario_selecting()); }
         }
 #endif
 #if defined(PACKS) && defined(PAUSE_TEST)

@@ -37,7 +37,7 @@ static struct { const u8 *c; u32 tex0; } chunks[LYT_CHUNKS];
 static int nchunks;
 
 /* a pane's live values, reset to the record each frame, then the animations */
-typedef struct { float t[3], r[3], s[2], size[2]; float vc[4][4], alpha; u8 vis; } PState;
+typedef struct { float t[3], r[3], s[2], size[2]; float vc[4][4], alpha; u8 vis, lang_off; } PState; /* lang_off: another language's */
 typedef struct { float srt[5], c0[4], c1[4]; s16 tex; } MState;
 typedef struct { float m[6], alpha; u8 vis; } PWorld; /* 2x3: x' = m0 x + m1 y + m2, y' = m3 x + m4 y + m5 */
 
@@ -51,6 +51,8 @@ struct LytInst {
     const u16 **text;
     u16 (*num)[12];  /* setTextBoxNumber's digits, per pane */
     s8 *vpos;        /* a text box's vertical position override, -1 none */
+    const float **follow; /* setFollowPos per pane */
+    u8 *follow_add;
     PState *ps;
     MState *ms;
     PWorld *pw;
@@ -95,11 +97,11 @@ static void hide_other_languages(LytInst *l)
         if (len <= 4) continue;
         for (unsigned c = 0; c < sizeof codes / sizeof codes[0]; c++) {
             if (strncmp(n + len - 4, codes[c], 4)) continue;
-            if (strcmp(codes[c], cur)) { l->ps[i].vis = 0; break; }
+            if (strcmp(codes[c], cur)) { l->ps[i].vis = 0; l->ps[i].lang_off = 1; break; }
             char base[16]; /* this language's own: the plain one hides */
             memcpy(base, n, len - 4); base[len - 4] = 0;
             int b = lyt_pane(l, base);
-            if (b >= 0) l->ps[b].vis = 0;
+            if (b >= 0) { l->ps[b].vis = 0; l->ps[b].lang_off = 1; }
             break;
         }
     }
@@ -122,6 +124,8 @@ LytInst *lyt_new(const char *name)
             l->text = mem_alloc(MEM_SCENE, h->npanes * sizeof *l->text);
             l->num = mem_alloc(MEM_SCENE, h->npanes * sizeof *l->num);
             l->vpos = mem_alloc(MEM_SCENE, h->npanes);
+            l->follow = mem_alloc(MEM_SCENE, h->npanes * sizeof *l->follow);
+            l->follow_add = mem_alloc(MEM_SCENE, h->npanes);
             memset(l->vpos, -1, h->npanes);
             l->ps = mem_alloc(MEM_SCENE, h->npanes * sizeof *l->ps);
             l->pw = mem_alloc(MEM_SCENE, h->npanes * sizeof *l->pw);
@@ -192,11 +196,12 @@ void lyt_set_pane_rate(LytInst *l, const char *pane, int ch, float r)
     int k = find_slot(l, lyt_pane(l, pane), ch);
     if (k >= 0) l->slot[k].rate = r;
 }
-int lyt_stopped(const LytInst *l, int ch) { int k = find_slot(l, -1, ch); return k < 0 || l->slot[k].stopped; }
+/* J3DFrameCtrl::isStop: at its end (a one-shot) or its rate 0 (setAnimFrameAndStop) */
+int lyt_stopped(const LytInst *l, int ch) { int k = find_slot(l, -1, ch); return k < 0 || l->slot[k].stopped || l->slot[k].rate == 0; }
 int lyt_pane_stopped(const LytInst *l, const char *pane, int ch)
 {
     int k = find_slot(l, lyt_pane(l, pane), ch);
-    return k < 0 || l->slot[k].stopped;
+    return k < 0 || l->slot[k].stopped || l->slot[k].rate == 0;
 }
 float lyt_frame(const LytInst *l, int ch) { int k = find_slot(l, -1, ch); return k < 0 ? 0 : l->slot[k].frame; }
 
@@ -215,7 +220,8 @@ void lyt_update(LytInst *l)
     }
 }
 
-void lyt_show_pane(LytInst *l, const char *pane, int show) { int p = lyt_pane(l, pane); if (p >= 0) l->ps[p].vis = show != 0; }
+void lyt_show_pane(LytInst *l, const char *pane, int show) { int p = lyt_pane(l, pane); if (p >= 0 && !l->ps[p].lang_off) l->ps[p].vis = show != 0; }
+int lyt_pane_shown(const LytInst *l, const char *pane) { int p = lyt_pane(l, pane); return p >= 0 && l->ps[p].vis; }
 void lyt_set_text(LytInst *l, const char *pane, const u16 *text) { int p = lyt_pane(l, pane); if (p >= 0) l->text[p] = text; }
 void lyt_set_pos(LytInst *l, float x, float y) { if (l) { l->ox = x; l->oy = y; } }
 void lyt_set_alpha(LytInst *l, float a) { if (l) l->alpha = a; }
@@ -314,7 +320,7 @@ static void evaluate(LytInst *l)
                 if (t->sub < 16) s->vc[t->sub / 4][t->sub % 4] = v;
                 else if (t->sub == 16) s->alpha = v;
                 break;
-            case T_RLVI: s->vis = v != 0; break;
+            case T_RLVI: if (!s->lang_off) s->vis = v != 0; break;
             }
         }
     }
@@ -340,6 +346,11 @@ static void evaluate(LytInst *l)
             w->m[3] = m[3] * lm[0] + m[4] * lm[3]; w->m[4] = m[3] * lm[1] + m[4] * lm[4]; w->m[5] = m[3] * lm[2] + m[4] * lm[5] + m[5];
             w->alpha = s->alpha / 255.0f * ((l->pane[par].flags & 2) ? pw->alpha : 1.0f);
             w->vis = s->vis && pw->vis;
+        }
+        if (l->follow[i]) { /* LayoutPaneCtrl::reflectFollowPos: its global place (its children follow) */
+            const float *f = l->follow[i];
+            if (l->follow_add[i]) { w->m[2] += f[0]; w->m[5] -= f[1]; }
+            else { w->m[2] = f[0] - 304.0f; w->m[5] = 228.0f - f[1]; }
         }
     }
 }
@@ -490,7 +501,7 @@ void lyt_show_rec(LytInst *l, const char *pane, int show)
 {
     int r = lyt_pane(l, pane);
     for (int i = r; r >= 0 && i < l->h->npanes; i++)
-        if (under(l, i, r)) l->ps[i].vis = show != 0;
+        if (under(l, i, r) && !l->ps[i].lang_off) l->ps[i].vis = show != 0; /* another language's stays out */
 }
 
 void lyt_set_text_rec(LytInst *l, const char *pane, const u16 *text)
@@ -524,7 +535,7 @@ void lyt_set_vpos_rec(LytInst *l, const char *pane, int v)
 void lyt_set_pane_frame_stop(LytInst *l, const char *pane, int ch, float frame)
 {
     int k = find_slot(l, lyt_pane(l, pane), ch);
-    if (k >= 0) { l->slot[k].frame = frame; l->slot[k].stopped = 1; }
+    if (k >= 0) { l->slot[k].frame = frame; l->slot[k].rate = 0; l->slot[k].stopped = 0; } /* setFrame, setRate(0) */
 }
 
 float lyt_pane_frame(const LytInst *l, const char *pane, int ch)
@@ -556,6 +567,22 @@ int lyt_pane_hit(LytInst *l, const char *pane, float x, float y)
     int ox = p->origin % 3, oy = p->origin / 3;
     float x0 = -s->size[0] * ox / 2, y0 = s->size[1] * oy / 2;
     return lx >= x0 && lx <= x0 + s->size[0] && ly <= y0 && ly >= y0 - s->size[1];
+}
+
+void lyt_follow(LytInst *l, const char *pane, const float *pos, int add)
+{
+    int i = lyt_pane(l, pane);
+    if (i >= 0) { l->follow[i] = pos; l->follow_add[i] = (u8)add; }
+}
+
+void lyt_copy_pane_trans(LytInst *l, const char *pane, float out[2])
+{
+    int i = lyt_pane(l, pane);
+    out[0] = out[1] = 0;
+    if (i < 0) return;
+    evaluate(l);
+    out[0] = l->pw[i].m[2] + 304.0f;
+    out[1] = 228.0f - l->pw[i].m[5];
 }
 
 int lyt_pane_center(LytInst *l, const char *pane, float *x, float *y)

@@ -355,6 +355,17 @@ LayoutData layouts. Order by dependency:
 8. The hub: AstroGalaxy / AstroDome objects (AstroDome, AstroDomeSky, AstroDomeGalaxySelector, MiniatureGalaxy,
    AstroChangeStageCube, AstroCountDownPlate), ScenarioSelectScene + ScenarioSelectLayout / Star (ScenarioSelect),
    StageTitle, StarReturnDemoStarter + StageResultInformer (ResultWindow), GalaxyMapController (Map* layouts).
+   Done (this commit): ScenarioSelectLayout / ScenarioSelectStar / BackButton in menu.c (menu_scenario_select from
+   seq_galaxy_move SEQ_SCENARIO_SELECT with no scenario: the stage left frozen, the sky and SelectPowerStar /
+   SelectPowerStarEmpty from out/packs/menus3d.bin, X picks, Circle / Triangle or Volver cancel back to the stage, a
+   white wipe into "<galaxy>/<n>" and a white open there: seq_set_open_wipe). `scensel` test: EggStar with star 1 ->
+   Star2 -> EggStarGalaxy/2. Fixed on the way: lyt setAnimFrameAndStop is rate 0 (isStop: ended or rate 0; ScenarioSelect
+   Appear never played), other languages' panes stay hidden (lang_off), simplify.py rounds its target (at 0.99 every
+   small mesh lost a triangle: the select sky's quad; **every pack needs a repack** for it and for slice.py VIS
+   PowerStar: frame 0, the clear shell no longer drawn over the stars). Next: the dome's galaxy select (the spec of
+   SphereSelector / Handle, MiniatureGalaxy(+Holder), AstroDomeOrbit, AstroDomeCameraController,
+   AstroDomeGalaxySelector, GalaxySelectInfo, GalaxyNamePlate, GalaxyConfirmLayout, GalaxySelectBackButton was read
+   from Petari 2026-10-17), then StageResultInformer, title / FileSelect, save, game over.
 Then phase 1 (Good Egg vs Wii: the rim step's ground check, below), sound last. The disc ISO over ~1 GB does not boot
 in PCSX2 (taken for a DVD: open fail; a CD-sized image boots); the user's way of loading it on the PS2 was asked.
 

@@ -23119,6 +23119,7 @@ void game_draw(void)
     lights_update(ce, cw, cu, mario->pos);
     bloom_update();
     render_light(default_light(LIGHT_PLANET));
+    if (menu_draw_screen()) return;
 #ifdef OVERVIEW_TEST
     { /* the whole galaxy: a camera orbiting the box of the placed objects (the middle 90 % on each axis, so a far
        * stray row does not shrink the rest), a third of a turn every 20 s */

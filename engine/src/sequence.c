@@ -2,6 +2,7 @@
 
 #include "game.h"
 #include "gamedata.h"
+#include "menu.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -11,7 +12,12 @@ static struct {
     int before_no;
     int cleared;      /* the star id the last stage clear gave */
     int start_id, start_zone, start_set;
+    int open_frames;  /* the next scene's opening wipe */
+    unsigned open_rgb;
 } sq;
+
+void seq_set_open_wipe(int frames, unsigned rgb) { sq.open_frames = frames; sq.open_rgb = rgb; }
+int seq_take_open_wipe(unsigned *rgb) { int f = sq.open_frames; *rgb = sq.open_rgb; sq.open_frames = 0; return f; }
 
 int seq_start_id(int *zone)
 {
@@ -79,6 +85,9 @@ void seq_galaxy_move(int type, const char *stage, int scenario, int start_id, in
         else { snprintf(st, sizeof st, "PeachCastleGardenGalaxy"); no = 1; }
         break;
     case SEQ_TITLE: snprintf(st, sizeof st, "FileSelect"); no = 1; break;
+    case SEQ_SCENARIO_SELECT: /* requestStartScenarioSelect: the player's choice first */
+        if (no < 1) { menu_scenario_select(st); return; }
+        break;
     case SEQ_MISS: stage_of(st, sizeof st, &no); break;
     }
     if (!st[0] || no < 1) return;

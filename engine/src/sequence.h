@@ -18,5 +18,8 @@ void seq_set_cleared(int star_id);    /* GameSequenceFunction::getClearedPowerSt
 int seq_start_id(int *zone);          /* this scene's start (JMapIdInfo: MarioNo, zone); -1 the default */
 const char *seq_before_stage(int *scenario); /* setBeforeStageScenario: the stage left last */
 int seq_story_grand_dome(const char *galaxy); /* GameDataConst::getIncludedGrandGalaxyId */
+/* the wipe the next scene opens with (openSystemWipe* after a close): frames (0 none) and its colour 0xRRGGBB */
+void seq_set_open_wipe(int frames, unsigned rgb);
+int seq_take_open_wipe(unsigned *rgb);
 
 #endif

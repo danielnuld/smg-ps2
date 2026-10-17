@@ -282,8 +282,9 @@ def scene(fs, galaxy, scenario):
 
 # static models drawn with a BVA's visibility at a frame (the shapes it hides there are left out; None: its last):
 # the egg shell holds its intact and cracked pieces, normal.bva shows the intact ones (DinoPackun::initEggShell);
-# CrystalCage::init startBva(obj_name) at 0 (whole; its last frame is the broken cage)
-VIS = {"DinoPackunEggShell": ("normal", None), "CrystalCageS": ("CrystalCageS", 0), "CrystalCageM": ("CrystalCageM", 0)}
+# CrystalCage::init startBva(obj_name) at 0 (whole; its last frame is the broken cage); PowerStar setupColor: frame 0 the
+# coloured star (1, the empty one of a star already got: ponytail, not drawn in the stages)
+VIS = {"PowerStar": ("PowerStar", 0), "DinoPackunEggShell": ("normal", None), "CrystalCageS": ("CrystalCageS", 0), "CrystalCageM": ("CrystalCageM", 0)}
 # models baked with a BRK's registers at a frame (Tico.cpp: ColorChange at its colour, frame 0 the yellow one)
 # startBrk + setBrkFrameAndStop(argN): one model per frame its rows use, "<class>~<frame>" baked at that frame (game.c
 # brk_model picks it by the row's arg). Butterfly: startBrk Butterfly, frame mColorIndex = arg0 (NoInit: 0)
