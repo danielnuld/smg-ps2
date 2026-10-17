@@ -248,6 +248,7 @@ typedef struct {
     int eyebeamer;   /* EyeBeamer: turns, goes to its rail and patrols it, its beam burning (update_eyebeamers) */
     int leaves;      /* CoconutTreeLeaf: its leaves sway, each with its collision (update_leaves, leaf_joints, lf_mats) */
     int palm;        /* PalmIsland: bobs on the water (update_palms) */
+    int sstorm;      /* SunakazeKun 1, TwisterSan 2, TwisterSanSlim 3: catches Mario, a spin throws him up (update_storms, ss_hold) */
     int kstair;      /* KoopaBattleMapStair(Big / Turn): breaks and falls after its switch (update_stairs) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
@@ -1149,6 +1150,7 @@ typedef struct { V3 n; float dist; int inst, attr, sub; } Hit; /* world normal, 
 static int nlfs, ground_sub, mario_ground_sub; static int lf_mats(const Inst *in, const float (**mats)[16], const int **coll);
 static void update_leaves(void), leaf_joints(Inst *in);
 static int npls; static void update_palms(void), pl_place(Inst *in);
+static int nsss, ss_ride = -1; static const Model *m_sstrap; static void ss_reset(void); static void update_storms(void), ss_place(Inst *in), draw_storm_traps(void); static int ss_hold(Player *m);
 static const Model *m_fish[6], *m_gull; static int nggs; static void update_gulls(void), draw_gulls(void);
 static int nfgs; static void update_fishes(void), draw_fishes(void);
 
@@ -1451,7 +1453,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nvines = 0; vine_ride = -1;
     pole_init();
     nrbms = 0;
-    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0; nfgs = 0; nggs = 0;
+    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0; nfgs = 0; nggs = 0; nsss = 0; ss_ride = -1; ss_reset();
     dino_cam = 0;
     foot_num = foot_rot = 0;
     nseesaws = 0;
@@ -3145,7 +3147,7 @@ void game_rebind(void)
     m_pleaf = scene_model(s, "PackunLeaf");
     m_rbeam = scene_model(s, "JumpBeamerBeam"); m_ebeam = scene_model(s, "EyeBeamerBeam");
     { static const char *fn[6] = {"FishA", "FishB", "FishC", "FishD", "FishE", "FishF"}; for (int f = 0; f < 6; f++) m_fish[f] = scene_model(s, fn[f]); }
-    m_gull = scene_model(s, "SeaGull");
+    m_gull = scene_model(s, "SeaGull"); m_sstrap = scene_model(s, "SunakazeKunTrap");
     t_whirl = scene_type(s, "WhirlPoolAccelerator");
     m_wbullet = scene_model(s, "WaterBullet");
     m_mogustone = scene_model(s, "MoguStone"); m_moguhole = scene_model(s, "MoguHole");
@@ -3292,6 +3294,7 @@ void game_rebind(void)
         in->eyebeamer = strcmp(name, "EyeBeamer") == 0;
         in->leaves = strcmp(name, "CoconutTreeLeaf") == 0;
         in->palm = strcmp(name, "PalmIsland") == 0;
+        in->sstorm = strcmp(name, "SunakazeKun") == 0 ? 1 : strcmp(name, "TwisterSan") == 0 ? 2 : strcmp(name, "TwisterSanSlim") == 0 ? 3 : 0;
         in->kstair = strncmp(name, "KoopaBattleMapStair", 19) == 0 && strcmp(name, "KoopaBattleMapStairTurnAppear") != 0;
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
@@ -3323,6 +3326,7 @@ void game_rebind(void)
         if (in->sbeamer) sbm_place(in);
         if (in->eyebeamer) eb_place(in);
         if (in->palm) pl_place(in);
+        if (in->sstorm) ss_place(in);
         if (in->trapeze) tz_place(in);
         if (in->onimasu) oni_place(in);
         if (in->kstair) ks_place(in);
@@ -11329,6 +11333,10 @@ static void update_mario(void)
             return;
         }
     }
+    if (ss_hold(m)) { /* in a Sandstorm */
+        if (mario_anim) anim_update(mario_anim);
+        return;
+    }
     if (tz_hold(m)) { /* on a Trapeze */
         if (mario_anim) anim_update(mario_anim);
         return;
@@ -19003,6 +19011,230 @@ static void draw_gulls(void)
     }
 }
 
+/* Sandstorm.cpp after Petari (SunakazeKun, TwisterSan, TwisterSanSlim; SandstormParam.bcsv's values): it runs its
+ * rail at 3 a frame (from the nearest place) turning its front to Mario 2 degrees a frame, NonActive past 7000. Its
+ * binder (a cone along its up, SensorHeight high, radius max(SensorMin, SizeUpRate x height x the foot's fraction))
+ * catches Mario (not while hurt): StormIn, Storm (the spiral: its angle -SpiralRot a frame, radius / height from
+ * where he was to SpiralRadius / BindHeight over StepStorm, the radius to 0 over StepAdjust after), StormFix
+ * (StormWait, its SW_A off, the CHANCE level SE) until his spin (from step 15) throws him up: a tornado jump
+ * (SunakazeKun's the mini one: setRocketBooster 0.0001 along his up x 1.6 a frame for 25 frames, else x 1.532 for
+ * 28), StormEnd (StepEnd frames without its binder, SW_A on). arg0: two SunakazeKunTrap hammers (200 up, 220 out,
+ * turning 4 degrees a frame about the world Y, bobbing 40 x sin(5 t)) hurt him strongly (40). ponytail: no actor
+ * camera, no rumble, no star piece sensor, no tornado centering / tilt */
+#define MAX_STORMS 16
+enum { SS_NONACTIVE, SS_WAIT, SS_STORM, SS_ADJUST, SS_FIX, SS_END };
+static const struct { const char *name; float h, rate, min; int storm, adjust, end; float bind, rot, rad; } ss_par[3] = {
+    {"SunakazeKun", 350.0f, 0.4f, 50.0f, 30, 20, 50, 250.0f, 9.0f, 200.0f},
+    {"TwisterSan", 600.0f, 0.5f, 100.0f, 55, 30, 50, 800.0f, 7.0f, 330.0f},
+    {"TwisterSanSlim", 850.0f, 0.3f, 100.0f, 55, 30, 50, 800.0f, 10.0f, 180.0f},
+};
+static struct { int row, init, nrv, step, c8, bound; float coord, b8, bc, c0, c4, cc, trot[2]; V3 front, pos, toff[2]; u32 lv[3]; } sss[MAX_STORMS];
+static struct { V3 v; float attn; int t; } ss_boost; /* Mario's rocket booster (procRocketBooster) */
+static int ss_of(int row)
+{
+    for (int i = 0; i < nsss; i++) if (sss[i].row == row) return i;
+    if (nsss == MAX_STORMS) return -1;
+    memset(&sss[nsss], 0, sizeof sss[0]);
+    sss[nsss].row = row;
+    return nsss++;
+}
+static void ss_set(int k, int n) { sss[k].nrv = n; sss[k].step = -1; }
+static void ss_mtx(int k, float m[16]) /* calcMtxFromGravityAndZAxis */
+{
+    V3 up = up_at(sss[k].pos, v3(0, 1, 0)), z = vtangent(sss[k].front, up);
+    z = vlen(z) > 1e-4f ? vnorm(z) : vnorm(vcross(v3(1, 0, 0), up));
+    V3 x = vcross(up, z), p = sss[k].pos;
+    float r[16] = {x.x, x.y, x.z, 0, up.x, up.y, up.z, 0, z.x, z.y, z.z, 0, p.x, p.y, p.z, 1};
+    memcpy(m, r, 64);
+}
+static void ss_place(Inst *in)
+{
+    int k = ss_of(in->row);
+    if (k < 0 || !sss[k].init) return;
+    float m[16];
+    ss_mtx(k, m);
+    const float *s3 = sc->objs[in->row].scale;
+    for (int c = 0; c < 3; c++) for (int j = 0; j < 3; j++) m[4 * c + j] *= s3[c];
+    memcpy(in->m, m, 64);
+}
+static void ss_spiral(int k, int t) /* updateSpiral */
+{
+    typeof(&sss[0]) o = &sss[k];
+    const typeof(ss_par[0]) *pr = &ss_par[t];
+    float x = o->cc / pr->storm, v1 = pr->rad * x, v2 = pr->bind * x, d9 = -pr->rot * x * 0.0174533f;
+    if (o->c8 <= pr->storm) {
+        float u = (float)o->c8 / pr->storm;
+        o->bc = v1 + (pr->rad - v1) * u; o->c4 = v2 + (pr->bind - v2) * u;
+    } else { o->bc = o->c0 + (0.0f - o->c0) * (float)(o->c8 - pr->storm) / pr->adjust; o->c4 = pr->bind; }
+    o->b8 = d9 - pr->rot * o->c8 * 0.0174533f;
+    o->c8++;
+}
+static int ss_try_jump(int k, int t) /* tryTornadoJumpPlayer: endBind */
+{
+    if (!pad_pressed(PAD_SQUARE)) return 0;
+    Player *m = mario;
+    typeof(&sss[0]) o = &sss[k];
+    V3 up = up_at(o->pos, m->up);
+    o->bound = 0; ss_ride = -1;
+    m->up = up_at(m->pos, m->up);
+    m->jump_kind = 8; /* tryTornadoJump */
+    m_set_jv(m, vadd(vmul(m->face, m->walk * MC.mJumpTornadoSpeed), vmul(m->up, MC.mJumpHeight[8])));
+    m_proc_jump(m, 1);
+    mario_play("jump", 1.0f, 0);
+    mario_sound("声スピン"); mario_sound("トルネードジャンプ");
+    m->jumping = 1; m->connect = 0; m->walk = 0; m->grounded = 0;
+    m->air_spin = MC.mAirWalkTimeTornado;
+    ss_boost.v = vmul(up, MC.mTornadoBoostPower);
+    if (t == 0) { ss_boost.attn = MC.mTornadoBoostAttnMini; ss_boost.t = MC.mTornadoBoostTimerMini; se_start(SE_OJ_SANDSTORM_S_BLOW_UP, &o->pos.x); }
+    else { ss_boost.attn = MC.mTornadoBoostAttn; ss_boost.t = MC.mTornadoBoostTimer; se_start(SE_OJ_SANDSTORM_BLOW_UP, &o->pos.x); }
+    camera_shake(SHAKE_NORMAL_WEAK);
+    ss_set(k, SS_END);
+    return 1;
+}
+static int ss_type(const Inst *in) { return in->sstorm - 1; }
+static void update_storms(void)
+{
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->sstorm || !row_shown(in->row)) continue;
+        int k = ss_of(in->row), t = ss_type(in);
+        if (k < 0) continue;
+        typeof(&sss[0]) o = &sss[k];
+        const Row *r = &sc->objs[in->row];
+        const typeof(ss_par[0]) *pr = &ss_par[t];
+        u32 rn = 0; int cl = 0;
+        const float *rail = r->path >= 0 && scene_blob_g ? find_rail(scene_blob_g, r->zone, r->path, &rn, &cl) : NULL;
+        if (!o->init) {
+            V3 x, z;
+            row_axes(r, &x, &z);
+            o->init = 1; o->pos = row_pos(r); o->front = vnorm(z);
+            if (rail) { o->coord = w_rail_nearest(rail, rn, o->pos); o->pos = rail_at(rail, rn, o->coord); V3 d = vsub(rail_at(rail, rn, o->coord + 1.0f), o->pos); if (vlen(d) > 1e-4f) o->front = vnorm(d); }
+            for (int h = 0; h < 2; h++) { o->toff[h] = h ? v3(0, 200.0f, -220.0f) : v3(0, 200.0f, 220.0f); o->trot[h] = 0; }
+            if (r->sw[SW_A] >= 0) sw_set((Row *)r, SW_A, 1);
+            ss_set(k, SS_WAIT);
+        }
+        int st = ++o->step;
+        V3 up = up_at(o->pos, v3(0, 1, 0));
+        float dm = vlen(vsub(mario->pos, o->pos));
+        switch (o->nrv) {
+        case SS_NONACTIVE:
+            if (dm < 7000.0f) ss_set(k, SS_WAIT);
+            break;
+        case SS_WAIT:
+            if (st == 0) obj_play(in, "Wait", 1, 0);
+            turn_on_plane(&o->front, vsub(mario->pos, o->pos), vmul(up, -1.0f), cosf(2.0f * 0.0174533f)); /* turnDirectionToPlayerDegree */
+            if (dm >= 7000.0f) { ss_set(k, SS_NONACTIVE); break; }
+            if (ss_ride < 0 && !mario->hurt_timer) { /* the binder: AutoRushBegin, tryStartBind */
+                V3 top = vadd(o->pos, vmul(up, pr->h));
+                float f = vdot(vsub(mc, o->pos), up) / pr->h;
+                f = f < 0 ? 0 : f > 1 ? 1 : f;
+                V3 foot = vadd(o->pos, vmul(vsub(top, o->pos), f));
+                float rad = pr->rate * f * pr->h;
+                if (rad < pr->min) rad = pr->min;
+                if (vlen(vsub(mc, foot)) < rad + HIT_BODY_R) {
+                    o->bound = 1; ss_ride = k;
+                    o->b8 = o->bc = o->c0 = o->c4 = 0; o->c8 = 0;
+                    o->cc = pr->storm * vdot(vsub(mario->pos, o->pos), up) / pr->bind;
+                    mario_play("stormin", 1.0f, 0); se_start(SE_PV_UPSET, &mario->pos.x);
+                    camera_shake(SHAKE_NORMAL_WEAK);
+                    se_start(t == 0 ? SE_OJ_SANDSTORM_BIND_S_IN : SE_OJ_SANDSTORM_BIND_IN, &o->pos.x);
+                    ss_set(k, SS_STORM);
+                }
+            }
+            break;
+        case SS_STORM:
+            if (st == 0 && t == 0) obj_play(in, "Spin", 1, 0);
+            ss_spiral(k, t);
+            if (!(st > 15 && ss_try_jump(k, t)) && st == pr->storm) ss_set(k, SS_ADJUST);
+            break;
+        case SS_ADJUST:
+            if (st == 0) o->c0 = o->bc;
+            ss_spiral(k, t);
+            if (!ss_try_jump(k, t) && st == pr->adjust) ss_set(k, SS_FIX);
+            break;
+        case SS_FIX:
+            if (st == 0) { mario_play("stormwait", 1.0f, 1); if (r->sw[SW_A] >= 0) sw_set((Row *)r, SW_A, 0); }
+            o->lv[1] = se_level(t == 0 ? SE_OJ_LV_SANDSTORM_S_CHANCE : SE_OJ_LV_SANDSTORM_CHANCE, &o->pos.x, o->lv[1]);
+            ss_try_jump(k, t);
+            break;
+        case SS_END:
+            if (st == 0) { if (r->sw[SW_A] >= 0) sw_set((Row *)r, SW_A, 1); se_start(SE_OJ_SANDSTORM_S_BIND_END, &o->pos.x); } /* isSunakazeKun's ptmf test: always the S one */
+            if (st > pr->end) ss_set(k, SS_WAIT);
+            break;
+        }
+        if (rail) { /* control: moveCoordAndFollowTrans */
+            float len = w_rail_len(rail, rn);
+            o->coord += 3.0f;
+            if (o->coord > len) o->coord = cl ? fmodf(o->coord, len) : len;
+            o->pos = rail_at(rail, rn, o->coord);
+        }
+        if (o->nrv != SS_NONACTIVE) o->lv[0] = se_level(t == 0 ? SE_OJ_LV_SANDSTORM_S_WAIT : SE_OJ_LV_SANDSTORM_WAIT, &o->pos.x, o->lv[0]);
+        ss_place(in);
+        if (o->bound) { /* updateBindActorMtx */
+            float d = o->bc;
+            if (o->c8 < 10) { float len = vlen(vtangent(vsub(mc, o->pos), up)); d = len + (o->bc - len) * (o->c8 / 10.0f); }
+            V3 v = v3(d * cosf(o->b8), o->c4, d * sinf(o->b8));
+            if (t != 0 && o->nrv == SS_FIX) v.y += sinf(o->step * 3.0f * 0.0174533f) * 270.0f;
+            float m[16];
+            ss_mtx(k, m);
+            mario->pos = v3(m[0] * v.x + m[4] * v.y + m[8] * v.z + m[12], m[1] * v.x + m[5] * v.y + m[9] * v.z + m[13], m[2] * v.x + m[6] * v.y + m[10] * v.z + m[14]);
+        }
+        if (in->sstorm == 1 && r->arg[0] > 0 && o->nrv != SS_NONACTIVE) { /* SunakazeKunTrap::exeTrap, attackSensor */
+            float m[16];
+            ss_mtx(k, m);
+            float e = 0.5f + 0.5f * (1.0f - cosf((st % 100) / 30.0f * 1.5707963f)), a = sinf(st * 5.0f * 0.0174533f); /* getEaseInValue */
+            o->lv[2] = se_level(SE_OJ_LV_SANDSTORM_S_HAMMER, &o->pos.x, o->lv[2]); /* control */
+            for (int h = 0; h < 2; h++) {
+                o->toff[h] = rot_axis(o->toff[h], v3(0, 1, 0), 4.0f * 0.0174533f);
+                V3 q = o->toff[h], p = v3(m[0] * q.x + m[4] * q.y + m[8] * q.z + m[12], m[1] * q.x + m[5] * q.y + m[9] * q.z + m[13], m[2] * q.x + m[6] * q.y + m[10] * q.z + m[14]);
+                p.y += 40.0f * e * a;
+                o->trot[h] += 5.0f;
+                if (vlen(vsub(mc, p)) < 40.0f + HIT_BODY_R && !mario->hurt_timer && !o->bound) hurt_mario(p, 25.0f); /* sendMsgEnemyAttackStrong */
+            }
+        }
+    }
+}
+static void ss_reset(void) { ss_boost.t = 0; }
+static int ss_hold(Player *m) /* Mario in a storm (its binder holds him), or his booster after it */
+{
+    if (ss_ride < 0) {
+        if (ss_boost.t > 0) { /* procRocketBooster */
+            ss_boost.t--;
+            m->vup += vdot(ss_boost.v, m->up); m->hvel = vadd(m->hvel, vtangent(ss_boost.v, m->up));
+            ss_boost.v = vmul(ss_boost.v, ss_boost.attn);
+        }
+        return 0;
+    }
+    m->hvel = v3(0, 0, 0); m->vup = 0; m->grounded = 0;
+    m->up = up_at(m->pos, m->up);
+    return 1;
+}
+static void draw_storm_traps(void)
+{
+    if (!m_sstrap || !m_sstrap->skin) return;
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (in->sstorm != 1 || !row_shown(in->row) || sc->objs[in->row].arg[0] <= 0) continue;
+        int k = ss_of(in->row);
+        if (k < 0 || !sss[k].init) continue;
+        float m[16];
+        ss_mtx(k, m);
+        int st = sss[k].step;
+        float e = 0.5f + 0.5f * (1.0f - cosf((st % 100) / 30.0f * 1.5707963f)), a = sinf(st * 5.0f * 0.0174533f);
+        for (int h = 0; h < 2; h++) {
+            Anim *an = obj_anim(12 * (int)sc->nobjs + 2 * in->row + h, m_sstrap, "SunakazeKunTrap");
+            if (!an) continue;
+            anim_update(an);
+            V3 q = sss[k].toff[h];
+            float p[3] = {m[0] * q.x + m[4] * q.y + m[8] * q.z + m[12], m[1] * q.x + m[5] * q.y + m[9] * q.z + m[13] + 40.0f * e * a, m[2] * q.x + m[6] * q.y + m[10] * q.z + m[14]};
+            float rot[3] = {sss[k].trot[h], sss[k].trot[h], sss[k].trot[h]}, one[3] = {1, 1, 1}, tm[16];
+            mat_translate_rot_scale(tm, p, rot, one);
+            draw_skin(m_sstrap, tm, an);
+        }
+    }
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -20845,6 +21077,7 @@ void game_update(void)
     update_palms();
     update_fishes();
     update_gulls();
+    update_storms();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
@@ -21852,6 +22085,7 @@ void game_draw(void)
     draw_eyebeams();
     draw_fishes();
     draw_gulls();
+    draw_storm_traps();
     RESTQ(0);
     draw_vines();
     RESTQ(1);
