@@ -252,6 +252,7 @@ typedef struct {
     int palm;        /* PalmIsland: bobs on the water (update_palms) */
     int sstorm;      /* SunakazeKun 1, TwisterSan 2, TwisterSanSlim 3: catches Mario, a spin throws him up (update_storms, ss_hold) */
     int tdoor;       /* TypicalDoor 1, DarknessRoomDoor 2, TypicalDoorOpen 3 (update_doors, door_place) */
+    int lotus;       /* LotusLeaf: shakes under Mario (update_lotus) */
     int kstair;      /* KoopaBattleMapStair(Big / Turn): breaks and falls after its switch (update_stairs) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
@@ -1153,6 +1154,7 @@ typedef struct { V3 n; float dist; int inst, attr, sub; } Hit; /* world normal, 
 static int nlfs, ground_sub, mario_ground_sub; static int lf_mats(const Inst *in, const float (**mats)[16], const int **coll);
 static void update_leaves(void), leaf_joints(Inst *in);
 static int npls; static void update_palms(void), pl_place(Inst *in);
+static int nlls; static void update_lotus(void), ll_place(Inst *in);
 static void update_kfires(void), kfires_reset(void), update_doors(void), door_place(Inst *in); static int door_solid(const Inst *in);
 static int nsss, ss_ride = -1; static const Model *m_sstrap; static void ss_reset(void); static void update_storms(void), ss_place(Inst *in), draw_storm_traps(void); static int ss_hold(Player *m);
 static const Model *m_fish[6], *m_gull; static int nggs; static void update_gulls(void), draw_gulls(void);
@@ -1458,7 +1460,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nvines = 0; vine_ride = -1;
     pole_init();
     nrbms = 0;
-    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0; nfgs = 0; nggs = 0; nsss = 0; ss_ride = -1; ss_reset(); kfires_reset();
+    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0; nfgs = 0; nggs = 0; nsss = 0; ss_ride = -1; ss_reset(); kfires_reset(); nlls = 0;
     dino_cam = 0;
     foot_num = foot_rot = 0;
     nseesaws = 0;
@@ -3301,6 +3303,7 @@ void game_rebind(void)
         in->palm = strcmp(name, "PalmIsland") == 0;
         in->sstorm = strcmp(name, "SunakazeKun") == 0 ? 1 : strcmp(name, "TwisterSan") == 0 ? 2 : strcmp(name, "TwisterSanSlim") == 0 ? 3 : 0;
         in->tdoor = strcmp(name, "TeresaMansionDoorA") == 0 || strcmp(name, "TeresaMansionDoorB") == 0 ? 1 : strcmp(name, "DarknessRoomDoorA") == 0 ? 2 : strcmp(name, "TeresaMansionEntranceDoor") == 0 ? 3 : 0;
+        in->lotus = strcmp(name, "LotusLeaf") == 0;
         in->kstair = strncmp(name, "KoopaBattleMapStair", 19) == 0 && strcmp(name, "KoopaBattleMapStairTurnAppear") != 0;
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
@@ -3334,6 +3337,7 @@ void game_rebind(void)
         if (in->eyebeamer) eb_place(in);
         if (in->palm) pl_place(in);
         if (in->tdoor) door_place(in);
+        if (in->lotus) ll_place(in);
         if (in->sstorm) ss_place(in);
         if (in->trapeze) tz_place(in);
         if (in->onimasu) oni_place(in);
@@ -19645,6 +19649,75 @@ static void update_doors(void)
     }
 }
 
+/* LotusLeaf.cpp after Petari: Mario landing on it shakes it (its world-Y velocity -1.5 cos(2 pi t / period), the
+ * speed x 0.95 and the period (17) + 0.65 a frame, never below 25 under its place; WAVE SE, LotusLeafRipple at its
+ * place) until it settles (WaitPlayerOn while he stays, rising back only), then it eases back to its place (0.04 a
+ * frame up to 0.1); Mario on it is carried */
+#define MAX_LOTUS 32
+enum { LL_WAIT, LL_SHAKEON, LL_SHAKE, LL_WAITON };
+static struct { int row, init, nrv, step; float y, y0, vy, speed, period; } lls[MAX_LOTUS];
+static int ll_of(int row)
+{
+    for (int i = 0; i < nlls; i++) if (lls[i].row == row) return i;
+    if (nlls == MAX_LOTUS) return -1;
+    memset(&lls[nlls], 0, sizeof lls[0]);
+    lls[nlls].row = row;
+    return nlls++;
+}
+static void ll_place(Inst *in)
+{
+    int k = ll_of(in->row);
+    if (k >= 0 && lls[k].init) in->m[13] = lls[k].y;
+}
+static void ll_converge(int k) /* convergeToInitPos */
+{
+    typeof(&lls[0]) o = &lls[k];
+    if (o->y < o->y0) { o->vy += 0.04f; if (o->vy > 0.1f) o->vy = 0.1f; if (o->y0 <= o->y + o->vy) { o->y = o->y0; o->vy = 0; } }
+    else { o->vy -= 0.04f; if (o->vy < -0.1f) o->vy = -0.1f; if (o->y + o->vy <= o->y0) { o->y = o->y0; o->vy = 0; } }
+}
+static void update_lotus(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->lotus || !row_shown(in->row)) continue;
+        int k = ll_of(in->row);
+        if (k < 0) continue;
+        typeof(&lls[0]) o = &lls[k];
+        if (!o->init) { o->init = 1; o->y = o->y0 = in->m[13]; o->nrv = LL_WAIT; o->step = -1; }
+        int on = mario_ground == i, st = ++o->step;
+        float old[16];
+        memcpy(old, in->m, 64);
+        switch (o->nrv) {
+        case LL_WAIT:
+            ll_converge(k);
+            if (on) { o->nrv = LL_SHAKEON; o->step = -1; }
+            break;
+        case LL_WAITON:
+            if (o->y0 < o->y) ll_converge(k);
+            if (!on) { o->nrv = LL_WAIT; o->step = -1; }
+            break;
+        case LL_SHAKEON: case LL_SHAKE: {
+            if (st == 0) {
+                o->speed = 1.5f; o->period = 17.0f;
+                se_start(SE_OJ_LOTUS_LEAF_WAVE, &in->m[12]);
+            }
+            float m[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, in->m[12], o->y0, in->m[14], 1};
+            fx_named("LotusLeaf", "LotusLeafRipple", m, NULL, &lls[k]);
+            float v = -o->speed * cosf(st * 6.2831853f / o->period), acc = v - o->vy;
+            o->period += 0.65f; o->speed *= 0.95f;
+            o->vy = v;
+            if (o->y + o->vy <= o->y0 - 25.0f) o->vy = 0;
+            if (o->nrv == LL_SHAKE ? on : !on) { o->nrv = o->nrv == LL_SHAKE ? LL_SHAKEON : LL_SHAKE; o->step = -1; break; }
+            if (fabsf(acc) < 0.0001f && fabsf(v) < 0.005f) { o->vy = 0; o->nrv = o->nrv == LL_SHAKEON ? LL_WAITON : LL_WAIT; o->step = -1; }
+            break;
+        }
+        }
+        o->y += o->vy;
+        ll_place(in);
+        if (on) carry(old, in);
+    }
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -21493,6 +21566,7 @@ void game_update(void)
     update_storms();
     update_kfires();
     update_doors();
+    update_lotus();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
