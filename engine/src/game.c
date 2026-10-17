@@ -239,6 +239,7 @@ typedef struct {
     int rbeamer;     /* RingBeamer: its group shoots rings at Mario (update_rbeamers, draw_rbeams) */
     int sbeamer;     /* SearchBeamer: aims its beam at Mario (update_sbeamers, sbm_place, sbm_joints) */
     int pressure;    /* WaterPressure: shoots water bullets that catch Mario (update_pressures, pr_joints) */
+    int trapeze;     /* Trapeze: a bar on ropes Mario swings on (update_trapezes, tz_hold, tz_place) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
 static V3 firebar_ball(const Inst *in, int j, int k);
@@ -601,7 +602,9 @@ static struct { int alive, host, step, spin, grav, nospin; V3 pos, vel, front, s
 static int nprs, wb_ride = -1; /* the water bullet Mario is in, -1 none */
 static const Model *m_wbullet;
 static void pr_joints(Inst *in), draw_wbullets(void), update_pressures(void);
-static int wb_hold(Player *m);
+static int wb_hold(Player *m), tz_hold(Player *m);
+static void tz_place(Inst *in), update_trapezes(void), draw_trapeze_ropes(void);
+static int ntzs, tz_ride = -1; /* the Trapeze Mario holds, -1 none */
 static int nmhills; static const Model *m_mhole, *m_mhill[3];
 static void sbm_place(Inst *in), sbm_joints(Inst *in);
 static int pole_try(Player *m), pole_hold(Player *m);
@@ -1420,7 +1423,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nvines = 0; vine_ride = -1;
     pole_init();
     nrbms = 0;
-    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs);
+    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1;
     dino_cam = 0;
     foot_num = foot_rot = 0;
     nseesaws = 0;
@@ -3231,6 +3234,7 @@ void game_rebind(void)
         in->rbeamer = strcmp(name, "RingBeamer") == 0;
         in->sbeamer = strcmp(name, "SearchBeamer") == 0;
         in->pressure = strcmp(name, "WaterPressure") == 0;
+        in->trapeze = strcmp(name, "Trapeze") == 0;
         in->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 ? 3 : 0;
         in->press = strcmp(name, "RGTowerPressGroundA") == 0 || strcmp(name, "ReverseGravityRoomPressGroundA") == 0 ||
                     strcmp(name, "ReverseGravityRoomPressGroundB") == 0 || in->dossun;
@@ -3257,6 +3261,7 @@ void game_rebind(void)
         if (in->biri && row_coord && row_turn[i]) biri_place(in);
         if (in->dossun && row_turn) dossun_place(in);
         if (in->sbeamer) sbm_place(in);
+        if (in->trapeze) tz_place(in);
         if (in->coco) coco_spawn(in);
         if (in->fountain || in->stray) memcpy(in->m0, in->m, 64);
         if (in->stray) in->head = row_turn[i] ? (stray_at[i % 64].x || stray_at[i % 64].y || stray_at[i % 64].z ? stray_at[i % 64] : v3(in->m[12], in->m[13], in->m[14])) : v3(in->m[12], in->m[13], in->m[14]);
@@ -11250,6 +11255,10 @@ static void update_mario(void)
             return;
         }
     }
+    if (tz_hold(m)) { /* on a Trapeze */
+        if (mario_anim) anim_update(mario_anim);
+        return;
+    }
     if (wb_hold(m)) { /* in a water bullet */
         if (mario_anim) anim_update(mario_anim);
         return;
@@ -17531,6 +17540,297 @@ static void draw_wbullets(void)
     }
 }
 
+/* SwingRopePoint.cpp after Petari: a point on a rope (position, velocity, its axes; up toward the anchor) */
+typedef struct { V3 pos, vel, side, up, front; } RopePt;
+static void rp_strain(RopePt *p, V3 anchor, float len) /* strain: its next place held at len from the anchor */
+{
+    V3 d = vsub(vadd(p->pos, p->vel), anchor), n;
+    if (vlen(d) < 1e-6f) n = vmul(p->up, -1.0f);
+    else { n = vnorm(d); p->up = vmul(n, -1.0f); }
+    V3 r = vmul(n, len);
+    p->vel = vsub(p->vel, vsub(d, r));
+}
+static void rp_update(RopePt *p, V3 axis, float fric) /* updatePosAndAxis */
+{
+    p->pos = vadd(p->pos, p->vel);
+    p->vel = vmul(p->vel, fric);
+    V3 s = vcross(p->up, axis);
+    if (vlen(s) > 1e-6f) p->side = vnorm(s);
+    V3 f = vcross(p->side, p->up);
+    if (vlen(f) > 1e-6f) p->front = vnorm(f);
+}
+static void rp_set_info(RopePt *p, V3 target, V3 vel, V3 anchor, float len) /* setInfo */
+{
+    p->vel = vel;
+    V3 d = vsub(target, anchor);
+    d = vlen(d) > 1e-6f ? vnorm(d) : v3(0, -1, 0);
+    p->pos = vadd(anchor, vmul(d, len));
+    p->up = vmul(d, -1.0f);
+    p->side = vcross(p->up, p->front);
+    p->front = vnorm(vcross(p->side, p->up));
+    p->side = vnorm(vcross(p->up, p->front));
+}
+
+/* Trapeze.cpp after Petari: a bar (its PartsModel "Trapeze") on two ropes 100 x scale y long from its place, 120 apart.
+ * Free it swings under gravity (1 a frame, x 0.995) until still (Stop); Mario in the air below it, within 80 along its
+ * front of the rope (its binder 200 on the rope by him) grabs it: SlideDown (TrapezeSlideDownStart / SlideDown,
+ * sliding 5 a frame to the bar), then he swings: the stick along / against its front pushes the hang point 0.5 a frame
+ * (gravity 0.8, x 0.995), Swing(Front / Back)(Start / End) or their Slow forms below 80, SwingWait when still. A jumps
+ * off along the swing (up 20-50, across at most 20, at least 15 his way with the stick: TrapezeFrontSpin / BackSpin),
+ * FreeInvalid until he lands, 40 frames or 500 off. Its actor camera while held; wind and creak SEs. ponytail: the
+ * rope a single strip a side (the three-sided prism not drawn), no shadow, no items taken by the body sensor */
+#define MAX_TRAPEZES 16
+enum { TZ_STOP, TZ_FREE, TZ_FREEINVALID, TZ_WAIT, TZ_SLIDESTART, TZ_SLIDE, TZ_FSTART, TZ_FEND, TZ_BSTART, TZ_BEND,
+       TZ_SFSTART, TZ_SFEND, TZ_SBSTART, TZ_SBEND };
+static struct { int row, nrv, step, init, rev, isf, isb, wasf, wasb, lvl; V3 pos, side, up, front; float len, coord, swing; RopePt stick, hang; u32 lv[2]; } tzs[MAX_TRAPEZES];
+static int tz_of(int row)
+{
+    for (int i = 0; i < ntzs; i++) if (tzs[i].row == row) return i;
+    if (ntzs == MAX_TRAPEZES) return -1;
+    memset(&tzs[ntzs], 0, sizeof tzs[0]);
+    tzs[ntzs].row = row;
+    return ntzs++;
+}
+static void tz_set(int k, int n) { tzs[k].nrv = n; tzs[k].step = -1; }
+static void tz_init(int k)
+{
+    typeof(&tzs[0]) o = &tzs[k];
+    const Row *r = &sc->objs[o->row];
+    float m[16], one[3] = {1, 1, 1};
+    mat_translate_rot_scale(m, r->pos, r->rot, one);
+    o->side = vnorm(v3(m[0], m[1], m[2])); o->up = vnorm(v3(m[4], m[5], m[6])); o->front = vnorm(v3(m[8], m[9], m[10]));
+    o->pos = row_pos(r); o->len = 100.0f * r->scale[1];
+    o->stick = (RopePt){v3(o->pos.x, o->pos.y - o->len, o->pos.z), v3(0, 0, 0), v3(1, 0, 0), v3(0, 1, 0), v3(0, 0, 1)};
+    o->hang = (RopePt){o->pos, v3(0, 0, 0), v3(1, 0, 0), v3(0, 1, 0), v3(0, 0, 1)};
+    rp_update(&o->stick, o->front, 0.995f); rp_update(&o->hang, o->front, 0.995f);
+    o->init = 1; tz_set(k, TZ_FREE);
+}
+static void tz_stick(int k, V3 anchor, float len) /* updateStick */
+{
+    V3 g = vmul(up_at(tzs[k].stick.pos, tzs[k].up), -1.0f);
+    tzs[k].stick.vel = vadd(tzs[k].stick.vel, g);
+    rp_strain(&tzs[k].stick, anchor, len);
+    rp_update(&tzs[k].stick, tzs[k].stick.front, 0.995f);
+}
+static V3 tz_world_stick(void) /* calcWorldStickDirectionXZ */
+{
+    V3 cf = vnorm(vtangent(vsub(mario->pos, cam_pos), v3(0, 1, 0))), cr = vnorm(vcross(cf, v3(0, 1, 0)));
+    return vadd(vmul(cr, pad_lx()), vmul(cf, pad_ly()));
+}
+static int tz_stick_on(void) { return fabsf(pad_lx()) > 0.1f || fabsf(pad_ly()) > 0.1f; } /* isGamePadStickOperated */
+static void tz_hang(int k) /* updateHangPoint */
+{
+    typeof(&tzs[0]) o = &tzs[k];
+    if (o->coord < o->len) { o->coord += 5.0f; if (o->coord > o->len) o->coord = o->len; } /* sHangAccelRate */
+    o->wasf = o->isf; o->wasb = o->isb; o->isf = o->isb = 0;
+    if (tz_stick_on()) {
+        V3 a = o->front;
+        if (vdot(tz_world_stick(), o->front) < 0.0f) a = vmul(a, -1.0f);
+        a = vmul(vtangent(a, o->side), 0.5f); /* sHangCoordSpeed */
+        o->hang.vel = vadd(o->hang.vel, a);
+        int fw = vdot(a, o->front) > 0.0f;
+        if (fw == !o->rev) o->isf = 1; else o->isb = 1;
+    }
+    V3 g = vmul(up_at(o->hang.pos, o->up), -1.0f);
+    o->hang.vel = vadd(o->hang.vel, vmul(g, 0.8f));
+    rp_strain(&o->hang, o->pos, o->coord);
+    o->hang.vel = vtangent(o->hang.vel, o->side);
+    rp_update(&o->hang, o->hang.front, 0.995f);
+    o->swing = vdot(o->hang.vel, o->hang.front) * (o->rev ? -1.0f : 1.0f);
+    int lvl = (int)(vlen(o->hang.vel) / 40.0f * 100.0f);
+    lvl = lvl > 100 ? 100 : lvl < 0 ? 0 : lvl;
+    o->lv[0] = se_level(SE_OJ_LV_ROPE_SWING_WIND_1, &o->hang.pos.x, o->lv[0]);
+    o->lv[1] = se_level(SE_OJ_LV_ROPE_SWING_WIND_2, &o->hang.pos.x, o->lv[1]);
+    if (o->lvl < 20 && lvl >= 20) se_start(SE_OJ_ROPE_CREAK_H, &o->hang.pos.x);
+    o->lvl = lvl;
+}
+static int tz_jump(int k) /* tryJump */
+{
+    typeof(&tzs[0]) o = &tzs[k];
+    if (!pad_pressed(PAD_CROSS)) return 0;
+    V3 jv = o->hang.vel;
+    jv.y = jv.y < 20.0f ? 20.0f : jv.y > 50.0f ? 50.0f : jv.y;
+    V3 h = v3(jv.x, 0, jv.z);
+    if (vdot(h, h) > 300.0f) { h = vmul(vnorm(h), 20.0f); jv.x = h.x; jv.z = h.z; }
+    else if (vdot(h, h) < 15.0f * 15.0f && tz_stick_on()) {
+        float s = vdot(tz_world_stick(), o->front) > 0.0f ? 1.0f : -1.0f;
+        jv.x = o->front.x * 15.0f * s; jv.z = o->front.z * 15.0f * s;
+    }
+    V3 fd = o->rev ? vmul(o->front, -1.0f) : o->front;
+    tz_ride = -1;
+    camera_event_end(); /* endActorCameraAtLanding */
+    mario->face = fd;
+    se_start(SE_PV_JUMP_JOY, &mario->pos.x); se_start(SE_PM_JUMP_M, &mario->pos.x);
+    mario->up = up_at(mario->pos, mario->up);
+    m_power_jump(mario, jv); /* endBindAndPlayerWeakGravityJump */
+    if (mario_anim) mario_play(vdot(fd, jv) >= 0.0f ? "trapezefrontspin" : "trapezebackspin", 1.0f, 0);
+    tz_set(k, TZ_FREEINVALID);
+    return 1;
+}
+static int tz_bind(int k) /* updateBind */
+{
+    typeof(&tzs[0]) o = &tzs[k];
+    if (tz_jump(k)) return 1;
+    tz_hang(k);
+    if (o->coord < o->len) tz_stick(k, o->hang.pos, o->len - o->coord);
+    else { o->stick.pos = o->hang.pos; o->stick.side = o->hang.side; o->stick.up = o->hang.up; o->stick.front = o->hang.front; o->stick.vel = v3(0, 0, 0); }
+    return 0;
+}
+static int tz_swing(int k) /* updateSwing */
+{
+    typeof(&tzs[0]) o = &tzs[k];
+    if (tz_bind(k)) return 1;
+    if (!o->isf && !o->isb && fabsf(o->swing) < 10.0f && o->hang.up.y >= 0.99f) { tz_set(k, TZ_WAIT); return 1; }
+    return 0;
+}
+static void tz_play(const char *c) { if (mario_anim) anim_play(mario_anim, c, 1.0f, 0, 12); } /* startBckPlayer(sAnimInterpoleFrame 12) */
+static void tz_step(int k)
+{
+    typeof(&tzs[0]) o = &tzs[k];
+    int st = ++o->step, stopped = !mario_anim || mario_anim->done;
+    int sf = o->isf && !o->wasf, sb = o->isb && !o->wasb; /* isStartSwingFront / Back */
+    switch (o->nrv) {
+    case TZ_WAIT:
+        if (st == 0 && mario_anim) anim_play(mario_anim, "trapezewait", 1.0f, 1, 12);
+        if (tz_bind(k)) return;
+        if (o->isf) tz_set(k, TZ_FSTART); else if (o->isb) tz_set(k, TZ_BSTART);
+        break;
+    case TZ_SLIDESTART: case TZ_SLIDE:
+        if (st == 0) { if (o->nrv == TZ_SLIDESTART) tz_play("trapezeslidedownstart"); else if (mario_anim) anim_play(mario_anim, "trapezeslidedown", 1.0f, 1, 0); }
+        if (tz_swing(k)) return;
+        { static u32 lv; lv = se_level(SE_OJ_LV_SLIDE_ROPE_SLIDE, &mario->pos.x, lv); }
+        if (o->coord == o->len) { /* updateSlideDown */
+            if (st > 20) se_start(SE_PM_GRAB_OBJ, &mario->pos.x);
+            tz_set(k, o->swing > 0 ? TZ_FSTART : TZ_BSTART);
+            return;
+        }
+        if (o->nrv == TZ_SLIDESTART && stopped) tz_set(k, TZ_SLIDE);
+        break;
+    case TZ_FSTART: case TZ_SFSTART:
+        if (st == 0) tz_play(o->nrv == TZ_SFSTART ? "trapezeslowswingfrontstart" : "trapezeswingfrontstart");
+        if (tz_swing(k)) return;
+        if (stopped && !(o->isf && o->swing < 0.0f)) { tz_set(k, !o->isf && o->swing < 80.0f ? TZ_SFEND : TZ_FEND); return; }
+        if (sf && o->nrv == TZ_SFSTART) { tz_set(k, TZ_FSTART); return; }
+        if (sb) { tz_set(k, TZ_BSTART); return; }
+        if (!o->isf && o->swing < 0.0f) tz_set(k, o->nrv == TZ_SFSTART ? TZ_SBEND : TZ_BEND);
+        break;
+    case TZ_FEND: case TZ_SFEND:
+        if (st == 0) tz_play(o->nrv == TZ_SFEND ? "trapezeslowswingfrontend" : "trapezeswingfrontend");
+        if (tz_swing(k)) return;
+        if (o->swing <= 0.0f) { tz_set(k, o->nrv == TZ_SFEND ? TZ_SBSTART : TZ_BSTART); return; }
+        if (sf) { tz_set(k, TZ_FSTART); return; }
+        if (sb && o->nrv == TZ_SFEND) tz_set(k, TZ_BSTART);
+        break;
+    case TZ_BSTART: case TZ_SBSTART:
+        if (st == 0) tz_play(o->nrv == TZ_SBSTART ? "trapezeslowswingbackstart" : "trapezeswingbackstart");
+        if (tz_swing(k)) return;
+        if (stopped && !(o->isb && o->swing > 0.0f)) { tz_set(k, !o->isb && o->swing > -80.0f ? TZ_SBEND : TZ_BEND); return; }
+        if (sb && o->nrv == TZ_SBSTART) { tz_set(k, TZ_BSTART); return; }
+        if (sf) { tz_set(k, TZ_FSTART); return; }
+        if (!o->isb && o->swing > 0.0f) tz_set(k, o->nrv == TZ_SBSTART ? TZ_SFEND : TZ_FEND);
+        break;
+    case TZ_BEND: case TZ_SBEND:
+        if (st == 0) tz_play(o->nrv == TZ_SBEND ? "trapezeslowswingbackend" : "trapezeswingbackend");
+        if (tz_swing(k)) return;
+        if (o->swing >= 0.0f) { tz_set(k, o->nrv == TZ_SBEND ? TZ_SFSTART : TZ_FSTART); return; }
+        if (sb) { tz_set(k, TZ_BSTART); return; }
+        if (sf && o->nrv == TZ_SBEND) tz_set(k, TZ_FSTART);
+        break;
+    }
+}
+static void update_trapezes(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->trapeze || !row_shown(in->row)) continue;
+        int k = tz_of(in->row);
+        if (k < 0) continue;
+        typeof(&tzs[0]) o = &tzs[k];
+        if (!o->init) tz_init(k);
+        if (k == tz_ride) continue; /* its nerve runs with Mario (tz_hold) */
+        int st = ++o->step;
+        if (o->nrv == TZ_FREE || o->nrv == TZ_FREEINVALID) { /* exeFree */
+            tz_stick(k, o->pos, o->len);
+            if (o->nrv == TZ_FREE && vdot(o->stick.vel, o->stick.vel) < 1.0f && 1.0f - fabsf(o->stick.up.y) < 0.001f) tz_set(k, TZ_STOP);
+            if (o->nrv == TZ_FREEINVALID) {
+                V3 h = vsub(mario->pos, o->stick.pos);
+                h.y = 0;
+                if (mario->grounded || st > 40 || vdot(h, h) > 500.0f * 500.0f) tz_set(k, TZ_FREE);
+            }
+        }
+        /* AutoRushBegin: its binder (200) on the rope by Mario */
+        if ((o->nrv == TZ_STOP || o->nrv == TZ_FREE) && !mario->grounded && mario->pos.y <= o->pos.y && tz_ride < 0 && mario->launch < 0 && pole_ride < 0 && wb_ride < 0) {
+            V3 sp;
+            if (o->nrv == TZ_STOP) { sp = v3(o->pos.x, mario->pos.y, o->pos.z); sp.y = sp.y < o->pos.y - o->len ? o->pos.y - o->len : sp.y > o->pos.y ? o->pos.y : sp.y; }
+            else { V3 d = vsub(o->stick.pos, o->pos); float l2 = vdot(d, d), t = l2 > 0 ? vdot(vsub(mario->pos, o->pos), d) / l2 : 0; sp = vadd(o->pos, vmul(d, t < 0 ? 0 : t > 1 ? 1 : t)); }
+            V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+            if (vlen(vsub(mc, sp)) < 200.0f + HIT_BODY_R && fabsf(vdot(vsub(mario->pos, sp), o->front)) <= 80.0f) {
+                V3 gp = vsub(mario->pos, o->pos);
+                gp = vadd(o->pos, vadd(vmul(o->up, vdot(o->up, gp)), vmul(o->front, vdot(o->front, gp))));
+                float c = vlen(vsub(gp, o->pos));
+                o->coord = c < 0 ? 0 : c > o->len ? o->len : c;
+                o->rev = vdot(mario->face, o->front) < 0.0f;
+                float hv = vdot(o->hang.vel, o->front), pv = vdot(vadd(mario->hvel, vmul(mario->up, mario->vup)), o->front);
+                if (fabsf(pv) < 3.0f && 3.0f < hv) pv = hv;
+                o->hang.front = fabsf(o->pos.y - gp.y) < 1.0f ? v3(0, -1, 0) : o->front;
+                rp_set_info(&o->hang, gp, vmul(o->front, pv), o->pos, o->coord);
+                o->hang.up = o->up;
+                tz_ride = k;
+                mario->hip = 0; mario->spin_timer = 0; mario->jumping = 0; mario->hvel = v3(0, 0, 0); mario->vup = 0;
+                if (mario_anim) mario_play("trapezewait", 1.0f, 1);
+                se_start(SE_PV_CATCH, &mario->pos.x); se_start(SE_PM_GRAB_OBJ, &mario->pos.x);
+                if (row_camset[o->row] != -1) camera_actor_start("Trapeze", "", (unsigned short)row_camset[o->row], mario->up, mario->face, mario->pos);
+                tz_set(k, TZ_SLIDESTART);
+            }
+        }
+    }
+    for (int i = 0; i < ninsts; i++) if (insts[i].trapeze) tz_place(&insts[i]);
+}
+/* while Mario holds it: its nerve, then his base matrix (the hang point's axes, reversed when he faced back) */
+static int tz_hold(Player *m)
+{
+    if (tz_ride < 0) return 0;
+    int k = tz_ride;
+    tz_step(k);
+    if (tz_ride < 0) return 0;
+    typeof(&tzs[0]) o = &tzs[k];
+    m->pos = o->hang.pos; m->up = o->hang.up; m->face = o->rev ? vmul(o->hang.front, -1.0f) : o->hang.front;
+    m->hvel = v3(0, 0, 0); m->vup = 0; m->grounded = 0;
+    return 1;
+}
+/* the bar (its inst) at the stick point (updateStickMtx), the ropes from the anchors */
+static void tz_place(Inst *in)
+{
+    int k = tz_of(in->row);
+    if (k < 0 || !tzs[k].init) return;
+    RopePt *s = &tzs[k].stick;
+    float m[16] = {s->side.x, s->side.y, s->side.z, 0, s->up.x, s->up.y, s->up.z, 0, s->front.x, s->front.y, s->front.z, 0, s->pos.x, s->pos.y, s->pos.z, 1};
+    memcpy(in->m, m, 64);
+}
+static void draw_trapeze_ropes(void)
+{
+    int tex = fx_rope_tex();
+    if (tex < 0) return;
+    for (int k = 0; k < ntzs; k++) {
+        typeof(&tzs[0]) o = &tzs[k];
+        if (!o->init || !row_shown(o->row)) continue;
+        Strip st[2];
+        for (int e = 0; e < 2; e++) {
+            float sx = e ? 60.0f : -60.0f; /* sStickLength / 2 */
+            V3 a = vadd(o->pos, vmul(o->side, sx)), b = vadd(o->stick.pos, vmul(o->side, sx));
+            V3 w = vmul(o->stick.side, 12.0f + 7.0f); /* sDrawWidthX + long offset */
+            for (int l = 0; l < 4; l++) {
+                V3 c = vadd(b, vmul(vsub(a, b), l / 3.0f));
+                V3 p0 = vsub(c, vmul(w, 0.5f)), p1 = vadd(c, vmul(w, 0.5f));
+                st[e].p[l][0][0] = p0.x; st[e].p[l][0][1] = p0.y; st[e].p[l][0][2] = p0.z;
+                st[e].p[l][1][0] = p1.x; st[e].p[l][1][1] = p1.y; st[e].p[l][1][2] = p1.z;
+            }
+            st[e].rgba = 0x80808080u; st[e].tex = (u16)tex; st[e].pad = 0;
+        }
+        render_strips(st, 2);
+    }
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -19357,6 +19657,7 @@ void game_update(void)
     update_sbeamers();
     update_whirls();
     update_pressures();
+    update_trapezes();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
@@ -20360,6 +20661,7 @@ void game_draw(void)
     draw_mogucchi_extras();
     draw_whirls();
     draw_wbullets();
+    draw_trapeze_ropes();
     RESTQ(0);
     draw_vines();
     RESTQ(1);

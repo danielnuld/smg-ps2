@@ -563,3 +563,4 @@ int fx_plantstalk_tex(void) { return fx_waterplant_tex(4); }
 int fx_dinofoot_tex(void) { return fx_waterplant_tex(5); }
 int fx_ocean_tex(int k) { return fx_waterplant_tex(6 + k); }
 int fx_whirl_tex(void) { return fx_waterplant_tex(8); }
+int fx_rope_tex(void) { return fx_waterplant_tex(9); }

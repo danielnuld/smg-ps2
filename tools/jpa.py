@@ -330,6 +330,9 @@ def pack(fs):
         wt[..., :3] = ((c0 + (c1 - c0) * wl[..., :3]) * 255 + 0.5).astype(np.uint8)
         wt[..., 3] = 255
         out_tex.append(tex.to_ps2(wt, 1, 1))
+        # Trapeze's rope (TrapezeRopeDrawInit: Trapeze.arc TrapezeRope.bti) after it (fx_rope_tex)
+        img = decode_bti({k.lower(): v for k, v in B.rarc_files((wp / "ObjectData" / "Trapeze.arc").read_bytes())}["trapezerope.bti"])
+        out_tex.append(tex.to_ps2(np.ascontiguousarray(img), 1, 1))
     flr = flare(wp, out_tex)
     head = struct.pack("<IIiI", len(used), len(defs), first, len(autos))
     return head + b"".join(defs) + b"".join(recs) + b"".join(autos) + flr, out_tex
