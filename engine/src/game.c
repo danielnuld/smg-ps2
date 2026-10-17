@@ -257,6 +257,7 @@ typedef struct {
     int vflow;       /* LavaHomeVolcanoFlow (update_volcanoflows) */
     int dland;       /* DesertMovingLand: up / down by its switches (update_dlands) */
     int bigfan;      /* BigFan / BigFanNoLeg: its clips and wind model (update_bigfans, draw_bigfan_winds) */
+    int eball;       /* ElectricBall: its ring of balls (update_eballs, draw_eballs; the instance itself not drawn) */
     int kstair;      /* KoopaBattleMapStair(Big / Turn): breaks and falls after its switch (update_stairs) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
@@ -1162,6 +1163,7 @@ static int npls; static void update_palms(void), pl_place(Inst *in);
 static int nlls; static void update_lotus(void), ll_place(Inst *in);
 #define TRAIN_CARS 8
 #define TRAIN_CARS_ROOM TRAIN_CARS
+static int nebl; static void update_eballs(void), draw_eballs(void);
 static const Model *m_bfwind; static void update_bigfans(void), draw_bigfan_winds(void);
 static int ndls; static void update_dlands(void), dl_place(Inst *in);
 static int insts_cap; static const Model *m_trainbody; static void update_trains(void), update_volcanoflows(void); static int tr_cars(const Row *r);
@@ -1470,7 +1472,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nvines = 0; vine_ride = -1;
     pole_init();
     nrbms = 0;
-    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0; nfgs = 0; nggs = 0; nsss = 0; ss_ride = -1; ss_reset(); kfires_reset(); nlls = 0; ndls = 0;
+    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0; nfgs = 0; nggs = 0; nsss = 0; ss_ride = -1; ss_reset(); kfires_reset(); nlls = 0; ndls = 0; nebl = 0;
     dino_cam = 0;
     foot_num = foot_rot = 0;
     nseesaws = 0;
@@ -3232,7 +3234,7 @@ void game_rebind(void)
                    strcmp(name, "KeySwitch") == 0 ? ITEM_KEY : strcmp(name, "MorphItemNeoFire") == 0 ? ITEM_FIRE :
                    strcmp(name, "MorphItemNeoBee") == 0 ? ITEM_BEE : 0; /* KeySwitch.cpp: taken (isMsgItemGet), its SW_A on */
         in->firebar = strcmp(name, "FireBar") == 0;
-        in->invisible = strncmp(name, "InvisibleWall", 13) == 0 || strcmp(name, "IronCannonLauncherPoint") == 0;
+        in->invisible = strncmp(name, "InvisibleWall", 13) == 0 || strcmp(name, "IronCannonLauncherPoint") == 0 || strcmp(name, "ElectricBall") == 0;
         in->flip = strcmp(name, "FlipPanel") == 0 || strcmp(name, "FlipPanelReverse") == 0;
         if (in->flip) {
             char v[48];
@@ -3319,6 +3321,7 @@ void game_rebind(void)
         in->vflow = strcmp(name, "LavaHomeVolcanoFlow") == 0;
         in->dland = strcmp(name, "DesertMovingLand") == 0;
         in->bigfan = strcmp(name, "BigFan") == 0 || strcmp(name, "BigFanNoLeg") == 0;
+        in->eball = strcmp(name, "ElectricBall") == 0;
         in->kstair = strncmp(name, "KoopaBattleMapStair", 19) == 0 && strcmp(name, "KoopaBattleMapStairTurnAppear") != 0;
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
@@ -19929,6 +19932,82 @@ static void draw_bigfan_winds(void)
     }
 }
 
+/* ElectricBall.cpp after Petari: arg0 (4) electric balls (ElectricBall each, its Electric effect) on a ring of arg1
+ * (750) about its local Y, turning arg2 x 0.01 degrees a frame once it moves (its SW_A, if any; BIRIKYU_MOVE level
+ * SE); the ball nearest Mario (75) shocks him (EnemyAttackElectric: Attack, 90 frames without, ElectricHit at its
+ * start and end) or pushes him. A railed one moves with the railer. ponytail: 16 balls at most */
+#define MAX_EBALLS 16
+static struct { int row, init, moving, attack; float ang; } ebl[MAX_EBALLS];
+static int ebl_of(int row)
+{
+    for (int i = 0; i < nebl; i++) if (ebl[i].row == row) return i;
+    if (nebl == MAX_EBALLS) return -1;
+    memset(&ebl[nebl], 0, sizeof ebl[0]);
+    ebl[nebl].row = row;
+    return nebl++;
+}
+static int eb_balls(const Row *r) { int n = r->arg[0] > 0 ? r->arg[0] : 4; return n > 16 ? 16 : n; }
+static V3 eb_ball(const Inst *in, int k, int b) /* Ball::updatePosition: mBaseMtx x its offset */
+{
+    const Row *r = &sc->objs[in->row];
+    float rad = r->arg[1] != -1 ? (float)r->arg[1] : 750.0f, a = 6.2831853f * b / eb_balls(r) + ebl[k].ang * 0.0174533f;
+    V3 x, z;
+    row_axes(r, &x, &z);
+    x = vnorm(x); z = vnorm(z);
+    return vadd(v3(in->m[12], in->m[13], in->m[14]), vadd(vmul(x, rad * cosf(a)), vmul(z, -rad * sinf(a))));
+}
+static void update_eballs(void)
+{
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->eball || !row_shown(in->row)) continue;
+        int k = ebl_of(in->row);
+        if (k < 0) continue;
+        const Row *r = &sc->objs[in->row];
+        if (!ebl[k].init) { ebl[k].init = 1; ebl[k].moving = r->sw[SW_A] < 0; }
+        if (!ebl[k].moving && sw_on(r, SW_A)) ebl[k].moving = 1; /* startMove */
+        int n = eb_balls(r), best = 0;
+        float bd = 1e30f;
+        for (int b = 0; b < n; b++) {
+            V3 p = eb_ball(in, k, b);
+            float d = vlen(vsub(p, mario->pos));
+            if (d < bd) { bd = d; best = b; }
+            if (ebl[k].moving) { float m[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, p.x, p.y, p.z, 1}; fx_named("ElectricBall", "Electric", m, NULL, (const char *)&ebl[k] + b); }
+        }
+        if (!ebl[k].moving) continue;
+        ebl[k].ang += (r->arg[2] != -1 ? (float)r->arg[2] : 0.01f) * 0.01f; /* control: setEulerY(mAngularSpeed: arg2, else 0.01, x 0.01) */
+        in->lv[0] = se_level(SE_OJ_LV_BIRIKYU_MOVE, &in->m[12], in->lv[0]);
+        V3 p = eb_ball(in, k, best);
+        float m[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, p.x, p.y, p.z, 1};
+        if (ebl[k].attack) { /* exeAttack */
+            if (++ebl[k].attack > 90) { fx_named("ElectricBall", "ElectricHit", m, NULL, NULL); ebl[k].attack = 0; }
+            continue;
+        }
+        if (!mario->hurt_timer && vlen(vsub(mc, p)) < 75.0f + HIT_BODY_R) {
+            hurt_mario(p, 25.0f); /* sendMsgEnemyAttackElectric */
+            fx_named("ElectricBall", "ElectricHit", m, NULL, NULL);
+            ebl[k].attack = 1;
+        }
+    }
+}
+static void draw_eballs(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->eball || !row_shown(in->row) || !in->md) continue;
+        int k = ebl_of(in->row);
+        if (k < 0) continue;
+        for (int b = 0, n = eb_balls(&sc->objs[in->row]); b < n; b++) {
+            V3 p = eb_ball(in, k, b);
+            float m[16];
+            memcpy(m, in->m, 64);
+            m[12] = p.x; m[13] = p.y; m[14] = p.z;
+            render_model(in->md, m, 0x80, 0x80, 0x80);
+        }
+    }
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -21782,6 +21861,7 @@ void game_update(void)
     update_volcanoflows();
     update_dlands();
     update_bigfans();
+    update_eballs();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
@@ -22792,6 +22872,7 @@ void game_draw(void)
     draw_gulls();
     draw_storm_traps();
     draw_bigfan_winds();
+    draw_eballs();
     RESTQ(0);
     draw_vines();
     RESTQ(1);

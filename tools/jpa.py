@@ -452,7 +452,7 @@ def flare(fs, out_tex):
 
 # classes whose emitEffect calls game.c makes by name (fx_named), besides the skinned ones (their joints: -1)
 NAMED = ("KillerGunnerSingle", "ItemBubble", "DinoPackunBall", "Mario", "Dossun", "Onimasu", "LavaStrangeRock",
-         "LavaStrangeRockL", "LavaStrangeRockTable", "MogucchiHill", "PalmIsland", "KabokuriFire", "LotusLeaf")
+         "LavaStrangeRockL", "LavaStrangeRockTable", "MogucchiHill", "PalmIsland", "KabokuriFire", "LotusLeaf", "ElectricBall")
 NAMED_ONLY = {"Mario": ("SpinLight", "SpinLightBurst")}  # of a big group only the rows the engine plays
 # and its animation rows for these clips (game.c draw_skin: Mario's clips as "mario/<clip>")
 NAMED_ANIMS = {"Mario": ("spaceflystart", "spaceflyloop", "spaceflyend", "spaceflyshort", "spaceflyshortstart",
