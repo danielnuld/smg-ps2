@@ -2252,9 +2252,10 @@ static void killer_rotz(Killer *k, V3 dir, V3 grav)
         k->rotz = k->rotz > 60.0f ? 60.0f : k->rotz < -60.0f ? -60.0f : k->rotz;
     } else k->rotz = k->rotz < 0 ? (k->rotz + 1.0f > 0 ? 0 : k->rotz + 1.0f) : (k->rotz - 1.0f < 0 ? 0 : k->rotz - 1.0f);
 }
-static V3 killer_target(const Killer *k, V3 grav) /* calcFrontVecToTarget, then the shadow's height check */
+static int in_water(V3 p, V3 up, float *depth);
+static V3 killer_target(const Killer *k, V3 grav, float h) /* calcFrontVecToTarget (cChaseTargetHeight 200, a Torpedo's 75), then the shadow's height check */
 {
-    V3 t = vnorm(vsub(vadd(mario->pos, vmul(vnorm(mario->up), 200.0f)), k->pos));
+    V3 t = vnorm(vsub(vadd(mario->pos, vmul(vnorm(mario->up), h)), k->pos));
     if (line_hits(k->pos, vadd(k->pos, vmul(grav, 150.0f)))) { /* isNear(shadow position, cChaseHeightMin) */
         V3 h = vtangent(t, k->up);
         if (vlen(h) > 1e-6f) t = vnorm(h);
@@ -2315,7 +2316,7 @@ static void update_killers(void)
             V3 camx = vnorm(vcross(vnorm(vsub(cw, ce)), cu));
             float sh = cosf(fmodf(k->ftime * 75.0f, 360.0f) * 0.0174533f) * 5.0f * (20 - k->freeze) / 20.0f;
             k->pos = vadd(k->fpos, vmul(camx, sh));
-            if (*ph == 2) { V3 tg = killer_target(k, g); k->front = turn_to(k->front, tg, 0.9997f); killer_rotz(k, tg, g); }
+            if (*ph == 2) { V3 tg = killer_target(k, g, in->killer == 2 ? 75.0f : 200.0f); k->front = turn_to(k->front, tg, 0.9997f); killer_rotz(k, tg, g); }
             if (pointer_a() && cursor_sees(k->pos, 40.0f)) k->freeze = 1; /* setNerve(Freeze): starts over */
             else if (++k->freeze > 20) { k->pos = k->fpos; k->freeze = 0; }
             if (vlen(vsub(c, k->pos)) < 70.0f + HIT_BODY_R) { hurt_mario(k->pos, 25.0f); brk = 1; }
@@ -2333,13 +2334,14 @@ static void update_killers(void)
             in->lv[0] = se_level(SE_EM_LV_KILLER_FLY, &k->pos.x, in->lv[0]); /* processMove: startMoveLevelSound */
         } else if (!brk) { /* processChase */
             in->lv[0] = se_level(SE_EM_LV_KILLER_FLY, &k->pos.x, in->lv[0]); /* startMoveLevelSound(true): its alarm a Torpedo's */
-            V3 tg = killer_target(k, g);
+            V3 tg = killer_target(k, g, in->killer == 2 ? 75.0f : 200.0f);
             k->front = turn_to(k->front, tg, 1.0f - (r->arg[1] >= 0 ? r->arg[1] : 3) * 0.0001f);
             killer_rotz(k, tg, g);
             if (vlen(vsub(mario->pos, k->pos)) > 3000.0f) brk = 1;
             k->up = turn_to(k->up, vmul(g, -1.0f), cosf(2.0f * 0.0174533f)); /* cUpVecRotateSpeed */
         }
-        if (!brk) k->pos = vadd(k->pos, vmul(k->front, 12.0f));
+        if (!brk) k->pos = vadd(k->pos, vmul(k->front, in->killer == 2 && *ph == 2 ? 5.0f : 12.0f)); /* cChaseSpeedTorpedo */
+        if (!brk && *ph >= 1) { float dep; int wet = in_water(k->pos, vmul(g, -1.0f), &dep); if (in->killer == 2 ? !wet : wet) brk = 1; } /* isWaterBreak */
         Hit h[1];
         int ground = 0;
         if (!brk && vlen(vsub(c, k->pos)) < 70.0f + HIT_BODY_R) {
@@ -3275,7 +3277,7 @@ void game_rebind(void)
         in->ibubble = strcmp(name, "ItemBubble") == 0;
         if (in->ibubble) in->head = row_pos(r); /* its items' frame (_CC) trails the bubble */
         in->meteor = NULL;
-        in->killer = strcmp(name, "HomingKiller") == 0;
+        in->killer = strcmp(name, "HomingKiller") == 0 ? 1 : strcmp(name, "Torpedo") == 0 ? 2 : 0; /* Torpedo: HomingKiller's Type_Torpedo */
         in->gcap = strcmp(name, "GCaptureTarget") == 0 ? 1 : strcmp(name, "BlueStarCupsulePlanet") == 0 ? 2 : strcmp(name, "UFOBlueStarCupsule") == 0 ? 3 : 0;
         in->tspot = strcmp(name, "TreasureSpot") == 0 ? 1 : strcmp(name, "CoinFlower") == 0 ? 2 : 0;
         in->prom = NULL;
