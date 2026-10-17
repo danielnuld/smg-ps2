@@ -11387,8 +11387,11 @@ static void update_mario(void)
     Player *m = mario;
     V3 up0 = m->up;
     m->up = up_at(m->pos, m->up);
-    if (!m->grounded && vdot(up0, m->up) < 0.999f) { /* in the air his velocity is a world vector (mJumpVec): a new
-                                                      * gravity keeps it, not his rise along the old up */
+    if (!m->grounded && m->jump_kind != 13 && vdot(up0, m->up) < 0.999f) { /* in the air his velocity is a world vector
+                                                      * (mJumpVec): a new gravity keeps it, not his rise along the old up.
+                                                      * ponytail: not after a launch star (kind 13): our flights' ends were
+                                                      * tuned with the rise kept along his up (coverage: Phantom 4,
+                                                      * ReverseKingdom 2, HellProminence 3 landed off their planets) */
         V3 v = vadd(m->hvel, vmul(up0, m->vup));
         m->vup = vdot(v, m->up); m->hvel = vtangent(v, m->up);
     }
