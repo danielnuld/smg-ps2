@@ -247,6 +247,7 @@ typedef struct {
     int leakpipe;    /* WaterLeakPipe: stretched to its height, leaking (update_leakpipes, leak_joints) */
     int eyebeamer;   /* EyeBeamer: turns, goes to its rail and patrols it, its beam burning (update_eyebeamers) */
     int leaves;      /* CoconutTreeLeaf: its leaves sway, each with its collision (update_leaves, leaf_joints, lf_mats) */
+    int palm;        /* PalmIsland: bobs on the water (update_palms) */
     int kstair;      /* KoopaBattleMapStair(Big / Turn): breaks and falls after its switch (update_stairs) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
@@ -1147,6 +1148,7 @@ unsigned int game_kcl_cycles;
 typedef struct { V3 n; float dist; int inst, attr, sub; } Hit; /* world normal, penetration, instance, KCL codes (kcl_codes), its leaf (lf_mats) */
 static int nlfs, ground_sub, mario_ground_sub; static int lf_mats(const Inst *in, const float (**mats)[16], const int **coll);
 static void update_leaves(void), leaf_joints(Inst *in);
+static int npls; static void update_palms(void), pl_place(Inst *in);
 
 /* Sphere against every placed KCL: the sphere goes to the instance's object space (KCL data is in model space),
  * normals and depths come back to world. ponytail: uniform scale only (scale.x), like every planet seen so far. */
@@ -1447,7 +1449,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nvines = 0; vine_ride = -1;
     pole_init();
     nrbms = 0;
-    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0;
+    nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0;
     dino_cam = 0;
     foot_num = foot_rot = 0;
     nseesaws = 0;
@@ -3264,6 +3266,7 @@ void game_rebind(void)
         in->leakpipe = strcmp(name, "WaterLeakPipe") == 0;
         in->eyebeamer = strcmp(name, "EyeBeamer") == 0;
         in->leaves = strcmp(name, "CoconutTreeLeaf") == 0;
+        in->palm = strcmp(name, "PalmIsland") == 0;
         in->kstair = strncmp(name, "KoopaBattleMapStair", 19) == 0 && strcmp(name, "KoopaBattleMapStairTurnAppear") != 0;
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
@@ -3294,6 +3297,7 @@ void game_rebind(void)
         if (in->dossun && row_turn) dossun_place(in);
         if (in->sbeamer) sbm_place(in);
         if (in->eyebeamer) eb_place(in);
+        if (in->palm) pl_place(in);
         if (in->trapeze) tz_place(in);
         if (in->onimasu) oni_place(in);
         if (in->kstair) ks_place(in);
@@ -18653,6 +18657,49 @@ static void update_leaves(void)
     }
 }
 
+/* PalmIsland.cpp after Petari: waits a random 0..60 frames, then floats: its velocity along its gravity
+ * sin(90 + 1.44 step) x 1.5 a frame (a bob 250 frames long), its WAVE SE as that turns over, its Ripple effect where it
+ * started floating; Mario on it is carried */
+#define MAX_PALMS 32
+static struct { int row, init, wait, step, up; V3 pos, start; } pls[MAX_PALMS];
+static int pl_of(int row)
+{
+    for (int i = 0; i < npls; i++) if (pls[i].row == row) return i;
+    if (npls == MAX_PALMS) return -1;
+    memset(&pls[npls], 0, sizeof pls[0]);
+    pls[npls].row = row;
+    return npls++;
+}
+static void pl_place(Inst *in)
+{
+    int k = pl_of(in->row);
+    if (k < 0 || !pls[k].init) return;
+    in->m[12] = pls[k].pos.x; in->m[13] = pls[k].pos.y; in->m[14] = pls[k].pos.z;
+}
+static void update_palms(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->palm || !row_shown(in->row)) continue;
+        int k = pl_of(in->row);
+        if (k < 0) continue;
+        typeof(&pls[0]) o = &pls[k];
+        if (!o->init) { o->init = 1; o->pos = row_pos(&sc->objs[in->row]); o->wait = rand() % 61; o->step = -1; }
+        if (o->wait >= 0) { if (++o->step >= o->wait) { o->wait = -1; o->step = -1; } continue; } /* exeWait */
+        int st = ++o->step;
+        if (st == 0) o->start = o->pos;
+        fx_named("PalmIsland", "Ripple", (const float[16]){1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, o->start.x, o->start.y, o->start.z, 1}, NULL, &pls[k]);
+        float v = sinf((90.0f + 1.44f * st) * 0.0174533f) * 1.5f, old[16];
+        int up = v > 0.0f;
+        if (up != o->up) se_start(SE_OJ_PALM_ISLAND_WAVE, &in->m[12]);
+        o->up = up;
+        memcpy(old, in->m, 64);
+        o->pos = vadd(o->pos, vmul(up_at(o->pos, v3(in->m[4], in->m[5], in->m[6])), -v)); /* mVelocity = gravity x value */
+        pl_place(in);
+        if (mario_ground == i) carry(old, in);
+    }
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -20491,6 +20538,7 @@ void game_update(void)
     update_stairs();
     update_eyebeamers();
     update_leaves();
+    update_palms();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
