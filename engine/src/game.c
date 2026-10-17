@@ -19166,7 +19166,12 @@ static struct {
     V3 pos[FG_FISH], vel[FG_FISH], front[FG_FISH], off[FG_FISH], esc[FG_FISH];
     float dappr[FG_FISH]; int tsearch[FG_FISH], tmove[FG_FISH], nrv[FG_FISH];
 } fgs[MAX_FGROUPS];
-static int fg_type(const char *n) { return !strncmp(n, "FishGroup", 9) && n[9] >= 'A' && n[9] <= 'F' && !n[10] ? n[9] - 'A' : -1; }
+static int fg_type(const char *n)
+{
+    static const char *const fg[6] = {"FishGroupA", "FishGroupB", "FishGroupC", "FishGroupD", "FishGroupE", "FishGroupF"};
+    for (int i = 0; i < 6; i++) if (!strcmp(n, fg[i])) return i;
+    return -1;
+}
 static void update_fishes(void)
 {
     V3 mp = mario->pos;
