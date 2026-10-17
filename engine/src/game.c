@@ -241,6 +241,7 @@ typedef struct {
     int pressure;    /* WaterPressure: shoots water bullets that catch Mario (update_pressures, pr_joints) */
     int trapeze;     /* Trapeze: a bar on ropes Mario swings on (update_trapezes, tz_hold, tz_place) */
     int onimasu;     /* Onimasu / OnimasuPivot: a block tumbling along its rail, a press (update_onimasu, oni_place) */
+    int lavarock;    /* LavaStrangeRock 1 / L 2 / Table 3: breaks under a launch or pushes Mario (update_lavarocks) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
 static V3 firebar_ball(const Inst *in, int j, int k);
@@ -606,7 +607,7 @@ static void pr_joints(Inst *in), draw_wbullets(void), update_pressures(void);
 static int wb_hold(Player *m), tz_hold(Player *m);
 static void tz_place(Inst *in), update_trapezes(void), draw_trapeze_ropes(void);
 static int ntzs, tz_ride = -1; /* the Trapeze Mario holds, -1 none */
-static int nonis; static void oni_place(Inst *in), update_onimasu(void);
+static int nonis; static void oni_place(Inst *in), update_onimasu(void), update_lavarocks(void);
 static int nmhills; static const Model *m_mhole, *m_mhill[3];
 static void sbm_place(Inst *in), sbm_joints(Inst *in);
 static int pole_try(Player *m), pole_hold(Player *m);
@@ -3238,6 +3239,7 @@ void game_rebind(void)
         in->sbeamer = strcmp(name, "SearchBeamer") == 0;
         in->pressure = strcmp(name, "WaterPressure") == 0;
         in->trapeze = strcmp(name, "Trapeze") == 0;
+        in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
         in->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 ? 3 : 0;
         in->press = strcmp(name, "RGTowerPressGroundA") == 0 || strcmp(name, "ReverseGravityRoomPressGroundA") == 0 ||
                     strcmp(name, "ReverseGravityRoomPressGroundB") == 0 || in->dossun || in->onimasu;
@@ -15771,7 +15773,7 @@ static void mhill_update(int h) /* the mounds: crumbling, Mario on them */
             se_start(SE_EM_MOGHILL_BREAK, &o->pos[i].x);
             float m[16];
             basis_matrix(m, o->pos[i], o->up[i], o->f[i], 0);
-            fx_named("MogucchiHillA", "Break", m, NULL, NULL);
+            fx_named("MogucchiHill", "Break", m, NULL, NULL); /* its pieces' AutoEffect group */
             o->alive[i] = 0;
             if (msg == MSG_TRAMPLE) { mario->vup = 15.0f; mario->grounded = 0; }
             continue;
@@ -18081,6 +18083,36 @@ static void oni_place(Inst *in) /* its pose after a rebind */
     memcpy(in->m, m, 64);
 }
 
+/* LavaStrangeRock.cpp after Petari (LavaStrangeRock / L / Table): a pillar from its place along its up (870 / 1300 /
+ * 730), radius 150 / 200 / 285 x scale y about that segment. arg0 1: Mario flying into it (isPlayerInRush: a launch)
+ * breaks it (Break effect, its SE); arg0 2: it pushes Mario off at 50. ponytail: no LodCtrlPlanet for the L one */
+static void update_lavarocks(void)
+{
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->lavarock || row_dead[in->row]) continue;
+        const Row *r = &sc->objs[in->row];
+        int mode = r->arg[0] == 1 ? 1 : r->arg[0] == 2 ? 2 : 0;
+        if (!mode) continue;
+        float range = in->lavarock == 2 ? 1300.0f : in->lavarock == 3 ? 730.0f : 870.0f;
+        float rad = (in->lavarock == 2 ? 200.0f : in->lavarock == 3 ? 285.0f : 150.0f) * r->scale[1];
+        V3 a = row_pos(r), up = vnorm(v3(in->m[4], in->m[5], in->m[6])), b = vadd(a, vmul(up, range));
+        V3 p = vsub(mc, vadd(mario->hvel, vmul(mario->up, mario->vup))), d = vsub(b, a); /* centre less its velocity */
+        float t = vdot(vsub(p, a), d) / vdot(d, d);
+        V3 q = vadd(a, vmul(d, t < 0 ? 0 : t > 1 ? 1 : t)), off = vsub(p, q);
+        if (vlen(off) >= rad) continue; /* checkHitSegmentSphere */
+        if (mode == 1) {
+            if (mario->launch < 0) continue;
+            fx_named(sc->types + 32 * r->type, "Break", in->m, NULL, NULL);
+            se_start(in->lavarock == 1 ? SE_OJ_STRANGEROCK_BREAK_S : in->lavarock == 2 ? SE_OJ_STRANGEROCK_BREAK_L : SE_OJ_STRANGEROCK_BREAK_M, &in->m[12]);
+            row_kill(in->row); game_rebind();
+            return;
+        }
+        if (vlen(off) > 1e-3f) { V3 v = vmul(vnorm(off), 50.0f); mario->hvel = vtangent(v, mario->up); mario->vup = vdot(v, mario->up); mario->grounded = 0; } /* pushPlayer */
+    }
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -19909,6 +19941,7 @@ void game_update(void)
     update_pressures();
     update_trapezes();
     update_onimasu();
+    update_lavarocks();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
