@@ -890,7 +890,8 @@ int main(void)
 #if defined(PACKS) && defined(PAUSE_TEST)
         { /* the pause menu: START, the pointer on its second button, X, then Yes in the confirm window */
             static const struct { u32 f; const char *pane; u32 btn; } st[] = {
-                {500, NULL, PAD_START}, {620, "BoxButton2", 0}, {640, NULL, PAD_CROSS}, {900, "BoxRight", 0}, {920, NULL, PAD_CROSS}};
+                {500, NULL, PAD_START}, {620, "BoxButton2", 0}, {640, NULL, PAD_CROSS}, {900, "BoxRight", 0}, {920, NULL, PAD_CROSS},
+                {1200, NULL, PAD_CROSS}, {1350, "BoxRight", 0}, {1370, NULL, PAD_CROSS}}; /* save and quit: Yes, saved, then the confirm's Yes */
             pad_force = 0;
             for (unsigned k = 0; k < sizeof st / sizeof st[0]; k++)
                 if (frame == st[k].f) {
