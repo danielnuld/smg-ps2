@@ -256,6 +256,7 @@ typedef struct {
     int train;       /* ChooChooTrain 1, its cars 2 + n (update_trains) */
     int vflow;       /* LavaHomeVolcanoFlow (update_volcanoflows) */
     int dland;       /* DesertMovingLand: up / down by its switches (update_dlands) */
+    int bigfan;      /* BigFan / BigFanNoLeg: its clips and wind model (update_bigfans, draw_bigfan_winds) */
     int kstair;      /* KoopaBattleMapStair(Big / Turn): breaks and falls after its switch (update_stairs) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
@@ -1161,6 +1162,7 @@ static int npls; static void update_palms(void), pl_place(Inst *in);
 static int nlls; static void update_lotus(void), ll_place(Inst *in);
 #define TRAIN_CARS 8
 #define TRAIN_CARS_ROOM TRAIN_CARS
+static const Model *m_bfwind; static void update_bigfans(void), draw_bigfan_winds(void);
 static int ndls; static void update_dlands(void), dl_place(Inst *in);
 static int insts_cap; static const Model *m_trainbody; static void update_trains(void), update_volcanoflows(void); static int tr_cars(const Row *r);
 static void update_kfires(void), kfires_reset(void), update_doors(void), door_place(Inst *in); static int door_solid(const Inst *in);
@@ -3316,6 +3318,7 @@ void game_rebind(void)
         in->train = strcmp(name, "ChooChooTrain") == 0;
         in->vflow = strcmp(name, "LavaHomeVolcanoFlow") == 0;
         in->dland = strcmp(name, "DesertMovingLand") == 0;
+        in->bigfan = strcmp(name, "BigFan") == 0 || strcmp(name, "BigFanNoLeg") == 0;
         in->kstair = strncmp(name, "KoopaBattleMapStair", 19) == 0 && strcmp(name, "KoopaBattleMapStairTurnAppear") != 0;
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
@@ -3401,7 +3404,7 @@ void game_rebind(void)
             in->bridge = 2 + i; in->invisible = 1; in->anim = NULL;
             in->kcl = scene_kcl(s, "PhantomShipBridge#Move");
         }
-    m_trainbody = scene_model(s, "ChooChooTrainBody");
+    m_trainbody = scene_model(s, "ChooChooTrainBody"); m_bfwind = scene_model(s, "BigFanWind");
     for (int i = 0, n = ninsts; i < n; i++) /* ChooChooTrain's cars (update_trains) */
         if (insts[i].train == 1 && m_trainbody)
             for (int c = 0; c < tr_cars(&s->objs[insts[i].row]) && ninsts < insts_cap; c++) {
@@ -19889,6 +19892,43 @@ static void update_dlands(void)
     }
 }
 
+/* BigFan.cpp after Petari (BigFan, BigFanNoLeg): Wait (its Wait clip and its wind model's: BigFanWind at its base
+ * matrix, z scaled arg0 / 2000 (4000 long)); with an appear switch it Starts when it appears (Appear clips, START SE,
+ * then Wait). Its wind (arg1 speed) moves only Boo Mario and big bubbles, neither of them here. row_turn 0 not
+ * started, 1 Start, 2 Wait. ponytail: hidden (not stopped) until its appear switch, no level SE */
+static void update_bigfans(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->bigfan || !row_shown(in->row)) continue;
+        const Row *r = &sc->objs[in->row];
+        signed char *n = &row_turn[in->row];
+        if (*n == 0) {
+            if (r->sw[SW_APPEAR] >= 0) { *n = 1; obj_play(in, "Appear", 0, 0); se_start(SE_OJ_BIG_FAN_START, &in->m[12]); }
+            else { *n = 2; obj_play(in, "Wait", 1, 0); }
+        } else if (*n == 1 && in->anim && in->anim->done) { *n = 2; obj_play(in, "Wait", 1, 0); } /* isActionEnd */
+    }
+}
+static void draw_bigfan_winds(void)
+{
+    if (!m_bfwind || !m_bfwind->skin) return;
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->bigfan || !row_shown(in->row) || !row_turn[in->row]) continue;
+        const Row *r = &sc->objs[in->row];
+        Anim *a = obj_anim(13 * (int)sc->nobjs + in->row, m_bfwind, "BigFanWind");
+        if (!a) continue;
+        const char *want = row_turn[in->row] == 1 ? "bigfanwind/appear" : "bigfanwind/wait";
+        if (a->clip_id < 0 || strcmp(sc->clips[a->clip_id].name, want)) anim_play(a, want, 1.0f, row_turn[in->row] == 2, 0);
+        anim_update(a);
+        float sc3[3] = {1, 1, (r->arg[0] != -1 ? (float)r->arg[0] : 4000.0f) / 2000.0f}, m[16];
+        mat_translate_rot_scale(m, r->pos, r->rot, sc3);
+        V3 p = row_pos(r);
+        m[12] = p.x; m[13] = p.y; m[14] = p.z;
+        draw_skin(m_bfwind, m, a);
+    }
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -21741,6 +21781,7 @@ void game_update(void)
     update_trains();
     update_volcanoflows();
     update_dlands();
+    update_bigfans();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
@@ -22750,6 +22791,7 @@ void game_draw(void)
     draw_fishes();
     draw_gulls();
     draw_storm_traps();
+    draw_bigfan_winds();
     RESTQ(0);
     draw_vines();
     RESTQ(1);
