@@ -6,6 +6,7 @@
 #include "fx.h"
 #include "lyt.h"
 #include "menu.h"
+#include "gamedata.h"
 #include "camera.h"
 
 #include <stdio.h>
@@ -1343,6 +1344,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     fx_init(s);
     talk_init(s);
     lyt_init(s);
+    gd_attach(s);
     menu_init(s);
     u32 gsz;
     const unsigned char *g = blob_chunk(blob, "GRAV", &gsz);
@@ -21926,6 +21928,15 @@ static void update_items(void)
         if (vlen(vsub(c, p)) > r + HIT_BODY_R) continue;
         if (in->item == ITEM_STAR) {
             printf("power star %d got\n", ++stars);
+            { /* GameDataHolder::setPowerStar: its id (PowerStar arg0, else the scenario's). ponytail: set at the touch,
+               * not after the result sequence (updateGameDataAndSequenceAfterStageResultSequence) */
+                char gal[48];
+                const char *sl = strchr(game_stage_name, '/');
+                int id = sc->objs[in->row].arg[0];
+                snprintf(gal, sizeof gal, "%.*s", sl ? (int)(sl - game_stage_name) : (int)strlen(game_stage_name), game_stage_name);
+                if (id <= 0 && sl) id = atoi(sl + 1);
+                gd_set_star(gal, id);
+            }
             se_start(SE_SY_STAR_GET, NULL); /* PowerStar::receiveOtherMsg */
             star_demo = 1; /* requestPowerStarGetDemo: the PowerStarGet camera and Mario's clip */
             /* PowerStar::exeStageClearDemo step 1: mBaseMtx = its posture _B8 (initPosture: up against the gravity at
@@ -22225,8 +22236,14 @@ int game_pause_permitted(void)
 {
     return !demo_on && !star_demo && !wipe_active() && !in_opening && life > 0 && !mario->hurt_timer && mario->press == 0;
 }
-/* hasPowerStarInCurrentStage(n) / the galaxy's star count (n -1). ponytail: no game data yet: none */
-int game_scenario_stars(int n) { (void)n; return 0; }
+/* hasPowerStarInCurrentStage(n) / the galaxy's power star count (n -1) */
+int game_scenario_stars(int n)
+{
+    char gal[48];
+    const char *sl = strchr(game_stage_name, '/');
+    snprintf(gal, sizeof gal, "%.*s", sl ? (int)(sl - game_stage_name) : (int)strlen(game_stage_name), game_stage_name);
+    return n < 0 ? gd_power_star_num(gal) : gd_has_star(gal, n);
+}
 void game_set_cursor(float x, float y) { cur_x = x; cur_y = y; }
 
 static void collect(Pickup *p, int n, float reach, int *counter, int fx, u32 se)

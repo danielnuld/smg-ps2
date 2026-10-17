@@ -105,6 +105,7 @@ typedef struct {
     u32 lytr_tex0[4];   /* each one's blob's first scene texture */
     u32 nlytr;
     const u8 *msgs;     /* MSGS chunk (tools/lyt.py: the menus' messages by label), or NULL */
+    const u8 *gdat;     /* GDAT chunk (tools/lyt.py: story, galaxy and scenario tables), or NULL */
 } Scene;
 
 /* Placement chunks (TYPE OBJS STRT) and the blob's assets. The scene must start zeroed. */

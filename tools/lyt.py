@@ -332,6 +332,63 @@ def msgs_chunk(fsp):
     return chunk(b"MSGS", struct.pack("<I12x", len(labels)) + body + bytes(lpool) + struct.pack(f"<{len(tpool)}H", *tpool))
 
 
+def dol_tables(fsp):
+    """cStoryProgressTable / cGalaxyInfoTable: BCSVs in main.dol's .rodata (Petari config/RMGE01: symbols.txt
+    0x8053C620 size 0x1E0, 0x8053C800 size 0xD20)"""
+    d = (Path(fsp).parent / "sys" / "main.dol").read_bytes()
+    offs, addrs, sizes = (struct.unpack_from(">18I", d, k) for k in (0, 0x48, 0x90))
+
+    def rd(addr, n):
+        for o, a, s in zip(offs, addrs, sizes):
+            if a <= addr < a + s:
+                return d[o + addr - a:o + addr - a + n]
+        raise KeyError(hex(addr))
+    return rd(0x8053C620, 0x1E0), rd(0x8053C800, 0xD20)
+
+
+def gdat_chunk(fsp):
+    """GDAT (the game data the menus and the story read): u32 nstory, ngalaxy, nscen, pad;
+    nstory x {char name[64] (UTF-8), u32 progress} (cStoryProgressTable);
+    ngalaxy x {char name[32]; u8 power_star_num (to open), grand_no, pad[2]; char cond[3][40] (OpenCondition0..2);
+               char map_pane[16]} (cGalaxyInfoTable, 172 B);
+    nscen x {char galaxy[32]; u8 nscen, pad[3]; 8 x {u8 star_id, hidden, pad[2]; char comet[12]; u32 luigi_timer}}
+            (every galaxy's ScenarioData.bcsv, by ScenarioNo, 196 B)"""
+    from slice import chunk
+    st, gi = dol_tables(fsp)
+    col = B.bcsv_column
+    story = b"".join(struct.pack("<64sI", n.encode()[:63], p)  # UTF-8: as gamedata.c's flag table literals
+                     for n, p in zip(col(st, "name"), col(st, "progress")))
+    names = col(gi, "name")
+    gal = b""
+    for k, n in enumerate(names):
+        conds = [(col(gi, f"OpenCondition{c}") or [""] * len(names))[k] for c in range(3)]
+        gal += struct.pack("<32sBB2x40s40s40s16s", n.encode()[:31], col(gi, "PowerStarNum")[k], col(gi, "GrandGalaxyNo")[k],
+                           *[c.encode()[:39] for c in conds], col(gi, "MapPaneName")[k].encode()[:15])
+    scen, nscen = b"", 0
+    for g in sorted(p.name for p in (Path(fsp) / "StageData").iterdir()):
+        arc = Path(fsp) / "StageData" / g / f"{g}Scenario.arc"
+        if not arc.exists():
+            continue
+        files = {k.lower().rsplit("/", 1)[-1]: v for k, v in B.rarc_files(arc.read_bytes())}
+        sd = files.get("scenariodata.bcsv")
+        if not sd:
+            continue
+        nos = col(sd, "ScenarioNo")
+        rows = {no: i for i, no in enumerate(nos)}
+        rec = struct.pack("<32sB3x", g.encode()[:31], len(nos))
+        for no in range(1, 9):
+            i = rows.get(no)
+            if i is None:
+                rec += b"\0" * 20
+                continue
+            v = lambda f, dflt: (col(sd, f) or [dflt] * len(nos))[i]
+            rec += struct.pack("<BB2x12sI", v("PowerStarId", 0), 1 if v("IsHidden", 0) else 0,
+                               str(v("Comet", "")).encode()[:11], v("LuigiModeTimer", 0))
+        scen += rec
+        nscen += 1
+    return chunk(b"GDAT", struct.pack("<4I", len(story) // 68, len(names), nscen, 0) + story + gal + scen)
+
+
 def build(fsp, names=COMMON):
     from slice import blob_of, chunk
     texts, bodies = [], []
@@ -344,7 +401,7 @@ def build(fsp, names=COMMON):
         offs.append(o)
         o += len(bd)
     lytr = struct.pack("<I12x", len(bodies)) + struct.pack(f"<{len(offs)}I", *offs) + b"".join(bodies)
-    return blob_of([chunk(b"LYTR", lytr), text_chunk(texts), msgs_chunk(fsp)]), len(texts)
+    return blob_of([chunk(b"LYTR", lytr), text_chunk(texts), msgs_chunk(fsp), gdat_chunk(fsp)]), len(texts)
 
 
 def selftest(fsp="data/fs/files"):

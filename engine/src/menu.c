@@ -1,6 +1,7 @@
 #include "menu.h"
 
 #include "game.h"
+#include "gamedata.h"
 #include "lyt.h"
 #include "mem.h"
 #include "pad.h"
@@ -279,10 +280,18 @@ static struct {
     u16 piece_msg[3];
 } pm;
 
-/* isInvalidBackAstroDome: the dome is not open yet (the first galaxy) or this is the Observatory itself.
- * ponytail: no game data yet: the Observatory and Good Egg's first visit (no AstroDome flag) end the game */
-static int pm_invalid_back(void) { return !strncmp(game_stage_name, "AstroGalaxy", 11) || !strncmp(game_stage_name, "AstroDome", 9); }
-static int pm_hide_scenario(void) { return !strncmp(game_stage_name, "AstroGalaxy", 11) || !strncmp(game_stage_name, "FileSelect", 10); }
+static int stage_astro(void) /* MR::isStageAstroLocation */
+{
+    return !strncmp(game_stage_name, "AstroGalaxy", 11) || !strncmp(game_stage_name, "AstroDome", 9) ||
+           !strncmp(game_stage_name, "LibraryRoom", 11);
+}
+/* isInvalidBackAstroDome: !isOnGameEventFlagUseAstroDome (the story past バトラー情報Ａ) or in the Observatory (but
+ * the Gateway, HeavensDoorGalaxy) */
+static int pm_invalid_back(void)
+{
+    return !gd_story_passed("バトラー情報Ａ") || (stage_astro() && strncmp(game_stage_name, "HeavensDoorGalaxy", 17));
+}
+static int pm_hide_scenario(void) { return stage_astro() || !strncmp(game_stage_name, "FileSelect", 10); } /* isStageHideScenarioTitle */
 
 static void pm_init(void)
 {
@@ -304,20 +313,30 @@ static void pm_init(void)
         snprintf(lbl, sizeof lbl, "ScenarioName_%s%s", gal, slash ? slash + 1 : "1");
         lyt_set_text_rec(pm.l, "ScenarioTitle", msg_get(lbl));
     }
-    /* updateStarPane: the scenario's stars, got ones lit */
+    /* updateStarPane: the galaxy's stars, the ones got lit; the extra ones (comets, hidden) after the normal ones
+     * when got; only the first while the dome cannot be used */
     static const char *sha[7] = {"ShaStarA", "ShaStarB", "ShaStarC", "ShaStarD", "ShaStarE", "ShaStarF", "ShaStarG"};
     static const char *pic[7] = {"PicStarA", "PicStarB", "PicStarC", "PicStarD", "PicStarE", "PicStarF", "PicStarG"};
-    int nsc = 0;
-    for (int i = 0; i < 7; i++) {
-        lyt_show_rec(pm.l, sha[i], 0);
-        if (!pm_hide_scenario() && game_scenario_stars(-1) > i) {
-            lyt_show_rec(pm.l, sha[i], 1);
-            if (!game_scenario_stars(i + 1)) lyt_show_rec(pm.l, pic[i], 0);
-            nsc = i + 1;
+    for (int i = 0; i < 7; i++) lyt_show_rec(pm.l, sha[i], 0);
+    if (!pm_hide_scenario()) {
+        int extra = 0, invalid_dome = !gd_story_passed("バトラー情報Ａ"), normal = 0;
+        int nsc = gd_scenario_num(gal), nstar = gd_power_star_num(gal);
+        for (int i = 1; i <= nsc; i++) normal += !gd_scenario_comet(gal, i)[0]; /* getNormalScenarioNum */
+        for (int i = 0; i < 7; i++) {
+            if (i < nstar) {
+                if (gd_has_star(gal, i + 1)) {
+                    if (i < normal) lyt_show_rec(pm.l, sha[i], 1);
+                    else lyt_show_rec(pm.l, sha[normal + extra++], 1);
+                } else if (i < normal) {
+                    lyt_show_rec(pm.l, sha[i], 1);
+                    lyt_show_rec(pm.l, pic[i], 0);
+                }
+            }
+            if (invalid_dome) break;
         }
+        lyt_start_pane(pm.l, "Stars", "Star", 1);
+        lyt_set_pane_frame_stop(pm.l, "Stars", 1, invalid_dome ? 0.0f : (float)(normal + extra - 1));
     }
-    lyt_start_pane(pm.l, "Stars", "Star", 1);
-    lyt_set_pane_frame_stop(pm.l, "Stars", 1, nsc > 0 ? nsc - 1 : 0);
     lyt_show_rec(pm.l, "LetterButton", 0); /* no Luigi letter (MR::getLuigiLetterGalaxyName) */
     si_init(&pm.win);
 }
@@ -336,7 +355,7 @@ static int pm_stopped_without_button(void)
 
 static void pm_appear(void)
 {
-    lyt_set_number_rec(pm.l, "ShaStarNum", game_stars());
+    lyt_set_number_rec(pm.l, "ShaStarNum", gd_star_num());
     lyt_set_number_rec(pm.l, "ShaMarioNum", game_lives());
     lyt_set_number_rec(pm.l, "ShaCoinNum", game_coins());
     lyt_set_number_rec(pm.l, "ShaPieceNum", game_starpieces());
