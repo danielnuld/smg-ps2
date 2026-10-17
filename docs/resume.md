@@ -359,6 +359,13 @@ new_walkers[] (count / placement / model by class); their star piece reactions i
 rebuilt before the test campaign (slice.py SKINNED_OBJ / EXTRA / keep list and jpa.py changed; OceanPhantomCave 1
 is 9.03 MB streaming, over the 9.01 budget: check after the repack).
 
+**Test campaign (2026-10-17):** all packs rebuilt (slice_all.py repacks a scenario over ROOM at ratio 0.9 / 0.8 /
+0.7; all 136 fit). Full coverage rerun on e5aeec4: 118 ok; misses only the old ones (PhantomGalaxy 3 / 6, CannonFleet 1,
+BreakDownPlanet 1, EpilogueDemoStage 1); FactoryGalaxy 1 timed out once, ok alone (39 s). Fixed on the way: 38fff06
+(starter drop 100 up; DeathArea SW_A / arg0 / launch rules), 290cd04 (no air-velocity rebase after a launch star, from
+92f184e), 33a9cd3 (starter flight ends at rest, from d6a62ae). The vine test mode is stale (also on old engines). Next:
+route EggStar 1-4, PCSX2 spot checks of the classes above, then phase 2.
+
 **Earlier (2026-10-16 morning, stopped by the user mid-investigation):** a longer Wii comparison, from the start
 to the first launch star (the SuperSpinDriver under the start planet, at -4631 -17641 -16400, the bottom of the tower
 that hangs under it). tools/dolphin/play/launch1.json: stick (0, -1) from g 90 runs Mario back over the wooden rim;
