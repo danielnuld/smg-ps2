@@ -388,6 +388,17 @@ in the port he wraps to the underside by g 250 (up 0 -1 0) and walks inward unti
 8087B1B8) to find where the rim wrap parts (the gravity at the rim or the camera through the flip), fix it after
 Petari, then go on down the tower to the launch star (a spin by it) and record both. The replay log now prints Mario's
 up. The pipe on the house's roof (-5551 -12109 -17737) leads into the house, not under the planet.
+**Phase 1, 2026-10-17 (launch1.json again, Wii probes every 5-10 frames, port `replay` logged every frame):** the
+port started walking ~8 frames late: its standing turn (その場足踏み, stand_turn 10) skipped decideWalkSpeed; in Petari
+MarioAnimator::update decides it under that clip (turning stays on while it runs), so the index is set at once and
+the clip stops. Fixed: the port now matches the Wii within 4 units up to g 125 (Wii start -3303.3 -13081.9 -15352.9 at
+g 93, moving from ~g 96). Next divergence: the step down off the wooden rim, g 130-145: the Wii goes down ~5 a frame
+(g 125 -13130, 135 -13173, 140 -13196, 145 -13231) and nearly stops after (x -3110 at g 145, -3108 at 150, -3083 at
+160), the port drops faster (g 130 -13157, 135 -13218, 140 -13231) and runs on at full speed. Look at doLanding's
+branches (isStickFull / _3CA / frontDot > 6 vs the 着地 clip) and whether the Wii is walking down a slope there
+(read its animation). 810B59A8 is a position copy, not Mario::mPosition (+0x208 / +0x278 / +0x71C read garbage):
+find the Mario object (dolmem near on g 93's position, then the unit front vector next to it) to read mWalkSpeed,
+mTargetWalkSpeedIndex, _3BC, the animation.
 
 **Night of 2026-10-16 (the user: comparison video, demo, short, then "continua con el resto de los detalles del port
 para ps2 hasta las 7 am"):** videos/2026-10-16_cmp-goodegg-final.mp4 (Wii | PS2, same inputs), _demo-goodegg.mp4,

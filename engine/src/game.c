@@ -11701,7 +11701,11 @@ static void update_mario(void)
                 int can = 0;
                 for (unsigned i = 0; i < sizeof cancel / sizeof cancel[0]; i++) can |= m_clip_is(cancel[i]);
                 if (busy && can) { m_decide_walk_speed(m); if (m->tsi) { m_clip_stop(); busy = 0; } }
-                if (m->stand_turn && m->tsi == 0 && m_enable_turn(m)) mario_play("run", 1.0f, 1); /* その場足踏み */
+                if (m->stand_turn && m->tsi == 0 && m_enable_turn(m)) { /* その場足踏み: MarioAnimator::update decides the
+                    * walk speed under it (mMovementStates.turning stays on while it runs: MarioMove.cpp, mainMove) */
+                    mario_play("run", 1.0f, 1);
+                    m_decide_walk_speed(m);
+                }
                 else if (!busy) { m_decide_walk_speed(m); m_decide_walk_anim(m); }
                 else { if (m->turning || m->turn_brake) m_decide_walk_speed(m); m_update_brake(m); }
             }
