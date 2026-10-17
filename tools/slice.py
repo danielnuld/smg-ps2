@@ -148,7 +148,7 @@ HOME_POS = "\u5408\u4f53\u30d6\u30ed\u30c3\u30af\u6545\u90f7\u70b9"  # 合体ブ
 LOGIC = ("TimerSwitch", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
          "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "DeathCube", "DeathSphere",
          "DeathCylinder", "RestartCube", "StarPieceSpot", "WaterCube", "WaterSphere", "WaterCylinder",
-         "AstroChangeStageCube")  # areas (areaobjinfo) travel as OBJS rows too
+         "AstroChangeStageCube", "MovieStarter")  # areas (areaobjinfo) travel as OBJS rows too
 
 
 def col(b, field, n, default=0):

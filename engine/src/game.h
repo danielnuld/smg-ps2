@@ -228,5 +228,6 @@ void game_request_scene(const char *next);
 int game_test_astro_cube(int mode);
 int game_test_dome(int what, int on);
 void game_test_miss(int over);
+int game_test_movie(int which);
 
 #endif

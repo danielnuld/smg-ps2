@@ -794,6 +794,9 @@ int main(void)
             }
         }
 #endif
+#if defined(PACKS) && defined(PROLOGUE_TEST)
+        if (frame == 300 || frame == 700) printf("prologue test f %u: movie starter %d\n", frame, game_test_movie(frame == 700));
+#endif
 #if defined(PACKS) && defined(MAP_TEST)
         { /* the Observatory's map: open, the other view (X on nothing), the star list, back, close */
             pad_force = 0;

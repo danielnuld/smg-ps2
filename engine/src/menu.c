@@ -706,6 +706,9 @@ void menu_fade_move(int frames, int type, const char *stage, int scenario, int s
     snprintf(fade.stage, sizeof fade.stage, "%s", stage ? stage : "");
 }
 int menu_fading(void) { return fade.frames != 0; }
+/* a fade to black kept until menu_fade_open (no move after it: a movie's stand-in) and its open */
+void menu_fade_hold(int frames) { wipe_start(frames, 1, 0); }
+void menu_fade_open(int frames) { wipe_start(frames, 0, 0); }
 
 static void fade_update(void)
 {

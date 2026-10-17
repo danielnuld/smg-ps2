@@ -13,6 +13,8 @@ int menu_paused(void);
 /* a fade to black over `frames`, then seq_galaxy_move (closeSystemWipe*, then the request) */
 void menu_fade_move(int frames, int type, const char *stage, int scenario, int start_id, int start_zone);
 int menu_fading(void);
+void menu_fade_hold(int frames);
+void menu_fade_open(int frames);
 /* ScenarioSelectScene: the galaxy's scenario chosen over the frozen stage, then the move there (sequence.c) */
 void menu_scenario_select(const char *galaxy);
 int menu_scenario_selecting(void);

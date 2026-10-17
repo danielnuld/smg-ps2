@@ -946,7 +946,7 @@ static int start_pos_cam; /* the start's camera is on (camera_start_pos) */
 static int draw_steps; /* logic steps since the last draw (game_set_draw_steps; 1 at start) */
 /* Switch logic rows (no model): TimerSwitch, SwitchSynchronizerReverse, GroupSwitchWatcher */
 enum { LOGIC_TIMER = 1, LOGIC_REVERSE, LOGIC_GROUP, LOGIC_BLOCKER, LOGIC_FLIPS, LOGIC_CHIPS, LOGIC_SWAREA, LOGIC_DEATH, LOGIC_RESTART, LOGIC_PIECESPOT,
-       LOGIC_ASTROCUBE };
+       LOGIC_ASTROCUBE, LOGIC_MOVIE };
 static int area_shape(const char *name);
 /* FlipPanel (Petari FlipPanel.cpp): row_step bits. Back = flipped (ACTMES_SUCCESS to the observer); a flip locks the
  * panel until Mario stood on other ground; it flips once he has stood on it 3 frames (checkPlayerOnTop). Done: the
@@ -1735,7 +1735,7 @@ void game_init(const Scene *s, const unsigned char *blob)
                                     count_type("SwitchSphere", 0) + count_type("SwitchCylinder", 0) +
                                     count_type("DeathCube", 0) + count_type("DeathSphere", 0) +
                                     count_type("DeathCylinder", 0) + count_type("RestartCube", 0) +
-                                    count_type("StarPieceSpot", 0) + count_type("AstroChangeStageCube", 0) + 1) *
+                                    count_type("StarPieceSpot", 0) + count_type("AstroChangeStageCube", 0) + count_type("MovieStarter", 0) + 1) *
                                        sizeof(Logic));
     int t_timer = scene_type(s, "TimerSwitch"), t_rev = scene_type(s, "SwitchSynchronizerReverse"),
         t_group = scene_type(s, "GroupSwitchWatcher"), t_block = scene_type(s, "CollisionBlocker"),
@@ -1747,7 +1747,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         int k = strncmp(tn, "Switch", 6) == 0 && area_shape(tn) >= 0 ? LOGIC_SWAREA :
                 strncmp(tn, "Death", 5) == 0 && area_shape(tn) >= 0 ? LOGIC_DEATH :
                 strcmp(tn, "RestartCube") == 0 ? LOGIC_RESTART : strcmp(tn, "StarPieceSpot") == 0 ? LOGIC_PIECESPOT :
-                strcmp(tn, "AstroChangeStageCube") == 0 ? LOGIC_ASTROCUBE :
+                strcmp(tn, "AstroChangeStageCube") == 0 ? LOGIC_ASTROCUBE : strcmp(tn, "MovieStarter") == 0 ? LOGIC_MOVIE :
                 t == t_timer ? LOGIC_TIMER : t == t_rev ? LOGIC_REVERSE : t == t_group ? LOGIC_GROUP :
                 t == t_block ? LOGIC_BLOCKER : t == t_flipobs ? LOGIC_FLIPS : t == t_ychips || t == t_bchips ? LOGIC_CHIPS : 0;
         if (k) { logic[nlogic].row = i; logic[nlogic++].kind = k; }
@@ -20881,6 +20881,39 @@ static int area_shape(const char *name)
  * 1 the Gateway (scenario 2; its scenario select once Rosetta told about the Tico), 3 the library, 5 the dome arg2.
  * ponytail: a fade for the circle wipe; the children's room by the grand stars (calcOpenedAstroDomeNum), the library
  * by PictureBookA */
+/* MovieStarter.cpp: its appear switch starts its movie (arg0 0 PrologueA: the story's "クッパ襲来後", once; 1
+ * PrologueB: "ピーチ城浮上後", then MoviePlayingSequence's stage HeavensDoorGalaxy 1); at the movie's end its dead
+ * switch. ponytail: no THP player: the movie is a fade to black held 120 frames (its play wait 75 + the end) */
+static int mv_row = -1, mv_t;
+static void movie_starter(int row, const Row *r)
+{
+    if (mv_row == row) {
+        if (++mv_t == 120 + 60) { /* isEndMovie */
+            if (r->arg[0] == 1) { menu_fade_move(1, SEQ_MOVE, "HeavensDoorGalaxy", 1, -1, 0); return; } /* requestChangeStageInGameMoving */
+            sw_set(r, SW_DEAD, 1); row_dead[row] = 1; mv_row = -1;
+            menu_fade_open(60);
+        }
+        return;
+    }
+    if (mv_row >= 0 || row_dead[row] || r->sw[SW_APPEAR] < 0 || !sw_on(r, SW_APPEAR)) return;
+    if (r->arg[0] == 0 && gd_story_passed("クッパ襲来後")) { sw_set(r, SW_DEAD, 1); row_dead[row] = 1; return; }
+    gd_story_follow(r->arg[0] == 0 ? "クッパ襲来後" : "ピーチ城浮上後");
+    printf("movie starter row %d: movie %d\n", row, r->arg[0]);
+    mv_row = row; mv_t = 0;
+    menu_fade_hold(60); /* the movie's wipe (WipeFade) */
+}
+
+int game_test_movie(int which) /* tests: the appear switch of the MovieStarter of arg0 `which` on; its row */
+{
+    for (int i = 0; i < nlogic; i++) {
+        const Row *r = &sc->objs[logic[i].row];
+        if (logic[i].kind != LOGIC_MOVIE || r->arg[0] != which) continue;
+        sw_set(r, SW_APPEAR, 1);
+        return logic[i].row;
+    }
+    return -1;
+}
+
 static int ac_row = -1, ac_wait;
 int game_test_astro_cube(int mode) /* tests: Mario put in the first AstroChangeStageCube of arg0 `mode`; its row */
 {
@@ -20978,6 +21011,7 @@ static void update_switches(void)
             continue;
         }
         if (logic[i].kind == LOGIC_ASTROCUBE) { astro_cube(row, r); continue; }
+        if (logic[i].kind == LOGIC_MOVIE) { movie_starter(row, r); continue; }
         if (logic[i].kind == LOGIC_PIECESPOT) { /* StarPieceSpot.cpp: arg0 star pieces (default 5) burst out when its
                                                   * appear switch goes on, or without one at a spin within 150 */
             V3 p = row_pos(r);
