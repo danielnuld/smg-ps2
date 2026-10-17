@@ -861,6 +861,7 @@ static int got_coins, got_purple, got_pieces;
 static float coin_rot, qcoin_rot, piece_rot, star_rot;
 static V3 cam_pos;
 static const Model *m_packunhead;
+static const Model *m_imeramera; /* IceMeramera: the Meramera class, its ice element (sElementArcName); ponytail: it hurts instead of freezing */
 static const Model *m_coin, *m_purple, *m_piece, *m_kuribo, *m_takohei, *m_packun, *m_kotebug, *m_spider, *m_meramera, *m_takobo, *m_mkoopa, *m_kari, *m_kmini, *m_karon, *m_teresa, *m_stink, *m_unizo[3], *m_note, *m_poihana, *m_petari;
 static Anim *mario_anim;
 /* ElectricRail (Petari ElectricRail.cpp, ElectricRailHolder.cpp): one segment per pair of rail points, arg0 rails
@@ -1432,7 +1433,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         else if (s->objs[i].type == t_flow)
             npieces += star_flow(NULL, 0, &s->objs[i], blob);
     nkuribo = count_type("Petari", 0) + count_type("Poihana", 0) + count_type("Unizo", 0) + count_type("UnizoLand", 0) + count_type("UnizoShoal", 0) + count_type("StinkBugSmall", 0) + count_type("Kuribo", 0) + count_type("TakoHei", 0) + count_type("PackunPetit", 0) + count_type("KoteBug", 0) +
-              count_type("JumpSpider", 0) + count_type("Meramera", 0) + count_type("Takobo", 0) +
+              count_type("JumpSpider", 0) + count_type("Meramera", 0) + count_type("IceMeramera", 0) + count_type("Takobo", 0) +
               count_type("MechanicKoopaMini", 0) + count_type("Karikari", 0) +
               count_type("KuriboMini", 0) + count_type("Karon", 0) +
               count_type("Teresa", 0) + count_type("Butterfly", 0);
@@ -1473,7 +1474,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     int t_coin = scene_type(s, "Coin"), t_pc = scene_type(s, "PurpleCoin"), t_circle = scene_type(s, "CirclePurpleCoinGroup");
     int t_rail = scene_type(s, "PurpleRailCoin"), t_piece = scene_type(s, "StarPiece"), t_kuribo = scene_type(s, "Kuribo");
     int t_tako = scene_type(s, "TakoHei"), t_packun = scene_type(s, "PackunPetit"), t_kote = scene_type(s, "KoteBug");
-    int t_spider = scene_type(s, "JumpSpider"), t_mera = scene_type(s, "Meramera"), t_takobo = scene_type(s, "Takobo");
+    int t_spider = scene_type(s, "JumpSpider"), t_mera = scene_type(s, "Meramera"), t_imera = scene_type(s, "IceMeramera"), t_takobo = scene_type(s, "Takobo");
     int t_mkoopa = scene_type(s, "MechanicKoopaMini"), t_kari = scene_type(s, "Karikari"), t_kmini = scene_type(s, "KuriboMini");
     int t_karon = scene_type(s, "Karon"), t_teresa = scene_type(s, "Teresa"), t_bfly = scene_type(s, "Butterfly");
     int t_stink = scene_type(s, "StinkBugSmall"), t_uni = scene_type(s, "Unizo"), t_unil = scene_type(s, "UnizoLand"),
@@ -1491,14 +1492,14 @@ void game_init(const Scene *s, const unsigned char *blob)
         else if (r->type == t_spg) is += star_group(pieces + is, r, blob);
         else if (r->type == t_flow) is += star_flow(pieces + is, is, r, blob);
         else if (r->type == t_kuribo || r->type == t_tako || r->type == t_packun || r->type == t_kote || r->type == t_spider ||
-                 r->type == t_mera || r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly || r->type == t_stink ||
+                 (r->type == t_mera || r->type == t_imera) || r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly || r->type == t_stink ||
                  r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == t_petari ||
                  walker_new_kind(s->types + 32 * r->type) >= 0) {
             memset(&kuribo[ik], 0, sizeof(Kuribo));
             kuribo[ik].dir = r->type == t_unil ? 1 : r->type == t_unis ? 2 : 0; /* Unizo: sea, land, shoal */
             kuribo[ik].kind = r->type == t_petari ? WALK_PETARI : r->type == t_poi ? WALK_POIHANA : r->type == t_uni || r->type == t_unil || r->type == t_unis ? WALK_UNIZO : r->type == t_stink ? WALK_STINKBUG : r->type == t_bfly ? WALK_BUTTERFLY : r->type == t_teresa ? WALK_TERESA : r->type == t_karon ? WALK_KARON : r->type == t_kmini ? WALK_KMINI : r->type == t_kari ? WALK_KARIKARI : r->type == t_mkoopa ? WALK_MKOOPA : r->type == t_takobo ? WALK_TAKOBO : r->type == t_tako ? WALK_TAKOHEI : r->type == t_packun ? WALK_PACKUN :
                               r->type == t_kote ? WALK_KOTEBUG : r->type == t_spider ? WALK_SPIDER :
-                              r->type == t_mera ? WALK_MERAMERA : WALK_KURIBO;
+                              (r->type == t_mera || r->type == t_imera) ? WALK_MERAMERA : WALK_KURIBO;
             if (walker_new_kind(s->types + 32 * r->type) >= 0) kuribo[ik].kind = walker_new_kind(s->types + 32 * r->type);
             kuribo[ik].pos = row_pos(r);
             kuribo[ik].row = i;
@@ -3136,7 +3137,7 @@ void game_rebind(void)
     m_packun = scene_model(s, "PackunPetit"); m_packunhead = scene_model(s, "PackunPetitHead");
     m_kotebug = scene_model(s, "KoteBug");
     m_spider = scene_model(s, "JumpSpider");
-    m_meramera = scene_model(s, "Meramera");
+    m_meramera = scene_model(s, "Meramera"); m_imeramera = scene_model(s, "IceMeramera");
     m_takobo = scene_model(s, "Takobo");
     m_mkoopa = scene_model(s, "MechanicKoopaMini");
     m_kari = scene_model(s, "Karikari");
@@ -3170,7 +3171,7 @@ void game_rebind(void)
     int t_rail = scene_type(s, "PurpleRailCoin"), t_piece = scene_type(s, "StarPiece"), t_kuribo = scene_type(s, "Kuribo");
     int t_spg = scene_type(s, "StarPieceGroup"), t_flow = scene_type(s, "StarPieceFlow"), t_erail = scene_type(s, "ElectricRail"), t_tako = scene_type(s, "TakoHei"),
         t_packun = scene_type(s, "PackunPetit"), t_kote = scene_type(s, "KoteBug"),
-        t_spider = scene_type(s, "JumpSpider"), t_mera = scene_type(s, "Meramera"), t_takobo = scene_type(s, "Takobo"),
+        t_spider = scene_type(s, "JumpSpider"), t_mera = scene_type(s, "Meramera"), t_imera = scene_type(s, "IceMeramera"), t_takobo = scene_type(s, "Takobo"),
         t_mkoopa = scene_type(s, "MechanicKoopaMini"), t_kari = scene_type(s, "Karikari"), t_kmini = scene_type(s, "KuriboMini"),
         t_karon = scene_type(s, "Karon"), t_teresa = scene_type(s, "Teresa"), t_bfly = scene_type(s, "Butterfly"),
         t_stink = scene_type(s, "StinkBugSmall"), t_uni = scene_type(s, "Unizo"), t_unil = scene_type(s, "UnizoLand"),
@@ -3192,7 +3193,7 @@ void game_rebind(void)
     for (u32 i = 0; i < s->nobjs; i++) { /* every placed model without behaviour: planets and the rest */
         const Row *r = &s->objs[i];
         if (r->type == t_coin || r->type == t_pc || r->type == t_piece || r->type == t_kuribo || r->type == t_circle ||
-            r->type == t_tako || r->type == t_packun || r->type == t_kote || r->type == t_spider || r->type == t_mera ||
+            r->type == t_tako || r->type == t_packun || r->type == t_kote || r->type == t_spider || (r->type == t_mera || r->type == t_imera) ||
             r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly ||
             r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_stink || r->type == scene_type(s, "NoteFairy") ||
             r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == scene_type(s, "Petari") || r->type == scene_type(s, "RockCreator") || r->type == scene_type(s, "WanwanRolling") ||
@@ -3276,7 +3277,7 @@ void game_rebind(void)
             in->prom = find_rail(scene_blob_g, r->zone, r->path, &in->prom_n, &cl);
             if (in->prom_n < 2) in->prom = NULL;
         }
-        if (scene_blob_g && r->path >= 0 && (strcmp(name, "MeteorStrike") == 0 || strcmp(name, "MeteorStrikeEnvironment") == 0)) {
+        if (scene_blob_g && r->path >= 0 && (strcmp(name, "MeteorStrike") == 0 || strcmp(name, "MeteorStrikeEnvironment") == 0 || strcmp(name, "MeteorCannon") == 0)) {
             u32 n; int cl;
             const float *p = find_rail_of(scene_blob_g, r->zone, r->path, &n, &cl, 1);
             in->meteor = p && n >= 2 ? p : NULL;
@@ -22403,7 +22404,7 @@ void game_draw(void)
         use_row_light(kuribo[i].row, kuribo[i].pos, LIGHT_STRONG);
         const Model *md = kuribo[i].kind == WALK_TAKOHEI ? m_takohei : kuribo[i].kind == WALK_PACKUN ? m_packun :
                           kuribo[i].kind == WALK_KOTEBUG ? m_kotebug : kuribo[i].kind == WALK_SPIDER ? m_spider :
-                          kuribo[i].kind == WALK_MERAMERA ? m_meramera : kuribo[i].kind == WALK_TAKOBO ? m_takobo :
+                          kuribo[i].kind == WALK_MERAMERA ? (strcmp(sc->types + 32 * sc->objs[kuribo[i].row].type, "IceMeramera") ? m_meramera : m_imeramera) : kuribo[i].kind == WALK_TAKOBO ? m_takobo :
                           kuribo[i].kind == WALK_MKOOPA ? m_mkoopa : kuribo[i].kind == WALK_KARIKARI ? m_kari :
                           kuribo[i].kind == WALK_KMINI ? m_kmini :
                           kuribo[i].kind == WALK_KARON ? m_karon :
