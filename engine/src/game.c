@@ -253,6 +253,8 @@ typedef struct {
     int sstorm;      /* SunakazeKun 1, TwisterSan 2, TwisterSanSlim 3: catches Mario, a spin throws him up (update_storms, ss_hold) */
     int tdoor;       /* TypicalDoor 1, DarknessRoomDoor 2, TypicalDoorOpen 3 (update_doors, door_place) */
     int lotus;       /* LotusLeaf: shakes under Mario (update_lotus) */
+    int train;       /* ChooChooTrain 1, its cars 2 + n (update_trains) */
+    int vflow;       /* LavaHomeVolcanoFlow (update_volcanoflows) */
     int kstair;      /* KoopaBattleMapStair(Big / Turn): breaks and falls after its switch (update_stairs) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
@@ -1156,6 +1158,9 @@ static int nlfs, ground_sub, mario_ground_sub; static int lf_mats(const Inst *in
 static void update_leaves(void), leaf_joints(Inst *in);
 static int npls; static void update_palms(void), pl_place(Inst *in);
 static int nlls; static void update_lotus(void), ll_place(Inst *in);
+#define TRAIN_CARS 8
+#define TRAIN_CARS_ROOM TRAIN_CARS
+static int insts_cap; static const Model *m_trainbody; static void update_trains(void), update_volcanoflows(void); static int tr_cars(const Row *r);
 static void update_kfires(void), kfires_reset(void), update_doors(void), door_place(Inst *in); static int door_solid(const Inst *in);
 static int nsss, ss_ride = -1; static const Model *m_sstrap; static void ss_reset(void); static void update_storms(void), ss_place(Inst *in), draw_storm_traps(void); static int ss_hold(Player *m);
 static const Model *m_fish[6], *m_gull; static int nggs; static void update_gulls(void), draw_gulls(void);
@@ -1480,7 +1485,8 @@ void game_init(const Scene *s, const unsigned char *blob)
     int t_stink = scene_type(s, "StinkBugSmall"), t_uni = scene_type(s, "Unizo"), t_unil = scene_type(s, "UnizoLand"),
         t_unis = scene_type(s, "UnizoShoal"), t_poi = scene_type(s, "Poihana"), t_petari = scene_type(s, "Petari");
     int t_gcircle = scene_type(s, "CircleCoinGroup"), t_grail = scene_type(s, "RailCoin");
-    insts =mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(Inst));
+    insts_cap = (int)s->nobjs + TRAIN_CARS_ROOM * count_type("ChooChooTrain", 0); /* room for ChooChooTrain's cars */
+    insts =mem_alloc(MEM_OBJECTS, insts_cap * sizeof(Inst));
     zone_spheres();
     game_rebind();
     for (u32 i = 0; i < s->nobjs; i++) {
@@ -3305,6 +3311,8 @@ void game_rebind(void)
         in->sstorm = strcmp(name, "SunakazeKun") == 0 ? 1 : strcmp(name, "TwisterSan") == 0 ? 2 : strcmp(name, "TwisterSanSlim") == 0 ? 3 : 0;
         in->tdoor = strcmp(name, "TeresaMansionDoorA") == 0 || strcmp(name, "TeresaMansionDoorB") == 0 ? 1 : strcmp(name, "DarknessRoomDoorA") == 0 ? 2 : strcmp(name, "TeresaMansionEntranceDoor") == 0 ? 3 : 0;
         in->lotus = strcmp(name, "LotusLeaf") == 0;
+        in->train = strcmp(name, "ChooChooTrain") == 0;
+        in->vflow = strcmp(name, "LavaHomeVolcanoFlow") == 0;
         in->kstair = strncmp(name, "KoopaBattleMapStair", 19) == 0 && strcmp(name, "KoopaBattleMapStairTurnAppear") != 0;
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
@@ -3389,6 +3397,15 @@ void game_rebind(void)
             in->bridge = 2 + i; in->invisible = 1; in->anim = NULL;
             in->kcl = scene_kcl(s, "PhantomShipBridge#Move");
         }
+    m_trainbody = scene_model(s, "ChooChooTrainBody");
+    for (int i = 0, n = ninsts; i < n; i++) /* ChooChooTrain's cars (update_trains) */
+        if (insts[i].train == 1 && m_trainbody)
+            for (int c = 0; c < tr_cars(&s->objs[insts[i].row]) && ninsts < insts_cap; c++) {
+                Inst *in = &insts[ninsts++];
+                *in = insts[i];
+                in->train = 2 + c; in->md = m_trainbody; in->kcl = scene_kcl(s, "ChooChooTrainBody"); in->anim = NULL;
+                in->reach = m_trainbody->radius * in->s;
+            }
     for (int i = 0; plant_first && i < ninsts; i++)
         if (insts[i].plant) { insts[i].kcl_ready = 1; place_plants(&insts[i]); }
     memset(zone_kcl, 0, sizeof zone_kcl);
@@ -19719,6 +19736,79 @@ static void update_lotus(void)
     }
 }
 
+/* ChooChooTrain.cpp after Petari: the engine runs its rail (from the nearest place) at arg1 (5) a frame turning to the
+ * rail's way, its arg0 (3) cars (ChooChooTrainBody, each its own collision) 1080 x scale behind one another along
+ * the rail, each turned to the coupling 532 x scale behind the one before; Run clips, its move level SE, a whistle
+ * every 180..600 frames; Mario on any of them is carried. The cars are extra instances (train 2 + car) made at the
+ * rebind. ponytail: 8 cars at most, turnDirectionAndGravityH as a full turn */
+static int tr_cars(const Row *r) { int n = r->arg[0] > 0 ? r->arg[0] : 3; return n > TRAIN_CARS ? TRAIN_CARS : n; }
+static void tr_mtx(float m[16], V3 p, V3 front, V3 up, float s)
+{
+    V3 z = vtangent(front, up);
+    z = vlen(z) > 1e-4f ? vnorm(z) : vnorm(vcross(v3(1, 0, 0), up));
+    V3 x = vcross(up, z);
+    float r[16] = {x.x * s, x.y * s, x.z * s, 0, up.x * s, up.y * s, up.z * s, 0, z.x * s, z.y * s, z.z * s, 0, p.x, p.y, p.z, 1};
+    memcpy(m, r, 64);
+}
+static void update_trains(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (in->train != 1 || !row_shown(in->row) || !row_coord) continue;
+        const Row *r = &sc->objs[in->row];
+        u32 rn = 0; int cl = 0;
+        const float *rail = r->path >= 0 && scene_blob_g ? find_rail(scene_blob_g, r->zone, r->path, &rn, &cl) : NULL;
+        if (!rail) continue;
+        float len = w_rail_len(rail, rn), s = r->scale[1] > 0 ? r->scale[1] : 1.0f, sp = r->arg[1] > 0 ? (float)r->arg[1] : 5.0f;
+        if (!row_rdir[in->row]) { row_rdir[in->row] = 1; row_coord[in->row] = w_rail_nearest(rail, rn, row_pos(r)); in->lv[1] = 180 + rand() % 421; }
+        float c = row_coord[in->row] + sp; /* control: moveCoord */
+        c = cl ? fmodf(c + len, len) : c > len ? len : c;
+        row_coord[in->row] = c;
+        V3 p = rail_at(rail, rn, c), up = up_at(p, v3(in->m[4], in->m[5], in->m[6])), d = vsub(rail_at(rail, rn, c + 1.0f), p);
+        float old[16];
+        memcpy(old, in->m, 64);
+        tr_mtx(in->m, p, vlen(d) > 1e-4f ? d : v3(in->m[8], in->m[9], in->m[10]), up, s);
+        if (mario_ground == i) carry(old, in);
+        V3 conn = vsub(p, vmul(vnorm(v3(in->m[8], in->m[9], in->m[10])), 532.0f * s));
+        for (int j = 0; j < ninsts; j++) { /* the cars: back along the rail */
+            Inst *car = &insts[j];
+            if (car->train < 2 || car->row != in->row) continue;
+            float cc = c - 1080.0f * s * (car->train - 1);
+            cc = cl ? fmodf(cc + 8.0f * len, len) : cc < 0 ? 0 : cc;
+            V3 q = rail_at(rail, rn, cc);
+            memcpy(old, car->m, 64);
+            tr_mtx(car->m, q, vsub(conn, q), up_at(q, up), s);
+            if (mario_ground == j) carry(old, car);
+            conn = vsub(q, vmul(vnorm(v3(car->m[8], car->m[9], car->m[10])), 532.0f * s));
+        }
+        in->lv[0] = se_level(SE_OJ_LV_TOY_SL_MOVE, &in->m[12], in->lv[0]);
+        if (in->lv[1] <= 0) { se_start(SE_OJ_TOY_SL_WHISTLE, &in->m[12]); in->lv[1] = 180 + rand() % 421; }
+        else in->lv[1]--;
+    }
+}
+
+/* LavaHomeVolcanoFlow.cpp after Petari: waits for its SW_A, then Moves (its clip, the EXPL_SIGN level SE) for 60
+ * frames: Active and Loop effects, EXPLODE, then Done (the ERUPTION level SE). row_turn its nerve, row_step its step.
+ * ponytail: no rumble */
+static void update_volcanoflows(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->vflow || !row_shown(in->row)) continue;
+        const Row *r = &sc->objs[in->row];
+        signed char *n = &row_turn[in->row];
+        unsigned short *st = &row_step[in->row];
+        if (*n == 0) { if (r->sw[SW_A] >= 0 && sw_on(r, SW_A)) { *n = 1; *st = 0; obj_play(in, "LavaHomeVolcanoFlow", 0, 0); } continue; }
+        if (*n == 1) {
+            in->lv[0] = se_level(SE_OJ_LV_VOLCANO_EXPL_SIGN, &in->m[12], in->lv[0]);
+            if (++*st == 60) { fx_named("LavaHomeVolcanoFlow", "Active", in->m, NULL, NULL); se_start(SE_OJ_VOLCANO_EXPLODE, &in->m[12]); *n = 2; }
+            continue;
+        }
+        fx_named("LavaHomeVolcanoFlow", "Loop", in->m, NULL, in);
+        in->lv[0] = se_level(SE_OJ_LV_VOLCANO_ERUPTION, &in->m[12], in->lv[0]);
+    }
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -21568,6 +21658,8 @@ void game_update(void)
     update_kfires();
     update_doors();
     update_lotus();
+    update_trains();
+    update_volcanoflows();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
