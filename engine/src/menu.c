@@ -349,6 +349,136 @@ static void sv_update(void)
     si_update(&sv.win);
 }
 
+/* --- StageResultInformer ("ResultWindow") after the stage clear's return: the star got (System_Result000 / 003 with
+ * the galaxy and scenario names, the star count counted up after 85 frames), a new coin record (System_Result006),
+ * the galaxy's star pieces counted into the stock (System_Result004); X goes on. ponytail: no galaxy complete / new
+ * galaxy / picture book / Tico galaxy information windows, no IconAButton, no effects or BGM */
+enum { SR_OFF, SR_APPEARSTAR, SR_WAITCOUNT, SR_COUNT, SR_DISPLAY, SR_DISAPPEAR, SR_APPEARSCORE, SR_APPEARPIECE, SR_DISPLAYPIECE,
+       SR_WAITPIECE };
+static struct { LytInst *l; Nrv n; int kind, pieces, pressed, alive, delay; SeqResult r; u16 text[160]; } sr;
+
+/* the message with its string arguments (group 7 tags: their last parameter the argument's index) put in */
+static void msg_with_args(u16 *out, int cap, const u16 *src, const u16 *const *args, int nargs)
+{
+    int n = 0;
+    while (src && *src && n < cap - 1) {
+        if (*src == 0x1A) {
+            int len = 4 + (src[3] + 1) / 2;
+            if (src[1] == 7) {
+                u16 last = src[len - 1];
+                int idx = (last >> 8 | (last & 0xFF) << 8);
+                for (const u16 *a = idx < nargs ? args[idx] : NULL; a && *a && n < cap - 1; a++) out[n++] = *a;
+            } else
+                for (int k = 0; k < len && n < cap - 1; k++) out[n++] = src[k];
+            src += len;
+            continue;
+        }
+        out[n++] = *src++;
+    }
+    out[n] = 0;
+}
+
+static void sr_counters(int star, int score, int piece) /* setCounterPaneShowHide */
+{
+    lyt_show_pane(sr.l, "TotalStar", star);
+    lyt_show_pane(sr.l, "BestScore", score);
+    lyt_show_pane(sr.l, "TotalPiece", piece);
+}
+static void sr_result_text(const u16 *s)
+{
+    lyt_set_text_rec(sr.l, "Result", s);
+    lyt_start(sr.l, "Line", 1); /* setAnimFrameAndStopAdjustTextHeight */
+    lyt_set_frame(sr.l, 1, lyt_text_height(sr.l, "Result"));
+    lyt_set_rate(sr.l, 1, 0);
+}
+static int sr_decide(void) { int d = pad_pressed(PAD_CROSS) || sr.pressed; if (d) { sr.pressed = 0; se_start(SE_SY_TALK_OK, NULL); } return d; }
+static void sr_next(void) /* decideNextNerve */
+{
+    if (sr.kind < 1 && sr.r.coins > sr.r.prev_max_coin) { sr.kind = 1; nrv_set(&sr.n, SR_APPEARSCORE); }
+    else if (sr.kind < 2 && sr.r.pieces > 0) { sr.kind = 2; nrv_set(&sr.n, SR_APPEARPIECE); }
+    else { sr.alive = 0; nrv_set(&sr.n, SR_OFF); }
+}
+static void sr_update(void)
+{
+    char label[64];
+    switch (nrv_begin(&sr.n)) {
+    case SR_APPEARSTAR:
+        if (FIRST(&sr.n)) {
+            const u16 *args[2];
+            snprintf(label, sizeof label, "GalaxyName_%s", sr.r.stage);
+            args[0] = msg_get(label);
+            snprintf(label, sizeof label, "ScenarioName_%s%d", sr.r.stage, sr.r.star);
+            args[1] = msg_get(label);
+            msg_with_args(sr.text, 160, msg_get(gd_scenario_hidden(sr.r.stage, sr.r.star) ? "System_Result003" : "System_Result000"), args, 2);
+            sr_counters(1, 0, 0);
+            lyt_start(sr.l, "Appear", 0);
+            sr_result_text(sr.text);
+            lyt_set_number_rec(sr.l, "ShaStarNum", sr.r.prev_stars);
+            snprintf(label, sizeof label, "%d", sr.r.coins);
+            lyt_set_number_rec(sr.l, "ShaCoinNum", sr.r.coins);
+            sr.kind = 0;
+        }
+        if (lyt_stopped(sr.l, 0)) nrv_set(&sr.n, SR_WAITCOUNT);
+        break;
+    case SR_WAITCOUNT: /* tryWaitIntervalBeforeKeyWait(sWaitBeforeCountUpPowerStar 85) */
+        if (pad_pressed(PAD_CROSS)) sr.pressed = 1;
+        if (sr.n.step >= 85) nrv_set(&sr.n, sr.r.prev_stars != sr.r.after_stars ? SR_COUNT : SR_DISPLAY);
+        break;
+    case SR_COUNT:
+        if (FIRST(&sr.n)) { lyt_set_number_rec(sr.l, "ShaStarNum", sr.r.after_stars); lyt_start(sr.l, "Flash", 0); se_start(SE_SY_RESULT_POW_STAR_INC, NULL); }
+        if (pad_pressed(PAD_CROSS)) sr.pressed = 1;
+        if (lyt_stopped(sr.l, 0)) nrv_set(&sr.n, SR_DISPLAY);
+        break;
+    case SR_DISPLAY:
+        if (sr_decide()) nrv_set(&sr.n, SR_DISAPPEAR);
+        break;
+    case SR_DISAPPEAR:
+        if (FIRST(&sr.n)) lyt_start(sr.l, "End", 0);
+        if (lyt_stopped(sr.l, 0)) sr_next();
+        break;
+    case SR_APPEARSCORE: /* AppearUpdateBestScore */
+        if (FIRST(&sr.n)) { sr_counters(0, 1, 0); lyt_show_pane(sr.l, "Coin", 1); lyt_start(sr.l, "Appear", 0); sr_result_text(msg_get("System_Result006")); }
+        if (lyt_stopped(sr.l, 0)) nrv_set(&sr.n, SR_DISPLAY);
+        break;
+    case SR_APPEARPIECE:
+        if (FIRST(&sr.n)) {
+            sr_counters(0, 0, 1); lyt_start(sr.l, "Appear", 0); sr_result_text(msg_get("System_Result004"));
+            sr.pieces = sr.r.pieces;
+            lyt_set_number_rec(sr.l, "ShaTPieceLNum", sr.pieces);
+            lyt_set_number_rec(sr.l, "ShaTPieceRNum", gd_stocked_star_pieces());
+        }
+        if (lyt_stopped(sr.l, 0)) nrv_set(&sr.n, SR_DISPLAYPIECE);
+        break;
+    case SR_DISPLAYPIECE: { /* one a frame into the stock */
+        int done = 0;
+        if (sr.pieces > 0) {
+            sr.pieces--;
+            gd_add_stocked_star_pieces(1);
+            if (sr.pieces > 0) { if (sr.pieces % 2 == 0) se_start(SE_SY_STAR_PIECE_SUM_UP, NULL); }
+            else se_start(SE_SY_STAR_PIECE_SUM_UP_END, NULL);
+        }
+        if (sr.pieces == 0) done = 1;
+        lyt_set_number_rec(sr.l, "ShaTPieceLNum", sr.pieces);
+        lyt_set_number_rec(sr.l, "ShaTPieceRNum", gd_stocked_star_pieces());
+        if (lyt_stopped(sr.l, 0) && !done) lyt_start(sr.l, "Flash", 0);
+        if (pad_pressed(PAD_CROSS)) { se_start(SE_SY_TALK_OK, NULL); nrv_set(&sr.n, done ? SR_DISAPPEAR : SR_WAITPIECE); }
+        break;
+    }
+    case SR_WAITPIECE:
+        if (FIRST(&sr.n)) {
+            gd_add_stocked_star_pieces(sr.pieces); sr.pieces = 0;
+            se_start(SE_SY_STAR_PIECE_SUM_UP_END, NULL);
+            lyt_set_number_rec(sr.l, "ShaTPieceLNum", 0);
+            lyt_set_number_rec(sr.l, "ShaTPieceRNum", gd_stocked_star_pieces());
+        }
+        if (sr.n.step == 45) nrv_set(&sr.n, SR_DISAPPEAR); /* sWaitDisplayStarPieceCount */
+        break;
+    }
+    nrv_end(&sr.n);
+    lyt_update(sr.l);
+}
+int menu_result_showing(void) { return sr.alive || sr.delay; }
+
 /* --- PauseMenu ------------------------------------------------------------------------------------------------- */
 enum { PM_SELECTING, PM_DECIDED, PM_DISAPPEAR, PM_CONFIRM, PM_SAVE };
 static struct {
@@ -503,6 +633,9 @@ void menu_init(const Scene *s)
     ss_init(s);
     si_init(&sv.win);
     sv_prompt = seq_take_save_prompt() ? 90 : 0;
+    memset(&sr, 0, sizeof sr);
+    sr.l = lyt_new("ResultWindow");
+    if (sv_prompt && seq_take_result(&sr.r)) sr.delay = 60;
     dmu_init();
     mlay_init();
     fs_init(s);
@@ -528,7 +661,11 @@ int menu_update(void)
     wipe_update();
     dmu_update();
     mlay_update();
-    if (sv_prompt && --sv_prompt == 0) menu_save_start(1, 0, 0); /* StorySequenceExecutor::tryStartSave after a clear */
+    if (sr.delay && --sr.delay == 0 && sr.l) { /* the clear's demo sequence: StageResultInformer, then the save */
+        sr.alive = 1; sr.n.next = -1; nrv_set(&sr.n, SR_APPEARSTAR);
+    }
+    if (sr.alive) { sr_update(); if (!sr.alive) sv_prompt = sv_prompt ? 1 : 0; return 1; }
+    if (sv_prompt && !sr.delay && --sv_prompt == 0) menu_save_start(1, 0, 0); /* StorySequenceExecutor::tryStartSave */
     if (menu_saving()) { game_cursor_menu(); sv_update(); if (!pm.alive) return 1; }
     if (menu_scenario_selecting()) { game_cursor_menu(); ss_update(); return 1; }
     if (menu_file_selecting()) { game_cursor_menu(); fs_update(); return 1; }
@@ -1922,6 +2059,7 @@ static void wipe_update(void)
 
 void menu_draw(void)
 {
+    if (sr.alive) { render_world_done(); lyt_draw(sr.l); }
     if (sv.win.alive) { render_world_done(); lyt_draw(sv.win.l); }
     if (dmu.on) { render_world_done(); dmu_draw(); }
     mlay_draw();

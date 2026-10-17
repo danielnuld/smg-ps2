@@ -386,7 +386,12 @@ LayoutData layouts. Order by dependency:
    frames, Save02, ConfirmEndGame remind) after a stage clear (sequence.c save prompt, 90 frames into the next scene:
    untested), the pause menu's Save and Quit in the Observatory (untested), game over (tested: miss test). Left: no
    icon.sys (the browser shows no picture), port 0 only, no full-card / no-card windows.
-   Next: StageResultInformer, galaxy pictures, icon select, the dome / Observatory demos.
+   Done (next commit): StageResultInformer (menu.c sr_*, layout ResultWindow): the star got with the galaxy and
+   scenario names (message string arguments put in by msg_with_args), the count up, a new coin record, the star
+   pieces into the stock; then the save prompt. sequence.c keeps the cleared stage's result (seq_set_result at the
+   star's touch). `result` test: a faked EggStar clear -> AstroDome/1, the result, record, pieces, save.
+   Next: galaxy pictures (GalaxyInfoTexture), icon select / Copy in the file select, the dome / Observatory demos,
+   the galaxy map (GalaxyMapController), PowerStarList, comets; then phase 1, sound.
 Then phase 1 (Good Egg vs Wii: the rim step's ground check, below), sound last. The disc ISO over ~1 GB does not boot
 in PCSX2 (taken for a DVD: open fail; a CD-sized image boots); the user's way of loading it on the PS2 was asked.
 

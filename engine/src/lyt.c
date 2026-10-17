@@ -491,6 +491,24 @@ float lyt_text_width(LytInst *l, const char *pane) /* getTextDrawRectRecursive's
     return w;
 }
 
+float lyt_text_height(LytInst *l, const char *pane) /* getTextDrawRectRecursive's height: its lines x (size + spacing) */
+{
+    int r = lyt_pane(l, pane);
+    float h = 0;
+    for (int i = r; r >= 0 && i < l->h->npanes; i++) {
+        const LytPane *p = &l->pane[i];
+        if (p->kind != K_TXT || !under(l, i, r) || !l->text[i] || !l->text[i][0]) continue;
+        int lines = 1;
+        for (const u16 *c = l->text[i]; *c; c++) {
+            if (*c == 0x1A) { c += 3 + (c[3] + 1) / 2; continue; }
+            lines += *c == 0x0A;
+        }
+        float th = lines * p->font[1] + (lines - 1) * p->line;
+        if (th > h) h = th;
+    }
+    return h;
+}
+
 void lyt_draw(LytInst *l)
 {
     if (!l) return;

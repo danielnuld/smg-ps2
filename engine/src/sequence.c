@@ -17,6 +17,10 @@ static struct {
     unsigned open_rgb;
 } sq;
 
+static SeqResult result;
+static int result_set;
+void seq_set_result(const SeqResult *r) { result = *r; result_set = 1; }
+int seq_take_result(SeqResult *r) { if (!result_set) return 0; *r = result; result_set = 0; return 1; }
 int seq_take_save_prompt(void) { int r = sq.save_prompt; sq.save_prompt = 0; return r; }
 void seq_set_open_wipe(int frames, unsigned rgb) { sq.open_frames = frames; sq.open_rgb = rgb; }
 int seq_take_open_wipe(unsigned *rgb) { int f = sq.open_frames; *rgb = sq.open_rgb; sq.open_frames = 0; return f; }

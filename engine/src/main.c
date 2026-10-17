@@ -25,6 +25,7 @@
 #include "menu.h"
 #include "gamedata.h"
 #include "mc.h"
+#include "sequence.h"
 #include "music_tab.h"
 #include "packs_cfg.h" /* written by build.sh: PACKS = "<Galaxy>/<scenario>", or empty */
 
@@ -766,6 +767,26 @@ int main(void)
         if (frame == 200) { /* the first grand star (the first dome open), Mario in a dome's entrance cube */
             gd_set_star("HeavensDoorGalaxy", 1);
             printf("astro test: grand star 1 %d, cube row %d\n", gd_flag_is_on("SpecialStarGrand1"), game_test_astro_cube(5));
+        }
+#endif
+#if defined(PACKS) && defined(RESULT_TEST)
+        { /* a stage clear faked in EggStar (its star 1, 50 coins, 12 star pieces): the dome, the result, the save */
+            pad_force = 0;
+            if (frame == 200) {
+                SeqResult r = {"EggStarGalaxy", 1, 0, 1, 50, 0, 12};
+                gd_set_star("HeavensDoorGalaxy", 1);
+                r.prev_stars = gd_star_num();
+                gd_set_star("EggStarGalaxy", 1);
+                r.after_stars = gd_star_num();
+                seq_set_result(&r);
+                seq_set_cleared(1);
+                seq_galaxy_move(SEQ_STAGE_CLEAR, NULL, -1, -1, 0);
+            }
+            if (frame > 600 && frame % 90 == 0) {
+                menu_test_point("BoxRight");
+                pad_force = PAD_CROSS;
+                printf("result test f %u: X, result %d saving %d\n", frame, menu_result_showing(), menu_saving());
+            }
         }
 #endif
 #if defined(PACKS) && defined(TITLE_TEST)

@@ -22051,8 +22051,15 @@ static void update_items(void)
                 int id = sc->objs[in->row].arg[0];
                 snprintf(gal, sizeof gal, "%.*s", sl ? (int)(sl - game_stage_name) : (int)strlen(game_stage_name), game_stage_name);
                 if (id <= 0 && sl) id = atoi(sl + 1);
+                SeqResult res; /* GameSequenceFunction: the cleared stage, for the result informer */
+                memset(&res, 0, sizeof res);
+                snprintf(res.stage, sizeof res.stage, "%s", gal);
+                res.star = id; res.prev_stars = gd_star_num(); res.coins = got_coins; res.pieces = got_pieces;
+                res.prev_max_coin = gd_max_coins(gal, sl ? atoi(sl + 1) : 1);
                 gd_set_star(gal, id);
                 gd_update_max_coins(gal, sl ? atoi(sl + 1) : 1, got_coins); /* the coin best score */
+                res.after_stars = gd_star_num();
+                seq_set_result(&res);
                 seq_set_cleared(id); /* GameSequenceFunction::getClearedPowerStarId */
             }
             se_start(SE_SY_STAR_GET, NULL); /* PowerStar::receiveOtherMsg */

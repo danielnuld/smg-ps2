@@ -19,6 +19,10 @@ int seq_start_id(int *zone);          /* this scene's start (JMapIdInfo: MarioNo
 const char *seq_before_stage(int *scenario); /* setBeforeStageScenario: the stage left last */
 int seq_story_grand_dome(const char *galaxy); /* GameDataConst::getIncludedGrandGalaxyId */
 /* the wipe the next scene opens with (openSystemWipe* after a close): frames (0 none) and its colour 0xRRGGBB */
+/* GameSequenceFunction's cleared stage (the result informer's): its star, the star counts, coins, star pieces */
+typedef struct { char stage[32]; int star, prev_stars, after_stars, coins, prev_max_coin, pieces; } SeqResult;
+void seq_set_result(const SeqResult *r);
+int seq_take_result(SeqResult *r);
 int seq_take_save_prompt(void);  /* after a stage clear the next scene asks to save (tryStartSave) */
 void seq_set_open_wipe(int frames, unsigned rgb);
 int seq_take_open_wipe(unsigned *rgb);
