@@ -60,7 +60,7 @@ RESIDENT = ("Coin", "StarPiece", "SuperSpinDriver")  # OBJ_TYPES in phase 0b's R
 SKINNED = ("Mario",)
 # placed classes drawn skinned and animated by their own BCKs (the scenario's ANIM chunk, "<class>/<clip>" in
 # lower case); their model archive is the class name
-SKINNED_OBJ = ("JumpBeamer", "JumpBeamerHead", "BombHei", "BigFan", "BigFanNoLeg", "BigFanWind", "DesertMovingLand", "LavaHomeVolcanoFlow", "DarknessRoomDoorA", "TeresaMansionDoorA", "TeresaMansionDoorB", "TeresaMansionEntranceDoor", "Pukupuku", "Kabokuri", "Snakehead", "SnakeheadSmall", "SunakazeKun", "TwisterSan", "TwisterSanSlim", "SunakazeKunTrap", "SeaGull", "FishA", "FishB", "FishC", "FishD", "FishE", "FishF", "TeresaWater", "CoconutTreeLeaf", "EyeBeamer", "EyeBeamerBeam", "KoopaBattleMapStair", "KoopaBattleMapStairBig", "KoopaBattleMapStairTurn", "WaterLeakPipe", "FirePressureRadiate", "WaterPressure", "WaterBullet", "Metbo", "Mogucchi", "MogucchiHole", "Mogu", "MoguStone", "MoguHole", "Kanina", "KaninaRed", "Jellyfish", "BasaBasa", "BasaBasaIce", "Gesso", "SearchBeamer", "RingBeamer", "JumpBeamerBeam", "FlowerGroup", "FlowerBlueGroup", "CutBushGroup", "DinoPackun", "OtaKing", "OtaKingFoot", "TicoFat", "Tico", "CocoSambo", "CocoSamboHead", "Kuribo", "Takobo",
+SKINNED_OBJ = ("LavaObstacleRockHomeB", "LavaFallDownColumnA", "LavaFallDownColumnB", "HeavenlyBeachUnderRock", "ShutterDoorC", "ShutterDoorD", "ShutterDoorE", "MechaKoopaPartsCaterpillar", "IceVolcanoAppearStepA", "IceVolcanoAppearStepB", "IceVolcanoClimbingWall", "IceUpDownShutterDoorA", "LavaBreakRockA", "HeavenlyBeachTopRock", "LavaBreakBridge", "LavaBreakRockB", "LavaBreakRockC", "LavaBreakRockD", "TeresaRacePartsB", "TeresaRoomDoor", "JumpBeamer", "JumpBeamerHead", "BombHei", "BigFan", "BigFanNoLeg", "BigFanWind", "DesertMovingLand", "LavaHomeVolcanoFlow", "DarknessRoomDoorA", "TeresaMansionDoorA", "TeresaMansionDoorB", "TeresaMansionEntranceDoor", "Pukupuku", "Kabokuri", "Snakehead", "SnakeheadSmall", "SunakazeKun", "TwisterSan", "TwisterSanSlim", "SunakazeKunTrap", "SeaGull", "FishA", "FishB", "FishC", "FishD", "FishE", "FishF", "TeresaWater", "CoconutTreeLeaf", "EyeBeamer", "EyeBeamerBeam", "KoopaBattleMapStair", "KoopaBattleMapStairBig", "KoopaBattleMapStairTurn", "WaterLeakPipe", "FirePressureRadiate", "WaterPressure", "WaterBullet", "Metbo", "Mogucchi", "MogucchiHole", "Mogu", "MoguStone", "MoguHole", "Kanina", "KaninaRed", "Jellyfish", "BasaBasa", "BasaBasaIce", "Gesso", "SearchBeamer", "RingBeamer", "JumpBeamerBeam", "FlowerGroup", "FlowerBlueGroup", "CutBushGroup", "DinoPackun", "OtaKing", "OtaKingFoot", "TicoFat", "Tico", "CocoSambo", "CocoSamboHead", "Kuribo", "Takobo",
                "Karikari", "Butterfly", "PackunPetit", "KuriboMini", "DinoPackunEggShellBreak", "PackunPetitHead",
                "RockBreak", "WanwanRollingBreak", "PunchingKinoko", "OtaKingMagma", "OtaKingLongFoot", "WoodBoxBreak",
                "CrystalCageSBreak", "BenefitItemOneUp", "BenefitItemLifeUp", "FlipPanel", "FlipPanelReverse", "OtaRock",
@@ -695,7 +695,7 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
 
 
 def skin_entry(b, bl, gtab):
-    """SKIN chunk entry (after the model name): u16 njoints, ndrw, ngroups, nmix; joints {s16 parent, u16 pad,
+    """SKIN chunk entry (after the model name): u16 njoints, ndrw, ngroups, nmix; joints {s16 parent, u16 pad (1: the Move joint),
     f32 scale[3], rot[3] (radians), trans[3]} (bind pose locals); drw {u16 first, u16 count} (count 0: rigid, first =
     joint; else a run of mix entries); mix {u16 joint, u16 pad, f32 weight, f32 invbind[3][4]}; groups {u8 nmat,
     u8 drw[11]} (skin.py)."""
@@ -713,7 +713,7 @@ def skin_entry(b, bl, gtab):
     assert all(len(t) <= 11 and max(t) < 256 for t in gtab), "matrix table does not fit u8[11]"
     out += struct.pack("<4H", len(js), len(dr), len(gtab), nmix)
     for j in js:
-        out += struct.pack("<hH9f", j["parent"], 0, *j["scale"], *j["rot"], *j["trans"])
+        out += struct.pack("<hH9f", j["parent"], j["name"] == "Move", *j["scale"], *j["rot"], *j["trans"])  # pad 1: MapObjActor's collision joint
     out += drw + mix
     for t in gtab:
         out += struct.pack("<B11B", len(t), *(list(t) + [0] * (11 - len(t))))

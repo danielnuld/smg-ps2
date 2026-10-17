@@ -260,6 +260,8 @@ typedef struct {
     int bigfan;      /* BigFan / BigFanNoLeg: its clips and wind model (update_bigfans, draw_bigfan_winds) */
     int eball;       /* ElectricBall: its ring of balls (update_eballs, draw_eballs; the instance itself not drawn) */
     int arrow;       /* ArrowSwitch: a spin turns it a step, its SW_A (update_arrows) */
+    int anmmodel;    /* the AnmModelObj family (anm_kind; update_anmmodels) */
+    int kmove;       /* the model's Move joint (SKIN pad 1), its collision on it (kcl_query), -1 none */
     int kstair;      /* KoopaBattleMapStair(Big / Turn): breaks and falls after its switch (update_stairs) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
@@ -1165,6 +1167,7 @@ static int npls; static void update_palms(void), pl_place(Inst *in);
 static int nlls; static void update_lotus(void), ll_place(Inst *in);
 #define TRAIN_CARS 8
 #define TRAIN_CARS_ROOM TRAIN_CARS
+static int anm_kind(const char *n); static void update_anmmodels(void);
 static int nass; static void update_arrows(void), as_place(Inst *in);
 static int nebl; static void update_eballs(void), draw_eballs(void);
 static const Model *m_bfwind; static void update_bigfans(void), draw_bigfan_winds(void);
@@ -1215,6 +1218,8 @@ static int kcl_query_(V3 c, float radius, Hit *out, int max)
         const float (*mats)[16] = (const float (*)[16])in->m;
         const int *lcoll = NULL;
         int nm = in->leaves ? lf_mats(in, &mats, &lcoll) : 0;
+        float kmm[16];
+        if (!nm && in->kmove >= 0 && in->anim && in->anim->skin == in->md->skin) { mat_mul(kmm, in->m, in->anim->world[in->kmove]); nm = 1; mats = (const float (*)[16])kmm; lcoll = NULL; }
         if (!nm) { nm = 1; mats = (const float (*)[16])in->m; lcoll = NULL; }
         for (int sub = 0; sub < nm && n < max; sub++) {
         if (lcoll && !lcoll[sub]) continue;
@@ -3326,6 +3331,7 @@ void game_rebind(void)
         in->bigfan = strcmp(name, "BigFan") == 0 || strcmp(name, "BigFanNoLeg") == 0;
         in->eball = strcmp(name, "ElectricBall") == 0;
         in->arrow = strcmp(name, "ArrowSwitch") == 0 ? 1 : strcmp(name, "ArrowSwitchMulti") == 0 ? 2 : 0;
+        in->anmmodel = anm_kind(name);
         in->kstair = strncmp(name, "KoopaBattleMapStair", 19) == 0 && strcmp(name, "KoopaBattleMapStairTurnAppear") != 0;
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
@@ -3338,6 +3344,9 @@ void game_rebind(void)
         in->railer = scene_blob_g && ((r->arg[7] > 0 && (r->arg[7] >> 30 & 1)) || in->eyebeamer) && r->path >= 0 ?
                      find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->kcl = scene_kcl(s, name);
+        in->kmove = -1;
+        if (in->kcl && in->anim && md->skin) /* MapObjActor: the collision on the Move joint (slice.py marks it: pad 1) */
+            for (int j = 0; j < md->skin->njoints; j++) if (md->skin->joints[j].pad == 1) { in->kmove = j; break; }
         if (in->tdoor) { char kn[48]; snprintf(kn, sizeof kn, "%s#Open", name); in->kcl_close = in->kcl; in->kcl_open = scene_kcl(s, kn); }
         in->zone = r->zone;
         mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
@@ -20366,6 +20375,60 @@ static void update_arrows(void)
     }
 }
 
+/* AnmModelObj.cpp after Petari: AnmModelSwitchMove (1: its SW_A, at once without one), AnmModelSwitchMoveEndKill (2:
+ * the same, gone at the end), AnmModelGroundOnMove (3: Mario standing on it; its SW_B on as it starts; gone at the
+ * end), AnmModelBindMove (4: never here, no rush binding), AnmModelSwitchMoveEventCamera (5: as 1). Wait until its
+ * trigger, Move (its Move clip as its BCK says) until the clip is over (isBckOneTimeAndStopped), then gone / Wait
+ * again (BindMove) / Done (its EndLoop effect). Its collision follows its Move joint (MapObjActor: initCollisionParts
+ * on cFollowJointName; kcl_query, Inst.kmove). row_turn 0 Wait / 1 Move / 2 Done, row_step its step. ponytail: no
+ * stage effect SEs, rumble or camera shakes, no event camera */
+static int obj_start(const Inst *in, const char *clip) /* tryStartAllAnim: the clip, looping as its BCK says */
+{
+    if (!in->anim) return 0;
+    char n[48];
+    snprintf(n, sizeof n, "%s/%s", sc->types + 32 * sc->objs[in->row].type, clip);
+    for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
+    in->anim->clip_id = -1;
+    return anim_start(in->anim, n, 0);
+}
+static int anm_kind(const char *n)
+{
+    static const char *const k1[] = {"LavaObstacleRockHomeB", "LavaFallDownColumnA", "LavaFallDownColumnB", "HeavenlyBeachUnderRock", "ShutterDoorC", "ShutterDoorD", "ShutterDoorE", "MechaKoopaPartsCaterpillar", "IceVolcanoAppearStepA", "IceVolcanoAppearStepB", "IceVolcanoClimbingWall", "IceUpDownShutterDoorA"};
+    static const char *const k2[] = {"LavaBreakRockA", "HeavenlyBeachTopRock"};
+    static const char *const k3[] = {"LavaBreakBridge", "LavaBreakRockB", "LavaBreakRockC", "LavaBreakRockD"};
+    for (u32 i = 0; i < sizeof k1 / sizeof *k1; i++) if (!strcmp(n, k1[i])) return 1;
+    for (u32 i = 0; i < sizeof k2 / sizeof *k2; i++) if (!strcmp(n, k2[i])) return 2;
+    for (u32 i = 0; i < sizeof k3 / sizeof *k3; i++) if (!strcmp(n, k3[i])) return 3;
+    return !strcmp(n, "TeresaRacePartsB") ? 4 : !strcmp(n, "TeresaRoomDoor") ? 5 : 0;
+}
+static void update_anmmodels(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->anmmodel || !row_shown(in->row)) continue;
+        const Row *r = &sc->objs[in->row];
+        signed char *n = &row_turn[in->row];
+        unsigned short *st = &row_step[in->row];
+        if (*st < 0xFFFF) ++*st;
+        if (*n == 0) {
+            int go = in->anmmodel == 3 ? mario_ground == i : in->anmmodel == 4 ? 0 : r->sw[SW_A] < 0 || sw_on(r, SW_A); /* isOnStartAnmTrigger */
+            if (in->anim && !*st) { obj_start(in, "Move"); in->anim->speed = 0.0f; in->anim->frame = 0.0f; } /* still at its first frame */
+            if (go) {
+                *n = 1; *st = 0;
+                obj_start(in, "Move");
+                if (in->anmmodel == 3 && r->sw[SW_B] >= 0) sw_set((Row *)r, SW_B, 1); /* AnmModelGroundOnMove::control */
+            }
+        } else if (*n == 1) {
+            if (!in->anim || (in->anim->done && !in->anim->loop)) { /* isDone */
+                if (in->anmmodel == 2 || in->anmmodel == 3) { row_kill(in->row); game_rebind(); return; } /* isKilledAtMoveDone */
+                if (in->anmmodel == 4) { *n = 0; *st = 1; continue; }                                  /* isRepeat */
+                *n = 2; *st = 0;
+                fx_named(sc->types + 32 * r->type, "EndLoop", in->m, in->anim ? (const float (*)[16])in->anim->world : NULL, in);
+            }
+        } else if (in->anim) { in->anim->speed = 0.0f; } /* Done: the last frame held */
+    }
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -22222,6 +22285,7 @@ void game_update(void)
     update_bigfans();
     update_eballs();
     update_arrows();
+    update_anmmodels();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
