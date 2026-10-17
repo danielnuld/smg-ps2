@@ -163,6 +163,7 @@ typedef struct {
     const Model *md;
     Anim *anim;      /* skinned models (slice.py SKINNED_OBJ): its pose, from obj_anim */
     const unsigned char *kcl;
+    const unsigned char *kcl_close, *kcl_open; /* TypicalDoor: its Close / Open collisions (door_place) */
     float m[16];     /* world matrix (uniform scale s) */
     float s, reach;  /* scale, bounding radius in world units */
     int zone;
@@ -250,6 +251,7 @@ typedef struct {
     int leaves;      /* CoconutTreeLeaf: its leaves sway, each with its collision (update_leaves, leaf_joints, lf_mats) */
     int palm;        /* PalmIsland: bobs on the water (update_palms) */
     int sstorm;      /* SunakazeKun 1, TwisterSan 2, TwisterSanSlim 3: catches Mario, a spin throws him up (update_storms, ss_hold) */
+    int tdoor;       /* TypicalDoor 1, DarknessRoomDoor 2, TypicalDoorOpen 3 (update_doors, door_place) */
     int kstair;      /* KoopaBattleMapStair(Big / Turn): breaks and falls after its switch (update_stairs) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
@@ -1151,7 +1153,7 @@ typedef struct { V3 n; float dist; int inst, attr, sub; } Hit; /* world normal, 
 static int nlfs, ground_sub, mario_ground_sub; static int lf_mats(const Inst *in, const float (**mats)[16], const int **coll);
 static void update_leaves(void), leaf_joints(Inst *in);
 static int npls; static void update_palms(void), pl_place(Inst *in);
-static void update_kfires(void), kfires_reset(void);
+static void update_kfires(void), kfires_reset(void), update_doors(void), door_place(Inst *in); static int door_solid(const Inst *in);
 static int nsss, ss_ride = -1; static const Model *m_sstrap; static void ss_reset(void); static void update_storms(void), ss_place(Inst *in), draw_storm_traps(void); static int ss_hold(Player *m);
 static const Model *m_fish[6], *m_gull; static int nggs; static void update_gulls(void), draw_gulls(void);
 static int nfgs; static void update_fishes(void), draw_fishes(void);
@@ -1190,6 +1192,7 @@ static int kcl_query_(V3 c, float radius, Hit *out, int max)
         if (!in->kcl) continue;
         if (in->beeflower && row_turn && row_turn[in->row]) continue; /* BeeFlowerHover gone through */
         if (in->otamagma && ota.nrv == OTA_DEAD) continue;            /* drawn till then (game_draw) */
+        if (in->tdoor && !door_solid(in)) continue;
         V3 d = vsub(c, v3(in->m[12], in->m[13], in->m[14]));
         if (vdot(d, d) > (in->reach + radius) * (in->reach + radius)) continue;
         const float (*mats)[16] = (const float (*)[16])in->m;
@@ -3297,6 +3300,7 @@ void game_rebind(void)
         in->leaves = strcmp(name, "CoconutTreeLeaf") == 0;
         in->palm = strcmp(name, "PalmIsland") == 0;
         in->sstorm = strcmp(name, "SunakazeKun") == 0 ? 1 : strcmp(name, "TwisterSan") == 0 ? 2 : strcmp(name, "TwisterSanSlim") == 0 ? 3 : 0;
+        in->tdoor = strcmp(name, "TeresaMansionDoorA") == 0 || strcmp(name, "TeresaMansionDoorB") == 0 ? 1 : strcmp(name, "DarknessRoomDoorA") == 0 ? 2 : strcmp(name, "TeresaMansionEntranceDoor") == 0 ? 3 : 0;
         in->kstair = strncmp(name, "KoopaBattleMapStair", 19) == 0 && strcmp(name, "KoopaBattleMapStairTurnAppear") != 0;
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
@@ -3309,6 +3313,7 @@ void game_rebind(void)
         in->railer = scene_blob_g && ((r->arg[7] > 0 && (r->arg[7] >> 30 & 1)) || in->eyebeamer) && r->path >= 0 ?
                      find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->kcl = scene_kcl(s, name);
+        if (in->tdoor) { char kn[48]; snprintf(kn, sizeof kn, "%s#Open", name); in->kcl_close = in->kcl; in->kcl_open = scene_kcl(s, kn); }
         in->zone = r->zone;
         mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
         in->s = r->scale[0];
@@ -3328,6 +3333,7 @@ void game_rebind(void)
         if (in->sbeamer) sbm_place(in);
         if (in->eyebeamer) eb_place(in);
         if (in->palm) pl_place(in);
+        if (in->tdoor) door_place(in);
         if (in->sstorm) ss_place(in);
         if (in->trapeze) tz_place(in);
         if (in->onimasu) oni_place(in);
@@ -19599,6 +19605,41 @@ static void draw_storm_traps(void)
     }
 }
 
+/* TypicalDoor.cpp after Petari (TeresaMansionDoorA / B, DarknessRoomDoorA; TypicalDoorOpen: TeresaMansionEntranceDoor):
+ * Close (its Close collision) until its SW_B, then Open (the Open clip; 30 frames on, its Open collision); the Open
+ * one starts open and its SW_B closes it (Close clip, the stage effect's stop SE). DarknessRoomDoor with arg0 -1 and
+ * an SW_A: its collision only while SW_A is on. row_turn 0 closed / 1 open, row_step its step. ponytail: no demo
+ * ("扉開く") nerve */
+static int door_solid(const Inst *in) /* kcl_query: DarknessRoomDoor::control's validate / invalidate */
+{
+    const Row *r = &sc->objs[in->row];
+    return in->tdoor != 2 || r->arg[0] != -1 || r->sw[SW_A] < 0 || sw_on(r, SW_A);
+}
+static void door_place(Inst *in)
+{
+    if (!row_turn || !in->kcl_open) return;
+    in->kcl = row_turn[in->row] && row_step[in->row] >= 30 ? in->kcl_open : in->kcl_close;
+}
+static void update_doors(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->tdoor || !row_shown(in->row)) continue;
+        const Row *r = &sc->objs[in->row];
+        signed char *open = &row_turn[in->row];
+        unsigned short *st = &row_step[in->row];
+        if (in->tdoor == 3 && !*open && !*st) { *open = 1; *st = 30; } /* TypicalDoorOpen::init: open() */
+        if (*st < 0xFFFF) ++*st;
+        int sb = r->sw[SW_B] >= 0 && sw_on(r, SW_B);
+        if (in->tdoor == 3 ? sb && *open : sb && !*open) { /* listenStageSwitchOnB: open / close */
+            *open = in->tdoor == 3 ? 0 : 1; *st = in->tdoor == 3; /* (1: not the Open one's first frame again) */
+            obj_play(in, *open ? "Open" : "Close", 0, 0);
+            if (!*open && in->tdoor == 3) se_start(SE_OJ_P_ROOM_DOOR_L_CL_ST, &in->m[12]); /* exeClose: the stop SE */
+        }
+        door_place(in); /* exeOpen: step 30; exeClose: step 0 */
+    }
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -21446,6 +21487,7 @@ void game_update(void)
     update_gulls();
     update_storms();
     update_kfires();
+    update_doors();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
