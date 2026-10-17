@@ -3290,7 +3290,7 @@ void game_rebind(void)
         in->snowman = strcmp(name, "SnowMan") == 0;
         in->candle = strcmp(name, "PhantomCandlestand") == 0 ? 1 : strcmp(name, "TeresaMansionCandlestand") == 0 ? 2 :
                      strcmp(name, "CandlestandIceVolcano") == 0 ? 3 : 0;
-        in->screw = strcmp(name, "ScrewSwitch") == 0 ? 1 : strcmp(name, "ScrewSwitchReverse") == 0 ? 2 : 0;
+        in->screw = strcmp(name, "ScrewSwitch") == 0 ? 1 : strcmp(name, "ScrewSwitchReverse") == 0 ? 2 : strcmp(name, "ValveSwitch") == 0 ? 3 : 0;
         in->biri_rail = in->biri && scene_blob_g && r->path >= 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->giver = strcmp(name, "DeadLeaves") == 0 ? 1 : strcmp(name, "Pompon2Plant") == 0 || strcmp(name, "Pompon4Plant") == 0 ? 2 : 0;
         in->ticorail = scene_blob_g && r->path >= 0 && strcmp(name, "TicoRail") == 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
@@ -9706,14 +9706,28 @@ static void update_screws(void)
         if (!in->screw) continue;
         int row = in->row;
         V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), top = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(up, 150.0f * in->s));
+        int valve = in->screw == 3; /* ValveSwitch.cpp after Petari: its binder 75 over its Valve joint, the ValveSwitchOn clip
+                                     * (arg0: ValveSwitchReverseOn) to its end, MOVE level SE for 30 frames, ON SE and a shake
+                                     * at 30, its SW_A at the end. ponytail: no BRK, no ScrewSwitchOn pose for Mario */
+        if (valve && in->anim && in->anim->skin && in->anim->skin->njoints > 1) {
+            float jm[16];
+            mat_mul(jm, in->m, in->anim->world[1]);
+            top = vadd(v3(jm[12], jm[13], jm[14]), vmul(up, 75.0f));
+        }
         if (row_turn[row] == 0) {
             if (mario_ground == i && mario->spin_timer > 0) { row_turn[row] = 1; row_step[row] = 0;
+                if (valve) { obj_play(in, sc->objs[row].arg[0] > 0 ? "ValveSwitchReverseOn" : "ValveSwitchOn", 0, 0); se_start(SE_PV_TWIST_START, &mario->pos.x); se_start(SE_PM_SPIN_ATTACK, &mario->pos.x); }
                 printf("screw switch row %d: screwing" "\n", row); }
             continue;
         }
         if (row_turn[row] != 1) continue;
         int len = in->screw == 1 ? 34 : 75;
         ++row_step[row];
+        if (valve) {
+            if (row_step[row] < 3 + 30) in->lv[0] = se_level(SE_OJ_LV_VALVE_SWITCH_MOVE, &in->m[12], in->lv[0]);
+            if (row_step[row] == 3 + 30) { se_start(SE_OJ_VALVE_SWITCH_ON, &in->m[12]); camera_shake(SHAKE_NORMAL_WEAK); }
+            len = in->anim && !in->anim->done ? row_step[row] : 0; /* isBckStopped */
+        }
         float k = row_step[row] < 3 ? row_step[row] / 3.0f : 1.0f; /* Adjust */
         V3 at = vsub(top, vmul(up, 1.0f)); /* just on it */
         mario->pos = vadd(vmul(mario->pos, 1.0f - k), vmul(at, k));
