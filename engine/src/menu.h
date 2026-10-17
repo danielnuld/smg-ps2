@@ -16,7 +16,7 @@ int menu_fading(void);
 void menu_fade_hold(int frames);
 void menu_fade_open(int frames);
 /* ScenarioSelectScene: the galaxy's scenario chosen over the frozen stage, then the move there (sequence.c) */
-void menu_scenario_select(const char *galaxy);
+void menu_scenario_select(const char *galaxy, int decided); /* decided: the scenario fixed (a comet's), 0 the choice */
 int menu_scenario_selecting(void);
 /* AstroDomeGalaxySelector's layouts, driven by game.c's dome select */
 void menu_dome_open(void);

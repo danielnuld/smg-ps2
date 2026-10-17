@@ -17,6 +17,7 @@
 #include <string.h>
 
 static void fade_update(void);
+static void msg_with_args(u16 *out, int cap, const u16 *src, const u16 *const *args, int nargs);
 static int sv_prompt; /* frames to the save prompt a stage clear left for this scene, 0 none */
 static void fade_draw(void);
 static void ss_init(const Scene *s);
@@ -727,11 +728,11 @@ static void fade_draw(void)
 /* --- ScenarioSelectLayout / ScenarioSelectStar / BackButton --------------------------------------------------------
  * ScenarioSelectScene over the stage left (its world frozen and not drawn): the sky (ScenarioSelectSky, BTK) and the
  * stars (SelectPowerStar) under the camera at (0, 0, 1000) looking at the origin, fovy 45; the stars at their panes
- * (calcWorldPositionFromScreenPos, depth 1000). ponytail: the scenario never decided (no comet warning: the
- * dome's comet galaxies not chosen yet), no ScenarioSelectEffect / star effects, no BGM, the star's colour (BTP: all
+ * (calcWorldPositionFromScreenPos, depth 1000); a comet's scenario decided, its warning first. ponytail: no
+ * ScenarioSelectEffect / star effects, no BGM, the star's colour (BTP: all
  * yellow); no race best times (BestTime stays out); isPlacedCoin taken as true; hidden stars: no Luigi / green star
  * checks */
-enum { SS_APPEARSTAR, SS_APPEAR, SS_WAIT, SS_DECIDE, SS_AFTER, SS_CANCEL, SS_CANCELFADE };
+enum { SS_APPEARSTAR, SS_APPEAR, SS_WAIT, SS_DECIDE, SS_AFTER, SS_CANCEL, SS_CANCELFADE, SS_COMETAPPEAR, SS_COMETWAIT, SS_COMETEND };
 enum { ST_APPEAR, ST_NOTPOINTING, ST_POINTING, ST_ENDPOINTING, ST_SELECTED, ST_SELECTEDMOVE, ST_NOTSELECTED };
 static const char *const ss_star_pane[7] = {"Star1", "Star2", "Star3", "Star4", "Star5", "Star6", "Star7"};
 static const char *const ss_question_pane[2] = {"NewStar1", "NewStar2"};
@@ -755,6 +756,8 @@ static struct {
     Anim *anim;
     char galaxy[32];
     int alive, selected, locked, hold, a4, a8, sky_frame; /* mSelectedScenarioNo, _28, _24, _A4, _A8 */
+    int decided;                        /* isScenarioDecided: its scenario (a comet's), 0 the choice */
+    u16 comet_txt[96];
     float star_top[2], new_pos[2], green_pos[2], mario_pos[2], q_pos[2][2];
     const char *mario_pane;
     u16 coin_txt[8];
@@ -896,6 +899,7 @@ static int ss_has(int no) { return gd_has_star(ss.galaxy, no); } /* hasPowerStar
 static int ss_display_num(int *normal, int *extra) /* calcDisplayScenarioNum */
 {
     int nn = ss_normal_num(), hidden = gd_power_star_num(ss.galaxy) - nn, is_new = 0;
+    if (ss.decided) { *normal = 1; *extra = 0; return !ss_has(ss.decided); }
     for (*normal = 0; *normal < nn; (*normal)++)
         if (!ss_has(*normal + 1)) { (*normal)++; is_new = 1; break; }
     *extra = 0;
@@ -950,9 +954,10 @@ static void ss_appear(void)
     ss.mario_pane = gd_player_left() < 10 ? "MarioPosition01" : "MarioPosition10";
     /* appearAllStar */
     for (int i = 0; i < 7; i++) ss.star[i].dead = 1;
-    for (int i = 0; i < normal; i++) ss_appear_star(i, i + 1, !is_new ? 2 : i < normal - 1 ? 1 : 0);
+    if (ss.decided) ss_appear_star(0, ss.decided, is_new ? 0 : 2);
+    for (int i = 0; i < normal && !ss.decided; i++) ss_appear_star(i, i + 1, !is_new ? 2 : i < normal - 1 ? 1 : 0);
     int nn = ss_normal_num(), power = gd_power_star_num(ss.galaxy), idx = 3;
-    for (int j = 0; j < power - nn; j++)
+    for (int j = 0; j < power - nn && !ss.decided; j++)
         if (ss_has(nn + j + 1)) ss_appear_star(idx++, nn + j + 1, is_new ? 1 : 2);
     lyt_show_rec(ss.l, "New", 0);
     lyt_show_rec(ss.l, "NewStarGreen", 0);
@@ -960,7 +965,7 @@ static void ss_appear(void)
     if (is_new) {
         lyt_show_rec(ss.l, "New", 1);
         lyt_copy_pane_trans(ss.l, ss_star_pane[normal - 1], ss.new_pos);
-    } else {
+    } else if (!ss.decided) {
         int hi = 0;
         for (int no = nn + 1; no <= power && hi < 2; no++) {
             if (!gd_scenario_hidden(ss.galaxy, no) || ss_has(no)) continue;
@@ -1079,9 +1084,31 @@ static void ss_update(void)
         ss.fly = se_level(SE_DM_LV_SENARIO_SEL_FLY, NULL, ss.fly);
         int all = 1;
         for (int i = 0; i < 7; i++) all &= ss.star[i].dead || sst_appear_end(&ss.star[i]);
-        if (all) nrv_set(&ss.n, SS_APPEAR);
+        if (all) nrv_set(&ss.n, ss.decided && gd_scenario_comet(ss.galaxy, ss.decided)[0] ? SS_COMETAPPEAR : SS_APPEAR);
         break;
     }
+    case SS_COMETAPPEAR: /* exeAppearCometWarning: "GalaxyInfo_CometAppearR" with its comet's name, at 15 */
+        if (ss.n.step == 15) {
+            char id[40];
+            snprintf(id, sizeof id, "CometName_%s", gd_scenario_comet(ss.galaxy, ss.decided));
+            const u16 *args[1] = {msg_get(id)};
+            msg_with_args(ss.comet_txt, 96, msg_get("GalaxyInfo_CometAppearR"), args, 1);
+            lyt_set_text_rec(ss.l, "TextComet", ss.comet_txt);
+            lyt_show_rec(ss.l, "CometAppear", 1);
+            lyt_start_pane(ss.l, "CometAppear", "CometAppear", 0);
+            se_start(SE_SY_COMET_WARNING_DISP, NULL);
+        }
+        if (ss.n.step > 15 && lyt_pane_stopped(ss.l, "CometAppear", 0)) nrv_set(&ss.n, SS_COMETWAIT);
+        break;
+    case SS_COMETWAIT:
+        if (ss.n.step % 80 == 25) se_start(SE_SY_COMET_WARNING, NULL);
+        if (FIRST(&ss.n)) lyt_start_pane(ss.l, "CometAppear", "CometWait", 0);
+        if (ss.n.step == 180) nrv_set(&ss.n, SS_COMETEND); /* cCometWarningFrame */
+        break;
+    case SS_COMETEND:
+        if (FIRST(&ss.n)) lyt_start_pane(ss.l, "CometAppear", "CometEnd", 0);
+        if (ss.n.step > 0 && lyt_pane_stopped(ss.l, "CometAppear", 0)) nrv_set(&ss.n, SS_APPEAR);
+        break;
     case SS_APPEAR:
         if (FIRST(&ss.n)) { lyt_set_pane_rate(ss.l, "ScenarioSelect", 0, 1.0f); ss_new_anim(NULL, 1.0f); }
         ss.fly = se_level(SE_DM_LV_SENARIO_SEL_FLY, NULL, ss.fly);
@@ -1144,7 +1171,7 @@ static void ss_update(void)
     ss_back_update();
 }
 
-void menu_scenario_select(const char *galaxy)
+void menu_scenario_select(const char *galaxy, int decided)
 {
     if (!ss.l || !ss.m_star || !ss.anim) { /* no layout: straight in at its first scenario */
         seq_galaxy_move(SEQ_MOVE, galaxy, 1, -1, 0);
@@ -1152,6 +1179,7 @@ void menu_scenario_select(const char *galaxy)
     }
     fade.frames = 0;
     snprintf(ss.galaxy, sizeof ss.galaxy, "%s", galaxy);
+    ss.decided = decided;
     ss.alive = 1;
     ss_appear();
     printf("scenario select: %s\n", ss.galaxy);
@@ -1182,6 +1210,7 @@ static void ss_init(const Scene *s)
     lyt_follow(ss.l, "NewStarGreen", ss.green_pos, 0);
     lyt_follow(ss.l, "Mario", ss.mario_pos, 0);
     for (int i = 0; i < 2; i++) lyt_follow(ss.l, ss_question_pane[i], ss.q_pos[i], 0);
+    lyt_show_rec(ss.l, "CometAppear", 0); /* RMGE01: hidden until its warning */
 }
 
 static void wipe_draw_quad(void)

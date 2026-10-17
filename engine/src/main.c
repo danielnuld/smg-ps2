@@ -861,10 +861,20 @@ int main(void)
             if (frame == 1420) pad_force = PAD_CROSS;
         }
 #endif
+#if defined(PACKS) && defined(COMET_TEST)
+        if (frame == 300) { /* a comet on Good Egg: its decided scenario and warning */
+            gd_set_star("HeavensDoorGalaxy", 1); /* 13 stars: EventCometStarter (StarNum 13) */
+            for (int k = 1; k <= 6; k++) { gd_set_star("EggStarGalaxy", k == 4 || k == 5 ? 7 : k); gd_set_star("HoneyBeeKingdomGalaxy", k); } gd_set_star("SurfingLv1Galaxy", 1); gd_set_star("FlipPanelExGalaxy", 1);
+            int a = gd_flag_try_on("EventCometStarter");
+            gd_comet_sync();
+            printf("comet test: starter %d, Good Egg comet star %d\n", a, gd_comet_star("EggStarGalaxy"));
+            menu_scenario_select("EggStarGalaxy", gd_comet_star("EggStarGalaxy"));
+        }
+#endif
 #if defined(PACKS) && defined(SCENSEL_TEST)
         { /* the scenario select of EggStar with its first star: the pointer on Star2 (the new one), X: its scenario 2 */
             pad_force = 0;
-            if (frame == 300) { gd_set_star("EggStarGalaxy", 1); menu_scenario_select("EggStarGalaxy"); }
+            if (frame == 300) { gd_set_star("EggStarGalaxy", 1); menu_scenario_select("EggStarGalaxy", 0); }
             if (frame == 700) printf("scensel test f %u: pointer on Star2 %d\n", frame, menu_test_point_scenario("Star2"));
             if (frame == 730) { pad_force = PAD_CROSS; printf("scensel test f %u: X, selecting %d\n", frame, menu_scenario_selecting()); }
         }

@@ -47,6 +47,10 @@ void gd_add_player_left(int n);
 int gd_stocked_star_pieces(void);
 void gd_add_stocked_star_pieces(int n);
 
+void gd_comet_sync(void);            /* GalaxyCometScheduler::syncWithFlags */
+void gd_comet_next(void);            /* forceToNextState (after a stage result) */
+int gd_comet_star(const char *galaxy); /* the landed comet's scenario (4 normal, 5 purple coins), 0 none */
+
 /* UserFiles 0..5 (FileSelector's 1..6): created, icon (1 Mario, 2 Luigi, 3 Yoshi, 4 Kinopio, 5 Peach), modified count */
 int gd_file_created(int i);
 int gd_file_icon(int i);

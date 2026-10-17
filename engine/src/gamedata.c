@@ -35,6 +35,7 @@ static struct {
     u16 left, left_supply;      /* mPlayerLeft, mPlayerLeftSupply */
     u16 alms[16];               /* StarPieceAlmsStorage */
     u8 complete_ml;             /* UserFile isOnCompleteEndingMarioAndLuigi */
+    u8 comet_pos[6], comet_land[6], comet_ready[6], comet_started; /* GalaxyCometScheduler (gd_comet_*) */
 } gd;
 
 static const GScen *find_scen(const char *g)
@@ -229,6 +230,91 @@ int gd_stocked_star_pieces(void) { return (int)gd.pieces; }
 void gd_add_stocked_star_pieces(int n) { int v = (int)gd.pieces + n; gd.pieces = (u32)(v < 0 ? 0 : v > 9999 ? 9999 : v); }
 
 /* the file: "SMGD", a version, the struct (ponytail: not GameDataHolder's BinaryDataChunkHolder chunks) */
+
+/* GalaxyCometScheduler.cpp: each grand galaxy's timetable of comets (0 normal, 1 the 100-coin one); a table's comet
+ * lands on its galaxy until a stage clear moves it on (forceToNextState: land -> hide -> the next one that can
+ * appear lands). Its state in the game data (updateGalaxyCometStatus) */
+typedef struct { const char *g; u8 cat; } CometPaper;
+#define N 0
+#define P 1
+static const CometPaper ct1[] = {{"EggStarGalaxy", N}, {"HoneyBeeKingdomGalaxy", N}, {"HoneyBeeKingdomGalaxy", P}, {"EggStarGalaxy", P},
+    {"EggStarGalaxy", N}, {"HoneyBeeKingdomGalaxy", N}, {"EggStarGalaxy", P}, {"HoneyBeeKingdomGalaxy", P}, {"EggStarGalaxy", N},
+    {"HoneyBeeKingdomGalaxy", P}, {"EggStarGalaxy", P}, {"HoneyBeeKingdomGalaxy", N}, {"HoneyBeeKingdomGalaxy", N}, {"EggStarGalaxy", N},
+    {"HoneyBeeKingdomGalaxy", P}, {"EggStarGalaxy", P}, {NULL, 0}};
+static const CometPaper ct2[] = {{"StarDustGalaxy", N}, {"StarDustGalaxy", P}, {"BattleShipGalaxy", N}, {"BattleShipGalaxy", P},
+    {"StarDustGalaxy", P}, {"BattleShipGalaxy", N}, {"StarDustGalaxy", N}, {"BattleShipGalaxy", P}, {"StarDustGalaxy", N},
+    {"StarDustGalaxy", P}, {"BattleShipGalaxy", N}, {"BattleShipGalaxy", P}, {"StarDustGalaxy", N}, {"BattleShipGalaxy", N},
+    {"StarDustGalaxy", P}, {"BattleShipGalaxy", P}, {NULL, 0}};
+static const CometPaper ct3[] = {{"PhantomGalaxy", N}, {"HeavenlyBeachGalaxy", N}, {"PhantomGalaxy", P}, {"HeavenlyBeachGalaxy", P},
+    {"HeavenlyBeachGalaxy", N}, {"PhantomGalaxy", P}, {"HeavenlyBeachGalaxy", P}, {"PhantomGalaxy", N}, {"HeavenlyBeachGalaxy", P},
+    {"PhantomGalaxy", N}, {"HeavenlyBeachGalaxy", N}, {"PhantomGalaxy", P}, {"PhantomGalaxy", N}, {"HeavenlyBeachGalaxy", P},
+    {"PhantomGalaxy", P}, {"HeavenlyBeachGalaxy", N}, {NULL, 0}};
+static const CometPaper ct4[] = {{"SandClockGalaxy", N}, {"CosmosGardenGalaxy", N}, {"IceVolcanoGalaxy", N}, {"CosmosGardenGalaxy", P},
+    {"SandClockGalaxy", N}, {"CosmosGardenGalaxy", N}, {"SandClockGalaxy", P}, {"CosmosGardenGalaxy", P}, {"SandClockGalaxy", N},
+    {"IceVolcanoGalaxy", P}, {"SandClockGalaxy", P}, {"CosmosGardenGalaxy", N}, {"IceVolcanoGalaxy", N}, {"CosmosGardenGalaxy", P},
+    {"IceVolcanoGalaxy", P}, {"SandClockGalaxy", N}, {"IceVolcanoGalaxy", N}, {"CosmosGardenGalaxy", P}, {"SandClockGalaxy", P},
+    {"IceVolcanoGalaxy", P}, {"CosmosGardenGalaxy", N}, {"IceVolcanoGalaxy", N}, {"SandClockGalaxy", P}, {"IceVolcanoGalaxy", P}, {NULL, 0}};
+static const CometPaper ct5[] = {{"OceanRingGalaxy", P}, {"ReverseKingdomGalaxy", N}, {"OceanRingGalaxy", N}, {"ReverseKingdomGalaxy", P},
+    {"FactoryGalaxy", N}, {"OceanRingGalaxy", P}, {"FactoryGalaxy", N}, {"ReverseKingdomGalaxy", N}, {"FactoryGalaxy", P},
+    {"OceanRingGalaxy", N}, {"ReverseKingdomGalaxy", N}, {"FactoryGalaxy", P}, {"OceanRingGalaxy", N}, {"ReverseKingdomGalaxy", P},
+    {"FactoryGalaxy", N}, {"ReverseKingdomGalaxy", N}, {"FactoryGalaxy", P}, {"OceanRingGalaxy", P}, {"FactoryGalaxy", N},
+    {"ReverseKingdomGalaxy", P}, {"OceanRingGalaxy", N}, {"FactoryGalaxy", P}, {"OceanRingGalaxy", P}, {"ReverseKingdomGalaxy", P}, {NULL, 0}};
+static const CometPaper ct6[] = {{"CannonFleetGalaxy", P}, {"OceanPhantomCaveGalaxy", P}, {"CannonFleetGalaxy", N}, {"HellProminenceGalaxy", N},
+    {"CannonFleetGalaxy", P}, {"HellProminenceGalaxy", P}, {"OceanPhantomCaveGalaxy", N}, {"CannonFleetGalaxy", P},
+    {"OceanPhantomCaveGalaxy", P}, {"CannonFleetGalaxy", P}, {"HellProminenceGalaxy", N}, {"OceanPhantomCaveGalaxy", P},
+    {"CannonFleetGalaxy", N}, {"HellProminenceGalaxy", P}, {"OceanPhantomCaveGalaxy", N}, {"HellProminenceGalaxy", N},
+    {"CannonFleetGalaxy", N}, {"OceanPhantomCaveGalaxy", N}, {"HellProminenceGalaxy", P}, {"CannonFleetGalaxy", N},
+    {"HellProminenceGalaxy", N}, {"OceanPhantomCaveGalaxy", P}, {"HellProminenceGalaxy", P}, {"OceanPhantomCaveGalaxy", N}, {NULL, 0}};
+#undef N
+#undef P
+static const CometPaper *const comet_tables[6] = {ct1, ct2, ct3, ct4, ct5, ct6};
+
+static int comet_can(const CometPaper *p) /* canAppearNormalComet / canAppearCoin100Comet */
+{
+    char f[64];
+    snprintf(f, sizeof f, "%s%s", p->cat ? "Coin100Comet" : "NormalComet", p->g);
+    return gd_flag_is_on(f) && !gd_has_star(p->g, p->cat ? 5 : 4);
+}
+static int comet_find(int t, int start, int *pos) /* findSuitableTimePaperPos */
+{
+    const CometPaper *tp = comet_tables[t];
+    int len = 0, p = start;
+    while (tp[len].g) len++;
+    for (int i = 0; i < len; i++) {
+        if (!tp[++p].g) p = 0;
+        if (comet_can(&tp[p])) { *pos = p; return 1; }
+    }
+    *pos = p;
+    return 0;
+}
+void gd_comet_sync(void) /* syncWithFlags: checkIsReady; "EventCometStarter" just on: the first contact */
+{
+    for (int t = 0; t < 6; t++) {
+        int pos, ready = comet_find(t, -1, &pos);
+        if (ready != gd.comet_ready[t]) { gd.comet_ready[t] = (u8)ready; if (ready) gd.comet_pos[t] = (u8)pos; }
+    }
+    if (gd_flag_is_on("EventCometStarter") && !gd.comet_started) { /* setScheduleFirstContact */
+        gd.comet_started = 1;
+        for (int t = 0; t < 6; t++) { gd.comet_pos[t] = 0; gd.comet_land[t] = t == 0; }
+    }
+}
+void gd_comet_next(void) /* forceToNextState: each table land <-> hide; hidden: the next comet that can appear */
+{
+    for (int t = 0; t < 6; t++) {
+        if (!gd.comet_ready[t]) continue;
+        gd.comet_land[t] = !gd.comet_land[t];
+        if (!gd.comet_land[t]) { int pos; gd.comet_ready[t] = (u8)comet_find(t, gd.comet_pos[t], &pos); gd.comet_pos[t] = (u8)pos; }
+    }
+}
+int gd_comet_star(const char *g) /* isCometLand: its comet's star (getEncounterCometPowerStarId: 4 normal, 5 coins); 0 none */
+{
+    for (int t = 0; t < 6; t++) {
+        const CometPaper *p = &comet_tables[t][gd.comet_pos[t]];
+        if (gd.comet_ready[t] && gd.comet_land[t] && !strcmp(p->g, g)) return p->cat ? 5 : 4;
+    }
+    return 0;
+}
+
 /* SaveDataHandleSequence's image of the save (config%d + mario%d per UserFile 1..6): each file a serialized gd, created
  * or not, its icon (FileSelectIconID: 1 Mario .. 5 Peach) and a modification count for its date. ponytail: no Luigi
  * data (luigi%d), no sysconf; the memory card writes this image (gd_image) */
@@ -286,13 +372,13 @@ int gd_serialize(u8 *buf, int size)
     int n = 8 + (int)sizeof gd;
     if (size < n) return 0;
     memcpy(buf, "SMGD", 4);
-    buf[4] = 1; buf[5] = buf[6] = buf[7] = 0;
+    buf[4] = 2; buf[5] = buf[6] = buf[7] = 0; /* 2: the comets kept */
     memcpy(buf + 8, &gd, sizeof gd);
     return n;
 }
 int gd_deserialize(const u8 *buf, int size)
 {
-    if (size < 8 + (int)sizeof gd || memcmp(buf, "SMGD", 4) || buf[4] != 1) return 0;
+    if (size < 8 + (int)sizeof gd || memcmp(buf, "SMGD", 4) || buf[4] != 2) return 0;
     memcpy(&gd, buf + 8, sizeof gd);
     gd.left = 4; /* GameDataPlayerStatus::deserialize: lives back to 4 */
     return 1;

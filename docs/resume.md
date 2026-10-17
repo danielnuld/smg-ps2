@@ -397,8 +397,13 @@ LayoutData layouts. Order by dependency:
    `map` test opens it directly). All packs repacked 2026-10-17 (simplify / PowerStar VIS fixes; 136 fit).
    Left on the map: discover / Tico / dome-lecture modes, Tico / comet / Mario icons, the list's belts / page turns,
    GalaxyDetail pictures (no room in the Observatory: AstroGalaxy streams 8.4 MB).
-   Next: icon select (MiiSelect fellows), the Observatory / dome demos (butler lectures), comets, the prologue; then
-   phase 1, sound.
+   Done since: MovieStarter (the prologue: a held fade for each THP movie, PrologueB -> HeavensDoorGalaxy 1; `prologue`
+   test), comets (gamedata.c GalaxyCometScheduler: Petari's six timetables, sync at each move, forceToNextState after a
+   stage result; the dome's confirm -> the comet's scenario decided, the scenario select's comet warning; `comet` test).
+   The save format is v2 (comets): v1 saves are dropped. The disc ISO (1.15 GB) still does not boot in PCSX2 ("open
+   fail SLICE.ELF;1"): OPL on the PS2 should load it; PCSX2 runs out/slice-packs.elf with host: packs.
+   Next: icon select (MiiSelect fellows), the Observatory / dome demos (butler lectures, AstroDomeComet), comet
+   icons on the map / dome info, Luigi; then phase 1, sound.
 Then phase 1 (Good Egg vs Wii: the rim step's ground check, below), sound last. The disc ISO over ~1 GB does not boot
 in PCSX2 (taken for a DVD: open fail; a CD-sized image boots); the user's way of loading it on the PS2 was asked.
 

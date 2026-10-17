@@ -91,12 +91,17 @@ void seq_galaxy_move(int type, const char *stage, int scenario, int start_id, in
         else { snprintf(st, sizeof st, "PeachCastleGardenGalaxy"); no = 1; }
         break;
     case SEQ_TITLE: snprintf(st, sizeof st, "FileSelect"); no = 1; break;
-    case SEQ_SCENARIO_SELECT: /* requestStartScenarioSelect: the player's choice first */
-        if (no < 1) { menu_scenario_select(st); return; }
+    case SEQ_SCENARIO_SELECT: /* requestStartScenarioSelect: the player's choice first; a landed comet: its star decided */
+        if (no < 1) { menu_scenario_select(st, gd_comet_star(st)); return; }
         break;
     case SEQ_MISS: stage_of(st, sizeof st, &no); break;
     }
-    if (type == SEQ_STAGE_CLEAR) sq.save_prompt = 1;
+    if (type == SEQ_STAGE_CLEAR) { /* updateGameDataAndSequenceAfterStageResultSequence */
+        sq.save_prompt = 1;
+        gd_comet_sync();
+        gd_comet_next();
+    }
+    gd_comet_sync(); /* GameSequenceProgress: syncWithFlags at every move */
     if (!st[0] || no < 1) return;
     char next[48];
     snprintf(next, sizeof next, "%s/%d", st, no);
