@@ -2706,15 +2706,15 @@ static void wipe_update(void)
 void menu_draw(void)
 {
     if (sr.alive) { render_world_done(); lyt_draw(sr.l); }
-    if (sv.win.alive) { render_world_done(); lyt_draw(sv.win.l); }
     if (dmu.on) { render_world_done(); dmu_draw(); }
     mlay_draw();
     gm_draw();
+    if (pm.alive) {
+        render_world_done(); /* the scene under the menu (LayoutOnPause draws after everything) */
+        lyt_draw(pm.l);
+        if (pm.win.alive) lyt_draw(pm.win.l);
+    }
+    if (sv.win.alive) { render_world_done(); lyt_draw(sv.win.l); } /* the save's window over all of it */
     wipe_draw_quad();
     fade_draw();
-    if (!pm.alive) return;
-    render_world_done(); /* the scene under the menu (LayoutOnPause draws after everything) */
-    lyt_draw(pm.l);
-    if (pm.win.alive) lyt_draw(pm.win.l);
-
 }
