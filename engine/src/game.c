@@ -223,6 +223,7 @@ typedef struct {
     const Model *md_bloom; /* its "<model>Bloom" model (PlanetMap::initBloomModel, createModelObjBloomModel) or NULL */
     int otamagma;    /* OtaKingMagma's collision (initCollisionParts "OtaKingMagma"): drawn with OtaKing (ota) */
     int bridge;      /* PhantomShipBridge 1; its Move collision part 2 + the bridge's inst index (update_bridges) */
+    int dossun;      /* Dossun: falls and rises on a cycle, a press (update_dossuns, dossun_place) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
 static V3 firebar_ball(const Inst *in, int j, int k);
@@ -575,6 +576,7 @@ static const Model *m_vtop, *m_vleaf;
 static int vine_try(Player *m);
 static int vine_hold(Player *m);
 static void pole_init(void);
+static void dossun_place(Inst *in);
 static int pole_try(Player *m), pole_hold(Player *m);
 static int pole_ride = -1; /* the Pole Mario holds (poles), -1 none */
 static const Model *m_ota, *m_otafoot, *m_coco, *m_fireball2, *m_firebubble, *m_otamagma, *m_otalfoot, *m_otabloom;
@@ -3187,9 +3189,10 @@ void game_rebind(void)
         in->rotor = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->arg[4] != -1 && r->arg[4] != 0; /* -1: not a map part */
         in->seesaw = strcmp(name, "PhantomShipHandle") == 0;
         in->bridge = strcmp(name, "PhantomShipBridge") == 0;
+        in->dossun = strcmp(name, "Dossun") == 0;
         in->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 ? 3 : 0;
         in->press = strcmp(name, "RGTowerPressGroundA") == 0 || strcmp(name, "ReverseGravityRoomPressGroundA") == 0 ||
-                    strcmp(name, "ReverseGravityRoomPressGroundB") == 0;
+                    strcmp(name, "ReverseGravityRoomPressGroundB") == 0 || in->dossun;
         in->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 : 0;
         { char bn[40]; snprintf(bn, sizeof bn, "%sBloom", name); in->md_bloom = scene_model(s, bn); }
         if (in->seesaw) { in->rotor = 0; seesaw_matrix(in); }
@@ -3211,6 +3214,7 @@ void game_rebind(void)
         if (in->tsuki && row_coord && row_turn[i]) tsuki_place(in);
         if (in->ticorail && row_coord && row_turn[i]) ticorail_place(in);
         if (in->biri && row_coord && row_turn[i]) biri_place(in);
+        if (in->dossun && row_turn) dossun_place(in);
         if (in->coco) coco_spawn(in);
         if (in->fountain || in->stray) memcpy(in->m0, in->m, 64);
         if (in->stray) in->head = row_turn[i] ? (stray_at[i % 64].x || stray_at[i % 64].y || stray_at[i % 64].z ? stray_at[i % 64] : v3(in->m[12], in->m[13], in->m[14])) : v3(in->m[12], in->m[13], in->m[14]);
@@ -12517,7 +12521,7 @@ static void pole_step(int k) /* its nerve while Mario holds it */
         if (first) pole_play(o->square ? "squarepolestart" : "treeclimbstart", 0);
         if (!o->square && mario_anim) {
             int end = anim_length(mario_anim);
-            float t = end > 0 ? 1.0f - (float)o->step / end : 0.0f, e = 1.0f - (1.0f - t) * (1.0f - t); /* getEaseOutValue */
+            float t = end > 0 ? 1.0f - (float)o->step / end : 0.0f, e = sinf(t * 1.5707963f); /* getEaseOutValue */
             o->roty += (o->nrv == PO_STARTFAST ? 9.0f : 5.0f) * e;
         }
         if (!pole_jump(k, 0, 0.0f) && stopped) pole_set(k, PO_WAIT);
@@ -15180,6 +15184,71 @@ static void update_railers(void)
     }
 }
 
+/* Dossun.cpp after Petari: its lower place the row's, its upper one arg0 (1000) along its up; Upper arg1 (180) minus
+ * FallStart's 24 frames, FallSign (FallStart, SE), Falling eased in at 30 a frame, OnGround 120 (Land effect, SE,
+ * camera shake within 3500), Rising eased in and out at 10 a frame; with SW_A it waits (Ready) for it. A press
+ * (addBodyMessageSensorMapObjPress: MarioPress); Mario on it is carried. row_turn its nerve (0 not started), row_step
+ * its step. ponytail: no FallStart shake / BVA faces, no quick comet (x 2.5) */
+enum { DS_INIT, DS_READY, DS_UPPER, DS_SIGN, DS_FALL, DS_GROUND, DS_RISE };
+static float ds_dist(const Row *r) { return r->arg[0] != -1 ? (float)r->arg[0] : 1000.0f; }
+static void dossun_place(Inst *in)
+{
+    const Row *r = &sc->objs[in->row];
+    float one[3] = {1, 1, 1}, m[16];
+    mat_translate_rot_scale(m, r->pos, r->rot, one);
+    V3 lo = row_pos(r), hi = vadd(lo, vmul(vnorm(v3(m[4], m[5], m[6])), ds_dist(r))), p = hi; /* _98, _8C */
+    int st = row_step[in->row], n = row_turn[in->row];
+    int fall = (short)(ds_dist(r) / 30.0f), hold = (short)(ds_dist(r) / 10.0f); /* mFallingTime, mHoldTime */
+    if (n == DS_FALL && fall > 0) p = vadd(hi, vmul(vsub(lo, hi), 1.0f - cosf((float)st / fall * 1.5707963f)));
+    else if (n == DS_GROUND) p = lo;
+    else if (n == DS_RISE && hold > 0) p = vadd(lo, vmul(vsub(hi, lo), (1.0f - cosf((float)st / hold * 3.14159265f)) / 2.0f));
+    in->m[12] = p.x; in->m[13] = p.y; in->m[14] = p.z;
+}
+static void update_dossuns(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->dossun) continue;
+        const Row *r = &sc->objs[in->row];
+        unsigned short *t = &row_step[in->row];
+        signed char *n = &row_turn[in->row];
+        int fall = (short)(ds_dist(r) / 30.0f), hold = (short)(ds_dist(r) / 10.0f);
+        int upper = (r->arg[1] != -1 ? r->arg[1] : 180) - 24; /* mRisenWaitTime - getBckFrameMax(FallStart) */
+        if (upper < 0) upper = 0;
+        float old[16];
+        memcpy(old, in->m, 64);
+        if (*n == DS_INIT) { *n = r->sw[SW_A] >= 0 ? DS_READY : DS_UPPER; *t = 0; }
+        else if (*t < 0xFFFF) ++*t;
+        V3 at = v3(in->m[12], in->m[13], in->m[14]);
+        switch (*n) {
+        case DS_READY: if (sw_on(r, SW_A)) { *n = DS_SIGN; *t = 0; } break;
+        case DS_UPPER: if (*t >= upper) { *n = DS_SIGN; *t = 0; } break;
+        case DS_SIGN:
+            if (*t == 0) se_start(SE_OJ_DOSSUN_FALL_SIGN, &at.x);
+            if (*t >= 24) { *n = DS_FALL; *t = 0; } /* isBckStopped(FallStart) */
+            break;
+        case DS_FALL:
+            in->lv[0] = se_level(SE_OJ_LV_DOSSUN_FALL, &at.x, in->lv[0]);
+            if (*t >= fall) { *n = DS_GROUND; *t = 0; }
+            break;
+        case DS_GROUND:
+            if (*t == 0) {
+                if (vlen(vsub(mario->pos, at)) < 3500.0f) camera_shake(SHAKE_NORMAL_WEAK); /* startRumbleWithShakeCameraNormalWeak */
+                se_start(SE_OJ_DOSSUN_LAND, &at.x);
+                fx_named("Dossun", "Land", in->m, NULL, NULL);
+            }
+            if (*t >= 120) { *n = DS_RISE; *t = 0; } /* sOnGroundFrame */
+            break;
+        case DS_RISE:
+            in->lv[0] = se_level(SE_OJ_LV_DOSSUN_UPPER, &at.x, in->lv[0]);
+            if (*t >= hold) { se_start(SE_OJ_DOSSUN_STOP, &at.x); *n = DS_UPPER; *t = 0; }
+            break;
+        }
+        dossun_place(in);
+        if (mario_ground == i) carry(old, in);
+    }
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -16985,6 +17054,7 @@ void game_update(void)
     }
     LQ(7, update_seesaws()); /* after Mario: his hip drop (hip_hit) this frame */
     LQ(8, update_bridges());
+    update_dossuns();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
