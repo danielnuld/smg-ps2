@@ -42,10 +42,10 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
-       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI };
+       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO };
 /* walkers ported in the release push: their classes (counted, placed and drawn through this table) */
 static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}, {"BasaBasa", WALK_BASABASA}, {"BasaBasaIce", WALK_BASABASA}, {"Jellyfish", WALK_JELLYFISH},
-                                                                    {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}, {"Mogu", WALK_MOGU}, {"Mogucchi", WALK_MOGUCCHI}};
+                                                                    {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}, {"Mogu", WALK_MOGU}, {"Mogucchi", WALK_MOGUCCHI}, {"Metbo", WALK_METBO}};
 #define NEW_WALKERS ((int)(sizeof new_walkers / sizeof new_walkers[0]))
 static const Model *m_wnew[NEW_WALKERS];
 static int walker_new_kind(const char *cls)
@@ -15808,6 +15808,211 @@ static void draw_mogucchi_extras(void) /* its hole (MogucchiHole, its clip the m
     }
 }
 
+/* ActorMovementUtil moveAndTurnToDirection: its front turned to dir on gravity's plane (turn degrees), onto the
+ * ground's plane, accel along it, friction, the binds' normal parts taken off, gravity off the ground (else into it) */
+static void w_move_turn(Kuribo *k, V3 dir, float accel, float grav, float fric, float turn)
+{
+    turn_on_plane(&k->front, dir, k->grav, cosf(turn * 0.0174533f));
+    if (k->on_ground) { V3 f = vtangent(k->front, k->gn); if (vlen(f) > 1e-6f) k->front = vnorm(f); } /* turnDirectionToGround */
+    w_add_move(k, k->front, accel);
+    k->vel = vmul(k->vel, fric);
+    if (k->on_ground && vdot(k->vel, k->gn) < 0) k->vel = vtangent(k->vel, k->gn); /* reboundVelocityFromCollision(0, 0, 1) */
+    if (k->on_wall == 2 && vdot(k->vel, k->wn) < 0) k->vel = vtangent(k->vel, k->wn);
+    k->vel = vadd(k->vel, k->on_ground ? vmul(k->gn, -grav) : vmul(k->grav, grav)); /* addVelocityToGravityOrGround */
+}
+
+/* Metbo.cpp after Petari: Wait 150 (its SW_A on, if any) then WalkAround 200 (0.25, a heading turned 20 either way
+ * every 10 frames, back home past 300 or at a drop), again or Wait; Mario within 800 in a clear line, no drop his
+ * way: Search (FIND), ChaseStart, Chase (0.8 a frame, at least 120, ends past 1200, at 220, a drop or 1 in 50: Rest
+ * 60, home where it stopped); NonActive past 3000. Its attack (80) hurts Mario in Wait / WalkAround / Search / Chase
+ * (Attack, Rest); a trample or hip drop: Guard (the hip drop countered) unless it swoons (then TrampleDown: a coin);
+ * a spin: SwoonStart (45 off, mostly up), SwoonLand, SwoonSpin, SwoonWait 150, Recover; invincible Mario or an
+ * explosion: BlowDown (SpinHitController 20 / 20 / 4, 0.2, 40 / 20, three star pieces); a star piece guards. Dead in a
+ * death area or water. Velocity at most 30 (not swooning / down). ponytail: no star pointer swoon, no SE version,
+ * no group clipping, no dark matter */
+enum { MB_NONACTIVE, MB_WAIT, MB_WALKAROUND, MB_SEARCH, MB_CHASESTART, MB_CHASE, MB_GUARD, MB_TRAMPLEDOWN, MB_BLOWDOWN,
+       MB_ATTACK, MB_REST, MB_SWOONSTART, MB_SWOONLAND, MB_SWOONSPIN, MB_SWOONWAIT, MB_RECOVER };
+static int mb_down(const Kuribo *k) { return k->nrv == MB_TRAMPLEDOWN || k->nrv == MB_BLOWDOWN; }
+static int mb_swoon(const Kuribo *k) { return k->nrv >= MB_SWOONSTART && k->nrv <= MB_SWOONWAIT; }
+static int mb_normal(const Kuribo *k) { return k->nrv >= MB_WAIT && k->nrv <= MB_CHASE; }
+static void mb_move(Kuribo *k, float a, float g, float f, float t, const V3 *target) /* moveOrFall */
+{
+    V3 v = target ? *target : mario->pos;
+    if (k->on_ground) w_move_turn(k, vsub(v, k->pos), a, g, f, t);
+    else w_move_turn(k, vsub(v, k->pos), 0.0f, 3.0f, 0.99f, 0.0f); /* sFallParam */
+}
+#define MB_DONTMOVE 0.0f, 2.0f, 0.5f, 0.0f
+#define MB_SKATE 0.0f, 2.0f, 0.98f, 0.0f
+static int mb_fall_next(const Kuribo *k, V3 dir) /* isFallNextMove(pos, dir, gravity, 200, 100, 300) */
+{
+    V3 f = vtangent(dir, k->grav);
+    if (vlen(f) < 1e-6f) return 0;
+    V3 s = vsub(vadd(k->pos, vmul(vnorm(f), 200.0f)), vmul(k->grav, 100.0f));
+    return !line_hits(s, vadd(s, vmul(k->grav, 400.0f)));
+}
+static int mb_search(Kuribo *k) /* trySearch */
+{
+    if (vlen(vsub(mario->pos, k->pos)) >= 800.0f) return 0;
+    if (line_hits(k->pos, vadd(mario->pos, vmul(mario->up, HIT_BODY_H)))) return 0; /* isExistMapCollision */
+    if (mb_fall_next(k, vsub(mario->pos, k->pos))) return 0;
+    w_nrv(k, MB_SEARCH);
+    return 1;
+}
+static void mb_kill(Kuribo *k)
+{
+    const Row *r = &sc->objs[k->row];
+    w_se(k, SE_EM_EXPLODE_S);
+    float m[16];
+    basis_matrix(m, k->pos, k->qy, k->qz, 0);
+    fx_named("Metbo", "Death", m, NULL, NULL);
+    if (r->sw[SW_DEAD] >= 0) sw_set((Row *)r, SW_DEAD, 1);
+    k->state = KURIBO_DEAD; row_kill(k->row);
+}
+static void metbo_update(Kuribo *k)
+{
+    const Row *r = &sc->objs[k->row];
+    if (!k->front.x && !k->front.y && !k->front.z) { kuribo_init(k); k->tcenter = k->pos; k->ttarget = v3(0, 0, 0); w_nrv(k, MB_WAIT); k->item = 0; }
+    k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f);
+    float near = vlen(vsub(mario->pos, k->pos));
+    int st = ++k->step;
+    switch (k->nrv) {
+    case MB_NONACTIVE:
+        if (st == 0) { k->vel = v3(0, 0, 0); k->bind_off = 1; }
+        if (near < 3000.0f) { k->bind_off = 0; w_nrv(k, MB_WAIT); }
+        break;
+    case MB_WAIT:
+        if (st == 0) w_act(k, "Wait");
+        mb_move(k, MB_DONTMOVE, NULL);
+        if ((r->sw[SW_A] < 0 || sw_on(r, SW_A)) && !mb_search(k)) {
+            if (near >= 3000.0f && k->on_ground) w_nrv(k, MB_NONACTIVE); /* tryNonActive */
+            else if (st == 150) w_nrv(k, MB_WALKAROUND);
+        }
+        break;
+    case MB_WALKAROUND: {
+        if (st == 0) w_act(k, "Walk");
+        if (vlen(vsub(k->pos, k->tcenter)) >= 300.0f || mb_fall_next(k, k->front)) k->ttarget = vsub(k->tcenter, k->pos);
+        else if (st % 10 == 0) k->ttarget = rot_axis(k->ttarget, vnorm(k->qy), (rand() % 2 ? -20.0f : 20.0f) * 0.0174533f);
+        V3 t = vadd(k->ttarget, k->pos);
+        mb_move(k, 0.25f, 2.0f, 0.92f, 2.0f, &t); /* sWalkAroundParam */
+        if (!mb_search(k) && st == 200) w_nrv(k, rand() % 2 ? MB_WAIT : MB_WALKAROUND);
+        break;
+    }
+    case MB_SEARCH:
+        if (st == 0) { w_act(k, "Search"); w_se(k, SE_EM_METBO_FIND); }
+        mb_move(k, 0.0f, 2.0f, 0.5f, 5.0f, NULL); /* sSearchParam */
+        if (w_bck_stopped(k)) w_nrv(k, MB_CHASESTART);
+        break;
+    case MB_CHASESTART:
+        if (st == 0) w_act(k, "RunStart");
+        if (k->on_ground) w_se_lv(k, SE_EM_LV_KURIBO_DASH1);
+        mb_move(k, MB_DONTMOVE, NULL);
+        if (w_bck_stopped(k)) w_nrv(k, MB_CHASE);
+        break;
+    case MB_CHASE:
+        if (st == 0) w_act(k, "Run");
+        if (k->on_ground) w_se_lv(k, SE_EM_LV_KURIBO_DASH1);
+        mb_move(k, 0.8f, 2.0f, 0.9f, 2.0f, NULL); /* sChaseParam */
+        if (mb_fall_next(k, k->front)) { k->tcenter = k->pos; w_nrv(k, MB_REST); break; }
+        if (st < 120) break;
+        if (near >= 1200.0f || st == 220 || rand() % 50 == 0) { k->tcenter = k->pos; w_nrv(k, MB_REST); } /* endChase */
+        break;
+    case MB_GUARD:
+        if (st == 0) w_act(k, "Guard");
+        mb_move(k, MB_DONTMOVE, NULL);
+        if (w_bck_stopped(k)) w_nrv(k, MB_WAIT);
+        break;
+    case MB_TRAMPLEDOWN:
+        if (st == 0) { w_se(k, SE_EM_STOMPED_S); w_act(k, "Press"); }
+        mb_move(k, MB_DONTMOVE, NULL);
+        if (w_bck_stopped(k)) { pop_coins(k->pos, k->qy, 1); mb_kill(k); return; }
+        break;
+    case MB_BLOWDOWN:
+        if (st == 0) { w_se(k, SE_PM_SPIN_HIT); w_act(k, "Blow"); }
+        if (spin_hit_exec(k, 20, 20, 4, 0.2f, 3, 0, k->timer)) { mb_kill(k); return; }
+        break;
+    case MB_ATTACK:
+        if (st == 0) w_act(k, "Attack");
+        mb_move(k, MB_DONTMOVE, NULL);
+        if (w_bck_stopped(k)) w_nrv(k, MB_REST);
+        break;
+    case MB_REST:
+        if (st == 0) w_act(k, "Wait");
+        mb_move(k, MB_DONTMOVE, NULL);
+        if (st == 60) w_nrv(k, MB_WAIT);
+        break;
+    case MB_SWOONSTART:
+        if (st == 0) { w_act(k, "SwoonStart"); w_se(k, SE_EM_CRASH_S); }
+        else { w_move_turn(k, vsub(mario->pos, k->pos), 0.0f, 3.0f, 0.99f, 0.0f); if (k->on_ground) w_nrv(k, MB_SWOONLAND); }
+        break;
+    case MB_SWOONLAND:
+        if (st == 0) w_act(k, "SwoonLand");
+        w_se_lv(k, SE_EM_LV_METBO_STAGGER);
+        mb_move(k, MB_SKATE, NULL);
+        if (w_bck_stopped(k)) w_nrv(k, MB_SWOONSPIN);
+        break;
+    case MB_SWOONSPIN:
+        if (st == 0) w_act(k, "SwoonSpin");
+        w_se_lv(k, SE_EM_LV_METBO_STAGGER);
+        mb_move(k, MB_SKATE, NULL);
+        if (w_bck_stopped(k)) w_nrv(k, MB_SWOONWAIT);
+        break;
+    case MB_SWOONWAIT:
+        if (st == 0) w_act(k, "SwoonWait");
+        w_se_lv(k, SE_EM_LV_METBO_SWOON);
+        mb_move(k, MB_DONTMOVE, NULL);
+        if (st == 150) w_nrv(k, MB_RECOVER);
+        break;
+    case MB_RECOVER:
+        if (st == 0) { w_act(k, "Recover"); w_se(k, SE_EM_METBO_SWOON_RECOVER); }
+        mb_move(k, MB_DONTMOVE, NULL);
+        if (w_bck_stopped(k)) w_nrv(k, MB_WAIT);
+        break;
+    }
+    k->act_t += k->act_rate;
+    /* control() */
+    float dep;
+    if (in_death(k->pos) || in_water(k->pos, k->qy, &dep)) { mb_kill(k); return; }
+    if (k->nrv != MB_SWOONSTART && !mb_down(k) && vlen(k->vel) > 30.0f) k->vel = vmul(vnorm(k->vel), 30.0f); /* restrictVelocity */
+    k->qy = vmul(k->grav, -1.0f); k->qz = vnorm(vtangent(k->front, k->qy)); /* calcMtxFromGravityAndZAxis (no blend) */
+    if (vlen(k->qz) < 1e-3f) k->qz = k->front;
+    if (k->nrv != MB_NONACTIVE) w_bind(k, 100.0f);
+    k->up = k->qy;
+    if (mb_down(k) || k->nrv == MB_NONACTIVE) return;
+    /* sensors at its feet: body 100, attack 80 */
+    int msg = mario_offence(k->pos, 100.0f, k->grav);
+    if (invincible_time && mario_touch(k->pos, 100.0f)) { spin_hit_start(k, mario->pos, 40.0f, 20.0f); k->timer = 1; k->item = 2; w_nrv(k, MB_BLOWDOWN); return; }
+    if (msg == MSG_HIPDROP && k->nrv != MB_RECOVER && k->nrv != MB_SWOONSTART) {
+        w_se(k, SE_EM_METBO_TRAMPLE);
+        if (mb_swoon(k)) w_nrv(k, MB_TRAMPLEDOWN);
+        else { w_nrv(k, MB_GUARD); mario->hip = 0; mario->vup = 25.0f; mario->grounded = 0; } /* sendMsgEnemyAttackCounterHipDrop */
+        return;
+    }
+    if (msg == MSG_TRAMPLE && k->nrv != MB_SWOONSTART) {
+        w_se(k, SE_EM_METBO_TRAMPLE);
+        if (k->nrv != MB_RECOVER) w_nrv(k, mb_swoon(k) ? MB_TRAMPLEDOWN : MB_GUARD);
+        mario->vup = 15.0f; mario->grounded = 0;
+        return;
+    }
+    if (msg == MSG_HITALL && k->nrv != MB_SWOONSTART) { /* startSwoon(false) */
+        scene_stop = 3; w_se(k, SE_EM_METBO_SPIN_HIT); w_se(k, SE_PM_SPIN_HIT);
+        V3 v = vsub(k->pos, mario->pos);
+        v = vlen(v) > 1e-6f ? vmul(vnorm(v), 0.4f) : v3(0, 0, 0);
+        k->vel = vmul(vnorm(vsub(v, k->grav)), 45.0f);
+        turn_on_plane(&k->front, vsub(mario->pos, k->pos), k->grav, -1.0f);
+        w_nrv(k, MB_SWOONSTART);
+        return;
+    }
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    if (vlen(vsub(mc, k->pos)) < 80.0f + HIT_BODY_R) {
+        if (mb_normal(k) && !mario->hurt_timer) { hurt_mario(k->pos, 15.0f); w_nrv(k, MB_ATTACK); } /* sendMsgEnemyAttack */
+        else {
+            V3 out = vtangent(vsub(mc, k->pos), mario->up);
+            float l = vlen(out), want = 80.0f + HIT_BODY_R * 0.6f;
+            if (l > 1e-3f && l < want) mario->pos = vadd(mario->pos, vmul(out, (want - l) / l));
+        }
+    }
+}
+
 static void update_kuribo_one(Kuribo *k);
 static void update_kuribo(void)
 {
@@ -15834,6 +16039,7 @@ static void update_kuribo_one(Kuribo *k)
             else if (k->kind == WALK_KANINA) kanina_update(k);
             else if (k->kind == WALK_MOGU) mogu_update(k);
             else if (k->kind == WALK_MOGUCCHI) mogucchi_update(k);
+            else if (k->kind == WALK_METBO) metbo_update(k);
             return;
         }
         if (k->kind == WALK_PETARI) { /* ponytail: still while its zone has no collision (streaming) */
@@ -18439,6 +18645,7 @@ static void update_shots(void)
             else if (e->kind == WALK_UNIZO || e->kind == WALK_POIHANA || e->kind == WALK_JELLYFISH) { /* isMsgStarPieceAttack: nothing more
                                                                                                   * (Jellyfish: its anim scale hit reaction) */ }
             else if (e->kind == WALK_GESSO) { if (e->nrv != GE_PUNCHDOWN) w_nrv(e, GE_ROTATE); } /* isMsgStarPieceAttack: Rotate */
+            else if (e->kind == WALK_METBO) { w_se(e, SE_EM_METBO_TRAMPLE); if (!mb_swoon(e) && e->nrv != MB_RECOVER && !mb_down(e)) w_nrv(e, MB_GUARD); } /* isMsgStarPieceReflect */
             else if (e->kind == WALK_MOGUCCHI) { if (e->nrv != MC_SCATTER && e->nrv != MC_DIE) w_nrv(e, MC_APPEARDOWN); } /* isMsgStarPieceAttack */
             else if (e->kind == WALK_MOGU) { /* isMsgStarPieceAttack: up, it flips (SwoonStart) */
                 if (e->nrv == MG_APPEAR || e->nrv == MG_SEARCH || e->nrv == MG_TURN || e->nrv == MG_THROW) { if (e->bshow == 1) e->bshow = 0; w_nrv(e, MG_SWOONSTART); }
