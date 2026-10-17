@@ -42,9 +42,10 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
-       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH };
+       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA };
 /* walkers ported in the release push: their classes (counted, placed and drawn through this table) */
-static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}, {"BasaBasa", WALK_BASABASA}, {"BasaBasaIce", WALK_BASABASA}, {"Jellyfish", WALK_JELLYFISH}};
+static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}, {"BasaBasa", WALK_BASABASA}, {"BasaBasaIce", WALK_BASABASA}, {"Jellyfish", WALK_JELLYFISH},
+                                                                    {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}};
 #define NEW_WALKERS ((int)(sizeof new_walkers / sizeof new_walkers[0]))
 static const Model *m_wnew[NEW_WALKERS];
 static int walker_new_kind(const char *cls)
@@ -15095,6 +15096,265 @@ static void jelly_update(Kuribo *k)
     }
 }
 
+/* Kanina.cpp after Petari (Kanina blue: a 1-up; KaninaRed: three star pieces). Appears (Appear) with its switch, Waits
+ * 120 then Walks 180 (3 aside, a random way within 90 of its front) or Digs (water bottom, or three walks done for a
+ * blue one) and waits underground 120 until Mario is 500 off. Mario in its front half within 1000 / 30: FindPlayer
+ * (Search), then RunAway (13 a frame, red 7 towards him, 60 (red 30) off his way, turning the other way each run) for
+ * 15-75 frames, breaks 10-75 (RunAwayBreak; a red one turns to him when he gets behind it: Turn / TurnEnd), back to
+ * Wait / Dig past 2000; a wall rebounds it (HitWall 6 back, 20 up, then RunAwayReboundDirection). Its attack (80 at
+ * Body) hurts Mario from its front (Attack, Vaunt); a trample or hip drop guards (Guard 90, GuardReturn; the hip drop
+ * throws Mario away); a front punch guards (30 back); a punch from behind (60 / 30 behind within 800), a fire ball,
+ * a jet turtle or invincible Mario knocks it down (25 / 25 away, PunchDown 15: its item, Death). Gravity 1.5 off the
+ * ground (1 knocked down, 2.2 rebounding), friction 0.93 / 0.99 (0.88 guarding) while it stays put. ponytail: the blue
+ * one's 1-up is given at once (no KinokoOneUp popping out), no joint rumbler, blink BTP, star pointer, enemy push or
+ * base-matrix slerp */
+enum { KA_APPEAR, KA_WAIT, KA_ATTACK, KA_VAUNT, KA_GUARD, KA_GUARDEND, KA_DAMAGEFB, KA_DAMAGEHIP, KA_DIG, KA_UNDER,
+       KA_FIND, KA_BREAK, KA_REBOUNDEACH, KA_TURN, KA_TURNEND, KA_WALK, KA_RUN, KA_RUNREB, KA_HITWALL };
+static int ka_red(const Kuribo *k) { return !strcmp(walker_cls(k), "KaninaRed"); }
+static int ka_fan(const Kuribo *k, V3 dir, float dist, float degh, float degv) /* isInSightFanPlayer (degh the whole fan) */
+{
+    V3 to = vsub(mario->pos, k->pos);
+    if (mario_hidden || vlen(to) >= dist || vlen(to) < 1e-6f) return 0;
+    V3 h = vtangent(to, k->grav), d = vtangent(dir, k->grav);
+    if (vlen(h) < 1e-6f || vlen(d) < 1e-6f || vdot(vnorm(h), vnorm(d)) < cosf(degh * 0.5f * 0.0174533f)) return 0;
+    return fabsf(vdot(vnorm(to), k->grav)) <= sinf(degv * 0.0174533f);
+}
+static int ka_backward(const Kuribo *k, float a) { return ka_fan(k, vmul(k->qz, -1.0f), 800.0f, a * 2.0f, 30.0f); } /* isPlayerBackward */
+static int ka_run_time(void) { int r = rand() % 4; return r == 0 ? 15 : r == 1 ? 30 : r == 2 ? 60 : 75; }
+static int ka_break_time(void) { int r = rand() % 4; return r == 0 ? 10 : r == 1 ? 30 : r == 2 ? 60 : 75; }
+static void ka_item(Kuribo *k) /* appearItemPunch / appearItemTrample */
+{
+    V3 up = vmul(k->grav, -1.0f);
+    if (ka_red(k)) { drop_pieces(k->pos, up, 3); w_se(k, SE_OJ_STAR_PIECE_BURST); }
+    else { lives++; se_start(SE_SY_1UP, NULL); printf("kanina %d: 1-up, lives %d\n", k->row, lives); } /* ponytail: no KinokoOneUp */
+}
+static void ka_kill(Kuribo *k)
+{
+    float m[16];
+    basis_matrix(m, k->pos, k->qy, k->qz, 0);
+    fx_named(walker_cls(k), "Death", m, NULL, NULL);
+    w_se(k, SE_EM_EXPLODE_S);
+    k->state = KURIBO_DEAD; row_kill(k->row);
+}
+static void ka_blow(Kuribo *k, V3 from) /* doDamageFireBall: setVelocityBlowAttack 25 / 25 */
+{
+    V3 h = vtangent(vsub(k->pos, from), k->grav);
+    h = vlen(h) > 1e-6f ? vnorm(h) : k->qz;
+    k->vel = vsub(vmul(h, 25.0f), vmul(k->grav, 25.0f));
+    k->front = vmul(h, -1.0f);
+    w_nrv(k, KA_DAMAGEFB);
+}
+static int ka_find(Kuribo *k) { if (ka_fan(k, k->qz, 1000.0f, 180.0f, 30.0f)) { w_nrv(k, KA_FIND); return 1; } return 0; }
+static int ka_hit_wall(Kuribo *k) /* tryHitWall: reboundVelocityFromCollision(1, 0, 1) */
+{
+    if (k->on_wall != 2 || !rebound(&k->vel, k->wn, 1.0f)) return 0;
+    k->ttarget = vlen(k->vel) > 1e-6f ? vnorm(k->vel) : v3(0, 0, 0);
+    w_nrv(k, KA_HITWALL);
+    return 1;
+}
+static void ka_start_run(Kuribo *k) /* startRun */
+{
+    int red = ka_red(k);
+    w_act(k, red ? "ChaseRun" : "Run");
+    V3 up = k->qy, fp = vtangent(vsub(k->pos, mario->pos), up); /* calcVecFromPlayerH */
+    fp = vlen(fp) > 1e-6f ? vnorm(fp) : k->qz;
+    float bc = k->lva[0], ang = -1.0f * bc * (red ? 30.0f : 60.0f);
+    V3 dir = rot_axis(fp, vnorm(up), ang * 0.0174533f);
+    if (red) dir = vmul(dir, -1.0f);
+    k->vel = vmul(vnorm(dir), red ? 7.0f : 13.0f);
+    float fa = -1.0f * bc * ((red ? 30.0f : 60.0f) + (red ? 45.0f : 15.0f));
+    V3 side = vmul(rot_axis(fp, vnorm(up), fa * 0.0174533f), bc);
+    k->front = vnorm(vcross(side, up)); /* makeQuatSideUp: its Z */
+    k->lvt[0] = ka_run_time();
+    k->lva[0] = -bc;
+}
+static void kanina_update(Kuribo *k)
+{
+    const Row *r = &sc->objs[k->row];
+    int red = ka_red(k);
+    if (!k->front.x && !k->front.y && !k->front.z) { /* init */
+        kuribo_init(k);
+        k->tcenter = k->pos; k->lva[0] = 1.0f; k->lvt[0] = 15; k->lvt[1] = 10; k->phase = 0;
+        w_nrv(k, KA_APPEAR);
+    }
+    (void)r;
+    k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f);
+    int st = ++k->step;
+    switch (k->nrv) {
+    case KA_APPEAR:
+        if (st == 0) w_act(k, "Appear");
+        w_se_lv(k, SE_EM_LV_KANINA_PRE_APPEAR);
+        if (w_bck_stopped(k)) w_nrv(k, KA_WAIT);
+        break;
+    case KA_WAIT:
+        if (st == 0) { k->vel = v3(0, 0, 0); w_act(k, "Wait"); }
+        if (!ka_find(k) && st == 120) {
+            float dep;
+            if (in_water(k->pos, k->qy, &dep) && k->on_ground) { w_nrv(k, KA_DIG); break; } /* isBindedGroundWaterBottom */
+            if (!red && k->phase >= 3) { w_nrv(k, KA_DIG); break; }
+            w_nrv(k, KA_WALK);
+        }
+        break;
+    case KA_WALK:
+        if (st == 0) {
+            k->phase++;
+            w_act(k, "Walk");
+            float a = -1.5707964f + (rand() % 10001) / 10000.0f * 3.1415927f;
+            k->front = rot_axis(k->qz, vnorm(k->qy), a); /* calcWalkDirection */
+            w_blend_quat(k, w_up_ref(k), k->front, 0.05f, 0.5f);
+            k->vel = vmul(vnorm(vcross(k->qy, k->qz)), 3.0f * (rand() & 1 ? 1.0f : -1.0f)); /* its X, half either way */
+        }
+        if (!ka_find(k) && st == 180) { k->vel = v3(0, 0, 0); w_nrv(k, KA_WAIT); }
+        break;
+    case KA_RUN:
+        if (st == 0) ka_start_run(k);
+        if (!red) w_se_lv(k, SE_EM_LV_KANINA_AWAY);
+        if (!ka_hit_wall(k)) {
+            if (vlen(vtangent(vsub(mario->pos, k->pos), k->grav)) > 2000.0f) {
+                k->vel = v3(0, 0, 0);
+                w_nrv(k, (red && (rand() & 1)) || !red ? KA_DIG : KA_WAIT);
+            } else if (st == k->lvt[0]) { k->vel = v3(0, 0, 0); w_nrv(k, KA_BREAK); }
+        }
+        break;
+    case KA_RUNREB:
+        if (st == 0) {
+            w_act(k, "Run");
+            V3 v = vtangent(k->ttarget, k->qy);
+            v = vlen(v) > 1e-6f ? vnorm(v) : v3(0, 0, 0);
+            k->vel = vmul(v, red ? 7.0f : 13.0f);
+            k->lvt[0] = ka_break_time(); k->lva[0] = -k->lva[0];
+        }
+        w_se_lv(k, SE_EM_LV_KANINA_AWAY);
+        if (!ka_hit_wall(k)) {
+            if (vlen(vsub(mario->pos, k->pos)) > 2000.0f) { w_nrv(k, KA_WAIT); break; }
+            if (st == k->lvt[0]) w_nrv(k, KA_BREAK);
+        }
+        break;
+    case KA_BREAK:
+        if (st == 0) { w_act(k, "Wait"); k->lvt[1] = ka_break_time(); }
+        if (red && ka_backward(k, 120.0f)) { w_nrv(k, KA_TURN); break; } /* tryTurn */
+        if (st == k->lvt[1]) {
+            float dep;
+            if (in_water(k->pos, k->qy, &dep) && k->on_ground) { w_nrv(k, KA_DIG); break; }
+            w_nrv(k, KA_RUN);
+        }
+        break;
+    case KA_ATTACK:
+        if (st == 0) {
+            V3 h = vtangent(vsub(mario->pos, k->pos), k->grav);
+            if (vlen(h) > 1e-6f) k->front = vnorm(h); /* calcVecToPlayerH */
+            w_act(k, "Attack"); w_se(k, SE_EM_KANINA_ATTACK_FRONT);
+        }
+        if (w_bck_stopped(k)) w_nrv(k, KA_VAUNT);
+        break;
+    case KA_VAUNT:
+        if (st == 0) w_act(k, "Vaunt");
+        if (w_bck_stopped(k)) w_nrv(k, KA_BREAK);
+        break;
+    case KA_HITWALL:
+        if (st == 0) {
+            k->vel = vadd(vmul(k->ttarget, 6.0f), vmul(k->qy, 20.0f)); /* sWallHitReboundAcc / AccY */
+            V3 v = vtangent(k->ttarget, k->qy);
+            if (vlen(v) > 1e-6f) k->front = vnorm(vcross(vnorm(v), k->qy)); /* makeQuatSideUp(v, up) */
+        }
+        w_se_lv(k, SE_EM_LV_KANINA_AWAY);
+        if (st > 10 && k->on_ground) w_nrv(k, KA_RUNREB);
+        break;
+    case KA_REBOUNDEACH:
+        if (st == 0) w_act(k, "Wait");
+        if (st > 10 && k->on_ground) w_nrv(k, KA_RUNREB);
+        break;
+    case KA_GUARD:
+        if (st == 0) {
+            w_act(k, "Guard"); w_se(k, SE_EM_KANINA_GUARD);
+            V3 h = vtangent(vsub(mario->pos, k->pos), k->grav);
+            if (vlen(h) > 1e-6f) k->front = vnorm(h);
+        }
+        if (st == 90) w_nrv(k, KA_GUARDEND);
+        break;
+    case KA_GUARDEND:
+        if (st == 0) w_act(k, "GuardReturn");
+        if (w_bck_stopped(k)) w_nrv(k, KA_BREAK);
+        break;
+    case KA_DAMAGEHIP:
+        if (st == 0) { w_act(k, "HipDropDown"); w_se(k, SE_EM_STOMPED_S); }
+        if (st == 70) { ka_item(k); ka_kill(k); return; }
+        break;
+    case KA_DAMAGEFB:
+        if (st == 0) { w_act(k, "PunchDown"); w_se(k, SE_PM_SPIN_HIT); }
+        if (st == 15) { ka_item(k); ka_kill(k); return; }
+        break;
+    case KA_DIG:
+        if (st == 0) { k->phase = 0; w_act(k, "Dig"); }
+        w_se_lv(k, SE_EM_LV_KANINA_DIG);
+        if (w_bck_stopped(k)) w_nrv(k, KA_UNDER);
+        break;
+    case KA_UNDER:
+        if (st == 0) { k->vel = v3(0, 0, 0); k->pos = k->tcenter; }
+        if (st > 120 && vlen(vsub(mario->pos, k->pos)) > 500.0f) w_nrv(k, KA_APPEAR);
+        break;
+    case KA_FIND:
+        if (st == 0) {
+            w_act(k, "Search"); w_se(k, SE_EV_KANINA_FIND);
+            V3 h = vtangent(vsub(mario->pos, k->pos), k->grav);
+            if (vlen(h) > 1e-6f) k->front = vnorm(h);
+        }
+        if (w_bck_stopped(k)) w_nrv(k, KA_RUN);
+        break;
+    case KA_TURN:
+        if (st == 0) w_act(k, "Turn");
+        w_turn_to(k, mario->pos, 1.7f);
+        { V3 h = vtangent(vsub(mario->pos, k->pos), k->grav); if (vlen(h) < 1e-6f || vdot(vnorm(h), vnorm(vtangent(k->front, k->grav))) > 0.9999f) w_nrv(k, KA_TURNEND); }
+        break;
+    case KA_TURNEND:
+        if (st == 0) w_act(k, "Wait");
+        if (st == 30) w_nrv(k, KA_RUN);
+        break;
+    }
+    k->act_t += k->act_rate;
+    /* control(): blendQuatFromGroundAndFront 0.05 / 0.5, updateMovement */
+    w_blend_quat(k, w_up_ref(k), k->front, 0.05f, 0.5f);
+    if (k->nrv != KA_UNDER) {
+        if (!w_on_ground(k)) k->vel = vadd(k->vel, vmul(k->grav, k->nrv == KA_DAMAGEFB ? 1.0f : k->nrv == KA_HITWALL ? 2.2f : 1.5f));
+        int stay = k->nrv != KA_WALK && k->nrv != KA_RUN && k->nrv != KA_RUNREB && k->nrv != KA_DAMAGEFB;
+        if (stay) k->vel = vmul(k->vel, k->nrv == KA_GUARD || k->nrv == KA_GUARDEND ? 0.88f : w_on_ground(k) ? 0.93f : 0.99f);
+        w_bind(k, 100.0f);
+    }
+    k->up = k->qy;
+    if (k->nrv == KA_UNDER || k->nrv == KA_DIG || k->nrv == KA_DAMAGEHIP || k->nrv == KA_DAMAGEFB || k->nrv == KA_APPEAR) return;
+    /* sensors at Body: body 100, attack 80 */
+    V3 body = w_joint(k, walker_new_model(k->row), 2, v3(0, 0, 0));
+    int msg = mario_offence(body, 100.0f, k->grav);
+    if (invincible_time && (msg == MSG_TRAMPLE || mario_touch(body, 100.0f))) { ka_item(k); ka_kill(k); return; } /* invincible */
+    if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) { /* receiveTrample / receiveHipDrop: it guards */
+        if (k->nrv != KA_ATTACK) {
+            w_nrv(k, KA_GUARD);
+            if (msg == MSG_TRAMPLE) { mario->vup = 15.0f; mario->grounded = 0; }
+            else { V3 a = vtangent(vsub(mario->pos, k->pos), k->grav); mario->hip = 0; m_power_jump(mario, vadd(vmul(vlen(a) > 1e-6f ? vnorm(a) : k->qz, 10.0f), vmul(mario->up, 25.0f))); } /* sendMsgAwayJump */
+        }
+        return;
+    }
+    if (msg == MSG_HITALL) { /* receivePunch */
+        if (ka_backward(k, 30.0f)) { scene_stop = 8; ka_blow(k, mario->pos); return; }
+        if (k->nrv != KA_ATTACK) {
+            V3 h = vtangent(vsub(k->pos, mario->pos), k->grav);
+            if (vlen(h) > 1e-6f) k->vel = vadd(k->vel, vmul(vnorm(h), 30.0f)); /* sPunchAccel */
+            w_nrv(k, KA_GUARD);
+        }
+        return;
+    }
+    int can = k->nrv != KA_ATTACK && k->nrv != KA_GUARD && k->nrv != KA_GUARDEND; /* isStatePossibleToAttack */
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    if (can && !ka_backward(k, 30.0f) && !mario->hurt_timer && vlen(vsub(mc, body)) < 80.0f + HIT_BODY_R) { /* tryAttack */
+        hurt_mario(body, 15.0f);
+        w_nrv(k, KA_ATTACK);
+    } else if (vlen(vsub(mc, body)) < 100.0f + HIT_BODY_R) { /* sendMsgPush */
+        V3 out = vtangent(vsub(mc, body), mario->up);
+        float l = vlen(out), want = 100.0f + HIT_BODY_R * 0.6f;
+        if (l > 1e-3f && l < want) mario->pos = vadd(mario->pos, vmul(out, (want - l) / l));
+    }
+}
+
 static void update_kuribo_one(Kuribo *k);
 static void update_kuribo(void)
 {
@@ -15118,6 +15378,7 @@ static void update_kuribo_one(Kuribo *k)
             if (k->kind == WALK_GESSO) gesso_update(k);
             else if (k->kind == WALK_BASABASA) basa_update(k);
             else if (k->kind == WALK_JELLYFISH) jelly_update(k);
+            else if (k->kind == WALK_KANINA) kanina_update(k);
             return;
         }
         if (k->kind == WALK_PETARI) { /* ponytail: still while its zone has no collision (streaming) */
@@ -17723,6 +17984,9 @@ static void update_shots(void)
             else if (e->kind == WALK_UNIZO || e->kind == WALK_POIHANA || e->kind == WALK_JELLYFISH) { /* isMsgStarPieceAttack: nothing more
                                                                                                   * (Jellyfish: its anim scale hit reaction) */ }
             else if (e->kind == WALK_GESSO) { if (e->nrv != GE_PUNCHDOWN) w_nrv(e, GE_ROTATE); } /* isMsgStarPieceAttack: Rotate */
+            else if (e->kind == WALK_KANINA) { /* isMsgStarPieceReflect: Guard */
+                if (e->nrv != KA_DAMAGEFB && e->nrv != KA_DAMAGEHIP && e->nrv != KA_UNDER && e->nrv != KA_DIG) w_nrv(e, KA_GUARD);
+            }
             else if (e->kind == WALK_BASABASA) { /* isMsgStarPieceAttack: Stun (isNrvEnableStun) */
                 if (e->nrv != BB_TRAMPLE && e->nrv != BB_PUNCHDOWN && e->nrv != BB_WAIT && e->nrv != BB_ATTACH) w_nrv(e, BB_STUN);
             }
