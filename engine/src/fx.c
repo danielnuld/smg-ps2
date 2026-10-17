@@ -264,18 +264,19 @@ static void host_size(float j[16], const float m[16])
     }
 }
 
-void fx_anim(const char *clip, float from, float to, const float m[16], const float (*world)[16], const void *key)
+int fx_anim(const char *clip, float from, float to, const float m[16], const float (*world)[16], const void *key)
 {
     const char *slash = strchr(clip, '/');
-    if (!res || !slash) return;
+    if (!res || !slash) return 0;
     u32 nc = (u32)(slash - clip);
-    if (!auto_ix) return;
+    if (!auto_ix) return 0;
     int lo = 0, hi = (int)nautos; /* the first row not before cls/clip */
     while (lo < hi) {
         int mid = (lo + hi) / 2;
         if (auto_key(&autos[auto_ix[mid]], clip, nc, slash + 1) < 0) lo = mid + 1; else hi = mid;
     }
-    for (u32 k = (u32)lo; k < nautos && !auto_key(&autos[auto_ix[k]], clip, nc, slash + 1); k++) {
+    u32 k = (u32)lo;
+    for (; k < nautos && !auto_key(&autos[auto_ix[k]], clip, nc, slash + 1); k++) {
         u32 i = auto_ix[k];
         const FxAuto *a = &autos[i];
         if (a->start == 0xFFFF) continue;
@@ -301,6 +302,7 @@ void fx_anim(const char *clip, float from, float to, const float m[16], const fl
             else keep_one(r, (const char *)key + i, e, d->off, on);
         }
     }
+    return k > (u32)lo;
 }
 
 int fx_named(const char *cls, const char *name, const float m[16], const float (*world)[16], const void *key)

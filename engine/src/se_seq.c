@@ -758,7 +758,7 @@ void se_volpitch(u32 handle, float vol, float pitch) /* JAISound volume / pitch 
  * (the level sounds' handles are kept per owner and entry). ponytail: the direction / once / stop flags, deltas and
  * repeat are not looked at */
 static struct { const void *owner; u32 entry, handle; } anim_lv[32];
-void se_anim(const char *clip, float from, float to, const float pos[3], const void *owner)
+int se_anim(const char *clip, float from, float to, const float pos[3], const void *owner)
 {
     int lo = 0, hi = (int)nbas - 1, at = -1;
     while (lo <= hi) {
@@ -766,7 +766,7 @@ void se_anim(const char *clip, float from, float to, const float pos[3], const v
         if (!c) { at = m; break; }
         if (c < 0) lo = m + 1; else hi = m - 1;
     }
-    if (at < 0) return;
+    if (at < 0) return 0;
     for (u32 k = 0; k < bas[at].n; k++) {
         const u8 *e = basent + bas[at].off + 0x20 * k;
         u32 id = be32(e), flags = be32(e + 0x10);
@@ -790,6 +790,7 @@ void se_anim(const char *clip, float from, float to, const float pos[3], const v
         u32 h = se_start(id, pos);
         if (h) se_volpitch(h, vol, pitch);
     }
+    return 1;
 }
 
 void se_listener(const float eye[3], const float r[3])

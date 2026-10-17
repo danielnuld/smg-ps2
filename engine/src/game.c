@@ -410,19 +410,22 @@ static void draw_skin(const Model *md, const float m[16], Anim *a)
     if (md == m_mario_skin) render_light(&plight.cur);
     u32 c0 = cycles();
     if (a->clip_id >= 0) {
-        { /* EffectKeeper's animation rows; Mario's clips are his group's ("mario/<clip>", tools/jpa.py NAMED_ANIMS) */
+        /* whether a clip has effect / sound rows, by clip (its name checks the slot): most have none */
+        static struct { const char *name; u8 nofx, nose; } has[512];
+        const char *cn = sc->clips[a->clip_id].name;
+        typeof(has[0]) *h = &has[a->clip_id & 511];
+        if (h->name != cn) { h->name = cn; h->nofx = h->nose = 0; }
+        if (!h->nofx) { /* EffectKeeper's animation rows; Mario's clips are his group's ("mario/<clip>", tools/jpa.py NAMED_ANIMS) */
             char fk[48];
-            const char *cn = sc->clips[a->clip_id].name;
             snprintf(fk, sizeof fk, strchr(cn, '/') ? "%s" : "mario/%s", cn);
-            fx_anim(fk, a->fx_seen == a->clip_id + 1 ? a->fx_frame : -1.0f, a->frame, m, (const float (*)[16])a->world, a);
+            h->nofx = !fx_anim(fk, a->fx_seen == a->clip_id + 1 ? a->fx_frame : -1.0f, a->frame, m, (const float (*)[16])a->world, a);
         }
-        { /* its animation sounds (.bas: MR::startBas / actorSoundMovement); Mario's clips are MarioAnime's.
+        if (!h->nose) { /* its animation sounds (.bas: MR::startBas / actorSoundMovement); Mario's clips are MarioAnime's.
            * ponytail: only while drawn */
             char key[48];
-            const char *cn = sc->clips[a->clip_id].name;
             snprintf(key, sizeof key, strchr(cn, '/') ? "%s" : "marioanime/%s", cn);
             float at[3] = {m[12], m[13], m[14]};
-            se_anim(key, a->fx_seen == a->clip_id + 1 ? a->fx_frame : -1.0f, a->frame, at, a);
+            h->nose = !se_anim(key, a->fx_seen == a->clip_id + 1 ? a->fx_frame : -1.0f, a->frame, at, a);
         }
         prof_fxa += cycles() - c0;
         a->fx_seen = a->clip_id + 1;
