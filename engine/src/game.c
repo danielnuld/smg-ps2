@@ -42,9 +42,9 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
-       WALK_GESSO, WALK_BASABASA };
+       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH };
 /* walkers ported in the release push: their classes (counted, placed and drawn through this table) */
-static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}, {"BasaBasa", WALK_BASABASA}, {"BasaBasaIce", WALK_BASABASA}};
+static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}, {"BasaBasa", WALK_BASABASA}, {"BasaBasaIce", WALK_BASABASA}, {"Jellyfish", WALK_JELLYFISH}};
 #define NEW_WALKERS ((int)(sizeof new_walkers / sizeof new_walkers[0]))
 static const Model *m_wnew[NEW_WALKERS];
 static int walker_new_kind(const char *cls)
@@ -14915,6 +14915,186 @@ static const Model *walker_new_model(int row) /* a new walker's class model */
     for (int i = 0; i < NEW_WALKERS; i++) if (!strcmp(new_walkers[i].cls, sc->types + 32 * sc->objs[row].type)) return m_wnew[i];
     return NULL;
 }
+/* a walker's rail (RailRider): its polyline, length, the coord nearest a point */
+static const float *w_rail(const Kuribo *k, u32 *n, int *closed)
+{
+    const Row *r = &sc->objs[k->row];
+    return r->path >= 0 && scene_blob_g ? find_rail(scene_blob_g, r->zone, r->path, n, closed) : NULL;
+}
+static float w_rail_len(const float *p, u32 n)
+{
+    float l = 0;
+    for (u32 i = 0; p && i + 1 < n; i++) l += vlen(vsub(v3(p[3 * i + 3], p[3 * i + 4], p[3 * i + 5]), v3(p[3 * i], p[3 * i + 1], p[3 * i + 2])));
+    return l;
+}
+static float w_rail_nearest(const float *p, u32 n, V3 q) /* moveCoordToNearestPos */
+{
+    float best = 1e30f, at = 0, acc = 0;
+    for (u32 i = 0; p && i + 1 < n; i++) {
+        V3 a = v3(p[3 * i], p[3 * i + 1], p[3 * i + 2]), b = v3(p[3 * i + 3], p[3 * i + 4], p[3 * i + 5]), d = vsub(b, a);
+        float l = vlen(d), t = l > 0 ? vdot(vsub(q, a), d) / (l * l) : 0;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        float dd = vlen(vsub(q, vadd(a, vmul(d, t))));
+        if (dd < best) { best = dd; at = acc + t * l; }
+        acc += l;
+    }
+    return at;
+}
+
+/* Jellyfish.cpp after Petari: floats bobbing (sin(_94 + 45) along gravity, _94 + 1 a frame); on a rail it moves at
+ * arg0 (5) a frame, at its end waits arg1 (60) frames, then turns back (arg2 1: from its start again). Wait (turning
+ * 0.2 a frame either way or not, chosen every 280 frames; not on a rail with arg2 1) until Mario is within 1000: Find
+ * (SearchOn), then Threat (SearchWait) facing him (its front turned 0.5 a frame on its side's plane, within 30 of
+ * horizontal), or ThreatWith(Left / Right)Turn (SearchRotate) when he is 35 off its front; past 1500 Wait. Its body
+ * (100 at 30 up) hurts Mario strongly (Attack); a spin or explosion knocks it out (40 away, Death 30 or bound: its
+ * effect, a coin). ponytail: no point light, no star pointer swoon, the star piece's hit reaction (anim scale) not
+ * shown, no push between enemies */
+enum { JF_WAIT, JF_WAITR, JF_WAITL, JF_FIND, JF_THREAT, JF_THREATR, JF_THREATL, JF_DEATH, JF_ATTACK, JF_RAILGOAL };
+static V3 jf_side(const Kuribo *k) { return vnorm(vcross(vmul(k->grav, -1.0f), k->front)); }
+static void jf_face(Kuribo *k) /* faceToMario */
+{
+    V3 v = vsub(mario->pos, k->pos), up = vmul(k->grav, -1.0f);
+    if (vlen(v) > 1e-6f) {
+        turn_on_plane(&k->front, vnorm(v), jf_side(k), cosf(0.5f * 0.0174533f));
+        V3 h = vtangent(k->front, up);
+        if (vlen(h) > 1e-6f && vdot(k->front, vnorm(h)) < cosf(30.0f * 0.0174533f)) { /* clampVecAngleDeg 30 */
+            float s = vdot(k->front, up) > 0 ? 1.0f : -1.0f;
+            k->front = vnorm(vadd(vmul(vnorm(h), cosf(30.0f * 0.0174533f)), vmul(up, s * sinf(30.0f * 0.0174533f))));
+        }
+    }
+    if (k->nrv != JF_THREAT) {
+        int mode, fm = anim_clip_info("jellyfish/searchrotate", &mode);
+        float t = fm > 0 ? 1.0f - (float)k->step / fm : 0.0f;
+        k->front = rot_axis(k->front, vnorm(up), (k->nrv == JF_THREATL ? 1.0f : -1.0f) * 1.5f * t * 0.0174533f);
+    }
+}
+static int jf_threat(Kuribo *k) /* selectNerveThreat */
+{
+    if (vlen(vsub(mario->pos, k->pos)) >= 1500.0f) { w_nrv(k, JF_WAIT); return 1; }
+    V3 a = vtangent(vsub(mario->pos, k->pos), k->grav), b = vtangent(k->front, k->grav);
+    if (vlen(a) > 1e-6f && vlen(b) > 1e-6f && vdot(vnorm(a), vnorm(b)) > cosf(35.0f * 0.0174533f)) {
+        if (k->nrv == JF_THREAT) return 0;
+        w_nrv(k, JF_THREAT);
+    } else w_nrv(k, vdot(vsub(mario->pos, k->pos), jf_side(k)) > 0.0f ? JF_THREATL : JF_THREATR);
+    return 1;
+}
+static int jf_after_wait(Kuribo *k, int rail) /* selectNerveAfterWait */
+{
+    const Row *r = &sc->objs[k->row];
+    if (vlen(vsub(mario->pos, k->pos)) < 1000.0f) { w_nrv(k, JF_FIND); return 1; }
+    if (rail && r->arg[2] == 1) return 0;
+    if (k->step == 280) {
+        int v = k->nrv == JF_WAIT ? rand() % 3 : 0;
+        w_nrv(k, v == 0 ? JF_WAIT : v == 1 ? JF_WAITR : JF_WAITL);
+        return 1;
+    }
+    return 0;
+}
+static void jelly_update(Kuribo *k)
+{
+    const Row *r = &sc->objs[k->row];
+    u32 rn; int rcl;
+    const float *rail = w_rail(k, &rn, &rcl);
+    if (!k->front.x && !k->front.y && !k->front.z) { /* init */
+        V3 x, z;
+        row_axes(r, &x, &z);
+        k->front = vnorm(z); k->dir = 1;
+        if (rail) k->lva[1] = w_rail_nearest(rail, rn, k->pos);
+        w_nrv(k, JF_WAIT);
+    }
+    k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f);
+    int st = ++k->step;
+    switch (k->nrv) {
+    case JF_WAIT: case JF_WAITR: case JF_WAITL:
+        if (st == 0 && k->nrv == JF_WAIT && strcmp(k->act, "Wait")) w_act(k, "Wait");
+        if (k->nrv != JF_WAIT) k->front = rot_axis(k->front, vnorm(k->grav), (k->nrv == JF_WAITR ? 0.2f : -0.2f) * 0.0174533f);
+        else w_se_lv(k, SE_EM_LV_JELLYFISH_WAIT);
+        jf_after_wait(k, rail != NULL);
+        break;
+    case JF_FIND:
+        if (st == 0) { w_act(k, "SearchOn"); w_se(k, SE_EM_JELLYFISH_FIND); }
+        jf_face(k);
+        if (w_bck_stopped(k)) jf_threat(k);
+        break;
+    case JF_THREAT:
+        if (k->act_mode != 2 && w_bck_stopped(k)) w_act(k, "SearchWait"); /* isBckOneTimeAndStopped */
+        w_se_lv(k, SE_EM_LV_JELLYFISH_WAIT);
+        jf_face(k);
+        jf_threat(k);
+        break;
+    case JF_THREATR: case JF_THREATL: /* threatTurn */
+        if (st == 0) w_act(k, "SearchRotate");
+        w_se_lv(k, SE_EM_LV_JELLYFISH_WAIT);
+        jf_face(k);
+        if (w_bck_stopped(k)) jf_threat(k);
+        break;
+    case JF_DEATH:
+        if (st == 0) { k->bind_off = 0; scene_stop = 5; w_act(k, "Death"); w_se(k, SE_PM_SPIN_HIT); w_se(k, SE_EM_JELLYFISH_HIT_PUNCH); }
+        if (st == 30 || (st > 0 && (k->on_ground || k->on_wall))) { /* kill */
+            w_se(k, SE_EM_JELLYFISH_DEAD);
+            float m[16];
+            basis_matrix(m, k->pos, vmul(k->grav, -1.0f), k->front, 0);
+            fx_named("Jellyfish", "Death", m, NULL, NULL);
+            pop_coins(k->pos, vmul(k->grav, -1.0f), 1);
+            k->state = KURIBO_DEAD; row_kill(k->row);
+            return;
+        }
+        break;
+    case JF_ATTACK:
+        if (st == 0) { w_act(k, "Attack"); w_se(k, SE_EM_JELLYFISH_ATTACK); }
+        if (w_bck_stopped(k)) { if (vlen(vsub(mario->pos, k->pos)) >= 1500.0f) w_nrv(k, JF_WAIT); else jf_threat(k); }
+        break;
+    case JF_RAILGOAL:
+        if (st == (r->arg[1] != -1 ? r->arg[1] : 60)) {
+            if (r->arg[2] == 1) { k->lva[1] = 0; k->dir = 1; } /* moveCoordAndTransToRailPoint(0) */
+            else k->dir = -k->dir; /* reverseRailDirection */
+            w_nrv(k, JF_WAIT);
+        }
+        break;
+    }
+    k->act_t += k->act_rate;
+    /* control(): the rail, the bob */
+    if (k->nrv != JF_DEATH) {
+        if (rail) {
+            float len = w_rail_len(rail, rn), sp = r->arg[0] != -1 ? (float)r->arg[0] : 5.0f;
+            if (k->nrv != JF_RAILGOAL) k->lva[1] += sp * k->dir; /* moveCoordAndFollowTrans */
+            if (k->lva[1] < 0) k->lva[1] = 0;
+            if (k->lva[1] > len) k->lva[1] = len;
+            V3 p = rail_at(rail, rn, k->lva[1]);
+            if (k->nrv == JF_RAILGOAL || (k->dir > 0 ? k->lva[1] >= len : k->lva[1] <= 0)) {
+                if (k->nrv != JF_RAILGOAL) { k->pos = p; w_nrv(k, JF_RAILGOAL); }
+            } else k->pos = p;
+            if (r->arg[2] == 1 && k->nrv != JF_RAILGOAL) { /* getRailDirection */
+                V3 ahead = rail_at(rail, rn, k->lva[1] + 1.0f);
+                if (vlen(vsub(ahead, p)) > 1e-3f && k->nrv == JF_WAIT) k->front = vnorm(vsub(ahead, p));
+            }
+        }
+        k->vel = vmul(k->grav, sinf((k->lva[0] + 45.0f) * 0.0174533f));
+        k->lva[0] += 1.0f;
+    }
+    k->pos = vadd(k->pos, k->vel);
+    if (!k->bind_off && k->nrv == JF_DEATH) { /* the binder (130) only once it is knocked out */
+        V3 c = k->pos, gn, wn;
+        int wall = 0;
+        k->on_ground = collide_n(&c, vmul(k->grav, -1.0f), 130.0f, &gn, &wn, &wall);
+        k->on_wall = wall; k->pos = c;
+    }
+    k->qy = k->up = vmul(k->grav, -1.0f); k->qz = vnorm(vtangent(k->front, k->qy)); /* makeMtxFrontUpPos */
+    if (vlen(k->qz) < 1e-3f) k->qz = k->front;
+    if (k->nrv == JF_DEATH) return;
+    V3 body = vsub(k->pos, vmul(k->grav, 30.0f));
+    if (mario_offence(body, 100.0f, k->grav) == MSG_HITALL) { /* knockOut */
+        V3 d = vnorm(vsub(k->pos, mario->pos));
+        k->vel = vmul(d, 40.0f); k->front = vmul(d, -1.0f);
+        w_nrv(k, JF_DEATH);
+        return;
+    }
+    if (vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), body)) < 100.0f + HIT_BODY_R && !mario->hurt_timer) {
+        hurt_mario(body, 25.0f); /* sendMsgEnemyAttackStrong */
+        w_nrv(k, JF_ATTACK);
+    }
+}
+
 static void update_kuribo_one(Kuribo *k);
 static void update_kuribo(void)
 {
@@ -14937,6 +15117,7 @@ static void update_kuribo_one(Kuribo *k)
             if (sc->objs[k->row].zone < 64 && !zone_kcl[sc->objs[k->row].zone]) return;
             if (k->kind == WALK_GESSO) gesso_update(k);
             else if (k->kind == WALK_BASABASA) basa_update(k);
+            else if (k->kind == WALK_JELLYFISH) jelly_update(k);
             return;
         }
         if (k->kind == WALK_PETARI) { /* ponytail: still while its zone has no collision (streaming) */
@@ -17539,7 +17720,8 @@ static void update_shots(void)
                 if (e->phase) { hit = 0; continue; }
                 if (e->nrv == PT_SWOON) w_nrv(e, PT_SWOON);
             }
-            else if (e->kind == WALK_UNIZO || e->kind == WALK_POIHANA) { /* isMsgStarPieceAttack: nothing more */ }
+            else if (e->kind == WALK_UNIZO || e->kind == WALK_POIHANA || e->kind == WALK_JELLYFISH) { /* isMsgStarPieceAttack: nothing more
+                                                                                                  * (Jellyfish: its anim scale hit reaction) */ }
             else if (e->kind == WALK_GESSO) { if (e->nrv != GE_PUNCHDOWN) w_nrv(e, GE_ROTATE); } /* isMsgStarPieceAttack: Rotate */
             else if (e->kind == WALK_BASABASA) { /* isMsgStarPieceAttack: Stun (isNrvEnableStun) */
                 if (e->nrv != BB_TRAMPLE && e->nrv != BB_PUNCHDOWN && e->nrv != BB_WAIT && e->nrv != BB_ATTACH) w_nrv(e, BB_STUN);
