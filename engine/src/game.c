@@ -42,10 +42,10 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
-       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU };
+       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI };
 /* walkers ported in the release push: their classes (counted, placed and drawn through this table) */
 static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}, {"BasaBasa", WALK_BASABASA}, {"BasaBasaIce", WALK_BASABASA}, {"Jellyfish", WALK_JELLYFISH},
-                                                                    {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}, {"Mogu", WALK_MOGU}};
+                                                                    {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}, {"Mogu", WALK_MOGU}, {"Mogucchi", WALK_MOGUCCHI}};
 #define NEW_WALKERS ((int)(sizeof new_walkers / sizeof new_walkers[0]))
 static const Model *m_wnew[NEW_WALKERS];
 static int walker_new_kind(const char *cls)
@@ -593,7 +593,8 @@ static void pole_init(void);
 static void dossun_place(Inst *in);
 static int nrbms, nsbms; static const Model *m_rbeam, *m_mogustone, *m_moguhole;
 const char *game_stage_name = ""; /* the galaxy being played (main.c: its pack name) */
-static void draw_mogu_extras(void);
+static void draw_mogu_extras(void), draw_mogucchi_extras(void);
+static int nmhills; static const Model *m_mhole, *m_mhill[3];
 static void sbm_place(Inst *in), sbm_joints(Inst *in);
 static int pole_try(Player *m), pole_hold(Player *m);
 static int pole_ride = -1; /* the Pole Mario holds (poles), -1 none */
@@ -1411,7 +1412,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nvines = 0; vine_ride = -1;
     pole_init();
     nrbms = 0;
-    nsbms = 0;
+    nsbms = 0; nmhills = 0;
     dino_cam = 0;
     foot_num = foot_rot = 0;
     nseesaws = 0;
@@ -3084,6 +3085,7 @@ void game_rebind(void)
     m_pleaf = scene_model(s, "PackunLeaf");
     m_rbeam = scene_model(s, "JumpBeamerBeam");
     m_mogustone = scene_model(s, "MoguStone"); m_moguhole = scene_model(s, "MoguHole");
+    m_mhole = scene_model(s, "MogucchiHole"); m_mhill[0] = scene_model(s, "MogucchiHillA"); m_mhill[1] = scene_model(s, "MogucchiHillB"); m_mhill[2] = scene_model(s, "MogucchiHillC");
     for (int i = 0; i < NEW_WALKERS; i++) m_wnew[i] = scene_model(s, new_walkers[i].cls);
     m_vtop = scene_model(s, "PlantTop"); m_vleaf = scene_model(s, "PlantLeaf");
     m_fireball2 = scene_model(s, "FireBall"); m_firebubble = scene_model(s, "FireBubble");
@@ -15598,6 +15600,214 @@ static void draw_mogu_extras(void) /* its hole (MoguHole) and its stone (MoguSto
     }
 }
 
+/* Mogucchi.cpp / MogucchiHill.cpp after Petari: a mole digging along its rail (Stroll: arg0 (5) a frame, its speed back
+ * up 0.1 a frame), on the ground the rail's point drops to along its gravity (1000), its hole (MogucchiHole) with it
+ * and a trail of mounds (MogucchiHillA / B / C at random, never one twice running; one every 80 travelled, the reserve
+ * point every 100; at most rail length / 150, up to 20, the oldest crumbling past that minus 5). Walking on the ground
+ * into its body (120 at Spine) or head (83 at Head) hurts Mario strongly (and shakes the camera); in the air it pushes.
+ * A spin on it while it strolls is countered; Mario's hip drop landing within 800 or a star piece brings it up
+ * (AppearDown: SwoonStart, Down 30 swooning, Dive back), and then a spin (after step 10 of AppearDown) blows it out
+ * (Scatter: 50 up less 1.2 a frame and 23 away, 15 frames; Die: a coin, Death, SW_DEAD); a trample bounces on it.
+ * A mound pushes Mario; his hip drop landing within 300, a trample or star piece breaks it, a spin breaks it and its
+ * neighbours. ponytail: mounds drawn as placed without their Lead / Fade clips (crumbling: gone after 40 frames), no
+ * 2P pointer stop, the counter-spin a push */
+#define MAX_MOGUCCHI 16
+#define MHILL_N 20
+static struct { int k, n, next, appear, cc, prev[3]; V3 reserve; V3 pos[MHILL_N], up[MHILL_N], f[MHILL_N]; int model[MHILL_N], age[MHILL_N], alive[MHILL_N]; } mhills[MAX_MOGUCCHI];
+enum { MC_STROLL, MC_APPEARDOWN, MC_DOWN, MC_DIVE, MC_SCATTER, MC_DIE };
+static int mhill_of(int k)
+{
+    for (int i = 0; i < nmhills; i++) if (mhills[i].k == k) return i;
+    if (nmhills == MAX_MOGUCCHI) return -1;
+    memset(&mhills[nmhills], 0, sizeof mhills[0]);
+    mhills[nmhills].k = k; mhills[nmhills].prev[0] = rand() % 3; mhills[nmhills].prev[1] = -2; mhills[nmhills].prev[2] = -3;
+    return nmhills++;
+}
+static void mhill_piece(int h, V3 pos, V3 up, V3 f) /* appearPiece */
+{
+    typeof(&mhills[0]) o = &mhills[h];
+    int crumble = (o->n + o->next - o->appear) % o->n; /* killPieceOverAppear */
+    if (o->alive[crumble] == 1) { o->alive[crumble] = 2; o->age[crumble] = 0; }
+    int off = rand() % 2, m = (o->prev[0] + off + 1) % 3; /* createPieces' order: never the one before, nor A B A */
+    if (o->prev[0] == o->prev[2] && o->prev[1] == m) m = (o->prev[0] + ((off + 1) % 2) + 1) % 3;
+    o->prev[2] = o->prev[1]; o->prev[1] = o->prev[0]; o->prev[0] = m;
+    o->model[o->next] = m; o->pos[o->next] = pos; o->up[o->next] = up; o->f[o->next] = f;
+    o->alive[o->next] = 1; o->age[o->next] = 0;
+    se_start(SE_EM_MOGHILL_APPEAR, &pos.x);
+    o->next = (o->next + 1) % o->n;
+}
+static void mhill_update(int h) /* the mounds: crumbling, Mario on them */
+{
+    typeof(&mhills[0]) o = &mhills[h];
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < o->n; i++) {
+        if (!o->alive[i]) continue;
+        if (o->alive[i] == 2 && ++o->age[i] >= 40) { o->alive[i] = 0; continue; } /* sCrumbleFrame */
+        V3 c = vadd(o->pos[i], vmul(o->up[i], 60.0f));
+        int brk = mario->hip == HIP_LAND && mario->hip_t == 0 && vlen(vsub(o->pos[i], mc)) < 300.0f; /* control: sAppearDist */
+        int msg = mario_offence(c, 120.0f, vmul(o->up[i], -1.0f));
+        if (brk || msg == MSG_TRAMPLE || msg == MSG_HIPDROP) {
+            se_start(SE_EM_MOGHILL_BREAK, &o->pos[i].x);
+            float m[16];
+            basis_matrix(m, o->pos[i], o->up[i], o->f[i], 0);
+            fx_named("MogucchiHillA", "Break", m, NULL, NULL);
+            o->alive[i] = 0;
+            if (msg == MSG_TRAMPLE) { mario->vup = 15.0f; mario->grounded = 0; }
+            continue;
+        }
+        if (msg == MSG_HITALL) { /* killPieces: it and the next two */
+            se_start(SE_EM_MOGHILL_BREAK, &o->pos[i].x);
+            for (int j = 0; j < 3; j++) o->alive[(i + j) % o->n] = 0;
+            continue;
+        }
+        V3 out = vtangent(vsub(mc, c), mario->up); /* sendMsgPush */
+        float l = vlen(out), want = 120.0f + HIT_BODY_R * 0.6f;
+        if (vlen(vsub(mc, c)) < 120.0f + HIT_BODY_R && l > 1e-3f && l < want && mario->hip != HIP_FALL) mario->pos = vadd(mario->pos, vmul(out, (want - l) / l));
+    }
+}
+static void mc_place(Kuribo *k, const float *rail, u32 rn) /* updatePosition: the rail's point dropped to the ground */
+{
+    V3 rp = rail_at(rail, rn, k->lva[1]);
+    k->grav = vmul(up_at(rp, vmul(k->grav, -1.0f)), -1.0f); /* mRailGravity */
+    k->pos = rp;
+    for (float d = 0; d <= 1000.0f; d += 20.0f) {
+        Hit hh[1];
+        V3 q = vadd(rp, vmul(k->grav, d));
+        if (kcl_query(q, 10.0f, hh, 1)) { k->pos = q; break; }
+    }
+    V3 ahead = rail_at(rail, rn, k->lva[1] + 1.0f), f = vtangent(vsub(ahead, rp), k->grav);
+    if (vlen(f) > 1e-3f) k->front = vnorm(f); /* makeEulerRotation: up against gravity, the rail's way */
+}
+static void mogucchi_update(Kuribo *k)
+{
+    const Row *r = &sc->objs[k->row];
+    u32 rn; int cl;
+    const float *rail = w_rail(k, &rn, &cl);
+    if (!rail) return;
+    float len = w_rail_len(rail, rn);
+    int h = mhill_of((int)(k - kuribo));
+    if (h < 0) return;
+    if (!k->front.x && !k->front.y && !k->front.z) { /* init, initAfterPlacement */
+        k->lva[1] = w_rail_nearest(rail, rn, k->pos);
+        k->grav = vmul(up_at(k->pos, v3(0, 1, 0)), -1.0f);
+        k->front = v3(0, 0, 1);
+        int n = (int)(len / 150.0f);
+        mhills[h].n = n > MHILL_N ? MHILL_N : n < 1 ? 1 : n;
+        mhills[h].appear = n > 5 ? mhills[h].n - 5 : mhills[h].n;
+        mc_place(k, rail, rn);
+        w_nrv(k, MC_STROLL);
+    }
+    float maxsp = r->arg[0] != -1 ? (float)r->arg[0] : 5.0f;
+    int st = ++k->step;
+    switch (k->nrv) {
+    case MC_STROLL:
+        if (st == 0) { w_act(k, "Walk"); k->len = maxsp; mhills[h].reserve = k->pos; mhills[h].cc = 1; }
+        w_se_lv(k, SE_EM_LV_MOGHILL_MOVE);
+        if (k->len < maxsp) { k->len += 0.1f; if (k->len > maxsp) k->len = maxsp; } /* updateStrollSpeed */
+        k->lva[1] += k->len; /* moveCoord */
+        if (cl) k->lva[1] = fmodf(k->lva[1], len); else if (k->lva[1] > len) k->lva[1] = len;
+        mc_place(k, rail, rn);
+        { /* MogucchiHill::exeMove */
+            float d = vlen(vsub(k->pos, mhills[h].reserve));
+            if (mhills[h].cc && d >= 80.0f) { mhill_piece(h, mhills[h].reserve, vmul(k->grav, -1.0f), k->front); mhills[h].cc = 0; }
+            if (d >= 100.0f) { mhills[h].reserve = k->pos; mhills[h].cc = 1; }
+        }
+        if (mario->hip == HIP_LAND && mario->hip_t == 0 && vlen(vsub(mario->pos, k->pos)) <= 800.0f) w_nrv(k, MC_APPEARDOWN); /* checkHipDrop */
+        break;
+    case MC_APPEARDOWN:
+        if (st == 0) { w_act(k, "SwoonStart"); w_se(k, SE_EM_MOGUCCHI_APPEAR); w_se(k, SE_EV_MOGUCCHI_SWOON); }
+        w_se_lv(k, SE_EM_LV_SWOON_S);
+        if (w_bck_stopped(k)) w_nrv(k, MC_DOWN);
+        break;
+    case MC_DOWN:
+        if (st == 0) w_act(k, "Swoon");
+        w_se_lv(k, SE_EM_LV_SWOON_S);
+        if (st == 30) w_nrv(k, MC_DIVE);
+        break;
+    case MC_DIVE:
+        if (st == 0) { w_act(k, "Hide"); w_se(k, SE_EM_MOGUCCHI_HIDE); }
+        if (w_bck_stopped(k)) w_nrv(k, MC_STROLL);
+        break;
+    case MC_SCATTER:
+        if (st == 0) { w_act(k, "PunchDown"); w_se(k, SE_PM_SPIN_HIT); k->lva[0] = 50.0f; }
+        k->ttarget = vtangent(k->ttarget, k->grav);
+        if (vlen(k->ttarget) > 1e-6f) { k->ttarget = vnorm(k->ttarget); k->front = vmul(k->ttarget, -1.0f); }
+        k->pos = vadd(k->pos, vadd(vmul(k->grav, -k->lva[0]), vmul(k->ttarget, 23.0f)));
+        k->lva[0] -= 1.2f;
+        if (st >= 15) w_nrv(k, MC_DIE);
+        break;
+    case MC_DIE:
+        if (st == 0) {
+            pop_coins(k->pos, vmul(k->grav, -1.0f), 1); w_se(k, SE_EM_EXPLODE_S);
+            float m[16];
+            basis_matrix(m, k->pos, vmul(k->grav, -1.0f), k->front, 0);
+            fx_named("Mogucchi", "Death", m, NULL, NULL);
+            if (r->sw[SW_DEAD] >= 0) sw_set((Row *)r, SW_DEAD, 1);
+            k->state = KURIBO_DEAD;
+        }
+        return;
+    }
+    k->act_t += k->act_rate;
+    k->qy = k->up = vmul(k->grav, -1.0f); k->qz = k->front;
+    mhill_update(h);
+    if (k->nrv == MC_SCATTER) return;
+    /* sensors */
+    V3 md0 = k->pos;
+    const Model *md = walker_new_model(k->row);
+    V3 head = w_joint(k, md, 6, v3(40.0f, 0, -8.0f)), body = w_joint(k, md, 3, v3(0, 0, 0)), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    int down = k->nrv == MC_DOWN || k->nrv == MC_APPEARDOWN || k->nrv == MC_DIVE, early = k->nrv == MC_APPEARDOWN && st < 10;
+    int spin = mario->spin_timer > 0 && mario_touch(md0, 180.0f), bm = mario_offence(body, 120.0f, k->grav), hm = mario_offence(head, 83.0f, k->grav);
+    if (spin || bm == MSG_HITALL || hm == MSG_HITALL) {
+        if (k->nrv == MC_STROLL && spin) { /* sendMsgEnemyAttackCounterSpin */
+            w_se(k, SE_EM_MOGUCCHI_REFRECT);
+            V3 away = vtangent(vsub(mario->pos, k->pos), mario->up);
+            if (vlen(away) > 1e-3f) { mario->hvel = vmul(vnorm(away), 15.0f); mario->vup = 10.0f; mario->grounded = 0; }
+            return;
+        }
+        if (down && !early) { scene_stop = 8; k->ttarget = vsub(k->pos, mario->pos); w_nrv(k, MC_SCATTER); return; } /* calcScatterVec */
+    }
+    if (bm == MSG_TRAMPLE || bm == MSG_HIPDROP || hm == MSG_TRAMPLE) {
+        if (down && !early) { w_act(k, "Bounce"); mario->vup = 15.0f; mario->grounded = 0; return; }
+        if (k->nrv == MC_STROLL && (bm == MSG_TRAMPLE || hm == MSG_TRAMPLE)) w_se(k, SE_EM_MOGUCCHI_REFRECT);
+    }
+    int touch = vlen(vsub(mc, body)) < 120.0f + HIT_BODY_R || vlen(vsub(mc, head)) < 83.0f + HIT_BODY_R;
+    if (!touch) return;
+    if (k->nrv == MC_STROLL && mario->grounded && !mario->hurt_timer) { /* sendMsgEnemyAttackStrongToDir */
+        hurt_mario(k->pos, 25.0f); camera_shake(SHAKE_NORMAL);
+        return;
+    }
+    V3 out = vtangent(vsub(mc, body), mario->up);
+    float l = vlen(out), want = 120.0f + HIT_BODY_R * 0.6f;
+    if (l > 1e-3f && l < want) mario->pos = vadd(mario->pos, vmul(out, (want - l) / l));
+}
+static void draw_mogucchi_extras(void) /* its hole (MogucchiHole, its clip the mole's) and its mounds */
+{
+    for (int i = 0; i < nkuribo; i++) {
+        Kuribo *k = &kuribo[i];
+        if (k->kind != WALK_MOGUCCHI || k->state == KURIBO_DEAD || !row_shown(k->row)) continue;
+        float m[16];
+        if (m_mhole && m_mhole->skin && k->act[0]) {
+            Anim *a = obj_anim(2 * (int)sc->nobjs + k->row, m_mhole, "MogucchiHole");
+            if (a) {
+                char n[48];
+                snprintf(n, sizeof n, "mogucchihole/%s", k->act);
+                for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
+                if (a->clip_id < 0 || strcmp(sc->clips[a->clip_id].name, n)) anim_start(a, n, 0);
+                anim_update(a);
+                basis_matrix(m, k->pos, k->qy, k->qz, 0);
+                draw_skin(m_mhole, m, a);
+            }
+        }
+        int h = mhill_of(i);
+        if (h < 0) continue;
+        for (int j = 0; j < mhills[h].n; j++) {
+            if (!mhills[h].alive[j] || !m_mhill[mhills[h].model[j]]) continue;
+            basis_matrix(m, mhills[h].pos[j], mhills[h].up[j], mhills[h].f[j], 0);
+            render_model(m_mhill[mhills[h].model[j]], m, 0x80, 0x60, 0x40);
+        }
+    }
+}
+
 static void update_kuribo_one(Kuribo *k);
 static void update_kuribo(void)
 {
@@ -15623,6 +15833,7 @@ static void update_kuribo_one(Kuribo *k)
             else if (k->kind == WALK_JELLYFISH) jelly_update(k);
             else if (k->kind == WALK_KANINA) kanina_update(k);
             else if (k->kind == WALK_MOGU) mogu_update(k);
+            else if (k->kind == WALK_MOGUCCHI) mogucchi_update(k);
             return;
         }
         if (k->kind == WALK_PETARI) { /* ponytail: still while its zone has no collision (streaming) */
@@ -18228,6 +18439,7 @@ static void update_shots(void)
             else if (e->kind == WALK_UNIZO || e->kind == WALK_POIHANA || e->kind == WALK_JELLYFISH) { /* isMsgStarPieceAttack: nothing more
                                                                                                   * (Jellyfish: its anim scale hit reaction) */ }
             else if (e->kind == WALK_GESSO) { if (e->nrv != GE_PUNCHDOWN) w_nrv(e, GE_ROTATE); } /* isMsgStarPieceAttack: Rotate */
+            else if (e->kind == WALK_MOGUCCHI) { if (e->nrv != MC_SCATTER && e->nrv != MC_DIE) w_nrv(e, MC_APPEARDOWN); } /* isMsgStarPieceAttack */
             else if (e->kind == WALK_MOGU) { /* isMsgStarPieceAttack: up, it flips (SwoonStart) */
                 if (e->nrv == MG_APPEAR || e->nrv == MG_SEARCH || e->nrv == MG_TURN || e->nrv == MG_THROW) { if (e->bshow == 1) e->bshow = 0; w_nrv(e, MG_SWOONSTART); }
                 else if (e->nrv == MG_HIDEWAIT || e->nrv == MG_HIDE) { hit = 0; continue; }
@@ -19600,6 +19812,7 @@ void game_draw(void)
     draw_hhp_leaves();
     draw_rbeams();
     draw_mogu_extras();
+    draw_mogucchi_extras();
     RESTQ(0);
     draw_vines();
     RESTQ(1);
