@@ -225,6 +225,7 @@ typedef struct {
     int bridge;      /* PhantomShipBridge 1; its Move collision part 2 + the bridge's inst index (update_bridges) */
     int dossun;      /* Dossun: falls and rises on a cycle, a press (update_dossuns, dossun_place) */
     int rbeamer;     /* RingBeamer: its group shoots rings at Mario (update_rbeamers, draw_rbeams) */
+    int sbeamer;     /* SearchBeamer: aims its beam at Mario (update_sbeamers, sbm_place, sbm_joints) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
 static V3 firebar_ball(const Inst *in, int j, int k);
@@ -578,7 +579,8 @@ static int vine_try(Player *m);
 static int vine_hold(Player *m);
 static void pole_init(void);
 static void dossun_place(Inst *in);
-static int nrbms; static const Model *m_rbeam;
+static int nrbms, nsbms; static const Model *m_rbeam;
+static void sbm_place(Inst *in), sbm_joints(Inst *in);
 static int pole_try(Player *m), pole_hold(Player *m);
 static int pole_ride = -1; /* the Pole Mario holds (poles), -1 none */
 static const Model *m_ota, *m_otafoot, *m_coco, *m_fireball2, *m_firebubble, *m_otamagma, *m_otalfoot, *m_otabloom;
@@ -1394,6 +1396,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nvines = 0; vine_ride = -1;
     pole_init();
     nrbms = 0;
+    nsbms = 0;
     dino_cam = 0;
     foot_num = foot_rot = 0;
     nseesaws = 0;
@@ -3195,6 +3198,7 @@ void game_rebind(void)
         in->bridge = strcmp(name, "PhantomShipBridge") == 0;
         in->dossun = strcmp(name, "Dossun") == 0;
         in->rbeamer = strcmp(name, "RingBeamer") == 0;
+        in->sbeamer = strcmp(name, "SearchBeamer") == 0;
         in->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 ? 3 : 0;
         in->press = strcmp(name, "RGTowerPressGroundA") == 0 || strcmp(name, "ReverseGravityRoomPressGroundA") == 0 ||
                     strcmp(name, "ReverseGravityRoomPressGroundB") == 0 || in->dossun;
@@ -3220,6 +3224,7 @@ void game_rebind(void)
         if (in->ticorail && row_coord && row_turn[i]) ticorail_place(in);
         if (in->biri && row_coord && row_turn[i]) biri_place(in);
         if (in->dossun && row_turn) dossun_place(in);
+        if (in->sbeamer) sbm_place(in);
         if (in->coco) coco_spawn(in);
         if (in->fountain || in->stray) memcpy(in->m0, in->m, 64);
         if (in->stray) in->head = row_turn[i] ? (stray_at[i % 64].x || stray_at[i % 64].y || stray_at[i % 64].z ? stray_at[i % 64] : v3(in->m[12], in->m[13], in->m[14])) : v3(in->m[12], in->m[13], in->m[14]);
@@ -15395,6 +15400,246 @@ static void draw_rbeams(void)
     }
 }
 
+/* SearchBeamer.cpp after Petari: a hovering beamer (joints Propeller 5, Core 6, BeamEnd 7, BeamStart 8). Far (beyond
+ * 2500) it waits 30 frames and turns 3 degrees a frame for 50 in turn; near it turns to Mario (3 a frame), and once he
+ * is within arg1 + 300 (1300) and 45 degrees of its front (its SW_A on, if any) it opens (Open, PRE_BEAM SE), bows
+ * to him (35 down, 3 a frame), shoots (Attack 10 frames): the beam grows from its core over 15 frames to where its
+ * line (arg1 + 300 long) meets the map, then follows Mario's centre 20 under at arg0 (8) a frame, its front kept within
+ * 35 degrees of its plane; out of reach it closes (Close). The beam's sensor (15) at the foot of Mario's aim on it
+ * shocks him (EnemyAttackElectric); the body (60, 80 under) pushes him. Mario standing on it stops it (StopStart,
+ * Stop, then 5 frames after he leaves, Recover 120). Its propeller spins 10-40 degrees a frame (0.3 up, 0.3 down
+ * when stopped). Beyond 4000 it rests (NonActive). ponytail: no star pointer swoon (DPDSwoon), no beam shadow, the
+ * beam's BTK and the hidden lambert5_v (a zero-length beam instead), its Face collision turns with it */
+#define MAX_SBEAMERS 64
+enum { SB_NONACTIVE, SB_WAITFAR, SB_SEARCH, SB_WAITNEAR, SB_OPEN, SB_PREPARE, SB_BSTART, SB_BAIM, SB_CLOSE, SB_STOPSTART,
+       SB_STOP, SB_STOPOFF, SB_RECOVER };
+static struct { int row, nrv, step, init; V3 f, up, bstart, bend; float ang, spd; u32 lv; } sbms[MAX_SBEAMERS];
+
+static int sbm_of(int row)
+{
+    for (int i = 0; i < nsbms; i++) if (sbms[i].row == row) return i;
+    if (nsbms == MAX_SBEAMERS) return -1;
+    memset(&sbms[nsbms], 0, sizeof sbms[0]);
+    sbms[nsbms].row = row;
+    return nsbms++;
+}
+static void sbm_set(int k, int n) { sbms[k].nrv = n; sbms[k].step = -1; }
+static int sbm_stopped(int k) { int n = sbms[k].nrv; return n == SB_STOPSTART || n == SB_STOP || n == SB_STOPOFF; }
+static V3 sbm_joint(const Inst *in, int j)
+{
+    if (!in->anim || !in->anim->skin || j >= in->anim->skin->njoints) return v3(in->m[12], in->m[13], in->m[14]);
+    float jm[16];
+    mat_mul(jm, in->m, in->anim->world[j]);
+    return v3(jm[12], jm[13], jm[14]);
+}
+static void sbm_place(Inst *in) /* calcAndSetBaseMtx: makeMtxFrontUpPos (front kept, up squared to it), its scale */
+{
+    int k = sbm_of(in->row);
+    if (k < 0 || !sbms[k].init) return;
+    const Row *r = &sc->objs[in->row];
+    V3 fz = sbms[k].f, ux = vcross(sbms[k].up, fz), p = row_pos(r);
+    if (vlen(ux) < 1e-3f) return;
+    ux = vnorm(ux);
+    V3 uy = vcross(fz, ux);
+    float m[16] = {ux.x * r->scale[0], ux.y * r->scale[0], ux.z * r->scale[0], 0, uy.x * r->scale[1], uy.y * r->scale[1], uy.z * r->scale[1], 0,
+                   fz.x * r->scale[2], fz.y * r->scale[2], fz.z * r->scale[2], 0, p.x, p.y, p.z, 1};
+    memcpy(in->m, m, 64);
+}
+static int sbm_line(V3 from, V3 dir, float len, V3 *hit) /* checkBeamDistiny: getFirstPolyOnLineToMap */
+{
+    int n = (int)(len / 25.0f) + 1;
+    for (int i = 1; i <= n; i++) {
+        V3 p = vadd(from, vmul(dir, len * i / n));
+        Hit h[1];
+        if (kcl_query(p, 15.0f, h, 1)) { *hit = p; return 1; }
+    }
+    *hit = vadd(from, vmul(dir, len));
+    return 0;
+}
+static V3 sbm_turn(V3 v, V3 to, float deg) /* turnVecToVecDegree */
+{
+    V3 ax = vcross(v, to);
+    float c = vdot(vnorm(v), vnorm(to)), a = acosf(c > 1 ? 1 : c < -1 ? -1 : c), mx = deg * 0.0174533f;
+    if (vlen(ax) < 1e-6f) return v;
+    return vnorm(rot_axis(v, vnorm(ax), a < mx ? a : mx));
+}
+static void sbm_reform(int k, int fast) /* reformDirection: the front back onto its plane, 3 (15) degrees a frame */
+{
+    V3 h = vtangent(sbms[k].f, sbms[k].up);
+    if (vdot(sbms[k].f, sbms[k].up) != 0.0f && vlen(h) > 1e-6f) sbms[k].f = sbm_turn(sbms[k].f, vnorm(h), fast ? 15.0f : 3.0f);
+}
+static void sbm_clamp(int k) /* clampVecAngleDeg(front, its plane's, 35) */
+{
+    V3 h = vtangent(sbms[k].f, sbms[k].up);
+    if (vlen(h) < 1e-6f) return;
+    h = vnorm(h);
+    if (vdot(sbms[k].f, h) < cosf(35.0f * 0.0174533f)) {
+        float s = vdot(sbms[k].f, sbms[k].up) > 0 ? 1.0f : -1.0f;
+        sbms[k].f = vnorm(vadd(vmul(h, cosf(35.0f * 0.0174533f)), vmul(sbms[k].up, s * sinf(35.0f * 0.0174533f))));
+    }
+}
+static V3 sbm_aim(void) { return vadd(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), vmul(mario->up, -20.0f)); } /* calcPlayerAimPos */
+static void sbm_bow(int k, V3 pos) /* bowToPlayer */
+{
+    V3 v = vtangent(vsub(sbm_aim(), pos), sbms[k].up);
+    if (vlen(v) < 1e-6f) return;
+    v = sbm_turn(vnorm(v), vmul(sbms[k].up, -1.0f), 35.0f);
+    sbms[k].f = sbm_turn(sbms[k].f, v, 3.0f);
+    sbm_clamp(k);
+}
+static int sbm_territory(int k, const Row *r, float reach) /* isPlayerInTerritory */
+{
+    if (r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) return 0;
+    V3 to = vtangent(vsub(mario->pos, row_pos(r)), sbms[k].up), f = vtangent(sbms[k].f, sbms[k].up);
+    if (vlen(vsub(mario->pos, row_pos(r))) >= reach || vlen(to) < 1e-6f || vlen(f) < 1e-6f) return 0;
+    return vdot(vnorm(to), vnorm(f)) >= cosf(45.0f * 0.0174533f); /* isFaceToPlayerHorizontalDegree */
+}
+static void update_sbeamers(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->sbeamer || row_dead[in->row]) continue;
+        int k = sbm_of(in->row);
+        if (k < 0) continue;
+        typeof(&sbms[0]) o = &sbms[k];
+        const Row *r = &sc->objs[in->row];
+        V3 pos = row_pos(r), core = sbm_joint(in, 6), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+        float speed = r->arg[0] != -1 ? (float)r->arg[0] : 8.0f, reach = 300.0f + (r->arg[1] != -1 ? (float)r->arg[1] : 1000.0f);
+        float near = vlen(vsub(mario->pos, pos));
+        if (!o->init) {
+            V3 x, z;
+            row_axes(r, &x, &z);
+            float m[16], one[3] = {1, 1, 1};
+            mat_translate_rot_scale(m, r->pos, r->rot, one);
+            o->f = vnorm(z); o->up = vnorm(v3(m[4], m[5], m[6])); o->spd = 40.0f;
+            o->bstart = o->bend = core; o->init = 1; sbm_set(k, SB_WAITFAR);
+        }
+        if (mario_ground == i) { /* isMsgFloorTouch */
+            if (o->nrv == SB_STOPOFF) sbm_set(k, SB_STOPOFF);
+            else if (!sbm_stopped(k)) sbm_set(k, o->nrv == SB_RECOVER ? SB_STOP : SB_STOPSTART);
+        }
+        int st = ++o->step, beam = 0;
+        switch (o->nrv) {
+        case SB_NONACTIVE: if (near < 4000.0f) sbm_set(k, SB_WAITFAR); break;
+        case SB_WAITFAR:
+            if (st == 0) obj_play(in, "Wait", 1, 0);
+            sbm_reform(k, 0);
+            if (st == 30) sbm_set(k, SB_SEARCH);
+            else if (near < 2500.0f) sbm_set(k, SB_WAITNEAR);
+            else if (near >= 4000.0f) sbm_set(k, SB_NONACTIVE); /* tryNonActive */
+            break;
+        case SB_SEARCH:
+            sbm_reform(k, 0);
+            o->f = rot_axis(o->f, o->up, 3.0f * 0.0174533f);
+            if (st == 50) sbm_set(k, SB_WAITFAR);
+            break;
+        case SB_WAITNEAR:
+            if (st == 0) obj_play(in, "Wait", 1, 0);
+            sbm_reform(k, 0);
+            turn_on_plane(&o->f, vsub(mario->pos, pos), o->up, cosf(3.0f * 0.0174533f)); /* turnDirectionToPlayerDegree */
+            if (near >= 3000.0f) sbm_set(k, SB_WAITFAR);
+            else if (sbm_territory(k, r, reach)) sbm_set(k, SB_OPEN);
+            break;
+        case SB_OPEN:
+            if (st == 0) { obj_play(in, "Open", 0, 0); se_start(SE_EM_SEARCHBEAMER_PRE_BEAM, &pos.x); }
+            sbm_bow(k, pos);
+            if (st >= 60) sbm_set(k, SB_PREPARE); /* isBckStopped(Open) */
+            break;
+        case SB_PREPARE:
+            if (st == 0) obj_play(in, "Attack", 1, 0);
+            if (st == 10) sbm_set(k, SB_BSTART);
+            break;
+        case SB_BSTART: {
+            beam = 1;
+            o->lv = se_level(SE_EM_LV_SEARCHBEAMER_BEAM, &pos.x, o->lv);
+            sbm_bow(k, pos);
+            V3 to;
+            sbm_line(pos, o->f, reach, &to);
+            float t = st / 15.0f; /* calcNerveRate(15) */
+            o->bend = vadd(core, vmul(vsub(to, core), t > 1 ? 1 : t));
+            if (st == 1) sbm_set(k, SB_BAIM);
+            break;
+        }
+        case SB_BAIM: {
+            beam = 1;
+            o->lv = se_level(SE_EM_LV_SEARCHBEAMER_BEAM, &pos.x, o->lv);
+            o->bstart = core;
+            V3 to, d = vnorm(vsub(sbm_aim(), pos));
+            sbm_line(pos, d, reach, &to);
+            V3 step = vsub(to, o->bend);
+            V3 nb = vlen(step) > 1e-6f ? vadd(o->bend, vmul(vnorm(step), speed)) : o->bend;
+            o->f = vnorm(vsub(nb, pos));
+            sbm_clamp(k);
+            int land = sbm_line(pos, o->f, reach, &o->bend);
+            fx_named("SearchBeamer", land ? "BeamEnd" : "BeamEndAir", in->m, in->anim ? (const float (*)[16])in->anim->world : NULL, &sbms[k]);
+            if (!sbm_territory(k, r, reach)) sbm_set(k, SB_CLOSE);
+            break;
+        }
+        case SB_CLOSE:
+            if (st == 0) obj_play(in, "Close", 0, 0);
+            sbm_reform(k, 0);
+            if (st < 5) o->bstart = vadd(core, vmul(vsub(o->bend, core), st / 5.0f));
+            if (st == 5) o->bstart = o->bend = core; /* initBeamPos */
+            if (st >= 30) sbm_set(k, SB_WAITNEAR);
+            break;
+        case SB_STOPSTART:
+            if (st == 0) { obj_play(in, "Close", 0, 0); o->bstart = o->bend = core; }
+            sbm_reform(k, 1);
+            if (st >= 30) sbm_set(k, SB_STOP);
+            break;
+        case SB_STOP:
+            if (st == 0) obj_play(in, "Stop", 1, 0);
+            sbm_reform(k, 1);
+            sbm_set(k, SB_STOPOFF);
+            break;
+        case SB_STOPOFF:
+            sbm_reform(k, 1);
+            if (st == 5) sbm_set(k, SB_RECOVER);
+            break;
+        case SB_RECOVER: if (st == 120) sbm_set(k, SB_WAITNEAR); break;
+        }
+        if (!beam && o->nrv != SB_CLOSE) o->bstart = o->bend = core;
+        /* updatePropeller */
+        o->spd += sbm_stopped(k) ? -0.3f : 0.3f;
+        o->spd = o->spd < 10.0f ? 10.0f : o->spd > 40.0f ? 40.0f : o->spd;
+        o->ang = fmodf(o->ang + o->spd, 360.0f);
+        sbm_place(in);
+        /* the beam's sensor at the foot of Mario's aim on it; the body pushes */
+        if (beam && !mario->hurt_timer) {
+            V3 a = sbm_aim(), d = vsub(o->bend, pos);
+            float l2 = vdot(d, d), t = l2 > 0 ? vdot(vsub(a, pos), d) / l2 : 0.0f;
+            V3 foot = vadd(pos, vmul(d, t < 0 ? 0 : t > 1 ? 1 : t));
+            if (vlen(vsub(foot, mc)) < 15.0f + HIT_BODY_R) { hurt_mario(foot, 15.0f); printf("search beamer %d shocks Mario\n", in->row); }
+        }
+        V3 body = vsub(pos, vmul(o->up, 80.0f)), out = vtangent(vsub(mc, body), mario->up);
+        float l = vlen(out), want = 60.0f + HIT_BODY_R * 0.6f;
+        if (vlen(vsub(mc, body)) < 60.0f + HIT_BODY_R && l > 1e-3f && l < want) mario->pos = vadd(mario->pos, vmul(out, (want - l) / l));
+    }
+}
+/* its joint controllers after the clip's pose: the propeller turned about its local Y, BeamStart / BeamEnd moved to
+ * the beam's ends (calcJointPropeller / BeamStart / BeamEnd) */
+static void sbm_joints(Inst *in)
+{
+    int k = sbm_of(in->row);
+    Anim *a = in->anim;
+    if (k < 0 || !a || !a->skin || a->skin->njoints < 9) return;
+    float t = sbms[k].ang * 0.0174533f, c = cosf(t), s = sinf(t), *w = a->world[5], ry[16], tmp[16];
+    mat_identity(ry);
+    ry[0] = c; ry[2] = -s; ry[8] = s; ry[10] = c;
+    mat_mul(tmp, w, ry);
+    memcpy(w, tmp, 64);
+    V3 ends[2] = {sbms[k].bend, sbms[k].bstart}, o = v3(in->m[12], in->m[13], in->m[14]);
+    for (int j = 0; j < 2; j++) { /* into model space: its axes are square, scaled */
+        float *wj = a->world[7 + j];
+        V3 d = vsub(ends[j], o);
+        for (int c = 0; c < 3; c++) {
+            V3 ax = v3(in->m[4 * c], in->m[4 * c + 1], in->m[4 * c + 2]);
+            float l2 = vdot(ax, ax);
+            wj[12 + c] = l2 > 0 ? vdot(d, ax) / l2 : 0.0f;
+        }
+    }
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -17087,6 +17332,7 @@ static void update_obj_anims(void)
                 insts[i].lv[0] = se_level(sc->types[32 * sc->objs[insts[i].row].type + 20] == 'B' ? SE_OJ_LV_P_SHIP_PROPELLER_L : SE_OJ_LV_P_SHIP_PROPELLER_S,
                                           &insts[i].m[12], insts[i].lv[0]);
             if (insts[i].punch) { anim_pose(insts[i].anim); punch_ball(&insts[i], insts[i].anim); anim_skin(insts[i].anim); continue; }
+            if (insts[i].sbeamer) { anim_pose(insts[i].anim); sbm_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].anim->done && !insts[i].anim->loop && !insts[i].vine && !obj_play(&insts[i], sc->types + 32 * sc->objs[insts[i].row].type, 1, 0))
                 obj_play(&insts[i], "wait", 1, 8); /* a one-shot clip over: back to its own clip (tryStartAllAnim), else Wait */
             anim_update(insts[i].anim);
@@ -17202,6 +17448,7 @@ void game_update(void)
     LQ(8, update_bridges());
     update_dossuns();
     update_rbeamers();
+    update_sbeamers();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
