@@ -613,7 +613,7 @@ static int vine_try(Player *m);
 static int vine_hold(Player *m);
 static void pole_init(void);
 static void dossun_place(Inst *in);
-static int nrbms, nsbms; static const Model *m_rbeam, *m_mogustone, *m_moguhole;
+static int nrbms, nsbms; static const Model *m_jbhead, *m_rbeam, *m_mogustone, *m_moguhole;
 const char *game_stage_name = ""; /* the galaxy being played (main.c: its pack name) */
 static void draw_mogu_extras(void), draw_mogucchi_extras(void), draw_whirls(void), update_whirls(void);
 static int t_whirl = -1;
@@ -3166,7 +3166,7 @@ void game_rebind(void)
     m_otamagma = scene_model(s, "OtaKingMagma"); m_otalfoot = scene_model(s, "OtaKingLongFoot");
     m_otabloom = scene_model(s, "OtaKingMagmaBloom");
     m_pleaf = scene_model(s, "PackunLeaf");
-    m_rbeam = scene_model(s, "JumpBeamerBeam"); m_ebeam = scene_model(s, "EyeBeamerBeam");
+    m_rbeam = scene_model(s, "JumpBeamerBeam"); m_jbhead = scene_model(s, "JumpBeamerHead"); m_ebeam = scene_model(s, "EyeBeamerBeam");
     { static const char *fn[6] = {"FishA", "FishB", "FishC", "FishD", "FishE", "FishF"}; for (int f = 0; f < 6; f++) m_fish[f] = scene_model(s, fn[f]); }
     m_gull = scene_model(s, "SeaGull"); m_sstrap = scene_model(s, "SunakazeKunTrap");
     t_whirl = scene_type(s, "WhirlPoolAccelerator");
@@ -3306,7 +3306,7 @@ void game_rebind(void)
         in->bridge = strcmp(name, "PhantomShipBridge") == 0;
         in->dossun = strcmp(name, "Dossun") == 0;
         in->onimasu = strcmp(name, "Onimasu") == 0 || strcmp(name, "OnimasuPivot") == 0;
-        in->rbeamer = strcmp(name, "RingBeamer") == 0;
+        in->rbeamer = strcmp(name, "RingBeamer") == 0 ? 1 : strcmp(name, "JumpBeamer") == 0 ? 2 : 0;
         in->sbeamer = strcmp(name, "SearchBeamer") == 0;
         in->pressure = strcmp(name, "WaterPressure") == 0;
         in->fpressure = strcmp(name, "FirePressureRadiate") == 0;
@@ -17643,10 +17643,20 @@ static void update_dossuns(void)
  * for arg1 (100) frames, at most 2000; Mario's sensor within 5 of its circle (on the beamer's plane, his height
  * counting) is shocked (EnemyAttackElectric). The beamer's head (130 at joint Top, 110 up) hurts strongly, its body
  * (160 at 80 up) pushes him out. SW_B off: Inter, its rings gone. ponytail: no Erase fade (BRK), no bloom model,
- * no shadow drawer, jet turtles / star pieces do nothing to it (as in Petari) */
+ * no shadow drawer, jet turtles / star pieces do nothing to it (as in Petari).
+ * JumpBeamer.cpp after Petari (rbeamer 2; its body JumpBeamerBody, its head JumpBeamerHead at the body's Top joint):
+ * hidden (Down's last frame) until the group attacks (Up, APPEAR SE), Wait; in reach (3200 / 500, SW_B) PreOpen, the
+ * same Open / rings, then Close (Open's end) and Inter; out of reach the group goes Down (HIDE SE) and hides. Its
+ * body (145 at Body, 35 up) only pushes Mario. A trample on it: HopStart (head HopStart, body Damage, HIT SE, the
+ * begoman trample jump: mTrampleBegoma up) then HopWait 300 (its spring out), HopEnd (CLOSE_SPRING) back to Wait; a
+ * trample in HopWait springs him (HopJump, TRAMPLE SE, mTrampleNormal up); a spin: HopStart; a hip drop throws him up
+ * (forceJumpPlayer). ponytail: the shake level SEs, the head's BRK colours, no event camera, the force jump's speed
+ * guessed (15) */
 #define MAX_RBEAMERS 64
-enum { RB_WAIT, RB_ATTACK, RB_INTER };
-static struct { int row, nrv, step, alive[3], life[3]; float rad[3]; u32 lv, lvb[3]; } rbms[MAX_RBEAMERS];
+enum { RB_WAIT, RB_ATTACK, RB_INTER, RB_HIDE, RB_UP, RB_DOWN, RB_PREOPEN, RB_CLOSE, RB_HOPSTART, RB_HOPWAIT, RB_HOPJUMP, RB_HOPEND };
+static struct { int row, nrv, step, alive[3], life[3], hseq, hdrawn; float rad[3]; u32 lv, lvb[3]; const char *hclip; } rbms[MAX_RBEAMERS];
+
+static void jb_head(int k, const char *clip) { rbms[k].hclip = clip; rbms[k].hseq++; } /* startBck(mHeadModel) */
 
 static int rbm_of(int row)
 {
@@ -17694,6 +17704,8 @@ static void update_rbeamers(void)
         if (k < 0) continue;
         typeof(&rbms[0]) o = &rbms[k];
         const Row *r = &sc->objs[in->row];
+        int jb = in->rbeamer == 2;
+        if (jb && !o->hclip) { o->nrv = RB_HIDE; o->step = -1; jb_head(k, "Wait"); obj_play(in, "Down", 0, 0); if (in->anim) in->anim->frame = (float)anim_length(in->anim) - 1.0f; }
         if (r->sw[SW_B] >= 0 && !sw_on(r, SW_B) && o->nrv != RB_INTER) { /* syncSwitchOffB */
             o->nrv = RB_INTER; o->step = -1;
             for (int b = 0; b < 3; b++) o->alive[b] = 0;
@@ -17701,11 +17713,44 @@ static void update_rbeamers(void)
         int st = ++o->step;
         switch (o->nrv) {
         case RB_WAIT:
-            if (rbm_near(in->row, 3000.0f, 500.0f)) rbm_group_nerve(in->row, RB_ATTACK);
+            if (!jb) { if (rbm_near(in->row, 3000.0f, 500.0f)) rbm_group_nerve(in->row, RB_ATTACK); break; }
+            if (!rbm_near(in->row, 3200.0f, 500.0f)) rbm_group_nerve(in->row, RB_DOWN);
+            else if (r->sw[SW_B] < 0 || sw_on(r, SW_B)) { o->nrv = RB_PREOPEN; o->step = -1; }
+            break;
+        case RB_HIDE:
+            if (st == 0) jb_head(k, "Wait");
+            if (rbm_near(in->row, 3000.0f, 500.0f)) rbm_group_nerve(in->row, RB_UP);
+            break;
+        case RB_UP: case RB_DOWN:
+            if (st == 0) { obj_play(in, o->nrv == RB_UP ? "Up" : "Down", 0, 0); se_start(o->nrv == RB_UP ? SE_EM_JGUARDER_APPEAR : SE_EM_JGUARDER_HIDE, &in->m[12]); }
+            if (st > 0 && (!in->anim || in->anim->done)) { o->nrv = o->nrv == RB_UP ? RB_WAIT : RB_HIDE; o->step = -1; }
+            break;
+        case RB_PREOPEN:
+            if (!rbm_near(in->row, 3200.0f, 500.0f)) rbm_group_nerve(in->row, RB_INTER);
+            else { o->nrv = RB_ATTACK; o->step = -1; }
+            break;
+        case RB_CLOSE:
+            if (!in->anim || in->anim->done) { o->nrv = RB_INTER; o->step = -1; }
+            break;
+        case RB_HOPSTART:
+            if (st == 0) { jb_head(k, "HopStart"); obj_play(in, "Damage", 0, 0); se_start(SE_EM_JGUARDER_HIT, &in->m[12]); }
+            if (st >= 30) { o->nrv = RB_HOPWAIT; o->step = -1; } /* isBckStopped(mHeadModel): ponytail, its length taken as 30 */
+            break;
+        case RB_HOPWAIT:
+            if (st == 0) jb_head(k, "HopWait");
+            if (st == 300) { o->nrv = RB_HOPEND; o->step = -1; }
+            break;
+        case RB_HOPJUMP:
+            if (st == 0) { jb_head(k, "HopJump"); se_start(SE_EM_JGUARDER_TRAMPLE, &in->m[12]); }
+            if (st >= 20) { o->nrv = RB_HOPWAIT; o->step = -1; }
+            break;
+        case RB_HOPEND:
+            if (st == 0) { obj_play(in, "HopEnd", 0, 0); jb_head(k, "HopEnd"); se_start(SE_EM_JGUARDER_CLOSE_SPRING, &in->m[12]); }
+            if (st > 0 && (!in->anim || in->anim->done)) { o->nrv = RB_WAIT; o->step = -1; }
             break;
         case RB_ATTACK:
             if (st == 0) obj_play(in, "Open", 0, 0);
-            if (st >= 240) { o->nrv = RB_INTER; o->step = -1; break; }
+            if (st >= 240) { o->nrv = jb ? RB_CLOSE : RB_INTER; o->step = -1; break; }
             if (st % 80 < 79) o->lv = se_level(SE_EM_LV_RINGBEAM_CHARGE, &in->m[12], o->lv);
             if (st % 80 < 79) fx_named("RingBeamer", "Charge", in->m, in->anim ? (const float (*)[16])in->anim->world : NULL, &rbms[k]);
             if (st % 80 == 79) {
@@ -17740,6 +17785,27 @@ static void update_rbeamers(void)
             o->lvb[b] = se_level(SE_EM_LV_RINGBEAM_MOVE, &sp.x, o->lvb[b]);
             if (++o->life[b] >= life) o->alive[b] = 0; /* kill */
         }
+        if (jb) { /* JumpBeamer: its body pushes, tramples / spins / hip drops (receiveMsgPlayerAttack) */
+            V3 body = vadd(row_pos(r), vmul(up, 35.0f));
+            if (in->anim && in->anim->skin && in->anim->skin->njoints > 1) {
+                float jm[16];
+                mat_mul(jm, in->m, in->anim->world[1]);
+                body = v3(jm[12] + jm[4] * 35.0f, jm[13] + jm[5] * 35.0f, jm[14] + jm[6] * 35.0f);
+            }
+            float br = o->nrv == RB_HOPSTART || o->nrv == RB_HOPWAIT || o->nrv == RB_HOPJUMP ? 120.0f : 145.0f;
+            int msg = o->nrv == RB_HIDE || o->nrv == RB_DOWN ? MSG_NONE : mario_offence(body, br, vmul(up, -1.0f));
+            if (msg == MSG_TRAMPLE) {
+                int spring = o->nrv == RB_HOPWAIT;
+                m_set_jv(mario, vadd(vtangent(vadd(mario->hvel, vmul(mario->up, mario->vup)), up), vmul(up, spring ? MC.mTrampleNormal : MC.mTrampleBegoma))); /* trampleJump */
+                mario->grounded = 0;
+                o->nrv = spring ? RB_HOPJUMP : RB_HOPSTART; o->step = -1;
+            } else if (msg == MSG_HIPDROP) { m_set_jv(mario, vmul(up, 15.0f)); mario->grounded = 0; mario->hip = 0; } /* forceJumpPlayer */
+            else if (msg == MSG_HITALL && o->nrv != RB_HOPSTART) { o->nrv = RB_HOPSTART; o->step = -1; }
+            V3 out = vtangent(vsub(mc, body), mario->up);
+            float l = vlen(out), want = br + HIT_BODY_R * 0.6f;
+            if (vlen(vsub(mc, body)) < br + HIT_BODY_R && l > 1e-3f && l < want) mario->pos = vadd(mario->pos, vmul(out, (want - l) / l));
+            continue;
+        }
         /* the beamer's own sensors: its head hurts, its body pushes */
         if (in->anim && in->anim->skin && in->anim->skin->njoints > 2) {
             float jm[16];
@@ -17755,6 +17821,24 @@ static void update_rbeamers(void)
 }
 static void draw_rbeams(void)
 {
+    for (int k = 0; m_jbhead && m_jbhead->skin && k < nrbms; k++) { /* JumpBeamer's head at the body's Top */
+        const Inst *in = NULL;
+        for (int i = 0; i < ninsts && !in; i++) if (insts[i].rbeamer == 2 && insts[i].row == rbms[k].row) in = &insts[i];
+        if (!in || !row_shown(in->row) || !in->anim || !in->anim->skin || in->anim->skin->njoints < 3 || !rbms[k].hclip) continue;
+        Anim *a = obj_anim(14 * (int)sc->nobjs + in->row, m_jbhead, "JumpBeamerHead");
+        if (!a) continue;
+        if (rbms[k].hdrawn != rbms[k].hseq) {
+            char n[48];
+            snprintf(n, sizeof n, "jumpbeamerhead/%s", rbms[k].hclip);
+            for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
+            anim_play(a, n, 1.0f, !strcmp(rbms[k].hclip, "Wait") || !strcmp(rbms[k].hclip, "HopWait"), 0);
+            rbms[k].hdrawn = rbms[k].hseq;
+        }
+        anim_update(a);
+        float m[16];
+        mat_mul(m, in->m, in->anim->world[2]);
+        draw_skin(m_jbhead, m, a);
+    }
     if (!m_rbeam || !m_rbeam->skin) return;
     for (int k = 0; k < nrbms; k++) {
         typeof(&rbms[0]) o = &rbms[k];
