@@ -224,6 +224,7 @@ typedef struct {
     int otamagma;    /* OtaKingMagma's collision (initCollisionParts "OtaKingMagma"): drawn with OtaKing (ota) */
     int bridge;      /* PhantomShipBridge 1; its Move collision part 2 + the bridge's inst index (update_bridges) */
     int dossun;      /* Dossun: falls and rises on a cycle, a press (update_dossuns, dossun_place) */
+    int rbeamer;     /* RingBeamer: its group shoots rings at Mario (update_rbeamers, draw_rbeams) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
 static V3 firebar_ball(const Inst *in, int j, int k);
@@ -577,6 +578,7 @@ static int vine_try(Player *m);
 static int vine_hold(Player *m);
 static void pole_init(void);
 static void dossun_place(Inst *in);
+static int nrbms; static const Model *m_rbeam;
 static int pole_try(Player *m), pole_hold(Player *m);
 static int pole_ride = -1; /* the Pole Mario holds (poles), -1 none */
 static const Model *m_ota, *m_otafoot, *m_coco, *m_fireball2, *m_firebubble, *m_otamagma, *m_otalfoot, *m_otabloom;
@@ -1391,6 +1393,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nhhps = 0;
     nvines = 0; vine_ride = -1;
     pole_init();
+    nrbms = 0;
     dino_cam = 0;
     foot_num = foot_rot = 0;
     nseesaws = 0;
@@ -3059,6 +3062,7 @@ void game_rebind(void)
     m_otamagma = scene_model(s, "OtaKingMagma"); m_otalfoot = scene_model(s, "OtaKingLongFoot");
     m_otabloom = scene_model(s, "OtaKingMagmaBloom");
     m_pleaf = scene_model(s, "PackunLeaf");
+    m_rbeam = scene_model(s, "JumpBeamerBeam");
     m_vtop = scene_model(s, "PlantTop"); m_vleaf = scene_model(s, "PlantLeaf");
     m_fireball2 = scene_model(s, "FireBall"); m_firebubble = scene_model(s, "FireBubble");
     m_sambohead = scene_model(s, "CocoSamboHead");
@@ -3190,6 +3194,7 @@ void game_rebind(void)
         in->seesaw = strcmp(name, "PhantomShipHandle") == 0;
         in->bridge = strcmp(name, "PhantomShipBridge") == 0;
         in->dossun = strcmp(name, "Dossun") == 0;
+        in->rbeamer = strcmp(name, "RingBeamer") == 0;
         in->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 ? 3 : 0;
         in->press = strcmp(name, "RGTowerPressGroundA") == 0 || strcmp(name, "ReverseGravityRoomPressGroundA") == 0 ||
                     strcmp(name, "ReverseGravityRoomPressGroundB") == 0 || in->dossun;
@@ -15249,6 +15254,147 @@ static void update_dossuns(void)
     }
 }
 
+/* RingBeamer.cpp / RingBeam.cpp after Petari: a group (joinToGroupArray) waits until Mario is within 3000 across and
+ * 500 along the nearest member's up (enableGroupAttack; SW_A / SW_B must be on if it has them), then every member
+ * Attacks: Open, three rings 80 frames apart (the Charge effect and its level SE before each), at 240 Inter (80, until
+ * its rings are gone), back to Wait; a ring is not shot (the group hides: Inter) once Mario is out of 3200 / 500.
+ * A ring (JumpBeamerBeam, its Spread clip at radius / 2000 of its frames) spreads at arg0 (20) a frame from 75 up
+ * for arg1 (100) frames, at most 2000; Mario's sensor within 5 of its circle (on the beamer's plane, his height
+ * counting) is shocked (EnemyAttackElectric). The beamer's head (130 at joint Top, 110 up) hurts strongly, its body
+ * (160 at 80 up) pushes him out. SW_B off: Inter, its rings gone. ponytail: no Erase fade (BRK), no bloom model,
+ * no shadow drawer, jet turtles / star pieces do nothing to it (as in Petari) */
+#define MAX_RBEAMERS 64
+enum { RB_WAIT, RB_ATTACK, RB_INTER };
+static struct { int row, nrv, step, alive[3], life[3]; float rad[3]; u32 lv, lvb[3]; } rbms[MAX_RBEAMERS];
+
+static int rbm_of(int row)
+{
+    for (int i = 0; i < nrbms; i++) if (rbms[i].row == row) return i;
+    if (nrbms == MAX_RBEAMERS) return -1;
+    memset(&rbms[nrbms], 0, sizeof rbms[0]);
+    rbms[nrbms].row = row;
+    return nrbms++;
+}
+static V3 rbm_up(const Row *r)
+{
+    float m[16], one[3] = {1, 1, 1};
+    mat_translate_rot_scale(m, r->pos, r->rot, one);
+    return vnorm(v3(m[4], m[5], m[6]));
+}
+static int rbm_same_group(const Row *a, const Row *b) { return a == b || (a->group >= 0 && a->group == b->group && a->zone == b->zone); }
+static int rbm_near(int row, float across, float along) /* enableGroupAttack: the member nearest Mario, isNearPlayerPose */
+{
+    const Row *r = &sc->objs[row];
+    if ((r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) || (r->sw[SW_B] >= 0 && !sw_on(r, SW_B))) return 0;
+    if (mario_hidden) return 0;
+    const Row *best = r;
+    float bd = vlen(vsub(row_pos(r), mario->pos));
+    for (int i = 0; i < nrbms; i++) {
+        const Row *o = &sc->objs[rbms[i].row];
+        float d = vlen(vsub(row_pos(o), mario->pos));
+        if (rbm_same_group(r, o) && d < bd) { bd = d; best = o; }
+    }
+    V3 up = rbm_up(best), d = vsub(row_pos(best), mario->pos);
+    if (fabsf(vdot(d, up)) > along) return 0;
+    return vlen(vtangent(d, up)) < across;
+}
+static void rbm_group_nerve(int row, int nrv) /* sendMsgToGroupMember ACTMES_GROUP_ATTACK / HIDE */
+{
+    const Row *r = &sc->objs[row];
+    for (int i = 0; i < nrbms; i++)
+        if (rbm_same_group(r, &sc->objs[rbms[i].row])) { rbms[i].nrv = nrv; rbms[i].step = -1; }
+}
+static void update_rbeamers(void)
+{
+    for (int i = 0; i < ninsts; i++) { /* the beamers in reach (their rows found once) */
+        Inst *in = &insts[i];
+        if (!in->rbeamer || row_dead[in->row]) continue;
+        int k = rbm_of(in->row);
+        if (k < 0) continue;
+        typeof(&rbms[0]) o = &rbms[k];
+        const Row *r = &sc->objs[in->row];
+        if (r->sw[SW_B] >= 0 && !sw_on(r, SW_B) && o->nrv != RB_INTER) { /* syncSwitchOffB */
+            o->nrv = RB_INTER; o->step = -1;
+            for (int b = 0; b < 3; b++) o->alive[b] = 0;
+        }
+        int st = ++o->step;
+        switch (o->nrv) {
+        case RB_WAIT:
+            if (rbm_near(in->row, 3000.0f, 500.0f)) rbm_group_nerve(in->row, RB_ATTACK);
+            break;
+        case RB_ATTACK:
+            if (st == 0) obj_play(in, "Open", 0, 0);
+            if (st >= 240) { o->nrv = RB_INTER; o->step = -1; break; }
+            if (st % 80 < 79) o->lv = se_level(SE_EM_LV_RINGBEAM_CHARGE, &in->m[12], o->lv);
+            if (st % 80 < 79) fx_named("RingBeamer", "Charge", in->m, in->anim ? (const float (*)[16])in->anim->world : NULL, &rbms[k]);
+            if (st % 80 == 79) {
+                if (!rbm_near(in->row, 3200.0f, 500.0f)) rbm_group_nerve(in->row, RB_INTER);
+                else if (!o->alive[st / 80]) { /* RingBeam::appear: exeSpread from the start */
+                    int b = st / 80;
+                    o->alive[b] = 1; o->life[b] = 0; o->rad[b] = 0.0f;
+                    se_start(SE_EM_JUMPRING_APPEAR, &in->m[12]);
+                }
+            }
+            break;
+        case RB_INTER:
+            if (st >= 80 && !o->alive[0] && !o->alive[1] && !o->alive[2]) { o->nrv = RB_WAIT; o->step = -1; }
+            break;
+        }
+        /* the rings */
+        V3 up = rbm_up(r), c0 = vadd(row_pos(r), vmul(up, 75.0f)), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+        float speed = r->arg[0] != -1 ? (float)r->arg[0] : 20.0f;
+        int life = r->arg[1] != -1 ? r->arg[1] : 100;
+        for (int b = 0; b < 3; b++) {
+            if (!o->alive[b]) continue;
+            o->rad[b] = speed * (o->life[b] + 1); /* _c0 += _a8 x speed; setRadius(|_c0 - ec|) */
+            if (o->rad[b] > 2000.0f) o->rad[b] = 2000.0f;
+            V3 d = vsub(mc, c0), h = vtangent(d, up);
+            if (vlen(h) > 1e-3f && vlen(d) < o->rad[b] + HIT_BODY_R && !mario->hurt_timer) { /* attackSensor */
+                V3 on = vmul(vnorm(h), o->rad[b]);
+                if (vlen(vsub(on, d)) <= 5.0f + HIT_BODY_R) { hurt_mario(c0, 15.0f); printf("ring beam %d shocks Mario\n", in->row); }
+            }
+            V3 ce = vsub(cam_pos, c0), hc = vtangent(ce, up); /* its sound at the ring's point nearest the camera */
+            float k2 = vlen(ce) > 1e-3f ? 1.0f - fabsf(vdot(up, vnorm(ce))) : 0.0f;
+            V3 sp = vlen(hc) > 1e-3f ? vadd(c0, vmul(vnorm(hc), o->rad[b] * k2)) : c0;
+            o->lvb[b] = se_level(SE_EM_LV_RINGBEAM_MOVE, &sp.x, o->lvb[b]);
+            if (++o->life[b] >= life) o->alive[b] = 0; /* kill */
+        }
+        /* the beamer's own sensors: its head hurts, its body pushes */
+        if (in->anim && in->anim->skin && in->anim->skin->njoints > 2) {
+            float jm[16];
+            mat_mul(jm, in->m, in->anim->world[2]);
+            V3 head = v3(jm[12] + jm[4] * 110.0f, jm[13] + jm[5] * 110.0f, jm[14] + jm[6] * 110.0f);
+            if (vlen(vsub(mc, head)) < 130.0f + HIT_BODY_R && !mario->hurt_timer) hurt_mario(head, 25.0f); /* EnemyAttackStrong */
+        }
+        V3 body = vadd(row_pos(r), vmul(up, 80.0f)), out = vtangent(vsub(mc, body), mario->up);
+        float l = vlen(out), want = 160.0f + HIT_BODY_R * 0.6f;
+        if (vlen(vsub(mc, body)) < 160.0f + HIT_BODY_R && l > 1e-3f && l < want) /* sendMsgPush */
+            mario->pos = vadd(mario->pos, vmul(out, (want - l) / l));
+    }
+}
+static void draw_rbeams(void)
+{
+    if (!m_rbeam || !m_rbeam->skin) return;
+    for (int k = 0; k < nrbms; k++) {
+        typeof(&rbms[0]) o = &rbms[k];
+        const Row *r = &sc->objs[o->row];
+        for (int b = 0; b < 3; b++) {
+            if (!o->alive[b] || !row_shown(o->row)) continue;
+            Anim *a = obj_anim(2 * (int)sc->nobjs + 3 * o->row + b, m_rbeam, "JumpBeamerBeam");
+            if (!a) continue;
+            if (a->clip_id < 0 || strcmp(sc->clips[a->clip_id].name, "jumpbeamerbeam/spread")) anim_start(a, "jumpbeamerbeam/spread", 0);
+            int n = anim_length(a);
+            a->speed = 0.0f; a->frame = o->rad[b] / 2000.0f * (float)n; /* setBckFrameAndStop */
+            anim_update(a);
+            float m[16];
+            mat_translate_rot_scale(m, r->pos, r->rot, r->scale);
+            V3 p = vadd(row_pos(r), vmul(rbm_up(r), 75.0f)); /* initPos */
+            m[12] = p.x; m[13] = p.y; m[14] = p.z;
+            draw_skin(m_rbeam, m, a);
+        }
+    }
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -17055,6 +17201,7 @@ void game_update(void)
     LQ(7, update_seesaws()); /* after Mario: his hip drop (hip_hit) this frame */
     LQ(8, update_bridges());
     update_dossuns();
+    update_rbeamers();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
@@ -18052,6 +18199,7 @@ void game_draw(void)
     u32 rq = cycles();
 #define RESTQ(k) do { u32 c_ = cycles(); prof_rest[k] += c_ - rq; rq = c_; } while (0)
     draw_hhp_leaves();
+    draw_rbeams();
     RESTQ(0);
     draw_vines();
     RESTQ(1);
