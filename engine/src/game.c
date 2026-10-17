@@ -5941,6 +5941,9 @@ static int update_launch(Player *m)
      * path's end straight down to the ground, none of the last step across: kept along gravity only; where Petari
      * drops it (endRush with ATYPE_SCENARIO_STARTER_BIND) was not traced */
     if (L->starter) step = vmul(m->up, vdot(step, m->up));
+    /* ponytail: the path can end with his feet under a raised ground (HeavenlyBeach 2: 10 under, then through it):
+     * he starts his drop 100 up along his up, so the ground is met from above */
+    if (L->starter) m->pos = vadd(m->pos, vmul(m->up, 100.0f));
     m_power_jump(m, step);
     if (L->starter) m->land_type = 2; /* MarioActor::endRush: ATYPE_SCENARIO_STARTER_BIND */
 
@@ -20792,8 +20795,10 @@ static void update_switches(void)
                 }
             continue;
         }
-        if (logic[i].kind == LOGIC_DEATH) { /* DeathArea.cpp: forceKillPlayerByAbyss */
-            if (row_shown(row) && area_inside(r, mario->pos)) { printf("death area %d\n", row); miss(); }
+        if (logic[i].kind == LOGIC_DEATH) { /* DeathArea.cpp: forceKillPlayerByAbyss; isInVolume: not while its SW_A is off;
+                                              * getDeathType: arg0 -1 (DeathType_Any) only; MarioActor::forceKill: not
+                                              * while bound (isEnableNerveChange: a launch star's flight is a rush) */
+            if (row_shown(row) && (r->sw[SW_A] < 0 || sw_on(r, SW_A)) && r->arg[0] == -1 && mario->launch < 0 && area_inside(r, mario->pos)) { printf("death area %d\n", row); miss(); }
             continue;
         }
         if (logic[i].kind == LOGIC_PIECESPOT) { /* StarPieceSpot.cpp: arg0 star pieces (default 5) burst out when its
