@@ -188,7 +188,7 @@ typedef struct {
     V3 gup;          /* AssemblyBlock: up at its home (its bobbing) */
     int jstand;      /* JumpStand: holds Mario landing on it, then throws him up (update_jumpstands) */
     int warppod;     /* WarpPod: takes Mario to its pair (warp_try, warp_update) */
-    int kiraira;     /* Kiraira: a chained mine, explodes on touch and recovers (update_kiraira, kiraira_pos) */
+    int kiraira;     /* Kiraira 1, KirairaRail 2: a chained / railed mine, explodes on touch and recovers (update_kiraira, kiraira_pos) */
     int kgun;        /* KillerGunnerSingle: charges and fires its shell (update_kgunners) */
     int orock;       /* OtaRock: throws coconuts and fire balls, down by a coconut sent back (update_orocks) */
     int hhp;         /* HammerHeadPackun: swings its head at Mario, down by a stomp in its chance (update_hhps) */
@@ -1959,13 +1959,23 @@ static void update_tsuki(void)
  * turns to Mario within 1500; touching its body (120) explodes it (an explosion attack), SW_B on; Dead 300 frames,
  * RecoverSign 120, Revival ~60 (KIRA_DOWN in all), then it waits again (SW_B off). row_turn 1 while down, row_step its
  * frames. ponytail: hidden while Dead (its Down BCK), faces Mario at once, SpaceMine's explosion, no chain, no group
- * alarm, no KirairaRail */
+ * alarm. KirairaRail (driftOnRail): instead of the bob it runs its rail at arg0 (5) a frame (row_coord, row_rdir),
+ * turning back within 50 of an end (SE_OJ_LV_KIRAIRA_CHAIN), and stays where it is while down */
 #define KIRA_DOWN 480
 static void hurt_mario(V3 from, float speed);
+static float w_rail_len(const float *p, u32 n);
+static const float *kira_rail(const Inst *in, u32 *rn, int *cl)
+{
+    const Row *r = &sc->objs[in->row];
+    return in->kiraira == 2 && r->path >= 0 && scene_blob_g && row_coord ? find_rail(scene_blob_g, r->zone, r->path, rn, cl) : NULL;
+}
 static V3 kiraira_pos(const Inst *in, V3 *up)
 {
     V3 p = v3(in->m[12], in->m[13], in->m[14]);
     *up = up_at(p, v3(in->m[4], in->m[5], in->m[6]));
+    u32 rn = 0; int cl = 0;
+    const float *rail = kira_rail(in, &rn, &cl);
+    if (rail) return rail_at(rail, rn, row_coord[in->row]);
     float t = (game_frame * 2.0f + 45.0f) * 0.0174533f;
     return vsub(p, vmul(*up, 43.0f * (0.7071068f - cosf(t))));
 }
@@ -2088,6 +2098,17 @@ static void update_kiraira(void)
         if (*ph) {
             if (++*t >= KIRA_DOWN) { *ph = 0; *t = 0; if (r->sw[SW_B] >= 0) sw_set(r, SW_B, 0); }
             continue;
+        }
+        u32 rn = 0; int cl = 0;
+        const float *rail = kira_rail(in, &rn, &cl);
+        if (rail) { /* driftOnRail */
+            float len = w_rail_len(rail, rn), sp = r->arg[0] != -1 ? (float)r->arg[0] : 5.0f;
+            if (row_rdir[in->row] != -1) row_rdir[in->row] = 1;
+            row_coord[in->row] += sp * row_rdir[in->row];
+            if (row_coord[in->row] < 0) row_coord[in->row] = 0;
+            if (row_coord[in->row] > len) row_coord[in->row] = len;
+            if (row_rdir[in->row] > 0 ? row_coord[in->row] >= len - 50.0f : row_coord[in->row] <= 50.0f) row_rdir[in->row] = -row_rdir[in->row]; /* isRailReachedNearGoal */
+            insts[i].lv[0] = se_level(SE_OJ_LV_KIRAIRA_CHAIN, &in->m[12], insts[i].lv[0]);
         }
         V3 up, p = kiraira_pos(in, &up);
         if (vlen(vsub(c, p)) >= 120.0f * in->s + HIT_BODY_R) continue;
@@ -3211,7 +3232,7 @@ void game_rebind(void)
         in->assembly = strncmp(name, "AssemblyBlock", 13) == 0;
         in->jstand = strcmp(name, "JumpStand") == 0;
         in->warppod = strcmp(name, "WarpPod") == 0;
-        in->kiraira = strcmp(name, "Kiraira") == 0;
+        in->kiraira = strcmp(name, "Kiraira") == 0 ? 1 : strcmp(name, "KirairaRail") == 0 ? 2 : 0;
         in->kgun = strcmp(name, "KillerGunnerSingle") == 0;
         in->orock = strcmp(name, "OtaRock") == 0;
         in->hhp = strcmp(name, "HammerHeadPackun") == 0;
