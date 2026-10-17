@@ -42,9 +42,9 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
-       WALK_GESSO };
+       WALK_GESSO, WALK_BASABASA };
 /* walkers ported in the release push: their classes (counted, placed and drawn through this table) */
-static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}};
+static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}, {"BasaBasa", WALK_BASABASA}, {"BasaBasaIce", WALK_BASABASA}};
 #define NEW_WALKERS ((int)(sizeof new_walkers / sizeof new_walkers[0]))
 static const Model *m_wnew[NEW_WALKERS];
 static int walker_new_kind(const char *cls)
@@ -52,6 +52,7 @@ static int walker_new_kind(const char *cls)
     for (int i = 0; i < NEW_WALKERS; i++) if (!strcmp(new_walkers[i].cls, cls)) return new_walkers[i].kind;
     return -1;
 }
+static const Model *walker_new_model(int row);
 /* Petari.cpp's nerves (petari_update) */
 enum { PT_LURK, PT_JUMPOUT, PT_WAIT, PT_APPROACH, PT_ESCAPE, PT_SWOONSTART, PT_SWOON, PT_SWOONEND, PT_LAND, PT_SMASH,
        PT_SPINOUT, PT_KICKOUT };
@@ -14647,6 +14648,273 @@ static void gesso_update(Kuribo *k)
     }
 }
 
+/* BasaBasa.cpp after Petari (BasaBasa, BasaBasaIce): a bat. Under a ceiling (a face within 30 over it) it hangs
+ * (Wait) until its target is within arg0 (2000): ChaseStart (FlyStart, FIND, 15 a frame along gravity for 50, bound at
+ * 15); else it flies at home (AirWait). Chase: 2 a frame along its front, turning 1.7 to the target (Mario's centre or
+ * its rail's point, 1 a frame along it) turned by a random -25..25; its height tuned to 600-800 (or the target's) over
+ * the ground below; facing away (60) a QuickTurn (45 frames on, then 2.55 a frame); Mario within 600-800 and home
+ * within arg1 (arg0 + 1000): AttackStart (rising), Attack (10 a frame at his head, up to 23, 180 frames or a wall),
+ * AttackEnd (50, its effect near the ground), AttackEndRecover; far from home: ComeHome (back under its ceiling:
+ * AttachCelling, Return, Wait). Velocity: half its sideways part, x 0.95 (0.96 AttackEnd, 0.45 ChaseStart), at most 8
+ * (15 ChaseStart / HitBack, 23 Attack). Its attack (60) hurts Mario (strongly swimming; the Ice one freezes: here a
+ * hurt) unless he hip-drops: HitBack (Reaction, 15 a frame back for 5), HitBackEnd 60; a trample or hip drop: down
+ * (8 frames, a coin; the Ice one hurts unless Ice Mario); a spin: PunchDown (SpinHitController 20 / 20 / 5, 20 / 10,
+ * three star pieces; the Ice one ignores it); a star piece: Stun (Swoon). Out of sight beyond 2500 for 180 frames it
+ * goes home. ponytail: no hang model, no star pointer swoon, no stamp squash, the shadow's ground probe a line 2000
+ * down, no push between enemies, no SpinStorm on the Ice one */
+enum { BB_WAIT, BB_AIRWAIT, BB_CHASESTART, BB_CHASE, BB_QTSTART, BB_QT, BB_PUNCHDOWN, BB_TRAMPLE, BB_ATTACKSTART, BB_ATTACK,
+       BB_ATTACKEND, BB_ATTACKENDREC, BB_HITBACK, BB_HITBACKEND, BB_COMEHOME, BB_ATTACH, BB_STUN };
+static const float *bb_rail(const Kuribo *k, u32 *n, int *closed)
+{
+    const Row *r = &sc->objs[k->row];
+    return r->path >= 0 && scene_blob_g ? find_rail(scene_blob_g, r->zone, r->path, n, closed) : NULL;
+}
+static V3 bb_target(Kuribo *k) /* _B4: 0 Mario's centre, 1 its rail's point, 2 home */
+{
+    if (k->phase == 2) return k->tcenter;
+    if (k->phase == 1) { u32 n; int cl; const float *p = bb_rail(k, &n, &cl); if (p) return rail_at(p, n, k->lva[1]); }
+    return vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+}
+static int bb_near_target(Kuribo *k, float d) { return vlen(vsub(k->phase == 0 ? vadd(mario->pos, vmul(mario->up, HIT_BODY_H)) : bb_target(k), k->pos)) < d; }
+static float bb_ground(const Kuribo *k) /* getShadowProjectionLength: down along gravity to the map, -1 none */
+{
+    for (float d = 25.0f; d <= 2000.0f; d += 25.0f) {
+        Hit h[1];
+        if (kcl_query(vadd(k->pos, vmul(k->grav, d)), 15.0f, h, 1)) return d;
+    }
+    return -1.0f;
+}
+static void bb_tune_height(Kuribo *k) /* tuneHeight */
+{
+    float g = bb_ground(k);
+    if (g < 0) return;
+    V3 v;
+    if (bb_near_target(k, k->len)) { V3 d = vsub(bb_target(k), k->pos); v = vmul(k->grav, vdot(k->grav, d)); }
+    else v = vmul(k->grav, g - (k->len - 350.0f));
+    if (vlen(v) < 2.0f) return;
+    k->vel = vadd(k->vel, vmul(vnorm(v), 2.0f));
+}
+static void bb_turn_to(Kuribo *k, V3 t, float deg) { turn_on_plane(&k->front, vsub(t, k->pos), k->grav, cosf(deg * 0.0174533f)); }
+static int bb_facing(Kuribo *k, V3 t, float deg)
+{
+    V3 h = vtangent(vsub(t, k->pos), k->grav), f = vtangent(k->front, k->grav);
+    return vlen(h) < 1e-6f || vlen(f) < 1e-6f || vdot(vnorm(h), vnorm(f)) >= cosf(deg * 0.0174533f);
+}
+static int bb_come_home(Kuribo *k) /* tryComeHome */
+{
+    if (vlen(vsub(k->pos, k->tcenter)) < k->to && bb_near_target(k, k->from)) return 0;
+    w_nrv(k, BB_COMEHOME);
+    return 1;
+}
+static void basa_update(Kuribo *k)
+{
+    const Row *r = &sc->objs[k->row];
+    int ice = !strcmp(walker_cls(k), "BasaBasaIce");
+    if (!k->front.x && !k->front.y && !k->front.z) { /* init, initAfterPlacement */
+        V3 x, z;
+        row_axes(r, &x, &z);
+        k->front = vnorm(z); k->velh = k->front;
+        k->from = r->arg[0] != -1 ? (float)r->arg[0] : 2000.0f;
+        k->to = r->arg[1] != -1 ? (float)r->arg[1] : 1000.0f + k->from;
+        k->len = 600.0f + (rand() % 2001) / 10.0f; k->lva[0] = -25.0f + (rand() % 501) / 10.0f;
+        k->grav = vmul(walker_up(k, v3(0, 1, 0)), -1.0f);
+        V3 from = vadd(k->pos, vmul(k->grav, 20.0f)), hit;
+        k->dir = 0;
+        for (float d = 0; d <= 30.0f; d += 5.0f) { /* getFirstPolyOnLineToMap: a ceiling just over it */
+            Hit h[1];
+            hit = vsub(from, vmul(k->grav, d));
+            if (kcl_query(hit, 5.0f, h, 1)) { k->pos = hit; k->dir = 1; break; }
+        }
+        k->tcenter = k->pos;
+        u32 n; int cl;
+        k->phase = bb_rail(k, &n, &cl) ? 1 : 0;
+        w_nrv(k, k->dir ? BB_WAIT : BB_AIRWAIT);
+    }
+    k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f); /* onCalcGravity */
+    float near = vlen(vsub(mario->pos, k->pos));
+    int st = ++k->step;
+    switch (k->nrv) {
+    case BB_WAIT:
+        if (st == 0) { w_act(k, "Wait"); k->phase = 0; k->bind_off = 1; }
+        if (bb_near_target(k, k->from)) w_nrv(k, BB_CHASESTART);
+        break;
+    case BB_AIRWAIT: {
+        u32 n; int cl;
+        if (st == 0) { w_act(k, "Fly"); k->phase = bb_rail(k, &n, &cl) ? 1 : 0; }
+        bb_tune_height(k);
+        if (bb_near_target(k, k->from)) w_nrv(k, BB_CHASE);
+        else bb_come_home(k);
+        break;
+    }
+    case BB_CHASESTART:
+        if (st == 0) { w_act(k, "FlyStart"); w_se(k, SE_EV_BASABASA_FIND); }
+        if (st < 50) k->vel = vadd(k->vel, vmul(k->grav, 15.0f));
+        if (st == 15) k->bind_off = 0;
+        if (w_bck_stopped(k)) w_nrv(k, BB_CHASE);
+        break;
+    case BB_CHASE: {
+        if (st == 0) { if (strcmp(k->act, "Fly")) w_act(k, "Fly"); k->bind_off = 0; }
+        V3 t = bb_target(k), v = vtangent(vsub(t, k->pos), k->grav);
+        if (vlen(v) > 1e-6f) turn_on_plane(&k->front, rot_axis(vnorm(v), vnorm(k->grav), k->lva[0] * 0.0174533f), k->grav, cosf(1.7f * 0.0174533f));
+        k->vel = vadd(k->vel, vmul(k->front, 2.0f));
+        bb_tune_height(k);
+        if (vlen(vsub(mario->pos, k->tcenter)) < k->to && near < k->len) w_nrv(k, BB_ATTACKSTART);
+        else if (!bb_facing(k, t, 60.0f)) w_nrv(k, BB_QTSTART);
+        else bb_come_home(k);
+        break;
+    }
+    case BB_QTSTART:
+        k->vel = vadd(k->vel, vmul(k->front, 2.0f));
+        if (st == 45) w_nrv(k, BB_QT);
+        break;
+    case BB_QT: {
+        V3 t = bb_target(k);
+        k->vel = vadd(k->vel, vmul(k->front, 2.0f));
+        bb_turn_to(k, t, 2.55f);
+        if (bb_facing(k, t, 2.55f)) w_nrv(k, BB_CHASE);
+        break;
+    }
+    case BB_TRAMPLE:
+        if (st == 0) { k->vel = v3(0, 0, 0); w_se(k, SE_EV_BASABASA_DAMAGE); w_se(k, SE_EM_STOMPED_S); }
+        if (st >= 8) { pop_coins(k->pos, vmul(k->grav, -1.0f), 1); k->item = 0; goto dead; } /* AnimStampController: 8 */
+        break;
+    case BB_PUNCHDOWN:
+        if (st == 0) { w_act(k, "Blow"); w_se(k, SE_EV_BASABASA_DAMAGE); w_se(k, SE_PM_SPIN_HIT); k->bind_off = 0; }
+        if (spin_hit_exec(k, 20, 20, 5, 0.0f, 3, 0, k->timer)) goto dead;
+        break;
+    case BB_ATTACKSTART: {
+        if (st == 0) w_act(k, "AttackStart");
+        bb_turn_to(k, bb_target(k), 2.55f);
+        V3 v = vmul(vadd(vmul(k->front, 2.0f), k->grav), -1.0f);
+        v = vlen(v) > 1e-6f ? vnorm(v) : vmul(k->grav, -1.0f);
+        k->vel = vadd(k->vel, vmul(v, 0.2f));
+        if (w_bck_stopped(k)) w_nrv(k, BB_ATTACK);
+        break;
+    }
+    case BB_ATTACK: {
+        if (st == 0) { w_act(k, "Attack"); w_se(k, SE_EV_BASABASA_ATTACK); k->ttarget = vadd(mario->pos, vmul(mario->up, 100.0f)); }
+        w_se_lv(k, SE_EM_LV_BASABASA_ATTACK);
+        V3 v = vsub(k->ttarget, k->pos);
+        if (ice) { V3 u = k->qy, vu = vmul(u, vdot(u, v)); v = vadd(vsub(v, vu), vmul(vu, 5.0f)); }
+        if (vlen(v) > 1e-6f) v = vnorm(v);
+        bb_turn_to(k, k->ttarget, 2.55f);
+        k->vel = vadd(k->vel, vmul(v, 10.0f));
+        if (vlen(vsub(k->ttarget, k->pos)) < 40.0f || k->on_wall || st == 180) w_nrv(k, BB_ATTACKEND);
+        break;
+    }
+    case BB_ATTACKEND:
+        if (st == 0) {
+            w_act(k, "AttackEnd");
+            float g = bb_ground(k);
+            if (g >= 0 && g < 200.0f) { float m[16]; basis_matrix(m, k->pos, k->qy, k->front, 0); fx_named(walker_cls(k), "AttackEnd", m, NULL, NULL); }
+        }
+        k->vel = vadd(k->vel, vmul(k->front, 0.1f));
+        if (st == 50) w_nrv(k, BB_ATTACKENDREC);
+        break;
+    case BB_ATTACKENDREC: {
+        if (st == 0) k->vel = v3(0, 0, 0);
+        V3 v = vnorm(vmul(vadd(vmul(k->front, -0.5f), k->grav), -1.0f));
+        if (k->act_t >= 116.0f) k->vel = vadd(k->vel, vmul(v, 0.3f)); /* getBckFrame */
+        if (w_bck_stopped(k)) w_nrv(k, BB_CHASE);
+        break;
+    }
+    case BB_HITBACK:
+        if (st == 0) { w_act(k, "Reaction"); k->bind_off = 0; turn_on_plane(&k->front, vsub(mario->pos, k->pos), k->grav, -1.0f); w_se(k, SE_EM_ICEBASA_SPIN_BLOW); }
+        if (st <= 5) {
+            V3 v = vmul(vadd(k->front, k->grav), -1.0f);
+            v = vlen(v) > 1e-6f ? vnorm(v) : vmul(k->grav, -1.0f);
+            k->vel = vadd(k->vel, vmul(v, 15.0f));
+        }
+        if (w_bck_stopped(k)) w_nrv(k, BB_HITBACKEND);
+        break;
+    case BB_HITBACKEND:
+        if (st == 0 && strcmp(k->act, "Fly")) w_act(k, "Fly");
+        if (st == 60) w_nrv(k, BB_CHASE);
+        break;
+    case BB_COMEHOME:
+        if (st == 0) { if (strcmp(k->act, "Fly")) w_act(k, "Fly"); k->phase = 2; }
+        bb_turn_to(k, k->tcenter, 2.55f);
+        k->vel = vadd(k->vel, vmul(k->front, 2.0f));
+        bb_tune_height(k);
+        if (bb_near_target(k, 300.0f)) w_nrv(k, k->dir ? BB_ATTACH : BB_AIRWAIT);
+        else if (st >= 120 && near < k->from && vlen(vsub(mario->pos, k->tcenter)) < k->to) { k->phase = 0; w_nrv(k, BB_CHASE); }
+        break;
+    case BB_ATTACH:
+        if (st == 0) { w_act(k, "Return"); k->bind_off = 1; }
+        turn_on_plane(&k->front, k->velh, k->grav, cosf(2.55f * 0.0174533f));
+        if (vlen(vsub(k->tcenter, k->pos)) < 10.0f) { k->vel = v3(0, 0, 0); k->pos = k->tcenter; }
+        else k->vel = vmul(vsub(k->tcenter, k->pos), 5.0f);
+        if (w_bck_stopped(k)) { k->vel = v3(0, 0, 0); w_nrv(k, BB_WAIT); }
+        break;
+    case BB_STUN:
+        if (st == 0) { w_act(k, "Swoon"); w_se(k, SE_EV_BASABASA_DAMAGE); }
+        k->vel = vadd(k->vel, k->grav);
+        if (w_bck_stopped(k)) w_nrv(k, BB_CHASE);
+        break;
+    }
+    k->act_t += k->act_rate;
+    /* control(): clipping home, controlVelocity, the rail's point */
+    w_se_lv(k, SE_EM_LV_ICEBASA_CHILL);
+    if (k->nrv != BB_ATTACH && k->nrv != BB_CHASESTART && k->clipped && near >= 2500.0f) {
+        if (++k->timer > 180) {
+            k->pos = k->tcenter; k->front = k->velh; k->vel = v3(0, 0, 0); k->timer = 0;
+            w_nrv(k, k->dir ? BB_WAIT : BB_AIRWAIT);
+        }
+    } else k->timer = 0;
+    if (k->nrv != BB_TRAMPLE && k->nrv != BB_PUNCHDOWN) { /* controlVelocity */
+        V3 side = vnorm(vcross(k->qy, k->front));
+        float sv = vdot(side, k->vel);
+        k->vel = vadd(vsub(k->vel, vmul(side, sv)), vmul(side, 0.5f * sv));
+        k->vel = vmul(k->vel, k->nrv == BB_ATTACKEND ? 0.96f : k->nrv == BB_CHASESTART ? 0.45f : 0.95f);
+        float mx = k->nrv == BB_CHASESTART || k->nrv == BB_HITBACK ? 15.0f : k->nrv == BB_ATTACK ? 23.0f : 8.0f;
+        if (vlen(k->vel) > mx) k->vel = vmul(vnorm(k->vel), mx);
+    }
+    if (k->phase == 1) { /* updateRailType: 1 a frame; Mario within arg0 of home: him */
+        u32 n; int cl;
+        const float *p = bb_rail(k, &n, &cl);
+        float len = 0;
+        for (u32 i = 0; p && i + 1 < n; i++) len += vlen(vsub(v3(p[3 * i + 3], p[3 * i + 4], p[3 * i + 5]), v3(p[3 * i], p[3 * i + 1], p[3 * i + 2])));
+        k->lva[1] += 1.0f;
+        if (len > 0) k->lva[1] = cl ? fmodf(k->lva[1], len) : (k->lva[1] > len ? len : k->lva[1]);
+        if (vlen(vsub(mario->pos, k->tcenter)) < k->from) k->phase = 0;
+    }
+    /* calcMtxFromGravityAndZAxis, the binder (110 about its centre) */
+    k->qy = vmul(k->grav, -1.0f);
+    k->qz = vnorm(vtangent(k->front, k->qy));
+    if (vlen(k->qz) < 1e-3f) k->qz = k->front;
+    k->pos = vadd(k->pos, k->vel);
+    if (!k->bind_off) {
+        V3 c = k->pos, gn, wn;
+        int wall = 0;
+        k->on_ground = collide_n(&c, k->qy, 110.0f, &gn, &wn, &wall);
+        k->on_wall = wall; k->pos = c;
+    } else k->on_ground = k->on_wall = 0;
+    k->up = k->qy;
+    /* sensors: body 90, attack 60 at JointRoot (its centre) */
+    if (k->nrv == BB_TRAMPLE || k->nrv == BB_PUNCHDOWN || k->nrv == BB_HITBACK) return;
+    int msg = mario_offence(k->pos, 90.0f, k->grav);
+    if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) {
+        if (ice) hurt_mario(k->pos, 15.0f); /* sendMsgEnemyAttackFreeze (no Ice Mario) */
+        else { w_nrv(k, BB_TRAMPLE); if (msg == MSG_TRAMPLE) { mario->vup = 15.0f; mario->grounded = 0; } }
+        return;
+    }
+    if (msg == MSG_HITALL && !ice) { spin_hit_start(k, mario->pos, 20.0f, 10.0f); k->timer = 1; k->item = 2; w_nrv(k, BB_PUNCHDOWN); return; }
+    if (mario->hip != HIP_FALL && !mario->hurt_timer && vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), k->pos)) < 60.0f + HIT_BODY_R) {
+        hurt_mario(k->pos, swimming ? 25.0f : 15.0f); /* EnemyAttackStrong swimming, else EnemyAttack */
+        w_nrv(k, BB_HITBACK);
+    }
+    return;
+dead:
+    w_se(k, SE_EM_EXPLODE_S);
+    { float m[16]; basis_matrix(m, k->pos, k->qy, k->front, 0); fx_named(walker_cls(k), "Death", m, NULL, NULL); }
+    k->state = KURIBO_DEAD; row_kill(k->row);
+}
+
+static const Model *walker_new_model(int row) /* a new walker's class model */
+{
+    for (int i = 0; i < NEW_WALKERS; i++) if (!strcmp(new_walkers[i].cls, sc->types + 32 * sc->objs[row].type)) return m_wnew[i];
+    return NULL;
+}
 static void update_kuribo_one(Kuribo *k);
 static void update_kuribo(void)
 {
@@ -14668,6 +14936,7 @@ static void update_kuribo_one(Kuribo *k)
         if (k->kind >= WALK_GESSO) { /* the release push's walkers; ponytail: still while their zone has no collision */
             if (sc->objs[k->row].zone < 64 && !zone_kcl[sc->objs[k->row].zone]) return;
             if (k->kind == WALK_GESSO) gesso_update(k);
+            else if (k->kind == WALK_BASABASA) basa_update(k);
             return;
         }
         if (k->kind == WALK_PETARI) { /* ponytail: still while its zone has no collision (streaming) */
@@ -17272,6 +17541,9 @@ static void update_shots(void)
             }
             else if (e->kind == WALK_UNIZO || e->kind == WALK_POIHANA) { /* isMsgStarPieceAttack: nothing more */ }
             else if (e->kind == WALK_GESSO) { if (e->nrv != GE_PUNCHDOWN) w_nrv(e, GE_ROTATE); } /* isMsgStarPieceAttack: Rotate */
+            else if (e->kind == WALK_BASABASA) { /* isMsgStarPieceAttack: Stun (isNrvEnableStun) */
+                if (e->nrv != BB_TRAMPLE && e->nrv != BB_PUNCHDOWN && e->nrv != BB_WAIT && e->nrv != BB_ATTACH) w_nrv(e, BB_STUN);
+            }
             else if (e->kind == WALK_STINKBUG) { if (e->phase != 2 && e->phase != 6) { e->phase = 5; e->timer = 0; } }
             else if (e->kind == WALK_KARIKARI) kari_blowout(e, s->pos, 1); /* isMsgStarPieceAttack: BlowOutStarPiece */
             else if (e->kind == WALK_PACKUN) { /* isMsgStarPieceAttack: SwoonStart */
@@ -18477,7 +18749,7 @@ void game_draw(void)
                           kuribo[i].kind == WALK_TERESA ? m_teresa :
                           kuribo[i].kind == WALK_BUTTERFLY ? brk_model(kuribo[i].row, "Butterfly", 0) : kuribo[i].kind == WALK_STINKBUG ? m_stink :
                           kuribo[i].kind == WALK_UNIZO ? m_unizo[kuribo[i].dir] : kuribo[i].kind == WALK_POIHANA ? m_poihana : kuribo[i].kind == WALK_PETARI ? m_petari :
-                          kuribo[i].kind >= WALK_GESSO ? m_wnew[kuribo[i].kind - WALK_GESSO] : m_kuribo;
+                          kuribo[i].kind >= WALK_GESSO ? walker_new_model(kuribo[i].row) : m_kuribo;
         if (kuribo[i].state == KURIBO_DEAD || !md || !row_shown(kuribo[i].row)) continue;
         if (kuribo[i].kind == WALK_TERESA && kuribo[i].phase == 4) continue; /* hidden in a wall */
         if (kuribo[i].kind == WALK_PETARI && kuribo[i].phase) continue; /* hideModel */
