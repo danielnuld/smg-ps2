@@ -41,7 +41,17 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
     u8 clipped; /* out of the view at the last draw (ClippingJudge: LiveActor::startClipped stops its movement) */ } Kuribo; /* walking
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
-enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI };
+enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
+       WALK_GESSO };
+/* walkers ported in the release push: their classes (counted, placed and drawn through this table) */
+static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}};
+#define NEW_WALKERS ((int)(sizeof new_walkers / sizeof new_walkers[0]))
+static const Model *m_wnew[NEW_WALKERS];
+static int walker_new_kind(const char *cls)
+{
+    for (int i = 0; i < NEW_WALKERS; i++) if (!strcmp(new_walkers[i].cls, cls)) return new_walkers[i].kind;
+    return -1;
+}
 /* Petari.cpp's nerves (petari_update) */
 enum { PT_LURK, PT_JUMPOUT, PT_WAIT, PT_APPROACH, PT_ESCAPE, PT_SWOONSTART, PT_SWOON, PT_SWOONEND, PT_LAND, PT_SMASH,
        PT_SPINOUT, PT_KICKOUT };
@@ -1373,6 +1383,7 @@ void game_init(const Scene *s, const unsigned char *blob)
               count_type("MechanicKoopaMini", 0) + count_type("Karikari", 0) +
               count_type("KuriboMini", 0) + count_type("Karon", 0) +
               count_type("Teresa", 0) + count_type("Butterfly", 0);
+    for (int i = 0; i < NEW_WALKERS; i++) nkuribo += count_type(new_walkers[i].cls, 0);
     int ntspots = count_type("TreasureSpot", 0) + count_type("CoinFlower", 0); /* a coin each when shot */
     for (u32 i = 0, tb = scene_type(s, "ItemBubble"); i < s->nobjs; i++) /* ItemBubble's coins (arg0 0, arg1 of them) */
         if (s->objs[i].type == (int)tb && s->objs[i].arg[0] <= 0) ntspots += s->objs[i].arg[1] > 1 ? s->objs[i].arg[1] : 1;
@@ -1428,12 +1439,14 @@ void game_init(const Scene *s, const unsigned char *blob)
         else if (r->type == t_flow) is += star_flow(pieces + is, is, r, blob);
         else if (r->type == t_kuribo || r->type == t_tako || r->type == t_packun || r->type == t_kote || r->type == t_spider ||
                  r->type == t_mera || r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly || r->type == t_stink ||
-                 r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == t_petari) {
+                 r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == t_petari ||
+                 walker_new_kind(s->types + 32 * r->type) >= 0) {
             memset(&kuribo[ik], 0, sizeof(Kuribo));
             kuribo[ik].dir = r->type == t_unil ? 1 : r->type == t_unis ? 2 : 0; /* Unizo: sea, land, shoal */
             kuribo[ik].kind = r->type == t_petari ? WALK_PETARI : r->type == t_poi ? WALK_POIHANA : r->type == t_uni || r->type == t_unil || r->type == t_unis ? WALK_UNIZO : r->type == t_stink ? WALK_STINKBUG : r->type == t_bfly ? WALK_BUTTERFLY : r->type == t_teresa ? WALK_TERESA : r->type == t_karon ? WALK_KARON : r->type == t_kmini ? WALK_KMINI : r->type == t_kari ? WALK_KARIKARI : r->type == t_mkoopa ? WALK_MKOOPA : r->type == t_takobo ? WALK_TAKOBO : r->type == t_tako ? WALK_TAKOHEI : r->type == t_packun ? WALK_PACKUN :
                               r->type == t_kote ? WALK_KOTEBUG : r->type == t_spider ? WALK_SPIDER :
                               r->type == t_mera ? WALK_MERAMERA : WALK_KURIBO;
+            if (walker_new_kind(s->types + 32 * r->type) >= 0) kuribo[ik].kind = walker_new_kind(s->types + 32 * r->type);
             kuribo[ik].pos = row_pos(r);
             kuribo[ik].row = i;
             kuribo[ik].up = up_at(kuribo[ik].pos, v3(0, 1, 0));
@@ -3066,6 +3079,7 @@ void game_rebind(void)
     m_otabloom = scene_model(s, "OtaKingMagmaBloom");
     m_pleaf = scene_model(s, "PackunLeaf");
     m_rbeam = scene_model(s, "JumpBeamerBeam");
+    for (int i = 0; i < NEW_WALKERS; i++) m_wnew[i] = scene_model(s, new_walkers[i].cls);
     m_vtop = scene_model(s, "PlantTop"); m_vleaf = scene_model(s, "PlantLeaf");
     m_fireball2 = scene_model(s, "FireBall"); m_firebubble = scene_model(s, "FireBubble");
     m_sambohead = scene_model(s, "CocoSamboHead");
@@ -3103,7 +3117,7 @@ void game_rebind(void)
             r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_stink || r->type == scene_type(s, "NoteFairy") ||
             r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == scene_type(s, "Petari") || r->type == scene_type(s, "RockCreator") || r->type == scene_type(s, "WanwanRolling") ||
             r->type == scene_type(s, "WanwanRollingMini") || r->type == scene_type(s, "WanwanRollingGold") ||
-            r->type == scene_type(s, "DinoPackun") || r->type == scene_type(s, "OtaKing"))
+            r->type == scene_type(s, "DinoPackun") || r->type == scene_type(s, "OtaKing") || walker_new_kind(s->types + 32 * r->type) >= 0)
             continue;
         const char *name = s->types + 32 * r->type;
         const Model *md = scene_model(s, name);
@@ -14468,6 +14482,171 @@ static void walker_explosion(V3 from)
 }
 
 u32 kprof[20], kprof_n[20]; /* update_kuribo's cycles and walkers by kind (profiling) */
+/* Gesso.cpp after Petari: a squid in the water (binder 150 about its centre, no gravity: each nerve sets its velocity).
+ * Wait bobs (1.5 x sin(45 + 2 step) along gravity, turning 0.3 a frame); Mario swimming within 1400: Search (FIND),
+ * turning 1.5 a frame to him, then WalkCharge (Walk, or WalkFast when he is within 1000 out of the water) 43 frames and
+ * Walk: up at 7 cos(0.99 step) with 3 (fast: 0.6) aside his way and 2.3 ahead, to 100 degrees; then on again, Sink
+ * (3 cos(100 + 3 step) to 180) below him, CoolDown (LostPlayer) past 2400, or ComeBack home at 3 once he leaves the water.
+ * Its up turns 0.5 a frame on its front's plane to its target (calcAndSetUpVecTarget); out of the water it does not
+ * rise. Its body (100) hurts Mario strongly (Attack: 25 back, Ink, 240); a spin or explosion knocks it out (30 away,
+ * PunchDown 20 or bound: Death, a coin); a star piece spins it (StarPiece). Out of sight or 10000 off for 300 frames it
+ * goes home (Wait). Arg0 0 with an appear switch: FromBox. ponytail: no star pointer swoon, no push from enemies */
+enum { GE_FROMBOX, GE_WAIT, GE_SEARCH, GE_WALKCHARGE, GE_WALK, GE_SINK, GE_LOST, GE_ATTACK, GE_PUNCHDOWN, GE_COMEBACK, GE_ROTATE };
+static V3 ge_side(const Kuribo *k) { return vnorm(vcross(k->qy, k->front)); } /* calcSideVec */
+static void ge_vel(Kuribo *k, float side, float up, float front) /* calcAndSetVelocity */
+{
+    k->vel = vadd(vadd(vmul(k->qy, up), vmul(ge_side(k), side)), vmul(k->front, front));
+}
+static void ge_up_target(Kuribo *k, float a, float b, float c) /* calcAndSetUpVecTarget */
+{
+    k->gup = (a == 0 && b == 0 && c == 0) ? v3(0, 1, 0) : vnorm(v3(a, b, c));
+}
+static void ge_bob(Kuribo *k) { k->vel = vmul(k->grav, 1.5f * sinf((45.0f + 2.0f * k->step) * 0.0174533f)); }
+static void ge_turn(Kuribo *k, V3 to, float deg) { turn_on_plane(&k->front, vsub(to, k->pos), k->grav, cosf(deg * 0.0174533f)); }
+static void ge_next(Kuribo *k) /* selectNextNerve */
+{
+    if (!swimming) w_nrv(k, GE_COMEBACK);
+    else if (vlen(vsub(mario->pos, k->pos)) >= 2400.0f) w_nrv(k, GE_LOST);
+    else if (vdot(vsub(mario->pos, k->pos), vmul(k->grav, -1.0f)) > 0.0f) w_nrv(k, GE_WALKCHARGE); /* isMarioUp */
+    else if (k->nrv != GE_SINK) w_nrv(k, GE_SINK);
+}
+static void ge_knock(Kuribo *k, V3 from) /* knockOut */
+{
+    k->vel = vmul(vnorm(vsub(k->pos, from)), 30.0f);
+    turn_on_plane(&k->front, vsub(k->pos, from), k->grav, -1.0f); /* turnDirectionToTarget(-1: at once), away */
+    w_nrv(k, GE_PUNCHDOWN);
+}
+static void gesso_update(Kuribo *k)
+{
+    const Row *r = &sc->objs[k->row];
+    if (!k->front.x && !k->front.y && !k->front.z) { /* init */
+        V3 x, z;
+        row_axes(r, &x, &z);
+        float m[16], one[3] = {1, 1, 1};
+        mat_translate_rot_scale(m, r->pos, r->rot, one);
+        k->tcenter = k->pos; k->front = vnorm(z); k->qy = k->gup = vnorm(v3(m[4], m[5], m[6]));
+        w_nrv(k, r->sw[SW_APPEAR] >= 0 && r->arg[0] == 0 ? GE_FROMBOX : GE_WAIT);
+    }
+    k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f);
+    V3 up = vmul(k->grav, -1.0f);
+    float near = vlen(vsub(mario->pos, k->pos));
+    /* clipAndInitPos */
+    if (near > 10000.0f || k->clipped) {
+        if (k->timer >= 300) { k->pos = k->tcenter; k->vel = v3(0, 0, 0); w_nrv(k, GE_WAIT); k->timer = 0; return; }
+        k->timer++;
+    } else k->timer = 0;
+    int st = ++k->step;
+    switch (k->nrv) {
+    case GE_FROMBOX:
+        if (st == 0) { w_act(k, "FromBox"); w_se(k, SE_EM_GESSO_SWIM_L); k->pos = vadd(k->pos, vmul(k->grav, -100.0f)); k->gup = k->qy = vnorm(v3(0, 1, 0.3f)); }
+        if (st < 10) ge_vel(k, 0.0f, 10.0f, 5.0f); else k->vel = v3(0, 0, 0);
+        if (w_bck_stopped(k)) { k->vel = v3(0, 0, 0); w_nrv(k, GE_WAIT); }
+        break;
+    case GE_WAIT:
+        if (st == 0) { w_act(k, "Wait"); ge_up_target(k, 0, 0, 0); }
+        ge_bob(k);
+        k->front = rot_axis(k->front, vnorm(k->grav), 0.3f * 0.0174533f);
+        if (near < 1400.0f && swimming) w_nrv(k, GE_SEARCH);
+        break;
+    case GE_SEARCH: {
+        if (st == 0) { w_act(k, "Search"); w_se(k, SE_EM_GESSO_FIND); ge_up_target(k, 0, 0, 0); }
+        ge_bob(k);
+        ge_turn(k, mario->pos, 1.5f);
+        V3 h = vtangent(vsub(mario->pos, k->pos), k->grav), f = vtangent(k->front, k->grav);
+        int facing = vlen(h) > 1e-6f && vlen(f) > 1e-6f && vdot(vnorm(h), vnorm(f)) >= cosf(1.5f * 0.0174533f);
+        if (facing && w_bck_stopped(k)) w_nrv(k, GE_WALKCHARGE);
+        break;
+    }
+    case GE_WALKCHARGE:
+        if (st == 0) { k->phase = near < 1000.0f && !swimming; w_act(k, k->phase ? "WalkFast" : "Walk"); k->gup = vnorm(v3(0, 1, 1)); }
+        k->vel = vmul(k->vel, 0.995f);
+        if (st == 43) { k->dir = vdot(vsub(mario->pos, k->pos), ge_side(k)) > 0.0f; w_nrv(k, GE_WALK); } /* isMarioLeft */
+        break;
+    case GE_WALK: {
+        if (st == 0) w_se(k, SE_EM_GESSO_SWIM_L);
+        ge_turn(k, mario->pos, 1.5f);
+        float s = k->dir ? 1.0f : -1.0f, a = 0.990099f * st, v = 7.0f * cosf(a * 0.0174533f); /* calcWalkMove */
+        ge_vel(k, k->phase ? s * 3.0f / 5.0f : s * 3.0f, v, 2.3f);
+        if (st == 0) ge_up_target(k, k->phase ? 3.0f * s / 5.0f : 3.0f * s / 2.0f, v, 4.6f);
+        if (a >= 70.0f) k->gup = vnorm(v3(0, 1, 1));
+        if (a >= 100.0f) ge_next(k);
+        break;
+    }
+    case GE_SINK: {
+        if (st == 0) w_act(k, near < 1000.0f ? "SinkFast" : "Sink");
+        ge_turn(k, mario->pos, 1.5f);
+        if (k->on_ground) { w_nrv(k, GE_WALKCHARGE); break; }
+        float s = k->dir ? 1.0f : -1.0f, a = 100.0f + 3.0f * st; /* calcSinkMove */
+        if (a > 180.0f) a = 180.0f;
+        ge_vel(k, s * 3.0f, 3.0f * cosf(a * 0.0174533f), 2.3f);
+        k->gup = vnorm(v3(0, 1, 1));
+        if (a >= 180.0f) ge_next(k);
+        break;
+    }
+    case GE_LOST:
+        if (st == 0) { w_act(k, "CoolDown"); ge_up_target(k, 0, 0, 0); }
+        ge_bob(k);
+        if (w_bck_stopped(k)) w_nrv(k, GE_WAIT);
+        break;
+    case GE_ATTACK:
+        if (st == 0) { w_act(k, "Attack"); w_se(k, SE_EM_GESSO_INK); ge_up_target(k, 0, 0, 0); }
+        if (!strcmp(k->act, "Attack") && w_bck_stopped(k)) w_act(k, "Wait"); /* isBckOneTimeAndStopped */
+        if (!strcmp(k->act, "Attack")) k->vel = vmul(k->vel, 0.9f); else ge_bob(k);
+        if (st == 240) w_nrv(k, GE_WAIT);
+        break;
+    case GE_PUNCHDOWN:
+        if (st == 0) { scene_stop = 5; w_act(k, "PunchDown"); w_se(k, SE_EM_GESSO_HIT_PUNCH); w_se(k, SE_PM_SPIN_HIT); }
+        ge_turn(k, mario->pos, 1.5f);
+        if (st == 20 || (st > 0 && (k->on_ground || k->on_wall))) { /* kill */
+            w_se(k, SE_EM_GESSO_DEAD);
+            k->state = KURIBO_DEAD; row_kill(k->row);
+            float m[16];
+            basis_matrix(m, k->pos, k->qy, k->front, 0);
+            fx_named("Gesso", "Death", m, NULL, NULL);
+            pop_coins(k->pos, up, 1);
+            return;
+        }
+        break;
+    case GE_COMEBACK:
+        if (st == 0) w_act(k, "CoolDown");
+        if (!strcmp(k->act, "CoolDown") && !w_bck_stopped(k)) ge_bob(k);
+        else {
+            if (!strcmp(k->act, "CoolDown")) w_act(k, "Sink");
+            if (swimming) { w_nrv(k, GE_WAIT); break; }
+            ge_turn(k, mario->pos, 1.5f);
+            k->vel = vmul(vnorm(vsub(k->tcenter, k->pos)), 3.0f);
+            if (vlen(vsub(k->tcenter, k->pos)) < 100.0f) w_nrv(k, GE_WAIT);
+        }
+        break;
+    case GE_ROTATE:
+        if (st == 0) { w_act(k, "StarPiece"); k->vel = v3(0, 0, 0); }
+        w_se_lv(k, SE_EM_LV_GESSO_STAR_PIECE_HIT);
+        if (w_bck_stopped(k)) w_nrv(k, GE_WAIT);
+        break;
+    }
+    k->act_t += k->act_rate;
+    /* control(): its up turned to the target on its front's plane, no rising out of the water */
+    turn_on_plane(&k->qy, k->gup, k->front, cosf(0.5f * 0.0174533f));
+    float depth;
+    if (!in_water(vadd(k->pos, vmul(up, 50.0f)), up, &depth) && vdot(k->vel, up) > 0.0f) k->vel = vtangent(k->vel, up);
+    /* the binder: 150 about its centre */
+    k->pos = vadd(k->pos, k->vel);
+    V3 c = k->pos, gn, wn;
+    int wall = 0;
+    k->on_ground = collide_n(&c, up, 150.0f, &gn, &wn, &wall);
+    k->on_wall = wall; k->pos = c;
+    k->up = k->qy; k->qz = k->front;
+    /* sensors */
+    if (k->nrv == GE_PUNCHDOWN) return;
+    int msg = mario_offence(k->pos, 100.0f, k->grav);
+    if (msg == MSG_HITALL) { ge_knock(k, mario->pos); return; }
+    if (vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), k->pos)) < 100.0f + HIT_BODY_R && !mario->hurt_timer) { /* attackSensor */
+        hurt_mario(k->pos, 25.0f); /* sendMsgEnemyAttackStrong */
+        k->vel = vmul(vnorm(vsub(k->pos, mario->pos)), 25.0f);
+        w_nrv(k, GE_ATTACK);
+    }
+}
+
 static void update_kuribo_one(Kuribo *k);
 static void update_kuribo(void)
 {
@@ -14486,6 +14665,11 @@ static void update_kuribo_one(Kuribo *k)
         k->up = walker_up(k, k->up);
         V3 to = vsub(mario->pos, k->pos);
         float d = vlen(to);
+        if (k->kind >= WALK_GESSO) { /* the release push's walkers; ponytail: still while their zone has no collision */
+            if (sc->objs[k->row].zone < 64 && !zone_kcl[sc->objs[k->row].zone]) return;
+            if (k->kind == WALK_GESSO) gesso_update(k);
+            return;
+        }
         if (k->kind == WALK_PETARI) { /* ponytail: still while its zone has no collision (streaming) */
             if (sc->objs[k->row].zone >= 64 || zone_kcl[sc->objs[k->row].zone]) petari_update(k);
             return;
@@ -17087,6 +17271,7 @@ static void update_shots(void)
                 if (e->nrv == PT_SWOON) w_nrv(e, PT_SWOON);
             }
             else if (e->kind == WALK_UNIZO || e->kind == WALK_POIHANA) { /* isMsgStarPieceAttack: nothing more */ }
+            else if (e->kind == WALK_GESSO) { if (e->nrv != GE_PUNCHDOWN) w_nrv(e, GE_ROTATE); } /* isMsgStarPieceAttack: Rotate */
             else if (e->kind == WALK_STINKBUG) { if (e->phase != 2 && e->phase != 6) { e->phase = 5; e->timer = 0; } }
             else if (e->kind == WALK_KARIKARI) kari_blowout(e, s->pos, 1); /* isMsgStarPieceAttack: BlowOutStarPiece */
             else if (e->kind == WALK_PACKUN) { /* isMsgStarPieceAttack: SwoonStart */
@@ -18291,7 +18476,8 @@ void game_draw(void)
                           kuribo[i].kind == WALK_KARON ? m_karon :
                           kuribo[i].kind == WALK_TERESA ? m_teresa :
                           kuribo[i].kind == WALK_BUTTERFLY ? brk_model(kuribo[i].row, "Butterfly", 0) : kuribo[i].kind == WALK_STINKBUG ? m_stink :
-                          kuribo[i].kind == WALK_UNIZO ? m_unizo[kuribo[i].dir] : kuribo[i].kind == WALK_POIHANA ? m_poihana : kuribo[i].kind == WALK_PETARI ? m_petari : m_kuribo;
+                          kuribo[i].kind == WALK_UNIZO ? m_unizo[kuribo[i].dir] : kuribo[i].kind == WALK_POIHANA ? m_poihana : kuribo[i].kind == WALK_PETARI ? m_petari :
+                          kuribo[i].kind >= WALK_GESSO ? m_wnew[kuribo[i].kind - WALK_GESSO] : m_kuribo;
         if (kuribo[i].state == KURIBO_DEAD || !md || !row_shown(kuribo[i].row)) continue;
         if (kuribo[i].kind == WALK_TERESA && kuribo[i].phase == 4) continue; /* hidden in a wall */
         if (kuribo[i].kind == WALK_PETARI && kuribo[i].phase) continue; /* hideModel */
