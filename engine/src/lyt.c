@@ -38,7 +38,7 @@ static struct { const u8 *c; u32 tex0; } chunks[LYT_CHUNKS];
 static int nchunks;
 
 /* a pane's live values, reset to the record each frame, then the animations */
-typedef struct { float t[3], r[3], s[2], size[2]; float vc[4][4], alpha; u8 vis, lang_off; } PState; /* lang_off: another language's */
+typedef struct { float t[3], r[3], s[2], size[2]; float vc[4][4], alpha; u8 vis, lang_off, nodraw; } PState; /* lang_off: another language's */
 typedef struct { float srt[5], c0[4], c1[4]; s16 tex; s32 tex_abs; } MState; /* tex_abs: replacePaneTexture's, -1 none */
 typedef struct { float m[6], alpha; u8 vis; } PWorld; /* 2x3: x' = m0 x + m1 y + m2, y' = m3 x + m4 y + m5 */
 
@@ -229,7 +229,7 @@ void lyt_update(LytInst *l)
 }
 
 void lyt_show_pane(LytInst *l, const char *pane, int show) { int p = lyt_pane(l, pane); if (p >= 0 && !l->ps[p].lang_off) l->ps[p].vis = show != 0; }
-void lyt_hide_for_good(LytInst *l, const char *pane) { int p = lyt_pane(l, pane); if (p >= 0) { l->ps[p].vis = 0; l->ps[p].lang_off = 1; } }
+void lyt_hide_for_good(LytInst *l, const char *pane) { int p = lyt_pane(l, pane); if (p >= 0) l->ps[p].nodraw = 1; } /* its children still drawn */
 int lyt_pane_shown(const LytInst *l, const char *pane) { int p = lyt_pane(l, pane); return p >= 0 && l->ps[p].vis; }
 void lyt_set_text(LytInst *l, const char *pane, const u16 *text) { int p = lyt_pane(l, pane); if (p >= 0) l->text[p] = text; }
 void lyt_set_pos(LytInst *l, float x, float y) { if (l) { l->ox = x; l->oy = y; } }
@@ -289,6 +289,7 @@ static void reset_state(LytInst *l)
         for (int c = 0; c < 4; c++) for (int k = 0; k < 4; k++) s->vc[c][k] = p->vcol[c][k];
         s->alpha = p->alpha;
         s->vis = p->flags & 1;
+        s->nodraw = 0;
     }
     for (int i = 0; i < h->nmats; i++) {
         const LytMat *m = &l->mat[i];
@@ -555,6 +556,7 @@ void lyt_draw(LytInst *l)
         float wd = s->size[0], ht = s->size[1];
         int ox = p->origin % 3, oy = p->origin / 3;
         float x0 = -wd * ox / 2, y0 = ht * oy / 2, x1 = x0 + wd, y1 = y0 - ht;
+        if (l->ps[i].nodraw) continue;
         if (p->kind == K_PIC) {
             int mi = p->mat;
             float uv[8];
