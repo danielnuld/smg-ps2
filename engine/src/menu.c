@@ -1200,7 +1200,7 @@ int menu_draw_screen(void)
 }
 
 /* --- AstroDomeGalaxySelector's layouts (game.c's dome select drives them): GalaxySelectInfo, GalaxySelectBackButton,
- * GalaxyConfirmLayout, GalaxyNamePlate. ponytail: no galaxy picture (PicDummy keeps its texture), no IconComet /
+ * GalaxyConfirmLayout, GalaxyNamePlate (dome.bin, GalaxyInfo with the galaxies' pictures). ponytail: no IconComet /
  * comet window, no green / red star icons (isPowerStarGreen / Red tables), plates not sorted by depth, no
  * GalaxyNamePlateNew effect */
 enum { GI_WAIT, GI_DISAPPEAR };
@@ -1262,6 +1262,11 @@ static void dmu_info_update(const char *g, int state) /* GalaxyInfoLayoutSetter:
         }
         lyt_set_text_rec(dmu.info, "StarIcon", dmu.star_icon);
         lyt_set_text_rec(dmu.info, "TxtStarBase", dmu.star_base);
+    }
+    { /* replaceTexture: "<galaxy>.bti" of GalaxyInfoTexture (its material in dome.bin), the unknown one before open */
+        char mn[24];
+        snprintf(mn, sizeof mn, "%.20s", state == 3 ? g : "GalaxyInfoTextureUnknown");
+        lyt_replace_pane_texture(dmu.info, "PicDummy", lyt_material_texture(dmu.info, mn));
     }
     lyt_set_pane_frame_stop(dmu.info, "CometWindow", 1, 0); /* hideCometWindow */
 }

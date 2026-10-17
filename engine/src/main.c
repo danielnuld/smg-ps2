@@ -213,7 +213,8 @@ static void toc_select(void)
         const TocEntry *e = (const TocEntry *)(toc_all + 4 + i * sizeof(TocEntry));
         if ((strncmp(e->path, scen, lp) == 0 && e->path[lp] == '/') || strcmp(e->path, "resident.bin") == 0 || strcmp(e->path, "sound.bin") == 0 ||
             strcmp(e->path, "menus.bin") == 0 || strcmp(e->path, "menus3d.bin") == 0 ||
-            ((strcmp(e->path, "title.bin") == 0 || strcmp(e->path, "title3d.bin") == 0) && strncmp(scen, "FileSelect/", 11) == 0)) {
+            ((strcmp(e->path, "title.bin") == 0 || strcmp(e->path, "title3d.bin") == 0) && strncmp(scen, "FileSelect/", 11) == 0) ||
+            (strcmp(e->path, "dome.bin") == 0 && strncmp(scen, "AstroDome/", 10) == 0)) {
             if (ntoc == (int)(sizeof toc / sizeof toc[0])) { printf("packs: TOC full\n"); for (;;) {} }
             memcpy(&toc[ntoc++], e, sizeof *e);
         }
@@ -534,9 +535,11 @@ static const u8 *load_packs(Scene *s)
         return NULL;
     { /* the menus' layouts (tools/lyt.py), when built: outside the scenario room */
         Pack mp;
-        static const char *const mp_names[4] = {"menus.bin", "menus3d.bin", "title.bin", "title3d.bin"}; /* layouts /
-                                                    * messages, their 3D models; the title and file select's (FileSelect) */
-        for (int k = 0; k < (strncmp(scen, "FileSelect/", 11) == 0 ? 4 : 2); k++)
+        /* layouts / messages, their 3D models; the title and file select's (FileSelect); the dome's (AstroDome) */
+        static const char *const mp_names[5] = {"menus.bin", "menus3d.bin", "title.bin", "title3d.bin", "dome.bin"};
+        for (int k = 0; k < 5; k++)
+            if (k >= 2 && strncmp(scen, k == 4 ? "AstroDome/" : "FileSelect/", k == 4 ? 10 : 11)) continue;
+            else
             if (pack_open(&mp, mp_names[k])) {
                 pack_close(&mp);
                 u32 before = pack_bytes;

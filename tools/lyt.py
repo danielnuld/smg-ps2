@@ -189,10 +189,22 @@ def picture_chars(fsp, names=None):
     return out
 
 
-def convert(files, name, texts):
+def bti(b):
+    """A BTI image -> RGBA"""
+    fmt, w, h, off = b[0], struct.unpack_from(">H", b, 2)[0], struct.unpack_from(">H", b, 4)[0], struct.unpack_from(">I", b, 0x1C)[0]
+    return tex.decode(b[off:], fmt, w, h).copy()
+
+
+def convert(files, name, texts, extra=None):
     """one layout (its RARC's files by lower-case base name) -> its Layout record and body; its textures appended to
-    `texts` (PS2 dicts)"""
+    `texts` (PS2 dicts). extra: {material name: BTI bytes} added as materials of their own (MR::replacePaneTexture's
+    textures: GalaxyInfoLayoutSetter's ObjectData/GalaxyInfoTexture.arc)"""
     texs, fonts, mats, panes = parse_brlyt(files[name.lower() + ".brlyt"])
+    files = dict(files)
+    for mn, b in (extra or {}).items():
+        files["@bti:" + mn.lower()] = b
+        mats.append(dict(name=mn, c0=(0, 0, 0, 0), c1=(255, 255, 255, 255), maps=[(len(texs), 0, 0)], srt=(0, 0, 0, 1, 1)))
+        texs.append("@bti:" + mn)
     anims = sorted((k[:-6], parse_brlan(v)) for k, v in files.items() if k.endswith(".brlan"))
     pidx = {p["name"]: i for i, p in enumerate(panes)}
     midx = {m["name"]: i for i, m in enumerate(mats)}
@@ -206,7 +218,7 @@ def convert(files, name, texts):
             f = files.get(texname.lower())
             if f is None:
                 return -1
-            rgba = tpl(f).astype(np.float32) / 255
+            rgba = (bti(f) if texname.startswith("@bti:") else tpl(f)).astype(np.float32) / 255
             if mask and mask.lower() in files:  # a second map as its mask (TitleLogo's PicLogoGalaxy: the space through
                 # the letters): baked at the mask's size, the first one's colour over it, the mask's alpha.
                 # ponytail: the first map's scroll (its SRT) is lost
@@ -234,7 +246,7 @@ def convert(files, name, texts):
             mask = texs[m["maps"][1][0]] if len(m["maps"]) > 1 and m["maps"][1][0] < len(texs) else None
             texi[k] = image(texs[ti], c0 if bake else None, c1 if bake else None, (ws, wt), mask) if ti < len(texs) else -1
             wraps[2 * k:2 * k + 2] = [ws, wt]
-            if ti < len(texs) and texs[ti].lower() in files:
+            if ti < len(texs) and texs[ti].lower() in files and not texs[ti].startswith("@bti:"):
                 tsz = tpl(files[(mask if mask and mask.lower() in files else texs[ti]).lower()]).shape[1::-1]
             if mask:
                 wraps[2 * k:2 * k + 2] = [0, 0]  # the mask's clamp
@@ -316,7 +328,10 @@ def convert(files, name, texts):
 
 # the layouts every scene may show (menus.bin, loaded with each scene)
 COMMON = ("PauseMenu", "SysInfoWindow", "SysInfoWindowMini", "GameOver", "TooBad", "StageTitle", "IconAButton",
-          "BackButton", "AllStarList", "ScenarioSelect", "GalaxySelect", "GalaxyInfo", "GalaxyNamePlate", "WipeKoopa", "ResultWindow")
+          "BackButton", "AllStarList", "ScenarioSelect", "WipeKoopa", "ResultWindow")
+# the dome's galaxy select's (AstroDomeGalaxySelector): dome.bin, loaded in the AstroDome stages only; GalaxyInfo with
+# the galaxies' pictures (GalaxyInfoTexture.arc) as materials named by galaxy (20 characters)
+DOME = ("GalaxySelect", "GalaxyInfo", "GalaxyNamePlate")
 
 
 # the messages menus and screens look up by label (MR::getLayoutMessageDirect / getGameMessageDirect): MSGS chunk
@@ -444,6 +459,23 @@ TITLE_3D = (("FileSelectDataPlanet", "FileSelectDataPlanet"), ("FileSelectDataMa
             ("CometNearOrbitSky", "CometNearOrbitSky"), ("MiniatureGalaxySelect", "MiniatureGalaxySelect"))
 
 
+def build_dome(fsp):
+    from slice import blob_of, chunk
+    pics = {n.rsplit("/", 1)[-1][:-4][:20]: b for n, b in B.rarc_files((Path(fsp) / "ObjectData" / "GalaxyInfoTexture.arc").read_bytes())
+            if n.lower().endswith(".bti")}
+    texts, bodies = [], []
+    for n in DOME:
+        files = {k.lower().rsplit("/", 1)[-1]: v for k, v in
+                 B.rarc_files((Path(fsp) / "LayoutData" / f"{n}.arc").read_bytes())}
+        bodies.append(convert(files, n, texts, pics if n == "GalaxyInfo" else None))
+    offs, o = [], 16 + 4 * len(bodies)
+    for bd in bodies:
+        offs.append(o)
+        o += len(bd)
+    lytr = struct.pack("<I12x", len(bodies)) + struct.pack(f"<{len(offs)}I", *offs) + b"".join(bodies)
+    return blob_of([chunk(b"LYTR", lytr), text_chunk(texts)])
+
+
 def build_title(fsp):
     from slice import blob_of, chunk
     import slice as SL
@@ -486,6 +518,8 @@ if __name__ == "__main__":  # python tools/lyt.py data/fs/files [out/packs/menus
     d3.write_bytes(build_3d(fsp))
     print(f"{d3}: {d3.stat().st_size / 1024:.0f} KB")
     print(f"{dst}: {len(blob) / 1024:.0f} KB, {len(COMMON)} layouts, {nt} textures")
+    dst.with_name("dome.bin").write_bytes(build_dome(fsp))
+    print(f"dome.bin {dst.with_name('dome.bin').stat().st_size / 1024:.0f} KB")
     t2, t3 = build_title(fsp)
     dst.with_name("title.bin").write_bytes(t2)
     dst.with_name("title3d.bin").write_bytes(t3)

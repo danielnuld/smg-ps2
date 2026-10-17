@@ -42,6 +42,8 @@ int lyt_pane_hit(LytInst *l, const char *pane, float x, float y);    /* the scre
 void lyt_follow(LytInst *l, const char *pane, const float *pos, int add);
 void lyt_copy_pane_trans(LytInst *l, const char *pane, float out[2]); /* MR::copyPaneTrans: its place, those units */
 float lyt_text_height(LytInst *l, const char *pane);                /* its text boxes' tallest text (layout units) */
+int lyt_material_texture(const LytInst *l, const char *mat);         /* its texture (scene index), -1 none */
+void lyt_replace_pane_texture(LytInst *l, const char *pane, int tex); /* MR::replacePaneTexture (-1: its own) */
 float lyt_text_width(LytInst *l, const char *pane);                 /* its text boxes' widest text (layout units) */
 
 /* game.c: a string's width (draw 0) or the string drawn at screen (x, y top) in a font (0 MessageFont26, 1 NumberFont,

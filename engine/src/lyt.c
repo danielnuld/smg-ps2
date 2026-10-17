@@ -7,6 +7,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 
 /* tools/lyt.py records (little endian) */
 typedef struct { char name[24]; u16 npanes, nmats, nanims, ntex, tex0, nstr; u32 panes, mats, anims, strings; } LytHead;
@@ -38,7 +39,7 @@ static int nchunks;
 
 /* a pane's live values, reset to the record each frame, then the animations */
 typedef struct { float t[3], r[3], s[2], size[2]; float vc[4][4], alpha; u8 vis, lang_off; } PState; /* lang_off: another language's */
-typedef struct { float srt[5], c0[4], c1[4]; s16 tex; } MState;
+typedef struct { float srt[5], c0[4], c1[4]; s16 tex; s32 tex_abs; } MState; /* tex_abs: replacePaneTexture's, -1 none */
 typedef struct { float m[6], alpha; u8 vis; } PWorld; /* 2x3: x' = m0 x + m1 y + m2, y' = m3 x + m4 y + m5 */
 
 struct LytInst {
@@ -279,6 +280,7 @@ static void reset_state(LytInst *l)
         memcpy(s->srt, m->srt, sizeof s->srt);
         for (int k = 0; k < 4; k++) { s->c0[k] = m->c0[k]; s->c1[k] = m->c1[k]; }
         s->tex = m->tex[0];
+        s->tex_abs = -1;
     }
 }
 
@@ -414,7 +416,22 @@ static u32 pane_rgba(const LytInst *l, int i, float alpha)
     return rgba_of(c[0], c[1], c[2], c[3] * alpha);
 }
 
-static u16 tex_of(const LytInst *l, int mi) { return mi >= 0 && l->ms[mi].tex >= 0 ? (u16)(l->tex0 + l->ms[mi].tex) : 0xFFFF; }
+static u16 tex_of(const LytInst *l, int mi)
+{
+    if (mi >= 0 && l->ms[mi].tex_abs >= 0) return (u16)l->ms[mi].tex_abs; /* MR::replacePaneTexture */
+    return mi >= 0 && l->ms[mi].tex >= 0 ? (u16)(l->tex0 + l->ms[mi].tex) : 0xFFFF;
+}
+int lyt_material_texture(const LytInst *l, const char *mat) /* a material's own texture (scene index), -1 none */
+{
+    for (int i = 0; l && i < l->h->nmats; i++)
+        if (!strncasecmp(l->mat[i].name, mat, 20)) /* (case as the archive's file names) */ return l->mat[i].tex[0] >= 0 ? (int)l->tex0 + l->mat[i].tex[0] : -1;
+    return -1;
+}
+void lyt_replace_pane_texture(LytInst *l, const char *pane, int tex) /* -1: its own again */
+{
+    int p = lyt_pane(l, pane);
+    if (p >= 0 && l->pane[p].mat >= 0) l->ms[l->pane[p].mat].tex_abs = tex;
+}
 
 static void draw_window(const LytInst *l, int i, const PWorld *w, float x0, float y0, float x1, float y1)
 {
