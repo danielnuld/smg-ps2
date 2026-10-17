@@ -491,7 +491,7 @@ static void load_modules(void)
     SifLoadModule("rom0:PADMAN", 0, NULL);
 }
 
-#if defined(TEASER) || defined(BENCH) || defined(DEBUG_HUD) || !defined(CATCHUP) /* the text lines */
+#if !defined(TEASER) && (defined(BENCH) || defined(DEBUG_HUD) || !defined(CATCHUP)) /* the text lines */
 static void ms(char *out, int n, const char *label, u32 c)
 {
     u32 us = (u32)(c / EE_MHZ);
@@ -565,7 +565,7 @@ int main(void)
     u64 sum[5] = {0};
     u32 top[5] = {0};
 #endif
-#if defined(TEASER) || defined(BENCH) || defined(DEBUG_HUD) || !defined(CATCHUP) /* the text lines */
+#if !defined(TEASER) && (defined(BENCH) || defined(DEBUG_HUD) || !defined(CATCHUP)) /* the text lines */
     char line[128], a[24], b[24], c[24];
 #endif
 #ifdef BENCH
@@ -686,9 +686,9 @@ int main(void)
 #if defined(TALK_TEST)
         if (frame >= 200 && frame < 3000) game_demo_walk1((int)frame);
 #elif defined(FAT_TEST)
-        if (frame >= 150) game_demo_fat((int)frame);
+        if (frame >= 150) { int st = game_demo_fat((int)frame); if (frame % 30 == 0) { char dd[128]; game_debug(dd, sizeof dd); printf("fat demo f %u: %d %s\n", frame, st, dd); } }
 #elif defined(VINE_TEST)
-        if (frame >= 300) game_demo_vine((int)frame);
+        if (frame >= 300) { int st = game_demo_vine((int)frame); if (frame % 20 == 0) { char dd[128]; game_debug(dd, sizeof dd); printf("vine demo f %u: %d %s\n", frame, st, dd); } }
 #elif defined(DINO_TEST)
         if (frame >= 150) game_demo_dino((int)frame);
 #elif defined(OTA_TEST)
@@ -1342,14 +1342,7 @@ int main(void)
         t_logic = t1 - t0;
         t_draw = t2 - t1;
         if (t2 - t0 > worst && frame > 60) worst = t2 - t0;
-#ifdef TEASER /* videos (build.sh with TEASER=1): a plain counter instead of the debug lines */
-        snprintf(line, sizeof line, "COINS %d   STAR BITS %d   LIVES %d", game_coins(), game_starpieces(), game_lives());
-        render_text(16, 12, line);
-        if (game_time_left() >= 0) {
-            int t = (game_time_left() + 59) / 60;
-            snprintf(line, sizeof line, "TIME %d:%02d", t / 60, t % 60);
-            render_text(16, 26, line);
-        }
+#ifdef TEASER /* videos (build.sh with TEASER=1): the game's HUD only */
 #elif defined(BENCH) || defined(DEBUG_HUD) || !defined(CATCHUP) /* tests and bench: the debug lines (normal builds: the game's HUD, game.c hud_draw) */
         ms(a, sizeof a, "LOGIC", t_logic);
         ms(b, sizeof b, "DRAW", t_draw);

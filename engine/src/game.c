@@ -9809,8 +9809,11 @@ static int test_walk_to(V3 to, float stop)
     pad_force_stick = 1;
     if (vlen(d) < stop) { pad_force_lx = pad_force_ly = 0; return 1; }
     d = vnorm(d);
-    float cx2 = vdot(m_cx, m_cx), cy2 = vdot(m_cy, m_cy);
-    float x = cx2 > 1e-6f ? vdot(d, m_cx) / cx2 : 0.0f, y = cy2 > 1e-6f ? vdot(d, m_cy) / cy2 : 1.0f;
+    /* d = x m_cx + y m_cy: the move axes are not square to each other under a high camera (calcMoveDir) */
+    float cx2 = vdot(m_cx, m_cx), cy2 = vdot(m_cy, m_cy), cxy = vdot(m_cx, m_cy), b1 = vdot(d, m_cx), b2 = vdot(d, m_cy);
+    float det = cx2 * cy2 - cxy * cxy, x, y;
+    if (det > 1e-6f) { x = (b1 * cy2 - b2 * cxy) / det; y = (cx2 * b2 - cxy * b1) / det; }
+    else { x = cx2 > 1e-6f ? b1 / cx2 : 0.0f; y = cy2 > 1e-6f ? b2 / cy2 : 1.0f; }
     float l = sqrtf(x * x + y * y);
     if (l > 1e-4f) { x /= l; y /= l; }
     pad_force_lx = x * 0.67f; pad_force_ly = y * 0.67f; /* x 1.5 in inputStick: a full tilt */
@@ -11057,7 +11060,13 @@ static void m_damage_floor(Player *m)
 static void update_mario(void)
 {
     Player *m = mario;
+    V3 up0 = m->up;
     m->up = up_at(m->pos, m->up);
+    if (!m->grounded && vdot(up0, m->up) < 0.999f) { /* in the air his velocity is a world vector (mJumpVec): a new
+                                                      * gravity keeps it, not his rise along the old up */
+        V3 v = vadd(m->hvel, vmul(up0, m->vup));
+        m->vup = vdot(v, m->up); m->hvel = vtangent(v, m->up);
+    }
     if (m->press) { /* pressed: still, his height to the ceiling's (doPressing, the _3B0 scale), the game over */
         m->hvel = v3(0, 0, 0); m->vup = 0;
         float k;
@@ -16723,7 +16732,8 @@ void game_update(void)
     LQ(10, update_invincible());
     LQ(11, update_follow_groups());
     LQ(12, update_wrecks());
-    LQ(13, update_kuribo());
+    if (!demo_on) LQ(13, update_kuribo()); /* a demo moves only its cast (requestMovementOn): walkers stop.
+                                            * ponytail: the other actors still move in demos */
     LQ(14, kari_director());
     LQ(15, kari_bite());
     LQ(16, break_boxes());
@@ -17606,8 +17616,11 @@ void game_draw(void)
             snprintf(n, sizeof n, "%s/%s", cls, clip);
             for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
             anim_play(a, n, 1.0f, loop, 6);
-            if (!wvis) { anim_advance(a); continue; }
+            float rate = anim_rate;
+            if (demo_on) anim_rate = 0.0f; /* stopped by the demo: its clip too */
+            if (!wvis) { anim_advance(a); anim_rate = rate; continue; }
             anim_update(a);
+            anim_rate = rate;
             draw_skin(md, m, a);
             continue;
         }
@@ -17875,6 +17888,7 @@ int game_demo_fat(int frame) /* EggStar 2: placed 900 off the TicoFat once, he w
         V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), z = vnorm(vtangent(v3(in->m[8], in->m[9], in->m[10]), up));
         V3 base = v3(in->m[12], in->m[13], in->m[14]);
         if (!placed) { placed = 1; demo_place(vadd(vadd(base, vmul(z, 900.0f)), vmul(up, 60.0f)), vmul(z, -1.0f)); }
+        mario->hurt_timer = mario->hurt_timer > 8 ? mario->hurt_timer : 8; /* hits would end the take */
         if (fat_state(in->row) % 1000 == 0) demo_walk(vadd(base, vmul(z, 230.0f)), 50.0f); /* Prep: up to it */
         else test_walk_to(mario->pos, 1e9f);
         if (got_pieces < 3) got_pieces = 3;
@@ -17907,13 +17921,35 @@ int game_demo_vine(int frame) /* EggStar 1: the Plant by the HammerHeadPackun gr
         if (misses != game_misses()) { misses = game_misses(); placed = 0; } /* after a miss: put back by it */
         if (!placed) { /* on the ground 250 to its side, facing it (above the seed, or 700 off, he fell off the disk) */
             V3 side = vnorm(vtangent(v3(1, 0, 0), up)), at = vadd(p, vmul(side, 250.0f)), hit;
-            if (drop_to_ground(vadd(at, vmul(up, 400.0f)), up, 1200.0f, &hit)) at = hit;
-            placed = 1; demo_place(vadd(at, vmul(up, 20.0f)), vmul(side, -1.0f));
+            int ground = drop_to_ground(vadd(at, vmul(up, 400.0f)), up, 1200.0f, &hit);
+            if (ground) at = hit;
+            placed = ground; demo_place(vadd(at, vmul(up, 20.0f)), vmul(side, -1.0f)); /* held there till its ground streams in */
         }
         if (k < 0) return -2;
         typeof(&vines[0]) o = &vines[k];
-        if (!sw_on(r, SW_APPEAR)) { sw_set((Row *)r, SW_APPEAR, 1); return -3; }
-        if (vine_ride == k) { test_walk_to(mario->pos, 1e9f); demo_press(PAD_SQUARE, 1); }
+        static int rode;
+        mario->hurt_timer = mario->hurt_timer > 8 ? mario->hurt_timer : 8; /* hits would end the take */
+        if (!sw_on(r, SW_APPEAR)) { /* the HammerHeadPackun first: its dead switch grows the Plant */
+            for (int i = 0; i < ninsts; i++) {
+                const Inst *in = &insts[i];
+                int h = in->hhp && !row_dead[in->row] ? hhp_of(in->row) : -1;
+                if (h < 0) continue;
+                typeof(&hhps[0]) q = &hhps[h];
+                V3 head = hhp_joint(in, h, 5, 120.0f);
+                if (hhp_chance(h) && q->nrv != HH_RECOVER) { /* its head down: onto it, a jump, the trample */
+                    if (demo_walk(head, 130.0f) || vlen(vtangent(vsub(head, mario->pos), mario->up)) < 220.0f)
+                        demo_press(PAD_CROSS, mario->grounded);
+                } else { /* 450 off it on his side: it strikes */
+                    V3 d = vtangent(vsub(mario->pos, q->pos), q->up);
+                    demo_walk(vadd(q->pos, vmul(vlen(d) > 1.0f ? vnorm(d) : q->f, 450.0f)), 60.0f);
+                }
+                return 100 + q->nrv;
+            }
+            test_walk_to(mario->pos, 1e9f);
+            return -3;
+        }
+        if (vine_ride == k) { rode = 1; test_walk_to(mario->pos, 1e9f); demo_press(PAD_SQUARE, 1); }
+        else if (rode) test_walk_to(mario->pos, 1e9f); /* off its top: he stays where he lands */
         else if (o->nrv == VN_GROWTHSTOP || o->nrv == VN_GROWTHWAIT) {
             if (demo_walk(o->info[1].pos, 110.0f)) pad_force |= PAD_CROSS; /* beside it: a jump onto it */
         } else test_walk_to(mario->pos, 1e9f);
@@ -17939,46 +17975,68 @@ int game_demo_dino(int frame) /* EggStar 1: before the egg, then after the tail 
     return dino.phase * 100 + dino.hits * 10 + dino.bstate;
 }
 
-int game_demo_ota(int frame) /* EggStar 3: on the bath's rim; onto a coconut's line and a spin when it is near */
+static V3 ota_rim_spot(float ang) /* the highest flat ground out from OtaKing (1200 - 3200) at ang off its front */
 {
-    static int placed;
+    V3 dir = rot_axis(ota.f0, ota.up, ang), hit, at = vadd(ota.pos, vmul(dir, 2000.0f));
+    float best = -1e9f;
+    for (float d = 1200.0f; d <= 3200.0f; d += 100.0f) {
+        V3 from = vadd(vadd(ota.pos, vmul(dir, d)), vmul(ota.up, 2500.0f));
+        int got = 0; /* down in 20s with Mario's body sphere (a 20 one misses this stage's faces) */
+        for (float t = 0; t <= 5000.0f && !got; t += 20.0f) {
+            Hit hp[1];
+            V3 q = vsub(from, vmul(ota.up, t));
+            if (kcl_query(q, BODY_RADIUS, hp, 1)) { got = 1; hit = vsub(q, vmul(ota.up, BODY_RADIUS)); }
+        }
+        if (!got || vdot(vsub(hit, ota.pos), ota.up) <= best) continue;
+        Hit hh[8]; /* flat ground only: a crevice between steep faces held him inside the rock */
+        int nh = kcl_query(vadd(hit, vmul(ota.up, BODY_RADIUS)), BODY_RADIUS + 10.0f, hh, 8), flat = nh > 0;
+        for (int j = 0; j < nh; j++) if (vdot(hh[j].n, ota.up) < 0.8f) flat = 0;
+        if (flat) { best = vdot(vsub(hit, ota.pos), ota.up); at = hit; }
+    }
+    printf("ota demo: rim spot %d out, %d up\n", (int)vlen(vtangent(vsub(at, ota.pos), ota.up)), (int)best);
+    return at;
+}
+
+int game_demo_ota(int frame) /* EggStar 3: along the bath's rim between two spots; still when a coconut comes at him,
+                              * a spin when it is near */
+{
+    static int placed, cur, wait;
+    static V3 spot[2];
     (void)frame;
     pad_force = 0;
     if (ota.row < 0 || mario->launch >= 0) return -1;
-    /* his place on the bath's rim: the highest ground found out from OtaKing along its front (1200 - 3200) */
-    static V3 at;
-    if (!placed) {
-        V3 dir = rot_axis(ota.f0, ota.up, 0.35f), hit;
-        float best = -1e9f;
-        at = vadd(ota.pos, vmul(dir, 2000.0f));
-        for (float d = 1200.0f; d <= 3200.0f; d += 100.0f) {
-            V3 from = vadd(vadd(ota.pos, vmul(dir, d)), vmul(ota.up, 2500.0f));
-            if (!drop_to_ground(from, ota.up, 5000.0f, &hit) || vdot(vsub(hit, ota.pos), ota.up) <= best) continue;
-            Hit hh[8]; /* flat ground only: a crevice between steep faces held him inside the rock */
-            int nh = kcl_query(vadd(hit, vmul(ota.up, 60.0f)), 70.0f, hh, 8), flat = nh > 0;
-            for (int j = 0; j < nh; j++) if (vdot(hh[j].n, ota.up) < 0.8f) flat = 0;
-            if (flat) { best = vdot(vsub(hit, ota.pos), ota.up); at = hit; }
-        }
-        printf("ota demo: rim %d out, %d up\n", (int)vlen(vtangent(vsub(at, ota.pos), ota.up)), (int)best);
-        placed = 1; demo_place(vadd(at, vmul(ota.up, 100.0f)), vsub(ota.pos, at));
+    if (placed == 0) { spot[0] = ota_rim_spot(0.35f); placed = 1; demo_place(vadd(spot[0], vmul(ota.up, 100.0f)), vsub(ota.pos, spot[0])); }
+    if (placed >= 1 && placed < 60) placed++; /* its zone streams in */
+    if (placed == 60 && mario->grounded) { /* its ground in: the rim's top there and 0.4 round it */
+        spot[0] = ota_rim_spot(0.35f); spot[1] = ota_rim_spot(-0.05f);
+        placed = 61;
     }
-    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), to = at;
-    int spin = 0;
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    int spin = 0, coming = 0, online = 0, jump = 0;
+    V3 line = mario->pos;
     for (int b = 0; b < OTA_BALLS; b++) {
+        coming |= ota.ball[b].state != 0; /* a rally on: he keeps his place (stopping on the rim's slope he slid off its line) */
         if (ota.ball[b].state != 1 && ota.ball[b].state != 3) continue;
-        V3 d = vnorm(ota.ball[b].vel), rel = vsub(mario->pos, ota.ball[b].pos);
-        if (ota.ball[b].state == 3 && vdot(rel, d) > 0) to = vadd(ota.ball[b].pos, vmul(d, vdot(rel, d))); /* its line */
-        if (vlen(vsub(ota.ball[b].pos, c)) < 380.0f) spin = 1;
+        if (vlen(vsub(ota.ball[b].pos, c)) < 380.0f && vdot(ota.ball[b].vel, vsub(c, ota.ball[b].pos)) > 0) spin = 1; /* coming in */
+        V3 d = vnorm(ota.ball[b].vel), rel = vsub(c, ota.ball[b].pos);
+        if (vdot(rel, d) > 0 && vdot(rel, d) < 15.0f * vlen(ota.ball[b].vel) && vdot(vsub(ota.ball[b].pos, c), mario->up) > 250.0f)
+            jump = 1; /* over his reach (aimed clear of the rim's bumps): a jump, the spin in the air */
+        if (vdot(rel, d) > 0) { /* onto its line (hit back 12.5 - 17.5 degrees aside): a step along the rim only */
+            V3 side = vnorm(vcross(ota.up, vtangent(vsub(mario->pos, ota.pos), ota.up)));
+            float k = vdot(vsub(vadd(ota.ball[b].pos, vmul(d, vdot(rel, d))), c), side);
+            k = k > 700.0f ? 700.0f : k < -700.0f ? -700.0f : k;
+            line = vadd(mario->pos, vmul(side, k)); online = 1;
+        }
     }
-    to = at; /* he holds his place on the rim: the coconuts come to him (stepping along the rim took the camera into it) */
     if (game_frame % 120 == 0)
-        printf("ota demo: nrv %d mario %d from his place, %d up, grounded %d hidden %d cam %d %d %d\n", ota.nrv,
-               (int)vlen(vsub(mario->pos, at)), (int)vdot(vsub(mario->pos, at), ota.up), mario->grounded, mario_hidden,
-               (int)cam_pos.x, (int)cam_pos.y, (int)cam_pos.z);
-    if (ota.nrv >= OTA_APPEARSTAR && demo_star()) return ota.nrv * 10 + ota.hits;
-    demo_walk(to, 60.0f);
-    demo_press(PAD_SQUARE, spin);
+        printf("ota demo: nrv %d hits %d mario %d from spot %d, grounded %d\n", ota.nrv, ota.hits, (int)vlen(vsub(mario->pos, spot[cur])), cur, mario->grounded);
     mario->hurt_timer = mario->hurt_timer > 8 ? mario->hurt_timer : 8;
+    if (ota.nrv >= OTA_APPEARSTAR && demo_star()) return ota.nrv * 10 + ota.hits;
+    if (online) demo_walk(line, 30.0f);
+    else if (coming || placed < 61) test_walk_to(mario->pos, 1e9f); /* a coconut out: he waits for it */
+    else if (demo_walk(spot[cur], 80.0f) && ++wait > 40) { cur ^= 1; wait = 0; }
+    demo_press(PAD_CROSS, jump && mario->grounded);
+    demo_press(PAD_SQUARE, spin);
     return ota.nrv * 10 + ota.hits;
 }
 
