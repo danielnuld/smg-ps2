@@ -42,11 +42,12 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
-       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU };
+       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU, WALK_BOMBHEI };
 /* walkers ported in the release push: their classes (counted, placed and drawn through this table) */
 static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}, {"BasaBasa", WALK_BASABASA}, {"BasaBasaIce", WALK_BASABASA}, {"Jellyfish", WALK_JELLYFISH},
                                                                     {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}, {"Mogu", WALK_MOGU}, {"Mogucchi", WALK_MOGUCCHI}, {"Metbo", WALK_METBO}, {"TeresaWater", WALK_TERESAW},
-                                                                    {"Snakehead", WALK_SNAKEHEAD}, {"SnakeheadSmall", WALK_SNAKEHEAD}, {"Kabokuri", WALK_KABOKURI}, {"Pukupuku", WALK_PUKUPUKU}};
+                                                                    {"Snakehead", WALK_SNAKEHEAD}, {"SnakeheadSmall", WALK_SNAKEHEAD}, {"Kabokuri", WALK_KABOKURI}, {"Pukupuku", WALK_PUKUPUKU},
+                                                                    {"BombHei", WALK_BOMBHEI}, {"BombHeiLauncher", WALK_BOMBHEI}, {"BombLauncher", WALK_BOMBHEI}};
 #define NEW_WALKERS ((int)(sizeof new_walkers / sizeof new_walkers[0]))
 static const Model *m_wnew[NEW_WALKERS];
 static int walker_new_kind(const char *cls)
@@ -12189,6 +12190,8 @@ static void poihana_update(Kuribo *k, V3 to, float d) /* to: unused, Mario is th
 static void w_nrv(Kuribo *k, int n) { k->nrv = n; k->step = -1; }
 static void w_snrv(Kuribo *k, int n) { k->snrv = n; k->sstep = -1; }
 static const char *walker_cls(const Kuribo *k) { return sc->types + 32 * sc->objs[k->row].type; }
+/* the class whose clips a walker plays: a launcher's bomb is a BombHei */
+static const char *walker_acls(const Kuribo *k) { return k->kind == WALK_BOMBHEI ? "BombHei" : walker_cls(k); }
 static float w_scale(const Kuribo *k) { return sc->objs[k->row].scale[1]; }
 
 /* MR::startAction: its clip from frame 0, looping as its BCK says (anim_start in the draw) */
@@ -12197,7 +12200,7 @@ static void w_act(Kuribo *k, const char *name)
     char n[48];
     k->act_interp = 0; k->act_rate = 1.0f;
     snprintf(k->act, sizeof k->act, "%s", name);
-    snprintf(n, sizeof n, "%s/%s", walker_cls(k), name);
+    snprintf(n, sizeof n, "%s/%s", walker_acls(k), name);
     for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
     k->act_frames = anim_clip_info(n, &k->act_mode);
     k->act_seq++; k->act_t = 0;
@@ -15157,7 +15160,9 @@ dead:
 
 static const Model *walker_new_model(int row) /* a new walker's class model */
 {
-    for (int i = 0; i < NEW_WALKERS; i++) if (!strcmp(new_walkers[i].cls, sc->types + 32 * sc->objs[row].type)) return m_wnew[i];
+    const char *c = sc->types + 32 * sc->objs[row].type;
+    if (!strcmp(c, "BombHeiLauncher") || !strcmp(c, "BombLauncher")) c = "BombHei"; /* the launcher's bomb */
+    for (int i = 0; i < NEW_WALKERS; i++) if (!strcmp(new_walkers[i].cls, c)) return m_wnew[i];
     return NULL;
 }
 /* a walker's rail (RailRider): its polyline, length, the coord nearest a point */
@@ -16658,6 +16663,171 @@ dead:
     k->state = KURIBO_DEAD; row_kill(k->row);
 }
 
+/* BombHei.cpp / BombHeiLauncher.cpp after Petari (walker kit). A Bob-omb (BombHei; a launcher's: BombHeiLauncher
+ * throws Bob-ombs, BombLauncher plain bombs): Launch (rolling, 0.98, gravity 1, rebound) until it lands slower than 5,
+ * Starting (Bob-omb) / Physics (bomb). A Bob-omb Waits 180 / Walks 160 (0.5 a random way, turning 2), and within
+ * 1000 of Mario (its SW_A on, if any) jumps (10) and Pursues (Run 1.5, CountDown 2 in its last 120 frames), its fuse
+ * lit: arg0 (600) frames (FUSE / ALARM level SEs) then Explode: the explosion (arg1 500, 200 up) grows over 8
+ * frames and blows Mario up (EnemyAttackExplosion); a death area explodes it too. Mario touching it is pushed and
+ * lights it; a trample or hip drop lights it and presses it (Pressed 60, then Pursue); a spin (Bob-omb) lights it and
+ * knocks it up (Spin, 10; Physics: rolling on the ground at 0.5, Stop under 5). A launcher (its own model and
+ * collision) throws its bomb up 35 and forward 1 (Open SE), waits 120 (Stop), and once the bomb is gone counts 60
+ * before the next (not while Mario stands on it; its SW_A on / off starts / stops it). ponytail: no carrying /
+ * throwing by Mario (Taken / Thrown), no ball roll pose, the explosion hurts Mario only, no star pointer bind */
+enum { BH_LAUNCH, BH_STARTING, BH_WAIT, BH_WALK, BH_PURSUE, BH_PURSUEFAST, BH_SPINHIT, BH_TRAMPLE, BH_PHYSICS, BH_STOP, BH_EXPLODE, BH_GONE };
+enum { BLN_WAIT, BLN_STOP };
+static int bh_launcher(const Kuribo *k) { const char *c = walker_cls(k); return !strcmp(c, "BombHeiLauncher") ? 1 : !strcmp(c, "BombLauncher") ? 2 : 0; }
+static int bh_fuse_len(const Kuribo *k) { const Row *r = &sc->objs[k->row]; return !bh_launcher(k) && r->arg[0] > 0 ? r->arg[0] : 600; }
+static void bh_light(Kuribo *k) /* startCountdown */
+{
+    if (k->timer != -1) return;
+    k->timer = bh_fuse_len(k);
+    float m[16];
+    basis_matrix(m, k->pos, vmul(k->grav, -1.0f), k->front, 0);
+    fx_named("BombHei", "Ignite", m, NULL, NULL);
+}
+static void bh_launch(Kuribo *k) /* BombHeiLauncher::exeLauncherWait: the throw */
+{
+    const Row *r = &sc->objs[k->row];
+    V3 x, z;
+    row_axes(r, &x, &z);
+    V3 up = vnorm(vcross(z, x));
+    k->pos = row_pos(r); k->vel = vadd(vmul(up, 35.0f), vmul(vnorm(z), 1.0f));
+    k->grav = vmul(up, -1.0f); k->timer = -1; k->bind_off = 0;
+    w_nrv(k, BH_LAUNCH);
+    se_start(SE_EM_BOMBLAUN_LAUNCH, r->pos);
+}
+static void bomb_update(Kuribo *k)
+{
+    const Row *r = &sc->objs[k->row];
+    int launcher = bh_launcher(k), bomb = launcher == 2;
+    float scl = r->scale[1] > 0 ? r->scale[1] : 1.0f;
+    if (!k->front.x && !k->front.y && !k->front.z) { /* init */
+        V3 x, z;
+        row_axes(r, &x, &z);
+        k->front = vnorm(z); k->timer = -1;
+        if (launcher) { k->snrv = BLN_STOP; k->sstep = -1; w_nrv(k, BH_GONE); k->lvt[0] = -1; } /* the launcher's bomb starts dead */
+        else w_nrv(k, BH_LAUNCH);
+    }
+    if (launcher) { /* the launcher: BLN_WAIT / BLN_STOP in snrv / sstep, its countdown in lvt[0] */
+        int ss = ++k->sstep, active = r->sw[SW_A] < 0 || sw_on(r, SW_A);
+        if (!active && k->nrv != BH_GONE) w_nrv(k, BH_GONE); /* offSwitchA: the bomb killed */
+        if (k->lvt[0] > 0) k->lvt[0]--;
+        if (k->snrv == BLN_STOP) { if (ss == 0) k->lvt[0] = -1; if (active && ss > 120) { k->snrv = BLN_WAIT; k->sstep = -1; } }
+        else if (active) {
+            int on = mario_ground >= 0 && mario_ground < ninsts && insts[mario_ground].row == k->row;
+            if (k->lvt[0] == 0 && !on) { bh_launch(k); k->snrv = BLN_STOP; k->sstep = -1; }
+            else if (k->nrv == BH_GONE && k->lvt[0] == -1) k->lvt[0] = 60;
+        }
+        if (k->nrv == BH_GONE) return;
+    } else if (k->nrv == BH_GONE) return;
+    k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f);
+    V3 up = vmul(k->grav, -1.0f);
+    int st = ++k->step;
+    if (in_death(k->pos) && k->nrv != BH_EXPLODE) w_nrv(k, BH_EXPLODE), st = ++k->step; /* control: isInDeath */
+    if (k->timer > 0 && k->nrv != BH_EXPLODE) { /* control: the fuse */
+        w_se_lv(k, k->timer <= 120 ? SE_EM_LV_BOMB_ALARM_FAST : k->timer <= 300 ? SE_EM_LV_BOMB_ALARM_MIDDLE : SE_EM_LV_BOMB_ALARM_SLOW);
+        if (--k->timer == 0) { w_nrv(k, BH_EXPLODE); st = ++k->step; }
+    }
+    int ground = k->on_ground && vdot(k->gn, up) > 0.75f; /* isOnGroundCos */
+    int near = vlen(vsub(mario->pos, k->pos)) < 1000.0f && (r->sw[SW_A] < 0 || launcher || sw_on(r, SW_A));
+    switch (k->nrv) {
+    case BH_LAUNCH:
+        if (st == 0) w_act(k, "Stop");
+        k->vel = vmul(k->vel, 0.98f);
+        if (!ground) k->vel = vadd(k->vel, k->grav);
+        else if (vdot(k->grav, k->vel) < 5.0f) { w_se(k, SE_EM_BOMB_BOUND); w_nrv(k, bomb ? BH_PHYSICS : BH_STARTING); break; }
+        break;
+    case BH_STARTING:
+        if (st == 0) { w_act(k, "Starting"); k->vel = v3(0, 0, 0); }
+        if (w_bck_stopped(k)) w_nrv(k, BH_WAIT);
+        break;
+    case BH_WAIT: case BH_WALK:
+        if (st == 0) {
+            w_act(k, k->nrv == BH_WAIT ? "Wait" : "Walk");
+            if (k->nrv == BH_WALK) { V3 d = vtangent(v3(frand(-1, 1), frand(-1, 1), frand(-1, 1)), k->grav); if (vlen(d) > 1e-3f) k->ttarget = vnorm(d); }
+        }
+        if (k->nrv == BH_WAIT) w_move_turn(k, vsub(mario->pos, k->pos), 0.0f, 2.0f, 0.8f, 0.0f); /* hNoMoveNoTurnParam */
+        else w_move_turn(k, k->ttarget, 0.5f, 2.0f, 0.8f, 2.0f);                                 /* hWalkParam */
+        if (st > (k->nrv == BH_WAIT ? 180 : 160)) { w_nrv(k, k->nrv == BH_WAIT ? BH_WALK : BH_WAIT); break; }
+        if (near) w_nrv(k, k->timer > 0 && k->timer < 120 ? BH_PURSUEFAST : BH_PURSUE);
+        break;
+    case BH_PURSUE: case BH_PURSUEFAST:
+        if (st == 0) { bh_light(k); k->vel = vmul(k->grav, -10.0f); }
+        if (k->nrv == BH_PURSUEFAST) { if (strcmp(k->act, "CountDown")) w_act(k, "CountDown"); w_move_turn(k, vsub(mario->pos, k->pos), 2.0f, 2.0f, 0.8f, 3.0f); }
+        else { if (strcmp(k->act, "Run")) w_act(k, "Run"); w_move_turn(k, vsub(mario->pos, k->pos), 1.5f, 2.0f, 0.8f, 3.0f); }
+        if (k->nrv == BH_PURSUE && k->timer > 0 && k->timer < 120) w_nrv(k, BH_PURSUEFAST);
+        break;
+    case BH_SPINHIT:
+        if (st == 0) { w_act(k, "Spin"); w_se(k, SE_PM_SPIN_HIT); k->vel = vmul(k->grav, -10.0f); }
+        if (ground) { if (w_bck_stopped(k)) w_nrv(k, BH_PHYSICS); }
+        else k->vel = vadd(k->vel, k->grav);
+        break;
+    case BH_TRAMPLE:
+        if (st == 0) { w_act(k, "Pressed"); w_se(k, SE_EM_BOMBHEI_TRAMPLE); }
+        k->vel = vadd(k->vel, k->on_ground ? vmul(k->gn, -1.0f) : k->grav); /* addVelocityToGravityOrGround */
+        if (ground) k->vel = vmul(k->gn, vdot(k->vel, k->gn)); /* killVelocityOnGroundCosH */
+        if (st > 60) w_nrv(k, BH_PURSUE);
+        break;
+    case BH_PHYSICS:
+        k->vel = vmul(k->vel, 0.98f);
+        if (!ground) k->vel = vadd(k->vel, k->grav);
+        else {
+            k->vel = vadd(k->vel, vmul(k->grav, 0.5f));
+            if (w_bck_stopped(k) && vlen(k->vel) < 5.0f) { w_nrv(k, BH_STOP); break; }
+        }
+        break;
+    case BH_STOP:
+        if (st == 0) w_act(k, "Stop");
+        k->vel = vadd(k->vel, k->on_ground ? vmul(k->gn, -1.0f) : k->grav);
+        k->vel = vmul(k->vel, k->on_ground ? 0.8f : 0.98f);
+        break;
+    case BH_EXPLODE: {
+        V3 c = vadd(k->pos, vmul(up, 200.0f * scl));
+        float rad = (r->arg[1] > 0 && !launcher ? (float)r->arg[1] : 500.0f) * scl * (st > 8 ? 8 : st) / 8.0f;
+        if (st == 0) {
+            float m[16];
+            basis_matrix(m, k->pos, up, k->front, 0);
+            fx_named("BombHei", "Explosion", m, NULL, NULL);
+            w_se(k, SE_EM_BOMB_EXPLOSION);
+            camera_shake(SHAKE_NORMAL_WEAK);
+            k->timer = -1;
+        }
+        if (!mario->hurt_timer && vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), c)) < rad + HIT_BODY_R) hurt_mario(c, 30.0f);
+        if (st > 8) {
+            if (launcher) { w_nrv(k, BH_GONE); return; }
+            if (r->sw[SW_DEAD] >= 0) sw_set((Row *)r, SW_DEAD, 1);
+            k->state = KURIBO_DEAD; row_kill(k->row);
+            return;
+        }
+        return;
+    }
+    }
+    k->act_t += k->act_rate;
+    if (k->nrv == BH_LAUNCH || k->nrv == BH_PHYSICS) { /* reboundVelocityFromCollision(0.1, 6, 1) */
+        if (k->on_ground && vdot(k->vel, k->gn) < -6.0f) k->vel = vsub(k->vel, vmul(k->gn, 1.1f * vdot(k->vel, k->gn)));
+        else if (k->on_ground && vdot(k->vel, k->gn) < 0) k->vel = vtangent(k->vel, k->gn);
+    }
+    w_bind(k, 53.0f);
+    k->qy = k->up = up; k->qz = vnorm(vtangent(k->front, up)); /* calcMtxFromGravityAndZAxis */
+    if (vlen(k->qz) < 1e-3f) k->qz = k->front;
+    if (k->nrv == BH_LAUNCH) return;
+    V3 body = vadd(k->pos, vmul(up, 60.0f * scl));
+    int msg = mario_offence(body, 60.0f * scl, k->grav);
+    if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) {
+        if (k->nrv == BH_PHYSICS || k->nrv == BH_STOP || k->nrv == BH_SPINHIT) return;
+        bh_light(k); w_nrv(k, BH_TRAMPLE);
+        if (msg == MSG_TRAMPLE) { mario->vup = 15.0f; mario->grounded = 0; }
+        return;
+    }
+    if (msg == MSG_HITALL && !bomb && k->nrv != BH_SPINHIT) { w_nrv(k, BH_SPINHIT); bh_light(k); scene_stop = 3; return; }
+    if (mario_touch(body, 60.0f * scl)) { /* sendMsgPushAndKillVelocityToTarget */
+        V3 d = vtangent(vsub(mario->pos, k->pos), up);
+        if (vlen(d) > 1e-3f) mario->pos = vadd(mario->pos, vmul(vnorm(d), 4.0f));
+        bh_light(k);
+    }
+}
+
 static void update_kuribo_one(Kuribo *k);
 static void update_kuribo(void)
 {
@@ -16689,6 +16859,7 @@ static void update_kuribo_one(Kuribo *k)
             else if (k->kind == WALK_SNAKEHEAD) snake_update(k);
             else if (k->kind == WALK_KABOKURI) kabo_update(k);
             else if (k->kind == WALK_PUKUPUKU) puku_update(k);
+            else if (k->kind == WALK_BOMBHEI) bomb_update(k);
             return;
         }
         if (k->kind == WALK_PETARI) { /* ponytail: still while its zone has no collision (streaming) */
@@ -21458,6 +21629,7 @@ static void update_shots(void)
                                                                                                   * (Jellyfish: its anim scale hit reaction) */ }
             else if (e->kind == WALK_GESSO) { if (e->nrv != GE_PUNCHDOWN) w_nrv(e, GE_ROTATE); } /* isMsgStarPieceAttack: Rotate */
             else if (e->kind == WALK_METBO) { w_se(e, SE_EM_METBO_TRAMPLE); if (!mb_swoon(e) && e->nrv != MB_RECOVER && !mb_down(e)) w_nrv(e, MB_GUARD); } /* isMsgStarPieceReflect */
+            else if (e->kind == WALK_BOMBHEI) { if (e->nrv == BH_GONE) { hit = 0; continue; } } /* isMsgStarPieceReflect */
             else if (e->kind == WALK_PUKUPUKU) { } /* isMsgStarPieceReflect: nothing more */
             else if (e->kind == WALK_KABOKURI) w_nrv(e, KB_STARPIECE); /* requestStarPieceHitted */
             else if (e->kind == WALK_TERESAW) w_nrv(e, TW_STUN); /* isMsgStarPieceAttack: Stun */
@@ -22731,7 +22903,7 @@ void game_draw(void)
             for (int j = 4; j < 7; j++) m[j] *= kuribo[i].timer < 300 ? 0.3f : 0.3f + 0.7f * (kuribo[i].timer - 300) / 60.0f;
         if (md->skin) { /* animated: the clip of its state (walker_clip), facing its way when it walks */
             Kuribo *k = &kuribo[i];
-            const char *cls = sc->types + 32 * sc->objs[k->row].type;
+            const char *cls = walker_acls(k);
             Anim *a = obj_anim(k->row, md, cls);
             if (!a) continue;
             if (k->act[0]) { /* ported walkers: the action their nerves started (startAction), at _A8 and its scale */
