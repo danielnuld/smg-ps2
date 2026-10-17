@@ -244,6 +244,7 @@ typedef struct {
     int lavarock;    /* LavaStrangeRock 1 / L 2 / Table 3: breaks under a launch or pushes Mario (update_lavarocks) */
     int fpressure;   /* FirePressureRadiate: a flame on a cycle (update_fpressures, fpr_joints) */
     int spmother;    /* StarPieceMother: its star pieces at a touch, or along its rail (update_spmothers) */
+    int leakpipe;    /* WaterLeakPipe: stretched to its height, leaking (update_leakpipes, leak_joints) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
 static V3 firebar_ball(const Inst *in, int j, int k);
@@ -611,6 +612,7 @@ static void tz_place(Inst *in), update_trapezes(void), draw_trapeze_ropes(void);
 static int ntzs, tz_ride = -1; /* the Trapeze Mario holds, -1 none */
 static int nonis, nfprs; static void oni_place(Inst *in), update_onimasu(void), update_lavarocks(void), update_fpressures(void), fpr_joints(Inst *in);
 static int nspms; static void update_spmothers(void);
+static void update_leakpipes(void), leak_joints(Inst *in);
 static int nmhills; static const Model *m_mhole, *m_mhill[3];
 static void sbm_place(Inst *in), sbm_joints(Inst *in);
 static int pole_try(Player *m), pole_hold(Player *m);
@@ -3243,6 +3245,7 @@ void game_rebind(void)
         in->pressure = strcmp(name, "WaterPressure") == 0;
         in->fpressure = strcmp(name, "FirePressureRadiate") == 0;
         in->spmother = strcmp(name, "StarPieceMother") == 0;
+        in->leakpipe = strcmp(name, "WaterLeakPipe") == 0;
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
         in->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 ? 3 : 0;
@@ -18301,6 +18304,28 @@ static void update_spmothers(void)
     }
 }
 
+/* WaterLeakPipe.cpp after Petari: a pipe whose Top joint (0) stands arg0 (500) up from its Bottom, leaking water
+ * (its Splash effect, SE_OJ_LV_WATER_LEAK). ponytail: no Ice Mario, so its water never freezes into IceStepNoSlip */
+static void update_leakpipes(void)
+{
+    static u32 lv[4];
+    int n = 0;
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->leakpipe || !row_shown(in->row)) continue;
+        fx_named("WaterLeakPipe", "Splash", in->m, in->anim ? (const float (*)[16])in->anim->world : NULL, in); /* exeWait */
+        if (n < 4 && vlen(vsub(v3(in->m[12], in->m[13], in->m[14]), mario->pos)) < 3000.0f) { lv[n] = se_level(SE_OJ_LV_WATER_LEAK, &in->m[12], lv[n]); n++; }
+    }
+}
+static void leak_joints(Inst *in) /* initPipeHeight: Top at its height (model space: its scale taken off) */
+{
+    Anim *a = in->anim;
+    if (!a || !a->skin || a->skin->njoints < 2) return;
+    const Row *r = &sc->objs[in->row];
+    float h = r->arg[0] != -1 ? (float)r->arg[0] : 500.0f;
+    a->world[0][12] = 0; a->world[0][13] = r->scale[1] > 0 ? h / r->scale[1] : h; a->world[0][14] = 0;
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -20010,6 +20035,7 @@ static void update_obj_anims(void)
             if (insts[i].sbeamer) { anim_pose(insts[i].anim); sbm_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].pressure) { anim_pose(insts[i].anim); pr_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].fpressure) { anim_pose(insts[i].anim); fpr_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
+            if (insts[i].leakpipe) { anim_pose(insts[i].anim); leak_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].anim->done && !insts[i].anim->loop && !insts[i].vine && !obj_play(&insts[i], sc->types + 32 * sc->objs[insts[i].row].type, 1, 0))
                 obj_play(&insts[i], "wait", 1, 8); /* a one-shot clip over: back to its own clip (tryStartAllAnim), else Wait */
             anim_update(insts[i].anim);
@@ -20133,6 +20159,7 @@ void game_update(void)
     update_lavarocks();
     update_fpressures();
     update_spmothers();
+    update_leakpipes();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
