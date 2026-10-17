@@ -344,7 +344,11 @@ Onimasu / Pivot (e6b407e), LavaStrangeRock / L / Table (9372c0f), FirePressureRa
 to Patrol, beam model), BlueStarCupsulePlanet / UFO (2c8b4f2: GCapture targets), CoconutTreeLeaf (79cc555: per-leaf
 KCL in kcl_query, Hit.sub), PalmIsland (393fe60), TeresaWater (ea6ff0e), FishGroup A-F (8ba6ead: rows kept without a
 model), SeaGullGroup (4bec260), KirairaRail (ab0860c), SunakazeKun / TwisterSan (3b537ac: Mario bind, tornado jump
-booster). Left as static on purpose: Flag* (a cloth renderer), StringSpider / SpiderMapBlock / SpiderCoin (the
+booster), Snakehead (82d7b10), Kabokuri (115d815: KabokuriFire), Pukupuku (44e061d), NeedlePlantFly (06ad5ee),
+TypicalDoor family (52504dc: <class>#Open KCL), LotusLeaf (cdd9d14), MeteorCannon / IceMeramera (ec30854),
+ChooChooTrain (76cc3cb: car instances, insts_cap) / LavaHomeVolcanoFlow, DesertMovingLand (4221141), BigFan
+(56e57a0), ElectricBall (0846644), BombHei / launchers (3f0cbb0, 2a9496d: walker_acls), JumpBeamer (9434051: the
+RingBeamer port's rbeamer 2). Left as static on purpose: Flag* (a cloth renderer), StringSpider / SpiderMapBlock / SpiderCoin (the
 SpiderThread system), MorphItemNeoIce / Hopper (Mario forms), KoopaStatue (explosions only). New walkers go through
 new_walkers[] (count / placement / model by class); their star piece reactions in update_shots. Every pack must be
 rebuilt before the test campaign (slice.py SKINNED_OBJ / EXTRA / keep list and jpa.py changed; OceanPhantomCave 1
