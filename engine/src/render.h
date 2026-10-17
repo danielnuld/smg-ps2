@@ -36,6 +36,8 @@ void render_bloom(u8 intensity, u8 intensity1, u8 intensity2);
  * writes; triangles with a corner behind the camera are left out */
 void render_mesh(const float (*pos)[3], const float (*uv)[2], int nvert, const u16 *idx, int ntri, u16 tex, int blend);
 /* the same in a colour 0xAABBGGRR (0x80 = 1.0) modulating the texture; blend 2 additive (Cs x As + Cd) */
+/* the next render_mesh / render_mesh_c draws the same vertices as the last one: their projection is kept */
+void render_mesh_same(void);
 void render_mesh_c(const float (*pos)[3], const float (*uv)[2], int nvert, const u16 *idx, int ntri, u16 tex, int blend, u32 rgba);
 /* render_mesh on the screen: x 0..640, y 0..448 (HUD units), over everything; colour 0xAABBGGRR (0x80 = 1.0)
  * modulating the texture, additive (Cs x As + Cd) or blended */

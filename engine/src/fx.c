@@ -222,10 +222,27 @@ static Emitter *new_emitter(const PtRes *r, const void *key, const float m[16], 
         float o[3];
         rot(m, off, o);
         e->m[12] += o[0]; e->m[13] += o[1]; e->m[14] += o[2];
-        e->live = e->first = e->kept = 1;
+        e->live = e->first = 1;
+        e->kept = 2;
         return e;
     }
     return NULL;
+}
+
+/* key's live emitter of r follows m (kept 2 more updates); none: a new one when create */
+static void keep_one(const PtRes *r, const void *key, const float m[16], const float off[3], int create)
+{
+    for (int j = 0; j < MAX_EMIT; j++) {
+        Emitter *e = &em[j];
+        if (!e->live || e->stop || e->key != key || e->r != r) continue;
+        e->kept = 2;
+        memcpy(e->m, m, 48); /* follow the owner (offset kept: m[12..14] below) */
+        float o[3];
+        rot(m, off, o);
+        e->m[12] = m[12] + o[0]; e->m[13] = m[13] + o[1]; e->m[14] = m[14] + o[2];
+        return;
+    }
+    if (create) new_emitter(r, key, m, off);
 }
 
 void fx_emit(int fx, const float m[16])
@@ -267,15 +284,22 @@ void fx_anim(const char *clip, float from, float to, const float m[16], const fl
         if (a->end != 0xFFFF) on = to >= st && to <= a->end;      /* kept from its start to its end frame */
         else if (to >= from) on = from < st && st <= to;           /* one shot as the clip passes its start */
         else on = st > from || st <= to;                           /* the clip went round (or restarted) */
-        if (!on) continue;
+        if (!on && a->end != 0xFFFF) continue;
         float e[16], j[16], o[16];
         if (a->joint >= 0) { mat_mul(j, m, world[a->joint]); host_size(j, m); }
         else memcpy(j, m, sizeof j);
         mat_identity(o);
         for (int k = 0; k < 3; k++) { o[5 * k] = a->scale; o[12 + k] = a->off[k]; }
         mat_mul(e, j, o);
-        if (a->end != 0xFFFF) fx_keep(a->fx, (const char *)key + i, e);
-        else fx_emit(a->fx, e);
+        if (a->end != 0xFFFF) { fx_keep(a->fx, (const char *)key + i, e); continue; }
+        /* SyncBckEffectChecker: one-time emitters at the start frame; a forever one (max frame 0) once
+         * (createSingleEmitter keeps a valid one), deleted as the clip changes (isDelete: not kept here) */
+        const FxDef *d = &defs[a->fx];
+        for (int q = 0; q < d->n; q++) {
+            const PtRes *r = &res[d->res[q]];
+            if (r->max_frame) { if (on) new_emitter(r, NULL, e, d->off); }
+            else keep_one(r, (const char *)key + i, e, d->off, on);
+        }
     }
 }
 
@@ -308,22 +332,8 @@ void fx_keep(int fx, const void *key, const float m[16])
     if (!res || fx < 0 || fx >= (int)ndefs)
         return;
     const FxDef *d = &defs[fx];
-    for (int i = 0; i < d->n; i++) {
-        const PtRes *r = &res[d->res[i]];
-        Emitter *e = NULL;
-        for (int j = 0; j < MAX_EMIT && !e; j++)
-            if (em[j].live && !em[j].stop && em[j].key == key && em[j].r == r)
-                e = &em[j];
-        if (e) {
-            e->kept = 1;
-            memcpy(e->m, m, 48);                       /* follow the owner (offset kept: m[12..14] below) */
-            float o[3];
-            rot(m, d->off, o);
-            e->m[12] = m[12] + o[0]; e->m[13] = m[13] + o[1]; e->m[14] = m[14] + o[2];
-        } else {
-            new_emitter(r, key, m, d->off);
-        }
-    }
+    for (int i = 0; i < d->n; i++)
+        keep_one(&res[d->res[i]], key, m, d->off, 1);
 }
 
 void fx_update(void)
@@ -333,10 +343,11 @@ void fx_update(void)
         if (!e->live)
             continue;
         const PtRes *r = e->r;
-        if (e->key) {
+        if (e->key) { /* kept 2 by its owner: one more update without it (catch-up: 2 updates a draw) */
             if (!e->kept)
                 e->stop = 1;
-            e->kept = 0;
+            else
+                e->kept--;
         }
         if (e->wait < r->start_frame) {
             e->wait++;

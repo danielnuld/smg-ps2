@@ -1406,6 +1406,9 @@ static void bloom_pass(void)
 }
 
 #define MESH_MAX 2048
+static int mesh_same;
+void render_mesh_same(void) { mesh_same = 1; }
+
 void render_mesh(const float (*pos)[3], const float (*uv)[2], int nvert, const u16 *idx, int ntri, u16 tex, int blend)
 {
     render_mesh_c(pos, uv, nvert, idx, ntri, tex, blend, 0x80808080u);
@@ -1418,7 +1421,7 @@ void render_mesh_c(const float (*pos)[3], const float (*uv)[2], int nvert, const
     static u8 mok[MESH_MAX];
     const TexEntry *e = tex_scene->tex[tex].e;
     if (nvert > MESH_MAX) nvert = MESH_MAX;
-    for (int v = 0; v < nvert; v++) { /* each vertex once: screen x, y, depth; mok 0 behind the camera or far off */
+    for (int v = mesh_same ? nvert : 0; v < nvert; v++) { /* each vertex once: screen x, y, depth; mok 0 behind the camera or far off */
         const float *p = pos[v];
         float xv = view[0] * p[0] + view[4] * p[1] + view[8] * p[2] + view[12];
         float yv = view[1] * p[0] + view[5] * p[1] + view[9] * p[2] + view[13];
@@ -1431,6 +1434,7 @@ void render_mesh_c(const float (*pos)[3], const float (*uv)[2], int nvert, const
         mok[v] = msx[v] >= 0 && msx[v] <= 4095 && msy[v] >= 0 && msy[v] <= 4095;
         msz[v] = (u32)(((proj[10] * zv + proj[14]) / zv + 1.0f) * (float)(0xFFFFFF / 2));
     }
+    mesh_same = 0;
     for (int t0 = 0; t0 < ntri; t0 += 40) { /* 40 triangles a GIF packet */
         int n = ntri - t0 < 40 ? ntri - t0 : 40;
         if (packet2_get_qw_count(vif[cur]) + 16 + TEXP + 6 * 3 * n + 8 > PACKET_QW)

@@ -5559,7 +5559,7 @@ static void place_waterplants(void)
  * inside, the face's far half only. ponytail: one texture sample for the face's two stages (tools/jpa.py), culling by
  * facing the centre, no TearDrop / SkullShark colours or start camera, no RiseUp demo, always the real drawing */
 typedef struct { V3 n; float w1, w2, u, v; } OsPoint;
-typedef struct { int row, n, npts, ntri; OsPoint *pt; u16 *tri; float (*pos)[3], (*uv)[2]; } OSphere;
+typedef struct { int row, n, npts, ntri; OsPoint *pt; u16 *tri; float (*pos)[3], (*uv)[2], (*face)[4]; } OSphere;
 static OSphere *ospheres;
 static int nospheres;
 
@@ -5652,6 +5652,13 @@ static void os_build(OSphere *o)
                 }
             }
     o->pos = mem_alloc(MEM_SCENE, o->npts * sizeof(*o->pos));
+    /* each triangle's normals' sum S and S.S / 3, read in order by the facing sort (the points don't fit the D-cache) */
+    o->face = mem_alloc(MEM_SCENE, o->ntri * sizeof(*o->face));
+    for (int t = 0; t < o->ntri; t++) {
+        const u16 *tr = o->tri + 3 * t;
+        V3 sn = vadd(vadd(o->pt[tr[0]].n, o->pt[tr[1]].n), o->pt[tr[2]].n);
+        o->face[t][0] = sn.x; o->face[t][1] = sn.y; o->face[t][2] = sn.z; o->face[t][3] = vdot(sn, sn) / 3.0f;
+    }
     o->uv = mem_alloc(MEM_SCENE, o->npts * sizeof(*o->uv));
 }
 
@@ -5710,10 +5717,11 @@ static void draw_oceanspheres(V3 eye, V3 right, V3 cup)
         int nk[2] = {0, 0}; /* the triangles facing away (0) and facing the eye (1), sorted once for both passes */
         for (int t = 0; t < o->ntri; t++) {
             const u16 *tr = o->tri + 3 * t;
-            V3 m = v3((o->pos[tr[0]][0] + o->pos[tr[1]][0] + o->pos[tr[2]][0]) / 3, (o->pos[tr[0]][1] + o->pos[tr[1]][1] + o->pos[tr[2]][1]) / 3,
-                      (o->pos[tr[0]][2] + o->pos[tr[1]][2] + o->pos[tr[2]][2]) / 3);
-            int facing = vdot(vsub(m, c), vsub(eye, m)) > 0.0f;
-            if (nk[facing] < 6 * 1024) memcpy(keep[facing] + 3 * nk[facing]++, tr, 6);
+            /* the centre m = c + rad S / 3 with S the normals' sum (the waves left out): facing when (m - c).(eye - m) > 0,
+             * S.to > rad S.S / 3 */
+            const float *f = o->face[t];
+            int facing = f[0] * to.x + f[1] * to.y + f[2] * to.z > rad * f[3];
+            if (nk[facing] < 6 * 1024) { u16 *kp = keep[facing] + 3 * nk[facing]++; kp[0] = tr[0]; kp[1] = tr[1]; kp[2] = tr[2]; }
         }
         for (int pass = inside; pass < 2; pass++) { /* 0 the back (env map, far half), 1 the face */
             int far_half = pass == 0 || inside, n = nk[!far_half];
@@ -5724,6 +5732,7 @@ static void draw_oceanspheres(V3 eye, V3 right, V3 cup)
                     o->uv[i][1] = (0.779175f * vdot(o->pt[i].n, cup) + 1.0f) * 0.5f;
                 } else { o->uv[i][0] = o->pt[i].u + off; o->uv[i][1] = o->pt[i].v + off; }
             }
+            if (pass > inside) render_mesh_same(); /* the face: the back's points */
             render_mesh((const float (*)[3])o->pos, (const float (*)[2])o->uv, o->npts, kept, n, (u16)fx_ocean_tex(pass == 0 ? 1 : 0), pass);
         }
     }
