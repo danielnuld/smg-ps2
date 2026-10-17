@@ -265,6 +265,7 @@ typedef struct {
     int kparent;     /* a "<class>#Move" collision's instance: its owner (whose pose and matrix it follows), -1 none */
     int lever;       /* SpinLeverSwitch (update_levers) */
     int dswitch, dsinit; /* DesertLandDownSwitch (update_dswitches) */
+    int tbox;        /* TreasureBox* (update_tboxes, tbox_hit) */
     int kstair;      /* KoopaBattleMapStair(Big / Turn): breaks and falls after its switch (update_stairs) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
@@ -1170,7 +1171,7 @@ static int npls; static void update_palms(void), pl_place(Inst *in);
 static int nlls; static void update_lotus(void), ll_place(Inst *in);
 #define TRAIN_CARS 8
 #define TRAIN_CARS_ROOM TRAIN_CARS
-static void update_levers(void), update_dswitches(void);
+static void update_levers(void), update_dswitches(void), update_tboxes(void), tbox_hit(V3 p, float r);
 static int anm_kind(const char *n); static void update_anmmodels(void);
 static int nass; static void update_arrows(void), as_place(Inst *in);
 static int nebl; static void update_eballs(void), draw_eballs(void);
@@ -3341,6 +3342,7 @@ void game_rebind(void)
         in->anmmodel = anm_kind(name);
         in->lever = strcmp(name, "SpinLeverSwitch") == 0;
         in->dswitch = strcmp(name, "DesertLandDownSwitch") == 0;
+        in->tbox = strncmp(name, "TreasureBox", 11) == 0;
         in->kstair = strncmp(name, "KoopaBattleMapStair", 19) == 0 && strcmp(name, "KoopaBattleMapStairTurnAppear") != 0;
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
@@ -9789,6 +9791,7 @@ static void update_jets(void)
             int gone = wall || ++jet.t >= (const int[]){300, 480, 300}[type] ||
                        vlen(vsub(p, v3(in->m0[12], in->m0[13], in->m0[14]))) > 10000.0f;
             hhp_blow(p, 60.0f); /* HammerHeadPackun: isMsgJetTurtleAttack */
+            tbox_hit(p, 60.0f); /* TreasureBoxCracked: isMsgJetTurtleAttack */
             for (int k = 0; k < nkuribo; k++) { /* ACTMES_JET_TURTLE_ATTACK */
                 Kuribo *e = &kuribo[k];
                 if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_BUTTERFLY ||
@@ -16846,6 +16849,7 @@ static void bomb_update(Kuribo *k)
             k->timer = -1;
         }
         if (!mario->hurt_timer && vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), c)) < rad + HIT_BODY_R) hurt_mario(c, 30.0f);
+        tbox_hit(c, rad); /* isMsgExplosionAttack */
         if (st > 8) {
             if (launcher) { w_nrv(k, BH_GONE); return; }
             if (r->sw[SW_DEAD] >= 0) sw_set((Row *)r, SW_DEAD, 1);
@@ -20551,6 +20555,58 @@ static void update_dswitches(void)
     }
 }
 
+/* TreasureBoxCracked.cpp after Petari (TreasureBox* / TreasureBoxCracked* / TreasureBoxGold*): a thrown shell (jet
+ * turtle; a gold one (arg2 1) refuses all but special ones: its REFUSE SE) or an explosion opens it (Open clip, the
+ * OPEN SE dry or wet), then its item comes out: Coin (popped 130 up), KinokoOneUp (a life), KinokoLifeUp (life up),
+ * PowerStar (its declared star: the box gone), Empty (its SW_A arg0 (5) frames on); arg2 2 starts open. Its dead switch
+ * at the clip's end. row_turn 0 Wait / 1 Open / 2 OpenWait, row_step its step. ponytail: no rising / bounding item,
+ * chips and air bubbles give nothing, no flip of Mario off its half-open lid, no Light / Glow effects */
+static void tbox_open(Inst *in) /* receiveMsgPlayerAttack (isMsgJetTurtleAttack) / receiveMsgEnemyAttack (isMsgExplosionAttack) */
+{
+    const Row *r = &sc->objs[in->row];
+    if (row_turn[in->row] != 0) return;
+    if (r->arg[2] == 1) { se_start(SE_OJ_TERAS_BOX_GOLD_REFUSE, &in->m[12]); return; }
+    float dep;
+    row_turn[in->row] = 1; row_step[in->row] = 0;
+    obj_play(in, "Open", 0, 0);
+    se_start(in_water(v3(in->m[12], in->m[13], in->m[14]), v3(in->m[4], in->m[5], in->m[6]), &dep) ? SE_OJ_TREASURE_BOX_OPEN_W : SE_OJ_TREASURE_BOX_OPEN, &in->m[12]);
+}
+static void tbox_hit(V3 p, float r) /* a jet turtle or an explosion at p */
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->tbox || !row_shown(in->row)) continue;
+        V3 c = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(vnorm(v3(in->m[4], in->m[5], in->m[6])), 50.0f)); /* body 200 at 50 up */
+        if (vlen(vsub(c, p)) < 200.0f + r) tbox_open(in);
+    }
+}
+static void update_tboxes(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->tbox || !row_shown(in->row)) continue;
+        const Row *r = &sc->objs[in->row];
+        const char *n = sc->types + 32 * r->type;
+        signed char *ph = &row_turn[in->row];
+        unsigned short *st = &row_step[in->row];
+        if (*st < 0xFFFF) ++*st;
+        if (*ph == 0 && r->arg[2] == 2) { *ph = 2; *st = 100; obj_play(in, "Open", 0, 0); if (in->anim) in->anim->frame = (float)anim_length(in->anim); } /* exeAlwaysOpen */
+        if (*ph != 1) continue;
+        V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), p = v3(in->m[12], in->m[13], in->m[14]);
+        if (*st == 1) { /* exeOpen: the item */
+            if (strstr(n, "Coin")) pop_coins(vadd(p, vmul(up, 130.0f)), up, 1);
+            else if (strstr(n, "KinokoOneUp")) { se_start(SE_SY_1UP, NULL); lives++; }
+            else if (strstr(n, "KinokoLifeUp")) { life = max_life = 2 * MAX_LIFE; }
+        }
+        if (strstr(n, "Empty") && *st == (r->arg[0] > 0 ? r->arg[0] : 5) && r->sw[SW_A] >= 0) sw_set((Row *)r, SW_A, 1); /* exeOpenWait */
+        if (*st > 1 && (!in->anim || in->anim->done)) {
+            *ph = 2;
+            if (r->sw[SW_DEAD] >= 0) sw_set((Row *)r, SW_DEAD, 1);
+            if (strstr(n, "PowerStar")) { row_kill(in->row); game_rebind(); return; } /* requestAppearPowerStar: its declared star */
+        }
+    }
+}
+
 static void update_flips(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -22410,6 +22466,7 @@ void game_update(void)
     update_anmmodels();
     update_levers();
     update_dswitches();
+    update_tboxes();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
