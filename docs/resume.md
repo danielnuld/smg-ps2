@@ -365,6 +365,19 @@ BreakDownPlanet 1, EpilogueDemoStage 1); FactoryGalaxy 1 timed out once, ok alon
 (starter drop 100 up; DeathArea SW_A / arg0 / launch rules), 290cd04 (no air-velocity rebase after a launch star, from
 92f184e), 33a9cd3 (starter flight ends at rest, from d6a62ae). The vine test mode is stale (also on old engines). Next:
 route EggStar 1-4, PCSX2 spot checks of the classes above, then phase 2.
+Route EggStar 1-4: all four stars (2026-10-17). Note: out/boot.txt (the coverage runner's scene) overrides every
+build's scene: delete it after one-scene runs.
+
+**Phase 2, frame rate (2026-10-17):** EggStar 1 bench start view (XF=-DBENCH_STILL) 21.1 -> 16.6 ms avg (worst 25),
+scripted path 16.5 -> 13.3. a5a4975: an animation's forever effects (JPA max frame 0) are made once per actor and
+kept while the clip plays (Petari createSingleEmitter / SyncBckEffectChecker); Takobo's wait had piled up 200
+emitters / 1200 particles; kept effects survive one update without their owner (catch-up); ocean spheres' facing
+sort from precomputed triangle normals (the points don't fit the 8 KB D-cache), the face pass reuses the back's
+projection (render_mesh_same). 69479ed: draw_skin caches by clip which clips have no effect / sound rows. Left (start
+view): walkers 3.1 ms (Takobo ~280 us each: pose ~100 us for 11 joints, the skinned draw's per-group matrices
+~175 us; a fast sincos and a binary key search changed nothing measurable, reverted), insts 2.4, ocean 2.0, logic
+4.4. Next ideas: the skinned matrices block on VU0 (pvw x drw, world x drw, light) in one pass, worst-frame spikes
+(draw max insts 7.6 / pickups 6.0 ms).
 
 **Earlier (2026-10-16 morning, stopped by the user mid-investigation):** a longer Wii comparison, from the start
 to the first launch star (the SuperSpinDriver under the start planet, at -4631 -17641 -16400, the bottom of the tower
