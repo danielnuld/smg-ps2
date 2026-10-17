@@ -397,8 +397,14 @@ g 93, moving from ~g 96). Next divergence: the step down off the wooden rim, g 1
 160), the port drops faster (g 130 -13157, 135 -13218, 140 -13231) and runs on at full speed. Look at doLanding's
 branches (isStickFull / _3CA / frontDot > 6 vs the 着地 clip) and whether the Wii is walking down a slope there
 (read its animation). 810B59A8 is a position copy, not Mario::mPosition (+0x208 / +0x278 / +0x71C read garbage):
-find the Mario object (dolmem near on g 93's position, then the unit front vector next to it) to read mWalkSpeed,
-mTargetWalkSpeedIndex, _3BC, the animation.
+Mario (Petari Mario, RMGE01, this scenario) is at 810B7E88: mPosition +0x130 = 810B7FB8, mFrontVec +0x208,
+mWalkSpeed +0x278 (Wii 0.4516 at g 110 = the port's 0.452), mJumpVec +0x2D4, mMovementStates +0x8 (byte 0: 0x80
+jumping, 0x40 on ground), _3BC +0x3BC, _3CA +0x3CA, _430 +0x430. The rim step: both on the ground at g 130 at the same
+place and walk 0.823; from g 131 the Wii is airborne (0xA0: jumping, walk 0, mJumpVec 5.59 -2.70 6.29), lands ~g 144
+and walks off again from 0 (slow start: walk 0.007 at g 145, 0.094 at 150). The port keeps him on the ground down the
+steep part (grounded through g 131-150, y falling 10-23 a frame) at full walk. Next: the port's ground check against
+Mario::checkGround / checkGroundOnSlope (MarioCollision.cpp 1727, MarioSlope.cpp 50: distance 60, the slope tests),
+then the drop (tryDrop: walk 0, the velocity into mJumpVec) and doLanding.
 
 **Night of 2026-10-16 (the user: comparison video, demo, short, then "continua con el resto de los detalles del port
 para ps2 hasta las 7 am"):** videos/2026-10-16_cmp-goodegg-final.mp4 (Wii | PS2, same inputs), _demo-goodegg.mp4,
