@@ -262,6 +262,7 @@ typedef struct {
     int arrow;       /* ArrowSwitch: a spin turns it a step, its SW_A (update_arrows) */
     int anmmodel;    /* the AnmModelObj family (anm_kind; update_anmmodels) */
     int kmove;       /* the model's Move joint (SKIN pad 1), its collision on it (kcl_query), -1 none */
+    int lever;       /* SpinLeverSwitch (update_levers) */
     int kstair;      /* KoopaBattleMapStair(Big / Turn): breaks and falls after its switch (update_stairs) */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_FIRE, ITEM_BEE, ITEM_INVINCIBLE };
@@ -1167,6 +1168,7 @@ static int npls; static void update_palms(void), pl_place(Inst *in);
 static int nlls; static void update_lotus(void), ll_place(Inst *in);
 #define TRAIN_CARS 8
 #define TRAIN_CARS_ROOM TRAIN_CARS
+static void update_levers(void);
 static int anm_kind(const char *n); static void update_anmmodels(void);
 static int nass; static void update_arrows(void), as_place(Inst *in);
 static int nebl; static void update_eballs(void), draw_eballs(void);
@@ -3332,6 +3334,7 @@ void game_rebind(void)
         in->eball = strcmp(name, "ElectricBall") == 0;
         in->arrow = strcmp(name, "ArrowSwitch") == 0 ? 1 : strcmp(name, "ArrowSwitchMulti") == 0 ? 2 : 0;
         in->anmmodel = anm_kind(name);
+        in->lever = strcmp(name, "SpinLeverSwitch") == 0;
         in->kstair = strncmp(name, "KoopaBattleMapStair", 19) == 0 && strcmp(name, "KoopaBattleMapStairTurnAppear") != 0;
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
@@ -20394,7 +20397,7 @@ static int obj_start(const Inst *in, const char *clip) /* tryStartAllAnim: the c
 static int anm_kind(const char *n)
 {
     static const char *const k1[] = {"LavaObstacleRockHomeB", "LavaFallDownColumnA", "LavaFallDownColumnB", "HeavenlyBeachUnderRock", "ShutterDoorC", "ShutterDoorD", "ShutterDoorE", "MechaKoopaPartsCaterpillar", "IceVolcanoAppearStepA", "IceVolcanoAppearStepB", "IceVolcanoClimbingWall", "IceUpDownShutterDoorA"};
-    static const char *const k2[] = {"LavaBreakRockA", "HeavenlyBeachTopRock"};
+    static const char *const k2[] = {"LavaBreakRockA", "HeavenlyBeachTopRock", "LavaBreakColumn"}; /* LavaBreakColumn: ponytail, no LavaColumn effect */
     static const char *const k3[] = {"LavaBreakBridge", "LavaBreakRockB", "LavaBreakRockC", "LavaBreakRockD"};
     for (u32 i = 0; i < sizeof k1 / sizeof *k1; i++) if (!strcmp(n, k1[i])) return 1;
     for (u32 i = 0; i < sizeof k2 / sizeof *k2; i++) if (!strcmp(n, k2[i])) return 2;
@@ -20426,6 +20429,44 @@ static void update_anmmodels(void)
                 fx_named(sc->types + 32 * r->type, "EndLoop", in->m, in->anim ? (const float (*)[16])in->anim->world : NULL, in);
             }
         } else if (in->anim) { in->anim->speed = 0.0f; } /* Done: the last frame held */
+    }
+}
+
+/* SpinLeverSwitch.cpp after Petari: Mario's spin on its Spin joint (50) throws it (On clip, HIT SE, camera shake,
+ * a hit stop of 8; ON SE at step 8, its SW_A on at 15) and it stays End; without an SW_A it starts thrown (On's last
+ * frame). Its Spin sensor pushes Mario. row_turn 0 Wait / 1 SwitchOn / 2 End, row_step its step. ponytail: no BRK,
+ * no rumble */
+static void update_levers(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->lever || !row_shown(in->row)) continue;
+        const Row *r = &sc->objs[in->row];
+        signed char *n = &row_turn[in->row];
+        unsigned short *st = &row_step[in->row];
+        if (*st < 0xFFFF) ++*st;
+        if (*n == 0 && r->sw[SW_A] < 0) { *n = 2; obj_play(in, "On", 0, 0); if (in->anim) in->anim->frame = (float)anim_length(in->anim); }
+        if (*n == 0) {
+            if (*st == 1) obj_play(in, "Wait", 1, 0);
+            if (mario->spin_timer > 0 && in->anim && in->anim->skin && in->anim->skin->njoints > 5) {
+                float jm[16];
+                mat_mul(jm, in->m, in->anim->world[5]);
+                if (mario_touch(v3(jm[12], jm[13], jm[14]), 50.0f)) {
+                    float dep;
+                    int wet = in_water(v3(in->m[12], in->m[13], in->m[14]), mario->up, &dep);
+                    *n = 1; *st = 0;
+                    obj_play(in, "On", 0, 0);
+                    se_start(wet ? SE_OJ_SPIN_LEVER_SW_HIT_W : SE_OJ_SPIN_LEVER_SW_HIT, &in->m[12]);
+                    camera_shake(SHAKE_NORMAL_WEAK); scene_stop = 8;
+                }
+            }
+        } else if (*n == 1) {
+            float dep;
+            int wet = in_water(v3(in->m[12], in->m[13], in->m[14]), mario->up, &dep);
+            if (*st == 8) se_start(wet ? SE_OJ_SPIN_LEVER_SW_ON_W : SE_OJ_SPIN_LEVER_SW_ON, &in->m[12]);
+            if (*st == 15) sw_set((Row *)r, SW_A, 1);
+            if (*st > 15 && (!in->anim || in->anim->done)) *n = 2;
+        }
     }
 }
 
@@ -22286,6 +22327,7 @@ void game_update(void)
     update_eballs();
     update_arrows();
     update_anmmodels();
+    update_levers();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
