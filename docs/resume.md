@@ -405,6 +405,15 @@ LayoutData layouts. Order by dependency:
    Done since: icon select (MiiSelect fellows, `title` test goes through it), the dome info's comet window, the save
    window over the pause menu, the pause test answers Save and Quit. Release rebuilt 2026-10-17 15:40 (out/smg-ps2.iso,
    out/slice-packs.elf boot the title).
+   Done since (3feb30f): the THP movies. tools/movies.py (ffmpeg) writes out/packs/movies/<Name>.smv (MPEG-2 without B
+   pictures + s16 PCM in one-second chunks, ~600 MB for all; disc.py takes them but the Luigi ones); movie.c plays one
+   with libmpeg between two scenes (main.c scene_switch, game_request_movie("A,B")): memalign / free wrapped to the
+   packs' region (Makefile --wrap), the picture uploaded in macroblocks to the texture cache's VRAM, paced by the EE
+   Count at 29.97 fps, sound through audsrv, sInfoTable's open / close wipes, FinalBattle skippable once visited.
+   Hooks: MovieStarter 0 / 1 / 2 (PrologueA -> the garden reloaded at start 1, PrologueB -> HeavensDoor 1, FinalBattle
+   -> the Observatory reloaded with KoopaBattleVs3's scenario select), the KoopaBattleVs3 clear -> EpilogueA, EndingA
+   (+ EndingB at 120 stars) -> the title. Tests `prologue`, `finalmovie`. Release + ISO rebuilt (ISO 1546 MB).
+   Left: subtitles (MovieSubtitles), pad rumble, EpilogueDemoStage's demo and the staff roll between the movies.
    Next: the Observatory / dome demos (butler lectures, AstroDomeComet, Mario's jump out), comet / Tico icons on the
    map, Luigi; then phase 1, sound.
 Then phase 1 (Good Egg vs Wii: the rim step's ground check, below), sound last. The disc ISO over ~1 GB does not boot
