@@ -209,6 +209,13 @@ int blob_add(Scene *s, const u8 *blob)
     }
     if (tk)
         s->talk = tk;
+    const u8 *ms = blob_chunk(blob, "MSGS", NULL);
+    if (ms) s->msgs = ms;
+    const u8 *ly = blob_chunk(blob, "LYTR", NULL);
+    if (ly && s->nlytr < 4) {
+        s->lytr[s->nlytr] = ly;
+        s->lytr_tex0[s->nlytr++] = tex0;
+    }
     return 0;
 }
 

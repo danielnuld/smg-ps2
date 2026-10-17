@@ -4,6 +4,8 @@
 #include "game.h"
 #include "anim.h"
 #include "fx.h"
+#include "lyt.h"
+#include "menu.h"
 #include "camera.h"
 
 #include <stdio.h>
@@ -846,6 +848,7 @@ static int demo_camera(const char *name, int frame, const float m[16])
     return 0;
 }
 static int demo_on; /* a demo is running: Mario waits (no input, no hurt) */
+static int in_opening; /* the scenario's opening camera or the ScenarioStarter's flight in (GameScene not in Action) */
 static int dino_demo_on, ota_demo_on; /* whose demo camera runs */
 static int demo_dino_damage; /* tryStartDemoMarioPuppetable "ディノパックンダメージ": Mario waits from Pulled to its damage's end */
 static int star_demo;      /* PowerStar::exeStageClearDemo: frames since a star was taken + 1, 0 none */
@@ -1339,6 +1342,8 @@ void game_init(const Scene *s, const unsigned char *blob)
     sc = s;
     fx_init(s);
     talk_init(s);
+    lyt_init(s);
+    menu_init(s);
     u32 gsz;
     const unsigned char *g = blob_chunk(blob, "GRAV", &gsz);
     ngrav = *(const int *)g;
@@ -9102,6 +9107,7 @@ static float hud_hermite(float f, float f0, float v0, float s0, float f1, float 
 }
 static void hud_draw(void)
 {
+    if (menu_paused()) return; /* PauseMenu::appear: deactivateDefaultGameLayout */
     for (int k = 0; k < 4; k++) {
         const HudCounter *c = &hud[k];
         if (c->ap == AP_HIDE) continue;
@@ -9150,6 +9156,36 @@ static const u16 *tk_label_prefix(const char *prefix)
         if (!strncmp(tk_ctl[i].label, prefix, strlen(prefix))) return tk_text + tk_msg[tk_ctl[i].msg].off;
     return NULL;
 }
+/* lyt.c's text boxes: the talk font at screen (x, y top), a font size in layout units (MessageFont26's cell 27 x 33),
+ * its character space; draw 0 only measures. ponytail: every box in MessageFont26 (MenuFont64 / NumberFont boxes too) */
+float game_text(const u16 *s, int font, float x, float y, float fsx, float fsy, float space, u32 rgb, float alpha, int draw)
+{
+    if (!s) return 0;
+    u16 conv[4 * 48 + 1];
+    if (font) { /* NumberFont / PictureFont boxes: each character as a picture tag (the icon atlas: digits at
+                 * 0x1000 + character, pictures at character - 0x30) */
+        int n = 0;
+        for (; *s && n < 4 * 47; s++) {
+            if (*s == 0x1A) { int k = tk_tag_len(s); while (k-- && n < 4 * 47) conv[n++] = *s++; s--; continue; }
+            conv[n++] = 0x1A; conv[n++] = 3; conv[n++] = (u16)(font == 1 ? 0x1000 + *s : *s - 0x30); conv[n++] = 0;
+        }
+        conv[n] = 0;
+        s = conv;
+    }
+    TkWriter w = {0};
+    w.sx = fsx / 27.0f * TK_KX; w.sy = fsy / 33.0f * TK_KY; w.cs = 1.0f + space / 27.0f;
+    w.x = x; w.y = y; w.draw = draw; w.alpha = alpha;
+    w.r = (int)(rgb >> 16 & 0xFF); w.g = (int)(rgb >> 8 & 0xFF); w.b = (int)(rgb & 0xFF);
+    int n0 = ntkq;
+    float tw = tk_write(&w, s, NULL, NULL, NULL);
+    if (draw && ntkq > n0) { /* its own glyphs now, in the layout's drawing order (talk_draw's go at its end) */
+        render_quads(tkq + n0, ntkq - n0);
+        render_quads_flush();
+    }
+    ntkq = n0;
+    return tw;
+}
+
 static void stitle_line(const u16 *s, float cy, float fsx, float fsy, float a)
 {
     if (!s) return;
@@ -22175,6 +22211,22 @@ static void update_shots(void)
 }
 
 int game_cursor(float *x, float *y) { *x = cur_x; *y = cur_y; return cur_idle < 300; } /* 0: not pointing */
+/* startStarPointerModePauseMenu: the pointer always shown, the right stick moving it (update_cursor's) */
+void game_cursor_menu(void)
+{
+    float x = pad_rx(), y = pad_ry(), k = 6.0f + 10.0f * sqrtf(x * x + y * y);
+    cur_idle = 0;
+    cur_x += x * k; cur_y -= y * k;
+    cur_x = cur_x < 0 ? 0 : cur_x > 639 ? 639 : cur_x;
+    cur_y = cur_y < 0 ? 0 : cur_y > 447 ? 447 : cur_y;
+}
+/* GameScene::isPermitToPauseMenu: in the action (no demo, no wipe, no star's demo), Mario alive and not hurt */
+int game_pause_permitted(void)
+{
+    return !demo_on && !star_demo && !wipe_active() && !in_opening && life > 0 && !mario->hurt_timer && mario->press == 0;
+}
+/* hasPowerStarInCurrentStage(n) / the galaxy's star count (n -1). ponytail: no game data yet: none */
+int game_scenario_stars(int n) { (void)n; return 0; }
 void game_set_cursor(float x, float y) { cur_x = x; cur_y = y; }
 
 static void collect(Pickup *p, int n, float reach, int *counter, int fx, u32 se)
@@ -22365,6 +22417,7 @@ const int lprof_n = 74;
 #define OPENING_PREROLL 156
 void game_update(void)
 {
+    if (menu_update()) return; /* GameScenePauseMenu: the pause sequence alone (GamePauseSequence) */
     if (scene_stop > 0) { scene_stop--; return; } /* SceneFunction stopScene: everything holds */
     /* GameSceneScenarioOpeningCameraState: the stage's StartScenario<n>.canm (CANM "stage/startscenario", world
      * space), Mario hidden, ScenarioTitle on until 60 frames before its end; then the ScenarioStarter flies Mario
@@ -22401,6 +22454,7 @@ void game_update(void)
         }
         opening_on = 1;
     }
+    in_opening = opening_on || (mario->launch >= 0 && launches[mario->launch].starter); /* not GameSceneAction yet */
     if (!opening_on && starter >= 0 && game_frame == 2) { /* ScenarioStarter::exeRailMove: the flight in (SpinDriverShootPath) */
         mario->pos = launches[starter].pos;
         mario->launch = starter; mario->launch_t = 0; mario->launch_from = mario->pos;
@@ -23595,6 +23649,7 @@ void game_draw(void)
     PROF(6);
     talk_draw();
     wipe_draw();
+    menu_draw();
     PROF(7);
     game_kcl_draw += prof_kq - kcl0; game_kcl_drawn += prof_kqn - kn0;
 }

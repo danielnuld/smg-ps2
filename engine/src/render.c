@@ -1471,7 +1471,7 @@ void render_mesh_c(const float (*pos)[3], const float (*uv)[2], int nvert, const
 
 void render_mesh2d(const float (*xy)[2], const float (*uv)[2], int nvert, const u16 *idx, int ntri, u16 tex, u32 rgba, int add)
 {
-    const TexEntry *e = tex_scene->tex[tex].e;
+    const TexEntry *e = tex == NO_TEX ? NULL : tex_scene->tex[tex].e; /* NO_TEX: flat, the colour alone */
     for (int t0 = 0; t0 < ntri; t0 += 40) { /* 40 triangles a GIF packet */
         int n = ntri - t0 < 40 ? ntri - t0 : 40;
         if (packet2_get_qw_count(vif[cur]) + 16 + TEXP + 6 * 3 * n + 8 > PACKET_QW)
@@ -1481,7 +1481,7 @@ void render_mesh2d(const float (*xy)[2], const float (*uv)[2], int nvert, const 
         AD(add ? GS_SET_ALPHA(0, 2, 0, 1, 0) : GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA); /* Cs x As + Cd, else a blend */
         AD(GS_SET_TEST(1, ATEST_METHOD_GREATER, 0, 0, 0, 0, 1, ZTEST_METHOD_ALLPASS), GS_REG_TEST);
         AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 1), GS_REG_ZBUF);
-        AD(GS_SET_PRIM(PRIM_TRIANGLE, 0, 1, 0, 1, 0, 1, 0, 0), GS_REG_PRIM);
+        AD(GS_SET_PRIM(PRIM_TRIANGLE, 0, e != NULL, 0, 1, 0, 1, 0, 0), GS_REG_PRIM);
         AD(GS_SET_RGBAQ(rgba & 0xFF, rgba >> 8 & 0xFF, rgba >> 16 & 0xFF, rgba >> 24, 0x3F800000), GS_REG_RGBAQ);
         for (int t = t0; t < t0 + n; t++) {
             const u16 *ix = idx + 3 * t;
@@ -1490,7 +1490,7 @@ void render_mesh2d(const float (*xy)[2], const float (*uv)[2], int nvert, const 
                 const float *q = uv[ix[v]], *p = xy[ix[v]];
                 float x = 2048.0f - SCREEN_W / 2 + p[0], y = 2048.0f - SCREEN_H / 2 + p[1] * YS;
                 x = fminf(fmaxf(x, 0.0f), 4095.0f); y = fminf(fmaxf(y, 0.0f), 4095.0f);
-                AD(GS_SET_UV((int)(q[0] * e->w * 16) & 0x3FFF, (int)(q[1] * e->h * 16) & 0x3FFF), GS_REG_UV);
+                if (e) AD(GS_SET_UV((int)(q[0] * e->w * 16) & 0x3FFF, (int)(q[1] * e->h * 16) & 0x3FFF), GS_REG_UV);
                 AD(GS_SET_XYZ((int)(x * 16), (int)(y * 16), 0xFFFFFF), GS_REG_XYZ2);
             }
         }
@@ -1501,9 +1501,10 @@ void render_mesh2d(const float (*xy)[2], const float (*uv)[2], int nvert, const 
     }
 }
 
-u32 render_end(void)
+/* the frame's world finished now: its blended groups and the bloom (render_end's), then the 2D queued so far; what is
+ * drawn after (a pause menu's layouts) covers them */
+void render_world_done(void)
 {
-    u32 c0 = cycles();
     for (int i = 0; i < nxlu; i++) {
         model_textures(xlu[i].md);
         if (xlu[i].md->lit)
@@ -1513,6 +1514,14 @@ u32 render_end(void)
     nxlu = 0;
     bloom_pass();
     draw_quads();
+}
+
+void render_quads_flush(void) { draw_quads(); }
+
+u32 render_end(void)
+{
+    u32 c0 = cycles();
+    render_world_done();
     flush_vif();
     dma_channel_wait(DMA_CHANNEL_VIF1, 0);
     if (text_open) {

@@ -233,7 +233,8 @@ def font_chunk(fsp, lang=LANG):
         pics |= p
     chars |= set(range(0x20, 0x7F))
     timg, tg = atlas(text, chars, (256, 256))
-    icons = {p + 0x30 for p in pics}
+    import lyt  # the menus' picture text boxes (tools/lyt.py)
+    icons = {p + 0x30 for p in pics} | lyt.picture_chars(fsp)
     pimg, pg = atlas(pic, icons, (256, 256))
     pg = [(g[0] - 0x30,) + tuple(g[1:]) for g in pg]
     # NumberFont's digits (the HUD counters' text boxes) under the pictures, codes 0x1000 + character

@@ -58,6 +58,10 @@ void render_strips(const Strip *st, int n);
  * float coordinates (clamped off the texture), as is a quad with pad 1 */
 typedef struct { float x, y, w, h, u, v, uw, vh; u32 rgba; u16 tex, pad; float vw, uh; } Quad;
 void render_quads(const Quad *q, int n);
+/* the quads queued so far drawn now (in the chain's order: what comes after covers them) */
+void render_quads_flush(void);
+/* the world finished now (its blended groups, the bloom, the queued 2D): the menus are drawn over it */
+void render_world_done(void);
 /* a drop shadow: a half-dark disc of radius 1 in the matrix's XZ plane (drawn with the blended instances) */
 void render_shadow(const float world[16]);
 /* Finish the frame (VIF chain, HUD, wait for the GS) and flip; returns EE cycles spent before the vsync wait. */

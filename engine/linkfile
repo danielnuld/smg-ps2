@@ -58,6 +58,8 @@ SECTIONS {
 		*fx.o(.data .data.*)
 		*blob.o(.data .data.*)
 		*se_seq.o(.data .data.*)
+		*lyt.o(.data .data.*)
+		*menu.o(.data .data.*)
 		__stop_gamedata = . ;
 	}
 
@@ -111,6 +113,8 @@ SECTIONS {
 		*fx.o(.bss .bss.* COMMON)
 		*blob.o(.bss .bss.* COMMON)
 		*se_seq.o(.bss .bss.* COMMON)
+		*lyt.o(.bss .bss.* COMMON)
+		*menu.o(.bss .bss.* COMMON)
 		__stop_gamebss = . ;
 	}
 

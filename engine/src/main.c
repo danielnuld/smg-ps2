@@ -21,6 +21,8 @@
 #include "vmath.h"
 
 #include "fx.h"
+#include "lyt.h"
+#include "menu.h"
 #include "music_tab.h"
 #include "packs_cfg.h" /* written by build.sh: PACKS = "<Galaxy>/<scenario>", or empty */
 
@@ -206,7 +208,8 @@ static void toc_select(void)
     ntoc = 0;
     for (u32 i = 0; i < toc_n; i++) {
         const TocEntry *e = (const TocEntry *)(toc_all + 4 + i * sizeof(TocEntry));
-        if ((strncmp(e->path, scen, lp) == 0 && e->path[lp] == '/') || strcmp(e->path, "resident.bin") == 0 || strcmp(e->path, "sound.bin") == 0) {
+        if ((strncmp(e->path, scen, lp) == 0 && e->path[lp] == '/') || strcmp(e->path, "resident.bin") == 0 || strcmp(e->path, "sound.bin") == 0 ||
+            strcmp(e->path, "menus.bin") == 0) {
             if (ntoc == (int)(sizeof toc / sizeof toc[0])) { printf("packs: TOC full\n"); for (;;) {} }
             memcpy(&toc[ntoc++], e, sizeof *e);
         }
@@ -496,7 +499,7 @@ static void stream_update(Scene *s)
         pend_commit(s);
 }
 
-static const u8 *base_bufs[4]; /* scene.bin, resident.bin, sound.bin, common.bin: freed at a scene change */
+static const u8 *base_bufs[6]; /* scene.bin, resident.bin, sound.bin, common.bin, menus.bin: freed at a scene change */
 static int nbase;
 static const u8 *load_base(const char *path) { return base_bufs[nbase++] = load_file(path); }
 
@@ -525,6 +528,15 @@ static const u8 *load_packs(Scene *s)
     snprintf(path, sizeof path, "%s/common.bin", scen);
     if (blob_add(s, load_base(path)) != 0)
         return NULL;
+    { /* the menus' layouts (tools/lyt.py), when built: outside the scenario room */
+        Pack mp;
+        if (pack_open(&mp, "menus.bin")) {
+            pack_close(&mp);
+            u32 before = pack_bytes;
+            if (blob_add(s, load_base("menus.bin")) != 0) return NULL;
+            resident_bytes += pack_bytes - before; /* its own budget, as resident.bin's */
+        }
+    }
     u32 sz;
     nzones = *(const u32 *)blob_chunk(scene_blob, "ZONE", &sz);
     if (nzones > 64)
@@ -735,6 +747,19 @@ int main(void)
             last_vb = vblanks;
 #endif
             continue;
+        }
+#endif
+#if defined(PACKS) && defined(PAUSE_TEST)
+        { /* the pause menu: START, the pointer on its second button, X, then Yes in the confirm window */
+            static const struct { u32 f; const char *pane; u32 btn; } st[] = {
+                {500, NULL, PAD_START}, {620, "BoxButton2", 0}, {640, NULL, PAD_CROSS}, {900, "BoxRight", 0}, {920, NULL, PAD_CROSS}};
+            pad_force = 0;
+            for (unsigned k = 0; k < sizeof st / sizeof st[0]; k++)
+                if (frame == st[k].f) {
+                    if (st[k].pane) printf("pause test f %u: pointer on %s %d\n", frame, st[k].pane, menu_test_point(st[k].pane));
+                    pad_force = st[k].btn;
+                    if (st[k].btn) printf("pause test f %u: button %x, paused %d\n", frame, st[k].btn, menu_paused());
+                }
         }
 #endif
 #if defined(PACKS) && defined(SCENE_TEST)
@@ -1482,8 +1507,21 @@ int main(void)
 #endif
         u32 t1 = cycles();
         anim_rate = (float)steps; game_set_draw_steps(steps); /* draw-time clips after `steps` logic steps */
+        if (menu_paused()) { anim_rate = 0; game_set_draw_steps(0); } /* the world held under the pause menu */
         game_draw();
         anim_rate = 1.0f;
+#if defined(PACKS) && defined(LYT_TEST)
+        { /* the pause menu's layout over the game: Appear and the buttons' ButtonAppear, then their Wait */
+            static LytInst *pm;
+            if (frame == 200) {
+                pm = lyt_new("PauseMenu");
+                printf("lyt test: PauseMenu %s, appear %d buttons %d\n", pm ? "found" : "missing", lyt_start(pm, "Appear", 0),
+                       lyt_start(pm, "ButtonAppear", 1));
+            }
+            if (pm && frame == 320) printf("lyt test f %u: appear stopped %d frame %d\n", frame, lyt_stopped(pm, 0), (int)lyt_frame(pm, 0));
+            if (pm) { for (int k = 0; k < steps; k++) lyt_update(pm); lyt_draw(pm); }
+        }
+#endif
         u32 t2 = cycles();
         t_logic = t1 - t0;
         t_draw = t2 - t1;
