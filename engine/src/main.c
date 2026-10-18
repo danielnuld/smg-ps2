@@ -868,6 +868,11 @@ int main(void)
         if (frame == 1300) printf("demo test: start %d\n", game_test_demo(0));
         if (frame > 1300 && frame % 20 == 0) printf("demo test f %u: %d\n", frame, game_test_demo(-1));
 #endif
+#if defined(PACKS) && defined(STORY_TEST) /* a fresh file moved to AstroDome/1: ドームレクチャー１ (cDemoAstroDomeLecture) */
+        if (frame == 200) seq_galaxy_move(SEQ_MOVE, "AstroDome", 1, -1, 0);
+        if (frame > 200 && frame % 30 == 0 && frame < 3000)
+            printf("story test f %u: busy %d demo %d butlerA %d\n", frame, game_story_busy(), game_test_demo(-1), gd_story_passed("バトラー情報Ａ"));
+#endif
 #if defined(PACKS) && defined(PROLOGUE_TEST)
         if (frame == 300 || frame == 700) printf("prologue test f %u: movie starter %d\n", frame, game_test_movie(frame == 700));
 #endif
