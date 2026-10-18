@@ -22538,6 +22538,7 @@ static int dx_last(int p) { return dx_active(p) && dx_step(p) == dx_total(p) - 1
 static const struct { const char *cls, *demo, *anim, *talk; } dx_casts[] = {
     {"Butler", "ドームレクチャー１", "demobutlerdomelecture1", "AstroDome_Butler023"},
     {"Butler", "ドームレクチャー２", "demobutlerdomelecture2", "AstroDome_Butler001"}, /* initDemoSheetTalkAnimFunctor: mTalkMessage[0] */
+    {"Butler", "バトラー報告", "demobutlerreport", "AstroDome_Butler003"},             /* initButlerDemo: mTalkMessage[2] */
 };
 static const char *dx_talk_set; /* setDemoTalkMessageCtrlDirect: the running demo's talk label, NULL the table's */
 static int butler_nrv;          /* Butler: 0 Wait, 1 Demo, 2 DemoDomeLecture2 */
@@ -22589,6 +22590,21 @@ static void dx_cast_hook(int row, int type, int part)
         row_dead[row] = 0; sw_changed = 1; butler_nrv = 1;
         return;
     }
+    if (type == 2 && !strcmp(cls, "Butler") && !strcmp(demos[dx.cur].h->name, "バトラー報告")) {
+        if (part == 0) { /* 開始: startDemoButlerReport, its talk by the story's event (4..8: mTalkMessage[2..6]) */
+            static const char *const msg[] = {"AstroDome_Butler003", "AstroDome_Butler006", "AstroDome_Butler007",
+                                              "AstroGalaxy_Butler005", "AstroGalaxy_Butler006"};
+            int ev = seq_demo_event();
+            dx_talk_set = msg[ev >= 4 && ev <= 8 ? ev - 4 : 0];
+            row_dead[row] = 0; sw_changed = 1; butler_nrv = 1;
+        } else { /* バトラーリセット: killIfBatlerMapAppear, else setDefaultPose and Wait */
+            if (gd_flag_is_on("SpecialStarGrand2")) row_dead[row] = 1;
+            for (int i = 0; i < ndx_moved; i++) if (dx_moved[i].row == row) dx_moved[i] = dx_moved[--ndx_moved];
+            butler_nrv = 0; sw_changed = 1;
+        }
+        return;
+    }
+    if (type == 0 && !strcmp(cls, "ButlerMap")) { row_dead[row] = !gd_flag_is_on("SpecialStarGrand2"); return; } /* ButlerMap::appear */
     if (type == 2 && !strcmp(cls, "Butler") && !strcmp(demos[dx.cur].h->name, "ドームレクチャー２")) { /* startDemoDomeLecture2 */
         dx_talk_set = gd_story_passed("天球儀レクチャー") && !gd_story_passed("ギャラクシー移動レクチャー") ? "AstroDome_Butler002" : "AstroDome_Butler001";
         row_dead[row] = 0; sw_changed = 1; butler_nrv = 2;
@@ -22869,7 +22885,7 @@ static void update_dome_npcs(void)
             } else if (mv) memcpy(in->m, mv, 64);
             else mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
             int ta = 0;
-            for (int k = 0; k < ndxt; k++) ta |= dx.on && dxt[k].row == in->row;
+            for (int k = 0; k < ndxt; k++) ta |= dx.on && dxt[k].row == in->row && butler_nrv;
             if (!ta) obj_play(in, "wait", 1, 0);
             continue;
         }

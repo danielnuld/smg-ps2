@@ -1628,7 +1628,8 @@ DEMO_SHEETS = ("time", "subpart", "player", "camera", "action", "wipe", "sound")
 DEMO_DIRECT_CAST = {"Butler": ("ドームレクチャー１", "ドームレクチャー２", "バトラー報告", "スターピース解説前半", "スターピース解説後半",
                                "バトラーグリーンドライバ説明"),
                     # StarReturnDemoStarter::tryRegisterDemo
-                    "StarReturnDemoStarter": ("グランドスター帰還[２回目以降]", "パワースター帰還", "天文ドームスター帰還")}
+                    "StarReturnDemoStarter": ("グランドスター帰還[２回目以降]", "パワースター帰還", "天文ドームスター帰還"),
+                    "ButlerMap": ("バトラー報告",)}
 
 
 _demo_dead = None

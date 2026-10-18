@@ -860,6 +860,26 @@ int main(void)
             }
         }
 #endif
+#if defined(PACKS) && defined(REPORT_TEST)
+        { /* EggStar's star 2 faked: the dome, its star return, then バトラー報告 (cDemoNewGalaxyDiscover) */
+            pad_force = frame > 600 && frame % 60 < 10 ? PAD_CROSS : 0; /* the result's pages and the Butler's */
+            if (frame == 200) {
+                SeqResult r = {"EggStarGalaxy", 2, 0, 1, 50, 0, 12};
+                gd_set_star("HeavensDoorGalaxy", 1);
+                gd_set_star("EggStarGalaxy", 1);
+                gd_story_follow("バトラー情報Ａ"); gd_story_follow("スターピースレクチャー");
+                r.prev_stars = gd_star_num();
+                gd_set_star("EggStarGalaxy", 2);
+                r.after_stars = gd_star_num();
+                seq_set_result(&r);
+                seq_set_cleared(2);
+                seq_galaxy_move(SEQ_STAGE_CLEAR, NULL, -1, -1, 0);
+            }
+            if (frame > 200 && frame % 60 == 0 && frame < 4000)
+                printf("report test f %u: busy %d demo %d result %d saving %d\n", frame, game_story_busy(), game_test_demo(-1),
+                       menu_result_showing(), menu_saving());
+        }
+#endif
 #if defined(PACKS) && defined(FINALMOVIE_TEST) /* AstroGalaxy/5: the FinalBattle MovieStarter, then the scenario select */
         if (frame == 200) printf("finalmovie test: movie starter %d\n", game_test_movie(2));
         if (frame == 400) printf("finalmovie test: scenario select %d\n", menu_scenario_selecting());
