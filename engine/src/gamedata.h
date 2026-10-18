@@ -32,6 +32,7 @@ int gd_galaxy_count(void);                      /* cGalaxyInfoTable's rows */
 void gd_galaxy_at(int i, const char **name, const char **map_pane);
 int gd_flag_can_on(const char *name);           /* GameEventFlagChecker */
 int gd_flag_is_on(const char *name);
+int gd_tico_galaxy(int i, const char **g, int *given, int *max); /* the i-th hungry Luma's galaxy, star pieces given / needed */
 void gd_scene_start(void);                       /* the scene start's game data (getSceneStartGameDataHolder) */
 int gd_flag_is_on_just(const char *name);        /* isOnJustGameEventFlag: on now, off as the scene started */
 int gd_flag_can_on_just(const char *name);       /* canOnJustGameEventFlag */

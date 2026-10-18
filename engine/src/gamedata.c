@@ -215,6 +215,19 @@ static int green_num(const char *unused) /* GameDataFunction::calcGreenStarNum: 
 }
 int gd_green_first_just(void) { return at_start(green_num, "") == 0 && green_num("") == 1; } /* isJustGetGreenStarFirst */
 
+/* GameEventFlagTable::getExclamationGalaxyNameFromIndex / getStarPieceNumGivingToTicoGalaxy / ...Max: the i-th
+ * StarPiece flag's galaxy (a hungry Luma's), the star pieces given to it (StarPieceAlmsStorage i + 8) and its need */
+int gd_tico_galaxy(int i, const char **g, int *given, int *max)
+{
+    for (int k = 0; k < NFLAGS; k++) {
+        const GdFlag *f = &gd_flags[k];
+        if (f->type != GT_STARPIECE || f->c1 != i) continue;
+        *g = f->s1; *given = i + 8 < 16 ? gd.alms[i + 8] : 0; *max = f->c2;
+        return 1;
+    }
+    return 0;
+}
+
 int gd_flag_try_on(const char *name) /* GameEventFlagChecker::tryOn */
 {
     if (!gd_flag_can_on(name)) return 0;

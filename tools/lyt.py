@@ -339,7 +339,8 @@ COMMON = ("PauseMenu", "SysInfoWindow", "SysInfoWindowMini", "GameOver", "TooBad
 DOME = ("GalaxySelect", "GalaxyInfo", "GalaxyNamePlate")
 # the Observatory's (GalaxyMapController, PowerStarList: ButlerMap's map): map.bin, in the AstroGalaxy stages only;
 MAP = ("MapGrandGalaxy", "MapGalaxyIcon", "MapDomeIcon", "MapTitle", "MapGalaxyBg", "MapButton", "GalaxyDetail", "IconMario",
-       "GalaxyNamePlate", "AllStarList", "PrologueStarSteward")  # RosettaMonologue (ロゼッタ状況説明デモ's picture book)
+       "GalaxyNamePlate", "AllStarList", "PrologueStarSteward",
+       "MapTicoIcon", "IconComet")  # GalaxyMapTicoIcon, GalaxyMapCometIcon  # RosettaMonologue (ロゼッタ状況説明デモ's picture book)
 
 
 # the messages menus and screens look up by label (MR::getLayoutMessageDirect / getGameMessageDirect): MSGS chunk

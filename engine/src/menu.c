@@ -14,6 +14,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static void fade_update(void);
@@ -2257,8 +2258,10 @@ static void fs_draw(void)
 /* --- GalaxyMapController, GalaxyMap, its icons and PowerStarList after Petari (map.bin: the Observatory's), opened by
  * ButlerMap's talk (startGalaxyMapLayout / startAstroMapLayout); the world frozen while it shows. The pointer is the
  * right stick, X is A (an icon: its detail; empty space: the other view), Circle / Triangle is B. ponytail: the
- * normal modes only (no discover / Tico / dome lecture modes), no Tico / comet icons, no Mario icons, no AstroMapBoard
- * capture, the star list without its separators (belts), page turns or capture */
+ * normal modes only (no discover / Tico / dome lecture modes), no AstroMapBoard capture, the star list without its
+ * separators (belts), page turns or capture. Its Mario icons (GalaxyMapMarioIcon: cMarioIconPositions, in a dome also
+ * cMarioIconPositionsInDome), Tico icons (GalaxyMapTicoIcon: the hungry Lumas' galaxies, their meter) and comet icons
+ * (GalaxyMapCometIcon: a galaxy with comets where one landed, its colour by the comet) follow their map panes */
 enum { GM_OFF, GM_READY, GM_FADEIN, GM_DISPLAY, GM_APPEARVIEW, GM_READYLIST, GM_APPEARLIST, GM_DISPLAYLIST, GM_DISAPPEARLIST,
        GM_FADEOUT, GM_READYGAME };
 enum { MV_IDLE, MV_FOCUSIN, MV_FOCUSOUT, MV_FADEIN, MV_DETAIL };
@@ -2273,6 +2276,9 @@ static struct {
     u8 back_clicked;
     u16 plate_txt[64];
     const char *list_gal[64]; int nlist;
+    LytInst *mario[2], *tico[8], *comet[GM_ICONS]; /* GalaxyMapMarioIcon 1 / 2, GalaxyMapTicoIcon, GalaxyMapCometIcon */
+    char mario_pane[2][8], tico_pane[8][8];
+    int ntico, tico_on[8], comet_on[GM_ICONS];
     u16 col[5][8][128];               /* the star list's columns: stage 8 panes, star / coin / comp / time 4 */
 } gm;
 
@@ -2325,6 +2331,36 @@ static void gm_follow(LytInst *l, const char *pane) /* setLayoutScalePosAtPaneSc
     lyt_pane_place(gm.map, pane, p);
     lyt_set_pos(l, p[0] - 304.0f, 228.0f - p[1]);
     lyt_set_scale(l, p[2]);
+}
+
+static int gm_comet_id(const char *name) /* MR::getCometNameIdFromString */
+{
+    return !strcmp(name, "Dark") ? 2 : !strcmp(name, "Ghost") ? 1 : !strcmp(name, "Quick") ? 3 :
+           !strcmp(name, "Purple") || !strcmp(name, "Black") ? 4 : 0;
+}
+static void gm_sync_extra(void) /* the icons' appear: GalaxyMapTicoIcon / GalaxyMapCometIcon::syncStatus, showBlink */
+{
+    for (int k = 0; k < gm.ntico; k++) {
+        const char *g;
+        int given, max;
+        gm.tico_on[k] = 0;
+        if (!gm.tico[k] || !gd_tico_galaxy(k, &g, &given, &max) || max <= 0) continue;
+        float rate = (float)given / max;
+        if (!gd_galaxy_appear(g) || rate >= 1.0f) continue;
+        gm.tico_on[k] = 1;
+        lyt_start(gm.tico[k], "TicoMeter", 2); lyt_set_frame(gm.tico[k], 2, rate * lyt_anim_frames(gm.tico[k], "TicoMeter")); lyt_set_rate(gm.tico[k], 2, 0);
+        lyt_start(gm.tico[k], "Wait", 0);
+        lyt_start(gm.tico[k], "Blink", 1); lyt_set_frame(gm.tico[k], 1, 0); lyt_set_rate(gm.tico[k], 1, 0);
+    }
+    for (int i = 0; i < gm.nicon; i++) {
+        gm.comet_on[i] = 0;
+        int cs = gm.comet[i] ? gd_comet_star(gm.icon[i].gal) : 0; /* isGalaxyCometLandInStage */
+        if (!cs) continue;
+        gm.comet_on[i] = 1;
+        lyt_start(gm.comet[i], "Color", 1); /* setCometAnimFromId */
+        lyt_set_frame(gm.comet[i], 1, (float)gm_comet_id(gd_scenario_comet(gm.icon[i].gal, cs))); lyt_set_rate(gm.comet[i], 1, 0);
+    }
+    for (int k = 0; k < 2; k++) if (gm.mario[k]) lyt_start(gm.mario[k], "Wait", 0);
 }
 
 static void gm_title(int galaxy_view)
@@ -2540,7 +2576,7 @@ static void gm_update(void)
             wipe_start(12, 0, 0);
             btn_appear(&gm.back); gm.back_clicked = 0;
             btn_appear(&gm.button);
-            gm_sync_icons();
+            gm_sync_icons(); gm_sync_extra();
             gm_force_view(gm.mode);
             lyt_start(gm.bg, "Wait", 0);
             lyt_set_number_rec(gm.map, "Star", gd_star_num());
@@ -2607,6 +2643,10 @@ static void gm_update(void)
             gm_follow(gm.icon[i].l, gm.icon[i].pane); btn_update(&gm.icon[i].b); lyt_update(gm.icon[i].l);
         }
         for (int d = 0; d < 6; d++) if (gm.dome[d]) { char p[8]; snprintf(p, sizeof p, "Dome%d", d + 1); gm_follow(gm.dome[d], p); lyt_update(gm.dome[d]); }
+        for (int k = 0; k < 2; k++) /* GalaxyMapMarioIcon::control: at its pane, its alpha */
+            if (gm.mario[k]) { gm_follow(gm.mario[k], gm.mario_pane[k]); lyt_set_alpha(gm.mario[k], lyt_pane_alpha(gm.map, gm.mario_pane[k])); lyt_update(gm.mario[k]); }
+        for (int k = 0; k < gm.ntico; k++) if (gm.tico_on[k]) { gm_follow(gm.tico[k], gm.tico_pane[k]); lyt_update(gm.tico[k]); }
+        for (int i = 0; i < gm.nicon; i++) if (gm.comet_on[i]) { gm_follow(gm.comet[i], gm.icon[i].pane); lyt_update(gm.comet[i]); }
         if (gm.plate_show) { lyt_update(gm.plate); gm.plate_show--; }
         if (gm.detail_on) lyt_update(gm.detail);
         btn_update(&gm.button); lyt_update(gm.btn_l);
@@ -2628,6 +2668,10 @@ static void gm_draw(void)
         for (int d = 0; d < 6; d++) if (gm.dome[d]) lyt_draw(gm.dome[d]);
         for (int i = 0; i < gm.nicon; i++) if (gm.icon[i].status && gm.icon[i].l_scale > 0.01f && i != gm.pointing) lyt_draw(gm.icon[i].l);
         if (gm.pointing >= 0) lyt_draw(gm.icon[gm.pointing].l); /* order 3: over the rest */
+        if (gm.mario[0]) lyt_draw(gm.mario[0]);                    /* GalaxyMap::draw: Mario 1, the Ticos, Mario 2, the comets */
+        for (int k = 0; k < gm.ntico; k++) if (gm.tico_on[k]) lyt_draw(gm.tico[k]);
+        if (gm.mario[1]) lyt_draw(gm.mario[1]);
+        for (int i = 0; i < gm.nicon; i++) if (gm.comet_on[i]) lyt_draw(gm.comet[i]);
         lyt_draw(gm.title);
         lyt_draw(gm.btn_l);
         if (gm.plate_show) lyt_draw(gm.plate);
@@ -2661,6 +2705,28 @@ static void gm_init(void)
         gm.nicon++;
     }
     for (int d = 0; d < 6; d++) gm.dome[d] = lyt_new("MapDomeIcon");
+    for (int i = 0; i < gm.nicon; i++) { /* initPaneCtrlPointing: a comet icon for a galaxy with any comet (isExistAnyComet) */
+        int any = 0;
+        for (int k = 1; k <= gd_scenario_num(gm.icon[i].gal); k++) any |= gd_scenario_comet(gm.icon[i].gal, k)[0] != 0;
+        if (any && (gm.comet[i] = lyt_new("IconComet"))) lyt_start(gm.comet[i], "Wait", 0);
+    }
+    { /* initMarioIcon: cMarioIconPositions / cMarioIconPositionsInDome by the dome's scenario (0 outside a dome) */
+        static const char *const pos[7] = {"Mario7", "Mario1", "Mario2", "Mario3", "Mario4", "Mario5", "Mario6"};
+        int no = 0;
+        if (!strncmp(game_stage_name, "AstroDome/", 10)) no = atoi(game_stage_name + 10);
+        if (no < 0 || no > 6) no = 0;
+        snprintf(gm.mario_pane[0], sizeof gm.mario_pane[0], "%s", pos[no]);
+        if (no) snprintf(gm.mario_pane[1], sizeof gm.mario_pane[1], "GMario%d", no);
+        for (int k = 0; k < 1 + (no != 0); k++)
+            if ((gm.mario[k] = lyt_new("IconMario"))) { lyt_start(gm.mario[k], "Luigi", 1); lyt_set_frame(gm.mario[k], 1, 0); lyt_set_rate(gm.mario[k], 1, 0); }
+    }
+    for (gm.ntico = 0; gm.ntico < 8; gm.ntico++) { /* initTicoIcon: calcExclamationGalaxyNum, panes Tico<n> */
+        const char *g;
+        int given, max;
+        if (!gd_tico_galaxy(gm.ntico, &g, &given, &max)) break;
+        snprintf(gm.tico_pane[gm.ntico], sizeof gm.tico_pane[0], "Tico%d", gm.ntico + 1);
+        if ((gm.tico[gm.ntico] = lyt_new("MapTicoIcon"))) lyt_start(gm.tico[gm.ntico], "Appear", 0);
+    }
     gm.pointing = -1;
     printf("galaxy map: %d galaxy icons\n", gm.nicon);
 }

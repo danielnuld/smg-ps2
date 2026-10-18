@@ -436,6 +436,17 @@ the demos): resume here.** State at the session break (2026-10-17 evening):
   the map lecture with the map, the save; BattleShipGalaxy/1: the first green star -> the star return, the green driver
   explanation, the save, the fade in). ponytail: the map opens in its normal mode (no NewDomeDiscover /
   ChallengeGalaxyDiscover modes).
+- **Resume here (2026-10-18):**
+  1. Map icons (menu.c gm_sync_extra: GalaxyMapMarioIcon / TicoIcon / CometIcon; lyt.py MAP + MapTicoIcon, IconComet;
+     gamedata gd_tico_galaxy) committed UNTESTED; map.bin grew 31 KB and AstroGalaxy/4 is now 8.18 MB over its room
+     (8.15): run the `map` test and AstroGalaxy/4 (grand) for "no memory"; trim if needed (anim_skipped / canm).
+  2. Merge agent-jumpout @ db62aee (D:/smg-ps2-wt/jumpout: マリオ飛び出し, AstroDomeDemoStarter adds_*; repack AstroDome
+     1-6; test `dome`, whose X click moved to 1700/1720) and agent-ending @ a6d7396 (D:/smg-ps2-wt/ending: the epilogue
+     list, EpilogueDemoStage, the StaffRoll in menu.c srl_*, ending.bin; rebuild menus.bin + ending.bin with lyt.py,
+     music.py for SMG_staffroll_strm / SMG_ev_epilogue_b_strm, repack EpilogueDemoStage + its sound.bin; test `ending`
+     from KoopaBattleVs3Galaxy/1). Both compiled only. git may call those worktrees "dubious ownership": merge from
+     D:/smg-ps2 with `git merge agent-<name>`, then `git worktree remove` them.
+  3. Then: movie subtitles (needs the font kept while a movie plays), Luigi, phase 1, sound.
 - Pack memory (2026-10-18): the Observatory ran out of pack region ("packs: no memory for ...": the heap is full after a
   load). slice_all.py's room per galaxy now leaves out the menu packs main.c loads beside it (MENU_PACKS: map.bin in
   AstroGalaxy, dome.bin, the title packs), and slice.py anim_skipped leaves out clips / canms a class never plays in a
