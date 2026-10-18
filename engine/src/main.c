@@ -112,6 +112,25 @@ static void *pk_alloc(u32 n)
     return NULL;
 }
 
+/* a used block cut to its first n bytes: the rest freed (merged with a free block after it) */
+static void pk_shrink(const void *p, u32 n)
+{
+    n = (n + 63) & ~63u;
+    for (int i = 0; i < pk_n; i++) {
+        if (pk_base + pk_blk[i].off != p) continue;
+        if (pk_blk[i].size <= n) return;
+        u32 cut = pk_blk[i].size - n;
+        pk_blk[i].size = n;
+        if (i + 1 < pk_n && !pk_blk[i + 1].used) { pk_blk[i + 1].off -= cut; pk_blk[i + 1].size += cut; }
+        else if (pk_n < PK_BLOCKS) {
+            memmove(&pk_blk[i + 2], &pk_blk[i + 1], (pk_n - i - 1) * sizeof pk_blk[0]);
+            pk_blk[i + 1].off = pk_blk[i].off + n; pk_blk[i + 1].size = cut; pk_blk[i + 1].used = 0;
+            pk_n++;
+        } else pk_blk[i].size += cut; /* no block left: kept whole */
+        return;
+    }
+}
+
 static void pk_free(const void *p)
 {
     if (!p) return;
@@ -582,7 +601,12 @@ static const u8 *load_packs(Scene *s)
         snprintf(path, sizeof path, "%s/sound.bin", scen);
         int own = pack_open(&sp, path);
         if (own) pack_close(&sp);
-        se_load(load_base(own ? path : "sound.bin"));
+        u32 before = pack_bytes;
+        const u8 *sb = load_base(own ? path : "sound.bin");
+        se_load(sb);
+        u32 keep = se_compact(sb, pack_bytes - before); /* the ADPCM went to SPU RAM: its EE copy freed */
+        pk_shrink(sb, PACK_ALLOC(keep));
+        pack_bytes = before + keep;
     }
     resident_bytes = pack_bytes - before_resident; /* its own budget (milestone 1), not the scenario room */
     snprintf(path, sizeof path, "%s/common.bin", scen);

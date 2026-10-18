@@ -130,6 +130,20 @@ int se_load(const u8 *b)
     return 0;
 }
 
+/* After se_load: the ADPCM (the pack's tail, tools/sound.py) is in SPU RAM -> the bytes still needed before it (the
+ * caller shrinks its buffer); size unchanged if anything lies after it */
+u32 se_compact(const u8 *b, u32 size)
+{
+    const u32 *h = (const u32 *)(b + 4);
+    u32 a = h[8];
+    if (b != snd || h[8] + h[9] != size || h[0] + h[1] > a || h[2] >= a || h[4] >= a || h[6] >= a || h[10] >= a ||
+        h[12] >= a)
+        return size;
+    for (u32 i = 0; i < nbanks; i++)
+        if (banks[i].off >= a) return size;
+    return a;
+}
+
 static const SeRow *se_row(u32 id)
 {
     u32 key = id & 0xFFFFFF;

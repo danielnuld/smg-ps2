@@ -1545,11 +1545,11 @@ def eye_chunk(fsp):
 # DemoButler* clips are the dome's), and DemoWithButler is ButlerExplain's (グランドスター１帰還)
 def anim_skipped(cls, clip, galaxy):
     """Also the Observatory's Rosetta: only her DemoWithButler (ロゼッタ状況説明デモ; the epilogue / red star / get power
-    demos are other stages'), and ButlerExplain (the Butler's archive): its DemoWithButler, none of the Butler's demos."""
+    demos are other stages'), and ButlerExplain (the Butler's archive): its DemoWithButler only."""
     if cls == "Butler":
         return clip == "demowithbutler" or (clip.startswith("demobutler") and galaxy != "AstroDome")
-    if cls == "ButlerExplain":
-        return clip.startswith("demo") and clip != "demowithbutler"
+    if cls == "ButlerExplain":  # NPCActorCaps default: mParam's actions nullptr, only its DemoWithButler talk anim
+        return clip != "demowithbutler"
     if cls == "ButlerMap":  # NPCActor's Wait / Talk and its DemoButlerMapLecture (tryInitDemoSheetTalkAnim)
         return clip not in ("wait", "talk", "demobutlermaplecture")
     if cls == "Rosetta":

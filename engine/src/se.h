@@ -14,6 +14,7 @@ void se_flush(void);                                  /* per frame: send the que
 u32 se_endx(void);                                    /* core 0 voices that reached a sample end (last flush) */
 /* the sequencer (se_seq.c, JAudio2 after Petari) on sound.bin (tools/sound.py pack); ids from se_ids.h */
 int se_load(const u8 *sound_bin);                     /* tables in EE, the waves uploaded to SPU RAM */
+u32 se_compact(const u8 *sound_bin, u32 size);        /* after se_load: drops the uploaded ADPCM -> bytes kept */
 u32 se_start(u32 id, const float *pos);               /* a one-shot SE (pos NULL: not placed) -> handle, 0 none */
 u32 se_level(u32 id, const float *pos, u32 handle);   /* a level SE: kept while asked each frame -> its handle */
 void se_stop(u32 handle);
