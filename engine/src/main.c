@@ -638,15 +638,12 @@ static void load_modules(void)
     sbv_patch_disable_prefix_check();
     SifLoadModule("rom0:SIO2MAN", 0, NULL);
     SifLoadModule("rom0:PADMAN", 0, NULL);
-    if (mc_init() == 0) { /* LogoScene MountGameData: startPreLoadSaveDataSequence */
-        int sz;
-        u8 *img = gd_image(&sz);
+    mc_init(); /* LogoScene MountGameData: startPreLoadSaveDataSequence (its windows: the first scene's menu.c sv_boot) */
 #ifndef TITLE_TEST /* (the title test starts from no files) */
-        if (mc_load(img, sz)) gd_image_loaded();
-#else
-        (void)img; (void)sz;
+    int sz, res = mc_load(gd_image(&sz), sz);
+    if (res == MC_OK) gd_image_loaded();
+    mc_set_boot(res);
 #endif
-    }
 }
 
 #if !defined(TEASER) && (defined(BENCH) || defined(DEBUG_HUD) || !defined(CATCHUP)) /* the text lines */
