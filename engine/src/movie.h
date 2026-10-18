@@ -15,5 +15,7 @@ typedef struct {
 /* MoviePlayingSequence: packs/movies/<name>.smv (tools/movies.py) played on the IPU at 29.97 fps with its sound, the
  * whole screen, nothing else running; its memory from malloc (no scene loaded). 0: not there */
 int movie_play(const char *name, const MovieIo *io);
+/* ponytail: no MovieSubtitles (CinemaSuper with Layout_StoryDemo*Talk at sSubtitlesInfo's frames): the font and the
+ * layouts are let go with the scene while a movie plays (its memory is the packs' region) */
 
 #endif

@@ -54,6 +54,7 @@ struct LytInst {
     s8 *vpos;        /* a text box's vertical position override, -1 none */
     const float **follow; /* setFollowPos per pane */
     u8 *follow_add;
+    float *pscale; /* setPaneScale per pane (1: none) */
     PState *ps;
     MState *ms;
     PWorld *pw;
@@ -134,6 +135,8 @@ LytInst *lyt_new(const char *name)
             l->vpos = mem_alloc(MEM_SCENE, h->npanes);
             l->follow = mem_alloc(MEM_SCENE, h->npanes * sizeof *l->follow);
             l->follow_add = mem_alloc(MEM_SCENE, h->npanes);
+            l->pscale = mem_alloc(MEM_SCENE, h->npanes * sizeof *l->pscale);
+            for (int k = 0; k < h->npanes; k++) l->pscale[k] = 1.0f;
             memset(l->vpos, -1, h->npanes);
             l->ps = mem_alloc(MEM_SCENE, h->npanes * sizeof *l->ps);
             l->pw = mem_alloc(MEM_SCENE, h->npanes * sizeof *l->pw);
@@ -379,6 +382,7 @@ static void evaluate(LytInst *l)
             if (l->follow_add[i]) { w->m[2] += f[0]; w->m[5] -= f[1]; }
             else { w->m[2] = f[0] - 304.0f; w->m[5] = 228.0f - f[1]; }
         }
+        if (l->pscale[i] != 1.0f) { w->m[0] *= l->pscale[i]; w->m[1] *= l->pscale[i]; w->m[3] *= l->pscale[i]; w->m[4] *= l->pscale[i]; }
     }
 }
 
@@ -647,6 +651,12 @@ void lyt_follow(LytInst *l, const char *pane, const float *pos, int add)
 {
     int i = lyt_pane(l, pane);
     if (i >= 0) { l->follow[i] = pos; l->follow_add[i] = (u8)add; }
+}
+
+void lyt_set_pane_scale(LytInst *l, const char *pane, float s)
+{
+    int i = lyt_pane(l, pane);
+    if (i >= 0) l->pscale[i] = s;
 }
 
 void lyt_evaluate(LytInst *l) { if (l) evaluate(l); }

@@ -43,6 +43,7 @@ int lyt_pane_hit(LytInst *l, const char *pane, float x, float y);    /* the scre
 /* MR::setFollowPos + setFollowTypeReplace (add 0: the pane's place is *pos) / setFollowTypeAdd (1: moved by *pos);
  * *pos in the layout's screen units (608 x 456, top left 0, y down), read each frame; NULL stops following */
 void lyt_follow(LytInst *l, const char *pane, const float *pos, int add);
+void lyt_set_pane_scale(LytInst *l, const char *pane, float s); /* MR::setPaneScale (its children too) */
 void lyt_evaluate(LytInst *l);                                        /* its panes' places now (for lyt_pane_place) */
 void lyt_pane_place(const LytInst *l, const char *pane, float out[3]); /* place and scale as last evaluated */
 void lyt_copy_pane_trans(LytInst *l, const char *pane, float out[2]); /* MR::copyPaneTrans: its place, those units */

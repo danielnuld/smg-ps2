@@ -22676,7 +22676,7 @@ void game_bgm_stage(void) /* startCurrentStageBGM; sequenced ones (LibraryRoom..
 }
 static void bgm_start(const char *id) /* startStageBGM(name, false) */
 {
-    const char *p = !strncmp(id, "MBGM_", 5) ? id + 5 : !strncmp(id, "BGM_", 4) ? id + 4 : id, *track = NULL;
+    const char *p = !strncmp(id, "MBGM_", 5) ? id + 5 : !strncmp(id, "BGM_", 4) || !strncmp(id, "STM_", 4) ? id + 4 : id, *track = NULL;
     for (u32 i = 0; i < sizeof bgm_tab / sizeof bgm_tab[0]; i++)
         if (!strcmp(bgm_tab[i].bgm, p)) track = bgm_tab[i].track;
     if (!track) { printf("bgm: no stream for %s\n", id); return; }
@@ -22684,6 +22684,7 @@ static void bgm_start(const char *id) /* startStageBGM(name, false) */
     printf("bgm: %s -> %s\n", id, track);
     bgm_play(track);
 }
+void game_bgm(const char *id) { bgm_start(id); }
 static void bgm_stop(int frames) { printf("bgm: stop over %d\n", frames); audio_fade(frames); } /* stopStageBGM(frames) */
 static void bgm_return(void) /* startLastStageBGM */
 {
@@ -22739,9 +22740,11 @@ static const struct { const char *cls, *demo, *anim, *talk; } dx_casts[] = {
     {"Rosetta", "ロゼッタカウントダウン開始デモ", "", "AstroGalaxy_Rosetta060"},
     {"Rosetta", "ロゼッタトーチの炎進捗デモ", "", "AstroGalaxy_Rosetta084"},
     {"Rosetta", "ロゼッタルイージデモ", "", "AstroGalaxy_Rosetta054"},
+    {"Rosetta", "エピローグデモ", "demoepilogueb", NULL}, /* RosettaDemoEpilogue: tryCreateDemoTalkAnimCtrlForScene, registerDemoTalkMessageCtrl */
 };
 static int dx_request(const char *name, int frameless);
 static int ros_demo; /* Rosetta::startDemo: her Demo nerve (the sheet drives her clips) until the demo ends */
+static int ros_fade; static u32 ros_cry; /* RosettaDemoEpilogue: mIsFadeOut, the baby's cry */
 static int ros_book; /* RosettaDemoAstroDomeExplain: the picture book (menu.c RosettaMonologue) holds the time keeper */
 static const char *dx_talk_set; /* setDemoTalkMessageCtrlDirect: the running demo's talk label, NULL the table's */
 static int butler_nrv;          /* Butler: 0 Wait, 1 Demo, 2 DemoDomeLecture2, 3 DemoStarPiece2, 4 DemoShowGalaxyMap */
@@ -22799,7 +22802,7 @@ static void dx_cast_hook(int row, int type, int part)
         tdl.nrv = type == 0 ? TDL_WAIT : TDL_MOVE; tdl.step = 0; tdl.part = part;
         return;
     }
-    if (type == 2 && !strcmp(cls, "Rosetta")) { ros_demo = 1; return; } /* Rosetta::startDemo (every sheet's 開始): her Demo nerve */
+    if (type == 2 && !strcmp(cls, "Rosetta")) { ros_demo = 1; ros_fade = 0; return; } /* Rosetta::startDemo (every sheet's 開始): her Demo nerve */
     if (type == 2 && !strcmp(cls, "ButlerExplain")) return;              /* ButlerExplain::startDemo: its Demo nerve (nothing more) */
     if (type == 0 && !strcmp(cls, "Butler")) { row_dead[row] = gd_flag_is_on("SpecialStarGrand2"); return; } /* Butler::appear: unless isButlerMapAppear */
     if (type == 2 && !strcmp(cls, "Butler") && !strcmp(demos[dx.cur].h->name, "ドームレクチャー１")) { /* startDemoDomeLecture1 */
@@ -23665,6 +23668,9 @@ static void rosetta_update(Inst *in)
         if (!strcmp(demos[dx.cur].h->name, "ロゼッタ状況説明デモ")) {
             if (dx_first(6)) { menu_cinema(0); menu_monologue_start(); ros_book = 1; dx.paused = 1; } /* tryFrameToScreenCinemaFrame, appear, pauseTimeKeepDemo */
             else if (ros_book && !menu_monologue_alive()) { ros_book = 0; dx.paused = 0; }          /* isDead: resumeTimeKeepDemo */
+        } else if (!strcmp(demos[dx.cur].h->name, "エピローグデモ")) { /* RosettaDemoEpilogue::exeDemo */
+            if (dx_active(0x80 | 4)) ros_fade = 1; /* エピローグ[フェードアウト] */
+            if (!ros_fade) ros_cry = se_level(SE_DM_LV_EPILOGUE_BABY_CRY, NULL, ros_cry); /* startAtmosphereLevelSE */
         }
         return;
     }
@@ -23933,8 +23939,8 @@ int game_test_demo(int k)
 int game_test_demo_name(const char *name) { return dx_request(name, 0); } /* tests: requestStartTimeKeepDemo by name */
 /* StorySequenceExecutor's nerves once the scene started (setNerveSceneStart): PlayDemoSequence, WaitTimeKeepDemoEnd,
  * WaitSaveEnd, StartSaveAfterSequence / WaitSaveEndAfterSequence (a list ending in 13 whose sequence has not saved: _B0),
- * FadeinAfterSequence. ponytail: no movies (2: game_request_movie plays them), prologue (8), staff roll (9) */
-enum { ST_IDLE, ST_PLAY, ST_WAIT_DEMO, ST_WAIT_SAVE, ST_SAVE_AFTER, ST_WAIT_SAVE_AFTER, ST_FADEIN_AFTER };
+ * FadeinAfterSequence. Movies (2) play between two loads of the stage (movie.c), the staff roll (9) is menu.c's. ponytail: no prologue (8) */
+enum { ST_IDLE, ST_PLAY, ST_WAIT_DEMO, ST_WAIT_SAVE, ST_SAVE_AFTER, ST_WAIT_SAVE_AFTER, ST_FADEIN_AFTER, ST_STAFFROLL };
 static struct { int nrv, step; } story;
 static void story_set(int n) { story.nrv = n; story.step = 0; }
 int game_story_busy(void) { return story.nrv != ST_IDLE; }
@@ -23973,6 +23979,26 @@ static void story_update(void)
         case 7: gd_story_follow(d->name); seq_demo_step(); story_set(ST_PLAY); break;
         case 12: if (seq_demo_next()) story_set(ST_PLAY); else { seq_demo_clear(); story_set(ST_IDLE); } break;
         case 13: if (seq_demo_next()) story_set(ST_PLAY); else story_set(seq_demo_saved(0) ? ST_FADEIN_AFTER : ST_SAVE_AFTER); break;
+        case 2: { /* tryStartMovieAndWaitEnd (9 EpilogueA, 10 EndingA, 11 EndingB): movie.c plays between two scenes, so the
+                   * stage is loaded again after it (the list goes on there: story_scene_start) */
+            char here[64];
+            snprintf(here, sizeof here, "%s", game_stage_name);
+            game_request_movie(d->ev == 9 ? "EpilogueA" : d->ev == 10 ? "EndingA" : "EndingB");
+            seq_demo_step();
+            printf("story: movie %s, then %s again\n", d->name, here);
+            game_request_scene(here);
+            story_set(ST_IDLE);
+            break;
+        }
+        case 4: /* requestChangeSceneTitle, forceStop */
+            printf("story: the title\n");
+            seq_demo_clear(); story_set(ST_IDLE);
+            seq_galaxy_move(SEQ_TITLE, NULL, -1, -1, 0);
+            break;
+        case 9: /* requestStaffRoll: exeStaffRollSequence */
+            story_set(ST_STAFFROLL);
+            break;
+        case 10: case 11: seq_demo_step(); story_set(ST_PLAY); break; /* the star pointer's ending mode, the remote checks */
         default: printf("story: step %d not played\n", d->type); seq_demo_step(); story_set(ST_PLAY); break;
         }
         break;
@@ -23992,6 +24018,12 @@ static void story_update(void)
     case ST_WAIT_SAVE_AFTER: /* exeWaitSaveEndAfterSequence */
         if (menu_saving()) return;
         story_set(ST_FADEIN_AFTER);
+        break;
+    case ST_STAFFROLL: /* exeStaffRollSequence: open the wipe, appear (12) or startInfo (13); at isPauseOrEnd close it */
+        if (first) { menu_wipe(0, -1, 0); menu_staffroll(d ? d->ev : 12); }
+        if (!menu_staffroll_pause_or_end()) return;
+        menu_wipe(1, -1, 0);
+        seq_demo_step(); story_set(ST_PLAY);
         break;
     case ST_FADEIN_AFTER: /* exeFadeinAfterSequence */
         if (first && menu_wipe_closed()) { menu_wipe(0, -1, 0); return; }
@@ -25253,7 +25285,7 @@ void game_update(void)
     gsr_update();
     update_astro_core();
     update_astro_sky();
-    demo_on = dino_demo_on || ota_demo_on || star_demo || fat_demo() || vine_demo_on() || talk_demo() || dx.on;
+    demo_on = dino_demo_on || ota_demo_on || star_demo || fat_demo() || vine_demo_on() || talk_demo() || dx.on || menu_staffroll_on(); /* (StaffRoll: offPlayerControl) */
     LQ(60, update_ticofat());
     LQ(61, update_sambos());
     LQ(62, update_fire());

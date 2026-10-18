@@ -343,11 +343,23 @@ MAP = ("MapGrandGalaxy", "MapGalaxyIcon", "MapDomeIcon", "MapTitle", "MapGalaxyB
        "MapTicoIcon", "IconComet")  # GalaxyMapTicoIcon, GalaxyMapCometIcon  # RosettaMonologue (ロゼッタ状況説明デモ's picture book)
 
 
+# the ending's (StaffRoll: StaffRollLine, StaffRollTitle, StaffRollPicture with StaffRollTexture.arc's pictures as
+# materials named by their file, its InformationMessage): ending.bin, in the EpilogueDemoStage stage only
+ENDING = ("StaffRoll", "StaffRollTitle", "StaffRollPicture", "InformationWindow")
+
+
+def build_ending(fsp):
+    pics = {n.rsplit("/", 1)[-1][:-4][:20]: b for n, b in B.rarc_files((Path(fsp) / "ObjectData" / "StaffRollTexture.arc").read_bytes())
+            if n.lower().endswith(".bti")}
+    return build_dome(fsp, ENDING, "StaffRollPicture", pics)
+
+
 # the messages menus and screens look up by label (MR::getLayoutMessageDirect / getGameMessageDirect): MSGS chunk
 MSG_PREFIXES = ("Layout_", "System_", "Select_", "NAND_", "PauseMenu_", "PlayerLeft", "ScenarioName_", "GalaxyName_",
                 "GalaxyNameShort_", "GalaxyStage_", "GalaxyInfo_", "GalaxyMap_", "GalaxyNamePlate_", "GetStar_",
                 "AllStarList_", "AstroName_", "CometName_", "RaceName_", "ConfirmEndGame", "Common_", "CONT_",
-                "PointerGuidance", "BButtonGuidance", "DPDGuidance", "WiiMessage", "Picture_", "AstroDome_", "RosettaMonologue")
+                "PointerGuidance", "BButtonGuidance", "DPDGuidance", "WiiMessage", "Picture_", "AstroDome_", "RosettaMonologue",
+                "StaffList", "StaffRollInfo_")
 
 
 def msgs_chunk(fsp):
@@ -468,10 +480,11 @@ TITLE_3D = (("FileSelectDataPlanet", "FileSelectDataPlanet"), ("FileSelectDataMa
             ("CometNearOrbitSky", "CometNearOrbitSky"), ("MiniatureGalaxySelect", "MiniatureGalaxySelect"))
 
 
-def build_dome(fsp, names=DOME, with_pics="GalaxyInfo"):
+def build_dome(fsp, names=DOME, with_pics="GalaxyInfo", pics=None):
     from slice import blob_of, chunk
-    pics = {n.rsplit("/", 1)[-1][:-4][:20]: b for n, b in B.rarc_files((Path(fsp) / "ObjectData" / "GalaxyInfoTexture.arc").read_bytes())
-            if n.lower().endswith(".bti")}
+    if pics is None:
+        pics = {n.rsplit("/", 1)[-1][:-4][:20]: b for n, b in B.rarc_files((Path(fsp) / "ObjectData" / "GalaxyInfoTexture.arc").read_bytes())
+                if n.lower().endswith(".bti")}
     texts, bodies = [], []
     for n in names:
         files = {k.lower().rsplit("/", 1)[-1]: v for k, v in
@@ -532,6 +545,8 @@ if __name__ == "__main__":  # python tools/lyt.py data/fs/files [out/packs/menus
     # Observatory's pack leaves no room for them)
     print(f"map.bin {dst.with_name('map.bin').stat().st_size / 1024:.0f} KB")
     print(f"dome.bin {dst.with_name('dome.bin').stat().st_size / 1024:.0f} KB")
+    dst.with_name("ending.bin").write_bytes(build_ending(fsp))
+    print(f"ending.bin {dst.with_name('ending.bin').stat().st_size / 1024:.0f} KB")
     t2, t3 = build_title(fsp)
     dst.with_name("title.bin").write_bytes(t2)
     dst.with_name("title3d.bin").write_bytes(t3)

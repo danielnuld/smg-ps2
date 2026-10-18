@@ -166,4 +166,6 @@ static const struct { const char *bgm, *track; } bgm_tab[] = {
     {"GALAXY_INTER", "SMG_galaxy_inter_strm"},
     {"PROLOGUE_02", "SMG_ev_prolo02_strm"},
     {"PROLOGUE_05", "SMG_ev_prolo05_strm"},
+    {"EPILOGUE_B", "SMG_ev_epilogue_b_strm"},
+    {"STAFF_ROLL", "SMG_staffroll_strm"},
 };
