@@ -183,6 +183,7 @@ typedef struct {
     int flip;        /* FlipPanel / FlipPanelReverse: row_step[row] holds FLIP_* bits */
     const Model *md_flip[2]; /* its "#PanelA" ("!", turned) and "#PanelEnd" (group complete) models (slice.py EXTRA) */
     int npc;         /* talking NPC (npc_class): turns to face Mario when he is near */
+    int dnpc;        /* Butler 1, TicoDomeLecture 2: demo casts (update_dome_npcs) */
     int hipsw;       /* hip drop switch: 1 PicketSwitch(Big) / HipDropSwitch (SW_A for good), 2 HipDropTimerSwitch */
     int rotor;       /* map part with a RotateSpeed: turns (rotor_matrix), carries Mario */
     int halo;        /* ZoneHalo 1 / PowerStarHalo 2: shown only from afar (update_halos) */
@@ -861,10 +862,11 @@ static struct {                /* the DemoExecutor running (dx_update) */
     const void *cam;           /* its camera running (_10) */
     char bck[28];              /* the player sheet's clip, "" wait */
     int req, req_t;            /* a demo asked to start (-1 none), frames it waited for its zones */
+    int paused;                /* DemoTimeKeeper::mIsPaused (pauseTimeKeepDemo) */
 } dx = {.req = -1};
 static int dx_zones_full = 1;  /* the asked / running demo's casts' zones are in full (game_zone_sets) */
-typedef struct { u16 total; u8 suspend, pad; } DxPart;
-typedef struct { u16 total, step; u8 main, pad[3]; } DxSub;
+typedef struct { u16 total; u8 suspend, talk; } DxPart;           /* talk: MR::isDemoPartTalk */
+typedef struct { u16 total, step; u8 main, loop, pad[2]; } DxSub;  /* loop: 会話アニメループ */
 typedef struct { u8 part, pad; s16 pos; char bck[28]; } DxPlayer;
 typedef struct { u8 part, target, continuous, pad; s16 row; u16 pad2; u32 cls; s32 start, end; char anim[32]; } DxCam;
 typedef struct { u8 part, type; s16 pos; u16 c0, cn; char anim[24]; } DxAct;
@@ -3319,6 +3321,7 @@ void game_rebind(void)
             in->md_flip[1] = scene_model(sc, v);
         }
         in->npc = npc_class(name);
+        in->dnpc = strcmp(name, "Butler") == 0 ? 1 : strcmp(name, "TicoDomeLecture") == 0 ? 2 : 0;
         in->fat = strcmp(name, "TicoFat") == 0;
         in->sambo = strcmp(name, "CocoSambo") == 0;
         in->sky = sky_class(name);
@@ -8621,6 +8624,7 @@ static struct {
     TkBalloon *bl;
 } td = {.msgctrl = -1, .c3C = -1, .c40 = -1, .c44 = -1, .st = -1};
 static int talk_demo(void) { return td.demo == 1 && td.st >= 0 && (td.nrv == TD_TALK || td.nrv == TD_NEXT); }
+static int talk_system(void) { return td.st >= 0 && (td.nrv == TD_TALK || td.nrv == TD_NEXT) && talkers[td.st].talk != 1; } /* isSystemTalking */
 static int talk_active(void) { return td.st >= 0 && td.nrv == TD_TALK && td.st_kind != TS_SHORT; } /* a balloon waiting for A */
 
 static int ts_lost(int p) { return p < 0 || p != td.st || tk_message_id(&talkers[td.st]) != td.st_msgid; }
@@ -8776,7 +8780,12 @@ static void td_init_state(int k) /* initState: TalkStateHolder::getState and the
     td.st_msgid = tk_message_id(t);
 }
 static void td_set(int n) { td.nrv = n; td.step = 0; }
-static int td_demo_type(const Talker *t, int demo) { return t->talk == 1 || !demo ? 0 : 1; } /* getDemoType */
+static int td_demo_type(const Talker *t, int demo) /* getDemoType: 2 / 3 in a time keep demo (with / without pause) */
+{
+    if (t->talk == 1) return 0;
+    if (dx.on) return demo ? 2 : 3;
+    return demo;
+}
 static int td_invalid(void) { return td.f4E || mario_hidden || star_demo; }
 
 static int talk_request(int k, int force) /* TalkDirector::request */
@@ -8817,12 +8826,14 @@ static int talk_start(int k, int force, int demo) /* TalkDirector::start (test, 
     tk_root_pre(t, 1);
     td.f58 = force; td.f4C = 1;
     td.demo = td_demo_type(t, demo);
+    if (td.demo == 2) dx.paused = 1; /* prepTalk: pauseTimeKeepDemo */
     if (tk_event_node(t)) td_set(TD_NEXT);
     else { ts_open(); td_set(TD_TALK); }
     return 1;
 }
 static void td_term_talk(void) /* termTalk: endNPCTalkCamera / endMultiActorCamera 会話 */
 {
+    if (td.demo == 2) dx.paused = 0; /* resumeTimeKeepDemo */
     td.f4D = 1; td.demo = 0;
     if (td.cam_on == 1) camera_talk_end();
     else if (td.cam_on == 2) camera_event_stop();
@@ -22458,9 +22469,12 @@ void game_cursor_menu(void)
  * nothing (DemoCameraKeeper), the action sheet acts on the casts (DemoActionKeeper), the wipe and sound sheets fade and
  * play system SEs. Started by its SW_APPEAR (listenNameObjStageSwitchOnAppear: startProperDemoSystem) or by name
  * (dx.req), with the cinema frame and the HUD off (startDemoSystem), Mario waiting; at the end its SW_DEAD on.
- * ponytail: action types 2 / 3 (the casts' own functors and nerves) only for the classes in dx_cast_hook, no talks
- * (8-10), no anim cameras (AnimCameraName) or cast clips (AnimName), casts not moved to a PosName, BGM changes not
- * made, other actors not stopped (requestStopSceneFor), no pause / resume */
+ * Talks (8-10) by the casts' demo talkers (dx_casts), DemoTalkAnimCtrl for the scene's (the cast's clip over the parts,
+ * its camera animation, the time keeper paused at a talk part's end until the talk is over); casts put at a PosName
+ * (dx_moved) for the classes that read it.
+ * ponytail: action types 2 / 3 (the casts' own functors and nerves) only for the classes in dx_cast_hook, no anim
+ * cameras of the camera sheet (AnimCameraName) or cast clips (AnimName), BGM changes not made, other actors not
+ * stopped (requestStopSceneFor) */
 
 static Row dx_row(const Demo *d) /* the group's switches as a row of its zone (sw_on / sw_set) */
 {
@@ -22497,6 +22511,10 @@ static void dx_init(const unsigned char *blob)
         for (int k = 0; k < h->nhide; k++) row_demo_hide[d->hide[k]] = 255;
         printf("demo: %s, %d parts, %d casts\n", h->name, h->nparts, h->ngroup);
     }
+    for (u32 i = 0; i < sc->nobjs; i++) { /* Butler / ButlerMap::init: makeActorDead by isButlerMapAppear (hasGrandStar(2)) */
+        const char *c = sc->types + 32 * sc->objs[i].type;
+        if (!strcmp(c, "Butler") || !strcmp(c, "ButlerMap")) row_dead[i] = gd_flag_is_on("SpecialStarGrand2") == !strcmp(c, "Butler");
+    }
 }
 
 /* DemoFunction::isDemoPartActiveFunction / getDemoPartStepFunction / getDemoPartTotalStepFunction */
@@ -22510,10 +22528,57 @@ static int dx_total(int p) { const Demo *d = &demos[dx.cur]; return p & 0x80 ? d
 static int dx_first(int p) { return dx_active(p) && dx_step(p) == 0; }                 /* MR::isDemoPartFirstStep */
 static int dx_last(int p) { return dx_active(p) && dx_step(p) == dx_total(p) - 1; }   /* MR::isDemoPartLastStep */
 
+/* the casts' demo talkers and scene DemoTalkAnimCtrls: Butler::initForAstroDome (registerDemoTalkMessageCtrlDirect,
+ * tryCreateDemoTalkAnimCtrlForSceneDirect "DemoButlerDomeLecture1") */
+static const struct { const char *cls, *demo, *anim, *talk; } dx_casts[] = {
+    {"Butler", "ドームレクチャー１", "demobutlerdomelecture1", "AstroDome_Butler023"},
+};
+#define DX_MAX_TA 4
+typedef struct {
+    int row, c;      /* the cast, its dx_casts entry */
+    int part;        /* _14: -1 not started, -2 started (""), else the main part */
+    int acc, talk;   /* _24 the parts' steps so far, _36 */
+    int cam, camf;   /* mHaveCamera, its frame */
+    float rep, end;  /* the clip's loop frames (createBckCtrlData) */
+} DxTalkAnim;
+static DxTalkAnim dxt[DX_MAX_TA];
+static int ndxt;
+static struct { int row; float m[16]; } dx_moved[8]; /* findNamePos: casts at a PosName until the demo's end */
+static int ndx_moved;
+static struct { int nrv, step, part; } tdl;          /* TicoDomeLecture's nerve (one per scene) */
+enum { TDL_WAIT, TDL_MOVE, TDL_META };
+static float tdl_p[3], tdl_r[3];                    /* its place when the move ended */
+
+static const float *dx_cast_m(int row)
+{
+    for (int i = 0; i < ndx_moved; i++)
+        if (dx_moved[i].row == row) return dx_moved[i].m;
+    return NULL;
+}
+static Inst *row_inst(int row)
+{
+    for (int i = 0; i < ninsts; i++)
+        if (insts[i].row == row) return &insts[i];
+    return NULL;
+}
+static void dx_clip(int row, const char *anim, char *n, int sz) /* "<class>/<anim>" lower case */
+{
+    snprintf(n, sz, "%s/%s", sc->types + 32 * sc->objs[row].type, anim);
+    for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
+}
+
 /* the casts' own reactions (registerDemoActionFunctor / registerDemoActionNerve, and appear() where a class has its own) */
-static void dx_cast_hook(int row, int type)
+static void dx_cast_hook(int row, int type, int part)
 {
     const char *cls = sc->types + 32 * sc->objs[row].type;
+    if (!strcmp(cls, "TicoDomeLecture") && (type == 0 || type == 3)) { /* appear: Wait at home; NrvMove */
+        tdl.nrv = type == 0 ? TDL_WAIT : TDL_MOVE; tdl.step = 0; tdl.part = part;
+        return;
+    }
+    if (type == 2 && !strcmp(cls, "Butler") && !strcmp(demos[dx.cur].h->name, "ドームレクチャー１")) { /* startDemoDomeLecture1 */
+        row_dead[row] = 0; sw_changed = 1;
+        return;
+    }
     if (type == 0 && !strcmp(cls, "GCaptureTarget")) { /* GCaptureTarget::appear: hidden, exeAppear shows it at step 30 */
         se_start(SE_SY_GCAPTURE_APPEAR, NULL);
         row_demo_hide[row] = 30;
@@ -22548,18 +22613,128 @@ static void dx_action(const Demo *d, const DxAct *a) /* DemoActionInfo::executeA
         int row = d->cast[a->c0 + k];
         const Row *r = &sc->objs[row];
         switch (a->type) {
-        case 0: row_demo_hide[row] = 0; row_dead[row] = 0; sw_changed = 1; dx_cast_hook(row, 0); break; /* appear */
-        case 1: row_dead[row] = 1; sw_changed = 1; break;                                               /* kill */
-        case 2: case 3: dx_cast_hook(row, a->type); break;
+        case 0: row_demo_hide[row] = 0; row_dead[row] = 0; sw_changed = 1; dx_cast_hook(row, 0, a->part); break; /* appear */
+        case 1: /* kill */
+            if (!strcmp(sc->types + 32 * r->type, "AstroDomeBlueStar") && r->sw[SW_APPEAR] >= 0) sw_set(r, SW_APPEAR, 0); /* its appear() listens to the switch (dome_init) */
+            else { row_dead[row] = 1; sw_changed = 1; }
+            break;
+        case 2: case 3: dx_cast_hook(row, a->type, a->part); break;
         case 4: sw_set(r, SW_A, 1); break;
         case 5: sw_set(r, SW_B, 1); break;
         case 6: row_demo_hide[row] = 0; sw_changed = 1; break;   /* showModel */
         case 7: row_demo_hide[row] = 255; sw_changed = 1; break; /* hideModel */
         case 12: sw_set(r, SW_A, 0); break;
         case 13: sw_set(r, SW_B, 0); break;
-        case 8: case 9: case 10: printf("demo: no talk (%s)\n", sc->types + 32 * r->type); break;
+        case 8: case 9: case 10: { /* tryTalkTimeKeepDemo(WithoutPause)MarioPuppetable(findTalkMessageCtrl) */
+            int t = -1;
+            for (unsigned c = 0; c < sizeof dx_casts / sizeof dx_casts[0]; c++)
+                if (!strcmp(dx_casts[c].cls, sc->types + 32 * r->type) && !strcmp(dx_casts[c].demo, d->h->name))
+                    t = talk_new(dx_casts[c].talk, row, row, 0.0f, 240.0f); /* createTalkCtrlDirectOnRootNodeAutomatic */
+            if (t < 0) { printf("demo: no talk (%s)\n", sc->types + 32 * r->type); break; }
+            const Inst *in = row_inst(row);
+            if (in) { float m[16]; memcpy(m, in->m, 64); for (int j = 0; j < 12; j++) m[j] /= in->s; talk_place(t, m); }
+            talk_force(t, a->type == 8);
+            break;
+        }
         default: break;
         }
+        if (a->pos >= 0 && ndx_moved < 8) { /* MR::findNamePos */
+            const float *g = dx_pos + 6 * a->pos;
+            float rot[3] = {g[3], g[4], g[5]};
+            int i = 0;
+            while (i < ndx_moved && dx_moved[i].row != row) i++;
+            if (i == ndx_moved) ndx_moved++;
+            dx_moved[i].row = row;
+            mat_translate_rot_scale(dx_moved[i].m, g, rot, r->scale);
+        }
+    }
+}
+
+/* DemoTalkAnimCtrl::updateDemo for the scene's (initForScene: _34 on, the cast's clip and camera animation) */
+static void dx_talk_anims(const Demo *d)
+{
+    for (int i = 0; i < ndxt; i++) {
+        DxTalkAnim *t = &dxt[i];
+        Inst *in = row_inst(t->row);
+        Anim *a = in ? in->anim : NULL;
+        char n[64];
+        dx_clip(t->row, dx_casts[t->c].anim, n, sizeof n);
+        int ok = dx.step == 0;                                           /* isDemoPartFirstStep(the main part) */
+        if (t->part == -1) { if (a) anim_start(a, n, 0); t->part = -2; } /* startAnim (startBckNoInterpole) */
+        if (t->part == -2) ok = dx.step == 1;
+        if (ok) { /* createBckCtrlData: loop mode 2 from _24 - 1 over the part, a talk part looping from its 会話アニメループ */
+            const DxPart *p = &d->parts[dx.part];
+            float s0 = t->acc - 1 > 0 ? t->acc - 1 : 0;
+            t->talk = p->talk;
+            t->rep = s0 + 1; t->end = s0 + p->total + 1;
+            if (t->talk)
+                for (int j = 0; j < d->h->nsub; j++)
+                    if (d->sub[j].main == dx.part && d->sub[j].loop && d->sub[j].step > 0) t->rep = s0 + d->sub[j].step;
+            if (a) { anim_start(a, n, 0); a->frame = s0; a->loop = 1; }
+            t->part = dx.part; t->acc += p->total;
+        }
+        if (a && a->frame >= t->end) a->frame = t->rep + (a->frame - t->end);
+        if (t->talk) { /* updatePause */
+            if (dx.paused) { if (!talk_system()) dx.paused = 0; }
+            else if (dx.step == d->parts[dx.part].total - 2) dx.paused = 1;
+        }
+        const DxPart *cp = &d->parts[dx.part]; /* isDemoSuspendOrLastPartLastStep */
+        int last = !dx.paused && dx.step >= cp->total - 1 && (cp->suspend || dx.part == d->h->nparts - 1);
+        if (t->cam && in) { /* the camera animation, paused with the time keeper (updateCamera); endCamera at the end */
+            if (last) { demo_camera(n, -1, in->m); t->cam = 0; }
+            else if (!demo_camera(n, t->camf, in->m)) t->cam = 0;
+            else if (!dx.paused) t->camf++;
+        }
+    }
+}
+
+/* Butler (exeDemo: at its PosName during the demo, then setDefaultPose and Wait) and TicoDomeLecture */
+static void update_dome_npcs(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->dnpc) continue;
+        const Row *r = &sc->objs[in->row];
+        if (in->dnpc == 1) {
+            const float *mv = dx.on ? dx_cast_m(in->row) : NULL;
+            if (mv) memcpy(in->m, mv, 64);
+            else mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
+            int ta = 0;
+            for (int k = 0; k < ndxt; k++) ta |= dx.on && dxt[k].row == in->row;
+            if (!ta) obj_play(in, "wait", 1, 0);
+            continue;
+        }
+        /* TicoDomeLecture: home _8C / _98, cMoveEndPos (0, -70, 0), cMoveEndRotate (30, 130, 0) */
+        float pos[3] = {r->pos[0], r->pos[1], r->pos[2]}, rot[3] = {r->rot[0], r->rot[1], r->rot[2]};
+        int first = tdl.step++ == 0;
+        if (tdl.nrv == TDL_WAIT) {
+            if (first) obj_play(in, "wait", 1, 0);
+            in->lv[0] = se_level(SE_SM_LV_TICO_WAIT, &in->m[12], in->lv[0]);
+        } else if (tdl.nrv == TDL_MOVE) {
+            static const float end_p[3] = {0.0f, -70.0f, 0.0f}, end_r[3] = {30.0f, 130.0f, 0.0f};
+            if (first) obj_play(in, "fly", 1, 0);
+            in->lv[0] = se_level(SE_SM_LV_TICO_WAIT, &in->m[12], in->lv[0]);
+            in->lv[1] = se_level(SE_SM_LV_TICO_FLY_DEMO, &in->m[12], in->lv[1]);
+            float k = 1.0f;
+            if (dx.on && dx_active(tdl.part)) {
+                int n = dx_total(tdl.part) - 1;
+                k = sinf((n > 0 && tdl.step - 1 < n ? (tdl.step - 1) / (float)n : 1.0f) * 1.5707963f); /* calcNerveEaseOutRate */
+                if (dx_last(tdl.part)) { tdl.nrv = TDL_META; tdl.step = 0; printf("tico dome lecture: metamorphosis\n"); }
+            }
+            for (int j = 0; j < 3; j++) { pos[j] += (end_p[j] - pos[j]) * k; rot[j] += (end_r[j] - rot[j]) * k; }
+            memcpy(tdl_p, pos, 12); memcpy(tdl_r, rot, 12);
+        } else {
+            memcpy(pos, tdl_p, 12); memcpy(rot, tdl_r, 12);
+            if (first) { obj_play(in, "metamorphosis", 0, 0); se_start(SE_SM_TICO_METAMORPHOSE, &in->m[12]); }
+            else if (!in->anim || in->anim->done) { /* isBckStopped: onSwitchDead, kill */
+                printf("tico dome lecture: dead\n");
+                if (r->sw[SW_DEAD] >= 0) sw_set(r, SW_DEAD, 1);
+                row_kill(in->row);
+                tdl.nrv = TDL_WAIT; tdl.step = 0;
+                continue;
+            }
+        }
+        mat_translate_rot_scale(in->m, pos, rot, r->scale);
     }
 }
 
@@ -22569,7 +22744,20 @@ static void dx_start(int k) /* DemoExecutor::start, startDemoSystem */
     dx.on = 1; dx.cur = k;
     dx.part = 0; dx.step = -1;
     for (int j = 0; j < DX_MAX_SUB; j++) dx.sub_t[j] = -1;
-    dx.cams_done = 0; dx.cam = NULL; dx.bck[0] = 0;
+    dx.cams_done = 0; dx.cam = NULL; dx.bck[0] = 0; dx.paused = 0;
+    ndxt = 0; ndx_moved = 0;
+    for (int g = 0; g < d->h->ngroup; g++)
+        for (unsigned c = 0; c < sizeof dx_casts / sizeof dx_casts[0] && ndxt < DX_MAX_TA; c++) {
+            int row = d->group[g];
+            if (strcmp(dx_casts[c].cls, sc->types + 32 * sc->objs[row].type) || strcmp(dx_casts[c].demo, d->h->name)) continue;
+            DxTalkAnim *t = &dxt[ndxt++];
+            memset(t, 0, sizeof *t);
+            t->row = row; t->c = (int)c; t->part = -1;
+            char n[64];
+            dx_clip(row, dx_casts[c].anim, n, sizeof n);
+            const u8 *q = sc->canm; /* mHaveCamera: <anim>.canm in its archive */
+            for (u32 j = 0; j < sc->ncanm && !t->cam; j++, q += 36 + 32 * *(const u32 *)(q + 32)) t->cam = !strcmp((const char *)q, n);
+        }
     menu_cinema(1);
     printf("demo: %s starts\n", d->h->name);
 }
@@ -22579,13 +22767,17 @@ static void dx_end(void) /* DemoExecutor::end, DemoDirector::doDemoEndRequest */
     const Demo *d = &demos[dx.cur];
     dx_camera_end();
     dx.cams_done = -1;
-    dx.on = 0;
+    dx.on = 0; dx.paused = 0;
+    for (int i = 0; i < ndxt; i++) /* endCamera */
+        if (dxt[i].cam) camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45);
+    ndxt = 0; ndx_moved = 0;
     Row r = dx_row(d);
     if (d->h->sw[SW_DEAD] >= 0) sw_set(&r, SW_DEAD, 1);
     menu_cinema(0);
     printf("demo: %s ends\n", d->h->name);
 }
 
+static void dx_keepers(const Demo *d);
 static void dx_update(void) /* DemoDirector::movement: the start requests, then DemoExecutor::movement */
 {
     for (u32 i = 0; i < sc->nobjs; i++) /* GCaptureTarget's step 30: shown when its countdown runs out */
@@ -22608,9 +22800,18 @@ static void dx_update(void) /* DemoDirector::movement: the start requests, then 
     const Demo *d = &demos[dx.cur];
     const DxPart *cp = &d->parts[dx.part < d->h->nparts ? dx.part : d->h->nparts - 1];
     /* DemoTimeKeeper::update */
-    dx.step++;
-    if (dx.step >= cp->total && !cp->suspend && ++dx.part < d->h->nparts) { dx.step = 0; cp = &d->parts[dx.part]; }
-    if ((cp->suspend && cp->total <= dx.step) || dx.part >= d->h->nparts) { dx_end(); return; } /* isDemoEnd */
+    if (dx.paused) { if (dx.step <= 0) dx.step++; }
+    else {
+        dx.step++;
+        if (dx.step >= cp->total && !cp->suspend && ++dx.part < d->h->nparts) { dx.step = 0; cp = &d->parts[dx.part]; }
+        if ((cp->suspend && cp->total <= dx.step) || dx.part >= d->h->nparts) { dx_end(); return; } /* isDemoEnd */
+    }
+    if (!dx.paused) dx_keepers(d);
+    dx_talk_anims(d);
+}
+
+static void dx_keepers(const Demo *d) /* DemoExecutor::movement's keepers (not while paused) */
+{
     for (int j = 0; j < d->h->nsub && j < DX_MAX_SUB; j++) { /* DemoSubPartKeeper::update */
         if (dx.sub_t[j] > 0) dx.sub_t[j]--;
         if (d->sub[j].main != 0xFF && dx_active(d->sub[j].main) && dx_step(d->sub[j].main) == d->sub[j].step)
@@ -23460,7 +23661,7 @@ static void dome_init(void)
     memset(&dm, 0, sizeof dm);
     dm.bs_row = -1;
     dn_init(&dm.bs, BS_WAIT); dn_init(&dm.sel, SS2_NONE); dn_init(&dm.hd, HD_DEAD); dn_init(&dm.cc, CC_DEAD); dn_init(&dm.gs, GS_DEAD);
-    for (u32 r = 0; r < sc->nobjs; r++) /* listenStageSwitchOnAppear: ponytail, its demo (ドームレクチャー１) not played: out */
+    for (u32 r = 0; r < sc->nobjs; r++) /* makeActorAppeared: its appear switch on (ドームレクチャー１ turns it off, TicoDomeLecture's dead switch on) */
         if (!strcmp(sc->types + 32 * sc->objs[r].type, "AstroDomeBlueStar")) {
             dm.bs_row = (int)r; dm.bs_home = row_pos(&sc->objs[r]);
             if (sc->objs[r].sw[SW_APPEAR] >= 0 && !sw_on(&sc->objs[r], SW_APPEAR)) { sw_set(&sc->objs[r], SW_APPEAR, 1); game_rebind(); }
@@ -23861,6 +24062,7 @@ void game_update(void)
     }
     story_update();
     dx_update();
+    update_dome_npcs();
     demo_on = dino_demo_on || ota_demo_on || star_demo || fat_demo() || vine_demo_on() || talk_demo() || dx.on;
     LQ(60, update_ticofat());
     LQ(61, update_sambos());

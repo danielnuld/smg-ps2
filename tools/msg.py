@@ -29,6 +29,10 @@ LANG = "UsSpanish"  # MessageData language (UsEnglish / UsFrench / UsSpanish)
 # IconAButton openWithTalk / openWithRead, the player name tag (ReplaceTagProcessor: System_PlayerName0<form>)
 SYSTEM = ("Layout_SystemTalk", "Layout_SystemRead", "System_PlayerName000")
 # createTalkCtrlDirect; TicoFat's InformationPlanet (appearInformation: getGameMessageDirect)
+# createTalkCtrlDirect bound to the placed actor (Butler::initTalkCtrlArray's cMessageId, initForAstroDome's demo talks)
+DIRECT = {"Butler": ("AstroDome_Butler001", "AstroDome_Butler002", "AstroDome_Butler003", "AstroDome_Butler006",
+                     "AstroDome_Butler007", "AstroGalaxy_Butler005", "AstroGalaxy_Butler006", "AstroDome_Butler023",
+                     "AstroDome_Butler011", "AstroDome_Butler014")}
 COMMON = {"Tico": ("Common_Tico000",), "TicoFat": ("Common_TicoFat000", "Common_TicoFat001", "InformationPlanet")}
 
 

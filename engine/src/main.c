@@ -870,6 +870,7 @@ int main(void)
 #endif
 #if defined(PACKS) && defined(STORY_TEST) /* a fresh file moved to AstroDome/1: ドームレクチャー１ (cDemoAstroDomeLecture) */
         if (frame == 200) seq_galaxy_move(SEQ_MOVE, "AstroDome", 1, -1, 0);
+        pad_force = frame > 300 && frame % 60 < 10 ? PAD_CROSS : 0; /* the Butler's pages (held: TalkStateEvent turns on a hold) */
         if (frame > 200 && frame % 30 == 0 && frame < 3000)
             printf("story test f %u: busy %d demo %d butlerA %d\n", frame, game_story_busy(), game_test_demo(-1), gd_story_passed("バトラー情報Ａ"));
 #endif

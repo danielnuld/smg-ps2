@@ -65,7 +65,7 @@ SKINNED_OBJ = ("TreasureBoxKinokoOneUp", "TreasureBoxCoin", "TreasureBoxEmpty", 
                "Karikari", "Butterfly", "PackunPetit", "KuriboMini", "DinoPackunEggShellBreak", "PackunPetitHead",
                "RockBreak", "WanwanRollingBreak", "PunchingKinoko", "OtaKingMagma", "OtaKingLongFoot", "WoodBoxBreak",
                "CrystalCageSBreak", "BenefitItemOneUp", "BenefitItemLifeUp", "FlipPanel", "FlipPanelReverse", "OtaRock",
-               "HammerHeadPackun", "PackunLeaf", "Plant", "Petari",
+               "HammerHeadPackun", "PackunLeaf", "Plant", "Petari", "Butler", "TicoDomeLecture",
                "PhantomShipPropellerSmall", "PhantomShipPropellerBig", "PhantomShipBridge")  # AnmModelSwitchMove without SW_A: Move at once (obj_anim: its only clip)
 # MapObjActor::initialize (tryStartAllAnim): a placed class whose model archive holds a BCK of the archive's name
 # plays it from the start; such classes are drawn skinned too (AUTO_SKINNED, class -> archive, filled by placement)
@@ -82,7 +82,7 @@ def auto_anim(fsp, arc):
     return _auto_anim[arc]
 
 
-ANIM_ARC = {"CocoSambo": "CocoSamboBody", "Karikari": "Karipon", "BenefitItemOneUp": "KinokoOneUp",
+ANIM_ARC = {"TicoDomeLecture": "Tico", "CocoSambo": "CocoSamboBody", "Karikari": "Karipon", "BenefitItemOneUp": "KinokoOneUp",
             "BenefitItemLifeUp": "KinokoLifeUp", "HammerHeadPackun": "PackunFlower", "Plant": "PlantSeed", "FlowerGroup": "Flower", "FlowerBlueGroup": "FlowerBlue",
             "CutBushGroup": "CutBush", "FirePressureRadiate": "FirePressure", "JumpBeamer": "JumpBeamerBody", "TreasureBoxKinokoOneUp": "TreasureBox", "TreasureBoxCoin": "TreasureBox", "TreasureBoxEmpty": "TreasureBox", "TreasureBoxGoldEmpty": "TreasureBoxGold", "TreasureBoxCrackedKinokoOneUp": "TreasureBoxCracked", "TreasureBoxCrackedAirBubble": "TreasureBoxCracked", "TreasureBoxBlueChip": "TreasureBox", "TreasureBoxYellowChip": "TreasureBox", "TreasureBoxKinokoLifeUp": "TreasureBox", "TreasureBoxCrackedKinokoLifeUp": "TreasureBoxCracked", "TreasureBoxCrackedEmpty": "TreasureBoxCracked"}  # where a class's clips are when not in its own-named archive
 # ponytail: models the renderer cannot reproduce: the atmosphere spheres (*Air: their glow is a TEV rim effect; drawn
@@ -91,7 +91,7 @@ NO_DRAW = ("SphereAir", "DimensionAir", "HomeAir", "TwilightAir", "DarknessRoomA
 OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup", "PurpleRailCoin", "CircleCoinGroup",
              "RailCoin", "SuperSpinDriver", "StarPieceGroup", "StarPieceFlow")
 # classes whose first NameObjFactory archive is not their model (OtaKing's is FireBall, Tico's TicoBaby): the model
-MODEL_ARC = {"OtaKing": "OtaKing", "KoopaJr": "KoopaJr", "Tico": "Tico", "Plant": "PlantSeed"}
+MODEL_ARC = {"TicoDomeLecture": "Tico", "OtaKing": "OtaKing", "KoopaJr": "KoopaJr", "Tico": "Tico", "Plant": "PlantSeed"}
 # ponytail: no MiniatureGalaxyStarNumber (its digits are texture matrices per material), no MiniatureGalaxyShadow
 MINI_EXTRA = ("MiniatureGalaxyUnknown", "MiniHatenaGalaxy", "MiniatureGalaxyUnknownKoopa", "MiniKoopaGalaxy",
               "MiniatureGalaxySelect")
@@ -1379,6 +1379,7 @@ def placement(fs, galaxy, scenario):
     # the classes' direct Common_ ones
     ctls = [(f"{zones[r['zone']]['name']}_{r['name']}{r['mid']:03d}", i) for i, r in enumerate(keep) if r.get("mid", -1) >= 0]
     ctls += [(lab, None) for c in sorted(msg.COMMON) if c in types for lab in msg.COMMON[c]]
+    ctls += [(lab, i) for i, r in enumerate(keep) for lab in msg.DIRECT.get(r["name"], ())]
     ctls += [(lab, None) for lab in msg.SYSTEM]
     ctls += [(f"GalaxyName_{galaxy}", None), (f"ScenarioName_{galaxy}{scenario}", None)]  # ScenarioTitle (StageTitle)
     out.append(chunk(b"TALK", msg.talk_chunk(fsp, ctls)))
@@ -1622,6 +1623,10 @@ def canm_chunk(fsp, classes, galaxy=None, scenario=None):
 # DemoExecutor's sheets (ObjectData/DemoSheet.arc "Demo<sheet><Time|SubPart|Player|Camera|Action|Wipe|Sound>.bcsv")
 WIPES = {"フェードワイプ": 0, "白フェードワイプ": 1, "円ワイプ": 2}  # SceneWipeHolder's wipes by name
 DEMO_SHEETS = ("time", "subpart", "player", "camera", "action", "wipe", "sound")
+# MR::registerDemoCast(actor, DemoName): casts by the demo's name, not its DemoGroupId (Butler::initForAstroDome /
+# initForAstroGalaxy: initDemoSheetTalkAnim registers too)
+DEMO_DIRECT_CAST = {"Butler": ("ドームレクチャー１", "ドームレクチャー２", "バトラー報告", "スターピース解説前半", "スターピース解説後半",
+                               "バトラーグリーンドライバ説明")}
 
 
 _demo_dead = None
@@ -1639,7 +1644,7 @@ def demo_dead_classes():
             for m in re.finditer(r"class\s+(\w+)\s*:\s*public\s+(\w+)", h.read_text(errors="ignore")):
                 parent[m.group(1)] = m.group(2)
         bases = {"MapObjActor", "BegomanBaby", "BegomanSpike", "BegomanSpring", "PlanetMap", "SuperSpinDriver",
-                 "BlueStarCupsulePlanet", "Tico", "GCaptureTarget", "NokonokoLand", "Flag", "OceanSphere", "Pole"}
+                 "BlueStarCupsulePlanet", "Tico", "TicoDomeLecture", "GCaptureTarget", "NokonokoLand", "Flag", "OceanSphere", "Pole"}
 
         def dead(c):
             for _ in range(32):
@@ -1662,8 +1667,8 @@ def demo_chunk(fsp, demos, gpos, keep, jp2en, se_ids):
     Layout (little endian): u32 ndemos, npos; npos x {float pos[3], rot[3]}; per demo, 4-aligned:
       Demo   {u32 size; char name[64] (UTF-8 DemoName); s16 sw[5] (SW_FIELDS, the group's); u16 zone;
               u8 nparts, nsub, nplayer, ncam, nact, nwipe, nsnd, nhide; u16 ngroup, ncast} (92 B)
-      parts  {u16 total; u8 suspend, pad}
-      sub    {u16 total, step (the main part's step it starts at); u8 main, pad[3]}
+      parts  {u16 total; u8 suspend, talk (its name holds 会話: MR::isDemoPartTalk)}
+      sub    {u16 total, step (the main part's step it starts at); u8 main, loop (会話アニメループ), pad[2]}
       player {u8 part, pad; s16 pos (-1 none); char bck[28]}
       cam    {u8 part, target (0 none, 1 the player, 2 a cast), continuous, pad; s16 row; u16 pad;
               u32 cls (camera.py class of "e:<DemoName>[<PartName>]"); s32 start, end; char anim[32]}
@@ -1700,15 +1705,18 @@ def demo_chunk(fsp, demos, gpos, keep, jp2en, se_ids):
         cols = lambda k, f, dv="": B.bcsv_column(sh[k], f) or [dv] * nrow[k]
         ints = lambda k, f, dv: int_or(sh[k], f, nrow[k], dv)
         names = cols("time", "PartName")
-        parts = [struct.pack("<HBx", max(t, 1), sf != 0) for t, sf in zip(ints("time", "TotalStep", 1), ints("time", "SuspendFlag", 0))]
+        parts = [struct.pack("<HBB", max(t, 1), sf != 0, "会話" in (n or ""))  # MR::isDemoPartTalk
+                 for t, sf, n in zip(ints("time", "TotalStep", 1), ints("time", "SuspendFlag", 0), names)]
         sub_names = cols("subpart", "SubPartName")
-        sub = [struct.pack("<HHB3x", max(t, 1), max(st, 0), names.index(mp) if mp in names else 0xFF)
-               for t, mp, st in zip(ints("subpart", "SubPartTotalStep", 1), cols("subpart", "MainPartName"), ints("subpart", "MainPartStep", 1))]
+        sub = [struct.pack("<HHBB2x", max(t, 1), max(st, 0), names.index(mp) if mp in names else 0xFF, "会話アニメループ" in (sn or ""))
+               for t, mp, st, sn in zip(ints("subpart", "SubPartTotalStep", 1), cols("subpart", "MainPartName"),
+                                        ints("subpart", "MainPartStep", 1), sub_names)]
         part = lambda n: names.index(n) if n in names else 0x80 | sub_names.index(n) if n in sub_names else None
         group = [i for i, r in enumerate(keep) if r.get("demo", -1) == d["l_id"] and r["zone"] == d["zone"]]
         for sg in demos:
             if sg["name"] == "DemoSubGroup" and sg["demo_name"] == d["demo_name"]:
                 group += [i for i, r in enumerate(keep) if r.get("demo", -1) == sg["l_id"] and r["zone"] == sg["zone"]]
+        group += [i for i, r in enumerate(keep) if d["demo_name"] in DEMO_DIRECT_CAST.get(r["name"], ()) and i not in group]
         match = lambda name, cid: [i for i in group if row_jp[i] == name and (cid < 0 or keep[i].get("cast", -1) == cid)]
         recs = {k: [] for k in DEMO_SHEETS[2:]}
         for pn, ps, bk in zip(cols("player", "PartName"), cols("player", "PosName"), cols("player", "BckName")):
