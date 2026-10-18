@@ -22,7 +22,7 @@ vbody = re.sub(r'#if \(VERSION == RMGK01\).*?#endif', '', vbody, flags=re.S)
 vals = re.findall(r'\{("[^"]*"),\s*([^}]*)\}', vbody)
 out.append('static const GdValue gd_values[] = {')
 for n, v in vals:
-    v = v.strip().replace('FindingLuigiEventScheduler::STATE_NULL', '0')
+    v = v.strip().replace('FindingLuigiEventScheduler::STATE_NULL', '0xFF00')
     out.append(f'    {{{n}, {v}}},')
 out.append('};')
 open('D:/smg-ps2/engine/src/gamedata_tab.h', 'wb').write(('\n'.join(out) + '\n').encode())

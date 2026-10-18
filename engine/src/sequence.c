@@ -65,6 +65,7 @@ static const SeqDemo cDemoEpilogueComplete[] = {{10, 14, ""}, {2, 9, "MovieEpilo
 static const SeqDemo cDemoKinopioRescued[] = {{0, 1, "パワースター帰還"}, {0, 1, "ロゼッタキノピオ探検隊デモ"}, {13, 0, ""}};
 static const SeqDemo cDemoTrickCometLecture[] = {{0, 1, "パワースター帰還"}, {0, 1, "ロゼッタコメット説明デモ"}, {13, 0, ""}};
 static const SeqDemo cDemoLuigiRescued[] = {{0, 1, "パワースター帰還"}, {0, 1, "ロゼッタルイージデモ"}, {13, 0, ""}};
+static const SeqDemo cDemoLuigiMissing[] = {{0, 1, "ルイージ失踪デモ"}, {13, 0, ""}};
 static const SeqDemo cDemoGreenStarGetFirst[] = {{0, 1, "パワースター帰還"}, {0, 7, "バトラーグリーンドライバ説明"}, {13, 0, ""}};
 static const SeqDemo cDemoGreenStarRelease[] = {{0, 1, "パワースター帰還"}, {0, 8, "バトラーグリーンドライバ説明"}, {13, 0, ""}};
 static const SeqDemo cDemoNewGalaxyDiscover[] = {{0, 1, "天文ドームスター帰還"}, {0, 4, "バトラー報告"}, {13, 0, ""}};
@@ -132,11 +133,20 @@ static void decide_move_galaxy(const char *st, int no, int clear)
 }
 
 /* decideNextEventForClearGalaxy's demos (the stage is chosen in seq_galaxy_move: clear_to_astro_galaxy). ponytail: no
- * Luigi (cDemoLuigiMissing), no picture book (cDemoRosettaPicureBookTalk) */
-static int clear_to_astro_galaxy(void) /* the lists below that setNextStageToAstroGalaxy by a flag just on */
+ * picture book (cDemoRosettaPicureBookTalk) */
+static int optional_demos(const SeqDemo **o) /* getOptionalDemoForClearGalaxy: isExecuteDemoLuigiMissing, the KoopaBattleVs3 talk */
 {
+    int n = 0;
+    if (gd_luigi_disappear() && !gd_flag_is_on("SpecialStarFindingLuigi1")) o[n++] = cDemoLuigiMissing;
+    if (gd_flag_can_on_just("KoopaBattleVs3Galaxy") || gd_flag_is_on_just("PowerStarComplete")) o[n++] = cDemoRosettaTalkKoopaBattleVs3GalaxyAppear;
+    return n;
+}
+static int clear_to_astro_galaxy(void) /* the lists below that setNextStageToAstroGalaxy by a flag just on, or an optional one */
+{
+    const SeqDemo *o[2];
     return gd_flag_is_on_just("EventKinopioExplorerRescued") || gd_flag_is_on_just("EventCometStarter") ||
-           gd_flag_is_on_just("SpecialStarLuigiRescued") || gd_green_first_just() || gd_flag_is_on_just("SpecialStarGreenAll");
+           gd_flag_is_on_just("SpecialStarLuigiRescued") || gd_green_first_just() || gd_flag_is_on_just("SpecialStarGreenAll") ||
+           optional_demos(o) > 0;
 }
 static void decide_clear_galaxy(const char *st)
 {
@@ -162,14 +172,17 @@ static void decide_clear_galaxy(const char *st)
         if (gd_green_first_just()) prepare_demo(cDemoGreenStarGetFirst);
         if (gd_flag_is_on_just("SpecialStarGreenAll")) prepare_demo(cDemoGreenStarRelease);
         if (nsdemo > n0) {
-            /* getOptionalDemoForClearGalaxy */
-            if (gd_flag_can_on_just("KoopaBattleVs3Galaxy") || gd_flag_is_on_just("PowerStarComplete")) prepare_demo(cDemoRosettaTalkKoopaBattleVs3GalaxyAppear);
+            const SeqDemo *o[2];
+            for (int i = 0, n = optional_demos(o); i < n; i++) prepare_demo(o[i]);
             return;
         }
     }
+    const SeqDemo *o[2];
+    int no = optional_demos(o);
     if (gd_is_grand_star(b, bn)) prepare_demo(cDemoGrandStarResult);
     else if (!strcmp(st, "AstroDome")) prepare_demo(cDemoPowerStarResultAstroDome);
     else prepare_demo(cDemoPowerStarResultAstroGalaxy);
+    for (int i = 0; i < no; i++) prepare_demo(o[i]);
 }
 
 static void stage_of(char *out, int n, int *scenario) /* MR::getCurrentStageName / getCurrentScenarioNo */
@@ -200,6 +213,9 @@ void seq_galaxy_move(int type, const char *stage, int scenario, int start_id, in
     stage_of(sq.before, sizeof sq.before, &cur_no);
     sq.before_no = type == SEQ_STAGE_CLEAR ? sq.cleared : cur_no;
     sq.start_set = start_id >= 0; sq.start_id = start_id; sq.start_zone = start_zone;
+    if (type == SEQ_STAGE_CLEAR) /* requestGalaxyMove: FindingLuigiEventScheduler::updateOnStageResult, then update */
+        gd_luigi_stage_result(sq.before, sq.before_no, result_set && result.prev_stars == result.after_stars);
+    gd_luigi_update(type);
     if (!strcmp(st, "AstroGalaxy") && no != 4) no = astro_galaxy_no();
     if (!strcmp(st, "AstroDome") && no == -1) no = astro_dome_no();
     seq_demo_clear();
@@ -234,7 +250,7 @@ void seq_galaxy_move(int type, const char *stage, int scenario, int start_id, in
         break;
     case SEQ_AFTER_LOADING: /* overwriteGalaxyNameAfterLoading. ponytail: no prologue movie */
         if (gd_flag_is_on("SpecialStarGrand1")) { snprintf(st, sizeof st, "AstroGalaxy"); no = astro_galaxy_no(); }
-        else if (gd_story_passed("ピーチ城浮上後")) { snprintf(st, sizeof st, "HeavensDoorGalaxy"); no = 1; }
+        else if (gd_story_passed("ピーチ城浮上後") || gd_player_luigi()) { snprintf(st, sizeof st, "HeavensDoorGalaxy"); no = 1; } /* || !isDataMario */
         else if (gd_story_passed("クッパ襲来後")) { snprintf(st, sizeof st, "PeachCastleGardenGalaxy"); no = 1; sq.start_set = 1; sq.start_id = 1; sq.start_zone = 0; }
         else { snprintf(st, sizeof st, "PeachCastleGardenGalaxy"); no = 1; }
         break;

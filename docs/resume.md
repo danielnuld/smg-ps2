@@ -447,6 +447,20 @@ the demos): resume here.** State at the session break (2026-10-17 evening):
      from KoopaBattleVs3Galaxy/1). Both compiled only. git may call those worktrees "dubious ownership": merge from
      D:/smg-ps2 with `git merge agent-<name>`, then `git worktree remove` them.
   3. Then: movie subtitles (needs the font kept while a movie plays), Luigi, phase 1, sound.
+- Luigi (agent-luigi, 2026-10-18), compiled only, untested: gamedata.c FindingLuigiEventScheduler (LuigiEventState
+  starts at STATE_NULL 0xFF00 now: gen_gamedata.py), the EventUtil Luigi checks (gd_luigi_*), each file's Mario and Luigi
+  game data (mario%d / luigi%d, the last loaded player: the save image doubled, MC_MAX 48 KB: older card saves are
+  dropped); sequence.c updateOnStageResult / update per move, cDemoLuigiMissing and getOptionalDemoForClearGalaxy in both
+  paths, Luigi's data starts at HeavensDoorGalaxy; game.c LuigiNPC / LuigiEvent (talkcls 6: Afraid, Normal, Event,
+  OnTree, Arrested nerves, TakeOutStar as the star's declarer), KinopioAstro talks (talkcls 3) with the messenger's
+  letter event, talk branches 10 (isPlayerLuigi) and 14 (Luigi results 12 / 13), MarioConst table 1 for Luigi
+  (mario_const.py: MC_TABLES, MC = *mc_table); menu.c LuigiLetter (letter.bin), the pause menu's LetterButton, BrosButton
+  and FileSelectInfo's Mario / Luigi state; slice.py resident_pack(player="Luigi") -> resident_luigi.bin (Luigi.arc as
+  "Mario", luigiAnimeSwapTable clips), main.c loads it instead of resident.bin for Luigi's file and letter.bin where the
+  letter can show; movie.c plays <name>Luigi.smv (FinalBattle, EpilogueA, EndingA) for Luigi, disc.py takes them.
+  To rerun: lyt.py (letter.bin, title.bin with BrosButton), slice_all.py (resident_luigi.bin; PhantomGalaxy, EggStar,
+  BattleShip, HoneyBeeKingdom and AstroGalaxy repacked for LuigiNPC / LuigiEvent), then the disc. Tests: `luigi`
+  (PhantomGalaxy/1: Mario before Luigi, X talks; his star), `luigiplay` (any scene played as Luigi).
 - Pack memory (2026-10-18): the Observatory ran out of pack region ("packs: no memory for ...": the heap is full after a
   load). slice_all.py's room per galaxy now leaves out the menu packs main.c loads beside it (MENU_PACKS: map.bin in
   AstroGalaxy, dome.bin, the title packs), and slice.py anim_skipped leaves out clips / canms a class never plays in a

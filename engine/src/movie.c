@@ -21,10 +21,10 @@
 /* MoviePlayingSequence.cpp sInfoTable: the open wipe (after the play starts) and the close (its frames before the
  * end, -1 at the end: a forced black), in 60 Hz steps (THP frames); a movie frame here is two. Kinds: 0 none, 1 black
  * forced, 2 black fade, 3 white (SystemWipeWhiteFade / WipeWhiteFade), -1 time: sFadeFrame (30) */
-static const struct { const char *name; s8 open; s16 open_t; s8 close; s16 close_t; } info[] = {
-    {"PrologueA", 2, 30, 1, -1}, {"PrologueB", 2, 30, 1, -1}, {"FinalBattle", 2, 30, 1, -1},
-    {"EpilogueA", 3, 90, 3, 180}, {"EndingA", 3, 180, 1, -1}, {"EndingB", 2, 180, 1, 180},
-};
+static const struct { const char *name; s8 open; s16 open_t; s8 close; s16 close_t; u8 luigi; } info[] = {
+    {"PrologueA", 2, 30, 1, -1, 0}, {"PrologueB", 2, 30, 1, -1, 0}, {"FinalBattle", 2, 30, 1, -1, 1},
+    {"EpilogueA", 3, 90, 3, 180, 1}, {"EndingA", 3, 180, 1, -1, 1}, {"EndingB", 2, 180, 1, 180, 0},
+}; /* luigi: mMovieNameLuigi ("<name>Luigi") */
 
 static const MovieIo *io;
 static u8 *buf[2], *ring;          /* the chunks read (one played, the next coming), the sound queued */
@@ -154,7 +154,7 @@ int movie_play(const char *name, const MovieIo *the_io)
     for (int i = 0; i < (int)(sizeof info / sizeof info[0]); i++)
         if (!strcmp(info[i].name, name)) k = i;
     io = the_io;
-    snprintf(path, sizeof path, "movies/%s.smv", name);
+    snprintf(path, sizeof path, "movies/%s%s.smv", name, info[k].luigi && gd_player_luigi() ? "Luigi" : ""); /* getMovieName */
     if (!io->open(path, &size)) { printf("movie: no %s\n", path); return 0; }
     io->start((u8 *)head, 2048);
     while (!io->done()) {}

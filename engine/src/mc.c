@@ -12,7 +12,7 @@
  * ponytail: no icon.sys / icon (the browser shows the folder without a picture), port 0 only, no "card full" window */
 #define MC_DIR "/SMGPS2"
 #define MC_FILE "/SMGPS2/save.dat"
-#define MC_MAX (24 * 1024)
+#define MC_MAX (48 * 1024) /* the six files with Mario's and Luigi's data (gamedata.c files) */
 
 static u8 buf[MC_MAX] __attribute__((aligned(64)));
 static int ok, step, fd, len, busy, pending;

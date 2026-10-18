@@ -496,8 +496,95 @@ void menu_result_start(void) /* StarReturnDemoStarter::tryStartStageResult: the 
     sr.held = 0; sr.alive = 1; sr.n.next = -1; nrv_set(&sr.n, SR_APPEARSTAR);
 }
 
+/* --- Luigi: LuigiLetter, the pause menu's letter button, BrosButton and FileSelectInfo's CharaState after Petari -----
+ * LuigiLetter (letter.bin, main.c loads it where the letter can show): its galaxy's picture (LuigiPicture<galaxy>, a
+ * material of letter.bin) on PicDummy; Appear (SE_SY_LETTER_APPEAR, then SE_SV_LUIGI_MAIL), Wait until A
+ * (SE_SY_TALK_OK), End, dead. The pause menu's (createLuigiLetterForMenu: getLuigiLetterGalaxyName) and
+ * KinopioAstro's (createLuigiLetterForTalk: ...ForNPC, game.c kast_event) are drawn over everything.
+ * ponytail: no IconAButton at AButtonPosition, no CS_CLICK_CLOSE */
+enum { LL_APPEAR, LL_WAIT, LL_END };
+static struct { LytInst *l; int on; Nrv n; } llt;
+
+void menu_luigi_letter(const char *galaxy, int talk)
+{
+    (void)talk; /* (the talk's layout scene or the pause's: both drawn by menu_draw) */
+    if (!galaxy || !(llt.l || (llt.l = lyt_new("LuigiLetter")))) return;
+    char mn[24];
+    snprintf(mn, sizeof mn, "%.20s", galaxy); /* "LuigiPicture%s.bti" (lyt.py LETTER: the material by its galaxy) */
+    lyt_replace_pane_texture(llt.l, "PicDummy", lyt_material_texture(llt.l, mn));
+    llt.on = 1; llt.n.next = -1; nrv_set(&llt.n, LL_APPEAR);
+}
+int menu_luigi_letter_alive(void) { return llt.on; }
+static void llt_update(void)
+{
+    if (!llt.on) return;
+    switch (nrv_begin(&llt.n)) {
+    case LL_APPEAR:
+        if (FIRST(&llt.n)) { lyt_start(llt.l, "Appear", 0); se_start(SE_SY_LETTER_APPEAR, NULL); }
+        if (lyt_stopped(llt.l, 0)) { se_start(SE_SV_LUIGI_MAIL, NULL); nrv_set(&llt.n, LL_WAIT); }
+        break;
+    case LL_WAIT:
+        if (FIRST(&llt.n)) lyt_start(llt.l, "Wait", 0);
+        if (pad_pressed(PAD_CROSS)) { pad_eat(PAD_CROSS); se_start(SE_SY_TALK_OK, NULL); nrv_set(&llt.n, LL_END); } /* testCorePadButtonA */
+        break;
+    case LL_END:
+        if (FIRST(&llt.n)) lyt_start(llt.l, "End", 0);
+        if (lyt_stopped(llt.l, 0)) llt.on = 0; /* kill */
+        break;
+    }
+    nrv_end(&llt.n);
+    if (llt.on) lyt_update(llt.l);
+}
+static void llt_draw(void) { if (llt.on) { render_world_done(); lyt_draw(llt.l); } }
+
+/* PauseMenu's letter (_38: ButtonPaneController LetterButton / BoxButton3): there while getLuigiLetterGalaxyName,
+ * appearing while isOnLuigiHiding; decided: exeLuigiLetter (the letter until it is dead, then the buttons back) */
+static struct { Btn b; u8 on, open; } pml;
+static void pml_stage(char *st, int n, int *scen)
+{
+    const char *sl = strchr(game_stage_name, '/');
+    snprintf(st, n, "%.*s", sl ? (int)(sl - game_stage_name) : (int)strlen(game_stage_name), game_stage_name);
+    *scen = sl ? atoi(sl + 1) : -1;
+}
+static int pml_init(LytInst *pause) /* 0: no letter (hidePaneRecursive "LetterButton") */
+{
+    char st[48];
+    int scen;
+    memset(&pml, 0, sizeof pml);
+    pml_stage(st, sizeof st, &scen);
+    if (!gd_luigi_letter_galaxy(st, scen) || !(llt.l || (llt.l = lyt_new("LuigiLetter")))) return 0;
+    btn_init(&pml.b, pause, "LetterButton", "BoxButton3", 0, 1);
+    pml.b.end_disappear = 0; /* _22 = false */
+    pml.on = 1;
+    return 1;
+}
+static void pml_appear(void)
+{
+    char st[48];
+    int scen;
+    pml_stage(st, sizeof st, &scen);
+    if (pml.on && gd_luigi_hiding(st, scen)) btn_appear(&pml.b); /* MR::isOnLuigiHiding */
+}
+static int pml_shown(void) { return pml.on && !btn_hidden(&pml.b); }
+static int pml_try_select(void) { return pml_shown() && btn_try_select(&pml.b); }
+static int pml_decided(void) /* exeDecided's letter part: 1 once it is decided and waits (exeLuigiLetter next) */
+{
+    if (!pml_shown() || !pml.b.selected) return 0;
+    if (btn_selected_se(&pml.b)) se_start(SE_SY_FILE_SEL_UPPER_DECIDE, NULL);
+    return btn_decided_wait(&pml.b);
+}
+static int pml_letter(void) /* exeLuigiLetter: 1 while the letter is up */
+{
+    char st[48];
+    int scen;
+    if (!pml.open) { pml_stage(st, sizeof st, &scen); pml.open = 1; menu_luigi_letter(gd_luigi_letter_galaxy(st, scen), 0); }
+    if (llt.on) return 1;
+    pml.open = 0;
+    return 0;
+}
+
 /* --- PauseMenu ------------------------------------------------------------------------------------------------- */
-enum { PM_SELECTING, PM_DECIDED, PM_DISAPPEAR, PM_CONFIRM, PM_SAVE };
+enum { PM_SELECTING, PM_DECIDED, PM_DISAPPEAR, PM_CONFIRM, PM_SAVE, PM_LETTER };
 static struct {
     LytInst *l;
     Btn up, down;
@@ -569,7 +656,7 @@ static void pm_init(void)
         lyt_start_pane(pm.l, "Stars", "Star", 1);
         lyt_set_pane_frame_stop(pm.l, "Stars", 1, invalid_dome ? 0.0f : (float)(normal + extra - 1));
     }
-    lyt_show_rec(pm.l, "LetterButton", 0); /* no Luigi letter (MR::getLuigiLetterGalaxyName) */
+    if (!pml_init(pm.l)) lyt_show_rec(pm.l, "LetterButton", 0); /* MR::getLuigiLetterGalaxyName: LuigiLetter, its button */
     si_init(&pm.win);
 }
 
@@ -602,6 +689,7 @@ static void pm_appear(void)
     }
     btn_appear(&pm.up);
     btn_appear(&pm.down);
+    pml_appear();
     nrv_set(&pm.n, PM_SELECTING);
     pm.alive = 1;
     se_start(SE_SY_PAUSE_ON, NULL);
@@ -611,9 +699,11 @@ static void pm_update(void)
 {
     switch (nrv_begin(&pm.n)) {
     case PM_SELECTING:
-        if (btn_pointing_trigger(&pm.up) || btn_pointing_trigger(&pm.down)) se_start(SE_SY_SELECT_PAUSE_ITEM, NULL);
-        if (btn_try_select(&pm.up) || btn_try_select(&pm.down)) { nrv_set(&pm.n, PM_DECIDED); break; }
-        if (pm_stopped_without_button() && !btn_appearing(&pm.up) && !btn_appearing(&pm.down) && pad_pressed(PAD_START)) {
+        if (btn_pointing_trigger(&pm.up) || btn_pointing_trigger(&pm.down) || (pml_shown() && btn_pointing_trigger(&pml.b)))
+            se_start(SE_SY_SELECT_PAUSE_ITEM, NULL);
+        if (btn_try_select(&pm.up) || btn_try_select(&pm.down) || pml_try_select()) { nrv_set(&pm.n, PM_DECIDED); break; }
+        if (pm_stopped_without_button() && !btn_appearing(&pm.up) && !btn_appearing(&pm.down) &&
+            (!pml_shown() || !btn_appearing(&pml.b)) && pad_pressed(PAD_START)) {
             se_start(SE_SY_PAUSE_OFF, NULL); /* Plus / Minus: back to the game */
             nrv_set(&pm.n, PM_DISAPPEAR);
         }
@@ -623,10 +713,14 @@ static void pm_update(void)
             if (btn_selected_se(&pm.up)) se_start(SE_SY_PAUSE_OFF, NULL);
             if (btn_decided_wait(&pm.up)) nrv_set(&pm.n, PM_DISAPPEAR);
         } else if (pm.down.selected && btn_decided_wait(&pm.down)) nrv_set(&pm.n, pm_invalid_back() ? PM_SAVE : PM_CONFIRM);
+        else if (pml_decided()) nrv_set(&pm.n, PM_LETTER);
+        break;
+    case PM_LETTER: /* exeLuigiLetter */
+        if (!pml_letter()) { btn_force_wait(&pm.up); btn_force_wait(&pm.down); if (pml_shown()) btn_force_wait(&pml.b); nrv_set(&pm.n, PM_SELECTING); }
         break;
     case PM_DISAPPEAR:
-        if (FIRST(&pm.n)) { pm_anim_without_button("End"); btn_disappear(&pm.up); btn_disappear(&pm.down); }
-        if (pm_stopped_without_button() && btn_hidden(&pm.up) && btn_hidden(&pm.down)) pm.alive = 0;
+        if (FIRST(&pm.n)) { pm_anim_without_button("End"); btn_disappear(&pm.up); btn_disappear(&pm.down); if (pml_shown()) btn_disappear(&pml.b); }
+        if (pm_stopped_without_button() && btn_hidden(&pm.up) && btn_hidden(&pm.down) && !pml_shown()) pm.alive = 0;
         break;
     case PM_SAVE: /* exeGameDataSave: startGameDataSaveSequence(false, true) */
         if (FIRST(&pm.n)) menu_save_start(1, 0, 1);
@@ -636,13 +730,14 @@ static void pm_update(void)
         if (FIRST(&pm.n)) si_appear(&pm.win, pm_invalid_back() ? "PauseMenu_ConfirmEndGame" : "PauseMenu_ConfirmBackAstroDome", SI_YESNO);
         if (!pm.win.alive && !pm.fade) {
             if (yn_yes(&pm.win.yn)) pm.fade = 1; /* closeSystemWipeFadeWithCaptureScreen(90), then the scene */
-            else { btn_force_wait(&pm.up); btn_force_wait(&pm.down); nrv_set(&pm.n, PM_SELECTING); }
+            else { btn_force_wait(&pm.up); btn_force_wait(&pm.down); if (pml_shown()) btn_force_wait(&pml.b); nrv_set(&pm.n, PM_SELECTING); }
         }
         break;
     }
     nrv_end(&pm.n);
     btn_update(&pm.up);
     btn_update(&pm.down);
+    if (pml.on) btn_update(&pml.b);
     lyt_update(pm.l);
     si_update(&pm.win);
     if (pm.fade == 1) { /* closeSystemWipeFadeWithCaptureScreen(90), then requestChangeSceneTitle / ...GoBackAstroDome */
@@ -699,6 +794,7 @@ int menu_update(void)
     dmu_update();
     mlay_update();
     mono_update();
+    llt_update();
     srl_update();
     if (sr.delay && --sr.delay == 0 && sr.l) { /* the clear's demo sequence: StageResultInformer, then the save */
         sr.alive = 1; sr.n.next = -1; nrv_set(&sr.n, SR_APPEARSTAR);
@@ -1593,7 +1689,7 @@ int menu_test_point_dome(const char *pane) /* tests: the pointer on a pane of th
 /* --- FileSelector (the FileSelect stage): TitleSequenceProduct, FileSelectItem, FileSelectCameraController,
  * FileSelectSky, FileSelectInfo, FileSelectNumber, FileSelectButton, BackButton after Petari, as a whole-screen menu
  * (its stage's world not drawn: FileSelector draws everything it shows). A+B is X+Circle held; the pointer is the
- * right stick, X decides, Circle / Triangle is B. ponytail: fellows only (no Miis), no Manual button, no copy source marker (FileSelectEffect), no BrosButton (no Luigi), no blink / morph blur / effects / ME / BGM, no swipe
+ * right stick, X decides, Circle / Triangle is B. ponytail: fellows only (no Miis), no Manual button, no copy source marker (FileSelectEffect), no blink / morph blur / effects / ME / BGM, no swipe
  * spin, the save's date not shown */
 enum { FS_OFF, FS_TITLE, FS_TITLEEND, FS_SELECTSTART, FS_SELECT, FS_CONFIRMSTART, FS_CONFIRM, FS_DEMOSTARTWAIT,
        FS_CREATECONFIRMSTART, FS_CREATECONFIRM, FS_CREATE, FS_DELETECONFIRMSTART, FS_DELETECONFIRM, FS_DELETE,
@@ -1636,6 +1732,52 @@ static struct {
 } fsl;
 
 
+static void fs_info_set(int slot);
+static int fsi_luigi; /* the info's file plays as Luigi (FileSelectInfo mIsSelectedMario) */
+/* BrosButton ("ルイージ切り替えボタン": ButtonPaneController BrosButton / BoxBButton) in the file confirm while
+ * isUserFileAppearLuigi; a decide flips the player (SE_SY_FILE_SEL_SW_MARIO / LUIGI): setUserFileMario, the file's info
+ * again, FileSelectInfo::change (CharaState: MariottoLuigi / LuigitoMario on channel 2, reflectInfo at their step 10) */
+static struct { LytInst *l; Btn b; u8 on, mario; int chara, chara_step; } bros; /* chara: 0 Mario, 1 ToLuigi, 2 Luigi, 3 ToMario */
+static void bros_init(void)
+{
+    memset(&bros, 0, sizeof bros);
+    if (!(bros.l = lyt_new("BrosButton"))) return;
+    btn_init(&bros.b, bros.l, "BrosButton", "BoxBButton", 0, 1);
+    bros.b.end_disappear = 0;
+}
+static void bros_appear(int mario) { if (bros.l) { bros.on = 1; bros.mario = (u8)mario; btn_appear(&bros.b); } }
+static void bros_disappear(void) { if (bros.on && !btn_hidden(&bros.b)) btn_disappear(&bros.b); }
+static int bros_hidden(void) { return !bros.on || btn_hidden(&bros.b); }
+static void bros_update(void) /* BrosButton::control and exeSelect */
+{
+    if (!bros.on) return;
+    if (btn_pointing_trigger(&bros.b)) se_start(SE_SY_BUTTON_CURSOR_ON, NULL);
+    if ((btn_is(&bros.b, BP_WAIT) || btn_is(&bros.b, BP_POINTING) || btn_is(&bros.b, BP_NOTPOINTING)) && btn_try_select(&bros.b)) {
+        bros.mario = !bros.mario;
+        se_start(bros.mario ? SE_SY_FILE_SEL_SW_MARIO : SE_SY_FILE_SEL_SW_LUIGI, NULL);
+    }
+    btn_update(&bros.b);
+    lyt_update(bros.l);
+    if (btn_hidden(&bros.b) && !btn_appearing(&bros.b)) bros.on = 0;
+}
+static int bros_selected(void) { return bros.on && btn_is(&bros.b, BP_DECIDEDWAIT); } /* isSelected (the Decide nerve) */
+static void bros_draw(void) { if (bros.on) lyt_draw(bros.l); }
+static void fs_chara(int luigi, int change) /* FileSelectInfo::change (or forceChange: its state at once) */
+{
+    static const char *const anim[4] = {"MarioWait", "MariottoLuigi", "LuigiWait", "LuigitoMario"};
+    int to = luigi ? (change ? 1 : 2) : (change ? 3 : 0);
+    if (change && (luigi ? bros.chara == 1 || bros.chara == 2 : bros.chara == 3 || bros.chara == 0)) return; /* there or going */
+    bros.chara = to; bros.chara_step = 0;
+    if (fsl.info) lyt_start(fsl.info, anim[to], 2);
+}
+static void fs_chara_update(void) /* CharaState: ToLuigi / ToMario end in Luigi / Mario */
+{
+    if (!fsl.info || (bros.chara != 1 && bros.chara != 3)) return;
+    int slot = fsl.sel >= 0 ? fsl.sel : fsl.hover;
+    if (++bros.chara_step == 10 && slot >= 0) fs_info_set(slot); /* reflectInfo */
+    if (lyt_stopped(fsl.info, 2)) fs_chara(bros.chara == 1, 0);
+}
+
 /* MiiSelect with its fellows only (FileSelectIconID 0 Mario, 1 Luigi, 2 Yoshi, 3 Kinopio, 4 Peach; Luigi once
  * isUserFileAppearLuigi), one page (Mii01..08 while it appears, Mii09..16 after: setCurrentPageGroupA / B), each a
  * MiiIcon at its "Character" frame (sCharacterTexFrame); X on one selects it. ponytail: no Miis, no page scroll,
@@ -1647,7 +1789,7 @@ static void mii_appear(int first, int prohibit)
 {
     if (!mii.l) return;
     mii.first = first; mii.prohibit = prohibit; mii.selected = -1; mii.n = 0;
-    int luigi = gd_flag_is_on("ViewCompleteEnding"); /* isUserFileAppearLuigi */
+    int luigi = fsl.sel >= 0 && gd_file_appear_luigi(fsl.item[fsl.sel].file - 1); /* isUserFileAppearLuigi */
     for (int f = 0; f < 5; f++) if (f != 1 || luigi) mii.fellow[mii.n++] = f;
     for (int i = 0; i < 5; i++) {
         if (!mii.icon[i]) continue;
@@ -1872,12 +2014,15 @@ static void fs_info_set(int slot) /* setFileInfo */
     lyt_show_rec(fsl.info, "MissCounter", 0);
     lyt_show_rec(fsl.info, "Complete1", ne);
     lyt_show_rec(fsl.info, "Complete2", ce);
-    lyt_show_rec(fsl.info, "BrosIcon", 0);
+    fsi_luigi = gd_file_luigi(it->file - 1); /* reflectInfo: BrosIcon when Luigi's or after the complete ending */
+    lyt_show_rec(fsl.info, "BrosIcon", fsi_luigi || ce);
+    lyt_show_pane(fsl.info, "TxtMario", !fsi_luigi);
+    lyt_show_pane(fsl.info, "TxtLuigi", fsi_luigi);
 }
 static void fs_info_appear(void)
 {
     if (!fsl.info) return;
-    if (!fsl.info_on) { lyt_start(fsl.info, "Appear", 0); lyt_start(fsl.info, "MarioWait", 2); lyt_start(fsl.info, "ButtonAppear", 1); lyt_set_frame(fsl.info, 1, 0); lyt_set_rate(fsl.info, 1, 0); }
+    if (!fsl.info_on) { lyt_start(fsl.info, "Appear", 0); fs_chara(fsi_luigi, 0); lyt_start(fsl.info, "ButtonAppear", 1); lyt_set_frame(fsl.info, 1, 0); lyt_set_rate(fsl.info, 1, 0); }
     else lyt_set_rate(fsl.info, 0, 1.0f);
     fsl.info_on = 1; fsl.info_dir = 1;
 }
@@ -1911,13 +2056,14 @@ static void fs_clear_pointing(void) { if (fsl.hover >= 0) fs_item_offpoint(&fsl.
 static void fs_layouts_out(void) /* disappearAllLayout */
 {
     if (fsl.op_on) { for (int b = 0; b < FB_N; b++) btn_disappear(&fsl.btn[b]); lyt_start(fsl.info, "ButtonEnd", 1); }
+    bros_disappear();
     fs_info_disappear();
     if (fsl.back_on && !fsl.back_clicked) btn_disappear(&fsl.back);
 }
 static int fs_layouts_hidden(void)
 {
     for (int b = 0; b < FB_N; b++) if (fsl.op_on && !btn_hidden(&fsl.btn[b])) return 0;
-    return !fsl.info_on && (!fsl.back_on || btn_hidden(&fsl.back));
+    return !fsl.info_on && (!fsl.back_on || btn_hidden(&fsl.back)) && bros_hidden();
 }
 static int fs_back_selected(void) /* checkSelectedBackButton */
 {
@@ -2008,6 +2154,12 @@ static void fs_update(void)
             btn_appear(&fsl.back); fsl.back_on = 1; fsl.back_clicked = 0;
             if (!fsl.info_on) { fs_info_set(fsl.sel); fs_info_appear(); }
             lyt_start(fsl.info, "ButtonAppear", 1); /* slide */
+            if (gd_file_appear_luigi(fsl.item[fsl.sel].file - 1)) bros_appear(!gd_file_luigi(fsl.item[fsl.sel].file - 1));
+        }
+        if (bros_selected()) { /* setUserFileMario, restoreUserFile, setFileInfo, change, resume */
+            gd_file_set_luigi(fsl.item[fsl.sel].file - 1, !bros.mario);
+            fs_chara(!bros.mario, 1);
+            btn_force_wait(&bros.b);
         }
         if (fs_back_selected()) { fs_layouts_out(); fs_clear_pointing(); nrv_set(&fsl.n, FS_SELECTSTART); break; }
         for (int b = 0; b < FB_N; b++) if (btn_pointing_trigger(&fsl.btn[b])) se_start(SE_SY_BUTTON_CURSOR_ON, NULL);
@@ -2160,6 +2312,8 @@ static void fs_update(void)
         if (btn_hidden(&fsl.back) && !btn_appearing(&fsl.back) && !nrv_is(&fsl.n, FS_CONFIRM)) fsl.back_on = 0;
     }
     fs_info_update();
+    bros_update();
+    fs_chara_update();
     mii_update();
     si_update(&fsl.win);
     /* FileSelectSky::exeWait */
@@ -2183,7 +2337,7 @@ static void fs_init(const Scene *s)
     btn_init(&fsl.btn[FB_DELETE], fsl.op, "DeleteButton", "PicDelete", 0, 1);
     btn_init(&fsl.btn[FB_COPY], fsl.op, "CopyButton", "PicCopy", 0, 1);
     btn_init(&fsl.btn[FB_MII], fsl.op, "MiiButton", "PicMii", 0, 1);
-    mii_init(); lyt_show_pane(fsl.op, "P2ManualButton", 0);
+    mii_init(); bros_init(); lyt_show_pane(fsl.op, "P2ManualButton", 0);
     btn_init(&fsl.back, fsl.back_l, "Back", "BoxButton", 0, 1);
     si_init(&fsl.win);
     for (int i = 0; i < 6; i++) {
@@ -2250,6 +2404,7 @@ static void fs_draw(void)
     for (int i = 0; i < 6; i++) if (fsl.item[i].num_on) lyt_draw(fsl.item[i].num);
     if (fsl.info_on) lyt_draw(fsl.info);
     if (fsl.op_on) lyt_draw(fsl.op);
+    bros_draw();
     if (fsl.back_on) lyt_draw(fsl.back_l);
     if (fsl.logo_on) lyt_draw(fsl.logo);
     if (fsl.press_on) lyt_draw(fsl.press);
@@ -3114,6 +3269,7 @@ void menu_draw(void)
         lyt_draw(pm.l);
         if (pm.win.alive) lyt_draw(pm.win.l);
     }
+    llt_draw(); /* PauseMenu::draw: the letter after the menu (and KinopioAstro's) */
     if (sv.win.alive) { render_world_done(); lyt_draw(sv.win.l); } /* the save's window over all of it */
     wipe_draw_quad();
     fade_draw();

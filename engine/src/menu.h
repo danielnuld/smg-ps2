@@ -39,6 +39,8 @@ int menu_wipe_closed(void);          /* !isWipeOpen: closed and still */
 void menu_cinema(int frame);         /* CinemaFrame: tryScreenToFrame (1) / tryFrameToScreen (0) */
 void menu_monologue_start(void);     /* RosettaMonologue (ロゼッタ状況説明デモ's picture book): appear */
 int menu_monologue_alive(void);      /* !isDead */
+void menu_luigi_letter(const char *galaxy, int talk); /* LuigiLetter (LuigiPicture<galaxy>): appear (talk: KinopioAstro's) */
+int menu_luigi_letter_alive(void);   /* !isDead */
 void menu_galaxy_map(int galaxy_view);  /* GalaxyMapController: the Grand Galaxy (1) or the Observatory (0) map */
 int menu_galaxy_map_active(void);
 int menu_test_point_map(const char *pane);
