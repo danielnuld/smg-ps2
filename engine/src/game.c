@@ -3451,7 +3451,7 @@ void game_rebind(void)
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
         in->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 ? 3 :
-                      strcmp(name, "ButlerMap") == 0 ? 4 : 0;
+                      strcmp(name, "ButlerMap") == 0 ? 4 : strcmp(name, "Butler") == 0 ? 5 : 0;
         in->press = strcmp(name, "RGTowerPressGroundA") == 0 || strcmp(name, "ReverseGravityRoomPressGroundA") == 0 ||
                     strcmp(name, "ReverseGravityRoomPressGroundB") == 0 || in->dossun || in->onimasu;
         in->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 : 0;
@@ -4392,6 +4392,21 @@ int game_test_shoot(int kind)
     return -1;
 }
 
+static int butler_talk_state(void);
+static int map_line(V3 from, V3 d, V3 *hp, V3 *n, int *inst);
+int game_test_butler_talk(int place) /* test builds: Mario put 150 before the Butler (place), the talk director's nerve */
+{
+    for (int i = 0; place && i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (in->dnpc != 1 || row_dead[in->row]) continue;
+        V3 p = v3(in->m[12], in->m[13], in->m[14]), f = vnorm(v3(in->m[8], in->m[9], in->m[10]));
+        mario->pos = vadd(p, vmul(f, 150.0f));
+        { V3 hp, nn; int k; if (map_line(mario->pos, v3(0, -1000.0f, 0), &hp, &nn, &k)) mario->pos = hp; } /* on the floor under it */
+        mario->face = vmul(f, -1.0f);
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+    }
+    return butler_talk_state();
+}
 static int butler_hits(void);
 int game_test_butler_shoot(void) /* test builds: the cursor on the Butler's body, L1; its lecture's hits, -1 none */
 {
@@ -8185,6 +8200,7 @@ typedef struct {
     int nhist;
     int (*event)(int t, u32 v);  /* mEventFunc; kill: mKillFunc */
     int (*kill)(int t, u32 v);
+    int (*branch)(int t, u32 v); /* mBranchFunc (registerBranchFunc), NULL: none */
     float sx, sy, sz;            /* _1C: the balloon's screen place (z > 0: behind the camera) */
 } Talker;
 static Talker talkers[MAX_TALKERS];
@@ -8313,7 +8329,7 @@ static void tk_root_pre(Talker *t, int arg) /* rootNodePre: branches taken by th
         int cond = 0;
         switch (n->index) {
         case 0: return; /* a selection */
-        case 1: cond = 1; break; /* mBranchFunc: none registered here */
+        case 1: cond = t->branch ? t->branch((int)(t - talkers), n->next) : 1; break; /* mBranchFunc(mNextIdx), none: true */
         case 2: cond = tk_near(t, t->dist); break;
         case 3: cond = r && sw_on(r, SW_A); break;
         case 4: cond = r && sw_on(r, SW_B); break;
@@ -9037,6 +9053,8 @@ static int talk_row_label(int row, char *out) /* the TALK entry of a row: its <z
     return 0;
 }
 static int tico_kill(int k, u32 v) { (void)v; if (talkers[k].row >= 0) row_kill(talkers[k].row); return 1; } /* killFunc: Meta */
+static int butler_branch(int k, u32 v); /* Butler::messageBranchFunc (the dome's section) */
+static int butler_talk_free(int row);   /* the Butler in its Wait nerve (no demo, no star piece reaction) */
 static void update_talkers(void)
 {
     if (!tk_nctl) return;
@@ -9046,11 +9064,16 @@ static void update_talkers(void)
         if (!in->talkcls || !row_shown(in->row)) continue;
         char lab[32];
         if (!talk_row_label(in->row, lab)) continue;
-        /* SignBoard: NPCActor caps (talk 240, its balloon 150 up); Tico::initMessage (350, 120 up); Kinopio (122 x 1.2 up) */
-        int k = talk_new(lab, in->row, in->row, sign ? 150.0f : tico ? 120.0f : 122.0f * 1.2f, tico ? 350.0f : 240.0f);
+        /* SignBoard, Butler: NPCActor caps (talk 240, its balloon 150 up); Tico::initMessage (350, 120 up); Kinopio (122 x 1.2 up) */
+        int k = talk_new(lab, in->row, in->row, sign || in->talkcls == 5 ? 150.0f : tico ? 120.0f : 122.0f * 1.2f, tico ? 350.0f : 240.0f);
         if (k < 0) continue;
         Talker *t = &talkers[k];
-        if (!t->root_auto) { t->root_auto = 1; if (tico) t->kill = tico_kill; } /* onRootNodeAutomatic (NPCActor::initTalkCtrl) */
+        if (!t->root_auto) { /* onRootNodeAutomatic (NPCActor::initTalkCtrl); Butler::initForAstroDome: registerBranchFunc */
+            t->root_auto = 1;
+            if (tico) t->kill = tico_kill;
+            if (in->talkcls == 5) t->branch = butler_branch;
+        }
+        if (in->talkcls == 5 && !butler_talk_free(in->row)) continue; /* NPCActor::exeWait only (its demos, the reaction) */
         float m[16];
         memcpy(m, in->m, 64);
         for (int j = 0; j < 12; j++) m[j] /= in->s;
@@ -23432,6 +23455,17 @@ static int butler_shot(V3 p)
     return 0;
 }
 
+/* Butler::messageBranchFunc: 0 the star piece lecture running (_160), 1 TriLegLv1Galaxy opened or openable */
+static int butler_branch(int k, u32 v)
+{
+    (void)k;
+    if (v == 0) return bsp.on;
+    if (v == 1) return gd_flag_is_on("TriLegLv1Galaxy") || gd_flag_can_on("TriLegLv1Galaxy");
+    return 0;
+}
+static int butler_talk_free(int row) { (void)row; return !dx.on && !butler_nrv && bsp.react < 0; }
+static int butler_talk_state(void) { return mario->grounded * 10000 + td.nrv * 100 + (td.st >= 0 ? td.st : 99); }
+
 /* SphereSelectorFunction::trySyncKillMsgSelectStart (Butler, ButlerMap): dead while the dome's galaxy select runs,
  * then appear() (Butler::appear / ButlerMap::appear: the one isButlerMapAppear wants) */
 static void butler_sync(int select_start)
@@ -23513,7 +23547,7 @@ static void update_dome_npcs(void)
                 }
                 continue;
             }
-            if (!ta) obj_play(in, "wait", 1, 0);
+            if (!ta) obj_play(in, td.st >= 0 && talkers[td.st].row == in->row && td.nrv == TD_TALK ? "talk" : "wait", 1, 0); /* mParam's talk / move actions */
             continue;
         }
         if (in->dnpc == 3 || in->dnpc == 4) { /* Rosetta, ButlerExplain: at their PosName in a demo, else as placed */

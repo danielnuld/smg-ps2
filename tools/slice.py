@@ -1717,6 +1717,7 @@ def demo_dead_classes():
             return False
         fac = (pet / "src" / "Game" / "NameObj" / "NameObjFactory.cpp").read_text(errors="ignore")
         _demo_dead = {n for n, c in re.findall(r'\{\s*"(\w+)",\s*createNameObj<\s*(\w+)\s*>', fac) if dead(c)}
+        _demo_dead -= {"AstroDome"}  # AstroDome::init: makeActorAppeared after MapObjActor::initialize
     return _demo_dead
 
 

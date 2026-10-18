@@ -421,13 +421,18 @@ the demos): resume here.** State at the session break (2026-10-17 evening):
   whole-Observatory views at ~40 % speed (EE-side logic + draw ~8 ms: the emulator, to check on the PS2).
   Only the DemoAstroReturn<n> canms of the grand star demos placed in a scenario are packed (DEMO_NAMES), and Rosetta's
   DemoWithButler canm only with ロゼッタ状況説明デモ.
+- Done, tested: the Butler as a talking NPC (talkcls 5: its placement's talk, AstroDome_Butler000 / AstroGalaxy_Butler012,
+  NPCActor caps 150 / 240, Butler::messageBranchFunc as the talker's branch func (Talker.branch: mBranchFunc(mNextIdx)),
+  only in its Wait nerve; Talk / Wait clips). Fixed: the dome (class AstroDome) waited dead because a demo makes it
+  appear (MapObjActor's rule), but AstroDome::init makes it appeared: the dome's floor and walls were missing (Mario
+  fell through) outside the star return. `butler` test (AstroDome/1: Mario before the Butler, X: its talk).
 - Pack memory (2026-10-18): the Observatory ran out of pack region ("packs: no memory for ...": the heap is full after a
   load). slice_all.py's room per galaxy now leaves out the menu packs main.c loads beside it (MENU_PACKS: map.bin in
   AstroGalaxy, dome.bin, the title packs), and slice.py anim_skipped leaves out clips / canms a class never plays in a
   stage (the Butler's dome demos outside AstroDome, Rosetta's other stages' demos in AstroGalaxy, ButlerExplain's copy of
   the Butler's). main.c prints the pack region's blocks when it runs out.
 - Next, in order: Butler's other demos (グリーンドライバ説明, バトラーマップレクチャー: their functors, the talk anim ctrls
-  initDemoSheetTalkAnim) and the Butler as a talking NPC; GrandStarReturnDemoStarter and the grand star flight; Rosetta's demos (RosettaDemoAstroDome.cpp, the picture book); anim cameras of the camera
+  initDemoSheetTalkAnim); GrandStarReturnDemoStarter and the grand star flight; Rosetta's demos (RosettaDemoAstroDome.cpp, the picture book); anim cameras of the camera
   sheet (AnimCameraName); more dx_cast_hook classes (engine classes with type 2/3 casts: EyeBeamer, doors via their
   switches, CollectTico, FirePressureRadiate); BGM changes of the Sound sheet; the other actors stopped during demos
   (requestStopSceneFor).

@@ -872,6 +872,13 @@ int main(void)
                        menu_result_showing(), menu_saving());
         }
 #endif
+#if defined(PACKS) && defined(BUTLER_TEST)
+        { /* AstroDome/1: Mario before the Butler, X: its own talk (AstroDome_Butler000), X held every second for the pages */
+            if (frame >= 200 && frame < 230) game_test_butler_talk(1);
+            pad_force = frame > 240 && frame % 60 < 10 ? PAD_CROSS : 0;
+            if (frame >= 200 && (frame % 30 == 0 || (frame > 236 && frame < 262)) && frame < 1500) printf("butler test f %u: talk %d\n", frame, game_test_butler_talk(0));
+        }
+#endif
 #if defined(PACKS) && defined(SPIECE_TEST)
         { /* EggStar's star 1 faked (the dome lecture heard): the star return, the result, スターピース解説前半, five star
            * pieces at the Butler, スターピース解説後半 */
