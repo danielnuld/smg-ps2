@@ -684,7 +684,7 @@ int menu_update(void)
         sr.alive = 1; sr.n.next = -1; nrv_set(&sr.n, SR_APPEARSTAR);
     }
     if (sr.alive) { sr_update(); if (!sr.alive) sv_prompt = sv_prompt ? 1 : 0; return 1; }
-    if (sv_prompt && !sr.delay && --sv_prompt == 0) menu_save_start(1, 0, 0); /* StorySequenceExecutor::tryStartSave */
+    if (sv_prompt && !sr.delay && !game_story_busy() && --sv_prompt == 0) menu_save_start(1, 0, 0); /* StorySequenceExecutor::tryStartSave (after its demos) */
     if (menu_saving()) { game_cursor_menu(); sv_update(); if (!pm.alive) return 1; }
     if (menu_scenario_selecting()) { game_cursor_menu(); ss_update(); return 1; }
     if (menu_file_selecting()) { game_cursor_menu(); fs_update(); return 1; }
@@ -2653,7 +2653,7 @@ static void gm_init(void)
 }
 
 /* --- MissLayout ("TooBad"), WipeKoopa, WipeGameOver ("GameOver"): the miss / game over sequences' (game.c) ----- */
-static struct { LytInst *toobad, *koopa, *gameover; u8 tb_on, ko_on, go_on; } mlay;
+static struct { LytInst *toobad, *koopa, *gameover, *cinema; u8 tb_on, ko_on, go_on, ci_on, ci_frame; } mlay;
 
 void menu_miss_start(void) /* MissLayout::start: Appear (its TooBad effect not shown) */
 {
@@ -2677,23 +2677,43 @@ void menu_wipe_gameover(void) /* WipeGameOver::exeActive: its GameOver animation
     mlay.go_on = 1;
     lyt_start(mlay.gameover, "GameOver", 0);
 }
+void menu_wipe(int close, int frames, u32 rgb) { wipe_start(frames < 0 ? 30 : frames, close, rgb); } /* WipeFade::sFadeFrame */
+int menu_wipe_closed(void) { return wipe.frames && wipe.close && wipe.t >= wipe.frames; }
+void menu_wipe_force(int close) { wipe_start(1, close, wipe.rgb); wipe.t = 1; if (!close) wipe.frames = 0; }
+/* CinemaFrame.cpp: Screen (dead), ScreenToFrame (Appear), Frame (Wait), FrameToScreen (End, then dead) */
+void menu_cinema(int frame)
+{
+    if (!mlay.cinema || (mlay.ci_on && mlay.ci_frame == frame)) return;
+    if (!frame && !mlay.ci_on) return;
+    mlay.ci_on = 1; mlay.ci_frame = (u8)frame;
+    lyt_start(mlay.cinema, frame ? "Appear" : "End", 0);
+}
 static void mlay_init(void)
 {
     memset(&mlay, 0, sizeof mlay);
     mlay.toobad = lyt_new("TooBad");
     mlay.koopa = lyt_new("WipeKoopa");
     mlay.gameover = lyt_new("GameOver");
+    mlay.cinema = lyt_new("CinemaFrame");
 }
 static void mlay_update(void)
 {
     if (mlay.tb_on) lyt_update(mlay.toobad);
     if (mlay.ko_on) lyt_update(mlay.koopa);
     if (mlay.go_on) lyt_update(mlay.gameover);
+    if (mlay.ci_on) {
+        lyt_update(mlay.cinema);
+        if (lyt_stopped(mlay.cinema, 0)) { /* setNerveAtAnimStopped: Frame (Wait) or Screen (killed) */
+            if (mlay.ci_frame) lyt_start(mlay.cinema, "Wait", 0);
+            else mlay.ci_on = 0;
+        }
+    }
 }
 static void mlay_draw(void)
 {
-    if (!mlay.tb_on && !mlay.ko_on && !mlay.go_on) return;
+    if (!mlay.tb_on && !mlay.ko_on && !mlay.go_on && !mlay.ci_on) return;
     render_world_done();
+    if (mlay.ci_on) lyt_draw(mlay.cinema); /* DrawType_CinemaFrame: under the other layouts */
     if (mlay.tb_on) lyt_draw(mlay.toobad);
     if (mlay.ko_on) lyt_draw(mlay.koopa);
     if (mlay.go_on) lyt_draw(mlay.gameover);

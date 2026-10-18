@@ -752,6 +752,7 @@ static int breakable(const char *name, const Row *r, int *coins, int *pieces)
     return 0;
 }
 static unsigned char *row_dead; /* per OBJS row: broken, never comes back (zone swaps rebind from the rows) */
+static unsigned char *row_demo_hide; /* per OBJS row: hidden by a demo (DemoExecutor: 255 until its appear / showModel, else frames left) */
 /* per OBJS row: a PowerStar some event brings out (declarePowerStar / requestAppearPowerStar; slice.py STAR_DECLARERS
  * puts the declarer's row in its arg7): that row + 1, -1 a hundred coins, 0 none. Out once the declarer is done
  * (row_dead), then row_step counts its appear demo (star_pos) */
@@ -778,7 +779,7 @@ static int row_shown(int i)
     if (strcmp(sc->types + 32 * r->type, TEST_SHOWN) == 0) return 1;
 #endif
     /* SleepControlFunc: SW_SLEEP off makes it dead, on appeared (TicoFat's planet) */
-    return !row_dead[i] && (r->sw[SW_APPEAR] < 0 || sw_on(r, SW_APPEAR)) && (r->sw[SW_SLEEP] < 0 || sw_on(r, SW_SLEEP));
+    return !row_dead[i] && !row_demo_hide[i] && (r->sw[SW_APPEAR] < 0 || sw_on(r, SW_APPEAR)) && (r->sw[SW_SLEEP] < 0 || sw_on(r, SW_SLEEP));
 }
 
 /* The row's object is gone for good: its dead switch goes on */
@@ -851,6 +852,37 @@ static int demo_camera(const char *name, int frame, const float m[16])
     return 0;
 }
 static int demo_on; /* a demo is running: Mario waits (no input, no hurt) */
+#define DX_MAX_SUB 16
+static struct {                /* the DemoExecutor running (dx_update) */
+    int on, cur;               /* running, its demo */
+    int part, step;            /* DemoTimeKeeper: _18, mCurrentStep */
+    int sub_t[DX_MAX_SUB];     /* DemoSubPartInfo::_10 */
+    int cams_done;             /* DemoCameraKeeper::_C */
+    const void *cam;           /* its camera running (_10) */
+    char bck[28];              /* the player sheet's clip, "" wait */
+    int req, req_t;            /* a demo asked to start (-1 none), frames it waited for its zones */
+} dx = {.req = -1};
+static int dx_zones_full = 1;  /* the asked / running demo's casts' zones are in full (game_zone_sets) */
+typedef struct { u16 total; u8 suspend, pad; } DxPart;
+typedef struct { u16 total, step; u8 main, pad[3]; } DxSub;
+typedef struct { u8 part, pad; s16 pos; char bck[28]; } DxPlayer;
+typedef struct { u8 part, target, continuous, pad; s16 row; u16 pad2; u32 cls; s32 start, end; char anim[32]; } DxCam;
+typedef struct { u8 part, type; s16 pos; u16 c0, cn; char anim[24]; } DxAct;
+typedef struct { u8 part, type, kind, pad; s32 frame; } DxWipe;
+typedef struct { u8 part, ret; s16 wipeout; u32 se; char bgm[32]; } DxSnd;
+typedef struct {
+    u32 size; char name[64]; s16 sw[5]; u16 zone;
+    u8 nparts, nsub, nplayer, ncam, nact, nwipe, nsnd, nhide; u16 ngroup, ncast;
+} DxHead; /* 92 bytes, slice.py demo_chunk */
+typedef struct {
+    const DxHead *h; const DxPart *parts; const DxSub *sub; const DxPlayer *player; const DxCam *cam; const DxAct *act;
+    const DxWipe *wipe; const DxSnd *snd; const s16 *group, *cast, *hide;
+    u8 sw_was;              /* its SW_APPEAR last frame (the rising edge starts it) */
+} Demo;
+#define MAX_DEMOS 32
+static Demo demos[MAX_DEMOS];
+static int ndemos;
+static const float *dx_pos; /* the GeneralPos table: pos[3], rot[3] each */
 static int in_opening; /* the scenario's opening camera or the ScenarioStarter's flight in (GameScene not in Action) */
 static int dino_demo_on, ota_demo_on; /* whose demo camera runs */
 static int demo_dino_damage; /* tryStartDemoMarioPuppetable "ディノパックンダメージ": Mario waits from Pulled to its damage's end */
@@ -940,6 +972,8 @@ static int test_walk_to(V3 to, float stop);
 static int amb_stale = 1; /* ambient_effects' per-type table to be rebuilt (a new scene) */
 static void talk_init(const Scene *s);
 static int talk_demo(void);
+static void dx_init(const unsigned char *blob);
+static void story_scene_start(void);
 static int talk_active(void);
 static void stitle_start(void);
 static int start_pos_cam; /* the start's camera is on (camera_start_pos) */
@@ -1403,6 +1437,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         }
     }
     row_dead = mem_alloc(MEM_OBJECTS, s->nobjs);
+    row_demo_hide = mem_alloc(MEM_OBJECTS, s->nobjs);
     star_wait = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(short));
     for (u32 i = 0; i < s->nobjs; i++) {
         int a = s->objs[i].arg[7];
@@ -1578,6 +1613,8 @@ void game_init(const Scene *s, const unsigned char *blob)
             if (row < s->nobjs) row_camset[row] = *(const s16 *)(cs + 6 + 4 * i);
         }
     }
+    dx_init(blob);
+    story_scene_start();
     starter = -1;
     for (u32 i = 0; i < s->nobjs; i++) {
         const Row *r = &s->objs[i];
@@ -3578,6 +3615,15 @@ void game_zone_sets(const unsigned char *full, unsigned char *need, unsigned cha
     if (pipe_zone >= 0 && pipe_zone < MAX_ZONES) { /* came out of a pipe in a low zone: its collision is needed now */
         if (full[pipe_zone]) pipe_zone = -1;
         else { need[pipe_zone] = 2; dist[pipe_zone] = -1e30f; }
+    }
+    dx_zones_full = 1; /* a demo's casts' zones: all of it at once (Petari has every zone; its camera looks there) */
+    int dk = dx.on ? dx.cur : dx.req;
+    for (int c = 0; dk >= 0 && c < demos[dk].h->ngroup; c++) {
+        int z = sc->objs[demos[dk].group[c]].zone;
+        if (z >= MAX_ZONES) continue;
+        dist[z] = -1e30f;
+        if (full[z]) { need[z] = 1; continue; } /* kept while the demo runs */
+        need[z] = 2; dx_zones_full = 0;
     }
     zone_wait = 0;
     for (int z = 0; z < MAX_ZONES; z++) zone_wait |= (need[z] || soon[z]) && !full[z];
@@ -9130,7 +9176,7 @@ static float hud_hermite(float f, float f0, float v0, float s0, float f1, float 
 }
 static void hud_draw(void)
 {
-    if (menu_paused() || dome_layout_off) return; /* PauseMenu::appear / SphereSelector::appear: deactivateDefaultGameLayout */
+    if (menu_paused() || dome_layout_off || dx.on) return; /* PauseMenu::appear / SphereSelector::appear / startDemoSystem: deactivateDefaultGameLayout */
     for (int k = 0; k < 4; k++) {
         const HudCounter *c = &hud[k];
         if (c->ap == AP_HIDE) continue;
@@ -11482,7 +11528,8 @@ static void update_mario(void)
         m->hvel = v3(0, 0, 0); m->vup = 0;
         if (m->hurt_timer) m->hurt_timer--;
         if (mario_anim) { /* PowerStarGet once (mario_play restarts a one-shot clip, as startBck does) */
-            if (!star_demo) mario_play("wait", 1.0f, 1);
+            if (dx.on && dx.bck[0]) { if (!m_clip_is(dx.bck)) mario_play(dx.bck, 1.0f, 0); } /* the demo's startBckPlayer */
+            else if (!star_demo) mario_play("wait", 1.0f, 1);
             else if (mario_anim->clip_id < 0 || strcmp(sc->clips[mario_anim->clip_id].name, "powerstarget")) mario_play("powerstarget", 1.0f, 0);
             anim_update(mario_anim);
         }
@@ -22404,6 +22451,283 @@ void game_cursor_menu(void)
     cur_x = cur_x < 0 ? 0 : cur_x > 639 ? 639 : cur_x;
     cur_y = cur_y < 0 ? 0 : cur_y > 447 ? 447 : cur_y;
 }
+/* --- DemoExecutor (Petari Demo/DemoExecutor.cpp and its keepers) on the DEMO chunk (tools/slice.py demo_chunk) -----
+ * A DemoGroup's time sheet: its main parts one after another (DemoTimeKeeper), sub parts started at a main part's step
+ * (DemoSubPartKeeper); at a part's first step the player sheet puts Mario at a GeneralPos and plays a clip
+ * (DemoPlayerKeeper), the camera sheet starts the part's event camera "e:<DemoName>[<PartName>]" on a cast, Mario or
+ * nothing (DemoCameraKeeper), the action sheet acts on the casts (DemoActionKeeper), the wipe and sound sheets fade and
+ * play system SEs. Started by its SW_APPEAR (listenNameObjStageSwitchOnAppear: startProperDemoSystem) or by name
+ * (dx.req), with the cinema frame and the HUD off (startDemoSystem), Mario waiting; at the end its SW_DEAD on.
+ * ponytail: action types 2 / 3 (the casts' own functors and nerves) only for the classes in dx_cast_hook, no talks
+ * (8-10), no anim cameras (AnimCameraName) or cast clips (AnimName), casts not moved to a PosName, BGM changes not
+ * made, other actors not stopped (requestStopSceneFor), no pause / resume */
+
+static Row dx_row(const Demo *d) /* the group's switches as a row of its zone (sw_on / sw_set) */
+{
+    Row r;
+    memset(&r, 0, sizeof r);
+    r.zone = d->h->zone;
+    memcpy(r.sw, d->h->sw, sizeof r.sw);
+    return r;
+}
+
+static void dx_init(const unsigned char *blob)
+{
+    ndemos = 0; dx.on = 0; dx.req = -1; dx_pos = NULL;
+    const u8 *c = blob_chunk(blob, "DEMO", NULL);
+    if (!c) return;
+    u32 n = ((const u32 *)c)[0], np = ((const u32 *)c)[1];
+    dx_pos = (const float *)(c + 8);
+    const u8 *q = c + 8 + 24 * np;
+    for (u32 i = 0; i < n && ndemos < MAX_DEMOS; i++, q += ((const DxHead *)q)->size) {
+        Demo *d = &demos[ndemos++];
+        const DxHead *h = d->h = (const DxHead *)q;
+        const u8 *p = q + sizeof(DxHead);
+        d->parts = (const DxPart *)p; p += h->nparts * sizeof(DxPart);
+        d->sub = (const DxSub *)p; p += h->nsub * sizeof(DxSub);
+        d->player = (const DxPlayer *)p; p += h->nplayer * sizeof(DxPlayer);
+        d->cam = (const DxCam *)p; p += h->ncam * sizeof(DxCam);
+        d->act = (const DxAct *)p; p += h->nact * sizeof(DxAct);
+        d->wipe = (const DxWipe *)p; p += h->nwipe * sizeof(DxWipe);
+        d->snd = (const DxSnd *)p; p += h->nsnd * sizeof(DxSnd);
+        d->group = (const s16 *)p; d->cast = d->group + h->ngroup; d->hide = d->cast + h->ncast;
+        Row r = dx_row(d);
+        d->sw_was = h->sw[SW_APPEAR] >= 0 && sw_on(&r, SW_APPEAR);
+        /* MapObjActor::initialize: a cast the demo makes appear waits dead (isRegisteredDemoActionAppear) */
+        for (int k = 0; k < h->nhide; k++) row_demo_hide[d->hide[k]] = 255;
+        printf("demo: %s, %d parts, %d casts\n", h->name, h->nparts, h->ngroup);
+    }
+}
+
+/* DemoFunction::isDemoPartActiveFunction / getDemoPartStepFunction / getDemoPartTotalStepFunction */
+static int dx_active(int p)
+{
+    if (p & 0x80) return dx.sub_t[p & 0x7F] > 0;
+    return p == dx.part;
+}
+static int dx_step(int p) { const Demo *d = &demos[dx.cur]; return p & 0x80 ? d->sub[p & 0x7F].total - dx.sub_t[p & 0x7F] : dx.step; }
+static int dx_total(int p) { const Demo *d = &demos[dx.cur]; return p & 0x80 ? d->sub[p & 0x7F].total : d->parts[p].total; }
+static int dx_first(int p) { return dx_active(p) && dx_step(p) == 0; }                 /* MR::isDemoPartFirstStep */
+static int dx_last(int p) { return dx_active(p) && dx_step(p) == dx_total(p) - 1; }   /* MR::isDemoPartLastStep */
+
+/* the casts' own reactions (registerDemoActionFunctor / registerDemoActionNerve, and appear() where a class has its own) */
+static void dx_cast_hook(int row, int type)
+{
+    const char *cls = sc->types + 32 * sc->objs[row].type;
+    if (type == 0 && !strcmp(cls, "GCaptureTarget")) { /* GCaptureTarget::appear: hidden, exeAppear shows it at step 30 */
+        se_start(SE_SY_GCAPTURE_APPEAR, NULL);
+        row_demo_hide[row] = 30;
+        return;
+    }
+    if (type == 3 && !strcmp(cls, "ElectricRail")) { row_dead[row] = 1; sw_changed = 1; return; } /* ElectricRailNrvDisappear */
+    if (type == 2 || type == 3) printf("demo: no %s for %s\n", type == 2 ? "functor" : "nerve", cls);
+}
+
+static void dx_camera_end(void) /* DemoCameraKeeper::endCurrentCamera */
+{
+    if (dx.cam) camera_event_end();
+    dx.cam = NULL;
+}
+
+static void dx_camera_first(const DxCam *c) /* DemoCameraKeeper::executeFirst */
+{
+    V3 up = mario->up, front = mario->face, pos = mario->pos; /* startEventCameraTargetPlayer / NoTarget */
+    if (c->target == 2 && c->row >= 0) {                     /* startEventCamera(CameraTargetArg(cast)) */
+        const Row *r = &sc->objs[c->row];
+        float m[16], one[3] = {1, 1, 1}, rot[3] = {r->rot[0], r->rot[1], r->rot[2]};
+        mat_translate_rot_scale(m, r->pos, rot, one);
+        up = v3(m[4], m[5], m[6]); front = v3(m[8], m[9], m[10]); pos = row_pos(r);
+    }
+    if (c->anim[0]) printf("demo: no anim camera %s\n", c->anim);
+    if (!camera_event_start(c->cls, 0, up, front, pos)) printf("demo: no camera %08x\n", c->cls);
+}
+
+static void dx_action(const Demo *d, const DxAct *a) /* DemoActionInfo::executeActionFirst */
+{
+    for (int k = 0; k < a->cn; k++) {
+        int row = d->cast[a->c0 + k];
+        const Row *r = &sc->objs[row];
+        switch (a->type) {
+        case 0: row_demo_hide[row] = 0; row_dead[row] = 0; sw_changed = 1; dx_cast_hook(row, 0); break; /* appear */
+        case 1: row_dead[row] = 1; sw_changed = 1; break;                                               /* kill */
+        case 2: case 3: dx_cast_hook(row, a->type); break;
+        case 4: sw_set(r, SW_A, 1); break;
+        case 5: sw_set(r, SW_B, 1); break;
+        case 6: row_demo_hide[row] = 0; sw_changed = 1; break;   /* showModel */
+        case 7: row_demo_hide[row] = 255; sw_changed = 1; break; /* hideModel */
+        case 12: sw_set(r, SW_A, 0); break;
+        case 13: sw_set(r, SW_B, 0); break;
+        case 8: case 9: case 10: printf("demo: no talk (%s)\n", sc->types + 32 * r->type); break;
+        default: break;
+        }
+    }
+}
+
+static void dx_start(int k) /* DemoExecutor::start, startDemoSystem */
+{
+    const Demo *d = &demos[k];
+    dx.on = 1; dx.cur = k;
+    dx.part = 0; dx.step = -1;
+    for (int j = 0; j < DX_MAX_SUB; j++) dx.sub_t[j] = -1;
+    dx.cams_done = 0; dx.cam = NULL; dx.bck[0] = 0;
+    menu_cinema(1);
+    printf("demo: %s starts\n", d->h->name);
+}
+
+static void dx_end(void) /* DemoExecutor::end, DemoDirector::doDemoEndRequest */
+{
+    const Demo *d = &demos[dx.cur];
+    dx_camera_end();
+    dx.cams_done = -1;
+    dx.on = 0;
+    Row r = dx_row(d);
+    if (d->h->sw[SW_DEAD] >= 0) sw_set(&r, SW_DEAD, 1);
+    menu_cinema(0);
+    printf("demo: %s ends\n", d->h->name);
+}
+
+static void dx_update(void) /* DemoDirector::movement: the start requests, then DemoExecutor::movement */
+{
+    for (u32 i = 0; i < sc->nobjs; i++) /* GCaptureTarget's step 30: shown when its countdown runs out */
+        if (row_demo_hide[i] > 0 && row_demo_hide[i] < 255 && --row_demo_hide[i] == 0) {
+            sw_changed = 1;
+            if (!strcmp(sc->types + 32 * sc->objs[i].type, "GCaptureTarget")) se_start(SE_OJ_GCAPTURE_APPEAR, sc->objs[i].pos);
+        }
+    for (int k = 0; k < ndemos; k++) { /* listenNameObjStageSwitchOnAppear */
+        Demo *d = &demos[k];
+        if (d->h->sw[SW_APPEAR] < 0) continue;
+        Row r = dx_row(d);
+        int on = sw_on(&r, SW_APPEAR);
+        if (on && !d->sw_was && dx.req < 0) { dx.req = k; dx_zones_full = 0; }
+        d->sw_was = (u8)on;
+    }
+    if (dx.req >= 0 && !dx.on && !star_demo && !talk_demo() && !in_opening && (dx_zones_full || ++dx.req_t > 120)) { /* MR::canStartDemo */
+        dx_start(dx.req); dx.req = -1; dx.req_t = 0;
+    }
+    if (!dx.on) return;
+    const Demo *d = &demos[dx.cur];
+    const DxPart *cp = &d->parts[dx.part < d->h->nparts ? dx.part : d->h->nparts - 1];
+    /* DemoTimeKeeper::update */
+    dx.step++;
+    if (dx.step >= cp->total && !cp->suspend && ++dx.part < d->h->nparts) { dx.step = 0; cp = &d->parts[dx.part]; }
+    if ((cp->suspend && cp->total <= dx.step) || dx.part >= d->h->nparts) { dx_end(); return; } /* isDemoEnd */
+    for (int j = 0; j < d->h->nsub && j < DX_MAX_SUB; j++) { /* DemoSubPartKeeper::update */
+        if (dx.sub_t[j] > 0) dx.sub_t[j]--;
+        if (d->sub[j].main != 0xFF && dx_active(d->sub[j].main) && dx_step(d->sub[j].main) == d->sub[j].step)
+            dx.sub_t[j] = d->sub[j].total;
+    }
+    for (int i = 0; i < d->h->nplayer; i++) { /* DemoPlayerKeeper::executePlayer */
+        const DxPlayer *p = &d->player[i];
+        if (!dx_first(p->part)) continue;
+        if (p->pos >= 0) { /* setPlayerPosOnGroundAndWait */
+            const float *g = dx_pos + 6 * p->pos;
+            float m[16], one[3] = {1, 1, 1}, rot[3] = {g[3], g[4], g[5]};
+            mat_translate_rot_scale(m, g, rot, one);
+            V3 at = v3(g[0], g[1], g[2]);
+            mario->up = up_at(at, v3(m[4], m[5], m[6]));
+            mario->pos = at; mario->face = vnorm(vtangent(v3(m[8], m[9], m[10]), mario->up));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->launch = -1;
+        }
+        if (p->bck[0]) { /* startBckPlayer */
+            snprintf(dx.bck, sizeof dx.bck, "%s", p->bck);
+            for (char *s = dx.bck; *s; s++) *s = (char)tolower((unsigned char)*s);
+        }
+    }
+    if (dx.cams_done >= 0 && dx.cams_done < d->h->ncam) /* DemoCameraKeeper::update */
+        for (int i = 0; i < d->h->ncam; i++) {
+            const DxCam *c = &d->cam[i];
+            if (dx_first(c->part)) { dx_camera_end(); dx.cam = c; dx_camera_first(c); }
+            else if (dx_last(c->part)) dx.cams_done++; /* executeLast: endAnimCamera (none here) */
+        }
+    for (int i = 0; i < d->h->nact; i++) /* DemoActionKeeper::update */
+        if (dx_first(d->act[i].part)) dx_action(d, &d->act[i]);
+    for (int i = 0; i < d->h->nwipe; i++) { /* DemoWipeKeeper::executeType */
+        const DxWipe *w = &d->wipe[i];
+        if (!dx_first(w->part)) continue;
+        u32 rgb = w->kind == 1 ? 0xFFFFFF : 0; /* 白フェードワイプ; ponytail: 円ワイプ as the fade */
+        if (w->type < 2) menu_wipe(w->type == 1, w->frame, rgb);
+        else menu_wipe_force(w->type == 3);
+    }
+    for (int i = 0; i < d->h->nsnd; i++) /* DemoSoundKeeper::executeType (the system SE) */
+        if (dx_first(d->snd[i].part) && d->snd[i].se != 0xFFFFFFFFu) se_start(d->snd[i].se, NULL);
+}
+
+int game_test_demo(int k)
+{
+    if (k < 0) return dx.on ? dx.part * 1000 + dx.step : -1;
+    if (k >= ndemos) return -2;
+    Row r = dx_row(&demos[k]);
+    if (demos[k].h->sw[SW_APPEAR] >= 0) sw_set(&r, SW_APPEAR, 1);
+    else { dx.req = k; dx_zones_full = 0; }
+    return 0;
+}
+/* StorySequenceExecutor's nerves once the scene started (setNerveSceneStart): PlayDemoSequence, WaitTimeKeepDemoEnd,
+ * WaitSaveEnd, FadeinAfterSequence. The save after a clear's sequence (StartSaveAfterSequence) is menu.c's prompt, held
+ * while this runs. ponytail: the star return demos (StarReturnDemoStarter, GrandStarReturnDemoStarter) not played (the
+ * result window and the save stand in), no movies (2: game_request_movie plays them), prologue (8), staff roll (9) */
+enum { ST_IDLE, ST_PLAY, ST_WAIT_DEMO, ST_WAIT_SAVE, ST_FADEIN_AFTER };
+static struct { int nrv, step; } story;
+static void story_set(int n) { story.nrv = n; story.step = 0; }
+int game_story_busy(void) { return story.nrv != ST_IDLE; }
+static int story_demo(const char *name) /* the scenario's demo by DemoName, -1 none */
+{
+    for (int k = 0; k < ndemos; k++)
+        if (!strcmp(demos[k].h->name, name)) return k;
+    return -1;
+}
+static void story_update(void)
+{
+    if (story.nrv == ST_IDLE) return;
+    int first = story.step++ == 0;
+    const SeqDemo *d = seq_demo_current();
+    switch (story.nrv) {
+    case ST_PLAY:
+        if (!d) { story_set(ST_IDLE); return; }
+        switch (d->type) {
+        case 0: { /* tryStartDemo: tryStartTimeKeepDemoMarioPuppetable */
+            static const char *const unported[] = {"天文ドームスター帰還", "パワースター帰還", "グランドスター帰還[２回目以降]",
+                                                   "グランドスター１帰還", "グランドスター２帰還", "グランドスター３帰還", "グランドスター４帰還",
+                                                   "グランドスター５帰還", "グランドスター６帰還"};
+            int k = story_demo(d->name);
+            for (unsigned i = 0; i < sizeof unported / sizeof unported[0]; i++)
+                if (!strcmp(unported[i], d->name)) k = -1;
+            if (k < 0) { printf("story: demo %s not played\n", d->name); seq_demo_step(); story_set(ST_PLAY); break; }
+            if (dx.on || dx.req >= 0) break;
+            dx.req = k; dx_zones_full = 0;
+            story_set(ST_WAIT_DEMO);
+            break;
+        }
+        case 1: /* tryStartFadein */
+            if (first && menu_wipe_closed()) menu_wipe(0, -1, 0);
+            else if (!menu_wipe_closed() || first) { seq_demo_step(); story_set(ST_PLAY); }
+            break;
+        case 5: /* tryStartSave */
+            menu_save_start(1, 0, 0); seq_demo_saved(1);
+            story_set(ST_WAIT_SAVE);
+            break;
+        case 6: gd_flag_try_on(d->name); seq_demo_step(); story_set(ST_PLAY); break;
+        case 7: gd_story_follow(d->name); seq_demo_step(); story_set(ST_PLAY); break;
+        case 12: if (seq_demo_next()) story_set(ST_PLAY); else { seq_demo_clear(); story_set(ST_IDLE); } break;
+        case 13: if (seq_demo_next()) story_set(ST_PLAY); else story_set(ST_FADEIN_AFTER); break;
+        default: printf("story: step %d not played\n", d->type); seq_demo_step(); story_set(ST_PLAY); break;
+        }
+        break;
+    case ST_WAIT_DEMO: /* exeWaitTimeKeepDemoEnd */
+        if (dx.on || dx.req >= 0) return;
+        seq_demo_step(); story_set(ST_PLAY);
+        break;
+    case ST_WAIT_SAVE: /* exeWaitSaveEnd */
+        if (menu_saving()) return;
+        seq_demo_step(); story_set(ST_PLAY);
+        break;
+    case ST_FADEIN_AFTER: /* exeFadeinAfterSequence */
+        if (first && menu_wipe_closed()) { menu_wipe(0, -1, 0); return; }
+        if (!first && menu_wipe_closed()) return;
+        seq_demo_clear(); story_set(ST_IDLE);
+        break;
+    }
+}
+static void story_scene_start(void) { story_set(seq_demo_current() ? ST_PLAY : ST_IDLE); } /* setNerveSceneStart */
 /* GameScene::isPermitToPauseMenu: in the action (no demo, no wipe, no star's demo), Mario alive and not hurt */
 int game_pause_permitted(void)
 {
@@ -23535,7 +23859,9 @@ void game_update(void)
         }
         else star_demo++;
     }
-    demo_on = dino_demo_on || ota_demo_on || star_demo || fat_demo() || vine_demo_on() || talk_demo();
+    story_update();
+    dx_update();
+    demo_on = dino_demo_on || ota_demo_on || star_demo || fat_demo() || vine_demo_on() || talk_demo() || dx.on;
     LQ(60, update_ticofat());
     LQ(61, update_sambos());
     LQ(62, update_fire());

@@ -864,6 +864,10 @@ int main(void)
         if (frame == 200) printf("finalmovie test: movie starter %d\n", game_test_movie(2));
         if (frame == 400) printf("finalmovie test: scenario select %d\n", menu_scenario_selecting());
 #endif
+#if defined(PACKS) && defined(DEMO_TEST) /* EggStarGalaxy/1: Gã‚­ãƒ£ãƒ—ãƒãƒ£ãƒ¼å‡ºç¾ (BlueStarZone's SW 1: the blue chips) */
+        if (frame == 1300) printf("demo test: start %d\n", game_test_demo(0));
+        if (frame > 1300 && frame % 20 == 0) printf("demo test f %u: %d\n", frame, game_test_demo(-1));
+#endif
 #if defined(PACKS) && defined(PROLOGUE_TEST)
         if (frame == 300 || frame == 700) printf("prologue test f %u: movie starter %d\n", frame, game_test_movie(frame == 700));
 #endif

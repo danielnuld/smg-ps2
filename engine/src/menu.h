@@ -32,6 +32,11 @@ void menu_miss_start(void);          /* MissLayout ("TooBad") */
 void menu_wipe_koopa(int frames);    /* WipeKoopa: closes over frames (<= 0: 90) */
 int menu_wipe_koopa_closed(void);
 void menu_wipe_gameover(void);       /* WipeGameOver ("GameOver") */
+/* the demos' (game.c DemoExecutor): SceneWipeHolder's fades and CinemaFrame */
+void menu_wipe(int close, int frames, u32 rgb); /* WipeFade: closes / opens over frames (< 0: sFadeFrame 30), rgb 0xBBGGRR */
+void menu_wipe_force(int close);     /* forceOpenWipe / forceCloseWipe (the colour kept) */
+int menu_wipe_closed(void);          /* !isWipeOpen: closed and still */
+void menu_cinema(int frame);         /* CinemaFrame: tryScreenToFrame (1) / tryFrameToScreen (0) */
 void menu_galaxy_map(int galaxy_view);  /* GalaxyMapController: the Grand Galaxy (1) or the Observatory (0) map */
 int menu_galaxy_map_active(void);
 int menu_test_point_map(const char *pane);
@@ -51,6 +56,7 @@ int menu_test_point(const char *pane); /* tests: the pointer on a pane of the op
 
 /* game.c */
 int game_pause_permitted(void);     /* GameScene::isPermitToPauseMenu */
+int game_story_busy(void);          /* StorySequenceExecutor playing its demo sequence (the save waits) */
 void game_cursor_menu(void);        /* the pointer moved by the right stick and shown (startStarPointerModePauseMenu) */
 int game_scenario_stars(int n);     /* hasPowerStarInCurrentStage(n) */
 

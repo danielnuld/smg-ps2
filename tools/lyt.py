@@ -333,7 +333,7 @@ def convert(files, name, texts, extra=None):
 
 # the layouts every scene may show (menus.bin, loaded with each scene)
 COMMON = ("PauseMenu", "SysInfoWindow", "SysInfoWindowMini", "GameOver", "TooBad", "StageTitle", "IconAButton",
-          "BackButton", "ScenarioSelect", "WipeKoopa", "ResultWindow")
+          "BackButton", "ScenarioSelect", "WipeKoopa", "ResultWindow", "CinemaFrame")
 # the dome's galaxy select's (AstroDomeGalaxySelector): dome.bin, loaded in the AstroDome stages only; GalaxyInfo with
 # the galaxies' pictures (GalaxyInfoTexture.arc) as materials named by galaxy (20 characters)
 DOME = ("GalaxySelect", "GalaxyInfo", "GalaxyNamePlate")

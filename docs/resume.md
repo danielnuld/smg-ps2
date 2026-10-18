@@ -325,7 +325,44 @@ there needs the embedded blob and every pack rebuilt.
 
 ## Next
 
-**Menus and game flow (the user, 2026-10-17: "quiero que metas todo esto que falta ... para que el release sea lo mas
+**In-engine demos (the user, 2026-10-17: "haz las dos cosas, primero los videos": the movies are done (3feb30f), now
+the demos): resume here.** State at the session break (2026-10-17 evening):
+- Done, tested, committed: the generic DemoExecutor.
+  - tools/slice.py `demo_chunk`: a DEMO chunk per scenario: every DemoGroup (demoobjinfo) with its sheets from
+    ObjectData/DemoSheet.arc (Time / SubPart / Player / Camera / Action / Wipe / Sound), part names resolved to
+    indices, its casts (rows whose DemoGroupId = the group's l_id in its zone, DemoSubGroups merged), the GeneralPos it
+    names, and `hide` (the appear casts that wait dead: `demo_dead_classes`, MapObjActor's subclasses and a few more,
+    read from vendor/Petari). rows() keeps DemoGroupId / CastId / cls; scene() returns demos and gpos.
+  - tools/camera.py: "e:<DemoName>[<PartName>]" event cameras (class = actor_hash of that string, num 0).
+  - tools/lyt.py COMMON + "CinemaFrame"; menu.c `menu_cinema` (Appear / Wait / End), `menu_wipe` / `menu_wipe_force` /
+    `menu_wipe_closed` (black / white fades).
+  - engine game.c "DemoExecutor" section (before game_pause_permitted): dx_init / dx_update (DemoTimeKeeper,
+    SubPartKeeper, PlayerKeeper, CameraKeeper with camera_event_start, ActionKeeper types 0 1 4-7 12 13, Wipe, Sound
+    SEs), started by the group's SW_APPEAR edge or dx.req, waits for !in_opening / no star or talk demo and for its
+    casts' zones streamed in full (game_zone_sets: dx_zones_full, max 120 frames); cinema frame, HUD off, Mario waits
+    (dx.bck: startBckPlayer), SW_DEAD at the end. row_demo_hide hides casts until their appear. Hooks
+    (dx_cast_hook): GCaptureTarget appear (SE, shown at step 30), ElectricRail nerve (disappear).
+  - `demo` test (build.sh demo, EggStarGalaxy/1, -DDEMO_TEST: frame 1300 demo 0 "Gキャプチャー出現"): BlueStarZone
+    streamed in, camera on the star planet, the five pull stars appear, cinema frame, HUD back after 120 steps.
+- Written, compiles, NOT tested: StorySequenceExecutor's demo sequences. sequence.c: the Petari tables (SeqDemo),
+  the queue (seq_demo_current / step / next / clear), decide_move_galaxy (dome lecture, star piece retry, butler
+  fortress reports), decide_clear_galaxy (grand star 1 + Rosetta explain, EggStar 1/2, torch lecture...), after-loading
+  Rosetta talk. game.c story_update (ST_PLAY / WAIT_DEMO / WAIT_SAVE / FADEIN_AFTER), started at scene init; the star
+  return demos are skipped (`unported` list) until StarReturnDemoStarter / GrandStarReturnDemoStarter are ported;
+  menu.c's save prompt waits for game_story_busy(). Test it: AstroDome/1 on a fresh file should play ドームレクチャー１.
+- A full repack (`python tools/slice_all.py data/fs/files out/packs 6`) was running at the break; rerun it if
+  out/packs/*/ scenes lack DEMO chunks (EggStarGalaxy was repacked), and `python tools/lyt.py data/fs/files` (done).
+- Next, in order: test the story runner; demo talks (action types 8 / 9 / 10: the cast's TalkMessageCtrl,
+  createTalkCtrl(rIter, "AstroDome_Butler023") labels in tools/msg.py's TALK chunk, DemoTalkAnimCtrl clips); Butler's
+  demo functors (Butler.cpp startDemoDomeLecture1 ...), TicoDomeLecture; StarReturnDemoStarter (the result window inside
+  the demo, replacing menu.c's) and GrandStarReturnDemoStarter; Rosetta's demos (RosettaDemoAstroDome.cpp, the picture
+  book); anim cameras (AnimCameraName canm per cast archive); more dx_cast_hook classes (scratchpad list: engine
+  classes with type 2/3 casts: EyeBeamer, doors via their switches, CollectTico, FirePressureRadiate); BGM changes of
+  the Sound sheet; the other actors stopped during demos (requestStopSceneFor).
+
+**Menus and game flow (2026-10-17, before the demos):**
+
+**(the user, 2026-10-17: "quiero que metas todo esto que falta ... para que el release sea lo mas
 fiel al original"): resume here.** Everything outside the levels, after Petari (all of it is decompiled: ~35k lines;
 two tables are compiled into the DOL, not on the disc: cGalaxyInfoTable, cStoryProgressTable) with the disc's
 LayoutData layouts. Order by dependency:

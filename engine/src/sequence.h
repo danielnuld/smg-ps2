@@ -28,5 +28,13 @@ void seq_set_open_wipe(int frames, unsigned rgb);
 void seq_set_select_after(const char *galaxy);  /* the next scene opens this galaxy's scenario select (FinalBattle's end) */
 int seq_take_select_after(char *galaxy, int n);
 int seq_take_open_wipe(unsigned *rgb);
+/* StorySequenceExecutor's demo sequences queued by the last move (game.c story_update plays them) */
+typedef struct { unsigned char type, ev; const char *name; } SeqDemo;
+const SeqDemo *seq_demo_current(void); /* getCurrentDemoInfo, NULL none */
+void seq_demo_step(void);              /* the current list's next info */
+int seq_demo_next(void);               /* tryNextDemoInfo: the next list, 0 none */
+void seq_demo_clear(void);
+int seq_demo_saved(int set);           /* _B0: the save ran in the sequence */
+int seq_demo_event(void);              /* getExecutingEventEnum */
 
 #endif

@@ -40,6 +40,7 @@ Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
 """
 import json
 import math
+import re
 import struct
 import sys
 import zlib
@@ -191,6 +192,7 @@ def rows(b):
     group = int_or(b, "GroupId", n, -1)
     camset = int_or(b, "CameraSetId", n, -1)
     mid = int_or(b, "MessageId", n, -1)
+    demo, cast = int_or(b, "DemoGroupId", n, -1), int_or(b, "CastId", n, -1)  # DemoDirector::registerDemoCast
     out = []
     for i in range(n):
         out.append(dict(name=names[i], l_id=lid[i], path=path[i], camset=camset[i], pos=[fl[f][i] for f in ROW_FIELDS[:3]],
@@ -199,7 +201,8 @@ def rows(b):
                         distant=(float_column(b, "Distant") or [None] * n)[i],
                         priority=int_or(b, "Priority", n, 0)[i], inverse=int_or(b, "Inverse", n, 0)[i],
                         gtype=(B.bcsv_column(b, "Gravity_type") or ["Normal"] * n)[i],
-                        sw=[sw[f][i] for f in SW_FIELDS], group=group[i], mid=mid[i]))
+                        sw=[sw[f][i] for f in SW_FIELDS], group=group[i], mid=mid[i], demo=demo[i], cast=cast[i],
+                        cls=names[i]))
     return out
 
 
@@ -234,6 +237,7 @@ def scene(fs, galaxy, scenario):
     cubes, bcams = [], []  # camera areas (cameracubeinfo rows) and each stage's cameraparam.bcam
     zone_id = {galaxy: 0}
     homes = {}  # (zone, Obj_ID) -> the GeneralPos HOME_POS linked to that objinfo row
+    demos, gpos = [], []  # DemoGroup / DemoSubGroup rows (demoobjinfo); every GeneralPos (MR::findNamePos)
     order = [galaxy] + [s for s in act if s != galaxy]
     for s in order:
         files = stage_files(st / f"{s}.arc")
@@ -257,6 +261,10 @@ def scene(fs, galaxy, scenario):
             for r, pn, oid in zip(rows(gp), B.bcsv_column(gp, "PosName"), int_or(gp, "Obj_ID", len(B.bcsv_column(gp, "name")), -1)):
                 if pn == HOME_POS and oid >= 0:
                     homes[(zid, oid)] = dict(zone=zid, pos=r["pos"], rot=r["rot"])
+                gpos.append(dict(zone=zid, name=pn, pos=list(r["pos"]), rot=list(r["rot"])))
+            db = files.get(f"{root}/jmp/placement/{layer}/demoobjinfo", b"")
+            for r, dn, ts in zip(rows(db), B.bcsv_column(db, "DemoName"), B.bcsv_column(db, "TimeSheetName")):
+                demos.append(dict(r, zone=zid, demo_name=dn, sheet=ts))
             sb = files.get(f"{root}/jmp/start/{layer}/startinfo", b"")
             ns = len(B.bcsv_column(sb, "name"))
             for r, no, cid in zip(rows(sb), int_or(sb, "MarioNo", ns, 0), int_or(sb, "Camera_id", ns, -1)):
@@ -280,7 +288,7 @@ def scene(fs, galaxy, scenario):
     for o in objs:
         if o["name"].startswith("AssemblyBlock") and (o["zone"], o["l_id"]) in homes:
             o["home"] = homes[(o["zone"], o["l_id"])]
-    return act, zones, objs, starts, paths, cubes, bcams, up
+    return act, zones, objs, starts, paths, cubes, bcams, up, demos, gpos
 
 
 # static models drawn with a BVA's visibility at a frame (the shapes it hides there are left out; None: its last):
@@ -1266,13 +1274,13 @@ def declare_stars(keep, scenario, appear, jp):
 
 def placement(fs, galaxy, scenario):
     """Scenario-wide chunks (TYPE ZONE OBJS STRT PATH GRAV CAMS CARE) and what the asset packs need."""
-    act, zones, objs, starts, paths, cubes, bcams, up = scene(fs, galaxy, scenario)
+    act, zones, objs, starts, paths, cubes, bcams, up, demos, gpos = scene(fs, galaxy, scenario)
     # everything placed in a zone goes to world space here, so the engine never composes zone matrices.
     # ponytail: CAMS vectors (fixed eye points, tower axes) stay zone-local; fine while zones sit at the origin
     # unrotated, transform them in camera.c by the CAMS zone when a galaxy needs it
     zid = {z["name"]: i for i, z in enumerate(zones)}
     up_ids = {zid[z]: zid[p] for z, p in up.items() if z in zid and p in zid and zid[p] != 0}
-    zworld = to_world(zones, up_ids, objs + starts + paths + cubes + [o["home"] for o in objs if "home" in o])
+    zworld = to_world(zones, up_ids, objs + starts + paths + cubes + gpos + [o["home"] for o in objs if "home" in o])
     for o in objs:  # the Astro classes drawn with their dome's model (ASTRO_MODELS)
         if o["name"] in ASTRO_MODELS and 1 <= o["args"][0] <= 6:
             o["name"] = ASTRO_MODELS[o["name"]][o["args"][0] - 1]
@@ -1335,6 +1343,7 @@ def placement(fs, galaxy, scenario):
     cams, cam_index, cam_types = camera.cameras(bcams, float_column, int_or, jp2en)
     cset = [(i, r["camset"]) for i, r in enumerate(keep) if r.get("camset", -1) >= 0]  # ActorCameraInfo: CameraSetId
     out.append(chunk(b"CSET", struct.pack("<I", len(cset)) + b"".join(struct.pack("<Hh", i, v) for i, v in cset)))
+    out.append(demo_chunk(fsp, demos, gpos, keep, jp2en, se_table()))
     care = [struct.pack("<BBH9f", camera.SHAPES[r["name"]], r["zone"],
                         cam_index.get((r["zone"], "c", r["args"][0] & 0xFFFF), 0xFFFF), *r["pos"], *r["rot"], *r["scale"])
             for r in camera.areas(cubes)]
@@ -1608,6 +1617,148 @@ def canm_chunk(fsp, classes, galaxy=None, scenario=None):
                     out.append(name32(f"{c.lower()}/{n.rsplit('/', 1)[-1][:-5].lower()}") + struct.pack("<I", len(fr)) +
                                b"".join(struct.pack("<8f", *f) for f in fr))
     return chunk(b"CANM", struct.pack("<I", len(out)) + b"".join(out))
+
+
+# DemoExecutor's sheets (ObjectData/DemoSheet.arc "Demo<sheet><Time|SubPart|Player|Camera|Action|Wipe|Sound>.bcsv")
+WIPES = {"フェードワイプ": 0, "白フェードワイプ": 1, "円ワイプ": 2}  # SceneWipeHolder's wipes by name
+DEMO_SHEETS = ("time", "subpart", "player", "camera", "action", "wipe", "sound")
+
+
+_demo_dead = None
+
+
+def demo_dead_classes():
+    """The placed classes that wait dead when a demo makes them appear: MapObjActor's (MapObjActor::initialize:
+    isRegisteredDemoActionAppear -> makeActorDead) and those that do so in their own init, from vendor/Petari (the
+    factory's names whose class derives from one of them)."""
+    global _demo_dead
+    if _demo_dead is None:
+        pet = Path(__file__).resolve().parent.parent / "vendor" / "Petari"
+        parent = {}
+        for h in (pet / "include").rglob("*.hpp"):
+            for m in re.finditer(r"class\s+(\w+)\s*:\s*public\s+(\w+)", h.read_text(errors="ignore")):
+                parent[m.group(1)] = m.group(2)
+        bases = {"MapObjActor", "BegomanBaby", "BegomanSpike", "BegomanSpring", "PlanetMap", "SuperSpinDriver",
+                 "BlueStarCupsulePlanet", "Tico", "GCaptureTarget", "NokonokoLand", "Flag", "OceanSphere", "Pole"}
+
+        def dead(c):
+            for _ in range(32):
+                if c in bases:
+                    return True
+                if c not in parent:
+                    return False
+                c = parent[c]
+            return False
+        fac = (pet / "src" / "Game" / "NameObj" / "NameObjFactory.cpp").read_text(errors="ignore")
+        _demo_dead = {n for n, c in re.findall(r'\{\s*"(\w+)",\s*createNameObj<\s*(\w+)\s*>', fac) if dead(c)}
+    return _demo_dead
+
+
+def demo_chunk(fsp, demos, gpos, keep, jp2en, se_ids):
+    """DEMO: the scenario's DemoGroups (DemoExecutor), their sheets with every part name resolved to an index (main
+    parts 0.., sub parts 0x80 | j, rows naming no part left out), their casts (the OBJS rows whose DemoGroupId is the
+    group's l_id in its zone, a DemoSubGroup's of the same DemoName too: DemoCastSubGroup) and the GeneralPos named by
+    them (MR::findNamePos, in the demo's zone first).
+    Layout (little endian): u32 ndemos, npos; npos x {float pos[3], rot[3]}; per demo, 4-aligned:
+      Demo   {u32 size; char name[64] (UTF-8 DemoName); s16 sw[5] (SW_FIELDS, the group's); u16 zone;
+              u8 nparts, nsub, nplayer, ncam, nact, nwipe, nsnd, nhide; u16 ngroup, ncast} (92 B)
+      parts  {u16 total; u8 suspend, pad}
+      sub    {u16 total, step (the main part's step it starts at); u8 main, pad[3]}
+      player {u8 part, pad; s16 pos (-1 none); char bck[28]}
+      cam    {u8 part, target (0 none, 1 the player, 2 a cast), continuous, pad; s16 row; u16 pad;
+              u32 cls (camera.py class of "e:<DemoName>[<PartName>]"); s32 start, end; char anim[32]}
+      act    {u8 part, type (DemoActionInfo::mActionType); s16 pos; u16 c0, cn (its casts: cast[c0 .. c0 + cn)); char anim[24]}
+      wipe   {u8 part, type (0 open 1 close 2 force open 3 force close), kind (WIPES), pad; s32 frame}
+      snd    {u8 part, ret (ReturnBgm); s16 wipeout (BgmWipeoutFrame); u32 se (se_ids, ~0 none); char bgm[32]}
+      group  {s16 row} x ngroup, cast {s16 row} x ncast, hide {s16 row} x nhide (the casts it makes appear that wait
+             dead until then: demo_dead_classes), padded to 4"""
+    sheets = {n.rsplit("/", 1)[-1].lower(): b for n, b in B.rarc_files((fsp / "ObjectData" / "DemoSheet.arc").read_bytes())}
+    main = [d for d in demos if d["name"] == "DemoGroup" and d.get("sheet")]
+    en2jp = {e: j for j, e in jp2en.items()}
+    row_jp = [en2jp.get(r.get("cls", r["name"])) for r in keep]
+    pos_tab, pos_index = [], {}
+
+    def pos_of(name, zone):
+        if not name:
+            return -1
+        cands = [g for g in gpos if g["name"] == name]
+        if not cands:
+            return -1
+        g = next((g for g in cands if g["zone"] == zone), cands[0])
+        if id(g) not in pos_index:
+            pos_index[id(g)] = len(pos_tab)
+            pos_tab.append(struct.pack("<6f", *g["pos"], *g["rot"]))
+        return pos_index[id(g)]
+
+    def text(v, n):
+        b = (v or "").encode("utf8")[:n - 1]
+        return b + b"\0" * (n - len(b))
+    out = []
+    for d in main:
+        sh = {k: sheets.get(f"demo{d['sheet'].lower()}{k}.bcsv", b"") for k in DEMO_SHEETS}
+        nrow = {k: len(B.bcsv_column(sh[k], "PartName" if k != "subpart" else "SubPartName")) for k in DEMO_SHEETS}
+        cols = lambda k, f, dv="": B.bcsv_column(sh[k], f) or [dv] * nrow[k]
+        ints = lambda k, f, dv: int_or(sh[k], f, nrow[k], dv)
+        names = cols("time", "PartName")
+        parts = [struct.pack("<HBx", max(t, 1), sf != 0) for t, sf in zip(ints("time", "TotalStep", 1), ints("time", "SuspendFlag", 0))]
+        sub_names = cols("subpart", "SubPartName")
+        sub = [struct.pack("<HHB3x", max(t, 1), max(st, 0), names.index(mp) if mp in names else 0xFF)
+               for t, mp, st in zip(ints("subpart", "SubPartTotalStep", 1), cols("subpart", "MainPartName"), ints("subpart", "MainPartStep", 1))]
+        part = lambda n: names.index(n) if n in names else 0x80 | sub_names.index(n) if n in sub_names else None
+        group = [i for i, r in enumerate(keep) if r.get("demo", -1) == d["l_id"] and r["zone"] == d["zone"]]
+        for sg in demos:
+            if sg["name"] == "DemoSubGroup" and sg["demo_name"] == d["demo_name"]:
+                group += [i for i, r in enumerate(keep) if r.get("demo", -1) == sg["l_id"] and r["zone"] == sg["zone"]]
+        match = lambda name, cid: [i for i in group if row_jp[i] == name and (cid < 0 or keep[i].get("cast", -1) == cid)]
+        recs = {k: [] for k in DEMO_SHEETS[2:]}
+        for pn, ps, bk in zip(cols("player", "PartName"), cols("player", "PosName"), cols("player", "BckName")):
+            if part(pn) is not None:
+                recs["player"].append(struct.pack("<Bxh", part(pn), pos_of(ps, d["zone"])) + text(bk, 28))
+        for pn, tn, tc, an, a0, a1, co in zip(cols("camera", "PartName"), cols("camera", "CameraTargetName"),
+                                               ints("camera", "CameraTargetCastID", -1), cols("camera", "AnimCameraName"),
+                                               ints("camera", "AnimCameraStartFrame", -1), ints("camera", "AnimCameraEndFrame", -1),
+                                               ints("camera", "IsContinuous", -1)):
+            if part(pn) is None:
+                continue
+            rows_ = match(tn, tc) if tn else []
+            tgt = 0 if not tn else 1 if tn == "マリオ" else 2
+            cls = camera.actor_hash(d["demo_name"], "", f"[{pn}]")
+            recs["camera"].append(struct.pack("<BBBxhHIii", part(pn), tgt, co == 1, rows_[0] if rows_ else -1, 0, cls, a0, a1) +
+                                  text(an.rsplit(".", 1)[0] if an else "", 32))
+        casts = []
+        for pn, cn, ci, ty, ps, an in zip(cols("action", "PartName"), cols("action", "CastName"), ints("action", "CastID", -1),
+                                          ints("action", "ActionType", 0), cols("action", "PosName"), cols("action", "AnimName")):
+            if part(pn) is None:
+                continue
+            rs = match(cn, ci)
+            recs["action"].append(struct.pack("<BBhHH", part(pn), ty, pos_of(ps, d["zone"]), len(casts), len(rs)) + text(an, 24))
+            casts += rs
+        for pn, wn, wt, wf in zip(cols("wipe", "PartName"), cols("wipe", "WipeName", "フェードワイプ"), ints("wipe", "WipeType", 0),
+                                  ints("wipe", "WipeFrame", -1)):
+            if part(pn) is not None:
+                recs["wipe"].append(struct.pack("<BBBxi", part(pn), wt, WIPES.get(wn, 0), wf))
+        for pn, bg, se, rb, bw in zip(cols("sound", "PartName"), cols("sound", "Bgm"), cols("sound", "SystemSe"),
+                                      ints("sound", "ReturnBgm", 0), ints("sound", "BgmWipeoutFrame", -1)):
+            if part(pn) is not None:
+                recs["sound"].append(struct.pack("<BBhI", part(pn), rb != 0, bw, se_ids.get(se, 0xFFFFFFFF)) + text(bg, 32))
+        appear = {casts[c0 + k] for _, ty, _, c0, cn in (struct.unpack_from("<BBhHH", a) for a in recs["action"]) if ty == 0
+                  for k in range(cn)}
+        hide = sorted(i for i in appear if keep[i].get("cls", keep[i]["name"]) in demo_dead_classes())[:255]
+        rows_b = struct.pack(f"<{len(group)}h{len(casts)}h{len(hide)}h", *group, *casts, *hide)
+        rows_b += b"\0" * (-len(rows_b) % 4)
+        body = text(d["demo_name"], 64) + struct.pack("<5hH8BHH", *[v if -2**15 <= v < 2**15 else -1 for v in d["sw"]], d["zone"],
+                                                       len(parts), len(sub), len(recs["player"]), len(recs["camera"]),
+                                                       len(recs["action"]), len(recs["wipe"]), len(recs["sound"]), len(hide),
+                                                       len(group), len(casts))
+        body += b"".join(parts) + b"".join(sub) + b"".join(b"".join(recs[k]) for k in DEMO_SHEETS[2:]) + rows_b
+        out.append(struct.pack("<I", 4 + len(body)) + body)
+    return chunk(b"DEMO", struct.pack("<II", len(out), len(pos_tab)) + b"".join(pos_tab) + b"".join(out))
+
+
+def se_table():
+    """SE name -> JAISoundID from engine/src/se_ids.h (tools/sound.py writes it)."""
+    h = Path(__file__).resolve().parent.parent / "engine" / "src" / "se_ids.h"
+    return {m[0]: int(m[1], 16) for m in re.findall(r"#define (SE_\w+) (0x[0-9A-Fa-f]+)u", h.read_text())} if h.exists() else {}
 
 
 def blob_of(chunks):
