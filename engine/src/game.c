@@ -929,6 +929,8 @@ static int demo_dino_damage; /* tryStartDemoMarioPuppetable "ディノパック�
 static int star_demo;      /* PowerStar::exeStageClearDemo: frames since a star was taken + 1, 0 none */
 static float star_demo_m[16]; /* its camera's frame: at the star, facing the way Mario looked */
 static int obj_play(const Inst *in, const char *clip, int loop, int interp);
+static int lg_cls(const char *name);              /* LuigiNPC 1, LuigiEvent 2 (the LuigiNPC section) */
+static int luigi_scenario(char *stage, int n);    /* the current stage, its scenario */
 /* Skinned placed models (slice.py SKINNED_OBJ): a pool of poses kept by row across rebinds, the class's "wait" clip
  * (else its first) looping unless its behaviour plays another (obj_play). ponytail: 40 at once (instances and walkers), the rest drawn in
  * the bind pose of the nearest free one's skin is skipped (not drawn) */
@@ -1421,6 +1423,7 @@ void game_init(const Scene *s, const unsigned char *blob)
 {
     sc = s;
     gd_scene_start(); /* GameDataFunction's scene start holder (the isOnJust checks) */
+    mc_table = &MC_TABLES[gd_player_luigi() ? 1 : 0]; /* MarioActor::init2: mConst->changeTable(1) when isPlayerLuigi */
     fx_init(s);
     talk_init(s);
     lyt_init(s);
@@ -3462,8 +3465,8 @@ void game_rebind(void)
         in->kstair = strncmp(name, "KoopaBattleMapStair", 19) == 0 && strcmp(name, "KoopaBattleMapStairTurnAppear") != 0;
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
-        in->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 ? 3 :
-                      strcmp(name, "ButlerMap") == 0 ? 4 : strcmp(name, "Butler") == 0 ? 5 : 0;
+        in->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 || strcmp(name, "KinopioAstro") == 0 ? 3 :
+                      strcmp(name, "ButlerMap") == 0 ? 4 : strcmp(name, "Butler") == 0 ? 5 : lg_cls(name) ? 6 : 0;
         in->press = strcmp(name, "RGTowerPressGroundA") == 0 || strcmp(name, "ReverseGravityRoomPressGroundA") == 0 ||
                     strcmp(name, "ReverseGravityRoomPressGroundB") == 0 || in->dossun || in->onimasu;
         in->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 : 0;
@@ -8368,7 +8371,14 @@ static void tk_root_pre(Talker *t, int arg) /* rootNodePre: branches taken by th
         case 5: cond = !bee_mode; break;
         case 6: cond = bee_mode; break;
         case 9: cond = t->done != 0; break;
-        default: cond = 0; /* Boo, star appeared, Luigi, time-keep demo, already read, LED, astro results */
+        case 10: cond = gd_player_luigi(); break; /* MR::isPlayerLuigi */
+        case 14: { /* TalkFunction::getBranchAstroGalaxyResult: TalkDirector::getBranchResult(mNextIdx); 12 / 13 Luigi */
+            char st[32];
+            int scen = luigi_scenario(st, sizeof st);
+            cond = n->next == 12 ? gd_luigi_disappear() : n->next == 13 ? gd_luigi_hiding(st, scen) : 0; /* ponytail: the other results 0 */
+            break;
+        }
+        default: cond = 0; /* Boo, star appeared, time-keep demo, already read, LED */
         }
         tk_branch(t, cond);
     }
@@ -9090,6 +9100,8 @@ static int talk_row_label(int row, char *out) /* the TALK entry of a row: its <z
 static int tico_kill(int k, u32 v) { (void)v; if (talkers[k].row >= 0) row_kill(talkers[k].row); return 1; } /* killFunc: Meta */
 static int butler_branch(int k, u32 v); /* Butler::messageBranchFunc (the dome's section) */
 static int butler_talk_free(int row);   /* the Butler in its Wait nerve (no demo, no star piece reaction) */
+static int luigi_talk_free(int row);    /* LuigiNPC in a talking nerve (its section) */
+static int luigi_event(int t, u32 v), luigi_branch(int t, u32 v), kast_event(int t, u32 v);
 static void update_talkers(void)
 {
     if (!tk_nctl) return;
@@ -9107,9 +9119,13 @@ static void update_talkers(void)
             t->root_auto = 1;
             if (tico) t->kill = tico_kill;
             if (in->talkcls == 5) t->branch = butler_branch;
+            if (in->talkcls == 6) { t->event = luigi_event; t->branch = luigi_branch; } /* LuigiNPC::init: registerBranchFunc / EventFunc */
+            if (in->talkcls == 3 && sc->objs[in->row].arg[0] == 2 && !strcmp(sc->types + 32 * sc->objs[in->row].type, "KinopioAstro"))
+                t->event = kast_event; /* KinopioAstro::init: the messenger's eventFunc */
         }
         if (in->talkcls == 5 && !butler_talk_free(in->row)) continue; /* NPCActor::exeWait only (its demos, the reaction) */
         if (in->talkcls == 4 && dx.on) continue;                         /* ButlerMap: its Wait nerve only */
+        if (in->talkcls == 6 && !luigi_talk_free(in->row)) continue;     /* LuigiNPC: Wait / AfraidWait / ArrestedWait */
         float m[16];
         memcpy(m, in->m, 64);
         for (int j = 0; j < 12; j++) m[j] /= in->s;
@@ -24244,6 +24260,176 @@ static void keep_effects(void)
 void game_set_time_limit(int seconds) { time_limit = time_left = seconds * 60; }
 int game_time_left(void) { return time_limit ? time_left : -1; }
 
+/* --- LuigiNPC after Petari (LuigiNPC.cpp; LuigiNPC and LuigiEvent: type arg0, LuigiEvent's + Type_Event): Afraid (the
+ * Ghostly Galaxy's rescue: AfraidWait), Normal (the Observatory's garage once SpecialStarLuigiRescued, gone while he is
+ * lost or hiding), Event / OnTree / Arrested (hiding in a galaxy: there only while isOnLuigiHidingCurrentStage, its SW_B
+ * on). His talk (talkcls 6) in Wait / AfraidWait / ArrestedWait; eventFunc 0 the TakeOutStar (his star: the row is
+ * the PowerStar's declarer, slice.py STAR_DECLARERS), 1 LuigiTalkAfterRescued on; branchFunc: !isNearPlayer.
+ * OnTree: put on the tree 16 short of the first face 500 ahead (initAfterPlacement); Mario's touch TreeTouch, his spin
+ * / trample / hip drop TreeFall (back 4, up 20, gravity 1 a frame) to TreeLand, then Wait. Arrested: SW_A -> Leave.
+ * ponytail: no reactions (trampled / spin / pointing / star piece: tryStartReactionAndPushNerve), no Teresa mode
+ * (AfraidSquat / Rise never), no message area, his star comes out of the declarer (star_pos) once the talk is over and
+ * he is gone (makeActorDead), not the PowerStar demo model in his hands until the star is got (receiveOtherMsg), no shadow,
+ * no Turn actions, no demo casts (tryRegisterDemoForLuigiAndKinopio: the DEMO chunk's casts by DemoGroupId) */
+enum { LG_WAIT, LG_TAKEOUT, LG_AFRAIDWAIT, LG_ARRESTEDWAIT, LG_ARRESTEDJUMP, LG_TREEWAIT, LG_TREETOUCH, LG_TREEFALL, LG_TREELAND };
+enum { LT_AFRAID, LT_NORMAL, LT_EVENT, LT_ONTREE, LT_ARRESTED };
+#define MAX_LUIGI 4
+static struct { int row, type, nrv, step, took; V3 pos, vel; } lg[MAX_LUIGI]; /* took: 1 his star out, 2 gone */
+static int nlg;
+
+static void lg_set(int k, int n) { lg[k].nrv = n; lg[k].step = 0; }
+static int lg_find(int row)
+{
+    for (int k = 0; k < nlg; k++) if (lg[k].row == row) return k;
+    return -1;
+}
+static void lg_dead(int row) { row_dead[row] = 1; sw_changed = 1; } /* makeActorDead */
+static int lg_cls(const char *name) { return !strcmp(name, "LuigiNPC") ? 1 : !strcmp(name, "LuigiEvent") ? 2 : 0; }
+static int luigi_scenario(char *stage, int n) /* the current stage and its scenario */
+{
+    const char *sl = strchr(game_stage_name, '/');
+    snprintf(stage, n, "%.*s", sl ? (int)(sl - game_stage_name) : (int)strlen(game_stage_name), game_stage_name);
+    return sl ? atoi(sl + 1) : -1;
+}
+static void luigi_init(int row) /* LuigiNPC::init / initAfterPlacement */
+{
+    if (nlg == MAX_LUIGI || lg_find(row) >= 0) return;
+    const Row *r = &sc->objs[row];
+    int k = nlg++;
+    char st[32];
+    int scen = luigi_scenario(st, sizeof st);
+    memset(&lg[k], 0, sizeof lg[k]);
+    lg[k].row = row;
+    lg[k].type = r->arg[0] + (lg_cls(sc->types + 32 * r->type) == 2 ? LT_EVENT : 0); /* getJMapInfoArg0NoInit (-1 unset) */
+    lg[k].pos = row_pos(r);
+    lg_set(k, LG_WAIT);
+    switch (lg[k].type) {
+    case LT_AFRAID: lg_set(k, LG_AFRAIDWAIT); break;
+    case LT_NORMAL: if (!gd_flag_is_on("SpecialStarLuigiRescued") || gd_luigi_gone_or_hiding(st, scen)) lg_dead(row); break;
+    case LT_ARRESTED: lg_set(k, LG_ARRESTEDWAIT); break;
+    case LT_ONTREE: { /* initAfterPlacement: getFirstPolyOnLineToMap(front x 500), sTreeDist 16 back */
+        V3 x, z, hp, n;
+        int inst;
+        row_axes(r, &x, &z);
+        if (map_line(lg[k].pos, vmul(z, 500.0f), &hp, &n, &inst)) lg[k].pos = vsub(hp, vmul(z, 16.0f));
+        lg_set(k, LG_TREEWAIT);
+        break;
+    }
+    }
+    if (lg[k].type > LT_NORMAL && lg[k].type <= LT_ARRESTED) { /* makeActorAppeared (SW_B on) only where he hides */
+        if (gd_luigi_hiding_current(st, scen)) { if (r->sw[SW_B] >= 0) sw_set(r, SW_B, 1); }
+        else lg_dead(row);
+    }
+}
+static int luigi_talk_free(int row) /* the nerves that talk: Wait, AfraidWait, ArrestedWait (tryTalkNearPlayer) */
+{
+    int k = lg_find(row);
+    return k >= 0 && (lg[k].nrv == LG_WAIT || lg[k].nrv == LG_AFRAIDWAIT || lg[k].nrv == LG_ARRESTEDWAIT);
+}
+static int luigi_event(int t, u32 v) /* LuigiNPC::eventFunc */
+{
+    int k = lg_find(talkers[t].row);
+    if (v == 0) { /* mTakeOutStar->takeOut(): over once its nerve ends */
+        if (k < 0 || lg[k].took) return 1;
+        if (lg[k].nrv != LG_TAKEOUT) lg_set(k, LG_TAKEOUT);
+        return 0;
+    }
+    if (v == 1) gd_flag_try_on("LuigiTalkAfterRescued"); /* onGameEventFlagTalkedToLuigiAfterRescued */
+    return 1;
+}
+static int luigi_branch(int t, u32 v) { (void)v; return !tk_near(&talkers[t], -1.0f); } /* !isNearPlayer || inMessageArea */
+
+static void update_luigi(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (in->talkcls != 6) continue;
+        const Row *r = &sc->objs[in->row];
+        luigi_init(in->row);
+        int k = lg_find(in->row);
+        if (k < 0 || !row_shown(in->row)) continue;
+        if (lg[k].took == 1 && !(td.st >= 0 && talkers[td.st].row == in->row)) { lg[k].took = 2; lg_dead(in->row); continue; } /* the star got */
+        int first = lg[k].step == 0, talking = td.st >= 0 && talkers[td.st].row == in->row && td.nrv == TD_TALK;
+        V3 up = up_at(lg[k].pos, v3(in->m[4], in->m[5], in->m[6])), x, z;
+        row_axes(r, &x, &z);
+        V3 c = vadd(lg[k].pos, vmul(up, 50.0f)); /* ponytail: the body sensor (mSensorSize 50) 50 up */
+        switch (lg[k].nrv) {
+        case LG_WAIT: obj_play(in, talking ? "talk" : "wait", 1, 8); break; /* setWaitAction: Wait / Talk */
+        case LG_AFRAIDWAIT: obj_play(in, talking ? "afraidtalk" : "afraidwait", 1, 8); break; /* setAfraidAction */
+        case LG_ARRESTEDWAIT: /* trySetNerveArrested: SW_A -> ArrestedJump */
+            if (r->sw[SW_A] >= 0 && sw_on(r, SW_A)) { lg_set(k, LG_ARRESTEDJUMP); continue; }
+            obj_play(in, talking ? "arrestedtalk" : "arrested", 1, 8);
+            break;
+        case LG_ARRESTEDJUMP:
+            if (first) { obj_play(in, "leave", 0, 8); se_start(SE_SV_LUIGI_ESCAPE, &c.x); }
+            else if (in->anim && in->anim->done) { lg_set(k, LG_WAIT); continue; }
+            break;
+        case LG_TAKEOUT: /* exeTakeOutStar (TakeOutStar::exeAnim: the action, then the star out: exeDemo) */
+            if (first) obj_play(in, "takeoutstar", 0, 8);
+            if (lg[k].step == 87) se_start(SE_SV_LUIGI_LIFT_UP, &c.x); /* sLiftUpSeTiming */
+            if (lg[k].step > 87) in->lv[0] = se_level(SE_OJ_LV_POW_STAR_EXIST, &c.x, in->lv[0]);
+            if (!first && in->anim && in->anim->done) { lg[k].took = 1; lg_set(k, LG_WAIT); continue; } /* exeDemo, Term: its star comes out once he is gone (star_wait) */
+            break;
+        case LG_TREEWAIT:
+            if (first) obj_play(in, "treewait", 1, 8);
+            if (vlen(vsub(mario->pos, lg[k].pos)) <= 600.0f) in->lv[0] = se_level(SE_SV_LV_LUIGI_AFRAID, &c.x, in->lv[0]); /* sAfraidSeRange */
+            break;
+        case LG_TREETOUCH:
+            if (first) { obj_play(in, "treetrampled", 0, 8); se_start(SE_SV_LUIGI_AFRAID_TOUCH, &c.x); }
+            else if (in->anim && in->anim->done) { lg_set(k, LG_TREEWAIT); continue; }
+            break;
+        case LG_TREEFALL: /* exeOnTreeFall: back sHitMove 4, up sHitJump 20; gravity 1 a frame until on the ground */
+            if (first) {
+                obj_play(in, "treehit", 0, 8);
+                lg[k].vel = vadd(vmul(z, -4.0f), vmul(up, 20.0f));
+                se_start(SE_SV_LUIGI_FALL, &c.x);
+            }
+            lg[k].vel = vsub(lg[k].vel, up);
+            {
+                V3 hp, n;
+                int inst;
+                if (vdot(lg[k].vel, up) < 0 && map_line(vadd(lg[k].pos, vmul(up, 10.0f)), vadd(lg[k].vel, vmul(up, -10.0f)), &hp, &n, &inst)) {
+                    lg[k].pos = hp; lg[k].vel = v3(0, 0, 0);
+                    lg_set(k, LG_TREELAND);
+                    continue;
+                }
+            }
+            lg[k].pos = vadd(lg[k].pos, lg[k].vel);
+            break;
+        case LG_TREELAND:
+            if (first) { obj_play(in, "treeland", 0, 8); se_start(SE_SM_LUIGI_LAND, &c.x); }
+            else if (in->anim && in->anim->done) { lg_set(k, LG_WAIT); continue; }
+            break;
+        }
+        if (lg[k].type == LT_ONTREE && (lg[k].nrv == LG_TREEWAIT || lg[k].nrv == LG_TREETOUCH)) {
+            int msg = mario_offence(c, 50.0f, vmul(up, -1.0f)); /* receiveMsgPlayerAttack: spin, trample, hip drop */
+            if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) se_start(SE_SM_NPC_TRAMPLED, &c.x);
+            if (msg != MSG_NONE) { lg_set(k, LG_TREEFALL); continue; }
+            if (lg[k].nrv == LG_TREEWAIT && mario_touch(c, 50.0f)) { lg_set(k, LG_TREETOUCH); continue; } /* attackSensor */
+        }
+        mat_translate_rot_scale(in->m, (const float *)&lg[k].pos, r->rot, r->scale);
+        lg[k].step++;
+    }
+}
+
+/* KinopioAstro (the messenger, arg0 2) after Petari: its talk's eventFunc 0 (LetterEvent_LuigiLetter) shows Luigi's letter
+ * (LuigiLetter for the talk: the hiding galaxy's picture, menu.c) until it is closed, then onGameEventFlagGetLuigiLetter;
+ * the Peach letter events are over at once. ponytail: no PeachLetter, no 1-ups (LetterEvent_PeachLetter1Ups), no mail */
+static int kast_letter;
+static int kast_event(int t, u32 v)
+{
+    (void)t;
+    if (v != 0) return 1;
+    char st[32];
+    int scen = luigi_scenario(st, sizeof st);
+    if (!gd_luigi_letter_at_messenger(st, scen)) return 1; /* no mLuigiLetter: dispLetter(nullptr) */
+    if (!kast_letter) { kast_letter = 1; menu_luigi_letter(gd_luigi_letter_galaxy_npc(st, scen), 1); return 0; }
+    if (menu_luigi_letter_alive()) return 0;
+    kast_letter = 0;
+    gd_luigi_set_hiding(); /* MR::onGameEventFlagGetLuigiLetter */
+    return 1;
+}
+
 /* --- the dome's galaxy select ---------------------------------------------------------------------------------------
  * AstroDomeBlueStar, SphereSelector, SphereSelectorHandle, MiniatureGalaxy(Holder), AstroDomeOrbit,
  * AstroDomeCameraController and AstroDomeGalaxySelector after Petari (their layouts: menu.c menu_dome_*). The pointer
@@ -25361,6 +25547,7 @@ void game_update(void)
     story_update();
     dx_update();
     update_dome_npcs();
+    update_luigi();
     srd_update();
     adds_update();
     gsr_update();

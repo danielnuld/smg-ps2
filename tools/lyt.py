@@ -376,6 +376,21 @@ def build_mappics(fsp):
     return head.ljust(4096, b"\0") + b"".join(d.ljust(slot, b"\0") for _, _, d in slots)
 
 
+# Luigi's letter (LuigiLetter: the pause menu's and KinopioAstro's) with each LuigiPicture<galaxy>.arc picture as a
+# material named by its galaxy (20 characters): letter.bin, loaded only in a scene where the letter can show
+# (main.c: getLuigiLetterGalaxyName / ...ForNPC)
+LETTER = ("LuigiLetter",)
+
+
+def build_letter(fsp):
+    pics = {}
+    for a in sorted((Path(fsp) / "ObjectData").glob("LuigiPicture*.arc")):
+        for n, b in B.rarc_files(a.read_bytes()):
+            if n.lower().endswith(".bti"):
+                pics[a.stem[len("LuigiPicture"):][:20]] = b
+    return build_dome(fsp, LETTER, "LuigiLetter", pics)
+
+
 def build_ending(fsp):
     pics = {n.rsplit("/", 1)[-1][:-4][:20]: b for n, b in B.rarc_files((Path(fsp) / "ObjectData" / "StaffRollTexture.arc").read_bytes())
             if n.lower().endswith(".bti")}
@@ -526,7 +541,7 @@ def build_3d(fsp):
 
 # the title and file select's (FileSelector, TitleSequenceProduct): title.bin (layouts) and title3d.bin (FileSelectItem's
 # planet and fellows, FileSelectSky), loaded in the FileSelect stage only
-TITLE = ("TitleLogo", "PressStart", "FileSelect", "FileInfo", "FileNumber", "MiiSelect", "MiiIcon")
+TITLE = ("TitleLogo", "PressStart", "FileSelect", "FileInfo", "FileNumber", "MiiSelect", "MiiIcon", "BrosButton")
 TITLE_3D = (("FileSelectDataPlanet", "FileSelectDataPlanet"), ("FileSelectDataMario", "FileSelectDataMario"),
             ("FileSelectDataLuigi", "FileSelectDataLuigi"), ("FileSelectDataYoshi", "FileSelectDataYoshi"),
             ("FileSelectDataKinopio", "FileSelectDataKinopio"), ("FileSelectDataPeach", "FileSelectDataPeach"),
@@ -599,6 +614,8 @@ if __name__ == "__main__":  # python tools/lyt.py data/fs/files [out/packs/menus
     print(f"map.bin {dst.with_name('map.bin').stat().st_size / 1024:.0f} KB, "
           f"mappics.bin {dst.with_name('mappics.bin').stat().st_size / 1024:.0f} KB")
     print(f"dome.bin {dst.with_name('dome.bin').stat().st_size / 1024:.0f} KB")
+    dst.with_name("letter.bin").write_bytes(build_letter(fsp))
+    print(f"letter.bin {dst.with_name('letter.bin').stat().st_size / 1024:.0f} KB")
     dst.with_name("ending.bin").write_bytes(build_ending(fsp))
     print(f"ending.bin {dst.with_name('ending.bin').stat().st_size / 1024:.0f} KB")
     dst.with_name("subs.bin").write_bytes(build_subs(fsp))

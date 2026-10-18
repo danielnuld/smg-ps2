@@ -44,6 +44,8 @@ int menu_monologue_alive(void);      /* !isDead */
  * startGalaxyMapLayoutForTicoComet, startAstroMapLayoutForChallengeGalaxyDiscover */
 enum { GMAP_ASTRO, GMAP_GALAXY, GMAP_LIST, GMAP_NEW_GALAXY, GMAP_NEW_TICO, GMAP_NEW_DOME, GMAP_TICO_COMET, GMAP_CHALLENGE };
 void menu_galaxy_map(int mode);
+void menu_luigi_letter(const char *galaxy, int talk); /* LuigiLetter (LuigiPicture<galaxy>): appear (talk: KinopioAstro's) */
+int menu_luigi_letter_alive(void);   /* !isDead */
 int menu_galaxy_map_active(void);
 int menu_test_point_map(const char *pane);
 int menu_file_selecting(void);       /* the FileSelect stage's FileSelector running */

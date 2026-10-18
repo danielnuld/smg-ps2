@@ -203,7 +203,7 @@ static const GdValue gd_values[] = {
     {"サーフィン[チャレンジ]/lo", 90 * 60},
     {"LibraryOpenNewStarCount", 1},
     {"絵本既読章", 0},
-    {"LuigiEventState", 0},
+    {"LuigiEventState", 0xFF00},
     {"WarpPodSaveBits", 0},
     {"TicoGalaxyAlreadyTalk", 0},
     {"MessageAlreadyRead", 0},

@@ -1,7 +1,7 @@
 """Convert every galaxy/scenario into the streaming layout (slice.py packs) and report the bytes per scenario.
 
 usage: python tools/slice_all.py data/fs/files out/packs [jobs] [Galaxy,Galaxy...: only those repacked]
-writes <out>/resident.bin, <out>/<Galaxy>/<n>/{scene,common,<Stage>,<Stage>.low}.bin and <out>/scenarios.csv:
+writes <out>/resident.bin (resident_luigi.bin: Luigi's), <out>/<Galaxy>/<n>/{scene,common,<Stage>,<Stage>.low}.bin and <out>/scenarios.csv:
   whole   every pack of the scenario in full (no streaming)
   stream  the most loaded at once with streaming (worst stage: its chain in full, other stages low)
   fits    stream <= ROOM
@@ -80,6 +80,9 @@ if __name__ == "__main__":
     res, names = SL.resident_pack(fs)
     (out / "resident.bin").write_bytes(res)
     print(f"resident.bin {len(res) / 1e6:.2f} MB ({', '.join(sorted(names))} + clips)", flush=True)
+    lres, _ = SL.resident_pack(fs, player="Luigi")  # loaded instead when the file plays as Luigi (main.c)
+    (out / "resident_luigi.bin").write_bytes(lres)
+    print(f"resident_luigi.bin {len(lres) / 1e6:.2f} MB", flush=True)
     gs = sorted(p.name for p in (Path(fs) / "StageData").iterdir() if (p / f"{p.name}Scenario.arc").exists())
     if len(sys.argv) > 4:
         gs = [g for g in gs if g in sys.argv[4].split(",")]

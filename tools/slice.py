@@ -67,7 +67,7 @@ SKINNED_OBJ = ("TreasureBoxKinokoOneUp", "TreasureBoxCoin", "TreasureBoxEmpty", 
                "CrystalCageSBreak", "BenefitItemOneUp", "BenefitItemLifeUp", "FlipPanel", "FlipPanelReverse", "OtaRock",
                "HammerHeadPackun", "PackunLeaf", "Plant", "Petari", "Butler", "TicoDomeLecture", "Rosetta", "ButlerExplain", "ButlerMap",
                "PhantomShipPropellerSmall", "PhantomShipPropellerBig", "PhantomShipBridge",  # AnmModelSwitchMove without SW_A: Move at once (obj_anim: its only clip)
-               "PStar", "GStar", "SpinTico", "AstroCore")  # PStar / GStar: the star return demos' PowerStar / GrandStar (clip names fit 31 chars)
+               "PStar", "GStar", "SpinTico", "AstroCore", "LuigiNPC", "LuigiEvent")  # PStar / GStar: the star return demos' PowerStar / GrandStar (clip names fit 31 chars)
 # MapObjActor::initialize (tryStartAllAnim): a placed class whose model archive holds a BCK of the archive's name
 # plays it from the start; such classes are drawn skinned too (AUTO_SKINNED, class -> archive, filled by placement)
 AUTO_SKINNED = {}
@@ -87,7 +87,7 @@ def auto_anim(fsp, arc):
     return _auto_anim[arc]
 
 
-ANIM_ARC = {"TicoDomeLecture": "Tico", "ButlerExplain": "Butler", "ButlerMap": "Butler", "PStar": "PowerStar", "GStar": "GrandStar", "CocoSambo": "CocoSamboBody", "Karikari": "Karipon", "BenefitItemOneUp": "KinokoOneUp",
+ANIM_ARC = {"LuigiEvent": "LuigiNPC", "TicoDomeLecture": "Tico", "ButlerExplain": "Butler", "ButlerMap": "Butler", "PStar": "PowerStar", "GStar": "GrandStar", "CocoSambo": "CocoSamboBody", "Karikari": "Karipon", "BenefitItemOneUp": "KinokoOneUp",
             "BenefitItemLifeUp": "KinokoLifeUp", "HammerHeadPackun": "PackunFlower", "Plant": "PlantSeed", "FlowerGroup": "Flower", "FlowerBlueGroup": "FlowerBlue",
             "CutBushGroup": "CutBush", "FirePressureRadiate": "FirePressure", "JumpBeamer": "JumpBeamerBody", "TreasureBoxKinokoOneUp": "TreasureBox", "TreasureBoxCoin": "TreasureBox", "TreasureBoxEmpty": "TreasureBox", "TreasureBoxGoldEmpty": "TreasureBoxGold", "TreasureBoxCrackedKinokoOneUp": "TreasureBoxCracked", "TreasureBoxCrackedAirBubble": "TreasureBoxCracked", "TreasureBoxBlueChip": "TreasureBox", "TreasureBoxYellowChip": "TreasureBox", "TreasureBoxKinokoLifeUp": "TreasureBox", "TreasureBoxCrackedKinokoLifeUp": "TreasureBoxCracked", "TreasureBoxCrackedEmpty": "TreasureBoxCracked"}  # where a class's clips are when not in its own-named archive
 # ponytail: models the renderer cannot reproduce: the atmosphere spheres (*Air: their glow is a TEV rim effect; drawn
@@ -99,7 +99,7 @@ OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup
 # camera animations baked for a class from another archive: class -> (CANM name prefix, archive)
 CANM_ARC = {"GrandStarReturnDemoStarter": ("gsr", "DemoAstroReturn"),
             "AstroDomeDemoStarter": ("adds", "AstroDomeDemoCamera")}  # initAnimCamera "AstroDomeDemoCamera.arc"  # initAnimCamera "DemoAstroReturn.arc"
-MODEL_ARC = {"TicoDomeLecture": "Tico", "PStar": "PowerStar", "GStar": "GrandStar", "OtaKing": "OtaKing", "KoopaJr": "KoopaJr", "Tico": "Tico", "Plant": "PlantSeed"}
+MODEL_ARC = {"LuigiEvent": "LuigiNPC", "TicoDomeLecture": "Tico", "PStar": "PowerStar", "GStar": "GrandStar", "OtaKing": "OtaKing", "KoopaJr": "KoopaJr", "Tico": "Tico", "Plant": "PlantSeed"}
 # ponytail: no MiniatureGalaxyStarNumber (its digits are texture matrices per material), no MiniatureGalaxyShadow
 MINI_EXTRA = ("MiniatureGalaxyUnknown", "MiniHatenaGalaxy", "MiniatureGalaxyUnknownKoopa", "MiniKoopaGalaxy",
               "MiniatureGalaxySelect")
@@ -524,7 +524,7 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                     t = ps2[key]
                     gain = gains[key]
                     split = ras_split.get(key, True)
-                    if (arc.stem == "Mario" and tex.material_name(b, bl[b"MAT3"], mat) == "EyeLid_v" and
+                    if (arc.stem in SKINNED_ARCS and tex.material_name(b, bl[b"MAT3"], mat) == "EyeLid_v" and
                             mt["tex"] + 3 < len(texs)):
                         # MarioActor::swapTextureInit: mario_eyeLid.0 .. .2 (open, half, shut), the blink's
                         # (updateBlink) swaps, baked through the same material (SWAP chunk)
@@ -1262,6 +1262,9 @@ def declare_stars(keep, scenario, appear, jp):
             k = None if s32(r["args"][7]) > 0 else -1
         elif r["name"] in ("CollectTico", "DinoPackun", "OtaKing"):  # their init declarePowerStar, always
             k = None
+        elif r["name"] in ("LuigiNPC", "LuigiEvent"):  # LuigiNPC::isDeclarePowerStarType: Afraid, Event, OnTree, Arrested
+            t = s32(r["args"][0]) + (2 if r["name"] == "LuigiEvent" else 0)
+            k = None if t == 0 or 2 <= t < 5 else -1
         elif k is None and s32(r["args"][7]) != 7:
             k = -1
         if k == -1:
@@ -1501,29 +1504,46 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
             chunk(b"SWAP", struct.pack("<I", len(swaps)) + b"".join(swaps))] + ptcl
 
 
-def anim_chunk(fsp):
+# the player's archive per player (GameSystemStationedArchiveLoader::createAndAddPlayerArchives: Mario.arc / Luigi.arc,
+# both with MarioAnime.arc): Luigi's model goes in resident_luigi.bin as "Mario"
+SKINNED_ARCS = {"Mario": "Mario", "Luigi": "Luigi"}
+# MarioAnimator.cpp luigiAnimeSwapTable (gIsLuigi: these clips played as Luigi's), and StarReturnDemoStarter's
+# isPlayerLuigi LuigiResultWaitStart: in Luigi's pack their clips go by Mario's names
+LUIGI_SWAP = {"run": "luigirun", "jump": "luigijump", "jumproll": "luigijumproll", "jumpback": "luigijumpback",
+              "runend": "luigirunend", "spin": "luigispin", "spinground": "luigispinground",
+              "spaceflyshort": "luigispaceflyshort", "wait": "luigiwait", "waitslopel": "luigiwaitslopel",
+              "waitsloper": "luigiwaitsloper", "waitslopeu": "luigiwaitslopeu", "waitsloped": "luigiwaitsloped",
+              "resultwaitstart": "luigiresultwaitstart"}
+
+
+def player_files(fsp, ext, swap):
+    """MarioAnime.arc's files of an extension as (clip, bytes), each swapped clip's data its Luigi one's."""
+    files = {n.rsplit("/", 1)[-1][:-len(ext)].lower(): b for n, b in B.rarc_files((fsp / "ObjectData" / "MarioAnime.arc").read_bytes())
+             if n.lower().endswith(ext)}
+    return [(n, files.get(swap.get(n, n), b) if swap else b) for n, b in files.items()]
+
+
+def anim_chunk(fsp, swap=None):
     clips = []
-    for n, b in B.rarc_files((fsp / "ObjectData" / "MarioAnime.arc").read_bytes()):
-        if n.lower().endswith(".bck"):
-            raw = anim_clip(b)
-            z = zlib.compress(raw, 9)
-            clips.append(name32(n.rsplit("/", 1)[-1][:-4].lower()) + struct.pack("<II", len(raw), len(z)) + z +
-                         b"\0" * (-len(z) % 4))
+    for n, b in player_files(fsp, ".bck", swap):
+        raw = anim_clip(b)
+        z = zlib.compress(raw, 9)
+        clips.append(name32(n) + struct.pack("<II", len(raw), len(z)) + z + b"\0" * (-len(z) % 4))
     return chunk(b"ANIM", struct.pack("<I", len(clips)) + b"".join(clips))
 
 
-def eye_chunk(fsp):
+def eye_chunk(fsp, player="Mario", swap=None):
     """EYEP: Mario's eye patterns (MarioActor::setBlink: the BTP of a clip's name, J3D1btp1 / TPT1), the EyeLid_v
     material's texture each frame as 0..3 over mario_eyeLid.0: {u32 n}, n x {char clip[32], u16 frames, u8 loop
     (2 = repeat: its own frame count; else the clip's frame), u8 pad, u8 eyelid[frames], padded to 4}."""
     import tex
-    mb = next(v for k, v in B.rarc_files((fsp / "ObjectData" / "Mario.arc").read_bytes()) if k.lower().endswith(".bdl"))
+    mb = next(v for k, v in B.rarc_files((fsp / "ObjectData" / f"{player}.arc").read_bytes()) if k.lower().endswith(".bdl"))
     bl = tex.blocks(mb)
     tnames = tex.names(mb, bl[b"TEX1"] + tex.u32(mb, bl[b"TEX1"] + 0x10))
     base = tnames.index("mario_eyeLid.0")
     out = []
-    for n, b in B.rarc_files((fsp / "ObjectData" / "MarioAnime.arc").read_bytes()):
-        if not n.lower().endswith(".btp") or b[:8] != b"J3D1btp1":
+    for n, b in player_files(fsp, ".btp", swap):
+        if b[:8] != b"J3D1btp1":
             continue
         t = b.find(b"TPT1")
         loop, fmax, nmat = b[t + 8], struct.unpack_from(">H", b, t + 0xA)[0], struct.unpack_from(">H", b, t + 0xC)[0]
@@ -1536,7 +1556,7 @@ def eye_chunk(fsp):
         keys = [struct.unpack_from(">H", b, t + ix_off + 2 * (first + k))[0] for k in range(cnt)]
         frames = max(fmax, 1)
         eye = bytes(min(max(keys[min(f, cnt - 1)] - base, 0), 3) if cnt else 0 for f in range(frames))
-        out.append(name32(n.rsplit("/", 1)[-1][:-4].lower()) + struct.pack("<HBB", frames, loop, 0) + eye +
+        out.append(name32(n) + struct.pack("<HBB", frames, loop, 0) + eye +
                    b"\0" * (-len(eye) % 4))
     return chunk(b"EYEP", struct.pack("<I", len(out)) + b"".join(out))
 
@@ -1554,7 +1574,13 @@ def anim_skipped(cls, clip, galaxy):
         return clip not in ("wait", "talk", "demobutlermaplecture")
     if cls == "Rosetta":
         return clip.startswith("demo") and (clip != "demowithbutler") == (galaxy == "AstroGalaxy")
+    if cls in ("LuigiNPC", "LuigiEvent"):  # the actions game.c's LuigiNPC plays (no reactions); the garage's: Wait / Talk
+        return clip not in (("wait", "talk") if galaxy == "AstroGalaxy" else LUIGI_NPC_CLIPS)
     return False
+
+
+LUIGI_NPC_CLIPS = ("wait", "talk", "afraidwait", "afraidtalk", "arrested", "arrestedtalk", "leave", "takeoutstar", "treewait",
+                   "treetrampled", "treehit", "treeland")
 
 
 def obj_anim_chunk(fsp, classes, galaxy=None):
@@ -1902,12 +1928,16 @@ def packs(fs, galaxy, scenario, resident, ratio=0.99):
     return files, info
 
 
-def resident_pack(fs, ratio=0.99):
-    """Models every scenario shares (phase 0b RESIDENT set, the ones the converter knows) + Mario + his clips."""
+def resident_pack(fs, ratio=0.99, player="Mario"):
+    """Models every scenario shares (phase 0b RESIDENT set, the ones the converter knows) + the player + his clips.
+    player "Luigi": resident_luigi.bin, loaded instead of resident.bin when the file plays as Luigi (main.c): Luigi.arc's
+    model as "Mario", MarioAnime.arc's clips with LUIGI_SWAP."""
     fsp = Path(fs)
     names = list(RESIDENT) + list(SKINNED)
-    models = [(t, t) for t in names] + [(f"{c}@{k}", f"{c}@{k}") for c in MAT_COLOR for k in range(len(MAT_COLOR[c][1]))]
-    return blob_of(assets(fsp, models, {}, ratio, fx=True) + [anim_chunk(fsp), eye_chunk(fsp)]), set(names)
+    swap = LUIGI_SWAP if player == "Luigi" else None
+    models = [(t, SKINNED_ARCS[player] if t == "Mario" else t) for t in names] + \
+        [(f"{c}@{k}", f"{c}@{k}") for c in MAT_COLOR for k in range(len(MAT_COLOR[c][1]))]
+    return blob_of(assets(fsp, models, {}, ratio, fx=True) + [anim_chunk(fsp, swap), eye_chunk(fsp, player, swap)]), set(names)
 
 
 def read_chunks(blob):

@@ -18,7 +18,7 @@
  * ponytail: the card's state checked at boot and before each save, not watched between */
 #define MC_DIR "/SMGPS2"
 #define MC_FILE "/SMGPS2/save.dat"
-#define MC_MAX (24 * 1024)
+#define MC_MAX (48 * 1024) /* the six files with Mario's and Luigi's data (gamedata.c files) */
 
 extern const u8 save_icn[], save_icn_end[], icon_sys[], icon_sys_end[];
 

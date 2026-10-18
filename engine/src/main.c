@@ -246,6 +246,7 @@ static void toc_select(void)
     for (u32 i = 0; i < toc_n; i++) {
         const TocEntry *e = (const TocEntry *)(toc_all + 4 + i * sizeof(TocEntry));
         if ((strncmp(e->path, scen, lp) == 0 && e->path[lp] == '/') || strcmp(e->path, "resident.bin") == 0 || strcmp(e->path, "sound.bin") == 0 ||
+            strcmp(e->path, "resident_luigi.bin") == 0 || strcmp(e->path, "letter.bin") == 0 ||
             strcmp(e->path, "menus.bin") == 0 || strcmp(e->path, "menus3d.bin") == 0 ||
             ((strcmp(e->path, "title.bin") == 0 || strcmp(e->path, "title3d.bin") == 0) && strncmp(scen, "FileSelect/", 11) == 0) ||
             (strcmp(e->path, "dome.bin") == 0 && strncmp(scen, "AstroDome/", 10) == 0) ||
@@ -595,9 +596,28 @@ static void stream_update(Scene *s)
         pend_commit(s);
 }
 
-static const u8 *base_bufs[8]; /* scene.bin, resident.bin, sound.bin, common.bin, menus(3d).bin: freed at a scene change */
+static const u8 *base_bufs[10]; /* scene.bin, resident.bin, sound.bin, common.bin, menus(3d).bin...: freed at a scene change */
 static int nbase;
 static const u8 *load_base(const char *path) { return base_bufs[nbase++] = load_file(path); }
+
+/* GameSystemStationedArchiveLoader::createAndAddPlayerArchives: the player's archives by the file's player (Mario.arc /
+ * Luigi.arc): resident_luigi.bin (Luigi's model and clips) instead of resident.bin when it plays as Luigi */
+static const char *resident_pack(void)
+{
+    Pack p;
+    if (!gd_player_luigi() || !pack_open(&p, "resident_luigi.bin")) return "resident.bin";
+    pack_close(&p);
+    return "resident_luigi.bin";
+}
+/* LuigiLetter::makeArchiveListForMenu / ForNPC: letter.bin only where the pause menu's or the messenger's letter can show */
+static int letter_scene(void)
+{
+    char st[48];
+    const char *sl = strchr(scen, '/');
+    snprintf(st, sizeof st, "%.*s", sl ? (int)(sl - scen) : (int)strlen(scen), scen);
+    int no = sl ? sl[1] - '0' : -1;
+    return gd_luigi_letter_galaxy(st, no) || (!strcmp(st, "AstroGalaxy") && gd_luigi_letter_galaxy_npc(st, no));
+}
 
 static const u8 *load_packs(Scene *s)
 {
@@ -611,7 +631,7 @@ static const u8 *load_packs(Scene *s)
     if (blob_load(s, scene_blob) != 0)
         return NULL;
     u32 before_resident = pack_bytes;
-    if (blob_add(s, load_base("resident.bin")) != 0)
+    if (blob_add(s, load_base(resident_pack())) != 0)
         return NULL;
     { /* the scenario's sound pack (tools/sound.py --pack --scene), else the shared one */
         Pack sp;
@@ -644,6 +664,12 @@ static const u8 *load_packs(Scene *s)
                 if (blob_add(s, load_base(mp_names[k])) != 0) return NULL;
                 resident_bytes += pack_bytes - before; /* its own budget, as resident.bin's */
             }
+        if (letter_scene() && pack_open(&mp, "letter.bin")) { /* Luigi's letter */
+            pack_close(&mp);
+            u32 before = pack_bytes;
+            if (blob_add(s, load_base("letter.bin")) != 0) return NULL;
+            resident_bytes += pack_bytes - before;
+        }
     }
     u32 sz;
     nzones = *(const u32 *)blob_chunk(scene_blob, "ZONE", &sz);

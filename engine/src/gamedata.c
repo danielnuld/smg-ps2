@@ -384,26 +384,136 @@ int gd_comet_star(const char *g) /* isCometLand: its comet's star (getEncounterC
     return 0;
 }
 
-/* SaveDataHandleSequence's image of the save (config%d + mario%d per UserFile 1..6): each file a serialized gd, created
- * or not, its icon (FileSelectIconID: 1 Mario .. 5 Peach) and a modification count for its date. ponytail: no Luigi
- * data (luigi%d), no sysconf; the memory card writes this image (gd_image) */
+/* GameDataConst::isPowerStarSpecial: a SpecialStar flag named <prefix>... gives the galaxy's star */
+static int star_special(const char *g, int star, const char *prefix)
+{
+    for (int i = 0; i < NFLAGS; i++)
+        if (gd_flags[i].type == GT_SPECIALSTAR && gd_flags[i].c1 == star && gd_flags[i].s1 && !strcmp(gd_flags[i].s1, g) &&
+            !strncmp(gd_flags[i].name, prefix, strlen(prefix)))
+            return 1;
+    return 0;
+}
+int gd_star_luigi_has(const char *g, int star) { return star_special(g, star, "SpecialStarFindingLuigi"); } /* isPowerStarLuigiHas */
+int gd_galaxy_luigi_arrested(const char *g, int star) /* GameDataConst::isGalaxyLuigiArrested (-1: any star) */
+{
+    int i = find_flag("SpecialStarLuigiRescued");
+    return i >= 0 && !strcmp(gd_flags[i].s1, g) && (star == -1 || star == gd_flags[i].c1);
+}
+
+/* FindingLuigiEventScheduler.cpp: LuigiEventState (a game event value): STATE_NULL, RESCUED, DISAPPEAR, HIDING, END, or
+ * 0..5 a count down of stars before he gets lost from the Observatory again; the galaxy and star he hides in, the first
+ * SpecialStarFindingLuigi1..3 not got. ponytail: no LuigiMailDirector (the Wii message board's mails: lost / found) */
+enum { LS_NULL = 0xFF00, LS_RESCUED, LS_DISAPPEAR, LS_HIDING, LS_END };
+static const char *luigi_lost_stage; /* mLuigiLostStageName, mLuigiLostStarID */
+static int luigi_lost_star = -1;
+static unsigned luigi_state(void) { return (unsigned)gd_value("LuigiEventState") & 0xFFFF; }
+static void luigi_set(unsigned v) { gd_set_value("LuigiEventState", (int)v); }
+void gd_luigi_hiding_galaxy(const char **g, int *star) /* getHidingGalaxyNameAndStarId */
+{
+    char n[32];
+    for (int k = 1; k <= 3; k++) {
+        snprintf(n, sizeof n, "SpecialStarFindingLuigi%1d", k);
+        if (!gd_flag_is_on(n)) { int i = find_flag(n); *g = i >= 0 ? gd_flags[i].s1 : NULL; *star = i >= 0 ? gd_flags[i].c1 : -1; return; }
+    }
+    *g = NULL; *star = -1;
+}
+static int luigi_star_index(void) /* calcPowerStarIndexLuigiHas */
+{
+    char n[32];
+    if (!gd_flag_is_on("SpecialStarLuigiRescued")) return 0;
+    for (int k = 1; k <= 3; k++) { snprintf(n, sizeof n, "SpecialStarFindingLuigi%1d", k); if (!gd_flag_is_on(n)) return k; }
+    return 4;
+}
+static void luigi_return_astro(int state) /* setStateReturnAstroGalaxy: past 108 stars he gets lost at once */
+{
+    luigi_set(gd_star_num() > 108 ? LS_DISAPPEAR : (unsigned)state);
+}
+void gd_luigi_stage_result(const char *stage, int star, int has_yet) /* updateOnStageResult (has_yet: hasPowerStarYetAtResultSequence) */
+{
+    if (luigi_state() == LS_NULL && gd_flag_is_on("SpecialStarLuigiRescued")) { luigi_set(LS_RESCUED); return; }
+    if (luigi_state() == LS_RESCUED && !has_yet && (gd_star_num() > 108 || gd_flag_is_on("LuigiTalkAfterRescued"))) {
+        luigi_set(LS_DISAPPEAR);
+        return;
+    }
+    if (luigi_state() == LS_HIDING && luigi_lost_stage && stage && !strcmp(luigi_lost_stage, stage) && luigi_lost_star == star) {
+        if (luigi_star_index() == 4) luigi_set(LS_END);
+        else luigi_return_astro(5);
+        return;
+    }
+    if (luigi_state() <= 5) { /* isState(0): counting down */
+        unsigned n = luigi_state();
+        if (n != 0 && --n == 0) luigi_set(LS_DISAPPEAR);
+        else luigi_return_astro((int)n);
+    }
+}
+void gd_luigi_set_hiding(void) { luigi_set(LS_HIDING); gd_luigi_hiding_galaxy(&luigi_lost_stage, &luigi_lost_star); } /* setStateHiding */
+void gd_luigi_update(int move_type) /* update(GalaxyMoveArgument): 6 syncWithGameEventFlag, 7 (the title) STATE_NULL */
+{
+    if (move_type == 6 && luigi_state() == LS_HIDING) gd_luigi_set_hiding();
+    if (move_type == 7) luigi_set(LS_NULL);
+}
+int gd_luigi_disappear(void) { return luigi_state() == LS_DISAPPEAR; }                        /* isLuigiDisappearFromAstroGalaxy */
+int gd_luigi_hiding_any(void) { return luigi_state() == LS_HIDING; }                          /* isLuigiHidingAnyGalaxy */
+int gd_luigi_active(void) { return luigi_state() != LS_NULL && luigi_state() != LS_RESCUED; } /* isActiveLuigiHideAndSeekEvent */
+int gd_luigi_end(void) { return luigi_state() == LS_END; }                                    /* isEndLuigiHideAndSeekEvent */
+
+/* EventUtil.cpp's Luigi checks for the current stage and its selected scenario (-1 none) */
+int gd_luigi_hiding(const char *stage, int scen) /* MR::isOnLuigiHiding */
+{
+    return (scen != -1 && gd_star_luigi_has(stage, scen)) || gd_luigi_hiding_any();
+}
+int gd_luigi_hiding_current(const char *stage, int scen) /* MR::isOnLuigiHidingCurrentStage */
+{
+    if (!gd_luigi_hiding(stage, scen)) return 0;
+    if (scen != -1 && gd_star_luigi_has(stage, scen)) return 1;
+    const char *g; int s;
+    gd_luigi_hiding_galaxy(&g, &s);
+    return g && !strcmp(g, stage);
+}
+int gd_luigi_gone_or_hiding(const char *stage, int scen) { return gd_luigi_disappear() || gd_luigi_hiding(stage, scen); } /* isLuigiDisappearFromAstroGalaxyOrHiding */
+int gd_luigi_letter_at_messenger(const char *stage, int scen) { return gd_luigi_disappear() && !gd_luigi_hiding(stage, scen); } /* isLuigiLetterArrivalAtMessenger */
+int gd_luigi_hiding_galaxy_scenario(const char *g, int scen) /* MR::isLuigiHidingGalaxyAndScenario */
+{
+    if (!gd_flag_is_on("SpecialStarLuigiRescued")) return 0;
+    const char *hg; int s;
+    gd_luigi_hiding_galaxy(&hg, &s);
+    return gd_luigi_hiding_any() && hg && !strcmp(hg, g) && s == scen;
+}
+const char *gd_luigi_letter_galaxy(const char *stage, int scen) /* MR::getLuigiLetterGalaxyName (the pause menu's letter) */
+{
+    if (scen != -1 && gd_star_luigi_has(stage, scen)) return stage;
+    if (gd_luigi_disappear() || gd_luigi_hiding_any()) { const char *g; int s; gd_luigi_hiding_galaxy(&g, &s); return g; }
+    return NULL;
+}
+const char *gd_luigi_letter_galaxy_npc(const char *stage, int scen) /* MR::getLuigiLetterGalaxyNameForNPC */
+{
+    if (gd_luigi_disappear() || gd_luigi_hiding(stage, scen)) { const char *g; int s; gd_luigi_hiding_galaxy(&g, &s); return g; }
+    return NULL;
+}
+
+/* SaveDataHandleSequence's image of the save (config%d + mario%d + luigi%d per UserFile 1..6): each file its Mario and
+ * its Luigi game data (serialized gd), created or not, its icon (FileSelectIconID: 1 Mario .. 5 Peach), the player
+ * last loaded (ConfigDataMisc isLastLoadedMario: UserFile mIsPlayerMario) and a modification count for its date.
+ * ponytail: no sysconf; the memory card writes this image (gd_image) */
 #define GD_FILES 6
-static struct { u8 created, icon, pad[2]; u32 modified; u8 data[8 + sizeof gd]; } files[GD_FILES];
-static int cur_file = -1;
+static struct { u8 created, icon, luigi, pad; u32 modified; u8 data[2][8 + sizeof gd]; } files[GD_FILES]; /* data[1]: luigi%d */
+static int cur_file = -1, cur_luigi;
 static u32 modify_count;
 
 int gd_file_created(int i) { return i >= 0 && i < GD_FILES && files[i].created; }
 int gd_file_icon(int i) { return gd_file_created(i) ? files[i].icon : 0; }
 u32 gd_file_modified(int i) { return gd_file_created(i) ? files[i].modified : 0; }
-static void file_store(int i) { gd_serialize(files[i].data, sizeof files[i].data); files[i].modified = ++modify_count; }
-void gd_file_create(int i, int icon) /* SaveDataHandler: resetAllData, setCreated, updateLastModified */
+static void file_store(int i) { gd_serialize(files[i].data[cur_luigi], sizeof files[i].data[0]); files[i].modified = ++modify_count; }
+void gd_file_create(int i, int icon) /* SaveDataHandler: resetAllData, setCreated, updateLastModified (both players' data) */
 {
     if (i < 0 || i >= GD_FILES) return;
     char keep[sizeof gd];
     memcpy(keep, &gd, sizeof gd);
     gd_reset();
-    files[i].created = 1; files[i].icon = (u8)icon;
-    file_store(i);
+    files[i].created = 1; files[i].icon = (u8)icon; files[i].luigi = 0;
+    gd_serialize(files[i].data[1], sizeof files[i].data[1]);
+    gd_serialize(files[i].data[0], sizeof files[i].data[0]);
+    files[i].modified = ++modify_count;
     memcpy(&gd, keep, sizeof gd);
 }
 void gd_file_copy(int dst, int src) /* copyUserFileMemory: every entry of src into dst */
@@ -414,20 +524,43 @@ void gd_file_copy(int dst, int src) /* copyUserFileMemory: every entry of src in
 }
 void gd_file_delete(int i) { if (i >= 0 && i < GD_FILES) memset(&files[i], 0, sizeof files[i]); }
 void gd_file_set_icon(int i, int icon) { if (gd_file_created(i)) { files[i].icon = (u8)icon; files[i].modified = ++modify_count; } }
-int gd_file_load(int i) /* restoreUserFile into the current data (startGameDataLoadSequence) */
+int gd_file_load(int i) /* restoreUserFile(isLastLoadedMario) into the current data (startGameDataLoadSequence) */
 {
-    if (!gd_file_created(i) || !gd_deserialize(files[i].data, sizeof files[i].data)) return 0;
+    if (!gd_file_created(i) || !gd_deserialize(files[i].data[files[i].luigi], sizeof files[i].data[0])) return 0;
     cur_file = i;
+    cur_luigi = files[i].luigi;
     return 1;
 }
-void gd_file_save(void) { if (cur_file >= 0) file_store(cur_file); } /* the current game into its file */
+void gd_file_save(void) { if (cur_file >= 0) file_store(cur_file); } /* the current game into its file (the player's data) */
 int gd_file_current(void) { return cur_file; }
+int gd_player_luigi(void) /* MR::isPlayerLuigi: !GameDataHolder::isDataMario */
+{
+#ifdef LUIGI_TEST
+    return 1;
+#endif
+    return cur_file >= 0 && cur_luigi;
+}
+int gd_file_luigi(int i) { return gd_file_created(i) && files[i].luigi; } /* FileSelector::isUserFileLuigi */
+void gd_file_set_luigi(int i, int luigi) { if (gd_file_created(i)) files[i].luigi = (u8)(luigi != 0); } /* setUserFileMario + setLastLoadedMario */
+static int file_data_flag(int i, int luigi, const char *flag) /* a flag of the file's Mario / Luigi data */
+{
+    static char keep[sizeof gd];
+    int on = 0;
+    memcpy(keep, &gd, sizeof gd);
+    if (gd_file_created(i) && gd_deserialize(files[i].data[luigi], sizeof files[i].data[0])) on = gd_flag_is_on(flag);
+    memcpy(&gd, keep, sizeof gd);
+    return on;
+}
+int gd_file_appear_luigi(int i) /* FileSelector::isUserFileAppearLuigi: Luigi's file, or Mario's that saw the complete ending */
+{
+    return gd_file_luigi(i) || file_data_flag(i, 0, "ViewCompleteEnding");
+}
 void gd_file_info(int i, int *stars, int *pieces, int *normal_end, int *complete_end) /* FileSelector::setFileInfo */
 {
     static char keep[sizeof gd];
     memcpy(keep, &gd, sizeof gd);
     *stars = *pieces = *normal_end = *complete_end = 0;
-    if (gd_file_created(i) && gd_deserialize(files[i].data, sizeof files[i].data)) {
+    if (gd_file_created(i) && gd_deserialize(files[i].data[files[i].luigi], sizeof files[i].data[0])) {
         *stars = gd_star_num(); *pieces = (int)gd.pieces;
         *normal_end = gd_flag_is_on("ViewNormalEnding"); *complete_end = gd_flag_is_on("ViewCompleteEnding");
     }

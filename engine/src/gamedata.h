@@ -62,7 +62,31 @@ void gd_comet_sync(void);            /* GalaxyCometScheduler::syncWithFlags */
 void gd_comet_next(void);            /* forceToNextState (after a stage result) */
 int gd_comet_star(const char *galaxy); /* the landed comet's scenario (4 normal, 5 purple coins), 0 none */
 
-/* UserFiles 0..5 (FileSelector's 1..6): created, icon (1 Mario, 2 Luigi, 3 Yoshi, 4 Kinopio, 5 Peach), modified count */
+/* Luigi (GameDataConst / FindingLuigiEventScheduler / EventUtil): his stars, the hide-and-seek state, the letter */
+int gd_star_luigi_has(const char *galaxy, int star);         /* GameDataConst::isPowerStarLuigiHas */
+int gd_galaxy_luigi_arrested(const char *galaxy, int star);  /* isGalaxyLuigiArrested (-1 any star) */
+void gd_luigi_stage_result(const char *stage, int star, int has_yet); /* updateOnStageResult */
+void gd_luigi_update(int move_type);                         /* update(GalaxyMoveArgument) */
+void gd_luigi_set_hiding(void);                              /* onGameEventFlagGetLuigiLetter: setStateHiding */
+void gd_luigi_hiding_galaxy(const char **galaxy, int *star); /* getLuigiHidingGalaxyNameAndStarId */
+int gd_luigi_disappear(void);                                /* isLuigiDisappearFromAstroGalaxy */
+int gd_luigi_hiding_any(void);                               /* isLuigiHidingAnyGalaxy */
+int gd_luigi_active(void);                                   /* isActiveLuigiHideAndSeekEvent */
+int gd_luigi_end(void);                                      /* isEndLuigiHideAndSeekEvent */
+int gd_luigi_hiding(const char *stage, int scenario);        /* MR::isOnLuigiHiding (scenario -1: none selected) */
+int gd_luigi_hiding_current(const char *stage, int scenario); /* isOnLuigiHidingCurrentStage */
+int gd_luigi_gone_or_hiding(const char *stage, int scenario); /* isLuigiDisappearFromAstroGalaxyOrHiding */
+int gd_luigi_letter_at_messenger(const char *stage, int scenario); /* isLuigiLetterArrivalAtMessenger */
+int gd_luigi_hiding_galaxy_scenario(const char *galaxy, int scenario); /* isLuigiHidingGalaxyAndScenario */
+const char *gd_luigi_letter_galaxy(const char *stage, int scenario);     /* getLuigiLetterGalaxyName, NULL none */
+const char *gd_luigi_letter_galaxy_npc(const char *stage, int scenario); /* getLuigiLetterGalaxyNameForNPC */
+
+/* UserFiles 0..5 (FileSelector's 1..6): created, icon (1 Mario, 2 Luigi, 3 Yoshi, 4 Kinopio, 5 Peach), modified count;
+ * each holds Mario's and Luigi's game data, the player last loaded picks one (gd_file_luigi) */
+int gd_player_luigi(void);        /* MR::isPlayerLuigi: the loaded data is Luigi's */
+int gd_file_luigi(int i);         /* FileSelector::isUserFileLuigi */
+void gd_file_set_luigi(int i, int luigi); /* setUserFileMario(!luigi): the data loaded and shown next */
+int gd_file_appear_luigi(int i);  /* isUserFileAppearLuigi: Luigi's, or Mario's complete ending seen */
 int gd_file_created(int i);
 int gd_file_icon(int i);
 u32 gd_file_modified(int i);
