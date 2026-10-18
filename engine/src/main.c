@@ -231,6 +231,7 @@ static void toc_select(void)
             ((strcmp(e->path, "title.bin") == 0 || strcmp(e->path, "title3d.bin") == 0) && strncmp(scen, "FileSelect/", 11) == 0) ||
             (strcmp(e->path, "dome.bin") == 0 && strncmp(scen, "AstroDome/", 10) == 0) ||
             (strcmp(e->path, "map.bin") == 0 && strncmp(scen, "AstroGalaxy/", 12) == 0) ||
+            (strcmp(e->path, "ending.bin") == 0 && strncmp(scen, "EpilogueDemoStage/", 18) == 0) ||
             strncmp(e->path, "movies/", 7) == 0) { /* any scene may end in one */
             if (ntoc == (int)(sizeof toc / sizeof toc[0])) { printf("packs: TOC full\n"); for (;;) {} }
             memcpy(&toc[ntoc++], e, sizeof *e);
@@ -589,10 +590,11 @@ static const u8 *load_packs(Scene *s)
         return NULL;
     { /* the menus' layouts (tools/lyt.py), when built: outside the scenario room */
         Pack mp;
-        /* layouts / messages, their 3D models; the title and file select's (FileSelect); the dome's (AstroDome) */
-        static const char *const mp_names[6] = {"menus.bin", "menus3d.bin", "title.bin", "title3d.bin", "dome.bin", "map.bin"};
-        static const char *const mp_scene[6] = {"", "", "FileSelect/", "FileSelect/", "AstroDome/", "AstroGalaxy/"};
-        for (int k = 0; k < 6; k++)
+        /* layouts / messages, their 3D models; the title and file select's (FileSelect); the dome's (AstroDome); the
+         * Observatory's map (AstroGalaxy); the ending's staff roll (EpilogueDemoStage) */
+        static const char *const mp_names[7] = {"menus.bin", "menus3d.bin", "title.bin", "title3d.bin", "dome.bin", "map.bin", "ending.bin"};
+        static const char *const mp_scene[7] = {"", "", "FileSelect/", "FileSelect/", "AstroDome/", "AstroGalaxy/", "EpilogueDemoStage/"};
+        for (int k = 0; k < 7; k++)
             if (strncmp(scen, mp_scene[k], strlen(mp_scene[k]))) continue; /* (the empty prefix: every scene) */
             else
             if (pack_open(&mp, mp_names[k])) {
@@ -830,6 +832,25 @@ int main(void)
         if (frame == 200) { /* the first grand star (the first dome open), Mario in a dome's entrance cube */
             gd_set_star("HeavensDoorGalaxy", 1);
             printf("astro test: grand star 1 %d, cube row %d\n", gd_flag_is_on("SpecialStarGrand1"), game_test_astro_cube(5));
+        }
+#endif
+#if defined(PACKS) && defined(ENDING_TEST)
+        { /* KoopaBattleVs3Galaxy/1's star faked: EpilogueA, EpilogueDemoStage's エピローグデモ, EndingA, the staff roll, its
+           * information windows, the save (Yes), the title. X held every second (the talks' pages, the windows) */
+            pad_force = frame > 300 && frame % 60 < 10 ? PAD_CROSS : 0;
+            if (menu_saving()) menu_test_point("BoxRight");
+            if (frame == 200) {
+                SeqResult r = {"KoopaBattleVs3Galaxy", 1, 0, 1, 0, 0, 0};
+                r.prev_stars = gd_star_num();
+                gd_set_star("KoopaBattleVs3Galaxy", 1);
+                r.after_stars = gd_star_num();
+                seq_set_result(&r);
+                seq_set_cleared(1);
+                seq_galaxy_move(SEQ_STAGE_CLEAR, NULL, -1, -1, 0);
+            }
+            if (frame > 200 && frame % 120 == 0)
+                printf("ending test f %u: busy %d demo %d staff roll %d pause %d saving %d\n", frame, game_story_busy(), game_test_demo(-1),
+                       menu_staffroll_on(), menu_staffroll_pause_or_end(), menu_saving());
         }
 #endif
 #if defined(PACKS) && defined(RESULT_TEST)

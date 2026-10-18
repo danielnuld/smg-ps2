@@ -25,6 +25,9 @@ static void dmu_init(void);
 static void dmu_update(void);
 static void mlay_init(void);
 static void mono_update(void);
+static void srl_init(void);
+static void srl_update(void);
+static void srl_draw(void);
 static void fs_init(const Scene *s);
 static void fs_update(void);
 static void fs_draw(void);
@@ -667,6 +670,7 @@ void menu_init(const Scene *s)
     mlay_init();
     memset(&mono, 0, sizeof mono);
     mono.l = lyt_new("PrologueStarSteward"); /* in map.bin: the Observatory only */
+    srl_init();
     fs_init(s);
     gm_init();
     u32 rgb;
@@ -694,6 +698,7 @@ int menu_update(void)
     dmu_update();
     mlay_update();
     mono_update();
+    srl_update();
     if (sr.delay && --sr.delay == 0 && sr.l) { /* the clear's demo sequence: StageResultInformer, then the save */
         sr.alive = 1; sr.n.next = -1; nrv_set(&sr.n, SR_APPEARSTAR);
     }
@@ -1241,6 +1246,7 @@ static void wipe_draw_quad(void)
 
 int menu_draw_screen(void)
 {
+    if (menu_staffroll_on()) { srl_draw(); return 1; } /* StaffRoll::appear: deactivateGameSceneDraw3D */
     if (gm_screen()) { /* deactivateGameSceneDraw3D */
         float eye[3] = {0, 0, 1000.0f}, target[3] = {0, 0, 0}, up[3] = {0, 1.0f, 0};
         render_begin(eye, target, up);
@@ -2788,6 +2794,239 @@ static void mono_update(void) /* RosettaMonologue::control */
         }
     }
     lyt_update(mono.l);
+}
+
+/* --- StaffRoll (StaffRoll.cpp: StaffRollLine x 64, StaffRollPicture, StaffRollTitle, InformationMessage; ending.bin) --
+ * appear (the 3D scene not drawn): PrepareDemo, PrepareBgm (STM_STAFF_ROLL, 60 steps), TitleLogoAppear (240),
+ * TitleLogoScroll (up to -210, the pictures start), LineScroll (StaffList000's lines, one each time the last has moved
+ * up its leading: 24.5, an empty line's 29.5; each from the screen's bottom at 0.5 a frame, gone above -24.5, columns at
+ * the centre +- 60 / 200 by '|'), EndLogoScroll (TheEnd up to 220 once the BGM's count is at 14211 less its scroll),
+ * AllRights (the thank-you voice at 190), PrepareInfo (100), then Pause for the ending movie (isPauseOrEnd); startInfo:
+ * Restart, the information windows (picture book unless ViewNormalEnding, comet, Luigi at the first complete ending),
+ * the save, End. The US region's params (sStaffRollParamTable[1]). ponytail: the programmed demos "StaffRoll" /
+ * "SaveAfterStaffRoll" not started (nothing else runs here), the count runs from the BGM's start (not isPlayingStageBgm),
+ * no BGM_NEW_GALAXY sub BGM (sequenced), no IconAButton under the information window, MessageEditorMessageTag lengths as
+ * the talk text's */
+#define SRL_LINES 64
+enum { SRL_PREPAREDEMO, SRL_PREPAREBGM, SRL_TITLEAPPEAR, SRL_TITLESCROLL, SRL_LINESCROLL, SRL_ENDSCROLL, SRL_ALLRIGHTS,
+       SRL_PREPAREINFO, SRL_BOOKIN, SRL_COMETIN, SRL_LUIGIIN, SRL_BOOKOUT, SRL_COMETOUT, SRL_LUIGIOUT, SRL_PAUSE,
+       SRL_RESTART, SRL_PREPARESAVE, SRL_SAVE, SRL_END };
+static const struct { int step, tex, pane, anim; } srl_pics[] = { /* sPictureTimingTable */
+    {1100, 0, 2, 0},   {1900, 0, 2, 1},   {2000, 1, 1, 0},   {2800, 1, 1, 1},   {2900, 2, 0, 0},   {3700, 2, 0, 1},   {3800, 3, 3, 0},
+    {4600, 3, 3, 1},   {4700, 4, 2, 0},   {5500, 4, 2, 1},   {6100, 5, 0, 2},   {6600, 5, 0, 3},   {6100, 6, 3, 2},   {6600, 6, 3, 3},
+    {6700, 7, 1, 2},   {7200, 7, 1, 3},   {6700, 8, 2, 2},   {7200, 8, 2, 3},   {7300, 9, 0, 2},   {7800, 9, 0, 3},   {7300, 10, 3, 2},
+    {7800, 10, 3, 3},  {7900, 11, 1, 2},  {8300, 11, 1, 3},  {7900, 12, 2, 2},  {8300, 12, 2, 3},  {8500, 13, 0, 2},  {8900, 13, 0, 3},
+    {8500, 14, 3, 2},  {8900, 14, 3, 3},  {9400, 15, 3, 0},  {10200, 15, 3, 1}, {10300, 16, 2, 0}, {11100, 16, 2, 1}, {11200, 17, 1, 0},
+    {12000, 17, 1, 1}, {12090, 18, 0, 0}, {12890, 18, 0, 1}, {12990, 19, 3, 0}, {13390, 19, 3, 1}};
+static const char *const srl_panes[4] = {"PictureLU", "PictureRU", "PictureLD", "PictureRD"};
+static const char *const srl_childs[4] = {"PicLU", "PicRU", "PicLD", "PicRD"};
+static const char *const srl_anims[4] = {"FadeIn", "FadeOut", "FrameIn", "FrameOut"};
+#define SRL_SPEED 0.5f       /* mScrollSpeed (Us) */
+#define SRL_LEADING 24.5f    /* mLineLeading */
+#define SRL_EMPTY 29.5f      /* mEmptyLineLeading */
+static struct {
+    LytInst *title, *pic, *info, *line[SRL_LINES];
+    u8 on, line_on[SRL_LINES], pic_on;
+    int line_step[SRL_LINES], pic_step;
+    float line_pos[SRL_LINES][2], title_pos[2], end_pos[2];
+    u16 line_text[SRL_LINES][128], info_text[1];
+    const u16 *msg;
+    int nlines, cur_line, gen, count;  /* mMsgLineNum, mMsgLine, _48, _4C */
+    Nrv n;
+} srl;
+
+static void srl_init(void) /* StaffRoll::init (the layouts are in the ending's stage only) */
+{
+    memset(&srl, 0, sizeof srl);
+    if (!(srl.title = lyt_new("StaffRollTitle")) || !(srl.pic = lyt_new("StaffRollPicture")) || !(srl.info = lyt_new("InformationWindow"))) {
+        srl.title = NULL;
+        return;
+    }
+    for (int i = 0; i < SRL_LINES; i++) {
+        if (!(srl.line[i] = lyt_new("StaffRoll"))) { srl.title = NULL; return; }
+        lyt_follow(srl.line[i], "Text00", srl.line_pos[i], 0); /* setFollowPos */
+        lyt_set_pane_scale(srl.line[i], "Text00", 0.8f);         /* mPaneScale */
+    }
+    lyt_copy_pane_trans(srl.title, "TitleLogo", srl.title_pos);
+    lyt_follow(srl.title, "TitleLogo", srl.title_pos, 0);
+    lyt_show_pane(srl.title, "TitleLogo", 0);
+    lyt_copy_pane_trans(srl.title, "TheEnd", srl.end_pos);
+    lyt_follow(srl.title, "TheEnd", srl.end_pos, 0);
+    lyt_show_pane(srl.title, "TheEnd", 0);
+    srl.msg = msg_get("StaffList000"); /* getGameMessageDirect, countMessageLine */
+    srl.nlines = srl.msg ? 1 : 0;
+    for (const u16 *s = srl.msg; s && *s; s++) srl.nlines += *s == '\n';
+    for (int i = 0; i < 4; i++) { /* StaffRollPicture::disappearAllPane */
+        lyt_start_pane(srl.pic, srl_panes[i], "FadeIn", 0);
+        lyt_set_pane_frame_stop(srl.pic, srl_panes[i], 0, 0.0f);
+    }
+}
+static const u16 *srl_line(int k) /* MR::getMessageLine: the k-th line's start */
+{
+    const u16 *s = srl.msg;
+    while (s && k > 0 && *s) if (*s++ == '\n') k--;
+    return s;
+}
+static void srl_make_line(void) /* StaffRoll::makeLine: its columns by '|', each on a dead StaffRollLine */
+{
+    const u16 *s = srl_line(srl.cur_line);
+    u16 cols[3][128];
+    int nc = 0, n = 0;
+    for (;;) {
+        if (*s == 0x1A) { int len = 4 + (s[3] + 1) / 2; while (len-- && n < 127) cols[nc][n++] = *s++; continue; } /* a tag kept whole */
+        if (*s != '|' && *s != '\n' && *s) { if (n < 127) cols[nc][n++] = *s; s++; continue; }
+        cols[nc][n] = 0;
+        nc++; n = 0;
+        if (*s != '|' || nc == 3) break;
+        s++;
+    }
+    for (int c = 0; c < nc; c++) {
+        float x = 304.0f; /* getScreenWidth / 2 */
+        if (nc == 2) x += c == 0 ? -60.0f : 60.0f;     /* sDoubleInterval */
+        else if (nc == 3 && c) x += c == 1 ? -200.0f : 200.0f; /* sTripleInterval */
+        int i = 0;
+        while (i < SRL_LINES && srl.line_on[i]) i++;
+        if (i == SRL_LINES) return;
+        memcpy(srl.line_text[i], cols[c], sizeof cols[c]);
+        lyt_set_text_rec(srl.line[i], "Text00", srl.line_text[i]);
+        srl.line_pos[i][0] = x;
+        srl.line_on[i] = 1; srl.line_step[i] = 0; /* appear: Scroll */
+    }
+}
+static int srl_next_empty(void) { return srl.cur_line < srl.nlines && (*srl_line(srl.cur_line) == '\n' || !*srl_line(srl.cur_line)); }
+static void srl_next_info(void) /* setNrvNextInfo */
+{
+    int c = srl.n.cur;
+    if (c == SRL_PREPAREINFO) nrv_set(&srl.n, SRL_PAUSE);
+    else if (!gd_flag_is_on("ViewNormalEnding") && c == SRL_RESTART) nrv_set(&srl.n, SRL_BOOKIN);
+    else if (c == SRL_BOOKOUT) { gd_flag_try_on("ViewNormalEnding"); nrv_set(&srl.n, SRL_COMETIN); }
+    else if (!gd_flag_is_on("ViewCompleteEnding") && gd_flag_is_on("PowerStarComplete")) { nrv_set(&srl.n, SRL_LUIGIIN); gd_flag_try_on("ViewCompleteEnding"); }
+    else nrv_set(&srl.n, SRL_PREPARESAVE);
+}
+void menu_staffroll(int ev) /* StorySequenceExecutor::exeStaffRollSequence: 12 appear, 13 startInfo */
+{
+    if (!srl.title) { printf("staff roll: no layouts\n"); return; }
+    srl.on = 1;
+    if (ev == 12) { nrv_set(&srl.n, SRL_PREPAREDEMO); srl.n.cur = -1; } /* appear */
+    else { srl.n.cur = -1; nrv_set(&srl.n, SRL_RESTART); }               /* startInfo */
+    printf("staff roll: %s\n", ev == 12 ? "appear" : "info");
+}
+int menu_staffroll_pause_or_end(void) { return !srl.title || srl.n.cur == SRL_PAUSE || srl.n.cur == SRL_END; } /* isPauseOrEnd */
+int menu_staffroll_on(void) { return srl.on; }
+static void srl_update(void)
+{
+    if (!srl.on) return;
+    switch (nrv_begin(&srl.n)) {
+    case SRL_PREPAREDEMO: nrv_set(&srl.n, SRL_PREPAREBGM); break; /* tryStartDemo "StaffRoll" */
+    case SRL_PREPAREBGM:
+        if (FIRST(&srl.n)) game_bgm("STM_STAFF_ROLL");
+        if (srl.n.step > 60) { srl.count = 0; nrv_set(&srl.n, SRL_TITLEAPPEAR); } /* sStepForTitleLogoAppear */
+        break;
+    case SRL_TITLEAPPEAR:
+        if (FIRST(&srl.n)) { lyt_show_pane(srl.title, "TitleLogo", 1); lyt_start_pane(srl.title, "TitleLogo", "TitleLogoAppear", 0); }
+        if (srl.n.step == 240) nrv_set(&srl.n, SRL_TITLESCROLL);
+        break;
+    case SRL_TITLESCROLL:
+        if (FIRST(&srl.n)) { lyt_start_pane(srl.title, "TitleLogo", "TitleLogoWait", 0); srl.pic_on = 1; srl.pic_step = 0; srl.gen = 0; }
+        srl.title_pos[1] -= SRL_SPEED;
+        if (srl.title_pos[1] < -210.0f) { lyt_show_pane(srl.title, "TitleLogo", 0); nrv_set(&srl.n, SRL_LINESCROLL); }
+        break;
+    case SRL_LINESCROLL: { /* until the end logo's scroll lands it at sEndLogoPosY as the BGM's 14211th step comes */
+        float h = 456.0f - 220.0f;
+        int rem = fmodf(h, SRL_SPEED) != 0.0f, steps = (int)(h / SRL_SPEED);
+        if (srl.count >= 14211 - (rem + steps)) nrv_set(&srl.n, SRL_ENDSCROLL);
+        break;
+    }
+    case SRL_ENDSCROLL:
+        if (FIRST(&srl.n)) {
+            lyt_show_pane(srl.title, "TheEnd", 1);
+            lyt_start_pane(srl.title, "TheEnd", "AllRights", 0);
+            lyt_set_pane_frame_stop(srl.title, "TheEnd", 0, 0.0f);
+            srl.end_pos[1] = 456.0f;
+        }
+        srl.end_pos[1] -= SRL_SPEED;
+        if (srl.end_pos[1] < 220.0f) { srl.end_pos[1] = 220.0f; nrv_set(&srl.n, SRL_ALLRIGHTS); }
+        break;
+    case SRL_ALLRIGHTS:
+        if (FIRST(&srl.n)) lyt_start_pane(srl.title, "TheEnd", "AllRights", 0);
+        if (srl.n.step == 190) se_start(SE_SY_E3_THANK_YOU, NULL); /* sStepToThankYouVoice (Mario) */
+        if (lyt_pane_stopped(srl.title, "TheEnd", 0)) { srl.pic_on = 0; lyt_show_pane(srl.title, "TheEnd", 0); nrv_set(&srl.n, SRL_PREPAREINFO); }
+        break;
+    case SRL_PREPAREINFO: if (srl.n.step == 100) srl_next_info(); break; /* sStepForPrepareInfo */
+    case SRL_BOOKIN: case SRL_COMETIN: case SRL_LUIGIIN: /* exeInfoAppear */
+        if (FIRST(&srl.n)) {
+            int c = srl.n.cur;
+            const u16 *m = msg_get(c == SRL_BOOKIN ? "System_Result005" : c == SRL_COMETIN ? "StaffRollInfo_Comet" : "StaffRollInfo_Luigi");
+            if (c == SRL_LUIGIIN) se_start(SE_SY_LUIGI_MODE_APPEAR, NULL);
+            lyt_show_rec(srl.info, "InfoWindowUp", 0); lyt_show_rec(srl.info, "InfoWindowCenter", 1); /* setCenter(true) */
+            lyt_set_text_rec(srl.info, "InfoWindowCenter", m ? m : srl.info_text);
+            lyt_start(srl.info, "Appear", 0);
+            lyt_start(srl.info, "Line", 1);
+            lyt_set_frame(srl.info, 1, lyt_text_height(srl.info, "InfConfirmC")); /* setAnimFrameAndStopAdjustTextHeight */
+            lyt_set_rate(srl.info, 1, 0);
+        }
+        if (pad_pressed(PAD_CROSS)) { /* testSystemPadTriggerDecide */
+            se_start(SE_SY_TALK_OK, NULL);
+            nrv_set(&srl.n, srl.n.cur + 3); /* its Disappear */
+        }
+        break;
+    case SRL_BOOKOUT: case SRL_COMETOUT: case SRL_LUIGIOUT: /* exeInfoDisappear */
+        if (FIRST(&srl.n)) lyt_start(srl.info, "End", 0);
+        if (srl.n.step > 0 && lyt_stopped(srl.info, 0)) srl_next_info();
+        break;
+    case SRL_PAUSE: break;
+    case SRL_RESTART: srl_next_info(); break;
+    case SRL_PREPARESAVE: nrv_set(&srl.n, SRL_SAVE); break;
+    case SRL_SAVE:
+        if (FIRST(&srl.n)) menu_save_start(1, 0, 0); /* startGameDataSaveSequence(true, false) */
+        else if (!menu_saving()) nrv_set(&srl.n, SRL_END);
+        break;
+    case SRL_END: break;
+    }
+    nrv_end(&srl.n);
+    /* movement: the lines, the pictures, the count, tryGenerateLine */
+    for (int i = 0; i < SRL_LINES; i++) { /* StaffRollLine::exeScroll */
+        if (!srl.line_on[i]) continue;
+        if (srl.line_step[i]++ == 0) srl.line_pos[i][1] = 456.0f; /* getScreenHeight */
+        srl.line_pos[i][1] -= SRL_SPEED;
+        if (srl.line_pos[i][1] < -SRL_LEADING) srl.line_on[i] = 0;
+        lyt_update(srl.line[i]);
+    }
+    if (srl.pic_on) { /* StaffRollPicture::exeWork */
+        int complete = gd_flag_is_on("PowerStarComplete");
+        for (unsigned i = 0; i < sizeof srl_pics / sizeof srl_pics[0]; i++) {
+            if (srl_pics[i].step != srl.pic_step) continue;
+            char t[24];
+            snprintf(t, sizeof t, "%cstaffrolltexture%03d", complete ? 'l' : 'm', srl_pics[i].tex); /* LStaffRollTexture / MStaffRollTexture */
+            lyt_replace_pane_texture(srl.pic, srl_childs[srl_pics[i].pane], lyt_material_texture(srl.pic, t));
+            lyt_start_pane(srl.pic, srl_panes[srl_pics[i].pane], srl_anims[srl_pics[i].anim], 0);
+        }
+        srl.pic_step++;
+    }
+    if (srl.n.cur >= SRL_TITLEAPPEAR) srl.count++;
+    if (srl.gen >= 0 && srl.n.cur >= SRL_TITLESCROLL) { /* tryGenerateLine */
+        if (srl.gen == 0 && srl.cur_line < srl.nlines) { srl_make_line(); srl.cur_line++; }
+        srl.gen++;
+        if (srl.gen * SRL_SPEED >= (srl_next_empty() ? SRL_EMPTY : SRL_LEADING))
+            srl.gen = srl.cur_line < srl.nlines ? 0 : -1;
+    }
+    lyt_update(srl.title);
+    lyt_update(srl.pic);
+    lyt_update(srl.info);
+    if (srl.n.cur == SRL_END) srl.on = 0;
+}
+static void srl_draw(void) /* StaffRoll::draw: black, the information, the pictures, the lines, the title */
+{
+    float eye[3] = {0, 0, 1000.0f}, target[3] = {0, 0, 0}, up[3] = {0, 1.0f, 0};
+    render_begin(eye, target, up);
+    render_world_done();
+    if (srl.n.cur >= SRL_BOOKIN && srl.n.cur <= SRL_LUIGIOUT) lyt_draw(srl.info);
+    if (srl.pic_on) lyt_draw(srl.pic);
+    for (int i = 0; i < SRL_LINES; i++) if (srl.line_on[i]) lyt_draw(srl.line[i]);
+    lyt_draw(srl.title);
+    if (sv.win.alive) lyt_draw(sv.win.l);
+    wipe_draw_quad();
+    fade_draw();
 }
 
 static void wipe_update(void)

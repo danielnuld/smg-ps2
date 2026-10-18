@@ -52,6 +52,10 @@ COMET_BGM = {"Red": "GALAXY_02_HURRY", "Dark": "GALAXY_02_HURRY", "Ghost": "GALA
              "Black": "GALAXY_21"}  # AudStageBgmWrap::getCometEventBgm
 
 
+# the demos' STM_ ids (StaffRoll::exePrepareBgm STM_STAFF_ROLL, the epilogue demo's sound sheet STM_EPILOGUE_B)
+STM_BGM = {"STAFF_ROLL": "SMG_staffroll_strm", "EPILOGUE_B": "SMG_ev_epilogue_b_strm"}
+
+
 def stream_of(bgm, streams):
     """Sound id name -> stream stem in AudioRes/Stream, or None (sequenced: LIBRARY, ASTRO_DOME_LOFT...)."""
     if bgm.startswith("GALAXY_"):
@@ -106,6 +110,8 @@ def table(fs, out):
                 used.add(st)
     bgm = sorted((sound_id(st), st) for st in used)  # the demos' startStageBGM(name): sound id -> stream
     assert all(stream_of(i, streams) == st for i, st in bgm), bgm
+    bgm += sorted((i, st) for i, st in STM_BGM.items() if st in streams)
+    used |= {st for _, st in bgm}
     Path(out).write_text("\n".join(["/* written by tools/music.py --table: scenario -> music stream (Petari AudStageBgmWrap) */",
                                     "static const struct { const char *scen, *track; } music_tab[] = {", *rows, "};",
                                     "/* sound id (MBGM_ dropped) -> music stream, for MR::startStageBGM by name */",

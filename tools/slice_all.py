@@ -21,7 +21,7 @@ import slice as SL
 
 ROOM = 9.01e6  # phase 0b: room for scenario data with the levers (docs/phase0b-report.md)
 # the menus' packs main.c loads beside a galaxy's own (scene_load: mp_names / mp_scene) come out of its room
-MENU_PACKS = {"FileSelect": ("title.bin", "title3d.bin"), "AstroDome": ("dome.bin",), "AstroGalaxy": ("map.bin",)}
+MENU_PACKS = {"FileSelect": ("title.bin", "title3d.bin"), "AstroDome": ("dome.bin",), "AstroGalaxy": ("map.bin",), "EpilogueDemoStage": ("ending.bin",)}
 
 
 def room(out, g):

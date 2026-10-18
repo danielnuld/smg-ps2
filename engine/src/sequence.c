@@ -56,6 +56,12 @@ static const SeqDemo cDemoGrandStarReturn6[] = {{0, 1, "グランドスター６
 static const SeqDemo cDemoRosettaTalkTorchProgress[] = {{0, 1, "ロゼッタトーチの炎進捗デモ"}, {13, 0, ""}};
 static const SeqDemo cDemoRosettaTalkKoopaBattleVs3GalaxyAppear[] = {{5, 0, "Save"}, {0, 1, "ロゼッタ最終決戦デモ"}, {12, 0, ""}};
 static const SeqDemo cDemoStarPieceLectureRetry[] = {{0, 3, "スターピース解説前半"}, {1, 1, "Fadein"}, {12, 0, ""}};
+/* the KoopaBattleVs3 clear (types 10 / 11: the star pointer's ending mode, the remote checks: nothing here) */
+static const SeqDemo cDemoEpilogueNormal[] = {{10, 14, ""}, {2, 9, "MovieEpilogueA"}, {0, 1, "エピローグデモ"}, {11, 15, ""},
+                                              {2, 10, "MovieEndingA"}, {9, 12, ""}, {11, 16, ""}, {9, 13, ""}, {4, 1, ""}, {12, 0, ""}};
+static const SeqDemo cDemoEpilogueComplete[] = {{10, 14, ""}, {2, 9, "MovieEpilogueA"}, {0, 1, "エピローグデモ"}, {11, 15, ""},
+                                                {2, 10, "MovieEndingA"}, {9, 12, ""}, {2, 11, "MovieEndingB"}, {11, 16, ""},
+                                                {9, 13, ""}, {4, 1, ""}, {12, 0, ""}};
 static const SeqDemo cDemoKinopioRescued[] = {{0, 1, "パワースター帰還"}, {0, 1, "ロゼッタキノピオ探検隊デモ"}, {13, 0, ""}};
 static const SeqDemo cDemoTrickCometLecture[] = {{0, 1, "パワースター帰還"}, {0, 1, "ロゼッタコメット説明デモ"}, {13, 0, ""}};
 static const SeqDemo cDemoLuigiRescued[] = {{0, 1, "パワースター帰還"}, {0, 1, "ロゼッタルイージデモ"}, {13, 0, ""}};
@@ -211,11 +217,14 @@ void seq_galaxy_move(int type, const char *stage, int scenario, int start_id, in
             snprintf(st, sizeof st, "AstroGalaxy"); no = astro_galaxy_no();
             break;
         }
-        if (!strcmp(sq.before, "KoopaBattleVs3Galaxy")) { /* cDemoEpilogueNormal / cDemoEpilogueComplete, then the title.
-            * ponytail: EpilogueDemoStage's "エピローグデモ" and the staff roll not played (the movies only); complete
-            * as 120 stars */
-            game_request_movie(gd_star_num() >= 120 ? "EpilogueA,EndingA,EndingB" : "EpilogueA,EndingA");
-            snprintf(st, sizeof st, "FileSelect"); no = 1; type = SEQ_TITLE;
+        if (!strcmp(sq.before, "KoopaBattleVs3Galaxy")) { /* decideNextEventForClearGalaxy: cDemoEpilogueComplete when
+            * isStarCompleteAllGalaxy, else cDemoEpilogueNormal, in EpilogueDemoStage/1 (the list's movies, the epilogue
+            * demo, the staff roll, the title: game.c story_update). Its first movie (MovieEpilogueA, after the star
+            * pointer's mode) plays as the stage loads (movie.c between the scenes) */
+            prepare_demo(gd_flag_is_on("PowerStarComplete") ? cDemoEpilogueComplete : cDemoEpilogueNormal);
+            sdemo[0] += 2;
+            game_request_movie("EpilogueA");
+            snprintf(st, sizeof st, "EpilogueDemoStage"); no = 1; type = SEQ_TITLE; /* (no result window, no save prompt) */
             break;
         }
     astro_or_dome: /* setNextStageToAstroGalaxyOrDome */

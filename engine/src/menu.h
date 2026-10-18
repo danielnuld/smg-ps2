@@ -48,6 +48,9 @@ void menu_save_start(int confirm, int remind, int quit); /* SaveDataHandleSequen
 int menu_saving(void);
 int menu_save_result(void);          /* 2 saved, 3 not */
 int menu_result_showing(void);       /* StageResultInformer */
+void menu_staffroll(int ev);         /* StaffRoll: 12 appear (to its pause), 13 startInfo (the infos, the save, End) */
+int menu_staffroll_pause_or_end(void); /* StaffRoll::isPauseOrEnd */
+int menu_staffroll_on(void);         /* the staff roll over the screen (the scene not drawn, Mario waits) */
 void menu_result_start(void);        /* the result held for the star return demo */
 int menu_take_save_request(void);    /* main.c: 1 once per request */
 int menu_draw_screen(void); /* game_draw: 1 when a whole-screen menu (the scenario select) drew the frame */
