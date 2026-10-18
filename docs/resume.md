@@ -350,8 +350,7 @@ the demos): resume here.** State at the session break (2026-10-17 evening):
   Rosetta talk. game.c story_update (ST_PLAY / WAIT_DEMO / WAIT_SAVE / FADEIN_AFTER), started at scene init; the star
   return demos are skipped (`unported` list) until StarReturnDemoStarter / GrandStarReturnDemoStarter are ported;
   menu.c's save prompt waits for game_story_busy(). Test it: AstroDome/1 on a fresh file should play ドームレクチャー１.
-- A full repack (`python tools/slice_all.py data/fs/files out/packs 6`) was running at the break; rerun it if
-  out/packs/*/ scenes lack DEMO chunks (EggStarGalaxy was repacked), and `python tools/lyt.py data/fs/files` (done).
+- All 136 scenarios repacked with DEMO chunks (2026-10-17), menus.bin with CinemaFrame.
 - Next, in order: test the story runner; demo talks (action types 8 / 9 / 10: the cast's TalkMessageCtrl,
   createTalkCtrl(rIter, "AstroDome_Butler023") labels in tools/msg.py's TALK chunk, DemoTalkAnimCtrl clips); Butler's
   demo functors (Butler.cpp startDemoDomeLecture1 ...), TicoDomeLecture; StarReturnDemoStarter (the result window inside
