@@ -185,7 +185,7 @@ typedef struct {
     int flip;        /* FlipPanel / FlipPanelReverse: row_step[row] holds FLIP_* bits */
     const Model *md_flip[2]; /* its "#PanelA" ("!", turned) and "#PanelEnd" (group complete) models (slice.py EXTRA) */
     int npc;         /* talking NPC (npc_class): turns to face Mario when he is near */
-    int dnpc;        /* Butler 1, TicoDomeLecture 2: demo casts (update_dome_npcs) */
+    int dnpc;        /* Butler 1, TicoDomeLecture 2, Rosetta 3, ButlerExplain 4: demo casts (update_dome_npcs) */
     int hipsw;       /* hip drop switch: 1 PicketSwitch(Big) / HipDropSwitch (SW_A for good), 2 HipDropTimerSwitch */
     int rotor;       /* map part with a RotateSpeed: turns (rotor_matrix), carries Mario */
     int halo;        /* ZoneHalo 1 / PowerStarHalo 2: shown only from afar (update_halos) */
@@ -3354,7 +3354,8 @@ void game_rebind(void)
             in->md_flip[1] = scene_model(sc, v);
         }
         in->npc = npc_class(name);
-        in->dnpc = strcmp(name, "Butler") == 0 ? 1 : strcmp(name, "TicoDomeLecture") == 0 ? 2 : 0;
+        in->dnpc = strcmp(name, "Butler") == 0 ? 1 : strcmp(name, "TicoDomeLecture") == 0 ? 2 : strcmp(name, "Rosetta") == 0 ? 3 :
+                   strcmp(name, "ButlerExplain") == 0 ? 4 : 0;
         in->fat = strcmp(name, "TicoFat") == 0;
         in->sambo = strcmp(name, "CocoSambo") == 0;
         in->sky = sky_class(name);
@@ -22686,8 +22687,25 @@ static const struct { const char *cls, *demo, *anim, *talk; } dx_casts[] = {
     {"Butler", "バトラー報告", "demobutlerreport", "AstroDome_Butler003"},             /* initButlerDemo: mTalkMessage[2] */
     {"Butler", "スターピース解説前半", "demobutlerstarpiece1", "AstroDome_Butler011"},
     {"Butler", "スターピース解説後半", "demobutlerstarpiece2", "AstroDome_Butler014"},
+    /* Rosetta (RosettaDemoAstroDome.cpp): the explain demo's DemoWithButler talk anim (hers for the scene with its canm,
+     * ButlerExplain's for the actor) on their own talkers (NULL: the row's MessageId label); the talk demos' EntryDemo
+     * talkers ("": no talk anim) */
+    {"Rosetta", "ロゼッタ状況説明デモ", "demowithbutler", NULL},
+    {"ButlerExplain", "ロゼッタ状況説明デモ", "demowithbutler", NULL},
+    {"Rosetta", "ロゼッタ最終決戦デモ", "", "AstroGalaxy_Rosetta300"},
+    {"Rosetta", "ロゼッタノーマルエンディング後デモ", "", "AstroGalaxy_Rosetta400"},
+    {"Rosetta", "ロゼッタキノピオ探検隊デモ", "", "AstroGalaxy_Rosetta080"},
+    {"Rosetta", "ロゼッタトーチの炎説明デモ", "", "AstroGalaxy_Rosetta020"},
+    {"Rosetta", "ロゼッタコメット説明デモ", "", "AstroGalaxy_Rosetta030"},
+    {"Rosetta", "ロゼッタ銀河の中心説明デモ", "", "AstroGalaxy_Rosetta040"},
+    {"Rosetta", "ロゼッタ天文台機能回復デモ", "", "AstroGalaxy_Rosetta050"},
+    {"Rosetta", "ロゼッタカウントダウン開始デモ", "", "AstroGalaxy_Rosetta060"},
+    {"Rosetta", "ロゼッタトーチの炎進捗デモ", "", "AstroGalaxy_Rosetta084"},
+    {"Rosetta", "ロゼッタルイージデモ", "", "AstroGalaxy_Rosetta054"},
 };
 static int dx_request(const char *name, int frameless);
+static int ros_demo; /* Rosetta::startDemo: her Demo nerve (the sheet drives her clips) until the demo ends */
+static int ros_book; /* RosettaDemoAstroDomeExplain: the picture book (menu.c RosettaMonologue) holds the time keeper */
 static const char *dx_talk_set; /* setDemoTalkMessageCtrlDirect: the running demo's talk label, NULL the table's */
 static int butler_nrv;          /* Butler: 0 Wait, 1 Demo, 2 DemoDomeLecture2, 3 DemoStarPiece2 */
 #define DX_MAX_TA 4
@@ -22734,6 +22752,9 @@ static void dx_cast_hook(int row, int type, int part)
         tdl.nrv = type == 0 ? TDL_WAIT : TDL_MOVE; tdl.step = 0; tdl.part = part;
         return;
     }
+    if (type == 2 && !strcmp(cls, "Rosetta")) { ros_demo = 1; return; } /* Rosetta::startDemo (every sheet's 開始): her Demo nerve */
+    if (type == 2 && !strcmp(cls, "ButlerExplain")) return;              /* ButlerExplain::startDemo: its Demo nerve (nothing more) */
+    if (type == 0 && !strcmp(cls, "Butler")) { row_dead[row] = gd_flag_is_on("SpecialStarGrand2"); return; } /* Butler::appear: unless isButlerMapAppear */
     if (type == 2 && !strcmp(cls, "Butler") && !strcmp(demos[dx.cur].h->name, "ドームレクチャー１")) { /* startDemoDomeLecture1 */
         row_dead[row] = 0; sw_changed = 1; butler_nrv = 1;
         return;
@@ -22845,6 +22866,46 @@ static void dx_camera_first(const DxCam *c) /* DemoCameraKeeper::executeFirst */
     if (!camera_event_start(c->cls, 0, up, front, pos)) printf("demo: no camera %08x\n", c->cls);
 }
 
+/* the demo talkers' balloon offsets (mMsgBalloonFollowOffs): Rosetta's Chin joint (its bind height; ponytail: not the
+ * animated joint), ButlerExplain's NPCActorCaps default (0, 150, 0), the Butler's Body joint matrix with no offset */
+static float dx_talk_offy(const char *cls) { return !strcmp(cls, "Rosetta") ? 178.0f : !strcmp(cls, "ButlerExplain") ? 150.0f : 0.0f; }
+/* a demo talker's host matrix: the cast's base (its scale out) moved by its clip's root joint (the demo clips walk the
+ * casts about their PosName). ponytail: placed at the talk's start, not followed */
+static void dx_talk_host(int t, int row)
+{
+    const Inst *in = row_inst(row);
+    if (!in) return;
+    float m[16];
+    memcpy(m, in->m, 64);
+    if (in->anim && in->anim->skin && in->anim->skin->njoints) {
+        const float *w = in->anim->world[0];
+        V3 p = v3(m[12] + m[0] * w[12] + m[4] * w[13] + m[8] * w[14], m[13] + m[1] * w[12] + m[5] * w[13] + m[9] * w[14],
+                  m[14] + m[2] * w[12] + m[6] * w[13] + m[10] * w[14]);
+        m[12] = p.x; m[13] = p.y; m[14] = p.z;
+    }
+    for (int j = 0; j < 12; j++) m[j] /= in->s;
+    talk_place(t, m);
+}
+/* Rosetta::eventFunc, her talk flows' events: 1 KoopaBattleVs3Galaxy opened (onGameEventFlagGalaxyOpen), 4 a fade
+ * (FadeStarter(-1): closeWipeFade, when it is done openWipeFade) then her SW_A (the final battle's MovieStarter).
+ * ponytail: 0 / 2 (setNextStageBGM BGM_SENARIO_SEL_3 / STM_ASTRO_OUT_3 and stopStageBGM) not played */
+static int rosetta_event(int t, u32 v)
+{
+    static int fading;
+    const Row *r = talkers[t].row >= 0 ? &sc->objs[talkers[t].row] : NULL;
+    switch (v) {
+    case 1: gd_flag_try_on("KoopaBattleVs3Galaxy"); return 1;
+    case 4:
+        if (!fading) { fading = 1; menu_wipe(1, -1, 0); return 0; }
+        if (!menu_wipe_closed()) return 0; /* isWipeActive */
+        fading = 0;
+        menu_wipe(0, -1, 0);
+        if (r && r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
+        return 1;
+    default: return 1;
+    }
+}
+
 static void dx_action(const Demo *d, const DxAct *a) /* DemoActionInfo::executeActionFirst */
 {
     for (int k = 0; k < a->cn; k++) {
@@ -22865,12 +22926,17 @@ static void dx_action(const Demo *d, const DxAct *a) /* DemoActionInfo::executeA
         case 13: sw_set(r, SW_B, 0); break;
         case 8: case 9: case 10: { /* tryTalkTimeKeepDemo(WithoutPause)MarioPuppetable(findTalkMessageCtrl) */
             int t = -1;
-            for (unsigned c = 0; c < sizeof dx_casts / sizeof dx_casts[0]; c++)
-                if (!strcmp(dx_casts[c].cls, sc->types + 32 * r->type) && !strcmp(dx_casts[c].demo, d->h->name))
-                    t = talk_new(dx_talk_set ? dx_talk_set : dx_casts[c].talk, row, row, 0.0f, 240.0f); /* createTalkCtrlDirectOnRootNodeAutomatic */
-            if (t < 0) { printf("demo: no talk (%s)\n", sc->types + 32 * r->type); break; }
-            const Inst *in = row_inst(row);
-            if (in) { float m[16]; memcpy(m, in->m, 64); for (int j = 0; j < 12; j++) m[j] /= in->s; talk_place(t, m); }
+            char own[32];
+            const char *cls = sc->types + 32 * r->type;
+            for (unsigned c = 0; c < sizeof dx_casts / sizeof dx_casts[0]; c++) {
+                if (strcmp(dx_casts[c].cls, cls) || strcmp(dx_casts[c].demo, d->h->name)) continue;
+                const char *lab = dx_talk_set ? dx_talk_set : dx_casts[c].talk;
+                if (!lab && !talk_row_label(row, own)) continue; /* the cast's own mMsgCtrl (registerDemoTalkMessageCtrl) */
+                t = talk_new(lab ? lab : own, row, row, dx_talk_offy(cls), 240.0f); /* createTalkCtrlDirectOnRootNodeAutomatic */
+            }
+            if (t < 0) { printf("demo: no talk (%s)\n", cls); break; }
+            dx_talk_host(t, row);
+            if (!strcmp(cls, "Rosetta")) talkers[t].event = rosetta_event; /* registerEventFunc */
             talk_force(t, a->type == 8);
             break;
         }
@@ -22919,7 +22985,8 @@ static void dx_talk_anims(const Demo *d)
             t->part = dx.part; t->acc += p->total;
         }
         if (a && a->frame >= t->end) a->frame = t->rep + (a->frame - t->end);
-        if (t->talk) { /* updatePause */
+        if (t->talk && strcmp(dx_casts[t->c].cls, "ButlerExplain")) { /* updatePause: the scene ctrls only (_35: initForScene;
+                                                                 * ButlerExplain's is tryCreateDemoTalkAnimCtrlForActor) */
             if (dx.paused) { if (!talk_system()) dx.paused = 0; }
             else if (dx.step == d->parts[dx.part].total - 2) dx.paused = 1;
         }
@@ -23112,7 +23179,29 @@ static void butler_sync(int select_start)
     butler_nrv = 0;
 }
 
-/* Butler (exeDemo: at its PosName during the demo, then setDefaultPose and Wait) and TicoDomeLecture */
+/* Rosetta (Rosetta.cpp): WaitA from init, every sWaitActionInterval 300 steps getRandom(0, 2): 0 WaitA, 1 WaitB (her
+ * move action); in a demo (startDemo: her Demo nerve) the sheet drives her (the talk anim ctrl, the actions' AnimName),
+ * endDemo at its end: WaitA. RosettaDemoAstroDomeExplain::exeDemo: at 状況説明[絵本表示] (part 6) the cinema frame to
+ * the screen, the picture book (menu.c RosettaMonologue) and the time keeper paused until it is dead.
+ * ponytail: she does not talk outside demos (not a talkcls), no TurnJointCtrl (her head and waist to Mario), no random
+ * TalkA / B / C at a talk's start, endDemoWithInterpole as endDemo */
+static void rosetta_update(Inst *in)
+{
+    if (!in->anim) return;
+    if (dx.on && ros_demo) {
+        if (!strcmp(demos[dx.cur].h->name, "ロゼッタ状況説明デモ")) {
+            if (dx_first(6)) { menu_cinema(0); menu_monologue_start(); ros_book = 1; dx.paused = 1; } /* tryFrameToScreenCinemaFrame, appear, pauseTimeKeepDemo */
+            else if (ros_book && !menu_monologue_alive()) { ros_book = 0; dx.paused = 0; }          /* isDead: resumeTimeKeepDemo */
+        }
+        return;
+    }
+    if (ros_demo) { ros_demo = 0; ros_book = 0; anim_start(in->anim, "rosetta/waita", 0); } /* endDemo: startBckNoInterpole WaitA */
+    const char *cur = in->anim->clip_id >= 0 ? sc->clips[in->anim->clip_id].name : "";
+    if (strcmp(cur, "rosetta/waita") && strcmp(cur, "rosetta/waitb")) obj_play(in, "waita", 1, 0);
+    else if (game_frame % 300 == 0) obj_play(in, rand() % 2 ? "waitb" : "waita", 1, 0); /* isIntervalStep(sWaitActionInterval) */
+}
+
+/* Butler (exeDemo: at its PosName during the demo, then setDefaultPose and Wait), Rosetta, ButlerExplain and TicoDomeLecture */
 static void update_dome_npcs(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -23161,6 +23250,13 @@ static void update_dome_npcs(void)
             if (!ta) obj_play(in, "wait", 1, 0);
             continue;
         }
+        if (in->dnpc == 3 || in->dnpc == 4) { /* Rosetta, ButlerExplain: at their PosName in a demo, else as placed */
+            const float *mv = dx.on ? dx_cast_m(in->row) : NULL;
+            if (mv) memcpy(in->m, mv, 64);
+            else mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
+            if (in->dnpc == 3) rosetta_update(in);
+            continue;
+        }
         /* TicoDomeLecture: home _8C / _98, cMoveEndPos (0, -70, 0), cMoveEndRotate (30, 130, 0) */
         float pos[3] = {r->pos[0], r->pos[1], r->pos[2]}, rot[3] = {r->rot[0], r->rot[1], r->rot[2]};
         int first = tdl.step++ == 0;
@@ -23207,7 +23303,7 @@ static void dx_start(int k) /* DemoExecutor::start, startDemoSystem */
     for (int g = 0; g < d->h->ngroup; g++)
         for (unsigned c = 0; c < sizeof dx_casts / sizeof dx_casts[0] && ndxt < DX_MAX_TA; c++) {
             int row = d->group[g];
-            if (strcmp(dx_casts[c].cls, sc->types + 32 * sc->objs[row].type) || strcmp(dx_casts[c].demo, d->h->name)) continue;
+            if (strcmp(dx_casts[c].cls, sc->types + 32 * sc->objs[row].type) || strcmp(dx_casts[c].demo, d->h->name) || !dx_casts[c].anim[0]) continue;
             DxTalkAnim *t = &dxt[ndxt++];
             memset(t, 0, sizeof *t);
             t->row = row; t->c = (int)c; t->part = -1;
@@ -23341,6 +23437,7 @@ int game_test_demo(int k)
     else dx_push(k, 0);
     return 0;
 }
+int game_test_demo_name(const char *name) { return dx_request(name, 0); } /* tests: requestStartTimeKeepDemo by name */
 /* StorySequenceExecutor's nerves once the scene started (setNerveSceneStart): PlayDemoSequence, WaitTimeKeepDemoEnd,
  * WaitSaveEnd, StartSaveAfterSequence / WaitSaveEndAfterSequence (a list ending in 13 whose sequence has not saved: _B0),
  * FadeinAfterSequence. ponytail: the star return demos (StarReturnDemoStarter, GrandStarReturnDemoStarter) not played (the
@@ -25104,7 +25201,7 @@ void game_draw(void)
             }
             continue;
         }
-        if (in->npc) { /* its own up, its front turned to Mario when he is near */
+        if (in->npc && !(in->dnpc == 3 && ros_demo)) { /* its own up, its front turned to Mario when he is near */
             V3 p = v3(in->m[12], in->m[13], in->m[14]), to = vsub(mario->pos, p);
             if (vdot(to, to) < NPC_TURN * NPC_TURN) {
                 V3 up = vmul(v3(in->m[4], in->m[5], in->m[6]), 1.0f / in->s);
