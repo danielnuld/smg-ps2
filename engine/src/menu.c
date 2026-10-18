@@ -361,7 +361,7 @@ static void sv_update(void)
  * galaxy / picture book / Tico galaxy information windows, no IconAButton, no effects or BGM */
 enum { SR_OFF, SR_APPEARSTAR, SR_WAITCOUNT, SR_COUNT, SR_DISPLAY, SR_DISAPPEAR, SR_APPEARSCORE, SR_APPEARPIECE, SR_DISPLAYPIECE,
        SR_WAITPIECE };
-static struct { LytInst *l; Nrv n; int kind, pieces, pressed, alive, delay; SeqResult r; u16 text[160]; } sr;
+static struct { LytInst *l; Nrv n; int kind, pieces, pressed, alive, delay, held; SeqResult r; u16 text[160]; } sr;
 
 /* the message with its string arguments (group 7 tags: their last parameter the argument's index) put in */
 static void msg_with_args(u16 *out, int cap, const u16 *src, const u16 *const *args, int nargs)
@@ -483,7 +483,12 @@ static void sr_update(void)
     nrv_end(&sr.n);
     lyt_update(sr.l);
 }
-int menu_result_showing(void) { return sr.alive || sr.delay; }
+int menu_result_showing(void) { return sr.alive || sr.delay || sr.held; }
+void menu_result_start(void) /* StarReturnDemoStarter::tryStartStageResult: the held result window appears */
+{
+    if (!sr.held || !sr.l) return;
+    sr.held = 0; sr.alive = 1; sr.n.next = -1; nrv_set(&sr.n, SR_APPEARSTAR);
+}
 
 /* --- PauseMenu ------------------------------------------------------------------------------------------------- */
 enum { PM_SELECTING, PM_DECIDED, PM_DISAPPEAR, PM_CONFIRM, PM_SAVE };
@@ -651,7 +656,11 @@ void menu_init(const Scene *s)
     sv_prompt = seq_take_save_prompt() ? 90 : 0;
     memset(&sr, 0, sizeof sr);
     sr.l = lyt_new("ResultWindow");
-    if (sv_prompt && seq_take_result(&sr.r)) sr.delay = 60;
+    if (sv_prompt && seq_take_result(&sr.r)) { /* a star return demo shows it at its wait's end (menu_result_start) */
+        const SeqDemo *d = seq_demo_current();
+        int ret = d && d->type == 0 && (!strcmp(d->name, "天文ドームスター帰還") || !strcmp(d->name, "パワースター帰還"));
+        if (ret) sr.held = 1; else sr.delay = 60;
+    }
     dmu_init();
     mlay_init();
     fs_init(s);

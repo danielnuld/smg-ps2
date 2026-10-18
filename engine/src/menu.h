@@ -46,6 +46,7 @@ void menu_save_start(int confirm, int remind, int quit); /* SaveDataHandleSequen
 int menu_saving(void);
 int menu_save_result(void);          /* 2 saved, 3 not */
 int menu_result_showing(void);       /* StageResultInformer */
+void menu_result_start(void);        /* the result held for the star return demo */
 int menu_take_save_request(void);    /* main.c: 1 once per request */
 int menu_draw_screen(void); /* game_draw: 1 when a whole-screen menu (the scenario select) drew the frame */
 const u16 *msg_get(const char *label); /* MR::getLayoutMessageDirect / getGameMessageDirect (MSGS chunk), NULL none */

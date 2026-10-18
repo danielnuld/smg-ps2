@@ -110,7 +110,7 @@ SKY_SEA = {"EarthNightMat_v": ((0, 25, 52), None), "EarthFar_v": (None, 7, 1, (0
 # extra models a class draws: a name of its own, or "#<BCK>": the class's archive with that animation's visibility
 # ("<archive>#<BVA>": another archive with that BVA's last-frame visibility: the cracked egg shell)
 # (FlipPanel: "?" at rest, "!" once flipped, the End face when its group is complete)
-EXTRA = {"FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
+EXTRA = {"StarReturnDemoStarter": ("PowerStar", "GrandStar"), "FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
          "MorphItemNeoFire": ("MarioFireBall",), "AirBubbleGenerator": ("AirBubble",),
          "DinoPackun": ("DinoPackunTailBall", "DinoPackunEggShell", "DinoPackunEggShell#EggBroken", "DinoPackunEggShellBreak"), "OtaKing": ("CocoNut", "OtaKingFoot", "FireBall", "FireBubble", "OtaKingMagma", "OtaKingLongFoot", "OtaKingMagmaBloom"), "OtaRock": ("CocoNut", "FireBall"), "HammerHeadPackun": ("PackunLeaf",), "Plant": ("PlantTop", "PlantLeaf"), "CocoSambo": ("CocoSamboHead",), "PackunPetit": ("PackunPetitHead",),
@@ -1626,7 +1626,9 @@ DEMO_SHEETS = ("time", "subpart", "player", "camera", "action", "wipe", "sound")
 # MR::registerDemoCast(actor, DemoName): casts by the demo's name, not its DemoGroupId (Butler::initForAstroDome /
 # initForAstroGalaxy: initDemoSheetTalkAnim registers too)
 DEMO_DIRECT_CAST = {"Butler": ("ドームレクチャー１", "ドームレクチャー２", "バトラー報告", "スターピース解説前半", "スターピース解説後半",
-                               "バトラーグリーンドライバ説明")}
+                               "バトラーグリーンドライバ説明"),
+                    # StarReturnDemoStarter::tryRegisterDemo
+                    "StarReturnDemoStarter": ("グランドスター帰還[２回目以降]", "パワースター帰還", "天文ドームスター帰還")}
 
 
 _demo_dead = None

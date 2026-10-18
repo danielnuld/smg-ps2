@@ -86,6 +86,13 @@ int seq_demo_next(void) /* tryNextDemoInfo */
 void seq_demo_clear(void) { nsdemo = 0; nsdyn = 0; sdemo_save = 0; } /* _48.clear(), _B0 = false */
 int seq_demo_saved(int set) { if (set) sdemo_save = 1; return sdemo_save; }
 int seq_demo_event(void) { return nsdemo ? sdemo[0]->ev : 0; } /* getExecutingEventEnum */
+int seq_has_next_demo(void) /* hasNextDemo: a demo after the current info, in its list or the next ones */
+{
+    for (int i = 0; i < nsdemo; i++)
+        for (const SeqDemo *p = sdemo[i] + (i == 0); p->type != 12 && p->type != 13; p++)
+            if (p->type == 0) return 1;
+    return 0;
+}
 
 static const SeqDemo *add_dyn(int type, int ev, const char *name) /* addDynamicDemoSequenceInfo */
 {

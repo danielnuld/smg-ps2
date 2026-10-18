@@ -369,11 +369,19 @@ the demos): resume here.** State at the session break (2026-10-17 evening):
   exeDemoDomeLecture2 (posed at the camera, facing it); Butler / ButlerMap dead while the galaxy select runs
   (trySyncKillMsgSelectStart: butler_sync). `story` test goes on: R2 at the blue star, the lecture's talk, 天球儀レクチャー
   passed. The `dome` test passes both lectures first.
+- Done, tested: StarReturnDemoStarter (game.c srd_*) for 天文ドームスター帰還 / パワースター帰還: ReturnDemoRailMove on its
+  rail (ResultFly, ResultFlyEnd at the brake frame, the turn to mForward), FlyWaitPowerStar, Fall to the floor, Land,
+  ResultWaitStart / ResultWait, the result window (menu.c holds it: menu_result_start) at the wait part's last step with
+  the time keeper paused, FadeOut when another demo follows (seq_has_next_demo), then the demo goes on; the dome's
+  kill / appear by the sheet. Mario's demo clips loop as their BCK says. slice.py: the starter cast by the demos' names,
+  PowerStar / GrandStar as its EXTRA models; its placement not drawn. AstroDome / AstroGalaxy repacked (+ sound).
+  `result` test (EggStarGalaxy/1): the flight in, the landing, the result, the save, then ドームレクチャー１ (the
+  test's file has not heard it). ponytail: no grand star flight, the star drawn still (its ResultFly clips not played),
+  no SpinTico / MarioHair models, no path drawer / DemoFlyLightDemo effect / BGM.
 - All 136 scenarios repacked with DEMO chunks (2026-10-17), menus.bin with CinemaFrame.
 - Next, in order: Butler's other demos (バトラー報告,
   スターピース解説前半 / 後半, グリーンドライバ説明: their functors, the talk anim ctrls initDemoSheetTalkAnim) and the
-  Butler as a talking NPC; StarReturnDemoStarter (the result window inside the demo, replacing menu.c's) and
-  GrandStarReturnDemoStarter; Rosetta's demos (RosettaDemoAstroDome.cpp, the picture book); anim cameras of the camera
+  Butler as a talking NPC; GrandStarReturnDemoStarter and the grand star flight; Rosetta's demos (RosettaDemoAstroDome.cpp, the picture book); anim cameras of the camera
   sheet (AnimCameraName); more dx_cast_hook classes (engine classes with type 2/3 casts: EyeBeamer, doors via their
   switches, CollectTico, FirePressureRadiate); BGM changes of the Sound sheet; the other actors stopped during demos
   (requestStopSceneFor).

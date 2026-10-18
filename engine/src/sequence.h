@@ -36,5 +36,6 @@ int seq_demo_next(void);               /* tryNextDemoInfo: the next list, 0 none
 void seq_demo_clear(void);
 int seq_demo_saved(int set);           /* _B0: the save ran in the sequence */
 int seq_demo_event(void);              /* getExecutingEventEnum */
+int seq_has_next_demo(void);           /* hasNextDemoForStorySequenceEvent */
 
 #endif
