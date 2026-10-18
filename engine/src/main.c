@@ -913,6 +913,30 @@ int main(void)
                 printf("rosetta test f %u: demo %d book %d\n", frame, game_test_demo(-1), menu_monologue_alive());
         }
 #endif
+#if defined(PACKS) && defined(GRAND_TEST)
+        { /* HeavensDoorGalaxy/1: its grand star faked -> AstroGalaxy/4, グランドスター１帰還 (then ロゼッタ状況説明デモ);
+           * HeavensDoorGalaxy/2: its star 2 faked -> AstroGalaxy, パワースター帰還. X held every second: the result's pages */
+            static int pages;
+            int second = !strcmp(PACKS, "HeavensDoorGalaxy/2");
+            pad_force = frame > 600 && frame % 60 < 10 ? PAD_CROSS : 0;
+            if (menu_saving()) menu_test_point("BoxRight"); /* the save prompt: Yes */
+            if (frame == 200) {
+                SeqResult r = {"HeavensDoorGalaxy", second ? 2 : 1, 0, 1, 50, 0, 12};
+                if (second) gd_set_star("HeavensDoorGalaxy", 1);
+                r.prev_stars = gd_star_num();
+                gd_set_star("HeavensDoorGalaxy", second ? 2 : 1);
+                r.after_stars = gd_star_num();
+                seq_set_result(&r);
+                seq_set_cleared(second ? 2 : 1);
+                seq_galaxy_move(SEQ_STAGE_CLEAR, NULL, -1, -1, 0);
+                printf("grand test: grand star 1 flag %d\n", gd_flag_is_on("SpecialStarGrand1"));
+            }
+            if (frame > 200 && frame % 60 == 0 && frame < 6000)
+                printf("grand test f %u: busy %d demo %d result %d saving %d\n", frame, game_story_busy(), game_test_demo(-1),
+                       menu_result_showing(), menu_saving());
+            (void)pages;
+        }
+#endif
 #if defined(PACKS) && defined(FINALMOVIE_TEST) /* AstroGalaxy/5: the FinalBattle MovieStarter, then the scenario select */
         if (frame == 200) printf("finalmovie test: movie starter %d\n", game_test_movie(2));
         if (frame == 400) printf("finalmovie test: scenario select %d\n", menu_scenario_selecting());

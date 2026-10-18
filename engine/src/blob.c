@@ -182,6 +182,8 @@ int blob_add(Scene *s, const u8 *blob)
     }
     const u8 *ca = blob_chunk(blob, "CANM", NULL);
     if (ca && *(const u32 *)ca) { s->ncanm = *(const u32 *)ca; s->canm = ca + 4; }
+    const u8 *gp = blob_chunk(blob, "GPOS", NULL);
+    s->ngpos = gp ? *(const u32 *)gp : 0; s->gpos = gp ? gp + 4 : NULL;
     const u8 *tx = blob_chunk(blob, "TEXT", NULL);
     if (tx) { /* {u32 n, pad}, n x TexEntry, then pixels and CLUTs (offsets from the payload) */
         u32 n = *(const u32 *)tx;

@@ -92,6 +92,8 @@ typedef struct {
     Clip *clips;
     u32 ncanm;           /* CANM chunk: camera animations, per frame pos xyz, watch xyz, twist, fovy */
     const u8 *canm;      /* n x {char[32] name, u32 frames, f32[8 x frames]} */
+    u32 ngpos;           /* GPOS chunk: the GeneralPos by name (MR::findNamePos) */
+    const u8 *gpos;      /* n x {char[48] name (UTF-8), f32 pos[3], rot[3]} */
     u32 ntex;
     TexRef *tex;        /* scene-wide texture index -> entry and its TEXT payload (offsets are from there) */
     const u8 *ptcl;     /* PTCL chunk (particle effects, tools/jpa.py pack) of the blob that had one, or NULL */

@@ -396,30 +396,36 @@ the demos): resume here.** State at the session break (2026-10-17 evening):
   ponytail: the pointing SE (isStarPointerPointing1P 弱) and the star piece counter layout / guidance
   (requestStarPieceLectureGuidance, requestCounterLayoutAppearanceForTicoEat) not done.
 - All 136 scenarios repacked with DEMO chunks (2026-10-17), menus.bin with CinemaFrame.
-- **Resume here (2026-10-17 night): agent branches to merge into master, one at a time, each tested in PCSX2 before its
-  commit** (worktrees D:/smg-ps2-wt/<name>, created by hand; `git worktree list`; build.sh now builds the repo it lives
-  in, in /root/smg-engine-<name>, blob given as /mnt/d/smg-ps2/out/slice/hd2.bin):
-  1. `agent-democore` @ cb65fcd (D:/smg-ps2-wt/democore): the generic DemoExecutor pieces — the action sheet's AnimName
-     (anim_start on the cast), the camera sheet's anim cameras (dx.acam, slice.py DEMO_CANM baked by canm_chunk after
-     demo_chunk), the sound sheet's BGM (bgm_start / bgm_stop / bgm_return; tools/music.py --table writes bgm_tab,
-     audio_fade; game_bgm_stage replaces main.c's stage BGM start), the scene stopped during a time keep demo (lq_cls gates
-     game_update's update_* by class: the running demo's casts and dx_always_moves keep moving), DemoStartRequestHolder's
-     queue (dx_push, dx_busy). Tests: demo, story, result, report, dome, talk, route (regressions) and the new `shell`
-     (HellProminence 1: the LavaShellTower's three anim cameras, BGM stop then MBGM_GALAXY_02_HURRY); repack HellProminence
-     1-6 (CANM). Its dx_action AnimName duplicates agent-rosetta's: keep one.
-  2. `agent-rosetta` @ f83afa3 (D:/smg-ps2-wt/rosetta): Rosetta's Observatory demos (RosettaDemoAstroDome.cpp: the eight
-     talk demos, ロゼッタ状況説明デモ with the DemoWithButler talk anims and the picture book RosettaMonologue in menu.c:
-     PrologueStarSteward in map.bin), Rosetta / ButlerExplain skinned, dnpc 3 / 4 in update_dome_npcs, casts by name for
-     AstroCountDownPlate / AstroMapBoard, msg.py DIRECT Rosetta labels. Test: `rosetta` (AstroGalaxy/4); repack AstroGalaxy
-     1-5 and `python tools/lyt.py data/fs/files out/packs/menus.bin`; re-run story.
-  3. `agent-grand` (D:/smg-ps2-wt/grand, still running at the break: check `git -C /d/smg-ps2-wt/grand log --oneline -3`):
-     GrandStarReturnDemoStarter and the star return visuals (grand star flight, the star's clips, SpinTico / MarioHair,
-     AstroDomeSky's demo nerves); test `grand` (a faked HeavensDoor/1 clear -> AstroGalaxy).
-  Merge order: democore, rosetta, grand (`git merge agent-<name>`; conflicts expected in dx_casts / dx_cast_hook /
-  dx_action and build.sh's flag line: keep both sides). After each: repack what it names, build, run its test and the
-  regressions, commit. Then remove the worktrees (`git worktree remove`). Still to do after them: the Butler as a talking
-  NPC, バトラーマップレクチャー and バトラーグリーンドライバ説明, the regressions `result` / `story` re-run after the save-after
-  change below (only `spiece` ran it).
+- Done, tested (2026-10-18, merged from agent branches): the generic DemoExecutor pieces (d82b4d9): the action sheet's
+  AnimName (anim_start on the cast), the camera sheet's anim cameras (dx.acam; slice.py DEMO_CANM bakes every demo camera
+  target's canms), the sound sheet's BGM (bgm_start / bgm_stop / bgm_return: tools/music.py --table writes bgm_tab,
+  audio_fade; game_bgm_stage is the stage BGM start), the scene stopped during a time keep demo (lq_cls gates
+  game_update's update_* by class: the running demo's casts and dx_always_moves keep moving), the start request queue
+  (DemoStartRequestHolder: dx_push, dx_busy). `shell` test (HellProminence 1: the LavaShellTower's three anim cameras,
+  the BGM stop then MBGM_GALAXY_02_HURRY). ponytail: one class per update_*, the programmable demos do not stop the
+  scene, no camera interpolation back, no BGM fade-in / sequenced BGMs, 円ワイプ as the fade, no startPart.
+- Done, tested (ffb173b): Rosetta's Observatory demos (RosettaDemoAstroDome.cpp): the talk demos (EntryDemo talkers
+  AstroGalaxy_Rosetta300..., her eventFunc), ロゼッタ状況説明デモ (Rosetta's DemoWithButler talk anim with its canm,
+  ButlerExplain's ForActor one: only the scene ctrls pause the time keeper; the picture book RosettaMonologue in menu.c,
+  PrologueStarSteward in map.bin), Rosetta / ButlerExplain skinned, her WaitA / WaitB idle. `rosetta` test
+  (AstroGalaxy/4: 状況説明 with the book, then 天文台機能回復). ponytail: no TurnJointCtrl / talks outside demos, her
+  balloon at her Chin's bind height, no BGM events, the book without typewriter / IconAButton, AstroCountDownPlate's
+  digits. Seen: AstroGalaxy runs ~35 fps in that demo's camera (not investigated).
+- Done, tested (agent-grand merged): GrandStarReturnDemoStarter (game.c gsr_*: ReturnDemoRailMove with brake 296 / turn 98,
+  FlyWait, RushToCore at コア中心 from the GPOS chunk, Revival with the DemoAstroReturn<n> canm, the starter's actor
+  cameras, the result inside the demo, fade out), StarReturnDemoStarter's grand star branch, the stars skinned with their
+  ResultFly clips (PStar / GStar EXTRA models), the Luma (SpinTico) at the landing, AstroCore Revival<n> / Grow,
+  AstroDomeSky's nerves with its BRK fade as a black quad. `grand` test (HeavensDoorGalaxy/1: a faked grand star 1 ->
+  AstroGalaxy/4: グランドスター１帰還, the result, then ロゼッタ状況説明デモ; HeavensDoorGalaxy/2: パワースター帰還 in
+  AstroGalaxy). ponytail: no MarioHair / cap hiding, no star effects / BGM / overlay. Seen: PCSX2 runs the revival's
+  whole-Observatory views at ~40 % speed (EE-side logic + draw ~8 ms: the emulator, to check on the PS2).
+  Only the DemoAstroReturn<n> canms of the grand star demos placed in a scenario are packed (DEMO_NAMES), and Rosetta's
+  DemoWithButler canm only with ロゼッタ状況説明デモ.
+- Pack memory (2026-10-18): the Observatory ran out of pack region ("packs: no memory for ...": the heap is full after a
+  load). slice_all.py's room per galaxy now leaves out the menu packs main.c loads beside it (MENU_PACKS: map.bin in
+  AstroGalaxy, dome.bin, the title packs), and slice.py anim_skipped leaves out clips / canms a class never plays in a
+  stage (the Butler's dome demos outside AstroDome, Rosetta's other stages' demos in AstroGalaxy, ButlerExplain's copy of
+  the Butler's). main.c prints the pack region's blocks when it runs out.
 - Next, in order: Butler's other demos (グリーンドライバ説明, バトラーマップレクチャー: their functors, the talk anim ctrls
   initDemoSheetTalkAnim) and the Butler as a talking NPC; GrandStarReturnDemoStarter and the grand star flight; Rosetta's demos (RosettaDemoAstroDome.cpp, the picture book); anim cameras of the camera
   sheet (AnimCameraName); more dx_cast_hook classes (engine classes with type 2/3 casts: EyeBeamer, doors via their

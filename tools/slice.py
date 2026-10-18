@@ -66,13 +66,15 @@ SKINNED_OBJ = ("TreasureBoxKinokoOneUp", "TreasureBoxCoin", "TreasureBoxEmpty", 
                "RockBreak", "WanwanRollingBreak", "PunchingKinoko", "OtaKingMagma", "OtaKingLongFoot", "WoodBoxBreak",
                "CrystalCageSBreak", "BenefitItemOneUp", "BenefitItemLifeUp", "FlipPanel", "FlipPanelReverse", "OtaRock",
                "HammerHeadPackun", "PackunLeaf", "Plant", "Petari", "Butler", "TicoDomeLecture", "Rosetta", "ButlerExplain",
-               "PhantomShipPropellerSmall", "PhantomShipPropellerBig", "PhantomShipBridge")  # AnmModelSwitchMove without SW_A: Move at once (obj_anim: its only clip)
+               "PhantomShipPropellerSmall", "PhantomShipPropellerBig", "PhantomShipBridge",  # AnmModelSwitchMove without SW_A: Move at once (obj_anim: its only clip)
+               "PStar", "GStar", "SpinTico", "AstroCore")  # PStar / GStar: the star return demos' PowerStar / GrandStar (clip names fit 31 chars)
 # MapObjActor::initialize (tryStartAllAnim): a placed class whose model archive holds a BCK of the archive's name
 # plays it from the start; such classes are drawn skinned too (AUTO_SKINNED, class -> archive, filled by placement)
 AUTO_SKINNED = {}
 # the demo camera sheets' anim cameras (DemoCameraKeeper AnimCameraName: a .canm of the target cast's archive): (class,
 # canm stem) per scenario, filled by demo_chunk and baked by canm_chunk (called after it)
 DEMO_CANM = set()
+DEMO_NAMES = set()  # the scenario's DemoGroup names (demo_chunk), for canm_chunk
 _auto_anim = {}
 
 
@@ -85,7 +87,7 @@ def auto_anim(fsp, arc):
     return _auto_anim[arc]
 
 
-ANIM_ARC = {"TicoDomeLecture": "Tico", "ButlerExplain": "Butler", "CocoSambo": "CocoSamboBody", "Karikari": "Karipon", "BenefitItemOneUp": "KinokoOneUp",
+ANIM_ARC = {"TicoDomeLecture": "Tico", "ButlerExplain": "Butler", "PStar": "PowerStar", "GStar": "GrandStar", "CocoSambo": "CocoSamboBody", "Karikari": "Karipon", "BenefitItemOneUp": "KinokoOneUp",
             "BenefitItemLifeUp": "KinokoLifeUp", "HammerHeadPackun": "PackunFlower", "Plant": "PlantSeed", "FlowerGroup": "Flower", "FlowerBlueGroup": "FlowerBlue",
             "CutBushGroup": "CutBush", "FirePressureRadiate": "FirePressure", "JumpBeamer": "JumpBeamerBody", "TreasureBoxKinokoOneUp": "TreasureBox", "TreasureBoxCoin": "TreasureBox", "TreasureBoxEmpty": "TreasureBox", "TreasureBoxGoldEmpty": "TreasureBoxGold", "TreasureBoxCrackedKinokoOneUp": "TreasureBoxCracked", "TreasureBoxCrackedAirBubble": "TreasureBoxCracked", "TreasureBoxBlueChip": "TreasureBox", "TreasureBoxYellowChip": "TreasureBox", "TreasureBoxKinokoLifeUp": "TreasureBox", "TreasureBoxCrackedKinokoLifeUp": "TreasureBoxCracked", "TreasureBoxCrackedEmpty": "TreasureBoxCracked"}  # where a class's clips are when not in its own-named archive
 # ponytail: models the renderer cannot reproduce: the atmosphere spheres (*Air: their glow is a TEV rim effect; drawn
@@ -94,7 +96,9 @@ NO_DRAW = ("SphereAir", "DimensionAir", "HomeAir", "TwilightAir", "DarknessRoomA
 OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup", "PurpleRailCoin", "CircleCoinGroup",
              "RailCoin", "SuperSpinDriver", "StarPieceGroup", "StarPieceFlow")
 # classes whose first NameObjFactory archive is not their model (OtaKing's is FireBall, Tico's TicoBaby): the model
-MODEL_ARC = {"TicoDomeLecture": "Tico", "OtaKing": "OtaKing", "KoopaJr": "KoopaJr", "Tico": "Tico", "Plant": "PlantSeed"}
+# camera animations baked for a class from another archive: class -> (CANM name prefix, archive)
+CANM_ARC = {"GrandStarReturnDemoStarter": ("gsr", "DemoAstroReturn")}  # initAnimCamera "DemoAstroReturn.arc"
+MODEL_ARC = {"TicoDomeLecture": "Tico", "PStar": "PowerStar", "GStar": "GrandStar", "OtaKing": "OtaKing", "KoopaJr": "KoopaJr", "Tico": "Tico", "Plant": "PlantSeed"}
 # ponytail: no MiniatureGalaxyStarNumber (its digits are texture matrices per material), no MiniatureGalaxyShadow
 MINI_EXTRA = ("MiniatureGalaxyUnknown", "MiniHatenaGalaxy", "MiniatureGalaxyUnknownKoopa", "MiniKoopaGalaxy",
               "MiniatureGalaxySelect")
@@ -113,7 +117,7 @@ SKY_SEA = {"EarthNightMat_v": ((0, 25, 52), None), "EarthFar_v": (None, 7, 1, (0
 # extra models a class draws: a name of its own, or "#<BCK>": the class's archive with that animation's visibility
 # ("<archive>#<BVA>": another archive with that BVA's last-frame visibility: the cracked egg shell)
 # (FlipPanel: "?" at rest, "!" once flipped, the End face when its group is complete)
-EXTRA = {"StarReturnDemoStarter": ("PowerStar", "GrandStar"), "FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
+EXTRA = {"StarReturnDemoStarter": ("PStar", "GStar", "SpinTico"), "GrandStarReturnDemoStarter": ("GStar",), "FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
          "MorphItemNeoFire": ("MarioFireBall",), "AirBubbleGenerator": ("AirBubble",),
          "DinoPackun": ("DinoPackunTailBall", "DinoPackunEggShell", "DinoPackunEggShell#EggBroken", "DinoPackunEggShellBreak"), "OtaKing": ("CocoNut", "OtaKingFoot", "FireBall", "FireBubble", "OtaKingMagma", "OtaKingLongFoot", "OtaKingMagmaBloom"), "OtaRock": ("CocoNut", "FireBall"), "HammerHeadPackun": ("PackunLeaf",), "Plant": ("PlantTop", "PlantLeaf"), "CocoSambo": ("CocoSamboHead",), "PackunPetit": ("PackunPetitHead",),
@@ -1308,7 +1312,8 @@ def placement(fs, galaxy, scenario):
             if e[0] == "#":
                 arcmap.setdefault(o["name"] + e, arcmap[o["name"]] + e if arcmap[o["name"]] else None)
             else:
-                arcmap.setdefault(e, e if (fsp / "ObjectData" / f"{e.partition('#')[0]}.arc").exists() else None)
+                ea = MODEL_ARC.get(e, e)  # an EXTRA model from another archive (PStar: a skinned PowerStar)
+                arcmap.setdefault(e, ea if (fsp / "ObjectData" / f"{ea.partition('#')[0]}.arc").exists() else None)
     sd = {n.lower(): d for n, d in B.rarc_files((fsp / "StageData" / galaxy / f"{galaxy}Scenario.arc").read_bytes())}
     sd = sd["scenariodata.bcsv"]
     names = next(B.rarc_files((fsp / "StageData" / "ObjNameTable.arc").read_bytes()))[1]
@@ -1347,6 +1352,9 @@ def placement(fs, galaxy, scenario):
     out.append(chunk(b"CSET", struct.pack("<I", len(cset)) + b"".join(struct.pack("<Hh", i, v) for i, v in cset)))
     out.append(demo_chunk(fsp, demos, gpos, keep, jp2en, se_table()))
     out.append(canm_chunk(Path(fs), set(types), galaxy, scenario))  # after demo_chunk: DEMO_CANM
+    # GPOS: every GeneralPos by name (MR::findNamePos from code: コア中心...): {u32 n}, n x {char name[48] UTF-8, f32 pos[3], rot[3]}
+    out.append(chunk(b"GPOS", struct.pack("<I", len(gpos)) +
+                     b"".join(g["name"].encode("utf8")[:47].ljust(48, b"\0") + struct.pack("<6f", *g["pos"], *g["rot"]) for g in gpos)))
     care = [struct.pack("<BBH9f", camera.SHAPES[r["name"]], r["zone"],
                         cam_index.get((r["zone"], "c", r["args"][0] & 0xFFFF), 0xFFFF), *r["pos"], *r["rot"], *r["scale"])
             for r in camera.areas(cubes)]
@@ -1419,10 +1427,11 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
         arc = fsp / "ObjectData" / f"{a}.arc"
         if not arc.exists():
             continue
-        key = (a, pose, ratio, brk, mc)
+        sk = cls in SKINNED or cls in SKINNED_OBJ or cls in AUTO_SKINNED
+        key = (a, pose, ratio, brk, mc, sk)  # one archive static and skinned (PowerStar / PStar): two entries
         if key not in _model_cache:
             st = {}
-            _model_cache[key] = (model_groups(arc, ratio, st, cls in SKINNED or cls in SKINNED_OBJ or cls in AUTO_SKINNED,
+            _model_cache[key] = (model_groups(arc, ratio, st, sk,
                                               pose or None, brk, mc), st)
         (groups, kcl, sk), st = _model_cache[key]
         for k, v in st.items():
@@ -1630,10 +1639,27 @@ def canm_chunk(fsp, classes, galaxy=None, scenario=None):
         if not arc.exists() or c == "ButlerExplain":  # its DemoWithButler talk anim ctrl is ForActor: no camera (the Butler's canms are his)
             continue
         for n, b in B.rarc_files(arc.read_bytes()):
-            if n.lower().endswith(".canm") and not anim_skipped(c, n.rsplit("/", 1)[-1][:-5].lower(), galaxy):
+            stem = n.rsplit("/", 1)[-1][:-5].lower()
+            if stem == "demowithbutler" and "ロゼッタ状況説明デモ" not in DEMO_NAMES:  # its talk anim's camera: only with that demo
+                continue
+            if n.lower().endswith(".canm") and not anim_skipped(c, stem, galaxy):
                 fr = canm_bake(b)
                 if fr:
                     out.append(name32(f"{c.lower()}/{n.rsplit('/', 1)[-1][:-5].lower()}") + struct.pack("<I", len(fr)) +
+                               b"".join(struct.pack("<8f", *f) for f in fr))
+    for c, (prefix, a) in CANM_ARC.items():  # a class's camera animations from another archive (CANM_ARC)
+        arc = fsp / "ObjectData" / f"{a}.arc"
+        if c not in classes or not arc.exists():
+            continue
+        for n, b in B.rarc_files(arc.read_bytes()):
+            stem = n.rsplit("/", 1)[-1][:-5].lower()
+            # DemoAstroReturn<n>: グランドスター<n>帰還's (getActiveGrandStarReturnDemoIndex), only where that demo is placed
+            if stem.startswith("demoastroreturn") and stem[-1:].isdigit() and                     f"グランドスター{chr(0xFF10 + int(stem[-1]))}帰還" not in DEMO_NAMES:
+                continue
+            if n.lower().endswith(".canm"):
+                fr = canm_bake(b)
+                if fr:
+                    out.append(name32(f"{prefix}/{n.rsplit('/', 1)[-1][:-5].lower()}") + struct.pack("<I", len(fr)) +
                                b"".join(struct.pack("<8f", *f) for f in fr))
     return chunk(b"CANM", struct.pack("<I", len(out)) + b"".join(out))
 
@@ -1658,6 +1684,10 @@ DEMO_DIRECT_CAST = {"Butler": ("ドームレクチャー１", "ドームレク�
                     "ButlerExplain": ("グランドスター１帰還",),
                     "AstroCountDownPlate": ("ロゼッタカウントダウン開始デモ", "ロゼッタ最終決戦デモ"),
                     "AstroMapBoard": ("ロゼッタトーチの炎説明デモ", "ロゼッタトーチの炎進捗デモ")}
+# the same, only for a placement without a DemoGroupId (GrandStarReturnDemoStarter::init: tryRegisterDemoCast(rIter)
+# else the grand star return demos 2..6 by name)
+DEMO_DIRECT_CAST_ELSE = {"GrandStarReturnDemoStarter": ("グランドスター２帰還", "グランドスター３帰還", "グランドスター４帰還",
+                                                        "グランドスター５帰還", "グランドスター６帰還")}
 
 
 _demo_dead = None
@@ -1711,6 +1741,8 @@ def demo_chunk(fsp, demos, gpos, keep, jp2en, se_ids):
     sheets = {n.rsplit("/", 1)[-1].lower(): b for n, b in B.rarc_files((fsp / "ObjectData" / "DemoSheet.arc").read_bytes())}
     main = [d for d in demos if d["name"] == "DemoGroup" and d.get("sheet")]
     DEMO_CANM.clear()
+    DEMO_NAMES.clear()
+    DEMO_NAMES.update(d["demo_name"] for d in main)
     en2jp = {e: j for j, e in jp2en.items()}
     row_jp = [en2jp.get(r.get("cls", r["name"])) for r in keep]
     pos_tab, pos_index = [], {}
@@ -1749,6 +1781,8 @@ def demo_chunk(fsp, demos, gpos, keep, jp2en, se_ids):
             if sg["name"] == "DemoSubGroup" and sg["demo_name"] == d["demo_name"]:
                 group += [i for i, r in enumerate(keep) if r.get("demo", -1) == sg["l_id"] and r["zone"] == sg["zone"]]
         group += [i for i, r in enumerate(keep) if d["demo_name"] in DEMO_DIRECT_CAST.get(r["name"], ()) and i not in group]
+        group += [i for i, r in enumerate(keep) if d["demo_name"] in DEMO_DIRECT_CAST_ELSE.get(r["name"], ()) and i not in group
+                  and r.get("demo", -1) in (-1, 0xFFFF)]
         match = lambda name, cid: [i for i in group if row_jp[i] == name and (cid < 0 or keep[i].get("cast", -1) == cid)]
         recs = {k: [] for k in DEMO_SHEETS[2:]}
         for pn, ps, bk in zip(cols("player", "PartName"), cols("player", "PosName"), cols("player", "BckName")):
