@@ -55,6 +55,7 @@ struct LytInst {
     const float **follow; /* setFollowPos per pane */
     u8 *follow_add;
     float *pscale; /* setPaneScale per pane (1: none) */
+    float *height; /* a pane's height set after its animations (PowerStarList::setSeparatorPaneSize), < 0 none */
     PState *ps;
     MState *ms;
     PWorld *pw;
@@ -137,6 +138,8 @@ LytInst *lyt_new(const char *name)
             l->follow_add = mem_alloc(MEM_SCENE, h->npanes);
             l->pscale = mem_alloc(MEM_SCENE, h->npanes * sizeof *l->pscale);
             for (int k = 0; k < h->npanes; k++) l->pscale[k] = 1.0f;
+            l->height = mem_alloc(MEM_SCENE, h->npanes * sizeof *l->height);
+            for (int k = 0; k < h->npanes; k++) l->height[k] = -1.0f;
             memset(l->vpos, -1, h->npanes);
             l->ps = mem_alloc(MEM_SCENE, h->npanes * sizeof *l->ps);
             l->pw = mem_alloc(MEM_SCENE, h->npanes * sizeof *l->pw);
@@ -188,6 +191,14 @@ int lyt_start_pane(LytInst *l, const char *pane, const char *anim, int ch)
     int p = lyt_pane(l, pane);
     return p >= 0 && start(l, p, anim, ch);
 }
+int lyt_start_pane_reverse(LytInst *l, const char *pane, const char *anim, int ch) /* MR::startPaneAnimReverseOneTime */
+{
+    int p = lyt_pane(l, pane);
+    if (p < 0 || !start(l, p, anim, ch)) return 0;
+    for (int i = 0; i < LYT_SLOTS; i++)
+        if (l->slot[i].on && l->slot[i].root == p && l->slot[i].ch == ch) { l->slot[i].frame = l->slot[i].a->frames; l->slot[i].rate = -1.0f; }
+    return 1;
+}
 
 static int find_slot(const LytInst *l, int root, int ch)
 {
@@ -224,7 +235,9 @@ void lyt_update(LytInst *l)
         if (!l->slot[i].on || l->slot[i].stopped) continue;
         float end = l->slot[i].a->frames;
         l->slot[i].frame += l->slot[i].rate;
-        if (l->slot[i].frame >= end) {
+        if (l->slot[i].rate < 0) { /* played backwards once: stops at its start */
+            if (l->slot[i].frame <= 0) { l->slot[i].frame = 0; l->slot[i].stopped = 1; }
+        } else if (l->slot[i].frame >= end) {
             if (l->slot[i].a->loop && end > 0) l->slot[i].frame = fmodf(l->slot[i].frame, end);
             else { l->slot[i].frame = end; l->slot[i].stopped = 1; }
         }
@@ -232,6 +245,8 @@ void lyt_update(LytInst *l)
 }
 
 void lyt_show_pane(LytInst *l, const char *pane, int show) { int p = lyt_pane(l, pane); if (p >= 0 && !l->ps[p].lang_off) l->ps[p].vis = show != 0; }
+void lyt_set_pane_alpha(LytInst *l, const char *pane, int a) { int p = lyt_pane(l, pane); if (p >= 0) l->ps[p].alpha = a < 0 ? 255 : a; } /* -1: 255 */
+void lyt_set_pane_height(LytInst *l, const char *pane, float h) { int p = lyt_pane(l, pane); if (p >= 0) l->height[p] = h; }
 void lyt_hide_for_good(LytInst *l, const char *pane) { int p = lyt_pane(l, pane); if (p >= 0) l->ps[p].nodraw = 1; } /* its children still drawn */
 int lyt_pane_shown(const LytInst *l, const char *pane) { int p = lyt_pane(l, pane); return p >= 0 && l->ps[p].vis; }
 void lyt_set_text(LytInst *l, const char *pane, const u16 *text) { int p = lyt_pane(l, pane); if (p >= 0) l->text[p] = text; }
@@ -353,6 +368,7 @@ static void evaluate(LytInst *l)
             }
         }
     }
+    for (int i = 0; i < h->npanes; i++) if (l->height[i] >= 0) l->ps[i].size[1] = l->height[i];
     /* the tree, parents before children (file order): translation, z rotation, scale (180 degrees about x / y a
      * mirror); a pane's alpha its own times its parent's where the parent influences its children's */
     for (int i = 0; i < h->npanes; i++) {

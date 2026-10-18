@@ -23694,7 +23694,7 @@ static void update_dome_npcs(void)
             if (!dx.on) bmap_nrv = 0;
             if (bmap_nrv == 1 && dx_last(2)) { /* exeLectureDemoShowMapBefore: マップ表示開始's last step */
                 dx.paused = 1; bmap_nrv = 2;
-                menu_galaxy_map(0); menu_wipe_force(0); /* startAstroMapLayoutForNewDomeDiscover, forceOpenWipeFade */
+                menu_galaxy_map(GMAP_NEW_DOME); menu_wipe_force(0); /* startAstroMapLayoutForNewDomeDiscover, forceOpenWipeFade */
             } else if (bmap_nrv == 2 && !menu_galaxy_map_active()) { dx.paused = 0; bmap_nrv = 3; } /* LectureDemoShowMapAfter */
             int ta = 0;
             for (int k = 0; k < ndxt; k++) ta |= dx.on && dxt[k].row == in->row && bmap_nrv;
@@ -23707,7 +23707,7 @@ static void update_dome_npcs(void)
             if (butler_nrv == 4) { /* exeDemoShowGalaxyMap: paused; at 30 the map (startAstroMapLayoutForChallengeGalaxyDiscover); at 70 resumed */
                 int n = butler_step++;
                 if (n == 0) dx.paused = 1;
-                if (n == 30) menu_galaxy_map(0);
+                if (n == 30) menu_galaxy_map(GMAP_CHALLENGE);
                 if (n == 70) { dx.paused = 0; butler_nrv = 1; }
             }
             if (butler_nrv == 2) { /* setNPCActorPose(-getCamZdir, getCamYdir, getCamPos) */

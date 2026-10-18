@@ -215,6 +215,32 @@ static int green_num(const char *unused) /* GameDataFunction::calcGreenStarNum: 
     return gd_flag_is_on("SpecialStarGreen1") + gd_flag_is_on("SpecialStarGreen2") + gd_flag_is_on("SpecialStarGreen3");
 }
 int gd_green_first_just(void) { return at_start(green_num, "") == 0 && green_num("") == 1; } /* isJustGetGreenStarFirst */
+int gd_galaxy_appear_just(const char *g) { return gd_galaxy_appear(g) && !at_start(gd_galaxy_appear, g); } /* isOnJustAppearGalaxy */
+static int tico_galaxy_num(const char *unused) /* GameDataFunction::calcTicoGalaxyNum */
+{
+    const char *g;
+    int n = 0, given, max;
+    (void)unused;
+    for (int i = 0; gd_tico_galaxy(i, &g, &given, &max); i++) n += gd_galaxy_appear(g);
+    return n;
+}
+static int galaxy_num_can_open(const char *unused) /* GameDataHolder::getGalaxyNumCanOpen */
+{
+    int n = 0;
+    (void)unused;
+    for (int i = 0; i < nscen; i++) n += gd_flag_can_on(scen[i].galaxy) && !gd_flag_is_on(scen[i].galaxy);
+    return n;
+}
+int gd_just_tico_galaxy(void) { return at_start(tico_galaxy_num, "") < tico_galaxy_num(""); } /* isJustAppearTicoGalaxy */
+int gd_just_open_galaxy(void) /* StageResultSequenceChecker::isJustOpenGalaxyWithoutChallengeGalaxy */
+{
+    int prev = at_start(galaxy_num_can_open, ""), after = galaxy_num_can_open(""), green = 0;
+    if (prev >= after) return 0;
+    if (!gd_flag_is_on_just("SpecialStarGreenAll")) return 1;
+    for (int i = 0; i < NFLAGS; i++) /* GameEventFlagTable::calcGreenPowerStarNum */
+        green += gd_flags[i].type == GT_SPECIALSTAR && strstr(gd_flags[i].name, "SpecialStarGreen");
+    return prev < after - green;
+}
 
 /* GameEventFlagTable::getExclamationGalaxyNameFromIndex / getStarPieceNumGivingToTicoGalaxy / ...Max: the i-th
  * StarPiece flag's galaxy (a hungry Luma's), the star pieces given to it (StarPieceAlmsStorage i + 8) and its need */
@@ -243,13 +269,21 @@ int gd_flag_try_on(const char *name) /* GameEventFlagChecker::tryOn */
 }
 
 int gd_grand_galaxy_no(const char *g) { const GInfo *gi = find_info(g); return gi ? gi->grand : 0; }
-int gd_is_grand_star(const char *g, int star) /* isPowerStarSpecial(..., "SpecialStarGrand") */
+int gd_is_special_star(const char *g, int star, const char *kind) /* GameDataConst::isPowerStarSpecial */
 {
     for (int i = 0; i < NFLAGS; i++)
         if (gd_flags[i].type == GT_SPECIALSTAR && gd_flags[i].c1 == star && gd_flags[i].s1 && !strcmp(gd_flags[i].s1, g) &&
-            strstr(gd_flags[i].name, "SpecialStarGrand"))
+            strstr(gd_flags[i].name, kind))
             return 1;
     return 0;
+}
+int gd_is_grand_star(const char *g, int star) { return gd_is_special_star(g, star, "SpecialStarGrand"); }
+int gd_question_galaxy(const char *g) /* GameDataConst::isQuestionGalaxy: an Appear<galaxy> flag of type GalaxyOpenStar */
+{
+    char n[64];
+    snprintf(n, sizeof n, "Appear%s", g);
+    int i = find_flag(n);
+    return i >= 0 && gd_flags[i].type == GT_GALAXYOPENSTAR;
 }
 int gd_galaxy_open(const char *g) { return !gd_power_star_num(g) || gd_flag_is_on(g); }
 int gd_galaxy_appear(const char *g)

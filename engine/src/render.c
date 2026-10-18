@@ -481,6 +481,49 @@ static void model_textures(const Model *md)
     }
 }
 
+/* texture i's cache entry and GS state packet from its TexEntry (not resident yet) */
+static void tex_setup(u32 i)
+{
+    const TexEntry *t = tex_scene->tex[i].e;
+    tex_block[i] = -1;
+    tex_nblk[i] = blocks_of(t);
+    tex_last[i] = 0;
+    qword_t *p = tex_packets + TEXP * i;
+    p[0].dw[0] = GIF_SET_TAG(TEXP - 1, 1, 0, 0, GIF_FLG_PACKED, 1);
+    p[0].dw[1] = GIF_REG_AD;
+    p[1].dw[1] = GS_REG_TEX0;    /* TEX0 itself is written when the texture gets its blocks (tex_need) */
+    /* no mips: fixed LOD 0, bilinear; mips: LOD = log2(depth) + K, bilinear in the nearest level (MMIN 4) */
+    p[2].dw[0] = t->nmip ? (u64)t->nmip << 2 | 1 << 5 | 5 << 6 | (u64)((t->lod_k + LOD_BIAS) & 0xFFF) << 32
+                         : GS_SET_TEX1(1, 0, 1, 1, 0, 0, 0);
+    p[2].dw[1] = GS_REG_TEX1;
+    p[7].dw[0] = 0; /* MIPTBP1 itself is written with TEX0 (tex_need) */
+    p[7].dw[1] = 0x34; /* MIPTBP1_1 */
+    p[3].dw[0] = GS_SET_CLAMP(t->clamp_s, t->clamp_t, 0, 0, 0, 0);
+    p[3].dw[1] = GS_REG_CLAMP;
+    /* texels under half alpha are cut out; a blended material blends them instead (blend_state's TEST) */
+    p[4].dw[0] = t->alpha ? GS_SET_TEST(1, ATEST_METHOD_GREATER_EQUAL, 0x40, 0, 0, 0, 1, ZTEST_METHOD_GREATER_EQUAL)
+                          : test_z;
+    p[4].dw[1] = GS_REG_TEST;
+    p[5].dw[0] = GS_SET_ALPHA(0, 1, 0, 1, 0x80);
+    p[5].dw[1] = GS_REG_ALPHA;
+    p[6].dw[0] = GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 0);
+    p[6].dw[1] = GS_REG_ZBUF;
+}
+
+/* menu.c (the map's GalaxyDetail picture, read on demand): scene texture t's pixels now from `base` as `e` says */
+void render_set_texture(u32 t, const TexEntry *e, const u8 *base)
+{
+    if (!tex_scene || t >= tex_scene->ntex) return;
+    dma_channel_wait(DMA_CHANNEL_VIF1, 0);
+    dma_channel_wait(DMA_CHANNEL_GIF, 0);
+    if (tex_block[t] >= 0) tex_free(t);
+    tex_scene->tex[t].e = e;
+    tex_scene->tex[t].base = base;
+    tex_setup(t);
+    FlushCache(0);
+    cur_tex = -1;
+}
+
 void render_load_textures(const Scene *s, u32 first_tex, u32 first_model)
 {
     u32 ntex = s->ntex;
@@ -504,31 +547,8 @@ void render_load_textures(const Scene *s, u32 first_tex, u32 first_model)
     }
     u32 need = 0;
     for (u32 i = first_tex; i < ntex; i++) {
-        const TexEntry *t = s->tex[i].e;
-        tex_block[i] = -1;
-        tex_nblk[i] = blocks_of(t);
-        tex_last[i] = 0;
+        tex_setup(i);
         need += tex_nblk[i];
-        qword_t *p = tex_packets + TEXP * i;
-        p[0].dw[0] = GIF_SET_TAG(TEXP - 1, 1, 0, 0, GIF_FLG_PACKED, 1);
-        p[0].dw[1] = GIF_REG_AD;
-        p[1].dw[1] = GS_REG_TEX0;    /* TEX0 itself is written when the texture gets its blocks (tex_need) */
-        /* no mips: fixed LOD 0, bilinear; mips: LOD = log2(depth) + K, bilinear in the nearest level (MMIN 4) */
-        p[2].dw[0] = t->nmip ? (u64)t->nmip << 2 | 1 << 5 | 5 << 6 | (u64)((t->lod_k + LOD_BIAS) & 0xFFF) << 32
-                             : GS_SET_TEX1(1, 0, 1, 1, 0, 0, 0);
-        p[2].dw[1] = GS_REG_TEX1;
-        p[7].dw[0] = 0; /* MIPTBP1 itself is written with TEX0 (tex_need) */
-        p[7].dw[1] = 0x34; /* MIPTBP1_1 */
-        p[3].dw[0] = GS_SET_CLAMP(t->clamp_s, t->clamp_t, 0, 0, 0, 0);
-        p[3].dw[1] = GS_REG_CLAMP;
-        /* texels under half alpha are cut out; a blended material blends them instead (blend_state's TEST) */
-        p[4].dw[0] = t->alpha ? GS_SET_TEST(1, ATEST_METHOD_GREATER_EQUAL, 0x40, 0, 0, 0, 1, ZTEST_METHOD_GREATER_EQUAL)
-                              : test_z;
-        p[4].dw[1] = GS_REG_TEST;
-        p[5].dw[0] = GS_SET_ALPHA(0, 1, 0, 1, 0x80);
-        p[5].dw[1] = GS_REG_ALPHA;
-        p[6].dw[0] = GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 0);
-        p[6].dw[1] = GS_REG_ZBUF;
     }
     FlushCache(0);
     vram_tex = need * 64;

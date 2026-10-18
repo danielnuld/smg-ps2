@@ -38,6 +38,11 @@ void gd_scene_start(void);                       /* the scene start's game data 
 int gd_flag_is_on_just(const char *name);        /* isOnJustGameEventFlag: on now, off as the scene started */
 int gd_flag_can_on_just(const char *name);       /* canOnJustGameEventFlag */
 int gd_green_first_just(void);                   /* StageResultSequenceChecker::isJustGetGreenStarFirst */
+int gd_galaxy_appear_just(const char *galaxy);   /* GameDataFunction::isOnJustAppearGalaxy */
+int gd_just_tico_galaxy(void);                   /* StageResultSequenceChecker::isJustAppearTicoGalaxy */
+int gd_just_open_galaxy(void);                   /* isJustOpenGalaxyWithoutChallengeGalaxy */
+int gd_is_special_star(const char *galaxy, int star, const char *kind); /* GameDataConst::isPowerStarSpecial */
+int gd_question_galaxy(const char *galaxy);      /* GameDataConst::isQuestionGalaxy */
 int gd_flag_try_on(const char *name);
 int gd_grand_galaxy_no(const char *galaxy);     /* GameDataConst::getIncludedGrandGalaxyId (its dome) */
 int gd_is_grand_star(const char *galaxy, int star); /* GameDataConst::isGrandStar */
