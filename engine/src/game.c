@@ -3352,7 +3352,8 @@ void game_rebind(void)
                    strcmp(name, "MorphItemNeoBee") == 0 ? ITEM_BEE : 0; /* KeySwitch.cpp: taken (isMsgItemGet), its SW_A on */
         in->firebar = strcmp(name, "FireBar") == 0;
         in->invisible = strncmp(name, "InvisibleWall", 13) == 0 || strcmp(name, "IronCannonLauncherPoint") == 0 || strcmp(name, "ElectricBall") == 0 ||
-                        strcmp(name, "StarReturnDemoStarter") == 0 || strcmp(name, "GrandStarReturnDemoStarter") == 0; /* their stars: srd_draw / gsr_draw */
+                        strcmp(name, "StarReturnDemoStarter") == 0 || strcmp(name, "GrandStarReturnDemoStarter") == 0 || /* their stars: srd_draw / gsr_draw */
+                        strcmp(name, "AstroDomeDemoStarter") == 0; /* its SuperSpinDriver: adds_draw */
         in->flip = strcmp(name, "FlipPanel") == 0 || strcmp(name, "FlipPanelReverse") == 0;
         if (in->flip) {
             char v[48];
@@ -22782,6 +22783,7 @@ static void dx_clip(int row, const char *anim, char *n, int sz) /* "<class>/<ani
 
 /* the casts' own reactions (registerDemoActionFunctor / registerDemoActionNerve, and appear() where a class has its own) */
 static void srd_appear(int row);
+static void adds_action(int row, int type, int part);
 static void gsr_appear(int row);
 static void acore_start(void);
 static void ads_demo_nerve(int part);
@@ -22834,10 +22836,11 @@ static void dx_cast_hook(int row, int type, int part)
         return;
     }
     if (type == 0 && !strcmp(cls, "ButlerMap")) { row_dead[row] = !gd_flag_is_on("SpecialStarGrand2"); return; } /* ButlerMap::appear */
-    if (type == 2 && !strcmp(cls, "AstroDomeBlueStar")) { /* waitAppear */
-        if (sc->objs[row].sw[SW_APPEAR] >= 0) sw_set(&sc->objs[row], SW_APPEAR, 1);
+    if (type == 2 && !strcmp(cls, "AstroDomeBlueStar")) { /* waitAppear (スターピース解説後半), else forceKill */
+        if (sc->objs[row].sw[SW_APPEAR] >= 0) sw_set(&sc->objs[row], SW_APPEAR, !strcmp(demos[dx.cur].h->name, "スターピース解説後半"));
         return;
     }
+    if (!strcmp(cls, "AstroDomeDemoStarter") && type != 1) { adds_action(row, type, part); return; }
     if (type == 2 && !strcmp(cls, "Butler") && !strncmp(demos[dx.cur].h->name, "スターピース解説", strlen("スターピース解説"))) {
         int second = !strcmp(demos[dx.cur].h->name, "スターピース解説後半");
         if (part == 0) { /* 開始: startDemoStarPiece1 (the lecture on, setSensorRadius Body 100, its SW_B) / startDemoStarPiece2 */
@@ -23255,6 +23258,155 @@ static void srd_draw(void) /* the star at Mario's base matrix while it flies (it
         Anim *a = star_anim("SpinTico", 1);
         if (md && a) { anim_update(a); if (a->frame >= SPINTICO_SHOWN) draw_skin(md, m, a); }
     }
+}
+
+/* --- AstroDomeDemoStarter after Petari (マリオ飛び出し): the SuperSpinDriver appears at Mario held by the blue star
+ * (SpinDriverAppear: turned by cAppearRotate (90, -5, 0) from the camera's up / front, Mario slerped to it), starts
+ * (SpinDriverStart: Start, SuperSpinDriverStart, both stopped from step 43; Shoot at 58), shoots him up 50 a step
+ * (SpinDriverShoot: SpaceFlyStart), then at VR軌道出現 startJumpOut (its SW_A, the AstroDomeDemoCamera camera animation
+ * from frame 0 over the 180 steps of 飛び出す, the starter at the origin) and JumpOut flies him along its rail
+ * (movePlayer: SpinDriverShootPath, his up its direction, turned about it by the eased countRotations(-18) - pi / 4,
+ * hidden within cJumpOutNearClipDistance 250 of the camera; SpaceFlyLoop), BGM_SENARIO_SEL at cBgmStartFrame 108,
+ * WhiteOut at cWhiteOutFrame 146 (closeSystemWipeWhiteFade). The sheet's parts: スピンドライバ出現 0, スピンドライバ起動 1,
+ * 飛び出す 2. ponytail: the SuperSpinDriver drawn still (its resident model has no clips: Appear / Start not played), no
+ * SpinDriverPathDrawer, no SuperSpinDriverFlyGlow effect, no rumble, the slerp of SpinDriverAppear as a blend of axes */
+enum { ADDS_DEAD, ADDS_APPEAR, ADDS_START, ADDS_SHOOT, ADDS_JUMPOUT, ADDS_WHITEOUT };
+static struct {
+    int row, nrv, step, cam;
+    const float *pts; u32 np; float len; /* SpinDriverShootPath: its rail */
+    V3 x, y, z, pos;                     /* _94 (its axes and translation) */
+    V3 c_up, c_front, c_pos;             /* _C4: Mario's base matrix at its appear */
+} adds = {.row = -1};
+static u32 adds_lv[3]; /* its level SEs */
+static int koopa_fortress_appear(void) /* MR::isKoopaFortressAppearInGalaxy: the dome's next grand star's galaxy open, its star not got */
+{
+    const char *sl = strchr(game_stage_name, '/');
+    if (strncmp(game_stage_name, "AstroDome/", 10) || !sl || sl[1] == '6') return 0;
+    char key[32];
+    snprintf(key, sizeof key, "SpecialStarGrand%d", sl[1] - '0' + 1);
+    const char *g = gd_flag_galaxy(key);
+    return g && gd_flag_is_on(g) && !gd_flag_is_on(key);
+}
+static void dm_jumpout(void); /* the dome's MiniatureGalaxyHolder::killAllMiniatureGalaxy, the handle gone */
+static void adds_set(int n) { adds.nrv = n; adds.step = 0; }
+static V3 adds_path(float t) { return rail_at(adds.pts, adds.np, t * adds.len); }
+static V3 adds_dir(float t) /* calcDirection(t, 0.01) */
+{
+    float a = t < 0.01f ? 0.0f : t > 0.99f ? 0.99f : t, b = t < 0.01f ? 0.01f : t > 0.99f ? 1.0f : t + 0.01f;
+    return vnorm(vsub(adds_path(b), adds_path(a)));
+}
+static void adds_action(int row, int type, int part)
+{
+    if (type == 0) { /* appear: SpinDriverAppear */
+        const Row *r = &sc->objs[row];
+        int closed;
+        adds.pts = scene_blob_g && r->path >= 0 ? find_rail(scene_blob_g, r->zone, r->path, &adds.np, &closed) : NULL;
+        if (!adds.pts || adds.np < 2) { printf("jump out: no rail" "\n"); return; }
+        adds.row = row; adds.len = w_rail_len(adds.pts, adds.np); adds.cam = 0;
+        adds_set(ADDS_APPEAR);
+    } else if (type == 3) adds_set(part == 1 ? ADDS_START : ADDS_JUMPOUT); /* registerDemoActionNerve: スピンドライバ起動 / 飛び出す */
+    else if (type == 2 && adds.nrv != ADDS_DEAD) { /* startJumpOut */
+        const Row *r = &sc->objs[row];
+        if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
+        adds.pos = v3(0, 0, 0); adds.x = v3(1, 0, 0); adds.y = v3(0, 1, 0); adds.z = v3(0, 0, 1);
+        adds.cam = 1; /* startAnimCameraTargetSelf("AstroDomeDemoCamera", 0, frames / 180) */
+    }
+}
+static void adds_update(void)
+{
+    if (adds.nrv == ADDS_DEAD) return;
+    if (!dx.on) { /* the demo over */
+        if (adds.cam) demo_camera("adds/astrodomedemocamera", -1, NULL);
+        adds_set(ADDS_DEAD); adds.cam = 0; mario_hidden = 0;
+        return;
+    }
+    int first = adds.step++ == 0, n = adds.step - 1;
+    V3 up = adds.y, front = adds.z, pos = adds.pos;
+    switch (adds.nrv) {
+    case ADDS_APPEAR: {
+        if (first) {
+            V3 eye, watch, cu;
+            float fovy;
+            camera_pose(&eye, &watch, &cu, &fovy);
+            adds.c_up = mario->up; adds.c_front = mario->face; adds.c_pos = mario->pos; /* _C4 */
+            adds.pos = mario->pos;
+            V3 cz = vnorm(vsub(watch, eye)), cy = vnorm(vtangent(cu, cz)), cx = vcross(cy, cz); /* makeMtxUpFrontPos(camY, camZ) */
+            float b[16] = {cx.x, cx.y, cx.z, 0, cy.x, cy.y, cy.z, 0, cz.x, cz.y, cz.z, 0, 0, 0, 0, 1}, rot[16], m[16];
+            float zero[3] = {0, 0, 0}, rr[3] = {90.0f, -5.0f, 0.0f}, one[3] = {1, 1, 1};
+            mat_translate_rot_scale(rot, zero, rr, one); /* cAppearRotate */
+            mat_mul(m, b, rot);
+            adds.x = v3(m[0], m[1], m[2]); adds.y = v3(m[4], m[5], m[6]); adds.z = v3(m[8], m[9], m[10]);
+            srd_bck("spindriverwait");
+            se_start(SE_OJ_S_SPIN_DRV_APPEAR, &adds.pos.x);
+        }
+        adds_lv[0] = se_level(SE_OJ_LV_S_SPIN_DRV_SHINE, &adds.pos.x, adds_lv[0]);
+        adds_lv[1] = se_level(SE_OJ_LV_SPIN_DRV_CAPTURE, &adds.pos.x, adds_lv[1]);
+        float k = dx_total(0) > 0 ? fminf((float)dx_step(0) / dx_total(0), 1.0f) : 1.0f; /* calcDemoPartStepRate */
+        up = vnorm(vadd(vmul(adds.c_up, 1.0f - k), vmul(adds.y, k)));
+        front = vnorm(vadd(vmul(adds.c_front, 1.0f - k), vmul(adds.z, k)));
+        pos = adds.pos;
+        break;
+    }
+    case ADDS_START:
+        if (first) {
+            srd_bck("superspindriverstart");
+            se_start(SE_SY_CS_S_SPIN_DRV_START, NULL); /* CS_SPIN_DRIVE_LONG's fallback */
+            se_start(SE_PM_SPIN_ATTACK, &adds.pos.x);
+        }
+        if (n >= 43 && mario_anim) mario_anim->speed = 0.0f; /* setBckRate 0 */
+        if (n + 1 == 58) adds_set(ADDS_SHOOT);
+        break;
+    case ADDS_SHOOT:
+        if (first) {
+            srd_bck("spaceflystart");
+            camera_shake(SHAKE_NORMAL);
+            se_start(koopa_fortress_appear() ? SE_SY_ASTRO_DEPERTURE_ME_KP : SE_SY_ASTRO_DEPERTURE_ME, NULL);
+            se_start(SE_OJ_S_SPIN_DRV_JUMP, &adds.pos.x);
+            se_start(SE_PV_JUMP_JOY, &adds.pos.x);
+        }
+        pos = vadd(adds.pos, vmul(adds.y, n * 50.0f));
+        break;
+    case ADDS_JUMPOUT:
+    case ADDS_WHITEOUT: {
+        if (first && adds.nrv == ADDS_JUMPOUT) { srd_bck("spaceflyloop"); dm_jumpout(); }
+        if (adds.nrv == ADDS_JUMPOUT && n == 108) bgm_start("BGM_SENARIO_SEL");               /* cBgmStartFrame */
+        if (adds.nrv == ADDS_JUMPOUT && n == 146) adds_set(ADDS_WHITEOUT);                   /* cWhiteOutFrame */
+        if (adds.nrv == ADDS_WHITEOUT && first) {
+            se_start(SE_DM_SENARIO_SEL_START, NULL);
+            menu_wipe(1, -1, 0xFFFFFF); /* closeSystemWipeWhiteFade */
+        }
+        if (!dx_active(2)) break;
+        float t = dx_total(2) > 0 ? fminf((float)dx_step(2) / dx_total(2), 1.0f) : 1.0f; /* movePlayer */
+        float spin = 6.2831853f * (int)(-18.0f / 6.2831853f) - 3.1415927f / 4.0f;  /* countRotations(cJumpOutRotateSpeed) + cJumpOutRotateEndAngle */
+        float a = sinf(t * 1.5707963f) * spin;
+        up = adds_dir(t);
+        V3 f0 = vnorm(vtangent(v3(0, -1, 0), up)), x0 = vcross(up, f0);
+        front = vadd(vmul(x0, sinf(a)), vmul(f0, cosf(a))); /* concat setEulerY(angle) */
+        pos = adds_path(t);
+        V3 eye, watch, cu;
+        float fovy;
+        camera_pose(&eye, &watch, &cu, &fovy);
+        mario_hidden = vlen(vsub(pos, eye)) < 250.0f; /* isJudgedToNearClip(cJumpOutNearClipDistance) */
+        adds_lv[2] = se_level(SE_PM_LV_SPIN_DRV_FLY, &pos.x, adds_lv[2]);
+        break;
+    }
+    }
+    if (adds.cam) { /* the camera animation over the 180 steps of 飛び出す, the starter at the origin */
+        static const float id[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        const char *cn = "adds/astrodomedemocamera";
+        int fr = canm_frames(cn), f = dx_active(2) && dx_total(2) > 0 ? dx_step(2) * fr / dx_total(2) : 0;
+        demo_camera(cn, f < fr ? f : fr - 1, id);
+    }
+    mario->pos = pos; mario->up = vnorm(up); mario->face = vnorm(vtangent(front, mario->up)); /* setPlayerBaseMtx */
+}
+static void adds_draw(void) /* the SuperSpinDriver at _94 until JumpOut hides it */
+{
+    if (adds.nrv != ADDS_APPEAR && adds.nrv != ADDS_START && adds.nrv != ADDS_SHOOT) return;
+    const Model *md = scene_model(sc, "SuperSpinDriver");
+    if (!md) return;
+    float m[16] = {adds.x.x, adds.x.y, adds.x.z, 0, adds.y.x, adds.y.y, adds.y.z, 0, adds.z.x, adds.z.y, adds.z.z, 0,
+                   adds.pos.x, adds.pos.y, adds.pos.z, 1};
+    render_model(md, m, 0x80, 0x80, 0x80);
 }
 
 /* --- GrandStarReturnDemoStarter after Petari: the grand star flown in along its rail (ReturnDemoRailMove with the grand
@@ -24145,6 +24297,11 @@ static void dm_selector_update(void)
     (void)dm.prev_a;
 }
 
+static void dm_jumpout(void) /* マリオ飛び出し's 飛び出す: MiniatureGalaxyHolder::killAllMiniatureGalaxy, the handle killed */
+{
+    for (int i = 0; i < dm.ng; i++) dn_init(&dm.g[i].n, MG_DEAD);
+    dn_init(&dm.hd, HD_DEAD);
+}
 static void dm_select_end(void) /* SphereSelector::kill: SELECT_END to all, the HUD back */
 {
     dm_msg(M_SELECT_END);
@@ -24397,7 +24554,7 @@ static void dm_camera_update(void)
     dm.zc = vadd(dm.zs, vmul(vsub(dm.ze, dm.zs), dm.ease));
     dm.tc = vadd(dm.ts, vmul(vsub(dm.te, dm.ts), dm.ease));
     dm.uc = vadd(dm.us, vmul(vsub(dm.ue, dm.us), dm.ease));
-    camera_set_override(1, dm.zc, dm.tc, vnorm(dm.uc), 60.0f); /* cFovy */
+    if (!adds.cam) camera_set_override(1, dm.zc, dm.tc, vnorm(dm.uc), 60.0f); /* cFovy; the jump out's camera animation over it */
 }
 
 /* --- AstroDomeGalaxySelector --- */
@@ -24455,17 +24612,22 @@ static void dm_selector_actor_update(void)
     case GS_CONFIRMCANCEL:
         if (dn_is(&dm.sel, SS2_SELECTWAIT)) dn_set(&dm.gs, GS_SELECT);
         break;
-    case GS_JUMPOUT: /* ponytail: マリオ飛び出し not played: straight to requestStartScenarioSelect */
-        if (dm.gs.step == 30) {
-            int i = dm.selected - T_GALAXY;
+    case GS_JUMPOUT: { /* requestStartTimeKeepDemoMarioPuppetable マリオ飛び出し, exeDemoJumpOut: the scenario select after it */
+        int i = dm.selected - T_GALAXY;
+        if (FIRST(&dm.gs)) {
             printf("dome: %s chosen\n", dm.g[i].name);
-            dm_select_end();
-            camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45.0f);
-            seq_galaxy_move(SEQ_SCENARIO_SELECT, dm.g[i].name, -1, -1, 0);
-            dn_init(&dm.gs, GS_DEAD);
-            return;
+            menu_dome_close(); /* disappearStarCounter, the confirm layout and the info out */
+            if (!dx_request("マリオ飛び出し", 0)) printf("dome: no jump out demo\n");
+            break;
         }
-        break;
+        if (dx_busy() && dm.gs.step < 2000) break; /* isDemoActive */
+        dm_select_end();
+        camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45.0f);
+        seq_galaxy_move(SEQ_SCENARIO_SELECT, dm.g[i].name, -1, -1, 0); /* requestStartScenarioSelect(ForComet) */
+        menu_wipe(0, -1, 0xFFFFFF); /* ScenarioSelectScene::exeStartScenarioSelect: openSystemWipeWhiteFade */
+        dn_init(&dm.gs, GS_DEAD);
+        return;
+    }
     }
     dn_end(&dm.gs);
 }
@@ -24656,7 +24818,7 @@ static int dome_busy(void) { return dm.on && (!dn_is(&dm.bs, BS_WAIT) || demo_on
 /* Mario held by the blue star: 1 while bound (update_mario skips his own move) */
 static int dome_hold(Player *m)
 {
-    if (!dm.on || dn_is(&dm.bs, BS_WAIT) || dn_is(&dm.bs, BS_BINDEND)) return 0;
+    if (!dm.on || dn_is(&dm.bs, BS_WAIT) || dn_is(&dm.bs, BS_BINDEND) || adds.nrv != ADDS_DEAD) return 0;
     m->pos = dm.host.p;
     m->up = vnorm(dm.host.y);
     m->face = vnorm(dm.host.z);
@@ -25087,6 +25249,7 @@ void game_update(void)
     dx_update();
     update_dome_npcs();
     srd_update();
+    adds_update();
     gsr_update();
     update_astro_core();
     update_astro_sky();
@@ -25775,6 +25938,7 @@ void game_draw(void)
     }
     srd_draw();
     gsr_draw();
+    adds_draw();
     for (int i = 0; i < nwrecks; i++) { /* wrecks: the break model's clip until it stops, the broken object for good */
         typeof(&wrecks[0]) w = &wrecks[i];
         if (w->left) render_model(w->left, w->m, 0x80, 0x80, 0x80);
