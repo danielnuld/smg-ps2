@@ -339,14 +339,14 @@ COMMON = ("PauseMenu", "SysInfoWindow", "SysInfoWindowMini", "GameOver", "TooBad
 DOME = ("GalaxySelect", "GalaxyInfo", "GalaxyNamePlate")
 # the Observatory's (GalaxyMapController, PowerStarList: ButlerMap's map): map.bin, in the AstroGalaxy stages only;
 MAP = ("MapGrandGalaxy", "MapGalaxyIcon", "MapDomeIcon", "MapTitle", "MapGalaxyBg", "MapButton", "GalaxyDetail", "IconMario",
-       "GalaxyNamePlate", "AllStarList")
+       "GalaxyNamePlate", "AllStarList", "PrologueStarSteward")  # RosettaMonologue (ロゼッタ状況説明デモ's picture book)
 
 
 # the messages menus and screens look up by label (MR::getLayoutMessageDirect / getGameMessageDirect): MSGS chunk
 MSG_PREFIXES = ("Layout_", "System_", "Select_", "NAND_", "PauseMenu_", "PlayerLeft", "ScenarioName_", "GalaxyName_",
                 "GalaxyNameShort_", "GalaxyStage_", "GalaxyInfo_", "GalaxyMap_", "GalaxyNamePlate_", "GetStar_",
                 "AllStarList_", "AstroName_", "CometName_", "RaceName_", "ConfirmEndGame", "Common_", "CONT_",
-                "PointerGuidance", "BButtonGuidance", "DPDGuidance", "WiiMessage", "Picture_", "AstroDome_")
+                "PointerGuidance", "BButtonGuidance", "DPDGuidance", "WiiMessage", "Picture_", "AstroDome_", "RosettaMonologue")
 
 
 def msgs_chunk(fsp):

@@ -24,6 +24,7 @@ static void ss_init(const Scene *s);
 static void dmu_init(void);
 static void dmu_update(void);
 static void mlay_init(void);
+static void mono_update(void);
 static void fs_init(const Scene *s);
 static void fs_update(void);
 static void fs_draw(void);
@@ -43,6 +44,7 @@ static void wipe_draw_quad(void);
 static struct { int t, frames, close; u32 rgb; } wipe;
 static void wipe_start(int frames, int close, u32 rgb) { wipe.t = 0; wipe.frames = frames; wipe.close = close; wipe.rgb = rgb; }
 static int wipe_active(void) { return wipe.frames && wipe.t < wipe.frames; }
+static struct { LytInst *l; int on, no; const u16 *page; u16 buf[400]; } mono; /* RosettaMonologue (by wipe_update) */
 
 /* --- messages (tools/lyt.py MSGS) ------------------------------------------------------------------------------ */
 static const u8 *msgs;
@@ -663,6 +665,8 @@ void menu_init(const Scene *s)
     }
     dmu_init();
     mlay_init();
+    memset(&mono, 0, sizeof mono);
+    mono.l = lyt_new("PrologueStarSteward"); /* in map.bin: the Observatory only */
     fs_init(s);
     gm_init();
     u32 rgb;
@@ -689,6 +693,7 @@ int menu_update(void)
     wipe_update();
     dmu_update();
     mlay_update();
+    mono_update();
     if (sr.delay && --sr.delay == 0 && sr.l) { /* the clear's demo sequence: StageResultInformer, then the save */
         sr.alive = 1; sr.n.next = -1; nrv_set(&sr.n, SR_APPEARSTAR);
     }
@@ -2728,6 +2733,64 @@ static void mlay_draw(void)
     if (mlay.go_on) lyt_draw(mlay.gameover);
 }
 
+/* --- RosettaMonologue (RosettaDemoAstroDome.cpp: "PrologueStarSteward", map.bin): the picture book of -----------
+ * ロゼッタ状況説明デモ. appear: FadeIn, the balloon's WinFadeIn, RosettaMonologue000; control: A turns the message's
+ * pages (SE_SY_TALK_FOCUS_ITEM), then the next message (CrossFade1..3 on its picture); after the fourth SE_SY_TALK_OK,
+ * FadeOut and WinFadeOut, and once stopped forceCloseWipeFade and dead. ponytail: the page's text at once (no
+ * TalkTextFormer typewriter), no IconAButton at AButtonPosition, no CS_CLICK_CLOSE */
+static void mono_form(const u16 *s) /* formMessage: one page (MessageUtil's page tag: group 1 type 1) into Text00 */
+{
+    int n = 0;
+    mono.page = NULL;
+    for (; *s && n < 399;) {
+        if (*s == 0x1A) {
+            int len = 4 + (s[3] + 1) / 2, page = s[1] == 1 && s[2] == 1;
+            if (page) { s += len; mono.page = *s == '\n' ? s + 1 : s; if (!*mono.page) mono.page = NULL; break; }
+            while (len-- && n < 399) mono.buf[n++] = *s++;
+        } else mono.buf[n++] = *s++;
+    }
+    mono.buf[n] = 0;
+    lyt_set_text_rec(mono.l, "Text00", mono.buf);
+}
+static void mono_msg(void) /* the message mMessageNo */
+{
+    static const u16 none[1];
+    char label[32];
+    snprintf(label, sizeof label, "RosettaMonologue%03d", mono.no);
+    const u16 *m = msg_get(label);
+    mono_form(m ? m : none);
+}
+void menu_monologue_start(void) /* RosettaMonologue::appear */
+{
+    if (!mono.l) return;
+    mono.on = 1; mono.no = 0;
+    lyt_start(mono.l, "FadeIn", 0);
+    lyt_start_pane(mono.l, "TalkBalloon", "WinFadeIn", 0);
+    mono_msg();
+}
+int menu_monologue_alive(void) { return mono.on; }
+static void mono_update(void) /* RosettaMonologue::control */
+{
+    if (!mono.on) return;
+    if (mono.no >= 4) {
+        if (lyt_stopped(mono.l, 0)) { menu_wipe_force(1); mono.on = 0; return; } /* forceCloseWipeFade, kill */
+    } else if (pad_pressed(PAD_CROSS)) { /* testCorePadTriggerA */
+        if (mono.page) { se_start(SE_SY_TALK_FOCUS_ITEM, NULL); mono_form(mono.page); } /* nextPage */
+        else {
+            mono.no++;
+            if (mono.no == 4) se_start(SE_SY_TALK_OK, NULL);
+            else { se_start(SE_SY_TALK_FOCUS_ITEM, NULL); mono_msg(); }
+            switch (mono.no) {
+            case 1: lyt_start_pane(mono.l, "CrossFade1", "CrossFade1", 0); break;
+            case 2: lyt_start_pane(mono.l, "CrossFade2", "CrossFade2", 0); break;
+            case 3: lyt_start_pane(mono.l, "CrossFade3", "CrossFade3", 0); break;
+            case 4: lyt_start(mono.l, "FadeOut", 0); lyt_start_pane(mono.l, "TalkBalloon", "WinFadeOut", 0); break;
+            }
+        }
+    }
+    lyt_update(mono.l);
+}
+
 static void wipe_update(void)
 {
     if (!wipe.frames) return;
@@ -2740,6 +2803,7 @@ void menu_draw(void)
     if (sr.alive) { render_world_done(); lyt_draw(sr.l); }
     if (dmu.on) { render_world_done(); dmu_draw(); }
     mlay_draw();
+    if (mono.on) { render_world_done(); lyt_draw(mono.l); }
     gm_draw();
     if (pm.alive) {
         render_world_done(); /* the scene under the menu (LayoutOnPause draws after everything) */

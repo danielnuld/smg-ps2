@@ -880,6 +880,20 @@ int main(void)
                        menu_result_showing(), menu_saving());
         }
 #endif
+#if defined(PACKS) && defined(ROSETTA_TEST)
+        { /* AstroGalaxy/4: ロゼッタ状況説明デモ by name (the grand star return before it is another port), X every second for
+           * the talks' pages and the picture book; once it ends, ロゼッタ天文台機能回復デモ (a talk demo) */
+            static int phase;
+            pad_force = frame > 300 && frame % 60 < 10 ? PAD_CROSS : 0;
+            if (frame == 300) printf("rosetta test: start %d\n", game_test_demo_name("ロゼッタ状況説明デモ"));
+            if (frame > 600 && phase == 0 && game_test_demo(-1) < 0) {
+                phase = 1;
+                printf("rosetta test f %u: second %d\n", frame, game_test_demo_name("ロゼッタ天文台機能回復デモ"));
+            }
+            if (frame > 300 && frame % 60 == 0 && frame < 6000)
+                printf("rosetta test f %u: demo %d book %d\n", frame, game_test_demo(-1), menu_monologue_alive());
+        }
+#endif
 #if defined(PACKS) && defined(FINALMOVIE_TEST) /* AstroGalaxy/5: the FinalBattle MovieStarter, then the scenario select */
         if (frame == 200) printf("finalmovie test: movie starter %d\n", game_test_movie(2));
         if (frame == 400) printf("finalmovie test: scenario select %d\n", menu_scenario_selecting());
