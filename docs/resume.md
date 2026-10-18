@@ -518,8 +518,14 @@ LayoutData layouts. Order by dependency:
    Done (next commit): the memory card (mc.c: rom0 MCMAN / MCSERV, mc0:/SMGPS2/save.dat = gd_image, read at boot,
    written in steps polled by main.c) and SaveDataHandleSequence (menu.c sv_*: System_Save00 / 07, Save01 >= 120
    frames, Save02, ConfirmEndGame remind) after a stage clear (sequence.c save prompt, 90 frames into the next scene:
-   untested), the pause menu's Save and Quit in the Observatory (untested), game over (tested: miss test). Left: no
-   icon.sys (the browser shows no picture), port 0 only, no full-card / no-card windows.
+   untested), the pause menu's Save and Quit in the Observatory (untested), game over (tested: miss test).
+   Done since (compile-only, untested in PCSX2): icon.sys + save.icn (tools/ps2icon.py from SaveIconBanner.arc
+   SaveIcon00.bti on a flat quad; assets.S links them, mc.c writes them with a new save), save.dat with
+   MR::calcCheckSum after the image, port 1 when port 0 has no card, NANDErrorSequence's windows in menu.c sv_*
+   (boot: corrupted -> NAND_07 / System_Save05 / System_Save04; no card, unformatted, no room -> NAND_02 /
+   System_Save04 -> play without saving; a save's failed write NAND_11_2, its no card / no room NAND_02; "the Wii
+   Menu" is OSDSYS BootBrowser). Fake a card with `XF=-DMC_FAKE=MC_NOCARD|MC_FULL|MC_CORRUPT|MC_FAILED`. Left: the
+   Wii texts (no PS2 strings on the disc), file select saves (fs_) show no System_Save01 window, browser icon unseen.
    Done (next commit): StageResultInformer (menu.c sr_*, layout ResultWindow): the star got with the galaxy and
    scenario names (message string arguments put in by msg_with_args), the count up, a new coin record, the star
    pieces into the stock; then the save prompt. sequence.c keeps the cleared stage's result (seq_set_result at the

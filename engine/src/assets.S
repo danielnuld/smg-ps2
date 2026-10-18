@@ -26,3 +26,17 @@ sndvoice_irx:
     .incbin "data/sndvoice.irx"
     .global sndvoice_irx_end
 sndvoice_irx_end:
+
+/* The memory card save's browser icon (tools/ps2icon.py; mc.c writes them) */
+    .balign 64
+    .global save_icn
+save_icn:
+    .incbin "src/save.icn"
+    .global save_icn_end
+save_icn_end:
+    .balign 64
+    .global icon_sys
+icon_sys:
+    .incbin "src/icon.sys"
+    .global icon_sys_end
+icon_sys_end:

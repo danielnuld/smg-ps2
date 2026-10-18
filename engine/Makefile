@@ -11,7 +11,7 @@ EE_CFLAGS += -O2 -Wall -Wextra -std=gnu99 -ffast-math $(EXTRA)
 
 all: $(EE_BIN)
 
-src/assets.o: src/assets.S data/slice.bin data/libsd.irx data/audsrv.irx
+src/assets.o: src/assets.S data/slice.bin data/libsd.irx data/audsrv.irx src/save.icn src/icon.sys
 
 # The game modules' static state (.data / .bss) in sections of their own (linkfile: .gamedata / .gamebss): main.c
 # restores the one and clears the other to change scenes in place, as a fresh boot would leave them

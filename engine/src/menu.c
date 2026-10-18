@@ -310,9 +310,17 @@ static void si_disappear(SysInfo *w) { if (w->alive) nrv_set(&w->n, SI_DISAPPEAR
 
 /* --- SaveDataHandleSequence (startSave): "save?" (System_Save00, or System_Save07 save and quit), the save with
  * System_Save01 for at least 120 frames, System_Save02; with confirm-remind a No asks ConfirmEndGame. The current
- * game goes into its file (gd_file_save) and the files to the memory card (main.c, mc.c) --------------------------- */
-enum { SV_OFF, SV_CONFIRM, SV_SAVE, SV_WINDOWOUT, SV_DONE, SV_REMIND };
-static struct { Nrv n; SysInfo win; int remind, quit, result; u32 lv; } sv;
+ * game goes into its file (gd_file_save) and the files to the memory card (main.c, mc.c). executeSaveFinish's
+ * failure and the boot's PreLoad (mc_take_boot, the first scene with the window) run NANDErrorSequence's windows
+ * (SV_E_*): a corrupted save asks NAND_07 (Yes: removed, System_Save05; No: System_Save04, then no saving), no room
+ * asks NAND_02 (Yes: out to the menu; No: System_Save04, then no saving), a failed write NAND_11_2 then the menu.
+ * ponytail: the Wii's texts kept (Wii system memory, the Wii Menu: the disc has no PS2 ones); no card or an
+ * unformatted one is NAND_02's (the Wii always has its memory); a save's NOCARD / FULL also go to NAND_02 (the Wii
+ * checks room once, at boot: a PS2 card can be pulled out between); the Wii Menu is the PS2 browser ----------------- */
+enum { SV_OFF, SV_CONFIRM, SV_SAVE, SV_WINDOWOUT, SV_DONE, SV_REMIND,
+       SV_E_ERROR, SV_E_REMOVECONFIRM, SV_E_REMOVE, SV_E_REMOVEDONE, SV_E_NOSAVEREMOVE, SV_E_NOSAVELESS,
+       SV_E_LESSCONFIRM, SV_E_GOMENU, SV_E_CHECK };
+static struct { Nrv n; SysInfo win; int remind, quit, result; u32 lv; const char *msg; } sv;
 static int save_requested;
 void menu_save_request(void) { save_requested = 1; }
 int menu_take_save_request(void) { int r = save_requested; save_requested = 0; return r; }
@@ -324,38 +332,115 @@ void menu_save_start(int confirm, int remind, int quit)
 }
 int menu_saving(void) { return sv.n.cur != SV_OFF || sv.n.next > SV_OFF; }
 int menu_save_result(void) { return sv.result; } /* 2 saved (or quit without), 3 not saved */
+static int sv_confirm(const char *label, int *yes) /* tryConfirm */
+{
+    if (FIRST(&sv.n)) { si_appear(&sv.win, label, SI_YESNO); se_start(SE_SY_SAVE_CONFIRM_INFO, NULL); }
+    if (sv.win.alive || sv.n.step == 0) return 0;
+    *yes = yn_yes(&sv.win.yn);
+    return 1;
+}
+static int sv_key(const char *label) /* tryProcessDoneKeyWait */
+{
+    if (FIRST(&sv.n)) si_appear(&sv.win, label, SI_KEY);
+    return !sv.win.alive && sv.n.step > 0;
+}
+static void sv_error(int res) /* the NANDErrorSequence a card result starts (exePreLoad, executeSaveFinish) */
+{
+    if (res == MC_CORRUPT) nrv_set(&sv.n, SV_E_REMOVECONFIRM); /* isSaveDataCorrupted: startRemoveFile */
+    else if (res == MC_FAILED) { sv.msg = "NAND_11_2"; nrv_set(&sv.n, SV_E_ERROR); } /* startErrorToWiiMenu */
+    else if (res == MC_NOCARD || res == MC_FULL) { sv.msg = "NAND_02"; nrv_set(&sv.n, SV_E_LESSCONFIRM); } /* tryLessBlockOrInode */
+}
+static void sv_error_end(int nosave) /* the error sequence killed: syncNoSaveFlagsFromErrorSequence, NoOperation */
+{
+    if (nosave) mc_set_nosave();
+    sv.result = 3;
+    nrv_set(&sv.n, SV_OFF);
+}
+static void sv_take_errors(void) /* the boot's PreLoad result; a save SaveAllWithoutKeyWait made (file select) failed */
+{
+    if (!sv.win.l || menu_saving()) return;
+    int res = mc_take_boot();
+    if (res == MC_OK || res == MC_NOFILE) {
+        res = mc_take_error();
+        if (res) se_start(SE_SY_SAVE_FAILURE, NULL);
+    }
+    if (res == MC_OK || res == MC_NOFILE) return;
+    sv.result = 0;
+    sv.n.next = -1;
+    sv_error(res);
+}
 static void sv_update(void)
 {
+    int yes = 0;
     if (!menu_saving()) return;
     switch (nrv_begin(&sv.n)) {
     case SV_CONFIRM:
-        if (FIRST(&sv.n)) si_appear(&sv.win, sv.quit ? "System_Save07" : "System_Save00", SI_YESNO);
-        if (!sv.win.alive && sv.n.step > 0) {
-            if (yn_yes(&sv.win.yn)) nrv_set(&sv.n, SV_SAVE);
-            else if (sv.remind) nrv_set(&sv.n, SV_REMIND);
-            else { sv.result = 3; nrv_set(&sv.n, SV_OFF); }
-        }
+        if (mc_nosave()) { nrv_set(&sv.n, SV_SAVE); break; } /* (_2C || _2B) */
+        if (!sv_confirm(sv.quit ? "System_Save07" : "System_Save00", &yes)) break;
+        if (yes) nrv_set(&sv.n, SV_SAVE);
+        else if (sv.remind) nrv_set(&sv.n, SV_REMIND);
+        else { sv.result = 3; nrv_set(&sv.n, SV_OFF); }
         break;
     case SV_SAVE: /* trySave */
-        if (FIRST(&sv.n)) { gd_file_save(); menu_save_request(); si_appear(&sv.win, "System_Save01", SI_BLOCKING); }
+        if (FIRST(&sv.n)) gd_file_save();
+        if (mc_nosave()) { sv.result = 2; nrv_set(&sv.n, SV_OFF); break; } /* tryNoSave */
+        if (FIRST(&sv.n)) { menu_save_request(); si_appear(&sv.win, "System_Save01", SI_BLOCKING); }
         if (sv.n.step > 20) sv.lv = se_level(SE_SY_LV_SAVING, NULL, sv.lv);
         if (sv.n.step > 120 && !mc_busy()) nrv_set(&sv.n, SV_WINDOWOUT);
         break;
-    case SV_WINDOWOUT:
+    case SV_WINDOWOUT: /* trySaveWindowDisappear */
         if (FIRST(&sv.n)) si_disappear(&sv.win);
-        if (!sv.win.alive) nrv_set(&sv.n, SV_DONE);
+        if (sv.win.alive) break;
+        mc_take_error(); /* (this save's: executeSaveFinish) */
+        if (mc_result() == MC_OK) { se_start(SE_SY_SAVE_SUCCESS, NULL); nrv_set(&sv.n, SV_DONE); }
+        else { se_start(SE_SY_SAVE_FAILURE, NULL); sv_error(mc_result()); }
         break;
-    case SV_DONE: /* tryProcessDoneKeyWait */
-        if (FIRST(&sv.n)) si_appear(&sv.win, "System_Save02", SI_KEY);
-        if (!sv.win.alive && sv.n.step > 0) { sv.result = 2; nrv_set(&sv.n, SV_OFF); }
+    case SV_DONE:
+        if (sv_key("System_Save02")) { sv.result = 2; nrv_set(&sv.n, SV_OFF); }
         break;
     case SV_REMIND:
-        if (FIRST(&sv.n)) si_appear(&sv.win, "ConfirmEndGame", SI_YESNO);
-        if (!sv.win.alive && sv.n.step > 0) {
-            if (yn_yes(&sv.win.yn)) { sv.result = 2; nrv_set(&sv.n, SV_OFF); }
-            else nrv_set(&sv.n, SV_CONFIRM);
-        }
+        if (!sv_confirm("ConfirmEndGame", &yes)) break;
+        if (yes) { sv.result = 2; nrv_set(&sv.n, SV_OFF); }
+        else nrv_set(&sv.n, SV_CONFIRM);
         break;
+    /* NANDErrorSequence */
+    case SV_E_ERROR: /* exeError */
+        if (sv_key(sv.msg)) mc_exit_to_browser(); /* requestGoWiiMenu */
+        break;
+    case SV_E_REMOVECONFIRM:
+        if (!sv_confirm("NAND_07", &yes)) break;
+        nrv_set(&sv.n, yes ? SV_E_REMOVE : SV_E_NOSAVEREMOVE);
+        break;
+    case SV_E_REMOVE: /* requestRemoveSaveData (blocking) */
+        mc_remove();
+        nrv_set(&sv.n, SV_E_REMOVEDONE);
+        break;
+    case SV_E_REMOVEDONE:
+        if (sv_key("System_Save05")) nrv_set(&sv.n, SV_E_CHECK);
+        break;
+    case SV_E_NOSAVEREMOVE: /* exeNoSaveConfirmBeforeRemove: result 3, isResultFileCorrupted */
+        if (!sv_confirm("System_Save04", &yes)) break;
+        if (yes) sv_error_end(1);
+        else nrv_set(&sv.n, SV_E_REMOVECONFIRM);
+        break;
+    case SV_E_NOSAVELESS: /* exeNoSaveConfirmLessBlockOrInode: result 2, isResultNoSave */
+        if (!sv_confirm("System_Save04", &yes)) break;
+        if (yes) sv_error_end(1);
+        else nrv_set(&sv.n, SV_E_LESSCONFIRM);
+        break;
+    case SV_E_LESSCONFIRM:
+        if (!sv_confirm(sv.msg, &yes)) break;
+        nrv_set(&sv.n, yes ? SV_E_GOMENU : SV_E_NOSAVELESS);
+        break;
+    case SV_E_GOMENU:
+        if (!sv.win.alive) mc_exit_to_browser(); /* requestGoWiiMenu */
+        break;
+    case SV_E_CHECK: { /* exeCheckEnableToCreateAfterRemove: tryCheckEnableToCreate (blocking) */
+        int res = mc_check();
+        if (res == MC_NOFILE) sv_error_end(0);
+        else sv_error(res);
+        break;
+    }
     }
     nrv_end(&sv.n);
     si_update(&sv.win);
@@ -704,6 +789,7 @@ int menu_update(void)
         sr.alive = 1; sr.n.next = -1; nrv_set(&sr.n, SR_APPEARSTAR);
     }
     if (sr.alive) { sr_update(); return 1; }
+    sv_take_errors();
     if (menu_saving()) { game_cursor_menu(); sv_update(); if (!pm.alive) return 1; }
     if (menu_scenario_selecting()) { game_cursor_menu(); ss_update(); return 1; }
     if (menu_file_selecting()) { game_cursor_menu(); fs_update(); return 1; }
@@ -2255,6 +2341,7 @@ static void fs_draw(void)
     if (fsl.press_on) lyt_draw(fsl.press);
     mii_draw();
     if (fsl.win.alive) lyt_draw(fsl.win.l);
+    if (sv.win.alive) lyt_draw(sv.win.l); /* SaveDataHandleSequence's (the boot's card windows) */
     wipe_draw_quad();
     fade_draw();
     /* the camera's target and fovy a frame late (setProgrammableCameraParam with the previous ones) */
