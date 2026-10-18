@@ -97,7 +97,8 @@ OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup
              "RailCoin", "SuperSpinDriver", "StarPieceGroup", "StarPieceFlow")
 # classes whose first NameObjFactory archive is not their model (OtaKing's is FireBall, Tico's TicoBaby): the model
 # camera animations baked for a class from another archive: class -> (CANM name prefix, archive)
-CANM_ARC = {"GrandStarReturnDemoStarter": ("gsr", "DemoAstroReturn")}  # initAnimCamera "DemoAstroReturn.arc"
+CANM_ARC = {"GrandStarReturnDemoStarter": ("gsr", "DemoAstroReturn"),
+            "AstroDomeDemoStarter": ("adds", "AstroDomeDemoCamera")}  # initAnimCamera "AstroDomeDemoCamera.arc"  # initAnimCamera "DemoAstroReturn.arc"
 MODEL_ARC = {"TicoDomeLecture": "Tico", "PStar": "PowerStar", "GStar": "GrandStar", "OtaKing": "OtaKing", "KoopaJr": "KoopaJr", "Tico": "Tico", "Plant": "PlantSeed"}
 # ponytail: no MiniatureGalaxyStarNumber (its digits are texture matrices per material), no MiniatureGalaxyShadow
 MINI_EXTRA = ("MiniatureGalaxyUnknown", "MiniHatenaGalaxy", "MiniatureGalaxyUnknownKoopa", "MiniKoopaGalaxy",
@@ -1709,7 +1710,7 @@ def demo_dead_classes():
             for m in re.finditer(r"class\s+(\w+)\s*:\s*public\s+(\w+)", h.read_text(errors="ignore")):
                 parent[m.group(1)] = m.group(2)
         bases = {"MapObjActor", "BegomanBaby", "BegomanSpike", "BegomanSpring", "PlanetMap", "SuperSpinDriver",
-                 "BlueStarCupsulePlanet", "Tico", "TicoDomeLecture", "GCaptureTarget", "NokonokoLand", "Flag", "OceanSphere", "Pole"}
+                 "BlueStarCupsulePlanet", "Tico", "TicoDomeLecture", "AstroDomeDemoStarter", "GCaptureTarget", "NokonokoLand", "Flag", "OceanSphere", "Pole"}
 
         def dead(c):
             for _ in range(32):

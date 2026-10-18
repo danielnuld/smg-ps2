@@ -155,6 +155,7 @@ static int galaxy_open_by_flags(const char *g)
 static int open_stars(const char *g) { const GInfo *gi = find_info(g); return gi ? gi->open_stars : 0; }
 
 int gd_flag_known(const char *name) { return find_flag(name) >= 0; }
+const char *gd_flag_galaxy(const char *name) { int i = find_flag(name); return i >= 0 ? gd_flags[i].s1 : NULL; } /* GameEventFlagAccessor::getGalaxyName */
 int gd_galaxy_count(void) { return ninfo; }
 void gd_galaxy_at(int i, const char **name, const char **map_pane) /* cGalaxyInfoTable's row i: name, MapPaneName */
 {

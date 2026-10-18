@@ -1050,7 +1050,7 @@ int main(void)
         if (frame == 1360 || frame == 1660) pad_force = PAD_CROSS; /* Yes, then the done window's key */
 #endif
 #if defined(PACKS) && defined(DOME_TEST)
-        { /* the dome: R2 at the blue star, Good Egg opened (New), then chosen and confirmed, its scenario 1 */
+        { /* the dome: R2 at the blue star, Good Egg opened (New), then chosen and confirmed, マリオ飛び出し, its scenario 1 */
             pad_force = 0;
             if (frame == 200) { /* the Gateway's grand star: Good Egg can open; the Butler's lectures heard */
                 gd_set_star("HeavensDoorGalaxy", 1); gd_story_follow("天球儀レクチャー"); gd_story_follow("ギャラクシー移動レクチャー");
@@ -1063,8 +1063,10 @@ int main(void)
             if (frame == 840) pad_force = PAD_CROSS;
             if (frame == 960) printf("dome test f %u: pointer on BoxStartButton %d\n", frame, menu_test_point_dome("BoxStartButton"));
             if (frame == 980) pad_force = PAD_CROSS;
-            if (frame == 1400) printf("dome test f %u: pointer on Star1 %d, selecting %d\n", frame, menu_test_point_scenario("Star1"), menu_scenario_selecting());
-            if (frame == 1420) pad_force = PAD_CROSS;
+            if (frame > 980 && frame < 1500 && frame % 30 == 0) /* マリオ飛び出し: its part * 1000 + step, then the scenario select */
+                printf("dome test f %u: demo %d, selecting %d\n", frame, game_test_demo(-1), menu_scenario_selecting());
+            if (frame == 1700) printf("dome test f %u: pointer on Star1 %d, selecting %d\n", frame, menu_test_point_scenario("Star1"), menu_scenario_selecting());
+            if (frame == 1720) pad_force = PAD_CROSS;
         }
 #endif
 #if defined(PACKS) && defined(COMET_TEST)
