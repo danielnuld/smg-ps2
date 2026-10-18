@@ -236,5 +236,6 @@ int game_test_demo(int k);   /* tests: demo k's appear switch on (-1: the runnin
 void game_bgm(const char *id); /* MR::startStageBGM by its sound id (MBGM_ / BGM_ / STM_ ...) */
 void game_bgm_stage(void);   /* MR::startCurrentStageBGM: the scenario's music stream (music_tab.h) */
 void game_request_movie(const char *name); /* main.c: played before the next scene requested loads */
+void game_font_init(const Scene *s); /* the talk font from s's FONT chunk (game_text; talk_init, main.c's subs.bin) */
 
 #endif

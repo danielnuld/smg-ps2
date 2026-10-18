@@ -52,6 +52,7 @@ static struct { LytInst *l; int on, no; const u16 *page; u16 buf[400]; } mono; /
 
 /* --- messages (tools/lyt.py MSGS) ------------------------------------------------------------------------------ */
 static const u8 *msgs;
+void msg_set(const u8 *m) { msgs = m; }
 
 const u16 *msg_get(const char *label)
 {

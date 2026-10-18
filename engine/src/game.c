@@ -9034,17 +9034,20 @@ static void talk_init(const Scene *s)
         tk_msg = (const TkMsg *)(tk_node + nn);
         tk_text = (const u16 *)(tk_msg + nm);
     }
-    if (s->font) {
-        const u8 *p = s->font;
-        tk_nglyph = *(const u16 *)p; tk_nicon = *(const u16 *)(p + 2);
-        tk_ttex = (int)s->font_tex0 + *(const u16 *)(p + 4);
-        tk_itex = (int)s->font_tex0 + *(const u16 *)(p + 6);
-        tk_lf = (s8)p[8]; tk_asc = p[9];
-        tk_glyph = (const TkGlyph *)(p + 16);
-        tk_icon = tk_glyph + tk_nglyph;
-        tk_lay = *(const u32 *)(p + 12) ? p + *(const u32 *)(p + 12) : NULL;
-    }
+    game_font_init(s);
     printf("talk: %d talk entries, font %d glyphs %d pictures\n", tk_nctl, tk_nglyph, tk_nicon);
+}
+void game_font_init(const Scene *s) /* the FONT chunk's glyphs (also main.c's subs.bin while a movie plays) */
+{
+    if (!s->font) return;
+    const u8 *p = s->font;
+    tk_nglyph = *(const u16 *)p; tk_nicon = *(const u16 *)(p + 2);
+    tk_ttex = (int)s->font_tex0 + *(const u16 *)(p + 4);
+    tk_itex = (int)s->font_tex0 + *(const u16 *)(p + 6);
+    tk_lf = (s8)p[8]; tk_asc = p[9];
+    tk_glyph = (const TkGlyph *)(p + 16);
+    tk_icon = tk_glyph + tk_nglyph;
+    tk_lay = *(const u32 *)(p + 12) ? p + *(const u32 *)(p + 12) : NULL;
 }
 
 /* the talkers placed in the scene (SignBoard, Tico, Kinopio: their wait nerves' talk) */

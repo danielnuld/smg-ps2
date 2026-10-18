@@ -17,6 +17,8 @@
 #include "gamedata.h"
 #include "pad.h"
 #include "render.h"
+#include "lyt.h"
+#include "menu.h"
 
 /* MoviePlayingSequence.cpp sInfoTable: the open wipe (after the play starts) and the close (its frames before the
  * end, -1 at the end: a forced black), in 60 Hz steps (THP frames); a movie frame here is two. Kinds: 0 none, 1 black
@@ -83,6 +85,8 @@ static void *init_cb(void *u, MPEGSequenceInfo *si)
     if (pic && si->m_Width == pw && si->m_Height == ph) return pic;
     if (pic) return NULL; /* the size changed: not ours */
     pw = si->m_Width; ph = si->m_Height;
+    render_reserve_blocks((ph + 31) / 32 * (640 / 64) * 32); /* its PSMCT32 pages (64 x 32, 32 blocks): the subtitles'
+                                                              * textures after them */
     pic = memalign(64, pw * ph * 4);
     SyncDCache(pic, pic + pw * ph * 4);
     upload = memalign(64, (4 + 6 * (pw / 16) * (ph / 16) + 1) * 16);
@@ -146,7 +150,89 @@ static u32 wipe(int k, int f, int n)
     return (u32)a << 24 | (u32)c << 16 | (u32)c << 8 | (u32)c;
 }
 
-int movie_play(const char *name, const MovieIo *the_io)
+/* --- MovieSubtitles / MovieSubtitlesDataTable.cpp sSubtitlesInfo: per movie up to five {message, start, appear time}
+ * (THP frames: 59.94 a second, two of each of ours). MoviePlayingSequence::exePlay's tryStartSubtitles appears the one
+ * starting at the current frame; MovieSubtitles (CinemaSuper, formMessage mode 2: no typewriter, the text at once):
+ * Talk -> TalkWait at once, at its step mAppearTime the next page (Talk again) or dead. The layout and the messages
+ * are main.c's subs.bin (lyt.c / msg_get / the talk font loaded from it). */
+static const struct { const char *movie; struct { const char *id; s16 start, time; } e[5]; } subs_info[] = {
+    {"PrologueA", {{"Layout_StoryDemoKoopaTalk000", 3887, 132}, {"Layout_StoryDemoKoopaTalk001", 4020, 154},
+                   {"Layout_StoryDemoKoopaTalk002", 4175, 120}, {"Layout_StoryDemoKoopaTalk003", 4680, 179},
+                   {"Layout_StoryDemoKoopaTalk004", 4560, 120}}},
+    {"PrologueB", {{"Layout_StoryDemoPeachTalk000", 4920, 120}, {"Layout_StoryDemoKameckTalk000", 5460, 180}}},
+    {"FinalBattle", {{"Layout_StoryDemoRosettaTalk000", 2970, 159}, {"Layout_StoryDemoRosettaTalk006", 3130, 180}}},
+    {"EpilogueA", {{"Layout_StoryDemoKoopaTalk005", 4607, 187}, {"Layout_StoryDemoKoopaTalk006", 4795, 226}}},
+    {"EndingA", {{"Layout_StoryDemoRosettaTalk001", 4980, 119}, {"Layout_StoryDemoRosettaTalk002", 5100, 149},
+                 {"Layout_StoryDemoRosettaTalk003", 5250, 120}}},
+    {"EndingB", {{"Layout_StoryDemoRosettaTalk004", 1860, 134}, {"Layout_StoryDemoRosettaTalk005", 1995, 275}}},
+};
+enum { SUB_WAIT, SUB_TALK, SUB_TALKWAIT };
+static struct { LytInst *l; const u16 *page; s16 start, time; int nrv, next, step; } sub[5];
+static int nsub;
+static const u8 *rum;   /* subs.bin's MRUM: {char movie[16]; s32 frame, pattern} (DemoPadRumbler) */
+static const char *rum_movie;
+
+static const u16 *next_page(const u16 *s) /* MR::getNextMessagePage */
+{
+    while (*s) {
+        if (*s != 0x1A) { s++; continue; }
+        int page = s[1] == 1 && s[2] == 1;
+        s += 4 + (s[3] + 1) / 2;
+        if (page) return *s == '\n' ? s + 1 : s;
+    }
+    return NULL;
+}
+
+static void subs_init(const char *name) /* MoviePlayingSequence's constructor: a MovieSubtitles per entry, dead */
+{
+    nsub = 0;
+    for (u32 i = 0; i < sizeof subs_info / sizeof subs_info[0]; i++) {
+        if (strcmp(subs_info[i].movie, name)) continue;
+        for (int k = 0; k < 5 && subs_info[i].e[k].id; k++) { /* getSubtitlesMessageNum */
+            const u16 *m = msg_get(subs_info[i].e[k].id);
+            LytInst *l = m ? lyt_new("CinemaSuper") : NULL;
+            if (!l) { printf("movie: no subtitle %s\n", subs_info[i].e[k].id); continue; }
+            sub[nsub].l = l; sub[nsub].page = m;
+            sub[nsub].start = subs_info[i].e[k].start; sub[nsub].time = subs_info[i].e[k].time;
+            sub[nsub].nrv = SUB_WAIT; sub[nsub].next = -1;
+            lyt_set_text_rec(l, "Text00", m); /* formMessage */
+            nsub++;
+        }
+    }
+}
+
+static void sub_set(int i, int nrv) { sub[i].next = nrv; }
+
+/* one 60 Hz step at THP frame t: tryStartSubtitles (the first starting there), DemoPadRumbler::update, then the
+ * subtitles' nerves (MovementType_MovieSubtitles) */
+static void subs_step(int t)
+{
+    for (int i = 0; i < nsub; i++)
+        if (sub[i].start == t) { sub_set(i, SUB_TALK); break; } /* appear */
+    for (u32 n = rum ? *(const u32 *)rum : 0, i = 0; i < n; i++) {
+        const u8 *e = rum + 16 + 24 * i;
+        if (!strncmp((const char *)e, rum_movie, 16) && *(const s32 *)(e + 16) == t) pad_rumble(*(const s32 *)(e + 20));
+    }
+    for (int i = 0; i < nsub; i++) {
+        if (sub[i].next >= 0) { sub[i].nrv = sub[i].next; sub[i].next = -1; sub[i].step = 0; }
+        if (sub[i].nrv == SUB_TALK) sub_set(i, SUB_TALKWAIT); /* updateTalking; isTextAppearedAll (mode 2) */
+        else if (sub[i].nrv == SUB_TALKWAIT && sub[i].step == sub[i].time) {
+            const u16 *n = next_page(sub[i].page);
+            if (n) { sub[i].page = n; lyt_set_text_rec(sub[i].l, "Text00", n); sub_set(i, SUB_TALK); }
+            else sub_set(i, SUB_WAIT); /* kill */
+        }
+        sub[i].step++;
+        if (sub[i].next >= 0) { sub[i].nrv = sub[i].next; sub[i].next = -1; sub[i].step = 0; }
+    }
+}
+
+static void subs_draw(void)
+{
+    for (int i = 0; i < nsub; i++)
+        if (sub[i].nrv != SUB_WAIT) { lyt_update(sub[i].l); lyt_draw(sub[i].l); }
+}
+
+int movie_play(const char *name, const MovieIo *the_io, const u8 *rumble)
 {
     char path[64];
     u32 size, head[512] __attribute__((aligned(64)));
@@ -177,6 +263,8 @@ int movie_play(const char *name, const MovieIo *the_io)
         audsrv_set_format(&fmt);
         audsrv_set_volume(MAX_VOLUME);
     }
+    rum = rumble; rum_movie = name;
+    subs_init(name);
     int skippable = !strcmp(name, "FinalBattle") && gd_visited_any("KoopaBattleVs3Galaxy"); /* trySkip */
 
     dma_channel_initialize(DMA_CHANNEL_toIPU, NULL, 0);
@@ -186,7 +274,9 @@ int movie_play(const char *name, const MovieIo *the_io)
     int f = 0;
     u32 t0 = cycles();
     while (MPEG_Picture(pic, &pts)) {
-        render_picture(upload, pw, ph, wipe(k, f, frames));
+        subs_step(2 * f); subs_step(2 * f + 1);
+        pad_rumble_update(); /* the second 60 Hz step's (pad_update does one) */
+        render_picture(upload, pw, ph, wipe(k, f, frames), nsub ? subs_draw : NULL);
         /* frame f's time (1001 / 30000 s of 294.912 MHz each, the Count wraps alike), then the next vblank: a slow
          * picture (an I one) is caught up by the quick ones after it, the sound kept with them */
         u32 at = t0 + (u32)((u64)(f + 1) * 9840230u);
@@ -204,6 +294,8 @@ int movie_play(const char *name, const MovieIo *the_io)
     io->close();
     free(upload); free(pic); free(ring); free(buf[1]); free(buf[0]); free(sizes);
     upload = NULL; pic = NULL;
+    render_reserve_blocks(0);
+    nsub = 0;
     printf("movie: %s ended at frame %d\n", name, f);
     return 1;
 }

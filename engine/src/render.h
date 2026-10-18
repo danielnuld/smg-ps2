@@ -70,7 +70,10 @@ u32 render_end(void);
 void render_clear_depth(void);
 u32 render_tris_drawn(void);
 u32 render_free_block(void); /* movie.c: the texture cache's first VRAM block (64 words), free with no scene loaded */
-void render_picture(const void *upload, int w, int h, u32 fade); /* a movie picture (upload: its GIF chain), letterboxed */
+/* a movie picture (upload: its GIF chain), letterboxed; overlay (if any) queues 2D over it (render_quads, flushed),
+ * under the fade */
+void render_picture(const void *upload, int w, int h, u32 fade, void (*overlay)(void));
+void render_reserve_blocks(u32 n); /* movie.c: the cache's first n blocks kept for the picture (textures after them) */
 void render_show(void);      /* the frame drawn shown (movie.c's pacing) */
 /* a world-space sphere within the camera's view (the test draw_model culls by) */
 int render_clip_judge(const float p[3], float rad); /* off ClippingJudge's volume (near 500, far 10000) */

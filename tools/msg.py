@@ -229,6 +229,34 @@ def atlas(f, codes, size):
     return img, out
 
 
+def _text_tex(timg):
+    """the text atlas: PSMT8, CLUT white with alpha = I4 intensity (16 levels), CSM1 order"""
+    import tex
+    idx = (timg[:, :, 0] >> 4).astype(np.uint8)
+    pal = np.zeros((256, 4), np.uint32)
+    pal[:16, :3] = 255
+    pal[:16, 3] = [(k * 17 * 128 + 127) // 255 for k in range(16)]
+    clut = (pal[:, 0] | pal[:, 1] << 8 | pal[:, 2] << 16 | pal[:, 3] << 24).astype("<u4")
+    clut = clut[[i ^ ((i >> 3 ^ i >> 4) & 1) * 0x18 for i in range(256)]]
+    return dict(w=256, h=256, psm=tex.PSMT8, clamp_s=1, clamp_t=1, alpha=2, pix=idx.tobytes(), clut=clut.tobytes(),
+                u_scale=1.0, v_scale=1.0)
+
+
+def font_subset_chunk(fsp, labels, lang=LANG):
+    """-> (FONT payload, [its text texture]): only the characters of those messages, no pictures, no balloon layouts
+    (LAYO offset 0); both tex indices 0 (the first texture of the blob)"""
+    f = _arc(fsp, "LayoutData/Font.arc")
+    text = rfnt(f["messagefont26.brfnt"])
+    m = Bmg(fsp, lang)
+    chars = {ord("?")}
+    for l in labels:
+        chars |= m.chars(m.index[l])[0]
+    timg, tg = atlas(text, chars - {0x0A}, (256, 256))
+    glyphs = b"".join(struct.pack("<HHHBBbBbx", *g) for g in tg)
+    head = struct.pack("<HHHHbBBBI", len(tg), 0, 0, 0, text["line_feed"], text["ascent"], text["cell_h"], 0, 0)
+    return head + glyphs, [_text_tex(timg)]
+
+
 def font_chunk(fsp, lang=LANG):
     """-> (FONT payload with tex indices relative to the first returned texture, [texture dicts]): every character
     and picture of the language's messages."""
@@ -253,15 +281,7 @@ def font_chunk(fsp, lang=LANG):
     nimg, ng = atlas(num, set(range(0x30, 0x3A)), (256, 256 - y0))
     pimg[y0:] = np.maximum(pimg[y0:], nimg)
     pg += [(0x1000 + g[0], g[1], g[2] + y0) + tuple(g[3:]) for g in ng]
-    # the text atlas: PSMT8, CLUT white with alpha = I4 intensity (16 levels), CSM1 order
-    idx = (timg[:, :, 0] >> 4).astype(np.uint8)
-    pal = np.zeros((256, 4), np.uint32)
-    pal[:16, :3] = 255
-    pal[:16, 3] = [(k * 17 * 128 + 127) // 255 for k in range(16)]
-    clut = (pal[:, 0] | pal[:, 1] << 8 | pal[:, 2] << 16 | pal[:, 3] << 24).astype("<u4")
-    clut = clut[[i ^ ((i >> 3 ^ i >> 4) & 1) * 0x18 for i in range(256)]]
-    ttex = dict(w=256, h=256, psm=tex.PSMT8, clamp_s=1, clamp_t=1, alpha=2, pix=idx.tobytes(), clut=clut.tobytes(),
-                u_scale=1.0, v_scale=1.0)
+    ttex = _text_tex(timg)
     ptex = tex.to_ps2(pimg, 0, 0, hi=True)
     glyphs = b"".join(struct.pack("<HHHBBbBbx", *g) for g in tg + pg)
     glyphs += b"\0" * (-len(glyphs) % 4)

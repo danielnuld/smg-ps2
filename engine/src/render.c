@@ -374,9 +374,10 @@ static void tex_free(int t)
     tex_block[t] = -1;
 }
 
+static u32 block_rsv;
 static int tex_alloc(int n, int align)
 {
-    for (int b = block_first, run = 0; b < block_end; b++) {
+    for (int b = block_first + block_rsv, run = 0; b < block_end; b++) {
         run = block_tex[b] < 0 && (run || b % align == 0) ? run + 1 : 0;
         if (run == n)
             return b - n + 1;
@@ -1540,10 +1541,11 @@ u32 render_end(void)
 
 /* movie.c: the texture cache's VRAM (its first block), free while no scene is loaded */
 u32 render_free_block(void) { return block_first; }
+void render_reserve_blocks(u32 n) { block_rsv = n; } /* tex_alloc starts past them */
 
 /* a decoded movie picture (w x h, its upload chain already built for render_free_block) on black, scaled to the
  * frame's width and letterboxed; covered by `fade` (0xAABBGGRR, A 0x80 opaque) */
-void render_picture(const void *upload, int w, int h, u32 fade)
+void render_picture(const void *upload, int w, int h, u32 fade, void (*overlay)(void))
 {
     int dh = h * SCREEN_W / w / 2, y0 = (SCREEN_H - dh) / 2; /* the frame is half the display's lines */
     dma_channel_wait(DMA_CHANNEL_VIF1, 0);
@@ -1563,6 +1565,12 @@ void render_picture(const void *upload, int w, int h, u32 fade)
     AD(GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA);
     ad_source((u32)block_first << 6, SCREEN_W >> 6, 10, 9, w, h, 0);
     ad_sprite(0, y0, SCREEN_W, y0 + dh, 0, 0, w, h, 0x80);
+    if (overlay) { /* MovieSubtitles (DrawType_MovieSubtitles), under the wipe */
+        ad_close();
+        overlay();
+        ad_open(8);
+        AD(GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA);
+    }
     if (fade >> 24) {
         AD(GS_SET_PRIM(PRIM_SPRITE, 0, 0, 0, 1, 0, 0, 0, 0), GS_REG_PRIM);
         AD(GS_SET_RGBAQ(fade & 0xFF, (fade >> 8) & 0xFF, (fade >> 16) & 0xFF, fade >> 24, 0x3F800000), GS_REG_RGBAQ);
