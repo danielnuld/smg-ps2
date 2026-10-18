@@ -12,6 +12,7 @@ extern const unsigned char libsd_irx[], libsd_irx_end[], audsrv_irx[], audsrv_ir
 static FILE *music;
 static unsigned int music_loop;    /* byte offset of the loop start in the samples */
 static int ready;
+static int fade_t, fade_n;         /* audio_fade: frames done / total (0: none) */
 static unsigned char chunk[8192] __attribute__((aligned(64)));
 
 int audio_init(void)
@@ -42,6 +43,7 @@ int audio_music(const char *path)
     music_loop = hdr[3];
     audsrv_set_format(&fmt);
     audsrv_set_volume(MAX_VOLUME);
+    fade_n = 0;
     printf("audio: %s, %u Hz, loop at byte %u\n", path, hdr[1], music_loop);
     return 0;
 }
@@ -52,11 +54,23 @@ void audio_stop(void)
 {
     if (music) fclose(music);
     music = NULL;
+    fade_n = 0;
+}
+
+void audio_fade(int frames)
+{
+    if (!music) return;
+    if (frames <= 0) { audio_stop(); return; }
+    fade_n = frames; fade_t = 0;
 }
 
 void audio_update(void)
 {
     if (!music) return;
+    if (fade_n) { /* a linear fade, then the stream closed */
+        if (++fade_t >= fade_n) { audio_stop(); return; }
+        audsrv_set_volume(MAX_VOLUME * (fade_n - fade_t) / fade_n);
+    }
     int room = audsrv_available();
     while (room >= 1024) { /* whole frames of 4 bytes, at most a chunk per call */
         int want = room < (int)sizeof chunk ? room & ~3 : (int)sizeof chunk;

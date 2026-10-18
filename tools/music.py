@@ -67,6 +67,20 @@ def stream_of(bgm, streams):
     return next((stem + t for t in ("_strm", "_multi") if stem + t in streams), None)
 
 
+def sound_id(stem):
+    """Stream stem -> sound id name (the inverse of stream_of)."""
+    s = stem.replace("_strm", "").replace("_multi", "")
+    if s.startswith("SMG_galaxy"):
+        return "GALAXY_" + s[len("SMG_galaxy"):].lstrip("_").upper()
+    if s.startswith("SMG_astroout0"):
+        return "ASTRO_OUT" if s[-1] == "1" else "ASTRO_OUT_" + s[-1]
+    if s == "SMG_astrodome":
+        return "ASTRO_DOME"
+    if s.startswith("SMG_ev_prolo"):
+        return "PROLOGUE_" + s[-2:]
+    return None
+
+
 def scenario_bgm(stage, no, comet):
     """AudStageBgmWrap::changeStageNameToSoundID (no Koopa fortress / AstroGalaxy bright flag: a first visit)."""
     if comet in COMET_BGM:
@@ -90,9 +104,14 @@ def table(fs, out):
             if st:
                 rows.append(f'    {{"{stage}/{no}", "{st}"}},')
                 used.add(st)
+    bgm = sorted((sound_id(st), st) for st in used)  # the demos' startStageBGM(name): sound id -> stream
+    assert all(stream_of(i, streams) == st for i, st in bgm), bgm
     Path(out).write_text("\n".join(["/* written by tools/music.py --table: scenario -> music stream (Petari AudStageBgmWrap) */",
-                                    "static const struct { const char *scen, *track; } music_tab[] = {", *rows, "};", ""]))
-    print(f"{out}: {len(rows)} scenarios, {len(used)} streams")
+                                    "static const struct { const char *scen, *track; } music_tab[] = {", *rows, "};",
+                                    "/* sound id (MBGM_ dropped) -> music stream, for MR::startStageBGM by name */",
+                                    "static const struct { const char *bgm, *track; } bgm_tab[] = {",
+                                    *[f'    {{"{i}", "{st}"}},' for i, st in bgm], "};", ""]))
+    print(f"{out}: {len(rows)} scenarios, {len(used)} streams, {len(bgm)} bgm ids")
     return used
 
 

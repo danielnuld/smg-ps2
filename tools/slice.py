@@ -70,6 +70,9 @@ SKINNED_OBJ = ("TreasureBoxKinokoOneUp", "TreasureBoxCoin", "TreasureBoxEmpty", 
 # MapObjActor::initialize (tryStartAllAnim): a placed class whose model archive holds a BCK of the archive's name
 # plays it from the start; such classes are drawn skinned too (AUTO_SKINNED, class -> archive, filled by placement)
 AUTO_SKINNED = {}
+# the demo camera sheets' anim cameras (DemoCameraKeeper AnimCameraName: a .canm of the target cast's archive): (class,
+# canm stem) per scenario, filled by demo_chunk and baked by canm_chunk (called after it)
+DEMO_CANM = set()
 _auto_anim = {}
 
 
@@ -1332,8 +1335,7 @@ def placement(fs, galaxy, scenario):
            chunk(b"PATH", struct.pack("<I", len(paths)) + b"".join(path_entry(p) for p in paths))]
     AUTO_SKINNED.update({t: arcmap[t] for t in types if t not in planets and t not in SKINNED_OBJ and arcmap.get(t)
                          and "#" not in arcmap[t] and auto_anim(fs, arcmap[t])})
-    out.append(obj_anim_chunk(Path(fs), set(types)))
-    out.append(canm_chunk(Path(fs), set(types), galaxy, scenario))
+    out.append(obj_anim_chunk(Path(fs), set(types), galaxy))
     wire = []
     grav = [g for g in (grav_record(o, paths, wire, i) for i, o in enumerate(keep)) if g]
     out.append(chunk(b"GRAV", struct.pack("<I", len(grav)) + b"".join(grav) + struct.pack(f"<{len(wire)}f", *wire)))
@@ -1344,6 +1346,7 @@ def placement(fs, galaxy, scenario):
     cset = [(i, r["camset"]) for i, r in enumerate(keep) if r.get("camset", -1) >= 0]  # ActorCameraInfo: CameraSetId
     out.append(chunk(b"CSET", struct.pack("<I", len(cset)) + b"".join(struct.pack("<Hh", i, v) for i, v in cset)))
     out.append(demo_chunk(fsp, demos, gpos, keep, jp2en, se_table()))
+    out.append(canm_chunk(Path(fs), set(types), galaxy, scenario))  # after demo_chunk: DEMO_CANM
     care = [struct.pack("<BBH9f", camera.SHAPES[r["name"]], r["zone"],
                         cam_index.get((r["zone"], "c", r["args"][0] & 0xFFFF), 0xFFFF), *r["pos"], *r["rot"], *r["scale"])
             for r in camera.areas(cubes)]
@@ -1528,7 +1531,13 @@ def eye_chunk(fsp):
     return chunk(b"EYEP", struct.pack("<I", len(out)) + b"".join(out))
 
 
-def obj_anim_chunk(fsp, classes):
+# clips a class never plays in a stage: Butler::init's initForAstroGalaxy registers none of its talk anim demos (their
+# DemoButler* clips are the dome's), and DemoWithButler is ButlerExplain's (グランドスター１帰還)
+def anim_skipped(cls, clip, galaxy):
+    return cls == "Butler" and (clip == "demowithbutler" or (clip.startswith("demobutler") and galaxy != "AstroDome"))
+
+
+def obj_anim_chunk(fsp, classes, galaxy=None):
     """ANIM for the skinned placed classes among `classes` (and their EXTRA models): "<class>/<clip>" lower case."""
     clips = []
     names = [c for c in SKINNED_OBJ if c in classes or any(c in EXTRA.get(k, ()) for k in classes)]
@@ -1540,7 +1549,7 @@ def obj_anim_chunk(fsp, classes):
         files = {n.rsplit("/", 1)[-1].lower(): b for n, b in B.rarc_files(arc.read_bytes())}
         packed = {}
         for n, b in files.items():
-            if n.endswith(".bck"):
+            if n.endswith(".bck") and not anim_skipped(c, n[:-4], galaxy):
                 raw = anim_clip(b)
                 z = zlib.compress(raw, 9)
                 packed[n[:-4]] = struct.pack("<II", len(raw), len(z)) + z + b"\0" * (-len(z) % 4)
@@ -1607,8 +1616,9 @@ def canm_chunk(fsp, classes, galaxy=None, scenario=None):
                 if fr:
                     out.append(name32("stage/startscenario") + struct.pack("<I", len(fr)) +
                                b"".join(struct.pack("<8f", *f) for f in fr))
-    for c in [c for c in SKINNED_OBJ if c in classes] + (["PowerStar"] if "PowerStar" in classes else []):
-        arc = fsp / "ObjectData" / f"{ANIM_ARC.get(c, c)}.arc"
+    for c in [c for c in SKINNED_OBJ if c in classes] + (["PowerStar"] if "PowerStar" in classes else []) + \
+            sorted({c for c, _ in DEMO_CANM if c in classes and c not in SKINNED_OBJ and c != "PowerStar"}):
+        arc = fsp / "ObjectData" / f"{AUTO_SKINNED.get(c) or ANIM_ARC.get(c, c)}.arc"
         if not arc.exists():
             continue
         for n, b in B.rarc_files(arc.read_bytes()):
@@ -1682,6 +1692,7 @@ def demo_chunk(fsp, demos, gpos, keep, jp2en, se_ids):
              dead until then: demo_dead_classes), padded to 4"""
     sheets = {n.rsplit("/", 1)[-1].lower(): b for n, b in B.rarc_files((fsp / "ObjectData" / "DemoSheet.arc").read_bytes())}
     main = [d for d in demos if d["name"] == "DemoGroup" and d.get("sheet")]
+    DEMO_CANM.clear()
     en2jp = {e: j for j, e in jp2en.items()}
     row_jp = [en2jp.get(r.get("cls", r["name"])) for r in keep]
     pos_tab, pos_index = [], {}
@@ -1733,6 +1744,8 @@ def demo_chunk(fsp, demos, gpos, keep, jp2en, se_ids):
                 continue
             rows_ = match(tn, tc) if tn else []
             tgt = 0 if not tn else 1 if tn == "マリオ" else 2
+            if an and rows_:
+                DEMO_CANM.add((keep[rows_[0]]["name"], an.rsplit(".", 1)[0].lower()))
             cls = camera.actor_hash(d["demo_name"], "", f"[{pn}]")
             recs["camera"].append(struct.pack("<BBBxhHIii", part(pn), tgt, co == 1, rows_[0] if rows_ else -1, 0, cls, a0, a1) +
                                   text(an.rsplit(".", 1)[0] if an else "", 32))

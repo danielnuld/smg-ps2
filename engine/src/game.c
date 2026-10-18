@@ -8,6 +8,8 @@
 #include "menu.h"
 #include "gamedata.h"
 #include "sequence.h"
+#include "audio.h"
+#include "music_tab.h"
 #include "camera.h"
 
 #include <stdio.h>
@@ -852,6 +854,13 @@ static int demo_camera(const char *name, int frame, const float m[16])
     }
     return 0;
 }
+static int canm_frames(const char *name) /* a CANM's frames, 0 if missing */
+{
+    const u8 *q = sc->canm;
+    for (u32 i = 0; i < sc->ncanm; i++, q += 36 + 32 * *(const u32 *)(q + 32))
+        if (!strcmp((const char *)q, name)) return (int)*(const u32 *)(q + 32);
+    return 0;
+}
 static int demo_on; /* a demo is running: Mario waits (no input, no hurt) */
 #define DX_MAX_SUB 16
 static struct {                /* the DemoExecutor running (dx_update) */
@@ -864,6 +873,7 @@ static struct {                /* the DemoExecutor running (dx_update) */
     int req, req_t;            /* a demo asked to start (-1 none), frames it waited for its zones */
     int paused;                /* DemoTimeKeeper::mIsPaused (pauseTimeKeepDemo) */
     int frameless, req_frameless; /* requestStartTimeKeepDemoWithoutCinemaFrame */
+    const void *acam; int acam_f;  /* the camera sheet's anim camera running (a DxCam) and its frame */
 } dx = {.req = -1};
 static int dx_zones_full = 1;  /* the asked / running demo's casts' zones are in full (game_zone_sets) */
 /* Butler's star piece lecture (Butler.cpp): _160 on, _164 hits, _168 the replace count, the reaction
@@ -876,6 +886,16 @@ static int butler_group(const Row *r) /* MR::getPairedGroupMember: the StarPiece
         if (sc->objs[i].group == r->group && sc->objs[i].zone == r->zone && !strcmp(sc->types + 32 * sc->objs[i].type, "StarPieceGroup")) return (int)i;
     return -1;
 }
+/* DemoStartRequestHolder: the start requests (16, in order) kept until MR::canStartDemo; dx.req is the head */
+static struct { int k, frameless; } dx_reqq[16];
+static int dx_nreq;
+static int dx_push(int k, int frameless)
+{
+    if (dx_nreq >= 16) return 0;
+    dx_reqq[dx_nreq].k = k; dx_reqq[dx_nreq].frameless = frameless; dx_nreq++;
+    return 1;
+}
+static int dx_busy(void) { return dx.on || dx.req >= 0 || dx_nreq > 0; } /* isDemoActive, or a request pending */
 typedef struct { u16 total; u8 suspend, talk; } DxPart;           /* talk: MR::isDemoPartTalk */
 typedef struct { u16 total, step; u8 main, loop, pad[2]; } DxSub;  /* loop: 会話アニメループ */
 typedef struct { u8 part, pad; s16 pos; char bck[28]; } DxPlayer;
@@ -986,6 +1006,7 @@ static int amb_stale = 1; /* ambient_effects' per-type table to be rebuilt (a ne
 static void talk_init(const Scene *s);
 static int talk_demo(void);
 static void dx_init(const unsigned char *blob);
+static int dx_row_moves(int row);
 static void story_scene_start(void);
 static int talk_active(void);
 static void stitle_start(void);
@@ -17753,7 +17774,7 @@ static void update_rotors(void)
 {
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
-        if (!in->rotor) continue;
+        if (!in->rotor || !dx_row_moves(in->row)) continue;
         const Row *r = &sc->objs[in->row];
         int row = in->row, packed = r->arg[7], type = packed & 15, cond = packed >> 8 & 15, hold = packed >> 12 & 0x3FFF;
         if (!mp_running(r, row)) continue;
@@ -17800,7 +17821,7 @@ static void update_railers(void)
 {
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
-        if (!in->railer) continue;
+        if (!in->railer || !dx_row_moves(in->row)) continue;
         const Row *r = &sc->objs[in->row];
         const unsigned char *e = in->railer;
         int was = in->rwork; /* RailMoveObj _D0 */
@@ -22526,7 +22547,7 @@ static Row dx_row(const Demo *d) /* the group's switches as a row of its zone (s
 
 static void dx_init(const unsigned char *blob)
 {
-    ndemos = 0; dx.on = 0; dx.req = -1; dx_pos = NULL;
+    ndemos = 0; dx.on = 0; dx.req = -1; dx_pos = NULL; dx_nreq = 0; dx.acam = NULL;
     const u8 *c = blob_chunk(blob, "DEMO", NULL);
     if (!c) return;
     u32 n = ((const u32 *)c)[0], np = ((const u32 *)c)[1];
@@ -22557,6 +22578,93 @@ static void dx_init(const unsigned char *blob)
     /* Butler::init: ButlerStateStarPieceReaction's talk by isOnGameEventFlagEndButlerStarPieceLecture; the lecture's state */
     memset(&bsp, 0, sizeof bsp); bsp.react = -1;
     bsp.msg = gd_story_passed("スターピースレクチャー") ? "AstroGalaxy_Butler000" : "AstroDome_Butler017";
+}
+
+/* StopSceneStateControl (Scene/SceneNameObjMovementController.cpp) for the time keep demos: their start stops the scene
+ * (requestStopSceneFor: suspendAllSceneNameObj, then movement on for the services alone: the talk director, the switch
+ * watcher, the cameras, the layouts, effects' one-shots...); the demo's casts (DemoExecutor::start:
+ * requestDemoCastMovementOn) and the simple casts (registerDemoSimpleCastAll: the skies, ElectricRailHolder, BigFan,
+ * the Observatory's own objects and NPCs...) keep moving; the end plays the scene again (requestPlaySceneFor). Here
+ * game_update's update_* are gated by class (lq_cls): one runs while a DemoExecutor demo is on only if its class is a
+ * cast of the demo or always moves; the skinned clips, the rotors and the railers are gated by row. ponytail: one
+ * class per update_* (a cast keeps its whole class moving, the other classes of that update_* stop with it); the
+ * programmable demos (DinoPackun, OtaKing, TicoFat, the vine, the talks) do not stop the scene; loop effects keep
+ * their particles (requestMovementOffAllLoopEmitters: ours stop emitting when their owner's update_* stops) */
+static int dx_always_moves(const char *cls) /* registerDemoSimpleCastAll without a condition, or in its stage */
+{
+    static const char *const always[] = {"ElectricRail", "BigFan", "BigFanNoLeg", "OceanRing", "OceanSphere", "WaterPressureBullet",
+                                         "Flag", "SpaceInner", "Koopa", "OtaKingMagma", "SphereSelectorHandle"};
+    static const char *const astro[] = {"Tico", "TicoComet", "Butler", "ButlerMap", "Rosetta", "TicoFat", "TicoRail"}; /* tryRegisterSimpleCastIfAstroGalaxy */
+    if (sky_class(cls) || !strncmp(cls, "Astro", 5) || !strncmp(cls, "KoopaBattleMap", 14)) return 1; /* Sky, AstroMapObj, AstroDome* */
+    for (unsigned i = 0; i < sizeof always / sizeof always[0]; i++) if (!strcmp(cls, always[i])) return 1;
+    if (!strncmp(game_stage_name, "AstroGalaxy/", 12))
+        for (unsigned i = 0; i < sizeof astro / sizeof astro[0]; i++) if (!strcmp(cls, astro[i])) return 1;
+    return !strncmp(game_stage_name, "HeavensDoorGalaxy/", 18) && !strcmp(cls, "EarthenPipe");
+}
+static int dx_cls_moves(const char *cls) /* an update_* of that class runs now */
+{
+    if (!dx.on) return 1;
+    const Demo *d = &demos[dx.cur];
+    for (int i = 0; i < d->h->ngroup; i++)
+        if (!strcmp(sc->types + 32 * sc->objs[d->group[i]].type, cls)) return 1;
+    return dx_always_moves(cls);
+}
+static int dx_row_moves(int row) /* the placement moves now */
+{
+    if (!dx.on) return 1;
+    const Demo *d = &demos[dx.cur];
+    for (int i = 0; i < d->h->ngroup; i++) if (d->group[i] == row) return 1;
+    return dx_always_moves(sc->types + 32 * sc->objs[row].type);
+}
+
+/* AudBgmConductor / MR::startStageBGM, stopStageBGM, startLastStageBGM, startCurrentStageBGM on our music streams
+ * (tools/music.py --table: music_tab per scenario, bgm_tab per sound id): "MBGM_GALAXY_24" is the id with its MBGM_ /
+ * BGM_ dropped; ids without a converted stream (the boss and STM ones) are logged. ponytail: no fade in, no sequenced
+ * BGMs (the host: path as main.c had it) */
+static char bgm_cur[40], bgm_last[40]; /* the stream playing, the one before startStageBGM changed it */
+static int on_stage(const char *galaxy) { size_t l = strlen(galaxy); return !strncmp(game_stage_name, galaxy, l) && game_stage_name[l] == '/'; }
+static void bgm_play(const char *track)
+{
+    char path[96];
+    snprintf(bgm_cur, sizeof bgm_cur, "%s", track);
+    snprintf(path, sizeof path, "host:music/%s.pcm", track);
+    audio_music(path);
+}
+void game_bgm_stage(void) /* startCurrentStageBGM; sequenced ones (LibraryRoom...) are not streams: galaxy 01 */
+{
+    const char *track = "SMG_galaxy01_strm";
+    for (u32 i = 0; i < sizeof music_tab / sizeof music_tab[0]; i++)
+        if (!strcmp(music_tab[i].scen, game_stage_name)) track = music_tab[i].track;
+    bgm_last[0] = 0;
+    bgm_play(track);
+}
+static void bgm_start(const char *id) /* startStageBGM(name, false) */
+{
+    const char *p = !strncmp(id, "MBGM_", 5) ? id + 5 : !strncmp(id, "BGM_", 4) ? id + 4 : id, *track = NULL;
+    for (u32 i = 0; i < sizeof bgm_tab / sizeof bgm_tab[0]; i++)
+        if (!strcmp(bgm_tab[i].bgm, p)) track = bgm_tab[i].track;
+    if (!track) { printf("bgm: no stream for %s\n", id); return; }
+    snprintf(bgm_last, sizeof bgm_last, "%s", bgm_cur);
+    printf("bgm: %s -> %s\n", id, track);
+    bgm_play(track);
+}
+static void bgm_stop(int frames) { printf("bgm: stop over %d\n", frames); audio_fade(frames); } /* stopStageBGM(frames) */
+static void bgm_return(void) /* startLastStageBGM */
+{
+    char t[40];
+    snprintf(t, sizeof t, "%s", bgm_last[0] ? bgm_last : bgm_cur);
+    bgm_last[0] = 0;
+    printf("bgm: back to %s\n", t);
+    bgm_play(t);
+}
+static int bgm_permitted(void) /* DemoSoundKeeper::isPermitBgmChange: not with a red / black comet in the stage */
+{
+    char gal[32];
+    const char *sl = strchr(game_stage_name, '/');
+    snprintf(gal, sizeof gal, "%.*s", sl ? (int)(sl - game_stage_name) : 31, game_stage_name);
+    int s = gd_comet_star(gal);
+    const char *c = s ? gd_scenario_comet(gal, s) : "";
+    return strcmp(c, "Red") && strcmp(c, "Black");
 }
 
 /* DemoFunction::isDemoPartActiveFunction / getDemoPartStepFunction / getDemoPartTotalStepFunction */
@@ -22682,10 +22790,40 @@ static void dx_cast_hook(int row, int type, int part)
     if (type == 2 || type == 3) printf("demo: no %s for %s\n", type == 2 ? "functor" : "nerve", cls);
 }
 
+static void dx_cast_matrix(int row, float m[16]) /* a cast's base matrix at scale 1 (CameraTargetArg(actor)) */
+{
+    const Inst *in = row_inst(row);
+    if (in) { memcpy(m, in->m, 64); for (int j = 0; j < 12; j++) m[j] /= in->s; return; }
+    const Row *r = &sc->objs[row];
+    float one[3] = {1, 1, 1}, rot[3] = {r->rot[0], r->rot[1], r->rot[2]};
+    mat_translate_rot_scale(m, r->pos, rot, one);
+}
+static void dx_acam_update(void) /* the camera sheet's anim camera: CameraAnim on its target cast, speed 1 */
+{
+    const DxCam *c = dx.acam;
+    if (!c) return;
+    char n[64];
+    float m[16];
+    dx_clip(c->row, c->anim, n, sizeof n);
+    int frames = canm_frames(n);
+    if (!frames) { printf("demo: no anim camera %s\n", n); dx.acam = NULL; return; }
+    dx_cast_matrix(c->row, m);
+    demo_camera(n, dx.acam_f < frames ? dx.acam_f : frames - 1, m); /* held on its last frame until endAnimCamera */
+    dx.acam_f++;
+}
 static void dx_camera_end(void) /* DemoCameraKeeper::endCurrentCamera */
 {
     if (dx.cam) camera_event_end();
     dx.cam = NULL;
+    if (dx.acam) { /* endAnimCamera / endEventCamera(IsContinuous). ponytail: no interpolation back (AnimCameraEndFrame) */
+        const DxCam *c = dx.acam;
+        char n[64];
+        float m[16];
+        dx_clip(c->row, c->anim, n, sizeof n);
+        dx_cast_matrix(c->row, m);
+        demo_camera(n, -1, m);
+        dx.acam = NULL;
+    }
 }
 
 static void dx_camera_first(const DxCam *c) /* DemoCameraKeeper::executeFirst */
@@ -22696,6 +22834,12 @@ static void dx_camera_first(const DxCam *c) /* DemoCameraKeeper::executeFirst */
         float m[16], one[3] = {1, 1, 1}, rot[3] = {r->rot[0], r->rot[1], r->rot[2]};
         mat_translate_rot_scale(m, r->pos, rot, one);
         up = v3(m[4], m[5], m[6]); front = v3(m[8], m[9], m[10]); pos = row_pos(r);
+    }
+    if (c->anim[0] && c->target == 2 && c->row >= 0) { /* startAnimCameraTargetSelf(cast, AnimCameraName, AnimCameraStartFrame, 1) */
+        dx.cam = NULL; dx.acam = c; dx.acam_f = c->start > 0 ? c->start : 0;
+        printf("demo: anim camera %s on row %d from %d\n", c->anim, c->row, dx.acam_f);
+        dx_acam_update();
+        return;
     }
     if (c->anim[0]) printf("demo: no anim camera %s\n", c->anim);
     if (!camera_event_start(c->cls, 0, up, front, pos)) printf("demo: no camera %08x\n", c->cls);
@@ -22731,6 +22875,13 @@ static void dx_action(const Demo *d, const DxAct *a) /* DemoActionInfo::executeA
             break;
         }
         default: break;
+        }
+        if (a->anim[0]) { /* MR::startAction(actor, AnimName): the cast's clip as its own BCK loops (ActorAnimKeeper / tryStartAllAnim) */
+            const Inst *in = row_inst(row);
+            char n[64];
+            dx_clip(row, a->anim, n, sizeof n);
+            if (in && in->anim) anim_start(in->anim, n, 0);
+            else printf("demo: no clip %s\n", n);
         }
         if (a->pos >= 0 && ndx_moved < 8) { /* MR::findNamePos */
             const float *g = dx_pos + 6 * a->pos;
@@ -22835,7 +22986,7 @@ static void srd_update(void)
     int first = srd.step++ == 0;
     switch (srd.nrv) {
     case SRD_APPEARWAIT:
-        if (first) mario_hidden = 1; /* hidePlayer */
+        if (first) { mario_hidden = 1; if (on_stage("AstroGalaxy")) bgm_start("MBGM_GALAXY_24"); } /* hidePlayer, startStageBGM */
         if (srd.step - 1 == 30) se_start(SE_PM_DEMO_RETURN_LIGHT, &srd.pos.x); /* cDemoAppearEffectStep */
         if (srd.step - 1 == 45) srd_set(SRD_MOVE);                              /* cDemoAppearWaitFrame */
         break;
@@ -22883,7 +23034,7 @@ static void srd_update(void)
         break;
     case SRD_WAIT:
     case SRD_RESULT:
-        if (first && srd.nrv == SRD_WAIT) srd_bck("resultwaitstart");
+        if (first && srd.nrv == SRD_WAIT) { srd_bck("resultwaitstart"); if (on_stage("AstroGalaxy")) bgm_stop(90); } /* stopStageBGM(90) */
         if (srd_bck_stopped()) srd_bck("resultwait"); /* tryStartResultWait */
         if (srd.nrv == SRD_WAIT && dx_last(1)) { /* tryStartStageResult */
             menu_result_start();
@@ -22897,7 +23048,7 @@ static void srd_update(void)
         else if (menu_wipe_closed()) srd_set(SRD_AFTER);
         break;
     case SRD_AFTER:
-        if (first) dx.paused = 0; /* resumeTimeKeepDemo */
+        if (first) { dx.paused = 0; if (on_stage("AstroGalaxy")) game_bgm_stage(); } /* resumeTimeKeepDemo, startCurrentStageBGM */
         if (!dx.on) srd_set(SRD_DEAD);
         return; /* Mario no longer held */
     }
@@ -23050,7 +23201,7 @@ static void dx_start(int k) /* DemoExecutor::start, startDemoSystem */
     dx.on = 1; dx.cur = k;
     dx.part = 0; dx.step = -1;
     for (int j = 0; j < DX_MAX_SUB; j++) dx.sub_t[j] = -1;
-    dx.cams_done = 0; dx.cam = NULL; dx.bck[0] = 0; dx.paused = 0;
+    dx.cams_done = 0; dx.cam = NULL; dx.acam = NULL; dx.bck[0] = 0; dx.paused = 0;
     dx.frameless = dx.req_frameless; dx.req_frameless = 0;
     ndxt = 0; ndx_moved = 0; dx_talk_set = NULL;
     for (int g = 0; g < d->h->ngroup; g++)
@@ -23066,7 +23217,7 @@ static void dx_start(int k) /* DemoExecutor::start, startDemoSystem */
             for (u32 j = 0; j < sc->ncanm && !t->cam; j++, q += 36 + 32 * *(const u32 *)(q + 32)) t->cam = !strcmp((const char *)q, n);
         }
     if (!dx.frameless) menu_cinema(1);
-    printf("demo: %s starts\n", d->h->name);
+    printf("demo: %s starts, %d casts move, the scene stopped\n", d->h->name, d->h->ngroup); /* requestStopSceneFor */
 }
 
 static void dx_end(void) /* DemoExecutor::end, DemoDirector::doDemoEndRequest */
@@ -23081,14 +23232,14 @@ static void dx_end(void) /* DemoExecutor::end, DemoDirector::doDemoEndRequest */
     Row r = dx_row(d);
     if (d->h->sw[SW_DEAD] >= 0) sw_set(&r, SW_DEAD, 1);
     if (!dx.frameless) menu_cinema(0);
-    printf("demo: %s ends\n", d->h->name);
+    printf("demo: %s ends, the scene plays\n", d->h->name); /* requestPlaySceneFor */
 }
 
 /* requestStartTimeKeepDemo(WithoutCinemaFrame) by the demo's name: 0 if the scene has none */
 static int dx_request(const char *name, int frameless)
 {
     for (int k = 0; k < ndemos; k++)
-        if (!strcmp(demos[k].h->name, name)) { dx.req = k; dx.req_frameless = frameless; dx_zones_full = 0; return 1; }
+        if (!strcmp(demos[k].h->name, name)) return dx_push(k, frameless);
     return 0;
 }
 
@@ -23105,10 +23256,15 @@ static void dx_update(void) /* DemoDirector::movement: the start requests, then 
         if (d->h->sw[SW_APPEAR] < 0) continue;
         Row r = dx_row(d);
         int on = sw_on(&r, SW_APPEAR);
-        if (on && !d->sw_was && dx.req < 0) { dx.req = k; dx_zones_full = 0; }
+        if (on && !d->sw_was) dx_push(k, 0); /* startProperDemoSystem: requestStartTimeKeepDemo */
         d->sw_was = (u8)on;
     }
-    if (dx.req >= 0 && !dx.on && !star_demo && !talk_demo() && !in_opening && (dx_zones_full || ++dx.req_t > 120)) { /* MR::canStartDemo */
+    if (dx.req < 0 && dx_nreq) { /* the next request, its casts' zones asked for (game_zone_sets) */
+        dx.req = dx_reqq[0].k; dx.req_frameless = dx_reqq[0].frameless;
+        memmove(dx_reqq, dx_reqq + 1, --dx_nreq * sizeof dx_reqq[0]);
+        dx_zones_full = 0; dx.req_t = 0;
+    }
+    if (dx.req >= 0 && !dx.on && !star_demo && !talk_demo() && !in_opening && life > 0 && (dx_zones_full || ++dx.req_t > 120)) { /* MR::canStartDemo */
         dx_start(dx.req); dx.req = -1; dx.req_t = 0;
     }
     if (!dx.on) return;
@@ -23123,6 +23279,7 @@ static void dx_update(void) /* DemoDirector::movement: the start requests, then 
     }
     if (!dx.paused) dx_keepers(d);
     dx_talk_anims(d);
+    dx_acam_update(); /* the CameraDirector goes on while the time keeper is paused */
 }
 
 static void dx_keepers(const Demo *d) /* DemoExecutor::movement's keepers (not while paused) */
@@ -23153,7 +23310,7 @@ static void dx_keepers(const Demo *d) /* DemoExecutor::movement's keepers (not w
         for (int i = 0; i < d->h->ncam; i++) {
             const DxCam *c = &d->cam[i];
             if (dx_first(c->part)) { dx_camera_end(); dx.cam = c; dx_camera_first(c); }
-            else if (dx_last(c->part)) dx.cams_done++; /* executeLast: endAnimCamera (none here) */
+            else if (dx_last(c->part)) { dx.cams_done++; if (dx.acam == (const void *)c) dx_camera_end(); } /* executeLast: endAnimCamera(AnimCameraEndFrame) */
         }
     for (int i = 0; i < d->h->nact; i++) /* DemoActionKeeper::update */
         if (dx_first(d->act[i].part)) dx_action(d, &d->act[i]);
@@ -23164,17 +23321,24 @@ static void dx_keepers(const Demo *d) /* DemoExecutor::movement's keepers (not w
         if (w->type < 2) menu_wipe(w->type == 1, w->frame, rgb);
         else menu_wipe_force(w->type == 3);
     }
-    for (int i = 0; i < d->h->nsnd; i++) /* DemoSoundKeeper::executeType (the system SE) */
-        if (dx_first(d->snd[i].part) && d->snd[i].se != 0xFFFFFFFFu) se_start(d->snd[i].se, NULL);
+    for (int i = 0; i < d->h->nsnd; i++) { /* DemoSoundKeeper::executeType */
+        const DxSnd *s = &d->snd[i];
+        if (dx_first(s->part)) {
+            if (s->wipeout >= 0 && bgm_permitted()) bgm_stop(s->wipeout); /* stopStageBGM(BgmWipeoutFrame) */
+            if (s->bgm[0] && bgm_permitted()) bgm_start(s->bgm);          /* startStageBGM(Bgm) */
+            if (s->se != 0xFFFFFFFFu) se_start(s->se, NULL);               /* startSystemSE */
+        } else if (dx_last(s->part) && s->ret && bgm_permitted()) bgm_return(); /* ReturnBgm: startLastStageBGM */
+    }
 }
 
 int game_test_demo(int k)
 {
+    if (k == -2) return dx.acam ? dx.acam_f : -1;
     if (k < 0) return dx.on ? dx.part * 1000 + dx.step : -1;
     if (k >= ndemos) return -2;
     Row r = dx_row(&demos[k]);
     if (demos[k].h->sw[SW_APPEAR] >= 0) sw_set(&r, SW_APPEAR, 1);
-    else { dx.req = k; dx_zones_full = 0; }
+    else dx_push(k, 0);
     return 0;
 }
 /* StorySequenceExecutor's nerves once the scene started (setNerveSceneStart): PlayDemoSequence, WaitTimeKeepDemoEnd,
@@ -23207,8 +23371,8 @@ static void story_update(void)
             for (unsigned i = 0; i < sizeof unported / sizeof unported[0]; i++)
                 if (!strcmp(unported[i], d->name)) k = -1;
             if (k < 0) { printf("story: demo %s not played\n", d->name); menu_result_start(); seq_demo_step(); story_set(ST_PLAY); break; }
-            if (dx.on || dx.req >= 0) break;
-            dx.req = k; dx_zones_full = 0;
+            if (dx_busy()) break;
+            dx_push(k, 0);
             story_set(ST_WAIT_DEMO);
             break;
         }
@@ -23228,7 +23392,7 @@ static void story_update(void)
         }
         break;
     case ST_WAIT_DEMO: /* exeWaitTimeKeepDemoEnd */
-        if (dx.on || dx.req >= 0) return;
+        if (dx_busy()) return;
         seq_demo_step(); story_set(ST_PLAY);
         break;
     case ST_WAIT_SAVE: /* exeWaitSaveEnd */
@@ -23814,12 +23978,12 @@ static void dm_selector_actor_update(void)
         dn_set(&dm.gs, !gd_story_passed("天球儀レクチャー") && dx_request("ドームレクチャー２", 1) ? GS_DEMODOMELECTURE : GS_SELECT);
         break;
     case GS_DEMODOMELECTURE: /* exeDemoDomeLecture */
-        if (dx.on || dx.req >= 0) break;
+        if (dx_busy()) break;
         gd_story_follow("天球儀レクチャー");
         dn_set(&dm.gs, GS_SELECT);
         break;
     case GS_GALAXYMOVELECTURE: /* exeGalaxyMoveLecture */
-        if (dx.on || dx.req >= 0) break;
+        if (dx_busy()) break;
         gd_story_follow("ギャラクシー移動レクチャー");
         dn_set(&dm.gs, GS_CONFIRM);
         break;
@@ -24165,6 +24329,7 @@ static void update_obj_anims(void)
     for (int i = 0; i < ninsts; i++)
         if (insts[i].anim && vlen(vsub(v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]), cam_pos)) < 8000.0f) {
             for (int k = 0; k < MAX_OBJ_ANIM; k++) if (oanim[k].a == insts[i].anim) oanim[k].last = game_frame;
+            if (!dx_row_moves(insts[i].row)) continue; /* the scene stopped by a demo: its casts alone animate (movement off: no calcAnim) */
             if (!strncmp(sc->types + 32 * sc->objs[insts[i].row].type, "PhantomShipPropeller", 20)) /* AnmModelObj::exeMove: its moving SE */
                 insts[i].lv[0] = se_level(sc->types[32 * sc->objs[insts[i].row].type + 20] == 'B' ? SE_OJ_LV_P_SHIP_PROPELLER_L : SE_OJ_LV_P_SHIP_PROPELLER_S,
                                           &insts[i].m[12], insts[i].lv[0]);
@@ -24180,13 +24345,27 @@ static void update_obj_anims(void)
         }
 }
 
+/* the class each of game_update's update_* moves, for the scene stopped by a demo (dx_cls_moves): NULL a service that
+ * always runs (or gated by row inside), "" map parts of many classes, stopped by every demo */
+static const char *const lq_cls[74] = {
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, /* obj_anims (by row), rotors (by row), halos, railers (by row), talkers, talk director, mario */
+    "PhantomShipHandle", "PhantomShipBridge", NULL, NULL, "StarPieceFollowGroup", NULL, NULL, /* seesaws, bridges, launched pieces (StarPieceDirector's:
+                                                                                             * simple casts), invincible (Mario's), follow groups, wrecks (simple casts), kuribo (demo_on) */
+    "Karikari", "Karikari", "", "CollapsePlane", "FlipPanel", "HipDropSwitch", "", "PowerStar", NULL, "FireBar", "Rock", "", "ShootingStar", "",
+    "LavaSteam", "LavaGeyser", "AssemblyBlock", "JumpStand", "Tsukidashikun", "Kiraira", "KillerGunnerSingle", "OtaRock", "HammerHeadPackun", "Plant",
+    "ItemBubble", "MeteorStrike", "HomingKiller", "StarPieceFlow", "LavaProminence", "BeeFlowerHover", "TicoRail", "DeadLeaves", "Birikyu",
+    "PunchingKinoko", "CocoNut", "NoteFairy", "SpaceCocoon", "Fluff", "JetTurtle", "ScrewSwitch", "PhantomCandlestand", "FountainBig", "StrayTico",
+    "AirBubble", "DinoPackun", "OtaKing",
+    "TicoFat", "CocoSambo", NULL, NULL, "EarthenPipe", NULL, "Coin", "Coin", "PurpleCoin", "StarPiece", NULL, NULL, NULL, NULL}; /* ticofat, sambos,
+                                                                                             * fire (Mario's), waterplants, pipes, switches (the SwitchWatcher), pops, collect x 3, cursor, camera, effects */
+static int dx_lq_moves(int k) { return !lq_cls[k] || dx_cls_moves(lq_cls[k]); }
 #ifdef BENCH
 u32 lprof[74]; /* game_update's calls (EE cycles, profiling) */
 const char *const lprof_name[74] = {"update_obj_anims", "update_rotors", "update_halos", "update_railers", "update_talkers", "update_talk_director", "update_mario", "update_seesaws", "update_bridges", "update_launched_pieces", "update_invincible", "update_follow_groups", "update_wrecks", "update_kuribo", "kari_director", "kari_bite", "break_boxes", "update_collapse", "update_flips", "update_hip_switches", "update_hazards", "update_items", "update_electric", "update_firebars", "update_rocks", "update_shells", "update_shooting", "update_plants", "update_steam", "update_geyser", "update_assembly", "update_jumpstands", "update_tsuki", "update_kiraira", "update_kgunners", "update_orocks", "update_hhps", "update_vines", "update_ibubbles", "update_meteor", "update_killers", "update_flows", "update_prom", "update_beeflowers", "update_ticorails", "update_givers", "update_birikyu", "update_punch", "update_coconuts", "update_notes", "update_cocoons", "update_fluffs", "update_jets", "update_screws", "update_candles", "update_fountains", "update_strays", "update_bubbles", "update_dino", "update_ota", "update_ticofat", "update_sambos", "update_fire", "place_waterplants", "update_pipes", "update_switches", "update_pops", "collect", "collect", "collect", "update_cursor", "camera_update", "keep_effects", "fx_update"};
 const int lprof_n = 74;
-#define LQ(k, stmt) do { u32 c_ = cycles(); stmt; lprof[k] += cycles() - c_; } while (0)
+#define LQ(k, stmt) do { if (dx_lq_moves(k)) { u32 c_ = cycles(); stmt; lprof[k] += cycles() - c_; } } while (0)
 #else
-#define LQ(k, stmt) stmt
+#define LQ(k, stmt) do { if (dx_lq_moves(k)) stmt; } while (0)
 #endif
 #define OPENING_PREROLL 156
 void game_update(void)

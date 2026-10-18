@@ -230,7 +230,8 @@ int game_test_dome(int what, int on);
 void game_test_miss(int over);
 int game_test_movie(int which);
 int game_test_butler_shoot(void); /* tests: a star piece at the Butler, its lecture hits */
-int game_test_demo(int k);   /* tests: demo k's appear switch on (-1: the running demo's step, -1 none) */
+int game_test_demo(int k);   /* tests: demo k's appear switch on (-1: the running demo's step, -1 none; -2: its anim camera's frame) */
+void game_bgm_stage(void);   /* MR::startCurrentStageBGM: the scenario's music stream (music_tab.h) */
 void game_request_movie(const char *name); /* main.c: played before the next scene requested loads */
 
 #endif

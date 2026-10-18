@@ -20,6 +20,12 @@ import budget as B
 import slice as SL
 
 ROOM = 9.01e6  # phase 0b: room for scenario data with the levers (docs/phase0b-report.md)
+# the menus' packs main.c loads beside a galaxy's own (scene_load: mp_names / mp_scene) come out of its room
+MENU_PACKS = {"FileSelect": ("title.bin", "title3d.bin"), "AstroDome": ("dome.bin",), "AstroGalaxy": ("map.bin",)}
+
+
+def room(out, g):
+    return ROOM - sum((Path(out) / f).stat().st_size for f in MENU_PACKS.get(g, ()) if (Path(out) / f).exists())
 
 
 def has_start(scene):
@@ -40,12 +46,13 @@ def scenarios(fs, galaxy):
 
 def galaxy(fs, out, g, resident):
     rows = []
+    gr = room(out, g)
     for no in scenarios(fs, g):  # one process per galaxy: its models are converted once (slice._model_cache)
         t = time.time()
         try:
             for ratio in (0.99, 0.9, 0.8, 0.7):  # over ROOM: its static models simplified further until it fits
                 files, info = SL.packs(fs, g, no, resident, ratio)
-                if max(info["stream"].values()) <= ROOM:
+                if max(info["stream"].values()) <= gr:
                     break
             d = Path(out) / g / str(no)
             d.mkdir(parents=True, exist_ok=True)
@@ -53,7 +60,7 @@ def galaxy(fs, out, g, resident):
                 (d / f).write_bytes(b)
             worst = max(info["stream"], key=info["stream"].get)
             rows.append(dict(galaxy=g, scenario=no, whole=info["whole"], stream=info["stream"][worst], worst_stage=worst,
-                             fits=int(info["stream"][worst] <= ROOM), stages=len(info["stages"]), objs=info["objs"],
+                             fits=int(info["stream"][worst] <= gr), stages=len(info["stages"]), objs=info["objs"],
                              start=has_start(files["scene.bin"]),
                              seconds=round(time.time() - t, 1), error=""))
         except Exception as e:
