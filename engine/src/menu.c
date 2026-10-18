@@ -658,7 +658,7 @@ void menu_init(const Scene *s)
     sr.l = lyt_new("ResultWindow");
     if (sv_prompt && seq_take_result(&sr.r)) { /* a star return demo shows it at its wait's end (menu_result_start) */
         const SeqDemo *d = seq_demo_current();
-        int ret = d && d->type == 0 && (!strcmp(d->name, "天文ドームスター帰還") || !strcmp(d->name, "パワースター帰還"));
+        int ret = d && d->type == 0 && strstr(d->name, "帰還"); /* 天文ドームスター帰還, パワースター帰還, グランドスター<n>帰還 */
         if (ret) sr.held = 1; else sr.delay = 60;
     }
     dmu_init();

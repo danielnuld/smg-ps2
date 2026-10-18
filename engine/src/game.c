@@ -852,6 +852,13 @@ static int demo_camera(const char *name, int frame, const float m[16])
     }
     return 0;
 }
+static int canm_frames(const char *name) /* a CANM's frames, 0 if missing */
+{
+    const u8 *q = sc->canm;
+    for (u32 i = 0; i < sc->ncanm; i++, q += 36 + 32 * *(const u32 *)(q + 32))
+        if (!strcmp((const char *)q, name)) return (int)*(const u32 *)(q + 32);
+    return 0;
+}
 static int demo_on; /* a demo is running: Mario waits (no input, no hurt) */
 #define DX_MAX_SUB 16
 static struct {                /* the DemoExecutor running (dx_update) */
@@ -886,6 +893,13 @@ typedef struct {
 static Demo demos[MAX_DEMOS];
 static int ndemos;
 static const float *dx_pos; /* the GeneralPos table: pos[3], rot[3] each */
+static const float *scene_gpos(const char *name) /* MR::findNamePos: a GeneralPos by name (GPOS chunk: pos[3], rot[3]), NULL none */
+{
+    const u8 *q = sc->gpos;
+    for (u32 i = 0; i < sc->ngpos; i++, q += 48 + 24)
+        if (!strcmp((const char *)q, name)) return (const float *)(q + 48);
+    return NULL;
+}
 static int in_opening; /* the scenario's opening camera or the ScenarioStarter's flight in (GameScene not in Action) */
 static int dino_demo_on, ota_demo_on; /* whose demo camera runs */
 static int demo_dino_damage; /* tryStartDemoMarioPuppetable "ディノパックンダメージ": Mario waits from Pulled to its damage's end */
@@ -3313,7 +3327,7 @@ void game_rebind(void)
                    strcmp(name, "MorphItemNeoBee") == 0 ? ITEM_BEE : 0; /* KeySwitch.cpp: taken (isMsgItemGet), its SW_A on */
         in->firebar = strcmp(name, "FireBar") == 0;
         in->invisible = strncmp(name, "InvisibleWall", 13) == 0 || strcmp(name, "IronCannonLauncherPoint") == 0 || strcmp(name, "ElectricBall") == 0 ||
-                        strcmp(name, "StarReturnDemoStarter") == 0; /* its stars drawn by srd_draw */
+                        strcmp(name, "StarReturnDemoStarter") == 0 || strcmp(name, "GrandStarReturnDemoStarter") == 0; /* their stars: srd_draw / gsr_draw */
         in->flip = strcmp(name, "FlipPanel") == 0 || strcmp(name, "FlipPanelReverse") == 0;
         if (in->flip) {
             char v[48];
@@ -22490,9 +22504,11 @@ static Row dx_row(const Demo *d) /* the group's switches as a row of its zone (s
     return r;
 }
 
+static void demo_actors_reset(void);
 static void dx_init(const unsigned char *blob)
 {
     ndemos = 0; dx.on = 0; dx.req = -1; dx_pos = NULL;
+    demo_actors_reset();
     const u8 *c = blob_chunk(blob, "DEMO", NULL);
     if (!c) return;
     u32 n = ((const u32 *)c)[0], np = ((const u32 *)c)[1];
@@ -22578,10 +22594,17 @@ static void dx_clip(int row, const char *anim, char *n, int sz) /* "<class>/<ani
 
 /* the casts' own reactions (registerDemoActionFunctor / registerDemoActionNerve, and appear() where a class has its own) */
 static void srd_appear(int row);
+static void gsr_appear(int row);
+static void acore_start(void);
+static void ads_demo_nerve(int part);
+static void ads_select(int start);
 static void dx_cast_hook(int row, int type, int part)
 {
     const char *cls = sc->types + 32 * sc->objs[row].type;
     if (type == 0 && !strcmp(cls, "StarReturnDemoStarter")) { srd_appear(row); return; }
+    if (type == 0 && !strcmp(cls, "GrandStarReturnDemoStarter")) { gsr_appear(row); return; }
+    if (type == 2 && !strcmp(cls, "AstroCore")) { acore_start(); return; }                   /* AstroCore::startDemo: Grow */
+    if (type == 3 && !strncmp(cls, "AstroDomeSky", 12)) { ads_demo_nerve(part); return; }  /* ReturnDemoWait on 移動, Disappear on ドーム出現 */
     if (!strcmp(cls, "TicoDomeLecture") && (type == 0 || type == 3)) { /* appear: Wait at home; NrvMove */
         tdl.nrv = type == 0 ? TDL_WAIT : TDL_MOVE; tdl.step = 0; tdl.part = part;
         return;
@@ -22722,23 +22745,31 @@ static void dx_talk_anims(const Demo *d)
 /* --- StarReturnDemoStarter / ReturnDemoRailMove after Petari: Mario flown in along the starter's rail holding the star
  * (ResultFly, ResultFlyEnd), then he falls (Fall, at most 35 a frame) to the floor 3000 under him, lands (Land), and
  * waits (ResultWaitStart, ResultWait); at the wait part's last step the result window (menu.c, held) with the time
- * keeper paused; then a fade out when another demo follows, and the demo goes on. The demo sheets' parts: 移動 0,
- * ウェイト 1. ponytail: power stars only (no GrandStar flight: FlyWaitGrandStar), the star drawn still at Mario's base
- * matrix (its ResultFly clips not played), no SpinTico / MarioHair models (the Luma and hair of ResultWaitStart), no
- * cap hiding, no SpinDriverPathDrawer, no DemoFlyLightDemo effect, no BGM changes */
+ * keeper paused; then a fade out when another demo follows, and the demo goes on. A grand star (isGrandStar: the
+ * result sequence's) flies with ResultFlyGrandStar / ...End (brake 296, the turn 98), then FlyWaitGrandStar: it flies
+ * away (ResultFlyGrandStarFlyAway, the camera shaken) and Mario falls at cFallStartFrameGrandStar 360. The star is a
+ * skinned EXTRA model (PStar / GStar: PowerStar / GrandStar with their ResultFly clips, started with Mario's); the Luma
+ * (SpinTico, ResultWaitStart) appears at the landing's end. The demo sheets' parts: 移動 0, ウェイト 1.
+ * ponytail: no MarioHair (its cap hiding (hidePlayerJoint Cap0) needs per joint hiding in the skin renderer), the
+ * Luma's BVA as its first visible frame, no SpinDriverPathDrawer, no DemoFlyLightDemo effect, no BGM changes */
 enum { SRD_DEAD, SRD_APPEARWAIT, SRD_MOVE, SRD_FLYWAIT, SRD_FALL, SRD_LAND, SRD_WAIT, SRD_RESULT, SRD_FADEOUT, SRD_AFTER };
 static struct {
-    int row, nrv, step;
+    int row, nrv, step, grand;           /* grand: GameSequenceFunction::isGrandStarAtResultSequence */
     const float *pts; u32 np; float len; /* SpinDriverShootPath: its rail */
     V3 up, front, pos, forward, ground;  /* mTransform (its up / front / translation), mForward, mPosition */
+    int luma;                            /* mLuma appeared (exeLand's end) */
+    u32 lv_fly, lv_drv;                  /* SE_OJ_LV_RET_POW_STAR_FLY (the star), SE_PM_LV_SPIN_DRV_FLY (the player) */
 } srd = {.row = -1};
+#define SPINTICO_SHOWN 60 /* ponytail: SpinTico's ResultWaitStart.bva shows it from this frame (not played: its only change) */
 static void srd_set(int n) { srd.nrv = n; srd.step = 0; }
-static V3 srd_path(float t) { return rail_at(srd.pts, srd.np, t * srd.len); } /* calcPosition (no start offset: init) */
-static V3 srd_dir(float t)                                                     /* calcDirection(t, 0.01) */
+static V3 rd_path(const float *pts, u32 np, float len, float t) { return rail_at(pts, np, t * len); } /* calcPosition (no start offset: init) */
+static V3 rd_dir(const float *pts, u32 np, float len, float t)                                    /* calcDirection(t, 0.01) */
 {
     float a = t < 0.01f ? 0.0f : t > 0.99f ? 0.99f : t, b = t < 0.01f ? 0.01f : t > 0.99f ? 1.0f : t + 0.01f;
-    return vnorm(vsub(srd_path(b), srd_path(a)));
+    return vnorm(vsub(rd_path(pts, np, len, b), rd_path(pts, np, len, a)));
 }
+static V3 srd_path(float t) { return rd_path(srd.pts, srd.np, srd.len, t); }
+static V3 srd_dir(float t) { return rd_dir(srd.pts, srd.np, srd.len, t); }
 static void srd_up_front(V3 up, V3 front) /* makeMtxUpFront */
 {
     srd.up = vnorm(up);
@@ -22752,13 +22783,39 @@ static void srd_bck(const char *clip) /* startBckPlayer (the demo branch keeps i
     if (mario_anim) mario_play(clip, 1.0f, mode == 2 || mode == 4);
 }
 static int srd_bck_stopped(void) { return mario_anim && !mario_anim->loop && mario_anim->done; } /* isBckStoppedPlayer */
-static void srd_appear(int row) /* appear: posToStart */
+/* the return demos' star models (createSubModel "PowerStar" / "GrandStar"): a pose slot of their own, their clips named
+ * with Mario's (MR::startBck(mPowerStar, ...)) */
+static Anim *star_anim(const char *cls, int slot)
+{
+    const Model *md = scene_model(sc, cls);
+    return md && md->skin ? obj_anim((int)sc->nobjs * 4 + slot, md, cls) : NULL;
+}
+static void star_bck(Anim *a, const char *cls, const char *clip)
+{
+    char n[64];
+    if (!a) return;
+    snprintf(n, sizeof n, "%s/%s", cls, clip);
+    for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
+    anim_start(a, n, 0);
+}
+static void rd_start_frames(Anim *a, int sf) /* ReturnDemoRailMove::update's first step: setBckFrame / setResultFlyStartFrame */
+{
+    int fm = a ? anim_length(a) : 0;
+    if (!a) return;
+    if (sf < 0) a->frame = (float)-sf;
+    else if (fm > 0) a->frame = (float)(fm - sf % fm);
+}
+static const char *srd_star_cls(void) { return srd.grand ? "GStar" : "PStar"; }
+static void srd_appear(int row) /* appear: posToStart, setupColorAtResultSequence */
 {
     const Row *r = &sc->objs[row];
-    int closed;
+    int closed, no;
+    const char *before = seq_before_stage(&no);
     srd.pts = scene_blob_g && r->path >= 0 ? find_rail(scene_blob_g, r->zone, r->path, &srd.np, &closed) : NULL;
     if (!srd.pts || srd.np < 2) { printf("star return: no rail" "\n"); return; }
     srd.row = row;
+    srd.grand = gd_is_grand_star(before, no);
+    srd.luma = 0; srd.lv_fly = srd.lv_drv = 0;
     srd.len = w_rail_len(srd.pts, srd.np);
     srd.forward = srd_dir(1.0f);
     srd.pos = srd_path(0.0f);
@@ -22768,24 +22825,27 @@ static void srd_appear(int row) /* appear: posToStart */
 static void srd_update(void)
 {
     if (srd.nrv == SRD_DEAD) return;
-    if (!dx.on && srd.nrv != SRD_AFTER) { srd_set(SRD_DEAD); mario_hidden = 0; return; }
-    int first = srd.step++ == 0;
+    if (!dx.on && srd.nrv != SRD_AFTER) { srd_set(SRD_DEAD); mario_hidden = 0; srd.luma = 0; return; }
+    Anim *star = star_anim(srd_star_cls(), 0);
+    int first = srd.step++ == 0, n = srd.step - 1;
     switch (srd.nrv) {
     case SRD_APPEARWAIT:
         if (first) mario_hidden = 1; /* hidePlayer */
-        if (srd.step - 1 == 30) se_start(SE_PM_DEMO_RETURN_LIGHT, &srd.pos.x); /* cDemoAppearEffectStep */
-        if (srd.step - 1 == 45) srd_set(SRD_MOVE);                              /* cDemoAppearWaitFrame */
+        if (n == 30) se_start(SE_PM_DEMO_RETURN_LIGHT, &srd.pos.x); /* cDemoAppearEffectStep */
+        if (n == 45) srd_set(SRD_MOVE);                              /* cDemoAppearWaitFrame */
         break;
     case SRD_MOVE: { /* ReturnDemoRailMove::start / update (partStep - 44, totalStep - 45) */
-        int cur = dx_step(0) - 44, max = dx_total(0) - 45, n = srd.step - 1;
-        int sf = max - 45, ss = max - 34; /* getDemoFlyBrakeFrame, the turn to the end */
-        if (first) { mario_hidden = 0; srd_bck("resultfly"); }
-        if ((sf < 0 && first) || n == sf) { srd_bck("resultflyend"); se_start(SE_PM_S_SPIN_DRV_COOL_DOWN, &srd.pos.x); }
-        if (first && mario_anim) { /* setBckFrame / setResultFlyStartFrame */
-            int fm = anim_length(mario_anim);
-            if (sf < 0) mario_anim->frame = (float)-sf;
-            else if (fm > 0) mario_anim->frame = (float)(fm - sf % fm);
+        int cur = dx_step(0) - 44, max = dx_total(0) - 45;
+        int sf = max - (srd.grand ? 296 : 45), ss = max - (srd.grand ? 98 : 34); /* getDemoFlyBrakeFrame, the turn to the end */
+        const char *fly = srd.grand ? "resultflygrandstar" : "resultfly", *end = srd.grand ? "resultflygrandstarend" : "resultflyend";
+        if (first) { mario_hidden = 0; srd_bck(fly); star_bck(star, srd_star_cls(), fly); }
+        if ((sf < 0 && first) || n == sf) {
+            srd_bck(end); star_bck(star, srd_star_cls(), end);
+            if (!srd.grand) se_start(SE_PM_S_SPIN_DRV_COOL_DOWN, &srd.pos.x);
         }
+        if (first) { rd_start_frames(mario_anim, sf); rd_start_frames(star, sf); }
+        srd.lv_fly = se_level(SE_OJ_LV_RET_POW_STAR_FLY, &srd.pos.x, srd.lv_fly);
+        srd.lv_drv = se_level(SE_PM_LV_SPIN_DRV_FLY, &srd.pos.x, srd.lv_drv);
         float pr = max > 0 ? (float)cur / max - 1.0f : 0.0f, t = 1.0f - pr * pr;
         srd.pos = srd_path(t);
         srd_up_front(srd_dir(t), v3(0, -1, 0));
@@ -22797,10 +22857,20 @@ static void srd_update(void)
         if (dx_last(0)) srd_set(SRD_FLYWAIT);
         break;
     }
-    case SRD_FLYWAIT: /* exeFlyWaitPowerStar */
+    case SRD_FLYWAIT: /* exeFlyWaitPowerStar / exeFlyWaitGrandStar */
         if (first) { srd.pos = srd_path(1.0f); srd_up_front(v3(0, 1, 0), srd.forward); } /* posToEnd */
-        if (srd.step - 1 == 115 - 45) se_start(SE_OJ_RET_POW_STAR_LEAVE, &srd.pos.x);
-        if (srd_bck_stopped()) srd_set(SRD_FALL);
+        if (!srd.grand) {
+            if (n < 115 - 45) srd.lv_fly = se_level(SE_OJ_LV_RET_POW_STAR_FLY, &srd.pos.x, srd.lv_fly);
+            if (n == 115 - 45) se_start(SE_OJ_RET_POW_STAR_LEAVE, &srd.pos.x);
+            if (srd_bck_stopped()) srd_set(SRD_FALL);
+        } else {
+            if (n < anim_clip_info("resultflygrandstarend", NULL) - 296) srd.lv_fly = se_level(SE_OJ_LV_RET_POW_STAR_FLY, &srd.pos.x, srd.lv_fly);
+            if (srd_bck_stopped()) { /* isBckOneTimeAndStoppedPlayer: the star flies away */
+                srd_bck("resultflygrandstarflyaway"); star_bck(star, srd_star_cls(), "resultflygrandstarflyaway");
+                camera_shake(SHAKE_WEAK);
+            }
+            if (n == 360) srd_set(SRD_FALL); /* cFallStartFrameGrandStar */
+        }
         break;
     case SRD_FALL: { /* exeFall: getFirstPolyOnLineToMap 3000 down, 1.8 x step a frame (at most 35) */
         if (first) {
@@ -22810,13 +22880,17 @@ static void srd_update(void)
             srd_bck("fall");
             srd.ground = map_line(srd.pos, v3(0, -3000.0f, 0), &hp, &nn, &inst) ? hp : vadd(srd.pos, v3(0, -3000.0f, 0));
         }
-        srd.pos.y -= fminf(1.8f * (srd.step - 1), 35.0f);
+        srd.pos.y -= fminf(1.8f * n, 35.0f);
         if (srd.pos.y < srd.ground.y) { srd.pos = srd.ground; srd_set(SRD_LAND); }
         break;
     }
     case SRD_LAND:
         if (first) srd_bck("land");
-        if (srd_bck_stopped()) srd_set(SRD_WAIT);
+        if (srd_bck_stopped()) { /* the Luma appears, ResultWaitStart (startAllAnim) */
+            Anim *la = star_anim("SpinTico", 1);
+            if (la) { star_bck(la, "SpinTico", "resultwaitstart"); srd.luma = 1; }
+            srd_set(SRD_WAIT);
+        }
         break;
     case SRD_WAIT:
     case SRD_RESULT:
@@ -22835,20 +22909,219 @@ static void srd_update(void)
         break;
     case SRD_AFTER:
         if (first) dx.paused = 0; /* resumeTimeKeepDemo */
-        if (!dx.on) srd_set(SRD_DEAD);
+        if (!dx.on) { srd_set(SRD_DEAD); srd.luma = 0; } /* kill: the Luma with it */
         return; /* Mario no longer held */
     }
     /* control: setPlayerBaseMtx(mTransform) */
     mario->pos = srd.pos; mario->up = srd.up; mario->face = srd.front;
 }
-static void srd_draw(void) /* the star at Mario's base matrix while it flies */
+static void base_mtx(float m[16], V3 up, V3 front, V3 pos) /* the base matrix of (up, front, pos): columns x, y, z */
 {
-    if (srd.nrv != SRD_MOVE && srd.nrv != SRD_FLYWAIT) return;
-    const Model *md = scene_model(sc, "PowerStar");
-    if (!md) return;
-    V3 x = vcross(srd.up, srd.front);
-    float m[16] = {x.x, x.y, x.z, 0, srd.up.x, srd.up.y, srd.up.z, 0, srd.front.x, srd.front.y, srd.front.z, 0, srd.pos.x, srd.pos.y, srd.pos.z, 1};
-    render_model(md, m, 0x80, 0x80, 0x80);
+    V3 x = vcross(up, front);
+    float t[16] = {x.x, x.y, x.z, 0, up.x, up.y, up.z, 0, front.x, front.y, front.z, 0, pos.x, pos.y, pos.z, 1};
+    memcpy(m, t, sizeof t);
+}
+static void srd_draw(void) /* the star at Mario's base matrix while it flies (its ResultFly clips), the Luma from the landing on */
+{
+    if (srd.nrv == SRD_DEAD || srd.nrv == SRD_AFTER) return;
+    float m[16];
+    base_mtx(m, srd.up, srd.front, srd.pos);
+    if (srd.nrv == SRD_MOVE || srd.nrv == SRD_FLYWAIT) {
+        const Model *md = scene_model(sc, srd_star_cls());
+        Anim *a = star_anim(srd_star_cls(), 0);
+        if (md && a) { anim_update(a); draw_skin(md, m, a); }
+        else if (md) render_model(md, m, 0x80, 0x80, 0x80);
+    }
+    if (srd.luma) {
+        const Model *md = scene_model(sc, "SpinTico");
+        Anim *a = star_anim("SpinTico", 1);
+        if (md && a) { anim_update(a); if (a->frame >= SPINTICO_SHOWN) draw_skin(md, m, a); }
+    }
+}
+
+/* --- GrandStarReturnDemoStarter after Petari: the grand star flown in along its rail (ReturnDemoRailMove with the grand
+ * star's brake 296 / turn 98, ResultFlyGrandStar / ...End), then Mario throws it (ResultFlyGrandStarRush) and it rushes
+ * to the core (コア中心, 100 a frame: hidden, only its SEs), the core revives under the DemoAstroReturn<n> camera
+ * animation (CANM "gsr/demoastroreturn<n>", the starter's matrix identity: mPosition / mRotation zeroed), the result
+ * window at リザルト画面's last step with the time keeper paused, a fade out, the demo goes on. The starter's own
+ * cameras (initMultiActorCamera 移動 / ウェイト / リザルト) for the demos after the first (whose sheet has its own). The
+ * sheets' parts: 移動 0, ウェイト→コア突入 1, コア回復 2 .. ドーム復活 nparts - 3, リザルト画面 nparts - 2, キャスト入れ換え
+ * nparts - 1. ponytail: the star's joint PowerStar taken at its base (updateRailMoveEndDir / calcOffsetStarToCore), no
+ * Blur effects on the rushing star, no SpinDriverPathDrawer, no BGM changes (STM_FIRST_ASTRO / STM_SECOND_ASTRO, then
+ * MBGM_GALAXY_24 / STM_ASTRO_OUT*), no overlayWithPreviousScreen, no rumble */
+enum { GSR_DEAD, GSR_MOVE, GSR_FLYWAIT, GSR_RUSH, GSR_REVIVAL, GSR_RESULT, GSR_FADEOUT, GSR_WAITEND };
+static const char *const gsr_names[] = {"グランドスター１帰還", "グランドスター２帰還", "グランドスター３帰還", /* cGrandStarReturnDemoTable */
+                                        "グランドスター４帰還", "グランドスター５帰還", "グランドスター６帰還"};
+static struct {
+    int row, nrv, step, index;           /* getActiveGrandStarReturnDemoIndex */
+    const float *pts; u32 np; float len;
+    V3 up, front, pos, forward;          /* mPrevTransform (the rail's: Mario's base), mForward */
+    V3 star, core, core_dir;             /* mTransform's translation (the star's), mPowerStarPosition, mDistanceToCore */
+    int star_shown, cam;                 /* showJointAndChildren PowerStar; the DemoAstroReturn camera running */
+    u32 lv_fly, lv_drv, lv_rush;
+} gsr = {.row = -1};
+static void gsr_set(int n) { gsr.nrv = n; gsr.step = 0; }
+static V3 gsr_path(float t) { return rd_path(gsr.pts, gsr.np, gsr.len, t); }
+static V3 gsr_dir(float t) { return rd_dir(gsr.pts, gsr.np, gsr.len, t); }
+static void gsr_up_front(V3 up, V3 front) { gsr.up = vnorm(up); gsr.front = vnorm(vtangent(front, gsr.up)); }
+static V3 gsr_core_offset(void) /* calcOffsetStarToCore: コア中心 - the star's PowerStar joint (its base here) */
+{
+    const float *c = scene_gpos("コア中心");
+    return c ? vsub(v3(c[0], c[1], c[2]), gsr.pos) : v3(0, 1, 0);
+}
+static void gsr_update_end_dir(void) { gsr.forward = vnorm(gsr_core_offset()); } /* updateRailMoveEndDir */
+static void gsr_camera(const char *event) /* startMultiActorCameraTargetPlayer(this, info, event) */
+{
+    camera_actor_start("GrandStarReturnDemoStarter", event, (unsigned short)row_camset[gsr.row], mario->up, mario->face, mario->pos);
+}
+static void gsr_appear(int row) /* appear: posToStart, start (ResultFlyGrandStar), Move */
+{
+    const Row *r = &sc->objs[row];
+    int closed;
+    gsr.pts = scene_blob_g && r->path >= 0 ? find_rail(scene_blob_g, r->zone, r->path, &gsr.np, &closed) : NULL;
+    if (!gsr.pts || gsr.np < 2) { printf("grand star return: no rail" "\n"); return; }
+    gsr.row = row;
+    gsr.index = 0;
+    for (unsigned i = 0; i < sizeof gsr_names / sizeof gsr_names[0]; i++)
+        if (!strcmp(demos[dx.cur].h->name, gsr_names[i])) gsr.index = (int)i;
+    gsr.len = w_rail_len(gsr.pts, gsr.np);
+    gsr.forward = gsr_dir(1.0f);
+    gsr.pos = gsr_path(0.0f);
+    gsr_up_front(gsr_dir(0.0f), v3(0, -1, 0));
+    gsr.star_shown = 1; gsr.cam = 0; gsr.lv_fly = gsr.lv_drv = gsr.lv_rush = 0;
+    srd_bck("resultflygrandstar"); star_bck(star_anim("GStar", 2), "GStar", "resultflygrandstar"); /* ReturnDemoRailMove::start */
+    gsr_set(GSR_MOVE);
+}
+static void gsr_update(void)
+{
+    if (gsr.nrv == GSR_DEAD) return;
+    if (!dx.on && gsr.nrv != GSR_WAITEND) { gsr_set(GSR_DEAD); return; }
+    const Demo *d = &demos[dx.cur];
+    Anim *star = star_anim("GStar", 2);
+    int first = gsr.step++ == 0, n = gsr.step - 1;
+    switch (gsr.nrv) {
+    case GSR_MOVE: { /* exeMove: ReturnDemoRailMove::update(partStep + 1, partTotal) */
+        int cur = dx_step(0) + 1, max = dx_total(0), sf = max - 296, ss = max - 98;
+        if (gsr.index != 0) { /* the first demo's sheet has its own cameras */
+            if (first) gsr_camera("移動");
+            if (dx_step(0) == 300) gsr_camera("ウェイト");
+        }
+        if ((sf < 0 && first) || n == sf) { srd_bck("resultflygrandstarend"); star_bck(star, "GStar", "resultflygrandstarend"); }
+        if (first) { rd_start_frames(mario_anim, sf); rd_start_frames(star, sf); }
+        gsr.lv_fly = se_level(SE_OJ_LV_RET_POW_STAR_FLY, &gsr.pos.x, gsr.lv_fly);
+        float pr = max > 0 ? (float)cur / max - 1.0f : 0.0f, t = 1.0f - pr * pr;
+        gsr.pos = gsr_path(t);
+        gsr_up_front(gsr_dir(t), v3(0, -1, 0));
+        if (n > ss) {
+            float k = max > ss ? sinf(fminf((float)(n - ss) / (max - ss), 1.0f) * 1.5707963f) : 1.0f;
+            V3 tf = vnorm(vtangent(gsr.forward, v3(0, 1, 0)));
+            gsr_up_front(vadd(vmul(gsr.up, 1.0f - k), vmul(v3(0, 1, 0), k)), vadd(vmul(gsr.front, 1.0f - k), vmul(tf, k)));
+        }
+        gsr.lv_drv = se_level(SE_PM_LV_SPIN_DRV_FLY, &gsr.pos.x, gsr.lv_drv);
+        gsr_update_end_dir();
+        if (gsr.index != 0) camera_event_target(gsr.up, gsr.pos);
+        if (dx_last(0)) gsr_set(GSR_FLYWAIT);
+        break;
+    }
+    case GSR_FLYWAIT: /* exeFlyWait */
+        if (first) { gsr_update_end_dir(); gsr.pos = gsr_path(1.0f); gsr_up_front(v3(0, 1, 0), gsr.forward); } /* posToEnd */
+        if (n < 60) gsr.lv_fly = se_level(SE_OJ_LV_RET_POW_STAR_FLY, &gsr.pos.x, gsr.lv_fly); /* step 60: emitEffectRush (none) */
+        if (gsr.index != 0) camera_event_target(gsr.up, gsr.pos);
+        if (srd_bck_stopped()) gsr_set(GSR_RUSH); /* isBckOneTimeAndStoppedPlayer */
+        break;
+    case GSR_RUSH: /* exeRushToCore: the star hidden rushes to the core 100 a frame, Mario throws it */
+        if (first) {
+            V3 off = gsr_core_offset();
+            srd_bck("resultflygrandstarrush"); star_bck(star, "GStar", "resultflygrandstarrush");
+            se_start(SE_OJ_GND_STAR_RUSH, &gsr.pos.x);
+            gsr.star_shown = 0; /* hideJointAndChildren PowerStar */
+            gsr.core = vadd(gsr.pos, off); gsr.core_dir = vnorm(off);
+        }
+        gsr.star = vadd(gsr.pos, vmul(gsr.core_dir, 100.0f * n)); /* updateRushStarPos */
+        gsr.lv_rush = se_level(SE_OJ_LV_GND_STAR_RUSH, &gsr.star.x, gsr.lv_rush);
+        if (dx_last(1)) gsr_set(GSR_REVIVAL);
+        break;
+    case GSR_REVIVAL: { /* exeRevival: the star into the core at step 40, the DemoAstroReturn<n> camera until ドーム復活's last step */
+        char cam[32];
+        float id[16];
+        int dome = d->h->nparts - 3, res = d->h->nparts - 2;
+        snprintf(cam, sizeof cam, "gsr/demoastroreturn%d", gsr.index + 1);
+        mat_identity(id);
+        if (first) gsr.cam = 1; /* startAnimCameraTargetSelf(this, info, DemoAstroReturn<n>, 0, 1) at the origin */
+        if (n < 40) { gsr.star = vadd(gsr.core, vmul(gsr.core_dir, -100.0f * (40 - n))); gsr.lv_rush = se_level(SE_OJ_LV_GND_STAR_RUSH, &gsr.star.x, gsr.lv_rush); }
+        if (n == 40) se_start(SE_OJ_GND_STAR_ENTER_CORE, &gsr.star.x); /* mPowerStar->kill */
+        if (gsr.cam) {
+            if (dx_last(dome)) { demo_camera(cam, -1, id); gsr.cam = 0; } /* endAnimCamera; ponytail: no overlayWithPreviousScreen */
+            else demo_camera(cam, n < canm_frames(cam) ? n : canm_frames(cam) - 1, id);
+        }
+        if (dx_first(res)) gsr_camera("リザルト");
+        if (dx_last(res)) { menu_result_start(); dx.paused = 1; gsr_set(GSR_RESULT); } /* tryStartStageResult */
+        break;
+    }
+    case GSR_RESULT: /* exeStageResult */
+        if (!menu_result_showing()) gsr_set(GSR_FADEOUT);
+        break;
+    case GSR_FADEOUT:
+        if (first) menu_wipe(1, 60, 0); /* closeWipeFade(60) */
+        else if (menu_wipe_closed()) { camera_event_stop(); gsr_set(GSR_WAITEND); } /* endMultiActorCamera リザルト */
+        break;
+    case GSR_WAITEND:
+        if (first) dx.paused = 0; /* resumeTimeKeepDemo; ponytail: no BGM */
+        if (!dx.on) gsr_set(GSR_DEAD);
+        return;
+    }
+    /* control: setPlayerBaseMtx(mPrevTransform) while it flies */
+    if (gsr.nrv == GSR_MOVE || gsr.nrv == GSR_FLYWAIT) { mario->pos = gsr.pos; mario->up = gsr.up; mario->face = gsr.front; }
+}
+static void gsr_draw(void) /* the grand star at Mario's base matrix while it flies */
+{
+    if (gsr.nrv != GSR_MOVE && gsr.nrv != GSR_FLYWAIT || !gsr.star_shown) return;
+    const Model *md = scene_model(sc, "GStar");
+    Anim *a = star_anim("GStar", 2);
+    float m[16];
+    base_mtx(m, gsr.up, gsr.front, gsr.pos);
+    if (md && a) { anim_update(a); draw_skin(md, m, a); }
+    else if (md) render_model(md, m, 0x80, 0x80, 0x80);
+}
+
+/* --- AstroCore after Petari: Revival<n> (n the opened domes) held at its end (setStateBeforeGrow); the grand star
+ * return's コア拡大 (startDemo) starts Grow: a camera shake, at sGrowTimeLag 40 the next Revival clip (startAnimGrow).
+ * ponytail: no ShockWave effect, no rumble, its BRK (the glow) not played, no push sensor (sSensorSizeTable) */
+static struct { int nrv, step, clip; } acore; /* nrv 0 Wait, 1 Grow; clip: 1 + the Revival<n> playing, 0 none */
+static int astro_opened_domes(void) /* MR::calcOpenedAstroDomeNum: the grand stars had at the scene's start (the result's not yet) */
+{
+    int n = 0, no;
+    char f[24];
+    for (int i = 1; i <= 6; i++) { snprintf(f, sizeof f, "SpecialStarGrand%d", i); n += gd_flag_is_on(f) != 0; }
+    if (menu_result_showing() && gd_is_grand_star(seq_before_stage(&no), no)) n--;
+    return n < 0 ? 0 : n > 6 ? 6 : n;
+}
+static void acore_start(void) { acore.nrv = 1; acore.step = 0; }
+static void update_astro_core(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->anim || strcmp(sc->types + 32 * sc->objs[in->row].type, "AstroCore")) continue;
+        char n[32];
+        if (acore.nrv == 0) { /* exeWait: setStateBeforeGrow */
+            int k = astro_opened_domes();
+            snprintf(n, sizeof n, "astrocore/revival%d", k);
+            if (acore.clip != k + 1 && anim_start(in->anim, n, 0)) { /* setAllAnimFrameAtEnd */
+                in->anim->frame = (float)anim_length(in->anim); in->anim->speed = 0; in->anim->loop = 0;
+                acore.clip = k + 1;
+            }
+        } else { /* exeGrow */
+            if (acore.step == 0) camera_shake(SHAKE_NORMAL_WEAK);
+            if (acore.step == 40) { /* sGrowTimeLag: startAnimGrow */
+                int k = astro_opened_domes() + 1;
+                snprintf(n, sizeof n, "astrocore/revival%d", k > 6 ? 6 : k);
+                se_start(SE_OJ_ASTRO_CORE_GROW, &in->m[12]);
+                camera_shake(SHAKE_NORMAL_WEAK);
+                if (anim_start(in->anim, n, 0)) acore.clip = k + 1;
+            }
+            acore.step++;
+        }
+    }
 }
 
 /* SphereSelectorFunction::trySyncKillMsgSelectStart (Butler, ButlerMap): dead while the dome's galaxy select runs,
@@ -23058,8 +23331,7 @@ int game_test_demo(int k)
 }
 /* StorySequenceExecutor's nerves once the scene started (setNerveSceneStart): PlayDemoSequence, WaitTimeKeepDemoEnd,
  * WaitSaveEnd, FadeinAfterSequence. The save after a clear's sequence (StartSaveAfterSequence) is menu.c's prompt, held
- * while this runs. ponytail: the star return demos (StarReturnDemoStarter, GrandStarReturnDemoStarter) not played (the
- * result window and the save stand in), no movies (2: game_request_movie plays them), prologue (8), staff roll (9) */
+ * while this runs. ponytail: no movies (2: game_request_movie plays them), prologue (8), staff roll (9) */
 enum { ST_IDLE, ST_PLAY, ST_WAIT_DEMO, ST_WAIT_SAVE, ST_FADEIN_AFTER };
 static struct { int nrv, step; } story;
 static void story_set(int n) { story.nrv = n; story.step = 0; }
@@ -23080,11 +23352,7 @@ static void story_update(void)
         if (!d) { story_set(ST_IDLE); return; }
         switch (d->type) {
         case 0: { /* tryStartDemo: tryStartTimeKeepDemoMarioPuppetable */
-            static const char *const unported[] = {"グランドスター帰還[２回目以降]", "グランドスター１帰還", "グランドスター２帰還", "グランドスター３帰還", "グランドスター４帰還",
-                                                   "グランドスター５帰還", "グランドスター６帰還"};
             int k = story_demo(d->name);
-            for (unsigned i = 0; i < sizeof unported / sizeof unported[0]; i++)
-                if (!strcmp(unported[i], d->name)) k = -1;
             if (k < 0) { printf("story: demo %s not played\n", d->name); menu_result_start(); seq_demo_step(); story_set(ST_PLAY); break; }
             if (dx.on || dx.req >= 0) break;
             dx.req = k; dx_zones_full = 0;
@@ -23748,6 +24016,7 @@ static void dm_msg(int msg)
     switch (msg) {
     case M_SELECT_START:
         butler_sync(1);
+        ads_select(1);
         dm_handle_appear();
         for (int i = 0; i < dm.ng; i++) dm_galaxy_appear(i);
         dm.start = dm_cam_pos(); dm.zs = dm.ze = dm.zc = dm.start; dm.ts = dm.te = dm.tc = v3(0, 0, 0);
@@ -23758,6 +24027,7 @@ static void dm_msg(int msg)
         break;
     case M_SELECT_END:
         butler_sync(0);
+        ads_select(0);
         dn_set(&dm.hd, HD_DISAPPEAR);
         for (int i = 0; i < dm.ng; i++) dn_init(&dm.g[i].n, MG_DEAD);
         dn_init(&dm.cc, CC_DEAD);
@@ -23781,6 +24051,77 @@ static void dm_msg(int msg)
         for (int i = 0; i < dm.ng; i++) if (dn_is(&dm.g[i].n, MG_SELECTED)) dn_set(&dm.g[i].n, MG_CONFIRMED);
         break;
     }
+}
+
+/* --- AstroDomeSky after Petari: hidden until the dome's galaxy select (Appear: its BRK fades it in over 59 frames, then
+ * Wait; RotateDisappear / RotateAppear while the handle spins over cAppearanceRotateSpeed 0.1; Disappear at the select's
+ * end), ReturnDemoWait (whole) and Disappear by the star return demo's sheet; turned with the handle at the camera
+ * (calcHandledRotateMtx). Its BRKs are an alpha fade of the universe materials from black (fillScreen(black) behind it;
+ * the colours are baked): drawn as the sky under a black screen quad of 1 - that alpha.
+ * ponytail: JumpOutDemo's rotation (マリオ飛び出し not played) */
+enum { ADS_HIDE, ADS_APPEAR, ADS_WAIT, ADS_ROTATEAPPEAR, ADS_ROTATEDISAPPEAR, ADS_DISAPPEAR, ADS_RETURNDEMOWAIT };
+static struct { int nrv, step; float frame, rate, brk; } ads; /* the BRK's frame and rate, mBrkFrame */
+#define ADS_BRK_MAX 59.0f       /* Appear / Disappear frame max (cRotateAppearBrkFrame) */
+#define ADS_ROT_DISAPPEAR 30.0f /* cRotateDisappearBrkFrame */
+static void ads_set(int n) { ads.nrv = n; ads.step = 0; }
+static void ads_select(int start) { ads_set(start ? ADS_APPEAR : ADS_DISAPPEAR); }  /* receiveOtherMsg: SelectStart / SelectEnd */
+static void ads_demo_nerve(int part) { ads_set(part == 0 ? ADS_RETURNDEMOWAIT : ADS_DISAPPEAR); } /* 移動 / ドーム出現 */
+static int ads_brk_stopped(void) { return ads.rate == 0 || ads.frame >= ADS_BRK_MAX; }
+static float ads_alpha(void) /* the universe materials' alpha at the BRK's frame: Appear 0 -> 1, Disappear 1 -> 0 */
+{
+    switch (ads.nrv) {
+    case ADS_HIDE: return 0;
+    case ADS_WAIT: case ADS_RETURNDEMOWAIT: return 1;
+    case ADS_APPEAR: case ADS_ROTATEAPPEAR: return ads.frame / ADS_BRK_MAX;
+    default: return 1.0f - ads.frame / ADS_BRK_MAX;
+    }
+}
+static int ads_try_rotate(void) /* tryRotateAppearance */
+{
+    if (0.1f < fabsf(dm.speed)) {
+        if (ads.nrv == ADS_ROTATEDISAPPEAR) return 0;
+        ads.brk = ads.nrv == ADS_ROTATEAPPEAR && !ads_brk_stopped() ? ADS_BRK_MAX - ads.frame : 0.0f;
+        ads_set(ADS_ROTATEDISAPPEAR);
+        return 1;
+    }
+    if (ads.nrv != ADS_ROTATEDISAPPEAR) return 0;
+    ads.brk = !ads_brk_stopped() ? ADS_BRK_MAX - ads.frame : ADS_ROT_DISAPPEAR - 1.0f;
+    ads_set(ADS_ROTATEAPPEAR);
+    return 1;
+}
+static void update_astro_sky(void)
+{
+    int first = ads.step++ == 0;
+    switch (ads.nrv) {
+    case ADS_HIDE: if (first) { ads.frame = ADS_BRK_MAX; ads.rate = 0; } break; /* Disappear at its end */
+    case ADS_APPEAR:
+        if (first) { ads.frame = 0; ads.rate = 1; se_start(SE_DM_ASTRO_HANDLE_OPEN_ST, NULL); }
+        if (ads_brk_stopped()) { se_start(SE_DM_ASTRO_HANDLE_OPEN_ED, NULL); ads_set(ADS_WAIT); }
+        break;
+    case ADS_WAIT: ads_try_rotate(); break;
+    case ADS_ROTATEAPPEAR:
+        if (first) { ads.frame = ads.brk; ads.rate = (ADS_BRK_MAX - ads.brk) / 200.0f; } /* cAppearanceBrkTotalFrame */
+        ads_try_rotate();
+        break;
+    case ADS_ROTATEDISAPPEAR:
+        if (first) { ads.frame = ads.brk; ads.rate = (ADS_ROT_DISAPPEAR - ads.brk) / 20.0f; }
+        if (ads.frame >= ADS_ROT_DISAPPEAR) { ads.frame = ADS_ROT_DISAPPEAR; ads.rate = 0; } /* setBrkFrameAndStop */
+        ads_try_rotate();
+        break;
+    case ADS_DISAPPEAR:
+        if (first) { ads.frame = 0; ads.rate = 1; }
+        if (ads_brk_stopped()) ads_set(ADS_HIDE);
+        break;
+    case ADS_RETURNDEMOWAIT: if (first) { ads.frame = ADS_BRK_MAX; ads.rate = 0; } break; /* Appear at its end */
+    }
+    ads.frame = fminf(ads.frame + ads.rate, ADS_BRK_MAX);
+}
+static void demo_actors_reset(void) /* a new scene: the demos' actors as placed */
+{
+    srd_set(SRD_DEAD); srd.luma = 0;
+    gsr_set(GSR_DEAD);
+    acore.nrv = 0; acore.clip = 0;
+    ads_set(ADS_HIDE);
 }
 
 /* --- AstroDomeBlueStar: Mario held at its host matrix (TryStartBind's ribbon: gcap phase 1) --- */
@@ -24272,6 +24613,9 @@ void game_update(void)
     dx_update();
     update_dome_npcs();
     srd_update();
+    gsr_update();
+    update_astro_core();
+    update_astro_sky();
     demo_on = dino_demo_on || ota_demo_on || star_demo || fat_demo() || vine_demo_on() || talk_demo() || dx.on;
     LQ(60, update_ticofat());
     LQ(61, update_sambos());
@@ -24751,11 +25095,24 @@ void game_draw(void)
                                          * (render.c FAR 120000) so the rest of the scene draws over them by depth */
         const Inst *in = &insts[i];
         if (!in->sky || in->md->radius <= 0) continue;
+        int dome_sky = !strncmp(sc->types + 32 * sc->objs[in->row].type, "AstroDomeSky", 12);
+        if (dome_sky && ads.nrv == ADS_HIDE) continue;
         float cm[16], k = 108000.0f / (in->md->radius * in->s);
         memcpy(cm, in->m, 64);
+        if (dome_sky) { /* AstroDomeSky::calcAndSetBaseMtx: the handle's rotation */
+            const Mx *h = dm_handle_mtx();
+            float hm[16] = {h->x.x, h->x.y, h->x.z, 0, h->y.x, h->y.y, h->y.z, 0, h->z.x, h->z.y, h->z.z, 0, 0, 0, 0, 1};
+            memcpy(cm, hm, 64);
+            k = 108000.0f / in->md->radius;
+        }
         for (int j = 0; j < 12; j++) if (j % 4 != 3) cm[j] *= k;
         cm[12] = ce.x; cm[13] = ce.y; cm[14] = ce.z;
         inst_draw(in, in->md, cm);
+        if (dome_sky && ads_alpha() < 1.0f) { /* its BRK's fade: black over it */
+            Quad q = {0, 0, 640, 448, 0, 0, 0, 0, (u32)((1.0f - ads_alpha()) * 0x80 + 0.5f) << 24, NO_TEX, 0, 0, 0};
+            render_quads(&q, 1);
+            render_quads_flush();
+        }
         sky_drawn = 1;
     }
     for (int i = 0; i < ninsts; i++) { /* BrightSun::control / controlSunModel: the Sun at the camera + its rotation's
@@ -24943,6 +25300,7 @@ void game_draw(void)
             inst_draw(in, in->md, in->m);
     }
     srd_draw();
+    gsr_draw();
     for (int i = 0; i < nwrecks; i++) { /* wrecks: the break model's clip until it stops, the broken object for good */
         typeof(&wrecks[0]) w = &wrecks[i];
         if (w->left) render_model(w->left, w->m, 0x80, 0x80, 0x80);
