@@ -880,6 +880,33 @@ int main(void)
                        menu_result_showing(), menu_saving());
         }
 #endif
+#if defined(PACKS) && defined(SPIECE_TEST)
+        { /* EggStar's star 1 faked (the dome lecture heard): the star return, the result, スターピース解説前半, five star
+           * pieces at the Butler, スターピース解説後半 */
+            static int shots;
+            pad_force = frame > 600 && frame % 60 < 10 ? PAD_CROSS : 0;
+            if (menu_saving()) menu_test_point("BoxRight"); /* the save prompt: Yes */
+            if (frame == 200) {
+                SeqResult r = {"EggStarGalaxy", 1, 0, 1, 50, 0, 12};
+                gd_set_star("HeavensDoorGalaxy", 1);
+                gd_story_follow("バトラー情報Ａ");
+                r.prev_stars = gd_star_num();
+                gd_set_star("EggStarGalaxy", 1);
+                r.after_stars = gd_star_num();
+                seq_set_result(&r);
+                seq_set_cleared(1);
+                seq_galaxy_move(SEQ_STAGE_CLEAR, NULL, -1, -1, 0);
+            }
+            if (frame > 600 && frame % 90 == 45 && !game_story_busy() && game_test_demo(-1) < 0 && shots < 12) {
+                pad_force = 0;
+                printf("spiece test f %u: shot, hits %d\n", frame, game_test_butler_shoot());
+                shots++;
+            }
+            if (frame > 200 && frame % 60 == 0 && frame < 5000)
+                printf("spiece test f %u: busy %d demo %d lecture %d saving %d\n", frame, game_story_busy(), game_test_demo(-1),
+                       gd_story_passed("スターピースレクチャー"), menu_saving());
+        }
+#endif
 #if defined(PACKS) && defined(FINALMOVIE_TEST) /* AstroGalaxy/5: the FinalBattle MovieStarter, then the scenario select */
         if (frame == 200) printf("finalmovie test: movie starter %d\n", game_test_movie(2));
         if (frame == 400) printf("finalmovie test: scenario select %d\n", menu_scenario_selecting());

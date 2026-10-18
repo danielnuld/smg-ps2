@@ -32,7 +32,8 @@ SYSTEM = ("Layout_SystemTalk", "Layout_SystemRead", "System_PlayerName000")
 # createTalkCtrlDirect bound to the placed actor (Butler::initTalkCtrlArray's cMessageId, initForAstroDome's demo talks)
 DIRECT = {"Butler": ("AstroDome_Butler001", "AstroDome_Butler002", "AstroDome_Butler003", "AstroDome_Butler006",
                      "AstroDome_Butler007", "AstroGalaxy_Butler005", "AstroGalaxy_Butler006", "AstroDome_Butler023",
-                     "AstroDome_Butler011", "AstroDome_Butler014")}
+                     "AstroDome_Butler011", "AstroDome_Butler014",
+                     "AstroDome_Butler017", "AstroGalaxy_Butler000")}  # ButlerStateStarPieceReaction
 COMMON = {"Tico": ("Common_Tico000",), "TicoFat": ("Common_TicoFat000", "Common_TicoFat001", "InformationPlanet")}
 
 

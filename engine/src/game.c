@@ -866,6 +866,16 @@ static struct {                /* the DemoExecutor running (dx_update) */
     int frameless, req_frameless; /* requestStartTimeKeepDemoWithoutCinemaFrame */
 } dx = {.req = -1};
 static int dx_zones_full = 1;  /* the asked / running demo's casts' zones are in full (game_zone_sets) */
+/* Butler's star piece lecture (Butler.cpp): _160 on, _164 hits, _168 the replace count, the reaction
+ * (ButlerStateStarPieceReaction: -1 none, else its step; talk: _14) and its talk, chosen at init */
+static struct { int on, hits, react, talk, replace; const char *msg; } bsp = {.react = -1};
+static int butler_hits(void) { return bsp.hits; }
+static int butler_group(const Row *r) /* MR::getPairedGroupMember: the StarPieceGroup of its group (joinToGroupArray) */
+{
+    for (u32 i = 0; i < sc->nobjs; i++)
+        if (sc->objs[i].group == r->group && sc->objs[i].zone == r->zone && !strcmp(sc->types + 32 * sc->objs[i].type, "StarPieceGroup")) return (int)i;
+    return -1;
+}
 typedef struct { u16 total; u8 suspend, talk; } DxPart;           /* talk: MR::isDemoPartTalk */
 typedef struct { u16 total, step; u8 main, loop, pad[2]; } DxSub;  /* loop: 会話アニメループ */
 typedef struct { u8 part, pad; s16 pos; char bck[28]; } DxPlayer;
@@ -4349,6 +4359,26 @@ int game_test_shoot(int kind)
         if (got_pieces < 1) got_pieces = 1;
         test_l1 = 1;
         return e->row;
+    }
+    return -1;
+}
+
+static int butler_hits(void);
+int game_test_butler_shoot(void) /* test builds: the cursor on the Butler's body, L1; its lecture's hits, -1 none */
+{
+    for (int i = 0; i < ninsts; i++) {
+        if (insts[i].dnpc != 1 || row_dead[insts[i].row]) continue;
+        V3 ce, cw, cu;
+        float fovy;
+        camera_pose(&ce, &cw, &cu, &fovy);
+        V3 p = vadd(v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]), vmul(vnorm(v3(insts[i].m[4], insts[i].m[5], insts[i].m[6])), 50.0f));
+        V3 fw = vnorm(vsub(cw, ce)), s = vnorm(vcross(fw, cu)), u = vcross(s, fw), to = vsub(p, ce);
+        float z = vdot(to, fw), f = 224.0f / tanf(fovy * 3.14159265f / 360.0f);
+        if (z <= 0) return -2;
+        cur_x = 320.0f + f * vdot(to, s) / z; cur_y = 224.0f - f * vdot(to, u) / z;
+        if (got_pieces < 1) got_pieces = 1;
+        test_l1 = 1;
+        return butler_hits();
     }
     return -1;
 }
@@ -22312,6 +22342,7 @@ static void update_cursor(void)
  * MechanicKoopaMini turns to SpinHit then fires, a free Karikari is blown out (dies), a Kiraira explodes; HomingKiller
  * and meteors only reflect it (isMsgStarPieceReflect). ponytail: no shooter effect / sound, no piece cost if none
  * are left, PackunPetit and JumpSpider ignore it */
+static void butler_lock_on(V3 o, V3 d, V3 *aim);
 static void shoot_piece(void)
 {
     if (got_pieces <= 0) { se_start(SE_SY_CS_NO_PIECE, NULL); return; } /* CS_NO_SPIECE's fallback */
@@ -22321,6 +22352,7 @@ static void shoot_piece(void)
     Hit h[1];
     for (float t = 100.0f; t <= 3000.0f; t += 60.0f)
         if (kcl_query(vadd(o, vmul(d, t)), 30.0f, h, 1)) { aim = vadd(o, vmul(d, t)); break; }
+    butler_lock_on(o, d, &aim); /* isMsgLockOnStarPieceShoot: the Butler takes the shot */
     for (int i = 0; i < MAX_SHOTS; i++)
         if (!shots[i].t) {
             shots[i].pos = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -22334,6 +22366,7 @@ static void shoot_piece(void)
         }
 }
 
+static int butler_shot(V3 p);
 static void update_shots(void)
 {
     Hit h[1];
@@ -22403,6 +22436,7 @@ static void update_shots(void)
             hit = 1;
         }
         if (!hit && hhp_reflects(s->pos, 30.0f)) hit = 2; /* HammerHeadPackun: isMsgStarPieceReflect */
+        if (!hit && butler_shot(s->pos)) hit = 1;         /* Butler: isMsgStarPieceAttack */
         for (int k = 0; k < ninsts && !hit; k++) { /* ItemBubble: isMsgStarPieceAttack bursts it */
             Inst *in = &insts[k];
             if (!in->ibubble || !row_shown(in->row) || vlen(vsub(s->pos, bubble_pos(in))) > 120.0f * 1.2f * sc->objs[in->row].scale[0]) continue;
@@ -22520,6 +22554,9 @@ static void dx_init(const unsigned char *blob)
         const char *c = sc->types + 32 * sc->objs[i].type;
         if (!strcmp(c, "Butler") || !strcmp(c, "ButlerMap")) row_dead[i] = gd_flag_is_on("SpecialStarGrand2") == !strcmp(c, "Butler");
     }
+    /* Butler::init: ButlerStateStarPieceReaction's talk by isOnGameEventFlagEndButlerStarPieceLecture; the lecture's state */
+    memset(&bsp, 0, sizeof bsp); bsp.react = -1;
+    bsp.msg = gd_story_passed("スターピースレクチャー") ? "AstroGalaxy_Butler000" : "AstroDome_Butler017";
 }
 
 /* DemoFunction::isDemoPartActiveFunction / getDemoPartStepFunction / getDemoPartTotalStepFunction */
@@ -22539,9 +22576,12 @@ static const struct { const char *cls, *demo, *anim, *talk; } dx_casts[] = {
     {"Butler", "ドームレクチャー１", "demobutlerdomelecture1", "AstroDome_Butler023"},
     {"Butler", "ドームレクチャー２", "demobutlerdomelecture2", "AstroDome_Butler001"}, /* initDemoSheetTalkAnimFunctor: mTalkMessage[0] */
     {"Butler", "バトラー報告", "demobutlerreport", "AstroDome_Butler003"},             /* initButlerDemo: mTalkMessage[2] */
+    {"Butler", "スターピース解説前半", "demobutlerstarpiece1", "AstroDome_Butler011"},
+    {"Butler", "スターピース解説後半", "demobutlerstarpiece2", "AstroDome_Butler014"},
 };
+static int dx_request(const char *name, int frameless);
 static const char *dx_talk_set; /* setDemoTalkMessageCtrlDirect: the running demo's talk label, NULL the table's */
-static int butler_nrv;          /* Butler: 0 Wait, 1 Demo, 2 DemoDomeLecture2 */
+static int butler_nrv;          /* Butler: 0 Wait, 1 Demo, 2 DemoDomeLecture2, 3 DemoStarPiece2 */
 #define DX_MAX_TA 4
 typedef struct {
     int row, c;      /* the cast, its dx_casts entry */
@@ -22605,6 +22645,29 @@ static void dx_cast_hook(int row, int type, int part)
         return;
     }
     if (type == 0 && !strcmp(cls, "ButlerMap")) { row_dead[row] = !gd_flag_is_on("SpecialStarGrand2"); return; } /* ButlerMap::appear */
+    if (type == 2 && !strcmp(cls, "AstroDomeBlueStar")) { /* waitAppear */
+        if (sc->objs[row].sw[SW_APPEAR] >= 0) sw_set(&sc->objs[row], SW_APPEAR, 1);
+        return;
+    }
+    if (type == 2 && !strcmp(cls, "Butler") && !strncmp(demos[dx.cur].h->name, "スターピース解説", strlen("スターピース解説"))) {
+        int second = !strcmp(demos[dx.cur].h->name, "スターピース解説後半");
+        if (part == 0) { /* 開始: startDemoStarPiece1 (the lecture on, setSensorRadius Body 100, its SW_B) / startDemoStarPiece2 */
+            const Row *r = &sc->objs[row];
+            if (!second) { bsp.on = 1; bsp.hits = 0; if (r->sw[SW_B] >= 0) sw_set(r, SW_B, 1); }
+            else { /* the lecture over: SW_B off, forceKillStarPieceAll and the paired group's kill */
+                int g = butler_group(r);
+                bsp.on = 0;
+                if (r->sw[SW_B] >= 0) sw_set(r, SW_B, 0);
+                if (g >= 0) { row_dead[g] = 1; for (int k = 0; k < npieces; k++) if (pieces[k].row == g) pieces[k].alive = PICK_GONE; }
+            }
+            bsp.react = -1;
+            row_dead[row] = 0; sw_changed = 1; butler_nrv = second ? 3 : 1;
+        } else { /* バトラーリセット: resetStatus (setDefaultPose, Wait) */
+            for (int i = 0; i < ndx_moved; i++) if (dx_moved[i].row == row) dx_moved[i] = dx_moved[--ndx_moved];
+            butler_nrv = 0; sw_changed = 1;
+        }
+        return;
+    }
     if (type == 2 && !strcmp(cls, "Butler") && !strcmp(demos[dx.cur].h->name, "ドームレクチャー２")) { /* startDemoDomeLecture2 */
         dx_talk_set = gd_story_passed("天球儀レクチャー") && !gd_story_passed("ギャラクシー移動レクチャー") ? "AstroDome_Butler002" : "AstroDome_Butler001";
         row_dead[row] = 0; sw_changed = 1; butler_nrv = 2;
@@ -22851,6 +22914,40 @@ static void srd_draw(void) /* the star at Mario's base matrix while it flies */
     render_model(md, m, 0x80, 0x80, 0x80);
 }
 
+/* Butler::receiveMsgPlayerAttack: a star piece at its Body (sensor 50, 100 in the lecture) while the lecture runs or after
+ * it: tryStartStarPieceReaction. ponytail: the sensor's centre taken 50 up its placement (no Body joint lookup) */
+static V3 butler_sensor(const Inst *in) { return vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(vnorm(v3(in->m[4], in->m[5], in->m[6])), 50.0f)); }
+/* StarPieceShooter's lock-on (isMsgLockOnStarPieceShoot: the Butler answers it): the pointer's ray within its sensor
+ * aims the shot at the sensor. ponytail: the ray against the sensor sphere stands for the star pointer's target */
+static void butler_lock_on(V3 o, V3 d, V3 *aim)
+{
+    if (!bsp.on && !gd_story_passed("スターピースレクチャー")) return;
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (in->dnpc != 1 || row_dead[in->row]) continue;
+        V3 c = butler_sensor(in), to = vsub(c, o);
+        float t = vdot(to, d);
+        if (t > 0 && vlen(vsub(to, vmul(d, t))) <= (bsp.on ? 100.0f : 50.0f)) { *aim = c; return; }
+    }
+}
+static int butler_shot(V3 p)
+{
+    if (!bsp.on && !gd_story_passed("スターピースレクチャー")) return 0;
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (in->dnpc != 1 || row_dead[in->row]) continue;
+        V3 c = butler_sensor(in);
+        if (vlen(vsub(p, c)) > (bsp.on ? 100.0f : 50.0f)) continue;
+        if (dx.on) return 1;
+        if (bsp.on) {
+            bsp.hits++;
+            if (bsp.react >= 0 || butler_nrv == 0) { if (bsp.hits <= 5) { bsp.react = 0; if (bsp.hits >= 5) se_start(SE_SY_STAR_PIECE_STOCK_MAX, NULL); } }
+        } else if (bsp.react < 0) bsp.react = 0;
+        return 1;
+    }
+    return 0;
+}
+
 /* SphereSelectorFunction::trySyncKillMsgSelectStart (Butler, ButlerMap): dead while the dome's galaxy select runs,
  * then appear() (Butler::appear / ButlerMap::appear: the one isButlerMapAppear wants) */
 static void butler_sync(int select_start)
@@ -22886,6 +22983,30 @@ static void update_dome_npcs(void)
             else mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
             int ta = 0;
             for (int k = 0; k < ndxt; k++) ta |= dx.on && dxt[k].row == in->row && butler_nrv;
+            if (butler_nrv == 3 && dx.on && dx_last(4)) { gd_story_follow("スターピースレクチャー"); butler_nrv = 1; } /* exeDemoStarPiece2: 終了's last step */
+            if (bsp.on) { /* control: tryReplaceStarPieceIfExecLecture (the paired StarPieceGroup back when none is left) */
+                int g = butler_group(r), any = 0;
+                for (int k = 0; g >= 0 && k < npieces; k++) any |= pieces[k].row == g && pieces[k].alive != PICK_GONE;
+                if (got_pieces == 0 && g >= 0 && row_shown(g) && !any && ++bsp.replace == 120) {
+                    V3 p = row_pos(&sc->objs[g]);
+                    for (int k = 0; k < npieces; k++) if (pieces[k].row == g) pieces[k].alive = PICK_ON; /* forceReplaceStarPieceAll */
+                    se_start(SE_OJ_STAR_PIECE_BURST, &p.x);
+                    se_start(SE_SY_LECT_STAR_PIECE_APR, NULL);
+                }
+            }
+            if (bsp.react >= 0 && !dx.on) { /* exeStarPieceReaction / ButlerStateStarPieceReaction::exeWait */
+                int react = bsp.on && bsp.hits >= 5;
+                if (bsp.react++ == 0) { bsp.talk = !react; obj_play(in, "starpiecereaction", 0, 0); se_start(SE_SM_BUTLER_ABSORB, &in->m[12]); }
+                if (bsp.talk) { /* tryTalkForce: AstroDome_Butler017 (AstroGalaxy_Butler000 once the lecture is over) */
+                    int k = talk_new(bsp.msg, in->row, in->row, 180.0f, 240.0f);
+                    if (k >= 0) { float m[16]; memcpy(m, in->m, 64); for (int j = 0; j < 12; j++) m[j] /= in->s; talk_place(k, m); talk_force(k, 0); }
+                }
+                if (in->anim && in->anim->done) {
+                    bsp.react = -1;
+                    if (react) dx_request("スターピース解説後半", 0); /* requestStartTimeKeepDemoMarioPuppetable */
+                }
+                continue;
+            }
             if (!ta) obj_play(in, "wait", 1, 0);
             continue;
         }
@@ -23057,10 +23178,10 @@ int game_test_demo(int k)
     return 0;
 }
 /* StorySequenceExecutor's nerves once the scene started (setNerveSceneStart): PlayDemoSequence, WaitTimeKeepDemoEnd,
- * WaitSaveEnd, FadeinAfterSequence. The save after a clear's sequence (StartSaveAfterSequence) is menu.c's prompt, held
- * while this runs. ponytail: the star return demos (StarReturnDemoStarter, GrandStarReturnDemoStarter) not played (the
+ * WaitSaveEnd, StartSaveAfterSequence / WaitSaveEndAfterSequence (a list ending in 13 whose sequence has not saved: _B0),
+ * FadeinAfterSequence. ponytail: the star return demos (StarReturnDemoStarter, GrandStarReturnDemoStarter) not played (the
  * result window and the save stand in), no movies (2: game_request_movie plays them), prologue (8), staff roll (9) */
-enum { ST_IDLE, ST_PLAY, ST_WAIT_DEMO, ST_WAIT_SAVE, ST_FADEIN_AFTER };
+enum { ST_IDLE, ST_PLAY, ST_WAIT_DEMO, ST_WAIT_SAVE, ST_SAVE_AFTER, ST_WAIT_SAVE_AFTER, ST_FADEIN_AFTER };
 static struct { int nrv, step; } story;
 static void story_set(int n) { story.nrv = n; story.step = 0; }
 int game_story_busy(void) { return story.nrv != ST_IDLE; }
@@ -23102,7 +23223,7 @@ static void story_update(void)
         case 6: gd_flag_try_on(d->name); seq_demo_step(); story_set(ST_PLAY); break;
         case 7: gd_story_follow(d->name); seq_demo_step(); story_set(ST_PLAY); break;
         case 12: if (seq_demo_next()) story_set(ST_PLAY); else { seq_demo_clear(); story_set(ST_IDLE); } break;
-        case 13: if (seq_demo_next()) story_set(ST_PLAY); else story_set(ST_FADEIN_AFTER); break;
+        case 13: if (seq_demo_next()) story_set(ST_PLAY); else story_set(seq_demo_saved(0) ? ST_FADEIN_AFTER : ST_SAVE_AFTER); break;
         default: printf("story: step %d not played\n", d->type); seq_demo_step(); story_set(ST_PLAY); break;
         }
         break;
@@ -23113,6 +23234,15 @@ static void story_update(void)
     case ST_WAIT_SAVE: /* exeWaitSaveEnd */
         if (menu_saving()) return;
         seq_demo_step(); story_set(ST_PLAY);
+        break;
+    case ST_SAVE_AFTER: /* exeStartSaveAfterSequence: tryStartSave once the result window (a return demo's) is gone */
+        if (menu_result_showing() || menu_saving()) break;
+        menu_save_start(1, 0, 0); seq_demo_saved(1);
+        story_set(ST_WAIT_SAVE_AFTER);
+        break;
+    case ST_WAIT_SAVE_AFTER: /* exeWaitSaveEndAfterSequence */
+        if (menu_saving()) return;
+        story_set(ST_FADEIN_AFTER);
         break;
     case ST_FADEIN_AFTER: /* exeFadeinAfterSequence */
         if (first && menu_wipe_closed()) { menu_wipe(0, -1, 0); return; }

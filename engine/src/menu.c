@@ -18,7 +18,7 @@
 
 static void fade_update(void);
 static void msg_with_args(u16 *out, int cap, const u16 *src, const u16 *const *args, int nargs);
-static int sv_prompt; /* frames to the save prompt a stage clear left for this scene, 0 none */
+static int sv_prompt; /* a stage clear left its result for this scene (the save after it: game.c story_update) */
 static void fade_draw(void);
 static void ss_init(const Scene *s);
 static void dmu_init(void);
@@ -653,7 +653,7 @@ void menu_init(const Scene *s)
     pm_init();
     ss_init(s);
     si_init(&sv.win);
-    sv_prompt = seq_take_save_prompt() ? 90 : 0;
+    sv_prompt = seq_take_save_prompt();
     memset(&sr, 0, sizeof sr);
     sr.l = lyt_new("ResultWindow");
     if (sv_prompt && seq_take_result(&sr.r)) { /* a star return demo shows it at its wait's end (menu_result_start) */
@@ -692,8 +692,7 @@ int menu_update(void)
     if (sr.delay && --sr.delay == 0 && sr.l) { /* the clear's demo sequence: StageResultInformer, then the save */
         sr.alive = 1; sr.n.next = -1; nrv_set(&sr.n, SR_APPEARSTAR);
     }
-    if (sr.alive) { sr_update(); if (!sr.alive) sv_prompt = sv_prompt ? 1 : 0; return 1; }
-    if (sv_prompt && !sr.delay && !game_story_busy() && --sv_prompt == 0) menu_save_start(1, 0, 0); /* StorySequenceExecutor::tryStartSave (after its demos) */
+    if (sr.alive) { sr_update(); return 1; }
     if (menu_saving()) { game_cursor_menu(); sv_update(); if (!pm.alive) return 1; }
     if (menu_scenario_selecting()) { game_cursor_menu(); ss_update(); return 1; }
     if (menu_file_selecting()) { game_cursor_menu(); fs_update(); return 1; }
