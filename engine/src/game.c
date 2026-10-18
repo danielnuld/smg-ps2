@@ -863,6 +863,7 @@ static struct {                /* the DemoExecutor running (dx_update) */
     char bck[28];              /* the player sheet's clip, "" wait */
     int req, req_t;            /* a demo asked to start (-1 none), frames it waited for its zones */
     int paused;                /* DemoTimeKeeper::mIsPaused (pauseTimeKeepDemo) */
+    int frameless, req_frameless; /* requestStartTimeKeepDemoWithoutCinemaFrame */
 } dx = {.req = -1};
 static int dx_zones_full = 1;  /* the asked / running demo's casts' zones are in full (game_zone_sets) */
 typedef struct { u16 total; u8 suspend, talk; } DxPart;           /* talk: MR::isDemoPartTalk */
@@ -22532,7 +22533,10 @@ static int dx_last(int p) { return dx_active(p) && dx_step(p) == dx_total(p) - 1
  * tryCreateDemoTalkAnimCtrlForSceneDirect "DemoButlerDomeLecture1") */
 static const struct { const char *cls, *demo, *anim, *talk; } dx_casts[] = {
     {"Butler", "ドームレクチャー１", "demobutlerdomelecture1", "AstroDome_Butler023"},
+    {"Butler", "ドームレクチャー２", "demobutlerdomelecture2", "AstroDome_Butler001"}, /* initDemoSheetTalkAnimFunctor: mTalkMessage[0] */
 };
+static const char *dx_talk_set; /* setDemoTalkMessageCtrlDirect: the running demo's talk label, NULL the table's */
+static int butler_nrv;          /* Butler: 0 Wait, 1 Demo, 2 DemoDomeLecture2 */
 #define DX_MAX_TA 4
 typedef struct {
     int row, c;      /* the cast, its dx_casts entry */
@@ -22576,7 +22580,12 @@ static void dx_cast_hook(int row, int type, int part)
         return;
     }
     if (type == 2 && !strcmp(cls, "Butler") && !strcmp(demos[dx.cur].h->name, "ドームレクチャー１")) { /* startDemoDomeLecture1 */
-        row_dead[row] = 0; sw_changed = 1;
+        row_dead[row] = 0; sw_changed = 1; butler_nrv = 1;
+        return;
+    }
+    if (type == 2 && !strcmp(cls, "Butler") && !strcmp(demos[dx.cur].h->name, "ドームレクチャー２")) { /* startDemoDomeLecture2 */
+        dx_talk_set = gd_story_passed("天球儀レクチャー") && !gd_story_passed("ギャラクシー移動レクチャー") ? "AstroDome_Butler002" : "AstroDome_Butler001";
+        row_dead[row] = 0; sw_changed = 1; butler_nrv = 2;
         return;
     }
     if (type == 0 && !strcmp(cls, "GCaptureTarget")) { /* GCaptureTarget::appear: hidden, exeAppear shows it at step 30 */
@@ -22629,7 +22638,7 @@ static void dx_action(const Demo *d, const DxAct *a) /* DemoActionInfo::executeA
             int t = -1;
             for (unsigned c = 0; c < sizeof dx_casts / sizeof dx_casts[0]; c++)
                 if (!strcmp(dx_casts[c].cls, sc->types + 32 * r->type) && !strcmp(dx_casts[c].demo, d->h->name))
-                    t = talk_new(dx_casts[c].talk, row, row, 0.0f, 240.0f); /* createTalkCtrlDirectOnRootNodeAutomatic */
+                    t = talk_new(dx_talk_set ? dx_talk_set : dx_casts[c].talk, row, row, 0.0f, 240.0f); /* createTalkCtrlDirectOnRootNodeAutomatic */
             if (t < 0) { printf("demo: no talk (%s)\n", sc->types + 32 * r->type); break; }
             const Inst *in = row_inst(row);
             if (in) { float m[16]; memcpy(m, in->m, 64); for (int j = 0; j < 12; j++) m[j] /= in->s; talk_place(t, m); }
@@ -22688,6 +22697,19 @@ static void dx_talk_anims(const Demo *d)
     }
 }
 
+/* SphereSelectorFunction::trySyncKillMsgSelectStart (Butler, ButlerMap): dead while the dome's galaxy select runs,
+ * then appear() (Butler::appear / ButlerMap::appear: the one isButlerMapAppear wants) */
+static void butler_sync(int select_start)
+{
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const char *c = sc->types + 32 * sc->objs[i].type;
+        if (strcmp(c, "Butler") && strcmp(c, "ButlerMap")) continue;
+        row_dead[i] = select_start || gd_flag_is_on("SpecialStarGrand2") == !strcmp(c, "Butler");
+        sw_changed = 1;
+    }
+    butler_nrv = 0;
+}
+
 /* Butler (exeDemo: at its PosName during the demo, then setDefaultPose and Wait) and TicoDomeLecture */
 static void update_dome_npcs(void)
 {
@@ -22697,7 +22719,16 @@ static void update_dome_npcs(void)
         const Row *r = &sc->objs[in->row];
         if (in->dnpc == 1) {
             const float *mv = dx.on ? dx_cast_m(in->row) : NULL;
-            if (mv) memcpy(in->m, mv, 64);
+            if (!dx.on) butler_nrv = 0; /* exeDemo: setDefaultPose, Wait */
+            if (butler_nrv == 2) { /* setNPCActorPose(-getCamZdir, getCamYdir, getCamPos) */
+                V3 eye, watch, up;
+                float fovy;
+                camera_pose(&eye, &watch, &up, &fovy);
+                V3 z = vnorm(vsub(eye, watch)), x = vnorm(vcross(up, z)), y = vcross(z, x); /* -getCamZdir: facing the camera */
+                float m[16] = {x.x, x.y, x.z, 0, y.x, y.y, y.z, 0, z.x, z.y, z.z, 0, eye.x, eye.y, eye.z, 1};
+                for (int j = 0; j < 12; j++) m[j] *= r->scale[j / 4];
+                memcpy(in->m, m, 64);
+            } else if (mv) memcpy(in->m, mv, 64);
             else mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
             int ta = 0;
             for (int k = 0; k < ndxt; k++) ta |= dx.on && dxt[k].row == in->row;
@@ -22745,7 +22776,8 @@ static void dx_start(int k) /* DemoExecutor::start, startDemoSystem */
     dx.part = 0; dx.step = -1;
     for (int j = 0; j < DX_MAX_SUB; j++) dx.sub_t[j] = -1;
     dx.cams_done = 0; dx.cam = NULL; dx.bck[0] = 0; dx.paused = 0;
-    ndxt = 0; ndx_moved = 0;
+    dx.frameless = dx.req_frameless; dx.req_frameless = 0;
+    ndxt = 0; ndx_moved = 0; dx_talk_set = NULL;
     for (int g = 0; g < d->h->ngroup; g++)
         for (unsigned c = 0; c < sizeof dx_casts / sizeof dx_casts[0] && ndxt < DX_MAX_TA; c++) {
             int row = d->group[g];
@@ -22758,7 +22790,7 @@ static void dx_start(int k) /* DemoExecutor::start, startDemoSystem */
             const u8 *q = sc->canm; /* mHaveCamera: <anim>.canm in its archive */
             for (u32 j = 0; j < sc->ncanm && !t->cam; j++, q += 36 + 32 * *(const u32 *)(q + 32)) t->cam = !strcmp((const char *)q, n);
         }
-    menu_cinema(1);
+    if (!dx.frameless) menu_cinema(1);
     printf("demo: %s starts\n", d->h->name);
 }
 
@@ -22773,8 +22805,16 @@ static void dx_end(void) /* DemoExecutor::end, DemoDirector::doDemoEndRequest */
     ndxt = 0; ndx_moved = 0;
     Row r = dx_row(d);
     if (d->h->sw[SW_DEAD] >= 0) sw_set(&r, SW_DEAD, 1);
-    menu_cinema(0);
+    if (!dx.frameless) menu_cinema(0);
     printf("demo: %s ends\n", d->h->name);
+}
+
+/* requestStartTimeKeepDemo(WithoutCinemaFrame) by the demo's name: 0 if the scene has none */
+static int dx_request(const char *name, int frameless)
+{
+    for (int k = 0; k < ndemos; k++)
+        if (!strcmp(demos[k].h->name, name)) { dx.req = k; dx.req_frameless = frameless; dx_zones_full = 0; return 1; }
+    return 0;
 }
 
 static void dx_keepers(const Demo *d);
@@ -23065,7 +23105,7 @@ int game_time_left(void) { return time_limit ? time_left : -1; }
  * AstroDomeCameraController and AstroDomeGalaxySelector after Petari (their layouts: menu.c menu_dome_*). The pointer
  * is the right stick, the pointer's A R2 at the blue star (gcap_pick, as GCaptureTarget) and X in the select (the
  * menus' decide; held with the pointer off the galaxies it drags the globe), B Circle / Triangle. ponytail: no
- * capture ribbon / effects, no star counter, no demos (ドームレクチャー２, マリオ飛び出し, GalaxyMoveLecture), no comet
+ * capture ribbon / effects, no star counter, no マリオ飛び出し demo, no comet
  * galaxy, no BGM states / rumble, no shadows / star number plates, the select ring without its BRK fade */
 typedef struct { V3 x, y, z, p; } Mx; /* columns, translation */
 static V3 mx_rot(const Mx *m, V3 v) { return vadd(vadd(vmul(m->x, v.x), vmul(m->y, v.y)), vmul(m->z, v.z)); }
@@ -23125,7 +23165,8 @@ enum { SS2_NONE, SS2_SELECTSTART, SS2_SELECTWAIT, SS2_SELECTCANCEL, SS2_CONFIRMS
 enum { HD_DEAD, HD_WAIT, HD_HOLD, HD_SPIN, HD_DISAPPEAR, HD_CONFIRMSTART, HD_CONFIRMWAIT, HD_CONFIRMCANCEL, HD_INVALID };
 enum { MG_DEAD, MG_WAIT, MG_SELECTED, MG_NOTSELECTED, MG_CONFIRMED, MG_OPEN };
 enum { CC_DEAD, CC_SELECTSTART, CC_SELECT, CC_CONFIRMSTART, CC_CONFIRM, CC_CONFIRMCANCEL };
-enum { GS_DEAD, GS_SELECTSTART, GS_SELECT, GS_SELECTCANCEL, GS_CONFIRMSTART, GS_CONFIRM, GS_CONFIRMCANCEL, GS_JUMPOUT };
+enum { GS_DEAD, GS_SELECTSTART, GS_SELECT, GS_SELECTCANCEL, GS_CONFIRMSTART, GS_CONFIRM, GS_CONFIRMCANCEL, GS_JUMPOUT,
+       GS_DEMODOMELECTURE, GS_GALAXYMOVELECTURE };
 enum { T_NONE, T_HANDLE, T_BACK, T_GALAXY }; /* pointing / selected targets (T_GALAXY + i) */
 #define DOME_MAX 8
 
@@ -23485,8 +23526,19 @@ static void dm_selector_actor_update(void)
 {
     if (dn_is(&dm.gs, GS_DEAD)) return;
     switch (dn_begin(&dm.gs)) {
-    case GS_SELECTSTART:
-        if (dn_is(&dm.sel, SS2_SELECTWAIT)) dn_set(&dm.gs, GS_SELECT); /* ponytail: ドームレクチャー２ not played */
+    case GS_SELECTSTART: /* tryStartLectureDemo: ドームレクチャー２ (without the cinema frame) until 天球儀レクチャー */
+        if (!dn_is(&dm.sel, SS2_SELECTWAIT)) break;
+        dn_set(&dm.gs, !gd_story_passed("天球儀レクチャー") && dx_request("ドームレクチャー２", 1) ? GS_DEMODOMELECTURE : GS_SELECT);
+        break;
+    case GS_DEMODOMELECTURE: /* exeDemoDomeLecture */
+        if (dx.on || dx.req >= 0) break;
+        gd_story_follow("天球儀レクチャー");
+        dn_set(&dm.gs, GS_SELECT);
+        break;
+    case GS_GALAXYMOVELECTURE: /* exeGalaxyMoveLecture */
+        if (dx.on || dx.req >= 0) break;
+        gd_story_follow("ギャラクシー移動レクチャー");
+        dn_set(&dm.gs, GS_CONFIRM);
         break;
     case GS_SELECT: {
         static int was_on;
@@ -23511,7 +23563,8 @@ static void dm_selector_actor_update(void)
     case GS_CONFIRMSTART:
         if (FIRST(&dm.gs)) menu_dome_back(1);
         dm_galaxy_info(dm.selected - T_GALAXY);
-        if (dn_is(&dm.sel, SS2_CONFIRMWAIT)) dn_set(&dm.gs, GS_CONFIRM);
+        if (dn_is(&dm.sel, SS2_CONFIRMWAIT)) /* tryStartLectureDemo: until ギャラクシー移動レクチャー */
+            dn_set(&dm.gs, !gd_story_passed("ギャラクシー移動レクチャー") && dx_request("ドームレクチャー２", 1) ? GS_GALAXYMOVELECTURE : GS_CONFIRM);
         break;
     case GS_CONFIRM:
         if (FIRST(&dm.gs)) menu_dome_confirm_appear();
@@ -23541,6 +23594,7 @@ static void dm_msg(int msg)
 {
     switch (msg) {
     case M_SELECT_START:
+        butler_sync(1);
         dm_handle_appear();
         for (int i = 0; i < dm.ng; i++) dm_galaxy_appear(i);
         dm.start = dm_cam_pos(); dm.zs = dm.ze = dm.zc = dm.start; dm.ts = dm.te = dm.tc = v3(0, 0, 0);
@@ -23550,6 +23604,7 @@ static void dm_msg(int msg)
         menu_dome_open();
         break;
     case M_SELECT_END:
+        butler_sync(0);
         dn_set(&dm.hd, HD_DISAPPEAR);
         for (int i = 0; i < dm.ng; i++) dn_init(&dm.g[i].n, MG_DEAD);
         dn_init(&dm.cc, CC_DEAD);

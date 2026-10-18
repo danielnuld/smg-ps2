@@ -363,8 +363,14 @@ the demos): resume here.** State at the session break (2026-10-17 evening):
   parts, the Butler's pages, the Tico's flight and change, the blue star, バトラー情報Ａ passed. ponytail: the
   TicoDomeLecture's ColorChange frame 1 drawn as Tico's 0; the Butler's own talks / nerves (exeWait, star piece
   reaction) not ported.
+- Done, tested: ドームレクチャー２ (AstroDomeGalaxySelector::tryStartLectureDemo at the select's start until 天球儀レクチャー,
+  at the confirm until ギャラクシー移動レクチャー; requestStartTimeKeepDemoWithoutCinemaFrame: dx_request(name, frameless));
+  Butler's startDemoDomeLecture2 (its talk Butler001 / 002: setDemoTalkMessageCtrlDirect = dx_talk_set) and
+  exeDemoDomeLecture2 (posed at the camera, facing it); Butler / ButlerMap dead while the galaxy select runs
+  (trySyncKillMsgSelectStart: butler_sync). `story` test goes on: R2 at the blue star, the lecture's talk, 天球儀レクチャー
+  passed. The `dome` test passes both lectures first.
 - All 136 scenarios repacked with DEMO chunks (2026-10-17), menus.bin with CinemaFrame.
-- Next, in order: Butler's other demos (ドームレクチャー２ startDemoDomeLecture2 / exeDemoDomeLecture2, バトラー報告,
+- Next, in order: Butler's other demos (バトラー報告,
   スターピース解説前半 / 後半, グリーンドライバ説明: their functors, the talk anim ctrls initDemoSheetTalkAnim) and the
   Butler as a talking NPC; StarReturnDemoStarter (the result window inside the demo, replacing menu.c's) and
   GrandStarReturnDemoStarter; Rosetta's demos (RosettaDemoAstroDome.cpp, the picture book); anim cameras of the camera

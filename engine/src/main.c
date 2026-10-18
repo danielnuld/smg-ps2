@@ -868,11 +868,15 @@ int main(void)
         if (frame == 1300) printf("demo test: start %d\n", game_test_demo(0));
         if (frame > 1300 && frame % 20 == 0) printf("demo test f %u: %d\n", frame, game_test_demo(-1));
 #endif
-#if defined(PACKS) && defined(STORY_TEST) /* a fresh file moved to AstroDome/1: ドームレクチャー１ (cDemoAstroDomeLecture) */
+#if defined(PACKS) && defined(STORY_TEST) /* a fresh file moved to AstroDome/1: ドームレクチャー１ (cDemoAstroDomeLecture),
+                                           * then R2 at the blue star: the galaxy select's ドームレクチャー２ */
         if (frame == 200) seq_galaxy_move(SEQ_MOVE, "AstroDome", 1, -1, 0);
         pad_force = frame > 300 && frame % 60 < 10 ? PAD_CROSS : 0; /* the Butler's pages (held: TalkStateEvent turns on a hold) */
+        if (frame >= 1500 && frame < 1545) game_test_dome(0, 1);
+        if (frame == 1545) game_test_dome(0, 0);
         if (frame > 200 && frame % 30 == 0 && frame < 3000)
-            printf("story test f %u: busy %d demo %d butlerA %d\n", frame, game_story_busy(), game_test_demo(-1), gd_story_passed("バトラー情報Ａ"));
+            printf("story test f %u: busy %d demo %d butlerA %d lecture %d\n", frame, game_story_busy(), game_test_demo(-1),
+                   gd_story_passed("バトラー情報Ａ"), gd_story_passed("天球儀レクチャー"));
 #endif
 #if defined(PACKS) && defined(PROLOGUE_TEST)
         if (frame == 300 || frame == 700) printf("prologue test f %u: movie starter %d\n", frame, game_test_movie(frame == 700));
@@ -932,7 +936,9 @@ int main(void)
 #if defined(PACKS) && defined(DOME_TEST)
         { /* the dome: R2 at the blue star, Good Egg opened (New), then chosen and confirmed, its scenario 1 */
             pad_force = 0;
-            if (frame == 200) gd_set_star("HeavensDoorGalaxy", 1); /* the Gateway's grand star: Good Egg can open */
+            if (frame == 200) { /* the Gateway's grand star: Good Egg can open; the Butler's lectures heard */
+                gd_set_star("HeavensDoorGalaxy", 1); gd_story_follow("天球儀レクチャー"); gd_story_follow("ギャラクシー移動レクチャー");
+            }
             if (frame >= 300 && frame < 345) { int r = game_test_dome(0, 1); if (frame == 300) printf("dome test f %u: blue star %d\n", frame, r); }
             if (frame == 345) game_test_dome(0, 0);
             if (frame >= 600 && frame <= 620) { int st = game_test_dome(1, 0); if (frame == 600) printf("dome test f %u: galaxy 0 state %d\n", frame, st); }
