@@ -39,7 +39,11 @@ int menu_wipe_closed(void);          /* !isWipeOpen: closed and still */
 void menu_cinema(int frame);         /* CinemaFrame: tryScreenToFrame (1) / tryFrameToScreen (0) */
 void menu_monologue_start(void);     /* RosettaMonologue (ロゼッタ状況説明デモ's picture book): appear */
 int menu_monologue_alive(void);      /* !isDead */
-void menu_galaxy_map(int galaxy_view);  /* GalaxyMapController: the Grand Galaxy (1) or the Observatory (0) map */
+/* GalaxyMapController's start modes (its Mode): MR::startAstroMapLayout, startGalaxyMapLayout,
+ * startAstroMapLayoutForNewGalaxyDiscover / ForNewTicoGalaxyDiscover / ForNewDomeDiscover,
+ * startGalaxyMapLayoutForTicoComet, startAstroMapLayoutForChallengeGalaxyDiscover */
+enum { GMAP_ASTRO, GMAP_GALAXY, GMAP_LIST, GMAP_NEW_GALAXY, GMAP_NEW_TICO, GMAP_NEW_DOME, GMAP_TICO_COMET, GMAP_CHALLENGE };
+void menu_galaxy_map(int mode);
 int menu_galaxy_map_active(void);
 int menu_test_point_map(const char *pane);
 int menu_file_selecting(void);       /* the FileSelect stage's FileSelector running */

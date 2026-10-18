@@ -249,7 +249,7 @@ static void toc_select(void)
             strcmp(e->path, "menus.bin") == 0 || strcmp(e->path, "menus3d.bin") == 0 ||
             ((strcmp(e->path, "title.bin") == 0 || strcmp(e->path, "title3d.bin") == 0) && strncmp(scen, "FileSelect/", 11) == 0) ||
             (strcmp(e->path, "dome.bin") == 0 && strncmp(scen, "AstroDome/", 10) == 0) ||
-            (strcmp(e->path, "map.bin") == 0 && strncmp(scen, "AstroGalaxy/", 12) == 0) ||
+            ((strcmp(e->path, "map.bin") == 0 || strcmp(e->path, "mappics.bin") == 0) && strncmp(scen, "AstroGalaxy/", 12) == 0) ||
             (strcmp(e->path, "ending.bin") == 0 && strncmp(scen, "EpilogueDemoStage/", 18) == 0) ||
             strncmp(e->path, "movies/", 7) == 0) { /* any scene may end in one */
             if (ntoc == (int)(sizeof toc / sizeof toc[0])) { printf("packs: TOC full\n"); for (;;) {} }
@@ -310,6 +310,23 @@ static void pack_close(Pack *p)
     if (p->f) fclose(p->f);
 #endif
     p->f = NULL;
+}
+
+/* menu.c's reads on demand (the map's GalaxyDetail pictures, mappics.bin): n bytes at `off` (DISC: a sector
+ * boundary; dst has room for whole sectors) into dst, waited for; 0 when the pack is missing or the read fails */
+int packs_read(const char *path, u32 off, void *dst, u32 n)
+{
+    Pack p;
+    if (!pack_open(&p, path)) return 0;
+    int ok = off + n <= p.size;
+#ifdef DISC
+    p.pos = off;
+#else
+    ok = ok && fseek(p.f, off, SEEK_SET) == 0;
+#endif
+    ok = ok && pack_read(&p, dst, n);
+    pack_close(&p);
+    return ok;
 }
 
 /* movie.c's reads: in order from one pack (DISC: asynchronous, whole sectors) */
@@ -651,6 +668,8 @@ static const u8 *load_packs(Scene *s)
            pack_bytes >> 10);
     return scene_blob;
 }
+#else
+int packs_read(const char *path, u32 off, void *dst, u32 n) { (void)path; (void)off; (void)dst; (void)n; return 0; }
 #endif
 
 #define EE_MHZ 294.912f
@@ -1040,16 +1059,23 @@ int main(void)
         if (frame == 300 || frame == 700) printf("prologue test f %u: movie starter %d\n", frame, game_test_movie(frame == 700));
 #endif
 #if defined(PACKS) && defined(MAP_TEST)
-        { /* the Observatory's map: open, the other view (X on nothing), the star list, back, close */
+        { /* the Observatory's map (XF=-DMAP_MODE=n: GalaxyMapController's mode, 0 Astro; a discover mode closes at
+           * the first X): open, Good Egg's detail with its picture (X on its icon, X), the other view (X on nothing),
+           * the star list, back, close */
+#ifndef MAP_MODE
+#define MAP_MODE 0
+#endif
             pad_force = 0;
             if (frame == 200) { gd_set_star("EggStarGalaxy", 1); gd_flag_try_on("EggStarGalaxy"); }
-            if (frame == 300) { menu_galaxy_map(0); printf("map test f %u: open %d\n", frame, menu_galaxy_map_active()); }
-            if (frame == 420) game_set_cursor(40, 40);
-            if (frame == 440) pad_force = PAD_CROSS;
-            if (frame == 640) printf("map test f %u: pointer on MapList %d\n", frame, menu_test_point_map("BoxLButton"));
+            if (frame == 300) { menu_galaxy_map(MAP_MODE); printf("map test f %u: open %d (mode %d)\n", frame, menu_galaxy_map_active(), MAP_MODE); }
+            if (frame == 400) printf("map test f %u: pointer on EggStarGalaxy %d\n", frame, menu_test_point_map("EggStarGalaxy"));
+            if (frame == 420 || frame == 560) pad_force = PAD_CROSS;
+            if (frame == 640) game_set_cursor(40, 40);
             if (frame == 660) pad_force = PAD_CROSS;
-            if (frame == 900 || frame == 1100) pad_force = PAD_CIRCLE;
-            if (frame == 1200) printf("map test f %u: open %d\n", frame, menu_galaxy_map_active());
+            if (frame == 840) printf("map test f %u: pointer on MapList %d\n", frame, menu_test_point_map("BoxLButton"));
+            if (frame == 860) pad_force = PAD_CROSS;
+            if (frame == 1100 || frame == 1300) pad_force = PAD_CIRCLE;
+            if (frame == 1400) printf("map test f %u: open %d\n", frame, menu_galaxy_map_active());
         }
 #endif
 #if defined(PACKS) && defined(COPY_TEST)

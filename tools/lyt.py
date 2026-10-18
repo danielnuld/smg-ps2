@@ -348,6 +348,34 @@ MAP = ("MapGrandGalaxy", "MapGalaxyIcon", "MapDomeIcon", "MapTitle", "MapGalaxyB
 ENDING = ("StaffRoll", "StaffRollTitle", "StaffRollPicture", "InformationWindow")
 
 
+def build_mappics(fsp):
+    """mappics.bin: the map's GalaxyDetail pictures (ObjectData/GalaxyInfoTexture.arc), not resident: menu.c gm_pic
+    reads the one shown when the detail opens. u32 n, slot, pad[2]; n x {char name[20] (the BTI's, lower case, cut to
+    20); u32 off; its TEXT entry (32 B as text_chunk's, pix / clut offsets from its slot)}; slots from 4096 on, each
+    `slot` bytes (whole sectors: the disc reads them)"""
+    from slice import lod_k
+    pics = [(n.rsplit("/", 1)[-1][:-4][:20].lower(), b) for n, b in
+            B.rarc_files((Path(fsp) / "ObjectData" / "GalaxyInfoTexture.arc").read_bytes()) if n.lower().endswith(".bti")]
+    slots = []
+    for name, b in pics:
+        tx = tex.to_ps2(np.ascontiguousarray(bti(b), np.uint8), 0, 0, hi=True)  # as convert's image() (no c0 / c1, clamped)
+        data = bytearray()
+        for lv in [tx["pix"]] + tx.get("mips", []):
+            data += lv + b"\0" * (-len(lv) % 16)
+        size, clut = len(data), len(data)
+        data += tx["clut"]
+        ent = struct.pack("<HHBBBBIIIBBBxh6x", tx["w"], tx["h"], tx["psm"], tx["clamp_s"], tx["clamp_t"], tx["alpha"],
+                          0, size, clut, tx["w"].bit_length() - 1, tx["h"].bit_length() - 1, len(tx.get("mips", [])),
+                          lod_k(tx.get("lod", (0, 0))))
+        slots.append((name, ent, bytes(data)))
+    slot = max(len(d) for _, _, d in slots)
+    slot += -slot % 2048
+    head = struct.pack("<II8x", len(slots), slot)
+    head += b"".join(struct.pack("<20sI", n.encode(), 4096 + k * slot) + e for k, (n, e, _) in enumerate(slots))
+    assert len(head) <= 4096
+    return head.ljust(4096, b"\0") + b"".join(d.ljust(slot, b"\0") for _, _, d in slots)
+
+
 def build_ending(fsp):
     pics = {n.rsplit("/", 1)[-1][:-4][:20]: b for n, b in B.rarc_files((Path(fsp) / "ObjectData" / "StaffRollTexture.arc").read_bytes())
             if n.lower().endswith(".bti")}
@@ -541,9 +569,10 @@ if __name__ == "__main__":  # python tools/lyt.py data/fs/files [out/packs/menus
     print(f"{d3}: {d3.stat().st_size / 1024:.0f} KB")
     print(f"{dst}: {len(blob) / 1024:.0f} KB, {len(COMMON)} layouts, {nt} textures")
     dst.with_name("dome.bin").write_bytes(build_dome(fsp))
-    dst.with_name("map.bin").write_bytes(build_dome(fsp, MAP, None))  # ponytail: no pictures in GalaxyDetail (the
-    # Observatory's pack leaves no room for them)
-    print(f"map.bin {dst.with_name('map.bin').stat().st_size / 1024:.0f} KB")
+    dst.with_name("map.bin").write_bytes(build_dome(fsp, MAP, None))  # GalaxyDetail's pictures apart: mappics.bin
+    dst.with_name("mappics.bin").write_bytes(build_mappics(fsp))
+    print(f"map.bin {dst.with_name('map.bin').stat().st_size / 1024:.0f} KB, "
+          f"mappics.bin {dst.with_name('mappics.bin').stat().st_size / 1024:.0f} KB")
     print(f"dome.bin {dst.with_name('dome.bin').stat().st_size / 1024:.0f} KB")
     dst.with_name("ending.bin").write_bytes(build_ending(fsp))
     print(f"ending.bin {dst.with_name('ending.bin').stat().st_size / 1024:.0f} KB")

@@ -18,6 +18,8 @@ void render_load_textures(const Scene *s, u32 first_tex, u32 first_model);
 /* Undo render_load_textures from these indices: frees those models' chains and rewinds the texture VRAM. Waits for
  * the GS and the VIF first, so nothing in flight still reads them. */
 void render_release(Scene *s, u32 first_tex, u32 first_model);
+/* scene texture t's pixels from `base` as `e` says from now on (its cache entry dropped): menu.c's on-demand picture */
+void render_set_texture(u32 t, const TexEntry *e, const u8 *base);
 void render_begin(const float eye[3], const float target[3], const float up[3]);
 /* Draw a model with world matrix `world` (column-major 4x4), flat-shaded with a base colour. */
 void render_model(const Model *md, const float world[16], u8 r, u8 g, u8 b);

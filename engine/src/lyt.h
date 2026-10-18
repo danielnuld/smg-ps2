@@ -12,6 +12,9 @@ void lyt_init(const Scene *s); /* the scene's LYTR chunks (game_init) */
 LytInst *lyt_new(const char *layout);                                 /* in the scene arena; NULL if not there */
 int lyt_start(LytInst *l, const char *anim, int ch);                  /* MR::startAnim; 0 if it has no such anim */
 int lyt_start_pane(LytInst *l, const char *pane, const char *anim, int ch); /* MR::startPaneAnim */
+int lyt_start_pane_reverse(LytInst *l, const char *pane, const char *anim, int ch); /* MR::startPaneAnimReverseOneTime */
+void lyt_set_pane_alpha(LytInst *l, const char *pane, int a);       /* MR::setPaneAlpha (-1: 255) */
+void lyt_set_pane_height(LytInst *l, const char *pane, float h);    /* its height after its animations, < 0 off */
 void lyt_set_frame(LytInst *l, int ch, float frame);                 /* MR::setAnimFrame (the layout channel's) */
 void lyt_set_pane_frame(LytInst *l, const char *pane, int ch, float frame);
 void lyt_set_rate(LytInst *l, int ch, float rate);                   /* MR::setAnimRate */
