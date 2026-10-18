@@ -879,6 +879,32 @@ int main(void)
             if (frame >= 200 && (frame % 30 == 0 || (frame > 236 && frame < 262)) && frame < 1500) printf("butler test f %u: talk %d\n", frame, game_test_butler_talk(0));
         }
 #endif
+#if defined(PACKS) && defined(ASTRODEMO_TEST)
+        { /* TriLegLv1Galaxy/1: its grand star (2) faked -> AstroGalaxy: グランドスター２帰還, ロゼッタトーチの炎説明デモ,
+           * バトラーマップレクチャー (cDemoTorchLecture); BattleShipGalaxy/1: BattleShip's star 7, the first green star, faked
+           * -> AstroGalaxy: パワースター帰還, バトラーグリーンドライバ説明 (cDemoGreenStarGetFirst). X held every second */
+            int green = !strncmp(PACKS, "BattleShip", 10);
+            pad_force = frame > 600 && frame % 60 < 10 ? PAD_CROSS : 0;
+            if (menu_saving()) menu_test_point("BoxRight"); /* the save prompt: Yes */
+            if (menu_galaxy_map_active() && frame % 120 == 0) pad_force = PAD_CIRCLE; /* the map shown by the lectures: closed */
+            if (frame == 200) {
+                SeqResult r = {"TriLegLv1Galaxy", 1, 0, 1, 50, 0, 12};
+                if (green) { strcpy(r.stage, "BattleShipGalaxy"); r.star = 7; }
+                gd_set_star("HeavensDoorGalaxy", 1);
+                gd_story_follow("バトラー情報Ａ"); gd_story_follow("スターピースレクチャー");
+                if (green) gd_set_star("TriLegLv1Galaxy", 1);
+                r.prev_stars = gd_star_num();
+                gd_set_star(r.stage, r.star);
+                r.after_stars = gd_star_num();
+                seq_set_result(&r);
+                seq_set_cleared(r.star);
+                seq_galaxy_move(SEQ_STAGE_CLEAR, NULL, -1, -1, 0);
+            }
+            if (frame > 200 && frame % 60 == 0 && frame < 9000)
+                printf("astrodemo test f %u: busy %d demo %d result %d saving %d map %d\n", frame, game_story_busy(), game_test_demo(-1),
+                       menu_result_showing(), menu_saving(), menu_galaxy_map_active());
+        }
+#endif
 #if defined(PACKS) && defined(SPIECE_TEST)
         { /* EggStar's star 1 faked (the dome lecture heard): the star return, the result, スターピース解説前半, five star
            * pieces at the Butler, スターピース解説後半 */

@@ -1420,6 +1420,7 @@ static void os_init(void);
 void game_init(const Scene *s, const unsigned char *blob)
 {
     sc = s;
+    gd_scene_start(); /* GameDataFunction's scene start holder (the isOnJust checks) */
     fx_init(s);
     talk_init(s);
     lyt_init(s);
@@ -3362,7 +3363,7 @@ void game_rebind(void)
         }
         in->npc = npc_class(name);
         in->dnpc = strcmp(name, "Butler") == 0 ? 1 : strcmp(name, "TicoDomeLecture") == 0 ? 2 : strcmp(name, "Rosetta") == 0 ? 3 :
-                   strcmp(name, "ButlerExplain") == 0 ? 4 : 0;
+                   strcmp(name, "ButlerExplain") == 0 ? 4 : strcmp(name, "ButlerMap") == 0 ? 5 : 0;
         in->fat = strcmp(name, "TicoFat") == 0;
         in->sambo = strcmp(name, "CocoSambo") == 0;
         in->sky = sky_class(name);
@@ -9074,6 +9075,7 @@ static void update_talkers(void)
             if (in->talkcls == 5) t->branch = butler_branch;
         }
         if (in->talkcls == 5 && !butler_talk_free(in->row)) continue; /* NPCActor::exeWait only (its demos, the reaction) */
+        if (in->talkcls == 4 && dx.on) continue;                         /* ButlerMap: its Wait nerve only */
         float m[16];
         memcpy(m, in->m, 64);
         for (int j = 0; j < 12; j++) m[j] /= in->s;
@@ -22719,6 +22721,8 @@ static const struct { const char *cls, *demo, *anim, *talk; } dx_casts[] = {
     {"Butler", "バトラー報告", "demobutlerreport", "AstroDome_Butler003"},             /* initButlerDemo: mTalkMessage[2] */
     {"Butler", "スターピース解説前半", "demobutlerstarpiece1", "AstroDome_Butler011"},
     {"Butler", "スターピース解説後半", "demobutlerstarpiece2", "AstroDome_Butler014"},
+    {"Butler", "バトラーグリーンドライバ説明", "", "AstroGalaxy_Butler005"},                /* initForAstroGalaxy: mTalkMessage[5] */
+    {"ButlerMap", "バトラーマップレクチャー", "demobutlermaplecture", "AstroGalaxy_ButlerMap001"}, /* ButlerMap::init */
     /* Rosetta (RosettaDemoAstroDome.cpp): the explain demo's DemoWithButler talk anim (hers for the scene with its canm,
      * ButlerExplain's for the actor) on their own talkers (NULL: the row's MessageId label); the talk demos' EntryDemo
      * talkers ("": no talk anim) */
@@ -22739,7 +22743,9 @@ static int dx_request(const char *name, int frameless);
 static int ros_demo; /* Rosetta::startDemo: her Demo nerve (the sheet drives her clips) until the demo ends */
 static int ros_book; /* RosettaDemoAstroDomeExplain: the picture book (menu.c RosettaMonologue) holds the time keeper */
 static const char *dx_talk_set; /* setDemoTalkMessageCtrlDirect: the running demo's talk label, NULL the table's */
-static int butler_nrv;          /* Butler: 0 Wait, 1 Demo, 2 DemoDomeLecture2, 3 DemoStarPiece2 */
+static int butler_nrv;          /* Butler: 0 Wait, 1 Demo, 2 DemoDomeLecture2, 3 DemoStarPiece2, 4 DemoShowGalaxyMap */
+static int butler_step;         /* its DemoShowGalaxyMap's step */
+static int bmap_nrv;            /* ButlerMap: 0 Wait, 1 LectureDemoShowMapBefore, 2 LectureDemoShowMap(After) */
 #define DX_MAX_TA 4
 typedef struct {
     int row, c;      /* the cast, its dx_casts entry */
@@ -22809,6 +22815,21 @@ static void dx_cast_hook(int row, int type, int part)
             if (gd_flag_is_on("SpecialStarGrand2")) row_dead[row] = 1;
             for (int i = 0; i < ndx_moved; i++) if (dx_moved[i].row == row) dx_moved[i] = dx_moved[--ndx_moved];
             butler_nrv = 0; sw_changed = 1;
+        }
+        return;
+    }
+    if (type == 2 && !strcmp(cls, "Butler") && !strcmp(demos[dx.cur].h->name, "バトラーグリーンドライバ説明")) {
+        if (part == 0) { /* 開始: startDemoButlerReport(green driver): its talk by the story event (7: [5], 8: [6]) */
+            dx_talk_set = seq_demo_event() == 8 ? "AstroGalaxy_Butler006" : "AstroGalaxy_Butler005";
+            row_dead[row] = 0; sw_changed = 1; butler_nrv = 1;
+        } else if (seq_demo_event() == 8) { butler_nrv = 4; butler_step = 0; } /* マップ表示: tryStartShowGalaxyMap */
+        return;
+    }
+    if (type == 2 && !strcmp(cls, "ButlerMap") && !strcmp(demos[dx.cur].h->name, "バトラーマップレクチャー")) {
+        if (part == 0) { row_dead[row] = 0; sw_changed = 1; bmap_nrv = 1; } /* 開始: startLectureDemo */
+        else { /* バトラーリセット: resetStatus (setDefaultPose, Wait) */
+            for (int i = 0; i < ndx_moved; i++) if (dx_moved[i].row == row) dx_moved[i] = dx_moved[--ndx_moved];
+            bmap_nrv = 0;
         }
         return;
     }
@@ -23508,9 +23529,29 @@ static void update_dome_npcs(void)
         Inst *in = &insts[i];
         if (!in->dnpc) continue;
         const Row *r = &sc->objs[in->row];
+        if (in->dnpc == 5) { /* ButlerMap: at its PosName in its lecture, else its placement; Wait / Talk (mParam) */
+            const float *mv = dx.on ? dx_cast_m(in->row) : NULL;
+            if (mv) memcpy(in->m, mv, 64);
+            else mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
+            if (!dx.on) bmap_nrv = 0;
+            if (bmap_nrv == 1 && dx_last(2)) { /* exeLectureDemoShowMapBefore: マップ表示開始's last step */
+                dx.paused = 1; bmap_nrv = 2;
+                menu_galaxy_map(0); menu_wipe_force(0); /* startAstroMapLayoutForNewDomeDiscover, forceOpenWipeFade */
+            } else if (bmap_nrv == 2 && !menu_galaxy_map_active()) { dx.paused = 0; bmap_nrv = 3; } /* LectureDemoShowMapAfter */
+            int ta = 0;
+            for (int k = 0; k < ndxt; k++) ta |= dx.on && dxt[k].row == in->row && bmap_nrv;
+            if (!ta) obj_play(in, td.st >= 0 && talkers[td.st].row == in->row && td.nrv == TD_TALK ? "talk" : "wait", 1, 0);
+            continue;
+        }
         if (in->dnpc == 1) {
             const float *mv = dx.on ? dx_cast_m(in->row) : NULL;
             if (!dx.on) butler_nrv = 0; /* exeDemo: setDefaultPose, Wait */
+            if (butler_nrv == 4) { /* exeDemoShowGalaxyMap: paused; at 30 the map (startAstroMapLayoutForChallengeGalaxyDiscover); at 70 resumed */
+                int n = butler_step++;
+                if (n == 0) dx.paused = 1;
+                if (n == 30) menu_galaxy_map(0);
+                if (n == 70) { dx.paused = 0; butler_nrv = 1; }
+            }
             if (butler_nrv == 2) { /* setNPCActorPose(-getCamZdir, getCamYdir, getCamPos) */
                 V3 eye, watch, up;
                 float fovy;

@@ -194,6 +194,27 @@ int gd_flag_is_on(const char *name) /* GameEventFlagChecker::isOn: the computed 
     return gd.flag[i >> 3] >> (i & 7) & 1;
 }
 
+/* GameDataFunction::getSceneStartGameDataHolder: the game data as the scene started (gd_scene_start), for the
+ * isOnJust / canOnJust checks of the story (a flag that went on in this scene) */
+static typeof(gd) gd_start;
+void gd_scene_start(void) { gd_start = gd; }
+static int at_start(int (*f)(const char *), const char *name)
+{
+    typeof(gd) cur = gd;
+    gd = gd_start;
+    int r = f(name);
+    gd = cur;
+    return r;
+}
+int gd_flag_is_on_just(const char *name) { return gd_flag_is_on(name) && !at_start(gd_flag_is_on, name); }    /* isOnJustGameEventFlag */
+int gd_flag_can_on_just(const char *name) { return gd_flag_can_on(name) && !at_start(gd_flag_can_on, name); } /* canOnJustGameEventFlag */
+static int green_num(const char *unused) /* GameDataFunction::calcGreenStarNum: SpecialStarGreen1..3 */
+{
+    (void)unused;
+    return gd_flag_is_on("SpecialStarGreen1") + gd_flag_is_on("SpecialStarGreen2") + gd_flag_is_on("SpecialStarGreen3");
+}
+int gd_green_first_just(void) { return at_start(green_num, "") == 0 && green_num("") == 1; } /* isJustGetGreenStarFirst */
+
 int gd_flag_try_on(const char *name) /* GameEventFlagChecker::tryOn */
 {
     if (!gd_flag_can_on(name)) return 0;

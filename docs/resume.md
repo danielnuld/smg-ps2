@@ -426,13 +426,22 @@ the demos): resume here.** State at the session break (2026-10-17 evening):
   only in its Wait nerve; Talk / Wait clips). Fixed: the dome (class AstroDome) waited dead because a demo makes it
   appear (MapObjActor's rule), but AstroDome::init makes it appeared: the dome's floor and walls were missing (Mario
   fell through) outside the star return. `butler` test (AstroDome/1: Mario before the Butler, X: its talk).
+- Done, tested: the story's "just" checks (gamedata.c gd_scene_start at game_init, gd_flag_is_on_just / can_on_just,
+  gd_green_first_just: getSceneStartGameDataHolder), so decideNextEventForClearGalaxy queues cDemoKinopioRescued,
+  cDemoTrickCometLecture, cDemoLuigiRescued, cDemoGreenStarGetFirst / Release and the KoopaBattleVs3 talk by them (to
+  AstroGalaxy), and AstroGalaxy's scenario 4 is grand star 1 just got. バトラーマップレクチャー (ButlerMap skinned with Wait /
+  Talk / DemoButlerMapLecture, startLectureDemo, the map at マップ表示開始's end with the time keeper paused, resetStatus;
+  its talk AstroGalaxy_ButlerMap001) and バトラーグリーンドライバ説明 (startDemoButlerReport: Butler005 / 006 by the event,
+  tryStartShowGalaxyMap at event 8). `astrodemo` test (TriLegLv1Galaxy/1: grand star 2 -> its return, the torch lecture,
+  the map lecture with the map, the save; BattleShipGalaxy/1: the first green star -> the star return, the green driver
+  explanation, the save, the fade in). ponytail: the map opens in its normal mode (no NewDomeDiscover /
+  ChallengeGalaxyDiscover modes).
 - Pack memory (2026-10-18): the Observatory ran out of pack region ("packs: no memory for ...": the heap is full after a
   load). slice_all.py's room per galaxy now leaves out the menu packs main.c loads beside it (MENU_PACKS: map.bin in
   AstroGalaxy, dome.bin, the title packs), and slice.py anim_skipped leaves out clips / canms a class never plays in a
   stage (the Butler's dome demos outside AstroDome, Rosetta's other stages' demos in AstroGalaxy, ButlerExplain's copy of
   the Butler's). main.c prints the pack region's blocks when it runs out.
-- Next, in order: Butler's other demos (グリーンドライバ説明, バトラーマップレクチャー: their functors, the talk anim ctrls
-  initDemoSheetTalkAnim); GrandStarReturnDemoStarter and the grand star flight; Rosetta's demos (RosettaDemoAstroDome.cpp, the picture book); anim cameras of the camera
+- Next, in order: GrandStarReturnDemoStarter and the grand star flight; Rosetta's demos (RosettaDemoAstroDome.cpp, the picture book); anim cameras of the camera
   sheet (AnimCameraName); more dx_cast_hook classes (engine classes with type 2/3 casts: EyeBeamer, doors via their
   switches, CollectTico, FirePressureRadiate); BGM changes of the Sound sheet; the other actors stopped during demos
   (requestStopSceneFor).

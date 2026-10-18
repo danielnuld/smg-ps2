@@ -56,6 +56,11 @@ static const SeqDemo cDemoGrandStarReturn6[] = {{0, 1, "グランドスター６
 static const SeqDemo cDemoRosettaTalkTorchProgress[] = {{0, 1, "ロゼッタトーチの炎進捗デモ"}, {13, 0, ""}};
 static const SeqDemo cDemoRosettaTalkKoopaBattleVs3GalaxyAppear[] = {{5, 0, "Save"}, {0, 1, "ロゼッタ最終決戦デモ"}, {12, 0, ""}};
 static const SeqDemo cDemoStarPieceLectureRetry[] = {{0, 3, "スターピース解説前半"}, {1, 1, "Fadein"}, {12, 0, ""}};
+static const SeqDemo cDemoKinopioRescued[] = {{0, 1, "パワースター帰還"}, {0, 1, "ロゼッタキノピオ探検隊デモ"}, {13, 0, ""}};
+static const SeqDemo cDemoTrickCometLecture[] = {{0, 1, "パワースター帰還"}, {0, 1, "ロゼッタコメット説明デモ"}, {13, 0, ""}};
+static const SeqDemo cDemoLuigiRescued[] = {{0, 1, "パワースター帰還"}, {0, 1, "ロゼッタルイージデモ"}, {13, 0, ""}};
+static const SeqDemo cDemoGreenStarGetFirst[] = {{0, 1, "パワースター帰還"}, {0, 7, "バトラーグリーンドライバ説明"}, {13, 0, ""}};
+static const SeqDemo cDemoGreenStarRelease[] = {{0, 1, "パワースター帰還"}, {0, 8, "バトラーグリーンドライバ説明"}, {13, 0, ""}};
 static const SeqDemo cDemoNewGalaxyDiscover[] = {{0, 1, "天文ドームスター帰還"}, {0, 4, "バトラー報告"}, {13, 0, ""}};
 static const SeqDemo cDemoAstroDomeLecture[] = {{0, 2, "ドームレクチャー１"}, {7, 0, "バトラー情報Ａ"}, {12, 0, ""}};
 static const SeqDemo cDemoRosettaTalkAfterNormalEnding[] = {{0, 1, "ロゼッタノーマルエンディング後デモ"},
@@ -120,9 +125,13 @@ static void decide_move_galaxy(const char *st, int no, int clear)
     /* ponytail: LibraryRoom's picture book (cDemoRosettaPicureBookTalk) waits for the picture book chapters */
 }
 
-/* decideNextEventForClearGalaxy's demos (the stage is chosen in seq_galaxy_move). ponytail: isOnJustGameEventFlag
- * (newly on) is not kept, so its lists wait (cDemoKinopioRescued, cDemoTrickCometLecture, cDemoLuigiRescued,
- * cDemoGreenStarGetFirst / Release), no Luigi (cDemoLuigiMissing), no picture book (cDemoRosettaPicureBookTalk) */
+/* decideNextEventForClearGalaxy's demos (the stage is chosen in seq_galaxy_move: clear_to_astro_galaxy). ponytail: no
+ * Luigi (cDemoLuigiMissing), no picture book (cDemoRosettaPicureBookTalk) */
+static int clear_to_astro_galaxy(void) /* the lists below that setNextStageToAstroGalaxy by a flag just on */
+{
+    return gd_flag_is_on_just("EventKinopioExplorerRescued") || gd_flag_is_on_just("EventCometStarter") ||
+           gd_flag_is_on_just("SpecialStarLuigiRescued") || gd_green_first_just() || gd_flag_is_on_just("SpecialStarGreenAll");
+}
 static void decide_clear_galaxy(const char *st)
 {
     const char *b = sq.before;
@@ -133,17 +142,22 @@ static void decide_clear_galaxy(const char *st)
         if (!strcmp(b, "HeavensDoorGalaxy") && bn == 1) prepare_demo(cDemoGrandStar1ResultFirst);
         if (!strcmp(b, "EggStarGalaxy") && bn == 1) prepare_demo(cDemoPowerStarResultAstroDomeWithSave);
         if (!strcmp(b, "EggStarGalaxy") && bn == 2) prepare_demo(cDemoNewGalaxyDiscover);
+        if (gd_flag_is_on_just("EventKinopioExplorerRescued")) prepare_demo(cDemoKinopioRescued);
         if (!strcmp(b, "TriLegLv1Galaxy") && bn == 1) prepare_demo(cDemoTorchLecture);
+        if (gd_flag_is_on_just("EventCometStarter")) prepare_demo(cDemoTrickCometLecture);
         if (!strcmp(b, "KoopaBattleVs1Galaxy") && bn == 1) prepare_demo(cDemoRosettaTalkAboutKoopa);
+        if (gd_flag_is_on_just("SpecialStarLuigiRescued")) prepare_demo(cDemoLuigiRescued);
         if (!strcmp(b, "KoopaJrShipLv1Galaxy") && bn == 1) prepare_demo(cDemoRosettaTalkAstroDomeRecover);
         if (!strcmp(b, "KoopaBattleVs2Galaxy") && bn == 1) { prepare_demo(cDemoGrandStarReturn5); prepare_demo(cDemoRosettaTalkCountDownStart); }
         if (!strcmp(b, "FloaterOtaKingGalaxy") && bn == 1) {
             prepare_demo(cDemoGrandStarReturn6);
             if (!gd_flag_can_on("KoopaBattleVs3Galaxy")) prepare_demo(cDemoRosettaTalkTorchProgress);
         }
+        if (gd_green_first_just()) prepare_demo(cDemoGreenStarGetFirst);
+        if (gd_flag_is_on_just("SpecialStarGreenAll")) prepare_demo(cDemoGreenStarRelease);
         if (nsdemo > n0) {
-            int need = gd_stars_to_open("KoopaBattleVs3Galaxy"); /* getOptionalDemoForClearGalaxy: canOnJustGameEventFlag */
-            if (result_set && result.prev_stars < need && result.after_stars >= need) prepare_demo(cDemoRosettaTalkKoopaBattleVs3GalaxyAppear);
+            /* getOptionalDemoForClearGalaxy */
+            if (gd_flag_can_on_just("KoopaBattleVs3Galaxy") || gd_flag_is_on_just("PowerStarComplete")) prepare_demo(cDemoRosettaTalkKoopaBattleVs3GalaxyAppear);
             return;
         }
     }
@@ -165,7 +179,7 @@ static int astro_galaxy_no(void)
     if (gd_flag_can_on("KoopaBattleVs3Galaxy")) return 5;
     if (gd_flag_is_on("SpecialStarGrand5")) return 3;
     if (gd_flag_is_on("SpecialStarGrand3")) return 2;
-    if (gd_flag_is_on("SpecialStarGrand1")) return 4; /* isOnJustGameEventFlag. ponytail: "just" (newly on) not kept */
+    if (gd_flag_is_on_just("SpecialStarGrand1")) return 4; /* isOnJustGameEventFlag */
     return 1;
 }
 static int astro_dome_no(void) { return gd_grand_galaxy_no(sq.before); } /* calcAproposScenarioNoOnAstroDome */
@@ -193,7 +207,7 @@ void seq_galaxy_move(int type, const char *stage, int scenario, int start_id, in
         if (!strcmp(sq.before, "HeavensDoorGalaxy") || gd_is_grand_star(sq.before, sq.before_no) ||
             !strcmp(sq.before, "TriLegLv1Galaxy") || !strcmp(sq.before, "KoopaBattleVs1Galaxy") ||
             !strcmp(sq.before, "KoopaJrShipLv1Galaxy") || !strcmp(sq.before, "KoopaBattleVs2Galaxy") ||
-            !strcmp(sq.before, "FloaterOtaKingGalaxy")) {
+            !strcmp(sq.before, "FloaterOtaKingGalaxy") || clear_to_astro_galaxy()) {
             snprintf(st, sizeof st, "AstroGalaxy"); no = astro_galaxy_no();
             break;
         }

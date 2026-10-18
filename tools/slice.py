@@ -65,7 +65,7 @@ SKINNED_OBJ = ("TreasureBoxKinokoOneUp", "TreasureBoxCoin", "TreasureBoxEmpty", 
                "Karikari", "Butterfly", "PackunPetit", "KuriboMini", "DinoPackunEggShellBreak", "PackunPetitHead",
                "RockBreak", "WanwanRollingBreak", "PunchingKinoko", "OtaKingMagma", "OtaKingLongFoot", "WoodBoxBreak",
                "CrystalCageSBreak", "BenefitItemOneUp", "BenefitItemLifeUp", "FlipPanel", "FlipPanelReverse", "OtaRock",
-               "HammerHeadPackun", "PackunLeaf", "Plant", "Petari", "Butler", "TicoDomeLecture", "Rosetta", "ButlerExplain",
+               "HammerHeadPackun", "PackunLeaf", "Plant", "Petari", "Butler", "TicoDomeLecture", "Rosetta", "ButlerExplain", "ButlerMap",
                "PhantomShipPropellerSmall", "PhantomShipPropellerBig", "PhantomShipBridge",  # AnmModelSwitchMove without SW_A: Move at once (obj_anim: its only clip)
                "PStar", "GStar", "SpinTico", "AstroCore")  # PStar / GStar: the star return demos' PowerStar / GrandStar (clip names fit 31 chars)
 # MapObjActor::initialize (tryStartAllAnim): a placed class whose model archive holds a BCK of the archive's name
@@ -87,7 +87,7 @@ def auto_anim(fsp, arc):
     return _auto_anim[arc]
 
 
-ANIM_ARC = {"TicoDomeLecture": "Tico", "ButlerExplain": "Butler", "PStar": "PowerStar", "GStar": "GrandStar", "CocoSambo": "CocoSamboBody", "Karikari": "Karipon", "BenefitItemOneUp": "KinokoOneUp",
+ANIM_ARC = {"TicoDomeLecture": "Tico", "ButlerExplain": "Butler", "ButlerMap": "Butler", "PStar": "PowerStar", "GStar": "GrandStar", "CocoSambo": "CocoSamboBody", "Karikari": "Karipon", "BenefitItemOneUp": "KinokoOneUp",
             "BenefitItemLifeUp": "KinokoLifeUp", "HammerHeadPackun": "PackunFlower", "Plant": "PlantSeed", "FlowerGroup": "Flower", "FlowerBlueGroup": "FlowerBlue",
             "CutBushGroup": "CutBush", "FirePressureRadiate": "FirePressure", "JumpBeamer": "JumpBeamerBody", "TreasureBoxKinokoOneUp": "TreasureBox", "TreasureBoxCoin": "TreasureBox", "TreasureBoxEmpty": "TreasureBox", "TreasureBoxGoldEmpty": "TreasureBoxGold", "TreasureBoxCrackedKinokoOneUp": "TreasureBoxCracked", "TreasureBoxCrackedAirBubble": "TreasureBoxCracked", "TreasureBoxBlueChip": "TreasureBox", "TreasureBoxYellowChip": "TreasureBox", "TreasureBoxKinokoLifeUp": "TreasureBox", "TreasureBoxCrackedKinokoLifeUp": "TreasureBoxCracked", "TreasureBoxCrackedEmpty": "TreasureBoxCracked"}  # where a class's clips are when not in its own-named archive
 # ponytail: models the renderer cannot reproduce: the atmosphere spheres (*Air: their glow is a TEV rim effect; drawn
@@ -1549,6 +1549,8 @@ def anim_skipped(cls, clip, galaxy):
         return clip == "demowithbutler" or (clip.startswith("demobutler") and galaxy != "AstroDome")
     if cls == "ButlerExplain":
         return clip.startswith("demo") and clip != "demowithbutler"
+    if cls == "ButlerMap":  # NPCActor's Wait / Talk and its DemoButlerMapLecture (tryInitDemoSheetTalkAnim)
+        return clip not in ("wait", "talk", "demobutlermaplecture")
     if cls == "Rosetta":
         return clip.startswith("demo") and (clip != "demowithbutler") == (galaxy == "AstroGalaxy")
     return False
@@ -1642,6 +1644,8 @@ def canm_chunk(fsp, classes, galaxy=None, scenario=None):
             stem = n.rsplit("/", 1)[-1][:-5].lower()
             if stem == "demowithbutler" and "ロゼッタ状況説明デモ" not in DEMO_NAMES:  # its talk anim's camera: only with that demo
                 continue
+            if c == "ButlerMap" and (stem != "demobutlermaplecture" or "バトラーマップレクチャー" not in DEMO_NAMES):
+                continue
             if n.lower().endswith(".canm") and not anim_skipped(c, stem, galaxy):
                 fr = canm_bake(b)
                 if fr:
@@ -1673,7 +1677,7 @@ DEMO_DIRECT_CAST = {"Butler": ("ドームレクチャー１", "ドームレク�
                                "バトラーグリーンドライバ説明"),
                     # StarReturnDemoStarter::tryRegisterDemo
                     "StarReturnDemoStarter": ("グランドスター帰還[２回目以降]", "パワースター帰還", "天文ドームスター帰還"),
-                    "ButlerMap": ("バトラー報告",),
+                    "ButlerMap": ("バトラー報告", "バトラーマップレクチャー", "バトラーグリーンドライバ説明"),
                     # Rosetta::init: AstroDemoFunction::tryRegisterAstroDemoAll and her three in-level demos
                     "Rosetta": ("グランドスター１帰還", "グランドスター２帰還", "グランドスター３帰還", "グランドスター４帰還", "グランドスター５帰還",
                                 "グランドスター６帰還", "グランドスター帰還[２回目以降]", "パワースター帰還", "ロゼッタ状況説明デモ", "ロゼッタ最終決戦デモ",

@@ -32,6 +32,10 @@ int gd_galaxy_count(void);                      /* cGalaxyInfoTable's rows */
 void gd_galaxy_at(int i, const char **name, const char **map_pane);
 int gd_flag_can_on(const char *name);           /* GameEventFlagChecker */
 int gd_flag_is_on(const char *name);
+void gd_scene_start(void);                       /* the scene start's game data (getSceneStartGameDataHolder) */
+int gd_flag_is_on_just(const char *name);        /* isOnJustGameEventFlag: on now, off as the scene started */
+int gd_flag_can_on_just(const char *name);       /* canOnJustGameEventFlag */
+int gd_green_first_just(void);                   /* StageResultSequenceChecker::isJustGetGreenStarFirst */
 int gd_flag_try_on(const char *name);
 int gd_grand_galaxy_no(const char *galaxy);     /* GameDataConst::getIncludedGrandGalaxyId (its dome) */
 int gd_is_grand_star(const char *galaxy, int star); /* GameDataConst::isGrandStar */
