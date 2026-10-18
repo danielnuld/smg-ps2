@@ -436,17 +436,18 @@ the demos): resume here.** State at the session break (2026-10-17 evening):
   the map lecture with the map, the save; BattleShipGalaxy/1: the first green star -> the star return, the green driver
   explanation, the save, the fade in). ponytail: the map opens in its normal mode (no NewDomeDiscover /
   ChallengeGalaxyDiscover modes).
-- **Resume here (2026-10-18):**
-  1. Map icons (menu.c gm_sync_extra: GalaxyMapMarioIcon / TicoIcon / CometIcon; lyt.py MAP + MapTicoIcon, IconComet;
-     gamedata gd_tico_galaxy) committed UNTESTED; map.bin grew 31 KB and AstroGalaxy/4 is now 8.18 MB over its room
-     (8.15): run the `map` test and AstroGalaxy/4 (grand) for "no memory"; trim if needed (anim_skipped / canm).
-  2. Merge agent-jumpout @ db62aee (D:/smg-ps2-wt/jumpout: マリオ飛び出し, AstroDomeDemoStarter adds_*; repack AstroDome
-     1-6; test `dome`, whose X click moved to 1700/1720) and agent-ending @ a6d7396 (D:/smg-ps2-wt/ending: the epilogue
-     list, EpilogueDemoStage, the StaffRoll in menu.c srl_*, ending.bin; rebuild menus.bin + ending.bin with lyt.py,
-     music.py for SMG_staffroll_strm / SMG_ev_epilogue_b_strm, repack EpilogueDemoStage + its sound.bin; test `ending`
-     from KoopaBattleVs3Galaxy/1). Both compiled only. git may call those worktrees "dubious ownership": merge from
-     D:/smg-ps2 with `git merge agent-<name>`, then `git worktree remove` them.
-  3. Then: Luigi, phase 1, sound.
+- **Resume here (2026-10-18 evening):** points 1 and 2 of the release list done and merged (agent-jumpout, agent-ending,
+  agent-memcard, agent-map, agent-subs, agent-luigi). Tested in PCSX2: grand (AstroGalaxy/4 loads), dome (jump out,
+  scenario select), luigi (talk, his star), luigiplay (Luigi in EggStar/1), prologue (subtitles), title (saves),
+  map (open, list, close), ending (EpilogueA, demo, EndingA, staff roll). Fixed on the way: sound.bin's ADPCM freed from
+  EE RAM after its SPU upload (main.c se_compact / pk_shrink, ~1.74 MB in every scene) and the room raised 9.01 ->
+  10.4 MB (PACK_ROOM, slice_all ROOM; the Observatory was simplified to 0.7 to fit, now full); ButlerExplain packs only
+  DemoWithButler; a save of another size (older format) is written over, not NAND_07; KoopaBattleVs3's clear decided
+  before the optional demos. Not checked: rumble (needs a real pad), the memory card windows (MC_FAKE builds), the map's
+  discover modes / GalaxyDetail picture, the PS2 browser icon. Only AstroGalaxy, AstroDome, EpilogueDemoStage and the
+  Luigi galaxies (PhantomGalaxy, EggStar, BattleShip, HoneyBeeKingdom) were repacked with the new room; the rest fit as
+  they were. Left: the sound packs for Luigi's SEs (sound.py --pack), a release build + ISO (disc.py: subs.bin,
+  letter.bin, mappics.bin, resident_luigi.bin, the Luigi movies), then the test campaign (point 3), phase 1, sound.
   - Done, compiled only (agent-subs, 2026-10-18): movie subtitles and pad rumble. MovieSubtitles (movie.c subs_*:
     sSubtitlesInfo, CinemaSuper, Talk / TalkWait / next page, two 60 Hz steps per movie frame) drawn over the picture
     (render_picture's overlay, under the wipe) from out/packs/subs.bin (tools/lyt.py build_subs: CinemaSuper, the
@@ -462,7 +463,6 @@ the demos): resume here.** State at the session break (2026-10-17 evening):
     ActorInfo BCK rumbles), no DemoCtrlBase / StageEffectDataTable / SimpleEffectObj rumbles, no swim / slider / Foo /
     flip / ceiling rumbles (not in the port), no second WPadRumble for the pause menu, the movie text in MessageFont26
     (CinemaFont26 not converted).
-  3. Then: movie subtitles (needs the font kept while a movie plays), Luigi, phase 1, sound.
 - Luigi (agent-luigi, 2026-10-18), compiled only, untested: gamedata.c FindingLuigiEventScheduler (LuigiEventState
   starts at STATE_NULL 0xFF00 now: gen_gamedata.py), the EventUtil Luigi checks (gd_luigi_*), each file's Mario and Luigi
   game data (mario%d / luigi%d, the last loaded player: the save image doubled, MC_MAX 48 KB: older card saves are
