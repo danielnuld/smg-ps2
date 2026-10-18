@@ -719,6 +719,36 @@ static MemMark boot_mark;
 static void scene_load(void);
 static void pend_cancel(void);
 
+/* the movies asked (game_request_movie), with no scene loaded: subs.bin (tools/lyt.py: MovieSubtitles' CinemaSuper,
+ * its messages and their glyphs, the movies' rumbles) at the bottom of the packs' region as the scene for lyt.c,
+ * msg_get and the talk font, the movies' buffers above it; all of it let go after */
+static void movies_play(void)
+{
+    MemMark mm;
+    mem_mark(&mm);
+    pk_movie = 1;
+    Pack sp;
+    const u8 *subs = NULL;
+    if (pack_open(&sp, "subs.bin")) { pack_close(&sp); subs = load_file("subs.bin"); }
+    if (subs && blob_add(&scene, subs) == 0) {
+        render_load_textures(&scene, 0, 0);
+        lyt_init(&scene);
+        game_font_init(&scene);
+        msg_set(scene.msgs);
+    }
+    for (char *m = strtok(movie_next, ","); m; m = strtok(NULL, ",")) {
+        movie_play(m, &mv_io, subs ? blob_chunk(subs, "MRUM", NULL) : NULL);
+        render_release(&scene, 0, 0); /* the font texture uploaded again past the next picture */
+    }
+    pk_free(subs);
+    msg_set(NULL);
+    memset(&scene, 0, sizeof scene);
+    pack_bytes = 0;
+    pk_movie = 0;
+    mem_release(&mm);
+    movie_next[0] = 0;
+}
+
 static void scene_switch(void)
 {
     printf("scene: %s -> %s\n", scen, scene_next);
@@ -742,12 +772,8 @@ static void scene_switch(void)
     memset(__start_gamebss, 0, __stop_gamebss - __start_gamebss);
     strcpy(scen, scene_next);
     scene_next[0] = 0;
-    if (movie_next[0]) {
-        pk_movie = 1;
-        for (char *m = strtok(movie_next, ","); m; m = strtok(NULL, ",")) movie_play(m, &mv_io);
-        pk_movie = 0;
-        movie_next[0] = 0;
-    }
+    pad_rumble_stop(); /* GameSystemSceneController: resetAllControllerRumble */
+    if (movie_next[0]) movies_play();
     scene_load();
 }
 #endif
@@ -1915,6 +1941,10 @@ int main(void)
         u32 t1 = cycles();
         anim_rate = (float)steps; game_set_draw_steps(steps); /* draw-time clips after `steps` logic steps */
         if (menu_paused()) { anim_rate = 0; game_set_draw_steps(0); } /* the world held under the pause menu */
+        { /* GamePauseSequence: onPauseBeginAllRumble / onPauseEndAllRumble (both stop the rumble) */
+            static int was_paused;
+            if (menu_paused() != was_paused) { was_paused = menu_paused(); pad_rumble_stop(); }
+        }
         game_draw();
         anim_rate = 1.0f;
 #if defined(PACKS) && defined(LYT_TEST)

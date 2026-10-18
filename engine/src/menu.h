@@ -59,6 +59,7 @@ void menu_result_start(void);        /* the result held for the star return demo
 int menu_take_save_request(void);    /* main.c: 1 once per request */
 int menu_draw_screen(void); /* game_draw: 1 when a whole-screen menu (the scenario select) drew the frame */
 const u16 *msg_get(const char *label); /* MR::getLayoutMessageDirect / getGameMessageDirect (MSGS chunk), NULL none */
+void msg_set(const u8 *msgs_chunk);    /* msg_get's chunk (menu_init's; main.c's subs.bin while a movie plays) */
 int menu_test_point_scenario(const char *pane);
 int menu_test_point_dome(const char *pane);
 int menu_test_point_file(int slot, const char *pane);

@@ -446,7 +446,22 @@ the demos): resume here.** State at the session break (2026-10-17 evening):
      music.py for SMG_staffroll_strm / SMG_ev_epilogue_b_strm, repack EpilogueDemoStage + its sound.bin; test `ending`
      from KoopaBattleVs3Galaxy/1). Both compiled only. git may call those worktrees "dubious ownership": merge from
      D:/smg-ps2 with `git merge agent-<name>`, then `git worktree remove` them.
-  3. Then: movie subtitles (needs the font kept while a movie plays), Luigi, phase 1, sound.
+  3. Then: Luigi, phase 1, sound.
+  - Done, compiled only (agent-subs, 2026-10-18): movie subtitles and pad rumble. MovieSubtitles (movie.c subs_*:
+    sSubtitlesInfo, CinemaSuper, Talk / TalkWait / next page, two 60 Hz steps per movie frame) drawn over the picture
+    (render_picture's overlay, under the wipe) from out/packs/subs.bin (tools/lyt.py build_subs: CinemaSuper, the
+    Layout_StoryDemo messages, only their MessageFont26 glyphs (msg.py font_subset_chunk), MRUM: MoviePadRumble*.arc);
+    main.c movies_play loads it at the bottom of the pack region as `scene` for lyt.c / msg_get (msg_set) / the talk
+    font (game_font_init), render_reserve_blocks keeps the picture's VRAM. Rumble: pad.c WPadRumble (eight channels,
+    gRumblePatternTable, the 1800-step rest) on the DualShock's small motor (RUMBLE_BIG: the large one's level, 0),
+    stopped at scene changes and pause; DemoPadRumbler over the movies; wired in game.c where Petari calls it (Mario's
+    startPadVib, launch stars, OtaKing, DinoPackun, CocoSambo, HammerHeadPackun, TicoFat, switches, pickups, ...).
+    Before testing: `python tools/lyt.py data/fs/files` (writes subs.bin beside menus.bin). Tests: `prologue` (Koopa's
+    subtitles from ~65 s into PrologueA), `finalmovie`; rumble on a real pad (PCSX2 shows nothing without a rumble
+    pad). ponytail: trample / spin rumbles at mario_offence (not at the message taken), no ActorPadAndCameraCtrl (the
+    ActorInfo BCK rumbles), no DemoCtrlBase / StageEffectDataTable / SimpleEffectObj rumbles, no swim / slider / Foo /
+    flip / ceiling rumbles (not in the port), no second WPadRumble for the pause menu, the movie text in MessageFont26
+    (CinemaFont26 not converted).
 - Pack memory (2026-10-18): the Observatory ran out of pack region ("packs: no memory for ...": the heap is full after a
   load). slice_all.py's room per galaxy now leaves out the menu packs main.c loads beside it (MENU_PACKS: map.bin in
   AstroGalaxy, dome.bin, the title packs), and slice.py anim_skipped leaves out clips / canms a class never plays in a

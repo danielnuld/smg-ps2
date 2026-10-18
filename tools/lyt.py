@@ -382,6 +382,31 @@ def build_ending(fsp):
     return build_dome(fsp, ENDING, "StaffRollPicture", pics)
 
 
+# the movies' (MoviePlayingSequence): subs.bin, loaded by main.c while the movies play (no scene then): MovieSubtitles'
+# CinemaSuper with its messages (MovieSubtitlesDataTable's Layout_StoryDemo*) and only their characters of
+# MessageFont26 (FONT, its atlas the one texture); MRUM: DemoPadRumbler's MoviePadRumble<Name>.arc (PadRumbleData.bcsv)
+# as u32 n, pad[3]; n x {char movie[16]; s32 StartFrame; s32 pattern (WPadRumbleData's index)}
+RUMBLE_NAMES = ("最強【長】", "最強", "強", "中", "弱", "微弱")
+
+
+def build_subs(fsp):
+    import msg
+    from slice import blob_of, chunk
+    labels = sorted(l for l in msg.Bmg(fsp).index if l.startswith("Layout_StoryDemo"))
+    font, ftex = msg.font_subset_chunk(fsp, labels)
+    files = {k.lower().rsplit("/", 1)[-1]: v for k, v in B.rarc_files((Path(fsp) / "LayoutData" / "CinemaSuper.arc").read_bytes())}
+    texts = list(ftex)  # the font's atlas first: FONT's tex index 0
+    body = convert(files, "CinemaSuper", texts)
+    lytr = struct.pack("<I12x", 1) + struct.pack("<I", 20) + body
+    rum = []
+    for p in sorted((Path(fsp) / "ObjectData").glob("MoviePadRumble*.arc")):
+        b = next(v for k, v in B.rarc_files(p.read_bytes()) if k.lower().endswith("padrumbledata.bcsv"))
+        for n, f in zip(B.bcsv_column(b, "PadRumbleName"), B.bcsv_column(b, "StartFrame")):
+            rum.append(struct.pack("<16sii", p.stem[len("MoviePadRumble"):].encode(), f, RUMBLE_NAMES.index(n)))
+    return blob_of([chunk(b"LYTR", lytr), text_chunk(texts), chunk(b"FONT", font), msgs_chunk(fsp, ("Layout_StoryDemo",)),
+                    chunk(b"MRUM", struct.pack("<I12x", len(rum)) + b"".join(rum))])
+
+
 # the messages menus and screens look up by label (MR::getLayoutMessageDirect / getGameMessageDirect): MSGS chunk
 MSG_PREFIXES = ("Layout_", "System_", "Select_", "NAND_", "PauseMenu_", "PlayerLeft", "ScenarioName_", "GalaxyName_",
                 "GalaxyNameShort_", "GalaxyStage_", "GalaxyInfo_", "GalaxyMap_", "GalaxyNamePlate_", "GetStar_",
@@ -390,13 +415,13 @@ MSG_PREFIXES = ("Layout_", "System_", "Select_", "NAND_", "PauseMenu_", "PlayerL
                 "StaffList", "StaffRollInfo_")
 
 
-def msgs_chunk(fsp):
+def msgs_chunk(fsp, prefixes=MSG_PREFIXES):
     """MSGS: u32 n, pad[3]; n x {u32 label, text} (byte offsets from the payload; labels sorted, NUL ended; texts UTF-16
     with the BMG's tags, 0 ended)"""
     import msg
     from slice import chunk
     m = msg.Bmg(fsp)
-    labels = sorted(l for l in m.index if l.startswith(MSG_PREFIXES))
+    labels = sorted(l for l in m.index if l.startswith(prefixes))
     lpool, tpool, ents = bytearray(), [], []
     for l in labels:
         ents.append((len(lpool), len(tpool)))
@@ -576,6 +601,8 @@ if __name__ == "__main__":  # python tools/lyt.py data/fs/files [out/packs/menus
     print(f"dome.bin {dst.with_name('dome.bin').stat().st_size / 1024:.0f} KB")
     dst.with_name("ending.bin").write_bytes(build_ending(fsp))
     print(f"ending.bin {dst.with_name('ending.bin').stat().st_size / 1024:.0f} KB")
+    dst.with_name("subs.bin").write_bytes(build_subs(fsp))
+    print(f"subs.bin {dst.with_name('subs.bin').stat().st_size / 1024:.0f} KB")
     t2, t3 = build_title(fsp)
     dst.with_name("title.bin").write_bytes(t2)
     dst.with_name("title3d.bin").write_bytes(t3)
