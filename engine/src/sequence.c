@@ -226,13 +226,6 @@ void seq_galaxy_move(int type, const char *stage, int scenario, int start_id, in
         break;
     case SEQ_STAGE_CLEAR: /* the clear's demo sequence ends with the save (tryStartSave); decideNextEventForClearGalaxy: the grand stars and the story's demos go to the
                            * Observatory; a power star back to its dome (decide_clear_galaxy queues the demos) */
-        if (!strcmp(sq.before, "HeavensDoorGalaxy") || gd_is_grand_star(sq.before, sq.before_no) ||
-            !strcmp(sq.before, "TriLegLv1Galaxy") || !strcmp(sq.before, "KoopaBattleVs1Galaxy") ||
-            !strcmp(sq.before, "KoopaJrShipLv1Galaxy") || !strcmp(sq.before, "KoopaBattleVs2Galaxy") ||
-            !strcmp(sq.before, "FloaterOtaKingGalaxy") || clear_to_astro_galaxy()) {
-            snprintf(st, sizeof st, "AstroGalaxy"); no = astro_galaxy_no();
-            break;
-        }
         if (!strcmp(sq.before, "KoopaBattleVs3Galaxy")) { /* decideNextEventForClearGalaxy: cDemoEpilogueComplete when
             * isStarCompleteAllGalaxy, else cDemoEpilogueNormal, in EpilogueDemoStage/1 (the list's movies, the epilogue
             * demo, the staff roll, the title: game.c story_update). Its first movie (MovieEpilogueA, after the star
@@ -241,6 +234,13 @@ void seq_galaxy_move(int type, const char *stage, int scenario, int start_id, in
             sdemo[0] += 2;
             game_request_movie("EpilogueA");
             snprintf(st, sizeof st, "EpilogueDemoStage"); no = 1; type = SEQ_TITLE; /* (no result window, no save prompt) */
+            break;
+        }
+        if (!strcmp(sq.before, "HeavensDoorGalaxy") || gd_is_grand_star(sq.before, sq.before_no) ||
+            !strcmp(sq.before, "TriLegLv1Galaxy") || !strcmp(sq.before, "KoopaBattleVs1Galaxy") ||
+            !strcmp(sq.before, "KoopaJrShipLv1Galaxy") || !strcmp(sq.before, "KoopaBattleVs2Galaxy") ||
+            !strcmp(sq.before, "FloaterOtaKingGalaxy") || clear_to_astro_galaxy()) {
+            snprintf(st, sizeof st, "AstroGalaxy"); no = astro_galaxy_no();
             break;
         }
     astro_or_dome: /* setNextStageToAstroGalaxyOrDome */
