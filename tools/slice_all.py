@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import budget as B
 import slice as SL
 
-ROOM = 9.01e6  # phase 0b: room for scenario data with the levers (docs/phase0b-report.md)
+ROOM = 10.4e6  # room for scenario data (phase 0b: 9.01e6, docs/phase0b-report.md; +1.39e6: main.c se_compact frees sound.bin's ADPCM)
 # the menus' packs main.c loads beside a galaxy's own (scene_load: mp_names / mp_scene) come out of its room
 MENU_PACKS = {"FileSelect": ("title.bin", "title3d.bin"), "AstroDome": ("dome.bin",), "AstroGalaxy": ("map.bin",), "EpilogueDemoStage": ("ending.bin",)}
 

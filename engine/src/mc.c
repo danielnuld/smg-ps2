@@ -88,9 +88,13 @@ int mc_load(u8 *dst, int size)
     u32 sum;
     memcpy(&sum, buf + n, 4);
 #ifdef MC_FAKE
-    if (MC_FAKE == MC_CORRUPT) got = 0;
+    if (MC_FAKE == MC_CORRUPT) sum = ~check_sum(buf, n);
 #endif
-    if (got != n && (got != n + 4 || sum != check_sum(buf, n))) { /* (n bytes: a save written before the checksum) */
+    if (got != n && got != n + 4) { /* another size: an older save format (before Luigi's data), dropped as v1 saves */
+        printf("mc: save of an older format (%d bytes, %d expected): written over\n", got, n + 4);
+        return MC_NOFILE;
+    }
+    if (got == n + 4 && sum != check_sum(buf, n)) { /* (n bytes: a save written before the checksum) */
         printf("mc: save corrupted (%d bytes, %d expected)\n", got, n + 4);
         return MC_CORRUPT;
     }

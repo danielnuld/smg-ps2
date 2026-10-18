@@ -9530,6 +9530,15 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
             }
     }
     if (row < 0 && frame % 120 == 0) printf("talk test f %d: no talker of class %d" "\n", frame, TALK_CLS);
+    if (row < 0 && TALK_CLS == 6 && frame % 120 == 0) { /* LuigiNPC's model is in its zone's full pack: Mario put by him */
+        int ty = scene_type(sc, "LuigiNPC");
+        for (u32 i = 0; i < sc->nobjs; i++)
+            if ((int)sc->objs[i].type == ty) {
+                mario->pos = vadd(row_pos(&sc->objs[i]), vmul(mario->up, 100.0f));
+                printf("talk test: Mario by LuigiNPC row %u" "\n", i);
+                break;
+            }
+    }
     if (row < 0 || mario->launch >= 0) return -1;
     const Inst *in = &insts[row];
     V3 p = v3(in->m[12], in->m[13], in->m[14]), z = vnorm(v3(in->m[8], in->m[9], in->m[10]));
@@ -25165,8 +25174,7 @@ static void dome_init(void)
     }
     dm.on = dm.bs_row >= 0 && dm.ng > 0;
     dm.m_select = scene_model(sc, "MiniatureGalaxySelect");
-    if (dm.on) printf("dome: blue star row %d, %d galaxies\n", dm.bs_row, dm.ng);
-}
+    if (dm.on) printf("dome: blue star row %d, %d galaxies\n", dm.bs_row, dm.ng);}
 
 static void dome_update(void)
 {
