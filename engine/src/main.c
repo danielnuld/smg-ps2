@@ -27,7 +27,6 @@
 #include "mc.h"
 #include "movie.h"
 #include "sequence.h"
-#include "music_tab.h"
 #include "packs_cfg.h" /* written by build.sh: PACKS = "<Galaxy>/<scenario>", or empty */
 
 extern const u8 slice_blob[];
@@ -732,15 +731,7 @@ static void scene_load(void)
         for (u32 i = 0; i < sizeof limits / sizeof limits[0]; i++)
             if (!strcmp(limits[i].scen, scen)) { game_set_time_limit(limits[i].secs); printf("time limit %d s\n", limits[i].secs); }
     }
-    {
-        /* the scenario's stage BGM (music_tab.h); sequenced ones (LibraryRoom...) are not streams: galaxy 01 */
-        const char *track = "SMG_galaxy01_strm";
-        char path[96];
-        for (u32 i = 0; i < sizeof music_tab / sizeof music_tab[0]; i++)
-            if (!strcmp(music_tab[i].scen, scen)) track = music_tab[i].track;
-        snprintf(path, sizeof path, "host:music/%s.pcm", track);
-        audio_music(path);
-    }
+    game_bgm_stage(); /* the scenario's stage BGM (game.c: music_tab.h) */
     {
         unsigned char start[64], near[64]; /* the start zone's chain and what streaming wants around Mario there (OceanRing 4
                                             * starts over another zone: without it, no ground for 2 s) */
@@ -897,6 +888,12 @@ int main(void)
         if (frame > 200 && frame % 30 == 0 && frame < 3000)
             printf("story test f %u: busy %d demo %d butlerA %d lecture %d\n", frame, game_story_busy(), game_test_demo(-1),
                    gd_story_passed("バトラー情報Ａ"), gd_story_passed("天球儀レクチャー"));
+#endif
+#if defined(PACKS) && defined(SHELL_TEST) /* HellProminenceGalaxy/1: 貝殻惑星[開始] (demo 1): the LavaShellTower's three anim
+                                           * cameras, the stage BGM stopped (60) then MBGM_GALAXY_02_HURRY, the scene stopped */
+        if (frame == 300) printf("shell test: start %d\n", game_test_demo(1));
+        if (frame > 300 && frame % 30 == 0 && frame < 1500)
+            printf("shell test f %u: demo %d, anim camera frame %d\n", frame, game_test_demo(-1), game_test_demo(-2));
 #endif
 #if defined(PACKS) && defined(PROLOGUE_TEST)
         if (frame == 300 || frame == 700) printf("prologue test f %u: movie starter %d\n", frame, game_test_movie(frame == 700));
