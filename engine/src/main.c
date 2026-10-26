@@ -1358,6 +1358,9 @@ int main(void)
             if (frame % 50 == 0) printf("ibubble test f %u: row %d pieces out %d\n", frame, row, game_pieces_out());
         }
 #endif
+#ifdef EXPLORE_TEST /* videos: any galaxy played through the pad (game_demo_explore) */
+        if (frame >= 150) game_demo_explore((int)frame);
+#endif
 #ifdef TEASER /* video demos: Mario through the pad only, every frame */
 #if defined(TALK_TEST)
         if (frame >= 200 && frame < 3000) game_demo_walk1((int)frame);

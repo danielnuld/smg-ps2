@@ -33718,6 +33718,67 @@ int game_demo_fat(int frame) /* EggStar 2: placed 900 off the TicoFat once, he w
     return -1;
 }
 
+int game_demo_explore(int frame) /* any galaxy (explore builds, for the videos): played as a player through the pad
+                                  * only: on to the nearest launch star not flown yet (a spin in its ring), a coin or
+                                  * star piece within 700 on the way; a target with no ground ahead or no headway for
+                                  * 4 s is given up */
+{
+    static int cur = -1, kind, since, ban[96], nban, flying = -1;
+    static float best_d;
+    pad_force = 0;
+    if (mario->launch >= 0) { /* the one he flies is done */
+        if (flying != mario->launch && nban < 96) ban[nban++] = 200000 + mario->launch;
+        flying = mario->launch; cur = -1; return -1;
+    }
+    flying = -1;
+    if (dx_busy() || talk_active()) { cur = -1; return -1; }
+    since++;
+    if (cur >= 0 && since > 240) { if (nban < 96) ban[nban++] = kind * 100000 + cur; cur = -1; }
+    if (cur < 0 || frame % 30 == 0) { /* pick again */
+        float bd = 700.0f;
+        int bc = -1, bk = 0;
+        for (int k = 0; k < 2; k++) {
+            Pickup *pp = k ? pieces : coins;
+            int n = k ? npieces : ncoins;
+            for (int i = 0; i < n; i++) {
+                int b = 0;
+                for (int j = 0; j < nban; j++) b |= ban[j] == k * 100000 + i;
+                if (!pp[i].alive || b || (pp[i].row >= 0 && !row_shown(pp[i].row))) continue;
+                float d = vlen(vsub(pp[i].pos, mario->pos));
+                if (d < bd) { bd = d; bc = i; bk = k; }
+            }
+        }
+        if (bc < 0) {
+            bd = 6000.0f;
+            for (int i = 0; i < nlaunches; i++) {
+                int b = 0;
+                for (int j = 0; j < nban; j++) b |= ban[j] == 200000 + i;
+                if (b || !launches[i].shown || launches[i].cool > 0) continue;
+                float d = vlen(vsub(launches[i].pos, mario->pos));
+                if (d < bd) { bd = d; bc = i; bk = 2; }
+            }
+        }
+        if (bc != cur || bk != kind) { cur = bc; kind = bk; since = 0; best_d = 1e30f; }
+    }
+    if (cur < 0) { test_walk_to(mario->pos, 1e9f); return 0; }
+    V3 to = kind == 2 ? launches[cur].pos : (kind ? pieces : coins)[cur].pos;
+    float d = vlen(vsub(to, mario->pos));
+    if (d < best_d - 30.0f) { best_d = d; since = 0; } /* headway */
+    if (mario->grounded && vlen(vtangent(vsub(to, mario->pos), mario->up)) > 200.0f) { /* no ground 150 ahead within 1500 under: off the planet */
+        V3 ahead = vadd(mario->pos, vmul(vnorm(vtangent(vsub(to, mario->pos), mario->up)), 150.0f));
+        int got = 0;
+        for (float t = -200.0f; t <= 1500.0f && !got; t += 40.0f) {
+            Hit hp[1];
+            got = kcl_query(vsub(ahead, vmul(mario->up, t)), BODY_RADIUS, hp, 1) > 0;
+        }
+        if (!got) { if (nban < 96) ban[nban++] = kind * 100000 + cur; cur = -1; test_walk_to(mario->pos, 1e9f); return 0; }
+    }
+    if (!test_walk_to(to, kind == 2 ? 60.0f : 20.0f) && since > 60 && since % 60 < 4) pad_force |= PAD_CROSS; /* no headway for a second: a jump */
+    if (kind == 2) demo_press(PAD_SQUARE, d < LAUNCH_BIND);
+    else if (d < 260.0f && vdot(vsub(to, mario->pos), mario->up) > 90.0f) demo_press(PAD_CROSS, mario->grounded); /* up there: a jump */
+    return kind * 1000 + cur;
+}
+
 int game_demo_vine(int frame) /* EggStar 1: the Plant by the HammerHeadPackun grown; he walks to it, jumps onto it,
                                * spins up it and leaves it at its top */
 {

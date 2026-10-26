@@ -50,6 +50,7 @@ int game_demo_fat(int frame);
 int game_demo_vine(int frame);
 int game_demo_dino(int frame);
 int game_demo_ota(int frame);
+int game_demo_explore(int frame);
 /* EggStar 2 (isStageStarPieceFollowGroupLimit): StarPieceFollowGroups give at most 100 minus Mario's star pieces */
 void game_set_piece_follow_limit(int on);
 int game_test_ibubble(int touch);
