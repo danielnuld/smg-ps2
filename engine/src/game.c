@@ -33753,7 +33753,7 @@ int game_demo_explore(int frame) /* any galaxy (explore builds, for the videos):
             for (int i = 0; i < nlaunches; i++) {
                 int b = 0;
                 for (int j = 0; j < nban; j++) b |= ban[j] == 200000 + i;
-                if (b || !launches[i].shown || launches[i].cool > 0) continue;
+                if (b || !row_shown(launches[i].row) || launches[i].cool > 0) continue;
                 float d = vlen(vsub(launches[i].pos, mario->pos));
                 if (d < bd) { bd = d; bc = i; bk = 2; }
             }
@@ -33774,7 +33774,11 @@ int game_demo_explore(int frame) /* any galaxy (explore builds, for the videos):
         if (!got) { if (nban < 96) ban[nban++] = kind * 100000 + cur; cur = -1; test_walk_to(mario->pos, 1e9f); return 0; }
     }
     if (!test_walk_to(to, kind == 2 ? 60.0f : 20.0f) && since > 60 && since % 60 < 4) pad_force |= PAD_CROSS; /* no headway for a second: a jump */
-    if (kind == 2) demo_press(PAD_SQUARE, d < LAUNCH_BIND);
+    if (kind == 2) { /* tryBind measures from his body's centre; one floating high takes a jump first */
+        float db = vlen(vsub(vadd(mario->pos, vmul(mario->up, BODY_RADIUS)), to));
+        if (db >= LAUNCH_BIND && vlen(vtangent(vsub(to, mario->pos), mario->up)) < 200.0f) demo_press(PAD_CROSS, mario->grounded);
+        demo_press(PAD_SQUARE, db < LAUNCH_BIND);
+    }
     else if (d < 260.0f && vdot(vsub(to, mario->pos), mario->up) > 90.0f) demo_press(PAD_CROSS, mario->grounded); /* up there: a jump */
     return kind * 1000 + cur;
 }
