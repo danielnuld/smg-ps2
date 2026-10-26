@@ -14,5 +14,13 @@ int kcl_check_sphere(const unsigned char *kcl, const float c[3], float radius, K
 /* Face normal of a prism (unit), for pushing out. */
 const float *kcl_face_normal(const unsigned char *kcl, int prism);
 int kcl_attribute(const unsigned char *kcl, int prism);
+/* Segment query (Petari KCollisionServer::checkArrow + KCHitArrow): the nearest prism the segment o + dir enters from
+ * its front, *frac its place along dir (0, 1]; 0 if none */
+int kcl_check_arrow(const unsigned char *kcl, const float o[3], const float dir[3], float *frac);
+
+/* KCollisionServer::getPos (vertex 0..2), its edge normals, CollisionParts::calcCollidePosition (c moved in place) */
+void kcl_prism_pos(const unsigned char *kcl, int prism, int v, float out[3]);
+const float *kcl_edge_normal(const unsigned char *kcl, int prism, int e);
+void kcl_collide_pos(const unsigned char *kcl, int prism, int flag, float c[3]);
 
 #endif

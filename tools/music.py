@@ -18,6 +18,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from budget import bcsv_column, rarc_files  # noqa: E402
+from bgmseq import SEQ_BGMS  # noqa: E402
 
 # Stage -> BGM (Petari AudStageBgmWrap.cpp sMAStageBgmData / sMASenarioBgmData, AudStageBgmTable.cpp entry 0 for
 # stages missing there); sound ids by name, a scenario group's -1 falls back to the stage's own id.
@@ -57,7 +58,10 @@ STM_BGM = {"STAFF_ROLL": "SMG_staffroll_strm", "EPILOGUE_B": "SMG_ev_epilogue_b_
 
 
 def stream_of(bgm, streams):
-    """Sound id name -> stream stem in AudioRes/Stream, or None (sequenced: LIBRARY, ASTRO_DOME_LOFT...)."""
+    """Sound id name -> stream stem in AudioRes/Stream; a sequenced one (LIBRARY, ASTRO_DOME_LOFT...) -> its
+    tools/bgmseq.py render SEQ_<name>; None: neither."""
+    if "BGM_" + bgm in SEQ_BGMS:
+        return "SEQ_" + bgm.lower()
     if bgm.startswith("GALAXY_"):
         stem = "SMG_" + bgm.lower().replace("galaxy_", "galaxy", 1).replace("galaxyinter", "galaxy_inter")
     elif bgm.startswith("ASTRO_OUT"):
@@ -108,9 +112,10 @@ def table(fs, out):
             if st:
                 rows.append(f'    {{"{stage}/{no}", "{st}"}},')
                 used.add(st)
-    bgm = sorted((sound_id(st), st) for st in used)  # the demos' startStageBGM(name): sound id -> stream
+    bgm = sorted((sound_id(st), st) for st in used if not st.startswith("SEQ_"))  # the demos' startStageBGM(name): sound id -> stream
     assert all(stream_of(i, streams) == st for i, st in bgm), bgm
     bgm += sorted((i, st) for i, st in STM_BGM.items() if st in streams)
+    bgm += [(n[4:], "SEQ_" + n[4:].lower()) for n in SEQ_BGMS]  # the sequenced (bgm_sub, the jingles)
     used |= {st for _, st in bgm}
     Path(out).write_text("\n".join(["/* written by tools/music.py --table: scenario -> music stream (Petari AudStageBgmWrap) */",
                                     "static const struct { const char *scen, *track; } music_tab[] = {", *rows, "};",

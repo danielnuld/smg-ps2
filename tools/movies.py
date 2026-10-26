@@ -44,7 +44,8 @@ def convert(thp, out):
     out.mkdir(parents=True, exist_ok=True)
     v = out / (thp.stem + ".m2v")
     subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(thp), "-an", "-vf", "fps=30000/1001",
-                    "-c:v", "mpeg2video", "-b:v", "4M", "-maxrate", "6M", "-bufsize", "1835k", "-bf", "0", "-g", "15",
+                    "-c:v", "mpeg2video", "-b:v", "6M", "-maxrate", "8M", "-bufsize", "1835k", "-bf", "0", "-g", "15",
+                    "-mbd", "rd", "-trellis", "2", "-cmp", "2", "-subcmp", "2", "-qmin", "1",
                     "-f", "mpeg2video", str(v)], check=True)
     pcm = subprocess.run(["ffmpeg", "-loglevel", "error", "-i", str(thp), "-vn", "-ac", "2", "-ar", str(RATE),
                           "-f", "s16le", "-"], capture_output=True).stdout  # the last ADPCM packet is short: an error, kept

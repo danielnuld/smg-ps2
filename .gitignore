@@ -16,3 +16,4 @@ videos/
 engine/slice-*.elf
 !engine/slice-bench.elf
 tools/dolphin/out/
+devlog/media/

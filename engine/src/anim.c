@@ -14,11 +14,16 @@
  * 0x8000 = 180 degrees. Joint local = T * Rz * Ry * Rx * S. */
 
 #define SLOTS 8 /* Mario and the animated placed objects near him */
+#define TSLOTS 6 /* a blend group's other tracks (Mario's: 基本, 水泳基本), clips up to TSLOT_MAX */
+#define TSLOT_MAX 65536
 
 static const Scene *sc;
 static u8 *slot_data[SLOTS];
 static int slot_clip[SLOTS], slot_age[SLOTS], age;
 static u32 slot_size;
+static u8 *tslot_data[TSLOTS];
+static int tslot_clip[TSLOTS], tslot_age[TSLOTS];
+static u32 tslot_size;
 u32 anim_inflates, anim_inflated; /* clips inflated, and their bytes (profiling) */
 static short *info_frames;
 static signed char *info_mode;
@@ -33,6 +38,15 @@ void anim_init(const Scene *s)
     for (int i = 0; i < SLOTS; i++) {
         slot_data[i] = mem_alloc(MEM_PLAYER, slot_size);
         slot_clip[i] = -1;
+    }
+    tslot_size = 0;
+    for (u32 i = 0; i < s->nclips; i++)
+        if (s->clips[i].raw > tslot_size && s->clips[i].raw <= TSLOT_MAX)
+            tslot_size = s->clips[i].raw;
+    tslot_size = (tslot_size + 15) & ~15u;
+    for (int i = 0; i < TSLOTS; i++) {
+        tslot_data[i] = tslot_size ? mem_alloc(MEM_PLAYER, tslot_size) : NULL;
+        tslot_clip[i] = -1;
     }
     /* here, below the zone packs' arena mark (allocated at the first anim_clip_info, a zone swap released it) */
     info_frames = mem_alloc(MEM_PLAYER, s->nclips * sizeof(short));
@@ -64,6 +78,22 @@ static const u8 *clip_data(int id)
     return slot_data[lru];
 }
 
+static const u8 *track_data(int id) /* clip_data for a group's tracks 1..3 (their own slots; a larger clip: the main ones) */
+{
+    if (sc->clips[id].raw > tslot_size || !tslot_data[0]) return clip_data(id);
+    int lru = 0;
+    for (int i = 0; i < TSLOTS; i++) {
+        if (tslot_clip[i] == id) { tslot_age[i] = ++age; return tslot_data[i]; }
+        if (tslot_age[i] < tslot_age[lru]) lru = i;
+    }
+    uLongf len = tslot_size;
+    anim_inflates++; anim_inflated += sc->clips[id].raw;
+    if (uncompress(tslot_data[lru], &len, sc->clips[id].z, sc->clips[id].zsize) != Z_OK) return NULL;
+    tslot_clip[lru] = id;
+    tslot_age[lru] = ++age;
+    return tslot_data[lru];
+}
+
 int anim_clip_info(const char *name, int *mode)
 {
     for (u32 i = 0; i < sc->nclips; i++)
@@ -93,9 +123,71 @@ void anim_bind(Anim *a, const Skin *skin)
     memset(a, 0, sizeof *a);
     a->skin = skin;
     a->clip_id = -1;
+    for (int k = 0; k < ANIM_TRACKS; k++) a->tclip[k] = -1;
     a->phase = -1.0f;
     a->interp = 1.0f;
     anim_update(a);
+}
+
+static int clip_id_of(const char *name)
+{
+    for (u32 i = 0; name && i < sc->nclips; i++) if (!strcmp(sc->clips[i].name, name)) return (int)i;
+    return -1;
+}
+
+void anim_blend(Anim *a, const char *clip, float w)
+{
+    int id = clip_id_of(clip);
+    a->ntrack = id >= 0 ? 2 : 1;
+    a->tclip[1] = id;
+    a->tw[0] = 1.0f - w; a->tw[1] = w;
+}
+
+void anim_group(Anim *a, const char *const *clips, int n, const float *w, float speed, int interp)
+{
+    int mode = 0;
+    anim_clip_info(clips[0], &mode);
+    anim_play(a, clips[0], speed, mode == 2 || mode == 4 || n > 1, interp);
+    a->ntrack = n > ANIM_TRACKS ? ANIM_TRACKS : n;
+    for (int k = 1; k < a->ntrack; k++) a->tclip[k] = clip_id_of(clips[k]);
+    anim_weights(a, w);
+}
+
+void anim_weights(Anim *a, const float *w)
+{
+    for (int k = 0; k < a->ntrack; k++) a->tw[k] = w[k];
+}
+
+static void local_mtx(const float q[4], const float t[3], const float s[3], float local[16])
+{
+    float x = q[0], y = q[1], z = q[2], w = q[3];
+    for (int i = 0; i < 16; i++) local[i] = i % 5 ? 0.0f : 1.0f;
+    local[0] = (1 - 2 * (y * y + z * z)) * s[0]; local[1] = 2 * (x * y + z * w) * s[0]; local[2] = 2 * (x * z - y * w) * s[0];
+    local[4] = 2 * (x * y - z * w) * s[1]; local[5] = (1 - 2 * (x * x + z * z)) * s[1]; local[6] = 2 * (y * z + x * w) * s[1];
+    local[8] = 2 * (x * z + y * w) * s[2]; local[9] = 2 * (y * z - x * w) * s[2]; local[10] = (1 - 2 * (x * x + y * y)) * s[2];
+    local[12] = t[0]; local[13] = t[1]; local[14] = t[2];
+}
+
+void anim_overlay(Anim *a, const Anim *up, int root)
+{
+    const Skin *k = a->skin;
+    if (!k || up->skin != k) return;
+    for (u32 j = 0; j < k->njoints && j < ANIM_MAX_JOINTS; j++) {
+        int under = 0;
+        for (int p = (int)j; p >= 0; p = k->joints[p].parent) if (p == root) { under = 1; break; }
+        if (under) { memcpy(a->q[j], up->q[j], 16); memcpy(a->t[j], up->t[j], 12); memcpy(a->s[j], up->s[j], 12); }
+        float local[16];
+        local_mtx(a->q[j], a->t[j], a->s[j], local);
+        if (k->joints[j].parent < 0) memcpy(a->world[j], local, 64);
+        else mat_mul(a->world[j], a->world[k->joints[j].parent], local);
+    }
+}
+
+void anim_track(Anim *a, int k, const char *clip)
+{
+    if (k <= 0 || k >= a->ntrack) return; /* (track 0 is the clip: anim_play) */
+    int id = clip_id_of(clip);
+    if (id >= 0) a->tclip[k] = id;
 }
 
 int anim_play(Anim *a, const char *name, float speed, int loop, int interp)
@@ -108,6 +200,7 @@ int anim_play(Anim *a, const char *name, float speed, int loop, int interp)
             if ((int)i == a->clip_id)
                 return 1;
             a->clip_id = i;
+            a->ntrack = 1; /* (a group's tracks: anim_group after this) */
             /* loop to loop (walk <-> run): keep the step phase instead of restarting the cycle */
             a->phase = was_loop && loop && a->clip && anim_length(a) ? a->frame / anim_length(a) : -1.0f;
             a->frame = 0;
@@ -281,6 +374,16 @@ void anim_pose(Anim *a)
             }
         }
     }
+    /* a group's tracks at the clip's phase (XanimeCore::updateFrame: mFrameRatio x each one's frame_max) */
+    const u8 *tc[ANIM_TRACKS] = {a->clip};
+    float tf[ANIM_TRACKS] = {a->frame}, tot = 0.0f;
+    int nt = a->ntrack > 1 ? a->ntrack : 1;
+    float ratio = a->clip && *(const u16 *)a->clip ? a->frame / *(const u16 *)a->clip : 0.0f;
+    for (int k = 1; k < nt; k++) {
+        tc[k] = a->tclip[k] >= 0 && a->tw[k] != 0.0f ? track_data(a->tclip[k]) : NULL;
+        tf[k] = tc[k] ? ratio * *(const u16 *)tc[k] : 0.0f;
+    }
+    if (nt > 1) for (int k = 0; k < nt; k++) if (tc[k]) tot += a->tw[k];
     for (u32 j = 0; j < k->njoints && j < ANIM_MAX_JOINTS; j++) {
         const SkJoint *jt = &k->joints[j];
         float s[3], r[3], t[3], local[16];
@@ -298,6 +401,30 @@ void anim_pose(Anim *a)
         float cz = cosf(r[2] * h), sz = sinf(r[2] * h);
         float q[4] = {cz * cy * sx - sz * sy * cx, cz * sy * cx + sz * cy * sx, sz * cy * cx - cz * sy * sx,
                       cz * cy * cx + sz * sy * sx}; /* x, y, z, w */
+        if (nt > 1 && tot > 0.0f) { /* XanimeCore::calcBlend: scale / translation by the normalised weights, the rotation
+                                     * lerped in turn by weight / the weights so far (JMAQuatLerp) */
+            float S[3] = {0, 0, 0}, T[3] = {0, 0, 0}, Q[4] = {0, 0, 0, 1}, acc = 0.0f;
+            for (int k = 0; k < nt; k++) {
+                if (!tc[k] || a->tw[k] == 0.0f) continue;
+                float sk[3], rk[3], tk[3];
+                if (j < ((const u16 *)tc[k])[2]) clip_local(tc[k], tf[k], j, sk, rk, tk);
+                else for (int i = 0; i < 3; i++) { sk[i] = jt->scale[i]; rk[i] = jt->rot[i] * (180.0f / 3.14159265f); tk[i] = jt->trans[i]; }
+                float bx = cosf(rk[0] * h), ax_ = sinf(rk[0] * h), by = cosf(rk[1] * h), ay = sinf(rk[1] * h);
+                float bz = cosf(rk[2] * h), az = sinf(rk[2] * h);
+                float qk[4] = {bz * by * ax_ - az * ay * bx, bz * ay * bx + az * by * ax_, az * by * bx - bz * ay * ax_,
+                               bz * by * bx + az * ay * ax_};
+                float w = a->tw[k] / tot, d = 0, l = 0;
+                for (int i = 0; i < 3; i++) { S[i] += sk[i] * w; T[i] += tk[i] * w; }
+                acc += w;
+                float u = w / acc;
+                for (int i = 0; i < 4; i++) d += Q[i] * qk[i];
+                float sgn = d < 0 ? -1.0f : 1.0f;
+                for (int i = 0; i < 4; i++) { Q[i] = Q[i] * (1 - u) + qk[i] * u * sgn; l += Q[i] * Q[i]; }
+                l = 1.0f / sqrtf(l);
+                for (int i = 0; i < 4; i++) Q[i] *= l;
+            }
+            memcpy(q, Q, 16); memcpy(s, S, 12); memcpy(t, T, 12);
+        }
         if (a->interp < 1.0f) { /* fade from the frozen pose: nlerp the rotation, lerp scale and translation */
             float w = a->interp, d = 0;
             for (int i = 0; i < 4; i++) d += q[i] * a->fq[j][i];

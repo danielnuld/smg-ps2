@@ -8,6 +8,9 @@
 void fx_init(const Scene *s);
 /* One-shot effect at a world matrix (an instance's: rotation, scale, position). */
 void fx_emit(int fx, const float m[16]);
+/* setGlobalPrmColor and setRate for the emitters the next fx_emit / fx_keep / fx_named create (255 255 255 1: as they
+ * are; it stays until set again) */
+void fx_tint(u8 r, u8 g, u8 b, float rate);
 /* Looping effect owned by `key` (e.g. an instance): call every frame it should run; its emitters stop emitting the
  * first frame it is not kept, and go once their particles are gone. */
 void fx_keep(int fx, const void *key, const float m[16]);
@@ -36,5 +39,7 @@ int fx_dinofoot_tex(void);
 int fx_ocean_tex(int k); /* OceanSphere's face (0) and back (1) textures (tools/jpa.py) */
 int fx_whirl_tex(void); /* WhirlPoolAccelerator's texture (Whirlpool.bti, its TEV baked), -1 none */
 int fx_rope_tex(void);  /* Trapeze's rope (TrapezeRope.bti), -1 none */
+int fx_marinesnow_tex(void); /* MarineSnow.bti (tools/jpa.py), -1 none */
+int fx_fooline_tex(int k); /* MarioFoo's FooLine.bti baked: 0 its trail, 1 its braking beam (tools/jpa.py), -1 none */
 
 #endif

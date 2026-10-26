@@ -14,6 +14,11 @@
 #include "blob.h"
 #include "camera.h"
 #include "game.h"
+#if defined(BENCH) && defined(DISC) /* console runs: udptty loses bursts, so the bench summary is paced (4 ms a line) */
+static int print_pace_on;
+static void print_pace(void) { if (print_pace_on) { unsigned c0 = cycles(); while (cycles() - c0 < 294912u * 4) {} } }
+#define printf(...) (printf(__VA_ARGS__), print_pace())
+#endif
 #include "mem.h"
 #include "pad.h"
 #include "render.h"
@@ -155,7 +160,7 @@ static void pk_free(const void *p)
 #define SECTOR 2048
 #define PACK_ALLOC(n) (((n) + SECTOR - 1) & ~(SECTOR - 1))
 typedef struct { char path[88]; u32 off, size; } TocEntry;
-static TocEntry toc[96];
+static TocEntry toc[160]; /* a scenario's packs, the shared ones, the movies and the music (33 tracks) */
 static int ntoc;
 static u8 *toc_all; /* the whole PACKS.TOC, kept (toc_select picks a scene's entries) */
 static u32 toc_n;
@@ -163,8 +168,11 @@ static u32 bin_lsn;
 static sceCdRMode cd_mode = {5, SCECdSpinNom, SCECdSecS2048, 0};
 
 /* whole sectors from `lsn` into `dst` (64-aligned, PACK_ALLOC long); wait: block until they are in */
+static u32 cd_seq; /* reads started (disc_read_async: a later read means an earlier one is in) */
 static int cd_read(u32 lsn, u32 sectors, void *dst, int wait)
 {
+    sceCdSync(0); /* one read at a time: audio.c's may still be going */
+    cd_seq++;
     if (!sceCdRead(lsn, sectors, dst, &cd_mode))
         return 0;
     if (wait) {
@@ -192,6 +200,11 @@ static void disc_menu(const u8 *entries, u32 n)
         count++;
     }
     if (!count) return;
+    { /* the release boots straight into the build's scenario: the menu only with SELECT held at boot */
+        int sel_held = 0;
+        for (int i = 0; i < 4; i++) { pad_update(); sel_held |= pad_held(PAD_SELECT); }
+        if (!sel_held) return;
+    }
     static const float eye[3] = {0, 0, 1}, at[3] = {0, 0, 0}, up[3] = {0, 1, 0};
     for (int f = 0, touched = 0;; f++) {
         pad_update();
@@ -247,12 +260,14 @@ static void toc_select(void)
         const TocEntry *e = (const TocEntry *)(toc_all + 4 + i * sizeof(TocEntry));
         if ((strncmp(e->path, scen, lp) == 0 && e->path[lp] == '/') || strcmp(e->path, "resident.bin") == 0 || strcmp(e->path, "sound.bin") == 0 ||
             strcmp(e->path, "resident_luigi.bin") == 0 || strcmp(e->path, "letter.bin") == 0 ||
+            strcmp(e->path, "subs.bin") == 0 || /* the movies' subtitles (movie.c; missing on the disc until 2026-10-24) */
             strcmp(e->path, "menus.bin") == 0 || strcmp(e->path, "menus3d.bin") == 0 ||
             ((strcmp(e->path, "title.bin") == 0 || strcmp(e->path, "title3d.bin") == 0) && strncmp(scen, "FileSelect/", 11) == 0) ||
             (strcmp(e->path, "dome.bin") == 0 && strncmp(scen, "AstroDome/", 10) == 0) ||
             ((strcmp(e->path, "map.bin") == 0 || strcmp(e->path, "mappics.bin") == 0) && strncmp(scen, "AstroGalaxy/", 12) == 0) ||
             (strcmp(e->path, "ending.bin") == 0 && strncmp(scen, "EpilogueDemoStage/", 18) == 0) ||
-            strncmp(e->path, "movies/", 7) == 0) { /* any scene may end in one */
+            strncmp(e->path, "movies/", 7) == 0 || /* any scene may end in one */
+            strncmp(e->path, "music/", 6) == 0) {  /* the BGMs (audio.c streams them) */
             if (ntoc == (int)(sizeof toc / sizeof toc[0])) { printf("packs: TOC full\n"); for (;;) {} }
             memcpy(&toc[ntoc++], e, sizeof *e);
         }
@@ -261,6 +276,29 @@ static void toc_select(void)
 }
 #else
 #define PACK_ALLOC(n) (n)
+#endif
+
+#ifdef DISC
+/* audio.c's music: a file in PACKS.BIN (its first sector and size), and sectors read only while the drive is idle
+ * (the zone prefetch and the movies read asynchronously: the music waits a frame rather than stall them) */
+int disc_file(const char *path, u32 *lsn, u32 *size)
+{
+    for (int i = 0; i < ntoc; i++)
+        if (strcmp(toc[i].path, path) == 0) { *lsn = bin_lsn + toc[i].off / SECTOR; *size = toc[i].size; return 1; }
+    return 0;
+}
+int disc_read_idle(u32 lsn, u32 sectors, void *dst)
+{
+    if (sceCdSync(1)) return 0; /* a read in progress */
+    return cd_read(lsn, sectors, dst, 1);
+}
+/* audio.c's stream: a read started only while the drive is idle (0: busy), not waited for; disc_read_done polls it */
+u32 disc_read_async(u32 lsn, u32 sectors, void *dst)
+{
+    if (sceCdSync(1) || !cd_read(lsn, sectors, dst, 0)) return 0;
+    return cd_seq;
+}
+int disc_read_done(u32 seq) { return seq != cd_seq || !sceCdSync(1); }
 #endif
 
 static int pack_open(Pack *p, const char *path)
@@ -705,8 +743,8 @@ static void load_modules(void)
     SifInitRpc(0);
     sbv_patch_enable_lmb();
     sbv_patch_disable_prefix_check();
-    SifLoadModule("rom0:SIO2MAN", 0, NULL);
-    SifLoadModule("rom0:PADMAN", 0, NULL);
+    SifLoadModule("rom0:XSIO2MAN", 0, NULL); /* X modules (libpadx): see mc.c mc_init */
+    SifLoadModule("rom0:XPADMAN", 0, NULL);
     mc_init(); /* LogoScene MountGameData: startPreLoadSaveDataSequence (its windows: the first scene's menu.c sv_boot) */
 #ifndef TITLE_TEST /* (the title test starts from no files) */
     int sz, res = mc_load(gd_image(&sz), sz);
@@ -898,17 +936,22 @@ int main(void)
 #endif
     for (;;) {
         u32 t0 = cycles();
+#if defined(BENCH) && defined(DISC)
+        if (frame >= 1860) print_pace_on = 1;
+#endif
         game_kcl_cycles = 0;
         int steps = 1;
 #ifdef CATCHUP
         steps = (int)(vblanks - last_vb);
         last_vb = vblanks;
         if (steps < 1) steps = 1;
-        if (steps > 2) steps = 2; /* a longer frame slows the game a moment rather than spiralling */
-        for (int s = 1; s < steps; s++) { pad_update(); game_update(); }
+        if (steps > 3) steps = 3; /* real speed down to 20 fps (the console runs 20-30 in heavy scenes: with 2, Mario
+                                    * moved in slow motion); a longer frame slows the game a moment rather than spiralling */
+        for (int s = 1; s < steps; s++) { pad_update(); game_update(); audio_feed(); }
 #endif
         pad_update();
         game_update();
+        audio_feed(); /* audsrv holds only 10 KB (80 ms of a stream): fed between the frame's long parts too */
         if (menu_take_save_request()) { int sz; mc_save(gd_image(&sz), sz); } /* SaveDataHandleSequence: save all */
         mc_poll();
 #ifdef PACKS
@@ -1106,6 +1149,9 @@ int main(void)
         if (frame == 300) printf("shell test: start %d\n", game_test_demo(1));
         if (frame > 300 && frame % 30 == 0 && frame < 1500)
             printf("shell test f %u: demo %d, anim camera frame %d\n", frame, game_test_demo(-1), game_test_demo(-2));
+#endif
+#if defined(PACKS) && defined(GATEWAY_TEST)
+        pad_force = game_test_gateway(frame) && frame % 40 < 3 ? PAD_CROSS : 0; /* A tapped while a talk waits */
 #endif
 #if defined(PACKS) && defined(PROLOGUE_TEST)
         if (frame == 300 || frame == 700) printf("prologue test f %u: movie starter %d\n", frame, game_test_movie(frame == 700));
@@ -1536,6 +1582,10 @@ int main(void)
             printf("giver test f %u: %s row %d, coins %d, pieces %d\n", frame, frame % 80 ? "leaves" : "pompon",
                    game_test_giver(frame % 80 ? 1 : 2), game_coins(), game_pieces_out());
 #endif
+#if defined(PACKS) && defined(MORPH_TEST)
+        game_test_morph((int)frame);
+        if (frame % 30 == 0) printf("morph perf f %u: logic %u draw %u us, tris %u\n", frame, t_logic / 295, t_draw / 295, render_tris_drawn());
+#endif
 #ifdef BEE_TEST
         { /* Bee Mario jumps (150), A held from 190 to 400 (flies, runs out), let go */
             if (frame == 150) { game_test_bee(0); game_test_jump(); }
@@ -1571,10 +1621,18 @@ int main(void)
         }
 #endif
 #ifdef WALKER_TEST
+#ifdef TOWER_TEST
+        { extern void game_test_tower(unsigned); game_test_tower(frame); }
+#elif defined HANG_TEST
+        { extern void game_test_hang(unsigned); game_test_hang(frame); }
+#elif defined ICE_TEST
+        { extern void game_test_ice(unsigned); game_test_ice(frame); }
+#else
         if (frame == 150 || frame == 450 || frame == 750 || frame == 1050) { /* Mario by a Kuribo, a Takobo, a Karikari, a Butterfly */
             static const char *cls[4] = {"Kuribo", "Takobo", "Karikari", "Butterfly"};
             printf("walker test f %u: %s row %d\n", frame, cls[frame / 300], game_test_walker(cls[frame / 300], 0));
         }
+#endif
 #endif
 #ifdef ROUTE_TEST
         if (frame >= 150) { /* the scenario played through: launch stars to its goal, its action, its star */
@@ -1638,7 +1696,7 @@ int main(void)
 #endif
 #ifdef SWIM_TEST
         { /* Mario dropped in a water area (150): floats up to the surface, stays */
-            if (frame == 150 || frame == 450) printf("swim test: row %d\n", game_test_swim()); /* 450: after the flight */
+            { extern void game_test_swim_input(int); game_test_swim_input((int)frame); }
             if (frame >= 150 && frame < 1000 && frame % 20 == 0) {
                 char dd[128];
                 game_debug(dd, sizeof dd);
@@ -1942,6 +2000,7 @@ int main(void)
         }
 #endif
         stream_update(&scene);
+        game_bgm_tick();
         audio_update();
 #endif
 #ifdef SND_TEST
@@ -1972,6 +2031,7 @@ int main(void)
             if (menu_paused() != was_paused) { was_paused = menu_paused(); pad_rumble_stop(); }
         }
         game_draw();
+        audio_feed();
         anim_rate = 1.0f;
 #if defined(PACKS) && defined(LYT_TEST)
         { /* the pause menu's layout over the game: Appear and the buttons' ButtonAppear, then their Wait */
@@ -2023,9 +2083,19 @@ int main(void)
             game_debug(dbg, sizeof dbg);
             printf("%s\n", dbg);
         }
-        if ((frame++ & 255) == 0)
+        if ((frame++ & 255) == 0) {
             printf("frame %u: logic %u us, draw %u us, worst %u us, tris %u\n", frame, (u32)(t_logic / EE_MHZ),
                    (u32)(t_draw / EE_MHZ), (u32)(worst / EE_MHZ), render_tris_drawn());
+#ifdef CATCHUP
+            { /* the frame rate over the last 256 frames, from the vblanks (console measurements over udptty) */
+                static u32 vb_prev;
+                u32 dv = vblanks - vb_prev;
+                vb_prev = vblanks;
+                if (frame > 1 && dv)
+                    printf("fps %u.%u over 256 frames (%u vblanks)\n", 256 * 5994 / dv / 100, 256 * 5994 / dv / 10 % 10, dv);
+            }
+#endif
+        }
         u32 vwait = render_wait_cycles(); /* blocked on the VIF in game_draw */
         (void)vwait;
 #ifdef SAMPLE_PROF
@@ -2099,6 +2169,21 @@ int main(void)
                 sum[i] += v[i];
                 if (v[i] > top[i]) top[i] = v[i];
             }
+        }
+        { /* emitted VU1 vertices per path (render.c render_vstat), averaged over the bench */
+            extern u32 render_vstat[6];
+            static u32 vsum[6];
+            for (int i = 0; i < 6; i++) { if (frame > 60 && frame <= 1860) vsum[i] += render_vstat[i]; render_vstat[i] = 0; }
+            if (frame == 1861) printf("bench verts: static tex %u lit %u env %u | skinned tex %u lit %u env %u\n",
+                                      vsum[0] / 1800, vsum[1] / 1800, vsum[2] / 1800, vsum[3] / 1800, vsum[4] / 1800, vsum[5] / 1800);
+        }
+        { /* the real frame rate over the measured frames, from the vblanks (render.c flip_tick) */
+            extern volatile u32 render_vblanks;
+            static u32 vb0;
+            if (frame == 61) vb0 = render_vblanks;
+            if (frame == 1861 && render_vblanks > vb0)
+                printf("bench fps %u.%u (%u vblanks for 1800 frames)\n", 1800 * 5994 / (render_vblanks - vb0) / 100,
+                       1800 * 5994 / (render_vblanks - vb0) / 10 % 10, render_vblanks - vb0);
         }
         if (frame == 1861) {
             static const char *nm[5] = {"logic", "kcl", "draw", "gs", "total"};

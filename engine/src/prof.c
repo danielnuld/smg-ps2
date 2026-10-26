@@ -49,7 +49,22 @@ void prof_dump(void)
 {
     on = 0;
     printf("prof: %u samples, %u outside the program (%08x %08x %08x %08x)\n", samples, outside, seen[0], seen[1], seen[2], seen[3]);
-    for (u32 i = 0; i < NB; i++)
-        if (hist[i] >= 2) printf("prof %08x %u\n", BASE + (i << 6), hist[i]);
+    /* six buckets a line, 4 ms apart (udptty loses bursts); buckets under 1 / 5000 of the samples left out */
+    u32 min = samples / 5000 > 2 ? samples / 5000 : 2, k = 0;
+    char line[200];
+    int n = 0;
+    for (u32 i = 0; i < NB; i++) {
+        if (hist[i] < min) continue;
+        n += snprintf(line + n, sizeof line - n, " %06x:%u", (BASE + (i << 6)) & 0xFFFFFF, hist[i]);
+        if (++k % 6 == 0) {
+            printf("prof%s\n", line);
+            n = 0;
+            u32 c0, c1;
+            __asm__ volatile("mfc0 %0, $9" : "=r"(c0));
+            do __asm__ volatile("mfc0 %0, $9" : "=r"(c1)); while (c1 - c0 < 294912u * 4);
+        }
+    }
+    if (n) printf("prof%s\n", line);
+    printf("prof end\n");
 }
 #endif

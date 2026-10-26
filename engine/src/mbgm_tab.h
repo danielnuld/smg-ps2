@@ -1,0 +1,20 @@
+/* written by tools/mbgm.py: the multi BGMs with mute states, the file each state plays (<stream>@<k>.pcm,
+ * 0: <stream>.pcm) for MR::setStageBGMState */
+static const struct { const char *track; unsigned char file[8]; } mbgm_tab[] = {
+    {"SMG_galaxy01_strm", {0, 0, 0, 3, 0, 0, 0, 0}},
+    {"SMG_boss02a_strm", {0, 0, 0, 3, 0, 0, 0, 0}},
+    {"SMG_galaxy03_multi", {0, 0, 0, 0, 4, 5, 6, 0}},
+    {"SMG_galaxy04_multi", {0, 0, 0, 0, 0, 5, 5, 7}},
+    {"SMG_galaxy05_strm", {0, 0, 0, 0, 0, 0, 0, 7}},
+    {"SMG_astrodome_multi", {0, 0, 2, 3, 4, 3, 6, 7}},
+    {"SMG_galaxy11_multi", {0, 0, 0, 0, 0, 0, 0, 7}},
+    {"SMG_fileselect_strm", {0, 0, 0, 0, 0, 0, 6, 7}},
+    {"SMG_astrodome02_strm", {0, 0, 0, 0, 4, 0, 6, 0}},
+    {"SMG_boss07_multi", {0, 0, 2, 3, 4, 0, 0, 0}},
+    {"SMG_ev_race02_multi", {0, 0, 2, 0, 0, 0, 0, 0}},
+    {"SMG_galaxy16_multi", {0, 0, 2, 0, 0, 0, 0, 0}},
+    {"SMG_galaxy24_multi", {0, 0, 2, 3, 4, 4, 4, 4}},
+    {"SMG_boss09a_multi", {0, 0, 2, 0, 4, 4, 4, 4}},
+    {"SMG_boss09b_multi", {0, 0, 2, 0, 4, 4, 4, 4}},
+    {"SMG_astrodome04_multi", {0, 0, 2, 3, 4, 3, 6, 7}},
+};

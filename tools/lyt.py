@@ -66,9 +66,15 @@ def parse_brlyt(b):
                 maps = [(u16(b, mo + 0x40 + 4 * k), b[mo + 0x42 + 4 * k], b[mo + 0x43 + 4 * k]) for k in range(nt)]
                 so = mo + 0x40 + 4 * nt
                 srts = [struct.unpack_from(">5f", b, so + 20 * k) for k in range(ns)]
+                # the blend mode last (nw4r lyt MaterialResourceNum: coord gens, channel control, material colour,
+                # TEV swap, indirect SRTs / orders, TEV stages, alpha compare before it): GX_BM_BLEND with
+                # GX_BL_ONE as the destination adds (TitleLogo's PicBloomA / B, PicFlash, PicLogoShine)
+                q = so + 20 * ns + 4 * (fl >> 8 & 0xF) + 4 * (fl >> 25 & 1) + 4 * (fl >> 27 & 1) + 4 * (fl >> 12 & 1)
+                q += 20 * (fl >> 13 & 3) + 4 * (fl >> 15 & 7) + 16 * (fl >> 18 & 0x1F) + 4 * (fl >> 23 & 1)
+                add = bool(fl >> 24 & 1) and b[q] == 1 and b[q + 2] == 1
                 mats.append(dict(name=cstr(b, mo, 20).strip(),
                                  c0=struct.unpack_from(">4h", b, mo + 0x14), c1=struct.unpack_from(">4h", b, mo + 0x1C),
-                                 maps=maps, srt=srts[0] if srts else (0, 0, 0, 1, 1)))
+                                 maps=maps, srt=srts[0] if srts else (0, 0, 0, 1, 1), add=add))
         elif kind in KINDS:
             p = dict(kind=KINDS[kind], name=cstr(b, o + 12, 16), flags=b[o + 8], origin=b[o + 9], alpha=b[o + 10],
                      ud=cstr(b, o + 0x1C, 8),
@@ -212,8 +218,8 @@ def convert(files, name, texts, extra=None):
     live = {e[0] for _, a in anims for e in a["entries"] if e[1] and any(t[0] == 3 and 4 <= t[2] < 12 for t in e[2])}
     images, img_ix = [], {}
 
-    def image(texname, c0, c1, wrap, mask=None):
-        key = (texname, c0, c1, wrap, mask)
+    def image(texname, c0, c1, wrap, mask=None, add=False):
+        key = (texname, c0, c1, wrap, mask, add)
         if key not in img_ix:
             f = files.get(texname.lower())
             if f is None:
@@ -230,7 +236,10 @@ def convert(files, name, texts, extra=None):
                 rgba[..., 3] *= mk[..., 3] if mk[..., 3].min() < 1 else mk[..., :3].mean(-1)
             if c0 is not None:  # lyt's default TEV for one texture: lerp(c0, c1, texel)
                 a, b_ = np.array(c0, np.float32) / 255, np.array(c1, np.float32) / 255
+                ta = rgba[..., 3].copy()
                 rgba = np.clip(a + (b_ - a) * rgba, 0, 1)
+                if add:  # added (Cs x As + Cd): the texture's own alpha weighs it (both colours' alpha are 0)
+                    rgba[..., 3] = ta
             img_ix[key] = len(images)
             images.append(((rgba * 255 + 0.5).astype(np.uint8), wrap))
         return img_ix[key]
@@ -244,7 +253,7 @@ def convert(files, name, texts, extra=None):
             c0 = tuple(max(0, min(255, v)) for v in m["c0"])
             c1 = tuple(max(0, min(255, v)) for v in m["c1"])
             mask = texs[m["maps"][1][0]] if len(m["maps"]) > 1 and m["maps"][1][0] < len(texs) else None
-            texi[k] = image(texs[ti], c0 if bake else None, c1 if bake else None, (ws, wt), mask) if ti < len(texs) else -1
+            texi[k] = image(texs[ti], c0 if bake else None, c1 if bake else None, (ws, wt), mask, m.get("add", False)) if ti < len(texs) else -1
             wraps[2 * k:2 * k + 2] = [ws, wt]
             if ti < len(texs) and texs[ti].lower() in files and not texs[ti].startswith("@bti:"):
                 tsz = tpl(files[(mask if mask and mask.lower() in files else texs[ti]).lower()]).shape[1::-1]
@@ -254,7 +263,8 @@ def convert(files, name, texts, extra=None):
         c0 = bytes(max(0, min(255, v)) for v in m["c0"])
         c1 = bytes(max(0, min(255, v)) for v in m["c1"])
         srt = (0, 0, 0, 1, 1) if len(m["maps"]) > 1 else m["srt"]  # a masked one: the mask's place, not the scroll
-        mrecs.append(struct.pack("<20s2h4B5f4s4sB3xHH", m["name"].encode()[:20], *texi, *wraps, *srt, c0, c1, baked, *tsz))
+        mrecs.append(struct.pack("<20s2h4B5f4s4sBB2xHH", m["name"].encode()[:20], *texi, *wraps, *srt, c0, c1, baked,
+                                 m.get("add", False), *tsz))
     strings = []
     precs = []
     for p in panes:
@@ -333,7 +343,7 @@ def convert(files, name, texts, extra=None):
 
 # the layouts every scene may show (menus.bin, loaded with each scene)
 COMMON = ("PauseMenu", "SysInfoWindow", "SysInfoWindowMini", "GameOver", "TooBad", "StageTitle", "IconAButton",
-          "BackButton", "ScenarioSelect", "WipeKoopa", "ResultWindow", "CinemaFrame")
+          "BackButton", "ScenarioSelect", "WipeKoopa", "ResultWindow", "CinemaFrame", "FlyMeter", "AirMeter")  # MarioSubMeter
 # the dome's galaxy select's (AstroDomeGalaxySelector): dome.bin, loaded in the AstroDome stages only; GalaxyInfo with
 # the galaxies' pictures (GalaxyInfoTexture.arc) as materials named by galaxy (20 characters)
 DOME = ("GalaxySelect", "GalaxyInfo", "GalaxyNamePlate")
@@ -427,7 +437,7 @@ MSG_PREFIXES = ("Layout_", "System_", "Select_", "NAND_", "PauseMenu_", "PlayerL
                 "GalaxyNameShort_", "GalaxyStage_", "GalaxyInfo_", "GalaxyMap_", "GalaxyNamePlate_", "GetStar_",
                 "AllStarList_", "AstroName_", "CometName_", "RaceName_", "ConfirmEndGame", "Common_", "CONT_",
                 "PointerGuidance", "BButtonGuidance", "DPDGuidance", "WiiMessage", "Picture_", "AstroDome_", "RosettaMonologue",
-                "StaffList", "StaffRollInfo_")
+                "StaffList", "StaffRollInfo_", "InformationObserver")
 
 
 def msgs_chunk(fsp, prefixes=MSG_PREFIXES):

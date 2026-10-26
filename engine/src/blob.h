@@ -18,11 +18,14 @@ typedef struct {
     u32 nverts;          /* 3 per triangle */
     u16 tex;             /* TEXT index, NO_TEX for untextured */
     u16 nbatch;
-    u8 blend, zwrite, alpha; /* material: 0 opaque, 1 blended, 2 additive, 3 the frame buffer x alpha (a screen copy
+    u8 blend, zwrite, alpha; /* material: 0 opaque, 1 blended, 2 additive, 4 the frame buffer x alpha + the vertex colour, 5 the frame buffer x (1 + alpha), 3 the frame buffer x alpha (a screen copy
                               * seen through a tint); depth written; constant alpha 0..255 */
     u8 lit;              /* 1 lit material: per-vertex normals, lit on VU1 (render_light); 2 environment-mapped: per-vertex
                           * normals, UVs from them on VU1 (VU1Env, env) */
-    const u16 *batch;    /* nbatch x {emitted, unique} */
+    u8 strip;            /* triangle strips (tools/slice.py strip_batches): 1 VU1Strip (static unlit): per batch s16
+                          * pos[n][4] (w = -32768 starts a strip), s16 uv[n][2] if textured, u8 rgba[n][4]; 2 VU1SkinLit
+                          * (skinned lit): w = 7 x slot with bit 15 for a start, s8 normal[n][4] before the colours */
+    const u16 *batch;    /* nbatch x {emitted, unique} ({n, 0} for strips) */
     const u8 *data;      /* per batch: s16 pos[unique][4] (x, y, z in steps of Model.qscale, w = 7 * matrix slot),
                           * s16 uv[unique][2] (12 fraction bits) if textured, s8 normal[unique][4] (x 127) if lit,
                           * u8 rgbi[emitted][4] (colour + unique index), each padded to 16 (tools/slice.py
@@ -31,7 +34,9 @@ typedef struct {
     float *uvm;          /* with btk: the UV matrix the chain uploads (3 qwords: columns s, t, 1; anim_btk); env: 4
                           * qwords (VU mem 8..10 and 15, render_env) */
     const float *env;    /* lit 2: rows s, t, q of the texgen on the view normal, columns n.x, n.y, n.z, 1 (tex.env_mtx) */
-    u16 swap[4], nswap;  /* its swappable textures (SWAP chunk: Mario's eyelids; [0] its own), scene indices */
+    u16 swap[8];         /* its swappable textures (SWAP chunk; [0] its own), scene indices */
+    u8 nswap, swap_kind; /* how many; 0 Mario's eyelids (the blink), 1 his ColorChange body / cap (calcAnim) */
+    u8 hide;             /* skinned: left out of the draw (its shape hidden by a BVA at its frame: game.c bva_apply) */
 } VuGroup;
 
 #define NO_TEX 0xFFFF
@@ -72,6 +77,9 @@ typedef struct {
     int lit;      /* some group is lit (VuGroup.lit): its matrices carry light matrices */
     void *chain;  /* static models: prebuilt VIF chain of the opaque batches, ends with RET (render.c) */
     void *chain_xlu; /* the same for the alpha-blended batches, drawn after the opaque ones */
+    int btp;      /* some group has BTP images (SWAP kind 0x80 | slot): game.c btp_apply */
+    const u8 *bvas; /* its BVAS entries (tools/slice.py bvas_entries: MR::startBva's visibility by frame), nbvas of them */
+    u32 nbvas;
 } Model;
 
 #define SCENE_MAX_MODELS 512
@@ -100,6 +108,10 @@ typedef struct {
     u32 ptcl_tex0;      /* that blob's first scene texture: PTCL texture indices are relative to it */
     const u8 *eyep;     /* EYEP chunk (Mario's eye patterns, tools/slice.py eye_chunk) after its count, or NULL */
     u32 neyep;
+    const u8 *btps;     /* BTPS chunk (tools/slice.py btp_chunk: the skinned classes' texture patterns by clip) after its count */
+    u32 nbtps;
+    const u8 *brkc;     /* BRKC chunk (tools/slice.py brkc_chunk: the BRK C0 tracks of the models with blend 4 groups) after its count */
+    u32 nbrkc;
     const u8 *font;     /* FONT chunk (tools/msg.py: the talk font's glyphs) of the blob that had one, or NULL */
     u32 font_tex0;      /* that blob's first scene texture */
     const u8 *talk;     /* TALK chunk (tools/msg.py: the scenario's talk messages), or NULL */

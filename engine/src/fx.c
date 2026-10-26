@@ -46,6 +46,8 @@ typedef struct {
     float acc;          /* fractional particles carried to the next emission */
     u16 tick, wait, nptcl;
     u8 live, stop, kept, first;
+    u8 tint[3];         /* setGlobalPrmColor (fx_tint): its particles' colour x tint / 255 */
+    float ratek;        /* setRate (fx_tint's rate): its emission x this */
 } Emitter;
 
 typedef struct {
@@ -208,6 +210,9 @@ static void create(int ei)
     p->scale = (r->esp & 1) ? 1.0f + zp() * r->sc_rndm : 1.0f;
 }
 
+static u8 next_tint[3] = {255, 255, 255};
+static float next_rate = 1.0f;
+void fx_tint(u8 r, u8 g, u8 b, float rate) { next_tint[0] = r; next_tint[1] = g; next_tint[2] = b; next_rate = rate; }
 static Emitter *new_emitter(const PtRes *r, const void *key, const float m[16], const float off[3])
 {
     for (int i = 0; i < MAX_EMIT; i++) {
@@ -225,6 +230,8 @@ static Emitter *new_emitter(const PtRes *r, const void *key, const float m[16], 
         e->m[12] += o[0]; e->m[13] += o[1]; e->m[14] += o[2];
         e->live = e->first = 1;
         e->kept = 2;
+        memcpy(e->tint, next_tint, 3);
+        e->ratek = next_rate;
         return e;
     }
     return NULL;
@@ -360,7 +367,7 @@ void fx_update(void)
         if (r->max_frame < 0 || (r->max_frame > 0 && e->tick >= r->max_frame))
             e->stop = 1;
         if (!e->stop && e->tick % (r->rate_step + 1) == 0) {
-            float c = r->rate * (1.0f + r->rate_rndm * zp());
+            float c = r->rate * e->ratek * (1.0f + r->rate_rndm * zp());
             e->acc += c;
             if (!(e->acc >= 0.0f && e->acc < 4096.0f)) /* a huge or broken rate: the loop below ran for billions */
                 e->acc = 0.0f;
@@ -530,6 +537,7 @@ void fx_draw(void)
             key_colour(r, p->age, c);
         else
             memcpy(c, r->prm, 4);
+        for (int k = 0; k < 3; k++) c[k] = (u8)(c[k] * e->tint[k] / 255);
         float al = c[3] * a * (128.0f / 255.0f);
         if (al < 1.0f || sc <= 0.0f)
             continue;
@@ -561,6 +569,7 @@ static int ptcl_look(const Ptcl *p, float pos[3], float *half, u32 *rgba)
     u8 c[4];
     if (r->nkeys) key_colour(r, p->age, c);
     else memcpy(c, r->prm, 4);
+    for (int k = 0; k < 3; k++) c[k] = (u8)(c[k] * e->tint[k] / 255);
     float al = c[3] * a * (128.0f / 255.0f);
     if (al < 1.0f || sc <= 0.0f) return 0;
     for (int k = 0; k < 3; k++) pos[k] = p->off[k] + p->loc[k] * e->s;
@@ -578,3 +587,5 @@ int fx_dinofoot_tex(void) { return fx_waterplant_tex(5); }
 int fx_ocean_tex(int k) { return fx_waterplant_tex(6 + k); }
 int fx_whirl_tex(void) { return fx_waterplant_tex(8); }
 int fx_rope_tex(void) { return fx_waterplant_tex(9); }
+int fx_fooline_tex(int k) { return fx_waterplant_tex(10 + k); }
+int fx_marinesnow_tex(void) { return fx_waterplant_tex(12); }

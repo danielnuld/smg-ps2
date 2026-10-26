@@ -25,6 +25,7 @@ void render_begin(const float eye[3], const float target[3], const float up[3]);
 void render_model(const Model *md, const float world[16], u8 r, u8 g, u8 b);
 /* Draw a skinned model with its draw matrices (anim.c Anim.drw). */
 void render_skinned(const Model *md, const float world[16], const float (*drw)[16]);
+void render_group_tint(const Model *md, u8 r, u8 g, u8 b);
 /* the light lit materials are drawn with from here on (LightFunction::loadActorLightInfo): two lights at world
  * positions (each draw takes its direction from the instance), their colours and the ambient, 0..1 */
 typedef struct { float pos[2][3], col[2][3], amb[3]; } RenderLight;
@@ -77,9 +78,11 @@ u32 render_free_block(void); /* movie.c: the texture cache's first VRAM block (6
 void render_picture(const void *upload, int w, int h, u32 fade, void (*overlay)(void));
 void render_reserve_blocks(u32 n); /* movie.c: the cache's first n blocks kept for the picture (textures after them) */
 void render_show(void);      /* the frame drawn shown (movie.c's pacing) */
+void render_movie_mode(int on); /* movie.c: 32-bit frames over the Z buffer and the cache's start (no scene loaded) */
 /* a world-space sphere within the camera's view (the test draw_model culls by) */
 int render_clip_judge(const float p[3], float rad); /* off ClippingJudge's volume (near 500, far 10000) */
 int render_visible(const float p[3], float rad);
+void render_flip_wait(void); /* until the last render_end's frame is on screen (asynchronous flip) */
 u32 render_wait_cycles(void); /* EE cycles blocked on the VIF chain since the last call (profiling) */
 /* Texture cache counters since boot: uploads (misses), textures that found no GS memory, chains waited on for room. */
 void render_tex_stats(u32 *misses, u32 *overflow, u32 *syncs);

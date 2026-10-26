@@ -270,6 +270,7 @@ int movie_play(const char *name, const MovieIo *the_io, const u8 *rumble)
     dma_channel_initialize(DMA_CHANNEL_toIPU, NULL, 0);
     s64 pts;
     pic = NULL; pw = ph = 0;
+    render_movie_mode(1);
     MPEG_Initialize(data_cb, NULL, init_cb, NULL, &pts);
     int f = 0;
     u32 t0 = cycles();
@@ -289,6 +290,7 @@ int movie_play(const char *name, const MovieIo *the_io, const u8 *rumble)
         if (skippable && pad_pressed(PAD_CROSS)) break;
     }
     MPEG_Destroy();
+    render_movie_mode(0);
     if (audio_ready()) audsrv_stop_audio();
     while (!io->done()) {}
     io->close();

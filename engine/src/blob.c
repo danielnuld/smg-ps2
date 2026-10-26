@@ -5,6 +5,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 
 const u8 *blob_chunk(const u8 *blob, const char *tag, u32 *size)
 {
@@ -83,7 +84,8 @@ int blob_add(Scene *s, const u8 *blob)
                 vg->zwrite = q[9];
                 vg->alpha = q[10];
                 vg->lit = q[11];
-                vg->nswap = 0;
+                vg->strip = q[12];
+                vg->nswap = 0; vg->swap_kind = 0;
                 md->lit |= vg->lit == 1;
                 vg->env = vg->lit == 2 ? (const float *)(q + 16) : NULL;
                 if (vg->env) { /* its 12-float matrix after the header (tools/slice.py assets) */
@@ -96,6 +98,12 @@ int blob_add(Scene *s, const u8 *blob)
                 q = vg->data;
                 for (u32 b = 0; b < vg->nbatch; b++) {
                     u32 ne = vg->batch[2 * b], nu = vg->batch[2 * b + 1];
+                    if (vg->strip) { /* 1 static: pos, uv, colour; 2 skinned lit: pos, uv, normal, colour; 3 env:
+                                      * pos, normal, colour */
+                        q += ((8 * ne + 15) & ~15u) + (vg->tex != NO_TEX && vg->strip != 3 ? (4 * ne + 15) & ~15u : 0) +
+                             (vg->strip >= 2 ? (4 * ne + 15) & ~15u : 0) + ((4 * ne + 15) & ~15u);
+                        continue;
+                    }
                     q += ((8 * nu + 15) & ~15u) + (vg->tex != NO_TEX ? (4 * nu + 15) & ~15u : 0) +
                          (vg->lit ? (4 * nu + 15) & ~15u : 0) + ((4 * ne + 15) & ~15u);
                 }
@@ -122,19 +130,36 @@ int blob_add(Scene *s, const u8 *blob)
         }
     }
     const u8 *sw = blob_chunk(blob, "SWAP", NULL);
-    if (sw) { /* {u32 n}, n x {char[32] model, u16 group, u16 count, u16 texture[count], pad to 8} (tools/slice.py) */
+    if (sw) { /* {u32 n}, n x {char[32] model, u16 group, u8 count, u8 kind, u16 texture[count], pad to 8} (tools/slice.py) */
         const u8 *q = sw + 4;
         for (u32 i = 0, n = *(const u32 *)sw; i < n; i++) {
-            u16 g = *(const u16 *)(q + 32), cnt = *(const u16 *)(q + 34);
+            u16 g = *(const u16 *)(q + 32), cnt = q[34];
             const u16 *ids = (const u16 *)(q + 36);
             for (u32 j = first; j < s->nmodels; j++)
                 if (strcmp(s->models[j].name, (const char *)q) == 0 && g < s->models[j].vu_ngroups) {
                     VuGroup *vg = &s->models[j].vu[g];
-                    vg->nswap = cnt > 4 ? 4 : cnt;
+                    vg->nswap = cnt > 8 ? 8 : cnt; vg->swap_kind = q[35];
+                    if (q[35] & 0x80) s->models[j].btp = 1;
                     for (u32 k = 0; k < vg->nswap; k++) vg->swap[k] = (u16)(ids[k] + tex0);
                 }
             u32 len = 36 + 2u * cnt;
             q += len + (-len & 7); /* the entry's padding (to 8) */
+        }
+    }
+    const u8 *bv = blob_chunk(blob, "BVAS", NULL);
+    if (bv) { /* {u32 n}, n x {char[32] "<model>/<bva>", u16 frames, u8 loop, u8 words, u32 hidden[frames][words]}: a
+               * model's run of entries */
+        const u8 *q = bv + 4;
+        for (u32 i = 0, n = *(const u32 *)bv; i < n; i++) {
+            const char *sl = strchr((const char *)q, '/');
+            for (u32 j = first; sl && j < s->nmodels; j++) {
+                Model *md = &s->models[j];
+                size_t ln = strlen(md->name);
+                if (ln != (size_t)(sl - (const char *)q) || strncasecmp(md->name, (const char *)q, ln)) continue;
+                if (!md->bvas) md->bvas = q;
+                md->nbvas++;
+            }
+            q += 36 + 4u * *(const u16 *)(q + 32) * q[35];
         }
     }
     const u8 *sk = blob_chunk(blob, "SKIN", NULL);
@@ -200,6 +225,10 @@ int blob_add(Scene *s, const u8 *blob)
         s->kcl_chunk[s->nkcl++] = k;
     const u8 *ey = blob_chunk(blob, "EYEP", NULL);
     if (ey) { s->neyep = *(const u32 *)ey; s->eyep = ey + 4; }
+    const u8 *bp = blob_chunk(blob, "BTPS", NULL); /* the scenario's: its last one stands */
+    if (bp && *(const u32 *)bp) { s->nbtps = *(const u32 *)bp; s->btps = bp + 4; }
+    const u8 *bk = blob_chunk(blob, "BRKC", NULL);
+    if (bk && *(const u32 *)bk) { s->nbrkc = *(const u32 *)bk; s->brkc = bk + 4; }
     const u8 *pt = blob_chunk(blob, "PTCL", NULL);
     if (pt) {
         s->ptcl = pt;

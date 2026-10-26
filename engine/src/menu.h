@@ -7,6 +7,10 @@
  * game.c calls menu_update at the start of each logic step (1: the game is paused, its world stops) and menu_draw
  * last in the frame. */
 void menu_init(const Scene *s);
+/* MarioSubMeter: 0 frameOut (ground), 1 water, 2 bee; its ratio; each frame (Mario resting, his screen place) */
+void menu_submeter_mode(int mode);
+void menu_submeter_ratio(int bee, float ratio);
+void menu_submeter_update(int resting, float x, float y, int visible);
 int menu_update(void);
 void menu_draw(void);
 int menu_paused(void);

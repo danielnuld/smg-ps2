@@ -26,7 +26,8 @@ typedef struct {
     u16 str, len;
     u8 pos, align, font_idx, pad2;
 } LytPane;
-typedef struct { char name[20]; s16 tex[2]; u8 wrap[4]; float srt[5]; u8 c0[4], c1[4]; u8 flags, pad[3]; u16 tw, th; } LytMat;
+typedef struct { char name[20]; s16 tex[2]; u8 wrap[4]; float srt[5]; u8 c0[4], c1[4]; u8 flags, add, pad[2]; u16 tw, th; } LytMat;
+/* add: the material's blend adds (Cs x As + Cd: GX_BL_SRCALPHA, GX_BL_ONE) */
 typedef struct { char name[24]; u16 frames; u8 loop, pad; u16 ntracks, ntexmap; u32 tracks, texmap; } LytAnim;
 typedef struct { s16 target; u8 is_mat, tag, index, sub, ctype, pad; u16 nkeys, pad2; u32 keys; } LytTrack;
 enum { K_PAN, K_PIC, K_WND, K_TXT, K_BND };
@@ -407,7 +408,7 @@ static void evaluate(LytInst *l)
 
 /* a pane-local rectangle (x0, y0 top left .. x1, y1 bottom right, y up) through its matrix as two triangles; uv
  * of its corners (top left, top right, bottom left, bottom right) */
-static void quad(const PWorld *w, float x0, float y0, float x1, float y1, const float uv[8], u16 tex, u32 rgba)
+static void quad(const PWorld *w, float x0, float y0, float x1, float y1, const float uv[8], u16 tex, u32 rgba, int add)
 {
     float xy[4][2], u[4][2];
     const float px[4] = {x0, x1, x0, x1}, py[4] = {y0, y0, y1, y1};
@@ -418,7 +419,7 @@ static void quad(const PWorld *w, float x0, float y0, float x1, float y1, const 
         u[k][0] = uv[2 * k]; u[k][1] = uv[2 * k + 1];
     }
     static const u16 idx[6] = {0, 1, 2, 1, 3, 2};
-    render_mesh2d((const float (*)[2])xy, (const float (*)[2])u, 4, idx, 2, tex, rgba, 0);
+    render_mesh2d((const float (*)[2])xy, (const float (*)[2])u, 4, idx, 2, tex, rgba, add);
 }
 
 static u32 rgba_of(float r, float g, float b, float a) /* 0..255 each -> 0xAABBGGRR, 0x80 = 1.0 */
@@ -483,7 +484,7 @@ static void draw_window(const LytInst *l, int i, const PWorld *w, float x0, floa
     if (mi >= 0 && mi < l->h->nmats) {
         mat_uv(&l->ms[mi], &l->mat[mi], p->uv, cuv);
         quad(w, x0 + cw - p->inflate[0], y0 - ch + p->inflate[2], x1 - cw + p->inflate[1], y1 + ch - p->inflate[3], cuv,
-             tex_of(l, mi), rgba);
+             tex_of(l, mi), rgba, l->mat[mi].add);
     }
     if (fm < 0 || fm >= l->h->nmats || l->ms[fm].tex < 0) return;
     u16 ft = tex_of(l, fm);
@@ -495,14 +496,14 @@ static void draw_window(const LytInst *l, int i, const PWorld *w, float x0, floa
     const float bl[8] = {0, 1, 1, 1, 0, 0, 1, 0}, br[8] = {1, 1, 0, 1, 1, 0, 0, 0};
     const float top[8] = {e, 0, e, 0, e, 1, e, 1}, bot[8] = {e, 1, e, 1, e, 0, e, 0};
     const float lef[8] = {0, e, 1, e, 0, e, 1, e}, rig[8] = {1, e, 0, e, 1, e, 0, e};
-    quad(w, x0, y0, x0 + cw, y0 - ch, tl, ft, frgba);
-    quad(w, x1 - cw, y0, x1, y0 - ch, tr, ft, frgba);
-    quad(w, x0, y1 + ch, x0 + cw, y1, bl, ft, frgba);
-    quad(w, x1 - cw, y1 + ch, x1, y1, br, ft, frgba);
-    quad(w, x0 + cw, y0, x1 - cw, y0 - ch, top, ft, frgba);
-    quad(w, x0 + cw, y1 + ch, x1 - cw, y1, bot, ft, frgba);
-    quad(w, x0, y0 - ch, x0 + cw, y1 + ch, lef, ft, frgba);
-    quad(w, x1 - cw, y0 - ch, x1, y1 + ch, rig, ft, frgba);
+    quad(w, x0, y0, x0 + cw, y0 - ch, tl, ft, frgba, 0);
+    quad(w, x1 - cw, y0, x1, y0 - ch, tr, ft, frgba, 0);
+    quad(w, x0, y1 + ch, x0 + cw, y1, bl, ft, frgba, 0);
+    quad(w, x1 - cw, y1 + ch, x1, y1, br, ft, frgba, 0);
+    quad(w, x0 + cw, y0, x1 - cw, y0 - ch, top, ft, frgba, 0);
+    quad(w, x0 + cw, y1 + ch, x1 - cw, y1, bot, ft, frgba, 0);
+    quad(w, x0, y0 - ch, x0 + cw, y1 + ch, lef, ft, frgba, 0);
+    quad(w, x1 - cw, y0 - ch, x1, y1 + ch, rig, ft, frgba, 0);
 }
 
 static void draw_text(const LytInst *l, int i, const PWorld *w, float x0, float y0, float x1, float y1)
@@ -582,7 +583,7 @@ void lyt_draw(LytInst *l)
             float uv[8];
             if (mi >= 0 && mi < l->h->nmats) mat_uv(&l->ms[mi], &l->mat[mi], p->uv, uv);
             else memcpy(uv, p->uv, sizeof uv);
-            quad(w, x0, y0, x1, y1, uv, tex_of(l, mi), pane_rgba(l, i, w->alpha));
+            quad(w, x0, y0, x1, y1, uv, tex_of(l, mi), pane_rgba(l, i, w->alpha), mi >= 0 && mi < l->h->nmats && l->mat[mi].add);
         } else if (p->kind == K_WND) {
             draw_window(l, i, w, x0, y0, x1, y1);
         } else if (p->kind == K_TXT) {

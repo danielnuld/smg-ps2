@@ -862,6 +862,7 @@ static void pm_update(void)
 
 /* --- GamePauseSequence ----------------------------------------------------------------------------------------- */
 static char select_after[32]; /* MoviePlayingSequence (FinalBattle): the scenario select opened over the stage */
+static void subm_init(void);
 void menu_init(const Scene *s)
 {
     msgs = s->msgs;
@@ -870,6 +871,7 @@ void menu_init(const Scene *s)
     si_init(&sv.win);
     sv_prompt = seq_take_save_prompt();
     memset(&sr, 0, sizeof sr);
+    subm_init();
     sr.l = lyt_new("ResultWindow");
     sr.info = lyt_new("InformationWindow"); /* MR::appearInformationMessageCenter's (NULL where not loaded) */
     if (sv_prompt && seq_take_result(&sr.r)) { /* a star return demo shows it at its wait's end (menu_result_start) */
@@ -900,6 +902,77 @@ int menu_test_point(const char *pane)
     game_set_cursor(x, y);
     return 1;
 }
+
+/* MarioSubMeter / SubMeterLayout: FlyMeter (ハチメーター, the bee's flight) and AirMeter (水中メーター, the oxygen), one
+ * active at a time (activeSubMeterBee / Water, frameOutSubMeter); its Count pane at 128 - 128 x ratio; Appear, Wait,
+ * Danger under 64 (its rate 1 + (64 - n) / 32), End; full and Mario on the ground (or at the surface) 60 frames: End,
+ * back with Appear when he leaves it; 60 right and 70 up of Mario on the screen (608 x 456) */
+static struct { LytInst *l; int st, n, cnt, shown; } subm[2];
+static int subm_active = -1, subm_vis;
+static void subm_init(void)
+{
+    static const char *const name[2] = {"FlyMeter", "AirMeter"};
+    subm_active = -1;
+    for (int k = 0; k < 2; k++) {
+        subm[k].l = lyt_new(name[k]);
+        subm[k].st = subm[k].cnt = subm[k].shown = 0; subm[k].n = 128;
+        if (!subm[k].l) continue;
+        lyt_start_pane(subm[k].l, "Count", "Count", 0);
+        lyt_set_pane_frame_stop(subm[k].l, "Count", 0, 0.0f);
+    }
+}
+static void subm_appear(int k) /* requestAppear / requestFrameIn */
+{
+    if (!subm[k].l) return;
+    subm[k].shown = 1; lyt_start(subm[k].l, "Appear", 0); subm[k].st = 1;
+}
+static void subm_deactivate(int k) { subm[k].shown = 0; subm[k].st = 0; } /* requestDeactivate: hideLayout */
+void menu_submeter_mode(int mode) /* 0 frameOutSubMeter (ground), 1 activeSubMeterWater, 2 activeSubMeterBee */
+{
+    if (mode == 0) {
+        if (subm_active >= 0 && subm[subm_active].l) { lyt_start(subm[subm_active].l, "End", 0); subm[subm_active].st = 4; } /* requestFrameOut */
+        subm_active = -1;
+        return;
+    }
+    int k = mode == 2 ? 0 : 1;
+    if (subm_active == k) return;
+    if (subm_active >= 0) subm_deactivate(subm_active);
+    subm_appear(k);
+    subm_active = k;
+}
+void menu_submeter_ratio(int bee, float ratio) /* setLifeRatio */
+{
+    int k = bee ? 0 : 1;
+    subm[k].n = (int)(128.0f * ratio);
+    if (subm[k].l) lyt_set_pane_frame_stop(subm[k].l, "Count", 0, (float)(0x80 - subm[k].n));
+}
+void menu_submeter_update(int resting, float x, float y, int visible) /* control (Mario on the ground / at the surface; his
+                                                                       * screen place; the default game layout on) */
+{
+    subm_vis = visible;
+    for (int k = 0; k < 2; k++) {
+        LytInst *l = subm[k].l;
+        if (!l) continue;
+        switch (subm[k].st) {
+        case 1: if (lyt_stopped(l, 0)) { lyt_start(l, "Wait", 0); subm[k].cnt = 0; subm[k].st = 2; } break;
+        case 2: if (subm[k].n < 0x40) { lyt_start(l, "Danger", 0); subm[k].st = 3; } break;
+        case 3:
+            if (subm[k].n > 0x40) { lyt_start(l, "Wait", 0); lyt_set_rate(l, 0, 1.0f); subm[k].st = 2; }
+            else lyt_set_rate(l, 0, (0x40 - subm[k].n) / 32.0f + 1.0f);
+            break;
+        case 4: if (lyt_stopped(l, 0)) { subm[k].shown = 0; subm[k].st = 0; } break;
+        }
+        if (resting) {
+            if ((subm[k].st == 2 || subm[k].st == 3) && subm[k].n == 0x80 && ++subm[k].cnt == 60) { lyt_start(l, "End", 0); subm[k].st = 5; }
+        } else if (subm[k].st == 5) { subm[k].st = 1; subm[k].cnt = 0; lyt_start(l, "Appear", 0); }
+        if (subm[k].shown) {
+            float sx = x * (608.0f / 640.0f) + 60.0f, sy = y * (456.0f / 448.0f) - 70.0f; /* sScreenOffsetX / Y */
+            lyt_set_pos(l, sx - 304.0f, 228.0f - sy);
+            lyt_update(l);
+        }
+    }
+}
+static void subm_draw(void) { if (subm_vis) for (int k = 0; k < 2; k++) if (subm[k].l && subm[k].shown) lyt_draw(subm[k].l); }
 
 int menu_update(void)
 {
@@ -3653,6 +3726,7 @@ static void wipe_update(void)
 
 void menu_draw(void)
 {
+    if (!pm.alive && !sr.alive) subm_draw(); /* the game's default layout (MarioSubMeter) */
     if (sr.alive) { render_world_done(); lyt_draw(sr.l); if (sr.info && (sr.n.cur == SR_INFO || sr.n.cur == SR_INFOEND)) lyt_draw(sr.info); }
     if (dmu.on) { render_world_done(); dmu_draw(); }
     mlay_draw();

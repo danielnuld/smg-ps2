@@ -132,6 +132,7 @@ int pad_init(void)
     do {
         s = padGetState(0, 0);
     } while (s != PAD_STATE_STABLE && s != PAD_STATE_FINDCTP1 && s != PAD_STATE_DISCONN && ++tries < 500000);
+    printf("pad: init state %d after %d tries\n", s, tries);
     return 0;
 }
 

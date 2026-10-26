@@ -4,7 +4,7 @@ EE_BIN = slice.elf
 EE_OBJS = src/main.o src/mem.o src/blob.o src/render.o src/pad.o src/gravity.o src/kcl.o src/game.o src/anim.o src/camera.o src/vu1_tex.o src/assets.o src/audio.o src/se.o src/se_seq.o src/prof.o src/fx.o src/lyt.o src/menu.o src/gamedata.o src/sequence.o src/mc.o src/movie.o
 
 EE_INCS += -Isrc -I$(PS2SDK)/ports/include
-EE_LIBS += -L$(PS2SDK)/ports/lib -lz -lcdvd -lmc -lmpeg -laudsrv -lpacket2 -ldraw -lgraph -ldma -lpad -lpatches -ldebug -lm
+EE_LIBS += -L$(PS2SDK)/ports/lib -lz -lcdvd -lmc -lmpeg -laudsrv -lpacket2 -ldraw -lgraph -ldma -lpadx -lpatches -ldebug -lm
 # movies: libmpeg's memalign / free from the packs' region (main.c __wrap_memalign)
 EE_LDFLAGS += -Wl,--wrap=memalign -Wl,--wrap=free
 EE_CFLAGS += -O2 -Wall -Wextra -std=gnu99 -ffast-math $(EXTRA)

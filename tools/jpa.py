@@ -128,7 +128,14 @@ FX = [("Coin", "CoinGet"), ("PurpleCoin", "CoinGet"), ("StarPiece", "StarPieceLi
       # MarioActor::initCommonEffect's smoke effects (cSmokeTable: registerEffectWithoutSRT by effect name): "JPA" rows
       # are particle effect names, not AutoEffectList rows
       ("JPA", "SmokeCircle"), ("JPA", "SmokeCircleFollow"), ("JPA", "SmokeSphereLoop"), ("JPA", "SmokeSphereFollow1Time"),
-      ("JPA", "SandCircle"), ("JPA", "SandSphereLoop"), ("JPA", "WaterCircle"), ("JPA", "WaterSphereLoop")]
+      ("JPA", "SandCircle"), ("JPA", "SandSphereLoop"), ("JPA", "WaterCircle"), ("JPA", "WaterSphereLoop"),
+      ("JPA", "SmokeSphere"), ("JPA", "WaterSphere"),  # (variant 0: 共通ひこうきブースト)
+      # the rest of initCommonEffect's materials (smoke / follow / water / flower / sand / snow / mud / honey x 4 variants)
+      ("JPA", "SmokeCircleLoop"), ("JPA", "SmokeSphereFollow"), ("JPA", "SmokeCircleLoopFollow"), ("JPA", "WaterCircleLoop"),
+      ("JPA", "FlowerCircle"), ("JPA", "FlowerSphereLoop"), ("JPA", "SnowSphere"), ("JPA", "SnowSphereLoop"),
+      ("JPA", "SnowCircle"), ("JPA", "SnowCircleLoop"), ("JPA", "MudSphere"), ("JPA", "MudSphereLoop"), ("JPA", "MudCircle"),
+      ("JPA", "MudCircleLoop"), ("JPA", "HoneySphere"), ("JPA", "HoneySphereLoop"), ("JPA", "HoneyCircle"),
+      ("JPA", "HoneyCircleLoop")]
 # Placed effect objects (NameObjFactory's *EffectObj* classes: SnowS, LavaSparksS...): each plays its AutoEffectList group
 # (the first row of GroupName = its name); FX_AMBIENT_FIRST + k in fx_tab.h, names in fx_ambient (game.c ambient_fx)
 AMBIENT = ("AstroTorchLightBlue", "AstroTorchLightRed", "BattleShipExplosionMetal", "BattleShipExplosionRock",
@@ -333,6 +340,21 @@ def pack(fs):
         # Trapeze's rope (TrapezeRopeDrawInit: Trapeze.arc TrapezeRope.bti) after it (fx_rope_tex)
         img = decode_bti({k.lower(): v for k, v in B.rarc_files((wp / "ObjectData" / "Trapeze.arc").read_bytes())}["trapezerope.bti"])
         out_tex.append(tex.to_ps2(np.ascontiguousarray(img), 1, 1))
+        # MarioFoo::draw3D's FooLine.bti (Mario.arc) after it, through its TEV lerp(C0, C1, TEXA), alpha TEXA (the
+        # additive strips carry the A0 x 2): the trail (fx_fooline_tex 0: C0 FF 00 00, C1 FF 40 40) and the braking beam
+        # (1: C0 FF 20 20; its quads map U 0..0.5 along them, so the left half). V carries nothing (8 rows)
+        fl = decode_bti({k.rsplit("/", 1)[-1].lower(): v for k, v in B.rarc_files((wp / "ObjectData" / "Mario.arc").read_bytes())}["fooline.bti"])
+        a = fl[: 8, :, 3:4].astype(np.float32) / 255
+        for c0, half in (((255, 0, 0), False), ((255, 32, 32), True)):
+            c0 = np.array(c0, np.float32)
+            t = np.zeros(a.shape[:2] + (4,), np.uint8)
+            t[..., :3] = (c0 + (np.array([255, 64, 64], np.float32) - c0) * a + 0.5).astype(np.uint8)
+            t[..., 3] = fl[: 8, :, 3]
+            out_tex.append(tex.to_ps2(np.ascontiguousarray(t[:, : t.shape[1] // 2] if half else t), 0, 1))
+        # MarineSnow (MarineSnow.arc's MarineSnow.bti) after them (fx_marinesnow_tex): its TEV colour TEXC, alpha
+        # A0 x TEXA (A0 in the sprites' colour)
+        img = decode_bti({k.rsplit("/", 1)[-1].lower(): v for k, v in B.rarc_files((wp / "ObjectData" / "MarineSnow.arc").read_bytes())}["marinesnow.bti"])
+        out_tex.append(tex.to_ps2(np.ascontiguousarray(img), 0, 0))
     flr = flare(wp, out_tex)
     head = struct.pack("<IIiI", len(used), len(defs), first, len(autos))
     return head + b"".join(defs) + b"".join(recs) + b"".join(autos) + flr, out_tex
@@ -452,11 +474,26 @@ def flare(fs, out_tex):
 
 # classes whose emitEffect calls game.c makes by name (fx_named), besides the skinned ones (their joints: -1)
 NAMED = ("KillerGunnerSingle", "ItemBubble", "DinoPackunBall", "Mario", "Dossun", "Onimasu", "LavaStrangeRock",
-         "LavaStrangeRockL", "LavaStrangeRockTable", "MogucchiHill", "PalmIsland", "KabokuriFire", "LotusLeaf", "ElectricBall")
-NAMED_ONLY = {"Mario": ("SpinLight", "SpinLightBurst")}  # of a big group only the rows the engine plays
+         "LavaStrangeRockL", "LavaStrangeRockTable", "MogucchiHill", "PalmIsland", "KabokuriFire", "LotusLeaf", "ElectricBall",
+         "MorphItemObj", "WaterColumn")  # (WaterColumn: MarioActor::emitEffectWaterColumn)  # MorphItemObjNeo's effect group (initEffectKeeper "MorphItemObj")
+NAMED_ONLY = {"Mario": ("SpinLight", "SpinLightBurst", "Invincible", "Ice", "Metamorphosis", "MetamorphosisEnd", "GetAgain", "WaterBound",
+                        "SkateL", "SkateR", "IceJumpLand", "IceMarioSpinLight", "FooMarioHandGlowL", "FooMarioHandGlowR",
+                        "FooMarioBrakeLampL", "FooMarioBrakeLampR", "FooMarioEndL", "FooMarioEndR",
+                        "ElectricDamage", "FireDamageSmoke", "BlueFireDamageSmoke", "WallHit",
+                        "SwimSpinLight", "SwimWaitRipple", "DiveBubble", "WaterColumnS", "SurfaceWave", "BodyBubble",
+                        "MouthBubble", "SeaSmoke",
+                        # cMaterialEffectTable's rows (属性尻ドロップ / ハチ風 / スピン / ステージイン) and 水波紋
+                        "HipDropSand", "HipDropSnow", "Hovering", "HoveringWater", "WaterSpin", "FlowerSpin", "SandSpin",
+                        "SnowSpin", "StageStartGroundSmoke", "StageStartGroundSand", "WaterRipple",
+                        # decide(Squat)WalkAnimation: 水はね右 / 左 / 右弱 / 左弱
+                        "WaterSplashRight", "WaterSplashLeft", "WaterSplashSRight", "WaterSplashSLeft", "SlipUp")}  # 無敵中 アイス中 変身 変身解除 アイテム再ゲット  # of a big group only the rows the engine plays
+# MarioActor::initEffect's registerEffect groups: a particle by its own name (not an AutoEffectList row) on a host
+# matrix, as fx_named rows (group, particle, joint: its getRealMtx host, "" the actor)
+REGISTERED = {"Mario": (("雪煙レベル", "CrestGetFlyC", "FootR"),)}
 # and its animation rows for these clips (game.c draw_skin: Mario's clips as "mario/<clip>")
 NAMED_ANIMS = {"Mario": ("spaceflystart", "spaceflyloop", "spaceflyend", "spaceflyshort", "spaceflyshortstart",
-                         "landscenariostart", "powerstarget", "sleep", "sleeplie", "spinlow")}
+                         "landscenariostart", "powerstarget", "sleep", "sleeplie", "spinlow", "foospin", "skatel", "skater",
+                         "icespinair", "iceskatespin")}
 
 
 def anim_effects(fs, auto, add_def):
@@ -502,6 +539,13 @@ def anim_effects(fs, auto, add_def):
             for clip in an[i].lower().split():  # "Eat2 Excite2 Joy2": each of them
                 out.append(struct.pack("<24s24sHHHh4f", c.lower().encode()[:23], clip.encode()[:23],
                                        min(int(st[i] or 0), 0xFFFE), end, def_of[e[i]], j, ox[i], oy[i], oz[i], sv[i] or 1.0))
+    for c, rows in REGISTERED.items():
+        for name, eff, jname in rows:
+            if eff not in def_of:
+                def_of[eff] = add_def(eff)
+            j = joints_of[c].index(jname) if jname in joints_of.get(c, ()) else -1
+            out.append(struct.pack("<24s24sHHHh4f", c.lower().encode()[:23], name.encode()[:23], 0xFFFF, 0xFFFF,
+                                   def_of[eff], j, 0.0, 0.0, 0.0, 1.0))
     return out
 
 

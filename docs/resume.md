@@ -2,6 +2,69 @@
 
 Last updated 2026-10-09. Detail and numbers: `docs/phase2-report.md`; tasks: `openspec/changes/phase-2-full-engine/tasks.md`.
 
+## Console release (2026-10-23 / 24): read this first
+
+First runs on Daniel's SCPH-75001 (ORBIT launcher, Neutrino over udpfs from nuld; console log = Neutrino's udptty
+broadcast on UDP 18194, captured by a listener on the PC). What the console needed, all in the tree, not committed:
+- Boot ELF named in serial form (`tools/disc.py` BOOT = SMGP_000.01): ORBIT's catalog drops a disc whose SYSTEM.CNF
+  boots `SLICE.ELF` (its serial must be 11 characters).
+- rom0:X* modules (XSIO2MAN, XPADMAN + libpadx, XMCMAN / XMCSERV, `mcInit(MC_TYPE_XMC)`): with the old rom0 ones
+  Neutrino's virtual memory card (-mc0) hung mc_init.
+- VIF1_ERR.ME0 masked (render_init): the real VIF1 stalls with ER0 when a REF tag arrives mid-UNPACK; PCSX2 does not
+  emulate it (the console froze on the first 3D frame).
+- `subs.bin` and `music/` kept in the disc TOC (main.c toc_select): the movies had no subtitles on the disc.
+Performance (PCSX2 hides it: `vu1Instant = true`; with it false PCSX2 matches the console's VU1, but never its EE,
+which runs ~1.5-2x slower than PCSX2 says):
+- Triangle strips (`tools/slice.py strip_batches`, VuGroup.strip 1 static unlit / 2 skinned lit / 3 static env) and
+  three VU1 programs that run them interleaved (`vu1_tex.vsm` VU1Strip, VU1SkinLit, VU1EnvStrip). Good Egg bench, VU1
+  timed: VU1 / GS wait 30.3 -> 7.7 ms. The old indexed programs remain for unlit skinned groups.
+- 640 x 448 (render.c HIRES, default; `-DLORES` the old 640 x 224): 16-bit dithered colour and 16-bit Z, FIELD
+  mode; same VRAM as before, about the same cost.
+- Asynchronous flip (render.c flip_tick, render_flip_wait): the HUD and a FINISH close the VIF1 chain, the VBLANK
+  handler shows the frame, the next frame's logic overlaps.
+- CATCHUP up to 3 logic steps a frame (real speed down to 20 fps; with 2, Mario moved in slow motion).
+- Console, Good Egg: ~21 fps before -> 26-33 in heavy places, 43-58 in light ones. EE bound now (logic ~8 ms a
+  step, draw build ~10 ms).
+Quality: textures k-means-refined 16-colour palettes and Lanczos downscale (tools/tex.py refine_palette), every
+galaxy repacked. Music: out/music copied to out/packs/music, streamed from PACKS.BIN (audio.c DISC ring, main.c
+disc_read_idle). Release boot: straight to the title; the scenario menu only with SELECT held. Every scenario has
+its own sound pack (`out/sound_all.sh`): the shared one with Luigi's SEs had to drop to 6 / 4 kHz caps.
+Tools of the session: disc bench `build.sh bench <blob> EggStarGalaxy/1 disc` (paced summary, `bench fps`), the
+fps line every 256 frames. Packs before all this: `out/packs-before-final-2026-10-24`.
+Next: EE (draw build: pose / draw_model; logic: launched pieces, items, camera), larger textures where VRAM allows,
+triple buffering if the texture cache can spare 560 KB.
+Second console round (2026-10-24), from Daniel's report:
+- White screen with the HUD after PrologueA: the garden's BloomCube at 255 read the whole 16-bit frame as bright.
+  Every 16-bit pixel's alpha bit stayed 1 after the alpha clear; bloom_pass now writes FBA 0 and turns dithering
+  off for it (which of the two did it was not isolated), dithering back on at its end.
+- Movies on 32-bit frames (render_movie_mode, from movie_play): two 640 x 448 PSMCT32 buffers over the 16-bit
+  frames, the Z buffer, the bloom buffers and the cache's first blocks (no scene loaded meanwhile); the 16-bit
+  frames come back black after. tools/movies.py encodes at 6 Mbps (8 peak, rd / trellis): 824 MB for the nine.
+- Title text broken when "Press A and B" appeared: PSMT8 textures 4-block aligned let the font's 256 x 256 glyph
+  sheet and the copyright overwrite each other (PCSX2 hardware and software alike); PSMT8 now page-aligned.
+- Layout materials with an adding blend (GX_BL_ONE: TitleLogo's PicBloomA / B, PicFlash, PicLogoShine) are drawn
+  added (lyt.py reads the blend mode; the LytMat byte after flags); the title's flash and the logo's glow show.
+- Eyes: models whose wait.btp picks the eye texture (FileSelectData*, Kinopio, Penguins, Rosetta, HoneyBee /
+  Queen) use its first frame (slice.py btp_first): the file select's Mario head had the shut-eye texture.
+- Music on the disc read asynchronously, 32 KB a read into a 1 s ring (audio.c, main.c disc_read_async /
+  disc_read_done; cd_read waits for a read in flight first): the old synchronous 14 KB reads stalled frames and a
+  half-second ring ran dry while zones streamed. "audio: audsrv ring N bytes" in the log tells audsrv's own buffer.
+- audsrv's own ring is 10 KB (80 ms at 32 kHz stereo): audio_feed (the stream only) runs between the catch-up
+  steps and after the draw build too; audio_update (with the fades) once a frame.
+- Camera pad (CameraLocalUtil / CameraDirector::controlCameraSE): D-pad left / right round the camera by pi / 4 where
+  the camera allows it (CameraFollow: its eye's line clear of the map; CameraTower: as many intervals as its yaw
+  speed; CameraParallel num1 1), L2 is the Wii's C (reset behind Mario), else the NG sound; D-pad up the first-person
+  view (MarioFpView + CameraSubjective: Mario still on the ground, the stick looks, D-pad down / X out). The D-pad no
+  longer moves Mario.
+- The Gateway's opening (HeavensDoorGalaxy 1, game.c "The Gateway's opening" section, gw_*): RunawayTico, DemoRabbit,
+  RunawayRabbitCollect / RunawayRabbit (WalkerStateRunaway), RosettaDemoHeavensDoor1, TicoDemoGetPower on the
+  チコガイドデモ sheet; the demo executor starts at a part now (dx_request_at), its kills turn on SW_DEAD
+  (NPCActor::kill: Rosetta's 1016 brings the black hole), the talk anim camera follows a cast moved to its PosName,
+  two talk anim ctrls no longer re-pause each other; EarthenPipe's SW_B at the exit (the rabbits in pipes).
+  slice.py: MODEL_ARC / ANIM_ARC / EXTRA for the rabbits (TrickRabbit / TrickRabbitBaby), TicoBaby, LightDome /
+  DomeHalo. Test: `build.sh gateway <blob> HeavensDoorGalaxy/1` (A taps, Mario put where it goes on): the whole
+  opening to the spin demo's end. ponytail: the guiding bunny hops along its rail when stuck 120 steps.
+
 ## Rules
 
 - Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -

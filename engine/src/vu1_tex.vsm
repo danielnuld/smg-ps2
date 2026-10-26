@@ -308,5 +308,323 @@ envLoop:
         NOP                                 xgkick        VI05
         NOP[E]                              NOP
         NOP                                 NOP
+; Static strips (VU1Strip, render.c STRIP_PROGRAM): unlit groups of models without a skeleton, as triangle strips
+; (tools/slice.py strip_batches). No index: the vertices come in emission order at fixed places, so one pointer walks
+; the three arrays, and four vertices run interleaved per loop (both pipes busy instead of one vertex's latencies).
+; batch at TOP  : +0 int x = vertex count n (a multiple of 4, <= 80); +1 GIF tag (TRIANGLE_STRIP, NLOOP = n)
+;                 +2 .. +81   positions (s32 x, y, z, w: UNPACK V4-16 signed; w = -32768 starts a strip: ADC on)
+;                 +82 .. +161 UVs (UNPACK V2-16 signed, 12 fraction bits; unwritten if untextured)
+;                 +162 .. +241 colours (UNPACK V4-8 unsigned, alpha 0x80 in the data)
+; output        : +242 GIF tag, then ST, RGBAQ, XYZ2 per vertex (+243 .. +482), XGKICKed.
+; The matrix is the static instance's (VU mem 1..4). Guard band: CF holds the last four clip judgements, so after
+; two clipw the triangles of both vertices are read with two masks (bits 6-23: the older one's, 0-17: the newer's).
+        .global VU1Strip_Start
+VU1Strip_Start:
+        NOP                                 lq.xyz        VF05,0(VI00)
+        NOP                                 lq            VF01,1(VI00)
+        NOP                                 lq            VF02,2(VI00)
+        NOP                                 lq            VF03,3(VI00)
+        NOP                                 lq            VF04,4(VI00)
+        NOP                                 lq            VF10,8(VI00)
+        NOP                                 lq            VF11,9(VI00)
+        NOP                                 lq            VF12,10(VI00)
+        NOP                                 xtop          VI02
+        NOP                                 iaddiu        VI12,VI00,0x7fff
+        NOP                                 ilw.x         VI07,0(VI02)
+        NOP                                 lq            VF06,1(VI02)
+        NOP                                 iaddiu        VI04,VI02,2
+        NOP                                 iaddiu        VI05,VI02,242
+        NOP                                 iaddiu        VI06,VI02,243
+        NOP                                 sq            VF06,0(VI05)
+        NOP                                 iadd          VI07,VI07,VI04
+stripLoop:
+        NOP                                 lq            VF07,0(VI04)
+        NOP                                 lq            VF09,80(VI04)
+        NOP                                 lq            VF13,1(VI04)
+        NOP                                 lq            VF15,81(VI04)
+        itof0.xyz     VF07,VF07             lq            VF16,2(VI04)
+        itof12        VF09,VF09             lq            VF18,82(VI04)
+        itof0.xyz     VF13,VF13             lq            VF19,3(VI04)
+        itof12        VF15,VF15             lq            VF21,83(VI04)
+        mulax         ACC,VF01,VF07x        ilw.w         VI08,0(VI04)
+        madday        ACC,VF02,VF07y        ilw.w         VI09,1(VI04)
+        maddaz        ACC,VF03,VF07z        ilw.w         VI10,2(VI04)
+        maddw         VF07,VF04,VF00w       ilw.w         VI11,3(VI04)
+        mulax         ACC,VF01,VF13x        lq            VF08,160(VI04)
+        madday        ACC,VF02,VF13y        lq            VF14,161(VI04)
+        maddaz        ACC,VF03,VF13z        lq            VF17,162(VI04)
+        maddw         VF13,VF04,VF00w       lq            VF20,163(VI04)
+        mulax         ACC,VF10,VF09x        div           Q,VF00w,VF07w
+        madday        ACC,VF11,VF09y        NOP
+        maddw         VF09,VF12,VF00w       NOP
+        clipw.xyz     VF07xyz,VF07w         NOP
+        clipw.xyz     VF13xyz,VF13w         NOP
+        mulax         ACC,VF10,VF15x        NOP
+        madday        ACC,VF11,VF15y        waitq
+        maddw         VF15,VF12,VF00w       NOP
+        addw.z        VF09,VF00,VF00w       NOP
+        mulq.xyz      VF07,VF07,Q           fcand         VI01,16777152
+        itof0.xyz     VF16,VF16             iadd          VI01,VI01,VI12
+        itof12        VF18,VF18             ior           VI08,VI08,VI01
+        mulq.xyz      VF09,VF09,Q           div           Q,VF00w,VF13w
+        mulaw.xyz     ACC,VF05,VF00w        fcand         VI01,262143
+        madd.xyz      VF07,VF07,VF05        iadd          VI01,VI01,VI12
+        addw.z        VF15,VF00,VF00w       ior           VI09,VI09,VI01
+        itof0.xyz     VF19,VF19             sq            VF09,0(VI06)
+        itof12        VF21,VF21             sq            VF08,1(VI06)
+        mulax         ACC,VF01,VF16x        isw.w         VI08,2(VI06)
+        madday        ACC,VF02,VF16y        NOP
+        maddaz        ACC,VF03,VF16z        waitq
+        maddw         VF16,VF04,VF00w       NOP
+        ftoi4.xyz     VF07,VF07             NOP
+        mulq.xyz      VF13,VF13,Q           NOP
+        mulq.xyz      VF15,VF15,Q           NOP
+        mulax         ACC,VF01,VF19x        NOP
+        madday        ACC,VF02,VF19y        sq.xyz        VF07,2(VI06)
+        maddaz        ACC,VF03,VF19z        div           Q,VF00w,VF16w
+        maddw         VF19,VF04,VF00w       sq            VF15,3(VI06)
+        mulaw.xyz     ACC,VF05,VF00w        sq            VF14,4(VI06)
+        madd.xyz      VF13,VF13,VF05        isw.w         VI09,5(VI06)
+        mulax         ACC,VF10,VF18x        NOP
+        madday        ACC,VF11,VF18y        NOP
+        maddw         VF18,VF12,VF00w       NOP
+        ftoi4.xyz     VF13,VF13             NOP
+        clipw.xyz     VF16xyz,VF16w         NOP
+        clipw.xyz     VF19xyz,VF19w         NOP
+        mulax         ACC,VF10,VF21x        waitq
+        madday        ACC,VF11,VF21y        sq.xyz        VF13,5(VI06)
+        maddw         VF21,VF12,VF00w       NOP
+        addw.z        VF18,VF00,VF00w       NOP
+        mulq.xyz      VF16,VF16,Q           fcand         VI01,16777152
+        NOP                                 iadd          VI01,VI01,VI12
+        NOP                                 ior           VI10,VI10,VI01
+        mulq.xyz      VF18,VF18,Q           div           Q,VF00w,VF19w
+        mulaw.xyz     ACC,VF05,VF00w        fcand         VI01,262143
+        madd.xyz      VF16,VF16,VF05        iadd          VI01,VI01,VI12
+        addw.z        VF21,VF00,VF00w       ior           VI11,VI11,VI01
+        NOP                                 sq            VF18,6(VI06)
+        NOP                                 sq            VF17,7(VI06)
+        ftoi4.xyz     VF16,VF16             isw.w         VI10,8(VI06)
+        NOP                                 waitq
+        mulq.xyz      VF19,VF19,Q           NOP
+        mulq.xyz      VF21,VF21,Q           NOP
+        NOP                                 NOP
+        NOP                                 sq.xyz        VF16,8(VI06)
+        mulaw.xyz     ACC,VF05,VF00w        sq            VF21,9(VI06)
+        madd.xyz      VF19,VF19,VF05        sq            VF20,10(VI06)
+        NOP                                 isw.w         VI11,11(VI06)
+        NOP                                 iaddiu        VI04,VI04,4
+        NOP                                 NOP
+        ftoi4.xyz     VF19,VF19             NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 sq.xyz        VF19,11(VI06)
+        NOP                                 ibne          VI04,VI07,stripLoop
+        NOP                                 iaddiu        VI06,VI06,12
+        NOP                                 xgkick        VI05
+        NOP[E]                              NOP
+        NOP                                 NOP
+; Skinned lit strips (VU1SkinLit, render.c SKINLIT_PROGRAM): lit groups of skinned models as triangle strips, each
+; vertex with its own matrix (w = 7 x slot, bit 15 starts a strip), two vertices interleaved per loop. Lighting as
+; VU1Lit: colour x min(ambient + sum max(0, n . l) colour, 2), at most 255.
+; batch at TOP  : +0 int x = vertex count n (a multiple of 4, <= 60); +1 GIF tag (TRIANGLE_STRIP, NLOOP = n)
+;                 +2 .. +71   m <= 10 matrices (4 columns local -> clip, then the light matrix's 3)
+;                 +72 .. +131 positions (UNPACK V4-16 signed), +132 .. +191 UVs (V2-16 signed),
+;                 +192 .. +251 normals (V4-8 signed, x 127), +252 .. +311 colours (V4-8 unsigned, alpha 0x80)
+; output        : +312 GIF tag, then ST, RGBAQ, XYZ2 per vertex (+313 .. +492), XGKICKed.
+        .global VU1SkinLit_Start
+VU1SkinLit_Start:
+        NOP                                 lq.xyz        VF05,0(VI00)
+        NOP                                 lq            VF10,8(VI00)
+        NOP                                 lq            VF11,9(VI00)
+        NOP                                 lq            VF12,10(VI00)
+        NOP                                 lq            VF19,11(VI00)
+        NOP                                 lq            VF20,12(VI00)
+        NOP                                 lq            VF18,13(VI00)
+        NOP                                 lq            VF23,14(VI00)
+        NOP                                 xtop          VI02
+        NOP                                 iaddiu        VI12,VI00,0x7fff
+        NOP                                 iaddiu        VI13,VI12,1
+        NOP                                 ilw.x         VI07,0(VI02)
+        NOP                                 lq            VF06,1(VI02)
+        NOP                                 iaddiu        VI03,VI02,2
+        NOP                                 iaddiu        VI04,VI02,72
+        NOP                                 iaddiu        VI05,VI02,312
+        NOP                                 iaddiu        VI06,VI02,313
+        NOP                                 sq            VF06,0(VI05)
+        NOP                                 iadd          VI07,VI07,VI04
+skLoop:
+        NOP                                 lq            VF01,0(VI04)
+        NOP                                 lq            VF16,1(VI04)
+        NOP                                 lq            VF02,60(VI04)
+        NOP                                 lq            VF17,61(VI04)
+        NOP                                 mtir          VI08,VF01w
+        itof0.xyz     VF01,VF01             mtir          VI11,VF16w
+        itof12        VF02,VF02             iand          VI09,VI08,VI12
+        itof0.xyz     VF16,VF16             iand          VI14,VI11,VI12
+        itof12        VF17,VF17             iadd          VI09,VI09,VI03
+        NOP                                 iadd          VI14,VI14,VI03
+        NOP                                 lq            VF06,0(VI09)
+        NOP                                 lq            VF07,1(VI09)
+        NOP                                 lq            VF08,2(VI09)
+        NOP                                 lq            VF09,3(VI09)
+        mulax         ACC,VF06,VF01x        lq            VF13,4(VI09)
+        madday        ACC,VF07,VF01y        lq            VF14,5(VI09)
+        maddaz        ACC,VF08,VF01z        lq            VF15,6(VI09)
+        maddw         VF01,VF09,VF00w       lq            VF03,120(VI04)
+        mulax         ACC,VF10,VF02x        lq            VF04,180(VI04)
+        madday        ACC,VF11,VF02y        lq            VF24,0(VI14)
+        maddw         VF02,VF12,VF00w       lq            VF25,1(VI14)
+        NOP                                 lq            VF26,2(VI14)
+        NOP                                 div           Q,VF00w,VF01w
+        itof0.xyz     VF03,VF03             lq            VF27,3(VI14)
+        itof0.xyz     VF04,VF04             lq            VF28,4(VI14)
+        clipw.xyz     VF01xyz,VF01w         lq            VF29,5(VI14)
+        addw.z        VF02,VF00,VF00w       lq            VF30,6(VI14)
+        mulax         ACC,VF24,VF16x        lq            VF21,121(VI04)
+        madday        ACC,VF25,VF16y        lq            VF22,181(VI04)
+        maddaz        ACC,VF26,VF16z        iand          VI10,VI08,VI13
+        maddw         VF16,VF27,VF00w       iand          VI15,VI11,VI13
+        mulax.xy      ACC,VF13,VF03x        waitq
+        madday.xy     ACC,VF14,VF03y        NOP
+        maddz.xy      VF03,VF15,VF03z       NOP
+        mulq.xyz      VF01,VF01,Q           NOP
+        mulq.xyz      VF02,VF02,Q           div           Q,VF00w,VF16w
+        clipw.xyz     VF16xyz,VF16w         NOP
+        max.xy        VF03,VF03,VF00        NOP
+        mulaw.xyz     ACC,VF05,VF00w        NOP
+        madd.xyz      VF01,VF01,VF05        NOP
+        mulax         ACC,VF10,VF17x        NOP
+        madday        ACC,VF11,VF17y        fcand         VI01,16777152
+        maddw         VF17,VF12,VF00w       iadd          VI01,VI01,VI12
+        mulaw.xyz     ACC,VF18,VF00w        ior           VI10,VI10,VI01
+        maddax.xyz    ACC,VF19,VF03x        fcand         VI01,262143
+        maddy.xyz     VF03,VF20,VF03y       iadd          VI01,VI01,VI12
+        ftoi4.xyz     VF01,VF01             ior           VI15,VI15,VI01
+        itof0.xyz     VF21,VF21             sq            VF02,0(VI06)
+        itof0.xyz     VF22,VF22             NOP
+        minix.xyz     VF03,VF03,VF23x       isw.w         VI10,2(VI06)
+        addw.z        VF17,VF00,VF00w       sq.xyz        VF01,2(VI06)
+        mulax.xy      ACC,VF28,VF21x        waitq
+        madday.xy     ACC,VF29,VF21y        NOP
+        maddz.xy      VF21,VF30,VF21z       NOP
+        mul.xyz       VF04,VF04,VF03        NOP
+        mulq.xyz      VF16,VF16,Q           NOP
+        mulq.xyz      VF17,VF17,Q           NOP
+        max.xy        VF21,VF21,VF00        NOP
+        miniw.xyz     VF04,VF04,VF23w       NOP
+        mulaw.xyz     ACC,VF05,VF00w        NOP
+        madd.xyz      VF16,VF16,VF05        NOP
+        mulaw.xyz     ACC,VF18,VF00w        NOP
+        maddax.xyz    ACC,VF19,VF21x        NOP
+        maddy.xyz     VF21,VF20,VF21y       NOP
+        ftoi0.xyz     VF04,VF04             sq            VF17,3(VI06)
+        ftoi4.xyz     VF16,VF16             isw.w         VI15,5(VI06)
+        NOP                                 NOP
+        minix.xyz     VF21,VF21,VF23x       NOP
+        NOP                                 sq            VF04,1(VI06)
+        NOP                                 sq.xyz        VF16,5(VI06)
+        NOP                                 NOP
+        mul.xyz       VF22,VF22,VF21        NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        miniw.xyz     VF22,VF22,VF23w       iaddiu        VI04,VI04,2
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        ftoi0.xyz     VF22,VF22             NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 sq            VF22,4(VI06)
+        NOP                                 ibne          VI04,VI07,skLoop
+        NOP                                 iaddiu        VI06,VI06,6
+        NOP                                 xgkick        VI05
+        NOP[E]                              NOP
+        NOP                                 NOP
+; Static environment-mapped strips (VU1EnvStrip, render.c ENVSTRIP_PROGRAM): as VU1Strip with the normals where the
+; UVs were (+82 .. +161, UNPACK V4-8 signed x 127); STQ from the normal as VU1Env (the clip matrix's columns, then the
+; texgen at VU mem 8..10 and 15). Two vertices per loop.
+        .global VU1EnvStrip_Start
+VU1EnvStrip_Start:
+        NOP                                 lq.xyz        VF05,0(VI00)
+        NOP                                 lq            VF01,1(VI00)
+        NOP                                 lq            VF02,2(VI00)
+        NOP                                 lq            VF03,3(VI00)
+        NOP                                 lq            VF04,4(VI00)
+        NOP                                 lq            VF10,8(VI00)
+        NOP                                 lq            VF11,9(VI00)
+        NOP                                 lq            VF12,10(VI00)
+        NOP                                 lq            VF24,15(VI00)
+        NOP                                 xtop          VI02
+        NOP                                 iaddiu        VI12,VI00,0x7fff
+        NOP                                 ilw.x         VI07,0(VI02)
+        NOP                                 lq            VF06,1(VI02)
+        NOP                                 iaddiu        VI04,VI02,2
+        NOP                                 iaddiu        VI05,VI02,242
+        NOP                                 iaddiu        VI06,VI02,243
+        NOP                                 sq            VF06,0(VI05)
+        NOP                                 iadd          VI07,VI07,VI04
+envStripLoop:
+        NOP                                 lq            VF07,0(VI04)
+        NOP                                 lq            VF14,1(VI04)
+        NOP                                 lq            VF13,80(VI04)
+        NOP                                 lq            VF15,81(VI04)
+        itof0.xyz     VF07,VF07             ilw.w         VI08,0(VI04)
+        itof0.xyz     VF14,VF14             ilw.w         VI09,1(VI04)
+        itof0.xyz     VF13,VF13             lq            VF08,160(VI04)
+        itof0.xyz     VF15,VF15             lq            VF16,161(VI04)
+        mulax         ACC,VF01,VF07x        NOP
+        madday        ACC,VF02,VF07y        NOP
+        maddaz        ACC,VF03,VF07z        NOP
+        maddw         VF07,VF04,VF00w       NOP
+        mulax         ACC,VF01,VF13x        NOP
+        madday        ACC,VF02,VF13y        NOP
+        maddz         VF17,VF03,VF13z       NOP
+        mulax         ACC,VF01,VF14x        div           Q,VF00w,VF07w
+        madday        ACC,VF02,VF14y        NOP
+        maddaz        ACC,VF03,VF14z        NOP
+        maddw         VF14,VF04,VF00w       NOP
+        mulax.xyz     ACC,VF10,VF17x        NOP
+        madday.xyz    ACC,VF11,VF17y        NOP
+        maddaw.xyz    ACC,VF12,VF17w        NOP
+        maddw.xyz     VF09,VF24,VF00w       waitq
+        clipw.xyz     VF07xyz,VF07w         NOP
+        clipw.xyz     VF14xyz,VF14w         NOP
+        mulq.xyz      VF07,VF07,Q           NOP
+        mulq.xyz      VF09,VF09,Q           div           Q,VF00w,VF14w
+        mulax         ACC,VF01,VF15x        NOP
+        madday        ACC,VF02,VF15y        NOP
+        maddz         VF18,VF03,VF15z       fcand         VI01,16777152
+        mulaw.xyz     ACC,VF05,VF00w        iadd          VI01,VI01,VI12
+        madd.xyz      VF07,VF07,VF05        ior           VI08,VI08,VI01
+        NOP                                 fcand         VI01,262143
+        mulax.xyz     ACC,VF10,VF18x        iadd          VI01,VI01,VI12
+        madday.xyz    ACC,VF11,VF18y        ior           VI09,VI09,VI01
+        maddaw.xyz    ACC,VF12,VF18w        sq            VF09,0(VI06)
+        maddw.xyz     VF19,VF24,VF00w       sq            VF08,1(VI06)
+        ftoi4.xyz     VF07,VF07             isw.w         VI08,2(VI06)
+        NOP                                 waitq
+        mulq.xyz      VF14,VF14,Q           NOP
+        mulq.xyz      VF19,VF19,Q           NOP
+        NOP                                 sq.xyz        VF07,2(VI06)
+        NOP                                 NOP
+        mulaw.xyz     ACC,VF05,VF00w        NOP
+        madd.xyz      VF14,VF14,VF05        sq            VF19,3(VI06)
+        NOP                                 sq            VF16,4(VI06)
+        NOP                                 isw.w         VI09,5(VI06)
+        NOP                                 iaddiu        VI04,VI04,2
+        ftoi4.xyz     VF14,VF14             NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 sq.xyz        VF14,5(VI06)
+        NOP                                 ibne          VI04,VI07,envStripLoop
+        NOP                                 iaddiu        VI06,VI06,6
+        NOP                                 xgkick        VI05
+        NOP[E]                              NOP
+        NOP                                 NOP
         .align 4
 VU1Tex_CodeEnd:

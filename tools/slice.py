@@ -58,16 +58,23 @@ import skin
 import tex
 
 RESIDENT = ("Coin", "StarPiece", "SuperSpinDriver")  # OBJ_TYPES in phase 0b's RESIDENT set (out/sets.json): the resident pack
-SKINNED = ("Mario",)
+SKINNED = ("Mario", "MarioFace", "MarioHandL", "MarioHandR")  # MarioActor::initFace: MarioFace (LuigiFace), its 8 faces on Face0..7 (game.c face_draw); initHand: MarioHandL / R, their 8 hands on HandL00..07 (game.c hands)
 # placed classes drawn skinned and animated by their own BCKs (the scenario's ANIM chunk, "<class>/<clip>" in
 # lower case); their model archive is the class name
-SKINNED_OBJ = ("TreasureBoxKinokoOneUp", "TreasureBoxCoin", "TreasureBoxEmpty", "TreasureBoxGoldEmpty", "TreasureBoxCrackedKinokoOneUp", "TreasureBoxCrackedAirBubble", "TreasureBoxBlueChip", "TreasureBoxYellowChip", "TreasureBoxKinokoLifeUp", "TreasureBoxCrackedKinokoLifeUp", "TreasureBoxCrackedEmpty", "DesertLandDownSwitch", "ValveSwitch", "SpinLeverSwitch", "LavaBreakColumn", "LavaObstacleRockHomeB", "LavaFallDownColumnA", "LavaFallDownColumnB", "HeavenlyBeachUnderRock", "ShutterDoorC", "ShutterDoorD", "ShutterDoorE", "MechaKoopaPartsCaterpillar", "IceVolcanoAppearStepA", "IceVolcanoAppearStepB", "IceVolcanoClimbingWall", "IceUpDownShutterDoorA", "LavaBreakRockA", "HeavenlyBeachTopRock", "LavaBreakBridge", "LavaBreakRockB", "LavaBreakRockC", "LavaBreakRockD", "TeresaRacePartsB", "TeresaRoomDoor", "JumpBeamer", "JumpBeamerHead", "BombHei", "BigFan", "BigFanNoLeg", "BigFanWind", "DesertMovingLand", "LavaHomeVolcanoFlow", "DarknessRoomDoorA", "TeresaMansionDoorA", "TeresaMansionDoorB", "TeresaMansionEntranceDoor", "Pukupuku", "Kabokuri", "Snakehead", "SnakeheadSmall", "SunakazeKun", "TwisterSan", "TwisterSanSlim", "SunakazeKunTrap", "SeaGull", "FishA", "FishB", "FishC", "FishD", "FishE", "FishF", "TeresaWater", "CoconutTreeLeaf", "EyeBeamer", "EyeBeamerBeam", "KoopaBattleMapStair", "KoopaBattleMapStairBig", "KoopaBattleMapStairTurn", "WaterLeakPipe", "FirePressureRadiate", "WaterPressure", "WaterBullet", "Metbo", "Mogucchi", "MogucchiHole", "Mogu", "MoguStone", "MoguHole", "Kanina", "KaninaRed", "Jellyfish", "BasaBasa", "BasaBasaIce", "Gesso", "SearchBeamer", "RingBeamer", "JumpBeamerBeam", "FlowerGroup", "FlowerBlueGroup", "CutBushGroup", "DinoPackun", "OtaKing", "OtaKingFoot", "TicoFat", "Tico", "CocoSambo", "CocoSamboHead", "Kuribo", "Takobo",
+# the placed classes whose archive has a Wait clip and no own-named one (NPCActor / walker idles: Kinopio, Penguin,
+# TakoHei...): skinned, so obj_anim plays their Wait (tools: out/wait_classes.json, 2026-10-24)
+WAIT_SKINNED = ("GCaptureTarget", "SuperSpinDriver", "SpinDriver", "Kinopio", "TakoHei", "BeeFlowerHover", "JumpSpider", "YellowChip", "Penguin", "TimerPieceBlock", "KoteBug", "SmallStone", "MechanicKoopaMini", "TicoRail", "SplashPieceBlock", "BlueChip", "JetTurtle", "Meramera", "Caretaker", "WarpPod", "HoneyBee", "Teresa", "JumpStand", "AssemblyBlockPartsTimerA", "Karon", "StinkBugSmall", "SuperSpinDriverPink", "BegomanSpike", "Poihana", "StringSpider", "AssemblyBlockPartsIceB", "BlueStarCupsulePlanet", "FireBallBeamKameck", "KinopioAstro", "SuperSpinDriverGreen", "TicoGalaxy", "TicoStarRing", "Rabbit", "IceMeramera", "FireBubble", "TicoAstro", "SamboHead", "BombTeresa", "SplashCoinBlock", "StarReturnDemoStarter", "TimerCoinBlock", "PenguinRacer", "MarioLauncher", "TicoReading", "HipDropSwitch", "PenguinMaster", "CollectTico", "JellyfishElectric", "GrandStar", "PenguinCoach", "AstroDomeDemoStarter", "AstroDomeBlueStar", "GrandStarReturnDemoStarter", "BegomanBaby", "TeresaChief", "TicoComet", "TicoShop", "DesertLandUpSwitch", "BossBegoman", "BegomanSpring", "HipDropTimerSwitch", "PenguinStudent", "TalkSyati", "HoneyQueen", "AssemblyBlockPartsIceD", "AssemblyBlockPartsIceE", "BallBeamer", "TeresaRacer", "BombBird", "BegomanSpringHide", "ShellfishCoin", "PenguinSkater", "IceMerameraKing", "AssemblyBlockPartsIceC", "BossKameck2", "WaterBazooka", "Syati", "PenguinRacerLeader", "Polta", "DharmaSambo", "SurfRay", "ElectricBazooka", "GoldenTurtle", "ShellfishYellowChip", "KuriboChief", "ExterminationKuriboKeySwitch", "StinkBugParent", "KoopaVs1", "KoopaVs2", "KoopaVs3", "Peach", "TrickRabbitFreeRun", "TrickRabbitFreeRunCollect", "BossKameck", "ExterminationCheckerKuribo", "TombSpider", "TripodBossCore", "TripodBossEyeLight", "TripodBossEyeLightBloom")
+WAIT_ARC = {"TimerPieceBlock": "CoinBlock", "TicoRail": "Tico", "SplashPieceBlock": "CoinBlock", "JetTurtle": "Koura", "SuperSpinDriverPink": "SuperSpinDriver", "FireBallBeamKameck": "Kameck", "KinopioAstro": "Kinopio", "SuperSpinDriverGreen": "SuperSpinDriver", "TicoGalaxy": "TicoFat", "TicoStarRing": "Tico", "Rabbit": "MoonRabbit", "TicoAstro": "TicoBaby", "SplashCoinBlock": "CoinBlock", "StarReturnDemoStarter": "GrandStar", "TimerCoinBlock": "CoinBlock", "PenguinRacer": "Penguin", "TicoReading": "Tico", "CollectTico": "StrayTico", "AstroDomeDemoStarter": "SuperSpinDriver", "AstroDomeBlueStar": "GCaptureTarget", "GrandStarReturnDemoStarter": "GrandStar", "TeresaChief": "Teresa", "PenguinStudent": "Penguin", "TalkSyati": "Syati", "BegomanSpringHide": "BegomanSpring", "ShellfishCoin": "Shellfish", "PenguinSkater": "Penguin", "BossKameck2": "BossKameck", "PenguinRacerLeader": "Penguin", "GoldenTurtle": "KouraShine", "ShellfishYellowChip": "Shellfish", "ExterminationKuriboKeySwitch": "Kuribo", "KoopaVs1": "Koopa", "KoopaVs2": "Koopa", "KoopaVs3": "Koopa", "TrickRabbitFreeRun": "TrickRabbit", "TrickRabbitFreeRunCollect": "TrickRabbit", "ExterminationCheckerKuribo": "Kuribo"}
+SKINNED_OBJ = ("MarioFreezeIce", "MarioFireBall", "WaterColumn", "MorphItemNeoHopper", "MorphItemNeoBee", "MorphItemNeoTeresa", "MorphItemNeoIce", "MorphItemNeoFire", "MorphItemNeoFoo", "MorphBubble", "CrystalBox", "CrystalBoxBreak", "BeeMarioWing", "TeresaMario", "TeresaLuigi",  # MorphItemObjNeo (Appear), its containers, the bee's wings, Boo Mario
+               "RunawayRabbit", "DemoRabbit", "TrickRabbit", "TrickRabbitBaby", "RunawayTico", "TicoBaby", "LightDome",
+               "TreasureBoxKinokoOneUp", "TreasureBoxCoin", "TreasureBoxEmpty", "TreasureBoxGoldEmpty", "TreasureBoxCrackedKinokoOneUp", "TreasureBoxCrackedAirBubble", "TreasureBoxBlueChip", "TreasureBoxYellowChip", "TreasureBoxKinokoLifeUp", "TreasureBoxCrackedKinokoLifeUp", "TreasureBoxCrackedEmpty", "DesertLandDownSwitch", "ValveSwitch", "SpinLeverSwitch", "LavaBreakColumn", "LavaObstacleRockHomeB", "LavaFallDownColumnA", "LavaFallDownColumnB", "HeavenlyBeachUnderRock", "ShutterDoorC", "ShutterDoorD", "ShutterDoorE", "MechaKoopaPartsCaterpillar", "IceVolcanoAppearStepA", "IceVolcanoAppearStepB", "IceVolcanoClimbingWall", "IceUpDownShutterDoorA", "LavaBreakRockA", "HeavenlyBeachTopRock", "LavaBreakBridge", "LavaBreakRockB", "LavaBreakRockC", "LavaBreakRockD", "TeresaRacePartsB", "TeresaRoomDoor", "JumpBeamer", "JumpBeamerHead", "BombHei", "BigFan", "BigFanNoLeg", "BigFanWind", "DesertMovingLand", "LavaHomeVolcanoFlow", "DarknessRoomDoorA", "TeresaMansionDoorA", "TeresaMansionDoorB", "TeresaMansionEntranceDoor", "Pukupuku", "Kabokuri", "Snakehead", "SnakeheadSmall", "SunakazeKun", "TwisterSan", "TwisterSanSlim", "SunakazeKunTrap", "SeaGull", "FishA", "FishB", "FishC", "FishD", "FishE", "FishF", "TeresaWater", "CoconutTreeLeaf", "EyeBeamer", "EyeBeamerBeam", "KoopaBattleMapStair", "KoopaBattleMapStairBig", "KoopaBattleMapStairTurn", "WaterLeakPipe", "FirePressureRadiate", "WaterPressure", "WaterBullet", "Metbo", "Mogucchi", "MogucchiHole", "Mogu", "MoguStone", "MoguHole", "Kanina", "KaninaRed", "Jellyfish", "BasaBasa", "BasaBasaIce", "Gesso", "SearchBeamer", "RingBeamer", "JumpBeamerBeam", "FlowerGroup", "FlowerBlueGroup", "CutBushGroup", "DinoPackun", "OtaKing", "OtaKingFoot", "TicoFat", "Tico", "CocoSambo", "CocoSamboHead", "Kuribo", "Takobo",
                "Karikari", "Butterfly", "PackunPetit", "KuriboMini", "DinoPackunEggShellBreak", "PackunPetitHead",
                "RockBreak", "WanwanRollingBreak", "PunchingKinoko", "OtaKingMagma", "OtaKingLongFoot", "WoodBoxBreak",
                "CrystalCageSBreak", "BenefitItemOneUp", "BenefitItemLifeUp", "FlipPanel", "FlipPanelReverse", "OtaRock",
                "HammerHeadPackun", "PackunLeaf", "Plant", "Petari", "Butler", "TicoDomeLecture", "Rosetta", "ButlerExplain", "ButlerMap",
                "PhantomShipPropellerSmall", "PhantomShipPropellerBig", "PhantomShipBridge",  # AnmModelSwitchMove without SW_A: Move at once (obj_anim: its only clip)
                "PStar", "GStar", "SpinTico", "AstroCore", "LuigiNPC", "LuigiEvent")  # PStar / GStar: the star return demos' PowerStar / GrandStar (clip names fit 31 chars)
+SKINNED_OBJ += tuple(c for c in WAIT_SKINNED if c not in SKINNED_OBJ)
 # MapObjActor::initialize (tryStartAllAnim): a placed class whose model archive holds a BCK of the archive's name
 # plays it from the start; such classes are drawn skinned too (AUTO_SKINNED, class -> archive, filled by placement)
 AUTO_SKINNED = {}
@@ -87,19 +94,24 @@ def auto_anim(fsp, arc):
     return _auto_anim[arc]
 
 
-ANIM_ARC = {"LuigiEvent": "LuigiNPC", "TicoDomeLecture": "Tico", "ButlerExplain": "Butler", "ButlerMap": "Butler", "PStar": "PowerStar", "GStar": "GrandStar", "CocoSambo": "CocoSamboBody", "Karikari": "Karipon", "BenefitItemOneUp": "KinokoOneUp",
+ANIM_ARC = {"MorphBubble": "ItemBubble", "MorphItemNeoHopper": "PowerUpHopper", "MorphItemNeoBee": "PowerUpBee", "MorphItemNeoTeresa": "PowerUpTeresa", "MorphItemNeoIce": "PowerUpIce", "MorphItemNeoFire": "PowerUpFire", "MorphItemNeoFoo": "PowerUpFoo", "RunawayRabbit": "TrickRabbit", "DemoRabbit": "TrickRabbit", "RunawayTico": "Tico", "LuigiEvent": "LuigiNPC", "TicoDomeLecture": "Tico", "ButlerExplain": "Butler", "ButlerMap": "Butler", "PStar": "PowerStar", "GStar": "GrandStar", "CocoSambo": "CocoSamboBody", "Karikari": "Karipon", "BenefitItemOneUp": "KinokoOneUp",
             "BenefitItemLifeUp": "KinokoLifeUp", "HammerHeadPackun": "PackunFlower", "Plant": "PlantSeed", "FlowerGroup": "Flower", "FlowerBlueGroup": "FlowerBlue",
             "CutBushGroup": "CutBush", "FirePressureRadiate": "FirePressure", "JumpBeamer": "JumpBeamerBody", "TreasureBoxKinokoOneUp": "TreasureBox", "TreasureBoxCoin": "TreasureBox", "TreasureBoxEmpty": "TreasureBox", "TreasureBoxGoldEmpty": "TreasureBoxGold", "TreasureBoxCrackedKinokoOneUp": "TreasureBoxCracked", "TreasureBoxCrackedAirBubble": "TreasureBoxCracked", "TreasureBoxBlueChip": "TreasureBox", "TreasureBoxYellowChip": "TreasureBox", "TreasureBoxKinokoLifeUp": "TreasureBox", "TreasureBoxCrackedKinokoLifeUp": "TreasureBoxCracked", "TreasureBoxCrackedEmpty": "TreasureBoxCracked"}  # where a class's clips are when not in its own-named archive
+ANIM_ARC.update({c: a for c, a in WAIT_ARC.items() if c not in ANIM_ARC})
 # ponytail: models the renderer cannot reproduce: the atmosphere spheres (*Air: their glow is a TEV rim effect; drawn
 # with their material they flood the screen)
-NO_DRAW = ("SphereAir", "DimensionAir", "HomeAir", "TwilightAir", "DarknessRoomAir", "SunsetAir", "FineAir")   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
+NO_DRAW = ("RunawayRabbitCollect", "SphereAir", "DimensionAir", "HomeAir", "TwilightAir", "DarknessRoomAir", "SunsetAir", "FineAir")   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
 OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup", "PurpleRailCoin", "CircleCoinGroup",
              "RailCoin", "SuperSpinDriver", "StarPieceGroup", "StarPieceFlow")
 # classes whose first NameObjFactory archive is not their model (OtaKing's is FireBall, Tico's TicoBaby): the model
 # camera animations baked for a class from another archive: class -> (CANM name prefix, archive)
 CANM_ARC = {"GrandStarReturnDemoStarter": ("gsr", "DemoAstroReturn"),
             "AstroDomeDemoStarter": ("adds", "AstroDomeDemoCamera")}  # initAnimCamera "AstroDomeDemoCamera.arc"  # initAnimCamera "DemoAstroReturn.arc"
-MODEL_ARC = {"LuigiEvent": "LuigiNPC", "TicoDomeLecture": "Tico", "PStar": "PowerStar", "GStar": "GrandStar", "OtaKing": "OtaKing", "KoopaJr": "KoopaJr", "Tico": "Tico", "Plant": "PlantSeed"}
+MODEL_ARC = {"LuigiEvent": "LuigiNPC", "TicoDomeLecture": "Tico", "PStar": "PowerStar", "GStar": "GrandStar", "OtaKing": "OtaKing", "KoopaJr": "KoopaJr", "Tico": "Tico", "Plant": "PlantSeed",
+             # the Gateway intro (HeavensDoorGalaxy 1): RunawayRabbitCollect's children, DemoRabbit, the baby Lumas; the
+             # rabbits' TrickRabbitBaby and the RunawayTico's TicoBaby are their EXTRA (by arg / cast id)
+             "RunawayRabbit": "TrickRabbit", "DemoRabbit": "TrickRabbit", "RunawayTico": "Tico", "TicoBaby": "TicoBaby",
+             "MorphBubble": "ItemBubble"}  # MorphItemObjNeo's container アイテム泡 (startBck Move)
 # ponytail: no MiniatureGalaxyStarNumber (its digits are texture matrices per material), no MiniatureGalaxyShadow
 MINI_EXTRA = ("MiniatureGalaxyUnknown", "MiniHatenaGalaxy", "MiniatureGalaxyUnknownKoopa", "MiniKoopaGalaxy",
               "MiniatureGalaxySelect")
@@ -118,13 +130,33 @@ SKY_SEA = {"EarthNightMat_v": ((0, 25, 52), None), "EarthFar_v": (None, 7, 1, (0
 # extra models a class draws: a name of its own, or "#<BCK>": the class's archive with that animation's visibility
 # ("<archive>#<BVA>": another archive with that BVA's last-frame visibility: the cracked egg shell)
 # (FlipPanel: "?" at rest, "!" once flipped, the End face when its group is complete)
-EXTRA = {"StarReturnDemoStarter": ("PStar", "GStar", "SpinTico"), "GrandStarReturnDemoStarter": ("GStar",), "FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
+EXTRA = {"RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
+         "Rosetta": ("LightDome", "DomeHalo"),  # RosettaDemoHeavensDoor1's parts (ライトドーム, ライト後光)
+         "StarReturnDemoStarter": ("PStar", "GStar", "SpinTico"), "GrandStarReturnDemoStarter": ("GStar",), "FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
          "MorphItemNeoFire": ("MarioFireBall",), "AirBubbleGenerator": ("AirBubble",),
          "DinoPackun": ("DinoPackunTailBall", "DinoPackunEggShell", "DinoPackunEggShell#EggBroken", "DinoPackunEggShellBreak"), "OtaKing": ("CocoNut", "OtaKingFoot", "FireBall", "FireBubble", "OtaKingMagma", "OtaKingLongFoot", "OtaKingMagmaBloom"), "OtaRock": ("CocoNut", "FireBall"), "HammerHeadPackun": ("PackunLeaf",), "Plant": ("PlantTop", "PlantLeaf"), "CocoSambo": ("CocoSamboHead",), "PackunPetit": ("PackunPetitHead",),
          "RockCreator": ("RockBreak",), "WanwanRolling": ("WanwanRollingBreak",),
          "WoodBox": ("#WoodBox", "WoodBoxBreak"), "CrystalCageS": ("#CrystalCageS", "CrystalCageSBreak"),
          "CrystalCageM": ("#CrystalCageM", "CrystalCageSBreak"), "RingBeamer": ("JumpBeamerBeam",), "Mogu": ("MoguStone", "MoguHole"), "Mogucchi": ("MogucchiHole", "MogucchiHillA", "MogucchiHillB", "MogucchiHillC"), "WaterPressure": ("WaterBullet",), "EyeBeamer": ("EyeBeamerBeam",), "FishGroupA": ("FishA",), "FishGroupB": ("FishB",), "FishGroupC": ("FishC",), "FishGroupD": ("FishD",), "FishGroupE": ("FishE",), "FishGroupF": ("FishF",), "SeaGullGroup": ("SeaGull",), "SunakazeKun": ("SunakazeKunTrap",), "ChooChooTrain": ("ChooChooTrainBody",), "BigFan": ("BigFanWind",), "BigFanNoLeg": ("BigFanWind",), "BombHeiLauncher": ("BombHei",), "BombLauncher": ("BombHei",), "JumpBeamer": ("JumpBeamerBeam", "JumpBeamerHead")}
+# MorphItemObjNeo::makeArchiveList: Mario's (and Luigi's: the packs serve both) model of the power-up, then the container by arg3 (0 ItemBubble, -1 CrystalBox + CrystalBoxBreak; none for BenefitItemInvincible).; IceMarioHandL / R, InvincibleMarioHandL / R (initHand: game.c hands)
+MORPH_ARCS = {"MorphItemNeoHopper": ("HopperMario", "HopperLuigi"), "MorphItemNeoBee": ("BeeMarioWing", "BeeMario", "BeeLuigi"),
+              "MorphItemNeoTeresa": ("TeresaMario", "TeresaLuigi"), "MorphItemNeoIce": ("IceMario", "IceLuigi", "IceMarioHandL", "IceMarioHandR"),
+              "MorphItemNeoFire": (), "MorphItemNeoFoo": (), "BenefitItemInvincible": ("InvincibleMario", "InvincibleLuigi", "InvincibleMarioHandL", "InvincibleMarioHandR")}
+# the player's power-up models: skinned, posed by Mario's own clips (the same 30 joints; game.c mode_draw)
+MORPH_SKIN = ("BoneMario", "BoneLuigi", "HopperMario", "HopperLuigi", "BeeMario", "BeeLuigi", "IceMario", "IceLuigi", "InvincibleMario", "InvincibleLuigi",
+              "IceMarioHandL", "IceMarioHandR", "InvincibleMarioHandL", "InvincibleMarioHandR")  # (initHand's, both players')
+
+
+def morph_arcs(o):
+    """The extra models a placed MorphItemObjNeo / BenefitItemInvincible row loads (makeArchiveList)."""
+    if o["name"] not in MORPH_ARCS:
+        return ()
+    a3 = s32(o["args"][3])
+    box = () if o["name"] == "BenefitItemInvincible" else ("MorphBubble",) if a3 == 0 else ("CrystalBox", "CrystalBoxBreak") if a3 == -1 else ()
+    return MORPH_ARCS[o["name"]] + box
+
+
 # model-less classes the engine runs (stage switch logic): kept in OBJS like the classes with a model
 # power stars an event brings out (Petari PowerStarEventKeeper): ScenarioData AppearPowerStarObj names each star's
 # declarer by its ObjNameTable name. The classes the engine runs, with the arg giving an explicit star id (None: the
@@ -157,7 +189,10 @@ HOME_POS = "\u5408\u4f53\u30d6\u30ed\u30c3\u30af\u6545\u90f7\u70b9"  # 合体ブ
 LOGIC = ("TimerSwitch", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
          "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "DeathCube", "DeathSphere",
          "DeathCylinder", "RestartCube", "StarPieceSpot", "WaterCube", "WaterSphere", "WaterCylinder",
-         "AstroChangeStageCube", "MovieStarter")  # areas (areaobjinfo) travel as OBJS rows too
+         "AstroChangeStageCube", "MovieStarter", "RunawayRabbitCollect",
+         # Mario's areas (MR::getAreaObj: game.c area_obj / foo_sphere)
+         "CelestrialSphere", "TowerModeCylinder", "NonSleepCube", "EffectCylinder", "SmokeEffectColorAreaCube",
+         "MessageAreaCube", "MessageAreaCylinder")  # areas (areaobjinfo) travel as OBJS rows too
 
 
 def col(b, field, n, default=0):
@@ -319,6 +354,30 @@ BRK_STEPS = {"TicoFat": ("fatred", (0, 20, 39, 59))}
 BRK_POSE = {"Tico": ("colorchange", 0), "TicoFat": ("normal", 0), "Rosetta": ("normal", 0), "DinoPackunEggShellBreak": ("break", 0)}  # TicoFat: startBrk Normal, frame 0 (ponytail: FatRed as it grows)
 
 
+def bvas_entries(arc, model, shapes):
+    """A skinned model's visibility animations (its archive's BVAs, MR::startBva) for BVAS: per BVA {char
+    key[32] "<model>/<bva>" lower case, u16 frames, u8 loop, u8 words, words x u32 per frame: its groups hidden
+    (bit g: group g, by `shapes` (model_groups' group -> shape))}."""
+    out = []
+    for n, b in sorted(B.rarc_files(arc.read_bytes())):
+        n = n.rsplit("/", 1)[-1].lower()
+        if not n.endswith(".bva") or b[:8] != b"J3D1bva1" or not shapes:
+            continue
+        v = b.find(b"VAF1")
+        loop, frames = b[v + 8], struct.unpack_from(">H", b, v + 0xA)[0]
+        words = (len(shapes) + 31) // 32
+        body = b""
+        for f in range(max(frames, 1)):
+            hid = bva_hidden(b, f)
+            bits = [0] * words
+            for g, sh in enumerate(shapes):
+                if sh in hid:
+                    bits[g // 32] |= 1 << (g % 32)
+            body += struct.pack(f"<{words}I", *bits)
+        out.append(name32(f"{model.lower()}/{n[:-4]}") + struct.pack("<HBB", max(frames, 1), loop, words) + body)
+    return out
+
+
 def bva_hidden(b, frame=0):
     """Shapes a J3D visibility animation (J3D1bva1, VAF1) hides at `frame`."""
     if b[:8] != b"J3D1bva1":
@@ -403,7 +462,82 @@ def btk_entry(anim, material, mt, t, group):
     return struct.pack("<I", len(body)) + body
 
 
-def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat=None):
+def btp_first(d):
+    """A BTP (TPT1 texture pattern) -> {material name: its texture index at frame 0}."""
+    o = 0x20
+    nm, oa, oi, ons = struct.unpack_from(">H", d, o + 0xC)[0], *struct.unpack_from(">I", d, o + 0x10),         struct.unpack_from(">I", d, o + 0x14)[0], struct.unpack_from(">I", d, o + 0x1C)[0]
+    names = tex.names(d, o + ons)
+    return {names[i]: struct.unpack_from(">H", d, o + oi + 2 * struct.unpack_from(">H", d, o + oa + 8 * i + 2)[0])[0]
+            for i in range(nm)}
+
+
+def face_bdl(b, pb, joint=18):
+    """MarioActor::initFace: MarioFace's shapes drawn with its player's model's textures and Face0 material
+    (mMaterialTable.mTexture = his, copyMaterial(Face0)): the face's BDL with the player's MAT3 / MDL3 / TEX1
+    sections and every INF1 material entry set to the player's Face0 one. initHand's MarioHandL / R the same with
+    HandL0 (joint 23) / HandR0 (28)."""
+    pbl = tex.blocks(pb)
+    inf1 = pbl[b"INF1"]
+    p, want, joint, mat, stack = inf1 + tex.u32(pb, inf1 + 0x14), joint, None, None, []
+    face_mat = None
+    while True:  # the player's INF1: the material of the shape on Face0 (joint 18)
+        t, i = tex.u16(pb, p), tex.u16(pb, p + 2)
+        if t == 0:
+            break
+        if t == 0x01:
+            stack.append((joint, mat))
+        elif t == 0x02:
+            joint, mat = stack.pop() if stack else (None, None)
+        elif t == 0x10:
+            joint = i
+        elif t == 0x11:
+            mat = i
+        elif t == 0x12 and joint == want:
+            face_mat = mat
+        p += 4
+    sec = lambda d, o: d[o:o + tex.u32(d, o + 4)]
+    bl = tex.blocks(b)
+    out = []
+    for tag, o in sorted(bl.items(), key=lambda kv: kv[1]):
+        if tag in (b"MAT3", b"MDL3", b"TEX1"):
+            continue
+        s = bytearray(sec(b, o))
+        if tag == b"INF1":
+            q = tex.u32(b, o + 0x14)
+            while struct.unpack_from(">H", s, q)[0]:
+                if struct.unpack_from(">H", s, q)[0] == 0x11:
+                    struct.pack_into(">H", s, q + 2, face_mat)
+                q += 4
+        out.append(bytes(s))
+    out += [sec(pb, pbl[t]) for t in (b"MAT3", b"MDL3", b"TEX1") if t in pbl]
+    body = b"".join(out)
+    return b[:8] + struct.pack(">II", 0x20 + len(body), len(out)) + b[0x10:0x20] + body
+
+
+def btp_tables(lfiles):
+    """An archive's BTPs (J3D1btp1 TPT1: a texture index per frame per material) -> (its materials in name order,
+    {material: the TEX1 indices its patterns use, sorted}, {clip: (loop, frames, {material: [index per frame]})}).
+    The runtime texture patterns (MR::startBtp, ActorAnimKeeper's same-name BTP): SWAP kind 0x80 | slot, BTPS."""
+    mats, clips = {}, {}
+    for n, d in sorted(lfiles.items()):
+        if not n.endswith(".btp") or d[:8] != b"J3D1btp1":
+            continue
+        t = d.find(b"TPT1")
+        loop, fmax, nmat = d[t + 8], struct.unpack_from(">H", d, t + 0xA)[0], struct.unpack_from(">H", d, t + 0xC)[0]
+        mt_off, ix_off, nm_off = (struct.unpack_from(">I", d, t + k)[0] for k in (0x10, 0x14, 0x1C))
+        names = tex.names(d, t + nm_off)
+        per = {}
+        for m in range(nmat):
+            cnt, first = struct.unpack_from(">HH", d, t + mt_off + 8 * m)
+            idx = [struct.unpack_from(">H", d, t + ix_off + 2 * (first + i))[0] for i in range(cnt)]
+            per[names[m]] = [idx[min(f, cnt - 1)] for f in range(fmax + 1)]
+            mats.setdefault(names[m], set()).update(idx)
+        clips[n[:-4]] = (loop, fmax + 1, per)
+    order = sorted(mats)
+    return order, {m: sorted(mats[m]) for m in order}, clips
+
+
+def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat=None, player=None):
     """-> (groups [(verts, tris, uvs or None, texture or None, slots or None, colours or None, blend)], kcl bytes or
     None,
     skin chunk entry or None) for the first J3D model of an archive. texture = tex.to_ps2 dict of the group's material
@@ -415,6 +549,13 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
     pose_world = None  # POSE: joint name -> world matrix at the BCK's last frame
     stats = stats if stats is not None else {}
     files = dict(B.rarc_files(arc.read_bytes()))
+    if arc.stem in ("MarioFace", "LuigiFace"):  # initFace: the player's textures and Face0 material
+        pb = next(v for k, v in B.rarc_files((arc.parent / f"{arc.stem[:-4]}.arc").read_bytes()) if k.lower().endswith(".bdl"))
+        files = {k: face_bdl(v, pb) if k.lower().endswith(".bdl") else v for k, v in files.items()}
+    if arc.stem in ("MarioHandL", "MarioHandR"):  # initHand: copyMaterial(HandL0 / HandR0) of the player's model
+        pb = next(v for k, v in B.rarc_files((arc.parent / f"{player or 'Mario'}.arc").read_bytes()) if k.lower().endswith(".bdl"))
+        files = {k: face_bdl(v, pb, 23 if arc.stem[-1] == "L" else 28) if k.lower().endswith(".bdl") else v
+                 for k, v in files.items()}
     for name, b in files.items():
         n = name.lower()
         if n.endswith((".bdl", ".bmd")) and b[:4] == b"J3D2" and not groups:
@@ -454,6 +595,17 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
             # MapObjActor::init (tryStartAllAnim(mObjectName)), OtaKingMagma (startBtk): the model's own-name BTK, played
             # at run time (anim_btk). ponytail: every model's, not only those classes'
             anim_tex = tex.btk(lfiles[arc.stem.lower() + ".btk"]) if arc.stem.lower() + ".btk" in lfiles else None
+            # the wait pattern's first frame (FileSelectData*: EyeMat_v's own texture is the shut eye, wait.btp opens it)
+            texs0 = texs  # (the BTP alternatives from the archive's own images)
+            bt_order, bt_tex, _ = btp_tables(lfiles) if skinned and arc.stem not in SKINNED_ARCS else ([], {}, {})
+            pattern = btp_first(lfiles["wait.btp"]) if "wait.btp" in lfiles else {}
+            if pattern:  # its image in place of the material's own (the TEV samples that slot)
+                texs = list(texs)
+                for m_ in set(shapes.values()):
+                    mt_ = tex.material_tex(b, bl[b"MAT3"], m_, bl.get(b"TEX1"))
+                    p_ = pattern.get(tex.material_name(b, bl[b"MAT3"], m_))
+                    if mt_ and p_ is not None and p_ < len(texs) and mt_["tex"] < len(texs):
+                        texs[mt_["tex"]] = texs[p_]
             bva, vframe = (pose, None) if pose and pose.lower() + ".bva" in lfiles else VIS.get(arc.stem, (None, None))
             vis_hide = bva_hidden(lfiles.get(bva.lower() + ".bva", b""), 1 << 30 if vframe is None else vframe) if bva else set()
             for pos, tri, info in got:
@@ -524,16 +676,34 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                     t = ps2[key]
                     gain = gains[key]
                     split = ras_split.get(key, True)
-                    if (arc.stem in SKINNED_ARCS and tex.material_name(b, bl[b"MAT3"], mat) == "EyeLid_v" and
-                            mt["tex"] + 3 < len(texs)):
-                        # MarioActor::swapTextureInit: mario_eyeLid.0 .. .2 (open, half, shut), the blink's
-                        # (updateBlink) swaps, baked through the same material (SWAP chunk)
+                    mname = tex.material_name(b, bl[b"MAT3"], mat)
+                    tnames = tex.names(b, bl[b"TEX1"] + tex.u32(b, bl[b"TEX1"] + 0x10))
+                    if (arc.stem in SKINNED_ARCS or arc.stem in MORPH_SKIN) and mname == "EyeLid_v":
+                        # MarioActor::swapTextureInit: mario_eyeLid.0 .. .3 (open, half, shut), the blink's
+                        # (updateBlink) swaps, baked through the same material (SWAP chunk kind 0)
                         alts = []
                         for d in (1, 2, 3):
+                            if mt["tex"] + d >= len(texs) or tnames[mt["tex"] + d] != f"mario_eyeLid.{d}":
+                                break
                             x2 = texs[mt["tex"] + d]
                             alts.append(tex.to_ps2(tex.bake(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, mt["tex"] + d,
                                                             over, {}), x2["wrap_s"], x2["wrap_t"], sky))
-                        t = dict(t, alts=alts)
+                        if alts:
+                            t = dict(t, alts=alts)
+                    elif mname in bt_tex and all(i < len(texs0) for i in bt_tex[mname]):
+                        # its BTPs' images (runtime texture patterns), each baked through the material
+                        alts = [tex.to_ps2(tex.bake(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs0, i, over, {}),
+                                           texs0[i]["wrap_s"], texs0[i]["wrap_t"], sky) for i in bt_tex[mname]]
+                        t = dict(t, alts=alts, swap_kind=0x80 | bt_order.index(mname))
+                    elif arc.stem in SKINNED_ARCS and mname in ("Body1_v", "Cap_v") and mt["tex"] + 2 < len(texs):
+                        # MarioActor::calcAnim: ColorChange.btp at frame 0 / 1 (Foo) / 2 (fire): Cap_v
+                        # MarioCap.0 .. .2, Body1_v MarioBody.0 .. .2 (SWAP chunk kind 1)
+                        alts = []
+                        for d in (1, 2):
+                            x2 = texs[mt["tex"] + d]
+                            alts.append(tex.to_ps2(tex.bake(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, mt["tex"] + d,
+                                                            over, {}), x2["wrap_s"], x2["wrap_t"], sky))
+                        t = dict(t, alts=alts, swap_kind=1)
                 if env and mt["tex"] < len(texs):  # rows s, t times the texture's UV scales
                     t = dict(t, env=[e * (t["u_scale"], t["v_scale"], 1.0)[i % 3] for i, e in enumerate(env)])
                     uvs = [(0.0, 0.0)] * len(used)
@@ -580,6 +750,7 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                             stats.setdefault("_btk", []).append(e)
                     if sea[1] is None:  # the floor: K0 flat
                         groups.append((verts, [remap[v] for v in tri], None, None, None, sea[0], (0, 1, 255), False, 1))
+                        stats.setdefault("_shape", []).append(info["shape"])
                     else:  # the wall: lerp(C1, K1, EarthFarK) on its own UVs (TEX0 through texture matrix 1)
                         bt, bslot, c1, k1 = sea[1:]
                         bkey = ("seabase", bt)
@@ -600,6 +771,7 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                                 su, sv = (bm[0][0] * su + bm[0][1] * sv + bm[0][2], bm[1][0] * su + bm[1][1] * sv + bm[1][2])
                             buv.append((su * bt2["u_scale"], sv * bt2["v_scale"]))
                         groups.append((verts, [remap[v] for v in tri], buv, bt2, None, None, (0, 1, 255), False, 1))
+                        stats.setdefault("_shape", []).append(info["shape"])
                 elif mt and mt["projected"] and arc.stem in SKY_ARCS and mt["tex"] < len(texs):
                     # ponytail: a sky's texture projected from vertex positions (texgen POS + texture matrix) gets
                     # spherical UVs from each vertex's direction instead (the stars tile SKY_TILES times around)
@@ -647,12 +819,41 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 blend = tex.material_blend(b, bl[b"MAT3"], mat) if mat is not None else (0, 1, 255)
                 if sea_add:
                     blend = (2, 0, 255)
+                ind_layer = False
                 if mat is not None and tex.samples_named(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), "IndDummy"):
                     # the screen behind, through its TEV's tint (CrystalCage's IndTex refracts a screen copy): kind 3,
                     # the frame buffer times the tint's mean. ponytail: no bend (indirect texture), one grey tint
                     tint = tex.tev(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, None, over)[:3]
+                    mb = blend  # (the material's own: an additive one is kind 5 below)
                     blend = (3, blend[1], max(0, min(255, round(255 * float(sum(tint)) / 3))))
                     t, uvs, cols = None, None, None if skinned else (255, 255, 255)
+                    mn = tex.material_name(b, bl[b"MAT3"], mat)
+                    if brk_c0(lfiles, mn) is not None:
+                        # C0 x (1 + the screen) (InvincibleMario's stage 0, its C0 a BRK's: brkc_chunk): kind 4, the
+                        # frame buffer x C0's mean + C0 (the vertex colour the engine sets each frame). ponytail: the
+                        # screen tinted by the mean, not per channel (no frame buffer copy to modulate)
+                        o0 = dict(over or {})
+                        o0[mn] = dict(o0.get(mn, {}), tex_level=0.0)
+                        c0 = tex.tev(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, None, o0)[:3]
+                        blend = (4, blend[1], max(0, min(255, round(255 * float(sum(c0)) / 3))))
+                        cols = [tuple(int(c * 255 + 0.5) for c in c0)] * len(used)
+                        if nget and 10 in info["at"]:  # its env stage (PREV + 1 x TEXC): the additive layer below
+                            layer = tex.env_layer(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, over)
+                            if layer:
+                                layer = dict(layer, k=np.ones(3, np.float32))
+                                ind_layer = True
+                    elif mb[0] == 2:
+                        # an additive one (MarioFreezeIce's HiLightMat: the screen x RAS x its stage's scale added, then
+                        # an env map): kind 5, the frame buffer x (1 + FIX) (FIX the screen term's factor, at most 2),
+                        # and its env stage the additive layer below
+                        off = lambda k: bl[b"MAT3"] + tex.u32(b, bl[b"MAT3"] + k)
+                        e = off(0x0C) + tex.u16(b, off(0x10) + 2 * mat) * 0x14C
+                        st0 = b[off(0x5C) + 20 * tex.u16(b, e + 0xE4):][:20]
+                        sc = {0: 1.0, 1: 2.0, 2: 4.0, 3: 0.5}[st0[7] & 3]
+                        blend = (5, blend[1], max(0, min(255, round(128 * sc * float(sum(tint)) / 3))))
+                        if nget and 10 in info["at"]:
+                            layer = tex.env_layer(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, over)
+                            ind_layer = bool(layer)
                 # per-vertex normals for lit materials (lit by the engine, vu_groups), False for unlit ones, None: lit
                 # without normals (face normals)
                 nrm = None
@@ -670,7 +871,8 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 elif ras_mean and isinstance(cols, list):  # baked at the mean: CLR0 / mean left (at most 1)
                     cols = [tuple(min(255, c[k] * 255 // ras_mean[k]) for k in range(3)) + tuple(c[3:]) for c in cols]
                 groups.append((verts, [remap[v] for v in tri], uvs, t, slots, cols, blend, nrm, gain))
-                if layer and t is not None and layer["tex"] < len(texs):
+                stats.setdefault("_shape", []).append(info["shape"])  # (bvas_entries: its shape's visibility)
+                if layer and (t is not None or ind_layer) and layer["tex"] < len(texs):
                     lkey = ("layer", layer["tex"], mat)
                     if lkey not in ps2:
                         x = texs[layer["tex"]]
@@ -687,6 +889,7 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                               for v in used]
                         if mats:
                             ln = [tuple(float(x) for x in skin.unit(m_[:3, :3] @ n)) for m_, n in zip(mats, ln)]
+                    stats.setdefault("_shape", []).append(info["shape"])
                     groups.append((verts, [remap[v] for v in tri], [(0.0, 0.0)] * len(used), lt, slots, None,
                                    (2, 0, 255), ln, 1))
                     if skinned:
@@ -1024,6 +1227,111 @@ def index_batches(pos, col, uv, n, nrm=b""):
     return len(table) // 4, pad(table) + data
 
 
+STRIP_MAX = 80  # vertices per VU1Strip batch (engine vu1_tex.vsm: fixed places for 80; a multiple of 4)
+SKIN_STRIP_MAX = 60  # VU1SkinLit: ten matrices (70 qwords) leave room for 60 (vu1_tex.vsm)
+STRIP_RESTART = -32768  # position w of a strip's first two vertices: the engine sets ADC (no triangle) on them
+
+
+def stripify(tris):
+    """Index triangles [(a, b, c)] -> strips [[v0, v1, v2, ...]] (each vertex after the second makes one triangle
+    with the two before it; the GS does not cull, so the alternating winding does not matter). Greedy: from each
+    unused triangle, the rotation whose walk over shared edges is longest."""
+    by_edge = {}
+    for t, (a, b, c) in enumerate(tris):
+        for e in ((a, b), (b, c), (c, a)):
+            by_edge.setdefault(frozenset(e), []).append(t)
+    used = [False] * len(tris)
+
+    def walk(start, rot, mark):
+        a, b, c = tris[start][rot:] + tris[start][:rot]
+        strip, seen = [a, b, c], {start}
+        while True:
+            u, v = strip[-2], strip[-1]
+            nxt = next((t for t in by_edge.get(frozenset((u, v)), ()) if not used[t] and t not in seen), None)
+            if nxt is None:
+                break
+            w = next(x for x in tris[nxt] if x != u and x != v)
+            if w in (u, v):  # degenerate
+                break
+            seen.add(nxt)
+            strip.append(w)
+        if mark:
+            for t in seen:
+                used[t] = True
+        return strip
+
+    # start from the triangles with the fewest neighbours: strips then eat into the mesh from its edges
+    order = sorted(range(len(tris)), key=lambda t: sum(len(by_edge[frozenset(e)]) for e in
+                                                        ((tris[t][0], tris[t][1]), (tris[t][1], tris[t][2]), (tris[t][2], tris[t][0]))))
+    strips = []
+    for t in order:
+        if used[t]:
+            continue
+        best = max(range(3), key=lambda r: len(walk(t, r, False)))
+        strips.append(walk(t, best, True))
+    return strips
+
+
+def strip_batches(pos, col, uv, n, nrm=b"", smax=STRIP_MAX, skinned=False):
+    """De-indexed static unlit group arrays (vu_groups) -> (batch table, data) of the strip VUMD layout (VU1Strip):
+    vertices equal in position, UV and colour are merged, the triangles stripified, the strips packed into batches of
+    at most STRIP_MAX vertices (a multiple of 4: the last vertex repeated as a restart), a strip cut at a batch end
+    going on with its last two vertices. Per batch: s16 pos[n][4] (w = STRIP_RESTART on each strip's first two),
+    s16 uv[n][2] if textured, u8 rgba[n][4], each padded to 16. Table entries {n, 0}.
+    skinned (VU1SkinLit): w keeps 7 x the matrix slot, the restart is its bit 15, and s8 normal[n][4] (x 127) come
+    between the UVs and the colours; batches of at most smax (60: ten matrices in the buffer)."""
+    pad = lambda x: bytes(x) + b"\0" * (-len(x) % 16)
+    keys, verts, tris = {}, [], []
+    for e in range(n):
+        k = (bytes(pos[8 * e:8 * e + (8 if skinned else 6)]), bytes(uv[4 * e:4 * e + 4]) if uv else b"",
+             bytes(col[4 * e:4 * e + 4]), bytes(nrm[4 * e:4 * e + 4]) if nrm else b"")
+        if k not in keys:
+            keys[k] = len(verts)
+            verts.append(k)
+        if e % 3 == 2:
+            tris.append(tuple(keys[(bytes(pos[8 * x:8 * x + (8 if skinned else 6)]), bytes(uv[4 * x:4 * x + 4]) if uv else b"",
+                                    bytes(col[4 * x:4 * x + 4]), bytes(nrm[4 * x:4 * x + 4]) if nrm else b"")]
+                              for x in range(e - 2, e + 1)))
+    tris = [t for t in tris if len(set(t)) == 3]  # zero-area index triangles draw nothing
+    batches, cur = [], []
+
+    def close():
+        while len(cur) % 4:
+            cur.append((cur[-1][0], True))
+        batches.append(list(cur))
+        cur.clear()
+
+    for s in stripify(tris):
+        i = 0  # the next vertex of s to emit
+        while i < len(s):
+            if smax - len(cur) < 3:  # no room for a triangle
+                close()
+            start = i - 2 if i else 0  # a strip cut at a batch end goes on from its last two vertices
+            take = s[start:start + smax - len(cur)]
+            cur.extend((v, j < 2) for j, v in enumerate(take))
+            i = start + len(take)
+            if i < len(s):
+                close()
+    if cur:
+        close()
+    table, data = b"", b""
+    for b in batches:
+        p_, u_, c_, n_ = bytearray(), bytearray(), bytearray(), bytearray()
+        for v, restart in b:
+            pk, uk, ck, nk = verts[v]
+            if skinned:
+                w = struct.unpack("<h", pk[6:8])[0]
+                p_ += pk[:6] + struct.pack("<h", w - 32768 if restart else w)  # bit 15 over 7 x slot (< 32768)
+            else:
+                p_ += pk + struct.pack("<h", STRIP_RESTART if restart else 0)
+            u_ += uk
+            c_ += ck
+            n_ += nk
+        table += struct.pack("<HH", len(b), 0)
+        data += pad(p_) + (pad(u_) if uv else b"") + (pad(n_) if nrm else b"") + pad(c_)
+    return len(batches), pad(table) + data
+
+
 def chunk(tag, payload):
     payload += b"\0" * (-len(payload) % 16)
     return tag + struct.pack("<I8x", len(payload)) + payload
@@ -1307,12 +1615,12 @@ def placement(fs, galaxy, scenario):
     planets = B.planet_table(fsp, lambda a: (fsp / "ObjectData" / f"{a}.arc").exists())
     # every class with a model on disc is kept (static until it gets a behaviour), plus gravities
     arcmap = {n: model_archive(fsp, n, planets) for n in {o["name"] for o in objs}}
-    keep = [o for o in objs if arcmap[o["name"]] or "Gravity" in o["name"] or o["name"] in LOGIC or o["name"] in jpa.AMBIENT or o["name"] in ("WaterPlant", "PowerStarAppearPoint", "CollectTico", "OceanBowl", "ScenarioStarter", "StarPieceFollowGroup", "CoinReplica", "PoleNoModel", "PoleSquareNoModel", "WhirlPoolAccelerator", "ArrowSwitchTarget", "LightCtrlCube", "LightCtrlCylinder", "LensFlareArea") or o["name"].startswith(("FishGroup", "SeaGullGroup", "BloomCube", "BloomSphere", "BloomCylinder", "SimpleBloom", "ScreenBlur", "DepthOfField"))]
+    keep = [o for o in objs if arcmap[o["name"]] or "Gravity" in o["name"] or o["name"] in LOGIC or o["name"] in jpa.AMBIENT or o["name"] in ("WaterPlant", "FallsCube", "PowerStarAppearPoint", "CollectTico", "OceanBowl", "ScenarioStarter", "StarPieceFollowGroup", "CoinReplica", "PoleNoModel", "PoleSquareNoModel", "WhirlPoolAccelerator", "ArrowSwitchTarget", "LightCtrlCube", "LightCtrlCylinder", "LensFlareArea") or o["name"].startswith(("FishGroup", "SeaGullGroup", "BloomCube", "BloomSphere", "BloomCylinder", "SimpleBloom", "ScreenBlur", "DepthOfField"))]
     for o in keep:  # MiniatureGalaxy::initPartsModel: its unknown / hatena / select ring / star number parts
         if o["name"].startswith("Mini") and o["name"].endswith("Galaxy"):
             EXTRA.setdefault(o["name"], MINI_EXTRA)
     for o in keep:
-        for e in EXTRA.get(o["name"], ()):
+        for e in EXTRA.get(o["name"], ()) + morph_arcs(o):
             if e[0] == "#":
                 arcmap.setdefault(o["name"] + e, arcmap[o["name"]] + e if arcmap[o["name"]] else None)
             else:
@@ -1345,6 +1653,8 @@ def placement(fs, galaxy, scenario):
     AUTO_SKINNED.update({t: arcmap[t] for t in types if t not in planets and t not in SKINNED_OBJ and arcmap.get(t)
                          and "#" not in arcmap[t] and auto_anim(fs, arcmap[t])})
     out.append(obj_anim_chunk(Path(fs), set(types), galaxy))
+    out.append(btp_chunk(Path(fs), set(types)))
+    out.append(brkc_chunk(Path(fs)))
     wire = []
     grav = [g for g in (grav_record(o, paths, wire, i) for i, o in enumerate(keep)) if g]
     out.append(chunk(b"GRAV", struct.pack("<I", len(grav)) + b"".join(grav) + struct.pack(f"<{len(wire)}f", *wire)))
@@ -1383,7 +1693,7 @@ def placement(fs, galaxy, scenario):
                 arcmap.setdefault(f"{n}~{k}", f"{arcmap[n]}~{BRK_STEPS[n][0]}:{fr}")
                 if f"{n}~{k}" not in per_stage[names[o["zone"]]]:
                     per_stage[names[o["zone"]]].append(f"{n}~{k}")
-        for m in (n,) + tuple(n + e if e[0] == "#" else e for e in EXTRA.get(o["name"], ())):
+        for m in (n,) + tuple(n + e if e[0] == "#" else e for e in EXTRA.get(o["name"], ())) + morph_arcs(o):
             if arcmap[m] and m not in per_stage[names[o["zone"]]]:
                 per_stage[names[o["zone"]]].append(m)
     for st in per_stage:
@@ -1412,7 +1722,7 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
     KCL for planets when `collision`. Converted models are cached per process (one archive, many scenarios). fx: also
     the particle effects (PTCL, tools/jpa.py pack), their textures first in TEXT."""
     stats = stats if stats is not None else {}
-    models_, kcls, vumd, skins, btks, swaps = [], [], [], [], [], []
+    models_, kcls, vumd, skins, btks, swaps, bvas = [], [], [], [], [], [], []
     texts, tex_id, ptcl = [], {}, []
     if fx:
         payload, texts = jpa.pack(fsp)
@@ -1425,23 +1735,26 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
         a, _, pose = a.partition("#")  # "<archive>#<BCK>": the model with that animation's last-frame visibility
         a, _, bv = a.partition("~")  # "<archive>~<BRK>:<frame>": baked at that BRK frame (BRK_ARG)
         brk = (bv.split(":")[0], int(bv.split(":")[1])) if bv else None
+        a, _, hp = a.partition("%")  # "<archive>%<player>": MarioHandL / R with that player's hand material
         a, _, mk = a.partition("@")  # "<archive>@<k>": material colour k (MAT_COLOR)
         mc = (MAT_COLOR[a][0], tuple(MAT_COLOR[a][1][int(mk)])) if mk else None
         cls = t.partition("~")[0]
         arc = fsp / "ObjectData" / f"{a}.arc"
         if not arc.exists():
             continue
-        sk = cls in SKINNED or cls in SKINNED_OBJ or cls in AUTO_SKINNED
-        key = (a, pose, ratio, brk, mc, sk)  # one archive static and skinned (PowerStar / PStar): two entries
+        sk = cls in SKINNED or cls in SKINNED_OBJ or cls in AUTO_SKINNED or cls in MORPH_SKIN
+        key = (a, pose, ratio, brk, mc, sk, hp)  # one archive static and skinned (PowerStar / PStar): two entries
         if key not in _model_cache:
             st = {}
             _model_cache[key] = (model_groups(arc, ratio, st, sk,
-                                              pose or None, brk, mc), st)
+                                              pose or None, brk, mc, hp or None), st)
         (groups, kcl, sk), st = _model_cache[key]
         for k, v in st.items():
             if not k.startswith("_"):
                 stats[k] = stats.get(k, 0) + v
         btks += [name32(t) + e for e in st.get("_btk", [])]
+        if sk:
+            bvas += bvas_entries(arc, t, st.get("_shape", []))
         if sk:
             skins.append(name32(t) + sk)
         # MODL keeps only the bounding radius (culling): drawing uses VUMD, collision KCL
@@ -1458,18 +1771,32 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
                     texts.append(dict(tx, lod=[0.0, 0.0]))
                 texts[ti]["lod"] = [a + b for a, b in zip(texts[ti]["lod"], lod_sums(verts, tris, uvs, tx))]
                 ids = []
-                for a_ in tx.get("alts", []):  # SWAP: {char model[32], u16 group, u16 n, u16 texture[n] (scene-relative), pad}
+                for a_ in tx.get("alts", []):  # SWAP: {char model[32], u16 group, u8 n, u8 kind (0 eyelids, 1 ColorChange), u16 texture[n] (scene-relative), pad}
                     k2 = a_["pix"] + a_["clut"] + bytes((a_["clamp_s"], a_["clamp_t"]))
                     t2 = tex_id.setdefault(k2, len(texts))
                     if t2 == len(texts):
                         texts.append(dict(a_, lod=list(texts[ti]["lod"])))
                     ids.append(t2)
                 if ids:
-                    sw = struct.pack("<HH", gi, len(ids) + 1) + struct.pack(f"<{len(ids) + 1}H", ti, *ids)
+                    sw = struct.pack("<HBB", gi, len(ids) + 1, tx.get("swap_kind", 0)) + struct.pack(f"<{len(ids) + 1}H", ti, *ids)
                     swaps.append(name32(t) + sw + b"\0" * (-len(sw) % 8))
-            nbt, body = index_batches(pos, col, uv, len(tris), nb)
             env = tx.get("env") if tx else None  # lit byte 2: VU1Env, its 12-float matrix (tex.env_mtx) after the header
-            vg += struct.pack("<IHHBBBB4x", len(tris), ti, nbt, *bl, 2 if env else 1 if nb else 0) + \
+            strip = not sk and not nb and not env  # static unlit: triangle strips for VU1Strip (fmt byte 1)
+            skstrip = bool(sk) and bool(nb) and not env  # skinned lit: strips for VU1SkinLit (fmt byte 2)
+            envstrip = not sk and bool(env)  # static environment-mapped: strips for VU1EnvStrip (fmt byte 3), no UVs
+            if envstrip:
+                nbt, body = strip_batches(pos, col, b"", len(tris), nb)
+            elif strip:
+                nbt, body = strip_batches(pos, col, uv, len(tris))
+            elif skstrip:
+                nbt, body = strip_batches(pos, col, uv, len(tris), nb, SKIN_STRIP_MAX, skinned=True)
+            else:
+                nbt, body = index_batches(pos, col, uv, len(tris), nb)
+            if strip:
+                stats["strip_verts"] = stats.get("strip_verts", 0) + sum(
+                    struct.unpack_from("<H", body, 4 * i)[0] for i in range(nbt))
+                stats["strip_list_verts"] = stats.get("strip_list_verts", 0) + len(tris)
+            vg += struct.pack("<IHHBBBBB3x", len(tris), ti, nbt, *bl, 2 if env else 1 if nb else 0, 1 if strip else 2 if skstrip else 3 if envstrip else 0) + \
                 (struct.pack("<12f", *env) if env else b"") + body
         vumd.append(name32(t) + struct.pack("<If8x", len(groups), qs) + vg)
         if kcl and collision:
@@ -1501,7 +1828,8 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
             chunk(b"VUMD", struct.pack("<I12x", len(vumd)) + b"".join(vumd)),
             chunk(b"KCL ", struct.pack("<I", len(kcls)) + b"".join(kcls)),
             chunk(b"BTK ", struct.pack("<I", len(btks)) + b"".join(btks)),
-            chunk(b"SWAP", struct.pack("<I", len(swaps)) + b"".join(swaps))] + ptcl
+            chunk(b"SWAP", struct.pack("<I", len(swaps)) + b"".join(swaps)),
+            chunk(b"BVAS", struct.pack("<I", len(bvas)) + b"".join(bvas))] + ptcl
 
 
 # the player's archive per player (GameSystemStationedArchiveLoader::createAndAddPlayerArchives: Mario.arc / Luigi.arc,
@@ -1583,10 +1911,71 @@ LUIGI_NPC_CLIPS = ("wait", "talk", "afraidwait", "afraidtalk", "arrested", "arre
                    "treetrampled", "treehit", "treeland")
 
 
+def brk_c0(lfiles, mname):
+    """The C0 track a BRK of the archive gives material mname (InvincibleMario's rainbow) -> (loop, [rgb per frame]),
+    None if none animates it."""
+    for n, d in sorted(lfiles.items()):
+        if not n.endswith(".brk") or d[:8] != b"J3D1brk1":
+            continue
+        t = d.find(b"TRK1")
+        frames = struct.unpack_from(">H", d, t + 0xA)[0]
+        if 0 not in tex.brk(d, 0).get(mname, {}).get("reg", {}):
+            continue
+        return d[t + 8], [tuple(min(255, max(0, round(c * 255))) for c in tex.brk(d, f)[mname]["reg"][0][:3])
+                          for f in range(frames)]
+    return None
+
+
+BRKC_ARCS = ("InvincibleMario", "InvincibleLuigi", "InvincibleMarioHandL", "InvincibleMarioHandR")
+
+
+def brkc_chunk(fsp):
+    """BRKC: the models whose kind 4 groups take a BRK's C0 (brk_c0): {u32 n}, n x {char model[32], u8 loop, u8 pad,
+    u16 frames, u8 rgb0[frames][4]} (its first material's track: theirs are one)."""
+    out = []
+    for a in BRKC_ARCS:
+        p = fsp / "ObjectData" / f"{a}.arc"
+        if not p.exists():
+            continue
+        lfiles = {n.rsplit("/", 1)[-1].lower(): b for n, b in B.rarc_files(p.read_bytes())}
+        bdl = next((v for k, v in lfiles.items() if k.endswith((".bdl", ".bmd"))), None)
+        if bdl is None:
+            continue
+        bl = tex.blocks(bdl)
+        tr = brk_c0(lfiles, tex.material_name(bdl, bl[b"MAT3"], 0))
+        if tr:
+            out.append(name32(a) + struct.pack("<BBH", tr[0], 0, len(tr[1])) + b"".join(bytes(c) + b"\0" for c in tr[1]))
+    return chunk(b"BRKC", struct.pack("<I", len(out)) + b"".join(out))
+
+
+def btp_chunk(fsp, classes):
+    """BTPS: the skinned classes' texture patterns by "<class>/<clip>" (lower case): {u32 n}, n x {char key[32], u8
+    nmat, u8 loop, u16 frames, nmat x {u8 slot, u8 swap[frames]} (swap: 0 the material's own texture, k its k-th
+    BTP image, SWAP kind 0x80 | slot), padded to 4}"""
+    out = []
+    names = [c for c in SKINNED_OBJ if c in classes or any(c in EXTRA.get(k, ()) + MORPH_ARCS.get(k, ()) for k in classes)]
+    names += [c for c in AUTO_SKINNED if c in classes and c not in names]
+    for c in names:
+        a = AUTO_SKINNED.get(c) or model_archive(fsp, c, {})
+        arc = fsp / "ObjectData" / f"{a}.arc" if a else None
+        if not arc or not arc.exists():
+            continue
+        lfiles = {n.rsplit("/", 1)[-1].lower(): b for n, b in B.rarc_files(arc.read_bytes())}
+        order, bt_tex, clips = btp_tables(lfiles)
+        for clip, (loop, frames, per) in clips.items():
+            body = struct.pack("<BBH", len(per), loop, frames)
+            for m, idx in per.items():
+                body += bytes([order.index(m)]) + bytes(min(255, 1 + bt_tex[m].index(i)) for i in idx)
+            e = name32(f"{c.lower()}/{clip}") + body
+            out.append(e + b"\0" * (-len(e) % 4))
+    return chunk(b"BTPS", struct.pack("<I", len(out)) + b"".join(out))
+
+
 def obj_anim_chunk(fsp, classes, galaxy=None):
     """ANIM for the skinned placed classes among `classes` (and their EXTRA models): "<class>/<clip>" lower case."""
     clips = []
-    names = [c for c in SKINNED_OBJ if c in classes or any(c in EXTRA.get(k, ()) for k in classes)]
+    names = [c for c in SKINNED_OBJ if c in classes or any(c in EXTRA.get(k, ()) + MORPH_ARCS.get(k, ()) for k in classes)
+             or (c in ("MorphBubble", "CrystalBox", "CrystalBoxBreak") and any(k in MORPH_ARCS for k in classes))]
     names += [c for c in AUTO_SKINNED if c in classes and c not in names]
     for c in names:
         arc = fsp / "ObjectData" / f"{AUTO_SKINNED.get(c) or ANIM_ARC.get(c, c)}.arc"
@@ -1908,11 +2297,13 @@ def packs(fs, galaxy, scenario, resident, ratio=0.99):
         for n in ns:
             if n not in resident:
                 count[n] = count.get(n, 0) + 1
-    shared = sorted(n for n, c in count.items() if c > 1)
+    # the player's power-up models go wherever he goes: always loaded (common.bin), not with the item's stage
+    player = set(MORPH_SKIN) | {"BeeMarioWing", "TeresaMario", "TeresaLuigi", "MarioFireBall"}
+    shared = sorted(n for n, c in count.items() if c > 1 or n in player)
     files = {"scene.bin": blob_of(out),
              "common.bin": blob_of(assets(fsp, [(n, am[n]) for n in shared], planets, ratio))}
     for st, ns in per.items():
-        own = [n for n in ns if count.get(n) == 1]
+        own = [n for n in ns if count.get(n) == 1 and n not in player]
         files[f"{st}.bin"] = blob_of(assets(fsp, [(n, am[n]) for n in own], planets, ratio))
         files[f"{st}.low.bin"] = blob_of(assets(fsp, [(n, low_lod(fsp, n)) for n in own if n in planets], planets,
                                                 ratio, collision=False))
@@ -1928,16 +2319,24 @@ def packs(fs, galaxy, scenario, resident, ratio=0.99):
     return files, info
 
 
+# the player's damage models any stage may show: initBoneMario (BoneMario / BoneLuigi, posed by his joints: MarioParalyze)
+# and initParts' 氷結モデル (MarioFreezeIce: MarioFreeze)
+PLAYER_PARTS = ("BoneMario", "MarioFreezeIce", "WaterColumn")  # (WaterColumn: initEffect's ModelObj, the swim's splash)
+
+
 def resident_pack(fs, ratio=0.99, player="Mario"):
     """Models every scenario shares (phase 0b RESIDENT set, the ones the converter knows) + the player + his clips.
     player "Luigi": resident_luigi.bin, loaded instead of resident.bin when the file plays as Luigi (main.c): Luigi.arc's
     model as "Mario", MarioAnime.arc's clips with LUIGI_SWAP."""
     fsp = Path(fs)
-    names = list(RESIDENT) + list(SKINNED)
+    names = list(RESIDENT) + list(SKINNED) + list(PLAYER_PARTS)
     swap = LUIGI_SWAP if player == "Luigi" else None
-    models = [(t, SKINNED_ARCS[player] if t == "Mario" else t) for t in names] + \
+    models = [(t, SKINNED_ARCS[player] if t == "Mario" else f"{player}Face" if t == "MarioFace" else
+               f"{t}%{player}" if t in ("MarioHandL", "MarioHandR") else f"Bone{player}" if t == "BoneMario" else t)
+              for t in names] + \
         [(f"{c}@{k}", f"{c}@{k}") for c in MAT_COLOR for k in range(len(MAT_COLOR[c][1]))]
-    return blob_of(assets(fsp, models, {}, ratio, fx=True) + [anim_chunk(fsp, swap), eye_chunk(fsp, player, swap)]), set(names)
+    return blob_of(assets(fsp, models, {}, ratio, fx=True) + [anim_chunk(fsp, swap), eye_chunk(fsp, player, swap),
+                                                            obj_anim_chunk(fsp, {"MarioFreezeIce", "WaterColumn"})]), set(names)
 
 
 def read_chunks(blob):

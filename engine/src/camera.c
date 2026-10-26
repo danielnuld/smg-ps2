@@ -315,6 +315,19 @@ static void vp_arrange(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, 
 /* CameraFollow's own state: mPos / mWatchPos (zone frame, before the arrange), mAngleXSpeed */
 static V3 fl_pos, fl_watch;
 static float fl_pitch_speed;
+/* The pad's rounds and reset (CameraLocalUtil testCameraPadTriggerRoundLeft / Right / Reset: the Wii D-pad and C;
+ * camera_input sets them for the next camera_update). CameraFollow: startRound towards a yaw at sRoundAddition 0.08
+ * (0.2 for a reset, behind Mario), sRoundInterval pi / 4, each side valid while the line to its eye is clear
+ * (checkValidityOfRound). CameraTower: whole intervals off its ideal yaw, as many as its yaw speed allows.
+ * CameraParallel (num1 1): 8 intervals round, 0.08 a frame (twice that back to 0 on a reset). */
+#define ROUND_INTERVAL (PI / 4.0f)
+static int in_left, in_right, in_reset;
+static int sj_on, sj_frame; /* the subjective camera (camera_fp) */
+static int fl_rounding, fl_valid_l, fl_valid_r;
+static float fl_yaw_target, fl_yaw_speed;
+static int tw_n, tw_rounding, tw_max;
+static int pa_rounding;
+static float pa_angle, pa_target, pa_add = 0.08f;
 #define LOOK_DOWN (75.0f * PI / 180.0f) /* sLookDownAngle */
 
 static int map_line(V3 from, V3 dir) /* Collision::checkStrikeLineToMap (world); none given: a hit */
@@ -347,6 +360,7 @@ static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V
     V3 w = watch_point(p, t, move);
     int type = p->type == 255 ? CAM_XZ_PARA : p->type;
     int vpan = type == CAM_XZ_PARA || type == CAM_TOWER || type == CAM_FOLLOW; /* the types with createVPanObj */
+    if (fresh) { fl_rounding = fl_valid_l = fl_valid_r = 0; tw_n = tw_rounding = 0; pa_rounding = 0; pa_angle = pa_target = 0.0f; }
     if (vpan && fresh) { /* reset (CameraParallel / CameraTower: resetJump, calcWatchPos; CameraFollow.cpp:45-64) */
         vp_reset_jump();
         if (type == CAM_FOLLOW) {
@@ -376,8 +390,19 @@ static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V
         V3 ri = vsub(ideal, w), rp = vsub(type_eye, w);
         ri.y = rp.y = 0.0f;
         float lag = PI * (1.0f - p->angle_a) * 0.5f;     /* the camera keeps its yaw until it lags more than this */
-        float yi = atan2f(ri.x, ri.z), yp = atan2f(rp.x, rp.z);
-        float yaw = yi + clampf(wrap_pi(yp - yi), -lag, lag);
+        tw_max = (int)((lag + ROUND_INTERVAL / 2) / ROUND_INTERVAL); /* arrangeHorizontalPose's maxDivNum */
+        if (in_reset) { tw_n = 0; tw_rounding = 1; }
+        else if (in_left && tw_n > -tw_max) { tw_n--; tw_rounding = 1; }
+        else if (in_right && tw_n < tw_max) { tw_n++; tw_rounding = 1; }
+        float yi = atan2f(ri.x, ri.z) + tw_n * ROUND_INTERVAL, yp = atan2f(rp.x, rp.z);
+        float yaw;
+        if (tw_rounding) { /* arrangeRoundingPose: towards the interval at sRoundAddition a frame */
+            float dy = wrap_pi(yi - yp);
+            yaw = yp + clampf(dy, -0.08f, 0.08f);
+            if (fabsf(dy) <= 0.08f) tw_rounding = 0;
+        } else {
+            yaw = yi + clampf(wrap_pi(yp - yi), -lag, lag);
+        }
         float hl = 0.95f * vlen(rp) + 0.05f * vlen(ri);  /* sAttenuation 0.05 */
         *eye = v3(w.x + sinf(yaw) * hl, ideal.y, w.z + cosf(yaw) * hl);
         break;
@@ -386,6 +411,16 @@ static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V
         float dmax = p->axis[0], dmin = p->axis[1];
         V3 r = vsub(fl_pos, w); /* constrainDistance */
         float d = vlen(r);
+        if (fl_rounding) { /* calcRotPos: the yaw converges on the round's target, the rest kept */
+            float rpitch = atan2f(r.y, sqrtf(r.x * r.x + r.z * r.z)), ryaw = atan2f(r.x, r.z);
+            float dy = wrap_pi(fl_yaw_target - ryaw);
+            ryaw += clampf(dy, -fl_yaw_speed, fl_yaw_speed);
+            if (fabsf(dy) <= fl_yaw_speed) fl_rounding = 0;
+            fl_pos = *eye = vadd(w, polar(d, rpitch, ryaw));
+            fl_watch = w;
+            follow_height(p, t, w, eye);
+            goto follow_valid;
+        }
         if (d < dmin) r = vmul(vnorm(near_zero(r) ? vsub(fl_pos, fl_watch) : r), dmin);
         else if (d >= dmax) r = vmul(vnorm(r), dmax + (d - dmax) * 0.5f);
         d = vlen(r);
@@ -397,10 +432,22 @@ static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V
         float behind = atan2f(back.x, back.z);
         V3 hm = vsub(move, vmul(t->up, vdot(move, t->up))); /* CameraFollow.cpp:221: the move off the target's up */
         float speed = t->jumping ? 0.0f : p->dist * (PI / 180.0f) * clampf(vlen(hm) / 15.0f, 0.0f, 1.0f);
-        yaw += clampf(wrap_pi(behind - yaw), -speed, speed);
+        if (in_reset) { fl_yaw_target = behind; fl_yaw_speed = 0.2f; fl_rounding = 1; } /* constrainAngleY: startRound */
+        else yaw += clampf(wrap_pi(behind - yaw), -speed, speed);
         fl_pos = *eye = vadd(w, polar(d, pitch, yaw));
+        if ((in_left && fl_valid_l) || (in_right && fl_valid_r)) { /* checkShiftStateToRound */
+            fl_yaw_target = yaw + (in_left ? -ROUND_INTERVAL : ROUND_INTERVAL);
+            fl_yaw_speed = 0.08f;
+            fl_rounding = 1;
+        }
         fl_watch = w;
         follow_height(p, t, w, eye);
+    follow_valid: { /* checkValidityOfRound: the eye an interval round either way, its line clear of the map */
+            V3 rr = vsub(*eye, w);
+            float rd = vlen(rr), rpt = atan2f(rr.y, sqrtf(rr.x * rr.x + rr.z * rr.z)), ry = atan2f(rr.x, rr.z);
+            fl_valid_l = !map_line(*eye, vsub(vadd(w, polar(rd, rpt, ry - ROUND_INTERVAL)), *eye));
+            fl_valid_r = !map_line(*eye, vsub(vadd(w, polar(rd, rpt, ry + ROUND_INTERVAL)), *eye));
+        }
         break;
     }
     case CAM_WONDER_PLANET: { /* CameraWonderPlanet.cpp:52-109: dragged along in the target frame */
@@ -528,7 +575,20 @@ static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V
         break;
     }
     default: /* CAM_XZ_PARA, CameraParallel.cpp:61-87, CamTranslatorParallel.cpp:12 */
-        *eye = vadd(w, polar(p->dist < 300.0f ? 300.0f : p->dist, p->angle_b, p->angle_a - PI * 0.5f));
+        if (p->num1 == 1) { /* calcRound (mIsEnableValid) */
+            if (pa_rounding) {
+                pa_angle += clampf(pa_target - pa_angle, -pa_add, pa_add);
+                if (pa_angle == pa_target) pa_rounding = 0;
+            } else if (in_reset) {
+                pa_target = 0.0f; pa_rounding = 1; pa_add = 0.16f;
+            } else if (in_left || in_right) {
+                int n = (pa_angle < 0.0f ? -1 : 1) * (int)((ROUND_INTERVAL / 2 + fabsf(pa_angle)) / ROUND_INTERVAL) + (in_left ? -1 : 1);
+                if (n < -4) { n += 8; pa_angle += 2 * PI; }
+                if (n > 4) { n -= 8; pa_angle -= 2 * PI; }
+                pa_target = n * ROUND_INTERVAL; pa_rounding = 1; pa_add = 0.08f;
+            }
+        }
+        *eye = vadd(w, polar(p->dist < 300.0f ? 300.0f : p->dist, p->angle_b, p->angle_a - PI * 0.5f + pa_angle));
         break;
     }
     if (vpan) { /* mVPan->arrange (CameraParallel / CameraTower reset it from their first pose) */
@@ -588,6 +648,17 @@ int camera_actor_start(const char *cls, const char *event, int set, V3 up, V3 fr
     return ev_begin(camera_class_hash(name), set, 0, up, front, pos);
 }
 
+/* MR::getMultiActorCameraFrames: the actor camera's EventFrame (evfrm), 0 if it has none */
+int camera_actor_frames(const char *cls, const char *event, int set)
+{
+    char name[96];
+    snprintf(name, sizeof name, "%s%s%s", cls, set & 0x8000 ? "共通" : "固有", event);
+    unsigned h = camera_class_hash(name);
+    for (int i = 0; i < ncams; i++)
+        if (cams[i].kind == 'e' && cams[i].evclass == h && cams[i].num == set) return cams[i].evfrm > 0 ? cams[i].evfrm : 0;
+    return 0;
+}
+
 void camera_event_end(void) { if (ev_on) ev_ending = 1; }
 
 void camera_event_stop(void) { if (ev_on) { ev_on = 0; cur = -3; } }
@@ -606,6 +677,21 @@ void camera_talk_start(V3 pos, V3 up, float height, float dist)
 }
 
 void camera_talk_end(void) { if (tk_on) { tk_on = 0; cur = -3; } }
+
+/* MR::startGlobalEventCamera on a programmable event camera (declareEventCameraProgrammable, setProgrammableCameraParam:
+ * its watch point, the eye's direction and distance from it, the up): that fixed pose blended in over `frames`;
+ * endGlobalEventCamera(frames): back to the area camera over those frames */
+static int pr_on, back_camint = -1;
+static V3 pr_eye, pr_watch, pr_up;
+void camera_prog_start(V3 watch, V3 eye, V3 up, int frames)
+{
+    pr_eye = eye; pr_watch = watch; pr_up = vnorm(up);
+    if (pr_on) return;
+    pr_on = 1;
+    cur = -3; timer = 0; camint = frames; fresh = 1;
+    type_eye = f_eye; type_watch = f_watch; type_up = f_up;
+}
+void camera_prog_end(int frames) { if (pr_on) { pr_on = 0; cur = -3; back_camint = frames; } }
 
 static int talk_pose(const CamTarget *t, V3 *eye, V3 *watch, V3 *up) /* CameraTalk::calc */
 {
@@ -670,7 +756,33 @@ void camera_start_pos(int zone, int id)
         if (cams[i].kind == 's' && cams[i].zone == zone && cams[i].num == (unsigned)(id & 0xFFFF)) start_cam = i;
 }
 void camera_start_pos_end(void) { start_cam = -1; }
+static void update(const CamTarget *t);
 void camera_update(const CamTarget *t)
+{
+    update(t);
+    in_left = in_right = in_reset = 0;
+    sj_frame = sj_on ? (sj_frame < 20 ? sj_frame + 1 : 20) : (sj_frame > 0 ? sj_frame - 1 : 0);
+}
+
+/* CameraDirector::controlCameraSE: the pad's round / reset this frame, if the current camera allows it (CAMIN_*
+ * bits: the sound to play); taken by the next camera_update */
+int camera_input(int left, int right, int reset)
+{
+    if (ev_on || tk_on || cur < -1) return 0;
+    const CamParam *p = param();
+    int type = p->type == 255 ? CAM_XZ_PARA : p->type;
+    int el = 0, er = 0, ereset = 0;
+    if (type == CAM_FOLLOW) { el = fl_valid_l; er = fl_valid_r; ereset = 1; }
+    else if (type == CAM_TOWER) { el = tw_n > -tw_max; er = tw_n < tw_max; ereset = 1; }
+    else if (type == CAM_XZ_PARA) el = er = ereset = p->num1 == 1;
+    int se = 0;
+    if (left) { se |= el ? CAMIN_MOVE : CAMIN_NG; in_left = el; }
+    if (right) { se |= er ? CAMIN_MOVE : CAMIN_NG; in_right = er; }
+    if (reset) { se |= ereset ? CAMIN_RESET | CAMIN_MOVE : CAMIN_NG; in_reset = ereset; }
+    return se;
+}
+
+static void update(const CamTarget *t)
 {
     shake_update();
     int a = -1;
@@ -680,6 +792,7 @@ void camera_update(const CamTarget *t)
     int want = start_cam >= 0 ? start_cam : a >= 0 && areas[a].cam != 0xFFFF ? areas[a].cam : (cur == -2 || cur == -3 ? -1 : cur);
     V3 move = vsub(t->pos, last_target);
     last_target = t->pos;
+    if (pr_on) { blend_to(pr_eye, pr_watch, pr_up); type_eye = pr_eye; type_up = pr_up; fresh = 0; return; }
     if (tk_on) {
         V3 e, w, u;
         if (talk_pose(t, &e, &w, &u)) { type_eye = e; type_up = u; fresh = 0; }
@@ -711,7 +824,8 @@ void camera_update(const CamTarget *t)
         int first = cur == -2;
         cur = want;
         timer = 0;
-        camint = first ? 0 : param()->camint;
+        camint = first ? 0 : back_camint >= 0 ? back_camint : param()->camint;
+        back_camint = -1;
         fresh = 1;
 #ifdef BENCH
         printf("camera %d %s\n", cur, camera_type_name());
@@ -750,6 +864,38 @@ void camera_update(const CamTarget *t)
     f_fovy = 0.9f * f_fovy + 0.1f * fovy;
 }
 
+/* CameraSubjective (MarioFpView's first-person view): 120 up from Mario's feet, his frame turned by the stick (sPadStickPlay
+ * 0.3; the angles' speeds fade 0.9 a frame, gain a tenth of the stick, x 3: pitch -45..90, yaw -80..80 degrees), the
+ * watch point 200 ahead; CameraDirector::calcSubjective blends it in and out over sSubjectiveInterpolateFrame 20
+ * (half a cosine). ponytail: one blend for position and turn (Petari starts the turn 10 frames later) */
+static V3 sj_pos, sj_x, sj_y, sj_z;
+static float sj_ax, sj_ay, sj_vx, sj_vy, sj_sx, sj_sy;
+void camera_fp(int on, V3 pos, V3 up, V3 front, int at_once)
+{
+    if (on && !sj_on) { /* CameraSubjective::reset */
+        sj_pos = vadd(pos, vmul(up, 120.0f));
+        sj_y = up; sj_z = front; sj_x = vnorm(vcross(up, front));
+        sj_ax = sj_ay = sj_vx = sj_vy = 0.0f;
+    }
+    sj_on = on;
+    if (!on && at_once) sj_frame = 0;
+}
+void camera_fp_look(float sx, float sy) { sj_sx = sx; sj_sy = sy; }
+static float stick_play(float v) { return v < -0.3f ? clampf((v + 0.3f) / 0.7f, -1, 1) : v > 0.3f ? clampf((v - 0.3f) / 0.7f, -1, 1) : 0.0f; }
+static void fp_calc(V3 *eye, V3 *watch, V3 *up)
+{
+    float ax = -stick_play(sj_sy), ay = -stick_play(sj_sx); /* the stick up looks up, right looks right */
+    sj_ax = clampf(sj_ax + sj_vx * 3.0f, -45.0f, 90.0f);
+    sj_ay = clampf(sj_ay + sj_vy * 3.0f, -80.0f, 80.0f);
+    sj_vx = clampf(sj_vx * 0.9f + ax / 10.0f, -1.0f, 2.0f);
+    sj_vy = clampf(sj_vy * 0.9f + ay / 10.0f, -1.0f, 2.0f);
+    float a = sj_ax * PI / 180.0f, b = sj_ay * PI / 180.0f;
+    V3 z = v3(cosf(a) * sinf(b), -sinf(a), cosf(a) * cosf(b)), y = v3(sinf(a) * sinf(b), cosf(a), sinf(a) * cosf(b));
+    V3 zw = vadd(vadd(vmul(sj_x, z.x), vmul(sj_y, z.y)), vmul(sj_z, z.z));
+    V3 yw = vadd(vadd(vmul(sj_x, y.x), vmul(sj_y, y.y)), vmul(sj_z, y.z));
+    *eye = sj_pos; *watch = vadd(sj_pos, vmul(zw, 200.0f)); *up = vnorm(yw);
+}
+
 static int ovr;
 static V3 o_eye, o_watch, o_up;
 static float o_fovy;
@@ -764,6 +910,15 @@ void camera_pose(V3 *eye, V3 *watch, V3 *up, float *fovy)
 {
     if (ovr) { *eye = o_eye; *watch = o_watch; *up = o_up; *fovy = o_fovy; return; }
     *eye = f_eye; *watch = f_watch; *up = f_up; *fovy = f_fovy;
+    if (sj_frame > 0) {
+        static V3 se, sw, su;
+        static int calced = -1;
+        if (calced != sj_frame || sj_on) { fp_calc(&se, &sw, &su); calced = sj_frame; }
+        float r = 0.5f - 0.5f * cosf(PI * sj_frame / 20.0f);
+        *eye = vadd(f_eye, vmul(vsub(se, f_eye), r));
+        *watch = vadd(f_watch, vmul(vsub(sw, f_watch), r));
+        *up = vnorm(vadd(f_up, vmul(vsub(su, f_up), r)));
+    }
 }
 
 int camera_current(void) { return cur < ncams ? cur : -1; }

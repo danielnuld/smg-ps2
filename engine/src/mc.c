@@ -35,8 +35,10 @@ static u32 check_sum(const u8 *p, int size) /* MR::calcCheckSum */
 
 int mc_init(void)
 {
-    if (SifLoadModule("rom0:MCMAN", 0, NULL) < 0 || SifLoadModule("rom0:MCSERV", 0, NULL) < 0) { printf("mc: modules not loaded\n"); return -1; }
-    if (mcInit(MC_TYPE_MC) < 0) { printf("mc: init failed\n"); return -1; }
+    /* the X modules, as commercial games: Neutrino's virtual card (-mc0, ORBIT) hooks XSIO2MAN; the old rom0:MCMAN /
+     * SIO2MAN hung under it (console and PCSX2, 2026-10-23) */
+    if (SifLoadModule("rom0:XMCMAN", 0, NULL) < 0 || SifLoadModule("rom0:XMCSERV", 0, NULL) < 0) { printf("mc: modules not loaded\n"); return -1; }
+    if (mcInit(MC_TYPE_XMC) < 0) { printf("mc: init failed\n"); return -1; }
     ok = 1;
     return 0;
 }

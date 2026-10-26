@@ -40,6 +40,14 @@ int camera_area_at(const CamArea *a, int n, V3 p);
 void camera_init(const CamParam *cams, int ncams, const CamArea *areas, int nareas, const float (*zones)[16],
                  const CamTarget *t);
 void camera_update(const CamTarget *t);
+/* the pad's camera round left / right (Wii D-pad) and reset (C) this frame, for the next camera_update: the sounds
+ * to play (CameraDirector::controlCameraSE) */
+enum { CAMIN_MOVE = 1, CAMIN_NG = 2, CAMIN_RESET = 4 };
+int camera_input(int left, int right, int reset);
+/* MarioFpView's subjective camera at Mario (pos, up, front) on / off (at_once: forceClose, else blended back over 20
+ * frames); camera_fp_look: the stick that turns it this frame */
+void camera_fp(int on, V3 pos, V3 up, V3 front, int at_once);
+void camera_fp_look(float sx, float sy);
 void camera_pose(V3 *eye, V3 *watch, V3 *up, float *fovy);
 /* SpinDriverCamera / MultiEventCamera: the event cameras "<class>:<set>:NN" one after another (evfrm), their
  * target a matrix (up, front, pos) whose up turns to the flight's direction (updateTargetMatrix); 0 if the class
@@ -53,11 +61,16 @@ void camera_event_end(void);
  * stop: endMultiActorCamera, at once (the area camera blends back) */
 int camera_actor_start(const char *cls, const char *event, int set, V3 up, V3 front, V3 pos);
 void camera_event_stop(void);
+int camera_actor_frames(const char *cls, const char *event, int set); /* getMultiActorCameraFrames: its evfrm */
 /* CameraDirector::startTalkCamera / endTalkCamera: CameraTalk ("共通会話カメラ", camint 120) about the target and the
  * talker at pos: up blended halfway to the target's, half way between them, turned 0.7 (or 90 degrees) round and
  * 0.12 up, dist back and height up */
 void camera_talk_start(V3 pos, V3 up, float height, float dist);
 void camera_talk_end(void);
+/* a programmable event camera (startGlobalEventCamera / setProgrammableCameraParam): fixed at eye looking at watch,
+ * blended in over frames; end: back to the area camera over frames */
+void camera_prog_start(V3 watch, V3 eye, V3 up, int frames);
+void camera_prog_end(int frames);
 /* a demo's animated camera (CameraAnim): this pose until off */
 void camera_set_override(int on, V3 eye, V3 watch, V3 up, float fovy);
 /* CameraManGame::startStartPosCamera: the start's camera ("s:" Camera_id of its zone) until camera_start_pos_end */

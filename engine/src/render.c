@@ -17,6 +17,48 @@
 #include <stdio.h>
 #include <string.h>
 
+/* console diagnosis (ORBIT, 2026-10-23: the console froze after the first 3D frame, PCSX2 did not): every DMA / GS
+ * FINISH wait in this file prints the DMAC, VIF1, GIF and GS state once a second while it is stuck */
+static u32 dbg_count(void) { u32 c; __asm__ volatile("mfc0 %0, $9" : "=r"(c)); return c; }
+#define DBG_R(a) (*(volatile u32 *)(a))
+static void dbg_dump(const char *what, int line)
+{
+    printf("stuck %s line %d: D1 chcr %08x madr %08x qwc %08x tadr %08x | D2 chcr %08x madr %08x qwc %08x | "
+           "VIF1 stat %08x err %08x code %08x | GIF stat %08x | D_STAT %08x | GS CSR %08x\n", what, line,
+           DBG_R(0x10009000), DBG_R(0x10009010), DBG_R(0x10009020), DBG_R(0x10009030), DBG_R(0x1000A000),
+           DBG_R(0x1000A010), DBG_R(0x1000A020), DBG_R(0x10003C00), DBG_R(0x10003C20), DBG_R(0x10003C80),
+           DBG_R(0x10003020), DBG_R(0x1000E010), DBG_R(0x12001000));
+}
+static void dbg_dma_wait(int ch, int line)
+{
+    volatile u32 *chcr = (volatile u32 *)(ch == DMA_CHANNEL_GIF ? 0x1000A000 : 0x10009000);
+    u32 c0 = dbg_count();
+    int n = 0;
+    while (*chcr & 0x100)
+        if (dbg_count() - c0 > 294912000u && n < 5) { dbg_dump(ch == DMA_CHANNEL_GIF ? "GIF dma" : "VIF1 dma", line); c0 = dbg_count(); n++; }
+}
+static void dbg_finish_wait(int line)
+{
+    u32 c0 = dbg_count();
+    int n = 0;
+    while (!(DBG_R(0x12001000) & 2))
+        if (dbg_count() - c0 > 294912000u && n < 5) { dbg_dump("GS finish", line); c0 = dbg_count(); n++; }
+    DBG_R(0x12001000) = 2; /* as draw_wait_finish: the FINISH event cleared */
+}
+#define dma_channel_wait(ch, t) dbg_dma_wait(ch, __LINE__)
+#define draw_wait_finish() dbg_finish_wait(__LINE__)
+
+/* 16-bit frames: dithering on (the usual 4 x 4 matrix), after each draw_setup_environment (which turns it off) */
+static qword_t *env_dither(qword_t *q)
+{
+#ifndef LORES
+    static char dm[16] = {-4, 2, -3, 3, 0, -2, 1, -1, -3, 3, -4, 2, 1, -1, 0, -2};
+    q = draw_dither_matrix(q, dm);
+    q = draw_dithering(q, 1);
+#endif
+    return q;
+}
+
 /* VU1 renderer: the EE only builds DMA chains that point at the blob's VU-ready vertex data (VUMD chunk) and at one
  * matrix per model instance; VU1 (vu1_tex.vsm) transforms, rejects off-band triangles, projects, computes STQ and
  * XGKICKs to the GS. Set-up follows ps2sdk samples/draw/vu1 (libpacket2, libdraw, libgraph).
@@ -30,15 +72,61 @@ extern u32 VU1Lit_Start __attribute__((section(".vudata")));
 #define LIT_PROGRAM ((u32)((u8 *)&VU1Lit_Start - (u8 *)&VU1Tex_CodeStart) / 8) /* MSCAL address of the lit batches */
 extern u32 VU1Env_Start __attribute__((section(".vudata")));
 #define ENV_PROGRAM ((u32)((u8 *)&VU1Env_Start - (u8 *)&VU1Tex_CodeStart) / 8) /* environment-mapped batches */
-#define PROGRAM(vg) ((vg)->lit == 2 ? ENV_PROGRAM : (vg)->lit ? LIT_PROGRAM : 0)
+extern u32 VU1Strip_Start __attribute__((section(".vudata")));
+#define STRIP_PROGRAM ((u32)((u8 *)&VU1Strip_Start - (u8 *)&VU1Tex_CodeStart) / 8) /* static strips (blob.h strip) */
+extern u32 VU1SkinLit_Start __attribute__((section(".vudata")));
+#define SKINLIT_PROGRAM ((u32)((u8 *)&VU1SkinLit_Start - (u8 *)&VU1Tex_CodeStart) / 8) /* skinned lit strips */
+extern u32 VU1EnvStrip_Start __attribute__((section(".vudata")));
+#define ENVSTRIP_PROGRAM ((u32)((u8 *)&VU1EnvStrip_Start - (u8 *)&VU1Tex_CodeStart) / 8) /* static env strips */
+#define PROGRAM(vg) ((vg)->strip == 3 ? ENVSTRIP_PROGRAM : (vg)->strip == 2 ? SKINLIT_PROGRAM : (vg)->strip ? STRIP_PROGRAM :                      (vg)->lit == 2 ? ENV_PROGRAM : (vg)->lit ? LIT_PROGRAM : 0)
 
 #define SCREEN_W 640
 /* 640 x 224 buffers shown in FRAME mode (each field reads every line): the picture is the same on both fields, so it
  * does not bob a line per frame under PCSX2's deinterlacing (a 448-line buffer read every other line did: each
  * buffer always lands on the same field). Layout and projection stay in 448-line units (DISP_H), scaled by YS. */
+#ifndef LORES /* HIRES (default): 640 x 448, 16-bit colour (dithered) and depth: the same VRAM as 640 x 224 at 32 bits */
+#define SCREEN_H 448
+#define FB_PSM GS_PSM_16S
+#define Z_FMT GS_ZBUF_16S
+#define Z_MAX 0xFFFF      /* the nearest depth (ZTEST GEQUAL: near is large) */
+#define Z_SCALE ((float)Z_MAX / 32.0f)
+#define FB_TH 9           /* log2 of the texture height that covers the frame (bloom's source) */
+#else
 #define SCREEN_H 224
+#define FB_PSM GS_PSM_32
+#define Z_FMT GS_ZBUF_24
+#define Z_MAX 0xFFFFFF
+#define Z_SCALE ((float)Z_MAX / 32.0f)
+#define FB_TH 8
+#endif
 #define DISP_H 448
 #define YS ((float)SCREEN_H / DISP_H)
+
+/* Asynchronous flip: render_end puts the HUD and a FINISH at the end of the frame's VIF1 chain and returns; the
+ * VBLANK handler shows the frame once the GS has signalled FINISH, so the next frame's logic overlaps the VU1 / GS
+ * work and no frame waits for a vblank of its own (a 35 ms frame no longer costs three). Whatever draws into a
+ * frame buffer, or changes VRAM, first waits for the flip (render_flip_wait). */
+static volatile int flip_pending;
+static volatile u32 flip_addr;
+static int fb_psm = FB_PSM;  /* the frames' format: GS_PSM_32 while a movie plays (render_movie_mode) */
+volatile u32 render_vblanks; /* every vblank (bench: real frame rate) */
+static int flip_tick(int cause)
+{
+    (void)cause;
+    render_vblanks++;
+    if (flip_pending && (*(volatile u64 *)0x12001000 & 2)) { /* GS CSR: FINISH */
+        *(volatile u64 *)0x12001000 = 2;
+        graph_set_framebuffer(0, flip_addr, SCREEN_W, fb_psm, 0, 0);
+        flip_pending = 0;
+    }
+    ExitHandler();
+    return 0;
+}
+void render_flip_wait(void)
+{
+    while (flip_pending) {}
+}
+
 #define BATCH 60           /* vertices per VU1 batch: 7n + 7m + 2 qwords (lit, m <= 10 matrices) must fit a 496-qword
                             * buffer, and n a multiple of 12 so the 4-byte colour, UV and normal arrays of the next
                             * batch start on a qword */
@@ -71,7 +159,11 @@ static float light_qw[16] __attribute__((aligned(16)));          /* VU mem 11..1
 static const RenderLight *light, *light_sent;                     /* the current light, the one VU mem holds */
 #define HDRS(t, n) (headers_static + 2 * ((t) * (BATCH / 3 + 1) + (n) / 3))
 static qword_t *headers_static;  /* [mode][count]: {n, 0, matrix base 1} + GIF tag, for prebuilt chains */
+#define STRIP_MAX 80             /* VU1Strip: vertices per batch (vu1_tex.vsm's fixed places; tools/slice.py STRIP_MAX) */
+#define HSTRIP(t, n) (headers_strip + 2 * ((t) * (STRIP_MAX / 4 + 1) + (n) / 4))
+static qword_t *headers_strip;   /* [mode][count / 4]: {n} + GIF tag of a TRIANGLE_STRIP */
 static u32 tris_drawn;
+u32 render_vstat[6]; /* emitted vertices by VU1 path (bench) */
 static u32 vram_tex;             /* VRAM words taken by textures and CLUTs */
 static qword_t *tex_packets;     /* per texture 8 qwords (GIF tag + TEX0, TEX1, CLAMP, TEST, ALPHA, ZBUF, MIPTBP1), then 3
                                   * for NO_TEX (tag + TEST, ZBUF). Blended textures (alpha kind 2) blend
@@ -169,6 +261,10 @@ void render_init(void)
 {
     dma_channel_initialize(DMA_CHANNEL_GIF, NULL, 0);
     dma_channel_initialize(DMA_CHANNEL_VIF1, NULL, 0);
+    /* VIF1_ERR.ME0: our chains send an UNPACK's data through REF tags, and with TTE on the real VIF1 takes such a tag
+     * arriving mid-UNPACK as a DMAtag mismatch (VIF1_STAT ER0) and stalls; masked, it ignores the tag. PCSX2 does not
+     * emulate ER0: the console froze on the first 3D frame (VIF1 stat 0e0010c3, 2026-10-23) */
+    *(volatile u32 *)0x10003C20 = 2;
     dma_channel_fast_waits(DMA_CHANNEL_GIF);
     dma_channel_fast_waits(DMA_CHANNEL_VIF1);
 
@@ -186,22 +282,27 @@ void render_init(void)
     packet2_free(p);
 
     for (int i = 0; i < 2; i++) {
-        frame[i].width = SCREEN_W; frame[i].height = SCREEN_H; frame[i].mask = 0; frame[i].psm = GS_PSM_32;
-        frame[i].address = graph_vram_allocate(SCREEN_W, SCREEN_H, GS_PSM_32, GRAPH_ALIGN_PAGE);
+        frame[i].width = SCREEN_W; frame[i].height = SCREEN_H; frame[i].mask = 0; frame[i].psm = FB_PSM;
+        frame[i].address = graph_vram_allocate(SCREEN_W, SCREEN_H, FB_PSM, GRAPH_ALIGN_PAGE);
     }
-    zbuf.enable = DRAW_ENABLE; zbuf.mask = 0; zbuf.method = ZTEST_METHOD_GREATER_EQUAL; zbuf.zsm = GS_ZBUF_24;
-    zbuf.address = graph_vram_allocate(SCREEN_W, SCREEN_H, GS_ZBUF_24, GRAPH_ALIGN_PAGE);
+    zbuf.enable = DRAW_ENABLE; zbuf.mask = 0; zbuf.method = ZTEST_METHOD_GREATER_EQUAL; zbuf.zsm = Z_FMT;
+    zbuf.address = graph_vram_allocate(SCREEN_W, SCREEN_H, Z_FMT, GRAPH_ALIGN_PAGE);
     bloom_q = graph_vram_allocate(192, 64, GS_PSM_32, GRAPH_ALIGN_PAGE);  /* bloom: a quarter, its blur, an eighth */
     bloom_q2 = graph_vram_allocate(192, 64, GS_PSM_32, GRAPH_ALIGN_PAGE);
     bloom_e = graph_vram_allocate(128, 32, GS_PSM_32, GRAPH_ALIGN_PAGE);
-    graph_initialize(frame[0].address, SCREEN_W, SCREEN_H, GS_PSM_32, 0, 0);
-    graph_set_mode(GRAPH_MODE_INTERLACED, graph_get_region(), GRAPH_MODE_FRAME, GRAPH_DISABLE);
+    graph_initialize(frame[0].address, SCREEN_W, SCREEN_H, FB_PSM, 0, 0);
+    /* 224 lines: FRAME (each field reads every line); 448: FIELD (each field its alternate lines: true 480i) */
+    graph_set_mode(GRAPH_MODE_INTERLACED, graph_get_region(), SCREEN_H == DISP_H ? GRAPH_MODE_FIELD : GRAPH_MODE_FRAME,
+                   GRAPH_DISABLE);
     graph_set_screen(0, 16, SCREEN_W, DISP_H);
-    graph_set_framebuffer(0, frame[0].address, SCREEN_W, GS_PSM_32, 0, 0);
+    graph_set_framebuffer(0, frame[0].address, SCREEN_W, FB_PSM, 0, 0);
     graph_set_output(GRAPH_ENABLE, GRAPH_DISABLE, 1, 0, 0, 0xFF); /* circuit 1, alpha from ALP (frame alpha is 0x80) */
     back = 1;
-    p = packet2_create(20, P2_TYPE_NORMAL, P2_MODE_NORMAL, 0);
+    AddIntcHandler(INTC_VBLANK_S, flip_tick, 0);
+    EnableIntc(INTC_VBLANK_S);
+    p = packet2_create(32, P2_TYPE_NORMAL, P2_MODE_NORMAL, 0);
     packet2_update(p, draw_setup_environment(p->next, 0, &frame[back], &zbuf));
+    packet2_update(p, env_dither(p->next));
     packet2_update(p, draw_primitive_xyoffset(p->next, 0, 2048 - SCREEN_W / 2, 2048 - SCREEN_H / 2));
     packet2_update(p, draw_finish(p->next));
     dma_channel_send_packet2(p, DMA_CHANNEL_GIF, 1);
@@ -233,10 +334,18 @@ void render_init(void)
             h->sw[2] = 1;
             h[1] = HDR(t, 1, n)[1];
         }
+    headers_strip = mem_alloc(MEM_RENDER, MODES * (STRIP_MAX / 4 + 1) * 2 * 16);
+    for (int t = 0; t < MODES; t++)
+        for (int n = 4; n <= STRIP_MAX; n += 4) {
+            qword_t *h = HSTRIP(t, n);
+            h->sw[0] = n; h->sw[1] = 0; h->sw[2] = 1; h->sw[3] = 0;
+            h[1].dw[0] = GIF_SET_TAG(n, 1, 1, GS_SET_PRIM(PRIM_TRIANGLE_STRIP, 1, t & 1, 0, t >> 1, 0, 0, 0, 0), GIF_FLG_PACKED, 3);
+            h[1].dw[1] = (u64)GIF_REG_ST | (u64)GIF_REG_RGBAQ << 4 | (u64)GIF_REG_XYZ2 << 8;
+        }
     /* scale constant at VU mem 0, below the double buffers: written once */
     ((float *)&scale_qw)[0] = 2048.0f;
     ((float *)&scale_qw)[1] = 2048.0f;
-    ((float *)&scale_qw)[2] = (float)0xFFFFFF / 32.0f;
+    ((float *)&scale_qw)[2] = Z_SCALE;
     p = packet2_create(6, P2_TYPE_NORMAL, P2_MODE_CHAIN, 1);
     packet2_utils_vu_add_unpack_data(p, 0, &scale_qw, 1, 0);
     packet2_utils_vu_add_unpack_data(p, 8, uv_ident, 3, 0); /* the UV matrix, identity */
@@ -291,9 +400,11 @@ void render_begin(const float eye[3], const float target[3], const float up[3])
     view[13] = -(u[0] * eye[0] + u[1] * eye[1] + u[2] * eye[2]);
     view[14] = -(fw[0] * eye[0] + fw[1] * eye[1] + fw[2] * eye[2]);
 
+    render_flip_wait(); /* frame[back] is still on screen until the last frame's flip */
     dma_channel_wait(DMA_CHANNEL_VIF1, 0);
     packet2_reset(gif, 0);
     packet2_update(gif, draw_setup_environment(gif->next, 0, &frame[back], &zbuf));
+    packet2_update(gif, env_dither(gif->next));
     packet2_update(gif, draw_primitive_xyoffset(gif->next, 0, 2048 - SCREEN_W / 2, 2048 - SCREEN_H / 2));
     packet2_update(gif, draw_disable_tests(gif->next, 0, &zbuf));
     packet2_update(gif, draw_clear(gif->next, 0, 2048.0f - SCREEN_W / 2, 2048.0f - SCREEN_H / 2, SCREEN_W, SCREEN_H, 0x08, 0x0C, 0x28));
@@ -435,7 +546,10 @@ static int tex_need(u32 t)
     }
     const TexEntry *e = tex_scene->tex[t].e;
     int n = tex_nblk[t], b;
-    while ((b = tex_alloc(n, T8(e) ? 4 : 1)) < 0) { /* evict the least recently used texture whose chain has completed */
+    while ((b = tex_alloc(n, T8(e) ? 32 : 1)) < 0) { /* PSMT8 from a page's start: from a 4-block step, the font's
+                                                     * 256 x 256 glyph sheet and the title's copyright under it overwrote
+                                                     * each other (PCSX2 hardware and software alike) */
+        /* no room: evict the least recently used texture whose chain has completed */
         int lru = -1;
         for (u32 i = 0; i < tex_scene->ntex; i++)
             if (tex_block[i] >= 0 && tex_last[i] <= done_seq && (lru < 0 || tex_last[i] < tex_last[lru]))
@@ -527,6 +641,7 @@ void render_set_texture(u32 t, const TexEntry *e, const u8 *base)
 
 void render_load_textures(const Scene *s, u32 first_tex, u32 first_model)
 {
+    render_flip_wait(); /* the last frame may still draw with these textures */
     u32 ntex = s->ntex;
     tex_scene = s;
     if (!tex_packets) { /* fixed slots (render_init: below main.c's scene mark): prebuilt chains point into them; the
@@ -562,6 +677,7 @@ void render_load_textures(const Scene *s, u32 first_tex, u32 first_model)
 
 void render_release(Scene *s, u32 first_tex, u32 first_model)
 {
+    render_flip_wait(); /* the last frame may still draw with these textures */
     dma_channel_wait(DMA_CHANNEL_VIF1, 0);
     dma_channel_wait(DMA_CHANNEL_GIF, 0);
     for (u32 i = first_model; i < s->nmodels; i++)
@@ -642,6 +758,39 @@ static void add_batch(packet2_t *pk, const u8 **p, u32 ne, u32 nu, int textured,
     *p = d;
 }
 
+/* one skinned lit strip batch (VU1SkinLit), after its matrices: positions to TOP+72, UVs +132, normals +192, colours
+ * +252 (vu1_tex.vsm's fixed places) */
+static void add_skin_strip_batch(packet2_t *pk, const u8 **p, u32 n, int textured)
+{
+    const u8 *d = *p;
+    unpack_narrow_to(pk, d, 8 * n, 72, n, P2_UNPACK_V4_16, 0);
+    d += (8 * n + 15) & ~15u;
+    if (textured) {
+        unpack_narrow_to(pk, d, 4 * n, 132, n, P2_UNPACK_V2_16, 0);
+        d += (4 * n + 15) & ~15u;
+    }
+    unpack_narrow_to(pk, d, 4 * n, 192, n, P2_UNPACK_V4_8, 0);
+    d += (4 * n + 15) & ~15u;
+    unpack_narrow_to(pk, d, 4 * n, 252, n, P2_UNPACK_V4_8, 1);
+    d += (4 * n + 15) & ~15u;
+    *p = d;
+}
+
+/* one strip batch (VU1Strip): positions to TOP+2, UVs to +82, colours to +162 (vu1_tex.vsm's fixed places) */
+static void add_strip_batch(packet2_t *pk, const u8 **p, u32 n, int textured)
+{
+    const u8 *d = *p;
+    unpack_narrow_to(pk, d, 8 * n, 2, n, P2_UNPACK_V4_16, 0);
+    d += (8 * n + 15) & ~15u;
+    if (textured) {
+        unpack_narrow_to(pk, d, 4 * n, 82, n, P2_UNPACK_V2_16, 0);
+        d += (4 * n + 15) & ~15u;
+    }
+    unpack_narrow_to(pk, d, 4 * n, 162, n, P2_UNPACK_V4_8, 1);
+    d += (4 * n + 15) & ~15u;
+    *p = d;
+}
+
 /* header mode of a group: bit 0 textured (PRIM TME), bit 1 blended material (PRIM ABE, drawn in the late pass) */
 static int group_mode(const VuGroup *vg)
 {
@@ -651,7 +800,7 @@ static int group_mode(const VuGroup *vg)
 /* GS state of a blended material, after its texture packet: ALPHA (Cs - Cd) A + Cd, or Cs A + Cd when additive, with
  * A the texture alpha when it has one, else the material alpha (FIX, 16 steps); ZBUF writes depth only if the
  * material does; TEST without the alpha cut. Prebuilt per (additive, z write, texture alpha, alpha / 16). */
-#define BLEND_STATES (3 * 2 * 2 * 16)
+#define BLEND_STATES (5 * 2 * 2 * 16)
 static qword_t *blend_states;
 
 static const qword_t *blend_state(const VuGroup *vg)
@@ -665,10 +814,13 @@ static void init_blend_states(void)
     blend_states = mem_alloc(MEM_RENDER, BLEND_STATES * 4 * 16);
     for (int i = 0; i < BLEND_STATES; i++) {
         int kind = i >> 6, zw = i >> 5 & 1, as = i >> 4 & 1, a = (i & 15) * 0x11 >> 1; /* FIX: 0..0x80 */
+        /* kind 3 (blend 4): Cd x FIX + Cs, the frame buffer through a tint's mean plus the tint (render_group_tint) */
         qword_t *p = blend_states + 4 * i;
         p[0].dw[0] = GIF_SET_TAG(3, 1, 0, 0, GIF_FLG_PACKED, 1);
         p[0].dw[1] = GIF_REG_AD;
         p[1].dw[0] = kind == 2 ? GS_SET_ALPHA(1, 2, 2, 2, a) /* Cd x FIX */
+                   : kind == 3 ? GS_SET_ALPHA(1, 2, 2, 0, a) /* Cd x FIX + Cs */
+                   : kind == 4 ? GS_SET_ALPHA(1, 2, 2, 1, a) /* Cd x FIX + Cd: blend 5, the frame buffer brightened */
                                : GS_SET_ALPHA(0, kind ? 2 : 1, as ? 0 : 2, 1, a);
         p[1].dw[1] = GS_REG_ALPHA;
         p[2].dw[0] = GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, !zw);
@@ -806,8 +958,21 @@ static packet2_t *build_chain_pass(Model *md, int xlu)
         const u8 *d = vg->data;
         for (u32 b = 0; b < vg->nbatch; b++) {
             u32 ne = vg->batch[2 * b], nu = vg->batch[2 * b + 1];
-            add_header(pk, HDRS(mode, ne), nu);
-            add_batch(pk, &d, ne, nu, vg->tex != NO_TEX, vg->lit, 2);
+            if (vg->strip == 3) { /* VU1EnvStrip: positions, normals where VU1Strip has UVs, colours */
+                add_header(pk, HSTRIP(mode, ne), 0);
+                unpack_narrow_to(pk, d, 8 * ne, 2, ne, P2_UNPACK_V4_16, 0);
+                d += (8 * ne + 15) & ~15u;
+                unpack_narrow_to(pk, d, 4 * ne, 82, ne, P2_UNPACK_V4_8, 0);
+                d += (4 * ne + 15) & ~15u;
+                unpack_narrow_to(pk, d, 4 * ne, 162, ne, P2_UNPACK_V4_8, 1);
+                d += (4 * ne + 15) & ~15u;
+            } else if (vg->strip) {
+                add_header(pk, HSTRIP(mode, ne), 0);
+                add_strip_batch(pk, &d, ne, vg->tex != NO_TEX);
+            } else {
+                add_header(pk, HDRS(mode, ne), nu);
+                add_batch(pk, &d, ne, nu, vg->tex != NO_TEX, vg->lit, 2);
+            }
             packet2_utils_vu_add_start_program(pk, PROGRAM(vg));
         }
         if (vg->uvm)
@@ -935,8 +1100,10 @@ static void draw_model_(const Model *md, const float world[16], const float (*dr
                 xlu[k] = xlu[k - 1];
             xlu[k].md = md; xlu[k].m = m; xlu[k].depth = mv[14]; xlu[k].light = light;
         }
-        for (u32 g = 0; g < md->vu_ngroups; g++)
+        for (u32 g = 0; g < md->vu_ngroups; g++) {
             tris_drawn += md->vu[g].nverts / 3;
+            render_vstat[md->vu[g].lit == 2 ? 2 : md->vu[g].lit ? 1 : 0] += md->vu[g].nverts; /* static: 0 tex, 1 lit, 2 env */
+        }
         return;
     }
     u32 need = drw ? 0 : 1, batches = 0, btks = 0;
@@ -962,6 +1129,8 @@ static void draw_model_(const Model *md, const float world[16], const float (*dr
     }
     for (u32 g = 0; g < md->vu_ngroups; g++) {
         const VuGroup *vg = &md->vu[g];
+        if (vg->strip == 1 || vg->strip == 3) continue; /* static strip groups: their model's prebuilt chain only */
+        if (drw && vg->hide) continue; /* a BVA's hidden shape */
         if (drw) {
             const SkGroup *sg = &md->skin->groups[g];
             gm = mats + nmats;
@@ -994,11 +1163,18 @@ static void draw_model_(const Model *md, const float world[16], const float (*dr
             add_uvm(vif[cur], vg->uvm);
         for (u32 b = 0; b < vg->nbatch; b++) {
             u32 ne = vg->batch[2 * b], nu = vg->batch[2 * b + 1];
+            if (vg->strip == 2) { /* VU1SkinLit: {n} + strip GIF tag, the matrices, the arrays at fixed places */
+                add_header(vif[cur], HSTRIP(mode, ne), 0);
+                packet2_utils_vu_add_unpack_data(vif[cur], 2, gm, 7 * m, 1);
+                add_skin_strip_batch(vif[cur], &d, ne, vg->tex != NO_TEX);
+            } else {
             add_header(vif[cur], HDR(mode, m, ne), nu);
             packet2_utils_vu_add_unpack_data(vif[cur], 2, gm, 7 * m, 1);
             add_batch(vif[cur], &d, ne, nu, vg->tex != NO_TEX, vg->lit, base);
+            }
             packet2_utils_vu_add_start_program(vif[cur], PROGRAM(vg));
             tris_drawn += ne / 3;
+            render_vstat[3 + (vg->lit == 2 ? 2 : vg->lit ? 1 : 0)] += ne; /* skinned: 3 tex, 4 lit, 5 env */
         }
         if (vg->uvm)
             add_uvm(vif[cur], uv_ident);
@@ -1055,14 +1231,14 @@ void render_clear_depth(void)
     packet2_vif_flush(vif[cur], 0);
     packet2_vif_open_direct(vif[cur], 0);
     packet2_add_2x_s64(vif[cur], GIF_SET_TAG(9, 1, 0, 0, GIF_FLG_PACKED, 1), GIF_REG_AD);
-    packet2_add_2x_s64(vif[cur], GS_SET_FRAME(fb, fw, GS_PSM_32, 0xFFFFFFFF), GS_REG_FRAME);
+    packet2_add_2x_s64(vif[cur], GS_SET_FRAME(fb, fw, FB_PSM, 0xFFFFFFFF), GS_REG_FRAME);
     packet2_add_2x_s64(vif[cur], GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, ZTEST_METHOD_ALLPASS), GS_REG_TEST);
     packet2_add_2x_s64(vif[cur], GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 0), GS_REG_ZBUF);
     packet2_add_2x_s64(vif[cur], GS_SET_PRIM(PRIM_SPRITE, 0, 0, 0, 0, 0, 0, 0, 0), GS_REG_PRIM);
     packet2_add_2x_s64(vif[cur], GS_SET_RGBAQ(0, 0, 0, 0x80, 0x3F800000), GS_REG_RGBAQ);
     packet2_add_2x_s64(vif[cur], GS_SET_XYZ((2048 - SCREEN_W / 2) << 4, (2048 - SCREEN_H / 2) << 4, 0), GS_REG_XYZ2);
     packet2_add_2x_s64(vif[cur], GS_SET_XYZ((2048 + SCREEN_W / 2) << 4, (2048 + SCREEN_H / 2) << 4, 0), GS_REG_XYZ2);
-    packet2_add_2x_s64(vif[cur], GS_SET_FRAME(fb, fw, GS_PSM_32, 0), GS_REG_FRAME);
+    packet2_add_2x_s64(vif[cur], GS_SET_FRAME(fb, fw, FB_PSM, 0), GS_REG_FRAME);
     packet2_add_2x_s64(vif[cur], test_z, GS_REG_TEST);
     packet2_vif_close_direct_auto(vif[cur]);
     packet2_chain_close_tag(vif[cur]);
@@ -1073,6 +1249,28 @@ void render_model(const Model *md, const float world[16], u8 cr, u8 cg, u8 cb)
 {
     (void)cr; (void)cg; (void)cb; /* colours are baked into the VUMD data */
     draw_model(md, world, NULL);
+}
+
+/* a model's blend 4 groups (a BRK's C0 over the frame buffer: tools/slice.py brk_c0) to tint rgb: their vertex
+ * colours (rgbi bytes 0-2 of each batch, the unindexed layout only) and FIX, the tint's mean */
+void render_group_tint(const Model *md, u8 r, u8 g, u8 b)
+{
+    for (u32 k = 0; k < md->vu_ngroups; k++) {
+        VuGroup *vg = &((Model *)md)->vu[k];
+        if (vg->blend != 4 || vg->strip) continue;
+        vg->alpha = (u8)((r + g + b) / 3);
+        u8 *d = (u8 *)vg->data;
+        for (u32 bt = 0; bt < vg->nbatch; bt++) {
+            u32 ne = vg->batch[2 * bt], nu = vg->batch[2 * bt + 1];
+            d += (8 * nu + 15) & ~15u;
+            if (vg->tex != NO_TEX) d += (4 * nu + 15) & ~15u;
+            if (vg->lit) d += (4 * nu + 15) & ~15u;
+            u8 *c = d;
+            for (u32 v = 0; v < ne; v++, c += 4) { c[0] = r >> 1; c[1] = g >> 1; c[2] = b >> 1; } /* 0x80 is 1 */
+            SyncDCache(d, c);
+            d += (4 * ne + 15) & ~15u;
+        }
+    }
 }
 
 void render_skinned(const Model *md, const float world[16], const float (*drw)[16])
@@ -1100,7 +1298,7 @@ void render_text(float x, float y, const char *s)
     const float px = 2.0f;
     rect_t r;
     r.color.r = r.color.g = r.color.b = 0xFF; r.color.a = 0x80; r.color.q = 1.0f;
-    r.v0.z = r.v1.z = 0xFFFFFF;
+    r.v0.z = r.v1.z = Z_MAX;
     for (; *s; s++, x += 4 * px) {
         char ch = (*s >= 'a' && *s <= 'z') ? *s - 32 : *s;
         const char *at = strchr(glyph_chars, ch);
@@ -1127,7 +1325,7 @@ void render_rect(float x, float y, float w, float h, u8 r, u8 g, u8 b)
     }
     rect_t q;
     q.color.r = r; q.color.g = g; q.color.b = b; q.color.a = 0x80; q.color.q = 1.0f;
-    q.v0.z = q.v1.z = 0xFFFFFF;
+    q.v0.z = q.v1.z = Z_MAX;
     q.v0.x = x - SCREEN_W / 2; q.v0.y = y * YS - SCREEN_H / 2;
     q.v1.x = q.v0.x + w; q.v1.y = q.v0.y + h * YS;
     if (packet2_get_qw_count(gif) < GIF_QW - 96)
@@ -1176,7 +1374,7 @@ void render_sprites(const Sprite *sp, int n)
             if (sx + hx < 2048 - SCREEN_W / 2 || sx - hx > 2048 + SCREEN_W / 2 || sy + hy < 2048 - SCREEN_H / 2 ||
                 sy - hy > 2048 + SCREEN_H / 2)
                 continue;
-            u32 z = (u32)(((proj[10] * zv + proj[14]) / zv + 1.0f) * (float)(0xFFFFFF / 2));
+            u32 z = (u32)(((proj[10] * zv + proj[14]) / zv + 1.0f) * (float)(Z_MAX / 2));
             packet2_add_2x_s64(vif[cur], GS_SET_RGBAQ(s->rgba & 0xFF, s->rgba >> 8 & 0xFF, s->rgba >> 16 & 0xFF, s->rgba >> 24, 0x3F800000), GS_REG_RGBAQ);
             packet2_add_2x_s64(vif[cur], GS_SET_UV(0, 0), GS_REG_UV);
             packet2_add_2x_s64(vif[cur], GS_SET_XYZ((int)((sx - hx) * 16), (int)((sy - hy) * 16), z), GS_REG_XYZ2);
@@ -1257,7 +1455,7 @@ static void draw_quads(void)
     nquads = 0;
 }
 
-/* WaterPlant strips: a triangle strip of 8 points each, alpha blended, textured (UV), no depth write; a strip with a
+/* WaterPlant strips: a triangle strip of 8 points each, alpha blended (pad bit 0: added, Cs x As + Cd), textured (UV), no depth write; a strip with a
  * point behind the camera or far off screen is left out */
 void render_strips(const Strip *st, int n)
 {
@@ -1276,7 +1474,7 @@ void render_strips(const Strip *st, int n)
             sx[v] = 2048.0f + shake_x + proj[0] * xv * k;
             sy[v] = 2048.0f + shake_y + proj[5] * yv * k;
             if (sx[v] < 2048 - SCREEN_W || sx[v] > 2048 + SCREEN_W || sy[v] < 2048 - SCREEN_H || sy[v] > 2048 + SCREEN_H) ok = 0;
-            sz[v] = (u32)(((proj[10] * zv + proj[14]) / zv + 1.0f) * (float)(0xFFFFFF / 2));
+            sz[v] = (u32)(((proj[10] * zv + proj[14]) / zv + 1.0f) * (float)(Z_MAX / 2));
         }
         if (!ok)
             continue;
@@ -1289,7 +1487,7 @@ void render_strips(const Strip *st, int n)
         packet2_vif_open_direct(vif[cur], 0);
         qword_t *tag = (qword_t *)vif[cur]->next;
         packet2_add_2x_s64(vif[cur], 0, GIF_REG_AD);
-        packet2_add_2x_s64(vif[cur], GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA);
+        packet2_add_2x_s64(vif[cur], s->pad & 1 ? GS_SET_ALPHA(0, 2, 0, 1, 0) : GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA);
         packet2_add_2x_s64(vif[cur], GS_SET_TEST(1, ATEST_METHOD_GREATER, 0x10, 0, 0, 0, 1, ZTEST_METHOD_GREATER_EQUAL), GS_REG_TEST);
         packet2_add_2x_s64(vif[cur], GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 1), GS_REG_ZBUF);
         packet2_add_2x_s64(vif[cur], GS_SET_PRIM(PRIM_TRIANGLE_STRIP, 0, 1, 0, 1, 0, 1, 0, 0), GS_REG_PRIM);
@@ -1363,21 +1561,24 @@ static void ad_target(u32 addr, int fbw, int w, int h)
     AD(GS_SET_XYZ((2048 - SCREEN_W / 2 + w) << 4, (2048 - SCREEN_H / 2 + h) << 4, 0), GS_REG_XYZ2);
 }
 /* a buffer as the texture (bilinear, clamped to w x h, tcc: its alpha too) */
-static void ad_source(u32 addr, int tbw, int tw, int th, int w, int h, int tcc)
+static void ad_source_psm(u32 addr, int tbw, int psm, int tw, int th, int w, int h, int tcc)
 {
     AD(0, GS_REG_TEXFLUSH);
-    AD(GS_SET_TEX0(addr >> 6, tbw, GS_PSM_32, tw, th, tcc, 0, 0, 0, 0, 0, 0), GS_REG_TEX0);
+    AD(GS_SET_TEX0(addr >> 6, tbw, psm, tw, th, tcc, 0, 0, 0, 0, 0, 0), GS_REG_TEX0);
     AD(GS_SET_TEX1(1, 0, 1, 1, 0, 0, 0), GS_REG_TEX1);
     AD(GS_SET_CLAMP(2, 2, 0, w - 1, 0, h - 1), GS_REG_CLAMP);
 }
+#define ad_source(addr, tbw, tw, th, w, h, tcc) ad_source_psm(addr, tbw, GS_PSM_32, tw, th, w, h, tcc)
 
 static void bloom_pass(void)
 {
     if (!bloom_k || !nbloom) { nbloom = 0; return; }
     u32 fb = frame[back].address, fw = SCREEN_W >> 6;
     /* the frame's alpha to 0, then the bloom models into it alone */
-    ad_open(6);
-    AD(GS_SET_FRAME(fb >> 11, fw, GS_PSM_32, 0x00FFFFFF), GS_REG_FRAME);
+    ad_open(8);
+    AD(GS_SET_FBA(0), GS_REG_FBA);
+    AD(GS_SET_DTHE(0), GS_REG_DTHE);
+    AD(GS_SET_FRAME(fb >> 11, fw, FB_PSM, 0x00FFFFFF), GS_REG_FRAME); /* colour kept (FBMSK in RGBA32 bits for any PSM) */
     AD(GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, ZTEST_METHOD_ALLPASS), GS_REG_TEST);
     AD(GS_SET_PRIM(PRIM_SPRITE, 0, 0, 0, 0, 0, 0, 0, 0), GS_REG_PRIM);
     AD(GS_SET_RGBAQ(0, 0, 0, 0, 0x3F800000), GS_REG_RGBAQ);
@@ -1396,7 +1597,8 @@ static void bloom_pass(void)
     ad_target(bloom_q, 3, 160, 56);
     AD(GS_SET_ALPHA(0, 2, 0, 1, 0), GS_REG_ALPHA);           /* Cs As + Cd */
     AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 1), GS_REG_ZBUF);
-    ad_source(fb, fw, 10, 8, SCREEN_W, SCREEN_H, 1);
+    AD(GS_SET_TEXA(0, 0, 0x80), GS_REG_TEXA); /* 16-bit frame: its alpha bit reads 0 or 0x80 */
+    ad_source_psm(fb, fw, FB_PSM, 10, FB_TH, SCREEN_W, SCREEN_H, 1);
     for (int k = 0; k < 4; k++) {
         float du = (k & 1) ? 1.0f : -1.0f, dv = (k & 2) ? 1.0f : -1.0f;
         ad_sprite(0, 0, 160, 56, du, dv, SCREEN_W + du, SCREEN_H + dv, 0x20);
@@ -1421,7 +1623,7 @@ static void bloom_pass(void)
             ad_sprite(0, 0, 80, 28, du, dv, 160 + du, 56 + dv, c2);
         }
     /* both added to the frame at intensity */
-    AD(GS_SET_FRAME(fb >> 11, fw, GS_PSM_32, 0), GS_REG_FRAME);
+    AD(GS_SET_FRAME(fb >> 11, fw, FB_PSM, 0), GS_REG_FRAME);
     int c = bloom_k * 0x80 / 255;
     ad_source(bloom_q2, 3, 8, 6, 160, 56, 0);
     ad_sprite(0, 0, SCREEN_W, SCREEN_H, 0, 0, 160, 56, c);
@@ -1430,6 +1632,7 @@ static void bloom_pass(void)
     AD(test_z, GS_REG_TEST);
     AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 0), GS_REG_ZBUF);
     AD(GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA);
+    AD(GS_SET_DTHE(FB_PSM != GS_PSM_32), GS_REG_DTHE); /* env_dither's */
     AD(0, GS_REG_TEXFLUSH);
     ad_close();
     cur_tex = -1;
@@ -1462,7 +1665,7 @@ void render_mesh_c(const float (*pos)[3], const float (*uv)[2], int nvert, const
         msx[v] = 2048.0f + shake_x + proj[0] * xv * k;
         msy[v] = 2048.0f + shake_y + proj[5] * yv * k;
         mok[v] = msx[v] >= 0 && msx[v] <= 4095 && msy[v] >= 0 && msy[v] <= 4095;
-        msz[v] = (u32)(((proj[10] * zv + proj[14]) / zv + 1.0f) * (float)(0xFFFFFF / 2));
+        msz[v] = (u32)(((proj[10] * zv + proj[14]) / zv + 1.0f) * (float)(Z_MAX / 2));
     }
     mesh_same = 0;
     for (int t0 = 0; t0 < ntri; t0 += 40) { /* 40 triangles a GIF packet */
@@ -1512,7 +1715,7 @@ void render_mesh2d(const float (*xy)[2], const float (*uv)[2], int nvert, const 
                 float x = 2048.0f - SCREEN_W / 2 + p[0], y = 2048.0f - SCREEN_H / 2 + p[1] * YS;
                 x = fminf(fmaxf(x, 0.0f), 4095.0f); y = fminf(fmaxf(y, 0.0f), 4095.0f);
                 if (e) AD(GS_SET_UV((int)(q[0] * e->w * 16) & 0x3FFF, (int)(q[1] * e->h * 16) & 0x3FFF), GS_REG_UV);
-                AD(GS_SET_XYZ((int)(x * 16), (int)(y * 16), 0xFFFFFF), GS_REG_XYZ2);
+                AD(GS_SET_XYZ((int)(x * 16), (int)(y * 16), Z_MAX), GS_REG_XYZ2);
             }
         }
         AD(GS_SET_TEST(1, ATEST_METHOD_GREATER, 0, 0, 0, 0, 1, ZTEST_METHOD_GREATER_EQUAL), GS_REG_TEST);
@@ -1543,39 +1746,95 @@ u32 render_end(void)
 {
     u32 c0 = cycles();
     render_world_done();
-    flush_vif();
-    dma_channel_wait(DMA_CHANNEL_VIF1, 0);
-    if (text_open) {
-        packet2_update(gif, draw_enable_tests(gif->next, 0, &zbuf));
-        packet2_update(gif, draw_finish(gif->next));
-        dma_channel_send_packet2(gif, DMA_CHANNEL_GIF, 1);
-        draw_wait_finish();
-        text_open = 0;
-    }
-    u32 busy = cycles() - c0;
-    graph_wait_vsync();
-    graph_set_framebuffer(0, frame[back].address, SCREEN_W, GS_PSM_32, 0, 0);
+    /* the HUD (gif packet) and a FINISH close the chain: FLUSH (VU1 and its XGKICKs done), then DIRECT from a REF */
+    if (!text_open)
+        packet2_reset(gif, 0);
+    packet2_update(gif, draw_enable_tests(gif->next, 0, &zbuf));
+    packet2_update(gif, draw_finish(gif->next));
+    text_open = 0;
+    u32 qw = packet2_get_qw_count(gif);
+    SyncDCache(gif->base, (u8 *)gif->base + qw * 16);
+    if (packet2_get_qw_count(vif[cur]) + 8 > PACKET_QW)
+        flush_vif();
+    packet2_chain_ref(vif[cur], gif->base, qw, 0, 0, 0);
+    packet2_vif_flush(vif[cur], 0);
+    packet2_vif_open_direct(vif[cur], 0);
+    packet2_vif_close_direct_manual(vif[cur], qw);
+    *(volatile u64 *)0x12001000 = 2; /* no stale FINISH: the flip waits for this chain's */
+    flip_addr = frame[back].address;
+    flip_pending = 1;
+    flush_vif(); /* the frame's last part goes; not waited for */
+#ifdef SYNC_FLIP /* the old behaviour, for comparisons: the frame on screen before the next one's logic */
+    render_flip_wait();
+#endif
     back ^= 1;
-    return busy;
+    return cycles() - c0;
 }
 
 /* movie.c: the texture cache's VRAM (its first block), free while no scene is loaded */
-u32 render_free_block(void) { return block_first; }
-void render_reserve_blocks(u32 n) { block_rsv = n; } /* tex_alloc starts past them */
+static u32 movie_blk; /* render_movie_mode: the cache's first blocks under the 32-bit frames */
+u32 render_free_block(void) { return block_first + movie_blk; }
+void render_reserve_blocks(u32 n) { block_rsv = n + movie_blk; } /* tex_alloc starts past them */
+
+/* movie.c, with no scene loaded: the movie on 32-bit frames (the 16-bit ones band and grain its gradients). Two
+ * 640 x 448 PSMCT32 buffers from the first frame's address cover both 16-bit frames, the Z buffer, the bloom buffers
+ * and the cache's first blocks; the cache is emptied and starts past them. Off: the 16-bit frames back, black. */
+void render_movie_mode(int on)
+{
+    if (FB_PSM == GS_PSM_32) return; /* LORES: the frames are 32-bit already */
+    render_flip_wait();
+    dma_channel_wait(DMA_CHANNEL_VIF1, 0);
+    dma_channel_wait(DMA_CHANNEL_GIF, 0);
+    static u32 addr16[2];
+    if (on) {
+        u32 size = SCREEN_W * SCREEN_H; /* words */
+        addr16[0] = frame[0].address; addr16[1] = frame[1].address;
+        frame[1].address = frame[0].address + size;
+        frame[0].psm = frame[1].psm = fb_psm = GS_PSM_32;
+        u32 end = (frame[0].address + 2 * size + 63) / 64;
+        movie_blk = end > (u32)block_first ? end - block_first : 0;
+        for (int b = block_first; b < block_end; b++) block_tex[b] = -1; /* every texture out */
+        for (int t = 0; t < SCENE_MAX_TEX; t++) tex_block[t] = -1;
+        block_rsv = movie_blk;
+    } else {
+        frame[0].address = addr16[0]; frame[1].address = addr16[1];
+        frame[0].psm = frame[1].psm = fb_psm = FB_PSM;
+        movie_blk = block_rsv = 0;
+    }
+    zbuffer_t mz = zbuf;
+    mz.mask = 1; /* the Z buffer lies under the second 32-bit frame */
+    packet2_reset(gif, 0);
+    for (int i = 0; i < 2; i++) { /* both black: neither shows the other format's pixels */
+        packet2_update(gif, draw_setup_environment(gif->next, 0, &frame[i], &mz));
+        packet2_update(gif, draw_dithering(gif->next, 0));
+        packet2_update(gif, draw_primitive_xyoffset(gif->next, 0, 2048 - SCREEN_W / 2, 2048 - SCREEN_H / 2));
+        packet2_update(gif, draw_disable_tests(gif->next, 0, &mz));
+        packet2_update(gif, draw_clear(gif->next, 0, 2048.0f - SCREEN_W / 2, 2048.0f - SCREEN_H / 2, SCREEN_W, SCREEN_H, 0, 0, 0));
+    }
+    packet2_update(gif, draw_finish(gif->next));
+    dma_channel_send_packet2(gif, DMA_CHANNEL_GIF, 1);
+    draw_wait_finish();
+    back = 1;
+    graph_set_framebuffer(0, frame[0].address, SCREEN_W, fb_psm, 0, 0);
+}
 
 /* a decoded movie picture (w x h, its upload chain already built for render_free_block) on black, scaled to the
  * frame's width and letterboxed; covered by `fade` (0xAABBGGRR, A 0x80 opaque) */
 void render_picture(const void *upload, int w, int h, u32 fade, void (*overlay)(void))
 {
-    int dh = h * SCREEN_W / w / 2, y0 = (SCREEN_H - dh) / 2; /* the frame is half the display's lines */
+    render_flip_wait();
+    int dh = (int)(h * SCREEN_W / w * YS), y0 = (SCREEN_H - dh) / 2; /* in frame lines (YS: 224 or 448 of them) */
     dma_channel_wait(DMA_CHANNEL_VIF1, 0);
     dma_channel_wait(DMA_CHANNEL_GIF, 0);
     dma_channel_send_chain(DMA_CHANNEL_GIF, (void *)upload, 0, 0, 0);
     dma_channel_wait(DMA_CHANNEL_GIF, 0);
+    zbuffer_t mz = zbuf;
+    mz.mask = fb_psm != FB_PSM; /* 32-bit frames: the Z buffer is under the second one */
     packet2_reset(gif, 0);
-    packet2_update(gif, draw_setup_environment(gif->next, 0, &frame[back], &zbuf));
+    packet2_update(gif, draw_setup_environment(gif->next, 0, &frame[back], &mz));
+    packet2_update(gif, fb_psm == GS_PSM_32 ? draw_dithering(gif->next, 0) : env_dither(gif->next));
     packet2_update(gif, draw_primitive_xyoffset(gif->next, 0, 2048 - SCREEN_W / 2, 2048 - SCREEN_H / 2));
-    packet2_update(gif, draw_disable_tests(gif->next, 0, &zbuf));
+    packet2_update(gif, draw_disable_tests(gif->next, 0, &mz));
     packet2_update(gif, draw_clear(gif->next, 0, 2048.0f - SCREEN_W / 2, 2048.0f - SCREEN_H / 2, SCREEN_W, SCREEN_H, 0, 0, 0));
     packet2_update(gif, draw_finish(gif->next));
     dma_channel_send_packet2(gif, DMA_CHANNEL_GIF, 1);
@@ -1583,7 +1842,7 @@ void render_picture(const void *upload, int w, int h, u32 fade, void (*overlay)(
     packet2_reset(vif[cur], 0);
     ad_open(20);
     AD(GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA);
-    ad_source((u32)block_first << 6, SCREEN_W >> 6, 10, 9, w, h, 0);
+    ad_source(render_free_block() << 6, SCREEN_W >> 6, 10, 9, w, h, 0);
     ad_sprite(0, y0, SCREEN_W, y0 + dh, 0, 0, w, h, 0x80);
     if (overlay) { /* MovieSubtitles (DrawType_MovieSubtitles), under the wipe */
         ad_close();
@@ -1606,7 +1865,8 @@ void render_picture(const void *upload, int w, int h, u32 fade, void (*overlay)(
 /* the frame drawn shown now (movie.c, at a vblank of its own pacing) */
 void render_show(void)
 {
-    graph_set_framebuffer(0, frame[back].address, SCREEN_W, GS_PSM_32, 0, 0);
+    render_flip_wait();
+    graph_set_framebuffer(0, frame[back].address, SCREEN_W, fb_psm, 0, 0);
     back ^= 1;
 }
 

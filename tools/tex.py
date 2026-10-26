@@ -114,6 +114,24 @@ def textures(b, tex1):
 
 
 # ---------- PS2 rule ----------
+def refine_palette(px, pal, iters=8):
+    """Lloyd (k-means) iterations from a starting palette: (N, 4) RGBA pixels, (k, 4) palette -> (palette, indices),
+    the palette's squared error never higher than the start's. Alpha weighs double (cut-outs keep their edge);
+    entries no pixel takes keep their colour."""
+    x = px.astype(np.float32)
+    wgt = np.array([1, 1, 1, 2], np.float32)
+    for _ in range(iters + 1):
+        d = (((x[:, None, :] - pal[None, :, :]) ** 2) * wgt).sum(2)
+        ia = d.argmin(1)
+        if _ == iters:
+            break
+        for k in range(len(pal)):
+            m = ia == k
+            if m.any():
+                pal[k] = x[m].mean(0)
+    return pal, ia
+
+
 def to_ps2(rgba, wrap_s, wrap_t, hi=False):
     """-> dict(w, h, psm, clamp_s, clamp_t, alpha, pix (PSMT4 bytes), clut (16 x u32 RGBA, a 0..0x80), u_scale,
     v_scale): steps 1-3 of the module rule. hi (skies): PSMT8, 256 colours (CLUT in CSM1 order: index bits 3 and 4
@@ -130,9 +148,10 @@ def to_ps2(rgba, wrap_s, wrap_t, hi=False):
         w, h = p2(w), p2(h)
         img = img.resize((w, h), Image.Resampling.BOX)
     md = MAX_DIM * 2 if hi else MAX_DIM
-    while w > md or h > md:
-        w, h = (w // 2 if w > md else w), (h // 2 if h > md else h)
-        img = img.resize((w, h), Image.Resampling.BOX)
+    if w > md or h > md:  # one Lanczos step to the size (sharper than repeated box halvings)
+        while w > md or h > md:
+            w, h = (w // 2 if w > md else w), (h // 2 if h > md else h)
+        img = img.resize((w, h), Image.Resampling.LANCZOS)
     a = np.asarray(img)[:, :, 3]
     alpha = 0 if a.min() == 255 else 1 if np.isin(a, (0, 255)).all() else 2
     nc = 256 if hi else 16
@@ -152,6 +171,10 @@ def to_ps2(rgba, wrap_s, wrap_t, hi=False):
         px = [np.asarray(lv).reshape(-1, 4) for lv in levels]
         allpx = np.concatenate([np.tile(p, (1 << k, 1)) for k, p in enumerate(px)])
         q = Image.fromarray(allpx.reshape(1, -1, 4), "RGBA").quantize(nc, method=Image.Quantize.FASTOCTREE)
+        pal16 = np.array((q.getpalette(rawmode="RGBA") or [])[:4 * nc] + [0] * 4 * nc, np.float32)[:4 * nc].reshape(nc, 4)
+        pal16, ia = refine_palette(allpx, pal16)
+        q = Image.fromarray(ia.reshape(1, -1).astype(np.uint8), "L")
+        q.putpalette(np.clip(np.rint(pal16), 0, 255).astype(np.uint8).reshape(-1).tolist(), rawmode="RGBA")
     if not hi or alpha:
         pal = np.array((q.getpalette(rawmode="RGBA") or [])[:4 * nc] + [0] * 4 * nc, np.uint32)[:4 * nc].reshape(nc, 4)
     idx = np.asarray(q, np.uint8)
@@ -341,8 +364,9 @@ def env_layer(b, mat3, m, tex1, texs, over=None):
     if tmap == 0xFF or coord == b[off(0x4C) + 4 * oi0]:
         return None
     st = b[off(0x5C) + 20 * u16(b, e + 0xE4 + 2 * (ns - 1)):][:20]
-    if not (st[1] == 15 and st[4] == 0 and st[5] == 0 and st[6] == 0 and st[7] == 0 and (st[2] == 8 or st[3] == 8)
-            and st[9] & 3 == 0):
+    add = st[1] == 8 and st[2] == 15 and st[3] == 15  # PREV + TEXC as a (1 - ZERO): MarioFreezeIce's HiLightMat
+    if not ((st[1] == 15 and (st[2] == 8 or st[3] == 8) or add) and st[4] == 0 and st[5] == 0 and st[6] == 0 and
+            st[7] == 0 and st[9] & 3 == 0):
         return None
     ci = u16(b, e + 0x28 + 2 * coord)
     if ci == 0xFFFF or b[off(0x38) + 4 * ci + 1] != 1:
@@ -355,7 +379,8 @@ def env_layer(b, mat3, m, tex1, texs, over=None):
     mn = material_name(b, mat3, m)
     zero = dict(over or {})
     zero[mn] = dict(zero.get(mn, {}), zero_coord=coord)
-    k = np.clip(tev(b, mat3, m, tex1, texs, None, over)[:3] - tev(b, mat3, m, tex1, texs, None, zero)[:3], 0, 4)
+    k = np.ones(3, np.float32) if add else np.clip(tev(b, mat3, m, tex1, texs, None, over)[:3] -
+                                                   tev(b, mat3, m, tex1, texs, None, zero)[:3], 0, 4)
     t = u16(b, off(0x48) + 2 * u16(b, e + 0x84 + 2 * tmap))
     return dict(coord=coord, tex=t, k=k, env=env, name=mn)
 

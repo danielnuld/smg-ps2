@@ -229,12 +229,15 @@ int game_test_astro_cube(int mode);
 int game_test_dome(int what, int on);
 void game_test_miss(int over);
 int game_test_movie(int which);
+int game_test_gateway(unsigned frame); /* GATEWAY_TEST: 1 while a talk waits for A */
+int game_test_morph(int frame); /* test builds: the first MorphItemObjNeo taken (MORPH_TEST) */
 int game_test_butler_talk(int place); /* tests: Mario before the Butler; the talk director's nerve * 100 + talker */
 int game_test_butler_shoot(void); /* tests: a star piece at the Butler, its lecture hits */
 int game_test_demo_name(const char *name); /* tests: a demo requested by its name, 0 if the scene has none */
 int game_test_demo(int k);   /* tests: demo k's appear switch on (-1: the running demo's step, -1 none; -2: its anim camera's frame) */
 void game_bgm(const char *id); /* MR::startStageBGM by its sound id (MBGM_ / BGM_ / STM_ ...) */
 void game_bgm_stage(void);   /* MR::startCurrentStageBGM: the scenario's music stream (music_tab.h) */
+void game_bgm_tick(void);    /* per frame before audio_update: a sub BGM over, the stage BGM back */
 void game_request_movie(const char *name); /* main.c: played before the next scene requested loads */
 void game_font_init(const Scene *s); /* the talk font from s's FONT chunk (game_text; talk_init, main.c's subs.bin) */
 
