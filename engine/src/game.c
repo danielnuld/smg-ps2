@@ -14524,6 +14524,7 @@ static void m_stop_jump(Player *m) /* stopJump */
     m->hvel = v3(0, 0, 0); m->vup = 0;
     m->jumping = 0; m->hip = 0; m->spin_lock = 0;
 }
+static int m_check_ground(Player *m);
 static void m_check_hang(Player *m) /* checkHang */
 {
     if (hg.timer) return;
@@ -14596,10 +14597,10 @@ static void m_check_hang(Player *m) /* checkHang */
         hg.s1E = 0;
     }
 ground:
-    if (hg.on) /* down to the ground: 1 ahead and up at a time, 10 times at most (updateGroundInfo) */
+    if (hg.on) /* updateGroundInfo (checkGround) until he has ground, 1 ahead and up at a time, 10 times at most.
+                * ponytail: _414 is not kept */
         for (int i = 0; i < 10; i++) {
-            V3 c = vadd(m->pos, vmul(m->up, BODY_RADIUS));
-            if (collide(&c, m->up, BODY_RADIUS)) { m->grounded = 1; return; }
+            if ((m->grounded = m_check_ground(m))) return;
             m->pos = vadd(m->pos, vadd(m->face, m->up));
         }
 }
@@ -16391,7 +16392,7 @@ static void update_mario_(void)
     }
     /* updateGroundInfo: on his feet (or waiting out mDropWaitTime) he checks his ground before the action */
     V3 p270 = m->pos; /* MarioActor _270: his place before the update */
-    int pgc = !hg.on && !swimming && !m->skate && !m->rabbit && !m->teresa && !fo.on, landed = 0;
+    int pgc = !swimming && !m->skate && !m->rabbit && !m->teresa && !fo.on, landed = 0;
     if (pgc) {
         int was = m->grounded;
         m->grounded = m_check_ground(m);
@@ -16452,8 +16453,8 @@ static void update_mario_(void)
     m->s350 = v3(0, 0, 0);
 
     /* MarioActor's Binder (initBinder 60, setBinderOffsetVec _2C4): radius 60 round his place + _2C4, up x 70 on the
-     * ground (50 squatting), eased 0.1 a frame to -gravity x 70 off it; checkGround keeps him on the ground. Hanging,
-     * swimming, skating, as Rabbit / Teresa keep one 50 sphere 50 up. ponytail: _2C4's up is his up (MarioActorGravity blends mHeadVec and _368 by
+     * ground (50 squatting), eased 0.1 a frame to -gravity x 70 off it; checkGround keeps him on the ground. Hanging his
+     * binder is off (MarioHang _F44). Skating, as Rabbit / Teresa he keeps one 50 sphere 50 up. ponytail: _2C4's up is his up (MarioActorGravity blends mHeadVec and _368 by
      * _984), the 0.5 ease on _10._23 / _934 not kept */
     float brad = BODY_RADIUS;
     V3 boff = vmul(m->up, BODY_RADIUS);
@@ -16468,7 +16469,8 @@ static void update_mario_(void)
                                                                    * 150 a frame, thin floors would let it through */
     ghost_through = player_mode == PM_TERESA && m->t418;
     collide_ceil = 0;
-    if (pgc) { /* Binder::bind; the faces hit: walls (the deepest), ceilings */
+    if (pgc && hg.on) { center = vadd(center, move); b_n = 0; m->wall = 0; } /* MarioHang::start: _F44 0, offBind */
+    else if (pgc) { /* Binder::bind; the faces hit: walls (the deepest), ceilings */
         center = m_bind(center, move, brad);
         m->wall = 0;
         mwl.d6 = 0;
