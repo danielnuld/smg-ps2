@@ -123,8 +123,10 @@ def main(out_md="docs/sound-gaps.md"):
           "sequencer, so every ME call takes its SE fallback or nothing (FlipPanel, rally combos, AstroDome select).",
           "- Sequenced BGMs play as tools/bgmseq.py renders (SEQ_*): one stream at a time, no cross fade, no "
           "moveVolumeStageBGM / moveVolumeSubBGM (PowerStar's appear demo, NoteFairy), no setSoundVolumeSetting.",
-          "- Boss BGMs (MR::startBossBGM: MBGM_BOSS_*), startAfterBossBGM (MBGM_STAR_EXIST), event BGMs (races, "
-          "chases), the miss / game over sub BGMs and the clear fanfare need the BGM ids beyond the scenario table.",
+          "- Done: every STM_ id has its stream in bgm_tab (bosses, STAR_EXIST, races, chases); startBossBGM / "
+          "startAfterBossBGM for DinoPackun and OtaKing, the miss / game over sub BGMs, the power star's clear fanfare. "
+          "Left: the other bosses' and events' calls (their classes: the list at the end), the grand star fanfares, "
+          "the picture book's STM_PROLOGUE_01 (its stream not converted).",
           "- Demos: the star return / Rosetta demos' BGM events, BGM fade-in after demos, ChangeBgmCube BGM changes.",
           ""]
     L += ["## Per galaxy", "", "| galaxy | placed names | class SE names | missing |", "|---|---:|---:|---:|"]
