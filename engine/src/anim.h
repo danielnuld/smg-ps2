@@ -12,6 +12,7 @@ typedef struct {
     const Skin *skin;
     const u8 *clip;      /* inflated clip in the cache, NULL = bind pose */
     int clip_id;
+    int skin_stale;      /* posed since its draw matrices were last made (anim_drw makes them) */
     int posed_id;        /* the clip `clip` was read from (anim_length: its pool space may hold another one now) */
     float frame, speed;
     float phase;         /* >= 0: start the next clip at this fraction of its length (loop to loop switch) */
@@ -36,7 +37,7 @@ void anim_bind(Anim *a, const Skin *skin);
  * current pose and fade into the clip over that many frames (Petari's per-animation interpolation, XanimeGroupInfo
  * _8); 0 snaps. */
 int anim_play(Anim *a, const char *name, float speed, int loop, int interp);
-/* Advance one frame and compute the pose (world + draw matrices). */
+/* Advance one frame and compute the pose (world matrices; the draw matrices at the draw: anim_drw). */
 void anim_update(Anim *a);
 /* Advance one frame only (its model not drawn this frame: its clip's timing goes on, the pose is not computed) */
 void anim_advance(Anim *a);
@@ -44,6 +45,8 @@ extern float anim_rate; /* logic steps one update stands for (1; main's catch-up
 /* anim_update in two: the joints' world matrices (which may then be changed), then the draw matrices from them */
 void anim_pose(Anim *a);
 void anim_skin(Anim *a);
+/* the draw matrices, made from the pose first if it changed since (anim_update leaves that to the draw) */
+const float (*anim_drw(Anim *a))[16];
 /* MR::startBck: the clip from frame 0 (even if it is playing), no interpolation (ModelManager::startBck; interp > 0:
  * startBckWithInterpole), looping as its own BCK says; 0 if missing */
 int anim_start(Anim *a, const char *name, int interp);

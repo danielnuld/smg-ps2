@@ -562,7 +562,7 @@ static void draw_skin(const Model *md, const float m[16], Anim *a)
         else bva_apply(md, a->clip_id >= 0 ? sc->clips[a->clip_id].name : NULL, a->frame);
     }
     bva_key = NULL;
-    render_skinned(md, m, (const float (*)[16])a->drw);
+    if (render_model_visible(md, m)) render_skinned(md, m, anim_drw(a)); /* culled: no draw matrices made */
 }
 /* a one-shot effect standing on `up` at p */
 static void fx_at(int fx, V3 p, V3 up)
@@ -1414,12 +1414,26 @@ static int star_flow(Pickup *out, int first, const Row *r, const unsigned char *
 
 /* --- physics shared by Mario and Kuribo ------------------------------------------------------------------- */
 
+static u32 grav_epoch; /* changes with the gravities switched off (update_switches): up_at's answers stay good till then */
 static V3 up_at(V3 p, V3 prev)
 {
+    /* gravity_at is a function of the point and the gravities on: its answer kept for the points asked again (items,
+     * pickups, pieces at rest ask the same point every frame) */
+    static struct { u32 key[3], epoch; int ok; V3 up; } c[64];
+    u32 k[3];
+    memcpy(k, &p, 12);
+    u32 h = (k[0] * 2654435761u ^ k[1] * 2246822519u ^ k[2] * 3266489917u) >> 26;
+    if (c[h].epoch == grav_epoch + 1 && c[h].key[0] == k[0] && c[h].key[1] == k[1] && c[h].key[2] == k[2])
+        return c[h].ok ? c[h].up : prev;
     float g[3];
-    if (!gravity_at(grav, ngrav, (const float *)&p, g))
+    int ok = gravity_at(grav, ngrav, (const float *)&p, g);
+    c[h].key[0] = k[0]; c[h].key[1] = k[1]; c[h].key[2] = k[2];
+    c[h].epoch = grav_epoch + 1;
+    c[h].ok = ok;
+    c[h].up = v3(-g[0], -g[1], -g[2]);
+    if (!ok)
         return prev;
-    return v3(-g[0], -g[1], -g[2]);
+    return c[h].up;
 }
 
 /* Push a sphere out of the KCL; returns 1 if it rests on ground (a face within 60 degrees of up). */
@@ -10673,7 +10687,18 @@ static int in_water(V3 p, V3 up, float *depth)
     static int types[5] = {-2, -2, -2, -2, -2};
     if (types[0] == -2) { types[0] = scene_type(sc, "WaterCube"); types[1] = scene_type(sc, "WaterSphere"); types[2] = scene_type(sc, "WaterCylinder");
         types[3] = scene_type(sc, "OceanSphere"); types[4] = scene_type(sc, "OceanBowl"); }
-    for (u32 i = 0; i < sc->nobjs; i++) {
+    static short rows[256]; /* the water rows in order (found once: every row was walked a call) */
+    static int nrows = -1;
+    if (nrows < 0) {
+        nrows = 0;
+        for (u32 i = 0; i < sc->nobjs && nrows <= 256; i++) {
+            int t = sc->objs[i].type;
+            if (t == types[0] || t == types[1] || t == types[2] || t == types[3] || t == types[4]) { if (nrows < 256) rows[nrows] = (short)i; nrows++; }
+        }
+    }
+    u32 nscan = nrows <= 256 ? (u32)nrows : sc->nobjs;
+    for (u32 k = 0; k < nscan; k++) {
+        u32 i = nrows <= 256 ? (u32)rows[k] : k;
         const Row *r = &sc->objs[i];
         if ((r->type == types[3] || r->type == types[4]) && row_shown(i)) {
             /* OceanSphere::isInWater: within 100 x scale; OceanBowl: that and under its plane (its up) */
@@ -14507,15 +14532,25 @@ static int water_obj(WInfo *w, V3 p)
     static const Scene *at;
     static int t[5];
     winfo_clear(w);
+    static short rows[256]; /* the water rows in order (found once: both walks went over every row a call) */
+    static int nrows;
     if (at != sc) { at = sc; t[0] = scene_type(sc, "WaterCube"); t[1] = scene_type(sc, "WaterSphere"); t[2] = scene_type(sc, "WaterCylinder");
-                    t[3] = scene_type(sc, "OceanSphere"); t[4] = scene_type(sc, "OceanBowl"); }
-    for (u32 i = 0; i < sc->nobjs; i++) {
+                    t[3] = scene_type(sc, "OceanSphere"); t[4] = scene_type(sc, "OceanBowl");
+                    nrows = 0;
+                    for (u32 i = 0; i < sc->nobjs && nrows <= 256; i++) {
+                        int ty = sc->objs[i].type;
+                        if (ty == t[0] || ty == t[1] || ty == t[2] || ty == t[3] || ty == t[4]) { if (nrows < 256) rows[nrows] = (short)i; nrows++; }
+                    } }
+    u32 nscan = nrows <= 256 ? (u32)nrows : sc->nobjs;
+    for (u32 k = 0; k < nscan; k++) {
+        u32 i = nrows <= 256 ? (u32)rows[k] : k;
         const Row *r = &sc->objs[i];
         if ((r->type == t[0] || r->type == t[1] || r->type == t[2]) && row_shown(i) && area_inside(r, p)) {
             w->row = (int)i; w->kind = 1; return 1;
         }
     }
-    for (u32 i = 0; i < sc->nobjs; i++) {
+    for (u32 k = 0; k < nscan; k++) {
+        u32 i = nrows <= 256 ? (u32)rows[k] : k;
         const Row *r = &sc->objs[i];
         if ((r->type != t[3] && r->type != t[4]) || !row_shown(i)) continue;
         float rad = 100.0f * r->scale[0];
@@ -25519,9 +25554,10 @@ static void update_switches(void)
     for (int i = 0; i < ngrav && i < 2048; i++) { /* GlobalGravityObj::updateSwitch: SW_A on, SW_B off.
                                                    * ponytail: SW_SLEEP (useStageSwitchSleep) not honoured */
         const Row *r = &sc->objs[grav[i].row];
-        grav_off[i] = (r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) || (r->sw[SW_B] >= 0 && sw_on(r, SW_B));
+        unsigned char off = (r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) || (r->sw[SW_B] >= 0 && sw_on(r, SW_B));
+        if (grav_off[i] != off) { grav_off[i] = off; grav_epoch++; }
     }
-    gravity_off = grav_off;
+    if (gravity_off != grav_off) { gravity_off = grav_off; grav_epoch++; }
     for (int i = 0; i < nlogic; i++) {
         int row = logic[i].row;
         const Row *r = &sc->objs[row];
@@ -26444,7 +26480,21 @@ static V3 item_sensor(const Inst *in, float *r)
  * hidden, 1 waiting in its cage, 2 appearing, 3 can be taken. ponytail: no demo camera, the stage goes on */
 /* PowerStar::setDemoAppearPos: an event star whose group (GroupId) has PowerStarAppearPoints comes out at the one
  * nearest its declarer, not at its own place */
-static V3 star_appear_point(const Inst *in, V3 from, V3 own)
+static V3 star_appear_point_(const Inst *in, V3 from, V3 own);
+static V3 star_appear_point(const Inst *in, V3 from, V3 own) /* the answer kept by star, place and own place: placed rows do not move */
+{
+    static struct { const Scene *at; int row; V3 from, own, p; } c[16];
+    static int next;
+    for (int k = 0; k < 16; k++)
+        if (c[k].at == sc && c[k].row == in->row && c[k].from.x == from.x && c[k].from.y == from.y && c[k].from.z == from.z &&
+            c[k].own.x == own.x && c[k].own.y == own.y && c[k].own.z == own.z)
+            return c[k].p;
+    V3 p = star_appear_point_(in, from, own);
+    c[next].at = sc; c[next].row = in->row; c[next].from = from; c[next].own = own; c[next].p = p;
+    next = (next + 1) & 15;
+    return p;
+}
+static V3 star_appear_point_(const Inst *in, V3 from, V3 own)
 {
     const Row *s = &sc->objs[in->row];
     int t = scene_type(sc, "PowerStarAppearPoint");
@@ -30253,7 +30303,7 @@ static void teresa_draw(const float m[16])
             v->alpha = (u8)(v->alpha * al);
         }
     render_light(&plight.cur);
-    render_skinned(m_teresa, w, (const float (*)[16])tsk.anim->drw);
+    render_skinned(m_teresa, w, anim_drw(tsk.anim));
     memcpy(tsk_fxm, w, sizeof tsk_fxm);
     static int k_glow, k_sleep;
     if (tsk_glow) fx_named("TeresaMario", "Glow", w, (const float (*)[16])tsk.anim->world, &k_glow);
@@ -31235,7 +31285,7 @@ static void update_ice_steps(void) /* IceStep::exeWait */
 static void draw_ice_steps(void)
 {
     for (int i = 0; i < ICE_STEPS; i++)
-        if (ice_steps[i].alive && m_icestep && ice_steps[i].anim) { render_light(&plight.cur); render_skinned(m_icestep, ice_steps[i].m, (const float (*)[16])ice_steps[i].anim->drw); }
+        if (ice_steps[i].alive && m_icestep && ice_steps[i].anim) { render_light(&plight.cur); render_skinned(m_icestep, ice_steps[i].m, anim_drw(ice_steps[i].anim)); }
 }
 /* MarioSwim::updateUnderWater for Ice Mario: probes 100 ahead (his last move, else his front), 40 deeper a frame (ten
  * a frame as ice); water within 210 under it and no map there: a floor 170 ahead on the surface (unless he stands

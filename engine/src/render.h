@@ -25,6 +25,9 @@ void render_begin(const float eye[3], const float target[3], const float up[3]);
 void render_model(const Model *md, const float world[16], u8 r, u8 g, u8 b);
 /* Draw a skinned model with its draw matrices (anim.c Anim.drw). */
 void render_skinned(const Model *md, const float world[16], const float (*drw)[16]);
+/* render_model / render_skinned would draw it: not wholly outside the view (their culling; a skinned draw can skip
+ * making its draw matrices) */
+int render_model_visible(const Model *md, const float world[16]);
 void render_group_tint(const Model *md, u8 r, u8 g, u8 b);
 /* the light lit materials are drawn with from here on (LightFunction::loadActorLightInfo): two lights at world
  * positions (each draw takes its direction from the instance), their colours and the ambient, 0..1 */
