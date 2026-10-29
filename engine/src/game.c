@@ -1027,8 +1027,8 @@ static int pd_try_start(const char *name, int row)
 }
 static void pd_end(const char *name) { if (pd.name && !strcmp(pd.name, name)) { pd.name = NULL; pd.row = -1; } }
 /* Butler's star piece lecture (Butler.cpp): _160 on, _164 hits, _168 the replace count, the reaction
- * (ButlerStateStarPieceReaction: -1 none, else its step; talk: _14) and its talk, chosen at init */
-static struct { int on, hits, react, talk, replace; const char *msg; } bsp = {.react = -1};
+ * (ButlerStateStarPieceReaction: -1 none, else its step; talk: _14) and its talk, chosen at init; _171 pointed */
+static struct { int on, hits, react, talk, replace, pointed; const char *msg; } bsp = {.react = -1};
 static int butler_hits(void) { return bsp.hits; }
 static int butler_group(const Row *r) /* MR::getPairedGroupMember: the StarPieceGroup of its group (joinToGroupArray) */
 {
@@ -28636,6 +28636,16 @@ static void update_dome_npcs(void)
                     se_start(SE_OJ_STAR_PIECE_BURST, &p.x);
                     se_start(SE_SY_LECT_STAR_PIECE_APR, NULL);
                 }
+                /* isStarPointerPointing1P(this, "弱"): its StarPointerTarget (NPCActorCaps mPointerSize 80, offset 0 at
+                 * its position) under the pointer; SE_SY_TICOFAT_POINT when it starts, the weak rumble at the new touch.
+                 * ponytail: the ray within 80 of it stands for calcRadius2d, no depth check against the map */
+                int was = bsp.pointed;
+                V3 o, d, to;
+                cursor_ray(&o, &d);
+                to = vsub(v3(in->m[12], in->m[13], in->m[14]), o);
+                float z = vdot(to, d);
+                bsp.pointed = cur_idle < 300 && z > 0 && vlen(vsub(to, vmul(d, z))) < 80.0f;
+                if (!was && bsp.pointed) { pad_rumble(RUMBLE_WEAK); se_start(SE_SY_TICOFAT_POINT, NULL); printf("butler: pointed\n"); }
             }
             if (bsp.react >= 0 && !dx.on) { /* exeStarPieceReaction / ButlerStateStarPieceReaction::exeWait */
                 int react = bsp.on && bsp.hits >= 5;
