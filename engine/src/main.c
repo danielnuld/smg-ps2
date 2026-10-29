@@ -514,6 +514,30 @@ static void target_set(unsigned char *out)
     }
 }
 
+/* The region can not hold the old and the new packs of a swap at once (OceanPhantomCave: GhostShipCaveZone's 5.6 MB
+ * and CaveChangeSizeZone's 1.6 MB): the zone models are dropped and the stage packs the swap replaces freed first, the
+ * rest read at once (pend_step), then the swap. 1 if one was freed. ponytail: a hitch where both used to be in RAM
+ * (a load pause, the zones not drawn meanwhile); a smaller set (target_set) first would avoid it */
+static int pend_evict(void)
+{
+    int n = 0;
+    for (u32 z = 0; z < nzones; z++)
+        if (zone_files[z] && (z < pend.z ? pend.buf[z] != zone_files[z] : pend.full[z] != zone_full[z])) n++;
+    if (!n) return 0;
+    render_release(&scene, base_tex, base_models);
+    scene.nmodels = base_models;
+    scene.ntex = base_tex;
+    scene.nkcl = base_kcl;
+    mem_release(&base_mark);
+    for (u32 z = 0; z < nzones; z++)
+        if (zone_files[z] && (z < pend.z ? pend.buf[z] != zone_files[z] : pend.full[z] != zone_full[z])) {
+            pk_free(zone_files[z]);
+            zone_files[z] = NULL;
+        }
+    printf("packs: %d stage packs freed before the swap (no room for both)\n", n);
+    return 1;
+}
+
 /* Read up to `budget` bytes of the pending packs; returns 1 when every stage pack is in memory. */
 static int pend_step(u32 budget)
 {
@@ -538,6 +562,11 @@ static int pend_step(u32 budget)
             }
             pend.size = pend.f.size;
             pend.cur = pk_alloc(PACK_ALLOC(pend.size));
+            if (!pend.cur && pend_evict()) { /* then all of it now: nothing of those zones is left to draw */
+                budget = 0xFFFFFFFF;
+                all = 1;
+                pend.cur = pk_alloc(PACK_ALLOC(pend.size));
+            }
             if (!pend.cur) {
                 printf("packs: no memory for %s (%u KB)\n", path, pend.size >> 10);
                 for (int i = 0; i < pk_n; i++) printf("packs:   block %u KB %s\n", pk_blk[i].size >> 10, pk_blk[i].used ? "used" : "free");
