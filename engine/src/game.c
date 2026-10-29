@@ -25453,11 +25453,32 @@ static int area_inside(const Row *r, V3 p)
  * its SW_APPEAR) and holds p; its row, -1 none */
 static int area_obj(const char *cls, V3 p)
 {
-    static struct { const Scene *at; const char *cls; int t; } c[24];
+    /* each class's rows listed once (in order: the first one inside still wins), not a walk over every row a call */
+    static struct { const Scene *at; const char *cls; int t, first, n; } c[24];
+    static short pool[1024];
+    static int npool;
+    static const Scene *pool_at;
     int k = 0;
     while (k < 24 && c[k].cls && c[k].cls != cls) k++;
     if (k == 24) k = 0;
-    if (c[k].cls != cls || c[k].at != sc) { c[k].cls = cls; c[k].at = sc; c[k].t = scene_type(sc, cls); }
+    if (c[k].cls != cls || c[k].at != sc) {
+        c[k].cls = cls; c[k].at = sc; c[k].t = scene_type(sc, cls);
+        if (pool_at != sc) { pool_at = sc; npool = 0; }
+        int n = 0;
+        for (u32 i = 0; c[k].t >= 0 && i < sc->nobjs; i++) n += sc->objs[i].type == c[k].t;
+        c[k].first = npool; c[k].n = -1; /* -1: no room in the pool, the walk */
+        if (npool + n <= 1024) {
+            for (u32 i = 0; c[k].t >= 0 && i < sc->nobjs; i++) if (sc->objs[i].type == c[k].t) pool[npool++] = (short)i;
+            c[k].n = n;
+        }
+    }
+    if (c[k].n >= 0) {
+        for (int j = 0; j < c[k].n; j++) {
+            int i = pool[c[k].first + j];
+            if (row_shown(i) && area_inside(&sc->objs[i], p)) return i;
+        }
+        return -1;
+    }
     for (u32 i = 0; c[k].t >= 0 && i < sc->nobjs; i++)
         if (sc->objs[i].type == c[k].t && row_shown(i) && area_inside(&sc->objs[i], p)) return (int)i;
     return -1;
@@ -32652,12 +32673,25 @@ static void bloom_update(void)
                                         "SimpleBloomCylinder", "ScreenBlurCube", "ScreenBlurSphere", "ScreenBlurCylinder",
                                         "DepthOfFieldCube", "DepthOfFieldSphere", "DepthOfFieldCylinder"};
     static int ty[12] = {-2};
+    static short rows[128]; /* the rows of those kinds, in order (found once: the walk over every row was per frame) */
+    static int nrows = -1;
     if (ty[0] == -2) for (int i = 0; i < 12; i++) ty[i] = scene_type(sc, kinds[i]);
+    if (nrows < 0) {
+        nrows = 0;
+        for (u32 i = 0; i < sc->nobjs && nrows <= 128; i++)
+            for (int j = 0; j < 12; j++)
+                if (ty[j] >= 0 && sc->objs[i].type == ty[j]) { if (nrows < 128) rows[nrows] = (short)i; nrows++; break; }
+    }
     const Row *area = NULL;
     int kind = -1;
-    for (u32 i = 0; i < sc->nobjs && !area; i++)
-        for (int j = 0; j < 12; j++)
-            if (ty[j] >= 0 && sc->objs[i].type == ty[j] && row_shown(i) && area_inside(&sc->objs[i], mario->pos)) { area = &sc->objs[i]; kind = j; break; }
+    if (nrows <= 128) {
+        for (int r = 0; r < nrows && !area; r++)
+            for (int j = 0, i = rows[r]; j < 12; j++)
+                if (ty[j] >= 0 && sc->objs[i].type == ty[j] && row_shown(i) && area_inside(&sc->objs[i], mario->pos)) { area = &sc->objs[i]; kind = j; break; }
+    } else
+        for (u32 i = 0; i < sc->nobjs && !area; i++)
+            for (int j = 0; j < 12; j++)
+                if (ty[j] >= 0 && sc->objs[i].type == ty[j] && row_shown(i) && area_inside(&sc->objs[i], mario->pos)) { area = &sc->objs[i]; kind = j; break; }
     int on = area && kind < 3;
     if (on) {
         float t = area->arg[0] >= 0 ? area->arg[0] : 255, t1 = area->arg[2] >= 0 ? area->arg[2] : 42, t2 = area->arg[3] >= 0 ? area->arg[3] : 21;

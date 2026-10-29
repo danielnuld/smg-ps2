@@ -939,8 +939,9 @@ static void light_matrix(float *m, const float w[16], const float at[3])
         float l = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
         if (l < 1e-6f)
             continue;
+        float inv = 1.0f / (l * 127.0f);
         for (int i = 0; i < 3; i++)
-            m[16 + 4 * i + k] = v[i] / (l * 127.0f);
+            m[16 + 4 * i + k] = v[i] * inv;
     }
 }
 /* light_matrix of world x drw for the draw matrices of one skinned draw: (world drw)^T d = drw^T (world^T d), so the
@@ -963,8 +964,9 @@ static void light_matrix_drw(float *m, const float drw[16], const float dl[2][3]
         float l = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
         if (l < 1e-6f)
             continue;
+        float inv = 1.0f / (l * 127.0f);
         for (int i = 0; i < 3; i++)
-            m[16 + 4 * i + k] = v[i] / (l * 127.0f);
+            m[16 + 4 * i + k] = v[i] * inv;
     }
 }
 
