@@ -16488,12 +16488,28 @@ static void update_mario_(void)
         m->wall = 0;
         mwl.d6 = 0;
         float wd = -1.0f;
+        int first_ceil = 1;
         for (int i = 0; i < b_n; i++) {
             V3 n = tri_n(&b_tri[i]);
             float d = vdot(n, m->up);
-            if (-d < -0.515f) mwl.d6 = 1; /* updateBinderInfo: a ground plane (n . gravity < _3C): mDrawStates._6 */
-            if (d <= -0.3f) { collide_ceil = 1; collide_ceil_inst = b_tri[i].inst; }
-            else if (d < WALL_ANGLE_COS && b_dep[i] > wd) { m->wall = 1; wn = n; wall_attr = tri_attr(&b_tri[i]); wd = b_dep[i]; }
+            /* updateBinderInfo: a ground plane (n . gravity under _3C) is mDrawStates._6; a ceiling (n . gravity 0.1 or
+             * more, 0.707 in a jump of kind 10): the first one he moves into (or pressed last frame) over 100 degrees
+             * cuts his jump along its normal (isCeiling: _3A4, _4C8). ponytail: the edge / corner push of a jump's
+             * first ground plane is not ported */
+            if (-d < -0.515f) mwl.d6 = 1;
+            else if (-d >= (m->jump_kind == 10 ? 0.707f : 0.1f)) {
+                V3 jv = m_jv(m);
+                float into = vdot(jv, n);
+                if (first_ceil && (into < 0.0f || mw.press1E) && angle_d(m, n) > 100.0f) {
+                    m_set_jv(m, vsub(jv, vmul(n, into)));
+                    m_pad_vib(0);
+                    first_ceil = 0;
+                    collide_ceil_inst = b_tri[i].inst;
+                }
+                collide_ceil = 1;
+                if (first_ceil) collide_ceil_inst = b_tri[i].inst;
+            }
+            if (d > -0.3f && d < WALL_ANGLE_COS && b_dep[i] > wd) { m->wall = 1; wn = n; wall_attr = tri_attr(&b_tri[i]); wd = b_dep[i]; }
         }
     } else
         for (int s = 0; s < steps && !ground; s++) {
