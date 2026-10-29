@@ -130,6 +130,7 @@ int kcl_check_sphere(const unsigned char *k, const float c[3], float radius, Kcl
                     float dist; unsigned char flag;
                     if (hit_sphere(k, p, c, radius, &dist, &flag)) {
                         out[n].prism = *list; out[n].flag = flag; out[n].dist = dist; n++;
+                        if (n >= max) return n; /* the rest of the walk could add nothing */
                     }
                 }
                 x += bs - (x & m);
