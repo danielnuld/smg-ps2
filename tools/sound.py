@@ -1100,8 +1100,11 @@ def pack(fs, out_bin, ids_h, sources, cap=16000, budget=1850000, scene=None):
         pcm, rate, base, loop = info[(ws, wid)]
         c = round(waves[(ws, wid)] * scale)
         cf = Path("out/sound_cache") / f"{ws}_{wid}_{c}.bin"
-        if cf.exists():
-            d_ = cf.read_bytes()
+        try:  # (another job may be replacing it)
+            d_ = cf.read_bytes() if cf.exists() else None
+        except OSError:
+            d_ = None
+        if d_:
             r2, n, ls = struct.unpack_from("<fIi", d_, 0)
             adp, ls = d_[12:], (None if ls < 0 else ls)
         else:
