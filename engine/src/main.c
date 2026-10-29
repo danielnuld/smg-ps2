@@ -728,6 +728,15 @@ static const u8 *load_packs(Scene *s)
     }
     u32 scen_base = pack_bytes - resident_bytes; /* scene.bin + common.bin: tools/slice_all.py's stream count */
     zone_room = PACK_ROOM > scen_base ? PACK_ROOM - scen_base : 0;
+    { /* and what the region really has left (its size follows the ELF's; the menus' packs came out of it): a swap
+       * holds the old packs while the new ones come in, so the low packs' sum is kept aside.
+       * ponytail: free bytes summed, not the largest free block */
+        u32 left = 0, lows = 0;
+        for (int i = 0; i < pk_n; i++) if (!pk_blk[i].used) left += pk_blk[i].size;
+        for (u32 z = 0; z < nzones; z++) lows += PACK_ALLOC(size_low[z]);
+        left = left > lows ? left - lows : 0;
+        if (left < zone_room) { printf("packs: zone room %u KB (the region's), not %u KB\n", left >> 10, zone_room >> 10); zone_room = left; }
+    }
     printf("packs: %s, %u zones, base %u models, %u textures, %u KB read\n", scen, nzones, s->nmodels, s->ntex,
            pack_bytes >> 10);
     return scene_blob;

@@ -360,8 +360,7 @@ static Chan *track_start(Track *t, int key, int vel, u32 timer)
     if (!vm) return NULL;
     const WaveRow *w = wave_row(bk[b].wsys, (u16)be32(vm + 4));
 #ifdef SE_LOG
-    if (!w) printf("se- wave %u/%u
-", bk[b].wsys, (unsigned)be32(vm + 4)); /* not in this sound.bin */
+    if (!w) printf("se- wave %u/%u\n", bk[b].wsys, (unsigned)be32(vm + 4)); /* not in this sound.bin */
 #endif
     if (!w) return NULL;
     Chan *c = chan_new();
