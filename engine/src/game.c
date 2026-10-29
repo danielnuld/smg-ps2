@@ -11052,6 +11052,21 @@ static int m_check_squat(Player *m, int a1) /* MarioModule::checkSquat: Z (R1) *
     return pad_held(PAD_R1);
 }
 
+/* the stick's margins (mStickMarginYstart / X, mStickMarginXstart / Y): one axis dropped or narrowed while the other is
+ * held far (MarioModule::calcWorldPadDir, Mario::mainMove) */
+static void m_stick_margin(float *px, float *py)
+{
+    float x = *px, y = *py;
+    if (fabsf(y) > MC.mStickMarginYstart) {
+        if (fabsf(x) < MC.mStickMarginX) x = 0;
+        else x = x > 0 ? (x - MC.mStickMarginX) / (1.0f - MC.mStickMarginX) : (x + MC.mStickMarginX) / (1.0f - MC.mStickMarginX);
+    } else if (fabsf(x) > MC.mStickMarginXstart) {
+        if (fabsf(y) < MC.mStickMarginY) y = 0;
+        else y = y > 0 ? (y - MC.mStickMarginY) / (1.0f - MC.mStickMarginY) : (y + MC.mStickMarginY) / (1.0f - MC.mStickMarginY);
+    }
+    *px = x; *py = y;
+}
+
 /* Mario::inputStick: x 1.5, clamped, |stick| under 0.01 is 0, angles within mStickAngleMargin of an axis snap to it */
 static void m_input_stick(Player *m)
 {
@@ -11073,32 +11088,13 @@ static void m_input_stick(Player *m)
     if (m_tower.on) m_sy = 0.0f; /* (Mario::inputStick: mStickPos.y) */
     m->stick_ang0 = m->stick_ang; m->stick_ang = r;
     if (z <= 0.01f) m->neutral = 0; /* _1D */
-    m_pad = vnorm(m_move_dir(m_sx, m_sy));
+    float px = m_sx, py = m_sy; /* calcWorldPadDir: zero for a still stick, else the margins, then calcMoveDir */
+    m_pad = v3(0, 0, 0);
+    if (fabsf(px) >= 0.001f || fabsf(py) >= 0.001f) { m_stick_margin(&px, &py); m_pad = m_move_dir(px, py); }
+    if (vlen(m_pad) > 1e-6f) m_pad = vnorm(m_pad);
 }
 
-/* retainMoveDir: _D once the stick has kept its angle 30 frames (_40E) */
-static void m_retain(Player *m)
-{
-    float ang = atan2f(m_sy, m_sx), diff = fabsf(ang - m->retain_ang);
-    if (diff > 3.14159265f) diff = 6.2831853f - diff;
-    if (m_group_on("その場足踏み")) diff = 1.0f;
-    if (m_clip_on("turn")) diff = 1.0f;
-    float limit = m->land_timer < 2 ? 0.1f : 0.06f;
-    if (m->retain_b) { if (m_sz != 0) m->retain_b = 0; diff = 1.0f; }
-    int retain = !(m->jumping && !m->retain_a) && !(m->jumping && m->wall);
-    m_draw_d = 0;
-    if (diff < limit && m_sz != 0 && retain) {
-        if (!m->retain_t || (m->retain_a && m->jumping)) { m_draw_d = 1; m->retain_t = 0; }
-        else m->retain_t--;
-    } else {
-        if (m->jumping) { if (m_sz != 0) m->retain_a = 0; }
-        else m->retain_a = 1;
-        if (!m->retain_t) m->weak_turn = 0;
-        m->retain_t = 30;
-        if (m_sz == 0) m->retain_b = 1;
-    }
-    m->retain_ang = ang;
-}
+static void m_retain(Player *m);
 
 static int m_enable_turn(const Player *m) /* isEnableTurn */
 {
@@ -12616,13 +12612,7 @@ static void m_main_move(Player *m)
         } else dir = m->move_dir;
     } else {
         float x = m_sx, y = m_sy;
-        if (fabsf(y) > MC.mStickMarginYstart) {
-            if (fabsf(x) < MC.mStickMarginX) x = 0;
-            else x = x > 0 ? (x - MC.mStickMarginX) / (1.0f - MC.mStickMarginX) : (x + MC.mStickMarginX) / (1.0f - MC.mStickMarginX);
-        } else if (fabsf(x) > MC.mStickMarginXstart) {
-            if (fabsf(y) < MC.mStickMarginY) y = 0;
-            else y = y > 0 ? (y - MC.mStickMarginY) / (1.0f - MC.mStickMarginY) : (y + MC.mStickMarginY) / (1.0f - MC.mStickMarginY);
-        }
+        m_stick_margin(&x, &y);
         dir = m_move_dir(x, y); dir_set = 1;
         m->sd = m_shadow(m, dir);
     }
@@ -13965,6 +13955,33 @@ static void m_center(Player *m)
     float val = mw.binder_r = m->squat ? 0.8f * mw.binder_r + 0.2f * 40.0f : 0.9f * mw.binder_r + 0.1f * 60.0f;
     if (player_mode == PM_TERESA) { mw.binder_r = 0.8f * mw.binder_r + 0.2f * 100.0f; val = 20.0f + mw.binder_r; } /* mPlayerMode 6 */
     mw.c = vadd(m->pos, vmul(m->up, val));
+}
+
+/* retainMoveDir: _D once the stick has kept its angle 30 frames (_40E) */
+static void m_retain(Player *m)
+{
+    float ang = atan2f(m_sy, m_sx), diff = fabsf(ang - m->retain_ang);
+    if (diff > 3.14159265f) diff = 6.2831853f - diff;
+    if (m_group_on("その場足踏み")) diff = 1.0f;
+    if (m_clip_on("turn")) diff = 1.0f; /* ターンブレーキ */
+    if (swimming) diff = 1.0f;
+    if (pad_pressed(PAD_SQUARE) && m->jumping && vdot(m_pad, m->prev_vel) < 0.0f) diff = 1.0f; /* isRequestSpin, _16C */
+    float limit = m->land_timer < 2 ? 0.1f : 0.06f;
+    if (m->retain_b) { if (m_sz != 0) m->retain_b = 0; diff = 1.0f; }
+    /* ponytail: the jump's !isAnimationRun(nullptr) (the Xanime default clip) is not checked */
+    int retain = !(m->jumping && !m->retain_a) && !(m->jumping && mw.w8);
+    m_draw_d = 0;
+    if (diff < limit && m_sz != 0 && retain) {
+        if (!m->retain_t || (m->retain_a && m->jumping)) { m_draw_d = 1; m->retain_t = 0; }
+        else m->retain_t--;
+    } else {
+        if (m->jumping) { if (m_sz != 0) m->retain_a = 0; }
+        else m->retain_a = 1;
+        if (!m->retain_t) m->weak_turn = 0;
+        m->retain_t = 30;
+        if (m_sz == 0) m->retain_b = 1;
+    }
+    m->retain_ang = ang;
 }
 
 /* checkAllWall: the faces round the centre within 80 (90 swimming), not floors nor ceilings (|n . head| <= 0.5), by
