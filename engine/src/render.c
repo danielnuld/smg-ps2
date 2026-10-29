@@ -383,6 +383,7 @@ void render_set_shake(float x, float y)
     proj[8] = shake_x / 2048.0f; proj[9] = shake_y / 2048.0f;
 }
 
+u32 render_begin_wait; /* EE cycles render_begin waited for the flip, the VIF and the clear (bench) */
 void render_begin(const float eye[3], const float target[3], const float up[3])
 {
     float fw[3] = {target[0] - eye[0], target[1] - eye[1], target[2] - eye[2]};
@@ -400,6 +401,8 @@ void render_begin(const float eye[3], const float target[3], const float up[3])
     view[13] = -(u[0] * eye[0] + u[1] * eye[1] + u[2] * eye[2]);
     view[14] = -(fw[0] * eye[0] + fw[1] * eye[1] + fw[2] * eye[2]);
 
+    u32 bw0;
+    __asm__ volatile("mfc0 %0, $9" : "=r"(bw0));
     render_flip_wait(); /* frame[back] is still on screen until the last frame's flip */
     dma_channel_wait(DMA_CHANNEL_VIF1, 0);
     packet2_reset(gif, 0);
@@ -412,6 +415,7 @@ void render_begin(const float eye[3], const float target[3], const float up[3])
     packet2_update(gif, draw_finish(gif->next));
     dma_channel_send_packet2(gif, DMA_CHANNEL_GIF, 1);
     draw_wait_finish();
+    { u32 bw1; __asm__ volatile("mfc0 %0, $9" : "=r"(bw1)); render_begin_wait = bw1 - bw0; }
     packet2_reset(vif[cur], 0);
     nmats = 0;
     tris_drawn = 0;
@@ -1051,13 +1055,16 @@ static int bloom_drawing; /* bloom_pass: blended groups drawn at once */
 
 static inline u32 cy_(void) { u32 c; __asm__ volatile("mfc0 %0, $9" : "=r"(c)); return c; }
 u32 prof_draw, prof_dcalls, prof_dculled; /* EE cycles in draw_model, its calls, those culled (profiling) */
+u32 prof_x[8]; /* ad hoc probes (main.c prints them in the bench) */
 static void draw_model_(const Model *md, const float world[16], const float (*drw)[16]);
 static void draw_model(const Model *md, const float world[16], const float (*drw)[16])
 {
     u32 c0 = cy_();
     prof_dcalls++;
     draw_model_(md, world, drw);
-    prof_draw += cy_() - c0;
+    u32 d = cy_() - c0;
+    prof_draw += d;
+    prof_x[drw ? 1 : 0] += d;
 }
 #define DRW_CACHE 192 /* a skinned draw's matrices by draw index (anim.h ANIM_MAX_DRW 160) */
 static float dcache[DRW_CACHE][MAT_FL];

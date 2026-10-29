@@ -2154,10 +2154,19 @@ int main(void)
             prof_pose = prof_skin = prof_draw = game_kcl_draw = 0;
             if (frame == 1861) printf("bench parts: pose %u skin %u draw_model %u kcl-in-draw %u us\n", (u32)(qsum[0] / 1800 / EE_MHZ),
                                       (u32)(qsum[1] / 1800 / EE_MHZ), (u32)(qsum[2] / 1800 / EE_MHZ), (u32)(qsum[3] / 1800 / EE_MHZ));
+            { /* ad hoc probes (render.c prof_x): whatever is being measured */
+                extern u32 prof_x[8];
+                static u64 xs[8];
+                for (int i = 0; i < 8; i++) { if (frame > 60 && frame <= 1860) xs[i] += prof_x[i]; prof_x[i] = 0; }
+                if (frame == 1861) for (int i = 0; i < 8; i++) if (xs[i]) printf("bench probe %d %u us\n", i, (u32)(xs[i] / 1800 / EE_MHZ));
+            }
             static u32 pmax[9];
             if (frame > 60 && frame <= 1860) for (int i = 0; i < 8; i++) if (game_prof[i] > pmax[i]) pmax[i] = game_prof[i];
             if (frame == 1861) for (int i = 0; i < 8; i++) printf("bench draw max %d %u us" "\n", i, (u32)(pmax[i] / EE_MHZ));
-            if (frame > 60 && frame <= 1860) { for (int i = 0; i < 8; i++) psum[i] += game_prof[i]; psum[8] += vwait; }
+            extern u32 render_begin_wait;
+            static u64 bwsum;
+            if (frame > 60 && frame <= 1860) { for (int i = 0; i < 8; i++) psum[i] += game_prof[i]; psum[8] += vwait; bwsum += render_begin_wait; }
+            if (frame == 1861) printf("bench draw beginwait avg %u us (in skies: the flip, VIF and clear waits)\n", (u32)(bwsum / 1800 / EE_MHZ));
             extern u32 anim_inflates, anim_inflated; extern u32 anim_cache_bytes(void);
             if (frame == 60) anim_inflates = anim_inflated = 0;
             if (frame == 1861) printf("bench anim: %u inflates, %u KB in 1800 frames, slot %u B\n", anim_inflates, anim_inflated >> 10, anim_cache_bytes() / 8);
