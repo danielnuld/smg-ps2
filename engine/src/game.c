@@ -2431,8 +2431,10 @@ static int sky_class(const char *name)
  * turned (or not turning), _18 Turn while turning, _1C Talk / _20 TalkTurn while talking (NPCActor::setDefaults /
  * setDefaultAction: Wait, Turn, Talk, TalkTurn; Tico Wait, Wait, Talk, Talk; Kinopio's setTalkAction Talk, Talk; a
  * Kinopio setNoTurnAction mode its one action: arg2 0 1 2 SpinWait1 2 3, 6 Pickel, 7 Sleep, 11 Rightened).
- * ponytail: no ActorAnimCtrl interpolation (the clip switches at once); Penguin / HoneyBee / Rabbit modes by their
- * args keep the defaults */
+ * Modes (npc_mode): Penguin arg0 0 Sit (SitDown / SitDownTalk, no turn), 1 Swim, 2 SwimSurface, 3 Dive, 4
+ * SwimTurtle; HoneyBee arg0 3 Sleep / 4 Stick (no turn), 5 Gatekeeper, 7 Flustered, 1 2 6 8 9 their own nerves (not
+ * here); Rabbit (TurnSmall) arg1 5 LongJump no turn. ponytail: no ActorAnimCtrl interpolation (the clip switches at
+ * once); the walking modes' rails (Penguin / Kinopio MoveTalk) not ported */
 typedef struct { const char *cls; u8 near, talk; float dist, speed, tilt_speed, tilt_max; const char *act[4]; } NpcTurn;
 static const NpcTurn npc_turns[] = {
     {"Tico", 1, 1, 2000.0f, 4.0f, 0.5f, 12.0f, {"wait", "wait", "talk", "talk"}},
@@ -2444,22 +2446,52 @@ static const NpcTurn npc_turns[] = {
     {"PenguinCoach", 1, 1, 2000.0f, 1.0f, 0, 0, {"wait", "turn", "talk", "talkturn"}},
     {"Caretaker", 0, 1, 2000.0f, 3.0f, 0, 0, {"wait", "turn", "talk", "talkturn"}},
     {"HoneyBee", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turn", "talk", "talkturn"}},
-    {"Rabbit", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turn", "talk", "talkturn"}}};
-/* a Kinopio's setNoTurnAction mode (arg2): its one action, NULL none */
-static const char *kinopio_noturn_action(int b)
+    {"Rabbit", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turnsmall", "talk", "turnsmall"}}}; /* Rabbit::init: TurnSmall */
+static void npc_set(NpcTurn *m, const char *a0, const char *a1, const char *a2, const char *a3)
 {
-    return b == 0 ? "spinwait1" : b == 1 ? "spinwait2" : b == 2 ? "spinwait3" : b == 6 ? "pickel" : b == 7 ? "sleep" :
-           b == 11 ? "rightened" : NULL;
+    m->act[0] = a0; m->act[1] = a1; m->act[2] = a2; m->act[3] = a3;
+}
+/* the row's mode (its class's args): its ActorTalkParam from its class's; 0 when its wait nerve is not a
+ * tryStartTurnAction / TalkAction one (another nerve drives it) */
+static int npc_mode(const NpcTurn *t, const Row *r, NpcTurn *m)
+{
+    *m = *t;
+    if (!strncmp(t->cls, "Kinopio", 7)) { /* mBehavior (arg2) */
+        int b = r->arg[2];
+        static const char *const one[12] = {"spinwait1", "spinwait2", "spinwait3", NULL, NULL, NULL, "pickel", "sleep", NULL,
+                                            NULL, NULL, "rightened"};
+        if (b == 4) return 0; /* Mount */
+        if (b == 5) npc_set(m, "swimwait", "swimwait", "swimwait", "swimwait");            /* setSingleAction */
+        if (b == 9) npc_set(m, "kinopiogoodsweapon", "kinopiogoodsweaponturn", "kinopiogoodsweapon", "kinopiogoodsweaponturn");
+        if (b == 10) npc_set(m, "joy", "joy", "joy", "joy");
+        if (b == 12) npc_set(m, "starpiecewait", "starpiecewait", "starpiecewait", "starpiecewait");
+        if (b >= 0 && b < 12 && one[b]) { npc_set(m, one[b], NULL, one[b], NULL); m->near = m->talk = 0; } /* setNoTurnAction */
+    } else if (!strcmp(t->cls, "Penguin")) { /* mBehavior (arg0) */
+        switch (r->arg[0]) {
+        case 0: npc_set(m, "sitdown", NULL, "sitdowntalk", NULL); m->near = m->talk = 0; break; /* setMoveTalkNoTurnAction */
+        case 1: m->act[0] = "swimwait"; m->act[1] = "swimwaittalk"; break;                  /* setMoveAction */
+        case 2: m->act[0] = "swimwaitsurface"; m->act[1] = "swimsurfacetalk"; break;
+        case 3: npc_set(m, "swimwaitsurface", "swimwaitsurface", "swimwaitsurface", "swimwaitsurface"); break;
+        case 4: npc_set(m, "swimturtletalk", "swimturtletalk", "swimturtletalk", "swimturtletalk"); break;
+        }
+    } else if (!strcmp(t->cls, "HoneyBee")) { /* mArg0 (arg0): its InitAction */
+        switch (r->arg[0]) {
+        case 1: case 2: case 6: case 8: case 9: return 0; /* JumpLecture, Fly, DropLecture, FlyLectureA / B: own nerves */
+        case 3: npc_set(m, "sleepwait", NULL, "sleepwait", NULL); m->near = m->talk = 0; break;
+        case 4: npc_set(m, "stickwait", NULL, "stickwait", NULL); m->near = m->talk = 0; break;
+        case 5: npc_set(m, "gatekeeperwait", "gatekeeperwait", "gatekeeperwait", "gatekeeperwait"); break;
+        case 7: npc_set(m, "flustered", "flustered", "flustered", "flustered"); break;
+        }
+    } else if (!strcmp(t->cls, "Rabbit")) { /* mBehavior (arg1) */
+        if (r->arg[1] == 5) m->near = m->talk = 0; /* LongJump */
+    }
+    return 1;
 }
 static int npc_class(const char *name, const Row *r)
 {
     for (unsigned i = 0; i < sizeof npc_turns / sizeof npc_turns[0]; i++) {
-        if (strcmp(name, npc_turns[i].cls)) continue;
-        if (!strncmp(name, "Kinopio", 7)) { /* mBehavior (arg2): setNoTurnAction / Mount */
-            int b = r->arg[2];
-            if (b == 4) return 0; /* (a setNoTurnAction mode: update_npc_turn plays its one action, no turn) */
-        }
-        return (int)i + 1;
+        NpcTurn m;
+        if (!strcmp(name, npc_turns[i].cls)) return npc_mode(&npc_turns[i], r, &m) ? (int)i + 1 : 0;
     }
     return 0;
 }
@@ -5502,6 +5534,8 @@ int game_test_torch(int how) /* tests: Mario into the first lit PhantomTorch / P
         if (last < 0) return -1;
         const Row *r = &sc->objs[last];
         mario->pos = row_pos(r); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        for (int k = ncoins - 1; k >= 0; k--) /* a coin it popped (appearCoinPop): Mario onto it */
+            if (coins[k].row < 0 && coins[k].alive != PICK_GONE) { mario->pos = vsub(coins[k].pos, vmul(mario->up, HIT_BODY_H)); printf("torch test: coin %d out\n", k); break; }
         return last;
     }
     for (u32 i = 0; i < sc->nobjs; i++) {
@@ -29206,6 +29240,19 @@ void game_test_npc_turn(int frame) /* tests: the turning NPCs within 3000 of Mar
                in->anim && in->anim->clip_id >= 0 ? sc->clips[in->anim->clip_id].name : "-");
     }
 }
+int game_test_npc_visit(int k) /* tests: Mario put 600 off the k-th turning NPC, to its side; its row, -1 past the last */
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->npc || k--) continue;
+        V3 side = vnorm(vcross(in->nu0, in->nf0));
+        mario->up = in->nu0;
+        mario->pos = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(side, 600.0f));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return in->row;
+    }
+    return -1;
+}
 static void update_npc_turn(void) /* the NPCs' wait nerves: tryStartTalkAction / tryStartTurnAction */
 {
     for (int i = 0; i < ninsts; i++) {
@@ -29216,12 +29263,14 @@ static void update_npc_turn(void) /* the NPCs' wait nerves: tryStartTalkAction /
         float d = vlen(to);
         to = d > 1e-6f ? vmul(to, 1.0f / d) : in->nf;
         int talking = td.st >= 0 && talkers[td.st].row == in->row && (td.nrv == TD_TALK || td.nrv == TD_NEXT);
-        const char *act, *one = !strncmp(t->cls, "Kinopio", 7) ? kinopio_noturn_action(sc->objs[in->row].arg[2]) : NULL;
-        if (one) act = one; /* setNoTurnAction: _0 _1 off, every action this one */
-        else if (talking) act = t->talk && !npc_turn_to_player(in, t, to) ? t->act[3] : t->act[2]; /* tryStartTalkAction */
+        NpcTurn mt;
+        npc_mode(t, &sc->objs[in->row], &mt);
+        t = &mt;
+        const char *act;
+        if (talking) act = t->talk && !npc_turn_to_player(in, t, to) ? t->act[3] : t->act[2]; /* tryStartTalkAction */
         else if (d < t->dist) act = t->near && !npc_turn_to_player(in, t, to) ? t->act[1] : t->act[0]; /* tryStartTurnAction */
         else act = (t->near || t->talk) && !npc_turn_default(in, t) ? t->act[1] : t->act[0];
-        obj_play(in, act, 1, 0); /* tryStartAction (no-op while it plays) */
+        if (act) obj_play(in, act, 1, 0); /* tryStartAction (no-op while it plays) */
     }
 }
 /* Rosetta (Rosetta.cpp): WaitA from init, every sWaitActionInterval 300 steps getRandom(0, 2): 0 WaitA, 1 WaitB (her

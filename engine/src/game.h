@@ -235,6 +235,7 @@ int game_test_morph(int frame); /* test builds: the first MorphItemObjNeo taken 
 int game_test_butler_talk(int place); /* tests: Mario before the Butler; the talk director's nerve * 100 + talker */
 int game_test_butler_shoot(void); /* tests: a star piece at the Butler, its lecture hits */
 int game_test_demo_name(const char *name); /* tests: a demo requested by its name, 0 if the scene has none */
+int game_test_npc_visit(int k);    /* tests: Mario beside the k-th turning NPC; its row */
 void game_test_npc_turn(int frame); /* tests: the turning NPCs near Mario, their angles */
 int game_test_torch(int how); /* tests: Mario into a lit PhantomTorch (0) or spinning by it (1); its row */
 int game_test_spc_n(void);  /* tests: star pieces got */
