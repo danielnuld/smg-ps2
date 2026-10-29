@@ -53,8 +53,32 @@ COMET_BGM = {"Red": "GALAXY_02_HURRY", "Dark": "GALAXY_02_HURRY", "Ghost": "GALA
              "Black": "GALAXY_21"}  # AudStageBgmWrap::getCometEventBgm
 
 
-# the demos' STM_ ids (StaffRoll::exePrepareBgm STM_STAFF_ROLL, the epilogue demo's sound sheet STM_EPILOGUE_B)
-STM_BGM = {"STAFF_ROLL": "SMG_staffroll_strm", "EPILOGUE_B": "SMG_ev_epilogue_b_strm"}
+# SMR.szs's stream section (BSTN section 2, STM_<id>) in order with its file names (the stream items' paths, in the
+# same order): AudBgmSetting.cpp plays BGM_<id> / MBGM_<id> as STM_<id>, so every id not in the scenario table
+# (bosses: MR::startBossBGM, startAfterBossBGM's STAR_EXIST, events, the demos' STM_STAFF_ROLL / STM_EPILOGUE_B) finds
+# its stream here
+STM_IDS = ("LIBRARY TITLE GALAXY_01 BOSS_01_A BOSS_02_A BOSS_02_B BOSS_03_A BOSS_03_B GALAXY_02 GALAXY_02_HURRY "
+           "GALAXY_02_CHASE GALAXY_03 RACE_01 GALAXY_04 BOSS_04 GALAXY_05 GALAXY_06 GALAXY_INTER GALAXY_27 BOSS_05_A "
+           "STAR_EXIST BOSS_06_A BOSS_06_B GALAXY_08 GALAXY_09 ASTRO_DOME GALAXY_10 GALAXY_10_HURRY GALAXY_11 GALAXY_12 "
+           "ASTRO_OUT PROLOGUE_01 PROLOGUE_02 PROLOGUE_03 PROLOGUE_04 GALAXY_13 BOSS_01_B GALAXY_14 FILE_SELECT "
+           "BOSS_05_B ASTRO_DOME_2 BOSS_KOOPA MEET_KOOPA GALAXY_15_HURRY GALAXY_15 KINOPIO_TANKEN GALAXY_22 RACE_02 "
+           "GALAXY_16 GALAXY_17 GALAXY_01_TOMB GALAXY_18 GALAXY_19 GALAXY_20 GALAXY_21 GALAXY_23 GALAXY_24 "
+           "BOSS_MECHA_KOOPA GALAXY_25 GALAXY_26 BOSS_09_A BOSS_09_B STAR_EXIST_2 STAFF_ROLL PROLOGUE_05 FIRST_ASTRO "
+           "GALAXY_28 BOSS_KOOPA_FINAL EPILOGUE_B ASTRO_DOME_LOFT PROLOGUE_01_B ASTRO_OUT_2 KINOPIO_TANKEN_B "
+           "ASTRO_OUT_3 SECOND_ASTRO").split()
+STM_FILES = ("astrodome03_strm title_strm galaxy01_strm boss01a_strm boss02a_strm boss02b_strm boss03a_strm "
+             "boss03b_strm galaxy02_strm galaxy02_hurry_strm ev_rabbit_strm galaxy03_multi ev_race_strm galaxy04_multi "
+             "boss04_strm galaxy05_strm galaxy06_strm galaxy_inter_strm galaxy27_strm boss05a_strm ev_starchance_strm "
+             "boss06a_strm boss06b_strm galaxy08_strm galaxy09_strm astrodome_multi galaxy10_strm galaxy10_hurry_strm "
+             "galaxy11_multi galaxy12_strm astroout01_strm ev_prolo01_strm ev_prolo02_strm ev_prolo03_strm "
+             "ev_prolo04_strm galaxy13_strm boss01b_strm galaxy14_strm fileselect_strm boss05b_strm astrodome02_strm "
+             "boss07_multi ev_kuppabt01_strm galaxy15_hurry_strm galaxy15_strm ev_kinotan_strm galaxy22_strm "
+             "ev_race02_multi galaxy16_multi galaxy17_strm galaxy01_tomb_strm galaxy18_strm galaxy19_strm galaxy20_strm "
+             "galaxy21_strm galaxy23_strm galaxy24_multi boss08_strm galaxy25_strm galaxy26_strm boss09a_multi "
+             "boss09b_multi ev_starchance02_strm staffroll_strm ev_prolo05_strm first_astro_strm galaxy28_strm "
+             "boss10_strm ev_epilogue_b_strm astrodome04_multi ev_prolo01_b_strm astroout02_strm ev_kinotan_strm "
+             "astroout03_strm second_astro_strm").split()
+STM_BGM = {i: "SMG_" + f for i, f in zip(STM_IDS, STM_FILES, strict=True)}
 
 
 def stream_of(bgm, streams):
@@ -114,7 +138,8 @@ def table(fs, out):
                 used.add(st)
     bgm = sorted((sound_id(st), st) for st in used if not st.startswith("SEQ_"))  # the demos' startStageBGM(name): sound id -> stream
     assert all(stream_of(i, streams) == st for i, st in bgm), bgm
-    bgm += sorted((i, st) for i, st in STM_BGM.items() if st in streams)
+    have = {i for i, _ in bgm} | {n[4:] for n in SEQ_BGMS}
+    bgm += sorted((i, st) for i, st in STM_BGM.items() if st in streams and i not in have)
     bgm += [(n[4:], "SEQ_" + n[4:].lower()) for n in SEQ_BGMS]  # the sequenced (bgm_sub, the jingles)
     used |= {st for _, st in bgm}
     Path(out).write_text("\n".join(["/* written by tools/music.py --table: scenario -> music stream (Petari AudStageBgmWrap) */",
