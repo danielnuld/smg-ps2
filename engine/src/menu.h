@@ -62,6 +62,8 @@ void menu_staffroll(int ev);         /* StaffRoll: 12 appear (to its pause), 13 
 int menu_staffroll_pause_or_end(void); /* StaffRoll::isPauseOrEnd */
 int menu_staffroll_on(void);         /* the staff roll over the screen (the scene not drawn, Mario waits) */
 void menu_result_start(void);        /* the result held for the star return demo */
+int menu_guidance_request(const char *label, int timeout); /* StarPointerGuidance::request1PGuidance (each frame), 0 none */
+int menu_guidance_exists(void);      /* MR::isExistStarPointerGuidance */
 int menu_take_save_request(void);    /* main.c: 1 once per request */
 int menu_draw_screen(void); /* game_draw: 1 when a whole-screen menu (the scenario select) drew the frame */
 const u16 *msg_get(const char *label); /* MR::getLayoutMessageDirect / getGameMessageDirect (MSGS chunk), NULL none */

@@ -315,9 +315,17 @@ static int pack_open(Pack *p, const char *path)
     return 0;
 #else
     char full[160];
-    snprintf(full, sizeof full, "host:packs/%s", path);
+#ifdef PACKS_OVERLAY /* dev builds (XF=-DPACKS_OVERLAY=dir): a pack in host:dir/ wins over packs/'s */
+#define OVL_STR2(x) #x
+#define OVL_STR(x) OVL_STR2(x)
+    snprintf(full, sizeof full, "host:" OVL_STR(PACKS_OVERLAY) "/%s", path);
     if (!(p->f = fopen(full, "rb")))
-        return 0;
+#endif
+    {
+        snprintf(full, sizeof full, "host:packs/%s", path);
+        if (!(p->f = fopen(full, "rb")))
+            return 0;
+    }
     fseek(p->f, 0, SEEK_END);
     p->size = ftell(p->f);
     fseek(p->f, 0, SEEK_SET);
@@ -1093,8 +1101,8 @@ int main(void)
                 shots++;
             }
             if (frame > 200 && frame % 60 == 0 && frame < 5000)
-                printf("spiece test f %u: busy %d demo %d lecture %d saving %d\n", frame, game_story_busy(), game_test_demo(-1),
-                       gd_story_passed("スターピースレクチャー"), menu_saving());
+                printf("spiece test f %u: busy %d demo %d lecture %d saving %d guidance %d counter %d\n", frame, game_story_busy(),
+                       game_test_demo(-1), gd_story_passed("スターピースレクチャー"), menu_saving(), menu_guidance_exists(), game_test_spc());
         }
 #endif
 #if defined(PACKS) && defined(ROSETTA_TEST)

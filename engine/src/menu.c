@@ -860,6 +860,74 @@ static void pm_update(void)
     }
 }
 
+/* --- StarPointerGuidance after Petari (Screen/StarPointerGuidance.cpp): the PointerGuidance layout's NPointerGuide,
+ * the 1P guidance message (request1PGuidance each frame: shown after hRequestTime 30 frames of the same message,
+ * EndOneLine / EndTwoLine hNotRequestEndTime 30 frames after the last request; with the timeout its Wait ends it at
+ * hEndTimeOutHide 240). ponytail: PointerFrame1 / PointerFrame2 (the remote out of the screen, CS_NOTICE_USE_DPD)
+ * never show: the PS2's stick pointer never leaves the screen */
+enum { SPG_ENDWAIT, SPG_APPEAR, SPG_WAIT, SPG_END };
+static struct { LytInst *l; Nrv n; int time, active, disabled, timeout, lines; const u16 *msg, *prev; } spg;
+static void spg_init(void)
+{
+    memset(&spg, 0, sizeof spg);
+    spg.n.next = -1; spg.lines = 1;
+    if (!(spg.l = lyt_new("PointerGuidance"))) return; /* (menus.bin packed without it: no guidance) */
+    lyt_show_rec(spg.l, "NPointerGuide", 0);
+    lyt_show_rec(spg.l, "PointerFrame1", 0);
+    lyt_show_rec(spg.l, "PointerFrame2", 0);
+}
+int menu_guidance_request(const char *label, int timeout)
+{
+    if (!spg.l) return 0;
+    spg.msg = label ? msg_get(label) : NULL;
+    spg.active = 1; spg.timeout = timeout;
+    return 1;
+}
+int menu_guidance_exists(void) { return !nrv_is(&spg.n, SPG_ENDWAIT) && !spg.disabled; } /* isExistGuidanceOrFrame */
+static void spg_update(void) /* control: the guidance's spine, then checkRequest1P */
+{
+    static const u16 empty[1];
+    if (!spg.l) return;
+    const char *two = spg.lines >= 2 ? "TwoLine" : "OneLine";
+    char an[16];
+    switch (nrv_begin(&spg.n)) {
+    case SPG_APPEAR: /* exeAppearCore */
+        if (FIRST(&spg.n)) { lyt_show_rec(spg.l, "NPointerGuide", 1); snprintf(an, sizeof an, "Appear%s", two); lyt_start_pane(spg.l, "NPointerGuide", an, 0); }
+        else if (lyt_pane_stopped(spg.l, "NPointerGuide", 0)) nrv_set(&spg.n, SPG_WAIT);
+        break;
+    case SPG_WAIT: /* exeWaitCore */
+        if (FIRST(&spg.n)) { spg.disabled = 0; lyt_start_pane(spg.l, "NPointerGuide", "Wait", 0); }
+        else if (spg.timeout && spg.n.step == 240) { /* hEndTimeOutHide */
+            spg.disabled = 1; snprintf(an, sizeof an, "End%s", two); lyt_start_pane(spg.l, "NPointerGuide", an, 0);
+        }
+        break;
+    case SPG_END: /* exeEndCore */
+        if (FIRST(&spg.n)) { if (!spg.disabled) { snprintf(an, sizeof an, "End%s", two); lyt_start_pane(spg.l, "NPointerGuide", an, 0); } }
+        else if (lyt_pane_stopped(spg.l, "NPointerGuide", 0)) { lyt_show_rec(spg.l, "NPointerGuide", 0); nrv_set(&spg.n, SPG_ENDWAIT); }
+        break;
+    }
+    nrv_end(&spg.n);
+    if (!spg.active) { /* checkRequest1P */
+        spg.time = spg.time < 0 ? spg.time - 1 : -1;
+        spg.prev = spg.msg; spg.msg = NULL;
+        if (spg.time <= -30 && nrv_is(&spg.n, SPG_WAIT)) nrv_set(&spg.n, SPG_END); /* hNotRequestEndTime */
+    } else {
+        if (spg.time < 0) spg.time = 0;
+        spg.time++;
+        if (spg.msg) {
+            if (spg.msg != spg.prev) spg.time = 0;
+            if (spg.time > 30 && nrv_is(&spg.n, SPG_ENDWAIT)) { /* hRequestTime */
+                spg.lines = 1;
+                for (const u16 *s = spg.msg; *s; s++) spg.lines += *s == 10; /* countMessageLine ('\n') */
+                lyt_set_text_rec(spg.l, "NPointerGuide", spg.msg);
+                nrv_set(&spg.n, SPG_APPEAR);
+            }
+        } else if (nrv_is(&spg.n, SPG_WAIT)) { lyt_set_text_rec(spg.l, "NPointerGuide", empty); nrv_set(&spg.n, SPG_END); }
+        spg.active = 0; spg.prev = spg.msg;
+    }
+    lyt_update(spg.l);
+}
+
 /* --- GamePauseSequence ----------------------------------------------------------------------------------------- */
 static char select_after[32]; /* MoviePlayingSequence (FinalBattle): the scenario select opened over the stage */
 static void subm_init(void);
@@ -884,6 +952,7 @@ void menu_init(const Scene *s)
     memset(&mono, 0, sizeof mono);
     mono.l = lyt_new("PrologueStarSteward"); /* in map.bin: the Observatory only */
     srl_init();
+    spg_init();
     fs_init(s);
     gm_init();
     u32 rgb;
@@ -984,6 +1053,7 @@ int menu_update(void)
     mono_update();
     llt_update();
     srl_update();
+    spg_update();
     if (sr.delay && --sr.delay == 0 && sr.l) { /* the clear's demo sequence: StageResultInformer, then the save */
         sr.alive = 1; sr.n.next = -1; nrv_set(&sr.n, SR_APPEARSTAR);
     }
@@ -3733,6 +3803,7 @@ void menu_draw(void)
     if (sr.alive) { render_world_done(); lyt_draw(sr.l); if (sr.info && (sr.n.cur == SR_INFO || sr.n.cur == SR_INFOEND)) lyt_draw(sr.info); }
     if (dmu.on) { render_world_done(); dmu_draw(); }
     mlay_draw();
+    if (spg.l && !nrv_is(&spg.n, SPG_ENDWAIT)) { render_world_done(); lyt_draw(spg.l); } /* StarPointerGuidance */
     if (mono.on) { render_world_done(); lyt_draw(mono.l); }
     gm_draw();
     if (pm.alive) {

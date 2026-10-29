@@ -363,6 +363,7 @@ static unsigned *row_larea_t;
 static struct { int area, from, t, n; RenderLight cur; } plight; /* the player's ActorLightCtrl (area -1: none yet) */
 static int area_inside(const Row *r, V3 p);
 static int area_obj(const char *cls, V3 p);
+static int screen_pos(V3 p, float *x, float *y);
 static unsigned game_frame;
 static void lights_init(void)
 {
@@ -9745,18 +9746,23 @@ static void lay_draw(const char *name, int group, float a, float dx, float dy)
  * controller shows them all once the player has not moved for 60 frames (PlayerNotMoving) and hides them after 240
  * once he moves; a counter whose number goes up appears by itself, counts up one every 3 frames and goes after 240
  * frames of Wait. setFollowPos: the counter's pane at Position001 / 010 / 100 by its digits (CoinCounter,
- * StarPieceCounter). ponytail: no Flash / Wait animations, no CountUpPaneRumbler, no counter light effects, no
- * TicoEat total mode, the LIFE meter (MarioMeter) apart */
+ * StarPieceCounter). The StarPieceCounter after Petari (spc_*): it appears while the pointer is on the screen
+ * (isValidAppearSituation), counts down one every 3 frames (10 in the TicoEat mode); requestedTicoEat (the Butler's
+ * lecture, TicoFat) kills the others and shows it centred (TSPiece, TPosition<n>) 94 up until a frame without the
+ * request (tryEndTicoEatStarPiece). ponytail: no Flash / Wait animations, no CountUpPaneRumbler, no counter light
+ * effects, the LIFE meter (MarioMeter) apart; in the Observatory TSPiece's PicNStarPiece is drawn over its
+ * PicTStarPiece (layout.py bakes both into the group) */
 enum { HC_HIDE, HC_APPEAR, HC_WAIT, HC_COUNTUP, HC_DISAPPEAR };
 enum { AP_HIDE, AP_APPEAR, AP_SHOW, AP_DISAPPEAR };
 typedef struct {
     const char *lay; int group; float offx, offy; /* the layout, the group drawn, the appearer's offset (screen, y down) */
     int nrv, step, disp, num, forced, wait_cd, ap, ap_step; float follow;
+    int dead, mode, f3c; float basey; /* killed (requestedTicoEat); StarPieceCounter: mMode, _3C, the appear base y */
 } HudCounter;
 static HudCounter hud[4] = { /* StarCounter, CoinCounter, StarPieceCounter (normal), PlayerLeft (normal) */
     {.lay = "StarCounter", .group = 0, .offx = -50.0f}, {.lay = "CoinCounter", .group = 0, .offx = 50.0f},
     {.lay = "StarPieceCounter", .group = 1, .offy = 30.0f}, {.lay = "PlayerLeft", .group = 0, .offx = -50.0f}};
-static struct { int nrv, step, still; } hudc; /* CounterLayoutController: 0 PlayerMoving, 1 PlayerNotMoving */
+static struct { int nrv, step, still, tico; } hudc; /* CounterLayoutController: 0 PlayerMoving, 1 PlayerNotMoving; _24 */
 static int hud_on; /* forceAppearDefaultGameLayout has run (ScenarioStarter's Welcome, step 90) */
 static int dome_layout_off; /* the dome's SphereSelector: deactivateDefaultGameLayout while it runs */
 static void hud_set(HudCounter *c, int n) { c->nrv = n; c->step = 0; }
@@ -9771,7 +9777,99 @@ static void hud_force_appear(HudCounter *c) /* CoinCounter / StarPieceCounter / 
     c->forced = 1;
 }
 static void hud_disappear(HudCounter *c) { c->forced = 0; hud_set(c, HC_DISAPPEAR); hud_ap(c, AP_DISAPPEAR); }
-static int hud_hidden_or_wait(const HudCounter *c) { return c->nrv == HC_HIDE || c->nrv == HC_WAIT; }
+static int hud_hidden_or_wait(const HudCounter *c) { return c->dead || c->nrv == HC_HIDE || c->nrv == HC_WAIT; }
+static void hud_kill(HudCounter *c) { c->dead = 1; hud_set(c, HC_HIDE); hud_ap(c, AP_HIDE); }
+static void hud_revive(HudCounter *c) /* CoinCounter / PlayerLeft::appear: hidden, its Hide nerve */
+{
+    c->dead = c->forced = c->wait_cd = 0; hud_set(c, HC_HIDE); hud_ap(c, AP_HIDE);
+}
+static int on_stage(const char *galaxy);
+static int hud_busy(void) /* CounterLayoutController::isInvalidSystemStateShowCounter */
+{
+    return menu_guidance_exists() || mario->launch >= 0 || talk_active(); /* guidance, in a bind, talking */
+}
+/* StarPieceCounter (hud[2]) */
+static int spc_center(const HudCounter *c) /* isDispCenter */
+{
+    return on_stage("AstroGalaxy") || on_stage("AstroDome") || on_stage("LibraryRoom") || c->mode || c->f3c == 2;
+}
+static int spc_valid(void) /* isValidAppearSituation (the TicoEat mode: no PointerFrame1 on the PS2) */
+{
+    float x, y;
+    return hud[2].mode || (game_cursor(&x, &y) && !hud_busy());
+}
+static void spc_appear(HudCounter *c) /* appear: reset, forceSync, Hide */
+{
+    c->dead = c->wait_cd = c->f3c = 0; c->disp = c->num = got_pieces;
+    hud_ap(c, AP_HIDE); hud_set(c, HC_HIDE);
+}
+static void spc_force_appear(HudCounter *c, int center)
+{
+    if (center || !(c->nrv == HC_WAIT && !c->dead)) { spc_appear(c); hud_set(c, HC_APPEAR); }
+    c->f3c = center ? 2 : 1;
+}
+static void spc_disappear(HudCounter *c, int force)
+{
+    if (force || !spc_valid()) hud_set(c, HC_DISAPPEAR);
+    if (!force) c->f3c = 0;
+}
+static int spc_change_mode(HudCounter *c, int mode) /* tryChangeModeTicoEat */
+{
+    if (c->nrv == HC_APPEAR || c->nrv == HC_DISAPPEAR) return 0;
+    if (c->nrv == HC_WAIT) { hud_set(c, HC_DISAPPEAR); return 0; }
+    if (c->nrv == HC_HIDE) hud_set(c, HC_HIDE);
+    c->wait_cd = 0; c->disp = c->num = got_pieces; /* forceSync */
+    c->mode = mode;
+    return 1;
+}
+static void spc_set(HudCounter *c, int n) { c->nrv = n; c->step = -1; } /* setNerve within its exe */
+static void spc_update(HudCounter *c) /* exe<nerve>, then control: updateCounter, the appearer */
+{
+    int first = c->step == 0;
+    switch (c->nrv) {
+    case HC_HIDE:
+        if (first) c->wait_cd = 0;
+        if (c->step > (c->mode ? 20 : 3) && spc_valid()) spc_set(c, HC_APPEAR); /* cHideFrameMinTicoEat / cHideFrameMin */
+        break;
+    case HC_APPEAR:
+        if (first) {
+            if (spc_center(c)) { c->group = 0; c->offx = 0.0f; c->offy = 30.0f; } /* cAppearOffsetCenterY */
+            else { c->group = 1; c->offx = 50.0f; c->offy = 0.0f; }             /* cAppearOffsetRightX */
+            c->basey = c->mode ? -94.0f : c->f3c == 2 ? -120.0f : 0.0f;         /* cBaseOffsetTicoFatY / EatTicoY */
+            hud_ap(c, AP_APPEAR);
+        }
+        if (c->ap == AP_SHOW) spc_set(c, HC_WAIT);
+        break;
+    case HC_WAIT:
+        if (!spc_valid() && (c->mode || (c->f3c == 0 && c->disp == c->num && (c->step > 240 || menu_guidance_exists()))))
+            spc_set(c, HC_DISAPPEAR);
+        break;
+    case HC_DISAPPEAR:
+        if (first) hud_ap(c, AP_DISAPPEAR);
+        if (c->ap == AP_HIDE) { if (c->f3c == 2) c->f3c = 0; spc_set(c, HC_HIDE); }
+        break;
+    }
+    c->step++; /* Spine::update (spc_set's -1: the new nerve's step 0 next frame) */
+    c->num = got_pieces;
+    if (c->nrv != HC_DISAPPEAR) { /* updateCounterValue */
+        if (c->wait_cd > 0) c->wait_cd--;
+        else if (c->disp != c->num) {
+            if (c->nrv == HC_WAIT) {
+                if (c->disp < c->num) c->disp++;
+                else if (c->mode == 1) c->disp = c->disp - c->num > 10 ? c->disp - 10 : c->num; /* cDecCounterValueFast */
+                else c->disp--;
+                c->wait_cd = 3; /* cInvalidCountUpInterval */
+            }
+            if (c->nrv != HC_APPEAR) hud_set(c, c->nrv != HC_WAIT ? HC_APPEAR : HC_WAIT);
+        }
+    }
+}
+int game_test_spc(void) { return hud[2].mode * 1000 + hud[2].nrv * 100 + hud[2].group * 10 + hud[1].dead; } /* tests */
+static void hud_tico_eat(int center) /* MR::requestCounterLayoutAppearanceForTicoEat (each frame) */
+{
+    if (!hud[2].mode && spc_change_mode(&hud[2], center ? 2 : 1)) { hud_kill(&hud[1]); hud_kill(&hud[3]); hud_kill(&hud[0]); }
+    hudc.tico = 1;
+}
 /* MarioMeter's HitPointMeter (MeterLayout): Wait (with 3: _4C down 0.05 a frame while the player moves, up while he
  * is still; below 3 it stays at 1), the ShowHide alpha at _4C x 20 and 50 to the right by getEaseInOutValue(_4C, 1,
  * 0); a change of life: Damage / Recover, then WaitStart (240 frames at 1). ponytail: no Danger pulse, no Damage
@@ -9796,9 +9894,11 @@ static void hud_update(void)
         hudc.nrv = 1; hudc.step = 0;
     }
     if (!hud_on) return;
-    int busy = mario->launch >= 0 || talk_active(); /* isInvalidSystemStateShowCounter: in a bind, talking */
+    int busy = hud_busy();
     for (int k = 0; k < 4; k++) {
         HudCounter *c = &hud[k];
+        if (k == 2) { spc_update(c); goto appearer; }
+        if (c->dead) continue;
         c->num = hud_value(k);
         c->step++;
         if (k == 0) { /* StarCounter: Appear, Wait, CountUp, Disappear (killed) */
@@ -9810,17 +9910,18 @@ static void hud_update(void)
             if (k == 3) { /* PlayerLeft: more lives make it appear; its number follows while shown */
                 if (c->nrv == HC_HIDE && c->num > c->disp) { hud_set(c, HC_APPEAR); hud_ap(c, AP_APPEAR); }
                 if (c->nrv != HC_HIDE) c->disp = c->num;
-            } else if (c->nrv != HC_DISAPPEAR || k == 1) {
+            } else if (c->nrv != HC_DISAPPEAR || k == 1) { /* CoinCounter */
                 if (c->wait_cd > 0) c->wait_cd--;
                 else if (c->disp < c->num) {
                     if (c->nrv == HC_WAIT) { c->wait_cd = 3; c->disp++; }
                     if (c->nrv != HC_APPEAR) { if (c->nrv != HC_WAIT) { hud_set(c, HC_APPEAR); hud_ap(c, AP_APPEAR); } else hud_set(c, HC_WAIT); }
-                } else if (k == 2 && c->disp > c->num) c->disp = c->num; /* pieces spent */
+                }
             }
             if (c->nrv == HC_APPEAR && c->ap == AP_SHOW) hud_set(c, HC_WAIT);
             else if (c->nrv == HC_WAIT && !c->forced && c->disp == c->num && (c->step > 240 || busy)) hud_disappear(c);
             else if (c->nrv == HC_DISAPPEAR && c->ap == AP_HIDE) hud_set(c, HC_HIDE);
         }
+    appearer:
         c->ap_step++;
         if (c->ap == AP_APPEAR && c->ap_step > 21) hud_ap(c, AP_SHOW);
         if (c->ap == AP_DISAPPEAR && c->ap_step > 21) hud_ap(c, AP_HIDE);
@@ -9832,16 +9933,28 @@ static void hud_update(void)
     if (hudc.nrv == 0 && !all) moving = 1;
     hudc.step++;
     hpm_update(hudc.nrv == 1); /* requestPlayerMoving / requestPlayerStopped */
-    if (hudc.nrv == 0) {
-        if (!moving) { if (++hudc.still > 60) { hudc.nrv = 1; hudc.step = 0; } } else hudc.still = 0;
+    if (hudc.nrv == 1 && hudc.step == 1 && !hudc.tico) { /* showAllLayout */
+        hud_force_appear(&hud[1]); spc_force_appear(&hud[2], 0); hud_force_appear(&hud[3]);
+        hud[0].dead = 0; hud[0].disp = hud[0].num; hud_set(&hud[0], HC_APPEAR); hud_ap(&hud[0], AP_APPEAR);
     }
-    if (hudc.nrv == 1 && hudc.step == 1) { /* showAllLayout */
-        for (int k = 1; k < 4; k++) hud_force_appear(&hud[k]);
-        hud[0].disp = hud[0].num; hud_set(&hud[0], HC_APPEAR); hud_ap(&hud[0], AP_APPEAR);
-    } else if (hudc.nrv == 1 && moving && hudc.step > 240) { /* hideAllLayout */
-        for (int k = 0; k < 4; k++) if (hud[k].nrv != HC_HIDE) hud_disappear(&hud[k]);
+    int ended = 0;
+    if (hud[2].mode && !hudc.tico) { /* tryEndTicoEatStarPiece */
+        if (spc_change_mode(&hud[2], 0)) { hud_revive(&hud[1]); hud_revive(&hud[3]); }
+        ended = 1;
+    }
+    if (hudc.nrv == 0) {
+        if (hudc.step == 1) hudc.still = 0;
+        if (ended) hudc.step = 0;
+        else if (!moving) { if (++hudc.still > 60) { hudc.nrv = 1; hudc.step = 0; } } else hudc.still = 0;
+    } else if (ended) hudc.step = 0;
+    else if (moving && (hudc.step > 240 || menu_guidance_exists())) { /* isWaitToDisappearCounter: hideAllLayout */
+        if (!hudc.tico) {
+            for (int k = 0; k < 4; k++) if (k != 2 && hud[k].nrv != HC_HIDE) hud_disappear(&hud[k]);
+            spc_disappear(&hud[2], 0);
+        }
         hudc.nrv = 0; hudc.step = 0; hudc.still = 0;
     }
+    hudc.tico = 0; /* control */
 }
 static float hud_hermite(float f, float f0, float v0, float s0, float f1, float v1, float s1)
 {
@@ -9863,8 +9976,10 @@ static void hud_draw(void)
             r = 1.0f - (1.0f - cosf(fminf(f / 21.0f, 1.0f) * 1.5707963f));
         }
         a = fminf(fmaxf(a, 0.0f), 1.0f);
-        float dx = c->offx * (1.0f - r), dy = -c->offy * (1.0f - r); /* screen offsets (y down) in layout units */
-        if (k == 1 || k == 2) /* setFollowPos: Position001 / 010 / 100 (x 52 / 26 / 0 past the counter's own place) */
+        float dx = c->offx * (1.0f - r), dy = -(c->offy * (1.0f - r) + c->basey); /* screen offsets (y down) in layout units */
+        if (k == 2 && c->group == 0) /* TPosition1000 / 0100 / 0010 / 0001 (x 0 / 13 / 26 / 39 past TSPieceCounter's) */
+            dx += c->disp >= 1000 ? 0.0f : c->disp >= 100 ? 13.0f : c->disp >= 10 ? 26.0f : 39.0f;
+        else if (k == 1 || k == 2) /* setFollowPos: Position001 / 010 / 100 (x 52 / 26 / 0 past the counter's own place) */
             dx += c->disp >= 100 ? 0.0f : c->disp >= 10 ? 26.0f : 52.0f;
         lay_num = c->disp;
         lay_draw(c->lay, c->group, a, dx, dy);
@@ -10103,8 +10218,8 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
  * past 1.3 / 1.6) through its ActorAnimCtrl actions. Its talks: Common_TicoFat001 (Prep: tryTalkNearPlayer, its
  * event node starts the eating: eventFunc 0) and Common_TicoFat000 (setMessage: Wait 1 by how much is left, Point 0,
  * Test 2; the end of Fullness' talk is the metamorphosis), 280 to talk, 220 x scale up, in front. WipeOut shakes the
- * camera and shows its screen effects. The "喜び" camera only runs for arg7 6 (Good Egg's has -1). ponytail: no
- * FullnessMeter's Shine / Flash, no TicoSeedGuidance, no item (arg0 0 / 1), no BVA eyes. Info shows InformationPlanet until A */
+ * camera and shows its screen effects. The "喜び" camera only runs for arg7 6 (Good Egg's has -1). updateGuidance: PointerGuidance_TicoFat and the
+ * StarPieceCounter's TicoEat mode near it. ponytail: no FullnessMeter's Shine / Flash, no item (arg0 0 / 1), no BVA eyes. Info shows InformationPlanet until A */
 #define MAX_FATS 4
 static struct {
     int row, nrv, t, left, total, inflight, eat, g174, g178, item, has_rail, tk1, tk0; /* mMsgCtrl, _16C */
@@ -10222,7 +10337,16 @@ static void update_ticofat(void)
         V3 rc = vsub(base, vadd(mario->pos, vmul(mario->up, HIT_BODY_H)));
         float talk = 280.0f * fminf(f->scale, 1.5f), dm = fabsf(vdot(rc, up)) <= talk ? vlen(vtangent(rc, up)) : 1e9f;
         /* updateGuidance / updatePointing (the pointer: the cursor's ray within 110 x scale of it) */
-        if (dm < talk) f->g174 = 8; else if (f->g174 > 0) f->g174--;
+        int near = dm < talk;
+        if (f->left > 0 && !dx.on) { /* (_1E0) requestTicoSeedGuidanceForce near, requestTicoSeedGuidance(_1F4) on the screen */
+            float sx, sy;
+            if (near && menu_guidance_request("PointerGuidance_TicoFat", 1)) hud_tico_eat(0);
+            int a = screen_pos(base, &sx, &sy) ? area_obj("TicoSeedGuidanceCube", mario->pos) : -1;
+            if (a >= 0 && sc->objs[a].arg[0] == sc->objs[f->row].arg[3] && menu_guidance_request("PointerGuidance_TicoFat", 1)) {
+                near = 1; hud_tico_eat(0);
+            }
+        }
+        if (near) f->g174 = 8; else if (f->g174 > 0) f->g174--;
         int pointing = 0;
         if (f->g174 > 0) {
             V3 o, d;
@@ -28974,6 +29098,7 @@ static void update_dome_npcs(void)
             int ta = 0;
             for (int k = 0; k < ndxt; k++) ta |= dx.on && dxt[k].row == in->row && butler_nrv;
             if (butler_nrv == 3 && dx.on && dx_last(4)) { gd_story_follow("スターピースレクチャー"); butler_nrv = 1; } /* exeDemoStarPiece2: 終了's last step */
+            if (bsp.on && !dx.on) { menu_guidance_request("PointerGuidance_StarPieceLecture", 0); hud_tico_eat(0); } /* control: _160 out of a demo */
             if (bsp.on) { /* control: tryReplaceStarPieceIfExecLecture (the paired StarPieceGroup back when none is left) */
                 int g = butler_group(r), any = 0;
                 for (int k = 0; g >= 0 && k < npieces; k++) any |= pieces[k].row == g && pieces[k].alive != PICK_GONE;
