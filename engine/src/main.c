@@ -427,7 +427,7 @@ static const u8 *scene_blob;
 static u32 nzones, base_models, base_tex, base_kcl;
 static u32 size_full[64], size_low[64], zone_room; /* each stage pack's bytes; what the stage packs may use */
 static u32 resident_bytes;
-#define PACK_ROOM 10400000u /* room for scenario data, resident.bin aside (9.01 MB in phase 0b; +1.39 MB since se_compact frees the ADPCM) (tools/slice_all.py ROOM) */
+#define PACK_ROOM 9200000u /* room for scenario data, resident.bin aside (the region less resident.bin, sound.bin's EE part and the menus' packs) (tools/slice_all.py ROOM) */
 static MemMark base_mark;
 
 /* Next zone's packs, read a slice per frame (a launch star's flight hides it); stages whose pack does not change
