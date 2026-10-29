@@ -326,6 +326,8 @@ static float face_bind[ANIM_MAX_JOINTS][16], face_w[16]; /* its joints' bind pos
  * as Invincible InvincibleMarioHandL / R (_A50 / _A54, their BRK at the body's frame) */
 #define JOINT_HANDL0_ 23
 #define JOINT_HANDR0_ 28
+#define JOINT_CAP0 14 /* Mario's JNT1 Cap0 (MR::hidePlayerJoint "Cap0": StarReturnDemoStarter) */
+static int mario_cap_hidden;
 static const Model *m_hand[3][2];
 static Anim *hand_anim[2];
 static float hand_bind[2][ANIM_MAX_JOINTS][16];
@@ -1025,8 +1027,8 @@ static int pd_try_start(const char *name, int row)
 }
 static void pd_end(const char *name) { if (pd.name && !strcmp(pd.name, name)) { pd.name = NULL; pd.row = -1; } }
 /* Butler's star piece lecture (Butler.cpp): _160 on, _164 hits, _168 the replace count, the reaction
- * (ButlerStateStarPieceReaction: -1 none, else its step; talk: _14) and its talk, chosen at init */
-static struct { int on, hits, react, talk, replace; const char *msg; } bsp = {.react = -1};
+ * (ButlerStateStarPieceReaction: -1 none, else its step; talk: _14) and its talk, chosen at init; _171 pointed */
+static struct { int on, hits, react, talk, replace, pointed; const char *msg; } bsp = {.react = -1};
 static int butler_hits(void) { return bsp.hits; }
 static int butler_group(const Row *r) /* MR::getPairedGroupMember: the StarPieceGroup of its group (joinToGroupArray) */
 {
@@ -27948,16 +27950,19 @@ static void dx_talk_anims(const Demo *d)
  * away (ResultFlyGrandStarFlyAway, the camera shaken) and Mario falls at cFallStartFrameGrandStar 360. The star is a
  * skinned EXTRA model (PStar / GStar: PowerStar / GrandStar with their ResultFly clips, started with Mario's); the Luma
  * (SpinTico, ResultWaitStart) appears at the landing's end. The demo sheets' parts: 移動 0, ウェイト 1.
- * ponytail: no MarioHair (its cap hiding (hidePlayerJoint Cap0) needs per joint hiding in the skin renderer), the
- * Luma's BVA as its first visible frame, no SpinDriverPathDrawer, no DemoFlyLightDemo effect, no BGM changes */
+ * MarioHair (Mario only; a pack without it: none) appears with the Luma and plays ResultWaitStart with him; while his
+ * ResultWaitStart plays, his Cap0 is hidden from cCapHideStartStep 21 to cCapHideEndStep 221 (tryStartResultWait).
+ * DemoFlyLightDemo is emitted on the star at cDemoAppearEffectStep 30.
+ * ponytail: the Luma's BVA as its first visible frame, no SpinDriverPathDrawer */
 enum { SRD_DEAD, SRD_APPEARWAIT, SRD_MOVE, SRD_FLYWAIT, SRD_FALL, SRD_LAND, SRD_WAIT, SRD_RESULT, SRD_FADEOUT, SRD_AFTER };
 static struct {
     int row, nrv, step, grand;           /* grand: GameSequenceFunction::isGrandStarAtResultSequence */
     const float *pts; u32 np; float len; /* SpinDriverShootPath: its rail */
     V3 up, front, pos, forward, ground;  /* mTransform (its up / front / translation), mForward, mPosition */
-    int luma;                            /* mLuma appeared (exeLand's end) */
+    int luma, hair;                      /* mLuma / mHair appeared (exeLand's end) */
     u32 lv_fly, lv_drv;                  /* SE_OJ_LV_RET_POW_STAR_FLY (the star), SE_PM_LV_SPIN_DRV_FLY (the player) */
 } srd = {.row = -1};
+static void base_mtx(float m[16], V3 up, V3 front, V3 pos);
 #define SPINTICO_SHOWN 60 /* ponytail: SpinTico's ResultWaitStart.bva shows it from this frame (not played: its only change) */
 static void srd_set(int n) { srd.nrv = n; srd.step = 0; }
 static V3 rd_path(const float *pts, u32 np, float len, float t) { return rail_at(pts, np, t * len); } /* calcPosition (no start offset: init) */
@@ -28023,13 +28028,18 @@ static void srd_appear(int row) /* appear: posToStart, setupColorAtResultSequenc
 static void srd_update(void)
 {
     if (srd.nrv == SRD_DEAD) return;
-    if (!dx.on && srd.nrv != SRD_AFTER) { srd_set(SRD_DEAD); mario_hidden = 0; srd.luma = 0; return; }
+    if (!dx.on && srd.nrv != SRD_AFTER) { srd_set(SRD_DEAD); mario_hidden = 0; srd.luma = srd.hair = 0; return; }
     Anim *star = star_anim(srd_star_cls(), 0);
     int first = srd.step++ == 0, n = srd.step - 1;
     switch (srd.nrv) {
     case SRD_APPEARWAIT:
         if (first) { mario_hidden = 1; if (on_stage("AstroGalaxy")) bgm_start("MBGM_GALAXY_24"); } /* hidePlayer, startStageBGM */
-        if (n == 30) se_start(SE_PM_DEMO_RETURN_LIGHT, &srd.pos.x); /* cDemoAppearEffectStep */
+        if (n == 30) { /* cDemoAppearEffectStep: emitEffect(mPowerStar, DemoFlyLightDemo), its sound */
+            float m[16];
+            base_mtx(m, srd.up, srd.front, srd.pos);
+            fx_named(srd_star_cls(), "DemoFlyLightDemo", m, star && star->skin ? (const float (*)[16])star->world : NULL, NULL);
+            se_start(SE_PM_DEMO_RETURN_LIGHT, &srd.pos.x);
+        }
         if (n == 45) srd_set(SRD_MOVE);                              /* cDemoAppearWaitFrame */
         break;
     case SRD_MOVE: { /* ReturnDemoRailMove::start / update (partStep - 44, totalStep - 45) */
@@ -28087,13 +28097,15 @@ static void srd_update(void)
         if (srd_bck_stopped()) { /* the Luma appears, ResultWaitStart (startAllAnim) */
             Anim *la = star_anim("SpinTico", 1);
             if (la) { star_bck(la, "SpinTico", "resultwaitstart"); srd.luma = 1; }
+            Anim *ha = gd_player_luigi() ? NULL : star_anim("MarioHair", 3); /* mHair: not for Luigi */
+            if (ha) { star_bck(ha, "MarioHair", "resultwaitstart"); srd.hair = 1; }
             srd_set(SRD_WAIT);
         }
         break;
     case SRD_WAIT:
     case SRD_RESULT:
         if (first && srd.nrv == SRD_WAIT) { srd_bck("resultwaitstart"); if (on_stage("AstroGalaxy")) bgm_stop(90); } /* stopStageBGM(90) */
-        if (srd_bck_stopped()) srd_bck("resultwait"); /* tryStartResultWait */
+        if (srd_bck_stopped()) srd_bck("resultwait"); /* tryStartResultWait (its cap: srd_cap) */
         if (srd.nrv == SRD_WAIT && dx_last(1)) { /* tryStartStageResult */
             menu_result_start();
             dx.paused = 1;
@@ -28107,7 +28119,7 @@ static void srd_update(void)
         break;
     case SRD_AFTER:
         if (first) { dx.paused = 0; if (on_stage("AstroGalaxy")) game_bgm_stage(); } /* resumeTimeKeepDemo, startCurrentStageBGM */
-        if (!dx.on) { srd_set(SRD_DEAD); srd.luma = 0; } /* kill: the Luma with it */
+        if (!dx.on) { srd_set(SRD_DEAD); srd.luma = srd.hair = 0; } /* kill: the Luma and the hair with it */
         return; /* Mario no longer held */
     }
     /* control: setPlayerBaseMtx(mTransform) */
@@ -28119,9 +28131,19 @@ static void base_mtx(float m[16], V3 up, V3 front, V3 pos) /* the base matrix of
     float t[16] = {x.x, x.y, x.z, 0, up.x, up.y, up.z, 0, front.x, front.y, front.z, 0, pos.x, pos.y, pos.z, 1};
     memcpy(m, t, sizeof t);
 }
+/* tryStartResultWait's cap: mFrame counts the steps of ResultWaitStart from exeWait's first (its frame here: the
+ * result window holds game_update while the clip plays on); with mHair, Cap0 hidden at cCapHideStartStep 21 and shown
+ * at cCapHideEndStep 221 */
+static void srd_cap(void)
+{
+    if ((srd.nrv != SRD_WAIT && srd.nrv != SRD_RESULT) || gd_player_luigi() || !scene_model(sc, "MarioHair") || !mario_anim) return;
+    if (m_clip_is("resultwaitstart")) mario_cap_hidden = mario_anim->frame >= 21.0f && mario_anim->frame < 221.0f;
+    else mario_cap_hidden = 0;
+}
 static void srd_draw(void) /* the star at Mario's base matrix while it flies (its ResultFly clips), the Luma from the landing on */
 {
-    if (srd.nrv == SRD_DEAD || srd.nrv == SRD_AFTER) return;
+    if (srd.nrv == SRD_DEAD || srd.nrv == SRD_AFTER) { mario_cap_hidden = 0; return; }
+    srd_cap();
     float m[16];
     base_mtx(m, srd.up, srd.front, srd.pos);
     if (srd.nrv == SRD_MOVE || srd.nrv == SRD_FLYWAIT) {
@@ -28134,6 +28156,13 @@ static void srd_draw(void) /* the star at Mario's base matrix while it flies (it
         const Model *md = scene_model(sc, "SpinTico");
         Anim *a = star_anim("SpinTico", 1);
         if (md && a) { anim_update(a); if (a->frame >= SPINTICO_SHOWN) draw_skin(md, m, a); }
+    }
+    if (srd.hair) { /* createModelObjPlayerDecoration at mTransform: its ResultWaitStart BCK and BVA */
+        const Model *md = scene_model(sc, "MarioHair");
+        Anim *a = star_anim("MarioHair", 3);
+        /* in step with his ResultWaitStart (the result window holds game_update, not the draws' clips) */
+        if (a && mario_anim && m_clip_is("resultwaitstart")) a->frame = mario_anim->frame - a->speed * anim_rate;
+        if (md && a) { anim_update(a); draw_skin(md, m, a); }
     }
 }
 
@@ -28607,6 +28636,16 @@ static void update_dome_npcs(void)
                     se_start(SE_OJ_STAR_PIECE_BURST, &p.x);
                     se_start(SE_SY_LECT_STAR_PIECE_APR, NULL);
                 }
+                /* isStarPointerPointing1P(this, "弱"): its StarPointerTarget (NPCActorCaps mPointerSize 80, offset 0 at
+                 * its position) under the pointer; SE_SY_TICOFAT_POINT when it starts, the weak rumble at the new touch.
+                 * ponytail: the ray within 80 of it stands for calcRadius2d, no depth check against the map */
+                int was = bsp.pointed;
+                V3 o, d, to;
+                cursor_ray(&o, &d);
+                to = vsub(v3(in->m[12], in->m[13], in->m[14]), o);
+                float z = vdot(to, d);
+                bsp.pointed = cur_idle < 300 && z > 0 && vlen(vsub(to, vmul(d, z))) < 80.0f;
+                if (!was && bsp.pointed) { pad_rumble(RUMBLE_WEAK); se_start(SE_SY_TICOFAT_POINT, NULL); printf("butler: pointed\n"); }
             }
             if (bsp.react >= 0 && !dx.on) { /* exeStarPieceReaction / ButlerStateStarPieceReaction::exeWait */
                 int react = bsp.on && bsp.hits >= 5;
@@ -29819,7 +29858,7 @@ static void update_astro_sky(void)
 }
 static void demo_actors_reset(void) /* a new scene: the demos' actors as placed */
 {
-    srd_set(SRD_DEAD); srd.luma = 0;
+    srd_set(SRD_DEAD); srd.luma = srd.hair = 0; mario_cap_hidden = 0;
     gsr_set(GSR_DEAD);
     acore.nrv = 0; acore.clip = 0;
     ads_set(ADS_HIDE);
@@ -33400,6 +33439,7 @@ void game_draw(void)
         int hands_on = hand_anim[0] && player_mode != PM_HOPPER && disp_model != 1 && !fp_on; /* updateHand: _A58 */
         if (disp_model != 5 && mario_anim->skin && mario_anim->skin->njoints > JOINT_HANDR0_ && hand_at != game_frame) {
             for (int j = 0; j < 12; j++) mario_anim->world[JOINT_HANDL0_][j] = mario_anim->world[JOINT_HANDR0_][j] = 0.0f;
+            if (mario_cap_hidden) for (int j = 0; j < 12; j++) mario_anim->world[JOINT_CAP0][j] = 0.0f; /* hidePlayerJoint Cap0 */
             anim_skin(mario_anim); /* initHand: hideJoint HandL0 / HandR0 (mModels 0-4) */
             hand_at = game_frame;
         }
