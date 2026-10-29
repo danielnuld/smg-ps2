@@ -110,6 +110,18 @@ class Baa:
         t = b + U32(d, b + 8 + 4 * sid[1])
         return U32(d, t + 4 + 4 * sid[2])
 
+    def wave_archives(self):
+        """-> {(wsys_no, wave id): its archive's index in the WSYS (what AudSceneMgr loads: loadWaveArc)}"""
+        d, out = self.d, {}
+        for ws, w in self.wsys.items():
+            winf, wbct = w + U32(d, w + 0x10), w + U32(d, w + 0x14)
+            for gi in range(U32(d, winf + 4)):
+                ga = w + U32(d, winf + 8 + 4 * gi)
+                cdf = w + U32(d, w + U32(d, wbct + 12 + 4 * gi) + 12)
+                for j in range(U32(d, ga + 0x70)):
+                    out[(ws, U16(d, w + U32(d, cdf + 8 + 4 * j) + 2))] = gi
+        return out
+
     def wave(self, wsys_no, wid):
         """-> (float32 samples, rate, base key, loop (start, end) or None) of wave id in wave system wsys_no"""
         key = (wsys_no, wid)
@@ -1083,6 +1095,18 @@ def pack(fs, out_bin, ids_h, sources, cap=16000, budget=1850000, scene=None):
     luigi = sorted({to_luigi[w] for w in voice})
     for v in voice:
         waves[to_luigi[v]] = max(waves.get(to_luigi[v], 0), waves[v])
+    if scene:  # AudSceneMgr: only the wave archives the stage / scenario loads (static, system, player, its BGM / SE /
+        # scenario SE sets); a sound whose waves are elsewhere is silent on the Wii too. Unknown scenes keep all.
+        sets = A.scene_sets()
+        gal, no = Path(scene).parts[-3], Path(scene).parts[-2]
+        loaded = sets.get((gal, int(no) if no.isdigit() else 0), sets.get((gal, 0)))
+        if loaded:
+            arc = baa.wave_archives()
+            drop = {w for w in waves if w[0] != VOICE_WSYS and
+                    not any(b == w[0] and (i is None or i == arc.get(w)) for b, i in loaded)}
+            print(f"{len(drop)} waves in archives {gal} {no} does not load")
+            for w in drop:
+                del waves[w]
     rest = sorted(set(waves) - set(voice) - set(luigi))
     info = {w: baa.wave(*w) for w in waves}
 
