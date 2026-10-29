@@ -244,6 +244,7 @@ int blob_add(Scene *s, const u8 *blob)
     if (fo) {
         s->font = fo;
         s->font_tex0 = tex0;
+        s->font2 = blob_chunk(blob, "FNT2", NULL);
     }
     if (tk)
         s->talk = tk;

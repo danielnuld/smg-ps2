@@ -168,9 +168,10 @@ def text_chunk(texts):
 
 
 def font_kind(fonts, i):
-    """a text box's font: 0 MessageFont26 (and MenuFont64), 1 NumberFont, 2 PictureFont"""
+    """a text box's font: 0 MessageFont26 (and MenuFont64), 1 NumberFont, 2 PictureFont, 3 CinemaFont26 (subs.bin's
+    FNT2; MessageFont26 where a blob has none)"""
     n = fonts[i].lower() if i < len(fonts) else ""
-    return 1 if n.startswith("numberfont") else 2 if n.startswith("picturefont") else 0
+    return 1 if n.startswith("numberfont") else 2 if n.startswith("picturefont") else 3 if n.startswith("cinemafont") else 0
 
 
 def picture_chars(fsp, names=None):
@@ -343,7 +344,8 @@ def convert(files, name, texts, extra=None):
 
 # the layouts every scene may show (menus.bin, loaded with each scene)
 COMMON = ("PauseMenu", "SysInfoWindow", "SysInfoWindowMini", "GameOver", "TooBad", "StageTitle", "IconAButton",
-          "BackButton", "ScenarioSelect", "WipeKoopa", "ResultWindow", "CinemaFrame", "FlyMeter", "AirMeter")  # MarioSubMeter
+          "BackButton", "ScenarioSelect", "WipeKoopa", "ResultWindow", "CinemaFrame", "FlyMeter", "AirMeter",  # MarioSubMeter
+          "PointerGuidance")  # StarPointerGuidance
 # the dome's galaxy select's (AstroDomeGalaxySelector): dome.bin, loaded in the AstroDome stages only; GalaxyInfo with
 # the galaxies' pictures (GalaxyInfoTexture.arc) as materials named by galaxy (20 characters)
 DOME = ("GalaxySelect", "GalaxyInfo", "GalaxyNamePlate")
@@ -419,8 +421,9 @@ def build_subs(fsp):
     from slice import blob_of, chunk
     labels = sorted(l for l in msg.Bmg(fsp).index if l.startswith("Layout_StoryDemo"))
     font, ftex = msg.font_subset_chunk(fsp, labels)
+    font2, ftex2 = msg.font_subset_chunk(fsp, labels, font="cinemafont26.brfnt", tex=1)  # CinemaSuper's ShaText
     files = {k.lower().rsplit("/", 1)[-1]: v for k, v in B.rarc_files((Path(fsp) / "LayoutData" / "CinemaSuper.arc").read_bytes())}
-    texts = list(ftex)  # the font's atlas first: FONT's tex index 0
+    texts = list(ftex) + list(ftex2)  # the fonts' atlases first: FONT's tex index 0, FNT2's 1
     body = convert(files, "CinemaSuper", texts)
     lytr = struct.pack("<I12x", 1) + struct.pack("<I", 20) + body
     rum = []
@@ -428,7 +431,8 @@ def build_subs(fsp):
         b = next(v for k, v in B.rarc_files(p.read_bytes()) if k.lower().endswith("padrumbledata.bcsv"))
         for n, f in zip(B.bcsv_column(b, "PadRumbleName"), B.bcsv_column(b, "StartFrame")):
             rum.append(struct.pack("<16sii", p.stem[len("MoviePadRumble"):].encode(), f, RUMBLE_NAMES.index(n)))
-    return blob_of([chunk(b"LYTR", lytr), text_chunk(texts), chunk(b"FONT", font), msgs_chunk(fsp, ("Layout_StoryDemo",)),
+    return blob_of([chunk(b"LYTR", lytr), text_chunk(texts), chunk(b"FONT", font), chunk(b"FNT2", font2),
+                    msgs_chunk(fsp, ("Layout_StoryDemo",)),
                     chunk(b"MRUM", struct.pack("<I12x", len(rum)) + b"".join(rum))])
 
 

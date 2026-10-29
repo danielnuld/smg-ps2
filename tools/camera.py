@@ -139,6 +139,10 @@ def cameras(bcams, float_column, int_column, jp2en=None):
             ints = [int(get(name, d)[i]) if get(name, d) else d for name, d in INTS]
             pan = [get(f"vpanaxis.{a}", 0)[i] if get(f"vpanaxis.{a}", 0) else (0, 1, 0)[k] for k, a in enumerate("XYZ")]
             flags = sum((1 << k) for k, f in enumerate(FLAGS) if get(f"flag.{f}", 0) and get(f"flag.{f}", 0)[i])
+            if get("eflag.enableErpFrame", 0) and get("eflag.enableErpFrame", 0)[i]:  # an event's (CameraParamChunkEvent)
+                flags |= 64
+            if get("eflag.enableEndErpFrame", 0) and get("eflag.enableEndErpFrame", 0)[i]:  # camendint + 1 in bits 7..15
+                flags |= min((int(get("camendint", 120)[i]) if get("camendint", 120) else 120) + 1, 511) << 7
             evfrm = get("evfrm", -1)
             evfrm = int(evfrm[i]) if evfrm else -1
             evfrm = evfrm - 2**32 if evfrm >= 2**31 else evfrm

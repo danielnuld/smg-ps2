@@ -187,6 +187,7 @@ static const Scene *sc;
 typedef struct {
     const Model *md;
     Anim *anim;      /* skinned models (slice.py SKINNED_OBJ): its pose, from obj_anim */
+    int anim_want;   /* skinned, its pose not got (the pool full) or taken back: update_obj_anims asks again near */
     const unsigned char *kcl;
     const unsigned char *kcl_close, *kcl_open; /* TypicalDoor: its Close / Open collisions (door_place) */
     float m[16];     /* world matrix (uniform scale s) */
@@ -202,7 +203,8 @@ typedef struct {
     int kcl_ready;   /* plants: the scene's collision is bound (set at the end of game_rebind) */
     int flip;        /* FlipPanel / FlipPanelReverse: row_step[row] holds FLIP_* bits */
     const Model *md_flip[2]; /* its "#PanelA" ("!", turned) and "#PanelEnd" (group complete) models (slice.py EXTRA) */
-    int npc;         /* talking NPC (npc_class): turns to face Mario when he is near */
+    int npc;         /* NPCActor's turning (npc_class): its ActorTalkParam index + 1, 0 none */
+    V3 nf, nu, nf0, nu0; /* NPCActor _A0 (its turned front / up) and _B0 (the placement's) */
     int dnpc;        /* Butler 1, TicoDomeLecture 2, Rosetta 3, ButlerExplain 4: demo casts (update_dome_npcs) */
     int hipsw;       /* hip drop switch: 1 PicketSwitch(Big) / HipDropSwitch (SW_A for good), 2 HipDropTimerSwitch */
     int rotor;       /* map part with a RotateSpeed: turns (rotor_matrix), carries Mario */
@@ -363,6 +365,7 @@ static unsigned *row_larea_t;
 static struct { int area, from, t, n; RenderLight cur; } plight; /* the player's ActorLightCtrl (area -1: none yet) */
 static int area_inside(const Row *r, V3 p);
 static int area_obj(const char *cls, V3 p);
+static int screen_pos(V3 p, float *x, float *y);
 static unsigned game_frame;
 static void lights_init(void)
 {
@@ -1978,7 +1981,8 @@ void game_init(const Scene *s, const unsigned char *blob)
         if (stone_row(&s->objs[i]) && s->objs[i].arg[2] >= 0) box_pieces += 8; /* a star piece per stone */
         if (!strcmp(tn, "Butterfly") && s->objs[i].arg[1] < 0) box_pieces++; /* the pointer brings one out */
         if (!strcmp(tn, "StinkBugSmall")) box_pieces += 3; /* declareStarPiece(3) */
-        if (!strcmp(tn, "PhantomCandlestand") || !strcmp(tn, "TeresaMansionCandlestand") || !strcmp(tn, "CandlestandIceVolcano")) {
+        if (!strcmp(tn, "PhantomCandlestand") || !strcmp(tn, "TeresaMansionCandlestand") || !strcmp(tn, "CandlestandIceVolcano") ||
+            !strcmp(tn, "PhantomTorch") || !strcmp(tn, "PhantomBonfire")) {
             /* arg0 -1 a coin, 0 a star piece */
             if (s->objs[i].arg[0] == -1) { ncoins++; box_coins++; } else if (s->objs[i].arg[0] == 0) box_pieces++;
         }
@@ -1997,6 +2001,13 @@ void game_init(const Scene *s, const unsigned char *blob)
     for (u32 i = 0; i < s->nobjs; i++) {
         int a = s->objs[i].arg[7];
         star_wait[i] = strcmp(s->types + 32 * s->objs[i].type, "PowerStar") ? 0 : a >= 0 ? a + 1 : a == -2 ? -1 : 0;
+    }
+    for (u32 i = 0; i < s->nobjs; i++) { /* TicoStarRing::init: dead unless its challenge galaxy (arg0) has appeared */
+        static const char *const ring_galaxy[4] = {"TamakoroExLv2Galaxy", "SurfingLv2Galaxy", "CubeBubbleExLv2Galaxy", "PeachCastleFinalGalaxy"};
+        int a = s->objs[i].arg[0] < 0 ? 0 : s->objs[i].arg[0]; /* getJMapInfoArg0NoInit over 0 */
+        if (strcmp(s->types + 32 * s->objs[i].type, "TicoStarRing") || a >= 4) continue;
+        row_dead[i] = !gd_galaxy_appear(ring_galaxy[a]);
+        printf("TicoStarRing row %u (%s): %s\n", i, ring_galaxy[a], row_dead[i] ? "dead" : "out");
     }
     row_step = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(unsigned short));
     row_angle = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(float));
@@ -2423,16 +2434,81 @@ static int sky_class(const char *name)
     return 0;
 }
 
-/* NPCs that turn to Mario within NPC_TURN (Petari NPCActor: the talk range; ponytail: an instant turn, no talk, no
- * idle animation) */
-#define NPC_TURN 1000.0f
-static int npc_class(const char *name)
+/* NPCActor's turning after Petari (NPCActor::turnToPlayer / turnToDefault, NPCUtil tryStartTurnAction /
+ * tryStartTalkAction): MR::ActorTalkParam _0 turns to Mario within _4 (isNearPlayer), _1 while its talk runs, _8
+ * degrees a frame (faceToVector: not when he is over 0.95 along its up), then its up tilted toward him at _C degrees a
+ * frame up to _10 from the placement's (turnQuatYDirRad, clampVecAngleDeg); out of range (_0 or _1) back to the
+ * placement's front (turnToDefault: blendQuatUpFront at _8 over the angle). NPCActor::setDefaults: 1, 1, 2000, 4, 0,
+ * 0. Per class: Tico (TicoAstro) _C 0.5, _10 12 (Tico.cpp); Kinopio / KinopioAstro arg2 (mBehavior) 0 1 2 6 7 11
+ * setNoTurnAction, 4 (Mount) _0 _1 off; Caretaker _0 off, _8 3; PenguinCoach _8 1; Rosetta and PenguinMaster
+ * setMoveTalkNoTurnAction (no turn). TicoFat / TicoGalaxy (their own nerves), TicoShop (TicoComet), TicoReading and
+ * CollectTico (LiveActors) do not turn here. Its action (tryStartAction, the clip of that name): _14 Wait when
+ * turned (or not turning), _18 Turn while turning, _1C Talk / _20 TalkTurn while talking (NPCActor::setDefaults /
+ * setDefaultAction: Wait, Turn, Talk, TalkTurn; Tico Wait, Wait, Talk, Talk; Kinopio's setTalkAction Talk, Talk; a
+ * Kinopio setNoTurnAction mode its one action: arg2 0 1 2 SpinWait1 2 3, 6 Pickel, 7 Sleep, 11 Rightened).
+ * Modes (npc_mode): Penguin arg0 0 Sit (SitDown / SitDownTalk, no turn), 1 Swim, 2 SwimSurface, 3 Dive, 4
+ * SwimTurtle; HoneyBee arg0 3 Sleep / 4 Stick (no turn), 5 Gatekeeper, 7 Flustered, 1 2 6 8 9 their own nerves (not
+ * here); Rabbit (TurnSmall) arg1 5 LongJump no turn. ponytail: no ActorAnimCtrl interpolation (the clip switches at
+ * once); the walking modes' rails (Penguin / Kinopio MoveTalk) not ported */
+typedef struct { const char *cls; u8 near, talk; float dist, speed, tilt_speed, tilt_max; const char *act[4]; } NpcTurn;
+static const NpcTurn npc_turns[] = {
+    {"Tico", 1, 1, 2000.0f, 4.0f, 0.5f, 12.0f, {"wait", "wait", "talk", "talk"}},
+    {"TicoAstro", 1, 1, 2000.0f, 4.0f, 0.5f, 12.0f, {"wait", "wait", "talk", "talk"}},
+    {"TicoStarRing", 1, 1, 2000.0f, 4.0f, 0.5f, 12.0f, {"wait", "wait", "talk", "talk"}}, /* a Tico (Tico::init's params) */
+    {"Kinopio", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turn", "talk", "talk"}},
+    {"KinopioAstro", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turn", "talk", "talk"}},
+    {"Penguin", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turn", "talk", "talkturn"}},
+    {"PenguinRacer", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turn", "talk", "talkturn"}},
+    {"PenguinCoach", 1, 1, 2000.0f, 1.0f, 0, 0, {"wait", "turn", "talk", "talkturn"}},
+    {"Caretaker", 0, 1, 2000.0f, 3.0f, 0, 0, {"wait", "turn", "talk", "talkturn"}},
+    {"HoneyBee", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turn", "talk", "talkturn"}},
+    {"Rabbit", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turnsmall", "talk", "turnsmall"}}}; /* Rabbit::init: TurnSmall */
+static void npc_set(NpcTurn *m, const char *a0, const char *a1, const char *a2, const char *a3)
 {
-    static const char *const npcs[] = {"Kinopio", "KinopioAstro", "Tico", "TicoAstro", "TicoFat", "TicoShop", "TicoReading",
-                                       "TicoGalaxy", "Penguin", "PenguinRacer", "PenguinCoach", "PenguinMaster", "Caretaker",
-                                       "HoneyBee", "Rabbit", "Rosetta", "CollectTico"};
-    for (unsigned i = 0; i < sizeof npcs / sizeof npcs[0]; i++)
-        if (strcmp(name, npcs[i]) == 0) return 1;
+    m->act[0] = a0; m->act[1] = a1; m->act[2] = a2; m->act[3] = a3;
+}
+/* the row's mode (its class's args): its ActorTalkParam from its class's; 0 when its wait nerve is not a
+ * tryStartTurnAction / TalkAction one (another nerve drives it) */
+static int npc_mode(const NpcTurn *t, const Row *r, NpcTurn *m)
+{
+    *m = *t;
+    if (!strncmp(t->cls, "Kinopio", 7)) { /* mBehavior (arg2) */
+        int b = r->arg[2];
+        static const char *const one[12] = {"spinwait1", "spinwait2", "spinwait3", NULL, NULL, NULL, "pickel", "sleep", NULL,
+                                            NULL, NULL, "rightened"};
+        if (b == 4) return 0; /* Mount */
+        if (b == 5) npc_set(m, "swimwait", "swimwait", "swimwait", "swimwait");            /* setSingleAction */
+        if (b == 9) npc_set(m, "kinopiogoodsweapon", "kinopiogoodsweaponturn", "kinopiogoodsweapon", "kinopiogoodsweaponturn");
+        if (b == 10) npc_set(m, "joy", "joy", "joy", "joy");
+        if (b == 12) npc_set(m, "starpiecewait", "starpiecewait", "starpiecewait", "starpiecewait");
+        if (b >= 0 && b < 12 && one[b]) { npc_set(m, one[b], NULL, one[b], NULL); m->near = m->talk = 0; } /* setNoTurnAction */
+    } else if (!strcmp(t->cls, "Penguin")) { /* mBehavior (arg0) */
+        switch (r->arg[0]) {
+        case 0: npc_set(m, "sitdown", NULL, "sitdowntalk", NULL); m->near = m->talk = 0; break; /* setMoveTalkNoTurnAction */
+        case 1: m->act[0] = "swimwait"; m->act[1] = "swimwaittalk"; break;                  /* setMoveAction */
+        case 2: m->act[0] = "swimwaitsurface"; m->act[1] = "swimsurfacetalk"; break;
+        case 3: npc_set(m, "swimwaitsurface", "swimwaitsurface", "swimwaitsurface", "swimwaitsurface"); break;
+        case 4: npc_set(m, "swimturtletalk", "swimturtletalk", "swimturtletalk", "swimturtletalk"); break;
+        }
+    } else if (!strcmp(t->cls, "HoneyBee")) { /* mArg0 (arg0): its InitAction */
+        switch (r->arg[0]) {
+        case 1: case 2: case 6: case 8: case 9: return 0; /* JumpLecture, Fly, DropLecture, FlyLectureA / B: own nerves */
+        case 3: npc_set(m, "sleepwait", NULL, "sleepwait", NULL); m->near = m->talk = 0; break;
+        case 4: npc_set(m, "stickwait", NULL, "stickwait", NULL); m->near = m->talk = 0; break;
+        case 5: npc_set(m, "gatekeeperwait", "gatekeeperwait", "gatekeeperwait", "gatekeeperwait"); break;
+        case 7: npc_set(m, "flustered", "flustered", "flustered", "flustered"); break;
+        }
+    } else if (!strcmp(t->cls, "Rabbit")) { /* mBehavior (arg1) */
+        if (r->arg[1] == 5) m->near = m->talk = 0; /* LongJump */
+    }
+    return 1;
+}
+static int npc_class(const char *name, const Row *r)
+{
+    for (unsigned i = 0; i < sizeof npc_turns / sizeof npc_turns[0]; i++) {
+        NpcTurn m;
+        if (!strcmp(name, npc_turns[i].cls)) return npc_mode(&npc_turns[i], r, &m) ? (int)i + 1 : 0;
+    }
     return 0;
 }
 
@@ -3873,6 +3949,7 @@ void game_rebind(void)
         in->md = md;
         in->row = i;
         in->anim = md->skin && !(plant_first && plant_first[i] >= 0) ? obj_anim(i, md, name) : NULL; /* plants: plant_pose */
+        in->anim_want = md->skin && !(plant_first && plant_first[i] >= 0) && !in->anim;
         int dc, dp;
         in->breaks = breakable(name, r, &dc, &dp);
         in->collapse = strcmp(name, "CollapsePlane") == 0 ? (r->arg[0] > 0 ? r->arg[0] : 140) : 0;
@@ -3894,7 +3971,8 @@ void game_rebind(void)
             snprintf(v, sizeof v, "%s#PanelEnd", name);
             in->md_flip[1] = scene_model(sc, v);
         }
-        in->npc = npc_class(name);
+        in->npc = npc_class(name, r);
+        in->nu = in->nu0 = vnorm(v3(in->m[4], in->m[5], in->m[6])); in->nf = in->nf0 = vnorm(v3(in->m[8], in->m[9], in->m[10]));
         in->dnpc = strcmp(name, "Butler") == 0 ? 1 : strcmp(name, "TicoDomeLecture") == 0 ? 2 : strcmp(name, "Rosetta") == 0 ? 3 :
                    strcmp(name, "ButlerExplain") == 0 ? 4 : strcmp(name, "ButlerMap") == 0 ? 5 : 0;
         in->fat = strcmp(name, "TicoFat") == 0;
@@ -4068,7 +4146,7 @@ void game_rebind(void)
         if (insts[i].bridge == 1 && scene_kcl(s, "PhantomShipBridge#Move") && ninsts < (int)s->nobjs) {
             Inst *in = &insts[ninsts++];
             *in = insts[i];
-            in->bridge = 2 + i; in->invisible = 1; in->anim = NULL;
+            in->bridge = 2 + i; in->invisible = 1; in->anim = NULL; in->anim_want = 0;
             in->kcl = scene_kcl(s, "PhantomShipBridge#Move");
         }
     m_trainbody = scene_model(s, "ChooChooTrainBody"); m_bfwind = scene_model(s, "BigFanWind");
@@ -4093,7 +4171,7 @@ void game_rebind(void)
             for (int c = 0; c < tr_cars(&s->objs[insts[i].row]) && ninsts < insts_cap; c++) {
                 Inst *in = &insts[ninsts++];
                 *in = insts[i];
-                in->train = 2 + c; in->md = m_trainbody; in->kcl = scene_kcl(s, "ChooChooTrainBody"); in->anim = NULL;
+                in->train = 2 + c; in->md = m_trainbody; in->kcl = scene_kcl(s, "ChooChooTrainBody"); in->anim = NULL; in->anim_want = 0;
                 in->reach = m_trainbody->radius * in->s;
             }
     for (int i = 0; plant_first && i < ninsts; i++)
@@ -5464,6 +5542,35 @@ int game_test_candle(int how)
             mario->hvel = v3(0, 0, 0); mario->vup = 0;
             return insts[i].row;
         }
+    return -1;
+}
+
+int game_test_torch(int how) /* tests: Mario into the first lit PhantomTorch / PhantomBonfire with an item: its flame (0) or 200 off it spinning (1);
+                               * 2: Mario on the last one put out (its item) */
+{
+    static int last = -1;
+    if (how == 2) {
+        if (last < 0) return -1;
+        const Row *r = &sc->objs[last];
+        mario->pos = row_pos(r); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        for (int k = ncoins - 1; k >= 0; k--) /* a coin it popped (appearCoinPop): Mario onto it */
+            if (coins[k].row < 0 && coins[k].alive != PICK_GONE) { printf("torch test: coin %d out at %.0f %.0f %.0f (alive %d), Mario was at %.0f %.0f %.0f, torch at %.0f %.0f %.0f\n", k, coins[k].pos.x, coins[k].pos.y, coins[k].pos.z, coins[k].alive, mario->pos.x, mario->pos.y, mario->pos.z, r->pos[0], r->pos[1], r->pos[2]); mario->pos = vsub(coins[k].pos, vmul(mario->up, HIT_BODY_H)); break; }
+        return last;
+    }
+    printf("torch test: Mario at %.0f %.0f %.0f (grounded %d)\n", mario->pos.x, mario->pos.y, mario->pos.z, mario->grounded);
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        const char *n = sc->types + 32 * r->type;
+        if ((strcmp(n, "PhantomTorch") && strcmp(n, "PhantomBonfire")) || row_turn[i] || !row_shown(i) || r->arg[1] != -1 || r->arg[0] == 1) continue; /* those with an item */
+        float m[16];
+        mat_translate_rot_scale(m, r->pos, r->rot, r->scale);
+        V3 up = vnorm(v3(m[4], m[5], m[6])), x = vnorm(v3(m[0], m[1], m[2])), base = row_pos(r);
+        mario->up = up;
+        mario->pos = how ? vadd(base, vmul(x, 200.0f)) : vsub(vadd(base, vmul(up, 70.0f * r->scale[0])), vmul(up, HIT_BODY_H));
+        if (how) { mario->spin_timer = SPIN_TIME; last = (int)i; }
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return (int)i;
+    }
     return -1;
 }
 
@@ -8754,6 +8861,7 @@ static const u16 *tk_text;
 static int tk_nctl;
 static const TkGlyph *tk_glyph, *tk_icon;
 static int tk_nglyph, tk_nicon, tk_ttex = -1, tk_itex = -1, tk_lf = 33, tk_asc = 26;
+static const u8 *tk_font2; static int tk_font2_tex0; /* FNT2 (CinemaFont26: subs.bin's), game_text's font 3 */
 /* the talk balloons' layouts (tools/layout.py LAYO, after the FONT glyphs): quads in layout units, textures counted
  * from the font's text texture */
 typedef struct { s16 x, y, w, h; u16 tex; u8 rgba[4]; s16 u, v, uw, vh; u8 group, fill; s16 cu, cv, tu, tv; } LayQuad;
@@ -9640,6 +9748,7 @@ void game_font_init(const Scene *s) /* the FONT chunk's glyphs (also main.c's su
     tk_glyph = (const TkGlyph *)(p + 16);
     tk_icon = tk_glyph + tk_nglyph;
     tk_lay = *(const u32 *)(p + 12) ? p + *(const u32 *)(p + 12) : NULL;
+    tk_font2 = s->font2; tk_font2_tex0 = (int)s->font_tex0;
 }
 
 /* the talkers placed in the scene (SignBoard, Tico, Kinopio: their wait nerves' talk) */
@@ -9770,18 +9879,23 @@ static void lay_draw(const char *name, int group, float a, float dx, float dy)
  * controller shows them all once the player has not moved for 60 frames (PlayerNotMoving) and hides them after 240
  * once he moves; a counter whose number goes up appears by itself, counts up one every 3 frames and goes after 240
  * frames of Wait. setFollowPos: the counter's pane at Position001 / 010 / 100 by its digits (CoinCounter,
- * StarPieceCounter). ponytail: no Flash / Wait animations, no CountUpPaneRumbler, no counter light effects, no
- * TicoEat total mode, the LIFE meter (MarioMeter) apart */
+ * StarPieceCounter). The StarPieceCounter after Petari (spc_*): it appears while the pointer is on the screen
+ * (isValidAppearSituation), counts down one every 3 frames (10 in the TicoEat mode); requestedTicoEat (the Butler's
+ * lecture, TicoFat) kills the others and shows it centred (TSPiece, TPosition<n>) 94 up until a frame without the
+ * request (tryEndTicoEatStarPiece). ponytail: no Flash / Wait animations, no CountUpPaneRumbler, no counter light
+ * effects, the LIFE meter (MarioMeter) apart; in the Observatory TSPiece's PicNStarPiece is drawn over its
+ * PicTStarPiece (layout.py bakes both into the group) */
 enum { HC_HIDE, HC_APPEAR, HC_WAIT, HC_COUNTUP, HC_DISAPPEAR };
 enum { AP_HIDE, AP_APPEAR, AP_SHOW, AP_DISAPPEAR };
 typedef struct {
     const char *lay; int group; float offx, offy; /* the layout, the group drawn, the appearer's offset (screen, y down) */
     int nrv, step, disp, num, forced, wait_cd, ap, ap_step; float follow;
+    int dead, mode, f3c; float basey; /* killed (requestedTicoEat); StarPieceCounter: mMode, _3C, the appear base y */
 } HudCounter;
 static HudCounter hud[4] = { /* StarCounter, CoinCounter, StarPieceCounter (normal), PlayerLeft (normal) */
     {.lay = "StarCounter", .group = 0, .offx = -50.0f}, {.lay = "CoinCounter", .group = 0, .offx = 50.0f},
     {.lay = "StarPieceCounter", .group = 1, .offy = 30.0f}, {.lay = "PlayerLeft", .group = 0, .offx = -50.0f}};
-static struct { int nrv, step, still; } hudc; /* CounterLayoutController: 0 PlayerMoving, 1 PlayerNotMoving */
+static struct { int nrv, step, still, tico; } hudc; /* CounterLayoutController: 0 PlayerMoving, 1 PlayerNotMoving; _24 */
 static int hud_on; /* forceAppearDefaultGameLayout has run (ScenarioStarter's Welcome, step 90) */
 static int dome_layout_off; /* the dome's SphereSelector: deactivateDefaultGameLayout while it runs */
 static void hud_set(HudCounter *c, int n) { c->nrv = n; c->step = 0; }
@@ -9796,7 +9910,100 @@ static void hud_force_appear(HudCounter *c) /* CoinCounter / StarPieceCounter / 
     c->forced = 1;
 }
 static void hud_disappear(HudCounter *c) { c->forced = 0; hud_set(c, HC_DISAPPEAR); hud_ap(c, AP_DISAPPEAR); }
-static int hud_hidden_or_wait(const HudCounter *c) { return c->nrv == HC_HIDE || c->nrv == HC_WAIT; }
+static int hud_hidden_or_wait(const HudCounter *c) { return c->dead || c->nrv == HC_HIDE || c->nrv == HC_WAIT; }
+static void hud_kill(HudCounter *c) { c->dead = 1; hud_set(c, HC_HIDE); hud_ap(c, AP_HIDE); }
+static void hud_revive(HudCounter *c) /* CoinCounter / PlayerLeft::appear: hidden, its Hide nerve */
+{
+    c->dead = c->forced = c->wait_cd = 0; hud_set(c, HC_HIDE); hud_ap(c, AP_HIDE);
+}
+static int on_stage(const char *galaxy);
+static int hud_busy(void) /* CounterLayoutController::isInvalidSystemStateShowCounter */
+{
+    return menu_guidance_exists() || mario->launch >= 0 || talk_active(); /* guidance, in a bind, talking */
+}
+/* StarPieceCounter (hud[2]) */
+static int spc_center(const HudCounter *c) /* isDispCenter */
+{
+    return on_stage("AstroGalaxy") || on_stage("AstroDome") || on_stage("LibraryRoom") || c->mode || c->f3c == 2;
+}
+static int spc_valid(void) /* isValidAppearSituation (the TicoEat mode: no PointerFrame1 on the PS2) */
+{
+    float x, y;
+    return hud[2].mode || (game_cursor(&x, &y) && !hud_busy());
+}
+static void spc_appear(HudCounter *c) /* appear: reset, forceSync, Hide */
+{
+    c->dead = c->wait_cd = c->f3c = 0; c->disp = c->num = got_pieces;
+    hud_ap(c, AP_HIDE); hud_set(c, HC_HIDE);
+}
+static void spc_force_appear(HudCounter *c, int center)
+{
+    if (center || !(c->nrv == HC_WAIT && !c->dead)) { spc_appear(c); hud_set(c, HC_APPEAR); }
+    c->f3c = center ? 2 : 1;
+}
+static void spc_disappear(HudCounter *c, int force)
+{
+    if (force || !spc_valid()) hud_set(c, HC_DISAPPEAR);
+    if (!force) c->f3c = 0;
+}
+static int spc_change_mode(HudCounter *c, int mode) /* tryChangeModeTicoEat */
+{
+    if (c->nrv == HC_APPEAR || c->nrv == HC_DISAPPEAR) return 0;
+    if (c->nrv == HC_WAIT) { hud_set(c, HC_DISAPPEAR); return 0; }
+    if (c->nrv == HC_HIDE) hud_set(c, HC_HIDE);
+    c->wait_cd = 0; c->disp = c->num = got_pieces; /* forceSync */
+    c->mode = mode;
+    return 1;
+}
+static void spc_set(HudCounter *c, int n) { c->nrv = n; c->step = -1; } /* setNerve within its exe */
+static void spc_update(HudCounter *c) /* exe<nerve>, then control: updateCounter, the appearer */
+{
+    int first = c->step == 0;
+    switch (c->nrv) {
+    case HC_HIDE:
+        if (first) c->wait_cd = 0;
+        if (c->step > (c->mode ? 20 : 3) && spc_valid()) spc_set(c, HC_APPEAR); /* cHideFrameMinTicoEat / cHideFrameMin */
+        break;
+    case HC_APPEAR:
+        if (first) {
+            if (spc_center(c)) { c->group = 0; c->offx = 0.0f; c->offy = 30.0f; } /* cAppearOffsetCenterY */
+            else { c->group = 1; c->offx = 50.0f; c->offy = 0.0f; }             /* cAppearOffsetRightX */
+            c->basey = c->mode ? -94.0f : c->f3c == 2 ? -120.0f : 0.0f;         /* cBaseOffsetTicoFatY / EatTicoY */
+            hud_ap(c, AP_APPEAR);
+        }
+        if (c->ap == AP_SHOW) spc_set(c, HC_WAIT);
+        break;
+    case HC_WAIT:
+        if (!spc_valid() && (c->mode || (c->f3c == 0 && c->disp == c->num && (c->step > 240 || menu_guidance_exists()))))
+            spc_set(c, HC_DISAPPEAR);
+        break;
+    case HC_DISAPPEAR:
+        if (first) hud_ap(c, AP_DISAPPEAR);
+        if (c->ap == AP_HIDE) { if (c->f3c == 2) c->f3c = 0; spc_set(c, HC_HIDE); }
+        break;
+    }
+    c->step++; /* Spine::update (spc_set's -1: the new nerve's step 0 next frame) */
+    c->num = got_pieces;
+    if (c->nrv != HC_DISAPPEAR) { /* updateCounterValue */
+        if (c->wait_cd > 0) c->wait_cd--;
+        else if (c->disp != c->num) {
+            if (c->nrv == HC_WAIT) {
+                if (c->disp < c->num) c->disp++;
+                else if (c->mode == 1) c->disp = c->disp - c->num > 10 ? c->disp - 10 : c->num; /* cDecCounterValueFast */
+                else c->disp--;
+                c->wait_cd = 3; /* cInvalidCountUpInterval */
+            }
+            if (c->nrv != HC_APPEAR) hud_set(c, c->nrv != HC_WAIT ? HC_APPEAR : HC_WAIT);
+        }
+    }
+}
+int game_test_spc_n(void) { return got_pieces; } /* tests: the star pieces got */
+int game_test_spc(void) { return hud[2].mode * 1000 + hud[2].nrv * 100 + hud[2].group * 10 + hud[1].dead; } /* tests */
+static void hud_tico_eat(int center) /* MR::requestCounterLayoutAppearanceForTicoEat (each frame) */
+{
+    if (!hud[2].mode && spc_change_mode(&hud[2], center ? 2 : 1)) { hud_kill(&hud[1]); hud_kill(&hud[3]); hud_kill(&hud[0]); }
+    hudc.tico = 1;
+}
 /* MarioMeter's HitPointMeter (MeterLayout): Wait (with 3: _4C down 0.05 a frame while the player moves, up while he
  * is still; below 3 it stays at 1), the ShowHide alpha at _4C x 20 and 50 to the right by getEaseInOutValue(_4C, 1,
  * 0); a change of life: Damage / Recover, then WaitStart (240 frames at 1). ponytail: no Danger pulse, no Damage
@@ -9821,9 +10028,11 @@ static void hud_update(void)
         hudc.nrv = 1; hudc.step = 0;
     }
     if (!hud_on) return;
-    int busy = mario->launch >= 0 || talk_active(); /* isInvalidSystemStateShowCounter: in a bind, talking */
+    int busy = hud_busy();
     for (int k = 0; k < 4; k++) {
         HudCounter *c = &hud[k];
+        if (k == 2) { spc_update(c); goto appearer; }
+        if (c->dead) continue;
         c->num = hud_value(k);
         c->step++;
         if (k == 0) { /* StarCounter: Appear, Wait, CountUp, Disappear (killed) */
@@ -9835,17 +10044,18 @@ static void hud_update(void)
             if (k == 3) { /* PlayerLeft: more lives make it appear; its number follows while shown */
                 if (c->nrv == HC_HIDE && c->num > c->disp) { hud_set(c, HC_APPEAR); hud_ap(c, AP_APPEAR); }
                 if (c->nrv != HC_HIDE) c->disp = c->num;
-            } else if (c->nrv != HC_DISAPPEAR || k == 1) {
+            } else if (c->nrv != HC_DISAPPEAR || k == 1) { /* CoinCounter */
                 if (c->wait_cd > 0) c->wait_cd--;
                 else if (c->disp < c->num) {
                     if (c->nrv == HC_WAIT) { c->wait_cd = 3; c->disp++; }
                     if (c->nrv != HC_APPEAR) { if (c->nrv != HC_WAIT) { hud_set(c, HC_APPEAR); hud_ap(c, AP_APPEAR); } else hud_set(c, HC_WAIT); }
-                } else if (k == 2 && c->disp > c->num) c->disp = c->num; /* pieces spent */
+                }
             }
             if (c->nrv == HC_APPEAR && c->ap == AP_SHOW) hud_set(c, HC_WAIT);
             else if (c->nrv == HC_WAIT && !c->forced && c->disp == c->num && (c->step > 240 || busy)) hud_disappear(c);
             else if (c->nrv == HC_DISAPPEAR && c->ap == AP_HIDE) hud_set(c, HC_HIDE);
         }
+    appearer:
         c->ap_step++;
         if (c->ap == AP_APPEAR && c->ap_step > 21) hud_ap(c, AP_SHOW);
         if (c->ap == AP_DISAPPEAR && c->ap_step > 21) hud_ap(c, AP_HIDE);
@@ -9857,16 +10067,28 @@ static void hud_update(void)
     if (hudc.nrv == 0 && !all) moving = 1;
     hudc.step++;
     hpm_update(hudc.nrv == 1); /* requestPlayerMoving / requestPlayerStopped */
-    if (hudc.nrv == 0) {
-        if (!moving) { if (++hudc.still > 60) { hudc.nrv = 1; hudc.step = 0; } } else hudc.still = 0;
+    if (hudc.nrv == 1 && hudc.step == 1 && !hudc.tico) { /* showAllLayout */
+        hud_force_appear(&hud[1]); spc_force_appear(&hud[2], 0); hud_force_appear(&hud[3]);
+        hud[0].dead = 0; hud[0].disp = hud[0].num; hud_set(&hud[0], HC_APPEAR); hud_ap(&hud[0], AP_APPEAR);
     }
-    if (hudc.nrv == 1 && hudc.step == 1) { /* showAllLayout */
-        for (int k = 1; k < 4; k++) hud_force_appear(&hud[k]);
-        hud[0].disp = hud[0].num; hud_set(&hud[0], HC_APPEAR); hud_ap(&hud[0], AP_APPEAR);
-    } else if (hudc.nrv == 1 && moving && hudc.step > 240) { /* hideAllLayout */
-        for (int k = 0; k < 4; k++) if (hud[k].nrv != HC_HIDE) hud_disappear(&hud[k]);
+    int ended = 0;
+    if (hud[2].mode && !hudc.tico) { /* tryEndTicoEatStarPiece */
+        if (spc_change_mode(&hud[2], 0)) { hud_revive(&hud[1]); hud_revive(&hud[3]); }
+        ended = 1;
+    }
+    if (hudc.nrv == 0) {
+        if (hudc.step == 1) hudc.still = 0;
+        if (ended) hudc.step = 0;
+        else if (!moving) { if (++hudc.still > 60) { hudc.nrv = 1; hudc.step = 0; } } else hudc.still = 0;
+    } else if (ended) hudc.step = 0;
+    else if (moving && (hudc.step > 240 || menu_guidance_exists())) { /* isWaitToDisappearCounter: hideAllLayout */
+        if (!hudc.tico) {
+            for (int k = 0; k < 4; k++) if (k != 2 && hud[k].nrv != HC_HIDE) hud_disappear(&hud[k]);
+            spc_disappear(&hud[2], 0);
+        }
         hudc.nrv = 0; hudc.step = 0; hudc.still = 0;
     }
+    hudc.tico = 0; /* control */
 }
 static float hud_hermite(float f, float f0, float v0, float s0, float f1, float v1, float s1)
 {
@@ -9888,8 +10110,10 @@ static void hud_draw(void)
             r = 1.0f - (1.0f - cosf(fminf(f / 21.0f, 1.0f) * 1.5707963f));
         }
         a = fminf(fmaxf(a, 0.0f), 1.0f);
-        float dx = c->offx * (1.0f - r), dy = -c->offy * (1.0f - r); /* screen offsets (y down) in layout units */
-        if (k == 1 || k == 2) /* setFollowPos: Position001 / 010 / 100 (x 52 / 26 / 0 past the counter's own place) */
+        float dx = c->offx * (1.0f - r), dy = -(c->offy * (1.0f - r) + c->basey); /* screen offsets (y down) in layout units */
+        if (k == 2 && c->group == 0) /* TPosition1000 / 0100 / 0010 / 0001 (x 0 / 13 / 26 / 39 past TSPieceCounter's) */
+            dx += c->disp >= 1000 ? 0.0f : c->disp >= 100 ? 13.0f : c->disp >= 10 ? 26.0f : 39.0f;
+        else if (k == 1 || k == 2) /* setFollowPos: Position001 / 010 / 100 (x 52 / 26 / 0 past the counter's own place) */
             dx += c->disp >= 100 ? 0.0f : c->disp >= 10 ? 26.0f : 52.0f;
         lay_num = c->disp;
         lay_draw(c->lay, c->group, a, dx, dy);
@@ -9925,10 +10149,20 @@ static const u16 *tk_label_prefix(const char *prefix)
     return NULL;
 }
 /* lyt.c's text boxes: the talk font at screen (x, y top), a font size in layout units (MessageFont26's cell 27 x 33),
- * its character space; draw 0 only measures. ponytail: every box in MessageFont26 (MenuFont64 / NumberFont boxes too) */
+ * its character space; draw 0 only measures; font 3 CinemaFont26 (subs.bin's FNT2). ponytail: MenuFont64 boxes in
+ * MessageFont26 (NumberFont / PictureFont through the icon atlas) */
 float game_text(const u16 *s, int font, float x, float y, float fsx, float fsy, float space, u32 rgb, float alpha, int draw)
 {
     if (!s) return 0;
+    if (font == 3) { /* CinemaFont26: FNT2's glyphs and atlas for this string (MessageFont26 without one) */
+        if (!tk_font2) return game_text(s, 0, x, y, fsx, fsy, space, rgb, alpha, draw);
+        const TkGlyph *g0 = tk_glyph; int n0 = tk_nglyph, t0 = tk_ttex, lf0 = tk_lf, a0 = tk_asc;
+        tk_nglyph = *(const u16 *)tk_font2; tk_ttex = tk_font2_tex0 + *(const u16 *)(tk_font2 + 4);
+        tk_lf = (s8)tk_font2[8]; tk_asc = tk_font2[9]; tk_glyph = (const TkGlyph *)(tk_font2 + 16);
+        float tw = game_text(s, 0, x, y, fsx, fsy, space, rgb, alpha, draw);
+        tk_glyph = g0; tk_nglyph = n0; tk_ttex = t0; tk_lf = lf0; tk_asc = a0;
+        return tw;
+    }
     u16 conv[4 * 48 + 1];
     if (font) { /* NumberFont / PictureFont boxes: each character as a picture tag (the icon atlas: digits at
                  * 0x1000 + character, pictures at character - 0x30) */
@@ -10128,8 +10362,8 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
  * past 1.3 / 1.6) through its ActorAnimCtrl actions. Its talks: Common_TicoFat001 (Prep: tryTalkNearPlayer, its
  * event node starts the eating: eventFunc 0) and Common_TicoFat000 (setMessage: Wait 1 by how much is left, Point 0,
  * Test 2; the end of Fullness' talk is the metamorphosis), 280 to talk, 220 x scale up, in front. WipeOut shakes the
- * camera and shows its screen effects. The "喜び" camera only runs for arg7 6 (Good Egg's has -1). ponytail: no
- * FullnessMeter's Shine / Flash, no TicoSeedGuidance, no item (arg0 0 / 1), no BVA eyes. Info shows InformationPlanet until A */
+ * camera and shows its screen effects. The "喜び" camera only runs for arg7 6 (Good Egg's has -1). updateGuidance: PointerGuidance_TicoFat and the
+ * StarPieceCounter's TicoEat mode near it. ponytail: no FullnessMeter's Shine / Flash, no item (arg0 0 / 1), no BVA eyes. Info shows InformationPlanet until A */
 #define MAX_FATS 4
 static struct {
     int row, nrv, t, left, total, inflight, eat, g174, g178, item, has_rail, tk1, tk0; /* mMsgCtrl, _16C */
@@ -10247,7 +10481,16 @@ static void update_ticofat(void)
         V3 rc = vsub(base, vadd(mario->pos, vmul(mario->up, HIT_BODY_H)));
         float talk = 280.0f * fminf(f->scale, 1.5f), dm = fabsf(vdot(rc, up)) <= talk ? vlen(vtangent(rc, up)) : 1e9f;
         /* updateGuidance / updatePointing (the pointer: the cursor's ray within 110 x scale of it) */
-        if (dm < talk) f->g174 = 8; else if (f->g174 > 0) f->g174--;
+        int near = dm < talk;
+        if (f->left > 0 && !dx.on) { /* (_1E0) requestTicoSeedGuidanceForce near, requestTicoSeedGuidance(_1F4) on the screen */
+            float sx, sy;
+            if (near && menu_guidance_request("PointerGuidance_TicoFat", 1)) hud_tico_eat(0);
+            int a = screen_pos(base, &sx, &sy) ? area_obj("TicoSeedGuidanceCube", mario->pos) : -1;
+            if (a >= 0 && sc->objs[a].arg[0] == sc->objs[f->row].arg[3] && menu_guidance_request("PointerGuidance_TicoFat", 1)) {
+                near = 1; hud_tico_eat(0);
+            }
+        }
+        if (near) f->g174 = 8; else if (f->g174 > 0) f->g174--;
         int pointing = 0;
         if (f->g174 > 0) {
             V3 o, d;
@@ -10512,6 +10755,55 @@ static void fireball_hit_walkers(int b)
 }
 
 static int fireball_hits_snowman(V3 p); /* update_snowmen */
+/* PhantomTorch.cpp (PhantomTorch, PhantomBonfire: no model, its effect named as the object): Wait (its effect, its
+ * level sound), its body (50 x scale at 70 x scale up) burns Mario (sendMsgEnemyAttackFire: Attack, 30 frames) unless
+ * decorative (arg1 set); a spin within 350 puts it out (Extinguish: the effect's Extinguish, SE_OJ_PHANTOM_TOACH_OFF;
+ * 15 frames later kill: arg0 -1 a coin, 0 a star piece (appearStarPiece 10, 40), soundOrder: SE_SY_CANDLE_COMBO_1..5
+ * by how many of its group are left, its dead switch). row_turn 0 wait, 1 attack, 2 out; row_step its frames.
+ * ponytail: no clipping (startClipped / endClipped: its effect runs while the row is shown) */
+static void update_torches(void)
+{
+    static int t[2] = {-2, -2};
+    static const Scene *at;
+    if (at != sc) { at = sc; t[0] = scene_type(sc, "PhantomTorch"); t[1] = scene_type(sc, "PhantomBonfire"); }
+    if (t[0] < 0 && t[1] < 0) return;
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if ((r->type != t[0] && r->type != t[1]) || !row_shown(i)) continue;
+        const char *name = sc->types + 32 * r->type;
+        float m[16], s = r->scale[0];
+        mat_translate_rot_scale(m, r->pos, r->rot, r->scale);
+        V3 p = row_pos(r), up = vnorm(v3(m[4], m[5], m[6])), body = vadd(p, vmul(up, 70.0f * s));
+        signed char *st = &row_turn[i];
+        unsigned short *n = &row_step[i];
+        if (*st == 2) { /* Extinguish */
+            if (++*n == 15) { /* kill */
+                if (r->arg[0] == -1) pop_coins(p, up, 1);
+                else if (r->arg[0] == 0) { drop_pieces(p, up, 1); se_start(SE_OJ_STAR_PIECE_BURST, &p.x); }
+                int left = 0; /* soundOrder: the group's actors not dead (this one still counts) */
+                for (u32 j = 0; r->group >= 0 && j < sc->nobjs; j++)
+                    left += sc->objs[j].group == r->group && sc->objs[j].zone == r->zone && !row_dead[j];
+                if (r->group >= 0) se_start(left == 1 ? SE_SY_CANDLE_COMBO_5 : left == 2 ? SE_SY_CANDLE_COMBO_4 :
+                                            left == 3 ? SE_SY_CANDLE_COMBO_3 : left == 4 ? SE_SY_CANDLE_COMBO_2 : SE_SY_CANDLE_COMBO_1, NULL);
+                row_kill((int)i);
+            }
+            continue;
+        }
+        fx_named(name, name, m, NULL, r); /* emitEffect(mParticle) */
+        if (*st == 1 && ++*n >= 30) { *st = 0; *n = 0; } /* Attack: isStep 30 */
+        if (r->arg[1] != -1) continue; /* mIsDecorative */
+        if (*st == 0 && vlen(vsub(c, body)) < 50.0f * s + HIT_BODY_R && !mario->hurt_timer) { /* attackSensor */
+            hurt_mario(body, 20.0f);
+            *st = 1; *n = 0;
+        }
+        if (*st == 0 && mario->spin_timer > 0 && vlen(vsub(c, body)) < 350.0f) { /* isInSpinStormRange 350 */
+            *st = 2; *n = 0;
+            fx_named(name, "Extinguish", m, NULL, NULL);
+            se_start(SE_OJ_PHANTOM_TOACH_OFF, &p.x);
+        }
+    }
+}
 static int fireball_lights_candle(V3 p) /* Candlestand::receiveMsgPlayerAttack: a WaitFire one within 150 x scale */
 {
     for (int i = 0; i < ninsts; i++) {
@@ -28183,17 +28475,9 @@ static void dx_acam_update(void) /* the camera sheet's anim camera: CameraAnim o
 }
 static void dx_camera_end(void) /* DemoCameraKeeper::endCurrentCamera */
 {
-    if (dx.cam) camera_event_end();
+    if (dx.cam) camera_event_end_now(-1); /* endEventCamera(IsContinuous): back over its chunk's end frames */
     dx.cam = NULL;
-    if (dx.acam) { /* endAnimCamera / endEventCamera(IsContinuous). ponytail: no interpolation back (AnimCameraEndFrame) */
-        const DxCam *c = dx.acam;
-        char n[64];
-        float m[16];
-        dx_clip(c->row, c->anim, n, sizeof n);
-        dx_cast_matrix(c->row, m);
-        demo_camera(n, -1, m);
-        dx.acam = NULL;
-    }
+    if (dx.acam) { camera_override_end(((const DxCam *)dx.acam)->end); dx.acam = NULL; } /* endAnimCamera(AnimCameraEndFrame) */
 }
 
 static void dx_camera_first(const DxCam *c) /* DemoCameraKeeper::executeFirst */
@@ -28345,7 +28629,7 @@ static void dx_talk_anims(const Demo *d)
         int last = !dx.paused && dx.step >= cp->total - 1 && (cp->suspend || dx.part == d->h->nparts - 1);
         if (t->cam && in) { /* the camera animation, paused with the time keeper (updateCamera); endCamera at the end */
             const float *cm = dx_cast_m(t->row) ? dx_cast_m(t->row) : in->m; /* at its PosName when the sheet moved it */
-            if (last) { demo_camera(n, -1, cm); t->cam = 0; }
+            if (last) { camera_override_end(0); t->cam = 0; } /* endAnimCamera(_44 0) */
             else if (!demo_camera(n, t->camf, cm)) t->cam = 0;
             else if (!dx.paused) t->camf++;
         }
@@ -28969,6 +29253,98 @@ static void butler_sync(int select_start)
     butler_nrv = 0;
 }
 
+static V3 npc_turn_vec(V3 v, V3 from, V3 to, float rate) /* TQuat4f::setRotate(from, to, rate) applied to v */
+{
+    V3 ax = vcross(from, to);
+    float l = vlen(ax), a = acosf(fminf(fmaxf(vdot(from, to), -1.0f), 1.0f));
+    if (l < 1e-6f) return v;
+    return rot_axis(v, vmul(ax, 1.0f / l), a * rate);
+}
+static int npc_turn_quat(Inst *in, V3 from, V3 to, float ang) /* turnQuat: from toward to by at most ang radians */
+{
+    from = vnorm(from); to = vnorm(to);
+    float between = acosf(fminf(fmaxf(vdot(from, to), -1.0f), 1.0f));
+    float rate = between <= ang ? 1.0f : fminf(fmaxf(ang / between, 0.0f), 1.0f);
+    in->nf = vnorm(npc_turn_vec(in->nf, from, to, rate));
+    in->nu = vnorm(npc_turn_vec(in->nu, from, to, rate));
+    return between < 0.015f;
+}
+static int npc_turn_to_player(Inst *in, const NpcTurn *t, V3 to) /* NPCActor::turnToPlayer(_8, _C, _10) */
+{
+    int turned = 1;
+    if (!(vdot(in->nf, to) < 0 && vlen(vcross(in->nf, to)) < 0.001f)) { /* !isOppositeDirection(-zDir, toPlayer) */
+        float along = vdot(to, in->nu); /* faceToVector: vecKillElement */
+        V3 flat = vsub(to, vmul(in->nu, along));
+        turned = along > 0.95f ? 0 : npc_turn_quat(in, in->nf, flat, t->speed * (float)M_PI / 180.0f);
+    }
+    if (t->tilt_max == 0.0f) return turned;
+    if (vlen(vcross(to, in->nu0)) < 0.001f && vdot(to, in->nu0) > 0) return 0; /* isSameDirection(toPlayer, yDir) */
+    V3 side = vnorm(vcross(in->nu0, to)), up = vcross(to, side); /* makeAxisFrontUp */
+    float a = acosf(fminf(fmaxf(vdot(vnorm(up), in->nu0), -1.0f), 1.0f));
+    if (a * 180.0f / (float)M_PI > t->tilt_max) /* clampVecAngleDeg */
+        up = rot_axis(in->nu0, vnorm(vcross(in->nu0, up)), t->tilt_max * (float)M_PI / 180.0f);
+    return npc_turn_quat(in, in->nu, up, t->tilt_speed * (float)M_PI / 180.0f) & turned;
+}
+static int npc_turn_default(Inst *in, const NpcTurn *t) /* NPCActor::turnToDefault(_8): blendQuatUpFront to _B0 */
+{
+    float a = acosf(fminf(fmaxf(vdot(in->nf0, in->nf), -1.0f), 1.0f));
+    if (vdot(in->nf, in->nf0) < 0 && vlen(vcross(in->nf, in->nf0)) < 0.001f) return 1; /* isOppositeDirection(-zDir, zDir2) */
+    V3 was = in->nf;
+    float rate = a > 1e-6f ? fminf(fabsf(t->speed * (float)M_PI / 180.0f / a), 1.0f) : 1.0f;
+    V3 nu = vnorm(npc_turn_vec(in->nu, in->nu, in->nu0, rate)), nf = vnorm(npc_turn_vec(in->nf, in->nu, in->nu0, rate));
+    in->nu = nu; in->nf = nf;
+    V3 target = vnorm(vsub(in->nf0, vmul(in->nu, vdot(in->nf0, in->nu))));
+    in->nf = vnorm(npc_turn_vec(in->nf, in->nf, target, rate));
+    return vlen(vcross(was, in->nf0)) < 0.001f && vdot(was, in->nf0) > 0; /* isSameDirection(zDir2, zDir) */
+}
+void game_test_npc_turn(int frame) /* tests: the turning NPCs within 3000 of Mario: their front's angle to him, to their placement's */
+{
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->npc) continue;
+        V3 to = vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14]));
+        if (vlen(to) > 3000.0f) continue;
+        to = vnorm(vsub(to, vmul(in->nu, vdot(to, in->nu))));
+        printf("npc turn f %d: row %d %s dist %d, to Mario %d deg, from placement %d deg, tilt %d deg, clip %s\n", frame, in->row,
+               npc_turns[in->npc - 1].cls, (int)vlen(vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14]))),
+               (int)(acosf(fminf(fmaxf(vdot(in->nf, to), -1.0f), 1.0f)) * 57.3f), (int)(acosf(fminf(fmaxf(vdot(in->nf, in->nf0), -1.0f), 1.0f)) * 57.3f),
+               (int)(acosf(fminf(fmaxf(vdot(in->nu, in->nu0), -1.0f), 1.0f)) * 57.3f),
+               in->anim && in->anim->clip_id >= 0 ? sc->clips[in->anim->clip_id].name : "-");
+    }
+}
+int game_test_npc_visit(int k) /* tests: Mario put 600 off the k-th turning NPC, to its side; its row, -1 past the last */
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->npc || k--) continue;
+        V3 side = vnorm(vcross(in->nu0, in->nf0));
+        mario->up = in->nu0;
+        mario->pos = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(side, 600.0f));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return in->row;
+    }
+    return -1;
+}
+static void update_npc_turn(void) /* the NPCs' wait nerves: tryStartTalkAction / tryStartTurnAction */
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->npc || !row_shown(in->row) || (in->dnpc == 3 && ros_demo)) continue;
+        const NpcTurn *t = &npc_turns[in->npc - 1];
+        V3 p = v3(in->m[12], in->m[13], in->m[14]), to = vsub(mario->pos, p);
+        float d = vlen(to);
+        to = d > 1e-6f ? vmul(to, 1.0f / d) : in->nf;
+        int talking = td.st >= 0 && talkers[td.st].row == in->row && (td.nrv == TD_TALK || td.nrv == TD_NEXT);
+        NpcTurn mt;
+        npc_mode(t, &sc->objs[in->row], &mt);
+        t = &mt;
+        const char *act;
+        if (talking) act = t->talk && !npc_turn_to_player(in, t, to) ? t->act[3] : t->act[2]; /* tryStartTalkAction */
+        else if (d < t->dist) act = t->near && !npc_turn_to_player(in, t, to) ? t->act[1] : t->act[0]; /* tryStartTurnAction */
+        else act = (t->near || t->talk) && !npc_turn_default(in, t) ? t->act[1] : t->act[0];
+        if (act) obj_play(in, act, 1, 0); /* tryStartAction (no-op while it plays) */
+    }
+}
 /* Rosetta (Rosetta.cpp): WaitA from init, every sWaitActionInterval 300 steps getRandom(0, 2): 0 WaitA, 1 WaitB (her
  * move action); in a demo (startDemo: her Demo nerve) the sheet drives her (the talk anim ctrl, the actions' AnimName),
  * endDemo at its end: WaitA. RosettaDemoAstroDomeExplain::exeDemo: at 状況説明[絵本表示] (part 6) the cinema frame to
@@ -28977,8 +29353,7 @@ static void butler_sync(int select_start)
  * TalkA / B / C at a talk's start, endDemoWithInterpole as endDemo */
 static void rosetta_update(Inst *in)
 {
-    if (!in->anim) return;
-    if (dx.on && ros_demo) {
+    if (dx.on && ros_demo) { /* the demos' executors (RosettaDemoAstroDome*): not her model's, with or without its pose */
         if (!strcmp(demos[dx.cur].h->name, "ロゼッタ状況説明デモ")) {
             if (dx_first(6)) { menu_cinema(0); menu_monologue_start(); ros_book = 1; dx.paused = 1; } /* tryFrameToScreenCinemaFrame, appear, pauseTimeKeepDemo */
             else if (ros_book && !menu_monologue_alive()) { ros_book = 0; dx.paused = 0; }          /* isDead: resumeTimeKeepDemo */
@@ -28988,6 +29363,7 @@ static void rosetta_update(Inst *in)
         }
         return;
     }
+    if (!in->anim) { ros_demo = 0; ros_book = 0; return; }
     if (ros_demo) { ros_demo = 0; ros_book = 0; anim_start(in->anim, "rosetta/waita", 0); } /* endDemo: startBckNoInterpole WaitA */
     const char *cur = in->anim->clip_id >= 0 ? sc->clips[in->anim->clip_id].name : "";
     if (strcmp(cur, "rosetta/waita") && strcmp(cur, "rosetta/waitb")) obj_play(in, "waita", 1, 0);
@@ -29037,6 +29413,7 @@ static void update_dome_npcs(void)
             int ta = 0;
             for (int k = 0; k < ndxt; k++) ta |= dx.on && dxt[k].row == in->row && butler_nrv;
             if (butler_nrv == 3 && dx.on && dx_last(4)) { gd_story_follow("スターピースレクチャー"); butler_nrv = 1; } /* exeDemoStarPiece2: 終了's last step */
+            if (bsp.on && !dx.on) { menu_guidance_request("PointerGuidance_StarPieceLecture", 0); hud_tico_eat(0); } /* control: _160 out of a demo */
             if (bsp.on) { /* control: tryReplaceStarPieceIfExecLecture (the paired StarPieceGroup back when none is left) */
                 int g = butler_group(r), any = 0;
                 for (int k = 0; g >= 0 && k < npieces; k++) any |= pieces[k].row == g && pieces[k].alive != PICK_GONE;
@@ -29253,6 +29630,11 @@ static void dx_keepers(const Demo *d) /* DemoExecutor::movement's keepers (not w
 
 int game_test_demo(int k)
 {
+    if (k == -3) return mario_anim && mario_anim->clip_id >= 0 ? mario_anim->clip_id * 1000 + (int)mario_anim->frame : -1; /* tests: Mario's clip and frame */
+    if (k == -4) { /* tests: Rosetta's pose: clip * 1000 + frame, -1 none */
+        for (int i = 0; i < ninsts; i++) if (insts[i].dnpc == 3) return insts[i].anim && insts[i].anim->clip_id >= 0 ? insts[i].anim->clip_id * 1000 + (int)insts[i].anim->frame : -1;
+        return -2;
+    }
     if (k == -2) return dx.acam ? dx.acam_f : -1;
     if (k < 0) return dx.on ? dx.part * 1000 + dx.step : -1;
     if (k >= ndemos) return -2;
@@ -31666,6 +32048,33 @@ static void mode_draw_parts(const float m[16])
 
 static void update_obj_anims(void)
 {
+    /* the pose pool (MAX_OBJ_ANIM): a skinned instance whose pose was taken by another row (it went unused 30 frames)
+     * loses it; one without a pose gets a free or stale one once within 8000 of the camera (Petari: every actor its
+     * own; the bind-time order left the scene's last skinned rows, e.g. AstroGalaxy's Rosetta, without one) */
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (in->anim) {
+            for (int k = 0; k < MAX_OBJ_ANIM; k++)
+                if (oanim[k].a == in->anim && oanim[k].row != in->row) { in->anim = NULL; in->anim_want = 1; break; }
+        }
+        float d = vlen(vsub(v3(in->m[12], in->m[13], in->m[14]), cam_pos));
+        if (!in->anim_want || !in->md || d >= 8000.0f) continue;
+        if ((in->anim = obj_anim(in->row, in->md, sc->types + 32 * sc->objs[in->row].type))) { in->anim_want = 0; continue; }
+        if (game_frame % 30) continue;
+        /* the pool full: every 30 frames the farthest instance holding a pose gives it up for this one when it is at
+         * least 1000 farther from the camera (the nearest skinned rows animated first) */
+        int far = -1;
+        float fd = d + 1000.0f;
+        for (int j = 0; j < ninsts; j++) {
+            if (!insts[j].anim || j == i) continue;
+            float dj = vlen(vsub(v3(insts[j].m[12], insts[j].m[13], insts[j].m[14]), cam_pos));
+            if (dj > fd) { fd = dj; far = j; }
+        }
+        if (far < 0) continue;
+        for (int k = 0; k < MAX_OBJ_ANIM; k++) if (oanim[k].a == insts[far].anim) { oanim[k].row = -1; oanim[k].last = 0; }
+        insts[far].anim = NULL; insts[far].anim_want = 1;
+        if ((in->anim = obj_anim(in->row, in->md, sc->types + 32 * sc->objs[in->row].type))) in->anim_want = 0;
+    }
     for (int i = 0; i < ninsts; i++)
         if (insts[i].anim && vlen(vsub(v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]), cam_pos)) < 8000.0f) {
             for (int k = 0; k < MAX_OBJ_ANIM; k++) if (oanim[k].a == insts[i].anim) oanim[k].last = game_frame;
@@ -32687,6 +33096,7 @@ void game_update(void)
     LQ(2, update_halos());
     LQ(3, update_railers());
     LQ(4, update_talkers());
+    update_npc_turn();
     hud_update();
 
     LQ(5, update_talk_director());
@@ -32849,6 +33259,7 @@ void game_update(void)
     LQ(52, update_jets());
     LQ(53, update_screws());
     LQ(54, update_candles());
+    update_torches();
     LQ(55, update_fountains());
     LQ(56, update_strays());
     LQ(57, update_bubbles());
@@ -33453,16 +33864,12 @@ void game_draw(void)
             }
             continue;
         }
-        if (in->npc && !(in->dnpc == 3 && ros_demo)) { /* its own up, its front turned to Mario when he is near */
-            V3 p = v3(in->m[12], in->m[13], in->m[14]), to = vsub(mario->pos, p);
-            if (vdot(to, to) < NPC_TURN * NPC_TURN) {
-                V3 up = vmul(v3(in->m[4], in->m[5], in->m[6]), 1.0f / in->s);
-                float cm[16];
-                basis_matrix(cm, p, up, to, 0);
-                for (int j = 0; j < 12; j++) if (j % 4 != 3) cm[j] *= in->s;
-                inst_draw(in, in->md, cm);
-                continue;
-            }
+        if (in->npc && !(in->dnpc == 3 && ros_demo)) { /* setBaseTRMtx(_A0) */
+            float cm[16];
+            basis_matrix(cm, v3(in->m[12], in->m[13], in->m[14]), in->nu, in->nf, 0);
+            for (int j = 0; j < 12; j++) if (j % 4 != 3) cm[j] *= in->s;
+            inst_draw(in, in->md, cm);
+            continue;
         }
         if (in->flip && in->md->skin) { inst_draw(in, in->md, in->m); continue; } /* turned by its clips */
         if (in->flip && in->md_flip[0]) { /* the face PanelA / PanelB / PanelEnd leave shown (static: no turn) */
