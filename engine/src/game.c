@@ -10669,7 +10669,18 @@ static int in_water(V3 p, V3 up, float *depth)
     static int types[5] = {-2, -2, -2, -2, -2};
     if (types[0] == -2) { types[0] = scene_type(sc, "WaterCube"); types[1] = scene_type(sc, "WaterSphere"); types[2] = scene_type(sc, "WaterCylinder");
         types[3] = scene_type(sc, "OceanSphere"); types[4] = scene_type(sc, "OceanBowl"); }
-    for (u32 i = 0; i < sc->nobjs; i++) {
+    static short rows[256]; /* the water rows in order (found once: every row was walked a call) */
+    static int nrows = -1;
+    if (nrows < 0) {
+        nrows = 0;
+        for (u32 i = 0; i < sc->nobjs && nrows <= 256; i++) {
+            int t = sc->objs[i].type;
+            if (t == types[0] || t == types[1] || t == types[2] || t == types[3] || t == types[4]) { if (nrows < 256) rows[nrows] = (short)i; nrows++; }
+        }
+    }
+    u32 nscan = nrows <= 256 ? (u32)nrows : sc->nobjs;
+    for (u32 k = 0; k < nscan; k++) {
+        u32 i = nrows <= 256 ? (u32)rows[k] : k;
         const Row *r = &sc->objs[i];
         if ((r->type == types[3] || r->type == types[4]) && row_shown(i)) {
             /* OceanSphere::isInWater: within 100 x scale; OceanBowl: that and under its plane (its up) */
@@ -14479,15 +14490,25 @@ static int water_obj(WInfo *w, V3 p)
     static const Scene *at;
     static int t[5];
     winfo_clear(w);
+    static short rows[256]; /* the water rows in order (found once: both walks went over every row a call) */
+    static int nrows;
     if (at != sc) { at = sc; t[0] = scene_type(sc, "WaterCube"); t[1] = scene_type(sc, "WaterSphere"); t[2] = scene_type(sc, "WaterCylinder");
-                    t[3] = scene_type(sc, "OceanSphere"); t[4] = scene_type(sc, "OceanBowl"); }
-    for (u32 i = 0; i < sc->nobjs; i++) {
+                    t[3] = scene_type(sc, "OceanSphere"); t[4] = scene_type(sc, "OceanBowl");
+                    nrows = 0;
+                    for (u32 i = 0; i < sc->nobjs && nrows <= 256; i++) {
+                        int ty = sc->objs[i].type;
+                        if (ty == t[0] || ty == t[1] || ty == t[2] || ty == t[3] || ty == t[4]) { if (nrows < 256) rows[nrows] = (short)i; nrows++; }
+                    } }
+    u32 nscan = nrows <= 256 ? (u32)nrows : sc->nobjs;
+    for (u32 k = 0; k < nscan; k++) {
+        u32 i = nrows <= 256 ? (u32)rows[k] : k;
         const Row *r = &sc->objs[i];
         if ((r->type == t[0] || r->type == t[1] || r->type == t[2]) && row_shown(i) && area_inside(r, p)) {
             w->row = (int)i; w->kind = 1; return 1;
         }
     }
-    for (u32 i = 0; i < sc->nobjs; i++) {
+    for (u32 k = 0; k < nscan; k++) {
+        u32 i = nrows <= 256 ? (u32)rows[k] : k;
         const Row *r = &sc->objs[i];
         if ((r->type != t[3] && r->type != t[4]) || !row_shown(i)) continue;
         float rad = 100.0f * r->scale[0];
@@ -26420,7 +26441,21 @@ static V3 item_sensor(const Inst *in, float *r)
  * hidden, 1 waiting in its cage, 2 appearing, 3 can be taken. ponytail: no demo camera, the stage goes on */
 /* PowerStar::setDemoAppearPos: an event star whose group (GroupId) has PowerStarAppearPoints comes out at the one
  * nearest its declarer, not at its own place */
-static V3 star_appear_point(const Inst *in, V3 from, V3 own)
+static V3 star_appear_point_(const Inst *in, V3 from, V3 own);
+static V3 star_appear_point(const Inst *in, V3 from, V3 own) /* the answer kept by star, place and own place: placed rows do not move */
+{
+    static struct { const Scene *at; int row; V3 from, own, p; } c[16];
+    static int next;
+    for (int k = 0; k < 16; k++)
+        if (c[k].at == sc && c[k].row == in->row && c[k].from.x == from.x && c[k].from.y == from.y && c[k].from.z == from.z &&
+            c[k].own.x == own.x && c[k].own.y == own.y && c[k].own.z == own.z)
+            return c[k].p;
+    V3 p = star_appear_point_(in, from, own);
+    c[next].at = sc; c[next].row = in->row; c[next].from = from; c[next].own = own; c[next].p = p;
+    next = (next + 1) & 15;
+    return p;
+}
+static V3 star_appear_point_(const Inst *in, V3 from, V3 own)
 {
     const Row *s = &sc->objs[in->row];
     int t = scene_type(sc, "PowerStarAppearPoint");
