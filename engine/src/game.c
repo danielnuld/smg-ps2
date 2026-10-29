@@ -31985,8 +31985,23 @@ static void update_obj_anims(void)
             for (int k = 0; k < MAX_OBJ_ANIM; k++)
                 if (oanim[k].a == in->anim && oanim[k].row != in->row) { in->anim = NULL; in->anim_want = 1; break; }
         }
-        if (in->anim_want && in->md && vlen(vsub(v3(in->m[12], in->m[13], in->m[14]), cam_pos)) < 8000.0f &&
-            (in->anim = obj_anim(in->row, in->md, sc->types + 32 * sc->objs[in->row].type))) in->anim_want = 0;
+        float d = vlen(vsub(v3(in->m[12], in->m[13], in->m[14]), cam_pos));
+        if (!in->anim_want || !in->md || d >= 8000.0f) continue;
+        if ((in->anim = obj_anim(in->row, in->md, sc->types + 32 * sc->objs[in->row].type))) { in->anim_want = 0; continue; }
+        if (game_frame % 30) continue;
+        /* the pool full: every 30 frames the farthest instance holding a pose gives it up for this one when it is at
+         * least 1000 farther from the camera (the nearest skinned rows animated first) */
+        int far = -1;
+        float fd = d + 1000.0f;
+        for (int j = 0; j < ninsts; j++) {
+            if (!insts[j].anim || j == i) continue;
+            float dj = vlen(vsub(v3(insts[j].m[12], insts[j].m[13], insts[j].m[14]), cam_pos));
+            if (dj > fd) { fd = dj; far = j; }
+        }
+        if (far < 0) continue;
+        for (int k = 0; k < MAX_OBJ_ANIM; k++) if (oanim[k].a == insts[far].anim) { oanim[k].row = -1; oanim[k].last = 0; }
+        insts[far].anim = NULL; insts[far].anim_want = 1;
+        if ((in->anim = obj_anim(in->row, in->md, sc->types + 32 * sc->objs[in->row].type))) in->anim_want = 0;
     }
     for (int i = 0; i < ninsts; i++)
         if (insts[i].anim && vlen(vsub(v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]), cam_pos)) < 8000.0f) {
