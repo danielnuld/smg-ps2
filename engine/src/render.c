@@ -1181,6 +1181,30 @@ static void emit_batch(const VuGroup *vg, int mode, u32 ne, u32 nu, const void *
     vif[cur]->next = (qword_t *)q;
 }
 
+/* draw_model's culling: view x world, only what the culling and the blended sort read (column 0's length, the
+ * translation, into mv); the draw matrix is (proj x view, once a frame) x world */
+static int model_culled(const Model *md, const float world[16], float mv[16])
+{
+    for (int i = 0; i < 3; i++) {
+        mv[i] = view[i] * world[0] + view[4 + i] * world[1] + view[8 + i] * world[2] + view[12 + i] * world[3];
+        mv[12 + i] = view[i] * world[12] + view[4 + i] * world[13] + view[8 + i] * world[14] + view[12 + i] * world[15];
+    }
+    float rad = md->radius * sqrtf(mv[0] * mv[0] + mv[1] * mv[1] + mv[2] * mv[2]);
+    if (mv[14] + rad < NEAR || mv[14] - rad > FAR) /* whole model behind the camera or past the far plane */
+        return 1;
+    /* side planes through the eye: f x = (w/2) z etc., normals unit (frustum[]); outside by more than rad: culled */
+    if (frustum[0] * fabsf(mv[12]) - frustum[1] * mv[14] > rad || frustum[2] * fabsf(mv[13]) - frustum[3] * mv[14] > rad) {
+        prof_dculled++;
+        return 1;
+    }
+    return 0;
+}
+int render_model_visible(const Model *md, const float world[16])
+{
+    float mv[16];
+    return md->vu_ngroups && !model_culled(md, world, mv);
+}
+
 #define DRW_CACHE 192 /* a skinned draw's matrices by draw index (anim.h ANIM_MAX_DRW 160) */
 static float dcache[DRW_CACHE][MAT_FL] __attribute__((aligned(16)));
 static u32 dstamp[DRW_CACHE], dseq = 1;
@@ -1188,21 +1212,9 @@ static void draw_model_(const Model *md, const float world[16], const float (*dr
 {
     if (!md->vu_ngroups)
         return;
-    /* view x world: only what the culling and the blended sort read (column 0's length, the translation); the draw
-     * matrix as (proj x view, once a frame) x world */
     float mv[16], pvw[16] __attribute__((aligned(16)));
-    for (int i = 0; i < 3; i++) {
-        mv[i] = view[i] * world[0] + view[4 + i] * world[1] + view[8 + i] * world[2] + view[12 + i] * world[3];
-        mv[12 + i] = view[i] * world[12] + view[4 + i] * world[13] + view[8 + i] * world[14] + view[12 + i] * world[15];
-    }
-    float rad = md->radius * sqrtf(mv[0] * mv[0] + mv[1] * mv[1] + mv[2] * mv[2]);
-    if (mv[14] + rad < NEAR || mv[14] - rad > FAR) /* whole model behind the camera or past the far plane */
+    if (model_culled(md, world, mv))
         return;
-    /* side planes through the eye: f x = (w/2) z etc., normals unit (frustum[]); outside by more than rad: culled */
-    if (frustum[0] * fabsf(mv[12]) - frustum[1] * mv[14] > rad || frustum[2] * fabsf(mv[13]) - frustum[3] * mv[14] > rad) {
-        prof_dculled++;
-        return;
-    }
     if (!pv_ok) { mat_mul(pv, proj, view); pv_ok = 1; }
     mat_mul(pvw, pv, world);
     if (md->lit && packet2_get_qw_count(vif[cur]) + 16 > PACKET_QW)

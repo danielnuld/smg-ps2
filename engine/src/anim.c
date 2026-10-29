@@ -343,15 +343,21 @@ static void clip_local(const u8 *c, float f, u32 j, float scale[3], float rot[3]
     }
 }
 
+static void anim_skin_(Anim *a);
 static inline u32 cy_(void) { u32 c; __asm__ volatile("mfc0 %0, $9" : "=r"(c)); return c; }
 u32 prof_pose, prof_skin; /* EE cycles in anim_pose / anim_skin (profiling) */
 void anim_update(Anim *a)
 {
     u32 c0 = cy_();
     anim_pose(a);
-    u32 c1 = cy_();
-    anim_skin(a);
-    prof_pose += c1 - c0; prof_skin += cy_() - c1;
+    prof_pose += cy_() - c0;
+    a->skin_stale = 1; /* the draw matrices when a draw needs them (anim_drw): only drawing reads them */
+}
+
+const float (*anim_drw(Anim *a))[16]
+{
+    if (a->skin_stale) anim_skin(a);
+    return (const float (*)[16])a->drw;
 }
 
 /* a clip's frame_max without inflating it once known (info_frames) */
@@ -499,6 +505,13 @@ void anim_pose(Anim *a)
 }
 
 void anim_skin(Anim *a)
+{
+    u32 c0 = cy_();
+    anim_skin_(a);
+    a->skin_stale = 0;
+    prof_skin += cy_() - c0;
+}
+static void anim_skin_(Anim *a)
 {
     const Skin *k = a->skin;
     for (u32 d = 0; d < k->ndrw && d < ANIM_MAX_DRW; d++) {

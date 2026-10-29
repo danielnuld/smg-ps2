@@ -558,7 +558,7 @@ static void draw_skin(const Model *md, const float m[16], Anim *a)
         else bva_apply(md, a->clip_id >= 0 ? sc->clips[a->clip_id].name : NULL, a->frame);
     }
     bva_key = NULL;
-    render_skinned(md, m, (const float (*)[16])a->drw);
+    if (render_model_visible(md, m)) render_skinned(md, m, anim_drw(a)); /* culled: no draw matrices made */
 }
 /* a one-shot effect standing on `up` at p */
 static void fx_at(int fx, V3 p, V3 up)
@@ -30192,7 +30192,7 @@ static void teresa_draw(const float m[16])
             v->alpha = (u8)(v->alpha * al);
         }
     render_light(&plight.cur);
-    render_skinned(m_teresa, w, (const float (*)[16])tsk.anim->drw);
+    render_skinned(m_teresa, w, anim_drw(tsk.anim));
     memcpy(tsk_fxm, w, sizeof tsk_fxm);
     static int k_glow, k_sleep;
     if (tsk_glow) fx_named("TeresaMario", "Glow", w, (const float (*)[16])tsk.anim->world, &k_glow);
@@ -31174,7 +31174,7 @@ static void update_ice_steps(void) /* IceStep::exeWait */
 static void draw_ice_steps(void)
 {
     for (int i = 0; i < ICE_STEPS; i++)
-        if (ice_steps[i].alive && m_icestep && ice_steps[i].anim) { render_light(&plight.cur); render_skinned(m_icestep, ice_steps[i].m, (const float (*)[16])ice_steps[i].anim->drw); }
+        if (ice_steps[i].alive && m_icestep && ice_steps[i].anim) { render_light(&plight.cur); render_skinned(m_icestep, ice_steps[i].m, anim_drw(ice_steps[i].anim)); }
 }
 /* MarioSwim::updateUnderWater for Ice Mario: probes 100 ahead (his last move, else his front), 40 deeper a frame (ten
  * a frame as ice); water within 210 under it and no map there: a floor 170 ahead on the surface (unless he stands
