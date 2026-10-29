@@ -3,7 +3,7 @@ Polls Petari's Mario (RMGE01; found by his place at the start: the heap moves be
 the movie's last frame (paused), so with the movie ending at g = G (replay.py dtm ... 0) frame k from the end is g G - k.
 usage: python -I trace.py OUT.csv SECONDS [G] ["x y z": where Mario stands at the start]
 columns: g, pos, front, walk, jumpvec, shadow, gnd (mGroundPos), vspeed (mVerticalSpeed), _368, states (mMovementStates
-0x8..0x10 hex), _1C, _3C0, _3CE, _3BC, _41C, _8F8, _960
+0x8..0x10 hex), _1C, _3C0, _3CE, _3BC, _41C, _8F8, _960; MarioActor mPosition, mVelocity, _288, _294, _F44
 """
 import struct
 import sys
@@ -19,11 +19,14 @@ FIELDS = [("pos", 0x130, "3f"), ("front", 0x208, "3f"), ("walk", 0x278, "f"), ("
           ("shadow", 0x31C, "3f"), ("gnd", 0x48C, "3f"), ("vspeed", 0x488, "f"), ("n368", 0x368, "3f"),
           ("st", 0x8, "8s"), ("d1C", 0x1C, "4s"), ("_3C0", 0x3C0, "H"), ("_3CE", 0x3CE, "H"), ("_3BC", 0x3BC, "H"), ("_41C", 0x41C, "H"), ("_8F8", 0x8F8, "3f"),
           ("_960", 0x960, "H")]
+# MarioActor (Mario's mActor at +4): mPosition, mVelocity, _288 (the binder's push), _294, _F44 (bind on)
+ACTOR = [(0x0C, 0x3C), (0x288, 0x2A0), (0xF44, 0xF45)]
+AFIELDS = [("apos", 0, "3f"), ("avel", 12, "3f"), ("a288", 0x30, "3f"), ("a294", 0x3C, "3f"), ("aF44", 0x48, "B")]
 
 
 def parse(b):
     out = []
-    for name, off, f in FIELDS:
+    for name, off, f in FIELDS + [(n, 0x980 + o, f) for n, o, f in AFIELDS]:
         v = struct.unpack_from(">" + f, b, off)
         out.append(" ".join(x.hex() if isinstance(x, bytes) else f"{x:.3f}" if isinstance(x, float) else str(x) for x in v))
     return out
@@ -62,6 +65,8 @@ def main():
     while addr and time.time() < end and time.time() - changed < 20:  # paused at the movie's end: 20 s unchanged
         try:
             b = ram.read(addr, 0x980)
+            act = struct.unpack_from(">I", b, 4)[0]
+            b += b"".join(ram.read(act + lo, hi - lo) for lo, hi in ACTOR)
         except Exception:
             break
         if b and b == prev and b != last:
