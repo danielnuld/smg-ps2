@@ -142,6 +142,8 @@ static packet2_t *vif[2], *gif;
 #define GIF_QW 8192             /* HUD text: one sprite per lit font pixel (the boot menu fills it) */
 static int cur;
 static float view[16], proj[16];
+static float pv[16] __attribute__((aligned(16))); /* proj x view (draw_model), pv_ok 0 after either changes */
+static int pv_ok;
 static float shake_x, shake_y; /* render_set_shake, in pixels */
 static u32 bloom_q, bloom_q2, bloom_e; /* VRAM (words) of the bloom buffers: 160 x 56 (FBW 3), again, 80 x 28 (FBW 2) */
 static float frustum[4];        /* side planes in view space: x n, z n for |x| and |y| (render_set_fovy) */
@@ -371,6 +373,7 @@ void render_set_fovy(float deg)
 {
     float f = (DISP_H / 2) / tanf(deg * 3.14159265f / 360.0f);
     float B = 2.0f / (1.0f / NEAR - 1.0f / FAR), A = 1.0f - B / NEAR;
+    pv_ok = 0;
     memset(proj, 0, sizeof proj);
     proj[0] = f / 2048.0f;
     proj[5] = -f * YS / 2048.0f;
@@ -387,6 +390,7 @@ void render_set_shake(float x, float y)
     shake_x = x * (SCREEN_W / 2);
     shake_y = -y * (SCREEN_H / 2);
     proj[8] = shake_x / 2048.0f; proj[9] = shake_y / 2048.0f;
+    pv_ok = 0;
 }
 
 u32 render_begin_wait; /* EE cycles render_begin waited for the flip, the VIF and the clear (bench) */
@@ -399,6 +403,7 @@ void render_begin(const float eye[3], const float target[3], const float up[3])
     float sl = sqrtf(s[0] * s[0] + s[1] * s[1] + s[2] * s[2]);
     s[0] /= sl; s[1] /= sl; s[2] /= sl;
     float u[3] = {s[1] * fw[2] - s[2] * fw[1], s[2] * fw[0] - s[0] * fw[2], s[0] * fw[1] - s[1] * fw[0]};
+    pv_ok = 0;
     mat_identity(view);
     view[0] = s[0]; view[4] = s[1]; view[8] = s[2];
     view[1] = u[0]; view[5] = u[1]; view[9] = u[2];
@@ -1096,6 +1101,84 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
     prof_draw += d;
     prof_x[drw ? 1 : 0] += d;
 }
+/* One skinned (or unchained) batch written straight into the VIF chain: the very qwords add_header,
+ * packet2_utils_vu_add_unpack_data, add_skin_strip_batch / add_batch and packet2_utils_vu_add_start_program build
+ * (BENCH builds check them against those), without packet2's per-code bookkeeping (~600 EE cycles a batch, ~1000
+ * batches a frame in Good Egg). Room: draw_model_'s check before its groups. */
+#define FQ_TAG(qwc, id, addr) ((u64)(qwc) | (u64)(id) << 28 | (u64)((u32)(addr) & 0x7FFFFFFF) << 32)
+#define FQ_STCYCL MAKE_VIF_CODE(0x0101, 0, P2_VIF_STCYCL, 0)
+#define FQ_UNPACK(mode, dest, usn, n) MAKE_VIF_CODE((dest) | (u32)(usn) << 14 | 1u << 15, (n) & 0xFF, (mode) | 0x60, 0)
+static inline u64 *fq_ref(u64 *q, const void *data, u32 bytes, u32 dest, u32 n, u32 mode, u32 usn)
+{
+    q[0] = FQ_TAG((bytes + 15) / 16, P2_DMA_TAG_REF, data);
+    q[1] = (u64)FQ_STCYCL | (u64)FQ_UNPACK(mode, dest, usn, n) << 32;
+    return q + 2;
+}
+static void emit_batch(const VuGroup *vg, int mode, u32 ne, u32 nu, const void *gm, u32 m, const u8 **pd, u32 base)
+{
+    u64 *q = (u64 *)vif[cur]->next;
+    const qword_t *h = vg->strip == 2 ? HSTRIP(mode, ne) : HDR(mode, m, ne);
+    u32 hn = vg->strip == 2 ? 0 : nu;
+    int tex = vg->tex != NO_TEX;
+    q[0] = FQ_TAG(2, P2_DMA_TAG_CNT, 0);
+    q[1] = (u64)FQ_STCYCL | (u64)FQ_UNPACK(P2_UNPACK_V4_32, 0, 1, 2) << 32;
+    q[2] = h[0].dw[0];
+    q[3] = (u64)hn << 32 | (u32)h[0].sw[2];
+    q[4] = h[1].dw[0];
+    q[5] = h[1].dw[1];
+    q = fq_ref(q + 6, gm, 16 * 7 * m, 2, 7 * m, P2_UNPACK_V4_32, 1);
+    const u8 *d = *pd;
+    if (vg->strip == 2) {
+        q = fq_ref(q, d, 8 * ne, 72, ne, P2_UNPACK_V4_16, 0);
+        d += (8 * ne + 15) & ~15u;
+        if (tex) {
+            q = fq_ref(q, d, 4 * ne, 132, ne, P2_UNPACK_V2_16, 0);
+            d += (4 * ne + 15) & ~15u;
+        }
+        q = fq_ref(q, d, 4 * ne, 192, ne, P2_UNPACK_V4_8, 0);
+        d += (4 * ne + 15) & ~15u;
+        q = fq_ref(q, d, 4 * ne, 252, ne, P2_UNPACK_V4_8, 1);
+        d += (4 * ne + 15) & ~15u;
+    } else {
+        q = fq_ref(q, d, 8 * nu, base, nu, P2_UNPACK_V4_16, 0);
+        d += (8 * nu + 15) & ~15u;
+        if (tex) {
+            q = fq_ref(q, d, 4 * nu, base + nu, nu, P2_UNPACK_V2_16, 0);
+            d += (4 * nu + 15) & ~15u;
+        }
+        if (vg->lit) {
+            q = fq_ref(q, d, 4 * nu, base + 2 * nu, nu, P2_UNPACK_V4_8, 0);
+            d += (4 * nu + 15) & ~15u;
+        }
+        q = fq_ref(q, d, 4 * ne, base + (vg->lit ? 3 : 2) * nu, ne, P2_UNPACK_V4_8, 1);
+        d += (4 * ne + 15) & ~15u;
+    }
+    q[0] = FQ_TAG(0, P2_DMA_TAG_CNT, 0);
+    q[1] = (u64)MAKE_VIF_CODE(0, 0, P2_VIF_FLUSH, 0) | (u64)MAKE_VIF_CODE(PROGRAM(vg), 0, P2_VIF_MSCAL, 0) << 32;
+    q += 2;
+#ifdef BENCH
+    { /* the first batches built again the packet2 way into a zeroed packet: the same qwords */
+        static packet2_t *chk;
+        static u32 nchk, nbad;
+        if (nchk < 4000) {
+            if (!chk) chk = packet2_create(32, P2_TYPE_NORMAL, P2_MODE_CHAIN, 1);
+            packet2_reset(chk, 1);
+            const u8 *d2 = *pd;
+            add_header(chk, h, hn);
+            packet2_utils_vu_add_unpack_data(chk, 2, (void *)gm, 7 * m, 1);
+            if (vg->strip == 2) add_skin_strip_batch(chk, &d2, ne, tex);
+            else add_batch(chk, &d2, ne, nu, tex, vg->lit, base);
+            packet2_utils_vu_add_start_program(chk, PROGRAM(vg));
+            u32 n = (u32)((u8 *)q - (u8 *)vif[cur]->next);
+            if (d2 != d || (u32)((u8 *)chk->next - (u8 *)chk->base) != n || memcmp(chk->base, vif[cur]->next, n)) nbad++;
+            if (++nchk == 4000) printf("bench emit_batch: %u of 4000 batches differ from packet2's\n", nbad);
+        }
+    }
+#endif
+    *pd = d;
+    vif[cur]->next = (qword_t *)q;
+}
+
 #define DRW_CACHE 192 /* a skinned draw's matrices by draw index (anim.h ANIM_MAX_DRW 160) */
 static float dcache[DRW_CACHE][MAT_FL] __attribute__((aligned(16)));
 static u32 dstamp[DRW_CACHE], dseq = 1;
@@ -1103,8 +1186,13 @@ static void draw_model_(const Model *md, const float world[16], const float (*dr
 {
     if (!md->vu_ngroups)
         return;
-    float mv[16] __attribute__((aligned(16))), pvw[16] __attribute__((aligned(16)));
-    mat_mul(mv, view, world);
+    /* view x world: only what the culling and the blended sort read (column 0's length, the translation); the draw
+     * matrix as (proj x view, once a frame) x world */
+    float mv[16], pvw[16] __attribute__((aligned(16)));
+    for (int i = 0; i < 3; i++) {
+        mv[i] = view[i] * world[0] + view[4 + i] * world[1] + view[8 + i] * world[2] + view[12 + i] * world[3];
+        mv[12 + i] = view[i] * world[12] + view[4 + i] * world[13] + view[8 + i] * world[14] + view[12 + i] * world[15];
+    }
     float rad = md->radius * sqrtf(mv[0] * mv[0] + mv[1] * mv[1] + mv[2] * mv[2]);
     if (mv[14] + rad < NEAR || mv[14] - rad > FAR) /* whole model behind the camera or past the far plane */
         return;
@@ -1113,7 +1201,8 @@ static void draw_model_(const Model *md, const float world[16], const float (*dr
         prof_dculled++;
         return;
     }
-    mat_mul(pvw, proj, mv);
+    if (!pv_ok) { mat_mul(pv, proj, view); pv_ok = 1; }
+    mat_mul(pvw, pv, world);
     if (md->lit && packet2_get_qw_count(vif[cur]) + 16 > PACKET_QW)
         flush_vif();
     if (md->lit)
@@ -1205,16 +1294,8 @@ static void draw_model_(const Model *md, const float world[16], const float (*dr
             add_uvm(vif[cur], vg->uvm);
         for (u32 b = 0; b < vg->nbatch; b++) {
             u32 ne = vg->batch[2 * b], nu = vg->batch[2 * b + 1];
-            if (vg->strip == 2) { /* VU1SkinLit: {n} + strip GIF tag, the matrices, the arrays at fixed places */
-                add_header(vif[cur], HSTRIP(mode, ne), 0);
-                packet2_utils_vu_add_unpack_data(vif[cur], 2, gm, 7 * m, 1);
-                add_skin_strip_batch(vif[cur], &d, ne, vg->tex != NO_TEX);
-            } else {
-            add_header(vif[cur], HDR(mode, m, ne), nu);
-            packet2_utils_vu_add_unpack_data(vif[cur], 2, gm, 7 * m, 1);
-            add_batch(vif[cur], &d, ne, nu, vg->tex != NO_TEX, vg->lit, base);
-            }
-            packet2_utils_vu_add_start_program(vif[cur], PROGRAM(vg));
+            /* strip 2 (VU1SkinLit): {n} + strip GIF tag, the matrices, the arrays at fixed places; else indexed */
+            emit_batch(vg, mode, ne, nu, gm, m, &d, base);
             tris_drawn += ne / 3;
             render_vstat[3 + (vg->lit == 2 ? 2 : vg->lit ? 1 : 0)] += ne; /* skinned: 3 tex, 4 lit, 5 env */
         }
