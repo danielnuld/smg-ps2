@@ -3685,6 +3685,7 @@ static void update_jumpstands(void)
             jstand_pos = mario->pos;
             pad_rumble(RUMBLE_MIDDLE); /* tryToStartBind */
             printf("jump stand %d: %s\n", in->row, hip_hit ? "hip drop" : "trample");
+            se_start(hip_hit ? SE_OJ_JUMP_STAND_LAND_L : SE_OJ_JUMP_STAND_LAND_S, &in->m[12]); /* (HipDrop: stopSound SE_PM_HIPDROP not made) */
         }
         ++*t;
         int hold = *ph == 3 ? 15 : 5;
@@ -3699,6 +3700,8 @@ static void update_jumpstands(void)
             if (*t == hold) { /* endBindAndShootUp */
                 float v = *ph == 3 ? 43.0f : *ph == 2 ? 32.0f : 26.0f;
                 if (*ph == 3) mario->up = up;
+                se_start(*ph == 3 ? SE_OJ_JUMP_STAND_BOUND_L : *ph == 2 ? SE_OJ_JUMP_STAND_BOUND_M : SE_OJ_JUMP_STAND_BOUND_S, &in->m[12]);
+                se_start(*ph == 3 ? SE_PV_JUMP_JOY : *ph == 2 ? SE_PV_JUMP_L : SE_PV_JUMP_M, &mario->pos.x); /* startSoundPlayer */
                 mario->vup = v; mario->grounded = 0; mario->jump_kind = 0; mario->air_timer = 0;
                 printf("jump stand %d throws at %d\n", in->row, (int)v);
             }
@@ -21920,9 +21923,15 @@ static void update_kuribo_one(Kuribo *k)
             if (kote && k->state == KURIBO_WALK && mario->hip != HIP_FALL) { k->state = KURIBO_STUN; k->timer = 240; }
             else if (kote && k->state == KURIBO_STUN && k->timer > 210 && mario->hip != HIP_FALL)
                 return; /* the bounce off the first stomp lands on it again: not a second stomp yet, no bounce */
-            else { k->state = KURIBO_DEAD; row_kill(k->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, k->pos, k->up); pop_coins(k->pos, k->up, 1); }
+            else {
+                if (k->kind == WALK_TAKOHEI) { /* TakoHei: exeFlatDown / exeHipDropDown first step, then kill (at once here) */
+                    w_se(k, mario->hip == HIP_FALL ? SE_EM_TAKOHEI_STOMPED_L : SE_EM_TAKOHEI_STOMPED); w_se(k, SE_EM_EXPLODE_S);
+                }
+                k->state = KURIBO_DEAD; row_kill(k->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, k->pos, k->up); pop_coins(k->pos, k->up, 1);
+            }
             mario->vup = 15.0f; mario->grounded = 0;
         } else if (d < 170.0f && mario->spin_timer > 0 && (k->state == KURIBO_WALK || (kote && k->timer < 230))) {
+            if (k->kind == WALK_TAKOHEI) { w_se(k, SE_EM_TAKOHEI_HITPUNCH); w_se(k, SE_EM_EXPLODE_S); } /* exePunchDown, kill */
             if (tako || (kote && k->state == KURIBO_STUN)) { k->state = KURIBO_DEAD; row_kill(k->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, k->pos, k->up); pop_coins(k->pos, k->up, 1); }
             else { k->state = KURIBO_STUN; k->timer = kote ? 240 : 180; }
         } else if (d < (tako ? 140.0f : 100.0f) && above <= 40.0f && k->state == KURIBO_WALK) /* not from above */
@@ -25660,6 +25669,7 @@ static void update_hazards(void)
         if (in->hazard == 2) { obj_play(in, "shake", 0, 0); se_start(SE_OJ_LEAVES_SWING, &in->m[12]); } /* sendMsgEnemyAttack: Shake */
         if (in->hazard == 1) {
             fx_emit(FX_SPACEMINE_EXPLOSION, in->m);
+            se_start(SE_OJ_SPACEMINE_EXPLOSION, &in->m[12]);
             pad_rumble(RUMBLE_MIDDLE); /* SpaceMine::kill: "中" */
             row_kill(in->row);
             printf("SpaceMine %d exploded\n", in->row);
