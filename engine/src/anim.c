@@ -13,17 +13,20 @@
  * count 0 is the default (scale 1, rotation 0, translation 0), count 1 a constant. Rotations are s16 << dec_shift,
  * 0x8000 = 180 degrees. Joint local = T * Rz * Ry * Rx * S. */
 
-#define SLOTS 8 /* Mario and the animated placed objects near him */
-#define TSLOTS 6 /* a blend group's other tracks (Mario's: 基本, 水泳基本), clips up to TSLOT_MAX */
+/* Inflated clips live in two pools, at their own sizes (most are a few KB: fixed slots of the largest clip's size
+ * held 8 and thrashed, ~8 inflates a frame at the start of Good Egg); the least recently used go until a gap fits.
+ * The main pool has the room of 8 of the largest clips, the tracks' pool (a blend group's tracks 1..3, Mario's
+ * 基本 / 水泳基本: clips up to TSLOT_MAX) that of 6. */
+#define SLOTS 8
+#define TSLOTS 6
 #define TSLOT_MAX 65536
+#define CE_MAX 256
 
+typedef struct { int id; u32 off, len, age; } ClipEnt;
+typedef struct { u8 *mem; u32 size; int n; ClipEnt e[CE_MAX]; } ClipCache; /* entries sorted by offset */
 static const Scene *sc;
-static u8 *slot_data[SLOTS];
-static int slot_clip[SLOTS], slot_age[SLOTS], age;
-static u32 slot_size;
-static u8 *tslot_data[TSLOTS];
-static int tslot_clip[TSLOTS], tslot_age[TSLOTS];
-static u32 tslot_size;
+static ClipCache cmain, ctrack;
+static u32 age, slot_size;
 u32 anim_inflates, anim_inflated; /* clips inflated, and their bytes (profiling) */
 static short *info_frames;
 static signed char *info_mode;
@@ -35,63 +38,70 @@ void anim_init(const Scene *s)
         if (s->clips[i].raw > slot_size)
             slot_size = s->clips[i].raw;
     slot_size = (slot_size + 15) & ~15u;
-    for (int i = 0; i < SLOTS; i++) {
-        slot_data[i] = mem_alloc(MEM_PLAYER, slot_size);
-        slot_clip[i] = -1;
-    }
-    tslot_size = 0;
+    cmain.size = SLOTS * slot_size;
+    cmain.mem = mem_alloc(MEM_PLAYER, cmain.size);
+    cmain.n = 0;
+    u32 tslot_size = 0;
     for (u32 i = 0; i < s->nclips; i++)
         if (s->clips[i].raw > tslot_size && s->clips[i].raw <= TSLOT_MAX)
             tslot_size = s->clips[i].raw;
     tslot_size = (tslot_size + 15) & ~15u;
-    for (int i = 0; i < TSLOTS; i++) {
-        tslot_data[i] = tslot_size ? mem_alloc(MEM_PLAYER, tslot_size) : NULL;
-        tslot_clip[i] = -1;
-    }
+    ctrack.size = TSLOTS * tslot_size;
+    ctrack.mem = ctrack.size ? mem_alloc(MEM_PLAYER, ctrack.size) : NULL;
+    ctrack.n = 0;
     /* here, below the zone packs' arena mark (allocated at the first anim_clip_info, a zone swap released it) */
     info_frames = mem_alloc(MEM_PLAYER, s->nclips * sizeof(short));
     info_mode = mem_alloc(MEM_PLAYER, s->nclips);
     for (u32 i = 0; i < s->nclips; i++) info_frames[i] = -2;
 }
 
-u32 anim_cache_bytes(void) { return SLOTS * slot_size; }
+u32 anim_cache_bytes(void) { return cmain.size; }
 
-static const u8 *clip_data(int id)
+static const u8 *cache_get(ClipCache *c, int id)
 {
-    int lru = 0;
-    for (int i = 0; i < SLOTS; i++) {
-        if (slot_clip[i] == id) {
-            slot_age[i] = ++age;
-            return slot_data[i];
+    for (int i = 0; i < c->n; i++)
+        if (c->e[i].id == id) {
+            c->e[i].age = ++age;
+            return c->mem + c->e[i].off;
         }
-        if (slot_age[i] < slot_age[lru])
-            lru = i;
+    u32 len = (sc->clips[id].raw + 15) & ~15u;
+    if (len > c->size) return NULL;
+    for (;;) {
+        u32 at = 0;
+        int k = 0;
+        if (c->n < CE_MAX)
+            for (; k <= c->n; k++) { /* the first gap that fits, before entry k */
+                u32 end = k < c->n ? c->e[k].off : c->size;
+                if (end - at >= len) break;
+                if (k < c->n) at = c->e[k].off + c->e[k].len;
+            }
+        if (c->n < CE_MAX && k <= c->n) {
+            uLongf zl = len;
+            anim_inflates++; anim_inflated += sc->clips[id].raw;
+            if (uncompress(c->mem + at, &zl, sc->clips[id].z, sc->clips[id].zsize) != Z_OK) {
+                printf("anim: inflate failed for %s\n", sc->clips[id].name);
+                return NULL;
+            }
+            memmove(&c->e[k + 1], &c->e[k], (c->n - k) * sizeof c->e[0]);
+            c->e[k] = (ClipEnt){id, at, len, ++age};
+            c->n++;
+            if (info_frames[id] == -2) { info_frames[id] = *(const short *)(c->mem + at); info_mode[id] = (signed char)c->mem[at + 2]; }
+            return c->mem + at;
+        }
+        int lru = 0; /* no gap: the least recently used goes */
+        for (int i = 1; i < c->n; i++)
+            if (c->e[i].age < c->e[lru].age) lru = i;
+        memmove(&c->e[lru], &c->e[lru + 1], (c->n - lru - 1) * sizeof c->e[0]);
+        c->n--;
     }
-    uLongf len = slot_size;
-    anim_inflates++; anim_inflated += sc->clips[id].raw;
-    if (uncompress(slot_data[lru], &len, sc->clips[id].z, sc->clips[id].zsize) != Z_OK) {
-        printf("anim: inflate failed for %s\n", sc->clips[id].name);
-        return NULL;
-    }
-    slot_clip[lru] = id;
-    slot_age[lru] = ++age;
-    return slot_data[lru];
 }
 
-static const u8 *track_data(int id) /* clip_data for a group's tracks 1..3 (their own slots; a larger clip: the main ones) */
+static const u8 *clip_data(int id) { return cache_get(&cmain, id); }
+
+static const u8 *track_data(int id) /* clip_data for a group's tracks 1..3 (their own pool; a larger clip: the main one) */
 {
-    if (sc->clips[id].raw > tslot_size || !tslot_data[0]) return clip_data(id);
-    int lru = 0;
-    for (int i = 0; i < TSLOTS; i++) {
-        if (tslot_clip[i] == id) { tslot_age[i] = ++age; return tslot_data[i]; }
-        if (tslot_age[i] < tslot_age[lru]) lru = i;
-    }
-    uLongf len = tslot_size;
-    anim_inflates++; anim_inflated += sc->clips[id].raw;
-    if (uncompress(tslot_data[lru], &len, sc->clips[id].z, sc->clips[id].zsize) != Z_OK) return NULL;
-    tslot_clip[lru] = id;
-    tslot_age[lru] = ++age;
-    return tslot_data[lru];
+    if (sc->clips[id].raw > TSLOT_MAX || !ctrack.mem) return clip_data(id);
+    return cache_get(&ctrack, id);
 }
 
 int anim_clip_info(const char *name, int *mode)
@@ -216,9 +226,10 @@ int anim_play(Anim *a, const char *name, float speed, int loop, int interp)
     return 0;
 }
 
+static float clip_len(int id);
 int anim_length(const Anim *a)
 {
-    return a->clip ? *(const u16 *)a->clip : 0;
+    return a->clip ? (int)clip_len(a->posed_id) : 0;
 }
 
 static float hermite(float f, float t0, float v0, float m0, float t1, float v1, float m1)
@@ -354,6 +365,7 @@ void anim_pose(Anim *a)
 {
     const Skin *k = a->skin;
     a->clip = a->clip_id >= 0 ? clip_data(a->clip_id) : NULL;
+    a->posed_id = a->clip_id;
     if (a->interp_left > 0) { /* XanimePlayer::updateInterpoleRatio */
         a->interp += (1.0f - a->interp) / a->interp_left;
         if (--a->interp_left == 0) a->interp = 1.0f;

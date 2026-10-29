@@ -12,6 +12,7 @@ typedef struct {
     const Skin *skin;
     const u8 *clip;      /* inflated clip in the cache, NULL = bind pose */
     int clip_id;
+    int posed_id;        /* the clip `clip` was read from (anim_length: its pool space may hold another one now) */
     float frame, speed;
     float phase;         /* >= 0: start the next clip at this fraction of its length (loop to loop switch) */
     int loop, done;
