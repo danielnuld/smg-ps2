@@ -12353,6 +12353,9 @@ static void m_air_walk(Player *m)
 
 /* procJump: the jump vector moves Mario, then falls at mGravityJumping[kind] x 0.5 (mGravityRatioA) while A is held,
  * the jump is "digital" or he is falling, x 1 once A is let go rising; Karikari clinging x (2 + n) / 2 */
+/* MarioWall (MarioWall.cpp after Petari): mwl._1D its binder-ground flag, _75C (fixWallingTop: the wall's up), the binder's
+ * ground touch this frame (mDrawStates._6, updateBinderInfo), _558 the frame of the last A in a jump (procJump) */
+static struct { int s1D, d6; V3 v75C; unsigned a558; } mwl = {.a558 = 0x80000000u};
 static void m_proc_jump(Player *m, int a1)
 {
     if (m->hip) { m_proc_hip(m); return; }
@@ -12368,6 +12371,7 @@ static void m_proc_jump(Player *m, int a1)
         }
     }
     if (!pad_held(PAD_CROSS)) m->keep_jump = 0;
+    if (m_req_jump) mwl.a558 = game_frame; /* checkTrgA: _558 = _37C */
     int rising = m_rising(m);
     int conn = a1 || m->keep_jump || m->digital || !rising || m->jump_kind == 2;
     float gs = conn ? MC.mGravityRatioA : 1.0f;
@@ -12416,81 +12420,8 @@ static void m_proc_jump(Player *m, int a1)
     m->air_timer++;
 }
 
-/* checkWallStick / isEnableStickWall: falling against a wall (not in a hip drop, the spin's first 25 frames, Karikari
- * clinging, the wall left at the same angle) Mario sticks to it. ponytail: the wall contact stands for the 120 probe */
-static void m_check_wall_stick(Player *m)
-{
-    if (!m->jumping || m->grounded || m->hip || !m->wall || m_rising(m) || kari_cling) return;
-    if (m->wall_cancel && vdot(m->wall_cancel_n, m->wall_n) < MC.mWallStickCancelAngle) m->wall_cancel = 0;
-    if (m->wall_cancel) return;
-    if (vdot(m->face, m->wall_n) > 0) return; /* a back wall needs the stick into it */
-    if (m->height < MC.mWallStickGrHeight) return;
-    if (m_clip_on("spin") && m->spin_t < 25) return;
-    if (!m_clip_on("walljump") && !m->slip_front && !(m_sz != 0 && vdot(m_pad, m->wall_n) < -0.5f)) return;
-    m->walling = 1; m->wall_t = 0; m->wall_drop = 0; m->wall_pull = 0;
-    m->wall_jv0 = vnorm(m->hvel); /* initTriangleJump */
-    mario_play("wallkeep", 1.0f, 1);
-    m_pad_vib(0); /* MarioWall::start */
-    m_stop_walk(m);
-    m->jumping = 0; m->hip = 0;
-    m_front(m, vmul(m->wall_n, -1.0f));
-}
-
-/* MarioWall::update: slides down (mWallDropSpeedNormal after mWallStickTime), A kicks off (startJump: the wall's normal
- * x mWallJumpPowerXZ + up x mWallJumpPowerY, mirrored off the way he came in within 15 frames), let go after
- * mWallReleaseTime + mWallStickTime, off the wall or on the ground */
-static int m_wall_update(Player *m)
-{
-    int release = 0;
-    m->wall_t++;
-    if (m->grounded) {
-        if (!m->slip_poly) { m_front(m, m->wall_n); mario_play("land", 1.0f, 0); } /* isOnSlipGround */
-        release = 1;
-    }
-    if (m->wall_t >= MC.mWallReleaseTime + MC.mWallStickTime) release = 1;
-    if (m->wall_t >= 3 && !m->wall) release = 1;
-    if (release) {
-        if (!m->grounded) { m->wall_cancel = 1; m->wall_cancel_n = m->wall_n; m_front(m, vmul(m->wall_n, -1.0f)); }
-        m->vel_after = vmul(m->wall_n, m->slip_poly ? 10.0f : 30.0f);
-        m->walling = 0;
-        return 0;
-    }
-    if (m_req_jump) {
-        V3 v = m->wall_n;
-        float d = vdot(v, vmul(m->wall_jv0, -1.0f));
-        if (m->wall_t < 15 && vlen(m->wall_jv0) > 0 && d < MC.mWallTriJumpMargin && d > 0) {
-            V3 ax = vnorm(vcross(vmul(m->wall_jv0, -1.0f), v));
-            v = rot_axis(v, ax, acosf(d));
-        }
-        m->walling = 0;
-        m->wall_cancel = 1; m->wall_cancel_n = m->wall_n;
-        m_try_wall_jump(m, vadd(vmul(v, MC.mWallJumpPowerXZ), vmul(m->up, MC.mWallJumpPowerY)));
-        m->spin_lock = 0;
-        return 0;
-    }
-    float blend = 0.9f, speed = MC.mWallDropSpeedNormal;
-    int side = m_sz != 0 && vdot(m_pad, m->wall_n) > 0.5f && !m->neutral ? 2 : 0; /* checkStickWallSide (1 counts as 0) */
-    if (side == 2) { if (m->wall_t < 165) m->wall_t = 165; if (!m->wall_pull) m->wall_pull = 1; mario_smoke_stop(SMOKE_WALL_RUB); }
-    else if (m->wall_t >= MC.mWallStickTime) { /* case 0: 壁すべり, スリップ, 共通壁手擦り */
-        if (!m_clip_on("wallkeep")) mario_play("wallslide", 1.0f, 1);
-        mario_smoke(SMOKE_WALL_RUB);
-    } else mario_smoke_stop(SMOKE_WALL_RUB);
-    if (m->wall_pull) m->wall_pull++;
-    if (m->wall_t < MC.mWallStickTime) blend = 1.0f;
-    m->wall_drop = m->wall_drop * blend + speed * (1.0f - blend);
-    m->vel = vmul(m->up, -m->wall_drop);
-    if (m->wall_t >= MC.mWallStickTime && m_clip_is("wallkeep") && mario_anim->loop) mario_play("wallslide", 1.0f, 1);
-    float ratio = m->wall_t < MC.mWallStickTime ? 0.0f : 1.0f - (m->wall_t - MC.mWallStickTime) * MC.mWallSideMoveRatio;
-    V3 c = vnorm(vcross(vmul(m->up, -1.0f), m->wall_n)); /* moveWallSlide */
-    if (m_sz != 0 && vlen(c) > 0) {
-        float d = vdot(c, m_pad);
-        if (fabsf(d) > 0.2f) {
-            d = d < -0.2f ? (0.2f + d) / 0.8f : (d - 0.2f) / 0.8f;
-            m->vel = vadd(m->vel, vmul(c, 10.0f * d * clamp01(ratio)));
-        }
-    }
-    return 1;
-}
+static void m_check_wall_stick(Player *m);
+static int m_wall_update(Player *m);
 
 /* doLanding: the landing clip by the jump, a run on (the stick full, or more than 6 forward kept as walk speed), the
  * hard landing over mHardLandingHeight */
@@ -13982,6 +13913,209 @@ static void m_retain(Player *m)
         if (m_sz == 0) m->retain_b = 1;
     }
     m->retain_ang = ang;
+}
+
+enum { WALLC_NOTWALLJUMP = 1, WALLC_NOTWALLSLIP = 2 };
+static int m_stick_wall_side(const Player *m) /* checkStickWallSide */
+{
+    if (m_sz != 0) {
+        V3 n = m_wall_norm(m);
+        if (vdot(m_pad, n) < -0.5f) return 1;
+        if (vdot(m_pad, n) > 0.5f && !m->neutral) return 2;
+    }
+    return 0;
+}
+static int m_wall_is_cancel(Player *m) /* MarioWall::isCancel */
+{
+    if (m->grounded) m->wall_cancel = 0;
+    if (m->wall_cancel && mw.w8 && vdot(m->wall_cancel_n, m_wall_norm(m)) < MC.mWallStickCancelAngle) m->wall_cancel = 0;
+    return m->wall_cancel;
+}
+/* isInhibitWall. ponytail: mDrawStates._2 (a CubeCamera of arg1 1) is not kept */
+static int m_inhibit_wall(void) { return m_check_wall_code(WALLC_NOTWALLJUMP, 1) || m_check_wall_code(WALLC_NOACTION, 1); }
+static int m_fixwall_top(Player *m) /* fixWallingTop: _75C, the wall's up. ponytail: no forceSetHeadVecKeepSide (his head is his up) */
+{
+    V3 n = m_wall_norm(m), side = vcross(n, vmul(m->up, -1.0f));
+    if (vlen(side) < 0.001f) return 0;
+    mwl.v75C = vcross(n, vnorm(side));
+    if (vlen(mwl.v75C) < 0.001f) return 0;
+    mwl.v75C = vnorm(mwl.v75C);
+    return 1;
+}
+static int m_fix_walling(Player *m, int immediate) /* fixWallingPosition: fixWallingDist, then fixWallingDir */
+{
+    if (!(mw.w19 && mw.w8)) {
+        if (mw.w19) {
+            V3 bn = tri_n(&mw.back), p = vadd(mw.p4F4, vmul(bn, 79.0f));
+            m->pos = vadd(m->pos, vmul(bn, vdot(vsub(p, m->pos), bn)));
+            if (!m_fixwall_top(m)) return 0;
+            m->pos = vsub(vadd(mw.p4F4, vmul(bn, 60.0f)), vmul(mwl.v75C, 80.0f));
+        } else if (mw.w8) {
+            if (!m_fixwall_top(m)) return 0;
+            V3 fn = tri_n(&mw.front);
+            if (map_poly(m->pos, vmul(m->face, 100.0f), NULL, NULL) && vdot(m->face, fn) < -0.999f) {
+                V3 p = vsub(vadd(mw.p4E8, vmul(fn, 60.0f)), vmul(mwl.v75C, 80.0f));
+                V3 c = vtangent(vsub(p, m->pos), m->up);
+                if (!near0(c)) {
+                    V3 r = vadd(c, m->s288); /* MarioActor _288 */
+                    if (fabsf(r.x) < fabsf(c.x)) c.x = r.x;
+                    if (fabsf(r.y) < fabsf(c.y)) c.y = r.y;
+                    if (fabsf(r.z) < fabsf(c.z)) c.z = r.z;
+                    m->pos = vadd(m->pos, c); /* addTrans 壁補正 */
+                }
+            }
+        }
+    }
+    /* fixWallingDir: faced against the back wall, else the front one (at once, else blended 0.1) */
+    V3 to;
+    if (mw.w19) to = vmul(tri_n(&mw.back), -1.0f);
+    else if (mw.w8) to = vmul(tri_n(&mw.front), -1.0f);
+    else return 1;
+    if (immediate) m_front(m, to);
+    else { V3 f = m->face; if (blend_sphere(f, to, &f, 0.1f)) m_front(m, f); }
+    return 1;
+}
+/* isEnableStickWall. ponytail: no tornado (_F), MarioActor _468, the ice wall (sensor 0x57) of Ice Mario */
+static int m_enable_stick_wall(Player *m)
+{
+    if (player_mode == PM_TERESA) return 0;
+    if (player_mode == PM_FOO && fo.on) return 0;
+    if (m_wall_is_cancel(m)) return 0;
+    if (!m->jumping || m->grounded) return 0;
+    if (m->hip) return 0;                              /* _B */
+    if (mw.press1E) return 0;                          /* mDrawStates._1E */
+    if (!mw.w8 && !mw.w19) return 0;
+    if (mw.s2 && m_vspeed(m) < MC.mWallStickGrHeight) return 0;
+    if (mw.f15 && mw.f4E0 < MC.mWallStickFrHeight) return 0;
+    if (m_clip_on("spin")) { if (m->spin_t < 25) return 0; } /* 空中ひねり, _945 */
+    else if (m->spin_timer && m->spin_t < 15) return 0;      /* isPunching */
+    if (mw.f15 && mw.s2 && mw.f39 && vdot(vsub(mw.p4A4, mw.shadow_pos), m->up) < MC.mWallStickStepHeight) return 0;
+    if (mw.w19 && vdot(tri_n(&mw.back), vtangent(m_jv(m), m->up)) > 0.0f) return 0;
+    if (m_inhibit_wall()) return 0;
+    if (mw.w8 && angle_d(m, tri_n(&mw.front)) < 80.0f) return 0;
+    if (mw.w19 && angle_d(m, tri_n(&mw.back)) < 80.0f) return 0;
+    if (vlen(vcross(m_wall_norm(m), vmul(m->up, -1.0f))) < 0.001f) return 0;
+    if (m_check_wall_code(WALLC_NOACTION, 1)) return 0;
+    if (m_rising(m)) return 0;
+    if (mw.w19) { if (!m_clip_on("walljump") && m_stick_wall_side(m) != 1) return 0; } /* 壁ジャンプ */
+    else if (!m_clip_on("walljump") && !m->slip_front && m_stick_wall_side(m) != 1) return 0;
+    if (mw.s30) return 0;
+    if (!map_poly(mario_joint_drawn(13), vmul(m->face, mw.w19 ? -120.0f : 120.0f), NULL, NULL)) return 0; /* _2AC */
+    return kari_cling == 0;
+}
+/* checkWallStick, MarioWall::start / initTriangleJump. ponytail: checkWallJumpCode (the barrier / water wall floor codes),
+ * checkBeeStick, the gravity change's _334 */
+static void m_check_wall_stick(Player *m)
+{
+    if (player_mode == PM_BEE) return;
+    if (!m_enable_stick_wall(m)) return;
+    m->walling = 1; m->wall_pull = 0; m->wall_drop = 0; mwl.s1D = 0;
+    mario_play("wallkeep", 1.0f, 1); /* 壁くっつき */
+    m_pad_vib(0);
+    V3 h = vtangent(m_jv(m), m->up);
+    m->wall_jv0 = vlen(h) >= 0.001f ? vnorm(h) : v3(0, 0, 0);
+    m->wall_t = 0;
+    m_stop_walk(m);
+    m->jumping = 0; m->hip = 0;
+    m_fix_walling(m, 1);
+}
+/* MarioWall::startJump: off the wall's normal (turned off the way he came in within 15 frames: mWallTriJumpMargin)
+ * x mWallJumpPowerXZ, up x mWallJumpPowerY. ponytail: mDrawStates._3 (ForbidTriangleJumpCube / CubeCamera 2) not kept */
+static int m_wall_start_jump(Player *m)
+{
+    if (m_inhibit_wall()) return 0;
+    V3 v = m_wall_norm(m);
+    m->wall_cancel_n = v;
+    if (m->wall_t < 15 && !near0(m->wall_jv0)) {
+        float d = vdot(v, vmul(m->wall_jv0, -1.0f));
+        if (d < MC.mWallTriJumpMargin && d > 0.0f) {
+            V3 ax = vcross(vmul(m->wall_jv0, -1.0f), v);
+            if (vlen(ax) > 1e-6f) v = rot_axis(v, vnorm(ax), acosf(d));
+        }
+    }
+    m->walling = 0;
+    m_try_wall_jump(m, vadd(vmul(v, MC.mWallJumpPowerXZ), vmul(m->up, MC.mWallJumpPowerY)));
+    m->wall_cancel = 1;
+    m->spin_lock = 0; /* _2B */
+    return 1;
+}
+/* tryWallPunch on land: off the wall (mWallSpinFlipGround, x mWallSpinFlipAirRatio jumping) and up mWallSpinHopGround
+ * (tryForcePowerJump). ponytail: no 壁ヒット effect, no sendPunch to the wall's sensor, no skate floor code 0x21 */
+static void m_wall_punch(Player *m)
+{
+    if (m->spin_lock || m_check_wall_code(WALLC_NOACTION, 0)) return;
+    m_stop_walk(m);
+    V3 v = vmul(m_wall_norm(m), MC.mWallSpinFlipGround);
+    if (m->jumping) v = vmul(v, MC.mWallSpinFlipAirRatio);
+    m_power_jump(m, vadd(v, vmul(m->up, MC.mWallSpinHopGround)));
+    m->spin_lock = 1; /* _2B */
+    m_pad_vib(2);
+    mario_sound("壁反射"); mario_sound("声スピンキャンセル");
+}
+/* MarioWall::update: the binder's ground (twice running with no move along it lets go), on the ground under 80 lands,
+ * let go after mWallReleaseTime + mWallStickTime or with no front wall from frame 3; A (or a recent A, or as Rabbit)
+ * jumps off; the spin punches off it; slides down _75C (mWallDropSpeedNormal after mWallStickTime), the stick along it
+ * (moveWallSlide). Returns 0 when it ends */
+static int m_wall_update(Player *m)
+{
+    int release = 0;
+    if (kari_cling) { m->walling = 0; return 0; }
+    if ((m->rabbit || game_frame - mwl.a558 < 6) && m_wall_start_jump(m)) return 0;
+    if (mwl.d6) {
+        if (mwl.s1D && vlen(vtangent(m->last_move, m->up)) < 1.0f) release = 1;
+        m->grounded = 1;
+        mwl.s1D = 1;
+    } else mwl.s1D = 0;
+    m->wall_t++;
+    if (m->grounded && !release) {
+        if (m_vspeed(m) < 80.0f) {
+            if (!m->slip_poly) { m_front(m, m_wall_norm(m)); mario_play("land", 1.0f, 0); } /* isOnSlipGround, 着地 */
+            release = 1;
+        } else m->grounded = 0;
+    }
+    if (m->wall_t >= MC.mWallReleaseTime + MC.mWallStickTime) release = 1;
+    if (m->wall_t >= 3 && !mw.w8 && !mw.w32) release = 1;
+    if (release) {
+        if (!m->grounded) { m->wall_cancel = 1; m->wall_cancel_n = m_wall_norm(m); m_front(m, vmul(m->wall_cancel_n, -1.0f)); }
+        m->vel_after = vadd(m->vel_after, vmul(m_wall_norm(m), m->grounded && m->slip_poly ? 10.0f : 30.0f));
+        m->walling = 0;
+        return 0;
+    }
+    if (m_req_jump && m_wall_start_jump(m)) return 0;
+    if (pad_pressed(PAD_SQUARE) && !m->spin_cool) { /* isRequestRush: 空中ひねり, tryWallPunch, setWallCancel */
+        m->spin_lock = 0;
+        m->walling = 0;
+        mario_play("spin", 1.0f, 0);
+        m_wall_punch(m);
+        m->wall_cancel = 1; m->wall_cancel_n = m_wall_norm(m);
+        return 0;
+    }
+    if (!m_fix_walling(m, 0)) { m->wall_cancel = 1; m->wall_cancel_n = m_wall_norm(m); m->walling = 0; return 0; }
+    float blend = 0.9f, speed = MC.mWallDropSpeedNormal;
+    int side = m_stick_wall_side(m);
+    if (side == 1) side = 0;
+    if (side == 2) { if (m->wall_t < 165) m->wall_t = 165; if (!m->wall_pull) m->wall_pull = 1; mario_smoke_stop(SMOKE_WALL_RUB); }
+    else if (m->wall_t >= MC.mWallStickTime) { /* case 0: 壁すべり, スリップ, 共通壁手擦り */
+        if (!m_clip_on("wallkeep")) mario_play("wallslide", 1.0f, 1);
+        mario_sound("スリップ");
+        mario_smoke(SMOKE_WALL_RUB);
+    } else mario_smoke_stop(SMOKE_WALL_RUB);
+    if (m->wall_pull) m->wall_pull++;
+    if (m->wall_t < MC.mWallStickTime) blend = 1.0f;
+    m->wall_drop = m->wall_drop * blend + speed * (1.0f - blend);
+    m->vel = vadd(m->vel, vmul(mwl.v75C, -m->wall_drop)); /* addVelocity(_75C, -_20) */
+    if (m->wall_t >= MC.mWallStickTime && m_clip_is("wallkeep") && mario_anim->loop) mario_play("wallslide", 1.0f, 1);
+    float ratio = m->wall_t < MC.mWallStickTime ? 0.0f : 1.0f - (m->wall_t - MC.mWallStickTime) * MC.mWallSideMoveRatio;
+    V3 c = vcross(vmul(m->up, -1.0f), m_wall_norm(m)); /* moveWallSlide */
+    if (vlen(c) >= 0.001f && m_sz != 0) {
+        c = vnorm(c);
+        float d = vdot(c, m_pad);
+        if (fabsf(d) > 0.2f) {
+            d = d < -0.2f ? (0.2f + d) / 0.8f : (d - 0.2f) / 0.8f;
+            m->vel = vadd(m->vel, vmul(c, 10.0f * d * clamp01(ratio)));
+        }
+    }
+    return 1;
 }
 
 /* checkAllWall: the faces round the centre within 80 (90 swimming), not floors nor ceilings (|n . head| <= 0.5), by
@@ -16230,7 +16364,7 @@ static void update_mario_(void)
     }
     /* updateGroundInfo: on his feet (or waiting out mDropWaitTime) he checks his ground before the action */
     V3 p270 = m->pos; /* MarioActor _270: his place before the update */
-    int pgc = !m->walling && !hg.on && !swimming && !m->skate && !m->rabbit && !m->teresa && !dmg.st && !fo.on, landed = 0;
+    int pgc = !hg.on && !swimming && !m->skate && !m->rabbit && !m->teresa && !dmg.st && !fo.on, landed = 0;
     if (pgc) {
         int was = m->grounded;
         m->grounded = m_check_ground(m);
@@ -16291,8 +16425,8 @@ static void update_mario_(void)
     m->s350 = v3(0, 0, 0);
 
     /* MarioActor's Binder (initBinder 60, setBinderOffsetVec _2C4): radius 60 round his place + _2C4, up x 70 on the
-     * ground (50 squatting), eased 0.1 a frame to -gravity x 70 off it; checkGround keeps him on the ground. Other
-     * statuses keep one 50 sphere 50 up. ponytail: _2C4's up is his up (MarioActorGravity blends mHeadVec and _368 by
+     * ground (50 squatting), eased 0.1 a frame to -gravity x 70 off it; checkGround keeps him on the ground. Hanging,
+     * swimming, skating, as Rabbit / Teresa, in a damage status keep one 50 sphere 50 up. ponytail: _2C4's up is his up (MarioActorGravity blends mHeadVec and _368 by
      * _984), the 0.5 ease on _10._23 / _934 not kept */
     static V3 b2C4;
     float brad = BODY_RADIUS;
@@ -16314,10 +16448,12 @@ static void update_mario_(void)
     if (pgc) { /* Binder::bind; the faces hit: walls (the deepest), ceilings */
         center = m_bind(center, move, brad);
         m->wall = 0;
+        mwl.d6 = 0;
         float wd = -1.0f;
         for (int i = 0; i < b_n; i++) {
             V3 n = tri_n(&b_tri[i]);
             float d = vdot(n, m->up);
+            if (-d < -0.515f) mwl.d6 = 1; /* updateBinderInfo: a ground plane (n . gravity < _3C): mDrawStates._6 */
             if (d <= -0.3f) { collide_ceil = 1; collide_ceil_inst = b_tri[i].inst; }
             else if (d < WALL_ANGLE_COS && b_dep[i] > wd) { m->wall = 1; wn = n; wall_attr = tri_attr(&b_tri[i]); wd = b_dep[i]; }
         }
@@ -16376,7 +16512,7 @@ static void update_mario_(void)
         m->tsi = 0;
         m->walk *= slow;
     }
-    int pg = pgc && !m->walling; /* checkGround decided his ground before the action */
+    int pg = pgc; /* checkGround decided his ground before the action */
     m_pg = pg;
     if (pg) {
         if (m->jumping) m->grounded = 0; /* (a jump from this frame's action) */
