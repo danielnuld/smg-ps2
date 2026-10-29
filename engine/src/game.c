@@ -5494,18 +5494,26 @@ int game_test_candle(int how)
     return -1;
 }
 
-int game_test_torch(int how) /* tests: Mario into the first lit PhantomTorch / PhantomBonfire's flame (0) or 200 off it spinning (1) */
+int game_test_torch(int how) /* tests: Mario into the first lit PhantomTorch / PhantomBonfire with an item: its flame (0) or 200 off it spinning (1);
+                               * 2: Mario on the last one put out (its item) */
 {
+    static int last = -1;
+    if (how == 2) {
+        if (last < 0) return -1;
+        const Row *r = &sc->objs[last];
+        mario->pos = row_pos(r); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return last;
+    }
     for (u32 i = 0; i < sc->nobjs; i++) {
         const Row *r = &sc->objs[i];
         const char *n = sc->types + 32 * r->type;
-        if ((strcmp(n, "PhantomTorch") && strcmp(n, "PhantomBonfire")) || row_turn[i] || !row_shown(i) || r->arg[1] != -1) continue;
+        if ((strcmp(n, "PhantomTorch") && strcmp(n, "PhantomBonfire")) || row_turn[i] || !row_shown(i) || r->arg[1] != -1 || r->arg[0] == 1) continue; /* those with an item */
         float m[16];
         mat_translate_rot_scale(m, r->pos, r->rot, r->scale);
         V3 up = vnorm(v3(m[4], m[5], m[6])), x = vnorm(v3(m[0], m[1], m[2])), base = row_pos(r);
         mario->up = up;
         mario->pos = how ? vadd(base, vmul(x, 200.0f)) : vsub(vadd(base, vmul(up, 70.0f * r->scale[0])), vmul(up, HIT_BODY_H));
-        if (how) mario->spin_timer = SPIN_TIME;
+        if (how) { mario->spin_timer = SPIN_TIME; last = (int)i; }
         mario->hvel = v3(0, 0, 0); mario->vup = 0;
         return (int)i;
     }
