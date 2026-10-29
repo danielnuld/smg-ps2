@@ -1856,6 +1856,26 @@ static V3 m_bind(V3 center, V3 vel, float r) /* returns the center after the mov
     return pos;
 }
 
+/* MarioActor _2C4 (setBinderOffsetVec; MarioActorGravity): up x 70 on the ground (50 squatting), eased 0.1 a frame to
+ * -gravity x 70 off it. b_floor / b_wall: Binder::storeContactPlane's deepest floor (n . gravity under -0.342) and
+ * wall (|n . gravity| under 0.342) of the last m_bind, -1 none */
+static V3 m_2C4;
+static void m_upd_2C4(const Player *m)
+{
+    if (m->grounded) m_2C4 = vmul(m->up, m->squat ? 50.0f : 70.0f);
+    else m_2C4 = vadd(vmul(m_2C4, 0.9f), vmul(m->up, 7.0f));
+}
+static void bind_contacts(V3 up, int *b_floor, int *b_wall)
+{
+    float fd = -99999.0f, wd = -99999.0f;
+    *b_floor = *b_wall = -1;
+    for (int i = 0; i < b_n; i++) {
+        float d = vdot(tri_n(&b_tri[i]), up);
+        if (fabsf(d) < 0.34202015f) { if (wd < b_dep[i]) { wd = b_dep[i]; *b_wall = i; } }
+        else if (d > 0.0f && fd < b_dep[i]) { fd = b_dep[i]; *b_floor = i; }
+    }
+}
+
 /* --- init ------------------------------------------------------------------------------------------------ */
 
 static void os_init(void);
@@ -16058,8 +16078,15 @@ static int swim_update(Player *m)
     Hit hh[8];
     int nh = kcl_query(vadd(c, vmul(fo.head, 40.0f)), 40.0f, hh, 8); /* checkHeadPoint */
     for (int i = 0; i < nh; i++) if (vdot(hh[i].n, m->up) < -0.5f) sw_hit_head(m, hh[i].n, vsub(vadd(c, vmul(fo.head, 40.0f)), vmul(hh[i].n, 40.0f - hh[i].dist)));
-    int ground = collide_n(&c, m->up, BODY_RADIUS, &gn, &wn, &wall);
-    m->pos = vsub(c, vmul(m->up, BODY_RADIUS));
+    /* the Binder (radius calcCenterPos's, round his place + _2C4): its deepest floor and wall */
+    m_upd_2C4(m);
+    c = m_bind(vadd(m->pos, m_2C4), m->vel, mw.binder_r);
+    m->pos = vsub(c, m_2C4);
+    int bf, bw, ground;
+    bind_contacts(m->up, &bf, &bw);
+    ground = bf >= 0; wall = bw >= 0;
+    if (ground) gn = tri_n(&b_tri[bf]);
+    if (wall) wn = tri_n(&b_tri[bw]);
     m->grounded = 0;
     if (ground) m->ground_n = gn;
     if (wall) { /* a walkable face ahead: mDrawStates._F, _380 */
@@ -16428,14 +16455,10 @@ static void update_mario_(void)
      * ground (50 squatting), eased 0.1 a frame to -gravity x 70 off it; checkGround keeps him on the ground. Hanging,
      * swimming, skating, as Rabbit / Teresa keep one 50 sphere 50 up. ponytail: _2C4's up is his up (MarioActorGravity blends mHeadVec and _368 by
      * _984), the 0.5 ease on _10._23 / _934 not kept */
-    static V3 b2C4;
     float brad = BODY_RADIUS;
     V3 boff = vmul(m->up, BODY_RADIUS);
-    if (pgc) {
-        if (m->grounded) b2C4 = vmul(m->up, m->squat ? 50.0f : 70.0f);
-        else b2C4 = vadd(vmul(b2C4, 0.9f), vmul(m->up, 7.0f));
-        boff = b2C4; brad = mw.binder_r; /* mBinder->mRadius (calcCenterPos) */
-    }
+    m_upd_2C4(m);
+    if (pgc) { boff = m_2C4; brad = mw.binder_r; } /* mBinder->mRadius (calcCenterPos) */
     V3 move = vadd(m->vel, m->vel_after), center = vadd(m->pos, boff), pos0 = m->pos;
     if (m->grounded && !m->jumping && !m->walling && !pgc) move = vadd(move, vmul(m->up, -GROUNDING)); /* follow the floor */
     V3 gn = m->up;
