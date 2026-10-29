@@ -28256,17 +28256,9 @@ static void dx_acam_update(void) /* the camera sheet's anim camera: CameraAnim o
 }
 static void dx_camera_end(void) /* DemoCameraKeeper::endCurrentCamera */
 {
-    if (dx.cam) camera_event_end();
+    if (dx.cam) camera_event_end_now(-1); /* endEventCamera(IsContinuous): back over its chunk's end frames */
     dx.cam = NULL;
-    if (dx.acam) { /* endAnimCamera / endEventCamera(IsContinuous). ponytail: no interpolation back (AnimCameraEndFrame) */
-        const DxCam *c = dx.acam;
-        char n[64];
-        float m[16];
-        dx_clip(c->row, c->anim, n, sizeof n);
-        dx_cast_matrix(c->row, m);
-        demo_camera(n, -1, m);
-        dx.acam = NULL;
-    }
+    if (dx.acam) { camera_override_end(((const DxCam *)dx.acam)->end); dx.acam = NULL; } /* endAnimCamera(AnimCameraEndFrame) */
 }
 
 static void dx_camera_first(const DxCam *c) /* DemoCameraKeeper::executeFirst */
@@ -28418,7 +28410,7 @@ static void dx_talk_anims(const Demo *d)
         int last = !dx.paused && dx.step >= cp->total - 1 && (cp->suspend || dx.part == d->h->nparts - 1);
         if (t->cam && in) { /* the camera animation, paused with the time keeper (updateCamera); endCamera at the end */
             const float *cm = dx_cast_m(t->row) ? dx_cast_m(t->row) : in->m; /* at its PosName when the sheet moved it */
-            if (last) { demo_camera(n, -1, cm); t->cam = 0; }
+            if (last) { camera_override_end(0); t->cam = 0; } /* endAnimCamera(_44 0) */
             else if (!demo_camera(n, t->camf, cm)) t->cam = 0;
             else if (!dx.paused) t->camf++;
         }

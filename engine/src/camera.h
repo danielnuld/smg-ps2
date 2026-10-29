@@ -14,7 +14,8 @@ typedef struct {
 typedef struct {
     unsigned short zone;
     unsigned char kind, type; /* kind 'c' / 's' / 'o'; type: CAM_* below, 255 = not ported (runs as XZ_PARA) */
-    unsigned short num, flags; /* flags bit i: noreset, nofovy, lofserpoff, antibluroff, collisionoff, subjectiveoff */
+    unsigned short num, flags; /* flags bit i: noreset, nofovy, lofserpoff, antibluroff, collisionoff, subjectiveoff;
+                                * 64 eflag.enableErpFrame; >> 7: eflag.enableEndErpFrame's camendint + 1 (0 off) */
     float dist, angle_a, angle_b, wpoint[3], axis[3], up[3], woffset[3], loffset, loffsetv, fovy, upper, lower,
         uplay, lplay;
     int camint, num1, num2, vpanuse;
@@ -56,6 +57,7 @@ unsigned camera_class_hash(const char *name);
 int camera_event_start(unsigned cls, int set, V3 up, V3 front, V3 pos);
 void camera_event_target(V3 dir, V3 pos);
 void camera_event_end(void);
+void camera_event_end_now(int frame); /* endEventCamera: at once, back over its chunk's end frames (frame, else 60) */
 /* an actor's camera (ActorCameraUtil startMultiActorCameraTargetOther): "<class>固有|共通<event><CameraSetId>" (camera.py
  * actor_hash; 共通 when the set has 0x8000), its target the matrix (up, front, pos) moved by camera_event_target;
  * stop: endMultiActorCamera, at once (the area camera blends back) */
@@ -73,6 +75,7 @@ void camera_prog_start(V3 watch, V3 eye, V3 up, int frames);
 void camera_prog_end(int frames);
 /* a demo's animated camera (CameraAnim): this pose until off */
 void camera_set_override(int on, V3 eye, V3 watch, V3 up, float fovy);
+void camera_override_end(int frame); /* endAnimCamera(frame): back to the game camera over frame (-1: 60) */
 /* CameraManGame::startStartPosCamera: the start's camera ("s:" Camera_id of its zone) until camera_start_pos_end */
 void camera_start_pos(int zone, int id);
 void camera_start_pos_end(void);
