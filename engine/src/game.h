@@ -235,7 +235,8 @@ int game_test_morph(int frame); /* test builds: the first MorphItemObjNeo taken 
 int game_test_butler_talk(int place); /* tests: Mario before the Butler; the talk director's nerve * 100 + talker */
 int game_test_butler_shoot(void); /* tests: a star piece at the Butler, its lecture hits */
 int game_test_demo_name(const char *name); /* tests: a demo requested by its name, 0 if the scene has none */
-int game_test_demo(int k);   /* tests: demo k's appear switch on (-1: the running demo's step, -1 none; -2: its anim camera's frame) */
+int game_test_spc(void);    /* tests: the StarPieceCounter: mode * 1000 + nerve * 100 + group * 10 + CoinCounter killed */
+int game_test_demo(int k);   /* tests: demo k's appear switch on (-1: the running demo's step, -1 none; -2: its anim camera's frame; -3: Mario's clip * 1000 + frame) */
 void game_bgm(const char *id); /* MR::startStageBGM by its sound id (MBGM_ / BGM_ / STM_ ...) */
 void game_bgm_stage(void);   /* MR::startCurrentStageBGM: the scenario's music stream (music_tab.h) */
 void game_bgm_tick(void);    /* per frame before audio_update: a sub BGM over, the stage BGM back */

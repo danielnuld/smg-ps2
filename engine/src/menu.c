@@ -457,7 +457,7 @@ static void sv_update(void)
  * window (InformationWindow) and the map show only where their packs are loaded (ending.bin / map.bin) */
 enum { SR_OFF, SR_APPEARSTAR, SR_WAITCOUNT, SR_COUNT, SR_DISPLAY, SR_DISAPPEAR, SR_APPEARSCORE, SR_APPEARPIECE, SR_DISPLAYPIECE,
        SR_WAITPIECE, SR_INFO, SR_INFOEND, SR_SHOWMAP };
-static struct { LytInst *l, *info; Nrv n; int kind, pieces, pressed, alive, delay, held, map_mode; const char *info_msg; SeqResult r; u16 text[160]; } sr;
+static struct { LytInst *l, *info; Nrv n; int kind, pieces, pressed, alive, delay, held, demo, map_mode; const char *info_msg; SeqResult r; u16 text[160]; } sr;
 
 /* the message with its string arguments (group 7 tags: their last parameter the argument's index) put in */
 static void msg_with_args(u16 *out, int cap, const u16 *src, const u16 *const *args, int nargs)
@@ -607,7 +607,7 @@ int menu_result_showing(void) { return sr.alive || sr.delay || sr.held; }
 void menu_result_start(void) /* StarReturnDemoStarter::tryStartStageResult: the held result window appears */
 {
     if (!sr.held || !sr.l) return;
-    sr.held = 0; sr.alive = 1; sr.n.next = -1; nrv_set(&sr.n, SR_APPEARSTAR);
+    sr.held = 0; sr.alive = sr.demo = 1; sr.n.next = -1; nrv_set(&sr.n, SR_APPEARSTAR);
 }
 
 /* --- Luigi: LuigiLetter, the pause menu's letter button, BrosButton and FileSelectInfo's CharaState after Petari -----
@@ -987,7 +987,10 @@ int menu_update(void)
     if (sr.delay && --sr.delay == 0 && sr.l) { /* the clear's demo sequence: StageResultInformer, then the save */
         sr.alive = 1; sr.n.next = -1; nrv_set(&sr.n, SR_APPEARSTAR);
     }
-    if (sr.alive && !menu_galaxy_map_active()) { sr_update(); return 1; } /* (paused while the map it opened shows) */
+    if (sr.alive && !menu_galaxy_map_active()) { /* (paused while the map it opened shows) */
+        sr_update();
+        return !sr.demo; /* a return demo's (requestMovementOn): the scene keeps moving under it, Mario in ResultWait */
+    }
     sv_take_errors();
     if (menu_saving()) { game_cursor_menu(); sv_update(); if (!pm.alive) return 1; }
     if (menu_scenario_selecting()) { game_cursor_menu(); ss_update(); return 1; }

@@ -1013,7 +1013,7 @@ int main(void)
             if (frame > 600 && frame % 90 == 0) {
                 menu_test_point("BoxRight");
                 pad_force = PAD_CROSS;
-                printf("result test f %u: X, result %d saving %d\n", frame, menu_result_showing(), menu_saving());
+                printf("result test f %u: X, result %d saving %d mario %d\n", frame, menu_result_showing(), menu_saving(), game_test_demo(-3));
             }
         }
 #endif

@@ -29190,6 +29190,7 @@ static void dx_keepers(const Demo *d) /* DemoExecutor::movement's keepers (not w
 
 int game_test_demo(int k)
 {
+    if (k == -3) return mario_anim && mario_anim->clip_id >= 0 ? mario_anim->clip_id * 1000 + (int)mario_anim->frame : -1; /* tests: Mario's clip and frame */
     if (k == -2) return dx.acam ? dx.acam_f : -1;
     if (k < 0) return dx.on ? dx.part * 1000 + dx.step : -1;
     if (k >= ndemos) return -2;
