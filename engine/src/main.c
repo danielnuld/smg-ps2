@@ -1402,6 +1402,7 @@ int main(void)
 #endif
 #if defined(TALK_TEST) && !defined(TEASER)
         if (frame >= 200 && frame < 2400) game_test_talk((int)frame); /* walks to the first SignBoard and reads it */
+        if (frame % 30 == 0 && frame < 2400) game_test_npc_turn((int)frame);
 #endif
 #ifdef SLIP_TEST
         if (frame >= 300 && frame < 2400) game_test_slip(); /* Mario left still on a steep slope */

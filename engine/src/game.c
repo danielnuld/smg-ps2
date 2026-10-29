@@ -202,7 +202,8 @@ typedef struct {
     int kcl_ready;   /* plants: the scene's collision is bound (set at the end of game_rebind) */
     int flip;        /* FlipPanel / FlipPanelReverse: row_step[row] holds FLIP_* bits */
     const Model *md_flip[2]; /* its "#PanelA" ("!", turned) and "#PanelEnd" (group complete) models (slice.py EXTRA) */
-    int npc;         /* talking NPC (npc_class): turns to face Mario when he is near */
+    int npc;         /* NPCActor's turning (npc_class): its ActorTalkParam index + 1, 0 none */
+    V3 nf, nu, nf0, nu0; /* NPCActor _A0 (its turned front / up) and _B0 (the placement's) */
     int dnpc;        /* Butler 1, TicoDomeLecture 2, Rosetta 3, ButlerExplain 4: demo casts (update_dome_npcs) */
     int hipsw;       /* hip drop switch: 1 PicketSwitch(Big) / HipDropSwitch (SW_A for good), 2 HipDropTimerSwitch */
     int rotor;       /* map part with a RotateSpeed: turns (rotor_matrix), carries Mario */
@@ -2416,16 +2417,33 @@ static int sky_class(const char *name)
     return 0;
 }
 
-/* NPCs that turn to Mario within NPC_TURN (Petari NPCActor: the talk range; ponytail: an instant turn, no talk, no
- * idle animation) */
-#define NPC_TURN 1000.0f
-static int npc_class(const char *name)
+/* NPCActor's turning after Petari (NPCActor::turnToPlayer / turnToDefault, NPCUtil tryStartTurnAction /
+ * tryStartTalkAction): MR::ActorTalkParam _0 turns to Mario within _4 (isNearPlayer), _1 while its talk runs, _8
+ * degrees a frame (faceToVector: not when he is over 0.95 along its up), then its up tilted toward him at _C degrees a
+ * frame up to _10 from the placement's (turnQuatYDirRad, clampVecAngleDeg); out of range (_0 or _1) back to the
+ * placement's front (turnToDefault: blendQuatUpFront at _8 over the angle). NPCActor::setDefaults: 1, 1, 2000, 4, 0,
+ * 0. Per class: Tico (TicoAstro) _C 0.5, _10 12 (Tico.cpp); Kinopio / KinopioAstro arg2 (mBehavior) 0 1 2 6 7 11
+ * setNoTurnAction, 4 (Mount) _0 _1 off; Caretaker _0 off, _8 3; PenguinCoach _8 1; Rosetta and PenguinMaster
+ * setMoveTalkNoTurnAction (no turn). TicoFat / TicoGalaxy (their own nerves), TicoShop (TicoComet), TicoReading and
+ * CollectTico (LiveActors) do not turn here. ponytail: the Wait / Turn / Talk / TalkTurn actions are not switched
+ * (the class's wait clip plays); Penguin / HoneyBee / Rabbit modes by their args keep the defaults */
+typedef struct { const char *cls; u8 near, talk; float dist, speed, tilt_speed, tilt_max; } NpcTurn;
+static const NpcTurn npc_turns[] = {
+    {"Tico", 1, 1, 2000.0f, 4.0f, 0.5f, 12.0f}, {"TicoAstro", 1, 1, 2000.0f, 4.0f, 0.5f, 12.0f},
+    {"Kinopio", 1, 1, 2000.0f, 4.0f, 0, 0}, {"KinopioAstro", 1, 1, 2000.0f, 4.0f, 0, 0},
+    {"Penguin", 1, 1, 2000.0f, 4.0f, 0, 0}, {"PenguinRacer", 1, 1, 2000.0f, 4.0f, 0, 0},
+    {"PenguinCoach", 1, 1, 2000.0f, 1.0f, 0, 0}, {"Caretaker", 0, 1, 2000.0f, 3.0f, 0, 0},
+    {"HoneyBee", 1, 1, 2000.0f, 4.0f, 0, 0}, {"Rabbit", 1, 1, 2000.0f, 4.0f, 0, 0}};
+static int npc_class(const char *name, const Row *r)
 {
-    static const char *const npcs[] = {"Kinopio", "KinopioAstro", "Tico", "TicoAstro", "TicoFat", "TicoShop", "TicoReading",
-                                       "TicoGalaxy", "Penguin", "PenguinRacer", "PenguinCoach", "PenguinMaster", "Caretaker",
-                                       "HoneyBee", "Rabbit", "Rosetta", "CollectTico"};
-    for (unsigned i = 0; i < sizeof npcs / sizeof npcs[0]; i++)
-        if (strcmp(name, npcs[i]) == 0) return 1;
+    for (unsigned i = 0; i < sizeof npc_turns / sizeof npc_turns[0]; i++) {
+        if (strcmp(name, npc_turns[i].cls)) continue;
+        if (!strncmp(name, "Kinopio", 7)) { /* mBehavior (arg2): setNoTurnAction / Mount */
+            int b = r->arg[2];
+            if (b == 0 || b == 1 || b == 2 || b == 4 || b == 6 || b == 7 || b == 11) return 0;
+        }
+        return (int)i + 1;
+    }
     return 0;
 }
 
@@ -3884,7 +3902,8 @@ void game_rebind(void)
             snprintf(v, sizeof v, "%s#PanelEnd", name);
             in->md_flip[1] = scene_model(sc, v);
         }
-        in->npc = npc_class(name);
+        in->npc = npc_class(name, r);
+        in->nu = in->nu0 = vnorm(v3(in->m[4], in->m[5], in->m[6])); in->nf = in->nf0 = vnorm(v3(in->m[8], in->m[9], in->m[10]));
         in->dnpc = strcmp(name, "Butler") == 0 ? 1 : strcmp(name, "TicoDomeLecture") == 0 ? 2 : strcmp(name, "Rosetta") == 0 ? 3 :
                    strcmp(name, "ButlerExplain") == 0 ? 4 : strcmp(name, "ButlerMap") == 0 ? 5 : 0;
         in->fat = strcmp(name, "TicoFat") == 0;
@@ -29034,6 +29053,77 @@ static void butler_sync(int select_start)
     butler_nrv = 0;
 }
 
+static V3 npc_turn_vec(V3 v, V3 from, V3 to, float rate) /* TQuat4f::setRotate(from, to, rate) applied to v */
+{
+    V3 ax = vcross(from, to);
+    float l = vlen(ax), a = acosf(fminf(fmaxf(vdot(from, to), -1.0f), 1.0f));
+    if (l < 1e-6f) return v;
+    return rot_axis(v, vmul(ax, 1.0f / l), a * rate);
+}
+static int npc_turn_quat(Inst *in, V3 from, V3 to, float ang) /* turnQuat: from toward to by at most ang radians */
+{
+    from = vnorm(from); to = vnorm(to);
+    float between = acosf(fminf(fmaxf(vdot(from, to), -1.0f), 1.0f));
+    float rate = between <= ang ? 1.0f : fminf(fmaxf(ang / between, 0.0f), 1.0f);
+    in->nf = vnorm(npc_turn_vec(in->nf, from, to, rate));
+    in->nu = vnorm(npc_turn_vec(in->nu, from, to, rate));
+    return between < 0.015f;
+}
+static int npc_turn_to_player(Inst *in, const NpcTurn *t, V3 to) /* NPCActor::turnToPlayer(_8, _C, _10) */
+{
+    int turned = 1;
+    if (!(vdot(in->nf, to) < 0 && vlen(vcross(in->nf, to)) < 0.001f)) { /* !isOppositeDirection(-zDir, toPlayer) */
+        float along = vdot(to, in->nu); /* faceToVector: vecKillElement */
+        V3 flat = vsub(to, vmul(in->nu, along));
+        turned = along > 0.95f ? 0 : npc_turn_quat(in, in->nf, flat, t->speed * (float)M_PI / 180.0f);
+    }
+    if (t->tilt_max == 0.0f) return turned;
+    if (vlen(vcross(to, in->nu0)) < 0.001f && vdot(to, in->nu0) > 0) return 0; /* isSameDirection(toPlayer, yDir) */
+    V3 side = vnorm(vcross(in->nu0, to)), up = vcross(to, side); /* makeAxisFrontUp */
+    float a = acosf(fminf(fmaxf(vdot(vnorm(up), in->nu0), -1.0f), 1.0f));
+    if (a * 180.0f / (float)M_PI > t->tilt_max) /* clampVecAngleDeg */
+        up = rot_axis(in->nu0, vnorm(vcross(in->nu0, up)), t->tilt_max * (float)M_PI / 180.0f);
+    return npc_turn_quat(in, in->nu, up, t->tilt_speed * (float)M_PI / 180.0f) & turned;
+}
+static void npc_turn_default(Inst *in, const NpcTurn *t) /* NPCActor::turnToDefault(_8): blendQuatUpFront to _B0 */
+{
+    float a = acosf(fminf(fmaxf(vdot(in->nf0, in->nf), -1.0f), 1.0f));
+    if (vdot(in->nf, in->nf0) < 0 && vlen(vcross(in->nf, in->nf0)) < 0.001f) return; /* isOppositeDirection(-zDir, zDir2) */
+    float rate = a > 1e-6f ? fminf(fabsf(t->speed * (float)M_PI / 180.0f / a), 1.0f) : 1.0f;
+    V3 nu = vnorm(npc_turn_vec(in->nu, in->nu, in->nu0, rate)), nf = vnorm(npc_turn_vec(in->nf, in->nu, in->nu0, rate));
+    in->nu = nu; in->nf = nf;
+    V3 target = vnorm(vsub(in->nf0, vmul(in->nu, vdot(in->nf0, in->nu))));
+    in->nf = vnorm(npc_turn_vec(in->nf, in->nf, target, rate));
+}
+void game_test_npc_turn(int frame) /* tests: the turning NPCs within 3000 of Mario: their front's angle to him, to their placement's */
+{
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!in->npc) continue;
+        V3 to = vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14]));
+        if (vlen(to) > 3000.0f) continue;
+        to = vnorm(vsub(to, vmul(in->nu, vdot(to, in->nu))));
+        printf("npc turn f %d: row %d %s dist %d, to Mario %d deg, from placement %d deg, tilt %d deg\n", frame, in->row,
+               npc_turns[in->npc - 1].cls, (int)vlen(vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14]))),
+               (int)(acosf(fminf(fmaxf(vdot(in->nf, to), -1.0f), 1.0f)) * 57.3f), (int)(acosf(fminf(fmaxf(vdot(in->nf, in->nf0), -1.0f), 1.0f)) * 57.3f),
+               (int)(acosf(fminf(fmaxf(vdot(in->nu, in->nu0), -1.0f), 1.0f)) * 57.3f));
+    }
+}
+static void update_npc_turn(void) /* the NPCs' wait nerves: tryStartTalkAction / tryStartTurnAction */
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->npc || !row_shown(in->row) || (in->dnpc == 3 && ros_demo)) continue;
+        const NpcTurn *t = &npc_turns[in->npc - 1];
+        V3 p = v3(in->m[12], in->m[13], in->m[14]), to = vsub(mario->pos, p);
+        float d = vlen(to);
+        to = d > 1e-6f ? vmul(to, 1.0f / d) : in->nf;
+        int talking = td.st >= 0 && talkers[td.st].row == in->row && (td.nrv == TD_TALK || td.nrv == TD_NEXT);
+        if (talking) { if (t->talk) npc_turn_to_player(in, t, to); }   /* isTalkTalking: _1 */
+        else if (d < t->dist) { if (t->near) npc_turn_to_player(in, t, to); } /* isNearPlayer(_4): _0 */
+        else if (t->near || t->talk) npc_turn_default(in, t);
+    }
+}
 /* Rosetta (Rosetta.cpp): WaitA from init, every sWaitActionInterval 300 steps getRandom(0, 2): 0 WaitA, 1 WaitB (her
  * move action); in a demo (startDemo: her Demo nerve) the sheet drives her (the talk anim ctrl, the actions' AnimName),
  * endDemo at its end: WaitA. RosettaDemoAstroDomeExplain::exeDemo: at 状況説明[絵本表示] (part 6) the cinema frame to
@@ -32754,6 +32844,7 @@ void game_update(void)
     LQ(2, update_halos());
     LQ(3, update_railers());
     LQ(4, update_talkers());
+    update_npc_turn();
     hud_update();
 
     LQ(5, update_talk_director());
@@ -33515,16 +33606,12 @@ void game_draw(void)
             }
             continue;
         }
-        if (in->npc && !(in->dnpc == 3 && ros_demo)) { /* its own up, its front turned to Mario when he is near */
-            V3 p = v3(in->m[12], in->m[13], in->m[14]), to = vsub(mario->pos, p);
-            if (vdot(to, to) < NPC_TURN * NPC_TURN) {
-                V3 up = vmul(v3(in->m[4], in->m[5], in->m[6]), 1.0f / in->s);
-                float cm[16];
-                basis_matrix(cm, p, up, to, 0);
-                for (int j = 0; j < 12; j++) if (j % 4 != 3) cm[j] *= in->s;
-                inst_draw(in, in->md, cm);
-                continue;
-            }
+        if (in->npc && !(in->dnpc == 3 && ros_demo)) { /* setBaseTRMtx(_A0) */
+            float cm[16];
+            basis_matrix(cm, v3(in->m[12], in->m[13], in->m[14]), in->nu, in->nf, 0);
+            for (int j = 0; j < 12; j++) if (j % 4 != 3) cm[j] *= in->s;
+            inst_draw(in, in->md, cm);
+            continue;
         }
         if (in->flip && in->md->skin) { inst_draw(in, in->md, in->m); continue; } /* turned by its clips */
         if (in->flip && in->md_flip[0]) { /* the face PanelA / PanelB / PanelEnd leave shown (static: no turn) */
