@@ -114,6 +114,7 @@ typedef struct {
     u32 nbrkc;
     const u8 *font;     /* FONT chunk (tools/msg.py: the talk font's glyphs) of the blob that had one, or NULL */
     u32 font_tex0;      /* that blob's first scene texture */
+    const u8 *font2;    /* FNT2 (subs.bin: CinemaFont26, layouts' font 3), its tex indices from font_tex0 too; or NULL */
     const u8 *talk;     /* TALK chunk (tools/msg.py: the scenario's talk messages), or NULL */
     const u8 *lytr[4];  /* LYTR chunks (tools/lyt.py: runtime layouts) of the blobs that had one */
     u32 lytr_tex0[4];   /* each one's blob's first scene texture */

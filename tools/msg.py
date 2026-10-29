@@ -242,18 +242,18 @@ def _text_tex(timg):
                 u_scale=1.0, v_scale=1.0)
 
 
-def font_subset_chunk(fsp, labels, lang=LANG):
-    """-> (FONT payload, [its text texture]): only the characters of those messages, no pictures, no balloon layouts
-    (LAYO offset 0); both tex indices 0 (the first texture of the blob)"""
+def font_subset_chunk(fsp, labels, lang=LANG, font="messagefont26.brfnt", tex=0):
+    """-> (FONT payload, [its text texture]): only the characters of those messages in `font`, no pictures, no balloon
+    layouts (LAYO offset 0); both tex indices `tex` (that texture of the blob)"""
     f = _arc(fsp, "LayoutData/Font.arc")
-    text = rfnt(f["messagefont26.brfnt"])
+    text = rfnt(f[font])
     m = Bmg(fsp, lang)
     chars = {ord("?")}
     for l in labels:
         chars |= m.chars(m.index[l])[0]
     timg, tg = atlas(text, chars - {0x0A}, (256, 256))
     glyphs = b"".join(struct.pack("<HHHBBbBbx", *g) for g in tg)
-    head = struct.pack("<HHHHbBBBI", len(tg), 0, 0, 0, text["line_feed"], text["ascent"], text["cell_h"], 0, 0)
+    head = struct.pack("<HHHHbBBBI", len(tg), 0, tex, tex, text["line_feed"], text["ascent"], text["cell_h"], 0, 0)
     return head + glyphs, [_text_tex(timg)]
 
 

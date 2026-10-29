@@ -8730,6 +8730,7 @@ static const u16 *tk_text;
 static int tk_nctl;
 static const TkGlyph *tk_glyph, *tk_icon;
 static int tk_nglyph, tk_nicon, tk_ttex = -1, tk_itex = -1, tk_lf = 33, tk_asc = 26;
+static const u8 *tk_font2; static int tk_font2_tex0; /* FNT2 (CinemaFont26: subs.bin's), game_text's font 3 */
 /* the talk balloons' layouts (tools/layout.py LAYO, after the FONT glyphs): quads in layout units, textures counted
  * from the font's text texture */
 typedef struct { s16 x, y, w, h; u16 tex; u8 rgba[4]; s16 u, v, uw, vh; u8 group, fill; s16 cu, cv, tu, tv; } LayQuad;
@@ -9616,6 +9617,7 @@ void game_font_init(const Scene *s) /* the FONT chunk's glyphs (also main.c's su
     tk_glyph = (const TkGlyph *)(p + 16);
     tk_icon = tk_glyph + tk_nglyph;
     tk_lay = *(const u32 *)(p + 12) ? p + *(const u32 *)(p + 12) : NULL;
+    tk_font2 = s->font2; tk_font2_tex0 = (int)s->font_tex0;
 }
 
 /* the talkers placed in the scene (SignBoard, Tico, Kinopio: their wait nerves' talk) */
@@ -10015,10 +10017,20 @@ static const u16 *tk_label_prefix(const char *prefix)
     return NULL;
 }
 /* lyt.c's text boxes: the talk font at screen (x, y top), a font size in layout units (MessageFont26's cell 27 x 33),
- * its character space; draw 0 only measures. ponytail: every box in MessageFont26 (MenuFont64 / NumberFont boxes too) */
+ * its character space; draw 0 only measures; font 3 CinemaFont26 (subs.bin's FNT2). ponytail: MenuFont64 boxes in
+ * MessageFont26 (NumberFont / PictureFont through the icon atlas) */
 float game_text(const u16 *s, int font, float x, float y, float fsx, float fsy, float space, u32 rgb, float alpha, int draw)
 {
     if (!s) return 0;
+    if (font == 3) { /* CinemaFont26: FNT2's glyphs and atlas for this string (MessageFont26 without one) */
+        if (!tk_font2) return game_text(s, 0, x, y, fsx, fsy, space, rgb, alpha, draw);
+        const TkGlyph *g0 = tk_glyph; int n0 = tk_nglyph, t0 = tk_ttex, lf0 = tk_lf, a0 = tk_asc;
+        tk_nglyph = *(const u16 *)tk_font2; tk_ttex = tk_font2_tex0 + *(const u16 *)(tk_font2 + 4);
+        tk_lf = (s8)tk_font2[8]; tk_asc = tk_font2[9]; tk_glyph = (const TkGlyph *)(tk_font2 + 16);
+        float tw = game_text(s, 0, x, y, fsx, fsy, space, rgb, alpha, draw);
+        tk_glyph = g0; tk_nglyph = n0; tk_ttex = t0; tk_lf = lf0; tk_asc = a0;
+        return tw;
+    }
     u16 conv[4 * 48 + 1];
     if (font) { /* NumberFont / PictureFont boxes: each character as a picture tag (the icon atlas: digits at
                  * 0x1000 + character, pictures at character - 0x30) */
