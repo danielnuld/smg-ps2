@@ -12156,27 +12156,7 @@ static void m_try_jump(Player *m) /* tryJump: 1st / 2nd / 3rd jump, or the turn,
 }
 
 static int near0(V3 v);
-static void m_try_drop(Player *m) /* tryDrop: off a ledge (cDropFrontSpeed 2) */
-{
-    m->squat_lock = 1;
-    m_set_jv(m, vmul(m->face, m->walk * 2.0f));
-    if (near0(m->s8F8) && m->s23) { /* sliding: down the ground's slope */
-        V3 side = vcross(vmul(m->up, -1.0f), m->ground_n);
-        side = near0(side) ? side : vnorm(side);
-        m->s8F8 = vcross(m->ground_n, side);
-        if (!near0(m->s8F8)) m->s8F8 = vnorm(m->s8F8);
-    }
-    if (!near0(m->s8F8)) { /* the slide's velocity, its gravity part cut, a lift by the map's last push (up to 8) */
-        V3 jv = vtangent(m->s8F8, m->up);
-        if (vlen(m->prev_vel) > 20.0f) jv = vadd(jv, vmul(m->up, 10.0f));
-        else { jv = vadd(jv, vmul(m->up, fminf(vlen(m->s288), 8.0f))); m->s8F8 = v3(0, 0, 0); }
-        m_set_jv(m, jv);
-    }
-    m->jump_kind = 0;
-    m_proc_jump(m, 1);
-    m->jumping = 1; m->connect = 0; m->digital = 1;
-    if (m->wall) m_stop_walk(m);
-}
+static void m_try_drop(Player *m);
 
 static void m_cancel_tornado(Player *m) /* cancelTornadoJump */
 {
@@ -14136,6 +14116,39 @@ static int m_wall_update(Player *m)
         }
     }
     return 1;
+}
+
+/* tryDrop: off a ledge (cDropFrontSpeed 2); a front / side wall within 80 of his ground place keeps him on the ground,
+ * pushed off it a tenth of the rest. ponytail: mDrawStates._B, the carried move (_184), _340, _428 after the slope
+ * slides, the bee's timers and ショート着地 are not kept */
+static void m_try_drop(Player *m)
+{
+    if (mw.w8) {
+        V3 h = vtangent(vsub(mw.p4E8, mw.ground_pos), m->up), n = tri_n(&mw.front);
+        if (vdot(h, n) < 0.0f && vlen(h) < 80.0f) { m->grounded = 1; m->s350 = vadd(m->s350, vmul(n, (80.0f - vlen(h)) * 0.1f)); return; }
+    }
+    if (mw.w1A) {
+        V3 h = vtangent(vsub(mw.p500, mw.ground_pos), m->up), n = tri_n(&mw.side);
+        if (vdot(h, n) < 0.0f && vlen(h) < 80.0f) { m->s350 = vadd(m->s350, vmul(n, (80.0f - vlen(h)) * 0.1f)); m->grounded = 1; return; }
+    }
+    m->squat_lock = 1;
+    m_set_jv(m, vmul(m->face, m->walk * 2.0f));
+    if (near0(m->s8F8) && m->s23) { /* sliding: down the ground's slope */
+        V3 side = vcross(vmul(m->up, -1.0f), m->ground_n);
+        side = near0(side) ? side : vnorm(side);
+        m->s8F8 = vcross(m->ground_n, side);
+        if (!near0(m->s8F8)) m->s8F8 = vnorm(m->s8F8);
+    }
+    if (!near0(m->s8F8)) { /* the slide's velocity, its gravity part cut, a lift by the map's last push (up to 8) */
+        V3 jv = vtangent(m->s8F8, m->up);
+        if (vlen(m->prev_vel) > 20.0f) jv = vadd(jv, vmul(m->up, 10.0f));
+        else { jv = vadd(jv, vmul(m->up, fminf(vlen(m->s288), 8.0f))); m->s8F8 = v3(0, 0, 0); }
+        m_set_jv(m, jv);
+    }
+    m->jump_kind = 0;
+    m_proc_jump(m, 1);
+    m->jumping = 1; m->connect = 0; m->digital = 1;
+    if (mw.w8) m_stop_walk(m);
 }
 
 /* checkAllWall: the faces round the centre within 80 (90 swimming), not floors nor ceilings (|n . head| <= 0.5), by
