@@ -6298,6 +6298,10 @@ static void draw_oceanspheres(V3 eye, V3 right, V3 cup)
         int inside = vlen(to) <= rad;
         /* ponytail: left out when behind the camera or past 30000 (Petari draws it, far ones from a display list) */
         if (!inside && (vdot(vmul(to, -1.0f), fwd) < -rad || vlen(to) - rad > 30000.0f)) continue;
+        { /* wholly outside the view (its waves reach 15 past rad): nothing of it would be drawn */
+            float cc[3] = {c.x, c.y, c.z};
+            if (!inside && !render_visible(cc, rad + 20.0f)) continue;
+        }
         for (int i = 0; i < o->npts; i++) { /* OceanSpherePoint::updatePos */
             const OsPoint *pt = &o->pt[i];
             float h = s1[(int)pt->w1 & 23] + s2[(int)pt->w2 & 23];
