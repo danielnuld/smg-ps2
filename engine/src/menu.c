@@ -735,6 +735,7 @@ static void pml_appear(void)
     if (pml.on && gd_luigi_hiding(st, scen)) btn_appear(&pml.b); /* MR::isOnLuigiHiding */
 }
 static int pml_shown(void) { return pml.on && !btn_hidden(&pml.b); }
+int menu_test_pml(void) { return pml.on * 10 + pml_shown(); } /* tests: the letter button made (10), shown (1) */
 static int pml_try_select(void) { return pml_shown() && btn_try_select(&pml.b); }
 static int pml_decided(void) /* exeDecided's letter part: 1 once it is decided and waits (exeLuigiLetter next) */
 {

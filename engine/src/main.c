@@ -1285,12 +1285,14 @@ int main(void)
         }
 #endif
 #if defined(PACKS) && defined(LETTER_TEST)
-        { /* a scenario with Luigi's letter (EggStarGalaxy/6): the letter as KinopioAstro's (menu_luigi_letter) and its
-           * IconAButton; X once the icon waits: closed */
+        { /* a scenario with Luigi's letter (EggStarGalaxy/6): START, the pointer on the pause menu's LetterButton, X: the
+           * letter and its IconAButton (PauseMenu::exeLuigiLetter); X once the icon waits: closed */
             pad_force = 0;
-            if (frame == 600) menu_luigi_letter("EggStarGalaxy", 1);
-            if (frame == 900) pad_force = PAD_CROSS;
-            if (frame >= 600 && frame < 1100 && frame % 20 == 0) printf("letter test f %u: letter %d\n", frame, menu_test_letter());
+            if (frame == 900) pad_force = PAD_START;
+            if (frame == 1020) printf("letter test f %u: paused %d, pointer on BoxButton3 %d\n", frame, menu_paused(), menu_test_point("BoxButton3"));
+            if (frame == 1040) pad_force = PAD_CROSS;
+            if (frame == 1300) pad_force = PAD_CROSS;
+            if (frame >= 900 && frame < 1500 && frame % 20 == 0) printf("letter test f %u: paused %d button %d letter %d\n", frame, menu_paused(), menu_test_pml(), menu_test_letter());
         }
 #endif
 #if defined(PACKS) && defined(SCENE_TEST)
