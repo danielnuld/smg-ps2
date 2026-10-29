@@ -32521,18 +32521,22 @@ static Anim *plant_pose(const Inst *in, const Plant *p)
     return &a;
 }
 
-static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle)
+/* basis_matrix with its angle's cosine and sine given (the pickups share one angle a frame) */
+static void basis_matrix_cs(float m[16], V3 pos, V3 up, V3 fwd, float c, float s)
 {
     V3 f = vnorm(vtangent(fwd, up));
     if (vlen(f) < 0.1f) f = vnorm(vtangent(v3(1, 0, 0), up));
     V3 r = vcross(up, f);
-    float c = cosf(angle), s = sinf(angle);
     V3 x = vadd(vmul(r, c), vmul(f, -s)), z = vadd(vmul(r, s), vmul(f, c));
     mat_identity(m);
     m[0] = x.x; m[1] = x.y; m[2] = x.z;
     m[4] = up.x; m[5] = up.y; m[6] = up.z;
     m[8] = z.x; m[9] = z.y; m[10] = z.z;
     m[12] = pos.x; m[13] = pos.y; m[14] = pos.z;
+}
+static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle)
+{
+    basis_matrix_cs(m, pos, up, fwd, cosf(angle), sinf(angle));
 }
 
 /* a walker's up against gravity, kept while it stands still (NonActive ones, waiting ones): one gravity_at per
@@ -32561,12 +32565,12 @@ static V3 pick_up(const Pickup *cp)
 
 static void draw_pickups(const Pickup *p, int n, const Model *md, u8 r, u8 g, u8 b, float rot)
 {
-    float m[16];
+    float m[16], c = cosf(rot), sn = sinf(rot);
     if (!md) return;
     for (int i = 0; i < n; i++) {
         if (!pickup_shown(&p[i])) continue;
         V3 up = pick_up(&p[i]);
-        basis_matrix(m, p[i].pos, up, v3(0, 0, 1), rot);
+        basis_matrix_cs(m, p[i].pos, up, v3(0, 0, 1), c, sn);
         render_model(md, m, r, g, b);
     }
 }
@@ -33215,9 +33219,10 @@ void game_draw(void)
     draw_pickups(coins, ncoins, m_coin, 0xF0, 0xD0, 0x30, coin_rot);
     draw_pickups(purple, npurple, m_purple, 0xB0, 0x50, 0xF0, coin_rot);
     render_light(default_light(LIGHT_PLANET)); /* StarPiece: its class's draw buffer */
+    float pc = cosf(piece_rot), ps = sinf(piece_rot);
     for (int i = 0; m_piece && i < npieces; i++) {
         if (!pickup_shown(&pieces[i])) continue;
-        basis_matrix(m, pieces[i].pos, pick_up(&pieces[i]), v3(0, 0, 1), piece_rot);
+        basis_matrix_cs(m, pieces[i].pos, pick_up(&pieces[i]), v3(0, 0, 1), pc, ps);
         render_model(m_pieces[piece_col[i]], m, 0x60, 0xD0, 0xF0);
     }
     for (int i = 0; m_piece && i < MAX_SHOTS; i++)
