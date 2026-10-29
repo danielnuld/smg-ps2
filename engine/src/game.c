@@ -1972,7 +1972,8 @@ void game_init(const Scene *s, const unsigned char *blob)
         if (stone_row(&s->objs[i]) && s->objs[i].arg[2] >= 0) box_pieces += 8; /* a star piece per stone */
         if (!strcmp(tn, "Butterfly") && s->objs[i].arg[1] < 0) box_pieces++; /* the pointer brings one out */
         if (!strcmp(tn, "StinkBugSmall")) box_pieces += 3; /* declareStarPiece(3) */
-        if (!strcmp(tn, "PhantomCandlestand") || !strcmp(tn, "TeresaMansionCandlestand") || !strcmp(tn, "CandlestandIceVolcano")) {
+        if (!strcmp(tn, "PhantomCandlestand") || !strcmp(tn, "TeresaMansionCandlestand") || !strcmp(tn, "CandlestandIceVolcano") ||
+            !strcmp(tn, "PhantomTorch") || !strcmp(tn, "PhantomBonfire")) {
             /* arg0 -1 a coin, 0 a star piece */
             if (s->objs[i].arg[0] == -1) { ncoins++; box_coins++; } else if (s->objs[i].arg[0] == 0) box_pieces++;
         }
@@ -5473,6 +5474,24 @@ int game_test_candle(int how)
             mario->hvel = v3(0, 0, 0); mario->vup = 0;
             return insts[i].row;
         }
+    return -1;
+}
+
+int game_test_torch(int how) /* tests: Mario into the first lit PhantomTorch / PhantomBonfire's flame (0) or 200 off it spinning (1) */
+{
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        const char *n = sc->types + 32 * r->type;
+        if ((strcmp(n, "PhantomTorch") && strcmp(n, "PhantomBonfire")) || row_turn[i] || !row_shown(i) || r->arg[1] != -1) continue;
+        float m[16];
+        mat_translate_rot_scale(m, r->pos, r->rot, r->scale);
+        V3 up = vnorm(v3(m[4], m[5], m[6])), x = vnorm(v3(m[0], m[1], m[2])), base = row_pos(r);
+        mario->up = up;
+        mario->pos = how ? vadd(base, vmul(x, 200.0f)) : vsub(vadd(base, vmul(up, 70.0f * r->scale[0])), vmul(up, HIT_BODY_H));
+        if (how) mario->spin_timer = SPIN_TIME;
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return (int)i;
+    }
     return -1;
 }
 
@@ -10642,6 +10661,55 @@ static void fireball_hit_walkers(int b)
 }
 
 static int fireball_hits_snowman(V3 p); /* update_snowmen */
+/* PhantomTorch.cpp (PhantomTorch, PhantomBonfire: no model, its effect named as the object): Wait (its effect, its
+ * level sound), its body (50 x scale at 70 x scale up) burns Mario (sendMsgEnemyAttackFire: Attack, 30 frames) unless
+ * decorative (arg1 set); a spin within 350 puts it out (Extinguish: the effect's Extinguish, SE_OJ_PHANTOM_TOACH_OFF;
+ * 15 frames later kill: arg0 -1 a coin, 0 a star piece (appearStarPiece 10, 40), soundOrder: SE_SY_CANDLE_COMBO_1..5
+ * by how many of its group are left, its dead switch). row_turn 0 wait, 1 attack, 2 out; row_step its frames.
+ * ponytail: no clipping (startClipped / endClipped: its effect runs while the row is shown) */
+static void update_torches(void)
+{
+    static int t[2] = {-2, -2};
+    static const Scene *at;
+    if (at != sc) { at = sc; t[0] = scene_type(sc, "PhantomTorch"); t[1] = scene_type(sc, "PhantomBonfire"); }
+    if (t[0] < 0 && t[1] < 0) return;
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if ((r->type != t[0] && r->type != t[1]) || !row_shown(i)) continue;
+        const char *name = sc->types + 32 * r->type;
+        float m[16], s = r->scale[0];
+        mat_translate_rot_scale(m, r->pos, r->rot, r->scale);
+        V3 p = row_pos(r), up = vnorm(v3(m[4], m[5], m[6])), body = vadd(p, vmul(up, 70.0f * s));
+        signed char *st = &row_turn[i];
+        unsigned short *n = &row_step[i];
+        if (*st == 2) { /* Extinguish */
+            if (++*n == 15) { /* kill */
+                if (r->arg[0] == -1) pop_coins(p, up, 1);
+                else if (r->arg[0] == 0) { drop_pieces(p, up, 1); se_start(SE_OJ_STAR_PIECE_BURST, &p.x); }
+                int left = 0; /* soundOrder: the group's actors not dead (this one still counts) */
+                for (u32 j = 0; r->group >= 0 && j < sc->nobjs; j++)
+                    left += sc->objs[j].group == r->group && sc->objs[j].zone == r->zone && !row_dead[j];
+                if (r->group >= 0) se_start(left == 1 ? SE_SY_CANDLE_COMBO_5 : left == 2 ? SE_SY_CANDLE_COMBO_4 :
+                                            left == 3 ? SE_SY_CANDLE_COMBO_3 : left == 4 ? SE_SY_CANDLE_COMBO_2 : SE_SY_CANDLE_COMBO_1, NULL);
+                row_kill((int)i);
+            }
+            continue;
+        }
+        fx_named(name, name, m, NULL, r); /* emitEffect(mParticle) */
+        if (*st == 1 && ++*n >= 30) { *st = 0; *n = 0; } /* Attack: isStep 30 */
+        if (r->arg[1] != -1) continue; /* mIsDecorative */
+        if (*st == 0 && vlen(vsub(c, body)) < 50.0f * s + HIT_BODY_R && !mario->hurt_timer) { /* attackSensor */
+            hurt_mario(body, 20.0f);
+            *st = 1; *n = 0;
+        }
+        if (*st == 0 && mario->spin_timer > 0 && vlen(vsub(c, body)) < 350.0f) { /* isInSpinStormRange 350 */
+            *st = 2; *n = 0;
+            fx_named(name, "Extinguish", m, NULL, NULL);
+            se_start(SE_OJ_PHANTOM_TOACH_OFF, &p.x);
+        }
+    }
+}
 static int fireball_lights_candle(V3 p) /* Candlestand::receiveMsgPlayerAttack: a WaitFire one within 150 x scale */
 {
     for (int i = 0; i < ninsts; i++) {
@@ -33007,6 +33075,7 @@ void game_update(void)
     LQ(52, update_jets());
     LQ(53, update_screws());
     LQ(54, update_candles());
+    update_torches();
     LQ(55, update_fountains());
     LQ(56, update_strays());
     LQ(57, update_bubbles());

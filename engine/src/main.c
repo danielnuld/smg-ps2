@@ -1749,6 +1749,10 @@ int main(void)
         if (frame >= 150 && frame < 600 && frame % 40 == 0) /* into a flame, then a spin by the next, in turn */
             printf("candle test f %u: row %d, life %d, coins %d\n", frame, game_test_candle(frame % 80 == 0), game_life(), game_coins());
 #endif
+#ifdef TORCH_TEST
+        if (frame >= 150 && frame < 900 && frame % 40 == 0) /* into a flame, then a spin by the next, in turn */
+            printf("torch test f %u: row %d, life %d, coins %d\n", frame, game_test_torch(frame % 80 == 0), game_life(), game_coins());
+#endif
 #ifdef SCREW_TEST
         { /* Mario dropped on a screw switch (150), a spin once he stands on it (180) */
             if (frame == 150) printf("screw test f %u: row %d\n", frame, game_test_screw());
