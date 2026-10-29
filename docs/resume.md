@@ -2,7 +2,32 @@
 
 Last updated 2026-10-09. Detail and numbers: `docs/phase2-report.md`; tasks: `openspec/changes/phase-2-full-engine/tasks.md`.
 
-## Console release (2026-10-23 / 24): read this first
+## Parallel agents (2026-10-28 / 29): read this first
+
+Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches agent-*; D: is exFAT, no junctions: they
+build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
+`mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
+`MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- #9 (issue #3) EE performance: Good Egg bench, EE time a frame (render_begin's flip / VIF / clear wait now printed
+  apart: ~3.4 ms of the old "draw" was that wait): start view 19.9 -> 12.5 ms (logic 6.7 -> 5.1, draw 12.7 -> 7.0),
+  path 16.4 -> 11.5, worst 38-42 -> 26. Clip cache sized per clip (inflates 8300-15000 -> 7-22 a bench), skinned
+  batches written straight into the VIF chain (emit_batch, checked equal to packet2's), OceanSphere off outside the
+  view, clip-name hash, NDEBUG, pickups' one sin / cos, bloom / area rows listed once, kcl_check_sphere early out.
+  route EggStar 1 identical (star at frame 3781). Tried, no gain: ocean GS registers precomputed, lazy projection.
+  Ideas left: Mario's anim_skin several times a frame, plants (CutBush / FlowerGroup ~1.3 ms), update_mario ~1 ms,
+  launched pieces, items, ocean spheres on screen (~2 ms). Second round in progress.
+- #7 (issue #6) star return demo: MarioHair and Cap0 hidden in ResultWaitStart (21-221), DemoFlyLightDemo at step 30
+  (needs AstroDome / AstroGalaxy repacked: slice.py MarioHair extra), the Butler lecture's pointing SE. Skipped:
+  PointerGuidance / StarPieceCounter TicoEat mode, CinemaFont26 (two text fonts in subs.bin), camera interpolation
+  back after demos, BGM fade-in. Seen: the result window stops the whole game update (Mario's anim too); Petari keeps
+  the scene running.
+- #8 (issue #5, partial) Good Egg rim: tools/dolphin/trace.py (Mario every frame in Dolphin, frames labelled by his
+  timers _3CE / _3BC), _41C starts at 0 and slip_keep's misuses replaced by Petari's conditions, tryDrop's _8F8 branch.
+  The Wii at g 130 takes a 60.7 deg face (checkGroundOnSlope), slides g 131-132, drops g 133, lands g 142; the port
+  takes the 58.7 deg one 14 higher and walks on. In progress: checkGround / checkGroundOnSlope (patch
+  D:/smg-ps2-wt/goodegg-checkground-wip.patch), Petari's binder 60 (the port's sphere is 50 at 50), the shadow pull.
+
+## Console release (2026-10-23 / 24)
 
 First runs on Daniel's SCPH-75001 (ORBIT launcher, Neutrino over udpfs from nuld; console log = Neutrino's udptty
 broadcast on UDP 18194, captured by a listener on the PC). What the console needed, all in the tree, not committed:

@@ -21,7 +21,7 @@ Research project. Not affiliated with or endorsed by Nintendo.
 | Saves | Memory card (`mc0:/SMGPS2`), with the PS2 browser icon |
 | Sound | Sound effects per scenario (SPU2 ADPCM), streamed music, multitrack BGM states; still being cut down to fit |
 | Rumble | DualShock 2 vibration where the Wii remote vibrates |
-| Performance | PCSX2: 60 fps in most places. Real PS2: 26-33 fps in heavy places, 43-58 in light ones (EE bound, work in progress) |
+| Performance | PCSX2: 60 fps in most places. Real PS2 (before the 2026-10-29 work): 26-33 fps in heavy places, 43-58 in light ones; EE time a frame since cut 30-37 % on the Good Egg bench (19.9 -> 12.5 ms), to be measured on the console |
 
 Controls: left stick moves, X jumps, Square spins, R1 crouch, the right stick moves the star pointer, L1 shoots star
 pieces, R2 grabs (Pull Stars, the dome's blue star), L2 resets the camera, D-pad left / right turns it, D-pad up looks
