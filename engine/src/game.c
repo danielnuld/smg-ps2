@@ -14445,7 +14445,8 @@ static int m_set_ground(Player *m, const Tri *t, V3 at) /* setGroundNorm, mGroun
  * the simple check (sliding, Teresa, or on more than mFlatAngle - 5 with no flatter face under him): one line down
  * 60 (+ 2 x the slope over 30, up to 40). ponytail: no WKFALL nudges at an edge, _414, _10._22, _1C._13 / _14, Fur,
  * the sliding select by _16C, force Trans (_D) */
-static struct { int s14, s36; } mgc; /* mMovementStates._14 (no ground last check), _36 (the simple check) */
+static struct { int s14, s36, s22; } mgc; /* mMovementStates._14 (no ground last check), _36 (the simple check), _10._22
+                                            * (MarioActor::movement held the last slide back: no pull) */
 static int m_check_ground(Player *m)
 {
     V3 g = vmul(m->up, -1.0f), hp, p[4];
@@ -14471,7 +14472,8 @@ static int m_check_ground(Player *m)
         m_set_ground(m, &t, hp);
         if (rising) return 0;
         mgc.s14 = 0;
-        if ((m->s23 || m->tsi) && player_mode != PM_TERESA) {
+        if (mgc.s22) mgc.s22 = 0; /* (_1C._C) */
+        else if ((m->s23 || m->tsi) && player_mode != PM_TERESA) {
             V3 down = vmul(m->ground_n, -1.0f);
             float v = vdot(vsub(hp, m->pos), down);
             if (fabsf(v) < dist && fabsf(v) > 1.0f) {
@@ -16167,6 +16169,7 @@ static void update_mario_(void)
         m->jumping = 1; m->digital = 1; m->keep_jump = 1; m->jump_from = m->pos; m->hip = 0;
     }
     /* updateGroundInfo: on his feet (or waiting out mDropWaitTime) he checks his ground before the action */
+    V3 p270 = m->pos; /* MarioActor _270: his place before the update */
     int pgc = !m->walling && !hg.on && !swimming && !m->skate && !m->rabbit && !m->teresa && !dmg.st && !fo.on, landed = 0;
     if (pgc) {
         int was = m->grounded;
@@ -16265,7 +16268,19 @@ static void update_mario_(void)
         off = vtangent(off, m_tower.up);
         if (vlen(off) > 1e-6f) m->pos = vadd(m_tower.c, vadd(vmul(vnorm(off), m_tower.r - 200.0f), vmul(m_tower.up, h)));
     }
-    m->s288 = vsub(vsub(m->pos, pos0), vadd(m->vel, m->vel_after)); /* MarioActor::movement: _288 */
+    { /* MarioActor::movement: _288 (the map's push in the move), a push undone half when it flips back, the walk stopped
+       * by a push over twice the move, a slide held back flagged (_10._22). ponytail: Mario::push (_350, the slide's
+       * push back up and the 坂すべり pushes) is not ported */
+        V3 vel = vadd(m->vel, m->vel_after), moved = vsub(m->pos, pos0), last = m->s288;
+        m->s288 = vsub(moved, vel);
+        float l = vlen(m->s288), ll = vlen(last);
+        if (pgc && l > 1e-4f && ll > 1e-4f && vdot(m->s288, last) / (l * ll) < -0.999f && fabsf(l - ll) < 1.0f)
+            m->pos = vsub(m->pos, vmul(m->s288, 0.5f)); /* isOppositeDirection */
+        if (pgc && l > 0.1f && !m->squat && !near0(vel) && l > 2.0f * (vlen(vsub(pos0, p270)) + vlen(vel))) m_stop_walk(m);
+        if (pgc && m->s23 && !(vlen(vel) < vlen(moved))) {
+            V3 d = near0(m->s8F8) ? m->s8F8 : vnorm(m->s8F8);
+            if (vlen(vel) > 20.0f && vdot(moved, d) < vdot(vel, d) * 0.5f) mgc.s22 = 1;
+        }
     }
     /* writeBackPhyisicalVector: a wall halves the jump's part into it; on the ground walking into one slows the walk */
     if (m->wall && m->jumping && !m->wall_free) {
