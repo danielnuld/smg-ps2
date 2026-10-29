@@ -29042,8 +29042,7 @@ static void butler_sync(int select_start)
  * TalkA / B / C at a talk's start, endDemoWithInterpole as endDemo */
 static void rosetta_update(Inst *in)
 {
-    if (!in->anim) return;
-    if (dx.on && ros_demo) {
+    if (dx.on && ros_demo) { /* the demos' executors (RosettaDemoAstroDome*): not her model's, with or without its pose */
         if (!strcmp(demos[dx.cur].h->name, "ロゼッタ状況説明デモ")) {
             if (dx_first(6)) { menu_cinema(0); menu_monologue_start(); ros_book = 1; dx.paused = 1; } /* tryFrameToScreenCinemaFrame, appear, pauseTimeKeepDemo */
             else if (ros_book && !menu_monologue_alive()) { ros_book = 0; dx.paused = 0; }          /* isDead: resumeTimeKeepDemo */
@@ -29053,6 +29052,7 @@ static void rosetta_update(Inst *in)
         }
         return;
     }
+    if (!in->anim) { ros_demo = 0; ros_book = 0; return; }
     if (ros_demo) { ros_demo = 0; ros_book = 0; anim_start(in->anim, "rosetta/waita", 0); } /* endDemo: startBckNoInterpole WaitA */
     const char *cur = in->anim->clip_id >= 0 ? sc->clips[in->anim->clip_id].name : "";
     if (strcmp(cur, "rosetta/waita") && strcmp(cur, "rosetta/waitb")) obj_play(in, "waita", 1, 0);
