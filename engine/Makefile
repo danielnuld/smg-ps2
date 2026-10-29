@@ -7,7 +7,7 @@ EE_INCS += -Isrc -I$(PS2SDK)/ports/include
 EE_LIBS += -L$(PS2SDK)/ports/lib -lz -lcdvd -lmc -lmpeg -laudsrv -lpacket2 -ldraw -lgraph -ldma -lpadx -lpatches -ldebug -lm
 # movies: libmpeg's memalign / free from the packs' region (main.c __wrap_memalign)
 EE_LDFLAGS += -Wl,--wrap=memalign -Wl,--wrap=free
-EE_CFLAGS += -O2 -Wall -Wextra -std=gnu99 -ffast-math $(EXTRA)
+EE_CFLAGS += -O2 -Wall -Wextra -std=gnu99 -ffast-math -DNDEBUG $(EXTRA)
 
 all: $(EE_BIN)
 

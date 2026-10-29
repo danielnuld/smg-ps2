@@ -390,6 +390,10 @@ void anim_advance(Anim *a)
     }
 }
 
+/* the half-angle sine / cosine of a joint rotation (degrees); most joints leave some axes at 0, where they are exact
+ * (sinf keeps a zero's sign) and the libm calls are skipped */
+#define COSH(d) ((d) == 0.0f ? 1.0f : cosf((d) * h))
+#define SINH(d) ((d) == 0.0f ? (d) * h : sinf((d) * h))
 void anim_pose(Anim *a)
 {
     const Skin *k = a->skin;
@@ -438,8 +442,8 @@ void anim_pose(Anim *a)
             }
         /* rotation as a quaternion: R = Rz * Ry * Rx -> q = qz * qy * qx */
         const float h = 3.14159265f / 360.0f;
-        float cx = cosf(r[0] * h), sx = sinf(r[0] * h), cy = cosf(r[1] * h), sy = sinf(r[1] * h);
-        float cz = cosf(r[2] * h), sz = sinf(r[2] * h);
+        float cx = COSH(r[0]), sx = SINH(r[0]), cy = COSH(r[1]), sy = SINH(r[1]);
+        float cz = COSH(r[2]), sz = SINH(r[2]);
         float q[4] = {cz * cy * sx - sz * sy * cx, cz * sy * cx + sz * cy * sx, sz * cy * cx - cz * sy * sx,
                       cz * cy * cx + sz * sy * sx}; /* x, y, z, w */
         if (nt > 1 && tot > 0.0f) { /* XanimeCore::calcBlend: scale / translation by the normalised weights, the rotation
@@ -450,8 +454,8 @@ void anim_pose(Anim *a)
                 float sk[3], rk[3], tk[3];
                 if (j < ((const u16 *)tc[k])[2]) clip_local(tc[k], tf[k], j, sk, rk, tk);
                 else for (int i = 0; i < 3; i++) { sk[i] = jt->scale[i]; rk[i] = jt->rot[i] * (180.0f / 3.14159265f); tk[i] = jt->trans[i]; }
-                float bx = cosf(rk[0] * h), ax_ = sinf(rk[0] * h), by = cosf(rk[1] * h), ay = sinf(rk[1] * h);
-                float bz = cosf(rk[2] * h), az = sinf(rk[2] * h);
+                float bx = COSH(rk[0]), ax_ = SINH(rk[0]), by = COSH(rk[1]), ay = SINH(rk[1]);
+                float bz = COSH(rk[2]), az = SINH(rk[2]);
                 float qk[4] = {bz * by * ax_ - az * ay * bx, bz * ay * bx + az * by * ax_, az * by * bx - bz * ay * ax_,
                                bz * by * bx + az * ay * ax_};
                 float w = a->tw[k] / tot, d = 0, l = 0;
