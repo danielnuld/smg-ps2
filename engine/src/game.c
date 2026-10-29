@@ -81,7 +81,8 @@ typedef struct {
     int land_type;      /* _3E: 2 after the ScenarioStarter's flight (ステージインB landing) */
     int air_timer;      /* _3BC: frames since take-off */
     int squat, wall;    /* mMovementStates._A; touching a wall this frame (wall_n valid) */
-    int slip_keep;      /* frames Mario may still stand on a 60-85 degree slope before it slips (Petari _41C) */
+    int slip_keep;      /* _41C: frames Mario may still stand on a 60-85 degree slope before it slips (15 only after a
+                         * non-slip floor code: isSlipFloorCode is true for Normal, so 0 on common ground) */
     /* Petari Mario's movement state (the Mario fields named after it) */
     int jumping;        /* mMovementStates.jumping */
     float walk;         /* mWalkSpeed (of MC.mWalkSpeed) */
@@ -117,10 +118,11 @@ typedef struct {
     V3 launch_from;     /* where Mario was caught */
     /* MarioSlip.cpp: _960 the floor code, mDrawStates._C on a slip polygon, _23 sliding, _8F0 its build-up, _8F8 the
      * slide's velocity, _910 skating, _280 / _284 the side move, _904 downhill, _1A8, _3C2 frames sliding, _3C4, _3FE
-     * slope dash frames, _8F4, mDrawStates._4 the slope dash; _16C last frame's velocity, getLastMove */
+     * slope dash frames, _8F4, mDrawStates._4 the slope dash; _16C last frame's velocity, getLastMove; MarioActor _288 the
+     * map's push in the last move (the move less mVelocity) */
     int floor, slip_poly, s23, s3C2, s3C4, s3FE, s_dash;
     float s8F0, s280, s8F4;
-    V3 s8F8, s910, s284, s904, s1A8, prev_vel, last_move;
+    V3 s8F8, s910, s284, s904, s1A8, prev_vel, last_move, s288;
     int press, press_t; /* MarioActor::setPress: _39C + 1 (0 none), frames to the game over (_FB8) */
     float press_s;      /* _3B0: his height's scale while pressed */
     /* the modes' Mario fields: MarioBee _406 _408 _76C _770 _774, mMovementStates._11 (the bee's flight on) / _12,
@@ -2277,7 +2279,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     mario->up = up_at(mario->pos, v3(0, 1, 0));
     mario->face = vnorm(vtangent(v3(0, 0, 1), mario->up));
     mario->jump_kind = 0; mario->stand_neutral = 10;
-    mario->slip_keep = SLIP_KEEP;
+    mario->slip_keep = 0; /* Mario::Mario: _41C 0 */
     mario->launch = -1;
     cam_pos = vadd(mario->pos, vadd(vmul(mario->up, 500), vmul(mario->face, -1000)));
     {   /* SMG cameras: CAMS + CARE chunks (tools/camera.py), each camera in its zone's frame (ZONE: world placement) */
@@ -11010,7 +11012,7 @@ static void m_retain(Player *m)
 
 static int m_enable_turn(const Player *m) /* isEnableTurn */
 {
-    return m->grounded && !m->turn_brake && m->slip_keep && !m->squat && !m->magic && !m->hip && !m->spin_timer;
+    return m->grounded && !m->turn_brake && !m->s23 && !m->squat && !m->magic && !m->hip && !m->spin_timer;
 }
 
 static void m_stop_walk(Player *m) /* stopWalk (cancelSquatMode, the brake clips stopped) */
@@ -11215,7 +11217,7 @@ static void m_decide_walk_anim(Player *m)
     if (m->tsi > 5 && m->walk > (gd_player_luigi() ? 0.3f : 0.9f) && !m->turn_brake && !m->slip_floor) m->brake1 = MC.mBrakeFirstTimer;
     if (m->brake1) m->brake1--;
     if (m->tsi == 0) {
-        if (m->brake1 && m->slip_keep) { mario_play("runend", 1.0f, 0); m->brake2 = MC.mBrakeSecondTimer; }
+        if (m->brake1 && !m->slip_poly) { mario_play("runend", 1.0f, 0); m->brake2 = MC.mBrakeSecondTimer; }
         m->brake1 = 0;
     }
 }
@@ -12047,10 +12049,23 @@ static void m_try_jump(Player *m) /* tryJump: 1st / 2nd / 3rd jump, or the turn,
 #endif
 }
 
+static int near0(V3 v);
 static void m_try_drop(Player *m) /* tryDrop: off a ledge (cDropFrontSpeed 2) */
 {
     m->squat_lock = 1;
     m_set_jv(m, vmul(m->face, m->walk * 2.0f));
+    if (near0(m->s8F8) && m->s23) { /* sliding: down the ground's slope */
+        V3 side = vcross(vmul(m->up, -1.0f), m->ground_n);
+        side = near0(side) ? side : vnorm(side);
+        m->s8F8 = vcross(m->ground_n, side);
+        if (!near0(m->s8F8)) m->s8F8 = vnorm(m->s8F8);
+    }
+    if (!near0(m->s8F8)) { /* the slide's velocity, its gravity part cut, a lift by the map's last push (up to 8) */
+        V3 jv = vtangent(m->s8F8, m->up);
+        if (vlen(m->prev_vel) > 20.0f) jv = vadd(jv, vmul(m->up, 10.0f));
+        else { jv = vadd(jv, vmul(m->up, fminf(vlen(m->s288), 8.0f))); m->s8F8 = v3(0, 0, 0); }
+        m_set_jv(m, jv);
+    }
     m->jump_kind = 0;
     m_proc_jump(m, 1);
     m->jumping = 1; m->connect = 0; m->digital = 1;
@@ -12343,14 +12358,14 @@ static int m_wall_update(Player *m)
     int release = 0;
     m->wall_t++;
     if (m->grounded) {
-        if (m->slip_keep) { m_front(m, m->wall_n); mario_play("land", 1.0f, 0); }
+        if (!m->slip_poly) { m_front(m, m->wall_n); mario_play("land", 1.0f, 0); } /* isOnSlipGround */
         release = 1;
     }
     if (m->wall_t >= MC.mWallReleaseTime + MC.mWallStickTime) release = 1;
     if (m->wall_t >= 3 && !m->wall) release = 1;
     if (release) {
         if (!m->grounded) { m->wall_cancel = 1; m->wall_cancel_n = m->wall_n; m_front(m, vmul(m->wall_n, -1.0f)); }
-        m->vel_after = vmul(m->wall_n, m->slip_keep ? 30.0f : 10.0f);
+        m->vel_after = vmul(m->wall_n, m->slip_poly ? 10.0f : 30.0f);
         m->walling = 0;
         return 0;
     }
@@ -12428,7 +12443,7 @@ static void m_do_landing(Player *m)
     m->squat_lock = 0;
     m->air_spin = MC.mAirWalkTime;
     if (vdot(vsub(m->jump_from, m->pos), m->up) > MC.mHardLandingHeight) hard = 1;
-    if (!hard && m->slip_keep) {
+    if (!hard && !m->slip_poly) { /* !mDrawStates._C */
         if (m->jump_kind == 5 && m_check_squat(m, 0)) { m->squat = 1; m->walk = 1.0f; m_clip_stop(); return; }
         if ((m_sz > 0.9f && m->back_t == 0) || (!m->hip && m_check_squat(m, 0))) {
             m_clip_stop();
@@ -12447,7 +12462,7 @@ static void m_do_landing(Player *m)
         }
     }
     if (m->jump_kind == 4) m_front(m, vmul(m->turn_from, -1.0f));
-    if (m->slip_keep) {
+    if (!m->slip_poly) {
         static const char *land[14] = {"land", "jump2land", "jumprollland", "", "jumpturnland", "jumpbroadland",
                                        "jumpbackland", "land", "land", "land", "", "land", "land", "land"};
         int k = m->jump_kind;
@@ -12479,7 +12494,7 @@ static void m_main_move(Player *m)
     int dir_set = 0;
     if (m_req_jump) { m_try_jump(m); return; }
     if (!m->grounded) {
-        if (m->drop_grace) m->drop_grace--;
+        if (m->drop_grace && !m->s23 && near0(m->s8F8)) m->drop_grace--;
         else { m_try_drop(m); return; }
     } else if (m_sz < MC.mWallBackHangStickPower) m->drop_grace = 0;
     else if (m->drop_grace < MC.mDropWaitTime) m->drop_grace = MC.mDropWaitTime;
@@ -12883,7 +12898,7 @@ static void m_swing(Player *m)
             mario_play("spin2nd", 1.0f, 0);
             mario_sound("パンチ風切り"); /* updateSwingAction: the upper animation changed */
             m->spin_timer = 15; m->spin_t = 0; m->walk = 0;
-        } else if (!m->squat && m->slip_keep) { /* startMagic (ponytail: no サマーソルト from a squat) */
+        } else if (!m->squat && !m->s23) { /* startMagic (ponytail: no サマーソルト from a squat) */
             m->magic = 1;
             mario_play("spinground", 1.0f, 0);
             mario_smoke(SMOKE_SPIN); /* MarioMagic::start: 共通地上スピン */
@@ -14338,6 +14353,17 @@ static void m_map_info(Player *m)
     m_center(m);
     m_check_all_wall(m);
     m_calc_shadow(m);
+}
+/* updateFloorCode (_960, _41C) and mDrawStates._C from his ground's codes and normal */
+static void m_floor_code(Player *m, int attr, V3 n)
+{
+    m->floor = attr & 0x3F;
+    if (angle_d(m, n) > MC.mSlipAngle) {
+        if (angle_d(m, n) > MC.mForceWallAngle) m->slip_keep = 0;
+        if (m->slip_keep) m->slip_keep--;
+        if (!m->slip_keep) m->floor = 0x80;
+    } else if (!slip_code(m->floor)) m->slip_keep = SLIP_KEEP;
+    m->slip_poly = slip_polygon(m, attr & 0x3F, n);
 }
 /* MarioHang::postureCtrl: his front against the hang's normal, up his ground's (climbing, eased to his head over 30) */
 static int hang_posture(float mm[16])
@@ -15997,7 +16023,7 @@ static void update_mario_(void)
     }
     if (slipping) slip_frames++;
 
-    V3 move = vadd(m->vel, m->vel_after), center = vadd(m->pos, vmul(m->up, BODY_RADIUS));
+    V3 move = vadd(m->vel, m->vel_after), center = vadd(m->pos, vmul(m->up, BODY_RADIUS)), pos0 = m->pos;
     if (m->grounded && !m->jumping && !m->walling) move = vadd(move, vmul(m->up, -GROUNDING)); /* follow the floor */
     V3 gn = m->up;
     int was_ground = m->grounded;
@@ -16021,6 +16047,7 @@ static void update_mario_(void)
         off = vtangent(off, m_tower.up);
         if (vlen(off) > 1e-6f) m->pos = vadd(m_tower.c, vadd(vmul(vnorm(off), m_tower.r - 200.0f), vmul(m_tower.up, h)));
     }
+    m->s288 = vsub(vsub(m->pos, pos0), vadd(m->vel, m->vel_after)); /* MarioActor::movement: _288 */
     /* writeBackPhyisicalVector: a wall halves the jump's part into it; on the ground walking into one slows the walk */
     if (m->wall && m->jumping && !m->wall_free) {
         float into = vdot(m_jv(m), m->wall_n);
@@ -16034,15 +16061,10 @@ static void update_mario_(void)
         m->grounded = 1;
         m->ground_n = gn;
         se_map_code(KCL_SOUND(ground_attr)); /* the landing's sounds read this ground's code */
+        m_floor_code(m, ground_attr, gn); /* updateGroundInfo before actionMain's landing */
         if (m->jumping && m->hip == HIP_FALL) m_hip_land(m);
         else if (m->jumping && !m->hip && !m->rabbit && !m->teresa && !dmg.st) m_do_landing(m);
         if (!m->hip) { m->vup = 0; m->hvel = vtangent(m->vel, m->up); }
-        m->floor = ground_attr & 0x3F; /* updateFloorCode: _960, _41C */
-        if (angle_d(m, gn) > MC.mSlipAngle) {
-            if (angle_d(m, gn) > MC.mForceWallAngle) m->slip_keep = 0;
-            if (m->slip_keep) m->slip_keep--;
-            if (!m->slip_keep) m->floor = 0x80;
-        } else if (!slip_code(m->floor)) m->slip_keep = SLIP_KEEP;
         m_damage_floor(m);
     } else if (!ground) m->grounded = 0;
     m->slip_poly = m->grounded && slip_polygon(m, ground_attr & 0x3F, m->ground_n); /* updateGroundInfo: mDrawStates._C */
@@ -32258,6 +32280,11 @@ void game_update(void)
         replay_g = 0;
         printf("replay: control at game frame %d\n", game_frame);
     }
+    if (replay_g >= 90 && replay_g < 700) /* every frame: the Wii probes' fields (mWalkSpeed, states, mJumpVec) */
+        printf("rf %d: %.1f %.1f %.1f walk %.3f g %d j %d jv %.2f %.2f %.2f gang %.1f clip %s\n", replay_g, mario->pos.x,
+               mario->pos.y, mario->pos.z, mario->walk, mario->grounded, mario->jumping, m_jv(mario).x, m_jv(mario).y,
+               m_jv(mario).z, angle_d(mario, mario->ground_n),
+               mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-");
     if (replay_g >= 0 && replay_g++ % 5 == 0) {
         V3 ce, cw, cu;
         float fv;
