@@ -83,7 +83,7 @@ typedef struct {
 } Model;
 
 #define SCENE_MAX_MODELS 512
-#define SCENE_MAX_TEX 1024
+#define SCENE_MAX_TEX 1088
 #define SCENE_MAX_PACKS 64
 typedef struct { const TexEntry *e; const u8 *base; } TexRef;
 
