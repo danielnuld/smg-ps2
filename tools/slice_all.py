@@ -21,6 +21,7 @@ import slice as SL
 
 ROOM = 9.2e6  # room for scenario data and the menu packs beside it (main.c PACK_ROOM): the pack region (14080 KB in test builds) less resident.bin (3.9 MB), sound.bin's EE part and menus(3d).bin (0.9 MB); 10.4e6 overran it in AstroGalaxy
 # the menus' packs main.c loads beside a galaxy's own (scene_load: mp_names / mp_scene) come out of its room
+# (mappics.bin is not one: menu.c reads one GalaxyDetail picture at a time into a 64 KB MEM_SCENE buffer, packs_read)
 MENU_PACKS = {"FileSelect": ("title.bin", "title3d.bin"), "AstroDome": ("dome.bin",), "AstroGalaxy": ("map.bin",), "EpilogueDemoStage": ("ending.bin",)}
 
 
