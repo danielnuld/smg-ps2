@@ -192,12 +192,10 @@ void mat_mul_c(float out[16], const float a[16], const float b[16]) /* the plain
 }
 
 /* out = a b (column-major) on VU0 in macro mode: each of b's columns as a's columns weighted by its x y z w (ACC);
- * through 16-byte aligned copies (lqc2 / sqc2) */
-void mat_mul(float out[16], const float a[16], const float b[16])
+ * lqc2 / sqc2 need 16-byte aligned matrices: unaligned ones go through aligned copies. All loads come before the
+ * stores, so out may be a or b */
+static inline void mat_mul_vu0(float *R, const float *A, const float *B)
 {
-    float A[16] __attribute__((aligned(16))), B[16] __attribute__((aligned(16))), R[16] __attribute__((aligned(16)));
-    memcpy(A, a, 64);
-    memcpy(B, b, 64);
     __asm__ volatile(
         "lqc2 $vf1, 0(%1)\n"
         "lqc2 $vf2, 16(%1)\n"
@@ -228,7 +226,15 @@ void mat_mul(float out[16], const float a[16], const float b[16])
         "sqc2 $vf7, 32(%0)\n"
         "sqc2 $vf8, 48(%0)\n"
         : : "r"(R), "r"(A), "r"(B) : "memory");
-    memcpy(out, R, 64);
+}
+void mat_mul(float out[16], const float a[16], const float b[16])
+{
+    float A[16] __attribute__((aligned(16))), B[16] __attribute__((aligned(16))), R[16] __attribute__((aligned(16)));
+    const float *pa = a, *pb = b;
+    if ((u32)a & 15) { memcpy(A, a, 64); pa = A; }
+    if ((u32)b & 15) { memcpy(B, b, 64); pb = B; }
+    if ((u32)out & 15) { mat_mul_vu0(R, pa, pb); memcpy(out, R, 64); }
+    else mat_mul_vu0(out, pa, pb);
 }
 
 /* SMG placement: translation, then rotation Z * Y * X (degrees), then scale. */
@@ -932,6 +938,30 @@ static void light_matrix(float *m, const float w[16], const float at[3])
             m[16 + 4 * i + k] = v[i] / (l * 127.0f);
     }
 }
+/* light_matrix of world x drw for the draw matrices of one skinned draw: (world drw)^T d = drw^T (world^T d), so the
+ * lights' directions go into world's frame once (dl) and each draw matrix (affine) takes them on from there */
+static void light_dirs(float dl[2][3], const float w[16], const float at[3])
+{
+    for (int k = 0; k < 2; k++) {
+        float d[3] = {light->pos[k][0] - at[0], light->pos[k][1] - at[1], light->pos[k][2] - at[2]};
+        for (int i = 0; i < 3; i++)
+            dl[k][i] = w[4 * i] * d[0] + w[4 * i + 1] * d[1] + w[4 * i + 2] * d[2];
+    }
+}
+static void light_matrix_drw(float *m, const float drw[16], const float dl[2][3])
+{
+    memset(m + 16, 0, 48);
+    for (int k = 0; k < 2; k++) {
+        float v[3];
+        for (int i = 0; i < 3; i++)
+            v[i] = drw[4 * i] * dl[k][0] + drw[4 * i + 1] * dl[k][1] + drw[4 * i + 2] * dl[k][2];
+        float l = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        if (l < 1e-6f)
+            continue;
+        for (int i = 0; i < 3; i++)
+            m[16 + 4 * i + k] = v[i] / (l * 127.0f);
+    }
+}
 
 /* the prebuilt chain of a model's opaque groups (xlu 0) or of its blended ones (xlu 1); NULL when it has none. A BTK
  * group's batches run between its own UV matrix (VuGroup.uvm, refreshed each frame: game_draw, anim_btk) and the
@@ -1067,13 +1097,13 @@ static void draw_model(const Model *md, const float world[16], const float (*drw
     prof_x[drw ? 1 : 0] += d;
 }
 #define DRW_CACHE 192 /* a skinned draw's matrices by draw index (anim.h ANIM_MAX_DRW 160) */
-static float dcache[DRW_CACHE][MAT_FL];
+static float dcache[DRW_CACHE][MAT_FL] __attribute__((aligned(16)));
 static u32 dstamp[DRW_CACHE], dseq = 1;
 static void draw_model_(const Model *md, const float world[16], const float (*drw)[16])
 {
     if (!md->vu_ngroups)
         return;
-    float mv[16], pvw[16];
+    float mv[16] __attribute__((aligned(16))), pvw[16] __attribute__((aligned(16)));
     mat_mul(mv, view, world);
     float rad = md->radius * sqrtf(mv[0] * mv[0] + mv[1] * mv[1] + mv[2] * mv[2]);
     if (mv[14] + rad < NEAR || mv[14] - rad > FAR) /* whole model behind the camera or past the far plane */
@@ -1127,6 +1157,8 @@ static void draw_model_(const Model *md, const float world[16], const float (*dr
     float (*gm)[MAT_FL] = mats + nmats; /* this group's matrices */
     dseq++; /* a new draw: the cached draw matrices are stale */
     u32 m = 1;
+    float dl[2][3];
+    int have_dl = 0;
     if (!drw) {
         memcpy(gm, pvw, 64);
         scale_cols(gm[0], md->qscale);
@@ -1148,14 +1180,17 @@ static void draw_model_(const Model *md, const float world[16], const float (*dr
                 mat_mul(gm[i], pvw, drw[di]);
                 scale_cols(gm[i], md->qscale);
                 if (md->lit) {
-                    float wd[16];
-                    mat_mul(wd, world, drw[di]);
-                    light_matrix(gm[i], wd, world + 12);
+                    if (!light) memset(gm[i] + 16, 0, 48);
+                    else {
+                        if (!have_dl) { light_dirs(dl, world, world + 12); have_dl = 1; }
+                        light_matrix_drw(gm[i], drw[di], (const float (*)[3])dl);
+                    }
                 }
                 if (di < DRW_CACHE) { memcpy(dcache[di], gm[i], sizeof gm[i]); dstamp[di] = dseq; }
             }
             nmats += m;
         }
+        u32 pb0 = cy_();
         set_tex(vg->tex);
         if (vg->blend) {
             emit_group(vif[cur], vg);
@@ -1185,6 +1220,7 @@ static void draw_model_(const Model *md, const float world[16], const float (*dr
         }
         if (vg->uvm)
             add_uvm(vif[cur], uv_ident);
+        prof_x[drw ? 2 : 3] += cy_() - pb0;
     }
 }
 

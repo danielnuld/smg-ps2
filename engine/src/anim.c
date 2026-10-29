@@ -104,10 +104,11 @@ static const u8 *track_data(int id) /* clip_data for a group's tracks 1..3 (thei
     return cache_get(&ctrack, id);
 }
 
+static int clip_id_of(const char *name);
 int anim_clip_info(const char *name, int *mode)
 {
-    for (u32 i = 0; i < sc->nclips; i++)
-        if (strcmp(sc->clips[i].name, name) == 0) {
+    int i = clip_id_of(name);
+    if (i >= 0) {
             if (info_frames[i] == -2) {
                 const u8 *c = clip_data(i);
                 info_frames[i] = c ? *(const short *)c : -1;
@@ -139,9 +140,37 @@ void anim_bind(Anim *a, const Skin *skin)
     anim_update(a);
 }
 
+/* clip names -> the first clip of that name: an open-addressed hash over the scene's clips, rebuilt when the list
+ * grows (blob.c adds a pack's clips); more clips than it holds: the plain search */
+#define CH_SIZE 4096
+static short ch_tab[CH_SIZE];
+static u32 ch_n;
+static const Clip *ch_clips;
+static u32 ch_hash(const char *s)
+{
+    u32 h = 2166136261u;
+    while (*s) h = (h ^ (u8)*s++) * 16777619u;
+    return h;
+}
 static int clip_id_of(const char *name)
 {
-    for (u32 i = 0; name && i < sc->nclips; i++) if (!strcmp(sc->clips[i].name, name)) return (int)i;
+    if (!name) return -1;
+    if (sc->nclips > CH_SIZE / 2) {
+        for (u32 i = 0; i < sc->nclips; i++) if (!strcmp(sc->clips[i].name, name)) return (int)i;
+        return -1;
+    }
+    if (ch_n != sc->nclips || ch_clips != sc->clips) {
+        memset(ch_tab, 0xFF, sizeof ch_tab);
+        for (u32 i = 0; i < sc->nclips; i++) {
+            u32 h = ch_hash(sc->clips[i].name) & (CH_SIZE - 1);
+            while (ch_tab[h] >= 0 && strcmp(sc->clips[ch_tab[h]].name, sc->clips[i].name)) h = (h + 1) & (CH_SIZE - 1);
+            if (ch_tab[h] < 0) ch_tab[h] = (short)i; /* a repeated name keeps its first clip */
+        }
+        ch_n = sc->nclips;
+        ch_clips = sc->clips;
+    }
+    for (u32 h = ch_hash(name) & (CH_SIZE - 1); ch_tab[h] >= 0; h = (h + 1) & (CH_SIZE - 1))
+        if (!strcmp(sc->clips[ch_tab[h]].name, name)) return ch_tab[h];
     return -1;
 }
 
@@ -205,9 +234,9 @@ int anim_play(Anim *a, const char *name, float speed, int loop, int interp)
     int was_loop = a->loop;
     a->speed = speed;
     a->loop = loop;
-    for (u32 i = 0; i < sc->nclips; i++)
-        if (strcmp(sc->clips[i].name, name) == 0) {
-            if ((int)i == a->clip_id)
+    int i = clip_id_of(name);
+    if (i >= 0) {
+            if (i == a->clip_id)
                 return 1;
             a->clip_id = i;
             a->ntrack = 1; /* (a group's tracks: anim_group after this) */
@@ -398,7 +427,7 @@ void anim_pose(Anim *a)
     if (nt > 1) for (int k = 0; k < nt; k++) if (tc[k]) tot += a->tw[k];
     for (u32 j = 0; j < k->njoints && j < ANIM_MAX_JOINTS; j++) {
         const SkJoint *jt = &k->joints[j];
-        float s[3], r[3], t[3], local[16];
+        float s[3], r[3], t[3], local[16] __attribute__((aligned(16)));
         if (a->clip && j < ((const u16 *)a->clip)[2])
             clip_local(a->clip, a->frame, j, s, r, t);
         else
