@@ -187,6 +187,7 @@ static const Scene *sc;
 typedef struct {
     const Model *md;
     Anim *anim;      /* skinned models (slice.py SKINNED_OBJ): its pose, from obj_anim */
+    int anim_want;   /* skinned, its pose not got (the pool full) or taken back: update_obj_anims asks again near */
     const unsigned char *kcl;
     const unsigned char *kcl_close, *kcl_open; /* TypicalDoor: its Close / Open collisions (door_place) */
     float m[16];     /* world matrix (uniform scale s) */
@@ -3882,6 +3883,7 @@ void game_rebind(void)
         in->md = md;
         in->row = i;
         in->anim = md->skin && !(plant_first && plant_first[i] >= 0) ? obj_anim(i, md, name) : NULL; /* plants: plant_pose */
+        in->anim_want = md->skin && !(plant_first && plant_first[i] >= 0) && !in->anim;
         int dc, dp;
         in->breaks = breakable(name, r, &dc, &dp);
         in->collapse = strcmp(name, "CollapsePlane") == 0 ? (r->arg[0] > 0 ? r->arg[0] : 140) : 0;
@@ -4078,7 +4080,7 @@ void game_rebind(void)
         if (insts[i].bridge == 1 && scene_kcl(s, "PhantomShipBridge#Move") && ninsts < (int)s->nobjs) {
             Inst *in = &insts[ninsts++];
             *in = insts[i];
-            in->bridge = 2 + i; in->invisible = 1; in->anim = NULL;
+            in->bridge = 2 + i; in->invisible = 1; in->anim = NULL; in->anim_want = 0;
             in->kcl = scene_kcl(s, "PhantomShipBridge#Move");
         }
     m_trainbody = scene_model(s, "ChooChooTrainBody"); m_bfwind = scene_model(s, "BigFanWind");
@@ -4103,7 +4105,7 @@ void game_rebind(void)
             for (int c = 0; c < tr_cars(&s->objs[insts[i].row]) && ninsts < insts_cap; c++) {
                 Inst *in = &insts[ninsts++];
                 *in = insts[i];
-                in->train = 2 + c; in->md = m_trainbody; in->kcl = scene_kcl(s, "ChooChooTrainBody"); in->anim = NULL;
+                in->train = 2 + c; in->md = m_trainbody; in->kcl = scene_kcl(s, "ChooChooTrainBody"); in->anim = NULL; in->anim_want = 0;
                 in->reach = m_trainbody->radius * in->s;
             }
     for (int i = 0; plant_first && i < ninsts; i++)
@@ -29478,6 +29480,10 @@ static void dx_keepers(const Demo *d) /* DemoExecutor::movement's keepers (not w
 int game_test_demo(int k)
 {
     if (k == -3) return mario_anim && mario_anim->clip_id >= 0 ? mario_anim->clip_id * 1000 + (int)mario_anim->frame : -1; /* tests: Mario's clip and frame */
+    if (k == -4) { /* tests: Rosetta's pose: clip * 1000 + frame, -1 none */
+        for (int i = 0; i < ninsts; i++) if (insts[i].dnpc == 3) return insts[i].anim && insts[i].anim->clip_id >= 0 ? insts[i].anim->clip_id * 1000 + (int)insts[i].anim->frame : -1;
+        return -2;
+    }
     if (k == -2) return dx.acam ? dx.acam_f : -1;
     if (k < 0) return dx.on ? dx.part * 1000 + dx.step : -1;
     if (k >= ndemos) return -2;
@@ -31891,6 +31897,18 @@ static void mode_draw_parts(const float m[16])
 
 static void update_obj_anims(void)
 {
+    /* the pose pool (MAX_OBJ_ANIM): a skinned instance whose pose was taken by another row (it went unused 30 frames)
+     * loses it; one without a pose gets a free or stale one once within 8000 of the camera (Petari: every actor its
+     * own; the bind-time order left the scene's last skinned rows, e.g. AstroGalaxy's Rosetta, without one) */
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (in->anim) {
+            for (int k = 0; k < MAX_OBJ_ANIM; k++)
+                if (oanim[k].a == in->anim && oanim[k].row != in->row) { in->anim = NULL; in->anim_want = 1; break; }
+        }
+        if (in->anim_want && in->md && vlen(vsub(v3(in->m[12], in->m[13], in->m[14]), cam_pos)) < 8000.0f &&
+            (in->anim = obj_anim(in->row, in->md, sc->types + 32 * sc->objs[in->row].type))) in->anim_want = 0;
+    }
     for (int i = 0; i < ninsts; i++)
         if (insts[i].anim && vlen(vsub(v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]), cam_pos)) < 8000.0f) {
             for (int k = 0; k < MAX_OBJ_ANIM; k++) if (oanim[k].a == insts[i].anim) oanim[k].last = game_frame;

@@ -1116,7 +1116,7 @@ int main(void)
                 printf("rosetta test f %u: second %d\n", frame, game_test_demo_name("ロゼッタ天文台機能回復デモ"));
             }
             if (frame > 300 && frame % 60 == 0 && frame < 6000)
-                printf("rosetta test f %u: demo %d book %d\n", frame, game_test_demo(-1), menu_monologue_alive());
+                printf("rosetta test f %u: demo %d book %d rosetta %d\n", frame, game_test_demo(-1), menu_monologue_alive(), game_test_demo(-4));
         }
 #endif
 #if defined(PACKS) && defined(GRAND_TEST)
