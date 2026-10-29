@@ -5543,9 +5543,10 @@ int game_test_torch(int how) /* tests: Mario into the first lit PhantomTorch / P
         const Row *r = &sc->objs[last];
         mario->pos = row_pos(r); mario->hvel = v3(0, 0, 0); mario->vup = 0;
         for (int k = ncoins - 1; k >= 0; k--) /* a coin it popped (appearCoinPop): Mario onto it */
-            if (coins[k].row < 0 && coins[k].alive != PICK_GONE) { mario->pos = vsub(coins[k].pos, vmul(mario->up, HIT_BODY_H)); printf("torch test: coin %d out\n", k); break; }
+            if (coins[k].row < 0 && coins[k].alive != PICK_GONE) { printf("torch test: coin %d out at %.0f %.0f %.0f (alive %d), Mario was at %.0f %.0f %.0f, torch at %.0f %.0f %.0f\n", k, coins[k].pos.x, coins[k].pos.y, coins[k].pos.z, coins[k].alive, mario->pos.x, mario->pos.y, mario->pos.z, r->pos[0], r->pos[1], r->pos[2]); mario->pos = vsub(coins[k].pos, vmul(mario->up, HIT_BODY_H)); break; }
         return last;
     }
+    printf("torch test: Mario at %.0f %.0f %.0f (grounded %d)\n", mario->pos.x, mario->pos.y, mario->pos.z, mario->grounded);
     for (u32 i = 0; i < sc->nobjs; i++) {
         const Row *r = &sc->objs[i];
         const char *n = sc->types + 32 * r->type;
