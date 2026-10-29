@@ -1775,6 +1775,71 @@ static int collide_n(V3 *center, V3 up, float radius, V3 *ground_n, V3 *wall_n, 
 
 static int collide(V3 *center, V3 up, float radius) { return collide_n(center, up, radius, NULL, NULL, NULL); }
 
+/* Binder::bind (LiveActor/Binder.cpp) for Mario (_1EC._3: no check at the start place): the move in steps of 35 to the
+ * first hit, pushed out by obtainMomentFixReaction (per axis the largest +, the most - of each face's normal x its
+ * depth + hOverlapAddValue 1.2), the rest of the move slid along that push once. b_n / b_dep / b_tri the faces hit.
+ * ponytail: no moving-parts reaction (_7C), no ExCollisionParts */
+#define BIND_MAX 32
+static int b_n;
+static float b_dep[BIND_MAX];
+static Tri b_tri[BIND_MAX];
+static int bind_find(V3 *pos, V3 *mv, int *rest, float r, int skip0)
+{
+    int steps = (int)(vlen(*mv) / 35.0f) + 1;
+    V3 step = steps > 1 ? vmul(*mv, 1.0f / steps) : *mv;
+    *mv = v3(0, 0, 0);
+    for (int i = 0; i <= steps; i++) {
+        if (i) { *pos = vadd(*pos, step); *mv = vadd(*mv, step); }
+        else if (skip0) continue;
+        Hit h[16];
+        int n = kcl_query(*pos, r, h, 16);
+        if (n) {
+            *rest = i != steps;
+            int c = 0;
+            for (int k = 0; k < n && b_n < BIND_MAX; k++, c++) {
+                b_tri[b_n] = (Tri){h[k].inst, h[k].sub, h[k].prism, h[k].inst < 0 ? kcl_icestep : insts[h[k].inst].kcl};
+                b_dep[b_n++] = h[k].dist + 1.2f;
+            }
+            return c;
+        }
+    }
+    *rest = 0;
+    return 0;
+}
+static V3 bind_reaction(int from)
+{
+    float pos[3] = {0, 0, 0}, neg[3] = {0, 0, 0};
+    for (int i = from; i < b_n; i++) {
+        V3 n = tri_n(&b_tri[i]);
+        float v[3] = {n.x * b_dep[i], n.y * b_dep[i], n.z * b_dep[i]};
+        for (int a = 0; a < 3; a++) {
+            if (pos[a] < v[a]) pos[a] = v[a];
+            else if (v[a] < neg[a]) neg[a] = v[a];
+        }
+    }
+    return v3(pos[0] + neg[0], pos[1] + neg[1], pos[2] + neg[2]);
+}
+static V3 m_bind(V3 center, V3 vel, float r) /* returns the center after the move */
+{
+    V3 pos = center, mv = vel;
+    int rest;
+    b_n = 0;
+    int first = bind_find(&pos, &mv, &rest, r, 1);
+    if (!first) return pos;
+    V3 react = bind_reaction(0);
+    pos = vadd(pos, react);
+    if (rest) { /* moveAlongHittedPlanes */
+        V3 rem = vsub(vel, mv), n = vlen(react) > 1e-6f ? vnorm(react) : v3(0, 0, 0);
+        float d = vdot(rem, n);
+        if (d < 0.0f) rem = vsub(rem, vmul(n, d));
+        if (vdot(vel, rem) >= 0.0f) {
+            bind_find(&pos, &rem, &rest, r, 1);
+            pos = vadd(pos, bind_reaction(first));
+        }
+    }
+    return pos;
+}
+
 /* --- init ------------------------------------------------------------------------------------------------ */
 
 static void os_init(void);
@@ -14335,9 +14400,10 @@ ground:
         }
 }
 /* after his move: recordLastGround, then checkAllWall and calcShadowPos from there */
+static int m_pg; /* this frame's ground came from m_check_ground (mGroundPos, the last ground recorded there) */
 static void m_map_info(Player *m)
 {
-    if (m->grounded) {
+    if (m->grounded && !m_pg) {
         mw.ground_pos = m->pos;
         if (ground_prism) {
             mw.last = (Tri){ground_inst, ground_sub, ground_prism, ground_inst < 0 ? kcl_icestep : insts[ground_inst].kcl};
@@ -14358,6 +14424,125 @@ static void m_floor_code(Player *m, int attr, V3 n)
         if (!m->slip_keep) m->floor = 0x80;
     } else if (!slip_code(m->floor)) m->slip_keep = SLIP_KEEP;
     m->slip_poly = slip_polygon(m, attr & 0x3F, n);
+}
+static V3 rot_axis(V3 v, V3 a, float ang); /* PSMTXRotAxisRad */
+static Tri m_gtri; /* mGroundPolygon as checkGround chose it */
+static int m_set_ground(Player *m, const Tri *t, V3 at) /* setGroundNorm, mGroundPolygon, mGroundPos, recordLastGround */
+{
+    m->ground_n = tri_n(t);
+    m_gtri = *t;
+    mw.ground_pos = at;
+    mw.last = *t;
+    mw.l4BC = tri_pt_in(&mw.last, at);
+    return 1;
+}
+/* Mario::checkGround (MarioCollision.cpp) and checkGroundOnSlope (MarioSlope.cpp, isUseSimpleGroundCheck) for Mario
+ * on his feet (walking, or waiting out mDropWaitTime off the ground), from his place before the action as
+ * updateGroundInfo (checkMap's shadow first): the ground he stands on (mGroundPolygon, _368, mGroundPos) and his
+ * snaps to it (addTrans, setTrans to the shadow at most 5 a frame, mVelocityAfter); 0 off the ground.
+ * Sensors: 3 lines down 100 from 30 up, 50 out along his front on the shadow's plane and turned 120 degrees twice
+ * (a 4th under him standing), a hit within 30 of his height, under 80 degrees and not steeper than _3C (-0.515);
+ * the simple check (sliding, Teresa, or on more than mFlatAngle - 5 with no flatter face under him): one line down
+ * 60 (+ 2 x the slope over 30, up to 40). ponytail: no WKFALL nudges at an edge, _414, _10._22, _1C._13 / _14, Fur,
+ * the sliding select by _16C, force Trans (_D) */
+static struct { int s14, s36; } mgc; /* mMovementStates._14 (no ground last check), _36 (the simple check) */
+static int m_check_ground(Player *m)
+{
+    V3 g = vmul(m->up, -1.0f), hp, p[4];
+    Tri t, ts[4];
+    int rising = m->jumping && m->vup > 0.0f; /* isRising */
+    m_calc_shadow(m); /* checkMap */
+    V3 sn = mw.s2 ? tri_n(&mw.shadow) : v3(0, 0, 0);
+    int simple = 0;
+    if (m->s23 || player_mode == PM_TERESA) simple = 1; /* isUseSimpleGroundCheck */
+    else if (m->grounded && angle_d(m, m->ground_n) > MC.mFlatAngle - 5.0f) {
+        simple = 1;
+        if (map_poly(vsub(m->pos, vmul(g, 30.0f)), vmul(g, 100.0f), NULL, &t) && angle_d(m, tri_n(&t)) < MC.mFlatAngle - 5.0f) simple = 0;
+    }
+    if (mgc.s14 ? mgc.s36 : simple) { /* checkGroundOnSlope */
+        mgc.s36 = 1;
+        if (near0(sn) || near0(vtangent(m->face, sn))) return 0;
+        mgc.s14 = 1;
+        float dist = rising ? 10.0f : 60.0f;
+        if (m->grounded) dist += 2.0f * fminf(fmaxf(angle_d(m, m->ground_n) - 30.0f, 0.0f), 40.0f);
+        if (!map_poly(vsub(m->pos, vmul(g, 30.0f)), vmul(g, dist), &hp, &t)) return 0;
+        V3 n = tri_n(&t);
+        if (angle_d(m, n) >= 80.0f || vdot(g, n) > -0.1908f) return 0;
+        m_set_ground(m, &t, hp);
+        if (rising) return 0;
+        mgc.s14 = 0;
+        if ((m->s23 || m->tsi) && player_mode != PM_TERESA) {
+            V3 down = vmul(m->ground_n, -1.0f);
+            float v = vdot(vsub(hp, m->pos), down);
+            if (fabsf(v) < dist && fabsf(v) > 1.0f) {
+                V3 d = vmul(down, v);
+                if (!m->s23) d = vmul(d, clamp01(m->walk));
+                if (slip_code(m->floor) && !m->s_dash) m->vel_after = vadd(m->vel_after, d);
+            }
+        }
+        return 1;
+    }
+    mgc.s36 = 0;
+    if (near0(sn)) return 0;
+    V3 off = vtangent(m->face, sn);
+    if (near0(off)) return 0;
+    off = vmul(vnorm(off), 50.0f);
+    mgc.s14 = 0;
+    const float maxd = rising ? 10.0f : 30.0f;
+    int count = !m->tsi && m->grounded && !m->jumping && !m->s23 ? 4 : 3, hit[4] = {0}, n_hit = 0;
+    for (int i = 0; i < count; i++) {
+        V3 start = i == 3 ? vsub(m->pos, vmul(g, 30.0f)) : vsub(vadd(m->pos, off), vmul(g, 30.0f));
+        hit[i] = map_poly(start, vmul(g, 100.0f), &p[i], &ts[i]);
+        if (i == 3) break;
+        if (hit[i]) {
+            V3 n = tri_n(&ts[i]);
+            if (fabsf(vdot(vsub(m->pos, p[i]), g)) > maxd) hit[i] = 0;
+            if (angle_d(m, n) >= 80.0f) hit[i] = 0;
+            if (vdot(g, n) > -0.515f) hit[i] = 0; /* _3C */
+            if (hit[i] && n_hit++ == 0) m_set_ground(m, &ts[i], p[i]);
+        }
+        off = rot_axis(off, sn, 2.0943952f);
+    }
+    int no_ground = !n_hit;
+    if (n_hit) { /* force Trs2 / Trs3: onto the shadow (or the ground) when within 30 */
+        float d = 0.0f;
+        if (angle_d(m, sn) < 55.0f) d = vdot(vsub(mw.shadow_pos, m->pos), g);
+        if (fabsf(d) > 30.0f) d = vdot(vsub(mw.ground_pos, m->pos), g);
+        if (fabsf(d) < 30.0f && fabsf(d) > 1.0f && m->grounded) {
+            float dot = vdot(g, vmul(m->ground_n, -1.0f));
+            if (dot > 0.99f) { if (!talk_active()) m->pos = vadd(m->pos, vmul(g, d)); return 1; }
+            if (dot > 0.0f && m->s23) { m->pos = vadd(m->pos, vmul(m->ground_n, -d * dot)); return 1; }
+        }
+    }
+    if (rising) return 0;
+    if (count == 4 && no_ground) {
+        if (hit[3] && fabsf(vdot(vsub(m->pos, p[3]), g)) < maxd) no_ground = 0;
+        if (vdot(m->s288, m->face) < 0.0f) { if (!mw.w19) m->pos = vadd(m->pos, vmul(m->face, -6.0f)); } /* no-g(back) */
+        else if (!mw.w8) m->pos = vadd(m->pos, vmul(m->face, 6.0f)); /* no-g */
+    }
+    if (no_ground) { mgc.s14 = 1; return 0; }
+    if ((m->jumping && n_hit) || (m->grounded && m_vspeed(m) >= 5.0f)) { /* toward the shadow, at most 5 */
+        float d = vdot(vsub(mw.ground_pos, mw.shadow_pos), m->ground_n), mv = 5.0f;
+        V3 dir = vsub(mw.shadow_pos, m->pos);
+        if (mw.w8 && vdot(dir, m_front_wall_norm()) < -0.01f) mv = 0.0f;
+        if (mw.w1A && vdot(dir, m_side_wall_norm()) < -0.01f) mv = 0.0f;
+        if (mw.w8 && mw.w19 && vdot(dir, tri_n(&mw.back)) < -0.01f) mv = 0.0f; /* (getBackWallNorm under _8) */
+        if (mv != 0.0f) {
+            if (vlen(dir) > mv) mw.shadow_pos = vadd(m->pos, vmul(vnorm(dir), mv));
+            if (d < maxd) m->pos = mw.shadow_pos;
+        }
+    }
+    if (!n_hit && fabsf(vdot(vsub(mw.shadow_pos, m->pos), g)) < maxd) {
+        float d = vdot(vsub(mw.shadow_pos, m->pos), g);
+        if (fabsf(d) > 1.0f || !m->grounded) m->vel_after = vadd(m->vel_after, vmul(g, d));
+        return 1;
+    }
+    if (!n_hit && fabsf(vdot(vsub(mw.ground_pos, m->pos), g)) < maxd) {
+        float d = vdot(vsub(mw.ground_pos, m->pos), g);
+        if (fabsf(d) > 1.0f) m->vel_after = vadd(m->vel_after, vmul(g, d));
+        return 1;
+    }
+    return n_hit || m_vspeed(m) < 5.0f;
 }
 /* MarioHang::postureCtrl: his front against the hang's normal, up his ground's (climbing, eased to his head over 30) */
 static int hang_posture(float mm[16])
@@ -15981,12 +16166,28 @@ static void update_mario_(void)
     if (!m->grounded && !m->jumping && !m->walling && m->vup != 0) { /* thrown by an object: a free jump */
         m->jumping = 1; m->digital = 1; m->keep_jump = 1; m->jump_from = m->pos; m->hip = 0;
     }
+    /* updateGroundInfo: on his feet (or waiting out mDropWaitTime) he checks his ground before the action */
+    int pgc = !m->walling && !hg.on && !swimming && !m->skate && !m->rabbit && !m->teresa && !dmg.st && !fo.on, landed = 0;
+    if (pgc) {
+        int was = m->grounded;
+        m->grounded = m_check_ground(m);
+        if (m->grounded) m_floor_code(m, tri_attr(&m_gtri), m->ground_n);
+        else m->slip_poly = 0;
+        if (m->grounded && !was && m->jumping) { /* procJump: on the ground, doLanding (the hip drop's) */
+            ground_inst = m_gtri.inst; ground_sub = m_gtri.sub; ground_prism = m_gtri.prism; ground_attr = tri_attr(&m_gtri);
+            se_map_code(KCL_SOUND(ground_attr));
+            if (m->hip == HIP_FALL) m_hip_land(m);
+            else if (!m->hip && !dmg.st) m_do_landing(m);
+            if (!m->hip) { m->vup = 0; m->hvel = v3(0, 0, 0); }
+            landed = 1;
+        }
+    }
     m_retain(m);
     m_swing(m);
     if (m->spin_timer) m->spin_timer--;
     m->spin_t++;
 
-    int slipping = m->s23, done = 0;
+    int slipping = m->s23, done = landed; /* (procJump landed him: no move this frame) */
     m->s_dash = 0; /* mDrawStates reset */
     if (dm_frame(m)) { done = 1; m->magic = 0; } /* the damage statuses (checkDamage, then the status's update) */
     if (!done && hg.on) { if (!hang_update(m)) hang_close(m); done = 1; } /* MarioHang */
@@ -16017,24 +16218,47 @@ static void update_mario_(void)
     }
     if (slipping) slip_frames++;
 
-    V3 move = vadd(m->vel, m->vel_after), center = vadd(m->pos, vmul(m->up, BODY_RADIUS)), pos0 = m->pos;
-    if (m->grounded && !m->jumping && !m->walling) move = vadd(move, vmul(m->up, -GROUNDING)); /* follow the floor */
+    /* MarioActor's Binder (initBinder 60, setBinderOffsetVec _2C4): radius 60 round his place + _2C4, up x 70 on the
+     * ground (50 squatting), eased 0.1 a frame to -gravity x 70 off it; checkGround keeps him on the ground. Other
+     * statuses keep one 50 sphere 50 up. ponytail: _2C4's up is his up (MarioActorGravity blends mHeadVec and _368 by
+     * _984), the 0.5 ease on _10._23 / _934 not kept */
+    static V3 b2C4;
+    float brad = BODY_RADIUS;
+    V3 boff = vmul(m->up, BODY_RADIUS);
+    if (pgc) {
+        if (m->grounded) b2C4 = vmul(m->up, m->squat ? 50.0f : 70.0f);
+        else b2C4 = vadd(vmul(b2C4, 0.9f), vmul(m->up, 7.0f));
+        boff = b2C4; brad = 60.0f;
+    }
+    V3 move = vadd(m->vel, m->vel_after), center = vadd(m->pos, boff), pos0 = m->pos;
+    if (m->grounded && !m->jumping && !m->walling && !pgc) move = vadd(move, vmul(m->up, -GROUNDING)); /* follow the floor */
     V3 gn = m->up;
     int was_ground = m->grounded;
     V3 wn = m->wall_n;
-    int ground = 0, steps = (int)(vlen(move) / BODY_RADIUS) + 1; /* no step longer than the body: a hip drop falls
+    int ground = 0, steps = (int)(vlen(move) / brad) + 1; /* no step longer than the body: a hip drop falls
                                                                    * 150 a frame, thin floors would let it through */
     ghost_through = player_mode == PM_TERESA && m->t418;
     collide_ceil = 0;
-    for (int s = 0; s < steps && !ground; s++) {
-        center = vadd(center, vmul(move, 1.0f / steps));
-        ground = collide_n(&center, m->up, BODY_RADIUS, &gn, &wn, &m->wall);
-    }
+    if (pgc) { /* Binder::bind; the faces hit: walls (the deepest), ceilings */
+        center = m_bind(center, move, brad);
+        m->wall = 0;
+        float wd = -1.0f;
+        for (int i = 0; i < b_n; i++) {
+            V3 n = tri_n(&b_tri[i]);
+            float d = vdot(n, m->up);
+            if (d <= -0.3f) { collide_ceil = 1; collide_ceil_inst = b_tri[i].inst; }
+            else if (d < WALL_ANGLE_COS && b_dep[i] > wd) { m->wall = 1; wn = n; wall_attr = tri_attr(&b_tri[i]); wd = b_dep[i]; }
+        }
+    } else
+        for (int s = 0; s < steps && !ground; s++) {
+            center = vadd(center, vmul(move, 1.0f / steps));
+            ground = collide_n(&center, m->up, brad, &gn, &wn, &m->wall);
+        }
     ghost_through = 0;
     if (ground && ground_inst >= 0 && insts[ground_inst].collapse && !row_step[insts[ground_inst].row])
         row_step[insts[ground_inst].row] = 1; /* CollapsePlane::exeWait: Mario on it starts the collapse */
     if (m->wall) m->wall_n = wn;
-    m->pos = vsub(center, vmul(m->up, BODY_RADIUS));
+    m->pos = vsub(center, boff);
     if (m_tower.on) { /* fixPositionInTower: at _718 - 200 from its axis, its height kept */
         V3 off = vsub(m->pos, m_tower.c);
         float h = vdot(off, m_tower.up);
@@ -16042,6 +16266,7 @@ static void update_mario_(void)
         if (vlen(off) > 1e-6f) m->pos = vadd(m_tower.c, vadd(vmul(vnorm(off), m_tower.r - 200.0f), vmul(m_tower.up, h)));
     }
     m->s288 = vsub(vsub(m->pos, pos0), vadd(m->vel, m->vel_after)); /* MarioActor::movement: _288 */
+    }
     /* writeBackPhyisicalVector: a wall halves the jump's part into it; on the ground walking into one slows the walk */
     if (m->wall && m->jumping && !m->wall_free) {
         float into = vdot(m_jv(m), m->wall_n);
@@ -16051,7 +16276,17 @@ static void update_mario_(void)
         m->tsi = 0;
         m->walk *= slow;
     }
-    if (ground && (!m->jumping || m->vup <= 0)) {
+    int pg = pgc && !m->walling; /* checkGround decided his ground before the action */
+    m_pg = pg;
+    if (pg) {
+        if (m->jumping) m->grounded = 0; /* (a jump from this frame's action) */
+        if (m->grounded) {
+            ground_inst = m_gtri.inst; ground_sub = m_gtri.sub; ground_prism = m_gtri.prism; ground_attr = tri_attr(&m_gtri);
+            se_map_code(KCL_SOUND(ground_attr));
+            m->vup = 0; m->hvel = vtangent(m->vel, m->up);
+            m_damage_floor(m);
+        }
+    } else if (ground && (!m->jumping || m->vup <= 0)) {
         m->grounded = 1;
         m->ground_n = gn;
         se_map_code(KCL_SOUND(ground_attr)); /* the landing's sounds read this ground's code */
@@ -16061,7 +16296,7 @@ static void update_mario_(void)
         if (!m->hip) { m->vup = 0; m->hvel = vtangent(m->vel, m->up); }
         m_damage_floor(m);
     } else if (!ground) m->grounded = 0;
-    m->slip_poly = m->grounded && slip_polygon(m, ground_attr & 0x3F, m->ground_n); /* updateGroundInfo: mDrawStates._C */
+    if (!pg) m->slip_poly = m->grounded && slip_polygon(m, ground_attr & 0x3F, m->ground_n); /* updateGroundInfo: mDrawStates._C */
     if (m->grounded && !m->jumping) m->land_timer++; /* updateTimers: _3CE */
     mario_ground = m->grounded ? ground_inst : -1; mario_ground_sub = ground_sub;
     mw.ceil = collide_ceil; mw.press1E = collide_ceil && press_at(collide_ceil_inst);
@@ -32213,6 +32448,9 @@ void game_update(void)
     static int replay_g = -1; /* the replay's frame: g = 0 the first frame the player is free */
     if (replay_g < 0 && !opening_on && game_frame > 3 && mario->launch < 0 && mario->grounded && !m_input_off()) {
         pad_replay_begin();
+#ifdef REPLAY_WII_START /* diagnostic: Mario put where the Wii's stands at g 0 */
+        mario->pos = v3(-3303.294f, -13081.923f, -15352.913f);
+#endif
         replay_g = 0;
         printf("replay: control at game frame %d\n", game_frame);
     }
@@ -32221,6 +32459,11 @@ void game_update(void)
                mario->pos.y, mario->pos.z, mario->walk, mario->grounded, mario->jumping, m_jv(mario).x, m_jv(mario).y,
                m_jv(mario).z, angle_d(mario, mario->ground_n),
                mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-");
+    if (replay_g >= 120 && replay_g < 170)
+        printf("rd %d: s23 %d floor %d sp %d f8 %.2f %.2f %.2f va %.2f %.2f %.2f vs %.1f s14 %d s36 %d gp %.1f %.1f %.1f sh %.1f %.1f %.1f\n",
+               replay_g, mario->s23, mario->floor, mario->slip_poly, mario->s8F8.x, mario->s8F8.y, mario->s8F8.z,
+               mario->vel_after.x, mario->vel_after.y, mario->vel_after.z, m_vspeed(mario), mgc.s14, mgc.s36,
+               mw.ground_pos.x, mw.ground_pos.y, mw.ground_pos.z, mw.shadow_pos.x, mw.shadow_pos.y, mw.shadow_pos.z);
     if (replay_g >= 0 && replay_g++ % 5 == 0) {
         V3 ce, cw, cu;
         float fv;
