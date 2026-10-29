@@ -1016,7 +1016,8 @@ def pack(fs, out_bin, ids_h, sources, cap=16000, budget=1850000, scene=None):
     names = {n for src in sources for n in re.findall(r"\bSE_[A-Z0-9_]+\b", Path(src).read_text(errors="ignore"))
              if n in baa.ids and baa.ids[n][0] == 0}
     # Mario's table: only the entries the sources play (mario_sound("<key>"), its 声 voice, its water companion)
-    keys = {k for src in sources for k in re.findall(r'mario_sound\("([^"]+)"\)', Path(src).read_text("utf-8", "ignore"))}
+    keys = {k for src in sources for line in Path(src).read_text("utf-8", "ignore").splitlines()
+            if "mario_sound(" in line for k in re.findall(r'"([^"]+)"', line)}  # ternaries too
     for key, se, kind, comp in re.findall(r'\{"([^"]+)", (SE_[A-Z0-9_]+), (\d+), ("[^"]*"|NULL)\}',
                                           mario_h.read_text("utf-8")):
         if key in keys or (key.startswith("声") and key[1:] in keys):
