@@ -16420,6 +16420,13 @@ static void update_mario_(void)
             landed = 1;
         }
     }
+    /* checkMap's end: sliding on 30 degrees or more, a line from 100 up his ground's normal 150 down the slide (_904)
+     * finds the face ahead (_24, _460) */
+    static int s24;
+    static Tri t460;
+    s24 = 0;
+    if (m->s23 && angle_d(m, m->ground_n) >= 30.0f)
+        s24 = map_poly(vadd(m->pos, vmul(m->ground_n, 100.0f)), vmul(m->s904, -150.0f), NULL, &t460);
     m_retain(m);
     m_swing(m);
     if (m->spin_timer) m->spin_timer--;
@@ -16443,6 +16450,12 @@ static void update_mario_(void)
     else { m_main_move(m); m_update_walk_speed(m); bee_on_ground(m); }
     if (!dmg.st && m->grounded) mw.s30 = mw.s31 = 1; /* actionMain (doFrontStep: MarioFrontStep not ported) */
     m_calc_front_floor(m);
+    if (m->s23 && m->grounded && s24 && slip_polygon(m, tri_attr(&t460) & 0x3F, tri_n(&t460))) { /* Mario::update: the slide
+        * along the face ahead, half its part into it turned up his ground's normal */
+        V3 n = tri_n(&t460);
+        float d = vdot(m->vel, n);
+        m->vel = vadd(vsub(m->vel, vmul(n, d)), vmul(vsub(m->ground_n, n), 0.5f * fabsf(d)));
+    }
     m_update_on_water(m); /* updateOnWater: the water floor codes */
     if (!m->s23) { m->s1A8 = m->vel; m->s3C2 = 0; m->s280 = 0; m->s284 = v3(0, 0, 0); } else m->s3C2++;
     if (m->s3C4) m->s3C4--;
