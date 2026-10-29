@@ -6300,6 +6300,10 @@ static void draw_oceanspheres(V3 eye, V3 right, V3 cup)
         int inside = vlen(to) <= rad;
         /* ponytail: left out when behind the camera or past 30000 (Petari draws it, far ones from a display list) */
         if (!inside && (vdot(vmul(to, -1.0f), fwd) < -rad || vlen(to) - rad > 30000.0f)) continue;
+        { /* wholly outside the view (its waves reach 15 past rad): nothing of it would be drawn */
+            float cc[3] = {c.x, c.y, c.z};
+            if (!inside && !render_visible(cc, rad + 20.0f)) continue;
+        }
         for (int i = 0; i < o->npts; i++) { /* OceanSpherePoint::updatePos */
             const OsPoint *pt = &o->pt[i];
             float h = s1[(int)pt->w1 & 23] + s2[(int)pt->w2 & 23];
@@ -25451,11 +25455,32 @@ static int area_inside(const Row *r, V3 p)
  * its SW_APPEAR) and holds p; its row, -1 none */
 static int area_obj(const char *cls, V3 p)
 {
-    static struct { const Scene *at; const char *cls; int t; } c[24];
+    /* each class's rows listed once (in order: the first one inside still wins), not a walk over every row a call */
+    static struct { const Scene *at; const char *cls; int t, first, n; } c[24];
+    static short pool[1024];
+    static int npool;
+    static const Scene *pool_at;
     int k = 0;
     while (k < 24 && c[k].cls && c[k].cls != cls) k++;
     if (k == 24) k = 0;
-    if (c[k].cls != cls || c[k].at != sc) { c[k].cls = cls; c[k].at = sc; c[k].t = scene_type(sc, cls); }
+    if (c[k].cls != cls || c[k].at != sc) {
+        c[k].cls = cls; c[k].at = sc; c[k].t = scene_type(sc, cls);
+        if (pool_at != sc) { pool_at = sc; npool = 0; }
+        int n = 0;
+        for (u32 i = 0; c[k].t >= 0 && i < sc->nobjs; i++) n += sc->objs[i].type == c[k].t;
+        c[k].first = npool; c[k].n = -1; /* -1: no room in the pool, the walk */
+        if (npool + n <= 1024) {
+            for (u32 i = 0; c[k].t >= 0 && i < sc->nobjs; i++) if (sc->objs[i].type == c[k].t) pool[npool++] = (short)i;
+            c[k].n = n;
+        }
+    }
+    if (c[k].n >= 0) {
+        for (int j = 0; j < c[k].n; j++) {
+            int i = pool[c[k].first + j];
+            if (row_shown(i) && area_inside(&sc->objs[i], p)) return i;
+        }
+        return -1;
+    }
     for (u32 i = 0; c[k].t >= 0 && i < sc->nobjs; i++)
         if (sc->objs[i].type == c[k].t && row_shown(i) && area_inside(&sc->objs[i], p)) return (int)i;
     return -1;
@@ -32560,18 +32585,22 @@ static Anim *plant_pose(const Inst *in, const Plant *p)
     return &a;
 }
 
-static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle)
+/* basis_matrix with its angle's cosine and sine given (the pickups share one angle a frame) */
+static void basis_matrix_cs(float m[16], V3 pos, V3 up, V3 fwd, float c, float s)
 {
     V3 f = vnorm(vtangent(fwd, up));
     if (vlen(f) < 0.1f) f = vnorm(vtangent(v3(1, 0, 0), up));
     V3 r = vcross(up, f);
-    float c = cosf(angle), s = sinf(angle);
     V3 x = vadd(vmul(r, c), vmul(f, -s)), z = vadd(vmul(r, s), vmul(f, c));
     mat_identity(m);
     m[0] = x.x; m[1] = x.y; m[2] = x.z;
     m[4] = up.x; m[5] = up.y; m[6] = up.z;
     m[8] = z.x; m[9] = z.y; m[10] = z.z;
     m[12] = pos.x; m[13] = pos.y; m[14] = pos.z;
+}
+static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle)
+{
+    basis_matrix_cs(m, pos, up, fwd, cosf(angle), sinf(angle));
 }
 
 /* a walker's up against gravity, kept while it stands still (NonActive ones, waiting ones): one gravity_at per
@@ -32600,12 +32629,12 @@ static V3 pick_up(const Pickup *cp)
 
 static void draw_pickups(const Pickup *p, int n, const Model *md, u8 r, u8 g, u8 b, float rot)
 {
-    float m[16];
+    float m[16], c = cosf(rot), sn = sinf(rot);
     if (!md) return;
     for (int i = 0; i < n; i++) {
         if (!pickup_shown(&p[i])) continue;
         V3 up = pick_up(&p[i]);
-        basis_matrix(m, p[i].pos, up, v3(0, 0, 1), rot);
+        basis_matrix_cs(m, p[i].pos, up, v3(0, 0, 1), c, sn);
         render_model(md, m, r, g, b);
     }
 }
@@ -32683,12 +32712,25 @@ static void bloom_update(void)
                                         "SimpleBloomCylinder", "ScreenBlurCube", "ScreenBlurSphere", "ScreenBlurCylinder",
                                         "DepthOfFieldCube", "DepthOfFieldSphere", "DepthOfFieldCylinder"};
     static int ty[12] = {-2};
+    static short rows[128]; /* the rows of those kinds, in order (found once: the walk over every row was per frame) */
+    static int nrows = -1;
     if (ty[0] == -2) for (int i = 0; i < 12; i++) ty[i] = scene_type(sc, kinds[i]);
+    if (nrows < 0) {
+        nrows = 0;
+        for (u32 i = 0; i < sc->nobjs && nrows <= 128; i++)
+            for (int j = 0; j < 12; j++)
+                if (ty[j] >= 0 && sc->objs[i].type == ty[j]) { if (nrows < 128) rows[nrows] = (short)i; nrows++; break; }
+    }
     const Row *area = NULL;
     int kind = -1;
-    for (u32 i = 0; i < sc->nobjs && !area; i++)
-        for (int j = 0; j < 12; j++)
-            if (ty[j] >= 0 && sc->objs[i].type == ty[j] && row_shown(i) && area_inside(&sc->objs[i], mario->pos)) { area = &sc->objs[i]; kind = j; break; }
+    if (nrows <= 128) {
+        for (int r = 0; r < nrows && !area; r++)
+            for (int j = 0, i = rows[r]; j < 12; j++)
+                if (ty[j] >= 0 && sc->objs[i].type == ty[j] && row_shown(i) && area_inside(&sc->objs[i], mario->pos)) { area = &sc->objs[i]; kind = j; break; }
+    } else
+        for (u32 i = 0; i < sc->nobjs && !area; i++)
+            for (int j = 0; j < 12; j++)
+                if (ty[j] >= 0 && sc->objs[i].type == ty[j] && row_shown(i) && area_inside(&sc->objs[i], mario->pos)) { area = &sc->objs[i]; kind = j; break; }
     int on = area && kind < 3;
     if (on) {
         float t = area->arg[0] >= 0 ? area->arg[0] : 255, t1 = area->arg[2] >= 0 ? area->arg[2] : 42, t2 = area->arg[3] >= 0 ? area->arg[3] : 21;
@@ -32980,8 +33022,19 @@ void game_draw(void)
     }
     if (sky_drawn) render_clear_depth(); /* the sky stays behind whatever its scale put in front */
     PROF(1);
+#ifdef BENCH
+    /* the instances' draw by class over the bench's frames 61..1860, the dearest printed at its end */
+    static u32 it_sum[1024], it_frame;
+    u32 it_c = cycles();
+    int it_ty = -1;
+    it_frame++;
+#define IT_MARK(ty) do { u32 c_ = cycles(); if (it_ty >= 0 && it_frame > 61 && it_frame <= 1861) it_sum[it_ty & 1023] += c_ - it_c; it_c = c_; it_ty = (ty); } while (0)
+#else
+#define IT_MARK(ty) do { } while (0)
+#endif
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
+        IT_MARK(in->row >= 0 ? (int)sc->objs[in->row].type : 1023);
         if (in->invisible || in->sky || in->sun) continue;
         if (in->plant) {
             if (plant_first[in->row] < 0) continue;
@@ -33144,6 +33197,18 @@ void game_draw(void)
         } else
             inst_draw(in, in->md, in->m);
     }
+    IT_MARK(-1);
+#ifdef BENCH
+    if (it_frame == 1862) {
+        for (int k = 0; k < 12; k++) {
+            int best = 0;
+            for (int t = 1; t < 1024; t++) if (it_sum[t] > it_sum[best]) best = t;
+            if (!it_sum[best]) break;
+            printf("bench inst %-24s %u us\n", best < (int)sc->ntypes ? sc->types + 32 * best : "?", (u32)(it_sum[best] / 1800 / 294.912f));
+            it_sum[best] = 0;
+        }
+    }
+#endif
     srd_draw();
     gsr_draw();
     adds_draw();
@@ -33231,9 +33296,10 @@ void game_draw(void)
     draw_pickups(coins, ncoins, m_coin, 0xF0, 0xD0, 0x30, coin_rot);
     draw_pickups(purple, npurple, m_purple, 0xB0, 0x50, 0xF0, coin_rot);
     render_light(default_light(LIGHT_PLANET)); /* StarPiece: its class's draw buffer */
+    float pc = cosf(piece_rot), ps = sinf(piece_rot);
     for (int i = 0; m_piece && i < npieces; i++) {
         if (!pickup_shown(&pieces[i])) continue;
-        basis_matrix(m, pieces[i].pos, pick_up(&pieces[i]), v3(0, 0, 1), piece_rot);
+        basis_matrix_cs(m, pieces[i].pos, pick_up(&pieces[i]), v3(0, 0, 1), pc, ps);
         render_model(m_pieces[piece_col[i]], m, 0x60, 0xD0, 0xF0);
     }
     for (int i = 0; m_piece && i < MAX_SHOTS; i++)
