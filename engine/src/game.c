@@ -13957,12 +13957,14 @@ static V3 mario_joint_drawn(int j) /* getRealPos: a joint as last calculated (on
     mat_mul(w, m_drawn, mario_anim->world[j]);
     return v3(w[12], w[13], w[14]);
 }
-/* MarioActor::calcCenterPos (_2A0): along his up by the binder's radius, eased to 60 (40 squatting); hanging his Spine1 */
+/* MarioActor::calcCenterPos (_2A0): along his up by the binder's radius, eased to 60 (40 squatting; as Teresa to 100,
+ * the centre 20 over it); hanging his Spine1 */
 static void m_center(Player *m)
 {
     if (hg.on) { mw.c = mario_joint_drawn(10); return; } /* Spine1 */
-    mw.binder_r = m->squat ? 0.8f * mw.binder_r + 0.2f * 40.0f : 0.9f * mw.binder_r + 0.1f * 60.0f;
-    mw.c = vadd(m->pos, vmul(m->up, mw.binder_r));
+    float val = mw.binder_r = m->squat ? 0.8f * mw.binder_r + 0.2f * 40.0f : 0.9f * mw.binder_r + 0.1f * 60.0f;
+    if (player_mode == PM_TERESA) { mw.binder_r = 0.8f * mw.binder_r + 0.2f * 100.0f; val = 20.0f + mw.binder_r; } /* mPlayerMode 6 */
+    mw.c = vadd(m->pos, vmul(m->up, val));
 }
 
 /* checkAllWall: the faces round the centre within 80 (90 swimming), not floors nor ceilings (|n . head| <= 0.5), by
@@ -16281,7 +16283,7 @@ static void update_mario_(void)
     if (pgc) {
         if (m->grounded) b2C4 = vmul(m->up, m->squat ? 50.0f : 70.0f);
         else b2C4 = vadd(vmul(b2C4, 0.9f), vmul(m->up, 7.0f));
-        boff = b2C4; brad = 60.0f;
+        boff = b2C4; brad = mw.binder_r; /* mBinder->mRadius (calcCenterPos) */
     }
     V3 move = vadd(m->vel, m->vel_after), center = vadd(m->pos, boff), pos0 = m->pos;
     if (m->grounded && !m->jumping && !m->walling && !pgc) move = vadd(move, vmul(m->up, -GROUNDING)); /* follow the floor */
