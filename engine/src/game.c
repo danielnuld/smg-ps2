@@ -1994,6 +1994,13 @@ void game_init(const Scene *s, const unsigned char *blob)
         int a = s->objs[i].arg[7];
         star_wait[i] = strcmp(s->types + 32 * s->objs[i].type, "PowerStar") ? 0 : a >= 0 ? a + 1 : a == -2 ? -1 : 0;
     }
+    for (u32 i = 0; i < s->nobjs; i++) { /* TicoStarRing::init: dead unless its challenge galaxy (arg0) has appeared */
+        static const char *const ring_galaxy[4] = {"TamakoroExLv2Galaxy", "SurfingLv2Galaxy", "CubeBubbleExLv2Galaxy", "PeachCastleFinalGalaxy"};
+        int a = s->objs[i].arg[0] < 0 ? 0 : s->objs[i].arg[0]; /* getJMapInfoArg0NoInit over 0 */
+        if (strcmp(s->types + 32 * s->objs[i].type, "TicoStarRing") || a >= 4) continue;
+        row_dead[i] = !gd_galaxy_appear(ring_galaxy[a]);
+        printf("TicoStarRing row %u (%s): %s\n", i, ring_galaxy[a], row_dead[i] ? "dead" : "out");
+    }
     row_step = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(unsigned short));
     row_angle = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(float));
     row_turn = mem_alloc(MEM_OBJECTS, s->nobjs);
@@ -2439,6 +2446,7 @@ typedef struct { const char *cls; u8 near, talk; float dist, speed, tilt_speed, 
 static const NpcTurn npc_turns[] = {
     {"Tico", 1, 1, 2000.0f, 4.0f, 0.5f, 12.0f, {"wait", "wait", "talk", "talk"}},
     {"TicoAstro", 1, 1, 2000.0f, 4.0f, 0.5f, 12.0f, {"wait", "wait", "talk", "talk"}},
+    {"TicoStarRing", 1, 1, 2000.0f, 4.0f, 0.5f, 12.0f, {"wait", "wait", "talk", "talk"}}, /* a Tico (Tico::init's params) */
     {"Kinopio", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turn", "talk", "talk"}},
     {"KinopioAstro", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turn", "talk", "talk"}},
     {"Penguin", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turn", "talk", "talkturn"}},
