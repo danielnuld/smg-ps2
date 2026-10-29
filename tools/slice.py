@@ -32,6 +32,8 @@ Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
           4 pad, nbatch × {u16 emitted, u16 unique} padded to 16, then per batch (index_batches): s16 pos[unique][4]
           (x, y, z in steps of qscale, w = 7 * matrix slot), s16 uv[unique][2] if textured, s8 normal[unique][4] if
           lit (x 127), u8 rgbi[emitted][4] (colour + unique index), each array padded to 16}}
+          an entry with no groups and a first pad word k > 0 is an alias: entry k - 1 of the chunk (an earlier one, an
+          older engine draws nothing for it) with the same groups, BTK and BVAS, none with SWAP (GStar / StarReturnDemoStarter: one GrandStar), drawn from it
   'LGHT'  the scenario's area lights and its zones' LightID tables (tools/light.py)
   'TLGT'  u8 per TYPE: its actor light type (tools/lighttype.py, light_types.json: 0 Player 1 Strong 2 Weak 3 Planet, 255)
   'GRAV'  u32 n, n × {u16 kind, u16 flags, s32 priority, s32 inverse, f32 range, f32 distant, f32 m[12] (x, y, z
@@ -189,7 +191,7 @@ HOME_POS = "\u5408\u4f53\u30d6\u30ed\u30c3\u30af\u6545\u90f7\u70b9"  # 合体ブ
 LOGIC = ("TimerSwitch", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
          "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "DeathCube", "DeathSphere",
          "DeathCylinder", "RestartCube", "StarPieceSpot", "WaterCube", "WaterSphere", "WaterCylinder",
-         "AstroChangeStageCube", "MovieStarter", "RunawayRabbitCollect",
+         "AstroChangeStageCube", "MovieStarter", "RunawayRabbitCollect", "PhantomTorch", "PhantomBonfire",
          # Mario's areas (MR::getAreaObj: game.c area_obj / foo_sphere)
          "CelestrialSphere", "TowerModeCylinder", "NonSleepCube", "EffectCylinder", "SmokeEffectColorAreaCube",
          "MessageAreaCube", "MessageAreaCylinder")  # areas (areaobjinfo) travel as OBJS rows too
@@ -1723,6 +1725,7 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
     the particle effects (PTCL, tools/jpa.py pack), their textures first in TEXT."""
     stats = stats if stats is not None else {}
     models_, kcls, vumd, skins, btks, swaps, bvas = [], [], [], [], [], [], []
+    vu_seen = {}  # an entry's groups + BTK + BVAS -> its index: identical models stored once (alias)
     texts, tex_id, ptcl = [], {}, []
     if fx:
         payload, texts = jpa.pack(fsp)
@@ -1752,9 +1755,10 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
         for k, v in st.items():
             if not k.startswith("_"):
                 stats[k] = stats.get(k, 0) + v
-        btks += [name32(t) + e for e in st.get("_btk", [])]
-        if sk:
-            bvas += bvas_entries(arc, t, st.get("_shape", []))
+        btk_e = st.get("_btk", [])
+        btks += [name32(t) + e for e in btk_e]
+        nsw, bva_e = len(swaps), bvas_entries(arc, t, st.get("_shape", [])) if sk else []
+        bvas += bva_e
         if sk:
             skins.append(name32(t) + sk)
         # MODL keeps only the bounding radius (culling): drawing uses VUMD, collision KCL
@@ -1798,7 +1802,15 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
                 stats["strip_list_verts"] = stats.get("strip_list_verts", 0) + len(tris)
             vg += struct.pack("<IHHBBBBB3x", len(tris), ti, nbt, *bl, 2 if env else 1 if nb else 0, 1 if strip else 2 if skstrip else 3 if envstrip else 0) + \
                 (struct.pack("<12f", *env) if env else b"") + body
-        vumd.append(name32(t) + struct.pack("<If8x", len(groups), qs) + vg)
+        body = struct.pack("<If8x", len(groups), qs) + vg
+        key = (body, tuple(btk_e), tuple(e[32:] for e in bva_e))
+        if len(swaps) > nsw:  # a model with SWAP keeps its own groups (game.c sets their textures per draw)
+            vumd.append(name32(t) + body)
+        elif key in vu_seen:
+            vumd.append(name32(t) + struct.pack("<IfI4x", 0, qs, vu_seen[key] + 1))
+        else:
+            vu_seen[key] = len(vumd)
+            vumd.append(name32(t) + body)
         if kcl and collision:
             kcl = kcl_to_le(kcl)
             kcls.append(name32(t) + struct.pack("<I", len(kcl)) + kcl + b"\0" * (-len(kcl) % 4))

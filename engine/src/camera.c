@@ -692,6 +692,17 @@ void camera_prog_start(V3 watch, V3 eye, V3 up, int frames)
     type_eye = f_eye; type_watch = f_watch; type_up = f_up;
 }
 void camera_prog_end(int frames) { if (pr_on) { pr_on = 0; cur = -3; back_camint = frames; } }
+/* CameraDirector::endEvent: the event camera popped at once, the view interpolated back to the game camera (reset from
+ * the view) over CameraManEvent::sendFinishInterpolateFrame's frames: the chunk's camendint (eflag.enableEndErpFrame),
+ * its camint (eflag.enableErpFrame), else frame, else sDefaultBlendFrame 60 */
+void camera_event_end_now(int frame)
+{
+    if (!ev_on) return;
+    const CamParam *p = &cams[ev_first + ev_i];
+    ev_on = 0; cur = -3;
+    back_camint = p->flags >> 7 ? (p->flags >> 7) - 1 : p->flags & 64 ? p->camint : frame >= 0 ? frame : 60;
+    printf("camera: event end, back over %d\n", back_camint);
+}
 
 static int talk_pose(const CamTarget *t, V3 *eye, V3 *watch, V3 *up) /* CameraTalk::calc */
 {
@@ -904,6 +915,16 @@ void camera_set_override(int on, V3 eye, V3 watch, V3 up, float fovy)
     ovr = on; o_eye = eye; o_watch = watch; o_up = up; o_fovy = fovy;
     if (!on) return;
     f_eye = eye; f_watch = watch; f_up = up; f_fovy = fovy; /* the follow camera starts from there afterwards */
+}
+/* endAnimCamera(frame): from the anim camera's last pose back to the game camera (reset from it) over frame (its event
+ * has no chunk: sendFinishInterpolateFrame takes the frame, -1 sDefaultBlendFrame 60) */
+void camera_override_end(int frame)
+{
+    if (!ovr) return;
+    ovr = 0;
+    i_eye = f_eye = o_eye; i_watch = f_watch = o_watch; i_up = f_up = o_up; f_fovy = o_fovy;
+    cur = -3; back_camint = frame >= 0 ? frame : 60;
+    printf("camera: anim end, back over %d\n", back_camint);
 }
 
 void camera_pose(V3 *eye, V3 *watch, V3 *up, float *fovy)

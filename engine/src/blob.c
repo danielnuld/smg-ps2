@@ -70,6 +70,12 @@ int blob_add(Scene *s, const u8 *blob)
         const u8 *q = vm + 16;
         for (u32 i = first; i < first + nv && i < s->nmodels; i++) {
             Model *md = &s->models[i];
+            if (!*(const u32 *)(q + 32) && *(const u32 *)(q + 40)) { /* an alias (tools/slice.py assets): an earlier entry's groups, shared */
+                const Model *src = &s->models[first + *(const u32 *)(q + 40) - 1];
+                md->vu_ngroups = src->vu_ngroups; md->lit = src->lit; md->qscale = src->qscale; md->vu = src->vu;
+                q += 48;
+                continue;
+            }
             md->vu_ngroups = *(const u32 *)(q + 32);
             md->lit = 0;
             md->qscale = *(const float *)(q + 36);
@@ -238,6 +244,7 @@ int blob_add(Scene *s, const u8 *blob)
     if (fo) {
         s->font = fo;
         s->font_tex0 = tex0;
+        s->font2 = blob_chunk(blob, "FNT2", NULL);
     }
     if (tk)
         s->talk = tk;

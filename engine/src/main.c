@@ -315,9 +315,17 @@ static int pack_open(Pack *p, const char *path)
     return 0;
 #else
     char full[160];
-    snprintf(full, sizeof full, "host:packs/%s", path);
+#ifdef PACKS_OVERLAY /* dev builds (XF=-DPACKS_OVERLAY=dir): a pack in host:dir/ wins over packs/'s */
+#define OVL_STR2(x) #x
+#define OVL_STR(x) OVL_STR2(x)
+    snprintf(full, sizeof full, "host:" OVL_STR(PACKS_OVERLAY) "/%s", path);
     if (!(p->f = fopen(full, "rb")))
-        return 0;
+#endif
+    {
+        snprintf(full, sizeof full, "host:packs/%s", path);
+        if (!(p->f = fopen(full, "rb")))
+            return 0;
+    }
     fseek(p->f, 0, SEEK_END);
     p->size = ftell(p->f);
     fseek(p->f, 0, SEEK_SET);
@@ -506,6 +514,30 @@ static void target_set(unsigned char *out)
     }
 }
 
+/* The region can not hold the old and the new packs of a swap at once (OceanPhantomCave: GhostShipCaveZone's 5.6 MB
+ * and CaveChangeSizeZone's 1.6 MB): the zone models are dropped and the stage packs the swap replaces freed first, the
+ * rest read at once (pend_step), then the swap. 1 if one was freed. ponytail: a hitch where both used to be in RAM
+ * (a load pause, the zones not drawn meanwhile); a smaller set (target_set) first would avoid it */
+static int pend_evict(void)
+{
+    int n = 0;
+    for (u32 z = 0; z < nzones; z++)
+        if (zone_files[z] && (z < pend.z ? pend.buf[z] != zone_files[z] : pend.full[z] != zone_full[z])) n++;
+    if (!n) return 0;
+    render_release(&scene, base_tex, base_models);
+    scene.nmodels = base_models;
+    scene.ntex = base_tex;
+    scene.nkcl = base_kcl;
+    mem_release(&base_mark);
+    for (u32 z = 0; z < nzones; z++)
+        if (zone_files[z] && (z < pend.z ? pend.buf[z] != zone_files[z] : pend.full[z] != zone_full[z])) {
+            pk_free(zone_files[z]);
+            zone_files[z] = NULL;
+        }
+    printf("packs: %d stage packs freed before the swap (no room for both)\n", n);
+    return 1;
+}
+
 /* Read up to `budget` bytes of the pending packs; returns 1 when every stage pack is in memory. */
 static int pend_step(u32 budget)
 {
@@ -530,6 +562,11 @@ static int pend_step(u32 budget)
             }
             pend.size = pend.f.size;
             pend.cur = pk_alloc(PACK_ALLOC(pend.size));
+            if (!pend.cur && pend_evict()) { /* then all of it now: nothing of those zones is left to draw */
+                budget = 0xFFFFFFFF;
+                all = 1;
+                pend.cur = pk_alloc(PACK_ALLOC(pend.size));
+            }
             if (!pend.cur) {
                 printf("packs: no memory for %s (%u KB)\n", path, pend.size >> 10);
                 for (int i = 0; i < pk_n; i++) printf("packs:   block %u KB %s\n", pk_blk[i].size >> 10, pk_blk[i].used ? "used" : "free");
@@ -1013,7 +1050,7 @@ int main(void)
             if (frame > 600 && frame % 90 == 0) {
                 menu_test_point("BoxRight");
                 pad_force = PAD_CROSS;
-                printf("result test f %u: X, result %d saving %d\n", frame, menu_result_showing(), menu_saving());
+                printf("result test f %u: X, result %d saving %d mario %d\n", frame, menu_result_showing(), menu_saving(), game_test_demo(-3));
             }
         }
 #endif
@@ -1093,8 +1130,8 @@ int main(void)
                 shots++;
             }
             if (frame > 200 && frame % 60 == 0 && frame < 5000)
-                printf("spiece test f %u: busy %d demo %d lecture %d saving %d\n", frame, game_story_busy(), game_test_demo(-1),
-                       gd_story_passed("スターピースレクチャー"), menu_saving());
+                printf("spiece test f %u: busy %d demo %d lecture %d saving %d guidance %d counter %d\n", frame, game_story_busy(),
+                       game_test_demo(-1), gd_story_passed("スターピースレクチャー"), menu_saving(), menu_guidance_exists(), game_test_spc());
         }
 #endif
 #if defined(PACKS) && defined(ROSETTA_TEST)
@@ -1108,7 +1145,7 @@ int main(void)
                 printf("rosetta test f %u: second %d\n", frame, game_test_demo_name("ロゼッタ天文台機能回復デモ"));
             }
             if (frame > 300 && frame % 60 == 0 && frame < 6000)
-                printf("rosetta test f %u: demo %d book %d\n", frame, game_test_demo(-1), menu_monologue_alive());
+                printf("rosetta test f %u: demo %d book %d rosetta %d\n", frame, game_test_demo(-1), menu_monologue_alive(), game_test_demo(-4));
         }
 #endif
 #if defined(PACKS) && defined(GRAND_TEST)
@@ -1276,6 +1313,17 @@ int main(void)
                 }
         }
 #endif
+#if defined(PACKS) && defined(LETTER_TEST)
+        { /* a scenario with Luigi's letter (EggStarGalaxy/6): START, the pointer on the pause menu's LetterButton, X: the
+           * letter and its IconAButton (PauseMenu::exeLuigiLetter); X once the icon waits: closed */
+            pad_force = 0;
+            if (frame == 900) pad_force = PAD_START;
+            if (frame == 1020) printf("letter test f %u: paused %d, pointer on BoxButton3 %d\n", frame, menu_paused(), menu_test_point("BoxButton3"));
+            if (frame == 1040) pad_force = PAD_CROSS;
+            if (frame == 1300) pad_force = PAD_CROSS;
+            if (frame >= 900 && frame < 1500 && frame % 20 == 0) printf("letter test f %u: paused %d button %d letter %d\n", frame, menu_paused(), menu_test_pml(), menu_test_letter());
+        }
+#endif
 #if defined(PACKS) && defined(SCENE_TEST)
         if (frame == 500 || frame == 1000 || frame == 1500) { /* scenes in place, one after another */
             static const char *next[3] = {"EggStarGalaxy/2", "AstroGalaxy/1", "EggStarGalaxy/1"};
@@ -1385,6 +1433,7 @@ int main(void)
 #endif
 #if defined(TALK_TEST) && !defined(TEASER)
         if (frame >= 200 && frame < 2400) game_test_talk((int)frame); /* walks to the first SignBoard and reads it */
+        if (frame % 30 == 0 && frame < 2400) game_test_npc_turn((int)frame);
 #endif
 #ifdef SLIP_TEST
         if (frame >= 300 && frame < 2400) game_test_slip(); /* Mario left still on a steep slope */
@@ -1730,6 +1779,17 @@ int main(void)
 #ifdef CANDLE_TEST
         if (frame >= 150 && frame < 600 && frame % 40 == 0) /* into a flame, then a spin by the next, in turn */
             printf("candle test f %u: row %d, life %d, coins %d\n", frame, game_test_candle(frame % 80 == 0), game_life(), game_coins());
+#endif
+#ifdef NPC_TEST
+        { /* Mario beside each turning NPC in turn (300 frames each): their turn, tilt and action */
+            if (frame >= 150 && frame % 300 == 150) printf("npc test f %u: visit row %d\n", frame, game_test_npc_visit((int)(frame - 150) / 300));
+            if (frame >= 150 && frame % 60 == 0) game_test_npc_turn((int)frame);
+        }
+#endif
+#ifdef TORCH_TEST
+        if (frame >= 150 && frame < 900 && frame % 40 == 0) /* a spin by a torch with an item, then onto it (its item), in turn */
+            printf("torch test f %u: row %d, life %d, coins %d, star pieces %d (out %d)\n", frame, game_test_torch(frame % 80 == 0 ? 1 : 2), game_life(),
+                   game_coins(), game_test_spc_n(), game_pieces_out());
 #endif
 #ifdef SCREW_TEST
         { /* Mario dropped on a screw switch (150), a spin once he stands on it (180) */
