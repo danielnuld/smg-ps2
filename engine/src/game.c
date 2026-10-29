@@ -1115,6 +1115,8 @@ static int miss_running(void);
 static int miss_abyss; /* the next miss is MarioActor::exeGameOverAbyss's (a DeathArea: forceKillPlayerByAbyss) */
 static void bgm_stop(int frames);
 static const char *bgm_comet(void);
+static void mario_sound(const char *key);
+static int m_anim_on(const char *jp);
 static void bgm_start(const char *id);
 static void bgm_boss(int id);
 static void bgm_after_boss(void);
@@ -6693,6 +6695,7 @@ static void warp_try(Player *m)
         warp.from = in->row; warp.to = to; warp.t = 0;
         warp.dest = vadd(v3(p->pos[0], p->pos[1], p->pos[2]), vmul(row_axis_y(p), 160.0f));
         m->hvel = v3(0, 0, 0); m->vup = 0; m->hip = 0; m->grounded = 0;
+        mario_sound("ワープポッド入り"); mario_sound("声慌て"); /* MarioWarp::start */
         printf("warp pod %d -> %d\n", warp.from, warp.to);
         return;
     }
@@ -6704,6 +6707,7 @@ static int warp_update(Player *m)
     const Row *r = &sc->objs[warp.from];
     m->hvel = v3(0, 0, 0); m->vup = 0;
     if (warp.t < 60) { /* to 160 up the pod (displacement x (1 - left / 60)) */
+        mario_sound("引き戻し基本"); mario_sound("ワープポッド移動");
         V3 to = vadd(v3(r->pos[0], r->pos[1], r->pos[2]), vmul(row_axis_y(r), 160.0f));
         m->pos = vadd(m->pos, vmul(vsub(to, m->pos), (warp.t + 1) / 60.0f));
         if (++warp.t == 60) { /* calcAxis */
@@ -6723,10 +6727,12 @@ static int warp_update(Player *m)
     if (k >= warp.n) {
         m->pos = warp.dest;
         row_step[warp.to] = 60;
+        if (player_mode != PM_TERESA) mario_sound("ワープポッド出"); /* (getPlayerMode() != 6) */
         printf("warp pod %d: arrived at %d\n", warp.from, warp.to);
         warp.from = -1;
         return 0;
     }
+    mario_sound("引き戻し基本"); mario_sound("引き戻し浮遊"); mario_sound("ワープポッド移動");
     float p = (1.0f + sinf(((float)k - 0.5f * warp.n) / warp.n * 3.14159265f)) * 0.5f;
     float ang = -warp.angle * (1.0f - p) + warp.angle * p, c = cosf(ang), s = sinf(ang);
     V3 a = warp.axis, v = warp.start; /* Rodrigues */
@@ -11338,6 +11344,7 @@ static void m_squat_anim(Player *m)
     } else if (m_sz == 0) m->tsi = 0;
     else if (m->squat_walk) { m->walk = (MC.mSquatWalkMaxSpeed - MC.mSquatWalkMinSpeed) * m_sz + MC.mSquatWalkMinSpeed; m->tsi = 1; }
     static const float w1[4] = {1, 0, 0, 0}, w2[4] = {0, 1, 0, 0}; /* walkWeights1 / 2 */
+    if (!m_group_on("しゃがみ基本") && !m->jumping && !m_anim_on("サマーソルト")) mario_sound("声しゃがむ"); /* (its _20._A: not kept) */
     m_group("しゃがみ基本", -1);
     m_walk_weight(m->tsi ? w2 : w1);
     if (mario_anim) mario_anim->speed = m->squat_walk ? 60.0f / MC.mSquatWalkStep * m->walk : 1.0f;
@@ -12593,7 +12600,7 @@ static void m_do_landing(Player *m)
 static void m_main_move(Player *m)
 {
     int a1 = 0;
-    if (m->s23) { m->tsi = 0; m->walk = 0; a1 = 1; } /* sliding: 坂滑り */
+    if (m->s23) { m->tsi = 0; m->walk = 0; a1 = 1; mario_sound("坂滑り"); } /* sliding */
     if (m->corr_flip) a1 = 1; /* _754 */
     m->slip_floor = m_skatable(m); /* _35: isSkatableFloor */
     V3 dir = m->move_dir;
@@ -12671,7 +12678,7 @@ static void m_main_move(Player *m)
         }
         m->turn_neutral = 0;
     }
-    if (m->turn_slip) { if (m->turn_slip == MC.mTurnSlipTime) m_pad_vib(2); m->turn_slip--; if (!m->slip_floor) m->walk = 0; }
+    if (m->turn_slip) { if (!m->slip_floor) mario_sound("スリップ"); if (m->turn_slip == MC.mTurnSlipTime) m_pad_vib(2); m->turn_slip--; if (!m->slip_floor) m->walk = 0; }
     if (!m->turn_slip && m->turn_brake) {
         if (m_sz != 0 && ang_abs_h(m_pad, m->face, m->up) > 3.14159265f * 0.5f) {
             m_clip_stop(); m_front(m, vmul(m->face, -1.0f)); m->turn_brake = 0;
@@ -17315,7 +17322,7 @@ static int mario_offence(V3 c, float r, V3 grav)
         /* the rumbles of MarioActor::trampleJump (startPadVib(0)) and tryTornadoAttack (1). ponytail: at the offence
          * found, not at its message taken (the callers act on it; a pattern playing is not restarted) */
         if (!mario->grounded && mario->vup < 0 && mario->hip != HIP_FALL && d < r + 80.0f + 1.5f * fall && above && horiz) {
-            m_pad_vib(0);
+            m_pad_vib(0); mario_sound("声踏み");
             return MSG_TRAMPLE;                                                                 /* mSensorRadiusTrampleAttack 80 */
         }
         if (mario->spin_timer > 0 && mario_touch(c, r)) { m_pad_vib(1); return MSG_HITALL; }  /* sendBodyAttack */
@@ -25641,7 +25648,7 @@ static void update_hazards(void)
                                           : fabsf(vdot(d, x)) < 500.0f * rw->scale[0] &&
                                                 fabsf(vdot(d, vcross(z, x))) < 500.0f * rw->scale[1] &&
                                                 fabsf(vdot(d, z)) < 500.0f * rw->scale[2];
-            if (in_hole) { printf("black hole %d at %d %d %d up %.2f %.2f %.2f\n", in->row, (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z, mario->up.x, mario->up.y, mario->up.z); miss(); return; }
+            if (in_hole) { printf("black hole %d at %d %d %d up %.2f %.2f %.2f\n", in->row, (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z, mario->up.x, mario->up.y, mario->up.z); mario_sound("ブラックホール吸い込まれ"); miss_abyss = 1; miss(); return; }
             continue;
         }
         if (in->hazard == 2) {
@@ -32859,6 +32866,9 @@ void game_update(void)
     update_astro_core();
     update_astro_sky();
     demo_on = dino_demo_on || ota_demo_on || star_demo || fat_demo() || vine_demo_on() || talk_demo() || dx.on || menu_staffroll_on() || gw_demo_on() || pd.name; /* (StaffRoll: offPlayerControl) */
+    /* MarioEffect: mHealth <= 1, not in a demo / the power star get demo / a dark comet, isEnableNerveChange.
+     * ponytail: mWaterLife (only ever set to 8 in Petari) not read, isPermitSE always */
+    if (life <= 1 && !demo_on && !star_demo && !opening_on && !miss_running() && strcmp(bgm_comet(), "Dark")) mario_sound("ライフ警告");
     LQ(60, update_ticofat());
     LQ(61, update_sambos());
     LQ(62, update_fire());
