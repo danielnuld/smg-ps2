@@ -173,6 +173,9 @@ void pad_update(void)
     }
 #endif
 #if defined(BENCH) && !defined(BENCH_STILL) /* BENCH_STILL: the same counts with Mario left at the start */
+    /* bench_mode: "still" written over "path_" in a copy of the ELF gives BENCH_STILL without a second build */
+    static volatile const char bench_mode[16] = "BENCHMODE:path_";
+    if (bench_mode[10] == 's') return;
     /* fixed path, 30 s (milestone 3): forward with chained jumps (X every 4 frames for 85 frames out of 180: the
      * 2nd and 3rd jumps), a right-hand circle with spins and a long jump every 2 s (R1 + X), forward-left with a
      * jump every 1.5 s and a back flip every 3 s (R1 + X standing still) */

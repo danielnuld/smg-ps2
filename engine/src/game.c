@@ -32941,8 +32941,19 @@ void game_draw(void)
     }
     if (sky_drawn) render_clear_depth(); /* the sky stays behind whatever its scale put in front */
     PROF(1);
+#ifdef BENCH
+    /* the instances' draw by class over the bench's frames 61..1860, the dearest printed at its end */
+    static u32 it_sum[1024], it_frame;
+    u32 it_c = cycles();
+    int it_ty = -1;
+    it_frame++;
+#define IT_MARK(ty) do { u32 c_ = cycles(); if (it_ty >= 0 && it_frame > 61 && it_frame <= 1861) it_sum[it_ty & 1023] += c_ - it_c; it_c = c_; it_ty = (ty); } while (0)
+#else
+#define IT_MARK(ty) do { } while (0)
+#endif
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
+        IT_MARK(in->row >= 0 ? (int)sc->objs[in->row].type : 1023);
         if (in->invisible || in->sky || in->sun) continue;
         if (in->plant) {
             if (plant_first[in->row] < 0) continue;
@@ -33105,6 +33116,18 @@ void game_draw(void)
         } else
             inst_draw(in, in->md, in->m);
     }
+    IT_MARK(-1);
+#ifdef BENCH
+    if (it_frame == 1862) {
+        for (int k = 0; k < 12; k++) {
+            int best = 0;
+            for (int t = 1; t < 1024; t++) if (it_sum[t] > it_sum[best]) best = t;
+            if (!it_sum[best]) break;
+            printf("bench inst %-24s %u us\n", best < (int)sc->ntypes ? sc->types + 32 * best : "?", (u32)(it_sum[best] / 1800 / 294.912f));
+            it_sum[best] = 0;
+        }
+    }
+#endif
     srd_draw();
     gsr_draw();
     adds_draw();
