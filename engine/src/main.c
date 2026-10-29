@@ -678,7 +678,7 @@ static const u8 *load_packs(Scene *s)
         if (own) pack_close(&sp);
         u32 before = pack_bytes;
         const u8 *sb = load_base(own ? path : "sound.bin");
-        se_load(sb);
+        se_load(sb, gd_player_luigi());
         u32 keep = se_compact(sb, pack_bytes - before); /* the ADPCM went to SPU RAM: its EE copy freed */
         pk_shrink(sb, PACK_ALLOC(keep));
         pack_bytes = before + keep;
