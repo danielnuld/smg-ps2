@@ -10921,9 +10921,9 @@ static int swim_update(Player *m); /* (MarioSwim: before update_mario) */
  * (checkWallStick, isEnableStickWall, MarioWall::start / update / startJump, moveWallSlide), MarioMagic.cpp (the ground
  * spin), MarioActor.cpp updateSwingAction / MarioActorPunch.cpp trySpinPunch; constants MC (tools/mario_const.py).
  * The gravity is -up; mJumpVec is hvel + up x vup. m->vel is the frame's move (mVelocity).
- * ponytail: our collision (collide_n) stands in for the Binder / checkGround / checkAllWall: no distance to the ceiling
- * (no ceiling hits, no squat uppercut), the height over the ground is a probe; no 2D, sand, slider, slip up, side step,
- * cliff hold; no _34 (decideInertiaOnIce / decideOnIceAnimation: its setter is not in the decomp); the quad walk blend
+ * The map: MarioActor's Binder, checkGround, checkAllWall, calcFrontFloor, calcShadowPos (see update_mario_).
+ * ponytail: skating, as Rabbit / Teresa Mario keeps the old 50 sphere (collide_n) and its ground; no squat uppercut,
+ * the height over the ground in the air is a probe; no 2D, sand, slider, side step; no _34 (decideInertiaOnIce / decideOnIceAnimation: its setter is not in the decomp); the quad walk blend
  * (基本: WalkSoft / Walk / Run / Wait at sWeightTable) and その場足踏み (Run / Wait) play their heaviest clip */
 static V3 m_cx, m_cy;          /* the camera's axes on the plane under Mario (calcMoveDir) */
 
