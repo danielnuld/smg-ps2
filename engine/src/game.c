@@ -12356,6 +12356,7 @@ static void m_air_walk(Player *m)
 /* MarioWall (MarioWall.cpp after Petari): mwl._1D its binder-ground flag, _75C (fixWallingTop: the wall's up), the binder's
  * ground touch this frame (mDrawStates._6, updateBinderInfo), _558 the frame of the last A in a jump (procJump) */
 static struct { int s1D, d6; V3 v75C; unsigned a558; } mwl = {.a558 = 0x80000000u};
+static void m_wall_jump_hit(Player *m);
 static void m_proc_jump(Player *m, int a1)
 {
     if (m->hip) { m_proc_hip(m); return; }
@@ -12405,15 +12406,7 @@ static void m_proc_jump(Player *m, int a1)
     }
     m->vel = vadd(m_jv(m), bee_add); /* addVelocity(mJumpVec) and the bee's addVelocity(gravity, _770) */
     m->vup -= acc * gs;
-    /* checkWallJumpHit: a long jump into a wall bounces off it (ponytail: no MarioBlown) */
-    if (m->jump_kind == 5 && m->wall) {
-        float into = vdot(m->hvel, m->wall_n);
-        if (into < 0) {
-            m->hvel = vsub(m->hvel, vmul(m->wall_n, into));
-            if (vlen(m->hvel) > 1e-3f) m_front(m, vmul(m->hvel, -1.0f));
-            m->spin_lock = 1; m->air_spin = 0; m->air_lock = 60;
-        }
-    }
+    m_wall_jump_hit(m);
     float max_drop = player_mode == PM_BEE && !m_rising(m) ? MC.mMaxDropSpeed[4] : MC.mMaxDropSpeed[0];
     if (!(m->jump_kind == 13 && m->drop_free) && -m->vup >= max_drop) m->vup = -max_drop;
     m_air_walk(m);
@@ -14149,6 +14142,45 @@ static void m_try_drop(Player *m)
     m_proc_jump(m, 1);
     m->jumping = 1; m->connect = 0; m->digital = 1;
     if (mw.w8) m_stop_walk(m);
+}
+
+/* checkWallJumpHit: a long jump (kind 5) into a front wall (_8) loses its part along the wall's normal; unless the wall
+ * is NoAction that part is turned back, MarioBlown takes a fifth of it and he faces against it (_2B, _402 0, _428
+ * 60). Else falling after 10 frames against a front wall under 80 degrees: the first time 5 off it with no gravity
+ * part (壁はじき, _10._E), then its part cut keeping the length. ponytail: checkWallJumpCode is not ported */
+static int m_blown(Player *m, V3 v);
+static void m_wall_jump_hit(Player *m)
+{
+    if (m->jump_kind == 5) {
+        if (mw.w8) {
+            V3 n = m_wall_norm(m), jv = m_jv(m);
+            float wd = vdot(jv, n);
+            jv = vsub(jv, vmul(n, wd)); /* cutVecElementFromJumpVec */
+            m_set_jv(m, jv);
+            if (m_check_wall_code(WALLC_NOACTION, 1)) return;
+            jv = vsub(jv, vmul(n, wd));
+            m_set_jv(m, jv);
+            m_blown(m, vmul(jv, 0.2f));
+            V3 h = vtangent(jv, m->up);
+            if (vlen(h) >= 0.001f) m_front(m, vmul(vnorm(h), -1.0f));
+            m->spin_lock = 1; m->air_spin = 0; m->air_lock = 60;
+        }
+        return;
+    }
+    if (!m_rising(m) && m->air_timer > 10 && mw.w8 && angle_d(m, tri_n(&mw.front)) < 80.0f) {
+        V3 n = tri_n(&mw.front);
+        if (!m->wall_hit) {
+            m_set_jv(m, vadd(vmul(n, 5.0f), vmul(m->up, m->vup))); /* + the gravity part (cutGravityElementFromJumpVec) */
+            m->wall_hit = 1;
+            m_anim("壁はじき");
+        } else {
+            V3 jv = m_jv(m);
+            float l = vlen(jv);
+            jv = vsub(jv, vmul(n, vdot(jv, n)));
+            if (vlen(jv) > 1e-6f) jv = vmul(vnorm(jv), l);
+            m_set_jv(m, jv);
+        }
+    }
 }
 
 /* checkAllWall: the faces round the centre within 80 (90 swimming), not floors nor ceilings (|n . head| <= 0.5), by
