@@ -122,7 +122,7 @@ typedef struct {
      * map's push in the last move (the move less mVelocity) */
     int floor, slip_poly, s23, s3C2, s3C4, s3FE, s_dash;
     float s8F0, s280, s8F4;
-    V3 s8F8, s910, s284, s904, s1A8, prev_vel, last_move, s288;
+    V3 s8F8, s910, s284, s904, s1A8, prev_vel, last_move, s288, s350; /* .., _350 (Mario::push) */
     int press, press_t; /* MarioActor::setPress: _39C + 1 (0 none), frames to the game over (_FB8) */
     float press_s;      /* _3B0: his height's scale while pressed */
     /* the modes' Mario fields: MarioBee _406 _408 _76C _770 _774, mMovementStates._11 (the bee's flight on) / _12,
@@ -16261,6 +16261,15 @@ static void update_mario_(void)
         else { m->slip_move = vmul(m->slip_move, MC.mInertiaSlipTurn); m->vel = vadd(m->vel, m->slip_move); }
     }
     if (slipping) slip_frames++;
+    if (!near0(m->s350) && !hg.on) { /* tryPushToVelocity (MarioStatus_Hang: kept out) */
+        if (m->jumping && !m->grounded) {
+            V3 d = vnorm(m->s350);
+            if (vdot(m_jv(m), m->s350) < 0.0f) m_set_jv(m, vsub(m_jv(m), vmul(d, vdot(m_jv(m), d)))); /* cutVecElementFromJumpVec */
+            if (vdot(m->vel, m->s350) < 0.0f) m->vel = vsub(m->vel, vmul(d, vdot(m->vel, d)));
+        } else if (dm_damaging() && m->grounded) m->s350 = vtangent(m->s350, m->up);
+        m->vel = vadd(m->vel, m->s350);
+    }
+    m->s350 = v3(0, 0, 0);
 
     /* MarioActor's Binder (initBinder 60, setBinderOffsetVec _2C4): radius 60 round his place + _2C4, up x 70 on the
      * ground (50 squatting), eased 0.1 a frame to -gravity x 70 off it; checkGround keeps him on the ground. Other
@@ -16310,17 +16319,33 @@ static void update_mario_(void)
         if (vlen(off) > 1e-6f) m->pos = vadd(m_tower.c, vadd(vmul(vnorm(off), m_tower.r - 200.0f), vmul(m_tower.up, h)));
     }
     { /* MarioActor::movement: _288 (the map's push in the move), a push undone half when it flips back, the walk stopped
-       * by a push over twice the move, a slide held back flagged (_10._22). ponytail: Mario::push (_350, the slide's
-       * push back up and the 坂すべり pushes) is not ported */
+       * by a push over twice the move; sliding: held back going up, Mario::push (_350) of the move along his velocity
+       * (and _3BC <= 2 a lift of the push, at most 10), else a slide held back flagged (_10._22), the 坂すべり clips
+       * pushed 5 along / against his front */
         V3 vel = vadd(m->vel, m->vel_after), moved = vsub(m->pos, pos0), last = m->s288;
         m->s288 = vsub(moved, vel);
         float l = vlen(m->s288), ll = vlen(last);
-        if (pgc && l > 1e-4f && ll > 1e-4f && vdot(m->s288, last) / (l * ll) < -0.999f && fabsf(l - ll) < 1.0f)
-            m->pos = vsub(m->pos, vmul(m->s288, 0.5f)); /* isOppositeDirection */
-        if (pgc && l > 0.1f && !m->squat && !near0(vel) && l > 2.0f * (vlen(vsub(pos0, p270)) + vlen(vel))) m_stop_walk(m);
-        if (pgc && m->s23 && !(vlen(vel) < vlen(moved))) {
-            V3 d = near0(m->s8F8) ? m->s8F8 : vnorm(m->s8F8);
-            if (vlen(vel) > 20.0f && vdot(moved, d) < vdot(vel, d) * 0.5f) mgc.s22 = 1;
+        V3 cr = vcross(m->s288, last); /* isOppositeDirection: dot < 0, each cross component within 0.01 */
+        if (pgc && vdot(m->s288, last) < 0.0f && fabsf(cr.x) <= 0.01f && fabsf(cr.y) <= 0.01f && fabsf(cr.z) <= 0.01f &&
+            l >= 0.001f && ll >= 0.001f && fabsf(l - ll) < 1.0f)
+            m->pos = vsub(m->pos, vmul(m->s288, 0.5f));
+        if (pgc && l > 0.1f) {
+            if (!m->squat && !near0(vel) && l > 2.0f * (vlen(vsub(pos0, p270)) + vlen(vel))) m_stop_walk(m);
+            if (m->s23 && vlen(vel) < vlen(moved)) {
+                if (vdot(moved, m->up) > 0.0f) { /* stack_134 . gravity < 0 */
+                    V3 p = vtangent(vel, m->up);
+                    if (near0(p)) p = vtangent(moved, m->up);
+                    if (!near0(p)) m->s350 = vadd(m->s350, vmul(vnorm(p), vlen(moved))); /* push(setLength) */
+                    if (m->air_timer <= 2) m->vup += fminf(l, 10.0f); /* mJumpVec += -gravity x min(|_288|, 10) */
+                }
+            } else if (m->s23) {
+                V3 d = near0(m->s8F8) ? m->s8F8 : vnorm(m->s8F8);
+                if (vlen(vel) > 20.0f && vdot(moved, d) < vdot(vel, d) * 0.5f) {
+                    if (m_anim_on("坂すべり下向きあおむけ")) m->s350 = vadd(m->s350, vmul(m->face, 5.0f));
+                    else if (m_anim_on("坂すべり上向きうつぶせ")) m->s350 = vadd(m->s350, vmul(m->face, -5.0f));
+                    mgc.s22 = 1;
+                }
+            }
         }
     }
     /* writeBackPhyisicalVector: a wall halves the jump's part into it; on the ground walking into one slows the walk */
