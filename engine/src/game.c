@@ -1410,12 +1410,26 @@ static int star_flow(Pickup *out, int first, const Row *r, const unsigned char *
 
 /* --- physics shared by Mario and Kuribo ------------------------------------------------------------------- */
 
+static u32 grav_epoch; /* changes with the gravities switched off (update_switches): up_at's answers stay good till then */
 static V3 up_at(V3 p, V3 prev)
 {
+    /* gravity_at is a function of the point and the gravities on: its answer kept for the points asked again (items,
+     * pickups, pieces at rest ask the same point every frame) */
+    static struct { u32 key[3], epoch; int ok; V3 up; } c[64];
+    u32 k[3];
+    memcpy(k, &p, 12);
+    u32 h = (k[0] * 2654435761u ^ k[1] * 2246822519u ^ k[2] * 3266489917u) >> 26;
+    if (c[h].epoch == grav_epoch + 1 && c[h].key[0] == k[0] && c[h].key[1] == k[1] && c[h].key[2] == k[2])
+        return c[h].ok ? c[h].up : prev;
     float g[3];
-    if (!gravity_at(grav, ngrav, (const float *)&p, g))
+    int ok = gravity_at(grav, ngrav, (const float *)&p, g);
+    c[h].key[0] = k[0]; c[h].key[1] = k[1]; c[h].key[2] = k[2];
+    c[h].epoch = grav_epoch + 1;
+    c[h].ok = ok;
+    c[h].up = v3(-g[0], -g[1], -g[2]);
+    if (!ok)
         return prev;
-    return v3(-g[0], -g[1], -g[2]);
+    return c[h].up;
 }
 
 /* Push a sphere out of the KCL; returns 1 if it rests on ground (a face within 60 degrees of up). */
@@ -25516,9 +25530,10 @@ static void update_switches(void)
     for (int i = 0; i < ngrav && i < 2048; i++) { /* GlobalGravityObj::updateSwitch: SW_A on, SW_B off.
                                                    * ponytail: SW_SLEEP (useStageSwitchSleep) not honoured */
         const Row *r = &sc->objs[grav[i].row];
-        grav_off[i] = (r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) || (r->sw[SW_B] >= 0 && sw_on(r, SW_B));
+        unsigned char off = (r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) || (r->sw[SW_B] >= 0 && sw_on(r, SW_B));
+        if (grav_off[i] != off) { grav_off[i] = off; grav_epoch++; }
     }
-    gravity_off = grav_off;
+    if (gravity_off != grav_off) { gravity_off = grav_off; grav_epoch++; }
     for (int i = 0; i < nlogic; i++) {
         int row = logic[i].row;
         const Row *r = &sc->objs[row];
