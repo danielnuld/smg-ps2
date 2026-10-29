@@ -103,7 +103,8 @@ static const float curves[4][17] = {
      0.0f}};
 
 /* ---- data ---- */
-int se_load(const u8 *b)
+static int luigi_voice; /* AudSceneMgr::isPlayerModeLuigi */
+int se_load(const u8 *b, int luigi)
 {
     if (!b || memcmp(b, "SNDB", 4)) { printf("se: no sound.bin\n"); return -1; }
     const u32 *h = (const u32 *)(b + 4);
@@ -124,7 +125,12 @@ int se_load(const u8 *b)
             if (!memcmp(ib + o, "LIST", 4)) bk[banks[i].bank].list = ib + o;
         }
     }
-    se_upload(SPU_BASE, b + h[8], h[9]);
+    /* the voices (tools/sound.py): Mario's at h[13], Luigi's at h[14], uploaded where Mario's go
+     * (AudSceneMgr::loadPlayerResource); older packs: 0, the whole blob */
+    luigi_voice = luigi;
+    if (!h[14]) se_upload(SPU_BASE, b + h[8], h[9]);
+    else if (!luigi) se_upload(SPU_BASE, b + h[8], h[14]);
+    else { se_upload(SPU_BASE, b + h[8], h[13]); se_upload(SPU_BASE + h[13], b + h[8] + h[14], h[9] - h[14]); }
     for (int v = 0; v < NVOICE; v++) voice_of[v] = -1;
     printf("se: %u SEs, %u waves, %u banks, %u KB ADPCM\n", nses, nwaves, nbanks, h[9] >> 10);
     return 0;
@@ -353,6 +359,9 @@ static Chan *track_start(Track *t, int key, int vel, u32 timer)
     } else return NULL;
     if (!vm) return NULL;
     const WaveRow *w = wave_row(bk[b].wsys, (u16)be32(vm + 4));
+#ifdef SE_LOG
+    if (!w) printf("se- wave %u/%u\n", bk[b].wsys, (unsigned)be32(vm + 4)); /* not in this sound.bin */
+#endif
     if (!w) return NULL;
     Chan *c = chan_new();
     if (!c) return NULL;
@@ -712,6 +721,7 @@ u32 se_start(u32 id, const float *pos)
             s->acc = 1.0f;
             if (pos) { s->has_pos = 1; s->pos[0] = pos[0]; s->pos[1] = pos[1]; s->pos[2] = pos[2]; }
             s->root = track_new(s, NULL, r->seq);
+            if (s->root && luigi_voice && (id >> 16 & 0xFF) == 1) s->root->ports[12] = 20; /* AudSystem::switchToLuigi: SE_PV */
             if (s->root && map_code > 0) /* AudSoundObject::setMapCodeToPort: the surface sounds read ports 11 / 12 */
                 switch (id) { /* SE_PM_ HIPDROP, FALLDOWN_S / M, FOOTNOTE_L / R, SUB_L / R, JUMP, LAND, HAND, LAND_HEAVY */
                 case 0x00020006u: case 0x00020013u: case 0x00020017u: case 0x00020025u: case 0x00020026u:

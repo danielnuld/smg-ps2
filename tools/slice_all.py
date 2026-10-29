@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import budget as B
 import slice as SL
 
-ROOM = 10.4e6  # room for scenario data (phase 0b: 9.01e6, docs/phase0b-report.md; +1.39e6: main.c se_compact frees sound.bin's ADPCM)
+ROOM = 9.2e6  # room for scenario data and the menu packs beside it (main.c PACK_ROOM): the pack region (14080 KB in test builds) less resident.bin (3.9 MB), sound.bin's EE part and menus(3d).bin (0.9 MB); 10.4e6 overran it in AstroGalaxy
 # the menus' packs main.c loads beside a galaxy's own (scene_load: mp_names / mp_scene) come out of its room
 MENU_PACKS = {"FileSelect": ("title.bin", "title3d.bin"), "AstroDome": ("dome.bin",), "AstroGalaxy": ("map.bin",), "EpilogueDemoStage": ("ending.bin",)}
 

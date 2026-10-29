@@ -427,7 +427,7 @@ static const u8 *scene_blob;
 static u32 nzones, base_models, base_tex, base_kcl;
 static u32 size_full[64], size_low[64], zone_room; /* each stage pack's bytes; what the stage packs may use */
 static u32 resident_bytes;
-#define PACK_ROOM 10400000u /* room for scenario data, resident.bin aside (9.01 MB in phase 0b; +1.39 MB since se_compact frees the ADPCM) (tools/slice_all.py ROOM) */
+#define PACK_ROOM 9200000u /* room for scenario data, resident.bin aside (the region less resident.bin, sound.bin's EE part and the menus' packs) (tools/slice_all.py ROOM) */
 static MemMark base_mark;
 
 /* Next zone's packs, read a slice per frame (a launch star's flight hides it); stages whose pack does not change
@@ -678,7 +678,7 @@ static const u8 *load_packs(Scene *s)
         if (own) pack_close(&sp);
         u32 before = pack_bytes;
         const u8 *sb = load_base(own ? path : "sound.bin");
-        se_load(sb);
+        se_load(sb, gd_player_luigi());
         u32 keep = se_compact(sb, pack_bytes - before); /* the ADPCM went to SPU RAM: its EE copy freed */
         pk_shrink(sb, PACK_ALLOC(keep));
         pack_bytes = before + keep;
@@ -728,6 +728,15 @@ static const u8 *load_packs(Scene *s)
     }
     u32 scen_base = pack_bytes - resident_bytes; /* scene.bin + common.bin: tools/slice_all.py's stream count */
     zone_room = PACK_ROOM > scen_base ? PACK_ROOM - scen_base : 0;
+    { /* and what the region really has left (its size follows the ELF's; the menus' packs came out of it): a swap
+       * holds the old packs while the new ones come in, so the low packs' sum is kept aside.
+       * ponytail: free bytes summed, not the largest free block */
+        u32 left = 0, lows = 0;
+        for (int i = 0; i < pk_n; i++) if (!pk_blk[i].used) left += pk_blk[i].size;
+        for (u32 z = 0; z < nzones; z++) lows += PACK_ALLOC(size_low[z]);
+        left = left > lows ? left - lows : 0;
+        if (left < zone_room) { printf("packs: zone room %u KB (the region's), not %u KB\n", left >> 10, zone_room >> 10); zone_room = left; }
+    }
     printf("packs: %s, %u zones, base %u models, %u textures, %u KB read\n", scen, nzones, s->nmodels, s->ntex,
            pack_bytes >> 10);
     return scene_blob;

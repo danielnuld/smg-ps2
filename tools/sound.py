@@ -24,6 +24,7 @@ region x oscillators x track volume^2 (parents multiplied) x the SE's table volu
 ponytail: linear interpolation (the DSP's 4-tap filter not reproduced); no vibrato / tremolo, FIR / IIR, buses,
 interrupts or game callbacks (syncCPU reads 0xFFFF); Rand effects take their base value; mono (pan ignored).
 """
+import os
 import re
 import struct
 import sys
@@ -1001,7 +1002,8 @@ def pack(fs, out_bin, ids_h, sources, cap=16000, budget=1850000, scene=None):
     waves {u16 wsys, u16 wave id, u32 SPU offset, u32 samples, u32 loop start (0xFFFFFFFF none), f32 rate,
     u8 base key, 3 pad} (24 B, sorted by wsys << 16 | id), the ADPCM blob (uploaded to SPU RAM as one), then
     (offset, count) of the animation sound index {char "<archive>/<clip>"[32], u32 offset, u32 entries} (40 B,
-    sorted) and the offset of its entries (JAUSoundAnimationSound, 0x20 B each, big-endian as in the .bas).
+    sorted), the offset of its entries (JAUSoundAnimationSound, 0x20 B each, big-endian as in the .bas), then
+    the ADPCM offsets of Mario's voice waves and of Luigi's (the last; their rows point where they go: over Mario's).
     IBNK / BSC stay big-endian. The SEs are the names written in `sources`; their waves are every one their
     sequences reach (bms analysis, all variants of keys read from registers), resampled to at most `cap` Hz for
     SYSTEM / PLAYER sounds and cap x 11025 / 16000 for the rest, all scaled down until the ADPCM fits `budget` bytes
@@ -1068,28 +1070,57 @@ def pack(fs, out_bin, ids_h, sources, cap=16000, budget=1850000, scene=None):
             waves[w] = max(waves.get(w, 0), c)
         pr, vol = baa.se_item(sid)
         se_rows.append((sid[1] << 16 | sid[2], off, pr, round(vol * 255)))
+    # Luigi's voice (AudSystem::switchToLuigi: an SE_PV sound gets port 12 = 20, which moves the voice bank's programs
+    # 0-2 to 20-22: wsys 34's waves 0-79 instead of 80-159; AudSceneMgr::loadPlayerResource loads one set or the
+    # other). Both sets packed, Luigi's last; the engine uploads one of them at the same SPU offset (se_load).
+    vprogs, to_luigi = inst[VOICE_BANK][1], {}
+    for p in (0, 1, 2):  # the same key regions, Luigi's waves
+        for (h, m), (hl, lg) in zip(vprogs[p], vprogs[p + 20], strict=True):
+            assert h == hl and len(m) == len(lg) == 1, (p, h)
+            to_luigi[(VOICE_WSYS, *m)] = (VOICE_WSYS, *lg)
+    voice = sorted(w for w in waves if w in to_luigi)
+    luigi = sorted({to_luigi[w] for w in voice})
+    for v in voice:
+        waves[to_luigi[v]] = max(waves.get(to_luigi[v], 0), waves[v])
+    rest = sorted(set(waves) - set(voice) - set(luigi))
     info = {w: baa.wave(*w) for w in waves}
 
-    def est(k):  # SPU ADPCM bytes with every cap scaled by k
-        return sum(len(info[w][0]) * min(1.0, waves[w] * k / info[w][1]) / 28 * 16 for w in waves)
+    def est(k):  # SPU ADPCM bytes with every cap scaled by k: the rest and one voice set
+        def size(ws):
+            return sum(len(info[w][0]) * min(1.0, waves[w] * k / info[w][1]) / 28 * 16 for w in ws)
+        return size(rest) + max(size(voice), size(luigi))
     scale = 1.0
     while est(scale) > budget and scale > 0.3:
         scale *= 0.95
-    blob, wrows = bytearray(), []
-    for ws, wid in sorted(waves):
+    blob, wrows, starts = bytearray(), [], []
+    for ws, wid in rest + voice + luigi:
+        if (ws, wid) in (voice[:1] + luigi[:1]):  # each voice set 64-aligned (SPU uploads)
+            blob += bytes(-len(blob) % 64)
+            starts.append(len(blob))
         pcm, rate, base, loop = info[(ws, wid)]
         c = round(waves[(ws, wid)] * scale)
         cf = Path("out/sound_cache") / f"{ws}_{wid}_{c}.bin"
-        if cf.exists():
-            d_ = cf.read_bytes()
+        try:  # (another job may be replacing it)
+            d_ = cf.read_bytes() if cf.exists() else None
+        except OSError:
+            d_ = None
+        if d_:
             r2, n, ls = struct.unpack_from("<fIi", d_, 0)
             adp, ls = d_[12:], (None if ls < 0 else ls)
         else:
             adp, r2, n, ls = ps2_wave(pcm, rate, loop, c)
             cf.parent.mkdir(parents=True, exist_ok=True)
-            cf.write_bytes(struct.pack("<fIi", r2, n, -1 if ls is None else ls) + adp)
-        wrows.append(struct.pack("<HHIIIfB3x", ws, wid, len(blob), n, 0xFFFFFFFF if ls is None else ls, r2, base))
+            tmp = cf.with_suffix(f".{os.getpid()}")  # whole files only: packs are built in parallel
+            tmp.write_bytes(struct.pack("<fIi", r2, n, -1 if ls is None else ls) + adp)
+            try:
+                os.replace(tmp, cf)
+            except OSError:  # another job's copy in use
+                tmp.unlink()
+        at = len(blob) - (starts[1] - starts[0] if len(starts) == 2 else 0)  # Luigi's: where they are uploaded
+        wrows.append(struct.pack("<HHIIIfB3x", ws, wid, at, n, 0xFFFFFFFF if ls is None else ls, r2, base))
         blob += adp
+    o_voice, o_luigi = starts or (0, 0)
+    wrows.sort(key=lambda r: struct.unpack_from("<HH", r))
     banks = sorted(baa.banks.items())
     ib_blob, brows = bytearray(), []
     for bno, (off, ws) in banks:
@@ -1108,8 +1139,8 @@ def pack(fs, out_bin, ids_h, sources, cap=16000, budget=1850000, scene=None):
     basent = b"".join(bas[k] for k in bkeys)
     o_adp = o_basent + len(basent) + (-(o_basent + len(basent)) % 64)
     out = bytearray(o_adp + len(blob))
-    struct.pack_into("<4s13I", out, 0, b"SNDB", o_bsc, len(bsc), o_bank, len(brows), o_se, len(se_rows), o_wv,
-                     len(wrows), o_adp, len(blob), o_bas, len(bkeys), o_basent)
+    struct.pack_into("<4s15I", out, 0, b"SNDB", o_bsc, len(bsc), o_bank, len(brows), o_se, len(se_rows), o_wv,
+                     len(wrows), o_adp, len(blob), o_bas, len(bkeys), o_basent, o_voice, o_luigi)
     at = 0
     for k, key in enumerate(bkeys):
         struct.pack_into("<32sII", out, o_bas + 40 * k, key.encode(), at, len(bas[key]) // 0x20)
@@ -1128,9 +1159,11 @@ def pack(fs, out_bin, ids_h, sources, cap=16000, budget=1850000, scene=None):
     Path(out_bin).write_bytes(out)
     print(f"sound.bin: {len(names)} SEs, {len(wrows)} waves, ADPCM {len(blob) / 1e6:.2f} MB (caps x {scale:.2f}: system "
           f"and Mario {cap * scale:.0f} Hz, the rest {cap * 11025 // 16000 * scale:.0f} Hz), "
-          f"EE {o_adp / 1e3:.0f} KB")
+          f"EE {o_adp / 1e3:.0f} KB, SPU {max(o_luigi, len(blob) - o_luigi + o_voice) / 1e6:.2f} MB (voices: Mario "
+          f"{(o_luigi - o_voice) / 1e3:.0f} KB, Luigi {(len(blob) - o_luigi) / 1e3:.0f} KB)")
 
 
+VOICE_BANK, VOICE_WSYS = 70, 34  # the player voice's IBNK and wave system (B70kawa)
 CURVES = _curves()
 
 
