@@ -50,6 +50,8 @@ static struct { int t, frames, close; u32 rgb; } wipe;
 static void wipe_start(int frames, int close, u32 rgb) { wipe.t = 0; wipe.frames = frames; wipe.close = close; wipe.rgb = rgb; }
 static int wipe_active(void) { return wipe.frames && wipe.t < wipe.frames; }
 static struct { LytInst *l; int on, no; const u16 *page; u16 buf[400]; } mono; /* RosettaMonologue (by wipe_update) */
+struct Iab;
+static struct Iab *mono_ab(void);
 
 /* --- messages (tools/lyt.py MSGS) ------------------------------------------------------------------------------ */
 static const u8 *msgs;
@@ -610,14 +612,63 @@ void menu_result_start(void) /* StarReturnDemoStarter::tryStartStageResult: the 
     sr.held = 0; sr.alive = sr.demo = 1; sr.n.next = -1; nrv_set(&sr.n, SR_APPEARSTAR);
 }
 
+/* --- IconAButton (Screen/IconAButton.cpp, menus.bin's IconAButton): Open (Appear), Wait (Press), Term (End, dead);
+ * openWithoutMessage hides PicPlate and clears its text; placed at the host's pane (setFollowActorPane /
+ * setLayoutPosAtPaneTrans: copyPaneTrans each frame) */
+enum { IAB_OPEN, IAB_WAIT, IAB_TERM };
+typedef struct Iab { LytInst *l, *host; const char *pane; Nrv n; int on; float pos[2]; } Iab;
+static void iab_init(Iab *b, LytInst *host, const char *pane)
+{
+    memset(b, 0, sizeof *b);
+    b->host = host; b->pane = pane; b->n.next = -1;
+    if (!(b->l = lyt_new("IconAButton"))) return;
+    lyt_start(b->l, "Appear", 0);
+    lyt_set_frame(b->l, 0, 0.0f); lyt_set_rate(b->l, 0, 0.0f); /* setAnimFrameAndStop(0) */
+    lyt_follow(b->l, "RootPane", b->pos, 0);
+}
+static void iab_open(Iab *b) /* openWithoutMessage */
+{
+    static const u16 none[1];
+    if (!b->l) return;
+    b->on = 1;
+    lyt_copy_pane_trans(b->host, b->pane, b->pos); /* updateFollowPos */
+    lyt_show_pane(b->l, "PicPlate", 0);
+    lyt_set_text_rec(b->l, "IconAButton", none);
+    nrv_set(&b->n, IAB_OPEN);
+}
+static int iab_wait(const Iab *b) { return b->on && nrv_is(&b->n, IAB_WAIT); }
+static void iab_term(Iab *b) { if (b->on && (nrv_is(&b->n, IAB_WAIT) || nrv_is(&b->n, IAB_OPEN))) nrv_set(&b->n, IAB_TERM); }
+static void iab_update(Iab *b) /* movement: the nerve, then control (updateFollowPos) */
+{
+    if (!b->on) return;
+    switch (nrv_begin(&b->n)) {
+    case IAB_OPEN:
+        if (FIRST(&b->n)) lyt_start(b->l, "Appear", 0);
+        if (lyt_stopped(b->l, 0)) nrv_set(&b->n, IAB_WAIT);
+        break;
+    case IAB_WAIT:
+        if (FIRST(&b->n)) lyt_start(b->l, "Press", 0);
+        break;
+    case IAB_TERM:
+        if (FIRST(&b->n)) lyt_start(b->l, "End", 0);
+        if (lyt_stopped(b->l, 0)) b->on = 0; /* kill */
+        break;
+    }
+    nrv_end(&b->n);
+    lyt_copy_pane_trans(b->host, b->pane, b->pos);
+    lyt_update(b->l);
+}
+static void iab_draw(Iab *b) { if (b->on) lyt_draw(b->l); }
+
 /* --- Luigi: LuigiLetter, the pause menu's letter button, BrosButton and FileSelectInfo's CharaState after Petari -----
  * LuigiLetter (letter.bin, main.c loads it where the letter can show): its galaxy's picture (LuigiPicture<galaxy>, a
  * material of letter.bin) on PicDummy; Appear (SE_SY_LETTER_APPEAR, then SE_SV_LUIGI_MAIL), Wait until A
  * (SE_SY_TALK_OK), End, dead. The pause menu's (createLuigiLetterForMenu: getLuigiLetterGalaxyName) and
  * KinopioAstro's (createLuigiLetterForTalk: ...ForNPC, game.c kast_event) are drawn over everything.
- * ponytail: no IconAButton at AButtonPosition, no CS_CLICK_CLOSE */
+ * Its IconAButton at AButtonPosition (openWithoutMessage in Wait, A only once it waits, term at End).
+ * ponytail: no CS_CLICK_CLOSE (the remote's speaker) */
 enum { LL_APPEAR, LL_WAIT, LL_END };
-static struct { LytInst *l; int on; Nrv n; } llt;
+static struct { LytInst *l; int on; Nrv n; Iab ab; } llt;
 
 void menu_luigi_letter(const char *galaxy, int talk)
 {
@@ -626,9 +677,11 @@ void menu_luigi_letter(const char *galaxy, int talk)
     char mn[24];
     snprintf(mn, sizeof mn, "%.20s", galaxy); /* "LuigiPicture%s.bti" (lyt.py LETTER: the material by its galaxy) */
     lyt_replace_pane_texture(llt.l, "PicDummy", lyt_material_texture(llt.l, mn));
+    if (!llt.ab.l) iab_init(&llt.ab, llt.l, "AButtonPosition");
     llt.on = 1; llt.n.next = -1; nrv_set(&llt.n, LL_APPEAR);
 }
 int menu_luigi_letter_alive(void) { return llt.on; }
+int menu_test_letter(void) { return llt.on * 10 + (llt.ab.on ? llt.ab.n.cur + 1 : 0); } /* tests: letter on, its IconAButton nerve + 1 */
 static void llt_update(void)
 {
     if (!llt.on) return;
@@ -638,18 +691,20 @@ static void llt_update(void)
         if (lyt_stopped(llt.l, 0)) { se_start(SE_SV_LUIGI_MAIL, NULL); nrv_set(&llt.n, LL_WAIT); }
         break;
     case LL_WAIT:
-        if (FIRST(&llt.n)) lyt_start(llt.l, "Wait", 0);
-        if (pad_pressed(PAD_CROSS)) { pad_eat(PAD_CROSS); se_start(SE_SY_TALK_OK, NULL); nrv_set(&llt.n, LL_END); } /* testCorePadButtonA */
+        if (FIRST(&llt.n)) { lyt_start(llt.l, "Wait", 0); iab_open(&llt.ab); }
+        if ((iab_wait(&llt.ab) || !llt.ab.l) && pad_pressed(PAD_CROSS)) { /* isWait, testCorePadButtonA */
+            pad_eat(PAD_CROSS); se_start(SE_SY_TALK_OK, NULL); nrv_set(&llt.n, LL_END);
+        }
         break;
     case LL_END:
-        if (FIRST(&llt.n)) lyt_start(llt.l, "End", 0);
+        if (FIRST(&llt.n)) { lyt_start(llt.l, "End", 0); iab_term(&llt.ab); }
         if (lyt_stopped(llt.l, 0)) llt.on = 0; /* kill */
         break;
     }
     nrv_end(&llt.n);
-    if (llt.on) lyt_update(llt.l);
+    if (llt.on) { lyt_update(llt.l); iab_update(&llt.ab); } /* movement: the letter, then its icon */
 }
-static void llt_draw(void) { if (llt.on) { render_world_done(); lyt_draw(llt.l); } }
+static void llt_draw(void) { if (llt.on) { render_world_done(); lyt_draw(llt.l); iab_draw(&llt.ab); } }
 
 /* PauseMenu's letter (_38: ButtonPaneController LetterButton / BoxButton3): there while getLuigiLetterGalaxyName,
  * appearing while isOnLuigiHiding; decided: exeLuigiLetter (the letter until it is dead, then the buttons back) */
@@ -3502,8 +3557,9 @@ static void mlay_draw(void)
 /* --- RosettaMonologue (RosettaDemoAstroDome.cpp: "PrologueStarSteward", map.bin): the picture book of -----------
  * ロゼッタ状況説明デモ. appear: FadeIn, the balloon's WinFadeIn, RosettaMonologue000; control: A turns the message's
  * pages (SE_SY_TALK_FOCUS_ITEM), then the next message (CrossFade1..3 on its picture); after the fourth SE_SY_TALK_OK,
- * FadeOut and WinFadeOut, and once stopped forceCloseWipeFade and dead. ponytail: the page's text at once (no
- * TalkTextFormer typewriter), no IconAButton at AButtonPosition, no CS_CLICK_CLOSE */
+ * FadeOut and WinFadeOut, and once stopped forceCloseWipeFade and dead. Its IconAButton (openWithoutMessage once the
+ * text is out, at AButtonPosition, term at A). ponytail: the page's text at once (no TalkTextFormer typewriter), no
+ * CS_CLICK_CLOSE */
 static void mono_form(const u16 *s) /* formMessage: one page (MessageUtil's page tag: group 1 type 1) into Text00 */
 {
     int n = 0;
@@ -3538,9 +3594,14 @@ int menu_monologue_alive(void) { return mono.on; }
 static void mono_update(void) /* RosettaMonologue::control */
 {
     if (!mono.on) return;
+    Iab *ab = mono_ab();
     if (mono.no >= 4) {
         if (lyt_stopped(mono.l, 0)) { menu_wipe_force(1); mono.on = 0; return; } /* forceCloseWipeFade, kill */
-    } else if (pad_pressed(PAD_CROSS)) { /* testCorePadTriggerA */
+    } else {
+        if (!ab->on) iab_open(ab); /* isTextAppearedAll (at once here): openWithoutMessage (iab_update: setLayoutPosAtPaneTrans) */
+    }
+    if (mono.no < 4 && pad_pressed(PAD_CROSS)) { /* testCorePadTriggerA */
+        iab_term(ab);
         if (mono.page) { se_start(SE_SY_TALK_FOCUS_ITEM, NULL); mono_form(mono.page); } /* nextPage */
         else {
             mono.no++;
@@ -3555,6 +3616,13 @@ static void mono_update(void) /* RosettaMonologue::control */
         }
     }
     lyt_update(mono.l);
+    iab_update(ab);
+}
+static struct Iab *mono_ab(void) /* RosettaDemoAstroDome's mIconAButton (killed at first) */
+{
+    static Iab ab;
+    if (mono.l && ab.host != mono.l) iab_init(&ab, mono.l, "AButtonPosition");
+    return &ab;
 }
 
 /* --- StaffRoll (StaffRoll.cpp: StaffRollLine x 64, StaffRollPicture, StaffRollTitle, InformationMessage; ending.bin) --
@@ -3804,7 +3872,7 @@ void menu_draw(void)
     if (dmu.on) { render_world_done(); dmu_draw(); }
     mlay_draw();
     if (spg.l && !nrv_is(&spg.n, SPG_ENDWAIT)) { render_world_done(); lyt_draw(spg.l); } /* StarPointerGuidance */
-    if (mono.on) { render_world_done(); lyt_draw(mono.l); }
+    if (mono.on) { render_world_done(); lyt_draw(mono.l); iab_draw(mono_ab()); }
     gm_draw();
     if (pm.alive) {
         render_world_done(); /* the scene under the menu (LayoutOnPause draws after everything) */

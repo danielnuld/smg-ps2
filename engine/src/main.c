@@ -1284,6 +1284,15 @@ int main(void)
                 }
         }
 #endif
+#if defined(PACKS) && defined(LETTER_TEST)
+        { /* a scenario with Luigi's letter (EggStarGalaxy/6): the letter as KinopioAstro's (menu_luigi_letter) and its
+           * IconAButton; X once the icon waits: closed */
+            pad_force = 0;
+            if (frame == 600) menu_luigi_letter("EggStarGalaxy", 1);
+            if (frame == 900) pad_force = PAD_CROSS;
+            if (frame >= 600 && frame < 1100 && frame % 20 == 0) printf("letter test f %u: letter %d\n", frame, menu_test_letter());
+        }
+#endif
 #if defined(PACKS) && defined(SCENE_TEST)
         if (frame == 500 || frame == 1000 || frame == 1500) { /* scenes in place, one after another */
             static const char *next[3] = {"EggStarGalaxy/2", "AstroGalaxy/1", "EggStarGalaxy/1"};
