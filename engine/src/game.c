@@ -16364,7 +16364,7 @@ static void update_mario_(void)
     }
     /* updateGroundInfo: on his feet (or waiting out mDropWaitTime) he checks his ground before the action */
     V3 p270 = m->pos; /* MarioActor _270: his place before the update */
-    int pgc = !hg.on && !swimming && !m->skate && !m->rabbit && !m->teresa && !dmg.st && !fo.on, landed = 0;
+    int pgc = !hg.on && !swimming && !m->skate && !m->rabbit && !m->teresa && !fo.on, landed = 0;
     if (pgc) {
         int was = m->grounded;
         m->grounded = m_check_ground(m);
@@ -16426,7 +16426,7 @@ static void update_mario_(void)
 
     /* MarioActor's Binder (initBinder 60, setBinderOffsetVec _2C4): radius 60 round his place + _2C4, up x 70 on the
      * ground (50 squatting), eased 0.1 a frame to -gravity x 70 off it; checkGround keeps him on the ground. Hanging,
-     * swimming, skating, as Rabbit / Teresa, in a damage status keep one 50 sphere 50 up. ponytail: _2C4's up is his up (MarioActorGravity blends mHeadVec and _368 by
+     * swimming, skating, as Rabbit / Teresa keep one 50 sphere 50 up. ponytail: _2C4's up is his up (MarioActorGravity blends mHeadVec and _368 by
      * _984), the 0.5 ease on _10._23 / _934 not kept */
     static V3 b2C4;
     float brad = BODY_RADIUS;
