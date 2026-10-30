@@ -7,7 +7,7 @@ usage: python tools/music.py data/fs/files out/music [names...]   (no names: eve
 AST (Wii stream): header 'STRM' {u32 data size, u16 format (1 = PCM16), u16 bits, u16 channels, u16 ?, u32 rate,
 u32 samples, u32 loop start, u32 loop end, u32 first block size} then blocks 'BLCK' {u32 size per channel, 0x18 pad}
 followed by each channel's `size` bytes of big-endian PCM16. Output <name>.pcm: u32 'SMGM', u32 rate, u32 channels,
-u32 loop start byte offset (into the samples), then interleaved little-endian PCM16 (what audsrv plays). Channels
+u32 loop start byte offset (into the samples; 0xFFFFFFFF: a one-shot, the AST loop flag 0), then interleaved little-endian PCM16 (what audsrv plays). Channels
 beyond the first two (the *_multi tracks layer instruments) are dropped. ponytail: no resampling (32 kHz stays).
 """
 import struct
@@ -152,7 +152,7 @@ def table(fs, out):
 
 
 def convert(ast):
-    magic, size, fmt, bits, chans, _, rate, samples, loop_start, loop_end = struct.unpack_from(">4sIHHHHIIII", ast, 0)
+    magic, size, fmt, bits, chans, looped, rate, samples, loop_start, loop_end = struct.unpack_from(">4sIHHHHIIII", ast, 0)
     assert magic == b"STRM" and fmt == 1 and bits == 16, (magic, fmt, bits)
     out, o = [], 0x40
     ast = ast + bytes(0x10000)  # some last blocks end short of their size (galaxy03_multi): zeros past `samples`
@@ -163,7 +163,7 @@ def convert(ast):
         o += n * chans
         out.append(np.stack(chs[:2] if chans >= 2 else [chs[0], chs[0]], axis=1))
     pcm = np.concatenate(out)[:samples].astype("<i2")
-    return rate, loop_start * 4, pcm.tobytes()
+    return rate, loop_start * 4 if looped else 0xFFFFFFFF, pcm.tobytes()  # loop flag 0 (staff roll, first_astro): a one-shot
 
 
 def main(fs, out, names):
@@ -177,7 +177,7 @@ def main(fs, out, names):
             continue
         rate, loop, data = convert(p.read_bytes())
         (out / f"{name}.pcm").write_bytes(struct.pack("<4sIII", b"SMGM", rate, 2, loop) + data)
-        print(f"{name}: {rate} Hz, {len(data) / 4 / rate:.1f} s, loop at {loop / 4 / rate:.1f} s, {len(data) >> 10} KB")
+        print(f"{name}: {rate} Hz, {len(data) / 4 / rate:.1f} s, " + (f"loop at {loop / 4 / rate:.1f} s" if loop != 0xFFFFFFFF else "one-shot") + f", {len(data) >> 10} KB")
 
 
 def selftest():
@@ -186,6 +186,7 @@ def selftest():
     hdr += b"\0" * (0x40 - len(hdr))
     blk = lambda l, r: b"BLCK" + struct.pack(">I", 4) + b"\0" * 0x18 + struct.pack(">2h", *l) + struct.pack(">2h", *r)
     rate, loop, data = convert(hdr + blk((1, 2), (3, 4)) + blk((5, 6), (7, 8)))
+    assert convert(hdr[:0xE] + bytes(2) + hdr[0x10:] + blk((1, 2), (3, 4)))[1] == 0xFFFFFFFF  # loop flag 0: one-shot
     assert rate == 32000 and loop == 4 and np.frombuffer(data, "<i2").tolist() == [1, 3, 2, 4, 5, 7, 6, 8]
     streams = {"SMG_galaxy11_strm", "SMG_galaxy21_strm", "SMG_galaxy_inter_strm", "SMG_galaxy01_tomb_strm",
                "SMG_galaxy03_multi", "SMG_astroout02_strm", "SMG_galaxy02_hurry_strm"}
