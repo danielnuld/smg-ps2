@@ -8,6 +8,8 @@
 #include "../src/fx.h"
 #include "../src/render.h"
 
+int seq_start_id(int *zone) { (void)zone; return -1; } /* blob.c scene_start: the default start */
+
 void mat_identity(float m[16])
 {
     for (int i = 0; i < 16; i++) m[i] = i % 5 == 0;
@@ -28,6 +30,12 @@ void render_sprites(const Sprite *sp, int n)
     drawn = n;
     for (int i = 0; i < n; i++)
         if (!(sp[i].half > 0.0f) || (sp[i].rgba >> 24) > 0x80) { printf("bad sprite %d\n", i); exit(1); }
+}
+
+void render_mesh_c(const float (*pos)[3], const float (*uv)[2], int nvert, const u16 *idx, int ntri, u16 tex, int blend,
+                   u32 rgba)
+{
+    (void)pos; (void)uv; (void)nvert; (void)idx; (void)ntri; (void)tex; (void)blend; (void)rgba;
 }
 
 static unsigned char *load(const char *path)

@@ -344,7 +344,11 @@ static void clip_local(const u8 *c, float f, u32 j, float scale[3], float rot[3]
 }
 
 static void anim_skin_(Anim *a);
+#ifdef _EE
 static inline u32 cy_(void) { u32 c; __asm__ volatile("mfc0 %0, $9" : "=r"(c)); return c; }
+#else
+static inline u32 cy_(void) { return 0; }
+#endif
 u32 prof_pose, prof_skin; /* EE cycles in anim_pose / anim_skin (profiling) */
 void anim_update(Anim *a)
 {
