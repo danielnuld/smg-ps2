@@ -9,6 +9,8 @@
 #include "../src/anim.h"
 #include "../src/render.h"
 
+int seq_start_id(int *zone) { (void)zone; return -1; } /* blob.c scene_start: the default start */
+
 /* render.c's matrix helpers (that file needs ps2sdk) */
 void mat_identity(float m[16])
 {
@@ -76,11 +78,12 @@ int main(void)
         a.frame = frame - 1.0f; /* anim_update advances one frame, then poses */
         a.done = 0;
         anim_update(&a);
+        const float (*drw)[16] = anim_drw(&a);
         float e = 0;
         for (unsigned d = 0; d < nd; d++)
             for (int k = 0; k < 16; k++) {
                 float tol = k >= 12 ? 0.05f : 1e-3f; /* translation in units, rotation part unitless */
-                float diff = fabsf(a.drw[d][k] - want[d * 16 + k]);
+                float diff = fabsf(drw[d][k] - want[d * 16 + k]);
                 if (diff / tol > e) e = diff / tol;
             }
         if (e > worst) worst = e;
