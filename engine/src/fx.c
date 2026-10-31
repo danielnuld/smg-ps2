@@ -529,6 +529,15 @@ void fx_draw(void)
             else if (t > r->sc_out_t && r->sc_out_t != 1.0f)
                 sc *= (r->sc_out_x - 1.0f) / (1.0f - r->sc_out_t) * (t - r->sc_out_t) + 1.0f;
         }
+        if (sc <= 0.0f)
+            continue;
+        /* its place first: one render_sprites leaves out (behind, off the screen) skips its colour and alpha (the same
+         * test, render_sprite_place, both times) */
+        float pos[3], half = 25.0f * r->size[0] * sc * e->s;
+        for (int k = 0; k < 3; k++)
+            pos[k] = p->off[k] + p->loc[k] * e->s;
+        if (!render_sprite_place(pos, half, NULL))
+            continue;
         if (r->esp & 2) { /* JPACalcAlphaAnm */
             if (t < r->al_in_t)
                 a = r->al_in + (r->al_base - r->al_in) / r->al_in_t * t;
@@ -544,12 +553,12 @@ void fx_draw(void)
             memcpy(c, r->prm, 4);
         for (int k = 0; k < 3; k++) c[k] = (u8)(c[k] * e->tint[k] / 255);
         float al = c[3] * a * (128.0f / 255.0f);
-        if (al < 1.0f || sc <= 0.0f)
+        if (al < 1.0f)
             continue;
         Sprite *s = &spr[n++];
         for (int k = 0; k < 3; k++)
-            s->pos[k] = p->off[k] + p->loc[k] * e->s;
-        s->half = 25.0f * r->size[0] * sc * e->s;
+            s->pos[k] = pos[k];
+        s->half = half;
         s->rgba = (c[0] * 128 / 255) | (c[1] * 128 / 255) << 8 | (c[2] * 128 / 255) << 16 | (u32)(al > 128 ? 128 : al) << 24;
         s->tex = tex0 + r->tex;
         s->add = r->add;

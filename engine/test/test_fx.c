@@ -25,6 +25,7 @@ void mat_mul(float out[16], const float a[16], const float b[16])
 }
 
 static int drawn;
+int render_sprite_place(const float pos[3], float half, float out[5]) { (void)pos; (void)half; (void)out; return 1; }
 void render_sprites(const Sprite *sp, int n)
 {
     drawn = n;
