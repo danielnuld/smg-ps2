@@ -76,6 +76,9 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   rebinds; a class's flags made once per type would cut most), fx_anim's strcmp search a skinned draw with effects,
   se_update's powf / sinf a channel a frame. Bench builds only: render_text's debug lines (~0.6 ms) and PCSX2's host reads (fread walks every
   FILE: _fwalk_sglue) inflate the numbers. No pack format change.
+- perf, Petari clipping (PR #63 on): obj_clipped ports ClippingActorInfo per class (Tico / LuigiNPC default sphere,
+  SuperSpinDriver). For the release agent: the pack's rows lack ClippingGroupId (SHORT, -1 none) and ViewGroupId; with
+  them ItemBlock (ItemBlock.cpp:72 setGroupClipping) and the ViewGroupCtrlCube far level could clip as Petari does.
 - zones (branch agent-zones): every zone streams in when Mario needs it. main.c: the room for zones he needs is the
   region's free bytes (the low packs' sum was subtracted as a swap reserve and then counted again in the set: 4503
   instead of 6510 KB in PhantomGalaxy/1); the nearest needed zone not yet in is the one always taken (it used to be the
