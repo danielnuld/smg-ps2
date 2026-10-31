@@ -674,6 +674,7 @@ static int nsambos;
 static const Model *m_sambohead;
 static int test_cross; /* test builds: X held (Bee Mario) */
 static unsigned char zone_kcl[64]; /* zones with collision bound (game_rebind): walkers wait in the others */
+static unsigned char zone_low[MAX_ZONES]; /* zones streamed in low (game_zone_sets): no collision of their own, only pieces of the base packs */
 static int test_nolost; /* test builds: no miss for falling off (Mario sent to a zone still streaming in) */
 static void notes_spawn(void);
 static int note_rail(const Row *r, const unsigned char **e);
@@ -944,6 +945,8 @@ static short *star_wait;
 #define TEST_SHOWN "HomingKiller"
 #elif defined(MKOOPA_TEST)
 #define TEST_SHOWN "MechanicKoopaMini"
+#elif defined(ROCK_TEST)
+#define TEST_SHOWN "RockCreator"
 #endif
 /* SuperSpinDriver.cpp: one in a group (惑星出現, a TicoFat's) waits dead until the group is called (TicoFat full) */
 #define MAX_GROUP_WAIT 16
@@ -4567,6 +4570,7 @@ void game_zone_sets(const unsigned char *full, unsigned char *need, unsigned cha
     }
     zone_wait = 0;
     for (int z = 0; z < MAX_ZONES; z++) zone_wait |= (need[z] || soon[z]) && !full[z];
+    for (int z = 0; z < MAX_ZONES; z++) zone_low[z] = !full[z];
 }
 
 int game_test_block(void)
@@ -6330,6 +6334,15 @@ int game_test_rockcreator(void)
     return rockcs[0].row;
 }
 
+int game_test_rock_hold(int k) /* Mario held 3000 above RockCreator k (its zone streams in, the rocks roll below him) */
+{
+    if (k >= nrockcs) return -1;
+    V3 at = row_pos(&sc->objs[rockcs[k].row]);
+    mario->pos = vadd(at, vmul(up_at(at, v3(0, 1, 0)), 3000.0f));
+    mario->hvel = v3(0, 0, 0); mario->vup = 0;
+    return rockcs[k].row;
+}
+
 int game_test_rock(void)
 {
     for (int i = 0; i < nrocks; i++) {
@@ -6341,6 +6354,36 @@ int game_test_rock(void)
         return c->row;
     }
     return -1;
+}
+
+static V3 rock_rail_pos(const RockC *c, float coord);
+int game_test_rock_log(int print) /* the farthest a rolling (Move) rock is from its rail's place */
+{
+    int far = 0;
+    for (int i = 0; print && i < nrockcs; i++) {
+        const Row *r = &sc->objs[rockcs[i].row];
+        printf("rockcreator row %d type %d zone %d low %d appear sw %d shown %d valid %d active %d delay %d\n", rockcs[i].row, rockcs[i].type,
+               r->zone, r->zone < MAX_ZONES ? zone_low[r->zone] : 0, r->sw[SW_APPEAR], row_shown(rockcs[i].row), rockcs[i].valid, rockcs[i].active,
+               rockcs[i].delay);
+    }
+    for (int i = 0; i < nrocks; i++) {
+        const Rock *o = &rocks[i];
+        if (!o->alive) continue;
+        const Row *r = &sc->objs[rockcs[o->c].row];
+        V3 g = vmul(up_at(o->pos, vmul(o->grav, -1.0f)), -1.0f);
+        float gd = -1.0f;
+        for (float t = 0; t <= 3.0f * o->rad; t += 20.0f) {
+            Hit h[1];
+            if (kcl_query(vadd(o->pos, vmul(g, t)), 10.0f, h, 1)) { gd = t; break; }
+        }
+        float away = vlen(vsub(o->pos, rock_rail_pos(&rockcs[o->c], o->coord)));
+        if (o->nrv == 2 /* RK_MOVE */ && away > far) far = (int)away;
+        if (print)
+            printf("rock %d row %d zone %d low %d nrv %d ground %d pos %.0f %.0f %.0f grav %.2f %.2f %.2f here %.2f %.2f %.2f to ground %.0f from rail %.0f\n",
+                   i, rockcs[o->c].row, r->zone, r->zone < MAX_ZONES ? zone_low[r->zone] : 0, o->nrv, o->on_ground, o->pos.x, o->pos.y,
+                   o->pos.z, o->grav.x, o->grav.y, o->grav.z, g.x, g.y, g.z, gd, away);
+    }
+    return far;
 }
 
 int game_rocks_alive(void)
@@ -28944,7 +28987,7 @@ static void rock_appear(Rock *o, const RockC *c) /* Rock::appear */
     V3 at = row_pos(r);
     o->alive = 1; o->fall = v3(0, 0, 0); o->air = 0; o->gravrate = 1.5f; o->railpt = -1; o->invbind = 0; o->rotx = 0;
     o->normalgrav = 0; o->slow = 0; o->ftime = 0;
-    o->rad = 225.0f * rock_scale(c);
+    o->rad = 225.0f * (c->type == 2 ? 0.3f : rock_scale(c)); /* getRadius: a WanwanRollingMini 0.3 */
     o->rotspeed = c->speed * 180.0f * 1.1f / (3.14159265f * o->rad);
     o->grav = vmul(up_at(at, v3(0, 1, 0)), -1.0f);
     float best = 1e30f;                                         /* moveCoordAndTransToNearestRailPos */
@@ -28982,6 +29025,9 @@ static void update_rocks(void)
         Rock *o = &rocks[i];
         if (!o->alive) continue;
         const RockC *c = &rockcs[o->c];
+        int z = sc->objs[c->row].zone;
+        if (z < MAX_ZONES && zone_low[z]) continue; /* ponytail: its zone still low (streaming: Petari has every zone's collision), it waits for it */
+        o->grav = vmul(up_at(o->pos, vmul(o->grav, -1.0f)), -1.0f); /* onCalcGravity: LiveActor::movement's calcGravity */
         float s = rock_scale(c), spd = c->speed;
         int st = o->step, appear_time = c->type == 0 ? 8 : 45;
         if (sc->objs[c->row].arg[3] != -1) appear_time = sc->objs[c->row].arg[3];

@@ -188,6 +188,9 @@ float game_rail_coord(int row);
 int game_test_rock(void);
 int game_test_rockcreator(void); /* Mario at the start of the first RockCreator's rail */
 int game_rocks_alive(void);
+/* Test builds: the farthest a rolling rock is from its rail's place (print: each creator and rock) */
+int game_test_rock_log(int print);
+int game_test_rock_hold(int k); /* Mario held 3000 above RockCreator k: its row or -1 */
 /* Test builds: Mario put on the k-th FlipPanel. Returns its row or -1 past the last. */
 int game_test_flip(int k);
 int game_flips_back(void); /* FlipPanels showing their back */
