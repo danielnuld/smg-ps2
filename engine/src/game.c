@@ -755,6 +755,8 @@ static struct {
 static int nhhps;
 static void seesaw_matrix(Inst *in);
 static int nseesaws;
+#define MAX_BRIDGES 4
+static int nbridges; /* PhantomShipBridge (update_bridges) */
 static int nfollows;
 #define MAX_FOLLOWS 8
 #define FOLLOW_N 16
@@ -2170,6 +2172,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     dino_cam = 0;
     foot_num = foot_rot = 0;
     nseesaws = 0;
+    nbridges = 0;
     nfollows = 0;
     nflows = 0;
     kari_cling = 0;
@@ -24491,10 +24494,9 @@ static void seesaw_matrix(Inst *in) /* its placement turned `angle` about its ow
 /* PhantomShipBridge.cpp: with SW_A it waits (no BCK: its bind pose) until SW_A turns on, then MoveA; SW_B on:
  * MoveB; without SW_A it is at MoveA's end at once (setStateMoveA). Step 55 of either: shakeCameraNormal. Its Move
  * collision follows the Move joint (joint 1); the body's stays. Not a NutShipFleetBridge: its FALL_BRIDGE sounds; the
- * riddle SE plays even with Mario dead */
-#define MAX_BRIDGES 4
-static struct { int row, nrv, t; } bridges[MAX_BRIDGES];
-static int nbridges;
+ * riddle SE plays even with Mario dead. Each its own Anim (a LiveActor's model), not the pose pool's: the Move
+ * collision needs its pose wherever the camera is */
+static struct { int row, nrv, t; Anim anim; } bridges[MAX_BRIDGES];
 enum { BR_WAIT, BR_MOVEA, BR_MOVEB };
 static void update_bridges(void)
 {
@@ -24509,6 +24511,7 @@ static void update_bridges(void)
             nbridges++;
             bridges[k].row = in->row; bridges[k].t = 1000;
             bridges[k].nrv = r->sw[SW_A] >= 0 ? BR_WAIT : BR_MOVEA;
+            anim_bind(&bridges[k].anim, in->md->skin);
         }
         typeof(&bridges[0]) b = &bridges[k];
         if (b->nrv == BR_WAIT && r->sw[SW_A] >= 0 && sw_on(r, SW_A)) { /* startMoveA */
@@ -24527,18 +24530,20 @@ static void update_bridges(void)
             if (b->t == 56) se_start(SE_OJ_FALL_BRIDGE_LAND, &in->m[12]);
         }
         if (b->nrv != BR_WAIT && b->t == 56) camera_shake(SHAKE_NORMAL);
-        in->anim = obj_anim(in->row, in->md, "PhantomShipBridge");
-        Anim *a = in->anim;
-        if (!a) continue;
+        Anim *a = &b->anim;
+        if (a->skin != in->md->skin) anim_bind(a, in->md->skin);
+        in->anim = a; in->anim_want = 0;
         if (b->nrv == BR_WAIT) { a->clip = NULL; a->clip_id = -1; }
         else {
-            anim_play(a, b->nrv == BR_MOVEA ? "phantomshipbridge/movea" : "phantomshipbridge/moveb", 0.0f, 0, 0);
-            int len = anim_length(a);
+            const char *clip = b->nrv == BR_MOVEA ? "phantomshipbridge/movea" : "phantomshipbridge/moveb";
+            anim_play(a, clip, 0.0f, 0, 0);
+            int len = anim_clip_info(clip, NULL);
             a->frame = (float)(b->t - 1 < len ? b->t - 1 : len); /* its frame, held at the end */
         }
+        anim_update(a); /* calcAnim (setStateMoveA: calcAnimDirect) wherever the camera is: the Move part below reads it */
     }
-#ifdef BRIDGE_TEST /* XF=-DBRIDGE_TEST: Mario held over the first bridge's row (its zone streams in); its SW_A on at
-                    * frame 900 */
+#ifdef BRIDGE_TEST /* XF=-DBRIDGE_TEST: Mario held 1300 along -X of the first bridge (its plank lowered: KoopaJrShipLv1 1 starts
+                    * there; its zone streams in); its SW_A on at frame 900, released at 1500 onto the plank */
     {
         int ty = scene_type(sc, "PhantomShipBridge");
         for (u32 i = 0; ty >= 0 && i < sc->nobjs; i++)
@@ -24546,7 +24551,7 @@ static void update_bridges(void)
                 const Row *r = &sc->objs[i];
                 if (game_frame >= 300 && game_frame < 1500) {
                     test_nolost = 1;
-                    mario->pos = vadd(row_pos(r), v3(0, 900.0f, 1500.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+                    mario->pos = vadd(row_pos(r), v3(-1300.0f, 900.0f, 0)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
                 }
                 if (game_frame == 900 && r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
                 const Inst *bi = NULL;
@@ -24562,7 +24567,7 @@ static void update_bridges(void)
             }
     }
 #endif
-    for (int i = 0; i < ninsts; i++) { /* the Move part: the bridge's matrix x its Move joint's (last pose) */
+    for (int i = 0; i < ninsts; i++) { /* the Move part: the bridge's matrix x its Move joint's (calcAnim: _8C->setMtx) */
         Inst *p = &insts[i];
         if (p->bridge < 2) continue;
         const Inst *in = &insts[p->bridge - 2];
@@ -34008,7 +34013,7 @@ static void update_obj_anims(void)
                 if (oanim[k].a == in->anim && oanim[k].row != in->row) { in->anim = NULL; in->anim_want = 1; break; }
         }
         float d = vlen(vsub(v3(in->m[12], in->m[13], in->m[14]), cam_pos));
-        if (!in->anim_want || !in->md || d >= 8000.0f) continue;
+        if (!in->anim_want || !in->md || in->bridge || d >= 8000.0f) continue; /* (a PhantomShipBridge has its own) */
         if ((in->anim = obj_anim(in->row, in->md, sc->types + 32 * sc->objs[in->row].type))) { in->anim_want = 0; continue; }
         if (game_frame % 30) continue;
         /* the pool full: every 30 frames the farthest instance holding a pose gives it up for this one when it is at
@@ -34016,7 +34021,7 @@ static void update_obj_anims(void)
         int far = -1;
         float fd = d + 1000.0f;
         for (int j = 0; j < ninsts; j++) {
-            if (!insts[j].anim || j == i) continue;
+            if (!insts[j].anim || j == i || insts[j].bridge) continue;
             float dj = vlen(vsub(v3(insts[j].m[12], insts[j].m[13], insts[j].m[14]), cam_pos));
             if (dj > fd) { fd = dj; far = j; }
         }
