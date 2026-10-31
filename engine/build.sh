@@ -39,7 +39,7 @@
 #   XF=-DTALK_CLS=3: the first Kinopio instead, its appear switch on, Mario put before it)
 # replay: normal play (60 Hz logic with catch-up) driven by host:replay.bin from the frame Mario is first free
 #   (tools/replay.py from a tools/dolphin timeline: the same inputs as the Dolphin movie) (-DREPLAY)
-# XF=-DBRIDGE_TEST (any mode, EggStar 3): Mario held over the first PhantomShipBridge, its SW_A on at frame 900: MoveA
+# XF=-DBRIDGE_TEST (any mode, EggStar 3): Mario held over the first PhantomShipBridge's lowered plank, its SW_A on at frame 900: MoveA
 # route: with packs, the scenario played through: launch stars to its goal (EggStar 1-4), its action, its star (-DROUTE_TEST)
 # purple: with packs, Mario takes every purple coin, then the 100-coin star (-DPURPLE_TEST)
 # ota: with packs, Mario spins OtaKing's coconuts back until it goes down and takes its star (-DOTA_TEST)

@@ -232,10 +232,10 @@ void anim_track(Anim *a, int k, const char *clip)
 int anim_play(Anim *a, const char *name, float speed, int loop, int interp)
 {
     int was_loop = a->loop;
-    a->speed = speed;
-    a->loop = loop;
     int i = clip_id_of(name);
-    if (i >= 0) {
+    if (i >= 0) { /* a missing clip leaves the playing one as it was (its speed and loop too) */
+            a->speed = speed;
+            a->loop = loop;
             if (i == a->clip_id)
                 return 1;
             a->clip_id = i;
