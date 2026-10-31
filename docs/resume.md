@@ -74,7 +74,10 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   **Repack must redo** with this branch's slice_all.py: AstroGalaxy (all), OceanPhantomCaveGalaxy, PhantomGalaxy (and
   then `python tools/zone_fit.py out/packs` must list none): with the old packs 13 zones are over the new room
   (letter.bin aside): AstroGalaxy 1-5 (main and TridentZone), OceanPhantomCave 1-2 GhostShipCaveZone, PhantomGalaxy 1
-  TeresaHouseZone. engine/test/run.sh now tests the tree it lives in and strips the SRCS lines' CR.
+  TeresaHouseZone. slice_all's shrink steps now go on to 0.6 / 0.5; the trial repack in out/wt-zones (overlay, those 3
+  galaxies) fits all 76 zones (tightest PhantomGalaxy/1 TeresaHouseZone, 119 KB left; OceanPhantomCave/1 now 6541 of
+  7155 KB) and AstroGalaxy 1-5 / OceanPhantomCave 1 went to a smaller ratio (simpler static models in the Observatory:
+  look at it after the repack). engine/test/run.sh now tests the tree it lives in and strips the SRCS lines' CR.
 
 ## Console release (2026-10-23 / 24)
 

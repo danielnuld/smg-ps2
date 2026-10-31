@@ -54,7 +54,7 @@ def galaxy(fs, out, g, resident):
     for no in scenarios(fs, g):  # one process per galaxy: its models are converted once (slice._model_cache)
         t = time.time()
         try:
-            for ratio in (0.99, 0.9, 0.8, 0.7):  # over ROOM: its static models simplified further until it fits
+            for ratio in (0.99, 0.9, 0.8, 0.7, 0.6, 0.5):  # over ROOM: its static models simplified further until it fits
                 files, info = SL.packs(fs, g, no, resident, ratio)
                 if max(info["stream"].values()) <= gr:
                     break
