@@ -439,6 +439,11 @@ static u32 reg_get(Track *t, int r)
     }
     return 0;
 }
+/* the sequences' own random numbers (JASSeqParser's, apart from the game's MR::getRandom): their calls follow the voices,
+ * whose end comes from the SPU in real time, and sharing rand() made the gameplay's random numbers (launched star pieces,
+ * plants) depend on audio timing */
+static u32 seq_rng = 1;
+static u32 seq_rand(void) { seq_rng = seq_rng * 1103515245u + 12345u; return seq_rng >> 16 & 0x7FFF; }
 static void reg_set(Track *t, int r, u32 v)
 {
     v &= 0xFFFF;
@@ -620,7 +625,7 @@ static void exec(Track *t, int op, const u32 *a)
         case 5: reg_set(t, r, v & cur); break;
         case 6: reg_set(t, r, v | cur); break;
         case 7: reg_set(t, r, v ^ cur); break;
-        case 8: reg_set(t, r, v ? (u32)rand() % v : 0); break;
+        case 8: reg_set(t, r, v ? seq_rand() % v : 0); break;
         case 9: reg_set(t, r, cur << v); break;
         case 10: reg_set(t, r, cur >> v); break;
         }
