@@ -2120,6 +2120,21 @@ int main(void)
         u32 t2 = cycles();
         t_logic = t1 - t0;
         t_draw = t2 - t1;
+#ifdef ROUTE_TEST
+        { /* the EE's time over each 200 frames of the route (the draw without render_begin's flip / VIF / clear wait),
+           * for the heavy places a bench path does not cross */
+            extern u32 render_begin_wait;
+            static u64 rl, rd;
+            static u32 rw;
+            u32 d = t_draw - render_begin_wait;
+            rl += t_logic; rd += d;
+            if (t_logic + d > rw) rw = t_logic + d;
+            if (frame % 200 == 0) {
+                printf("route perf f %u: logic %u draw %u us, worst %u\n", frame, (u32)(rl / 200 / EE_MHZ), (u32)(rd / 200 / EE_MHZ), (u32)(rw / EE_MHZ));
+                rl = rd = 0; rw = 0;
+            }
+        }
+#endif
         if (t2 - t0 > worst && frame > 60) worst = t2 - t0;
 #ifdef TEASER /* videos (build.sh with TEASER=1): the game's HUD only */
 #elif defined(BENCH) || defined(DEBUG_HUD) || !defined(CATCHUP) /* tests and bench: the debug lines (normal builds: the game's HUD, game.c hud_draw) */

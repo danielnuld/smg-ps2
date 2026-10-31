@@ -1824,8 +1824,8 @@ void render_mesh(const float (*pos)[3], const float (*uv)[2], int nvert, const u
 
 void render_mesh_c(const float (*pos)[3], const float (*uv)[2], int nvert, const u16 *idx, int ntri, u16 tex, int blend, u32 rgba)
 {
-    static float msx[MESH_MAX], msy[MESH_MAX];
-    static u32 msz[MESH_MAX];
+    /* each vertex's XYZ2 and UV once (a vertex is in ~6 triangles: their conversions were made a triangle) */
+    static u64 mxyz[MESH_MAX], muv[MESH_MAX];
     static u8 mok[MESH_MAX];
     const TexEntry *e = tex == NO_TEX ? NULL : tex_scene->tex[tex].e; /* NO_TEX: flat, the colour alone */
     if (nvert > MESH_MAX) nvert = MESH_MAX;
@@ -1837,12 +1837,16 @@ void render_mesh_c(const float (*pos)[3], const float (*uv)[2], int nvert, const
         mok[v] = zv >= NEAR && zv <= FAR;
         if (!mok[v]) continue;
         float k = 2048.0f / zv;
-        msx[v] = 2048.0f + shake_x + proj[0] * xv * k;
-        msy[v] = 2048.0f + shake_y + proj[5] * yv * k;
-        mok[v] = msx[v] >= 0 && msx[v] <= 4095 && msy[v] >= 0 && msy[v] <= 4095;
-        msz[v] = (u32)(((proj[10] * zv + proj[14]) / zv + 1.0f) * (float)(Z_MAX / 2));
+        float sx = 2048.0f + shake_x + proj[0] * xv * k;
+        float sy = 2048.0f + shake_y + proj[5] * yv * k;
+        mok[v] = sx >= 0 && sx <= 4095 && sy >= 0 && sy <= 4095;
+        u32 sz = (u32)(((proj[10] * zv + proj[14]) / zv + 1.0f) * (float)(Z_MAX / 2));
+        mxyz[v] = GS_SET_XYZ((int)(sx * 16), (int)(sy * 16), sz);
     }
     mesh_same = 0;
+    if (e)
+        for (int v = 0; v < nvert; v++)
+            muv[v] = GS_SET_UV((int)(uv[v][0] * e->w * 16) & 0x3FFF, (int)(uv[v][1] * e->h * 16) & 0x3FFF);
     for (int t0 = 0; t0 < ntri; t0 += 40) { /* 40 triangles a GIF packet */
         int n = ntri - t0 < 40 ? ntri - t0 : 40;
         if (packet2_get_qw_count(vif[cur]) + 16 + TEXP + 6 * 3 * n + 8 > PACKET_QW)
@@ -1857,9 +1861,8 @@ void render_mesh_c(const float (*pos)[3], const float (*uv)[2], int nvert, const
             const u16 *ix = idx + 3 * t;
             if (ix[0] >= nvert || ix[1] >= nvert || ix[2] >= nvert || !mok[ix[0]] || !mok[ix[1]] || !mok[ix[2]]) continue;
             for (int v = 0; v < 3; v++) {
-                const float *q = e ? uv[ix[v]] : NULL;
-                if (e) AD(GS_SET_UV((int)(q[0] * e->w * 16) & 0x3FFF, (int)(q[1] * e->h * 16) & 0x3FFF), GS_REG_UV);
-                AD(GS_SET_XYZ((int)(msx[ix[v]] * 16), (int)(msy[ix[v]] * 16), msz[ix[v]]), GS_REG_XYZ2);
+                if (e) AD(muv[ix[v]], GS_REG_UV);
+                AD(mxyz[ix[v]], GS_REG_XYZ2);
             }
         }
         AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 0), GS_REG_ZBUF);
