@@ -2186,7 +2186,11 @@ int main(void)
         u32 vwait = render_wait_cycles(); /* blocked on the VIF in game_draw */
         (void)vwait;
 #ifdef SAMPLE_PROF
-        { extern void prof_start(void), prof_dump(void); if (frame == 60) prof_start(); if (frame == 1861) prof_dump(); }
+#ifndef PROF_FROM /* the frames sampled (XF="-DSAMPLE_PROF -DPROF_FROM=2900 -DPROF_TO=3700": a route's stretch) */
+#define PROF_FROM 60
+#define PROF_TO 1861
+#endif
+        { extern void prof_start(void), prof_dump(void); if (frame == PROF_FROM) prof_start(); if (frame == PROF_TO) prof_dump(); }
 #endif
         t_gs = render_end();
 #ifdef BENCH

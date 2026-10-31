@@ -3946,15 +3946,21 @@ void game_rebind(void)
     V3 ride_vel[2] = {flf.inst >= 0 ? insts[flf.inst].hvel : v3(0, 0, 0), coc.inst >= 0 ? insts[coc.inst].hvel : v3(0, 0, 0)};
     int wait_row = coc.wait >= 0 ? insts[coc.wait].row : -1;
     ninsts = 0;
+    int t_note = scene_type(s, "NoteFairy"), t_petari = scene_type(s, "Petari"), t_rockc = scene_type(s, "RockCreator"),
+        t_wan = scene_type(s, "WanwanRolling"), t_wanm = scene_type(s, "WanwanRollingMini"),
+        t_wang = scene_type(s, "WanwanRollingGold"), t_dino = scene_type(s, "DinoPackun"), t_ota = scene_type(s, "OtaKing");
+    static signed char wnk[1024]; /* walker_new_kind by type this rebind: 0 not yet, 1 no, 2 yes */
+    memset(wnk, 0, sizeof wnk);
     for (u32 i = 0; i < s->nobjs; i++) { /* every placed model without behaviour: planets and the rest */
         const Row *r = &s->objs[i];
+        if (r->type < 1024 && !wnk[r->type]) wnk[r->type] = (signed char)(walker_new_kind(s->types + 32 * r->type) >= 0 ? 2 : 1);
         if (r->type == t_coin || r->type == t_pc || r->type == t_piece || r->type == t_kuribo || r->type == t_circle ||
             r->type == t_tako || r->type == t_packun || r->type == t_kote || r->type == t_spider || (r->type == t_mera || r->type == t_imera) ||
             r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly ||
-            r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_stink || r->type == scene_type(s, "NoteFairy") ||
-            r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == scene_type(s, "Petari") || r->type == scene_type(s, "RockCreator") || r->type == scene_type(s, "WanwanRolling") ||
-            r->type == scene_type(s, "WanwanRollingMini") || r->type == scene_type(s, "WanwanRollingGold") ||
-            r->type == scene_type(s, "DinoPackun") || r->type == scene_type(s, "OtaKing") || walker_new_kind(s->types + 32 * r->type) >= 0)
+            r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_stink || r->type == t_note ||
+            r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == t_petari || r->type == t_rockc || r->type == t_wan ||
+            r->type == t_wanm || r->type == t_wang || r->type == t_dino || r->type == t_ota ||
+            (r->type < 1024 ? wnk[r->type] == 2 : walker_new_kind(s->types + 32 * r->type) >= 0))
             continue;
         const char *name = s->types + 32 * r->type;
         const Model *md = scene_model(s, name);
@@ -6498,10 +6504,13 @@ static void os_init(void)
         if (sc->objs[i].type == ty) { ospheres[nospheres].row = i; os_build(&ospheres[nospheres]); nospheres++; }
 }
 
+/* a drawing's angle that turns k radians a frame, within one turn: sinf / cosf of hundreds of radians (frame 2000 on)
+ * take newlib's slow reduction, ~0.4 ms a frame in Good Egg's boss (drawing only: no state reads it) */
+static float draw_angle(float k) { return fmodf(game_frame * k, 6.2831853f); }
 static void draw_oceanspheres(V3 eye, V3 right, V3 cup)
 {
     if (fx_ocean_tex(0) < 0) return;
-    float t1 = -0.1f * game_frame, off = 0.0008f * game_frame;
+    float t1 = draw_angle(-0.1f), off = 0.0008f * game_frame;
     off -= floorf(off);
     static u16 keep[2][3 * 6 * 1024];
     /* the wave's two terms by a point's w1 / w2 (whole numbers 0 .. n): a table a frame instead of two sines a point */
@@ -33964,7 +33973,7 @@ void game_draw(void)
             continue;
         }
         if (in->shoot) { /* spinning about its y, grown by k */
-            float k, rot[16], cm[16], a = game_frame * 0.17453293f;
+            float k, rot[16], cm[16], a = draw_angle(0.17453293f);
             V3 p = shoot_pos(in, &k);
             if (k <= 0.0f || row_dead[in->row]) continue;
             mat_identity(rot);
@@ -34173,7 +34182,7 @@ void game_draw(void)
     }
     for (int i = 0; m_piece && i < MAX_SHOTS; i++)
         if (shots[i].t) {
-            basis_matrix(m, shots[i].pos, up_at(shots[i].pos, v3(0, 1, 0)), shots[i].vel, game_frame * 0.5f);
+            basis_matrix(m, shots[i].pos, up_at(shots[i].pos, v3(0, 1, 0)), shots[i].vel, draw_angle(0.5f));
             render_model(m_pieces[shots[i].col], m, 0x60, 0xD0, 0xF0);
         }
     for (int i = 0; i < nkuribo; i++) {
@@ -34504,24 +34513,24 @@ void game_draw(void)
     for (int k = 0; k < norocks; k++) { /* OtaRocks' coconuts and fire balls */
         for (int b = 0; m_coco && b < 4; b++) {
             if (!orocks[k].ball[b].state) continue;
-            basis_matrix(m, orocks[k].ball[b].pos, orocks[k].ball[b].up, orocks[k].ball[b].vel, game_frame * 0.3f);
+            basis_matrix(m, orocks[k].ball[b].pos, orocks[k].ball[b].up, orocks[k].ball[b].vel, draw_angle(0.3f));
             render_model(m_coco, m, 0x80, 0x80, 0x80);
         }
         for (int f = 0; m_fireball2 && f < 3; f++) {
             if (!orocks[k].fire[f].alive) continue;
-            basis_matrix(m, orocks[k].fire[f].pos, orocks[k].fire[f].up, orocks[k].fire[f].vel, game_frame * 0.4f);
+            basis_matrix(m, orocks[k].fire[f].pos, orocks[k].fire[f].up, orocks[k].fire[f].vel, draw_angle(0.4f));
             render_model(m_fireball2, m, 0x80, 0x80, 0x80);
         }
     }
     if (ota.row >= 0) { /* its coconuts (SpinX), fire balls, fire bubbles */
         for (int b = 0; m_coco && b < OTA_BALLS; b++) {
             if (!ota.ball[b].state) continue;
-            basis_matrix(m, ota.ball[b].pos, ota.ball[b].up, ota.ball[b].vel, game_frame * 0.3f);
+            basis_matrix(m, ota.ball[b].pos, ota.ball[b].up, ota.ball[b].vel, draw_angle(0.3f));
             render_model(m_coco, m, 0x80, 0x80, 0x80);
         }
         for (int i = 0; m_fireball2 && i < OTA_FIRES; i++) {
             if (!ota.fire[i].alive) continue;
-            basis_matrix(m, ota.fire[i].pos, ota.fire[i].up, ota.fire[i].vel, game_frame * 0.4f);
+            basis_matrix(m, ota.fire[i].pos, ota.fire[i].up, ota.fire[i].vel, draw_angle(0.4f));
             render_model(m_fireball2, m, 0x80, 0x80, 0x80);
         }
         for (int i = 0; m_firebubble && i < OTA_BUBBLES; i++) {
@@ -34568,7 +34577,7 @@ void game_draw(void)
     }
     if (m_note) for (int i = 0; i < nnotes; i++) { /* NoteFairy notes, turning 8 degrees a frame */
         if (notes[i].alive != 1) continue;
-        basis_matrix(m, notes[i].pos, up_at(notes[i].pos, v3(0, 1, 0)), v3(1, 0, 0), game_frame * 0.1396263f);
+        basis_matrix(m, notes[i].pos, up_at(notes[i].pos, v3(0, 1, 0)), v3(1, 0, 0), draw_angle(0.1396263f));
         render_model(m_note, m, 0x80, 0x80, 0x80);
     }
     draw_waterplants();

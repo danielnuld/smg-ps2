@@ -277,37 +277,46 @@ const Row *scene_start(const Scene *s)
     return any ? any : &s->starts[0];
 }
 
-/* scene_type / scene_model kept by the name (hashed, checked by its text) for the table as it stands
- * (scene_models_gen counts the models added or dropped): their walks of strcmp over every class or model ran several
- * times a frame, names built in buffers among them */
+/* scene_type / scene_model by a hash table of the names (open addressing, each name's first index), made again when
+ * the table changes (scene_models_gen: blob_add counts its adds; nmodels drops at a zone swap): their walks of
+ * strcmp over every class or model ran several times a frame, and once a row at a rebind */
 u32 scene_models_gen;
-#define NAMES_KEPT 128
-typedef struct { const void *tab; u32 gen; int idx; char nm[40]; } NameKept;
-static int name_kept(NameKept *c, const char *name, const void *tab, u32 gen, int *idx, NameKept **slot)
+#define NAME_SLOTS 1024 /* (more names than 3 / 4 of it: the walk) */
+typedef struct { const void *tab; u32 n, gen; u16 slot[NAME_SLOTS]; } NameTab;
+static u32 name_hash(const char *s)
 {
-    u32 h = 2166136261u, n = 0;
-    for (const char *q = name; *q; q++, n++) h = (h ^ (u8)*q) * 16777619u; /* FNV-1a */
-    NameKept *e = &c[(h ^ h >> 16) % NAMES_KEPT];
-    if (e->tab == tab && e->gen == gen && !strcmp(e->nm, name)) { *idx = e->idx; return 1; }
-    *slot = n < sizeof e->nm ? e : NULL;
-    return 0;
+    u32 h = 2166136261u;
+    for (; *s; s++) h = (h ^ (u8)*s) * 16777619u; /* FNV-1a */
+    return h ^ h >> 15;
 }
-static int name_keep(NameKept *e, const char *name, const void *tab, u32 gen, int idx)
+/* the index of name among n names (name_at(i)), -1 none */
+static int name_find(NameTab *t, const void *tab, u32 n, const char *(*name_at)(const void *, u32), const char *name)
 {
-    if (e) { e->tab = tab; e->gen = gen; e->idx = idx; strcpy(e->nm, name); }
-    return idx;
+    if (n > NAME_SLOTS * 3 / 4) {
+        for (u32 i = 0; i < n; i++) if (!strcmp(name_at(tab, i), name)) return (int)i;
+        return -1;
+    }
+    if (t->tab != tab || t->n != n || t->gen != scene_models_gen) {
+        t->tab = tab; t->n = n; t->gen = scene_models_gen;
+        memset(t->slot, 0xFF, sizeof t->slot);
+        for (u32 i = 0; i < n; i++)
+            for (u32 h = name_hash(name_at(tab, i)) % NAME_SLOTS;; h = (h + 1) % NAME_SLOTS) {
+                if (t->slot[h] == 0xFFFF) { t->slot[h] = (u16)i; break; }
+                if (!strcmp(name_at(tab, t->slot[h]), name_at(tab, i))) break; /* the first one stays */
+            }
+    }
+    for (u32 h = name_hash(name) % NAME_SLOTS;; h = (h + 1) % NAME_SLOTS) {
+        if (t->slot[h] == 0xFFFF) return -1;
+        if (!strcmp(name_at(tab, t->slot[h]), name)) return t->slot[h];
+    }
 }
+static const char *type_name_at(const void *tab, u32 i) { return (const char *)tab + 32 * i; }
+static const char *model_name_at(const void *tab, u32 i) { return ((const Model *)tab)[i].name; }
 
 int scene_type(const Scene *s, const char *name)
 {
-    static NameKept c[NAMES_KEPT];
-    NameKept *e;
-    int i;
-    if (name_kept(c, name, s->types, s->ntypes, &i, &e)) return i;
-    for (i = 0; i < (int)s->ntypes; i++)
-        if (strcmp(s->types + 32 * i, name) == 0)
-            break;
-    return name_keep(e, name, s->types, s->ntypes, i < (int)s->ntypes ? i : -1);
+    static NameTab t;
+    return name_find(&t, s->types, s->ntypes, type_name_at, name);
 }
 
 const u8 *scene_kcl(const Scene *s, const char *name)
@@ -326,15 +335,7 @@ const u8 *scene_kcl(const Scene *s, const char *name)
 
 const Model *scene_model(const Scene *s, const char *name)
 {
-    static NameKept c[NAMES_KEPT];
-    NameKept *e;
-    int i;
-    u32 gen = scene_models_gen ^ s->nmodels << 16;
-    if (!name_kept(c, name, s->models, gen, &i, &e)) {
-        for (i = 0; i < (int)s->nmodels; i++)
-            if (strcmp(s->models[i].name, name) == 0)
-                break;
-        name_keep(e, name, s->models, gen, i = i < (int)s->nmodels ? i : -1);
-    }
+    static NameTab t;
+    int i = name_find(&t, s->models, s->nmodels, model_name_at, name);
     return i >= 0 ? &s->models[i] : NULL;
 }
