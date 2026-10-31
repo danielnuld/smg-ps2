@@ -2,7 +2,7 @@
 
 usage: python3 tools/prof_map.py <emulog> <nm -n of the ELF> [top n]
 prints the samples by function ("prof" lines: self time, 1 sample ~0.1 ms) and the library calls' callers
-("callp": strcmp / strncmp / strstr / memset / cosf / sinf calls, one in 16 counted) by function."""
+("callp": strcmp / strncmp / strstr / memset / cosf / sinf / snprintf calls, one in 16 counted) by function."""
 import sys, re, bisect, collections
 syms = []
 for l in open(sys.argv[2], errors='replace'):

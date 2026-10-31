@@ -111,7 +111,7 @@ void prof_dump(void)
 }
 #endif
 #ifdef SAMPLE_PROF
-/* the library calls by caller (Makefile: --wrap with SAMPLE_PROF): one in 16 calls counted at its return address,
+/* the library calls by caller (Makefile: --wrap with SAMPLE_PROF; snprintf below): one in 16 calls counted at its return address,
  * dumped as "callp" buckets */
 static u32 ncalls;
 static inline void count_caller(void *ra)
@@ -129,4 +129,16 @@ char *__wrap_strstr(const char *a, const char *b) { count_caller(__builtin_retur
 void *__wrap_memset(void *d, int c, unsigned int n) { count_caller(__builtin_return_address(0)); return __real_memset(d, c, n); }
 float __wrap_cosf(float x) { count_caller(__builtin_return_address(0)); return __real_cosf(x); }
 float __wrap_sinf(float x) { count_caller(__builtin_return_address(0)); return __real_sinf(x); }
+#endif
+#ifdef SAMPLE_PROF
+#include <stdarg.h>
+int __wrap_snprintf(char *s, unsigned int n, const char *f, ...)
+{
+    count_caller(__builtin_return_address(0));
+    va_list ap;
+    va_start(ap, f);
+    int r = vsnprintf(s, n, f, ap);
+    va_end(ap);
+    return r;
+}
 #endif

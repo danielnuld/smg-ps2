@@ -1887,10 +1887,12 @@ static void swim_reset(void);
 static const Model *m_freeze_ice;
 
 static void area_types_reset(void);
+static u32 scene_seq; /* game_init counts the scenes (row_list) */
 void game_init(const Scene *s, const unsigned char *blob)
 {
     sc = s;
     area_types_reset();
+    scene_seq++;
     gd_scene_start(); /* GameDataFunction's scene start holder (the isOnJust checks) */
     mc_table = &MC_TABLES[gd_player_luigi() ? 1 : 0]; /* MarioActor::init2: mConst->changeTable(1) when isPlayerLuigi */
     fx_init(s);
@@ -3809,10 +3811,14 @@ static void railer_place(Inst *in)
 /* SmallStone.cpp (SmallStone / CircleShell / CircleStrawberry): 8 members on a ring of 300 around it, each dropped
  * onto the ground and raised arg0; a spin within 400 of its centre (120 up) breaks them all (star pieces when arg2
  * is set: one each, ponytail for appearStarPiece's burst). They share the plant groups' members (plants) */
+static signed char stone_type[1024]; /* stone_row by type: 0 not yet, 1 no, 2 yes (area_types_reset) */
 static int stone_row(const Row *r)
 {
     const char *n = sc->types + 32 * r->type;
-    return strcmp(n, "SmallStone") == 0 || strcmp(n, "CircleShell") == 0 || strcmp(n, "CircleStrawberry") == 0;
+    if (r->type < 1024 && stone_type[r->type]) return stone_type[r->type] == 2;
+    int s = strcmp(n, "SmallStone") == 0 || strcmp(n, "CircleShell") == 0 || strcmp(n, "CircleStrawberry") == 0;
+    if (r->type < 1024) stone_type[r->type] = (signed char)(1 + s);
+    return s;
 }
 
 static int plant_count(const Row *r) { return stone_row(r) ? 8 : r->arg[0] > 0 ? r->arg[0] : 7; }
@@ -24748,6 +24754,19 @@ static void update_palms(void)
  * every 5..20, until 600 off) found within 150 every 5..10 frames, or within 500 of his spin. Velocity damped 0.95;
  * its up the group's (arg2: against the gravity, else (0, 1, 0)). ponytail: one Swim pose per group (no per-fish
  * rate), drawn within 5000 of the camera only (Petari hides past 300 m), 16 fish a group at most */
+/* the rows of some classes, in order, listed once a scene (a walk over every row a frame for a handful); n -1: more
+ * than it holds (the callers walk every row then) */
+
+typedef struct { u32 seq; int n; short row[64]; } RowList;
+static const RowList *row_list(RowList *l, const int *t, int nt)
+{
+    if (l->seq == scene_seq + 1) return l;
+    l->seq = scene_seq + 1; l->n = 0;
+    for (u32 row = 0; row < sc->nobjs && l->n >= 0; row++)
+        for (int k = 0; k < nt; k++)
+            if ((int)sc->objs[row].type == t[k]) { if (l->n < 64) l->row[l->n++] = (short)row; else l->n = -1; break; }
+    return l;
+}
 #define MAX_FGROUPS 24
 #define FG_FISH 16
 enum { FI_WANDER, FI_APPROACH, FI_ESCAPE };
@@ -24762,7 +24781,10 @@ static void update_fishes(void)
     int fgt[6]; /* their classes (by index: no name compared a row) */
     for (int i = 0; i < 6; i++) fgt[i] = scene_type(sc, fg[i]);
     V3 mp = mario->pos;
-    for (u32 row = 0; row < sc->nobjs; row++) {
+    static RowList rl;
+    const RowList *l = row_list(&rl, fgt, 6);
+    for (int li = 0, nl = l->n < 0 ? (int)sc->nobjs : l->n; li < nl; li++) {
+        u32 row = l->n < 0 ? (u32)li : (u32)l->row[li];
         const Row *r = &sc->objs[row];
         int ty = -1;
         for (int i = 0; i < 6 && ty < 0; i++) if ((int)r->type == fgt[i]) ty = i;
@@ -24880,7 +24902,10 @@ static void gu_set(int k, int b, int n) { ggs[k].nrv[b] = n; ggs[k].step[b] = -1
 static void update_gulls(void)
 {
     int t = scene_type(sc, "SeaGullGroup"); /* its class by index: no name compared a row */
-    for (u32 row = 0; row < sc->nobjs; row++) {
+    static RowList rl;
+    const RowList *l = row_list(&rl, &t, 1);
+    for (int li = 0, nl = l->n < 0 ? (int)sc->nobjs : l->n; li < nl; li++) {
+        u32 row = l->n < 0 ? (u32)li : (u32)l->row[li];
         const Row *r = &sc->objs[row];
         if ((int)r->type != t || !row_shown((int)row) || r->path < 0 || !scene_blob_g) continue;
         u32 rn = 0; int cl = 0;
@@ -26098,7 +26123,7 @@ static int area_centered(const char *name)
 /* area_shape and area_centered of a class, kept by its type (area_types_reset at each scene): area_inside runs for
  * the light, camera, switch, water... areas every frame, and its names' searches cost more than its test */
 static signed char area_type_shape[1024], area_type_centered[1024]; /* 0 not yet, else the answer + 2 */
-static void area_types_reset(void) { memset(area_type_shape, 0, sizeof area_type_shape); }
+static void area_types_reset(void) { memset(area_type_shape, 0, sizeof area_type_shape); memset(stone_type, 0, sizeof stone_type); }
 static int area_type(int t, int *centered)
 {
     const char *n = sc->types + 32 * t;

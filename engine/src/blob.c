@@ -277,27 +277,30 @@ const Row *scene_start(const Scene *s)
     return any ? any : &s->starts[0];
 }
 
-/* scene_type / scene_model kept by the name's address (its text checked again: a buffer's may change) for the
- * table as it stands (scene_models_gen counts the models added or dropped): their walks of strcmp over every class
- * or model ran several times a frame */
+/* scene_type / scene_model kept by the name (hashed, checked by its text) for the table as it stands
+ * (scene_models_gen counts the models added or dropped): their walks of strcmp over every class or model ran several
+ * times a frame, names built in buffers among them */
 u32 scene_models_gen;
-typedef struct { const char *at; const void *tab; u32 gen; int idx; char nm[40]; } NameKept;
+#define NAMES_KEPT 128
+typedef struct { const void *tab; u32 gen; int idx; char nm[40]; } NameKept;
 static int name_kept(NameKept *c, const char *name, const void *tab, u32 gen, int *idx, NameKept **slot)
 {
-    NameKept *e = &c[((u32)(unsigned long)name * 2654435761u) >> 26];
-    if (e->at == name && e->tab == tab && e->gen == gen && !strcmp(e->nm, name)) { *idx = e->idx; return 1; }
-    *slot = strlen(name) < sizeof e->nm ? e : NULL;
+    u32 h = 2166136261u, n = 0;
+    for (const char *q = name; *q; q++, n++) h = (h ^ (u8)*q) * 16777619u; /* FNV-1a */
+    NameKept *e = &c[(h ^ h >> 16) % NAMES_KEPT];
+    if (e->tab == tab && e->gen == gen && !strcmp(e->nm, name)) { *idx = e->idx; return 1; }
+    *slot = n < sizeof e->nm ? e : NULL;
     return 0;
 }
 static int name_keep(NameKept *e, const char *name, const void *tab, u32 gen, int idx)
 {
-    if (e) { e->at = name; e->tab = tab; e->gen = gen; e->idx = idx; strcpy(e->nm, name); }
+    if (e) { e->tab = tab; e->gen = gen; e->idx = idx; strcpy(e->nm, name); }
     return idx;
 }
 
 int scene_type(const Scene *s, const char *name)
 {
-    static NameKept c[64];
+    static NameKept c[NAMES_KEPT];
     NameKept *e;
     int i;
     if (name_kept(c, name, s->types, s->ntypes, &i, &e)) return i;
@@ -323,7 +326,7 @@ const u8 *scene_kcl(const Scene *s, const char *name)
 
 const Model *scene_model(const Scene *s, const char *name)
 {
-    static NameKept c[64];
+    static NameKept c[NAMES_KEPT];
     NameKept *e;
     int i;
     u32 gen = scene_models_gen ^ s->nmodels << 16;

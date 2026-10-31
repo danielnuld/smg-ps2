@@ -241,6 +241,29 @@ void mat_mul(float out[16], const float a[16], const float b[16])
     else mat_mul_vu0(out, pa, pb);
 }
 
+static void scale_cols(float m[16], float s);
+/* mat_mul then scale_cols(out, s) (a skinned draw's matrices: columns 0-2 x the model's quantisation), in one go on
+ * VU0 when all three are aligned */
+static void mat_mul_scale3(float *out, const float *a, const float *b, float s)
+{
+    if (((u32)out | (u32)a | (u32)b) & 15) { mat_mul(out, a, b); scale_cols(out, s); return; }
+    __asm__ volatile(
+        "qmtc2 %3, $vf9\n"
+        "lqc2 $vf1, 0(%1)\n lqc2 $vf2, 16(%1)\n lqc2 $vf3, 32(%1)\n lqc2 $vf4, 48(%1)\n"
+        "lqc2 $vf5, 0(%2)\n lqc2 $vf6, 16(%2)\n lqc2 $vf7, 32(%2)\n lqc2 $vf8, 48(%2)\n"
+        "vmulax.xyzw $ACC, $vf1, $vf5x\n vmadday.xyzw $ACC, $vf2, $vf5y\n"
+        "vmaddaz.xyzw $ACC, $vf3, $vf5z\n vmaddw.xyzw $vf5, $vf4, $vf5w\n"
+        "vmulax.xyzw $ACC, $vf1, $vf6x\n vmadday.xyzw $ACC, $vf2, $vf6y\n"
+        "vmaddaz.xyzw $ACC, $vf3, $vf6z\n vmaddw.xyzw $vf6, $vf4, $vf6w\n"
+        "vmulax.xyzw $ACC, $vf1, $vf7x\n vmadday.xyzw $ACC, $vf2, $vf7y\n"
+        "vmaddaz.xyzw $ACC, $vf3, $vf7z\n vmaddw.xyzw $vf7, $vf4, $vf7w\n"
+        "vmulax.xyzw $ACC, $vf1, $vf8x\n vmadday.xyzw $ACC, $vf2, $vf8y\n"
+        "vmaddaz.xyzw $ACC, $vf3, $vf8z\n vmaddw.xyzw $vf8, $vf4, $vf8w\n"
+        "vmulx.xyzw $vf5, $vf5, $vf9x\n vmulx.xyzw $vf6, $vf6, $vf9x\n vmulx.xyzw $vf7, $vf7, $vf9x\n"
+        "sqc2 $vf5, 0(%0)\n sqc2 $vf6, 16(%0)\n sqc2 $vf7, 32(%0)\n sqc2 $vf8, 48(%0)\n"
+        : : "r"(out), "r"(a), "r"(b), "r"(*(u32 *)&s) : "memory");
+}
+
 /* SMG placement: translation, then rotation Z * Y * X (degrees), then scale. */
 void mat_translate_rot_scale(float m[16], const float pos[3], const float rot[3], const float scale[3])
 {
@@ -1288,8 +1311,7 @@ static void draw_model_(const Model *md, const float world[16], const float (*dr
             for (u32 i = 0; i < m; i++) { /* each draw matrix once a draw, though several groups use it */
                 u32 di = sg->drw[i];
                 if (di < DRW_CACHE && dstamp[di] == dseq) { memcpy(gm[i], dcache[di], sizeof gm[i]); continue; }
-                mat_mul(gm[i], pvw, drw[di]);
-                scale_cols(gm[i], md->qscale);
+                mat_mul_scale3(gm[i], pvw, drw[di], md->qscale);
                 if (md->lit) {
                     if (!light) zero12(gm[i] + 16);
                     else {
