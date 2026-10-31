@@ -565,7 +565,7 @@ static void draw_skin(const Model *md, const float m[16], Anim *a)
         else bva_apply(md, a->clip_id >= 0 ? sc->clips[a->clip_id].name : NULL, a->frame);
     }
     bva_key = NULL;
-    if (render_model_visible(md, m)) render_skinned(md, m, anim_drw(a)); /* culled: no draw matrices made */
+    if (render_model_visible(md, m)) render_skinned_visible(md, m, anim_drw(a)); /* culled: no draw matrices made */
 }
 /* a one-shot effect standing on `up` at p */
 static void fx_at(int fx, V3 p, V3 up)
@@ -1266,13 +1266,23 @@ static void mario_play(const char *clip, float speed, int loop)
 
 static V3 row_pos(const Row *r) { return v3(r->pos[0], r->pos[1], r->pos[2]); }
 
-/* SMG placement axes (rotation Z * Y * X, degrees), same as render.c mat_translate_rot_scale */
+/* SMG placement axes (rotation Z * Y * X, degrees), same as render.c mat_translate_rot_scale; kept by the rotation
+ * (its bits: a pure function of it, many rows share one): areas, walkers, rails ask every frame, six sines /
+ * cosines a time */
 static void row_axes(const Row *r, V3 *x, V3 *z)
 {
-    float m[16], one[3] = {1, 1, 1};
-    mat_translate_rot_scale(m, r->pos, r->rot, one);
-    *x = v3(m[0], m[1], m[2]);
-    *z = v3(m[8], m[9], m[10]);
+    static struct { u32 k[3]; int ok; V3 x, z; } c[64];
+    u32 k[3];
+    memcpy(k, r->rot, 12);
+    typeof(&c[0]) e = &c[(k[0] * 2654435761u ^ k[1] * 2246822519u ^ k[2] * 3266489917u) >> 26];
+    if (!e->ok || e->k[0] != k[0] || e->k[1] != k[1] || e->k[2] != k[2]) {
+        float m[16], one[3] = {1, 1, 1};
+        mat_translate_rot_scale(m, r->pos, r->rot, one);
+        e->x = v3(m[0], m[1], m[2]);
+        e->z = v3(m[8], m[9], m[10]);
+        memcpy(e->k, k, 12); e->ok = 1;
+    }
+    *x = e->x; *z = e->z;
 }
 
 static int count_type(const char *name, int per_row_arg0)
@@ -1876,9 +1886,11 @@ static const Model *m_wcolumn;
 static void swim_reset(void);
 static const Model *m_freeze_ice;
 
+static void area_types_reset(void);
 void game_init(const Scene *s, const unsigned char *blob)
 {
     sc = s;
+    area_types_reset();
     gd_scene_start(); /* GameDataFunction's scene start holder (the isOnJust checks) */
     mc_table = &MC_TABLES[gd_player_luigi() ? 1 : 0]; /* MarioActor::init2: mConst->changeTable(1) when isPlayerLuigi */
     fx_init(s);
@@ -12061,7 +12073,12 @@ static const char *m_anim_clip(const char *jp)
 }
 static int m_anim_idx(const char *jp)
 {
-    for (unsigned i = 0; i < sizeof m_anims / sizeof m_anims[0]; i++) if (!strcmp(m_anims[i].jp, jp)) return (int)i;
+    /* the index kept by the name's address (checked again by its text: the table's first such name), the walk over
+     * the table's names ran for every isAnimationRun a frame */
+    static struct { const char *at; int i; } c[64];
+    typeof(&c[0]) e = &c[((u32)jp * 2654435761u) >> 26];
+    if (e->at == jp && !strcmp(m_anims[e->i].jp, jp)) return e->i;
+    for (unsigned i = 0; i < sizeof m_anims / sizeof m_anims[0]; i++) if (!strcmp(m_anims[i].jp, jp)) { e->at = jp; e->i = (int)i; return (int)i; }
     return -1;
 }
 static int m_jp_same(int i) /* the playing clip is m_anims[i]'s animation: by its name, else (mario_play) by its rate */
@@ -15030,7 +15047,7 @@ static void winfo_clear(WInfo *w) /* WaterInfo::clear */
     memset(w, 0, sizeof *w);
     w->surf_n = v3(0, 1, 0); w->edge_d = -1.0f; w->row = -1;
 }
-static int area_shape(const char *name);
+static int area_shape(const char *name), area_type(int t, int *centered);
 /* MR::getWaterAreaObj: the WaterArea p is in (its form's volume), else the ocean (WaterAreaFunction::tryInOceanArea) */
 static int water_obj(WInfo *w, V3 p)
 {
@@ -15111,7 +15128,7 @@ static int water_info(WInfo *w, V3 p, V3 grav, int skip)
         else { w->edge_pos = vadd(vmul(vnorm(e), rad), ctr); w->edge_d = vlen(vsub(w->edge_pos, p)); }
         return 1;
     }
-    int shape = area_shape(sc->types + 32 * r->type);
+    int ctr_, shape = area_type((int)r->type, &ctr_);
     V3 x, z;
     row_axes(r, &x, &z);
     V3 y = vcross(z, x);
@@ -24739,18 +24756,16 @@ static struct {
     V3 pos[FG_FISH], vel[FG_FISH], front[FG_FISH], off[FG_FISH], esc[FG_FISH];
     float dappr[FG_FISH]; int tsearch[FG_FISH], tmove[FG_FISH], nrv[FG_FISH];
 } fgs[MAX_FGROUPS];
-static int fg_type(const char *n)
-{
-    static const char *const fg[6] = {"FishGroupA", "FishGroupB", "FishGroupC", "FishGroupD", "FishGroupE", "FishGroupF"};
-    for (int i = 0; i < 6; i++) if (!strcmp(n, fg[i])) return i;
-    return -1;
-}
 static void update_fishes(void)
 {
+    static const char *const fg[6] = {"FishGroupA", "FishGroupB", "FishGroupC", "FishGroupD", "FishGroupE", "FishGroupF"};
+    int fgt[6]; /* their classes (by index: no name compared a row) */
+    for (int i = 0; i < 6; i++) fgt[i] = scene_type(sc, fg[i]);
     V3 mp = mario->pos;
     for (u32 row = 0; row < sc->nobjs; row++) {
         const Row *r = &sc->objs[row];
-        int ty = fg_type(sc->types + 32 * r->type);
+        int ty = -1;
+        for (int i = 0; i < 6 && ty < 0; i++) if ((int)r->type == fgt[i]) ty = i;
         if (ty < 0 || !row_shown((int)row) || r->path < 0 || !scene_blob_g) continue;
         u32 rn = 0; int cl = 0;
         const float *rail = find_rail(scene_blob_g, r->zone, r->path, &rn, &cl);
@@ -24864,9 +24879,10 @@ static int gg_next(int k, int b) /* updatePosInfo */
 static void gu_set(int k, int b, int n) { ggs[k].nrv[b] = n; ggs[k].step[b] = -1; }
 static void update_gulls(void)
 {
+    int t = scene_type(sc, "SeaGullGroup"); /* its class by index: no name compared a row */
     for (u32 row = 0; row < sc->nobjs; row++) {
         const Row *r = &sc->objs[row];
-        if (strcmp(sc->types + 32 * r->type, "SeaGullGroup") || !row_shown((int)row) || r->path < 0 || !scene_blob_g) continue;
+        if ((int)r->type != t || !row_shown((int)row) || r->path < 0 || !scene_blob_g) continue;
         u32 rn = 0; int cl = 0;
         const float *rail = find_rail(scene_blob_g, r->zone, r->path, &rn, &cl);
         if (!rail) continue;
@@ -26079,15 +26095,27 @@ static int area_centered(const char *name)
     for (unsigned i = 0; i < sizeof c / sizeof c[0]; i++) if (!strcmp(name, c[i])) return 1;
     return 0;
 }
+/* area_shape and area_centered of a class, kept by its type (area_types_reset at each scene): area_inside runs for
+ * the light, camera, switch, water... areas every frame, and its names' searches cost more than its test */
+static signed char area_type_shape[1024], area_type_centered[1024]; /* 0 not yet, else the answer + 2 */
+static void area_types_reset(void) { memset(area_type_shape, 0, sizeof area_type_shape); }
+static int area_type(int t, int *centered)
+{
+    const char *n = sc->types + 32 * t;
+    if (t < 0 || t >= 1024) { *centered = area_centered(n); return area_shape(n); }
+    if (!area_type_shape[t]) { area_type_shape[t] = (signed char)(area_shape(n) + 2); area_type_centered[t] = (signed char)area_centered(n); }
+    *centered = area_type_centered[t];
+    return area_type_shape[t] - 2;
+}
 static int area_inside(const Row *r, V3 p)
 {
     V3 d = vsub(p, row_pos(r)), x, z;
-    int shape = area_shape(sc->types + 32 * r->type);
+    int centered, shape = area_type((int)r->type, &centered);
     if (shape == 2) return vlen(d) < 500.0f * r->scale[0];
     row_axes(r, &x, &z);
     V3 y = vcross(z, x);
     float h = vdot(d, y);
-    if (shape == 0 && area_centered(sc->types + 32 * r->type)) h += 500.0f * r->scale[1]; /* createCenterOriginCube (Type_Cube1) */
+    if (shape == 0 && centered) h += 500.0f * r->scale[1]; /* createCenterOriginCube (Type_Cube1) */
     if (h < 0.0f || h > (shape == 1 ? 500.0f : 1000.0f) * r->scale[1]) return 0; /* AreaFormCylinder: 500 x scale_y */
     if (shape == 1) return vlen(vtangent(d, y)) < 500.0f * r->scale[0];
     return fabsf(vdot(d, x)) < 500.0f * r->scale[0] && fabsf(vdot(d, z)) < 500.0f * r->scale[2];
@@ -26192,8 +26220,8 @@ static void update_switches(void)
                 se_start(yel ? SE_OJ_YELLOWCHIP_APPEAR : SE_OJ_BLUECHIP_APPEAR, NULL);
             }
             int n = 0, got = 0;
-            for (u32 k = 0; k < sc->nobjs; k++)
-                if (sc->objs[k].arg[0] == r->arg[0] && strcmp(sc->types + 32 * sc->objs[k].type, chip) == 0) {
+            for (u32 k = 0, ct = (u32)scene_type(sc, chip); k < sc->nobjs; k++) /* the chip class by index */
+                if (sc->objs[k].type == ct && sc->objs[k].arg[0] == r->arg[0]) {
                     n++;
                     got += row_dead[k];
                 }
@@ -26214,11 +26242,10 @@ static void update_switches(void)
                 se_start(SE_OJ_FLIP_PANEL_APPEAR, &op.x);
             }
             int n = 0, back = 0;
+            int tf = scene_type(sc, "FlipPanel"), tr = scene_type(sc, "FlipPanelReverse"); /* by index, not by name a row */
             for (u32 k = 0; k < sc->nobjs; k++) {
                 const Row *q = &sc->objs[k];
-                const char *qn = sc->types + 32 * q->type;
-                if (q->group != r->group || q->zone != r->zone ||
-                    (strcmp(qn, "FlipPanel") != 0 && strcmp(qn, "FlipPanelReverse") != 0))
+                if (q->group != r->group || q->zone != r->zone || ((int)q->type != tf && (int)q->type != tr))
                     continue;
                 n++;
                 back += row_step[k] & FLIP_BACK;
@@ -33412,9 +33439,16 @@ static void basis_matrix_cs(float m[16], V3 pos, V3 up, V3 fwd, float c, float s
     m[8] = z.x; m[9] = z.y; m[10] = z.z;
     m[12] = pos.x; m[13] = pos.y; m[14] = pos.z;
 }
+/* with the cosine and sine kept by angle (its bits): 0 for most callers, a plant's or a pickup's own angle frame
+ * after frame; cosf / sinf of the same angle give the same answer */
 static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle)
 {
-    basis_matrix_cs(m, pos, up, fwd, cosf(angle), sinf(angle));
+    if (angle == 0.0f) { basis_matrix_cs(m, pos, up, fwd, 1.0f, angle); return; } /* cosf(+-0) 1, sinf(+-0) +-0 */
+    static struct { u32 a; float c, s; } k[512];
+    union { float f; u32 u; } b = {angle};
+    typeof(&k[0]) e = &k[(b.u * 0x9E3779B1u) >> 23];
+    if (e->a != b.u) { e->a = b.u; e->c = cosf(angle); e->s = sinf(angle); } /* (0 never comes here: zeroed is empty) */
+    basis_matrix_cs(m, pos, up, fwd, e->c, e->s);
 }
 
 /* a walker's up against gravity, kept while it stands still (NonActive ones, waiting ones): one gravity_at per

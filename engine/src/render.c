@@ -177,10 +177,12 @@ static qword_t *tex_packets;     /* per texture 8 qwords (GIF tag + TEX0, TEX1, 
 static int cur_tex;
 static u64 test_z;               /* TEST with the depth test only */
 
-void mat_identity(float m[16])
+void mat_identity(float m[16]) /* stored one by one: memset's call costs more than the 16 stores */
 {
-    memset(m, 0, 64);
-    m[0] = m[5] = m[10] = m[15] = 1.0f;
+    m[0] = 1.0f; m[1] = 0.0f; m[2] = 0.0f; m[3] = 0.0f;
+    m[4] = 0.0f; m[5] = 1.0f; m[6] = 0.0f; m[7] = 0.0f;
+    m[8] = 0.0f; m[9] = 0.0f; m[10] = 1.0f; m[11] = 0.0f;
+    m[12] = 0.0f; m[13] = 0.0f; m[14] = 0.0f; m[15] = 1.0f;
 }
 
 void mat_mul_c(float out[16], const float a[16], const float b[16]) /* the plain C one (mat_mul's check) */
@@ -927,9 +929,14 @@ void render_light(const RenderLight *l) { light = l; }
 /* the light matrix of a matrix `w` (local -> world) at m[16..27]: per light the direction from the instance to the
  * light (world), into w's local space (w^T d, normalised: w is a rotation times a scale), x 1 / 127 (the normals'
  * scale); columns x, y, z of (light 0, light 1). ponytail: one direction per instance, not per vertex */
+/* the light matrix cleared by stores (memset's call costs more for 12 floats) */
+static inline void zero12(float *m)
+{
+    m[0] = m[1] = m[2] = m[3] = m[4] = m[5] = m[6] = m[7] = m[8] = m[9] = m[10] = m[11] = 0.0f;
+}
 static void light_matrix(float *m, const float w[16], const float at[3])
 {
-    memset(m + 16, 0, 48);
+    zero12(m + 16);
     if (!light)
         return;
     for (int k = 0; k < 2; k++) {
@@ -956,7 +963,7 @@ static void light_dirs(float dl[2][3], const float w[16], const float at[3])
 }
 static void light_matrix_drw(float *m, const float drw[16], const float dl[2][3])
 {
-    memset(m + 16, 0, 48);
+    zero12(m + 16);
     for (int k = 0; k < 2; k++) {
         float v[3];
         for (int i = 0; i < 3; i++)
@@ -1094,6 +1101,7 @@ static inline u32 cy_(void) { u32 c; __asm__ volatile("mfc0 %0, $9" : "=r"(c)); 
 u32 prof_draw, prof_dcalls, prof_dculled; /* EE cycles in draw_model, its calls, those culled (profiling) */
 u32 prof_x[8]; /* ad hoc probes (main.c prints them in the bench) */
 static void draw_model_(const Model *md, const float world[16], const float (*drw)[16]);
+static int cull_passed; /* render_skinned_visible */
 static void draw_model(const Model *md, const float world[16], const float (*drw)[16])
 {
     u32 c0 = cy_();
@@ -1213,7 +1221,7 @@ static void draw_model_(const Model *md, const float world[16], const float (*dr
     if (!md->vu_ngroups)
         return;
     float mv[16], pvw[16] __attribute__((aligned(16)));
-    if (model_culled(md, world, mv))
+    if (!(cull_passed && drw) && model_culled(md, world, mv))
         return;
     if (!pv_ok) { mat_mul(pv, proj, view); pv_ok = 1; }
     mat_mul(pvw, pv, world);
@@ -1283,7 +1291,7 @@ static void draw_model_(const Model *md, const float world[16], const float (*dr
                 mat_mul(gm[i], pvw, drw[di]);
                 scale_cols(gm[i], md->qscale);
                 if (md->lit) {
-                    if (!light) memset(gm[i] + 16, 0, 48);
+                    if (!light) zero12(gm[i] + 16);
                     else {
                         if (!have_dl) { light_dirs(dl, world, world + 12); have_dl = 1; }
                         light_matrix_drw(gm[i], drw[di], (const float (*)[3])dl);
@@ -1414,6 +1422,13 @@ void render_group_tint(const Model *md, u8 r, u8 g, u8 b)
 void render_skinned(const Model *md, const float world[16], const float (*drw)[16])
 {
     draw_model(md, world, drw);
+}
+/* (cull_passed: draw_model_ skips its culling, a skinned draw reads no mv) */
+void render_skinned_visible(const Model *md, const float world[16], const float (*drw)[16])
+{
+    cull_passed = 1;
+    draw_model(md, world, drw);
+    cull_passed = 0;
 }
 
 /* 3x5 bitmap font as GS sprites (no texture, no VRAM). Digits, upper-case letters and a few signs. */

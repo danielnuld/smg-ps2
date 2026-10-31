@@ -133,6 +133,7 @@ int scene_type(const Scene *s, const char *name);
 /* Mario's start row: MarioNo 0 of zone 0 (Petari cInitializeStartIdInfo), else the first MarioNo 0, else the first. */
 const Row *scene_start(const Scene *s);
 const Model *scene_model(const Scene *s, const char *name);
+extern u32 scene_models_gen; /* blob_add counts its adds (scene_model keeps its answers until then) */
 /* Little-endian KCL of a model (planets), NULL if it has none. */
 const u8 *scene_kcl(const Scene *s, const char *name);
 

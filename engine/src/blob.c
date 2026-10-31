@@ -55,6 +55,7 @@ int blob_add(Scene *s, const u8 *blob)
         return -1;
     }
     s->nmodels += nm;
+    scene_models_gen++; /* scene_model: its kept answers stale */
     const u8 *p = m ? m + 4 : NULL;
     for (u32 i = first; i < s->nmodels; i++) {
         Model *md = &s->models[i];
@@ -276,12 +277,34 @@ const Row *scene_start(const Scene *s)
     return any ? any : &s->starts[0];
 }
 
+/* scene_type / scene_model kept by the name's address (its text checked again: a buffer's may change) for the
+ * table as it stands (scene_models_gen counts the models added or dropped): their walks of strcmp over every class
+ * or model ran several times a frame */
+u32 scene_models_gen;
+typedef struct { const char *at; const void *tab; u32 gen; int idx; char nm[40]; } NameKept;
+static int name_kept(NameKept *c, const char *name, const void *tab, u32 gen, int *idx, NameKept **slot)
+{
+    NameKept *e = &c[((u32)(unsigned long)name * 2654435761u) >> 26];
+    if (e->at == name && e->tab == tab && e->gen == gen && !strcmp(e->nm, name)) { *idx = e->idx; return 1; }
+    *slot = strlen(name) < sizeof e->nm ? e : NULL;
+    return 0;
+}
+static int name_keep(NameKept *e, const char *name, const void *tab, u32 gen, int idx)
+{
+    if (e) { e->at = name; e->tab = tab; e->gen = gen; e->idx = idx; strcpy(e->nm, name); }
+    return idx;
+}
+
 int scene_type(const Scene *s, const char *name)
 {
-    for (u32 i = 0; i < s->ntypes; i++)
+    static NameKept c[64];
+    NameKept *e;
+    int i;
+    if (name_kept(c, name, s->types, s->ntypes, &i, &e)) return i;
+    for (i = 0; i < (int)s->ntypes; i++)
         if (strcmp(s->types + 32 * i, name) == 0)
-            return i;
-    return -1;
+            break;
+    return name_keep(e, name, s->types, s->ntypes, i < (int)s->ntypes ? i : -1);
 }
 
 const u8 *scene_kcl(const Scene *s, const char *name)
@@ -300,8 +323,15 @@ const u8 *scene_kcl(const Scene *s, const char *name)
 
 const Model *scene_model(const Scene *s, const char *name)
 {
-    for (u32 i = 0; i < s->nmodels; i++)
-        if (strcmp(s->models[i].name, name) == 0)
-            return &s->models[i];
-    return NULL;
+    static NameKept c[64];
+    NameKept *e;
+    int i;
+    u32 gen = scene_models_gen ^ s->nmodels << 16;
+    if (!name_kept(c, name, s->models, gen, &i, &e)) {
+        for (i = 0; i < (int)s->nmodels; i++)
+            if (strcmp(s->models[i].name, name) == 0)
+                break;
+        name_keep(e, name, s->models, gen, i = i < (int)s->nmodels ? i : -1);
+    }
+    return i >= 0 ? &s->models[i] : NULL;
 }
