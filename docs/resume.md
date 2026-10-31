@@ -87,8 +87,8 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   slice_all.py: ROOM 9.1e6 (measured 9.18e6 with the test ELFs' 13824 KB region) and room() less letter.bin (loaded
   in every galaxy while Luigi is missing). Checked in PCSX2: torch (PhantomGalaxy/1: TeresaHouseZone in at the first
   torch, coin 84 popped and taken, coins 1), spiderblock (OceanPhantomCave/1: GhostShipCaveZone in, 7094 of 7150 KB;
-  SpiderMapBlock found). Still wrong in spiderblock (not zones): the hip drop lands on GhostShipCavePlanet at y -163,
-  122 over the block's origin, so the block is not hit; Mario then stays in HipDropLand (m_proc_hip no longer runs).
+  SpiderMapBlock found). Its hip drop (block missed, Mario stuck in HipDropLand) is fixed in PR #37
+  (kcl_check_arrow's box entry, HipDropLand's ground).
   **Repack must redo** with this branch's slice_all.py: AstroGalaxy (all), OceanPhantomCaveGalaxy, PhantomGalaxy (and
   then `python tools/zone_fit.py out/packs` must list none): with the old packs 13 zones are over the new room
   (letter.bin aside): AstroGalaxy 1-5 (main and TridentZone), OceanPhantomCave 1-2 GhostShipCaveZone, PhantomGalaxy 1
