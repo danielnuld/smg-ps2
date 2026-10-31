@@ -2397,20 +2397,13 @@ void game_init(const Scene *s, const unsigned char *blob)
             if (pipes[k].id == p->id && pipes[k].partner < 0) { pipes[k].partner = npipes; p->partner = k; break; }
         npipes++;
     }
-    logic = mem_alloc(MEM_OBJECTS, (count_type("TimerSwitch", 0) + count_type("SwitchSynchronizerReverse", 0) +
-                                    count_type("GroupSwitchWatcher", 0) + count_type("CollisionBlocker", 0) +
-                                    count_type("FlipPanelObserver", 0) + count_type("YellowChipGroup", 0) +
-                                    count_type("BlueChipGroup", 0) + count_type("SwitchCube", 0) +
-                                    count_type("SwitchSphere", 0) + count_type("SwitchCylinder", 0) +
-                                    count_type("DeathCube", 0) + count_type("DeathSphere", 0) +
-                                    count_type("DeathCylinder", 0) + count_type("RestartCube", 0) +
-                                    count_type("StarPieceSpot", 0) + count_type("AstroChangeStageCube", 0) + count_type("MovieStarter", 0) + 1) *
-                                       sizeof(Logic));
     int t_timer = scene_type(s, "TimerSwitch"), t_rev = scene_type(s, "SwitchSynchronizerReverse"),
         t_group = scene_type(s, "GroupSwitchWatcher"), t_block = scene_type(s, "CollisionBlocker"),
         t_flipobs = scene_type(s, "FlipPanelObserver"), t_ychips = scene_type(s, "YellowChipGroup"),
         t_bchips = scene_type(s, "BlueChipGroup");
+    for (int pass = 0; pass < 2; pass++) /* counted with the same test it is filled with (FallsCube had overrun it) */
     for (u32 i = 0; i < s->nobjs; i++) {
+        if (pass && i == 0) { logic = mem_alloc(MEM_OBJECTS, (nlogic + 1) * sizeof(Logic)); nlogic = 0; }
         int t = s->objs[i].type;
         const char *tn = s->types + 32 * t;
         int k = strncmp(tn, "Switch", 6) == 0 && area_shape(tn) >= 0 ? LOGIC_SWAREA :
@@ -2420,7 +2413,8 @@ void game_init(const Scene *s, const unsigned char *blob)
                 strcmp(tn, "FallsCube") == 0 ? LOGIC_FALLS :
                 t == t_timer ? LOGIC_TIMER : t == t_rev ? LOGIC_REVERSE : t == t_group ? LOGIC_GROUP :
                 t == t_block ? LOGIC_BLOCKER : t == t_flipobs ? LOGIC_FLIPS : t == t_ychips || t == t_bchips ? LOGIC_CHIPS : 0;
-        if (k) { logic[nlogic].row = i; logic[nlogic++].kind = k; }
+        if (k && pass) { logic[nlogic].row = i; logic[nlogic].kind = k; }
+        nlogic += k != 0;
     }
     const Row *st = scene_start(s);
     start_pos = row_pos(st);
@@ -28120,7 +28114,7 @@ static void update_switches(void)
         if (logic[i].kind == LOGIC_DEATH) { /* DeathArea.cpp: forceKillPlayerByAbyss; isInVolume: not while its SW_A is off;
                                               * getDeathType: arg0 -1 (DeathType_Any) only; MarioActor::forceKill: not
                                               * while bound (isEnableNerveChange: a launch star's flight is a rush) */
-            if (row_shown(row) && (r->sw[SW_A] < 0 || sw_on(r, SW_A)) && r->arg[0] == -1 && mario->launch < 0 && area_inside(r, mario->pos)) { printf("death area %d\n", row); miss_abyss = 1; miss(); }
+            if (row_shown(row) && (r->sw[SW_A] < 0 || sw_on(r, SW_A)) && r->arg[0] == -1 && mario->launch < 0 && area_inside(r, mario->pos)) { printf("death area %d at %d %d %d\n", row, (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z); miss_abyss = 1; miss(); }
             continue;
         }
         if (logic[i].kind == LOGIC_ASTROCUBE) { astro_cube(row, r); continue; }
