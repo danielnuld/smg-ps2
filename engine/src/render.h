@@ -59,6 +59,9 @@ void render_rect(float x, float y, float w, float h, u8 r, u8 g, u8 b);
  * scene texture, additive (else alpha) blending. Depth tested, not written; draw them after the models. */
 typedef struct { float pos[3], half; u32 rgba; u16 tex; u8 add, pad; } Sprite;
 void render_sprites(const Sprite *sp, int n);
+/* a sprite's screen place (out: x, y, half width, half height in GS units, view depth; NULL: none) or 0 when
+ * render_sprites leaves it out (behind the camera, past the far plane, wider than the screen, off it) */
+int render_sprite_place(const float pos[3], float half, float out[5]);
 /* a vertical textured strip: 4 levels of 2 points (left, right; bottom first), v 1 at the bottom, 0 at the top */
 typedef struct { float p[4][2][3]; u32 rgba; u16 tex; u16 pad; } Strip;
 void render_strips(const Strip *st, int n);

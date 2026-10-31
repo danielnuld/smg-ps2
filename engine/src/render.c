@@ -1552,6 +1552,27 @@ void render_rect(float x, float y, float w, float h, u8 r, u8 g, u8 b)
 /* Particles (fx.c): camera-facing sprites projected here as the VU1 program would (x = 2048 + f x / z, depth
  * (zndc + 1) * 0xFFFFFF / 2), sent through PATH2 in the chain after what is drawn so far; depth tested, not written.
  * Runs of one texture and blend share a state block; 64 sprites per DIRECT. */
+/* not inlined: fx_draw's early test and render_sprites make the very same decision (the same code, the same floats) */
+__attribute__((noinline)) int render_sprite_place(const float pos[3], float half, float out[5])
+{
+    float xv = view[0] * pos[0] + view[4] * pos[1] + view[8] * pos[2] + view[12];
+    float yv = view[1] * pos[0] + view[5] * pos[1] + view[9] * pos[2] + view[13];
+    float zv = view[2] * pos[0] + view[6] * pos[1] + view[10] * pos[2] + view[14];
+    if (zv < NEAR || zv > FAR)
+        return 0;
+    float k = 2048.0f / zv, sx = 2048.0f + shake_x + proj[0] * xv * k, sy = 2048.0f + shake_y + proj[5] * yv * k;
+    float hx = proj[0] * half * k, hy = -proj[5] * half * k;
+    /* wider than the screen (a big emitter's scale, or right at the camera): skipped. Its corners would leave
+     * the GS's 0..4095 range and wrap, and a few such sprites stall the GS for seconds (ambient effects) */
+    if (hx > SCREEN_W || hy > SCREEN_H)
+        return 0;
+    if (sx + hx < 2048 - SCREEN_W / 2 || sx - hx > 2048 + SCREEN_W / 2 || sy + hy < 2048 - SCREEN_H / 2 ||
+        sy - hy > 2048 + SCREEN_H / 2)
+        return 0;
+    if (out) { out[0] = sx; out[1] = sy; out[2] = hx; out[3] = hy; out[4] = zv; }
+    return 1;
+}
+
 void render_sprites(const Sprite *sp, int n)
 {
     for (int i = 0; i < n;) {
@@ -1575,20 +1596,10 @@ void render_sprites(const Sprite *sp, int n)
         u32 regs = 4;
         for (; i < j; i++) {
             const Sprite *s = &sp[i];
-            float xv = view[0] * s->pos[0] + view[4] * s->pos[1] + view[8] * s->pos[2] + view[12];
-            float yv = view[1] * s->pos[0] + view[5] * s->pos[1] + view[9] * s->pos[2] + view[13];
-            float zv = view[2] * s->pos[0] + view[6] * s->pos[1] + view[10] * s->pos[2] + view[14];
-            if (zv < NEAR || zv > FAR)
+            float o[5];
+            if (!render_sprite_place(s->pos, s->half, o))
                 continue;
-            float k = 2048.0f / zv, sx = 2048.0f + shake_x + proj[0] * xv * k, sy = 2048.0f + shake_y + proj[5] * yv * k;
-            float hx = proj[0] * s->half * k, hy = -proj[5] * s->half * k;
-            /* wider than the screen (a big emitter's scale, or right at the camera): skipped. Its corners would leave
-             * the GS's 0..4095 range and wrap, and a few such sprites stall the GS for seconds (ambient effects) */
-            if (hx > SCREEN_W || hy > SCREEN_H)
-                continue;
-            if (sx + hx < 2048 - SCREEN_W / 2 || sx - hx > 2048 + SCREEN_W / 2 || sy + hy < 2048 - SCREEN_H / 2 ||
-                sy - hy > 2048 + SCREEN_H / 2)
-                continue;
+            float sx = o[0], sy = o[1], hx = o[2], hy = o[3], zv = o[4];
             u32 z = (u32)(((proj[10] * zv + proj[14]) / zv + 1.0f) * (float)(Z_MAX / 2));
             packet2_add_2x_s64(vif[cur], GS_SET_RGBAQ(s->rgba & 0xFF, s->rgba >> 8 & 0xFF, s->rgba >> 16 & 0xFF, s->rgba >> 24, 0x3F800000), GS_REG_RGBAQ);
             packet2_add_2x_s64(vif[cur], GS_SET_UV(0, 0), GS_REG_UV);
