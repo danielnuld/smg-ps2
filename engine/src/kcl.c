@@ -197,7 +197,10 @@ int kcl_check_arrow(const unsigned char *k, const float o[3], const float dir[3]
         int c[3];
         for (int a = 0; a < 3; a++) {
             c[a] = (int)p[a];
-            if (c[a] < 0 || c[a] > ~mask[a]) return 0;
+            /* t stays within the clipped segment: a cell index past the box is the entry point on its far face
+             * (a segment from above the box: p = ext exactly), not a miss; SpiderMapBlock's top was never found */
+            if (c[a] < 0) c[a] = 0;
+            if (c[a] > ~mask[a]) c[a] = ~mask[a];
         }
         int shift;
         const unsigned short *list = search_block(k, &shift, (unsigned)c[0], (unsigned)c[1], (unsigned)c[2]);

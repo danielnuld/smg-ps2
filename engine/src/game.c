@@ -17134,7 +17134,9 @@ static void update_mario_(void)
     int pg = pgc; /* checkGround decided his ground before the action */
     m_pg = pg;
     if (pg) {
-        if (m->jumping) m->grounded = 0; /* (a jump from this frame's action) */
+        /* (a jump from this frame's action; not HipDropLand: procHipDrop keeps the jump on while he stands through the
+         * landing, and taking his ground away made the next frame land again, its clip never ending) */
+        if (m->jumping && m->hip != HIP_LAND) m->grounded = 0;
         if (m->grounded) {
             ground_inst = m_gtri.inst; ground_sub = m_gtri.sub; ground_prism = m_gtri.prism; ground_attr = tri_attr(&m_gtri);
             se_map_code(KCL_SOUND(ground_attr));
