@@ -33,6 +33,10 @@ int main(void)
         float q[3] = {c[0] + nr[0] * 100, c[1] + nr[1] * 100, c[2] + nr[2] * 100};
         m = kcl_check_sphere(k, q, 30.0f, hits, 32);
         for (int i = 0; i < m; i++) assert(hits[i].prism != idx);
+        /* an arrow from far out along the normal back through the centroid (it starts outside the octree's box, enters
+         * on its far face): a face at or before the centroid */
+        float o[3] = {c[0] + nr[0] * 9000, c[1] + nr[1] * 9000, c[2] + nr[2] * 9000}, d[3] = {-nr[0] * 9010, -nr[1] * 9010, -nr[2] * 9010}, fr;
+        assert(kcl_check_arrow(k, o, d, &fr) && fr <= 9000.0f / 9010.0f + 1e-4f);
         checked++;
     }
     assert(checked == 3);
