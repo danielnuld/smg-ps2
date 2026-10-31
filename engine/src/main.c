@@ -2351,11 +2351,11 @@ int main(void)
                         if (lsum[i] / 1800 / EE_MHZ >= 100) printf("bench logic %-24s %u us" "\n", lprof_name[i], (u32)(lsum[i] / 1800 / EE_MHZ));
             }
             {
-                extern u32 kprof[20], kprof_n[20];
-                static u32 ks[20], kn[20];
-                for (int i = 0; i < 20; i++) { if (frame > 60 && frame <= 1860) { ks[i] += kprof[i]; kn[i] += kprof_n[i]; } kprof[i] = kprof_n[i] = 0; }
+                extern u32 kprof[KPROF_KINDS], kprof_n[KPROF_KINDS];
+                static u32 ks[KPROF_KINDS], kn[KPROF_KINDS];
+                for (int i = 0; i < KPROF_KINDS; i++) { if (frame > 60 && frame <= 1860) { ks[i] += kprof[i]; kn[i] += kprof_n[i]; } kprof[i] = kprof_n[i] = 0; }
                 if (frame == 1861)
-                    for (int i = 0; i < 20; i++)
+                    for (int i = 0; i < KPROF_KINDS; i++)
                         if (kn[i]) printf("bench walker kind %d: %u us, %u a frame" "\n", i, (u32)(ks[i] / 1800 / EE_MHZ), kn[i] / 1800);
             }
             {

@@ -67,7 +67,7 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
-       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU, WALK_BOMBHEI, WALK_STRSPIDER, WALK_BEGOSPIKE };
+       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU, WALK_BOMBHEI, WALK_STRSPIDER, WALK_BEGOSPIKE, WALK_KINDS };
 /* walkers ported in the release push: their classes (counted, placed and drawn through this table) */
 static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}, {"BasaBasa", WALK_BASABASA}, {"BasaBasaIce", WALK_BASABASA}, {"Jellyfish", WALK_JELLYFISH},
                                                                     {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}, {"Mogu", WALK_MOGU}, {"Mogucchi", WALK_MOGUCCHI}, {"Metbo", WALK_METBO}, {"TeresaWater", WALK_TERESAW},
@@ -20744,7 +20744,8 @@ static void walker_explosion(V3 from)
     }
 }
 
-u32 kprof[20], kprof_n[20]; /* update_kuribo's cycles and walkers by kind (profiling) */
+u32 kprof[KPROF_KINDS], kprof_n[KPROF_KINDS]; /* update_kuribo's cycles and walkers by kind (profiling) */
+_Static_assert(WALK_KINDS <= KPROF_KINDS, "kprof: a slot a walker kind (kinds past 20 wrote over what followed)");
 /* Gesso.cpp after Petari: a squid in the water (binder 150 about its centre, no gravity: each nerve sets its velocity).
  * Wait bobs (1.5 x sin(45 + 2 step) along gravity, turning 0.3 a frame); Mario swimming within 1400: Search (FIND),
  * turning 1.5 a frame to him, then WalkCharge (Walk, or WalkFast when he is within 1000 out of the water) 43 frames and
