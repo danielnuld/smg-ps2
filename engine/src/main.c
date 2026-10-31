@@ -1822,6 +1822,7 @@ int main(void)
         /* 900 before the first spike (200: it comes for him), a spin by it (600: blown), a trample (900: Mario hurt) */
         if (frame >= 100 && frame < 200 && frame % 20 == 0) game_test_begoman(0); /* its zone in */
         if (frame == 200) printf("begoman test f %u: before row %d\n", frame, game_test_begoman(0));
+        if (frame > 600 && frame < 640) game_test_spin_now(); /* (a flip from its last hit may stop the first) */
         if (frame == 600) printf("begoman test f %u: spin row %d\n", frame, game_test_begoman(1));
         if (frame == 900) printf("begoman test f %u: trample row %d\n", frame, game_test_begoman(2));
         if (frame >= 200 && frame <= 1100 && frame % 20 == 0) { printf("begoman test f %u: life %d\n", frame, game_life()); game_begoman_state(); }
@@ -2087,7 +2088,7 @@ int main(void)
 #ifdef HIP_TEST
         if (frame == 120)
             printf("hip test: above row %d\n", game_test_hip());
-        if (frame > 120 && frame <= 220 && frame % 5 == 0) {
+        if (frame > 120 && frame <= 420 && frame % 10 == 0) {
             char d[128];
             game_debug(d, sizeof d);
             printf("hip test f %u: hip %d coins %d pieces %d %s\n", frame, game_hip_state(), game_coins(),
