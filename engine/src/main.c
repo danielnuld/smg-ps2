@@ -2130,7 +2130,9 @@ int main(void)
             rl += t_logic; rd += d;
             if (t_logic + d > rw) rw = t_logic + d;
             if (frame % 200 == 0) {
-                printf("route perf f %u: logic %u draw %u us, worst %u\n", frame, (u32)(rl / 200 / EE_MHZ), (u32)(rd / 200 / EE_MHZ), (u32)(rw / EE_MHZ));
+                extern u32 rebind_cycles, rebinds;
+                printf("route perf f %u: logic %u draw %u us, worst %u, %u rebinds %u us\n", frame, (u32)(rl / 200 / EE_MHZ), (u32)(rd / 200 / EE_MHZ), (u32)(rw / EE_MHZ), rebinds, (u32)(rebind_cycles / EE_MHZ));
+                rebinds = rebind_cycles = 0;
                 rl = rd = 0; rw = 0;
             }
         }

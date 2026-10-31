@@ -26,6 +26,15 @@
 #include "vmath.h"
 #include "mario_const.h"
 
+/* strcmp with its first characters compared inline: the class names are told apart by strcmp chains (a rebind runs
+ * ~150 a placed object), most of them settled by the first character. The same answer as newlib's (the difference
+ * of the first differing characters, unsigned) */
+static inline int strcmp_first(const char *a, const char *b)
+{
+    return *a != *b ? (unsigned char)*a - (unsigned char)*b : strcmp(a, b);
+}
+#define strcmp(a, b) strcmp_first((a), (b))
+
 /* Gameplay subset of HeavensDoorGalaxy scenario 2, data-oriented: one compact array per type, sized at load,
  * no allocation per object. Behaviour follows Petari where noted; differences are listed in docs/phase1-report.md. */
 
@@ -3873,7 +3882,16 @@ static void place_plants(const Inst *in)
     pgroups[row].r = 160.0f + br * r->scale[1]; /* sSize + radius x scale */
 }
 
+static void game_rebind_(void);
+u32 rebind_cycles, rebinds; /* game_rebind's time and count (the route test's perf lines) */
 void game_rebind(void)
+{
+    u32 c0 = cycles();
+    game_rebind_();
+    rebind_cycles += cycles() - c0;
+    rebinds++;
+}
+static void game_rebind_(void)
 {
     const Scene *s = sc;
     m_coin = scene_model(s, "Coin");
