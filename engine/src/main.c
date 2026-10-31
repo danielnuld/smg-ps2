@@ -104,6 +104,17 @@ void __wrap_free(void *p)
 static void *pk_alloc(u32 n)
 {
     n = (n + 63) & ~63u;
+    if (n <= (64u << 10)) /* a small pack (an empty zone's low pack) from the region's top: one in the middle split the
+                           * free room a big stage pack wanted (OceanRing 3: 2129 + 4054 KB free, 4348 KB not) */
+        for (int i = pk_n - 1; i >= 0; i--) {
+            if (pk_blk[i].used || pk_blk[i].size < n) continue;
+            if (pk_blk[i].size == n || pk_n == PK_BLOCKS) { pk_blk[i].used = 1; return pk_base + pk_blk[i].off; }
+            memmove(&pk_blk[i + 2], &pk_blk[i + 1], (pk_n - i - 1) * sizeof pk_blk[0]);
+            pk_blk[i].size -= n;
+            pk_blk[i + 1].off = pk_blk[i].off + pk_blk[i].size; pk_blk[i + 1].size = n; pk_blk[i + 1].used = 1;
+            pk_n++;
+            return pk_base + pk_blk[i + 1].off;
+        }
     for (int i = 0; i < pk_n; i++) {
         if (pk_blk[i].used || pk_blk[i].size < n) continue;
         if (pk_blk[i].size > n && pk_n < PK_BLOCKS) { /* the rest stays free after it */
