@@ -56,10 +56,25 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   StarDust, and every other one with these classes (Hanachan: HeavenlyBeach, FlowerPlanet, EringiPlanet, ForestHome,
   WormEaten, Poihana, ReverseForestHome zones; StringSpider: OceanRing, PhantomNest, TeresaHouse; KoopaStatue:
   PhantomNest, TeresaHouse; BegomanSpike: CannonFleet).
-  Found, not fixed: PhantomGalaxy/1's TeresaHouseZone (4.1 MB) never streams in (zone room 4503 KB "the region's";
-  main + house + the other lows ~6.3 MB): the house has no collision or actors, so its torches (and their coin) never
-  run. Not ported: SpiderThread (the web; only the TombSpider boss makes it: initSpiderThread), so SpiderCoins stay
-  at their places. engine/test/run.sh: in a Windows (CRLF) checkout the SRCS lines carry a CR (`-lz\r`); strip it.
+  Not ported: SpiderThread (the web; only the TombSpider boss makes it: initSpiderThread), so SpiderCoins stay
+  at their places.
+- zones (branch agent-zones): every zone streams in when Mario needs it. main.c: the room for zones he needs is the
+  region's free bytes (the low packs' sum was subtracted as a swap reserve and then counted again in the set: 4503
+  instead of 6510 KB in PhantomGalaxy/1); the nearest needed zone not yet in is the one always taken (it used to be the
+  main stage he stands on, so a second zone came only "if it fit"); the zones he only heads for keep the old reserve
+  (zone_room_bg: no load pause for a maybe); a full zone stays full while it fits (leaving the house no longer
+  reloads); when the kept packs split the free bytes, pend_evict_all frees every stage pack and reads the set again in
+  one piece. Load lines: `packs: <scen>, n zones (room / in the background)`, `packs: zone X never fits` (it then
+  stays low, no hang). tools/zone_fit.py lists offline every zone of out/packs that can not fit (slice_all.room).
+  slice_all.py: ROOM 9.1e6 (measured 9.18e6 with the test ELFs' 13824 KB region) and room() less letter.bin (loaded
+  in every galaxy while Luigi is missing). Checked in PCSX2: torch (PhantomGalaxy/1: TeresaHouseZone in at the first
+  torch, coin 84 popped and taken, coins 1), spiderblock (OceanPhantomCave/1: GhostShipCaveZone in, 7094 of 7150 KB;
+  SpiderMapBlock found). Still wrong in spiderblock (not zones): the hip drop lands on GhostShipCavePlanet at y -163,
+  122 over the block's origin, so the block is not hit; Mario then stays in HipDropLand (m_proc_hip no longer runs).
+  **Repack must redo** with this branch's slice_all.py: AstroGalaxy (all), OceanPhantomCaveGalaxy, PhantomGalaxy (and
+  then `python tools/zone_fit.py out/packs` must list none): with the old packs 13 zones are over the new room
+  (letter.bin aside): AstroGalaxy 1-5 (main and TridentZone), OceanPhantomCave 1-2 GhostShipCaveZone, PhantomGalaxy 1
+  TeresaHouseZone. engine/test/run.sh now tests the tree it lives in and strips the SRCS lines' CR.
 
 ## Console release (2026-10-23 / 24)
 
@@ -91,7 +106,7 @@ its own sound pack (`out/sound_all.sh`): the shared one with Luigi's SEs had to 
 Tools of the session: disc bench `build.sh bench <blob> EggStarGalaxy/1 disc` (paced summary, `bench fps`), the
 fps line every 256 frames. Packs before all this: `out/packs-before-final-2026-10-24`.
 Next: EE (draw build: pose / draw_model; logic: launched pieces, items, camera), larger textures where VRAM allows,
-triple buffering if the texture cache can spare 560 KB.
+triple buffering if the texture cache can spare 560 KB.
 Second console round (2026-10-24), from Daniel's report:
 - White screen with the HUD after PrologueA: the garden's BloomCube at 255 read the whole 16-bit frame as bright.
   Every 16-bit pixel's alpha bit stayed 1 after the alpha clear; bloom_pass now writes FBA 0 and turns dithering
