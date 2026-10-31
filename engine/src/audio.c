@@ -39,19 +39,22 @@ static int m_read(u32 off, void *dst, u32 n) /* n bytes at off (at most 14 KB), 
 }
 #else
 static FILE *music;
-/* fopen; dev builds with XF=-DPACKS_OVERLAY=dir try host:dir/<path past host:> first (main.c's packs do the same) */
+/* fopen; dev builds with XF=-DPACKS_OVERLAY=dir try host:dir/<path past host:> first (main.c's packs do the same),
+ * then host:packs/<path past host:> (the release set tools/disc.py packs: out/packs/music has the .rhy and the newer
+ * streams, out/music neither), then the path itself */
 static FILE *m_open(const char *path)
 {
+    char full[160];
+    FILE *f;
+    if (strncmp(path, "host:", 5)) return fopen(path, "rb");
 #ifdef PACKS_OVERLAY
 #define OVL_STR2(x) #x
 #define OVL_STR(x) OVL_STR2(x)
-    char full[160];
-    if (!strncmp(path, "host:", 5)) {
-        snprintf(full, sizeof full, "host:" OVL_STR(PACKS_OVERLAY) "/%s", path + 5);
-        FILE *f = fopen(full, "rb");
-        if (f) return f;
-    }
+    snprintf(full, sizeof full, "host:" OVL_STR(PACKS_OVERLAY) "/%s", path + 5);
+    if ((f = fopen(full, "rb"))) return f;
 #endif
+    snprintf(full, sizeof full, "host:packs/%s", path + 5);
+    if ((f = fopen(full, "rb"))) return f;
     return fopen(path, "rb");
 }
 #endif
