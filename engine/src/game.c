@@ -183,6 +183,8 @@ typedef struct {
     float initrot;    /* its arg5: the first pose's turn about the path (calcInitPose) */
     int shown, shine; /* shown last frame (-1 unknown: its Appear); _13C: frames Mario's sensor was last on it */
     u32 lv;           /* its shine's level sound */
+    V3 clip_c;        /* SpinDriverUtil::setShadowAndClipping: its clipping sphere (clip_r 0: not yet worked out) */
+    float clip_r;
 } Launch;
 #define LAUNCH_BIND 300.0f
 
@@ -280,6 +282,7 @@ typedef struct {
     u8 rwork;        /* RailMoveObj _D0: its rail mover worked last frame (update_railers' StageEffect SEs) */
     int press;       /* RailMoveObjPress (RGTowerPressGroundA, ReverseGravityRoomPressGroundA / B): ATYPE_MAP_OBJ_PRESS */
     int talkcls;     /* SignBoard 1, Tico 2, Kinopio 3, ..., TicoStarRing 7: update_talkers */
+    int clipcls;     /* its Petari clipping ported (obj_clipped): NPCActor's default 1, SuperSpinDriver 2; 0 never clipped */
     u32 lv[2];       /* its level sounds' handles (Tico's wait / float) */
     const Model *md_bloom; /* its "<model>Bloom" model (PlanetMap::initBloomModel, createModelObjBloomModel) or NULL */
     int otamagma;    /* OtaKingMagma's collision (initCollisionParts "OtaKingMagma"): drawn with OtaKing (ota) */
@@ -2331,7 +2334,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         L->start = r->type == t_starter ? 0 : super ? 45 : 20; /* ScenarioStarter flies at once (exeRailMove) */
         { V3 x, z; row_axes(r, &x, &z); L->up = vnorm(vcross(z, x)); } /* MR::calcUpVec */
         L->row = i;
-        L->shown = -1; L->shine = 0; L->lv = 0;
+        L->shown = -1; L->shine = 0; L->lv = 0; L->clip_r = 0;
         nlaunches++;
     }
     int t_erail = scene_type(s, "ElectricRail");
@@ -4066,6 +4069,7 @@ typedef struct {
     __typeof__(((Inst *)0)->trapeze) trapeze;
     __typeof__(((Inst *)0)->lavarock) lavarock;
     __typeof__(((Inst *)0)->talkcls) talkcls;
+    __typeof__(((Inst *)0)->clipcls) clipcls;
     __typeof__(((Inst *)0)->halo) halo;
 } ClassInfo;
 
@@ -4151,6 +4155,8 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 || strcmp(name, "KinopioAstro") == 0 ? 3 :
                   strcmp(name, "ButlerMap") == 0 ? 4 : strcmp(name, "Butler") == 0 ? 5 : lg_cls(name) ? 6 : strcmp(name, "TicoStarRing") == 0 ? 7 : 0;
     ci->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 : 0;
+    ci->clipcls = strcmp(name, "Tico") == 0 || strcmp(name, "TicoBaby") == 0 || lg_cls(name) ? 1 : /* NameObjFactory: Tico, LuigiNPC */
+                  strcmp(name, "SuperSpinDriver") == 0 || strcmp(name, "SuperSpinDriverPink") == 0 || strcmp(name, "SuperSpinDriverGreen") == 0 ? 2 : 0;
 }
 static const ClassInfo *class_of(int t, const char *name)
 {
@@ -4231,6 +4237,7 @@ static void class_apply(Inst *in, const ClassInfo *ci)
     in->trapeze = ci->trapeze;
     in->lavarock = ci->lavarock;
     in->talkcls = ci->talkcls;
+    in->clipcls = ci->clipcls;
     in->halo = ci->halo;
 }
 static void game_rebind_(void)
@@ -28114,7 +28121,7 @@ static void update_collapse(void)
 /* NeedlePlant::receiveMsgEnemyAttack: an enemy attack within its sensor (180 x scale, 150 x scale up) breaks it */
 static void needle_attacked(V3 p, float r)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, hazard) { /* (the needle plants among them) */
         Inst *in = &insts[i];
         if (in->hazard != 2 || !row_shown(in->row)) continue;
         V3 b = v3(in->m[12], in->m[13], in->m[14]), up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
@@ -34281,6 +34288,42 @@ static void mode_draw_parts(const float m[16])
     }
 }
 
+/* SpinDriverUtil::setShadowAndClipping(this, &_124, mShadowLength, 300, &_130) (SuperSpinDriver::initAfterPlacement):
+ * the sphere halfway down its shadow's drop (arg1, else the map 1500 + 300 along its gravity), 300 more than half the drop */
+static void launch_clip(Launch *L, const Row *r)
+{
+    V3 pos = row_pos(r), g = vmul(up_at(pos, v3(0, 1, 0)), -1.0f), end, hp; /* initGravityAxis: none -> (0, -1, 0) */
+    float drop = (float)r->arg[1], margin = 300.0f;
+    if (drop < 0.0f) {
+        if (map_poly(vsub(pos, vmul(g, margin)), vmul(g, 1500.0f + margin), &hp, NULL)) {
+            end = hp; drop = vlen(vsub(hp, pos)) + margin; margin += 0.5f * drop;
+        } else end = pos;
+    } else {
+        end = vadd(pos, vmul(g, drop)); margin += 0.5f * drop;
+    }
+    L->clip_c = vmul(vadd(end, pos), 0.5f);
+    L->clip_r = margin;
+}
+/* ClippingActorInfo::isJudgedToClip for the classes whose clipping is ported (clipcls), off ClippingJudge's frustum of
+ * their far level. ponytail: no ViewGroupId in the pack (the far level as outside every ViewGroupCtrlCube) */
+static int obj_clipped(const Inst *in)
+{
+    if (in->clipcls == 1) { /* NPCActor::initialize (NPCActor.cpp:324) sets none: LiveActor's ClippingActorInfo
+                             * (ClippingActorInfo.cpp:7-16), a sphere of 300 about mPosition, far level 6 (10000) */
+        float p[3] = {in->m[12], in->m[13], in->m[14]};
+        return render_clip_judge(p, 300.0f, 10000.0f);
+    }
+    for (int i = 0; i < nlaunches; i++) { /* SuperSpinDriver */
+        Launch *L = &launches[i];
+        if (L->row != in->row || L->starter) continue;
+        if (mario->launch == i || L->cool) return 0; /* tryBind's invalidateClipping (SuperSpinDriver.cpp:418) until exeWait's
+                                                      * validateClipping (:627) after the cool down */
+        if (L->clip_r == 0.0f) launch_clip(L, &sc->objs[in->row]);
+        return render_clip_judge(&L->clip_c.x, L->clip_r, 20000.0f); /* setClippingFar200m (:74): level 5 */
+    }
+    return 0;
+}
+
 static void update_obj_anims(void)
 {
     /* the pose pool (MAX_OBJ_ANIM): a skinned instance whose pose was taken by another row (it went unused 30 frames)
@@ -34292,8 +34335,9 @@ static void update_obj_anims(void)
             for (int k = 0; k < MAX_OBJ_ANIM; k++)
                 if (oanim[k].a == in->anim && oanim[k].row != in->row) { in->anim = NULL; in->anim_want = 1; break; }
         }
+        if (!in->anim_want || !in->md || in->bridge) continue; /* (a PhantomShipBridge has its own) */
         float d = vlen(vsub(v3(in->m[12], in->m[13], in->m[14]), cam_pos));
-        if (!in->anim_want || !in->md || in->bridge || d >= 8000.0f) continue; /* (a PhantomShipBridge has its own) */
+        if (d >= 8000.0f) continue;
         if ((in->anim = obj_anim(in->row, in->md, sc->types + 32 * sc->objs[in->row].type))) { in->anim_want = 0; continue; }
         if (game_frame % 30) continue;
         /* the pool full: every 30 frames the farthest instance holding a pose gives it up for this one when it is at
@@ -34311,8 +34355,12 @@ static void update_obj_anims(void)
         if ((in->anim = obj_anim(in->row, in->md, sc->types + 32 * sc->objs[in->row].type))) in->anim_want = 0;
     }
     for (int i = 0; i < ninsts; i++)
-        if (insts[i].anim && vlen(vsub(v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]), cam_pos)) < 8000.0f) {
-            for (int k = 0; k < MAX_OBJ_ANIM; k++) if (oanim[k].a == insts[i].anim) oanim[k].last = game_frame;
+        if (insts[i].anim) {
+            int near = vlen(vsub(v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]), cam_pos)) < 8000.0f;
+            if (near) for (int k = 0; k < MAX_OBJ_ANIM; k++) if (oanim[k].a == insts[i].anim) oanim[k].last = game_frame;
+            /* a class with its clipping ported moves while not clipped (startClipped: no movement, no calcAnim), the
+             * rest within 8000 of the camera */
+            if (insts[i].clipcls ? obj_clipped(&insts[i]) : !near) continue;
             if (!dx_row_moves(insts[i].row)) continue; /* the scene stopped by a demo: its casts alone animate (movement off: no calcAnim) */
             if (!strncmp(sc->types + 32 * sc->objs[insts[i].row].type, "PhantomShipPropeller", 20)) /* AnmModelObj::exeMove: its moving SE */
                 insts[i].lv[0] = se_level(sc->types[32 * sc->objs[insts[i].row].type + 20] == 'B' ? SE_OJ_LV_P_SHIP_PROPELLER_L : SE_OJ_LV_P_SHIP_PROPELLER_S,
@@ -36387,7 +36435,7 @@ void game_draw(void)
         const float *wsc = sc->objs[kuribo[i].row].scale;
         float wr = md->radius * fmaxf(fmaxf(wsc[0], wsc[1]), wsc[2]) + 100.0f, wp[3] = {kuribo[i].pos.x, kuribo[i].pos.y, kuribo[i].pos.z};
         int wvis = render_visible(wp, wr);
-        kuribo[i].clipped = (u8)render_clip_judge(wp, 300.0f); /* ClippingActorInfo's default sphere, 300 about it, off
+        kuribo[i].clipped = (u8)render_clip_judge(wp, 300.0f, 10000.0f); /* ClippingActorInfo's default sphere, 300 about it, off
                                                                * ClippingJudge's volume (this view) */
         if (wvis) { u32 c1 = cycles(); walker_shadow(&kuribo[i]); prof_shadow += cycles() - c1; }
         basis_matrix(m, kuribo[i].pos, kuribo[i].up, kuribo[i].kind == WALK_STINKBUG || kuribo[i].kind == WALK_POIHANA ? stink_front(&kuribo[i]) : vsub(mario->pos, kuribo[i].pos), 0);

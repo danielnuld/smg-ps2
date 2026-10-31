@@ -2110,12 +2110,12 @@ int render_visible(const float p[3], float rad) /* draw_model's test: a sphere i
     return !(frustum[0] * fabsf(x) - frustum[1] * z > rad || frustum[2] * fabsf(y) - frustum[3] * z > rad);
 }
 
-int render_clip_judge(const float p[3], float rad) /* ClippingJudge: this view's frustum, near 500, far 10000 */
+int render_clip_judge(const float p[3], float rad, float far) /* ClippingJudge::isJudgedToClipFrustum: this view's frustum, near 500, far a level's mClipDistances */
 {
     float x = view[0] * p[0] + view[4] * p[1] + view[8] * p[2] + view[12];
     float y = view[1] * p[0] + view[5] * p[1] + view[9] * p[2] + view[13];
     float z = view[2] * p[0] + view[6] * p[1] + view[10] * p[2] + view[14];
-    if (z + rad < 500.0f || z - rad > 10000.0f) return 1;
+    if (z + rad < 500.0f || z - rad > far) return 1;
     return frustum[0] * fabsf(x) - frustum[1] * z > rad || frustum[2] * fabsf(y) - frustum[3] * z > rad;
 }
 
