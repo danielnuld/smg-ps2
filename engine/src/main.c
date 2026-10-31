@@ -1534,6 +1534,19 @@ int main(void)
             if (frame % 50 == 0) printf("hhp test f %u: %d\n", frame, st);
         }
 #endif
+#ifdef ROCK_TEST
+        { /* the RockCreators out from the start, Mario held 3000 over the first one till 1800 (its zone streams in, the
+           * rocks roll below him), then let go: every rolling rock stays near its rail's place (Good Egg row 463's rocks
+           * drop ~1000 off its rail's end before they break: a fly-off goes on for thousands) */
+            if (frame >= 120 && frame < 1800) game_test_rock_hold(0);
+            static int worst;
+            int pr = frame % 300 == 0;
+            int far = game_test_rock_log(pr);
+            if (far > worst) worst = far;
+            if (pr) printf("rock test f %u: %d rolling, farthest from its rail %d (worst %d)\n", frame, game_rocks_alive(), far, worst);
+            if (frame == 3000) printf("rock test end: worst %d from a rail: %s\n", worst, worst < 1500 ? "ok" : "FLEW OFF");
+        }
+#endif
 #ifdef OROCK_TEST
         if (frame >= 400 && frame < 2400 && frame % 2 == 0) { /* Mario before the OtaRocks, spinning coconuts back */
             int st = game_test_orock();
