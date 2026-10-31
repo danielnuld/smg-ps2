@@ -12,6 +12,7 @@
 #include "music_tab.h"
 #include "mbgm_tab.h"
 #include "camera.h"
+#include "me.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,6 +26,15 @@
 #include "render.h"
 #include "vmath.h"
 #include "mario_const.h"
+
+/* MR::startDPDHitSound: ME_DPD_HIT over a BGM with a chord (MR::hasME), else its SE (no CS sound: no remote speaker) */
+static void dpd_hit_sound(void)
+{
+    if (me_has()) me_start_system("ME_DPD_HIT");
+    else se_start(SE_SY_DPD_HIT, NULL);
+}
+static int bgm_stage_playing(void); /* MR::isPlayingStageBgm */
+static void flip_observer_msg(int row, int success);
 
 /* Gameplay subset of HeavensDoorGalaxy scenario 2, data-oriented: one compact array per type, sized at load,
  * no allocation per object. Behaviour follows Petari where noted; differences are listed in docs/phase1-report.md. */
@@ -3005,7 +3015,7 @@ static void update_killers(void)
         int brk = 0;
         if (!k->freeze && pointer_a() && cursor_sees(k->pos, 40.0f)) { /* tryFreeze */
             k->freeze = 1; k->fpos = k->pos;
-            se_start(SE_SY_DPD_HIT, NULL); /* exeFreeze: startDPDHitSound (mFreezeTime 0; no ME) */
+            dpd_hit_sound(); /* exeFreeze: startDPDHitSound (mFreezeTime 0) */
             printf("homing killer %d frozen\n", in->row);
         }
         if (k->freeze) { /* exeFreeze: still, shaking along the camera's X, its timers held */
@@ -3388,7 +3398,7 @@ static void update_birikyu(void)
             const unsigned char *pa = e + 24 + 12 * np + 12 * nr;
             int wait = *(const int *)(pa + 12 * (row_coord[row] > 0 ? nr - 1 : 0) + 4);
             if (*t >= wait) { *ph = 1; *t = 0; }
-        } else if (pointer_a() && cursor_sees(p, 30.0f)) { *ph = 5; *t = 0; biri_group(in, 0); se_start(SE_SY_DPD_HIT, NULL); } /* tryStopPointing; exeStopPointing: startDPDHitSound (no ME) */
+        } else if (pointer_a() && cursor_sees(p, 30.0f)) { *ph = 5; *t = 0; biri_group(in, 0); dpd_hit_sound(); } /* tryStopPointing; exeStopPointing: startDPDHitSound */
         else {
             if (in->biri_rail) {
                 const unsigned char *e = in->biri_rail;
@@ -6661,7 +6671,7 @@ static void fly_pose(Player *m, V3 dir, int s, int flight, int t0_in, const Laun
 static void m_power_jump(Player *m, V3 v);
 
 /* the stars' sounds (SpinDriver / SuperSpinDriver): its spot or Mario's; the CS (remote speaker) ones play their SE
- * fallbacks, ME_MAGIC its SE_SY_S_SPIN_DRV_ME_ALT */
+ * fallbacks; ME_MAGIC / ME_MAGIC_L (me.c) when the BGM has a chord, else SE_SY_S_SPIN_DRV_ME_ALT */
 static u32 launch_fly_snd;
 static void launch_sound(const Launch *L, u32 id) { float at[3] = {L->pos.x, L->pos.y, L->pos.z}; se_start(id, at); }
 static void mario_se(u32 id) { float at[3] = {mario->pos.x, mario->pos.y, mario->pos.z}; se_start(id, at); }
@@ -6696,7 +6706,11 @@ static int update_launch(Player *m)
     if (s == 1 && !L->starter) camera_shake(L->start < 45 ? SHAKE_NORMAL : SHAKE_STRONG); /* exeShoot */
     if (s == 1 && !L->starter) { /* exeShoot's first step */
         pad_rumble(RUMBLE_VERY_STRONG);
-        se_start(SE_SY_S_SPIN_DRV_ME_ALT, NULL);
+#ifdef SE_LOG
+        printf("launch: exeShoot, hasME %d\n", me_has());
+#endif
+        if (me_has()) me_start_system(L->start < 45 ? "ME_MAGIC" : "ME_MAGIC_L"); /* SpinDriver / SuperSpinDriver::exeShoot */
+        else se_start(SE_SY_S_SPIN_DRV_ME_ALT, NULL);
         launch_sound(L, L->start < 45 ? SE_OJ_SPIN_DRV_JUMP : SE_OJ_S_SPIN_DRV_JUMP);
         mario_se(SE_PV_JUMP_JOY);
         if (in_water(L->pos, L->up, NULL)) launch_sound(L, SE_PM_SPIN_DIV_IN_WATER_2);
@@ -8096,6 +8110,7 @@ static void update_ota_balls(V3 c, V3 body, V3 face)
         float dc = vlen(vsub(c, k->pos));
         /* isValidReceivePunch: Throw / HitBackToPlayer / Rebound within 400 of his centre: HitBackToHost */
         if ((k->state == 1 || k->state == 3 || k->state == 4) && mario->spin_timer > 0 && dc < 400.0f && k->t > 1) {
+            if (bgm_stage_playing()) me_start_system(k->rally == 0 ? "ME_RALLY_COMBO_FIRST" : "ME_RALLY_COMBO_SECOND"); /* exeHitBackToHost */
             k->rally++;
             coco_hitback(k->pos, k->up, ota.pos, body, &k->vel, &k->grav);
             k->state = 2; k->t = 0;
@@ -8119,8 +8134,10 @@ static void update_ota_balls(V3 c, V3 body, V3 face)
                     ota_ball_aim(b, 3.0f * k->rally + 15.0f, r);
                     k->state = 3; k->t = 0;
                     { float at[3] = {k->pos.x, k->pos.y, k->pos.z}; se_start(SE_OJ_COCONUT_BALL_VOLLEY, at); } /* exeHitBackToPlayer */
+                    if (bgm_stage_playing()) me_start_system("ME_RALLY_COMBO_SECOND");
                     printf("ota king: hits it back" "\n");
                 } else {
+                    if (bgm_stage_playing()) me_start_system("ME_RALLY_COMBO_LAST"); /* OtaKing::receiveMsgEnemyAttack */
                     ota_damage();
                     ota_ball_kill(b);
                 }
@@ -16451,7 +16468,8 @@ static void update_mario_(void)
                 mode_rush(sc->types + 32 * sc->objs[launches[i].row].type)) {
                 m->launch = i; m->launch_t = 0; m->launch_from = m->pos; m->hip = 0;
                 if (launches[i].start < 45) { /* SpinDriver::startBind (a swing) */
-                    se_start(SE_SY_S_SPIN_DRV_ME_ALT, NULL);
+                    if (me_has()) me_start_system("ME_MAGIC");
+                    else se_start(SE_SY_S_SPIN_DRV_ME_ALT, NULL);
                     float at[3] = {m->pos.x, m->pos.y, m->pos.z};
                     se_start(SE_PM_SPIN_ATTACK, at);
                     if (in_water(launches[i].pos, launches[i].up, NULL)) launch_sound(&launches[i], SE_PM_SPIN_DRV_IN_WATER_1);
@@ -16999,7 +17017,10 @@ static void hurt_mario(V3 from, float push) /* sendMsgEnemyAttack (the plain one
 /* n coins popping out at p (CoinHolder::appearCoinPop): 25 against gravity, randomized by 4 when several */
 static void pop_coins(V3 p, V3 up, int n)
 {
-    if (n > 0) se_start(SE_SY_COIN_APPEAR_S, NULL); /* CoinHolder addToCoinHolder (ME_COIN_APPEAR_S's alternative) */
+    if (n > 0) { /* CoinHolder addToCoinHolder */
+        if (me_has()) me_start_system("ME_COIN_APPEAR_S");
+        else se_start(SE_SY_COIN_APPEAR_S, NULL);
+    }
     for (int k = 0; k < n; k++) {
         V3 rnd = n > 1 ? v3((rand() % 801 - 400) / 100.0f, (rand() % 801 - 400) / 100.0f, (rand() % 801 - 400) / 100.0f)
                        : v3(0, 0, 0);
@@ -19311,8 +19332,8 @@ static int kari_dpd(Kuribo *k) /* tryDPDAttacked: R2 with the pointer on it */
 {
     if (!pointer_a() || !cursor_sees(k->pos, 30.0f)) return 0;
     if (k->nrv == RN_PRECLING || k->nrv == RN_CLING) { /* requestRelease */
-        if (game_frame >= kari_norelease) { kari_release(k, 0); kari_norelease = game_frame + 10; se_start(SE_SY_DPD_HIT, NULL); }
-    } else { kari_release(k, 0); fx_at(FX_KARIPON_TOUCH, k->pos, vmul(k->grav, -1.0f)); se_start(SE_SY_DPD_HIT, NULL); } /* startDPDHitSound (no ME) */
+        if (game_frame >= kari_norelease) { kari_release(k, 0); kari_norelease = game_frame + 10; dpd_hit_sound(); }
+    } else { kari_release(k, 0); fx_at(FX_KARIPON_TOUCH, k->pos, vmul(k->grav, -1.0f)); dpd_hit_sound(); } /* startDPDHitSound */
     return 1;
 }
 /* KarikariDirector cling_data: a slot's matrix, Mario's joint x (pos, rot degrees) */
@@ -25870,8 +25891,30 @@ static void update_flips(void)
         *st = ((*st & FLIP_BACK) ^ FLIP_BACK) | FLIP_LOCK;
         if (in->anim && in->md && in->md->skin) obj_play(in, (*st & FLIP_BACK) ? "panela" : "panelb", 0, 0); /* BackLand / FrontLand */
         se_start(SE_OJ_FLIP_PANEL_CHANGE, &in->m[12]); /* exeBackLand / exeFrontLand */
+        flip_observer_msg(in->row, *st & FLIP_BACK); /* ACTMES_SUCCESS / ACTMES_FAILURE to the group */
         pad_rumble(RUMBLE_MIDDLE);
     }
+}
+
+/* FlipPanelObserver::receiveOtherMsg: a panel of its group turned to its back (ACTMES_SUCCESS, _90 the panels already
+ * back) or to its front (ACTMES_FAILURE); _9C in HeavensDoorGalaxy */
+static void flip_observer_msg(int row, int success)
+{
+    const Row *r = &sc->objs[row];
+    if (r->group < 0) return;
+    int observer = 0, back = 0;
+    for (u32 k = 0; k < sc->nobjs; k++) {
+        const Row *q = &sc->objs[k];
+        if (q->group != r->group || q->zone != r->zone) continue;
+        const char *qn = sc->types + 32 * q->type;
+        if (!strcmp(qn, "FlipPanelObserver")) observer |= !row_dead[k];
+        else if (k != (u32)row && (!strcmp(qn, "FlipPanel") || !strcmp(qn, "FlipPanelReverse"))) back += row_step[k] & FLIP_BACK;
+    }
+    if (!observer) return;
+    int inv = !strncmp(game_stage_name, "HeavensDoorGalaxy/", 18);
+    if (success) me_start_system(!back ? (inv ? "ME_FLIP_PANEL_INV_OFF_FIRST" : "ME_FLIP_PANEL_ON_FIRST")
+                                       : (inv ? "ME_FLIP_PANEL_INV_OFF" : "ME_FLIP_PANEL_ON"));
+    else me_start_system(inv ? "ME_FLIP_PANEL_INV_ON" : "ME_FLIP_PANEL_OFF");
 }
 
 /* CollapsePlane (Petari CollapsePlane.cpp): once stood on, the plane shrinks in x / z (1 - 0.7 step / time) and after
@@ -28140,6 +28183,7 @@ static char bgm_cur[40], bgm_last[40]; /* the stream playing, the one before sta
  * at faderInterruptedVolume 0) and when the sub is over it comes back where it would be, recovering over
  * faderInterruptedRecoverTime 60 frames. A stage BGM started meanwhile waits there. */
 static struct { int on, had; char stage[40]; unsigned pos, at; } bsub;
+static int bgm_stage_playing(void) { return audio_playing() && !bsub.on; } /* MR::isPlayingStageBgm (one stream: no sub) */
 static int bgm_file; /* the state file the stage BGM plays (mbgm_tab.h: <track>@<k>.pcm, 0 its own) */
 static int on_stage(const char *galaxy) { size_t l = strlen(galaxy); return !strncmp(game_stage_name, galaxy, l) && game_stage_name[l] == '/'; }
 static void bgm_play(const char *track)
@@ -30188,15 +30232,15 @@ static void dm_selector_update(void)
         dm.pointing = dm.cand; dm.cand = 0; /* the pointing result a frame late */
         break;
     case SS2_SELECTCANCEL:
-        if (FIRST(&dm.sel)) se_start(SE_SY_GALAXY_DECIDE_CANCEL, NULL);
+        if (FIRST(&dm.sel)) { se_start(SE_SY_GALAXY_DECIDE_CANCEL, NULL); me_start_random("ME_ASTRO_DOME_CALCEL", 5); } /* playCanceledME */
         break;
     case SS2_CONFIRMSTART:
-        if (FIRST(&dm.sel)) { dm_msg(M_CONFIRM_START); se_start(SE_SY_GALAXY_SELECTED, NULL); }
+        if (FIRST(&dm.sel)) { dm_msg(M_CONFIRM_START); se_start(SE_SY_GALAXY_SELECTED, NULL); me_start_random("ME_ASTRO_DOME_SELECT", 4); } /* playSelectedME */
         if (dm.sel.step == 45) dn_set(&dm.sel, SS2_CONFIRMWAIT); /* getConfirmStartCancelFrame */
         break;
     case SS2_CONFIRMWAIT: break;
     case SS2_CONFIRMCANCEL:
-        if (FIRST(&dm.sel)) { dm_msg(M_CONFIRM_CANCEL); dm.selected = dm.pointing = 0; }
+        if (FIRST(&dm.sel)) { dm_msg(M_CONFIRM_CANCEL); dm.selected = dm.pointing = 0; me_start_random("ME_ASTRO_DOME_CALCEL", 5); } /* playCanceledME */
         if (dm.sel.step == 45) dn_set(&dm.sel, SS2_SELECTWAIT);
         break;
     case SS2_CONFIRMED:
@@ -30395,7 +30439,7 @@ static void dm_galaxy_update(int i)
         float r = g->level / 20.0f;
         if (!g->zoom_out) {
             dm_galaxy_scale(i, 0.65f + 0.35f * reaction_f(r, 1.5f, -0.08f));
-            if (g->level == 1) se_start(g->state < 2 ? SE_SY_CURSOR_1 : SE_SY_CURSOR_1, NULL); /* ponytail: its ME (voice) */
+            if (g->level == 1) me_start_random(g->state < 2 ? "ME_ASTRO_DOME_HIT_GALAXY_N" : "ME_ASTRO_DOME_HIT_GALAXY", 5); /* playNeedStarME / playPointedME */
         } else dm_galaxy_scale(i, 1.0f + (0.65f - 1.0f) * sinf(r * 1.5707963f));
     }
     g->pos = dm_galaxy_pos(i);

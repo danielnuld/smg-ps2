@@ -9,6 +9,8 @@
  * channel when all 24 are busy; envelopes reach the SPU once a frame. */
 #include "se.h"
 
+#include "me.h"
+
 #include <libsd-common.h>
 #include <math.h>
 #include <stdio.h>
@@ -78,6 +80,7 @@ struct Sound {
     u32 id, handle;
     u8 prio;
     float vol, pitch, acc, pos[3], base; /* base: the table's volume */
+    float pan;                           /* not placed: its pan (se_note_params; 0.5 the middle) */
     Track *root;
 };
 static Chan ch[MAX_CH];
@@ -132,6 +135,8 @@ int se_load(const u8 *b, int luigi)
     else if (!luigi) se_upload(SPU_BASE, b + h[8], h[14]);
     else { se_upload(SPU_BASE, b + h[8], h[13]); se_upload(SPU_BASE + h[13], b + h[8] + h[14], h[9] - h[14]); }
     for (int v = 0; v < NVOICE; v++) voice_of[v] = -1;
+    if (h[0] >= 80 && h[15]) me_set_resource(b + h[15], b + h[16]); /* JaiMe.arc (older packs: none) */
+    else me_set_resource(NULL, NULL);
     printf("se: %u SEs, %u waves, %u banks, %u KB ADPCM\n", nses, nwaves, nbanks, h[9] >> 10);
     return 0;
 }
@@ -718,7 +723,7 @@ u32 se_start(u32 id, const float *pos)
             Sound *s = &so[i];
             memset(s, 0, sizeof *s);
             s->used = 1; s->id = id; s->handle = next_handle++; s->prio = r->prio; s->vol = s->base = r->vol / 255.0f; s->pitch = 1;
-            s->acc = 1.0f;
+            s->acc = 1.0f; s->pan = 0.5f;
             if (pos) { s->has_pos = 1; s->pos[0] = pos[0]; s->pos[1] = pos[1]; s->pos[2] = pos[2]; }
             s->root = track_new(s, NULL, r->seq);
             if (s->root && luigi_voice && (id >> 16 & 0xFF) == 1) s->root->ports[12] = 20; /* AudSystem::switchToLuigi: SE_PV */
@@ -776,6 +781,52 @@ void se_volpitch(u32 handle, float vol, float pitch) /* JAISound volume / pitch 
         if (so[i].used && so[i].handle == handle) { so[i].vol = so[i].base * vol; so[i].pitch = pitch; }
 }
 
+/* A note outside any sequence (me.c's AudMeTrack::channelStart: JASBank::noteOn on its bank / program, the
+ * track's ADSR override when adsr is set, a direct release on the envelope): a sound of its own whose root track is
+ * done, so it ends with its channel -> handle, 0 none */
+u32 se_note(int bank, int prog, int key, int vel, const u8 *adsr, u16 release)
+{
+    Sound *s = NULL;
+    for (int i = 0; i < MAX_SND && !s; i++)
+        if (!so[i].used) s = &so[i];
+    Track *t = s ? track_new(s, NULL, 0) : NULL;
+    if (!t) return 0;
+    memset(s, 0, sizeof *s);
+    s->used = 1; s->handle = next_handle++; s->vol = s->base = 1.0f; s->pitch = 1.0f; s->acc = 1.0f; s->pan = 0.5f;
+    s->root = t;
+    t->done = 1; t->bank = bank; t->prog = prog;
+    if (adsr) {
+        memcpy(t->adsr, adsr, sizeof t->adsr);
+        OscData *d = &t->over[0];
+        d->target = 0; d->rate = 1; d->scale = 1; d->vertex = 0; d->table = t->adsr; d->rel = NULL;
+        t->over_on[0] = 1;
+    }
+    Chan *c = track_start(t, key, vel, 0);
+    if (!c) { t->used = 0; s->used = 0; return 0; }
+    if (release) c->osc[0].dr = release;
+    t->notes[0] = c;
+    return s->handle;
+}
+static Sound *note_sound(u32 h)
+{
+    for (int i = 0; i < MAX_SND; i++)
+        if (so[i].used && so[i].handle == h && h) return &so[i];
+    return NULL;
+}
+void se_note_off(u32 h, u16 dr) /* JASChannel::release */
+{
+    Sound *s = note_sound(h);
+    if (s) note_off(s->root, 0, dr);
+}
+int se_note_alive(u32 h) { Sound *s = note_sound(h); return s && s->root->notes[0]; }
+void se_note_params(u32 h, float vol, float pitch, float pan, float oct) /* JASChannel::setParams (JASChannelParams) */
+{
+    Sound *s = note_sound(h);
+    if (!s) return;
+    s->vol = vol; s->pitch = pitch; s->pan = pan < 0 ? 0 : pan > 1 ? 1 : pan;
+    s->root->params[1] = oct; s->root->bend = 3; /* updateTrack's octaves: params[1] x bend / 3 */
+}
+
 /* JAUSoundAnimator::updateAnimSound over sound.bin's .bas tables: clip "<archive>/<clip>" went from frame `from`
  * (-1: just started) to `to`; an entry plays as the clip passes its note-on frame (round the loop too), at its
  * base volume (/ 127) and pitch; flag 0x40 holds it as a level sound from note-on to note-off. owner: the animation
@@ -825,7 +876,7 @@ void se_listener(const float eye[3], const float r[3])
 /* the distance fall-off and pan of a positioned sound (ponytail: JAIAudience's curves not ported) */
 static void place(const Sound *s, float *vol, float *pan)
 {
-    *vol = 1.0f; *pan = 0.5f;
+    *vol = 1.0f; *pan = s->pan;
     if (!s->has_pos) return;
     float d[3] = {s->pos[0] - listener[0], s->pos[1] - listener[1], s->pos[2] - listener[2]};
     float dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
