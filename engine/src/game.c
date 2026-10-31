@@ -878,6 +878,8 @@ static int breakable(const char *name, const Row *r, int *coins, int *pieces)
      * TeresaMansionHoleCover at a hip drop (4), KoopaStatue at an explosion or an enemy attack (0x48: breaks 5,
      * explosion_breaks); arg3 -1 arg6 coins (1), 3 arg6 star pieces (5). ponytail: no 1-up / power star items,
      * ConcreteBlock / SnowBlockA (ball dash, fire) stay whole */
+    if (strcmp(name, "SpiderMapBlock") == 0) { *coins = 1; return 2; } /* SpiderMapBlock.cpp: isMsgPlayerHipDropFloor kills it */
+    if (strcmp(name, "SpiderCoin") == 0) { *coins = 1; return 6; }     /* SpiderCoin.cpp: the pointer frees it (spider_coins; a row, no instance) */
     if (strcmp(name, "KoopaStatue") == 0) {
         if (r->arg[3] == -1) *coins = r->arg[6] > 0 ? r->arg[6] : 1;
         else if (r->arg[3] == 3) *pieces = r->arg[6] > 0 ? r->arg[6] : 5;
@@ -4909,6 +4911,34 @@ int game_test_freeze(int on) /* test builds: R2 held with the cursor on the firs
     return -1;
 }
 
+static void spider_coin_free(u32 i);
+int game_test_spidercoin(void) /* spidercoin test: Mario 600 before the first SpiderCoin (its zone in), R2 with the cursor on it; its row */
+{
+    test_r2 = 0;
+    int ty = scene_type(sc, "SpiderCoin");
+    for (u32 r = 0; ty >= 0 && r < sc->nobjs; r++) {
+        if ((int)sc->objs[r].type != ty || row_dead[r]) continue;
+        V3 p = row_pos(&sc->objs[r]), up = up_at(p, mario->up);
+        static int aim;
+        if ((aim = !aim)) { /* every other call: put 600 before it; the next aims (the camera has come) */
+            mario->up = up; mario->pos = vadd(p, v3(0, 0, 600.0f)); mario->face = v3(0, 0, -1); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return (int)r;
+        }
+        V3 ce, cw, cu;
+        float fovy;
+        camera_pose(&ce, &cw, &cu, &fovy);
+        V3 fw = vnorm(vsub(cw, ce)), sd = vnorm(vcross(fw, cu)), u = vcross(sd, fw), to = vsub(vadd(p, vmul(up, 80.0f)), ce);
+        float z = vdot(to, fw), f = 224.0f / tanf(fovy * 3.14159265f / 360.0f);
+        if (z > 0) { cur_x = 320.0f + f * vdot(to, sd) / z; cur_y = 224.0f - f * vdot(to, u) / z; test_r2 = 1; }
+        int in = -1;
+        for (int i = 0; i < ninsts; i++) if (insts[i].row == (int)r) in = insts[i].breaks;
+        printf("spidercoin test: row %u shown %d breaks %d, cursor %.0f %.0f (z %.0f)\n", r, row_shown((int)r), in, cur_x, cur_y, z);
+        if (cur_x < 0 || cur_x > 640 || cur_y < 0 || cur_y > 448) { spider_coin_free(r); mario->pos = row_pos(&sc->objs[r]); } /* off StarDust 3's fixed view: freed as the pointer would, Mario onto its coin */
+        return (int)r;
+    }
+    return -1;
+}
+
 int game_test_kari_point(int on) /* test builds: R2 with the cursor on the first clinging Karikari */
 {
     test_r2 = 0;
@@ -5961,6 +5991,28 @@ int game_test_hip(void)
     return in->row;
 }
 
+int game_test_spiderblock(void) /* spiderblock test: Mario 300 over the first SpiderMapBlock as a hip drop starts; its row */
+{
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (row_dead[in->row] || strcmp(sc->types + 32 * sc->objs[in->row].type, "SpiderMapBlock")) continue;
+        V3 p = v3(in->m[12], in->m[13], in->m[14]);
+        mario->up = up_at(p, mario->up);
+        mario->pos = vadd(p, vmul(mario->up, 300.0f));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
+        mario->hip = HIP_START; mario->hip_t = 0; mario->jumping = 1; mario->zero_gr = MC.mHipDropZeroGrTime;
+        if (mario_anim) mario_play("hipdropstart", 1.0f, 0);
+        return in->row;
+    }
+    int ty = scene_type(sc, "SpiderMapBlock"); /* none in: Mario put over the first one's place (its zone streams in) */
+    for (u32 i = 0; ty >= 0 && i < sc->nobjs; i++)
+        if ((int)sc->objs[i].type == ty && !row_dead[i]) {
+            V3 p = row_pos(&sc->objs[i]);
+            mario->up = up_at(p, mario->up); mario->pos = vadd(p, vmul(mario->up, 300.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return -2;
+        }
+    return -1;
+}
 int game_hip_state(void) { return mario->hip; }
 
 int game_test_pipe(void)
@@ -22507,6 +22559,24 @@ static void update_wrecks(void)
     }
 }
 
+/* MR::appearCoinToVelocity: one coin out of p at vel (a popped coin's fall and bounces) */
+static void coin_to_velocity(V3 p, V3 vel)
+{
+    se_start(SE_SY_COIN_APPEAR_S, NULL);
+    pops[npops].coin = ncoins; pops[npops].t = 0; pops[npops++].vel = vel;
+    coins[ncoins].pos = p; coins[ncoins].row = -1; coins[ncoins++].alive = PICK_POP_NEW;
+}
+/* SpiderCoin::calcAndSetBaseMtx: its cocoon (SpaceCocoon x 0.3) 20 down and 20 along Z from it (mUp: its placement's
+ * Y; ponytail: no SpiderThread to hang from, it stays at its place) */
+static void spider_coin_mtx(const Row *r, float m[16], float *cocoon) /* its coin (50 down) or, cocoon set, its cocoon */
+{
+    V3 x, z, p = row_pos(r);
+    row_axes(r, &x, &z);
+    V3 up = vnorm(vcross(z, x)), side = vnorm(vcross(up, v3(0, 0, 1))), front = vnorm(vcross(side, up));
+    if (!cocoon) { basis_matrix(m, vadd(p, vmul(up, -50.0f)), up, front, 0); return; } /* sModelOffset */
+    basis_matrix(m, vadd(vadd(p, vmul(up, -20.0f)), vmul(front, 20.0f)), up, front, 0); /* sCocoonOffsetY / Z */
+    for (int j = 0; j < 12; j++) m[j] *= *cocoon;
+}
 static void break_inst(const Inst *in, int drops)
 {
     V3 p = v3(in->m[12], in->m[13], in->m[14]);
@@ -22532,6 +22602,14 @@ static void break_inst(const Inst *in, int drops)
         else if (!strcmp(name, "CrystalCageL")) se_start(SE_OJ_CRYSTAL_CAGE_L_BREAK, at);
         else if (statue) se_start(SE_OJ_STRANGEROCK_BREAK_S, at); /* tryStartBreak: StageEffect's stop SE */
         if ((box || !strcmp(name, "PunchBox")) && sp) se_start(SE_OJ_STAR_PIECE_BURST, at);
+    }
+    if (!strcmp(name, "SpiderMapBlock")) { /* SpiderMapBlock::kill */
+        V3 y = v3(in->m[4], in->m[5], 0.0f); /* its Y in XY */
+        se_start(SE_OJ_ROCK_BREAK, &p.x); fx_named(name, "Break", in->m, NULL, NULL);
+        coin_to_velocity(v3(p.x, p.y, sc->objs[in->row].pos[2]), vmul(vlen(y) > 1e-6f ? vnorm(y) : y, 35.0f)); /* appearCoinToVelocity, sCoinSpeed */
+        row_kill(in->row);
+        printf("%s %d broken, its coin out\n", name, in->row);
+        return;
     }
     if ((box || cage || statue) && nwrecks < MAX_WRECKS) {
         char v[48];
@@ -22573,6 +22651,51 @@ static void explosion_breaks(V3 at, float rad)
         break_inst(in, 1);
         game_rebind();
         return;
+    }
+}
+
+/* SpiderCoin: the pointer on it (150 at 80 up) with its A frees the coin. ponytail: no rub (tryRub), no Touch spin */
+static void spider_coins(void)
+{
+    int ty = scene_type(sc, "SpiderCoin");
+    for (u32 i = 0; ty >= 0 && i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if ((int)r->type != ty || row_dead[i] || !row_shown((int)i)) continue;
+        V3 x, z, p = row_pos(r);
+        row_axes(r, &x, &z);
+        V3 up = vnorm(vcross(z, x));
+        if (!pointer_a() || !cursor_sees(vadd(p, vmul(up, 80.0f)), 40.0f)) continue; /* initStarPointerTarget 150 at 80 up */
+        spider_coin_free(i);
+    }
+}
+static void spider_coin_free(u32 i) /* SpiderCoin::kill */
+{
+    {
+        const Row *r = &sc->objs[i];
+        V3 x, z, p = row_pos(r);
+        row_axes(r, &x, &z);
+        V3 up = vnorm(vcross(z, x));
+        float cm[16], k = 0.3f;
+        spider_coin_mtx(r, cm, &k);
+        fx_named("SpaceCocoon", "Stick", cm, NULL, NULL);
+        V3 v = v3(-up.x, -up.y, 0.0f); /* -mUp in XY */
+        coin_to_velocity(p, vmul(vlen(v) > 1e-6f ? vnorm(v) : v, 20.0f)); /* appearCoinToVelocity, sCoinSpeed */
+        row_kill((int)i);
+        printf("SpiderCoin %u freed\n", i);
+    }
+}
+static void draw_spider_cocoons(void)
+{
+    const Model *md = scene_model(sc, "SpaceCocoon");
+    int ty = scene_type(sc, "SpiderCoin");
+    for (u32 i = 0; ty >= 0 && i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if ((int)r->type != ty || row_dead[i] || !row_shown((int)i)) continue;
+        float m[16], k = 0.3f;
+        spider_coin_mtx(r, m, NULL);
+        if (m_coin) render_model(m_coin, m, 0xF0, 0xD0, 0x30);
+        spider_coin_mtx(r, m, &k);
+        if (md) render_model(md, m, 0x80, 0x80, 0x80);
     }
 }
 

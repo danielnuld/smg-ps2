@@ -26,6 +26,27 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   The Wii at g 130 takes a 60.7 deg face (checkGroundOnSlope), slides g 131-132, drops g 133, lands g 142; the port
   takes the 58.7 deg one 14 higher and walks on. In progress: checkGround / checkGroundOnSlope (patch
   D:/smg-ps2-wt/goodegg-checkground-wip.patch), Petari's binder 60 (the port's sphere is 50 at 50), the shadow pull.
+- gaps8 (branch agent-gaps8, from fix/host-tests): TicoStarRing talk (its galaxy name as the talk's string
+  argument, TalkDirector's yes / no node: A answers Yes, Meta on Yes), KoopaStatue (explosions break it:
+  KoopaStatueBreak's clip, left on its Break BVA), Hanachan (5 parts, rail walk, trample / angry pursue / overturn /
+  pressed), StringSpider (walker kit WALK_STRSPIDER: its string and swing), BegomanSpike (walker kit WALK_BEGOSPIKE
+  with BegomanBase's nerves, the attack permitter, electric rails), SpiderMapBlock (hip drop: its coin to velocity),
+  SpiderCoin (R2 + cursor frees it; its SpaceCocoon). Test modes: `talk` with XF=-DTALK_CLS=7 (AstroGalaxy/1),
+  `statue` (KoopaBattleVs3Galaxy/1), `hanachan` / `strspider` (KoopaJrShipLv1Galaxy/1), `begoman`
+  (BattleShipGalaxy/3), `hip` (OceanPhantomCaveGalaxy/1: SpiderMapBlock), `spidercoin` (StarDustGalaxy/3); the new
+  tests count frames from Mario free (game_test_free). Overlay packs: out/wt-gaps3.
+  The repack must pick up (tools/slice.py, tools/msg.py): msg.py DIRECT TicoStarRing (AstroGalaxy);
+  EXTRA KoopaStatue ("#Break", "KoopaStatueBreak"), Hanachan (HanachanHead / Body / BodyS), StringSpider
+  (StringSpiderString), BegomanSpike (BegomanSpikeHead, BegomanBrokenPiece), SpiderCoin (SpaceCocoon); SKINNED_OBJ
+  KoopaStatueBreak, BegomanBrokenPiece, HanachanHead / Body / BodyS; BRK_POSE the Hanachan parts; NO_DRAW + LOGIC
+  Hanachan. Galaxies: AstroGalaxy, KoopaBattleVs3Galaxy, KoopaJrShipLv1Galaxy, BattleShipGalaxy, OceanPhantomCave,
+  StarDust, and every other one with these classes (Hanachan: HeavenlyBeach, FlowerPlanet, EringiPlanet, ForestHome,
+  WormEaten, Poihana, ReverseForestHome zones; StringSpider: OceanRing, PhantomNest, TeresaHouse; KoopaStatue:
+  PhantomNest, TeresaHouse; BegomanSpike: CannonFleet).
+  Found, not fixed: PhantomGalaxy/1's TeresaHouseZone (4.1 MB) never streams in (zone room 4503 KB "the region's";
+  main + house + the other lows ~6.3 MB): the house has no collision or actors, so its torches (and their coin) never
+  run. Not ported: SpiderThread (the web; only the TombSpider boss makes it: initSpiderThread), so SpiderCoins stay
+  at their places. engine/test/run.sh: in a Windows (CRLF) checkout the SRCS lines carry a CR (`-lz\r`); strip it.
 
 ## Console release (2026-10-23 / 24)
 

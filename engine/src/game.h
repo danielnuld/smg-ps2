@@ -246,6 +246,7 @@ int game_test_begoman(int how); /* begoman test: Mario 900 before (0), spinning 
 int game_begoman_state(void); /* its nerve, -1 none */
 int game_test_spidercoin(void); /* spidercoin test: R2 with the cursor on the first SpiderCoin; its row */
 void game_test_unclip(void); /* tests: the walkers move though off the view */
+int game_test_spiderblock(void); /* spiderblock test: a hip drop onto the first SpiderMapBlock; its row */
 int game_test_statue(void); /* statue test: an explosion at the first standing KoopaStatue; its row */
 int game_test_torch(int how); /* tests: Mario into a lit PhantomTorch (0), spinning by it (1), on its item (2), by it (3); its row */
 int game_test_spc_n(void);  /* tests: star pieces got */

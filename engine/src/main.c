@@ -1830,6 +1830,17 @@ int main(void)
 #ifdef SPIDERCOIN_TEST
         if (frame >= 150 && frame <= 900 && frame % 30 == 0) printf("spidercoin test f %u: row %d, coins %d\n", frame, game_test_spidercoin(), game_coins());
 #endif
+#ifdef SPIDERBLOCK_TEST
+    {
+        static u32 f0;
+        u32 mf = frame;
+        if (!f0 && mf > 30 && game_test_free()) f0 = mf;
+        u32 frame = f0 ? mf - f0 + 150 : 0;
+        if (frame >= 150 && frame < 500 && frame % 10 == 0) game_test_spiderblock(); /* its zone in */
+        if (frame == 500) printf("spiderblock test: above row %d\n", game_test_spiderblock()); /* a hip drop onto the first SpiderMapBlock */
+        if (frame > 500 && frame <= 700 && frame % 10 == 0) { char d[160]; game_debug(d, sizeof d); printf("spiderblock test f %u: hip %d coins %d %s\n", frame, game_hip_state(), game_coins(), d); }
+    }
+#endif
 #ifdef STATUE_TEST
         if (frame >= 200 && frame % 100 == 0 && frame <= 600) printf("statue test f %u: row %d, coins %d\n", frame, game_test_statue(), game_coins());
 #endif
