@@ -104,8 +104,9 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   shared sound.bin rebuilt with main's sound.py (ME data). Logs: out/release_*.log.
   Coverage (tools/coverage.ps1 -Elf out/wt-release-cover.elf, one galaxy per PCSX2 lock; failed runs' logs kept in
   out/cover_logs): 115 / 123 ok (EpilogueDemoStage now left out: only reached with its demo sequence, `ending` test).
-  Not ok: CannonFleet 1-5 hang in game_init after the "talk:" line with main's engine (cf026b7; the pre-#24 engine
-  boots them: a regression from the Mario PR #24, also with out/wt-mario-route.elf); KoopaJrShipLv1 1 (Mario lands at
+  Not ok: CannonFleet 1-5 hung in game_init after the "talk:" line (fixed, fix/cannonfleet-hang: not #24 but #33's
+  gravity grid, whose cell count of a range 1e8 gravity overflowed the EE's 32-bit long; now 120 / 123 ok, CannonFleet
+  1-5 boot and play to the cover line, route EggStar 2 star at f 3661); KoopaJrShipLv1 1 (Mario lands at
   the start, (-28500 538 -28200), and falls through to BlackHoleCube 38 in plain play too: the PhantomShipBridge row
   127 draws raised; its Move part's matrix was seen not following the joint's MoveA end pose; open); PhantomGalaxy 6 /
   BattleShip 1 / CannonFleet 1 (before the hang) are the cover test's landing (a black hole, a JumpBeamer's rings, a

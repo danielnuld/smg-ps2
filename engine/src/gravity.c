@@ -366,14 +366,17 @@ static int sphere_cells(int i, int lo[3], int hi[3]) /* its box's cells, 0 if un
 {
     if (bound_r2[i] < 0) return 0;
     float r = sqrtf(bound_r2[i]) + 1.0f; /* (a hair over: rounding) */
-    long cells = 1;
+    int cells = 1;
     for (int k = 0; k < 3; k++) {
         float a = bound_c[i][k] - r, b = bound_c[i][k] + r;
         if (!(a > -1e9f && b < 1e9f)) return 0;
         lo[k] = cell_of(a); hi[k] = cell_of(b);
+        /* checked axis by axis: the product of three wide axes overflowed the EE's 32-bit long (CannonFleet's range
+         * 1e8 gravity, 24415 cells a side, wrapped under GMAXC and grid_build walked its cells forever) */
         cells *= hi[k] - lo[k] + 1;
+        if (hi[k] - lo[k] + 1 > GMAXC || cells > GMAXC) return 0;
     }
-    return cells <= GMAXC;
+    return 1;
 }
 static void grid_build(int n)
 {
