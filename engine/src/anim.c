@@ -458,22 +458,23 @@ void anim_pose(Anim *a)
     if (nt > 1) for (int k = 0; k < nt; k++) if (tc[k]) tot += a->tw[k];
     for (u32 j = 0; j < k->njoints && j < ANIM_MAX_JOINTS; j++) {
         const SkJoint *jt = &k->joints[j];
-        float s[3], r[3], t[3], local[16] __attribute__((aligned(16)));
-        if (a->clip && j < ((const u16 *)a->clip)[2])
-            clip_local(a->clip, a->frame, j, s, r, t);
-        else
-            for (int i = 0; i < 3; i++) {
-                s[i] = jt->scale[i];
-                r[i] = jt->rot[i] * (180.0f / 3.14159265f);
-                t[i] = jt->trans[i];
-            }
-        /* rotation as a quaternion: R = Rz * Ry * Rx -> q = qz * qy * qx */
+        float s[3], r[3], t[3], q[4], local[16] __attribute__((aligned(16)));
         const float h = 3.14159265f / 360.0f;
-        float cx = COSH(r[0]), sx = SINH(r[0]), cy = COSH(r[1]), sy = SINH(r[1]);
-        float cz = COSH(r[2]), sz = SINH(r[2]);
-        float q[4] = {cz * cy * sx - sz * sy * cx, cz * sy * cx + sz * cy * sx, sz * cy * cx - cz * sy * sx,
-                      cz * cy * cx + sz * sy * sx}; /* x, y, z, w */
-        if (nt > 1 && tot > 0.0f) { /* XanimeCore::calcBlend: scale / translation by the normalised weights, the rotation
+        if (!(nt > 1 && tot > 0.0f)) { /* (a blend makes its own from every track, the clip's among them) */
+            if (a->clip && j < ((const u16 *)a->clip)[2])
+                clip_local(a->clip, a->frame, j, s, r, t);
+            else
+                for (int i = 0; i < 3; i++) {
+                    s[i] = jt->scale[i];
+                    r[i] = jt->rot[i] * (180.0f / 3.14159265f);
+                    t[i] = jt->trans[i];
+                }
+            /* rotation as a quaternion: R = Rz * Ry * Rx -> q = qz * qy * qx */
+            float cx = COSH(r[0]), sx = SINH(r[0]), cy = COSH(r[1]), sy = SINH(r[1]);
+            float cz = COSH(r[2]), sz = SINH(r[2]);
+            q[0] = cz * cy * sx - sz * sy * cx; q[1] = cz * sy * cx + sz * cy * sx; /* x, y, z, w */
+            q[2] = sz * cy * cx - cz * sy * sx; q[3] = cz * cy * cx + sz * sy * sx;
+        } else { /* XanimeCore::calcBlend: scale / translation by the normalised weights, the rotation
                                      * lerped in turn by weight / the weights so far (JMAQuatLerp) */
             float S[3] = {0, 0, 0}, T[3] = {0, 0, 0}, Q[4] = {0, 0, 0, 1}, acc = 0.0f;
             for (int k = 0; k < nt; k++) {

@@ -98,9 +98,10 @@ int main(void)
 #define RND(a, b) ((a) + ((b) - (a)) * ((seed = seed * 1103515245u + 12345u) >> 8 & 0xFFFF) / 65535.0f)
         for (int i = 0; i < 300; i++) {
             int kind = kinds[i % 6];
-            float s = RND(100, 1500);
+            float s = RND(100, 1500), pr = RND(0, 3), rg = RND(200, 4000);
+            float x = RND(-60000, 60000), y = RND(-20000, 20000), z = RND(-60000, 60000);
             many[i] = mk(kind, kind == GRAV_CUBE ? 63 : kind == GRAV_PLANE_BOX ? 3 : kind == GRAV_PLANE_CYLINDER ? 0 : 2,
-                         (int)RND(0, 3), RND(200, 4000), s, s * 0.5f, s, RND(-60000, 60000), RND(-20000, 20000), RND(-60000, 60000));
+                         (int)pr, rg, s, s * 0.5f, s, x, y, z);
             if (kind == GRAV_PLANE_CYLINDER) { many[i].p[1] = s; many[i].p[2] = 2 * s; }
         }
         for (int i = 300; i < 2049; i++) many[i] = mk(GRAV_POINT, 0, -5, 0, 1, 1, 1, 1e8f, 0, 0);
