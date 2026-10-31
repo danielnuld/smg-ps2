@@ -6706,6 +6706,9 @@ static int update_launch(Player *m)
     if (s == 1 && !L->starter) camera_shake(L->start < 45 ? SHAKE_NORMAL : SHAKE_STRONG); /* exeShoot */
     if (s == 1 && !L->starter) { /* exeShoot's first step */
         pad_rumble(RUMBLE_VERY_STRONG);
+#ifdef SE_LOG
+        printf("launch: exeShoot, hasME %d\n", me_has());
+#endif
         if (me_has()) me_start_system(L->start < 45 ? "ME_MAGIC" : "ME_MAGIC_L"); /* SpinDriver / SuperSpinDriver::exeShoot */
         else se_start(SE_SY_S_SPIN_DRV_ME_ALT, NULL);
         launch_sound(L, L->start < 45 ? SE_OJ_SPIN_DRV_JUMP : SE_OJ_S_SPIN_DRV_JUMP);
