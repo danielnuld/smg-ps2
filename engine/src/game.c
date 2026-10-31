@@ -1135,6 +1135,23 @@ static int luigi_scenario(char *stage, int n);    /* the current stage, its scen
 #define MAX_OBJ_ANIM 40
 static struct { int row; unsigned last; Anim *a; } oanim[MAX_OBJ_ANIM];
 static int ninsts;
+/* FOR_KIND(i, field): the instances whose `field` is set, in index order, listed once a rebind (inst_seq: game_rebind
+ * counts the tables) instead of a walk over every instance a frame for a handful. Only for fields set nowhere but in
+ * game_rebind_ (a field cleared since only makes the list a superset: the loop's own test stays), loops that do not
+ * rebind. Past 64 instances the list gives up for the walk over all */
+static u32 inst_seq;
+typedef struct { u32 seq; int n; short ix[64]; } InstList;
+#define KIND_CAT_(a, b) a##b
+#define KIND_CAT(a, b) KIND_CAT_(a, b)
+#define FOR_KIND(i, field) FOR_KIND_(i, field, KIND_CAT(kind_list_, __LINE__))
+#define FOR_KIND_(i, field, L)                                                                                     \
+    static InstList L;                                                                                         \
+    if (L.seq != inst_seq + 1) {                                                                               \
+        L.seq = inst_seq + 1; L.n = 0;                                                                         \
+        for (int k_ = 0; k_ < ninsts && L.n >= 0; k_++)                                                        \
+            if (insts[k_].field) { if (L.n < 64 && k_ < 32768) L.ix[L.n++] = (short)k_; else L.n = -1; }                 \
+    }                                                                                                          \
+    for (int li_ = 0, i = 0; li_ < (L.n < 0 ? ninsts : L.n) && (i = L.n < 0 ? li_ : L.ix[li_], 1); li_++)
 static const Gravity *grav;
 static int ngrav;
 static Pickup *coins, *purple, *pieces;
@@ -2699,7 +2716,7 @@ static void tsuki_place(Inst *in)
 
 static void update_tsuki(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, tsuki) {
         Inst *in = &insts[i];
         if (!in->tsuki) continue;
         const Row *r = &sc->objs[in->row];
@@ -2785,7 +2802,7 @@ static V3 kiraira_pos(const Inst *in, V3 *up)
 static void update_kgunners(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, kgun) {
         const Inst *in = &insts[i];
         if (!in->kgun || !row_shown(in->row)) continue;
         unsigned short *t = &row_step[in->row];
@@ -2874,7 +2891,7 @@ static void bubble_burst(Inst *in)
 static void update_ibubbles(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, ibubble) {
         Inst *in = &insts[i];
         if (!in->ibubble || !row_shown(in->row)) continue;
         row_step[in->row]++;
@@ -2887,7 +2904,7 @@ static void update_ibubbles(void)
 static void update_kiraira(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, kiraira) {
         const Inst *in = &insts[i];
         if (!in->kiraira) continue;
         const Row *r = &sc->objs[in->row];
@@ -2940,7 +2957,7 @@ static V3 meteor_pos(const Inst *in, V3 *dir)
 static void update_meteor(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, meteor) {
         const Inst *in = &insts[i];
         if (!in->meteor || !row_shown(in->row)) continue;
         const Row *r = &sc->objs[in->row];
@@ -3172,7 +3189,7 @@ static V3 prom_pos(const Inst *in)
 static void update_prom(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, prom) {
         const Inst *in = &insts[i];
         if (!in->prom || !row_shown(in->row)) continue;
         const Row *r = &sc->objs[in->row];
@@ -3201,7 +3218,7 @@ static void update_prom(void)
 static void carry(const float old[16], const Inst *in);
 static void update_beeflowers(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, beeflower) {
         Inst *in = &insts[i];
         if (!in->beeflower) continue;
         const Row *r = &sc->objs[in->row];
@@ -3246,7 +3263,7 @@ static void ticorail_place(Inst *in)
 
 static void update_ticorails(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, ticorail) {
         Inst *in = &insts[i];
         if (!in->ticorail) continue;
         int row = in->row;
@@ -3330,7 +3347,7 @@ static V3 giver_sensor(const Inst *in)
 static void update_givers(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, giver) {
         const Inst *in = &insts[i];
         if (!in->giver || row_turn[in->row]) continue;
         V3 s = giver_sensor(in), up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
@@ -3411,7 +3428,7 @@ static void biri_group(const Inst *from, int start)
 static void update_birikyu(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, biri) {
         Inst *in = &insts[i];
         if (!in->biri) continue;
         const Row *r = &sc->objs[in->row];
@@ -3810,7 +3827,7 @@ static void update_jumpstands(void)
 {
     int prev = jstand_prev;
     jstand_prev = mario_ground;
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, jstand) {
         const Inst *in = &insts[i];
         if (!in->jstand) continue;
         unsigned short *t = &row_step[in->row];
@@ -3925,7 +3942,9 @@ u32 rebind_cycles, rebinds; /* game_rebind's time and count (the route test's pe
 void game_rebind(void)
 {
     u32 c0 = cycles();
+    inst_seq++; /* (FOR_KIND's lists: made again, during the rebind too) */
     game_rebind_();
+    inst_seq++;
     rebind_cycles += cycles() - c0;
     rebinds++;
 }
@@ -5922,7 +5941,7 @@ int game_test_coco(int how)
 /* the first CocoNut that is not waiting: its row_turn and its distance from its place, else -1 */
 int game_coco_state(int *dist)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, coco) {
         const Inst *in = &insts[i];
         if (!in->coco || !row_turn[in->row]) continue;
         *dist = (int)vlen(vsub(in->head, row_pos(&sc->objs[in->row])));
@@ -6946,7 +6965,7 @@ static V3 row_axis_y(const Row *r)
 static void warp_try(Player *m)
 {
     V3 c = vadd(m->pos, vmul(m->up, HIT_BODY_H));
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, warppod) {
         const Inst *in = &insts[i];
         if (!in->warppod) continue;
         const Row *r = &sc->objs[in->row];
@@ -7040,7 +7059,7 @@ static int gcap_pick(void) /* the target under the cursor, -1 none */
     cursor_ray(&o, &d);
     int best = -1;
     float bz = 1e30f;
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, gcap) {
         const Inst *in = &insts[i];
         if (!in->gcap || !row_shown(in->row)) continue;
         const Row *r = &sc->objs[in->row];
@@ -7138,7 +7157,7 @@ static int jbranch_try(Player *m)
     if (jb.cool) { jb.cool--; return 0; }
     if (m->grounded || m->launch >= 0) return 0;
     V3 c = vadd(m->pos, vmul(m->up, HIT_BODY_H));
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, jbranch) {
         const Inst *in = &insts[i];
         if (!in->jbranch) continue;
         V3 bar = v3(in->m[12], in->m[13], in->m[14]), side = vnorm(v3(in->m[0], in->m[1], in->m[2]));
@@ -7233,7 +7252,7 @@ static int cursor_sees(V3 p, float px);
 static int pointer_a(void);
 static void update_cocoons(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, cocoon) {
         Inst *in = &insts[i];
         if (!in->cocoon) continue;
         if (coc.wait == i) { /* FreeInvalid */
@@ -7257,7 +7276,7 @@ static int cocoon_try(Player *m)
 {
     if (coc.inst >= 0 || m->grounded || m->launch >= 0) return 0;
     V3 c = vadd(m->pos, vmul(m->up, HIT_BODY_H));
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, cocoon) {
         Inst *in = &insts[i];
         if (!in->cocoon || coc.wait == i) continue;
         V3 up = vnorm(v3(in->m0[4], in->m0[5], in->m0[6])), b = vadd(in->head, vmul(up, 100.0f));
@@ -7390,7 +7409,7 @@ static void jet_reset(Inst *in)
  * melted, bit 2 body melted. ponytail: no melting animation (the model squashes as parts go), spins only shake it */
 static int fireball_hits_snowman(V3 p)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, snowman) {
         Inst *in = &insts[i];
         if (!in->snowman || row_dead[in->row]) continue;
         const Row *r = &sc->objs[in->row];
@@ -7424,7 +7443,7 @@ static void update_strays(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     int t = scene_type(sc, "CollectTico"), k = 0;
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, stray) {
         Inst *in = &insts[i];
         if (!in->stray || row_dead[in->row]) continue;
         int row = in->row;
@@ -8855,7 +8874,7 @@ static void sambo_turn(int k, float deg) /* dirToPlayer */
 static void update_sambos(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, sambo) {
         Inst *in = &insts[i];
         if (!in->sambo) continue;
         int k = sambo_of(in->row);
@@ -10879,7 +10898,7 @@ static int fat_demo(void) /* Test .. After: Mario waits (its demo) */
 
 static void update_fountains(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, fountain) {
         Inst *in = &insts[i];
         if (!in->fountain) continue;
         int row = in->row, t = row_step[row] = (row_step[row] + 1) % 420;
@@ -10906,7 +10925,7 @@ static void update_fountains(void)
 static void update_candles(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, candle) {
         Inst *in = &insts[i];
         if (!in->candle) continue;
         int row = in->row;
@@ -11084,7 +11103,7 @@ static void update_fire(void)
 
 static void update_screws(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, screw) {
         Inst *in = &insts[i];
         if (!in->screw) continue;
         int row = in->row;
@@ -11127,7 +11146,7 @@ static void update_screws(void)
 static void update_jets(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, jet) {
         Inst *in = &insts[i];
         if (!in->jet) continue;
         if (row_turn[in->row] > 0) row_turn[in->row]--;
@@ -11184,7 +11203,7 @@ static void fluff_place(Inst *in)
 static void update_fluffs(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, fluff) {
         Inst *in = &insts[i];
         if (!in->fluff || flf.inst == i) continue;
         int row = in->row;
@@ -11218,7 +11237,7 @@ static int fluff_try(Player *m)
 {
     if (flf.inst >= 0 || m->grounded || m->launch >= 0) return 0;
     V3 c = vadd(m->pos, vmul(m->up, HIT_BODY_H));
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, fluff) {
         Inst *in = &insts[i];
         if (!in->fluff || row_turn[in->row] != 1 || vlen(vsub(c, in->head)) > 150.0f + HIT_BODY_R * 0.5f) continue;
         V3 up = up_at(in->head, m->up), v = vadd(m->hvel, vmul(m->up, m->vup));
@@ -18714,7 +18733,7 @@ static void update_vines(void)
     int swing = pad_pressed(PAD_SQUARE) || vine_test_sq; /* isPadSwing */
     vine_test_sq = 0;
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, vine) {
         Inst *in = &insts[i];
         if (!in->vine) continue;
         int k = vine_of(in->row);
@@ -19002,7 +19021,7 @@ static void hhp_sensors(const Inst *in, int k, V3 p[6], float r[6])
  * radius rad at p on any of its sensors blows it down; 1 if one took it */
 static int hhp_blow(V3 p, float rad)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, hhp) {
         const Inst *in = &insts[i];
         if (!in->hhp || row_dead[in->row]) continue;
         int k = hhp_of(in->row);
@@ -19024,7 +19043,7 @@ static int hhp_blow(V3 p, float rad)
 
 static int hhp_reflects(V3 p, float rad) /* isMsgStarPieceReflect on any of its sensors */
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, hhp) {
         const Inst *in = &insts[i];
         if (!in->hhp || row_dead[in->row]) continue;
         int k = hhp_of(in->row);
@@ -19174,7 +19193,7 @@ static void update_hhps(void)
 static void draw_hhp_leaves(void) /* PartsModel PackunLeaf: Spin1 x makeMtxTR((100 with arg0 > 0, 0, 0), (0, -90, -90)) */
 {
     if (!m_pleaf || !m_pleaf->skin) return;
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, hhp) {
         const Inst *in = &insts[i];
         if (!in->hhp || row_dead[in->row] || !in->anim || !in->anim->skin || in->anim->skin->njoints < 3) continue;
         Anim *la = obj_anim((int)sc->nobjs + in->row, m_pleaf, "PackunLeaf");
@@ -24426,7 +24445,7 @@ int game_hanachan_state(void) { for (int k = 0; k < nhanas; k++) if (hanas[k].nr
  * frames (default 300, mTimerMax; row_step counts them down), then off. ponytail: the stake does not sink */
 static void update_hip_switches(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, hipsw) {
         const Inst *in = &insts[i];
         if (!in->hipsw) continue;
         const Row *r = &sc->objs[in->row];
@@ -24584,7 +24603,7 @@ static void update_bridges(void)
 
 static void update_seesaws(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, seesaw) {
         Inst *in = &insts[i];
         if (!in->seesaw) continue;
         int k = seesaw_of(in->row);
@@ -24641,7 +24660,7 @@ static void update_seesaws(void)
  * BRK fade (BRK at run time is item c): shown and hidden at once */
 static void update_halos(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, halo) {
         Inst *in = &insts[i];
         if (!in->halo) continue;
         const Row *r = &sc->objs[in->row];
@@ -24658,7 +24677,7 @@ static void update_halos(void)
 
 static void update_rotors(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, rotor) {
         Inst *in = &insts[i];
         if (!in->rotor || !dx_row_moves(in->row)) continue;
         const Row *r = &sc->objs[in->row];
@@ -24781,7 +24800,7 @@ static void dossun_place(Inst *in)
 }
 static void update_dossuns(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, dossun) {
         Inst *in = &insts[i];
         if (!in->dossun) continue;
         const Row *r = &sc->objs[in->row];
@@ -24886,7 +24905,7 @@ static void rbm_group_nerve(int row, int nrv) /* sendMsgToGroupMember ACTMES_GRO
 }
 static void update_rbeamers(void)
 {
-    for (int i = 0; i < ninsts; i++) { /* the beamers in reach (their rows found once) */
+    FOR_KIND(i, rbeamer) { /* the beamers in reach (their rows found once) */
         Inst *in = &insts[i];
         if (!in->rbeamer || row_dead[in->row]) continue;
         int k = rbm_of(in->row);
@@ -25145,7 +25164,7 @@ static int sbm_territory(int k, const Row *r, float reach) /* isPlayerInTerritor
 }
 static void update_sbeamers(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, sbeamer) {
         Inst *in = &insts[i];
         if (!in->sbeamer || row_dead[in->row]) continue;
         int k = sbm_of(in->row);
@@ -25718,7 +25737,7 @@ static void tz_step(int k)
 }
 static void update_trapezes(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, trapeze) {
         Inst *in = &insts[i];
         if (!in->trapeze || !row_shown(in->row)) continue;
         int k = tz_of(in->row);
@@ -25985,7 +26004,7 @@ static void oni_land(int k, Inst *in)
 }
 static void update_onimasu(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, onimasu) {
         Inst *in = &insts[i];
         if (!in->onimasu || !row_shown(in->row)) continue;
         int k = oni_of(in->row);
@@ -26127,7 +26146,7 @@ static void fpr_group(int row, int nrv)
 static void update_fpressures(void)
 {
     V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, fpressure) {
         Inst *in = &insts[i];
         if (!in->fpressure || !row_shown(in->row)) continue;
         int k = fpr_of(in->row);
@@ -26275,7 +26294,7 @@ static void update_leakpipes(void)
 {
     static u32 lv[4];
     int n = 0;
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, leakpipe) {
         Inst *in = &insts[i];
         if (!in->leakpipe || !row_shown(in->row)) continue;
         fx_named("WaterLeakPipe", "Splash", in->m, in->anim ? (const float (*)[16])in->anim->world : NULL, in); /* exeWait */
@@ -26403,7 +26422,7 @@ static int eb_beam_mtx(const Inst *in, float out[16]) /* calcAnim: _9C, the Beam
 static void update_eyebeamers(void)
 {
     V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, eyebeamer) {
         Inst *in = &insts[i];
         if (!in->eyebeamer || !row_shown(in->row)) continue;
         int k = eb_of(in->row);
@@ -26548,7 +26567,7 @@ static void leaf_joints(Inst *in) /* after the pose: the rest from the bind pose
 static void update_leaves(void)
 {
     const V3 wind = v3(0, 0, 1);
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, leaves) {
         Inst *in = &insts[i];
         if (!in->leaves || !row_shown(in->row)) continue;
         int k = lf_of(in->row);
@@ -26608,7 +26627,7 @@ static void pl_place(Inst *in)
 }
 static void update_palms(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, palm) {
         Inst *in = &insts[i];
         if (!in->palm || !row_shown(in->row)) continue;
         int k = pl_of(in->row);
@@ -26968,7 +26987,7 @@ static int ss_type(const Inst *in) { return in->sstorm - 1; }
 static void update_storms(void)
 {
     V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, sstorm) {
         Inst *in = &insts[i];
         if (!in->sstorm || !row_shown(in->row)) continue;
         int k = ss_of(in->row), t = ss_type(in);
@@ -27129,7 +27148,7 @@ static void door_place(Inst *in)
 }
 static void update_doors(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, tdoor) {
         Inst *in = &insts[i];
         if (!in->tdoor || !row_shown(in->row)) continue;
         const Row *r = &sc->objs[in->row];
@@ -27175,7 +27194,7 @@ static void ll_converge(int k) /* convergeToInitPos */
 }
 static void update_lotus(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, lotus) {
         Inst *in = &insts[i];
         if (!in->lotus || !row_shown(in->row)) continue;
         int k = ll_of(in->row);
@@ -27272,7 +27291,7 @@ static void update_trains(void)
  */
 static void update_volcanoflows(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, vflow) {
         Inst *in = &insts[i];
         if (!in->vflow || !row_shown(in->row)) continue;
         const Row *r = &sc->objs[in->row];
@@ -27314,7 +27333,7 @@ static void dl_place(Inst *in)
 }
 static void update_dlands(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, dland) {
         Inst *in = &insts[i];
         if (!in->dland || !row_shown(in->row)) continue;
         int k = dl_of(in->row);
@@ -27371,7 +27390,7 @@ static void update_dlands(void)
  * started, 1 Start, 2 Wait. ponytail: hidden (not stopped) until its appear switch, no level SE */
 static void update_bigfans(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, bigfan) {
         Inst *in = &insts[i];
         if (!in->bigfan || !row_shown(in->row)) continue;
         const Row *r = &sc->objs[in->row];
@@ -27385,7 +27404,7 @@ static void update_bigfans(void)
 static void draw_bigfan_winds(void)
 {
     if (!m_bfwind || !m_bfwind->skin) return;
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, bigfan) {
         const Inst *in = &insts[i];
         if (!in->bigfan || !row_shown(in->row) || !row_turn[in->row]) continue;
         const Row *r = &sc->objs[in->row];
@@ -27429,7 +27448,7 @@ static V3 eb_ball(const Inst *in, int k, int b) /* Ball::updatePosition: mBaseMt
 static void update_eballs(void)
 {
     V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, eball) {
         Inst *in = &insts[i];
         if (!in->eball || !row_shown(in->row)) continue;
         int k = ebl_of(in->row);
@@ -27463,7 +27482,7 @@ static void update_eballs(void)
 }
 static void draw_eballs(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, eball) {
         const Inst *in = &insts[i];
         if (!in->eball || !row_shown(in->row) || !in->md) continue;
         int k = ebl_of(in->row);
@@ -27528,7 +27547,7 @@ static void as_turn(int k, int idx, int plus) { ass[k].idx = idx; ass[k].plus = 
 static void update_arrows(void)
 {
     V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, arrow) {
         Inst *in = &insts[i];
         if (!in->arrow || !row_shown(in->row)) continue;
         int k = as_of(in->row);
@@ -27636,7 +27655,7 @@ static void update_anmmodels(void)
  * frame). Its Spin sensor pushes Mario. row_turn 0 Wait / 1 SwitchOn / 2 End, row_step its step. ponytail: no BRK */
 static void update_levers(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, lever) {
         Inst *in = &insts[i];
         if (!in->lever || !row_shown(in->row)) continue;
         const Row *r = &sc->objs[in->row];
@@ -27677,7 +27696,7 @@ static void update_levers(void)
  * ponytail: no spring sag of the button, no SandClockGalaxy timer offset */
 static void update_dswitches(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, dswitch) {
         Inst *in = &insts[i];
         if (!in->dswitch || !row_shown(in->row)) continue;
         const Row *r = &sc->objs[in->row];
@@ -27732,7 +27751,7 @@ static void tbox_open(Inst *in) /* receiveMsgPlayerAttack (isMsgJetTurtleAttack)
 }
 static void tbox_hit(V3 p, float r) /* a jet turtle or an explosion at p */
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, tbox) {
         Inst *in = &insts[i];
         if (!in->tbox || !row_shown(in->row)) continue;
         V3 c = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(vnorm(v3(in->m[4], in->m[5], in->m[6])), 50.0f)); /* body 200 at 50 up */
@@ -28392,7 +28411,7 @@ static V3 shoot_pos(const Inst *in, float *k)
 
 static void update_shooting(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, shoot) {
         Inst *in = &insts[i];
         if (!in->shoot || !row_shown(in->row)) continue;
         int row = in->row;
@@ -28427,7 +28446,7 @@ static void update_shooting(void)
 static void update_steam(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, steam) {
         const Inst *in = &insts[i];
         if (!in->steam || !row_shown(in->row)) continue;
         const Row *r = &sc->objs[in->row];
@@ -28477,7 +28496,7 @@ static float geyser_height(const Inst *in)
 static void update_geyser(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, geyser) {
         const Inst *in = &insts[i];
         if (!in->geyser || !row_shown(in->row)) continue;
         const Row *r = &sc->objs[in->row];
@@ -28918,7 +28937,7 @@ static void update_rocks(void)
 static void update_firebars(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, firebar) {
         const Inst *in = &insts[i];
         if (!in->firebar) continue;
         const Row *r = &sc->objs[in->row];
@@ -31288,7 +31307,7 @@ int game_test_npc_visit(int k) /* tests: Mario put 600 off the k-th turning NPC,
 }
 static void update_npc_turn(void) /* the NPCs' wait nerves: tryStartTalkAction / tryStartTurnAction */
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, npc) {
         Inst *in = &insts[i];
         if (!in->npc || !row_shown(in->row) || (in->dnpc == 3 && ros_demo)) continue;
         if ((in->talkcls == 2 || in->talkcls == 7) && row_step[in->row]) continue; /* a Tico's Meta nerve */
@@ -31335,7 +31354,7 @@ static void rosetta_update(Inst *in)
 /* Butler (exeDemo: at its PosName during the demo, then setDefaultPose and Wait), Rosetta, ButlerExplain and TicoDomeLecture */
 static void update_dome_npcs(void)
 {
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, dnpc) {
         Inst *in = &insts[i];
         if (!in->dnpc) continue;
         const Row *r = &sc->objs[in->row];
@@ -32973,7 +32992,7 @@ static void teresa_draw(const float m[16])
 static V3 bigfan_wind(V3 p, float *speed)
 {
     V3 sum = v3(0, 0, 0);
-    for (int i = 0; i < ninsts; i++) {
+    FOR_KIND(i, bigfan) {
         const Inst *in = &insts[i];
         if (!in->bigfan || !row_shown(in->row) || row_turn[in->row] < 1) continue; /* isStartOrWait */
         const Row *r = &sc->objs[in->row];
