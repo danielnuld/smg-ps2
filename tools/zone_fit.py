@@ -42,7 +42,7 @@ def elf_end(path):
 
 
 # main.c pk_init's region against the ELF's end, measured in PCSX2 (256 KB steps): ends of 16736-16787 KB gave 13568 KB,
-# 16866 and 16936 KB 13312 KB, 17209 KB 13056 KB. HEAP_KB is the lowest constant that fits them all (30355-30433), so
+# 16866 and 16936 KB 13312 KB, 17209 KB 13056 KB, 10732 KB (packs builds, no linked blob) 19456 KB. HEAP_KB is the lowest constant that fits them all (30355-30433), so
 # the region here is never above the PS2's
 HEAP_KB = 30355
 ROOM_KB, ROOM_REGION_KB = 8962, 13824  # ROOM measured with a 13824 KB region (the docstring)
