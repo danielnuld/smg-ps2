@@ -1576,12 +1576,12 @@ static int kcl_each(V3 c, float radius, KclEach fn, void *ctx)
     for (int li = 0; li < nkcl_list; li++) {
         int i = kcl_list[li];
         const Inst *in = &insts[i];
+        V3 d = vsub(c, v3(in->m[12], in->m[13], in->m[14])); /* (out of reach first: most are; the tests below are pure) */
+        if (vdot(d, d) > (in->reach + radius) * (in->reach + radius)) continue;
         if (!in->kcl) continue;
         if (in->beeflower && row_turn && row_turn[in->row]) continue; /* BeeFlowerHover gone through */
         if (in->otamagma && ota.nrv == OTA_DEAD) continue;            /* drawn till then (game_draw) */
         if (in->tdoor && !door_solid(in)) continue;
-        V3 d = vsub(c, v3(in->m[12], in->m[13], in->m[14]));
-        if (vdot(d, d) > (in->reach + radius) * (in->reach + radius)) continue;
         const float (*mats)[16] = (const float (*)[16])in->m;
         const int *lcoll = NULL;
         int nm = in->leaves ? lf_mats(in, &mats, &lcoll) : 0;
