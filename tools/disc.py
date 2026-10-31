@@ -7,8 +7,9 @@ name, since launchers (ORBIT's catalog, OPL) take the boot file's name as the ga
   PACKS.BIN  every file under the packs dir, each starting on a 2048-byte sector
   PACKS.TOC  u32 n, n x {char path[88] (relative, '/' separated, NUL padded), u32 offset, u32 size} (little-endian)
   SYSTEM.CNF boots cdrom0:\\SMGP_000.01;1
-then the ISO through mkisofs in WSL (ISO 9660 level 1: the PS2 ROM's cdrom0: reads 8.3 names only, hence one big
-file and a table instead of the packs' own names).
+Before it, tools/zone_fit.py --elf checks every scenario's main stage fits the pack region that ELF leaves (it fails here
+otherwise, not with "packs: no memory" on the PS2). Then the ISO through mkisofs in WSL (ISO 9660 level 1: the PS2
+ROM's cdrom0: reads 8.3 names only, hence one big file and a table instead of the packs' own names).
 """
 import struct
 import subprocess
@@ -49,6 +50,9 @@ def main():
         (disc / "SLICE.ELF").replace(disc / BOOT)
     if not (disc / BOOT).exists():
         sys.exit(f"{disc / 'SLICE.ELF'} missing: engine/build.sh MODE blob Galaxy/n disc")
+    # every scenario's main stage must fit the pack region this ELF leaves (a bigger ELF shrinks it: "packs: no memory")
+    if subprocess.run([sys.executable, str(Path(__file__).parent / "zone_fit.py"), str(packs), "--elf", str(disc / BOOT)]).returncode:
+        sys.exit("disc.py: the packs do not fit the region the disc's ELF leaves (tools/zone_fit.py above)")
     n, size = build(packs, disc)
     print(f"PACKS.BIN: {n} packs, {size / 2**20:.0f} MB")
     # the boot files first (SYSTEM.CNF, the ELF, then PACKS.TOC) at the start of the disc

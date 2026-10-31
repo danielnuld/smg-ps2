@@ -14,6 +14,7 @@
 #include <math.h>
 #include <packet2.h>
 #include <packet2_utils.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -1498,6 +1499,35 @@ void render_text(float x, float y, const char *s)
                     if (packet2_get_qw_count(gif) < GIF_QW - 96)
                         packet2_update(gif, draw_rect_filled(gif->next, 0, &r));
                 }
+    }
+}
+
+/* A fatal error (a pack missing or over its room, a read error, no memory): printed, then shown on screen for good
+ * (a black screen with its lines instead of a silent hang); before render_init, only printed */
+void render_fatal(const char *fmt, ...)
+{
+    char msg[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof msg, fmt, ap);
+    va_end(ap);
+    printf("FATAL: %s\n", msg);
+    if (!gif)
+        for (;;) {}
+    static const float eye[3] = {0, 0, 1}, at[3] = {0, 0, 0}, up[3] = {0, 1, 0};
+    for (;;) {
+        render_begin(eye, at, up);
+        render_text(16, 12, "ERROR - THE GAME CAN NOT GO ON:");
+        float y = 36;
+        for (char *s = msg, *e; *s && y < 420; s = *e ? e + 1 : e, y += 14) { /* a line a '\n', 76 characters at most */
+            char line[80];
+            e = strchr(s, '\n');
+            if (!e) e = s + strlen(s);
+            int n = e - s < 76 ? (int)(e - s) : 76;
+            memcpy(line, s, n); line[n] = 0;
+            render_text(16, y, line);
+        }
+        render_end();
     }
 }
 

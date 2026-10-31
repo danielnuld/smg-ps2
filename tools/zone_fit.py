@@ -1,6 +1,8 @@
 """List every zone whose chain can not stream in (main.c target_set / load_packs' "never fits" line, offline).
 
-usage: python tools/zone_fit.py out/packs [room_kb]
+usage: python tools/zone_fit.py out/packs [room_kb | --elf boot.elf]
+--elf: the room that ELF leaves (region_kb: main.c pk_init takes the heap less 1.5 MB in 256 KB steps), exit status 1
+if a zone is over it (tools/disc.py runs it on the disc's ELF).
 For each <Galaxy>/<n>/scene.bin: each zone's chain (ZPAR) in full, every other stage low, plus scene.bin and
 common.bin, each pack rounded to whole sectors (main.c PACK_ALLOC), against slice_all.room (ROOM less the galaxy's menu
 packs and letter.bin), or room_kb less those (ROOM measured on the PS2: the "packs: ... room N KB" line plus scene.bin
@@ -26,6 +28,30 @@ def chunk(blob, tag):
     raise KeyError(tag)
 
 
+def elf_end(path):
+    """The end of an ELF's loaded segments (text, data, bss): the heap starts there"""
+    b = Path(path).read_bytes()
+    phoff, = struct.unpack_from("<I", b, 28)
+    phentsize, phnum = struct.unpack_from("<HH", b, 42)
+    end = 0
+    for i in range(phnum):
+        t, _, va, _, _, memsz, _, _ = struct.unpack_from("<8I", b, phoff + i * phentsize)
+        if t == 1:
+            end = max(end, va + memsz)
+    return end
+
+
+# main.c pk_init's region against the ELF's end, measured in PCSX2 (256 KB steps): ends of 16736-16787 KB gave 13568 KB,
+# 16866 and 16936 KB 13312 KB, 17209 KB 13056 KB. HEAP_KB is the lowest constant that fits them all (30355-30433), so
+# the region here is never above the PS2's
+HEAP_KB = 30355
+ROOM_KB, ROOM_REGION_KB = 8962, 13824  # ROOM measured with a 13824 KB region (the docstring)
+
+
+def region_kb(elf):
+    return (HEAP_KB - elf_end(elf) // 1024) // 256 * 256
+
+
 def alloc(p):
     return -(-p.stat().st_size // SECTOR) * SECTOR if p.exists() else 0
 
@@ -44,17 +70,23 @@ def scenario(out, d, room_kb):
             chain.add(k)
             k = parent[k]
         cost = base + sum(alloc(d / f"{names[s]}.bin" if s in chain else d / f"{names[s]}.low.bin") for s in range(n))
-        yield names[z], cost, room
+        yield names[z], cost, room, z
 
 
 if __name__ == "__main__":
     out = Path(sys.argv[1])
-    room_kb = int(sys.argv[2]) if len(sys.argv) > 2 else 0
-    rows = [(f"{d.parent.name}/{d.name}", z, c, r - c, r) for d in sorted(out.glob("*/*/")) if (d / "scene.bin").exists()
-            for z, c, r in scenario(out, d, room_kb)]
+    room_kb = int(sys.argv[2]) if len(sys.argv) > 2 and sys.argv[2] != "--elf" else 0
+    if sys.argv[2:3] == ["--elf"]:
+        reg = region_kb(sys.argv[3])
+        room_kb = ROOM_KB - (ROOM_REGION_KB - reg)
+        print(f"{sys.argv[3]}: ends at {elf_end(sys.argv[3]) >> 10} KB, region {reg} KB, room {room_kb} KB")
+    rows = [(f"{d.parent.name}/{d.name}", z, c, r - c, r, k) for d in sorted(out.glob("*/*/")) if (d / "scene.bin").exists()
+            for z, c, r, k in scenario(out, d, room_kb)]
     over = [r for r in rows if r[3] < 0]
-    for s, z, c, m, r in over:
-        print(f"never fits: {s} {z}: {c >> 10} KB, room {r >> 10} KB")
+    for s, z, c, m, r, k in over:
+        print(f"{'STAGE NEVER LOADS' if k == 0 else 'never fits'}: {s} {z}: {c >> 10} KB, room {r >> 10} KB")
     print(f"{len(rows)} zones in {len({r[0] for r in rows})} scenarios, {len(over)} over their room; tightest:")
-    for s, z, c, m, r in sorted(rows, key=lambda r: r[3])[:8]:
+    for s, z, c, m, r, k in sorted(rows, key=lambda r: r[3])[:8]:
         print(f"  {s} {z}: {c >> 10} KB ({m >> 10} KB left)")
+    if any(k == 0 for *_, k in over):  # a main stage over its room: "packs: no memory" on the PS2, the scenario can not start
+        sys.exit("zone_fit: a scenario's main stage does not fit its room")
