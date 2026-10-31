@@ -240,9 +240,14 @@ static Emitter *new_emitter(const PtRes *r, const void *key, const float m[16], 
 /* key's live emitter of r follows m (kept 2 more updates); none: a new one when create */
 static void keep_one(const PtRes *r, const void *key, const float m[16], const float off[3], int create)
 {
-    for (int j = 0; j < MAX_EMIT; j++) {
+    /* the emitter found last time for this key and resource, checked again (one at most matches: a new one is made
+     * only when none does), else the walk over all; kept effects ask every frame */
+    static short last[256];
+    u32 h = ((u32)(unsigned long)key * 2654435761u ^ (u32)(unsigned long)r * 40503u) >> 24;
+    for (int j = key ? last[h] : 0, walk = !key; j < MAX_EMIT; j = walk ? j + 1 : 0, walk = 1) {
         Emitter *e = &em[j];
         if (!e->live || e->stop || e->key != key || e->r != r) continue;
+        if (key) last[h] = (short)j;
         e->kept = 2;
         memcpy(e->m, m, 48); /* follow the owner (offset kept: m[12..14] below) */
         float o[3];

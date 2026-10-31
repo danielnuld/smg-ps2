@@ -56,10 +56,46 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   StarDust, and every other one with these classes (Hanachan: HeavenlyBeach, FlowerPlanet, EringiPlanet, ForestHome,
   WormEaten, Poihana, ReverseForestHome zones; StringSpider: OceanRing, PhantomNest, TeresaHouse; KoopaStatue:
   PhantomNest, TeresaHouse; BegomanSpike: CannonFleet).
-  Found, not fixed: PhantomGalaxy/1's TeresaHouseZone (4.1 MB) never streams in (zone room 4503 KB "the region's";
-  main + house + the other lows ~6.3 MB): the house has no collision or actors, so its torches (and their coin) never
-  run. Not ported: SpiderThread (the web; only the TombSpider boss makes it: initSpiderThread), so SpiderCoins stay
-  at their places. engine/test/run.sh: in a Windows (CRLF) checkout the SRCS lines carry a CR (`-lz\r`); strip it.
+  Not ported: SpiderThread (the web; only the TombSpider boss makes it: initSpiderThread), so SpiderCoins stay
+  at their places.
+- agent-perf3 (EE time, third round; on fix/host-tests): the sampling profiler works in PCSX2 now (`XF=-DSAMPLE_PROF`,
+  `-DPROF_FROM= -DPROF_TO=` for a route's stretch; `python3 tools/prof_map.py <emulog> <nm -n of the ELF>`: self time
+  by function and strcmp / memset / sin / cos / snprintf callers) and the route test prints the EE's time each 200
+  frames (`route perf f N: logic, draw without the waits, worst`). Exact changes only (same functions of the same
+  inputs; bench end states and the route's log line for line unchanged, star at 3781), except the drawings' angles
+  that turn with the frame (taken within one turn). Good Egg bench, start view: logic 4205 -> 3026 us, EE draw 7139 ->
+  5771; path: logic 4112 -> 2968, EE draw 5623 -> 4630. Route: logic 7758 -> 4816 at f 600, 6644 -> 4407 at f 3200,
+  worst frames 92 -> 30 ms (f 1400), 88 -> 16 (f 3000). What it was: names looked up by strcmp walks every frame
+  (area classes, scene_type / scene_model, Mario's anim names, rows by class; at a rebind once a row), sines / cosines
+  of unchanging rotations (areas, camera areas, joints) and of huge angles (newlib's slow reduction), memset for
+  small matrices, gravity_at over every gravity (now a grid), skinning on the FPU (now VU0). Ideas left: KCL
+  (kcl_check_sphere 0.5-0.8 ms a frame in heavy places; kcl_each walks every KCL instance a query, ~0.35 ms: moving
+  parts keep a grid from being exact), draw_model_ ~1 ms (skinned batches), particles fx_draw + render_sprites +
+  fx_update ~1 ms (on the EE), Mario's pose ~0.36 ms (30 joints, 4-track blend), walkers posed one by one, zone swaps
+  and rebinds (game_rebind on a kill / switch: the whole instance table again, 2.8-11 ms a call, `route perf`'s
+  rebinds; a class's flags made once per type would cut most), fx_anim's strcmp search a skinned draw with effects,
+  se_update's powf / sinf a channel a frame. Bench builds only: render_text's debug lines (~0.6 ms) and PCSX2's host reads (fread walks every
+  FILE: _fwalk_sglue) inflate the numbers. No pack format change.
+- zones (branch agent-zones): every zone streams in when Mario needs it. main.c: the room for zones he needs is the
+  region's free bytes (the low packs' sum was subtracted as a swap reserve and then counted again in the set: 4503
+  instead of 6510 KB in PhantomGalaxy/1); the nearest needed zone not yet in is the one always taken (it used to be the
+  main stage he stands on, so a second zone came only "if it fit"); the zones he only heads for keep the old reserve
+  (zone_room_bg: no load pause for a maybe); a full zone stays full while it fits (leaving the house no longer
+  reloads); when the kept packs split the free bytes, pend_evict_all frees every stage pack and reads the set again in
+  one piece. Load lines: `packs: <scen>, n zones (room / in the background)`, `packs: zone X never fits` (it then
+  stays low, no hang). tools/zone_fit.py lists offline every zone of out/packs that can not fit (slice_all.room).
+  slice_all.py: ROOM 9.1e6 (measured 9.18e6 with the test ELFs' 13824 KB region) and room() less letter.bin (loaded
+  in every galaxy while Luigi is missing). Checked in PCSX2: torch (PhantomGalaxy/1: TeresaHouseZone in at the first
+  torch, coin 84 popped and taken, coins 1), spiderblock (OceanPhantomCave/1: GhostShipCaveZone in, 7094 of 7150 KB;
+  SpiderMapBlock found). Still wrong in spiderblock (not zones): the hip drop lands on GhostShipCavePlanet at y -163,
+  122 over the block's origin, so the block is not hit; Mario then stays in HipDropLand (m_proc_hip no longer runs).
+  **Repack must redo** with this branch's slice_all.py: AstroGalaxy (all), OceanPhantomCaveGalaxy, PhantomGalaxy (and
+  then `python tools/zone_fit.py out/packs` must list none): with the old packs 13 zones are over the new room
+  (letter.bin aside): AstroGalaxy 1-5 (main and TridentZone), OceanPhantomCave 1-2 GhostShipCaveZone, PhantomGalaxy 1
+  TeresaHouseZone. slice_all's shrink steps now go on to 0.6 / 0.5; the trial repack in out/wt-zones (overlay, those 3
+  galaxies) fits all 76 zones (tightest PhantomGalaxy/1 TeresaHouseZone, 119 KB left; OceanPhantomCave/1 now 6541 of
+  7155 KB) and AstroGalaxy 1-5 / OceanPhantomCave 1 went to a smaller ratio (simpler static models in the Observatory:
+  look at it after the repack). engine/test/run.sh now tests the tree it lives in and strips the SRCS lines' CR.
 
 ## Console release (2026-10-23 / 24)
 
@@ -91,7 +127,7 @@ its own sound pack (`out/sound_all.sh`): the shared one with Luigi's SEs had to 
 Tools of the session: disc bench `build.sh bench <blob> EggStarGalaxy/1 disc` (paced summary, `bench fps`), the
 fps line every 256 frames. Packs before all this: `out/packs-before-final-2026-10-24`.
 Next: EE (draw build: pose / draw_model; logic: launched pieces, items, camera), larger textures where VRAM allows,
-triple buffering if the texture cache can spare 560 KB.
+triple buffering if the texture cache can spare 560 KB.
 Second console round (2026-10-24), from Daniel's report:
 - White screen with the HUD after PrologueA: the garden's BloomCube at 255 read the whole 16-bit frame as bright.
   Every 16-bit pixel's alpha bit stayed 1 after the alpha clear; bloom_pass now writes FBA 0 and turns dithering

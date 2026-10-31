@@ -55,6 +55,7 @@ int blob_add(Scene *s, const u8 *blob)
         return -1;
     }
     s->nmodels += nm;
+    scene_models_gen++; /* scene_model: its kept answers stale */
     const u8 *p = m ? m + 4 : NULL;
     for (u32 i = first; i < s->nmodels; i++) {
         Model *md = &s->models[i];
@@ -276,16 +277,73 @@ const Row *scene_start(const Scene *s)
     return any ? any : &s->starts[0];
 }
 
+/* scene_type / scene_model by a hash table of the names (open addressing, each name's first index), made again when
+ * the table changes (scene_models_gen: blob_add counts its adds; nmodels drops at a zone swap): their walks of
+ * strcmp over every class or model ran several times a frame, and once a row at a rebind */
+u32 scene_models_gen;
+#define NAME_SLOTS 1024 /* (more names than 3 / 4 of it: the walk) */
+typedef struct { const void *tab; u32 n, gen; u16 slot[NAME_SLOTS]; } NameTab;
+static u32 name_hash(const char *s)
+{
+    u32 h = 2166136261u;
+    for (; *s; s++) h = (h ^ (u8)*s) * 16777619u; /* FNV-1a */
+    return h ^ h >> 15;
+}
+/* the index of name among n names (name_at(i)), -1 none */
+static int name_find(NameTab *t, const void *tab, u32 n, const char *(*name_at)(const void *, u32), const char *name)
+{
+    if (n > NAME_SLOTS * 3 / 4) {
+        for (u32 i = 0; i < n; i++) if (!strcmp(name_at(tab, i), name)) return (int)i;
+        return -1;
+    }
+    if (t->tab != tab || t->n != n || t->gen != scene_models_gen) {
+        t->tab = tab; t->n = n; t->gen = scene_models_gen;
+        memset(t->slot, 0xFF, sizeof t->slot);
+        for (u32 i = 0; i < n; i++)
+            for (u32 h = name_hash(name_at(tab, i)) % NAME_SLOTS;; h = (h + 1) % NAME_SLOTS) {
+                if (t->slot[h] == 0xFFFF) { t->slot[h] = (u16)i; break; }
+                if (!strcmp(name_at(tab, t->slot[h]), name_at(tab, i))) break; /* the first one stays */
+            }
+    }
+    for (u32 h = name_hash(name) % NAME_SLOTS;; h = (h + 1) % NAME_SLOTS) {
+        if (t->slot[h] == 0xFFFF) return -1;
+        if (!strcmp(name_at(tab, t->slot[h]), name)) return t->slot[h];
+    }
+}
+static const char *type_name_at(const void *tab, u32 i) { return (const char *)tab + 32 * i; }
+static const char *model_name_at(const void *tab, u32 i) { return ((const Model *)tab)[i].name; }
+
 int scene_type(const Scene *s, const char *name)
 {
-    for (u32 i = 0; i < s->ntypes; i++)
-        if (strcmp(s->types + 32 * i, name) == 0)
-            return i;
-    return -1;
+    static NameTab t;
+    return name_find(&t, s->types, s->ntypes, type_name_at, name);
 }
 
+/* by the same hash table over the KCL entries listed in order (a rebind asks "<class>#Move" of every animated
+ * instance); more entries than the table holds: the walk */
+static const char *kcl_name_at(const void *tab, u32 i) { return (const char *)((const u8 *const *)tab)[i]; }
 const u8 *scene_kcl(const Scene *s, const char *name)
 {
+    static const u8 *ent[NAME_SLOTS * 3 / 4];
+    static u32 nent, ent_gen, ent_nkcl;
+    static const Scene *ent_s;
+    static NameTab t;
+    if (ent_s != s || ent_nkcl != s->nkcl || ent_gen != scene_models_gen || !nent) {
+        ent_s = s; ent_nkcl = s->nkcl; ent_gen = scene_models_gen; nent = 0;
+        t.tab = NULL; /* (its table made again) */
+        for (u32 c = 0; c < s->nkcl; c++) {
+            const u8 *q = s->kcl_chunk[c] + 4;
+            for (u32 i = 0, n = *(const u32 *)s->kcl_chunk[c]; i < n; i++) {
+                if (nent < sizeof ent / sizeof ent[0]) ent[nent] = q;
+                nent++;
+                q += 36 + ((*(const u32 *)(q + 32) + 3) & ~3u);
+            }
+        }
+    }
+    if (nent <= sizeof ent / sizeof ent[0]) {
+        int i = name_find(&t, ent, nent, kcl_name_at, name);
+        return i >= 0 ? ent[i] + 36 : NULL;
+    }
     for (u32 c = 0; c < s->nkcl; c++) {
         const u8 *q = s->kcl_chunk[c] + 4;
         for (u32 i = 0, n = *(const u32 *)s->kcl_chunk[c]; i < n; i++) {
@@ -300,8 +358,7 @@ const u8 *scene_kcl(const Scene *s, const char *name)
 
 const Model *scene_model(const Scene *s, const char *name)
 {
-    for (u32 i = 0; i < s->nmodels; i++)
-        if (strcmp(s->models[i].name, name) == 0)
-            return &s->models[i];
-    return NULL;
+    static NameTab t;
+    int i = name_find(&t, s->models, s->nmodels, model_name_at, name);
+    return i >= 0 ? &s->models[i] : NULL;
 }

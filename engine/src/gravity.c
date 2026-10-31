@@ -1,6 +1,7 @@
 #include "gravity.h"
 
 #include <math.h>
+#include <stdio.h>
 
 static float dot(const float a[3], const float b[3]) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
 static void sub(float o[3], const float a[3], const float b[3]) { o[0] = a[0] - b[0]; o[1] = a[1] - b[1]; o[2] = a[2] - b[2]; }
@@ -297,7 +298,7 @@ static int one(const Gravity *g, const float p[3], float v[3])
 
 /* A sphere outside which a gravity is never in range (in_range: distance < range + distant from its point, cube,
  * disk rim or segment), so most gravities of a galaxy are passed over with one distance test. r2 < 0: no bound
- * (unlimited range, or the plane kinds, whose own test is as cheap) */
+ * (unlimited range) */
 #define MAX_BOUNDS 2048
 static const Gravity *bound_of;
 static int bound_n;
@@ -330,8 +331,101 @@ static void bounds(const Gravity *g, int n)
                 r = R + q->p[0] * 0.5f;
             }
         }
+        /* the plane kinds: their own range (a sphere, a box of orthogonal axes, a cylinder), a hair over (rounding) */
+        float s = -1.0f;
+        if (q->kind == GRAV_PLANE && q->range >= 0) s = q->range;
+        else if (q->kind == GRAV_PLANE_BOX) {
+            float a = dot(q->m[0], q->m[0]), b = dot(q->m[1], q->m[1]), c = dot(q->m[2], q->m[2]);
+            float ab = dot(q->m[0], q->m[1]), bc = dot(q->m[1], q->m[2]), ca = dot(q->m[2], q->m[0]);
+            if (ab * ab <= 1e-8f * a * b && bc * bc <= 1e-8f * b * c && ca * ca <= 1e-8f * c * a) s = sqrtf(a + b + c);
+        } else if (q->kind == GRAV_PLANE_CYLINDER && q->p[1] >= 0 && q->p[2] >= 0) {
+            float up[3];
+            split(up, q->m[1]);
+            for (int k = 0; k < 3; k++) bound_c[i][k] += up[k] * q->p[2] * 0.5f;
+            s = sqrtf(q->p[2] * q->p[2] * 0.25f + q->p[1] * q->p[1]);
+        }
+        if (s >= 0) r = s * 1.001f + 10.0f;
         bound_r2[i] = r < 0 ? -1.0f : r * r;
     }
+}
+
+/* The bounds in a hashed grid of GCELL cubes: each bucket lists, ascending, the bounded gravities whose sphere's box
+ * meets a cell hashed there; the unbounded ones (and spheres over GMAXC cells) are listed apart, for every point.
+ * gravity_at walks the merge of the two lists in index order: the same gravities in the same order as a walk over
+ * all of them that passes over those whose sphere misses p (a point in a sphere is in its box, in one of its cells).
+ * The pool full: no grid, the walk over all. */
+#define GCELL 8192.0f
+#define GBUCKETS 256
+#define GMAXC 125
+#define GPOOL 16384
+static unsigned short g_first[GBUCKETS + 1], g_pool[GPOOL], g_always[MAX_BOUNDS];
+static int g_nalways, g_on;
+static int cell_of(float x) { return (int)floorf(x / GCELL); }
+static unsigned bucket_of(int x, int y, int z) { return ((unsigned)x * 73856093u ^ (unsigned)y * 19349663u ^ (unsigned)z * 83492791u) % GBUCKETS; }
+static int sphere_cells(int i, int lo[3], int hi[3]) /* its box's cells, 0 if unbounded or over GMAXC */
+{
+    if (bound_r2[i] < 0) return 0;
+    float r = sqrtf(bound_r2[i]) + 1.0f; /* (a hair over: rounding) */
+    long cells = 1;
+    for (int k = 0; k < 3; k++) {
+        float a = bound_c[i][k] - r, b = bound_c[i][k] + r;
+        if (!(a > -1e9f && b < 1e9f)) return 0;
+        lo[k] = cell_of(a); hi[k] = cell_of(b);
+        cells *= hi[k] - lo[k] + 1;
+    }
+    return cells <= GMAXC;
+}
+static void grid_build(int n)
+{
+    static unsigned short cnt[GBUCKETS], last[GBUCKETS];
+    g_on = 0; g_nalways = 0;
+    if (n > MAX_BOUNDS) return;
+    for (int pass = 0; pass < 2; pass++) { /* count, then fill */
+        for (int b = 0; b < GBUCKETS; b++) { cnt[b] = 0; last[b] = 0xFFFF; }
+        g_nalways = 0;
+        for (int i = 0; i < n; i++) {
+            int lo[3], hi[3];
+            if (!sphere_cells(i, lo, hi)) { g_always[g_nalways++] = (unsigned short)i; continue; }
+            for (int x = lo[0]; x <= hi[0]; x++)
+                for (int y = lo[1]; y <= hi[1]; y++)
+                    for (int z = lo[2]; z <= hi[2]; z++) {
+                        unsigned b = bucket_of(x, y, z);
+                        if (last[b] == i) continue; /* (two of its cells in one bucket) */
+                        last[b] = (unsigned short)i;
+                        if (pass) g_pool[g_first[b] + cnt[b]] = (unsigned short)i;
+                        cnt[b]++;
+                    }
+        }
+        if (!pass) {
+            unsigned t = 0;
+            for (int b = 0; b < GBUCKETS; b++) { g_first[b] = (unsigned short)t; t += cnt[b]; if (t > GPOOL) return; }
+            g_first[GBUCKETS] = (unsigned short)t;
+        }
+    }
+    g_on = 1;
+    printf("gravity grid: %d gravities, %d for every point, %u in buckets\n", n, g_nalways, (unsigned)g_first[GBUCKETS]);
+}
+
+static inline void visit(const Gravity *g, int i, const float p[3], float total[3], int *best, int *any)
+{
+    float v[3];
+    if (g[i].priority < *best || (gravity_off && gravity_off[i]))
+        return;
+    if (i < MAX_BOUNDS && bound_r2[i] >= 0) {
+        float d[3];
+        sub(d, p, bound_c[i]);
+        if (dot(d, d) >= bound_r2[i])
+            return;
+    }
+    if (!one(&g[i], p, v))
+        return;
+    if (g[i].priority > *best) {
+        *best = g[i].priority;
+        total[0] = v[0]; total[1] = v[1]; total[2] = v[2];
+    } else {
+        total[0] += v[0]; total[1] += v[1]; total[2] += v[2];
+    }
+    *any = 1;
 }
 
 int gravity_at(const Gravity *g, int n, const float p[3], float out[3])
@@ -339,28 +433,18 @@ int gravity_at(const Gravity *g, int n, const float p[3], float out[3])
     /* PlanetGravityManager::calcTotalGravityVector: highest priority in range wins, equal priorities add up. */
     float total[3] = {0, 0, 0};
     int best = -1, any = 0;
-    if (g != bound_of || n != bound_n)
+    if (g != bound_of || n != bound_n) {
         bounds(g, n);
-    for (int i = 0; i < n; i++) {
-        float v[3];
-        if (g[i].priority < best || (gravity_off && gravity_off[i]))
-            continue;
-        if (i < MAX_BOUNDS && bound_r2[i] >= 0) {
-            float d[3];
-            sub(d, p, bound_c[i]);
-            if (dot(d, d) >= bound_r2[i])
-                continue;
-        }
-        if (!one(&g[i], p, v))
-            continue;
-        if (g[i].priority > best) {
-            best = g[i].priority;
-            total[0] = v[0]; total[1] = v[1]; total[2] = v[2];
-        } else {
-            total[0] += v[0]; total[1] += v[1]; total[2] += v[2];
-        }
-        any = 1;
+        grid_build(n);
     }
+    if (g_on && p[0] > -1e9f && p[0] < 1e9f && p[1] > -1e9f && p[1] < 1e9f && p[2] > -1e9f && p[2] < 1e9f) {
+        unsigned b = bucket_of(cell_of(p[0]), cell_of(p[1]), cell_of(p[2]));
+        const unsigned short *a = g_always, *ae = g_always + g_nalways, *c = g_pool + g_first[b], *ce = g_pool + g_first[b + 1];
+        while (a < ae || c < ce) /* the two lists merged, in index order */
+            visit(g, c >= ce || (a < ae && *a < *c) ? *a++ : *c++, p, total, &best, &any);
+    } else
+        for (int i = 0; i < n; i++)
+            visit(g, i, p, total, &best, &any);
     float l = sqrtf(total[0] * total[0] + total[1] * total[1] + total[2] * total[2]);
     float inv = l > 0 ? 1.0f / l : 0.0f;
     out[0] = total[0] * inv; out[1] = total[1] * inv; out[2] = total[2] * inv;

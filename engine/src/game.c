@@ -27,6 +27,14 @@
 #include "vmath.h"
 #include "mario_const.h"
 
+/* strcmp with its first characters compared inline: the class names are told apart by strcmp chains (a rebind runs
+ * ~150 a placed object), most of them settled by the first character. The same answer as newlib's (the difference
+ * of the first differing characters, unsigned) */
+static inline int strcmp_first(const char *a, const char *b)
+{
+    return *a != *b ? (unsigned char)*a - (unsigned char)*b : strcmp(a, b);
+}
+#define strcmp(a, b) strcmp_first((a), (b))
 /* MR::startDPDHitSound: ME_DPD_HIT over a BGM with a chord (MR::hasME), else its SE (no CS sound: no remote speaker) */
 static void dpd_hit_sound(void)
 {
@@ -133,7 +141,7 @@ typedef struct {
      * map's push in the last move (the move less mVelocity) */
     int floor, slip_poly, s23, s3C2, s3C4, s3FE, s_dash;
     float s8F0, s280, s8F4;
-    V3 s8F8, s910, s284, s904, s1A8, prev_vel, last_move, s288;
+    V3 s8F8, s910, s284, s904, s1A8, prev_vel, last_move, s288, s350; /* .., _350 (Mario::push) */
     int press, press_t; /* MarioActor::setPress: _39C + 1 (0 none), frames to the game over (_FB8) */
     float press_s;      /* _3B0: his height's scale while pressed */
     /* the modes' Mario fields: MarioBee _406 _408 _76C _770 _774, mMovementStates._11 (the bee's flight on) / _12,
@@ -576,7 +584,7 @@ static void draw_skin(const Model *md, const float m[16], Anim *a)
         else bva_apply(md, a->clip_id >= 0 ? sc->clips[a->clip_id].name : NULL, a->frame);
     }
     bva_key = NULL;
-    if (render_model_visible(md, m)) render_skinned(md, m, anim_drw(a)); /* culled: no draw matrices made */
+    if (render_model_visible(md, m)) render_skinned_visible(md, m, anim_drw(a)); /* culled: no draw matrices made */
 }
 /* a one-shot effect standing on `up` at p */
 static void fx_at(int fx, V3 p, V3 up)
@@ -1289,13 +1297,23 @@ static void mario_play(const char *clip, float speed, int loop)
 
 static V3 row_pos(const Row *r) { return v3(r->pos[0], r->pos[1], r->pos[2]); }
 
-/* SMG placement axes (rotation Z * Y * X, degrees), same as render.c mat_translate_rot_scale */
+/* SMG placement axes (rotation Z * Y * X, degrees), same as render.c mat_translate_rot_scale; kept by the rotation
+ * (its bits: a pure function of it, many rows share one): areas, walkers, rails ask every frame, six sines /
+ * cosines a time */
 static void row_axes(const Row *r, V3 *x, V3 *z)
 {
-    float m[16], one[3] = {1, 1, 1};
-    mat_translate_rot_scale(m, r->pos, r->rot, one);
-    *x = v3(m[0], m[1], m[2]);
-    *z = v3(m[8], m[9], m[10]);
+    static struct { u32 k[3]; int ok; V3 x, z; } c[64];
+    u32 k[3];
+    memcpy(k, r->rot, 12);
+    typeof(&c[0]) e = &c[(k[0] * 2654435761u ^ k[1] * 2246822519u ^ k[2] * 3266489917u) >> 26];
+    if (!e->ok || e->k[0] != k[0] || e->k[1] != k[1] || e->k[2] != k[2]) {
+        float m[16], one[3] = {1, 1, 1};
+        mat_translate_rot_scale(m, r->pos, r->rot, one);
+        e->x = v3(m[0], m[1], m[2]);
+        e->z = v3(m[8], m[9], m[10]);
+        memcpy(e->k, k, 12); e->ok = 1;
+    }
+    *x = e->x; *z = e->z;
 }
 
 static int count_type(const char *name, int per_row_arg0)
@@ -1890,6 +1908,26 @@ static V3 m_bind(V3 center, V3 vel, float r) /* returns the center after the mov
     return pos;
 }
 
+/* MarioActor _2C4 (setBinderOffsetVec; MarioActorGravity): up x 70 on the ground (50 squatting), eased 0.1 a frame to
+ * -gravity x 70 off it. b_floor / b_wall: Binder::storeContactPlane's deepest floor (n . gravity under -0.342) and
+ * wall (|n . gravity| under 0.342) of the last m_bind, -1 none */
+static V3 m_2C4;
+static void m_upd_2C4(const Player *m)
+{
+    if (m->grounded) m_2C4 = vmul(m->up, m->squat ? 50.0f : 70.0f);
+    else m_2C4 = vadd(vmul(m_2C4, 0.9f), vmul(m->up, 7.0f));
+}
+static void bind_contacts(V3 up, int *b_floor, int *b_wall)
+{
+    float fd = -99999.0f, wd = -99999.0f;
+    *b_floor = *b_wall = -1;
+    for (int i = 0; i < b_n; i++) {
+        float d = vdot(tri_n(&b_tri[i]), up);
+        if (fabsf(d) < 0.34202015f) { if (wd < b_dep[i]) { wd = b_dep[i]; *b_wall = i; } }
+        else if (d > 0.0f && fd < b_dep[i]) { fd = b_dep[i]; *b_floor = i; }
+    }
+}
+
 /* --- init ------------------------------------------------------------------------------------------------ */
 
 static void os_init(void);
@@ -1899,9 +1937,13 @@ static const Model *m_wcolumn;
 static void swim_reset(void);
 static const Model *m_freeze_ice;
 
+static void area_types_reset(void);
+static u32 scene_seq; /* game_init counts the scenes (row_list) */
 void game_init(const Scene *s, const unsigned char *blob)
 {
     sc = s;
+    area_types_reset();
+    scene_seq++;
     gd_scene_start(); /* GameDataFunction's scene start holder (the isOnJust checks) */
     mc_table = &MC_TABLES[gd_player_luigi() ? 1 : 0]; /* MarioActor::init2: mConst->changeTable(1) when isPlayerLuigi */
     fx_init(s);
@@ -3813,10 +3855,14 @@ static void railer_place(Inst *in)
 /* SmallStone.cpp (SmallStone / CircleShell / CircleStrawberry): 8 members on a ring of 300 around it, each dropped
  * onto the ground and raised arg0; a spin within 400 of its centre (120 up) breaks them all (star pieces when arg2
  * is set: one each, ponytail for appearStarPiece's burst). They share the plant groups' members (plants) */
+static signed char stone_type[1024]; /* stone_row by type: 0 not yet, 1 no, 2 yes (area_types_reset) */
 static int stone_row(const Row *r)
 {
     const char *n = sc->types + 32 * r->type;
-    return strcmp(n, "SmallStone") == 0 || strcmp(n, "CircleShell") == 0 || strcmp(n, "CircleStrawberry") == 0;
+    if (r->type < 1024 && stone_type[r->type]) return stone_type[r->type] == 2;
+    int s = strcmp(n, "SmallStone") == 0 || strcmp(n, "CircleShell") == 0 || strcmp(n, "CircleStrawberry") == 0;
+    if (r->type < 1024) stone_type[r->type] = (signed char)(1 + s);
+    return s;
 }
 
 static int plant_count(const Row *r) { return stone_row(r) ? 8 : r->arg[0] > 0 ? r->arg[0] : 7; }
@@ -3871,7 +3917,16 @@ static void place_plants(const Inst *in)
     pgroups[row].r = 160.0f + br * r->scale[1]; /* sSize + radius x scale */
 }
 
+static void game_rebind_(void);
+u32 rebind_cycles, rebinds; /* game_rebind's time and count (the route test's perf lines) */
 void game_rebind(void)
+{
+    u32 c0 = cycles();
+    game_rebind_();
+    rebind_cycles += cycles() - c0;
+    rebinds++;
+}
+static void game_rebind_(void)
 {
     const Scene *s = sc;
     m_coin = scene_model(s, "Coin");
@@ -3944,15 +3999,21 @@ void game_rebind(void)
     V3 ride_vel[2] = {flf.inst >= 0 ? insts[flf.inst].hvel : v3(0, 0, 0), coc.inst >= 0 ? insts[coc.inst].hvel : v3(0, 0, 0)};
     int wait_row = coc.wait >= 0 ? insts[coc.wait].row : -1;
     ninsts = 0;
+    int t_note = scene_type(s, "NoteFairy"), t_petari = scene_type(s, "Petari"), t_rockc = scene_type(s, "RockCreator"),
+        t_wan = scene_type(s, "WanwanRolling"), t_wanm = scene_type(s, "WanwanRollingMini"),
+        t_wang = scene_type(s, "WanwanRollingGold"), t_dino = scene_type(s, "DinoPackun"), t_ota = scene_type(s, "OtaKing");
+    static signed char wnk[1024]; /* walker_new_kind by type this rebind: 0 not yet, 1 no, 2 yes */
+    memset(wnk, 0, sizeof wnk);
     for (u32 i = 0; i < s->nobjs; i++) { /* every placed model without behaviour: planets and the rest */
         const Row *r = &s->objs[i];
+        if (r->type < 1024 && !wnk[r->type]) wnk[r->type] = (signed char)(walker_new_kind(s->types + 32 * r->type) >= 0 ? 2 : 1);
         if (r->type == t_coin || r->type == t_pc || r->type == t_piece || r->type == t_kuribo || r->type == t_circle ||
             r->type == t_tako || r->type == t_packun || r->type == t_kote || r->type == t_spider || (r->type == t_mera || r->type == t_imera) ||
             r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly ||
-            r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_stink || r->type == scene_type(s, "NoteFairy") ||
-            r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == scene_type(s, "Petari") || r->type == scene_type(s, "RockCreator") || r->type == scene_type(s, "WanwanRolling") ||
-            r->type == scene_type(s, "WanwanRollingMini") || r->type == scene_type(s, "WanwanRollingGold") ||
-            r->type == scene_type(s, "DinoPackun") || r->type == scene_type(s, "OtaKing") || walker_new_kind(s->types + 32 * r->type) >= 0)
+            r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_stink || r->type == t_note ||
+            r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == t_petari || r->type == t_rockc || r->type == t_wan ||
+            r->type == t_wanm || r->type == t_wang || r->type == t_dino || r->type == t_ota ||
+            (r->type < 1024 ? wnk[r->type] == 2 : walker_new_kind(s->types + 32 * r->type) >= 0))
             continue;
         const char *name = s->types + 32 * r->type;
         const Model *md = scene_model(s, name);
@@ -6561,10 +6622,13 @@ static void os_init(void)
         if (sc->objs[i].type == ty) { ospheres[nospheres].row = i; os_build(&ospheres[nospheres]); nospheres++; }
 }
 
+/* a drawing's angle that turns k radians a frame, within one turn: sinf / cosf of hundreds of radians (frame 2000 on)
+ * take newlib's slow reduction, ~0.4 ms a frame in Good Egg's boss (drawing only: no state reads it) */
+static float draw_angle(float k) { return fmodf(game_frame * k, 6.2831853f); }
 static void draw_oceanspheres(V3 eye, V3 right, V3 cup)
 {
     if (fx_ocean_tex(0) < 0) return;
-    float t1 = -0.1f * game_frame, off = 0.0008f * game_frame;
+    float t1 = draw_angle(-0.1f), off = 0.0008f * game_frame;
     off -= floorf(off);
     static u16 keep[2][3 * 6 * 1024];
     /* the wave's two terms by a point's w1 / w2 (whole numbers 0 .. n): a table a frame instead of two sines a point */
@@ -11364,9 +11428,9 @@ static int swim_update(Player *m); /* (MarioSwim: before update_mario) */
  * (checkWallStick, isEnableStickWall, MarioWall::start / update / startJump, moveWallSlide), MarioMagic.cpp (the ground
  * spin), MarioActor.cpp updateSwingAction / MarioActorPunch.cpp trySpinPunch; constants MC (tools/mario_const.py).
  * The gravity is -up; mJumpVec is hvel + up x vup. m->vel is the frame's move (mVelocity).
- * ponytail: our collision (collide_n) stands in for the Binder / checkGround / checkAllWall: no distance to the ceiling
- * (no ceiling hits, no squat uppercut), the height over the ground is a probe; no 2D, sand, slider, slip up, side step,
- * cliff hold; no _34 (decideInertiaOnIce / decideOnIceAnimation: its setter is not in the decomp); the quad walk blend
+ * The map: MarioActor's Binder, checkGround, checkAllWall, calcFrontFloor, calcShadowPos (see update_mario_).
+ * ponytail: skating, as Rabbit / Teresa Mario keeps the old 50 sphere (collide_n) and its ground; no squat uppercut,
+ * the height over the ground in the air is a probe; no 2D, sand, slider, side step; no _34 (decideInertiaOnIce / decideOnIceAnimation: its setter is not in the decomp); the quad walk blend
  * (基本: WalkSoft / Walk / Run / Wait at sWeightTable) and その場足踏み (Run / Wait) play their heaviest clip */
 static V3 m_cx, m_cy;          /* the camera's axes on the plane under Mario (calcMoveDir) */
 
@@ -11515,6 +11579,21 @@ static int m_check_squat(Player *m, int a1) /* MarioModule::checkSquat: Z (R1) *
     return pad_held(PAD_R1);
 }
 
+/* the stick's margins (mStickMarginYstart / X, mStickMarginXstart / Y): one axis dropped or narrowed while the other is
+ * held far (MarioModule::calcWorldPadDir, Mario::mainMove) */
+static void m_stick_margin(float *px, float *py)
+{
+    float x = *px, y = *py;
+    if (fabsf(y) > MC.mStickMarginYstart) {
+        if (fabsf(x) < MC.mStickMarginX) x = 0;
+        else x = x > 0 ? (x - MC.mStickMarginX) / (1.0f - MC.mStickMarginX) : (x + MC.mStickMarginX) / (1.0f - MC.mStickMarginX);
+    } else if (fabsf(x) > MC.mStickMarginXstart) {
+        if (fabsf(y) < MC.mStickMarginY) y = 0;
+        else y = y > 0 ? (y - MC.mStickMarginY) / (1.0f - MC.mStickMarginY) : (y + MC.mStickMarginY) / (1.0f - MC.mStickMarginY);
+    }
+    *px = x; *py = y;
+}
+
 /* Mario::inputStick: x 1.5, clamped, |stick| under 0.01 is 0, angles within mStickAngleMargin of an axis snap to it */
 static void m_input_stick(Player *m)
 {
@@ -11536,32 +11615,13 @@ static void m_input_stick(Player *m)
     if (m_tower.on) m_sy = 0.0f; /* (Mario::inputStick: mStickPos.y) */
     m->stick_ang0 = m->stick_ang; m->stick_ang = r;
     if (z <= 0.01f) m->neutral = 0; /* _1D */
-    m_pad = vnorm(m_move_dir(m_sx, m_sy));
+    float px = m_sx, py = m_sy; /* calcWorldPadDir: zero for a still stick, else the margins, then calcMoveDir */
+    m_pad = v3(0, 0, 0);
+    if (fabsf(px) >= 0.001f || fabsf(py) >= 0.001f) { m_stick_margin(&px, &py); m_pad = m_move_dir(px, py); }
+    if (vlen(m_pad) > 1e-6f) m_pad = vnorm(m_pad);
 }
 
-/* retainMoveDir: _D once the stick has kept its angle 30 frames (_40E) */
-static void m_retain(Player *m)
-{
-    float ang = atan2f(m_sy, m_sx), diff = fabsf(ang - m->retain_ang);
-    if (diff > 3.14159265f) diff = 6.2831853f - diff;
-    if (m_group_on("その場足踏み")) diff = 1.0f;
-    if (m_clip_on("turn")) diff = 1.0f;
-    float limit = m->land_timer < 2 ? 0.1f : 0.06f;
-    if (m->retain_b) { if (m_sz != 0) m->retain_b = 0; diff = 1.0f; }
-    int retain = !(m->jumping && !m->retain_a) && !(m->jumping && m->wall);
-    m_draw_d = 0;
-    if (diff < limit && m_sz != 0 && retain) {
-        if (!m->retain_t || (m->retain_a && m->jumping)) { m_draw_d = 1; m->retain_t = 0; }
-        else m->retain_t--;
-    } else {
-        if (m->jumping) { if (m_sz != 0) m->retain_a = 0; }
-        else m->retain_a = 1;
-        if (!m->retain_t) m->weak_turn = 0;
-        m->retain_t = 30;
-        if (m_sz == 0) m->retain_b = 1;
-    }
-    m->retain_ang = ang;
-}
+static void m_retain(Player *m);
 
 static int m_enable_turn(const Player *m) /* isEnableTurn */
 {
@@ -12207,7 +12267,12 @@ static const char *m_anim_clip(const char *jp)
 }
 static int m_anim_idx(const char *jp)
 {
-    for (unsigned i = 0; i < sizeof m_anims / sizeof m_anims[0]; i++) if (!strcmp(m_anims[i].jp, jp)) return (int)i;
+    /* the index kept by the name's address (checked again by its text: the table's first such name), the walk over
+     * the table's names ran for every isAnimationRun a frame */
+    static struct { const char *at; int i; } c[64];
+    typeof(&c[0]) e = &c[((u32)jp * 2654435761u) >> 26];
+    if (e->at == jp && !strcmp(m_anims[e->i].jp, jp)) return e->i;
+    for (unsigned i = 0; i < sizeof m_anims / sizeof m_anims[0]; i++) if (!strcmp(m_anims[i].jp, jp)) { e->at = jp; e->i = (int)i; return (int)i; }
     return -1;
 }
 static int m_jp_same(int i) /* the playing clip is m_anims[i]'s animation: by its name, else (mario_play) by its rate */
@@ -12604,27 +12669,7 @@ static void m_try_jump(Player *m) /* tryJump: 1st / 2nd / 3rd jump, or the turn,
 }
 
 static int near0(V3 v);
-static void m_try_drop(Player *m) /* tryDrop: off a ledge (cDropFrontSpeed 2) */
-{
-    m->squat_lock = 1;
-    m_set_jv(m, vmul(m->face, m->walk * 2.0f));
-    if (near0(m->s8F8) && m->s23) { /* sliding: down the ground's slope */
-        V3 side = vcross(vmul(m->up, -1.0f), m->ground_n);
-        side = near0(side) ? side : vnorm(side);
-        m->s8F8 = vcross(m->ground_n, side);
-        if (!near0(m->s8F8)) m->s8F8 = vnorm(m->s8F8);
-    }
-    if (!near0(m->s8F8)) { /* the slide's velocity, its gravity part cut, a lift by the map's last push (up to 8) */
-        V3 jv = vtangent(m->s8F8, m->up);
-        if (vlen(m->prev_vel) > 20.0f) jv = vadd(jv, vmul(m->up, 10.0f));
-        else { jv = vadd(jv, vmul(m->up, fminf(vlen(m->s288), 8.0f))); m->s8F8 = v3(0, 0, 0); }
-        m_set_jv(m, jv);
-    }
-    m->jump_kind = 0;
-    m_proc_jump(m, 1);
-    m->jumping = 1; m->connect = 0; m->digital = 1;
-    if (m->wall) m_stop_walk(m);
-}
+static void m_try_drop(Player *m);
 
 static void m_cancel_tornado(Player *m) /* cancelTornadoJump */
 {
@@ -12821,6 +12866,10 @@ static void m_air_walk(Player *m)
 
 /* procJump: the jump vector moves Mario, then falls at mGravityJumping[kind] x 0.5 (mGravityRatioA) while A is held,
  * the jump is "digital" or he is falling, x 1 once A is let go rising; Karikari clinging x (2 + n) / 2 */
+/* MarioWall (MarioWall.cpp after Petari): mwl._1D its binder-ground flag, _75C (fixWallingTop: the wall's up), the binder's
+ * ground touch this frame (mDrawStates._6, updateBinderInfo), _558 the frame of the last A in a jump (procJump) */
+static struct { int s1D, d6; V3 v75C; unsigned a558; } mwl = {.a558 = 0x80000000u};
+static void m_wall_jump_hit(Player *m);
 static void m_proc_jump(Player *m, int a1)
 {
     if (m->hip) { m_proc_hip(m); return; }
@@ -12836,6 +12885,7 @@ static void m_proc_jump(Player *m, int a1)
         }
     }
     if (!pad_held(PAD_CROSS)) m->keep_jump = 0;
+    if (m_req_jump) mwl.a558 = game_frame; /* checkTrgA: _558 = _37C */
     int rising = m_rising(m);
     int conn = a1 || m->keep_jump || m->digital || !rising || m->jump_kind == 2;
     float gs = conn ? MC.mGravityRatioA : 1.0f;
@@ -12869,96 +12919,15 @@ static void m_proc_jump(Player *m, int a1)
     }
     m->vel = vadd(m_jv(m), bee_add); /* addVelocity(mJumpVec) and the bee's addVelocity(gravity, _770) */
     m->vup -= acc * gs;
-    /* checkWallJumpHit: a long jump into a wall bounces off it (ponytail: no MarioBlown) */
-    if (m->jump_kind == 5 && m->wall) {
-        float into = vdot(m->hvel, m->wall_n);
-        if (into < 0) {
-            m->hvel = vsub(m->hvel, vmul(m->wall_n, into));
-            if (vlen(m->hvel) > 1e-3f) m_front(m, vmul(m->hvel, -1.0f));
-            m->spin_lock = 1; m->air_spin = 0; m->air_lock = 60;
-        }
-    }
+    m_wall_jump_hit(m);
     float max_drop = player_mode == PM_BEE && !m_rising(m) ? MC.mMaxDropSpeed[4] : MC.mMaxDropSpeed[0];
     if (!(m->jump_kind == 13 && m->drop_free) && -m->vup >= max_drop) m->vup = -max_drop;
     m_air_walk(m);
     m->air_timer++;
 }
 
-/* checkWallStick / isEnableStickWall: falling against a wall (not in a hip drop, the spin's first 25 frames, Karikari
- * clinging, the wall left at the same angle) Mario sticks to it. ponytail: the wall contact stands for the 120 probe */
-static void m_check_wall_stick(Player *m)
-{
-    if (!m->jumping || m->grounded || m->hip || !m->wall || m_rising(m) || kari_cling) return;
-    if (m->wall_cancel && vdot(m->wall_cancel_n, m->wall_n) < MC.mWallStickCancelAngle) m->wall_cancel = 0;
-    if (m->wall_cancel) return;
-    if (vdot(m->face, m->wall_n) > 0) return; /* a back wall needs the stick into it */
-    if (m->height < MC.mWallStickGrHeight) return;
-    if (m_clip_on("spin") && m->spin_t < 25) return;
-    if (!m_clip_on("walljump") && !m->slip_front && !(m_sz != 0 && vdot(m_pad, m->wall_n) < -0.5f)) return;
-    m->walling = 1; m->wall_t = 0; m->wall_drop = 0; m->wall_pull = 0;
-    m->wall_jv0 = vnorm(m->hvel); /* initTriangleJump */
-    mario_play("wallkeep", 1.0f, 1);
-    m_pad_vib(0); /* MarioWall::start */
-    m_stop_walk(m);
-    m->jumping = 0; m->hip = 0;
-    m_front(m, vmul(m->wall_n, -1.0f));
-}
-
-/* MarioWall::update: slides down (mWallDropSpeedNormal after mWallStickTime), A kicks off (startJump: the wall's normal
- * x mWallJumpPowerXZ + up x mWallJumpPowerY, mirrored off the way he came in within 15 frames), let go after
- * mWallReleaseTime + mWallStickTime, off the wall or on the ground */
-static int m_wall_update(Player *m)
-{
-    int release = 0;
-    m->wall_t++;
-    if (m->grounded) {
-        if (!m->slip_poly) { m_front(m, m->wall_n); mario_play("land", 1.0f, 0); } /* isOnSlipGround */
-        release = 1;
-    }
-    if (m->wall_t >= MC.mWallReleaseTime + MC.mWallStickTime) release = 1;
-    if (m->wall_t >= 3 && !m->wall) release = 1;
-    if (release) {
-        if (!m->grounded) { m->wall_cancel = 1; m->wall_cancel_n = m->wall_n; m_front(m, vmul(m->wall_n, -1.0f)); }
-        m->vel_after = vmul(m->wall_n, m->slip_poly ? 10.0f : 30.0f);
-        m->walling = 0;
-        return 0;
-    }
-    if (m_req_jump) {
-        V3 v = m->wall_n;
-        float d = vdot(v, vmul(m->wall_jv0, -1.0f));
-        if (m->wall_t < 15 && vlen(m->wall_jv0) > 0 && d < MC.mWallTriJumpMargin && d > 0) {
-            V3 ax = vnorm(vcross(vmul(m->wall_jv0, -1.0f), v));
-            v = rot_axis(v, ax, acosf(d));
-        }
-        m->walling = 0;
-        m->wall_cancel = 1; m->wall_cancel_n = m->wall_n;
-        m_try_wall_jump(m, vadd(vmul(v, MC.mWallJumpPowerXZ), vmul(m->up, MC.mWallJumpPowerY)));
-        m->spin_lock = 0;
-        return 0;
-    }
-    float blend = 0.9f, speed = MC.mWallDropSpeedNormal;
-    int side = m_sz != 0 && vdot(m_pad, m->wall_n) > 0.5f && !m->neutral ? 2 : 0; /* checkStickWallSide (1 counts as 0) */
-    if (side == 2) { if (m->wall_t < 165) m->wall_t = 165; if (!m->wall_pull) m->wall_pull = 1; mario_smoke_stop(SMOKE_WALL_RUB); }
-    else if (m->wall_t >= MC.mWallStickTime) { /* case 0: 壁すべり, スリップ, 共通壁手擦り */
-        if (!m_clip_on("wallkeep")) mario_play("wallslide", 1.0f, 1);
-        mario_smoke(SMOKE_WALL_RUB);
-    } else mario_smoke_stop(SMOKE_WALL_RUB);
-    if (m->wall_pull) m->wall_pull++;
-    if (m->wall_t < MC.mWallStickTime) blend = 1.0f;
-    m->wall_drop = m->wall_drop * blend + speed * (1.0f - blend);
-    m->vel = vmul(m->up, -m->wall_drop);
-    if (m->wall_t >= MC.mWallStickTime && m_clip_is("wallkeep") && mario_anim->loop) mario_play("wallslide", 1.0f, 1);
-    float ratio = m->wall_t < MC.mWallStickTime ? 0.0f : 1.0f - (m->wall_t - MC.mWallStickTime) * MC.mWallSideMoveRatio;
-    V3 c = vnorm(vcross(vmul(m->up, -1.0f), m->wall_n)); /* moveWallSlide */
-    if (m_sz != 0 && vlen(c) > 0) {
-        float d = vdot(c, m_pad);
-        if (fabsf(d) > 0.2f) {
-            d = d < -0.2f ? (0.2f + d) / 0.8f : (d - 0.2f) / 0.8f;
-            m->vel = vadd(m->vel, vmul(c, 10.0f * d * clamp01(ratio)));
-        }
-    }
-    return 1;
-}
+static void m_check_wall_stick(Player *m);
+static int m_wall_update(Player *m);
 
 /* doLanding: the landing clip by the jump, a run on (the stick full, or more than 6 forward kept as walk speed), the
  * hard landing over mHardLandingHeight */
@@ -13080,13 +13049,7 @@ static void m_main_move(Player *m)
         } else dir = m->move_dir;
     } else {
         float x = m_sx, y = m_sy;
-        if (fabsf(y) > MC.mStickMarginYstart) {
-            if (fabsf(x) < MC.mStickMarginX) x = 0;
-            else x = x > 0 ? (x - MC.mStickMarginX) / (1.0f - MC.mStickMarginX) : (x + MC.mStickMarginX) / (1.0f - MC.mStickMarginX);
-        } else if (fabsf(x) > MC.mStickMarginXstart) {
-            if (fabsf(y) < MC.mStickMarginY) y = 0;
-            else y = y > 0 ? (y - MC.mStickMarginY) / (1.0f - MC.mStickMarginY) : (y + MC.mStickMarginY) / (1.0f - MC.mStickMarginY);
-        }
+        m_stick_margin(&x, &y);
         dir = m_move_dir(x, y); dir_set = 1;
         m->sd = m_shadow(m, dir);
     }
@@ -14421,12 +14384,316 @@ static V3 mario_joint_drawn(int j) /* getRealPos: a joint as last calculated (on
     mat_mul(w, m_drawn, mario_anim->world[j]);
     return v3(w[12], w[13], w[14]);
 }
-/* MarioActor::calcCenterPos (_2A0): along his up by the binder's radius, eased to 60 (40 squatting); hanging his Spine1 */
+/* MarioActor::calcCenterPos (_2A0): along his up by the binder's radius, eased to 60 (40 squatting; as Teresa to 100,
+ * the centre 20 over it); hanging his Spine1 */
 static void m_center(Player *m)
 {
     if (hg.on) { mw.c = mario_joint_drawn(10); return; } /* Spine1 */
-    mw.binder_r = m->squat ? 0.8f * mw.binder_r + 0.2f * 40.0f : 0.9f * mw.binder_r + 0.1f * 60.0f;
-    mw.c = vadd(m->pos, vmul(m->up, mw.binder_r));
+    float val = mw.binder_r = m->squat ? 0.8f * mw.binder_r + 0.2f * 40.0f : 0.9f * mw.binder_r + 0.1f * 60.0f;
+    if (player_mode == PM_TERESA) { mw.binder_r = 0.8f * mw.binder_r + 0.2f * 100.0f; val = 20.0f + mw.binder_r; } /* mPlayerMode 6 */
+    mw.c = vadd(m->pos, vmul(m->up, val));
+}
+
+/* retainMoveDir: _D once the stick has kept its angle 30 frames (_40E) */
+static void m_retain(Player *m)
+{
+    float ang = atan2f(m_sy, m_sx), diff = fabsf(ang - m->retain_ang);
+    if (diff > 3.14159265f) diff = 6.2831853f - diff;
+    if (m_group_on("その場足踏み")) diff = 1.0f;
+    if (m_clip_on("turn")) diff = 1.0f; /* ターンブレーキ */
+    if (swimming) diff = 1.0f;
+    if (pad_pressed(PAD_SQUARE) && m->jumping && vdot(m_pad, m->prev_vel) < 0.0f) diff = 1.0f; /* isRequestSpin, _16C */
+    float limit = m->land_timer < 2 ? 0.1f : 0.06f;
+    if (m->retain_b) { if (m_sz != 0) m->retain_b = 0; diff = 1.0f; }
+    /* ponytail: the jump's !isAnimationRun(nullptr) (the Xanime default clip) is not checked */
+    int retain = !(m->jumping && !m->retain_a) && !(m->jumping && mw.w8);
+    m_draw_d = 0;
+    if (diff < limit && m_sz != 0 && retain) {
+        if (!m->retain_t || (m->retain_a && m->jumping)) { m_draw_d = 1; m->retain_t = 0; }
+        else m->retain_t--;
+    } else {
+        if (m->jumping) { if (m_sz != 0) m->retain_a = 0; }
+        else m->retain_a = 1;
+        if (!m->retain_t) m->weak_turn = 0;
+        m->retain_t = 30;
+        if (m_sz == 0) m->retain_b = 1;
+    }
+    m->retain_ang = ang;
+}
+
+enum { WALLC_NOTWALLJUMP = 1, WALLC_NOTWALLSLIP = 2 };
+static int m_stick_wall_side(const Player *m) /* checkStickWallSide */
+{
+    if (m_sz != 0) {
+        V3 n = m_wall_norm(m);
+        if (vdot(m_pad, n) < -0.5f) return 1;
+        if (vdot(m_pad, n) > 0.5f && !m->neutral) return 2;
+    }
+    return 0;
+}
+static int m_wall_is_cancel(Player *m) /* MarioWall::isCancel */
+{
+    if (m->grounded) m->wall_cancel = 0;
+    if (m->wall_cancel && mw.w8 && vdot(m->wall_cancel_n, m_wall_norm(m)) < MC.mWallStickCancelAngle) m->wall_cancel = 0;
+    return m->wall_cancel;
+}
+/* isInhibitWall. ponytail: mDrawStates._2 (a CubeCamera of arg1 1) is not kept */
+static int m_inhibit_wall(void) { return m_check_wall_code(WALLC_NOTWALLJUMP, 1) || m_check_wall_code(WALLC_NOACTION, 1); }
+static int m_fixwall_top(Player *m) /* fixWallingTop: _75C, the wall's up. ponytail: no forceSetHeadVecKeepSide (his head is his up) */
+{
+    V3 n = m_wall_norm(m), side = vcross(n, vmul(m->up, -1.0f));
+    if (vlen(side) < 0.001f) return 0;
+    mwl.v75C = vcross(n, vnorm(side));
+    if (vlen(mwl.v75C) < 0.001f) return 0;
+    mwl.v75C = vnorm(mwl.v75C);
+    return 1;
+}
+static int m_fix_walling(Player *m, int immediate) /* fixWallingPosition: fixWallingDist, then fixWallingDir */
+{
+    if (!(mw.w19 && mw.w8)) {
+        if (mw.w19) {
+            V3 bn = tri_n(&mw.back), p = vadd(mw.p4F4, vmul(bn, 79.0f));
+            m->pos = vadd(m->pos, vmul(bn, vdot(vsub(p, m->pos), bn)));
+            if (!m_fixwall_top(m)) return 0;
+            m->pos = vsub(vadd(mw.p4F4, vmul(bn, 60.0f)), vmul(mwl.v75C, 80.0f));
+        } else if (mw.w8) {
+            if (!m_fixwall_top(m)) return 0;
+            V3 fn = tri_n(&mw.front);
+            if (map_poly(m->pos, vmul(m->face, 100.0f), NULL, NULL) && vdot(m->face, fn) < -0.999f) {
+                V3 p = vsub(vadd(mw.p4E8, vmul(fn, 60.0f)), vmul(mwl.v75C, 80.0f));
+                V3 c = vtangent(vsub(p, m->pos), m->up);
+                if (!near0(c)) {
+                    V3 r = vadd(c, m->s288); /* MarioActor _288 */
+                    if (fabsf(r.x) < fabsf(c.x)) c.x = r.x;
+                    if (fabsf(r.y) < fabsf(c.y)) c.y = r.y;
+                    if (fabsf(r.z) < fabsf(c.z)) c.z = r.z;
+                    m->pos = vadd(m->pos, c); /* addTrans 壁補正 */
+                }
+            }
+        }
+    }
+    /* fixWallingDir: faced against the back wall, else the front one (at once, else blended 0.1) */
+    V3 to;
+    if (mw.w19) to = vmul(tri_n(&mw.back), -1.0f);
+    else if (mw.w8) to = vmul(tri_n(&mw.front), -1.0f);
+    else return 1;
+    if (immediate) m_front(m, to);
+    else { V3 f = m->face; if (blend_sphere(f, to, &f, 0.1f)) m_front(m, f); }
+    return 1;
+}
+/* isEnableStickWall. ponytail: no tornado (_F), MarioActor _468, the ice wall (sensor 0x57) of Ice Mario */
+static int m_enable_stick_wall(Player *m)
+{
+    if (player_mode == PM_TERESA) return 0;
+    if (player_mode == PM_FOO && fo.on) return 0;
+    if (m_wall_is_cancel(m)) return 0;
+    if (!m->jumping || m->grounded) return 0;
+    if (m->hip) return 0;                              /* _B */
+    if (mw.press1E) return 0;                          /* mDrawStates._1E */
+    if (!mw.w8 && !mw.w19) return 0;
+    if (mw.s2 && m_vspeed(m) < MC.mWallStickGrHeight) return 0;
+    if (mw.f15 && mw.f4E0 < MC.mWallStickFrHeight) return 0;
+    if (m_clip_on("spin")) { if (m->spin_t < 25) return 0; } /* 空中ひねり, _945 */
+    else if (m->spin_timer && m->spin_t < 15) return 0;      /* isPunching */
+    if (mw.f15 && mw.s2 && mw.f39 && vdot(vsub(mw.p4A4, mw.shadow_pos), m->up) < MC.mWallStickStepHeight) return 0;
+    if (mw.w19 && vdot(tri_n(&mw.back), vtangent(m_jv(m), m->up)) > 0.0f) return 0;
+    if (m_inhibit_wall()) return 0;
+    if (mw.w8 && angle_d(m, tri_n(&mw.front)) < 80.0f) return 0;
+    if (mw.w19 && angle_d(m, tri_n(&mw.back)) < 80.0f) return 0;
+    if (vlen(vcross(m_wall_norm(m), vmul(m->up, -1.0f))) < 0.001f) return 0;
+    if (m_check_wall_code(WALLC_NOACTION, 1)) return 0;
+    if (m_rising(m)) return 0;
+    if (mw.w19) { if (!m_clip_on("walljump") && m_stick_wall_side(m) != 1) return 0; } /* 壁ジャンプ */
+    else if (!m_clip_on("walljump") && !m->slip_front && m_stick_wall_side(m) != 1) return 0;
+    if (mw.s30) return 0;
+    if (!map_poly(mario_joint_drawn(13), vmul(m->face, mw.w19 ? -120.0f : 120.0f), NULL, NULL)) return 0; /* _2AC */
+    return kari_cling == 0;
+}
+/* checkWallStick, MarioWall::start / initTriangleJump. ponytail: checkWallJumpCode (the barrier / water wall floor codes),
+ * checkBeeStick, the gravity change's _334 */
+static void m_check_wall_stick(Player *m)
+{
+    if (player_mode == PM_BEE) return;
+    if (!m_enable_stick_wall(m)) return;
+    m->walling = 1; m->wall_pull = 0; m->wall_drop = 0; mwl.s1D = 0;
+    mario_play("wallkeep", 1.0f, 1); /* 壁くっつき */
+    m_pad_vib(0);
+    V3 h = vtangent(m_jv(m), m->up);
+    m->wall_jv0 = vlen(h) >= 0.001f ? vnorm(h) : v3(0, 0, 0);
+    m->wall_t = 0;
+    m_stop_walk(m);
+    m->jumping = 0; m->hip = 0;
+    m_fix_walling(m, 1);
+}
+/* MarioWall::startJump: off the wall's normal (turned off the way he came in within 15 frames: mWallTriJumpMargin)
+ * x mWallJumpPowerXZ, up x mWallJumpPowerY. ponytail: mDrawStates._3 (ForbidTriangleJumpCube / CubeCamera 2) not kept */
+static int m_wall_start_jump(Player *m)
+{
+    if (m_inhibit_wall()) return 0;
+    V3 v = m_wall_norm(m);
+    m->wall_cancel_n = v;
+    if (m->wall_t < 15 && !near0(m->wall_jv0)) {
+        float d = vdot(v, vmul(m->wall_jv0, -1.0f));
+        if (d < MC.mWallTriJumpMargin && d > 0.0f) {
+            V3 ax = vcross(vmul(m->wall_jv0, -1.0f), v);
+            if (vlen(ax) > 1e-6f) v = rot_axis(v, vnorm(ax), acosf(d));
+        }
+    }
+    m->walling = 0;
+    m_try_wall_jump(m, vadd(vmul(v, MC.mWallJumpPowerXZ), vmul(m->up, MC.mWallJumpPowerY)));
+    m->wall_cancel = 1;
+    m->spin_lock = 0; /* _2B */
+    return 1;
+}
+/* tryWallPunch on land: off the wall (mWallSpinFlipGround, x mWallSpinFlipAirRatio jumping) and up mWallSpinHopGround
+ * (tryForcePowerJump). ponytail: no 壁ヒット effect, no sendPunch to the wall's sensor, no skate floor code 0x21 */
+static void m_wall_punch(Player *m)
+{
+    if (m->spin_lock || m_check_wall_code(WALLC_NOACTION, 0)) return;
+    m_stop_walk(m);
+    V3 v = vmul(m_wall_norm(m), MC.mWallSpinFlipGround);
+    if (m->jumping) v = vmul(v, MC.mWallSpinFlipAirRatio);
+    m_power_jump(m, vadd(v, vmul(m->up, MC.mWallSpinHopGround)));
+    m->spin_lock = 1; /* _2B */
+    m_pad_vib(2);
+    mario_sound("壁反射"); mario_sound("声スピンキャンセル");
+}
+/* MarioWall::update: the binder's ground (twice running with no move along it lets go), on the ground under 80 lands,
+ * let go after mWallReleaseTime + mWallStickTime or with no front wall from frame 3; A (or a recent A, or as Rabbit)
+ * jumps off; the spin punches off it; slides down _75C (mWallDropSpeedNormal after mWallStickTime), the stick along it
+ * (moveWallSlide). Returns 0 when it ends */
+static int m_wall_update(Player *m)
+{
+    int release = 0;
+    if (kari_cling) { m->walling = 0; return 0; }
+    if ((m->rabbit || game_frame - mwl.a558 < 6) && m_wall_start_jump(m)) return 0;
+    if (mwl.d6) {
+        if (mwl.s1D && vlen(vtangent(m->last_move, m->up)) < 1.0f) release = 1;
+        m->grounded = 1;
+        mwl.s1D = 1;
+    } else mwl.s1D = 0;
+    m->wall_t++;
+    if (m->grounded && !release) {
+        if (m_vspeed(m) < 80.0f) {
+            if (!m->slip_poly) { m_front(m, m_wall_norm(m)); mario_play("land", 1.0f, 0); } /* isOnSlipGround, 着地 */
+            release = 1;
+        } else m->grounded = 0;
+    }
+    if (m->wall_t >= MC.mWallReleaseTime + MC.mWallStickTime) release = 1;
+    if (m->wall_t >= 3 && !mw.w8 && !mw.w32) release = 1;
+    if (release) {
+        if (!m->grounded) { m->wall_cancel = 1; m->wall_cancel_n = m_wall_norm(m); m_front(m, vmul(m->wall_cancel_n, -1.0f)); }
+        m->vel_after = vadd(m->vel_after, vmul(m_wall_norm(m), m->grounded && m->slip_poly ? 10.0f : 30.0f));
+        m->walling = 0;
+        return 0;
+    }
+    if (m_req_jump && m_wall_start_jump(m)) return 0;
+    if (pad_pressed(PAD_SQUARE) && !m->spin_cool) { /* isRequestRush: 空中ひねり, tryWallPunch, setWallCancel */
+        m->spin_lock = 0;
+        m->walling = 0;
+        mario_play("spin", 1.0f, 0);
+        m_wall_punch(m);
+        m->wall_cancel = 1; m->wall_cancel_n = m_wall_norm(m);
+        return 0;
+    }
+    if (!m_fix_walling(m, 0)) { m->wall_cancel = 1; m->wall_cancel_n = m_wall_norm(m); m->walling = 0; return 0; }
+    float blend = 0.9f, speed = MC.mWallDropSpeedNormal;
+    int side = m_stick_wall_side(m);
+    if (side == 1) side = 0;
+    if (side == 2) { if (m->wall_t < 165) m->wall_t = 165; if (!m->wall_pull) m->wall_pull = 1; mario_smoke_stop(SMOKE_WALL_RUB); }
+    else if (m->wall_t >= MC.mWallStickTime) { /* case 0: 壁すべり, スリップ, 共通壁手擦り */
+        if (!m_clip_on("wallkeep")) mario_play("wallslide", 1.0f, 1);
+        mario_sound("スリップ");
+        mario_smoke(SMOKE_WALL_RUB);
+    } else mario_smoke_stop(SMOKE_WALL_RUB);
+    if (m->wall_pull) m->wall_pull++;
+    if (m->wall_t < MC.mWallStickTime) blend = 1.0f;
+    m->wall_drop = m->wall_drop * blend + speed * (1.0f - blend);
+    m->vel = vadd(m->vel, vmul(mwl.v75C, -m->wall_drop)); /* addVelocity(_75C, -_20) */
+    if (m->wall_t >= MC.mWallStickTime && m_clip_is("wallkeep") && mario_anim->loop) mario_play("wallslide", 1.0f, 1);
+    float ratio = m->wall_t < MC.mWallStickTime ? 0.0f : 1.0f - (m->wall_t - MC.mWallStickTime) * MC.mWallSideMoveRatio;
+    V3 c = vcross(vmul(m->up, -1.0f), m_wall_norm(m)); /* moveWallSlide */
+    if (vlen(c) >= 0.001f && m_sz != 0) {
+        c = vnorm(c);
+        float d = vdot(c, m_pad);
+        if (fabsf(d) > 0.2f) {
+            d = d < -0.2f ? (0.2f + d) / 0.8f : (d - 0.2f) / 0.8f;
+            m->vel = vadd(m->vel, vmul(c, 10.0f * d * clamp01(ratio)));
+        }
+    }
+    return 1;
+}
+
+/* tryDrop: off a ledge (cDropFrontSpeed 2); a front / side wall within 80 of his ground place keeps him on the ground,
+ * pushed off it a tenth of the rest. ponytail: mDrawStates._B, the carried move (_184), _340, _428 after the slope
+ * slides, the bee's timers and ショート着地 are not kept */
+static void m_try_drop(Player *m)
+{
+    if (mw.w8) {
+        V3 h = vtangent(vsub(mw.p4E8, mw.ground_pos), m->up), n = tri_n(&mw.front);
+        if (vdot(h, n) < 0.0f && vlen(h) < 80.0f) { m->grounded = 1; m->s350 = vadd(m->s350, vmul(n, (80.0f - vlen(h)) * 0.1f)); return; }
+    }
+    if (mw.w1A) {
+        V3 h = vtangent(vsub(mw.p500, mw.ground_pos), m->up), n = tri_n(&mw.side);
+        if (vdot(h, n) < 0.0f && vlen(h) < 80.0f) { m->s350 = vadd(m->s350, vmul(n, (80.0f - vlen(h)) * 0.1f)); m->grounded = 1; return; }
+    }
+    m->squat_lock = 1;
+    m_set_jv(m, vmul(m->face, m->walk * 2.0f));
+    if (near0(m->s8F8) && m->s23) { /* sliding: down the ground's slope */
+        V3 side = vcross(vmul(m->up, -1.0f), m->ground_n);
+        side = near0(side) ? side : vnorm(side);
+        m->s8F8 = vcross(m->ground_n, side);
+        if (!near0(m->s8F8)) m->s8F8 = vnorm(m->s8F8);
+    }
+    if (!near0(m->s8F8)) { /* the slide's velocity, its gravity part cut, a lift by the map's last push (up to 8) */
+        V3 jv = vtangent(m->s8F8, m->up);
+        if (vlen(m->prev_vel) > 20.0f) jv = vadd(jv, vmul(m->up, 10.0f));
+        else { jv = vadd(jv, vmul(m->up, fminf(vlen(m->s288), 8.0f))); m->s8F8 = v3(0, 0, 0); }
+        m_set_jv(m, jv);
+    }
+    m->jump_kind = 0;
+    m_proc_jump(m, 1);
+    m->jumping = 1; m->connect = 0; m->digital = 1;
+    if (mw.w8) m_stop_walk(m);
+}
+
+/* checkWallJumpHit: a long jump (kind 5) into a front wall (_8) loses its part along the wall's normal; unless the wall
+ * is NoAction that part is turned back, MarioBlown takes a fifth of it and he faces against it (_2B, _402 0, _428
+ * 60). Else falling after 10 frames against a front wall under 80 degrees: the first time 5 off it with no gravity
+ * part (壁はじき, _10._E), then its part cut keeping the length. ponytail: checkWallJumpCode is not ported */
+static int m_blown(Player *m, V3 v);
+static void m_wall_jump_hit(Player *m)
+{
+    if (m->jump_kind == 5) {
+        if (mw.w8) {
+            V3 n = m_wall_norm(m), jv = m_jv(m);
+            float wd = vdot(jv, n);
+            jv = vsub(jv, vmul(n, wd)); /* cutVecElementFromJumpVec */
+            m_set_jv(m, jv);
+            if (m_check_wall_code(WALLC_NOACTION, 1)) return;
+            jv = vsub(jv, vmul(n, wd));
+            m_set_jv(m, jv);
+            m_blown(m, vmul(jv, 0.2f));
+            V3 h = vtangent(jv, m->up);
+            if (vlen(h) >= 0.001f) m_front(m, vmul(vnorm(h), -1.0f));
+            m->spin_lock = 1; m->air_spin = 0; m->air_lock = 60;
+        }
+        return;
+    }
+    if (!m_rising(m) && m->air_timer > 10 && mw.w8 && angle_d(m, tri_n(&mw.front)) < 80.0f) {
+        V3 n = tri_n(&mw.front);
+        if (!m->wall_hit) {
+            m_set_jv(m, vadd(vmul(n, 5.0f), vmul(m->up, m->vup))); /* + the gravity part (cutGravityElementFromJumpVec) */
+            m->wall_hit = 1;
+            m_anim("壁はじき");
+        } else {
+            V3 jv = m_jv(m);
+            float l = vlen(jv);
+            jv = vsub(jv, vmul(n, vdot(jv, n)));
+            if (vlen(jv) > 1e-6f) jv = vmul(vnorm(jv), l);
+            m_set_jv(m, jv);
+        }
+    }
 }
 
 /* checkAllWall: the faces round the centre within 80 (90 swimming), not floors nor ceilings (|n . head| <= 0.5), by
@@ -14815,6 +15082,7 @@ static void m_stop_jump(Player *m) /* stopJump */
     m->hvel = v3(0, 0, 0); m->vup = 0;
     m->jumping = 0; m->hip = 0; m->spin_lock = 0;
 }
+static int m_check_ground(Player *m);
 static void m_check_hang(Player *m) /* checkHang */
 {
     if (hg.timer) return;
@@ -14887,10 +15155,10 @@ static void m_check_hang(Player *m) /* checkHang */
         hg.s1E = 0;
     }
 ground:
-    if (hg.on) /* down to the ground: 1 ahead and up at a time, 10 times at most (updateGroundInfo) */
+    if (hg.on) /* updateGroundInfo (checkGround) until he has ground, 1 ahead and up at a time, 10 times at most.
+                * ponytail: _414 is not kept */
         for (int i = 0; i < 10; i++) {
-            V3 c = vadd(m->pos, vmul(m->up, BODY_RADIUS));
-            if (collide(&c, m->up, BODY_RADIUS)) { m->grounded = 1; return; }
+            if ((m->grounded = m_check_ground(m))) return;
             m->pos = vadd(m->pos, vadd(m->face, m->up));
         }
 }
@@ -15176,7 +15444,7 @@ static void winfo_clear(WInfo *w) /* WaterInfo::clear */
     memset(w, 0, sizeof *w);
     w->surf_n = v3(0, 1, 0); w->edge_d = -1.0f; w->row = -1;
 }
-static int area_shape(const char *name);
+static int area_shape(const char *name), area_type(int t, int *centered);
 /* MR::getWaterAreaObj: the WaterArea p is in (its form's volume), else the ocean (WaterAreaFunction::tryInOceanArea) */
 static int water_obj(WInfo *w, V3 p)
 {
@@ -15257,7 +15525,7 @@ static int water_info(WInfo *w, V3 p, V3 grav, int skip)
         else { w->edge_pos = vadd(vmul(vnorm(e), rad), ctr); w->edge_d = vlen(vsub(w->edge_pos, p)); }
         return 1;
     }
-    int shape = area_shape(sc->types + 32 * r->type);
+    int ctr_, shape = area_type((int)r->type, &ctr_);
     V3 x, z;
     row_axes(r, &x, &z);
     V3 y = vcross(z, x);
@@ -16369,8 +16637,15 @@ static int swim_update(Player *m)
     Hit hh[8];
     int nh = kcl_query(vadd(c, vmul(fo.head, 40.0f)), 40.0f, hh, 8); /* checkHeadPoint */
     for (int i = 0; i < nh; i++) if (vdot(hh[i].n, m->up) < -0.5f) sw_hit_head(m, hh[i].n, vsub(vadd(c, vmul(fo.head, 40.0f)), vmul(hh[i].n, 40.0f - hh[i].dist)));
-    int ground = collide_n(&c, m->up, BODY_RADIUS, &gn, &wn, &wall);
-    m->pos = vsub(c, vmul(m->up, BODY_RADIUS));
+    /* the Binder (radius calcCenterPos's, round his place + _2C4): its deepest floor and wall */
+    m_upd_2C4(m);
+    c = m_bind(vadd(m->pos, m_2C4), m->vel, mw.binder_r);
+    m->pos = vsub(c, m_2C4);
+    int bf, bw, ground;
+    bind_contacts(m->up, &bf, &bw);
+    ground = bf >= 0; wall = bw >= 0;
+    if (ground) gn = tri_n(&b_tri[bf]);
+    if (wall) wn = tri_n(&b_tri[bw]);
     m->grounded = 0;
     if (ground) m->ground_n = gn;
     if (wall) { /* a walkable face ahead: mDrawStates._F, _380 */
@@ -16676,7 +16951,7 @@ static void update_mario_(void)
     }
     /* updateGroundInfo: on his feet (or waiting out mDropWaitTime) he checks his ground before the action */
     V3 p270 = m->pos; /* MarioActor _270: his place before the update */
-    int pgc = !m->walling && !hg.on && !swimming && !m->skate && !m->rabbit && !m->teresa && !dmg.st && !fo.on, landed = 0;
+    int pgc = !swimming && !m->skate && !m->rabbit && !m->teresa && !fo.on, landed = 0;
     if (pgc) {
         int was = m->grounded;
         m->grounded = m_check_ground(m);
@@ -16691,6 +16966,13 @@ static void update_mario_(void)
             landed = 1;
         }
     }
+    /* checkMap's end: sliding on 30 degrees or more, a line from 100 up his ground's normal 150 down the slide (_904)
+     * finds the face ahead (_24, _460) */
+    static int s24;
+    static Tri t460;
+    s24 = 0;
+    if (m->s23 && angle_d(m, m->ground_n) >= 30.0f)
+        s24 = map_poly(vadd(m->pos, vmul(m->ground_n, 100.0f)), vmul(m->s904, -150.0f), NULL, &t460);
     m_retain(m);
     m_swing(m);
     if (m->spin_timer) m->spin_timer--;
@@ -16714,6 +16996,12 @@ static void update_mario_(void)
     else { m_main_move(m); m_update_walk_speed(m); bee_on_ground(m); }
     if (!dmg.st && m->grounded) mw.s30 = mw.s31 = 1; /* actionMain (doFrontStep: MarioFrontStep not ported) */
     m_calc_front_floor(m);
+    if (m->s23 && m->grounded && s24 && slip_polygon(m, tri_attr(&t460) & 0x3F, tri_n(&t460))) { /* Mario::update: the slide
+        * along the face ahead, half its part into it turned up his ground's normal */
+        V3 n = tri_n(&t460);
+        float d = vdot(m->vel, n);
+        m->vel = vadd(vsub(m->vel, vmul(n, d)), vmul(vsub(m->ground_n, n), 0.5f * fabsf(d)));
+    }
     m_update_on_water(m); /* updateOnWater: the water floor codes */
     if (!m->s23) { m->s1A8 = m->vel; m->s3C2 = 0; m->s280 = 0; m->s284 = v3(0, 0, 0); } else m->s3C2++;
     if (m->s3C4) m->s3C4--;
@@ -16726,19 +17014,24 @@ static void update_mario_(void)
         else { m->slip_move = vmul(m->slip_move, MC.mInertiaSlipTurn); m->vel = vadd(m->vel, m->slip_move); }
     }
     if (slipping) slip_frames++;
+    if (!near0(m->s350) && !hg.on) { /* tryPushToVelocity (MarioStatus_Hang: kept out) */
+        if (m->jumping && !m->grounded) {
+            V3 d = vnorm(m->s350);
+            if (vdot(m_jv(m), m->s350) < 0.0f) m_set_jv(m, vsub(m_jv(m), vmul(d, vdot(m_jv(m), d)))); /* cutVecElementFromJumpVec */
+            if (vdot(m->vel, m->s350) < 0.0f) m->vel = vsub(m->vel, vmul(d, vdot(m->vel, d)));
+        } else if (dm_damaging() && m->grounded) m->s350 = vtangent(m->s350, m->up);
+        m->vel = vadd(m->vel, m->s350);
+    }
+    m->s350 = v3(0, 0, 0);
 
     /* MarioActor's Binder (initBinder 60, setBinderOffsetVec _2C4): radius 60 round his place + _2C4, up x 70 on the
-     * ground (50 squatting), eased 0.1 a frame to -gravity x 70 off it; checkGround keeps him on the ground. Other
-     * statuses keep one 50 sphere 50 up. ponytail: _2C4's up is his up (MarioActorGravity blends mHeadVec and _368 by
+     * ground (50 squatting), eased 0.1 a frame to -gravity x 70 off it; checkGround keeps him on the ground. Hanging his
+     * binder is off (MarioHang _F44). Skating, as Rabbit / Teresa he keeps one 50 sphere 50 up. ponytail: _2C4's up is his up (MarioActorGravity blends mHeadVec and _368 by
      * _984), the 0.5 ease on _10._23 / _934 not kept */
-    static V3 b2C4;
     float brad = BODY_RADIUS;
     V3 boff = vmul(m->up, BODY_RADIUS);
-    if (pgc) {
-        if (m->grounded) b2C4 = vmul(m->up, m->squat ? 50.0f : 70.0f);
-        else b2C4 = vadd(vmul(b2C4, 0.9f), vmul(m->up, 7.0f));
-        boff = b2C4; brad = 60.0f;
-    }
+    m_upd_2C4(m);
+    if (pgc) { boff = m_2C4; brad = mw.binder_r; } /* mBinder->mRadius (calcCenterPos) */
     V3 move = vadd(m->vel, m->vel_after), center = vadd(m->pos, boff), pos0 = m->pos;
     if (m->grounded && !m->jumping && !m->walling && !pgc) move = vadd(move, vmul(m->up, -GROUNDING)); /* follow the floor */
     V3 gn = m->up;
@@ -16748,15 +17041,34 @@ static void update_mario_(void)
                                                                    * 150 a frame, thin floors would let it through */
     ghost_through = player_mode == PM_TERESA && m->t418;
     collide_ceil = 0;
-    if (pgc) { /* Binder::bind; the faces hit: walls (the deepest), ceilings */
+    if (pgc && hg.on) { center = vadd(center, move); b_n = 0; m->wall = 0; } /* MarioHang::start: _F44 0, offBind */
+    else if (pgc) { /* Binder::bind; the faces hit: walls (the deepest), ceilings */
         center = m_bind(center, move, brad);
         m->wall = 0;
+        mwl.d6 = 0;
         float wd = -1.0f;
+        int first_ceil = 1;
         for (int i = 0; i < b_n; i++) {
             V3 n = tri_n(&b_tri[i]);
             float d = vdot(n, m->up);
-            if (d <= -0.3f) { collide_ceil = 1; collide_ceil_inst = b_tri[i].inst; }
-            else if (d < WALL_ANGLE_COS && b_dep[i] > wd) { m->wall = 1; wn = n; wall_attr = tri_attr(&b_tri[i]); wd = b_dep[i]; }
+            /* updateBinderInfo: a ground plane (n . gravity under _3C) is mDrawStates._6; a ceiling (n . gravity 0.1 or
+             * more, 0.707 in a jump of kind 10): the first one he moves into (or pressed last frame) over 100 degrees
+             * cuts his jump along its normal (isCeiling: _3A4, _4C8). ponytail: the edge / corner push of a jump's
+             * first ground plane is not ported */
+            if (-d < -0.515f) mwl.d6 = 1;
+            else if (-d >= (m->jump_kind == 10 ? 0.707f : 0.1f)) {
+                V3 jv = m_jv(m);
+                float into = vdot(jv, n);
+                if (first_ceil && (into < 0.0f || mw.press1E) && angle_d(m, n) > 100.0f) {
+                    m_set_jv(m, vsub(jv, vmul(n, into)));
+                    m_pad_vib(0);
+                    first_ceil = 0;
+                    collide_ceil_inst = b_tri[i].inst;
+                }
+                collide_ceil = 1;
+                if (first_ceil) collide_ceil_inst = b_tri[i].inst;
+            }
+            if (d > -0.3f && d < WALL_ANGLE_COS && b_dep[i] > wd) { m->wall = 1; wn = n; wall_attr = tri_attr(&b_tri[i]); wd = b_dep[i]; }
         }
     } else
         for (int s = 0; s < steps && !ground; s++) {
@@ -16775,17 +17087,33 @@ static void update_mario_(void)
         if (vlen(off) > 1e-6f) m->pos = vadd(m_tower.c, vadd(vmul(vnorm(off), m_tower.r - 200.0f), vmul(m_tower.up, h)));
     }
     { /* MarioActor::movement: _288 (the map's push in the move), a push undone half when it flips back, the walk stopped
-       * by a push over twice the move, a slide held back flagged (_10._22). ponytail: Mario::push (_350, the slide's
-       * push back up and the 坂すべり pushes) is not ported */
+       * by a push over twice the move; sliding: held back going up, Mario::push (_350) of the move along his velocity
+       * (and _3BC <= 2 a lift of the push, at most 10), else a slide held back flagged (_10._22), the 坂すべり clips
+       * pushed 5 along / against his front */
         V3 vel = vadd(m->vel, m->vel_after), moved = vsub(m->pos, pos0), last = m->s288;
         m->s288 = vsub(moved, vel);
         float l = vlen(m->s288), ll = vlen(last);
-        if (pgc && l > 1e-4f && ll > 1e-4f && vdot(m->s288, last) / (l * ll) < -0.999f && fabsf(l - ll) < 1.0f)
-            m->pos = vsub(m->pos, vmul(m->s288, 0.5f)); /* isOppositeDirection */
-        if (pgc && l > 0.1f && !m->squat && !near0(vel) && l > 2.0f * (vlen(vsub(pos0, p270)) + vlen(vel))) m_stop_walk(m);
-        if (pgc && m->s23 && !(vlen(vel) < vlen(moved))) {
-            V3 d = near0(m->s8F8) ? m->s8F8 : vnorm(m->s8F8);
-            if (vlen(vel) > 20.0f && vdot(moved, d) < vdot(vel, d) * 0.5f) mgc.s22 = 1;
+        V3 cr = vcross(m->s288, last); /* isOppositeDirection: dot < 0, each cross component within 0.01 */
+        if (pgc && vdot(m->s288, last) < 0.0f && fabsf(cr.x) <= 0.01f && fabsf(cr.y) <= 0.01f && fabsf(cr.z) <= 0.01f &&
+            l >= 0.001f && ll >= 0.001f && fabsf(l - ll) < 1.0f)
+            m->pos = vsub(m->pos, vmul(m->s288, 0.5f));
+        if (pgc && l > 0.1f) {
+            if (!m->squat && !near0(vel) && l > 2.0f * (vlen(vsub(pos0, p270)) + vlen(vel))) m_stop_walk(m);
+            if (m->s23 && vlen(vel) < vlen(moved)) {
+                if (vdot(moved, m->up) > 0.0f) { /* stack_134 . gravity < 0 */
+                    V3 p = vtangent(vel, m->up);
+                    if (near0(p)) p = vtangent(moved, m->up);
+                    if (!near0(p)) m->s350 = vadd(m->s350, vmul(vnorm(p), vlen(moved))); /* push(setLength) */
+                    if (m->air_timer <= 2) m->vup += fminf(l, 10.0f); /* mJumpVec += -gravity x min(|_288|, 10) */
+                }
+            } else if (m->s23) {
+                V3 d = near0(m->s8F8) ? m->s8F8 : vnorm(m->s8F8);
+                if (vlen(vel) > 20.0f && vdot(moved, d) < vdot(vel, d) * 0.5f) {
+                    if (m_anim_on("坂すべり下向きあおむけ")) m->s350 = vadd(m->s350, vmul(m->face, 5.0f));
+                    else if (m_anim_on("坂すべり上向きうつぶせ")) m->s350 = vadd(m->s350, vmul(m->face, -5.0f));
+                    mgc.s22 = 1;
+                }
+            }
         }
     }
     /* writeBackPhyisicalVector: a wall halves the jump's part into it; on the ground walking into one slows the walk */
@@ -16797,7 +17125,7 @@ static void update_mario_(void)
         m->tsi = 0;
         m->walk *= slow;
     }
-    int pg = pgc && !m->walling; /* checkGround decided his ground before the action */
+    int pg = pgc; /* checkGround decided his ground before the action */
     m_pg = pg;
     if (pg) {
         if (m->jumping) m->grounded = 0; /* (a jump from this frame's action) */
@@ -26295,6 +26623,19 @@ static void update_palms(void)
  * every 5..20, until 600 off) found within 150 every 5..10 frames, or within 500 of his spin. Velocity damped 0.95;
  * its up the group's (arg2: against the gravity, else (0, 1, 0)). ponytail: one Swim pose per group (no per-fish
  * rate), drawn within 5000 of the camera only (Petari hides past 300 m), 16 fish a group at most */
+/* the rows of some classes, in order, listed once a scene (a walk over every row a frame for a handful); n -1: more
+ * than it holds (the callers walk every row then) */
+
+typedef struct { u32 seq; int n; short row[64]; } RowList;
+static const RowList *row_list(RowList *l, const int *t, int nt)
+{
+    if (l->seq == scene_seq + 1) return l;
+    l->seq = scene_seq + 1; l->n = 0;
+    for (u32 row = 0; row < sc->nobjs && l->n >= 0; row++)
+        for (int k = 0; k < nt; k++)
+            if ((int)sc->objs[row].type == t[k]) { if (l->n < 64) l->row[l->n++] = (short)row; else l->n = -1; break; }
+    return l;
+}
 #define MAX_FGROUPS 24
 #define FG_FISH 16
 enum { FI_WANDER, FI_APPROACH, FI_ESCAPE };
@@ -26303,18 +26644,19 @@ static struct {
     V3 pos[FG_FISH], vel[FG_FISH], front[FG_FISH], off[FG_FISH], esc[FG_FISH];
     float dappr[FG_FISH]; int tsearch[FG_FISH], tmove[FG_FISH], nrv[FG_FISH];
 } fgs[MAX_FGROUPS];
-static int fg_type(const char *n)
-{
-    static const char *const fg[6] = {"FishGroupA", "FishGroupB", "FishGroupC", "FishGroupD", "FishGroupE", "FishGroupF"};
-    for (int i = 0; i < 6; i++) if (!strcmp(n, fg[i])) return i;
-    return -1;
-}
 static void update_fishes(void)
 {
+    static const char *const fg[6] = {"FishGroupA", "FishGroupB", "FishGroupC", "FishGroupD", "FishGroupE", "FishGroupF"};
+    int fgt[6]; /* their classes (by index: no name compared a row) */
+    for (int i = 0; i < 6; i++) fgt[i] = scene_type(sc, fg[i]);
     V3 mp = mario->pos;
-    for (u32 row = 0; row < sc->nobjs; row++) {
+    static RowList rl;
+    const RowList *l = row_list(&rl, fgt, 6);
+    for (int li = 0, nl = l->n < 0 ? (int)sc->nobjs : l->n; li < nl; li++) {
+        u32 row = l->n < 0 ? (u32)li : (u32)l->row[li];
         const Row *r = &sc->objs[row];
-        int ty = fg_type(sc->types + 32 * r->type);
+        int ty = -1;
+        for (int i = 0; i < 6 && ty < 0; i++) if ((int)r->type == fgt[i]) ty = i;
         if (ty < 0 || !row_shown((int)row) || r->path < 0 || !scene_blob_g) continue;
         u32 rn = 0; int cl = 0;
         const float *rail = find_rail(scene_blob_g, r->zone, r->path, &rn, &cl);
@@ -26428,9 +26770,13 @@ static int gg_next(int k, int b) /* updatePosInfo */
 static void gu_set(int k, int b, int n) { ggs[k].nrv[b] = n; ggs[k].step[b] = -1; }
 static void update_gulls(void)
 {
-    for (u32 row = 0; row < sc->nobjs; row++) {
+    int t = scene_type(sc, "SeaGullGroup"); /* its class by index: no name compared a row */
+    static RowList rl;
+    const RowList *l = row_list(&rl, &t, 1);
+    for (int li = 0, nl = l->n < 0 ? (int)sc->nobjs : l->n; li < nl; li++) {
+        u32 row = l->n < 0 ? (u32)li : (u32)l->row[li];
         const Row *r = &sc->objs[row];
-        if (strcmp(sc->types + 32 * r->type, "SeaGullGroup") || !row_shown((int)row) || r->path < 0 || !scene_blob_g) continue;
+        if ((int)r->type != t || !row_shown((int)row) || r->path < 0 || !scene_blob_g) continue;
         u32 rn = 0; int cl = 0;
         const float *rail = find_rail(scene_blob_g, r->zone, r->path, &rn, &cl);
         if (!rail) continue;
@@ -27665,15 +28011,27 @@ static int area_centered(const char *name)
     for (unsigned i = 0; i < sizeof c / sizeof c[0]; i++) if (!strcmp(name, c[i])) return 1;
     return 0;
 }
+/* area_shape and area_centered of a class, kept by its type (area_types_reset at each scene): area_inside runs for
+ * the light, camera, switch, water... areas every frame, and its names' searches cost more than its test */
+static signed char area_type_shape[1024], area_type_centered[1024]; /* 0 not yet, else the answer + 2 */
+static void area_types_reset(void) { memset(area_type_shape, 0, sizeof area_type_shape); memset(stone_type, 0, sizeof stone_type); }
+static int area_type(int t, int *centered)
+{
+    const char *n = sc->types + 32 * t;
+    if (t < 0 || t >= 1024) { *centered = area_centered(n); return area_shape(n); }
+    if (!area_type_shape[t]) { area_type_shape[t] = (signed char)(area_shape(n) + 2); area_type_centered[t] = (signed char)area_centered(n); }
+    *centered = area_type_centered[t];
+    return area_type_shape[t] - 2;
+}
 static int area_inside(const Row *r, V3 p)
 {
     V3 d = vsub(p, row_pos(r)), x, z;
-    int shape = area_shape(sc->types + 32 * r->type);
+    int centered, shape = area_type((int)r->type, &centered);
     if (shape == 2) return vlen(d) < 500.0f * r->scale[0];
     row_axes(r, &x, &z);
     V3 y = vcross(z, x);
     float h = vdot(d, y);
-    if (shape == 0 && area_centered(sc->types + 32 * r->type)) h += 500.0f * r->scale[1]; /* createCenterOriginCube (Type_Cube1) */
+    if (shape == 0 && centered) h += 500.0f * r->scale[1]; /* createCenterOriginCube (Type_Cube1) */
     if (h < 0.0f || h > (shape == 1 ? 500.0f : 1000.0f) * r->scale[1]) return 0; /* AreaFormCylinder: 500 x scale_y */
     if (shape == 1) return vlen(vtangent(d, y)) < 500.0f * r->scale[0];
     return fabsf(vdot(d, x)) < 500.0f * r->scale[0] && fabsf(vdot(d, z)) < 500.0f * r->scale[2];
@@ -27778,8 +28136,8 @@ static void update_switches(void)
                 se_start(yel ? SE_OJ_YELLOWCHIP_APPEAR : SE_OJ_BLUECHIP_APPEAR, NULL);
             }
             int n = 0, got = 0;
-            for (u32 k = 0; k < sc->nobjs; k++)
-                if (sc->objs[k].arg[0] == r->arg[0] && strcmp(sc->types + 32 * sc->objs[k].type, chip) == 0) {
+            for (u32 k = 0, ct = (u32)scene_type(sc, chip); k < sc->nobjs; k++) /* the chip class by index */
+                if (sc->objs[k].type == ct && sc->objs[k].arg[0] == r->arg[0]) {
                     n++;
                     got += row_dead[k];
                 }
@@ -27800,11 +28158,10 @@ static void update_switches(void)
                 se_start(SE_OJ_FLIP_PANEL_APPEAR, &op.x);
             }
             int n = 0, back = 0;
+            int tf = scene_type(sc, "FlipPanel"), tr = scene_type(sc, "FlipPanelReverse"); /* by index, not by name a row */
             for (u32 k = 0; k < sc->nobjs; k++) {
                 const Row *q = &sc->objs[k];
-                const char *qn = sc->types + 32 * q->type;
-                if (q->group != r->group || q->zone != r->zone ||
-                    (strcmp(qn, "FlipPanel") != 0 && strcmp(qn, "FlipPanelReverse") != 0))
+                if (q->group != r->group || q->zone != r->zone || ((int)q->type != tf && (int)q->type != tr))
                     continue;
                 n++;
                 back += row_step[k] & FLIP_BACK;
@@ -35005,9 +35362,16 @@ static void basis_matrix_cs(float m[16], V3 pos, V3 up, V3 fwd, float c, float s
     m[8] = z.x; m[9] = z.y; m[10] = z.z;
     m[12] = pos.x; m[13] = pos.y; m[14] = pos.z;
 }
+/* with the cosine and sine kept by angle (its bits): 0 for most callers, a plant's or a pickup's own angle frame
+ * after frame; cosf / sinf of the same angle give the same answer */
 static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle)
 {
-    basis_matrix_cs(m, pos, up, fwd, cosf(angle), sinf(angle));
+    if (angle == 0.0f) { basis_matrix_cs(m, pos, up, fwd, 1.0f, angle); return; } /* cosf(+-0) 1, sinf(+-0) +-0 */
+    static struct { u32 a; float c, s; } k[512];
+    union { float f; u32 u; } b = {angle};
+    typeof(&k[0]) e = &k[(b.u * 0x9E3779B1u) >> 23];
+    if (e->a != b.u) { e->a = b.u; e->c = cosf(angle); e->s = sinf(angle); } /* (0 never comes here: zeroed is empty) */
+    basis_matrix_cs(m, pos, up, fwd, e->c, e->s);
 }
 
 /* a walker's up against gravity, kept while it stands still (NonActive ones, waiting ones): one gravity_at per
@@ -35498,7 +35862,7 @@ void game_draw(void)
             continue;
         }
         if (in->shoot) { /* spinning about its y, grown by k */
-            float k, rot[16], cm[16], a = game_frame * 0.17453293f;
+            float k, rot[16], cm[16], a = draw_angle(0.17453293f);
             V3 p = shoot_pos(in, &k);
             if (k <= 0.0f || row_dead[in->row]) continue;
             mat_identity(rot);
@@ -35712,7 +36076,7 @@ void game_draw(void)
     }
     for (int i = 0; m_piece && i < MAX_SHOTS; i++)
         if (shots[i].t) {
-            basis_matrix(m, shots[i].pos, up_at(shots[i].pos, v3(0, 1, 0)), shots[i].vel, game_frame * 0.5f);
+            basis_matrix(m, shots[i].pos, up_at(shots[i].pos, v3(0, 1, 0)), shots[i].vel, draw_angle(0.5f));
             render_model(m_pieces[shots[i].col], m, 0x60, 0xD0, 0xF0);
         }
     for (int i = 0; i < nkuribo; i++) {
@@ -36078,24 +36442,24 @@ void game_draw(void)
     for (int k = 0; k < norocks; k++) { /* OtaRocks' coconuts and fire balls */
         for (int b = 0; m_coco && b < 4; b++) {
             if (!orocks[k].ball[b].state) continue;
-            basis_matrix(m, orocks[k].ball[b].pos, orocks[k].ball[b].up, orocks[k].ball[b].vel, game_frame * 0.3f);
+            basis_matrix(m, orocks[k].ball[b].pos, orocks[k].ball[b].up, orocks[k].ball[b].vel, draw_angle(0.3f));
             render_model(m_coco, m, 0x80, 0x80, 0x80);
         }
         for (int f = 0; m_fireball2 && f < 3; f++) {
             if (!orocks[k].fire[f].alive) continue;
-            basis_matrix(m, orocks[k].fire[f].pos, orocks[k].fire[f].up, orocks[k].fire[f].vel, game_frame * 0.4f);
+            basis_matrix(m, orocks[k].fire[f].pos, orocks[k].fire[f].up, orocks[k].fire[f].vel, draw_angle(0.4f));
             render_model(m_fireball2, m, 0x80, 0x80, 0x80);
         }
     }
     if (ota.row >= 0) { /* its coconuts (SpinX), fire balls, fire bubbles */
         for (int b = 0; m_coco && b < OTA_BALLS; b++) {
             if (!ota.ball[b].state) continue;
-            basis_matrix(m, ota.ball[b].pos, ota.ball[b].up, ota.ball[b].vel, game_frame * 0.3f);
+            basis_matrix(m, ota.ball[b].pos, ota.ball[b].up, ota.ball[b].vel, draw_angle(0.3f));
             render_model(m_coco, m, 0x80, 0x80, 0x80);
         }
         for (int i = 0; m_fireball2 && i < OTA_FIRES; i++) {
             if (!ota.fire[i].alive) continue;
-            basis_matrix(m, ota.fire[i].pos, ota.fire[i].up, ota.fire[i].vel, game_frame * 0.4f);
+            basis_matrix(m, ota.fire[i].pos, ota.fire[i].up, ota.fire[i].vel, draw_angle(0.4f));
             render_model(m_fireball2, m, 0x80, 0x80, 0x80);
         }
         for (int i = 0; m_firebubble && i < OTA_BUBBLES; i++) {
@@ -36144,7 +36508,7 @@ void game_draw(void)
     }
     if (m_note) for (int i = 0; i < nnotes; i++) { /* NoteFairy notes, turning 8 degrees a frame */
         if (notes[i].alive != 1) continue;
-        basis_matrix(m, notes[i].pos, up_at(notes[i].pos, v3(0, 1, 0)), v3(1, 0, 0), game_frame * 0.1396263f);
+        basis_matrix(m, notes[i].pos, up_at(notes[i].pos, v3(0, 1, 0)), v3(1, 0, 0), draw_angle(0.1396263f));
         render_model(m_note, m, 0x80, 0x80, 0x80);
     }
     draw_waterplants();
