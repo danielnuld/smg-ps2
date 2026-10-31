@@ -96,6 +96,29 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   galaxies) fits all 76 zones (tightest PhantomGalaxy/1 TeresaHouseZone, 119 KB left; OceanPhantomCave/1 now 6541 of
   7155 KB) and AstroGalaxy 1-5 / OceanPhantomCave 1 went to a smaller ratio (simpler static models in the Observatory:
   look at it after the repack). engine/test/run.sh now tests the tree it lives in and strips the SRCS lines' CR.
+- Release repack (agent-release2, 2026-10-30 / 31): out/packs backed up to out/packs-backup-2026-10-30 (all but music).
+  With main's tools at cf026b7: lyt.py (menus.bin 598 KB with IconAButton / PointerGuidance, subs.bin 143 KB with
+  CinemaFont26), slice_all.py (resident.bin 3.99 MB with the torch effects, resident_luigi.bin, all 136 scenarios;
+  AstroGalaxy / OceanPhantomCave / PhantomGalaxy again with #35's room: `zone_fit.py out/packs` lists none),
+  out/wt-sound/music/* copied into out/packs/music (7 .pcm, staffroll one-shot, 74 .rhy), every sound pack and the
+  shared sound.bin rebuilt with main's sound.py (ME data). Logs: out/release_*.log.
+  Coverage (tools/coverage.ps1 -Elf out/wt-release-cover.elf, one galaxy per PCSX2 lock; failed runs' logs kept in
+  out/cover_logs): 115 / 123 ok (EpilogueDemoStage now left out: only reached with its demo sequence, `ending` test).
+  Not ok: CannonFleet 1-5 hang in game_init after the "talk:" line with main's engine (cf026b7; the pre-#24 engine
+  boots them: a regression from the Mario PR #24, also with out/wt-mario-route.elf); KoopaJrShipLv1 1 (Mario lands at
+  the start, (-28500 538 -28200), and falls through to BlackHoleCube 38 in plain play too: the PhantomShipBridge row
+  127 draws raised; its Move part's matrix was seen not following the joint's MoveA end pose; open); PhantomGalaxy 6 /
+  BattleShip 1 / CannonFleet 1 (before the hang) are the cover test's landing (a black hole, a JumpBeamer's rings, a
+  DeathCube edge at -7892 -8066 -237), not port bugs found. Fixed on the way (this branch): the scene logic array
+  counted without FallsCube (HeavenlyBeach 1-5, HoneyBeeKingdom 3 / 5 crashed at boot), the death area line prints
+  Mario's position. Seen and handed on: EggStar 1's own sound pack (10 MEs) crashed at boot (jump to 0 once
+  SMG_galaxy01_strm.rhy loads; its ME table zeroed: fine) on the #30 engine; with main's engine and the final packs it
+  boots and routes. The pack region is now 13568 KB with main's ELF (13824 when ROOM 9.1e6 was measured): the
+  tightest zones (PhantomGalaxy 1 TeresaHouseZone 119 KB left) still loaded in the coverage run, keep an eye on it.
+  Route EggStar 1-4 on main's engine and the final packs: 2, 3, 4 get their star; 1 crashes at boot with the route
+  ELF (the same ME jump to 0: it depends on the ELF's layout, the cover ELF booted it), with its ME table zeroed it
+  routes to the star at f 3781 as before. Release disc: build.sh plain ... FileSelect/1 disc, then main's disc.py
+  (takes the .rhy) -> out/smg-ps2.iso.
 
 ## Console release (2026-10-23 / 24)
 
