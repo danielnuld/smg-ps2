@@ -260,7 +260,7 @@ typedef struct {
     const unsigned char *railer; /* map part on a rail: its PATH entry; moves along it (update_railers) */
     u8 rwork;        /* RailMoveObj _D0: its rail mover worked last frame (update_railers' StageEffect SEs) */
     int press;       /* RailMoveObjPress (RGTowerPressGroundA, ReverseGravityRoomPressGroundA / B): ATYPE_MAP_OBJ_PRESS */
-    int talkcls;     /* SignBoard 1, Tico 2, Kinopio 3: update_talkers */
+    int talkcls;     /* SignBoard 1, Tico 2, Kinopio 3, ..., TicoStarRing 7: update_talkers */
     u32 lv[2];       /* its level sounds' handles (Tico's wait / float) */
     const Model *md_bloom; /* its "<model>Bloom" model (PlanetMap::initBloomModel, createModelObjBloomModel) or NULL */
     int otamagma;    /* OtaKingMagma's collision (initCollisionParts "OtaKingMagma"): drawn with OtaKing (ota) */
@@ -927,6 +927,9 @@ static int row_shown(int i)
 }
 
 /* The row's object is gone for good: its dead switch goes on */
+/* TicoStarRing::init: mGalaxyName by arg0 (getJMapInfoArg0NoInit over 0) */
+static const char *const ring_galaxy[4] = {"TamakoroExLv2Galaxy", "SurfingLv2Galaxy", "CubeBubbleExLv2Galaxy", "PeachCastleFinalGalaxy"};
+static int ring_arg(const Row *r) { return r->arg[0] < 0 ? 0 : r->arg[0]; }
 static void row_kill(int i)
 {
     row_dead[i] = 1;
@@ -2003,8 +2006,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         star_wait[i] = strcmp(s->types + 32 * s->objs[i].type, "PowerStar") ? 0 : a >= 0 ? a + 1 : a == -2 ? -1 : 0;
     }
     for (u32 i = 0; i < s->nobjs; i++) { /* TicoStarRing::init: dead unless its challenge galaxy (arg0) has appeared */
-        static const char *const ring_galaxy[4] = {"TamakoroExLv2Galaxy", "SurfingLv2Galaxy", "CubeBubbleExLv2Galaxy", "PeachCastleFinalGalaxy"};
-        int a = s->objs[i].arg[0] < 0 ? 0 : s->objs[i].arg[0]; /* getJMapInfoArg0NoInit over 0 */
+        int a = ring_arg(&s->objs[i]);
         if (strcmp(s->types + 32 * s->objs[i].type, "TicoStarRing") || a >= 4) continue;
         row_dead[i] = !gd_galaxy_appear(ring_galaxy[a]);
         printf("TicoStarRing row %u (%s): %s\n", i, ring_galaxy[a], row_dead[i] ? "dead" : "out");
@@ -4063,7 +4065,7 @@ void game_rebind(void)
         in->trapeze = strcmp(name, "Trapeze") == 0;
         in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
         in->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 || strcmp(name, "KinopioAstro") == 0 ? 3 :
-                      strcmp(name, "ButlerMap") == 0 ? 4 : strcmp(name, "Butler") == 0 ? 5 : lg_cls(name) ? 6 : 0;
+                      strcmp(name, "ButlerMap") == 0 ? 4 : strcmp(name, "Butler") == 0 ? 5 : lg_cls(name) ? 6 : strcmp(name, "TicoStarRing") == 0 ? 7 : 0;
         in->press = strcmp(name, "RGTowerPressGroundA") == 0 || strcmp(name, "ReverseGravityRoomPressGroundA") == 0 ||
                     strcmp(name, "ReverseGravityRoomPressGroundB") == 0 || in->dossun || in->onimasu;
         in->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 : 0;
@@ -8878,6 +8880,7 @@ typedef struct {
     u8 talk, balloon;            /* mMessageInfo.mTalkType (history may zero it), mBalloonType */
     s8 b_flag;                   /* mMessageInfo._B */
     int arg;                     /* mTagArg (an int) */
+    const u16 *sarg;             /* mTagArg as a string (setMessageArg(wchar_t*): the string tag's text) */
     u16 hist[16];
     int nhist;
     int (*event)(int t, u32 v);  /* mEventFunc; kill: mKillFunc */
@@ -9137,6 +9140,7 @@ static const u8 tk_colors[12][3] = {{255, 255, 255}, {220, 130, 130}, {80, 170, 
                                     {180, 110, 200}, {255, 190, 190}, {110, 243, 70}, {120, 255, 255}, {255, 255, 80},
                                     {251, 188, 250}, {190, 190, 200}};
 typedef struct { float x, y, sx, sy, cs, alpha; int r, g, b, shadow, arg, draw; const TkAlpha *ac; } TkWriter;
+static const u16 *tk_sarg; /* the string message argument of the talker being formed / drawn */
 static const u16 *tk_player_name(void)
 {
     static u16 fallback[] = {'M', 'a', 'r', 'i', 'o', 0};
@@ -9147,10 +9151,10 @@ static const u16 *tk_player_name(void)
 static float tk_write(TkWriter *w, const u16 *s, int *lines, int *count, int *wait)
 {
     float x0 = w->x, x = x0, y = w->y, wmax = 0, size = 1.0f;
-    int ci = 0, wt = 0, nl = 1, col = 0;
+    int ci = 0, wt = 0, nl = 1, col = 0, scount = 0; /* scount: the string argument's characters counted (formed in) */
     const u16 *stack = NULL;
     while (s) {
-        if (!*s) { if (stack) { s = stack; stack = NULL; continue; } break; }
+        if (!*s) { if (stack) { s = stack; stack = NULL; scount = 0; continue; } break; }
         int code = *s;
         if (code == 0x1A) {
             int g = s[1], ty = s[2];
@@ -9161,6 +9165,7 @@ static float tk_write(TkWriter *w, const u16 *s, int *lines, int *count, int *wa
             if (g == 4) { size = ty == 0 ? 0.75f : ty == 2 ? 1.5f : 1.0f; continue; }
             if (g == 0xFF && ty == 0) { col = par[0] < 12 ? par[0] : 0; continue; } /* system colour */
             if (g == 5 && ty == 0 && !stack) { stack = s; s = tk_player_name(); ci += 3; continue; } /* player name */
+            if (g == 7 && !stack && tk_sarg) { stack = s; s = tk_sarg; scount = 1; continue; } /* exeStringGroup: the string argument */
             if (g == 6) { /* number: the message argument */
                 char num[12];
                 int n = snprintf(num, sizeof num, "%d", w->arg);
@@ -9207,7 +9212,7 @@ static float tk_write(TkWriter *w, const u16 *s, int *lines, int *count, int *wa
             tk_quad(x + gl->left * w->sx * size, y, gl->w * w->sx * size, gl->h * w->sy * size, rgba, tk_ttex, gl->u, gl->v, gl->w, gl->h);
         }
         if (gl) x += (gl->cw * size + w->cs) * w->sx;
-        if (!stack) ci++;
+        if (!stack || scount) ci++;
     }
     if (x - x0 > wmax) wmax = x - x0;
     if (lines) *lines = nl;
@@ -9290,6 +9295,7 @@ static struct { int nrv, step, read, plain; float x, y; } tk_abtn; /* nrv: BL_DE
 static void tk_former(TkBalloon *b, const u16 *page) /* TalkTextFormer::formMessage + initTagProcessorRecursive */
 {
     b->page = page;
+    tk_sarg = talkers[b->talker].sarg;
     TkWriter w = {0};
     int count, wait;
     w.sx = w.sy = 1.0f;
@@ -9395,15 +9401,16 @@ static TkBalloon *tk_get_balloon(const Talker *t) /* TalkBalloonHolder::getBallo
 
 /* --- TalkState and TalkDirector --- */
 enum { TS_BASE, TS_NORMAL, TS_SHORT, TS_EVENT };
-enum { TD_WAIT, TD_PREP, TD_TALK, TD_NEXT, TD_TERM };
+enum { TD_WAIT, TD_PREP, TD_TALK, TD_NEXT, TD_TERM, TD_SLCT };
+static int tk_yesno = -1; /* MR::isYesNoSelected / isYesNoSelectedYes: -1 none, 0 No, 1 Yes (YesNoController) */
 static struct {
     int nrv, step, msgctrl, c3C, c40, c44, demo, f4C, f4D, f4E, f50, f58, f59;
     int st, st_kind, st_msgid, s10, s14, s1C, pages; /* mTalkState: its talker, kind, mMessageID and fields */
     int cam_on;                                         /* the camera startCamera began: 1 talk, 2 multi-actor */
     TkBalloon *bl;
 } td = {.msgctrl = -1, .c3C = -1, .c40 = -1, .c44 = -1, .st = -1};
-static int talk_demo(void) { return td.demo == 1 && td.st >= 0 && (td.nrv == TD_TALK || td.nrv == TD_NEXT); }
-static int talk_system(void) { return td.st >= 0 && (td.nrv == TD_TALK || td.nrv == TD_NEXT) && talkers[td.st].talk != 1; } /* isSystemTalking */
+static int talk_demo(void) { return td.demo == 1 && td.st >= 0 && (td.nrv == TD_TALK || td.nrv == TD_SLCT || td.nrv == TD_NEXT); }
+static int talk_system(void) { return td.st >= 0 && (td.nrv == TD_TALK || td.nrv == TD_SLCT || td.nrv == TD_NEXT) && talkers[td.st].talk != 1; } /* isSystemTalking */
 static int talk_active(void) { return td.st >= 0 && td.nrv == TD_TALK && td.st_kind != TS_SHORT; } /* a balloon waiting for A */
 
 static int ts_lost(int p) { return p < 0 || p != td.st || tk_message_id(&talkers[td.st]) != td.st_msgid; }
@@ -9654,9 +9661,31 @@ static void td_exe_talk(void)
         if (!ts_talk()) return;
         tk_read(&talkers[k]);
     }
-    ts_clos(); /* (a select talk: no selector, it goes on as Yes would after rootNodeSel) */
+    if (tk_select(&talkers[k])) { td_set(TD_SLCT); return; }
+    ts_clos();
     td.f50 = 0;
     if (talkers[k].root_auto && !ts_self(td.c44)) tk_root_pst(&talkers[k]);
+    td_set(TD_NEXT);
+    td_exe_next();
+}
+/* TalkDirector::exeSlct: the yes / no selector (appearYesNoSelector), at its choice rootNodeSel and rootNodePre.
+ * ponytail: no YesNoLayout (the SelectButton layout and Select_<branch>_Yes / _No are not converted): A answers Yes */
+static void td_exe_slct(void)
+{
+    int k = td.st;
+    Talker *t = &talkers[k];
+    if (td.step == 1) { tk_yesno = -1; se_start(SE_SM_TALKBLN_OPEN, NULL); }
+    t->state = 3;
+    if (td.step > 1 && pad_pressed(PAD_CROSS)) { tk_yesno = 1; se_start(SE_SY_TALK_SELECT_YES, NULL); }
+    if (tk_yesno < 0) return;
+    ts_clos();
+    td.f50 = 1;
+    if (t->root_auto) { /* rootNodeSel: forwardFlowNode, forwardCurrentBranchNode, recordTempFlowNode */
+        tk_forward(t);
+        if (t->cur != TK_NONE && tk_node[t->cur].type == 2) tk_branch(t, tk_yesno);
+        t->flow = t->cur;
+        tk_root_pre(t, 1);
+    }
     td_set(TD_NEXT);
     td_exe_next();
 }
@@ -9696,6 +9725,7 @@ static void update_talk_director(void)
         else { talkers[td.st].state = 0; td.st = -1; td_set(TD_WAIT); }
         break;
     case TD_TALK: td_exe_talk(); break;
+    case TD_SLCT: td_exe_slct(); break;
     case TD_NEXT: td_exe_next(); break;
     case TD_TERM:
         if (!td.f58 && !ts_term(td.msgctrl)) break;
@@ -9758,7 +9788,8 @@ static int talk_row_label(int row, char *out) /* the TALK entry of a row: its <z
         if (tk_ctl[i].row == row) { strcpy(out, tk_ctl[i].label); return 1; }
     return 0;
 }
-static int tico_kill(int k, u32 v) { (void)v; if (talkers[k].row >= 0) row_kill(talkers[k].row); return 1; } /* killFunc: Meta */
+/* Tico::killFunc / setNerveMeta: Meta (row_step: its steps from 1, update_talkers) */
+static int tico_kill(int k, u32 v) { (void)v; if (talkers[k].row >= 0 && !row_step[talkers[k].row]) row_step[talkers[k].row] = 1; return 1; }
 static int butler_branch(int k, u32 v); /* Butler::messageBranchFunc (the dome's section) */
 static int butler_talk_free(int row);   /* the Butler in its Wait nerve (no demo, no star piece reaction) */
 static int luigi_talk_free(int row);    /* LuigiNPC in a talking nerve (its section) */
@@ -9768,7 +9799,7 @@ static void update_talkers(void)
     if (!tk_nctl) return;
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
-        int sign = in->talkcls == 1, tico = in->talkcls == 2;
+        int sign = in->talkcls == 1, tico = in->talkcls == 2 || in->talkcls == 7; /* 7: TicoStarRing (a Tico) */
         if (!in->talkcls || !row_shown(in->row)) continue;
         char lab[32];
         if (!talk_row_label(in->row, lab)) continue;
@@ -9779,6 +9810,12 @@ static void update_talkers(void)
         if (!t->root_auto) { /* onRootNodeAutomatic (NPCActor::initTalkCtrl); Butler::initForAstroDome: registerBranchFunc */
             t->root_auto = 1;
             if (tico) t->kill = tico_kill;
+            if (in->talkcls == 7) { /* TicoStarRing::init: setMessageArgToCurrentGalaxyName(mGalaxyName) */
+                char gl[48];
+                int a = ring_arg(&sc->objs[in->row]);
+                snprintf(gl, sizeof gl, "GalaxyName_%s", a < 4 ? ring_galaxy[a] : "unknown");
+                t->sarg = msg_get(gl);
+            }
             if (in->talkcls == 5) t->branch = butler_branch;
             if (in->talkcls == 6) { t->event = luigi_event; t->branch = luigi_branch; } /* LuigiNPC::init: registerBranchFunc / EventFunc */
             if (in->talkcls == 3 && sc->objs[in->row].arg[0] == 2 && !strcmp(sc->types + 32 * sc->objs[in->row].type, "KinopioAstro"))
@@ -9798,10 +9835,20 @@ static void update_talkers(void)
             w->lv[1] = se_level(SE_SM_LV_TICO_FLOAT, &m[12], w->lv[1]);
             if (w->lv[1]) se_volpitch(w->lv[1], 0.2f, 1.0f);
         }
-        if (in->talkcls == 4) { /* ButlerMap::exeTalk: at its talk's end the map (obj_arg0: the Grand Galaxy's) */
+        if (tico && row_step[in->row]) { /* Tico::exeMeta: Metamorphosis, at its end SE_SM_METAMORPHOSE_SMOKE and kill */
+            unsigned short *ms = &row_step[in->row];
+            if (*ms == 1 && !obj_play(in, "metamorphosis", 0, 0)) *ms = 0xFFFF; /* no clip: at once */
+            else if (*ms > 1 && (*ms == 0xFFFF || !in->anim || in->anim->done)) {
+                se_start(SE_SM_METAMORPHOSE_SMOKE, &m[12]); row_kill(in->row);
+                printf("tico row %d: metamorphosis over, killed\n", in->row);
+            }
+            if (*ms < 0xFFFF) ++*ms;
+        } else if (in->talkcls == 7) { /* TicoStarRing::exeWait: at its talk's end, Yes chosen: setNerveMeta */
+            if (talk_near_at_end(k) && tk_yesno == 1) row_step[in->row] = 1; /* tryTalkSelectLeft */
+        } else if (in->talkcls == 4) { /* ButlerMap::exeTalk: at its talk's end the map (obj_arg0: the Grand Galaxy's) */
             if (talk_near_at_end(k)) menu_galaxy_map(sc->objs[in->row].arg[0] > 0);
         } else if (tico && sc->objs[in->row].arg[1] == 3) { /* Tico::exeTalk: at its talk's end Meta (gone) */
-            if (talk_near_at_end(k)) { se_start(SE_SM_METAMORPHOSE_SMOKE, &m[12]); row_kill(in->row); } /* exeMeta */
+            if (talk_near_at_end(k)) row_step[in->row] = 1; /* setNerve(Meta) */
         } else talk_near(k); /* exeWait: tryTalkNearPlayer (Tico / Kinopio: ...AndStartTalkAction) */
     }
 }
@@ -10246,6 +10293,7 @@ static void talk_draw(void)
         Talker *t = &talkers[b->talker];
         tk_balloon_pos(t);
         if (t->sz > 0) continue;
+        tk_sarg = t->sarg;
         float a = tk_fade(b);
         if (b->fade) a = 0;
         TkWriter w = {0};
@@ -10260,6 +10308,7 @@ static void talk_draw(void)
     if (tk_bev.nrv != BL_DEAD && tk_bev.page) { /* TalkBalloonEvent: WinBalloon 570 x 120 at (0, 144), its text (-16, 144) */
         float a = tk_fade(&tk_bev);
         lay_draw("TalkBalloonEvent", -1, a, 0, 0);
+        tk_sarg = talkers[tk_bev.talker].sarg;
         tk_text_box(tk_bev.page, tk_hx(-16 - 240), tk_hy(144 + 50), 100 * TK_KY, a, &tk_bev.ac, talkers[tk_bev.talker].arg, 0);
         if (tk_abtn.nrv != BL_DEAD && tk_abtn.plain) tk_draw_abtn(tk_hx(253), tk_hy(64 + 49));
     }
@@ -10325,6 +10374,16 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
                 break;
             }
     }
+    static int ring_out;
+    if (row < 0 && TALK_CLS == 7 && !ring_out++) { /* the TicoStarRings wait for their galaxy to appear: the first one out */
+        int ty = scene_type(sc, "TicoStarRing");
+        for (u32 i = 0; i < sc->nobjs; i++)
+            if ((int)sc->objs[i].type == ty && row_dead[i]) {
+                row_dead[i] = 0; sw_changed = 1;
+                printf("talk test: TicoStarRing row %u out" "\n", i);
+                break;
+            }
+    }
     if (row < 0 && frame % 120 == 0) printf("talk test f %d: no talker of class %d" "\n", frame, TALK_CLS);
     if (row < 0 && TALK_CLS == 6 && frame % 120 == 0) { /* LuigiNPC's model is in its zone's full pack: Mario put by him */
         int ty = scene_type(sc, "LuigiNPC");
@@ -10346,8 +10405,8 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
     if (phase == 0 && (TALK_CLS != 1 ? t > 360 : test_walk_to(vadd(p, vmul(z, 170.0f)), 60.0f))) { phase = 1; t = 0; }
     if (phase == 1 && t > 25 && (t - 25) % 45 < 5) pad_force = PAD_CROSS;
     if (frame % 30 == 0)
-        printf("talk test f %d: phase %d sign row %d, mario %d from it, director %d, balloon %d, abtn %d\n", frame, phase,
-               in->row, (int)vlen(vsub(mario->pos, p)), td.nrv, tk_bsign.nrv, tk_abtn.nrv);
+        printf("talk test f %d: phase %d sign row %d, mario %d from it, director %d, balloon %d, abtn %d, yes/no %d, step %d\n", frame, phase,
+               in->row, (int)vlen(vsub(mario->pos, p)), td.nrv, tk_bsign.nrv, tk_abtn.nrv, tk_yesno, row_step[in->row]);
     return in->row;
 }
 
@@ -29330,11 +29389,12 @@ static void update_npc_turn(void) /* the NPCs' wait nerves: tryStartTalkAction /
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
         if (!in->npc || !row_shown(in->row) || (in->dnpc == 3 && ros_demo)) continue;
+        if ((in->talkcls == 2 || in->talkcls == 7) && row_step[in->row]) continue; /* a Tico's Meta nerve */
         const NpcTurn *t = &npc_turns[in->npc - 1];
         V3 p = v3(in->m[12], in->m[13], in->m[14]), to = vsub(mario->pos, p);
         float d = vlen(to);
         to = d > 1e-6f ? vmul(to, 1.0f / d) : in->nf;
-        int talking = td.st >= 0 && talkers[td.st].row == in->row && (td.nrv == TD_TALK || td.nrv == TD_NEXT);
+        int talking = td.st >= 0 && talkers[td.st].row == in->row && (td.nrv == TD_TALK || td.nrv == TD_SLCT || td.nrv == TD_NEXT);
         NpcTurn mt;
         npc_mode(t, &sc->objs[in->row], &mt);
         t = &mt;
