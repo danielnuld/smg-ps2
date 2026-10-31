@@ -88,6 +88,38 @@ int main(void)
     gravity_off = off;
     assert(gravity_at(two, 2, (float[3]){0, 0, 0}, v) && near3(v, 1, 0, 0));
     gravity_off = 0;
+    { /* the grid (n <= 2048) against the walk over all (n > 2048: none): 300 point / disk / cube / plane (sphere, box,
+       * cylinder) gravities spread over a galaxy, the same answers at points anywhere and near them; the walk's array
+       * padded with gravities of priority -5 (never taken) */
+        static Gravity many[2049];
+        static float want[3000][4], pts[3000][3];
+        static const int kinds[6] = {GRAV_POINT, GRAV_DISK, GRAV_CUBE, GRAV_PLANE, GRAV_PLANE_BOX, GRAV_PLANE_CYLINDER};
+        unsigned seed = 1;
+#define RND(a, b) ((a) + ((b) - (a)) * ((seed = seed * 1103515245u + 12345u) >> 8 & 0xFFFF) / 65535.0f)
+        for (int i = 0; i < 300; i++) {
+            int kind = kinds[i % 6];
+            float s = RND(100, 1500), pr = RND(0, 3), rg = RND(200, 4000);
+            float x = RND(-60000, 60000), y = RND(-20000, 20000), z = RND(-60000, 60000);
+            many[i] = mk(kind, kind == GRAV_CUBE ? 63 : kind == GRAV_PLANE_BOX ? 3 : kind == GRAV_PLANE_CYLINDER ? 0 : 2,
+                         (int)pr, rg, s, s * 0.5f, s, x, y, z);
+            if (kind == GRAV_PLANE_CYLINDER) { many[i].p[1] = s; many[i].p[2] = 2 * s; }
+        }
+        for (int i = 300; i < 2049; i++) many[i] = mk(GRAV_POINT, 0, -5, 0, 1, 1, 1, 1e8f, 0, 0);
+        for (int k = 0; k < 3000; k++) {
+            if (k & 1) { pts[k][0] = RND(-70000, 70000); pts[k][1] = RND(-25000, 25000); pts[k][2] = RND(-70000, 70000); continue; }
+            const Gravity *q = &many[k % 300];
+            for (int a = 0; a < 3; a++) pts[k][a] = q->m[3][a] + RND(-6000, 6000);
+        }
+        for (int k = 0; k < 3000; k++) want[k][3] = (float)gravity_at(many, 2049, pts[k], want[k]);
+        int hits = 0;
+        for (int k = 0; k < 3000; k++) {
+            int ok = gravity_at(many, 300, pts[k], v);
+            assert(ok == (int)want[k][3] && v[0] == want[k][0] && v[1] == want[k][1] && v[2] == want[k][2]);
+            hits += ok;
+        }
+        printf("gravity grid: 3000 points, %d with gravity, the same as the walk over all\n", hits);
+#undef RND
+    }
     puts("test_gravity ok");
     return 0;
 }

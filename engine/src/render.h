@@ -28,6 +28,8 @@ void render_skinned(const Model *md, const float world[16], const float (*drw)[1
 /* render_model / render_skinned would draw it: not wholly outside the view (their culling; a skinned draw can skip
  * making its draw matrices) */
 int render_model_visible(const Model *md, const float world[16]);
+/* render_skinned for a draw render_model_visible just passed (same model and world): its culling not done twice */
+void render_skinned_visible(const Model *md, const float world[16], const float (*drw)[16]);
 void render_group_tint(const Model *md, u8 r, u8 g, u8 b);
 /* the light lit materials are drawn with from here on (LightFunction::loadActorLightInfo): two lights at world
  * positions (each draw takes its direction from the instance), their colours and the ambient, 0..1 */

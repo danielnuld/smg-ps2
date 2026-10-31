@@ -177,10 +177,12 @@ static qword_t *tex_packets;     /* per texture 8 qwords (GIF tag + TEX0, TEX1, 
 static int cur_tex;
 static u64 test_z;               /* TEST with the depth test only */
 
-void mat_identity(float m[16])
+void mat_identity(float m[16]) /* stored one by one: memset's call costs more than the 16 stores */
 {
-    memset(m, 0, 64);
-    m[0] = m[5] = m[10] = m[15] = 1.0f;
+    m[0] = 1.0f; m[1] = 0.0f; m[2] = 0.0f; m[3] = 0.0f;
+    m[4] = 0.0f; m[5] = 1.0f; m[6] = 0.0f; m[7] = 0.0f;
+    m[8] = 0.0f; m[9] = 0.0f; m[10] = 1.0f; m[11] = 0.0f;
+    m[12] = 0.0f; m[13] = 0.0f; m[14] = 0.0f; m[15] = 1.0f;
 }
 
 void mat_mul_c(float out[16], const float a[16], const float b[16]) /* the plain C one (mat_mul's check) */
@@ -237,6 +239,29 @@ void mat_mul(float out[16], const float a[16], const float b[16])
     if ((u32)b & 15) { memcpy(B, b, 64); pb = B; }
     if ((u32)out & 15) { mat_mul_vu0(R, pa, pb); memcpy(out, R, 64); }
     else mat_mul_vu0(out, pa, pb);
+}
+
+static void scale_cols(float m[16], float s);
+/* mat_mul then scale_cols(out, s) (a skinned draw's matrices: columns 0-2 x the model's quantisation), in one go on
+ * VU0 when all three are aligned */
+static void mat_mul_scale3(float *out, const float *a, const float *b, float s)
+{
+    if (((u32)out | (u32)a | (u32)b) & 15) { mat_mul(out, a, b); scale_cols(out, s); return; }
+    __asm__ volatile(
+        "qmtc2 %3, $vf9\n"
+        "lqc2 $vf1, 0(%1)\n lqc2 $vf2, 16(%1)\n lqc2 $vf3, 32(%1)\n lqc2 $vf4, 48(%1)\n"
+        "lqc2 $vf5, 0(%2)\n lqc2 $vf6, 16(%2)\n lqc2 $vf7, 32(%2)\n lqc2 $vf8, 48(%2)\n"
+        "vmulax.xyzw $ACC, $vf1, $vf5x\n vmadday.xyzw $ACC, $vf2, $vf5y\n"
+        "vmaddaz.xyzw $ACC, $vf3, $vf5z\n vmaddw.xyzw $vf5, $vf4, $vf5w\n"
+        "vmulax.xyzw $ACC, $vf1, $vf6x\n vmadday.xyzw $ACC, $vf2, $vf6y\n"
+        "vmaddaz.xyzw $ACC, $vf3, $vf6z\n vmaddw.xyzw $vf6, $vf4, $vf6w\n"
+        "vmulax.xyzw $ACC, $vf1, $vf7x\n vmadday.xyzw $ACC, $vf2, $vf7y\n"
+        "vmaddaz.xyzw $ACC, $vf3, $vf7z\n vmaddw.xyzw $vf7, $vf4, $vf7w\n"
+        "vmulax.xyzw $ACC, $vf1, $vf8x\n vmadday.xyzw $ACC, $vf2, $vf8y\n"
+        "vmaddaz.xyzw $ACC, $vf3, $vf8z\n vmaddw.xyzw $vf8, $vf4, $vf8w\n"
+        "vmulx.xyzw $vf5, $vf5, $vf9x\n vmulx.xyzw $vf6, $vf6, $vf9x\n vmulx.xyzw $vf7, $vf7, $vf9x\n"
+        "sqc2 $vf5, 0(%0)\n sqc2 $vf6, 16(%0)\n sqc2 $vf7, 32(%0)\n sqc2 $vf8, 48(%0)\n"
+        : : "r"(out), "r"(a), "r"(b), "r"(((union { float f; u32 u; }){s}).u) : "memory");
 }
 
 /* SMG placement: translation, then rotation Z * Y * X (degrees), then scale. */
@@ -927,9 +952,14 @@ void render_light(const RenderLight *l) { light = l; }
 /* the light matrix of a matrix `w` (local -> world) at m[16..27]: per light the direction from the instance to the
  * light (world), into w's local space (w^T d, normalised: w is a rotation times a scale), x 1 / 127 (the normals'
  * scale); columns x, y, z of (light 0, light 1). ponytail: one direction per instance, not per vertex */
+/* the light matrix cleared by stores (memset's call costs more for 12 floats) */
+static inline void zero12(float *m)
+{
+    m[0] = m[1] = m[2] = m[3] = m[4] = m[5] = m[6] = m[7] = m[8] = m[9] = m[10] = m[11] = 0.0f;
+}
 static void light_matrix(float *m, const float w[16], const float at[3])
 {
-    memset(m + 16, 0, 48);
+    zero12(m + 16);
     if (!light)
         return;
     for (int k = 0; k < 2; k++) {
@@ -956,7 +986,7 @@ static void light_dirs(float dl[2][3], const float w[16], const float at[3])
 }
 static void light_matrix_drw(float *m, const float drw[16], const float dl[2][3])
 {
-    memset(m + 16, 0, 48);
+    zero12(m + 16);
     for (int k = 0; k < 2; k++) {
         float v[3];
         for (int i = 0; i < 3; i++)
@@ -1094,6 +1124,7 @@ static inline u32 cy_(void) { u32 c; __asm__ volatile("mfc0 %0, $9" : "=r"(c)); 
 u32 prof_draw, prof_dcalls, prof_dculled; /* EE cycles in draw_model, its calls, those culled (profiling) */
 u32 prof_x[8]; /* ad hoc probes (main.c prints them in the bench) */
 static void draw_model_(const Model *md, const float world[16], const float (*drw)[16]);
+static int cull_passed; /* render_skinned_visible */
 static void draw_model(const Model *md, const float world[16], const float (*drw)[16])
 {
     u32 c0 = cy_();
@@ -1213,7 +1244,7 @@ static void draw_model_(const Model *md, const float world[16], const float (*dr
     if (!md->vu_ngroups)
         return;
     float mv[16], pvw[16] __attribute__((aligned(16)));
-    if (model_culled(md, world, mv))
+    if (!(cull_passed && drw) && model_culled(md, world, mv))
         return;
     if (!pv_ok) { mat_mul(pv, proj, view); pv_ok = 1; }
     mat_mul(pvw, pv, world);
@@ -1280,10 +1311,9 @@ static void draw_model_(const Model *md, const float world[16], const float (*dr
             for (u32 i = 0; i < m; i++) { /* each draw matrix once a draw, though several groups use it */
                 u32 di = sg->drw[i];
                 if (di < DRW_CACHE && dstamp[di] == dseq) { memcpy(gm[i], dcache[di], sizeof gm[i]); continue; }
-                mat_mul(gm[i], pvw, drw[di]);
-                scale_cols(gm[i], md->qscale);
+                mat_mul_scale3(gm[i], pvw, drw[di], md->qscale);
                 if (md->lit) {
-                    if (!light) memset(gm[i] + 16, 0, 48);
+                    if (!light) zero12(gm[i] + 16);
                     else {
                         if (!have_dl) { light_dirs(dl, world, world + 12); have_dl = 1; }
                         light_matrix_drw(gm[i], drw[di], (const float (*)[3])dl);
@@ -1414,6 +1444,13 @@ void render_group_tint(const Model *md, u8 r, u8 g, u8 b)
 void render_skinned(const Model *md, const float world[16], const float (*drw)[16])
 {
     draw_model(md, world, drw);
+}
+/* (cull_passed: draw_model_ skips its culling, a skinned draw reads no mv) */
+void render_skinned_visible(const Model *md, const float world[16], const float (*drw)[16])
+{
+    cull_passed = 1;
+    draw_model(md, world, drw);
+    cull_passed = 0;
 }
 
 /* 3x5 bitmap font as GS sprites (no texture, no VRAM). Digits, upper-case letters and a few signs. */
@@ -1787,8 +1824,8 @@ void render_mesh(const float (*pos)[3], const float (*uv)[2], int nvert, const u
 
 void render_mesh_c(const float (*pos)[3], const float (*uv)[2], int nvert, const u16 *idx, int ntri, u16 tex, int blend, u32 rgba)
 {
-    static float msx[MESH_MAX], msy[MESH_MAX];
-    static u32 msz[MESH_MAX];
+    /* each vertex's XYZ2 and UV once (a vertex is in ~6 triangles: their conversions were made a triangle) */
+    static u64 mxyz[MESH_MAX], muv[MESH_MAX];
     static u8 mok[MESH_MAX];
     const TexEntry *e = tex == NO_TEX ? NULL : tex_scene->tex[tex].e; /* NO_TEX: flat, the colour alone */
     if (nvert > MESH_MAX) nvert = MESH_MAX;
@@ -1800,12 +1837,16 @@ void render_mesh_c(const float (*pos)[3], const float (*uv)[2], int nvert, const
         mok[v] = zv >= NEAR && zv <= FAR;
         if (!mok[v]) continue;
         float k = 2048.0f / zv;
-        msx[v] = 2048.0f + shake_x + proj[0] * xv * k;
-        msy[v] = 2048.0f + shake_y + proj[5] * yv * k;
-        mok[v] = msx[v] >= 0 && msx[v] <= 4095 && msy[v] >= 0 && msy[v] <= 4095;
-        msz[v] = (u32)(((proj[10] * zv + proj[14]) / zv + 1.0f) * (float)(Z_MAX / 2));
+        float sx = 2048.0f + shake_x + proj[0] * xv * k;
+        float sy = 2048.0f + shake_y + proj[5] * yv * k;
+        mok[v] = sx >= 0 && sx <= 4095 && sy >= 0 && sy <= 4095;
+        u32 sz = (u32)(((proj[10] * zv + proj[14]) / zv + 1.0f) * (float)(Z_MAX / 2));
+        mxyz[v] = GS_SET_XYZ((int)(sx * 16), (int)(sy * 16), sz);
     }
     mesh_same = 0;
+    if (e)
+        for (int v = 0; v < nvert; v++)
+            muv[v] = GS_SET_UV((int)(uv[v][0] * e->w * 16) & 0x3FFF, (int)(uv[v][1] * e->h * 16) & 0x3FFF);
     for (int t0 = 0; t0 < ntri; t0 += 40) { /* 40 triangles a GIF packet */
         int n = ntri - t0 < 40 ? ntri - t0 : 40;
         if (packet2_get_qw_count(vif[cur]) + 16 + TEXP + 6 * 3 * n + 8 > PACKET_QW)
@@ -1820,9 +1861,8 @@ void render_mesh_c(const float (*pos)[3], const float (*uv)[2], int nvert, const
             const u16 *ix = idx + 3 * t;
             if (ix[0] >= nvert || ix[1] >= nvert || ix[2] >= nvert || !mok[ix[0]] || !mok[ix[1]] || !mok[ix[2]]) continue;
             for (int v = 0; v < 3; v++) {
-                const float *q = e ? uv[ix[v]] : NULL;
-                if (e) AD(GS_SET_UV((int)(q[0] * e->w * 16) & 0x3FFF, (int)(q[1] * e->h * 16) & 0x3FFF), GS_REG_UV);
-                AD(GS_SET_XYZ((int)(msx[ix[v]] * 16), (int)(msy[ix[v]] * 16), msz[ix[v]]), GS_REG_XYZ2);
+                if (e) AD(muv[ix[v]], GS_REG_UV);
+                AD(mxyz[ix[v]], GS_REG_XYZ2);
             }
         }
         AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 0), GS_REG_ZBUF);
