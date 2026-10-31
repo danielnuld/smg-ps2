@@ -1786,6 +1786,50 @@ int main(void)
             if (frame >= 150 && frame % 60 == 0) game_test_npc_turn((int)frame);
         }
 #endif
+#ifdef HANACHAN_TEST
+    {   /* frames from Mario free (the flight in over) + 150 */
+        static u32 f0;
+        u32 mf = frame;
+        if (!f0 && mf > 30 && game_test_free()) f0 = mf;
+        u32 frame = f0 ? mf - f0 + 150 : 0;
+        if (frame == 200 || frame == 860) printf("hanachan test f %u: trample row %d\n", frame, game_test_hanachan(0));
+        if (frame == 760) printf("hanachan test f %u: spin row %d\n", frame, game_test_hanachan(1));
+        if (frame >= 200 && frame <= 1100 && frame % 20 == 0) printf("hanachan test f %u: nerve %d\n", frame, game_hanachan_state());
+    }
+#endif
+#ifdef STRSPIDER_TEST
+    {
+        static u32 f0;
+        u32 mf = frame;
+        if (!f0 && mf > 30 && game_test_free()) f0 = mf;
+        u32 frame = f0 ? mf - f0 + 150 : 0;
+        { /* under the first spider (200, held to 400: it comes down), spins (400, 440: Spinned, Blow); the next one trampled (600 under, 800 onto) */
+            if (frame == 200 || frame == 600) { printf("strspider test f %u: under row %d\n", frame, game_test_strspider(0)); game_test_hold(1); }
+            if ((frame > 200 && frame < 400) || (frame > 600 && frame < 800)) game_test_hold(0);
+            if (frame == 400 || frame == 440) printf("strspider test f %u: spin row %d\n", frame, game_test_strspider(1));
+            if (frame == 800) printf("strspider test f %u: trample row %d\n", frame, game_test_strspider(2));
+            if (frame >= 200 && frame <= 900 && frame % 20 == 0) game_strspider_state();
+            game_test_unclip(); /* the spider above Mario is off the view */
+        }
+    }
+#endif
+#ifdef BEGOMAN_TEST
+    {
+        static u32 f0;
+        u32 mf = frame;
+        if (!f0 && mf > 30 && game_test_free()) f0 = mf;
+        u32 frame = f0 ? mf - f0 + 150 : 0;
+        /* 900 before the first spike (200: it comes for him), a spin by it (600: blown), a trample (900: Mario hurt) */
+        if (frame >= 100 && frame < 200 && frame % 20 == 0) game_test_begoman(0); /* its zone in */
+        if (frame == 200) printf("begoman test f %u: before row %d\n", frame, game_test_begoman(0));
+        if (frame == 600) printf("begoman test f %u: spin row %d\n", frame, game_test_begoman(1));
+        if (frame == 900) printf("begoman test f %u: trample row %d\n", frame, game_test_begoman(2));
+        if (frame >= 200 && frame <= 1100 && frame % 20 == 0) { printf("begoman test f %u: life %d\n", frame, game_life()); game_begoman_state(); }
+    }
+#endif
+#ifdef SPIDERCOIN_TEST
+        if (frame >= 150 && frame <= 900 && frame % 30 == 0) printf("spidercoin test f %u: row %d, coins %d\n", frame, game_test_spidercoin(), game_coins());
+#endif
 #ifdef STATUE_TEST
         if (frame >= 200 && frame % 100 == 0 && frame <= 600) printf("statue test f %u: row %d, coins %d\n", frame, game_test_statue(), game_coins());
 #endif

@@ -22624,6 +22624,587 @@ static void break_boxes(void)
     }
 }
 
+/* Hanachan.cpp after Petari (Hanachan and its HanachanParts: HanachanHead, BodyS, Body, BodyS, Body). The parts
+ * start on its rail 85 apart behind the head (half their sensors' radii). Walk: the head goes along the rail at 4
+ * (calcMovingDirectionAlongRail, 800: its front turned 0.08 rad a frame to it; 2000 off the rail it heads for Mario at
+ * 0.04), each part pulled to 87 behind the one before (moveBodyAlongHead, hCollideRange 2) and turned to it. Each part
+ * (sensor 85 at 100 / BodyS 85 up, binder 100 at 100) falls by its gravity x 0.5, x 0.98. Mario: a trample on a
+ * walking one: Trample (the parts hop 5 from the trampled one out), BecomeAngry (hops 10 frames apart, Anger), then
+ * AngryPursue 300 frames at 13 (turning 0.08 to Mario, unless arg0 1: along the rail), AngryEnd (braking over 60
+ * frames, AngryEnd clip) and Walk again; the head hitting a map wall (its normal -0.9 against the front) WallHitEnd
+ * (hops 20, 3 frames apart). A spin (stopScene 4) or a hip drop landing within 1000: Overturn (each part jumps 25 in
+ * turn, 3 frames apart from the nearest, gravity 2), OverturnWait 180 frames, Recover (17, 3 apart, 67 on: Anger)
+ * and AngryPursue; a spin or a star piece on it while over: OverturnBound (15). A hip drop on it, or a trample while
+ * it is over (Overturn past 50, Bound, Wait, Recover before 60): HipDropped (Press / OverturnPress at the nearest
+ * part): after 30 frames all killed, 2 star pieces from each Head / Body, the dead switch. Its walking parts hurt
+ * Mario on the ground (EnemyAttack), its angry ones strongly (and WallHitEnd); else they push him. A star piece on a
+ * walking one: WallHitEnd from it. Invincible Mario blows it apart (Blow: 30 out, 20 up, each part on its own angle
+ * across pi - 0.4). ponytail: no Anger BRK colour or Anger BVA eyes (Normal ones drawn), no hit-reaction scale
+ * (AnimScaleController), no 2P star pointer bind, move-limit walls taken as map walls, clipped (not moved or drawn)
+ * while walking beyond 5000 of Mario */
+enum { HN_WALK, HN_TRAMPLE, HN_BECOMEANGRY, HN_PURSUE, HN_ANGRYEND, HN_WALLHITEND, HN_OVERTURN, HN_OVERTURNBOUND,
+       HN_OVERTURNWAIT, HN_RECOVER, HN_HIPDROPPED, HN_OVERHIPDROPPED, HN_BLOW, HN_BINDEND, HN_DEAD };
+typedef struct { V3 pos, vel, push, fall, grav, y, z, wn; int nrv, next, step, start, landed, dead, ground, wall; char clip[16]; } HnPart;
+#define MAX_HANAS 8
+static struct {
+    int row, nrv, next, step, chase, fwd;
+    HnPart p[5];
+    V3 attack, front;
+    float coord;
+    const float *rail; u32 rn; int closed;
+    u32 lv[2];
+} hanas[MAX_HANAS];
+static int nhanas;
+static const Scene *hana_scene;
+static const char *const hn_model[5] = {"HanachanHead", "HanachanBodyS", "HanachanBody", "HanachanBodyS", "HanachanBody"};
+static V3 hn_sensor(const HnPart *p, int i) { return vadd(p->pos, vmul(p->y, i == 1 || i == 3 ? 85.0f : 100.0f)); }
+static void hn_set(int k, int n) { hanas[k].next = n; }
+static void hn_pset(HnPart *p, int n) { p->next = n; }
+static V3 hn_rail_near(int k, V3 q, V3 *dir) /* calcNearestRailPosAndDirection: the coord set, its point; dir to the end */
+{
+    typeof(&hanas[0]) h = &hanas[k];
+    h->coord = w_rail_nearest(h->rail, h->rn, q);
+    float l = w_rail_len(h->rail, h->rn), d0 = h->coord - 1.0f < 0 ? 0 : h->coord - 1.0f, d1 = h->coord + 1.0f > l ? l : h->coord + 1.0f;
+    *dir = vnorm(vsub(rail_at(h->rail, h->rn, d1), rail_at(h->rail, h->rn, d0)));
+    return rail_at(h->rail, h->rn, h->coord);
+}
+static V3 hn_turn(V3 from, V3 to, float rad) /* turnVecToVecRadian */
+{
+    float c = vdot(from, to), left = acosf(c > 1 ? 1 : c < -1 ? -1 : c);
+    V3 ax = vcross(from, to);
+    if (vlen(ax) < 1e-6f) return left < 1.0f ? from : rad >= left ? to : from;
+    return vnorm(rot_axis(from, vnorm(ax), left < rad ? left : rad));
+}
+static void hn_blend(HnPart *p, V3 up, V3 front, float ru, float rf) /* blendQuatUpFront */
+{
+    float c = vdot(p->y, up);
+    V3 ax = vcross(p->y, up);
+    if (vlen(ax) > 1e-6f) {
+        float ang = acosf(c > 1 ? 1 : c < -1 ? -1 : c) * ru;
+        ax = vnorm(ax);
+        p->y = vnorm(rot_axis(p->y, ax, ang)); p->z = vnorm(rot_axis(p->z, ax, ang));
+    }
+    V3 tf = vtangent(front, p->y);
+    if (vlen(tf) < 1e-6f) return;
+    tf = vnorm(tf);
+    c = vdot(p->z, tf);
+    float ang = acosf(c > 1 ? 1 : c < -1 ? -1 : c) * rf;
+    if (vdot(vcross(p->z, tf), p->y) < 0) ang = -ang;
+    p->z = vnorm(vtangent(rot_axis(p->z, p->y, ang), p->y));
+}
+static Anim *hn_anim(int k, int i)
+{
+    const Model *md = scene_model(sc, hn_model[i]);
+    return md && md->skin ? obj_anim((int)sc->nobjs * 4 + k * 5 + i, md, hn_model[i]) : NULL;
+}
+static void hn_act(int k, int i, const char *clip) /* startAction: its BCK from frame 0 */
+{
+    Anim *a = hn_anim(k, i);
+    char n[48];
+    int j = 0;
+    for (; hn_model[i][j]; j++) n[j] = (char)tolower((unsigned char)hn_model[i][j]);
+    snprintf(n + j, sizeof n - j, "/%s", clip);
+    for (char *c = n + j; *c; c++) *c = (char)tolower((unsigned char)*c);
+    snprintf(hanas[k].p[i].clip, sizeof hanas[k].p[i].clip, "%s", clip);
+    if (a) { anim_start(a, n, 0); a->speed = 1.0f; }
+}
+static void hn_frame_rate(int k, int i, float f, float rate) /* setBckFrameAndStop, setBckRate */
+{
+    Anim *a = hn_anim(k, i);
+    if (a) { a->frame = f; a->speed = rate; }
+}
+static int hn_stopped(int k, int i) { Anim *a = hn_anim(k, i); return !a || a->done; } /* isBckStopped */
+static V3 hn_common_grav(int k, int i) /* getCommonGravity: the middle Body's while the parts hop together */
+{
+    int n = hanas[k].nrv;
+    return n == HN_TRAMPLE || n == HN_BECOMEANGRY || n == HN_OVERTURN || n == HN_OVERTURNBOUND || n == HN_RECOVER ?
+           hanas[k].p[2].grav : hanas[k].p[i].grav;
+}
+static void hn_fall(int k, int i, float g) /* the fall: on the ground none, else x g of the gravity, x 0.98 */
+{
+    HnPart *p = &hanas[k].p[i];
+    if (p->ground) p->fall = v3(0, 0, 0);
+    else p->fall = vmul(vadd(p->fall, vmul(hn_common_grav(k, i), g)), 0.98f);
+}
+static void hn_land(HnPart *p) { if (!p->landed && p->step > p->start) p->landed = 1; }
+static int hn_wall_hit(int k, int i) /* isHeadHitWall */
+{
+    const HnPart *p = &hanas[k].p[i];
+    return i == 0 && p->wall && vdot(p->wn, hanas[k].front) <= -0.9f;
+}
+static void hn_head_fx(int k, const char *name, int keep)
+{
+    float m[16];
+    HnPart *p = &hanas[k].p[0];
+    basis_matrix(m, p->pos, p->y, p->z, 0);
+    fx_named("HanachanHead", name, m, NULL, keep ? (const void *)&hanas[k].p[0] : NULL);
+}
+static void hn_part_exe(int k, int i)
+{
+    typeof(&hanas[0]) h = &hanas[k];
+    HnPart *p = &h->p[i];
+    int st = p->step;
+    V3 g = hn_common_grav(k, i);
+    switch (p->nrv) {
+    case HN_WALK:
+        if (st == 0) { hn_act(k, i, "Walk"); hn_frame_rate(k, i, 8.0f * i, 1.0f); } /* hWalkStep 8, hWalkAnimRate */
+        p->vel = vadd(p->fall, p->push);
+        hn_fall(k, i, 0.5f);
+        break;
+    case HN_TRAMPLE:
+        if (st == 0) p->landed = 0;
+        if (st == p->start) { hn_act(k, i, "AngryStart"); p->fall = vmul(g, -5.0f); } /* hTrampleJumpVelV */
+        p->vel = vadd(p->fall, p->push);
+        if (p->ground && !p->landed && st > p->start) {
+            p->landed = 1;
+            hn_act(k, i, "Walk"); hn_frame_rate(k, i, 8.0f * i, 3.0f); /* changeHeadAngry, hAngryAnimRate */
+        }
+        hn_fall(k, i, 0.5f);
+        break;
+    case HN_BECOMEANGRY:
+        if (st == 0) { p->fall = vmul(g, -5.0f); p->start = 0; p->landed = 0; } /* hBecomeAngryJumpVelV; startBrk Anger */
+        p->vel = vadd(p->fall, p->push);
+        if (p->ground) hn_land(p);
+        hn_fall(k, i, 0.5f);
+        break;
+    case HN_PURSUE:
+        if (hn_wall_hit(k, i)) { hn_set(k, HN_WALLHITEND); break; } /* isBindedWallOfMap (move limits as map walls) */
+        p->vel = vadd(p->fall, p->push);
+        if (p->ground) p->fall = v3(0, 0, 0);
+        else p->fall = vmul(vadd(p->fall, vmul(p->grav, 0.5f)), 0.98f);
+        break;
+    case HN_ANGRYEND:
+        if (st == 0) p->landed = 0;
+        if (st == p->start) { hn_act(k, i, "AngryEnd"); p->fall = v3(0, 0, 0); } /* startBrk Normal, hAngryEndJumpVelV 0 */
+        if (hn_wall_hit(k, i)) hn_set(k, HN_WALLHITEND);
+        p->vel = vadd(p->fall, p->push);
+        if (p->ground) hn_land(p);
+        hn_fall(k, i, 0.5f);
+        break;
+    case HN_WALLHITEND:
+        if (st == 0) p->landed = 0;
+        if (st == p->start) p->fall = vmul(g, -20.0f); /* startBrk Normal, hWallHitEndJumpVelV */
+        p->vel = vadd(p->fall, p->push);
+        if (p->ground) hn_land(p);
+        hn_fall(k, i, 2.0f); /* hWallHitEndGravity */
+        break;
+    case HN_OVERTURN:
+        if (st == p->start) { hn_act(k, i, "Overturn"); p->fall = vmul(g, -25.0f); } /* hOverturnAnimBegin 0, hOverturnJumpVelV */
+        p->vel = vadd(p->fall, p->push);
+        if (p->ground) { p->fall = v3(0, 0, 0); if (st > p->start) hn_pset(p, HN_OVERTURNWAIT); }
+        else p->fall = vmul(vadd(p->fall, vmul(g, 2.0f)), 0.98f); /* hOverturnGravity */
+        break;
+    case HN_OVERTURNBOUND:
+        if (st == p->start) { hn_act(k, i, "OverturnBound"); p->fall = vmul(g, -15.0f); } /* hOverturnBoundJumpVelV */
+        p->vel = vadd(p->fall, p->push);
+        if (p->ground) { p->fall = v3(0, 0, 0); if (st > p->start) hn_pset(p, HN_OVERTURNWAIT); }
+        else p->fall = vmul(vadd(p->fall, g), 0.98f); /* hOverturnBoundGravity 1 */
+        break;
+    case HN_OVERTURNWAIT:
+        if (st == 0) { hn_act(k, i, "OverturnLand"); p->landed = 0; }
+        if (!p->landed && st > 0 && hn_stopped(k, i)) { hn_act(k, i, "OverturnWait"); hn_frame_rate(k, i, 8.0f * i, 1.0f); p->landed = 1; }
+        p->vel = p->push;
+        break;
+    case HN_RECOVER:
+        if (st == 0) p->landed = 0;
+        if (st == p->start - 55) hn_act(k, i, "Recover"); /* hRecoverAnimBegin; startBrk Anger */
+        if (st == p->start) p->fall = vmul(g, -17.0f); /* hRecoverJumpVelV */
+        p->vel = vadd(p->fall, p->push);
+        if (p->ground) {
+            if (p->start == 0) { if (hn_stopped(k, i) && !p->landed) { p->landed = 1; hn_act(k, i, "Walk"); hn_frame_rate(k, i, 0, 3.0f); } }
+            else if (st > p->start) { hn_act(k, i, "RecoverLand"); p->start = 0; }
+            p->fall = v3(0, 0, 0);
+        } else p->fall = vmul(vadd(p->fall, g), 0.98f); /* hRecoverGravity */
+        break;
+    case HN_HIPDROPPED: case HN_OVERHIPDROPPED: {
+        p->vel = vadd(p->fall, p->push);
+        if (st == 0) p->landed = 0; /* forceBindOnGround */
+        if (st == p->start) {
+            int near = 0;
+            float best = 1e30f;
+            for (int j = 0; j < 5; j++) { float d = vlen(vsub(hn_sensor(&h->p[j], j), h->attack)); if (d < best) { best = d; near = j; } }
+            if (i == near || (near == 1 && i == 0)) hn_act(k, i, p->nrv == HN_OVERHIPDROPPED ? "OverturnPress" : "Press");
+            else { Anim *a = hn_anim(k, i); if (a) a->speed = 0; } /* stopBck */
+        }
+        if (p->ground) { if (st > p->start) p->landed = 1; p->fall = v3(0, 0, 0); }
+        else p->fall = vmul(vadd(p->fall, vmul(g, 2.0f)), 0.98f);
+        break;
+    }
+    case HN_BLOW:
+        if (st == 0) { hn_act(k, i, "Rotate"); p->vel = p->push; }
+        p->vel = vadd(p->vel, p->grav); /* hBlowGravity 1 */
+        if ((st > 15 && (p->ground || p->wall)) || st > 30) p->dead = 2; /* kill (hBlowTime) */
+        break;
+    }
+}
+static int hn_landed_in(int k, int n) /* the head's and the tail's isLandedInNerve */
+{
+    return hanas[k].p[0].nrv == n && hanas[k].p[0].landed && hanas[k].p[4].nrv == n && hanas[k].p[4].landed;
+}
+static int hn_nearest(int k) /* calcNearestInfectionId */
+{
+    int id = 0;
+    float best = 9999999.0f;
+    for (int i = 0; i < 5; i++) {
+        V3 d = vsub(hn_sensor(&hanas[k].p[i], i), hanas[k].attack);
+        if (vdot(d, d) < best) { best = vdot(d, d); id = i; }
+    }
+    return id;
+}
+static void hn_all(int k, int n) { for (int i = 0; i < 5; i++) { hanas[k].p[i].next = n; hanas[k].p[i].landed = 0; } } /* setNerveAllParts */
+static void hn_delay(int k, int id, int delay, int step) /* setDelayAllPartsAtId */
+{
+    int d = delay;
+    for (int i = id; i >= 0; i--) { hanas[k].p[i].start = d; d += step; }
+    d = delay + step;
+    for (int i = id + 1; i < 5; i++) { hanas[k].p[i].start = d; d += step; }
+}
+static void hn_head_to(int k, V3 dir, float speed, float turn) /* the head turned to dir, pushed along its front */
+{
+    typeof(&hanas[0]) h = &hanas[k];
+    HnPart *p = &h->p[0];
+    h->front = p->z;
+    if (vlen(dir) > 1e-6f) h->front = hn_turn(h->front, dir, turn);
+    p->push = vadd(p->push, vmul(h->front, speed));
+    hn_blend(p, vmul(p->grav, -1.0f), h->front, 0.5f, 0.5f);
+}
+static void hn_head_to_player(int k, float speed, float turn) /* moveHeadToPlayer */
+{
+    HnPart *p = &hanas[k].p[0];
+    V3 d = vtangent(vsub(mario->pos, p->pos), p->grav); /* calcVecToPlayerH */
+    hn_head_to(k, vlen(d) > 1e-6f ? vnorm(d) : v3(0, 0, 0), speed, turn);
+}
+static void hn_head_rail(int k, float speed) /* moveHeadAlongRail */
+{
+    typeof(&hanas[0]) h = &hanas[k];
+    HnPart *p = &h->p[0];
+    if (!h->rail) { hn_head_to(k, v3(0, 0, 0), speed, 0); return; }
+    V3 dir, at = hn_rail_near(k, p->pos, &dir);
+    float l = w_rail_len(h->rail, h->rn);
+    if (!h->closed && (h->fwd ? h->coord >= l - 1.0f : h->coord <= 1.0f)) h->fwd = !h->fwd; /* isRailReachedGoal: reverse */
+    if (!h->fwd) dir = vmul(dir, -1.0f);
+    V3 from = vsub(at, p->pos);
+    float dist = vlen(from);
+    V3 rd = vadd(vmul(from, 1.0f / 800.0f), dir);
+    if (dist > 2000.0f) { hn_head_to_player(k, speed, 0.04f); return; } /* hFarDistToPursuePlayer */
+    rd = vtangent(rd, p->grav);
+    hn_head_to(k, vlen(rd) > 1e-6f ? vnorm(rd) : v3(0, 0, 0), speed, 0.08f);
+}
+static void hn_body(int k) /* moveBodyAlongHead */
+{
+    typeof(&hanas[0]) h = &hanas[k];
+    for (int i = 1; i < 5; i++) {
+        V3 a = hn_sensor(&h->p[i - 1], i - 1), b = hn_sensor(&h->p[i], i), to = vsub(a, b);
+        float l = vlen(to);
+        V3 u = l > 1e-6f ? vmul(to, 1.0f / l) : h->p[i].z;
+        h->p[i].push = vadd(h->p[i].push, vsub(to, vmul(u, 2.0f + 85.0f))); /* hCollideRange + the radii's halves */
+        hn_blend(&h->p[i], vmul(h->p[i].grav, -1.0f), u, 0.3f, 0.5f);
+    }
+}
+static void hn_hip_reaction(int k) /* applyPlayerHipDropReaction */
+{
+    if (!hip_hit) return;
+    typeof(&hanas[0]) h = &hanas[k];
+    h->attack = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    float best = 999999.0f;
+    for (int i = 0; i < 5; i++) { float d = vlen(vsub(mario->pos, h->p[i].pos)); if (d < best) best = d; }
+    if (best > 1000.0f) return; /* hNearHipDropReactionDist */
+    hn_set(k, h->nrv == HN_OVERTURNWAIT ? HN_OVERTURNBOUND : HN_OVERTURN);
+}
+static void hn_se(int k, u32 id) { se_start(id, &hanas[k].p[2].pos.x); }
+static void hn_se_lv(int k, int s, u32 id) { hanas[k].lv[s] = se_level(id, &hanas[k].p[2].pos.x, hanas[k].lv[s]); }
+static void hn_exe(int k)
+{
+    typeof(&hanas[0]) h = &hanas[k];
+    int st = h->step;
+    switch (h->nrv) {
+    case HN_WALK:
+        if (st == 0) hn_all(k, HN_WALK);
+        hn_head_rail(k, 4.0f); /* hWalkSpeed */
+        hn_body(k); hn_hip_reaction(k);
+        break;
+    case HN_TRAMPLE:
+        if (st == 0) { hn_all(k, HN_TRAMPLE); hn_delay(k, hn_nearest(k), 0, 0); hn_se(k, SE_EV_HANACHAN_TRAMPLE); }
+        hn_body(k);
+        if (hn_landed_in(k, HN_TRAMPLE)) hn_set(k, HN_BECOMEANGRY);
+        break;
+    case HN_BECOMEANGRY:
+        if (st == 0) { hn_all(k, HN_BECOMEANGRY); hn_delay(k, 0, 0, 10); } /* hBecomeAngryInterval */
+        hn_se_lv(k, 0, SE_EM_LV_HANACHAN_STEAM); hn_se_lv(k, 1, SE_EM_LV_HANACHAN_PRE_ANGRY);
+        hn_body(k);
+        if (hn_landed_in(k, HN_BECOMEANGRY)) hn_set(k, HN_PURSUE);
+        break;
+    case HN_PURSUE:
+        if (st == 0) { hn_all(k, HN_PURSUE); hn_head_fx(k, "AngrySmoke", 0); } /* changeHeadAngry */
+        hn_se_lv(k, 0, SE_EM_LV_HANACHAN_WHISTLE); hn_se_lv(k, 1, SE_EM_LV_HANACHAN_MOVE_ANGRY);
+        if (h->chase) hn_head_to_player(k, 13.0f, 0.08f); else hn_head_rail(k, 13.0f); /* hAngrySpeed */
+        hn_body(k); hn_hip_reaction(k);
+        if (st > 300) hn_set(k, HN_ANGRYEND); /* hAngryPursueTime */
+        break;
+    case HN_ANGRYEND: {
+        if (st == 0) { hn_all(k, HN_ANGRYEND); hn_delay(k, 4, 0, 0); hn_se(k, SE_EV_HANACHAN_COOLDOWN); }
+        hn_se_lv(k, 0, SE_EM_LV_HANACHAN_BRAKE);
+        HnPart *hd = &h->p[0];
+        h->front = hd->z;
+        hd->push = vadd(hd->push, vmul(h->front, (1.0f - st / 60.0f) * 13.0f));
+        hn_blend(hd, vmul(hd->grav, -1.0f), h->front, 0.5f, 0.5f);
+        hn_body(k); hn_hip_reaction(k);
+        if (st > 60 && hn_landed_in(k, HN_ANGRYEND)) hn_set(k, HN_WALK);
+        break;
+    }
+    case HN_WALLHITEND: case HN_BINDEND:
+        if (st == 0) {
+            hn_se(k, SE_EV_HANACHAN_COOLDOWN);
+            hn_all(k, HN_WALLHITEND);
+            if (h->nrv == HN_BINDEND) hn_delay(k, hn_nearest(k), 0, 3);
+            else { hn_delay(k, 0, 0, 3); hn_head_fx(k, "WallHit", 0); } /* hWallHitInterval */
+        }
+        if (hn_landed_in(k, HN_WALLHITEND)) hn_set(k, HN_WALK);
+        break;
+    case HN_OVERTURN: case HN_OVERTURNBOUND:
+        if (st == 0) {
+            hn_all(k, h->nrv);
+            hn_delay(k, hn_nearest(k), 0, h->nrv == HN_OVERTURN ? 3 : 2); /* hSpinInterval, hOverturnBoundInterval */
+            hn_se(k, SE_PM_SPIN_HIT); /* startBlowHitSound */
+            if (h->nrv == HN_OVERTURN) hn_se(k, SE_EV_HANACHAN_OVERTURN);
+        }
+        if (st == 29) hn_se(k, SE_EM_HANACHAN_BOUND); /* hOverturnBoundSeTime */
+        hn_body(k);
+        if (hn_landed_in(k, HN_OVERTURNWAIT)) hn_set(k, HN_OVERTURNWAIT);
+        break;
+    case HN_OVERTURNWAIT:
+        if (st > 180) { hn_set(k, HN_RECOVER); break; } /* hOverturnTime */
+        hn_se_lv(k, 0, SE_EM_LV_HANACHAN_SWOON);
+        hn_hip_reaction(k); hn_body(k);
+        break;
+    case HN_RECOVER:
+        if (st == 0) { hn_all(k, HN_RECOVER); hn_delay(k, 0, 67, 3); } /* hRecoverInit, hRecoverInterval */
+        hn_se_lv(k, 0, SE_EM_LV_HANACHAN_PRE_ANGRY);
+        if (st >= 60) hn_se_lv(k, 1, SE_EM_LV_HANACHAN_STEAM); /* hRecoverSteamSeTime */
+        if (st == 63) { hn_se(k, SE_EM_HANACHAN_GETUP); hn_se(k, SE_EV_HANACHAN_ANGRY); } /* hRecoverGetupSeTime */
+        hn_body(k);
+        if (hn_landed_in(k, HN_RECOVER)) hn_set(k, HN_PURSUE);
+        break;
+    case HN_HIPDROPPED: case HN_OVERHIPDROPPED:
+        if (st == 0) {
+            hn_all(k, h->nrv);
+            hn_delay(k, hn_nearest(k), 0, 0);
+            hn_se(k, SE_EM_STOMPED_S); hn_se(k, SE_EV_HANACHAN_DEAD);
+        }
+        if (st > 30 && h->p[0].landed && h->p[4].landed && (h->p[0].nrv == HN_HIPDROPPED || h->p[0].nrv == HN_OVERHIPDROPPED)) /* hHipDroppedTime */
+            for (int i = 0; i < 5; i++) h->p[i].dead = 2;
+        break;
+    case HN_BLOW:
+        if (st == 0) { hn_all(k, HN_BLOW); hn_se(k, SE_PM_SPIN_HIT); }
+        break;
+    }
+}
+static void hn_kill_part(int k, int i) /* HanachanParts::kill */
+{
+    HnPart *p = &hanas[k].p[i];
+    float m[16];
+    basis_matrix(m, p->pos, p->y, p->z, 0);
+    fx_named(hn_model[i], i == 0 ? "HeadDeath" : "BodyDeath", m, NULL, NULL);
+    if (i == 0 || i == 2 || i == 4) { drop_pieces(p->pos, vmul(p->grav, -1.0f), 2); hn_se(k, SE_OJ_STAR_PIECE_BURST); }
+    p->dead = 1;
+}
+static void hn_blow(int k, V3 from) /* setNerveBlow */
+{
+    typeof(&hanas[0]) h = &hanas[k];
+    V3 g = h->p[2].grav, dir = vtangent(vsub(h->p[2].pos, from), g);
+    dir = vlen(dir) > 1e-6f ? vnorm(dir) : v3(0, 0, 0);
+    V3 side = vcross(dir, g);
+    float ang = 0.2f, step = (3.14159265f - 0.4f) / 4.0f; /* hInitBlowRadian */
+    if (vdot(vsub(h->p[0].pos, from), side) < 0) { step = -step; ang = 3.14159265f - ang; }
+    for (int i = 0; i < 5; i++) {
+        V3 b = vadd(vmul(side, cosf(ang)), vmul(dir, sinf(ang)));
+        b = vlen(b) > 1e-6f ? vmul(vnorm(b), 30.0f) : b; /* hBlowVelH */
+        h->p[i].push = vadd(b, vmul(h->p[i].grav, -20.0f)); /* hBlowVelV */
+        ang += step;
+    }
+    hn_set(k, HN_BLOW);
+}
+static void hn_trample_jump(void) { m_set_jv(mario, vadd(vtangent(m_jv(mario), mario->up), vmul(mario->up, MC.mTrampleNormal))); mario->grounded = 0; mario->jumping = 1; }
+static void hn_mario(int k) /* the parts' sensors and Mario: attackSensor / receiveMsgPlayerAttack */
+{
+    typeof(&hanas[0]) h = &hanas[k];
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    int n = h->nrv;
+    for (int i = 0; i < 5; i++) {
+        HnPart *p = &h->p[i];
+        if (p->dead || n == HN_BLOW || n == HN_DEAD) continue;
+        V3 s = hn_sensor(p, i);
+        if (player_mode == PM_INVINCIBLE && vlen(vsub(c, s)) < 85.0f + HIT_BODY_R) { /* isMsgInvincibleAttack */
+            if (n != HN_HIPDROPPED && n != HN_OVERHIPDROPPED) { hn_blow(k, mario->pos); printf("hanachan row %d blown\n", h->row); }
+            return;
+        }
+        int msg = p->nrv == HN_HIPDROPPED || p->nrv == HN_OVERHIPDROPPED ? MSG_NONE : mario_offence(s, 85.0f, p->grav);
+        if (msg == MSG_HIPDROP) {
+            if (n != HN_HIPDROPPED && n != HN_OVERHIPDROPPED) {
+                hn_set(k, n == HN_OVERTURN || n == HN_OVERTURNBOUND || n == HN_OVERTURNWAIT || n == HN_RECOVER ? HN_OVERHIPDROPPED : HN_HIPDROPPED);
+                h->attack = c;
+                printf("hanachan row %d hip dropped\n", h->row);
+            }
+            return;
+        }
+        if (msg == MSG_TRAMPLE) {
+            se_start(SE_EM_HANACHAN_TRAMPLE, &s.x);
+            hn_trample_jump();
+            if ((n == HN_OVERTURN && h->step > 50) || n == HN_OVERTURNBOUND || n == HN_OVERTURNWAIT || (n == HN_RECOVER && h->step < 60)) {
+                hn_set(k, HN_OVERHIPDROPPED); h->attack = c; /* hOverturnCanTrampleDeathTime, hRecoverCanTrampleDeathTime */
+                printf("hanachan row %d trampled over: pressed\n", h->row);
+            } else if (n == HN_WALK) { hn_set(k, HN_TRAMPLE); h->attack = c; printf("hanachan row %d trampled\n", h->row); }
+            return;
+        }
+        if (msg == MSG_HITALL) {
+            if (n == HN_OVERTURN || n == HN_OVERTURNBOUND) return;
+            scene_stop = 4; /* hPunchStopSceneTime */
+            hn_set(k, n == HN_OVERTURNWAIT ? HN_OVERTURNBOUND : HN_OVERTURN);
+            h->attack = c;
+            printf("hanachan row %d spun: overturn\n", h->row);
+            return;
+        }
+        float d = vlen(vsub(c, s));
+        if (d >= 85.0f + HIT_BODY_R) continue;
+        if (!mario->hurt_timer) { /* attackSensor */
+            if (p->nrv == HN_PURSUE && mario->grounded) { if (mario_attack(ATK_STRONG, s)) { hn_set(k, HN_WALLHITEND); return; } }
+            else if (p->nrv == HN_WALK && mario->grounded) { if (mario_attack(ATK_ENEMY, s)) return; }
+            else if (p->nrv == HN_HIPDROPPED || p->nrv == HN_OVERHIPDROPPED) continue;
+        }
+        V3 out = vtangent(vsub(c, s), mario->up); /* sendMsgPush */
+        if (vlen(out) > 1e-3f) mario->pos = vadd(mario->pos, vmul(vnorm(out), 85.0f + HIT_BODY_R - d));
+    }
+}
+int hana_shot(V3 at) /* a star piece shot (isMsgStarPieceAttack) on a part: 1 if one took it */
+{
+    for (int k = 0; k < nhanas; k++) {
+        typeof(&hanas[0]) h = &hanas[k];
+        if (h->nrv == HN_DEAD || !row_shown(h->row)) continue;
+        for (int i = 0; i < 5; i++) {
+            if (h->p[i].dead || vlen(vsub(at, hn_sensor(&h->p[i], i))) > 85.0f + 30.0f) continue;
+            if (h->nrv == HN_OVERTURNWAIT) { hn_set(k, HN_OVERTURNBOUND); h->attack = at; return 1; }
+            if (h->nrv == HN_WALK) { hn_set(k, HN_BINDEND); h->attack = at; return 1; }
+            return h->nrv != HN_WALK; /* isMsgStarPieceReflect: taken unless walking or over */
+        }
+    }
+    return 0;
+}
+static void hn_init(int k, int row)
+{
+    typeof(&hanas[0]) h = &hanas[k];
+    const Row *r = &sc->objs[row];
+    memset(h, 0, sizeof *h);
+    h->row = row; h->chase = r->arg[0] != 1; h->fwd = 1; h->front = v3(0, 0, 1);
+    h->rail = r->path >= 0 && scene_blob_g ? find_rail(scene_blob_g, r->zone, r->path, &h->rn, &h->closed) : NULL;
+    V3 x, z, pos = row_pos(r), dir = v3(0, 0, 0);
+    row_axes(r, &x, &z);
+    V3 up = vnorm(vcross(z, x));
+    float c0 = 0, l = h->rail ? w_rail_len(h->rail, h->rn) : 0;
+    if (h->rail) { pos = hn_rail_near(k, pos, &dir); c0 = h->coord; } /* moveCoordToNearestPos */
+    for (int i = 0; i < 5; i++) { /* reversed, moveCoord by the sensors' half radii (85) */
+        HnPart *p = &h->p[i];
+        float cd = c0 - 85.0f * i;
+        if (h->closed) cd = fmodf(cd + 5.0f * l, l > 0 ? l : 1.0f);
+        p->pos = h->rail ? rail_at(h->rail, h->rn, cd < 0 ? 0 : cd) : vsub(pos, vmul(z, 85.0f * i));
+        p->grav = vmul(up_at(p->pos, up), -1.0f);
+        p->y = vmul(p->grav, -1.0f);
+        V3 f = h->rail ? vtangent(dir, p->y) : z;
+        p->z = vlen(f) > 1e-6f ? vnorm(f) : z;
+        p->nrv = p->next = HN_WALK; p->step = 0;
+    }
+    h->nrv = HN_WALK; h->next = -1;
+    for (int i = 0; i < 5; i++) h->p[i].next = -1;
+}
+static void update_hanachans(void)
+{
+    if (hana_scene != sc) { hana_scene = sc; nhanas = 0; }
+    int ty = scene_type(sc, "Hanachan");
+    if (ty < 0) return;
+    for (u32 row = 0; row < sc->nobjs; row++) {
+        if ((int)sc->objs[row].type != ty || !row_shown((int)row)) continue;
+        int k = -1;
+        for (int j = 0; j < nhanas; j++) if (hanas[j].row == (int)row) k = j;
+        if (k < 0) { if (nhanas == MAX_HANAS) continue; k = nhanas++; hn_init(k, (int)row); }
+        typeof(&hanas[0]) h = &hanas[k];
+        if (h->nrv == HN_DEAD) continue;
+        if (h->nrv == HN_WALK && vlen(vsub(mario->pos, h->p[2].pos)) > 5000.0f) continue; /* clipped */
+        if (h->next >= 0) { h->nrv = h->next; h->step = 0; h->next = -1; }
+        hn_exe(k);
+        h->step++;
+        if (h->next >= 0) { h->nrv = h->next; h->step = 0; h->next = -1; }
+        for (int i = 0; i < 5; i++) { /* control: each part's movement, its push spent */
+            HnPart *p = &h->p[i];
+            if (p->dead) continue;
+            if (p->next >= 0) { p->nrv = p->next; p->step = 0; p->next = -1; }
+            p->grav = vmul(up_at(p->pos, vmul(p->grav, -1.0f)), -1.0f); /* onCalcGravity */
+            hn_part_exe(k, i);
+            p->step++;
+            if (p->next >= 0) { p->nrv = p->next; p->step = 0; p->next = -1; }
+            if (p->dead == 2) { hn_kill_part(k, i); continue; }
+            V3 up = vmul(p->grav, -1.0f);
+            p->pos = vadd(p->pos, p->vel); /* the binder: 100 at 100 up */
+            V3 bc = vadd(p->pos, vmul(up, 100.0f)), gn = up, wn = up;
+            int wall = 0;
+            p->ground = collide_n(&bc, up, 100.0f, &gn, &wn, &wall) && vdot(p->vel, gn) <= 0.0f; /* isOnGround */
+            p->wall = wall; p->wn = wn;
+            p->pos = vsub(bc, vmul(up, 100.0f));
+            p->push = v3(0, 0, 0);
+            Anim *a = hn_anim(k, i);
+            if (a) anim_update(a);
+        }
+        for (int i = 0; i < 5; i++) /* the parts' sensors on each other: receiveMsgPush (own: within the radii's halves) */
+            for (int j = 0; j < 5; j++) {
+                if (i == j || h->p[i].dead || h->p[j].dead) continue;
+                V3 d = vsub(hn_sensor(&h->p[j], j), hn_sensor(&h->p[i], i));
+                float l = vlen(d);
+                if (l < 85.0f && l > 1e-3f) h->p[j].push = vadd(h->p[j].push, vmul(d, 0.25f * (85.0f - l) / l)); /* hPushRate */
+            }
+        hn_mario(k);
+        int alive = 0;
+        for (int i = 0; i < 5; i++) alive += !h->p[i].dead;
+        if (!alive) { /* Hanachan::kill */
+            h->nrv = HN_DEAD;
+            hn_se(k, SE_EM_EXPLODE_S);
+            row_kill((int)row);
+            printf("hanachan row %d dead\n", h->row);
+        }
+    }
+}
+static void draw_hanachans(void)
+{
+    for (int k = 0; k < nhanas; k++) {
+        typeof(&hanas[0]) h = &hanas[k];
+        if (h->nrv == HN_DEAD || !row_shown(h->row) || (h->nrv == HN_WALK && vlen(vsub(mario->pos, h->p[2].pos)) > 5000.0f)) continue;
+        for (int i = 0; i < 5; i++) {
+            const HnPart *p = &h->p[i];
+            const Model *md = scene_model(sc, hn_model[i]);
+            Anim *a = hn_anim(k, i);
+            if (p->dead || !md || !a) continue;
+            float m[16];
+            basis_matrix(m, p->pos, p->y, p->z, 0);
+            draw_skin(md, m, a);
+        }
+    }
+}
+int game_test_hanachan(int how) /* hanachan test: Mario put over the nearest live Hanachan's part 2 falling (0: a trample) or beside it spinning (1) or
+                                 * over it in a hip drop (2); its row */
+{
+    for (int k = 0; k < nhanas; k++) {
+        typeof(&hanas[0]) h = &hanas[k];
+        if (h->nrv == HN_DEAD) continue;
+        HnPart *p = &h->p[2];
+        V3 up = vmul(p->grav, -1.0f);
+        mario->up = up; mario->hvel = v3(0, 0, 0);
+        if (how == 1) { mario->pos = vadd(p->pos, vmul(vnorm(vcross(up, p->z)), 100.0f)); mario->vup = 0; mario->spin_timer = SPIN_TIME; }
+        else { mario->pos = vadd(p->pos, vmul(up, 200.0f)); mario->vup = -10.0f; mario->grounded = 0; mario->jumping = 1; if (how == 2) mario->hip = HIP_FALL; }
+        printf("hanachan test: row %d nerve %d parts %d %d %d %d %d\n", h->row, h->nrv, h->p[0].nrv, h->p[1].nrv, h->p[2].nrv, h->p[3].nrv, h->p[4].nrv);
+        return h->row;
+    }
+    return -1;
+}
+int game_test_free(void) { return !in_opening && mario->launch < 0; } /* tests: the flight in over, Mario free */
+int game_hanachan_state(void) { for (int k = 0; k < nhanas; k++) if (hanas[k].nrv != HN_DEAD) return hanas[k].nrv; return -1; }
+
 /* PicketSwitch.cpp / HipDropSwitch.cpp: a hip drop landing on it turns SW_A on; HipDropTimerSwitch.cpp: for arg0
  * frames (default 300, mTimerMax; row_step counts them down), then off. ponytail: the stake does not sink */
 static void update_hip_switches(void)
@@ -28072,7 +28653,8 @@ static void update_shots(void)
             hit = 1;
         }
         if (!hit && hhp_reflects(s->pos, 30.0f)) hit = 2; /* HammerHeadPackun: isMsgStarPieceReflect */
-        if (!hit && butler_shot(s->pos)) hit = 1;         /* Butler: isMsgStarPieceAttack */
+        if (!hit && butler_shot(s->pos)) hit = 1;
+        if (!hit && hana_shot(s->pos)) hit = 1;          /* Hanachan's parts */         /* Butler: isMsgStarPieceAttack */
         for (int k = 0; k < ninsts && !hit; k++) { /* ItemBubble: isMsgStarPieceAttack bursts it */
             Inst *in = &insts[k];
             if (!in->ibubble || !row_shown(in->row) || vlen(vsub(s->pos, bubble_pos(in))) > 120.0f * 1.2f * sc->objs[in->row].scale[0]) continue;
@@ -33367,6 +33949,8 @@ void game_update(void)
     LQ(53, update_screws());
     LQ(54, update_candles());
     update_torches();
+    update_hanachans();
+    spider_coins();
     LQ(55, update_fountains());
     LQ(56, update_strays());
     LQ(57, update_bubbles());
@@ -34613,6 +35197,8 @@ void game_draw(void)
             render_model(m_pieces[fats[k].gift[g].col], m, 0x60, 0xD0, 0xF0);
         }
     draw_sambo_heads();
+    draw_hanachans();
+    draw_spider_cocoons();
     RESTQ(4);
     if (m_bubble) for (int b = 0; b < MAX_BUBBLES; b++) { /* AirBubbleGenerator's bubbles */
         if (!bubbles[b].life) continue;
