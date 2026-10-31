@@ -114,6 +114,8 @@ int kcl_check_sphere(const unsigned char *k, const float c[3], float radius, Kcl
      * two ids in one slot: a prism tested again, the same answer) */
     static unsigned short seen_p[256];
     static unsigned seen_q[256], qseq;
+    static const unsigned short *seen_l[64]; /* the leaves walked this query (seen_lq: its qseq) */
+    static unsigned seen_lq[64];
     if (++qseq == 0) qseq = 1;
     /* ponytail: plain cell walk with de-duplication instead of checkSphere's skip-list trick; same hits */
     for (unsigned z = lo[2]; (int)z <= hi[2];) {
@@ -126,14 +128,21 @@ int kcl_check_sphere(const unsigned char *k, const float c[3], float radius, Kcl
                 int bs = 1 << shift, m = bs - 1;
                 if (bs - (int)(y & m) < ystep) ystep = bs - (y & m);
                 if (bs - (int)(z & m) < zstep) zstep = bs - (z & m);
+                { /* a leaf met again (a big one spans several rows of the walk): nothing new in it, every prism of it
+                   * already tested or a hit (a full out[] returned) */
+                    unsigned ls = ((unsigned)(unsigned long)list * 2654435761u) >> 26;
+                    if (seen_lq[ls] == qseq && seen_l[ls] == list) { x += bs - (x & m); continue; }
+                    seen_lq[ls] = qseq; seen_l[ls] = list;
+                }
                 while (*++list) {
+                    unsigned sl = *list & 255;
+                    if (seen_q[sl] == qseq && seen_p[sl] == *list) continue; /* (before reading the prism) */
                     const Prism *p = PR(k, *list);
                     if (p->height <= 0) continue;
-                    unsigned sl = *list & 255;
-                    if (seen_q[sl] == qseq && seen_p[sl] == *list) continue;
+                    int dup = 0; /* (a slot unused this query: no prism of it tested yet, none among the hits) */
+                    if (seen_q[sl] == qseq)
+                        for (int i = 0; i < n; i++) dup |= out[i].prism == *list;
                     seen_q[sl] = qseq; seen_p[sl] = *list;
-                    int dup = 0;
-                    for (int i = 0; i < n; i++) dup |= out[i].prism == *list;
                     if (dup || n >= max) continue;
                     float dist; unsigned char flag;
                     if (hit_sphere(k, p, c, radius, &dist, &flag)) {
