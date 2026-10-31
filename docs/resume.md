@@ -120,6 +120,14 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   ELF (the same ME jump to 0: it depends on the ELF's layout, the cover ELF booted it), with its ME table zeroed it
   routes to the star at f 3781 as before. Release disc: build.sh plain ... FileSelect/1 disc, then main's disc.py
   (takes the .rhy) -> out/smg-ps2.iso.
+- Pack region for the disc (release/astro-fit, 2026-10-31): #56 found the disc ELF (16879 KB end, 13312 KB region)
+  left AstroGalaxy 1-5's main stage 134-232 KB over its room. Cause: every build linked out/slice/hd2.bin (6 MB of
+  .rodata, slice_blob) though with packs (Galaxy/n, disc) main.c never reads it. build.sh now links an empty blob when
+  given Galaxy/n: disc ELF ends at 10932 KB, region 19200 KB (zone_fit: all 906 zones fit, tightest AstroGalaxy/1
+  TridentZone 5540 KB left); host packs ELFs 10732 KB -> 19456 KB measured in PCSX2 (zone_fit predicts the same). No
+  repack: packs unchanged (still sliced to ROOM 9.1e6 / main.c PACK_ROOM, now the streaming bound, not the region).
+  Checked from out/packs: AstroGalaxy 1, PhantomGalaxy 1, OceanPhantomCave 4 boot, no "never fits" / "no memory",
+  59.9 fps; route EggStar 1 star at f 3781. Old ELF / ISO in out/bak-astro-fit.
 
 ## Console release (2026-10-23 / 24)
 
