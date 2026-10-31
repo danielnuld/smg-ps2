@@ -26635,7 +26635,7 @@ static const RowList *row_list(RowList *l, const int *t, int nt)
     l->seq = scene_seq + 1; l->n = 0;
     for (u32 row = 0; row < sc->nobjs && l->n >= 0; row++)
         for (int k = 0; k < nt; k++)
-            if ((int)sc->objs[row].type == t[k]) { if (l->n < 64) l->row[l->n++] = (short)row; else l->n = -1; break; }
+            if ((int)sc->objs[row].type == t[k]) { if (l->n < 64 && row < 32768) l->row[l->n++] = (short)row; else l->n = -1; break; }
     return l;
 }
 #define MAX_FGROUPS 24
