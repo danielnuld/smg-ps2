@@ -319,8 +319,31 @@ int scene_type(const Scene *s, const char *name)
     return name_find(&t, s->types, s->ntypes, type_name_at, name);
 }
 
+/* by the same hash table over the KCL entries listed in order (a rebind asks "<class>#Move" of every animated
+ * instance); more entries than the table holds: the walk */
+static const char *kcl_name_at(const void *tab, u32 i) { return (const char *)((const u8 *const *)tab)[i]; }
 const u8 *scene_kcl(const Scene *s, const char *name)
 {
+    static const u8 *ent[NAME_SLOTS * 3 / 4];
+    static u32 nent, ent_gen, ent_nkcl;
+    static const Scene *ent_s;
+    static NameTab t;
+    if (ent_s != s || ent_nkcl != s->nkcl || ent_gen != scene_models_gen || !nent) {
+        ent_s = s; ent_nkcl = s->nkcl; ent_gen = scene_models_gen; nent = 0;
+        t.tab = NULL; /* (its table made again) */
+        for (u32 c = 0; c < s->nkcl; c++) {
+            const u8 *q = s->kcl_chunk[c] + 4;
+            for (u32 i = 0, n = *(const u32 *)s->kcl_chunk[c]; i < n; i++) {
+                if (nent < sizeof ent / sizeof ent[0]) ent[nent] = q;
+                nent++;
+                q += 36 + ((*(const u32 *)(q + 32) + 3) & ~3u);
+            }
+        }
+    }
+    if (nent <= sizeof ent / sizeof ent[0]) {
+        int i = name_find(&t, ent, nent, kcl_name_at, name);
+        return i >= 0 ? ent[i] + 36 : NULL;
+    }
     for (u32 c = 0; c < s->nkcl; c++) {
         const u8 *q = s->kcl_chunk[c] + 4;
         for (u32 i = 0, n = *(const u32 *)s->kcl_chunk[c]; i < n; i++) {
