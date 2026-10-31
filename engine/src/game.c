@@ -4006,6 +4006,9 @@ static void game_rebind_(void)
         t_wan = scene_type(s, "WanwanRolling"), t_wanm = scene_type(s, "WanwanRollingMini"),
         t_wang = scene_type(s, "WanwanRollingGold"), t_dino = scene_type(s, "DinoPackun"), t_ota = scene_type(s, "OtaKing");
     static signed char wnk[1024]; /* walker_new_kind by type this rebind: 0 not yet, 1 no, 2 yes */
+    static const Model *bloom_of[1024]; /* "<class>Bloom" by type this rebind (snprintf + lookup an object) */
+    static unsigned char bloom_ok[1024];
+    memset(bloom_ok, 0, sizeof bloom_ok);
     memset(wnk, 0, sizeof wnk);
     for (u32 i = 0; i < s->nobjs; i++) { /* every placed model without behaviour: planets and the rest */
         const Row *r = &s->objs[i];
@@ -4147,7 +4150,11 @@ static void game_rebind_(void)
         in->press = strcmp(name, "RGTowerPressGroundA") == 0 || strcmp(name, "ReverseGravityRoomPressGroundA") == 0 ||
                     strcmp(name, "ReverseGravityRoomPressGroundB") == 0 || in->dossun || in->onimasu;
         in->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 : 0;
-        { char bn[40]; snprintf(bn, sizeof bn, "%sBloom", name); in->md_bloom = scene_model(s, bn); }
+        if (r->type < 1024 && bloom_ok[r->type]) in->md_bloom = bloom_of[r->type]; /* this rebind's answer for the class */
+        else {
+            char bn[40]; snprintf(bn, sizeof bn, "%sBloom", name); in->md_bloom = scene_model(s, bn);
+            if (r->type < 1024) { bloom_of[r->type] = in->md_bloom; bloom_ok[r->type] = 1; }
+        }
         if (in->seesaw) { in->rotor = 0; seesaw_matrix(in); }
         in->railer = scene_blob_g && ((r->arg[7] > 0 && (r->arg[7] >> 30 & 1)) || in->eyebeamer) && r->path >= 0 ?
                      find_path(scene_blob_g, r->zone, r->path) : NULL;
