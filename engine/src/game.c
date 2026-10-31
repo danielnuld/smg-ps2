@@ -1140,6 +1140,7 @@ static int ninsts;
  * game_rebind_ (a field cleared since only makes the list a superset: the loop's own test stays), loops that do not
  * rebind. Past 64 instances the list gives up for the walk over all */
 static u32 inst_seq;
+static u32 class_seq; /* game_rebind counts the rebinds: class_of's cache made again */
 typedef struct { u32 seq; int n; short ix[64]; } InstList;
 #define KIND_CAT_(a, b) a##b
 #define KIND_CAT(a, b) KIND_CAT_(a, b)
@@ -3942,11 +3943,262 @@ u32 rebind_cycles, rebinds; /* game_rebind's time and count (the route test's pe
 void game_rebind(void)
 {
     u32 c0 = cycles();
+    class_seq++;
     inst_seq++; /* (FOR_KIND's lists: made again, during the rebind too) */
     game_rebind_();
     inst_seq++;
     rebind_cycles += cycles() - c0;
     rebinds++;
+#ifdef INST_DUMP /* the instance table after each rebind, hashed (words that look like EE pointers left out): old and new builds compared */
+    {
+        u32 h = 2166136261u;
+        for (int i = 0; i < ninsts; i++) {
+            const u32 *w = (const u32 *)&insts[i];
+            for (u32 k = 0; k < sizeof(Inst) / 4; k++) { u32 v = w[k]; if (v >= 0x100000u && v < 0x2000000u) v = 0; h = (h ^ v) * 16777619u; }
+        }
+        printf("inst dump: rebind %u, %d insts, hash %08x\n", rebinds, ninsts, h);
+    }
+#endif
+}
+/* The Inst fields game_rebind_ derives from the class name alone, made once a class a rebind (class_seq) and
+ * copied to each of its objects: ~150 name tests an object were the bulk of a rebind */
+typedef struct {
+    __typeof__(((Inst *)0)->hazard) hazard;
+    __typeof__(((Inst *)0)->item) item;
+    __typeof__(((Inst *)0)->firebar) firebar;
+    __typeof__(((Inst *)0)->flip) flip;
+    __typeof__(((Inst *)0)->dnpc) dnpc;
+    __typeof__(((Inst *)0)->fat) fat;
+    __typeof__(((Inst *)0)->sambo) sambo;
+    __typeof__(((Inst *)0)->sky) sky;
+    __typeof__(((Inst *)0)->sun) sun;
+    __typeof__(((Inst *)0)->shoot) shoot;
+    __typeof__(((Inst *)0)->steam) steam;
+    __typeof__(((Inst *)0)->geyser) geyser;
+    __typeof__(((Inst *)0)->assembly) assembly;
+    __typeof__(((Inst *)0)->jstand) jstand;
+    __typeof__(((Inst *)0)->warppod) warppod;
+    __typeof__(((Inst *)0)->kiraira) kiraira;
+    __typeof__(((Inst *)0)->kgun) kgun;
+    __typeof__(((Inst *)0)->orock) orock;
+    __typeof__(((Inst *)0)->hhp) hhp;
+    __typeof__(((Inst *)0)->vine) vine;
+    __typeof__(((Inst *)0)->ibubble) ibubble;
+    __typeof__(((Inst *)0)->killer) killer;
+    __typeof__(((Inst *)0)->gcap) gcap;
+    __typeof__(((Inst *)0)->tspot) tspot;
+    __typeof__(((Inst *)0)->beeflower) beeflower;
+    __typeof__(((Inst *)0)->jbranch) jbranch;
+    __typeof__(((Inst *)0)->biri) biri;
+    __typeof__(((Inst *)0)->punch) punch;
+    __typeof__(((Inst *)0)->coco) coco;
+    __typeof__(((Inst *)0)->cocoon) cocoon;
+    __typeof__(((Inst *)0)->fluff) fluff;
+    __typeof__(((Inst *)0)->jet) jet;
+    __typeof__(((Inst *)0)->fountain) fountain;
+    __typeof__(((Inst *)0)->stray) stray;
+    __typeof__(((Inst *)0)->bubble) bubble;
+    __typeof__(((Inst *)0)->snowman) snowman;
+    __typeof__(((Inst *)0)->candle) candle;
+    __typeof__(((Inst *)0)->screw) screw;
+    __typeof__(((Inst *)0)->giver) giver;
+    __typeof__(((Inst *)0)->hipsw) hipsw;
+    __typeof__(((Inst *)0)->seesaw) seesaw;
+    __typeof__(((Inst *)0)->bridge) bridge;
+    __typeof__(((Inst *)0)->dossun) dossun;
+    __typeof__(((Inst *)0)->onimasu) onimasu;
+    __typeof__(((Inst *)0)->rbeamer) rbeamer;
+    __typeof__(((Inst *)0)->sbeamer) sbeamer;
+    __typeof__(((Inst *)0)->pressure) pressure;
+    __typeof__(((Inst *)0)->fpressure) fpressure;
+    __typeof__(((Inst *)0)->spmother) spmother;
+    __typeof__(((Inst *)0)->leakpipe) leakpipe;
+    __typeof__(((Inst *)0)->eyebeamer) eyebeamer;
+    __typeof__(((Inst *)0)->leaves) leaves;
+    __typeof__(((Inst *)0)->palm) palm;
+    __typeof__(((Inst *)0)->sstorm) sstorm;
+    __typeof__(((Inst *)0)->tdoor) tdoor;
+    __typeof__(((Inst *)0)->lotus) lotus;
+    __typeof__(((Inst *)0)->train) train;
+    __typeof__(((Inst *)0)->vflow) vflow;
+    __typeof__(((Inst *)0)->dland) dland;
+    __typeof__(((Inst *)0)->bigfan) bigfan;
+    __typeof__(((Inst *)0)->eball) eball;
+    __typeof__(((Inst *)0)->arrow) arrow;
+    __typeof__(((Inst *)0)->anmmodel) anmmodel;
+    __typeof__(((Inst *)0)->lever) lever;
+    __typeof__(((Inst *)0)->dswitch) dswitch;
+    __typeof__(((Inst *)0)->tbox) tbox;
+    __typeof__(((Inst *)0)->kstair) kstair;
+    __typeof__(((Inst *)0)->trapeze) trapeze;
+    __typeof__(((Inst *)0)->lavarock) lavarock;
+    __typeof__(((Inst *)0)->talkcls) talkcls;
+    __typeof__(((Inst *)0)->halo) halo;
+} ClassInfo;
+
+static void class_make(ClassInfo *ci, const char *name)
+{
+    ci->hazard = strcmp(name, "SpaceMine") == 0 ? 1 : strcmp(name, "NeedlePlant") == 0 || strcmp(name, "NeedlePlantFly") == 0 ? 2 :
+                 strcmp(name, "BlackHole") == 0 ? 3 : strcmp(name, "BlackHoleCube") == 0 ? 4 : 0;
+    ci->item = strcmp(name, "PowerStar") == 0 ? ITEM_STAR : strcmp(name, "BenefitItemOneUp") == 0 ? ITEM_ONEUP :
+               strcmp(name, "BenefitItemLifeUp") == 0 ? ITEM_LIFEUP : strcmp(name, "BenefitItemInvincible") == 0 ? ITEM_INVINCIBLE : strcmp(name, "QuestionCoin") == 0 ? ITEM_QCOIN :
+               strcmp(name, "YellowChip") == 0 || strcmp(name, "BlueChip") == 0 ? ITEM_CHIP :
+               strcmp(name, "KeySwitch") == 0 ? ITEM_KEY : 0; /* KeySwitch.cpp: taken (isMsgItemGet), its SW_A on */
+    ci->firebar = strcmp(name, "FireBar") == 0;
+    ci->flip = strcmp(name, "FlipPanel") == 0 || strcmp(name, "FlipPanelReverse") == 0;
+    ci->dnpc = strcmp(name, "Butler") == 0 ? 1 : strcmp(name, "TicoDomeLecture") == 0 ? 2 : strcmp(name, "Rosetta") == 0 ? 3 :
+               strcmp(name, "ButlerExplain") == 0 ? 4 : strcmp(name, "ButlerMap") == 0 ? 5 : 0;
+    ci->fat = strcmp(name, "TicoFat") == 0;
+    ci->sambo = strcmp(name, "CocoSambo") == 0;
+    ci->sky = sky_class(name);
+    ci->sun = strcmp(name, "BrightSun") == 0;
+    ci->shoot = strcmp(name, "ShootingStar") == 0;
+    ci->steam = strcmp(name, "LavaSteam") == 0;
+    ci->geyser = strcmp(name, "LavaGeyser") == 0;
+    ci->assembly = strncmp(name, "AssemblyBlock", 13) == 0;
+    ci->jstand = strcmp(name, "JumpStand") == 0;
+    ci->warppod = strcmp(name, "WarpPod") == 0;
+    ci->kiraira = strcmp(name, "Kiraira") == 0 ? 1 : strcmp(name, "KirairaRail") == 0 ? 2 : 0;
+    ci->kgun = strcmp(name, "KillerGunnerSingle") == 0;
+    ci->orock = strcmp(name, "OtaRock") == 0;
+    ci->hhp = strcmp(name, "HammerHeadPackun") == 0;
+    ci->vine = strcmp(name, "Plant") == 0;
+    ci->ibubble = strcmp(name, "ItemBubble") == 0;
+    ci->killer = strcmp(name, "HomingKiller") == 0 ? 1 : strcmp(name, "Torpedo") == 0 ? 2 : 0; /* Torpedo: HomingKiller's Type_Torpedo */
+    ci->gcap = strcmp(name, "GCaptureTarget") == 0 ? 1 : strcmp(name, "BlueStarCupsulePlanet") == 0 ? 2 : strcmp(name, "UFOBlueStarCupsule") == 0 ? 3 :
+               strcmp(name, "AstroDomeBlueStar") == 0 ? 4 : 0;
+    ci->tspot = strcmp(name, "TreasureSpot") == 0 ? 1 : strcmp(name, "CoinFlower") == 0 ? 2 : 0;
+    ci->beeflower = strcmp(name, "BeeFlowerHover") == 0;
+    ci->jbranch = strcmp(name, "JumpBranch") == 0;
+    ci->biri = strcmp(name, "BigBirikyu") == 0 ? 1 : strcmp(name, "Birikyu") == 0 ? 2 : 0;
+    ci->punch = strcmp(name, "PunchingKinoko") == 0;
+    ci->coco = strcmp(name, "CocoNut") == 0;
+    ci->cocoon = strcmp(name, "SpaceCocoon") == 0;
+    ci->fluff = strcmp(name, "Fluff") == 0;
+    ci->jet = strcmp(name, "JetTurtle") == 0;
+    ci->fountain = strcmp(name, "FountainBig") == 0;
+    ci->stray = strcmp(name, "StrayTico") == 0;
+    ci->bubble = strcmp(name, "AirBubble") == 0 ? 1 : strcmp(name, "AirBubbleGenerator") == 0 ? 2 : 0;
+    ci->snowman = strcmp(name, "SnowMan") == 0;
+    ci->candle = strcmp(name, "PhantomCandlestand") == 0 ? 1 : strcmp(name, "TeresaMansionCandlestand") == 0 ? 2 :
+                 strcmp(name, "CandlestandIceVolcano") == 0 ? 3 : 0;
+    ci->screw = strcmp(name, "ScrewSwitch") == 0 ? 1 : strcmp(name, "ScrewSwitchReverse") == 0 ? 2 : strcmp(name, "ValveSwitch") == 0 ? 3 : 0;
+    ci->giver = strcmp(name, "DeadLeaves") == 0 ? 1 : strcmp(name, "Pompon2Plant") == 0 || strcmp(name, "Pompon4Plant") == 0 ? 2 : 0;
+    ci->hipsw = strncmp(name, "PicketSwitch", 12) == 0 || strcmp(name, "HipDropSwitch") == 0 ? 1 :
+                strcmp(name, "HipDropTimerSwitch") == 0 ? 2 : 0;
+    ci->seesaw = strcmp(name, "PhantomShipHandle") == 0;
+    ci->bridge = strcmp(name, "PhantomShipBridge") == 0;
+    ci->dossun = strcmp(name, "Dossun") == 0;
+    ci->onimasu = strcmp(name, "Onimasu") == 0 || strcmp(name, "OnimasuPivot") == 0;
+    ci->rbeamer = strcmp(name, "RingBeamer") == 0 ? 1 : strcmp(name, "JumpBeamer") == 0 ? 2 : 0;
+    ci->sbeamer = strcmp(name, "SearchBeamer") == 0;
+    ci->pressure = strcmp(name, "WaterPressure") == 0;
+    ci->fpressure = strcmp(name, "FirePressureRadiate") == 0;
+    ci->spmother = strcmp(name, "StarPieceMother") == 0;
+    ci->leakpipe = strcmp(name, "WaterLeakPipe") == 0;
+    ci->eyebeamer = strcmp(name, "EyeBeamer") == 0;
+    ci->leaves = strcmp(name, "CoconutTreeLeaf") == 0;
+    ci->palm = strcmp(name, "PalmIsland") == 0;
+    ci->sstorm = strcmp(name, "SunakazeKun") == 0 ? 1 : strcmp(name, "TwisterSan") == 0 ? 2 : strcmp(name, "TwisterSanSlim") == 0 ? 3 : 0;
+    ci->tdoor = strcmp(name, "TeresaMansionDoorA") == 0 || strcmp(name, "TeresaMansionDoorB") == 0 ? 1 : strcmp(name, "DarknessRoomDoorA") == 0 ? 2 : strcmp(name, "TeresaMansionEntranceDoor") == 0 ? 3 : 0;
+    ci->lotus = strcmp(name, "LotusLeaf") == 0;
+    ci->train = strcmp(name, "ChooChooTrain") == 0;
+    ci->vflow = strcmp(name, "LavaHomeVolcanoFlow") == 0;
+    ci->dland = strcmp(name, "DesertMovingLand") == 0;
+    ci->bigfan = strcmp(name, "BigFan") == 0 || strcmp(name, "BigFanNoLeg") == 0;
+    ci->eball = strcmp(name, "ElectricBall") == 0;
+    ci->arrow = strcmp(name, "ArrowSwitch") == 0 ? 1 : strcmp(name, "ArrowSwitchMulti") == 0 ? 2 : 0;
+    ci->anmmodel = anm_kind(name);
+    ci->lever = strcmp(name, "SpinLeverSwitch") == 0;
+    ci->dswitch = strcmp(name, "DesertLandDownSwitch") == 0;
+    ci->tbox = strncmp(name, "TreasureBox", 11) == 0;
+    ci->kstair = strncmp(name, "KoopaBattleMapStair", 19) == 0 && strcmp(name, "KoopaBattleMapStairTurnAppear") != 0;
+    ci->trapeze = strcmp(name, "Trapeze") == 0;
+    ci->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
+    ci->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 || strcmp(name, "KinopioAstro") == 0 ? 3 :
+                  strcmp(name, "ButlerMap") == 0 ? 4 : strcmp(name, "Butler") == 0 ? 5 : lg_cls(name) ? 6 : strcmp(name, "TicoStarRing") == 0 ? 7 : 0;
+    ci->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 : 0;
+}
+static const ClassInfo *class_of(int t, const char *name)
+{
+    static struct { u32 seq; int t; ClassInfo ci; } c[64];
+    typeof(&c[0]) e = &c[(u32)t % 64];
+    if (e->seq != class_seq + 1 || e->t != t) { e->seq = class_seq + 1; e->t = t; class_make(&e->ci, name); }
+    return &e->ci;
+}
+static void class_apply(Inst *in, const ClassInfo *ci)
+{
+    in->hazard = ci->hazard;
+    in->item = ci->item;
+    in->firebar = ci->firebar;
+    in->flip = ci->flip;
+    in->dnpc = ci->dnpc;
+    in->fat = ci->fat;
+    in->sambo = ci->sambo;
+    in->sky = ci->sky;
+    in->sun = ci->sun;
+    in->shoot = ci->shoot;
+    in->steam = ci->steam;
+    in->geyser = ci->geyser;
+    in->assembly = ci->assembly;
+    in->jstand = ci->jstand;
+    in->warppod = ci->warppod;
+    in->kiraira = ci->kiraira;
+    in->kgun = ci->kgun;
+    in->orock = ci->orock;
+    in->hhp = ci->hhp;
+    in->vine = ci->vine;
+    in->ibubble = ci->ibubble;
+    in->killer = ci->killer;
+    in->gcap = ci->gcap;
+    in->tspot = ci->tspot;
+    in->beeflower = ci->beeflower;
+    in->jbranch = ci->jbranch;
+    in->biri = ci->biri;
+    in->punch = ci->punch;
+    in->coco = ci->coco;
+    in->cocoon = ci->cocoon;
+    in->fluff = ci->fluff;
+    in->jet = ci->jet;
+    in->fountain = ci->fountain;
+    in->stray = ci->stray;
+    in->bubble = ci->bubble;
+    in->snowman = ci->snowman;
+    in->candle = ci->candle;
+    in->screw = ci->screw;
+    in->giver = ci->giver;
+    in->hipsw = ci->hipsw;
+    in->seesaw = ci->seesaw;
+    in->bridge = ci->bridge;
+    in->dossun = ci->dossun;
+    in->onimasu = ci->onimasu;
+    in->rbeamer = ci->rbeamer;
+    in->sbeamer = ci->sbeamer;
+    in->pressure = ci->pressure;
+    in->fpressure = ci->fpressure;
+    in->spmother = ci->spmother;
+    in->leakpipe = ci->leakpipe;
+    in->eyebeamer = ci->eyebeamer;
+    in->leaves = ci->leaves;
+    in->palm = ci->palm;
+    in->sstorm = ci->sstorm;
+    in->tdoor = ci->tdoor;
+    in->lotus = ci->lotus;
+    in->train = ci->train;
+    in->vflow = ci->vflow;
+    in->dland = ci->dland;
+    in->bigfan = ci->bigfan;
+    in->eball = ci->eball;
+    in->arrow = ci->arrow;
+    in->anmmodel = ci->anmmodel;
+    in->lever = ci->lever;
+    in->dswitch = ci->dswitch;
+    in->tbox = ci->tbox;
+    in->kstair = ci->kstair;
+    in->trapeze = ci->trapeze;
+    in->lavarock = ci->lavarock;
+    in->talkcls = ci->talkcls;
+    in->halo = ci->halo;
 }
 static void game_rebind_(void)
 {
@@ -4055,17 +4307,10 @@ static void game_rebind_(void)
         int dc, dp;
         in->breaks = breakable(name, r, &dc, &dp);
         in->collapse = strcmp(name, "CollapsePlane") == 0 ? (r->arg[0] > 0 ? r->arg[0] : 140) : 0;
-        in->hazard = strcmp(name, "SpaceMine") == 0 ? 1 : strcmp(name, "NeedlePlant") == 0 || strcmp(name, "NeedlePlantFly") == 0 ? 2 :
-                     strcmp(name, "BlackHole") == 0 ? 3 : strcmp(name, "BlackHoleCube") == 0 ? 4 : 0;
-        in->item = strcmp(name, "PowerStar") == 0 ? ITEM_STAR : strcmp(name, "BenefitItemOneUp") == 0 ? ITEM_ONEUP :
-                   strcmp(name, "BenefitItemLifeUp") == 0 ? ITEM_LIFEUP : strcmp(name, "BenefitItemInvincible") == 0 ? ITEM_INVINCIBLE : strcmp(name, "QuestionCoin") == 0 ? ITEM_QCOIN :
-                   strcmp(name, "YellowChip") == 0 || strcmp(name, "BlueChip") == 0 ? ITEM_CHIP :
-                   strcmp(name, "KeySwitch") == 0 ? ITEM_KEY : 0; /* KeySwitch.cpp: taken (isMsgItemGet), its SW_A on */
-        in->firebar = strcmp(name, "FireBar") == 0;
+        class_apply(in, class_of(r->type, name)); /* the class-name tests, once a class a rebind */
         in->invisible = strncmp(name, "InvisibleWall", 13) == 0 || strcmp(name, "IronCannonLauncherPoint") == 0 || strcmp(name, "ElectricBall") == 0 ||
                         strcmp(name, "StarReturnDemoStarter") == 0 || strcmp(name, "GrandStarReturnDemoStarter") == 0 || /* their stars: srd_draw / gsr_draw */
                         strcmp(name, "AstroDomeDemoStarter") == 0; /* its SuperSpinDriver: adds_draw */
-        in->flip = strcmp(name, "FlipPanel") == 0 || strcmp(name, "FlipPanelReverse") == 0;
         if (in->flip) {
             char v[48];
             snprintf(v, sizeof v, "%s#PanelA", name);
@@ -4075,48 +4320,10 @@ static void game_rebind_(void)
         }
         in->npc = npc_class(name, r);
         in->nu = in->nu0 = vnorm(v3(in->m[4], in->m[5], in->m[6])); in->nf = in->nf0 = vnorm(v3(in->m[8], in->m[9], in->m[10]));
-        in->dnpc = strcmp(name, "Butler") == 0 ? 1 : strcmp(name, "TicoDomeLecture") == 0 ? 2 : strcmp(name, "Rosetta") == 0 ? 3 :
-                   strcmp(name, "ButlerExplain") == 0 ? 4 : strcmp(name, "ButlerMap") == 0 ? 5 : 0;
-        in->fat = strcmp(name, "TicoFat") == 0;
-        in->sambo = strcmp(name, "CocoSambo") == 0;
-        in->sky = sky_class(name);
-        in->sun = strcmp(name, "BrightSun") == 0;
-        in->shoot = strcmp(name, "ShootingStar") == 0;
-        in->steam = strcmp(name, "LavaSteam") == 0;
-        in->geyser = strcmp(name, "LavaGeyser") == 0;
-        in->assembly = strncmp(name, "AssemblyBlock", 13) == 0;
-        in->jstand = strcmp(name, "JumpStand") == 0;
-        in->warppod = strcmp(name, "WarpPod") == 0;
-        in->kiraira = strcmp(name, "Kiraira") == 0 ? 1 : strcmp(name, "KirairaRail") == 0 ? 2 : 0;
-        in->kgun = strcmp(name, "KillerGunnerSingle") == 0;
-        in->orock = strcmp(name, "OtaRock") == 0;
-        in->hhp = strcmp(name, "HammerHeadPackun") == 0;
-        in->vine = strcmp(name, "Plant") == 0;
-        in->ibubble = strcmp(name, "ItemBubble") == 0;
         if (in->ibubble) in->head = row_pos(r); /* its items' frame (_CC) trails the bubble */
         in->meteor = NULL;
-        in->killer = strcmp(name, "HomingKiller") == 0 ? 1 : strcmp(name, "Torpedo") == 0 ? 2 : 0; /* Torpedo: HomingKiller's Type_Torpedo */
-        in->gcap = strcmp(name, "GCaptureTarget") == 0 ? 1 : strcmp(name, "BlueStarCupsulePlanet") == 0 ? 2 : strcmp(name, "UFOBlueStarCupsule") == 0 ? 3 :
-                   strcmp(name, "AstroDomeBlueStar") == 0 ? 4 : 0;
-        in->tspot = strcmp(name, "TreasureSpot") == 0 ? 1 : strcmp(name, "CoinFlower") == 0 ? 2 : 0;
         in->prom = NULL;
-        in->beeflower = strcmp(name, "BeeFlowerHover") == 0;
-        in->jbranch = strcmp(name, "JumpBranch") == 0;
-        in->biri = strcmp(name, "BigBirikyu") == 0 ? 1 : strcmp(name, "Birikyu") == 0 ? 2 : 0;
-        in->punch = strcmp(name, "PunchingKinoko") == 0;
-        in->coco = strcmp(name, "CocoNut") == 0;
-        in->cocoon = strcmp(name, "SpaceCocoon") == 0;
-        in->fluff = strcmp(name, "Fluff") == 0;
-        in->jet = strcmp(name, "JetTurtle") == 0;
-        in->fountain = strcmp(name, "FountainBig") == 0;
-        in->stray = strcmp(name, "StrayTico") == 0;
-        in->bubble = strcmp(name, "AirBubble") == 0 ? 1 : strcmp(name, "AirBubbleGenerator") == 0 ? 2 : 0;
-        in->snowman = strcmp(name, "SnowMan") == 0;
-        in->candle = strcmp(name, "PhantomCandlestand") == 0 ? 1 : strcmp(name, "TeresaMansionCandlestand") == 0 ? 2 :
-                     strcmp(name, "CandlestandIceVolcano") == 0 ? 3 : 0;
-        in->screw = strcmp(name, "ScrewSwitch") == 0 ? 1 : strcmp(name, "ScrewSwitchReverse") == 0 ? 2 : strcmp(name, "ValveSwitch") == 0 ? 3 : 0;
         in->biri_rail = in->biri && scene_blob_g && r->path >= 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
-        in->giver = strcmp(name, "DeadLeaves") == 0 ? 1 : strcmp(name, "Pompon2Plant") == 0 || strcmp(name, "Pompon4Plant") == 0 ? 2 : 0;
         in->ticorail = scene_blob_g && r->path >= 0 && strcmp(name, "TicoRail") == 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
         if (scene_blob_g && r->path >= 0 && strncmp(name, "LavaProminence", 14) == 0 && strcmp(name, "LavaProminenceTriple")) {
             int cl;
@@ -4132,43 +4339,9 @@ static void game_rebind_(void)
                     find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->plant = strcmp(name, "FlowerGroup") == 0 || strcmp(name, "FlowerBlueGroup") == 0 || strcmp(name, "CutBushGroup") == 0 ||
                     stone_row(r);
-        in->hipsw = strncmp(name, "PicketSwitch", 12) == 0 || strcmp(name, "HipDropSwitch") == 0 ? 1 :
-                    strcmp(name, "HipDropTimerSwitch") == 0 ? 2 : 0;
         in->rotor = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->arg[4] != -1 && r->arg[4] != 0; /* -1: not a map part */
-        in->seesaw = strcmp(name, "PhantomShipHandle") == 0;
-        in->bridge = strcmp(name, "PhantomShipBridge") == 0;
-        in->dossun = strcmp(name, "Dossun") == 0;
-        in->onimasu = strcmp(name, "Onimasu") == 0 || strcmp(name, "OnimasuPivot") == 0;
-        in->rbeamer = strcmp(name, "RingBeamer") == 0 ? 1 : strcmp(name, "JumpBeamer") == 0 ? 2 : 0;
-        in->sbeamer = strcmp(name, "SearchBeamer") == 0;
-        in->pressure = strcmp(name, "WaterPressure") == 0;
-        in->fpressure = strcmp(name, "FirePressureRadiate") == 0;
-        in->spmother = strcmp(name, "StarPieceMother") == 0;
-        in->leakpipe = strcmp(name, "WaterLeakPipe") == 0;
-        in->eyebeamer = strcmp(name, "EyeBeamer") == 0;
-        in->leaves = strcmp(name, "CoconutTreeLeaf") == 0;
-        in->palm = strcmp(name, "PalmIsland") == 0;
-        in->sstorm = strcmp(name, "SunakazeKun") == 0 ? 1 : strcmp(name, "TwisterSan") == 0 ? 2 : strcmp(name, "TwisterSanSlim") == 0 ? 3 : 0;
-        in->tdoor = strcmp(name, "TeresaMansionDoorA") == 0 || strcmp(name, "TeresaMansionDoorB") == 0 ? 1 : strcmp(name, "DarknessRoomDoorA") == 0 ? 2 : strcmp(name, "TeresaMansionEntranceDoor") == 0 ? 3 : 0;
-        in->lotus = strcmp(name, "LotusLeaf") == 0;
-        in->train = strcmp(name, "ChooChooTrain") == 0;
-        in->vflow = strcmp(name, "LavaHomeVolcanoFlow") == 0;
-        in->dland = strcmp(name, "DesertMovingLand") == 0;
-        in->bigfan = strcmp(name, "BigFan") == 0 || strcmp(name, "BigFanNoLeg") == 0;
-        in->eball = strcmp(name, "ElectricBall") == 0;
-        in->arrow = strcmp(name, "ArrowSwitch") == 0 ? 1 : strcmp(name, "ArrowSwitchMulti") == 0 ? 2 : 0;
-        in->anmmodel = anm_kind(name);
-        in->lever = strcmp(name, "SpinLeverSwitch") == 0;
-        in->dswitch = strcmp(name, "DesertLandDownSwitch") == 0;
-        in->tbox = strncmp(name, "TreasureBox", 11) == 0;
-        in->kstair = strncmp(name, "KoopaBattleMapStair", 19) == 0 && strcmp(name, "KoopaBattleMapStairTurnAppear") != 0;
-        in->trapeze = strcmp(name, "Trapeze") == 0;
-        in->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
-        in->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 || strcmp(name, "KinopioAstro") == 0 ? 3 :
-                      strcmp(name, "ButlerMap") == 0 ? 4 : strcmp(name, "Butler") == 0 ? 5 : lg_cls(name) ? 6 : strcmp(name, "TicoStarRing") == 0 ? 7 : 0;
         in->press = strcmp(name, "RGTowerPressGroundA") == 0 || strcmp(name, "ReverseGravityRoomPressGroundA") == 0 ||
                     strcmp(name, "ReverseGravityRoomPressGroundB") == 0 || in->dossun || in->onimasu;
-        in->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 : 0;
         if (r->type < 1024 && bloom_ok[r->type]) in->md_bloom = bloom_of[r->type]; /* this rebind's answer for the class */
         else {
             char bn[40]; snprintf(bn, sizeof bn, "%sBloom", name); in->md_bloom = scene_model(s, bn);
