@@ -90,7 +90,7 @@ void render_reserve_blocks(u32 n); /* movie.c: the cache's first n blocks kept f
 void render_show(void);      /* the frame drawn shown (movie.c's pacing) */
 void render_movie_mode(int on); /* movie.c: 32-bit frames over the Z buffer and the cache's start (no scene loaded) */
 /* a world-space sphere within the camera's view (the test draw_model culls by) */
-int render_clip_judge(const float p[3], float rad); /* off ClippingJudge's volume (near 500, far 10000) */
+int render_clip_judge(const float p[3], float rad, float far); /* off ClippingJudge's volume (near 500, far: 10000 level 6, 20000 level 5) */
 int render_visible(const float p[3], float rad);
 void render_flip_wait(void); /* until the last render_end's frame is on screen (asynchronous flip) */
 u32 render_wait_cycles(void); /* EE cycles blocked on the VIF chain since the last call (profiling) */
