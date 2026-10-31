@@ -31,16 +31,17 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   by function and strcmp / memset / sin / cos / snprintf callers) and the route test prints the EE's time each 200
   frames (`route perf f N: logic, draw without the waits, worst`). Exact changes only (same functions of the same
   inputs; bench end states and the route's log line for line unchanged, star at 3781), except the drawings' angles
-  that turn with the frame (taken within one turn). Good Egg bench, start view: logic 4205 -> 3022 us, EE draw 7139 ->
-  5818; path: logic 4112 -> 2974, EE draw 5623 -> 4626. Route: logic 7758 -> 4840 at f 600, 6644 -> 4418 at f 3200,
-  worst frames 92 -> 31 ms (f 1400), 88 -> 19 (f 3000). What it was: names looked up by strcmp walks every frame
+  that turn with the frame (taken within one turn). Good Egg bench, start view: logic 4205 -> 3026 us, EE draw 7139 ->
+  5771; path: logic 4112 -> 2968, EE draw 5623 -> 4630. Route: logic 7758 -> 4816 at f 600, 6644 -> 4407 at f 3200,
+  worst frames 92 -> 30 ms (f 1400), 88 -> 16 (f 3000). What it was: names looked up by strcmp walks every frame
   (area classes, scene_type / scene_model, Mario's anim names, rows by class; at a rebind once a row), sines / cosines
   of unchanging rotations (areas, camera areas, joints) and of huge angles (newlib's slow reduction), memset for
   small matrices, gravity_at over every gravity (now a grid), skinning on the FPU (now VU0). Ideas left: KCL
   (kcl_check_sphere 0.5-0.8 ms a frame in heavy places; kcl_each walks every KCL instance a query, ~0.35 ms: moving
   parts keep a grid from being exact), draw_model_ ~1 ms (skinned batches), particles fx_draw + render_sprites +
   fx_update ~1 ms (on the EE), Mario's pose ~0.36 ms (30 joints, 4-track blend), walkers posed one by one, zone swaps
-  (game_rebind) still a 30 ms frame, fx_anim's strcmp search a skinned draw with effects, se_update's powf / sinf a
+  and rebinds (game_rebind on a kill / switch: the whole instance table again, 2.8-11 ms a call, `route perf`'s
+  rebinds; a class's flags made once per type would cut most), fx_anim's strcmp search a skinned draw with effects, se_update's powf / sinf a
   channel a frame. Bench builds only: render_text's debug lines (~0.6 ms) and PCSX2's host reads (fread walks every
   FILE: _fwalk_sglue) inflate the numbers. No pack format change.
 
