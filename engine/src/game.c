@@ -1570,11 +1570,34 @@ static void kcl_list_build(void)
 /* every placed collision (its sub-matrix m, the scale k of its columns, s: the KCL's local units per world unit) whose
  * reach meets the sphere c, radius; fn's nonzero stops the walk */
 typedef int (*KclEach)(void *ctx, int inst, int sub, const float *m, float s);
+/* A narrower list for a run of queries near one place (collide_n's pushes and its resting probe): the KCL instances
+ * within reach of a sphere (cand_c, cand_r), in order. A query whose sphere lies inside it walks only those (an
+ * instance out of reach of the big sphere is out of reach of any inside it: the same instances pass); 1 unit spare */
+static short kcl_cand[256];
+static int nkcl_cand = -1; /* -1: none */
+static V3 cand_c;
+static float cand_r;
+static void kcl_cand_begin(V3 c, float r)
+{
+    if (kcl_list_ninsts != ninsts) kcl_list_build();
+    cand_c = c; cand_r = r; nkcl_cand = 0;
+    for (int li = 0; li < nkcl_list; li++) {
+        const Inst *in = &insts[kcl_list[li]];
+        V3 d = vsub(c, v3(in->m[12], in->m[13], in->m[14]));
+        if (vdot(d, d) > (in->reach + r) * (in->reach + r)) continue;
+        if (nkcl_cand == 256) { nkcl_cand = -1; return; } /* too many: the walk over all */
+        kcl_cand[nkcl_cand++] = (short)kcl_list[li];
+    }
+}
+static void kcl_cand_end(void) { nkcl_cand = -1; }
 static int kcl_each(V3 c, float radius, KclEach fn, void *ctx)
 {
     if (kcl_list_ninsts != ninsts) kcl_list_build(); /* init, a rebind: the list follows the instances */
-    for (int li = 0; li < nkcl_list; li++) {
-        int i = kcl_list[li];
+    const short *list = kcl_list;
+    int nlist = nkcl_list;
+    if (nkcl_cand >= 0 && vlen(vsub(c, cand_c)) + radius <= cand_r - 1.0f) { list = kcl_cand; nlist = nkcl_cand; }
+    for (int li = 0; li < nlist; li++) {
+        int i = list[li];
         const Inst *in = &insts[i];
         V3 d = vsub(c, v3(in->m[12], in->m[13], in->m[14])); /* (out of reach first: most are; the tests below are pure) */
         if (vdot(d, d) > (in->reach + radius) * (in->reach + radius)) continue;
@@ -1823,6 +1846,7 @@ static int collide_n(V3 *center, V3 up, float radius, V3 *ground_n, V3 *wall_n, 
     float flat = WALL_ANGLE_COS; /* ground normal = the flattest ground face touched: it is what holds Mario up, and
                                   * taking the deepest one flipped between the two faces of a crease */
     if (wall) *wall = 0;
+    kcl_cand_begin(*center, radius + 64.0f); /* its pushes and resting probe stay near: they walk only those within reach */
     for (int it = 0; it < 3; it++) {
         Hit hits[16];
         int n = kcl_query(*center, radius, hits, 16);
@@ -1865,6 +1889,7 @@ static int collide_n(V3 *center, V3 up, float radius, V3 *ground_n, V3 *wall_n, 
                 ground_inst = hits[i].inst; ground_attr = hits[i].attr; ground_sub = hits[i].sub; ground_prism = hits[i].prism;
             }
     }
+    kcl_cand_end();
     game_kcl_cycles += cycles() - c0;
     return ground;
 }
