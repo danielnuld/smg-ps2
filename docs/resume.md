@@ -41,8 +41,8 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   parts keep a grid from being exact), draw_model_ ~1 ms (skinned batches), particles fx_draw + render_sprites +
   fx_update ~1 ms (on the EE), Mario's pose ~0.36 ms (30 joints, 4-track blend), walkers posed one by one, zone swaps
   and rebinds (game_rebind on a kill / switch: the whole instance table again, 2.8-11 ms a call, `route perf`'s
-  rebinds; a class's flags made once per type would cut most), fx_anim's strcmp search a skinned draw with effects, se_update's powf / sinf a
-  channel a frame. Bench builds only: render_text's debug lines (~0.6 ms) and PCSX2's host reads (fread walks every
+  rebinds; a class's flags made once per type would cut most), fx_anim's strcmp search a skinned draw with effects,
+  se_update's powf / sinf a channel a frame. Bench builds only: render_text's debug lines (~0.6 ms) and PCSX2's host reads (fread walks every
   FILE: _fwalk_sglue) inflate the numbers. No pack format change.
 
 ## Console release (2026-10-23 / 24)
