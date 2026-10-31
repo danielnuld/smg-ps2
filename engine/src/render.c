@@ -261,7 +261,7 @@ static void mat_mul_scale3(float *out, const float *a, const float *b, float s)
         "vmaddaz.xyzw $ACC, $vf3, $vf8z\n vmaddw.xyzw $vf8, $vf4, $vf8w\n"
         "vmulx.xyzw $vf5, $vf5, $vf9x\n vmulx.xyzw $vf6, $vf6, $vf9x\n vmulx.xyzw $vf7, $vf7, $vf9x\n"
         "sqc2 $vf5, 0(%0)\n sqc2 $vf6, 16(%0)\n sqc2 $vf7, 32(%0)\n sqc2 $vf8, 48(%0)\n"
-        : : "r"(out), "r"(a), "r"(b), "r"(*(u32 *)&s) : "memory");
+        : : "r"(out), "r"(a), "r"(b), "r"(((union { float f; u32 u; }){s}).u) : "memory");
 }
 
 /* SMG placement: translation, then rotation Z * Y * X (degrees), then scale. */

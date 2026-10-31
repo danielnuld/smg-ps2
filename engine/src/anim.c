@@ -568,7 +568,7 @@ static void anim_skin_(Anim *a)
                 "vmulaw.xyzw $ACC, $vf16, $vf0w\n vmaddaw.xyzw $ACC, $vf1, $vf5w\n"
                 "vmaddaw.xyzw $ACC, $vf2, $vf6w\n vmaddaw.xyzw $ACC, $vf3, $vf7w\n"
                 "vmaddw.xyzw $vf16, $vf4, $vf0w\n"
-                : : "r"(a->world[mx->joint]), "r"(r), "r"(*(u32 *)&w) : "memory");
+                : : "r"(a->world[mx->joint]), "r"(r), "r"(((union { float f; u32 u; }){w}).u) : "memory");
         }
         __asm__ volatile("sqc2 $vf13, 0(%0)\n sqc2 $vf14, 16(%0)\n sqc2 $vf15, 32(%0)\n sqc2 $vf16, 48(%0)\n"
                          : : "r"(out) : "memory");
