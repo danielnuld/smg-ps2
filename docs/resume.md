@@ -33,8 +33,10 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   with BegomanBase's nerves, the attack permitter, electric rails), SpiderMapBlock (hip drop: its coin to velocity),
   SpiderCoin (R2 + cursor frees it; its SpaceCocoon). Test modes: `talk` with XF=-DTALK_CLS=7 (AstroGalaxy/1),
   `statue` (KoopaBattleVs3Galaxy/1), `hanachan` / `strspider` (KoopaJrShipLv1Galaxy/1), `begoman`
-  (BattleShipGalaxy/3), `hip` (OceanPhantomCaveGalaxy/1: SpiderMapBlock), `spidercoin` (StarDustGalaxy/3); the new
-  tests count frames from Mario free (game_test_free). Overlay packs: out/wt-gaps3.
+  (BattleShipGalaxy/3), `spiderblock` (OceanPhantomCaveGalaxy/1), `spidercoin` (StarDustGalaxy/3); the new tests
+  count frames from Mario free (game_test_free). Overlay packs: out/wt-gaps3. All seen working in PCSX2 but
+  spiderblock (GhostShipCaveZone never streams in there: the same zone-room limit as below) and SpiderCoin's pointer
+  (StarDust 3's boss camera keeps it off screen; the test frees them directly).
   The repack must pick up (tools/slice.py, tools/msg.py): msg.py DIRECT TicoStarRing (AstroGalaxy);
   EXTRA KoopaStatue ("#Break", "KoopaStatueBreak"), Hanachan (HanachanHead / Body / BodyS), StringSpider
   (StringSpiderString), BegomanSpike (BegomanSpikeHead, BegomanBrokenPiece), SpiderCoin (SpaceCocoon); SKINNED_OBJ
