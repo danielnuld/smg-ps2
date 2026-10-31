@@ -101,20 +101,28 @@ void __wrap_free(void *p)
     else __real_free(p);
 }
 
+/* from the region's top (the last free block that fits, its end): the low stage packs and small ones, so the full
+ * stage packs swapped in and out below them find the free room in one piece (OceanRing 3: 2129 + 4054 KB free
+ * around an empty zone's low pack, 4348 KB wanted; Phantom 1: 1116 + 3267 KB around three low packs, 4017 wanted) */
+static void *pk_alloc_top(u32 n)
+{
+    n = (n + 63) & ~63u;
+    for (int i = pk_n - 1; i >= 0; i--) {
+        if (pk_blk[i].used || pk_blk[i].size < n) continue;
+        if (pk_blk[i].size == n || pk_n == PK_BLOCKS) { pk_blk[i].used = 1; return pk_base + pk_blk[i].off; }
+        memmove(&pk_blk[i + 2], &pk_blk[i + 1], (pk_n - i - 1) * sizeof pk_blk[0]);
+        pk_blk[i].size -= n;
+        pk_blk[i + 1].off = pk_blk[i].off + pk_blk[i].size; pk_blk[i + 1].size = n; pk_blk[i + 1].used = 1;
+        pk_n++;
+        return pk_base + pk_blk[i + 1].off;
+    }
+    return NULL;
+}
+
 static void *pk_alloc(u32 n)
 {
     n = (n + 63) & ~63u;
-    if (n <= (64u << 10)) /* a small pack (an empty zone's low pack) from the region's top: one in the middle split the
-                           * free room a big stage pack wanted (OceanRing 3: 2129 + 4054 KB free, 4348 KB not) */
-        for (int i = pk_n - 1; i >= 0; i--) {
-            if (pk_blk[i].used || pk_blk[i].size < n) continue;
-            if (pk_blk[i].size == n || pk_n == PK_BLOCKS) { pk_blk[i].used = 1; return pk_base + pk_blk[i].off; }
-            memmove(&pk_blk[i + 2], &pk_blk[i + 1], (pk_n - i - 1) * sizeof pk_blk[0]);
-            pk_blk[i].size -= n;
-            pk_blk[i + 1].off = pk_blk[i].off + pk_blk[i].size; pk_blk[i + 1].size = n; pk_blk[i + 1].used = 1;
-            pk_n++;
-            return pk_base + pk_blk[i + 1].off;
-        }
+    if (n <= (64u << 10)) return pk_alloc_top(n);
     for (int i = 0; i < pk_n; i++) {
         if (pk_blk[i].used || pk_blk[i].size < n) continue;
         if (pk_blk[i].size > n && pk_n < PK_BLOCKS) { /* the rest stays free after it */
@@ -462,6 +470,7 @@ static struct {
     u8 *cur;
     u32 size, off, bytes;
     u32 flight;       /* DISC: bytes of the asynchronous read in progress (0 none) */
+    int reread;       /* the whole set read again once (pend_evict(1)) */
 } pend;
 
 static void chain_of(int zone, unsigned char *full)
@@ -529,12 +538,21 @@ static void target_set(unsigned char *out)
 /* The region can not hold the old and the new packs of a swap at once (OceanPhantomCave: GhostShipCaveZone's 5.6 MB
  * and CaveChangeSizeZone's 1.6 MB): the zone models are dropped and the stage packs the swap replaces freed first, the
  * rest read at once (pend_step), then the swap. 1 if one was freed. ponytail: a hitch where both used to be in RAM
- * (a load pause, the zones not drawn meanwhile); a smaller set (target_set) first would avoid it */
-static int pend_evict(void)
+ * (a load pause, the zones not drawn meanwhile); a smaller set (target_set) first would avoid it.
+ * all: the room is there but in pieces (packs kept between the holes: Phantom 1, 1116 + 3267 KB free, 4017 wanted):
+ * every stage pack freed, the reads so far too, and the whole set read again from its first zone (full packs bottom
+ * up, low ones from the top: one free piece) */
+static int pend_evict(int all)
 {
     int n = 0;
+    if (all) {
+        for (u32 z = 0; z < pend.z && z < nzones; z++)
+            if (pend.buf[z] && pend.buf[z] != zone_files[z]) { pk_free(pend.buf[z]); n++; }
+        memset(pend.buf, 0, sizeof pend.buf);
+        pend.z = 0;
+    }
     for (u32 z = 0; z < nzones; z++)
-        if (zone_files[z] && (z < pend.z ? pend.buf[z] != zone_files[z] : pend.full[z] != zone_full[z])) n++;
+        if (zone_files[z] && (all || (z < pend.z ? pend.buf[z] != zone_files[z] : pend.full[z] != zone_full[z]))) n++;
     if (!n) return 0;
     render_release(&scene, base_tex, base_models);
     scene.nmodels = base_models;
@@ -542,11 +560,11 @@ static int pend_evict(void)
     scene.nkcl = base_kcl;
     mem_release(&base_mark);
     for (u32 z = 0; z < nzones; z++)
-        if (zone_files[z] && (z < pend.z ? pend.buf[z] != zone_files[z] : pend.full[z] != zone_full[z])) {
+        if (zone_files[z] && (all || (z < pend.z ? pend.buf[z] != zone_files[z] : pend.full[z] != zone_full[z]))) {
             pk_free(zone_files[z]);
             zone_files[z] = NULL;
         }
-    printf("packs: %d stage packs freed before the swap (no room for both)\n", n);
+    printf("packs: %d stage packs freed before the swap (%s)\n", n, all ? "the room in pieces: all read again" : "no room for both");
     return 1;
 }
 
@@ -573,11 +591,18 @@ static int pend_step(u32 budget)
                 for (;;) {}
             }
             pend.size = pend.f.size;
-            pend.cur = pk_alloc(PACK_ALLOC(pend.size));
-            if (!pend.cur && pend_evict()) { /* then all of it now: nothing of those zones is left to draw */
+            pend.cur = pend.full[z] ? pk_alloc(PACK_ALLOC(pend.size)) : pk_alloc_top(PACK_ALLOC(pend.size));
+            if (!pend.cur && pend_evict(0)) { /* then all of it now: nothing of those zones is left to draw */
                 budget = 0xFFFFFFFF;
                 all = 1;
-                pend.cur = pk_alloc(PACK_ALLOC(pend.size));
+                pend.cur = pend.full[z] ? pk_alloc(PACK_ALLOC(pend.size)) : pk_alloc_top(PACK_ALLOC(pend.size));
+            }
+            if (!pend.cur && !pend.reread && pend_evict(1)) { /* the room in pieces: once more from the first zone */
+                pack_close(&pend.f);
+                pend.reread = 1;
+                budget = 0xFFFFFFFF;
+                all = 1;
+                continue;
             }
             if (!pend.cur) {
                 printf("packs: no memory for %s (%u KB)\n", path, pend.size >> 10);
@@ -777,13 +802,12 @@ static const u8 *load_packs(Scene *s)
     }
     u32 scen_base = pack_bytes - resident_bytes; /* scene.bin + common.bin: tools/slice_all.py's stream count */
     zone_room = PACK_ROOM > scen_base ? PACK_ROOM - scen_base : 0;
-    { /* and what the region really has left (its size follows the ELF's; the menus' packs came out of it): a swap
-       * holds the old packs while the new ones come in, so the low packs' sum is kept aside.
+    { /* and what the region really has left (its size follows the ELF's; the menus' packs came out of it). A swap with
+       * no room for the old and the new packs at once frees the old first (pend_evict), so the low packs are not kept
+       * aside as well (set_cost counts them already: HoneyBeeKingdom 3's start zone never came in full, Mario fell).
        * ponytail: free bytes summed, not the largest free block */
-        u32 left = 0, lows = 0;
+        u32 left = 0;
         for (int i = 0; i < pk_n; i++) if (!pk_blk[i].used) left += pk_blk[i].size;
-        for (u32 z = 0; z < nzones; z++) lows += PACK_ALLOC(size_low[z]);
-        left = left > lows ? left - lows : 0;
         if (left < zone_room) { printf("packs: zone room %u KB (the region's), not %u KB\n", left >> 10, zone_room >> 10); zone_room = left; }
     }
     printf("packs: %s, %u zones, base %u models, %u textures, %u KB read\n", scen, nzones, s->nmodels, s->ntex,
