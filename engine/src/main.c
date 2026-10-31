@@ -23,6 +23,7 @@ static void print_pace(void) { if (print_pace_on) { unsigned c0 = cycles(); whil
 #include "pad.h"
 #include "render.h"
 #include "se.h"
+#include "me.h"
 #include "vmath.h"
 
 #include "fx.h"
@@ -862,6 +863,7 @@ static void movies_play(void)
 static void scene_switch(void)
 {
     printf("scene: %s -> %s\n", scen, scene_next);
+    me_reset(); /* AudSystem::preProcessToReset */
     se_silence();
     audio_stop(); /* its FILE sits above the base packs: freed before they go (the heap stays whole) */
     if (pend.active) pend_cancel();
@@ -1786,10 +1788,76 @@ int main(void)
             if (frame >= 150 && frame % 60 == 0) game_test_npc_turn((int)frame);
         }
 #endif
+#ifdef HANACHAN_TEST
+    {   /* frames from Mario free (the flight in over) + 150 */
+        static u32 f0;
+        u32 mf = frame;
+        if (!f0 && mf > 30 && game_test_free()) f0 = mf;
+        u32 frame = f0 ? mf - f0 + 150 : 0;
+        if (frame == 200 || frame == 860) printf("hanachan test f %u: trample row %d\n", frame, game_test_hanachan(0));
+        if (frame == 760) printf("hanachan test f %u: spin row %d\n", frame, game_test_hanachan(1));
+        if (frame >= 200 && frame <= 1100 && frame % 20 == 0) printf("hanachan test f %u: nerve %d\n", frame, game_hanachan_state());
+    }
+#endif
+#ifdef STRSPIDER_TEST
+    {
+        static u32 f0;
+        u32 mf = frame;
+        if (!f0 && mf > 30 && game_test_free()) f0 = mf;
+        u32 frame = f0 ? mf - f0 + 150 : 0;
+        { /* under the first spider (200, held to 400: it comes down), spins (400, 440: Spinned, Blow); the next one trampled (600 under, 800 onto) */
+            if (frame == 200 || frame == 600) { printf("strspider test f %u: under row %d\n", frame, game_test_strspider(0)); game_test_hold(1); }
+            if ((frame > 200 && frame < 400) || (frame > 600 && frame < 800)) game_test_hold(0);
+            if (frame == 400 || frame == 440) printf("strspider test f %u: spin row %d\n", frame, game_test_strspider(1));
+            if (frame == 800) printf("strspider test f %u: trample row %d\n", frame, game_test_strspider(2));
+            if (frame >= 200 && frame <= 900 && frame % 20 == 0) game_strspider_state();
+            game_test_unclip(); /* the spider above Mario is off the view */
+        }
+    }
+#endif
+#ifdef BEGOMAN_TEST
+    {
+        static u32 f0;
+        u32 mf = frame;
+        if (!f0 && mf > 30 && game_test_free()) f0 = mf;
+        u32 frame = f0 ? mf - f0 + 150 : 0;
+        /* 900 before the first spike (200: it comes for him), a spin by it (600: blown), a trample (900: Mario hurt) */
+        if (frame >= 100 && frame < 200 && frame % 20 == 0) game_test_begoman(0); /* its zone in */
+        if (frame == 200) printf("begoman test f %u: before row %d\n", frame, game_test_begoman(0));
+        if (frame > 600 && frame < 640) game_test_spin_now(); /* (a flip from its last hit may stop the first) */
+        if (frame == 600) printf("begoman test f %u: spin row %d\n", frame, game_test_begoman(1));
+        if (frame == 900) printf("begoman test f %u: trample row %d\n", frame, game_test_begoman(2));
+        if (frame >= 200 && frame <= 1100 && frame % 20 == 0) { printf("begoman test f %u: life %d\n", frame, game_life()); game_begoman_state(); }
+    }
+#endif
+#ifdef SPIDERCOIN_TEST
+        if (frame >= 150 && frame <= 900 && frame % 30 == 0) printf("spidercoin test f %u: row %d, coins %d\n", frame, game_test_spidercoin(), game_coins());
+#endif
+#ifdef SPIDERBLOCK_TEST
+    {
+        static u32 f0;
+        u32 mf = frame;
+        if (!f0 && mf > 30 && game_test_free()) f0 = mf;
+        u32 frame = f0 ? mf - f0 + 150 : 0;
+        if (frame >= 150 && frame < 500 && frame % 10 == 0) game_test_spiderblock(); /* its zone in */
+        if (frame == 500) printf("spiderblock test: above row %d\n", game_test_spiderblock()); /* a hip drop onto the first SpiderMapBlock */
+        if (frame > 500 && frame <= 700 && frame % 10 == 0) { char d[160]; game_debug(d, sizeof d); printf("spiderblock test f %u: hip %d coins %d %s\n", frame, game_hip_state(), game_coins(), d); }
+    }
+#endif
+#ifdef STATUE_TEST
+        if (frame >= 200 && frame % 100 == 0 && frame <= 600) printf("statue test f %u: row %d, coins %d\n", frame, game_test_statue(), game_coins());
+#endif
 #ifdef TORCH_TEST
-        if (frame >= 150 && frame < 900 && frame % 40 == 0) /* a spin by a torch with an item, then onto it (its item), in turn */
-            printf("torch test f %u: row %d, life %d, coins %d, star pieces %d (out %d)\n", frame, game_test_torch(frame % 80 == 0 ? 1 : 2), game_life(),
-                   game_coins(), game_test_spc_n(), game_pieces_out());
+        if (frame >= 150 && frame < 1350) { /* by a torch with an item, held 150 frames (its zone's collision streams in), a spin, then onto its item */
+            int t = (int)(frame - 150) % 300, row = -9;
+            if (t == 0) { row = game_test_torch(3); game_test_hold(1); }
+            else if (t < 150) game_test_hold(0);
+            else if (t == 150) row = game_test_torch(1);
+            else if (t > 165) game_test_torch(2); /* each frame: Mario kept on its item (a coin falls where the house is low) */
+            if (row != -9 || frame % 40 == 0)
+                printf("torch test f %u: row %d, life %d, coins %d, star pieces %d (out %d)\n", frame, row, game_life(), game_coins(),
+                       game_test_spc_n(), game_pieces_out());
+        }
 #endif
 #ifdef SCREW_TEST
         { /* Mario dropped on a screw switch (150), a spin once he stands on it (180) */
@@ -2022,7 +2090,7 @@ int main(void)
 #ifdef HIP_TEST
         if (frame == 120)
             printf("hip test: above row %d\n", game_test_hip());
-        if (frame > 120 && frame <= 220 && frame % 5 == 0) {
+        if (frame > 120 && frame <= 420 && frame % 10 == 0) {
             char d[128];
             game_debug(d, sizeof d);
             printf("hip test f %u: hip %d coins %d pieces %d %s\n", frame, game_hip_state(), game_coins(),
@@ -2086,6 +2154,7 @@ int main(void)
             float e[3] = {eye.x, eye.y, eye.z}, rr[3] = {r.x, r.y, r.z};
             se_listener(e, rr);
         }
+        me_update();
         se_update(steps);
         se_flush();
 #if defined(ROUTE_TEST) || defined(SND_TEST) || defined(WALKER_TEST) || defined(FAT_TEST)

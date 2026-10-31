@@ -21,11 +21,45 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   PointerGuidance / StarPieceCounter TicoEat mode, CinemaFont26 (two text fonts in subs.bin), camera interpolation
   back after demos, BGM fade-in. Seen: the result window stops the whole game update (Mario's anim too); Petari keeps
   the scene running.
+- Sound agent (branch agent-sound2, PR: see the issue "ME sequencer and missing streams"): the seven streams bgm_tab
+  named but out/music lacked (title, ev_prolo01 / 01_b / 04, ev_kuppabt01, first_astro, second_astro) converted;
+  music.py now writes AST loop flag 0 as a one-shot (staffroll, prolo04, first / second_astro). The ME sequencer
+  (engine/src/me.c after RhythmLib; me_has / me_start_system = MR::hasME / startSystemME; notes through se_seq.c's
+  se_note), its rhythm from tools/rhythm.py's <stream>.rhy (each rhythm BGM's sequence run offline: beat callbacks,
+  chord / scale against the stream's samples; audio.c loads it with the music). sound.py --pack carries JaiMe.arc
+  (SNDB header 80 bytes: [15] metable, [16] defaultme; older packs: no ME) and the MEs' waves. Host test test_me.c.
+  **Release agent, to copy:** out/wt-sound/music/* (the 7 new .pcm, SMG_staffroll_strm.pcm rewritten as a one-shot,
+  74 .rhy) into out/packs/music; then every sound pack rebuilt with this branch's tools/sound.py (out/sound_all.sh,
+  and the shared out/packs/sound.bin) so they carry the ME data and waves; tools/disc.py now packs .rhy.
+  Dev runs: XF=-DPACKS_OVERLAY=wt-sound also reads music/ from the overlay (audio.c m_open).
 - #8 (issue #5, partial) Good Egg rim: tools/dolphin/trace.py (Mario every frame in Dolphin, frames labelled by his
   timers _3CE / _3BC), _41C starts at 0 and slip_keep's misuses replaced by Petari's conditions, tryDrop's _8F8 branch.
   The Wii at g 130 takes a 60.7 deg face (checkGroundOnSlope), slides g 131-132, drops g 133, lands g 142; the port
   takes the 58.7 deg one 14 higher and walks on. In progress: checkGround / checkGroundOnSlope (patch
   D:/smg-ps2-wt/goodegg-checkground-wip.patch), Petari's binder 60 (the port's sphere is 50 at 50), the shadow pull.
+- gaps8 (branch agent-gaps8, from fix/host-tests): TicoStarRing talk (its galaxy name as the talk's string
+  argument, TalkDirector's yes / no node: A answers Yes, Meta on Yes), KoopaStatue (explosions break it:
+  KoopaStatueBreak's clip, left on its Break BVA), Hanachan (5 parts, rail walk, trample / angry pursue / overturn /
+  pressed), StringSpider (walker kit WALK_STRSPIDER: its string and swing), BegomanSpike (walker kit WALK_BEGOSPIKE
+  with BegomanBase's nerves, the attack permitter, electric rails), SpiderMapBlock (hip drop: its coin to velocity),
+  SpiderCoin (R2 + cursor frees it; its SpaceCocoon). Test modes: `talk` with XF=-DTALK_CLS=7 (AstroGalaxy/1),
+  `statue` (KoopaBattleVs3Galaxy/1), `hanachan` / `strspider` (KoopaJrShipLv1Galaxy/1), `begoman`
+  (BattleShipGalaxy/3), `spiderblock` (OceanPhantomCaveGalaxy/1), `spidercoin` (StarDustGalaxy/3); the new tests
+  count frames from Mario free (game_test_free). Overlay packs: out/wt-gaps3. All seen working in PCSX2 but
+  spiderblock (GhostShipCaveZone never streams in there: the same zone-room limit as below) and SpiderCoin's pointer
+  (StarDust 3's boss camera keeps it off screen; the test frees them directly).
+  The repack must pick up (tools/slice.py, tools/msg.py): msg.py DIRECT TicoStarRing (AstroGalaxy);
+  EXTRA KoopaStatue ("#Break", "KoopaStatueBreak"), Hanachan (HanachanHead / Body / BodyS), StringSpider
+  (StringSpiderString), BegomanSpike (BegomanSpikeHead, BegomanBrokenPiece), SpiderCoin (SpaceCocoon); SKINNED_OBJ
+  KoopaStatueBreak, BegomanBrokenPiece, HanachanHead / Body / BodyS; BRK_POSE the Hanachan parts; NO_DRAW + LOGIC
+  Hanachan. Galaxies: AstroGalaxy, KoopaBattleVs3Galaxy, KoopaJrShipLv1Galaxy, BattleShipGalaxy, OceanPhantomCave,
+  StarDust, and every other one with these classes (Hanachan: HeavenlyBeach, FlowerPlanet, EringiPlanet, ForestHome,
+  WormEaten, Poihana, ReverseForestHome zones; StringSpider: OceanRing, PhantomNest, TeresaHouse; KoopaStatue:
+  PhantomNest, TeresaHouse; BegomanSpike: CannonFleet).
+  Found, not fixed: PhantomGalaxy/1's TeresaHouseZone (4.1 MB) never streams in (zone room 4503 KB "the region's";
+  main + house + the other lows ~6.3 MB): the house has no collision or actors, so its torches (and their coin) never
+  run. Not ported: SpiderThread (the web; only the TombSpider boss makes it: initSpiderThread), so SpiderCoins stay
+  at their places. engine/test/run.sh: in a Windows (CRLF) checkout the SRCS lines carry a CR (`-lz\r`); strip it.
 - agent-perf3 (EE time, third round; on fix/host-tests): the sampling profiler works in PCSX2 now (`XF=-DSAMPLE_PROF`,
   `-DPROF_FROM= -DPROF_TO=` for a route's stretch; `python3 tools/prof_map.py <emulog> <nm -n of the ELF>`: self time
   by function and strcmp / memset / sin / cos / snprintf callers) and the route test prints the EE's time each 200
