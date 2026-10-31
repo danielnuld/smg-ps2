@@ -601,6 +601,11 @@ static void fx_at(int fx, V3 p, V3 up)
 #define SW_PER_ZONE 128
 static unsigned char sw_bits[(MAX_ZONES + 1) * SW_PER_ZONE / 8];
 static int sw_changed;
+/* the bits as update_switches last acted on them: sw_set marks them dirty, and it rebinds only when they differ
+ * by then (a switch two objects set and clear every frame: CannonFleet 1's SwitchSynchronizerReverse and SwitchArea
+ * on one SW_A, flapping within the frame as in Petari, made a rebind a frame; other changes set sw_changed as before) */
+static unsigned char sw_seen[sizeof sw_bits];
+static int sw_dirty;
 
 static int sw_bit(const Row *r, int k, int add)
 {
@@ -621,7 +626,7 @@ static void sw_set(const Row *r, int k, int on)
     int b = sw_bit(r, k, 0);
     if (b < 0 || (sw_bits[b >> 3] >> (b & 7) & 1) == on) return;
     sw_bits[b >> 3] ^= 1 << (b & 7);
-    sw_changed = 1;
+    sw_dirty = 1;
 }
 static unsigned short *row_step; /* per OBJS row: CollapsePlane frames since Mario stood on it (0: not yet) */
 static float *row_angle;         /* per OBJS row: a rotating map part's angle (degrees) */
@@ -28402,6 +28407,10 @@ static void update_switches(void)
             if (r->arg[2] < 0) { if (hit && !sw_on(r, SW_A)) { sw_set(r, SW_A, 1); row_dead[row] = 1; } }
             else sw_set(r, SW_A, hit);
         }
+    }
+    if (sw_dirty) { /* changed since the last time here (not only set and cleared again) */
+        sw_dirty = 0;
+        if (memcmp(sw_bits, sw_seen, sizeof sw_bits)) { sw_changed = 1; memcpy(sw_seen, sw_bits, sizeof sw_bits); }
     }
     if (sw_changed) {
         sw_changed = 0;
