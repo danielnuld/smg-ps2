@@ -21,7 +21,7 @@ PATH_LEN = 88
 
 
 def build(packs, disc):
-    files = sorted(p for p in packs.rglob("*") if p.is_file() and p.suffix in (".bin", ".smv", ".pcm"))  # movies: tools/movies.py; music: tools/music.py (out/music copied to packs/music)
+    files = sorted(p for p in packs.rglob("*") if p.is_file() and p.suffix in (".bin", ".smv", ".pcm", ".rhy"))  # movies: tools/movies.py; music: tools/music.py, rhythm.py (out/music copied to packs/music)
     toc, off = [], 0
     with open(disc / "PACKS.BIN", "wb") as out:
         for p in files:

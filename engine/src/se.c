@@ -99,6 +99,7 @@ void se_wait(void) /* the last command batch answered (before a scene change let
 u32 se_endx(void) { return endx; }
 
 #ifdef SND_TEST
+#include "me.h"
 #include "se_ids.h"
 /* the SEs of sound.bin's test set, one every 90 frames, not placed; logs the voices in use */
 void se_test(int frame)
@@ -109,6 +110,12 @@ void se_test(int frame)
         u32 id = ids[(frame / 90) % (sizeof ids / sizeof ids[0])];
         u32 h = se_start(id, NULL);
         printf("se test: frame %d start %08x -> handle %u\n", frame, id, h);
+    }
+    if (frame % 90 == 75) { /* an ME between them (me.c: on the BGM's beat, on its chord) */
+        static const char *const me[] = {"ME_MAGIC", "ME_COIN_APPEAR_S", "ME_RALLY_COMBO_FIRST", "ME_MAGIC_L"};
+        const char *n = me[(frame / 90) % 4];
+        printf("se test: frame %d ME %s (hasME %d)\n", frame, n, me_has());
+        me_start_system(n);
     }
     if (frame % 90 >= 30 && frame % 90 <= 60 && frame % 5 == 0) {
         int ns, nc, nv;

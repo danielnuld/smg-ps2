@@ -1007,6 +1007,63 @@ def scenario_keep(placed):
     return keep, known
 
 
+# AudMeSeqParser::sCmdInfo: opcode -> argument widths (0 u8, 1 u16, 2 u24)
+ME_ARGS = {0x00: (0,), 0x01: (0,), 0x02: (1,), 0x03: (1,), 0x04: (1,) * 5, 0x10: (0, 2), 0x11: (0,), 0x20: (0,),
+           0x28: (0, 1), 0x2A: (0,), 0x30: (2,), 0x31: (2,), 0x33: (1,), 0x35: (2,), 0x36: (2,), 0x3A: (2,), 0x3B: (2,),
+           0x40: (2, 0), 0x41: (2, 0, 0), 0x42: (2, 0, 0), 0x43: (2, 0, 0, 0), 0x50: (0,), 0x51: (0,), 0x52: (0,),
+           0x53: (0,), 0x54: (0,), 0x58: (0,), 0x59: (0,), 0x5A: (1,), 0x5B: (1,), 0x5C: (0,), 0x5D: (1,), 0x60: (0,),
+           0x68: (0, 0), 0x69: (0, 0), 0x78: (2,), 0x79: (2,), 0x81: (2,), 0x82: (2,), 0x83: (2,), 0x84: (0,),
+           0x86: (0,), 0x87: (0,), 0x8A: (0, 0), 0x90: (0, 0, 0), 0x91: (0, 0, 0)}
+
+
+# the placed classes (patterns from the start of the name) that start an ME (Petari's MR::startSystemME callers); the
+# rest play anywhere
+ME_CLASSES = {"ME_MAGIC": ("SpinDriver", "Karikari"), "ME_MAGIC_L": ("SuperSpinDriver",), "ME_RALLY_COMBO": ("OtaKing$",),
+              "ME_FLIP_PANEL": ("FlipPanelObserver",), "ME_ASTRO_DOME": ("Mini.*Galaxy$", "FileSelector")}
+
+
+def me_res(fs):
+    """JaiMe.arc (AudSystem::setMeResource(arc, 1, 0)) -> (metable.bmt, defaultme.bme, {ME name: id})"""
+    from budget import rarc_files
+    arc = dict(rarc_files((Path(fs) / "AudioRes/Info/JaiMe.arc").read_bytes()))
+    tab, seq = arc["metable.bmt"], arc["defaultme.bme"]
+    n, names = U32(tab, 0), U32(tab, 8)
+    return tab, seq, {tab[U32(tab, names + 4 * i):].split(bytes(1))[0].decode(): i for i in range(n)}
+
+
+def me_programs(seq, me_id):
+    """(bank, program) pairs an ME's notes play: its tracks read straight through (children opened with their
+    parent's bank / program, AudMeTrack::inherit), as AudMeSeqParser's cmdBank / cmdPrg / cmdBProg set them"""
+    out, todo, seen = set(), [(U32(seq, 4 + 4 * me_id), 0, 0xF0)], set()
+    while todo:
+        pc, bank, prog = todo.pop()
+        while pc < len(seq) and pc not in seen:
+            seen.add(pc)
+            op, a, p = seq[pc], [], pc + 1
+            if op not in ME_ARGS and op != 0x24 and op not in (0x2B, 0x32, 0x34, 0x38, 0x39, 0x48, 0x49, 0x4A, 0x55,
+                                                                0x70, 0x71, 0x80, 0x85):
+                break
+            for w in ME_ARGS.get(op, ()):
+                a.append(int.from_bytes(seq[p:p + w + 1], "big"))
+                p += w + 1
+            if op == 0x24:
+                break
+            if op == 0x00:
+                bank = a[0]
+            elif op == 0x01:
+                prog = a[0]
+            elif op == 0x02:
+                bank, prog = a[0] >> 8, a[0] & 0xFF
+            elif op == 0x10:
+                todo.append((a[1], bank, prog))
+            elif op == 0x40:
+                out.add((bank, prog))
+            elif op == 0x30:
+                p = a[0]
+            pc = p
+    return out
+
+
 def pack(fs, out_bin, ids_h, sources, cap=16000, budget=1850000, scene=None):
     """sound.bin for the engine (se.c) and se_ids.h (every SE name -> its JAISoundID):
     'SNDB', then u32 pairs (offset, count / size): BSC bytes, banks {u16 bank, u16 wsys, u32 IBNK offset} (8 B),
@@ -1019,7 +1076,9 @@ def pack(fs, out_bin, ids_h, sources, cap=16000, budget=1850000, scene=None):
     IBNK / BSC stay big-endian. The SEs are the names written in `sources`; their waves are every one their
     sequences reach (bms analysis, all variants of keys read from registers), resampled to at most `cap` Hz for
     SYSTEM / PLAYER sounds and cap x 11025 / 16000 for the rest, all scaled down until the ADPCM fits `budget` bytes
-    of SPU RAM (2 MB less audsrv's area under 0x10000 and some room)."""
+    of SPU RAM (2 MB less audsrv's area under 0x10000 and some room). Then (offset, offset) of JaiMe.arc's metable.bmt
+    and defaultme.bme (engine/src/me.c; 0: none), the waves of the MEs the sources name: every key of their programs
+    (the notes follow the BGM's chord)."""
     import audio as A
     baa = Baa(fs)
     d = baa.d
@@ -1107,6 +1166,24 @@ def pack(fs, out_bin, ids_h, sources, cap=16000, budget=1850000, scene=None):
             print(f"{len(drop)} waves in archives {gal} {no} does not load")
             for w in drop:
                 del waves[w]
+    me_tab, me_seq, me_ids = me_res(fs)
+    me_tok = {t for src in sources for t in re.findall(r"\bME_[A-Z0-9_]+\b", Path(src).read_text(errors="ignore"))}
+    me_names = sorted(n for n in me_ids if n in me_tok or any(n[:len(t)] == t and n[len(t):].isdigit() for t in me_tok))
+    # (a stem me_start_random numbers: ME_ASTRO_DOME_SELECT -> 1..4); a scenario's own pack: those its classes play
+    if scene:
+        placed = scene_types(scene)
+        def me_keep(n):
+            for pre, cls in sorted(ME_CLASSES.items(), key=lambda kv: -len(kv[0])):
+                if n.startswith(pre):
+                    return any(re.match(c, t) for t in placed for c in cls)
+            return True
+        me_names = [n for n in me_names if me_keep(n)]
+    for bank, prog in sorted({bp for n in me_names for bp in me_programs(me_seq, me_ids[n])}):
+        if bank in inst:
+            wb, progs = inst[bank]
+            for _, ids in progs.get(prog, []):
+                for w in ids:
+                    waves[(wb, w)] = max(waves.get((wb, w), 0), cap)
     rest = sorted(set(waves) - set(voice) - set(luigi))
     info = {w: baa.wave(*w) for w in waves}
 
@@ -1152,7 +1229,7 @@ def pack(fs, out_bin, ids_h, sources, cap=16000, budget=1850000, scene=None):
         size = U32(d, off + 4)
         brows.append((bno, ws, len(ib_blob)))
         ib_blob += d[off:off + size] + bytes(-size % 16)
-    head = 64
+    head = 80
     o_bsc = head
     o_bank = o_bsc + len(bsc) + (-len(bsc) % 16)
     o_ibnk = o_bank + 8 * len(brows) + (-(8 * len(brows)) % 16)
@@ -1162,10 +1239,14 @@ def pack(fs, out_bin, ids_h, sources, cap=16000, budget=1850000, scene=None):
     bkeys = sorted(bas)
     o_basent = o_bas + 40 * len(bkeys)
     basent = b"".join(bas[k] for k in bkeys)
-    o_adp = o_basent + len(basent) + (-(o_basent + len(basent)) % 64)
+    o_metab = o_basent + len(basent) + (-(o_basent + len(basent)) % 16)
+    o_meseq = o_metab + len(me_tab) + (-len(me_tab) % 16)
+    o_adp = o_meseq + len(me_seq) + (-(o_meseq + len(me_seq)) % 64)
     out = bytearray(o_adp + len(blob))
-    struct.pack_into("<4s15I", out, 0, b"SNDB", o_bsc, len(bsc), o_bank, len(brows), o_se, len(se_rows), o_wv,
-                     len(wrows), o_adp, len(blob), o_bas, len(bkeys), o_basent, o_voice, o_luigi)
+    struct.pack_into("<4s17I", out, 0, b"SNDB", o_bsc, len(bsc), o_bank, len(brows), o_se, len(se_rows), o_wv,
+                     len(wrows), o_adp, len(blob), o_bas, len(bkeys), o_basent, o_voice, o_luigi, o_metab, o_meseq)
+    out[o_metab:o_metab + len(me_tab)] = me_tab
+    out[o_meseq:o_meseq + len(me_seq)] = me_seq
     at = 0
     for k, key in enumerate(bkeys):
         struct.pack_into("<32sII", out, o_bas + 40 * k, key.encode(), at, len(bas[key]) // 0x20)
@@ -1182,7 +1263,7 @@ def pack(fs, out_bin, ids_h, sources, cap=16000, budget=1850000, scene=None):
         out[o_wv + 24 * k:o_wv + 24 * k + 24] = r
     out[o_adp:] = blob
     Path(out_bin).write_bytes(out)
-    print(f"sound.bin: {len(names)} SEs, {len(wrows)} waves, ADPCM {len(blob) / 1e6:.2f} MB (caps x {scale:.2f}: system "
+    print(f"sound.bin: {len(names)} SEs, {len(me_names)} MEs, {len(wrows)} waves, ADPCM {len(blob) / 1e6:.2f} MB (caps x {scale:.2f}: system "
           f"and Mario {cap * scale:.0f} Hz, the rest {cap * 11025 // 16000 * scale:.0f} Hz), "
           f"EE {o_adp / 1e3:.0f} KB, SPU {max(o_luigi, len(blob) - o_luigi + o_voice) / 1e6:.2f} MB (voices: Mario "
           f"{(o_luigi - o_voice) / 1e3:.0f} KB, Luigi {(len(blob) - o_luigi) / 1e3:.0f} KB)")

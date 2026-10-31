@@ -6,6 +6,7 @@
 #include "sequence.h"
 #include "lyt.h"
 #include "mc.h"
+#include "me.h"
 #include "mem.h"
 #include "pad.h"
 #include "render.h"
@@ -2240,6 +2241,8 @@ static void fs_item_offpoint(FsItem *it)
 static void fs_item_onpoint(FsItem *it) /* onPointing */
 {
     if (!it->selectable || it->pointed) return;
+    /* playPointedNotUsingME in NewWait (a file not made yet), else playPointedME */
+    me_start_random(gd_file_created(it->file - 1) ? "ME_ASTRO_DOME_HIT_GALAXY" : "ME_ASTRO_DOME_HIT_GALAXY_N", 5);
     it->pointed = 1;
     if (it->num) lyt_start(it->num, "SelectIn", 1);
     fs_item_scale(it, 1);
@@ -2458,6 +2461,7 @@ static void fs_update(void)
         if (fsl.hover >= 0 && fsl.item[fsl.hover].pointed && pad_pressed(PAD_CROSS)) { /* onSelect */
             fsl.sel = fsl.hover;
             se_start(SE_SY_GALAXY_SELECTED, NULL);
+            me_start_random("ME_ASTRO_DOME_SELECT", 4); /* FileSelector::onSelect: playSelectedME */
             fs_item_scale(&fsl.item[fsl.sel], 0);
             nrv_set(&fsl.n, gd_file_created(fsl.item[fsl.sel].file - 1) ? FS_CONFIRMSTART : FS_CREATECONFIRMSTART);
         }
@@ -2580,6 +2584,7 @@ static void fs_update(void)
         if (fsl.hover >= 0 && fsl.item[fsl.hover].pointed && pad_pressed(PAD_CROSS)) {
             fsl.sel = fsl.hover;
             se_start(SE_SY_GALAXY_SELECTED, NULL);
+            me_start_random("ME_ASTRO_DOME_SELECT", 4); /* FileSelector::onSelect: playSelectedME */
             nrv_set(&fsl.n, FS_COPYCONFIRMSTART);
         }
         break;
