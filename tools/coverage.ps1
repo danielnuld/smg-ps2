@@ -30,6 +30,10 @@ foreach ($r in $rows) {
     $res += [pscustomobject]@{ galaxy = $r.galaxy; scenario = $r.scenario; result = $result;
         slow = $m.Groups[1].Value; worst_us = $m.Groups[2].Value; runtime_kb = $m.Groups[3].Value; line = $line.Trim() }
     "$scen $result $($m.Groups[2].Value)"
+    if ($result -ne "ok") {  # the log kept for a look: out/cover_logs/<Galaxy>_<n>.txt
+        New-Item -ItemType Directory -Force "$out\cover_logs" | Out-Null
+        $txt | Set-Content "$out\cover_logs\$($r.galaxy)_$($r.scenario).txt"
+    }
     $res | Export-Csv -Path "$out\coverage.csv" -NoTypeInformation
 }
 Get-Process | Where-Object { $_.Name -like 'pcsx2*' } | Stop-Process -Force
