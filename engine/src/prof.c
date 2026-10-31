@@ -142,3 +142,21 @@ int __wrap_snprintf(char *s, unsigned int n, const char *f, ...)
     return r;
 }
 #endif
+#ifdef BOUNDS
+/* XF=-DBOUNDS (Makefile: -fsanitize=bounds-strict): every index past a known array bound, read or write, logged once
+ * a source line with its caller, instead of picking up whatever the layout puts next */
+#include <stdio.h>
+typedef struct { const char *file; unsigned line, column; } UbLoc;
+typedef struct { UbLoc loc; const void *array_type, *index_type; } UbOob;
+void __ubsan_handle_out_of_bounds(UbOob *d, unsigned long index)
+{
+    static unsigned seen[64];
+    static int nseen;
+    unsigned key = d->loc.line ^ (unsigned)(unsigned long)d->loc.file << 16;
+    for (int i = 0; i < nseen; i++) if (seen[i] == key) return;
+    if (nseen < 64) seen[nseen++] = key;
+    printf("BOUNDS: %s:%u:%u index %ld (from %08x)\n", d->loc.file, d->loc.line, d->loc.column, (long)index,
+           (unsigned)(unsigned long)__builtin_return_address(0));
+}
+void __ubsan_handle_out_of_bounds_abort(UbOob *d, unsigned long index) { __ubsan_handle_out_of_bounds(d, index); }
+#endif

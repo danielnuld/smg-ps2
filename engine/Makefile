@@ -11,6 +11,10 @@ EE_LDFLAGS += -Wl,--wrap=memalign -Wl,--wrap=free
 ifneq ($(findstring SAMPLE_PROF,$(EXTRA)),)
 EE_LDFLAGS += -Wl,--wrap=strcmp -Wl,--wrap=strncmp -Wl,--wrap=strstr -Wl,--wrap=memset -Wl,--wrap=cosf -Wl,--wrap=sinf -Wl,--wrap=snprintf
 endif
+# XF=-DBOUNDS: every array index past a known bound logged (prof.c's __ubsan_handle_out_of_bounds), reads and writes
+ifneq ($(findstring BOUNDS,$(EXTRA)),)
+EE_CFLAGS += -fsanitize=bounds-strict
+endif
 EE_CFLAGS += -O2 -Wall -Wextra -std=gnu99 -ffast-math -DNDEBUG $(EXTRA)
 
 all: $(EE_BIN)

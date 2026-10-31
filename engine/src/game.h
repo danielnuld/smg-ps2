@@ -10,6 +10,7 @@ int game_time_left(void);
 void game_update(void);
 /* After the scene's models changed (zone packs swapped): find every placed model again. */
 void game_rebind(void);
+#define KPROF_KINDS 32 /* kprof / kprof_n: update_kuribo's time by walker kind (game.c WALK_KINDS fits) */
 /* full[z]: stage z is loaded in full. need[z]: Mario needs its collision (2: at once); soon[z]: he is heading for it; dist[z]:
  * its priority (smaller first), for the zones that fit the memory room (main.c stream_update). */
 void game_zone_sets(const unsigned char *full, unsigned char *need, unsigned char *soon, float *dist);
