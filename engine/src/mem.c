@@ -14,8 +14,13 @@ void *mem_alloc(int type, u32 size)
 {
     size = (size + 15) & ~15u;
     if (top + size > ARENA_SIZE) {
+#ifdef _EE /* shown on screen too (render.c) */
+        void render_fatal(const char *fmt, ...) __attribute__((noreturn));
+        render_fatal("mem: out of memory (%s, %u B, used %u)", names[type], size, top);
+#else
         printf("mem: out of memory (%s, %u B, used %u)\n", names[type], size, top);
         for (;;) {}
+#endif
     }
     void *p = arena + top;
     top += size;

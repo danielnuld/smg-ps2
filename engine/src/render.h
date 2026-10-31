@@ -51,6 +51,8 @@ void render_mesh_c(const float (*pos)[3], const float (*uv)[2], int nvert, const
  * modulating the texture, additive (Cs x As + Cd) or blended */
 void render_mesh2d(const float (*xy)[2], const float (*uv)[2], int nvert, const u16 *idx, int ntri, u16 tex, u32 rgba, int add);
 void render_text(float x, float y, const char *s);
+/* a fatal error printed and shown on screen for good (printf format); it does not return */
+void render_fatal(const char *fmt, ...) __attribute__((noreturn, format(printf, 1, 2)));
 /* A filled rectangle over everything, in the HUD's units (x 0..640, y 0..448) */
 void render_rect(float x, float y, float w, float h, u8 r, u8 g, u8 b);
 /* Camera-facing textured squares (particles): centre, half size in world units, colour 0xAABBGGRR (0x80 = 1.0),

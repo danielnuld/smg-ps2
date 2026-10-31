@@ -238,14 +238,12 @@ static void toc_load(void)
     sceCdInit(SCECdINoD);
     sceCdMmode(SCECdMmodeDvd);
     if (!sceCdSearchFile(&ft, "\\PACKS.TOC;1") || !sceCdSearchFile(&fb, "\\PACKS.BIN;1")) {
-        printf("packs: no PACKS.TOC / PACKS.BIN on the disc\n");
-        for (;;) {}
+        render_fatal("packs: no PACKS.TOC / PACKS.BIN on the disc\n");
     }
     bin_lsn = fb.lsn;
     u8 *t = memalign(64, PACK_ALLOC(ft.size));
     if (!t || !cd_read(ft.lsn, PACK_ALLOC(ft.size) / SECTOR, t, 1)) {
-        printf("packs: cannot read PACKS.TOC\n");
-        for (;;) {}
+        render_fatal("packs: cannot read PACKS.TOC\n");
     }
     toc_all = t;
     toc_n = *(const u32 *)t;
@@ -269,7 +267,7 @@ static void toc_select(void)
             (strcmp(e->path, "ending.bin") == 0 && strncmp(scen, "EpilogueDemoStage/", 18) == 0) ||
             strncmp(e->path, "movies/", 7) == 0 || /* any scene may end in one */
             strncmp(e->path, "music/", 6) == 0) {  /* the BGMs (audio.c streams them) */
-            if (ntoc == (int)(sizeof toc / sizeof toc[0])) { printf("packs: TOC full\n"); for (;;) {} }
+            if (ntoc == (int)(sizeof toc / sizeof toc[0])) render_fatal("packs: TOC full");
             memcpy(&toc[ntoc++], e, sizeof *e);
         }
     }
@@ -417,13 +415,11 @@ static const u8 *load_file(const char *path)
 {
     Pack p;
     if (!pack_open(&p, path)) {
-        printf("packs: missing %s\n", path);
-        for (;;) {}
+        render_fatal("packs: missing %s\n", path);
     }
     u8 *b = pk_alloc(PACK_ALLOC(p.size));
     if (!b || !pack_read(&p, b, p.size)) {
-        printf("packs: cannot read %s (%u B)\n", path, p.size);
-        for (;;) {}
+        render_fatal("packs: cannot read %s (%u B)\n", path, p.size);
     }
     pack_close(&p);
     pack_bytes += p.size;
@@ -596,8 +592,7 @@ static int pend_step(u32 budget)
             snprintf(path, sizeof path, "%s/%s%s", scen, (const char *)(zn + 4 + 56 * z),
                      pend.full[z] ? ".bin" : ".low.bin");
             if (!pack_open(&pend.f, path)) {
-                printf("packs: missing %s" "\n", path);
-                for (;;) {}
+                render_fatal("packs: missing %s" "\n", path);
             }
             pend.size = pend.f.size;
             pend.cur = pk_alloc(PACK_ALLOC(pend.size));
@@ -614,7 +609,7 @@ static int pend_step(u32 budget)
             if (!pend.cur) {
                 printf("packs: no memory for %s (%u KB)\n", path, pend.size >> 10);
                 for (int i = 0; i < pk_n; i++) printf("packs:   block %u KB %s\n", pk_blk[i].size >> 10, pk_blk[i].used ? "used" : "free");
-                for (;;) {}
+                render_fatal("packs: no memory for\n%s (%u KB)\nthe pack region is %u KB (tools/zone_fit.py --elf)", path, pend.size >> 10, pk_size >> 10);
             }
             pend.off = 0;
         }
@@ -632,8 +627,7 @@ static int pend_step(u32 budget)
         } else if (budget && !all && pend.off < pend.size) { /* start the next one, poll it later */
             u32 n = pend.size - pend.off < budget ? pend.size - pend.off : budget;
             if (!cd_read(pend.f.base + pend.off / SECTOR, PACK_ALLOC(n) / SECTOR, pend.cur + pend.off, 0)) {
-                printf("packs: read error" "\n");
-                for (;;) {}
+                render_fatal("packs: read error" "\n");
             }
             pend.flight = n;
             return 0;
@@ -650,8 +644,7 @@ static int pend_step(u32 budget)
             return 0;
         u32 n = pend.size - pend.off < budget ? pend.size - pend.off : budget;
         if (!pack_read(&pend.f, pend.cur + pend.off, n)) {
-            printf("packs: read error" "\n");
-            for (;;) {}
+            render_fatal("packs: read error" "\n");
         }
         pend.off += n;
         pend.bytes += n;
@@ -683,8 +676,7 @@ static void pend_commit(Scene *s)
     for (u32 z = 0; z < nzones; z++)
         if (blob_add(s, zone_files[z]) != 0) {
             printf("packs: zone pack %u (%s) starts %.4s\n", z, zone_full[z] ? "full" : "low", (const char *)zone_files[z]);
-            printf("packs: zone %u failed" "\n", z);
-            for (;;) {}
+            render_fatal("packs: zone %u failed" "\n", z);
         }
     render_load_textures(s, base_tex, base_models);
     game_rebind();
@@ -947,8 +939,7 @@ static void scene_load(void)
 {
     const u8 *blob = load_packs(&scene);
     if (!blob) {
-        printf("slice: bad blob\n");
-        for (;;) {}
+        render_fatal("slice: bad blob\n");
     }
     /* base packs first, then the game (its allocations stay), then the zone packs above the mark */
     render_load_textures(&scene, 0, 0);
@@ -997,8 +988,7 @@ int main(void)
 #else
     const u8 *blob = blob_load(&scene, slice_blob) == 0 ? slice_blob : NULL;
     if (!blob) {
-        printf("slice: bad blob\n");
-        for (;;) {}
+        render_fatal("slice: bad blob\n");
     }
     render_load_textures(&scene, 0, 0);
     game_init(&scene, blob);
