@@ -237,6 +237,7 @@ int game_test_butler_shoot(void); /* tests: a star piece at the Butler, its lect
 int game_test_demo_name(const char *name); /* tests: a demo requested by its name, 0 if the scene has none */
 int game_test_npc_visit(int k);    /* tests: Mario beside the k-th turning NPC; its row */
 void game_test_npc_turn(int frame); /* tests: the turning NPCs near Mario, their angles */
+int game_test_statue(void); /* statue test: an explosion at the first standing KoopaStatue; its row */
 int game_test_torch(int how); /* tests: Mario into a lit PhantomTorch (0), spinning by it (1), on its item (2), by it (3); its row */
 int game_test_spc_n(void);  /* tests: star pieces got */
 int game_test_spc(void);    /* tests: the StarPieceCounter: mode * 1000 + nerve * 100 + group * 10 + CoinCounter killed */

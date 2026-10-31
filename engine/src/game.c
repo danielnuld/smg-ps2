@@ -875,8 +875,14 @@ static int breakable(const char *name, const Row *r, int *coins, int *pieces)
         return 3;
     }
     /* SimpleBreakableObj.cpp: IcicleRock and SandUpDownTowerBreakableWallA / B break at a spin (mBreakFlags 2),
-     * TeresaMansionHoleCover at a hip drop (4); arg3 -1 arg6 coins (1), 3 arg6 star pieces (5). ponytail: no
-     * 1-up / power star items, KoopaStatue / ConcreteBlock / SnowBlockA (explosions, ball dash, fire) stay whole */
+     * TeresaMansionHoleCover at a hip drop (4), KoopaStatue at an explosion or an enemy attack (0x48: breaks 5,
+     * explosion_breaks); arg3 -1 arg6 coins (1), 3 arg6 star pieces (5). ponytail: no 1-up / power star items,
+     * ConcreteBlock / SnowBlockA (ball dash, fire) stay whole */
+    if (strcmp(name, "KoopaStatue") == 0) {
+        if (r->arg[3] == -1) *coins = r->arg[6] > 0 ? r->arg[6] : 1;
+        else if (r->arg[3] == 3) *pieces = r->arg[6] > 0 ? r->arg[6] : 5;
+        return 5;
+    }
     if (strcmp(name, "TakoBarrelA") == 0) { /* mBreakFlags 1: only its SW_B (initCaseUseSwitchB) breaks it */
         if (r->arg[3] == -1) *coins = r->arg[6] > 0 ? r->arg[6] : 1;
         else if (r->arg[3] == 3) *pieces = r->arg[6] > 0 ? r->arg[6] : 5;
@@ -961,7 +967,7 @@ static int piece_next;
 static const Model *m_pieces[PIECE_COLOURS];
 static int piece_colour_next(void) { int k = piece_next; piece_next = (piece_next + 1) % PIECE_COLOURS; return k; }
 #define MAX_WRECKS 16           /* break models / broken objects left (break_inst, update_wrecks) */
-static struct { const Model *brk, *left; float m[16]; int t, coins, pieces, row; V3 p, up; } wrecks[MAX_WRECKS];
+static struct { const Model *brk, *left; const char *bname; float m[16]; int t, coins, pieces, row; V3 p, up; } wrecks[MAX_WRECKS];
 static int nwrecks;
 /* Coins popping out of what broke (Petari CoinHolder::appearCoinPop, Coin::exeMove): 25 against gravity plus up to 4
  * at random, gravity 1, 0.75 rebound off the ground (impacts of 2 and more), 0.9 / 0.995 damping on the ground / in
@@ -5574,6 +5580,20 @@ int game_test_torch(int how) /* tests: Mario into the first lit PhantomTorch / P
         mario->hvel = v3(0, 0, 0); mario->vup = 0;
         return (int)i;
     }
+    return -1;
+}
+
+int game_test_statue(void) /* statue test: an explosion (sendMsgExplosionToNearActor) at the first standing KoopaStatue; its row */
+{
+    for (int i = 0; i < ninsts; i++)
+        if (insts[i].breaks == 5 && !row_dead[insts[i].row]) {
+            V3 p = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]);
+            mario->pos = vadd(p, vmul(vnorm(v3(insts[i].m[8], insts[i].m[9], insts[i].m[10])), insts[i].reach + 300.0f));
+            int row = insts[i].row;
+            walker_explosion(p);
+            printf("statue test: row %d, broken %d, coins out %d\n", row, row_dead[row], ncoins);
+            return row;
+        }
     return -1;
 }
 
@@ -10847,8 +10867,7 @@ static void update_torches(void)
                 if (r->group >= 0) se_start(left == 1 ? SE_SY_CANDLE_COMBO_5 : left == 2 ? SE_SY_CANDLE_COMBO_4 :
                                             left == 3 ? SE_SY_CANDLE_COMBO_3 : left == 4 ? SE_SY_CANDLE_COMBO_2 : SE_SY_CANDLE_COMBO_1, NULL);
                 row_kill((int)i);
-                printf("torch row %u out: item %d, coins %d
-", i, r->arg[0], ncoins);
+                printf("torch row %u out: item %d, coins %d\n", i, r->arg[0], ncoins);
             }
             continue;
         }
@@ -20059,8 +20078,10 @@ static int walker_blow(Kuribo *e, V3 from)
 }
 
 /* sendMsgExplosionToNearActor (cExplosionDistance 250): each walker's isMsgExplosionAttack */
+static void explosion_breaks(V3 at, float rad); /* the KoopaStatues it reaches */
 static void walker_explosion(V3 from)
 {
+    explosion_breaks(from, 250.0f);
     for (int i = 0; i < nkuribo; i++) {
         Kuribo *e = &kuribo[i];
         if (e->state == KURIBO_DEAD || !row_shown(e->row) || vlen(vsub(e->pos, from)) > 250.0f) continue;
@@ -22133,6 +22154,7 @@ static void bomb_update(Kuribo *k)
         }
         if (!mario->hurt_timer && vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), c)) < rad + HIT_BODY_R) hurt_mario(c, 30.0f);
         tbox_hit(c, rad); /* isMsgExplosionAttack */
+        explosion_breaks(c, rad);
         if (st > 8) {
             if (launcher) { w_nrv(k, BH_GONE); return; }
             if (r->sw[SW_DEAD] >= 0) sw_set((Row *)r, SW_DEAD, 1);
@@ -22494,7 +22516,8 @@ static void break_inst(const Inst *in, int drops)
     if (!drops) n = sp = 0;
     V3 up = up_at(p, mario->up);
     const char *name = sc->types + 32 * r->type;
-    int box = strcmp(name, "WoodBox") == 0, cage = strcmp(name, "CrystalCageS") == 0 || strcmp(name, "CrystalCageM") == 0;
+    int box = strcmp(name, "WoodBox") == 0, cage = strcmp(name, "CrystalCageS") == 0 || strcmp(name, "CrystalCageM") == 0,
+        statue = strcmp(name, "KoopaStatue") == 0;
     { /* their break sounds: WoodBox::doHit (and its explosion out of water), PunchBox, CrystalCage::exeBreak (L its own) */
         float at[3] = {p.x, p.y, p.z}, depth;
         int wet = in_water(p, up, &depth);
@@ -22507,19 +22530,27 @@ static void break_inst(const Inst *in, int drops)
             if (r->arg[7] == 1) se_start(SE_SV_KINOPIO_PUHA, at);
         }
         else if (!strcmp(name, "CrystalCageL")) se_start(SE_OJ_CRYSTAL_CAGE_L_BREAK, at);
+        else if (statue) se_start(SE_OJ_STRANGEROCK_BREAK_S, at); /* tryStartBreak: StageEffect's stop SE */
         if ((box || !strcmp(name, "PunchBox")) && sp) se_start(SE_OJ_STAR_PIECE_BURST, at);
     }
-    if ((box || cage) && nwrecks < MAX_WRECKS) {
+    if ((box || cage || statue) && nwrecks < MAX_WRECKS) {
         char v[48];
-        snprintf(v, sizeof v, "%s#%s", name, name);
+        snprintf(v, sizeof v, "%s#%s", name, statue ? "Break" : name);
         typeof(&wrecks[0]) w = &wrecks[nwrecks++];
         memcpy(w->m, in->m, 64);
-        w->brk = scene_model(sc, box ? "WoodBoxBreak" : "CrystalCageSBreak");
-        w->left = (box ? r->arg[1] != 0 : r->arg[0] != 1) ? scene_model(sc, v) : NULL;
+        w->bname = box ? "WoodBoxBreak" : statue ? "KoopaStatueBreak" : "CrystalCageSBreak";
+        w->brk = scene_model(sc, w->bname);
+        w->left = statue || (box ? r->arg[1] != 0 : r->arg[0] != 1) ? scene_model(sc, v) : NULL;
         w->t = 0; w->row = in->row; w->p = p; w->up = up;
         w->coins = box ? n : 0; w->pieces = box ? sp : 0;
         if (cage) { pop_coins(p, up, n); scene_stop = 3; } /* appearCoinPop at once; stopScene(3) at step 2 */
-        fx_at(box ? FX_WOODBOXBREAK_BREAK : FX_CRYSTALCAGES_BREAK, p, up);
+        if (statue) { /* SimpleBreakableObj::setStateBreak: stopScene(5), startBreak: appearItem, the Break effect, its
+                       * ModelObj's Break clip, its own BVA Break (stays: endBreak kills only the model) */
+            pop_coins(p, up, n); drop_pieces(p, up, sp);
+            if (sp) se_start(SE_OJ_STAR_PIECE_BURST, &p.x);
+            scene_stop = 5; camera_shake(SHAKE_NORMAL_WEAK);
+            fx_named(name, "Break", in->m, NULL, NULL);
+        } else fx_at(box ? FX_WOODBOXBREAK_BREAK : FX_CRYSTALCAGES_BREAK, p, up);
         row_kill(in->row);
         printf("%s %d broken, %d coins, %d star pieces\n", name, in->row, n, sp);
         return;
@@ -22530,6 +22561,19 @@ static void break_inst(const Inst *in, int drops)
     if (in->breaks != 3) /* ItemBlocks stay */
         fx_at(strncmp(name, "CrystalCage", 11) == 0 ? FX_CRYSTALCAGES_BREAK : FX_PUNCHBOX_BREAK, p, up);
     printf("%s %d broken, %d coins, %d star pieces\n", name, in->row, n, sp);
+}
+
+/* SimpleBreakableObj::receiveMsgEnemyAttack: isMsgExplosionAttack (mBreakFlags 8) breaks a KoopaStatue (breaks 5)
+ * whose body the explosion reaches (its collision's reach) */
+static void explosion_breaks(V3 at, float rad)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (in->breaks != 5 || row_dead[in->row] || vlen(vsub(at, v3(in->m[12], in->m[13], in->m[14]))) > rad + in->reach) continue;
+        break_inst(in, 1);
+        game_rebind();
+        return;
+    }
 }
 
 static void break_boxes(void)
@@ -22551,7 +22595,7 @@ static void break_boxes(void)
         }
     }
     for (int i = 0; i < ninsts; i++) /* SimpleBreakableObj::initCaseUseSwitchB: SW_B on breaks it */
-        if (insts[i].breaks == 4 && !row_dead[insts[i].row] && sc->objs[insts[i].row].sw[SW_B] >= 0 &&
+        if ((insts[i].breaks == 4 || insts[i].breaks == 5) && !row_dead[insts[i].row] && sc->objs[insts[i].row].sw[SW_B] >= 0 &&
             sw_on(&sc->objs[insts[i].row], SW_B)) {
             break_inst(&insts[i], 1);
             game_rebind();
@@ -34090,10 +34134,15 @@ void game_draw(void)
         if (w->left) render_model(w->left, w->m, 0x80, 0x80, 0x80);
         if (w->t < 0 || !w->brk) continue;
         if (!w->brk->skin) { if (w->t > 60) w->t = -1; else render_model(w->brk, w->m, 0x80, 0x80, 0x80); continue; }
-        int box = w->brk == scene_model(sc, "WoodBoxBreak");
-        Anim *ba = obj_anim((int)sc->nobjs * 3 + i, w->brk, box ? "WoodBoxBreak" : "CrystalCageSBreak");
+        Anim *ba = obj_anim((int)sc->nobjs * 3 + i, w->brk, w->bname);
         if (!ba) continue;
-        if (w->t <= 1) anim_start(ba, box ? "woodboxbreak/break" : "crystalcagesbreak/break", 0);
+        if (w->t <= 1) { /* "<archive lowercase>/break" */
+            char clip[48];
+            int k = 0;
+            for (; w->bname[k] && k < 40; k++) clip[k] = (char)tolower((unsigned char)w->bname[k]);
+            strcpy(clip + k, "/break");
+            anim_start(ba, clip, 0);
+        }
         anim_update(ba);
         if (ba->done && w->t > 16) { w->t = -1; continue; } /* isBckStopped: kill */
         draw_skin(w->brk, w->m, ba);

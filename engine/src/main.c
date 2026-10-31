@@ -1786,6 +1786,9 @@ int main(void)
             if (frame >= 150 && frame % 60 == 0) game_test_npc_turn((int)frame);
         }
 #endif
+#ifdef STATUE_TEST
+        if (frame >= 200 && frame % 100 == 0 && frame <= 600) printf("statue test f %u: row %d, coins %d\n", frame, game_test_statue(), game_coins());
+#endif
 #ifdef TORCH_TEST
         if (frame >= 150 && frame < 1350) { /* by a torch with an item, held 150 frames (its zone's collision streams in), a spin, then onto its item */
             int t = (int)(frame - 150) % 300, row = -9;
