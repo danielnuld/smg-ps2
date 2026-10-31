@@ -1,5 +1,7 @@
 #include "audio.h"
 
+#include "me.h"
+
 #include <audsrv.h>
 #include <kernel.h>
 #include <loadfile.h>
@@ -37,6 +39,21 @@ static int m_read(u32 off, void *dst, u32 n) /* n bytes at off (at most 14 KB), 
 }
 #else
 static FILE *music;
+/* fopen; dev builds with XF=-DPACKS_OVERLAY=dir try host:dir/<path past host:> first (main.c's packs do the same) */
+static FILE *m_open(const char *path)
+{
+#ifdef PACKS_OVERLAY
+#define OVL_STR2(x) #x
+#define OVL_STR(x) OVL_STR2(x)
+    char full[160];
+    if (!strncmp(path, "host:", 5)) {
+        snprintf(full, sizeof full, "host:" OVL_STR(PACKS_OVERLAY) "/%s", path + 5);
+        FILE *f = fopen(full, "rb");
+        if (f) return f;
+    }
+#endif
+    return fopen(path, "rb");
+}
 #endif
 static unsigned int music_loop;    /* byte offset of the loop start in the samples */
 static unsigned int music_rate;
@@ -44,6 +61,37 @@ static int ready;
 static int fade_t, fade_n;         /* audio_fade: frames done / total (0: none) */
 static int fin_t, fin_n;           /* audio_seek's fade in */
 static unsigned char chunk[8192] __attribute__((aligned(64)));
+static unsigned char rhy[24 << 10] __attribute__((aligned(64))); /* the stream's rhythm (tools/rhythm.py .rhy) */
+
+/* The music's .rhy beside it (a state file <track>@<k> shares its track's) for the ME sequencer: none, no rhythm */
+static void rhythm_load(const char *path)
+{
+    char p[128];
+    int n = snprintf(p, sizeof p, "%s", path), got = -1;
+    char *dot = strrchr(p, '.'), *slash = strrchr(p, '/'), *at = strrchr(p, '@');
+    if (n <= 0 || n + 4 >= (int)sizeof p || !dot) { me_rhythm(NULL, 0); return; }
+    *(at && (!slash || at > slash) ? at : dot) = 0;
+    strcat(p, ".rhy");
+#ifdef DISC
+    u32 lsn, size, lsn0 = m_lsn;
+    if (disc_file(p, &lsn, &size) && size <= sizeof rhy) {
+        m_lsn = lsn; /* m_read reads at m_lsn */
+        got = 0;
+        for (u32 o = 0; o < size && got >= 0;) {
+            u32 k = size - o > 16384 ? 16384 : size - o;
+            int tries = 0;
+            while (!m_read(o, rhy + o, k) && ++tries < 1000000) {}
+            if (tries >= 1000000) got = -1;
+            else { o += k; got = (int)o; }
+        }
+        m_lsn = lsn0;
+    }
+#else
+    FILE *f = m_open(p);
+    if (f) { got = (int)fread(rhy, 1, sizeof rhy, f); fclose(f); }
+#endif
+    me_rhythm(got > 0 ? rhy : NULL, got > 0 ? (u32)got : 0);
+}
 
 int audio_init(void)
 {
@@ -75,7 +123,7 @@ int audio_music(const char *path)
     { static int once; if (!once++) printf("audio: audsrv ring %d bytes\n", audsrv_available()); }
 #else
     if (music) fclose(music);
-    music = fopen(path, "rb");
+    music = m_open(path);
     if (!music || fread(hdr, 4, 4, music) != 4 || memcmp(hdr, "SMGM", 4) != 0) {
         printf("audio: no music %s\n", path);
         if (music) fclose(music);
@@ -90,6 +138,7 @@ int audio_music(const char *path)
     audsrv_set_volume(MAX_VOLUME);
     fade_n = fin_n = 0;
     printf("audio: %s, %u Hz, loop at byte %u\n", path, hdr[1], music_loop);
+    rhythm_load(path);
     return 0;
 }
 
@@ -103,6 +152,7 @@ void audio_stop(void)
 #endif
     music = NULL;
     fade_n = 0;
+    me_rhythm(NULL, 0); /* AudBgmRhythmStrategy::reject */
 }
 
 unsigned audio_pos(void)
@@ -157,6 +207,7 @@ void audio_update(void)
         audsrv_set_volume(fin_n ? MAX_VOLUME * fin_t / fin_n : MAX_VOLUME);
     }
     audio_feed();
+    if (music) me_rhythm_tick(audio_pos(), music_loop);
 }
 
 void audio_feed(void)

@@ -21,6 +21,17 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   PointerGuidance / StarPieceCounter TicoEat mode, CinemaFont26 (two text fonts in subs.bin), camera interpolation
   back after demos, BGM fade-in. Seen: the result window stops the whole game update (Mario's anim too); Petari keeps
   the scene running.
+- Sound agent (branch agent-sound2, PR: see the issue "ME sequencer and missing streams"): the seven streams bgm_tab
+  named but out/music lacked (title, ev_prolo01 / 01_b / 04, ev_kuppabt01, first_astro, second_astro) converted;
+  music.py now writes AST loop flag 0 as a one-shot (staffroll, prolo04, first / second_astro). The ME sequencer
+  (engine/src/me.c after RhythmLib; me_has / me_start_system = MR::hasME / startSystemME; notes through se_seq.c's
+  se_note), its rhythm from tools/rhythm.py's <stream>.rhy (each rhythm BGM's sequence run offline: beat callbacks,
+  chord / scale against the stream's samples; audio.c loads it with the music). sound.py --pack carries JaiMe.arc
+  (SNDB header 80 bytes: [15] metable, [16] defaultme; older packs: no ME) and the MEs' waves. Host test test_me.c.
+  **Release agent, to copy:** out/wt-sound/music/* (the 7 new .pcm, SMG_staffroll_strm.pcm rewritten as a one-shot,
+  74 .rhy) into out/packs/music; then every sound pack rebuilt with this branch's tools/sound.py (out/sound_all.sh,
+  and the shared out/packs/sound.bin) so they carry the ME data and waves; tools/disc.py now packs .rhy.
+  Dev runs: XF=-DPACKS_OVERLAY=wt-sound also reads music/ from the overlay (audio.c m_open).
 - #8 (issue #5, partial) Good Egg rim: tools/dolphin/trace.py (Mario every frame in Dolphin, frames labelled by his
   timers _3CE / _3BC), _41C starts at 0 and slip_keep's misuses replaced by Petari's conditions, tryDrop's _8F8 branch.
   The Wii at g 130 takes a 60.7 deg face (checkGroundOnSlope), slides g 131-132, drops g 133, lands g 142; the port

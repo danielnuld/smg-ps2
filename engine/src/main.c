@@ -23,6 +23,7 @@ static void print_pace(void) { if (print_pace_on) { unsigned c0 = cycles(); whil
 #include "pad.h"
 #include "render.h"
 #include "se.h"
+#include "me.h"
 #include "vmath.h"
 
 #include "fx.h"
@@ -862,6 +863,7 @@ static void movies_play(void)
 static void scene_switch(void)
 {
     printf("scene: %s -> %s\n", scen, scene_next);
+    me_reset(); /* AudSystem::preProcessToReset */
     se_silence();
     audio_stop(); /* its FILE sits above the base packs: freed before they go (the heap stays whole) */
     if (pend.active) pend_cancel();
@@ -2086,6 +2088,7 @@ int main(void)
             float e[3] = {eye.x, eye.y, eye.z}, rr[3] = {r.x, r.y, r.z};
             se_listener(e, rr);
         }
+        me_update();
         se_update(steps);
         se_flush();
 #if defined(ROUTE_TEST) || defined(SND_TEST) || defined(WALKER_TEST) || defined(FAT_TEST)
