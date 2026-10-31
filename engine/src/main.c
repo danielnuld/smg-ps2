@@ -1787,9 +1787,16 @@ int main(void)
         }
 #endif
 #ifdef TORCH_TEST
-        if (frame >= 150 && frame < 900 && frame % 40 == 0) /* a spin by a torch with an item, then onto it (its item), in turn */
-            printf("torch test f %u: row %d, life %d, coins %d, star pieces %d (out %d)\n", frame, game_test_torch(frame % 80 == 0 ? 1 : 2), game_life(),
-                   game_coins(), game_test_spc_n(), game_pieces_out());
+        if (frame >= 150 && frame < 1350) { /* by a torch with an item, held 150 frames (its zone's collision streams in), a spin, then onto its item */
+            int t = (int)(frame - 150) % 300, row = -9;
+            if (t == 0) { row = game_test_torch(3); game_test_hold(1); }
+            else if (t < 150) game_test_hold(0);
+            else if (t == 150) row = game_test_torch(1);
+            else if (t > 165) game_test_torch(2); /* each frame: Mario kept on its item (a coin falls where the house is low) */
+            if (row != -9 || frame % 40 == 0)
+                printf("torch test f %u: row %d, life %d, coins %d, star pieces %d (out %d)\n", frame, row, game_life(), game_coins(),
+                       game_test_spc_n(), game_pieces_out());
+        }
 #endif
 #ifdef SCREW_TEST
         { /* Mario dropped on a screw switch (150), a spin once he stands on it (180) */

@@ -5548,7 +5548,7 @@ int game_test_candle(int how)
 }
 
 int game_test_torch(int how) /* tests: Mario into the first lit PhantomTorch / PhantomBonfire with an item: its flame (0) or 200 off it spinning (1);
-                               * 2: Mario on the last one put out (its item) */
+                               * 2: Mario on the last one put out (its item); 3: 200 off it, no spin (its zone streams in) */
 {
     static int last = -1;
     if (how == 2) {
@@ -5569,7 +5569,8 @@ int game_test_torch(int how) /* tests: Mario into the first lit PhantomTorch / P
         V3 up = vnorm(v3(m[4], m[5], m[6])), x = vnorm(v3(m[0], m[1], m[2])), base = row_pos(r);
         mario->up = up;
         mario->pos = how ? vadd(base, vmul(x, 200.0f)) : vsub(vadd(base, vmul(up, 70.0f * r->scale[0])), vmul(up, HIT_BODY_H));
-        if (how) { mario->spin_timer = SPIN_TIME; last = (int)i; }
+        if (how == 1) mario->spin_timer = SPIN_TIME;
+        if (how) last = (int)i;
         mario->hvel = v3(0, 0, 0); mario->vup = 0;
         return (int)i;
     }
@@ -10846,6 +10847,8 @@ static void update_torches(void)
                 if (r->group >= 0) se_start(left == 1 ? SE_SY_CANDLE_COMBO_5 : left == 2 ? SE_SY_CANDLE_COMBO_4 :
                                             left == 3 ? SE_SY_CANDLE_COMBO_3 : left == 4 ? SE_SY_CANDLE_COMBO_2 : SE_SY_CANDLE_COMBO_1, NULL);
                 row_kill((int)i);
+                printf("torch row %u out: item %d, coins %d
+", i, r->arg[0], ncoins);
             }
             continue;
         }
