@@ -267,16 +267,26 @@ static void mat_mul_scale3(float *out, const float *a, const float *b, float s)
 /* SMG placement: translation, then rotation Z * Y * X (degrees), then scale. */
 void mat_translate_rot_scale(float m[16], const float pos[3], const float rot[3], const float scale[3])
 {
-    const float d = 3.14159265f / 180.0f;
-    float cx = cosf(rot[0] * d), sx = sinf(rot[0] * d), cy = cosf(rot[1] * d), sy = sinf(rot[1] * d);
-    float cz = cosf(rot[2] * d), sz = sinf(rot[2] * d);
-    float r00 = cz * cy, r10 = sz * cy, r20 = -sy;
-    float r01 = cz * sy * sx - sz * cx, r11 = sz * sy * sx + cz * cx, r21 = cy * sx;
-    float r02 = cz * sy * cx + sz * sx, r12 = sz * sy * cx - cz * sx, r22 = cy * cx;
+    /* the rotation's terms kept by its bits (a pure function of it; rows share rotations, a rebind makes every
+     * placed object's matrix, six sines / cosines each) */
+    static struct { u32 k[3]; int ok; float r[9]; } c[256];
+    u32 k[3];
+    memcpy(k, rot, 12);
+    typeof(&c[0]) e = &c[(k[0] * 2654435761u ^ k[1] * 2246822519u ^ k[2] * 3266489917u) >> 24];
+    if (!e->ok || e->k[0] != k[0] || e->k[1] != k[1] || e->k[2] != k[2]) {
+        const float d = 3.14159265f / 180.0f;
+        float cx = cosf(rot[0] * d), sx = sinf(rot[0] * d), cy = cosf(rot[1] * d), sy = sinf(rot[1] * d);
+        float cz = cosf(rot[2] * d), sz = sinf(rot[2] * d);
+        e->r[0] = cz * cy; e->r[1] = sz * cy; e->r[2] = -sy;
+        e->r[3] = cz * sy * sx - sz * cx; e->r[4] = sz * sy * sx + cz * cx; e->r[5] = cy * sx;
+        e->r[6] = cz * sy * cx + sz * sx; e->r[7] = sz * sy * cx - cz * sx; e->r[8] = cy * cx;
+        memcpy(e->k, k, 12); e->ok = 1;
+    }
+    const float *r = e->r;
     mat_identity(m);
-    m[0] = r00 * scale[0]; m[1] = r10 * scale[0]; m[2] = r20 * scale[0];
-    m[4] = r01 * scale[1]; m[5] = r11 * scale[1]; m[6] = r21 * scale[1];
-    m[8] = r02 * scale[2]; m[9] = r12 * scale[2]; m[10] = r22 * scale[2];
+    m[0] = r[0] * scale[0]; m[1] = r[1] * scale[0]; m[2] = r[2] * scale[0];
+    m[4] = r[3] * scale[1]; m[5] = r[4] * scale[1]; m[6] = r[5] * scale[1];
+    m[8] = r[6] * scale[2]; m[9] = r[7] * scale[2]; m[10] = r[8] * scale[2];
     m[12] = pos[0]; m[13] = pos[1]; m[14] = pos[2];
 }
 
