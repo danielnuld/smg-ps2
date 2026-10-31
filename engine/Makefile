@@ -1,12 +1,16 @@
 # Phase-1 slice engine. Build in WSL with the ps2dev toolchain (/usr/local/ps2dev):
 #   bash engine/build.sh          (copies the tree to the WSL disk, builds, copies slice.elf back)
 EE_BIN = slice.elf
-EE_OBJS = src/main.o src/mem.o src/blob.o src/render.o src/pad.o src/gravity.o src/kcl.o src/game.o src/anim.o src/camera.o src/vu1_tex.o src/assets.o src/audio.o src/se.o src/se_seq.o src/prof.o src/fx.o src/lyt.o src/menu.o src/gamedata.o src/sequence.o src/mc.o src/movie.o
+EE_OBJS = src/main.o src/mem.o src/blob.o src/render.o src/pad.o src/gravity.o src/kcl.o src/game.o src/anim.o src/camera.o src/vu1_tex.o src/assets.o src/audio.o src/se.o src/se_seq.o src/me.o src/prof.o src/fx.o src/lyt.o src/menu.o src/gamedata.o src/sequence.o src/mc.o src/movie.o
 
 EE_INCS += -Isrc -I$(PS2SDK)/ports/include
 EE_LIBS += -L$(PS2SDK)/ports/lib -lz -lcdvd -lmc -lmpeg -laudsrv -lpacket2 -ldraw -lgraph -ldma -lpadx -lpatches -ldebug -lm
 # movies: libmpeg's memalign / free from the packs' region (main.c __wrap_memalign)
 EE_LDFLAGS += -Wl,--wrap=memalign -Wl,--wrap=free
+# the sampling profiler (XF=-DSAMPLE_PROF): string, memset, sine / cosine and snprintf calls counted by caller (prof.c)
+ifneq ($(findstring SAMPLE_PROF,$(EXTRA)),)
+EE_LDFLAGS += -Wl,--wrap=strcmp -Wl,--wrap=strncmp -Wl,--wrap=strstr -Wl,--wrap=memset -Wl,--wrap=cosf -Wl,--wrap=sinf -Wl,--wrap=snprintf
+endif
 EE_CFLAGS += -O2 -Wall -Wextra -std=gnu99 -ffast-math -DNDEBUG $(EXTRA)
 
 all: $(EE_BIN)

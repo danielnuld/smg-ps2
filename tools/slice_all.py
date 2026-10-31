@@ -19,14 +19,17 @@ sys.path.insert(0, str(Path(__file__).parent))
 import budget as B
 import slice as SL
 
-ROOM = 9.2e6  # room for scenario data and the menu packs beside it (main.c PACK_ROOM): the pack region (14080 KB in test builds) less resident.bin (3.9 MB), sound.bin's EE part and menus(3d).bin (0.9 MB); 10.4e6 overran it in AstroGalaxy
+ROOM = 9.1e6  # room for scenario data and the menu packs beside it (main.c PACK_ROOM): the pack region (13824 KB in test builds) less resident.bin (3.9 MB), sound.bin's EE part and menus(3d).bin (0.9 MB): 9.18e6 measured
+# (main.c "packs: ... room N KB" + scene.bin + common.bin; 13824 KB region), less ~75 KB for sector rounding and ELF growth; 10.4e6 overran it in AstroGalaxy
 # the menus' packs main.c loads beside a galaxy's own (scene_load: mp_names / mp_scene) come out of its room
 # (mappics.bin is not one: menu.c reads one GalaxyDetail picture at a time into a 64 KB MEM_SCENE buffer, packs_read)
 MENU_PACKS = {"FileSelect": ("title.bin", "title3d.bin"), "AstroDome": ("dome.bin",), "AstroGalaxy": ("map.bin",), "EpilogueDemoStage": ("ending.bin",)}
+# and Luigi's letter (main.c letter_scene): in any galaxy while he is missing (MR::getLuigiLetterGalaxyName)
+LETTER = "letter.bin"
 
 
 def room(out, g):
-    return ROOM - sum((Path(out) / f).stat().st_size for f in MENU_PACKS.get(g, ()) if (Path(out) / f).exists())
+    return ROOM - sum((Path(out) / f).stat().st_size for f in MENU_PACKS.get(g, ()) + (LETTER,) if (Path(out) / f).exists())
 
 
 def has_start(scene):
@@ -51,7 +54,7 @@ def galaxy(fs, out, g, resident):
     for no in scenarios(fs, g):  # one process per galaxy: its models are converted once (slice._model_cache)
         t = time.time()
         try:
-            for ratio in (0.99, 0.9, 0.8, 0.7):  # over ROOM: its static models simplified further until it fits
+            for ratio in (0.99, 0.9, 0.8, 0.7, 0.6, 0.5):  # over ROOM: its static models simplified further until it fits
                 files, info = SL.packs(fs, g, no, resident, ratio)
                 if max(info["stream"].values()) <= gr:
                     break

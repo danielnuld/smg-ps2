@@ -278,9 +278,13 @@ static float hermite(float f, float t0, float v0, float m0, float t1, float v1, 
             return k[1];                                                                                    \
         if (k[last] <= f)                                                                                   \
             return k[last + 1];                                                                             \
-        u32 i = 0;                                                                                          \
-        while (i + st <= last && k[i + st] <= f)                                                            \
-            i += st;                                                                                        \
+        u32 lo = 0, hi = count - 1; /* the last key at or before f by halves (k[0] <= f < k[last], the times    \
+                                     * ascend): where a walk from the first key stops */                    \
+        while (hi - lo > 1) {                                                                               \
+            u32 mid = (lo + hi) >> 1;                                                                       \
+            if (k[mid * st] <= f) lo = mid; else hi = mid;                                                  \
+        }                                                                                                   \
+        u32 i = lo * st;                                                                                    \
         return hermite(f, k[i], k[i + 1], type == 0 ? k[i + 2] : k[i + 3], k[i + st], k[i + st + 1], k[i + st + 2]); \
     }
 KEY_FN(key_f, float)
@@ -344,7 +348,11 @@ static void clip_local(const u8 *c, float f, u32 j, float scale[3], float rot[3]
 }
 
 static void anim_skin_(Anim *a);
+#ifdef _EE
 static inline u32 cy_(void) { u32 c; __asm__ volatile("mfc0 %0, $9" : "=r"(c)); return c; }
+#else
+static inline u32 cy_(void) { return 0; }
+#endif
 u32 prof_pose, prof_skin; /* EE cycles in anim_pose / anim_skin (profiling) */
 void anim_update(Anim *a)
 {
@@ -398,8 +406,21 @@ void anim_advance(Anim *a)
 
 /* the half-angle sine / cosine of a joint rotation (degrees); most joints leave some axes at 0, where they are exact
  * (sinf keeps a zero's sign) and the libm calls are skipped */
-#define COSH(d) ((d) == 0.0f ? 1.0f : cosf((d) * h))
-#define SINH(d) ((d) == 0.0f ? (d) * h : sinf((d) * h))
+/* and the nonzero ones kept by angle (the bits of d): most joints hold an axis still, or stand on a key, frame after
+ * frame and instance after instance, and cosf / sinf cost the EE more than the rest of a joint */
+static struct { u32 d; float c, s; } half_sc[1024];
+static inline const typeof(half_sc[0]) *half_of(float d)
+{
+    union { float f; u32 u; } b = {d};
+    typeof(half_sc[0]) *e = &half_sc[(b.u * 0x9E3779B1u) >> 22];
+    if (e->d != b.u) { /* (0 never comes here: a zeroed entry is empty) */
+        const float h = 3.14159265f / 360.0f;
+        e->d = b.u; e->c = cosf(d * h); e->s = sinf(d * h);
+    }
+    return e;
+}
+#define COSH(d) ((d) == 0.0f ? 1.0f : half_of(d)->c)
+#define SINH(d) ((d) == 0.0f ? (d) * h : half_of(d)->s)
 void anim_pose(Anim *a)
 {
     const Skin *k = a->skin;
@@ -437,22 +458,23 @@ void anim_pose(Anim *a)
     if (nt > 1) for (int k = 0; k < nt; k++) if (tc[k]) tot += a->tw[k];
     for (u32 j = 0; j < k->njoints && j < ANIM_MAX_JOINTS; j++) {
         const SkJoint *jt = &k->joints[j];
-        float s[3], r[3], t[3], local[16] __attribute__((aligned(16)));
-        if (a->clip && j < ((const u16 *)a->clip)[2])
-            clip_local(a->clip, a->frame, j, s, r, t);
-        else
-            for (int i = 0; i < 3; i++) {
-                s[i] = jt->scale[i];
-                r[i] = jt->rot[i] * (180.0f / 3.14159265f);
-                t[i] = jt->trans[i];
-            }
-        /* rotation as a quaternion: R = Rz * Ry * Rx -> q = qz * qy * qx */
+        float s[3], r[3], t[3], q[4], local[16] __attribute__((aligned(16)));
         const float h = 3.14159265f / 360.0f;
-        float cx = COSH(r[0]), sx = SINH(r[0]), cy = COSH(r[1]), sy = SINH(r[1]);
-        float cz = COSH(r[2]), sz = SINH(r[2]);
-        float q[4] = {cz * cy * sx - sz * sy * cx, cz * sy * cx + sz * cy * sx, sz * cy * cx - cz * sy * sx,
-                      cz * cy * cx + sz * sy * sx}; /* x, y, z, w */
-        if (nt > 1 && tot > 0.0f) { /* XanimeCore::calcBlend: scale / translation by the normalised weights, the rotation
+        if (!(nt > 1 && tot > 0.0f)) { /* (a blend makes its own from every track, the clip's among them) */
+            if (a->clip && j < ((const u16 *)a->clip)[2])
+                clip_local(a->clip, a->frame, j, s, r, t);
+            else
+                for (int i = 0; i < 3; i++) {
+                    s[i] = jt->scale[i];
+                    r[i] = jt->rot[i] * (180.0f / 3.14159265f);
+                    t[i] = jt->trans[i];
+                }
+            /* rotation as a quaternion: R = Rz * Ry * Rx -> q = qz * qy * qx */
+            float cx = COSH(r[0]), sx = SINH(r[0]), cy = COSH(r[1]), sy = SINH(r[1]);
+            float cz = COSH(r[2]), sz = SINH(r[2]);
+            q[0] = cz * cy * sx - sz * sy * cx; q[1] = cz * sy * cx + sz * cy * sx; /* x, y, z, w */
+            q[2] = sz * cy * cx - cz * sy * sx; q[3] = cz * cy * cx + sz * sy * sx;
+        } else { /* XanimeCore::calcBlend: scale / translation by the normalised weights, the rotation
                                      * lerped in turn by weight / the weights so far (JMAQuatLerp) */
             float S[3] = {0, 0, 0}, T[3] = {0, 0, 0}, Q[4] = {0, 0, 0, 1}, acc = 0.0f;
             for (int k = 0; k < nt; k++) {
@@ -521,6 +543,36 @@ static void anim_skin_(Anim *a)
             continue;
         }
         float *out = a->drw[d];
+#ifdef _EE
+        /* on VU0: out = sum of weight x world x invbind (the 3 x 4 rows as given: column c of world x invbind is
+         * world's columns 0-2 weighted by the rows' c-th terms, + world's column 3 for c = 3), summed in vf13-16 */
+        __asm__ volatile("vsub.xyzw $vf13, $vf0, $vf0\n vsub.xyzw $vf14, $vf0, $vf0\n"
+                         "vsub.xyzw $vf15, $vf0, $vf0\n vsub.xyzw $vf16, $vf0, $vf0\n");
+        for (u32 i = 0; i < dr->count; i++) {
+            const SkMix *mx = &k->mix[dr->first + i];
+            float r[12] __attribute__((aligned(16)));
+            memcpy(r, mx->invbind, 48);
+            float w = mx->weight;
+            __asm__ volatile(
+                "qmtc2 %2, $vf17\n"
+                "lqc2 $vf1, 0(%0)\n lqc2 $vf2, 16(%0)\n lqc2 $vf3, 32(%0)\n lqc2 $vf4, 48(%0)\n"
+                "lqc2 $vf5, 0(%1)\n lqc2 $vf6, 16(%1)\n lqc2 $vf7, 32(%1)\n"
+                "vmulx.xyzw $vf1, $vf1, $vf17x\n vmulx.xyzw $vf2, $vf2, $vf17x\n"
+                "vmulx.xyzw $vf3, $vf3, $vf17x\n vmulx.xyzw $vf4, $vf4, $vf17x\n"
+                "vmulaw.xyzw $ACC, $vf13, $vf0w\n vmaddax.xyzw $ACC, $vf1, $vf5x\n"
+                "vmaddax.xyzw $ACC, $vf2, $vf6x\n vmaddx.xyzw $vf13, $vf3, $vf7x\n"
+                "vmulaw.xyzw $ACC, $vf14, $vf0w\n vmadday.xyzw $ACC, $vf1, $vf5y\n"
+                "vmadday.xyzw $ACC, $vf2, $vf6y\n vmaddy.xyzw $vf14, $vf3, $vf7y\n"
+                "vmulaw.xyzw $ACC, $vf15, $vf0w\n vmaddaz.xyzw $ACC, $vf1, $vf5z\n"
+                "vmaddaz.xyzw $ACC, $vf2, $vf6z\n vmaddz.xyzw $vf15, $vf3, $vf7z\n"
+                "vmulaw.xyzw $ACC, $vf16, $vf0w\n vmaddaw.xyzw $ACC, $vf1, $vf5w\n"
+                "vmaddaw.xyzw $ACC, $vf2, $vf6w\n vmaddaw.xyzw $ACC, $vf3, $vf7w\n"
+                "vmaddw.xyzw $vf16, $vf4, $vf0w\n"
+                : : "r"(a->world[mx->joint]), "r"(r), "r"(((union { float f; u32 u; }){w}).u) : "memory");
+        }
+        __asm__ volatile("sqc2 $vf13, 0(%0)\n sqc2 $vf14, 16(%0)\n sqc2 $vf15, 32(%0)\n sqc2 $vf16, 48(%0)\n"
+                         : : "r"(out) : "memory");
+#else
         memset(out, 0, 64);
         for (u32 i = 0; i < dr->count; i++) {
             const SkMix *mx = &k->mix[dr->first + i];
@@ -534,5 +586,6 @@ static void anim_skin_(Anim *a)
             for (int q = 0; q < 16; q++)
                 out[q] += mx->weight * m[q];
         }
+#endif
     }
 }

@@ -22,6 +22,12 @@ void se_map_code(int code); /* the player's ground sound code (AudSoundObject::g
 void se_port(u32 handle, int port, u16 value);        /* a sequence port (JAISound::setPort) */
 void se_listener(const float eye[3], const float right[3]);
 void se_volpitch(u32 handle, float vol, float pitch); /* scale a playing sound's volume and pitch */
+/* a note of bank / program outside any sequence (me.c's channels): adsr 24 bytes of big-endian {mode, time, value}
+ * points or NULL, release a direct release (0 none) -> handle, 0 none; it ends once released and faded */
+u32 se_note(int bank, int prog, int key, int vel, const u8 *adsr, u16 release);
+void se_note_off(u32 handle, u16 dr);
+int se_note_alive(u32 handle);
+void se_note_params(u32 handle, float vol, float pitch, float pan, float oct);
 /* animation sounds (.bas): clip "<archive>/<clip>" lower case went from frame `from` (-1 just started) to `to` */
 void se_wait(void);    /* the last se_flush answered */
 void se_silence(void); /* every voice off (before a scene change) */

@@ -110,6 +110,11 @@ int kcl_check_sphere(const unsigned char *k, const float c[3], float radius, Kcl
         if (hi[a] < lo[a]) return 0;
     }
     int n = 0;
+    /* the prisms tested this query (by id, a direct-mapped set: a prism in several cells of the walk is tested once;
+     * two ids in one slot: a prism tested again, the same answer) */
+    static unsigned short seen_p[256];
+    static unsigned seen_q[256], qseq;
+    if (++qseq == 0) qseq = 1;
     /* ponytail: plain cell walk with de-duplication instead of checkSphere's skip-list trick; same hits */
     for (unsigned z = lo[2]; (int)z <= hi[2];) {
         int zstep = 1 << 30;
@@ -124,6 +129,9 @@ int kcl_check_sphere(const unsigned char *k, const float c[3], float radius, Kcl
                 while (*++list) {
                     const Prism *p = PR(k, *list);
                     if (p->height <= 0) continue;
+                    unsigned sl = *list & 255;
+                    if (seen_q[sl] == qseq && seen_p[sl] == *list) continue;
+                    seen_q[sl] = qseq; seen_p[sl] = *list;
                     int dup = 0;
                     for (int i = 0; i < n; i++) dup |= out[i].prism == *list;
                     if (dup || n >= max) continue;

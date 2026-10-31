@@ -237,7 +237,18 @@ int game_test_butler_shoot(void); /* tests: a star piece at the Butler, its lect
 int game_test_demo_name(const char *name); /* tests: a demo requested by its name, 0 if the scene has none */
 int game_test_npc_visit(int k);    /* tests: Mario beside the k-th turning NPC; its row */
 void game_test_npc_turn(int frame); /* tests: the turning NPCs near Mario, their angles */
-int game_test_torch(int how); /* tests: Mario into a lit PhantomTorch (0) or spinning by it (1); its row */
+int game_test_hanachan(int how); /* hanachan test: Mario onto the first live Hanachan: trample (0), spin (1), hip drop (2); its row */
+int game_hanachan_state(void); /* its nerve (game.c HN_*), -1 none */
+int game_test_strspider(int how); /* strspider test: Mario under (0), spinning by (1), onto (2) the first StringSpider; its row */
+int game_strspider_state(void); /* its nerve, -1 none */
+int game_test_free(void); /* tests: the flight in over, Mario free */
+int game_test_begoman(int how); /* begoman test: Mario 900 before (0), spinning by (1), onto (2) the first BegomanSpike; its row */
+int game_begoman_state(void); /* its nerve, -1 none */
+int game_test_spidercoin(void); /* spidercoin test: R2 with the cursor on the first SpiderCoin; its row */
+void game_test_unclip(void); /* tests: the walkers move though off the view */
+int game_test_spiderblock(void); /* spiderblock test: a hip drop onto the first SpiderMapBlock; its row */
+int game_test_statue(void); /* statue test: an explosion at the first standing KoopaStatue; its row */
+int game_test_torch(int how); /* tests: Mario into a lit PhantomTorch (0), spinning by it (1), on its item (2), by it (3); its row */
 int game_test_spc_n(void);  /* tests: star pieces got */
 int game_test_spc(void);    /* tests: the StarPieceCounter: mode * 1000 + nerve * 100 + group * 10 + CoinCounter killed */
 int game_test_demo(int k);   /* tests: demo k's appear switch on (-1: the running demo's step, -1 none; -2: its anim camera's frame; -3: Mario's clip * 1000 + frame) */
