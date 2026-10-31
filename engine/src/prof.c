@@ -1,7 +1,7 @@
-/* A sampling profiler for bench builds: EE Timer 1 interrupts ~10 000 times a second and the interrupted PC (COP0
- * EPC) is counted in 64-byte buckets of the program; prof_dump prints the busiest buckets (tools: map them to
- * functions with the ELF's nm). Only with -DSAMPLE_PROF. */
 #ifdef SAMPLE_PROF
+/* A sampling profiler for bench builds (XF=-DSAMPLE_PROF, tools/prof_map.py sums it by function): EE Timer 1
+ * interrupts ~10 000 times a second and the interrupted PC (COP0 EPC) is counted in 64-byte buckets of the program;
+ * prof_dump prints the busiest buckets. */
 #include <kernel.h>
 #include <stdio.h>
 #include <string.h>
@@ -17,11 +17,44 @@ static u16 hist[NB];
 static u32 samples, outside, seen[8];
 static int on;
 
+/* PCSX2's kernel runs the handler after an eret of its own (EPC then 0x81fe0): the interrupted PC is a word of the
+ * kernel's RAM (its saved context, 0x80019430 there). The first sample lists the kernel words holding program
+ * addresses; over the next CAL samples the one that nearly always holds one and changes the most is taken */
+#define CAL 2000
+#define CALW 512
+extern char _ftext[], _etext[];
+static u16 cal_in[CALW], cal_chg[CALW];
+static u32 cal_prev[CALW];
+static int cal_slot = -1, ncand;
+static u32 cand[CALW], cal_addr;
+static u16 hcall[NB];
 static int tick(int cause)
 {
     (void)cause;
     u32 pc;
     __asm__ volatile("mfc0 %0, $14" : "=r"(pc));
+    if (on && (pc < BASE || pc >= (u32)_etext)) {
+        if (cal_slot < 0 && samples == 0) { /* the kernel's RAM: the words holding program addresses now */
+            for (u32 a = 0x80000000u; a < 0x80080000u && ncand < CALW; a += 4) {
+                u32 v = *(volatile u32 *)a;
+                if (v >= (u32)_ftext && v < (u32)_etext) { cand[ncand] = a; cal_prev[ncand++] = v; }
+            }
+        } else if (cal_slot < 0 && samples < CAL) {
+            for (int i = 0; i < ncand; i++) {
+                u32 v = *(volatile u32 *)cand[i];
+                if (v >= (u32)_ftext && v < (u32)_etext) cal_in[i]++;
+                if (v != cal_prev[i]) cal_chg[i]++;
+                cal_prev[i] = v;
+            }
+        } else if (cal_slot < 0) {
+            int best = 0;
+            for (int i = 0; i < ncand; i++)
+                if (cal_in[i] >= CAL * 9 / 10 && cal_chg[i] > cal_chg[best]) best = i;
+            cal_slot = best;
+            cal_addr = cand[best];
+        }
+        if (cal_slot >= 0) pc = *(volatile u32 *)cal_addr;
+    }
     if (on) {
         u32 b = (pc - BASE) >> 6;
         if (pc >= BASE && b < NB) { if (hist[b] < 0xFFFF) hist[b]++; }
@@ -45,26 +78,55 @@ void prof_start(void)
     on = 1;
 }
 
-void prof_dump(void)
+static void dump_hist(const u16 *h, const char *tag, u32 min)
 {
-    on = 0;
-    printf("prof: %u samples, %u outside the program (%08x %08x %08x %08x)\n", samples, outside, seen[0], seen[1], seen[2], seen[3]);
-    /* six buckets a line, 4 ms apart (udptty loses bursts); buckets under 1 / 5000 of the samples left out */
-    u32 min = samples / 5000 > 2 ? samples / 5000 : 2, k = 0;
+    /* six buckets a line, 4 ms apart (udptty loses bursts) */
     char line[200];
     int n = 0;
+    u32 k = 0;
     for (u32 i = 0; i < NB; i++) {
-        if (hist[i] < min) continue;
-        n += snprintf(line + n, sizeof line - n, " %06x:%u", (BASE + (i << 6)) & 0xFFFFFF, hist[i]);
+        if (h[i] < min) continue;
+        n += snprintf(line + n, sizeof line - n, " %06x:%u", (BASE + (i << 6)) & 0xFFFFFF, h[i]);
         if (++k % 6 == 0) {
-            printf("prof%s\n", line);
+            printf("%s%s\n", tag, line);
             n = 0;
             u32 c0, c1;
             __asm__ volatile("mfc0 %0, $9" : "=r"(c0));
             do __asm__ volatile("mfc0 %0, $9" : "=r"(c1)); while (c1 - c0 < 294912u * 4);
         }
     }
-    if (n) printf("prof%s\n", line);
+    if (n) printf("%s%s\n", tag, line);
+}
+
+void prof_dump(void)
+{
+    on = 0;
+    printf("prof: %u samples, %u outside the program (%08x %08x %08x %08x), slot %d at %08x of %d (in %u changed %u)\n", samples, outside, seen[0],
+           seen[1], seen[2], seen[3], cal_slot, cal_addr, ncand, cal_slot >= 0 ? cal_in[cal_slot] : 0, cal_slot >= 0 ? cal_chg[cal_slot] : 0);
+    /* buckets under 1 / 5000 of the samples left out; then the library calls' callers ("callp" lines) */
+    u32 min = samples / 5000 > 2 ? samples / 5000 : 2;
+    dump_hist(hist, "prof", min);
+    dump_hist(hcall, "callp", min);
     printf("prof end\n");
 }
+#endif
+#ifdef SAMPLE_PROF
+/* the library calls by caller (Makefile: --wrap with SAMPLE_PROF): one in 16 calls counted at its return address,
+ * dumped as "callp" buckets */
+static u32 ncalls;
+static inline void count_caller(void *ra)
+{
+    u32 b = ((u32)ra - BASE) >> 6;
+    if (on && !(++ncalls & 15) && b < NB && hcall[b] < 0xFFFF) hcall[b]++;
+}
+int __real_strcmp(const char *, const char *), __real_strncmp(const char *, const char *, unsigned int);
+char *__real_strstr(const char *, const char *);
+void *__real_memset(void *, int, unsigned int);
+float __real_cosf(float), __real_sinf(float);
+int __wrap_strcmp(const char *a, const char *b) { count_caller(__builtin_return_address(0)); return __real_strcmp(a, b); }
+int __wrap_strncmp(const char *a, const char *b, unsigned int n) { count_caller(__builtin_return_address(0)); return __real_strncmp(a, b, n); }
+char *__wrap_strstr(const char *a, const char *b) { count_caller(__builtin_return_address(0)); return __real_strstr(a, b); }
+void *__wrap_memset(void *d, int c, unsigned int n) { count_caller(__builtin_return_address(0)); return __real_memset(d, c, n); }
+float __wrap_cosf(float x) { count_caller(__builtin_return_address(0)); return __real_cosf(x); }
+float __wrap_sinf(float x) { count_caller(__builtin_return_address(0)); return __real_sinf(x); }
 #endif
