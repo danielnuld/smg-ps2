@@ -27,6 +27,14 @@
 #include "vmath.h"
 #include "mario_const.h"
 
+/* strcmp with its first characters compared inline: the class names are told apart by strcmp chains (a rebind runs
+ * ~150 a placed object), most of them settled by the first character. The same answer as newlib's (the difference
+ * of the first differing characters, unsigned) */
+static inline int strcmp_first(const char *a, const char *b)
+{
+    return *a != *b ? (unsigned char)*a - (unsigned char)*b : strcmp(a, b);
+}
+#define strcmp(a, b) strcmp_first((a), (b))
 /* MR::startDPDHitSound: ME_DPD_HIT over a BGM with a chord (MR::hasME), else its SE (no CS sound: no remote speaker) */
 static void dpd_hit_sound(void)
 {
@@ -576,7 +584,7 @@ static void draw_skin(const Model *md, const float m[16], Anim *a)
         else bva_apply(md, a->clip_id >= 0 ? sc->clips[a->clip_id].name : NULL, a->frame);
     }
     bva_key = NULL;
-    if (render_model_visible(md, m)) render_skinned(md, m, anim_drw(a)); /* culled: no draw matrices made */
+    if (render_model_visible(md, m)) render_skinned_visible(md, m, anim_drw(a)); /* culled: no draw matrices made */
 }
 /* a one-shot effect standing on `up` at p */
 static void fx_at(int fx, V3 p, V3 up)
@@ -1289,13 +1297,23 @@ static void mario_play(const char *clip, float speed, int loop)
 
 static V3 row_pos(const Row *r) { return v3(r->pos[0], r->pos[1], r->pos[2]); }
 
-/* SMG placement axes (rotation Z * Y * X, degrees), same as render.c mat_translate_rot_scale */
+/* SMG placement axes (rotation Z * Y * X, degrees), same as render.c mat_translate_rot_scale; kept by the rotation
+ * (its bits: a pure function of it, many rows share one): areas, walkers, rails ask every frame, six sines /
+ * cosines a time */
 static void row_axes(const Row *r, V3 *x, V3 *z)
 {
-    float m[16], one[3] = {1, 1, 1};
-    mat_translate_rot_scale(m, r->pos, r->rot, one);
-    *x = v3(m[0], m[1], m[2]);
-    *z = v3(m[8], m[9], m[10]);
+    static struct { u32 k[3]; int ok; V3 x, z; } c[64];
+    u32 k[3];
+    memcpy(k, r->rot, 12);
+    typeof(&c[0]) e = &c[(k[0] * 2654435761u ^ k[1] * 2246822519u ^ k[2] * 3266489917u) >> 26];
+    if (!e->ok || e->k[0] != k[0] || e->k[1] != k[1] || e->k[2] != k[2]) {
+        float m[16], one[3] = {1, 1, 1};
+        mat_translate_rot_scale(m, r->pos, r->rot, one);
+        e->x = v3(m[0], m[1], m[2]);
+        e->z = v3(m[8], m[9], m[10]);
+        memcpy(e->k, k, 12); e->ok = 1;
+    }
+    *x = e->x; *z = e->z;
 }
 
 static int count_type(const char *name, int per_row_arg0)
@@ -1899,9 +1917,13 @@ static const Model *m_wcolumn;
 static void swim_reset(void);
 static const Model *m_freeze_ice;
 
+static void area_types_reset(void);
+static u32 scene_seq; /* game_init counts the scenes (row_list) */
 void game_init(const Scene *s, const unsigned char *blob)
 {
     sc = s;
+    area_types_reset();
+    scene_seq++;
     gd_scene_start(); /* GameDataFunction's scene start holder (the isOnJust checks) */
     mc_table = &MC_TABLES[gd_player_luigi() ? 1 : 0]; /* MarioActor::init2: mConst->changeTable(1) when isPlayerLuigi */
     fx_init(s);
@@ -3819,10 +3841,14 @@ static void railer_place(Inst *in)
 /* SmallStone.cpp (SmallStone / CircleShell / CircleStrawberry): 8 members on a ring of 300 around it, each dropped
  * onto the ground and raised arg0; a spin within 400 of its centre (120 up) breaks them all (star pieces when arg2
  * is set: one each, ponytail for appearStarPiece's burst). They share the plant groups' members (plants) */
+static signed char stone_type[1024]; /* stone_row by type: 0 not yet, 1 no, 2 yes (area_types_reset) */
 static int stone_row(const Row *r)
 {
     const char *n = sc->types + 32 * r->type;
-    return strcmp(n, "SmallStone") == 0 || strcmp(n, "CircleShell") == 0 || strcmp(n, "CircleStrawberry") == 0;
+    if (r->type < 1024 && stone_type[r->type]) return stone_type[r->type] == 2;
+    int s = strcmp(n, "SmallStone") == 0 || strcmp(n, "CircleShell") == 0 || strcmp(n, "CircleStrawberry") == 0;
+    if (r->type < 1024) stone_type[r->type] = (signed char)(1 + s);
+    return s;
 }
 
 static int plant_count(const Row *r) { return stone_row(r) ? 8 : r->arg[0] > 0 ? r->arg[0] : 7; }
@@ -3877,7 +3903,16 @@ static void place_plants(const Inst *in)
     pgroups[row].r = 160.0f + br * r->scale[1]; /* sSize + radius x scale */
 }
 
+static void game_rebind_(void);
+u32 rebind_cycles, rebinds; /* game_rebind's time and count (the route test's perf lines) */
 void game_rebind(void)
+{
+    u32 c0 = cycles();
+    game_rebind_();
+    rebind_cycles += cycles() - c0;
+    rebinds++;
+}
+static void game_rebind_(void)
 {
     const Scene *s = sc;
     m_coin = scene_model(s, "Coin");
@@ -3950,15 +3985,21 @@ void game_rebind(void)
     V3 ride_vel[2] = {flf.inst >= 0 ? insts[flf.inst].hvel : v3(0, 0, 0), coc.inst >= 0 ? insts[coc.inst].hvel : v3(0, 0, 0)};
     int wait_row = coc.wait >= 0 ? insts[coc.wait].row : -1;
     ninsts = 0;
+    int t_note = scene_type(s, "NoteFairy"), t_petari = scene_type(s, "Petari"), t_rockc = scene_type(s, "RockCreator"),
+        t_wan = scene_type(s, "WanwanRolling"), t_wanm = scene_type(s, "WanwanRollingMini"),
+        t_wang = scene_type(s, "WanwanRollingGold"), t_dino = scene_type(s, "DinoPackun"), t_ota = scene_type(s, "OtaKing");
+    static signed char wnk[1024]; /* walker_new_kind by type this rebind: 0 not yet, 1 no, 2 yes */
+    memset(wnk, 0, sizeof wnk);
     for (u32 i = 0; i < s->nobjs; i++) { /* every placed model without behaviour: planets and the rest */
         const Row *r = &s->objs[i];
+        if (r->type < 1024 && !wnk[r->type]) wnk[r->type] = (signed char)(walker_new_kind(s->types + 32 * r->type) >= 0 ? 2 : 1);
         if (r->type == t_coin || r->type == t_pc || r->type == t_piece || r->type == t_kuribo || r->type == t_circle ||
             r->type == t_tako || r->type == t_packun || r->type == t_kote || r->type == t_spider || (r->type == t_mera || r->type == t_imera) ||
             r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly ||
-            r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_stink || r->type == scene_type(s, "NoteFairy") ||
-            r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == scene_type(s, "Petari") || r->type == scene_type(s, "RockCreator") || r->type == scene_type(s, "WanwanRolling") ||
-            r->type == scene_type(s, "WanwanRollingMini") || r->type == scene_type(s, "WanwanRollingGold") ||
-            r->type == scene_type(s, "DinoPackun") || r->type == scene_type(s, "OtaKing") || walker_new_kind(s->types + 32 * r->type) >= 0)
+            r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_stink || r->type == t_note ||
+            r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == t_petari || r->type == t_rockc || r->type == t_wan ||
+            r->type == t_wanm || r->type == t_wang || r->type == t_dino || r->type == t_ota ||
+            (r->type < 1024 ? wnk[r->type] == 2 : walker_new_kind(s->types + 32 * r->type) >= 0))
             continue;
         const char *name = s->types + 32 * r->type;
         const Model *md = scene_model(s, name);
@@ -6567,10 +6608,13 @@ static void os_init(void)
         if (sc->objs[i].type == ty) { ospheres[nospheres].row = i; os_build(&ospheres[nospheres]); nospheres++; }
 }
 
+/* a drawing's angle that turns k radians a frame, within one turn: sinf / cosf of hundreds of radians (frame 2000 on)
+ * take newlib's slow reduction, ~0.4 ms a frame in Good Egg's boss (drawing only: no state reads it) */
+static float draw_angle(float k) { return fmodf(game_frame * k, 6.2831853f); }
 static void draw_oceanspheres(V3 eye, V3 right, V3 cup)
 {
     if (fx_ocean_tex(0) < 0) return;
-    float t1 = -0.1f * game_frame, off = 0.0008f * game_frame;
+    float t1 = draw_angle(-0.1f), off = 0.0008f * game_frame;
     off -= floorf(off);
     static u16 keep[2][3 * 6 * 1024];
     /* the wave's two terms by a point's w1 / w2 (whole numbers 0 .. n): a table a frame instead of two sines a point */
@@ -12213,7 +12257,12 @@ static const char *m_anim_clip(const char *jp)
 }
 static int m_anim_idx(const char *jp)
 {
-    for (unsigned i = 0; i < sizeof m_anims / sizeof m_anims[0]; i++) if (!strcmp(m_anims[i].jp, jp)) return (int)i;
+    /* the index kept by the name's address (checked again by its text: the table's first such name), the walk over
+     * the table's names ran for every isAnimationRun a frame */
+    static struct { const char *at; int i; } c[64];
+    typeof(&c[0]) e = &c[((u32)jp * 2654435761u) >> 26];
+    if (e->at == jp && !strcmp(m_anims[e->i].jp, jp)) return e->i;
+    for (unsigned i = 0; i < sizeof m_anims / sizeof m_anims[0]; i++) if (!strcmp(m_anims[i].jp, jp)) { e->at = jp; e->i = (int)i; return (int)i; }
     return -1;
 }
 static int m_jp_same(int i) /* the playing clip is m_anims[i]'s animation: by its name, else (mario_play) by its rate */
@@ -15182,7 +15231,7 @@ static void winfo_clear(WInfo *w) /* WaterInfo::clear */
     memset(w, 0, sizeof *w);
     w->surf_n = v3(0, 1, 0); w->edge_d = -1.0f; w->row = -1;
 }
-static int area_shape(const char *name);
+static int area_shape(const char *name), area_type(int t, int *centered);
 /* MR::getWaterAreaObj: the WaterArea p is in (its form's volume), else the ocean (WaterAreaFunction::tryInOceanArea) */
 static int water_obj(WInfo *w, V3 p)
 {
@@ -15263,7 +15312,7 @@ static int water_info(WInfo *w, V3 p, V3 grav, int skip)
         else { w->edge_pos = vadd(vmul(vnorm(e), rad), ctr); w->edge_d = vlen(vsub(w->edge_pos, p)); }
         return 1;
     }
-    int shape = area_shape(sc->types + 32 * r->type);
+    int ctr_, shape = area_type((int)r->type, &ctr_);
     V3 x, z;
     row_axes(r, &x, &z);
     V3 y = vcross(z, x);
@@ -26301,6 +26350,19 @@ static void update_palms(void)
  * every 5..20, until 600 off) found within 150 every 5..10 frames, or within 500 of his spin. Velocity damped 0.95;
  * its up the group's (arg2: against the gravity, else (0, 1, 0)). ponytail: one Swim pose per group (no per-fish
  * rate), drawn within 5000 of the camera only (Petari hides past 300 m), 16 fish a group at most */
+/* the rows of some classes, in order, listed once a scene (a walk over every row a frame for a handful); n -1: more
+ * than it holds (the callers walk every row then) */
+
+typedef struct { u32 seq; int n; short row[64]; } RowList;
+static const RowList *row_list(RowList *l, const int *t, int nt)
+{
+    if (l->seq == scene_seq + 1) return l;
+    l->seq = scene_seq + 1; l->n = 0;
+    for (u32 row = 0; row < sc->nobjs && l->n >= 0; row++)
+        for (int k = 0; k < nt; k++)
+            if ((int)sc->objs[row].type == t[k]) { if (l->n < 64) l->row[l->n++] = (short)row; else l->n = -1; break; }
+    return l;
+}
 #define MAX_FGROUPS 24
 #define FG_FISH 16
 enum { FI_WANDER, FI_APPROACH, FI_ESCAPE };
@@ -26309,18 +26371,19 @@ static struct {
     V3 pos[FG_FISH], vel[FG_FISH], front[FG_FISH], off[FG_FISH], esc[FG_FISH];
     float dappr[FG_FISH]; int tsearch[FG_FISH], tmove[FG_FISH], nrv[FG_FISH];
 } fgs[MAX_FGROUPS];
-static int fg_type(const char *n)
-{
-    static const char *const fg[6] = {"FishGroupA", "FishGroupB", "FishGroupC", "FishGroupD", "FishGroupE", "FishGroupF"};
-    for (int i = 0; i < 6; i++) if (!strcmp(n, fg[i])) return i;
-    return -1;
-}
 static void update_fishes(void)
 {
+    static const char *const fg[6] = {"FishGroupA", "FishGroupB", "FishGroupC", "FishGroupD", "FishGroupE", "FishGroupF"};
+    int fgt[6]; /* their classes (by index: no name compared a row) */
+    for (int i = 0; i < 6; i++) fgt[i] = scene_type(sc, fg[i]);
     V3 mp = mario->pos;
-    for (u32 row = 0; row < sc->nobjs; row++) {
+    static RowList rl;
+    const RowList *l = row_list(&rl, fgt, 6);
+    for (int li = 0, nl = l->n < 0 ? (int)sc->nobjs : l->n; li < nl; li++) {
+        u32 row = l->n < 0 ? (u32)li : (u32)l->row[li];
         const Row *r = &sc->objs[row];
-        int ty = fg_type(sc->types + 32 * r->type);
+        int ty = -1;
+        for (int i = 0; i < 6 && ty < 0; i++) if ((int)r->type == fgt[i]) ty = i;
         if (ty < 0 || !row_shown((int)row) || r->path < 0 || !scene_blob_g) continue;
         u32 rn = 0; int cl = 0;
         const float *rail = find_rail(scene_blob_g, r->zone, r->path, &rn, &cl);
@@ -26434,9 +26497,13 @@ static int gg_next(int k, int b) /* updatePosInfo */
 static void gu_set(int k, int b, int n) { ggs[k].nrv[b] = n; ggs[k].step[b] = -1; }
 static void update_gulls(void)
 {
-    for (u32 row = 0; row < sc->nobjs; row++) {
+    int t = scene_type(sc, "SeaGullGroup"); /* its class by index: no name compared a row */
+    static RowList rl;
+    const RowList *l = row_list(&rl, &t, 1);
+    for (int li = 0, nl = l->n < 0 ? (int)sc->nobjs : l->n; li < nl; li++) {
+        u32 row = l->n < 0 ? (u32)li : (u32)l->row[li];
         const Row *r = &sc->objs[row];
-        if (strcmp(sc->types + 32 * r->type, "SeaGullGroup") || !row_shown((int)row) || r->path < 0 || !scene_blob_g) continue;
+        if ((int)r->type != t || !row_shown((int)row) || r->path < 0 || !scene_blob_g) continue;
         u32 rn = 0; int cl = 0;
         const float *rail = find_rail(scene_blob_g, r->zone, r->path, &rn, &cl);
         if (!rail) continue;
@@ -27671,15 +27738,27 @@ static int area_centered(const char *name)
     for (unsigned i = 0; i < sizeof c / sizeof c[0]; i++) if (!strcmp(name, c[i])) return 1;
     return 0;
 }
+/* area_shape and area_centered of a class, kept by its type (area_types_reset at each scene): area_inside runs for
+ * the light, camera, switch, water... areas every frame, and its names' searches cost more than its test */
+static signed char area_type_shape[1024], area_type_centered[1024]; /* 0 not yet, else the answer + 2 */
+static void area_types_reset(void) { memset(area_type_shape, 0, sizeof area_type_shape); memset(stone_type, 0, sizeof stone_type); }
+static int area_type(int t, int *centered)
+{
+    const char *n = sc->types + 32 * t;
+    if (t < 0 || t >= 1024) { *centered = area_centered(n); return area_shape(n); }
+    if (!area_type_shape[t]) { area_type_shape[t] = (signed char)(area_shape(n) + 2); area_type_centered[t] = (signed char)area_centered(n); }
+    *centered = area_type_centered[t];
+    return area_type_shape[t] - 2;
+}
 static int area_inside(const Row *r, V3 p)
 {
     V3 d = vsub(p, row_pos(r)), x, z;
-    int shape = area_shape(sc->types + 32 * r->type);
+    int centered, shape = area_type((int)r->type, &centered);
     if (shape == 2) return vlen(d) < 500.0f * r->scale[0];
     row_axes(r, &x, &z);
     V3 y = vcross(z, x);
     float h = vdot(d, y);
-    if (shape == 0 && area_centered(sc->types + 32 * r->type)) h += 500.0f * r->scale[1]; /* createCenterOriginCube (Type_Cube1) */
+    if (shape == 0 && centered) h += 500.0f * r->scale[1]; /* createCenterOriginCube (Type_Cube1) */
     if (h < 0.0f || h > (shape == 1 ? 500.0f : 1000.0f) * r->scale[1]) return 0; /* AreaFormCylinder: 500 x scale_y */
     if (shape == 1) return vlen(vtangent(d, y)) < 500.0f * r->scale[0];
     return fabsf(vdot(d, x)) < 500.0f * r->scale[0] && fabsf(vdot(d, z)) < 500.0f * r->scale[2];
@@ -27784,8 +27863,8 @@ static void update_switches(void)
                 se_start(yel ? SE_OJ_YELLOWCHIP_APPEAR : SE_OJ_BLUECHIP_APPEAR, NULL);
             }
             int n = 0, got = 0;
-            for (u32 k = 0; k < sc->nobjs; k++)
-                if (sc->objs[k].arg[0] == r->arg[0] && strcmp(sc->types + 32 * sc->objs[k].type, chip) == 0) {
+            for (u32 k = 0, ct = (u32)scene_type(sc, chip); k < sc->nobjs; k++) /* the chip class by index */
+                if (sc->objs[k].type == ct && sc->objs[k].arg[0] == r->arg[0]) {
                     n++;
                     got += row_dead[k];
                 }
@@ -27806,11 +27885,10 @@ static void update_switches(void)
                 se_start(SE_OJ_FLIP_PANEL_APPEAR, &op.x);
             }
             int n = 0, back = 0;
+            int tf = scene_type(sc, "FlipPanel"), tr = scene_type(sc, "FlipPanelReverse"); /* by index, not by name a row */
             for (u32 k = 0; k < sc->nobjs; k++) {
                 const Row *q = &sc->objs[k];
-                const char *qn = sc->types + 32 * q->type;
-                if (q->group != r->group || q->zone != r->zone ||
-                    (strcmp(qn, "FlipPanel") != 0 && strcmp(qn, "FlipPanelReverse") != 0))
+                if (q->group != r->group || q->zone != r->zone || ((int)q->type != tf && (int)q->type != tr))
                     continue;
                 n++;
                 back += row_step[k] & FLIP_BACK;
@@ -35011,9 +35089,16 @@ static void basis_matrix_cs(float m[16], V3 pos, V3 up, V3 fwd, float c, float s
     m[8] = z.x; m[9] = z.y; m[10] = z.z;
     m[12] = pos.x; m[13] = pos.y; m[14] = pos.z;
 }
+/* with the cosine and sine kept by angle (its bits): 0 for most callers, a plant's or a pickup's own angle frame
+ * after frame; cosf / sinf of the same angle give the same answer */
 static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle)
 {
-    basis_matrix_cs(m, pos, up, fwd, cosf(angle), sinf(angle));
+    if (angle == 0.0f) { basis_matrix_cs(m, pos, up, fwd, 1.0f, angle); return; } /* cosf(+-0) 1, sinf(+-0) +-0 */
+    static struct { u32 a; float c, s; } k[512];
+    union { float f; u32 u; } b = {angle};
+    typeof(&k[0]) e = &k[(b.u * 0x9E3779B1u) >> 23];
+    if (e->a != b.u) { e->a = b.u; e->c = cosf(angle); e->s = sinf(angle); } /* (0 never comes here: zeroed is empty) */
+    basis_matrix_cs(m, pos, up, fwd, e->c, e->s);
 }
 
 /* a walker's up against gravity, kept while it stands still (NonActive ones, waiting ones): one gravity_at per
@@ -35504,7 +35589,7 @@ void game_draw(void)
             continue;
         }
         if (in->shoot) { /* spinning about its y, grown by k */
-            float k, rot[16], cm[16], a = game_frame * 0.17453293f;
+            float k, rot[16], cm[16], a = draw_angle(0.17453293f);
             V3 p = shoot_pos(in, &k);
             if (k <= 0.0f || row_dead[in->row]) continue;
             mat_identity(rot);
@@ -35718,7 +35803,7 @@ void game_draw(void)
     }
     for (int i = 0; m_piece && i < MAX_SHOTS; i++)
         if (shots[i].t) {
-            basis_matrix(m, shots[i].pos, up_at(shots[i].pos, v3(0, 1, 0)), shots[i].vel, game_frame * 0.5f);
+            basis_matrix(m, shots[i].pos, up_at(shots[i].pos, v3(0, 1, 0)), shots[i].vel, draw_angle(0.5f));
             render_model(m_pieces[shots[i].col], m, 0x60, 0xD0, 0xF0);
         }
     for (int i = 0; i < nkuribo; i++) {
@@ -36084,24 +36169,24 @@ void game_draw(void)
     for (int k = 0; k < norocks; k++) { /* OtaRocks' coconuts and fire balls */
         for (int b = 0; m_coco && b < 4; b++) {
             if (!orocks[k].ball[b].state) continue;
-            basis_matrix(m, orocks[k].ball[b].pos, orocks[k].ball[b].up, orocks[k].ball[b].vel, game_frame * 0.3f);
+            basis_matrix(m, orocks[k].ball[b].pos, orocks[k].ball[b].up, orocks[k].ball[b].vel, draw_angle(0.3f));
             render_model(m_coco, m, 0x80, 0x80, 0x80);
         }
         for (int f = 0; m_fireball2 && f < 3; f++) {
             if (!orocks[k].fire[f].alive) continue;
-            basis_matrix(m, orocks[k].fire[f].pos, orocks[k].fire[f].up, orocks[k].fire[f].vel, game_frame * 0.4f);
+            basis_matrix(m, orocks[k].fire[f].pos, orocks[k].fire[f].up, orocks[k].fire[f].vel, draw_angle(0.4f));
             render_model(m_fireball2, m, 0x80, 0x80, 0x80);
         }
     }
     if (ota.row >= 0) { /* its coconuts (SpinX), fire balls, fire bubbles */
         for (int b = 0; m_coco && b < OTA_BALLS; b++) {
             if (!ota.ball[b].state) continue;
-            basis_matrix(m, ota.ball[b].pos, ota.ball[b].up, ota.ball[b].vel, game_frame * 0.3f);
+            basis_matrix(m, ota.ball[b].pos, ota.ball[b].up, ota.ball[b].vel, draw_angle(0.3f));
             render_model(m_coco, m, 0x80, 0x80, 0x80);
         }
         for (int i = 0; m_fireball2 && i < OTA_FIRES; i++) {
             if (!ota.fire[i].alive) continue;
-            basis_matrix(m, ota.fire[i].pos, ota.fire[i].up, ota.fire[i].vel, game_frame * 0.4f);
+            basis_matrix(m, ota.fire[i].pos, ota.fire[i].up, ota.fire[i].vel, draw_angle(0.4f));
             render_model(m_fireball2, m, 0x80, 0x80, 0x80);
         }
         for (int i = 0; m_firebubble && i < OTA_BUBBLES; i++) {
@@ -36150,7 +36235,7 @@ void game_draw(void)
     }
     if (m_note) for (int i = 0; i < nnotes; i++) { /* NoteFairy notes, turning 8 degrees a frame */
         if (notes[i].alive != 1) continue;
-        basis_matrix(m, notes[i].pos, up_at(notes[i].pos, v3(0, 1, 0)), v3(1, 0, 0), game_frame * 0.1396263f);
+        basis_matrix(m, notes[i].pos, up_at(notes[i].pos, v3(0, 1, 0)), v3(1, 0, 0), draw_angle(0.1396263f));
         render_model(m_note, m, 0x80, 0x80, 0x80);
     }
     draw_waterplants();

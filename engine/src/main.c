@@ -2241,6 +2241,23 @@ int main(void)
         u32 t2 = cycles();
         t_logic = t1 - t0;
         t_draw = t2 - t1;
+#ifdef ROUTE_TEST
+        { /* the EE's time over each 200 frames of the route (the draw without render_begin's flip / VIF / clear wait),
+           * for the heavy places a bench path does not cross */
+            extern u32 render_begin_wait;
+            static u64 rl, rd;
+            static u32 rw;
+            u32 d = t_draw - render_begin_wait;
+            rl += t_logic; rd += d;
+            if (t_logic + d > rw) rw = t_logic + d;
+            if (frame % 200 == 0) {
+                extern u32 rebind_cycles, rebinds;
+                printf("route perf f %u: logic %u draw %u us, worst %u, %u rebinds %u us\n", frame, (u32)(rl / 200 / EE_MHZ), (u32)(rd / 200 / EE_MHZ), (u32)(rw / EE_MHZ), rebinds, (u32)(rebind_cycles / EE_MHZ));
+                rebinds = rebind_cycles = 0;
+                rl = rd = 0; rw = 0;
+            }
+        }
+#endif
         if (t2 - t0 > worst && frame > 60) worst = t2 - t0;
 #ifdef TEASER /* videos (build.sh with TEASER=1): the game's HUD only */
 #elif defined(BENCH) || defined(DEBUG_HUD) || !defined(CATCHUP) /* tests and bench: the debug lines (normal builds: the game's HUD, game.c hud_draw) */
@@ -2292,7 +2309,11 @@ int main(void)
         u32 vwait = render_wait_cycles(); /* blocked on the VIF in game_draw */
         (void)vwait;
 #ifdef SAMPLE_PROF
-        { extern void prof_start(void), prof_dump(void); if (frame == 60) prof_start(); if (frame == 1861) prof_dump(); }
+#ifndef PROF_FROM /* the frames sampled (XF="-DSAMPLE_PROF -DPROF_FROM=2900 -DPROF_TO=3700": a route's stretch) */
+#define PROF_FROM 60
+#define PROF_TO 1861
+#endif
+        { extern void prof_start(void), prof_dump(void); if (frame == PROF_FROM) prof_start(); if (frame == PROF_TO) prof_dump(); }
 #endif
         t_gs = render_end();
 #ifdef BENCH
