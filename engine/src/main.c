@@ -288,6 +288,7 @@ static void toc_select(void)
             (strcmp(e->path, "dome.bin") == 0 && strncmp(scen, "AstroDome/", 10) == 0) ||
             ((strcmp(e->path, "map.bin") == 0 || strcmp(e->path, "mappics.bin") == 0) && strncmp(scen, "AstroGalaxy/", 12) == 0) ||
             (strcmp(e->path, "ending.bin") == 0 && strncmp(scen, "EpilogueDemoStage/", 18) == 0) ||
+            (strcmp(e->path, "prologue.bin") == 0 && strncmp(scen, "PeachCastleGardenGalaxy/", 24) == 0) ||
             strncmp(e->path, "movies/", 7) == 0 || /* any scene may end in one */
             strncmp(e->path, "music/", 6) == 0) {  /* the BGMs (audio.c streams them) */
             if (ntoc == (int)(sizeof toc / sizeof toc[0])) render_fatal("packs: TOC full");
@@ -797,10 +798,13 @@ static const u8 *load_packs(Scene *s)
     { /* the menus' layouts (tools/lyt.py), when built: outside the scenario room */
         Pack mp;
         /* layouts / messages, their 3D models; the title and file select's (FileSelect); the dome's (AstroDome); the
-         * Observatory's map (AstroGalaxy); the ending's staff roll (EpilogueDemoStage) */
-        static const char *const mp_names[7] = {"menus.bin", "menus3d.bin", "title.bin", "title3d.bin", "dome.bin", "map.bin", "ending.bin"};
-        static const char *const mp_scene[7] = {"", "", "FileSelect/", "FileSelect/", "AstroDome/", "AstroGalaxy/", "EpilogueDemoStage/"};
-        for (int k = 0; k < 7; k++)
+         * Observatory's map (AstroGalaxy); the ending's staff roll (EpilogueDemoStage); the new game's opening
+         * (PeachCastleGardenGalaxy: PrologueDirector's picture book and letter) */
+        static const char *const mp_names[8] = {"menus.bin", "menus3d.bin", "title.bin", "title3d.bin", "dome.bin", "map.bin", "ending.bin",
+                                                "prologue.bin"};
+        static const char *const mp_scene[8] = {"", "", "FileSelect/", "FileSelect/", "AstroDome/", "AstroGalaxy/", "EpilogueDemoStage/",
+                                                "PeachCastleGardenGalaxy/"};
+        for (int k = 0; k < 8; k++)
             if (strncmp(scen, mp_scene[k], strlen(mp_scene[k]))) continue; /* (the empty prefix: every scene) */
             else
             if (pack_open(&mp, mp_names[k])) {
@@ -1334,6 +1338,17 @@ int main(void)
             if (frame == 1170) pad_force = PAD_CROSS;
             if (frame == 1450) printf("title test f %u: pointer on BoxStartButton %d\n", frame, menu_test_point_file(0, "BoxStartButton"));
             if (frame == 1470) pad_force = PAD_CROSS;
+        }
+#endif
+#if defined(PACKS) && defined(OPENING_TEST)
+        { /* after the title test's Start: PrologueDirector's nerves as they change; A while the picture book waits at a
+           * page (each 60 frames, held 3) and while the letter is up (each 240), the book's page logged; then the garden in control */
+            static int last = -2, lpage = -2;
+            int n = game_test_prologue(), pg = menu_test_prologue_book();
+            if (n != last) { printf("opening test f %u: nerve %d\n", frame, n); last = n; }
+            if (pg != lpage) { printf("opening test f %u: picture book %d\n", frame, pg); lpage = pg; }
+            if (frame > 1500 && ((pg >= 0 && pg % 10 == 1 && frame % 60 < 3) || (menu_prologue_letter_alive() && frame % 240 < 3))) pad_force = PAD_CROSS;
+            if (frame > 1500 && frame % 300 == 0) printf("opening test f %u: nerve %d, %s\n", frame, n, game_stage_name);
         }
 #endif
 #if defined(PACKS) && defined(NEWFILE_TEST)

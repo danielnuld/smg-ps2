@@ -56,6 +56,7 @@ static const SeqDemo cDemoGrandStarReturn6[] = {{0, 1, "グランドスター６
 static const SeqDemo cDemoRosettaTalkTorchProgress[] = {{0, 1, "ロゼッタトーチの炎進捗デモ"}, {13, 0, ""}};
 static const SeqDemo cDemoRosettaTalkKoopaBattleVs3GalaxyAppear[] = {{5, 0, "Save"}, {0, 1, "ロゼッタ最終決戦デモ"}, {12, 0, ""}};
 static const SeqDemo cDemoStarPieceLectureRetry[] = {{0, 3, "スターピース解説前半"}, {1, 1, "Fadein"}, {12, 0, ""}};
+static const SeqDemo cDemoPrologue[] = {{8, 1, "Prologue"}, {12, 0, ""}};
 /* the KoopaBattleVs3 clear (types 10 / 11: the star pointer's ending mode, the remote checks: nothing here) */
 static const SeqDemo cDemoEpilogueNormal[] = {{10, 14, ""}, {2, 9, "MovieEpilogueA"}, {0, 1, "エピローグデモ"}, {11, 15, ""},
                                               {2, 10, "MovieEndingA"}, {9, 12, ""}, {11, 16, ""}, {9, 13, ""}, {4, 1, ""}, {12, 0, ""}};
@@ -248,11 +249,11 @@ void seq_galaxy_move(int type, const char *stage, int scenario, int start_id, in
         if (no >= 1 && no <= 6) snprintf(st, sizeof st, "AstroDome");
         else { snprintf(st, sizeof st, "AstroGalaxy"); no = astro_galaxy_no(); }
         break;
-    case SEQ_AFTER_LOADING: /* overwriteGalaxyNameAfterLoading. ponytail: no prologue movie */
+    case SEQ_AFTER_LOADING: /* overwriteGalaxyNameAfterLoading */
         if (gd_flag_is_on("SpecialStarGrand1")) { snprintf(st, sizeof st, "AstroGalaxy"); no = astro_galaxy_no(); }
         else if (gd_story_passed("ピーチ城浮上後") || gd_player_luigi()) { snprintf(st, sizeof st, "HeavensDoorGalaxy"); no = 1; } /* || !isDataMario */
         else if (gd_story_passed("クッパ襲来後")) { snprintf(st, sizeof st, "PeachCastleGardenGalaxy"); no = 1; sq.start_set = 1; sq.start_id = 1; sq.start_zone = 0; }
-        else { snprintf(st, sizeof st, "PeachCastleGardenGalaxy"); no = 1; }
+        else { prepare_demo(cDemoPrologue); snprintf(st, sizeof st, "PeachCastleGardenGalaxy"); no = 1; }
         break;
     case SEQ_TITLE: snprintf(st, sizeof st, "FileSelect"); no = 1; break;
     case SEQ_MOVE: decide_move_galaxy(st, no, 0); break;

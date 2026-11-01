@@ -23,7 +23,8 @@ ROOM = 9.1e6  # room for scenario data and the menu packs beside it (main.c PACK
 # (main.c "packs: ... room N KB" + scene.bin + common.bin; 13824 KB region), less ~75 KB for sector rounding and ELF growth; 10.4e6 overran it in AstroGalaxy
 # the menus' packs main.c loads beside a galaxy's own (scene_load: mp_names / mp_scene) come out of its room
 # (mappics.bin is not one: menu.c reads one GalaxyDetail picture at a time into a 64 KB MEM_SCENE buffer, packs_read)
-MENU_PACKS = {"FileSelect": ("title.bin", "title3d.bin"), "AstroDome": ("dome.bin",), "AstroGalaxy": ("map.bin",), "EpilogueDemoStage": ("ending.bin",)}
+MENU_PACKS = {"FileSelect": ("title.bin", "title3d.bin"), "AstroDome": ("dome.bin",), "AstroGalaxy": ("map.bin",), "EpilogueDemoStage": ("ending.bin",),
+              "PeachCastleGardenGalaxy": ("prologue.bin",)}
 # and Luigi's letter (main.c letter_scene): in any galaxy while he is missing (MR::getLuigiLetterGalaxyName)
 LETTER = "letter.bin"
 

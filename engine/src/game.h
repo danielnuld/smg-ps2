@@ -262,4 +262,5 @@ void game_bgm_tick(void);    /* per frame before audio_update: a sub BGM over, t
 void game_request_movie(const char *name); /* main.c: played before the next scene requested loads */
 void game_font_init(const Scene *s); /* the talk font from s's FONT chunk (game_text; talk_init, main.c's subs.bin) */
 
+int game_test_prologue(void); /* tests: PrologueDirector's nerve, -1 none */
 #endif

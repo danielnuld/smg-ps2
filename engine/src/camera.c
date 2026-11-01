@@ -953,6 +953,7 @@ void camera_pose(V3 *eye, V3 *watch, V3 *up, float *fovy)
 }
 
 int camera_current(void) { return cur < ncams ? cur : -1; }
+int camera_game_current(void) { return !ovr && !ev_on && !tk_on && !pr_on; } /* getCurrentCameraMan() == mCameraManGame */
 
 const char *camera_type_name(void)
 {

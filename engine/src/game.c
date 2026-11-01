@@ -1105,6 +1105,8 @@ static int gw_puppet(void);
 static int gw_talk_continue(int t);
 static int gw_pipe_switch(void);
 static void gw_init(void), gw_update(void), gw_draw(void);
+static void pro_init(void), pro_start(void), pro_update(void), pro_draw(void); /* the new game's opening (its section) */
+static int pro_puppet(void);
 typedef struct { u16 total; u8 suspend, talk; } DxPart;           /* talk: MR::isDemoPartTalk */
 typedef struct { u16 total, step; u8 main, loop, pad[2]; } DxSub;  /* loop: 会話アニメループ */
 typedef struct { u8 part, pad; s16 pos; char bck[28]; } DxPlayer;
@@ -2302,6 +2304,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     }
     dx_init(blob);
     gw_init();
+    pro_init();
     mi_init();
     story_scene_start();
     starter = -1;
@@ -2511,6 +2514,10 @@ void game_init(const Scene *s, const unsigned char *blob)
         CamTarget t = {mario->pos, mario->face, mario->up, 0, 0, {0, 0, 0}, NULL};
         camera_init(c ? (const CamParam *)(c + 16) : NULL, c ? *(const int *)c : 0,
                     a ? (const CamArea *)(a + 16) : NULL, a ? *(const int *)a : 0, (const float (*)[16])zm, &t);
+        /* CameraDirector::closeCreatingCameraChunk: mIsStartCameraActive, startStartPosCamera(false): the start's
+         * camera (getCurrentStartCameraId: its Camera_id) until checkStartCondition */
+        const Row *st0 = scene_start(s);
+        if (st0->arg[1] >= 0) { camera_start_pos(st0->zone, st0->arg[1]); start_pos_cam = 1; }
     }
     printf("game: %d launch stars, %d electric rail segments\n", nlaunches, nerails);
     printf("game: walkers %d: kuribo %d, takohei %d, packun %d\n", nkuribo, game_kind_alive(WALK_KURIBO),
@@ -10576,7 +10583,7 @@ static float hud_hermite(float f, float f0, float v0, float s0, float f1, float 
 }
 static void hud_draw(void)
 {
-    if (menu_paused() || dome_layout_off || dx.on) return; /* PauseMenu::appear / SphereSelector::appear / startDemoSystem: deactivateDefaultGameLayout */
+    if (menu_paused() || dome_layout_off || dx.on || pd.name) return; /* PauseMenu::appear / SphereSelector::appear / startDemoSystem (a programmable demo too): deactivateDefaultGameLayout */
     for (int k = 0; k < 4; k++) {
         const HudCounter *c = &hud[k];
         if (c->ap == AP_HIDE) continue;
@@ -17057,6 +17064,7 @@ static void update_mario_(void)
                 int mode = 0;
                 if (!m_clip_is(dx.bck)) { anim_clip_info(dx.bck, &mode); mario_play(dx.bck, 1.0f, mode == 2 || mode == 4); }
             }
+            else if (pro_puppet()) ; /* the prologue's DemoPeachCastleGate (pro_update) */
             else if (!star_demo && !gw_puppet()) mario_play("wait", 1.0f, 1);
             else if (mario_anim->clip_id < 0 || strcmp(sc->clips[mario_anim->clip_id].name, "powerstarget")) mario_play("powerstarget", 1.0f, 0);
             anim_update(mario_anim);
@@ -31888,7 +31896,8 @@ int game_test_demo(int k)
 int game_test_demo_name(const char *name) { return dx_request(name, 0); } /* tests: requestStartTimeKeepDemo by name */
 /* StorySequenceExecutor's nerves once the scene started (setNerveSceneStart): PlayDemoSequence, WaitTimeKeepDemoEnd,
  * WaitSaveEnd, StartSaveAfterSequence / WaitSaveEndAfterSequence (a list ending in 13 whose sequence has not saved: _B0),
- * FadeinAfterSequence. Movies (2) play between two loads of the stage (movie.c), the staff roll (9) is menu.c's. ponytail: no prologue (8) */
+ * FadeinAfterSequence. Movies (2) play between two loads of the stage (movie.c), the staff roll (9) is menu.c's, the
+ * prologue (8) the PrologueDirector's (pro_*) */
 enum { ST_IDLE, ST_PLAY, ST_WAIT_DEMO, ST_WAIT_SAVE, ST_SAVE_AFTER, ST_WAIT_SAVE_AFTER, ST_FADEIN_AFTER, ST_STAFFROLL };
 static struct { int nrv, step; } story;
 static void story_set(int n) { story.nrv = n; story.step = 0; }
@@ -31943,6 +31952,11 @@ static void story_update(void)
             printf("story: the title\n");
             seq_demo_clear(); story_set(ST_IDLE);
             seq_galaxy_move(SEQ_TITLE, NULL, -1, -1, 0);
+            break;
+        case 8: /* forceOpenWipeFade, MR::startPrologue */
+            menu_wipe_force(0);
+            pro_start();
+            seq_demo_step(); story_set(ST_PLAY);
             break;
         case 9: /* requestStaffRoll: exeStaffRollSequence */
             story_set(ST_STAFFROLL);
@@ -34400,6 +34414,221 @@ const int lprof_n = 74;
 #define LQ(k, stmt) do { if (dx_lq_moves(k)) stmt; } while (0)
 #endif
 #define OPENING_PREROLL 156
+/* --- The new game's opening (PeachCastleGardenGalaxy 1) after Petari PrologueDirector / PrologueHolder: the story's
+ * cDemoPrologue (story_update step 8: forceOpenWipeFade, MR::startPrologue) makes it appear: the wipe shut, the image
+ * effect off, its SW_A off (the PeachCastleTownGate hidden). Wait: プロローグデモ (tryStartDemoWithoutCinemaFrame), the
+ * player's base matrix kept. PictureBook: ProloguePictureBook (menu.c), the wipe opened over sPicBookStartWipeFrame, its
+ * scenery 背景書割 (DemoLetter, at the origin) and its DemoLetter camera, STM_PROLOGUE_01; once the book is over the
+ * wipe shut, the BGM stopped (90). PeachLetterStart: the wipe opened over 60, 90 steps; PeachLetter: STM_PROLOGUE_02,
+ * SE_SY_LETTER_APPEAR, Peach's voice, PrologueLetter until it is dead (her voice stopped); PeachLetterWait
+ * (sPeachLetterWait); PeachLetterEnd: the wipe shut over 60, then the camera ended, the scenery gone. BindWait:
+ * プロローグデモ ended, 主人公ピーチ城に到着 (tryStartDemoMarioPuppetable, with the cinema frame): マリオの経路
+ * (DemoPeachCastleGate, at the origin, drawn: its sky and falling star) plays its BCK, its camera on it. Arrive: the
+ * player at its MarioPosition joint each frame playing his DemoPeachCastleGate, the wipe opened (30), the image effect
+ * back; SE_DM_ARRIVE_CASTLE_STAR at sFallingStarStep; the wipe shut 30 before his BCK's end, then the camera ended and
+ * the dummy gone. GameStart: the player back at the kept matrix, the wipe shut; at sGameStartFrame the wipe opened
+ * (30), the demo ended, initPlayerAfterOpeningDemo (ウォークイン), the director dead (its SW_A on).
+ * ponytail: submitLevelSE / permitLevelSE not ported (no level-SE gate here) */
+enum { PRO_DEAD, PRO_WAIT, PRO_PICTUREBOOK, PRO_LETTERSTART, PRO_LETTER, PRO_LETTERWAIT, PRO_LETTEREND, PRO_BINDWAIT,
+       PRO_ARRIVE, PRO_GAMESTART };
+#define PRO_PIC_BOOK_START_WIPE 60   /* sPicBookStartWipeFrame */
+#define PRO_PEACH_LETTER_WAIT 20     /* sPeachLetterWait */
+#define PRO_LETTER_START_WIPE 60     /* sPeachLetterStartWipeFrame */
+#define PRO_LETTER_END_WIPE 60       /* sPeachLetterEndWipeFrame */
+#define PRO_ARRIVE_START_WIPE 30     /* sArriveStartWipeFrame */
+#define PRO_ARRIVE_END_WIPE 30       /* sArriveEndWipeFrame */
+#define PRO_GAME_START_WIPE 30       /* sGameStartWipeFrame */
+#define PRO_GAME_START_FRAME 15      /* sGameStartFrame */
+#define PRO_FALLING_STAR_STEP 130    /* sFallingStarStep */
+#define PRO_JOINT_MARIO_POSITION 1   /* DemoPeachCastleGate.bdl's JNT1: Root, MarioPosition, SkyModel, StarPiece, pPlane1055 */
+static const char *const pro_book_demo = "プロローグデモ";      /* sPictureBookDemoName */
+static const char *const pro_arrive_demo = "主人公ピーチ城に到着"; /* sArriveDemoName */
+static int image_effect_off; /* MR::forceOffImageEffect until setImageEffectControlAuto (bloom_update) */
+static struct {
+    int row, nrv, step;     /* the PrologueDirector's row (-1 none), nerve, its step */
+    int scenery, dummy;     /* mScenery / mMarioPosDummyModel alive */
+    int cam, camf;          /* the anim camera running (1 DemoLetter, 2 DemoPeachCastleGate) and its frame */
+    V3 pos, up, front;      /* _A0: the player's base matrix at the start */
+    u32 voice;              /* SE_SV_PEACH_OPENING_LETTER's handle */
+} pro = {.row = -1};
+static void pro_set(int n) { pro.nrv = n; pro.step = 0; printf("prologue: nerve %d\n", n); }
+static int pro_puppet(void) { return pro.nrv == PRO_ARRIVE; } /* Mario plays the director's DemoPeachCastleGate */
+static Anim *pro_dummy_anim(void) /* マリオの経路's model and pose (a slot of its own) */
+{
+    const Model *md = scene_model(sc, "DemoPeachCastleGate");
+    return md && md->skin ? obj_anim((int)sc->nobjs * 4 + 4, md, "DemoPeachCastleGate") : NULL;
+}
+static void pro_init(void)
+{
+    memset(&pro, 0, sizeof pro);
+    pro.row = -1;
+    image_effect_off = 0;
+    int t = scene_type(sc, "PrologueDirector");
+    for (u32 i = 0; t >= 0 && i < sc->nobjs; i++)
+        if (sc->objs[i].type == t) pro.row = (int)i;
+    if (pro.row < 0) return;
+    const Row *r = &sc->objs[pro.row];
+    if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1); /* initAfterPlacement (useStageSwitchWriteA: _D0): onSwitchA */
+}
+static void pro_start(void) /* MR::startPrologue: PrologueHolder::start, PrologueDirector::appear */
+{
+    if (pro.row < 0) { printf("prologue: no PrologueDirector\n"); return; }
+    const Row *r = &sc->objs[pro.row];
+    pro_set(PRO_WAIT);
+    menu_wipe_force(1); /* forceCloseWipeFade */
+    image_effect_off = 1; /* forceOffImageEffect */
+    if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 0);
+}
+static void pro_kill(void)
+{
+    const Row *r = &sc->objs[pro.row];
+    pro_set(PRO_DEAD);
+    if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
+}
+static void pro_camera(int cam) /* startAnimCamera (cam 1 DemoLetter on the scenery, 2 DemoPeachCastleGate on the dummy) / endAnimCamera(0) */
+{
+    if (!cam) { camera_override_end(0); pro.cam = 0; return; }
+    pro.cam = cam; pro.camf = 0;
+}
+static void pro_camera_update(void) /* CameraAnim at speed 1, held on its last frame until endAnimCamera */
+{
+    static const float id[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    if (!pro.cam) return;
+    const char *n = pro.cam == 1 ? "prologue/demoletter" : "prologue/demopeachcastlegate";
+    int fr = canm_frames(n);
+    if (fr) demo_camera(n, pro.camf < fr ? pro.camf : fr - 1, id);
+    pro.camf++;
+}
+static void pro_player_at_joint(void) /* setPlayerBaseMtx(getJointMtx(mMarioPosDummyModel, "MarioPosition")) */
+{
+    Anim *a = pro_dummy_anim();
+    if (!a || PRO_JOINT_MARIO_POSITION >= a->skin->njoints) return;
+    const float *w = a->world[PRO_JOINT_MARIO_POSITION]; /* (the dummy at the origin: model space is the world) */
+    mario->pos = v3(w[12], w[13], w[14]);
+    mario->up = vnorm(v3(w[4], w[5], w[6]));
+    mario->face = vnorm(vtangent(v3(w[8], w[9], w[10]), mario->up));
+}
+static void pro_nerve(void)
+{
+    int first = pro.step == 0;
+    switch (pro.nrv) {
+    case PRO_WAIT:
+        if (pd_try_start(pro_book_demo, pro.row)) { /* tryStartDemoWithoutCinemaFrame; submitLevelSE */
+            pro_set(PRO_PICTUREBOOK);
+            pro.pos = mario->pos; pro.up = mario->up; pro.front = mario->face; /* _A0: getPlayerBaseMtx */
+            return;
+        }
+        break;
+    case PRO_PICTUREBOOK:
+        if (first) {
+            menu_prologue_book(1);
+            menu_wipe(0, PRO_PIC_BOOK_START_WIPE, 0);
+            pro.scenery = 1;
+            pro_camera(1); /* startAnimCameraTargetSelf(mScenery, "DemoLetter", 0, 1) */
+            bgm_start("STM_PROLOGUE_01");
+        }
+        if (menu_prologue_book_end()) { /* isEnd() || isDead */
+            menu_wipe_force(1);
+            menu_prologue_book(0);
+            bgm_stop(90);
+            pro_set(PRO_LETTERSTART);
+            return;
+        }
+        break;
+    case PRO_LETTERSTART:
+        if (first) menu_wipe(0, PRO_LETTER_START_WIPE, 0);
+        if (pro.step == 90) { pro_set(PRO_LETTER); return; }
+        break;
+    case PRO_LETTER:
+        if (first) {
+            bgm_start("STM_PROLOGUE_02");
+            se_start(SE_SY_LETTER_APPEAR, NULL);
+            pro.voice = se_start(SE_SV_PEACH_OPENING_LETTER, NULL);
+            menu_prologue_letter();
+        }
+        if (!menu_prologue_letter_alive()) {
+            if (pro.voice) se_stop(pro.voice); /* stopSystemSE */
+            pro.voice = 0;
+            pro_set(PRO_LETTERWAIT);
+            return;
+        }
+        break;
+    case PRO_LETTERWAIT:
+        if (pro.step >= PRO_PEACH_LETTER_WAIT) { pro_set(PRO_LETTEREND); return; }
+        break;
+    case PRO_LETTEREND:
+        if (first) menu_wipe(1, PRO_LETTER_END_WIPE, 0);
+        if (menu_wipe_active()) break;
+        pro_camera(0); /* endAnimCamera(mScenery, "DemoLetter", 0) */
+        pro.scenery = 0;
+        pro_set(PRO_BINDWAIT);
+        return;
+    case PRO_BINDWAIT:
+        if (first) pd_end(pro_book_demo);
+        if (pd_try_start(pro_arrive_demo, pro.row)) { /* tryStartDemoMarioPuppetable: with the cinema frame */
+            menu_cinema(1);
+            pro.dummy = 1;
+            Anim *a = pro_dummy_anim();
+            if (a) anim_start(a, "demopeachcastlegate/demopeachca", 0); /* startBck DemoPeachCastleGate (its CLIP name cut to 31) */
+            pro_camera(2); /* startAnimCameraTargetOther(dummy, "DemoPeachCastleGate", the identity CameraTargetMtx) */
+            pro_set(PRO_ARRIVE);
+            return;
+        }
+        break;
+    case PRO_ARRIVE: {
+        int mode = 0, fmax = anim_clip_info("demopeachcastlegate", &mode); /* getBckFrameMaxPlayer */
+        if (first) {
+            pro_player_at_joint();
+            mario_play("demopeachcastlegate", 1.0f, 0); /* startBckPlayer */
+            menu_wipe(0, PRO_ARRIVE_START_WIPE, 0);
+            image_effect_off = 0; /* setImageEffectControlAuto */
+        }
+        pro_player_at_joint();
+        if (pro.step == PRO_FALLING_STAR_STEP) se_start(SE_DM_ARRIVE_CASTLE_STAR, NULL); /* startAtmosphereSE */
+        if (pro.step == fmax - PRO_ARRIVE_END_WIPE) menu_wipe(1, PRO_ARRIVE_END_WIPE, 0);
+        if (!first && mario_anim && !mario_anim->loop && mario_anim->done) { /* isBckStoppedPlayer */
+            pro_camera(0);
+            pro.dummy = 0;
+            pro_set(PRO_GAMESTART);
+            return;
+        }
+        break;
+    }
+    case PRO_GAMESTART:
+        if (first) {
+            mario->pos = pro.pos; mario->up = pro.up; mario->face = pro.front; /* setPlayerBaseMtx(_A0) */
+            menu_wipe_force(1);
+        }
+        if (pro.step == PRO_GAME_START_FRAME) {
+            menu_wipe(0, PRO_GAME_START_WIPE, 0);
+            pd_end(pro_arrive_demo); menu_cinema(0); /* endDemo */
+            m_anim("ウォークイン"); /* initPlayerAfterOpeningDemo */
+            pro_kill();
+            return;
+        }
+        break;
+    }
+    pro.step++;
+}
+static void pro_update(void)
+{
+    if (pro.nrv == PRO_DEAD) return;
+    pro_nerve();
+    pro_camera_update(); /* (the CameraDirector after the actors) */
+    if (pro.dummy) { Anim *a = pro_dummy_anim(); if (a) anim_update(a); } /* its calcAnim: the joint read next frame */
+}
+int game_test_prologue(void) { return pro.row < 0 ? -1 : pro.nrv; } /* tests: the director's nerve (-1 none) */
+static void pro_draw(void)
+{
+    static const float id[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+    if (pro.scenery) { const Model *md = scene_model(sc, "DemoLetter"); if (md) render_model(md, id, 0x80, 0x80, 0x80); }
+    if (pro.dummy) {
+        const Model *md = scene_model(sc, "DemoPeachCastleGate");
+        Anim *a = pro_dummy_anim();
+        if (md && a) draw_skin(md, id, a);
+    }
+}
+
 /* --- The Gateway's opening (HeavensDoorGalaxy 1) after Petari RunawayTico, DemoRabbit, RunawayRabbitCollect /
  * RunawayRabbit (WalkerStateRunaway), RosettaDemoHeavensDoor1, TicoDemoGetPower and HeavensDoorDemoObj, on the
  * チコガイドデモ sheet (gw_part: its parts in order). A Luma (RunawayTico cast 0, TicoBaby) meets Mario
@@ -35364,9 +35593,13 @@ void game_update(void)
                            (int)kuribo[i].pos.y, (int)kuribo[i].pos.z, kuribo[i].nrv, kuribo[i].step, kuribo[i].clipped);
     }
 #endif
-    { /* CameraDirector::checkStartCondition: the start camera ends once the player moves */
+    { /* CameraDirector::checkStartCondition: the start camera ends once the player moves, the game camera current
+       * more than 30 frames (mStartTime) */
         static V3 last;
-        if (start_pos_cam && vlen(vsub(mario->pos, last)) > 0.5f && !m_input_off()) { start_pos_cam = 0; camera_start_pos_end(); }
+        static int start_t;
+        if (start_pos_cam && camera_game_current() && start_t++ > 30 && vlen(vsub(mario->pos, last)) > 0.5f && !m_input_off()) {
+            start_pos_cam = 0; camera_start_pos_end();
+        }
         last = mario->pos;
     }
     kcl_list_build();
@@ -35563,6 +35796,7 @@ void game_update(void)
         if (star_demo == 17) bgm_sub("BGM_CLEAR"); /* sFanfareStartStepPowerStar 15 */
     }
     story_update();
+    pro_update();
     dx_update();
     update_dome_npcs();
     update_luigi();
@@ -35837,7 +36071,7 @@ static void bloom_update(void)
         for (u32 i = 0; i < sc->nobjs && !area; i++)
             for (int j = 0; j < 12; j++)
                 if (ty[j] >= 0 && sc->objs[i].type == ty[j] && row_shown(i) && area_inside(&sc->objs[i], mario->pos)) { area = &sc->objs[i]; kind = j; break; }
-    int on = area && kind < 3;
+    int on = area && kind < 3 && !image_effect_off;
     if (on) {
         float t = area->arg[0] >= 0 ? area->arg[0] : 255, t1 = area->arg[2] >= 0 ? area->arg[2] : 42, t2 = area->arg[3] >= 0 ? area->arg[3] : 21;
         k += (t + 0.5f - k) * 0.1f; k1 += (t1 + 0.5f - k1) * 0.1f; k2 += (t2 + 0.5f - k2) * 0.1f;
@@ -36855,6 +37089,7 @@ void game_draw(void)
     }
     RESTQ(6);
     gw_draw();
+    pro_draw();
     mi_draw();
     draw_ice_steps();
     foot_draw();

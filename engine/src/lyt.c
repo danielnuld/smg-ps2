@@ -41,7 +41,7 @@ static int nchunks;
 /* a pane's live values, reset to the record each frame, then the animations */
 typedef struct { float t[3], r[3], s[2], size[2]; float vc[4][4], alpha; u8 vis, lang_off, nodraw; } PState; /* lang_off: another language's */
 typedef struct { float srt[5], c0[4], c1[4]; s16 tex; s32 tex_abs; } MState; /* tex_abs: replacePaneTexture's, -1 none */
-typedef struct { float m[6], alpha; u8 vis; } PWorld; /* 2x3: x' = m0 x + m1 y + m2, y' = m3 x + m4 y + m5 */
+typedef struct { float m[6], alpha, ga; u8 vis; } PWorld; /* ga: the global alpha its children get */ /* 2x3: x' = m0 x + m1 y + m2, y' = m3 x + m4 y + m5 */
 
 struct LytInst {
     const LytHead *h;
@@ -371,7 +371,8 @@ static void evaluate(LytInst *l)
     }
     for (int i = 0; i < h->npanes; i++) if (l->height[i] >= 0) l->ps[i].size[1] = l->height[i];
     /* the tree, parents before children (file order): translation, z rotation, scale (180 degrees about x / y a
-     * mirror); a pane's alpha its own times its parent's where the parent influences its children's */
+     * mirror); a pane's alpha its own times the global alpha it gets: its parent's own where the parent influences its
+     * children's alpha, else what the parent got (nw4r Pane::Draw: DrawInfo's global alpha down the tree) */
     for (int i = 0; i < h->npanes; i++) {
         const PState *s = &l->ps[i];
         PWorld *w = &l->pw[i];
@@ -385,13 +386,15 @@ static void evaluate(LytInst *l)
             lm[2] += l->ox; lm[5] += l->oy;
             memcpy(w->m, lm, sizeof lm);
             w->alpha = s->alpha / 255.0f * l->alpha;
+            w->ga = (l->pane[i].flags & 2) ? w->alpha : 1.0f;
             w->vis = s->vis;
         } else {
             const PWorld *pw = &l->pw[par];
             const float *m = pw->m;
             w->m[0] = m[0] * lm[0] + m[1] * lm[3]; w->m[1] = m[0] * lm[1] + m[1] * lm[4]; w->m[2] = m[0] * lm[2] + m[1] * lm[5] + m[2];
             w->m[3] = m[3] * lm[0] + m[4] * lm[3]; w->m[4] = m[3] * lm[1] + m[4] * lm[4]; w->m[5] = m[3] * lm[2] + m[4] * lm[5] + m[5];
-            w->alpha = s->alpha / 255.0f * ((l->pane[par].flags & 2) ? pw->alpha : 1.0f);
+            w->alpha = s->alpha / 255.0f * pw->ga;
+            w->ga = (l->pane[i].flags & 2) ? w->alpha : pw->ga;
             w->vis = s->vis && pw->vis;
         }
         if (l->follow[i]) { /* LayoutPaneCtrl::reflectFollowPos: its global place (its children follow) */
