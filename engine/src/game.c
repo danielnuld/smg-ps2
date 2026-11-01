@@ -9466,7 +9466,9 @@ static void tk_root_pre(Talker *t, int arg) /* rootNodePre: branches taken by th
         case 6: cond = player_mode == PM_BEE; break;
         case 9: cond = t->done != 0; break;
         case 10: cond = gd_player_luigi(); break; /* MR::isPlayerLuigi */
-        case 14: { /* TalkFunction::getBranchAstroGalaxyResult: TalkDirector::getBranchResult(mNextIdx); 12 / 13 Luigi */
+        case 11: { /* TalkFunction::getBranchAstroGalaxyResult: TalkDirector::getBranchResult(mNextIdx); 12 / 13 Luigi,
+                    * 18 the player left supplies. The US message data's (RMGE01) condition 11 is it: its arguments
+                    * are getBranchResult's 0..27 (Petari's enum, TypeE 14, is the RMGK01 one) */
             char st[32];
             int scen = luigi_scenario(st, sizeof st);
             cond = n->next == 12 ? gd_luigi_disappear() : n->next == 13 ? gd_luigi_hiding(st, scen) :
