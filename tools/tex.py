@@ -600,13 +600,13 @@ def tev(b, mat3, m, tex1, texs, base=None, over=None, max_stages=16, ras_k=1.0):
             return np.full(shape + (4,), ov.get("tex_level", 1.0), np.float32)
         t = sampled(oi)
         if base is None:  # env_mean: a texgen'd (environment) texture on an untextured group, its mean colour
-            x = texs[t]["rgba"] if t < len(texs) else np.full((1, 4), 255, np.uint8)
+            x = texa(texs[t]) if t < len(texs) else np.full((1, 4), 255, np.uint8)
             return x.reshape(-1, 4).mean(0).astype(np.float32) / 255.0
         # a texture on other coordinates than the base's (environment maps, scrolling sparkles, projections) cannot
         # be laid over the base's texels: its mean colour stands in
         other = t != base and b[off(0x4C) + 4 * oi] != base_coord
         if (t, other) not in tex_cache:
-            x = texs[t]["rgba"] if t < len(texs) else texs[base]["rgba"]
+            x = texa(texs[t] if t < len(texs) else texs[base])
             if other:
                 x = np.broadcast_to(x.reshape(-1, 4).mean(0), shape + (4,))
             elif x.shape[:2] != shape:  # nearest resize to the base texture's size
@@ -639,6 +639,15 @@ def tev(b, mat3, m, tex1, texs, base=None, over=None, max_stages=16, ras_k=1.0):
                0 * one[..., 3]]
 
         def run(a, bb, c, d, op, bias, scale, clamp):
+            if op >= 8:  # GX_TEV_COMP_*: d + (a > b or a == b ? c : 0) on R8, GR16, BGR24 or per channel (RGB8 / A8)
+                q = lambda x: np.rint(x * 255)
+                if op < 14 and a.ndim and a.shape[-1] == 3:
+                    w = (1, 256, 65536)[: (op - 8) // 2 + 1]
+                    av = sum(q(a[..., i]) * w[i] for i in range(len(w)))[..., None]
+                    bv = sum(q(bb[..., i]) * w[i] for i in range(len(w)))[..., None]
+                else:
+                    av, bv = q(a), q(bb)
+                return np.clip(d + np.where(av == bv if op & 1 else av > bv, c, 0), 0, 1)
             v = a * (1 - c) + bb * c
             v = d - v if op == 1 else d + v
             v = v + (0.5 if bias == 1 else -0.5 if bias == 2 else 0.0)
@@ -653,6 +662,13 @@ def tev(b, mat3, m, tex1, texs, base=None, over=None, max_stages=16, ras_k=1.0):
         regs[st[18] & 3][..., 3] = al
         regs[st[9] & 3][..., :3] = out[..., :3]
     return np.clip(regs[0], 0, 1)
+
+
+def texa(t):
+    """A textures() entry's RGBA as the TEV reads it: GX I4 / I8 give their intensity as TEXA too (decode keeps them
+    opaque, the texture's own alpha)."""
+    x = t["rgba"]
+    return np.concatenate([x[..., :3], x[..., :1]], -1) if t.get("fmt") in (0, 1) else x
 
 
 def vertex_colour(b, mat3, m):
@@ -675,8 +691,11 @@ def lit(b, mat3, m):
 
 def bake(b, mat3, m, tex1, texs, t, over=None, info=None):
     """Texture t with material m's TEV baked in (tev), RGBA8, keeping the texture's own alpha (cut-outs; the TEV alpha
-    often reads lit channels). ponytail: a result near white where the texture is not (RAS from lit or second colour
-    channels, e.g. Coin's env-map stages) falls back to the plain texture; real lighting would fix those.
+    often reads lit channels), except where the texture has none (I4 / I8, RGB565...), the blend takes the source
+    alpha (GX_BM_BLEND, GX_BL_SRCALPHA) and the TEV alpha follows the texels: that alpha (water ripples: white, alpha
+    TEXA x TEXA, or none at all; a uniform one stays the material alpha, material_blend). ponytail: a result near white
+    where the texture is not, from a TEV that reads RAS (lit or second colour channels, e.g. Coin's env-map stages),
+    falls back to the plain texture; real lighting would fix those.
     info (a dict) gets "gain": the light level the texture stands for is RAS 1 (gain 1) or RAS 0.5 (gain 2: the
     engine's lighting doubles the channel colour, as the shaders' TEX x RAS x 2 do)."""
     src = texs[t]["rgba"]
@@ -693,8 +712,12 @@ def bake(b, mat3, m, tex1, texs, t, over=None, info=None):
             out = half
             if info is not None:
                 info["gain"] = 2
-    out[..., 3] = src[..., 3]
-    if out[..., :3].mean() > 240 and src[..., :3].mean() < 200:
+    off = lambda k: mat3 + u32(b, mat3 + k)
+    bm = off(0x70) + 4 * u16(b, off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C + 0x148)
+    if not (src[..., 3].min() == 255 and b[bm] == 1 and b[bm + 1] == 4 and
+            (np.ptp(out[..., 3]) > 2 or out[..., 3].max() < 8)):
+        out[..., 3] = src[..., 3]
+    if out[..., :3].mean() > 240 and src[..., :3].mean() < 200 and reads_ras(b, mat3, m):
         # saturated by stages that need real lighting (Tico's rim light): with a BRK's registers (its colour) the first
         # stage alone (TEX x RAS + C0) when that keeps a colour, else the plain texture
         one = (tev(b, mat3, m, tex1, texs, t, over, 1) * 255 + 0.5).astype(np.uint8) if over else None
@@ -705,6 +728,16 @@ def bake(b, mat3, m, tex1, texs, t, over=None, info=None):
             return one
         return src
     return out
+
+
+def reads_ras(b, mat3, m):
+    """Whether a TEV stage of material m takes RAS (the colour channel: lighting, vertex or material colour) as a
+    colour input (stage bytes 1-4, as tev), or a register's alpha while an alpha stage takes RAS."""
+    off = lambda k: mat3 + u32(b, mat3 + k)
+    e = off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C
+    sts = [b[off(0x5C) + 20 * u16(b, e + 0xE4 + 2 * s):][:20] for s in range(b[off(0x58) + b[e + 4]])]
+    cin = {x for st in sts for x in st[1:5]}
+    return bool(cin & {10, 11} or cin & {1, 3, 5, 7} and any(5 in st[10:14] for st in sts))
 
 
 def samples_named(b, mat3, m, tex1, name):

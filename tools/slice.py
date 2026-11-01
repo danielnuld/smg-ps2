@@ -122,11 +122,27 @@ ROW_FIELDS = ("pos_x", "pos_y", "pos_z", "dir_x", "dir_y", "dir_z", "scale_x", "
 ROW = struct.Struct("<HHii9f8i5hh")
 # sky archives whose star textures are projected from positions (spherical UVs instead, model_groups)
 SKY_ARCS = ("VROrbit", "VRDarkSpace", "VRSandwichSun", "GalaxySky", "MilkyWaySky", "HalfGalaxySky", "PhantomSky",
-            "KoopaVS1Sky", "KoopaVS2Sky", "StarrySky", "RockPlanetOrbitSky", "GreenPlanetOrbitSky")
+            "KoopaVS1Sky", "KoopaVS2Sky", "StarrySky", "RockPlanetOrbitSky", "GreenPlanetOrbitSky", "CometNearOrbitSky")
 SKY_TILES = 8
-# VROrbit's sea materials (their MAT3: EarthNightMat_v K0 + lerp(C0 0, TEX, RAS) + RAS x TEX; EarthFar_v RAS x TEX +
-# lerp(C1, K1, EarthFarK) + RAS x TEX): (flat base or None, base texture TEX1 index, its matrix slot, C1, K1)
-SKY_SEA = {"EarthNightMat_v": ((0, 25, 52), None), "EarthFar_v": (None, 7, 1, (0, 25, 52), (0, 151, 230))}
+# the orbit skies' sea materials (VROrbit, CometNearOrbitSky: EarthNightMat_v K0 + lerp(C0 0, TEX, RAS) + RAS x TEX;
+# EarthFar_v RAS x TEX + lerp(C1, K1, EarthFarK) + RAS x TEX), read by sky_sea
+SKY_SEA = ("EarthNightMat_v", "EarthFar_v")
+
+
+def sky_sea(b, mat3, m):
+    """A SKY_SEA material -> (flat K of stage 0, None) for EarthNightMat_v, else (None, stage 1's TEX1 index, its texture
+    matrix slot, C1, stage 1's K): the wall's lerp(C1, K, TEX). MAT3 offsets as tex.tev."""
+    off = lambda k: mat3 + tex.u32(b, mat3 + k)
+    e = off(0x0C) + tex.u16(b, off(0x10) + 2 * m) * 0x14C
+    k = lambda s: tuple(b[off(0x54) + 4 * tex.u16(b, e + 0x94 + 2 * ((b[e + 0x9C + s] - 0x0C) & 3)):][:3])
+    if tex.material_name(b, mat3, m) == "EarthNightMat_v":
+        return k(0), None
+    oi = tex.u16(b, e + 0xBC + 2)
+    coord, tmap = b[off(0x4C) + 4 * oi], b[off(0x4C) + 4 * oi + 1]
+    bt = tex.u16(b, off(0x48) + 2 * tex.u16(b, e + 0x84 + 2 * tmap))
+    slot = (b[off(0x38) + 4 * tex.u16(b, e + 0x28 + 2 * coord) + 2] - 30) // 3
+    c1 = tuple(max(0, min(255, v)) for v in struct.unpack_from(">3h", b, off(0x50) + 8 * tex.u16(b, e + 0xDC + 2)))
+    return None, bt, slot, c1, k(1)
 
 # second models a class draws besides its own (FireBar.cpp: FireBarBall around the FireBarCore)
 # extra models a class draws: a name of its own, or "#<BCK>": the class's archive with that animation's visibility
@@ -728,11 +744,11 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                             stats.setdefault("_btk", []).append(e)
                 elif (mt and mt["projected"] and arc.stem in SKY_ARCS and mt["tex"] < len(texs) and
                       tex.material_name(b, bl[b"MAT3"], mat) in SKY_SEA and get0 is not None):
-                    # VROrbit's sea (EarthNightMat_v floor, EarthFar_v wall): base + CLR0 x Cloud01k on the Wii's
+                    # the orbit skies' sea (EarthNightMat_v floor, EarthFar_v wall): base + CLR0 x Cloud01k on the Wii's
                     # Projmap UVs (tex.projmap, camera at the sky's origin): the base a group of its own, the clouds
                     # this one, added (blend 2), coloured by CLR0. ponytail: EarthKsMM (CLR0 x its corner glow) left
                     # out, uv = st / q per vertex (the wall's q changes across a triangle)
-                    sea = SKY_SEA[tex.material_name(b, bl[b"MAT3"], mat)]
+                    sea = sky_sea(b, bl[b"MAT3"], mat)
                     pm = tex.projmap(b, bl[b"MAT3"], mat, mt["slot"])
                     x = texs[mt["tex"]]
                     key = ("sea", mt["tex"])
@@ -2371,6 +2387,22 @@ def selftest():
                               if not (g[3] and g[3].get("env"))]  # env layers (tex.env_layer) aside
         assert len(faces(None)) == len(faces("PanelA")) == len(faces("PanelEnd")) == 2
         assert len({faces(None)[1], faces("PanelA")[1], faces("PanelEnd")[1]}) == 3
+    vr = fp.with_name("VROrbit.arc")
+    if vr.exists():  # sky_sea reads VROrbit's sea constants from its MAT3
+        b = next(v for k, v in B.rarc_files(vr.read_bytes()) if k.lower().endswith(".bdl"))
+        m3 = tex.blocks(b)[b"MAT3"]
+        nm = tex.names(b, m3 + tex.u32(b, m3 + 0x14))
+        assert sky_sea(b, m3, nm.index("EarthNightMat_v")) == ((0, 25, 52), None)
+        assert sky_sea(b, m3, nm.index("EarthFar_v")) == (None, 7, 1, (0, 25, 52), (0, 151, 230))
+    pg = fp.with_name("PeachCastleGardenPlanet.arc")
+    if pg.exists():  # its pond's ripples: white K, alpha TEXA x RAS x TEXA of an I8 (tex.texa, tex.bake)
+        b = next(v for k, v in B.rarc_files(pg.read_bytes()) if k.lower().endswith((".bdl", ".bmd")))
+        bl = tex.blocks(b)
+        nm = tex.names(b, bl[b"MAT3"] + tex.u32(b, bl[b"MAT3"] + 0x14))
+        m = nm.index("lambert118_v_x")
+        texs = tex.textures(b, bl[b"TEX1"])
+        r = tex.bake(b, bl[b"MAT3"], m, bl[b"TEX1"], texs, tex.material_tex(b, bl[b"MAT3"], m, bl[b"TEX1"])["tex"])
+        assert r[..., :3].min() == 255 and r[..., 3].mean() < 128
     # a unit right triangle mapped onto a 64 x 64 texture: 64 texels per unit -> K = 16 log2(64 / LOD_F)
     sq = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
     full = lod_sums(sq, [0, 1, 2], [(0, 0), (1, 0), (0, 1)], {"w": 64, "h": 64})
