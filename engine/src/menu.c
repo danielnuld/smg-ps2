@@ -336,7 +336,8 @@ void menu_yesno_appear(const char *yes, const char *no, int talk_se)
 }
 int menu_yesno_selected(void) /* isYesNoSelected: 1 Yes, 2 No (isYesNoSelectedYes), 0 not yet */
 {
-    return ynl.l && nrv_is(&ynl.yn.n, YN_SELECTED) ? (yn_yes(&ynl.yn) ? 1 : 2) : 0;
+    if (!ynl.l) return 1; /* (menus.bin packed without SelectButton: Yes, no talk left hanging) */
+    return nrv_is(&ynl.yn.n, YN_SELECTED) ? (yn_yes(&ynl.yn) ? 1 : 2) : 0;
 }
 static void ynl_update(void)
 {
