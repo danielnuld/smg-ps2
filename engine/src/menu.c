@@ -767,6 +767,66 @@ void menu_peach_letter(void) /* appear */
     plt.on = 1; plt.n.next = -1; nrv_set(&plt.n, LL_APPEAR);
 }
 int menu_peach_letter_alive(void) { return plt.on; }
+
+/* --- ProloguePictureBook and PrologueLetter after Petari (prologue.bin, the garden's), PrologueDirector's (game.c
+ * pro_*). ProloguePictureBook ("プロローグの絵本", "PrologueDemo"): appear starts its Prologue animation; Playing stops
+ * it a frame before each page's sBookPageInfo frame, KeyWait holds it (rate 0, its IconAButton openWithoutMessage at
+ * AButtonPosition) until A (SE_SY_TALK_FOCUS_ITEM, term, the next page); End once the animation has played out.
+ * PrologueLetter ("ピーチからの手紙", "PeachLetterMini"): Appear, Wait (its IconAButton) until A (SE_SY_TALK_OK),
+ * Disappear (End), then dead */
+enum { PB_ACTIVE, PB_PLAYING, PB_KEYWAIT, PB_END };
+static const int pb_page[] = {0, 350, 700, 1050, 1400, 1748, -1}; /* sBookPageInfo */
+static struct { LytInst *l; int on, page; Nrv n; Iab ab; } pbk;
+enum { PRL_APPEAR, PRL_WAIT, PRL_DISAPPEAR };
+static struct { LytInst *l; int on; Nrv n; Iab ab; } prl;
+static void pro_lyt_init(void) /* ProloguePictureBook::init (killed), PrologueLetter::init (no prologue.bin: NULL) */
+{
+    memset(&pbk, 0, sizeof pbk); memset(&prl, 0, sizeof prl);
+    if ((pbk.l = lyt_new("PrologueDemo"))) iab_init(&pbk.ab, pbk.l, "AButtonPosition");
+    if ((prl.l = lyt_new("PeachLetterMini"))) iab_init(&prl.ab, prl.l, "AButtonPosition");
+}
+void menu_prologue_book(int appear) /* ProloguePictureBook::appear (1) / kill (0) */
+{
+    if (!pbk.l) return;
+    pbk.ab.on = 0; /* (appear: requestMovementOn; kill: mIconAButton->kill) */
+    pbk.on = appear;
+    if (!appear) return;
+    lyt_start(pbk.l, "Prologue", 0);
+    pbk.n.next = -1; nrv_set(&pbk.n, PB_PLAYING);
+}
+int menu_prologue_book_end(void) { return !pbk.on || nrv_is(&pbk.n, PB_END); } /* isEnd() || isDead */
+int menu_test_prologue_book(void) { return pbk.on ? pbk.page * 10 + (nrv_is(&pbk.n, PB_KEYWAIT) ? 1 : 0) : -1; } /* tests: page x 10 + waiting */
+void menu_prologue_letter(void) { if (prl.l) { prl.on = 1; prl.ab.on = 0; prl.n.next = -1; nrv_set(&prl.n, PRL_APPEAR); } } /* PrologueLetter::appear */
+int menu_prologue_letter_alive(void) { return prl.on; }
+static void pbk_update(void)
+{
+    if (!pbk.on) return;
+    switch (nrv_begin(&pbk.n)) {
+    case PB_PLAYING: { /* exePlaying */
+        if (lyt_stopped(pbk.l, 0)) { nrv_set(&pbk.n, PB_END); break; }
+        int info = pb_page[pbk.page + 1];
+        if (info < 0) break;
+        if (info > (int)lyt_frame(pbk.l, 0)) break; /* (testSystemPadTriggerDecide: its answer unused) */
+        lyt_set_frame(pbk.l, 0, info - 1.0f);
+        nrv_set(&pbk.n, PB_KEYWAIT);
+        break;
+    }
+    case PB_KEYWAIT: /* exeKeyWait */
+        if (FIRST(&pbk.n)) { iab_open(&pbk.ab); lyt_set_rate(pbk.l, 0, 0.0f); }
+        if (pad_pressed(PAD_CROSS)) { /* testCorePadTriggerA */
+            pad_eat(PAD_CROSS);
+            se_start(SE_SY_TALK_FOCUS_ITEM, NULL);
+            iab_term(&pbk.ab);
+            pbk.page++;
+            lyt_set_rate(pbk.l, 0, 1.0f);
+            nrv_set(&pbk.n, PB_PLAYING);
+        }
+        break;
+    }
+    nrv_end(&pbk.n);
+    lyt_update(pbk.l);
+    iab_update(&pbk.ab); /* control: setLayoutScalePosAtPaneScaleTrans AButtonPosition */
+}
 static void plt_update(void)
 {
     if (!plt.on) return;
@@ -790,6 +850,33 @@ static void plt_update(void)
     if (plt.on) { lyt_update(plt.l); iab_update(&plt.ab); } /* movement: the letter, then its icon */
 }
 static void plt_draw(void) { if (plt.on) { render_world_done(); lyt_draw(plt.l); iab_draw(&plt.ab); } }
+static void prl_update(void)
+{
+    if (!prl.on) return;
+    switch (nrv_begin(&prl.n)) {
+    case PRL_APPEAR:
+        if (FIRST(&prl.n)) lyt_start(prl.l, "Appear", 0);
+        if (lyt_stopped(prl.l, 0)) nrv_set(&prl.n, PRL_WAIT);
+        break;
+    case PRL_WAIT:
+        if (FIRST(&prl.n)) { lyt_start(prl.l, "Wait", 0); iab_open(&prl.ab); }
+        if (pad_pressed(PAD_CROSS)) { /* testSystemPadTriggerDecide */
+            pad_eat(PAD_CROSS); se_start(SE_SY_TALK_OK, NULL); nrv_set(&prl.n, PRL_DISAPPEAR);
+        }
+        break;
+    case PRL_DISAPPEAR:
+        if (FIRST(&prl.n)) { lyt_start(prl.l, "End", 0); iab_term(&prl.ab); }
+        if (lyt_stopped(prl.l, 0)) { prl.on = 0; prl.ab.on = 0; } /* kill (and its IconAButton's) */
+        break;
+    }
+    nrv_end(&prl.n);
+    if (prl.on) { lyt_update(prl.l); iab_update(&prl.ab); }
+}
+static void pro_lyt_draw(void)
+{
+    if (pbk.on) { render_world_done(); lyt_draw(pbk.l); iab_draw(&pbk.ab); }
+    if (prl.on) { render_world_done(); lyt_draw(prl.l); iab_draw(&prl.ab); }
+}
 
 /* PauseMenu's letter (_38: ButtonPaneController LetterButton / BoxButton3): there while getLuigiLetterGalaxyName,
  * appearing while isOnLuigiHiding; decided: exeLuigiLetter (the letter until it is dead, then the buttons back) */
@@ -1407,6 +1494,7 @@ void menu_init(const Scene *s)
     mlay_init();
     memset(&mono, 0, sizeof mono);
     mono.l = lyt_new("PrologueStarSteward"); /* in map.bin: the Observatory only */
+    pro_lyt_init();
     srl_init();
     sp_init();
     spg_init();
@@ -1829,6 +1917,8 @@ int menu_update(void)
     mlay_update();
     mono_update();
     llt_update();
+    pbk_update();
+    prl_update();
     plt_update();
     srl_update();
     spg_update();
@@ -4251,6 +4341,7 @@ void menu_wipe_gameover(void) /* WipeGameOver::exeActive: its GameOver animation
 }
 void menu_wipe(int close, int frames, u32 rgb) { wipe_start(frames < 0 ? 30 : frames, close, rgb); } /* WipeFade::sFadeFrame */
 int menu_wipe_closed(void) { return wipe.frames && wipe.close && wipe.t >= wipe.frames; }
+int menu_wipe_active(void) { return wipe_active(); }
 void menu_wipe_force(int close) { wipe_start(1, close, wipe.rgb); wipe.t = 1; if (!close) wipe.frames = 0; }
 /* CinemaFrame.cpp: Screen (dead), ScreenToFrame (Appear), Frame (Wait), FrameToScreen (End, then dead) */
 void menu_cinema(int frame)
@@ -4612,6 +4703,7 @@ void menu_draw(void)
     if (spg.l && !nrv_is(&spg.n, SPG_ENDWAIT)) { render_world_done(); lyt_draw(spg.l); } /* StarPointerGuidance */
     if (mono.on) { render_world_done(); lyt_draw(mono.l); iab_draw(mono_ab()); }
     if (ynl.alive) { render_world_done(); lyt_draw(ynl.l); }
+    pro_lyt_draw();
     gm_draw();
     if (pm.alive) {
         render_world_done(); /* the scene under the menu (LayoutOnPause draws after everything) */

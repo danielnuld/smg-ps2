@@ -75,7 +75,8 @@ SKINNED_OBJ = ("MarioFreezeIce", "MarioFireBall", "WaterColumn", "MorphItemNeoHo
                "CrystalCageSBreak", "BenefitItemOneUp", "BenefitItemLifeUp", "FlipPanel", "FlipPanelReverse", "OtaRock",
                "HammerHeadPackun", "PackunLeaf", "Plant", "Petari", "Butler", "TicoDomeLecture", "Rosetta", "ButlerExplain", "ButlerMap",
                "PhantomShipPropellerSmall", "PhantomShipPropellerBig", "PhantomShipBridge",  # AnmModelSwitchMove without SW_A: Move at once (obj_anim: its only clip)
-               "PStar", "GStar", "SpinTico", "MarioHair", "AstroCore", "LuigiNPC", "LuigiEvent")  # PStar / GStar: the star return demos' PowerStar / GrandStar (clip names fit 31 chars)
+               "PStar", "GStar", "SpinTico", "MarioHair", "AstroCore", "LuigiNPC", "LuigiEvent",
+               "DemoPeachCastleGate")  # PStar / GStar: the star return demos' PowerStar / GrandStar (clip names fit 31 chars)
 SKINNED_OBJ += tuple(c for c in WAIT_SKINNED if c not in SKINNED_OBJ)
 # MapObjActor::initialize (tryStartAllAnim): a placed class whose model archive holds a BCK of the archive's name
 # plays it from the start; such classes are drawn skinned too (AUTO_SKINNED, class -> archive, filled by placement)
@@ -102,13 +103,19 @@ ANIM_ARC = {"MorphBubble": "ItemBubble", "MorphItemNeoHopper": "PowerUpHopper", 
 ANIM_ARC.update({c: a for c, a in WAIT_ARC.items() if c not in ANIM_ARC})
 # ponytail: models the renderer cannot reproduce: the atmosphere spheres (*Air: their glow is a TEV rim effect; drawn
 # with their material they flood the screen)
+# ponytail: materials left out of a model, the renderer cannot reproduce them: DemoPeachCastleGate's Dark_v_x, a
+# black vignette on a plane before the arrival camera, blended by its vertex alpha (VU1 batches keep no vertex alpha:
+# it would black the screen out)
+DROP_MATERIALS = {("DemoPeachCastleGate", "Dark_v_x")}
 NO_DRAW = ("Hanachan", "RunawayRabbitCollect", "SphereAir", "DimensionAir", "HomeAir", "TwilightAir", "DarknessRoomAir", "SunsetAir", "FineAir")   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
 OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup", "PurpleRailCoin", "CircleCoinGroup",
              "RailCoin", "SuperSpinDriver", "StarPieceGroup", "StarPieceFlow")
 # classes whose first NameObjFactory archive is not their model (OtaKing's is FireBall, Tico's TicoBaby): the model
 # camera animations baked for a class from another archive: class -> (CANM name prefix, archive)
 CANM_ARC = {"GrandStarReturnDemoStarter": ("gsr", "DemoAstroReturn"),
-            "AstroDomeDemoStarter": ("adds", "AstroDomeDemoCamera")}  # initAnimCamera "AstroDomeDemoCamera.arc"  # initAnimCamera "DemoAstroReturn.arc"
+            "AstroDomeDemoStarter": ("adds", "AstroDomeDemoCamera"),  # initAnimCamera "AstroDomeDemoCamera.arc"  # initAnimCamera "DemoAstroReturn.arc"
+            # PrologueDirector: initAnimCamera on its ModelObjs 背景書割 ("DemoLetter") and マリオの経路 ("DemoPeachCastleGate")
+            "PrologueDirector": ("prologue", ("DemoLetter", "DemoPeachCastleGate"))}
 MODEL_ARC = {"LuigiEvent": "LuigiNPC", "TicoDomeLecture": "Tico", "PStar": "PowerStar", "GStar": "GrandStar", "OtaKing": "OtaKing", "KoopaJr": "KoopaJr", "Tico": "Tico", "Plant": "PlantSeed",
              # the Gateway intro (HeavensDoorGalaxy 1): RunawayRabbitCollect's children, DemoRabbit, the baby Lumas; the
              # rabbits' TrickRabbitBaby and the RunawayTico's TicoBaby are their EXTRA (by arg / cast id)
@@ -136,6 +143,7 @@ EXTRA = {"RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby"
          "Rosetta": ("LightDome", "DomeHalo"),  # RosettaDemoHeavensDoor1's parts (ライトドーム, ライト後光)
          "StarReturnDemoStarter": ("PStar", "GStar", "SpinTico", "MarioHair"), "GrandStarReturnDemoStarter": ("GStar",), "FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
+         "PrologueDirector": ("DemoLetter", "DemoPeachCastleGate"),  # createScenery, createMarioPosDummyModel
          "MorphItemNeoFire": ("MarioFireBall",), "AirBubbleGenerator": ("AirBubble",),
          "DinoPackun": ("DinoPackunTailBall", "DinoPackunEggShell", "DinoPackunEggShell#EggBroken", "DinoPackunEggShellBreak"), "OtaKing": ("CocoNut", "OtaKingFoot", "FireBall", "FireBubble", "OtaKingMagma", "OtaKingLongFoot", "OtaKingMagmaBloom"), "OtaRock": ("CocoNut", "FireBall"), "HammerHeadPackun": ("PackunLeaf",), "Plant": ("PlantTop", "PlantLeaf"), "CocoSambo": ("CocoSamboHead",), "Hanachan": ("HanachanHead", "HanachanBody", "HanachanBodyS"), "PackunPetit": ("PackunPetitHead",),
          "RockCreator": ("RockBreak",), "WanwanRolling": ("WanwanRollingBreak",),
@@ -194,7 +202,8 @@ LOGIC = ("TimerSwitch", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "Coll
          "AstroChangeStageCube", "MovieStarter", "RunawayRabbitCollect", "PhantomTorch", "PhantomBonfire", "Hanachan",
          # Mario's areas (MR::getAreaObj: game.c area_obj / foo_sphere)
          "CelestrialSphere", "TowerModeCylinder", "NonSleepCube", "EffectCylinder", "SmokeEffectColorAreaCube",
-         "MessageAreaCube", "MessageAreaCylinder", "PullBackCylinder")  # areas (areaobjinfo) travel as OBJS rows too
+         "MessageAreaCube", "MessageAreaCylinder", "PullBackCylinder",
+         "PrologueDirector")  # areas (areaobjinfo) travel as OBJS rows too
 
 
 def col(b, field, n, default=0):
@@ -633,6 +642,8 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                     mats = [posed[k] if k < len(posed) else np.eye(4) for k in d]
                     verts = [tuple(float(x) for x in (m[:3, :3] @ p + m[:3, 3])) for m, p in zip(mats, verts)]
                 mat = shapes.get(info["shape"])
+                if mat is not None and (arc.stem, tex.material_name(b, bl[b"MAT3"], mat)) in DROP_MATERIALS:
+                    continue
                 mt = tex.material_tex(b, bl[b"MAT3"], mat, bl.get(b"TEX1")) if mat is not None else None
                 get = geom.vtx1_attr(b, bl[b"VTX1"], mt["attr"]) if mt and mt["attr"] in info["at"] else None
                 uvs = t = None
@@ -2085,8 +2096,8 @@ def canm_chunk(fsp, classes, galaxy=None, scenario=None):
                 if fr:
                     out.append(name32(f"{c.lower()}/{n.rsplit('/', 1)[-1][:-5].lower()}") + struct.pack("<I", len(fr)) +
                                b"".join(struct.pack("<8f", *f) for f in fr))
-    for c, (prefix, a) in CANM_ARC.items():  # a class's camera animations from another archive (CANM_ARC)
-        arc = fsp / "ObjectData" / f"{a}.arc"
+    for c, (prefix, a) in [(c, (p, a)) for c, (p, aa) in CANM_ARC.items() for a in ((aa,) if isinstance(aa, str) else aa)]:
+        arc = fsp / "ObjectData" / f"{a}.arc"  # a class's camera animations from other archives (CANM_ARC)
         if c not in classes or not arc.exists():
             continue
         for n, b in B.rarc_files(arc.read_bytes()):

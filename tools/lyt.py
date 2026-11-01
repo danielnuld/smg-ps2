@@ -421,6 +421,9 @@ MAP = ("MapGrandGalaxy", "MapGalaxyIcon", "MapDomeIcon", "MapTitle", "MapGalaxyB
 # the ending's (StaffRoll: StaffRollLine, StaffRollTitle, StaffRollPicture with StaffRollTexture.arc's pictures as
 # materials named by their file, its InformationMessage): ending.bin, in the EpilogueDemoStage stage only
 ENDING = ("StaffRoll", "StaffRollTitle", "StaffRollPicture", "InformationWindow")
+# the new game's opening (PrologueDirector: ProloguePictureBook's "PrologueDemo", PrologueLetter's "PeachLetterMini"):
+# prologue.bin, in the PeachCastleGardenGalaxy stage only
+PROLOGUE = ("PrologueDemo", "PeachLetterMini")
 
 
 def build_mappics(fsp):
@@ -706,6 +709,8 @@ if __name__ == "__main__":  # python tools/lyt.py data/fs/files [out/packs/menus
     print(f"letter.bin {dst.with_name('letter.bin').stat().st_size / 1024:.0f} KB")
     dst.with_name("ending.bin").write_bytes(build_ending(fsp))
     print(f"ending.bin {dst.with_name('ending.bin').stat().st_size / 1024:.0f} KB")
+    dst.with_name("prologue.bin").write_bytes(build_dome(fsp, PROLOGUE, None))
+    print(f"prologue.bin {dst.with_name('prologue.bin').stat().st_size / 1024:.0f} KB")
     dst.with_name("subs.bin").write_bytes(build_subs(fsp))
     print(f"subs.bin {dst.with_name('subs.bin').stat().st_size / 1024:.0f} KB")
     t2, t3 = build_title(fsp)

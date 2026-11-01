@@ -51,9 +51,16 @@ void menu_wipe_gameover(void);       /* WipeGameOver ("GameOver") */
 void menu_wipe(int close, int frames, u32 rgb); /* WipeFade: closes / opens over frames (< 0: sFadeFrame 30), rgb 0xBBGGRR */
 void menu_wipe_force(int close);     /* forceOpenWipe / forceCloseWipe (the colour kept) */
 int menu_wipe_closed(void);          /* !isWipeOpen: closed and still */
+int menu_wipe_active(void);          /* isWipeActive: closing or opening */
 void menu_cinema(int frame);         /* CinemaFrame: tryScreenToFrame (1) / tryFrameToScreen (0) */
 void menu_monologue_start(void);     /* RosettaMonologue (ロゼッタ状況説明デモ's picture book): appear */
 int menu_monologue_alive(void);      /* !isDead */
+/* PrologueDirector's (prologue.bin): ProloguePictureBook appear (1) / kill (0), isEnd() || isDead; PrologueLetter */
+void menu_prologue_book(int appear);
+int menu_prologue_book_end(void);
+void menu_prologue_letter(void);
+int menu_prologue_letter_alive(void); /* !isDead */
+int menu_test_prologue_book(void);   /* tests: page x 10 + 1 while it waits for A, -1 dead */
 /* GalaxyMapController's start modes (its Mode): MR::startAstroMapLayout, startGalaxyMapLayout,
  * startAstroMapLayoutForNewGalaxyDiscover / ForNewTicoGalaxyDiscover / ForNewDomeDiscover,
  * startGalaxyMapLayoutForTicoComet, startAstroMapLayoutForChallengeGalaxyDiscover */
