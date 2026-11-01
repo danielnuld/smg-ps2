@@ -55,6 +55,11 @@ static int chunk_take(void)
     SyncDCache(c, c + sizes[pending]);
     vlen = ((u32 *)c)[0];
     vpos = 0;
+    if (16 + vlen + ((u32 *)c)[1] > sizes[pending]) { /* not a chunk (a bad read): the movie ends rather than feed the IPU garbage */
+        printf("movie: chunk %d bad (%u + %u bytes in %u)\n", pending, vlen, ((u32 *)c)[1], sizes[pending]);
+        vlen = 0; pending = -1;
+        return 0;
+    }
     for (u32 alen = ((u32 *)c)[1], i = 0; i < alen && ring_n < ring_cap;) {
         u32 wr = (ring_rd + ring_n) % ring_cap, n = ring_cap - wr;
         if (n > ring_cap - ring_n) n = ring_cap - ring_n;
@@ -285,7 +290,7 @@ int movie_play(const char *name, const MovieIo *the_io, const u8 *rumble)
         vsync_wait();
         render_show();
         feed_audio();
-        f++;
+        if (++f % 600 == 0) printf("movie: %s frame %d\n", name, f); /* the console's log (udptty): how far it got */
         pad_update();
         if (skippable && pad_pressed(PAD_CROSS)) break;
     }

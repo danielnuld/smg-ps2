@@ -131,6 +131,22 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   repack: packs unchanged (still sliced to ROOM 9.1e6 / main.c PACK_ROOM, now the streaming bound, not the region).
   Checked from out/packs: AstroGalaxy 1, PhantomGalaxy 1, OceanPhantomCave 4 boot, no "never fits" / "no memory",
   59.9 fps; route EggStar 1 star at f 3781. Old ELF / ISO in out/bak-astro-fit.
+- Disc build in PCSX2 (fix/prologue-freeze, 2026-10-31): PCSX2 takes an image over 452849 sectors (~884 MB) for a DVD,
+  and with its real BIOS no file of our DVD is found, by the OSD ("open fail name SYSTEM.CNF;1" with -slowboot), by
+  loadelf ("open fail SMGP_000.01;1" with fastboot) or by the game's own sceCdSearchFile ("packs: no PACKS.TOC" with
+  -elf; disc type 0x14). Tried without effect: full BIOS boot, a two-sector root directory (PCSX2's image type then
+  DVD), a UDF bridge (mkisofs -udf). A real PS2 DVD's mastering / mechacon key is likely what it wants. Under the CD
+  size the same image is a PS2 CD (type 0x12) and everything reads. So: a CD-sized test disc with only the scenes
+  wanted, built with main's disc.py into out/wt-disc, e.g. packs = the root .bin, FileSelect, PeachCastleGardenGalaxy,
+  HeavensDoorGalaxy, movies/Prologue*, music/SMG_{ev_prolo,fileselect,title,galaxy24}* (330 MB), then
+  `tools/run_quiet.ps1 -Elf <disc ELF of any test mode> -Iso <test.iso>` (new: with both, that ELF runs with the image
+  as its disc, no ISO rebuild per test). Checked so: `title` (A+B, new file -> PeachCastleGardenGalaxy/1, prologue
+  stream from the disc), `prologue` with XF=-DCATCHUP and EECycleRate -3 (PrologueA and PrologueB play through from
+  the disc, with subtitles and rumble). The console's prologue freeze did not reproduce. Made robust since, as the
+  likely console-only cause (Neutrino reads the ISO over udpfs): a sceCdRead refused or ending in sceCdGetError was
+  taken as read (the movie then played a stale chunk, libmpeg lost the stream); now asked again and logged ("cd:"),
+  a chunk that is not one ends the movie ("movie: chunk n bad"), and "movie: <name> frame n" every 600 frames says
+  on the console's udptty log where it stops.
 
 ## Console release (2026-10-23 / 24)
 
@@ -509,7 +525,7 @@ after tags (US: mNoCharSpace starts true, font size tags return NO_CHAR_SPACE wh
 | Host tests | `wsl.exe -e bash /mnt/d/smg-ps2/engine/test/run.sh` |
 | Sound packs (after adding SE names to game.c) | per scenario: `for n in 1 2 3 4 5 6; do python tools/sound.py --pack data/fs/files out/packs/EggStarGalaxy/$n/sound.bin engine/src/se_ids.h 16000 --scene out/packs/EggStarGalaxy/$n/scene.bin engine/src/game.c; done` (SYSTEM / PLAYER sounds always, the rest when a placed class may play them (sfxcut's index), Mario's table entries game.c plays; caps scaled to fit 1.85 MB; waves cached in out/sound_cache); the shared fallback without `--scene` to out/packs/sound.bin; also writes engine/src/se_ids.h and mario_snd.h; one SE to WAV: `python tools/sound.py data/fs/files SE_SY_COIN` -> out/sound |
 | Coverage (task 5.3) | `build.sh cover out/slice/hd2.bin BattleShipGalaxy/2` then `tools/coverage.ps1` → `out/coverage.csv` (one ELF, the scenario through `out/boot.txt`; ~1 min each); `python tools/class_coverage.py` → `out/class_coverage.md` (behaviour / static / missing placements) |
-| Disc image | `build.sh MODE out/slice/hd2.bin Galaxy/n disc` (→ `out/disc/SLICE.ELF`) then `python tools/disc.py` → `out/smg-ps2.iso` (819 MB, all 136 scenarios' packs); boot with `tools/run_quiet.ps1 -Iso out/smg-ps2.iso`; a boot menu lists every scenario (D-pad, X; the build's scenario starts after 10 s) |
+| Disc image | `build.sh MODE out/slice/hd2.bin Galaxy/n disc` (→ `out/disc/SLICE.ELF`) then `python tools/disc.py` → `out/smg-ps2.iso` (819 MB, all 136 scenarios' packs); the full ISO does not read in PCSX2 (a DVD: see "Disc build in PCSX2"), a CD-sized one does: `tools/run_quiet.ps1 -Iso test.iso [-Elf disc ELF]`; a boot menu lists every scenario (D-pad, X; the build's scenario starts after 10 s) |
 | PCSX2 in the background | `tools/run_quiet.ps1 -Elf <elf> -Wait <s>`, `tools/snapbg.ps1 <png>`, log `Documents/PCSX2/logs/emulog.txt` |
 
 Patch scripts go through files (Write), not bash heredocs, because of apostrophes. In Python-generated C, write `\n` as `chr(92) + "n"`.

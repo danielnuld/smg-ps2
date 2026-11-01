@@ -170,17 +170,34 @@ static sceCdRMode cd_mode = {5, SCECdSpinNom, SCECdSecS2048, 0};
 
 /* whole sectors from `lsn` into `dst` (64-aligned, PACK_ALLOC long); wait: block until they are in */
 static u32 cd_seq; /* reads started (disc_read_async: a later read means an earlier one is in) */
+static int cd_start(u32 lsn, u32 sectors, void *dst) /* a read begun; one refused (drive not ready, a command still
+                                                        * held) is asked again, logged; 0: never taken */
+{
+    for (int tries = 0;; tries++) {
+        sceCdSync(0); /* one read at a time: audio.c's may still be going */
+        cd_seq++;
+        if (sceCdRead(lsn, sectors, dst, &cd_mode)) return 1;
+        printf("cd: read %u + %u refused, again (%d)\n", lsn, sectors, tries);
+        if (tries == 300) return 0;
+    }
+}
+static int cd_failed(u32 lsn, u32 sectors) /* the read just finished: an error (logged) */
+{
+    int e = sceCdGetError();
+    if (e != SCECdErNO) printf("cd: read %u + %u error %d, again\n", lsn, sectors, e);
+    return e != SCECdErNO;
+}
 static int cd_read(u32 lsn, u32 sectors, void *dst, int wait)
 {
-    sceCdSync(0); /* one read at a time: audio.c's may still be going */
-    cd_seq++;
-    if (!sceCdRead(lsn, sectors, dst, &cd_mode))
-        return 0;
-    if (wait) {
+    for (int tries = 0; tries < 30; tries++) {
+        if (!cd_start(lsn, sectors, dst)) return 0;
+        if (!wait) return 1;
         sceCdSync(0);
+        if (cd_failed(lsn, sectors)) continue;
         InvalidDCache(dst, (u8 *)dst + sectors * SECTOR - 1);
+        return 1;
     }
-    return 1;
+    return 0;
 }
 
 /* Boot menu: every scenario on the disc (the TOC's "<Galaxy>/<n>/scene.bin" entries), D-pad up / down (left / right
@@ -379,7 +396,7 @@ int packs_read(const char *path, u32 off, void *dst, u32 n)
 static Pack mv_pack;
 #ifdef DISC
 static u8 *mv_dst;
-static u32 mv_n;
+static u32 mv_n, mv_lsn;
 #endif
 static int mv_open(const char *path, u32 *size)
 {
@@ -390,9 +407,11 @@ static int mv_open(const char *path, u32 *size)
 static void mv_start(u8 *dst, u32 n)
 {
 #ifdef DISC
-    mv_dst = cd_read(mv_pack.base + mv_pack.pos / SECTOR, PACK_ALLOC(n) / SECTOR, dst, 0) ? dst : NULL;
+    mv_dst = dst;
+    mv_lsn = mv_pack.base + mv_pack.pos / SECTOR;
     mv_n = PACK_ALLOC(n);
     mv_pack.pos += n;
+    if (!cd_start(mv_lsn, mv_n / SECTOR, dst)) render_fatal("movie: the disc does not read (sector %u)\n", mv_lsn);
 #else
     pack_read(&mv_pack, dst, n);
 #endif
@@ -402,6 +421,10 @@ static int mv_done(void)
 #ifdef DISC
     if (mv_dst) {
         if (sceCdSync(1)) return 0;
+        if (cd_failed(mv_lsn, mv_n / SECTOR)) { /* the chunk read again: played from a stale buffer, libmpeg lost the stream */
+            if (!cd_start(mv_lsn, mv_n / SECTOR, mv_dst)) render_fatal("movie: the disc does not read (sector %u)\n", mv_lsn);
+            return 0;
+        }
         InvalidDCache(mv_dst, mv_dst + mv_n - 1);
         mv_dst = NULL;
     }
@@ -618,6 +641,11 @@ static int pend_step(u32 budget)
             if (!all && sceCdSync(1))
                 return 0;
             sceCdSync(0);
+            if (cd_failed(pend.f.base + pend.off / SECTOR, PACK_ALLOC(pend.flight) / SECTOR)) {
+                if (!cd_read(pend.f.base + pend.off / SECTOR, PACK_ALLOC(pend.flight) / SECTOR, pend.cur + pend.off, 0))
+                    render_fatal("packs: read error" "\n");
+                continue; /* polled again */
+            }
             InvalidDCache(pend.cur + pend.off, pend.cur + pend.off + PACK_ALLOC(pend.flight) - 1);
             pend.off += pend.flight;
             pend.f.pos += pend.flight;
