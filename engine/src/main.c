@@ -837,7 +837,7 @@ static void load_modules(void)
     SifLoadModule("rom0:XSIO2MAN", 0, NULL); /* X modules (libpadx): see mc.c mc_init */
     SifLoadModule("rom0:XPADMAN", 0, NULL);
     mc_init(); /* LogoScene MountGameData: startPreLoadSaveDataSequence (its windows: the first scene's menu.c sv_boot) */
-#ifndef TITLE_TEST /* (the title test starts from no files) */
+#if !defined(TITLE_TEST) && !defined(NEWFILE_SEED) /* (the title test and newfile's seed start from no files) */
     int sz, res = mc_load(gd_image(&sz), sz);
     if (res == MC_OK) gd_image_loaded();
     mc_set_boot(res);
@@ -860,6 +860,11 @@ static int vblank_tick(int cause) { (void)cause; vblanks++; ExitHandler(); retur
 /* the next scene asked by the game (game.h game_request_scene: "<Galaxy>/<n>"); taken at the end of the frame's update */
 static char scene_next[64];
 void game_request_scene(const char *next) { snprintf(scene_next, sizeof scene_next, "%s", next); }
+#ifdef PACKS
+#define SCENE_ASKED() (scene_next[0] != 0)
+#else /* (no scene changes: the request is never taken) */
+#define SCENE_ASKED() 0
+#endif
 /* a movie played before the next scene loads (MoviePlayingSequence: game.h game_request_movie) */
 static char movie_next[64]; /* names, ',' between */
 void game_request_movie(const char *name) { snprintf(movie_next, sizeof movie_next, "%s", name); }
@@ -1037,10 +1042,11 @@ int main(void)
         if (steps < 1) steps = 1;
         if (steps > 3) steps = 3; /* real speed down to 20 fps (the console runs 20-30 in heavy scenes: with 2, Mario
                                     * moved in slow motion); a longer frame slows the game a moment rather than spiralling */
-        for (int s = 1; s < steps; s++) { pad_update(); game_update(); audio_feed(); }
+        /* (no step after a scene change was asked: the old scene's logic would act on the next one's game data) */
+        for (int s = 1; s < steps && !SCENE_ASKED(); s++) { pad_update(); game_update(); audio_feed(); }
 #endif
         pad_update();
-        game_update();
+        if (!SCENE_ASKED()) game_update();
         audio_feed(); /* audsrv holds only 10 KB (80 ms of a stream): fed between the frame's long parts too */
         if (menu_take_save_request()) { int sz; mc_save(gd_image(&sz), sz); } /* SaveDataHandleSequence: save all */
         mc_poll();
@@ -1293,6 +1299,29 @@ int main(void)
             if (frame == 1150) printf("title test f %u: pointer on BoxRight %d\n", frame, menu_test_point_file(0, "BoxRight"));
             if (frame == 1170) pad_force = PAD_CROSS;
             if (frame == 1450) printf("title test f %u: pointer on BoxStartButton %d\n", frame, menu_test_point_file(0, "BoxStartButton"));
+            if (frame == 1470) pad_force = PAD_CROSS;
+        }
+#endif
+#if defined(PACKS) && defined(NEWFILE_TEST)
+        { /* the files from the card; XF=-DNEWFILE_SEED: none, file 1 seeded with progress, still loaded as after a quit
+           * to the title, and saved (gamedata.c). Then file 2 (new): Yes, icon, Yes, Start -> a fresh game (the prologue);
+           * XF=-DNEWFILE_SLOT=n: the n-th slot instead (0: file 1, Start -> its game; 2: file 4, new). It writes the card */
+#ifndef NEWFILE_SLOT
+#define NEWFILE_SLOT 1
+#endif
+            pad_force = 0;
+            if (frame >= 400 && frame < 420) pad_force = PAD_CROSS | PAD_CIRCLE;
+            if (frame == 600) printf("newfile test f %u: pointer on slot %d %d\n", frame, NEWFILE_SLOT, menu_test_point_file(NEWFILE_SLOT, NULL));
+            if (frame == 620) pad_force = PAD_CROSS;
+#if NEWFILE_SLOT != 0 /* (a new file there) */
+            if (frame == 800) printf("newfile test f %u: pointer on BoxRight %d\n", frame, menu_test_point_file(NEWFILE_SLOT, "BoxRight"));
+            if (frame == 820) pad_force = PAD_CROSS;
+            if (frame == 1000) printf("newfile test f %u: pointer on Mii09 %d\n", frame, menu_test_point_file(NEWFILE_SLOT, "Mii09"));
+            if (frame == 1020) pad_force = PAD_CROSS;
+            if (frame == 1150) printf("newfile test f %u: pointer on BoxRight %d\n", frame, menu_test_point_file(NEWFILE_SLOT, "BoxRight"));
+            if (frame == 1170) pad_force = PAD_CROSS;
+#endif
+            if (frame == 1450) printf("newfile test f %u: pointer on BoxStartButton %d\n", frame, menu_test_point_file(NEWFILE_SLOT, "BoxStartButton"));
             if (frame == 1470) pad_force = PAD_CROSS;
         }
 #endif
