@@ -41,6 +41,7 @@ static int gm_screen(void);
 int menu_galaxy_map_active(void);
 int menu_file_selecting(void);
 static void mlay_update(void);
+static void tl_init(void);
 static void mlay_draw(void);
 static void ss_update(void);
 static void wipe_update(void);
@@ -997,6 +998,7 @@ void menu_init(const Scene *s)
     sv_prompt = seq_take_save_prompt();
     memset(&sr, 0, sizeof sr);
     subm_init();
+    tl_init();
     sr.l = lyt_new("ResultWindow");
     sr.info = lyt_new("InformationWindow"); /* MR::appearInformationMessageCenter's (NULL where not loaded) */
     if (sv_prompt && seq_take_result(&sr.r)) { /* a star return demo shows it at its wait's end (menu_result_start) */
@@ -1159,9 +1161,10 @@ static int tl_update_normal(void) /* updateNormal (mIsSuspend never set) */
     if (tl.time == tl.limit) { nrv_set(&tl.n, TL_TIMEUPREADY); return 1; }
     return 0;
 }
+static void tl_init(void) { memset(&tl, 0, sizeof tl); tl.l = lyt_new("TimeLimit"); } /* (with the scene: not above its mark) */
 void menu_time_limit_appear(int frames) /* appear (resetFrame), setTimeLimit */
 {
-    if (!tl.l && !(tl.l = lyt_new("TimeLimit"))) return;
+    if (!tl.l) return;
     tl.limit = (u32)frames; tl.time = 0;
     tl_text();
     tl.scale.max = 8; tl.scale.dir = 1; tl.scale.frame = 8; /* sScaleUpDownFrame, setOne */
