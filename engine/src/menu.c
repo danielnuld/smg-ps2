@@ -41,6 +41,7 @@ static int gm_screen(void);
 int menu_galaxy_map_active(void);
 int menu_file_selecting(void);
 static void mlay_update(void);
+static void plt_init(void);
 static void mlay_draw(void);
 static void ss_update(void);
 static void wipe_update(void);
@@ -712,10 +713,16 @@ static void llt_draw(void) { if (llt.on) { render_world_done(); lyt_draw(llt.l);
  * AButtonPosition) until A once the icon waits (SE_SY_TALK_OK), End (term), dead. KinopioAstro's dispLetter (game.c
  * kast_event) */
 static struct { LytInst *l; int on; Nrv n; Iab ab; } plt;
+static void plt_init(void) /* init (with the scene: letter.bin's, NULL where it is not loaded) */
+{
+    memset(&plt, 0, sizeof plt);
+    if (!(plt.l = lyt_new("PeachLetter"))) return;
+    iab_init(&plt.ab, plt.l, "AButtonPosition");
+    lyt_set_text_rec(plt.l, "Body", msg_get("PeachLetter_001"));
+}
 void menu_peach_letter(void) /* appear */
 {
-    if (!plt.l && !(plt.l = lyt_new("PeachLetter"))) return;
-    if (!plt.ab.l) { iab_init(&plt.ab, plt.l, "AButtonPosition"); lyt_set_text_rec(plt.l, "Body", msg_get("PeachLetter_001")); }
+    if (!plt.l) return;
     plt.on = 1; plt.n.next = -1; nrv_set(&plt.n, LL_APPEAR);
 }
 int menu_peach_letter_alive(void) { return plt.on; }
@@ -1033,6 +1040,7 @@ void menu_init(const Scene *s)
     sv_prompt = seq_take_save_prompt();
     memset(&sr, 0, sizeof sr);
     subm_init();
+    plt_init();
     sr.l = lyt_new("ResultWindow");
     sr.info = lyt_new("InformationWindow"); /* MR::appearInformationMessageCenter's (NULL where not loaded) */
     if (sv_prompt && seq_take_result(&sr.r)) { /* a star return demo shows it at its wait's end (menu_result_start) */
