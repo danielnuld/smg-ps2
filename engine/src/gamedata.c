@@ -95,14 +95,24 @@ void gd_attach(const Scene *s)
     story = (const GStory *)(g + 16);
     info = (const GInfo *)(story + nstory);
     scen = (const GScen *)(info + ninfo);
-    if (!gd.ok) gd_reset();
+    if (!gd.ok) {
+        gd_reset();
+        /* ponytail: a dev build booted straight into a galaxy (main.c PACKS, no file select) plays the boot's fresh data;
+         * every galaxy but the garden and the Gateway's first scenario comes after the Gateway's spin, so the spin's
+         * story event is taken as passed there (the release boots FileSelect: no scenarios, nothing done) */
+        extern const char *game_stage_name;
+        char gal[32];
+        snprintf(gal, sizeof gal, "%.*s", (int)strcspn(game_stage_name, "/"), game_stage_name);
+        if (gd_scenario_num(gal) && strcmp(gal, "PeachCastleGardenGalaxy") && strcmp(game_stage_name, "HeavensDoorGalaxy/1"))
+            gd_story_follow("スピン権利");
+    }
 #if defined(NEWFILE_TEST) && defined(NEWFILE_SEED) /* file 1 with progress (the Gateway's grand star, the castle risen),
     * still loaded as after a quit to the title */
     static int seeded;
     void menu_save_request(void);
     if (!seeded++ && nscen) {
         gd_file_create(0, 1); gd_file_load(0);
-        gd_set_star("HeavensDoorGalaxy", 1); gd_story_follow("ピーチ城浮上後"); gd_add_stocked_star_pieces(123);
+        gd_set_star("HeavensDoorGalaxy", 1); gd_story_follow("スピン権利"); gd_add_stocked_star_pieces(123);
         gd_file_save();
         menu_save_request(); /* (on the card for the next boot) */
         printf("newfile test: file 1 seeded, %d stars\n", gd_star_num());
@@ -143,6 +153,7 @@ int gd_story_passed(const char *event)
 }
 void gd_story_follow(const char *event)
 {
+    if (gd_story_passed(event)) return; /* GameDataFunction::followStoryEventByName: never back */
     for (int i = 0; i < nstory; i++)
         if (!strcmp(story[i].name, event)) { gd.story = (u8)story[i].progress; return; }
 }

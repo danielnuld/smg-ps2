@@ -102,6 +102,7 @@ void game_test_jump(void);
 int game_bee_state(void);
 int game_fire_state(void);
 void game_test_spin_now(void);
+int game_test_spin_timer(void); /* test builds: Mario's spin (punch hit) timer, 0 none */
 int game_screw_state(void);
 int game_jet_state(void);
 int game_key_taken(void);
