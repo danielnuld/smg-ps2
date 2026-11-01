@@ -77,6 +77,12 @@ void menu_pointer_stream(int on);
 void menu_pointer_draw(void);
 int menu_guidance_request(const char *label, int timeout); /* StarPointerGuidance::request1PGuidance (each frame), 0 none */
 int menu_guidance_exists(void);      /* MR::isExistStarPointerGuidance */
+/* TimeLimitLayout (a Red / Black comet's): appear with the limit (frames), a frame on, kill; isReadyToTimeUp; frames left */
+void menu_time_limit_appear(int frames);
+void menu_time_limit_update(void);
+void menu_time_limit_kill(void);
+int menu_time_limit_up(void);
+int menu_time_limit_left(void);        /* -1 not shown */
 /* YesNoLayout: MR::appearYesNoSelector(yes, no) (talk_se: TalkDirector's setYesNoSelectorSE), isYesNoSelected */
 void menu_yesno_appear(const char *yes, const char *no, int talk_se);
 int menu_yesno_selected(void);       /* 1 Yes, 2 No, 0 not yet */
