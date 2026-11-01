@@ -23,6 +23,10 @@ PATH_LEN = 88
 
 def build(packs, disc):
     files = sorted(p for p in packs.rglob("*") if p.is_file() and p.suffix in (".bin", ".smv", ".pcm", ".rhy"))  # movies: tools/movies.py; music: tools/music.py, rhythm.py (out/music copied to packs/music)
+    # main.c toc_select keeps a scene's entries in toc[512]: its scenario's, every root pack, movies, music (upper bound)
+    shared = sum(len(p.relative_to(packs).parts) == 1 or p.relative_to(packs).parts[0] in ("movies", "music") for p in files)
+    scen = max(sum(1 for f in files if f.parent == d) for d in {f.parent for f in files if len(f.relative_to(packs).parts) == 3})
+    assert shared + scen <= 512, f"disc.py: {shared} shared + {scen} scenario entries overflow main.c's toc[512]"
     toc, off = [], 0
     with open(disc / "PACKS.BIN", "wb") as out:
         for p in files:
