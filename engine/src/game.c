@@ -842,7 +842,7 @@ static void ota_lfoot(int k, int nrv, const char *clip)
 }
 #define MAX_BUBBLES 8 /* AirBubbleHolder's free bubbles (update_bubbles) */
 static struct { V3 pos, vel; int t, life; } bubbles[MAX_BUBBLES];
-static int time_limit, time_left; /* a Red / Black comet's limit and frames left (CometEventExecutorTimeLimit), 0 none */
+static int time_limit, time_on; /* a Red / Black comet's limit (frames, 0 none); its executor: 0 to start, 1 on, 2 over */
 static int swimming, oxygen = 3600; /* Mario in water (swim_update); oxygen left (mOxygenMax 3600) */
 static V3 stray_at[64]; /* StrayTico: where the rescued ones are (kept over a rebind), by row % 64 */
 #define MAX_FIREBALLS 3 /* FireMarioBall: MarioActor's _B54 */
@@ -17566,7 +17566,7 @@ static void miss(void)
     printf("%s" "\n", mev.over ? "game over" : "mario down");
     return;
 #endif
-    time_left = time_limit; /* the comet's time starts over with the scenario */
+    time_on = 0; /* the comet's time starts over with the scenario */
     mario->pos = start_pos; mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->hurt_timer = 0; mario->hip = 0;
     mario->up = up_at(mario->pos, v3(0, 1, 0)); /* placed anew, as at the start (not his up where he fell) */
     mario->launch = -1; /* out of any launch star's flight (it would carry him back) */
@@ -32109,10 +32109,10 @@ static void keep_effects(void)
 }
 
 /* CometEventKeeper (Red / Black comet): the scenario's limit (sTimeLimitInfoTable, seconds) counts down from the start;
- * at 0 (isReadyToTimeUp) Mario is lost (forceKillPlayerByWaterRace); a power star stops it. ponytail: no countdown
- * sounds, no TimeLimitLayout (the HUD line) */
-void game_set_time_limit(int seconds) { time_limit = time_left = seconds * 60; }
-int game_time_left(void) { return time_limit ? time_left : -1; }
+ * on menu.c's TimeLimitLayout; at 0 (isReadyToTimeUp) Mario is lost (forceKillPlayerByWaterRace); a power star stops
+ * it (endCometEvent) */
+void game_set_time_limit(int seconds) { time_limit = seconds * 60; time_on = 0; }
+int game_time_left(void) { return time_limit ? menu_time_limit_left() : -1; }
 
 /* --- LuigiNPC after Petari (LuigiNPC.cpp; LuigiNPC and LuigiEvent: type arg0, LuigiEvent's + Type_Event): Afraid (the
  * Ghostly Galaxy's rescue: AfraidWait), Normal (the Observatory's garage once SpecialStarLuigiRescued, gone while he is
@@ -35372,7 +35372,14 @@ void game_update(void)
     kcl_list_build();
     LQ(0, update_obj_anims());
 
-    if (!opening_on && time_limit && time_left > 0 && !stars && --time_left == 0) { printf("time up" "\n"); miss(); }
+    if (!opening_on && time_limit && time_on != 2) { /* CometEventExecutorTimeLimit::exeStartEvent; a star: endCometEvent */
+        if (stars) { menu_time_limit_kill(); time_on = 2; }
+        else {
+            if (!time_on) { menu_time_limit_appear(time_limit); time_on = 1; }
+            menu_time_limit_update();
+            if (menu_time_limit_up()) { printf("time up" "\n"); miss(); time_on = 2; } /* forceKillPlayerByWaterRace */
+        }
+    }
     hip_hit = 0;
     if (!opening_on) game_frame++; /* frames of play: the starter flight begins at 2 */
     LQ(1, update_rotors());
