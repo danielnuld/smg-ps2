@@ -470,8 +470,29 @@ void gd_luigi_stage_result(const char *stage, int star, int has_yet) /* updateOn
     }
 }
 void gd_luigi_set_hiding(void) { luigi_set(LS_HIDING); gd_luigi_hiding_galaxy(&luigi_lost_stage, &luigi_lost_star); } /* setStateHiding */
+/* EventUtil's player left supplies (KinopioAstro's Peach letter and its 1-ups): mPlayerLeftSupply 10 or more, the
+ * MissPointForLetter value at 20 (a miss 1, a game over 3), GameSequenceProgress's LuigiLeftSupplier (a Luigi file,
+ * synced at move type 6) */
+static u8 luigi_supply;
+int gd_luigi_left_supply(void) { return luigi_supply; }
+int gd_any_left_supply(void) /* isAnyPlayerLeftSupply */
+{
+    return gd.left_supply >= 10 || gd_value("MissPointForLetter") >= 20 || luigi_supply;
+}
+void gd_off_all_left_supply(void) /* offAllPlayerLeftSupply */
+{
+    if (gd.left_supply >= 10) gd.left_supply = 0;
+    if (gd_value("MissPointForLetter") >= 20) gd_set_value("MissPointForLetter", 0);
+    luigi_supply = 0;
+}
+void gd_add_miss_point(int n) /* GameDataHolder::addMissPoint: clamped to 0..20 */
+{
+    int v = gd_value("MissPointForLetter") + n;
+    gd_set_value("MissPointForLetter", v < 0 ? 0 : v > 20 ? 20 : v);
+}
 void gd_luigi_update(int move_type) /* update(GalaxyMoveArgument): 6 syncWithGameEventFlag, 7 (the title) STATE_NULL */
 {
+    if (move_type == 6) luigi_supply = (u8)gd_player_luigi(); /* LuigiLeftSupplier::syncWithFlags */
     if (move_type == 6 && luigi_state() == LS_HIDING) gd_luigi_set_hiding();
     if (move_type == 7) luigi_set(LS_NULL);
 }

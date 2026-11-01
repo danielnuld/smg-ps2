@@ -405,7 +405,8 @@ COMMON = ("PauseMenu", "SysInfoWindow", "SysInfoWindowMini", "GameOver", "TooBad
           "PointerGuidance",  # StarPointerGuidance
           "DPDPointer",  # StarPointerLayout's 1P pointer, StarPointerBlur's Blur.bti as its material "Blur"
           "SelectButton",  # YesNoLayout (the talks' yes / no)
-          "TimeLimit")  # TimeLimitLayout (Red / Black comets)
+          "TimeLimit",  # TimeLimitLayout (Red / Black comets)
+          "HitPointMeter")  # MarioMeter
 # ponytail: no DPDPointerSub (the 2P pointer) nor DPDPointerNumber (the player number, shown only with two remotes
 # connected): one pad here
 # the dome's galaxy select's (AstroDomeGalaxySelector): dome.bin, loaded in the AstroDome stages only; GalaxyInfo with
@@ -420,6 +421,9 @@ MAP = ("MapGrandGalaxy", "MapGalaxyIcon", "MapDomeIcon", "MapTitle", "MapGalaxyB
 # the ending's (StaffRoll: StaffRollLine, StaffRollTitle, StaffRollPicture with StaffRollTexture.arc's pictures as
 # materials named by their file, its InformationMessage): ending.bin, in the EpilogueDemoStage stage only
 ENDING = ("StaffRoll", "StaffRollTitle", "StaffRollPicture", "InformationWindow")
+# the new game's opening (PrologueDirector: ProloguePictureBook's "PrologueDemo", PrologueLetter's "PeachLetterMini"):
+# prologue.bin, in the PeachCastleGardenGalaxy stage only
+PROLOGUE = ("PrologueDemo", "PeachLetterMini")
 
 
 def build_mappics(fsp):
@@ -453,7 +457,7 @@ def build_mappics(fsp):
 # Luigi's letter (LuigiLetter: the pause menu's and KinopioAstro's) with each LuigiPicture<galaxy>.arc picture as a
 # material named by its galaxy (20 characters): letter.bin, loaded only in a scene where the letter can show
 # (main.c: getLuigiLetterGalaxyName / ...ForNPC)
-LETTER = ("LuigiLetter",)
+LETTER = ("LuigiLetter", "PeachLetter")
 
 
 def build_letter(fsp):
@@ -503,7 +507,7 @@ MSG_PREFIXES = ("Layout_", "System_", "Select_", "NAND_", "PauseMenu_", "PlayerL
                 "GalaxyNameShort_", "GalaxyStage_", "GalaxyInfo_", "GalaxyMap_", "GalaxyNamePlate_", "GetStar_",
                 "AllStarList_", "AstroName_", "CometName_", "RaceName_", "ConfirmEndGame", "Common_", "CONT_",
                 "PointerGuidance", "BButtonGuidance", "DPDGuidance", "WiiMessage", "Picture_", "AstroDome_", "RosettaMonologue",
-                "StaffList", "StaffRollInfo_", "InformationObserver")
+                "StaffList", "StaffRollInfo_", "InformationObserver", "PeachLetter_")
 
 
 def msgs_chunk(fsp, prefixes=MSG_PREFIXES):
@@ -705,6 +709,8 @@ if __name__ == "__main__":  # python tools/lyt.py data/fs/files [out/packs/menus
     print(f"letter.bin {dst.with_name('letter.bin').stat().st_size / 1024:.0f} KB")
     dst.with_name("ending.bin").write_bytes(build_ending(fsp))
     print(f"ending.bin {dst.with_name('ending.bin').stat().st_size / 1024:.0f} KB")
+    dst.with_name("prologue.bin").write_bytes(build_dome(fsp, PROLOGUE, None))
+    print(f"prologue.bin {dst.with_name('prologue.bin').stat().st_size / 1024:.0f} KB")
     dst.with_name("subs.bin").write_bytes(build_subs(fsp))
     print(f"subs.bin {dst.with_name('subs.bin').stat().st_size / 1024:.0f} KB")
     t2, t3 = build_title(fsp)
