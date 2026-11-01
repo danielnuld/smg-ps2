@@ -64,6 +64,17 @@ void menu_staffroll(int ev);         /* StaffRoll: 12 appear (to its pause), 13 
 int menu_staffroll_pause_or_end(void); /* StaffRoll::isPauseOrEnd */
 int menu_staffroll_on(void);         /* the staff roll over the screen (the scene not drawn, Mario waits) */
 void menu_result_start(void);        /* the result held for the star return demo */
+/* the star pointer (StarPointerLayout): a StarPointerModeEnum asked for this logic step (MR::startStarPointerMode* /
+ * requestStarPointerMode*: the lowest asked is set up), a touch (the pointing checks' onReaction with enableTouch;
+ * rumble: their "弱"; 0 when the pointer is not valid or not in the screen), SpaceCocoon's command stream on / off
+ * (each step), the layout drawn over the frame (main.c) */
+enum { SPM_SAVELOAD = 2, SPM_TITLE = 4, SPM_FILESELECT, SPM_SCENARIOSELECT, SPM_PAUSEMENU, SPM_CHOOSEYESNO, SPM_DEMO = 12,
+       SPM_DEMOMARIODEATH, SPM_POWERSTARGETDEMO, SPM_SPHEREONREACTION = 16, SPM_SPHEREFINGER, SPM_COMMANDSTREAM = 19,
+       SPM_BLUESTAR, SPM_BLUESTARREADY, SPM_GAME = 25 };
+void menu_pointer_request(int mode);
+int menu_pointer_touch(const void *id, int rumble);
+void menu_pointer_stream(int on);
+void menu_pointer_draw(void);
 int menu_guidance_request(const char *label, int timeout); /* StarPointerGuidance::request1PGuidance (each frame), 0 none */
 int menu_guidance_exists(void);      /* MR::isExistStarPointerGuidance */
 /* TimeLimitLayout (a Red / Black comet's): appear with the limit (frames), a frame on, kill; isReadyToTimeUp; frames left */
@@ -72,6 +83,9 @@ void menu_time_limit_update(void);
 void menu_time_limit_kill(void);
 int menu_time_limit_up(void);
 int menu_time_limit_left(void);        /* -1 not shown */
+/* YesNoLayout: MR::appearYesNoSelector(yes, no) (talk_se: TalkDirector's setYesNoSelectorSE), isYesNoSelected */
+void menu_yesno_appear(const char *yes, const char *no, int talk_se);
+int menu_yesno_selected(void);       /* 1 Yes, 2 No, 0 not yet */
 int menu_take_save_request(void);    /* main.c: 1 once per request */
 int menu_draw_screen(void); /* game_draw: 1 when a whole-screen menu (the scenario select) drew the frame */
 const u16 *msg_get(const char *label); /* MR::getLayoutMessageDirect / getGameMessageDirect (MSGS chunk), NULL none */
@@ -85,6 +99,7 @@ int menu_test_point(const char *pane); /* tests: the pointer on a pane of the op
 int game_pause_permitted(void);     /* GameScene::isPermitToPauseMenu */
 int game_story_busy(void);          /* StorySequenceExecutor playing its demo sequence (the save waits) */
 void game_cursor_menu(void);        /* the pointer moved by the right stick and shown (startStarPointerModePauseMenu) */
+int game_pointer_a(void);           /* the pointer's A held (testCorePadButtonA: R2, or X, the Wii's A also) */
 int game_scenario_stars(int n);     /* hasPowerStarInCurrentStage(n) */
 
 #endif
