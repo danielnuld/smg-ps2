@@ -181,11 +181,17 @@ static int cd_start(u32 lsn, u32 sectors, void *dst) /* a read begun; one refuse
         if (tries == 300) return 0;
     }
 }
-static int cd_failed(u32 lsn, u32 sectors) /* the read just finished: an error (logged) */
+static int cd_failed(u32 lsn, u32 sectors) /* the read just finished: an error (logged), read again twice at most; then
+                                              * taken as it came (Neutrino's sceCdGetError may stay set on good data:
+                                              * "packs: cannot read subs.bin" on the console) */
 {
+    static u32 err_lsn, errs;
     int e = sceCdGetError();
-    if (e != SCECdErNO) printf("cd: read %u + %u error %d, again\n", lsn, sectors, e);
-    return e != SCECdErNO;
+    if (e == SCECdErNO) return 0;
+    errs = lsn == err_lsn ? errs + 1 : 1;
+    err_lsn = lsn;
+    printf("cd: read %u + %u error %d%s\n", lsn, sectors, e, errs > 2 ? ", taken" : ", again");
+    return errs <= 2;
 }
 static int cd_read(u32 lsn, u32 sectors, void *dst, int wait)
 {
