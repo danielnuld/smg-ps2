@@ -356,7 +356,8 @@ def convert(files, name, texts, extra=None):
 COMMON = ("PauseMenu", "SysInfoWindow", "SysInfoWindowMini", "GameOver", "TooBad", "StageTitle", "IconAButton",
           "BackButton", "ScenarioSelect", "WipeKoopa", "ResultWindow", "CinemaFrame", "FlyMeter", "AirMeter",  # MarioSubMeter
           "PointerGuidance",  # StarPointerGuidance
-          "DPDPointer")  # StarPointerLayout's 1P pointer, StarPointerBlur's Blur.bti as its material "Blur"
+          "DPDPointer",  # StarPointerLayout's 1P pointer, StarPointerBlur's Blur.bti as its material "Blur"
+          "SelectButton")  # YesNoLayout (the talks' yes / no)
 # ponytail: no DPDPointerSub (the 2P pointer) nor DPDPointerNumber (the player number, shown only with two remotes
 # connected): one pad here
 # the dome's galaxy select's (AstroDomeGalaxySelector): dome.bin, loaded in the AstroDome stages only; GalaxyInfo with

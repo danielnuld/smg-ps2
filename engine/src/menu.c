@@ -206,7 +206,7 @@ static void btn_update(Btn *b)
 
 /* --- YesNoController ------------------------------------------------------------------------------------------- */
 enum { YN_SELECTING, YN_DECIDED, YN_DISAPPEAR, YN_SELECTED, YN_NOTSELECTED };
-typedef struct { LytInst *host; Btn yes, no; u8 on; Nrv n; } YesNo;
+typedef struct { LytInst *host; Btn yes, no; u8 on, se_set; int se[3]; Nrv n; } YesNo; /* se: setSE's cursor / yes / no */
 
 static void yn_init(YesNo *y, LytInst *host)
 {
@@ -215,6 +215,11 @@ static void yn_init(YesNo *y, LytInst *host)
     btn_init(&y->yes, host, "Right", "BoxRight", 0, 1); y->yes.end_disappear = 0;
     btn_init(&y->no, host, "Left", "BoxLeft", 0, 1); y->no.end_disappear = 0;
     y->n.next = YN_SELECTING;
+}
+static int yn_se(const YesNo *y, int k) /* mCursorSE / mYesSE / mNoSE, else sDefault*SE */
+{
+    static const int def[3] = {SE_SY_TALK_FOCUS_ITEM, SE_SY_TALK_SELECT_YES, SE_SY_TALK_SELECT_NO};
+    return y->se_set ? y->se[k] : def[k];
 }
 static void yn_appear(YesNo *y) { y->on = 1; nrv_set(&y->n, YN_SELECTING); }
 static int yn_yes(const YesNo *y) { return y->yes.selected; }
@@ -226,11 +231,12 @@ static void yn_update(YesNo *y)
     switch (nrv_begin(&y->n)) {
     case YN_SELECTING:
         if (FIRST(&y->n)) { btn_appear(&y->yes); btn_appear(&y->no); }
-        if (btn_pointing_trigger(&y->yes) || btn_pointing_trigger(&y->no)) se_start(SE_SY_TALK_FOCUS_ITEM, NULL);
+        if (btn_pointing_trigger(&y->yes)) se_start(yn_se(y, 0), NULL);
+        if (btn_pointing_trigger(&y->no)) se_start(yn_se(y, 0), NULL);
         if (btn_try_select(&y->yes) || btn_try_select(&y->no)) nrv_set(&y->n, YN_DECIDED);
         break;
     case YN_DECIDED:
-        if (FIRST(&y->n)) se_start(y->yes.selected ? SE_SY_TALK_SELECT_YES : SE_SY_TALK_SELECT_NO, NULL);
+        if (FIRST(&y->n)) se_start(yn_se(y, y->yes.selected ? 1 : 2), NULL);
         if ((y->yes.selected && btn_decided_wait(&y->yes)) || (!y->yes.selected && btn_decided_wait(&y->no)))
             nrv_set(&y->n, YN_DISAPPEAR);
         break;
@@ -315,6 +321,36 @@ static void si_update(SysInfo *w)
 }
 
 static void si_disappear(SysInfo *w) { if (w->alive) nrv_set(&w->n, SI_DISAPPEAR); } /* SysInfoWindow::disappear */
+
+/* --- YesNoLayout (GameSceneLayoutHolder's "Yes/Noレイアウト": SelectButton): appearYesNoSelector sets its Right
+ * (yes) / Left (no) texts and its YesNoController's appear; Selecting kills it once the controller is done; the
+ * pointer in its ChooseYesNo mode meanwhile. ponytail: no LeftText / RightText effects (its EffectKeeper), no
+ * information message (setInformationMessage: none of the talks' passes one) */
+static struct { LytInst *l; YesNo yn; u8 alive; } ynl;
+void menu_yesno_appear(const char *yes, const char *no, int talk_se)
+{
+    if (!ynl.l) return;
+    ynl.yn.se_set = (u8)talk_se; /* TalkDirector: setYesNoSelectorSE (a branch not a yes / no) or resetYesNoSelectorSE */
+    ynl.yn.se[0] = SE_SY_TALK_FOCUS_ITEM; ynl.yn.se[1] = ynl.yn.se[2] = SE_SY_TALK_SELECT_YES;
+    ynl.alive = 1; /* appear: LayoutActor::appear, mController->appear */
+    yn_appear(&ynl.yn);
+    lyt_set_text_rec(ynl.l, "Right", msg_get(yes)); /* setSelectMessage */
+    lyt_set_text_rec(ynl.l, "Left", msg_get(no));
+}
+int menu_yesno_selected(void) /* isYesNoSelected: 1 Yes, 2 No (isYesNoSelectedYes), 0 not yet */
+{
+    if (!ynl.l) return 1; /* (menus.bin packed without SelectButton: Yes, no talk left hanging) */
+    return nrv_is(&ynl.yn.n, YN_SELECTED) ? (yn_yes(&ynl.yn) ? 1 : 2) : 0;
+}
+static void ynl_update(void)
+{
+    if (!ynl.alive) return;
+    if (!ynl.yn.on) { ynl.alive = 0; return; } /* exeSelecting: kill (LayoutActor::movement: its nerve, control) */
+    menu_pointer_request(SPM_CHOOSEYESNO); /* startStarPointerModeChooseYesNo */
+    game_cursor_menu();
+    yn_update(&ynl.yn);
+    lyt_update(ynl.l);
+}
 
 /* --- SaveDataHandleSequence (startSave): "save?" (System_Save00, or System_Save07 save and quit), the save with
  * System_Save01 for at least 120 frames, System_Save02; with confirm-remind a No asks ConfirmEndGame. The current
@@ -1326,6 +1362,8 @@ void menu_init(const Scene *s)
     srl_init();
     sp_init();
     spg_init();
+    memset(&ynl, 0, sizeof ynl);
+    if ((ynl.l = lyt_new("SelectButton"))) yn_init(&ynl.yn, ynl.l);
     fs_init(s);
     gm_init();
     u32 rgb;
@@ -1339,7 +1377,7 @@ int menu_paused(void) { return pm.alive; }
 int menu_test_point(const char *pane)
 {
     float x, y;
-    LytInst *l = sv.win.alive ? sv.win.l : pm.win.alive && lyt_pane(pm.win.l, pane) >= 0 ? pm.win.l : pm.l;
+    LytInst *l = ynl.alive ? ynl.l : sv.win.alive ? sv.win.l : pm.win.alive && lyt_pane(pm.win.l, pane) >= 0 ? pm.win.l : pm.l;
     if (!lyt_pane_center(l, pane, &x, &y)) return 0;
     game_set_cursor(x, y);
     return 1;
@@ -1428,6 +1466,7 @@ int menu_update(void)
     llt_update();
     srl_update();
     spg_update();
+    ynl_update();
     if (sr.delay && --sr.delay == 0 && sr.l) { /* the clear's demo sequence: StageResultInformer, then the save */
         sr.alive = 1; sr.n.next = -1; nrv_set(&sr.n, SR_APPEARSTAR);
     }
@@ -4206,6 +4245,7 @@ void menu_draw(void)
     mlay_draw();
     if (spg.l && !nrv_is(&spg.n, SPG_ENDWAIT)) { render_world_done(); lyt_draw(spg.l); } /* StarPointerGuidance */
     if (mono.on) { render_world_done(); lyt_draw(mono.l); iab_draw(mono_ab()); }
+    if (ynl.alive) { render_world_done(); lyt_draw(ynl.l); }
     gm_draw();
     if (pm.alive) {
         render_world_done(); /* the scene under the menu (LayoutOnPause draws after everything) */
