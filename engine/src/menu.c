@@ -43,6 +43,7 @@ int menu_file_selecting(void);
 static int fs_title(void);
 static void mlay_update(void);
 static void hm_init(void);
+static void tl_init(void);
 static void mlay_draw(void);
 static void ss_update(void);
 static void wipe_update(void);
@@ -1350,6 +1351,7 @@ void menu_init(const Scene *s)
     memset(&sr, 0, sizeof sr);
     subm_init();
     hm_init();
+    tl_init();
     sr.l = lyt_new("ResultWindow");
     sr.info = lyt_new("InformationWindow"); /* MR::appearInformationMessageCenter's (NULL where not loaded) */
     if (sv_prompt && seq_take_result(&sr.r)) { /* a star return demo shows it at its wait's end (menu_result_start) */
@@ -1660,6 +1662,118 @@ void menu_meter_update(void) /* LayoutActor::movement: the nerve, control, the a
     lyt_update(hm.l);
 }
 static void hm_draw(void) { if (hm.l && hm.alive && !hm.hidden) lyt_draw(hm.l); }
+/* --- TimeLimitLayout (Screen/TimeLimitLayout.cpp: "TimeLimit"), CometEventExecutorTimeLimit's (DisplayModeOnNormal:
+ * no fade out): Appear, then the count; at a sTimingTable time left the TIME grows (ScaleUp 8 frames, TimeSignal's
+ * blinks while it keeps), the last 10 s TimeLimit's pulse and the count sounds; at 0 TimeUpReady (the executor kills
+ * Mario). A pane scale set by control is overwritten while Appear (it has scale tracks) stays bound on its channel,
+ * as nw4r's bound animation does. Moved by game.c each frame its scene moves (menu_time_limit_update) */
+enum { TL_APPEAR, TL_COUNTDOWN, TL_SCALEUP, TL_SCALEKEEP, TL_SCALEDOWN, TL_FADEOUT, TL_TIMEUPREADY };
+typedef struct { int frame, max, dir; } ValCtl; /* ValueControl */
+static void vc_reset(ValCtl *v) { v->frame = v->dir > 0 ? 0 : v->max; }
+static void vc_dir(ValCtl *v, int dir) { v->dir = dir; vc_reset(v); } /* setDirToOne / ZeroResetFrame */
+static void vc_update(ValCtl *v) { if ((v->dir > 0 && v->frame != v->max) || (v->dir < 0 && v->frame != 0)) v->frame += v->dir; }
+static float vc_value(const ValCtl *v) { return (float)v->frame / v->max; }
+static float ease_in_out(float x) { return (1.0f - cosf(x * 3.14159265f)) / 2.0f; } /* getEaseInOutValue(x, 0, 1, 1) */
+typedef struct { u32 start, keep; u8 up, down, fade; } TlTiming;
+static const TlTiming tl_timing[5] = { /* sTimingTable */
+    {18000, 100, 1, 1, 1}, {10800, 100, 1, 1, 1}, {3600, 100, 1, 1, 1}, {1800, 100, 1, 1, 0}, {600, 600, 0, 0, 0}};
+static struct { LytInst *l; u8 alive, appear_bound; u32 time, limit; const TlTiming *cur; ValCtl scale, fade; Nrv n; u16 text[24]; } tl;
+
+static void tl_text(void) /* updateTextBox: makeMinuteAndSecondString(limit - time + 59) into Number */
+{
+    u32 f = tl.limit - tl.time + 59;
+    int arg[2] = {f >= 216000 ? 59 : (int)(f / 3600), f >= 216000 ? 59 : (int)(f % 3600 / 60)}, na = 0, n = 0;
+    const u16 *s = msg_get("System_Time001"); /* ReplaceArgs: its number tags (group 6) the arguments in turn */
+    for (; s && *s && n < 20; ) {
+        if (*s == 0x1A) {
+            int len = 4 + (s[3] + 1) / 2;
+            if (s[1] == 6 && na < 2) {
+                char d[8];
+                int k = snprintf(d, sizeof d, s[2] == 5 ? "%02d" : "%d", arg[na++]);
+                for (int j = 0; j < k && n < 20; j++) tl.text[n++] = (u16)d[j];
+            }
+            s += len;
+        } else tl.text[n++] = *s++;
+    }
+    tl.text[n] = 0;
+    lyt_set_text_rec(tl.l, "Number", tl.text);
+}
+static void tl_start(const char *anim) { lyt_start(tl.l, anim, 0); tl.appear_bound = !strcmp(anim, "Appear"); }
+static const TlTiming *tl_current_timing(void) /* getCurrentTiming */
+{
+    for (int i = 0; i < 5; i++) {
+        u32 start = tl_timing[i].start, frame = start - tl_timing[i].keep;
+        if (tl.limit >= frame && start >= tl.limit) continue;
+        u32 left = tl.limit - tl.time;
+        if (frame > left || left >= start) continue;
+        return &tl_timing[i];
+    }
+    return NULL;
+}
+static int tl_update_normal(void) /* updateNormal (mIsSuspend never set) */
+{
+    if (tl.time != tl.limit) { tl.time++; tl_text(); } /* addFrame */
+    u32 left = tl.limit - tl.time;
+    if (left <= 120) { if (left % 60 == 0 && left) se_start(SE_SY_E3_TIMER_COUNT_4, NULL); }
+    else if (left <= 360) { if (left % 60 == 0) se_start(SE_SY_E3_TIMER_COUNT_2, NULL); }
+    else if (left <= 600) { if (left % 60 == 0) se_start(SE_SY_E3_TIMER_COUNT_1, NULL); }
+    if (left == 600) tl_start("TimeLimit");
+    if (tl.time == tl.limit) { nrv_set(&tl.n, TL_TIMEUPREADY); return 1; }
+    return 0;
+}
+static void tl_init(void) { memset(&tl, 0, sizeof tl); tl.l = lyt_new("TimeLimit"); } /* (with the scene: not above its mark) */
+void menu_time_limit_appear(int frames) /* appear (resetFrame), setTimeLimit */
+{
+    if (!tl.l) return;
+    tl.limit = (u32)frames; tl.time = 0;
+    tl_text();
+    tl.scale.max = 8; tl.scale.dir = 1; tl.scale.frame = 8; /* sScaleUpDownFrame, setOne */
+    tl.fade.max = 60; tl.fade.dir = 1; tl.fade.frame = 60;  /* sFadeinoutFrame, setOne */
+    tl.cur = &tl_timing[0];
+    tl.alive = 1;
+    tl.n.next = -1; nrv_set(&tl.n, TL_APPEAR);
+}
+void menu_time_limit_kill(void) { tl.alive = 0; }
+int menu_time_limit_up(void) { return tl.alive && nrv_is(&tl.n, TL_TIMEUPREADY); } /* isReadyToTimeUp */
+int menu_time_limit_left(void) { return tl.alive ? (int)(tl.limit - tl.time) : -1; }
+void menu_time_limit_update(void) /* LayoutActor::movement: the nerve, control, the animations */
+{
+    if (!tl.alive) return;
+    switch (nrv_begin(&tl.n)) {
+    case TL_APPEAR:
+        if (FIRST(&tl.n)) { se_start(SE_SY_E3_TIMER_SCALE_UP, NULL); tl_start("Appear"); }
+        if (lyt_stopped(tl.l, 0)) nrv_set(&tl.n, TL_COUNTDOWN); /* setNerveAtAnimStopped */
+        break;
+    case TL_COUNTDOWN: {
+        if (tl_update_normal()) break;
+        const TlTiming *t = tl_current_timing();
+        if (t) { tl.cur = t; se_start(SE_SY_E3_TIMER_SCALE_UP, NULL); nrv_set(&tl.n, TL_SCALEUP); }
+        break;
+    }
+    case TL_SCALEUP:
+        if (FIRST(&tl.n)) { vc_dir(&tl.scale, 1); tl.fade.dir = 1; tl.fade.frame = tl.fade.max; }
+        if (tl_update_normal()) break;
+        if (tl.scale.frame == tl.scale.max) nrv_set(&tl.n, TL_SCALEKEEP);
+        break;
+    case TL_SCALEKEEP:
+        if (FIRST(&tl.n) && tl.cur->up) tl_start("TimeSignal");
+        if (tl_update_normal()) break;
+        if (tl.n.step > (int)tl.cur->keep) nrv_set(&tl.n, tl.cur->down ? TL_SCALEDOWN : TL_COUNTDOWN); /* isGreaterStep */
+        break;
+    case TL_SCALEDOWN:
+        if (FIRST(&tl.n)) vc_dir(&tl.scale, -1);
+        if (tl_update_normal()) break;
+        if (tl.scale.frame == tl.scale.max) nrv_set(&tl.n, TL_COUNTDOWN); /* (_35: no Fadeout) */
+        break;
+    case TL_TIMEUPREADY: break;
+    }
+    nrv_end(&tl.n);
+    vc_update(&tl.fade);
+    vc_update(&tl.scale);
+    lyt_set_pane_scale(tl.l, "TimeLimit", tl.appear_bound ? 1.0f : 1.0f + ease_in_out(vc_value(&tl.scale)) * 0.5f);
+    lyt_set_alpha(tl.l, ease_in_out(vc_value(&tl.fade)));
+    lyt_update(tl.l);
+}
 
 int menu_update(void)
 {
@@ -4450,6 +4564,7 @@ void menu_draw(void)
     if (sr.alive) { render_world_done(); lyt_draw(sr.l); if (sr.info && (sr.n.cur == SR_INFO || sr.n.cur == SR_INFOEND)) lyt_draw(sr.info); }
     if (dmu.on) { render_world_done(); dmu_draw(); }
     mlay_draw();
+    if (tl.alive) { render_world_done(); lyt_draw(tl.l); } /* TimeLimitLayout */
     if (spg.l && !nrv_is(&spg.n, SPG_ENDWAIT)) { render_world_done(); lyt_draw(spg.l); } /* StarPointerGuidance */
     if (mono.on) { render_world_done(); lyt_draw(mono.l); iab_draw(mono_ab()); }
     if (ynl.alive) { render_world_done(); lyt_draw(ynl.l); }
