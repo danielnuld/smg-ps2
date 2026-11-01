@@ -1283,6 +1283,16 @@ int main(void)
 #if defined(PACKS) && defined(GATEWAY_TEST)
         pad_force = game_test_gateway(frame) && frame % 40 < 3 ? PAD_CROSS : 0; /* A tapped while a talk waits */
 #endif
+#if defined(PACKS) && defined(SPINGATE_TEST)
+        { /* the spin's gate (スピン権利): Square tapped every 200 frames while Mario is free, his spin timer 2 frames
+           * after (0: no spin). As `gateway` with XF=-DSPINGATE_TEST on HeavensDoorGalaxy/1: none until the spin is explained */
+#ifndef GATEWAY_TEST
+            pad_force = 0;
+#endif
+            if (game_test_free() && frame % 200 < 3) pad_force |= PAD_SQUARE;
+            if (game_test_free() && frame % 200 == 4) printf("spingate test f %u: spin timer %d\n", frame, game_test_spin_timer());
+        }
+#endif
 #if defined(PACKS) && defined(PROLOGUE_TEST)
         if (frame == 300 || frame == 700) printf("prologue test f %u: movie starter %d\n", frame, game_test_movie(frame == 700));
 #endif
@@ -1902,9 +1912,24 @@ int main(void)
 #endif
 #ifdef NPC_TEST
         { /* Mario beside each turning NPC in turn (300 frames each): their turn, tilt and action */
+#ifdef NPC_LOOK
+            { extern void game_test_npc_look(unsigned); game_test_npc_look(frame); }
+#else
             if (frame >= 150 && frame % 300 == 150) printf("npc test f %u: visit row %d\n", frame, game_test_npc_visit((int)(frame - 150) / 300));
             if (frame >= 150 && frame % 60 == 0) game_test_npc_turn((int)frame);
+#endif
         }
+#endif
+#ifdef PULLBACK_TEST
+    {   /* frames from Mario free + 150 */
+        static u32 f0;
+        u32 mf = frame;
+        extern int game_test_busy(void);
+        extern void game_test_pullback(unsigned);
+        pad_force = game_test_busy() && mf % 40 < 3 ? PAD_CROSS : 0; /* A tapped through the opening's talks */
+        if (!f0 && mf > 30 && game_test_free() && !game_test_busy()) f0 = mf;
+        if (f0) game_test_pullback(mf - f0 + 150);
+    }
 #endif
 #ifdef HANACHAN_TEST
     {   /* frames from Mario free (the flight in over) + 150 */
@@ -2346,14 +2371,7 @@ int main(void)
             render_text(16, 54, line);
         }
 #endif
-        { /* the star pointer's cursor: a yellow cross, white in the middle */
-            float cx, cy;
-            if (game_cursor(&cx, &cy)) {
-                render_rect(cx - 8, cy - 2, 16, 4, 0xFF, 0xD0, 0x20);
-                render_rect(cx - 2, cy - 8, 4, 16, 0xFF, 0xD0, 0x20);
-                render_rect(cx - 1, cy - 1, 2, 2, 0xFF, 0xFF, 0xFF);
-            }
-        }
+        menu_pointer_draw(); /* the star pointer (StarPointerDirector::draw: last) */
         if ((frame & 255) == 0) {
             char dbg[128];
             game_debug(dbg, sizeof dbg);
