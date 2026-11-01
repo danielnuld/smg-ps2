@@ -9281,8 +9281,8 @@ static void draw_sambo_heads(void)
  * nodes: switches, the owner's event function), Term. Normal / event talks are a demo (Mario waits) and start their
  * message's camera (CameraTalk, or its 会話 multi-actor camera).
  * The event and sign balloons are their layouts (tools/layout.py: BRLYT panes, TPL textures, window frames, the beak).
- * ponytail: the short (stretch) balloon a flat pane, the Appear / End animations a 21-frame fade, no sounds, no yes / no selector (a select talk goes on
- * as if Yes), the already-read flags are not saved */
+ * ponytail: the short (stretch) balloon a flat pane, the Appear / End animations a 21-frame fade, no sounds, the already-read flags are not
+ * saved */
 typedef struct { char label[32]; u16 row, node, msg, pad; } TkCtl;
 typedef struct { u8 type, group; u16 index, next, t0, t1, pad; } TkNode;
 typedef struct { u32 off; u16 cam; u8 snd, camtype, talk, balloon; s8 a, b; } TkMsg;
@@ -10100,16 +10100,38 @@ static void td_exe_talk(void)
     td_set(TD_NEXT);
     td_exe_next();
 }
-/* TalkDirector::exeSlct: the yes / no selector (appearYesNoSelector), at its choice rootNodeSel and rootNodePre.
- * ponytail: no YesNoLayout (the SelectButton layout and Select_<branch>_Yes / _No are not converted): A answers Yes */
+/* TalkMessageCtrl::getNextNodeBranch's argument where its condition is 0 (the yes / no choice), else -1 */
+static int tk_select_arg(const Talker *t)
+{
+    int nx = tk_next_node(t);
+    return nx != TK_NONE && tk_node[nx].type == 2 && tk_node[nx].index == 0 ? tk_node[nx].next : -1;
+}
+/* TalkDirector::appearYesNoSelector: Select_<getBranchID>_Yes / _No; isSelectYesNo (not arguments 14, 16) keeps the
+ * selector's own sounds, the other choices SE_SY_TALK_SELECT_YES for both */
+static void td_appear_yesno(const Talker *t)
+{
+    static const char *const id[19] = {"PenguinRace", "SwimmingSchool", "PenguinRace", "BombTimeAttackLv1",
+        "PhantomTeresaRacer", "BombTimeAttackLv2", "TrialSurfingCoach", "TrialSurfingHowTo", "DeathPromenadeTeresaRacer",
+        "RosettaFinalBattle", "CometTico", "TransformTico", "ChallengeSurfingCoach", "TicoShopExchange", "TicoShopWhich",
+        "KinopioPurple", "CometTicoTell", "TrialTamakoroHowTo", "KnockOnTheDoor"};
+    int a = tk_select_arg(t);
+    const char *b = a >= 0 && a < 19 ? id[a] : "(null)";
+    char yes[64], no[64];
+    snprintf(yes, sizeof yes, "Select_%s_Yes", b);
+    snprintf(no, sizeof no, "Select_%s_No", b);
+    menu_yesno_appear(yes, no, !(a >= 0 && a != 14 && a != 16));
+}
+/* TalkDirector::exeSlct: the yes / no selector (appearYesNoSelector, menu.c's YesNoLayout), at its choice
+ * rootNodeSel and rootNodePre */
 static void td_exe_slct(void)
 {
     int k = td.st;
     Talker *t = &talkers[k];
-    if (td.step == 1) { tk_yesno = -1; se_start(SE_SM_TALKBLN_OPEN, NULL); }
+    if (td.step == 1) { tk_yesno = -1; td_appear_yesno(t); se_start(SE_SM_TALKBLN_OPEN, NULL); }
     t->state = 3;
-    if (td.step > 1 && pad_pressed(PAD_CROSS)) { tk_yesno = 1; se_start(SE_SY_TALK_SELECT_YES, NULL); }
-    if (tk_yesno < 0) return;
+    int sel = menu_yesno_selected();
+    if (!sel) return;
+    tk_yesno = sel == 1; /* isYesNoSelectedYes; resetYesNoSelectorSE: the next appear sets them again */
     ts_clos();
     td.f50 = 1;
     if (t->root_auto) { /* rootNodeSel: forwardFlowNode, forwardCurrentBranchNode, recordTempFlowNode */
@@ -10836,6 +10858,15 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
     }
     if (phase == 0 && (TALK_CLS != 1 ? t > 360 : test_walk_to(vadd(p, vmul(z, 170.0f)), 60.0f))) { phase = 1; t = 0; }
     if (phase == 1 && t > 25 && (t - 25) % 45 < 5) pad_force = PAD_CROSS;
+#ifndef TALK_NO
+#define TALK_NO 0
+#endif
+    if (td.nrv == TD_SLCT) { /* the yes / no selector: the pointer on Yes (XF=-DTALK_NO=1: No), A once it is in */
+        static int slct;
+        if (++slct == 60) printf("talk test f %d: pointer on %s %d\n", frame, TALK_NO ? "BoxLeft" : "BoxRight",
+                                 menu_test_point(TALK_NO ? "BoxLeft" : "BoxRight"));
+        pad_force = slct == 80 ? PAD_CROSS : 0;
+    }
     if (frame % 30 == 0)
         printf("talk test f %d: phase %d sign row %d, mario %d from it, director %d, balloon %d, abtn %d, yes/no %d, step %d\n", frame, phase,
                in->row, (int)vlen(vsub(mario->pos, p)), td.nrv, tk_bsign.nrv, tk_abtn.nrv, tk_yesno, row_step[in->row]);
