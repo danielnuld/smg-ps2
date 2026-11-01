@@ -988,6 +988,9 @@ static void scene_load(void)
     render_load_textures(&scene, 0, 0);
     game_stage_name = scen;
     game_init(&scene, blob);
+#ifdef TALK_PEACH /* (again: game_init's gd_init made the game data fresh) */
+    if (!gd_any_left_supply()) gd_add_miss_point(20);
+#endif
     mem_mark(&base_mark);
     game_set_piece_follow_limit(!strcmp(scen, "EggStarGalaxy/2"));
     { /* CometEventKeeper::sTimeLimitInfoTable: the Red / Black comet scenarios' limits (seconds) */
