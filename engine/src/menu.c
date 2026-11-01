@@ -3132,7 +3132,6 @@ static void fs_init(const Scene *s)
     fsl.m_sky = scene_model(s, "CometNearOrbitSky");
     for (int i = 0; i < 5; i++) fsl.m_fellow[i] = scene_model(s, fs_fellow[i]);
     if (!fsl.logo || !fsl.press || !fsl.op || !fsl.back_l || !fsl.info) { printf("file select: layouts missing\n"); return; }
-    lyt_hide_for_good(fsl.logo, "PicLogoGalaxy"); /* ponytail: its space through the letters' mask shows as a box */
     btn_init(&fsl.btn[FB_START], fsl.op, "StartButton", "BoxStartButton", 0, 1);
     btn_init(&fsl.btn[FB_DELETE], fsl.op, "DeleteButton", "PicDelete", 0, 1);
     btn_init(&fsl.btn[FB_COPY], fsl.op, "CopyButton", "PicCopy", 0, 1);

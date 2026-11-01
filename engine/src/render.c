@@ -491,9 +491,11 @@ static int uploads[MAX_UPLOADS], nuploads;
 static qword_t *upload_chain;
 
 /* PSMT4: pixels in 128-pixel rows, then the 16-entry CLUT (one block). PSMT8 (skies): the 256-entry CLUT first (16 x
- * 16 PSMCT32: 4 blocks, 4-aligned so they make one square), then the pixels in rows of 128 or 256. */
+ * 16 PSMCT32: 4 blocks, 4-aligned so they make one square), then the pixels in rows of 128 or more. PSMCT32 (the
+ * title's full colour layouts, tools/tex.py to_ps2_full): the pixels alone, from a page's start. */
 #define T8(t) ((t)->psm == GS_PSM_8)
-#define TBW(t) (T8(t) && (t)->w > 128 ? 4 : 2)
+#define T32(t) ((t)->psm == GS_PSM_32)
+#define TBW(t) (T32(t) ? ((t)->w > 64 ? (t)->w / 64 : 1) : T8(t) && (t)->w > 128 ? (t)->w / 64 : 2)
 /* Blocks a w x h image spans from its base block in a buffer `bw` pixels wide: the GS swizzles the blocks of a page
  * (PSMT4: 128 x 128 pages of 32 x 16 blocks; PSMT8: 128 x 64 pages of 16 x 16), so a strip shorter than a page
  * reaches further than its size says (128 x 32 PSMT4 touches blocks 0-3 and 8-11). Highest block touched + 1. */
@@ -501,13 +503,17 @@ static const unsigned char blk4[8][4] = {{0, 2, 8, 10}, {1, 3, 9, 11}, {4, 6, 12
                                          {16, 18, 24, 26}, {17, 19, 25, 27}, {20, 22, 28, 30}, {21, 23, 29, 31}};
 static const unsigned char blk8[4][8] = {{0, 1, 4, 5, 8, 9, 12, 13}, {2, 3, 6, 7, 10, 11, 14, 15},
                                          {16, 17, 20, 21, 24, 25, 28, 29}, {18, 19, 22, 23, 26, 27, 30, 31}};
-static int footprint(int t8, int w, int h, int bw)
+static const unsigned char blk32[4][8] = {{0, 1, 4, 5, 16, 17, 20, 21}, {2, 3, 6, 7, 18, 19, 22, 23},
+                                          {8, 9, 12, 13, 24, 25, 28, 29}, {10, 11, 14, 15, 26, 27, 30, 31}};
+static int footprint(int psm, int w, int h, int bw) /* (PSMCT32: 64 x 32 pages of 8 x 8 blocks) */
 {
-    int bkw = t8 ? 16 : 32, bkh = 16, pw = 128, ph = t8 ? 64 : 128, top = 0;
+    int t8 = psm == GS_PSM_8, t32 = psm == GS_PSM_32;
+    int bkw = t32 ? 8 : t8 ? 16 : 32, bkh = t32 ? 8 : 16, pw = t32 ? 64 : 128, ph = t32 ? 32 : t8 ? 64 : 128, top = 0;
     for (int y = 0; y < h; y += bkh)
         for (int x = 0; x < w; x += bkw) {
             int page = (y / ph) * (bw / pw) + x / pw;
-            int b = t8 ? blk8[(y % ph) / bkh][(x % pw) / bkw] : blk4[(y % ph) / bkh][(x % pw) / bkw];
+            int b = t32 ? blk32[(y % ph) / bkh][(x % pw) / bkw] : t8 ? blk8[(y % ph) / bkh][(x % pw) / bkw]
+                        : blk4[(y % ph) / bkh][(x % pw) / bkw];
             if (page * 32 + b + 1 > top) top = page * 32 + b + 1;
         }
     return top;
@@ -516,13 +522,15 @@ static int footprint(int t8, int w, int h, int bw)
 /* PSMT4 level k (0 = base): in a 128-pixel-wide buffer; the mips follow the base, the CLUT comes last */
 static int lvl_blocks(const TexEntry *t, int k)
 {
-    return footprint(0, t->w >> k, t->h >> k, 128);
+    return footprint(GS_PSM_4, t->w >> k, t->h >> k, 128);
 }
 
 static int blocks_of(const TexEntry *t)
 {
+    if (T32(t))
+        return footprint(GS_PSM_32, t->w, t->h, 64 * TBW(t));
     if (T8(t))
-        return 4 + footprint(1, t->w, t->h, 64 * TBW(t));
+        return 4 + footprint(GS_PSM_8, t->w, t->h, 64 * TBW(t));
     int n = 1;
     for (int k = 0; k <= t->nmip; k++)
         n += lvl_blocks(t, k);
@@ -555,6 +563,11 @@ static void flush_uploads(void)
     for (int i = 0; i < nuploads; i++) {
         int t = uploads[i];
         const TexEntry *e = tex_scene->tex[t].e;
+        if (T32(e)) {
+            q = draw_texture_transfer(q, (void *)(tex_scene->tex[t].base + e->pix_off), e->w, e->h, GS_PSM_32,
+                                      tex_block[t] * 64, 64 * TBW(e));
+            continue;
+        }
         if (T8(e)) {
             q = draw_texture_transfer(q, (void *)(tex_scene->tex[t].base + e->pix_off), e->w, e->h, GS_PSM_8,
                                       (tex_block[t] + 4) * 64, 64 * TBW(e));
@@ -597,7 +610,7 @@ static int tex_need(u32 t)
     }
     const TexEntry *e = tex_scene->tex[t].e;
     int n = tex_nblk[t], b;
-    while ((b = tex_alloc(n, T8(e) ? 32 : 1)) < 0) { /* PSMT8 from a page's start: from a 4-block step, the font's
+    while ((b = tex_alloc(n, T8(e) || T32(e) ? 32 : 1)) < 0) { /* PSMT8 from a page's start: from a 4-block step, the font's
                                                      * 256 x 256 glyph sheet and the title's copyright under it overwrote
                                                      * each other (PCSX2 hardware and software alike) */
         /* no room: evict the least recently used texture whose chain has completed */
@@ -624,7 +637,8 @@ static int tex_need(u32 t)
     for (int i = b; i < b + n; i++)
         block_tex[i] = t;
     qword_t *p = tex_packets + TEXP * t;
-    p[1].dw[0] = T8(e) ? GS_SET_TEX0(b + 4, TBW(e), GS_PSM_8, e->tw, e->th, 1, 0, b, GS_PSM_32, 0, 0, 1)
+    p[1].dw[0] = T32(e) ? GS_SET_TEX0(b, TBW(e), GS_PSM_32, e->tw, e->th, 1, 0, 0, 0, 0, 0, 0)
+               : T8(e) ? GS_SET_TEX0(b + 4, TBW(e), GS_PSM_8, e->tw, e->th, 1, 0, b, GS_PSM_32, 0, 0, 1)
                        : GS_SET_TEX0(b, 2, GS_PSM_4, e->tw, e->th, 1, 0, b + n - 1, GS_PSM_32, 0, 0, 1);
     if (!T8(e) && e->nmip) { /* MIPTBP1: levels 1-3 after the base, rows of 128 (TBW 2) */
         u64 b1 = b + lvl_blocks(e, 0), b2 = b1 + lvl_blocks(e, 1), b3 = b2 + lvl_blocks(e, 2);
