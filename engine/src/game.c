@@ -34517,7 +34517,11 @@ static void gw_play(int row, const char *cls, const char *clip, int interp) /* M
     char n[64];
     snprintf(n, sizeof n, "%s/%s", cls, clip);
     for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
-    if (in && in->anim) anim_start(in->anim, n, interp);
+    if (in && in->anim && !anim_start(in->anim, n, interp)) {
+#ifdef GATEWAY_TEST
+        printf("gateway: no clip %s\n", n);
+#endif
+    }
 }
 static int gw_stopped(int row) { Inst *in = gw_inst(row); return !in || !in->anim || (in->anim->done && !in->anim->loop); }
 static void gw_place(GwRabbit *r) /* its base matrix from the body (setBaseTRMtx: the up / front quat) */
@@ -34538,7 +34542,8 @@ static void gw_body_init(GwRabbit *r, int row)
     kuribo_init(&r->k);
     r->talk = -1; r->sw_was = 0;
 }
-static const char *gw_rcls(const GwRabbit *r) { return r->baby ? "TrickRabbitBaby" : "TrickRabbit"; }
+static const char *gw_rcls(const GwRabbit *r) /* slice.py names the TrickRabbit archive's clips after the placed class */
+{ return r->baby ? "TrickRabbitBaby" : sc->types + 32 * sc->objs[r->k.row].type; }
 static void gw_ract(GwRabbit *r, const char *clip) { gw_play(r->k.row, gw_rcls(r), clip, 4); }
 /* the binder's step with its gravity: onCalcGravity, the move, the ground / wall */
 static void gw_move(GwRabbit *r)
