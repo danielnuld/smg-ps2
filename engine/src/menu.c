@@ -346,7 +346,8 @@ static void ynl_update(void)
 {
     if (!ynl.alive) return;
     if (!ynl.yn.on) { ynl.alive = 0; return; } /* exeSelecting: kill (LayoutActor::movement: its nerve, control) */
-    game_cursor_menu(); /* startStarPointerModeChooseYesNo */
+    menu_pointer_request(SPM_CHOOSEYESNO); /* startStarPointerModeChooseYesNo */
+    game_cursor_menu();
     yn_update(&ynl.yn);
     lyt_update(ynl.l);
 }
