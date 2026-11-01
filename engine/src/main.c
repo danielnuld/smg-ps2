@@ -2346,14 +2346,7 @@ int main(void)
             render_text(16, 54, line);
         }
 #endif
-        { /* the star pointer's cursor: a yellow cross, white in the middle */
-            float cx, cy;
-            if (game_cursor(&cx, &cy)) {
-                render_rect(cx - 8, cy - 2, 16, 4, 0xFF, 0xD0, 0x20);
-                render_rect(cx - 2, cy - 8, 4, 16, 0xFF, 0xD0, 0x20);
-                render_rect(cx - 1, cy - 1, 2, 2, 0xFF, 0xFF, 0xFF);
-            }
-        }
+        menu_pointer_draw(); /* the star pointer (StarPointerDirector::draw: last) */
         if ((frame & 255) == 0) {
             char dbg[128];
             game_debug(dbg, sizeof dbg);

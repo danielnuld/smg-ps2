@@ -7296,6 +7296,7 @@ static void dome_bind(void);
 static int dome_hold(Player *m);
 static int dome_busy(void);
 static int pointer_a(void) { return pad_held(PAD_R2) || test_r2; } /* the pointer's A */
+int game_pointer_a(void) { return pointer_a() || pad_held(PAD_CROSS); }
 
 /* BlueStarCupsulePlanet.cpp after Petari: a target at its Root joint (UFOBlueStarCupsule's 300 up), StarPointer radius
  * 500 (the UFO's 200), pointable within 3400 (sPointableRange; the UFO only from above its plane), never released by
@@ -7341,12 +7342,15 @@ static int gcap_update(Player *m)
     int a = pointer_a(), trig = a && !prev_a;
     prev_a = a;
     if (!gcap.phase) {
-        if (trig && !dome_busy()) {
+        if (!dome_busy()) {
             int t = gcap_pick();
-            if (t >= 0 && mode_rush("GCapture")) { gcap.phase = 1; gcap.t = 0; gcap.target = t; gcap.power = 0; printf("gcapture: target row %d" "\n", insts[t].row); }
+            /* GCaptureTarget::exeHitPointer: pointed (touch, "弱"), the hand open for it (requestStarPointerModeBlueStarReady) */
+            if (t >= 0 && menu_pointer_touch(&insts[t], 1)) menu_pointer_request(SPM_BLUESTARREADY);
+            if (trig && t >= 0 && mode_rush("GCapture")) { gcap.phase = 1; gcap.t = 0; gcap.target = t; gcap.power = 0; printf("gcapture: target row %d" "\n", insts[t].row); }
         }
         return 0;
     }
+    menu_pointer_request(SPM_BLUESTAR); /* GCapture: startStarPointerModeBlueStar .. endStarPointerMode */
     if (gcap.target >= ninsts || !insts[gcap.target].gcap) { gcap.phase = 0; return 0; } /* rebound away */
     const Inst *in = &insts[gcap.target];
     const Row *r = &sc->objs[in->row];
@@ -7505,6 +7509,7 @@ static int cursor_sees(V3 p, float px);
 static int pointer_a(void);
 static void update_cocoons(void)
 {
+    menu_pointer_stream(coc.inst >= 0 && coc.phase == 2); /* BindAim: tryStartStarPointerCommandStream .. its end */
     FOR_KIND(i, cocoon) {
         Inst *in = &insts[i];
         if (!in->cocoon) continue;
@@ -7582,6 +7587,8 @@ static int cocoon_update(Player *m)
         cocoon_release(m, v3(0, 0, 0));
         return 0;
     }
+    if (coc.phase == 1 && cursor_sees(in->head, 40.0f) && menu_pointer_touch(in, 1)) /* updateBindWait: pointed (touch, "弱") */
+        menu_pointer_request(SPM_BLUESTARREADY);
     if (coc.phase == 1 && pointer_a() && cursor_sees(in->head, 40.0f)) { coc.phase = 2; coc.t = 0; } /* BindAim */
     if (coc.phase == 2) {
         if (!pointer_a()) { /* tryRelease */
@@ -32606,7 +32613,7 @@ static void dm_galaxy_update(int i)
             float f = 224.0f / tanf(fov * 3.14159265f / 360.0f), z = vdot(vsub(g->pos, ce), vnorm(vsub(w, e)));
             if (game_cursor(&cx, &cy) && screen_pos(g->pos, &sx, &sy) && z > 0) {
                 float r = 2500.0f * g->scale * f / z;
-                if ((sx - cx) * (sx - cx) + (sy - cy) * (sy - cy) < r * r) dm_register(T_GALAXY + i, (u32)z);
+                if ((sx - cx) * (sx - cx) + (sy - cy) * (sy - cy) < r * r) { dm_register(T_GALAXY + i, (u32)z); menu_pointer_touch(g, 0); }
             }
         }
         if (dm.pointing == T_GALAXY + i) dm_galaxy_zoom_in(i); else dm_galaxy_zoom_out(i);
@@ -33027,6 +33034,10 @@ static void dome_update(void)
     if (!ready && ninsts) { dome_init(); ready = 1; } /* its zone's instances are bound after game_init */
     if (!dm.on) return;
     if (dn_is(&dm.sel, SS2_SELECTWAIT) || dn_is(&dm.sel, SS2_SELECTSTART)) game_cursor_menu(); /* SphereSelectorFinger */
+    if (!dn_is(&dm.sel, SS2_NONE)) { /* SphereSelector: appear .. kill; exeSelectWait's OnReaction while pointing is valid */
+        menu_pointer_request(SPM_SPHEREFINGER);
+        if (dn_is(&dm.sel, SS2_SELECTWAIT) && !dm.invalid) menu_pointer_request(SPM_SPHEREONREACTION);
+    }
     dm_bluestar_update();
     dm_selector_update();
     dm_handle_update();
@@ -35321,6 +35332,13 @@ void game_update(void)
         opening_on = 1;
     }
     in_opening = opening_on || (mario->launch >= 0 && launches[mario->launch].starter); /* not GameSceneAction yet */
+    { /* the star pointer's modes while these last (startStarPointerModeGame / Demo (the opening camera's, a demo's) /
+       * DemoMarioDeath (MarioActor's miss) / PowerStarGetDemo) */
+        menu_pointer_request(SPM_GAME);
+        if (demo_on || in_opening) menu_pointer_request(SPM_DEMO);
+        if (mev.on) menu_pointer_request(SPM_DEMOMARIODEATH);
+        if (star_demo) menu_pointer_request(SPM_POWERSTARGETDEMO);
+    }
     if (!opening_on && starter >= 0 && game_frame == 2) { /* ScenarioStarter::exeRailMove: the flight in (SpinDriverShootPath) */
         mario->pos = launches[starter].pos;
         mario->launch = starter; mario->launch_t = 0; mario->launch_from = mario->pos;
