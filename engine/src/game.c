@@ -10519,20 +10519,6 @@ static void hud_tico_eat(int center) /* MR::requestCounterLayoutAppearanceForTic
     if (!hud[2].mode && spc_change_mode(&hud[2], center ? 2 : 1)) { hud_kill(&hud[1]); hud_kill(&hud[3]); hud_kill(&hud[0]); }
     hudc.tico = 1;
 }
-/* MarioMeter's HitPointMeter (MeterLayout): Wait (with 3: _4C down 0.05 a frame while the player moves, up while he
- * is still; below 3 it stays at 1), the ShowHide alpha at _4C x 20 and 50 to the right by getEaseInOutValue(_4C, 1,
- * 0); a change of life: Damage / Recover, then WaitStart (240 frames at 1). ponytail: no Danger pulse, no Damage
- * shake, no Break / Zero meter, no 4..6 (LifeUp) meter, no pointer fade (mAlpha) */
-enum { HM_WAIT, HM_WAITSTART };
-static struct { int nrv, step, count; float k; } hpm = {HM_WAIT, 0, 3, 0.0f};
-static void hpm_update(int stopped)
-{
-    hpm.step++;
-    if (life != hpm.count) { hpm.count = life; hpm.nrv = HM_WAITSTART; hpm.step = 0; hpm.k = 1.0f; } /* setCount */
-    if (hpm.nrv == HM_WAITSTART) { hpm.k = 1.0f; if (hpm.step > 240) { hpm.nrv = HM_WAIT; hpm.step = 0; } return; }
-    if (hpm.count == 3) hpm.k = fminf(fmaxf(hpm.k + (stopped ? 0.05f : -0.05f), 0.0f), 1.0f);
-    else hpm.k = 1.0f;
-}
 static int hud_welcome, hud_had_starter; /* frames since the ScenarioStarter's landing (ShowWelcomeLayout's step); a flight in */
 static void hud_update(void)
 {
@@ -10581,7 +10567,7 @@ static void hud_update(void)
     for (int k = 0; k < 4; k++) all &= hud_hidden_or_wait(&hud[k]);
     if (hudc.nrv == 0 && !all) moving = 1;
     hudc.step++;
-    hpm_update(hudc.nrv == 1); /* requestPlayerMoving / requestPlayerStopped */
+    menu_meter_moving(hudc.nrv != 1); /* MarioMeter: requestPlayerMoving / requestPlayerStopped (menu.c) */
     if (hudc.nrv == 1 && hudc.step == 1 && !hudc.tico) { /* showAllLayout */
         hud_force_appear(&hud[1]); spc_force_appear(&hud[2], 0); hud_force_appear(&hud[3]);
         hud[0].dead = 0; hud[0].disp = hud[0].num; hud_set(&hud[0], HC_APPEAR); hud_ap(&hud[0], AP_APPEAR);
@@ -10639,17 +10625,6 @@ static void hud_draw(void)
         float a = f < 60 ? hud_hermite(f, 0, 0, 0, 60, 255, 0) : f < 100 ? 255.0f : hud_hermite(f, 100, 255, 0, 130, 0, -23.6f);
         lay_draw("Welcome", 0, fminf(fmaxf(a / 255.0f, 0.0f), 1.0f), 0, 0);
     }
-    if (hud_on) { /* the life meter */
-
-        float f = hpm.k * 20.0f, a = hud_hermite(f, 0, 0, 0, 20, 255, 0) / 255.0f;
-        float dx = 50.0f * (1.0f - (1.0f - cosf(3.14159265f * hpm.k)) / 2.0f);
-        int n = hpm.count < 0 ? 0 : hpm.count > 3 ? 3 : hpm.count;
-        lay_draw("HitPointMeter", n, a, dx, 0);
-        lay_num = hpm.count;
-        lay_draw("HitPointMeter", 15, a, dx, 0);
-        lay_num = -1;
-    }
-
 }
 /* ScenarioTitle (StageTitle layout): the galaxy's and the scenario's names (GalaxyName_<galaxy>, ScenarioName_<galaxy>
  * <n>, in the scene's TALK) centred in their text boxes, MessageFont26 at 21.6 x 26.4 / 24.3 x 29.7, white over a
@@ -12514,7 +12489,8 @@ static int mode_control(Player *m)
     if (super_got) {
         if (pd_try_start("マリオスーパー化", -1)) {
             super_got = 0;
-            life = max_life = 2 * MAX_LIFE; /* changeMaxLife(6), requestPowerUpHPMeter */
+            life = max_life = 2 * MAX_LIFE; /* changeMaxLife(6) */
+            menu_meter_power_up(); /* requestPowerUpHPMeter */
             if (mario_anim) mario_anim->speed = 0; /* stopAnimFrame */
             pad_rumble(RUMBLE_MORPH); /* startPadVib("マリオ[変身]") */
             se_start(SE_SY_SUPER_KINOKO_GET, NULL);
@@ -17849,6 +17825,7 @@ static void miss(void)
     mario->up = up_at(mario->pos, v3(0, 1, 0)); /* placed anew, as at the start (not his up where he fell) */
     mario->launch = -1; /* out of any launch star's flight (it would carry him back) */
     life = max_life = MAX_LIFE;
+    menu_meter_init_count(life); /* the scene again: its MarioMeter anew (initLifeCount) */
     if (--lives < 0) { printf("game over\n"); lives = START_LIVES; }
     printf("miss %d, lives %d\n", ++misses, lives);
 }
@@ -35708,6 +35685,17 @@ void game_update(void)
             if (swimming) menu_submeter_ratio(0, (float)oxygen / MC.mOxygenMax);
             screen_pos(vadd(mario->pos, vmul(mario->up, BODY_RADIUS)), &sx, &sy);
             menu_submeter_update(mario->grounded || (swimming && !mario->jumping), sx, sy, !(menu_paused() || dome_layout_off || dx.on));
+            /* setLifeCount (not while the life-up demo holds him: control returns before controlMain's update2D);
+             * MeterLayout::calcMarioHeadPosition: his centre on the screen, up by calcPointRadius2D(120), (32, -38) */
+            if (!super_t) menu_meter_count(life);
+            V3 ce, cw, cu, c = vadd(mario->pos, vmul(mario->up, BODY_RADIUS));
+            float fovy, ux = sx, uy = sy;
+            camera_pose(&ce, &cw, &cu, &fovy);
+            screen_pos(vadd(c, vmul(vnorm(cu), 120.0f)), &ux, &uy);
+            float r = sqrtf((ux - sx) * (ux - sx) + (uy - sy) * (uy - sy)) * (456.0f / 448.0f);
+            menu_meter_head(sx * (608.0f / 640.0f) + 32.0f, sy * (456.0f / 448.0f) - r - 38.0f);
+            menu_meter_active(hud_on && !(menu_paused() || dome_layout_off || dx.on)); /* activate / deactivateDefaultGameLayout */
+            menu_meter_update();
         }
         io_update();
         /* MR::getMapSoundCodeFoot: the ground's (else the wall's) sound code for Mario's surface sounds; -1 none */

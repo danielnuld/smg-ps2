@@ -42,6 +42,7 @@ int menu_galaxy_map_active(void);
 int menu_file_selecting(void);
 static int fs_title(void);
 static void mlay_update(void);
+static void hm_init(void);
 static void tl_init(void);
 static void mlay_draw(void);
 static void ss_update(void);
@@ -1349,6 +1350,7 @@ void menu_init(const Scene *s)
     sv_prompt = seq_take_save_prompt();
     memset(&sr, 0, sizeof sr);
     subm_init();
+    hm_init();
     tl_init();
     sr.l = lyt_new("ResultWindow");
     sr.info = lyt_new("InformationWindow"); /* MR::appearInformationMessageCenter's (NULL where not loaded) */
@@ -1456,6 +1458,210 @@ void menu_submeter_update(int resting, float x, float y, int visible) /* control
 }
 static void subm_draw(void) { if (subm_vis) for (int k = 0; k < 2; k++) if (subm[k].l && subm[k].shown) lyt_draw(subm[k].l); }
 
+/* MarioMeter's HitPointMeter (MeterLayout, Screen/MeterLayout.cpp): the life plate. Wait (with 3 life it slides 50 out
+ * to the right while Mario moves, _4C), Danger1 / Danger2 pulsing at rate 4 (1 life) / 2 (2), Damage1 / Damage2 shakes,
+ * Recover (Font's Flash, the number's CountUpPaneRumbler), BreakMeter (4..6 down to 3: Break, then FontPosition2to1),
+ * ZeroMeter / ZeroMeterBreak (hidden at 0), PowerUp (the life-up mushroom: the W plate by Mario's head counting to 6,
+ * MeterMove back to its place, CounterMove: FontPosition1to2, 4 5 6), WaitStart (240 frames); its ShowHide frame
+ * _4C x mAlpha x 20, the pointer on PicBase fading it to 0.3. ponytail: no SuddenDeathMeter (a life of 1), no Break /
+ * Break123 layout effects */
+enum { ML_HIDE, ML_APPEAR, ML_WAIT, ML_WAITSTART, ML_POWERUP, ML_METERMOVE, ML_COUNTERMOVE, ML_RECOVER, ML_DAMAGE,
+       ML_BREAKMETER, ML_ZEROMETER, ML_ZEROMETERBREAK };
+static struct {
+    LytInst *l;
+    u8 alive, hidden;
+    int count, rum_t;                         /* mCount; the RumbleCalculator's _4 (of 15) */
+    float alpha, k;                           /* mAlpha, _4C */
+    float pos[2], posw[2], p3c[2], rum[2];    /* mFollowPos, mFollowPosW, _3C, the rumbler's mPosition */
+    float head[2];                            /* calcMarioHeadPosition (game.c, each frame) */
+    Nrv n;
+} hm;
+static float hm_ease(float x) { return (1.0f - cosf(x * 3.14159265f)) / 2.0f; } /* getEaseInOutValue(x, 0, 1, 1) */
+static void hm_frame_stop(int ch, float f) { lyt_set_frame(hm.l, ch, f); lyt_set_rate(hm.l, ch, 0); } /* setAnimFrameAndStop */
+static void hm_count_frame(void) /* setCountAnimFrame */
+{
+    lyt_set_number_rec(hm.l, "HitPointNumber", hm.count);
+    lyt_start_pane(hm.l, "HitPointMeter", "Count", 0);
+    lyt_set_pane_frame_stop(hm.l, "HitPointMeter", 0, (float)hm.count);
+}
+static void hm_recovery_frame(void) /* setRecoveryCountAnimFrame */
+{
+    lyt_set_number_rec(hm.l, "HitPointNumber", hm.count);
+    lyt_start_pane(hm.l, "HitPointMeter", "RecoveryCount", 0);
+    lyt_set_pane_frame_stop(hm.l, "HitPointMeter", 0, (float)hm.count);
+}
+static void hm_anim_base(void) /* setAnimBase */
+{
+    hm_count_frame();
+    lyt_start(hm.l, hm.count <= 3 ? "Danger1" : "Danger2", 1);
+    if (hm.count <= 1) lyt_set_rate(hm.l, 1, 4.0f);
+    else if (hm.count <= 2) lyt_set_rate(hm.l, 1, 2.0f);
+    else hm_frame_stop(1, 0.0f);
+}
+static void hm_zero_follow(void) { hm.pos[0] = hm.pos[1] = hm.posw[0] = hm.posw[1] = 0; }
+void menu_meter_init_count(int life) /* a new MeterLayout (the scene's, or the scene again after a miss) and initCount */
+{
+    LytInst *l = hm.l;
+    memset(&hm, 0, sizeof hm);
+    hm.l = l; hm.count = life; hm.k = 1.0f; hm.rum_t = 15; /* mCount(3), mAlpha(), _4C(1) */
+    if (!l) return;
+    lyt_follow(l, "HPMeter", hm.pos, 1);
+    lyt_follow(l, "HitPointW", hm.posw, 1);
+    lyt_follow(l, "HitPointNumber", hm.rum, 1); /* CountUpPaneRumbler */
+    lyt_start(l, "FontPosition2to1", 1);
+    lyt_start(l, "ShowHide", 2);
+    hm_frame_stop(2, hm.alpha * hm.k * 20.0f);
+    hm_count_frame();
+    hm.alive = 1; hm.n.next = -1; nrv_set(&hm.n, ML_WAIT); /* appear */
+}
+static void hm_init(void) { hm.l = lyt_new("HitPointMeter"); menu_meter_init_count(3); }
+void menu_meter_count(int life) /* setLifeCount (setCount) */
+{
+    int prev = hm.count;
+    hm.count = life;
+    if (life < prev) nrv_set(&hm.n, life == 0 ? ML_ZEROMETER : prev >= 4 && life < 4 ? ML_BREAKMETER : ML_DAMAGE);
+    else if (prev < life) nrv_set(&hm.n, ML_RECOVER);
+}
+void menu_meter_power_up(void) /* requestPowerUp */
+{
+    if (!hm.l) return;
+    hm.k = 1.0f;
+    hm_frame_stop(2, hm.k * 20.0f);
+    hm_zero_follow();
+    hm.alive = 1;
+    nrv_set(&hm.n, ML_POWERUP);
+}
+void menu_meter_active(int on) /* requestActive / requestDeactivate */
+{
+    if (!hm.l) return;
+    if (!on) { hm.alive = 0; return; }
+    if (hm.alive) return;
+    hm.rum_t = 15; /* mCountUpPaneRumbler->reset */
+    if (hm.count == 3) { hm.k = 0; hm.pos[0] = (1.0f - hm_ease(0.0f)) * 50.0f; } /* getEaseInOutValue(0, 1, 0, 1) x 50 */
+    else { hm.k = 1.0f; hm.pos[0] = hm.pos[1] = 0; }
+    hm_frame_stop(2, hm.k * 20.0f);
+    hm.posw[0] = hm.posw[1] = 0;
+    hm.alive = 1;
+    nrv_set(&hm.n, ML_WAIT);
+}
+void menu_meter_moving(int moving) /* requestPlayerMoving / requestPlayerStopped */
+{
+    if (!nrv_is(&hm.n, ML_WAIT)) return;
+    if (hm.count == 3) hm.k = fminf(fmaxf(hm.k + (moving ? -0.05f : 0.05f), 0.0f), 1.0f);
+    else hm.k = 1.0f;
+}
+void menu_meter_head(float x, float y) { hm.head[0] = x; hm.head[1] = y; }
+int menu_test_meter(void) { return hm.alive * 1000 + hm.n.cur * 10 + hm.count; } /* tests: alive, nerve, count */
+void menu_meter_update(void) /* LayoutActor::movement: the nerve, control, the animations */
+{
+    if (!hm.l || !hm.alive) return;
+    switch (nrv_begin(&hm.n)) {
+    case ML_HIDE: break;
+    case ML_APPEAR:
+        if (FIRST(&hm.n)) { hm.posw[0] = hm.posw[1] = 0; hm_anim_base(); hm.k = 1.0f; }
+        hm.pos[0] = hm.pos[1] = 0;
+        if (hm.n.step > 120) nrv_set(&hm.n, ML_WAIT); /* sAppearTime */
+        break;
+    case ML_WAITSTART:
+        if (FIRST(&hm.n)) { hm_anim_base(); hm.k = 1.0f; }
+        hm_zero_follow();
+        if (hm.n.step > 240) nrv_set(&hm.n, ML_WAIT); /* sWaitStartTime */
+        break;
+    case ML_WAIT:
+        if (FIRST(&hm.n)) { hm_anim_base(); hm.pos[0] = hm.pos[1] = 0; }
+        hm.pos[0] = (1.0f - hm_ease(hm.k)) * 50.0f; /* getEaseInOutValue(_4C, 1, 0, 1) x 50 */
+        hm.posw[0] = hm.posw[1] = 0;
+        break;
+    case ML_POWERUP: {
+        float base[3];
+        hm.pos[0] = hm.pos[1] = 0;
+        lyt_evaluate(hm.l);
+        lyt_pane_place(hm.l, "MoveMeterW", base); /* calcPowerUpMeterBasePosition */
+        hm.posw[0] = hm.head[0] - base[0]; hm.posw[1] = hm.head[1] - base[1];
+        if (FIRST(&hm.n)) {
+            hm.hidden = 0; /* showLayout */
+            lyt_start(hm.l, "Danger1", 1); hm_frame_stop(1, 0.0f);
+            hm_recovery_frame();
+            hm.k = 1.0f;
+        }
+        if (hm.count < 6 && hm.n.step > 0 && hm.n.step % 5 == 0) { /* sRecoveryCountInterval */
+            hm.count++;
+            hm_recovery_frame();
+            if (hm.count >= 4) lyt_set_number_rec(hm.l, "HitPointNumber", 3);
+            else { hm.rum_t = 0; lyt_start_pane(hm.l, "Font", "Flash", 0); }
+        }
+        if (hm.n.step > 60) nrv_set(&hm.n, ML_METERMOVE); /* sPowerUpWaitTime */
+        break;
+    }
+    case ML_METERMOVE: {
+        if (FIRST(&hm.n)) { hm.p3c[0] = hm.posw[0]; hm.p3c[1] = hm.posw[1]; hm.k = 1.0f; }
+        float r = fminf((float)hm.n.step / 25.0f, 1.0f); /* calcNerveEaseInRate(sMoveToBasePositionTime) */
+        r = 1.0f - cosf(r * 3.14159265f / 2.0f);
+        hm.posw[0] = hm.p3c[0] * (1.0f - r); hm.posw[1] = hm.p3c[1] * (1.0f - r);
+        if (hm.n.step > 25) nrv_set(&hm.n, ML_COUNTERMOVE);
+        break;
+    }
+    case ML_COUNTERMOVE:
+        if (FIRST(&hm.n)) { lyt_start(hm.l, "FontPosition1to2", 1); hm.k = 1.0f; }
+        if (hm.n.step == 0) lyt_set_number_rec(hm.l, "HitPointNumber", 4);
+        if (hm.n.step == 5) lyt_set_number_rec(hm.l, "HitPointNumber", 5);
+        if (hm.n.step == 10) lyt_set_number_rec(hm.l, "HitPointNumber", 6);
+        if (lyt_stopped(hm.l, 1)) nrv_set(&hm.n, ML_WAITSTART);
+        break;
+    case ML_RECOVER:
+        if (FIRST(&hm.n)) {
+            hm.rum_t = 0; lyt_start_pane(hm.l, "Font", "Flash", 0);
+            hm_count_frame(); hm_zero_follow(); hm.k = 1.0f;
+        }
+        if (lyt_pane_stopped(hm.l, "Font", 0)) nrv_set(&hm.n, ML_WAITSTART);
+        break;
+    case ML_DAMAGE:
+        if (FIRST(&hm.n)) {
+            lyt_start(hm.l, hm.count < 3 ? "Damage1" : "Damage2", 1);
+            hm_zero_follow(); hm_count_frame(); hm.k = 1.0f;
+        }
+        if (lyt_stopped(hm.l, 1)) nrv_set(&hm.n, ML_WAITSTART);
+        break;
+    case ML_BREAKMETER:
+        if (FIRST(&hm.n)) {
+            lyt_start_pane(hm.l, "HitPointMeter", "Break", 0);
+            lyt_set_number_rec(hm.l, "HitPointNumber", hm.count);
+            lyt_start(hm.l, "Damage2", 1);
+            hm_zero_follow(); hm.k = 1.0f;
+        }
+        if (hm.n.step == 40) { /* sBreakDelayTime (emitEffect Break) */
+            se_start(SE_SY_LIFE_PLATE_DEC, NULL);
+            lyt_start(hm.l, "FontPosition2to1", 1);
+            hm_count_frame();
+            nrv_set(&hm.n, ML_WAITSTART);
+        }
+        break;
+    case ML_ZEROMETER:
+        if (FIRST(&hm.n)) { lyt_start(hm.l, "Damage1", 1); hm_zero_follow(); hm_count_frame(); hm.k = 1.0f; }
+        if (lyt_stopped(hm.l, 1)) nrv_set(&hm.n, ML_ZEROMETERBREAK);
+        break;
+    case ML_ZEROMETERBREAK:
+        if (FIRST(&hm.n)) hm_zero_follow();
+        if (hm.n.step == 40) hm.hidden = 1; /* (emitEffect Break123) hideLayout */
+        break;
+    }
+    nrv_end(&hm.n);
+    /* control: mAlpha (the pointer on PicBase), the ShowHide frame, the rumbler */
+    float cx, cy;
+    if (nrv_is(&hm.n, ML_APPEAR)) hm.alpha = 1.0f;
+    else if (game_cursor(&cx, &cy) && lyt_pane_hit(hm.l, "PicBase", cx, cy)) hm.alpha -= 0.05f;
+    else hm.alpha += 0.05f;
+    hm.alpha = fminf(fmaxf(hm.alpha, 0.3f), 1.2f); /* sMinAlpha, sMaxAlpha */
+    hm_frame_stop(2, hm.k * fminf(hm.alpha, 1.0f) * 20.0f); /* normalize(mAlpha, 0, 1) */
+    hm.rum[0] = hm.rum[1] = 0;
+    if (hm.rum_t < 15) { /* RumbleCalculatorCosMultLinear(cRumbleFreq 2, pi / 2, cRumbleAmp 8, cRumbleFrame 15): its y */
+        float pr = hm.rum_t / 15.0f;
+        hm.rum[1] = cosf(2.0f * pr * 6.2831853f + 1.5707963f) * (1.0f - pr) * 8.0f;
+        hm.rum_t++;
+    }
+    lyt_update(hm.l);
+}
+static void hm_draw(void) { if (hm.l && hm.alive && !hm.hidden) lyt_draw(hm.l); }
 /* --- TimeLimitLayout (Screen/TimeLimitLayout.cpp: "TimeLimit"), CometEventExecutorTimeLimit's (DisplayModeOnNormal:
  * no fade out): Appear, then the count; at a sTimingTable time left the TIME grows (ScaleUp 8 frames, TimeSignal's
  * blinks while it keeps), the last 10 s TimeLimit's pulse and the count sounds; at 0 TimeUpReady (the executor kills
@@ -4353,7 +4559,7 @@ static void wipe_update(void)
 
 void menu_draw(void)
 {
-    if (!pm.alive && !sr.alive) subm_draw(); /* the game's default layout (MarioSubMeter) */
+    if (!pm.alive && !sr.alive) { subm_draw(); hm_draw(); } /* the game's default layout (MarioSubMeter, MarioMeter) */
     if (sr.alive) { render_world_done(); lyt_draw(sr.l); if (sr.info && (sr.n.cur == SR_INFO || sr.n.cur == SR_INFOEND)) lyt_draw(sr.info); }
     if (dmu.on) { render_world_done(); dmu_draw(); }
     mlay_draw();
