@@ -524,11 +524,15 @@ static void draw_text(const LytInst *l, int i, const PWorld *w, float x0, float 
     const PState *ps = &l->ps[i];
     float r = 0, g = 0, b = 0, a = 0;
     for (int v = 0; v < 4; v++) { r += ps->vc[v][0]; g += ps->vc[v][1]; b += ps->vc[v][2]; a += ps->vc[v][3]; }
-    /* the text colour: the box's top / bottom colours' mean, times the material's c1 (lyt TextBox) */
+    /* the text colour: the box's top / bottom colours' mean, times the material's c1 (lyt TextBox: a glyph's texel
+     * lerps c0 -> c1, its alpha too: the Sha* shadow boxes' c1 alpha 50-100 is a faint shadow, not a second text) */
     float tc[3] = {(p->top[0] + p->bottom[0]) * 0.5f, (p->top[1] + p->bottom[1]) * 0.5f, (p->top[2] + p->bottom[2]) * 0.5f};
     float ta = (p->top[3] + p->bottom[3]) * 0.5f / 255.0f;
     int mi = p->mat;
-    if (mi >= 0 && mi < l->h->nmats) for (int k = 0; k < 3; k++) tc[k] *= l->ms[mi].c1[k] / 255.0f;
+    if (mi >= 0 && mi < l->h->nmats) {
+        for (int k = 0; k < 3; k++) tc[k] *= l->ms[mi].c1[k] / 255.0f;
+        ta *= l->ms[mi].c1[3] / 255.0f;
+    }
     (void)r; (void)g; (void)b;
     u32 rgb = (u32)tc[0] << 16 | (u32)tc[1] << 8 | (u32)tc[2];
     game_text(s, p->font_idx, x, y, fsx, fsy, p->space * sx, rgb, w->alpha * ta * (a / 4.0f / 255.0f), 1);
