@@ -241,11 +241,13 @@ def convert(files, name, texts, extra=None):
                 rgba = np.clip(a + (b_ - a) * rgba, 0, 1)
                 if add:  # added (Cs x As + Cd): the texture's own alpha weighs it (both colours' alpha are 0)
                     rgba[..., 3] = ta
+                elif mask and mask.lower() != texname.lower() and c0[3] == c1[3]:  # one alpha for both colours: the
+                    rgba[..., 3] = ta * a[3]  # mask's shape kept (DPDPointer's PicHand: the gradation in the hand)
             img_ix[key] = len(images)
             images.append(((rgba * 255 + 0.5).astype(np.uint8), wrap))
         return img_ix[key]
 
-    mrecs = []
+    mrecs, masked = [], {}
     for m in mats:
         texi, wraps, baked, tsz = [-1, -1], [0, 0, 0, 0], 0, (0, 0)
         for k, (ti, ws, wt) in enumerate(m["maps"][:1]):
@@ -255,6 +257,8 @@ def convert(files, name, texts, extra=None):
             c1 = tuple(max(0, min(255, v)) for v in m["c1"])
             mask = texs[m["maps"][1][0]] if len(m["maps"]) > 1 and m["maps"][1][0] < len(texs) else None
             texi[k] = image(texs[ti], c0 if bake else None, c1 if bake else None, (ws, wt), mask, m.get("add", False)) if ti < len(texs) else -1
+            if mask and ti < len(texs):
+                masked[m["name"]] = (texs[ti], c0 if bake else None, c1 if bake else None, (ws, wt), m.get("add", False))
             wraps[2 * k:2 * k + 2] = [ws, wt]
             if ti < len(texs) and texs[ti].lower() in files and not texs[ti].startswith("@bti:"):
                 tsz = tpl(files[(mask if mask and mask.lower() in files else texs[ti]).lower()]).shape[1::-1]
@@ -305,6 +309,12 @@ def convert(files, name, texts, extra=None):
             if target is None:
                 continue
             for tag, index, sub, ctype, ks in trs:
+                if tag == 5 and index == 1 and is_mat and ename in masked:  # a pattern on a masked material's mask
+                    # (DPDPointer's HandType: PicHand's hand): the material baked again with each as its mask, on map 0
+                    tn0, c0, c1, ws, add = masked[ename]
+                    for k in ks:
+                        tmap[int(k[1])] = image(tn0, c0, c1, ws, a["textures"][int(k[1])], add)
+                    index = 0
                 tracks.append((target, is_mat, tag, index, sub, ctype, len(ks), len(keys)))
                 keys += ks
         arecs.append((an, a["frames"], a["loop"], tracks, keys, tmap))
@@ -346,7 +356,10 @@ def convert(files, name, texts, extra=None):
 COMMON = ("PauseMenu", "SysInfoWindow", "SysInfoWindowMini", "GameOver", "TooBad", "StageTitle", "IconAButton",
           "BackButton", "ScenarioSelect", "WipeKoopa", "ResultWindow", "CinemaFrame", "FlyMeter", "AirMeter",  # MarioSubMeter
           "PointerGuidance",  # StarPointerGuidance
+          "DPDPointer",  # StarPointerLayout's 1P pointer, StarPointerBlur's Blur.bti as its material "Blur"
           "SelectButton")  # YesNoLayout (the talks' yes / no)
+# ponytail: no DPDPointerSub (the 2P pointer) nor DPDPointerNumber (the player number, shown only with two remotes
+# connected): one pad here
 # the dome's galaxy select's (AstroDomeGalaxySelector): dome.bin, loaded in the AstroDome stages only; GalaxyInfo with
 # the galaxies' pictures (GalaxyInfoTexture.arc) as materials named by galaxy (20 characters)
 DOME = ("GalaxySelect", "GalaxyInfo", "GalaxyNamePlate")
@@ -524,10 +537,12 @@ def gdat_chunk(fsp):
 def build(fsp, names=COMMON):
     from slice import blob_of, chunk
     texts, bodies = [], []
+    blur = {"Blur": next(v for k, v in B.rarc_files((Path(fsp) / "ObjectData" / "StarPointerBlur.arc").read_bytes())
+                         if k.lower().endswith("blur.bti"))}
     for n in names:
         files = {k.lower().rsplit("/", 1)[-1]: v for k, v in
                  B.rarc_files((Path(fsp) / "LayoutData" / f"{n}.arc").read_bytes())}
-        bodies.append(convert(files, n, texts))
+        bodies.append(convert(files, n, texts, blur if n == "DPDPointer" else None))
     offs, o = [], 16 + 4 * len(bodies)
     for bd in bodies:
         offs.append(o)
