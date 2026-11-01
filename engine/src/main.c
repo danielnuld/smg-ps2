@@ -161,7 +161,7 @@ static void pk_free(const void *p)
 #define SECTOR 2048
 #define PACK_ALLOC(n) (((n) + SECTOR - 1) & ~(SECTOR - 1))
 typedef struct { char path[88]; u32 off, size; } TocEntry;
-static TocEntry toc[160]; /* a scenario's packs, the shared ones, the movies and the music (33 tracks) */
+static const TocEntry *toc[512]; /* into toc_all: a scenario's packs, the shared ones, the movies, the music (~230 with .rhy) */
 static int ntoc;
 static u8 *toc_all; /* the whole PACKS.TOC, kept (toc_select picks a scene's entries) */
 static u32 toc_n;
@@ -268,7 +268,7 @@ static void toc_select(void)
             strncmp(e->path, "movies/", 7) == 0 || /* any scene may end in one */
             strncmp(e->path, "music/", 6) == 0) {  /* the BGMs (audio.c streams them) */
             if (ntoc == (int)(sizeof toc / sizeof toc[0])) render_fatal("packs: TOC full");
-            memcpy(&toc[ntoc++], e, sizeof *e);
+            toc[ntoc++] = e;
         }
     }
     printf("packs: disc TOC %u entries, %d for %s\n", toc_n, ntoc, scen);
@@ -283,7 +283,7 @@ static void toc_select(void)
 int disc_file(const char *path, u32 *lsn, u32 *size)
 {
     for (int i = 0; i < ntoc; i++)
-        if (strcmp(toc[i].path, path) == 0) { *lsn = bin_lsn + toc[i].off / SECTOR; *size = toc[i].size; return 1; }
+        if (strcmp(toc[i]->path, path) == 0) { *lsn = bin_lsn + toc[i]->off / SECTOR; *size = toc[i]->size; return 1; }
     return 0;
 }
 int disc_read_idle(u32 lsn, u32 sectors, void *dst)
@@ -305,9 +305,9 @@ static int pack_open(Pack *p, const char *path)
     memset(p, 0, sizeof *p);
 #ifdef DISC
     for (int i = 0; i < ntoc; i++)
-        if (strcmp(toc[i].path, path) == 0) {
-            p->base = bin_lsn + toc[i].off / SECTOR;
-            p->size = toc[i].size;
+        if (strcmp(toc[i]->path, path) == 0) {
+            p->base = bin_lsn + toc[i]->off / SECTOR;
+            p->size = toc[i]->size;
             p->f = (FILE *)1;
             return 1;
         }
