@@ -754,14 +754,15 @@ static const char *resident_pack(void)
     pack_close(&p);
     return "resident_luigi.bin";
 }
-/* LuigiLetter::makeArchiveListForMenu / ForNPC: letter.bin only where the pause menu's or the messenger's letter can show */
+/* LuigiLetter::makeArchiveListForMenu / ForNPC, PeachLetter (KinopioAstro::makeArchiveList: isAnyPlayerLeftSupply):
+ * letter.bin only where the pause menu's or the messenger's letter can show */
 static int letter_scene(void)
 {
     char st[48];
     const char *sl = strchr(scen, '/');
     snprintf(st, sizeof st, "%.*s", sl ? (int)(sl - scen) : (int)strlen(scen), scen);
     int no = sl ? sl[1] - '0' : -1;
-    return gd_luigi_letter_galaxy(st, no) || (!strcmp(st, "AstroGalaxy") && gd_luigi_letter_galaxy_npc(st, no));
+    return gd_luigi_letter_galaxy(st, no) || (!strcmp(st, "AstroGalaxy") && (gd_luigi_letter_galaxy_npc(st, no) || gd_any_left_supply()));
 }
 
 static const u8 *load_packs(Scene *s)
@@ -976,6 +977,9 @@ static void scene_switch(void)
 #ifdef PACKS
 static void scene_load(void)
 {
+#ifdef TALK_PEACH /* talk test on the messenger: a supply (MissPointForLetter at 20), Peach's letter loaded */
+    if (!gd_any_left_supply()) gd_add_miss_point(20);
+#endif
     const u8 *blob = load_packs(&scene);
     if (!blob) {
         render_fatal("slice: bad blob\n");
@@ -984,6 +988,9 @@ static void scene_load(void)
     render_load_textures(&scene, 0, 0);
     game_stage_name = scen;
     game_init(&scene, blob);
+#ifdef TALK_PEACH /* (again: game_init's gd_init made the game data fresh) */
+    if (!gd_any_left_supply()) gd_add_miss_point(20);
+#endif
     mem_mark(&base_mark);
     game_set_piece_follow_limit(!strcmp(scen, "EggStarGalaxy/2"));
     { /* CometEventKeeper::sTimeLimitInfoTable: the Red / Black comet scenarios' limits (seconds) */

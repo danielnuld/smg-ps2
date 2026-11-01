@@ -270,6 +270,9 @@ def stage_files(path):
     return {p.lower(): d for p, d in B.rarc_files(path.read_bytes(), paths=True)}
 
 
+TALK_NAME = {"KinopioAstro": "Kinopio"}  # createTalkCtrl's message name where it is not the class's
+
+
 def scene(fs, galaxy, scenario):
     fs = Path(fs)
     st = fs / "StageData"
@@ -1705,7 +1708,9 @@ def placement(fs, galaxy, scenario):
                 areas=len(care), camera_types=dict(cam_types))
     # TALK: the messages of the rows with a MessageId (TalkNodeCtrl::createFlowNode: <zone>_<class><id %03d>) and
     # the classes' direct Common_ ones
-    ctls = [(f"{zones[r['zone']]['name']}_{r['name']}{r['mid']:03d}", i) for i, r in enumerate(keep) if r.get("mid", -1) >= 0]
+    # (its class's message name: KinopioAstro's Kinopio::init createTalkCtrl(this, rIter, "Kinopio"))
+    ctls = [(f"{zones[r['zone']]['name']}_{TALK_NAME.get(r['name'], r['name'])}{r['mid']:03d}", i) for i, r in enumerate(keep)
+            if r.get("mid", -1) >= 0]
     ctls += [(lab, None) for c in sorted(msg.COMMON) if c in types for lab in msg.COMMON[c]]
     ctls += [(lab, i) for i, r in enumerate(keep) for lab in msg.DIRECT.get(r["name"], ())]
     ctls += [(lab, None) for lab in msg.SYSTEM]

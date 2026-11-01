@@ -454,7 +454,7 @@ def build_mappics(fsp):
 # Luigi's letter (LuigiLetter: the pause menu's and KinopioAstro's) with each LuigiPicture<galaxy>.arc picture as a
 # material named by its galaxy (20 characters): letter.bin, loaded only in a scene where the letter can show
 # (main.c: getLuigiLetterGalaxyName / ...ForNPC)
-LETTER = ("LuigiLetter",)
+LETTER = ("LuigiLetter", "PeachLetter")
 
 
 def build_letter(fsp):
@@ -504,7 +504,7 @@ MSG_PREFIXES = ("Layout_", "System_", "Select_", "NAND_", "PauseMenu_", "PlayerL
                 "GalaxyNameShort_", "GalaxyStage_", "GalaxyInfo_", "GalaxyMap_", "GalaxyNamePlate_", "GetStar_",
                 "AllStarList_", "AstroName_", "CometName_", "RaceName_", "ConfirmEndGame", "Common_", "CONT_",
                 "PointerGuidance", "BButtonGuidance", "DPDGuidance", "WiiMessage", "Picture_", "AstroDome_", "RosettaMonologue",
-                "StaffList", "StaffRollInfo_", "InformationObserver")
+                "StaffList", "StaffRollInfo_", "InformationObserver", "PeachLetter_")
 
 
 def msgs_chunk(fsp, prefixes=MSG_PREFIXES):

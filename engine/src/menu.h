@@ -61,6 +61,8 @@ enum { GMAP_ASTRO, GMAP_GALAXY, GMAP_LIST, GMAP_NEW_GALAXY, GMAP_NEW_TICO, GMAP_
 void menu_galaxy_map(int mode);
 void menu_luigi_letter(const char *galaxy, int talk); /* LuigiLetter (LuigiPicture<galaxy>): appear (talk: KinopioAstro's) */
 int menu_luigi_letter_alive(void);   /* !isDead */
+void menu_peach_letter(void);         /* PeachLetter (KinopioAstro's): appear */
+int menu_peach_letter_alive(void);    /* !isDead */
 int menu_test_pml(void);            /* tests: the pause menu letter button: made 10, shown 1 */
 int menu_test_letter(void);         /* tests: 10 x letter on + its IconAButton nerve + 1 (0 dead) */
 int menu_galaxy_map_active(void);
