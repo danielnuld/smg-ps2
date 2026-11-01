@@ -1995,6 +1995,7 @@ static const Model *m_freeze_ice;
 
 static void area_types_reset(void);
 static u32 scene_seq; /* game_init counts the scenes (row_list) */
+static int swing_perm; /* (MarioActor::_EEB: its section) */
 void game_init(const Scene *s, const unsigned char *blob)
 {
     sc = s;
@@ -2008,6 +2009,8 @@ void game_init(const Scene *s, const unsigned char *blob)
     gd_attach(s);
     menu_init(s);
     lives = gd_player_left();
+    if (!gd_story_passed("スピン権利")) swing_perm = 0; /* GameSequenceProgress::startScene: setPlayerSwingPermission(false) */
+    printf("mario: swing permission %d\n", swing_perm);
     u32 gsz;
     const unsigned char *g = blob_chunk(blob, "GRAV", &gsz);
     ngrav = *(const int *)g;
@@ -5634,6 +5637,7 @@ int game_test_fluff(int phase)
 /* Test builds: Mario onto the first waiting screw switch, spinning (its row, -1 none); game_screw_state: the first
  * one's row_turn */
 void game_test_spin_now(void) { mario->spin_timer = SPIN_TIME; } /* test builds: a spin this frame */
+int game_test_spin_timer(void) { return mario->spin_timer; }
 
 /* Test builds: Mario by the first burning candlestand, spinning (how 1) or in its flame (0); its row, -1 none */
 /* Test builds: Mario onto the first FountainBig's base (its row, -1 none) */
@@ -12412,9 +12416,21 @@ static const struct { const char *msg, *flag, *first_bgm, *bgm; } io_attr[] = {
     {"InformationObserverFire", "ファイアマリオ初変身", "BGM_FIRST_MORPH_A", "BGM_FIRE_B"},
     {"InformationObserverIce", "アイスマリオ初変身", "BGM_FIRST_MORPH_A", "BGM_ICE_B"},
     {"InformationObserverFlying", "フライングマリオ初変身", "BGM_FIRST_MORPH_A", "BGM_FLYING_B"},
-    {"InformationObserverInvincible", "無敵マリオ初変身", "BGM_FIRST_MORPH_A", "BGM_MUTEKI_B"}};
-enum { IO_BEE, IO_TERESA, IO_HOPPER, IO_FIRE, IO_ICE, IO_FLYING, IO_INVINCIBLE };
-static struct { int type, nrv, step, frames; } io = {0, 0, 0, -1}; /* nrv 0 dead, 1 wait (its demo asked), 2 disp */
+    {"InformationObserverInvincible", "無敵マリオ初変身", "BGM_FIRST_MORPH_A", "BGM_MUTEKI_B"},
+    {"InformationObserverSpin", NULL, NULL, NULL}}; /* (explainSpin: onGameEventFlagEnableToSpinAndStarPointer) */
+enum { IO_BEE, IO_TERESA, IO_HOPPER, IO_FIRE, IO_ICE, IO_FLYING, IO_INVINCIBLE, IO_SPIN };
+static struct { int type, nrv, step, frames, keep; } io = {0, 0, 0, -1, 0}; /* nrv 0 dead, 1 wait (its demo asked), 2 disp;
+                                                                           * keep: _90, a time keep demo paused */
+/* MarioActor::_EEB (MR::setPlayerSwingPermission): the spin's isRequestRush. True from the constructor (each scene),
+ * off at GameSequenceProgress::startScene before スピン権利 (game_init), on when the spin is explained (the Gateway) */
+static int swing_perm = 1;
+static void io_entry(int type) /* InformationObserver::entry: a time keep demo running is paused, else its own demo */
+{
+    io.type = type;
+    io.keep = dx.on; /* isTimeKeepDemoActive */
+    if (io.keep) { dx.paused = 1; io.nrv = 2; io.step = -1; } /* pauseTimeKeepDemo, Disp */
+    else io.nrv = 1; /* requestStartDemoWithoutCinemaFrame 初出表示 */
+}
 const u16 *msg_get(const char *label);
 static int io_mode_type(int mode) /* the mode's explain<X>IfAtFirst */
 {
@@ -12442,14 +12458,19 @@ static void io_update(void)
     if (io.frames >= 0) io.frames--;
     if (!pad_pressed(PAD_CROSS) || io.frames >= 0) return;
     pad_eat(PAD_CROSS);
-    pd_end("初出表示");
+    if (io.keep) dx.paused = 0; /* resumeTimeKeepDemo */
+    else pd_end("初出表示");
     if (io_attr[io.type].bgm) {
         if (io.type == IO_FLYING) { bgm_sub_stop(5); bgm_start(io_attr[io.type].bgm); }
         else bgm_sub(io_attr[io.type].bgm);
     }
     se_start(SE_SY_TALK_OK, NULL);
     info_text = NULL;
-    gd_flag_try_on(io_attr[io.type].flag);
+    if (io.type == IO_SPIN) { /* onGameEventFlagEnableToSpinAndStarPointer */
+        gd_story_follow("スピン権利");
+        swing_perm = 1; /* setPlayerSwingPermission(true) */
+        printf("mario: swing permission on (スピン権利)\n");
+    } else gd_flag_try_on(io_attr[io.type].flag);
     io.nrv = 0;
 }
 
@@ -12503,7 +12524,7 @@ static void mode_movement(Player *m)
             if (mario_anim) mario_anim->speed = 1.0f; /* releaseAnimFrame */
             morph_over = 1;
             int t = io_mode_type(player_mode);
-            if (t >= 0 && !gd_flag_is_on(io_attr[t].flag) && io.nrv == 0) { io.type = t; io.nrv = 1; } /* explain<X>MarioIfAtFirst */
+            if (t >= 0 && !gd_flag_is_on(io_attr[t].flag) && io.nrv == 0) io_entry(t); /* explain<X>MarioIfAtFirst */
             if (morph_cam) morph_cam_end = 10;
             morph_cam = 0;
         }
@@ -12803,7 +12824,7 @@ static void bee_mode_gravity(Player *m, V3 up0)
             if (m->height > MC.mBeeWallWalkCancelRadius) detach = 1;
             else if (m->jumping && m->wall && KCL_WALL(wall_attr) == WALL_NORMAL) detach = 1;
             else m->bee_wall = 5;
-            if (m->jumping && pad_pressed(PAD_SQUARE)) m->bee_wall = 0; /* isRequestRush */
+            if (m->jumping && swing_perm && pad_pressed(PAD_SQUARE)) m->bee_wall = 0; /* isRequestRush */
         } else if (m->jumping) {
             if (m->height < 100.0f) m->bee_wall--;
             if (m->wall && KCL_WALL(wall_attr) == WALL_NORMAL) detach = 1;
@@ -13685,7 +13706,7 @@ static void m_swing(Player *m)
 {
     if (m->jumping && player_mode != PM_TERESA && !foo_active()) m->spin_cool = 0;
     if (m->spin_cool) m->spin_cool--;
-    if (!pad_pressed(PAD_SQUARE) || m->spin_cool || m->walling || m_input_off()) return;
+    if (!swing_perm || !pad_pressed(PAD_SQUARE) || m->spin_cool || m->walling || m_input_off()) return; /* isRequestRush */
     if (player_mode == PM_TORNADO || swimming || foo_active()) return; /* canRush */
     switch (mode_action("スピンアタック")) {
     case 1: break;
@@ -14403,7 +14424,7 @@ static int dm_update(Player *m) /* the status's update: 0 gives the frame back (
             dmg.c_timer = m->grounded ? 30 : 10;
             if (m->grounded) m_anim("しびれ回復");
         }
-        if (dmg.c12 && (pad_pressed(PAD_SQUARE) || m_req_jump)) { /* isRequestRush / checkTrgA */
+        if (dmg.c12 && ((swing_perm && pad_pressed(PAD_SQUARE)) || m_req_jump)) { /* isRequestRush / checkTrgA */
             m_clip_stop();
             if (m_req_jump) m_try_jump(m);
             return 0;
@@ -14877,7 +14898,7 @@ static int m_wall_update(Player *m)
         return 0;
     }
     if (m_req_jump && m_wall_start_jump(m)) return 0;
-    if (pad_pressed(PAD_SQUARE) && !m->spin_cool) { /* isRequestRush: 空中ひねり, tryWallPunch, setWallCancel */
+    if (swing_perm && pad_pressed(PAD_SQUARE) && !m->spin_cool) { /* isRequestRush: 空中ひねり, tryWallPunch, setWallCancel */
         m->spin_lock = 0;
         m->walling = 0;
         mario_play("spin", 1.0f, 0);
@@ -34422,7 +34443,7 @@ const int lprof_n = 74;
  * message) fades white into 高楼出現 (the tower: Rosetta's SW_A raises HeavensDoorAppearStepA, her SW_B, the halo,
  * the Lumas at TicoDemoPos2 / 3). Near Rosetta the spin demo (スピンゲット: her talks, the baby Luma, the light dome).
  * ponytail: no SpotMarkLight, foot prints, effects (smoke, the dome's light), BGM states, rumble; the rabbits' star
- * piece / blow damage not ported; Mario's spin is allowed from the start (no スピン権利 gate) */
+ * piece / blow damage not ported */
 enum { GP_MEET, GP_META, GP_RAPPEAR, GP_MARIO, GP_RTALK, GP_RESCAPE, GP_CFADEOUT, GP_CFADEIN, GP_CTALK, GP_CRUN, GP_CSTART,
        GP_TOWER, GP_TOWERAFTER, GP_TFADEOUT, GP_TFADEIN, GP_SPIN1, GP_SPINT1, GP_SPIN2, GP_SPINT2, GP_SPIN3, GP_SPINT3, GP_SPIN4,
        GP_SPIN5, GP_SPINT4, GP_SPIN6, GP_SPIN7, GP_SPIN8, GP_N };
@@ -35113,7 +35134,7 @@ static void gw_update(void)
     }
     for (int c = 0; c < 3; c++) rt_update(c);
     ro_update();
-    if (gw.baby >= 0 && gw_first(GP_SPIN5)) printf("gateway: the spin explained (explainEnableToSpin)\n");
+    if (gw.baby >= 0 && gw_first(GP_SPIN5)) { printf("gateway: the spin explained (explainEnableToSpin)\n"); io_entry(IO_SPIN); } /* TicoDemoGetPower::exeDemo */
 }
 
 /* RosettaDemoHeavensDoor1's parts: the light dome (at her Center joint, -13 down, -30 back) while she is out, the
@@ -35170,6 +35191,12 @@ int game_test_gateway(unsigned frame)
                frame, dx.on && dx.cur == gw.demo, dx.part, dx.step, gw.ndr ? gw.dr[0].k.nrv : -1, gw.tnrv[0], gw.tnrv[1], gw.tnrv[2],
                gw.collect_nrv, gw.caught, gw.nrr > 0 ? gw.rr[0].k.nrv : -1, gw.nrr > 1 ? gw.rr[1].k.nrv : -1, gw.nrr > 2 ? gw.rr[2].k.nrv : -1,
                gw.nrr > 3 ? gw.rr[3].k.nrv : -1, gw.ro_nrv, gw.catching, gw.commenting, (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z);
+#ifdef SPINGATE_TEST /* (with the spingate test) Rosetta's spin demo once the guide demo is over: the chase is skipped */
+    if (frame > 600 && !dx_busy() && gw.ro_nrv == RO_WAIT && gw.collect_nrv == 0) {
+        menu_wipe(1, -1, 0); gw.halo_brk = 1; gw.ro_nrv = RO_FADE; gw.ro_step = -1;
+        printf("gateway test f %u: the spin demo now\n", frame);
+    }
+#endif
     if (frame % 120 == 30 && dx.on)
         printf("gateway test: td nrv %d st %d demo %d kind %d, talker cur %d state %d talk %d, dx paused %d ndxt %d part0 %d talk0 %d" "%c", td.nrv, td.st, td.demo, td.st_kind,
                td.st >= 0 ? talkers[td.st].cur : -1, td.st >= 0 ? talkers[td.st].state : -1, td.st >= 0 ? talkers[td.st].talk : -1, dx.paused, ndxt,
