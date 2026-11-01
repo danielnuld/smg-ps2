@@ -16,9 +16,11 @@ LYTR (little endian): u32 nlayouts, u32 pad[3], nlayouts x u32 offset (from the 
           text: float font[2] (size x y), space, line; u8 top[4], bottom[4]; u16 str, len (its Layout_ message label,
           ASCII in strings: none, it starts empty); u8 pos (0..8 as origin), align, font (0 message 1 number
           2 picture), pad} (176 B)
-  Mat    {char name[20]; s16 tex[2] (layout textures, -1 none); u8 wrap[4] (s t of each: 0 clamp 1 repeat 2 mirror);
+  Mat    {char name[20]; s16 tex[2] (layout textures, -1 none; flags bit 2: tex[1] its mask's first rectangle in
+          strings); u8 wrap[4] (s t of each: 0 clamp 1 repeat 2 mirror);
           float srt[5] (tx ty rotation sx sy, texture SRT 0); u8 c0[4], c1[4]; u8 flags (bit 0 the colours baked into
-          its texture: lerp(c0, c1, texel) not to be applied again), pad[3]; u16 tw, th (the texture's own size: a window's corners)} (64 B)
+          its texture: lerp(c0, c1, texel) not to be applied again, bit 1 but its alpha c1's (animated), bit 2 drawn on
+          its mask's rectangles: mask_rects, u16 x0 y0 x1 y1 each), add; u16 nrect; u16 tw, th (the texture's own size: a window's corners)} (64 B)
   Anim   {char name[24]; u16 frames; u8 loop, pad; u16 ntracks, ntexmap; u32 tracks, texmap (offsets from the layout)}
           (40 B); texmap: u16 layout texture per BRLAN texture name (RLTP values index it)
   Track  {s16 target (pane or material index); u8 is_mat, tag (0 RLPA 1 RLVC 2 RLVI 3 RLMC 4 RLTS 5 RLTP), index (the
@@ -26,9 +28,9 @@ LYTR (little endian): u32 nlayouts, u32 pad[3], nlayouts x u32 offset (from the 
           vertex colours, 16 alpha, RLMC 0..3 material colour, 4..7 c0, 8..11 c1, RLTS 0..4 tx ty r sx sy), ctype (1
           step, 2 Hermite), pad; u16 nkeys, pad; u32 keys (offset from the layout: nkeys x {float frame, value, slope})}
           (16 B)
-ponytail: one texture per material (a second one, a mask, is left out), vertex colours drawn as their mean, the
-material colour and TEV stages past c0 / c1 not applied, windows with one frame texture (mirrored round) or none,
-pane rotations other than z only as 180 degree flips.
+ponytail: one texture per material (a second one, a mask, baked into the first; in two passes when the first
+scrolls on its own, drawn on the mask's rectangles), vertex colours drawn as their mean, the material colour and TEV stages past c0 / c1 not applied,
+windows with one frame texture (mirrored round) or none, pane rotations other than z only as 180 degree flips.
 """
 import struct
 import sys
@@ -70,11 +72,21 @@ def parse_brlyt(b):
                 # TEV swap, indirect SRTs / orders, TEV stages, alpha compare before it): GX_BM_BLEND with
                 # GX_BL_ONE as the destination adds (TitleLogo's PicBloomA / B, PicFlash, PicLogoShine)
                 q = so + 20 * ns + 4 * (fl >> 8 & 0xF) + 4 * (fl >> 25 & 1) + 4 * (fl >> 27 & 1) + 4 * (fl >> 12 & 1)
-                q += 20 * (fl >> 13 & 3) + 4 * (fl >> 15 & 7) + 16 * (fl >> 18 & 0x1F) + 4 * (fl >> 23 & 1)
+                q += 20 * (fl >> 13 & 3) + 4 * (fl >> 15 & 7)
+                # the stage that reads the second map, its alpha inputs (nw4r lyt TevStageInOp: a b c d, 4 bits
+                # each): d + (1 - c) a + c b with c its alpha (GX_CA_TEXA 4). (APREV 0, ZERO 7): APREV x (1 - mask),
+                # the mask's dark part shows the first map (TitleLogo's PicLogoGalaxy: the space through GALAXY);
+                # (ZERO, APREV or RASA 5): its light part. None: another combination
+                mask = None
+                for k in range(fl >> 18 & 0x1F):
+                    st = q + 16 * k
+                    if b[st + 2] == 1 and b[st + 9] >> 4 == 7 and b[st + 9] & 15 == 4:
+                        mask = {(0, 7): "inv", (7, 0): "mask", (7, 5): "mask"}.get((b[st + 8] & 15, b[st + 8] >> 4))
+                q += 16 * (fl >> 18 & 0x1F) + 4 * (fl >> 23 & 1)
                 add = bool(fl >> 24 & 1) and b[q] == 1 and b[q + 2] == 1
                 mats.append(dict(name=cstr(b, mo, 20).strip(),
                                  c0=struct.unpack_from(">4h", b, mo + 0x14), c1=struct.unpack_from(">4h", b, mo + 0x1C),
-                                 maps=maps, srt=srts[0] if srts else (0, 0, 0, 1, 1), add=add))
+                                 maps=maps, srt=srts[0] if srts else (0, 0, 0, 1, 1), srts=srts, add=add, mask=mask))
         elif kind in KINDS:
             p = dict(kind=KINDS[kind], name=cstr(b, o + 12, 16), flags=b[o + 8], origin=b[o + 9], alpha=b[o + 10],
                      ud=cstr(b, o + 0x1C, 8),
@@ -202,10 +214,28 @@ def bti(b):
     return tex.decode(b[off:], fmt, w, h).copy()
 
 
-def convert(files, name, texts, extra=None):
+def mask_rects(rgba, inv):
+    """a mask texture (its alpha, or its intensity) -> the rectangles where it shows the first map (alpha >= 0.5; inv:
+    < 0.5): each texel row's runs, a run the row below repeats merged down; (x0, y0, x1, y1) in 1 / 65535 of its size"""
+    a = (rgba[..., 3] if rgba[..., 3].min() < 255 else rgba[..., :3].mean(-1)) >= 128
+    on = ~a if inv else a
+    h, w = on.shape
+    rects, live = [], {}
+    for y in range(h + 1):
+        runs = set()
+        if y < h:
+            d = np.diff(np.concatenate([[0], on[y].astype(np.int8), [0]]))
+            runs = set(zip(np.flatnonzero(d == 1), np.flatnonzero(d == -1)))
+        rects += [(x0, y0, x1, y) for (x0, x1), y0 in live.items() if (x0, x1) not in runs]
+        live = {r: live.get(r, y) for r in runs}
+    return [(x0 * 65535 // w, y0 * 65535 // h, x1 * 65535 // w, y1 * 65535 // h) for x0, y0, x1, y1 in rects]
+
+
+def convert(files, name, texts, extra=None, full=False):
     """one layout (its RARC's files by lower-case base name) -> its Layout record and body; its textures appended to
     `texts` (PS2 dicts). extra: {material name: BTI bytes} added as materials of their own (MR::replacePaneTexture's
-    textures: GalaxyInfoLayoutSetter's ObjectData/GalaxyInfoTexture.arc)"""
+    textures: GalaxyInfoLayoutSetter's ObjectData/GalaxyInfoTexture.arc). full: textures at full resolution, unquantized
+    (tex.to_ps2_full)"""
     texs, fonts, mats, panes = parse_brlyt(files[name.lower() + ".brlyt"])
     files = dict(files)
     for mn, b in (extra or {}).items():
@@ -215,17 +245,23 @@ def convert(files, name, texts, extra=None):
     anims = sorted((k[:-6], parse_brlan(v)) for k, v in files.items() if k.endswith(".brlan"))
     pidx = {p["name"]: i for i, p in enumerate(panes)}
     midx = {m["name"]: i for i, m in enumerate(mats)}
-    # materials whose colours an animation moves keep them live (not baked into the texture)
-    live = {e[0] for _, a in anims for e in a["entries"] if e[1] and any(t[0] == 3 and 4 <= t[2] < 12 for t in e[2])}
+    # materials whose colours an animation moves keep them live (not baked into the texture); when only their alphas
+    # move and c0's is 0 (TitleLogo's PicBloomA / B: c1's), the colours are baked and c1's alpha applied live
+    def moved(test):
+        return {e[0] for _, a in anims for e in a["entries"] if e[1] and any(test(t) for t in e[2])}
+    live = moved(lambda t: t[0] == 3 and 4 <= t[2] < 12 and t[2] % 4 != 3)
+    alpha_live = moved(lambda t: t[0] == 3 and t[2] in (7, 11))
+    scrolled = moved(lambda t: t[0] == 4 and t[1] == 0)  # its first map's texture SRT moves
     images, img_ix = [], {}
 
-    def image(texname, c0, c1, wrap, mask=None, add=False):
-        key = (texname, c0, c1, wrap, mask, add)
+    def image(texname, c0, c1, wrap, mask=None, add=False, a_live=False):
+        key = (texname, c0, c1, wrap, mask, add, a_live)
         if key not in img_ix:
             f = files.get(texname.lower())
             if f is None:
                 return -1
-            rgba = (bti(f) if texname.startswith("@bti:") else tpl(f)).astype(np.float32) / 255
+            src = bti(f) if texname.startswith("@bti:") else tpl(f)
+            rgba = (tex.pow2_up(src) if full else src).astype(np.float32) / 255
             if mask and mask.lower() in files:  # a second map as its mask (TitleLogo's PicLogoGalaxy: the space through
                 # the letters): baked at the mask's size, the first one's colour over it, the mask's alpha.
                 # ponytail: the first map's scroll (its SRT) is lost
@@ -239,34 +275,49 @@ def convert(files, name, texts, extra=None):
                 a, b_ = np.array(c0, np.float32) / 255, np.array(c1, np.float32) / 255
                 ta = rgba[..., 3].copy()
                 rgba = np.clip(a + (b_ - a) * rgba, 0, 1)
-                if add:  # added (Cs x As + Cd): the texture's own alpha weighs it (both colours' alpha are 0)
-                    rgba[..., 3] = ta
+                if add or a_live:  # added (Cs x As + Cd): the texture's own alpha weighs it (both colours' alpha
+                    rgba[..., 3] = ta  # are 0); alpha_live: c1's alpha applied by lyt.c
+                elif mask and mask.lower() != texname.lower() and c0[3] == c1[3]:  # one alpha for both colours: the
+                    rgba[..., 3] = ta * a[3]  # mask's shape kept (DPDPointer's PicHand: the gradation in the hand)
             img_ix[key] = len(images)
             images.append(((rgba * 255 + 0.5).astype(np.uint8), wrap))
         return img_ix[key]
 
-    mrecs = []
+    mrecs, masked, strings = [], {}, []
     for m in mats:
         texi, wraps, baked, tsz = [-1, -1], [0, 0, 0, 0], 0, (0, 0)
+        # a mask whose first map scrolls on its own (TitleLogo's PicLogoGalaxy: Wait moves the space, not the
+        # letters): the mask as rectangles (mask_rects) the first map is drawn on
+        two = (len(m["maps"]) > 1 and m.get("mask") and m["name"] in scrolled and m["maps"][1][0] < len(texs)
+               and tuple(m["srts"][1]) == (0, 0, 0, 1, 1))
         for k, (ti, ws, wt) in enumerate(m["maps"][:1]):
             plain = m["c0"] == (0, 0, 0, 0) and m["c1"] == (255, 255, 255, 255)
-            bake = not plain and m["name"] not in live
+            a_live = m["name"] in alpha_live and m["c0"][3] == 0
+            bake = not plain and m["name"] not in live and (m["name"] not in alpha_live or a_live)
             c0 = tuple(max(0, min(255, v)) for v in m["c0"])
             c1 = tuple(max(0, min(255, v)) for v in m["c1"])
-            mask = texs[m["maps"][1][0]] if len(m["maps"]) > 1 and m["maps"][1][0] < len(texs) else None
-            texi[k] = image(texs[ti], c0 if bake else None, c1 if bake else None, (ws, wt), mask, m.get("add", False)) if ti < len(texs) else -1
+            mask = texs[m["maps"][1][0]] if len(m["maps"]) > 1 and m["maps"][1][0] < len(texs) and not two else None
+            texi[k] = image(texs[ti], c0 if bake else None, c1 if bake else None, (ws, wt), mask, m.get("add", False),
+                            a_live=a_live) if ti < len(texs) else -1
+            if mask and ti < len(texs):
+                masked[m["name"]] = (texs[ti], c0 if bake else None, c1 if bake else None, (ws, wt), m.get("add", False))
             wraps[2 * k:2 * k + 2] = [ws, wt]
             if ti < len(texs) and texs[ti].lower() in files and not texs[ti].startswith("@bti:"):
                 tsz = tpl(files[(mask if mask and mask.lower() in files else texs[ti]).lower()]).shape[1::-1]
             if mask:
                 wraps[2 * k:2 * k + 2] = [0, 0]  # the mask's clamp
-            baked = 1 if bake else baked
+            baked = (1 if bake else baked) | (2 if bake and a_live else 0)
+        nrect = 0
+        if two:
+            rects = mask_rects(tpl(files[texs[m["maps"][1][0]].lower()]), m["mask"] == "inv")
+            texi[1], nrect = len(strings), len(rects)
+            strings += [v for r in rects for v in r]
+            baked |= 4
         c0 = bytes(max(0, min(255, v)) for v in m["c0"])
         c1 = bytes(max(0, min(255, v)) for v in m["c1"])
-        srt = (0, 0, 0, 1, 1) if len(m["maps"]) > 1 else m["srt"]  # a masked one: the mask's place, not the scroll
-        mrecs.append(struct.pack("<20s2h4B5f4s4sBB2xHH", m["name"].encode()[:20], *texi, *wraps, *srt, c0, c1, baked,
-                                 m.get("add", False), *tsz))
-    strings = []
+        srt = (0, 0, 0, 1, 1) if len(m["maps"]) > 1 and not two else m["srt"]  # a baked mask: its place, not the scroll
+        mrecs.append(struct.pack("<20s2h4B5f4s4sBBHHH", m["name"].encode()[:20], *texi, *wraps, *srt, c0, c1, baked,
+                                 m.get("add", False), nrect, *tsz))
     precs = []
     for p in panes:
         rec = struct.pack("<16shhBBBB3f3f2f2f", p["name"].encode()[:16], p["parent"], p["mat"], p["kind"], p["flags"],
@@ -305,6 +356,12 @@ def convert(files, name, texts, extra=None):
             if target is None:
                 continue
             for tag, index, sub, ctype, ks in trs:
+                if tag == 5 and index == 1 and is_mat and ename in masked:  # a pattern on a masked material's mask
+                    # (DPDPointer's HandType: PicHand's hand): the material baked again with each as its mask, on map 0
+                    tn0, c0, c1, ws, add = masked[ename]
+                    for k in ks:
+                        tmap[int(k[1])] = image(tn0, c0, c1, ws, a["textures"][int(k[1])], add)
+                    index = 0
                 tracks.append((target, is_mat, tag, index, sub, ctype, len(ks), len(keys)))
                 keys += ks
         arecs.append((an, a["frames"], a["loop"], tracks, keys, tmap))
@@ -336,7 +393,7 @@ def convert(files, name, texts, extra=None):
     out += b"\0" * (-len(out) % 16)
     tex0 = len(texts)
     for rgba, (ws, wt) in images:
-        texts.append(tex.to_ps2(rgba, ws, wt, hi=True))
+        texts.append(tex.to_ps2_full(rgba, ws, wt) if full else tex.to_ps2(rgba, ws, wt, hi=True))
     head = struct.pack("<24sHHHHHHIIII", name.encode()[:24], len(panes), len(mats), len(arecs), len(images), tex0,
                        len(strings), off_panes, off_mats, off_anims, off_str)
     return head + bytes(out)
@@ -345,7 +402,12 @@ def convert(files, name, texts, extra=None):
 # the layouts every scene may show (menus.bin, loaded with each scene)
 COMMON = ("PauseMenu", "SysInfoWindow", "SysInfoWindowMini", "GameOver", "TooBad", "StageTitle", "IconAButton",
           "BackButton", "ScenarioSelect", "WipeKoopa", "ResultWindow", "CinemaFrame", "FlyMeter", "AirMeter",  # MarioSubMeter
-          "PointerGuidance")  # StarPointerGuidance
+          "PointerGuidance",  # StarPointerGuidance
+          "DPDPointer",  # StarPointerLayout's 1P pointer, StarPointerBlur's Blur.bti as its material "Blur"
+          "SelectButton",  # YesNoLayout (the talks' yes / no)
+          "TimeLimit")  # TimeLimitLayout (Red / Black comets)
+# ponytail: no DPDPointerSub (the 2P pointer) nor DPDPointerNumber (the player number, shown only with two remotes
+# connected): one pad here
 # the dome's galaxy select's (AstroDomeGalaxySelector): dome.bin, loaded in the AstroDome stages only; GalaxyInfo with
 # the galaxies' pictures (GalaxyInfoTexture.arc) as materials named by galaxy (20 characters)
 DOME = ("GalaxySelect", "GalaxyInfo", "GalaxyNamePlate")
@@ -526,10 +588,12 @@ def gdat_chunk(fsp):
 def build(fsp, names=COMMON):
     from slice import blob_of, chunk
     texts, bodies = [], []
+    blur = {"Blur": next(v for k, v in B.rarc_files((Path(fsp) / "ObjectData" / "StarPointerBlur.arc").read_bytes())
+                         if k.lower().endswith("blur.bti"))}
     for n in names:
         files = {k.lower().rsplit("/", 1)[-1]: v for k, v in
                  B.rarc_files((Path(fsp) / "LayoutData" / f"{n}.arc").read_bytes())}
-        bodies.append(convert(files, n, texts))
+        bodies.append(convert(files, n, texts, blur if n == "DPDPointer" else None))
     offs, o = [], 16 + 4 * len(bodies)
     for bd in bodies:
         offs.append(o)
@@ -559,6 +623,8 @@ def build_3d(fsp):
 # the title and file select's (FileSelector, TitleSequenceProduct): title.bin (layouts) and title3d.bin (FileSelectItem's
 # planet and fellows, FileSelectSky), loaded in the FileSelect stage only
 TITLE = ("TitleLogo", "PressStart", "FileSelect", "FileInfo", "FileNumber", "MiiSelect", "MiiIcon", "BrosButton")
+# the title screen has the memory to itself: its logo at full resolution and colour depth (the user saw it blurred)
+TITLE_FULL = ("TitleLogo",)
 TITLE_3D = (("FileSelectDataPlanet", "FileSelectDataPlanet"), ("FileSelectDataMario", "FileSelectDataMario"),
             ("FileSelectDataLuigi", "FileSelectDataLuigi"), ("FileSelectDataYoshi", "FileSelectDataYoshi"),
             ("FileSelectDataKinopio", "FileSelectDataKinopio"), ("FileSelectDataPeach", "FileSelectDataPeach"),
@@ -590,7 +656,7 @@ def build_title(fsp):
     for n in TITLE:
         files = {k.lower().rsplit("/", 1)[-1]: v for k, v in
                  B.rarc_files((Path(fsp) / "LayoutData" / f"{n}.arc").read_bytes())}
-        bodies.append(convert(files, n, texts))
+        bodies.append(convert(files, n, texts, full=n in TITLE_FULL))
     offs, o = [], 16 + 4 * len(bodies)
     for bd in bodies:
         offs.append(o)
@@ -611,6 +677,13 @@ def selftest(fsp="data/fs/files"):
     body = convert(files, "PauseMenu", [])
     off_panes, off_mats = struct.unpack_from("<II", body, 36)
     assert off_panes == 52 and off_mats == 52 + 176 * len(panes)
+    # TitleLogo's GALAXY: the space on the mask's dark part, as rectangles covering just that
+    files = {k.lower().rsplit("/", 1)[-1]: v for k, v in
+             B.rarc_files((Path(fsp) / "LayoutData" / "TitleLogo.arc").read_bytes())}
+    mk = tpl(files["mytitlemask.tpl"])
+    rects = mask_rects(mk, True)
+    area = sum((x1 - x0) * (y1 - y0) for x0, y0, x1, y1 in rects) / 65535 ** 2
+    assert 0 < len(rects) < 1000 and abs(area - (mk[..., 3] < 128).mean()) < 0.01, (len(rects), area)
 
 
 if __name__ == "__main__":  # python tools/lyt.py data/fs/files [out/packs/menus.bin]; --selftest

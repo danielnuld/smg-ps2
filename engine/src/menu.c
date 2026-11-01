@@ -40,7 +40,9 @@ static void gm_draw(void);
 static int gm_screen(void);
 int menu_galaxy_map_active(void);
 int menu_file_selecting(void);
+static int fs_title(void);
 static void mlay_update(void);
+static void tl_init(void);
 static void mlay_draw(void);
 static void ss_update(void);
 static void wipe_update(void);
@@ -80,11 +82,13 @@ static void nrv_end(Nrv *n) { n->step++; nrv_change(n); }      /* step on, chang
 static int nrv_is(const Nrv *n, int v) { return (n->next >= 0 ? n->next : n->cur) == v; } /* getCurrentNerve */
 #define FIRST(n) ((n)->step == 0)
 
-static int pointing_on(LytInst *l, const char *pane) /* MR::isStarPointerPointingPane */
+static int pointing_on(LytInst *l, const char *pane) /* MR::isStarPointerPointingPane (touch, "弱") */
 {
     float x, y;
     game_cursor(&x, &y);
-    return lyt_pane_hit(l, pane, x, y);
+    if (!lyt_pane_hit(l, pane, x, y)) return 0;
+    menu_pointer_touch((const char *)l + (size_t)pane, 1); /* its id: the actor + the pane's name */
+    return 1;
 }
 
 /* --- ButtonPaneController -------------------------------------------------------------------------------------- */
@@ -203,7 +207,7 @@ static void btn_update(Btn *b)
 
 /* --- YesNoController ------------------------------------------------------------------------------------------- */
 enum { YN_SELECTING, YN_DECIDED, YN_DISAPPEAR, YN_SELECTED, YN_NOTSELECTED };
-typedef struct { LytInst *host; Btn yes, no; u8 on; Nrv n; } YesNo;
+typedef struct { LytInst *host; Btn yes, no; u8 on, se_set; int se[3]; Nrv n; } YesNo; /* se: setSE's cursor / yes / no */
 
 static void yn_init(YesNo *y, LytInst *host)
 {
@@ -212,6 +216,11 @@ static void yn_init(YesNo *y, LytInst *host)
     btn_init(&y->yes, host, "Right", "BoxRight", 0, 1); y->yes.end_disappear = 0;
     btn_init(&y->no, host, "Left", "BoxLeft", 0, 1); y->no.end_disappear = 0;
     y->n.next = YN_SELECTING;
+}
+static int yn_se(const YesNo *y, int k) /* mCursorSE / mYesSE / mNoSE, else sDefault*SE */
+{
+    static const int def[3] = {SE_SY_TALK_FOCUS_ITEM, SE_SY_TALK_SELECT_YES, SE_SY_TALK_SELECT_NO};
+    return y->se_set ? y->se[k] : def[k];
 }
 static void yn_appear(YesNo *y) { y->on = 1; nrv_set(&y->n, YN_SELECTING); }
 static int yn_yes(const YesNo *y) { return y->yes.selected; }
@@ -223,11 +232,12 @@ static void yn_update(YesNo *y)
     switch (nrv_begin(&y->n)) {
     case YN_SELECTING:
         if (FIRST(&y->n)) { btn_appear(&y->yes); btn_appear(&y->no); }
-        if (btn_pointing_trigger(&y->yes) || btn_pointing_trigger(&y->no)) se_start(SE_SY_TALK_FOCUS_ITEM, NULL);
+        if (btn_pointing_trigger(&y->yes)) se_start(yn_se(y, 0), NULL);
+        if (btn_pointing_trigger(&y->no)) se_start(yn_se(y, 0), NULL);
         if (btn_try_select(&y->yes) || btn_try_select(&y->no)) nrv_set(&y->n, YN_DECIDED);
         break;
     case YN_DECIDED:
-        if (FIRST(&y->n)) se_start(y->yes.selected ? SE_SY_TALK_SELECT_YES : SE_SY_TALK_SELECT_NO, NULL);
+        if (FIRST(&y->n)) se_start(yn_se(y, y->yes.selected ? 1 : 2), NULL);
         if ((y->yes.selected && btn_decided_wait(&y->yes)) || (!y->yes.selected && btn_decided_wait(&y->no)))
             nrv_set(&y->n, YN_DISAPPEAR);
         break;
@@ -312,6 +322,36 @@ static void si_update(SysInfo *w)
 }
 
 static void si_disappear(SysInfo *w) { if (w->alive) nrv_set(&w->n, SI_DISAPPEAR); } /* SysInfoWindow::disappear */
+
+/* --- YesNoLayout (GameSceneLayoutHolder's "Yes/Noレイアウト": SelectButton): appearYesNoSelector sets its Right
+ * (yes) / Left (no) texts and its YesNoController's appear; Selecting kills it once the controller is done; the
+ * pointer in its ChooseYesNo mode meanwhile. ponytail: no LeftText / RightText effects (its EffectKeeper), no
+ * information message (setInformationMessage: none of the talks' passes one) */
+static struct { LytInst *l; YesNo yn; u8 alive; } ynl;
+void menu_yesno_appear(const char *yes, const char *no, int talk_se)
+{
+    if (!ynl.l) return;
+    ynl.yn.se_set = (u8)talk_se; /* TalkDirector: setYesNoSelectorSE (a branch not a yes / no) or resetYesNoSelectorSE */
+    ynl.yn.se[0] = SE_SY_TALK_FOCUS_ITEM; ynl.yn.se[1] = ynl.yn.se[2] = SE_SY_TALK_SELECT_YES;
+    ynl.alive = 1; /* appear: LayoutActor::appear, mController->appear */
+    yn_appear(&ynl.yn);
+    lyt_set_text_rec(ynl.l, "Right", msg_get(yes)); /* setSelectMessage */
+    lyt_set_text_rec(ynl.l, "Left", msg_get(no));
+}
+int menu_yesno_selected(void) /* isYesNoSelected: 1 Yes, 2 No (isYesNoSelectedYes), 0 not yet */
+{
+    if (!ynl.l) return 1; /* (menus.bin packed without SelectButton: Yes, no talk left hanging) */
+    return nrv_is(&ynl.yn.n, YN_SELECTED) ? (yn_yes(&ynl.yn) ? 1 : 2) : 0;
+}
+static void ynl_update(void)
+{
+    if (!ynl.alive) return;
+    if (!ynl.yn.on) { ynl.alive = 0; return; } /* exeSelecting: kill (LayoutActor::movement: its nerve, control) */
+    menu_pointer_request(SPM_CHOOSEYESNO); /* startStarPointerModeChooseYesNo */
+    game_cursor_menu();
+    yn_update(&ynl.yn);
+    lyt_update(ynl.l);
+}
 
 /* --- SaveDataHandleSequence (startSave): "save?" (System_Save00, or System_Save07 save and quit), the save with
  * System_Save01 for at least 120 frames, System_Save02; with confirm-remind a No asks ConfirmEndGame. The current
@@ -1004,6 +1044,310 @@ static void pm_update(void)
     }
 }
 
+/* --- StarPointerLayout after Petari (Screen/StarPointerLayout.cpp, StarPointerBlur.cpp, StarPointerController.cpp,
+ * System/StarPointerOnOffController.cpp): the 1P pointer, DPDPointer's StarPointer (the star: Wait, Touch, Blink, End)
+ * or HandPointer (HandType's frames 0 finger, 1 grip, 2 open; HandArrow round the open / gripping hand of the sphere
+ * selector) as the mode asks, on its nerves (the pointer's A: game_pointer_a; a touch: menu_pointer_touch), with
+ * StarPointerBlur's trail behind the star (draw2: two strips, thick 10 to 0, its texture's alpha in sColorA[0] added).
+ * The modes are asked each logic step while their requester's state lasts (incModeCounter .. popState); the lowest
+ * one asked is set up when it changes (updateMode), none: Base. ponytail: the remote's DPD has no PS2 counterpart:
+ * in the screen is the stick pointer pointing (game_cursor: moved, out 300 frames after), its one place a frame the
+ * blur's past points, no roll (rotateTest's angle 0) and no rumble going out (the stick pointer idling out is no move
+ * of the player's); no 2P (DPDPointerSub, DPDPointerNumber, Transparency), no command stream drawn (SpaceCocoon's aim
+ * line; its hand shown), no nozzle (BigBubble), kinds 2 / 5 (no requester), mRadius (each pointing check keeps its
+ * own radius), mShootDisabled */
+enum { SPN_WAIT, SPN_ONREACTION, SPN_GRIP, SPN_HOLD, SPN_HOLDTOUCH, SPN_RELEASE, SPN_OUTSCREEN, SPN_HIDE, SPN_HIDEIMM,
+       SPN_INVALIDATE };
+enum { SPK_STAR, SPK_HAND, SPK_CROSS = 3, SPK_FINGER };   /* StarPointerKind (3 HandPointerReactionWithCrossCursor) */
+enum { SPA_NULL = -1, SPA_FINGER, SPA_GUU, SPA_PAA, SPA_STAR }; /* AnimType (0..2: HandType's frame) */
+#define SP_BLUR 20 /* BLUR_POINT_NUM */
+static struct {
+    LytInst *l;
+    Nrv n;
+    int kind, anim, mode, appear, appear_time, valid, guide_off, in, out_time, frozen, stream, blur_tex, nhidden;
+    int touch_timer, start_touch, new_touch;
+    const void *touch_id, *new_id;
+    u32 req;
+    float x, y;
+    struct { float x, y; int hidden; } blur[SP_BLUR];
+} sp;
+static void spg_off(void);
+
+void menu_pointer_request(int mode) { sp.req |= 1u << mode; }
+static int sp_cur(void) { return sp.n.next >= 0 ? sp.n.next : sp.n.cur; } /* getCurrentNerve */
+static int sp_appear(void) { return sp.appear && sp.appear_time >= 0; }  /* isAppear */
+static int sp_touch(void) { return sp.touch_timer > 0; }                 /* isTouch */
+
+static void sp_blur_point(float x, float y, int hide) /* StarPointerBlur::updatePoint */
+{
+    sp.nhidden = hide ? sp.nhidden + 1 : 0;
+    memmove(&sp.blur[1], &sp.blur[0], (SP_BLUR - 1) * sizeof sp.blur[0]);
+    sp.blur[0].x = x; sp.blur[0].y = y; sp.blur[0].hidden = hide;
+}
+static void sp_blur_hide(void) { if (sp.nhidden < SP_BLUR) sp_blur_point(sp.blur[0].x, sp.blur[0].y, 1); }
+static void sp_blur_hide_all(void)
+{
+    if (sp.nhidden >= SP_BLUR) return;
+    for (int i = 0; i < SP_BLUR; i++) sp.blur[i].hidden = 1;
+    sp.nhidden = SP_BLUR;
+}
+static void sp_blur_draw(void)
+{
+    if (sp.nhidden >= SP_BLUR || sp.blur_tex < 0) return;
+    float xy[4 * SP_BLUR][2], uv[4 * SP_BLUR][2]; /* every strip in one draw */
+    u16 idx[12 * SP_BLUR];
+    int nv = 0, nt = 0;
+    for (int d = 0; d < 2; d++) /* its dir (0, 1), then (1, 0) */
+        for (int s = 0, e; s < SP_BLUR; s = e) { /* findDrawPointRange */
+            while (s < SP_BLUR && sp.blur[s].hidden) s++;
+            for (e = s; e < SP_BLUR && !sp.blur[e].hidden; e++) ;
+            if (e - s < 2) continue;
+            for (int k = s; k < e; k++) {
+                float t = k / (float)SP_BLUR, th = (1.0f - t) * 10.0f; /* sBeginThick .. sEndThick */
+                float ox = d ? th * (640.0f / 608.0f) : 0.0f, oy = d ? 0.0f : th * (448.0f / 456.0f);
+                xy[nv][0] = sp.blur[k].x - ox; xy[nv][1] = sp.blur[k].y - oy; uv[nv][0] = 0; uv[nv++][1] = t;
+                xy[nv][0] = sp.blur[k].x + ox; xy[nv][1] = sp.blur[k].y + oy; uv[nv][0] = 1; uv[nv++][1] = t;
+                if (k > s && (sp.blur[k].x != sp.blur[k - 1].x || sp.blur[k].y != sp.blur[k - 1].y)) { /* (none of no area) */
+                    u16 b = (u16)(nv - 4);
+                    u16 *q = idx + 3 * nt;
+                    q[0] = b; q[1] = b + 1; q[2] = b + 2; q[3] = b + 1; q[4] = b + 3; q[5] = b + 2;
+                    nt += 2;
+                }
+            }
+        }
+    if (nt) render_mesh2d((const float (*)[2])xy, (const float (*)[2])uv, nv, idx, nt, (u16)sp.blur_tex, 0x80801900, 1);
+}
+
+static void sp_to_star(void) /* changeToStarPointer */
+{
+    if (sp.blur[0].hidden) sp_blur_point(sp.x, sp.y, 0); /* StarPointerBlur::show */
+    lyt_show_rec(sp.l, "HandPointer", 0);
+    lyt_show_rec(sp.l, "StarPointer", 1);
+}
+static void sp_to_hand(void) /* changeToHandPointer */
+{
+    sp_blur_hide_all();
+    lyt_show_rec(sp.l, "StarPointer", 0);
+    lyt_show_rec(sp.l, "HandPointer", 1);
+    lyt_show_rec(sp.l, "PicPlayer1", 1);
+    lyt_show_rec(sp.l, "PicPlayer2", 0);
+}
+static void sp_anim_star(const char *a) { sp_to_star(); lyt_start_pane(sp.l, "StarPointer", a, 0); sp.anim = SPA_STAR; }
+static void sp_anim_hand(int a) /* startAnimHandFinger / Guu / Paa */
+{
+    sp_to_hand();
+    lyt_start_pane(sp.l, "HandPointer", "HandType", 0);
+    lyt_set_pane_frame_stop(sp.l, "HandPointer", 0, (float)a);
+    sp.anim = a;
+}
+static void sp_hide_all(void) /* hideAll */
+{
+    sp_blur_hide_all();
+    lyt_show_pane(sp.l, "PicNozzle", 0);
+    lyt_show_pane(sp.l, "HandArrow", 0);
+    lyt_show_rec(sp.l, "HandPointer", 0);
+    lyt_show_rec(sp.l, "StarPointer", 0);
+}
+static void sp_set(int v) /* Spine::setNerve: the current nerve's end first (Invalidate's: tearDownHide) */
+{
+    if (sp.n.step >= 0 && sp.n.cur == SPN_INVALIDATE) {
+        if (sp.kind == SPK_STAR) lyt_set_rate(sp.l, 0, 1.0f);
+        else if (sp.kind != SPK_CROSS) lyt_show_pane(sp.l, "HandPointer", 1);
+        sp.frozen = 0; /* showLayout, releaseAnimFrame, onCalcAnim */
+    }
+    nrv_set(&sp.n, v);
+}
+static void sp_change(int kind) /* changeLayout, then resetSameNerve */
+{
+    if (kind == sp.kind) return;
+    if (kind == SPK_STAR && !sp.stream) sp.anim = SPA_NULL;
+    sp.kind = kind;
+    int c = sp_cur();
+    if (c != SPN_HIDE && c != SPN_HIDEIMM) sp_set(c);
+}
+static void sp_pos(void) /* setPosition: the root at the pointer (608 x 456 layout units) */
+{
+    lyt_set_pos(sp.l, sp.x * (608.0f / 640.0f) - 304.0f, 228.0f - sp.y * (456.0f / 448.0f));
+}
+
+static void sp_init(void) /* StarPointerLayout(), initWithPort(0), appear */
+{
+    memset(&sp, 0, sizeof sp);
+    sp.n.next = -1; sp.kind = -1; sp.anim = SPA_PAA; sp.mode = -2; sp.appear = 1; sp.valid = 1;
+    for (int i = 0; i < SP_BLUR; i++) sp.blur[i].hidden = 1;
+    if (!(sp.l = lyt_new("DPDPointer"))) return; /* (menus.bin packed without it: no pointer) */
+    sp.blur_tex = lyt_material_texture(sp.l, "Blur");
+    sp.n.cur = SPN_HIDEIMM;
+    sp_change(SPK_STAR);
+    sp_hide_all();
+    sp_set(SPN_WAIT);
+}
+
+static void sp_setup(int m) /* StarPointerOnOffController::setup*: show / hide, the kind, validate, the guidance */
+{
+    static const struct { u8 show, kind, valid, guide; } tab[26] = { /* unlisted: Base (Title, Demo, PowerStarGetDemo) */
+        [SPM_SAVELOAD] = {1, SPK_FINGER, 1, 0}, [SPM_FILESELECT] = {1, SPK_FINGER, 1, 1},
+        [SPM_SCENARIOSELECT] = {1, SPK_FINGER, 1, 1}, [SPM_PAUSEMENU] = {1, SPK_FINGER, 1, 0},
+        [SPM_CHOOSEYESNO] = {1, SPK_FINGER, 1, 1}, [SPM_DEMOMARIODEATH] = {1, SPK_STAR, 0, 1},
+        [SPM_SPHEREONREACTION] = {1, SPK_CROSS, 1, 1}, [SPM_SPHEREFINGER] = {1, SPK_FINGER, 1, 1},
+        [SPM_COMMANDSTREAM] = {1, SPK_STAR, 1, 1}, [SPM_BLUESTAR] = {1, SPK_HAND, 1, 1},
+        [SPM_BLUESTARREADY] = {1, SPK_HAND, 1, 1}, [SPM_GAME] = {1, SPK_STAR, 1, 1}};
+    int k = m >= 0 ? m : 0;
+    if (tab[k].show) { if (!sp.appear) sp.appear_time = -3; sp.appear = 1; } else sp.appear = 0; /* show / hide */
+    sp_change(tab[k].kind);
+    sp.valid = tab[k].valid;
+    sp.guide_off = !tab[k].guide;
+    if (sp.guide_off) spg_off();
+}
+
+int menu_pointer_touch(const void *id, int rumble) /* onReaction; the pointing's tryRumblePad when isChanceToRumble */
+{
+    if (!sp.l || !sp.valid || !sp.in) return 0;
+    sp.new_id = id; sp.start_touch = 1;
+    if (rumble && (sp.new_touch || ((nrv_is(&sp.n, SPN_ONREACTION) || nrv_is(&sp.n, SPN_GRIP)) && sp.n.step == 1)))
+        pad_rumble(RUMBLE_WEAK);
+    return 1;
+}
+
+void menu_pointer_stream(int on) /* startCommandStream (its mode asked while on) / forceEndCommandStream */
+{
+    if (!sp.l) return;
+    if (on) { if (!sp.stream) sp_blur_hide_all(); sp.stream = 1; menu_pointer_request(SPM_COMMANDSTREAM); }
+    else if (sp.stream) { sp.stream = 0; sp_blur_point(sp.x, sp.y, 0); }
+}
+
+static void sp_control(void)
+{
+    sp.appear_time++;
+    int c = sp_cur();
+    lyt_show_pane(sp.l, "HandArrow", sp.kind == SPK_CROSS && (sp.anim == SPA_GUU || sp.anim == SPA_PAA) &&
+                                     c != SPN_HIDE && c != SPN_HIDEIMM && c != SPN_OUTSCREEN);
+    if (sp.kind != SPK_HAND && !sp.stream) { if (sp.in) sp_blur_point(sp.x, sp.y, 0); else sp_blur_hide(); } /* updateDecoration */
+    sp.new_touch = 0; /* updateTouch (sTouchCount 1) */
+    if (sp.start_touch) {
+        if (!sp.touch_timer || sp.new_id != sp.touch_id) { sp.new_touch = 1; sp.touch_id = sp.new_id; }
+        sp.touch_timer = 1; sp.start_touch = 0;
+    } else if (sp.touch_timer > 0) sp.touch_timer--;
+    if (!sp_appear()) {
+        if (!nrv_is(&sp.n, SPN_INVALIDATE)) sp_set(SPN_INVALIDATE);
+        sp_pos();
+        return;
+    }
+    if (nrv_is(&sp.n, SPN_INVALIDATE)) {
+        if (sp.in) sp_set(SPN_WAIT);
+        else { sp_hide_all(); sp_set(SPN_HIDEIMM); }
+        sp_pos();
+        return;
+    }
+    if (!sp.in) {
+        c = sp_cur();
+        if (c != SPN_OUTSCREEN && c != SPN_HIDE && c != SPN_HIDEIMM && sp.out_time > 5) { /* isOutScreenLong (hIsOutScreenCounter) */
+            if (sp.kind == SPK_STAR) { if (!lyt_pane_shown(sp.l, "StarPointer")) sp_anim_hand(SPA_GUU); else sp_anim_star("Blink"); }
+            else if (sp.kind == SPK_HAND) sp_anim_hand(SPA_PAA);
+            sp_set(SPN_OUTSCREEN);
+        }
+        return;
+    }
+    sp_pos();
+}
+
+static void sp_update(void) /* each logic step: StarPointerOnOffController::update, the controller, the layout's movement */
+{
+    if (!sp.l) return;
+    int m = sp.req ? __builtin_ctz(sp.req) : -1;
+    sp.req = 0;
+    if (m != sp.mode) { sp.mode = m; sp_setup(m); }
+    sp.in = game_cursor(&sp.x, &sp.y); /* isStarPointerInScreen, mPastInfo.mPos */
+    sp.out_time = sp.in ? 0 : sp.out_time + 1;
+    int a = game_pointer_a(), cur = nrv_begin(&sp.n);
+    switch (cur) {
+    case SPN_WAIT:
+        if (FIRST(&sp.n)) {
+            if (sp.kind == SPK_STAR) sp_anim_star("Wait");
+            else if (sp.kind == SPK_HAND || sp.kind == SPK_CROSS) sp_anim_hand(SPA_PAA);
+            else sp_anim_hand(SPA_FINGER);
+            lyt_show_pane(sp.l, "PicNozzle", 0);
+        }
+        if (sp_touch()) sp_set(SPN_ONREACTION);
+        else if (a) sp_set(SPN_GRIP);
+        break;
+    case SPN_GRIP:
+        if (FIRST(&sp.n)) {
+            if (sp.kind == SPK_STAR) { if (sp.stream) sp_anim_hand(SPA_GUU); else sp_anim_star("Wait"); }
+            else if (sp.kind == SPK_HAND || (sp.kind == SPK_CROSS && sp.anim != SPA_FINGER)) sp_anim_hand(SPA_GUU);
+            else if (sp.kind == SPK_FINGER) sp_anim_hand(SPA_FINGER);
+            lyt_show_pane(sp.l, "PicNozzle", 0);
+        }
+        if (!a) sp_set(SPN_RELEASE);
+        else if (sp.n.step > 20 || !lyt_pane_shown(sp.l, "StarPointer")) sp_set(SPN_HOLD); /* hGripTime */
+        break;
+    case SPN_HOLD:
+    case SPN_HOLDTOUCH:
+        if (FIRST(&sp.n)) {
+            if (sp.kind == SPK_STAR) { if (sp.stream) sp_anim_hand(SPA_GUU); else sp_anim_star("Wait"); }
+            else if (sp.kind == SPK_HAND || (sp.kind == SPK_CROSS && sp.anim != SPA_FINGER)) sp_anim_hand(SPA_GUU);
+            else if (sp.kind == SPK_FINGER) sp_anim_hand(SPA_FINGER);
+            lyt_show_pane(sp.l, "PicNozzle", 0);
+        }
+        if (cur == SPN_HOLD) {
+            if (sp_touch()) { sp_set(SPN_HOLDTOUCH); break; }
+            if (sp.kind == SPK_CROSS && sp.anim == SPA_FINGER) sp_anim_hand(SPA_GUU);
+        } else if (!sp_touch()) { sp_set(SPN_HOLD); break; }
+        if (!a) sp_set(SPN_RELEASE);
+        break;
+    case SPN_RELEASE:
+        if (sp_touch()) { sp_set(SPN_ONREACTION); break; }
+        if (FIRST(&sp.n)) {
+            if (sp.kind == SPK_STAR) sp_to_star();
+            else if (sp.kind == SPK_HAND || sp.kind == SPK_CROSS) sp_anim_hand(SPA_PAA);
+            else sp_anim_hand(SPA_FINGER);
+            lyt_show_pane(sp.l, "PicNozzle", 0);
+        }
+        if (a) sp_set(SPN_GRIP);
+        else if (sp.n.step > 30) sp_set(SPN_WAIT); /* hReleaseTime */
+        break;
+    case SPN_ONREACTION:
+        if (FIRST(&sp.n)) {
+            if (sp.kind == SPK_STAR || sp.kind == SPK_HAND) sp_anim_hand(SPA_PAA); /* the 1P star: the open hand */
+            else sp_anim_hand(SPA_FINGER);
+            lyt_show_pane(sp.l, "PicNozzle", 0);
+        }
+        if (a) sp_set(SPN_GRIP);
+        else if (!sp_touch()) sp_set(SPN_WAIT);
+        break;
+    case SPN_OUTSCREEN:
+        if (FIRST(&sp.n)) { sp_blur_hide_all(); lyt_show_pane(sp.l, "PicNozzle", 0); }
+        if (sp.in) sp_set(a ? SPN_GRIP : SPN_WAIT);
+        else if (sp.stream && a) sp_set(SPN_OUTSCREEN);
+        else if (sp.n.step > 0) sp_set(SPN_HIDE); /* sBeginHideTime */
+        break;
+    default: /* Hide, HideImmediately, Invalidate */
+        if (FIRST(&sp.n)) {
+            lyt_show_pane(sp.l, "PicNozzle", 0);
+            if (cur == SPN_HIDEIMM) { lyt_show_rec(sp.l, "HandPointer", 0); lyt_show_rec(sp.l, "StarPointer", 0); }
+            else if (cur == SPN_INVALIDATE) sp.frozen = 1; /* hideLayout, stopAnimFrame, offCalcAnim */
+            else if (sp.kind == SPK_STAR) { sp_anim_star("End"); lyt_set_rate(sp.l, 0, 2.0f); } /* hEndAnimRate */
+            else lyt_show_pane(sp.l, "HandPointer", 0);
+            sp_blur_hide_all();
+        }
+        if (cur != SPN_INVALIDATE && sp.in) sp_set(SPN_WAIT);
+        break;
+    }
+    nrv_end(&sp.n);
+    sp_control();
+    if (!sp.frozen) lyt_update(sp.l);
+}
+
+void menu_pointer_draw(void) /* StarPointerLayout::draw (drawDecoration: the blur under the star), over the frame */
+{
+    if (!sp.l) return;
+    if (!sp_appear()) { sp_blur_hide_all(); return; }
+    render_world_done();
+    if (sp.kind == SPK_HAND || sp.kind == SPK_FINGER) sp_blur_hide_all();
+    else sp_blur_draw();
+    if (!sp.frozen) lyt_draw(sp.l);
+}
+
 /* --- StarPointerGuidance after Petari (Screen/StarPointerGuidance.cpp): the PointerGuidance layout's NPointerGuide,
  * the 1P guidance message (request1PGuidance each frame: shown after hRequestTime 30 frames of the same message,
  * EndOneLine / EndTwoLine hNotRequestEndTime 30 frames after the last request; with the timeout its Wait ends it at
@@ -1020,9 +1364,17 @@ static void spg_init(void)
     lyt_show_rec(spg.l, "PointerFrame1", 0);
     lyt_show_rec(spg.l, "PointerFrame2", 0);
 }
+static void spg_off(void) /* deactive (a pointer setup's deactiveStarPointerGuidance; active again with the next one) */
+{
+    if (!spg.l) return;
+    lyt_show_rec(spg.l, "NPointerGuide", 0);
+    nrv_set(&spg.n, SPG_ENDWAIT);
+    spg.msg = spg.prev = NULL; spg.active = 0;
+}
 int menu_guidance_request(const char *label, int timeout)
 {
-    if (!spg.l) return 0;
+    if (!spg.l || !sp.valid) return 0; /* isStarPointerValid */
+    if (sp.guide_off) return 1;        /* !mIsActive: the request dropped */
     spg.msg = label ? msg_get(label) : NULL;
     spg.active = 1; spg.timeout = timeout;
     return 1;
@@ -1084,6 +1436,7 @@ void menu_init(const Scene *s)
     sv_prompt = seq_take_save_prompt();
     memset(&sr, 0, sizeof sr);
     subm_init();
+    tl_init();
     sr.l = lyt_new("ResultWindow");
     sr.info = lyt_new("InformationWindow"); /* MR::appearInformationMessageCenter's (NULL where not loaded) */
     if (sv_prompt && seq_take_result(&sr.r)) { /* a star return demo shows it at its wait's end (menu_result_start) */
@@ -1097,7 +1450,10 @@ void menu_init(const Scene *s)
     mono.l = lyt_new("PrologueStarSteward"); /* in map.bin: the Observatory only */
     pro_lyt_init();
     srl_init();
+    sp_init();
     spg_init();
+    memset(&ynl, 0, sizeof ynl);
+    if ((ynl.l = lyt_new("SelectButton"))) yn_init(&ynl.yn, ynl.l);
     fs_init(s);
     gm_init();
     u32 rgb;
@@ -1111,7 +1467,7 @@ int menu_paused(void) { return pm.alive; }
 int menu_test_point(const char *pane)
 {
     float x, y;
-    LytInst *l = sv.win.alive ? sv.win.l : pm.win.alive && lyt_pane(pm.win.l, pane) >= 0 ? pm.win.l : pm.l;
+    LytInst *l = ynl.alive ? ynl.l : sv.win.alive ? sv.win.l : pm.win.alive && lyt_pane(pm.win.l, pane) >= 0 ? pm.win.l : pm.l;
     if (!lyt_pane_center(l, pane, &x, &y)) return 0;
     game_set_cursor(x, y);
     return 1;
@@ -1188,9 +1544,123 @@ void menu_submeter_update(int resting, float x, float y, int visible) /* control
 }
 static void subm_draw(void) { if (subm_vis) for (int k = 0; k < 2; k++) if (subm[k].l && subm[k].shown) lyt_draw(subm[k].l); }
 
+/* --- TimeLimitLayout (Screen/TimeLimitLayout.cpp: "TimeLimit"), CometEventExecutorTimeLimit's (DisplayModeOnNormal:
+ * no fade out): Appear, then the count; at a sTimingTable time left the TIME grows (ScaleUp 8 frames, TimeSignal's
+ * blinks while it keeps), the last 10 s TimeLimit's pulse and the count sounds; at 0 TimeUpReady (the executor kills
+ * Mario). A pane scale set by control is overwritten while Appear (it has scale tracks) stays bound on its channel,
+ * as nw4r's bound animation does. Moved by game.c each frame its scene moves (menu_time_limit_update) */
+enum { TL_APPEAR, TL_COUNTDOWN, TL_SCALEUP, TL_SCALEKEEP, TL_SCALEDOWN, TL_FADEOUT, TL_TIMEUPREADY };
+typedef struct { int frame, max, dir; } ValCtl; /* ValueControl */
+static void vc_reset(ValCtl *v) { v->frame = v->dir > 0 ? 0 : v->max; }
+static void vc_dir(ValCtl *v, int dir) { v->dir = dir; vc_reset(v); } /* setDirToOne / ZeroResetFrame */
+static void vc_update(ValCtl *v) { if ((v->dir > 0 && v->frame != v->max) || (v->dir < 0 && v->frame != 0)) v->frame += v->dir; }
+static float vc_value(const ValCtl *v) { return (float)v->frame / v->max; }
+static float ease_in_out(float x) { return (1.0f - cosf(x * 3.14159265f)) / 2.0f; } /* getEaseInOutValue(x, 0, 1, 1) */
+typedef struct { u32 start, keep; u8 up, down, fade; } TlTiming;
+static const TlTiming tl_timing[5] = { /* sTimingTable */
+    {18000, 100, 1, 1, 1}, {10800, 100, 1, 1, 1}, {3600, 100, 1, 1, 1}, {1800, 100, 1, 1, 0}, {600, 600, 0, 0, 0}};
+static struct { LytInst *l; u8 alive, appear_bound; u32 time, limit; const TlTiming *cur; ValCtl scale, fade; Nrv n; u16 text[24]; } tl;
+
+static void tl_text(void) /* updateTextBox: makeMinuteAndSecondString(limit - time + 59) into Number */
+{
+    u32 f = tl.limit - tl.time + 59;
+    int arg[2] = {f >= 216000 ? 59 : (int)(f / 3600), f >= 216000 ? 59 : (int)(f % 3600 / 60)}, na = 0, n = 0;
+    const u16 *s = msg_get("System_Time001"); /* ReplaceArgs: its number tags (group 6) the arguments in turn */
+    for (; s && *s && n < 20; ) {
+        if (*s == 0x1A) {
+            int len = 4 + (s[3] + 1) / 2;
+            if (s[1] == 6 && na < 2) {
+                char d[8];
+                int k = snprintf(d, sizeof d, s[2] == 5 ? "%02d" : "%d", arg[na++]);
+                for (int j = 0; j < k && n < 20; j++) tl.text[n++] = (u16)d[j];
+            }
+            s += len;
+        } else tl.text[n++] = *s++;
+    }
+    tl.text[n] = 0;
+    lyt_set_text_rec(tl.l, "Number", tl.text);
+}
+static void tl_start(const char *anim) { lyt_start(tl.l, anim, 0); tl.appear_bound = !strcmp(anim, "Appear"); }
+static const TlTiming *tl_current_timing(void) /* getCurrentTiming */
+{
+    for (int i = 0; i < 5; i++) {
+        u32 start = tl_timing[i].start, frame = start - tl_timing[i].keep;
+        if (tl.limit >= frame && start >= tl.limit) continue;
+        u32 left = tl.limit - tl.time;
+        if (frame > left || left >= start) continue;
+        return &tl_timing[i];
+    }
+    return NULL;
+}
+static int tl_update_normal(void) /* updateNormal (mIsSuspend never set) */
+{
+    if (tl.time != tl.limit) { tl.time++; tl_text(); } /* addFrame */
+    u32 left = tl.limit - tl.time;
+    if (left <= 120) { if (left % 60 == 0 && left) se_start(SE_SY_E3_TIMER_COUNT_4, NULL); }
+    else if (left <= 360) { if (left % 60 == 0) se_start(SE_SY_E3_TIMER_COUNT_2, NULL); }
+    else if (left <= 600) { if (left % 60 == 0) se_start(SE_SY_E3_TIMER_COUNT_1, NULL); }
+    if (left == 600) tl_start("TimeLimit");
+    if (tl.time == tl.limit) { nrv_set(&tl.n, TL_TIMEUPREADY); return 1; }
+    return 0;
+}
+static void tl_init(void) { memset(&tl, 0, sizeof tl); tl.l = lyt_new("TimeLimit"); } /* (with the scene: not above its mark) */
+void menu_time_limit_appear(int frames) /* appear (resetFrame), setTimeLimit */
+{
+    if (!tl.l) return;
+    tl.limit = (u32)frames; tl.time = 0;
+    tl_text();
+    tl.scale.max = 8; tl.scale.dir = 1; tl.scale.frame = 8; /* sScaleUpDownFrame, setOne */
+    tl.fade.max = 60; tl.fade.dir = 1; tl.fade.frame = 60;  /* sFadeinoutFrame, setOne */
+    tl.cur = &tl_timing[0];
+    tl.alive = 1;
+    tl.n.next = -1; nrv_set(&tl.n, TL_APPEAR);
+}
+void menu_time_limit_kill(void) { tl.alive = 0; }
+int menu_time_limit_up(void) { return tl.alive && nrv_is(&tl.n, TL_TIMEUPREADY); } /* isReadyToTimeUp */
+int menu_time_limit_left(void) { return tl.alive ? (int)(tl.limit - tl.time) : -1; }
+void menu_time_limit_update(void) /* LayoutActor::movement: the nerve, control, the animations */
+{
+    if (!tl.alive) return;
+    switch (nrv_begin(&tl.n)) {
+    case TL_APPEAR:
+        if (FIRST(&tl.n)) { se_start(SE_SY_E3_TIMER_SCALE_UP, NULL); tl_start("Appear"); }
+        if (lyt_stopped(tl.l, 0)) nrv_set(&tl.n, TL_COUNTDOWN); /* setNerveAtAnimStopped */
+        break;
+    case TL_COUNTDOWN: {
+        if (tl_update_normal()) break;
+        const TlTiming *t = tl_current_timing();
+        if (t) { tl.cur = t; se_start(SE_SY_E3_TIMER_SCALE_UP, NULL); nrv_set(&tl.n, TL_SCALEUP); }
+        break;
+    }
+    case TL_SCALEUP:
+        if (FIRST(&tl.n)) { vc_dir(&tl.scale, 1); tl.fade.dir = 1; tl.fade.frame = tl.fade.max; }
+        if (tl_update_normal()) break;
+        if (tl.scale.frame == tl.scale.max) nrv_set(&tl.n, TL_SCALEKEEP);
+        break;
+    case TL_SCALEKEEP:
+        if (FIRST(&tl.n) && tl.cur->up) tl_start("TimeSignal");
+        if (tl_update_normal()) break;
+        if (tl.n.step > (int)tl.cur->keep) nrv_set(&tl.n, tl.cur->down ? TL_SCALEDOWN : TL_COUNTDOWN); /* isGreaterStep */
+        break;
+    case TL_SCALEDOWN:
+        if (FIRST(&tl.n)) vc_dir(&tl.scale, -1);
+        if (tl_update_normal()) break;
+        if (tl.scale.frame == tl.scale.max) nrv_set(&tl.n, TL_COUNTDOWN); /* (_35: no Fadeout) */
+        break;
+    case TL_TIMEUPREADY: break;
+    }
+    nrv_end(&tl.n);
+    vc_update(&tl.fade);
+    vc_update(&tl.scale);
+    lyt_set_pane_scale(tl.l, "TimeLimit", tl.appear_bound ? 1.0f : 1.0f + ease_in_out(vc_value(&tl.scale)) * 0.5f);
+    lyt_set_alpha(tl.l, ease_in_out(vc_value(&tl.fade)));
+    lyt_update(tl.l);
+}
+
 int menu_update(void)
 {
     if (select_after[0]) { menu_scenario_select(select_after, 0); select_after[0] = 0; }
+    sp_update(); /* StarPointerDirector::update, before the scene (the modes and touches its last step asked) */
     fade_update();
     wipe_update();
     dmu_update();
@@ -1201,6 +1671,7 @@ int menu_update(void)
     plt_update();
     srl_update();
     spg_update();
+    ynl_update();
     if (sr.delay && --sr.delay == 0 && sr.l) { /* the clear's demo sequence: StageResultInformer, then the save */
         sr.alive = 1; sr.n.next = -1; nrv_set(&sr.n, SR_APPEARSTAR);
     }
@@ -1209,15 +1680,19 @@ int menu_update(void)
         return !sr.demo; /* a return demo's (requestMovementOn): the scene keeps moving under it, Mario in ResultWait */
     }
     sv_take_errors();
-    if (menu_saving()) { game_cursor_menu(); sv_update(); if (!pm.alive) return 1; }
-    if (menu_scenario_selecting()) { game_cursor_menu(); ss_update(); return 1; }
-    if (menu_file_selecting()) { game_cursor_menu(); fs_update(); return 1; }
-    if (menu_galaxy_map_active()) { game_cursor_menu(); gm_update(); return 1; } /* GameScene::exeGalaxyMap */
+    if (menu_saving()) { menu_pointer_request(SPM_SAVELOAD); game_cursor_menu(); sv_update(); if (!pm.alive) return 1; }
+    if (menu_scenario_selecting()) { menu_pointer_request(SPM_SCENARIOSELECT); game_cursor_menu(); ss_update(); return 1; }
+    if (menu_file_selecting()) { /* FileSelector: startStarPointerModeTitle, then ...FileSelect */
+        menu_pointer_request(fs_title() ? SPM_TITLE : SPM_FILESELECT);
+        game_cursor_menu(); fs_update(); return 1;
+    }
+    if (menu_galaxy_map_active()) { menu_pointer_request(SPM_PAUSEMENU); game_cursor_menu(); gm_update(); return 1; } /* GameScene::exeGalaxyMap */
     if (!pm.alive) { /* GameScenePauseControl: Plus (START) where GameScene::isPermitToPauseMenu */
         if (!pm.l || !pad_pressed(PAD_START) || !game_pause_permitted()) return 0;
         pad_eat(PAD_START);
         pm_appear();
     }
+    menu_pointer_request(SPM_PAUSEMENU); /* GamePauseSequence */
     game_cursor_menu();
     pm_update();
     return 1;
@@ -1526,7 +2001,9 @@ static int ss_pointing_star(int i) /* isStarPointerPointingTarget: the circle of
     float x, y, cx, cy;
     if (!game_cursor(&x, &y) || !lyt_pane_center(ss.l, ss_star_pane[i], &cx, &cy)) return 0;
     float dx = (x - cx) * (608.0f / 640.0f), dy = (y - cy) * (456.0f / 448.0f); /* layout units */
-    return dx * dx + dy * dy < 60.0f * 60.0f;
+    if (dx * dx + dy * dy >= 60.0f * 60.0f) return 0;
+    menu_pointer_touch(ss_star_pane[i], 1); /* (touch, "弱") */
+    return 1;
 }
 
 static void ss_update_selected(void)
@@ -2745,7 +3222,6 @@ static void fs_init(const Scene *s)
     fsl.m_sky = scene_model(s, "CometNearOrbitSky");
     for (int i = 0; i < 5; i++) fsl.m_fellow[i] = scene_model(s, fs_fellow[i]);
     if (!fsl.logo || !fsl.press || !fsl.op || !fsl.back_l || !fsl.info) { printf("file select: layouts missing\n"); return; }
-    lyt_hide_for_good(fsl.logo, "PicLogoGalaxy"); /* ponytail: its space through the letters' mask shows as a box */
     btn_init(&fsl.btn[FB_START], fsl.op, "StartButton", "BoxStartButton", 0, 1);
     btn_init(&fsl.btn[FB_DELETE], fsl.op, "DeleteButton", "PicDelete", 0, 1);
     btn_init(&fsl.btn[FB_COPY], fsl.op, "CopyButton", "PicCopy", 0, 1);
@@ -2785,6 +3261,7 @@ int menu_test_point_file(int slot, const char *pane) /* tests: the pointer on fi
     return 1;
 }
 int menu_file_selecting(void) { return fsl.n.cur != FS_OFF || fsl.n.next > FS_OFF; }
+static int fs_title(void) { return nrv_is(&fsl.n, FS_TITLE); } /* exeTitle (TitleEnd: startStarPointerModeFileSelect) */
 
 static void fs_draw_model(const Model *md, const float pos[3], float rot_y, float scale)
 {
@@ -3071,7 +3548,10 @@ static int gm_pointed_icon(void) /* getPointingGalaxyIcon: the first icon pointe
     float x, y;
     game_cursor(&x, &y);
     for (int i = 0; i < gm.nicon; i++)
-        if (gm.icon[i].status && gm.icon[i].l_scale > 0.01f && lyt_pane_hit(gm.icon[i].l, "GalaxyIcon", x, y)) return i;
+        if (gm.icon[i].status && gm.icon[i].l_scale > 0.01f && lyt_pane_hit(gm.icon[i].l, "GalaxyIcon", x, y)) {
+            menu_pointer_touch(gm.icon[i].l, 1); /* GalaxyMapIcon::isPointing (touch, "弱") */
+            return i;
+        }
     return -1;
 }
 
@@ -3968,8 +4448,10 @@ void menu_draw(void)
     if (sr.alive) { render_world_done(); lyt_draw(sr.l); if (sr.info && (sr.n.cur == SR_INFO || sr.n.cur == SR_INFOEND)) lyt_draw(sr.info); }
     if (dmu.on) { render_world_done(); dmu_draw(); }
     mlay_draw();
+    if (tl.alive) { render_world_done(); lyt_draw(tl.l); } /* TimeLimitLayout */
     if (spg.l && !nrv_is(&spg.n, SPG_ENDWAIT)) { render_world_done(); lyt_draw(spg.l); } /* StarPointerGuidance */
     if (mono.on) { render_world_done(); lyt_draw(mono.l); iab_draw(mono_ab()); }
+    if (ynl.alive) { render_world_done(); lyt_draw(ynl.l); }
     pro_lyt_draw();
     gm_draw();
     if (pm.alive) {
