@@ -10252,7 +10252,7 @@ static void update_talkers(void)
             }
             if (in->talkcls == 5) t->branch = butler_branch;
             if (in->talkcls == 6) { t->event = luigi_event; t->branch = luigi_branch; } /* LuigiNPC::init: registerBranchFunc / EventFunc */
-            if (in->talkcls == 3 && sc->objs[in->row].arg[0] == 2 && !strcmp(sc->types + 32 * sc->objs[in->row].type, "KinopioAstro")) {
+            if (in->talkcls == 3 && sc->objs[in->row].arg[1] == 2 && !strcmp(sc->types + 32 * sc->objs[in->row].type, "KinopioAstro")) {
                 t->event = kast_event; /* KinopioAstro::init: the messenger's eventFunc */
                 kast_peach = gd_any_left_supply() ? 1 + gd_luigi_left_supply() : 0; /* mPeachLetter made (_194), mIsPlayerLuigi */
                 if (kast_peach) t->arg = kast_peach == 2 ? 20 : 5; /* setMessageArg: sMessangerOneUpExNum / OneUpNum */
@@ -10799,8 +10799,8 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
 #ifndef TALK_CLS
 #define TALK_CLS 1 /* the talker class to read (XF=-DTALK_CLS=3: the first Kinopio) */
 #endif
-#ifdef TALK_PEACH /* XF=-DTALK_CLS=3 -DTALK_PEACH (AstroGalaxy): the messenger (KinopioAstro arg0 2), Peach's letter */
-#define TALK_PICK(i) (sc->objs[insts[i].row].arg[0] == 2 && !strcmp(sc->types + 32 * sc->objs[insts[i].row].type, "KinopioAstro"))
+#ifdef TALK_PEACH /* XF=-DTALK_CLS=3 -DTALK_PEACH (AstroGalaxy): the messenger (KinopioAstro arg1 2), Peach's letter */
+#define TALK_PICK(i) (sc->objs[insts[i].row].arg[1] == 2 && !strcmp(sc->types + 32 * sc->objs[insts[i].row].type, "KinopioAstro"))
 #else
 #define TALK_PICK(i) 1
 #endif
@@ -32277,7 +32277,7 @@ static void update_luigi(void)
     }
 }
 
-/* KinopioAstro (the messenger, arg0 2) after Petari: its talk's eventFunc 0 (LetterEvent_LuigiLetter) shows Luigi's letter
+/* KinopioAstro (the messenger, arg1 2: mObjArg0) after Petari: its talk's eventFunc 0 (LetterEvent_LuigiLetter) shows Luigi's letter
  * (LuigiLetter for the talk: the hiding galaxy's picture, menu.c) until it is closed, then onGameEventFlagGetLuigiLetter;
  * 1 (PeachLetterNormal) Peach's (menu.c PeachLetter, made while isAnyPlayerLeftSupply) until it is closed, then
  * offAllPlayerLeftSupply; 2 (PeachLetter1Ups) 5 lives (20 for a Luigi supply) and SE_SY_5UP. ponytail: no OneUpBoard
