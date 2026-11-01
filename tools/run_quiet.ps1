@@ -1,6 +1,6 @@
 # Start PCSX2 with an ELF without stealing focus: launch minimized, then show it off-screen without activating it,
 # so PrintWindow (snapbg.ps1) can capture it while the user keeps working. usage: run_quiet.ps1 [elf] [seconds]
-# [-Iso disc.iso] boots a disc image instead (tools/disc.py)
+# [-Iso disc.iso] boots a disc image instead (tools/disc.py); with -Elf too, that ELF runs with the image as its disc
 param([string]$Elf = "D:\smg-ps2\engine\slice.elf", [int]$Wait = 16, [string]$Iso = "")
 Add-Type @"
 using System; using System.Runtime.InteropServices;
@@ -14,7 +14,7 @@ public class QW {
 }
 "@
 Get-Process | Where-Object { $_.Name -like 'pcsx2*' } | Stop-Process -Force; Start-Sleep 1
-Start-Process -FilePath "C:\Program Files\PCSX2\pcsx2-qt.exe" -ArgumentList $(if ($Iso) { @('-fastboot', '--', $Iso) } else { @('-elf', $Elf) }) -WindowStyle Minimized
+Start-Process -FilePath "C:\Program Files\PCSX2\pcsx2-qt.exe" -ArgumentList $(if ($Iso -and $PSBoundParameters.ContainsKey('Elf')) { @('-fastboot', '-elf', $Elf, '--', $Iso) } elseif ($Iso) { @('-fastboot', '--', $Iso) } else { @('-elf', $Elf) }) -WindowStyle Minimized
 Start-Sleep 4
 $p = Get-Process pcsx2-qt | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1
 $wp = New-Object QW+WP
