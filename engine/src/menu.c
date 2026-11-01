@@ -43,6 +43,8 @@ int menu_file_selecting(void);
 static int fs_title(void);
 static void mlay_update(void);
 static void plt_init(void);
+static void hm_init(void);
+static void tl_init(void);
 static void mlay_draw(void);
 static void ss_update(void);
 static void wipe_update(void);
@@ -1392,6 +1394,8 @@ void menu_init(const Scene *s)
     memset(&sr, 0, sizeof sr);
     subm_init();
     plt_init();
+    hm_init();
+    tl_init();
     sr.l = lyt_new("ResultWindow");
     sr.info = lyt_new("InformationWindow"); /* MR::appearInformationMessageCenter's (NULL where not loaded) */
     if (sv_prompt && seq_take_result(&sr.r)) { /* a star return demo shows it at its wait's end (menu_result_start) */
@@ -1497,6 +1501,323 @@ void menu_submeter_update(int resting, float x, float y, int visible) /* control
     }
 }
 static void subm_draw(void) { if (subm_vis) for (int k = 0; k < 2; k++) if (subm[k].l && subm[k].shown) lyt_draw(subm[k].l); }
+
+/* MarioMeter's HitPointMeter (MeterLayout, Screen/MeterLayout.cpp): the life plate. Wait (with 3 life it slides 50 out
+ * to the right while Mario moves, _4C), Danger1 / Danger2 pulsing at rate 4 (1 life) / 2 (2), Damage1 / Damage2 shakes,
+ * Recover (Font's Flash, the number's CountUpPaneRumbler), BreakMeter (4..6 down to 3: Break, then FontPosition2to1),
+ * ZeroMeter / ZeroMeterBreak (hidden at 0), PowerUp (the life-up mushroom: the W plate by Mario's head counting to 6,
+ * MeterMove back to its place, CounterMove: FontPosition1to2, 4 5 6), WaitStart (240 frames); its ShowHide frame
+ * _4C x mAlpha x 20, the pointer on PicBase fading it to 0.3. ponytail: no SuddenDeathMeter (a life of 1), no Break /
+ * Break123 layout effects */
+enum { ML_HIDE, ML_APPEAR, ML_WAIT, ML_WAITSTART, ML_POWERUP, ML_METERMOVE, ML_COUNTERMOVE, ML_RECOVER, ML_DAMAGE,
+       ML_BREAKMETER, ML_ZEROMETER, ML_ZEROMETERBREAK };
+static struct {
+    LytInst *l;
+    u8 alive, hidden;
+    int count, rum_t;                         /* mCount; the RumbleCalculator's _4 (of 15) */
+    float alpha, k;                           /* mAlpha, _4C */
+    float pos[2], posw[2], p3c[2], rum[2];    /* mFollowPos, mFollowPosW, _3C, the rumbler's mPosition */
+    float head[2];                            /* calcMarioHeadPosition (game.c, each frame) */
+    Nrv n;
+} hm;
+static float hm_ease(float x) { return (1.0f - cosf(x * 3.14159265f)) / 2.0f; } /* getEaseInOutValue(x, 0, 1, 1) */
+static void hm_frame_stop(int ch, float f) { lyt_set_frame(hm.l, ch, f); lyt_set_rate(hm.l, ch, 0); } /* setAnimFrameAndStop */
+static void hm_count_frame(void) /* setCountAnimFrame */
+{
+    lyt_set_number_rec(hm.l, "HitPointNumber", hm.count);
+    lyt_start_pane(hm.l, "HitPointMeter", "Count", 0);
+    lyt_set_pane_frame_stop(hm.l, "HitPointMeter", 0, (float)hm.count);
+}
+static void hm_recovery_frame(void) /* setRecoveryCountAnimFrame */
+{
+    lyt_set_number_rec(hm.l, "HitPointNumber", hm.count);
+    lyt_start_pane(hm.l, "HitPointMeter", "RecoveryCount", 0);
+    lyt_set_pane_frame_stop(hm.l, "HitPointMeter", 0, (float)hm.count);
+}
+static void hm_anim_base(void) /* setAnimBase */
+{
+    hm_count_frame();
+    lyt_start(hm.l, hm.count <= 3 ? "Danger1" : "Danger2", 1);
+    if (hm.count <= 1) lyt_set_rate(hm.l, 1, 4.0f);
+    else if (hm.count <= 2) lyt_set_rate(hm.l, 1, 2.0f);
+    else hm_frame_stop(1, 0.0f);
+}
+static void hm_zero_follow(void) { hm.pos[0] = hm.pos[1] = hm.posw[0] = hm.posw[1] = 0; }
+void menu_meter_init_count(int life) /* a new MeterLayout (the scene's, or the scene again after a miss) and initCount */
+{
+    LytInst *l = hm.l;
+    memset(&hm, 0, sizeof hm);
+    hm.l = l; hm.count = life; hm.k = 1.0f; hm.rum_t = 15; /* mCount(3), mAlpha(), _4C(1) */
+    if (!l) return;
+    lyt_follow(l, "HPMeter", hm.pos, 1);
+    lyt_follow(l, "HitPointW", hm.posw, 1);
+    lyt_follow(l, "HitPointNumber", hm.rum, 1); /* CountUpPaneRumbler */
+    lyt_start(l, "FontPosition2to1", 1);
+    lyt_start(l, "ShowHide", 2);
+    hm_frame_stop(2, hm.alpha * hm.k * 20.0f);
+    hm_count_frame();
+    hm.alive = 1; hm.n.next = -1; nrv_set(&hm.n, ML_WAIT); /* appear */
+}
+static void hm_init(void) { hm.l = lyt_new("HitPointMeter"); menu_meter_init_count(3); }
+void menu_meter_count(int life) /* setLifeCount (setCount) */
+{
+    int prev = hm.count;
+    hm.count = life;
+    if (life < prev) nrv_set(&hm.n, life == 0 ? ML_ZEROMETER : prev >= 4 && life < 4 ? ML_BREAKMETER : ML_DAMAGE);
+    else if (prev < life) nrv_set(&hm.n, ML_RECOVER);
+}
+void menu_meter_power_up(void) /* requestPowerUp */
+{
+    if (!hm.l) return;
+    hm.k = 1.0f;
+    hm_frame_stop(2, hm.k * 20.0f);
+    hm_zero_follow();
+    hm.alive = 1;
+    nrv_set(&hm.n, ML_POWERUP);
+}
+void menu_meter_active(int on) /* requestActive / requestDeactivate */
+{
+    if (!hm.l) return;
+    if (!on) { hm.alive = 0; return; }
+    if (hm.alive) return;
+    hm.rum_t = 15; /* mCountUpPaneRumbler->reset */
+    if (hm.count == 3) { hm.k = 0; hm.pos[0] = (1.0f - hm_ease(0.0f)) * 50.0f; } /* getEaseInOutValue(0, 1, 0, 1) x 50 */
+    else { hm.k = 1.0f; hm.pos[0] = hm.pos[1] = 0; }
+    hm_frame_stop(2, hm.k * 20.0f);
+    hm.posw[0] = hm.posw[1] = 0;
+    hm.alive = 1;
+    nrv_set(&hm.n, ML_WAIT);
+}
+void menu_meter_moving(int moving) /* requestPlayerMoving / requestPlayerStopped */
+{
+    if (!nrv_is(&hm.n, ML_WAIT)) return;
+    if (hm.count == 3) hm.k = fminf(fmaxf(hm.k + (moving ? -0.05f : 0.05f), 0.0f), 1.0f);
+    else hm.k = 1.0f;
+}
+void menu_meter_head(float x, float y) { hm.head[0] = x; hm.head[1] = y; }
+int menu_test_meter(void) { return hm.alive * 1000 + hm.n.cur * 10 + hm.count; } /* tests: alive, nerve, count */
+void menu_meter_update(void) /* LayoutActor::movement: the nerve, control, the animations */
+{
+    if (!hm.l || !hm.alive) return;
+    switch (nrv_begin(&hm.n)) {
+    case ML_HIDE: break;
+    case ML_APPEAR:
+        if (FIRST(&hm.n)) { hm.posw[0] = hm.posw[1] = 0; hm_anim_base(); hm.k = 1.0f; }
+        hm.pos[0] = hm.pos[1] = 0;
+        if (hm.n.step > 120) nrv_set(&hm.n, ML_WAIT); /* sAppearTime */
+        break;
+    case ML_WAITSTART:
+        if (FIRST(&hm.n)) { hm_anim_base(); hm.k = 1.0f; }
+        hm_zero_follow();
+        if (hm.n.step > 240) nrv_set(&hm.n, ML_WAIT); /* sWaitStartTime */
+        break;
+    case ML_WAIT:
+        if (FIRST(&hm.n)) { hm_anim_base(); hm.pos[0] = hm.pos[1] = 0; }
+        hm.pos[0] = (1.0f - hm_ease(hm.k)) * 50.0f; /* getEaseInOutValue(_4C, 1, 0, 1) x 50 */
+        hm.posw[0] = hm.posw[1] = 0;
+        break;
+    case ML_POWERUP: {
+        float base[3];
+        hm.pos[0] = hm.pos[1] = 0;
+        lyt_evaluate(hm.l);
+        lyt_pane_place(hm.l, "MoveMeterW", base); /* calcPowerUpMeterBasePosition */
+        hm.posw[0] = hm.head[0] - base[0]; hm.posw[1] = hm.head[1] - base[1];
+        if (FIRST(&hm.n)) {
+            hm.hidden = 0; /* showLayout */
+            lyt_start(hm.l, "Danger1", 1); hm_frame_stop(1, 0.0f);
+            hm_recovery_frame();
+            hm.k = 1.0f;
+        }
+        if (hm.count < 6 && hm.n.step > 0 && hm.n.step % 5 == 0) { /* sRecoveryCountInterval */
+            hm.count++;
+            hm_recovery_frame();
+            if (hm.count >= 4) lyt_set_number_rec(hm.l, "HitPointNumber", 3);
+            else { hm.rum_t = 0; lyt_start_pane(hm.l, "Font", "Flash", 0); }
+        }
+        if (hm.n.step > 60) nrv_set(&hm.n, ML_METERMOVE); /* sPowerUpWaitTime */
+        break;
+    }
+    case ML_METERMOVE: {
+        if (FIRST(&hm.n)) { hm.p3c[0] = hm.posw[0]; hm.p3c[1] = hm.posw[1]; hm.k = 1.0f; }
+        float r = fminf((float)hm.n.step / 25.0f, 1.0f); /* calcNerveEaseInRate(sMoveToBasePositionTime) */
+        r = 1.0f - cosf(r * 3.14159265f / 2.0f);
+        hm.posw[0] = hm.p3c[0] * (1.0f - r); hm.posw[1] = hm.p3c[1] * (1.0f - r);
+        if (hm.n.step > 25) nrv_set(&hm.n, ML_COUNTERMOVE);
+        break;
+    }
+    case ML_COUNTERMOVE:
+        if (FIRST(&hm.n)) { lyt_start(hm.l, "FontPosition1to2", 1); hm.k = 1.0f; }
+        if (hm.n.step == 0) lyt_set_number_rec(hm.l, "HitPointNumber", 4);
+        if (hm.n.step == 5) lyt_set_number_rec(hm.l, "HitPointNumber", 5);
+        if (hm.n.step == 10) lyt_set_number_rec(hm.l, "HitPointNumber", 6);
+        if (lyt_stopped(hm.l, 1)) nrv_set(&hm.n, ML_WAITSTART);
+        break;
+    case ML_RECOVER:
+        if (FIRST(&hm.n)) {
+            hm.rum_t = 0; lyt_start_pane(hm.l, "Font", "Flash", 0);
+            hm_count_frame(); hm_zero_follow(); hm.k = 1.0f;
+        }
+        if (lyt_pane_stopped(hm.l, "Font", 0)) nrv_set(&hm.n, ML_WAITSTART);
+        break;
+    case ML_DAMAGE:
+        if (FIRST(&hm.n)) {
+            lyt_start(hm.l, hm.count < 3 ? "Damage1" : "Damage2", 1);
+            hm_zero_follow(); hm_count_frame(); hm.k = 1.0f;
+        }
+        if (lyt_stopped(hm.l, 1)) nrv_set(&hm.n, ML_WAITSTART);
+        break;
+    case ML_BREAKMETER:
+        if (FIRST(&hm.n)) {
+            lyt_start_pane(hm.l, "HitPointMeter", "Break", 0);
+            lyt_set_number_rec(hm.l, "HitPointNumber", hm.count);
+            lyt_start(hm.l, "Damage2", 1);
+            hm_zero_follow(); hm.k = 1.0f;
+        }
+        if (hm.n.step == 40) { /* sBreakDelayTime (emitEffect Break) */
+            se_start(SE_SY_LIFE_PLATE_DEC, NULL);
+            lyt_start(hm.l, "FontPosition2to1", 1);
+            hm_count_frame();
+            nrv_set(&hm.n, ML_WAITSTART);
+        }
+        break;
+    case ML_ZEROMETER:
+        if (FIRST(&hm.n)) { lyt_start(hm.l, "Damage1", 1); hm_zero_follow(); hm_count_frame(); hm.k = 1.0f; }
+        if (lyt_stopped(hm.l, 1)) nrv_set(&hm.n, ML_ZEROMETERBREAK);
+        break;
+    case ML_ZEROMETERBREAK:
+        if (FIRST(&hm.n)) hm_zero_follow();
+        if (hm.n.step == 40) hm.hidden = 1; /* (emitEffect Break123) hideLayout */
+        break;
+    }
+    nrv_end(&hm.n);
+    /* control: mAlpha (the pointer on PicBase), the ShowHide frame, the rumbler */
+    float cx, cy;
+    if (nrv_is(&hm.n, ML_APPEAR)) hm.alpha = 1.0f;
+    else if (game_cursor(&cx, &cy) && lyt_pane_hit(hm.l, "PicBase", cx, cy)) hm.alpha -= 0.05f;
+    else hm.alpha += 0.05f;
+    hm.alpha = fminf(fmaxf(hm.alpha, 0.3f), 1.2f); /* sMinAlpha, sMaxAlpha */
+    hm_frame_stop(2, hm.k * fminf(hm.alpha, 1.0f) * 20.0f); /* normalize(mAlpha, 0, 1) */
+    hm.rum[0] = hm.rum[1] = 0;
+    if (hm.rum_t < 15) { /* RumbleCalculatorCosMultLinear(cRumbleFreq 2, pi / 2, cRumbleAmp 8, cRumbleFrame 15): its y */
+        float pr = hm.rum_t / 15.0f;
+        hm.rum[1] = cosf(2.0f * pr * 6.2831853f + 1.5707963f) * (1.0f - pr) * 8.0f;
+        hm.rum_t++;
+    }
+    lyt_update(hm.l);
+}
+static void hm_draw(void) { if (hm.l && hm.alive && !hm.hidden) lyt_draw(hm.l); }
+/* --- TimeLimitLayout (Screen/TimeLimitLayout.cpp: "TimeLimit"), CometEventExecutorTimeLimit's (DisplayModeOnNormal:
+ * no fade out): Appear, then the count; at a sTimingTable time left the TIME grows (ScaleUp 8 frames, TimeSignal's
+ * blinks while it keeps), the last 10 s TimeLimit's pulse and the count sounds; at 0 TimeUpReady (the executor kills
+ * Mario). A pane scale set by control is overwritten while Appear (it has scale tracks) stays bound on its channel,
+ * as nw4r's bound animation does. Moved by game.c each frame its scene moves (menu_time_limit_update) */
+enum { TL_APPEAR, TL_COUNTDOWN, TL_SCALEUP, TL_SCALEKEEP, TL_SCALEDOWN, TL_FADEOUT, TL_TIMEUPREADY };
+typedef struct { int frame, max, dir; } ValCtl; /* ValueControl */
+static void vc_reset(ValCtl *v) { v->frame = v->dir > 0 ? 0 : v->max; }
+static void vc_dir(ValCtl *v, int dir) { v->dir = dir; vc_reset(v); } /* setDirToOne / ZeroResetFrame */
+static void vc_update(ValCtl *v) { if ((v->dir > 0 && v->frame != v->max) || (v->dir < 0 && v->frame != 0)) v->frame += v->dir; }
+static float vc_value(const ValCtl *v) { return (float)v->frame / v->max; }
+static float ease_in_out(float x) { return (1.0f - cosf(x * 3.14159265f)) / 2.0f; } /* getEaseInOutValue(x, 0, 1, 1) */
+typedef struct { u32 start, keep; u8 up, down, fade; } TlTiming;
+static const TlTiming tl_timing[5] = { /* sTimingTable */
+    {18000, 100, 1, 1, 1}, {10800, 100, 1, 1, 1}, {3600, 100, 1, 1, 1}, {1800, 100, 1, 1, 0}, {600, 600, 0, 0, 0}};
+static struct { LytInst *l; u8 alive, appear_bound; u32 time, limit; const TlTiming *cur; ValCtl scale, fade; Nrv n; u16 text[24]; } tl;
+
+static void tl_text(void) /* updateTextBox: makeMinuteAndSecondString(limit - time + 59) into Number */
+{
+    u32 f = tl.limit - tl.time + 59;
+    int arg[2] = {f >= 216000 ? 59 : (int)(f / 3600), f >= 216000 ? 59 : (int)(f % 3600 / 60)}, na = 0, n = 0;
+    const u16 *s = msg_get("System_Time001"); /* ReplaceArgs: its number tags (group 6) the arguments in turn */
+    for (; s && *s && n < 20; ) {
+        if (*s == 0x1A) {
+            int len = 4 + (s[3] + 1) / 2;
+            if (s[1] == 6 && na < 2) {
+                char d[8];
+                int k = snprintf(d, sizeof d, s[2] == 5 ? "%02d" : "%d", arg[na++]);
+                for (int j = 0; j < k && n < 20; j++) tl.text[n++] = (u16)d[j];
+            }
+            s += len;
+        } else tl.text[n++] = *s++;
+    }
+    tl.text[n] = 0;
+    lyt_set_text_rec(tl.l, "Number", tl.text);
+}
+static void tl_start(const char *anim) { lyt_start(tl.l, anim, 0); tl.appear_bound = !strcmp(anim, "Appear"); }
+static const TlTiming *tl_current_timing(void) /* getCurrentTiming */
+{
+    for (int i = 0; i < 5; i++) {
+        u32 start = tl_timing[i].start, frame = start - tl_timing[i].keep;
+        if (tl.limit >= frame && start >= tl.limit) continue;
+        u32 left = tl.limit - tl.time;
+        if (frame > left || left >= start) continue;
+        return &tl_timing[i];
+    }
+    return NULL;
+}
+static int tl_update_normal(void) /* updateNormal (mIsSuspend never set) */
+{
+    if (tl.time != tl.limit) { tl.time++; tl_text(); } /* addFrame */
+    u32 left = tl.limit - tl.time;
+    if (left <= 120) { if (left % 60 == 0 && left) se_start(SE_SY_E3_TIMER_COUNT_4, NULL); }
+    else if (left <= 360) { if (left % 60 == 0) se_start(SE_SY_E3_TIMER_COUNT_2, NULL); }
+    else if (left <= 600) { if (left % 60 == 0) se_start(SE_SY_E3_TIMER_COUNT_1, NULL); }
+    if (left == 600) tl_start("TimeLimit");
+    if (tl.time == tl.limit) { nrv_set(&tl.n, TL_TIMEUPREADY); return 1; }
+    return 0;
+}
+static void tl_init(void) { memset(&tl, 0, sizeof tl); tl.l = lyt_new("TimeLimit"); } /* (with the scene: not above its mark) */
+void menu_time_limit_appear(int frames) /* appear (resetFrame), setTimeLimit */
+{
+    if (!tl.l) return;
+    tl.limit = (u32)frames; tl.time = 0;
+    tl_text();
+    tl.scale.max = 8; tl.scale.dir = 1; tl.scale.frame = 8; /* sScaleUpDownFrame, setOne */
+    tl.fade.max = 60; tl.fade.dir = 1; tl.fade.frame = 60;  /* sFadeinoutFrame, setOne */
+    tl.cur = &tl_timing[0];
+    tl.alive = 1;
+    tl.n.next = -1; nrv_set(&tl.n, TL_APPEAR);
+}
+void menu_time_limit_kill(void) { tl.alive = 0; }
+int menu_time_limit_up(void) { return tl.alive && nrv_is(&tl.n, TL_TIMEUPREADY); } /* isReadyToTimeUp */
+int menu_time_limit_left(void) { return tl.alive ? (int)(tl.limit - tl.time) : -1; }
+void menu_time_limit_update(void) /* LayoutActor::movement: the nerve, control, the animations */
+{
+    if (!tl.alive) return;
+    switch (nrv_begin(&tl.n)) {
+    case TL_APPEAR:
+        if (FIRST(&tl.n)) { se_start(SE_SY_E3_TIMER_SCALE_UP, NULL); tl_start("Appear"); }
+        if (lyt_stopped(tl.l, 0)) nrv_set(&tl.n, TL_COUNTDOWN); /* setNerveAtAnimStopped */
+        break;
+    case TL_COUNTDOWN: {
+        if (tl_update_normal()) break;
+        const TlTiming *t = tl_current_timing();
+        if (t) { tl.cur = t; se_start(SE_SY_E3_TIMER_SCALE_UP, NULL); nrv_set(&tl.n, TL_SCALEUP); }
+        break;
+    }
+    case TL_SCALEUP:
+        if (FIRST(&tl.n)) { vc_dir(&tl.scale, 1); tl.fade.dir = 1; tl.fade.frame = tl.fade.max; }
+        if (tl_update_normal()) break;
+        if (tl.scale.frame == tl.scale.max) nrv_set(&tl.n, TL_SCALEKEEP);
+        break;
+    case TL_SCALEKEEP:
+        if (FIRST(&tl.n) && tl.cur->up) tl_start("TimeSignal");
+        if (tl_update_normal()) break;
+        if (tl.n.step > (int)tl.cur->keep) nrv_set(&tl.n, tl.cur->down ? TL_SCALEDOWN : TL_COUNTDOWN); /* isGreaterStep */
+        break;
+    case TL_SCALEDOWN:
+        if (FIRST(&tl.n)) vc_dir(&tl.scale, -1);
+        if (tl_update_normal()) break;
+        if (tl.scale.frame == tl.scale.max) nrv_set(&tl.n, TL_COUNTDOWN); /* (_35: no Fadeout) */
+        break;
+    case TL_TIMEUPREADY: break;
+    }
+    nrv_end(&tl.n);
+    vc_update(&tl.fade);
+    vc_update(&tl.scale);
+    lyt_set_pane_scale(tl.l, "TimeLimit", tl.appear_bound ? 1.0f : 1.0f + ease_in_out(vc_value(&tl.scale)) * 0.5f);
+    lyt_set_alpha(tl.l, ease_in_out(vc_value(&tl.fade)));
+    lyt_update(tl.l);
+}
 
 int menu_update(void)
 {
@@ -3062,7 +3383,6 @@ static void fs_init(const Scene *s)
     fsl.m_sky = scene_model(s, "CometNearOrbitSky");
     for (int i = 0; i < 5; i++) fsl.m_fellow[i] = scene_model(s, fs_fellow[i]);
     if (!fsl.logo || !fsl.press || !fsl.op || !fsl.back_l || !fsl.info) { printf("file select: layouts missing\n"); return; }
-    lyt_hide_for_good(fsl.logo, "PicLogoGalaxy"); /* ponytail: its space through the letters' mask shows as a box */
     btn_init(&fsl.btn[FB_START], fsl.op, "StartButton", "BoxStartButton", 0, 1);
     btn_init(&fsl.btn[FB_DELETE], fsl.op, "DeleteButton", "PicDelete", 0, 1);
     btn_init(&fsl.btn[FB_COPY], fsl.op, "CopyButton", "PicCopy", 0, 1);
@@ -4284,10 +4604,11 @@ static void wipe_update(void)
 
 void menu_draw(void)
 {
-    if (!pm.alive && !sr.alive) subm_draw(); /* the game's default layout (MarioSubMeter) */
+    if (!pm.alive && !sr.alive) { subm_draw(); hm_draw(); } /* the game's default layout (MarioSubMeter, MarioMeter) */
     if (sr.alive) { render_world_done(); lyt_draw(sr.l); if (sr.info && (sr.n.cur == SR_INFO || sr.n.cur == SR_INFOEND)) lyt_draw(sr.info); }
     if (dmu.on) { render_world_done(); dmu_draw(); }
     mlay_draw();
+    if (tl.alive) { render_world_done(); lyt_draw(tl.l); } /* TimeLimitLayout */
     if (spg.l && !nrv_is(&spg.n, SPG_ENDWAIT)) { render_world_done(); lyt_draw(spg.l); } /* StarPointerGuidance */
     if (mono.on) { render_world_done(); lyt_draw(mono.l); iab_draw(mono_ab()); }
     if (ynl.alive) { render_world_done(); lyt_draw(ynl.l); }

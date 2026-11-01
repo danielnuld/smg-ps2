@@ -11,6 +11,17 @@ void menu_init(const Scene *s);
 void menu_submeter_mode(int mode);
 void menu_submeter_ratio(int bee, float ratio);
 void menu_submeter_update(int resting, float x, float y, int visible);
+/* MarioMeter (HitPointMeter): initLifeCount, setLifeCount, requestPowerUp (the life-up mushroom), requestActive /
+ * requestDeactivate (the default game layout), requestPlayerMoving / Stopped, Mario's head on the screen (608 x 456);
+ * a frame on (each frame its scene moves) */
+void menu_meter_init_count(int life);
+void menu_meter_count(int life);
+void menu_meter_power_up(void);
+void menu_meter_active(int on);
+void menu_meter_moving(int moving);
+void menu_meter_head(float x, float y);
+void menu_meter_update(void);
+int menu_test_meter(void);        /* tests: alive x 1000 + nerve x 10 + count */
 int menu_update(void);
 void menu_draw(void);
 int menu_paused(void);
@@ -79,6 +90,12 @@ void menu_pointer_stream(int on);
 void menu_pointer_draw(void);
 int menu_guidance_request(const char *label, int timeout); /* StarPointerGuidance::request1PGuidance (each frame), 0 none */
 int menu_guidance_exists(void);      /* MR::isExistStarPointerGuidance */
+/* TimeLimitLayout (a Red / Black comet's): appear with the limit (frames), a frame on, kill; isReadyToTimeUp; frames left */
+void menu_time_limit_appear(int frames);
+void menu_time_limit_update(void);
+void menu_time_limit_kill(void);
+int menu_time_limit_up(void);
+int menu_time_limit_left(void);        /* -1 not shown */
 /* YesNoLayout: MR::appearYesNoSelector(yes, no) (talk_se: TalkDirector's setYesNoSelectorSE), isYesNoSelected */
 void menu_yesno_appear(const char *yes, const char *no, int talk_se);
 int menu_yesno_selected(void);       /* 1 Yes, 2 No, 0 not yet */

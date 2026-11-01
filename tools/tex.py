@@ -30,6 +30,7 @@ from budget import u16, u32
 MAX_DIM = 128
 PSMT4 = 0x14
 PSMT8 = 0x13
+PSMCT32 = 0x00
 
 
 # ---------- GX decoding ----------
@@ -200,6 +201,46 @@ def to_ps2(rgba, wrap_s, wrap_t, hi=False):
     pix = (idx[:, 0::2] | idx[:, 1::2] << 4).astype(np.uint8).tobytes() if w > 1 else idx.tobytes()
     return dict(w=w, h=h, psm=PSMT4, clamp_s=0 if wrap_s else 1, clamp_t=0 if wrap_t else 1, alpha=alpha, pix=pix,
                 clut=clut, u_scale=us, v_scale=vs, mips=mips)
+
+
+def pow2_up(rgba):
+    """an RGBA image resized up to the next powers of two (Lanczos; never down): the GS's sizes at full resolution.
+    An intensity image (R = G = B = A: GX I4 / I8) is resized as one channel, so it stays one"""
+    h, w = rgba.shape[:2]
+    W, H = 1 << max(w - 1, 0).bit_length(), 1 << max(h - 1, 0).bit_length()
+    if (W, H) == (w, h):
+        return rgba
+    if (rgba == rgba[..., :1]).all():
+        g = np.asarray(Image.fromarray(np.ascontiguousarray(rgba[..., 0]), "L").resize((W, H), Image.Resampling.LANCZOS))
+        return np.repeat(g[..., None], 4, 2)
+    return np.asarray(Image.fromarray(np.ascontiguousarray(rgba), "RGBA").resize((W, H), Image.Resampling.LANCZOS))
+
+
+def to_ps2_full(rgba, wrap_s, wrap_t):
+    """a powers-of-two RGBA image at full resolution, unquantized: PSMT8 with its exact palette when it has at most
+    256 colours (intensity textures, also with their material colours baked in), else PSMCT32 (alpha 0..0x80).
+    For layouts that have the memory to spare (the title's)."""
+    if wrap_s == 2:
+        rgba = np.concatenate([rgba, rgba[:, ::-1]], 1)
+    if wrap_t == 2:
+        rgba = np.concatenate([rgba, rgba[::-1]], 0)
+    h, w = rgba.shape[:2]
+    assert not (w & (w - 1) or h & (h - 1)), (w, h)
+    a = rgba[..., 3]
+    alpha = 0 if a.min() == 255 else 1 if np.isin(a, (0, 255)).all() else 2
+    px = rgba.reshape(-1, 4).astype(np.uint32)
+    uniq, idx = np.unique(px, axis=0, return_inverse=True)
+    out = dict(w=w, h=h, clamp_s=0 if wrap_s else 1, clamp_t=0 if wrap_t else 1, alpha=alpha, u_scale=1.0, v_scale=1.0)
+    if len(uniq) <= 256:
+        pal = np.zeros((256, 4), np.uint32)
+        pal[:len(uniq)] = uniq
+        pal[:, 3] = (pal[:, 3] * 128 + 127) // 255
+        clut = (pal[:, 0] | pal[:, 1] << 8 | pal[:, 2] << 16 | pal[:, 3] << 24).astype("<u4")
+        clut = clut[[i ^ ((i >> 3 ^ i >> 4) & 1) * 0x18 for i in range(256)]]  # CSM1, as to_ps2's
+        return dict(out, psm=PSMT8, pix=idx.reshape(-1).astype(np.uint8).tobytes(), clut=clut.tobytes())
+    px[:, 3] = (px[:, 3] * 128 + 127) // 255
+    return dict(out, psm=PSMCT32, clut=b"",
+                pix=(px[:, 0] | px[:, 1] << 8 | px[:, 2] << 16 | px[:, 3] << 24).astype("<u4").tobytes())
 
 
 # ---------- materials ----------

@@ -26,8 +26,10 @@ typedef struct {
     u16 str, len;
     u8 pos, align, font_idx, pad2;
 } LytPane;
-typedef struct { char name[20]; s16 tex[2]; u8 wrap[4]; float srt[5]; u8 c0[4], c1[4]; u8 flags, add, pad[2]; u16 tw, th; } LytMat;
-/* add: the material's blend adds (Cs x As + Cd: GX_BL_SRCALPHA, GX_BL_ONE) */
+typedef struct { char name[20]; s16 tex[2]; u8 wrap[4]; float srt[5]; u8 c0[4], c1[4]; u8 flags, add; u16 nrect, tw, th; } LytMat;
+/* flags: bit 0 c0 / c1 baked into its texture, bit 1 its alpha still c1's (only that animated), bit 2 drawn on its
+ * mask's nrect rectangles (u16 x0 y0 x1 y1 in 1 / 65535 of the pane, from strings[tex[1]]); add: the material's
+ * blend adds (Cs x As + Cd: GX_BL_SRCALPHA, GX_BL_ONE) */
 typedef struct { char name[24]; u16 frames; u8 loop, pad; u16 ntracks, ntexmap; u32 tracks, texmap; } LytAnim;
 typedef struct { s16 target; u8 is_mat, tag, index, sub, ctype, pad; u16 nkeys, pad2; u32 keys; } LytTrack;
 enum { K_PAN, K_PIC, K_WND, K_TXT, K_BND };
@@ -41,7 +43,8 @@ static int nchunks;
 /* a pane's live values, reset to the record each frame, then the animations */
 typedef struct { float t[3], r[3], s[2], size[2]; float vc[4][4], alpha; u8 vis, lang_off, nodraw; } PState; /* lang_off: another language's */
 typedef struct { float srt[5], c0[4], c1[4]; s16 tex; s32 tex_abs; } MState; /* tex_abs: replacePaneTexture's, -1 none */
-typedef struct { float m[6], alpha; u8 vis; } PWorld; /* 2x3: x' = m0 x + m1 y + m2, y' = m3 x + m4 y + m5 */
+typedef struct { float m[6], alpha, calpha; u8 vis; } PWorld; /* 2x3: x' = m0 x + m1 y + m2, y' = m3 x + m4 y + m5;
+                                                             * calpha: the global alpha its children's DrawInfo has */
 
 struct LytInst {
     const LytHead *h;
@@ -371,7 +374,8 @@ static void evaluate(LytInst *l)
     }
     for (int i = 0; i < h->npanes; i++) if (l->height[i] >= 0) l->ps[i].size[1] = l->height[i];
     /* the tree, parents before children (file order): translation, z rotation, scale (180 degrees about x / y a
-     * mirror); a pane's alpha its own times its parent's where the parent influences its children's */
+     * mirror); alpha as nw4r lyt Pane::CalculateMtx: a pane's own times the DrawInfo's global alpha once an
+     * ancestor that influences its children's has put its own in it (and the whole layout's, lyt_set_alpha) */
     for (int i = 0; i < h->npanes; i++) {
         const PState *s = &l->ps[i];
         PWorld *w = &l->pw[i];
@@ -386,14 +390,17 @@ static void evaluate(LytInst *l)
             memcpy(w->m, lm, sizeof lm);
             w->alpha = s->alpha / 255.0f * l->alpha;
             w->vis = s->vis;
+            w->calpha = l->alpha;
         } else {
             const PWorld *pw = &l->pw[par];
             const float *m = pw->m;
             w->m[0] = m[0] * lm[0] + m[1] * lm[3]; w->m[1] = m[0] * lm[1] + m[1] * lm[4]; w->m[2] = m[0] * lm[2] + m[1] * lm[5] + m[2];
             w->m[3] = m[3] * lm[0] + m[4] * lm[3]; w->m[4] = m[3] * lm[1] + m[4] * lm[4]; w->m[5] = m[3] * lm[2] + m[4] * lm[5] + m[5];
-            w->alpha = s->alpha / 255.0f * ((l->pane[par].flags & 2) ? pw->alpha : 1.0f);
+            w->alpha = s->alpha / 255.0f * pw->calpha;
             w->vis = s->vis && pw->vis;
+            w->calpha = pw->calpha;
         }
+        if ((l->pane[i].flags & 2) && s->alpha < 255.0f) w->calpha *= s->alpha / 255.0f;
         if (l->follow[i]) { /* LayoutPaneCtrl::reflectFollowPos: its global place (its children follow) */
             const float *f = l->follow[i];
             if (l->follow_add[i]) { w->m[2] += f[0]; w->m[5] -= f[1]; }
@@ -410,6 +417,7 @@ static void evaluate(LytInst *l)
  * of its corners (top left, top right, bottom left, bottom right) */
 static void quad(const PWorld *w, float x0, float y0, float x1, float y1, const float uv[8], u16 tex, u32 rgba, int add)
 {
+    if (!(rgba >> 24)) return; /* nothing to blend or add (a bloom at rest: c1's alpha 0) */
     float xy[4][2], u[4][2];
     const float px[4] = {x0, x1, x0, x1}, py[4] = {y0, y0, y1, y1};
     for (int k = 0; k < 4; k++) {
@@ -420,6 +428,40 @@ static void quad(const PWorld *w, float x0, float y0, float x1, float y1, const 
     }
     static const u16 idx[6] = {0, 1, 2, 1, 3, 2};
     render_mesh2d((const float (*)[2])xy, (const float (*)[2])u, 4, idx, 2, tex, rgba, add);
+}
+
+/* a material whose second map masks its first (TEV stage 1 x the mask's alpha) where the two move apart (TitleLogo's
+ * PicLogoGalaxy: Wait scrolls the space under GALAXY's letters): the GS takes one texture a pass, and a mask in the
+ * frame's alpha bit did not hold in PCSX2 (DATE, or blending by it, drew the whole box), so the first map is drawn
+ * on the rectangles lyt.py cut from the mask, its coordinates the pane corners' (uv) at each point. ponytail: the mask's soft edge cut at half alpha,
+ * at its texels (TitleLogo's lies under the letters' rims) */
+static void masked_quad(const LytInst *l, const LytMat *m, const PWorld *w, float x0, float y0, float x1, float y1,
+                        const float uv[8], u16 tex, u32 rgba, int add)
+{
+    if (!(rgba >> 24)) return;
+    const u16 (*r)[4] = (const u16 (*)[4])((const u16 *)((const u8 *)l->h + l->h->strings) + m->tex[1]);
+    enum { N = 32 };
+    float xy[4 * N][2], u[4 * N][2];
+    u16 idx[6 * N];
+    for (int k0 = 0; k0 < m->nrect; k0 += N) {
+        int n = m->nrect - k0 < N ? m->nrect - k0 : N;
+        for (int k = 0; k < n; k++) {
+            const u16 *q = r[k0 + k];
+            for (int c = 0; c < 4; c++) {
+                float s = q[(c & 1) * 2] / 65535.0f, t = q[1 + (c >> 1) * 2] / 65535.0f;
+                float px = x0 + (x1 - x0) * s, py = y0 + (y1 - y0) * t;
+                float X = w->m[0] * px + w->m[1] * py + w->m[2], Y = w->m[3] * px + w->m[4] * py + w->m[5];
+                float *v = xy[4 * k + c], *tc = u[4 * k + c];
+                v[0] = 320.0f + X * LYT_KX;
+                v[1] = 224.0f - Y * LYT_KY;
+                for (int a = 0; a < 2; a++) /* bilinear in the corners' (top left, top right, bottom left, bottom right) */
+                    tc[a] = (1 - t) * ((1 - s) * uv[a] + s * uv[2 + a]) + t * ((1 - s) * uv[4 + a] + s * uv[6 + a]);
+            }
+            static const u16 qi[6] = {0, 1, 2, 1, 3, 2};
+            for (int j = 0; j < 6; j++) idx[6 * k + j] = (u16)(4 * k + qi[j]);
+        }
+        render_mesh2d((const float (*)[2])xy, (const float (*)[2])u, 4 * n, idx, 2 * n, tex, rgba, add);
+    }
 }
 
 static u32 rgba_of(float r, float g, float b, float a) /* 0..255 each -> 0xAABBGGRR, 0x80 = 1.0 */
@@ -441,6 +483,12 @@ static void mat_uv(const MState *m, const LytMat *mr, const float in[8], float o
         out[2 * k] = (0.5f + m->srt[0] + c * m->srt[3] * u - sn * m->srt[4] * v) * hu;
         out[2 * k + 1] = (0.5f + m->srt[1] + sn * m->srt[3] * u + c * m->srt[4] * v) * hv;
     }
+    /* a repeating axis moved by whole turns to start at 0 or more: the GS's UV has no sign (TitleLogo's space
+     * scrolls from u -0.04) */
+    for (int a = 0; a < 2; a++) {
+        float lo = fminf(fminf(out[a], out[2 + a]), fminf(out[4 + a], out[6 + a]));
+        if (lo < 0 && mr->wrap[a]) for (int k = 0; k < 4; k++) out[2 * k + a] += ceilf(-lo);
+    }
 }
 
 /* a pane's colour: its vertex colours' mean, times its material's c1 where that is not baked in its texture */
@@ -452,6 +500,8 @@ static u32 pane_rgba(const LytInst *l, int i, float alpha)
     int mi = l->pane[i].mat;
     if (mi >= 0 && mi < l->h->nmats && l->ms[mi].tex >= 0 && !(l->mat[mi].flags & 1))
         for (int k = 0; k < 4; k++) c[k] *= l->ms[mi].c1[k] / 255.0f;
+    else if (mi >= 0 && mi < l->h->nmats && (l->mat[mi].flags & 2)) /* the colours baked, c1's alpha live */
+        c[3] *= l->ms[mi].c1[3] / 255.0f;
     return rgba_of(c[0], c[1], c[2], c[3] * alpha);
 }
 
@@ -587,7 +637,11 @@ void lyt_draw(LytInst *l)
             float uv[8];
             if (mi >= 0 && mi < l->h->nmats) mat_uv(&l->ms[mi], &l->mat[mi], p->uv, uv);
             else memcpy(uv, p->uv, sizeof uv);
-            quad(w, x0, y0, x1, y1, uv, tex_of(l, mi), pane_rgba(l, i, w->alpha), mi >= 0 && mi < l->h->nmats && l->mat[mi].add);
+            int add = mi >= 0 && mi < l->h->nmats && l->mat[mi].add;
+            if (mi >= 0 && mi < l->h->nmats && (l->mat[mi].flags & 4))
+                masked_quad(l, &l->mat[mi], w, x0, y0, x1, y1, uv, tex_of(l, mi), pane_rgba(l, i, w->alpha), add);
+            else
+                quad(w, x0, y0, x1, y1, uv, tex_of(l, mi), pane_rgba(l, i, w->alpha), add);
         } else if (p->kind == K_WND) {
             draw_window(l, i, w, x0, y0, x1, y1);
         } else if (p->kind == K_TXT) {
