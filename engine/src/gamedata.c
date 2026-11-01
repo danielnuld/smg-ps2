@@ -96,6 +96,18 @@ void gd_attach(const Scene *s)
     info = (const GInfo *)(story + nstory);
     scen = (const GScen *)(info + ninfo);
     if (!gd.ok) gd_reset();
+#if defined(NEWFILE_TEST) && defined(NEWFILE_SEED) /* file 1 with progress (the Gateway's grand star, the castle risen),
+    * still loaded as after a quit to the title */
+    static int seeded;
+    void menu_save_request(void);
+    if (!seeded++ && nscen) {
+        gd_file_create(0, 1); gd_file_load(0);
+        gd_set_star("HeavensDoorGalaxy", 1); gd_story_follow("ピーチ城浮上後"); gd_add_stocked_star_pieces(123);
+        gd_file_save();
+        menu_save_request(); /* (on the card for the next boot) */
+        printf("newfile test: file 1 seeded, %d stars\n", gd_star_num());
+    }
+#endif
 }
 
 int gd_has_star(const char *g, int star) { int i = find_gal(g); return i >= 0 && star >= 1 && star <= 8 && (gd.gal[i].owned >> (star - 1) & 1); }
@@ -504,17 +516,20 @@ int gd_file_created(int i) { return i >= 0 && i < GD_FILES && files[i].created; 
 int gd_file_icon(int i) { return gd_file_created(i) ? files[i].icon : 0; }
 u32 gd_file_modified(int i) { return gd_file_created(i) ? files[i].modified : 0; }
 static void file_store(int i) { gd_serialize(files[i].data[cur_luigi], sizeof files[i].data[0]); files[i].modified = ++modify_count; }
-void gd_file_create(int i, int icon) /* SaveDataHandler: resetAllData, setCreated, updateLastModified (both players' data) */
+static void file_reset_current(int i) /* restoreUserFile(mCurrentUserFile, i, true), resetAllData: file i is the current one, fresh */
+{
+    gd_reset();
+    cur_file = i;
+    cur_luigi = 0;
+}
+void gd_file_create(int i, int icon) /* startCreateUserFile: the current file fresh, setCreated, updateLastModified (both players' data) */
 {
     if (i < 0 || i >= GD_FILES) return;
-    char keep[sizeof gd];
-    memcpy(keep, &gd, sizeof gd);
-    gd_reset();
+    file_reset_current(i);
     files[i].created = 1; files[i].icon = (u8)icon; files[i].luigi = 0;
     gd_serialize(files[i].data[1], sizeof files[i].data[1]);
     gd_serialize(files[i].data[0], sizeof files[i].data[0]);
     files[i].modified = ++modify_count;
-    memcpy(&gd, keep, sizeof gd);
 }
 void gd_file_copy(int dst, int src) /* copyUserFileMemory: every entry of src into dst */
 {
@@ -522,13 +537,21 @@ void gd_file_copy(int dst, int src) /* copyUserFileMemory: every entry of src in
     memcpy(&files[dst], &files[src], sizeof files[dst]);
     files[dst].modified = ++modify_count;
 }
-void gd_file_delete(int i) { if (i >= 0 && i < GD_FILES) memset(&files[i], 0, sizeof files[i]); }
+void gd_file_delete(int i) /* startDeleteUserFile: the current file fresh, its memory initialized */
+{
+    if (i < 0 || i >= GD_FILES) return;
+    file_reset_current(i);
+    memset(&files[i], 0, sizeof files[i]);
+}
 void gd_file_set_icon(int i, int icon) { if (gd_file_created(i)) { files[i].icon = (u8)icon; files[i].modified = ++modify_count; } }
 int gd_file_load(int i) /* restoreUserFile(isLastLoadedMario) into the current data (startGameDataLoadSequence) */
 {
     if (!gd_file_created(i) || !gd_deserialize(files[i].data[files[i].luigi], sizeof files[i].data[0])) return 0;
     cur_file = i;
     cur_luigi = files[i].luigi;
+    gd_scene_start(); /* the after-loading move's storeSceneStartGameDataHolder: the just-on checks against this file,
+                       * not the file select's scene start (the boot's empty data or the file played before) */
+    printf("gamedata: file %d loaded (%s): %d stars, %d star pieces\n", i + 1, cur_luigi ? "Luigi" : "Mario", gd_star_num(), (int)gd.pieces);
     return 1;
 }
 void gd_file_save(void) { if (cur_file >= 0) file_store(cur_file); } /* the current game into its file (the player's data) */
