@@ -281,7 +281,9 @@ after tags (US: mNoCharSpace starts true, font size tags return NO_CHAR_SPACE wh
     within arg0 in front of it (turn cos 1 - arg1 x 1e-4) unless arg2; breaks on the map, on Mario (hurt), 3000 off
     or after 600 frames; the next one 180 frames later (ponytail: no freeze, no roll, no Torpedo / MagnumKiller);
   - star pointer stand-in: a cursor on the right stick (6-16 px a frame, R3 centres it, `cursor_ray` through the
-    camera); star pieces shown within 24 px of it (and 4000 of the camera) are taken;
+    camera); star pieces shown within 24 px of it (and 4000 of the camera) are taken; drawn as StarPointerLayout
+    (menu.c `sp_*`: DPDPointer in menus.bin, its nerves, the blur, the OnOff controller's modes: the star in play,
+    the finger in menus, the open / gripping hand for pull stars and cocoons, hidden in demos);
   - GCaptureTarget: R2 with the cursor on one (200 of its ray, within arg1 of Mario) captures it; 30 frames later
     Mario is pulled (0.7 x power, damped 0.99 / 0.75 near), R2 let go: he floats on (0.99) until 180 frames or the
     map, then falls free with that velocity; R2 on another recaptures, R1 or arg0 breaks (ponytail: no ribbon);
