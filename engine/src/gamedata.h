@@ -67,6 +67,10 @@ int gd_star_luigi_has(const char *galaxy, int star);         /* GameDataConst::i
 int gd_galaxy_luigi_arrested(const char *galaxy, int star);  /* isGalaxyLuigiArrested (-1 any star) */
 void gd_luigi_stage_result(const char *stage, int star, int has_yet); /* updateOnStageResult */
 void gd_luigi_update(int move_type);                         /* update(GalaxyMoveArgument) */
+int gd_any_left_supply(void);      /* MR::isAnyPlayerLeftSupply (the messenger's Peach letter) */
+int gd_luigi_left_supply(void);    /* MR::isLuigiLeftSupply */
+void gd_off_all_left_supply(void); /* MR::offAllPlayerLeftSupply */
+void gd_add_miss_point(int n);     /* addMissPoint (decPlayerLeft 1, incPlayerGameOverNum 3) */
 void gd_luigi_set_hiding(void);                              /* onGameEventFlagGetLuigiLetter: setStateHiding */
 void gd_luigi_hiding_galaxy(const char **galaxy, int *star); /* getLuigiHidingGalaxyNameAndStarId */
 int gd_luigi_disappear(void);                                /* isLuigiDisappearFromAstroGalaxy */

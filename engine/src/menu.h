@@ -11,6 +11,17 @@ void menu_init(const Scene *s);
 void menu_submeter_mode(int mode);
 void menu_submeter_ratio(int bee, float ratio);
 void menu_submeter_update(int resting, float x, float y, int visible);
+/* MarioMeter (HitPointMeter): initLifeCount, setLifeCount, requestPowerUp (the life-up mushroom), requestActive /
+ * requestDeactivate (the default game layout), requestPlayerMoving / Stopped, Mario's head on the screen (608 x 456);
+ * a frame on (each frame its scene moves) */
+void menu_meter_init_count(int life);
+void menu_meter_count(int life);
+void menu_meter_power_up(void);
+void menu_meter_active(int on);
+void menu_meter_moving(int moving);
+void menu_meter_head(float x, float y);
+void menu_meter_update(void);
+int menu_test_meter(void);        /* tests: alive x 1000 + nerve x 10 + count */
 int menu_update(void);
 void menu_draw(void);
 int menu_paused(void);
@@ -57,6 +68,8 @@ enum { GMAP_ASTRO, GMAP_GALAXY, GMAP_LIST, GMAP_NEW_GALAXY, GMAP_NEW_TICO, GMAP_
 void menu_galaxy_map(int mode);
 void menu_luigi_letter(const char *galaxy, int talk); /* LuigiLetter (LuigiPicture<galaxy>): appear (talk: KinopioAstro's) */
 int menu_luigi_letter_alive(void);   /* !isDead */
+void menu_peach_letter(void);         /* PeachLetter (KinopioAstro's): appear */
+int menu_peach_letter_alive(void);    /* !isDead */
 int menu_test_pml(void);            /* tests: the pause menu letter button: made 10, shown 1 */
 int menu_test_letter(void);         /* tests: 10 x letter on + its IconAButton nerve + 1 (0 dead) */
 int menu_galaxy_map_active(void);

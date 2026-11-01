@@ -9487,10 +9487,13 @@ static void tk_root_pre(Talker *t, int arg) /* rootNodePre: branches taken by th
         case 6: cond = player_mode == PM_BEE; break;
         case 9: cond = t->done != 0; break;
         case 10: cond = gd_player_luigi(); break; /* MR::isPlayerLuigi */
-        case 14: { /* TalkFunction::getBranchAstroGalaxyResult: TalkDirector::getBranchResult(mNextIdx); 12 / 13 Luigi */
+        case 11: { /* TalkFunction::getBranchAstroGalaxyResult: TalkDirector::getBranchResult(mNextIdx); 12 / 13 Luigi,
+                    * 18 the player left supplies. The US message data's (RMGE01) condition 11 is it: its arguments
+                    * are getBranchResult's 0..27 (Petari's enum, TypeE 14, is the RMGK01 one) */
             char st[32];
             int scen = luigi_scenario(st, sizeof st);
-            cond = n->next == 12 ? gd_luigi_disappear() : n->next == 13 ? gd_luigi_hiding(st, scen) : 0; /* ponytail: the other results 0 */
+            cond = n->next == 12 ? gd_luigi_disappear() : n->next == 13 ? gd_luigi_hiding(st, scen) :
+                   n->next == 18 ? gd_any_left_supply() : 0; /* ponytail: the other results 0 */
             break;
         }
         default: cond = 0; /* Boo, star appeared, time-keep demo, already read, LED */
@@ -10269,6 +10272,7 @@ static int butler_branch(int k, u32 v); /* Butler::messageBranchFunc (the dome's
 static int butler_talk_free(int row);   /* the Butler in its Wait nerve (no demo, no star piece reaction) */
 static int luigi_talk_free(int row);    /* LuigiNPC in a talking nerve (its section) */
 static int luigi_event(int t, u32 v), luigi_branch(int t, u32 v), kast_event(int t, u32 v);
+static int kast_peach; /* KinopioAstro (the messenger): its Peach letter, 0 none, 1 Mario's, 2 a Luigi supply */
 static void update_talkers(void)
 {
     if (!tk_nctl) return;
@@ -10293,8 +10297,11 @@ static void update_talkers(void)
             }
             if (in->talkcls == 5) t->branch = butler_branch;
             if (in->talkcls == 6) { t->event = luigi_event; t->branch = luigi_branch; } /* LuigiNPC::init: registerBranchFunc / EventFunc */
-            if (in->talkcls == 3 && sc->objs[in->row].arg[0] == 2 && !strcmp(sc->types + 32 * sc->objs[in->row].type, "KinopioAstro"))
+            if (in->talkcls == 3 && sc->objs[in->row].arg[1] == 2 && !strcmp(sc->types + 32 * sc->objs[in->row].type, "KinopioAstro")) {
                 t->event = kast_event; /* KinopioAstro::init: the messenger's eventFunc */
+                kast_peach = gd_any_left_supply() ? 1 + gd_luigi_left_supply() : 0; /* mPeachLetter made (_194), mIsPlayerLuigi */
+                if (kast_peach) t->arg = kast_peach == 2 ? 20 : 5; /* setMessageArg: sMessangerOneUpExNum / OneUpNum */
+            }
         }
         if (in->talkcls == 5 && !butler_talk_free(in->row)) continue; /* NPCActor::exeWait only (its demos, the reaction) */
         if (in->talkcls == 4 && dx.on) continue;                         /* ButlerMap: its Wait nerve only */
@@ -10526,20 +10533,6 @@ static void hud_tico_eat(int center) /* MR::requestCounterLayoutAppearanceForTic
     if (!hud[2].mode && spc_change_mode(&hud[2], center ? 2 : 1)) { hud_kill(&hud[1]); hud_kill(&hud[3]); hud_kill(&hud[0]); }
     hudc.tico = 1;
 }
-/* MarioMeter's HitPointMeter (MeterLayout): Wait (with 3: _4C down 0.05 a frame while the player moves, up while he
- * is still; below 3 it stays at 1), the ShowHide alpha at _4C x 20 and 50 to the right by getEaseInOutValue(_4C, 1,
- * 0); a change of life: Damage / Recover, then WaitStart (240 frames at 1). ponytail: no Danger pulse, no Damage
- * shake, no Break / Zero meter, no 4..6 (LifeUp) meter, no pointer fade (mAlpha) */
-enum { HM_WAIT, HM_WAITSTART };
-static struct { int nrv, step, count; float k; } hpm = {HM_WAIT, 0, 3, 0.0f};
-static void hpm_update(int stopped)
-{
-    hpm.step++;
-    if (life != hpm.count) { hpm.count = life; hpm.nrv = HM_WAITSTART; hpm.step = 0; hpm.k = 1.0f; } /* setCount */
-    if (hpm.nrv == HM_WAITSTART) { hpm.k = 1.0f; if (hpm.step > 240) { hpm.nrv = HM_WAIT; hpm.step = 0; } return; }
-    if (hpm.count == 3) hpm.k = fminf(fmaxf(hpm.k + (stopped ? 0.05f : -0.05f), 0.0f), 1.0f);
-    else hpm.k = 1.0f;
-}
 static int hud_welcome, hud_had_starter; /* frames since the ScenarioStarter's landing (ShowWelcomeLayout's step); a flight in */
 static void hud_update(void)
 {
@@ -10588,7 +10581,7 @@ static void hud_update(void)
     for (int k = 0; k < 4; k++) all &= hud_hidden_or_wait(&hud[k]);
     if (hudc.nrv == 0 && !all) moving = 1;
     hudc.step++;
-    hpm_update(hudc.nrv == 1); /* requestPlayerMoving / requestPlayerStopped */
+    menu_meter_moving(hudc.nrv != 1); /* MarioMeter: requestPlayerMoving / requestPlayerStopped (menu.c) */
     if (hudc.nrv == 1 && hudc.step == 1 && !hudc.tico) { /* showAllLayout */
         hud_force_appear(&hud[1]); spc_force_appear(&hud[2], 0); hud_force_appear(&hud[3]);
         hud[0].dead = 0; hud[0].disp = hud[0].num; hud_set(&hud[0], HC_APPEAR); hud_ap(&hud[0], AP_APPEAR);
@@ -10646,17 +10639,6 @@ static void hud_draw(void)
         float a = f < 60 ? hud_hermite(f, 0, 0, 0, 60, 255, 0) : f < 100 ? 255.0f : hud_hermite(f, 100, 255, 0, 130, 0, -23.6f);
         lay_draw("Welcome", 0, fminf(fmaxf(a / 255.0f, 0.0f), 1.0f), 0, 0);
     }
-    if (hud_on) { /* the life meter */
-
-        float f = hpm.k * 20.0f, a = hud_hermite(f, 0, 0, 0, 20, 255, 0) / 255.0f;
-        float dx = 50.0f * (1.0f - (1.0f - cosf(3.14159265f * hpm.k)) / 2.0f);
-        int n = hpm.count < 0 ? 0 : hpm.count > 3 ? 3 : hpm.count;
-        lay_draw("HitPointMeter", n, a, dx, 0);
-        lay_num = hpm.count;
-        lay_draw("HitPointMeter", 15, a, dx, 0);
-        lay_num = -1;
-    }
-
 }
 /* ScenarioTitle (StageTitle layout): the galaxy's and the scenario's names (GalaxyName_<galaxy>, ScenarioName_<galaxy>
  * <n>, in the scene's TALK) centred in their text boxes, MessageFont26 at 21.6 x 26.4 / 24.3 x 29.7, white over a
@@ -10837,8 +10819,13 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
 #ifndef TALK_CLS
 #define TALK_CLS 1 /* the talker class to read (XF=-DTALK_CLS=3: the first Kinopio) */
 #endif
+#ifdef TALK_PEACH /* XF=-DTALK_CLS=3 -DTALK_PEACH (AstroGalaxy): the messenger (KinopioAstro arg1 2), Peach's letter */
+#define TALK_PICK(i) (sc->objs[insts[i].row].arg[1] == 2 && !strcmp(sc->types + 32 * sc->objs[insts[i].row].type, "KinopioAstro"))
+#else
+#define TALK_PICK(i) 1
+#endif
     for (int i = 0; i < ninsts && row < 0; i++)
-        if (insts[i].talkcls == TALK_CLS && talk_row_label(insts[i].row, lab)) row = i;
+        if (insts[i].talkcls == TALK_CLS && talk_row_label(insts[i].row, lab) && TALK_PICK(i)) row = i;
     pad_force = 0;
     if (row < 0 && TALK_CLS == 3) { /* the Kinopios wait for their appear switch: on */
         int ty = scene_type(sc, "Kinopio");
@@ -12521,7 +12508,8 @@ static int mode_control(Player *m)
     if (super_got) {
         if (pd_try_start("マリオスーパー化", -1)) {
             super_got = 0;
-            life = max_life = 2 * MAX_LIFE; /* changeMaxLife(6), requestPowerUpHPMeter */
+            life = max_life = 2 * MAX_LIFE; /* changeMaxLife(6) */
+            menu_meter_power_up(); /* requestPowerUpHPMeter */
             if (mario_anim) mario_anim->speed = 0; /* stopAnimFrame */
             pad_rumble(RUMBLE_MORPH); /* startPadVib("マリオ[変身]") */
             se_start(SE_SY_SUPER_KINOKO_GET, NULL);
@@ -17817,6 +17805,7 @@ static void miss_event_update(void)
         if (f == 160) menu_wipe_gameover(); /* reqLayout */
         if (f == 420) { /* finish: SaveAfterGameOver (startGameDataSaveSequence(true, true)) */
             lives = 4; /* resetSystemAndGameStatus: the file's lives back to 4 (synced into the game data) */
+            gd_add_miss_point(3); /* exeSaveAfterGameOver: incPlayerGameOverNum */
             menu_save_start(1, 1, 1);
         }
         if (f > 420 && !menu_saving()) { seq_galaxy_move(SEQ_TITLE, NULL, 1, -1, 0); mev.on = 0; } /* requestChangeSceneAfterGameOver */
@@ -17828,7 +17817,7 @@ static void miss_event_update(void)
             if (mev.wipe_f++ == 0) menu_wipe_koopa(-1);
             else if (menu_wipe_koopa_closed()) mev.phase = 2;
         }
-        if (f == 120) { lives--; printf("miss %d, lives %d" "\n", ++misses, lives); } /* decLeft */
+        if (f == 120) { lives--; gd_add_miss_point(1); printf("miss %d, lives %d" "\n", ++misses, lives); } /* decLeft: decPlayerLeft */
         if (mev.phase == 2 && mev.pf++ == 30) seq_galaxy_move(SEQ_MISS, NULL, -1, -1, 0); /* doWaitAfterWipe */
     }
     if (next) mev.phase++;
@@ -17857,6 +17846,7 @@ static void miss(void)
     mario->up = up_at(mario->pos, v3(0, 1, 0)); /* placed anew, as at the start (not his up where he fell) */
     mario->launch = -1; /* out of any launch star's flight (it would carry him back) */
     life = max_life = MAX_LIFE;
+    menu_meter_init_count(life); /* the scene again: its MarioMeter anew (initLifeCount) */
     if (--lives < 0) { printf("game over\n"); lives = START_LIVES; }
     printf("miss %d, lives %d\n", ++misses, lives);
 }
@@ -32558,13 +32548,30 @@ static void update_luigi(void)
     }
 }
 
-/* KinopioAstro (the messenger, arg0 2) after Petari: its talk's eventFunc 0 (LetterEvent_LuigiLetter) shows Luigi's letter
+/* KinopioAstro (the messenger, arg1 2: mObjArg0) after Petari: its talk's eventFunc 0 (LetterEvent_LuigiLetter) shows Luigi's letter
  * (LuigiLetter for the talk: the hiding galaxy's picture, menu.c) until it is closed, then onGameEventFlagGetLuigiLetter;
- * the Peach letter events are over at once. ponytail: no PeachLetter, no 1-ups (LetterEvent_PeachLetter1Ups), no mail */
+ * 1 (PeachLetterNormal) Peach's (menu.c PeachLetter, made while isAnyPlayerLeftSupply) until it is closed, then
+ * offAllPlayerLeftSupply; 2 (PeachLetter1Ups) 5 lives (20 for a Luigi supply) and SE_SY_5UP. ponytail: no OneUpBoard
+ * (requestOneUp's count), no letter icon balloon (mLetterIconTalkCtrl) nor its SE_SM_LV_KINOMES_GOT_MAIL, no
+ * SendLetter (the Wii's mail) */
 static int kast_letter;
 static int kast_event(int t, u32 v)
 {
     (void)t;
+    if (v == 1) { /* dispLetter(mPeachLetter) */
+        if (!kast_peach) return 1;
+        if (!kast_letter) { kast_letter = 1; menu_peach_letter(); return 0; }
+        if (menu_peach_letter_alive()) return 0;
+        kast_letter = 0;
+        gd_off_all_left_supply();
+        return 1;
+    }
+    if (v == 2) { /* PeachLetter1Ups: incPlayerLeft x sMessangerOneUpExNum / sMessangerOneUpNum */
+        lives += kast_peach == 2 ? 20 : 5;
+        se_start(SE_SY_5UP, NULL);
+        printf("messenger: %d lives\n", lives);
+        return 1;
+    }
     if (v != 0) return 1;
     char st[32];
     int scen = luigi_scenario(st, sizeof st);
@@ -35941,6 +35948,17 @@ void game_update(void)
             if (swimming) menu_submeter_ratio(0, (float)oxygen / MC.mOxygenMax);
             screen_pos(vadd(mario->pos, vmul(mario->up, BODY_RADIUS)), &sx, &sy);
             menu_submeter_update(mario->grounded || (swimming && !mario->jumping), sx, sy, !(menu_paused() || dome_layout_off || dx.on));
+            /* setLifeCount (not while the life-up demo holds him: control returns before controlMain's update2D);
+             * MeterLayout::calcMarioHeadPosition: his centre on the screen, up by calcPointRadius2D(120), (32, -38) */
+            if (!super_t) menu_meter_count(life);
+            V3 ce, cw, cu, c = vadd(mario->pos, vmul(mario->up, BODY_RADIUS));
+            float fovy, ux = sx, uy = sy;
+            camera_pose(&ce, &cw, &cu, &fovy);
+            screen_pos(vadd(c, vmul(vnorm(cu), 120.0f)), &ux, &uy);
+            float r = sqrtf((ux - sx) * (ux - sx) + (uy - sy) * (uy - sy)) * (456.0f / 448.0f);
+            menu_meter_head(sx * (608.0f / 640.0f) + 32.0f, sy * (456.0f / 448.0f) - r - 38.0f);
+            menu_meter_active(hud_on && !(menu_paused() || dome_layout_off || dx.on)); /* activate / deactivateDefaultGameLayout */
+            menu_meter_update();
         }
         io_update();
         /* MR::getMapSoundCodeFoot: the ground's (else the wall's) sound code for Mario's surface sounds; -1 none */
