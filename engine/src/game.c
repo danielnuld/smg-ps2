@@ -387,6 +387,7 @@ static unsigned *row_larea_t;
 static struct { int area, from, t, n; RenderLight cur; } plight; /* the player's ActorLightCtrl (area -1: none yet) */
 static int area_inside(const Row *r, V3 p);
 static int area_obj(const char *cls, V3 p);
+static void safe_reset(V3 p);
 static int screen_pos(V3 p, float *x, float *y);
 static unsigned game_frame;
 static void lights_init(void)
@@ -2492,6 +2493,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     }
 #endif
     mario->pos = start_pos;
+    safe_reset(start_pos);
     mario->up = up_at(mario->pos, v3(0, 1, 0));
     mario->face = vnorm(vtangent(v3(0, 0, 1), mario->up));
     mario->jump_kind = 0; mario->stand_neutral = 10;
@@ -4362,7 +4364,6 @@ static void game_rebind_(void)
             in->md_flip[1] = scene_model(sc, v);
         }
         in->npc = npc_class(name, r);
-        in->nu = in->nu0 = vnorm(v3(in->m[4], in->m[5], in->m[6])); in->nf = in->nf0 = vnorm(v3(in->m[8], in->m[9], in->m[10]));
         if (in->ibubble) in->head = row_pos(r); /* its items' frame (_CC) trails the bubble */
         in->meteor = NULL;
         in->prom = NULL;
@@ -4408,6 +4409,8 @@ static void game_rebind_(void)
             in->s = k;
         }
         in->reach = md->radius * in->s;
+        /* NPCActor _A0 / _B0: initDefaultPosAndQuat's placement turn (its matrix's axes, set just above) */
+        in->nu = in->nu0 = vnorm(v3(in->m[4], in->m[5], in->m[6])); in->nf = in->nf0 = vnorm(v3(in->m[8], in->m[9], in->m[10]));
         if (in->rotor && row_angle) rotor_matrix(in);
         if (in->railer && row_coord) railer_place(in);
         if (in->tsuki && row_coord && row_turn[i]) tsuki_place(in);
@@ -15105,16 +15108,23 @@ static void m_calc_front_floor(Player *m)
     if (m->grounded && angle_d(m, m->ground_n) >= 25.0f) mw.f39 = 0;
 }
 
-/* calcShadowPos: the first face down 400 from 100 over him (hanging from his Spine1), six times further on; failing, or
- * 100 off the last, once from a little aside as far as the last plus 150 (found when it was the jump); none: 2500 down.
- * ponytail: MarioRecovery's 30 tries */
+/* MarioRecovery (MarioRecovery.cpp): on, _11 .. _1A, _1C .. _70, _7C .. _84, _88 */
+static struct { int on, s12, s14, s16, s18, s1A, s88; V3 v1C, v28, v34, v40, v4C, v58, v64, v70; float f7C, f80, f84; } rec;
+/* Mario::saveLastSafetyTrans / getLastSafetyTrans: _7E0 the last safe ground (_7E4 its part's matrix then), _7D4 the
+ * place on it; _820 / _824 / _814 the one before */
+static struct { Tri t, t820; float m[16], m824[16]; V3 p, p814; } safe;
+static void safe_reset(V3 p) { memset(&safe, 0, sizeof safe); safe.p = safe.p814 = p; rec.on = 0; } /* initAfterConst */
+
+/* calcShadowPos: the first face down 400 from 100 over him (hanging from his Spine1), six times further on (30 in
+ * MarioRecovery); failing, or 100 off the last, once from a little aside as far as the last plus 150 (found when it
+ * was the jump); none: 2500 down */
 static void m_calc_shadow(Player *m)
 {
     V3 start = vadd(m->pos, vmul(m->up, 100.0f)), d = vmul(m->up, -400.0f), p;
     if (hg.on && hg.s12 < 2) start = mario_joint_drawn(10);
     float prev = vlen(vsub(mw.shadow_pos, m->pos));
     p = start;
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < (rec.on ? 30 : 6); i++) {
         if ((mw.s2 = map_poly(p, d, &mw.shadow_pos, &mw.shadow))) break;
         p = vadd(p, d);
     }
@@ -15518,13 +15528,15 @@ static int m_set_ground(Player *m, const Tri *t, V3 at) /* setGroundNorm, mGroun
  * the simple check (sliding, Teresa, or on more than mFlatAngle - 5 with no flatter face under him): one line down
  * 60 (+ 2 x the slope over 30, up to 40). ponytail: no WKFALL nudges at an edge, _414, _10._22, _1C._13 / _14, Fur,
  * the sliding select by _16C, force Trans (_D) */
-static struct { int s14, s36, s22; } mgc; /* mMovementStates._14 (no ground last check), _36 (the simple check), _10._22
-                                            * (MarioActor::movement held the last slide back: no pull) */
+static struct { int s14, s36, s22, s11; } mgc; /* mMovementStates._14 (no ground last check), _36 (the simple check), _10._22
+                                                 * (MarioActor::movement held the last slide back: no pull), _1C._11 (every
+                                                 * sensor of the check on ground) */
 static int m_check_ground(Player *m)
 {
     V3 g = vmul(m->up, -1.0f), hp, p[4];
     Tri t, ts[4];
     int rising = m->jumping && m->vup > 0.0f; /* isRising */
+    mgc.s11 = 0;
     m_calc_shadow(m); /* checkMap */
     V3 sn = mw.s2 ? tri_n(&mw.shadow) : v3(0, 0, 0);
     int simple = 0;
@@ -15578,6 +15590,7 @@ static int m_check_ground(Player *m)
         }
         off = rot_axis(off, sn, 2.0943952f);
     }
+    mgc.s11 = hit[0] && hit[1] && hit[2] && (count == 3 || hit[3]);
     int no_ground = !n_hit;
     if (n_hit) { /* force Trs2 / Trs3: onto the shadow (or the ground) when within 30 */
         float d = 0.0f;
@@ -17033,6 +17046,192 @@ void game_test_swim_input(int frame)
                sw.spin_t, sw.spin_dash, sw.zsink_t, oxygen, mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-",
                m_w[0], m_w[1], m_w[2], m_w[3], mario->pos.x, mario->pos.y, mario->pos.z);
 }
+/* Mario::saveLastSafetyTrans: on his feet with every ground sensor on (_1C._11), on a Normal / NoSlip / Sand / Glass /
+ * WaterBottom / Wet / NoStampSand floor (_960), no wall met, not on a slip polygon, over 160 from the ceiling, under 10
+ * over his shadow, on under 15 degrees of an unmoved part: the place 5 / 8 his own, 3 / 8 the ground's corners, within
+ * 50 of him (_7D4); the last one kept (_814) while its part has not moved. ponytail: no _96A (setNotSafetyTimer: the
+ * push message), no MapObjMoveCollision ground sensor test (0x48), MarioFireDamage not a status here */
+static void m_save_safety(Player *m)
+{
+    if (rec.on || !mgc.s11) return;
+    switch (m->floor) {
+    case 0: case 3: case 13: case 14: case 20: case 21: case 22: case 23: case 30: break;
+    default: return;
+    }
+    if (mw.w8 || mw.w32 || mw.w19 || mw.w1A || m->slip_poly || m_dist_to_ceil(m) < 160.0f) return;
+    if (!(m_vspeed(m) < 10.0f) || !(angle_d(m, tri_n(&m_gtri)) < 15.0f) || tri_moved(&m_gtri)) return;
+    float cm[16], k;
+    if (tri_part(&safe.t, cm, &k) && !memcmp(cm, safe.m, 64) && !tri_moved(&safe.t)) {
+        safe.p814 = safe.p; safe.t820 = safe.t; memcpy(safe.m824, safe.m, 64);
+    }
+    safe.t = m_gtri;
+    tri_part(&m_gtri, safe.m, &k);
+    safe.p = vmul(vadd(vadd(vadd(vmul(m->pos, 5.0f), tri_pos(&m_gtri, 0)), tri_pos(&m_gtri, 1)), tri_pos(&m_gtri, 2)), 0.125f);
+    if (vlen(vsub(safe.p, m->pos)) > 50.0f) safe.p = vadd(m->pos, vmul(vnorm(vsub(safe.p, m->pos)), 50.0f));
+}
+static V3 m_last_safety(void) /* getLastSafetyTrans */
+{
+    float cm[16], k;
+    return tri_part(&safe.t, cm, &k) && !memcmp(cm, safe.m, 64) ? safe.p : safe.p814;
+}
+
+/* MarioRecovery: a PullBackCylinder (arg0 not 1) takes Mario back to his last safe place: up its axis at 10 a frame
+ * to the place's height (or 600 over and 600 out from its base when the place is under it; 180 frames at most), then
+ * round an arc about the place (calcFirstVector, updateJump) for 200 frames (+ 1 per 20 past 500 away); once his
+ * shadow is past the place and he is within 300 of it, the bubble bursts and he drops (close: on his feet).
+ * ponytail: no 引き戻し event camera (e:引き戻し is not converted by camera.py), no 引き戻し泡 / 泡破裂 effects (not in the
+ * effect packs), the binder stays off for the whole flight (_14 / _F44: Petari binds him again after 60 frames) */
+static int rec_update(Player *m);
+static int rec_first_vector(Player *m) /* calcFirstVector */
+{
+    V3 g = vmul(m->up, -1.0f), h;
+    float vert;
+    rec.v40 = m->pos;
+    rec.v1C = kill_elem(m->last_move, g, &vert);
+    rec.v28 = vmul(g, vert);
+    V3 off = vsub(m->pos, rec.v34);
+    if (!near0(off)) rec.v1C = vadd(rec.v1C, vmul(vnorm(off), 10.0f));
+    rec.s14 = 60;
+    rec.v70 = vsub(m->pos, rec.v34);
+    float dist = vlen(rec.v70);
+    rec.f84 = dist;
+    if (near0(rec.v70)) return 0;
+    rec.v70 = vnorm(rec.v70);
+    h = kill_elem(rec.v70, g, &vert);
+    if (rec.s12) h = kill_elem(vsub(rec.v4C, rec.v34), g, &vert);
+    if (near0(h)) return 0;
+    h = vnorm(h);
+    rec.v64 = vcross(g, h);
+    if (near0(rec.v64)) return 0;
+    rec.v64 = vnorm(rec.v64);
+    rec.f7C = rec.s12 ? ang_abs(h, vmul(rec.v70, -1.0f)) + 3.1415927f : 6.2831855f - ang_abs(h, rec.v70);
+    rec.s18 = 200;
+    float extra = (dist - 500.0f) / 20.0f;
+    if (extra > 0.0f) rec.s18 = (int)extra + 200;
+    rec.s88 = rec.s18;
+    rec.f80 = rec.f7C / rec.s18;
+    rec.f7C = 0.0f;
+    rec_update(m);
+    rec.s12 = 0;
+    return 1;
+}
+static void rec_jump(Player *m) /* updateJump */
+{
+    V3 g = vmul(m->up, -1.0f);
+    V3 rot = rot_axis(rec.v70, rec.v64, rec.f7C);
+    if (rec.s88 > 60 && rec.s88 < 120) {
+        if (rec.f7C < 4.712389f) rec.f84 += -rec.f84 / (float)(rec.s88 - 60);
+        rec.f7C += 0.5f * rec.f80;
+    } else rec.f7C += rec.f80;
+    if (rec.s88) rec.s88--;
+    float radius = rec.f84 < 300.0f ? 300.0f : rec.f84;
+    V3 target = vadd(rec.v34, vmul(vnorm(rot), radius));
+    V3 vel = vmul(vsub(target, m->pos), 25.0f / (25.0f + rec.s88));
+    int elapsed = rec.s18 - rec.s88;
+    if (elapsed < 60) {
+        float f = (1.0f - elapsed / 60.0f) * 0.8f;
+        vel = vadd(vel, vmul(rec.v1C, f));
+        vel = vadd(vel, vmul(rec.v28, f));
+    }
+    float vert;
+    vel = kill_elem(vel, g, &vert);
+    if (vlen(vel) > 30.0f) vel = vmul(vnorm(vel), 30.0f);
+    m->pos = vadd(m->pos, vadd(vel, vmul(g, vert)));
+}
+static int rec_update(Player *m) /* MarioRecovery::update: 0 when it ends */
+{
+    m->hvel = v3(0, 0, 0); m->vup = 0; /* clearVelocity */
+    switch (rec.s1A) {
+    case 0:
+        rec.s1A++;
+        rec.s16 = rec.s18 + 60;
+        /* fall through */
+    case 1: {
+        int vol = 0;
+        if (rec.s16) { vol = rec.s16 / 2; if (rec.s16 > rec.s18) vol = 100 - (rec.s16 - rec.s18); }
+        vol = vol < 0 ? 0 : vol > 100 ? 100 : vol;
+        mario_sound("引き戻し基本");
+        mario_sound("引き戻し浮遊");
+        for (unsigned i = 0; i < sizeof mario_snd / sizeof mario_snd[0]; i++)
+            if (!strcmp(mario_snd[i].key, "引き戻し浮遊") && mario_lv[i]) se_volpitch(mario_lv[i], vol / 100.0f, 1.0f);
+        m_front_blend(m, rec.v1C, 0.1f);
+        if (rec.s14) rec.s14--;
+        if (rec.s16) rec.s16--;
+        if (!rec.s16 || vlen(vsub(rec.v34, m->pos)) < 20.0f) { m->pos = rec.v34; return 0; }
+        rec_jump(m);
+        int passed = 0, distant = 1;
+        V3 so = vsub(mw.shadow_pos, rec.v34), io = vsub(rec.v40, rec.v34);
+        if (near0(so)) passed = 1;
+        if (vlen(so) < 50.0f) distant = 0;
+        if (!near0(so)) so = vnorm(so);
+        if (!near0(io)) io = vnorm(io);
+        if (vdot(so, io) < 0.0f) passed = 1;
+        if (passed) {
+            if (distant && vlen(vsub(mw.shadow_pos, m->pos)) > 300.0f) break;
+            mario_sound("引き戻し泡破裂");
+            rec.s1A++;
+        }
+        break;
+    }
+    case 2:
+        return 0;
+    case 3:
+        if (rec.s16) rec.s16--;
+        if (!rec.s16) { rec.s1A = 0; rec_first_vector(m); }
+        else {
+            float d;
+            kill_elem(vsub(rec.v34, m->pos), rec.v58, &d);
+            if (fabsf(d) < 10.0f) { m->pos = vadd(m->pos, vmul(rec.v58, d)); rec.s1A = 0; rec_first_vector(m); }
+            else m->pos = vadd(m->pos, vmul(rec.v58, d < -10.0f ? -10.0f : d > 10.0f ? 10.0f : d));
+            mario_sound("引き戻し基本");
+        }
+        break;
+    }
+    return 1;
+}
+static int rec_start(Player *m) /* MarioRecovery::start */
+{
+    rec.s16 = 0; rec.s1A = 0;
+    rec.v34 = m_last_safety();
+    m_anim("引き戻し"); /* changeAnimationNonStop */
+    mario_sound("声慌て");
+    if (rec.s12) {
+        rec.s1A = 3; rec.s16 = 180;
+        if (ang_abs(vsub(rec.v34, rec.v4C), rec.v58) >= 1.5707964f) {
+            V3 dir = vsub(rec.v34, rec.v4C);
+            dir = near0(dir) ? v3(1, 0, 0) : vnorm(dir);
+            V3 c = vcross(rec.v58, dir);
+            c = near0(c) ? v3(0, 0, 1) : vnorm(c);
+            dir = vcross(c, rec.v58);
+            if (!near0(dir)) dir = vnorm(dir);
+            rec.v34 = vadd(vadd(rec.v4C, vmul(rec.v58, 600.0f)), vmul(dir, 600.0f));
+        }
+    } else if (!rec_first_vector(m)) return 0;
+    printf("recovery: to %d %d %d\n", (int)rec.v34.x, (int)rec.v34.y, (int)rec.v34.z);
+    return 1;
+}
+static void rec_close(Player *m) /* MarioRecovery::close */
+{
+    rec.on = 0;
+    m->grounded = 1; m->jumping = 0; /* mMovementStates._1, jumping */
+    m->s420 = 16;
+    m_clip_stop();
+    m_anim("基本");
+    printf("recovery: done at %d %d %d\n", (int)m->pos.x, (int)m->pos.y, (int)m->pos.z);
+}
+/* Mario::doRecovery: not in MarioFoo, a recovery or a warp; squat and walk stopped, the status on (_12: the cylinder's)
+ * and the jump stopped. ponytail: without _12 doPointWarpRecovery (MarioWarp's mode 3: PullBackCube, a PullBackCylinder
+ * with arg0 1) is not ported; MarioActor _934 / _EA4 not checked */
+static int m_do_recovery(Player *m)
+{
+    if (fo.on || rec.on || warp.from >= 0) return 0;
+    if (!rec.s12) return 0;
+    m_stop_walk(m);
+    if (rec_start(m)) rec.on = 1;
+    m_stop_jump(m);
+    return 1;
+}
+
 static void update_mario_(void);
 static void update_mario(void)
 {
@@ -17230,6 +17429,24 @@ static void update_mario_(void)
             m_tower.c = vadd(row_pos(r), vmul(m_tower.up, 250.0f * r->scale[1]));
             m_tower.r = 500.0f * r->scale[0];
         }
+    }
+    { /* updateCubeCode: in a PullBackCube or PullBackCylinder, doRecovery (a cylinder without arg0 1: its base and up
+       * for MarioRecovery's _4C / _58, _12) */
+        int pb = area_obj("PullBackCube", m->pos);
+        if (pb < 0 && (pb = area_obj("PullBackCylinder", m->pos)) >= 0 && sc->objs[pb].arg[0] != 1) {
+            V3 x, z;
+            row_axes(&sc->objs[pb], &x, &z);
+            rec.v4C = row_pos(&sc->objs[pb]); rec.v58 = vnorm(vcross(z, x)); rec.s12 = 1;
+        }
+        if (pb >= 0) m_do_recovery(m);
+    }
+    if (rec.on) { /* MarioRecovery's update (actionMain) on the shadow checkMap found */
+        V3 p0 = m->pos;
+        m_calc_shadow(m);
+        if (!rec_update(m)) rec_close(m);
+        m->last_move = vsub(m->pos, p0);
+        if (mario_anim) anim_update(mario_anim);
+        return;
     }
     m_input_stick(m);
 #ifdef SLOPE_TEST
@@ -17446,6 +17663,7 @@ static void update_mario_(void)
             se_map_code(KCL_SOUND(ground_attr));
             m->vup = 0; m->hvel = vtangent(m->vel, m->up);
             m_damage_floor(m);
+            if (!m->jumping) m_save_safety(m);
         }
     } else if (ground && (!m->jumping || m->vup <= 0)) {
         m->grounded = 1;
@@ -17596,6 +17814,7 @@ static void miss(void)
 #endif
     time_left = time_limit; /* the comet's time starts over with the scenario */
     mario->pos = start_pos; mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->hurt_timer = 0; mario->hip = 0;
+    safe_reset(start_pos);
     mario->up = up_at(mario->pos, v3(0, 1, 0)); /* placed anew, as at the start (not his up where he fell) */
     mario->launch = -1; /* out of any launch star's flight (it would carry him back) */
     life = max_life = MAX_LIFE;
@@ -37354,5 +37573,65 @@ void game_test_hang(unsigned frame)
     if (frame >= 405 && frame < 940 && frame % 5 == 0)
         printf("hang test f %u: face %.2f pad %.2f hang %d step %d t %d grounded %d jumping %d w8 %d f15 %d f39 %d s31 %d h %d anim %s\n", frame, vdot(m->face, dir), vdot(m_pad, dir), hg.on, hg.s12, hg.s14,
                m->grounded, m->jumping, mw.w8, mw.f15, mw.f39, mw.s31, (int)vdot(vsub(top, m->pos), m->up), mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-");
+}
+#endif
+
+#ifdef PULLBACK_TEST
+/* the Gateway's pit (HeavensDoorGalaxy/1, HeavensDoorMysteriousPlanet): Mario dropped 700 up the first
+ * PullBackCylinder's axis from its base (frame 300 from free): MarioRecovery takes him back to his last safe place */
+int game_test_busy(void) { return dx_busy() || talk_active(); } /* tests: a demo or a talk holds Mario */
+void game_test_pullback(unsigned frame)
+{
+    int t = scene_type(sc, "PullBackCylinder");
+    for (u32 i = 0; t >= 0 && i < sc->nobjs; i++) {
+        if (sc->objs[i].type != t || sc->objs[i].arg[0] == 1) continue;
+        const Row *r = &sc->objs[i];
+        V3 x, z;
+        row_axes(r, &x, &z);
+        V3 up = vnorm(vcross(z, x)), b = row_pos(r);
+        if (frame == 300) {
+            V3 s = m_last_safety();
+            printf("pullback test f %u: safe %d %d %d (start %d %d %d), drop over row %d\n", frame, (int)s.x, (int)s.y, (int)s.z,
+                   (int)start_pos.x, (int)start_pos.y, (int)start_pos.z, (int)i);
+            mario->pos = vadd(b, vmul(up, 700.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
+        }
+        if (frame >= 300 && frame <= 900 && frame % 10 == 0)
+            printf("pullback test f %u: pos %d %d %d axis %.0f off %.0f rec %d/%d grounded %d anim %s\n", frame, (int)mario->pos.x,
+                   (int)mario->pos.y, (int)mario->pos.z, vdot(vsub(mario->pos, b), up), vlen(vtangent(vsub(mario->pos, b), up)),
+                   rec.on, rec.s1A, mario->grounded, m_jp ? m_jp : "-");
+        return;
+    }
+    if (frame == 300) printf("pullback test: no PullBackCylinder\n");
+}
+#endif
+
+#ifdef NPC_LOOK
+/* XF=-DNPC_LOOK (npc build): from frame 300 the camera on each Kinopio in turn (240 frames each), 350 off its front
+ * and 120 up, Mario put 800 behind it; its row and place printed */
+void game_test_npc_look(unsigned frame)
+{
+    if (frame == 290)
+        for (int i = 0; i < ninsts; i++) {
+            Inst *in = &insts[i];
+            if (in->row < 0 || strncmp(sc->types + 32 * sc->objs[in->row].type, "Kinopio", 7)) continue;
+            const Row *r = &sc->objs[in->row];
+            printf("npc look: row %d rot %d %d %d up %.2f %.2f %.2f s %.2f nu %.2f %.2f %.2f clip %s\n", in->row, (int)r->rot[0], (int)r->rot[1],
+                   (int)r->rot[2], in->m[4], in->m[5], in->m[6], vlen(v3(in->m[0], in->m[1], in->m[2])), in->nu.x, in->nu.y, in->nu.z,
+                   in->anim && in->anim->clip_id >= 0 ? sc->clips[in->anim->clip_id].name : "-");
+        }
+    if (frame < 300) return;
+    int k = (int)(frame - 300) / 240;
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (in->row < 0 || strncmp(sc->types + 32 * sc->objs[in->row].type, "Kinopio", 7) || k--) continue;
+        V3 p = v3(in->m[12], in->m[13], in->m[14]), up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+        V3 f = vnorm(v3(in->m[8], in->m[9], in->m[10]));
+        camera_set_override(1, vadd(vadd(p, vmul(f, 350.0f)), vmul(up, 120.0f)), vadd(p, vmul(up, 60.0f)), up, 45.0f);
+        if ((frame - 300) % 240 == 0) {
+            mario->pos = vadd(p, vmul(f, -800.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            printf("npc look f %u: row %d at %d %d %d\n", frame, in->row, (int)p.x, (int)p.y, (int)p.z);
+        }
+        return;
+    }
 }
 #endif

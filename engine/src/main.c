@@ -1912,9 +1912,24 @@ int main(void)
 #endif
 #ifdef NPC_TEST
         { /* Mario beside each turning NPC in turn (300 frames each): their turn, tilt and action */
+#ifdef NPC_LOOK
+            { extern void game_test_npc_look(unsigned); game_test_npc_look(frame); }
+#else
             if (frame >= 150 && frame % 300 == 150) printf("npc test f %u: visit row %d\n", frame, game_test_npc_visit((int)(frame - 150) / 300));
             if (frame >= 150 && frame % 60 == 0) game_test_npc_turn((int)frame);
+#endif
         }
+#endif
+#ifdef PULLBACK_TEST
+    {   /* frames from Mario free + 150 */
+        static u32 f0;
+        u32 mf = frame;
+        extern int game_test_busy(void);
+        extern void game_test_pullback(unsigned);
+        pad_force = game_test_busy() && mf % 40 < 3 ? PAD_CROSS : 0; /* A tapped through the opening's talks */
+        if (!f0 && mf > 30 && game_test_free() && !game_test_busy()) f0 = mf;
+        if (f0) game_test_pullback(mf - f0 + 150);
+    }
 #endif
 #ifdef HANACHAN_TEST
     {   /* frames from Mario free (the flight in over) + 150 */

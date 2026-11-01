@@ -194,7 +194,7 @@ LOGIC = ("TimerSwitch", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "Coll
          "AstroChangeStageCube", "MovieStarter", "RunawayRabbitCollect", "PhantomTorch", "PhantomBonfire", "Hanachan",
          # Mario's areas (MR::getAreaObj: game.c area_obj / foo_sphere)
          "CelestrialSphere", "TowerModeCylinder", "NonSleepCube", "EffectCylinder", "SmokeEffectColorAreaCube",
-         "MessageAreaCube", "MessageAreaCylinder")  # areas (areaobjinfo) travel as OBJS rows too
+         "MessageAreaCube", "MessageAreaCylinder", "PullBackCylinder")  # areas (areaobjinfo) travel as OBJS rows too
 
 
 def col(b, field, n, default=0):
