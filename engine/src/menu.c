@@ -707,6 +707,42 @@ static void llt_update(void)
 }
 static void llt_draw(void) { if (llt.on) { render_world_done(); lyt_draw(llt.l); iab_draw(&llt.ab); } }
 
+/* PeachLetter (Screen/PeachLetter.cpp; letter.bin, loaded where the messenger has one: main.c letter_scene): Body's
+ * PeachLetter_001; Appear (SE_SY_LETTER_APPEAR, then SE_SV_PEACH_MAIL), Wait (its IconAButton openWithoutMessage at
+ * AButtonPosition) until A once the icon waits (SE_SY_TALK_OK), End (term), dead. KinopioAstro's dispLetter (game.c
+ * kast_event) */
+static struct { LytInst *l; int on; Nrv n; Iab ab; } plt;
+void menu_peach_letter(void) /* appear */
+{
+    if (!plt.l && !(plt.l = lyt_new("PeachLetter"))) return;
+    if (!plt.ab.l) { iab_init(&plt.ab, plt.l, "AButtonPosition"); lyt_set_text_rec(plt.l, "Body", msg_get("PeachLetter_001")); }
+    plt.on = 1; plt.n.next = -1; nrv_set(&plt.n, LL_APPEAR);
+}
+int menu_peach_letter_alive(void) { return plt.on; }
+static void plt_update(void)
+{
+    if (!plt.on) return;
+    switch (nrv_begin(&plt.n)) {
+    case LL_APPEAR:
+        if (FIRST(&plt.n)) { lyt_start(plt.l, "Appear", 0); se_start(SE_SY_LETTER_APPEAR, NULL); }
+        if (lyt_stopped(plt.l, 0)) { se_start(SE_SV_PEACH_MAIL, NULL); nrv_set(&plt.n, LL_WAIT); }
+        break;
+    case LL_WAIT:
+        if (FIRST(&plt.n)) { lyt_start(plt.l, "Wait", 0); iab_open(&plt.ab); }
+        if ((iab_wait(&plt.ab) || !plt.ab.l) && pad_pressed(PAD_CROSS)) { /* isWait, testCorePadTriggerA */
+            pad_eat(PAD_CROSS); se_start(SE_SY_TALK_OK, NULL); nrv_set(&plt.n, LL_END);
+        }
+        break;
+    case LL_END:
+        if (FIRST(&plt.n)) { lyt_start(plt.l, "End", 0); iab_term(&plt.ab); }
+        if (lyt_stopped(plt.l, 0)) plt.on = 0; /* kill */
+        break;
+    }
+    nrv_end(&plt.n);
+    if (plt.on) { lyt_update(plt.l); iab_update(&plt.ab); } /* movement: the letter, then its icon */
+}
+static void plt_draw(void) { if (plt.on) { render_world_done(); lyt_draw(plt.l); iab_draw(&plt.ab); } }
+
 /* PauseMenu's letter (_38: ButtonPaneController LetterButton / BoxButton3): there while getLuigiLetterGalaxyName,
  * appearing while isOnLuigiHiding; decided: exeLuigiLetter (the letter until it is dead, then the buttons back) */
 static struct { Btn b; u8 on, open; } pml;
@@ -1109,6 +1145,7 @@ int menu_update(void)
     mlay_update();
     mono_update();
     llt_update();
+    plt_update();
     srl_update();
     spg_update();
     if (sr.delay && --sr.delay == 0 && sr.l) { /* the clear's demo sequence: StageResultInformer, then the save */
@@ -3886,6 +3923,7 @@ void menu_draw(void)
         if (pm.win.alive) lyt_draw(pm.win.l);
     }
     llt_draw(); /* PauseMenu::draw: the letter after the menu (and KinopioAstro's) */
+    plt_draw();
     if (sv.win.alive) { render_world_done(); lyt_draw(sv.win.l); } /* the save's window over all of it */
     wipe_draw_quad();
     fade_draw();

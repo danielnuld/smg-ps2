@@ -9469,7 +9469,8 @@ static void tk_root_pre(Talker *t, int arg) /* rootNodePre: branches taken by th
         case 14: { /* TalkFunction::getBranchAstroGalaxyResult: TalkDirector::getBranchResult(mNextIdx); 12 / 13 Luigi */
             char st[32];
             int scen = luigi_scenario(st, sizeof st);
-            cond = n->next == 12 ? gd_luigi_disappear() : n->next == 13 ? gd_luigi_hiding(st, scen) : 0; /* ponytail: the other results 0 */
+            cond = n->next == 12 ? gd_luigi_disappear() : n->next == 13 ? gd_luigi_hiding(st, scen) :
+                   n->next == 18 ? gd_any_left_supply() : 0; /* ponytail: the other results 0 */
             break;
         }
         default: cond = 0; /* Boo, star appeared, time-keep demo, already read, LED */
@@ -10226,6 +10227,7 @@ static int butler_branch(int k, u32 v); /* Butler::messageBranchFunc (the dome's
 static int butler_talk_free(int row);   /* the Butler in its Wait nerve (no demo, no star piece reaction) */
 static int luigi_talk_free(int row);    /* LuigiNPC in a talking nerve (its section) */
 static int luigi_event(int t, u32 v), luigi_branch(int t, u32 v), kast_event(int t, u32 v);
+static int kast_peach; /* KinopioAstro (the messenger): its Peach letter, 0 none, 1 Mario's, 2 a Luigi supply */
 static void update_talkers(void)
 {
     if (!tk_nctl) return;
@@ -10250,8 +10252,11 @@ static void update_talkers(void)
             }
             if (in->talkcls == 5) t->branch = butler_branch;
             if (in->talkcls == 6) { t->event = luigi_event; t->branch = luigi_branch; } /* LuigiNPC::init: registerBranchFunc / EventFunc */
-            if (in->talkcls == 3 && sc->objs[in->row].arg[0] == 2 && !strcmp(sc->types + 32 * sc->objs[in->row].type, "KinopioAstro"))
+            if (in->talkcls == 3 && sc->objs[in->row].arg[0] == 2 && !strcmp(sc->types + 32 * sc->objs[in->row].type, "KinopioAstro")) {
                 t->event = kast_event; /* KinopioAstro::init: the messenger's eventFunc */
+                kast_peach = gd_any_left_supply() ? 1 + gd_luigi_left_supply() : 0; /* mPeachLetter made (_194), mIsPlayerLuigi */
+                if (kast_peach) t->arg = kast_peach == 2 ? 20 : 5; /* setMessageArg: sMessangerOneUpExNum / OneUpNum */
+            }
         }
         if (in->talkcls == 5 && !butler_talk_free(in->row)) continue; /* NPCActor::exeWait only (its demos, the reaction) */
         if (in->talkcls == 4 && dx.on) continue;                         /* ButlerMap: its Wait nerve only */
@@ -10794,8 +10799,13 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
 #ifndef TALK_CLS
 #define TALK_CLS 1 /* the talker class to read (XF=-DTALK_CLS=3: the first Kinopio) */
 #endif
+#ifdef TALK_PEACH /* XF=-DTALK_CLS=3 -DTALK_PEACH (AstroGalaxy): the messenger (KinopioAstro arg0 2), Peach's letter */
+#define TALK_PICK(i) (sc->objs[insts[i].row].arg[0] == 2 && !strcmp(sc->types + 32 * sc->objs[insts[i].row].type, "KinopioAstro"))
+#else
+#define TALK_PICK(i) 1
+#endif
     for (int i = 0; i < ninsts && row < 0; i++)
-        if (insts[i].talkcls == TALK_CLS && talk_row_label(insts[i].row, lab)) row = i;
+        if (insts[i].talkcls == TALK_CLS && talk_row_label(insts[i].row, lab) && TALK_PICK(i)) row = i;
     pad_force = 0;
     if (row < 0 && TALK_CLS == 3) { /* the Kinopios wait for their appear switch: on */
         int ty = scene_type(sc, "Kinopio");
@@ -17532,6 +17542,7 @@ static void miss_event_update(void)
         if (f == 160) menu_wipe_gameover(); /* reqLayout */
         if (f == 420) { /* finish: SaveAfterGameOver (startGameDataSaveSequence(true, true)) */
             lives = 4; /* resetSystemAndGameStatus: the file's lives back to 4 (synced into the game data) */
+            gd_add_miss_point(3); /* exeSaveAfterGameOver: incPlayerGameOverNum */
             menu_save_start(1, 1, 1);
         }
         if (f > 420 && !menu_saving()) { seq_galaxy_move(SEQ_TITLE, NULL, 1, -1, 0); mev.on = 0; } /* requestChangeSceneAfterGameOver */
@@ -17543,7 +17554,7 @@ static void miss_event_update(void)
             if (mev.wipe_f++ == 0) menu_wipe_koopa(-1);
             else if (menu_wipe_koopa_closed()) mev.phase = 2;
         }
-        if (f == 120) { lives--; printf("miss %d, lives %d" "\n", ++misses, lives); } /* decLeft */
+        if (f == 120) { lives--; gd_add_miss_point(1); printf("miss %d, lives %d" "\n", ++misses, lives); } /* decLeft: decPlayerLeft */
         if (mev.phase == 2 && mev.pf++ == 30) seq_galaxy_move(SEQ_MISS, NULL, -1, -1, 0); /* doWaitAfterWipe */
     }
     if (next) mev.phase++;
@@ -32268,11 +32279,28 @@ static void update_luigi(void)
 
 /* KinopioAstro (the messenger, arg0 2) after Petari: its talk's eventFunc 0 (LetterEvent_LuigiLetter) shows Luigi's letter
  * (LuigiLetter for the talk: the hiding galaxy's picture, menu.c) until it is closed, then onGameEventFlagGetLuigiLetter;
- * the Peach letter events are over at once. ponytail: no PeachLetter, no 1-ups (LetterEvent_PeachLetter1Ups), no mail */
+ * 1 (PeachLetterNormal) Peach's (menu.c PeachLetter, made while isAnyPlayerLeftSupply) until it is closed, then
+ * offAllPlayerLeftSupply; 2 (PeachLetter1Ups) 5 lives (20 for a Luigi supply) and SE_SY_5UP. ponytail: no OneUpBoard
+ * (requestOneUp's count), no letter icon balloon (mLetterIconTalkCtrl) nor its SE_SM_LV_KINOMES_GOT_MAIL, no
+ * SendLetter (the Wii's mail) */
 static int kast_letter;
 static int kast_event(int t, u32 v)
 {
     (void)t;
+    if (v == 1) { /* dispLetter(mPeachLetter) */
+        if (!kast_peach) return 1;
+        if (!kast_letter) { kast_letter = 1; menu_peach_letter(); return 0; }
+        if (menu_peach_letter_alive()) return 0;
+        kast_letter = 0;
+        gd_off_all_left_supply();
+        return 1;
+    }
+    if (v == 2) { /* PeachLetter1Ups: incPlayerLeft x sMessangerOneUpExNum / sMessangerOneUpNum */
+        lives += kast_peach == 2 ? 20 : 5;
+        se_start(SE_SY_5UP, NULL);
+        printf("messenger: %d lives\n", lives);
+        return 1;
+    }
     if (v != 0) return 1;
     char st[32];
     int scen = luigi_scenario(st, sizeof st);
