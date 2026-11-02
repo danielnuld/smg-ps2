@@ -212,6 +212,26 @@ Second console round (2026-10-24), from Daniel's report:
   opening to the spin demo's end. ponytail: the guiding bunny hops along its rail when stuck 120 steps.
 
 - fix/start-crater: the Gateway's pit (HeavensDoorGalaxy 1, HeavensDoorMysteriousPlanet, 650 deep) had no way out: its PullBackCylinder was not converted and MarioRecovery not ported. Now Mario::updateCubeCode / doRecovery, MarioRecovery (start, update, updateJump, calcFirstVector, close) and save / getLastSafetyTrans are in game.c. **Release agent, to repack:** tools/slice.py LOGIC gained PullBackCylinder: every HeavensDoorGalaxy and AstroGalaxy scenario's scene.bin (dev overlay: out/wt-crater). Same branch: NPCs' turn axes (Inst nu / nf, NPCActor _A0 / _B0) were read before game_rebind_ set the instance matrix (zero): Toads drawn tilted, some upside down in the ground (PeachCastleGarden 1 row 60); `npc` with XF=-DNPC_LOOK puts the camera on each Kinopio in turn.
+- feat/mario-sidestep: MarioSideStep after Petari (doSideStep, start / close / update, checkWallPush at the end of
+  decideWalkAnimation): walking square into a wall Mario leans on it (壁押し), waits (壁ウエイト), walks along it
+  (壁右歩き / 壁左歩き at 6), A jumps off, the spin punches off. Test: `build.sh sidestep <blob> KoopaJrShipLv1Galaxy/1`
+  (the nearest vertical wall: lean, wait, walk; the airship's cannon shells interrupt it now and then). ponytail:
+  checkWallJumpCode (barrier / water walls) not ported.
+- feat/mario-slider: MarioSlider after Petari (checkSliderMode / startSlider, start / update / close, calcGroundAccel,
+  calcWallHit, postureCtrl, setHipSliderTilt; checkGroundOnSlope's 100 and steep faces on it; no ground spin on it):
+  on Slider floors (code 9: ForestHomePlanet in HoneyBeeKingdom, HugeBattleShipPlanet, IceMountainPlanet,
+  ScaleDownRelayPlanet) Mario slides sitting (スライダー尻) up to mSliderMaxSpeed 32, steered and braked by the stick,
+  hands over to MarioSlip on a slip floor, A jumps with the slide's speed. Test: `build.sh slider <blob>
+  HoneyBeeKingdomGalaxy/1`.
+- feat/mario-2d: Mario2D / MarioMove2D after Petari (check2DMode, stick2DadjustGround, stick2Dadjust, set2Dmode,
+  clear2DStick, calcShadowDir2D) and their hooks in Mario.cpp / MarioMove.cpp / MarioCollision.cpp (the place kept on the
+  plane through _688 in writeBackPhyisicalVector, setFrontVec never into the screen, the turn round at once with the
+  drawn turn mirrored to the camera, isEnableTurn off, walls facing the plane skipped, createMtxDir's shake absorption).
+  slice.py LOGIC gained PlaneModeCube / PlaneCircularModeCube. **Release agent, to repack (scene.bin):**
+  TeresaMario2DGalaxy, KoopaBattleVs1/2/3Galaxy, CannonFleetGalaxy, HellProminenceGalaxy, StarDustGalaxy,
+  DarkRoomGalaxy, SandClockGalaxy, CosmosGardenGalaxy, BattleShipGalaxy (dev overlay: out/wt-states for TeresaMario2D 1
+  and KoopaBattleVs1 1). Test: `XF=-DPACKS_OVERLAY=wt-states build.sh 2d <blob> TeresaMario2DGalaxy/1`. ponytail:
+  PipeModeCube (MarioMove25D), the gravity flip's 2D handling, checkForceGrounding not ported.
 
 ## Rules
 

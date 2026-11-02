@@ -7,6 +7,7 @@ int audio_music(const char *path);    /* start a music stream (host:music/<name>
 int audio_ready(void);
 int audio_playing(void);                /* audsrv started */
 void audio_fade(int frames);        /* AudBgm::stop(frames): the music faded out over frames (<= 0: now), then closed */
+void audio_move_volume(float v, int frames); /* MR::moveVolumeStageBGM: the stream's volume to v (0..1) over frames */
 unsigned audio_pos(void);            /* the stream's place: its bytes after the header played (about) */
 void audio_seek(unsigned pos, int ahead, int fade_in); /* AudBgmVolumeController's recover: on at pos plus ahead frames' worth (past its end: wrapped to the loop), faded in over fade_in frames */
 void audio_stop(void);                /* the music stream closed (a scene change) */

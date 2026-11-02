@@ -63,6 +63,14 @@ static unsigned int music_rate;
 static int ready;
 static int fade_t, fade_n;         /* audio_fade: frames done / total (0: none) */
 static int fin_t, fin_n;           /* audio_seek's fade in */
+/* AudBgmVolumeController's volume (MR::moveVolumeStageBGM / SubBGM: our one stream): to mv_to over mv_n frames */
+static float mv_cur = 1.0f, mv_from = 1.0f, mv_to = 1.0f;
+static int mv_t, mv_n;
+void audio_move_volume(float v, int frames)
+{
+    mv_from = mv_cur; mv_to = v; mv_t = 0; mv_n = frames > 0 ? frames : 0;
+    if (!mv_n) mv_cur = v;
+}
 static unsigned char chunk[8192] __attribute__((aligned(64)));
 static unsigned char rhy[24 << 10] __attribute__((aligned(64))); /* the stream's rhythm (tools/rhythm.py .rhy) */
 
@@ -138,7 +146,7 @@ int audio_music(const char *path)
     music_loop = hdr[3];
     music_rate = hdr[1];
     audsrv_set_format(&fmt);
-    audsrv_set_volume(MAX_VOLUME);
+    audsrv_set_volume((int)(MAX_VOLUME * mv_cur));
     fade_n = fin_n = 0;
     printf("audio: %s, %u Hz, loop at byte %u\n", path, hdr[1], music_loop);
     rhythm_load(path);
@@ -202,13 +210,15 @@ void audio_fade(int frames)
 void audio_update(void)
 {
     if (!music) return;
+    int moved = mv_n > 0;
+    if (mv_n) { mv_cur = mv_from + (mv_to - mv_from) * ++mv_t / mv_n; if (mv_t >= mv_n) mv_n = 0; }
     if (fade_n) { /* a linear fade, then the stream closed */
         if (++fade_t >= fade_n) { audio_stop(); return; }
-        audsrv_set_volume(MAX_VOLUME * (fade_n - fade_t) / fade_n);
+        audsrv_set_volume((int)(MAX_VOLUME * mv_cur) * (fade_n - fade_t) / fade_n);
     } else if (fin_n) {
         if (++fin_t >= fin_n) fin_n = 0;
-        audsrv_set_volume(fin_n ? MAX_VOLUME * fin_t / fin_n : MAX_VOLUME);
-    }
+        audsrv_set_volume((int)(MAX_VOLUME * mv_cur) * (fin_n ? fin_t : 1) / (fin_n ? fin_n : 1));
+    } else if (moved) audsrv_set_volume((int)(MAX_VOLUME * mv_cur));
     audio_feed();
     if (music) me_rhythm_tick(audio_pos(), music_loop);
 }
