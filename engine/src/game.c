@@ -1067,10 +1067,11 @@ static int dx_zones_full = 1;  /* the asked / running demo's casts' zones are in
  * マリオ変身, マリオスーパー化, 初出表示, an item's 出現): it starts when no other demo runs; the scene stops but for
  * its cast (requestMovementOn: a row, -1 Mario alone) and the classes every demo moves (dx_always_moves) */
 static struct { const char *name; int row; } pd = {NULL, -1};
+static int in_opening; /* the scenario's opening camera or the ScenarioStarter's flight in (GameScene not in Action) */
 static int pd_try_start(const char *name, int row)
 {
     if (pd.name) return !strcmp(pd.name, name);
-    if (dx.on || dx.req >= 0) return 0;
+    if (dx.on || dx.req >= 0 || in_opening) return 0; /* MR::canStartDemo: GameScene in Action */
     pd.name = name; pd.row = row;
     printf("demo: %s\n", name);
     return 1;
@@ -1135,13 +1136,13 @@ static const float *scene_gpos(const char *name) /* MR::findNamePos: a GeneralPo
         if (!strcmp((const char *)q, name)) return (const float *)(q + 48);
     return NULL;
 }
-static int in_opening; /* the scenario's opening camera or the ScenarioStarter's flight in (GameScene not in Action) */
 static int dino_demo_on, ota_demo_on; /* whose demo camera runs */
 static int demo_dino_damage; /* tryStartDemoMarioPuppetable "ディノパックンダメージ": Mario waits from Pulled to its damage's end */
 static int star_demo;      /* PowerStar::exeStageClearDemo: frames since a star was taken + 1, 0 none */
 static float star_demo_m[16]; /* its camera's frame: at the star, facing the way Mario looked */
 static int obj_play(const Inst *in, const char *clip, int loop, int interp);
 static int lg_cls(const char *name);              /* LuigiNPC 1, LuigiEvent 2 (the LuigiNPC section) */
+static int luigi_took(int row);                    /* his star taken out (TakeOutStar), not just made dead at init */
 static int luigi_scenario(char *stage, int n);    /* the current stage, its scenario */
 /* Skinned placed models (slice.py SKINNED_OBJ): a pool of poses kept by row across rebinds, the class's "wait" clip
  * (else its first) looping unless its behaviour plays another (obj_play). ponytail: 40 at once (instances and walkers), the rest drawn in
@@ -4696,6 +4697,7 @@ int game_test_cage(int on_star)
         if (on_star) {
             int state;
             V3 p = star_pos(in, &state);
+            if (!state) continue; /* (hidden: one its declarer never brings out here, an absent Luigi's) */
             mario->pos = vadd(p, vmul(up_at(p, mario->up), -HIT_BODY_H));
             mario->hvel = v3(0, 0, 0); mario->vup = 0;
             return state;
@@ -29659,8 +29661,11 @@ static V3 item_sensor(const Inst *in, float *r)
 /* An event star (star_wait) waits hidden, or shown inside the cage that declared it (CrystalCageL: 250 up the cage,
  * BreakableCage: 150, DummyDisplayModel); then the PowerStar.cpp appear demo (exeAppearDemoRise / Move): from there
  * (its own place for the hundred coins) 300 up its own y (ease out over 60 frames), at frame 80 off to its place in
- * 120 frames on an arc as high as half the distance across its up (300 to 5000); taken from frame 210. *state: 0
- * hidden, 1 waiting in its cage, 2 appearing, 3 can be taken. ponytail: no demo camera, the stage goes on */
+ * 120 frames on an arc as high as half the distance across its up (300 to 5000); its Move's step 210 (frame 290)
+ * ends the demo (endAppearDemo: Wait, taken after). The demo パワースター出現 (requestStartDemoWithoutCinemaFrame: it
+ * waits for it in WaitStartAppear; the scene stops but for the star) runs the actor camera of the nearest
+ * PowerStarAppearPoint (else the star's own), its target the star, the BGM's volume down to 0 over 5 frames and back
+ * over 60 at the end (star_demo_update). *state: 0 hidden, 1 waiting in its cage, 2 appearing, 3 can be taken */
 /* PowerStar::setDemoAppearPos: an event star whose group (GroupId) has PowerStarAppearPoints comes out at the one
  * nearest its declarer, not at its own place */
 static V3 star_appear_point_(const Inst *in, V3 from, V3 own);
@@ -29693,6 +29698,44 @@ static V3 star_appear_point_(const Inst *in, V3 from, V3 own)
     return p;
 }
 
+static int star_cam_row(const Inst *in) /* getAppearCameraActor: the PowerStarAppearPoint it comes out at, else itself */
+{
+    const Row *s = &sc->objs[in->row];
+    int t = scene_type(sc, "PowerStarAppearPoint"), w = star_wait[in->row], best = in->row;
+    if (t < 0 || s->group < 0 || w <= 0) return best;
+    V3 from = row_pos(&sc->objs[w - 1]);
+    float bd = 1e30f;
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if (r->type != t || r->group != s->group || r->zone != s->zone) continue;
+        float d = vlen(vsub(row_pos(r), from));
+        if (d < bd) { bd = d; best = (int)i; }
+    }
+    return best;
+}
+/* PowerStar::exeAppearDemoRise's first step / the frames of the demo / exeAppearDemoMove's step 210: 0 when the demo
+ * can not start yet (the star waits) */
+static int star_demo_update(const Inst *in, int t, V3 sp)
+{
+    V3 up = up_at(sp, v3(in->m[4], in->m[5], in->m[6]));
+    if (t == 0) {
+        if (!pd_try_start("パワースター出現", in->row)) return 0;
+        audio_move_volume(0.0f, 5); /* moveVolumeStageBGM / SubBGM(0, 5) */
+        int cr = star_cam_row(in);
+        int cam = row_camset[cr] != -1 && /* startActorCameraTargetOther(getAppearCameraActor, getAppearCameraInfo, the star) */
+                  camera_actor_start(sc->types + 32 * sc->objs[cr].type, "", (unsigned short)row_camset[cr], up,
+                                     v3(in->m[8], in->m[9], in->m[10]), sp);
+        printf("power star appear demo: row %d (declarer %d %s), camera of row %d set %d: %s\n", in->row, star_wait[in->row] - 1,
+               star_wait[in->row] > 0 ? sc->types + 32 * sc->objs[star_wait[in->row] - 1].type : "-", cr, row_camset[cr], cam ? "on" : "none");
+    }
+    camera_event_target(up, sp);
+    if (t == 290) { /* resetCameraLocalOffset, endActorCamera, endAppearDemo */
+        camera_event_stop();
+        pd_end("パワースター出現");
+        audio_move_volume(1.0f, 60);
+    }
+    return 1;
+}
 static V3 star_pos(const Inst *in, int *state)
 {
     V3 p = v3(in->m[12], in->m[13], in->m[14]);
@@ -29708,12 +29751,13 @@ static V3 star_pos(const Inst *in, int *state)
         row_axes(r, &x, &z);
         float h = strcmp(name, "CrystalCageL") == 0 ? 250.0f : strncmp(name, "Breakable", 9) == 0 ? 150.0f : 0.0f;
         o = vadd(row_pos(r), vmul(vcross(z, x), h * r->scale[0]));
-        if (!row_dead[w - 1]) { *state = h > 0; return o; }
+        if (!row_dead[w - 1] || (lg_cls(name) && !luigi_took(w - 1))) { *state = h > 0; return o; } /* (a Luigi absent
+                                                                                                       * here: no star) */
     } else if (got_coins < 100 && got_purple < 100) { /* ScenePlayingResult: 100 coins, or 100 purple coins */
         *state = 0;
         return o;
     }
-    *state = t >= 210 ? 3 : 2;
+    *state = t > 290 ? 3 : 2;
     if (t >= 200) return p;
     if (t < 80) return vadd(o, vmul(up, 300.0f * sinf(fminf(t / 60.0f, 1.0f) * 1.5707963f)));
     V3 a = vadd(o, vmul(up, 300.0f)), d = vsub(p, a);
@@ -30302,6 +30346,7 @@ static void update_items(void)
             if (state == 2 && t == 200) se_start(w ? SE_OJ_POW_STAR_MOVE_END_W : SE_OJ_POW_STAR_MOVE_END, &sp.x); /* its step 120 */
             if (state == 3 || (state == 2 && (t < 80 || t >= 200))) /* processWait, exeAppearDemoRise, Move from step 120 */
                 in->lv[0] = se_level(w ? SE_OJ_LV_POW_STAR_EXIST_W : SE_OJ_LV_POW_STAR_EXIST, &sp.x, in->lv[0]);
+            if (state == 2 && !star_demo_update(in, t, sp)) continue;
             if (state < 3) { row_step[in->row] += state == 2; continue; } /* row_step: its appear demo */
         }
 
@@ -32531,6 +32576,7 @@ static int lg_find(int row)
     return -1;
 }
 static void lg_dead(int row) { row_dead[row] = 1; sw_changed = 1; } /* makeActorDead */
+static int luigi_took(int row) { int k = lg_find(row); return k >= 0 && lg[k].took; }
 static int lg_cls(const char *name) { return !strcmp(name, "LuigiNPC") ? 1 : !strcmp(name, "LuigiEvent") ? 2 : 0; }
 static int luigi_scenario(char *stage, int n) /* the current stage and its scenario */
 {
@@ -35976,7 +36022,7 @@ void game_update(void)
         }
         opening_on = 1;
     }
-    in_opening = opening_on || (mario->launch >= 0 && launches[mario->launch].starter); /* not GameSceneAction yet */
+    in_opening = opening_on || starter >= 0 || (mario->launch >= 0 && launches[mario->launch].starter); /* not GameSceneAction yet */
     { /* the star pointer's modes while these last (startStarPointerModeGame / Demo (the opening camera's, a demo's) /
        * DemoMarioDeath (MarioActor's miss) / PowerStarGetDemo) */
         menu_pointer_request(SPM_GAME);
