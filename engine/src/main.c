@@ -1983,6 +1983,19 @@ int main(void)
         }
     }
 #endif
+#ifdef BEAMER_TEST
+    {
+        static u32 f0;
+        u32 mf = frame;
+        if (!f0 && mf > 30 && game_test_free()) f0 = mf;
+        u32 frame = f0 ? mf - f0 + 150 : 0;
+        /* 1000 off the first JumpBeamer (it comes up), onto its body (400: HopStart), onto its spring (560: the helicopter jump) */
+        if (frame >= 100 && frame < 400 && frame % 20 == 0) game_test_beamer(0);
+        if (frame == 400) printf("beamer test f %u: body row %d\n", frame, game_test_beamer(1));
+        if (frame == 560) printf("beamer test f %u: spring row %d\n", frame, game_test_beamer(2));
+        if (frame >= 380 && frame <= 760 && frame % 4 == 0) { printf("beamer test f %u: ", frame); game_beamer_state(); }
+    }
+#endif
 #ifdef BEGOMAN_TEST
     {
         static u32 f0;
