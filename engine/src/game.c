@@ -186,6 +186,7 @@ typedef struct {
     int starter;      /* ScenarioStarter's flight: no ShootStart, its own motion times and first pose */
     float initrot;    /* its arg5: the first pose's turn about the path (calcInitPose) */
     int shown, shine; /* shown last frame (-1 unknown: its Appear); _13C: frames Mario's sensor was last on it */
+    int appear;       /* its appear demo 出現 with the camera 出現イベント用: -1 asked, > 0 its step */
     u32 lv;           /* its shine's level sound */
     V3 clip_c;        /* SpinDriverUtil::setShadowAndClipping: its clipping sphere (clip_r 0: not yet worked out) */
     float clip_r;
@@ -2354,7 +2355,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         L->start = r->type == t_starter ? 0 : super ? 45 : 20; /* ScenarioStarter flies at once (exeRailMove) */
         { V3 x, z; row_axes(r, &x, &z); L->up = vnorm(vcross(z, x)); } /* MR::calcUpVec */
         L->row = i;
-        L->shown = -1; L->shine = 0; L->lv = 0; L->clip_r = 0;
+        L->shown = -1; L->shine = 0; L->lv = 0; L->clip_r = 0; L->appear = 0;
         nlaunches++;
     }
     int t_erail = scene_type(s, "ElectricRail");
@@ -7307,6 +7308,37 @@ static void wp_end_camera(void) /* WarpPodMgr::endEventCamera (WarpPod::endEvent
 {
     for (int k = 0; k < wpm.n; k++) wpm.p[k].cc = 0;
     camera_event_end_now(-1);
+}
+static int launch_appear_frames(const Launch *L) /* SpinDriverCamera::getAppearCameraFrames (0: no appear camera) */
+{
+    return row_camset[L->row] != -1 ? camera_actor_frames(sc->types + 32 * sc->objs[L->row].type, "出現イベント用",
+                                                          (unsigned short)row_camset[L->row]) : 0;
+}
+static void update_launch_appear(void) /* SpinDriver / SuperSpinDriver: TryDemo, Appear (EmptyAppear) */
+{
+    for (int i = 0; i < nlaunches; i++) {
+        Launch *L = &launches[i];
+        if (!L->appear) continue;
+        const char *cls = sc->types + 32 * sc->objs[L->row].type;
+        int cam_f = launch_appear_frames(L);
+        if (L->appear == -1) {
+            if (!pd_try_start("出現", L->row)) continue; /* TryDemo: the demo (with the cinema frame) started: Appear */
+            menu_cinema(1);
+            V3 x, z;
+            row_axes(&sc->objs[L->row], &x, &z);
+            camera_actor_start(cls, "出現イベント用", (unsigned short)row_camset[L->row], L->up, z, L->pos); /* startAppearCamera */
+            L->appear = 1;
+        }
+        if (L->appear == 1 && sc->objs[L->row].arg[4] != 1) { /* exeAppear / exeEmptyAppear first step (arg4 1: no jingle) */
+            se_start(SE_SY_SPIN_DRIVER_APPEAR, NULL);
+            launch_sound(L, L->start < 45 ? SE_OJ_SPIN_DRV_APPEAR : SE_OJ_S_SPIN_DRV_APPEAR);
+        }
+        if (++L->appear > cam_f + 1) { /* isGreaterStep(getAppearCameraFrames): endAppearCamera, endDemoWaitCameraInterpolating.
+                                        * ponytail: its Appear BCK's stop not waited for */
+            if (cam_f > 0) { camera_event_stop(); pd_end("出現"); menu_cinema(0); }
+            L->appear = 0;
+        }
+    }
 }
 static void update_warppods(void) /* WarpPod::control / movement */
 {
@@ -17838,10 +17870,8 @@ static void update_mario_(void)
         if (L->cool) L->cool--;
         if (L->starter) continue;
         int on = row_shown(L->row);
-        if (on && !L->shown && sc->objs[L->row].arg[4] != 1) { /* exeAppear / exeEmptyAppear first step (arg4 1: no jingle) */
-            se_start(SE_SY_SPIN_DRIVER_APPEAR, NULL);
-            launch_sound(L, L->start < 45 ? SE_OJ_SPIN_DRV_APPEAR : SE_OJ_S_SPIN_DRV_APPEAR);
-        }
+        if (on && !L->shown) L->appear = launch_appear_frames(L) > 0 ? -1 : 1; /* appear: isUseAppearCamera ?
+                                                                                * requestStartDemo 出現 : Appear */
         L->shown = on;
         /* receiveOtherMsg (Mario's sensor on its bind one): _13C 60, counted down in control; exeWait's shine */
         if (on && m->launch != i && vlen(vsub(vadd(m->pos, vmul(m->up, BODY_RADIUS)), L->pos)) < LAUNCH_BIND) L->shine = 60;
@@ -36785,6 +36815,7 @@ void game_update(void)
     LQ(63, place_waterplants());
     LQ(64, update_pipes());
     update_warppods(); /* (WarpPod: its own demo's cast) */
+    update_launch_appear();
     LQ(65, update_switches());
     LQ(66, update_pops());
     int had = got_coins;
