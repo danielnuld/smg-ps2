@@ -25294,6 +25294,40 @@ static const struct { const char *name; u32 st, mv, ed; } rail_se[] = {
     {"BroadBeanMoveStepB", SE_OJ_STONE_FLOOR_S_START, SE_OJ_LV_STONE_FLOOR_S_MOVE, SE_OJ_STONE_FLOOR_S_END},
     {"RGTowerPressGroundA", SE_OJ_STONE_FLOOR_S_START, SE_OJ_LV_STONE_FLOOR_S_MOVE, SE_OJ_STONE_FLOOR_S_END},
 };
+/* StageEffectDataTable.cpp sStageEffectCameraDataTable: start / stop shake (0 none, 1 Strong .. 5 VeryWeak), the
+ * moving infinity shake (intensity, speed; 0 none) and the distance to Mario under which the start / stop ones play
+ * (-1: Mario on it, isDistanceValidShake) */
+static const struct { const char *name; signed char st; float in, sp; signed char ed; float dist; } stage_cam[] = {
+    {"LavaHomeVolcanoInnerFlow", 0, 0.3f, 2.2f, 0, 0.0f}, {"LavaRotatePlanetStartStep", 0, 0.0f, 0.0f, 0, 0.0f},
+    {"OceanRingRuinsMove", 3, 0.0f, 0.0f, 3, 3000.0f}, {"OceanRingRuinsGearBig", 0, 0.0f, 0.0f, 0, 0.0f},
+    {"OceanRingRuinsGearSmall", 0, 0.0f, 0.0f, 0, 0.0f}, {"OceanRotateBridge", 0, 0.0f, 0.0f, 0, 3000.0f},
+    {"ShutterDoorA", 0, 0.0f, 0.0f, 2, 3000.0f}, {"ShutterDoorD", 0, 0.0f, 0.0f, 2, 3000.0f},
+    {"OceanSwingBoard", 0, 0.0f, 0.0f, 0, 0.0f}, {"RotateNutStep", 0, 0.0f, 0.0f, 0, 0.0f},
+    {"OnimasuPlanetRailMovePartsA", 0, 0.0f, 0.0f, 0, 0.0f}, {"GhostShipCaveMoveGroundA", 0, 0.0f, 0.0f, 0, 0.0f},
+    {"GhostShipCaveMoveGroundB", 0, 0.0f, 0.0f, 0, 0.0f}, {"WaterRoadCaveStepA", 0, 0.0f, 0.0f, 0, 0.0f},
+    {"TeresaRoomDoor", 0, 0.1f, 2.2f, 0, 0.0f}, {"LavaObstacleRockHomeA", 0, 0.1f, 2.2f, 0, 0.0f},
+    {"LavaObstacleRockShell", 0, 0.1f, 2.2f, 0, 0.0f}, {"ForestObstacleWoodA", 0, 0.1f, 2.2f, 0, 0.0f},
+    {"MiniMechaKoopaPartsMoveStepA", 0, 0.0f, 0.0f, 2, 10000.0f}, {"MiniMechaKoopaPartsCage", 0, 0.0f, 0.0f, 2, 10000.0f},
+    {"RayGunPlanetPartsScrew", 3, 0.0f, 0.0f, 2, 10000.0f}, {"KoopaVS1PartsMoveStepA", 4, 0.0f, 0.0f, 4, -1.0f},
+    {"KoopaVS1PartsMoveStepB", 3, 0.0f, 0.0f, 3, -1.0f}, {"KoopaVS1PartsRotateMoveStepA", 4, 0.0f, 0.0f, 4, -1.0f},
+    {"KoopaVS1PartsRotateMoveStepB", 4, 0.0f, 0.0f, 4, -1.0f}, {"BeeWallClimbPartsA", 4, 0.0f, 0.0f, 4, -1.0f},
+    {"KoopaJrSmallShipA", 2, 0.0f, 0.0f, 2, 3000.0f}, {"IceVolcanoAppearStepA", 0, 0.0f, 0.0f, 1, 3000.0f},
+    {"IceVolcanoClimbingWall", 0, 0.0f, 0.0f, 1, 10000.0f}, {"BroadBeanMoveStepA", 0, 0.0f, 0.0f, 5, -1.0f},
+    {"BroadBeanMoveStepB", 0, 0.0f, 0.0f, 5, -1.0f}, {"HeavensDoorInsideCage", 0, 0.15f, 1.2f, 0, 10000.0f},
+};
+static int stage_cam_of(const char *name)
+{
+    for (int k = 0; k < (int)(sizeof stage_cam / sizeof *stage_cam); k++) if (!strcmp(stage_cam[k].name, name)) return k;
+    return -1;
+}
+static void stage_shake(int c, int type, int inst) /* shakeStartCamera / shakeStopCamera */
+{
+    static const int power[6] = {-1, SHAKE_STRONG, SHAKE_NORMAL, SHAKE_NORMAL_WEAK, SHAKE_WEAK, SHAKE_VERY_WEAK};
+    if (c < 0 || power[type] < 0) return;
+    const float *p = &insts[inst].m[12];
+    float d = vlen(vsub(mario->pos, v3(p[0], p[1], p[2])));
+    if (stage_cam[c].dist == -1.0f ? mario_ground == inst : d > 0.0f && d < stage_cam[c].dist) camera_shake(power[type]);
+}
 static void update_railers(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -25316,6 +25350,11 @@ static void update_railers(void)
         if (row_rhold[row]) { row_rhold[row]--; continue; }
         int se = -1; /* isRailMoverWorking: its SEs by name */
         for (int k = 0; k < (int)(sizeof rail_se / sizeof *rail_se); k++) if (!strcmp(rail_se[k].name, sc->types + 32 * r->type)) se = k;
+        int cam = stage_cam_of(sc->types + 32 * r->type);
+        if (!was && cam >= 0) { /* startMoveInner: tryStageEffectStart's shakeStartCamera, shakeCameraMoving */
+            stage_shake(cam, stage_cam[cam].st, i);
+            if (stage_cam[cam].in > 0.0f) camera_shake_infinity(in, stage_cam[cam].in, stage_cam[cam].sp);
+        }
         in->rwork = 1;
         if (se >= 0) {
             if (!was && rail_se[se].st) se_start(rail_se[se].st, &in->m[12]); /* startMoveInner: tryStageEffectStart */
@@ -25335,6 +25374,10 @@ static void update_railers(void)
         }
         if (n >= len || n <= 0) { /* an end */
             if (se >= 0) se_start(rail_se[se].ed, &in->m[12]); /* doAtEndPoint: tryStageEffectStop */
+            if (cam >= 0) { /* its shakeStopCamera, stopShakingCameraMoving */
+                stage_shake(cam, stage_cam[cam].ed, i);
+                if (stage_cam[cam].in > 0.0f) camera_shake_stop(in);
+            }
             int type = stop >= 0 ? stop : 1;
             n = n >= len ? len : 0;
             int hold = *(const int *)(pa + 12 * (n > 0 ? nr - 1 : 0) + 8);
@@ -27931,7 +27974,7 @@ static void update_dlands(void)
             if (r->sw[SW_B] >= 0 && sw_on(r, SW_B)) dl_set(k, DL_SIGNUP);
             break;
         case DL_SIGNDOWN: case DL_SIGNUP:
-            if (st == 0) { obj_play(in, "Vibration", 0, 0); camera_shake(SHAKE_NORMAL_WEAK); }
+            if (st == 0) { obj_play(in, "Vibration", 0, 0); camera_shake_infinity(o, 0.15f, 1.2f); } /* exeMoveSign */
             if ((in->anim ? in->anim->done && st > 0 : st >= 60)) dl_set(k, o->nrv == DL_SIGNUP ? DL_UP : DL_DOWN); /* isBckStopped */
             break;
         case DL_DOWN: case DL_UP: {
@@ -27939,6 +27982,7 @@ static void update_dlands(void)
             V3 a = o->nrv == DL_DOWN ? o->top : o->bottom, b = o->nrv == DL_DOWN ? o->bottom : o->top;
             if (st == 0) se_start(SE_OJ_DESERT_LAND_MOVE_ST, NULL);
             in->lv[1] = se_level(SE_OJ_LV_DESERT_LAND_MOVE, NULL, in->lv[1]);
+            if (st == 90) camera_shake_stop(o); /* isStep(90): stopShakingCamera */
             o->pos = vadd(o->pos, vmul(vsub(b, a), 1.0f / n));
             if (st + 1 >= n) {
                 o->pos = b;

@@ -609,9 +609,9 @@ static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V
         *eye = vadd(*watch, vmul(vnorm(vsub(*eye, *watch)), 300.0f));
 }
 
-/* A launch star's flight: SpinDriverCamera follows its own event camera (the star's camera set in the bcam, not
- * ported); ponytail: a chase camera 1300 behind Mario along the path and 400 above him, eased 0.1 a frame; once he
- * lands, the area camera takes over through camint (30 frames). */
+/* MultiEventCamera (SpinDriverCamera, the actor cameras): the event cameras of a set one after another; the launch
+ * stars' flights start theirs with the flight's first pose, move the target with the flight and end it at landing
+ * (endForceAtLanding); a star without a camera set keeps the area camera. */
 static int ev_on, ev_ending, ev_first, ev_n, ev_i, ev_t; /* the event cameras running (cams[ev_first + i]) */
 static V3 ev_up, ev_front, ev_pos;                         /* their target matrix (CameraTargetMtx) */
 
@@ -751,6 +751,24 @@ static void blend_to(V3 e, V3 w, V3 u) /* CameraViewInterpolator: (timer / camin
 
 static int shake_frame[7] = {25, 25, 25, 25, 25, 25, 25}; /* sSinglyMaxFrame 25: ended */
 static float shake_off;
+static struct { const void *who; float in, speed; int frame, on; } shake_inf[4]; /* NR_INFINITY_TASKS */
+
+void camera_shake_infinity(const void *who, float intensity, float speed) /* MR::shakeCameraInfinity: CameraShaker::
+                                                                           * shakeInfinity, a free task, 15 / speed */
+{
+    for (int i = 0; i < 4; i++)
+        if (!shake_inf[i].on) {
+            shake_inf[i].on = 1; shake_inf[i].who = who; shake_inf[i].in = intensity; shake_inf[i].speed = 15.0f / speed;
+            shake_inf[i].frame = 0;
+            return;
+        }
+}
+
+void camera_shake_stop(const void *who) /* MR::stopShakingCamera: stopShakingInfinity */
+{
+    for (int i = 0; i < 4; i++)
+        if (shake_inf[i].who == who) { shake_inf[i].on = 0; shake_inf[i].who = NULL; return; }
+}
 
 void camera_shake(int power) { if (shake_frame[power] >= 25) shake_frame[power] = 0; }
 
@@ -765,6 +783,11 @@ static void shake_update(void) /* CameraShaker::movement: CameraShakeTask::movem
         int left = 25 - ++shake_frame[i]; /* at 25 the task ends: no offset */
         if (left > 0)
             y += intensity[i] * sinf(3.1415927f * 4.0f * left / 25) * sinf(3.1415927f * 0.5f * left / 25);
+    }
+    for (int i = 0; i < 4; i++) { /* updateInfinityTask: CameraShakePatternVerticalSin, restarted at its end (delay 0) */
+        if (!shake_inf[i].on || shake_inf[i].speed < 0.01f) continue;
+        if (++shake_inf[i].frame >= shake_inf[i].speed) { shake_inf[i].frame = 0; continue; } /* isEnd: no offset */
+        y += shake_inf[i].in * -sinf(2.0f * 3.1415927f * shake_inf[i].frame / shake_inf[i].speed);
     }
     shake_off = y * 30.0f / 456.0f;
 }

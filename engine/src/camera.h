@@ -83,9 +83,12 @@ int camera_game_current(void); /* CameraManGame is the current camera man (no an
 /* CameraShaker::shakeVertical (MR::shakeCameraVeryWeak .. VeryStrong): one CameraShakePatternSingly of that power, not
  * restarted while it runs; camera_update moves them, camera_shake_y is their summed offset, adjusted to the screen
  * (adjustOffsetToScreen: x 30 / 456), for the projection's translation (CameraContext::updateProjectionMtx).
- * ponytail: no horizontal or infinity shakes (nothing in Good Egg starts them) */
+ * camera_shake_infinity / camera_shake_stop: MR::shakeCameraInfinity / stopShakingCamera, one of 4 vertical sine
+ * tasks by its owner. The horizontal tasks are left out: no MR function starts them */
 enum { SHAKE_VERY_WEAK, SHAKE_WEAK, SHAKE_NORMAL_WEAK, SHAKE_NORMAL, SHAKE_NORMAL_STRONG, SHAKE_STRONG, SHAKE_VERY_STRONG };
 void camera_shake(int power);
+void camera_shake_infinity(const void *who, float intensity, float speed);
+void camera_shake_stop(const void *who);
 float camera_shake_y(void);
 /* Active camera (CAMS index, -1 = default) and its type, for the HUD. */
 int camera_current(void);
