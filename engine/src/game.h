@@ -247,6 +247,7 @@ int game_hanachan_state(void); /* its nerve (game.c HN_*), -1 none */
 int game_test_strspider(int how); /* strspider test: Mario under (0), spinning by (1), onto (2) the first StringSpider; its row */
 int game_strspider_state(void); /* its nerve, -1 none */
 int game_test_free(void); /* tests: the flight in over, Mario free */
+unsigned game_test_moves(unsigned frame); /* the moves test: its pad this frame (game.c) */
 int game_test_begoman(int how); /* begoman test: Mario 900 before (0), spinning by (1), onto (2) the first BegomanSpike; its row */
 int game_begoman_state(void); /* its nerve, -1 none */
 int game_test_spidercoin(void); /* spidercoin test: R2 with the cursor on the first SpiderCoin; its row */
