@@ -543,17 +543,25 @@ there needs the embedded blob and every pack rebuilt.
   lerp factor 216 (L(C0, C1, env): the Observatory's metals), second UV set added 102 / multiplied 85 / other 105
   (Good Egg's egg planets x EggHigh, OtaKing's bath, the skies' galaxy / star layers, glows), Mario-style alpha terms
   read with the lighting 109 (left), env map multiplied 59 / other 100, projections ~150 (IndDummy screen copies
-  left), unused 79. Now tex.layers fits
-  each extra coordinate (TEV at 0, 0.5 and 1 over the base's texels) to an added / subtracted, multiplied (Cd x As)
-  or alpha-lerped pass; slice.model_groups draws it as a group over the same triangles (its UVs, BTK, VU1Env
-  normals or Projmap), the base baked at its level; render.c blends 6 / 7. 1839 materials now draw their layers
-  (927 env_layer + 912 new: 609 added, 30 subtracted, 146 multiplied, 187 lerped), 456 stay at the mean. Same-texgen
-  coordinates are baked texel for texel. Cost (Good Egg bench): EE 15.9 ms either way, VU1 timed (vu1Instant off)
-  21.8 -> 22.2 ms (44.2 -> 43.4 fps); +4 texture uploads, VRAM need +100-160 KB a scenario; packs +7 % (EggStar 3
-  stream 5.12 -> 5.51 MB). slice_all drops layers (LAYER_STEPS: all, the larger, none) before simplifying geometry
-  further, so no scenario loses geometry for them (the Observatory's TridentZone was 0.87 MB over with all of them).
-  route EggStar 1 star at f 3781. ponytail: a coloured layer multiplied / lerped by its grey; the base's alpha
-  cut-outs do not mask its passes. **Release: full repack** (slice_all.py, then zone_fit / vram_need).
+  left), unused 79. Now tex.layers fits each extra coordinate (the TEV at 0, 0.5 and 1 over the base's texels) to an
+  added / subtracted, multiplied (Cd x As) or alpha-lerped pass; slice.model_groups draws it as a group over the same
+  triangles (its UVs through its texture matrix and BTK, VU1Env normals or Projmap), the base baked at its level;
+  render.c blends 6 (Cd x As, no alpha test) / 7 (Cd - Cs). Over a VU1Strip base a pass shares its strips (VUMD fmt
+  byte 6: per batch only its UVs or normals; slice.strip_batches extra, render.c build_chain_pass). Coordinates made as
+  the base's are baked texel for texel (tex.texgen_key). Offline over ObjectData: 1839 of the 2295 draw their layers
+  (927 env_layer + 912 new: 609 added, 30 subtracted, 146 multiplied, 187 lerped), 456 stay at the mean.
+  Cost, Good Egg bench: EE 15.90 ms either way; VU1 timed (vu1Instant off) 21.80 -> 22.14 ms (44.2 -> 43.6 fps);
+  texture uploads 179 -> 183, none without room; vram_need +100-160 KB a scenario. Packs: EggStar 1 whole 11.74 ->
+  12.00 MB, EggStar 3 stream 5.12 -> 5.32, HeavensDoor 1 stream 6.56 -> 7.28, garden 3.62 -> 3.71. slice_all tries
+  every layer, then the larger ones only (LAYER_STEPS), at ratios down to LAYER_RATIO 0.7, then none (and fits are
+  counted in whole sectors, as zone_fit). The Observatory (AstroGalaxy, TridentZone, room 7.71 MB) fits no layers
+  even at 0.7 and stays as before (now at ratio 0.9 for scenario 1): next, passes over lit (indexed) bases sharing
+  their vertices too, smaller pass textures, or a larger PACK_ROOM (the disc ELF leaves 5.8 MB more). Its floor rings
+  (blue inside gold, where a black hole was drawn) come from the same-texgen baking. Seen in PCSX2: the
+  skies' star fields (garden, Good Egg, Gateway), Good Egg's asteroids and egg planets. route EggStar 1 star at
+  f 3781. ponytail: a coloured layer multiplied / lerped by its grey; a pass takes its base's vertex colours; the
+  base's alpha cut-outs do not mask its passes. **Release: full repack** (slice_all.py, then zone_fit / vram_need);
+  the engine reads old packs as before, new packs need this engine.
 - The new game's opening (feat/prologue, 2026-11-01): StorySequenceExecutor's cDemoPrologue (step 8) on a new file
   (overwriteGalaxyNameAfterLoading) starts PrologueDirector (game.c pro_*, its nerves and constants as Petari):
   ProloguePictureBook ("PrologueDemo") and PrologueLetter ("PeachLetterMini") in menu.c from prologue.bin (tools/lyt.py
