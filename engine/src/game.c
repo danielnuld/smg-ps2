@@ -1198,6 +1198,7 @@ static void bgm_stop(int frames);
 static const char *bgm_comet(void);
 static void mario_sound(const char *key);
 static int m_anim_on(const char *jp);
+static void m_anim(const char *jp);
 static void bgm_start(const char *id);
 static void bgm_boss(int id);
 static void bgm_after_boss(void);
@@ -5163,11 +5164,15 @@ int game_test_jumpstand(int hip)
 
 static int warp_pair(int row);
 static V3 row_axis_y(const Row *r);
-int game_test_warppod(void)
+static void wp_activate(int row);
+int game_test_warppod(void) /* a visible pod first (AstroGalaxy's), made active with its pair */
 {
+    for (int pass = 0; pass < 2; pass++)
     for (int i = 0; i < ninsts; i++) {
         if (!insts[i].warppod || warp_pair(insts[i].row) < 0) continue;
         const Row *r = &sc->objs[insts[i].row];
+        if (pass == 0 && r->arg[1] == 0) continue;
+        wp_activate(insts[i].row); wp_activate(warp_pair(insts[i].row));
         mario->pos = vadd(v3(r->pos[0], r->pos[1], r->pos[2]), vmul(row_axis_y(r), 10.0f - HIT_BODY_H));
         mario->hvel = v3(0, 0, 0); mario->vup = 0;
         return insts[i].row;
@@ -7279,9 +7284,11 @@ static int update_launch(Player *m)
  * An invisible pod (arg1 0, MarioWarp _45 0: 惑星貫通) takes him at once to 160 up its y and along the straight line
  * from there to the pair's (the Gateway's tunnel through its planet); at the end tryForcePowerJump out of the pair:
  * its y x mWarpPodJumpY + its z x mWarpPodJumpX (a visible pod: y x 12 + z x 5).
- * ponytail: no pod glow / path drawing, the Wait / Active animations, arg7's pairing of two inactive pods, Mario's
- * ポッドワープ開始 / 終了 animations (the jump comes at once) */
-static struct { int from, to, t, n, mode; V3 dest, entry, axis, centre, start; float angle; } warp = {.from = -1};
+ * A visible pod: ポッドワープ開始 at the start, Mario hidden (MarioActor _481) from the end of the rise; at the end of
+ * the flight ワープポッド出, shown again, ポッドワープ終了 and the camera's end; the power jump once that has run (_58).
+ * ponytail: no pod glow / path drawing, the Wait / Active animations, arg7's pairing of two inactive pods */
+static struct { int from, to, t, n, mode, out; V3 dest, entry, axis, centre, start; float angle; } warp = {.from = -1};
+static int m_hide481; /* MarioActor _481: isAllHidden while a pod carries him */
 #define MAX_WARPPODS 32
 static struct { const Scene *at; int n, cc_row; struct { int row, inactive, cd, a6, cc; } p[MAX_WARPPODS]; } wpm;
 static int wp_of(int row) /* the WarpPodMgr's pods, set up at the scene's first use (WarpPod::initAfterPlacement) */
@@ -7306,6 +7313,7 @@ static int wp_of(int row) /* the WarpPodMgr's pods, set up at the scene's first 
     for (int k = 0; k < wpm.n; k++) if (wpm.p[k].row == row) return k;
     return -1;
 }
+static void wp_activate(int row) { int k = wp_of(row); if (k >= 0) wpm.p[k].inactive = 0; } /* the warppod test */
 static int wp_path_index(int k) /* its index among the arg3 0 pods */
 {
     int n = 0;
@@ -7420,8 +7428,10 @@ static void warp_try(Player *m)
         warp.entry = vadd(v3(r->pos[0], r->pos[1], r->pos[2]), vmul(row_axis_y(r), 160.0f)); /* _20 */
         warp.mode = r->arg[1] == 0 ? 0 : 1; /* _45: mVisibilityState (arg1, NoInit 1) */
         m->hvel = v3(0, 0, 0); m->vup = 0; m->hip = 0; m->grounded = 0;
+        warp.out = 0; /* _58 */
         if (warp.mode == 1) mario_sound("ワープポッド入り");
         mario_sound("声慌て"); /* MarioWarp::start */
+        if (warp.mode == 1) m_anim("ポッドワープ開始"); /* changeAnimationNonStop */
         if (!wpm.p[k].cc && !wpm.p[kp].cc) { /* WarpPod::startEventCamera */
             char name[64];
             wp_camera_name(name, sizeof name, in->row, 0);
@@ -7450,21 +7460,34 @@ static int warp_update(Player *m)
             warp.start = vmul(normal, -radius);
             warp.angle = a;
             warp.n = (int)(radius / 25.0f) < 120 ? 120 : (int)(radius / 25.0f);
+            if (warp.mode == 1 && player_mode != PM_TERESA) m_hide481 = 1; /* _481, updateHand / updateFace */
         }
         return 1;
     }
     int k = warp.t - rise; /* frames flown */
+    if (warp.out) { /* _58 1: held at the pair till ポッドワープ終了 has run */
+        if (m_anim_on("ポッドワープ終了")) return 1;
+        k = warp.n;
+    } else if (k == warp.n && warp.mode == 1 && player_mode != PM_TERESA) { /* _88 0 */
+        mario_sound("ワープポッド出");
+        warp.out = 1; m_hide481 = 0;
+        m_anim("ポッドワープ終了");
+        wp_end_camera();
+        printf("warp pod %d: out, its animation %s\n", warp.from, m_anim_on("ポッドワープ終了") ? "on" : "missing");
+        return 1;
+    }
     if (k >= warp.n) { /* close: no snap to the pair, Mario is where the flight left him */
         const Row *p = &sc->objs[warp.to];
         V3 px, pz;
         row_axes(p, &px, &pz);
         row_step[warp.to] = 60;
+        m_hide481 = 0;
         wp_end_camera();
         if (warp.mode == 0) { /* 惑星貫通終了, tryForcePowerJump(_2C x mWarpPodJumpY + _38 x mWarpPodJumpX) */
             mario_sound("惑星貫通終了"); mario_sound("声中ジャンプ");
             m_power_jump(m, vadd(vmul(row_axis_y(p), MC.mWarpPodJumpY), vmul(pz, MC.mWarpPodJumpX)));
         } else if (player_mode != PM_TERESA) { /* (getPlayerMode() != 6) */
-            mario_sound("ワープポッド出"); mario_sound("声中ジャンプ");
+            mario_sound("声中ジャンプ");
             m_power_jump(m, vadd(vmul(row_axis_y(p), 12.0f), vmul(pz, 5.0f)));
         }
         printf("warp pod %d: arrived at %d\n", warp.from, warp.to);
@@ -38496,7 +38519,7 @@ void game_draw(void)
         mat_identity(rz); rz[0] = rz[5] = cosf(mario->sk24); rz[1] = sinf(mario->sk24); rz[4] = -rz[1];
         mat_mul(t, m, ry); mat_mul(m, t, rz);
     }
-    if (!mario_hidden) /* ponytail: MarioShadow's volume (his posed model) as an oval of its bind pose's extent */
+    if (!mario_hidden && !m_hide481) /* ponytail: MarioShadow's volume (his posed model) as an oval of its bind pose's extent */
         draw_shadow(mario->pos, mario->up, mario->face, 34.0f, 37.0f, 8.0f, 50.0f, 1000.0f);
     {
         /* MarioActor::updateBlink / swapTexture("EyeLid_v"): the clip's own eye pattern if it has one (setBlink: its
@@ -38535,7 +38558,7 @@ void game_draw(void)
             }
         }
     }
-    if (m_mario_skin && !(mario->hurt_timer & 4) && !mario_hidden && !(fp_on && !fp_delay) && !teresa_hides_mario()) { /* the eye inside his head in the view */
+    if (m_mario_skin && !(mario->hurt_timer & 4) && !mario_hidden && !m_hide481 && !(fp_on && !fp_delay) && !teresa_hides_mario()) { /* the eye inside his head in the view */
         const Model *md = disp_model >= 1 && m_morph[disp_model] ? m_morph[disp_model] : m_mario_skin;
         static unsigned inv_from; /* MR::startBrk(_9C8, "InvincibleMario") at its change: its C0 from frame 0 */
         static int inv_was;
