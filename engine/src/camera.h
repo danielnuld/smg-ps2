@@ -57,6 +57,7 @@ unsigned camera_class_hash(const char *name);
 int camera_event_start(unsigned cls, int set, V3 up, V3 front, V3 pos);
 void camera_event_target(V3 dir, V3 pos);
 void camera_event_end(void);
+int camera_event_named(const char *name, int zone); /* "e:<name>" of that zone, the player its target (NoTarget) */
 void camera_event_end_now(int frame); /* endEventCamera: at once, back over its chunk's end frames (frame, else 60) */
 /* an actor's camera (ActorCameraUtil startMultiActorCameraTargetOther): "<class>固有|共通<event><CameraSetId>" (camera.py
  * actor_hash; 共通 when the set has 0x8000), its target the matrix (up, front, pos) moved by camera_event_target;

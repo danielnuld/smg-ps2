@@ -1244,7 +1244,8 @@ static int scene_stop;           /* MR::stopScene: frames the actors stay still 
  * (-gravity, or its Y axis when arg6); a binder of radius 70 at 50 below the top takes Mario if he is within 50 of
  * the axis or above the top, and the partner throws him out with Y * arg1 + Z * arg0 (default 20, 5). A pipe works
  * again once Mario stood on ground 30 frames after the warp. Mario goes through bound (pipe_bind: Ready, In, the
- * hidden partner rising, Out, the jump). ponytail: no camera, no water pipes' stream */
+ * hidden partner rising, Out, the jump); the partner's actor camera 出現 from its tryShowUp to its tryHideDown (the
+ * jump). ponytail: no water pipes' stream, no processBgmPlayerIn / Out */
 typedef struct { V3 top, up, front; float hf, vf; int id, partner, zone, row, mode; } Pipe; /* mode arg2: 1 / 2
                     * hidden until the partner is used (row_step[row] 1 while out), 1 hides again after the exit */
 static int pipe_out = -1; /* the mode 1 pipe Mario came out of, hidden once the pipes re-arm */
@@ -7253,8 +7254,75 @@ static int update_launch(Player *m)
  * (its eye sensor: 15 x scale, 120 x scale for an invisible one, arg1 0) goes in 60 frames to 160 up its y, then
  * flies an arc (an angle of pi / 4 each side, max(radius / 25, 120) frames, sine-eased, following at half the gap)
  * to 160 up the pair, which waits 60 frames (row_step) before it takes him again, longer while he stays within 200.
- * ponytail: every pod is active (no grand star count, no path flags), no event camera, no pod glow / path drawing */
+ * A pod is inactive while the opened domes (calcOpenedAstroDomeNum) are fewer than its arg4, or, with arg3 0, while
+ * its bit of WarpPodSaveBits (its index among those, in init order) is off. Mario touching an active pod whose pair
+ * is inactive makes the pair appear with its demo (appearWithDemo: its bit on; control: 出現, tryStartDemo
+ * WithoutCinemaFrame, the event camera "wPod出現カメラ <GroupId>" kept until the next warp's end, arg5 (120) frames
+ * of demo). The warp's event camera "ワープカメラ <GroupId>-<'A' + arg0>" of the pod he went in (WarpPodMgr::
+ * startEventCamera, not while an appear camera is on) until he comes out (endEventCamera).
+ * ponytail: no pod glow / path drawing, the Wait / Active animations, arg7's pairing of two inactive pods */
 static struct { int from, to, t, n; V3 dest, axis, centre, start; float angle; } warp = {.from = -1};
+#define MAX_WARPPODS 32
+static struct { const Scene *at; int n, cc_row; struct { int row, inactive, cd, a6, cc; } p[MAX_WARPPODS]; } wpm;
+static int wp_of(int row) /* the WarpPodMgr's pods, set up at the scene's first use (WarpPod::initAfterPlacement) */
+{
+    if (wpm.at != sc) {
+        int grand = 0, path = 0;
+        char fl[24];
+        for (int i = 1; i <= 7; i++) { snprintf(fl, sizeof fl, "SpecialStarGrand%d", i); grand += gd_flag_is_on(fl); }
+        if (gd_flag_is_on("SpecialStarGrand7")) grand--; /* calcOpenedAstroDomeNum */
+        memset(&wpm, 0, sizeof wpm);
+        wpm.at = sc; wpm.cc_row = -1;
+        int t = scene_type(sc, "WarpPod");
+        for (u32 i = 0; i < sc->nobjs && wpm.n < MAX_WARPPODS; i++) {
+            const Row *r = &sc->objs[i];
+            if (r->type != t) continue;
+            int inactive = r->arg[4] != -1 && grand < r->arg[4];
+            if (r->arg[3] == 0) inactive = !(gd_value("WarpPodSaveBits") >> path++ & 1); /* isOnWarpPodPathFlag */
+            wpm.p[wpm.n].row = (int)i; wpm.p[wpm.n].inactive = inactive;
+            wpm.n++;
+        }
+    }
+    for (int k = 0; k < wpm.n; k++) if (wpm.p[k].row == row) return k;
+    return -1;
+}
+static int wp_path_index(int k) /* its index among the arg3 0 pods */
+{
+    int n = 0;
+    for (int j = 0; j < k; j++) n += sc->objs[wpm.p[j].row].arg[3] == 0;
+    return n;
+}
+static void wp_camera_name(char *b, int n, int row, int appear)
+{
+    const Row *r = &sc->objs[row];
+    if (appear) snprintf(b, n, "wPod出現カメラ %d", r->group);
+    else snprintf(b, n, "ワープカメラ %d-%c", r->group, (char)((r->arg[0] < 0 ? 0 : r->arg[0]) + 65));
+}
+static void wp_end_camera(void) /* WarpPodMgr::endEventCamera (WarpPod::endEventCamera: its appear camera, else its warp camera) */
+{
+    for (int k = 0; k < wpm.n; k++) wpm.p[k].cc = 0;
+    camera_event_end_now(-1);
+}
+static void update_warppods(void) /* WarpPod::control / movement */
+{
+    if (wpm.at != sc) return;
+    for (int k = 0; k < wpm.n; k++) {
+        typeof(&wpm.p[0]) p = &wpm.p[k];
+        const Row *r = &sc->objs[p->row];
+        if (p->cd && pd_try_start("出現", p->row)) { /* control */
+            char name[64];
+            p->cd = 0;
+            p->a6 = r->arg[5] != -1 ? r->arg[5] : 120; /* mCameraTime */
+            wp_camera_name(name, sizeof name, p->row, 1);
+            camera_event_named(name, r->zone); /* startEventCameraNoTarget */
+            float at[3] = {r->pos[0], r->pos[1], r->pos[2]};
+            se_start(SE_OJ_WARP_POD_PATH_APPEAR, at);
+            p->inactive = 0; p->cc = 1;
+            printf("warp pod %d: appears (%s)\n", p->row, name);
+        }
+        if (p->a6 && !--p->a6 && p->cc) pd_end("出現"); /* movement */
+    }
+}
 
 static int warp_pair(int row)
 {
@@ -7288,13 +7356,23 @@ static void warp_try(Player *m)
         }
         float rad = (r->arg[1] == 0 ? 120.0f : 15.0f) * r->scale[0] + HIT_BODY_R;
         if (vlen(vsub(c, v3(r->pos[0], r->pos[1], r->pos[2]))) >= rad) continue;
-        int to = warp_pair(in->row);
-        if (to < 0) continue;
+        int to = warp_pair(in->row), k = wp_of(in->row), kp = to >= 0 ? wp_of(to) : -1;
+        if (to < 0 || k < 0 || kp < 0 || wpm.p[k].inactive) continue; /* attackSensor */
+        if (wpm.p[kp].inactive) { /* the pair's appearWithDemo */
+            if (sc->objs[to].arg[3] == 0) gd_set_value("WarpPodSaveBits", gd_value("WarpPodSaveBits") | 1 << wp_path_index(kp));
+            wpm.p[kp].cd = 1;
+            continue;
+        }
         const Row *p = &sc->objs[to];
         warp.from = in->row; warp.to = to; warp.t = 0;
         warp.dest = vadd(v3(p->pos[0], p->pos[1], p->pos[2]), vmul(row_axis_y(p), 160.0f));
         m->hvel = v3(0, 0, 0); m->vup = 0; m->hip = 0; m->grounded = 0;
         mario_sound("ワープポッド入り"); mario_sound("声慌て"); /* MarioWarp::start */
+        if (!wpm.p[k].cc && !wpm.p[kp].cc) { /* WarpPod::startEventCamera */
+            char name[64];
+            wp_camera_name(name, sizeof name, in->row, 0);
+            camera_event_named(name, r->zone);
+        }
         printf("warp pod %d -> %d\n", warp.from, warp.to);
         return;
     }
@@ -7327,6 +7405,7 @@ static int warp_update(Player *m)
         m->pos = warp.dest;
         row_step[warp.to] = 60;
         if (player_mode != PM_TERESA) mario_sound("ワープポッド出"); /* (getPlayerMode() != 6) */
+        wp_end_camera();
         printf("warp pod %d: arrived at %d\n", warp.from, warp.to);
         warp.from = -1;
         return 0;
@@ -17149,7 +17228,7 @@ static V3 m_last_safety(void) /* getLastSafetyTrans */
  * to the place's height (or 600 over and 600 out from its base when the place is under it; 180 frames at most), then
  * round an arc about the place (calcFirstVector, updateJump) for 200 frames (+ 1 per 20 past 500 away); once his
  * shadow is past the place and he is within 300 of it, the bubble bursts and he drops (close: on his feet).
- * ponytail: no 引き戻し event camera (e:引き戻し is not converted by camera.py), no 引き戻し泡 / 泡破裂 effects (not in the
+ * Its global event camera 引き戻し (the player its target) from start to close. ponytail: no 引き戻し泡 / 泡破裂 effects (not in the
  * effect packs), the binder stays off for the whole flight (_14 / _F44: Petari binds him again after 60 frames) */
 static int rec_update(Player *m);
 static int rec_first_vector(Player *m) /* calcFirstVector */
@@ -17283,6 +17362,7 @@ static int rec_start(Player *m) /* MarioRecovery::start */
 static void rec_close(Player *m) /* MarioRecovery::close */
 {
     rec.on = 0;
+    camera_event_end_now(-1); /* endGlobalEventCamera(引き戻し, -1, true) */
     m->grounded = 1; m->jumping = 0; /* mMovementStates._1, jumping */
     m->s420 = 16;
     m_clip_stop();
@@ -17297,7 +17377,7 @@ static int m_do_recovery(Player *m)
     if (fo.on || rec.on || warp.from >= 0) return 0;
     if (!rec.s12) return 0;
     m_stop_walk(m);
-    if (rec_start(m)) rec.on = 1;
+    if (rec_start(m)) { rec.on = 1; camera_event_named("引き戻し", 0); } /* MarioRecovery::start: startGlobalEventCameraNoTarget */
     m_stop_jump(m);
     return 1;
 }
@@ -18720,7 +18800,7 @@ static int mario_offence(V3 c, float r, V3 grav)
  * HangDown (back down at most 20, a spin climbs again at 10), at the top a jump along the tip's up at arg0 (30)
  * (endBindAndPlayerForceWeakGravityJump), at the foot he lets go; then it ignores him 60 frames or until he lands.
  * Leaves near him spring (0.02 x his speed). Taken while growing (no demo) he rides it up (HangWaitGrowUp /
- * HangUpGrowUp). ponytail: no demo or catch cameras (multi-actor cameras), no rail clipping, no items taken by its
+ * HangUpGrowUp); its multi-actor cameras 掴まり and 出現デモ. ponytail: no rail clipping, no items taken by its
  * Ride sensor, no rush cancel; the stalk's three faces each one colour (the mean of their two vertex colours), drawn
  * through render_strips one segment a strip */
 static float frand(float a, float b) { return a + (b - a) * (rand() % 10001) / 10000.0f; }
@@ -28901,6 +28981,8 @@ static int pipe_bind(Player *m)
         if (pipe_t == 1) se_start(SE_DM_DOKAN_WARP, NULL); /* exePlayerIn first step */
         if (!mario_anim || (mario_anim->done && pipe_t > 1)) {
             pipe_zone = o->zone;
+            if (row_camset[o->row] != -1) /* tryShowUp: startMultiActorCameraTargetSelf 出現 (the partner) */
+                camera_actor_start(sc->types + 32 * sc->objs[o->row].type, "出現", (unsigned short)row_camset[o->row], o->up, o->front, o->top);
             if (o->mode == 1 || o->mode == 2) { /* tryShowUp: the hidden partner rises (WaitToShowUp 20, ShowUp 30) */
                 row_step[o->row] = 1;
                 pipe_out = o->mode == 1 ? p->partner : -1;
@@ -28929,6 +29011,7 @@ static int pipe_bind(Player *m)
             if (vlen(m->hvel) > 0.1f) m->face = vnorm(m->hvel);
             mario_se(SE_PM_JUMP_M); mario_se(SE_PV_JUMP_JOY); /* exePlayerOut: the bck stopped */
             if (mario_anim) mario_play("earthenpipejump", 1.0f, 0);
+            camera_event_stop(); /* the partner's tryHideDown: endMultiActorCamera 出現 */
             { const Row *pr = &sc->objs[p->row]; if (pr->sw[SW_B] >= 0 && gw_pipe_switch()) sw_set(pr, SW_B, 1); } /* onSwitchB (_194: not before the rabbits' chase) */
             pipe_seq = 0; pipe_wait = 1;
         }
@@ -36314,6 +36397,7 @@ void game_update(void)
     LQ(62, update_fire());
     LQ(63, place_waterplants());
     LQ(64, update_pipes());
+    update_warppods(); /* (WarpPod: its own demo's cast) */
     LQ(65, update_switches());
     LQ(66, update_pops());
     int had = got_coins;
