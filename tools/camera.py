@@ -114,12 +114,14 @@ def cameras(bcams, float_column, int_column, jp2en=None):
                 evclass, num = actor_hash(en, mark, event), int(digits) + (0x8000 if mark == "共通" else 0)
             elif kind == "e:" and cid.endswith("]"):  # a demo's part "e:<DemoName>[<PartName>]" (DemoCameraKeeper)
                 evclass, num = actor_hash(cid[2:], "", ""), 0
-            elif kind == "e:":  # MultiEventCamera "e:<actor>:<CameraSetId 3 digits>:<NN>番目": its class and set << 4 | NN
+            elif kind == "e:" and ":" in cid[2:]:  # MultiEventCamera "e:<actor>:<CameraSetId 3 digits>:<NN>番目": its class and set << 4 | NN
                 parts = cid[2:].split(":")
                 en = (jp2en or {}).get(parts[0]) if len(parts) == 3 else None
                 if not en or not parts[1].isdigit() or not parts[2][:2].isdigit():
                     continue
                 evclass, num = class_hash(en), int(parts[1]) << 4 | int(parts[2][:2])
+            elif kind == "e:":  # a named one ("e:引き戻し" declareGlobalEventCamera, "e:ワープカメラ 0-A" WarpPod): its name's hash
+                evclass, num = actor_hash(cid[2:], "", ""), 0
             elif kind not in ("c:", "s:", "o:"):
                 continue
             else:
