@@ -23514,6 +23514,172 @@ static void mb_kill(Kuribo *k)
     if (r->sw[SW_DEAD] >= 0) sw_set((Row *)r, SW_DEAD, 1);
     k->state = KURIBO_DEAD; row_kill(k->row);
 }
+/* JumpSpider.cpp after Petari: stuck to the ground under its placement (initAfterPlacement: the first face 300 along
+ * its gravity, _A0; its gravity that face's, not computed again), its front _94 turned to Mario. Wait: Mario within
+ * 1000: FIND, PreJump (JumpStart, turning 0.05 rad) -> Jump (22 up, gravity 0.3, turning 0.02) -> landing back on _A0:
+ * JumpEnd -> PreJump again, or Wait past 1000. Its body (100 x scale, 60 up) hurts Mario (EnemyAttack: Hit, then Jump)
+ * unless he is over it (isPlayerExistUp 0.25), hip dropping, or it is waiting / landing / powerless (a push). A
+ * trample or hip drop: StampFall / StampDeath (Press, 20 frames, a coin); a spin: HitBlow (SpinHitController 15 / 10 /
+ * 3: 40 out, 20 up, three star pieces); a star piece: NoPowerStart / Land / Wait (240) / End. Its dead switch.
+ * ponytail: no 2P pointer (DpdPointed) nor PlayerKick, no EyeLight / Touch effects, no anim scale controller */
+enum { JS_WAIT, JS_PREJUMP, JS_JUMP, JS_JUMPEND, JS_HITTOPLAYER, JS_STAMPFALL, JS_STAMPDEATH, JS_HITBLOW, JS_STARPIECEHIT,
+       JS_STARPIECEHITLAND, JS_STARPIECEHITWAIT, JS_NOPOWEREND };
+static V3 hn_turn(V3 from, V3 to, float rad);
+static int js_down(const Kuribo *k) { return k->nrv == JS_HITBLOW || k->nrv == JS_STAMPDEATH || k->nrv == JS_STAMPFALL; }
+static void js_damp(Kuribo *k, float g, float gd, float ah, float av, float jv) /* applyVelocityDampAndGravity */
+{
+    if (!k->on_ground) k->vel = vadd(k->vel, vmul(k->grav, g));
+    V3 v = vmul(k->grav, vdot(k->grav, k->vel)), h = vsub(k->vel, v);
+    h = vmul(h, w_on_ground(k) ? gd : ah);
+    if (vdot(v, k->grav) < 0) v = vmul(v, av);
+    k->vel = vadd(h, v);
+    if (w_on_ground(k) && vlen(vtangent(k->vel, k->gn)) < jv) k->vel = vmul(k->gn, vdot(k->gn, k->vel));
+}
+static void js_turn(Kuribo *k, float rad) /* calcVecToPlayerH, turnVecToVecRadian(_94) */
+{
+    V3 h = vtangent(vsub(mario->pos, k->pos), k->grav);
+    if (vlen(h) > 1e-6f) k->front = vnorm(vtangent(hn_turn(k->front, vnorm(h), rad), k->grav));
+}
+static void js_kill(Kuribo *k)
+{
+    const Row *r = &sc->objs[k->row];
+    float m[16];
+    basis_matrix(m, k->pos, k->qy, k->qz, 0);
+    fx_named("JumpSpider", "Death", m, NULL, NULL);
+    if (r->sw[SW_DEAD] >= 0) sw_set((Row *)r, SW_DEAD, 1);
+    k->state = KURIBO_DEAD; row_kill(k->row);
+    printf("jump spider row %d dead\n", k->row);
+}
+int jspider_star(Kuribo *k) /* isMsgStarPieceAttack */
+{
+    if (js_down(k)) return 0;
+    if (k->nrv != JS_STARPIECEHIT) w_nrv(k, JS_STARPIECEHIT);
+    return 1;
+}
+static void jspider_update(Kuribo *k)
+{
+    const Row *r = &sc->objs[k->row];
+    float s = w_scale(k);
+    if (!k->front.x && !k->front.y && !k->front.z) { /* init, initAfterPlacement */
+        V3 x, z, hp, n;
+        int inst;
+        row_axes(r, &x, &z);
+        k->front = vnorm(z);
+        k->grav = vmul(up_at(k->pos, v3(0, 1, 0)), -1.0f);
+        if (!kcl_line(vsub(k->pos, vmul(k->grav, 10.0f)), vadd(vsub(k->pos, vmul(k->grav, 10.0f)), vmul(k->grav, 300.0f)), &hp, &n, &inst)) {
+            k->state = KURIBO_DEAD; row_kill(k->row); return; /* kill (no switch) */
+        }
+        k->tcenter = k->pos = hp; k->grav = vmul(n, -1.0f);
+        k->item = 1;
+        w_nrv(k, JS_WAIT);
+    }
+    float near = vlen(vsub(mario->pos, k->pos));
+    int st = ++k->step;
+    switch (k->nrv) {
+    case JS_WAIT:
+        if (st == 0) w_act(k, "Wait");
+        if (near < 1000.0f) { w_se(k, SE_EV_JUMPSPIDER_FIND); w_nrv(k, JS_PREJUMP); }
+        break;
+    case JS_PREJUMP:
+        if (st == 0) { w_act(k, "JumpStart"); k->vel = v3(0, 0, 0); }
+        js_turn(k, 0.05f);
+        if (w_bck_stopped(k)) w_nrv(k, JS_JUMP);
+        break;
+    case JS_JUMP:
+        if (st == 0) { w_act(k, "Jump"); w_se(k, SE_EM_JUMPSPIDER_JUMP); k->vel = vmul(k->grav, -22.0f); }
+        js_damp(k, 0.3f, 0.8f, 0.98f, 0.98f, 1.0f);
+        js_turn(k, 0.02f);
+        if (w_on_ground(k)) {
+            w_se(k, SE_EM_JUMPSPIDER_LAND);
+            k->pos = k->tcenter; k->vel = v3(0, 0, 0);
+            w_act(k, "JumpEnd"); w_nrv(k, JS_JUMPEND);
+        }
+        break;
+    case JS_JUMPEND:
+        k->pos = k->tcenter;
+        if (w_bck_stopped(k)) w_nrv(k, near > 1000.0f ? JS_WAIT : JS_PREJUMP);
+        break;
+    case JS_HITTOPLAYER:
+        if (st == 0) { w_act(k, "Hit"); k->vel = v3(0, 0, 0); }
+        if (k->on_ground && vdot(k->vel, k->gn) < 0) k->vel = vtangent(k->vel, k->gn); /* reboundVelocityFromCollision(0, 0, 1) */
+        js_damp(k, 0.3f, 0.8f, 0.98f, 0.98f, 1.0f);
+        if (w_on_ground(k)) k->vel = vmul(k->gn, vdot(k->gn, k->vel)); /* killVelocityOnGroundH */
+        if (st > 58) js_turn(k, 0.05f);
+        if (w_bck_stopped(k)) w_nrv(k, JS_JUMP);
+        break;
+    case JS_STAMPFALL:
+        if (st == 0) k->vel = vmul(k->grav, 30.0f);
+        if (w_on_ground(k)) { k->vel = v3(0, 0, 0); k->pos = k->tcenter; w_nrv(k, JS_STAMPDEATH); }
+        break;
+    case JS_STAMPDEATH:
+        if (st == 0) { w_act(k, "Press"); k->vel = v3(0, 0, 0); }
+        k->pos = k->tcenter;
+        if (st > 20) { w_se(k, SE_EM_EXPLODE_S); pop_coins(k->pos, vmul(k->grav, -1.0f), 1); js_kill(k); return; } /* hStampDeathTime */
+        break;
+    case JS_HITBLOW:
+        if (st == 0) { w_act(k, "Blow"); w_se(k, SE_PM_SPIN_HIT); w_se(k, SE_EV_JUMPSPIDER_DEAD); }
+        k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f); /* onCalcGravity */
+        if (spin_hit_exec(k, 15, 10, 3, 0.0f, 3, 0, k->timer)) { w_se(k, SE_EM_EXPLODE_S); js_kill(k); return; }
+        break;
+    case JS_STARPIECEHIT: /* exeNoPowerStart */
+        if (st == 0) { w_act(k, "NoPowerStart"); k->vel = v3(0, 0, 0); }
+        js_damp(k, 0.8f, 0.8f, 0.98f, 0.98f, 1.0f);
+        if (w_on_ground(k) && w_bck_stopped(k)) {
+            k->pos = k->tcenter; k->vel = v3(0, 0, 0);
+            w_se(k, SE_EM_JUMPSPIDER_LAND);
+            w_act(k, "NoPowerLand"); w_nrv(k, JS_STARPIECEHITLAND);
+        }
+        break;
+    case JS_STARPIECEHITLAND:
+        if (st == 0) k->vel = v3(0, 0, 0);
+        k->pos = k->tcenter;
+        if (w_bck_stopped(k)) w_nrv(k, JS_STARPIECEHITWAIT);
+        break;
+    case JS_STARPIECEHITWAIT:
+        if (st == 0) { w_act(k, "NoPowerWait"); k->vel = v3(0, 0, 0); }
+        k->pos = k->tcenter;
+        w_se_lv(k, SE_EM_LV_SWOON_S);
+        if (st > 240) w_nrv(k, JS_NOPOWEREND); /* hNoPowerWaitTime */
+        break;
+    case JS_NOPOWEREND:
+        if (st == 0) { w_act(k, "NoPowerEnd"); w_se(k, SE_EM_JUMPSPIDER_STEP); }
+        k->pos = k->tcenter;
+        if (w_bck_stopped(k)) w_nrv(k, JS_WAIT);
+        break;
+    }
+    k->act_t += k->act_rate;
+    w_bind(k, 100.0f * s); /* initBinder(100 x scale, 100 x scale) */
+    k->qy = vmul(k->grav, -1.0f); k->qz = vnorm(vtangent(k->front, k->qy)); /* calcMtxFromGravityAndZAxis */
+    if (vlen(k->qz) < 1e-3f) k->qz = k->front;
+    k->up = k->qy;
+    if (js_down(k)) return;
+    /* receiveMsgPlayerAttack, then attackSensor: its body 100 x scale, 60 x scale up */
+    V3 body = vadd(k->pos, vmul(k->qy, 60.0f * s)), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    int msg = mario_offence(body, 100.0f * s, k->grav);
+    if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) {
+        w_se(k, SE_EM_STOMPED_S); w_se(k, SE_EV_JUMPSPIDER_DEAD);
+        if (msg == MSG_TRAMPLE) mario_trample();
+        w_nrv(k, w_on_ground(k) ? JS_STAMPDEATH : JS_STAMPFALL);
+        printf("jump spider row %d stamped\n", k->row);
+        return;
+    }
+    if (msg == MSG_HITALL || (player_mode == PM_INVINCIBLE && mario_touch(body, 100.0f * s))) {
+        spin_hit_start(k, mario->pos, 40.0f, 20.0f); k->timer = 1; k->item = 1;
+        w_nrv(k, JS_HITBLOW);
+        printf("jump spider row %d blown\n", k->row);
+        return;
+    }
+    if (!mario_touch(body, 100.0f * s) || mario->hip == HIP_FALL || mario->hip == HIP_LAND) return;
+    V3 tu = vsub(mc, vadd(k->pos, vmul(k->qy, 100.0f * s)));
+    int above = vlen(tu) > 1e-6f && vdot(k->qy, vnorm(tu)) > 0.25f; /* isPlayerExistUp */
+    int quiet = k->nrv == JS_WAIT || k->nrv == JS_JUMPEND || k->nrv == JS_STARPIECEHIT || k->nrv == JS_STARPIECEHITLAND ||
+                k->nrv == JS_STARPIECEHITWAIT || k->nrv == JS_NOPOWEREND;
+    if (!quiet && !above && !mario->hurt_timer && mario_attack(ATK_ENEMY, body)) { w_nrv(k, JS_HITTOPLAYER); return; }
+    V3 out = vtangent(vsub(mc, body), mario->up); /* sendMsgPush */
+    float l = vlen(out), want = 100.0f * s + HIT_BODY_R * 0.6f;
+    if (l > 1e-3f && l < want) mario->pos = vadd(mario->pos, vmul(out, (want - l) / l));
+}
+
 static void metbo_update(Kuribo *k)
 {
     const Row *r = &sc->objs[k->row];
@@ -25025,31 +25191,7 @@ static void update_kuribo_one(Kuribo *k)
         if (k->kind == WALK_STINKBUG) { stink_update(k, to, d); return; }
         if (k->kind == WALK_UNIZO) { unizo_update(k, to, d); return; }
         if (k->kind == WALK_POIHANA) { poihana_update(k, to, d); return; }
-        if (k->kind == WALK_SPIDER) { /* JumpSpider.cpp: hops at Mario; ponytail: hop size and rate guessed (Petari's
-                                        * hJumpDistance / hWaitTime are not in the decompilation) */
-            V3 vu = vmul(k->up, vdot(k->vel, k->up)), vh = vsub(k->vel, vu);
-            vu = vsub(vu, vmul(k->up, 1.5f));
-            V3 center = vadd(vadd(k->pos, vmul(k->up, 45.0f)), vadd(vh, vu));
-            int ground = collide(&center, k->up, 45.0f);
-            k->pos = vsub(center, vmul(k->up, 45.0f));
-            if (ground && vdot(vu, k->up) <= 0) { /* hGroundDamp; on the ground it may hop again */
-                vh = vmul(vh, 0.8f); vu = v3(0, 0, 0);
-                if (++k->timer > 60 && d < 1200.0f) {
-                    vh = vmul(vnorm(vtangent(to, k->up)), 10.0f); vu = vmul(k->up, 18.0f); k->timer = 0;
-                }
-            } else
-                vh = vmul(vh, 0.98f); /* hAirDampH */
-            k->vel = vadd(vh, vu);
-            float above = vdot(to, k->up);
-            if (d < 130.0f && mario->vup < 0 && above > 40.0f) {
-                k->state = KURIBO_DEAD; row_kill(k->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, k->pos, k->up); pop_coins(k->pos, k->up, 1);
-                mario_trample();
-            } else if (d < 170.0f && mario->spin_timer > 0) {
-                k->state = KURIBO_DEAD; row_kill(k->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, k->pos, k->up); pop_coins(k->pos, k->up, 1);
-            } else if (d < 110.0f && above <= 40.0f && !ground) /* hurts while jumping, pushes otherwise */
-                hurt_mario(k->pos, 15.0f);
-            return;
-        }
+        if (k->kind == WALK_SPIDER) { jspider_update(k); return; }
         if (k->state == KURIBO_STUN) {
             if (--k->timer <= 0) k->state = KURIBO_WALK;
         } else if (d < (tako ? 1600.0f : k->kind == WALK_KOTEBUG ? 1000.0f : 1500.0f)) { /* chase on the surface (ponytail: no turn rate, no notice
@@ -31777,7 +31919,8 @@ static void update_shots(void)
             else if (e->kind == WALK_KARIKARI) kari_blowout(e, s->pos, 1); /* isMsgStarPieceAttack: BlowOutStarPiece */
             else if (e->kind == WALK_PACKUN) { /* isMsgStarPieceAttack: SwoonStart */
                 if (e->nrv != PN_TRAMPLEDOWN && e->nrv != PN_PUNCHDOWN) w_nrv(e, PN_SWOONSTART);
-            } else if (e->kind != WALK_SPIDER) { e->state = KURIBO_STUN; e->timer = 180; }
+            } else if (e->kind == WALK_SPIDER) { if (!jspider_star(e)) { hit = 0; continue; } }
+            else { e->state = KURIBO_STUN; e->timer = 180; }
             printf("star piece hits walker row %d" "\n", e->row);
         }
         for (int k = 0; k < ninsts && !hit; k++) {

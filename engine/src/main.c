@@ -2287,7 +2287,8 @@ int main(void)
         if (frame == 780) printf("enemy test: stomp it again row %d\n", game_test_enemy(3, 0, 0));
         if (frame == 900) printf("enemy test: stand by JumpSpider row %d\n", game_test_enemy(4, 0, 2));
         if (frame == 1020) printf("enemy test: spin by JumpSpider row %d\n", game_test_enemy(4, 0, 1));
-        if (frame % 60 == 0 && frame >= 180 && frame <= 1140)
+        if (frame == 1140) printf("enemy test: stomp the next JumpSpider row %d\n", game_test_enemy(4, 0, 0));
+        if (frame % 60 == 0 && frame >= 180 && frame <= 1260)
             printf("enemy test f %u: takohei %d packun %d kotebug %d spider %d life %d coins %d\n", frame,
                    game_kind_alive(1), game_kind_alive(2), game_kind_alive(3), game_kind_alive(4), game_life(), game_coins());
 #endif
