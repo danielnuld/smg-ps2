@@ -79,7 +79,7 @@ SKINNED_OBJ = ("MarioFreezeIce", "MarioFireBall", "WaterColumn", "MorphItemNeoHo
                "HammerHeadPackun", "PackunLeaf", "Plant", "Petari", "Butler", "TicoDomeLecture", "Rosetta", "ButlerExplain", "ButlerMap",
                "PhantomShipPropellerSmall", "PhantomShipPropellerBig", "PhantomShipBridge",  # AnmModelSwitchMove without SW_A: Move at once (obj_anim: its only clip)
                "PStar", "GStar", "SpinTico", "MarioHair", "AstroCore", "LuigiNPC", "LuigiEvent",
-               "DemoPeachCastleGate")  # PStar / GStar: the star return demos' PowerStar / GrandStar (clip names fit 31 chars)
+               "DemoPeachCastleGate", "PicketSwitch", "PicketSwitchBig")  # PStar / GStar: the star return demos' PowerStar / GrandStar (clip names fit 31 chars)
 SKINNED_OBJ += tuple(c for c in WAIT_SKINNED if c not in SKINNED_OBJ)
 # MapObjActor::initialize (tryStartAllAnim): a placed class whose model archive holds a BCK of the archive's name
 # plays it from the start; such classes are drawn skinned too (AUTO_SKINNED, class -> archive, filled by placement)
