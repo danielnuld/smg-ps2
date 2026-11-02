@@ -223,6 +223,15 @@ Second console round (2026-10-24), from Daniel's report:
   ScaleDownRelayPlanet) Mario slides sitting (スライダー尻) up to mSliderMaxSpeed 32, steered and braked by the stick,
   hands over to MarioSlip on a slip floor, A jumps with the slide's speed. Test: `build.sh slider <blob>
   HoneyBeeKingdomGalaxy/1`.
+- feat/mario-2d: Mario2D / MarioMove2D after Petari (check2DMode, stick2DadjustGround, stick2Dadjust, set2Dmode,
+  clear2DStick, calcShadowDir2D) and their hooks in Mario.cpp / MarioMove.cpp / MarioCollision.cpp (the place kept on the
+  plane through _688 in writeBackPhyisicalVector, setFrontVec never into the screen, the turn round at once with the
+  drawn turn mirrored to the camera, isEnableTurn off, walls facing the plane skipped, createMtxDir's shake absorption).
+  slice.py LOGIC gained PlaneModeCube / PlaneCircularModeCube. **Release agent, to repack (scene.bin):**
+  TeresaMario2DGalaxy, KoopaBattleVs1/2/3Galaxy, CannonFleetGalaxy, HellProminenceGalaxy, StarDustGalaxy,
+  DarkRoomGalaxy, SandClockGalaxy, CosmosGardenGalaxy, BattleShipGalaxy (dev overlay: out/wt-states for TeresaMario2D 1
+  and KoopaBattleVs1 1). Test: `XF=-DPACKS_OVERLAY=wt-states build.sh 2d <blob> TeresaMario2DGalaxy/1`. ponytail:
+  PipeModeCube (MarioMove25D), the gravity flip's 2D handling, checkForceGrounding not ported.
 - feat/mario-jetswim: MarioSwim with a carried JetTurtle after Petari (startJet, jet, dropJet, doJetJump and every
   mJetTimer branch of start / update: the jet speed mSwimFrontJetSpeed (Slow), Z brakes, the T inertias, the jet's
   rotation ratios, the floor's mTurboReductionHitFloor, the stream's mTurboReductionStream, the jet jump out of the

@@ -1910,6 +1910,9 @@ int main(void)
             }
         }
 #endif
+#ifdef MARIO2D_TEST
+        { extern void game_test_2d_input(int); game_test_2d_input((int)frame); } /* Mario walking in a 2D area */
+#endif
 #ifdef SLIDER_TEST
         { extern void game_test_slider_input(int); game_test_slider_input((int)frame); } /* Mario put on a Slider floor */
 #endif
