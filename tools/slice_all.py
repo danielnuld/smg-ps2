@@ -54,21 +54,16 @@ def scenarios(fs, galaxy):
 def galaxy(fs, out, g, resident):
     rows = []
     gr = room(out, g)
-    step = LAYER_STEPS
     for no in scenarios(fs, g):  # one process per galaxy: its models are converted once (slice._model_cache)
         t = time.time()
         try:
-            # over ROOM: its static models simplified further until it fits; then with only the larger texture layers
-            # (tex.layers' passes: their geometry is the base's again), then none. ponytail: a galaxy's next scenario
-            # starts at the layer step its last one needed (each step converts every model again)
-            for lmin, lmax, ratio in [(m, n, r) for m, n in step for r in (0.99, 0.9, 0.8, 0.7, 0.6, 0.5)]:
-                if (SL.tex.LAYER_MIN, SL.tex.LAYER_MAX) != (lmin, lmax):
-                    SL.tex.LAYER_MIN, SL.tex.LAYER_MAX = lmin, lmax
-                    SL._model_cache.clear()
+            # over ROOM: fewer texture layers (tex.layers' passes repeat their base's geometry), then its static models
+            # simplified further, until it fits: geometry is given up only where it was without layers
+            for ratio, (SL.tex.LAYER_MIN, SL.tex.LAYER_MAX) in [(r, s) for r in (0.99, 0.9, 0.8, 0.7, 0.6, 0.5)
+                                                                for s in LAYER_STEPS]:
                 files, info = SL.packs(fs, g, no, resident, ratio)
                 if max(info["stream"].values()) <= gr:
                     break
-            step = LAYER_STEPS[LAYER_STEPS.index((lmin, lmax)):]
             d = Path(out) / g / str(no)
             d.mkdir(parents=True, exist_ok=True)
             for f, b in files.items():

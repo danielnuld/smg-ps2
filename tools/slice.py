@@ -1847,7 +1847,8 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
         if not arc.exists():
             continue
         sk = cls in SKINNED or cls in SKINNED_OBJ or cls in AUTO_SKINNED or cls in MORPH_SKIN
-        key = (a, pose, ratio, brk, mc, sk, hp)  # one archive static and skinned (PowerStar / PStar): two entries
+        # one archive static and skinned (PowerStar / PStar): two entries; and per layer step (slice_all LAYER_STEPS)
+        key = (a, pose, ratio, brk, mc, sk, hp, tex.LAYER_MIN, tex.LAYER_MAX)
         if key not in _model_cache:
             st = {}
             _model_cache[key] = (model_groups(arc, ratio, st, sk,
