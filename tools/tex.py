@@ -453,6 +453,130 @@ def env_mtx(b, t, typ):
     return col_x + col_y + col_z + col_c
 
 
+def texgen_key(b, mat3, m, coord):
+    """Material m's texture coordinate `coord` as GX makes it: (type, source, texture matrix index, that matrix's
+    J3DTexMtxInfo bytes), None when it has none. Two coordinates with one key give the same UVs."""
+    if coord is None:
+        return None
+    off = lambda k: mat3 + u32(b, mat3 + k)
+    e = off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C
+    ci = u16(b, e + 0x28 + 2 * coord)
+    if ci == 0xFFFF:
+        return None
+    typ, src, mtx = b[off(0x38) + 4 * ci:off(0x38) + 4 * ci + 3]
+    mi = u16(b, e + 0x48 + 2 * ((mtx - 30) // 3)) if mtx != 60 else 0xFFFF
+    return typ, src, mtx, bytes(b[off(0x40) + 0x64 * mi:off(0x40) + 0x64 * mi + 0x64]) if mi != 0xFFFF else None
+
+
+def coord_gen(b, mat3, m, coord):
+    """How material m's coordinate `coord` is made -> dict(attr: VTX1 attribute (13 = TEX0) or None, mtx: 2x3 or None,
+    slot: texture matrix slot (BTK texMtxIndex) or None, maya, env: env_mtx's 12 floats (normal texgen) or None, proj:
+    projmap's 3x4 (position texgen, Projmap) or None)."""
+    off = lambda k: mat3 + u32(b, mat3 + k)
+    e = off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C
+    ci = u16(b, e + 0x28 + 2 * coord)
+    if ci == 0xFFFF:
+        return None
+    typ, src, mtx = b[off(0x38) + 4 * ci:off(0x38) + 4 * ci + 3]
+    res = dict(attr=13 + src - 4 if 4 <= src <= 11 else None, mtx=None, slot=None, maya=0, env=None, proj=None)
+    if mtx != 60:
+        res["slot"] = (mtx - 30) // 3
+        mi = u16(b, e + 0x48 + 2 * res["slot"])
+        if mi != 0xFFFF:
+            t = off(0x40) + 0x64 * mi
+            res["mtx"], res["maya"] = tex_mtx(b, t), b[t + 1] >> 7
+            if src == 1:
+                res["env"] = env_mtx(b, t, typ)
+            elif src == 0:
+                res["proj"] = projmap(b, mat3, m, res["slot"])
+    return res
+
+
+LAYER_ERR = 0.06  # the most a layer's model (add / mul / lerp) may miss the TEV by, mean over the base texels (0..1)
+LAYER_MAX = 2     # passes over a material at most
+LAYER_MIN = 0.02  # the least mean change (0..1) a layer makes to be worth its pass
+
+
+def layers(b, mat3, m, tex1, texs, base, over=None, skip=()):
+    """Material m's textures on other coordinates than its base texture's (detail maps, masks, environment maps,
+    scrolling overlays), each as a pass of its own over the base: per coordinate the TEV over the base's texels with
+    that coordinate's texture read as 0 (R0), 0.5 and 1 (R1) is fitted to one of what the GS blends can do, with X
+    the layer's texel (its colour when the TEV reads TEXC, else its alpha):
+      add   R0 + K X, K twice the mean of R0.5 - R0 (its negative channels a "sub" pass: the frame buffer minus)
+      mul   R1 X: the frame buffer times X's grey (texture alpha, GS Cd x As)
+      lerp  R0 + (C - R0) X, C the mean of R1: C blended over by X's grey (texture alpha)
+    -> [dict(coord, tex (TEX1 index), kind (add / sub / mul / lerp), rgba (the pass's texture, uint8), level (what the
+    base is baked with at that coordinate: 0 or 1), err, size (the mean change it makes))], at most LAYER_MAX (the
+    largest first), none under LAYER_MIN; a coordinate made as the base's, one in `skip` (env_layer's) or whose best
+    fit misses by more than LAYER_ERR stays its mean colour (tev). ponytail: a coloured X multiplied or lerped by as
+    grey; lighting read at the material colour (tev)."""
+    off = lambda k: mat3 + u32(b, mat3 + k)
+    e = off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C
+    ns = b[off(0x58) + b[e + 4]]
+    tnames = names(b, tex1 + u32(b, tex1 + 0x10)) if tex1 is not None else []
+    base_coord, uses = None, {}
+    for s in range(ns):
+        oi = u16(b, e + 0xBC + 2 * s)
+        if oi == 0xFFFF or b[off(0x4C) + 4 * oi + 1] == 0xFF:
+            continue
+        coord = b[off(0x4C) + 4 * oi]
+        t = u16(b, off(0x48) + 2 * u16(b, e + 0x84 + 2 * b[off(0x4C) + 4 * oi + 1]))
+        if base_coord is None and t == base:
+            base_coord = coord
+        st = b[off(0x5C) + 20 * u16(b, e + 0xE4 + 2 * s):][:20]
+        u = uses.setdefault(coord, [t, False])
+        u[1] |= 8 in st[1:5]
+    if base_coord is None:
+        return []
+    bkey = texgen_key(b, mat3, m, base_coord)
+    mn = material_name(b, mat3, m)
+    ov = (over or {}).get(mn, {})
+
+    def run(c, v):
+        o = dict(over or {})
+        o[mn] = dict(ov, coord_val={**ov.get("coord_val", {}), c: v})
+        return tev(b, mat3, m, tex1, texs, base, o)[..., :3]
+
+    out = []
+    for c, (t, colour) in uses.items():
+        if c == base_coord or c in skip or t >= len(texs) or texgen_key(b, mat3, m, c) in (bkey, None) or \
+                (t < len(tnames) and tnames[t] == "IndDummy"):
+            continue
+        r0, rh, r1 = run(c, 0.0), run(c, 0.5), run(c, 1.0)
+        d = r1 - r0
+        if np.abs(d).max() < 3 / 255:
+            continue
+        # each model checked at X = 1 and X = 0.5 (the TEV clamps: an added map saturating looks like a lerp to
+        # white at 1 only); add's K from the half level, clamped as the GS's COLCLAMP does
+        k, cc = 2 * (rh - r0).reshape(-1, 3).mean(0), r1.reshape(-1, 3).mean(0)
+        err = lambda p1, ph: float(np.abs(r1 - p1).mean() + np.abs(rh - ph).mean()) / 2
+        fits = [("add", err(np.clip(r0 + k, 0, 1), np.clip(r0 + k / 2, 0, 1))), ("mul", err(r1, r1 / 2)),
+                ("lerp", err(cc, (r0 + cc) / 2))]
+        kind, err = min(fits, key=lambda f: f[1])
+        if err > LAYER_ERR:
+            continue
+        x = texa(texs[t]).astype(np.float32) / 255
+        fac = x[..., :3] if colour else np.repeat(x[..., 3:4], 3, -1)
+        grey = fac.mean(-1)
+        size = float(np.abs(d).mean())
+        if kind == "add":
+            for kd, kk in (("add", np.maximum(k, 0)), ("sub", np.maximum(-k, 0))):
+                if kk.max() < 3 / 255:
+                    continue
+                img = np.ones(x.shape, np.float32)
+                img[..., :3] = np.clip(fac * kk, 0, 1)
+                out.append(dict(coord=c, tex=t, kind=kd, rgba=(img * 255 + 0.5).astype(np.uint8), level=0.0, err=err,
+                                size=size * float(kk.sum() / max(np.abs(k).sum(), 1e-6))))
+            continue
+        img = np.ones(x.shape, np.float32)
+        img[..., 3] = grey
+        if kind == "lerp":
+            img[..., :3] = cc
+        out.append(dict(coord=c, tex=t, kind=kind, rgba=(img * 255 + 0.5).astype(np.uint8),
+                        level=1.0 if kind == "mul" else 0.0, err=err, size=size))
+    return sorted((q for q in out if q["size"] >= LAYER_MIN), key=lambda q: -q["size"])[:LAYER_MAX]
+
+
 KSEL_FRAC = [1.0, 7 / 8, 6 / 8, 5 / 8, 4 / 8, 3 / 8, 2 / 8, 1 / 8]
 
 
@@ -596,6 +720,8 @@ def tev(b, mat3, m, tex1, texs, base=None, over=None, max_stages=16, ras_k=1.0):
             return np.ones(shape + (4,), np.float32)
         if ov.get("zero_coord") is not None and b[off(0x4C) + 4 * oi] == ov["zero_coord"]:
             return np.zeros(shape + (4,), np.float32)  # a layer drawn apart (env_layer): left out here
+        if b[off(0x4C) + 4 * oi] in ov.get("coord_val", {}):  # a pass of its own (layers): read as that level
+            return np.full(shape + (4,), ov["coord_val"][b[off(0x4C) + 4 * oi]], np.float32)
         if base is None and not ov.get("env_mean"):  # texture inputs read tex_level (default 1)
             return np.full(shape + (4,), ov.get("tex_level", 1.0), np.float32)
         t = sampled(oi)
@@ -603,8 +729,9 @@ def tev(b, mat3, m, tex1, texs, base=None, over=None, max_stages=16, ras_k=1.0):
             x = texa(texs[t]) if t < len(texs) else np.full((1, 4), 255, np.uint8)
             return x.reshape(-1, 4).mean(0).astype(np.float32) / 255.0
         # a texture on other coordinates than the base's (environment maps, scrolling sparkles, projections) cannot
-        # be laid over the base's texels: its mean colour stands in
-        other = t != base and b[off(0x4C) + 4 * oi] != base_coord
+        # be laid over the base's texels: its mean colour stands in (layers draws the main ones as passes of their own);
+        # another coordinate made as the base's is (same source and matrix) is baked texel for texel
+        other = t != base and texgen_key(b, mat3, m, b[off(0x4C) + 4 * oi]) != texgen_key(b, mat3, m, base_coord)
         if (t, other) not in tex_cache:
             x = texa(texs[t] if t < len(texs) else texs[base])
             if other:

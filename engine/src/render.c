@@ -865,7 +865,7 @@ static int group_mode(const VuGroup *vg)
 /* GS state of a blended material, after its texture packet: ALPHA (Cs - Cd) A + Cd, or Cs A + Cd when additive, with
  * A the texture alpha when it has one, else the material alpha (FIX, 16 steps); ZBUF writes depth only if the
  * material does; TEST without the alpha cut. Prebuilt per (additive, z write, texture alpha, alpha / 16). */
-#define BLEND_STATES (5 * 2 * 2 * 16)
+#define BLEND_STATES (7 * 2 * 2 * 16)
 static qword_t *blend_states;
 
 static const qword_t *blend_state(const VuGroup *vg)
@@ -886,11 +886,14 @@ static void init_blend_states(void)
         p[1].dw[0] = kind == 2 ? GS_SET_ALPHA(1, 2, 2, 2, a) /* Cd x FIX */
                    : kind == 3 ? GS_SET_ALPHA(1, 2, 2, 0, a) /* Cd x FIX + Cs */
                    : kind == 4 ? GS_SET_ALPHA(1, 2, 2, 1, a) /* Cd x FIX + Cd: blend 5, the frame buffer brightened */
+                   : kind == 5 ? GS_SET_ALPHA(1, 2, 0, 2, 0) /* Cd x As: blend 6, a multiplied layer (slice.py layers) */
+                   : kind == 6 ? GS_SET_ALPHA(2, 0, as ? 0 : 2, 1, a) /* Cd - Cs x A: blend 7, a subtracted layer */
                                : GS_SET_ALPHA(0, kind ? 2 : 1, as ? 0 : 2, 1, a);
         p[1].dw[1] = GS_REG_ALPHA;
         p[2].dw[0] = GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, !zw);
         p[2].dw[1] = GS_REG_ZBUF;
-        p[3].dw[0] = GS_SET_TEST(1, ATEST_METHOD_GREATER_EQUAL, 0x01, 0, 0, 0, 1, ZTEST_METHOD_GREATER_EQUAL);
+        /* a multiplied layer keeps its zero texels (they darken): no alpha test */
+        p[3].dw[0] = GS_SET_TEST(kind != 5, ATEST_METHOD_GREATER_EQUAL, 0x01, 0, 0, 0, 1, ZTEST_METHOD_GREATER_EQUAL);
         p[3].dw[1] = GS_REG_TEST;
     }
 }

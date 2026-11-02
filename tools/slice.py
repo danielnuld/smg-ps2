@@ -28,7 +28,8 @@ Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
   'MODL'  u32 n, n × {char[32] name, f32 bounding radius}
   'KCL '  u32 n, n × {char[32] model, u32 size, bytes[size] (little-endian KCL, kcl_to_le), pad to 4}
   'VUMD'  u32 n, 12 pad, n × {char[32] name, u32 ngroups, f32 qscale, 8 pad, ngroups × {u32 nverts (3 per
-          triangle), u16 tex, u16 nbatch, u8 blend (0 opaque, 1 blended, 2 additive), u8 z_write, u8 alpha, u8 lit,
+          triangle), u16 tex, u16 nbatch, u8 blend (0 opaque, 1 blended, 2 additive, 3-5 frame buffer
+          tints, 6 multiplied by the texture alpha, 7 subtracted: render.c init_blend_states), u8 z_write, u8 alpha, u8 lit,
           4 pad, nbatch × {u16 emitted, u16 unique} padded to 16, then per batch (index_batches): s16 pos[unique][4]
           (x, y, z in steps of qscale, w = 7 * matrix slot), s16 uv[unique][2] if textured, s8 normal[unique][4] if
           lit (x 127), u8 rgbi[emitted][4] (colour + unique index), each array padded to 16}}
@@ -568,6 +569,11 @@ def btp_tables(lfiles):
     return order, {m: sorted(mats[m]) for m in order}, clips
 
 
+# tex.layers kinds -> VUMD blend: 2 added (Cs + Cd), 7 subtracted (Cd - Cs), 6 multiplied (Cd x As), 1 blended
+# ((Cs - Cd) As + Cd)
+LAYER_BLEND = {"add": 2, "sub": 7, "mul": 6, "lerp": 1}
+
+
 def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat=None, player=None):
     """-> (groups [(verts, tris, uvs or None, texture or None, slots or None, colours or None, blend)], kcl bytes or
     None,
@@ -615,7 +621,7 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 gtab = []
             shapes = tex.shape_materials(b, bl[b"INF1"])
             texs = tex.textures(b, bl[b"TEX1"]) if b"TEX1" in bl else []
-            ps2, gains, ras_split = {}, {}, {}
+            ps2, gains, ras_split, lay_cache = {}, {}, {}, {}
             sky = arc.stem in SKY_ARCS or arc.stem.endswith("Sky")  # 8-bit textures (tex.to_ps2 hi)
             lfiles = {k.lower().rsplit("/", 1)[-1]: v for k, v in files.items()}
             bp = brk or BRK_POSE.get(arc.stem)  # a BRK_ARG variant's (name, frame) first
@@ -683,8 +689,25 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 # without it, the layer a second, additive group (after this one)
                 layer = (tex.env_layer(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, over)
                          if get and mat is not None and nget and 10 in info["at"] else None)
+                # its textures on other coordinates (tex.layers: detail maps, masks, environment maps, scrolling
+                # overlays) that this shape can draw: passes of their own after it, the base baked at their level.
+                # Over a blended base only added / subtracted ones (a multiply or lerp would reach the frame behind)
+                mlay = []
+                if (get or env) and mat is not None and mt["tex"] < len(texs):
+                    lk = (mt["tex"], mat)
+                    if lk not in lay_cache:
+                        lay_cache[lk] = tex.layers(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, mt["tex"], over,
+                                                   (layer["coord"],) if layer else ())
+                    kind0 = tex.material_blend(b, bl[b"MAT3"], mat)[0]
+                    for L in lay_cache[lk]:
+                        g = tex.coord_gen(b, bl[b"MAT3"], mat, L["coord"])
+                        if g and (g["env"] and nget and 10 in info["at"] or
+                                  g["attr"] in info["at"] and (g["mtx"] or g["slot"] is None) or
+                                  g["proj"] is not None and not skinned) and (kind0 == 0 or L["kind"] in ("add", "sub")):
+                            mlay.append((L, g))
                 if (get or env) and mt["tex"] < len(texs):
-                    key = (mt["tex"], mat, ras_mean)  # the material's TEV baked into its texture (tex.tev)
+                    # the material's TEV baked into its texture (tex.tev)
+                    key = (mt["tex"], mat, ras_mean, tuple(L["coord"] for L, _ in mlay))
                     if key not in ps2:
                         x = texs[mt["tex"]]
                         binfo = {}
@@ -694,8 +717,12 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                             o2[layer["name"]] = dict(o2.get(layer["name"], {}), zero_coord=layer["coord"])
                         if ras_mean:
                             mn = tex.material_name(b, bl[b"MAT3"], mat)
-                            o2 = dict(over or {})
+                            o2 = dict(o2 or {})
                             o2[mn] = dict(o2.get(mn, {}), mat=[c / 255 for c in ras_mean] + [1.0])
+                        if mlay:
+                            mn_ = tex.material_name(b, bl[b"MAT3"], mat)
+                            o2 = dict(o2 or {})
+                            o2[mn_] = dict(o2.get(mn_, {}), coord_val={L["coord"]: L["level"] for L, _ in mlay})
                         baked = tex.bake(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, mt["tex"], o2, binfo)
                         if ras_mean and not separable(b, bl, mat, texs, o2, mn):
                             ras_split[key] = False  # not TEX x f(RAS): baked at the mean, vertices CLR0 / mean
@@ -928,6 +955,47 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                     if skinned:
                         gtab.append(tables[(info["shape"], info["group"])])
                     stats["env_layer"] = stats.get("env_layer", 0) + 1
+                for L, g in mlay if t is not None else ():  # tex.layers' passes, each a group over the same triangles
+                    x = texs[L["tex"]]
+                    pkey = ("mlayer", mat, L["coord"], L["kind"])
+                    if pkey not in ps2:
+                        ps2[pkey] = tex.to_ps2(L["rgba"], x["wrap_s"], x["wrap_t"], sky)
+                    lt, luv, ln = ps2[pkey], None, False
+                    if g["env"]:  # normal texgen: UVs on VU1 from the view-space normal (VU1Env)
+                        lt = dict(lt, env=[e * (lt["u_scale"], lt["v_scale"], 1.0)[i % 3] for i, e in enumerate(g["env"])])
+                        luv = [(0.0, 0.0)] * len(used)
+                        o, w = info["at"][10]
+                        ln = [nget(info["keys"][v][o] if w == 1 else info["keys"][v][o] << 8 | info["keys"][v][o + 1])
+                              for v in used]
+                        if mats:
+                            ln = [tuple(float(x) for x in skin.unit(m_[:3, :3] @ n)) for m_, n in zip(mats, ln)]
+                    elif g["attr"] in info["at"]:  # its own UV set through its texture matrix (BTK: anim_btk)
+                        lget = geom.vtx1_attr(b, bl[b"VTX1"], g["attr"])
+                        o, w = info["at"][g["attr"]]
+                        m2 = g["mtx"]
+                        luv = []
+                        for v in used:
+                            k = info["keys"][v]
+                            su, sv = lget(k[o] if w == 1 else k[o] << 8 | k[o + 1])
+                            if m2:
+                                su, sv = (m2[0][0] * su + m2[0][1] * sv + m2[0][2], m2[1][0] * su + m2[1][1] * sv + m2[1][2])
+                            luv.append((su * lt["u_scale"], sv * lt["v_scale"]))
+                        if anim_tex and m2:
+                            be = btk_entry(anim_tex, tex.material_name(b, bl[b"MAT3"], mat), g, lt, len(groups))
+                            if be:
+                                stats.setdefault("_btk", []).append(be)
+                    else:  # projected from positions (Projmap): uv = (s, t) / q per vertex
+                        luv = []
+                        for p in verts:
+                            s_, t_, q_ = g["proj"] @ np.array([p[0], p[1], p[2], 1.0])
+                            q_ = q_ if abs(q_) > 1e-6 else 1e-6
+                            luv.append((s_ / q_ * lt["u_scale"], t_ / q_ * lt["v_scale"]))
+                    stats.setdefault("_shape", []).append(info["shape"])
+                    groups.append((verts, [remap[v] for v in tri], luv, lt, slots, None,
+                                   (LAYER_BLEND[L["kind"]], 0, 255), ln, 1))
+                    if skinned:
+                        gtab.append(tables[(info["shape"], info["group"])])
+                    stats["layers"] = stats.get("layers", 0) + 1
             if skinned:
                 sk = skin_entry(b, bl, gtab)
         elif n.endswith(".kcl"):
@@ -2419,6 +2487,15 @@ def selftest():
         texs = tex.textures(b, bl[b"TEX1"])
         r = tex.bake(b, bl[b"MAT3"], m, bl[b"TEX1"], texs, tex.material_tex(b, bl[b"MAT3"], m, bl[b"TEX1"])["tex"])
         assert r[..., :3].min() == 255 and r[..., 3].mean() < 128
+    eg = fp.with_name("StarEggRoadEggPlanetA.arc")
+    if eg.exists():  # Good Egg's grass times the egg's EggHigh shading on its own UVs: a multiplied pass (tex.layers)
+        b = next(v for k, v in B.rarc_files(eg.read_bytes()) if k.lower().endswith((".bdl", ".bmd")))
+        bl = tex.blocks(b)
+        m = tex.names(b, bl[b"MAT3"] + tex.u32(b, bl[b"MAT3"] + 0x14)).index("lambert4_v")
+        texs = tex.textures(b, bl[b"TEX1"])
+        ls = tex.layers(b, bl[b"MAT3"], m, bl[b"TEX1"], texs, tex.material_tex(b, bl[b"MAT3"], m, bl[b"TEX1"])["tex"])
+        assert [(q["coord"], q["kind"], q["level"]) for q in ls] == [(1, "mul", 1.0)] and ls[0]["err"] < 0.01, ls
+        assert any(g[6][0] == LAYER_BLEND["mul"] for g in model_groups(eg, 1.0)[0])
     # a unit right triangle mapped onto a 64 x 64 texture: 64 texels per unit -> K = 16 log2(64 / LOD_F)
     sq = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
     full = lod_sums(sq, [0, 1, 2], [(0, 0), (1, 0), (0, 1)], {"w": 64, "h": 64})

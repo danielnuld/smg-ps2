@@ -27,6 +27,8 @@ MENU_PACKS = {"FileSelect": ("title.bin", "title3d.bin"), "AstroDome": ("dome.bi
               "PeachCastleGardenGalaxy": ("prologue.bin",)}
 # and Luigi's letter (main.c letter_scene): in any galaxy while he is missing (MR::getLuigiLetterGalaxyName)
 LETTER = "letter.bin"
+# (tex.LAYER_MIN, tex.LAYER_MAX) tried in turn when a scenario does not fit: every layer, the larger ones, none
+LAYER_STEPS = ((0.02, 2), (0.15, 1), (1.0, 0))
 
 
 def room(out, g):
@@ -52,13 +54,21 @@ def scenarios(fs, galaxy):
 def galaxy(fs, out, g, resident):
     rows = []
     gr = room(out, g)
+    step = LAYER_STEPS
     for no in scenarios(fs, g):  # one process per galaxy: its models are converted once (slice._model_cache)
         t = time.time()
         try:
-            for ratio in (0.99, 0.9, 0.8, 0.7, 0.6, 0.5):  # over ROOM: its static models simplified further until it fits
+            # over ROOM: its static models simplified further until it fits; then with only the larger texture layers
+            # (tex.layers' passes: their geometry is the base's again), then none. ponytail: a galaxy's next scenario
+            # starts at the layer step its last one needed (each step converts every model again)
+            for lmin, lmax, ratio in [(m, n, r) for m, n in step for r in (0.99, 0.9, 0.8, 0.7, 0.6, 0.5)]:
+                if (SL.tex.LAYER_MIN, SL.tex.LAYER_MAX) != (lmin, lmax):
+                    SL.tex.LAYER_MIN, SL.tex.LAYER_MAX = lmin, lmax
+                    SL._model_cache.clear()
                 files, info = SL.packs(fs, g, no, resident, ratio)
                 if max(info["stream"].values()) <= gr:
                     break
+            step = LAYER_STEPS[LAYER_STEPS.index((lmin, lmax)):]
             d = Path(out) / g / str(no)
             d.mkdir(parents=True, exist_ok=True)
             for f, b in files.items():
