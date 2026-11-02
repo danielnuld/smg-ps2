@@ -1957,6 +1957,17 @@ int main(void)
 #endif
         }
 #endif
+#ifdef CRATER_TEST
+    {   /* frames from Mario free + 150 */
+        static u32 f0;
+        u32 mf = frame;
+        extern int game_test_busy(void);
+        extern void game_test_crater(unsigned);
+        pad_force = game_test_busy() && mf % 40 < 3 ? PAD_CROSS : 0; /* A tapped through the opening's talks */
+        if (!f0 && mf > 30 && game_test_free() && !game_test_busy()) f0 = mf;
+        if (f0) game_test_crater(mf - f0 + 150);
+    }
+#endif
 #ifdef PULLBACK_TEST
     {   /* frames from Mario free + 150 */
         static u32 f0;

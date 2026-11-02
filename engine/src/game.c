@@ -7272,8 +7272,12 @@ static int update_launch(Player *m)
  * WithoutCinemaFrame, the event camera "wPod出現カメラ <GroupId>" kept until the next warp's end, arg5 (120) frames
  * of demo). The warp's event camera "ワープカメラ <GroupId>-<'A' + arg0>" of the pod he went in (WarpPodMgr::
  * startEventCamera, not while an appear camera is on) until he comes out (endEventCamera).
- * ponytail: no pod glow / path drawing, the Wait / Active animations, arg7's pairing of two inactive pods */
-static struct { int from, to, t, n; V3 dest, axis, centre, start; float angle; } warp = {.from = -1};
+ * An invisible pod (arg1 0, MarioWarp _45 0: 惑星貫通) takes him at once to 160 up its y and along the straight line
+ * from there to the pair's (the Gateway's tunnel through its planet); at the end tryForcePowerJump out of the pair:
+ * its y x mWarpPodJumpY + its z x mWarpPodJumpX (a visible pod: y x 12 + z x 5).
+ * ponytail: no pod glow / path drawing, the Wait / Active animations, arg7's pairing of two inactive pods, Mario's
+ * ポッドワープ開始 / 終了 animations (the jump comes at once) */
+static struct { int from, to, t, n, mode; V3 dest, entry, axis, centre, start; float angle; } warp = {.from = -1};
 #define MAX_WARPPODS 32
 static struct { const Scene *at; int n, cc_row; struct { int row, inactive, cd, a6, cc; } p[MAX_WARPPODS]; } wpm;
 static int wp_of(int row) /* the WarpPodMgr's pods, set up at the scene's first use (WarpPod::initAfterPlacement) */
@@ -7409,8 +7413,11 @@ static void warp_try(Player *m)
         const Row *p = &sc->objs[to];
         warp.from = in->row; warp.to = to; warp.t = 0;
         warp.dest = vadd(v3(p->pos[0], p->pos[1], p->pos[2]), vmul(row_axis_y(p), 160.0f));
+        warp.entry = vadd(v3(r->pos[0], r->pos[1], r->pos[2]), vmul(row_axis_y(r), 160.0f)); /* _20 */
+        warp.mode = r->arg[1] == 0 ? 0 : 1; /* _45: mVisibilityState (arg1, NoInit 1) */
         m->hvel = v3(0, 0, 0); m->vup = 0; m->hip = 0; m->grounded = 0;
-        mario_sound("ワープポッド入り"); mario_sound("声慌て"); /* MarioWarp::start */
+        if (warp.mode == 1) mario_sound("ワープポッド入り");
+        mario_sound("声慌て"); /* MarioWarp::start */
         if (!wpm.p[k].cc && !wpm.p[kp].cc) { /* WarpPod::startEventCamera */
             char name[64];
             wp_camera_name(name, sizeof name, in->row, 0);
@@ -7424,13 +7431,12 @@ static void warp_try(Player *m)
 /* returns 1 while the warp holds Mario */
 static int warp_update(Player *m)
 {
-    const Row *r = &sc->objs[warp.from];
+    int rise = warp.mode == 0 ? 1 : 60; /* start: _54 */
     m->hvel = v3(0, 0, 0); m->vup = 0;
-    if (warp.t < 60) { /* to 160 up the pod (displacement x (1 - left / 60)) */
-        mario_sound("引き戻し基本"); mario_sound("ワープポッド移動");
-        V3 to = vadd(v3(r->pos[0], r->pos[1], r->pos[2]), vmul(row_axis_y(r), 160.0f));
-        m->pos = vadd(m->pos, vmul(vsub(to, m->pos), (warp.t + 1) / 60.0f));
-        if (++warp.t == 60) { /* calcAxis */
+    if (warp.t < rise) { /* to 160 up the pod (displacement x (1 - left / _56)) */
+        if (warp.mode == 1) { mario_sound("引き戻し基本"); mario_sound("ワープポッド移動"); }
+        m->pos = vadd(m->pos, vmul(vsub(warp.entry, m->pos), (warp.t + 1) / (float)rise));
+        if (++warp.t == rise) { /* calcAxis */
             V3 disp = vsub(warp.dest, m->pos);
             float dist = vlen(disp), a = 0.7853982f;
             warp.axis = vnorm(vcross(disp, vmul(m->up, -1.0f)));
@@ -7443,22 +7449,35 @@ static int warp_update(Player *m)
         }
         return 1;
     }
-    int k = warp.t - 60; /* frames flown */
-    if (k >= warp.n) {
-        m->pos = warp.dest;
+    int k = warp.t - rise; /* frames flown */
+    if (k >= warp.n) { /* close: no snap to the pair, Mario is where the flight left him */
+        const Row *p = &sc->objs[warp.to];
+        V3 px, pz;
+        row_axes(p, &px, &pz);
         row_step[warp.to] = 60;
-        if (player_mode != PM_TERESA) mario_sound("ワープポッド出"); /* (getPlayerMode() != 6) */
         wp_end_camera();
+        if (warp.mode == 0) { /* 惑星貫通終了, tryForcePowerJump(_2C x mWarpPodJumpY + _38 x mWarpPodJumpX) */
+            mario_sound("惑星貫通終了"); mario_sound("声中ジャンプ");
+            m_power_jump(m, vadd(vmul(row_axis_y(p), MC.mWarpPodJumpY), vmul(pz, MC.mWarpPodJumpX)));
+        } else if (player_mode != PM_TERESA) { /* (getPlayerMode() != 6) */
+            mario_sound("ワープポッド出"); mario_sound("声中ジャンプ");
+            m_power_jump(m, vadd(vmul(row_axis_y(p), 12.0f), vmul(pz, 5.0f)));
+        }
         printf("warp pod %d: arrived at %d\n", warp.from, warp.to);
         warp.from = -1;
         return 0;
     }
-    mario_sound("引き戻し基本"); mario_sound("引き戻し浮遊"); mario_sound("ワープポッド移動");
+    if (warp.mode == 0) mario_sound("惑星貫通中");
+    else { mario_sound("引き戻し基本"); mario_sound("引き戻し浮遊"); mario_sound("ワープポッド移動"); }
     float p = (1.0f + sinf(((float)k - 0.5f * warp.n) / warp.n * 3.14159265f)) * 0.5f;
     float ang = -warp.angle * (1.0f - p) + warp.angle * p, c = cosf(ang), s = sinf(ang);
     V3 a = warp.axis, v = warp.start; /* Rodrigues */
     V3 rot = vadd(vadd(vmul(v, c), vmul(vcross(a, v), s)), vmul(a, vdot(a, v) * (1.0f - c)));
     m->pos = vadd(m->pos, vmul(vsub(vadd(warp.centre, rot), m->pos), 0.5f));
+    if (warp.mode == 0) { /* kept on the line from _20 to _14 (vecKillElement) */
+        V3 dir = vnorm(vsub(warp.dest, warp.entry));
+        m->pos = vadd(warp.entry, vmul(dir, vdot(vsub(m->pos, warp.entry), dir)));
+    }
     warp.t++;
     return 1;
 }
@@ -39169,7 +39188,7 @@ void game_test_hang(unsigned frame)
 }
 #endif
 
-#ifdef PULLBACK_TEST
+#if defined(PULLBACK_TEST) || defined(CRATER_TEST)
 /* the Gateway's pit (HeavensDoorGalaxy/1, HeavensDoorMysteriousPlanet): Mario dropped 700 up the first
  * PullBackCylinder's axis from its base (frame 300 from free): MarioRecovery takes him back to his last safe place */
 int game_test_busy(void) { return dx_busy() || talk_active(); } /* tests: a demo or a talk holds Mario */
@@ -39195,6 +39214,27 @@ void game_test_pullback(unsigned frame)
         return;
     }
     if (frame == 300) printf("pullback test: no PullBackCylinder\n");
+}
+/* the Gateway's craters (HeavensDoorMysteriousPlanet): Mario dropped 900 up the first invisible (arg1 0) WarpPod's
+ * y axis (frame 300 from free): he falls into its crater, the pod takes him to its pair in the other crater */
+void game_test_crater(unsigned frame)
+{
+    static int row = -1;
+    for (int i = 0; frame == 300 && row < 0 && i < ninsts; i++) {
+        const Row *r = &sc->objs[insts[i].row];
+        if (!insts[i].warppod || r->arg[1] != 0 || warp_pair(insts[i].row) < 0) continue;
+        row = insts[i].row;
+        mario->pos = vadd(row_pos(r), vmul(row_axis_y(r), 900.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
+        printf("crater test f %u: drop over warp pod row %d (pair %d)\n", frame, row, warp_pair(row));
+    }
+    if (frame == 300 && row < 0) printf("crater test: no invisible WarpPod\n");
+    if (row >= 0 && frame >= 300 && frame <= 1200 && frame % 10 == 0) {
+        const Row *r = &sc->objs[row], *q = &sc->objs[warp_pair(row)];
+        V3 mid = vmul(vadd(row_pos(r), row_pos(q)), 0.5f); /* about the planet's centre (the tunnel goes through it) */
+        printf("crater test f %u: pos %d %d %d pod %.0f pair %.0f centre %.0f warp %d grounded %d\n", frame, (int)mario->pos.x,
+               (int)mario->pos.y, (int)mario->pos.z, vlen(vsub(mario->pos, row_pos(r))), vlen(vsub(mario->pos, row_pos(q))),
+               vlen(vsub(mario->pos, mid)), warp.from, mario->grounded);
+    }
 }
 #endif
 
