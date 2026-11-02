@@ -235,7 +235,7 @@ typedef struct {
     int npc;         /* NPCActor's turning (npc_class): its ActorTalkParam index + 1, 0 none */
     V3 nf, nu, nf0, nu0; /* NPCActor _A0 (its turned front / up) and _B0 (the placement's) */
     int dnpc;        /* Butler 1, TicoDomeLecture 2, Rosetta 3, ButlerExplain 4: demo casts (update_dome_npcs) */
-    int hipsw;       /* hip drop switch: 1 PicketSwitch(Big) / HipDropSwitch (SW_A for good), 2 HipDropTimerSwitch */
+    int hipsw;       /* hip drop switch (update_hip_switches): 1 HipDropSwitch, 2 HipDropTimerSwitch, 3 PicketSwitch(Big) */
     int rotor;       /* map part with a RotateSpeed: turns (rotor_matrix), carries Mario */
     int halo;        /* ZoneHalo 1 / PowerStarHalo 2: shown only from afar (update_halos) */
     int seesaw;      /* PhantomShipHandle: MapPartsSeesaw1AxisRotator, turned by Mario's weight (update_seesaws) */
@@ -4154,8 +4154,8 @@ static void class_make(ClassInfo *ci, const char *name)
                  strcmp(name, "CandlestandIceVolcano") == 0 ? 3 : 0;
     ci->screw = strcmp(name, "ScrewSwitch") == 0 ? 1 : strcmp(name, "ScrewSwitchReverse") == 0 ? 2 : strcmp(name, "ValveSwitch") == 0 ? 3 : 0;
     ci->giver = strcmp(name, "DeadLeaves") == 0 ? 1 : strcmp(name, "Pompon2Plant") == 0 || strcmp(name, "Pompon4Plant") == 0 ? 2 : 0;
-    ci->hipsw = strncmp(name, "PicketSwitch", 12) == 0 || strcmp(name, "HipDropSwitch") == 0 ? 1 :
-                strcmp(name, "HipDropTimerSwitch") == 0 ? 2 : 0;
+    ci->hipsw = strcmp(name, "HipDropSwitch") == 0 ? 1 : strcmp(name, "HipDropTimerSwitch") == 0 ? 2 :
+                strncmp(name, "PicketSwitch", 12) == 0 ? 3 : 0;
     ci->seesaw = strcmp(name, "PhantomShipHandle") == 0;
     ci->bridge = strcmp(name, "PhantomShipBridge") == 0;
     ci->dossun = strcmp(name, "Dossun") == 0;
@@ -6324,6 +6324,9 @@ int game_test_hip(void)
     int best = -1, rank = 0; /* a hip drop switch, else a HipDropRock, else any breakable */
     for (int i = 0; i < ninsts; i++) {
         int k = insts[i].hipsw ? 3 : insts[i].breaks == 2 ? 2 : insts[i].breaks == 1 ? 1 : 0;
+#ifdef HIP_CLS /* XF=-DHIP_CLS=n: the first hip drop switch of kind n (update_hip_switches) */
+        if (insts[i].hipsw != HIP_CLS) k = 0;
+#endif
         if (k > rank) { rank = k; best = i; }
     }
     if (best < 0) return -1;
@@ -6334,6 +6337,7 @@ int game_test_hip(void)
     mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
     mario->hip = HIP_START; mario->hip_t = 0; mario->jumping = 1; mario->zero_gr = MC.mHipDropZeroGrTime; /* as if R1 was pressed up there */
     if (mario_anim) mario_play("hipdropstart", 1.0f, 0);
+    printf("hip test: %s", sc->types + 32 * sc->objs[in->row].type); printf("%c", 10);
     return in->row;
 }
 
@@ -26088,24 +26092,74 @@ unsigned game_test_moves(unsigned frame)
     return pad;
 }
 
-/* PicketSwitch.cpp / HipDropSwitch.cpp: a hip drop landing on it turns SW_A on; HipDropTimerSwitch.cpp: for arg0
- * frames (default 300, mTimerMax; row_step counts them down), then off. ponytail: the stake does not sink */
+/* HipDropSwitch.cpp / HipDropTimerSwitch.cpp after Petari: Off (Wait clip, SW_A off; Mario landing on it:
+ * SE_OJ_PNC_KINOKO_BOUND) -> a hip drop: SwitchDown (On clip) -> at its end On (SW_A on, HIPDROP_SWITCH_ON, a shake);
+ * the timer one after arg0 frames (mTimerMax 300) with its timer SEs (arg1 picks set A / B) SwitchUp (Off clip) -> Off.
+ * PicketSwitch.cpp: a hip drop in Wait: LastDrop (Second clip, a very strong rumble, PICKET_SWITCH_DROP / ON), its SW_A
+ * on at the clip's end (FirstDrop is never reached). row_turn the nerve, row_step its step, dsinit Mario on it last
+ * frame (_CD). ponytail: no spring sag of the button, no On / Off / Second BRK colours (one BRKC a model: needs a
+ * reslice), star pieces and the pointer's press don't bounce it, the stake does not sink */
+enum { HS_OFF, HS_DOWN, HS_ON, HS_UP };
 static void update_hip_switches(void)
 {
+    static const unsigned timer_se[2][4] = {{SE_SY_TIMER_A_2, SE_SY_TIMER_A_1, SE_SY_TIMER_A_QUASI_0, SE_SY_TIMER_A_0},
+                                            {SE_SY_TIMER_B_2, SE_SY_TIMER_B_1, SE_SY_TIMER_B_QUASI_0, SE_SY_TIMER_B_0}}; /* sTimerSeSet */
     FOR_KIND(i, hipsw) {
-        const Inst *in = &insts[i];
-        if (!in->hipsw) continue;
+        Inst *in = &insts[i];
+        if (!in->hipsw || !row_shown(in->row)) continue;
         const Row *r = &sc->objs[in->row];
-        unsigned short *t = &row_step[in->row];
+        signed char *n = &row_turn[in->row];
+        unsigned short *st = &row_step[in->row];
+        if (*st < 0xFFFF) ++*st;
         V3 d = vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14])); /* on it: over its footprint (the ground
                                                                          * instance may be the planet around it) */
         int on = hip_inst == i || (fabsf(vdot(d, mario->up)) < in->reach && vlen(vtangent(d, mario->up)) < 0.7f * in->reach);
-        if (hip_hit && on && !sw_on(r, SW_A)) {
-            sw_set(r, SW_A, 1);
-            if (in->hipsw == 2) *t = r->arg[0] > 0 ? r->arg[0] : 300;
-            printf("%s %d on\n", sc->types + 32 * r->type, in->row);
-        } else if (in->hipsw == 2 && *t && --*t == 0)
-            sw_set(r, SW_A, 0);
+        int touch = mario->grounded && on, was = in->dsinit; /* isMsgFloorTouch this frame (_CE) / the last (_CD) */
+        in->dsinit = touch;
+        if (in->hipsw == 3) { /* PicketSwitch */
+            if (*n == HS_OFF && hip_hit && on) {
+                *n = HS_DOWN; *st = 1;
+                obj_play(in, "Second", 0, 0);
+                pad_rumble(RUMBLE_VERY_STRONG);
+                se_start(SE_OJ_PICKET_SWITCH_DROP, &in->m[12]); se_start(SE_OJ_PICKET_SWITCH_ON, &in->m[12]);
+                printf("%s %d drop\n", sc->types + 32 * r->type, in->row);
+            } else if (*n == HS_DOWN && *st > 1 && (!in->anim || in->anim->done)) {
+                *n = HS_ON; sw_set(r, SW_A, 1); /* onSwitchA, invalidateHitSensors */
+                printf("%s %d on\n", sc->types + 32 * r->type, in->row);
+            }
+            continue;
+        }
+        switch (*n) {
+        case HS_OFF:
+            if (*st == 1) { if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 0); obj_play(in, "Wait", 1, 0); }
+            if (touch && !was) se_start(SE_OJ_PNC_KINOKO_BOUND, &in->m[12]);
+            if (hip_hit && on) { *n = HS_DOWN; *st = 0; } /* trySwitchDown */
+            break;
+        case HS_DOWN:
+            if (*st == 1) printf("%s %d down: clip %d\n", sc->types + 32 * r->type, in->row, obj_play(in, "On", 0, 0));
+            if (*st > 1 && (!in->anim || in->anim->done)) { *n = HS_ON; *st = 0; } /* tryOn */
+            break;
+        case HS_ON:
+            if (*st == 1) {
+                sw_set(r, SW_A, 1);
+                se_start(SE_OJ_HIPDROP_SWITCH_ON, &in->m[12]); camera_shake(SHAKE_NORMAL);
+                printf("%s %d on\n", sc->types + 32 * r->type, in->row);
+            }
+            if (in->hipsw == 2) {
+                int max = r->arg[0] > 0 ? r->arg[0] : 300, step = *st - 1, sub = max % 60, el = step - sub + (sub ? 60 : 0);
+                const unsigned *se = timer_se[r->arg[1] > 0];
+                if (el >= 60 && !miss_running() && !star_demo) { /* updateTimerSE */
+                    if (step == max) se_start(se[3], NULL);
+                    else if (el % 60 == 0 && el < max) se_start(el < max - 600 ? se[0] : el < max - 120 ? se[1] : se[2], NULL);
+                }
+                if (step > max) { *n = HS_UP; *st = 0; } /* isGreaterStep(mTimerMax) */
+            }
+            break;
+        case HS_UP:
+            if (*st == 1) { obj_play(in, "Off", 0, 0); printf("%s %d up\n", sc->types + 32 * r->type, in->row); }
+            if (*st > 1 && (!in->anim || in->anim->done)) { *n = HS_OFF; *st = 0; }
+            break;
+        }
     }
 }
 

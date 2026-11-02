@@ -2292,9 +2292,12 @@ int main(void)
                    game_kind_alive(1), game_kind_alive(2), game_kind_alive(3), game_kind_alive(4), game_life(), game_coins());
 #endif
 #ifdef HIP_TEST
-        if (frame == 120)
+#ifndef HIP_AT /* XF=-DHIP_AT=n: the hip drop at frame n (after a scenario's opening flight) */
+#define HIP_AT 120
+#endif
+        if (frame == HIP_AT)
             printf("hip test: above row %d\n", game_test_hip());
-        if (frame > 120 && frame <= 420 && frame % 10 == 0) {
+        if (frame > HIP_AT && frame <= HIP_AT + 600 && frame % 10 == 0) {
             char d[128];
             game_debug(d, sizeof d);
             printf("hip test f %u: hip %d coins %d pieces %d %s\n", frame, game_hip_state(), game_coins(),
