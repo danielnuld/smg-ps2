@@ -17683,7 +17683,12 @@ void game_test_2d_input(int frame)
         int tc = scene_type(sc, "PlaneModeCube"), tr = scene_type(sc, "PlaneCircularModeCube"), n = 0, first = -1;
         for (u32 i = 0; i < sc->nobjs; i++) if (sc->objs[i].type == tc || sc->objs[i].type == tr) { n++; if (first < 0) first = (int)i; }
         printf("2d test: %d plane areas, first row %d, in one %d\n", n, first, m2.on || m2.circ);
-        if (!m2.on && !m2.circ && first >= 0) { m->pos = vadd(row_pos(&sc->objs[first]), vmul(m->up, 100.0f)); m->hvel = v3(0, 0, 0); m->vup = 0; }
+        if (first >= 0) {
+            const Row *r = &sc->objs[first];
+            printf("2d test: area at %.0f %.0f %.0f rot %.0f %.0f %.0f scale %.1f %.1f %.1f shown %d inside %d; Mario %.0f %.0f %.0f\n", r->pos[0], r->pos[1],
+                   r->pos[2], r->rot[0], r->rot[1], r->rot[2], r->scale[0], r->scale[1], r->scale[2], row_shown(first), area_inside(r, m->pos), m->pos.x,
+                   m->pos.y, m->pos.z);
+        }
     }
     if (t < 30) return;
     int s = t - 30;
