@@ -28,8 +28,11 @@ Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
   'MODL'  u32 n, n × {char[32] name, f32 bounding radius}
   'KCL '  u32 n, n × {char[32] model, u32 size, bytes[size] (little-endian KCL, kcl_to_le), pad to 4}
   'VUMD'  u32 n, 12 pad, n × {char[32] name, u32 ngroups, f32 qscale, 8 pad, ngroups × {u32 nverts (3 per
-          triangle), u16 tex, u16 nbatch, u8 blend (0 opaque, 1 blended, 2 additive), u8 z_write, u8 alpha, u8 lit,
-          4 pad, nbatch × {u16 emitted, u16 unique} padded to 16, then per batch (index_batches): s16 pos[unique][4]
+          triangle), u16 tex, u16 nbatch, u8 blend (0 opaque, 1 blended, 2 additive, 3-5 frame buffer
+          tints, 6 multiplied by the texture alpha, 7 subtracted: render.c init_blend_states), u8 z_write, u8 alpha, u8 lit,
+          u8 strip (strip_batches' formats), u8 share (a layer pass on the strips of the group that many back: per
+          batch only its UVs or normals), 2 pad,
+          nbatch × {u16 emitted, u16 unique} padded to 16, then per batch (index_batches): s16 pos[unique][4]
           (x, y, z in steps of qscale, w = 7 * matrix slot), s16 uv[unique][2] if textured, s8 normal[unique][4] if
           lit (x 127), u8 rgbi[emitted][4] (colour + unique index), each array padded to 16}}
           an entry with no groups and a first pad word k > 0 is an alias: entry k - 1 of the chunk (an earlier one, an
@@ -568,6 +571,11 @@ def btp_tables(lfiles):
     return order, {m: sorted(mats[m]) for m in order}, clips
 
 
+# tex.layers kinds -> VUMD blend: 2 added (Cs + Cd), 7 subtracted (Cd - Cs), 6 multiplied (Cd x As), 1 blended
+# ((Cs - Cd) As + Cd)
+LAYER_BLEND = {"add": 2, "sub": 7, "mul": 6, "lerp": 1}
+
+
 def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat=None, player=None):
     """-> (groups [(verts, tris, uvs or None, texture or None, slots or None, colours or None, blend)], kcl bytes or
     None,
@@ -615,7 +623,7 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 gtab = []
             shapes = tex.shape_materials(b, bl[b"INF1"])
             texs = tex.textures(b, bl[b"TEX1"]) if b"TEX1" in bl else []
-            ps2, gains, ras_split = {}, {}, {}
+            ps2, gains, ras_split, lay_cache = {}, {}, {}, {}
             sky = arc.stem in SKY_ARCS or arc.stem.endswith("Sky")  # 8-bit textures (tex.to_ps2 hi)
             lfiles = {k.lower().rsplit("/", 1)[-1]: v for k, v in files.items()}
             bp = brk or BRK_POSE.get(arc.stem)  # a BRK_ARG variant's (name, frame) first
@@ -683,8 +691,25 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 # without it, the layer a second, additive group (after this one)
                 layer = (tex.env_layer(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, over)
                          if get and mat is not None and nget and 10 in info["at"] else None)
+                # its textures on other coordinates (tex.layers: detail maps, masks, environment maps, scrolling
+                # overlays) that this shape can draw: passes of their own after it, the base baked at their level.
+                # Over a blended base only added / subtracted ones (a multiply or lerp would reach the frame behind)
+                mlay = []
+                if (get or env) and mat is not None and mt["tex"] < len(texs):
+                    lk = (mt["tex"], mat)
+                    if lk not in lay_cache:
+                        lay_cache[lk] = tex.layers(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, mt["tex"], over,
+                                                   (layer["coord"],) if layer else ())
+                    kind0 = tex.material_blend(b, bl[b"MAT3"], mat)[0]
+                    for L in lay_cache[lk]:
+                        g = tex.coord_gen(b, bl[b"MAT3"], mat, L["coord"])
+                        if g and (g["env"] and nget and 10 in info["at"] or
+                                  g["attr"] in info["at"] and (g["mtx"] or g["slot"] is None) or
+                                  g["proj"] is not None and not skinned) and (kind0 == 0 or L["kind"] in ("add", "sub")):
+                            mlay.append((L, g))
                 if (get or env) and mt["tex"] < len(texs):
-                    key = (mt["tex"], mat, ras_mean)  # the material's TEV baked into its texture (tex.tev)
+                    # the material's TEV baked into its texture (tex.tev)
+                    key = (mt["tex"], mat, ras_mean, tuple(L["coord"] for L, _ in mlay))
                     if key not in ps2:
                         x = texs[mt["tex"]]
                         binfo = {}
@@ -694,8 +719,12 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                             o2[layer["name"]] = dict(o2.get(layer["name"], {}), zero_coord=layer["coord"])
                         if ras_mean:
                             mn = tex.material_name(b, bl[b"MAT3"], mat)
-                            o2 = dict(over or {})
+                            o2 = dict(o2 or {})
                             o2[mn] = dict(o2.get(mn, {}), mat=[c / 255 for c in ras_mean] + [1.0])
+                        if mlay:
+                            mn_ = tex.material_name(b, bl[b"MAT3"], mat)
+                            o2 = dict(o2 or {})
+                            o2[mn_] = dict(o2.get(mn_, {}), coord_val={L["coord"]: L["level"] for L, _ in mlay})
                         baked = tex.bake(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, mt["tex"], o2, binfo)
                         if ras_mean and not separable(b, bl, mat, texs, o2, mn):
                             ras_split[key] = False  # not TEX x f(RAS): baked at the mean, vertices CLR0 / mean
@@ -914,7 +943,8 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                         lt[..., 3] = 255  # added whole (K x TEXC): no texture alpha, the blend's FIX 1
                         ps2[lkey] = tex.to_ps2(lt.astype(np.uint8), x["wrap_s"], x["wrap_t"], sky)
                     lt = ps2[lkey]
-                    lt = dict(lt, env=[e * (lt["u_scale"], lt["v_scale"], 1.0)[i % 3] for i, e in enumerate(layer["env"])])
+                    lt = dict(lt, layer=True,
+                              env=[e * (lt["u_scale"], lt["v_scale"], 1.0)[i % 3] for i, e in enumerate(layer["env"])])
                     ln = nrm if isinstance(nrm, list) else None
                     if ln is None:  # an unlit material's normals, for the layer only
                         o, w = info["at"][10]
@@ -928,6 +958,47 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                     if skinned:
                         gtab.append(tables[(info["shape"], info["group"])])
                     stats["env_layer"] = stats.get("env_layer", 0) + 1
+                for L, g in mlay if t is not None else ():  # tex.layers' passes, each a group over the same triangles
+                    x = texs[L["tex"]]
+                    pkey = ("mlayer", mat, L["coord"], L["kind"])
+                    if pkey not in ps2:
+                        ps2[pkey] = tex.to_ps2(L["rgba"], x["wrap_s"], x["wrap_t"], sky)
+                    lt, luv, ln = dict(ps2[pkey], layer=True), None, False
+                    if g["env"]:  # normal texgen: UVs on VU1 from the view-space normal (VU1Env)
+                        lt = dict(lt, env=[e * (lt["u_scale"], lt["v_scale"], 1.0)[i % 3] for i, e in enumerate(g["env"])])
+                        luv = [(0.0, 0.0)] * len(used)
+                        o, w = info["at"][10]
+                        ln = [nget(info["keys"][v][o] if w == 1 else info["keys"][v][o] << 8 | info["keys"][v][o + 1])
+                              for v in used]
+                        if mats:
+                            ln = [tuple(float(x) for x in skin.unit(m_[:3, :3] @ n)) for m_, n in zip(mats, ln)]
+                    elif g["attr"] in info["at"]:  # its own UV set through its texture matrix (BTK: anim_btk)
+                        lget = geom.vtx1_attr(b, bl[b"VTX1"], g["attr"])
+                        o, w = info["at"][g["attr"]]
+                        m2 = g["mtx"]
+                        luv = []
+                        for v in used:
+                            k = info["keys"][v]
+                            su, sv = lget(k[o] if w == 1 else k[o] << 8 | k[o + 1])
+                            if m2:
+                                su, sv = (m2[0][0] * su + m2[0][1] * sv + m2[0][2], m2[1][0] * su + m2[1][1] * sv + m2[1][2])
+                            luv.append((su * lt["u_scale"], sv * lt["v_scale"]))
+                        if anim_tex and m2:
+                            be = btk_entry(anim_tex, tex.material_name(b, bl[b"MAT3"], mat), g, lt, len(groups))
+                            if be:
+                                stats.setdefault("_btk", []).append(be)
+                    else:  # projected from positions (Projmap): uv = (s, t) / q per vertex
+                        luv = []
+                        for p in verts:
+                            s_, t_, q_ = g["proj"] @ np.array([p[0], p[1], p[2], 1.0])
+                            q_ = q_ if abs(q_) > 1e-6 else 1e-6
+                            luv.append((s_ / q_ * lt["u_scale"], t_ / q_ * lt["v_scale"]))
+                    stats.setdefault("_shape", []).append(info["shape"])
+                    groups.append((verts, [remap[v] for v in tri], luv, lt, slots, None,
+                                   (LAYER_BLEND[L["kind"]], 0, 255), ln, 1))
+                    if skinned:
+                        gtab.append(tables[(info["shape"], info["group"])])
+                    stats["layers"] = stats.get("layers", 0) + 1
             if skinned:
                 sk = skin_entry(b, bl, gtab)
         elif n.endswith(".kcl"):
@@ -1305,25 +1376,29 @@ def stripify(tris):
     return strips
 
 
-def strip_batches(pos, col, uv, n, nrm=b"", smax=STRIP_MAX, skinned=False):
+def strip_batches(pos, col, uv, n, nrm=b"", smax=STRIP_MAX, skinned=False, extra=()):
     """De-indexed static unlit group arrays (vu_groups) -> (batch table, data) of the strip VUMD layout (VU1Strip):
     vertices equal in position, UV and colour are merged, the triangles stripified, the strips packed into batches of
     at most STRIP_MAX vertices (a multiple of 4: the last vertex repeated as a restart), a strip cut at a batch end
     going on with its last two vertices. Per batch: s16 pos[n][4] (w = STRIP_RESTART on each strip's first two),
     s16 uv[n][2] if textured, u8 rgba[n][4], each padded to 16. Table entries {n, 0}.
     skinned (VU1SkinLit): w keeps 7 x the matrix slot, the restart is its bit 15, and s8 normal[n][4] (x 127) come
-    between the UVs and the colours; batches of at most smax (60: ten matrices in the buffer)."""
+    between the UVs and the colours; batches of at most smax (60: ten matrices in the buffer).
+    extra: the 4-byte per-vertex arrays (UVs or normals) of passes drawn over these strips (assets: layer groups that
+    share them): vertices merge only where those agree too, and a third result gives each one's batches (the same
+    table, per batch its array in strip order, padded to 16)."""
     pad = lambda x: bytes(x) + b"\0" * (-len(x) % 16)
     keys, verts, tris = {}, [], []
+    xkey = lambda e: tuple(bytes(x[4 * e:4 * e + 4]) for x in extra)
     for e in range(n):
         k = (bytes(pos[8 * e:8 * e + (8 if skinned else 6)]), bytes(uv[4 * e:4 * e + 4]) if uv else b"",
-             bytes(col[4 * e:4 * e + 4]), bytes(nrm[4 * e:4 * e + 4]) if nrm else b"")
+             bytes(col[4 * e:4 * e + 4]), bytes(nrm[4 * e:4 * e + 4]) if nrm else b"", xkey(e))
         if k not in keys:
             keys[k] = len(verts)
             verts.append(k)
         if e % 3 == 2:
             tris.append(tuple(keys[(bytes(pos[8 * x:8 * x + (8 if skinned else 6)]), bytes(uv[4 * x:4 * x + 4]) if uv else b"",
-                                    bytes(col[4 * x:4 * x + 4]), bytes(nrm[4 * x:4 * x + 4]) if nrm else b"")]
+                                    bytes(col[4 * x:4 * x + 4]), bytes(nrm[4 * x:4 * x + 4]) if nrm else b"", xkey(x))]
                               for x in range(e - 2, e + 1)))
     tris = [t for t in tris if len(set(t)) == 3]  # zero-area index triangles draw nothing
     batches, cur = [], []
@@ -1347,11 +1422,12 @@ def strip_batches(pos, col, uv, n, nrm=b"", smax=STRIP_MAX, skinned=False):
                 close()
     if cur:
         close()
-    table, data = b"", b""
+    table, data, xdata = b"", b"", [b""] * len(extra)
     for b in batches:
         p_, u_, c_, n_ = bytearray(), bytearray(), bytearray(), bytearray()
+        xdata = [x + pad(b"".join(verts[v][4][k] for v, _ in b)) for k, x in enumerate(xdata)]
         for v, restart in b:
-            pk, uk, ck, nk = verts[v]
+            pk, uk, ck, nk, _ = verts[v]
             if skinned:
                 w = struct.unpack("<h", pk[6:8])[0]
                 p_ += pk[:6] + struct.pack("<h", w - 32768 if restart else w)  # bit 15 over 7 x slot (< 32768)
@@ -1362,6 +1438,8 @@ def strip_batches(pos, col, uv, n, nrm=b"", smax=STRIP_MAX, skinned=False):
             n_ += nk
         table += struct.pack("<HH", len(b), 0)
         data += pad(p_) + (pad(u_) if uv else b"") + (pad(n_) if nrm else b"") + pad(c_)
+    if extra:
+        return len(batches), pad(table) + data, [pad(table) + x for x in xdata]
     return len(batches), pad(table) + data
 
 
@@ -1779,7 +1857,8 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
         if not arc.exists():
             continue
         sk = cls in SKINNED or cls in SKINNED_OBJ or cls in AUTO_SKINNED or cls in MORPH_SKIN
-        key = (a, pose, ratio, brk, mc, sk, hp)  # one archive static and skinned (PowerStar / PStar): two entries
+        # one archive static and skinned (PowerStar / PStar): two entries; and per layer step (slice_all LAYER_STEPS)
+        key = (a, pose, ratio, brk, mc, sk, hp, tex.LAYER_MIN, tex.LAYER_MAX)
         if key not in _model_cache:
             st = {}
             _model_cache[key] = (model_groups(arc, ratio, st, sk,
@@ -1798,8 +1877,20 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
         models_.append(name32(t) + struct.pack("<f", math.sqrt(max((sum(c * c for c in v) for verts, *_ in groups
                                                                     for v in verts), default=0.0))))
         vg, qs = b"", pos_scale(groups)
-        for gi, ((verts, tris, uvs, tx, _, _, bl, _, _), (pos, col, uv, nb)) in enumerate(zip(groups, vu_groups(groups, BASE_COLOUR.get(t, (112, 176, 96)),
-                                                                             stats, qs))):
+        vgs = vu_groups(groups, BASE_COLOUR.get(t, (112, 176, 96)), stats, qs)
+        # a static model's layer passes (model_groups: env_layer, tex.layers) over a VU1Strip base share its strips:
+        # their batches hold only their UVs (VU1Strip) or normals (VU1EnvStrip), positions and colours read from the
+        # base (fmt byte 6: how many groups back it is). ponytail: the layer takes the base's vertex colours
+        share, shared = {}, {}
+        for gi, g in enumerate(groups):
+            if sk or not (g[3] and g[3].get("layer")):
+                continue
+            j = next((j for j in range(gi - 1, -1, -1) if groups[j][0] is g[0] and not (groups[j][3] or {}).get("layer")),
+                     None)
+            if j is not None and gi - j < 256 and groups[j][3] and not groups[j][3].get("env") and not vgs[j][3] and \
+                    bool(g[3].get("env")) == bool(vgs[gi][3]):
+                share[gi] = j
+        for gi, ((verts, tris, uvs, tx, _, _, bl, _, _), (pos, col, uv, nb)) in enumerate(zip(groups, vgs)):
             ti = 0xFFFF
             if tx:
                 key = tx["pix"] + tx["clut"] + bytes((tx["clamp_s"], tx["clamp_t"]))
@@ -1821,8 +1912,15 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
             strip = not sk and not nb and not env  # static unlit: triangle strips for VU1Strip (fmt byte 1)
             skstrip = bool(sk) and bool(nb) and not env  # skinned lit: strips for VU1SkinLit (fmt byte 2)
             envstrip = not sk and bool(env)  # static environment-mapped: strips for VU1EnvStrip (fmt byte 3), no UVs
-            if envstrip:
+            mine = [k for k, j in share.items() if j == gi]
+            if gi in share:
+                strip, envstrip = not env, bool(env)
+                nbt, body = shared[gi]
+            elif envstrip:
                 nbt, body = strip_batches(pos, col, b"", len(tris), nb)
+            elif strip and mine:
+                nbt, body, xs = strip_batches(pos, col, uv, len(tris), extra=[vgs[k][3] or vgs[k][2] for k in mine])
+                shared.update((k, (nbt, x)) for k, x in zip(mine, xs))
             elif strip:
                 nbt, body = strip_batches(pos, col, uv, len(tris))
             elif skstrip:
@@ -1833,7 +1931,8 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
                 stats["strip_verts"] = stats.get("strip_verts", 0) + sum(
                     struct.unpack_from("<H", body, 4 * i)[0] for i in range(nbt))
                 stats["strip_list_verts"] = stats.get("strip_list_verts", 0) + len(tris)
-            vg += struct.pack("<IHHBBBBB3x", len(tris), ti, nbt, *bl, 2 if env else 1 if nb else 0, 1 if strip else 2 if skstrip else 3 if envstrip else 0) + \
+            vg += struct.pack("<IHHBBBBBB2x", len(tris), ti, nbt, *bl, 2 if env else 1 if nb else 0,
+                              1 if strip else 2 if skstrip else 3 if envstrip else 0, gi - share.get(gi, gi)) + \
                 (struct.pack("<12f", *env) if env else b"") + body
         body = struct.pack("<If8x", len(groups), qs) + vg
         key = (body, tuple(btk_e), tuple(e[32:] for e in bva_e))
@@ -2358,8 +2457,9 @@ def packs(fs, galaxy, scenario, resident, ratio=0.99):
         while chain[-1] in up:
             chain.append(up[chain[-1]])
         chain = set(chain) | {galaxy}
-        stream[z] = len(files["scene.bin"]) + len(files["common.bin"]) + sum(
-            len(files[f"{st}.bin" if st in chain else f"{st}.low.bin"]) for st in per)
+        sec = lambda b: -(-len(b) // 2048) * 2048  # whole sectors, as main.c PACK_ALLOC (tools/zone_fit.py)
+        stream[z] = sec(files["scene.bin"]) + sec(files["common.bin"]) + sum(
+            sec(files[f"{st}.bin" if st in chain else f"{st}.low.bin"]) for st in per)
     info.update(stream=stream, whole=sum(len(b) for f, b in files.items() if not f.endswith(".low.bin")))
     return files, info
 
@@ -2419,6 +2519,15 @@ def selftest():
         texs = tex.textures(b, bl[b"TEX1"])
         r = tex.bake(b, bl[b"MAT3"], m, bl[b"TEX1"], texs, tex.material_tex(b, bl[b"MAT3"], m, bl[b"TEX1"])["tex"])
         assert r[..., :3].min() == 255 and r[..., 3].mean() < 128
+    eg = fp.with_name("StarEggRoadEggPlanetA.arc")
+    if eg.exists():  # Good Egg's grass times the egg's EggHigh shading on its own UVs: a multiplied pass (tex.layers)
+        b = next(v for k, v in B.rarc_files(eg.read_bytes()) if k.lower().endswith((".bdl", ".bmd")))
+        bl = tex.blocks(b)
+        m = tex.names(b, bl[b"MAT3"] + tex.u32(b, bl[b"MAT3"] + 0x14)).index("lambert4_v")
+        texs = tex.textures(b, bl[b"TEX1"])
+        ls = tex.layers(b, bl[b"MAT3"], m, bl[b"TEX1"], texs, tex.material_tex(b, bl[b"MAT3"], m, bl[b"TEX1"])["tex"])
+        assert [(q["coord"], q["kind"], q["level"]) for q in ls] == [(1, "mul", 1.0)] and ls[0]["err"] < 0.01, ls
+        assert any(g[6][0] == LAYER_BLEND["mul"] for g in model_groups(eg, 1.0)[0])
     # a unit right triangle mapped onto a 64 x 64 texture: 64 texels per unit -> K = 16 log2(64 / LOD_F)
     sq = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
     full = lod_sums(sq, [0, 1, 2], [(0, 0), (1, 0), (0, 1)], {"w": 64, "h": 64})

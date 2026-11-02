@@ -865,7 +865,7 @@ static int group_mode(const VuGroup *vg)
 /* GS state of a blended material, after its texture packet: ALPHA (Cs - Cd) A + Cd, or Cs A + Cd when additive, with
  * A the texture alpha when it has one, else the material alpha (FIX, 16 steps); ZBUF writes depth only if the
  * material does; TEST without the alpha cut. Prebuilt per (additive, z write, texture alpha, alpha / 16). */
-#define BLEND_STATES (5 * 2 * 2 * 16)
+#define BLEND_STATES (7 * 2 * 2 * 16)
 static qword_t *blend_states;
 
 static const qword_t *blend_state(const VuGroup *vg)
@@ -886,11 +886,14 @@ static void init_blend_states(void)
         p[1].dw[0] = kind == 2 ? GS_SET_ALPHA(1, 2, 2, 2, a) /* Cd x FIX */
                    : kind == 3 ? GS_SET_ALPHA(1, 2, 2, 0, a) /* Cd x FIX + Cs */
                    : kind == 4 ? GS_SET_ALPHA(1, 2, 2, 1, a) /* Cd x FIX + Cd: blend 5, the frame buffer brightened */
+                   : kind == 5 ? GS_SET_ALPHA(1, 2, 0, 2, 0) /* Cd x As: blend 6, a multiplied layer (slice.py layers) */
+                   : kind == 6 ? GS_SET_ALPHA(2, 0, as ? 0 : 2, 1, a) /* Cd - Cs x A: blend 7, a subtracted layer */
                                : GS_SET_ALPHA(0, kind ? 2 : 1, as ? 0 : 2, 1, a);
         p[1].dw[1] = GS_REG_ALPHA;
         p[2].dw[0] = GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, !zw);
         p[2].dw[1] = GS_REG_ZBUF;
-        p[3].dw[0] = GS_SET_TEST(1, ATEST_METHOD_GREATER_EQUAL, 0x01, 0, 0, 0, 1, ZTEST_METHOD_GREATER_EQUAL);
+        /* a multiplied layer keeps its zero texels (they darken): no alpha test */
+        p[3].dw[0] = GS_SET_TEST(kind != 5, ATEST_METHOD_GREATER_EQUAL, 0x01, 0, 0, 0, 1, ZTEST_METHOD_GREATER_EQUAL);
         p[3].dw[1] = GS_REG_TEST;
     }
 }
@@ -1052,9 +1055,20 @@ static packet2_t *build_chain_pass(Model *md, int xlu)
         else if (vg->uvm)
             add_uvm(pk, vg->uvm);
         const u8 *d = vg->data;
+        const VuGroup *sg = vg - vg->share; /* a layer's base: its batches walked alongside (positions, colours) */
+        const u8 *sd = sg->data;
         for (u32 b = 0; b < vg->nbatch; b++) {
             u32 ne = vg->batch[2 * b], nu = vg->batch[2 * b + 1];
-            if (vg->strip == 3) { /* VU1EnvStrip: positions, normals where VU1Strip has UVs, colours */
+            if (vg->share) { /* the base's positions and colours around its own UVs (VU1Strip) or normals (VU1EnvStrip) */
+                add_header(pk, HSTRIP(mode, ne), 0);
+                unpack_narrow_to(pk, sd, 8 * ne, 2, ne, P2_UNPACK_V4_16, 0);
+                sd += (8 * ne + 15) & ~15u;
+                unpack_narrow_to(pk, d, 4 * ne, 82, ne, vg->strip == 3 ? P2_UNPACK_V4_8 : P2_UNPACK_V2_16, 0);
+                d += (4 * ne + 15) & ~15u;
+                if (sg->tex != NO_TEX) sd += (4 * ne + 15) & ~15u;
+                unpack_narrow_to(pk, sd, 4 * ne, 162, ne, P2_UNPACK_V4_8, 1);
+                sd += (4 * ne + 15) & ~15u;
+            } else if (vg->strip == 3) { /* VU1EnvStrip: positions, normals where VU1Strip has UVs, colours */
                 add_header(pk, HSTRIP(mode, ne), 0);
                 unpack_narrow_to(pk, d, 8 * ne, 2, ne, P2_UNPACK_V4_16, 0);
                 d += (8 * ne + 15) & ~15u;

@@ -25,6 +25,9 @@ typedef struct {
     u8 strip;            /* triangle strips (tools/slice.py strip_batches): 1 VU1Strip (static unlit): per batch s16
                           * pos[n][4] (w = -32768 starts a strip), s16 uv[n][2] if textured, u8 rgba[n][4]; 2 VU1SkinLit
                           * (skinned lit): w = 7 x slot with bit 15 for a start, s8 normal[n][4] before the colours */
+    u8 share;            /* a layer pass (tools/slice.py layers) on the strips of the group this many back (a VU1Strip
+                          * one): per batch only its s16 uv[n][2] (strip 1) or s8 normal[n][4] (strip 3), positions and
+                          * colours read from that group's batch */
     const u16 *batch;    /* nbatch x {emitted, unique} ({n, 0} for strips) */
     const u8 *data;      /* per batch: s16 pos[unique][4] (x, y, z in steps of Model.qscale, w = 7 * matrix slot),
                           * s16 uv[unique][2] (12 fraction bits) if textured, s8 normal[unique][4] (x 127) if lit,
