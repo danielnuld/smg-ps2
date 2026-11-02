@@ -658,7 +658,9 @@ static struct { int phase, t, target; V3 vel; float power; } gcap; /* GCapture (
 static int test_r2; /* test builds: R2 held */
 static int test_noclip; /* test builds: the walkers move though clipped (game_test_unclip) */
 static struct { int inst, cool; V3 pt, vel, side, front; } jb = {.inst = -1}; /* JumpBranch (jbranch_update) */
-static struct { int inst, phase, t; } jet = {.inst = -1}; /* the JetTurtle Mario holds or threw (update_jets) */
+static struct { int inst, phase, t, drop; V3 dir; } jet = {.inst = -1}; /* the JetTurtle Mario holds or threw (update_jets); drop:
+                                                                * MarioSwim::dropJet's releaseThrowMemoSensor asked */
+static int m_carry_jet(void) { return jet.inst >= 0 && jet.phase == 1; } /* MarioActor _468 / getCarrySensor */
 static struct { int inst, phase, t, spins; } flf = {.inst = -1}; /* the Fluff Mario rides (fluff_update) */
 static struct { int inst, phase, t, wait; V3 vel; } coc = {.inst = -1, .wait = -1}; /* SpaceCocoon Mario hangs on (cocoon_update) */
 typedef struct { V3 pos, vel; int t, col; } Shot; /* star pieces shot at the pointer (update_shots); col: piece_col */
@@ -7774,8 +7776,9 @@ static int cocoon_update(Player *m)
 /* JetTurtle.cpp (on land): a Koopa shell waiting at its home. Mario touching it takes it (TakenStart: held in front
  * of him); a spin throws it along his front (Throwing) at sThrowSpdStraight (30, arg1 0: 20) a frame; it blows away the
  * walkers it touches (JetTurtleAttack: Unizos too) and is gone (reset) on a wall, after sResetStep (300, arg1 0: 480)
- * frames or 10000 from home; then it is back at home (Restart). jet.phase 1 held, 2 thrown. ponytail: no water jet
- * (swimming), no homing on enemies, no bounding off rebound walls, no gravity in its flight */
+ * frames or 10000 from home; then it is back at home (Restart). jet.phase 1 held, 2 thrown. In water Mario jets with it
+ * (MarioSwim) and dropJet throws it along his swim front. ponytail: no homing on enemies, no bounding off rebound walls,
+ * no gravity in its flight, no BrakeLamp / SwimBubble / BulletWater effects, held at his hands' place as on land */
 static void jet_place(Inst *in)
 {
     memcpy(in->m, in->m0, 64);
@@ -11563,6 +11566,7 @@ static void update_screws(void)
     }
 }
 
+static int sw_start_jet(Player *m, int type);
 static void update_jets(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -11574,8 +11578,9 @@ static void update_jets(void)
         int type = r->arg[1] + 1 >= 0 && r->arg[1] + 1 <= 2 ? r->arg[1] + 1 : 0;
         if (jet.inst == i && jet.phase == 1) { /* held: in front of him at his hands */
             in->head = vadd(vadd(mario->pos, vmul(mario->face, 70.0f)), vmul(mario->up, 60.0f));
-            if (mario->spin_timer > 0) { /* thrown */
-                in->hvel = vmul(mario->face, (const float[]){30, 20, 30}[type]);
+            if (mario->spin_timer > 0 || jet.drop) { /* thrown (in water: dropJet, along his swim front) */
+                in->hvel = vmul(jet.drop ? jet.dir : mario->face, (const float[]){30, 20, 30}[type]);
+                jet.drop = 0;
                 jet.phase = 2; jet.t = 0;
                 printf("jet turtle row %d: thrown" "\n", in->row);
             }
@@ -11607,6 +11612,7 @@ static void update_jets(void)
             continue;
         }
         if (jet.inst < 0 && !row_turn[in->row] && vlen(vsub(c, vadd(in->head, vmul(mario->up, 50.0f)))) < 80.0f + HIT_BODY_R) {
+            if (swimming && !sw_start_jet(mario, type == 1)) continue; /* receiveMsgTaken: startJet (ATYPE_JET_TURTLE_SLOW 1) */
             jet.inst = i; jet.phase = 1; jet.t = 0; /* TakenStart */
             printf("jet turtle row %d: taken" "\n", in->row);
         }
@@ -15254,8 +15260,8 @@ static int m_wall_update(Player *m)
  * wall walks him sideways at 6 (壁右歩き / 壁左歩き, 1 + 0.25 x its part into the wall less), let go he waits (壁ウエイト),
  * the stick off it lets go (turned off it beyond 0.707), A jumps off it, the spin punches off it, off his feet he drops.
  * A wall face under mForceWallAngle stops the walk at speed index 1; walking into a wall of the back jump codes
- * (checkWallJumpCode) throws him off it first. ponytail: mDrawStates._A (the edge nudges) and MarioActor _468 are never
- * set, no mTornadoRestartTime (_40A) in forceStopTornado, no startBas (the walk's foot sounds) */
+ * (checkWallJumpCode) throws him off it first; never while he carries a shell (MarioActor _468). ponytail:
+ * mDrawStates._A (the edge nudges) is never set, no mTornadoRestartTime (_40A) in forceStopTornado, no startBas */
 enum { WALLC_NOTSIDESTEP = 5 };
 static void side_step_start(Player *m) /* MarioSideStep::start */
 {
@@ -15274,6 +15280,7 @@ static int m_do_side_step(Player *m) /* doSideStep */
     if (m->side_step) return 0;
     if (m_check_wall_code(WALLC_NOTSIDESTEP, 0) || m_check_wall_code(WALLC_NOACTION, 0)) return 0;
     if (kari_cling) return 0;                                  /* _1C._5 */
+    if (m_carry_jet()) return 0;                               /* MarioActor _468 */
     if (m_dist_to_ceil(m) < 200.0f) return 0;                  /* _72C */
     if (player_mode == PM_HOPPER) return 0;
     if (mw.front.prism && angle_d(m, tri_n(&mw.front)) > 91.0f) return 0; /* calcPolygonAngleD(mFrontWallTriangle) */
@@ -15301,7 +15308,7 @@ static void m_check_wall_push(Player *m) /* checkWallPush */
 }
 static int side_step_update(Player *m) /* MarioSideStep::update: 0 ends it */
 {
-    if (!mw.w8 || kari_cling || talk_active() || !slip_code(m->floor)) return 0;
+    if (!mw.w8 || kari_cling || talk_active() || m_carry_jet() || !slip_code(m->floor)) return 0;
     V3 n = m_wall_norm(m);
     if (m_sz < 0.1f) m_anim("壁ウエイト");
     else {
@@ -16172,8 +16179,8 @@ static int fx_swim_spin, fx_swim_ripple, fx_swim_wave, fx_swim_body, fx_swim_mou
  * pi/2 level), A strokes (水泳一掻き: cFrontAcc over 40 frames), Z sinks (水泳潜り), the spin spins then dashes; he
  * floats (procBuoyancy) or bobs at the surface (flowOnWave), the area's stream carries him, the oxygen runs (mOxygenMax,
  * cold water arg1 1 hurts every 120); the 基本 group of four swim tracks (SwimWait / FlutterSurface / Flutter / Drift)
- * by MarioAnimator's weights. ponytail: OceanRing's water and the shell's jet (MarioSwim::jet: the carried JetTurtle)
- * come with their objects (phase 2: no OceanRing water, no carrying yet) */
+ * by MarioAnimator's weights; with a carried JetTurtle he jets (startJet, jet, dropJet, doJetJump). ponytail: OceanRing's
+ * water comes with its object */
 enum { SWX_NONE, SWX_JUMP, SWX_POWER_JUMP, SWX_FALL, SWX_4, SWX_SLIDE, SWX_SURFACE }; /* WaterExitAction */
 enum { SWS_NONE, SWS_ENTERING, SWS_UNDERWATER, SWS_SURFACE };                     /* SwimState */
 typedef struct {
@@ -16523,9 +16530,15 @@ static void sw_start_spin_dash(Player *m) /* startSpinDash */
     m->spin_timer = sw.spin_dash; /* setPunchHitTimer */
     if (gd_player_luigi()) sw_dec_oxygen(MC.mOxygenMax / 16);
 }
+static void sw_drop_jet(Player *m, int damage);
+static void sw_jet_jump(Player *m, int type);
+static void sw_close(Player *m);
 static void sw_spin(Player *m) /* MarioSwim::spin */
 {
-    if (sw.jet_t) return; /* (the shell: dropJet on a spin) */
+    if (sw.jet_t) { /* the spin throws the shell */
+        if (pad_pressed(PAD_SQUARE) && !sw.spin_t && !sw.spin_dash && !sw.jet_cool) sw_drop_jet(m, 0); /* isRequestSpin */
+        return;
+    }
     if (sw.knock_t || sw.zsink_t) return;
     if (sw_check_trg_a() && sw.spin_t) { sw.spin_t = 0; sw_start_spin_dash(m); return; }
     if (sw.spin_t) { sw.spin_t--; sw.fspeed *= 0.95f; if (!sw.spin_t) sw_start_spin_dash(m); }
@@ -16555,10 +16568,64 @@ static float sw_ring_acc(void) /* calcRingAcc */
     sw.blur = sw.blur > 0.0f ? sw.blur - 0.5f : 0.0f;
     return 1.0f;
 }
-static void sw_jet(Player *m) /* MarioSwim::jet: no shell carried (phase 2), the ring dash */
+static int sw_start_jet(Player *m, int type) /* startJet: the shell taken (b88 1: ATYPE_JET_TURTLE_SLOW) */
 {
     (void)m;
-    sw.jet_t = 0; sw.jet_cool = 0;
+    if (sw.jet_t) return 0;
+    sw.b88 = type; sw.jet_t = 1;
+    sw_force_stop_spin();
+    m_anim(m_anim_on("水泳ジェット") ? "水泳ジェット" : "水泳ジェット開始");
+    return 1;
+}
+static void sw_drop_jet(Player *m, int damage) /* dropJet: the shell thrown (releaseThrowMemoSensor) */
+{
+    (void)m;
+    if (!sw.jet_t) return;
+    sw.jet_t = 0;
+    if (sw.fspeed > MC.mSwimFrontMaxSpeed) sw.fspeed = MC.mSwimFrontMaxSpeed;
+    m_anim(damage ? "水泳ジェット終了" : "水泳亀投げ");
+    jet.drop = 1; jet.dir = vnorm(fo.front); /* (damageDropThrowMemoSensor: never asked) */
+    sw.knock_t = 15; sw.knock = v3(0, 0, 0);
+    m_pad_vib(0);
+}
+static void sw_jet_jump(Player *m, int type) /* doJetJump: out of the water with the shell. ponytail: _1C._7 never set */
+{
+    if (sw.ring_charge) return;
+    float h = 12.0f, v = 15.0f;
+    if (sw_check_lvl_a()) { h = 18.0f; v = 30.0f; }
+    else if (type == 0) m->digital = 1;
+    m->walk = clamp01(sw.fspeed / MC.mSwimToWalkSpd);
+    m->connect = 0; m->no_air_walk = 0; /* _5, _2F */
+    V3 d = vtangent(m->last_move, sw.up);
+    d = vlen(d) > 1e-6f ? vnorm(d) : d;
+    sw.next = SWX_POWER_JUMP;
+    sw_close(m);
+    m_power_jump(m, vadd(vmul(d, h * 1.25f), vmul(sw.up, v)));
+    m_anim("水泳ジェット");
+}
+static void sw_jet(Player *m) /* MarioSwim::jet: with a shell he jets (mSwimFrontJetSpeed, Slow), Z brakes; else the ring dash.
+                               * ponytail: no BrakeLamp effect, no setStageBGMStateBit(4) */
+{
+    (void)m;
+    if (!m_carry_jet()) { sw.jet_t = 0; sw.jet_cool = 0; }
+    if (sw.jet_cool) sw.jet_cool--;
+    if (sw.jet_t) {
+        float acc = sw_ring_acc(), js = sw.b88 ? MC.mSwimFrontJetSpeedSlow : MC.mSwimFrontJetSpeed, target = js;
+        if (acc != 1.0f) { target = acc * MC.mSwimFrontMaxSpeed; if (target < js) target = js; }
+        sw.jet_t++;
+        if (sw_check_lvl_z()) {
+            if (sw_check_trg_z() || sw.state_t < 2) mario_sound("亀ブレーキ");
+            if (sw.fspeed > target) { sw.fspeed *= 0.95f; return; }
+            if (sw.fspeed > 0.1f * target) { sw.fspeed *= 0.96f; return; }
+        } else mario_sound("亀ジェット泳ぎ");
+        if (sw.fspeed < target) {
+            if (sw.fspeed < 1.0f) sw.fspeed = 1.0f;
+            sw.fspeed *= 1.02f;
+            if (sw.ring_t) sw.fspeed *= 1.5f;
+        } else if (sw.fspeed > target) sw.fspeed *= 0.98f;
+        else sw.fspeed = target;
+        return;
+    }
     float acc = sw_ring_acc(); /* ringDash */
     if (!sw.ring_t) return;
     float target = acc * MC.mSwimFrontMaxSpeed;
@@ -16716,7 +16783,7 @@ static void sw_decide_animation(Player *m) /* decideAnimation */
 {
     float speeds[4] = {1.0f, MC.mSwimSurfaceSpeed, MC.mSwimWaterSpeed, MC.mSwimDriftSpeed};
     (void)m;
-    if (sw.jet_t) return;
+    if (sw.jet_t) { if (!sw_anim_busy()) m_anim("水泳ジェット"); return; } /* (水泳ジェット the default) */
     if (m_upper_on("水泳水面初期移動") && m_sz < 0.1f) m_upper_stop();
     if (sw_anim_busy() && !m_anim_on("水泳上昇呼吸")) {
         if (fabsf(m_sx) < 0.1f) { m_stop_anim("水泳ターン左", NULL); m_stop_anim("水泳ターン右", NULL); }
@@ -16818,10 +16885,12 @@ static void sw_pushed_by_wall(Player *m) /* pushedByWaterWall: the ocean's edge 
         sw.vangle = ang_abs(fo.head, m->up);
     } else { blend_sphere(sw.front, d, &sw.front, 0.2f); sw.t44 = 30; }
 }
+static void sw_drop_jet(Player *m, int damage);
 static void sw_add_faint(Player *m, V3 dir) /* addFaint */
 {
     if (dm_after()) return;
     if (!sw.dmg_type) dmg.a41E = 150;
+    sw_drop_jet(m, 0);
     sw.knock_t = MC.mWaterInnerFaintTime;
     m_anim("水泳ダメージ");
     mario_sound("水中ダメージ"); mario_sound("声水中ダメージ"); mario_sound("ダメージ");
@@ -16838,6 +16907,7 @@ static void sw_add_damage(Player *m, V3 dir) /* addDamage */
 {
     if (dm_after()) return;
     if (!sw.dmg_type) dmg.a41E = 180;
+    sw_drop_jet(m, 0);
     sw.fspeed = 0.0f;
     mario_sound(sw.dmg_type ? "壁衝突" : "ダメージ");
     if (sw.on_surface) {
@@ -16977,8 +17047,9 @@ static void sw_start(Player *m) /* Mario::startSwim and MarioSwim::start */
     sw.b1D = 0; sw.b1E = 0;
     if (m_anim_on("飛び込みジャンプ")) r1e = 1;
     if (m_anim_on("後方飛び込みジャンプ")) { r1e = 1; m_front(m, vmul(m->face, -1.0f)); }
-    sw.jet_t = 0;
+    if (!m_carry_jet()) sw.jet_t = 0; /* (!_468) */
     if (sw.b9D == 4) r1d = 1;
+    if (sw.jet_t && was_jumping && !m->digital) r1e = 2;
     m->digital = 0;
     if (m_anim_on("リングダッシュ")) r1e = 2;
     if (m_anim_on("水泳スピン移動") || m_anim_on("水泳スピンジャンプ")) r1e = 3;
@@ -17002,7 +17073,7 @@ static void sw_start(Player *m) /* Mario::startSwim and MarioSwim::start */
         if (sw.state == SWS_SURFACE) { sw.dive_t = 0x3C; sw.fspeed = (0.2f + 0.1f * f) * MC.mSwimFrontMaxSpeed; }
         else if (m->drop_free || r1e) { /* mMovementStates._B (a forced jump) or a dive */
             sw.fspeed = 10.0f;
-            m_anim("水泳ジャンプダイブ回転");
+            m_anim(sw.jet_t ? "水泳ジェット" : "水泳ジャンプダイブ回転");
             mario_named_fx("DiveBubble", NULL); /* 水面Ｚ沈降 */
             int k = r1e == 2 ? 1 : r1e == 3 ? 2 : 0;
             sw.lock_t = MC.mSwimSpecStartTimerA[k]; sw.sink_t = MC.mSwimSpecStartTimerB[k];
@@ -17025,6 +17096,14 @@ static void sw_start(Player *m) /* Mario::startSwim and MarioSwim::start */
         sw.knock_t = 0x5A;
         sw.knock = vmul(vtangent(m->last_move, sw.up), 0.5f);
     }
+    if (m_carry_jet()) { /* into the water with a shell */
+        if (!sw.jet_t) {
+            const Row *jr = &sc->objs[insts[jet.inst].row];
+            sw_start_jet(m, jr->arg[1] == 0); /* ATYPE_JET_TURTLE_SLOW */
+            r1e = 2; sw.at_surface_swim = 0; sw.vangle = 2.09439516068f; sw.on_surface = 0;
+        } else r1e = 2;
+    }
+    if (r1e == 2) m_anim(m_anim_on("水泳ジェット") ? "水泳ジェット" : "水泳ジェット開始");
     sw_life_by_time(m);
     menu_submeter_mode(1); /* changeLifeMeterModeWater */
     sw.next = SWX_NONE;
@@ -17090,7 +17169,10 @@ static int sw_update(Player *m)
         V3 h = vtangent(vsub(sw.surf_n, m->pos), m->up);
         float hgt = sw_far_height(m);
         if (vlen(h) > 100.0f || -sw.wdepth >= hgt || sw.knock_t || sw.wall_t) {
-            if (!m_anim_on("水泳ジャンプダイブ")) { sw.next = SWX_FALL; return 0; }
+            if (!m_anim_on("水泳ジャンプダイブ")) {
+                if (sw.jet_t) { sw_jet_jump(m, 1); return 0; }
+                sw.next = SWX_FALL; return 0;
+            }
         } else sw.state = SWS_ENTERING;
     }
     if (sw.shore && sw.wdepth > -50.0f && ang_abs_h(vmul(sw.shore_n, -1.0f), m_pad, m->up) < 0.196349546313f) {
@@ -17104,11 +17186,14 @@ static int sw_update(Player *m)
     if (sw.wall_t) sw.wall_t--;
     if (sw.on_surface || (sw.at_surface_swim && sw_check_trg_a())) {
         if (sw.spin_t || sw.spin_dash) sw.b9C = 0;
-        else {
+        else if (sw.jet_t) {
+            if (sw_check_trg_a()) { sw_jet_jump(m, 0); return 0; }
+            if (sw_stick_y() <= 0.0f) { sw.vangle = 3.1415927f / 2.0f; sw.stick_y = 1.0f; }
+        } else {
             int tmp = 0x1E;
             if (sw_check_lvl_a()) {
                 if (sw.b9C && (!m_anim_on("水上一掻き") || !sw.paddle_hold)) sw.paddle_hold++;
-                if ((sw.wall_t || m->wall) && sw_check_trg_a()) sw.paddle_hold = tmp;
+                if ((sw.wall_t || sw.jet_t || m->wall) && sw_check_trg_a()) sw.paddle_hold = tmp;
             } else {
                 sw.b9C = 1;
                 if (sw.paddle_hold && sw.paddle_hold < tmp) sw_surface_paddle();
@@ -17150,6 +17235,7 @@ static int sw_update(Player *m)
             m_anim(spinmove ? "水泳スピン移動" : "水泳スピンジャンプ");
             return 2;
         }
+        if (sw.jet_t && (sw_stick_y() < -0.1f || sw_check_lvl_a()) && sw_far_height(m) - sw.wdepth > 200.0f) { sw_jet_jump(m, 0); return 0; }
         if (sw.ring_t && sw_far_height(m) - sw.wdepth > 200.0f) {
             m->walk = clamp01(sw.fspeed / MC.mSwimToWalkSpd);
             m->connect = 0;
@@ -17169,6 +17255,10 @@ static int sw_update(Player *m)
             if (d2 >= 0.0f) sw.vangle = 1.5707964f + 0.9f * acosf(d1);
             else if (sw.fspeed > 1.0f) sw.vangle = 1.5707964f - 0.5f * acosf(d1);
             else { sw.t38 = 0x3C; sw.vangle = 1.5707964f - acosf(d1); }
+            if (sw.jet_t && sw_far_height(m) < 100.0f) { /* 水底接触 */
+                sw.floor_t = 2; fx_swim_floor = 1;
+                sw.fspeed *= MC.mTurboReductionHitFloor;
+            }
         }
         sw.b1F = 0;
     }
@@ -17185,7 +17275,14 @@ static int sw_update(Player *m)
         float res = f1f;
         if (sw.on_surface && !sw.zsink_t) {
             if (!sw.b18) {
-                if (sw_check_trg_z() && !sw_7a7c()) {
+                if (sw.jet_t) {
+                    if (sw_stick_y() > 0.707f) { sw.vangle = MC.mZsinkAngleX; sw.at_surface_swim = 0; sw.b1E = 0; }
+                    sw.stick_y = sw.stick_y * MC.mSwimRotXIneT + sw_stick_y() * (1.0f - MC.mSwimRotXIneT);
+                    sw.stick_x = 2.5f * (m_sx * (1.0f - MC.mSwimRotZIneT));
+                    float k = 1.0f;
+                    if (sw_stick_y() < 0.0f) k += 2.0f * -sw_stick_y();
+                    sw.stick_x *= k;
+                } else if (sw_check_trg_z() && !sw_7a7c()) {
                     m_upper_stop();
                     m_anim("水泳潜り");
                     mario_named_fx("DiveBubble", NULL);
@@ -17203,8 +17300,13 @@ static int sw_update(Player *m)
                 mario_named_fx("DiveBubble", NULL);
                 sw.zsink_t = MC.mZsinkStartTimer;
             }
-            sw.stick_y = sw.stick_y * MC.mSwimRotXIne + sw_stick_y() * (1.0f - MC.mSwimRotXIne);
-            sw.stick_x = sw.stick_x * MC.mSwimRotZIne + m_sx * (1.0f - MC.mSwimRotZIne);
+            if (sw.jet_t) {
+                sw.stick_y = sw.stick_y * MC.mSwimRotXIneT + sw_stick_y() * (1.0f - MC.mSwimRotXIneT);
+                sw.stick_x = sw.stick_x * MC.mSwimRotZIneT + m_sx * (1.0f - MC.mSwimRotZIneT);
+            } else {
+                sw.stick_y = sw.stick_y * MC.mSwimRotXIne + sw_stick_y() * (1.0f - MC.mSwimRotXIne);
+                sw.stick_x = sw.stick_x * MC.mSwimRotZIne + m_sx * (1.0f - MC.mSwimRotZIne);
+            }
         }
         if (!sw.at_surface_swim && !sw.idle_t && sw.lock_t) sw.vangle += res * (sw.stick_y * MC.mSwimRotSpeedX);
         if ((sw.fspeed < cTurnMotionSpeedS || sw.on_surface || sw_check_lvl_a() || sw_check_lvl_z()) && m_anim_on("水泳一掻き") &&
@@ -17233,6 +17335,7 @@ static int sw_update(Player *m)
         } else target = cNeutralAngleWaitS + (cUpperAngleWaitS - cNeutralAngleWaitS) * -sy;
         float bl = 0.05f;
         if (sw.fspeed > 5.0f && (bl -= bl * (5.0f / sw.fspeed)) < 0.0f) bl = 0.0f;
+        if (sw.jet_t) bl *= sw.b88 ? MC.mSwimXJetRotRatioRed : MC.mSwimXJetRotRatio;
         if (sw.at_surface_swim) { target = 0.523598790169f; bl = 0.01f; }
         if (sw.on_surface) target = 0.523598790169f;
         if (sw.zsink_t) { bl = 0.15f; target = MC.mZsinkAngleX; }
@@ -17296,7 +17399,8 @@ static int sw_update(Player *m)
         sw_add_vel(m, sw.knock);
         if (sw.knock_t < 0x78) sw.knock = vmul(sw.knock, 0.98f);
     }
-    sw_add_vel(m, sw.stream); /* (the shell's: x mTurboReductionStream) */
+    if (sw.jet_t) sw_add_vel_s(m, sw.stream, MC.mTurboReductionStream);
+    else sw_add_vel(m, sw.stream);
     {
         V3 sd = sw.stream;
         float l = vlen(sd);
@@ -17522,6 +17626,26 @@ void game_test_sidestep_input(int frame)
         printf("sidestep f %d: on %d w8 %d tsi %d walk %.2f grounded %d jumping %d clip %s face.n %.2f pad.n %.2f sz %.2f pos %.0f %.0f %.0f\n", frame,
                m->side_step, mw.w8, m->tsi, m->walk, m->grounded, m->jumping, mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-",
                vdot(m->face, wn), vdot(m_pad, wn), m_sz, m->pos.x, m->pos.y, m->pos.z);
+}
+/* Test builds (JETSWIM_TEST): from Mario's first free frame he takes the first JetTurtle (10), is put in the water
+ * holding it (60): the stick ahead jets him, Z held brakes (200-260), a spin throws the shell (330), then A on the
+ * surface; his jet timer, speed and the shell's phase logged */
+int game_test_jet(int phase);
+void game_test_jetswim_input(int frame)
+{
+    static int free_at = -1;
+    Player *m = mario;
+    if (free_at < 0) { if (demo_on || !m->grounded || m->launch >= 0 || starter >= 0) return; free_at = frame; }
+    int t = frame - free_at;
+    if (t == 10) printf("jetswim test: shell row %d\n", game_test_jet(0));
+    if (t == 60) printf("jetswim test: water row %d, carrying %d\n", game_test_swim(), m_carry_jet());
+    if (t < 60) return;
+    pad_force_stick = t >= 80 && t < 420; pad_force_lx = 0; pad_force_ly = 0.67f;
+    pad_force = (t >= 200 && t < 260) ? PAD_R1 : (t >= 330 && t < 333) ? PAD_SQUARE : (t >= 420 && t < 423) ? PAD_CROSS : 0;
+    if (t % 5 == 0 && t <= 520)
+        printf("jetswim f %d: swim %d jet_t %d b88 %d speed %.1f shell %d/%d surf %d vangle %.2f clip %s pos %.0f %.0f %.0f\n", t, sw.on, sw.jet_t, sw.b88,
+               sw.fspeed, jet.inst >= 0 ? insts[jet.inst].row : -1, jet.phase, sw.on_surface, sw.vangle,
+               mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-", m->pos.x, m->pos.y, m->pos.z);
 }
 /* Mario::saveLastSafetyTrans: on his feet with every ground sensor on (_1C._11), on a Normal / NoSlip / Sand / Glass /
  * WaterBottom / Wet / NoStampSand floor (_960), no wall met, not on a slip polygon, over 160 from the ceiling, under 10
