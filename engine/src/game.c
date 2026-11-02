@@ -1137,6 +1137,7 @@ static const float *scene_gpos(const char *name) /* MR::findNamePos: a GeneralPo
     return NULL;
 }
 static int dino_demo_on, ota_demo_on; /* whose demo camera runs */
+static const char *boss_demo_cls(void);
 static int demo_dino_damage; /* tryStartDemoMarioPuppetable "ディノパックンダメージ": Mario waits from Pulled to its damage's end */
 static int star_demo;      /* PowerStar::exeStageClearDemo: frames since a star was taken + 1, 0 none */
 static float star_demo_m[16]; /* its camera's frame: at the star, facing the way Mario looked */
@@ -29802,7 +29803,7 @@ static int star_demo_update(const Inst *in, int t, V3 sp)
 {
     V3 up = up_at(sp, v3(in->m[4], in->m[5], in->m[6]));
     if (t == 0) {
-        if (!pd_try_start("パワースター出現", in->row)) return 0;
+        if (!boss_demo_cls() && !pd_try_start("パワースター出現", in->row)) return 0; /* (in a boss's demo: that one goes on) */
         audio_move_volume(0.0f, 5); /* moveVolumeStageBGM / SubBGM(0, 5) */
         int cr = star_cam_row(in);
         int cam = row_camset[cr] != -1 && /* startActorCameraTargetOther(getAppearCameraActor, getAppearCameraInfo, the star) */
@@ -29812,7 +29813,7 @@ static int star_demo_update(const Inst *in, int t, V3 sp)
                star_wait[in->row] > 0 ? sc->types + 32 * sc->objs[star_wait[in->row] - 1].type : "-", cr, row_camset[cr], cam ? "on" : "none");
     }
     camera_event_target(up, sp);
-    if (t == 290) { /* resetCameraLocalOffset, endActorCamera, endAppearDemo */
+    if (t == 290) { /* resetCameraLocalOffset, endActorCamera, endAppearDemo (_11C: not its own demo) */
         camera_event_stop();
         pd_end("パワースター出現");
         audio_move_volume(1.0f, 60);
@@ -30829,7 +30830,8 @@ static void dx_init(const unsigned char *blob)
  * game_update's update_* are gated by class (lq_cls): one runs while a DemoExecutor demo is on only if its class is a
  * cast of the demo or always moves; the skinned clips, the rotors and the railers are gated by row. ponytail: one
  * class per update_* (a cast keeps its whole class moving, the other classes of that update_* stop with it); the
- * programmable demos (DinoPackun, OtaKing, TicoFat, the vine, the talks) do not stop the scene; loop effects keep
+ * programmable demos of TicoFat, the vine and the talks do not stop the scene (DinoPackun's and OtaKing's do:
+ * boss_demo_cls; the power star appear demo and the other pd_try_start ones do); loop effects keep
  * their particles (requestMovementOffAllLoopEmitters: ours stop emitting when their owner's update_* stops) */
 static int dx_always_moves(const char *cls) /* registerDemoSimpleCastAll without a condition, or in its stage */
 {
@@ -30842,8 +30844,13 @@ static int dx_always_moves(const char *cls) /* registerDemoSimpleCastAll without
         for (unsigned i = 0; i < sizeof astro / sizeof astro[0]; i++) if (!strcmp(cls, astro[i])) return 1;
     return !strncmp(game_stage_name, "HeavensDoorGalaxy/", 18) && !strcmp(cls, "EarthenPipe");
 }
+/* the bosses' own demos (DinoPackunDemo tryStartDemoMarioPuppetable, OtaKing::startDemo) stop the scene as well but
+ * for the boss and the power star it brings out in them (appearPowerStarContinueCurrentDemo: requestMovementOn) */
+static const char *boss_demo_cls(void) { return dino_demo_on ? "DinoPackun" : ota_demo_on ? "OtaKing" : NULL; }
 static int dx_cls_moves(const char *cls) /* an update_* of that class runs now */
 {
+    const char *bc = boss_demo_cls();
+    if (bc && !pd.name) return !strcmp(cls, bc) || !strcmp(cls, "PowerStar") || dx_always_moves(cls);
     if (pd.name) return (pd.row >= 0 && !strcmp(sc->types + 32 * sc->objs[pd.row].type, cls)) || dx_always_moves(cls);
     if (!dx.on) return 1;
     const Demo *d = &demos[dx.cur];
@@ -30853,6 +30860,7 @@ static int dx_cls_moves(const char *cls) /* an update_* of that class runs now *
 }
 static int dx_row_moves(int row) /* the placement moves now */
 {
+    if (boss_demo_cls() && !pd.name) return dx_cls_moves(sc->types + 32 * sc->objs[row].type);
     if (pd.name) return row == pd.row || dx_always_moves(sc->types + 32 * sc->objs[row].type);
     if (!dx.on) return 1;
     const Demo *d = &demos[dx.cur];
