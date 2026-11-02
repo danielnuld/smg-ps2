@@ -658,7 +658,8 @@ static struct { int phase, t, target; V3 vel; float power; } gcap; /* GCapture (
 static int test_r2; /* test builds: R2 held */
 static int test_noclip; /* test builds: the walkers move though clipped (game_test_unclip) */
 static struct { int inst, cool; V3 pt, vel, side, front; } jb = {.inst = -1}; /* JumpBranch (jbranch_update) */
-static struct { int inst, phase, t, drop; V3 dir; } jet = {.inst = -1}; /* the JetTurtle Mario holds or threw (update_jets); drop:
+static struct { int inst, phase, t, drop, row; V3 dir, head, vel; } jet = {.inst = -1}; /* the JetTurtle Mario holds or threw
+                                                                * (update_jets; row / head / vel kept for a rebind); drop:
                                                                 * MarioSwim::dropJet's releaseThrowMemoSensor asked */
 static int m_carry_jet(void) { return jet.inst >= 0 && jet.phase == 1; } /* MarioActor _468 / getCarrySensor */
 static struct { int inst, phase, t, spins; } flf = {.inst = -1}; /* the Fluff Mario rides (fluff_update) */
@@ -4526,8 +4527,8 @@ static void game_rebind_(void)
         if (insts[i].plant) { insts[i].kcl_ready = 1; place_plants(&insts[i]); }
     memset(zone_kcl, 0, sizeof zone_kcl);
     for (int i = 0; i < ninsts; i++) if (insts[i].kcl && insts[i].zone < 64) zone_kcl[insts[i].zone] = 1;
-    int jet_row = jet.inst >= 0 ? insts[jet.inst].row : -1;
-    V3 jet_head = jet.inst >= 0 ? insts[jet.inst].head : v3(0, 0, 0), jet_vel = jet.inst >= 0 ? insts[jet.inst].hvel : v3(0, 0, 0);
+    int jet_row = jet.inst >= 0 ? jet.row : -1; /* (insts is the new set here: the old index means nothing) */
+    V3 jet_head = jet.head, jet_vel = jet.vel;
     flf.inst = coc.inst = jb.inst = coc.wait = -1;
     jet.inst = -1;
     for (int i = 0; i < ninsts && jet_row >= 0; i++)
@@ -11585,6 +11586,7 @@ static void update_jets(void)
                 printf("jet turtle row %d: thrown" "\n", in->row);
             }
             jet_place(in);
+            jet.row = in->row; jet.head = in->head; jet.vel = in->hvel;
             continue;
         }
         if (jet.inst == i && jet.phase == 2) { /* Throwing */
@@ -11609,11 +11611,12 @@ static void update_jets(void)
             }
             if (gone) { jet.inst = -1; jet.phase = 0; jet_reset(in); continue; }
             jet_place(in);
+            jet.row = in->row; jet.head = in->head; jet.vel = in->hvel;
             continue;
         }
         if (jet.inst < 0 && !row_turn[in->row] && vlen(vsub(c, vadd(in->head, vmul(mario->up, 50.0f)))) < 80.0f + HIT_BODY_R) {
             if (swimming && !sw_start_jet(mario, type == 1)) continue; /* receiveMsgTaken: startJet (ATYPE_JET_TURTLE_SLOW 1) */
-            jet.inst = i; jet.phase = 1; jet.t = 0; /* TakenStart */
+            jet.inst = i; jet.phase = 1; jet.t = 0; jet.row = in->row; jet.head = in->head; jet.vel = v3(0, 0, 0); /* TakenStart */
             printf("jet turtle row %d: taken" "\n", in->row);
         }
     }
