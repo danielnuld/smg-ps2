@@ -1005,7 +1005,7 @@ static void scene_load(void)
         for (u32 i = 0; i < sizeof limits / sizeof limits[0]; i++)
             if (!strcmp(limits[i].scen, scen)) { game_set_time_limit(limits[i].secs); printf("time limit %d s\n", limits[i].secs); }
     }
-    game_bgm_stage(); /* the scenario's stage BGM (game.c: music_tab.h) */
+    game_bgm_first(); /* the scenario's stage BGM (game.c: music_tab.h) */
     {
         unsigned char start[64], near[64]; /* the start zone's chain and what streaming wants around Mario there (OceanRing 4
                                             * starts over another zone: without it, no ground for 2 s) */
@@ -1293,6 +1293,9 @@ int main(void)
 #endif
 #if defined(PACKS) && defined(GATEWAY_TEST)
         pad_force = game_test_gateway(frame) && frame % 40 < 3 ? PAD_CROSS : 0; /* A tapped while a talk waits */
+#endif
+#if defined(PACKS) && defined(MOVES_TEST)
+        pad_force = game_test_moves(frame); /* Mario's moves driven by the pad (game_test_moves) */
 #endif
 #if defined(PACKS) && defined(SPINGATE_TEST)
         { /* the spin's gate (スピン権利): Square tapped every 200 frames while Mario is free, his spin timer 2 frames
