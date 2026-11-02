@@ -217,6 +217,12 @@ Second console round (2026-10-24), from Daniel's report:
   (壁右歩き / 壁左歩き at 6), A jumps off, the spin punches off. Test: `build.sh sidestep <blob> KoopaJrShipLv1Galaxy/1`
   (the nearest vertical wall: lean, wait, walk; the airship's cannon shells interrupt it now and then). ponytail:
   checkWallJumpCode (barrier / water walls) not ported.
+- feat/mario-slider: MarioSlider after Petari (checkSliderMode / startSlider, start / update / close, calcGroundAccel,
+  calcWallHit, postureCtrl, setHipSliderTilt; checkGroundOnSlope's 100 and steep faces on it; no ground spin on it):
+  on Slider floors (code 9: ForestHomePlanet in HoneyBeeKingdom, HugeBattleShipPlanet, IceMountainPlanet,
+  ScaleDownRelayPlanet) Mario slides sitting (スライダー尻) up to mSliderMaxSpeed 32, steered and braked by the stick,
+  hands over to MarioSlip on a slip floor, A jumps with the slide's speed. Test: `build.sh slider <blob>
+  HoneyBeeKingdomGalaxy/1`.
 
 ## Rules
 

@@ -119,6 +119,7 @@ typedef struct {
     int stand_neutral, stand_turn; /* _40C, _750 */
     float corr;         /* _74C: the drawn turn left (createCorrectionMtx eases it out over _750, to pi over _754) */
     int corr_flip, slip_floor, slip_task; /* _754, mMovementStates._35 (isSkatableFloor), taskOnSlipTurn pushed */
+    int rot_task;                      /* taskOnRotation (4) pushed: the helicopter jump's turn */
     V3 slip_from, slip_move; /* _220 (the front the slip turn left), _2B8 (its getLastMove) */
     int slow_start, start_spin, start_spin2; /* _404, _3FA, _3FC */
     int brake1, brake2; /* _71E, _71F */
@@ -152,6 +153,7 @@ typedef struct {
     int s406, s408, s76C, s774, fly11, s12, s42C, bee_wall, s9F2, s420;
     int skate, sk14, sk18, sk19, sk1A, sk1B, sk1C, sk1D; /* MarioSkate: on, its _14 _18 _19 _1A _1B _1C _1D */
     int side_step;      /* MarioSideStep (MarioStatus_SideStep) on */
+    int slider;         /* MarioSlider (MarioStatus_Slider) on */
     int rabbit, rb25, rb26, rb27, rb28, rb68, rb69, rb2A, rb6A; /* MarioRabbit: on, its flags and counters */
     int teresa, t418, ts42, ts44, ts46, ts48, ts58, ts1C4, ts1C; /* MarioTeresa: on, Mario::_418 (through walls), its own */
     float ts20, ts24, ts50; V3 ts14, ts28, ts34;                /* its height, wait height, _50, jump, wind, velocity */
@@ -162,6 +164,7 @@ typedef struct {
 } Player;
 static float angle_d(const Player *m, V3 n);
 static void mario_trample(void); /* MarioActor::doTrampleJump */
+static void mario_trample_auto(void); /* doTrampleJump on an ATYPE_PLAYER_AUTO_JUMP sensor */
 
 /* SuperSpinDriver (Petari SuperSpinDriver.cpp, SpinDriverShootPath.cpp, ParabolicPath.cpp): bind radius 300,
  * ShootStart 45 frames (Mario pulled to the centre over 15), then Shoot along the path for mFlightTime (arg0,
@@ -11901,6 +11904,11 @@ static void foo_close(void);
 static int swim_update(Player *m); /* (MarioSwim: before update_mario) */
 static int side_step_update(Player *m);
 static void side_step_close(Player *m);
+static int slider_update(Player *m);
+static void slider_close(Player *m);
+static void m_start_slider(Player *m);
+static void m_stop_jump(Player *m);
+static Tri m_gtri;
 static void m_check_wall_push(Player *m);
 
 /* --- Mario's movement --------------------------------------------------------------------------------------
@@ -13052,6 +13060,7 @@ static void jump_hop(Player *m)
     if (!m->jumping) return;
     if (!m_rising(m)) m->vup = MC.mClapJumpBonusFalling;
     else if (m->vup < MC.mHopLimit) { m->vup += MC.mClapJumpBonusRising; if (m->vup > MC.mHopLimit) m->vup = MC.mHopLimit; }
+    if (m->jump_kind == 11) m->jump_kind = 0;
 }
 
 static int fireball_wall_attack(V3 p);
@@ -13270,10 +13279,10 @@ static void m_force_free_jump(Player *m, V3 v)
  * in turn, the hopper's ホッパーふみジャンプA / B. _988 back to 0 on the ground (initForJump). ponytail: no ふみつぶし
  * effect (not in the slice's Mario effects) */
 static int m_trample_n; /* MarioActor _988 */
-static void m_trample(Player *m)
+static void m_trample_jump(Player *m, float normal)
 {
     if (foo_active()) return;
-    V3 v = vadd(vtangent(m_jv(m), m->up), vmul(m->up, MC.mTrampleNormal));
+    V3 v = vadd(vtangent(m_jv(m), m->up), vmul(m->up, normal));
     if (m_trample_n == 2) v = vmul(v, pad_held(PAD_CROSS) ? 1.2f : 1.5f);
     if (pad_held(PAD_CROSS)) v = vadd(v, vmul(m->up, MC.mTrampleLong)); /* checkLvlA */
     m_force_free_jump(m, v);
@@ -13291,6 +13300,7 @@ static void m_trample(Player *m)
     m_pad_vib(0);
     m->no_air_walk = 0; m->wall_free = 0; /* _2F, _22 */
 }
+static void m_trample(Player *m) { m_trample_jump(m, MC.mTrampleNormal); }
 /* MarioActor::doTrampleJump, an object's sensor (not ATYPE_PLAYER_AUTO_JUMP) taking his trample: off a wall, the
  * tornado's air walk and the spin back (_402, _2B), trampleJump. ponytail: no 砲弾 / 全滅用クリボー combo count
  * (playSoundTrampleCombo, its 1-up) */
@@ -13301,6 +13311,24 @@ static void mario_trample(void)
     m->air_spin = MC.mAirWalkTimeTornado;
     m->spin_lock = 0;
     m_trample(m);
+}
+/* doTrampleJump on an ATYPE_PLAYER_AUTO_JUMP sensor (a spring: JumpBeamer, JumpGuarder, BegomanSpring): _988 0,
+ * trampleJump(mTrampleBegoma, mTrampleLong), ヘリコプタージャンプ (changeAnimationNonStop), rumble 2, the helicopter
+ * sound, startRotationTask(4), kind 11 (procJump: gravity mGravityJumping[0] rising and mTrampleBegomaOpenTime frames
+ * into the fall, then [11], the drop capped at mMaxDropSpeed[3]; doAirWalk: free steering falling, at most 7) */
+static void mario_trample_auto(void)
+{
+    Player *m = mario;
+    if (m->walling) m->walling = 0; /* closeStatus */
+    m->air_spin = MC.mAirWalkTimeTornado;
+    m->spin_lock = 0;
+    m_trample_n = 0;
+    m_trample_jump(m, MC.mTrampleBegoma);
+    m_anim("ヘリコプタージャンプ");
+    m_pad_vib(2);
+    mario_sound("ヘリコプタージャンプ");
+    m->rot_task = 1;
+    m->jump_kind = 11;
 }
 
 static void m_init_jump(Player *m) /* initJumpParam */
@@ -13405,7 +13433,7 @@ static void m_air_walk(Player *m)
     int inhibit = 0;
     float fd = vdot(md, m->face);
     side = vsub(md, vmul(m->face, fd));
-    if (m->jump_kind == 8) inhibit = 1;
+    if (m->jump_kind == 8 || m->jump_kind == 11) inhibit = 1;
     else if (fd >= 0) {
         float red = m->jump_kind == 5 ? MC.mSquatJumpFrontReduction : MC.mJumpFrontReduction;
         int begin = m->jump_kind == 5 ? MC.mSquatJumpFrontReductionBTime : MC.mJumpFrontReductionBeginTime;
@@ -13425,10 +13453,12 @@ static void m_air_walk(Player *m)
         float al = vdot(vnorm(md), vnorm(m_jv(m)));
         if (al < 0) m->hvel = vadd(m->hvel, vmul(m->hvel, MC.mAirWalkSpeedKiller * al));
     }
-    if (m->jump_kind == 8) m->hvel = vadd(m->hvel, vmul(md, MC.mWalkSpeed * 5.0f / MC.mAirWalkTimerFact2));
+    int heli_fall = m->jump_kind == 11 && !m_rising(m);
+    if (m->jump_kind == 8 || heli_fall) m->hvel = vadd(m->hvel, vmul(md, MC.mWalkSpeed * 5.0f / MC.mAirWalkTimerFact2));
     else m->hvel = vadd(m->hvel, vmul(md, MC.mWalkSpeed * MC.mAirWalkTimerFact1 / (m->air_timer + MC.mAirWalkTimerFact2)));
-    if (!m_rising(m)) m->vel = vadd(m->vel, vmul(md, MC.mWalkSpeed * MC.mAirWalkTimerFact3));
-    float cap = m->jump_kind == 8 ? 6.0f : MC.mMaxJumpSpeed;
+    if (heli_fall) mario_sound("滞空中");
+    if (m->jump_kind != 11 && !m_rising(m)) m->vel = vadd(m->vel, vmul(md, MC.mWalkSpeed * MC.mAirWalkTimerFact3));
+    float cap = m->jump_kind == 8 ? 6.0f : m->jump_kind == 11 ? 7.0f : MC.mMaxJumpSpeed;
     if (vlen(m->hvel) > cap) m->hvel = vmul(vnorm(m->hvel), cap);
 }
 
@@ -13483,6 +13513,7 @@ static void m_proc_jump(Player *m, int a1)
     if (bee_on_air(m)) m->s76C = MC.mBeeGravityReviveTime;
     if (m->s406) m->s406--;
     float acc = m->jump_kind == 12 ? 1.8f : MC.mGravityJumping[m->jump_kind == 13 ? 9 : m->jump_kind];
+    if (m->jump_kind == 11 && (m_rising(m) || m->fall_t < MC.mTrampleBegomaOpenTime)) acc = MC.mGravityJumping[0];
     if (m->jump_kind == 8 && m->spin_kind == 1) acc = MC.mSpinJumpGravity;
     if (m->jump_kind == 8 && !m_rising(m)) acc *= 0.25f;
     float cling = 1.0f;
@@ -13497,7 +13528,9 @@ static void m_proc_jump(Player *m, int a1)
     m->vel = vadd(m_jv(m), bee_add); /* addVelocity(mJumpVec) and the bee's addVelocity(gravity, _770) */
     m->vup -= acc * gs;
     m_wall_jump_hit(m);
-    float max_drop = player_mode == PM_BEE && !m_rising(m) ? MC.mMaxDropSpeed[4] : MC.mMaxDropSpeed[0];
+    float max_drop = MC.mMaxDropSpeed[0];
+    if (m->jump_kind == 11 && !m_rising(m) && m->fall_t >= MC.mTrampleBegomaOpenTime) max_drop = MC.mMaxDropSpeed[3];
+    if (player_mode == PM_BEE && !m_rising(m)) max_drop = MC.mMaxDropSpeed[4];
     if (!(m->jump_kind == 13 && m->drop_free) && -m->vup >= max_drop) m->vup = -max_drop;
     m_air_walk(m);
     m->air_timer++;
@@ -13998,7 +14031,7 @@ static void m_swing(Player *m)
             mario_play("spin2nd", 1.0f, 0);
             mario_sound("パンチ風切り"); /* updateSwingAction: the upper animation changed */
             m->spin_timer = 15; m->spin_t = 0; m->walk = 0;
-        } else if (m->s23) return; /* !isEnableSpinPunch */
+        } else if (m->s23 || m->slider) return; /* !isEnableSpinPunch (_23, MarioSlider) */
         else if (m->squat) { /* squatting under no ceiling within 160: サマーソルト */
             if (m_dist_to_ceil(m) <= 160.0f) return;
             m_anim("サマーソルト");
@@ -15373,6 +15406,101 @@ static int side_step_update(Player *m) /* MarioSideStep::update: 0 ends it */
     return m_fix_walling(m, 0);
 }
 
+/* MarioSlider.cpp after Petari (Mario::isSliderFloor / checkSliderMode / startSlider, MarioSlider::start / update /
+ * close / calcGroundAccel / calcWallHit / postureCtrl): on his feet on a Slider floor (code 9) he sits and slides
+ * (スライダー尻): his slide (_14, from his last velocity along the ground) loses mSliderBrakePow a frame (over 20
+ * another tenth of the stick pulled back, eased mSliderBrakeIne), gains mSliderSlopePow down the slope (_2C) and
+ * mSliderWeightPow x the stick sideways (eased mSliderWeightIne), up to mSliderMaxSpeed, 15 into the ground; his front
+ * turns to it (mSliderFrontTurnRatio), walls turn it; 10 frames off the slider he drops (onto a slip polygon he slides
+ * on as MarioSlip), A jumps with it. postureCtrl leans his drawn up about his front by the stick (sl.up) */
+static struct { V3 v14, v20, v2C, up; float f38, f3C; int c40; } sl;
+static void m_start_slider(Player *m) /* startSlider */
+{
+    if (m->slider) return;
+    if (m->hip && m->jumping) { /* mMovementStates._B (unreached from checkSliderMode: never jumping) */
+        mario_sound("尻ドロップ着地"); mario_sound("声尻ドロップ着地");
+        m_pad_vib(3);
+    }
+    m_stop_walk(m);
+    m_stop_jump(m);
+    /* MarioSlider::start */
+    m->slider = 1;
+    float d;
+    sl.v14 = kill_elem(m->prev_vel, m->ground_n, &d); /* _16C along _368 */
+    sl.v20 = m->face;
+    sl.up = m->up; /* (_1FC) */
+    m->squat = 0; /* cancelSquatMode */
+    m_anim("スライダー尻");
+    sl.c40 = 10; sl.f38 = 0.0f; sl.f3C = 0.0f;
+}
+static void slider_close(Player *m) /* MarioSlider::close: スライダー尻 back to 落下 / 基本 */
+{
+    m->slider = 0;
+    m_stop_anim("スライダー尻", NULL);
+}
+static void slider_wall_hit(Player *m) /* calcWallHit */
+{
+    float d;
+    if (mw.w1A) {
+        V3 n = tri_n(&mw.side), v = kill_elem(sl.v14, n, &d);
+        if (d < 0.0f) {
+            if (-d < 10.0f) d = -10.0f;
+            sl.v14 = vsub(v, vmul(n, d));
+        }
+    }
+    if (mw.w8) {
+        V3 n = tri_n(&mw.front), v = kill_elem(sl.v14, n, &d);
+        if (d < 0.0f) {
+            if (-d < 10.0f) d = -10.0f;
+            sl.v14 = vsub(v, vmul(n, 0.5f * d));
+            if (!near0(sl.v14)) m_front(m, vnorm(sl.v14));
+        }
+    }
+}
+static int slider_update(Player *m) /* MarioSlider::update: 0 ends it */
+{
+    if (!(!m->jumping && m->grounded && m->floor == 9)) { /* !checkSliderMode */
+        if (m->grounded && slip_polygon(m, tri_attr(&m_gtri) & 0x3F, tri_n(&m_gtri))) { m->s8F8 = sl.v14; m->s8F0 = 10.0f; return 0; }
+        if (--sl.c40 == 0) { m_try_drop(m); m_set_jv(m, m->last_move); return 0; }
+    } else sl.c40 = 10;
+    { /* calcGroundAccel: down the slope along the ground */
+        V3 c = vcross(m->ground_n, vmul(m->up, -1.0f));
+        c = near0(c) ? c : vnorm(c);
+        sl.v2C = vcross(c, m->ground_n);
+        sl.v2C = near0(sl.v2C) ? sl.v2C : vnorm(sl.v2C);
+    }
+    if (m_req_jump) { /* checkTrgA */
+        m->walk = vlen(sl.v14) / MC.mJumpFrontSpeed;
+        m_try_jump(m);
+        return 0;
+    }
+    sl.f38 = -m_sy * (1.0f - MC.mSliderBrakeIne) + sl.f38 * MC.mSliderBrakeIne;
+    sl.f3C = m_sx * (1.0f - MC.mSliderWeightIne) + sl.f3C * MC.mSliderWeightIne;
+    float sp = vlen(sl.v14) - MC.mSliderBrakePow, d;
+    if (sp > 20.0f) sp *= 1.0f - 0.1f * sl.f38;
+    V3 dir = sl.v14;
+    if (near0(dir)) dir = vmul(sl.v2C, MC.mSliderSlopePow);
+    if (near0(dir)) return 0;
+    dir = vnorm(dir);
+    V3 side = kill_elem(vcross(dir, m->ground_n), m->ground_n, &d);
+    side = near0(side) ? side : vnorm(side);
+    sl.v14 = near0(sl.v14) ? sl.v14 : vmul(vnorm(sl.v14), sp); /* setLength */
+    sl.v14 = vadd(sl.v14, vmul(sl.v2C, MC.mSliderSlopePow));
+    sl.v14 = vadd(sl.v14, vmul(side, sl.f3C * MC.mSliderWeightPow));
+    sl.v14 = kill_elem(sl.v14, m->ground_n, &d);
+    if (vlen(sl.v14) > MC.mSliderMaxSpeed) sl.v14 = vmul(vnorm(sl.v14), MC.mSliderMaxSpeed);
+    m->vel = vadd(m->vel, sl.v14);
+    m->vel = vadd(m->vel, kill_elem(vmul(m->ground_n, -15.0f), m->face, &d));
+    V3 h = vtangent(sl.v14, m->up);
+    if (!near0(h)) m_front_blend(m, vnorm(h), MC.mSliderFrontTurnRatio);
+    slider_wall_hit(m);
+    mario_sound("坂滑り");
+    /* postureCtrl: _1FC eased to _368 turned about his front by 0.2 x pi x _3C / 2 */
+    blend_sphere(sl.up, rot_axis(m->ground_n, m->face, 0.2f * (3.1415927f * sl.f3C / 2.0f)), &sl.up, MC.mSliderHeadRotateRatio);
+    sl.up = vnorm(sl.up);
+    return 1;
+}
+
 /* tryDrop: off a ledge (cDropFrontSpeed 2); a front / side wall within 80 of his ground place keeps him on the ground,
  * pushed off it a tenth of the rest. ponytail: mDrawStates._B, the carried move (_184), _340, _428 after the slope
  * slides, the bee's timers and ショート着地 are not kept */
@@ -15989,9 +16117,10 @@ static int m_check_ground(Player *m)
         mgc.s14 = 1;
         float dist = rising ? 10.0f : 60.0f;
         if (m->grounded) dist += 2.0f * fminf(fmaxf(angle_d(m, m->ground_n) - 30.0f, 0.0f), 40.0f);
+        if (m->slider) dist = 100.0f;
         if (!map_poly(vsub(m->pos, vmul(g, 30.0f)), vmul(g, dist), &hp, &t)) return 0;
         V3 n = tri_n(&t);
-        if (angle_d(m, n) >= 80.0f || vdot(g, n) > -0.1908f) return 0;
+        if (angle_d(m, n) >= 80.0f || (!m->slider && vdot(g, n) > -0.1908f)) return 0;
         m_set_ground(m, &t, hp);
         if (rising) return 0;
         mgc.s14 = 0;
@@ -17555,6 +17684,63 @@ void game_test_sidestep_input(int frame)
                m->side_step, mw.w8, m->tsi, m->walk, m->grounded, m->jumping, mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-",
                vdot(m->face, wn), vdot(m_pad, wn), m_sz, m->pos.x, m->pos.y, m->pos.z);
 }
+/* Test builds (SLIDER_TEST): from Mario's first free frame he is held over the first planet with Slider floors
+ * (ForestHomePlanet: HoneyBeeKingdom, HugeBattleShipPlanet: BattleShip, IceMountainPlanet: IceVolcano,
+ * ScaleDownRelayPlanet: OceanPhantomCave) until its collision is in, then put 100 over the highest Slider face of it
+ * (along the gravity there): he lands and slides; the stick right 60 frames, left 60, pulled back 20, then A */
+void game_test_slider_input(int frame)
+{
+    static int free_at = -1, row = -1, at = -1, done;
+    static V3 hold;
+    Player *m = mario;
+    if (free_at < 0) { if (demo_on || !m->grounded || m->launch >= 0 || starter >= 0) return; free_at = frame; }
+    frame -= free_at;
+    if (frame == 10) {
+        static const char *cls[] = {"ForestHomePlanet", "HugeBattleShipPlanet", "IceMountainPlanet", "ScaleDownRelayPlanet"};
+        for (int c = 0; c < 4 && row < 0; c++) {
+            int t = scene_type(sc, cls[c]);
+            for (u32 i = 0; t >= 0 && i < sc->nobjs && row < 0; i++) if (sc->objs[i].type == t) row = (int)i;
+        }
+        if (row >= 0) { hold = vadd(row_pos(&sc->objs[row]), vmul(m->up, 3000.0f)); test_nolost = 1; }
+        printf("slider test: planet row %d\n", row);
+    }
+    if (row < 0 || frame < 10) return;
+    if (!done) {
+        m->pos = hold; m->hvel = v3(0, 0, 0); m->vup = 0;
+        if (frame % 30) return;
+        float best = -1e30f;
+        V3 bp = hold, bn = m->up;
+        int n = 0;
+        for (int i = 0; i < ninsts; i++) {
+            if (insts[i].row != row || !insts[i].kcl) continue;
+            const unsigned *h = (const unsigned *)insts[i].kcl;
+            int np = (int)((h[3] - h[2]) / 16);
+            for (int p = 1; p < np; p++) {
+                if ((kcl_attribute(insts[i].kcl, p) & 0x3F) != 9) continue;
+                Tri t = {i, 0, p, insts[i].kcl};
+                V3 c = vmul(vadd(vadd(tri_pos(&t, 0), tri_pos(&t, 1)), tri_pos(&t, 2)), 1.0f / 3.0f), up = up_at(c, tri_n(&t));
+                float hgt = vdot(c, up);
+                n++;
+                if (vdot(tri_n(&t), up) > 0.5f && hgt > best) { best = hgt; bp = c; bn = tri_n(&t); }
+            }
+        }
+        printf("slider test f %d: %d Slider faces\n", frame, n);
+        if (!n) return;
+        done = 1; at = frame;
+        m->pos = vadd(bp, vmul(bn, 100.0f));
+        printf("slider test: put at %.0f %.0f %.0f n %.2f %.2f %.2f\n", m->pos.x, m->pos.y, m->pos.z, bn.x, bn.y, bn.z);
+    }
+    int t = frame - at;
+    pad_force_stick = 1; pad_force_lx = pad_force_ly = 0; pad_force = 0;
+    if (t >= 60 && t < 120) pad_force_lx = 0.67f;
+    else if (t >= 120 && t < 180) pad_force_lx = -0.67f;
+    else if (t >= 180 && t < 200) pad_force_ly = -0.67f;
+    else if (t >= 200 && t < 203) pad_force = PAD_CROSS;
+    if (t % 5 == 0 && t <= 600)
+        printf("slider f %d: on %d floor %d grounded %d jumping %d slip %d speed %.1f f38 %.2f f3C %.2f clip %s w %.2f %.2f %.2f %.2f pos %.0f %.0f %.0f\n", t,
+               m->slider, m->floor, m->grounded, m->jumping, m->s23, vlen(sl.v14), sl.f38, sl.f3C,
+               mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-", m_w[0], m_w[1], m_w[2], m_w[3], m->pos.x, m->pos.y, m->pos.z);
+}
 /* Mario::saveLastSafetyTrans: on his feet with every ground sensor on (_1C._11), on a Normal / NoSlip / Sand / Glass /
  * WaterBottom / Wet / NoStampSand floor (_960), no wall met, not on a slip polygon, over 160 from the ceiling, under 10
  * over his shadow, on under 15 degrees of an unmoved part: the place 5 / 8 his own, 3 / 8 the ground's corners, within
@@ -18010,6 +18196,7 @@ static void update_mario_(void)
     s24 = 0;
     if (m->s23 && angle_d(m, m->ground_n) >= 30.0f)
         s24 = map_poly(vadd(m->pos, vmul(m->ground_n, 100.0f)), vmul(m->s904, -150.0f), NULL, &t460);
+    if (!m->jumping && m->grounded && m->floor == 9) m_start_slider(m); /* checkSliderMode (isSliderFloor) */
     m_retain(m);
     if (m->grounded) m_trample_n = 0; /* initForJump */
     m_swing(m);
@@ -18026,6 +18213,7 @@ static void update_mario_(void)
         else { m_main_move(m); m_update_walk_speed(m); done = 1; }
     }
     if (!done && m->side_step) { if (!side_step_update(m)) side_step_close(m); done = 1; } /* MarioSideStep (a status) */
+    if (!done && m->slider) { if (!slider_update(m)) slider_close(m); done = 1; } /* MarioSlider (a status) */
     if (!done && m->skate) { if (!skate_update(m)) skate_close_(m); else done = 1; } /* MarioSkate (a status) */
     if (!done && m->rabbit && rabbit_update(m)) done = 1;                 /* MarioRabbit (a status) */
     if (!done && m->teresa && mteresa_update(m)) done = 1;                 /* MarioTeresa (a status) */
@@ -18051,6 +18239,10 @@ static void update_mario_(void)
     if (m->slip_task) { /* callExtraTasks: taskOnSlipTurn */
         if (!m_anim_on("ターンブレーキ滑り床")) { m_front(m, vmul(m->slip_from, -1.0f)); m->corr_flip = 0; m->corr = 0; m->slip_task = 0; }
         else { m->slip_move = vmul(m->slip_move, MC.mInertiaSlipTurn); m->vel = vadd(m->vel, m->slip_move); }
+    }
+    if (m->rot_task) { /* callExtraTasks: taskOnRotation (4) */
+        if (!m_anim_on("ヘリコプタージャンプ")) { m_yangle = 0.0f; m->rot_task = 0; }
+        else m_yangle += m_rising(m) ? MC.mTrampleBegomaRotRise : MC.mTrampleBegomaRotFall;
     }
     if (slipping) slip_frames++;
     if (!near0(m->s350) && !hg.on) { /* tryPushToVelocity (MarioStatus_Hang: kept out) */
@@ -18242,7 +18434,18 @@ static void update_mario_(void)
         int busy = mario_anim->clip_id >= 0 && !mario_anim->loop && !mario_anim->done && !m_anim_on("飛び込み準備"); /* (a walk / wait motion) */
         busy |= m_anim_on("ブレーキ滑り床") || m_anim_on("ターンブレーキ滑り床"); /* run's loops, not isWalkOrWaitingMotion */
         if (m->hip || m->magic || m->walling || m->sleep || dmg.st || hg.on) ; /* their own clips */
-        else if (m->side_step && m->grounded && !m->jumping) { /* MarioSideStep's clips are no walk motions */
+        else if (m->slider) { /* MarioAnimator::setHipSliderTilt: スライダー尻's four by the stick (setHipSlidingTilt) */
+            if (m_group_on("スライダー尻")) {
+                static const float px[4] = {0, 0, -1, 1}, py[4] = {1, -1, 0, 0};
+                float w[4];
+                for (int i = 0; i < 4; i++) {
+                    float d = sqrtf((px[i] - m_sx) * (px[i] - m_sx) + (py[i] - m_sy) * (py[i] - m_sy));
+                    w[i] = d >= 1.414213f ? 0.0f : (1.414213f - d) / 1.414213f;
+                    w[i] *= w[i];
+                }
+                m_set_weight(w, MC.mSliderTiltRatio);
+            }
+        } else if (m->side_step && m->grounded && !m->jumping) { /* MarioSideStep's clips are no walk motions */
             if (m_anim_on("壁押し")) { m_decide_walk_speed(m); m_check_wall_push(m); }
             else if (m->turning || m->turn_brake) m_decide_walk_speed(m);
             m_update_brake(m);
@@ -25960,16 +26163,33 @@ static void update_dossuns(void)
  * JumpBeamer.cpp after Petari (rbeamer 2; its body JumpBeamerBody, its head JumpBeamerHead at the body's Top joint):
  * hidden (Down's last frame) until the group attacks (Up, APPEAR SE), Wait; in reach (3200 / 500, SW_B) PreOpen, the
  * same Open / rings, then Close (Open's end) and Inter; out of reach the group goes Down (HIDE SE) and hides. Its
- * body (145 at Body, 35 up) only pushes Mario. A trample on it: HopStart (head HopStart, body Damage, HIT SE, the
- * begoman trample jump: mTrampleBegoma up) then HopWait 300 (its spring out), HopEnd (CLOSE_SPRING) back to Wait; a
- * trample in HopWait springs him (HopJump, TRAMPLE SE, mTrampleNormal up); a spin: HopStart; a hip drop throws him up
- * (forceJumpPlayer). ponytail: the shake level SEs, the head's BRK colours, no event camera, the force jump's speed
- * guessed (15) */
+ * body (ATYPE_BEGOMAN, 145 at Body, 35 up) pushes Mario; a trample on it (his normal trample jump) or a spin:
+ * HopStart (head HopStart, body Damage, HIT SE, the body 120) until the head's clip ends, HopWait 300 (the body
+ * stopped, the spring out: the Jump sensor, ATYPE_PLAYER_AUTO_JUMP 145 at the head's SpringJoint3, 100 down, on),
+ * HopEnd (both HopEnd, CLOSE_SPRING) until both end, the body 145, the Jump sensor off, Wait. A trample (or a hip
+ * drop: tryHipDropAttack) on the Jump sensor: his jump vector straight up (setPlayerJumpVec), the helicopter jump
+ * (mario_trample_auto), HopJump (head HopJump, TRAMPLE SE) back to HopWait at its end. A hip drop on the body throws
+ * him up (forceJumpPlayer). ponytail: the shake level SEs, the head's BRK colours, no event camera, the force jump's
+ * speed guessed (15); the head's clip end read off its drawn pose (unseen: HopStart 30, HopJump 20 frames) */
 #define MAX_RBEAMERS 64
 enum { RB_WAIT, RB_ATTACK, RB_INTER, RB_HIDE, RB_UP, RB_DOWN, RB_PREOPEN, RB_CLOSE, RB_HOPSTART, RB_HOPWAIT, RB_HOPJUMP, RB_HOPEND };
-static struct { int row, nrv, step, alive[3], life[3], hseq, hdrawn; float rad[3]; u32 lv, lvb[3]; const char *hclip; } rbms[MAX_RBEAMERS];
+static struct { int row, nrv, step, alive[3], life[3], hseq, hdrawn, jon; float rad[3], br; u32 lv, lvb[3]; const char *hclip; } rbms[MAX_RBEAMERS];
 
 static void jb_head(int k, const char *clip) { rbms[k].hclip = clip; rbms[k].hseq++; } /* startBck(mHeadModel) */
+static Anim *jb_head_anim(int row) { return m_jbhead && m_jbhead->skin ? obj_anim(14 * (int)sc->nobjs + row, m_jbhead, "JumpBeamerHead") : NULL; }
+static int jb_head_stopped(int k, int st, int unseen) /* isBckStopped(mHeadModel): its clip started by draw_rbeams */
+{
+    Anim *a = rbms[k].hdrawn == rbms[k].hseq ? jb_head_anim(rbms[k].row) : NULL;
+    return a ? a->done : st >= unseen;
+}
+static V3 jb_spring(const Inst *in) /* the Jump sensor: the head (at the body's Top) its SpringJoint3, 100 down */
+{
+    float hm[16], jm[16];
+    Anim *ha = jb_head_anim(in->row);
+    mat_mul(hm, in->m, in->anim->world[2]);
+    if (ha && ha->skin == m_jbhead->skin && ha->skin->njoints > 4) { mat_mul(jm, hm, ha->world[4]); memcpy(hm, jm, sizeof hm); }
+    return v3(hm[12] - hm[4] * 100.0f, hm[13] - hm[5] * 100.0f, hm[14] - hm[6] * 100.0f);
+}
 
 static int rbm_of(int row)
 {
@@ -26018,7 +26238,7 @@ static void update_rbeamers(void)
         typeof(&rbms[0]) o = &rbms[k];
         const Row *r = &sc->objs[in->row];
         int jb = in->rbeamer == 2;
-        if (jb && !o->hclip) { o->nrv = RB_HIDE; o->step = -1; jb_head(k, "Wait"); obj_play(in, "Down", 0, 0); if (in->anim) in->anim->frame = (float)anim_length(in->anim) - 1.0f; }
+        if (jb && !o->hclip) { o->nrv = RB_HIDE; o->step = -1; o->br = 145.0f; jb_head(k, "Wait"); obj_play(in, "Down", 0, 0); if (in->anim) in->anim->frame = (float)anim_length(in->anim) - 1.0f; }
         if (r->sw[SW_B] >= 0 && !sw_on(r, SW_B) && o->nrv != RB_INTER) { /* syncSwitchOffB */
             o->nrv = RB_INTER; o->step = -1;
             for (int b = 0; b < 3; b++) o->alive[b] = 0;
@@ -26046,20 +26266,20 @@ static void update_rbeamers(void)
             if (!in->anim || in->anim->done) { o->nrv = RB_INTER; o->step = -1; }
             break;
         case RB_HOPSTART:
-            if (st == 0) { jb_head(k, "HopStart"); obj_play(in, "Damage", 0, 0); se_start(SE_EM_JGUARDER_HIT, &in->m[12]); }
-            if (st >= 30) { o->nrv = RB_HOPWAIT; o->step = -1; } /* isBckStopped(mHeadModel): ponytail, its length taken as 30 */
+            if (st == 0) { jb_head(k, "HopStart"); obj_play(in, "Damage", 0, 0); se_start(SE_EM_JGUARDER_HIT, &in->m[12]); o->br = 120.0f; }
+            if (st > 0 && jb_head_stopped(k, st, 30)) { o->nrv = RB_HOPWAIT; o->step = -1; }
             break;
         case RB_HOPWAIT:
-            if (st == 0) jb_head(k, "HopWait");
+            if (st == 0) { if (in->anim) in->anim->speed = 0.0f; jb_head(k, "HopWait"); o->jon = 1; } /* stopBck */
             if (st == 300) { o->nrv = RB_HOPEND; o->step = -1; }
             break;
         case RB_HOPJUMP:
             if (st == 0) { jb_head(k, "HopJump"); se_start(SE_EM_JGUARDER_TRAMPLE, &in->m[12]); }
-            if (st >= 20) { o->nrv = RB_HOPWAIT; o->step = -1; }
+            if (st > 0 && jb_head_stopped(k, st, 20)) { o->nrv = RB_HOPWAIT; o->step = -1; }
             break;
         case RB_HOPEND:
             if (st == 0) { obj_play(in, "HopEnd", 0, 0); jb_head(k, "HopEnd"); se_start(SE_EM_JGUARDER_CLOSE_SPRING, &in->m[12]); }
-            if (st > 0 && (!in->anim || in->anim->done)) { o->nrv = RB_WAIT; o->step = -1; }
+            if (st > 0 && (!in->anim || in->anim->done) && jb_head_stopped(k, st, 1)) { o->br = 145.0f; o->jon = 0; o->nrv = RB_WAIT; o->step = -1; }
             break;
         case RB_ATTACK:
             if (st == 0) obj_play(in, "Open", 0, 0);
@@ -26098,21 +26318,25 @@ static void update_rbeamers(void)
             o->lvb[b] = se_level(SE_EM_LV_RINGBEAM_MOVE, &sp.x, o->lvb[b]);
             if (++o->life[b] >= life) o->alive[b] = 0; /* kill */
         }
-        if (jb) { /* JumpBeamer: its body pushes, tramples / spins / hip drops (receiveMsgPlayerAttack) */
+        if (jb) { /* JumpBeamer: its Jump sensor springs, its body pushes; tramples / spins / hip drops (receiveMsgPlayerAttack) */
             V3 body = vadd(row_pos(r), vmul(up, 35.0f));
-            if (in->anim && in->anim->skin && in->anim->skin->njoints > 1) {
+            if (in->anim && in->anim->skin && in->anim->skin->njoints > 2) {
                 float jm[16];
                 mat_mul(jm, in->m, in->anim->world[1]);
                 body = v3(jm[12] + jm[4] * 35.0f, jm[13] + jm[5] * 35.0f, jm[14] + jm[6] * 35.0f);
+                int jmsg = o->jon ? mario_offence(jb_spring(in), 145.0f, vmul(up, -1.0f)) : MSG_NONE;
+                if (jmsg == MSG_TRAMPLE || jmsg == MSG_HIPDROP) { /* ATYPE_PLAYER_AUTO_JUMP: a hip drop tramples it too */
+                    m_set_jv(mario, up); /* setPlayerJumpVec(up) */
+                    mario_trample_auto();
+                    o->nrv = RB_HOPJUMP; o->step = -1;
+                    printf("jump beamer %d springs Mario\n", in->row);
+                    continue;
+                }
             }
-            float br = o->nrv == RB_HOPSTART || o->nrv == RB_HOPWAIT || o->nrv == RB_HOPJUMP ? 120.0f : 145.0f;
+            float br = o->br;
             int msg = o->nrv == RB_HIDE || o->nrv == RB_DOWN ? MSG_NONE : mario_offence(body, br, vmul(up, -1.0f));
-            if (msg == MSG_TRAMPLE) {
-                int spring = o->nrv == RB_HOPWAIT;
-                m_set_jv(mario, vadd(vtangent(vadd(mario->hvel, vmul(mario->up, mario->vup)), up), vmul(up, spring ? MC.mTrampleNormal : MC.mTrampleBegoma))); /* trampleJump */
-                mario->grounded = 0;
-                o->nrv = spring ? RB_HOPJUMP : RB_HOPSTART; o->step = -1;
-            } else if (msg == MSG_HIPDROP) { m_set_jv(mario, vmul(up, 15.0f)); mario->grounded = 0; mario->hip = 0; } /* forceJumpPlayer */
+            if (msg == MSG_TRAMPLE) { mario_trample(); o->nrv = RB_HOPSTART; o->step = -1; }
+            else if (msg == MSG_HIPDROP) { m_set_jv(mario, vmul(up, 15.0f)); mario->grounded = 0; mario->hip = 0; } /* forceJumpPlayer */
             else if (msg == MSG_HITALL && o->nrv != RB_HOPSTART) { o->nrv = RB_HOPSTART; o->step = -1; }
             V3 out = vtangent(vsub(mc, body), mario->up);
             float l = vlen(out), want = br + HIT_BODY_R * 0.6f;
@@ -26171,6 +26395,36 @@ static void draw_rbeams(void)
             draw_skin(m_rbeam, m, a);
         }
     }
+}
+int game_test_beamer(int how) /* beamer test: the first JumpBeamer: Mario 1000 off it (0), falling onto its body (1), onto its spring (2) */
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (in->rbeamer != 2 || row_dead[in->row] || !in->anim || !in->anim->skin || in->anim->skin->njoints < 3) continue;
+        const Row *r = &sc->objs[in->row];
+        V3 up = rbm_up(r), side = vtangent(vsub(mario->pos, row_pos(r)), up);
+        side = vnorm(vlen(side) > 1.0f ? side : vtangent(v3(1, 0, 0), up));
+        float jm[16];
+        mat_mul(jm, in->m, in->anim->world[1]);
+        V3 p = how == 0 ? vadd(vadd(row_pos(r), vmul(side, 1000.0f)), vmul(up, 200.0f))
+             : how == 1 ? vadd(v3(jm[12], jm[13], jm[14]), vmul(up, 250.0f)) : vadd(jb_spring(in), vmul(up, 250.0f));
+        mario->pos = p; mario->up = up; mario->hvel = v3(0, 0, 0);
+        mario->vup = how ? -10.0f : 0.0f; mario->grounded = 0; mario->jumping = how != 0; mario->hip = 0;
+        return in->row;
+    }
+    return -1;
+}
+void game_beamer_state(void)
+{
+    for (int k = 0; k < nrbms; k++)
+        for (int i = 0; i < ninsts; i++)
+            if (insts[i].rbeamer == 2 && insts[i].row == rbms[k].row) {
+                printf("jump beamer row %d: nerve %d step %d jump %d body %.0f; Mario kind %d vup %.1f h %.1f yangle %.2f clip %d life %d\n",
+                       rbms[k].row, rbms[k].nrv, rbms[k].step, rbms[k].jon, rbms[k].br, mario->jump_kind, mario->vup, vlen(mario->hvel),
+                       m_yangle, m_anim_on("ヘリコプタージャンプ"), game_life());
+                return;
+            }
+    printf("no jump beamer\n");
 }
 
 /* SearchBeamer.cpp after Petari: a hovering beamer (joints Propeller 5, Core 6, BeamEnd 7, BeamStart 8). Far (beyond
@@ -37782,6 +38036,7 @@ void game_draw(void)
     }
     if (fo.on || fo.sw || fo.blend) mario_base(m); /* MarioFoo / MarioSwim: _1FC and his front (setBlendMtxTimer after it) */
     hang_posture(m); /* MarioHang::postureCtrl */
+    if (mario->slider) basis_matrix(m, mario->pos, sl.up, mario->face, 0); /* MarioSlider::postureCtrl: _1FC */
     m_blend_apply(m);
     if (mario->press) for (int j = 4; j < 7; j++) m[j] *= mario->press_s; /* _3B0: squashed along his up */
     if (dmg.scale_y != 1.0f) for (int j = 4; j < 7; j++) m[j] *= dmg.scale_y; /* MarioCrush: mScale (1, 0.2, 1) */
