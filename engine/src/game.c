@@ -36240,6 +36240,7 @@ typedef struct {
     int pressure, notc, active, linked, baby;
     float speed;       /* WalkerStateRunaway::mRunawaySpeed */
     int talk;          /* its talker (-1 none) */
+    const char *want;  /* its action, started once its instance's anim is made (a rebind after showModel) */
     V3 mpos; V3 mup, mfront; /* Mario's pose blended to it (exeCaught) */
 } GwRabbit;
 static struct {
@@ -36319,15 +36320,21 @@ static void gw_body_init(GwRabbit *r, int row)
     r->k.row = row;
     r->k.pos = row_pos(&sc->objs[row]);
     kuribo_init(&r->k);
-    r->talk = -1; r->sw_was = 0;
+    r->talk = -1; r->sw_was = 0; r->want = NULL;
 }
 static const char *gw_rcls(const GwRabbit *r) /* slice.py names the TrickRabbit archive's clips after the placed class */
 { return r->baby ? "TrickRabbitBaby" : sc->types + 32 * sc->objs[r->k.row].type; }
-static void gw_ract(GwRabbit *r, const char *clip) { gw_play(r->k.row, gw_rcls(r), clip, 4); }
+static void gw_ract(GwRabbit *r, const char *clip)
+{
+    Inst *in = gw_inst(r->k.row);
+    r->want = in && in->anim ? NULL : clip;
+    gw_play(r->k.row, gw_rcls(r), clip, 4);
+}
 /* the binder's step with its gravity: onCalcGravity, the move, the ground / wall */
 static void gw_move(GwRabbit *r)
 {
     r->k.grav = vmul(walker_up(&r->k, vmul(r->k.grav, -1.0f)), -1.0f);
+    if (r->want) gw_ract(r, r->want);
     w_bind(&r->k, 60.0f); /* sBindRadius */
     r->air = r->k.on_ground ? 0 : r->air + 1;
     w_blend_quat(&r->k, vmul(r->k.grav, -1.0f), r->k.front, 0.1f, 0.2f); /* blendQuatUpFront(sUpVecBlendRate, sFrontVecBlendRate) */
@@ -36544,7 +36551,7 @@ static void rr_update(GwRabbit *r, int i)
     if (!r->sw_was && row->sw[SW_APPEAR] >= 0 && sw_on(row, SW_APPEAR)) {
         r->sw_was = 1;
         if (r->active) {
-            row_demo_hide[r->k.row] = 0;
+            row_demo_hide[r->k.row] = 0; sw_changed = 1; /* showModel: the rebind makes its instance */
             w_nrv(&r->k, RR_APPEAR);
             st = r->k.step = 0;
             for (int j = 0; j < gw.nrr; j++) /* RunawayRabbitCollect::noticeAppearRabbit: one of its group */
@@ -36626,7 +36633,7 @@ static void rr_update(GwRabbit *r, int i)
         if (st > 2 && gw_stopped(r->k.row)) { gw.catching = -1; w_nrv(&r->k, RR_STOP); } /* endDemo(捕まり) */
         break;
     case RR_STOP:
-        if (st == 0) { row_demo_hide[r->k.row] = 255; return; } /* kill */
+        if (st == 0) { row_demo_hide[r->k.row] = 255; sw_changed = 1; return; } /* kill */
         return;
     }
     gw_move(r);
