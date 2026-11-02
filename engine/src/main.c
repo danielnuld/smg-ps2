@@ -1294,6 +1294,9 @@ int main(void)
 #if defined(PACKS) && defined(GATEWAY_TEST)
         pad_force = game_test_gateway(frame) && frame % 40 < 3 ? PAD_CROSS : 0; /* A tapped while a talk waits */
 #endif
+#if defined(PACKS) && defined(MOVES_TEST)
+        pad_force = game_test_moves(frame); /* Mario's moves driven by the pad (game_test_moves) */
+#endif
 #if defined(PACKS) && defined(SPINGATE_TEST)
         { /* the spin's gate (スピン権利): Square tapped every 200 frames while Mario is free, his spin timer 2 frames
            * after (0: no spin). As `gateway` with XF=-DSPINGATE_TEST on HeavensDoorGalaxy/1: none until the spin is explained */
@@ -1906,6 +1909,9 @@ int main(void)
                 printf("bubble test f %u: row %d, %d\n", frame, row, game_swim_state());
             }
         }
+#endif
+#ifdef SIDESTEP_TEST
+        { extern void game_test_sidestep_input(int); game_test_sidestep_input((int)frame); } /* Mario leans on a wall and side steps */
 #endif
 #ifdef SWIM_TEST
         { /* Mario dropped in a water area (150): floats up to the surface, stays */
