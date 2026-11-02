@@ -119,6 +119,7 @@ typedef struct {
     int stand_neutral, stand_turn; /* _40C, _750 */
     float corr;         /* _74C: the drawn turn left (createCorrectionMtx eases it out over _750, to pi over _754) */
     int corr_flip, slip_floor, slip_task; /* _754, mMovementStates._35 (isSkatableFloor), taskOnSlipTurn pushed */
+    int rot_task;                      /* taskOnRotation (4) pushed: the helicopter jump's turn */
     V3 slip_from, slip_move; /* _220 (the front the slip turn left), _2B8 (its getLastMove) */
     int slow_start, start_spin, start_spin2; /* _404, _3FA, _3FC */
     int brake1, brake2; /* _71E, _71F */
@@ -163,6 +164,7 @@ typedef struct {
 } Player;
 static float angle_d(const Player *m, V3 n);
 static void mario_trample(void); /* MarioActor::doTrampleJump */
+static void mario_trample_auto(void); /* doTrampleJump on an ATYPE_PLAYER_AUTO_JUMP sensor */
 
 /* SuperSpinDriver (Petari SuperSpinDriver.cpp, SpinDriverShootPath.cpp, ParabolicPath.cpp): bind radius 300,
  * ShootStart 45 frames (Mario pulled to the centre over 15), then Shoot along the path for mFlightTime (arg0,
@@ -13026,6 +13028,7 @@ static void jump_hop(Player *m)
     if (!m->jumping) return;
     if (!m_rising(m)) m->vup = MC.mClapJumpBonusFalling;
     else if (m->vup < MC.mHopLimit) { m->vup += MC.mClapJumpBonusRising; if (m->vup > MC.mHopLimit) m->vup = MC.mHopLimit; }
+    if (m->jump_kind == 11) m->jump_kind = 0;
 }
 
 static int fireball_wall_attack(V3 p);
@@ -13244,10 +13247,10 @@ static void m_force_free_jump(Player *m, V3 v)
  * in turn, the hopper's ホッパーふみジャンプA / B. _988 back to 0 on the ground (initForJump). ponytail: no ふみつぶし
  * effect (not in the slice's Mario effects) */
 static int m_trample_n; /* MarioActor _988 */
-static void m_trample(Player *m)
+static void m_trample_jump(Player *m, float normal)
 {
     if (foo_active()) return;
-    V3 v = vadd(vtangent(m_jv(m), m->up), vmul(m->up, MC.mTrampleNormal));
+    V3 v = vadd(vtangent(m_jv(m), m->up), vmul(m->up, normal));
     if (m_trample_n == 2) v = vmul(v, pad_held(PAD_CROSS) ? 1.2f : 1.5f);
     if (pad_held(PAD_CROSS)) v = vadd(v, vmul(m->up, MC.mTrampleLong)); /* checkLvlA */
     m_force_free_jump(m, v);
@@ -13265,6 +13268,7 @@ static void m_trample(Player *m)
     m_pad_vib(0);
     m->no_air_walk = 0; m->wall_free = 0; /* _2F, _22 */
 }
+static void m_trample(Player *m) { m_trample_jump(m, MC.mTrampleNormal); }
 /* MarioActor::doTrampleJump, an object's sensor (not ATYPE_PLAYER_AUTO_JUMP) taking his trample: off a wall, the
  * tornado's air walk and the spin back (_402, _2B), trampleJump. ponytail: no 砲弾 / 全滅用クリボー combo count
  * (playSoundTrampleCombo, its 1-up) */
@@ -13275,6 +13279,24 @@ static void mario_trample(void)
     m->air_spin = MC.mAirWalkTimeTornado;
     m->spin_lock = 0;
     m_trample(m);
+}
+/* doTrampleJump on an ATYPE_PLAYER_AUTO_JUMP sensor (a spring: JumpBeamer, JumpGuarder, BegomanSpring): _988 0,
+ * trampleJump(mTrampleBegoma, mTrampleLong), ヘリコプタージャンプ (changeAnimationNonStop), rumble 2, the helicopter
+ * sound, startRotationTask(4), kind 11 (procJump: gravity mGravityJumping[0] rising and mTrampleBegomaOpenTime frames
+ * into the fall, then [11], the drop capped at mMaxDropSpeed[3]; doAirWalk: free steering falling, at most 7) */
+static void mario_trample_auto(void)
+{
+    Player *m = mario;
+    if (m->walling) m->walling = 0; /* closeStatus */
+    m->air_spin = MC.mAirWalkTimeTornado;
+    m->spin_lock = 0;
+    m_trample_n = 0;
+    m_trample_jump(m, MC.mTrampleBegoma);
+    m_anim("ヘリコプタージャンプ");
+    m_pad_vib(2);
+    mario_sound("ヘリコプタージャンプ");
+    m->rot_task = 1;
+    m->jump_kind = 11;
 }
 
 static void m_init_jump(Player *m) /* initJumpParam */
@@ -13379,7 +13401,7 @@ static void m_air_walk(Player *m)
     int inhibit = 0;
     float fd = vdot(md, m->face);
     side = vsub(md, vmul(m->face, fd));
-    if (m->jump_kind == 8) inhibit = 1;
+    if (m->jump_kind == 8 || m->jump_kind == 11) inhibit = 1;
     else if (fd >= 0) {
         float red = m->jump_kind == 5 ? MC.mSquatJumpFrontReduction : MC.mJumpFrontReduction;
         int begin = m->jump_kind == 5 ? MC.mSquatJumpFrontReductionBTime : MC.mJumpFrontReductionBeginTime;
@@ -13399,10 +13421,12 @@ static void m_air_walk(Player *m)
         float al = vdot(vnorm(md), vnorm(m_jv(m)));
         if (al < 0) m->hvel = vadd(m->hvel, vmul(m->hvel, MC.mAirWalkSpeedKiller * al));
     }
-    if (m->jump_kind == 8) m->hvel = vadd(m->hvel, vmul(md, MC.mWalkSpeed * 5.0f / MC.mAirWalkTimerFact2));
+    int heli_fall = m->jump_kind == 11 && !m_rising(m);
+    if (m->jump_kind == 8 || heli_fall) m->hvel = vadd(m->hvel, vmul(md, MC.mWalkSpeed * 5.0f / MC.mAirWalkTimerFact2));
     else m->hvel = vadd(m->hvel, vmul(md, MC.mWalkSpeed * MC.mAirWalkTimerFact1 / (m->air_timer + MC.mAirWalkTimerFact2)));
-    if (!m_rising(m)) m->vel = vadd(m->vel, vmul(md, MC.mWalkSpeed * MC.mAirWalkTimerFact3));
-    float cap = m->jump_kind == 8 ? 6.0f : MC.mMaxJumpSpeed;
+    if (heli_fall) mario_sound("滞空中");
+    if (m->jump_kind != 11 && !m_rising(m)) m->vel = vadd(m->vel, vmul(md, MC.mWalkSpeed * MC.mAirWalkTimerFact3));
+    float cap = m->jump_kind == 8 ? 6.0f : m->jump_kind == 11 ? 7.0f : MC.mMaxJumpSpeed;
     if (vlen(m->hvel) > cap) m->hvel = vmul(vnorm(m->hvel), cap);
 }
 
@@ -13457,6 +13481,7 @@ static void m_proc_jump(Player *m, int a1)
     if (bee_on_air(m)) m->s76C = MC.mBeeGravityReviveTime;
     if (m->s406) m->s406--;
     float acc = m->jump_kind == 12 ? 1.8f : MC.mGravityJumping[m->jump_kind == 13 ? 9 : m->jump_kind];
+    if (m->jump_kind == 11 && (m_rising(m) || m->fall_t < MC.mTrampleBegomaOpenTime)) acc = MC.mGravityJumping[0];
     if (m->jump_kind == 8 && m->spin_kind == 1) acc = MC.mSpinJumpGravity;
     if (m->jump_kind == 8 && !m_rising(m)) acc *= 0.25f;
     float cling = 1.0f;
@@ -13471,7 +13496,9 @@ static void m_proc_jump(Player *m, int a1)
     m->vel = vadd(m_jv(m), bee_add); /* addVelocity(mJumpVec) and the bee's addVelocity(gravity, _770) */
     m->vup -= acc * gs;
     m_wall_jump_hit(m);
-    float max_drop = player_mode == PM_BEE && !m_rising(m) ? MC.mMaxDropSpeed[4] : MC.mMaxDropSpeed[0];
+    float max_drop = MC.mMaxDropSpeed[0];
+    if (m->jump_kind == 11 && !m_rising(m) && m->fall_t >= MC.mTrampleBegomaOpenTime) max_drop = MC.mMaxDropSpeed[3];
+    if (player_mode == PM_BEE && !m_rising(m)) max_drop = MC.mMaxDropSpeed[4];
     if (!(m->jump_kind == 13 && m->drop_free) && -m->vup >= max_drop) m->vup = -max_drop;
     m_air_walk(m);
     m->air_timer++;
@@ -18182,6 +18209,10 @@ static void update_mario_(void)
     if (m->slip_task) { /* callExtraTasks: taskOnSlipTurn */
         if (!m_anim_on("ターンブレーキ滑り床")) { m_front(m, vmul(m->slip_from, -1.0f)); m->corr_flip = 0; m->corr = 0; m->slip_task = 0; }
         else { m->slip_move = vmul(m->slip_move, MC.mInertiaSlipTurn); m->vel = vadd(m->vel, m->slip_move); }
+    }
+    if (m->rot_task) { /* callExtraTasks: taskOnRotation (4) */
+        if (!m_anim_on("ヘリコプタージャンプ")) { m_yangle = 0.0f; m->rot_task = 0; }
+        else m_yangle += m_rising(m) ? MC.mTrampleBegomaRotRise : MC.mTrampleBegomaRotFall;
     }
     if (slipping) slip_frames++;
     if (!near0(m->s350) && !hg.on) { /* tryPushToVelocity (MarioStatus_Hang: kept out) */
@@ -26102,16 +26133,33 @@ static void update_dossuns(void)
  * JumpBeamer.cpp after Petari (rbeamer 2; its body JumpBeamerBody, its head JumpBeamerHead at the body's Top joint):
  * hidden (Down's last frame) until the group attacks (Up, APPEAR SE), Wait; in reach (3200 / 500, SW_B) PreOpen, the
  * same Open / rings, then Close (Open's end) and Inter; out of reach the group goes Down (HIDE SE) and hides. Its
- * body (145 at Body, 35 up) only pushes Mario. A trample on it: HopStart (head HopStart, body Damage, HIT SE, the
- * begoman trample jump: mTrampleBegoma up) then HopWait 300 (its spring out), HopEnd (CLOSE_SPRING) back to Wait; a
- * trample in HopWait springs him (HopJump, TRAMPLE SE, mTrampleNormal up); a spin: HopStart; a hip drop throws him up
- * (forceJumpPlayer). ponytail: the shake level SEs, the head's BRK colours, no event camera, the force jump's speed
- * guessed (15) */
+ * body (ATYPE_BEGOMAN, 145 at Body, 35 up) pushes Mario; a trample on it (his normal trample jump) or a spin:
+ * HopStart (head HopStart, body Damage, HIT SE, the body 120) until the head's clip ends, HopWait 300 (the body
+ * stopped, the spring out: the Jump sensor, ATYPE_PLAYER_AUTO_JUMP 145 at the head's SpringJoint3, 100 down, on),
+ * HopEnd (both HopEnd, CLOSE_SPRING) until both end, the body 145, the Jump sensor off, Wait. A trample (or a hip
+ * drop: tryHipDropAttack) on the Jump sensor: his jump vector straight up (setPlayerJumpVec), the helicopter jump
+ * (mario_trample_auto), HopJump (head HopJump, TRAMPLE SE) back to HopWait at its end. A hip drop on the body throws
+ * him up (forceJumpPlayer). ponytail: the shake level SEs, the head's BRK colours, no event camera, the force jump's
+ * speed guessed (15); the head's clip end read off its drawn pose (unseen: HopStart 30, HopJump 20 frames) */
 #define MAX_RBEAMERS 64
 enum { RB_WAIT, RB_ATTACK, RB_INTER, RB_HIDE, RB_UP, RB_DOWN, RB_PREOPEN, RB_CLOSE, RB_HOPSTART, RB_HOPWAIT, RB_HOPJUMP, RB_HOPEND };
-static struct { int row, nrv, step, alive[3], life[3], hseq, hdrawn; float rad[3]; u32 lv, lvb[3]; const char *hclip; } rbms[MAX_RBEAMERS];
+static struct { int row, nrv, step, alive[3], life[3], hseq, hdrawn, jon; float rad[3], br; u32 lv, lvb[3]; const char *hclip; } rbms[MAX_RBEAMERS];
 
 static void jb_head(int k, const char *clip) { rbms[k].hclip = clip; rbms[k].hseq++; } /* startBck(mHeadModel) */
+static Anim *jb_head_anim(int row) { return m_jbhead && m_jbhead->skin ? obj_anim(14 * (int)sc->nobjs + row, m_jbhead, "JumpBeamerHead") : NULL; }
+static int jb_head_stopped(int k, int st, int unseen) /* isBckStopped(mHeadModel): its clip started by draw_rbeams */
+{
+    Anim *a = rbms[k].hdrawn == rbms[k].hseq ? jb_head_anim(rbms[k].row) : NULL;
+    return a ? a->done : st >= unseen;
+}
+static V3 jb_spring(const Inst *in) /* the Jump sensor: the head (at the body's Top) its SpringJoint3, 100 down */
+{
+    float hm[16], jm[16];
+    Anim *ha = jb_head_anim(in->row);
+    mat_mul(hm, in->m, in->anim->world[2]);
+    if (ha && ha->skin == m_jbhead->skin && ha->skin->njoints > 4) { mat_mul(jm, hm, ha->world[4]); memcpy(hm, jm, sizeof hm); }
+    return v3(hm[12] - hm[4] * 100.0f, hm[13] - hm[5] * 100.0f, hm[14] - hm[6] * 100.0f);
+}
 
 static int rbm_of(int row)
 {
@@ -26160,7 +26208,7 @@ static void update_rbeamers(void)
         typeof(&rbms[0]) o = &rbms[k];
         const Row *r = &sc->objs[in->row];
         int jb = in->rbeamer == 2;
-        if (jb && !o->hclip) { o->nrv = RB_HIDE; o->step = -1; jb_head(k, "Wait"); obj_play(in, "Down", 0, 0); if (in->anim) in->anim->frame = (float)anim_length(in->anim) - 1.0f; }
+        if (jb && !o->hclip) { o->nrv = RB_HIDE; o->step = -1; o->br = 145.0f; jb_head(k, "Wait"); obj_play(in, "Down", 0, 0); if (in->anim) in->anim->frame = (float)anim_length(in->anim) - 1.0f; }
         if (r->sw[SW_B] >= 0 && !sw_on(r, SW_B) && o->nrv != RB_INTER) { /* syncSwitchOffB */
             o->nrv = RB_INTER; o->step = -1;
             for (int b = 0; b < 3; b++) o->alive[b] = 0;
@@ -26188,20 +26236,20 @@ static void update_rbeamers(void)
             if (!in->anim || in->anim->done) { o->nrv = RB_INTER; o->step = -1; }
             break;
         case RB_HOPSTART:
-            if (st == 0) { jb_head(k, "HopStart"); obj_play(in, "Damage", 0, 0); se_start(SE_EM_JGUARDER_HIT, &in->m[12]); }
-            if (st >= 30) { o->nrv = RB_HOPWAIT; o->step = -1; } /* isBckStopped(mHeadModel): ponytail, its length taken as 30 */
+            if (st == 0) { jb_head(k, "HopStart"); obj_play(in, "Damage", 0, 0); se_start(SE_EM_JGUARDER_HIT, &in->m[12]); o->br = 120.0f; }
+            if (st > 0 && jb_head_stopped(k, st, 30)) { o->nrv = RB_HOPWAIT; o->step = -1; }
             break;
         case RB_HOPWAIT:
-            if (st == 0) jb_head(k, "HopWait");
+            if (st == 0) { if (in->anim) in->anim->speed = 0.0f; jb_head(k, "HopWait"); o->jon = 1; } /* stopBck */
             if (st == 300) { o->nrv = RB_HOPEND; o->step = -1; }
             break;
         case RB_HOPJUMP:
             if (st == 0) { jb_head(k, "HopJump"); se_start(SE_EM_JGUARDER_TRAMPLE, &in->m[12]); }
-            if (st >= 20) { o->nrv = RB_HOPWAIT; o->step = -1; }
+            if (st > 0 && jb_head_stopped(k, st, 20)) { o->nrv = RB_HOPWAIT; o->step = -1; }
             break;
         case RB_HOPEND:
             if (st == 0) { obj_play(in, "HopEnd", 0, 0); jb_head(k, "HopEnd"); se_start(SE_EM_JGUARDER_CLOSE_SPRING, &in->m[12]); }
-            if (st > 0 && (!in->anim || in->anim->done)) { o->nrv = RB_WAIT; o->step = -1; }
+            if (st > 0 && (!in->anim || in->anim->done) && jb_head_stopped(k, st, 1)) { o->br = 145.0f; o->jon = 0; o->nrv = RB_WAIT; o->step = -1; }
             break;
         case RB_ATTACK:
             if (st == 0) obj_play(in, "Open", 0, 0);
@@ -26240,21 +26288,25 @@ static void update_rbeamers(void)
             o->lvb[b] = se_level(SE_EM_LV_RINGBEAM_MOVE, &sp.x, o->lvb[b]);
             if (++o->life[b] >= life) o->alive[b] = 0; /* kill */
         }
-        if (jb) { /* JumpBeamer: its body pushes, tramples / spins / hip drops (receiveMsgPlayerAttack) */
+        if (jb) { /* JumpBeamer: its Jump sensor springs, its body pushes; tramples / spins / hip drops (receiveMsgPlayerAttack) */
             V3 body = vadd(row_pos(r), vmul(up, 35.0f));
-            if (in->anim && in->anim->skin && in->anim->skin->njoints > 1) {
+            if (in->anim && in->anim->skin && in->anim->skin->njoints > 2) {
                 float jm[16];
                 mat_mul(jm, in->m, in->anim->world[1]);
                 body = v3(jm[12] + jm[4] * 35.0f, jm[13] + jm[5] * 35.0f, jm[14] + jm[6] * 35.0f);
+                int jmsg = o->jon ? mario_offence(jb_spring(in), 145.0f, vmul(up, -1.0f)) : MSG_NONE;
+                if (jmsg == MSG_TRAMPLE || jmsg == MSG_HIPDROP) { /* ATYPE_PLAYER_AUTO_JUMP: a hip drop tramples it too */
+                    m_set_jv(mario, up); /* setPlayerJumpVec(up) */
+                    mario_trample_auto();
+                    o->nrv = RB_HOPJUMP; o->step = -1;
+                    printf("jump beamer %d springs Mario\n", in->row);
+                    continue;
+                }
             }
-            float br = o->nrv == RB_HOPSTART || o->nrv == RB_HOPWAIT || o->nrv == RB_HOPJUMP ? 120.0f : 145.0f;
+            float br = o->br;
             int msg = o->nrv == RB_HIDE || o->nrv == RB_DOWN ? MSG_NONE : mario_offence(body, br, vmul(up, -1.0f));
-            if (msg == MSG_TRAMPLE) {
-                int spring = o->nrv == RB_HOPWAIT;
-                m_set_jv(mario, vadd(vtangent(vadd(mario->hvel, vmul(mario->up, mario->vup)), up), vmul(up, spring ? MC.mTrampleNormal : MC.mTrampleBegoma))); /* trampleJump */
-                mario->grounded = 0;
-                o->nrv = spring ? RB_HOPJUMP : RB_HOPSTART; o->step = -1;
-            } else if (msg == MSG_HIPDROP) { m_set_jv(mario, vmul(up, 15.0f)); mario->grounded = 0; mario->hip = 0; } /* forceJumpPlayer */
+            if (msg == MSG_TRAMPLE) { mario_trample(); o->nrv = RB_HOPSTART; o->step = -1; }
+            else if (msg == MSG_HIPDROP) { m_set_jv(mario, vmul(up, 15.0f)); mario->grounded = 0; mario->hip = 0; } /* forceJumpPlayer */
             else if (msg == MSG_HITALL && o->nrv != RB_HOPSTART) { o->nrv = RB_HOPSTART; o->step = -1; }
             V3 out = vtangent(vsub(mc, body), mario->up);
             float l = vlen(out), want = br + HIT_BODY_R * 0.6f;
@@ -26313,6 +26365,36 @@ static void draw_rbeams(void)
             draw_skin(m_rbeam, m, a);
         }
     }
+}
+int game_test_beamer(int how) /* beamer test: the first JumpBeamer: Mario 1000 off it (0), falling onto its body (1), onto its spring (2) */
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (in->rbeamer != 2 || row_dead[in->row] || !in->anim || !in->anim->skin || in->anim->skin->njoints < 3) continue;
+        const Row *r = &sc->objs[in->row];
+        V3 up = rbm_up(r), side = vtangent(vsub(mario->pos, row_pos(r)), up);
+        side = vnorm(vlen(side) > 1.0f ? side : vtangent(v3(1, 0, 0), up));
+        float jm[16];
+        mat_mul(jm, in->m, in->anim->world[1]);
+        V3 p = how == 0 ? vadd(vadd(row_pos(r), vmul(side, 1000.0f)), vmul(up, 200.0f))
+             : how == 1 ? vadd(v3(jm[12], jm[13], jm[14]), vmul(up, 250.0f)) : vadd(jb_spring(in), vmul(up, 250.0f));
+        mario->pos = p; mario->up = up; mario->hvel = v3(0, 0, 0);
+        mario->vup = how ? -10.0f : 0.0f; mario->grounded = 0; mario->jumping = how != 0; mario->hip = 0;
+        return in->row;
+    }
+    return -1;
+}
+void game_beamer_state(void)
+{
+    for (int k = 0; k < nrbms; k++)
+        for (int i = 0; i < ninsts; i++)
+            if (insts[i].rbeamer == 2 && insts[i].row == rbms[k].row) {
+                printf("jump beamer row %d: nerve %d step %d jump %d body %.0f; Mario kind %d vup %.1f h %.1f yangle %.2f clip %d life %d\n",
+                       rbms[k].row, rbms[k].nrv, rbms[k].step, rbms[k].jon, rbms[k].br, mario->jump_kind, mario->vup, vlen(mario->hvel),
+                       m_yangle, m_anim_on("ヘリコプタージャンプ"), game_life());
+                return;
+            }
+    printf("no jump beamer\n");
 }
 
 /* SearchBeamer.cpp after Petari: a hovering beamer (joints Propeller 5, Core 6, BeamEnd 7, BeamStart 8). Far (beyond
