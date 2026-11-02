@@ -27,8 +27,12 @@ MENU_PACKS = {"FileSelect": ("title.bin", "title3d.bin"), "AstroDome": ("dome.bi
               "PeachCastleGardenGalaxy": ("prologue.bin",)}
 # and Luigi's letter (main.c letter_scene): in any galaxy while he is missing (MR::getLuigiLetterGalaxyName)
 LETTER = "letter.bin"
-# (tex.LAYER_MIN, tex.LAYER_MAX) tried in turn when a scenario does not fit: every layer, the larger ones, none
+RATIOS = (0.99, 0.9, 0.8, 0.7, 0.6, 0.5)  # static models' simplification, tried in turn until a scenario fits
+# (tex.LAYER_MIN, tex.LAYER_MAX) tried in turn at each ratio: every layer, the larger ones, none
 LAYER_STEPS = ((0.02, 2), (0.15, 1), (1.0, 0))
+# the least ratio kept for layers: below it a scenario drops them first (the Observatory, AstroGalaxy, was at 0.7
+# before them; layers were worth more there than 0.9's geometry: its metals and floors)
+LAYER_RATIO = 0.7
 
 
 def room(out, g):
@@ -57,10 +61,11 @@ def galaxy(fs, out, g, resident):
     for no in scenarios(fs, g):  # one process per galaxy: its models are converted once (slice._model_cache)
         t = time.time()
         try:
-            # over ROOM: fewer texture layers (tex.layers' passes repeat their base's geometry), then its static models
-            # simplified further, until it fits: geometry is given up only where it was without layers
-            for ratio, (SL.tex.LAYER_MIN, SL.tex.LAYER_MAX) in [(r, s) for r in (0.99, 0.9, 0.8, 0.7, 0.6, 0.5)
-                                                                for s in LAYER_STEPS]:
+            # over ROOM: fewer texture layers (tex.layers' passes), then its static models simplified further, down to
+            # LAYER_RATIO; still over, no layers and the whole ladder again
+            for ratio, (SL.tex.LAYER_MIN, SL.tex.LAYER_MAX) in (
+                    [(r, s) for r in RATIOS if r >= LAYER_RATIO for s in LAYER_STEPS[:-1]] +
+                    [(r, LAYER_STEPS[-1]) for r in RATIOS]):
                 files, info = SL.packs(fs, g, no, resident, ratio)
                 if max(info["stream"].values()) <= gr:
                     break
