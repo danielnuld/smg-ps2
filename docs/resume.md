@@ -232,6 +232,14 @@ Second console round (2026-10-24), from Daniel's report:
   DarkRoomGalaxy, SandClockGalaxy, CosmosGardenGalaxy, BattleShipGalaxy (dev overlay: out/wt-states for TeresaMario2D 1
   and KoopaBattleVs1 1). Test: `XF=-DPACKS_OVERLAY=wt-states build.sh 2d <blob> TeresaMario2DGalaxy/1`. ponytail:
   PipeModeCube (MarioMove25D), the gravity flip's 2D handling, checkForceGrounding not ported.
+- feat/mario-jetswim: MarioSwim with a carried JetTurtle after Petari (startJet, jet, dropJet, doJetJump and every
+  mJetTimer branch of start / update: the jet speed mSwimFrontJetSpeed (Slow), Z brakes, the T inertias, the jet's
+  rotation ratios, the floor's mTurboReductionHitFloor, the stream's mTurboReductionStream, the jet jump out of the
+  water, a spin / faint / damage throws the shell along his swim front); a shell taken under water starts the jet
+  (receiveMsgTaken); MarioSideStep is off while carrying (MarioActor _468). Fixed: a zone rebind read the held shell's
+  row from the new instance set (it could switch to another row); its row / place are kept now. Test: `build.sh jetswim
+  <blob> HeavenlyBeachGalaxy/3`. ponytail: no BrakeLamp / SwimBubble / BulletWater effects, the thrown shell flies as on
+  land.
 
 ## Rules
 
