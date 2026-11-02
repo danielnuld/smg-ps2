@@ -537,6 +537,23 @@ K` for each PrologueDirector nerve (1 Wait .. 9 GameStart, 0 dead once the playe
 Patch scripts go through files (Write), not bash heredocs, because of apostrophes. In Python-generated C, write `\n` as `chr(92) + "n"`.
 The OBJS row format (`ROW` in `tools/slice.py`, `Row` in `engine/src/blob.h`) changed to 92 B (switches): any change
 there needs the embedded blob and every pack rebuilt.
+- Texture layers (feat/multitex, 2026-11-01): 2295 of 7780 materials sample textures on two or more coordinates;
+  they were baked with the extra ones at their mean colour (but tex.env_layer's additive env maps, 927). By how the
+  extra layer enters the TEV (scratch classifier): environment map added 1125 (909 env_layer), environment map as a
+  lerp factor 216 (L(C0, C1, env): the Observatory's metals), second UV set added 102 / multiplied 85 / other 105
+  (Good Egg's egg planets x EggHigh, OtaKing's bath, the skies' galaxy / star layers, glows), Mario-style alpha terms
+  read with the lighting 109 (left), env map multiplied 59 / other 100, projections ~150 (IndDummy screen copies
+  left), unused 79. Now tex.layers fits
+  each extra coordinate (TEV at 0, 0.5 and 1 over the base's texels) to an added / subtracted, multiplied (Cd x As)
+  or alpha-lerped pass; slice.model_groups draws it as a group over the same triangles (its UVs, BTK, VU1Env
+  normals or Projmap), the base baked at its level; render.c blends 6 / 7. 1839 materials now draw their layers
+  (927 env_layer + 912 new: 609 added, 30 subtracted, 146 multiplied, 187 lerped), 456 stay at the mean. Same-texgen
+  coordinates are baked texel for texel. Cost (Good Egg bench): EE 15.9 ms either way, VU1 timed (vu1Instant off)
+  21.8 -> 22.2 ms (44.2 -> 43.4 fps); +4 texture uploads, VRAM need +100-160 KB a scenario; packs +7 % (EggStar 3
+  stream 5.12 -> 5.51 MB). slice_all drops layers (LAYER_STEPS: all, the larger, none) before simplifying geometry
+  further, so no scenario loses geometry for them (the Observatory's TridentZone was 0.87 MB over with all of them).
+  route EggStar 1 star at f 3781. ponytail: a coloured layer multiplied / lerped by its grey; the base's alpha
+  cut-outs do not mask its passes. **Release: full repack** (slice_all.py, then zone_fit / vram_need).
 - The new game's opening (feat/prologue, 2026-11-01): StorySequenceExecutor's cDemoPrologue (step 8) on a new file
   (overwriteGalaxyNameAfterLoading) starts PrologueDirector (game.c pro_*, its nerves and constants as Petari):
   ProloguePictureBook ("PrologueDemo") and PrologueLetter ("PeachLetterMini") in menu.c from prologue.bin (tools/lyt.py
