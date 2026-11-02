@@ -24901,7 +24901,7 @@ static void hn_blow(int k, V3 from) /* setNerveBlow */
     }
     hn_set(k, HN_BLOW);
 }
-static void hn_trample_jump(void) mario_trample();
+static void hn_trample_jump(void) { mario_trample(); }
 static void hn_mario(int k) /* the parts' sensors and Mario: attackSensor / receiveMsgPlayerAttack */
 {
     typeof(&hanas[0]) h = &hanas[k];
