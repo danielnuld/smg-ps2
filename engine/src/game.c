@@ -130,6 +130,7 @@ typedef struct {
     V3 hip_jv, jump_from, last_pos; /* _2F8, _4B0 */
     int spin_cool, spin_t, magic; /* MarioActor _946, _945; MarioMagic active */
     int spun, spin_rec, spin_end; /* _10._19 (trySpinJump's: the landing's spin cool), MarioActor _94C, _94E */
+    int tornado, tornado_t;       /* mMovementStates._F (the tornado jump), _544 */
     int walling, wall_t, wall_pull, wall_cancel; /* MarioWall: active, _14, _18, _1C */
     float wall_drop;    /* MarioWall _20 */
     V3 wall_jv0, wall_cancel_n; /* MarioWall _30, _24 */
@@ -12035,7 +12036,7 @@ static void m_update_walk_speed(Player *m) /* updateWalkSpeed */
     if (t == 0.0f) m->slow_start = MC.mSlowStartTime;
     if (m->slow_start) { f2 = (float)(MC.mSlowStartTime - m->slow_start) / MC.mSlowStartTime; m->slow_start--; }
     t *= f2 * f2;
-    if (m->magic) t *= MC.mTornadoMultiply; /* mMovementStates._F || isStatusActive(MarioStatus_Magic). ponytail: no tornado (_F) */
+    if (m->tornado || m->magic) t *= MC.mTornadoMultiply; /* mMovementStates._F || isStatusActive(MarioStatus_Magic) */
     m->squat = 0;
     if (m_check_squat(m, 0)) {
         m->squat = 1;
@@ -12076,6 +12077,7 @@ static void m_set_weight(const float *w, float rate);
 static int m_group_on(const char *jp);
 static void m_group(const char *jp, int interp);
 static void m_walk_weight(const float *w);
+static void m_check_wall_push(Player *m);
 /* MarioAnimator::controlWaitAnimation: standing on a slope the 基本 group's track 2 plays the slope's wait (坂右 / 左 /
  * 前 / 後ウエイト) weighted by its angle (up to 45 degrees), against Wait; stopWaitAnimation puts ラン back */
 static int m_wait_t, m_wait_mode; /* _78, _16 */
@@ -12192,6 +12194,7 @@ static void m_decide_walk_anim(Player *m)
     m_wade_steps(m, 0);
     if (m->tsi == 0 && life == 1 && max_life > 2) anim_track(mario_anim, 3, "damagewait"); /* ダメージウエイト */
     else if (life > 1) anim_track(mario_anim, 3, "wait"); /* incLife: ノーマルウエイト */
+    m_check_wall_push(m); /* checkWallPush's head */
     if (m->tsi > 5 && m->walk > (gd_player_luigi() ? 0.3f : 0.9f) && !m->turn_brake && !m->slip_floor) m->brake1 = MC.mBrakeFirstTimer;
     if (m->brake1) m->brake1--;
     if (m->tsi == 0) {
@@ -13054,12 +13057,21 @@ static void m_try_jump(Player *m) /* tryJump: 1st / 2nd / 3rd jump, or the turn,
 static int near0(V3 v);
 static void m_try_drop(Player *m);
 
+static struct { V3 v; float attn; int t; } ss_boost; /* Mario's rocket booster (setRocketBooster: _3D4, its attenuation, _426) */
 static void m_cancel_tornado(Player *m) /* cancelTornadoJump */
 {
     m->jump_kind = 0;
     if (m_clip_is("spin")) m_clip_stop();
     m->jump_from = m->pos;
     m->spin_lock = 1;
+    ss_boost.t = 0; /* _426 */
+}
+/* resetTornado: the tornado off (_F, _544), mYAngleOffset 0. ponytail: no TornadoMario (its model is not in the slice),
+ * no calcTornadoTilt, no AtField of 150 while in it */
+static void m_reset_tornado(Player *m)
+{
+    m->tornado = 0; m->tornado_t = 0;
+    m_yangle = 0.0f;
 }
 
 static void foo_try_start(Player *m);
@@ -13082,10 +13094,10 @@ static void m_try_spin_jump(Player *m) /* trySpinJump (_42A 1: the button, not a
 #endif
 }
 
-static void m_try_wall_jump(Player *m, V3 v) /* tryWallJump(v, true) */
+static void m_try_wall_jump(Player *m, V3 v, int a2) /* tryWallJump(v, a2): a2 his front along it */
 {
     m->jump_kind = 7;
-    m->jumping = 1; m->connect = 0; m->digital = 1; m->hip = 0; m->slip_front = 1;
+    m->jumping = 1; m->connect = 0; m->digital = 1; m->hip = 0; m->slip_front = a2;
     m_set_jv(m, v);
     m->jump_from = m->pos;
     m->air_timer = 0; m->keep_jump = 1; m->back_t = 0; m->air_walk_t = 0; m->fall_t = 0;
@@ -13093,7 +13105,7 @@ static void m_try_wall_jump(Player *m, V3 v) /* tryWallJump(v, true) */
     mario_play("walljump", 1.0f, 0);
     mario_smoke(SMOKE_WALL_JUMP); /* 共通壁ジャンプ */
     mario_sound("ジャンプ踏切"); mario_sound("声小ジャンプ");
-    m_front(m, v);
+    if (a2) m_front(m, v);
     m_stop_walk(m);
 }
 
@@ -13114,6 +13126,7 @@ static void m_power_jump(Player *m, V3 v)
     m->spin_lock = 0;
     m->no_air_walk = 1;
     m->drop_free = vdot(v, m->up) < 0; /* _20: no drop speed cap */
+    m_reset_tornado(m); /* (tryForceJump) */
     m->wall_free = 1;                  /* _22: walls leave the jump vector alone */
     if (m->rabbit) { m->rb26 = 1; if (m->jump_kind != 12) m->rb68 = 1; } /* mRabbit->forceJump */
 }
@@ -13128,6 +13141,7 @@ static void m_force_free_jump(Player *m, V3 v)
     m->air_timer = 0; m->back_t = 0; m->air_walk_t = 0; m->fall_t = 0; m->keep_jump = 1; m->fly11 = 0;
     m->jump_from = m->pos;
     m->s42C = 0; m->s76C = 0;
+    m_reset_tornado(m); /* (tryForceJump) */
     m->air_spin = MC.mAirWalkTime;
     if (player_mode == PM_BEE) mario_sound("ハチ体力完全回復");
     if (m->rabbit) m->rb26 = 1; /* mRabbit->forceJump (kind 12: _68 kept) */
@@ -13325,6 +13339,8 @@ static void m_proc_jump(Player *m, int a1)
     int rising = m_rising(m);
     int conn = a1 || m->keep_jump || m->digital || !rising || m->jump_kind == 2;
     float gs = conn ? MC.mGravityRatioA : 1.0f;
+    if (m->jump_kind == 8 && !m->spin_kind) /* the tornado jump: connected while the booster is in its first 16 frames */
+        gs = !ss_boost.t || ss_boost.t > MC.mTornadoBoostTimer - 0x10 ? MC.mGravityRatioA : 1.0f;
     if (m->jump_kind == 13 && (m->digital || !rising)) gs = 1.0f;
     if (a1) m_init_jump(m);
     else if (pad_pressed(PAD_R1) && m_jump_to_hip_drop(m)) return;
@@ -13334,7 +13350,14 @@ static void m_proc_jump(Player *m, int a1)
     }
     int was_air_walk = 0;
     if (m->air_walk_t) { was_air_walk = 1; m->air_walk_t--; }
-    if (m->jump_kind == 8 && m->spin_kind) {
+    int k8 = m->jump_kind == 8;
+    if (k8 && pad_pressed(PAD_R1)) { /* checkTrgZ: the spin / tornado jump cancelled */
+        m_reset_tornado(m);
+        m_cancel_tornado(m);
+        m_clip_stop();
+        mario_sound("声小ジャンプ");
+    }
+    if (k8 && m->spin_kind) {
         if (m->air_spin) m->air_spin--;
         if (!m->air_spin) { m_cancel_tornado(m); if (player_mode != PM_BEE) m->air_spin = MC.mAirWalkTime; }
     }
@@ -13377,6 +13400,7 @@ static void m_do_landing(Player *m)
         return;
     }
     if (swing_perm && m->spin_lock && m->spun && m->jump_kind != 3) { m->spun = 0; m->spin_cool = 0x10; } /* _946 */
+    m_reset_tornado(m);
     mario_sound("着地");
     if (m->land_type == 2) { /* ScenarioStarter: stopWalk, the stage-in landing */
         m->land_type = 0;
@@ -14273,6 +14297,14 @@ static void dm_start(Player *m)
     }
 }
 
+/* MarioActor::selectDamagePop: auto_efx_bitmap's ダメージ中跳ねる (bit 21) for his ground's host: ザコカメムシ,
+ * 子連れカメムシ (StinkBugSmall / StinkBugParent; their collision is not in the port yet: none) */
+static int m_damage_pop(void)
+{
+    if (mario_ground < 0 || insts[mario_ground].row < 0) return 0;
+    const char *tn = sc->types + 32 * sc->objs[insts[mario_ground].row].type;
+    return !strcmp(tn, "StinkBugSmall") || !strcmp(tn, "StinkBugParent");
+}
 static int dm_update(Player *m) /* the status's update: 0 gives the frame back (closed) */
 {
     switch (dmg.st) {
@@ -14290,7 +14322,10 @@ static int dm_update(Player *m) /* the status's update: 0 gives the frame back (
                     dmg.d1C = vadd(h, vmul(m->up, vt));
                 }
             }
-            if (m->grounded) { /* ponytail: no selectDamagePop (the sensors' bounce table) */
+            if (m->grounded && m->height > 30.0f && m_damage_pop()) { /* mVerticalSpeed, selectDamagePop: it bounces */
+                dmg.d1C = vadd(dmg.d1C, vmul(m->ground_n, 20.0f)); /* _368 */
+                m->grounded = 0; m->jumping = 1;
+            } else if (m->grounded) {
                 m->jumping = 0;
                 mario_sound("吹っ飛び倒れ");
                 m_anim(dmg.d2C);
@@ -14887,6 +14922,63 @@ static int m_wall_is_cancel(Player *m) /* MarioWall::isCancel */
 }
 /* isInhibitWall. ponytail: mDrawStates._2 (a CubeCamera of arg1 1) is not kept */
 static int m_inhibit_wall(void) { return m_check_wall_code(WALLC_NOTWALLJUMP, 1) || m_check_wall_code(WALLC_NOACTION, 1); }
+/* updateWallFloorCode / checkWallFloorCode: the walls' floor codes (_964: front, back, side), each kept from its last
+ * valid face */
+static int mw_floor[3];
+static void m_update_wall_floor_code(void)
+{
+    if ((mw.w8 || mw.w32) && mw.front.prism) mw_floor[0] = tri_attr(&mw.front) & 0x3F;
+    if (mw.w19 && mw.back.prism) mw_floor[1] = tri_attr(&mw.back) & 0x3F;
+    if (mw.w1A && mw.side.prism) mw_floor[2] = tri_attr(&mw.side) & 0x3F;
+}
+static int m_wall_floor_code(int code)
+{
+    return ((mw.w8 || mw.w32) && mw_floor[0] == code) || (mw.w19 && mw_floor[1] == code) || (mw.w1A && mw_floor[2] == code);
+}
+/* MarioWall::startBackJump: thrown off the wall's normal (mWallBackJumpPowerXZ, up mWallBackJumpPowerY) unless he
+ * jumps into it; 0 the barrier (結界ヒット: no air walk, 60 frames of _428), 1 the water wall (水弾かれ), 2 the
+ * trampoline wall. ponytail: no 結界ヒット / 水壁ヒット effects (not in the slice's Mario effects) */
+static int m_wall_back_jump(Player *m, int type)
+{
+    if (m_inhibit_wall()) return 0;
+    V3 n = m_wall_norm(m);
+    if (m->jumping && vdot(n, m_jv(m)) > 0.0f) return 0;
+    m->wall_cancel_n = n; /* _24 */
+    m_try_wall_jump(m, vadd(vmul(n, MC.mWallBackJumpPowerXZ), vmul(m->up, MC.mWallBackJumpPowerY)), 0);
+    if (type == 0) { mario_sound("結界ヒット"); m->air_spin = 0; m->air_lock = 60; }
+    else if (type == 1) mario_sound("水弾かれ");
+    else if (type == 2) mario_sound("トランポリンジャンプ大");
+    m_pad_vib(2);
+    m->wall_cancel = 1; /* _1C */
+    m->spin_lock = 1;  /* _2B */
+    return 1;
+}
+/* Mario::checkWallJumpCode (MarioSideStep.cpp): a wall of floor code 11, 6 (the barrier), 34 (trampoline), 7 (water
+ * wall) or 8: on the ground (or in the hip drop's fall clip) he stops, pushed 10 off it; initTriangleJump; the back
+ * jump. 1 when thrown */
+static int m_check_wall_jump_code(Player *m)
+{
+    if (!(m_wall_floor_code(11) || m_wall_floor_code(6) || m_wall_floor_code(34) || m_wall_floor_code(7) || m_wall_floor_code(8)))
+        return 0;
+    if (m->grounded || (m->hip_clip[2] && m_anim_on(m->hip_clip[2]))) { /* _1, isAnimationRun(_728) */
+        m_stop_walk(m);
+        m->s350 = vadd(m->s350, vmul(m_wall_norm(m), 10.0f)); /* push (taken into the velocity at tryPushToVelocity) */
+        V3 n = m_wall_norm(m);
+        m_set_jv(m, vadd(vtangent(vmul(n, -10.0f), m->up), vmul(m->up, 10.0f)));
+    }
+    V3 h = vtangent(m_jv(m), m->up); /* initTriangleJump */
+    m->wall_jv0 = vlen(h) >= 0.001f ? vnorm(h) : v3(0, 0, 0);
+    m->wall_t = 0;
+    int type = -1;
+    if (m_wall_floor_code(7)) type = 1;
+    if (m_wall_floor_code(6)) type = 0;
+    if (m_wall_floor_code(34)) type = 2;
+    return m_wall_back_jump(m, type);
+}
+static void m_check_wall_push(Player *m) /* checkWallPush's head: walking into a wall of the back jump codes */
+{
+    if (m->tsi && (mw.w8 || mw.w32)) m_check_wall_jump_code(m);
+}
 static int m_fixwall_top(Player *m) /* fixWallingTop: _75C, the wall's up. ponytail: no forceSetHeadVecKeepSide (his head is his up) */
 {
     V3 n = m_wall_norm(m), side = vcross(n, vmul(m->up, -1.0f));
@@ -14929,7 +15021,7 @@ static int m_fix_walling(Player *m, int immediate) /* fixWallingPosition: fixWal
     else { V3 f = m->face; if (blend_sphere(f, to, &f, 0.1f)) m_front(m, f); }
     return 1;
 }
-/* isEnableStickWall. ponytail: no tornado (_F), MarioActor _468, the ice wall (sensor 0x57) of Ice Mario */
+/* isEnableStickWall. ponytail: MarioActor _468, the ice wall (sensor 0x57) of Ice Mario */
 static int m_enable_stick_wall(Player *m)
 {
     if (player_mode == PM_TERESA) return 0;
@@ -14937,6 +15029,7 @@ static int m_enable_stick_wall(Player *m)
     if (m_wall_is_cancel(m)) return 0;
     if (!m->jumping || m->grounded) return 0;
     if (m->hip) return 0;                              /* _B */
+    if (m->tornado) return 0;                          /* _F */
     if (mw.press1E) return 0;                          /* mDrawStates._1E */
     if (!mw.w8 && !mw.w19) return 0;
     if (mw.s2 && m_vspeed(m) < MC.mWallStickGrHeight) return 0;
@@ -14957,12 +15050,12 @@ static int m_enable_stick_wall(Player *m)
     if (!map_poly(mario_joint_drawn(13), vmul(m->face, mw.w19 ? -120.0f : 120.0f), NULL, NULL)) return 0; /* _2AC */
     return kari_cling == 0;
 }
-/* checkWallStick, MarioWall::start / initTriangleJump. ponytail: checkWallJumpCode (the barrier / water wall floor codes),
+/* checkWallStick (not on a wall of the back jump codes: checkWallJumpCode), MarioWall::start / initTriangleJump. ponytail:
  * checkBeeStick, the gravity change's _334 */
 static void m_check_wall_stick(Player *m)
 {
     if (player_mode == PM_BEE) return;
-    if (!m_enable_stick_wall(m)) return;
+    if (m_check_wall_jump_code(m) || !m_enable_stick_wall(m)) return;
     m->walling = 1; m->wall_pull = 0; m->wall_drop = 0; mwl.s1D = 0;
     mario_play("wallkeep", 1.0f, 1); /* 壁くっつき */
     m_pad_vib(0);
@@ -14972,6 +15065,7 @@ static void m_check_wall_stick(Player *m)
     m_stop_walk(m);
     m->jumping = 0; m->hip = 0;
     m_fix_walling(m, 1);
+    m_reset_tornado(m);
 }
 /* MarioWall::startJump: off the wall's normal (turned off the way he came in within 15 frames: mWallTriJumpMargin)
  * x mWallJumpPowerXZ, up x mWallJumpPowerY. ponytail: mDrawStates._3 (ForbidTriangleJumpCube / CubeCamera 2) not kept */
@@ -14988,7 +15082,7 @@ static int m_wall_start_jump(Player *m)
         }
     }
     m->walling = 0;
-    m_try_wall_jump(m, vadd(vmul(v, MC.mWallJumpPowerXZ), vmul(m->up, MC.mWallJumpPowerY)));
+    m_try_wall_jump(m, vadd(vmul(v, MC.mWallJumpPowerXZ), vmul(m->up, MC.mWallJumpPowerY)), 1);
     m->wall_cancel = 1;
     m->spin_lock = 0; /* _2B */
     return 1;
@@ -15108,12 +15202,13 @@ static void m_try_drop(Player *m)
 /* checkWallJumpHit: a long jump (kind 5) into a front wall (_8) loses its part along the wall's normal; unless the wall
  * is NoAction that part is turned back, MarioBlown takes a fifth of it and he faces against it (_2B, _402 0, _428
  * 60). Else falling after 10 frames against a front wall under 80 degrees: the first time 5 off it with no gravity
- * part (壁はじき, _10._E), then its part cut keeping the length. ponytail: checkWallJumpCode is not ported */
+ * part (壁はじき, _10._E), then its part cut keeping the length. A wall of the back jump codes throws him
+ * instead (checkWallJumpCode) */
 static int m_blown(Player *m, V3 v);
 static void m_wall_jump_hit(Player *m)
 {
     if (m->jump_kind == 5) {
-        if (mw.w8) {
+        if (mw.w8 && !m_check_wall_jump_code(m)) {
             V3 n = m_wall_norm(m), jv = m_jv(m);
             float wd = vdot(jv, n);
             jv = vsub(jv, vmul(n, wd)); /* cutVecElementFromJumpVec */
@@ -15153,7 +15248,7 @@ static void m_check_all_wall(Player *m)
 {
     float r = swimming ? 90.0f : 80.0f;
     V3 c = mw.c, front = m->face;
-    if (m->jumping && m->jump_kind == 8) { /* _F: the tornado's last move */
+    if (m->tornado) { /* _F: the tornado's last move */
         V3 d = vtangent(m->last_move, m->up);
         if (vlen(d) > 1e-4f) front = vnorm(d);
     }
@@ -15193,6 +15288,7 @@ static void m_check_all_wall(Player *m)
             mw.w19 = 1;
         }
     }
+    m_update_wall_floor_code();
 }
 
 /* calcFrontFloor (after the action): the wall ahead (the faced one, else a line 100 along his front from 8 up, 200 along
@@ -15211,7 +15307,7 @@ static void m_calc_front_floor(Player *m)
     else {
         V3 d = vmul(m->face, 100.0f);
         start = vadd(m->pos, vmul(m->up, 8.0f));
-        if (m->jumping && m->jump_kind == 8 && vlen(m->move_dir) > 1e-6f) {
+        if (m->tornado && vlen(m->move_dir) > 1e-6f) {
             V3 t = vtangent(m->move_dir, m->up);
             if (vlen(t) > 1e-6f) d = vmul(vnorm(t), 200.0f);
         }
@@ -15840,10 +15936,22 @@ static void hang_end_by(Player *m, int faint)
     hang_close(m);
 }
 
-/* Mario::checkPressDamage: a vertical press (setPress 0), or a wall with the Press floor code while on other ground
- * (setPress 4, 120). Only near a press object (the checks need one). ponytail: checkSidePressPre / checkSidePress
- * (front and back walls, the moving faces' velocities) and the push off walls closer than 200 (_72C) are not in the
- * port's collision */
+/* Mario::checkSidePressPre: a front and a back wall under 100 apart, of two parts one a press object (no Dossun),
+ * facing each other (normals under -0.5): setPress 1. ponytail: the hanging case (_8C8, his hang's wall) */
+static int m_side_press_pre(void)
+{
+    if (!mw.w8 || !mw.w19 || vlen(vsub(mw.p4F4, mw.p4E8)) >= 100.0f || mw.front.inst == mw.back.inst) return 0;
+    if (!press_at(mw.front.inst) && !press_at(mw.back.inst)) return 0;
+    for (int k = 0; k < 2; k++) { /* isDossun: its host's name has ドッスン */
+        int i = k ? mw.back.inst : mw.front.inst;
+        if (i >= 0 && insts[i].row >= 0 && strstr(sc->types + 32 * sc->objs[insts[i].row].type, "Dossun")) return 0;
+    }
+    return vdot(tri_n(&mw.front), tri_n(&mw.back)) < -0.5f;
+}
+/* Mario::checkPressDamage: a vertical press (setPress 0), two walls closing in (checkSidePressPre, setPress 1), or a
+ * wall with the Press floor code while on other ground (setPress 4, 120). The vertical one only near a press object
+ * (the checks need one). ponytail: checkSidePress (the moving faces' velocities: no calcVelocityMovingPoint in the
+ * port's collision) and the push off walls closer than 200 (_72C) */
 static int m_check_press(Player *m)
 {
     if (m->launch >= 0) return 0;
@@ -15852,7 +15960,8 @@ static int m_check_press(Player *m)
         if (insts[i].press && vlen(vsub(m->pos, v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]))) < insts[i].reach + 300.0f)
             near = 1;
     if (near && m_vertical_press(m, 0)) { m_set_press(m, 0); return m->press != 0; }
-    if (m->wall && (wall_attr & 0x3F) == 29 && m->grounded && m->floor != 29) { m_set_press(m, 4); return 1; }
+    if (m_side_press_pre()) { m_set_press(m, 1); return 1; }
+    if (m_wall_floor_code(29) && m->grounded && m->floor != 29) { m_set_press(m, 4); return 1; } /* checkWallFloorCode(0x1D) */
     return 0;
 }
 
@@ -27603,7 +27712,6 @@ static const struct { const char *name; float h, rate, min; int storm, adjust, e
     {"TwisterSanSlim", 850.0f, 0.3f, 100.0f, 55, 30, 50, 800.0f, 10.0f, 180.0f},
 };
 static struct { int row, init, nrv, step, c8, bound; float coord, b8, bc, c0, c4, cc, trot[2]; V3 front, pos, toff[2]; u32 lv[3]; } sss[MAX_STORMS];
-static struct { V3 v; float attn; int t; } ss_boost; /* Mario's rocket booster (procRocketBooster) */
 static int ss_of(int row)
 {
     for (int i = 0; i < nsss; i++) if (sss[i].row == row) return i;
@@ -27652,13 +27760,16 @@ static int ss_try_jump(int k, int t) /* tryTornadoJumpPlayer: endBind */
     o->bound = 0; ss_ride = -1;
     pad_rumble(RUMBLE_STRONG); /* Sandstorm::endBind */
     m->up = up_at(m->pos, m->up);
-    m->jump_kind = 8; /* tryTornadoJump */
+    m->tornado_t = MC.mTornadoTimeAir; /* MarioAccess::tornadoJump: _544 */
+    m->jump_kind = 8; m->spin_kind = 0; /* tryTornadoJump */
     m_set_jv(m, vadd(vmul(m->face, m->walk * MC.mJumpTornadoSpeed), vmul(m->up, MC.mJumpHeight[8])));
+    m->digital = 0; m->tornado = 1; /* _E, _F */
     m_proc_jump(m, 1);
     mario_play("jump", 1.0f, 0);
     mario_sound("声スピン"); mario_sound("トルネードジャンプ");
-    m->jumping = 1; m->connect = 0; m->walk = 0; m->grounded = 0;
+    m->jumping = 1; m->connect = 0; m->walk = 0; m->grounded = 0; m->neutral = 0;
     m->air_spin = MC.mAirWalkTimeTornado;
+    m->zero_gr = MC.mTornadoZeroGravityTimer; /* _424 */
     ss_boost.v = vmul(up, MC.mTornadoBoostPower);
     if (t == 0) { ss_boost.attn = MC.mTornadoBoostAttnMini; ss_boost.t = MC.mTornadoBoostTimerMini; se_start(SE_OJ_SANDSTORM_S_BLOW_UP, &o->pos.x); }
     else { ss_boost.attn = MC.mTornadoBoostAttn; ss_boost.t = MC.mTornadoBoostTimer; se_start(SE_OJ_SANDSTORM_BLOW_UP, &o->pos.x); }
