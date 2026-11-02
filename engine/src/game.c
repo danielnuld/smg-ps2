@@ -151,6 +151,7 @@ typedef struct {
      * clips), _420 (the fire spin's hold) */
     int s406, s408, s76C, s774, fly11, s12, s42C, bee_wall, s9F2, s420;
     int skate, sk14, sk18, sk19, sk1A, sk1B, sk1C, sk1D; /* MarioSkate: on, its _14 _18 _19 _1A _1B _1C _1D */
+    int side_step;      /* MarioSideStep (MarioStatus_SideStep) on */
     int rabbit, rb25, rb26, rb27, rb28, rb68, rb69, rb2A, rb6A; /* MarioRabbit: on, its flags and counters */
     int teresa, t418, ts42, ts44, ts46, ts48, ts58, ts1C4, ts1C; /* MarioTeresa: on, Mario::_418 (through walls), its own */
     float ts20, ts24, ts50; V3 ts14, ts28, ts34;                /* its height, wait height, _50, jump, wind, velocity */
@@ -11784,6 +11785,9 @@ static void foo_frame(Player *m);
 static int foo_active(void);
 static void foo_close(void);
 static int swim_update(Player *m); /* (MarioSwim: before update_mario) */
+static int side_step_update(Player *m);
+static void side_step_close(Player *m);
+static void m_check_wall_push(Player *m);
 
 /* --- Mario's movement --------------------------------------------------------------------------------------
  * After Petari: Mario.cpp (update, actionMain, inputStick, writeBackPhyisicalVector, setFrontVecKeepUp), MarioMove.cpp
@@ -12201,6 +12205,7 @@ static void m_decide_walk_anim(Player *m)
         if (m->brake1 && !m->slip_poly) { mario_play("runend", 1.0f, 0); m->brake2 = MC.mBrakeSecondTimer; }
         m->brake1 = 0;
     }
+    m_check_wall_push(m);
 }
 
 /* decideSquatWalkAnimation: しゃがみ基本 (SquatWait / SquatWalk), squat walking at mSquatWalkMin..MaxSpeed */
@@ -15014,7 +15019,7 @@ static int m_fix_walling(Player *m, int immediate) /* fixWallingPosition: fixWal
     }
     /* fixWallingDir: faced against the back wall, else the front one (at once, else blended 0.1) */
     V3 to;
-    if (mw.w19) to = vmul(tri_n(&mw.back), -1.0f);
+    if (mw.w19 && !m->side_step) to = vmul(tri_n(&mw.back), -1.0f); /* (not in MarioSideStep) */
     else if (mw.w8) to = vmul(tri_n(&mw.front), -1.0f);
     else return 1;
     if (immediate) m_front(m, to);
@@ -15164,6 +15169,96 @@ static int m_wall_update(Player *m)
         }
     }
     return 1;
+}
+
+/* MarioSideStep.cpp after Petari (Mario::doSideStep, MarioSideStep::start / close / update) and MarioWalk.cpp
+ * checkWallPush: walking (speed index over 0) square into a front wall (within mWallPushAngleRange) of 85 to 91 degrees
+ * standing square on his ground, unmoved, with 200 or more to the ceiling, he leans on it (壁押し); the stick along the
+ * wall walks him sideways at 6 (壁右歩き / 壁左歩き, 1 + 0.25 x its part into the wall less), let go he waits (壁ウエイト),
+ * the stick off it lets go (turned off it beyond 0.707), A jumps off it, the spin punches off it, off his feet he drops.
+ * A wall face under mForceWallAngle stops the walk at speed index 1. ponytail: checkWallJumpCode (the barrier / water
+ * wall floor codes: MarioWall::startBackJump) is not ported, mDrawStates._A (the edge nudges) and MarioActor _468 are
+ * never set, forceStopTornado has no tornado to stop, no startBas (the walk's foot sounds) */
+enum { WALLC_NOTSIDESTEP = 5 };
+static void side_step_start(Player *m) /* MarioSideStep::start */
+{
+    m->side_step = 1;
+    if (!m_anim_on("壁押し")) mario_sound("声壁押し");
+    m_anim_ip("壁押し", 0);
+    m_blend_mtx(10); /* setBlendMtxTimer */
+}
+static void side_step_close(Player *m) /* MarioSideStep::close */
+{
+    m->side_step = 0;
+    m_stop_anim("壁ウエイト", NULL); m_stop_anim("壁右歩き", NULL); m_stop_anim("壁左歩き", NULL); m_stop_anim("壁押し", NULL);
+}
+static int m_do_side_step(Player *m) /* doSideStep */
+{
+    if (m->side_step) return 0;
+    if (m_check_wall_code(WALLC_NOTSIDESTEP, 0) || m_check_wall_code(WALLC_NOACTION, 0)) return 0;
+    if (kari_cling) return 0;                                  /* _1C._5 */
+    if (m_dist_to_ceil(m) < 200.0f) return 0;                  /* _72C */
+    if (player_mode == PM_HOPPER) return 0;
+    if (mw.front.prism && angle_d(m, tri_n(&mw.front)) > 91.0f) return 0; /* calcPolygonAngleD(mFrontWallTriangle) */
+    float a = ang_abs(m_front_wall_norm(), m->ground_n);       /* against _368 */
+    if (a >= 1.6534699f || a < 1.4959966f) return 0;
+    if (!slip_code(m->floor) || m->floor == 2) return 0;
+    if (!mw.w8 || !mw.front.prism || tri_moved(&mw.front)) return 0; /* getWallPolygon, its base matrix unmoved */
+    m_stop_walk(m);
+    side_step_start(m); /* changeStatus */
+    return 1;
+}
+static void m_check_wall_push(Player *m) /* checkWallPush (checkWallJumpCode first: not ported) */
+{
+    float ang = ang_abs_h(m->face, vmul(m_wall_norm(m), -1.0f), m->up);
+    int side = m->tsi && mw.w8 && ang < MC.mWallPushAngleRange * 3.14159265f / 180.0f;
+    if (m->slip_poly) side = 0; /* mDrawStates._C */
+    if (angle_d(m, m_wall_norm(m)) < MC.mForceWallAngle) {
+        side = 0;
+        if (mw.w8 && m->tsi) { m->tsi = 1; m->walk = 0; }
+    }
+    if (!m_anim_on("壁押し") && side) m_do_side_step(m);
+}
+static int side_step_update(Player *m) /* MarioSideStep::update: 0 ends it */
+{
+    if (!mw.w8 || kari_cling || talk_active() || !slip_code(m->floor)) return 0;
+    V3 n = m_wall_norm(m);
+    if (m_sz < 0.1f) m_anim("壁ウエイト");
+    else {
+        V3 d = vtangent(m_pad, m->up), side;
+        d = vlen(d) > 0.0f ? vnorm(d) : d;
+        float fwd = vdot(d, n);
+        side = vsub(d, vmul(n, fwd));
+        if (fwd < -0.866f) {
+            if (!m_anim_on("壁押し")) mario_sound("声壁押し");
+            m_anim_ip("壁押し", 0);
+        } else if (fwd > 0.0f) {
+            if (fwd > 0.707f) m_front(m, n);
+            mw.w8 = 0;
+            return 0;
+        } else {
+            side = vmul(side, (1.0f + 0.25f * fwd) * m_sz);
+            if (vdot(side, vcross(m->up, m->face)) < 0.0f) { if (!m_anim_on("壁右歩き")) m_anim("壁右歩き"); } /* mSideVec */
+            else if (!m_anim_on("壁左歩き")) m_anim("壁左歩き");
+            m->vel = vadd(m->vel, vsub(vmul(side, 6.0f), vmul(n, 6.0f)));
+        }
+    }
+    if (m_req_jump) { /* checkTrgA */
+        m->hvel = v3(0, 0, 0); m->walk = 0; /* resetInline */
+        m_front(m, vmul(n, -1.0f));
+        m_try_jump(m);
+        return 0;
+    }
+    if (swing_perm && pad_pressed(PAD_SQUARE) && !m->spin_cool && !m_input_off()) { m_wall_punch(m); return 0; } /* isRequestRush */
+    if (!m->grounded) {
+        if (mw.w8) { /* keepDistFrontWall */
+            float l = vlen(vtangent(vsub(mw.p4E8, mw.ground_pos), m->up));
+            if (l < 80.0f) m->s350 = vadd(m->s350, vmul(tri_n(&mw.front), 80.0f - l));
+        }
+        m_try_drop(m);
+        return 0;
+    }
+    return m_fix_walling(m, 0);
 }
 
 /* tryDrop: off a ledge (cDropFrontSpeed 2); a front / side wall within 80 of his ground place keeps him on the ground,
@@ -17290,6 +17385,64 @@ void game_test_swim_input(int frame)
                sw.spin_t, sw.spin_dash, sw.zsink_t, oxygen, mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-",
                m_w[0], m_w[1], m_w[2], m_w[3], mario->pos.x, mario->pos.y, mario->pos.z);
 }
+/* Test builds (SIDESTEP_TEST): from Mario's first free frame, the nearest wall of 86 to 91 degrees (rays round his
+ * chest, 5000 out, the same face 50 lower and 70 higher), Mario put on its floor 400 before it: the stick at it until
+ * he leans on it (MarioSideStep), let go 30 frames, along the wall one way for 120, the other for 120, at it again,
+ * then A jumps off */
+void game_test_sidestep_input(int frame)
+{
+    static int free_at = -1, found;
+    static V3 wp, wn, at;
+    Player *m = mario;
+    if (free_at < 0) { if (demo_on || !m->grounded || m->launch >= 0 || starter >= 0) return; free_at = frame; }
+    frame -= free_at;
+    if (frame == 10) {
+        V3 a = vtangent(v3(1, 0, 0), m->up), c = vadd(m->pos, vmul(m->up, 80.0f));
+        if (vlen(a) < 0.1f) a = vtangent(v3(0, 0, 1), m->up);
+        a = vnorm(a);
+        V3 b = vcross(m->up, a);
+        float best = 1e9f;
+        for (int i = 0; i < 48; i++) {
+            float r = i * 6.2831853f / 48.0f;
+            V3 d = vadd(vmul(a, cosf(r)), vmul(b, sinf(r))), hp;
+            Tri t;
+            if (!map_poly(c, vmul(d, 5000.0f), &hp, &t)) continue;
+            float dist = vlen(vsub(hp, c)), ang = angle_d(m, tri_n(&t));
+            if (!(ang >= 86.0f && ang <= 91.0f && vdot(tri_n(&t), d) < -0.9f && dist < best)) continue;
+            /* the same face from 30 and 150 up (no step under the ray), a line from 40 up to the floor before it */
+            V3 h2 = c, h3 = c, g = c;
+            int k2 = map_poly(vsub(c, vmul(m->up, 50.0f)), vmul(d, 5000.0f), &h2, NULL), k3 = map_poly(vadd(c, vmul(m->up, 70.0f)), vmul(d, 5000.0f), &h3, NULL);
+            int kg = map_poly(vadd(vsub(hp, vmul(d, 400.0f)), vmul(m->up, 100.0f)), vmul(m->up, -400.0f), &g, NULL);
+            float d2 = vlen(vtangent(vsub(h2, c), m->up)), d3 = vlen(vtangent(vsub(h3, c), m->up));
+            if (!k2 || fabsf(d2 - dist) > 30.0f || !k3 || fabsf(d3 - dist) > 30.0f || !kg) continue;
+            best = dist; wp = hp; wn = tri_n(&t); found = 1; at = g;
+        }
+        printf("sidestep test: wall %d at %.0f %.0f %.0f n %.2f %.2f %.2f dist %.0f from %.0f %.0f %.0f\n", found, wp.x, wp.y, wp.z, wn.x, wn.y,
+               wn.z, best, m->pos.x, m->pos.y, m->pos.z);
+        if (found) { m->pos = at; m->hvel = v3(0, 0, 0); m->vup = 0; m_front(m, vmul(wn, -1.0f)); } /* on its floor 400 before it */
+    }
+    if (!found || frame < 10) return;
+    static int lean_at = -1;
+    if (lean_at < 0 && m->side_step) lean_at = frame;
+    if (lean_at >= 0 && !m->side_step && frame - lean_at < 330) { printf("sidestep test: off at t %d, again\n", frame - lean_at); lean_at = -1; }
+    V3 along = vnorm(vcross(m->up, wn));
+    pad_force = 0;
+    if (lean_at < 0) { if (frame < 1500) test_walk_to(vsub(wp, vmul(wn, 200.0f)), 0.0f); else pad_force_stick = 0; } /* at it */
+    else {
+        int t = frame - lean_at;
+        pad_force_stick = 1;
+        if (t < 40) test_walk_to(vsub(m->pos, vmul(wn, 1000.0f)), 0.0f);
+        else if (t < 70) pad_force_lx = pad_force_ly = 0;
+        else if (t < 190) test_walk_to(vsub(vadd(m->pos, vmul(along, 1000.0f)), vmul(wn, 400.0f)), 0.0f); /* (a little into it: */
+        else if (t < 310) test_walk_to(vsub(vsub(m->pos, vmul(along, 1000.0f)), vmul(wn, 400.0f)), 0.0f); /* off it lets go) */
+        else if (t < 340) test_walk_to(vsub(m->pos, vmul(wn, 1000.0f)), 0.0f);
+        else { pad_force_lx = pad_force_ly = 0; if (t < 343) pad_force = PAD_CROSS; }
+    }
+    if (frame % 5 == 0 && frame <= 1800)
+        printf("sidestep f %d: on %d w8 %d tsi %d walk %.2f grounded %d jumping %d clip %s face.n %.2f pad.n %.2f sz %.2f pos %.0f %.0f %.0f\n", frame,
+               m->side_step, mw.w8, m->tsi, m->walk, m->grounded, m->jumping, mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-",
+               vdot(m->face, wn), vdot(m_pad, wn), m_sz, m->pos.x, m->pos.y, m->pos.z);
+}
 /* Mario::saveLastSafetyTrans: on his feet with every ground sensor on (_1C._11), on a Normal / NoSlip / Sand / Glass /
  * WaterBottom / Wet / NoStampSand floor (_960), no wall met, not on a slip polygon, over 160 from the ceiling, under 10
  * over his shadow, on under 15 degrees of an unmoved part: the place 5 / 8 his own, 3 / 8 the ground's corners, within
@@ -17761,6 +17914,7 @@ static void update_mario_(void)
         else if (!m_clip_on("spinground") || m->jumping || slipping) m->magic = 0;
         else { m_main_move(m); m_update_walk_speed(m); done = 1; }
     }
+    if (!done && m->side_step) { if (!side_step_update(m)) side_step_close(m); done = 1; } /* MarioSideStep (a status) */
     if (!done && m->skate) { if (!skate_update(m)) skate_close_(m); else done = 1; } /* MarioSkate (a status) */
     if (!done && m->rabbit && rabbit_update(m)) done = 1;                 /* MarioRabbit (a status) */
     if (!done && m->teresa && mteresa_update(m)) done = 1;                 /* MarioTeresa (a status) */
@@ -17977,6 +18131,11 @@ static void update_mario_(void)
         int busy = mario_anim->clip_id >= 0 && !mario_anim->loop && !mario_anim->done && !m_anim_on("飛び込み準備"); /* (a walk / wait motion) */
         busy |= m_anim_on("ブレーキ滑り床") || m_anim_on("ターンブレーキ滑り床"); /* run's loops, not isWalkOrWaitingMotion */
         if (m->hip || m->magic || m->walling || m->sleep || dmg.st || hg.on) ; /* their own clips */
+        else if (m->side_step && m->grounded && !m->jumping) { /* MarioSideStep's clips are no walk motions */
+            if (m_anim_on("壁押し")) { m_decide_walk_speed(m); m_check_wall_push(m); }
+            else if (m->turning || m->turn_brake) m_decide_walk_speed(m);
+            m_update_brake(m);
+        }
         else if (m->grounded && !m->jumping && (m->s23 || (busy && (m_clip_is("slidehipend") || m_clip_is("slidestmachend"))))) ; /* slopeMove's clips */
         else if (m->grounded && !m->jumping) {
             if (m->squat) m_squat_anim(m);

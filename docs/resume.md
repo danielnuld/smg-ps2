@@ -212,6 +212,11 @@ Second console round (2026-10-24), from Daniel's report:
   opening to the spin demo's end. ponytail: the guiding bunny hops along its rail when stuck 120 steps.
 
 - fix/start-crater: the Gateway's pit (HeavensDoorGalaxy 1, HeavensDoorMysteriousPlanet, 650 deep) had no way out: its PullBackCylinder was not converted and MarioRecovery not ported. Now Mario::updateCubeCode / doRecovery, MarioRecovery (start, update, updateJump, calcFirstVector, close) and save / getLastSafetyTrans are in game.c. **Release agent, to repack:** tools/slice.py LOGIC gained PullBackCylinder: every HeavensDoorGalaxy and AstroGalaxy scenario's scene.bin (dev overlay: out/wt-crater). Same branch: NPCs' turn axes (Inst nu / nf, NPCActor _A0 / _B0) were read before game_rebind_ set the instance matrix (zero): Toads drawn tilted, some upside down in the ground (PeachCastleGarden 1 row 60); `npc` with XF=-DNPC_LOOK puts the camera on each Kinopio in turn.
+- feat/mario-sidestep: MarioSideStep after Petari (doSideStep, start / close / update, checkWallPush at the end of
+  decideWalkAnimation): walking square into a wall Mario leans on it (壁押し), waits (壁ウエイト), walks along it
+  (壁右歩き / 壁左歩き at 6), A jumps off, the spin punches off. Test: `build.sh sidestep <blob> KoopaJrShipLv1Galaxy/1`
+  (the nearest vertical wall: lean, wait, walk; the airship's cannon shells interrupt it now and then). ponytail:
+  checkWallJumpCode (barrier / water walls) not ported.
 
 ## Rules
 
