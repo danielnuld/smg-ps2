@@ -14275,6 +14275,14 @@ static void dm_start(Player *m)
     }
 }
 
+/* MarioActor::selectDamagePop: auto_efx_bitmap's ダメージ中跳ねる (bit 21) for his ground's host: ザコカメムシ,
+ * 子連れカメムシ (StinkBugSmall / StinkBugParent; their collision is not in the port yet: none) */
+static int m_damage_pop(void)
+{
+    if (mario_ground < 0 || insts[mario_ground].row < 0) return 0;
+    const char *tn = sc->types + 32 * sc->objs[insts[mario_ground].row].type;
+    return !strcmp(tn, "StinkBugSmall") || !strcmp(tn, "StinkBugParent");
+}
 static int dm_update(Player *m) /* the status's update: 0 gives the frame back (closed) */
 {
     switch (dmg.st) {
@@ -14292,7 +14300,10 @@ static int dm_update(Player *m) /* the status's update: 0 gives the frame back (
                     dmg.d1C = vadd(h, vmul(m->up, vt));
                 }
             }
-            if (m->grounded) { /* ponytail: no selectDamagePop (the sensors' bounce table) */
+            if (m->grounded && m->height > 30.0f && m_damage_pop()) { /* mVerticalSpeed, selectDamagePop: it bounces */
+                dmg.d1C = vadd(dmg.d1C, vmul(m->ground_n, 20.0f)); /* _368 */
+                m->grounded = 0; m->jumping = 1;
+            } else if (m->grounded) {
                 m->jumping = 0;
                 mario_sound("吹っ飛び倒れ");
                 m_anim(dmg.d2C);
@@ -15901,10 +15912,22 @@ static void hang_end_by(Player *m, int faint)
     hang_close(m);
 }
 
-/* Mario::checkPressDamage: a vertical press (setPress 0), or a wall with the Press floor code while on other ground
- * (setPress 4, 120). Only near a press object (the checks need one). ponytail: checkSidePressPre / checkSidePress
- * (front and back walls, the moving faces' velocities) and the push off walls closer than 200 (_72C) are not in the
- * port's collision */
+/* Mario::checkSidePressPre: a front and a back wall under 100 apart, of two parts one a press object (no Dossun),
+ * facing each other (normals under -0.5): setPress 1. ponytail: the hanging case (_8C8, his hang's wall) */
+static int m_side_press_pre(void)
+{
+    if (!mw.w8 || !mw.w19 || vlen(vsub(mw.p4F4, mw.p4E8)) >= 100.0f || mw.front.inst == mw.back.inst) return 0;
+    if (!press_at(mw.front.inst) && !press_at(mw.back.inst)) return 0;
+    for (int k = 0; k < 2; k++) { /* isDossun: its host's name has ドッスン */
+        int i = k ? mw.back.inst : mw.front.inst;
+        if (i >= 0 && insts[i].row >= 0 && strstr(sc->types + 32 * sc->objs[insts[i].row].type, "Dossun")) return 0;
+    }
+    return vdot(tri_n(&mw.front), tri_n(&mw.back)) < -0.5f;
+}
+/* Mario::checkPressDamage: a vertical press (setPress 0), two walls closing in (checkSidePressPre, setPress 1), or a
+ * wall with the Press floor code while on other ground (setPress 4, 120). The vertical one only near a press object
+ * (the checks need one). ponytail: checkSidePress (the moving faces' velocities: no calcVelocityMovingPoint in the
+ * port's collision) and the push off walls closer than 200 (_72C) */
 static int m_check_press(Player *m)
 {
     if (m->launch >= 0) return 0;
@@ -15913,7 +15936,8 @@ static int m_check_press(Player *m)
         if (insts[i].press && vlen(vsub(m->pos, v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]))) < insts[i].reach + 300.0f)
             near = 1;
     if (near && m_vertical_press(m, 0)) { m_set_press(m, 0); return m->press != 0; }
-    if (m->wall && (wall_attr & 0x3F) == 29 && m->grounded && m->floor != 29) { m_set_press(m, 4); return 1; }
+    if (m_side_press_pre()) { m_set_press(m, 1); return 1; }
+    if (m_wall_floor_code(29) && m->grounded && m->floor != 29) { m_set_press(m, 4); return 1; } /* checkWallFloorCode(0x1D) */
     return 0;
 }
 
