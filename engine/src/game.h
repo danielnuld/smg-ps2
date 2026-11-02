@@ -250,6 +250,8 @@ int game_test_free(void); /* tests: the flight in over, Mario free */
 unsigned game_test_moves(unsigned frame); /* the moves test: its pad this frame (game.c) */
 int game_test_begoman(int how); /* begoman test: Mario 900 before (0), spinning by (1), onto (2) the first BegomanSpike; its row */
 int game_begoman_state(void); /* its nerve, -1 none */
+int game_test_beamer(int how); /* beamer test: Mario 1000 off (0), onto the body (1), onto the spring (2) of the first JumpBeamer; its row */
+void game_beamer_state(void); /* its nerve and Mario's jump logged */
 int game_test_spidercoin(void); /* spidercoin test: R2 with the cursor on the first SpiderCoin; its row */
 void game_test_unclip(void); /* tests: the walkers move though off the view */
 int game_test_spiderblock(void); /* spiderblock test: a hip drop onto the first SpiderMapBlock; its row */
