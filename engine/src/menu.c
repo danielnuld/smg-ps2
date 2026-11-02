@@ -4315,7 +4315,7 @@ static void gm_init(void)
 }
 
 /* --- MissLayout ("TooBad"), WipeKoopa, WipeGameOver ("GameOver"): the miss / game over sequences' (game.c) ----- */
-static struct { LytInst *toobad, *koopa, *gameover, *cinema; u8 tb_on, ko_on, go_on, ci_on, ci_frame; } mlay;
+static struct { LytInst *toobad, *koopa, *gameover, *cinema; u8 tb_on, ko_on, go_on, ci_on, ci_nrv, ci_first; } mlay;
 
 void menu_miss_start(void) /* MissLayout::start: Appear (its TooBad effect not shown) */
 {
@@ -4343,13 +4343,58 @@ void menu_wipe(int close, int frames, u32 rgb) { wipe_start(frames < 0 ? 30 : fr
 int menu_wipe_closed(void) { return wipe.frames && wipe.close && wipe.t >= wipe.frames; }
 int menu_wipe_active(void) { return wipe_active(); }
 void menu_wipe_force(int close) { wipe_start(1, close, wipe.rgb); wipe.t = 1; if (!close) wipe.frames = 0; }
-/* CinemaFrame.cpp: Screen (dead), ScreenToFrame (Appear), Frame (Wait), FrameToScreen (End, then dead) */
-void menu_cinema(int frame)
+/* CinemaFrame.cpp: Screen (dead: End's last frame), Frame (Wait), Blank (Open's frame 0: the screen black),
+ * ScreenToFrame (Appear), FrameToBlank (Close), BlankToFrame (Open), FrameToScreen (End): the moving ones go on at
+ * their animation's stop (setNerveAtAnimStopped) */
+static void ci_set(int n) /* setNerve (appear() first when dead) */
 {
-    if (!mlay.cinema || (mlay.ci_on && mlay.ci_frame == frame)) return;
-    if (!frame && !mlay.ci_on) return;
-    mlay.ci_on = 1; mlay.ci_frame = (u8)frame;
-    lyt_start(mlay.cinema, frame ? "Appear" : "End", 0);
+    if (!mlay.cinema) return;
+    mlay.ci_on = 1; mlay.ci_nrv = (u8)n; mlay.ci_first = 1;
+}
+void menu_cinema(int frame) /* tryScreenToFrame / tryFrameToScreen */
+{
+    int n = mlay.ci_nrv;
+    if (frame) { if (!mlay.ci_on || !(n == CI_FRAME || n == CI_SCREEN_TO_FRAME || n == CI_BLANK_TO_FRAME)) ci_set(CI_SCREEN_TO_FRAME); }
+    else if (!mlay.ci_on) ci_set(CI_FRAME_TO_SCREEN); /* (dead: appear() is ScreenToFrame, then FrameToScreen) */
+    else if (!(n == CI_SCREEN || n == CI_FRAME_TO_SCREEN)) ci_set(CI_FRAME_TO_SCREEN);
+}
+void menu_cinema_blank(int on) /* tryFrameToBlank (1) / tryBlankToFrame (0) */
+{
+    int n = mlay.ci_nrv;
+    if (on) { if (!mlay.ci_on || !(n == CI_BLANK || n == CI_FRAME_TO_BLANK)) ci_set(CI_FRAME_TO_BLANK); }
+    else if (!mlay.ci_on || !(n == CI_FRAME || n == CI_SCREEN_TO_FRAME || n == CI_BLANK_TO_FRAME)) ci_set(CI_BLANK_TO_FRAME);
+}
+void menu_cinema_force(int n) { ci_set(n); } /* forceToScreen / forceToFrame / forceToBlank */
+int menu_cinema_stopped(void) /* isStop */
+{
+    int n = mlay.ci_nrv;
+    return !mlay.ci_on || n == CI_SCREEN || n == CI_FRAME || n == CI_BLANK;
+}
+static void ci_update(void)
+{
+    LytInst *l = mlay.cinema;
+    int first = mlay.ci_first;
+    mlay.ci_first = 0;
+    switch (mlay.ci_nrv) {
+    case CI_SCREEN: /* End's last frame, killed */
+        mlay.ci_on = 0;
+        return;
+    case CI_FRAME: if (first) lyt_start(l, "Wait", 0); break;
+    case CI_BLANK:
+        if (first) { lyt_start(l, "Open", 0); lyt_set_frame(l, 0, 0.0f); lyt_set_rate(l, 0, 0.0f); }
+        break;
+    case CI_SCREEN_TO_FRAME: if (first) lyt_start(l, "Appear", 0); break;
+    case CI_FRAME_TO_BLANK: if (first) lyt_start(l, "Close", 0); break;
+    case CI_BLANK_TO_FRAME: if (first) lyt_start(l, "Open", 0); break;
+    case CI_FRAME_TO_SCREEN: if (first) lyt_start(l, "End", 0); break;
+    }
+    lyt_update(l);
+    if (!first && lyt_stopped(l, 0)) {
+        int n = mlay.ci_nrv;
+        if (n == CI_SCREEN_TO_FRAME || n == CI_BLANK_TO_FRAME) ci_set(CI_FRAME);
+        else if (n == CI_FRAME_TO_BLANK) ci_set(CI_BLANK);
+        else if (n == CI_FRAME_TO_SCREEN) ci_set(CI_SCREEN);
+    }
 }
 static void mlay_init(void)
 {
@@ -4364,13 +4409,7 @@ static void mlay_update(void)
     if (mlay.tb_on) lyt_update(mlay.toobad);
     if (mlay.ko_on) lyt_update(mlay.koopa);
     if (mlay.go_on) lyt_update(mlay.gameover);
-    if (mlay.ci_on) {
-        lyt_update(mlay.cinema);
-        if (lyt_stopped(mlay.cinema, 0)) { /* setNerveAtAnimStopped: Frame (Wait) or Screen (killed) */
-            if (mlay.ci_frame) lyt_start(mlay.cinema, "Wait", 0);
-            else mlay.ci_on = 0;
-        }
-    }
+    if (mlay.ci_on) ci_update();
 }
 static void mlay_draw(void)
 {

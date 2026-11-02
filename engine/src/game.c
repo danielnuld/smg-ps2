@@ -1262,6 +1262,11 @@ static int dx_row_moves(int row);
 static void story_scene_start(void);
 static int talk_active(void);
 static void stitle_start(void);
+static void stitle_kill(void);
+static int starter_bgm_on_welcome(void);
+static int on_stage(const char *galaxy);
+static int starter_skip; /* ScenarioStarter _124: its flight skipped, the frame closing */
+static int hud_welcome, hud_had_starter; /* frames since the ScenarioStarter's landing (ShowWelcomeLayout's step); a flight in */
 static int start_pos_cam; /* the start's camera is on (camera_start_pos) */
 static int draw_steps; /* logic steps since the last draw (game_set_draw_steps; 1 at start) */
 /* Switch logic rows (no model): TimerSwitch, SwitchSynchronizerReverse, GroupSwitchWatcher */
@@ -1296,6 +1301,7 @@ static int stone_row(const Row *r);
 static Launch *launches;
 static int nlaunches;
 static int starter; /* ScenarioStarter's flight (a launch, -1 none): Mario flies it in at the scenario's start */
+static int opening_visited; /* isAlreadyVisitedCurrentStageAndScenario: before this load (the skips' condition) */
 static short *row_camset; /* per OBJS row: its CameraSetId (CSET chunk, ActorCameraInfo), -1 none */
 static int ground_flips, slip_frames;
 #ifdef SLOPE_TEST
@@ -2534,6 +2540,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         char gal[48];
         const char *sl = strchr(game_stage_name, '/');
         snprintf(gal, sizeof gal, "%.*s", sl ? (int)(sl - game_stage_name) : (int)strlen(game_stage_name), game_stage_name);
+        opening_visited = sl && gd_visited(gal, atoi(sl + 1));
         if (sl) gd_set_visited(gal, atoi(sl + 1));
     }
 }
@@ -7132,7 +7139,41 @@ static int update_launch(Player *m)
         return 1;
     }
     int small = !L->starter && L->start < 45, s = t - L->start;
-    if (L->starter && s == 10) stitle_start(); /* ScenarioStarter::exeRailMove step 10: its ScenarioTitle */
+    if (L->starter) { /* ScenarioStarter::exeRailMove */
+        if (s == 10) { menu_cinema_blank(0); stitle_start(); } /* step 10: tryBlankToFrameCinemaFrame, its ScenarioTitle */
+        if (s > 10 && s < L->flight - 70 && opening_visited && pad_pressed(PAD_CROSS)) { /* trySkipTrigger (_F8: the
+                                                                                          * flight less SpaceFlyEnd + 20) */
+            pad_eat(PAD_CROSS);
+            menu_cinema_blank(1);
+            starter_skip = 1;
+        }
+        if (starter_skip && menu_cinema_stopped()) { /* exeRailMoveCanceled: updateBindActorMtx puts him back at the
+                                                      * player's place at init (_10C), endBindAndPlayerWait: 基本 */
+            starter_skip = 0;
+            camera_event_stop(); /* SpinDriverCamera::cancel: endForceSoon */
+            stitle_kill();
+            if (starter_bgm_on_welcome()) { bgm_stop(0); game_bgm_stage(); }
+            L->cool = 60;
+            m->launch = -1;
+            fly_on = 0;
+            m->pos = start_pos;
+            m->up = up_at(m->pos, v3(0, 1, 0));
+            m->face = vnorm(vtangent(v3(0, 0, 1), m->up));
+            m->vel = v3(0, 0, 0);
+            if (mario_anim) mario_play("wait", 1.0f, 1);
+            menu_cinema(0); /* exeShowWelcomeLayout: tryFrameToScreenCinemaFrame, startStartPosCamera, Welcome */
+            hud_welcome = 1;
+            for (u32 k = 0; k < sc->nstarts; k++)
+                if (sc->starts[k].zone == 0 && sc->starts[k].arg[0] == 0 && sc->starts[k].arg[1] >= 0) {
+                    camera_start_pos(0, sc->starts[k].arg[1]);
+                    start_pos_cam = 1;
+                }
+            return 0;
+        }
+        /* isStartBgmOnWelcome: the stage BGM bgmStartTime before the flight's end */
+        int bgm_t = on_stage("EggStarGalaxy") ? 20 : on_stage("HoneyBeeKingdomGalaxy") ? 7 : on_stage("FactoryGalaxy") ? 11 : 0;
+        if (s == L->flight - bgm_t && starter_bgm_on_welcome()) { bgm_stop(0); game_bgm_stage(); }
+    }
 
     if (s == 1 && !L->starter) camera_shake(L->start < 45 ? SHAKE_NORMAL : SHAKE_STRONG); /* exeShoot */
     if (s == 1 && !L->starter) { /* exeShoot's first step */
@@ -7185,6 +7226,7 @@ static int update_launch(Player *m)
         return 1;
     /* endBindAndSpinDriverJump(_D0): he goes on with the path's last velocity; the star rests 60 frames */
     camera_event_end(); /* SpinDriverCamera::end: endForceAtLanding */
+    if (L->starter) menu_cinema(0); /* exeShowWelcomeLayout: tryFrameToScreenCinemaFrame */
     L->cool = 60;
     m->launch = -1;
     fly_on = 0;
@@ -10533,7 +10575,6 @@ static void hud_tico_eat(int center) /* MR::requestCounterLayoutAppearanceForTic
     if (!hud[2].mode && spc_change_mode(&hud[2], center ? 2 : 1)) { hud_kill(&hud[1]); hud_kill(&hud[3]); hud_kill(&hud[0]); }
     hudc.tico = 1;
 }
-static int hud_welcome, hud_had_starter; /* frames since the ScenarioStarter's landing (ShowWelcomeLayout's step); a flight in */
 static void hud_update(void)
 {
     if (hud_welcome && hud_welcome < 1000) hud_welcome++;
@@ -10646,6 +10687,7 @@ static void hud_draw(void)
 static struct { int nrv, step; } stitle; /* 0 dead, 1 appear, 2 wait, 3 end */
 static void stitle_start(void) { stitle.nrv = 1; stitle.step = 0; }
 static void stitle_end(void) { if (stitle.nrv == 1 || stitle.nrv == 2) { stitle.nrv = 3; stitle.step = 0; } }
+static void stitle_kill(void) { stitle.nrv = 0; }
 static const u16 *tk_label_prefix(const char *prefix)
 {
     for (int i = 0; i < tk_nctl; i++)
@@ -30748,6 +30790,23 @@ static void bgm_start(const char *id) /* startStageBGM(name, false) */
     bgm_play(track);
 }
 void game_bgm(const char *id) { bgm_start(id); }
+/* GameScene::isValidScenarioOpeningCamera: the stage's StartScenario<n>.canm, its frames (0 none; test builds start
+ * in play) */
+static int opening_frames(void)
+{
+#ifndef CATCHUP
+    return 0;
+#endif
+    const u8 *q = sc->canm;
+    for (u32 i = 0; i < sc->ncanm; i++, q += 36 + 32 * *(const u32 *)(q + 32))
+        if (!strcmp((const char *)q, "stage/startscenario")) return (int)*(const u32 *)(q + 32);
+    return 0;
+}
+void game_bgm_first(void) /* GameScene::startStagePlayFirst: the stage BGM, unless the opening camera (BGM_START_DEMO)
+                           * or the ScenarioStarter starts it */
+{
+    if (!opening_frames() && starter < 0) game_bgm_stage();
+}
 static void bgm_stop(int frames) /* stopStageBGM(frames) */
 {
     printf("bgm: stop over %d\n", frames);
@@ -30769,6 +30828,14 @@ static const char *bgm_comet(void) /* the comet appearing in the current stage (
     snprintf(gal, sizeof gal, "%.*s", sl ? (int)(sl - game_stage_name) : 31, game_stage_name);
     int s = gd_comet_star(gal);
     return s ? gd_scenario_comet(gal, s) : "";
+}
+static int starter_bgm_on_welcome(void) /* ScenarioStarter::isStartBgmOnWelcome */
+{
+    const char *c = bgm_comet();
+    if (!strcmp(c, "Red") || !strcmp(c, "Black")) return 0;
+    return !strcmp(game_stage_name, "EggStarGalaxy/1") || !strcmp(game_stage_name, "HoneyBeeKingdomGalaxy/1") ||
+           !strcmp(game_stage_name, "FactoryGalaxy/1") || !strcmp(game_stage_name, "FactoryGalaxy/2") ||
+           !strcmp(game_stage_name, "FactoryGalaxy/3");
 }
 static int bgm_permitted(void) /* DemoSoundKeeper::isPermitBgmChange: not with a red / black comet in the stage */
 {
@@ -35816,36 +35883,52 @@ void game_update(void)
     if (scene_stop > 0) { scene_stop--; return; } /* SceneFunction stopScene: everything holds */
     /* GameSceneScenarioOpeningCameraState: the stage's StartScenario<n>.canm (CANM "stage/startscenario", world
      * space), Mario hidden, ScenarioTitle on until 60 frames before its end; then the ScenarioStarter flies Mario
-     * in. The other actors move meanwhile (GameScene::exeScenarioOpeningCamera: executeMovementList). ponytail: no
-     * cinema frame, no BGM_START_DEMO, no skip. GameScene starts in that nerve with the camera state waiting, so
+     * in. The other actors move meanwhile (GameScene::exeScenarioOpeningCamera: executeMovementList). start():
+     * forceToFrameCinemaFrame, startStageBGM BGM_START_DEMO, Mario at スタートカメラマリオ座標 (back at the end:
+     * setPlayerBaseMtx); 60 frames before its end tryFrameToBlankCinemaFrame with the title's end; done once the camera
+     * ended and the frame stopped (end(): stopStageBGM(10)); A skips it (trySkipTrigger: the scenario visited before,
+     * not at the first step; forceToBlankCinemaFrame). Then without a ScenarioStarter GameScene::exeScenarioOpeningCamera
+     * opens the frame and starts the stage BGM. GameScene starts in that nerve with the camera state waiting, so
      * the actors already move while the stage finishes loading (black): OPENING_PREROLL frames, run at once.
-     * ponytail: the count is Dolphin's (EggStar 1, Takobo patrols matched to its RAM), loading time on a real Wii */
+     * ponytail: the count is Dolphin's (EggStar 1, Takobo patrols matched to its RAM), loading time on a real Wii;
+     * AudSystem set830(30) 20 frames before the end not ported */
     static int opening = -2, opening_n, prerolling;
+    static V3 opening_pos;
     int opening_on = 0;
     if (opening == -2) {
-        opening = -1;
-        const u8 *q = sc->canm;
-        for (u32 i = 0; i < sc->ncanm; i++, q += 36 + 32 * *(const u32 *)(q + 32))
-            if (!strcmp((const char *)q, "stage/startscenario")) { opening = 0; opening_n = (int)*(const u32 *)(q + 32); }
-#ifndef CATCHUP
-        opening = -1; /* test builds start in play */
-#endif
+        opening_n = opening_frames();
+        opening = opening_n > 0 ? 0 : -1;
         if (opening >= 0) {
             mario_hidden = 1;
             prerolling = 1;
             for (int i = 0; i < OPENING_PREROLL; i++) game_update();
             prerolling = 0;
-            stitle_start();
+            stitle_start(); /* exePlay's first step: ScenarioTitle::start, then start() */
+            menu_cinema_force(CI_FRAME);
+            bgm_start("BGM_START_DEMO");
+            opening_pos = mario->pos;
+            const float *g = scene_gpos("スタートカメラマリオ座標");
+            if (g) mario->pos = v3(g[0], g[1], g[2]);
         }
     }
     if (prerolling) opening_on = 1;
     else if (opening >= 0) {
         static const float id[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-        demo_camera("stage/startscenario", opening, id);
-        if (opening == opening_n - 60) stitle_end();
-        if (++opening >= opening_n) {
+        int skip = opening > 0 && opening_visited && pad_pressed(PAD_CROSS);
+        demo_camera("stage/startscenario", opening < opening_n ? opening : opening_n - 1, id);
+        if (!skip && opening == opening_n - 60) { menu_cinema_blank(1); stitle_end(); }
+        if (skip || (++opening >= opening_n && menu_cinema_stopped())) { /* end() */
+            if (skip) pad_eat(PAD_CROSS);
+            bgm_stop(10);
             opening = -1; mario_hidden = 0;
             camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45);
+            stitle_kill();
+            mario->pos = opening_pos;
+            if (skip) menu_cinema_force(CI_BLANK);
+            if (starter < 0) { /* GameScene::exeScenarioOpeningCamera without a ScenarioStarter */
+                menu_cinema(0);
+                bgm_stop(0); game_bgm_stage();
+            }
         }
         opening_on = 1;
     }
@@ -35861,6 +35944,8 @@ void game_update(void)
         mario->pos = launches[starter].pos;
         mario->launch = starter; mario->launch_t = 0; mario->launch_from = mario->pos;
         printf("scenario starter: flight in, %d frames" "\n", launches[starter].flight);
+        menu_cinema_force(CI_BLANK); /* exeWaitToStart (GameScene::startStagePlayFirst's without the opening camera) */
+        if (!starter_bgm_on_welcome()) { bgm_stop(0); game_bgm_stage(); } /* exeCinemaFrameBlank */
         hud_had_starter = 1;
         starter = -1;
     }

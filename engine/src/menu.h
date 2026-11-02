@@ -53,6 +53,10 @@ void menu_wipe_force(int close);     /* forceOpenWipe / forceCloseWipe (the colo
 int menu_wipe_closed(void);          /* !isWipeOpen: closed and still */
 int menu_wipe_active(void);          /* isWipeActive: closing or opening */
 void menu_cinema(int frame);         /* CinemaFrame: tryScreenToFrame (1) / tryFrameToScreen (0) */
+enum { CI_SCREEN, CI_FRAME, CI_BLANK, CI_SCREEN_TO_FRAME, CI_FRAME_TO_BLANK, CI_BLANK_TO_FRAME, CI_FRAME_TO_SCREEN };
+void menu_cinema_blank(int on);      /* tryFrameToBlank (1) / tryBlankToFrame (0) */
+void menu_cinema_force(int nrv);     /* forceToScreen / forceToFrame / forceToBlank (CI_SCREEN / FRAME / BLANK) */
+int menu_cinema_stopped(void);       /* isStop: Screen, Frame or Blank */
 void menu_monologue_start(void);     /* RosettaMonologue (ロゼッタ状況説明デモ's picture book): appear */
 int menu_monologue_alive(void);      /* !isDead */
 /* PrologueDirector's (prologue.bin): ProloguePictureBook appear (1) / kill (0), isEnd() || isDead; PrologueLetter */

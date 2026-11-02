@@ -259,6 +259,7 @@ int game_test_spc(void);    /* tests: the StarPieceCounter: mode * 1000 + nerve 
 int game_test_demo(int k);   /* tests: demo k's appear switch on (-1: the running demo's step, -1 none; -2: its anim camera's frame; -3: Mario's clip * 1000 + frame) */
 void game_bgm(const char *id); /* MR::startStageBGM by its sound id (MBGM_ / BGM_ / STM_ ...) */
 void game_bgm_stage(void);   /* MR::startCurrentStageBGM: the scenario's music stream (music_tab.h) */
+void game_bgm_first(void);   /* GameScene::startStagePlayFirst's: the stage BGM unless the opening / starter start it */
 void game_bgm_tick(void);    /* per frame before audio_update: a sub BGM over, the stage BGM back */
 void game_request_movie(const char *name); /* main.c: played before the next scene requested loads */
 void game_font_init(const Scene *s); /* the talk font from s's FONT chunk (game_text; talk_init, main.c's subs.bin) */
