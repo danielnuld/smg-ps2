@@ -12200,14 +12200,13 @@ static void m_decide_walk_anim(Player *m)
     m_wade_steps(m, 0);
     if (m->tsi == 0 && life == 1 && max_life > 2) anim_track(mario_anim, 3, "damagewait"); /* ダメージウエイト */
     else if (life > 1) anim_track(mario_anim, 3, "wait"); /* incLife: ノーマルウエイト */
-    m_check_wall_push(m); /* checkWallPush's head */
+    m_check_wall_push(m); /* checkWallPush */
     if (m->tsi > 5 && m->walk > (gd_player_luigi() ? 0.3f : 0.9f) && !m->turn_brake && !m->slip_floor) m->brake1 = MC.mBrakeFirstTimer;
     if (m->brake1) m->brake1--;
     if (m->tsi == 0) {
         if (m->brake1 && !m->slip_poly) { mario_play("runend", 1.0f, 0); m->brake2 = MC.mBrakeSecondTimer; }
         m->brake1 = 0;
     }
-    m_check_wall_push(m);
 }
 
 /* decideSquatWalkAnimation: しゃがみ基本 (SquatWait / SquatWalk), squat walking at mSquatWalkMin..MaxSpeed */
@@ -15007,10 +15006,6 @@ static int m_check_wall_jump_code(Player *m)
     if (m_wall_floor_code(34)) type = 2;
     return m_wall_back_jump(m, type);
 }
-static void m_check_wall_push(Player *m) /* checkWallPush's head: walking into a wall of the back jump codes */
-{
-    if (m->tsi && (mw.w8 || mw.w32)) m_check_wall_jump_code(m);
-}
 static int m_fixwall_top(Player *m) /* fixWallingTop: _75C, the wall's up. ponytail: no forceSetHeadVecKeepSide (his head is his up) */
 {
     V3 n = m_wall_norm(m), side = vcross(n, vmul(m->up, -1.0f));
@@ -15235,8 +15230,9 @@ static int m_do_side_step(Player *m) /* doSideStep */
     side_step_start(m); /* changeStatus */
     return 1;
 }
-static void m_check_wall_push(Player *m) /* checkWallPush (checkWallJumpCode first: not ported) */
+static void m_check_wall_push(Player *m) /* checkWallPush: walking into a wall of the back jump codes first */
 {
+    if (m->tsi && (mw.w8 || mw.w32) && m_check_wall_jump_code(m)) return;
     float ang = ang_abs_h(m->face, vmul(m_wall_norm(m), -1.0f), m->up);
     int side = m->tsi && mw.w8 && ang < MC.mWallPushAngleRange * 3.14159265f / 180.0f;
     if (m->slip_poly) side = 0; /* mDrawStates._C */
