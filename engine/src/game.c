@@ -1072,10 +1072,11 @@ static int dx_zones_full = 1;  /* the asked / running demo's casts' zones are in
  * マリオ変身, マリオスーパー化, 初出表示, an item's 出現): it starts when no other demo runs; the scene stops but for
  * its cast (requestMovementOn: a row, -1 Mario alone) and the classes every demo moves (dx_always_moves) */
 static struct { const char *name; int row; } pd = {NULL, -1};
+static int in_opening; /* the scenario's opening camera or the ScenarioStarter's flight in (GameScene not in Action) */
 static int pd_try_start(const char *name, int row)
 {
     if (pd.name) return !strcmp(pd.name, name);
-    if (dx.on || dx.req >= 0) return 0;
+    if (dx.on || dx.req >= 0 || in_opening) return 0; /* MR::canStartDemo: GameScene in Action */
     pd.name = name; pd.row = row;
     printf("demo: %s\n", name);
     return 1;
@@ -1140,13 +1141,14 @@ static const float *scene_gpos(const char *name) /* MR::findNamePos: a GeneralPo
         if (!strcmp((const char *)q, name)) return (const float *)(q + 48);
     return NULL;
 }
-static int in_opening; /* the scenario's opening camera or the ScenarioStarter's flight in (GameScene not in Action) */
 static int dino_demo_on, ota_demo_on; /* whose demo camera runs */
+static const char *boss_demo_cls(void);
 static int demo_dino_damage; /* tryStartDemoMarioPuppetable "ディノパックンダメージ": Mario waits from Pulled to its damage's end */
 static int star_demo;      /* PowerStar::exeStageClearDemo: frames since a star was taken + 1, 0 none */
 static float star_demo_m[16]; /* its camera's frame: at the star, facing the way Mario looked */
 static int obj_play(const Inst *in, const char *clip, int loop, int interp);
 static int lg_cls(const char *name);              /* LuigiNPC 1, LuigiEvent 2 (the LuigiNPC section) */
+static int luigi_took(int row);                    /* his star taken out (TakeOutStar), not just made dead at init */
 static int luigi_scenario(char *stage, int n);    /* the current stage, its scenario */
 /* Skinned placed models (slice.py SKINNED_OBJ): a pool of poses kept by row across rebinds, the class's "wait" clip
  * (else its first) looping unless its behaviour plays another (obj_play). ponytail: 40 at once (instances and walkers), the rest drawn in
@@ -1248,7 +1250,8 @@ static int scene_stop;           /* MR::stopScene: frames the actors stay still 
  * (-gravity, or its Y axis when arg6); a binder of radius 70 at 50 below the top takes Mario if he is within 50 of
  * the axis or above the top, and the partner throws him out with Y * arg1 + Z * arg0 (default 20, 5). A pipe works
  * again once Mario stood on ground 30 frames after the warp. Mario goes through bound (pipe_bind: Ready, In, the
- * hidden partner rising, Out, the jump). ponytail: no camera, no water pipes' stream */
+ * hidden partner rising, Out, the jump); the partner's actor camera 出現 from its tryShowUp to its tryHideDown (the
+ * jump). ponytail: no water pipes' stream, no processBgmPlayerIn / Out */
 typedef struct { V3 top, up, front; float hf, vf; int id, partner, zone, row, mode; } Pipe; /* mode arg2: 1 / 2
                     * hidden until the partner is used (row_step[row] 1 while out), 1 hides again after the exit */
 static int pipe_out = -1; /* the mode 1 pipe Mario came out of, hidden once the pipes re-arm */
@@ -4701,6 +4704,7 @@ int game_test_cage(int on_star)
         if (on_star) {
             int state;
             V3 p = star_pos(in, &state);
+            if (!state) continue; /* (hidden: one its declarer never brings out here, an absent Luigi's) */
             mario->pos = vadd(p, vmul(up_at(p, mario->up), -HIT_BODY_H));
             mario->hvel = v3(0, 0, 0); mario->vup = 0;
             return state;
@@ -7256,8 +7260,75 @@ static int update_launch(Player *m)
  * (its eye sensor: 15 x scale, 120 x scale for an invisible one, arg1 0) goes in 60 frames to 160 up its y, then
  * flies an arc (an angle of pi / 4 each side, max(radius / 25, 120) frames, sine-eased, following at half the gap)
  * to 160 up the pair, which waits 60 frames (row_step) before it takes him again, longer while he stays within 200.
- * ponytail: every pod is active (no grand star count, no path flags), no event camera, no pod glow / path drawing */
+ * A pod is inactive while the opened domes (calcOpenedAstroDomeNum) are fewer than its arg4, or, with arg3 0, while
+ * its bit of WarpPodSaveBits (its index among those, in init order) is off. Mario touching an active pod whose pair
+ * is inactive makes the pair appear with its demo (appearWithDemo: its bit on; control: 出現, tryStartDemo
+ * WithoutCinemaFrame, the event camera "wPod出現カメラ <GroupId>" kept until the next warp's end, arg5 (120) frames
+ * of demo). The warp's event camera "ワープカメラ <GroupId>-<'A' + arg0>" of the pod he went in (WarpPodMgr::
+ * startEventCamera, not while an appear camera is on) until he comes out (endEventCamera).
+ * ponytail: no pod glow / path drawing, the Wait / Active animations, arg7's pairing of two inactive pods */
 static struct { int from, to, t, n; V3 dest, axis, centre, start; float angle; } warp = {.from = -1};
+#define MAX_WARPPODS 32
+static struct { const Scene *at; int n, cc_row; struct { int row, inactive, cd, a6, cc; } p[MAX_WARPPODS]; } wpm;
+static int wp_of(int row) /* the WarpPodMgr's pods, set up at the scene's first use (WarpPod::initAfterPlacement) */
+{
+    if (wpm.at != sc) {
+        int grand = 0, path = 0;
+        char fl[24];
+        for (int i = 1; i <= 7; i++) { snprintf(fl, sizeof fl, "SpecialStarGrand%d", i); grand += gd_flag_is_on(fl); }
+        if (gd_flag_is_on("SpecialStarGrand7")) grand--; /* calcOpenedAstroDomeNum */
+        memset(&wpm, 0, sizeof wpm);
+        wpm.at = sc; wpm.cc_row = -1;
+        int t = scene_type(sc, "WarpPod");
+        for (u32 i = 0; i < sc->nobjs && wpm.n < MAX_WARPPODS; i++) {
+            const Row *r = &sc->objs[i];
+            if (r->type != t) continue;
+            int inactive = r->arg[4] != -1 && grand < r->arg[4];
+            if (r->arg[3] == 0) inactive = !(gd_value("WarpPodSaveBits") >> path++ & 1); /* isOnWarpPodPathFlag */
+            wpm.p[wpm.n].row = (int)i; wpm.p[wpm.n].inactive = inactive;
+            wpm.n++;
+        }
+    }
+    for (int k = 0; k < wpm.n; k++) if (wpm.p[k].row == row) return k;
+    return -1;
+}
+static int wp_path_index(int k) /* its index among the arg3 0 pods */
+{
+    int n = 0;
+    for (int j = 0; j < k; j++) n += sc->objs[wpm.p[j].row].arg[3] == 0;
+    return n;
+}
+static void wp_camera_name(char *b, int n, int row, int appear)
+{
+    const Row *r = &sc->objs[row];
+    if (appear) snprintf(b, n, "wPod出現カメラ %d", r->group);
+    else snprintf(b, n, "ワープカメラ %d-%c", r->group, (char)((r->arg[0] < 0 ? 0 : r->arg[0]) + 65));
+}
+static void wp_end_camera(void) /* WarpPodMgr::endEventCamera (WarpPod::endEventCamera: its appear camera, else its warp camera) */
+{
+    for (int k = 0; k < wpm.n; k++) wpm.p[k].cc = 0;
+    camera_event_end_now(-1);
+}
+static void update_warppods(void) /* WarpPod::control / movement */
+{
+    if (wpm.at != sc) return;
+    for (int k = 0; k < wpm.n; k++) {
+        typeof(&wpm.p[0]) p = &wpm.p[k];
+        const Row *r = &sc->objs[p->row];
+        if (p->cd && pd_try_start("出現", p->row)) { /* control */
+            char name[64];
+            p->cd = 0;
+            p->a6 = r->arg[5] != -1 ? r->arg[5] : 120; /* mCameraTime */
+            wp_camera_name(name, sizeof name, p->row, 1);
+            camera_event_named(name, r->zone); /* startEventCameraNoTarget */
+            float at[3] = {r->pos[0], r->pos[1], r->pos[2]};
+            se_start(SE_OJ_WARP_POD_PATH_APPEAR, at);
+            p->inactive = 0; p->cc = 1;
+            printf("warp pod %d: appears (%s)\n", p->row, name);
+        }
+        if (p->a6 && !--p->a6 && p->cc) pd_end("出現"); /* movement */
+    }
+}
 
 static int warp_pair(int row)
 {
@@ -7291,13 +7362,23 @@ static void warp_try(Player *m)
         }
         float rad = (r->arg[1] == 0 ? 120.0f : 15.0f) * r->scale[0] + HIT_BODY_R;
         if (vlen(vsub(c, v3(r->pos[0], r->pos[1], r->pos[2]))) >= rad) continue;
-        int to = warp_pair(in->row);
-        if (to < 0) continue;
+        int to = warp_pair(in->row), k = wp_of(in->row), kp = to >= 0 ? wp_of(to) : -1;
+        if (to < 0 || k < 0 || kp < 0 || wpm.p[k].inactive) continue; /* attackSensor */
+        if (wpm.p[kp].inactive) { /* the pair's appearWithDemo */
+            if (sc->objs[to].arg[3] == 0) gd_set_value("WarpPodSaveBits", gd_value("WarpPodSaveBits") | 1 << wp_path_index(kp));
+            wpm.p[kp].cd = 1;
+            continue;
+        }
         const Row *p = &sc->objs[to];
         warp.from = in->row; warp.to = to; warp.t = 0;
         warp.dest = vadd(v3(p->pos[0], p->pos[1], p->pos[2]), vmul(row_axis_y(p), 160.0f));
         m->hvel = v3(0, 0, 0); m->vup = 0; m->hip = 0; m->grounded = 0;
         mario_sound("ワープポッド入り"); mario_sound("声慌て"); /* MarioWarp::start */
+        if (!wpm.p[k].cc && !wpm.p[kp].cc) { /* WarpPod::startEventCamera */
+            char name[64];
+            wp_camera_name(name, sizeof name, in->row, 0);
+            camera_event_named(name, r->zone);
+        }
         printf("warp pod %d -> %d\n", warp.from, warp.to);
         return;
     }
@@ -7330,6 +7411,7 @@ static int warp_update(Player *m)
         m->pos = warp.dest;
         row_step[warp.to] = 60;
         if (player_mode != PM_TERESA) mario_sound("ワープポッド出"); /* (getPlayerMode() != 6) */
+        wp_end_camera();
         printf("warp pod %d: arrived at %d\n", warp.from, warp.to);
         warp.from = -1;
         return 0;
@@ -17633,7 +17715,7 @@ static V3 m_last_safety(void) /* getLastSafetyTrans */
  * to the place's height (or 600 over and 600 out from its base when the place is under it; 180 frames at most), then
  * round an arc about the place (calcFirstVector, updateJump) for 200 frames (+ 1 per 20 past 500 away); once his
  * shadow is past the place and he is within 300 of it, the bubble bursts and he drops (close: on his feet).
- * ponytail: no 引き戻し event camera (e:引き戻し is not converted by camera.py), no 引き戻し泡 / 泡破裂 effects (not in the
+ * Its global event camera 引き戻し (the player its target) from start to close. ponytail: no 引き戻し泡 / 泡破裂 effects (not in the
  * effect packs), the binder stays off for the whole flight (_14 / _F44: Petari binds him again after 60 frames) */
 static int rec_update(Player *m);
 static int rec_first_vector(Player *m) /* calcFirstVector */
@@ -17767,6 +17849,7 @@ static int rec_start(Player *m) /* MarioRecovery::start */
 static void rec_close(Player *m) /* MarioRecovery::close */
 {
     rec.on = 0;
+    camera_event_end_now(-1); /* endGlobalEventCamera(引き戻し, -1, true) */
     m->grounded = 1; m->jumping = 0; /* mMovementStates._1, jumping */
     m->s420 = 16;
     m_clip_stop();
@@ -17781,7 +17864,7 @@ static int m_do_recovery(Player *m)
     if (fo.on || rec.on || warp.from >= 0) return 0;
     if (!rec.s12) return 0;
     m_stop_walk(m);
-    if (rec_start(m)) rec.on = 1;
+    if (rec_start(m)) { rec.on = 1; camera_event_named("引き戻し", 0); } /* MarioRecovery::start: startGlobalEventCameraNoTarget */
     m_stop_jump(m);
     return 1;
 }
@@ -19225,7 +19308,7 @@ static int mario_offence(V3 c, float r, V3 grav)
  * HangDown (back down at most 20, a spin climbs again at 10), at the top a jump along the tip's up at arg0 (30)
  * (endBindAndPlayerForceWeakGravityJump), at the foot he lets go; then it ignores him 60 frames or until he lands.
  * Leaves near him spring (0.02 x his speed). Taken while growing (no demo) he rides it up (HangWaitGrowUp /
- * HangUpGrowUp). ponytail: no demo or catch cameras (multi-actor cameras), no rail clipping, no items taken by its
+ * HangUpGrowUp); its multi-actor cameras 掴まり and 出現デモ. ponytail: no rail clipping, no items taken by its
  * Ride sensor, no rush cancel; the stalk's three faces each one colour (the mean of their two vertex colours), drawn
  * through render_strips one segment a strip */
 static float frand(float a, float b) { return a + (b - a) * (rand() % 10001) / 10000.0f; }
@@ -25843,6 +25926,40 @@ static const struct { const char *name; u32 st, mv, ed; } rail_se[] = {
     {"BroadBeanMoveStepB", SE_OJ_STONE_FLOOR_S_START, SE_OJ_LV_STONE_FLOOR_S_MOVE, SE_OJ_STONE_FLOOR_S_END},
     {"RGTowerPressGroundA", SE_OJ_STONE_FLOOR_S_START, SE_OJ_LV_STONE_FLOOR_S_MOVE, SE_OJ_STONE_FLOOR_S_END},
 };
+/* StageEffectDataTable.cpp sStageEffectCameraDataTable: start / stop shake (0 none, 1 Strong .. 5 VeryWeak), the
+ * moving infinity shake (intensity, speed; 0 none) and the distance to Mario under which the start / stop ones play
+ * (-1: Mario on it, isDistanceValidShake) */
+static const struct { const char *name; signed char st; float in, sp; signed char ed; float dist; } stage_cam[] = {
+    {"LavaHomeVolcanoInnerFlow", 0, 0.3f, 2.2f, 0, 0.0f}, {"LavaRotatePlanetStartStep", 0, 0.0f, 0.0f, 0, 0.0f},
+    {"OceanRingRuinsMove", 3, 0.0f, 0.0f, 3, 3000.0f}, {"OceanRingRuinsGearBig", 0, 0.0f, 0.0f, 0, 0.0f},
+    {"OceanRingRuinsGearSmall", 0, 0.0f, 0.0f, 0, 0.0f}, {"OceanRotateBridge", 0, 0.0f, 0.0f, 0, 3000.0f},
+    {"ShutterDoorA", 0, 0.0f, 0.0f, 2, 3000.0f}, {"ShutterDoorD", 0, 0.0f, 0.0f, 2, 3000.0f},
+    {"OceanSwingBoard", 0, 0.0f, 0.0f, 0, 0.0f}, {"RotateNutStep", 0, 0.0f, 0.0f, 0, 0.0f},
+    {"OnimasuPlanetRailMovePartsA", 0, 0.0f, 0.0f, 0, 0.0f}, {"GhostShipCaveMoveGroundA", 0, 0.0f, 0.0f, 0, 0.0f},
+    {"GhostShipCaveMoveGroundB", 0, 0.0f, 0.0f, 0, 0.0f}, {"WaterRoadCaveStepA", 0, 0.0f, 0.0f, 0, 0.0f},
+    {"TeresaRoomDoor", 0, 0.1f, 2.2f, 0, 0.0f}, {"LavaObstacleRockHomeA", 0, 0.1f, 2.2f, 0, 0.0f},
+    {"LavaObstacleRockShell", 0, 0.1f, 2.2f, 0, 0.0f}, {"ForestObstacleWoodA", 0, 0.1f, 2.2f, 0, 0.0f},
+    {"MiniMechaKoopaPartsMoveStepA", 0, 0.0f, 0.0f, 2, 10000.0f}, {"MiniMechaKoopaPartsCage", 0, 0.0f, 0.0f, 2, 10000.0f},
+    {"RayGunPlanetPartsScrew", 3, 0.0f, 0.0f, 2, 10000.0f}, {"KoopaVS1PartsMoveStepA", 4, 0.0f, 0.0f, 4, -1.0f},
+    {"KoopaVS1PartsMoveStepB", 3, 0.0f, 0.0f, 3, -1.0f}, {"KoopaVS1PartsRotateMoveStepA", 4, 0.0f, 0.0f, 4, -1.0f},
+    {"KoopaVS1PartsRotateMoveStepB", 4, 0.0f, 0.0f, 4, -1.0f}, {"BeeWallClimbPartsA", 4, 0.0f, 0.0f, 4, -1.0f},
+    {"KoopaJrSmallShipA", 2, 0.0f, 0.0f, 2, 3000.0f}, {"IceVolcanoAppearStepA", 0, 0.0f, 0.0f, 1, 3000.0f},
+    {"IceVolcanoClimbingWall", 0, 0.0f, 0.0f, 1, 10000.0f}, {"BroadBeanMoveStepA", 0, 0.0f, 0.0f, 5, -1.0f},
+    {"BroadBeanMoveStepB", 0, 0.0f, 0.0f, 5, -1.0f}, {"HeavensDoorInsideCage", 0, 0.15f, 1.2f, 0, 10000.0f},
+};
+static int stage_cam_of(const char *name)
+{
+    for (int k = 0; k < (int)(sizeof stage_cam / sizeof *stage_cam); k++) if (!strcmp(stage_cam[k].name, name)) return k;
+    return -1;
+}
+static void stage_shake(int c, int type, int inst) /* shakeStartCamera / shakeStopCamera */
+{
+    static const int power[6] = {-1, SHAKE_STRONG, SHAKE_NORMAL, SHAKE_NORMAL_WEAK, SHAKE_WEAK, SHAKE_VERY_WEAK};
+    if (c < 0 || power[type] < 0) return;
+    const float *p = &insts[inst].m[12];
+    float d = vlen(vsub(mario->pos, v3(p[0], p[1], p[2])));
+    if (stage_cam[c].dist == -1.0f ? mario_ground == inst : d > 0.0f && d < stage_cam[c].dist) camera_shake(power[type]);
+}
 static void update_railers(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -25865,6 +25982,11 @@ static void update_railers(void)
         if (row_rhold[row]) { row_rhold[row]--; continue; }
         int se = -1; /* isRailMoverWorking: its SEs by name */
         for (int k = 0; k < (int)(sizeof rail_se / sizeof *rail_se); k++) if (!strcmp(rail_se[k].name, sc->types + 32 * r->type)) se = k;
+        int cam = stage_cam_of(sc->types + 32 * r->type);
+        if (!was && cam >= 0) { /* startMoveInner: tryStageEffectStart's shakeStartCamera, shakeCameraMoving */
+            stage_shake(cam, stage_cam[cam].st, i);
+            if (stage_cam[cam].in > 0.0f) camera_shake_infinity(in, stage_cam[cam].in, stage_cam[cam].sp);
+        }
         in->rwork = 1;
         if (se >= 0) {
             if (!was && rail_se[se].st) se_start(rail_se[se].st, &in->m[12]); /* startMoveInner: tryStageEffectStart */
@@ -25884,6 +26006,10 @@ static void update_railers(void)
         }
         if (n >= len || n <= 0) { /* an end */
             if (se >= 0) se_start(rail_se[se].ed, &in->m[12]); /* doAtEndPoint: tryStageEffectStop */
+            if (cam >= 0) { /* its shakeStopCamera, stopShakingCameraMoving */
+                stage_shake(cam, stage_cam[cam].ed, i);
+                if (stage_cam[cam].in > 0.0f) camera_shake_stop(in);
+            }
             int type = stop >= 0 ? stop : 1;
             n = n >= len ? len : 0;
             int hold = *(const int *)(pa + 12 * (n > 0 ? nr - 1 : 0) + 8);
@@ -28482,7 +28608,7 @@ static void update_dlands(void)
             if (r->sw[SW_B] >= 0 && sw_on(r, SW_B)) dl_set(k, DL_SIGNUP);
             break;
         case DL_SIGNDOWN: case DL_SIGNUP:
-            if (st == 0) { obj_play(in, "Vibration", 0, 0); camera_shake(SHAKE_NORMAL_WEAK); }
+            if (st == 0) { obj_play(in, "Vibration", 0, 0); camera_shake_infinity(o, 0.15f, 1.2f); } /* exeMoveSign */
             if ((in->anim ? in->anim->done && st > 0 : st >= 60)) dl_set(k, o->nrv == DL_SIGNUP ? DL_UP : DL_DOWN); /* isBckStopped */
             break;
         case DL_DOWN: case DL_UP: {
@@ -28490,6 +28616,7 @@ static void update_dlands(void)
             V3 a = o->nrv == DL_DOWN ? o->top : o->bottom, b = o->nrv == DL_DOWN ? o->bottom : o->top;
             if (st == 0) se_start(SE_OJ_DESERT_LAND_MOVE_ST, NULL);
             in->lv[1] = se_level(SE_OJ_LV_DESERT_LAND_MOVE, NULL, in->lv[1]);
+            if (st == 90) camera_shake_stop(o); /* isStep(90): stopShakingCamera */
             o->pos = vadd(o->pos, vmul(vsub(b, a), 1.0f / n));
             if (st + 1 >= n) {
                 o->pos = b;
@@ -29406,6 +29533,8 @@ static int pipe_bind(Player *m)
         if (pipe_t == 1) se_start(SE_DM_DOKAN_WARP, NULL); /* exePlayerIn first step */
         if (!mario_anim || (mario_anim->done && pipe_t > 1)) {
             pipe_zone = o->zone;
+            if (row_camset[o->row] != -1) /* tryShowUp: startMultiActorCameraTargetSelf 出現 (the partner) */
+                camera_actor_start(sc->types + 32 * sc->objs[o->row].type, "出現", (unsigned short)row_camset[o->row], o->up, o->front, o->top);
             if (o->mode == 1 || o->mode == 2) { /* tryShowUp: the hidden partner rises (WaitToShowUp 20, ShowUp 30) */
                 row_step[o->row] = 1;
                 pipe_out = o->mode == 1 ? p->partner : -1;
@@ -29434,6 +29563,7 @@ static int pipe_bind(Player *m)
             if (vlen(m->hvel) > 0.1f) m->face = vnorm(m->hvel);
             mario_se(SE_PM_JUMP_M); mario_se(SE_PV_JUMP_JOY); /* exePlayerOut: the bck stopped */
             if (mario_anim) mario_play("earthenpipejump", 1.0f, 0);
+            camera_event_stop(); /* the partner's tryHideDown: endMultiActorCamera 出現 */
             { const Row *pr = &sc->objs[p->row]; if (pr->sw[SW_B] >= 0 && gw_pipe_switch()) sw_set(pr, SW_B, 1); } /* onSwitchB (_194: not before the rabbits' chase) */
             pipe_seq = 0; pipe_wait = 1;
         }
@@ -30166,8 +30296,11 @@ static V3 item_sensor(const Inst *in, float *r)
 /* An event star (star_wait) waits hidden, or shown inside the cage that declared it (CrystalCageL: 250 up the cage,
  * BreakableCage: 150, DummyDisplayModel); then the PowerStar.cpp appear demo (exeAppearDemoRise / Move): from there
  * (its own place for the hundred coins) 300 up its own y (ease out over 60 frames), at frame 80 off to its place in
- * 120 frames on an arc as high as half the distance across its up (300 to 5000); taken from frame 210. *state: 0
- * hidden, 1 waiting in its cage, 2 appearing, 3 can be taken. ponytail: no demo camera, the stage goes on */
+ * 120 frames on an arc as high as half the distance across its up (300 to 5000); its Move's step 210 (frame 290)
+ * ends the demo (endAppearDemo: Wait, taken after). The demo パワースター出現 (requestStartDemoWithoutCinemaFrame: it
+ * waits for it in WaitStartAppear; the scene stops but for the star) runs the actor camera of the nearest
+ * PowerStarAppearPoint (else the star's own), its target the star, the BGM's volume down to 0 over 5 frames and back
+ * over 60 at the end (star_demo_update). *state: 0 hidden, 1 waiting in its cage, 2 appearing, 3 can be taken */
 /* PowerStar::setDemoAppearPos: an event star whose group (GroupId) has PowerStarAppearPoints comes out at the one
  * nearest its declarer, not at its own place */
 static V3 star_appear_point_(const Inst *in, V3 from, V3 own);
@@ -30200,6 +30333,44 @@ static V3 star_appear_point_(const Inst *in, V3 from, V3 own)
     return p;
 }
 
+static int star_cam_row(const Inst *in) /* getAppearCameraActor: the PowerStarAppearPoint it comes out at, else itself */
+{
+    const Row *s = &sc->objs[in->row];
+    int t = scene_type(sc, "PowerStarAppearPoint"), w = star_wait[in->row], best = in->row;
+    if (t < 0 || s->group < 0 || w <= 0) return best;
+    V3 from = row_pos(&sc->objs[w - 1]);
+    float bd = 1e30f;
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if (r->type != t || r->group != s->group || r->zone != s->zone) continue;
+        float d = vlen(vsub(row_pos(r), from));
+        if (d < bd) { bd = d; best = (int)i; }
+    }
+    return best;
+}
+/* PowerStar::exeAppearDemoRise's first step / the frames of the demo / exeAppearDemoMove's step 210: 0 when the demo
+ * can not start yet (the star waits) */
+static int star_demo_update(const Inst *in, int t, V3 sp)
+{
+    V3 up = up_at(sp, v3(in->m[4], in->m[5], in->m[6]));
+    if (t == 0) {
+        if (!boss_demo_cls() && !pd_try_start("パワースター出現", in->row)) return 0; /* (in a boss's demo: that one goes on) */
+        audio_move_volume(0.0f, 5); /* moveVolumeStageBGM / SubBGM(0, 5) */
+        int cr = star_cam_row(in);
+        int cam = row_camset[cr] != -1 && /* startActorCameraTargetOther(getAppearCameraActor, getAppearCameraInfo, the star) */
+                  camera_actor_start(sc->types + 32 * sc->objs[cr].type, "", (unsigned short)row_camset[cr], up,
+                                     v3(in->m[8], in->m[9], in->m[10]), sp);
+        printf("power star appear demo: row %d (declarer %d %s), camera of row %d set %d: %s\n", in->row, star_wait[in->row] - 1,
+               star_wait[in->row] > 0 ? sc->types + 32 * sc->objs[star_wait[in->row] - 1].type : "-", cr, row_camset[cr], cam ? "on" : "none");
+    }
+    camera_event_target(up, sp);
+    if (t == 290) { /* resetCameraLocalOffset, endActorCamera, endAppearDemo (_11C: not its own demo) */
+        camera_event_stop();
+        pd_end("パワースター出現");
+        audio_move_volume(1.0f, 60);
+    }
+    return 1;
+}
 static V3 star_pos(const Inst *in, int *state)
 {
     V3 p = v3(in->m[12], in->m[13], in->m[14]);
@@ -30215,12 +30386,13 @@ static V3 star_pos(const Inst *in, int *state)
         row_axes(r, &x, &z);
         float h = strcmp(name, "CrystalCageL") == 0 ? 250.0f : strncmp(name, "Breakable", 9) == 0 ? 150.0f : 0.0f;
         o = vadd(row_pos(r), vmul(vcross(z, x), h * r->scale[0]));
-        if (!row_dead[w - 1]) { *state = h > 0; return o; }
+        if (!row_dead[w - 1] || (lg_cls(name) && !luigi_took(w - 1))) { *state = h > 0; return o; } /* (a Luigi absent
+                                                                                                       * here: no star) */
     } else if (got_coins < 100 && got_purple < 100) { /* ScenePlayingResult: 100 coins, or 100 purple coins */
         *state = 0;
         return o;
     }
-    *state = t >= 210 ? 3 : 2;
+    *state = t > 290 ? 3 : 2;
     if (t >= 200) return p;
     if (t < 80) return vadd(o, vmul(up, 300.0f * sinf(fminf(t / 60.0f, 1.0f) * 1.5707963f)));
     V3 a = vadd(o, vmul(up, 300.0f)), d = vsub(p, a);
@@ -30809,6 +30981,7 @@ static void update_items(void)
             if (state == 2 && t == 200) se_start(w ? SE_OJ_POW_STAR_MOVE_END_W : SE_OJ_POW_STAR_MOVE_END, &sp.x); /* its step 120 */
             if (state == 3 || (state == 2 && (t < 80 || t >= 200))) /* processWait, exeAppearDemoRise, Move from step 120 */
                 in->lv[0] = se_level(w ? SE_OJ_LV_POW_STAR_EXIST_W : SE_OJ_LV_POW_STAR_EXIST, &sp.x, in->lv[0]);
+            if (state == 2 && !star_demo_update(in, t, sp)) continue;
             if (state < 3) { row_step[in->row] += state == 2; continue; } /* row_step: its appear demo */
         }
 
@@ -31208,7 +31381,8 @@ static void dx_init(const unsigned char *blob)
  * game_update's update_* are gated by class (lq_cls): one runs while a DemoExecutor demo is on only if its class is a
  * cast of the demo or always moves; the skinned clips, the rotors and the railers are gated by row. ponytail: one
  * class per update_* (a cast keeps its whole class moving, the other classes of that update_* stop with it); the
- * programmable demos (DinoPackun, OtaKing, TicoFat, the vine, the talks) do not stop the scene; loop effects keep
+ * programmable demos of TicoFat, the vine and the talks do not stop the scene (DinoPackun's and OtaKing's do:
+ * boss_demo_cls; the power star appear demo and the other pd_try_start ones do); loop effects keep
  * their particles (requestMovementOffAllLoopEmitters: ours stop emitting when their owner's update_* stops) */
 static int dx_always_moves(const char *cls) /* registerDemoSimpleCastAll without a condition, or in its stage */
 {
@@ -31221,8 +31395,13 @@ static int dx_always_moves(const char *cls) /* registerDemoSimpleCastAll without
         for (unsigned i = 0; i < sizeof astro / sizeof astro[0]; i++) if (!strcmp(cls, astro[i])) return 1;
     return !strncmp(game_stage_name, "HeavensDoorGalaxy/", 18) && !strcmp(cls, "EarthenPipe");
 }
+/* the bosses' own demos (DinoPackunDemo tryStartDemoMarioPuppetable, OtaKing::startDemo) stop the scene as well but
+ * for the boss and the power star it brings out in them (appearPowerStarContinueCurrentDemo: requestMovementOn) */
+static const char *boss_demo_cls(void) { return dino_demo_on ? "DinoPackun" : ota_demo_on ? "OtaKing" : NULL; }
 static int dx_cls_moves(const char *cls) /* an update_* of that class runs now */
 {
+    const char *bc = boss_demo_cls();
+    if (bc && !pd.name) return !strcmp(cls, bc) || !strcmp(cls, "PowerStar") || dx_always_moves(cls);
     if (pd.name) return (pd.row >= 0 && !strcmp(sc->types + 32 * sc->objs[pd.row].type, cls)) || dx_always_moves(cls);
     if (!dx.on) return 1;
     const Demo *d = &demos[dx.cur];
@@ -31232,6 +31411,7 @@ static int dx_cls_moves(const char *cls) /* an update_* of that class runs now *
 }
 static int dx_row_moves(int row) /* the placement moves now */
 {
+    if (boss_demo_cls() && !pd.name) return dx_cls_moves(sc->types + 32 * sc->objs[row].type);
     if (pd.name) return row == pd.row || dx_always_moves(sc->types + 32 * sc->objs[row].type);
     if (!dx.on) return 1;
     const Demo *d = &demos[dx.cur];
@@ -33038,6 +33218,7 @@ static int lg_find(int row)
     return -1;
 }
 static void lg_dead(int row) { row_dead[row] = 1; sw_changed = 1; } /* makeActorDead */
+static int luigi_took(int row) { int k = lg_find(row); return k >= 0 && lg[k].took; }
 static int lg_cls(const char *name) { return !strcmp(name, "LuigiNPC") ? 1 : !strcmp(name, "LuigiEvent") ? 2 : 0; }
 static int luigi_scenario(char *stage, int n) /* the current stage and its scenario */
 {
@@ -36483,7 +36664,7 @@ void game_update(void)
         }
         opening_on = 1;
     }
-    in_opening = opening_on || (mario->launch >= 0 && launches[mario->launch].starter); /* not GameSceneAction yet */
+    in_opening = opening_on || starter >= 0 || (mario->launch >= 0 && launches[mario->launch].starter); /* not GameSceneAction yet */
     { /* the star pointer's modes while these last (startStarPointerModeGame / Demo (the opening camera's, a demo's) /
        * DemoMarioDeath (MarioActor's miss) / PowerStarGetDemo) */
         menu_pointer_request(SPM_GAME);
@@ -36775,6 +36956,7 @@ void game_update(void)
     LQ(62, update_fire());
     LQ(63, place_waterplants());
     LQ(64, update_pipes());
+    update_warppods(); /* (WarpPod: its own demo's cast) */
     LQ(65, update_switches());
     LQ(66, update_pops());
     int had = got_coins;

@@ -609,10 +609,11 @@ static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V
         *eye = vadd(*watch, vmul(vnorm(vsub(*eye, *watch)), 300.0f));
 }
 
-/* A launch star's flight: SpinDriverCamera follows its own event camera (the star's camera set in the bcam, not
- * ported); ponytail: a chase camera 1300 behind Mario along the path and 400 above him, eased 0.1 a frame; once he
- * lands, the area camera takes over through camint (30 frames). */
+/* MultiEventCamera (SpinDriverCamera, the actor cameras): the event cameras of a set one after another; the launch
+ * stars' flights start theirs with the flight's first pose, move the target with the flight and end it at landing
+ * (endForceAtLanding); a star without a camera set keeps the area camera. */
 static int ev_on, ev_ending, ev_first, ev_n, ev_i, ev_t; /* the event cameras running (cams[ev_first + i]) */
+static int ev_player; /* startEventCameraNoTarget / startGlobalEventCameraNoTarget: the player its target */
 static V3 ev_up, ev_front, ev_pos;                         /* their target matrix (CameraTargetMtx) */
 
 unsigned camera_class_hash(const char *name)
@@ -632,7 +633,7 @@ static int ev_begin(unsigned cls, int set, int shift, V3 up, V3 front, V3 pos)
             ev_n++;
         }
     if (ev_first < 0) return 0;
-    ev_on = 1; ev_ending = 0; ev_i = 0; ev_t = 0;
+    ev_on = 1; ev_ending = 0; ev_i = 0; ev_t = 0; ev_player = 0;
     ev_up = vnorm(up); ev_front = vnorm(vsub(front, vmul(ev_up, vdot(front, ev_up)))); ev_pos = pos;
     cur = -3; /* the camera change: blend over the event camera's camint */
     timer = 0; camint = cams[ev_first].camint; fresh = 1;
@@ -650,6 +651,26 @@ void camera_event_target(V3 dir, V3 pos) /* SpinDriverCamera::updateTargetMatrix
 }
 
 int camera_event_start(unsigned cls, int set, V3 up, V3 front, V3 pos) { return ev_begin(cls, set, 4, up, front, pos); }
+
+/* a named event camera ("e:<name>", camera.py: its class the name's hash, num 0) of that zone (else the first of the
+ * name), started with no target: the player's (MR::startEventCameraNoTarget, startGlobalEventCameraNoTarget) */
+int camera_event_named(const char *name, int zone)
+{
+    unsigned h = camera_class_hash(name);
+    int k = -1;
+    for (int i = 0; i < ncams; i++)
+        if (cams[i].kind == 'e' && cams[i].evclass == h && cams[i].num == 0) {
+            if (cams[i].zone == zone) { k = i; break; }
+            if (k < 0) k = i;
+        }
+    if (k < 0) return 0;
+    ev_on = 1; ev_ending = 0; ev_i = 0; ev_t = 0; ev_player = 1;
+    ev_first = k; ev_n = 1;
+    cur = -3;
+    timer = 0; camint = cams[k].camint; fresh = 1;
+    type_eye = f_eye; type_watch = f_watch; type_up = f_up;
+    return 1;
+}
 
 int camera_actor_start(const char *cls, const char *event, int set, V3 up, V3 front, V3 pos)
 {
@@ -751,6 +772,24 @@ static void blend_to(V3 e, V3 w, V3 u) /* CameraViewInterpolator: (timer / camin
 
 static int shake_frame[7] = {25, 25, 25, 25, 25, 25, 25}; /* sSinglyMaxFrame 25: ended */
 static float shake_off;
+static struct { const void *who; float in, speed; int frame, on; } shake_inf[4]; /* NR_INFINITY_TASKS */
+
+void camera_shake_infinity(const void *who, float intensity, float speed) /* MR::shakeCameraInfinity: CameraShaker::
+                                                                           * shakeInfinity, a free task, 15 / speed */
+{
+    for (int i = 0; i < 4; i++)
+        if (!shake_inf[i].on) {
+            shake_inf[i].on = 1; shake_inf[i].who = who; shake_inf[i].in = intensity; shake_inf[i].speed = 15.0f / speed;
+            shake_inf[i].frame = 0;
+            return;
+        }
+}
+
+void camera_shake_stop(const void *who) /* MR::stopShakingCamera: stopShakingInfinity */
+{
+    for (int i = 0; i < 4; i++)
+        if (shake_inf[i].who == who) { shake_inf[i].on = 0; shake_inf[i].who = NULL; return; }
+}
 
 void camera_shake(int power) { if (shake_frame[power] >= 25) shake_frame[power] = 0; }
 
@@ -765,6 +804,11 @@ static void shake_update(void) /* CameraShaker::movement: CameraShakeTask::movem
         int left = 25 - ++shake_frame[i]; /* at 25 the task ends: no offset */
         if (left > 0)
             y += intensity[i] * sinf(3.1415927f * 4.0f * left / 25) * sinf(3.1415927f * 0.5f * left / 25);
+    }
+    for (int i = 0; i < 4; i++) { /* updateInfinityTask: CameraShakePatternVerticalSin, restarted at its end (delay 0) */
+        if (!shake_inf[i].on || shake_inf[i].speed < 0.01f) continue;
+        if (++shake_inf[i].frame >= shake_inf[i].speed) { shake_inf[i].frame = 0; continue; } /* isEnd: no offset */
+        y += shake_inf[i].in * -sinf(2.0f * 3.1415927f * shake_inf[i].frame / shake_inf[i].speed);
     }
     shake_off = y * 30.0f / 456.0f;
 }
@@ -832,7 +876,8 @@ static void update(const CamTarget *t)
             }
             ev_t++;
             CamTarget et = *t;
-            et.pos = ev_pos; et.up = ev_up; et.front = ev_front; et.flying = 0;
+            if (!ev_player) { et.pos = ev_pos; et.up = ev_up; et.front = ev_front; }
+            et.flying = 0;
             V3 e, w, u;
             zone_pose(&cams[ev_first + ev_i], &et, move, &e, &w, &u);
             fresh = 0;
