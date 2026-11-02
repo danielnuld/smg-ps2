@@ -1910,6 +1910,9 @@ int main(void)
             }
         }
 #endif
+#ifdef SIDESTEP_TEST
+        { extern void game_test_sidestep_input(int); game_test_sidestep_input((int)frame); } /* Mario leans on a wall and side steps */
+#endif
 #ifdef SWIM_TEST
         { /* Mario dropped in a water area (150): floats up to the surface, stays */
             { extern void game_test_swim_input(int); game_test_swim_input((int)frame); }
