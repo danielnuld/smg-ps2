@@ -1005,7 +1005,7 @@ static void scene_load(void)
         for (u32 i = 0; i < sizeof limits / sizeof limits[0]; i++)
             if (!strcmp(limits[i].scen, scen)) { game_set_time_limit(limits[i].secs); printf("time limit %d s\n", limits[i].secs); }
     }
-    game_bgm_stage(); /* the scenario's stage BGM (game.c: music_tab.h) */
+    game_bgm_first(); /* the scenario's stage BGM (game.c: music_tab.h) */
     {
         unsigned char start[64], near[64]; /* the start zone's chain and what streaming wants around Mario there (OceanRing 4
                                             * starts over another zone: without it, no ground for 2 s) */
