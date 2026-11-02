@@ -12198,14 +12198,13 @@ static void m_decide_walk_anim(Player *m)
     m_wade_steps(m, 0);
     if (m->tsi == 0 && life == 1 && max_life > 2) anim_track(mario_anim, 3, "damagewait"); /* ダメージウエイト */
     else if (life > 1) anim_track(mario_anim, 3, "wait"); /* incLife: ノーマルウエイト */
-    m_check_wall_push(m); /* checkWallPush's head */
+    m_check_wall_push(m); /* checkWallPush */
     if (m->tsi > 5 && m->walk > (gd_player_luigi() ? 0.3f : 0.9f) && !m->turn_brake && !m->slip_floor) m->brake1 = MC.mBrakeFirstTimer;
     if (m->brake1) m->brake1--;
     if (m->tsi == 0) {
         if (m->brake1 && !m->slip_poly) { mario_play("runend", 1.0f, 0); m->brake2 = MC.mBrakeSecondTimer; }
         m->brake1 = 0;
     }
-    m_check_wall_push(m);
 }
 
 /* decideSquatWalkAnimation: しゃがみ基本 (SquatWait / SquatWalk), squat walking at mSquatWalkMin..MaxSpeed */
@@ -14980,10 +14979,6 @@ static int m_check_wall_jump_code(Player *m)
     if (m_wall_floor_code(34)) type = 2;
     return m_wall_back_jump(m, type);
 }
-static void m_check_wall_push(Player *m) /* checkWallPush's head: walking into a wall of the back jump codes */
-{
-    if (m->tsi && (mw.w8 || mw.w32)) m_check_wall_jump_code(m);
-}
 static int m_fixwall_top(Player *m) /* fixWallingTop: _75C, the wall's up. ponytail: no forceSetHeadVecKeepSide (his head is his up) */
 {
     V3 n = m_wall_norm(m), side = vcross(n, vmul(m->up, -1.0f));
@@ -15176,9 +15171,9 @@ static int m_wall_update(Player *m)
  * standing square on his ground, unmoved, with 200 or more to the ceiling, he leans on it (壁押し); the stick along the
  * wall walks him sideways at 6 (壁右歩き / 壁左歩き, 1 + 0.25 x its part into the wall less), let go he waits (壁ウエイト),
  * the stick off it lets go (turned off it beyond 0.707), A jumps off it, the spin punches off it, off his feet he drops.
- * A wall face under mForceWallAngle stops the walk at speed index 1. ponytail: checkWallJumpCode (the barrier / water
- * wall floor codes: MarioWall::startBackJump) is not ported, mDrawStates._A (the edge nudges) and MarioActor _468 are
- * never set, forceStopTornado has no tornado to stop, no startBas (the walk's foot sounds) */
+ * A wall face under mForceWallAngle stops the walk at speed index 1; walking into a wall of the back jump codes
+ * (checkWallJumpCode) throws him off it first. ponytail: mDrawStates._A (the edge nudges) and MarioActor _468 are never
+ * set, no mTornadoRestartTime (_40A) in forceStopTornado, no startBas (the walk's foot sounds) */
 enum { WALLC_NOTSIDESTEP = 5 };
 static void side_step_start(Player *m) /* MarioSideStep::start */
 {
@@ -15205,11 +15200,14 @@ static int m_do_side_step(Player *m) /* doSideStep */
     if (!slip_code(m->floor) || m->floor == 2) return 0;
     if (!mw.w8 || !mw.front.prism || tri_moved(&mw.front)) return 0; /* getWallPolygon, its base matrix unmoved */
     m_stop_walk(m);
+    m_reset_tornado(m); /* forceStopTornado */
+    if (m->jumping) m_cancel_tornado(m);
     side_step_start(m); /* changeStatus */
     return 1;
 }
-static void m_check_wall_push(Player *m) /* checkWallPush (checkWallJumpCode first: not ported) */
+static void m_check_wall_push(Player *m) /* checkWallPush */
 {
+    if (m->tsi && (mw.w8 || mw.w32) && m_check_wall_jump_code(m)) return;
     float ang = ang_abs_h(m->face, vmul(m_wall_norm(m), -1.0f), m->up);
     int side = m->tsi && mw.w8 && ang < MC.mWallPushAngleRange * 3.14159265f / 180.0f;
     if (m->slip_poly) side = 0; /* mDrawStates._C */
