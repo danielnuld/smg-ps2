@@ -11808,6 +11808,171 @@ static void m_check_wall_push(Player *m);
  * the height over the ground in the air is a probe; no 2D, sand, slider, side step; no _34 (decideInertiaOnIce / decideOnIceAnimation: its setter is not in the decomp); the quad walk blend
  * (基本: WalkSoft / Walk / Run / Wait at sWeightTable) and その場足踏み (Run / Wait) play their heaviest clip */
 static V3 m_cx, m_cy;          /* the camera's axes on the plane under Mario (calcMoveDir) */
+static V3 m_camx, m_camy, m_camz; /* MarioActor mCamDirX / Y / Z (getCamDirX / Y / Z: Z looks forward) */
+static float ang_abs(V3 a, V3 b);
+static float ang_abs_h(V3 a, V3 b, V3 up);
+static float clamp01(float f);
+static float m_sz; /* (mStickPos.z, below) */
+
+/* Mario2D.cpp / MarioMove2D.cpp after Petari (check2DMode, stick2DadjustGround, stick2Dadjust, set2Dmode, clear2DStick,
+ * calcShadowDir2D) and their hooks: in a PlaneModeCube (mMovementStates._37) or a PlaneCircularModeCube (_10._15) Mario
+ * moves on the area's plane: his place is kept on the plane through _688 (eased 1 a frame towards the area's centre,
+ * writeBackPhyisicalVector), his velocity loses its part across it, the stick is turned to the plane (on a PlaneModeCube
+ * only a stick within 30 degrees of the move along the plane counts, held while it stays within 0.3), his front never
+ * looks into the screen (setFrontVec), he turns round at once (90 degrees of stick to turn standing, _750 10 with the
+ * drawn turn mirrored to the camera: createCorrectionMtx), isEnableTurn is off, the walls facing the plane are no walls
+ * (checkAllWall) and his drawn axes absorb small shakes (createMtxDir, mVibrationAbsorbAngle).
+ * ponytail: PipeModeCube (MarioMove25D) is not ported; the gravity flip's 2D handling (MarioActorGravity: no gravity
+ * flips here, _10.turning never set), checkForceGrounding, the binder's push from moving parts in 2D, the walk tilt and
+ * homing of MarioAnimator, beforeJumping2D's _628 (read nowhere) and the warps' _688 (MarioAccess setTrans) are not
+ * kept */
+static struct {
+    int on, circ, was, was_circ;   /* mMovementStates._37, _10._15; last frame's (_20._37, _28 bit 10) */
+    V3 fx, fy, fz;                 /* _F4: the area's rotation (its columns) */
+    V3 side, up, nrm;              /* mSide2D, mUp2D, mNormal2D */
+    V3 v6A0, v688, v694, v660, v670, v67C, abs_s, abs_f, abs_u; /* .., createMtxDir's _950 / _944 / _938 */
+    float f614, f618, f61C, f620;
+    int b60E, b60F, b610, b611, b624, b66C;
+} m2;
+static void m2_clear(void) /* clear2DStick */
+{
+    m2.b60E = m2.b60F = m2.b610 = m2.b611 = 0;
+    m2.f618 = m2.f614 = m2.f620 = m2.f61C = 0.0f;
+    m2.b624 = 0; m2.b66C = 0;
+    m2.v670 = m2.v67C = v3(0, 0, 0);
+}
+static void m2_set_mode(int mode) /* set2Dmode */
+{
+    if (mode == m2.b624) return;
+    if (m2.f614 > 0.0f) m2.b60E = 1;
+    if (m2.f614 < 0.0f) m2.b60E = 2;
+    m2.b624 = mode;
+}
+static void m2_check(Player *m) /* check2DMode */
+{
+    m2.was = m2.on; m2.was_circ = m2.circ;
+    m2.on = m2.circ = 0;
+    int a = area_obj("PlaneModeCube", m->pos);
+    if (a >= 0) {
+        m2.on = 1;
+        row_axes(&sc->objs[a], &m2.fx, &m2.fz); /* makeMtxTR(0, calcCubeRotate) */
+        m2.fy = vcross(m2.fz, m2.fx);
+        if (!m2.was) { m2.v688 = m->pos; m2.v6A0 = m2.fz; m2.v694 = row_pos(&sc->objs[a]); } /* getRotatedAxisZ, calcCubePos */
+    } else if ((a = area_obj("PlaneCircularModeCube", m->pos)) >= 0) {
+        const Row *r = &sc->objs[a];
+        float ry = r->rot[1] * 3.1415927f / 180.0f, c = cosf(ry), s = sinf(ry);
+        m2.fx = v3(c, 0, -s); m2.fy = v3(0, 1, 0); m2.fz = v3(s, 0, c); /* tmpMtxRotYDeg */
+        m2.circ = 1;
+        if (!m2.was_circ) { V3 x, z; row_axes(r, &x, &z); m2.v688 = m->pos; m2.v6A0 = z; m2.v694 = row_pos(r); }
+    }
+}
+static float m2_signed_h(V3 a, V3 b, V3 axis) /* MR::diffAngleSignedHorizontal */
+{
+    V3 ha = vsub(a, vmul(axis, vdot(a, axis))), hb = vsub(b, vmul(axis, vdot(b, axis)));
+    float ab = ang_abs(ha, hb), a1 = vdot(ha, hb), a2 = vdot(rot_axis(ha, axis, 0.00017453293f), hb);
+    return a2 > a1 ? ab : -ab;
+}
+static V3 m2_norm0(V3 v, int *zero) { *zero = vdot(v, v) < 1e-12f; return *zero ? v : vnorm(v); } /* MR::normalizeOrZero */
+static void m2_adjust_ground(Player *m, float *rx, float *ry) /* stick2DadjustGround */
+{
+    if (!strcmp(game_stage_name, "HellProminenceGalaxy/3")) return; /* isStageCameraRotate2D */
+    m2.side = m2.fx; m2.up = m2.fy; m2.nrm = vmul(m2.fz, -1.0f);
+    m2.v6A0 = m2.nrm;
+    int z;
+    m2.v660 = m2_norm0(vsub(m->ground_n, vmul(m2.v6A0, vdot(m->ground_n, m2.v6A0))), &z); /* _368 off _6A0 */
+    if (z) m2.v660 = m->ground_n;
+    float dot = vdot(m2.v660, m2.up);
+    if (!(dot >= -0.707f && dot <= 0.707f)) m2_set_mode(dot >= 0.0f);
+    V3 sd = m2_norm0(v3(*rx, *ry, 0), &z);
+    if (m2.b66C) {
+        if (fabsf(m_sz) < 1e-6f || ang_abs(sd, m2.v670) > 0.3f) { m2.b66C = 0; return; }
+        float a = -m2_signed_h(m2.v67C, m2.v660, m2.v6A0), c = cosf(a), s = sinf(a); /* tmpMtxRotZRad */
+        *rx = c * sd.x - s * sd.y; *ry = s * sd.x + c * sd.y;
+        return;
+    }
+    if (fabsf(m_sz) < 1e-6f) return;
+    V3 v2 = v3(vdot(m2.v660, m_camx), vdot(m2.v660, m_camy), 0);
+    float diff = ang_abs(sd, v2);
+    if (diff < 30.0f * 3.1415927f / 180.0f || diff > 150.0f * 3.1415927f / 180.0f) { *rx = *ry = 0; m_sz = 0; return; }
+    m2.v670 = sd; m2.v67C = m2.v660; m2.b66C = 1;
+}
+static void m2_adjust(Player *m, float *rx, float *ry) /* stick2Dadjust (PlaneCircularModeCube) */
+{
+    float sxi = *rx, syi = *ry;
+    m2.side = m2.fx; m2.up = v3(0, 1, 0); m2.nrm = vmul(m2.fz, -1.0f);
+    float angle = m2_signed_h(m_camy, v3(0, 1, 0), m_camz);
+    if (ang_abs_h(m_camx, v3(1, 0, 0), m_camz) >= 3.0415928f && fabsf(angle) >= 3.0415928f) { angle = 0.0f; *rx = -*rx; }
+    m2.side = rot_axis(m2.side, m2.v6A0, angle); m2.up = rot_axis(m2.up, m2.v6A0, angle);
+    int z;
+    m2.v660 = m2_norm0(vsub(m->ground_n, vmul(m2.v6A0, vdot(m->ground_n, m2.v6A0))), &z);
+    if (z) m2.v660 = m->ground_n;
+    m2_set_mode(vdot(m2.v660, m2.up) >= 0.0f);
+    int main_y = 0, main_x = 0;
+    if (m2.b66C) {
+        if (fabsf(m_sz) < 1e-6f) m2.b66C = 0;
+        else {
+            float diff = ang_abs(v3(*rx, *ry, 0), m2.v670);
+            if (m2.v670.x * *rx < 0.0f || m2.v670.y * *ry < 0.0f) m2.b66C = 0;
+            else if (diff < 0.3f) { *rx = m2.v67C.x; *ry = m2.v67C.y; }
+            else m2.b66C = 0;
+        }
+    }
+    if (!m2.b66C && fabsf(m_sz) >= 1e-6f && !m2.b60E && !m2.b60F) {
+        V3 sv = v3(*rx, *ry, 0);
+        sv = vadd(vadd(vmul(m2.fx, sv.x), vmul(m2.fy, sv.y)), vmul(m2.fz, sv.z)); /* PSMTXMultVecSR(_F4) */
+        sv = rot_axis(sv, m2.v6A0, angle);
+        float diff = ang_abs(vmul(m2.v660, -1.0f), sv), cl = clamp01(1.0f - m_sz * m_sz), th = 0.5f + (1.5f - 0.5f) * cl;
+        if (diff < th || diff > 3.1415927f - th) { *rx = *ry = 0; m_sz = 0; }
+        else {
+            m2.v670 = sv;
+            sv = vsub(sv, vmul(m2.v660, vdot(sv, m2.v660)));
+            *rx = sv.x; *ry = sv.y;
+            m2.v67C = sv; m2.b66C = 1;
+        }
+    }
+    if (fabsf(*ry) > fabsf(*rx)) { main_y = 1; *rx = 0; *ry = *ry > 0.0f ? m_sz : -m_sz; }
+    else { main_x = 1; *ry = 0; *rx = *rx > 0.0f ? m_sz : -m_sz; }
+    float am = ang_abs(m2.v660, m2.up);
+    int lx = 0, ly = 0;
+    if (!((m2.b60E || m2.b60F) && !m2.b610 && !m2.b611)) {
+        if ((am < 0.5235988f || am > 2.617994f || m2.b610) && !m2.b611) {
+            if (m2.f620 == 0.0f) {
+                *ry = 0;
+                if (main_y && fabsf(sxi) > 0.3f) { *rx = sxi < 0.0f ? -m_sz : m_sz; lx = 1; }
+            }
+        } else if (((am > 1.3962635f && am < 1.7453294f) || m2.b611) && !m2.b610 && m2.f61C == 0.0f) {
+            *rx = 0;
+            if (main_x && fabsf(syi) > 0.3f) { *ry = syi < 0.0f ? -m_sz : m_sz; ly = 1; }
+        }
+    }
+    m2.f61C = *rx; m2.f620 = *ry; m2.b610 = lx; m2.b611 = ly;
+    if (!m2.b60E && !m2.b60F && *ry != 0.0f) {
+        if (am >= 0.19634955f && am <= 1.5707964f) m2.b60F = vdot(m2.v660, m2.side) < 0.0f ? 1 : 2;
+        else if (am >= 1.5707964f && am <= 2.9452431f) m2.b60F = vdot(m2.v660, m2.side) < 0.0f ? 2 : 1;
+    }
+    switch (m2.b60F) {
+    case 1: if (*ry == 0.0f) m2.b60F = 0; else *rx = *ry; break;
+    case 2: if (*ry == 0.0f) m2.b60F = 0; else { *rx = -*ry; *ry = -*ry; } break;
+    default: m2.b60F = 0;
+    }
+    switch (m2.b60E) {
+    case 1: if (*rx > 0.0f) *rx = -*rx; else m2.b60E = 0; break;
+    case 2: if (*rx < 0.0f) *rx = -*rx; else m2.b60E = 0; break;
+    default: m2.b60E = 0;
+    }
+    m2.f614 = *rx; m2.f618 = *ry;
+    if (fabsf(am - 1.5707964f) >= 0.0001f) { *ry = 0; m_sz = fabsf(*rx); }
+    else { *rx = 0; m_sz = fabsf(*ry); }
+}
+static V3 m2_front(V3 f) /* setFrontVec in 2D: a front into the screen turned back out of it */
+{
+    if (!m2.on || talk_active()) return f;
+    V3 pm = vdot(m_camz, m2.v6A0) > 0.0f ? m2.v6A0 : vmul(m2.v6A0, -1.0f);
+    if (vdot(pm, f) <= 0.0f) return f;
+    float d = vdot(f, pm);
+    V3 r = vsub(vsub(f, vmul(pm, d)), vmul(pm, d));
+    return vdot(r, r) < 1e-12f ? r : vnorm(r);
+}
 
 /* Test builds: the left stick toward `to`, as a player would hold it (calcMoveDir inverted: Mario walks there with
  * his own movement and clips); 1 once within `stop` across his up, the stick let go */
@@ -11911,6 +12076,7 @@ static V3 m_move_dir(float x, float y) /* calcMoveDir; in a tower its axis and t
 
 static V3 m_shadow(const Player *m, V3 v) /* calcShadowDir: v on the plane under Mario */
 {
+    if (m2.on || m2.circ) { int z; return m2_norm0(v, &z); } /* calcShadowDir2D */
     V3 d = vnorm(v), n = m->up;
     if (fabsf(vdot(d, n)) > fabsf(vdot(d, m->ground_n))) n = m->ground_n;
     return vnorm(vcross(vcross(n, d), n));
@@ -11918,8 +12084,8 @@ static V3 m_shadow(const Player *m, V3 v) /* calcShadowDir: v on the plane under
 
 static void m_front(Player *m, V3 v) /* setFrontVecKeepUp */
 {
-    V3 f = vtangent(v, m->up);
-    if (vlen(f) > 1e-4f) m->face = vnorm(f);
+    V3 f = vtangent(m2_front(v), m->up);
+    if (vlen(f) > 1e-4f) m->face = m2_front(vnorm(f));
     m->sd = m->face;
 }
 
@@ -11987,6 +12153,8 @@ static void m_input_stick(Player *m)
     r = a >= q - mg ? q : a <= mg ? 0.0f : q / (q - 2.0f * mg) * (a - mg);
     r += q * quot;
     m_sx = z * cosf(r); m_sy = z * sinf(r); m_sz = z;
+    if (m2.on) m2_adjust_ground(m, &m_sx, &m_sy);
+    if (m2.circ) m2_adjust(m, &m_sx, &m_sy);
     if (m_tower.on) m_sy = 0.0f; /* (Mario::inputStick: mStickPos.y) */
     m->stick_ang0 = m->stick_ang; m->stick_ang = r;
     if (z <= 0.01f) m->neutral = 0; /* _1D */
@@ -12000,7 +12168,7 @@ static void m_retain(Player *m);
 
 static int m_enable_turn(const Player *m) /* isEnableTurn */
 {
-    return m->grounded && !m->turn_brake && !m->s23 && !m->squat && !m->magic && !m->hip && !m->spin_timer;
+    return m->grounded && !m->turn_brake && !m->s23 && !m->squat && !m->magic && !m->hip && !m->spin_timer && !m2.on && !m2.circ;
 }
 
 static void m_stop_walk(Player *m) /* stopWalk (cancelSquatMode, the brake clips stopped) */
@@ -12331,6 +12499,11 @@ static void m_correction(Player *m)
     if (fabsf(m->corr) < 1e-6f && !m->corr_flip) { m->stand_turn = 0; m->corr = 0; return; }
     if (!m->stand_turn && !m->corr_flip) { m_front(m, rot_axis(m->face, m->up, m->corr)); m->corr = 0; }
     m_corr_draw = m->corr;
+    if (m2.on && !talk_active()) { /* 2D: turned the way the camera sees */
+        float d = vdot(m->face, m_camx);
+        if (vdot(m->up, m_camy) < 0.0f) d = -d; /* (_1FC) */
+        if ((d < 0.0f && m->corr < 0.0f) || (d > 0.0f && m->corr > 0.0f)) m_corr_draw = -m->corr;
+    }
     if (m->corr_flip) { m->corr += (3.14159265f - m->corr) / (float)m->corr_flip; m->corr_flip--; m->stand_turn = 0; }
     if (m->stand_turn) {
         m->corr = m->corr * (float)(m->stand_turn - 1) / (float)m->stand_turn;
@@ -13488,7 +13661,8 @@ static void m_main_move(Player *m)
         if (a3) {
             dir = m_move_dir(m_sx, m_sy); dir_set = 1;
             m->sd = m_shadow(m, dir);
-            if (ang_abs_h(m_shadow(m, m->face), m->sd, m->up) > 3.14159265f * 10.0f / 180.0f) {
+            if (m2.on ? ang_abs_h(m_shadow(m, m->face), m->sd, m2.v6A0) > 3.14159265f * 90.0f / 180.0f
+                      : ang_abs_h(m_shadow(m, m->face), m->sd, m->up) > 3.14159265f * 10.0f / 180.0f) {
                 if (!a1) m_front_turn(m, m->sd, MC.mStandingTurnTime); /* setFrontVecKeepUp(_22C, mStandingTurnTime) */
                 return;
             }
@@ -13555,9 +13729,9 @@ static void m_main_move(Player *m)
         V3 cross = v3(0, 0, m->last_rx * m_ry - m->last_ry * m_rx); /* PSVECCrossProduct(_250, stick): the raw sticks' (x, y, 0) */
         do {
             if (m_sz == 0) { m->u_turn = 0; m->turning = 0; break; }
-            if (vlen(m->turn_cross) < 1e-6f) {
+            if (vlen(m->turn_cross) < 1e-6f && !m2.on) {
                 if (fabsf(m->last_rx - m_rx) > 1e-6f || fabsf(m->last_ry - m_ry) > 1e-6f) { m->turning = 1; break; }
-            } else if (vdot(cross, m->turn_cross) > 0) { m->turning = 1; break; }
+            } else if (vdot(cross, m->turn_cross) > 0 && !m2.on) { m->turning = 1; break; }
             if (m->turn_slip) { m->u_turn = 0; m->turning = 0; }
             if (ang_abs(fs, m->sd) <= 0.707f) {
                 V3 c2 = vcross(fs, m->sd);
@@ -13580,7 +13754,8 @@ static void m_main_move(Player *m)
             m->last_sd = m->sd;
         }
         V3 v2 = m->face;
-        if (m->u_turn) v2 = rot_axis(fs, m->up, m->u_side ? 0.12f : -0.12f);
+        if (m2.on) { m->retain_t = 0; m_draw_d = 0; m->u_turn = 0; v2 = m->sd; } /* in 2D straight to the stick */
+        else if (m->u_turn) v2 = rot_axis(fs, m->up, m->u_side ? 0.12f : -0.12f);
         else if (ang_abs(m->face, m->sd) < 0.1f) v2 = m->stick_ang0 == m->stick_ang ? m->sd : m->face;
         else {
             float d = ang_abs(m->face, m->sd);
@@ -13595,6 +13770,7 @@ static void m_main_move(Player *m)
         }
         m->turning = 1;
         if (!m_group_on("その場足踏み") && dot > 0.99f) m->turning = 0;
+        if (m2.on && vdot(m->face, v2) < 0.0f && !m_clip_on("brake")) { m->stand_turn = 10; m->corr = 3.14159265f; } /* _750, _74C */
         if (!a1) m_front(m, v2);
     } else {
         if (!m->turn_slip) {
@@ -15357,6 +15533,7 @@ static void m_check_all_wall(Player *m)
     int n = kcl_query(c, r, h, 16), walls[3] = {-1, -1, -1};
     for (int i = 0; i < n; i++) {
         if (fabsf(vdot(h[i].n, m->up)) > 0.5f) continue;
+        if (m2.on && fabsf(vdot(h[i].n, m2.v6A0)) > 0.707f) continue; /* (2D) */
         float facing = vdot(h[i].n, front);
         int side = facing >= MC.mWallBackAngleRange ? 2 : facing <= -MC.mWallFrontAngleRange ? 0 : 1;
         if (walls[side] >= 0 && h[walls[side]].dist > h[i].dist) continue;
@@ -17493,6 +17670,33 @@ void game_test_slider_input(int frame)
                m->slider, m->floor, m->grounded, m->jumping, m->s23, vlen(sl.v14), sl.f38, sl.f3C,
                mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-", m_w[0], m_w[1], m_w[2], m_w[3], m->pos.x, m->pos.y, m->pos.z);
 }
+/* Test builds (MARIO2D_TEST): from Mario's first free frame, if he is in no 2D area he is put 100 over the first
+ * PlaneModeCube's centre (TeresaMario2DGalaxy, KoopaBattleVs galaxies); then the stick right 120 frames, left 120, up
+ * 60 (no move in 2D), right with A at 360; his distance off the plane (along _6A0) logged */
+void game_test_2d_input(int frame)
+{
+    static int free_at = -1;
+    Player *m = mario;
+    if (free_at < 0) { if (demo_on || !m->grounded || m->launch >= 0 || starter >= 0) return; free_at = frame; }
+    int t = frame - free_at;
+    if (t == 10) {
+        int tc = scene_type(sc, "PlaneModeCube"), tr = scene_type(sc, "PlaneCircularModeCube"), n = 0, first = -1;
+        for (u32 i = 0; i < sc->nobjs; i++) if (sc->objs[i].type == tc || sc->objs[i].type == tr) { n++; if (first < 0) first = (int)i; }
+        printf("2d test: %d plane areas, first row %d, in one %d\n", n, first, m2.on || m2.circ);
+        if (!m2.on && !m2.circ && first >= 0) { m->pos = vadd(row_pos(&sc->objs[first]), vmul(m->up, 100.0f)); m->hvel = v3(0, 0, 0); m->vup = 0; }
+    }
+    if (t < 30) return;
+    int s = t - 30;
+    pad_force_stick = 1; pad_force_lx = pad_force_ly = 0; pad_force = 0;
+    if (s < 120 || (s >= 300 && s < 420)) pad_force_lx = 0.67f;
+    else if (s < 240) pad_force_lx = -0.67f;
+    else if (s < 300) pad_force_ly = 0.67f;
+    if (s >= 360 && s < 363) pad_force = PAD_CROSS;
+    if (s % 5 == 0 && s <= 480)
+        printf("2d f %d: on %d circ %d off %.1f sx %.2f sy %.2f sz %.2f face.n %.2f face.cx %.2f grounded %d clip %s pos %.0f %.0f %.0f\n", s, m2.on, m2.circ,
+               vdot(vsub(m->pos, m2.v688), m2.v6A0), m_sx, m_sy, m_sz, vdot(m->face, m2.v6A0), vdot(m->face, m_camx), m->grounded,
+               mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-", m->pos.x, m->pos.y, m->pos.z);
+}
 /* Mario::saveLastSafetyTrans: on his feet with every ground sensor on (_1C._11), on a Normal / NoSlip / Sand / Glass /
  * WaterBottom / Wet / NoStampSand floor (_960), no wall met, not on a slip polygon, over 160 from the ceiling, under 10
  * over his shadow, on under 15 degrees of an unmoved part: the place 5 / 8 his own, 3 / 8 the ground's corners, within
@@ -17865,6 +18069,7 @@ static void update_mario_(void)
         gx = vlen(gx) > 1e-6f ? vnorm(gx) : sx;
         gy = vlen(gy) > 1e-6f ? vnorm(gy) : gyo;
         m_cx = gx; m_cy = vmul(gy, -1.0f);
+        m_camx = sx; m_camy = sy; m_camz = fw;
     }
     { /* MarioCollision: in a TowerModeCylinder (calcCylinderCenterPos: its base + up x height / 2) */
         int t = area_obj("TowerModeCylinder", m->pos);
@@ -17896,6 +18101,7 @@ static void update_mario_(void)
         if (mario_anim) anim_update(mario_anim);
         return;
     }
+    m2_check(m); /* check2DMode (before inputStick) */
     m_input_stick(m);
 #ifdef SLOPE_TEST
     { /* push into the 77 degree face slope_test() chose for 240 frames, then let go */
@@ -18008,6 +18214,14 @@ static void update_mario_(void)
      * ground (50 squatting), eased 0.1 a frame to -gravity x 70 off it; checkGround keeps him on the ground. Hanging his
      * binder is off (MarioHang _F44). Skating, as Rabbit / Teresa he keeps one 50 sphere 50 up. ponytail: _2C4's up is his up (MarioActorGravity blends mHeadVec and _368 by
      * _984), the 0.5 ease on _10._23 / _934 not kept */
+    if (m2.on || m2.circ) { /* writeBackPhyisicalVector in 2D: his place on the plane through _688, eased to the centre */
+        V3 d = vsub(m->pos, m2.v688);
+        m->pos = vadd(m2.v688, vsub(d, vmul(m2.v6A0, vdot(d, m2.v6A0))));
+        m->vel = vsub(m->vel, vmul(m2.v6A0, vdot(m->vel, m2.v6A0)));
+        float k = vdot(vsub(m2.v694, m2.v688), m2.v6A0);
+        k = k > 1.0f ? 1.0f : k < -1.0f ? -1.0f : k;
+        m2.v688 = vadd(m2.v688, vmul(m2.v6A0, k));
+    }
     float brad = BODY_RADIUS;
     V3 boff = vmul(m->up, BODY_RADIUS);
     m_upd_2C4(m);
@@ -37619,7 +37833,14 @@ void game_draw(void)
         render_model(md, m, kuribo[i].state == KURIBO_STUN ? 0x50 : 0x90, 0x50, 0x20);
     }
     PROF(3);
-    basis_matrix(m, mario->pos, mario->up, mario->face, m_yangle + m_corr_draw);
+    {
+        V3 du = mario->up, df = mario->face;
+        if ((m2.on || m2.circ) && player_mode != PM_TERESA) { /* createMtxDir: mVibrationAbsorbAngleF / H */
+            if (ang_abs(df, m2.abs_f) < MC.mVibrationAbsorbAngleF) df = m2.abs_f; else m2.abs_f = df;
+            if (ang_abs(du, m2.abs_u) < MC.mVibrationAbsorbAngleH) du = m2.abs_u; else m2.abs_u = du;
+        }
+        basis_matrix(m, mario->pos, du, df, m_yangle + m_corr_draw);
+    }
     if (jb.inst >= 0) { /* swinging round a JumpBranch: his head towards it */
         const Inst *in = &insts[jb.inst];
         V3 up = vnorm(vsub(v3(in->m[12], in->m[13], in->m[14]), jb.pt));
