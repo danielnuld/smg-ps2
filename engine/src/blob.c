@@ -92,6 +92,7 @@ int blob_add(Scene *s, const u8 *blob)
                 vg->alpha = q[10];
                 vg->lit = q[11];
                 vg->strip = q[12];
+                vg->share = q[13];
                 vg->nswap = 0; vg->swap_kind = 0;
                 md->lit |= vg->lit == 1;
                 vg->env = vg->lit == 2 ? (const float *)(q + 16) : NULL;
@@ -105,6 +106,10 @@ int blob_add(Scene *s, const u8 *blob)
                 q = vg->data;
                 for (u32 b = 0; b < vg->nbatch; b++) {
                     u32 ne = vg->batch[2 * b], nu = vg->batch[2 * b + 1];
+                    if (vg->share) { /* uv or normal only: the rest is its base group's */
+                        q += (4 * ne + 15) & ~15u;
+                        continue;
+                    }
                     if (vg->strip) { /* 1 static: pos, uv, colour; 2 skinned lit: pos, uv, normal, colour; 3 env:
                                       * pos, normal, colour */
                         q += ((8 * ne + 15) & ~15u) + (vg->tex != NO_TEX && vg->strip != 3 ? (4 * ne + 15) & ~15u : 0) +

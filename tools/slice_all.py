@@ -79,7 +79,7 @@ def galaxy(fs, out, g, resident):
                              error=f"{type(e).__name__}: {e} @ {traceback.extract_tb(e.__traceback__)[-1].lineno}"))
         r = rows[-1]
         print(f"{g} {no}: whole {r['whole'] / 1e6:.2f} stream {r['stream'] / 1e6:.2f} MB ({r['worst_stage']}) "
-              f"{r['seconds']} s {r['error']}", flush=True)
+              f"ratio {ratio} layers {SL.tex.LAYER_MAX} >= {SL.tex.LAYER_MIN} {r['seconds']} s {r['error']}", flush=True)
     return rows
 
 
