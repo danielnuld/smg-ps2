@@ -17670,8 +17670,8 @@ void game_test_slider_input(int frame)
                m->slider, m->floor, m->grounded, m->jumping, m->s23, vlen(sl.v14), sl.f38, sl.f3C,
                mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-", m_w[0], m_w[1], m_w[2], m_w[3], m->pos.x, m->pos.y, m->pos.z);
 }
-/* Test builds (MARIO2D_TEST): from Mario's first free frame, if he is in no 2D area he is put 100 over the first
- * PlaneModeCube's centre (TeresaMario2DGalaxy, KoopaBattleVs galaxies); then the stick right 120 frames, left 120, up
+/* Test builds (MARIO2D_TEST): from Mario's first free frame, if he is in no 2D area he is held in the first
+ * PlaneModeCube's first floor under its top (TeresaMario2DGalaxy, KoopaBattleVs galaxies); then the stick right 120 frames, left 120, up
  * 60 (no move in 2D), right with A at 360; his distance off the plane (along _6A0) logged */
 void game_test_2d_input(int frame)
 {
@@ -17679,6 +17679,22 @@ void game_test_2d_input(int frame)
     Player *m = mario;
     if (free_at < 0) { if (demo_on || !m->grounded || m->launch >= 0 || starter >= 0) return; free_at = frame; }
     int t = frame - free_at;
+    static int put = -1, area = -1;
+    if (area >= 0 && put < 0) { /* held in the area until its collision is in: then on the first floor under its top */
+        const Row *r = &sc->objs[area];
+        V3 x, z, hp;
+        row_axes(r, &x, &z);
+        V3 y = vcross(z, x);
+        m->pos = vadd(row_pos(r), vmul(y, 500.0f * r->scale[1])); m->hvel = v3(0, 0, 0); m->vup = 0;
+        for (int i = 0; i <= 20 && put < 0; i++) {
+            V3 top = vadd(vadd(row_pos(r), vmul(x, (i / 20.0f - 0.5f) * 900.0f * r->scale[0])), vmul(y, 990.0f * r->scale[1]));
+            if (map_poly(top, vmul(y, -980.0f * r->scale[1]), &hp, NULL)) { put = t; m->pos = vadd(hp, vmul(y, 50.0f)); }
+        }
+        if (put >= 0) printf("2d test f %d: put on the floor at %.0f %.0f %.0f\n", t, m->pos.x, m->pos.y, m->pos.z);
+        test_nolost = 1;
+        return;
+    }
+    if (put >= 0) t = t - put + 30;
     if (t == 10) {
         int tc = scene_type(sc, "PlaneModeCube"), tr = scene_type(sc, "PlaneCircularModeCube"), n = 0, first = -1;
         for (u32 i = 0; i < sc->nobjs; i++) if (sc->objs[i].type == tc || sc->objs[i].type == tr) { n++; if (first < 0) first = (int)i; }
@@ -17688,6 +17704,7 @@ void game_test_2d_input(int frame)
             printf("2d test: area at %.0f %.0f %.0f rot %.0f %.0f %.0f scale %.1f %.1f %.1f shown %d inside %d; Mario %.0f %.0f %.0f\n", r->pos[0], r->pos[1],
                    r->pos[2], r->rot[0], r->rot[1], r->rot[2], r->scale[0], r->scale[1], r->scale[2], row_shown(first), area_inside(r, m->pos), m->pos.x,
                    m->pos.y, m->pos.z);
+            if (!area_inside(r, m->pos)) area = first;
         }
     }
     if (t < 30) return;
