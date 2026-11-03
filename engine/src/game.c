@@ -1001,7 +1001,8 @@ static int t_replica = -1;
 static int pickup_on(const Pickup *p, int take)
 {
     if (p->alive == PICK_GONE || p->alive == (take ? PICK_POP_NEW : PICK_POP_BLINK)) return 0;
-    if (p->row >= 0 && take && sc->objs[p->row].type == t_replica && sc->objs[p->row].sw[SW_A] >= 0 && !sw_on(&sc->objs[p->row], SW_A))
+    if (p->row >= 0 && take && sc->objs[p->row].type == t_replica && !sw_on(&sc->objs[p->row], SW_A)) /* appearNonActive; only SW_A
+                                                                          * activates it (none: never) */
         return 0;
     return p->row < 0 || (row_shown(p->row) && !sw_on(&sc->objs[p->row], SW_B));
 }
@@ -33862,7 +33863,7 @@ static void collect(Pickup *p, int n, float reach, int *counter, int fx, u32 se)
  * AutoEffectList group at its place (fx_ambient, tools/jpa.py AMBIENT), while its SW_A is on if it has one; the
  * break / explosion ones (sEffectDataTable's rumbling SEs) play once when their SW_A comes on. Only the 12 nearest
  * within 5000 of the camera run (MAX_EMIT 128 is shared with the game's effects). ponytail: no sound, no clipping by
- * the class's own far distance, no demo casts */
+ * the class's own far distance, no demo casts (the once ones: exeMove's shake, SE and rumble at step 7, below) */
 static int ambient_fx(const char *name)
 {
     for (int k = 0; k < FX_AMBIENT_N; k++) if (strcmp(name, fx_ambient[k]) == 0) return FX_AMBIENT_FIRST + k;
@@ -33899,7 +33900,14 @@ static void ambient_effects(void)
                 mat_translate_rot_scale(m, r->pos, r->rot, r->scale);
                 fx_emit(fx, m);
                 row_turn[i] = 1;
-            }
+                const char *n = sc->types + 32 * r->type; /* sEffectDataTable: shake 0 strong, its SE */
+                u32 se = !strcmp(n, "IceLayerBreak") ? SE_OJ_ICE_LAYER_BREAK : !strcmp(n, "WaterLayerBreak") ? SE_OJ_WATER_LAYER_BREAK :
+                         !strcmp(n, "StarPieceClusterBreak") ? SE_OJ_CRYSTAL_CAGE_L_BREAK : !strcmp(n, "BattleShipExplosionMetal") ? SE_AT_BTLSHIP_EXPLODE_METAL :
+                         !strcmp(n, "BattleShipExplosionRock") ? SE_AT_BTLSHIP_EXPLODE_ROCK : 0;
+                if (strncmp(n, "BattleShip", 10)) camera_shake(SHAKE_STRONG);
+                if (se) se_start(se, r->pos);
+            } else if (row_turn[i] >= 1 && row_turn[i] < 8 && ++row_turn[i] == 8 && strncmp(sc->types + 32 * r->type, "BattleShip", 10))
+                pad_rumble(RUMBLE_VERY_STRONG); /* "最強" at step 7 */
             continue;
         }
         if (r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) continue;
