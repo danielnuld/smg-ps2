@@ -1698,6 +1698,9 @@ int main(void)
             printf("warppod test f %u: %s\n", frame, d);
         }
 #endif
+#ifdef TORNADO_TEST
+        if (frame >= 120) game_test_tornado((int)frame);
+#endif
 #ifdef TSUKI_TEST
         if (frame >= 120 && frame % 30 == 0) {
             float c = 0;
