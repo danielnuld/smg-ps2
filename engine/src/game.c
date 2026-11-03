@@ -4447,7 +4447,11 @@ static void game_rebind_(void)
                     stone_row(r);
         in->rotor = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) && r->arg[4] != -1 && r->arg[4] != 0; /* -1: not a map part */
         in->press = strcmp(name, "RGTowerPressGroundA") == 0 || strcmp(name, "ReverseGravityRoomPressGroundA") == 0 ||
-                    strcmp(name, "ReverseGravityRoomPressGroundB") == 0 || in->dossun || in->onimasu;
+                    strcmp(name, "ReverseGravityRoomPressGroundB") == 0 || in->dossun || in->onimasu ||
+                    !strcmp(name, "TsukidashikunBig") || !strncmp(name, "DesertMovingLand", 16) ||
+                    !strncmp(name, "SeesawMoveNut", 13) || !strcmp(name, "SandCapsulePressGround"); /* isSensorPressObj:
+                    * RailMoveObjPress, Dossun, Onimasu, RailBlock, DesertMovingLand, SeesawMoveNut, SandCapsulePressGround.
+                    * ponytail: GeneralMapParts / TripodBossFixParts with PressType 1 (not in the pack's rows) */
         if (r->type < 1024 && bloom_ok[r->type]) in->md_bloom = bloom_of[r->type]; /* this rebind's answer for the class */
         else {
             char bn[40]; snprintf(bn, sizeof bn, "%sBloom", name); in->md_bloom = scene_model(s, bn);
@@ -16563,10 +16567,123 @@ static int m_side_press_pre(void)
     }
     return vdot(tri_n(&mw.front), tri_n(&mw.back)) < -0.5f;
 }
-/* Mario::checkPressDamage: a vertical press (setPress 0), two walls closing in (checkSidePressPre, setPress 1), or a
- * wall with the Press floor code while on other ground (setPress 4, 120). The vertical one only near a press object
- * (the checks need one). ponytail: checkSidePress (the moving faces' velocities: no calcVelocityMovingPoint in the
- * port's collision) and the push off walls closer than 200 (_72C) */
+/* MR::calcVelocityMovingPoint: how far a place on a part moved since Mario's last update (getPrevBaseMtx: kcl_pm).
+ * ponytail: a part on leaves or a Move joint has no previous matrix here: still */
+static V3 m_moving_point_vel(const Hit *h)
+{
+    if (h->inst < 0 || h->inst >= kcl_pm_n) return v3(0, 0, 0);
+    const Inst *in = &insts[h->inst];
+    if (in->leaves || in->kmove >= 0 || !memcmp(in->m, kcl_pm[h->inst], 64)) return v3(0, 0, 0); /* isSameMtx */
+    const float *m = in->m, *pm = kcl_pm[h->inst];
+    V3 d = vsub(h->pos, v3(m[12], m[13], m[14])), prev = v3(pm[12], pm[13], pm[14]);
+    for (int c = 0; c < 3; c++) { /* getBaseInvMtx, then getPrevBaseMtx */
+        V3 col = v3(m[4 * c], m[4 * c + 1], m[4 * c + 2]);
+        prev = vadd(prev, vmul(v3(pm[4 * c], pm[4 * c + 1], pm[4 * c + 2]), vdot(d, col) / vdot(col, col)));
+    }
+    return vsub(h->pos, prev);
+}
+static int v_near0(V3 v, float t) { return fabsf(v.x) <= t && fabsf(v.y) <= t && fabsf(v.z) <= t; } /* MR::isNearZero */
+static int m_tilt_press(int inst) /* MarioActor::selectTiltPress: _FC4's ナナメつぶし許可 bit (Onimasu, OnimasuPivot) */
+{
+    return inst >= 0 && insts[inst].row >= 0 && !strncmp(sc->types + 32 * sc->objs[insts[inst].row].type, "Onimasu", 7);
+}
+/* Mario::checkSidePress: two faces of his body ball (80 at 70 up, 50 at 40 squatting) facing each other (normals
+ * under -0.707) on opposite sides, of two parts one a press object, moving into him (their velocities along their
+ * normals 0.2 or more and against the other's): in the air off a face's edge he is pushed out along gravity, two
+ * faces not in line push him off both, a slope over 20 degrees (not a tilt press) slides him out with 180 or more to
+ * the ceiling, his ground's floor code changed on a press with 200 or more under him pushes him 10 aside; else
+ * setPress 0 (a face across his head) or 1. A jump between two such faces keeps its level (cutGravityElementFromJumpVec),
+ * falling into a gap under 80 he stops there. addVelocity goes to the next frame's push (m->s350: the check is after
+ * the move here). ponytail: no MarioBury / mSinkTimer in the port (taken as off); mDrawStates _1E / _A not kept */
+static int m_side_press(Player *m)
+{
+    V3 pos = hg.on ? mw.c : m->pos, g = vmul(m->up, -1.0f);
+    float radius = m->squat ? 50.0f : 80.0f, height = m->squat ? 40.0f : 70.0f;
+    float ceil_d = m_dist_to_ceil(m);
+    V3 c = vadd(pos, vmul(m->up, height));
+    Hit hs[32];
+    int n = kcl_query(c, radius, hs, 32); /* Collision::checkStrikeBallToMap */
+    if (n < 2) return 0;
+    for (int i = 0; i < n; i++) {
+        const Hit *a = &hs[i];
+        V3 an = a->n;
+        for (int j = i + 1; j < n; j++) {
+            const Hit *b = &hs[j];
+            V3 bn = b->n;
+            if (vdot(an, bn) >= -0.707f) continue;
+            if (vdot(vsub(a->pos, c), vsub(b->pos, c)) > 0.0f) continue;
+            float sep = vlen(vsub(a->pos, b->pos));
+            V3 av = m_moving_point_vel(a), bv = m_moving_point_vel(b);
+            if (!v_near0(av, 0.001f) || !v_near0(bv, 0.001f)) {
+                if (!v_near0(av, 0.001f)) {
+                    av = vnorm(av);
+                    if (vdot(av, an) < 0.2f || vdot(av, bn) > -0.2f) continue;
+                }
+                if (!v_near0(bv, 0.001f)) {
+                    bv = vnorm(bv);
+                    if (vdot(bv, bn) < 0.2f || vdot(bv, an) > -0.2f) continue;
+                }
+                if (a->inst != b->inst && (press_at(a->inst) || press_at(b->inst))) {
+                    if (hg.on) { m->grounded = 0; hang_close(m); }
+                    if (!m->grounded && fabsf(vdot(an, g)) < 0.707f) {
+                        int pushed = 0;
+                        for (int k = 0; k < 2 && !pushed; k++) {
+                            const Hit *h = k ? b : a;
+                            if (h->flag == 1) continue; /* isCollisionAtFace */
+                            float vert = vdot(vsub(h->pos, c), g); /* vecKillElement */
+                            if (vert != 0.0f) { m->s350 = vadd(m->s350, vmul(g, -vert)); pushed = 1; }
+                        }
+                        if (pushed) continue;
+                    }
+                    if (ceil_d >= 180.0f) { /* !Bury, !mSinkTimer */
+                        V3 ao = vsub(a->pos, c), bo = vsub(c, b->pos);
+                        float la = vlen(ao), lb = vlen(bo), dd = la > 0 && lb > 0 ? vdot(ao, bo) / (la * lb) : 1.0f;
+                        if (acosf(dd > 1.0f ? 1.0f : dd < -1.0f ? -1.0f : dd) >= 0.017453292f) { /* diffAngleAbs */
+                            ao = la > 0 ? vmul(ao, 1.0f / la) : ao; bo = lb > 0 ? vmul(bo, 1.0f / lb) : bo;
+                            m->s350 = vadd(m->s350, vadd(vmul(ao, -5.0f), vmul(bo, 5.0f)));
+                            continue;
+                        }
+                    }
+                    float dn = -vdot(an, bn), ang = acosf(dn > 1.0f ? 1.0f : dn < -1.0f ? -1.0f : dn);
+                    if (m_tilt_press(a->inst) || m_tilt_press(b->inst)) ang = 0.0f;
+                    if (ang > 0.34906587f) { /* !Bury, !mSinkTimer */
+                        float dist = (160.0f - ceil_d) / sinf(ang);
+                        if (!(dist < 0.0f)) {
+                            V3 ah = vtangent(an, m->up), bh = vtangent(bn, m->up), *w = vlen(ah) > vlen(bh) ? &ah : &bh;
+                            if (vlen(*w) > 0.0f) m->s350 = vadd(m->s350, vmul(vnorm(*w), dist)); /* setLength */
+                        }
+                        continue;
+                    }
+                    if ((tri_attr(&mw.shadow) & 0x3F) != m->floor && press_at(mario_ground) && m_vspeed(m) >= 200.0f) {
+                        V3 hz = vtangent(vsub(mw.shadow_pos, mw.ground_pos), m->up);
+                        if (vlen(hz) > 0.0f) m->s350 = vadd(m->s350, vmul(vnorm(hz), 10.0f));
+                        return 0;
+                    }
+                    m_set_press(m, fabsf(vdot(an, m->up)) > 0.707f ? 0 : 1);
+                    return 1;
+                }
+            }
+            if (m->jumping) {
+                float nd = vdot(an, bn);
+                V3 t = vnorm(vcross(an, g)), au = vnorm(vcross(t, an));
+                t = vnorm(vcross(bn, g));
+                V3 bu = vnorm(vcross(t, bn));
+                float dist = vlen(vsub(vadd(a->pos, vmul(au, height)), vadd(b->pos, vmul(bu, height))));
+                if (m_rising(m)) {
+                    if (nd < -0.707f && dist < 120.0f && sep < 100.0f) m->vup = 0.0f;
+                } else if (nd < -0.707f && sep < 100.0f && dist < 80.0f) {
+                    m->vup = 0.0f;
+                    m->grounded = 1;
+                    m_stop_jump(m);
+                }
+            }
+        }
+    }
+    return 0;
+}
+/* Mario::checkPressDamage: a vertical press (setPress 0), two walls closing in (checkSidePressPre, setPress 1), faces
+ * moving into him (checkSidePress), or a wall with the Press floor code while on other ground (setPress 4, 120). The
+ * vertical one only near a press object (the checks need one). ponytail: the push off walls closer than 200 (_72C) */
 static int m_check_press(Player *m)
 {
     if (m->launch >= 0) return 0;
@@ -16576,6 +16693,7 @@ static int m_check_press(Player *m)
             near = 1;
     if (near && m_vertical_press(m, 0)) { m_set_press(m, 0); return m->press != 0; }
     if (m_side_press_pre()) { m_set_press(m, 1); return 1; }
+    if (m_side_press(m)) return 1;
     if (m_wall_floor_code(29) && m->grounded && m->floor != 29) { m_set_press(m, 4); return 1; } /* checkWallFloorCode(0x1D) */
     return 0;
 }
