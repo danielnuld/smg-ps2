@@ -2653,7 +2653,7 @@ static int npc_mode(const NpcTurn *t, const Row *r, NpcTurn *m)
         case 7: npc_set(m, "flustered", "flustered", "flustered", "flustered"); break;
         }
     } else if (!strcmp(t->cls, "Rabbit")) { /* mBehavior (arg1) */
-        if (r->arg[1] == 5) m->near = m->talk = 0; /* LongJump */
+        if (r->arg[1] == 3) m->near = m->talk = 0; /* arg1 3: Behavior_LongJump (Rabbit.cpp init) */
     }
     return 1;
 }
@@ -2871,6 +2871,13 @@ static V3 kiraira_pos(const Inst *in, V3 *up)
     return vsub(p, vmul(*up, 43.0f * (0.7071068f - cosf(t))));
 }
 
+static void rumble_shake_weak(V3 at, int strong, int weak, float d1, float d2) /* startRumbleWithShakeCameraWeak */
+{
+    float d = vlen(vsub(mario->pos, at));
+    if (d <= d1) { pad_rumble(strong); camera_shake(SHAKE_NORMAL); }
+    else if (d <= d2) { pad_rumble(weak); camera_shake(SHAKE_WEAK); }
+}
+
 /* KillerGunnerSingle.cpp: Wait 120 frames, Charge until its KillerGunnerSingleCharge BTK stops (99 frames), Shoot
  * playing KillerGunnerSingleShoot: its "shell" sensor, 250 at (0, 0, 700) in its frame, valid from step 0 to 40,
  * hurts Mario (sendMsgEnemyAttackMaximum: damageLarge) and the nerve turns Attack; the BCK's end (59) back to Wait.
@@ -2890,6 +2897,7 @@ static void update_kgunners(void)
             obj_play(in, "killergunnersingleshoot", 0, 0);
             fx_named("KillerGunnerSingle", "KillerGunnerSingleSmoke", in->m, in->anim ? (const float (*)[16])in->anim->world : NULL, NULL);
             *ph = 2; *t = 0;
+            rumble_shake_weak(v3(in->m[12], in->m[13], in->m[14]), RUMBLE_MIDDLE, RUMBLE_WEAK, 500.0f, 1000.0f); /* exeShoot's first step */
         } else if (*ph == 2 || *ph == 3) {
             if (*ph == 2 && *t < 40 && !mario->hurt_timer) {
                 V3 shell = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(vnorm(v3(in->m[8], in->m[9], in->m[10])), 700.0f));
@@ -3214,6 +3222,7 @@ static void update_killers(void)
             basis_matrix(m, k->pos, vmul(g, -1.0f), k->front, 0);
             fx_emit(FX_HOMINGKILLER_EXPLOSION, m);
             se_start(SE_EM_KILLER_EXPLOSION, &k->pos.x);
+            rumble_shake_weak(k->pos, RUMBLE_STRONG, RUMBLE_MIDDLE, 1000.0f, 2000.0f); /* cCameraShakeDistance */
             if (ground) fx_emit(FX_HOMINGKILLER_SANDCOLUMN, m);
             walker_explosion(k->pos);
             needle_attacked(k->pos, 250.0f);
@@ -11637,7 +11646,7 @@ static void update_screws(void)
         ++row_step[row];
         if (valve) {
             if (row_step[row] < 3 + 30) in->lv[0] = se_level(SE_OJ_LV_VALVE_SWITCH_MOVE, &in->m[12], in->lv[0]);
-            if (row_step[row] == 3 + 30) { se_start(SE_OJ_VALVE_SWITCH_ON, &in->m[12]); camera_shake(SHAKE_NORMAL_WEAK); pad_rumble(RUMBLE_VERY_STRONG); }
+            if (row_step[row] == 3 + 30) { se_start(SE_OJ_VALVE_SWITCH_ON, &in->m[12]); camera_shake(SHAKE_NORMAL); pad_rumble(RUMBLE_VERY_STRONG); }
             len = in->anim && !in->anim->done ? row_step[row] : 0; /* isBckStopped */
         } else if (row_step[row] == 3 + (in->screw == 1 ? 30 : 25)) /* exeScrew: sStepToRumbleCamera */
             pad_rumble(RUMBLE_VERY_STRONG);
@@ -21076,7 +21085,7 @@ static void kuribo_update(Kuribo *k)
         if (st > (k->nrv == KN_FLATDOWN ? 20 : k->nrv == KN_HIPDROPDOWN ? 40 : 180)) { w_kill(k); return; }
         break;
     case KN_BLOWDOWN:
-        if (st == 0) { w_act(k, "Blow"); w_se(k, SE_EM_CRASH_S); }
+        if (st == 0) { w_act(k, "Blow"); w_se(k, SE_EM_CRASH_S); w_se(k, SE_PM_SPIN_HIT); } /* startBlowHitSound */
         if (!w_on_ground(k)) k->vel = vadd(k->vel, vmul(k->grav, 1.5f));
         k->vel = vmul(k->vel, w_on_ground(k) ? 0.93f : 0.99f);
         if (k->on_wall == 2) rebound_hv(&k->vel, k->wn, 0.2f, 0.7f);
@@ -21204,9 +21213,9 @@ static void kmini_update(Kuribo *k)
     } else if (msg == MSG_HIPDROP) {
         w_act(k, "FlatDown"); w_nrv(k, KN_HIPDROPDOWN); k->bind_off = 1; k->item = 1;
         w_se(k, SE_EM_STOMPED_S); /* requestHipDropDown */
-    } else if (msg == MSG_HITALL) { /* requestBlowDown 22 / 25 (a kick while staggering: three star pieces) */
+    } else if (msg == MSG_HITALL) { /* requestBlowDown 22 / 25, setTypeCoin(1) (only PlayerKick gives three star pieces) */
         V3 h = vnorm(vtangent(vsub(k->pos, mario->pos), k->grav));
-        k->item = k->nrv == KN_STAGGER ? 2 : 1;
+        k->item = 1;
         k->vel = vsub(vmul(h, 22.0f), vmul(k->grav, 25.0f));
         if (vlen(vsub(mario->pos, k->pos)) < 1000.0f) scene_stop = 4;
         w_nrv(k, KN_BLOWDOWN);
@@ -28943,7 +28952,7 @@ static int ss_try_jump(int k, int t) /* tryTornadoJumpPlayer: endBind */
     ss_boost.v = vmul(up, MC.mTornadoBoostPower);
     if (t == 0) { ss_boost.attn = MC.mTornadoBoostAttnMini; ss_boost.t = MC.mTornadoBoostTimerMini; se_start(SE_OJ_SANDSTORM_S_BLOW_UP, &o->pos.x); }
     else { ss_boost.attn = MC.mTornadoBoostAttn; ss_boost.t = MC.mTornadoBoostTimer; se_start(SE_OJ_SANDSTORM_BLOW_UP, &o->pos.x); }
-    camera_shake(SHAKE_NORMAL_WEAK);
+    camera_shake(SHAKE_NORMAL);
     ss_set(k, SS_END);
     return 1;
 }
@@ -28994,7 +29003,7 @@ static void update_storms(void)
                     o->b8 = o->bc = o->c0 = o->c4 = 0; o->c8 = 0;
                     o->cc = pr->storm * vdot(vsub(mario->pos, o->pos), up) / pr->bind;
                     mario_play("stormin", 1.0f, 0); se_start(SE_PV_UPSET, &mario->pos.x);
-                    camera_shake(SHAKE_NORMAL_WEAK);
+                    camera_shake(SHAKE_NORMAL);
                     se_start(t == 0 ? SE_OJ_SANDSTORM_BIND_S_IN : SE_OJ_SANDSTORM_BIND_IN, &o->pos.x);
                     ss_set(k, SS_STORM);
                 }
@@ -29640,7 +29649,7 @@ static void update_levers(void)
                     obj_play(in, "On", 0, 0);
                     se_start(wet ? SE_OJ_SPIN_LEVER_SW_HIT_W : SE_OJ_SPIN_LEVER_SW_HIT, &in->m[12]);
                     pad_rumble(RUMBLE_STRONG);
-                    camera_shake(SHAKE_NORMAL_WEAK); scene_stop = 8;
+                    camera_shake(SHAKE_NORMAL); scene_stop = 8;
                 }
             }
         } else if (*n == 1) {
@@ -29681,7 +29690,7 @@ static void update_dswitches(void)
         case 1:
             if (*st == 6) obj_play(in, "On", 0, 0);
             if (*st > 6 && (!in->anim || in->anim->done)) { /* tryOn */
-                se_start(SE_OJ_HIPDROP_SWITCH_ON, &in->m[12]); camera_shake(SHAKE_NORMAL_WEAK);
+                se_start(SE_OJ_HIPDROP_SWITCH_ON, &in->m[12]); camera_shake(SHAKE_NORMAL);
                 *n = 2; *st = 0;
             }
             break;
@@ -30121,7 +30130,8 @@ static void update_switches(void)
             if (r->sw[SW_APPEAR] >= 0 ? !sw_on(r, SW_APPEAR) :
                 mario->spin_timer <= 0 || vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), p)) > 150.0f + HIT_BODY_R)
                 continue;
-            drop_pieces(p, up_at(p, mario->up), r->arg[0] >= 0 ? r->arg[0] : 5);
+            se_start(SE_OJ_STAR_PIECE_BURST, &p.x);
+            launch_pieces(p, up_at(p, mario->up), r->arg[0] >= 0 ? r->arg[0] : 5, 15.0f, 40.0f); /* sRandomPieceValue, sLaunchYVel */
             row_dead[row] = 1;
             printf("star piece spot %d burst\n", row);
             continue;
