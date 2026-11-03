@@ -3567,7 +3567,7 @@ static void fs_draw(void)
  * (GalaxyMapCometIcon: a galaxy with comets where one landed, its colour by the comet) follow their map panes.
  * GalaxyDetail's picture (GalaxyInfoTexture) is read from mappics.bin into one texture when the detail opens.
  * ponytail: no AstroMapBoard capture, no dome name plates (GalaxyMapDomeIcon's GalaxyNamePlate), no IconAButton;
- * startGalaxyMapLayoutForTicoComet has no caller (TicoComet's demo is not ported); the star list without its race
+ * the star list without its race
  * best times (no race times in the save) or its capture (WiiConnect24) */
 enum { GM_OFF, GM_READYMODEMAP, GM_FADEINMODEMAP, GM_APPEARGALAXY, GM_DISPLAYGALAXY, GM_APPEARASTRO, GM_DISPLAYASTRO,
        GM_READYLIST, GM_APPEARLIST, GM_DISPLAYLIST, GM_DISAPPEARLIST, GM_NGD_ASTRO, GM_NGD_APPEARGALAXY,
