@@ -174,7 +174,10 @@ static void mario_trample_auto(void); /* doTrampleJump on an ATYPE_PLAYER_AUTO_J
  * pointer steering). ponytail: rails are straight segments between control points (the game's are Bezier), no camera
  * of its own, no pull-in (arg2). SuperSpinDriverPink / Green are the same class (Green needs no star).
  * SpinDriver (SpinDriver.cpp): bind radius 300, ShootStart 20 frames (a dip 200 under it along its up); on a rail the same path for arg0 frames (default
- * 300), else Mario is thrown along its Y axis at arg0 (default 40) */
+ * 300), else Mario is thrown along its Y axis at arg0 (default 40)
+ * ponytail (unmarked until the 2026-11-02 audit): no Capture within 240 without a spin (SpinDriver.cpp:676, arg2),
+ * no Y spin when shaken / near (:285, SuperSpinDriver :293), the fly anim from flight / 5 (SpinDriver: (flight -
+ * 70) / 5 :798; SuperSpinDriver a multiple of SpaceFlyStart :966), no SpinDriverPathDrawer dotted path in play */
 typedef struct {
     V3 pos;
     int flight, cool;
@@ -899,7 +902,12 @@ static void zone_grow(const Inst *in);
  * (default 8), TimerPieceBlock 20 star pieces, SplashPieceBlock arg0 (default 8), ItemBlockSwitch nothing (its dead
  * switch). Returns 1 (spin or hip drop), 2 (hip drop only), 3 (hit from below) or 0 for anything else. ponytail:
  * a timer block gives everything on its first hit. CrystalCageL takes 2 hits 20 frames apart (its star: star_pos);
- * BreakableCage(Rotate / L) breaks on a spin too (ponytail: in SMG only what Mario rides or throws breaks it) */
+ * BreakableCage(Rotate / L) breaks on a spin too (ponytail: in SMG only what Mario rides or throws breaks it)
+ * ponytail (unmarked until the 2026-11-02 audit): PunchBox: its SW_A kill should give 1 star piece silently
+ * (PunchBox.cpp:167-195: no break effect / SE), a hit hides it at step 5 and pops coins at 15. WoodBox: arg1
+ * respawn, arg3 riddle SE, arg4 1-up, arg7 power star and enemy attacks unread (WoodBox.cpp:43-110, 202-262), its
+ * dead switch at the hit instead of step 15. CrystalCageL: no cracked BVA frame, wobble (RumbleCalculator 4 / 50 /
+ * 0x14) nor REFLECT on the first hit, a Break effect it does not have (CrystalCage.cpp:190-345) */
 static int breakable(const char *name, const Row *r, int *coins, int *pieces)
 {
     *coins = *pieces = 0;
@@ -1231,7 +1239,10 @@ static Spark *erails;
 static int nerails;
 static const Model *m_erail, *m_fireball, *m_rock;
 /* RockCreator / Rock (Petari RockCreator.cpp, Rock.cpp; WanwanRolling(Mini / Gold) are RockCreators too): see
- * update_rocks */
+ * update_rocks
+ * ponytail (unmarked until the 2026-11-02 audit): no roll level SEs (ROCK_MOVE / WANWANROLL_MOVE / MINI / MUD), no
+ * Wanwan bark every 120 within 600, no bound / break SEs, no rumble and shake on a break within 1000 / 2000
+ * (Rock.cpp:539-628, 782, 909) */
 typedef struct { int row, type, nrocks, first, timer, valid, active, delay; float speed; const unsigned char *rail;
                  const float *pts; u32 np; int closed; float len; } RockC;
 typedef struct { int c, alive, nrv, step, railpt, on_ground, on_wall, bind, air, normalgrav, invbind, slow, ftime,
@@ -1242,7 +1253,11 @@ typedef struct { int c, alive, nrv, step, railpt, on_ground, on_wall, bind, air,
  * SW_A, when set, must be on (the Point); its appear switch shows it. A shell flies straight for 360 frames and
  * explodes on what it hits (after 10 frames) or on Mario (hurt); stomped, it drops under gravity (0.55 rebound, 0.95
  * / 0.99 damping) and misfires after 45. The Point's own model is the shell (its archive). ponytail: no star pointer
- * freeze, launchers fire only within 8000 of Mario */
+ * freeze, launchers fire only within 8000 of Mario
+ * ponytail (unmarked until the 2026-11-02 audit): the shell starts 100 along Z (Petari
+ * tryShotBullet(sGunPointModelOffset): 175), no launcher Shot clip / Shoot effect, its explosion is SpaceMine's
+ * effect (Petari: its own Explosion, KILLER_EXPLOSION, a weak shake within 1000), no MisFire effect / SE, no
+ * LocusSmoke, no HipDropDown bounce (KoopaJrShipCannonShell.cpp:183-256) */
 #define SHELLS_PER 3
 typedef struct { V3 pos, vel, dir; int row, t, state; } Shell; /* state 0 none, 1 flying, 2 stomped */
 static Shell *shells;
@@ -1296,7 +1311,10 @@ enum { LOGIC_TIMER = 1, LOGIC_REVERSE, LOGIC_GROUP, LOGIC_BLOCKER, LOGIC_FLIPS, 
 static int area_shape(const char *name);
 /* FlipPanel (Petari FlipPanel.cpp): row_step bits. Back = flipped (ACTMES_SUCCESS to the observer); a flip locks the
  * panel until Mario stood on other ground; it flips once he has stood on it 3 frames (checkPlayerOnTop). Done: the
- * group is complete (FlipPanelNrvEnd) */
+ * group is complete (FlipPanelNrvEnd)
+ * ponytail (unmarked until the 2026-11-02 audit): its bloom model is always drawn (FlipPanel.cpp:62-104 / 156: only
+ * on the back side, front for FlipPanelReverse, gone at End), no 25 sink under Mario (calcJointMove :54), the group
+ * sets SW_A at once instead of after the FlipPanelComplete demo (arg0 + 40) and its star */
 enum { FLIP_BACK = 1, FLIP_LOCK = 2, FLIP_DONE = 4, FLIP_STEP = 8 };
 typedef struct { int row, kind; } Logic;
 static Logic *logic;
@@ -2637,7 +2655,14 @@ static int npc_mode(const NpcTurn *t, const Row *r, NpcTurn *m)
         if (b == 10) npc_set(m, "joy", "joy", "joy", "joy");
         if (b == 12) npc_set(m, "starpiecewait", "starpiecewait", "starpiecewait", "starpiecewait");
         if (b >= 0 && b < 12 && one[b]) { npc_set(m, one[b], NULL, one[b], NULL); m->near = m->talk = 0; } /* setNoTurnAction */
-    } else if (!strcmp(t->cls, "Penguin")) { /* mBehavior (arg0) */
+    } else if (!strcmp(t->cls, "Penguin")) { /* mBehavior (arg0)
+     * ponytail (unmarked until the 2026-11-02 audit): arg0 3 Dive (SwimDive, S_DIVE every 120-300) and 4 SwimTurtle
+     * (its shell taken within 450 or on a spin) are not ported, no random TalkA / TalkB (Penguin.cpp:127, 261-314);
+     * PenguinCoach has no golden shell check / star (PenguinCoach.cpp:139-185), PenguinStudent no code (its rail
+     * school, the KouraShine shell); the Penguin / Tico / TicoRail colour BRK frame by arg (Penguin arg7, Tico arg0) is
+     * not in slice.py BRK_ARG; Caretaker plays wait / turn / talk instead of BWaitStand (CareTaker.cpp:84-112), no
+     * BodyColor BRK nor Dirt BTK; Rabbit arg1 0 with a rail (escape: Wait / PreJump / Move / Goal) and the UpJump /
+     * LongJump lectures (Rabbit.cpp:512-546) not ported */
         switch (r->arg[0]) {
         case 0: npc_set(m, "sitdown", NULL, "sitdowntalk", NULL); m->near = m->talk = 0; break; /* setMoveTalkNoTurnAction */
         case 1: m->act[0] = "swimwait"; m->act[1] = "swimwaittalk"; break;                  /* setMoveAction */
@@ -2645,7 +2670,10 @@ static int npc_mode(const NpcTurn *t, const Row *r, NpcTurn *m)
         case 3: npc_set(m, "swimwaitsurface", "swimwaitsurface", "swimwaitsurface", "swimwaitsurface"); break;
         case 4: npc_set(m, "swimturtletalk", "swimturtletalk", "swimturtletalk", "swimturtletalk"); break;
         }
-    } else if (!strcmp(t->cls, "HoneyBee")) { /* mArg0 (arg0): its InitAction */
+    } else if (!strcmp(t->cls, "HoneyBee")) { /* mArg0 (arg0): its InitAction
+     * ponytail (unmarked until the 2026-11-02 audit): the arg0 1, 2, 6, 8, 9 bees (Fly on their rail, JumpLecture,
+     * DropLecture, FlyLectureA / B: HoneyBee.cpp:75-280) stay static, HoneyBee has no talk (talkcls) and no
+     * calcFloatOffset 120 bob */
         switch (r->arg[0]) {
         case 1: case 2: case 6: case 8: case 9: return 0; /* JumpLecture, Fly, DropLecture, FlyLectureA / B: own nerves */
         case 3: npc_set(m, "sleepwait", NULL, "sleepwait", NULL); m->near = m->talk = 0; break;
@@ -2689,7 +2717,9 @@ static void rotor_matrix(Inst *in)
  * position, arg5 rx << 16 | ry, arg6 rz, degrees) and its place (the row). row_turn: 0 Wait (at home, turning 0.1
  * degree a frame about its local x, y and z: one turn about x + y + z; bobbing sin(step) along gravity a frame), 1
  * Assemble (home -> place in 10 frames), 2 AssembleWait, 3 Return (10 frames), 4 Timer; row_step its frames.
- * ponytail: the blend lerps the matrices and re-orthonormalizes, no slerp; collision stays on while it flies */
+ * ponytail: the blend lerps the matrices and re-orthonormalizes, no slerp; collision stays on while it flies
+ * ponytail (unmarked until the 2026-11-02 audit): Timer parts vanish with no Disappear flash sFlashTime 100 frames
+ * before (AssemblyBlock.cpp:204-220), no Blur effect, no bloom model */
 static void assembly_home(const Row *r, float m[16])
 {
     float pos[3] = {(float)r->arg[2], (float)r->arg[3], (float)r->arg[4]};
@@ -3028,7 +3058,9 @@ static void update_kiraira(void)
  * or passes point 1; its body (90) hits Mario (a strong attack) and breaks it. MeteorStrikeEnvironment ones touch
  * nothing. row_turn 0 waiting (row_step the interval), 1 falling (row_step its steps), 2 done. ponytail: one meteor at
  * a time per launcher (no arg2 multi meteors, no start part-way when off screen), no shadow, no break model / lava
- * column, no meteor at all before the first frame it is on screen is not checked */
+ * column, no meteor at all before the first frame it is on screen is not checked
+ * ponytail (unmarked until the 2026-11-02 audit): no CANNON_SHELL_SHOOT, METEOR_FALL, METEOR_BREAK nor rumble
+ * (MeteorStrike.cpp:141 / 308 / 381) */
 static int kcl_query(V3 c, float radius, Hit *out, int max);
 static V3 meteor_pos(const Inst *in, V3 *dir)
 {
@@ -3300,7 +3332,9 @@ static void update_prom(void)
 /* BeeFlowerHover.cpp: turns arg0 / 100 degrees a frame about its Y (default 0.5); Mario touching it from above when he
  * is not a bee (Bee Mario stands on it) is HardTouch: its collision goes at once, it shows ThroughMario (~30
  * frames, ponytail: it just shows on), hides, and 60 frames later Appears (~30) with its collision back. row_turn 1
- * while gone, row_step its frames. ponytail: no rail mover, no low model LOD */
+ * while gone, row_step its frames. ponytail: no rail mover, no low model LOD
+ * ponytail (unmarked until the 2026-11-02 audit): no OnBee clip on a Bee Mario landing, no shake / rumble on
+ * HardTouch (BeeFlowerHover.cpp:100-125), arg0 0 or negative falls back to 0.5 (Petari: only -1 is the default) */
 static void carry(const float old[16], const Inst *in);
 static void update_beeflowers(void)
 {
@@ -3332,7 +3366,10 @@ static void update_beeflowers(void)
  * random, LookAround 160 (turning 1.2 degrees a frame left, right, left), MoveSign (~30, half the time it turns
  * back), Move again. row_turn 0 not started, 1 move, 2 stop, 3 wait, 4 look around, 5 sign; row_rdir its direction;
  * row_coord, row_speed, row_step. ponytail: no talk, the look-around is its facing only, the Spin / Turn BCKs not
- * played (static Tico model) */
+ * played (static Tico model)
+ * ponytail (unmarked until the 2026-11-02 audit): it bounces back at the rail ends (TicoRail.cpp:135-200 clamps,
+ * turning only on MoveSignAndTurn), fixed waits (Petari: step + 1/300 random, forced at +300), Stop decelerates
+ * over 30 frames instead of the Spin BCK */
 static void ticorail_place(Inst *in)
 {
     const unsigned char *e = in->ticorail;
@@ -3610,7 +3647,11 @@ static void update_birikyu(void)
  * 3 brake, 4 crushed, 5 crushed end; row_step its frames. Drawn skinned: its Ball joint at the head, its Y turned
  * from the base to it (ballMtxCallBack), the stalk bending between Root and Ball. ponytail: the head keeps its
  * height over the base plane, not over the ground (addVelocityKeepHeight's shadow); no collision for the head, no 2P
- * pointer snap, no breakables hit, no anim scale */
+ * pointer snap, no breakables hit, no anim scale
+ * ponytail (unmarked until the 2026-11-02 audit): no stopScene(5) on the punch (PunchingKinoko.cpp:311), no
+ * scatterStarPiecePlayer(10) at speed >= 30 nor velocity reflection x 1.6 and Hit effect (160-175), walkers it
+ * touches die for a coin instead of ToEnemyAttackBlow (180), no Normal / Press / Revival BRKs, no FlipWeakJump in
+ * CrushedEnd */
 static void punch_place(Inst *in)
 {
     V3 base = v3(in->m0[12], in->m0[13], in->m0[14]), up0 = vnorm(v3(in->m0[4], in->m0[5], in->m0[6]));
@@ -3740,7 +3781,10 @@ static void update_punch(void)
  * on the ground the speed goes x 0.925; a wall reflects its direction (x 0.8); slower than 1.5 on the ground it stops.
  * It turns as it rolls (updateRotate). A walker hit, a death area, the void or water (ponytail: not checked) bring it
  * back to its place after a break (60 frames hidden). row_turn 0 wait, 1 move, 2 broken; row_step its frames.
- * ponytail: no water ground (the _WATER sounds), no coconut-to-coconut hits, no breakables, no moving ground (velocity areas) */
+ * ponytail: no water ground (the _WATER sounds), no coconut-to-coconut hits, no breakables, no moving ground (velocity areas)
+ * ponytail (unmarked until the 2026-11-02 audit): no RollingSmoke while rolling nor Land effect on a bounce
+ * (CocoNut.cpp:279 / 285), water plays CocoNutBreak instead of WaterColumn (930-946), it comes back after a fixed
+ * 60 frames instead of once clipped (112-135) */
 static int area_inside(const Row *r, V3 p);
 static int in_water(V3 p, V3 up, float *depth);
 static int walker_blow(Kuribo *e, V3 from);
@@ -3917,7 +3961,10 @@ static void update_coconuts(void)
 /* JumpStand.cpp: Mario landing on it is held (bound); TrampleBound throws him at step 5 along -gravity at 26, 32 if
  * he pressed jump in those 5 frames; HipDropBound (a hip drop landing) sinks him 6 - ease a frame for 15 frames, then
  * 43 along its up. row_turn: 0 wait, 1 trample, 2 high trample, 3 hip drop; row_step frames; jstand_pos the held
- * place. ponytail: no stick steering on the throw; the bound is a squash of the model (jstand_squash), not its BCK */
+ * place. ponytail: no stick steering on the throw; the bound is a squash of the model (jstand_squash), not its BCK
+ * ponytail (unmarked until the 2026-11-02 audit): Mario jumps normally instead of TrampolineJumpLow / Middle / High
+ * (clips not sliced), no StarPieceBound, mario->up set to the stand's instead of a velocity along it
+ * (JumpStand.cpp:84-100, 216-244) */
 static V3 jstand_pos;
 static int jstand_prev = -1; /* mario_ground last frame */
 
@@ -3978,7 +4025,10 @@ static void railer_place(Inst *in)
 
 /* SmallStone.cpp (SmallStone / CircleShell / CircleStrawberry): 8 members on a ring of 300 around it, each dropped
  * onto the ground and raised arg0; a spin within 400 of its centre (120 up) breaks them all (star pieces when arg2
- * is set: one each, ponytail for appearStarPiece's burst). They share the plant groups' members (plants) */
+ * is set: one each, ponytail for appearStarPiece's burst). They share the plant groups' members (plants)
+ * ponytail (unmarked until the 2026-11-02 audit): PunchBox's break effect stands in for SmallStone's own Break
+ * (SmallStone.cpp:511), members turned k x 1.3 rad instead of the one posture from gravity (:129), no wind shake
+ * (tryShake 242 / 284) nor the 20 push (263) */
 static signed char stone_type[1024]; /* stone_row by type: 0 not yet, 1 no, 2 yes (area_types_reset) */
 static int stone_row(const Row *r)
 {
@@ -4140,6 +4190,16 @@ typedef struct {
     __typeof__(((Inst *)0)->halo) halo;
 } ClassInfo;
 
+/* ponytail (unmarked until the 2026-11-02 audit): placed classes of the early galaxies with no behaviour here
+ * (drawn static, or not at all), each a whole Petari class: HeavensDoor KuriboChief / ChildKuribo /
+ * ExterminationKuriboKeySwitch (Enemy/KuriboChief.cpp), ShockWaveGenerator (its spin shock wave to enemies within
+ * 1000, 衝撃波カメラ), CapsuleCage (SW_B open, 注目カメラ), PurpleCoinStarter / the purple coin counter
+ * (PurpleCoinHolder.cpp); Honeyhive HoneyQueen, Creeper, BossStinkBug, StinkBugParent, GhostPlayer (Cosmic Mario);
+ * Space Junk TombSpider, BossKameck, ChildKameck, SpiderAttachPoint (SlingShooter), UFOKinoko, CoinBox,
+ * PlanetRocket, NokonokoLand; Battlerock BegomanBaby, BossBegoman, BreakableTrash, UFOStrongA, TicoShop,
+ * BattleShipElevator; Beach Bowl ShellfishCoin / ShellfishYellowChip (Shellfish.cpp), DriftWood, PenguinStudent;
+ * the observatory AstroMapObj states (AstroStarPlate / AstroDomeEntrance / AstroRotateStepA / B: Dead / Alive /
+ * Revival / Open by dome), AstroCountDownPlate (stars left), AstroOverlookObj (HUD hidden in its area) */
 static void class_make(ClassInfo *ci, const char *name)
 {
     ci->hazard = strcmp(name, "SpaceMine") == 0 ? 1 : strcmp(name, "NeedlePlant") == 0 || strcmp(name, "NeedlePlantFly") == 0 ? 2 :
@@ -7737,7 +7797,10 @@ static int jbranch_update(Player *m)
  * last 90, until he hits the map after 20; closer it goes back to waiting. X lets go (RushCancel). Then it ignores
  * him until he is 300 off or on the ground (FreeInvalid). A pointer sweep over it (R2 off) and star pieces push the
  * cocoon. coc.phase 1 wait, 2 aim, 3 flight; coc.wait the FreeInvalid inst. ponytail: no stalk drawn (the cocoon
- * model only, tilted along it), no CocoonWait / Stretch / Fly animations, no breakables hit at the end */
+ * model only, tilted along it), no CocoonWait / Stretch / Fly animations, no breakables hit at the end
+ * ponytail (unmarked until the 2026-11-02 audit): no stopScene(sStepStopScene 8) on a map hit, Mario plays fall
+ * instead of AirRotation when mAttackTime runs out (SpaceCocoon.cpp:345-366), no wait / aim / attack multi-actor
+ * cameras */
 static V3 cocoon_neutral(const Inst *in)
 {
     const Row *r = &sc->objs[in->row];
@@ -7893,7 +7956,11 @@ static int cocoon_update(Player *m)
  * walkers it touches (JetTurtleAttack: Unizos too) and is gone (reset) on a wall, after sResetStep (300, arg1 0: 480)
  * frames or 10000 from home; then it is back at home (Restart). jet.phase 1 held, 2 thrown. In water Mario jets with it
  * (MarioSwim) and dropJet throws it along his swim front. ponytail: no homing on enemies, no bounding off rebound walls,
- * no gravity in its flight, no BrakeLamp / SwimBubble / BulletWater effects, held at his hands' place as on land */
+ * no gravity in its flight, no BrakeLamp / SwimBubble / BulletWater effects, held at his hands' place as on land
+ * ponytail (unmarked until the 2026-11-02 audit): arg2 1 should never come back (kill), else Restart: hidden 45,
+ * blinking to step 105, KouraRevival effect and REVIVE_APPEAR (JetTurtle.cpp:107-114, 695-740); here back home at
+ * once, no Explosion(Red / Gold) on a break. A thrown shell kills every walker alike (DeathSmoke, a coin): Gesso
+ * knockOut, Poihana tryShock only, Snakehead TurtleDown with 9 pieces and a 1-up in Petari */
 static void jet_place(Inst *in)
 {
     memcpy(in->m, in->m0, 64);
@@ -7911,7 +7978,11 @@ static void jet_reset(Inst *in)
 /* ScrewSwitch.cpp / ScrewSwitchReverse.cpp: Mario standing on the screw (its binder, 150 up) spins: he is drawn
  * to its middle (Adjust, 3 frames) and held while it screws (ScrewSwitchOn: 34 frames, the reverse one 75), then
  * its SW_A goes on and he is let go; it stays done. row_turn 0 waiting, 1 screwing, 2 done; row_step its frames.
- * ponytail: the screw does not go down (no ScrewSwitchOn joint pose), no ScrewSwitchOn animation for Mario */
+ * ponytail: the screw does not go down (no ScrewSwitchOn joint pose), no ScrewSwitchOn animation for Mario
+ * ponytail (unmarked until the 2026-11-02 audit): ScrewSwitch: no shakeCameraNormal at step 30 nor TWIST_START /
+ * SPIN_ATTACK on the bind (ScrewSwitch.cpp:84-129); ScrewSwitchReverse holds Mario 75 frames with no jump and
+ * stays, Petari releases him at step 25 with a 28 jump (sJumpPower), then EXPLODE_S, SW_A and kill
+ * (ScrewSwitchReverse.cpp:95-168) */
 /* Candlestand.cpp (PhantomCandlestand, TeresaMansionCandlestand): a candle burning (Burn, its Fire effect / Fire01
  * and Fire02); its flame (sensor 50 x scale at 220 up; 70 at 300) burns Mario (EnemyAttackFire). A spin within 350 x
  * scale puts it out (Extinguish): 15 frames later its item comes out (arg0 -1 a coin, 0 a star piece, at 0 up; 220
@@ -7923,7 +7994,9 @@ static void jet_reset(Inst *in)
  * frames; its height scale 0 to 1 over the first 20) and down over 10 (SpoutEnd). Mario within 60 of its axis, 600
  * up, is thrown up (ACTMES_FOUNTAINJUMP -> MarioFlow: mJumpHeightFlow 18 with mGravityFlow 0.3, about 540 up: here
  * 44 up with Mario's own gravity, mJumpDistFlow 2 ahead), once until he lands. row_step its cycle frame, row_turn 1
- * while he flies off it; its FountainBigSign and FountainBig effects. ponytail: no Bee Mario flip */
+ * while he flies off it; its FountainBigSign and FountainBig effects. ponytail: no Bee Mario flip
+ * ponytail (unmarked until the 2026-11-02 audit): the throw is 44 up with Mario's own gravity, not MarioFlow
+ * (mJumpHeightFlow 18, mGravityFlow 0.3), no rumble */
 /* SnowMan.cpp: a fire ball on its head or body melts that part (MeltHead / MeltBody: SW_A, SW_B), the second
  * one brings it down (kill: SW_DEAD). Head sensor 100 at 250 up, body 150 at 100 (scale). row_turn bit 1 head
  * melted, bit 2 body melted. ponytail: no melting animation (the model squashes as parts go), spins only shake it */
@@ -7958,7 +8031,10 @@ static int fireball_hits_snowman(V3 p)
  * (Chase: behind him, 0.97 friction, warped back when 2000 off). When every StrayTico of a CollectTico's zone is
  * rescued the CollectTico's power star comes out (the row dies: star_wait). row_turn 1 rescued. ponytail: no bubble,
  * no complete demo (the ring of Lumas, CollectTicoLight), the star flies from the CollectTico's row, not 300 over
- * Mario */
+ * Mario
+ * ponytail (unmarked until the 2026-11-02 audit): the Lumas lerp 0.08 to slots 150 + 80k behind Mario instead of
+ * StrayTico.cpp:224-231 / 296-317 (toward him past 400, away inside 300, height 150, friction 0.97, turning 4
+ * degrees to his front), its own SW_A after Glad unset */
 static void update_strays(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -7999,7 +8075,10 @@ static void update_strays(void)
 /* AirBubble.cpp: touched by Mario (130 x scale) or a spin within cSwingRange 250 it breaks and fills his oxygen
  * (incPlayerOxygen 8: all of it), its row dies. AirBubbleGenerator.cpp: every arg0 (180) frames a bubble comes out
  * 120 along its up and rises (cMoveStartAccel 7 up, then 0.3 a frame, x 0.85) for arg1 (cDefaultLife 360) frames.
- * row_step the generator's frames. ponytail: no swaying (cCoriolis), no RecoveryBubbleBreak effect, no rail bubbles */
+ * row_step the generator's frames. ponytail: no swaying (cCoriolis), no RecoveryBubbleBreak effect, no rail bubbles
+ * ponytail (unmarked until the 2026-11-02 audit): no AIR_BUBBLE_APPEAR, Generate clip nor its 6 frame delay, no
+ * AIR_BUBBLE_BREAK nor middle rumble when one goes, no +-1 bob of a placed bubble (AirBubbleGenerator.cpp:59-70,
+ * AirBubble.cpp:141-160); generators stop past 6000 from Mario (Petari: no such limit) */
 static void update_bubbles(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -11139,7 +11218,10 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
  * event node starts the eating: eventFunc 0) and Common_TicoFat000 (setMessage: Wait 1 by how much is left, Point 0,
  * Test 2; the end of Fullness' talk is the metamorphosis), 280 to talk, 220 x scale up, in front. WipeOut shakes the
  * camera and shows its screen effects. The "喜び" camera only runs for arg7 6 (Good Egg's has -1). updateGuidance: PointerGuidance_TicoFat and the
- * StarPieceCounter's TicoEat mode near it. ponytail: no FullnessMeter's Shine / Flash, no item (arg0 0 / 1), no BVA eyes. Info shows InformationPlanet until A */
+ * StarPieceCounter's TicoEat mode near it. ponytail: no FullnessMeter's Shine / Flash, no item (arg0 0 / 1), no BVA eyes. Info shows InformationPlanet until A
+ * ponytail (unmarked until the 2026-11-02 audit): no デブチコカメラ event camera while pointed (TicoFat.cpp:314-327), no
+ * TicoFatGoodsStarPiece models (226-235), no arg7 save of the pieces fed (514-519), no Reaction voices (trampled /
+ * spun / pointed, 657-677) */
 #define MAX_FATS 4
 static struct {
     int row, nrv, t, left, total, inflight, eat, g174, g178, item, has_rail, tk1, tk0; /* mMsgCtrl, _16C */
@@ -19367,7 +19449,10 @@ static void drop_pieces(V3 p, V3 up, int n);
  * waiting (Search). Its horn (100 x scale ahead) hurts Mario (EnemyAttackStrong) and it stops (Attack); a spin or a
  * star piece makes it guard (SpinReaction, 30 frames); a hip drop kills it: 3 star pieces. phase 0 wait, 1 dash sign,
  * 2 dash, 3 dash end, 4 back, 5 attack / guard, 6 dying; from its turn in degrees from its front, to the sweep sign.
- * ponytail: no standing on its back (Panic / Shake), no star pointer swoon, arg0 -1 taken as 0, arg1 -1 as 1000 */
+ * ponytail: no standing on its back (Panic / Shake), no star pointer swoon, arg0 -1 taken as 0, arg1 -1 as 1000
+ * ponytail (unmarked until the 2026-11-02 audit): SW_A (ForceFall, gravity 2 a frame) not read, a valid SW_DEAD
+ * should mean no star pieces (StinkBugSmall.cpp:55-58, 330-460), the star piece reaction also in DashEnd / Attack
+ * (Petari: isNrvEnableStarPieceAttack) */
 static V3 stink_front(const Kuribo *k)
 {
     V3 x, z;
@@ -19466,7 +19551,11 @@ static void stink_update(Kuribo *k, V3 to, float d)
  * him (EnemyAttackStrong) and bounces it (5 up, 1 back), then it rests 120 frames (CollidePlayer). Stomps and spins
  * do nothing; a star piece only shakes it; enemy attacks (PunchingKinoko, CocoNut) break it: 6 star pieces. phase 0
  * wait, 1 jump, 2 chase, 3 collide; timer its frames; to its roll angle. ponytail: no damage-floor JumpDown, no spin
- * drift, no shoal water ripples, the roll turns about the current velocity (no quaternion kept) */
+ * drift, no shoal water ripples, the roll turns about the current velocity (no quaternion kept)
+ * ponytail (unmarked until the 2026-11-02 audit): no UnizoBreak model (Break BCK / BRK), Death effect nor camera
+ * shake on its break (Unizo.cpp:703-728: DeathSmokeKuribo stands in), no sea roll bob (sRollHeightSea 30 x |sin|),
+ * no CollideEnemy bump between Unizos, Jump -> Chase at 60 frames instead of the Search BCK end, a new attack
+ * blocked all through CollidePlayer */
 static float liner(float v, float lo, float hi, float a, float b) /* AudUtil::linerMinMax */
 {
     return v <= lo ? a : v >= hi ? b : a + (b - a) * (v - lo) / (hi - lo);
@@ -19573,7 +19662,10 @@ static void unizo_update(Kuribo *k, V3 to, float d)
  * caught in the air he goes up at once. Idle it walks round home (WalkAround: 120 frames every 180). A spin knocks it
  * out (Shock, then Swoon 110 frames, Recover 30); a stomp bounces Mario off. Ground friction x 0.95 ahead, x 0.8 to the
  * side. phase 0 wait, 1 search, 2 chase, 3 charge, 4 back home, 5 walk around, 6 shock / swoon; from its turn from its
- * front (degrees); timer its frames. ponytail: no sleep, no drowning, no back attack flip, no star pointer swoon */
+ * front (degrees); timer its frames. ponytail: no sleep, no drowning, no back attack flip, no star pointer swoon
+ * ponytail (unmarked until the 2026-11-02 audit): WalkAround is a fixed 350 circle about home (Poihana.cpp:248-271:
+ * a random +-2 degree wander, home past 350), no GoBack past sDistanceForNeedBack 2000 from home, no
+ * tryHipDropShock (500) nor explosion shock */
 static V3 stink_front(const Kuribo *k);
 static void poihana_update(Kuribo *k, V3 to, float d) /* to: unused, Mario is the target */
 {
@@ -21033,7 +21125,10 @@ static void w_kill(Kuribo *k)
  * a coin), a spin: Stagger, or a kick once 15 into it: BlowDown (36 / 30 away, 30, three star pieces); arg1 0 starts
  * it AppearFromBox (7 / 30 along its front, Land 15 after the ground). Dead in a death area or water, no item.
  * ponytail: no star pointer bind (BindStarPointer / AnimScaleController), no push between walkers, no shadow, no
- * velocity areas / rail-moving ground, no sounds */
+ * velocity areas / rail-moving ground, no sounds
+ * ponytail (unmarked until the 2026-11-02 audit): no PlayerKick (walking into a staggering Kuribo / KuriboMini:
+ * BlowDown with three star pieces, Kuribo.cpp:310, KuriboMini.cpp:273), arg0 set should switch gravity off and take
+ * it from its rotation (Kuribo.cpp:90) */
 enum { KN_NONACTIVE, KN_APPEARFROMBOX, KN_BLOW, KN_BLOWLAND, KN_WANDER, KN_FINDPLAYER, KN_CHASE, KN_ATTACKSUCCESS,
        KN_STAGGER, KN_FLATDOWN, KN_HIPDROPDOWN, KN_PRESSDOWN, KN_BLOWDOWN };
 #define KB_G 1.5f, 0.99f, 0.93f
@@ -21853,7 +21948,10 @@ static float converge(float v, float to, float step) { return v < to ? (v + step
  * 0.97, rate to 3, 30 frames), Hive while B (L1) is held with the pointer within 100 pixels (towards where it points
  * 0.05, at most 2.5, rate to 1.2); it turns its front to its way (at most acos 0.997 a frame) when faster than 0.5;
  * arg1 -1: a star piece once the pointer is within 10 pixels; binder 30. ponytail: no perching (NPC sensors, sleeping
- * Mario), all of them the BRK's first colour (arg0 needs a per-instance BRK) */
+ * Mario), all of them the BRK's first colour (arg0 needs a per-instance BRK)
+ * ponytail (unmarked until the 2026-11-02 audit): in HeavensDoorGalaxy its orientation should come from gravity
+ * (Butterfly.cpp:114 makeQuatUpNoSupport), its clip from a random frame (:106 setBckFrameAtRandom),
+ * STAR_PIECE_BURST when its piece comes out (:316) */
 enum { BN_WAIT, BN_RUNAWAY, BN_HIVE };
 static int bfly_run_away(Kuribo *k, V3 home)
 {
@@ -25265,7 +25363,13 @@ static void update_kuribo_one(Kuribo *k)
             if (--k->timer <= 0) k->state = KURIBO_WALK;
         } else if (d < (tako ? 1600.0f : k->kind == WALK_KOTEBUG ? 1000.0f : 1500.0f)) { /* chase on the surface (ponytail: no turn rate, no notice
                                                          * animation); TakoHei.cpp: sFindDistance, sPursueAccel 0.5,
-                                                         * sNormalGroundFrec 0.85 */
+                                                         * sNormalGroundFrec 0.85
+         * ponytail (unmarked until the 2026-11-02 audit): TakoHei and KoteBug here are improvised chasers. TakoHei.cpp:
+         * Wait 120 / Walk in a 400 territory, Find, Pursue keeping 700 from Mario, ink (AttackSign, Attack:
+         * spurtTakoHeiInk), CoolDown 60, a spin PunchDown (22 frames, 20 / 35) with three star pieces. KoteBug.cpp: flees a
+         * non-bee Mario (EscapeSearch, FlyEscape), chases Bee Mario flying 100 up, hurts only in FlyStart / FlyPursue, an
+         * overturned one spun: Blow with three star pieces, stomped: StampDeath 20 frames then a coin, a star piece
+         * overturns it (240) */
             V3 dir = vnorm(vtangent(to, k->up));
             k->vel = tako ? vadd(vmul(k->vel, 0.85f), vmul(dir, 0.5f)) : vadd(vmul(k->vel, 0.8f), vmul(dir, 4.0f * 0.2f));
         } else {
@@ -29753,7 +29857,10 @@ static void update_dswitches(void)
  * OPEN SE dry or wet), then its item comes out: Coin (popped 130 up), KinokoOneUp (a life), KinokoLifeUp (life up),
  * PowerStar (its declared star: the box gone), Empty (its SW_A arg0 (5) frames on); arg2 2 starts open. Its dead switch
  * at the clip's end. row_turn 0 Wait / 1 Open / 2 OpenWait, row_step its step. ponytail: no rising / bounding item,
- * chips and air bubbles give nothing, no flip of Mario off its half-open lid, no Light / Glow effects */
+ * chips and air bubbles give nothing, no flip of Mario off its half-open lid, no Light / Glow effects
+ * ponytail (unmarked until the 2026-11-02 audit): TreasureBoxPowerStar: Petari keeps the box open and its star
+ * appears at OpenWait step 10 (TreasureBoxCracked.cpp:182-201); here the row goes and the star waits for the Open
+ * clip's end */
 static void tbox_open(Inst *in) /* receiveMsgPlayerAttack (isMsgJetTurtleAttack) / receiveMsgEnemyAttack (isMsgExplosionAttack) */
 {
     const Row *r = &sc->objs[in->row];
@@ -29878,7 +29985,10 @@ static void update_collapse(void)
  * it shakes (Shake); an enemy attack (a coconut, a rock, an explosion) breaks it (Break: a coin, arg0 0 three star
  * pieces: needle_attacked). BlackHole / BlackHoleCube (BlackHole.cpp): inside the sphere of radius 500 * scale, or the cube's box
  * of +-500 * scale, Mario is inhaled: a miss; walkers in it die (nothing dropped); SW_A kills it. ponytail: no star-piece
- * shots or invincibility kills, the mine does not spin, no inhale demo (actor camera, Disappear) */
+ * shots or invincibility kills, the mine does not spin, no inhale demo (actor camera, Disappear)
+ * ponytail (unmarked until the 2026-11-02 audit): it kills every walker kind but the butterfly; in Petari only
+ * those with an isMsgInhaleBlackHole handler go (Kuribo, KuriboMini, Karikari, Karon, KoteBug, MechanicKoopaMini,
+ * Metbo, SamboHead, KuriboChief...): the Petari enemy, for one, survives */
 /* NeedlePlant::receiveMsgEnemyAttack: an enemy attack within its sensor (180 x scale, 150 x scale up) breaks it */
 static void needle_attacked(V3 p, float r)
 {
@@ -30177,7 +30287,9 @@ static void update_switches(void)
             printf("star piece spot %d burst\n", row);
             continue;
         }
-        if (logic[i].kind == LOGIC_CHIPS) { /* ChipGroup.cpp: SW_A once every chip of its arg0 is taken */
+        if (logic[i].kind == LOGIC_CHIPS) { /* ChipGroup.cpp: SW_A once every chip of its arg0 is taken
+         * ponytail (unmarked until the 2026-11-02 audit): no SE_SY_YELLOWCHIP_GET pitched by the count (ChipBase.cpp:353),
+         * no chip counter (showChipCounter), SW_A at once instead of after the complete demo (ChipGroup.cpp:69-219) */
             const char *chip = sc->types[32 * r->type] == 'Y' ? "YellowChip" : "BlueChip";
             int yel = chip[0] == 'Y';
             if (r->sw[SW_APPEAR] >= 0 && row_shown(row) && !(row_step[row] & 0x8000)) { /* receiveAppearRequest */
@@ -30401,7 +30513,9 @@ static void update_electric(void)
 
 /* FireBar (Petari FireBar.cpp): arg7 sticks (default 1) of arg0 balls (default 5) 100 apart, the first arg5 (default
  * 140) out from the core and 50 up its Y axis; they turn 0.1 * arg1 degrees a frame about that axis from its Z
- * axis. A sensor of radius 30 at the point of a stick nearest Mario burns him. Ball k of stick j: */
+ * axis. A sensor of radius 30 at the point of a stick nearest Mario burns him. Ball k of stick j:
+ * ponytail (unmarked until the 2026-11-02 audit): flat tinted models: no FireBarBall effect within 5000
+ * (controlEmitEffect, not in fx_tab.h), no BTK staggered 25 a ball */
 static V3 firebar_ball(const Inst *in, int j, int k)
 {
     const Row *r = &sc->objs[in->row];
@@ -32049,7 +32163,9 @@ static void update_shots(void)
             giver_give(in, giver_sensor(in), vnorm(v3(in->m[4], in->m[5], in->m[6])));
             hit = 2;
         }
-        for (int k = 0; k < ninsts && !hit; k++) { /* TreasureSpot.cpp: Spout, Mario within 2000 */
+        for (int k = 0; k < ninsts && !hit; k++) { /* TreasureSpot.cpp: Spout, Mario within 2000
+         * ponytail (unmarked until the 2026-11-02 audit): no Glow effect within 2000 (TreasureSpot.cpp:96-105), CoinFlower
+         * never plays Bloom (44-46), its sensor 120 at 50 up instead of 80 at 30 */
             const Inst *in = &insts[k];
             if (!in->tspot || row_turn[in->row]) continue;
             V3 p = v3(in->m[12], in->m[13], in->m[14]), up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
@@ -36502,7 +36618,11 @@ static void pro_draw(void)
  * message) fades white into 高楼出現 (the tower: Rosetta's SW_A raises HeavensDoorAppearStepA, her SW_B, the halo,
  * the Lumas at TicoDemoPos2 / 3). Near Rosetta the spin demo (スピンゲット: her talks, the baby Luma, the light dome).
  * ponytail: no SpotMarkLight, foot prints, effects (smoke, the dome's light), BGM states, rumble; the rabbits' star
- * piece / blow damage not ported */
+ * piece / blow damage not ported
+ * ponytail (unmarked until the 2026-11-02 audit): RunawayTico Guide0 lacks TICO_WAIT from step 210, TICO_FLOAT_DEMO
+ * from 560, the sub-BGM BGM_MEET_TICO_ZOOM_OUT at 617 and MEET_TICO_ZOOM_OUT 630-730 (RunawayTico.cpp:180-193);
+ * HeavensDoorInsideCage's Vanish (Move, Break effect, shake, kill), PlanetPartsA's BGM switch to STM_STAR_EXIST_2
+ * and INSIDE_SUN_WORK (HeavensDoorDemoObj.cpp:67-71) are not cast in dx_cast_hook */
 enum { GP_MEET, GP_META, GP_RAPPEAR, GP_MARIO, GP_RTALK, GP_RESCAPE, GP_CFADEOUT, GP_CFADEIN, GP_CTALK, GP_CRUN, GP_CSTART,
        GP_TOWER, GP_TOWERAFTER, GP_TFADEOUT, GP_TFADEIN, GP_SPIN1, GP_SPINT1, GP_SPIN2, GP_SPINT2, GP_SPIN3, GP_SPINT3, GP_SPIN4,
        GP_SPIN5, GP_SPINT4, GP_SPIN6, GP_SPIN7, GP_SPIN8, GP_N };
