@@ -27388,11 +27388,38 @@ static void update_dossuns(void)
  * HopEnd (both HopEnd, CLOSE_SPRING) until both end, the body 145, the Jump sensor off, Wait. A trample (or a hip
  * drop: tryHipDropAttack) on the Jump sensor: his jump vector straight up (setPlayerJumpVec), the helicopter jump
  * (mario_trample_auto), HopJump (head HopJump, TRAMPLE SE) back to HopWait at its end. A hip drop on the body throws
- * him up (forceJumpPlayer). ponytail: the shake level SEs, the head's BRK colours, no event camera, the force jump's
+ * him up (forceJumpPlayer). Its event camera (JumpEmitter initEventCamera: a MultiEventCamera of 2 on its CameraSetId,
+ * "JumpBeamer:<set>:<NN>番目") starts on the spring's trample; the second once he no longer rises (isActive(0)
+ * nextForce), ended (endForceSoon) 2500 from where it started, on the ground or in a rush (a launch), or when it is
+ * killed. ponytail: the shake level SEs, the head's BRK colours, the force jump's
  * speed guessed (15); the head's clip end read off its drawn pose (unseen: HopStart 30, HopJump 20 frames) */
 #define MAX_RBEAMERS 64
 enum { RB_WAIT, RB_ATTACK, RB_INTER, RB_HIDE, RB_UP, RB_DOWN, RB_PREOPEN, RB_CLOSE, RB_HOPSTART, RB_HOPWAIT, RB_HOPJUMP, RB_HOPEND };
-static struct { int row, nrv, step, alive[3], life[3], hseq, hdrawn, jon; float rad[3], br; u32 lv, lvb[3]; const char *hclip; } rbms[MAX_RBEAMERS];
+static struct { int row, nrv, step, alive[3], life[3], hseq, hdrawn, jon, cam; float rad[3], br; u32 lv, lvb[3]; const char *hclip; V3 c4; } rbms[MAX_RBEAMERS];
+static int jb_cam_owner = -1; /* the beamer whose event camera runs (mIsEventCamera) */
+static void jb_cam_end(int k) /* JumpEmitter::endEventCamera */
+{
+    if (!rbms[k].cam) return;
+    rbms[k].cam = 0;
+    if (jb_cam_owner == k) { jb_cam_owner = -1; camera_event_end_now(-1); } /* endForceSoon */
+}
+static void jb_cam_start(int k) /* JumpEmitter::startEventCamera */
+{
+    if (row_camset[rbms[k].row] == -1) return; /* (no MultiEventCamera) */
+    if (!camera_event_start_player(camera_class_hash("JumpBeamer"), row_camset[rbms[k].row])) return;
+    rbms[k].cam = 1; jb_cam_owner = k;
+    rbms[k].c4 = row_pos(&sc->objs[rbms[k].row]); /* _C4: its mPosition */
+    printf("jump beamer %d: event camera, set %d" "\n", rbms[k].row, row_camset[rbms[k].row]);
+}
+static void jb_cam_update(int k) /* JumpEmitter::updateEventCamera */
+{
+    if (!rbms[k].cam) return;
+    if (jb_cam_owner != k) { rbms[k].cam = 0; return; } /* another camera took over */
+    if (camera_event_index() == 0 && !(mario->jumping && m_rising(mario))) camera_event_next(); /* !isPlayerJumpRising */
+    if (camera_event_index() < 0) { rbms[k].cam = 0; jb_cam_owner = -1; return; } /* (its last one ended) */
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    if (vdot(vsub(c, rbms[k].c4), vsub(c, rbms[k].c4)) > 6250000.0f || mario->grounded || mario->launch >= 0) jb_cam_end(k);
+}
 
 static void jb_head(int k, const char *clip) { rbms[k].hclip = clip; rbms[k].hseq++; } /* startBck(mHeadModel) */
 static Anim *jb_head_anim(int row) { return m_jbhead && m_jbhead->skin ? obj_anim(14 * (int)sc->nobjs + row, m_jbhead, "JumpBeamerHead") : NULL; }
@@ -27457,6 +27484,7 @@ static void update_rbeamers(void)
         typeof(&rbms[0]) o = &rbms[k];
         const Row *r = &sc->objs[in->row];
         int jb = in->rbeamer == 2;
+        if (jb) jb_cam_update(k); /* (control: updateEventCamera) */
         if (jb && !o->hclip) { o->nrv = RB_HIDE; o->step = -1; o->br = 145.0f; jb_head(k, "Wait"); obj_play(in, "Down", 0, 0); if (in->anim) in->anim->frame = (float)anim_length(in->anim) - 1.0f; }
         if (r->sw[SW_B] >= 0 && !sw_on(r, SW_B) && o->nrv != RB_INTER) { /* syncSwitchOffB */
             o->nrv = RB_INTER; o->step = -1;
@@ -27547,6 +27575,7 @@ static void update_rbeamers(void)
                 if (jmsg == MSG_TRAMPLE || jmsg == MSG_HIPDROP) { /* ATYPE_PLAYER_AUTO_JUMP: a hip drop tramples it too */
                     m_set_jv(mario, up); /* setPlayerJumpVec(up) */
                     mario_trample_auto();
+                    jb_cam_start(k);
                     o->nrv = RB_HOPJUMP; o->step = -1;
                     printf("jump beamer %d springs Mario\n", in->row);
                     continue;
@@ -27615,11 +27644,14 @@ static void draw_rbeams(void)
         }
     }
 }
-int game_test_beamer(int how) /* beamer test: the first JumpBeamer: Mario 1000 off it (0), falling onto its body (1), onto its spring (2) */
+int game_test_beamer(int how) /* beamer test: the first JumpBeamer (one with a camera set first): Mario 1000 off it (0), falling onto its body (1), onto its spring (2) */
 {
+    for (int pass = 0; pass < 2; pass++)
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
         if (in->rbeamer != 2 || row_dead[in->row] || !in->anim || !in->anim->skin || in->anim->skin->njoints < 3) continue;
+        if (pass == 0 && row_camset[in->row] == -1) continue;
+        { Row *w = (Row *)&sc->objs[in->row]; for (int q = SW_A; q <= SW_B; q++) if (w->sw[q] >= 0 && !sw_on(w, q)) sw_set(w, q, 1); } /* (its switches on) */
         const Row *r = &sc->objs[in->row];
         V3 up = rbm_up(r), side = vtangent(vsub(mario->pos, row_pos(r)), up);
         side = vnorm(vlen(side) > 1.0f ? side : vtangent(v3(1, 0, 0), up));
@@ -27637,7 +27669,7 @@ void game_beamer_state(void)
 {
     for (int k = 0; k < nrbms; k++)
         for (int i = 0; i < ninsts; i++)
-            if (insts[i].rbeamer == 2 && insts[i].row == rbms[k].row) {
+            if (insts[i].rbeamer == 2 && insts[i].row == rbms[k].row && row_camset[rbms[k].row] != -1) {
                 printf("jump beamer row %d: nerve %d step %d jump %d body %.0f; Mario kind %d vup %.1f h %.1f yangle %.2f clip %d life %d\n",
                        rbms[k].row, rbms[k].nrv, rbms[k].step, rbms[k].jon, rbms[k].br, mario->jump_kind, mario->vup, vlen(mario->hvel),
                        m_yangle, m_anim_on("ヘリコプタージャンプ"), game_life());
@@ -30925,7 +30957,8 @@ static int pipe_bind(Player *m)
             if (vlen(m->hvel) > 0.1f) m->face = vnorm(m->hvel);
             mario_se(SE_PM_JUMP_M); mario_se(SE_PV_JUMP_JOY); /* exePlayerOut: the bck stopped */
             if (mario_anim) mario_play("earthenpipejump", 1.0f, 0);
-            camera_event_stop(); /* the partner's tryHideDown: endMultiActorCamera 出現 */
+            if (row_camset[o->row] != -1) camera_event_stop(); /* the partner's tryHideDown: endMultiActorCamera 出現
+                                                                 * (none started without its camera info) */
             { const Row *pr = &sc->objs[p->row]; if (pr->sw[SW_B] >= 0 && gw_pipe_switch()) sw_set(pr, SW_B, 1); } /* onSwitchB (_194: not before the rabbits' chase) */
             pipe_seq = 0; pipe_wait = 1;
         }

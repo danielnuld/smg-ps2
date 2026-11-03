@@ -651,6 +651,23 @@ void camera_event_target(V3 dir, V3 pos) /* SpinDriverCamera::updateTargetMatrix
 }
 
 int camera_event_start(unsigned cls, int set, V3 up, V3 front, V3 pos) { return ev_begin(cls, set, 4, up, front, pos); }
+/* MultiEventCamera::start with an empty CameraTargetArg (the player its target), isActive(i), nextForce */
+int camera_event_start_player(unsigned cls, int set)
+{
+    if (!ev_begin(cls, set, 4, v3(0, 1, 0), v3(0, 0, 1), v3(0, 0, 0))) return 0;
+    ev_player = 1;
+    return 1;
+}
+int camera_event_index(void) { return ev_on && !ev_ending ? ev_i : -1; }
+void camera_event_next(void) /* nextForce: the next of the set, after the last endCamera (Soon) */
+{
+    if (!ev_on) return;
+    if (ev_i < ev_n - 1) {
+        ev_i++; ev_t = 0;
+        timer = 0; camint = cams[ev_first + ev_i].camint; fresh = 1;
+        type_eye = f_eye; type_watch = f_watch; type_up = f_up;
+    } else camera_event_end_now(-1);
+}
 
 /* a named event camera ("e:<name>", camera.py: its class the name's hash, num 0) of that zone (else the first of the
  * name), started with no target: the player's (MR::startEventCameraNoTarget, startGlobalEventCameraNoTarget) */
