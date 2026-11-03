@@ -10796,9 +10796,36 @@ static void tcm_update(Inst *in, const float *m)
         break;
     }
 }
+static int ros_branch(int t, u32 v) { (void)t; (void)v; return 0; } /* Rosetta::branchFunc */
+static int rosetta_event(int t, u32 v);
+static int ros_demo;
+static int ros_talk_k = -1; /* Rosetta's own talker (rosetta_update: her talk actions) */
+static float dx_talk_offy(const char *cls);
+static void rosetta_talk(void) /* Rosetta's mMsgCtrl outside demos, in the Observatory (the Gateway's: RosettaDemoHeavensDoor1's) */
+{
+    ros_talk_k = -1;
+    if (strncmp(game_stage_name, "AstroGalaxy/", 12) || ros_demo || dx.on) return;
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        char lab[32];
+        if (in->dnpc != 3 || !row_shown(in->row) || !talk_row_label(in->row, lab)) continue;
+        int k = talk_new(lab, in->row, in->row, dx_talk_offy("Rosetta"), 200.0f); /* setDistanceToTalk 200, her Chin */
+        if (k < 0) return;
+        Talker *t = &talkers[k];
+        if (!t->root_auto) { t->root_auto = 1; t->front = 1; t->event = rosetta_event; t->branch = ros_branch; } /* registerBranchFunc / EventFunc, onStartOnlyFront */
+        float m[16];
+        memcpy(m, in->m, 64);
+        for (int j = 0; j < 12; j++) m[j] /= in->s;
+        talk_place(k, m);
+        talk_near(k);
+        ros_talk_k = k;
+        return;
+    }
+}
 static void update_talkers(void)
 {
     if (!tk_nctl) return;
+    rosetta_talk();
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
         int sign = in->talkcls == 1, tico = in->talkcls == 2 || in->talkcls == 7 || in->talkcls == 8; /* 7: TicoStarRing, 8: TicoComet (Ticos) */
@@ -11363,7 +11390,7 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
 #define TALK_PICK(i) 1
 #endif
     for (int i = 0; i < ninsts && row < 0; i++)
-        if (insts[i].talkcls == TALK_CLS && talk_row_label(insts[i].row, lab) && TALK_PICK(i)) row = i;
+        if ((TALK_CLS == 9 ? insts[i].dnpc == 3 : insts[i].talkcls == TALK_CLS) && talk_row_label(insts[i].row, lab) && TALK_PICK(i)) row = i; /* 9: Rosetta */
     pad_force = 0;
     if (row < 0 && TALK_CLS == 3) { /* the Kinopios wait for their appear switch: on */
         int ty = scene_type(sc, "Kinopio");
@@ -11408,7 +11435,7 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
     t++;
     if (phase == 0 && TALK_CLS != 1 && t < 300) { /* another class: Mario put 170 in front of it, then left to land */
         V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
-        mario->pos = vadd(vadd(p, vmul(z, 170.0f)), vmul(up, 30.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        mario->pos = vadd(vadd(p, vmul(z, TALK_CLS == 9 ? 120.0f : 170.0f)), vmul(up, 30.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
     }
     if (phase == 0 && (TALK_CLS != 1 ? t > 360 : test_walk_to(vadd(p, vmul(z, 170.0f)), 60.0f))) { phase = 1; t = 0; }
     if (phase == 1 && t > 25 && (t - 25) % 45 < 5) pad_force = PAD_CROSS;
@@ -34123,8 +34150,10 @@ static void update_npc_turn(void) /* the NPCs' wait nerves: tryStartTalkAction /
  * move action); in a demo (startDemo: her Demo nerve) the sheet drives her (the talk anim ctrl, the actions' AnimName),
  * endDemo at its end: WaitA. RosettaDemoAstroDomeExplain::exeDemo: at 状況説明[絵本表示] (part 6) the cinema frame to
  * the screen, the picture book (menu.c RosettaMonologue) and the time keeper paused until it is dead.
- * ponytail: she does not talk outside demos (not a talkcls), no TurnJointCtrl (her head and waist to Mario), no random
- * TalkA / B / C at a talk's start, endDemoWithInterpole as endDemo */
+ * Outside demos her own talk (NPCActor's mMsgCtrl: <zone>_Rosetta<id>, onStartOnlyFront, setDistanceToTalk 200, its
+ * balloon at her Chin; branchFunc false, eventFunc rosetta_event): setMoveTalkNoTurnAction WaitA / TalkA (no turn), at
+ * each talk's start getRandom(0, 3) TalkA / TalkB / TalkC.
+ * ponytail: no TurnJointCtrl (her head and waist to Mario), endDemoWithInterpole as endDemo */
 static void rosetta_update(Inst *in)
 {
     if (dx.on && ros_demo) { /* the demos' executors (RosettaDemoAstroDome*): not her model's, with or without its pose */
@@ -34139,9 +34168,14 @@ static void rosetta_update(Inst *in)
     }
     if (!in->anim) { ros_demo = 0; ros_book = 0; return; }
     if (ros_demo) { ros_demo = 0; ros_book = 0; anim_start(in->anim, "rosetta/waita", 0); } /* endDemo: startBckNoInterpole WaitA */
-    const char *cur = in->anim->clip_id >= 0 ? sc->clips[in->anim->clip_id].name : "";
-    if (strcmp(cur, "rosetta/waita") && strcmp(cur, "rosetta/waitb")) obj_play(in, "waita", 1, 0);
-    else if (game_frame % 300 == 0) obj_play(in, rand() % 2 ? "waitb" : "waita", 1, 0); /* isIntervalStep(sWaitActionInterval) */
+    static const char *wait = "waita", *talk = "talka";
+    static int was_talking;
+    int k = ros_talk_k; /* (update_talkers: her talk) */
+    int talking = k >= 0 && td.st == k && (td.nrv == TD_TALK || td.nrv == TD_SLCT || td.nrv == TD_NEXT);
+    if (talking && !was_talking) { static const char *const ta[3] = {"talka", "talkb", "talkc"}; talk = ta[rand() % 3]; } /* isTalkStart: getRandom(0, 3) */
+    was_talking = talking;
+    if (game_frame % 300 == 0) wait = rand() % 2 ? "waitb" : "waita"; /* isIntervalStep(sWaitActionInterval): getRandom(0, 2) */
+    obj_play(in, talking ? talk : wait, 1, 0); /* tryStartAction (no-op while it plays) */
 }
 
 /* Butler (exeDemo: at its PosName during the demo, then setDefaultPose and Wait), Rosetta, ButlerExplain and TicoDomeLecture */
