@@ -637,7 +637,7 @@ void lyt_draw(LytInst *l)
             float uv[8];
             if (mi >= 0 && mi < l->h->nmats) mat_uv(&l->ms[mi], &l->mat[mi], p->uv, uv);
             else memcpy(uv, p->uv, sizeof uv);
-            int add = mi >= 0 && mi < l->h->nmats && l->mat[mi].add;
+            int add = mi >= 0 && mi < l->h->nmats ? l->mat[mi].add : 0; /* 1 added, 2 multiplied */
             if (mi >= 0 && mi < l->h->nmats && (l->mat[mi].flags & 4))
                 masked_quad(l, &l->mat[mi], w, x0, y0, x1, y1, uv, tex_of(l, mi), pane_rgba(l, i, w->alpha), add);
             else

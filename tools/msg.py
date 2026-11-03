@@ -32,6 +32,7 @@ SYSTEM = ("Layout_SystemTalk", "Layout_SystemRead", "System_PlayerName000")
 # createTalkCtrlDirect bound to the placed actor (Butler::initTalkCtrlArray's cMessageId, initForAstroDome's demo talks)
 DIRECT = {"ButlerMap": ("AstroGalaxy_ButlerMap001",),  # ButlerMap::init: its map lecture's talk
           "TicoStarRing": ("AstroGalaxy_TicoCommon000",),  # TicoStarRing::init: initMessage
+          "RosettaReading": ("LibraryRoom_RosettaReading003",),  # RosettaReading::init: every chapter can be read
           "Butler": ("AstroDome_Butler001", "AstroDome_Butler002", "AstroDome_Butler003", "AstroDome_Butler006",
                      "AstroDome_Butler007", "AstroGalaxy_Butler005", "AstroGalaxy_Butler006", "AstroDome_Butler023",
                      "AstroDome_Butler011", "AstroDome_Butler014",

@@ -51,6 +51,8 @@ int gd_galaxy_appear(const char *galaxy);       /* GameDataHolder::isAppearGalax
 int gd_story_passed(const char *event);         /* isPassedStoryEvent */
 void gd_story_follow(const char *event);        /* followStoryEventByName */
 int gd_value(const char *name);                 /* GameEventValueChecker */
+int gd_book_can_read(void);
+void gd_test_flag_on(const char *name);           /* tests: an event flag on, its conditions skipped */                      /* GameDataHolder::getPictureBookChapterCanRead: PictureBookA.. on in a row */
 void gd_set_value(const char *name, int v);
 
 int gd_player_left(void);

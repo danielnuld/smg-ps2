@@ -1959,7 +1959,7 @@ void render_mesh2d(const float (*xy)[2], const float (*uv)[2], int nvert, const 
             flush_vif();
         set_tex(tex);
         ad_open(0);
-        AD(add ? GS_SET_ALPHA(0, 2, 0, 1, 0) : GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA); /* Cs x As + Cd, else a blend */
+        AD(add == 2 ? GS_SET_ALPHA(1, 2, 0, 2, 0) : add ? GS_SET_ALPHA(0, 2, 0, 1, 0) : GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA); /* 2: Cd x As (GX_BL_DSTCLR, ZERO); Cs x As + Cd; else a blend */
         AD(GS_SET_TEST(1, ATEST_METHOD_GREATER, 0, 0, 0, 0, 1, ZTEST_METHOD_ALLPASS), GS_REG_TEST);
         AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 1), GS_REG_ZBUF);
         AD(GS_SET_PRIM(PRIM_TRIANGLE, 0, e != NULL, 0, 1, 0, 1, 0, 0), GS_REG_PRIM);

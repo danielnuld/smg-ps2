@@ -70,6 +70,8 @@ int menu_test_prologue_book(void);   /* tests: page x 10 + 1 while it waits for 
  * startGalaxyMapLayoutForTicoComet, startAstroMapLayoutForChallengeGalaxyDiscover */
 enum { GMAP_ASTRO, GMAP_GALAXY, GMAP_LIST, GMAP_NEW_GALAXY, GMAP_NEW_TICO, GMAP_NEW_DOME, GMAP_TICO_COMET, GMAP_CHALLENGE };
 void menu_galaxy_map(int mode);
+void menu_picture_book(int chapter_min, int chapter_max); /* PictureBookLayout (RosettaReading's): appear */
+int menu_picture_book_alive(void);                         /* !isDead */
 void menu_luigi_letter(const char *galaxy, int talk); /* LuigiLetter (LuigiPicture<galaxy>): appear (talk: KinopioAstro's) */
 int menu_luigi_letter_alive(void);   /* !isDead */
 void menu_peach_letter(void);         /* PeachLetter (KinopioAstro's): appear */

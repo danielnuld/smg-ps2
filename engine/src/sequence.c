@@ -57,6 +57,7 @@ static const SeqDemo cDemoRosettaTalkTorchProgress[] = {{0, 1, "ロゼッタト�
 static const SeqDemo cDemoRosettaTalkKoopaBattleVs3GalaxyAppear[] = {{5, 0, "Save"}, {0, 1, "ロゼッタ最終決戦デモ"}, {12, 0, ""}};
 static const SeqDemo cDemoStarPieceLectureRetry[] = {{0, 3, "スターピース解説前半"}, {1, 1, "Fadein"}, {12, 0, ""}};
 static const SeqDemo cDemoPrologue[] = {{8, 1, "Prologue"}, {12, 0, ""}};
+static const SeqDemo cDemoRosettaPicureBookTalk[] = {{0, 1, "ロゼッタ朗読"}, {1, 1, "Fadein"}, {12, 0, ""}};
 /* the KoopaBattleVs3 clear (types 10 / 11: the star pointer's ending mode, the remote checks: nothing here) */
 static const SeqDemo cDemoEpilogueNormal[] = {{10, 14, ""}, {2, 9, "MovieEpilogueA"}, {0, 1, "エピローグデモ"}, {11, 15, ""},
                                               {2, 10, "MovieEndingA"}, {9, 12, ""}, {11, 16, ""}, {9, 13, ""}, {4, 1, ""}, {12, 0, ""}};
@@ -130,11 +131,11 @@ static void decide_move_galaxy(const char *st, int no, int clear)
             prepare_demo(d);
         }
     }
-    /* ponytail: LibraryRoom's picture book (cDemoRosettaPicureBookTalk) waits for the picture book chapters */
+    if (!strcmp(st, "LibraryRoom") && gd_book_can_read() != 0 && gd_book_can_read() != gd_value("絵本既読章"))
+        prepare_demo(cDemoRosettaPicureBookTalk); /* a chapter not read yet: Rosetta reads it */
 }
 
-/* decideNextEventForClearGalaxy's demos (the stage is chosen in seq_galaxy_move: clear_to_astro_galaxy). ponytail: no
- * picture book (cDemoRosettaPicureBookTalk) */
+/* decideNextEventForClearGalaxy's demos (the stage is chosen in seq_galaxy_move: clear_to_astro_galaxy) */
 static int optional_demos(const SeqDemo **o) /* getOptionalDemoForClearGalaxy: isExecuteDemoLuigiMissing, the KoopaBattleVs3 talk */
 {
     int n = 0;
