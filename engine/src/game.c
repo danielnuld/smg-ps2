@@ -206,6 +206,11 @@ static V3 launch_pos(const Launch *L, float t);
 #define SLIP_KEEP 15              /* Mario::updateFloorCode: frames on a slope before its floor code turns slip */
 #define GROUNDING 20.0f           /* mGravityGrounding: downward step while on the ground keeps Mario on crests */
 enum { HIP_START = 1, HIP_FALL, HIP_LAND };
+/* the enemy attacks Mario takes (MarioActor::receiveMsgEnemyAttack: mario_attack) */
+enum { ATK_ENEMY, ATK_STRONG, ATK_MAXIMUM, ATK_EXPLOSION, ATK_FLIP_VERYWEAK, ATK_FLIP_WEAK, ATK_FLIP_WEAK_JUMP, ATK_FLIP_JUMP,
+       ATK_FLIP, ATK_FLIP_ROT, ATK_FLIP_MAXIMUM, ATK_FIREBACK, ATK_FIRERUN, ATK_FIRERUN_STRONG, ATK_ELECTRIC, ATK_HEATBEAM,
+       ATK_FREEZE, ATK_CRUSH, ATK_COUNTER_SPIN, ATK_COUNTER_HIPDROP, ATK_EXTRA_DAMAGE };
+static int mario_attack(int msg, V3 from);
 #define BODY_RADIUS 50.0f        /* ponytail: one sphere for Mario's body; SMG uses several collision checks */
 #define HIT_BODY_H 80.0f          /* Mario's hit sensor for touches: centre this high, radius HIT_BODY_R (the
                                    * collision sphere is lower and smaller); ponytail: one sphere, not his sensors */
@@ -2889,7 +2894,7 @@ static void update_kgunners(void)
             if (*ph == 2 && *t < 40 && !mario->hurt_timer) {
                 V3 shell = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(vnorm(v3(in->m[8], in->m[9], in->m[10])), 700.0f));
                 if (vlen(vsub(c, shell)) < 250.0f) {
-                    hurt_mario(shell, MC.mJumpDistLargeDamage);
+                    mario_attack(ATK_MAXIMUM, shell);
                     *ph = 3;
                     printf("killer gunner %d hits\n", in->row);
                 }
@@ -2998,7 +3003,7 @@ static void update_kiraira(void)
         }
         V3 up, p = kiraira_pos(in, &up);
         if (vlen(vsub(c, p)) >= 120.0f * in->s + HIT_BODY_R) continue;
-        hurt_mario(p, 25.0f);
+        mario_attack(ATK_EXPLOSION, p);
         float m[16];
         memcpy(m, in->m, 64);
         m[12] = p.x; m[13] = p.y; m[14] = p.z;
@@ -3044,7 +3049,7 @@ static void update_meteor(void)
         int env = strcmp(sc->types + 32 * r->type, "MeteorStrikeEnvironment") == 0, end = 0;
         Hit h[1];
         if (!env && vlen(vsub(c, p)) < 90.0f + HIT_BODY_R) {
-            hurt_mario(p, 25.0f);
+            mario_attack(ATK_STRONG, p);
             printf("meteor %d hits Mario\n", in->row);
             end = 1;
         } else if (vdot(vsub(p, b), dir) > 0)
@@ -3170,7 +3175,7 @@ static void update_killers(void)
             if (*ph == 2) { V3 tg = killer_target(k, g, in->killer == 2 ? 75.0f : 200.0f); k->front = turn_to(k->front, tg, 0.9997f); killer_rotz(k, tg, g); }
             if (pointer_a() && cursor_sees(k->pos, 40.0f)) k->freeze = 1; /* setNerve(Freeze): starts over */
             else if (++k->freeze > 20) { k->pos = k->fpos; k->freeze = 0; }
-            if (vlen(vsub(c, k->pos)) < 70.0f + HIT_BODY_R) { hurt_mario(k->pos, 25.0f); brk = 1; }
+            if (vlen(vsub(c, k->pos)) < 70.0f + HIT_BODY_R) { mario_attack(ATK_EXPLOSION, k->pos); brk = 1; }
             if (!brk) continue;
         }
         if (!brk && *ph == 1) { /* processMove, tryChaseStart */
@@ -3196,7 +3201,7 @@ static void update_killers(void)
         Hit h[1];
         int ground = 0;
         if (!brk && vlen(vsub(c, k->pos)) < 70.0f + HIT_BODY_R) {
-            hurt_mario(k->pos, 25.0f);
+            mario_attack(ATK_EXPLOSION, k->pos);
             printf("homing killer %d hits Mario\n", in->row);
             brk = 1;
         } else if (!brk && (*ph == 2 || *t >= 35) && kcl_query(k->pos, 70.0f, h, 1)) {
@@ -3276,7 +3281,7 @@ static void update_prom(void)
         else if (*ph == 4 && speed * *t > 300.0f) { *ph = 0; *t = 0; }
         if (*ph < 2) continue;
         if (vlen(vsub(c, prom_pos(in))) < 120.0f * r->scale[0] + HIT_BODY_R && !mario->hurt_timer) {
-            hurt_mario(prom_pos(in), 15.0f);
+            mario_attack(ATK_FIRERUN_STRONG, prom_pos(in));
             printf("lava prominence %d burns" "\n", in->row);
         }
     }
@@ -3559,7 +3564,7 @@ static void update_birikyu(void)
         if (*ph == 5) in->lv[1] = se_level(SE_EM_LV_DPD_POINT, &in->m[12], in->lv[1]); /* exeStopPointing: startDPDFreezeLevelSound */
         else if (*ph != 4) in->lv[0] = se_level(SE_OJ_LV_BIRIKYU_MOVE, &in->m[12], in->lv[0]); /* exeMove / MoveCircle / WaitAtEdge / Attack */
         if (*ph != 2 && vlen(vsub(c, p)) < rad + HIT_BODY_R && !mario->hurt_timer) { /* sendMsgEnemyAttackElectric */
-            hurt_mario(p, 15.0f);
+            mario_attack(ATK_ELECTRIC, p);
             *ph = 2; *t = 0;
             if (in->biri == 2) fx_at(FX_BIRIKYU_HIT, p, v3(0, 1, 0));
             biri_group(in, 0);
@@ -3690,7 +3695,7 @@ static void update_punch(void)
             }
         }
         if (*ph == 1 && speed >= 15.0f && vlen(vsub(c, in->head)) < 70.0f + HIT_BODY_R && !mario->hurt_timer) { /* isEnableHitPlayer */
-            hurt_mario(in->head, speed >= 30.0f ? 25.0f : 12.0f);
+            mario_attack(speed >= 45.0f ? ATK_FLIP_MAXIMUM : speed >= 30.0f ? ATK_FLIP : ATK_FLIP_WEAK, in->head);
             if (speed >= 30.0f) se_start(SE_PM_WALL_HIT_BODY, &mario->pos.x); /* attackSensor: startSoundPlayer */
             in->hvel = vmul(in->hvel, 0.3f);
             *ph = 0; *t = 0;
@@ -8472,7 +8477,7 @@ static void update_dino(void)
                 mario->hvel = vmul(out, 10.0f); mario->vup = 15.0f; mario->grounded = 0;
             } else if (!mario->hurt_timer) { /* blow (Chase; Lv2 Walk too) or hit, then AttackHit */
                 int blow = dino.nrv == DN_CHASE || (lv2 && dino.nrv == DN_WALK);
-                hurt_mario(dino.pos, blow ? 25.0f : 15.0f);
+                mario_attack(blow && vdot(dino.vel, vsub(c, body)) >= 0.0f ? ATK_MAXIMUM : ATK_STRONG, dino.pos);
                 dino_set_nrv(DN_ATTACKHIT);
             }
         }
@@ -8806,7 +8811,7 @@ static void update_ota_fire(V3 c)
         Hit h[1];
         if (kcl_query(ota.fire[i].pos, 60.0f, h, 1) > 0 || vlen(vsub(ota.fire[i].pos, mario->pos)) > 5000.0f) {
             se_start(SE_OJ_FIRE_BALL_BREAK, &ota.fire[i].pos.x); ota.fire[i].alive = 0; continue; } /* FireBall::kill */
-        if (vlen(vsub(c, ota.fire[i].pos)) < 40.0f + HIT_BODY_R) { hurt_mario(ota.fire[i].pos, 20.0f); se_start(SE_OJ_FIRE_BALL_BREAK, &ota.fire[i].pos.x); ota.fire[i].alive = 0; }
+        if (vlen(vsub(c, ota.fire[i].pos)) < 40.0f + HIT_BODY_R) { mario_attack(ATK_FIRERUN, ota.fire[i].pos); se_start(SE_OJ_FIRE_BALL_BREAK, &ota.fire[i].pos.x); ota.fire[i].alive = 0; }
     }
     for (int i = 0; i < OTA_BUBBLES; i++) { /* FireBubble: Appear (gravity 0.75), Wait, Chase (4, gravity 2), Down */
         typeof(&ota.bub[0]) q = &ota.bub[i];
@@ -8835,7 +8840,7 @@ static void update_ota_fire(V3 c)
         } else if (q->state == 3 && ++q->chase > q->act) { q->state = 4; q->t = 0; se_start(SE_EM_FIRE_BUBBLE_DIE, &q->pos.x); }
         else if (q->state == 3 && q->t % 39 == 0) se_start(SE_EM_FIRE_BUBBLE_JUMP, &q->pos.x); /* exeChase: its Wait clip (39 frames) passing 0 */
         else if (q->state == 4 && q->t >= 60) { q->state = 0; continue; } /* its Down clip, then killOrWaitToApppear */
-        if (q->state != 1 && q->state != 4 && vlen(vsub(c, q->pos)) < 30.0f + HIT_BODY_R) { hurt_mario(q->pos, 20.0f); q->state = 0; }
+        if (q->state != 1 && q->state != 4 && vlen(vsub(c, q->pos)) < 30.0f + HIT_BODY_R) { mario_attack(ATK_FIRERUN, q->pos); q->state = 0; }
     }
 }
 
@@ -8894,7 +8899,7 @@ static void update_orocks(void)
             if (vlen(fr) > 0.5f) o->f = fr;
             basis_matrix(in->m, o->pos, o->up, o->f, 0);
             for (int j = 0; j < 12; j++) if (j % 4 != 3) in->m[j] *= r->scale[0];
-            if (vlen(vsub(c, body)) < 300.0f + 100.0f) hurt_mario(body, 15.0f); /* attackSensor */
+            if (vlen(vsub(c, body)) < 300.0f + 100.0f) mario_attack(ATK_STRONG, body); /* attackSensor */
         }
         switch (o->nrv) {
         case OR_WAIT:
@@ -8996,7 +9001,7 @@ static void update_orocks(void)
             Hit h[1];
             if (kcl_query(o->fire[f].pos, 60.0f, h, 1) > 0 || vlen(vsub(o->fire[f].pos, mario->pos)) > 5000.0f) {
                 se_start(SE_OJ_FIRE_BALL_BREAK, &o->fire[f].pos.x); o->fire[f].alive = 0; continue; } /* FireBall::kill */
-            if (vlen(vsub(c, o->fire[f].pos)) < 40.0f + HIT_BODY_R) { hurt_mario(o->fire[f].pos, 20.0f); se_start(SE_OJ_FIRE_BALL_BREAK, &o->fire[f].pos.x); o->fire[f].alive = 0; }
+            if (vlen(vsub(c, o->fire[f].pos)) < 40.0f + HIT_BODY_R) { mario_attack(ATK_FIRERUN, o->fire[f].pos); se_start(SE_OJ_FIRE_BALL_BREAK, &o->fire[f].pos.x); o->fire[f].alive = 0; }
         }
     }
 }
@@ -9193,7 +9198,7 @@ static void update_ota(void)
                 V3 sp = v3(jm[12] + jm[0] * so[q][0] + jm[4] * so[q][1] + jm[8] * so[q][2],
                            jm[13] + jm[1] * so[q][0] + jm[5] * so[q][1] + jm[9] * so[q][2],
                            jm[14] + jm[2] * so[q][0] + jm[6] * so[q][1] + jm[10] * so[q][2]);
-                if (vlen(vsub(c, sp)) < sr[q] + HIT_BODY_R) { hurt_mario(sp, 20.0f); ota_lfoot(k, 2, "damage"); break; }
+                if (vlen(vsub(c, sp)) < sr[q] + HIT_BODY_R) { mario_attack(ATK_FIRERUN, sp); ota_lfoot(k, 2, "damage"); break; }
             }
         }
     }
@@ -9202,7 +9207,7 @@ static void update_ota(void)
     if ((db < 400.0f + HIT_BODY_R || df < 400.0f + HIT_BODY_R) && ota.nrv != OTA_DOWNDEMO && ota.nrv != OTA_APPEARSTAR && ota.nrv != OTA_APPEARDEMO) {
         int near_ok = ota.nrv == OTA_WAIT || ota.nrv == OTA_THROWCOCOWAIT || ota.nrv == OTA_THROWCOCO || ota.nrv == OTA_THROWFIREWAIT ||
                       ota.nrv == OTA_THROWFIRE || ota.nrv == OTA_BUBBLEATTACK;
-        if (near_ok && !mario->hurt_timer) { hurt_mario(body, 30.0f); ota_set(OTA_NEARATTACK); }
+        if (near_ok && !mario->hurt_timer) { mario_attack(ATK_MAXIMUM, body); ota_set(OTA_NEARATTACK); }
         V3 out = vtangent(vsub(c, body), ota.up);
         if (vlen(out) > 1e-3f && db < 400.0f + HIT_BODY_R) mario->pos = vadd(mario->pos, vmul(vnorm(out), 400.0f + HIT_BODY_R - db));
     }
@@ -9471,7 +9476,7 @@ static void update_sambos(void)
                 V3 sp = j < 3 ? sambo_joint(k, in, j, v3(40.0f * q->s, 0, 0)) : sambo_head_pos(k, in);
                 float rad = (j < 3 ? 80.0f : 100.0f) * q->s, d = vlen(vsub(c, sp));
                 if (d < rad + HIT_BODY_R) {
-                    hurt_mario(sp, 20.0f);
+                    mario_attack(ATK_STRONG, sp);
                     V3 out = vtangent(vsub(c, sp), q->up);
                     if (vlen(out) > 1e-3f) mario->pos = vadd(mario->pos, vmul(vnorm(out), rad + HIT_BODY_R - d));
                     break;
@@ -11452,7 +11457,7 @@ static void update_candles(void)
             else { fx_keep(FX_TERESAMANSIONCANDLESTAND_FIRE01, r, in->m); fx_keep(FX_TERESAMANSIONCANDLESTAND_FIRE02, (const char *)r + 1, in->m); }
             V3 flame = vadd(base, vmul(up, h * s));
             if (vlen(vsub(c, flame)) < rad + HIT_BODY_R && !mario->hurt_timer) { /* sendMsgEnemyAttackFire */
-                hurt_mario(flame, 20.0f);
+                mario_attack(ATK_FIRERUN, flame);
                 printf("candlestand row %d burns Mario" "\n", row);
             }
             if (mario->spin_timer > 0 && vlen(vsub(c, vadd(base, vmul(up, 100.0f * s)))) < 350.0f * s) { /* isInSpinStormRange */
@@ -11538,7 +11543,7 @@ static void update_torches(void)
         if (*st == 1 && ++*n >= 30) { *st = 0; *n = 0; } /* Attack: isStep 30 */
         if (r->arg[1] != -1) continue; /* mIsDecorative */
         if (*st == 0 && vlen(vsub(c, body)) < 50.0f * s + HIT_BODY_R && !mario->hurt_timer) { /* attackSensor */
-            hurt_mario(body, 20.0f);
+            mario_attack(ATK_FIRERUN, body);
             *st = 1; *n = 0;
         }
         if (*st == 0 && mario->spin_timer > 0 && vlen(vsub(c, body)) < 350.0f) { /* isInSpinStormRange 350 */
@@ -14301,9 +14306,6 @@ static void m_swing(Player *m)
  * getDamageAfterTimer, no new damage and his blink). The swim's damage waits for MarioSwim (the old hit). */
 enum { DMS_NONE, DMS_DAMAGE, DMS_FAINT, DMS_BLOWN, DMS_FLIP, DMS_FIREDANCE, DMS_FIRERUN, DMS_PARALYZE, DMS_FREEZE,
        DMS_CRUSH, DMS_STUN };
-enum { ATK_ENEMY, ATK_STRONG, ATK_MAXIMUM, ATK_EXPLOSION, ATK_FLIP_VERYWEAK, ATK_FLIP_WEAK, ATK_FLIP_WEAK_JUMP, ATK_FLIP_JUMP,
-       ATK_FLIP, ATK_FLIP_ROT, ATK_FLIP_MAXIMUM, ATK_FIREBACK, ATK_FIRERUN, ATK_FIRERUN_STRONG, ATK_ELECTRIC, ATK_HEATBEAM,
-       ATK_FREEZE, ATK_CRUSH, ATK_COUNTER_SPIN, ATK_COUNTER_HIPDROP, ATK_EXTRA_DAMAGE };
 static struct {
     int st, started;                                  /* the active status; started this frame (checkDamage) */
     int req_damage, req_faint, req_blown, req_fire, req_paralyze, req_crush;
@@ -19186,7 +19188,7 @@ static void mkoopa_update(Kuribo *k, V3 to, float d)
     case 4:
         if (vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), vadd(vadd(k->pos, vmul(k->up, 80.0f * s)), vmul(dir, 100.0f * s)))) <
             60.0f * s + HIT_BODY_R && !mario->hurt_timer)
-            hurt_mario(k->pos, 15.0f); /* sendMsgEnemyAttackFire */
+            mario_attack(ATK_FIRERUN, k->pos); /* sendMsgEnemyAttackFire */
         if (k->timer > 120) { k->phase = 5; k->timer = 0; }
         break;
     case 5: if (k->timer >= 30) { k->phase = 0; k->timer = 0; } break;
@@ -19355,7 +19357,7 @@ static void stink_update(Kuribo *k, V3 to, float d)
     if (k->phase != 5 && k->phase != 6) { /* the horn */
         V3 horn = vadd(vadd(k->pos, vmul(f, 100.0f * s)), vmul(k->up, 70.0f * s)), hc = vsub(c, horn);
         if (vlen(hc) < 100.0f * s + HIT_BODY_R && vdot(vsub(c, k->pos), f) > 0 && !mario->hurt_timer) {
-            hurt_mario(k->pos, 25.0f); /* sendMsgEnemyAttackStrong */
+            mario_attack(ATK_STRONG, k->pos); /* sendMsgEnemyAttackStrong */
             if (k->phase != 2) { k->phase = 5; k->timer = 0; }
             printf("stink bug row %d: horn hits Mario" "\n", k->row);
         }
@@ -19512,7 +19514,7 @@ static void unizo_update(Kuribo *k, V3 to, float d)
     k->to += vlen(vtangent(vsub(nc, center), up)) / R; /* rotateQuatRollBall */
     k->pos = vsub(nc, vmul(up, R));
     if (vlen(vsub(c, vadd(k->pos, vmul(up, R)))) < 115.2f + HIT_BODY_R && !mario->hurt_timer && k->phase != 3) {
-        hurt_mario(vadd(k->pos, vmul(up, R)), 25.0f); /* sendMsgEnemyAttackStrong, doAttack */
+        mario_attack(ATK_STRONG, vadd(k->pos, vmul(up, R))); /* sendMsgEnemyAttackStrong, doAttack */
         se_start(SE_EM_UNIZO_NEEDLE, &k->pos.x); se_start(SE_EM_UNIZO_STICK, &k->pos.x); /* exeAttack's first step */
         V3 away = vtangent(vsub(k->pos, mario->pos), up);
         k->vel = vadd(vmul(up, 5.0f), vlen(away) > 1e-3f ? vnorm(away) : v3(0, 0, 0));
@@ -20809,7 +20811,7 @@ static void update_hhps(void)
             if (dist >= sr[s] + HIT_BODY_R) continue;
             if (s && !mario->hurt_timer) hurt_mario(sp[s], 15.0f); /* sendMsgEnemyAttack */
             else if (!s && !killing && hhp_attack_valid(k) && !mario->hurt_timer) { /* sendMsgEnemyAttackStrong */
-                hurt_mario(sp[0], 25.0f);
+                mario_attack(ATK_STRONG, sp[0]);
                 camera_shake(SHAKE_NORMAL); pad_rumble(RUMBLE_MIDDLE);
                 if (o->nrv == HH_ATTACK && o->step >= 0) hhp_set(k, HH_HIT);
             } else { /* sendMsgPush */
@@ -21314,7 +21316,7 @@ static void takobo_update(Kuribo *k, V3 to, float d)
         if (st >= 85 && st < 90) { /* the attack sensor: sendMsgEnemyAttackStrong */
             V3 fist = w_joint(k, m_takobo, 7, v3(10.0f, 2.0f, 0.0f));
             if (!mario->hurt_timer && vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), fist)) < 80.0f * s + HIT_BODY_R)
-                hurt_mario(fist, 25.0f);
+                mario_attack(ATK_STRONG, fist);
         }
         if (w_bck_stopped(k)) w_nrv(k, TN_WAIT);
         break;
@@ -21783,7 +21785,7 @@ static void packun_update(Kuribo *k)
         if (msg == MSG_TRAMPLE) mario_trample();
     } else if (msg == MSG_HITALL) packun_punch(k, mario->pos);
     else if (!mario->hurt_timer && vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), head)) < 50.0f * s + HIT_BODY_R) {
-        hurt_mario(head, 25.0f); /* sendMsgEnemyAttackStrong */
+        mario_attack(ATK_STRONG, head); /* sendMsgEnemyAttackStrong */
         if (mario->hip != HIP_FALL) w_nrv(k, PN_HITWAITFORATTACK);
     }
 }
@@ -22315,7 +22317,7 @@ static void gesso_update(Kuribo *k)
     int msg = mario_offence(k->pos, 100.0f, k->grav);
     if (msg == MSG_HITALL) { ge_knock(k, mario->pos); return; }
     if (vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), k->pos)) < 100.0f + HIT_BODY_R && !mario->hurt_timer) { /* attackSensor */
-        hurt_mario(k->pos, 25.0f); /* sendMsgEnemyAttackStrong */
+        mario_attack(ATK_STRONG, k->pos); /* sendMsgEnemyAttackStrong */
         k->vel = vmul(vnorm(vsub(k->pos, mario->pos)), 25.0f);
         w_nrv(k, GE_ATTACK);
     }
@@ -22567,13 +22569,13 @@ static void basa_update(Kuribo *k)
     if (k->nrv == BB_TRAMPLE || k->nrv == BB_PUNCHDOWN || k->nrv == BB_HITBACK) return;
     int msg = mario_offence(k->pos, 90.0f, k->grav);
     if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) {
-        if (ice) hurt_mario(k->pos, 15.0f); /* sendMsgEnemyAttackFreeze (no Ice Mario) */
+        if (ice) mario_attack(ATK_FREEZE, k->pos); /* sendMsgEnemyAttackFreeze (no Ice Mario) */
         else { pad_rumble(RUMBLE_STRONG); /* tryRumbleDefaultHit */ w_nrv(k, BB_TRAMPLE); if (msg == MSG_TRAMPLE) mario_trample(); }
         return;
     }
     if (msg == MSG_HITALL && !ice) { spin_hit_start(k, mario->pos, 20.0f, 10.0f); k->timer = 1; k->item = 2; w_nrv(k, BB_PUNCHDOWN); return; }
     if (mario->hip != HIP_FALL && !mario->hurt_timer && vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), k->pos)) < 60.0f + HIT_BODY_R) {
-        hurt_mario(k->pos, swimming ? 25.0f : 15.0f); /* EnemyAttackStrong swimming, else EnemyAttack */
+        mario_attack(ice ? ATK_FREEZE : swimming ? ATK_STRONG : ATK_ENEMY, k->pos); /* BasaBasa.cpp attackSensor: Freeze (ice), EnemyAttackStrong swimming, else EnemyAttack */
         w_nrv(k, BB_HITBACK);
     }
     return;
@@ -22765,7 +22767,7 @@ static void jelly_update(Kuribo *k)
         return;
     }
     if (vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), body)) < 100.0f + HIT_BODY_R && !mario->hurt_timer) {
-        hurt_mario(body, 25.0f); /* sendMsgEnemyAttackStrong */
+        mario_attack(ATK_STRONG, body); /* sendMsgEnemyAttackStrong */
         w_nrv(k, JF_ATTACK);
     }
 }
@@ -23442,7 +23444,7 @@ static void mogucchi_update(Kuribo *k)
     int touch = vlen(vsub(mc, body)) < 120.0f + HIT_BODY_R || vlen(vsub(mc, head)) < 83.0f + HIT_BODY_R;
     if (!touch) return;
     if (k->nrv == MC_STROLL && mario->grounded && !mario->hurt_timer) { /* sendMsgEnemyAttackStrongToDir */
-        hurt_mario(k->pos, 25.0f); camera_shake(SHAKE_NORMAL);
+        mario_attack(ATK_STRONG, k->pos); camera_shake(SHAKE_NORMAL);
         return;
     }
     V3 out = vtangent(vsub(mc, body), mario->up);
@@ -24617,7 +24619,7 @@ static void tw_update(Kuribo *k)
     if (vlen(k->qz) < 1e-3f) k->qz = k->front;
     if (k->nrv == TW_HIT) return;
     if (mario_touch(k->pos, 60.0f)) { /* attackSensor */
-        if (!mario->hurt_timer) { hurt_mario(k->pos, 25.0f); w_nrv(k, TW_HIT); }
+        if (!mario->hurt_timer) { mario_attack(ATK_STRONG, k->pos); w_nrv(k, TW_HIT); }
         else { V3 d = vtangent(vsub(mario->pos, k->pos), mario->up); if (vlen(d) > 1e-3f) mario->pos = vadd(mario->pos, vmul(vnorm(d), 5.0f)); } /* sendMsgPush */
     }
 }
@@ -24698,12 +24700,12 @@ static void snake_update(Kuribo *k)
     int nh;
     if (small) { heads[0] = w_joint(k, md, 6, v3(140.0f, -70.0f, 0)); hr[0] = 100.0f; nh = 1; }
     else { heads[0] = w_joint(k, md, 11, v3(100.0f, 0, 0)); hr[0] = 250.0f; heads[1] = w_joint(k, md, 8, v3(250.0f, 0, 0)); hr[1] = 200.0f; nh = 2; }
-    for (int h = 0; h < nh; h++) if (mario_touch(heads[h], hr[h])) { hurt_mario(heads[h], 25.0f); return; } /* sendMsgEnemyAttackStrong */
+    for (int h = 0; h < nh; h++) if (mario_touch(heads[h], hr[h])) { mario_attack(ATK_STRONG, heads[h]); return; } /* sendMsgEnemyAttackStrong */
     V3 a = rail_at(rail, rn, 0), b = rail_at(rail, rn, len), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), d = vsub(b, a); /* the body */
     float t = vdot(d, d) > 1e-6f ? vdot(vsub(mc, a), d) / vdot(d, d) : 0;
     V3 foot = vadd(a, vmul(d, t < 0 ? 0 : t > 1 ? 1 : t));
     V3 body = w_joint(k, md, 3, v3(0, 0, 0));
-    if (mario_touch(body, small ? 300.0f : 600.0f) && vlen(vsub(mc, foot)) <= (small ? 100.0f : 300.0f)) hurt_mario(foot, 25.0f);
+    if (mario_touch(body, small ? 300.0f : 600.0f) && vlen(vsub(mc, foot)) <= (small ? 100.0f : 300.0f)) mario_attack(ATK_STRONG, foot);
 }
 
 /* Kabokuri.cpp / KabokuriFire.cpp after Petari (walker kit): a pumpkin walking its rail (from the nearest place): Wait
@@ -24735,7 +24737,7 @@ static void update_kfires(void)
         fx_named("KabokuriFire", "KabokuriFire", m, NULL, &kfs[i]);
         kfs[i].lv = se_level(SE_OJ_LV_PHANTOM_TOACH_BURN, &kfs[i].pos.x, kfs[i].lv);
         V3 c = vadd(kfs[i].pos, vmul(kfs[i].up, 90.0f));
-        if (!mario->hurt_timer && vlen(vsub(mc, c)) < 40.0f + HIT_BODY_R) hurt_mario(c, 25.0f); /* sendMsgEnemyAttackFire */
+        if (!mario->hurt_timer && vlen(vsub(mc, c)) < 40.0f + HIT_BODY_R) mario_attack(ATK_FIRERUN, c); /* sendMsgEnemyAttackFire */
         if (++kfs[i].t > 320) kfs[i].alive = 0;
     }
 }
@@ -24971,7 +24973,7 @@ static void puku_update(Kuribo *k)
             w_nrv(k, PK_BLOWN); scene_stop = 4;
             return;
         }
-        if (!mario->hurt_timer && mario_touch(c, 60.0f)) { hurt_mario(c, 25.0f); if (k->nrv == PK_WATER) w_act(k, "BodyAttack"); }
+        if (!mario->hurt_timer && mario_touch(c, 60.0f)) { mario_attack(ATK_STRONG, c); if (k->nrv == PK_WATER) w_act(k, "BodyAttack"); }
     }
     return;
 dead:
@@ -25111,7 +25113,7 @@ static void bomb_update(Kuribo *k)
             camera_shake(SHAKE_NORMAL_WEAK);
             k->timer = -1;
         }
-        if (!mario->hurt_timer && vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), c)) < rad + HIT_BODY_R) hurt_mario(c, 30.0f);
+        if (!mario->hurt_timer && vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), c)) < rad + HIT_BODY_R) mario_attack(ATK_EXPLOSION, c);
         tbox_hit(c, rad); /* isMsgExplosionAttack */
         explosion_breaks(c, rad);
         if (st > 8) {
@@ -26911,7 +26913,7 @@ static void update_rbeamers(void)
             V3 d = vsub(mc, c0), h = vtangent(d, up);
             if (vlen(h) > 1e-3f && vlen(d) < o->rad[b] + HIT_BODY_R && !mario->hurt_timer) { /* attackSensor */
                 V3 on = vmul(vnorm(h), o->rad[b]);
-                if (vlen(vsub(on, d)) <= 5.0f + HIT_BODY_R) { hurt_mario(c0, 15.0f); printf("ring beam %d shocks Mario\n", in->row); }
+                if (vlen(vsub(on, d)) <= 5.0f + HIT_BODY_R) { mario_attack(ATK_ELECTRIC, c0); printf("ring beam %d shocks Mario\n", in->row); }
             }
             V3 ce = vsub(cam_pos, c0), hc = vtangent(ce, up); /* its sound at the ring's point nearest the camera */
             float k2 = vlen(ce) > 1e-3f ? 1.0f - fabsf(vdot(up, vnorm(ce))) : 0.0f;
@@ -26949,7 +26951,7 @@ static void update_rbeamers(void)
             float jm[16];
             mat_mul(jm, in->m, in->anim->world[2]);
             V3 head = v3(jm[12] + jm[4] * 110.0f, jm[13] + jm[5] * 110.0f, jm[14] + jm[6] * 110.0f);
-            if (vlen(vsub(mc, head)) < 130.0f + HIT_BODY_R && !mario->hurt_timer) hurt_mario(head, 25.0f); /* EnemyAttackStrong */
+            if (vlen(vsub(mc, head)) < 130.0f + HIT_BODY_R && !mario->hurt_timer) mario_attack(ATK_STRONG, head); /* EnemyAttackStrong */
         }
         V3 body = vadd(row_pos(r), vmul(up, 80.0f)), out = vtangent(vsub(mc, body), mario->up);
         float l = vlen(out), want = 160.0f + HIT_BODY_R * 0.6f;
@@ -27237,7 +27239,7 @@ static void update_sbeamers(void)
             V3 a = sbm_aim(), d = vsub(o->bend, pos);
             float l2 = vdot(d, d), t = l2 > 0 ? vdot(vsub(a, pos), d) / l2 : 0.0f;
             V3 foot = vadd(pos, vmul(d, t < 0 ? 0 : t > 1 ? 1 : t));
-            if (vlen(vsub(foot, mc)) < 15.0f + HIT_BODY_R) { hurt_mario(foot, 15.0f); printf("search beamer %d shocks Mario\n", in->row); }
+            if (vlen(vsub(foot, mc)) < 15.0f + HIT_BODY_R) { mario_attack(ATK_ELECTRIC, foot); printf("search beamer %d shocks Mario\n", in->row); }
         }
         V3 body = vsub(pos, vmul(o->up, 80.0f)), out = vtangent(vsub(mc, body), mario->up);
         float l = vlen(out), want = 60.0f + HIT_BODY_R * 0.6f;
@@ -28153,7 +28155,7 @@ static void update_fpressures(void)
             V3 x = vnorm(v3(jm[0], jm[1], jm[2])), a = vadd(v3(jm[12], jm[13], jm[14]), vmul(x, 50.0f)), b = vadd(a, vmul(x, o->len - 50.0f)), d = vsub(b, a);
             float t = vdot(d, d) > 0 ? vdot(vsub(mario->pos, a), d) / vdot(d, d) : 0;
             V3 foot = vadd(a, vmul(d, t < 0 ? 0 : t > 1 ? 1 : t));
-            if (vlen(vsub(mc, foot)) < 50.0f + HIT_BODY_R) hurt_mario(foot, 20.0f); /* sendMsgEnemyAttackFire */
+            if (vlen(vsub(mc, foot)) < 50.0f + HIT_BODY_R) mario_attack(ATK_FIRERUN, foot); /* sendMsgEnemyAttackFire */
         }
         V3 body = vadd(row_pos(r), vmul(vnorm(v3(in->m[4], in->m[5], in->m[6])), 30.0f)), out = vtangent(vsub(mc, body), mario->up);
         float l = vlen(out), want = 70.0f + HIT_BODY_R * 0.6f;
@@ -28438,7 +28440,7 @@ static void update_eyebeamers(void)
         if (!eb_beam_mtx(in, bm)) continue;
         V3 dn = vmul(vnorm(v3(in->m[4], in->m[5], in->m[6])), -1.0f), b = v3(bm[12], bm[13], bm[14]); /* isInBeamRange */
         float d = vdot(dn, vsub(mc, b));
-        if (d >= 0 && d <= eb_len(r) && vlen(vsub(mc, vadd(b, vmul(dn, d)))) < 140.0f) hurt_mario(vadd(b, vmul(dn, d)), 25.0f);
+        if (d >= 0 && d <= eb_len(r) && vlen(vsub(mc, vadd(b, vmul(dn, d)))) < 140.0f) mario_attack(ATK_HEATBEAM, vadd(b, vmul(dn, d)));
     }
 }
 static void draw_eyebeams(void)
@@ -29048,7 +29050,7 @@ static void update_storms(void)
                 V3 q = o->toff[h], p = v3(m[0] * q.x + m[4] * q.y + m[8] * q.z + m[12], m[1] * q.x + m[5] * q.y + m[9] * q.z + m[13], m[2] * q.x + m[6] * q.y + m[10] * q.z + m[14]);
                 p.y += 40.0f * e * a;
                 o->trot[h] += 5.0f;
-                if (vlen(vsub(mc, p)) < 40.0f + HIT_BODY_R && !mario->hurt_timer && !o->bound) hurt_mario(p, 25.0f); /* sendMsgEnemyAttackStrong */
+                if (vlen(vsub(mc, p)) < 40.0f + HIT_BODY_R && !mario->hurt_timer && !o->bound) mario_attack(ATK_STRONG, p); /* sendMsgEnemyAttackStrong */
             }
         }
     }
@@ -29437,7 +29439,7 @@ static void update_eballs(void)
             continue;
         }
         if (!mario->hurt_timer && vlen(vsub(mc, p)) < 75.0f + HIT_BODY_R) {
-            hurt_mario(p, 25.0f); /* sendMsgEnemyAttackElectric */
+            mario_attack(ATK_ELECTRIC, p); /* sendMsgEnemyAttackElectric */
             fx_named("ElectricBall", "ElectricHit", m, NULL, NULL);
             ebl[k].attack = 1;
         }
@@ -29885,7 +29887,7 @@ static void update_hazards(void)
             r = 70.0f * in->s;
         }
         if (vlen(vsub(c, p)) > r + HIT_BODY_R || (in->hazard == 2 && mario->hurt_timer)) continue;
-        hurt_mario(p, in->hazard == 1 ? 25.0f : 15.0f);
+        mario_attack(in->hazard == 1 ? ATK_EXPLOSION : ATK_ENEMY, p);
         if (in->hazard == 2) { obj_play(in, "shake", 0, 0); se_start(SE_OJ_LEAVES_SWING, &in->m[12]); } /* sendMsgEnemyAttack: Shake */
         if (in->hazard == 1) {
             fx_emit(FX_SPACEMINE_EXPLOSION, in->m);
@@ -30340,7 +30342,7 @@ static void update_electric(void)
         V3 q = vadd(e->a, vmul(ab, fminf(fmaxf(t, 0.0f), 1.0f))), up = up_at(q, mario->up);
         for (int k = 0; k < e->h; k++)
             if (vlen(vsub(c, vadd(q, vmul(up, 100.0f * k)))) < 30.0f + HIT_BODY_R) {
-                hurt_mario(q, 15.0f);
+                mario_attack(ATK_ELECTRIC, q);
                 return;
             }
     }
@@ -30440,7 +30442,7 @@ static void update_steam(void)
         float h = vdot(d, up), rr = 0.7f * HIT_BODY_R;
         if (((h >= 0.0f && h <= 330.0f && vlen(vsub(d, vmul(up, h))) < rr + 10.0f) ||
             (vlen(vsub(c, vadd(p, vmul(up, 400.0f)))) < rr + 70.0f)) && !mario->hurt_timer) {
-            hurt_mario(p, 15.0f);
+            mario_attack(ATK_FIRERUN, p);
             printf("lava steam %d burns\n", in->row);
         }
     }
@@ -30492,7 +30494,7 @@ static void update_geyser(void)
         float h = vdot(d, up);
         h = h < 0.0f ? 0.0f : h > top ? top : h;
         if (vlen(vsub(c, vadd(p, vmul(up, h)))) < 0.7f * HIT_BODY_R + 100.0f * r->scale[1] && !mario->hurt_timer) {
-            hurt_mario(p, 15.0f);
+            mario_attack(ATK_FIRERUN_STRONG, p);
             printf("lava geyser %d burns\n", in->row);
         }
     }
@@ -30652,7 +30654,7 @@ static void update_shells(void)
             o->t = 0;
             mario_trample();
         } else {
-            hurt_mario(o->pos, 25.0f);
+            mario_attack(ATK_EXPLOSION, o->pos);
             shell_explode(o);
             printf("cannon shell hit Mario\n");
         }
@@ -30893,7 +30895,7 @@ static void update_rocks(void)
         }
         if (vlen(vsub(mc, o->pos)) < br + HIT_BODY_R && !mario->hurt_timer) {
             if (o->nrv != RK_FREEZE && o->nrv != RK_APPEAR) {
-                hurt_mario(o->pos, 25.0f);                         /* sendMsgEnemyAttackStrong */
+                mario_attack(ATK_STRONG, o->pos);                         /* sendMsgEnemyAttackStrong */
                 if (sc->objs[c->row].arg[5] > 0 && c->type == 0 && o->nrv == RK_MOVE) o->slow = 150;
             }
         }
@@ -30919,7 +30921,7 @@ static void update_firebars(void)
             V3 a = firebar_ball(in, j, 0), ab = vsub(firebar_ball(in, j, balls - 1), a);
             float t = fminf(fmaxf(vdot(vsub(c, a), ab) / fmaxf(vdot(ab, ab), 1e-3f), 0.0f), 1.0f);
             V3 q = vadd(a, vmul(ab, t));
-            if (vlen(vsub(c, q)) < 30.0f + HIT_BODY_R) { hurt_mario(q, 15.0f); return; }
+            if (vlen(vsub(c, q)) < 30.0f + HIT_BODY_R) { mario_attack(ATK_FIRERUN, q); return; }
         }
     }
 }
