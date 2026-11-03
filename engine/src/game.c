@@ -4293,7 +4293,7 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->trapeze = strcmp(name, "Trapeze") == 0;
     ci->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
     ci->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 || strcmp(name, "KinopioAstro") == 0 ? 3 :
-                  strcmp(name, "ButlerMap") == 0 ? 4 : strcmp(name, "Butler") == 0 ? 5 : lg_cls(name) ? 6 : strcmp(name, "TicoStarRing") == 0 ? 7 : 0;
+                  strcmp(name, "ButlerMap") == 0 ? 4 : strcmp(name, "Butler") == 0 ? 5 : lg_cls(name) ? 6 : strcmp(name, "TicoStarRing") == 0 ? 7 : strcmp(name, "TicoComet") == 0 ? 8 : 0;
     ci->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 : 0;
     ci->clipcls = strcmp(name, "Tico") == 0 || strcmp(name, "TicoBaby") == 0 || lg_cls(name) ? 1 : /* NameObjFactory: Tico, LuigiNPC */
                   strcmp(name, "SuperSpinDriver") == 0 || strcmp(name, "SuperSpinDriverPink") == 0 || strcmp(name, "SuperSpinDriverGreen") == 0 ? 2 : 0;
@@ -10724,13 +10724,86 @@ static int butler_talk_free(int row);   /* the Butler in its Wait nerve (no demo
 static int luigi_talk_free(int row);    /* LuigiNPC in a talking nerve (its section) */
 static int luigi_event(int t, u32 v), luigi_branch(int t, u32 v), kast_event(int t, u32 v);
 static int kast_peach; /* KinopioAstro (the messenger): its Peach letter, 0 none, 1 Mario's, 2 a Luigi supply */
+/* TicoComet (TicoComet.cpp, a TicoEat): in the Observatory once Rosetta told of the trick comet (isRosettaTalkTrickComet:
+ * EventCometStarter), else dead. Its talk (AstroGalaxy_TicoComet000, 350 to talk, its argument _194 20) asks for 20
+ * star pieces: branchFunc, enough of them; eventFunc 0 tryEat (EatPre: Excite; EatNow: a piece gifted every 100 / 20
+ * steps, each one eaten as it reaches its mouth, SE_SM_LV_TICOFAT_ABSORB / EATING; all eaten: EatPst 4 steps, EatEnd),
+ * 1 / 2 the StarPieceCounter's TicoFat mode on / off, 3 tryDemo (DemoAnim: Demo, SE_SM_TICOFAT_META_ITEM / META; at 90
+ * SE_SM_METAMORPHOSE_SMOKE, SE_DM_TICOFAT_MORPH_WIPE_IN; DemoFade: closeWipeWhiteFade(30), SE_DM_TICOFAT_MORPH_WIPE_OUT;
+ * the wipe over: forceOpenWipeWhiteFade, forceToNextStateGalaxyCometScheduler, startGalaxyMapLayoutForTicoComet, Wait,
+ * its pieces counted again; DemoEnd). ponytail: no turn to the camera in EatPre (turnQuatZDirRad), no Eat0..2 / Big0..2
+ * growth, no AnimScaleController, no reaction voices */
+static void wipe_start(int close, int frames);
+static int wipe_active(void);
+static void hud_tico_eat(int center);
+enum { TCM_NONE, TCM_EATPRE, TCM_EATNOW, TCM_EATPST, TCM_EATEND, TCM_DEMOANIM, TCM_DEMOFADE, TCM_DEMOEND };
+static struct { int row, nrv, step, left, counter; u32 lv[2]; struct { V3 pos; int on, col; } gift[8]; } tcm = {.row = -1, .left = 20};
+static int tcm_branch(int t, u32 v) { (void)t; (void)v; return got_pieces >= 20; } /* branchFunc: getStarPieceNum >= _194 */
+static int tcm_event(int t, u32 v) /* TicoComet::eventFunc */
+{
+    (void)t;
+    if (v == 1) { tcm.counter = 1; return 1; } /* forceAppearStarPieceCounterForTicoFat */
+    if (v == 2) { tcm.counter = 0; return 1; } /* disappearStarPieceCounterForTicoFat */
+    if (v != 0 && v != 3) return 1;
+    if (tcm.nrv == TCM_NONE) { tcm.nrv = v == 0 ? TCM_EATPRE : TCM_DEMOANIM; tcm.step = 0; } /* pushNerve */
+    if (tcm.nrv == (v == 0 ? TCM_EATEND : TCM_DEMOEND)) { tcm.nrv = TCM_NONE; return 1; } /* popNerve */
+    return 0;
+}
+static void tcm_update(Inst *in, const float *m)
+{
+    V3 up = vnorm(v3(m[4], m[5], m[6])), mouth = vadd(v3(m[12], m[13], m[14]), vmul(up, 100.0f));
+    if (tcm.counter) hud_tico_eat(0);
+    for (int g = 0; g < 8; g++) { /* the gifted pieces, flying to its Mouth: receiveMsgPlayerAttack(StarPieceGift) */
+        if (!tcm.gift[g].on) continue;
+        V3 to = vsub(mouth, tcm.gift[g].pos);
+        if (vlen(to) < 40.0f) { tcm.gift[g].on = 0; if (tcm.left > 0) tcm.left--; continue; }
+        tcm.gift[g].pos = vadd(tcm.gift[g].pos, vmul(vnorm(to), fminf(40.0f, vlen(to))));
+    }
+    int s = tcm.step++;
+    switch (tcm.nrv) {
+    case TCM_EATPRE: if (s == 0) obj_play(in, "excite", 1, 0); tcm.nrv = TCM_EATNOW; tcm.step = 0; break;
+    case TCM_EATNOW: {
+        int inflight = 0;
+        for (int g = 0; g < 8; g++) inflight += tcm.gift[g].on;
+        if (tcm.left - inflight > 0 && s % 5 == 0 && got_pieces > 0) /* isIntervalStep(100 / _194): giftStarPieceToTarget(Mouth, 1) */
+            for (int g = 0; g < 8; g++) if (!tcm.gift[g].on) {
+                tcm.gift[g].on = 1; tcm.gift[g].pos = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+                tcm.gift[g].col = piece_colour_next(); got_pieces--;
+                se_start(SE_SY_CS_FEED_PIECE, NULL);
+                break;
+            }
+        tcm.lv[0] = se_level(SE_SM_LV_TICOFAT_ABSORB, &m[12], tcm.lv[0]);
+        tcm.lv[1] = se_level(SE_SM_LV_TICOFAT_EATING, &m[12], tcm.lv[1]);
+        if (tcm.left == 0) { tcm.nrv = TCM_EATPST; tcm.step = 0; }
+        break;
+    }
+    case TCM_EATPST: if (s >= 4) { obj_play(in, "joy2", 1, 0); tcm.nrv = TCM_EATEND; tcm.step = 0; } break;
+    case TCM_DEMOANIM:
+        if (s == 0) { obj_play(in, "demo", 0, 0); se_start(SE_SM_TICOFAT_META_ITEM, &m[12]); se_start(SE_SM_TICOFAT_META, &m[12]); }
+        if (s >= 90) { se_start(SE_SM_METAMORPHOSE_SMOKE, &m[12]); se_start(SE_DM_TICOFAT_MORPH_WIPE_IN, NULL); tcm.nrv = TCM_DEMOFADE; tcm.step = 0; }
+        break;
+    case TCM_DEMOFADE:
+        if (s == 0) { wipe_start(1, 30); se_start(SE_DM_TICOFAT_MORPH_WIPE_OUT, NULL); break; }
+        if (!wipe_active()) {
+            wipe_start(0, 1); /* forceOpenWipeWhiteFade (gone at the next draw) */
+            gd_comet_next(); /* forceToNextStateGalaxyCometScheduler */
+            menu_galaxy_map(GMAP_TICO_COMET);
+            obj_play(in, "wait", 1, 0);
+            tcm.left = 20; /* clearGotCountStarPieceReceiver, _198 = _194 */
+            printf("tico comet row %d: its comet prayed for\n", in->row);
+            tcm.nrv = TCM_DEMOEND; tcm.step = 0;
+        }
+        break;
+    }
+}
 static void update_talkers(void)
 {
     if (!tk_nctl) return;
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
-        int sign = in->talkcls == 1, tico = in->talkcls == 2 || in->talkcls == 7; /* 7: TicoStarRing (a Tico) */
+        int sign = in->talkcls == 1, tico = in->talkcls == 2 || in->talkcls == 7 || in->talkcls == 8; /* 7: TicoStarRing, 8: TicoComet (Ticos) */
         if (!in->talkcls || !row_shown(in->row)) continue;
+        if (in->talkcls == 8 && !gd_flag_is_on("EventCometStarter")) { insts[i].invisible = 1; continue; } /* !isRosettaTalkTrickComet: makeActorDead */
         char lab[32];
         if (!talk_row_label(in->row, lab)) continue;
         /* SignBoard, Butler: NPCActor caps (talk 240, its balloon 150 up); Tico::initMessage (350, 120 up); Kinopio (122 x 1.2 up) */
@@ -10739,7 +10812,8 @@ static void update_talkers(void)
         Talker *t = &talkers[k];
         if (!t->root_auto) { /* onRootNodeAutomatic (NPCActor::initTalkCtrl); Butler::initForAstroDome: registerBranchFunc */
             t->root_auto = 1;
-            if (tico) t->kill = tico_kill;
+            if (tico && in->talkcls != 8) t->kill = tico_kill;
+            if (in->talkcls == 8) { t->event = tcm_event; t->branch = tcm_branch; t->arg = 20; tcm.row = in->row; } /* registerBranchFunc / EventFunc, setMessageArg(_194) */
             if (in->talkcls == 7) { /* TicoStarRing::init: setMessageArgToCurrentGalaxyName(mGalaxyName) */
                 char gl[48];
                 int a = ring_arg(&sc->objs[in->row]);
@@ -10778,6 +10852,9 @@ static void update_talkers(void)
             if (*ms < 0xFFFF) ++*ms;
         } else if (in->talkcls == 7) { /* TicoStarRing::exeWait: at its talk's end, Yes chosen: setNerveMeta */
             if (talk_near_at_end(k) && tk_yesno == 1) row_step[in->row] = 1; /* tryTalkSelectLeft */
+        } else if (in->talkcls == 8) { /* TicoComet: its nerves under the talk's event nodes */
+            tcm_update(&insts[i], m);
+            talk_near(k);
         } else if (in->talkcls == 4) { /* ButlerMap::exeTalk: at its talk's end the map (obj_arg0: the Grand Galaxy's) */
             if (talk_near_at_end(k)) menu_galaxy_map(sc->objs[in->row].arg[0] > 0);
         } else if (tico && sc->objs[in->row].arg[1] == 3) { /* Tico::exeTalk: at its talk's end Meta (gone) */
@@ -11297,6 +11374,14 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
                 break;
             }
     }
+    static int comet_on;
+    if (TALK_CLS == 8 && !comet_on++) { /* TicoComet: the trick comet told of (13 stars: EventCometStarter), 50 star pieces */
+        gd_set_star("HeavensDoorGalaxy", 1);
+        for (int k = 1; k <= 6; k++) { gd_set_star("EggStarGalaxy", k == 4 || k == 5 ? 7 : k); gd_set_star("HoneyBeeKingdomGalaxy", k); }
+        gd_set_star("SurfingLv1Galaxy", 1); gd_set_star("FlipPanelExGalaxy", 1);
+        printf("talk test: EventCometStarter %d" "\n", gd_flag_try_on("EventCometStarter"));
+        got_pieces = 50;
+    }
     static int ring_out;
     if (row < 0 && TALK_CLS == 7 && !ring_out++) { /* the TicoStarRings wait for their galaxy to appear: the first one out */
         int ty = scene_type(sc, "TicoStarRing");
@@ -11330,8 +11415,9 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
 #ifndef TALK_NO
 #define TALK_NO 0
 #endif
+    static int slct;
+    if (td.nrv != TD_SLCT) slct = 0; /* (each selector answered: TicoComet asks twice) */
     if (td.nrv == TD_SLCT) { /* the yes / no selector: the pointer on Yes (XF=-DTALK_NO=1: No), A once it is in */
-        static int slct;
         if (++slct == 60) printf("talk test f %d: pointer on %s %d\n", frame, TALK_NO ? "BoxLeft" : "BoxRight",
                                  menu_test_point(TALK_NO ? "BoxLeft" : "BoxRight"));
         pad_force = slct == 80 ? PAD_CROSS : 0;
@@ -39678,6 +39764,10 @@ void game_draw(void)
         }
     }
     RESTQ(3);
+    for (int g = 0; m_piece && g < 8; g++) if (tcm.gift[g].on) { /* TicoComet's gifted star pieces */
+        basis_matrix(m, tcm.gift[g].pos, up_at(tcm.gift[g].pos, v3(0, 1, 0)), v3(0, 0, 1), piece_rot);
+        render_model(m_pieces[tcm.gift[g].col], m, 0x60, 0xD0, 0xF0);
+    }
     for (int k = 0; m_piece && k < nfats; k++) /* TicoFat's gifted star pieces */
         for (int g = 0; g < 8; g++) if (fats[k].gift[g].on) {
             basis_matrix(m, fats[k].gift[g].pos, up_at(fats[k].gift[g].pos, v3(0, 1, 0)), v3(0, 0, 1), piece_rot);
