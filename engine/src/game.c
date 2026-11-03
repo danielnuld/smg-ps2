@@ -32883,10 +32883,23 @@ static int dx_always_moves(const char *cls) /* registerDemoSimpleCastAll without
 /* the bosses' own demos (DinoPackunDemo tryStartDemoMarioPuppetable, OtaKing::startDemo) stop the scene as well but
  * for the boss and the power star it brings out in them (appearPowerStarContinueCurrentDemo: requestMovementOn) */
 static const char *boss_demo_cls(void) { return dino_demo_on ? "DinoPackun" : ota_demo_on ? "OtaKing" : NULL; }
+/* the demos an actor starts on itself (startDemoSystem: requestMovementOn its starter; the rest of the scene stops):
+ * TicoFat's (tryMetamorphosis: TicoFatNrvDemo, callRequestMovementOnAllGroupMember), the Plant's growth
+ * (伸び植物（成長）) and a talk demo (TalkDirector's, its talker moving). Their class, NULL none */
+static int fat_demo(void), vine_demo_on(void);
+static const char *own_demo_cls(void)
+{
+    if (fat_demo()) return "TicoFat";
+    if (vine_demo_on()) return "Plant";
+    if (talk_demo() && td.st >= 0) return sc->types + 32 * sc->objs[talkers[td.st].row].type;
+    return NULL;
+}
 static int dx_cls_moves(const char *cls) /* an update_* of that class runs now */
 {
     const char *bc = boss_demo_cls();
     if (bc && !pd.name) return !strcmp(cls, bc) || !strcmp(cls, "PowerStar") || dx_always_moves(cls);
+    const char *oc = !pd.name && !dx.on ? own_demo_cls() : NULL;
+    if (oc) return !strcmp(cls, oc) || dx_always_moves(cls);
     if (pd.name) return (pd.row >= 0 && !strcmp(sc->types + 32 * sc->objs[pd.row].type, cls)) || dx_always_moves(cls);
     if (!dx.on) return 1;
     const Demo *d = &demos[dx.cur];
@@ -32897,6 +32910,7 @@ static int dx_cls_moves(const char *cls) /* an update_* of that class runs now *
 static int dx_row_moves(int row) /* the placement moves now */
 {
     if (boss_demo_cls() && !pd.name) return dx_cls_moves(sc->types + 32 * sc->objs[row].type);
+    if (!pd.name && !dx.on && own_demo_cls()) return dx_cls_moves(sc->types + 32 * sc->objs[row].type);
     if (pd.name) return row == pd.row || dx_always_moves(sc->types + 32 * sc->objs[row].type);
     if (!dx.on) return 1;
     const Demo *d = &demos[dx.cur];
@@ -38452,8 +38466,8 @@ void game_update(void)
     LQ(10, update_invincible());
     LQ(11, update_follow_groups());
     LQ(12, update_wrecks());
-    if (!demo_on) LQ(13, update_kuribo()); /* a demo moves only its cast (requestMovementOn): walkers stop.
-                                            * ponytail: the other actors still move in demos */
+    if (!demo_on) LQ(13, update_kuribo()); /* a demo moves only its cast (requestMovementOn): walkers stop; the other
+                                            * update_* by their class (lq_cls, dx_cls_moves) */
     LQ(14, kari_director());
     LQ(15, kari_bite());
     LQ(16, break_boxes());
