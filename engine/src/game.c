@@ -2040,6 +2040,9 @@ static struct { int on; Anim *a; float m[16]; } wcol; /* MarioActor::_BA8, the W
 static const Model *m_wcolumn;
 static void swim_reset(void);
 static const Model *m_freeze_ice;
+/* TornadoMario (MarioActor::mTornadoMario, MarioTornado / LuigiTornado): vis mIsVisible, shown its model, clip its BCK */
+static struct { int vis, shown; const char *clip; Anim *a; u32 lv; } tor;
+static const Model *m_tornado;
 
 static void area_types_reset(void);
 static u32 scene_seq; /* game_init counts the scenes (row_list) */
@@ -2089,6 +2092,11 @@ void game_init(const Scene *s, const unsigned char *blob)
         wcol.a = m_wcolumn ? mem_alloc(MEM_PLAYER, sizeof(Anim)) : NULL;
         if (wcol.a) { memset(wcol.a, 0, sizeof(Anim)); anim_bind(wcol.a, m_wcolumn->skin); }
         wcol.on = 0;
+        m_tornado = scene_model(s, "MarioTornado"); /* initTornadoMario: isLoadedObjectOrLayoutArchive */
+        if (m_tornado && !m_tornado->skin) m_tornado = NULL;
+        tor.a = m_tornado ? mem_alloc(MEM_PLAYER, sizeof(Anim)) : NULL;
+        if (tor.a) { memset(tor.a, 0, sizeof(Anim)); anim_bind(tor.a, m_tornado->skin); }
+        tor.vis = tor.shown = 0; tor.clip = NULL; /* init: appear, hidden */
         swim_reset();
         m_icestep = scene_model(s, "IceStep");
         kcl_icestep = scene_kcl(s, "IceStep");
@@ -13550,8 +13558,7 @@ static void m_cancel_tornado(Player *m) /* cancelTornadoJump */
     m->spin_lock = 1;
     ss_boost.t = 0; /* _426 */
 }
-/* resetTornado: the tornado off (_F, _544), mYAngleOffset 0. ponytail: no TornadoMario (its model is not in the slice),
- * no calcTornadoTilt, no AtField of 150 while in it */
+/* resetTornado: the tornado off (_F, _544), mYAngleOffset 0. ponytail: no calcTornadoTilt, no AtField of 150 while in it */
 static void m_reset_tornado(Player *m)
 {
     m->tornado = 0; m->tornado_t = 0;
@@ -18583,11 +18590,47 @@ static int m_do_recovery(Player *m)
     return 1;
 }
 
+static void tor_bck(const char *clip) /* TornadoMario's startBck (the BTKs: ponytail, its texture scroll not played) */
+{
+    tor.clip = clip;
+    if (tor.a) anim_start(tor.a, clip, 0);
+}
+static int tor_bck_on(const char *clip) { return tor.a && tor.clip == clip && !tor.a->done; } /* isBckPlaying */
+/* MarioActor::updateTornado and TornadoMario::show / hide / hideForce / control: shown in a tornado jump past its
+ * second frame (_F, _544 > 1): MarioTornadoStart, then MarioTornadoLoop with SE_PM_LV_TORNADE_FLYING; out of it (but
+ * 空中ひねり in a spin jump, or MarioMagic) MarioTornadoEnd, the model hidden when that stops. ponytail: drawn at his
+ * place on his front and up (setTrHeight's _54C: his up), no shadow cylinder, getDrawStates _8 / _990 (hideForce) */
+static const char TOR_START[] = "mariotornado/mariotornadostart", TOR_LOOP[] = "mariotornado/mariotornadoloop",
+                  TOR_END[] = "mariotornado/mariotornadoend";
+static void update_tornado_mario(Player *m)
+{
+    if (m->tornado && m->tornado_t > 0 && !m->grounded) m->tornado_t--; /* ponytail: _544's countdown is not in the
+        * decompilation (only its sets and > 1 / > 2 reads): one a frame in the air from mTornadoTimeAir */
+    if (!m_tornado || !tor.a) return;
+    if (m->tornado && m->tornado_t > 1) {
+        if (!tor.vis) { tor.vis = 1; tor_bck(TOR_START); tor.shown = 1; } /* show */
+    } else if ((!m_anim_on("空中ひねり") || m->jump_kind != 8) && !m->magic) {
+        if (tor.vis) { tor.vis = 0; tor_bck(TOR_END); } /* hide */
+    }
+    anim_update(tor.a);
+    if (tor.vis) { /* control */
+        if (tor.a->done) tor_bck(TOR_LOOP);
+        float at[3] = {m->pos.x, m->pos.y, m->pos.z};
+        tor.lv = se_level(SE_PM_LV_TORNADE_FLYING, at, tor.lv);
+    } else if (tor.a->done) tor.shown = 0; /* hideModel */
+}
+static int tornado_hides_mario(void) /* MarioActor::drawMarioModel: the tornado drawn instead */
+{
+    if (!m_tornado) return 0;
+    return (mario->tornado && mario->tornado_t > 2) || tor_bck_on(TOR_END) || tor_bck_on(TOR_LOOP);
+}
+
 static void update_mario_(void);
 static void update_mario(void)
 {
     if (hg.timer) hg.timer--; /* mHangTimer */
     update_mario_();
+    update_tornado_mario(mario);
     carry_inst = -1; carry_d = v3(0, 0, 0);
     kcl_pm_save();
     m_blend_step();
@@ -29352,6 +29395,27 @@ static int ss_hold(Player *m) /* Mario in a storm (its binder holds him), or his
     m->up = up_at(m->pos, m->up);
     return 1;
 }
+/* Test builds (TORNADO_TEST, SandClock 1): Mario put in the first storm until it holds him, a spin 60 frames on: the
+ * tornado jump and TornadoMario (Start, Loop, End) logged every 10 frames */
+void game_test_tornado(int frame)
+{
+    static int held_at = -1, thrown;
+    pad_force = 0;
+    if (ss_ride >= 0) {
+        if (held_at < 0) held_at = frame;
+        if (frame - held_at >= 60 && frame - held_at < 63) pad_force = PAD_SQUARE;
+    } else if (!thrown && held_at >= 0) thrown = 1;
+    else if (!thrown && frame % 20 == 0)
+        for (int i = 0; i < ninsts; i++) if (insts[i].sstorm) {
+            mario->pos = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]);
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            break;
+        }
+    if (frame % 10 == 0)
+        printf("tornado test f %d: ride %d tornado %d/%d tor vis %d shown %d clip %s frame %.0f, Mario %s\n", frame, ss_ride,
+               mario->tornado, mario->tornado_t, tor.vis, tor.shown, tor.clip ? tor.clip + 13 : "-", tor.a ? tor.a->frame : -1.0f,
+               tornado_hides_mario() ? "hidden" : "drawn");
+}
 static void draw_storm_traps(void)
 {
     if (!m_sstrap || !m_sstrap->skin) return;
@@ -39078,7 +39142,12 @@ void game_draw(void)
             }
         }
     }
-    if (m_mario_skin && !(mario->hurt_timer & 4) && !mario_hidden && !m_hide481 && !(fp_on && !fp_delay) && !teresa_hides_mario()) { /* the eye inside his head in the view */
+    if (tor.shown && tor.a && !mario_hidden && !m_hide481) { /* TornadoMario::calcAndSetBaseMtx: makeMtxUpFrontPos */
+        float tm[16];
+        basis_matrix(tm, mario->pos, mario->up, mario->face, 0);
+        draw_skin(m_tornado, tm, tor.a);
+    }
+    if (m_mario_skin && !(mario->hurt_timer & 4) && !mario_hidden && !m_hide481 && !(fp_on && !fp_delay) && !teresa_hides_mario() && !tornado_hides_mario()) { /* the eye inside his head in the view */
         const Model *md = disp_model >= 1 && m_morph[disp_model] ? m_morph[disp_model] : m_mario_skin;
         static unsigned inv_from; /* MR::startBrk(_9C8, "InvincibleMario") at its change: its C0 from frame 0 */
         static int inv_was;
