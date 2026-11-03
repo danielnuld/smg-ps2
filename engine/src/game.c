@@ -3399,10 +3399,13 @@ static void update_ticorails(void)
 }
 
 /* DeadLeaves.cpp: a spin by it (its sensor 70 at 30 up) brings out its item once (arg0 0 a coin, 1 three star
- * pieces). PomponPlant.cpp (Pompon2Plant / Pompon4Plant): Mario touching its flower (sensor 70 at (55, 170, -100)
- * in its frame) bounces off it (sendMsgTouchJump) and it gives arg1 (default 1) coins, or star pieces with arg0 0,
- * once; the pointer touching it (cursor) or a star piece shot do too. row_turn 1 once given. ponytail: no Spin /
- * Swing animation, the bounce is a plain 20 up */
+ * pieces); row_turn 1 once given. PomponPlant.cpp (Pompon2Plant / Pompon4Plant) after Petari: Wait; Mario touching
+ * its flower (sensor 70 at (55, 170, -100) in its frame) outside SwingPlayer bounces off it (sendMsgTouchJump:
+ * mario_touch_jump) and it swings (SwingPlayer: POMPON_PLANT_HIT, Hit clip), its item the first time only
+ * (tryGenItem: arg1 (1) coins, star pieces with arg0 0 and STAR_PIECE_BURST); the pointer on it in Wait: SwingDpd
+ * (DPD_HIT, DpdHit clip, no item). row_turn the nerve (0 Wait, 1 SwingDpd, 2 SwingPlayer), dsinit its item given.
+ * ponytail: a star piece (isMsgStarPieceReflect: SwingPlayer) does not reach it */
+static int mario_touch_jump(V3 from);
 static void cursor_ray(V3 *o, V3 *d);
 static int cursor_sees(V3 p, float px);
 static int pointer_a(void);
@@ -3417,7 +3420,7 @@ static void giver_give(const Inst *in, V3 at, V3 up)
         else if (r->arg[0] == 1) drop_pieces(at, up, 3);
     } else {
         int n = r->arg[1] > 0 ? r->arg[1] : 1;
-        if (r->arg[0] == 0) drop_pieces(at, up, n); else pop_coins(at, up, n);
+        if (r->arg[0] == 0) { drop_pieces(at, up, n); se_start(SE_OJ_STAR_PIECE_BURST, &at.x); } else pop_coins(at, up, n);
     }
     printf("%s %d gives its item" "\n", in->giver == 1 ? "dead leaves" : "pompon plant", in->row);
 }
@@ -3433,17 +3436,32 @@ static void update_givers(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     FOR_KIND(i, giver) {
-        const Inst *in = &insts[i];
-        if (!in->giver || row_turn[in->row]) continue;
+        Inst *in = &insts[i];
+        if (!in->giver) continue;
         V3 s = giver_sensor(in), up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
         float d = vlen(vsub(c, s));
         if (in->giver == 1) {
-            if (mario->spin_timer > 0 && d < 70.0f + 100.0f) giver_give(in, s, up);
-        } else if (d < 70.0f + HIT_BODY_R) { /* the touch jump */
-            mario->vup = 20.0f; mario->grounded = 0; mario->jump_kind = 0;
-            giver_give(in, s, up);
-        } else if (pointer_a() && cursor_sees(s, 30.0f))
-            giver_give(in, s, up);
+            if (!row_turn[in->row] && mario->spin_timer > 0 && d < 70.0f + 100.0f) giver_give(in, s, up);
+            continue;
+        }
+        signed char *n = &row_turn[in->row];
+        unsigned short *st = &row_step[in->row];
+        if (*st < 0xFFFF) ++*st;
+        if (*n != 2 && d < 70.0f + HIT_BODY_R && mario_touch_jump(s)) { *n = 2; *st = 0; } /* attackSensor */
+        switch (*n) {
+        case 0: if (cursor_sees(s, 30.0f)) { *n = 1; *st = 0; } break; /* tryStarPointerCheckWithoutRumble */
+        case 1:
+            if (*st == 0) { se_start(SE_OJ_POMPON_PLANT_DPD_HIT, &s.x); obj_play(in, "DpdHit", 0, 0); }
+            if (*st > 0 && (!in->anim || in->anim->done)) *n = 0;
+            break;
+        case 2:
+            if (*st == 0) {
+                se_start(SE_OJ_POMPON_PLANT_HIT, &s.x); obj_play(in, "Hit", 0, 0);
+                if (!in->dsinit) { in->dsinit = 1; giver_give(in, s, up); row_turn[in->row] = 2; } /* tryGenItem */
+            }
+            if (*st > 0 && (!in->anim || in->anim->done)) *n = 0;
+            break;
+        }
     }
 }
 
@@ -5609,7 +5627,7 @@ int game_test_giver(int kind)
 {
     for (int i = 0; i < ninsts; i++) { /* Mario at the first ungiven one: by DeadLeaves spinning, into a Pompon's flower */
         const Inst *in = &insts[i];
-        if (in->giver != kind || row_turn[in->row]) continue;
+        if (in->giver != kind || (kind == 2 ? in->dsinit : row_turn[in->row])) continue; /* given (PomponPlant: mCanGenItem) */
         V3 s = giver_sensor(in);
         mario->pos = vsub(s, vmul(mario->up, HIT_BODY_H));
         if (kind == 1) { mario->pos = vadd(mario->pos, vmul(vnorm(v3(in->m[0], in->m[1], in->m[2])), 120.0f)); mario->spin_timer = SPIN_TIME; }
@@ -15073,6 +15091,22 @@ static int dm_frame(Player *m)
     if (dmg.st == DMS_PARALYZE) disp_model = (game_frame & 3) ? 1 : dmg.disp_prev;
     m->hurt_timer = dm_enable_add() ? 0 : dm_after() ? dm_after() : 1; /* the objects' "can be hurt" and the blink */
     return took;
+}
+
+/* MarioActor::receiveOtherMsg ACTMES_TOUCHJUMP: not while damaged; away from `from` (mMsgJumpGroundPowerXZ along the
+ * ground + mMsgJumpGroundPowerY up, mMsgJumpAirPower in a jump), tryForcePowerJump */
+static int mario_touch_jump(V3 from)
+{
+    Player *m = mario;
+    if (dmg.st != DMS_NONE) return 0;
+    V3 v = vsub(vadd(m->pos, vmul(m->up, HIT_BODY_H)), from);
+    if (!m->jumping) {
+        v = vtangent(v, m->up);
+        v = vlen(v) > 1e-6f ? vmul(vnorm(v), MC.mMsgJumpGroundPowerXZ) : v;
+        v = vadd(v, vmul(m->up, MC.mMsgJumpGroundPowerY));
+    } else if (vlen(v) > 1e-6f) v = vmul(vnorm(v), MC.mMsgJumpAirPower);
+    m_power_jump(m, v);
+    return 1;
 }
 
 /* MarioActor::receiveMsgEnemyAttack / tryAttackMsg / tryVectorAttackMsg: an enemy's attack from `from` */
@@ -25267,7 +25301,8 @@ static void update_kuribo_one(Kuribo *k)
 
 /* Breakables (breakable()): Mario's spin near one, or his hip drop landing on it, breaks it; collision goes at once,
  * then its drops appear. ponytail: no upper punch, drops appear where the box was instead of popping out, a broken
- * HipDropRock is gone (no wreck left), no star piece on a switch kill */
+ * HipDropRock is gone (no wreck left, no HipDropRockBreak model: PunchBox's break effect stands in for it, its dead switch at once instead of at step 30), no star
+ * piece on a switch kill */
 /* MR::appearStarPiece (StarPieceDirector::appearPiece, StarPiece::launch): n star pieces from p, each 40 along `up`
  * plus up to 10 at random on each axis, falling (update_launched_pieces); gettable after 25 frames */
 static void drop_pieces(V3 p, V3 up, int n) { launch_pieces(p, up, n, 10.0f, 40.0f); }
@@ -25500,6 +25535,11 @@ static void break_inst(const Inst *in, int drops)
         else if (!strcmp(name, "CrystalCageL")) se_start(SE_OJ_CRYSTAL_CAGE_L_BREAK, at);
         else if (statue) se_start(SE_OJ_STRANGEROCK_BREAK_S, at); /* tryStartBreak: StageEffect's stop SE */
         if ((box || !strcmp(name, "PunchBox")) && sp) se_start(SE_OJ_STAR_PIECE_BURST, at);
+        if (!strcmp(name, "HipDropRock")) { /* HipDropRock::exeBreak: ROCK_BREAK, its SW_B, appearItem's burst */
+            se_start(SE_OJ_ROCK_BREAK, at);
+            if (r->sw[SW_B] >= 0) sw_set((Row *)r, SW_B, 1);
+            if (sp) se_start(SE_OJ_STAR_PIECE_BURST, at);
+        }
     }
     if (!strcmp(name, "SpiderMapBlock")) { /* SpiderMapBlock::kill */
         V3 y = v3(in->m[4], in->m[5], 0.0f); /* its Y in XY */
