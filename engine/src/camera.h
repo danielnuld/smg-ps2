@@ -55,6 +55,9 @@ void camera_pose(V3 *eye, V3 *watch, V3 *up, float *fovy);
  * has no such cameras. end: endForceAtLanding (back to the area camera once the target lands). */
 unsigned camera_class_hash(const char *name);
 int camera_event_start(unsigned cls, int set, V3 up, V3 front, V3 pos);
+int camera_event_start_player(unsigned cls, int set); /* MultiEventCamera::start(0), the player its target */
+int camera_event_index(void);                         /* the set's camera running (isActive), -1 none */
+void camera_event_next(void);                         /* MultiEventCamera::nextForce */
 void camera_event_target(V3 dir, V3 pos);
 void camera_event_end(void);
 int camera_event_named(const char *name, int zone); /* "e:<name>" of that zone, the player its target (NoTarget) */
