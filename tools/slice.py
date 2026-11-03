@@ -384,6 +384,9 @@ MAT_COLOR = {"StarPiece": ("StarPiece1_v", [(0x80, 0x00, 0x99), (0xE6, 0xA0, 0x0
 # a BRK stopped at a frame the actor sets at run time: its model baked at these frames, "<class>~<k>" (game.c picks k).
 # TicoFat::setScale: FatRed at (scale - 1) / 0.9 of its frame max (59); Normal frame 0 has the same colours as FatRed 0
 BRK_STEPS = {"TicoFat": ("fatred", (0, 20, 39, 59))}
+# a class that picks one of several BRKs at run time (MR::startBrk by name): its model baked at frame 0 of each, "<class>~<k>".
+# AstroDomeComet::appear: cCometBrkName[getCometNameId]
+BRK_NAMES = {"AstroDomeComet": ("red", "blue", "white", "yellow", "purple")}
 BRK_POSE = {"Tico": ("colorchange", 0), "TicoFat": ("normal", 0), "Rosetta": ("normal", 0), "DinoPackunEggShellBreak": ("break", 0),
             "HanachanHead": ("normal", 0), "HanachanBody": ("normal", 0), "HanachanBodyS": ("normal", 0)}  # HanachanParts::init: startBrk Normal  # TicoFat: startBrk Normal, frame 0 (ponytail: FatRed as it grows)
 
@@ -1799,6 +1802,10 @@ def placement(fs, galaxy, scenario):
             arcmap.setdefault(bn, bn)
             if bn not in per_stage[names[o["zone"]]]:
                 per_stage[names[o["zone"]]].append(bn)
+        for k, bn_ in enumerate(BRK_NAMES.get(n, ()) if arcmap.get(n) else ()):  # its BRKs' models (BRK_NAMES)
+            arcmap.setdefault(f"{n}~{k}", f"{arcmap[n]}~{bn_}:0")
+            if f"{n}~{k}" not in per_stage[names[o["zone"]]]:
+                per_stage[names[o["zone"]]].append(f"{n}~{k}")
         if n in BRK_STEPS and arcmap.get(n):  # its BRK frames' models (BRK_STEPS)
             for k, fr in enumerate(BRK_STEPS[n][1]):
                 arcmap.setdefault(f"{n}~{k}", f"{arcmap[n]}~{BRK_STEPS[n][0]}:{fr}")

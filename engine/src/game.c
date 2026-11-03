@@ -10677,8 +10677,16 @@ static HudCounter hud[4] = { /* StarCounter, CoinCounter, StarPieceCounter (norm
 static struct { int nrv, step, still, tico; } hudc; /* CounterLayoutController: 0 PlayerMoving, 1 PlayerNotMoving; _24 */
 static int hud_on; /* forceAppearDefaultGameLayout has run (ScenarioStarter's Welcome, step 90) */
 static int dome_layout_off; /* the dome's SphereSelector: deactivateDefaultGameLayout while it runs */
+static int star_alone; /* MR::appearStarCounter with the default layout off (the dome's select): the StarCounter alone */
 static void hud_set(HudCounter *c, int n) { c->nrv = n; c->step = 0; }
 static void hud_ap(HudCounter *c, int n) { c->ap = n; c->ap_step = 0; }
+static int hud_value(int k);
+static void star_counter_show(int on) /* MR::appearStarCounter (StarCounter::appear) / disappearStarCounter */
+{
+    HudCounter *c = &hud[0];
+    if (on) { c->dead = 0; c->disp = c->num = hud_value(0); hud_set(c, HC_APPEAR); hud_ap(c, AP_APPEAR); star_alone = 1; }
+    else if (!c->dead && c->nrv != HC_HIDE) { hud_set(c, HC_DISAPPEAR); hud_ap(c, AP_DISAPPEAR); }
+}
 static int hud_value(int k)
 {
     return k == 0 ? stars : k == 1 ? got_coins : k == 2 ? got_pieces : lives;
@@ -10795,6 +10803,7 @@ static void hud_update(void)
     int busy = hud_busy();
     for (int k = 0; k < 4; k++) {
         HudCounter *c = &hud[k];
+        if (dome_layout_off && k) continue; /* deactivateDefaultGameLayout: the controller and its counters dead */
         if (k == 2) { spc_update(c); goto appearer; }
         if (c->dead) continue;
         c->num = hud_value(k);
@@ -10824,6 +10833,7 @@ static void hud_update(void)
         if (c->ap == AP_APPEAR && c->ap_step > 21) hud_ap(c, AP_SHOW);
         if (c->ap == AP_DISAPPEAR && c->ap_step > 21) hud_ap(c, AP_HIDE);
     }
+    if (dome_layout_off) return;
     /* the controller */
     int moving = !mario->grounded || pad_lx() != 0.0f || pad_ly() != 0.0f || pad_held(0xFFFF) || busy;
     int all = 1;
@@ -10861,10 +10871,10 @@ static float hud_hermite(float f, float f0, float v0, float s0, float f1, float 
 }
 static void hud_draw(void)
 {
-    if (menu_paused() || dome_layout_off || dx.on || pd.name) return; /* PauseMenu::appear / SphereSelector::appear / startDemoSystem (a programmable demo too): deactivateDefaultGameLayout */
+    if (menu_paused() || (dome_layout_off && !star_alone) || dx.on || pd.name) return; /* PauseMenu::appear / SphereSelector::appear / startDemoSystem (a programmable demo too): deactivateDefaultGameLayout */
     for (int k = 0; k < 4; k++) {
         const HudCounter *c = &hud[k];
-        if (c->ap == AP_HIDE) continue;
+        if (c->ap == AP_HIDE || (dome_layout_off && k)) continue;
         float f = (float)c->ap_step, a = 1.0f, r = 1.0f;
         if (c->ap == AP_APPEAR) { /* appear.brlan RLVC: (2, 0, 0) (20, 255, 38.79); the ease-out rate */
             a = f <= 2 ? 0.0f : f >= 20 ? 1.0f : hud_hermite(f, 2, 0, 0, 20, 255, 38.79f) / 255.0f;
@@ -34279,8 +34289,8 @@ static int kast_event(int t, u32 v)
  * AstroDomeCameraController and AstroDomeGalaxySelector after Petari (their layouts: menu.c menu_dome_*). The pointer
  * is the right stick, the pointer's A R2 at the blue star (gcap_pick, as GCaptureTarget) and X in the select (the
  * menus' decide; held with the pointer off the galaxies it drags the globe), B Circle / Triangle. ponytail: no
- * capture ribbon / effects, no star counter, no マリオ飛び出し demo, no comet
- * galaxy, no BGM states / rumble, no shadows / star number plates, the select ring without its BRK fade */
+ * capture ribbon / effects, no BGM states / rumble, no shadows / star number plates, the select ring without its BRK
+ * fade */
 typedef struct { V3 x, y, z, p; } Mx; /* columns, translation */
 static V3 mx_rot(const Mx *m, V3 v) { return vadd(vadd(vmul(m->x, v.x), vmul(m->y, v.y)), vmul(m->z, v.z)); }
 static V3 mx_ap(const Mx *m, V3 v) { return vadd(mx_rot(m, v), m->p); }
@@ -34361,6 +34371,8 @@ static struct {
     Dn cc; V3 start; V3 zs, ze, zc, ts, te, tc, us, ue, uc; float ease;
     /* AstroDomeGalaxySelector */
     Dn gs; int back_on;
+    /* AstroDomeComet: its row, the comet galaxy (-1 dead), Confirm, its colour's model */
+    int c_row, c_gi, c_confirm; const Model *c_md;
 } dm;
 static Inst *dm_inst(int row) /* its instance now (game_rebind renumbers them) */
 {
@@ -34448,7 +34460,7 @@ static void dm_select_end(void) /* SphereSelector::kill: SELECT_END to all, the 
 {
     dm_msg(M_SELECT_END);
     dn_init(&dm.sel, SS2_NONE);
-    dome_layout_off = 0;
+    dome_layout_off = star_alone = 0;
     menu_dome_close();
 }
 
@@ -34582,6 +34594,62 @@ static int dm_galaxy_selected(int i) /* receive TARGET_SELECTED in Wait */
 static void dm_galaxy_zoom_in(int i) { if (dm.g[i].zoom_out && dm.g[i].level == 20) { dm.g[i].zoom_out = 0; dm.g[i].level = 0; } }
 static void dm_galaxy_zoom_out(int i) { if (!dm.g[i].zoom_out && dm.g[i].level == 20) { dm.g[i].zoom_out = 1; dm.g[i].level = 0; } }
 
+/* --- AstroDomeComet after Petari: alive from the select's start to its end (trySyncAppearMsgSelectStart) over the
+ * galaxy a comet landed on (updateCometStatus: isGalaxyCometLandInStage), its colour the BRK cCometBrkName[comet name
+ * id] (slice.py BRK_NAMES: "AstroDomeComet~<id>"), at the galaxy's place with its own rotation; Select: its six
+ * pointing actors (cPointingRadius 1000 at cPointingPosY 2000 + cPointingOffsetY 1500 x i up its CometIcon) point
+ * that galaxy unless the handle is held; Confirm: hidden unless its galaxy is the one chosen.
+ * (its BCK AstroDomeComet turns the comet round the galaxy). ponytail: the pointing column on the base, not on the
+ * turning CometIcon joint; no BTK, no bloom model */
+static void dm_comet_appear(void)
+{
+    dm.c_gi = -1;
+    for (int i = 0; i < dm.ng && dm.c_row >= 0; i++) {
+        int st = gd_comet_star(dm.g[i].name);
+        if (!st) continue;
+        const char *c = gd_scenario_comet(dm.g[i].name, st);
+        int id = !strcmp(c, "Dark") ? 2 : !strcmp(c, "Ghost") ? 1 : !strcmp(c, "Quick") ? 3 : /* getCometNameIdFromString */
+                 !strcmp(c, "Purple") || !strcmp(c, "Black") ? 4 : 0;
+        char n[24];
+        snprintf(n, sizeof n, "AstroDomeComet~%d", id);
+        dm.c_md = scene_model(sc, n);
+        dm.c_gi = i; dm.c_confirm = 0;
+        printf("dome: comet %s over %s (%s model)\n", c, dm.g[i].name, dm.c_md ? "coloured" : "base");
+        break;
+    }
+}
+static void dm_comet_update(void)
+{
+    Inst *in = dm_inst(dm.c_row);
+    if (!in) return;
+    in->invisible = 1;
+    if (dm.c_gi < 0 || dn_is(&dm.sel, SS2_NONE)) return;
+    int gi = dm.c_gi;
+    /* calcAndSetBaseMtx: mPosition the galaxy's, its placement's rotation and scale */
+    in->m[12] = dm.g[gi].pos.x; in->m[13] = dm.g[gi].pos.y; in->m[14] = dm.g[gi].pos.z;
+    if (dm.c_md) in->md = dm.c_md;
+    if (in->md->skin && (!in->anim || in->anim->skin != in->md->skin)) /* startBck AstroDomeComet: its pose beyond update_obj_anims' 8000 */
+        in->anim = obj_anim(in->row, in->md, "AstroDomeComet");
+    if (in->anim && vlen(vsub(dm.g[gi].pos, cam_pos)) >= 8000.0f && dx_row_moves(in->row)) anim_update(in->anim);
+    if (dm.c_confirm) { in->invisible = dm.selected != T_GALAXY + gi; return; } /* exeConfirm */
+    in->invisible = 0;
+    if (dn_is(&dm.hd, HD_HOLD)) return; /* tryPointing: not while the handle is held */
+    V3 ce = dm_cam_pos(), e, w, u; float fov, cx, cy;
+    camera_pose(&e, &w, &u, &fov);
+    float f = 224.0f / tanf(fov * 3.14159265f / 360.0f);
+    if (!game_cursor(&cx, &cy)) return;
+    for (int k = 0; k < 6; k++) { /* isStarPointerPointing1PWithoutCheckZ */
+        float y = 2000.0f + 1500.0f * k, sx, sy;
+        V3 p = v3(in->m[4] * y + in->m[12], in->m[5] * y + in->m[13], in->m[6] * y + in->m[14]);
+        float z = vdot(vsub(p, ce), vnorm(vsub(w, e))), r = z > 0 ? 1000.0f * f / z : 0;
+        if (z > 0 && screen_pos(p, &sx, &sy) && (sx - cx) * (sx - cx) + (sy - cy) * (sy - cy) < r * r) {
+            float gz = vdot(vsub(dm.g[gi].pos, ce), vnorm(vsub(w, e)));
+            if (dn_is(&dm.g[gi].n, MG_WAIT)) dm_register(T_GALAXY + gi, (u32)(gz > 0 ? gz : 0)); /* registerPointingTarget(mMiniGalaxy) */
+            break;
+        }
+    }
+}
+
 static void dm_galaxy_update(int i)
 {
     typeof(&dm.g[0]) g = &dm.g[i];
@@ -34708,11 +34776,14 @@ static void dm_selector_actor_update(void)
     switch (dn_begin(&dm.gs)) {
     case GS_SELECTSTART: /* tryStartLectureDemo: ドームレクチャー２ (without the cinema frame) until 天球儀レクチャー */
         if (!dn_is(&dm.sel, SS2_SELECTWAIT)) break;
-        dn_set(&dm.gs, !gd_story_passed("天球儀レクチャー") && dx_request("ドームレクチャー２", 1) ? GS_DEMODOMELECTURE : GS_SELECT);
+        if (!gd_story_passed("天球儀レクチャー") && dx_request("ドームレクチャー２", 1)) { dn_set(&dm.gs, GS_DEMODOMELECTURE); break; }
+        star_counter_show(1); /* appearStarCounter */
+        dn_set(&dm.gs, GS_SELECT);
         break;
     case GS_DEMODOMELECTURE: /* exeDemoDomeLecture */
         if (dx_busy()) break;
         gd_story_follow("天球儀レクチャー");
+        star_counter_show(1); /* appearStarCounter */
         dn_set(&dm.gs, GS_SELECT);
         break;
     case GS_GALAXYMOVELECTURE: /* exeGalaxyMoveLecture */
@@ -34738,7 +34809,7 @@ static void dm_selector_actor_update(void)
         break;
     }
     case GS_SELECTCANCEL:
-        if (menu_dome_back_state(2)) { dm_select_end(); dn_init(&dm.gs, GS_DEAD); return; }
+        if (menu_dome_back_state(2)) { dm_select_end(); star_counter_show(0); dn_init(&dm.gs, GS_DEAD); return; } /* selectEnd, kill: disappearStarCounter */
         break;
     case GS_CONFIRMSTART:
         if (FIRST(&dm.gs)) menu_dome_back(1);
@@ -34759,7 +34830,8 @@ static void dm_selector_actor_update(void)
         int i = dm.selected - T_GALAXY;
         if (FIRST(&dm.gs)) {
             printf("dome: %s chosen\n", dm.g[i].name);
-            menu_dome_close(); /* disappearStarCounter, the confirm layout and the info out */
+            star_counter_show(0); /* disappearStarCounter */
+            menu_dome_close(); /* the confirm layout and the info out */
             if (!dx_request("マリオ飛び出し", 0)) printf("dome: no jump out demo\n");
             break;
         }
@@ -34783,6 +34855,7 @@ static void dm_msg(int msg)
         ads_select(1);
         dm_handle_appear();
         for (int i = 0; i < dm.ng; i++) dm_galaxy_appear(i);
+        dm_comet_appear();
         dm.start = dm_cam_pos(); dm.zs = dm.ze = dm.zc = dm.start; dm.ts = dm.te = dm.tc = v3(0, 0, 0);
         dm.us = dm.ue = dm.uc = v3(0, 1, 0);
         dn_init(&dm.cc, CC_SELECTSTART); dm.cc.step = -1; dm.cc.next = CC_SELECTSTART;
@@ -34792,6 +34865,7 @@ static void dm_msg(int msg)
     case M_SELECT_END:
         butler_sync(0);
         ads_select(0);
+        dm.c_gi = -1; /* AstroDomeComet::kill */
         dn_set(&dm.hd, HD_DISAPPEAR);
         for (int i = 0; i < dm.ng; i++) dn_init(&dm.g[i].n, MG_DEAD);
         dn_init(&dm.cc, CC_DEAD);
@@ -34801,6 +34875,7 @@ static void dm_msg(int msg)
     case M_CONFIRM_START:
         dn_set(&dm.hd, HD_CONFIRMSTART);
         for (int i = 0; i < dm.ng; i++) if (!dn_is(&dm.g[i].n, MG_SELECTED)) dn_set(&dm.g[i].n, MG_NOTSELECTED);
+        dm.c_confirm = 1;
         dn_set(&dm.cc, CC_CONFIRMSTART);
         dn_set(&dm.gs, GS_CONFIRMSTART);
         dn_set(&dm.bs, BS_CONFIRMSTART);
@@ -34808,6 +34883,7 @@ static void dm_msg(int msg)
     case M_CONFIRM_CANCEL:
         dn_set(&dm.hd, HD_CONFIRMCANCEL);
         for (int i = 0; i < dm.ng; i++) dn_set(&dm.g[i].n, MG_WAIT);
+        dm.c_confirm = 0;
         dn_set(&dm.cc, CC_CONFIRMCANCEL);
         dn_set(&dm.bs, BS_CONFIRMCANCEL);
         break;
@@ -34972,7 +35048,7 @@ static int dome_hold(Player *m)
 static void dome_init(void)
 {
     memset(&dm, 0, sizeof dm);
-    dm.bs_row = -1;
+    dm.bs_row = dm.c_row = dm.c_gi = -1;
     dn_init(&dm.bs, BS_WAIT); dn_init(&dm.sel, SS2_NONE); dn_init(&dm.hd, HD_DEAD); dn_init(&dm.cc, CC_DEAD); dn_init(&dm.gs, GS_DEAD);
     for (u32 r = 0; r < sc->nobjs; r++) /* makeActorAppeared: its appear switch on (ドームレクチャー１ turns it off, TicoDomeLecture's dead switch on) */
         if (!strcmp(sc->types + 32 * sc->objs[r].type, "AstroDomeBlueStar")) {
@@ -34993,6 +35069,8 @@ static void dome_init(void)
             dn_init(&g->n, MG_DEAD);
         }
     }
+    for (u32 r = 0; r < sc->nobjs; r++)
+        if (!strcmp(sc->types + 32 * sc->objs[r].type, "AstroDomeComet")) dm.c_row = (int)r;
     for (int i = 0; i < ninsts; i++) /* SphereSelectorHandle: its place */
         if (!strcmp(sc->types + 32 * sc->objs[insts[i].row].type, "SphereSelectorHandle")) dm.hpos = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]);
     for (int i = 0; i < dm.ng; i++) { /* MiniatureGalaxyHolder::calcIndex: by the stars to open, a Koopa one last */
@@ -35025,6 +35103,7 @@ static void dome_update(void)
     dm_selector_update();
     dm_handle_update();
     for (int i = 0; i < dm.ng; i++) dm_galaxy_update(i);
+    dm_comet_update();
     dm_camera_update();
     dm_selector_actor_update();
     for (int i = 0; i < dm.ng; i++) { /* dead until the select starts */

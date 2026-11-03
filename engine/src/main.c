@@ -1408,9 +1408,15 @@ int main(void)
             pad_force = 0;
             if (frame == 200) { /* the Gateway's grand star: Good Egg can open; the Butler's lectures heard */
                 gd_set_star("HeavensDoorGalaxy", 1); gd_story_follow("天球儀レクチャー"); gd_story_follow("ギャラクシー移動レクチャー");
+#ifdef DOME_COMET /* XF=-DDOME_COMET: a comet on Good Egg (as the comet test), opened: AstroDomeComet over it */
+                for (int k = 1; k <= 6; k++) { gd_set_star("EggStarGalaxy", k == 4 || k == 5 ? 7 : k); gd_set_star("HoneyBeeKingdomGalaxy", k); } gd_set_star("SurfingLv1Galaxy", 1); gd_set_star("FlipPanelExGalaxy", 1);
+                gd_flag_try_on("EggStarGalaxy"); gd_flag_try_on("EventCometStarter"); gd_comet_sync();
+                printf("dome test: Good Egg comet star %d\n", gd_comet_star("EggStarGalaxy"));
+#endif
             }
             if (frame >= 300 && frame < 345) { int r = game_test_dome(0, 1); if (frame == 300) printf("dome test f %u: blue star %d\n", frame, r); }
             if (frame == 345) game_test_dome(0, 0);
+#ifndef DOME_COMET /* (the select left on screen) */
             if (frame >= 600 && frame <= 620) { int st = game_test_dome(1, 0); if (frame == 600) printf("dome test f %u: galaxy 0 state %d\n", frame, st); }
             if (frame == 620) pad_force = PAD_CROSS;
             if (frame >= 820 && frame <= 840) { int st = game_test_dome(1, 0); if (frame == 820) printf("dome test f %u: galaxy 0 state %d\n", frame, st); }
@@ -1421,6 +1427,7 @@ int main(void)
                 printf("dome test f %u: demo %d, selecting %d\n", frame, game_test_demo(-1), menu_scenario_selecting());
             if (frame == 1700) printf("dome test f %u: pointer on Star1 %d, selecting %d\n", frame, menu_test_point_scenario("Star1"), menu_scenario_selecting());
             if (frame == 1720) pad_force = PAD_CROSS;
+#endif
         }
 #endif
 #if defined(PACKS) && defined(COMET_TEST)
