@@ -2092,9 +2092,18 @@ int main(void)
             printf("key test f %u: row %d, taken %d\n", frame, game_test_key(), game_key_taken());
 #endif
 #ifdef NOTE_TEST
-        { /* the first note fairy out (150), Mario onto its notes one after another (from 300) */
+        { /* the first note fairy out (150), Mario onto its notes one after another (from 300); XF=-DNOTE_WATCH: out at
+           * 600 (after the opening), the notes taken from 1300; -DNOTE_FAIL: none taken (the countdown, the flashing) */
+#ifdef NOTE_WATCH
+            if (frame == 600) printf("note test f %u: row %d\n", frame, game_test_note(0));
+            if (frame >= 1300 && frame < 2400 && frame % 5 == 0) {
+#elif defined(NOTE_FAIL)
+            if (frame == 600) printf("note test f %u: row %d\n", frame, game_test_note(0));
+            if (0) {
+#else
             if (frame == 150) printf("note test f %u: row %d\n", frame, game_test_note(0));
             if (frame >= 300 && frame < 2400 && frame % 5 == 0) {
+#endif
                 int left = game_test_note(1);
                 if (frame % 30 == 0) printf("note test f %u: %d left\n", frame, left);
             }
