@@ -12131,7 +12131,9 @@ static float m_sz; /* (mStickPos.z, below) */
  * looks into the screen (setFrontVec), he turns round at once (90 degrees of stick to turn standing, _750 10 with the
  * drawn turn mirrored to the camera: createCorrectionMtx), isEnableTurn is off, the walls facing the plane are no walls
  * (checkAllWall) and his drawn axes absorb small shakes (createMtxDir, mVibrationAbsorbAngle).
- * ponytail: PipeModeCube (MarioMove25D) is not ported; the gravity flip's 2D handling (MarioActorGravity: no gravity
+ * PipeModeCube (MarioMove25D: set25Dmode / update25Dmode / updateAxisFromMode) is placed in no stage of the game
+ * (only ObjNameTable names it): not ported.
+ * ponytail: the gravity flip's 2D handling (MarioActorGravity: no gravity
  * flips here, _10.turning never set), checkForceGrounding, the binder's push from moving parts in 2D, the walk tilt and
  * homing of MarioAnimator, beforeJumping2D's _628 (read nowhere) and the warps' _688 (MarioAccess setTrans) are not
  * kept */
@@ -13666,8 +13668,10 @@ static void m_trample_jump(Player *m, float normal)
 }
 static void m_trample(Player *m) { m_trample_jump(m, MC.mTrampleNormal); }
 /* MarioActor::doTrampleJump, an object's sensor (not ATYPE_PLAYER_AUTO_JUMP) taking his trample: off a wall, the
- * tornado's air walk and the spin back (_402, _2B), trampleJump. ponytail: no 砲弾 / 全滅用クリボー combo count
- * (playSoundTrampleCombo, its 1-up) */
+ * tornado's air walk and the spin back (_402, _2B), trampleJump. Its combo (_989: playSoundTrampleCombo, a 1-up at the
+ * fifth 砲弾 / eighth 全滅用クリボー) counts only those two actors: 砲弾 is KoopaJrShip's boss shell (the port's cannon
+ * shells are IronCannonShell, キャノン弾砲台の弾: no combo) and 全滅用クリボー the KuriboChief's children; neither is
+ * ported, so neither is the count (ponytail: add it with them) */
 static void mario_trample(void)
 {
     Player *m = mario;
