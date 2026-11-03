@@ -1209,6 +1209,9 @@ static int life = MAX_LIFE, max_life = MAX_LIFE, misses, lives = START_LIVES, st
 static void miss(void);
 static int miss_running(void);
 static int miss_abyss; /* the next miss is MarioActor::exeGameOverAbyss's (a DeathArea: forceKillPlayerByAbyss) */
+/* MarioActor::exeGameOverBlackHole2 (MarioActorBlackHole.cpp): the hole's place (mBlackHolePosition), Mario's place
+ * about it (mPosRelativeToBlackHole), the axis he spirals about (mBlackHoleRotateAxis), his scale, the nerve step */
+static struct { int on, step, hidden; V3 pos, rel, axis; float scale; } bh;
 static void bgm_stop(int frames);
 static const char *bgm_comet(void);
 static void mario_sound(const char *key);
@@ -2093,6 +2096,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         wcol.a = m_wcolumn ? mem_alloc(MEM_PLAYER, sizeof(Anim)) : NULL;
         if (wcol.a) { memset(wcol.a, 0, sizeof(Anim)); anim_bind(wcol.a, m_wcolumn->skin); }
         wcol.on = 0;
+        memset(&bh, 0, sizeof bh);
         m_tornado = scene_model(s, "MarioTornado"); /* initTornadoMario: isLoadedObjectOrLayoutArchive */
         if (m_tornado && !m_tornado->skin) m_tornado = NULL;
         tor.a = m_tornado ? mem_alloc(MEM_PLAYER, sizeof(Anim)) : NULL;
@@ -18749,8 +18753,68 @@ static void update_mario(void)
     kcl_pm_save();
     m_blend_step();
 }
+/* MarioActor::forceGameOverBlackHole / exeGameOverBlackHole2 after the hole's attackSensor (BlackHole Demo): the
+ * hole's actor camera if it has one (tryStartDemoCamera), ブラックホール落下, 共通ブラックホール, DieBlackHole and
+ * ブラックホール吸い込まれ, initBlackHoleOut (the spiral's axis turned off his place towards the camera by
+ * atan(mBlackHoleFirstRadius x his distance to the camera along its z / his distance to the hole)); each step he turns
+ * about it by min(mBlackHoleRotateSpeed x step x sqrt(step / 180), mBlackHoleRotateLimit), the axis eased 0.01 to the
+ * camera's -z, his distance x (180 - step) / (181 - step), his scale 1 - mBlackHoleScaleSpeed x step (down to
+ * mBlackHoleScaleLimit); step 60 the miss (マリオ奈落 / ゲームオーバー: miss() with the abyss's voice), step
+ * mBlackHoleHideTime he is hidden (_482) with ブラックホール消滅 (MarioDieBlackHoleVanish).
+ * ponytail: no BlackHoleCamera (startBlackHoleCamera) for a hole without its own camera, no star pointer death mode,
+ * no BlackHole Disappear demo action; a build without the miss events (MISS_EVENTS) ends it at the miss */
+static void bh_start(Player *m, const Inst *in)
+{
+    memset(&bh, 0, sizeof bh);
+    bh.on = 1; bh.scale = 1.0f;
+    bh.pos = v3(in->m[12], in->m[13], in->m[14]);
+    if (row_camset[in->row] != -1) { /* BlackHole::tryStartDemoCamera: startActorCameraTargetSelf */
+        V3 x, z;
+        row_axes(&sc->objs[in->row], &x, &z);
+        camera_actor_start(sc->types + 32 * sc->objs[in->row].type, "", (unsigned short)row_camset[in->row], m->up, z, bh.pos);
+    }
+    m_anim("ブラックホール落下"); /* changeAnimationNonStop */
+    mario_smoke(SMOKE_BLACKHOLE);
+    mario_sound("ブラックホール吸い込まれ");
+    mario_named_fx(gd_player_luigi() ? "DieBlackHoleLuigi" : player_mode == PM_BEE ? "DieBlackHoleBee" : "DieBlackHole", NULL);
+    V3 eye, watch, up; float fovy; /* initBlackHoleOut */
+    camera_pose(&eye, &watch, &up, &fovy);
+    V3 camz = vnorm(vsub(watch, eye));
+    bh.rel = vsub(m->pos, bh.pos);
+    V3 a = vnorm(vcross(vnorm(vsub(eye, bh.pos)), vnorm(bh.rel)));
+    float mag = vlen(bh.rel), f = vdot(vsub(eye, m->pos), camz) * MC.mBlackHoleFirstRadius;
+    float t = mag > 1e-6f ? atanf(f / mag) : 0.0f, c = cosf(t), s = sinf(t); /* PSMTXRotAxisRad: Rodrigues */
+    V3 v = bh.rel;
+    bh.axis = vnorm(vadd(vadd(vmul(v, c), vmul(vcross(a, v), s)), vmul(a, vdot(a, v) * (1.0f - c))));
+    m->hvel = v3(0, 0, 0); m->vup = 0;
+    printf("black hole: Mario inhaled\n");
+}
+static void bh_update(Player *m)
+{
+    if (bh.step == 60) { miss_abyss = 1; miss(); if (!miss_running()) { bh.on = 0; return; } } /* startPlayerEvent */
+    if (bh.step == MC.mBlackHoleHideTime) { bh.hidden = 1; mario_named_fx("Vanish", NULL); } /* _482, ブラックホール消滅 */
+    float st = (float)bh.step, k = st < 180.0f ? sqrtf(st / 180.0f) : 1.0f;
+    float ang = st * MC.mBlackHoleRotateSpeed * k;
+    if (ang > MC.mBlackHoleRotateLimit) ang = MC.mBlackHoleRotateLimit;
+    V3 a = bh.axis, v = bh.rel;
+    float c = cosf(ang), s = sinf(ang);
+    bh.rel = vadd(vadd(vmul(v, c), vmul(vcross(a, v), s)), vmul(a, vdot(a, v) * (1.0f - c)));
+    V3 eye, watch, up; float fovy;
+    camera_pose(&eye, &watch, &up, &fovy);
+    blend_sphere(bh.axis, vnorm(vsub(eye, watch)), &bh.axis, 0.01f);
+    float d = 180.0f - st;
+    if (d < 0.0f) d = 0.0f;
+    float l = vlen(bh.rel);
+    if (l > 1e-6f) bh.rel = vmul(bh.rel, (l * d / (1.0f + d)) / l);
+    bh.scale = 1.0f - st * MC.mBlackHoleScaleSpeed;
+    if (bh.scale < MC.mBlackHoleScaleLimit) bh.scale = MC.mBlackHoleScaleLimit;
+    m->pos = vadd(bh.pos, bh.rel);
+    m->hvel = v3(0, 0, 0); m->vup = 0;
+    bh.step++;
+}
 static void update_mario_(void)
 {
+    if (bh.on) { bh_update(mario); if (mario_anim) anim_update(mario_anim); return; } /* MarioActorNrvGameOverBlackHole */
     if (miss_running()) { if (mario_anim) anim_update(mario_anim); return; } /* the down / game over demo holds him */
     Player *m = mario;
     V3 up0 = m->up;
@@ -19349,7 +19413,7 @@ static void miss(void)
     mev.on = 1;
     mev.over = lives <= 0; /* MarioActor::exeGameOver: getPlayerLeft() == 0 */
     mario->hvel = v3(0, 0, 0); mario->vup = 0;
-    if (mario_anim) mario_play(swimming ? "deathwater" : "down", 1.0f, 0); /* changeGameOverAnimation */
+    if (mario_anim && !bh.on) mario_play(swimming ? "deathwater" : "down", 1.0f, 0); /* changeGameOverAnimation */
     bgm_stop(10); bgm_sub_stop(10); /* (setCubeBgmChangeInvalid, clearBgmQueue) */
     if (miss_abyss && !mev.over) mario_sound("声落下死亡"); /* EventAbyss::init */
     else { mario_sound("声最終ダメージ"); mario_sound("最後の一撃"); } /* EventDown / EventGameOver::init */
@@ -30291,7 +30355,8 @@ static void update_collapse(void)
  * it shakes (Shake); an enemy attack (a coconut, a rock, an explosion) breaks it (Break: a coin, arg0 0 three star
  * pieces: needle_attacked). BlackHole / BlackHoleCube (BlackHole.cpp): inside the sphere of radius 500 * scale, or the cube's box
  * of +-500 * scale, Mario is inhaled: a miss; walkers in it die (nothing dropped); SW_A kills it. ponytail: no star-piece
- * shots or invincibility kills, the mine does not spin, no inhale demo (actor camera, Disappear)
+ * shots or invincibility kills, the mine does not spin; Mario's inhale is bh_start / bh_update (no BlackHole
+ * Disappear demo action)
  * ponytail (unmarked until the 2026-11-02 audit): it kills every walker kind but the butterfly; in Petari only
  * those with an isMsgInhaleBlackHole handler go (Kuribo, KuriboMini, Karikari, Karon, KoteBug, MechanicKoopaMini,
  * Metbo, SamboHead, KuriboChief...): the Petari enemy, for one, survives */
@@ -30345,7 +30410,7 @@ static void update_hazards(void)
                                           : fabsf(vdot(d, x)) < 500.0f * rw->scale[0] &&
                                                 fabsf(vdot(d, vcross(z, x))) < 500.0f * rw->scale[1] &&
                                                 fabsf(vdot(d, z)) < 500.0f * rw->scale[2];
-            if (in_hole) { printf("black hole %d at %d %d %d up %.2f %.2f %.2f\n", in->row, (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z, mario->up.x, mario->up.y, mario->up.z); mario_sound("ブラックホール吸い込まれ"); miss_abyss = 1; miss(); return; }
+            if (in_hole && !bh.on) { printf("black hole %d at %d %d %d up %.2f %.2f %.2f\n", in->row, (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z, mario->up.x, mario->up.y, mario->up.z); bh_start(mario, in); return; }
             continue;
         }
         if (in->hazard == 2) {
@@ -30576,7 +30641,7 @@ static void update_switches(void)
         if (logic[i].kind == LOGIC_DEATH) { /* DeathArea.cpp: forceKillPlayerByAbyss; isInVolume: not while its SW_A is off;
                                               * getDeathType: arg0 -1 (DeathType_Any) only; MarioActor::forceKill: not
                                               * while bound (isEnableNerveChange: a launch star's flight is a rush) */
-            if (row_shown(row) && (r->sw[SW_A] < 0 || sw_on(r, SW_A)) && r->arg[0] == -1 && mario->launch < 0 && area_inside(r, mario->pos)) { printf("death area %d at %d %d %d\n", row, (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z); miss_abyss = 1; miss(); }
+            if (row_shown(row) && (r->sw[SW_A] < 0 || sw_on(r, SW_A)) && r->arg[0] == -1 && mario->launch < 0 && !bh.on && area_inside(r, mario->pos)) { printf("death area %d at %d %d %d\n", row, (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z); miss_abyss = 1; miss(); }
             continue;
         }
         if (logic[i].kind == LOGIC_ASTROCUBE) { astro_cube(row, r); continue; }
@@ -39328,6 +39393,7 @@ void game_draw(void)
     if (mario->slider) basis_matrix(m, mario->pos, sl.up, mario->face, 0); /* MarioSlider::postureCtrl: _1FC */
     m_blend_apply(m);
     if (mario->press) for (int j = 4; j < 7; j++) m[j] *= mario->press_s; /* _3B0: squashed along his up */
+    if (bh.on) for (int j = 0; j < 11; j++) if (j % 4 != 3) m[j] *= bh.scale; /* the black hole's mScale */
     if (dmg.scale_y != 1.0f) for (int j = 4; j < 7; j++) m[j] *= dmg.scale_y; /* MarioCrush: mScale (1, 0.2, 1) */
     if (mario->skate) { /* MarioSkate::postureCtrl: x rotY(_20 pi) x rotZ(_24) */
         float ry[16], rz[16], t[16], a = mario->sk20 * 3.1415927f;
@@ -39335,7 +39401,7 @@ void game_draw(void)
         mat_identity(rz); rz[0] = rz[5] = cosf(mario->sk24); rz[1] = sinf(mario->sk24); rz[4] = -rz[1];
         mat_mul(t, m, ry); mat_mul(m, t, rz);
     }
-    if (!mario_hidden && !m_hide481) /* ponytail: MarioShadow's volume (his posed model) as an oval of its bind pose's extent */
+    if (!mario_hidden && !m_hide481 && !bh.on) /* ponytail: MarioShadow's volume (his posed model) as an oval of its bind pose's extent */
         draw_shadow(mario->pos, mario->up, mario->face, 34.0f, 37.0f, 8.0f, 50.0f, 1000.0f);
     {
         /* MarioActor::updateBlink / swapTexture("EyeLid_v"): the clip's own eye pattern if it has one (setBlink: its
@@ -39379,7 +39445,7 @@ void game_draw(void)
         basis_matrix(tm, mario->pos, mario->up, mario->face, 0);
         draw_skin(m_tornado, tm, tor.a);
     }
-    if (m_mario_skin && !(mario->hurt_timer & 4) && !mario_hidden && !m_hide481 && !(fp_on && !fp_delay) && !teresa_hides_mario() && !tornado_hides_mario()) { /* the eye inside his head in the view */
+    if (m_mario_skin && !(mario->hurt_timer & 4) && !mario_hidden && !m_hide481 && !bh.hidden && !(fp_on && !fp_delay) && !teresa_hides_mario() && !tornado_hides_mario()) { /* the eye inside his head in the view */
         const Model *md = disp_model >= 1 && m_morph[disp_model] ? m_morph[disp_model] : m_mario_skin;
         static unsigned inv_from; /* MR::startBrk(_9C8, "InvincibleMario") at its change: its C0 from frame 0 */
         static int inv_was;
