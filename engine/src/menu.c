@@ -4499,10 +4499,11 @@ static struct Iab *mono_ab(void) /* RosettaDemoAstroDome's mIconAButton (killed 
  * the centre +- 60 / 200 by '|'), EndLogoScroll (TheEnd up to 220 once the BGM's count is at 14211 less its scroll),
  * AllRights (the thank-you voice at 190), PrepareInfo (100), then Pause for the ending movie (isPauseOrEnd); startInfo:
  * Restart, the information windows (picture book unless ViewNormalEnding, comet, Luigi at the first complete ending),
- * the save, End. The US region's params (sStaffRollParamTable[1]). ponytail: the programmed demos "StaffRoll" /
- * "SaveAfterStaffRoll" not started (nothing else runs here), the count runs from the BGM's start (not isPlayingStageBgm),
- * no BGM_NEW_GALAXY sub BGM (sequenced), no IconAButton under the information window, MessageEditorMessageTag lengths as
- * the talk text's */
+ * the save, End. The information windows appearWithButtonLayout: the IconAButton at AButtonPosC (setCenter), its term at
+ * the window's End. The US region's params (sStaffRollParamTable[1]). The programmed demos "StaffRoll" /
+ * "SaveAfterStaffRoll" are not started: only the staff roll runs in this stage (nothing for them to stop).
+ * ponytail: the count runs from the BGM's start (not isPlayingStageBgm), no BGM_NEW_GALAXY sub BGM (sequenced),
+ * MessageEditorMessageTag lengths as the talk text's */
 #define SRL_LINES 64
 enum { SRL_PREPAREDEMO, SRL_PREPAREBGM, SRL_TITLEAPPEAR, SRL_TITLESCROLL, SRL_LINESCROLL, SRL_ENDSCROLL, SRL_ALLRIGHTS,
        SRL_PREPAREINFO, SRL_BOOKIN, SRL_COMETIN, SRL_LUIGIIN, SRL_BOOKOUT, SRL_COMETOUT, SRL_LUIGIOUT, SRL_PAUSE,
@@ -4529,6 +4530,7 @@ static struct {
     const u16 *msg;
     int nlines, cur_line, gen, count;  /* mMsgLineNum, mMsgLine, _48, _4C */
     Nrv n;
+    Iab ab;                            /* InformationMessage::mAButtonIcon */
 } srl;
 
 static void srl_init(void) /* StaffRoll::init (the layouts are in the ending's stage only) */
@@ -4549,6 +4551,7 @@ static void srl_init(void) /* StaffRoll::init (the layouts are in the ending's s
     lyt_copy_pane_trans(srl.title, "TheEnd", srl.end_pos);
     lyt_follow(srl.title, "TheEnd", srl.end_pos, 0);
     lyt_show_pane(srl.title, "TheEnd", 0);
+    iab_init(&srl.ab, srl.info, "AButtonPosC"); /* InformationMessage: IconAButton(true, false), setCenter(true): AButtonPosC */
     srl.msg = msg_get("StaffList000"); /* getGameMessageDirect, countMessageLine */
     srl.nlines = srl.msg ? 1 : 0;
     for (const u16 *s = srl.msg; s && *s; s++) srl.nlines += *s == '\n';
@@ -4660,6 +4663,8 @@ static void srl_update(void)
             lyt_start(srl.info, "Line", 1);
             lyt_set_frame(srl.info, 1, lyt_text_height(srl.info, "InfConfirmC")); /* setAnimFrameAndStopAdjustTextHeight */
             lyt_set_rate(srl.info, 1, 0);
+            iab_open(&srl.ab); /* appearWithButtonLayout: openWithoutMessage */
+            printf("staff roll: information window %d (A button %s)\n", c, srl.ab.l ? "on" : "missing");
         }
         if (pad_pressed(PAD_CROSS)) { /* testSystemPadTriggerDecide */
             se_start(SE_SY_TALK_OK, NULL);
@@ -4667,7 +4672,7 @@ static void srl_update(void)
         }
         break;
     case SRL_BOOKOUT: case SRL_COMETOUT: case SRL_LUIGIOUT: /* exeInfoDisappear */
-        if (FIRST(&srl.n)) lyt_start(srl.info, "End", 0);
+        if (FIRST(&srl.n)) { lyt_start(srl.info, "End", 0); iab_term(&srl.ab); } /* InformationMessage::exeDisappear: mAButtonIcon->term */
         if (srl.n.step > 0 && lyt_stopped(srl.info, 0)) srl_next_info();
         break;
     case SRL_PAUSE: break;
@@ -4709,6 +4714,7 @@ static void srl_update(void)
     lyt_update(srl.title);
     lyt_update(srl.pic);
     lyt_update(srl.info);
+    iab_update(&srl.ab);
     if (srl.n.cur == SRL_END) srl.on = 0;
 }
 static void srl_draw(void) /* StaffRoll::draw: black, the information, the pictures, the lines, the title */
@@ -4716,7 +4722,7 @@ static void srl_draw(void) /* StaffRoll::draw: black, the information, the pictu
     float eye[3] = {0, 0, 1000.0f}, target[3] = {0, 0, 0}, up[3] = {0, 1.0f, 0};
     render_begin(eye, target, up);
     render_world_done();
-    if (srl.n.cur >= SRL_BOOKIN && srl.n.cur <= SRL_LUIGIOUT) lyt_draw(srl.info);
+    if (srl.n.cur >= SRL_BOOKIN && srl.n.cur <= SRL_LUIGIOUT) { lyt_draw(srl.info); iab_draw(&srl.ab); }
     if (srl.pic_on) lyt_draw(srl.pic);
     for (int i = 0; i < SRL_LINES; i++) if (srl.line_on[i]) lyt_draw(srl.line[i]);
     lyt_draw(srl.title);
