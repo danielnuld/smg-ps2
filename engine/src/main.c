@@ -1113,7 +1113,11 @@ int main(void)
 #if defined(PACKS) && defined(ENDING_TEST)
         { /* KoopaBattleVs3Galaxy/1's star faked: EpilogueA, EpilogueDemoStage's エピローグデモ, EndingA, the staff roll, its
            * information windows, the save (Yes), the title. X held every second (the talks' pages, the windows) */
+#ifdef ENDING_SLOW /* XF=-DENDING_SLOW: X every 5 s (the information windows stay to be seen) */
+            pad_force = frame > 300 && frame % (menu_staffroll_on() ? 300 : 60) < 10 ? PAD_CROSS : 0;
+#else
             pad_force = frame > 300 && frame % 60 < 10 ? PAD_CROSS : 0;
+#endif
             if (menu_saving()) menu_test_point("BoxRight");
             if (frame == 200) {
                 SeqResult r = {"KoopaBattleVs3Galaxy", 1, 0, 1, 0, 0, 0};
