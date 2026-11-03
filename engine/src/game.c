@@ -8042,48 +8042,155 @@ static int fireball_hits_snowman(V3 p)
     return 0;
 }
 
-/* CollectTico.cpp / StrayTico.cpp: a stray Luma waits (in its bubble) until Mario touches it (Glad), then follows him
- * (Chase: behind him, 0.97 friction, warped back when 2000 off). When every StrayTico of a CollectTico's zone is
- * rescued the CollectTico's power star comes out (the row dies: star_wait). row_turn 1 rescued. ponytail: no bubble,
- * no complete demo (the ring of Lumas, CollectTicoLight), the star flies from the CollectTico's row, not 300 over
- * Mario
- * ponytail (unmarked until the 2026-11-02 audit): the Lumas lerp 0.08 to slots 150 + 80k behind Mario instead of
- * StrayTico.cpp:224-231 / 296-317 (toward him past 400, away inside 300, height 150, friction 0.97, turning 4
- * degrees to his front), its own SW_A after Glad unset */
+/* CollectTico.cpp / StrayTico.cpp: a stray Luma waits (in its bubble, turning to Mario 2 degrees a frame within 1000)
+ * until Mario touches it: Glad (SE_SM_STRAYTICO_SPIN, SE_SM_STRAYTICO_GET with the ones rescued before on port 11; at
+ * the end of its 42-frame Glad its SW_A on and SE_SV_STRAYTICO_GLAD; the last one straight to Chase), then Chase:
+ * toward Mario past sChaseDistance 400, away inside sAwayDistance 300 (0.5 a frame, flat to gravity), held 150 over
+ * him (addVelocityKeepHeight 0.5, 200), sChaseFric 0.97, turning sChaseTurnDegree 4 to his front; updateWarp: over
+ * sWarpTryDistance 2000 off, back at _B0 (his centre, renewed past sUpdateWarpDistance 1600) once both are off the
+ * view. When every StrayTico of a CollectTico's zone is rescued (Mario not dead) the demo チコ集めコンプリート (with
+ * the cinema frame): CompleteDemo (_94 300 over Mario; each Luma from where it is to its place on a 450 ring round it
+ * at 360 i / n over sCompletePlacementTime 40, eased in and out; from step 60 to sCompleteDemoTime 200 the ring
+ * shrinks to 0 turning 900 degrees, eased in; SE_SM_LV_STRAYTICO_COMPLETE), then Flash (CollectTicoLight,
+ * SE_SM_STRAYTICO_FUSION; the Lumas gone at 10; at 60 the demo ended, SW_A on, the power star from _94: the row dies,
+ * star_wait). row_turn 1 rescued, row_step the frames since (1000: no Glad). ponytail: no bubble, no binder
+ * (reboundVelocityFromCollision), no LauncherCamera nerve; the demo's cast is a StrayTico row (pd.row: update_strays
+ * runs); the sheet variant (集めチコスター出現) unhandled: no galaxy has it */
+static struct { int row, nrv, step, n; V3 c, up, d4; } ctd = {.row = -1}; /* the CollectTico in its demo: 1 CompleteDemo, 2 Flash */
+static struct { V3 e0, vel, b0, front; } strd[64]; /* StrayTico by row % 64: _E0, its velocity, _B0, mFrontVec */
+static V3 rot_deg(V3 v, V3 axis, float deg);
+static int note_star_row; static V3 note_star_at; /* (star_pos) */
+static int miss_running(void);
+static V3 stray_turn(V3 f, V3 to, V3 up, float deg) /* turnDirectionDegree: f toward to (flat to up), at most deg */
+{
+    V3 a = vtangent(f, up), b = vtangent(to, up);
+    if (vlen(a) < 1e-4f || vlen(b) < 1e-4f) return f;
+    a = vnorm(a); b = vnorm(b);
+    float ang = acosf(fminf(fmaxf(vdot(a, b), -1.0f), 1.0f)) * 57.29578f;
+    if (ang <= deg) return b;
+    return vnorm(rot_deg(a, vdot(vcross(a, b), up) >= 0 ? up : vmul(up, -1.0f), deg));
+}
 static void update_strays(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    int t = scene_type(sc, "CollectTico"), k = 0;
+    int t = scene_type(sc, "CollectTico"), st = scene_type(sc, "StrayTico");
+    if (ctd.row >= 0) { /* exeCompleteDemo / exeFlash */
+        int s = ctd.step++, idx = 0;
+        if (ctd.nrv == 1) {
+            int done = 1;
+            V3 g = vmul(ctd.up, -1.0f); /* _C8: the gravity */
+            FOR_KIND(i, stray) {
+                Inst *in = &insts[i];
+                if (!in->stray || row_dead[in->row] || sc->objs[in->row].zone != sc->objs[ctd.row].zone) continue;
+                typeof(&strd[0]) d = &strd[in->row % 64];
+                float a0 = 360.0f * idx++ / ctd.n; /* _EC */
+                if (s == 0) { d->e0 = in->head; d->vel = v3(0, 0, 0); } /* requestCompleteDemo; zeroVelocity */
+                if (s < 40) {
+                    V3 at = vadd(ctd.c, rot_deg(vmul(ctd.d4, 450.0f), g, a0));
+                    float r = (1.0f - cosf(3.14159265f * s / 40.0f)) * 0.5f; /* calcNerveEaseInOutRate */
+                    in->head = vadd(vmul(d->e0, 1.0f - r), vmul(at, r));
+                } else if (s > 60) {
+                    float u = fminf((s - 60) / 140.0f, 1.0f), ang = a0 + 900.0f * (1.0f - cosf(u * 1.5707963f));
+                    in->head = vadd(ctd.c, rot_deg(vmul(ctd.d4, 450.0f * (1.0f - u)), g, fmodf(ang, 360.0f)));
+                }
+                d->front = stray_turn(d->front, mario->face, ctd.up, 4.0f); /* sCompleteDemoRotate */
+                stray_at[in->row % 64] = in->head;
+                basis_matrix(in->m, in->head, ctd.up, d->front, 0);
+                for (int j = 0; j < 12; j++) if (j % 4 != 3) in->m[j] *= in->s;
+                done &= s > 200; /* isCompleteDemoEnd */
+            }
+            static u32 lv;
+            lv = se_level(SE_SM_LV_STRAYTICO_COMPLETE, &ctd.c.x, lv);
+            if (done) { ctd.nrv = 2; ctd.step = 0; }
+            return;
+        }
+        if (s == 0) { /* exeFlash */
+            float m[16];
+            basis_matrix(m, ctd.c, ctd.up, v3(0, 0, 1), 0);
+            fx_named("CollectTico", "CollectTicoLight", m, NULL, NULL);
+            se_start(SE_SM_STRAYTICO_FUSION, &ctd.c.x);
+        }
+        if (s == 10) /* the Lumas killed */
+            for (u32 q = 0; q < sc->nobjs; q++)
+                if (sc->objs[q].type == st && sc->objs[q].zone == sc->objs[ctd.row].zone && !row_dead[q]) row_kill(q);
+        if (s == 60) { /* requestAppearPowerStar(this, _94), endDemo, onSwitchA */
+            const Row *r = &sc->objs[ctd.row];
+            note_star_row = ctd.row; note_star_at = ctd.c;
+            pd_end("チコ集めコンプリート");
+            menu_cinema(0);
+            if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
+            row_kill(ctd.row);
+            printf("collect tico row %d: its star" "\n", ctd.row);
+            ctd.row = -1;
+        }
+        return;
+    }
     FOR_KIND(i, stray) {
         Inst *in = &insts[i];
         if (!in->stray || row_dead[in->row]) continue;
         int row = in->row;
-        if (!row_turn[row]) {
+        typeof(&strd[0]) d = &strd[row % 64];
+        V3 up = up_at(in->head, mario->up);
+        if (vlen(d->front) < 0.5f) d->front = vnorm(v3(in->m[8], in->m[9], in->m[10]));
+        if (!row_turn[row]) { /* exeWait */
+            in->lv[0] = se_level(SE_SM_LV_STRAYTICO_WAIT, &in->head.x, in->lv[0]);
+            if (vlen(vsub(mario->pos, in->head)) < 1000.0f) d->front = stray_turn(d->front, vsub(mario->pos, in->head), up, 2.0f); /* sWaitTurnDegree */
             if (vlen(vsub(c, in->head)) < 60.0f + HIT_BODY_R) {
-                row_turn[row] = 1;
+                int before = 0, all = 0;
+                for (u32 q = 0; q < sc->nobjs; q++)
+                    if (sc->objs[q].type == st && sc->objs[q].zone == sc->objs[row].zone) { all++; before += row_turn[q] != 0; }
+                row_turn[row] = 1; row_step[row] = before + 1 == all ? 1000 : 0; /* noRescuedCount 1: straight to Chase */
+                d->vel = v3(0, 0, 0); d->b0 = c;
+                se_start(SE_SM_STRAYTICO_SPIN, &in->head.x); /* exeGlad */
+                u32 h = se_start(SE_SM_STRAYTICO_GET, &in->head.x);
+                if (h) se_port(h, 11, (u16)(before > 127 ? 127 : before)); /* modifySe_Takezawa: port 11 */
                 printf("stray tico row %d rescued" "\n", row);
             }
-        } else { /* Chase: a place behind Mario, one after another */
-            V3 at = vadd(vsub(mario->pos, vmul(mario->face, 150.0f + 80.0f * k)), vmul(mario->up, 150.0f));
-            if (vlen(vsub(at, in->head)) > 2000.0f) in->head = at; /* updateWarp */
-            in->head = vadd(in->head, vmul(vsub(at, in->head), 0.08f));
-            k++;
+        } else if (row_step[row] < 42) { /* exeGlad: its Glad played, then SW_A and its voice */
+            if (++row_step[row] == 42) {
+                const Row *r = &sc->objs[row];
+                if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
+                se_start(SE_SV_STRAYTICO_GLAD, &in->head.x);
+                d->b0 = c; /* exeChase's first step: _B0 */
+            }
+            in->lv[0] = se_level(SE_SM_LV_STRAYTICO_WAIT_GRP, &in->head.x, in->lv[0]);
+        } else { /* exeChase: updateWarp, updateChase */
+            in->lv[0] = se_level(SE_SM_LV_STRAYTICO_WAIT_GRP, &in->head.x, in->lv[0]);
+            if (vlen(vsub(mario->pos, in->head)) > 2000.0f) { /* !isNearPlayerAnyTime(sWarpTryDistance) */
+                if (vlen(vsub(mario->pos, d->b0)) > 1600.0f) d->b0 = c; /* !isNearPlayer(_B0, sUpdateWarpDistance) */
+                if (render_clip_judge(&in->head.x, 200.0f, 1e9f) && render_clip_judge(&d->b0.x, 200.0f, 1e9f)) { in->head = d->b0; d->vel = v3(0, 0, 0); }
+            }
+            V3 to = vtangent(vsub(mario->pos, in->head), up), g = vmul(up, -1.0f);
+            float dist = vlen(vsub(mario->pos, in->head));
+            if (dist > 400.0f && vlen(to) > 1e-3f) d->vel = vadd(d->vel, vmul(vnorm(to), 0.5f));        /* addVelocityMoveToTarget */
+            else if (dist < 300.0f && vlen(to) > 1e-3f) d->vel = vsub(d->vel, vmul(vnorm(to), 0.5f));   /* addVelocityAwayFromTarget */
+            d->front = stray_turn(d->front, mario->face, up, 4.0f);
+            float x = vdot(g, vsub(mario->pos, in->head)) - 150.0f, n = (fminf(fmaxf(fabsf(x), -200.0f), 200.0f) + 200.0f) / 400.0f;
+            d->vel = vadd(d->vel, vmul(g, 0.5f * (x >= 0 ? n : -n))); /* addVelocityKeepHeight(150, 0.5, 200): normalizeAbs */
+            d->vel = vmul(d->vel, 0.97f); /* attenuateVelocity(sChaseFric) */
+            in->head = vadd(in->head, d->vel);
         }
         stray_at[row % 64] = in->head;
-        memcpy(in->m, in->m0, 64);
-        in->m[12] = in->head.x; in->m[13] = in->head.y; in->m[14] = in->head.z;
+        basis_matrix(in->m, in->head, up, d->front, 0); /* blendQuatUpFront(-gravity, mFrontVec) */
+        for (int j = 0; j < 12; j++) if (j % 4 != 3) in->m[j] *= in->s;
     }
     for (u32 j = 0; t >= 0 && j < sc->nobjs; j++) { /* CollectTico::exeWait: all rescued */
         const Row *r = &sc->objs[j];
         if (r->type != t || row_dead[j]) continue;
-        int left = 0, any = 0, st = scene_type(sc, "StrayTico");
+        int left = 0, any = 0, cast = -1;
         for (u32 q = 0; q < sc->nobjs; q++)
-            if (sc->objs[q].type == st && sc->objs[q].zone == r->zone) { any++; left += !row_turn[q]; }
-        if (any && !left) {
-            if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
-            row_kill(j);
-            printf("collect tico row %d: all %d rescued" "\n", (int)j, any);
-        }
+            if (sc->objs[q].type == st && sc->objs[q].zone == r->zone) { any++; left += !row_turn[q]; if (cast < 0) cast = (int)q; }
+        if (!any || left || miss_running()) continue;
+        if (!pd_try_start("チコ集めコンプリート", cast)) continue; /* requestStartDemo (TryStartDemo until it can) */
+        menu_cinema(1);
+        ctd.row = (int)j; ctd.nrv = 1; ctd.step = 0; ctd.n = any;
+        ctd.up = up_at(mario->pos, mario->up); /* calcGravity at Mario: -gravity */
+        ctd.c = vadd(mario->pos, vmul(ctd.up, 300.0f)); /* _94 */
+        ctd.d4 = vtangent(v3(0, 0, 1), ctd.up); /* makeAxisVerticalZX */
+        if (vlen(ctd.d4) < 1e-4f) ctd.d4 = vtangent(v3(1, 0, 0), ctd.up);
+        ctd.d4 = vnorm(ctd.d4);
+        printf("collect tico row %d: all %d rescued, its demo" "\n", (int)j, any);
+        return;
     }
 }
 
@@ -31450,7 +31557,7 @@ static int star_demo_update(const Inst *in, int t, V3 sp)
     }
     return 1;
 }
-static int note_star_row = -1; static V3 note_star_at; /* NoteFairy mPowerStarSpawnType 1 / 2: its star from the last note taken */
+static int note_star_row = -1; static V3 note_star_at; /* a star from its own place (requestAppearPowerStar(this, pos)): NoteFairy's last note, CollectTico's _94 */
 static V3 star_pos(const Inst *in, int *state)
 {
     V3 p = v3(in->m[12], in->m[13], in->m[14]);
