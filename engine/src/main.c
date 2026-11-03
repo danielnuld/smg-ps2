@@ -1483,6 +1483,9 @@ int main(void)
         if (frame == 1990) printf("scene test end: %s mem %u KB\n", scen, mem_total() >> 10);
 #endif
 #ifdef PACKS
+#ifdef HOLE_TEST /* (a plain build, XF=-DHOLE_TEST: the miss events on) Mario into the first black hole */
+        { static int done; if (!done && frame > 120 && game_test_free()) { done = 1; printf("hole test f %u: black hole row %d" "\n", frame, game_test_hole()); } }
+#endif
 #ifdef HAZARD_TEST
         if (frame == 120)
             printf("hazard test: mine row %d\n", game_test_hazard(1));
