@@ -24,7 +24,7 @@ ROOM = 9.1e6  # room for scenario data and the menu packs beside it (main.c PACK
 # the menus' packs main.c loads beside a galaxy's own (scene_load: mp_names / mp_scene) come out of its room
 # (mappics.bin is not one: menu.c reads one GalaxyDetail picture at a time into a 64 KB MEM_SCENE buffer, packs_read)
 MENU_PACKS = {"FileSelect": ("title.bin", "title3d.bin"), "AstroDome": ("dome.bin",), "AstroGalaxy": ("map.bin",), "EpilogueDemoStage": ("ending.bin",),
-              "PeachCastleGardenGalaxy": ("prologue.bin",)}
+              "PeachCastleGardenGalaxy": ("prologue.bin",), "LibraryRoom": ("picturebook.bin",)}
 # and Luigi's letter (main.c letter_scene): in any galaxy while he is missing (MR::getLuigiLetterGalaxyName)
 LETTER = "letter.bin"
 RATIOS = (0.99, 0.9, 0.8, 0.7, 0.6, 0.5)  # static models' simplification, tried in turn until a scenario fits

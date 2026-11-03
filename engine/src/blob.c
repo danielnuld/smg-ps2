@@ -255,7 +255,7 @@ int blob_add(Scene *s, const u8 *blob)
     if (tk)
         s->talk = tk;
     const u8 *ms = blob_chunk(blob, "MSGS", NULL), *gt = blob_chunk(blob, "GDAT", NULL);
-    if (ms) s->msgs = ms;
+    if (ms) { if (s->msgs && !s->msgs2) s->msgs2 = ms; else s->msgs = ms; } /* (menus.bin's first: picturebook.bin's after it) */
     if (gt) s->gdat = gt;
     const u8 *ly = blob_chunk(blob, "LYTR", NULL);
     if (ly && s->nlytr < 4) {

@@ -30,6 +30,7 @@ static void mlay_init(void);
 static void mono_update(void);
 static void srl_init(void);
 static void srl_update(void);
+static void pb_init(void), pb_update(void), pb_draw(void);
 static void srl_draw(void);
 static void fs_init(const Scene *s);
 static void fs_update(void);
@@ -62,7 +63,14 @@ static struct Iab *mono_ab(void);
 static const u8 *msgs;
 void msg_set(const u8 *m) { msgs = m; }
 
+static const u8 *msgs2; /* a second pack's MSGS (picturebook.bin: the picture book's), looked up after the first */
+static const u16 *msg_find(const u8 *msgs, const char *label);
 const u16 *msg_get(const char *label)
+{
+    const u16 *m = msg_find(msgs, label);
+    return m || !msgs2 ? m : msg_find(msgs2, label);
+}
+static const u16 *msg_find(const u8 *msgs, const char *label)
 {
     if (!msgs || !label) return NULL;
     int lo = 0, hi = (int)*(const u32 *)msgs - 1;
@@ -1473,7 +1481,7 @@ static char select_after[32]; /* MoviePlayingSequence (FinalBattle): the scenari
 static void subm_init(void);
 void menu_init(const Scene *s)
 {
-    msgs = s->msgs;
+    msgs = s->msgs; msgs2 = s->msgs2;
     pm_init();
     ss_init(s);
     si_init(&sv.win);
@@ -1496,6 +1504,7 @@ void menu_init(const Scene *s)
     mono.l = lyt_new("PrologueStarSteward"); /* in map.bin: the Observatory only */
     pro_lyt_init();
     srl_init();
+    pb_init();
     sp_init();
     spg_init();
     memset(&ynl, 0, sizeof ynl);
@@ -1921,6 +1930,7 @@ int menu_update(void)
     prl_update();
     plt_update();
     srl_update();
+    pb_update();
     spg_update();
     ynl_update();
     if (sr.delay && --sr.delay == 0 && sr.l) { /* the clear's demo sequence: StageResultInformer, then the save */
@@ -2481,6 +2491,7 @@ static void wipe_draw_quad(void)
 int menu_draw_screen(void)
 {
     if (menu_staffroll_on()) { srl_draw(); return 1; } /* StaffRoll::appear: deactivateGameSceneDraw3D */
+    if (menu_picture_book_alive()) { pb_draw(); return 1; } /* PictureBookLayout::appear: deactivateGameSceneDraw3D */
     if (gm_screen()) { /* deactivateGameSceneDraw3D */
         float eye[3] = {0, 0, 1000.0f}, target[3] = {0, 0, 0}, up[3] = {0, 1.0f, 0};
         render_begin(eye, target, up);
@@ -4490,6 +4501,231 @@ static struct Iab *mono_ab(void) /* RosettaDemoAstroDome's mIconAButton (killed 
     static Iab ab;
     if (mono.l && ab.host != mono.l) iab_init(&ab, mono.l, "AButtonPosition");
     return &ab;
+}
+
+/* --- PictureBookLayout (PictureBookLayout.cpp; picturebook.bin, the LibraryRoom's), RosettaReading's (its chapters
+ * mChapterMin .. Max read in turn, no contents): appear (the 3D scene not drawn: deactivateGameSceneDraw3D) FadeIn (the
+ * chapter's pages, its title, PicToneDown, PageNext's last frame (first going back), openWipeFade(cFadeFrame 60 /
+ * speed), STM_PROLOGUE_01), WaitNoText (cWaitNoTextFrame 60, 0 fast), FadeInText (the title on page 0, else Text with
+ * TextColor at 1 read / 0 new, PicToneDown; chapter 7's BGM changes; the book's end text centred; 30 / speed),
+ * WaitWithText (the IconAButton openWithTurn; A or right: on, left: back fast), FadeOutText (30 / speed: textNext, else
+ * pageNext: PageNext (forwards / backwards at the speed, SE_SY_PICTUREBOOK_NEXT_(F_)ST / ED at 81 / 27), else
+ * chapterNext: FadeOut (closeWipeFade 60 / speed, stopStageBGM), the next chapter's FadeIn or kill). Pages: the
+ * chapter's Chapter<c>Page<p> (lyt.py: materials "chapter<c>page<p>"), the title PictureBookTitle. Texts:
+ * PictureBookChapter<c>_Title, _Page<p>_<k>. getReadSpeed 3 fast, else 1.
+ * ponytail: RosettaPictureBook's mode (the contents, PictureBookCloseButton, Open / ContentsSelect / Close) not ported;
+ * the end text only vertically centred (no horizontal alignment in lyt.c); isStopOrFadeoutBgmName by the last name
+ * this book started or stopped */
+enum { PB_DEAD, PB_FADEIN, PB_WAITNOTEXT, PB_FADEINTEXT, PB_WAITWITHTEXT, PB_FADEOUTTEXT, PB_PAGENEXT, PB_FADEOUT };
+static struct {
+    LytInst *l; Iab ab; Nrv n;
+    int cmin, cmax, chapter, page, text, nr_c, nr_p, nr_t, dir, fast;
+    char bgm[24]; int bgm_stopped; /* the stage BGM this book started, stopped since */
+} pb;
+static const u16 *pb_msg(int c, int p, int k)
+{
+    char id[64];
+    if (p == 0) snprintf(id, sizeof id, "PictureBookChapter%d_Title", c);
+    else snprintf(id, sizeof id, "PictureBookChapter%d_Page%d_%03d", c, p, k);
+    return msg_get(id);
+}
+static int pb_tex(int c, int p) /* "Chapter<c>Page<p>.bti"'s material, -1 none */
+{
+    char n[24];
+    snprintf(n, sizeof n, "chapter%dpage%d", c, p);
+    return lyt_material_texture(pb.l, n);
+}
+static int pb_texture_num(int c) { int n = 0; while (pb_tex(c, n + 1) >= 0) n++; return n; } /* getTextureNum */
+static int pb_page_num(int c) { for (int p = 0; p < 100; p++) if (!pb_msg(c, p + 1, 0)) return p; return 1; } /* getPageNum */
+static int pb_max_text(void) { for (int i = 0; i < 100; i++) if (!pb_msg(pb.chapter, pb.page, i)) return i - 1; return 0; } /* getCurrentMaxTextIndex */
+static int pb_speed(void) { return pb.fast ? 3 : 1; } /* getReadSpeed (no contents) */
+static int pb_read_text(void) /* isReadedCurrentText */
+{
+    return pb.chapter < pb.nr_c || (pb.chapter == pb.nr_c && pb.page < pb.nr_p) ||
+           (pb.chapter == pb.nr_c && pb.page == pb.nr_p && pb.text <= pb.nr_t);
+}
+static int pb_book_end(void) { return pb.chapter == 9 && pb.page == pb_page_num(9) && pb_max_text() == pb.text; } /* isBookEndCurrentText */
+static int pb_update_text(void) /* updateText */
+{
+    const u16 *m = pb_msg(pb.chapter, pb.page, pb.text);
+    if (!m) return 0;
+    lyt_set_text_rec(pb.l, pb.page == 0 ? "Title" : "Text", m);
+    return 1;
+}
+static void pb_page_tex(const char *a, const char *b, int page) /* replacePaneTexture: the title, else the chapter's page */
+{
+    int n = pb_texture_num(pb.chapter), t;
+    if (page == 0 || n == 0) t = lyt_material_texture(pb.l, "picturebooktitle");
+    else t = pb_tex(pb.chapter, (n + page - 1) % n + 1);
+    lyt_replace_pane_texture(pb.l, a, t);
+    lyt_replace_pane_texture(pb.l, b, t);
+}
+static void pb_update_texture(void) /* updateTexture */
+{
+    pb_page_tex("PicLeftPage", "PicTurnRightPage", pb.dir > 0 ? pb.page - 1 : pb.page);
+    pb_page_tex("PicRightPage", "PicTurnLeftPage", pb.dir > 0 ? pb.page : pb.page + 1);
+}
+static int pb_text_next(void) { if (pb.page == 0) return 0; pb.text += pb.dir; return pb.text >= 0 && pb_update_text(); }
+static int pb_page_next(void)
+{
+    pb.page += pb.dir;
+    if (pb.page < 0) return 0;
+    if (pb.page != 0) pb.text = pb.dir > 0 ? 0 : pb_max_text();
+    return pb_update_text();
+}
+static int pb_chapter_next(void)
+{
+    pb.chapter += pb.dir;
+    if (pb.cmax < pb.chapter) return 0;
+    if (pb.dir > 0) { pb.page = 0; pb.text = 0; }
+    else { pb.page = pb_page_num(pb.chapter); pb.text = pb_max_text(); }
+    return 1;
+}
+static void pb_alpha(float a) /* setTextAlpha */
+{
+    int v = (int)(a * 255.0f + 0.5f);
+    lyt_set_pane_alpha(pb.l, "Text", v); lyt_set_pane_alpha(pb.l, "Title", v); lyt_set_pane_alpha(pb.l, "Contents", v);
+}
+static float pb_tone_in(float a) /* getFadeInAlphaTextBG */
+{
+    if (!pb.page || pb_book_end()) return 0.0f;
+    int v = pb.dir > 0 ? !pb.text : pb_max_text() == pb.text && pb.page < pb_texture_num(pb.chapter);
+    return v ? a : 1.0f;
+}
+static float pb_tone_out(float a) /* getFadeOutAlphaTextBG */
+{
+    if (!pb.page || pb_book_end()) return 0.0f;
+    int v = pb.dir > 0 ? pb_max_text() == pb.text && pb.page < pb_texture_num(pb.chapter) : pb.text == 0 && pb.page > 0;
+    return v ? a : 1.0f;
+}
+static void pb_bgm(const char *id) { game_bgm(id); snprintf(pb.bgm, sizeof pb.bgm, "%s", id); pb.bgm_stopped = 0; } /* startStageBGM */
+static void pb_bgm_stop(int frames) { game_bgm_stop(frames); pb.bgm_stopped = 1; }                                  /* stopStageBGM */
+static int pb_bgm_off(const char *id) { return strcmp(pb.bgm, id) || pb.bgm_stopped; }                             /* isStopOrFadeoutBgmName */
+
+void menu_picture_book(int cmin, int cmax) /* PictureBookLayout(cmin, cmax, true)::appear */
+{
+    if (!pb.l) { printf("picture book: no layout\n"); return; }
+    pb.cmin = cmin; pb.cmax = cmax; pb.chapter = cmin; pb.page = pb.text = 0;
+    pb.nr_c = pb.nr_p = pb.nr_t = -1; pb.dir = 1; pb.fast = 0;
+    lyt_show_rec(pb.l, "Contents", 0); /* hidePaneRecursive Contents */
+    pb.n.next = -1; nrv_set(&pb.n, PB_FADEIN);
+    printf("picture book: chapters %d .. %d\n", cmin, cmax);
+}
+int menu_picture_book_alive(void) { return !nrv_is(&pb.n, PB_DEAD); }
+static void pb_init(void)
+{
+    memset(&pb, 0, sizeof pb);
+    pb.n.cur = PB_DEAD; pb.n.next = -1;
+    if (!(pb.l = lyt_new("PictureBook"))) return;
+    iab_init(&pb.ab, pb.l, "AButtonPosition"); /* createAndSetupIconAButton */
+}
+static void pb_kill(void) /* kill: startCurrentStageBGM, the 3D scene back */
+{
+    nrv_set(&pb.n, PB_DEAD);
+    pb.ab.on = 0;
+    game_bgm_stage();
+}
+static void pb_update(void)
+{
+    if (!pb.l || nrv_is(&pb.n, PB_DEAD)) return;
+    switch (nrv_begin(&pb.n)) {
+    case PB_FADEIN:
+        if (FIRST(&pb.n)) {
+            pb_update_text();
+            lyt_show_rec(pb.l, "Text", 0); lyt_show_rec(pb.l, "Title", 0); lyt_show_rec(pb.l, "PicToneDown", 1);
+            lyt_set_pane_alpha(pb.l, "PicToneDown", pb.dir > 0 ? 0 : 255);
+            pb_update_texture();
+            lyt_start(pb.l, "PageNext", 0);
+            lyt_set_frame(pb.l, 0, pb.dir > 0 ? lyt_anim_frames(pb.l, "PageNext") : 0.0f); lyt_set_rate(pb.l, 0, 0);
+            wipe_start(60 / pb_speed(), 0, 0); /* openWipeFade(cFadeFrame / getReadSpeed) */
+            pb_bgm("STM_PROLOGUE_01");
+        }
+        if (!wipe_active()) nrv_set(&pb.n, PB_WAITNOTEXT);
+        break;
+    case PB_WAITNOTEXT:
+        if (pb.n.step == (pb.fast ? 0 : 60)) nrv_set(&pb.n, PB_FADEINTEXT); /* cWaitNoTextFrame */
+        break;
+    case PB_FADEINTEXT: {
+        if (FIRST(&pb.n)) {
+            if (pb.page == 0) lyt_show_rec(pb.l, "Title", 1);
+            else {
+                lyt_show_rec(pb.l, "Text", 1); lyt_show_rec(pb.l, "PicToneDown", 1);
+                lyt_start_pane(pb.l, "Text", "TextColor", 0);
+                lyt_set_pane_frame_stop(pb.l, "Text", 0, pb_read_text() ? 1.0f : 0.0f);
+            }
+            if (pb.chapter == 7) {
+                if (pb.page <= 5 && pb_bgm_off("STM_PROLOGUE_01")) pb_bgm("STM_PROLOGUE_01");
+                if (pb.page == 6) pb_bgm_stop(120);
+                if (pb.page == 7 && pb_bgm_off("STM_PROLOGUE_01_B")) pb_bgm("STM_PROLOGUE_01_B");
+                if (pb.page == 8) { if (pb.text >= 1) pb_bgm_stop(120); else if (pb_bgm_off("STM_PROLOGUE_01_B")) pb_bgm("STM_PROLOGUE_01_B"); }
+            } else if (pb_bgm_off("STM_PROLOGUE_01")) pb_bgm("STM_PROLOGUE_01");
+            lyt_set_vpos_rec(pb.l, "Text", pb_book_end() ? 1 : 0); /* setTextBoxVerticalPositionCenter / Top */
+            if (pb.fast && !pb_read_text()) pb.fast = 0;
+        }
+        int st = 30 / pb_speed();
+        float a = fminf((float)pb.n.step / st, 1.0f); /* calcNerveRate */
+        pb_alpha(a);
+        lyt_set_pane_alpha(pb.l, "PicToneDown", (int)(pb_tone_in(a) * 255.0f + 0.5f));
+        if (pb.n.step == st) nrv_set(&pb.n, PB_WAITWITHTEXT);
+        break;
+    }
+    case PB_WAITWITHTEXT:
+        if (FIRST(&pb.n)) iab_open(&pb.ab); /* openWithTurn */
+        if (pad_pressed(PAD_CROSS) || pad_pressed(PAD_RIGHT)) { /* testCorePadTriggerA / Right */
+            se_start(SE_SY_TALK_FOCUS_ITEM, NULL);
+            if (pb.dir > 0 && !pb_read_text()) { pb.nr_c = pb.chapter; pb.nr_p = pb.page; pb.nr_t = pb.text; }
+            pb.dir = 1;
+            nrv_set(&pb.n, PB_FADEOUTTEXT);
+        } else if (pad_pressed(PAD_LEFT) && (pb.cmin < pb.chapter || pb.page > 0 || pb.text > 0)) {
+            se_start(SE_SY_TALK_FOCUS_ITEM, NULL);
+            pb.fast = 1; pb.dir = -1;
+            nrv_set(&pb.n, PB_FADEOUTTEXT);
+        }
+        break;
+    case PB_FADEOUTTEXT: {
+        if (FIRST(&pb.n)) iab_term(&pb.ab);
+        int st = 30 / pb_speed();
+        float a = 1.0f - fminf((float)pb.n.step / st, 1.0f);
+        pb_alpha(a);
+        lyt_set_pane_alpha(pb.l, "PicToneDown", (int)(pb_tone_out(a) * 255.0f + 0.5f));
+        if (pb.n.step == st) {
+            if (pb_text_next()) nrv_set(&pb.n, PB_FADEINTEXT);
+            else if (pb_page_next()) nrv_set(&pb.n, PB_PAGENEXT);
+            else { if (pb_chapter_next() && !pb_bgm_off("STM_PROLOGUE_01_B")) pb_bgm_stop(120); nrv_set(&pb.n, PB_FADEOUT); }
+        }
+        break;
+    }
+    case PB_PAGENEXT:
+        if (FIRST(&pb.n)) {
+            lyt_show_rec(pb.l, "Text", 0); lyt_show_rec(pb.l, "Title", 0); lyt_show_rec(pb.l, "PicToneDown", 0);
+            pb_update_texture();
+            lyt_start(pb.l, "PageNext", 0);
+            if (pb.dir < 0) lyt_set_frame(pb.l, 0, lyt_anim_frames(pb.l, "PageNext")); /* startAnimReverseOneTime */
+            lyt_set_rate(pb.l, 0, (float)(pb.dir * pb_speed()));
+            se_start(pb.fast ? SE_SY_PICTUREBOOK_NEXT_F_ST : SE_SY_PICTUREBOOK_NEXT_ST, NULL);
+        }
+        if (pb.n.step == (pb.fast ? 27 : 81)) se_start(pb.fast ? SE_SY_PICTUREBOOK_NEXT_F_ED : SE_SY_PICTUREBOOK_NEXT_ED, NULL); /* cPageNext*SeStep */
+        if (pb.n.step > 0 && lyt_stopped(pb.l, 0)) nrv_set(&pb.n, PB_WAITNOTEXT);
+        break;
+    case PB_FADEOUT:
+        if (FIRST(&pb.n)) { wipe_start(60 / pb_speed(), 1, 0); pb_bgm_stop(60 / pb_speed()); }
+        if (wipe_active()) break;
+        if (pb.cmax >= pb.chapter) nrv_set(&pb.n, PB_FADEIN);
+        else pb_kill();
+        break;
+    }
+    nrv_end(&pb.n);
+    lyt_update(pb.l);
+    iab_update(&pb.ab);
+}
+static void pb_draw(void)
+{
+    float eye[3] = {0, 0, 1000.0f}, target[3] = {0, 0, 0}, up[3] = {0, 1.0f, 0};
+    render_begin(eye, target, up);
+    render_world_done();
+    lyt_draw(pb.l);
+    iab_draw(&pb.ab);
+    wipe_draw_quad();
 }
 
 /* --- StaffRoll (StaffRoll.cpp: StaffRollLine x 64, StaffRollPicture, StaffRollTitle, InformationMessage; ending.bin) --

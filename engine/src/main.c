@@ -289,6 +289,7 @@ static void toc_select(void)
             ((strcmp(e->path, "map.bin") == 0 || strcmp(e->path, "mappics.bin") == 0) && strncmp(scen, "AstroGalaxy/", 12) == 0) ||
             (strcmp(e->path, "ending.bin") == 0 && strncmp(scen, "EpilogueDemoStage/", 18) == 0) ||
             (strcmp(e->path, "prologue.bin") == 0 && strncmp(scen, "PeachCastleGardenGalaxy/", 24) == 0) ||
+            (strcmp(e->path, "picturebook.bin") == 0 && strncmp(scen, "LibraryRoom/", 12) == 0) ||
             strncmp(e->path, "movies/", 7) == 0 || /* any scene may end in one */
             strncmp(e->path, "music/", 6) == 0) {  /* the BGMs (audio.c streams them) */
             if (ntoc == (int)(sizeof toc / sizeof toc[0])) render_fatal("packs: TOC full");
@@ -801,11 +802,11 @@ static const u8 *load_packs(Scene *s)
         /* layouts / messages, their 3D models; the title and file select's (FileSelect); the dome's (AstroDome); the
          * Observatory's map (AstroGalaxy); the ending's staff roll (EpilogueDemoStage); the new game's opening
          * (PeachCastleGardenGalaxy: PrologueDirector's picture book and letter) */
-        static const char *const mp_names[8] = {"menus.bin", "menus3d.bin", "title.bin", "title3d.bin", "dome.bin", "map.bin", "ending.bin",
-                                                "prologue.bin"};
-        static const char *const mp_scene[8] = {"", "", "FileSelect/", "FileSelect/", "AstroDome/", "AstroGalaxy/", "EpilogueDemoStage/",
-                                                "PeachCastleGardenGalaxy/"};
-        for (int k = 0; k < 8; k++)
+        static const char *const mp_names[9] = {"menus.bin", "menus3d.bin", "title.bin", "title3d.bin", "dome.bin", "map.bin", "ending.bin",
+                                                "prologue.bin", "picturebook.bin"};
+        static const char *const mp_scene[9] = {"", "", "FileSelect/", "FileSelect/", "AstroDome/", "AstroGalaxy/", "EpilogueDemoStage/",
+                                                "PeachCastleGardenGalaxy/", "LibraryRoom/"}; /* (the library's picture book) */
+        for (int k = 0; k < 9; k++)
             if (strncmp(scen, mp_scene[k], strlen(mp_scene[k]))) continue; /* (the empty prefix: every scene) */
             else
             if (pack_open(&mp, mp_names[k])) {
@@ -1432,6 +1433,27 @@ int main(void)
             if (frame == 1700) printf("dome test f %u: pointer on Star1 %d, selecting %d\n", frame, menu_test_point_scenario("Star1"), menu_scenario_selecting());
             if (frame == 1720) pad_force = PAD_CROSS;
 #endif
+        }
+#endif
+#if defined(PACKS) && defined(LIBRARY_TEST)
+        { /* XF=-DLIBRARY_TEST from AstroGalaxy/1: chapters 1-3 can be read (PictureBookA..C), none read; to the library at 200:
+           * ロゼッタ朗読, its talks and the picture book read through by X every second */
+            static int moved;
+            pad_force = moved && frame % 60 < 8 ? PAD_CROSS : 0;
+            if (frame == 200 && !moved) {
+                /* (PictureBookA..C are computed: SpecialStarGrand3, 24 / 28 stars) */
+                static const char *const gs[] = {"EggStarGalaxy", "HoneyBeeKingdomGalaxy", "BattleShipGalaxy", "HeavenlyBeachGalaxy"};
+                for (int g = 0; g < 4; g++) for (int k = 1; k <= 6; k++) gd_set_star(gs[g], k);
+                gd_set_star("HeavensDoorGalaxy", 1); gd_set_star("KoopaBattleVs1Galaxy", 1); gd_set_star("SurfingLv1Galaxy", 1);
+                gd_set_star("FlipPanelExGalaxy", 1);
+                gd_set_value("絵本既読章", 0); gd_set_value("LibraryOpenNewStarCount", 0);
+                printf("library test: grand3 %d, value %d, stars %d\n", gd_flag_is_on("SpecialStarGrand3"), gd_value("LibraryOpenNewStarCount"), gd_star_num());
+                printf("library test: can read %d, read %d\n", gd_book_can_read(), gd_value("絵本既読章"));
+                seq_galaxy_move(SEQ_MOVE, "LibraryRoom", 1, -1, 0);
+                moved = 1;
+            }
+            if (moved && frame % 120 == 0)
+                printf("library test f %u: demo %d, book %d, read %d\n", frame, game_test_demo(-1), menu_picture_book_alive(), gd_value("絵本既読章"));
         }
 #endif
 #if defined(PACKS) && defined(COMET_TEST)

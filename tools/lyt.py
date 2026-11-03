@@ -83,7 +83,10 @@ def parse_brlyt(b):
                     if b[st + 2] == 1 and b[st + 9] >> 4 == 7 and b[st + 9] & 15 == 4:
                         mask = {(0, 7): "inv", (7, 0): "mask", (7, 5): "mask"}.get((b[st + 8] & 15, b[st + 8] >> 4))
                 q += 16 * (fl >> 18 & 0x1F) + 4 * (fl >> 23 & 1)
-                add = bool(fl >> 24 & 1) and b[q] == 1 and b[q + 2] == 1
+                # GX_BL_DSTCLR, GX_BL_ZERO multiplies the screen by the colour (PictureBook's PicValley*: the spine's
+                # shadow): add 2 (lyt.c / render.c: Cd x As with the colour's grey as its alpha)
+                add = 1 if bool(fl >> 24 & 1) and b[q] == 1 and b[q + 2] == 1 else \
+                    2 if bool(fl >> 24 & 1) and b[q] == 1 and b[q + 1] == 2 and b[q + 2] == 0 else 0
                 mats.append(dict(name=cstr(b, mo, 20).strip(),
                                  c0=struct.unpack_from(">4h", b, mo + 0x14), c1=struct.unpack_from(">4h", b, mo + 0x1C),
                                  maps=maps, srt=srts[0] if srts else (0, 0, 0, 1, 1), srts=srts, add=add, mask=mask))
@@ -275,7 +278,10 @@ def convert(files, name, texts, extra=None, full=False):
                 a, b_ = np.array(c0, np.float32) / 255, np.array(c1, np.float32) / 255
                 ta = rgba[..., 3].copy()
                 rgba = np.clip(a + (b_ - a) * rgba, 0, 1)
-                if add or a_live:  # added (Cs x As + Cd): the texture's own alpha weighs it (both colours' alpha
+                if add == 2:  # multiplied: the colour as the alpha that weighs the screen (Cd x As), white
+                    rgba[..., 3] = rgba[..., :3].mean(-1)
+                    rgba[..., :3] = 1.0
+                elif add or a_live:  # added (Cs x As + Cd): the texture's own alpha weighs it (both colours' alpha
                     rgba[..., 3] = ta  # are 0); alpha_live: c1's alpha applied by lyt.c
                 elif mask and mask.lower() != texname.lower() and c0[3] == c1[3]:  # one alpha for both colours: the
                     rgba[..., 3] = ta * a[3]  # mask's shape kept (DPDPointer's PicHand: the gradation in the hand)
@@ -421,6 +427,22 @@ MAP = ("MapGrandGalaxy", "MapGalaxyIcon", "MapDomeIcon", "MapTitle", "MapGalaxyB
 # the ending's (StaffRoll: StaffRollLine, StaffRollTitle, StaffRollPicture with StaffRollTexture.arc's pictures as
 # materials named by their file, its InformationMessage): ending.bin, in the EpilogueDemoStage stage only
 ENDING = ("StaffRoll", "StaffRollTitle", "StaffRollPicture", "InformationWindow")
+# the library's picture book (PictureBookLayout: RosettaReading's and RosettaPictureBook's), with the pages of
+# PictureBookChapter1..9.arc (Chapter<c>Page<p>.bti) and PictureBookTexture.arc's title / covers as materials named by
+# their file (lower case, 20 characters), and its messages (PictureBookChapter<c>_Title / _Page<p>_<k>, a second MSGS:
+# blob.c msgs2): picturebook.bin, in the LibraryRoom stage only (PictureBookLayout::makeArchiveList)
+PICTURE = ("PictureBook",)
+
+
+def build_picturebook(fsp):
+    pics = {}
+    for a in ["PictureBookTexture"] + [f"PictureBookChapter{c}" for c in range(1, 10)]:
+        for n, b in B.rarc_files((Path(fsp) / "ObjectData" / f"{a}.arc").read_bytes()):
+            if n.lower().endswith(".bti"):
+                pics[n.rsplit("/", 1)[-1][:-4][:20].lower()] = b
+    return build_dome(fsp, PICTURE, "PictureBook", pics, extra=[msgs_chunk(fsp, ("PictureBookChapter",))])
+
+
 # the new game's opening (PrologueDirector: ProloguePictureBook's "PrologueDemo", PrologueLetter's "PeachLetterMini"):
 # prologue.bin, in the PeachCastleGardenGalaxy stage only
 PROLOGUE = ("PrologueDemo", "PeachLetterMini")
@@ -632,7 +654,7 @@ TITLE_3D = (("FileSelectDataPlanet", "FileSelectDataPlanet"), ("FileSelectDataMa
             ("CometNearOrbitSky", "CometNearOrbitSky"), ("MiniatureGalaxySelect", "MiniatureGalaxySelect"))
 
 
-def build_dome(fsp, names=DOME, with_pics="GalaxyInfo", pics=None):
+def build_dome(fsp, names=DOME, with_pics="GalaxyInfo", pics=None, extra=()):
     from slice import blob_of, chunk
     if pics is None:
         pics = {n.rsplit("/", 1)[-1][:-4][:20]: b for n, b in B.rarc_files((Path(fsp) / "ObjectData" / "GalaxyInfoTexture.arc").read_bytes())
@@ -647,7 +669,7 @@ def build_dome(fsp, names=DOME, with_pics="GalaxyInfo", pics=None):
         offs.append(o)
         o += len(bd)
     lytr = struct.pack("<I12x", len(bodies)) + struct.pack(f"<{len(offs)}I", *offs) + b"".join(bodies)
-    return blob_of([chunk(b"LYTR", lytr), text_chunk(texts)])
+    return blob_of([chunk(b"LYTR", lytr), text_chunk(texts)] + list(extra))
 
 
 def build_title(fsp):
@@ -709,6 +731,8 @@ if __name__ == "__main__":  # python tools/lyt.py data/fs/files [out/packs/menus
     print(f"letter.bin {dst.with_name('letter.bin').stat().st_size / 1024:.0f} KB")
     dst.with_name("ending.bin").write_bytes(build_ending(fsp))
     print(f"ending.bin {dst.with_name('ending.bin').stat().st_size / 1024:.0f} KB")
+    dst.with_name("picturebook.bin").write_bytes(build_picturebook(fsp))
+    print(f"picturebook.bin {dst.with_name('picturebook.bin').stat().st_size / 1024:.0f} KB")
     dst.with_name("prologue.bin").write_bytes(build_dome(fsp, PROLOGUE, None))
     print(f"prologue.bin {dst.with_name('prologue.bin').stat().st_size / 1024:.0f} KB")
     dst.with_name("subs.bin").write_bytes(build_subs(fsp))

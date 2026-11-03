@@ -165,6 +165,18 @@ static int find_value(const char *name)
     return -1;
 }
 int gd_value(const char *name) { int i = find_value(name); return i < 0 ? 0 : gd.value[i]; }
+void gd_test_flag_on(const char *name) { int i = find_flag(name); if (i >= 0) gd.flag[i >> 3] |= (u8)(1 << (i & 7)); }
+int gd_book_can_read(void) /* getPictureBookChapterCanRead: cPictureBookChapterSuffix "ABCDEFGHI" */
+{
+    int n = 0;
+    for (const char *c = "ABCDEFGHI"; *c; c++) {
+        char f[16];
+        snprintf(f, sizeof f, "PictureBook%c", *c);
+        if (!gd_flag_is_on(f)) break;
+        n++;
+    }
+    return n;
+}
 void gd_set_value(const char *name, int v) { int i = find_value(name); if (i >= 0) gd.value[i] = (u16)v; }
 
 /* GameEventFlagTable::getGalaxyDependedFlags: the galaxy's OpenCondition0..2 */

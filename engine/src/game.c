@@ -604,7 +604,14 @@ static void draw_skin(const Model *md, const float m[16], Anim *a)
         else bva_apply(md, a->clip_id >= 0 ? sc->clips[a->clip_id].name : NULL, a->frame);
     }
     bva_key = NULL;
-    if (render_model_visible(md, m)) render_skinned_visible(md, m, anim_drw(a)); /* culled: no draw matrices made */
+    float cm[16]; /* culled about its root joint as posed (a demo clip may carry the body far from its origin:
+                   * RosettaReading's DemoRosettaReading puts her 220 off, on her chair) */
+    memcpy(cm, m, sizeof cm);
+    if (a->skin && a->skin->njoints) {
+        const float *j = a->world[0];
+        for (int k = 0; k < 3; k++) cm[12 + k] += m[k] * j[12] + m[4 + k] * j[13] + m[8 + k] * j[14];
+    }
+    if (render_model_visible(md, cm)) render_skinned_visible(md, m, anim_drw(a)); /* culled: no draw matrices made */
 }
 /* a one-shot effect standing on `up` at p */
 static void fx_at(int fx, V3 p, V3 up)
@@ -33053,6 +33060,7 @@ static void bgm_start(const char *id) /* startStageBGM(name, false) */
     bgm_play(track);
 }
 void game_bgm(const char *id) { bgm_start(id); }
+void game_bgm_stop(int frames) { bgm_stop(frames); }
 /* GameScene::isValidScenarioOpeningCamera: the stage's StartScenario<n>.canm, its frames (0 none; test builds start
  * in play) */
 static int opening_frames(void)
@@ -33160,6 +33168,9 @@ static const struct { const char *cls, *demo, *anim, *talk; } dx_casts[] = {
     {"Rosetta", "ロゼッタトーチの炎進捗デモ", "", "AstroGalaxy_Rosetta084"},
     {"Rosetta", "ロゼッタルイージデモ", "", "AstroGalaxy_Rosetta054"},
     {"Rosetta", "エピローグデモ", "demoepilogueb", NULL}, /* RosettaDemoEpilogue: tryCreateDemoTalkAnimCtrlForScene, registerDemoTalkMessageCtrl */
+    /* RosettaReading::init: tryCreateDemoTalkAnimCtrlForScene DemoRosettaReading, registerDemoTalkMessageCtrl (000, or 003
+     * once every chapter can be read: dx_cast_hook) */
+    {"RosettaReading", "ロゼッタ朗読", "demorosettareading", "LibraryRoom_RosettaReading000"},
     {"Rosetta", "チコガイドデモ", "demogetpower", NULL},   /* RosettaDemoHeavensDoor1: ForActor (no camera), her own talk */
     {"TicoBaby", "チコガイドデモ", "demogetpower", NULL},  /* TicoDemoGetPower: ForScene (its camera) */
 };
@@ -33199,10 +33210,12 @@ static Inst *row_inst(int row)
         if (insts[i].row == row) return &insts[i];
     return NULL;
 }
-static void dx_clip(int row, const char *anim, char *n, int sz) /* "<class>/<anim>" lower case */
+static void dx_clip(int row, const char *anim, char *n, int sz) /* "<class>/<anim>" lower case, cut to 31 as the
+                                                                * packs' names (slice.py name32: rosettareading/demorosettareadi) */
 {
     snprintf(n, sz, "%s/%s", sc->types + 32 * sc->objs[row].type, anim);
     for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
+    if (sz > 31) n[31] = 0;
 }
 
 /* the casts' own reactions (registerDemoActionFunctor / registerDemoActionNerve, and appear() where a class has its own) */
@@ -33219,6 +33232,14 @@ static void dx_cast_hook(int row, int type, int part)
     if (type == 0 && !strcmp(cls, "StarReturnDemoStarter")) { srd_appear(row); return; }
     if (type == 0 && !strcmp(cls, "GrandStarReturnDemoStarter")) { gsr_appear(row); return; }
     if (type == 2 && !strcmp(cls, "AstroCore")) { acore_start(); return; }                   /* AstroCore::startDemo: Grow */
+    if (type == 2 && !strcmp(cls, "RosettaChair")) { /* RosettaChair::startDemo (朗読開始) / setDefaultPose (キャスト入れ換え).
+                                                     * ponytail: its collision not invalidated during the demo */
+        const Inst *in = row_inst(row);
+        if (in) obj_play(in, part == 0 ? "demorosettareading" : "rosettachair", 1, 0);
+        return;
+    }
+    if (type == 0 && !strcmp(cls, "RosettaReading")) /* appear (RosettaReading::init's talk label by getChapterNumberMax) */
+        dx_talk_set = gd_book_can_read() == 9 ? "LibraryRoom_RosettaReading003" : NULL;
     if (type == 3 && !strncmp(cls, "AstroDomeSky", 12)) { ads_demo_nerve(part); return; }  /* ReturnDemoWait on 移動, Disappear on ドーム出現 */
     if (!strcmp(cls, "TicoDomeLecture") && (type == 0 || type == 3)) { /* appear: Wait at home; NrvMove */
         tdl.nrv = type == 0 ? TDL_WAIT : TDL_MOVE; tdl.step = 0; tdl.part = part;
@@ -34223,6 +34244,41 @@ static void rosetta_update(Inst *in)
     was_talking = talking;
     if (game_frame % 300 == 0) wait = rand() % 2 ? "waitb" : "waita"; /* isIntervalStep(sWaitActionInterval): getRandom(0, 2) */
     obj_play(in, talking ? talk : wait, 1, 0); /* tryStartAction (no-op while it plays) */
+}
+
+/* RosettaReading (RosettaReading.cpp) in ロゼッタ朗読 (parts 0 朗読開始, 1 ロゼッタ会話[開始], 2 絵本デモ開始, 3 絵本デモ終了, 4
+ * ロゼッタ会話[終了], 5 朗読終了, 6 キャスト入れ換え): PictureBookBefore (SE_SM_LV_TICO_WAIT_LIBRARY in 0 / 1 and part 2's
+ * first 60 steps, SE_SM_ROSETTA_BOOK_OPEN at its step 100, stopStageBGM(120) at its first; its last step:
+ * pauseTimeKeepDemo), PictureBook (the PictureBookLayout of chapters getPictureBookChapterAlreadyRead + 1 ..
+ * getPictureBookChapterCanRead, forceToScreenCinemaFrame; dead: those chapters read (絵本既読章), forceToFrame,
+ * resumeTimeKeepDemo), PictureBookAfter (the level SE past part 3's step 30 and in part 4). ponytail: no
+ * overlayWithPreviousScreen at part 3's step 122; her model (skinned, posed by DemoRosettaReading on the chair, drawn)
+ * is not seen in PCSX2 yet (cause open: next to look at, her materials / the canm's frame) */
+static int rdg_nrv; /* 0 Before, 1 PictureBook, 2 After */
+static void reading_update(void)
+{
+    static u32 lv;
+    if (!dx.on || strcmp(demos[dx.cur].h->name, "ロゼッタ朗読")) { rdg_nrv = 0; return; }
+    for (int i = 0; i < ninsts; i++) /* TicoReading::exeWait: DemoRosettaReadingWait (its name cut to 31). ponytail: no
+                                      * setBckFrameAtRandom, no ColorChange BRK frame (arg0) */
+        if (!row_dead[insts[i].row] && !strcmp(sc->types + 32 * sc->objs[insts[i].row].type, "TicoReading"))
+            obj_play(&insts[i], "demorosettareadingw", 1, 0);
+    if (rdg_nrv == 0) {
+        if (dx_active(0) || dx_active(1) || (dx_active(2) && dx_step(2) <= 60)) lv = se_level(SE_SM_LV_TICO_WAIT_LIBRARY, NULL, lv);
+        if (dx_active(2) && dx_step(2) == 100) se_start(SE_SM_ROSETTA_BOOK_OPEN, NULL);
+        if (dx_first(2)) game_bgm_stop(120);
+        if (dx_last(2)) { /* pauseTimeKeepDemo, PictureBook */
+            dx.paused = 1; rdg_nrv = 1;
+            menu_picture_book(gd_value("絵本既読章") + 1, gd_book_can_read());
+            menu_cinema_force(CI_SCREEN); /* forceToScreenCinemaFrame */
+        }
+    } else if (rdg_nrv == 1) {
+        if (!menu_picture_book_alive()) {
+            gd_set_value("絵本既読章", gd_book_can_read()); /* setPictureBookChapterAlreadyRead(min .. max) */
+            menu_cinema_force(CI_FRAME); /* forceToFrameCinemaFrame */
+            dx.paused = 0; rdg_nrv = 2;
+        }
+    } else if ((dx_active(3) && dx_step(3) > 30) || dx_active(4)) lv = se_level(SE_SM_LV_TICO_WAIT_LIBRARY, NULL, lv);
 }
 
 /* Butler (exeDemo: at its PosName during the demo, then setDefaultPose and Wait), Rosetta, ButlerExplain and TicoDomeLecture */
@@ -38567,6 +38623,7 @@ void game_update(void)
     pro_update();
     dx_update();
     update_dome_npcs();
+    reading_update();
     update_luigi();
     srd_update();
     adds_update();
