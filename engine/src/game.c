@@ -870,8 +870,9 @@ static struct { V3 pos, vel; int t, wall, step, b90, ground, roof; V3 gn, rn; fl
 static Anim *fb_anim[MAX_FIREBALLS]; /* their Roll (startBck at exeThrow's first step) */
 static const Model *m_marioball, *m_bubble;
 #define MAX_NOTES 512 /* NoteFairy notes (update_notes) */
-static struct { V3 pos; float coord; short row, alive; } notes[MAX_NOTES];
+static struct { V3 pos; float coord; short row, alive, t; } notes[MAX_NOTES]; /* alive: 0 out, 1 shown, 2 taken, 3 flying up (t) */
 static int nnotes;
+static int note_force_row = -1; /* test builds: the fairy taken as switched on */
 #define MAX_WPLANTS 1024 /* WaterPlant (place_waterplants, draw_waterplants) */
 static struct { V3 pos, up, dir; float h; short row, type; } wplants[MAX_WPLANTS];
 static int nwplants;
@@ -6149,8 +6150,10 @@ int game_test_note(int phase)
             if (!row_turn[i] && note_rail(&sc->objs[i], &e)) {
                 int n = 0;
                 for (int k = 0; k < nnotes; k++) n += notes[k].row == (short)i;
-                row_turn[i] = 1; row_coord[i] = 0;
-                printf("note test: row %d, %d notes, rail %d long\n", (int)i, n, (int)tsuki_len(e));
+                note_force_row = (int)i; /* its appear switch taken as on: exeHide */
+                printf("note test: row %d, %d notes, rail %d long, args %d %d %d %d %d %d %d %d\n", (int)i, n, (int)tsuki_len(e),
+                       sc->objs[i].arg[0], sc->objs[i].arg[1], sc->objs[i].arg[2], sc->objs[i].arg[3], sc->objs[i].arg[4],
+                       sc->objs[i].arg[5], sc->objs[i].arg[6], sc->objs[i].arg[7]);
             }
             return (int)i;
         }
@@ -31447,6 +31450,7 @@ static int star_demo_update(const Inst *in, int t, V3 sp)
     }
     return 1;
 }
+static int note_star_row = -1; static V3 note_star_at; /* NoteFairy mPowerStarSpawnType 1 / 2: its star from the last note taken */
 static V3 star_pos(const Inst *in, int *state)
 {
     V3 p = v3(in->m[12], in->m[13], in->m[14]);
@@ -31455,13 +31459,14 @@ static V3 star_pos(const Inst *in, int *state)
     if (!w) return p;
     V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), o = p;
     if (w > 0) {
-        p = star_appear_point(in, row_pos(&sc->objs[w - 1]), p);
+        V3 from = w - 1 == note_star_row ? note_star_at : row_pos(&sc->objs[w - 1]);
+        p = star_appear_point(in, from, p);
         const Row *r = &sc->objs[w - 1];
         const char *name = sc->types + 32 * r->type;
         V3 x, z;
         row_axes(r, &x, &z);
         float h = strcmp(name, "CrystalCageL") == 0 ? 250.0f : strncmp(name, "Breakable", 9) == 0 ? 150.0f : 0.0f;
-        o = vadd(row_pos(r), vmul(vcross(z, x), h * r->scale[0]));
+        o = vadd(from, vmul(vcross(z, x), h * r->scale[0]));
         if (!row_dead[w - 1] || (lg_cls(name) && !luigi_took(w - 1))) { *state = h > 0; return o; } /* (a Luigi absent
                                                                                                        * here: no star) */
     } else if (got_coins < 100 && got_purple < 100) { /* ScenePlayingResult: 100 coins, or 100 purple coins */
@@ -31480,18 +31485,29 @@ static V3 star_pos(const Inst *in, int *state)
  * its notes come out as it passes them: arg0 notes spread evenly over the rail, one per rail point with -2, else one
  * every 150 (the rail's point arg0 for -2). Mario touching a note (80) takes it; all taken: its SW_A on and its power
  * star out (arg7, the row dies: star_wait); arg2 (20) seconds after the last one is out the rest are gone. The notes
- * turn 8 degrees a frame (NoteGroup). row_turn 0 hidden, 1 coming out, 2 counting down, 3 over; row_coord the fairy's
- * place on the rail, row_step the countdown. ponytail: no appear demo / camera, no melody, no flashing, a failure is
- * final (no new try) */
+ * turn 8 degrees a frame (NoteGroup). row_turn 0 hidden (Hide), 4 StartAppearDemo, 5 DemoAppear, 1 coming out
+ * (AppearNoteBloom / AppearNote), 2 counting down (EndWait), 3 over (dead), 6 RailMoveStart; row_coord the fairy's
+ * place on the rail, row_step its nerve's step. arg3 the appearance: 1-3 the fairy shown at its place, Mario turned to
+ * it at step 30 and the demo 出現 with the cinema frame and its actor camera (StartAppearDemo), the fairy's flight down to the rail's
+ * start over 130 (DemoAppear), the demo ended 60 steps into the notes (type 3: once all are out); 4 the demo without
+ * the frame from the rail's start; 5 / 6 no demo; any other all notes at once (AppearNote). arg4 the melody (-1 the
+ * combo scale, -2 its four-note steps; >= 0 a remix melody), arg5 0 SE_SY_TOTAL_COMPLETE, arg6 <= 0 the stage BGM down
+ * while it runs (moveVolumeStageBGMForNoteFairy 0 over 30, 1 over 120 at its kill), arg7 2 / 3 the star from the
+ * last note taken. A taken note flies up 10 steps (sFlyUpSpeed 30); the notes flash their last 180 steps
+ * (FlashingCtrl: 10-step blinks, 5 under 90); SW_B valid and off kills it. A failure is final (Petari: killed).
+ * ponytail: a remix melody (AudRemixSequencer, not ported) plays the combo scale; no Blur / Get / Vanish effects;
+ * one fairy's demo / sounds at a time */
 static int note_rail(const Row *r, const unsigned char **e)
 {
     *e = scene_blob_g && r->path >= 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
     return *e != NULL;
 }
 
+static struct { int row, show, demo, frame, cam; V3 pos, p8c, p98; } nf = {.row = -1}; /* the fairy running: shown, its place; its demo 出現 */
 static void notes_spawn(void) /* at game_init: every fairy's notes, hidden */
 {
     nnotes = 0;
+    nf.row = note_star_row = -1; nf.demo = 0;
     int t = scene_type(sc, "NoteFairy");
     for (u32 i = 0; t >= 0 && i < sc->nobjs; i++) {
         const Row *r = &sc->objs[i];
@@ -31512,64 +31528,169 @@ static void notes_spawn(void) /* at game_init: every fairy's notes, hidden */
 }
 
 static u32 note_lv[3], note_tm_id; /* NoteFairy level sounds: fairy move, fanfare, timer. ponytail: one set for all fairies (one runs at a time) */
+static void note_demo_end(void) /* endDemo 出現, endActorCamera */
+{
+    if (!nf.demo) return;
+    printf("note fairy row %d: its demo ends\n", nf.row);
+    pd_end("出現");
+    if (nf.cam) camera_event_stop();
+    if (nf.frame) menu_cinema(0);
+    nf.demo = nf.cam = 0;
+}
+static int note_demo_start(int row, int frame) /* enterDemoAppear: startActorCameraTargetSelf, requestStartDemo(WithoutCinemaFrame) */
+{
+    if (!pd_try_start("出現", row)) return 0;
+    const Row *r = &sc->objs[row];
+    V3 x, z;
+    row_axes(r, &x, &z);
+    nf.demo = 1; nf.frame = frame;
+    nf.cam = row_camset[row] != -1 && camera_actor_start("NoteFairy", "", (unsigned short)row_camset[row], vcross(z, x), z, nf.pos);
+    if (frame) menu_cinema(1);
+    return 1;
+}
+static void note_fairy_kill(u32 i) /* NoteFairy::kill: the BGM back, its notes gone */
+{
+    const Row *r = &sc->objs[i];
+    if (r->arg[6] <= 0) audio_move_volume(1.0f, 120); /* moveVolumeStageBGMForNoteFairy(1, 120) */
+    for (int k = 0; k < nnotes; k++) if (notes[k].row == (short)i && notes[k].alive == 1) notes[k].alive = 0;
+    if (nf.row == (int)i) { note_demo_end(); nf.row = -1; }
+    row_turn[i] = 3;
+}
+static void note_turn(u32 i, int t) { row_turn[i] = (unsigned char)t; row_step[i] = 0; }
 static void update_notes(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     int t = scene_type(sc, "NoteFairy");
+    for (int k = 0; k < nnotes; k++) /* Note::exeFlyUp: up along -gravity at sFlyUpSpeed, dead at sStepFlyUp */
+        if (notes[k].alive == 3) {
+            notes[k].pos = vadd(notes[k].pos, vmul(up_at(notes[k].pos, v3(0, 1, 0)), 30.0f));
+            if (++notes[k].t >= 10) notes[k].alive = 2;
+        }
     for (u32 i = 0; t >= 0 && i < sc->nobjs; i++) {
         const Row *r = &sc->objs[i];
         if (r->type != t || row_turn[i] == 3) continue;
         const unsigned char *e;
         if (!note_rail(r, &e)) continue;
-        if (row_turn[i] == 0) {
-            if (!row_shown(i)) continue;
-            row_turn[i] = 1; row_coord[i] = 0;
-            if (r->arg[3] != 6) se_start(SE_SY_READ_RIDDLE_S, NULL); /* exeHide */
-            printf("note fairy row %d: notes come out (rail %d long)" "\n", (int)i, (int)tsuki_len(e));
+        const float *pts = (const float *)(e + 24);
+        u32 np = *(const u32 *)(e + 8);
+        int type = r->arg[3];
+        if (row_turn[i] == 0) { /* exeHide */
+            if (!row_shown(i) && (int)i != note_force_row) continue;
+            if (type != 6) se_start(SE_SY_READ_RIDDLE_S, NULL); /* !_D0 */
+            if (r->arg[6] <= 0) audio_move_volume(0.0f, 30); /* _CF: moveVolumeStageBGMForNoteFairy(0, 30) */
+            row_coord[i] = 0;
+            nf.row = (int)i; nf.demo = 0; nf.show = type >= 1 && type <= 6; nf.p8c = nf.pos = row_pos(r); /* showModel (StartAppearDemo / RailMoveStart) */
+            { /* _98: 800 back along the rail's start direction (flat in Y), half way up to the rail's start */
+                V3 s0 = rail_at(pts, np, 0), d = vsub(rail_at(pts, np, 10.0f), s0);
+                d.y = 0;
+                d = vlen(d) > 1e-4f ? vnorm(d) : v3(0, 0, 0);
+                nf.p98 = v3(nf.p8c.x - 800.0f * d.x, 0.5f * nf.p8c.y + 0.5f * s0.y, nf.p8c.z - 800.0f * d.z);
+            }
+            note_turn(i, type >= 1 && type <= 3 ? 4 : type == 4 ? 6 : 1);
+            printf("note fairy row %d: appears (type %d, rail %d long)" "\n", (int)i, type, (int)tsuki_len(e));
         }
+        if (r->sw[SW_B] >= 0 && !sw_on(r, SW_B) && (int)i != note_force_row) { note_fairy_kill(i); continue; } /* control: isValidSwitchB && !isOnSwitchB (a test's fairy: its area's switch taken as on) */
         float len = tsuki_len(e), speed = r->arg[1] > 0 ? (float)r->arg[1] : 13.0f;
-        int left = 0, all = 0;
-        if (row_turn[i] == 1) row_coord[i] += r->arg[3] == -1 ? len : speed; /* AppearNote (type -1): all at once */
-        V3 fp = rail_at((const float *)(e + 24), *(const u32 *)(e + 8), row_coord[i]); /* the fairy */
+        int st = row_step[i]++;
+        if (row_turn[i] == 4) { /* exeStartAppearDemo */
+            nf.pos = nf.p8c;
+            if (st >= 30) { /* isStep(30): setPlayerFrontVec to it, enterDemoAppear (with the frame) */
+                V3 f = vtangent(vsub(nf.p8c, mario->pos), mario->up);
+                if (st == 30 && vlen(f) > 1e-3f) mario->face = vnorm(f);
+                if (note_demo_start((int)i, 1)) note_turn(i, 5); else row_step[i] = 31; /* (requested: it starts once it can) */
+            }
+            continue;
+        }
+        if (row_turn[i] == 6) { /* exeRailMoveStart: at the rail's start, enterDemoAppear without the frame (AppearNoteBloom once it starts) */
+            nf.pos = rail_at(pts, np, 0);
+            if (note_demo_start((int)i, 0)) note_turn(i, 1);
+            continue;
+        }
+        if (row_turn[i] == 5) { /* exeDemoAppear */
+            V3 s0 = rail_at(pts, np, 0);
+            if (st <= 60) {
+                float k = sinf(st / 60.0f * 1.5707963f); /* getEaseOutValue */
+                nf.pos = vadd(vmul(nf.p8c, 1.0f - k), vmul(nf.p98, k));
+                nf.pos.y -= 300.0f * sinf(3.14159265f * k);
+            }
+            if (st > 70) {
+                float k = 1.0f - cosf((st - 70) / 60.0f * 1.5707963f); /* getEaseInValue */
+                nf.pos.x = nf.p98.x * (1.0f - k) + s0.x * k;
+                nf.pos.y = nf.p98.y - sinf(1.5707963f * k) * (nf.p98.y - s0.y);
+                nf.pos.z = nf.p98.z * (1.0f - k) + s0.z * k;
+            }
+            note_lv[0] = se_level(SE_OJ_LV_FLOWER_FAIRY_MOVE, &nf.pos.x, note_lv[0]);
+            if (nf.cam) camera_event_target(up_at(nf.pos, v3(0, 1, 0)), nf.pos);
+            if (st == 130) note_turn(i, 1);
+            continue;
+        }
+        int bloom = type >= 1 && type <= 6, left = 0, all = 0, got = 0;
+        if (row_turn[i] == 1) {
+            if (!bloom) row_coord[i] = len; /* exeAppearNote: all at once */
+            else {
+                if (st == 60 && type != 3) note_demo_end(); /* !_CC && !_CD (5 / 6 have none) */
+                row_coord[i] += speed; /* moveCoordAndFollowTrans */
+                nf.pos = rail_at(pts, np, row_coord[i]);
+                note_lv[0] = se_level(SE_OJ_LV_FLOWER_FAIRY_MOVE, &nf.pos.x, note_lv[0]);
+                if (nf.cam) camera_event_target(up_at(nf.pos, v3(0, 1, 0)), nf.pos);
+            }
+        }
         for (int k = 0; k < nnotes; k++) {
             if (notes[k].row != (short)i) continue;
             all++;
+            got += notes[k].alive >= 2;
+        }
+        for (int k = 0; k < nnotes; k++) {
+            if (notes[k].row != (short)i) continue;
             if (row_turn[i] == 1 && notes[k].alive == 0 && row_coord[i] >= notes[k].coord) notes[k].alive = 1; /* the fairy passed it */
             if (notes[k].alive == 1 && vlen(vsub(c, notes[k].pos)) < 80.0f + HIT_BODY_R) {
-                notes[k].alive = 2; /* taken (addNoteToCounter) */
+                notes[k].alive = 3; notes[k].t = 0; /* attackSensor: FlyUp, addNoteToCounter */
+                int song = r->arg[4], n;
+                if (song == -2) { n = got; while (n >= 96) n -= 4; n = n / 4 + n % 4; } /* NoteCounter::add */
+                else { n = got + 5; while (n > 36) n -= 12; } /* (-1; a remix melody: ponytail) */
+                u32 h = se_start(SE_SY_FLOWER_GET_COMBO, NULL);
+                if (h) se_port(h, 11, (u16)n); /* modifySe_Kawamura: port 11 the note */
+                if (r->arg[7] == 2 || r->arg[7] == 3) { note_star_row = (int)i; note_star_at = notes[k].pos; } /* setLastGotNote: mPowerStarSpawnType 1 / 2 */
+                got++;
                 printf("note fairy row %d: note %d taken" "\n", (int)i, k);
             }
-            left += notes[k].alive != 2;
+            left += notes[k].alive < 2;
         }
-        if (row_turn[i] == 1 && row_coord[i] >= len) { row_turn[i] = 2; row_step[i] = 0; }
+        if (row_turn[i] == 1 && row_coord[i] >= len) { /* _B0 >= mMelodyNoteNum: the fairy hidden, EndWait */
+            if (type == 3) note_demo_end(); /* _CC */
+            nf.show = 0; /* hideModel */
+            note_turn(i, 2);
+        }
         if (!left) { /* ACTMES_SUCCESS */
-            row_turn[i] = 3;
-            if (r->arg[5] == 0) se_start(SE_SY_TOTAL_COMPLETE, &fp.x); /* receiveOtherMsg: mCompletionJingle 0 */
+            if (r->arg[5] == 0) se_start(SE_SY_TOTAL_COMPLETE, NULL); /* receiveOtherMsg: mCompletionJingle 0 */
             if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
+            note_fairy_kill(i);
             row_kill(i); /* its power star comes out (star_wait) */
             printf("note fairy row %d: all %d notes taken" "\n", (int)i, all);
-        } else if (row_turn[i] == 2 && ++row_step[i] >= 60 * (r->arg[2] > 0 ? r->arg[2] : 20)) { /* failureNoteCollection */
-            row_turn[i] = 3;
+        } else if (row_turn[i] == 2 && row_step[i] >= 60 * (r->arg[2] > 0 ? r->arg[2] : 20)) { /* Note::exeCountDown, then isDeadAllNotes */
             for (int k = 0; k < nnotes; k++)
-                if (notes[k].row == (short)i && notes[k].alive == 1) { /* Note::exeCountDown */
-                    notes[k].alive = 0;
-                    se_start(SE_OJ_MUSICAL_NOTE_BREAK, &notes[k].pos.x);
-                }
+                if (notes[k].row == (short)i && notes[k].alive == 1) se_start(SE_OJ_MUSICAL_NOTE_BREAK, &notes[k].pos.x);
+            note_fairy_kill(i);
             printf("note fairy row %d: time is up" "\n", (int)i);
         }
-        if (row_turn[i] == 1 && r->arg[3] != -1) /* exeAppearNoteBloom */
-            note_lv[0] = se_level(SE_OJ_LV_FLOWER_FAIRY_MOVE, &fp.x, note_lv[0]);
         if (row_turn[i] == 2) { /* exeEndWait: timeLeft = mTimeLimit - step */
             int tl = 60 * (r->arg[2] > 0 ? r->arg[2] : 20), rem = tl - row_step[i];
             u32 id = rem <= 170 ? SE_RS_LV_NOTE_TIMER_FAST : rem <= tl / 2 ? SE_RS_LV_NOTE_TIMER_MIDDLE : SE_RS_LV_NOTE_TIMER_SLOW;
-            note_lv[1] = se_level(SE_SY_NO_SOUND_FANFARE, &fp.x, note_lv[1]);
+            note_lv[1] = se_level(SE_SY_NO_SOUND_FANFARE, &nf.p8c.x, note_lv[1]);
             if (id != note_tm_id) note_lv[2] = 0;
             note_tm_id = id;
             note_lv[2] = se_level(id, NULL, note_lv[2]); /* startSystemLevelSE, levelA to port 13 (modifySe_Takezawa) */
             se_port(note_lv[2], 13, id == SE_RS_LV_NOTE_TIMER_FAST ? 0 : id == SE_RS_LV_NOTE_TIMER_MIDDLE ? 30 : 85);
         }
-
     }
+}
+static int note_hidden(int k) /* FlashingCtrl (start(mCounter)): off on the even intervals of its last 180 steps */
+{
+    int i = notes[k].row;
+    if (row_turn[i] != 2) return 0;
+    const Row *r = &sc->objs[i];
+    int timer = 60 * (r->arg[2] > 0 ? r->arg[2] : 20) - row_step[i];
+    return timer <= 180 && !((timer / (timer < 90 ? 5 : 10)) & 1);
 }
 
 /* QuestionCoin::exeThrowActor: Mario held at the binder (sBindStartBlendFrame 0: at once) in mLaunchQuat (the coin's
@@ -39398,8 +39519,12 @@ void game_draw(void)
         basis_matrix(m, bubbles[b].pos, up_at(bubbles[b].pos, v3(0, 1, 0)), v3(1, 0, 0), 0);
         render_model(m_bubble, m, 0x80, 0x80, 0x80);
     }
+    if (m_note && nf.row >= 0 && nf.show) { /* the fairy (its Note model), turning with the notes */
+        basis_matrix(m, nf.pos, up_at(nf.pos, v3(0, 1, 0)), v3(1, 0, 0), draw_angle(0.1396263f));
+        render_model(m_note, m, 0x80, 0x80, 0x80);
+    }
     if (m_note) for (int i = 0; i < nnotes; i++) { /* NoteFairy notes, turning 8 degrees a frame */
-        if (notes[i].alive != 1) continue;
+        if ((notes[i].alive != 1 && notes[i].alive != 3) || (notes[i].alive == 1 && note_hidden(i))) continue;
         basis_matrix(m, notes[i].pos, up_at(notes[i].pos, v3(0, 1, 0)), v3(1, 0, 0), draw_angle(0.1396263f));
         render_model(m_note, m, 0x80, 0x80, 0x80);
     }
