@@ -632,6 +632,18 @@ there needs the embedded blob and every pack rebuilt.
   To rerun: lyt.py (prologue.bin), slice_all.py PeachCastleGardenGalaxy, its sound.bin (SE_SV_PEACH_OPENING_LETTER,
   SE_DM_ARRIVE_CASTLE_STAR). Also: the HUD hides in programmable demos too (startDemoSystem). ponytail: submitLevelSE / permitLevelSE; DemoPeachCastleGate's Dark_v_x vignette left out
   and its GateLight's edges solid (VU1 batches keep no vertex alpha: slice.py DROP_MATERIALS).
+- Rosalina's storybook, rest (fix/story-rosetta, 2026-11-04): her model was drawn as "the screen through a tint"
+  (blend 3, no texture): slice.py took every material sampling IndDummy for CrystalCage's refraction, but Rosetta's
+  IndDummy stage is lerp(TEXC, CPREV, A1) with C1's alpha 1 (erase.brk fades her through it): tex.samples_named now
+  leaves such a stage out (only Rosetta and RosettaReading change: the dome's Rosetta was invisible too). Also
+  ANIM_MAX_DRW 160 -> 224 (RosettaReading 219 draw matrices; Koopa 197, OtaRock 170) and ANIM_MAX_JOINTS 48 -> 72
+  (Koopa 70, Rosetta 49): arena +~380 KB. RosettaChair at the sheet's PosName during the demo with its collision off,
+  RosettaReading / TicoReading dead until the demo, RosettaReading killed at its end, TicoReading's ColorChange by arg0
+  (slice.py BRK_ARG) and random start frame, overlayWithPreviousScreen (render_cover: the next n frames not flipped;
+  also GrandStarReturnDemoStarter's 2), lyt text boxes' horizontal position (setTextBoxHorizontalPosition*, lines
+  aligned as nw4r: the book's last text centred). RosettaPictureBook (the table's book: A, ロゼッタ絵本デモ, the
+  PictureBookLayout's contents mode: Open, ContentsSelect, PictureBookCloseButton, Close). Test: `library` (with
+  XF=-DRPB_ONLY=1 only the table's book: contents, chapter 1, B on its title page). ponytail: the circle wipes are fades.
 
 - KuriboChief (feat/172-kuribochief, 2026-11-04): Enemy/KuriboChief.cpp as walker kind WALK_KCHIEF (its params,
   sensors at its joints, Stagger 240 / kick from 70, BlowDown / BlowDownLand, the kick by walking into it, the star

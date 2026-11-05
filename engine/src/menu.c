@@ -108,6 +108,7 @@ typedef struct {
     const char *pane, *bound;
     int ch;
     u8 to_disappear, end_disappear, pointing_kept, active, selected, pointing; /* _18, _22, _23, _24 */
+    u8 noapp;        /* invalidateAppearance: no ButtonAppear / ButtonEnd (end_disappear 0 too) */
     float pstart;
     Nrv n;
 } Btn;
@@ -121,7 +122,12 @@ static void btn_init(Btn *b, LytInst *host, const char *pane, const char *bound,
     nrv_set(&b->n, BP_HIDDEN);
 }
 static int btn_is(const Btn *b, int nrv) { return nrv_is(&b->n, nrv); }
-static void btn_appear(Btn *b) { b->selected = 0; b->pstart = 0; b->pointing = 0; b->active = 1; nrv_set(&b->n, BP_APPEAR); }
+static void btn_appear(Btn *b)
+{
+    b->selected = 0; b->pstart = 0; b->pointing = 0; b->active = 1;
+    if (b->noapp) { lyt_show_pane(b->host, b->pane, 1); nrv_set(&b->n, BP_WAIT); }
+    else nrv_set(&b->n, BP_APPEAR);
+}
 static void btn_disappear(Btn *b) { b->active = 1; nrv_set(&b->n, BP_DISAPPEAR); }
 static void btn_force_wait(Btn *b) { b->selected = 0; b->pstart = 0; b->pointing = 0; nrv_set(&b->n, BP_WAIT); }
 static int btn_hidden(const Btn *b) { return btn_is(b, BP_HIDDEN); }
@@ -1240,7 +1246,7 @@ static void sp_setup(int m) /* StarPointerOnOffController::setup*: show / hide, 
     static const struct { u8 show, kind, valid, guide; } tab[26] = { /* unlisted: Base (Title, Demo, PowerStarGetDemo) */
         [SPM_SAVELOAD] = {1, SPK_FINGER, 1, 0}, [SPM_FILESELECT] = {1, SPK_FINGER, 1, 1},
         [SPM_SCENARIOSELECT] = {1, SPK_FINGER, 1, 1}, [SPM_PAUSEMENU] = {1, SPK_FINGER, 1, 0},
-        [SPM_CHOOSEYESNO] = {1, SPK_FINGER, 1, 1}, [SPM_DEMOMARIODEATH] = {1, SPK_STAR, 0, 1},
+        [SPM_CHOOSEYESNO] = {1, SPK_FINGER, 1, 1}, [SPM_PICTUREBOOK] = {1, SPK_FINGER, 1, 0}, [SPM_DEMOMARIODEATH] = {1, SPK_STAR, 0, 1},
         [SPM_SPHEREONREACTION] = {1, SPK_CROSS, 1, 1}, [SPM_SPHEREFINGER] = {1, SPK_FINGER, 1, 1},
         [SPM_COMMANDSTREAM] = {1, SPK_STAR, 1, 1}, [SPM_BLUESTAR] = {1, SPK_HAND, 1, 1},
         [SPM_BLUESTARREADY] = {1, SPK_HAND, 1, 1}, [SPM_GAME] = {1, SPK_STAR, 1, 1}};
@@ -4513,15 +4519,55 @@ static struct Iab *mono_ab(void) /* RosettaDemoAstroDome's mIconAButton (killed 
  * chapterNext: FadeOut (closeWipeFade 60 / speed, stopStageBGM), the next chapter's FadeIn or kill). Pages: the
  * chapter's Chapter<c>Page<p> (lyt.py: materials "chapter<c>page<p>"), the title PictureBookTitle. Texts:
  * PictureBookChapter<c>_Title, _Page<p>_<k>. getReadSpeed 3 fast, else 1.
- * ponytail: RosettaPictureBook's mode (the contents, PictureBookCloseButton, Open / ContentsSelect / Close) not ported;
- * the end text only vertically centred (no horizontal alignment in lyt.c); isStopOrFadeoutBgmName by the last name
- * this book started or stopped */
-enum { PB_DEAD, PB_FADEIN, PB_WAITNOTEXT, PB_FADEINTEXT, PB_WAITWITHTEXT, PB_FADEOUTTEXT, PB_PAGENEXT, PB_FADEOUT };
+ * RosettaPictureBook's (contents: chapters 1 .. getPictureBookChapterAlreadyRead, every text read, speed 3): Open (the
+ * covers, Appear held cBookOpenFrame 60 then played, openWipeFade(60), STM_PROLOGUE_01, SE_SY_PICTUREBOOK_NEXT_ST at
+ * 140; at Appear's end + 60 the chapters' buttons (ButtonPaneController Chapter<n> / BoxButton<n>, no appearance
+ * anims) and the close button, the contents fading in over cFadeTextFrame 30), ContentsSelect (a chapter: SE_SY_TALK_OK,
+ * its FadeIn; the close button: Close), ContentsFadeOut, the reading (the close button on each chapter's title page),
+ * Close (End, the left page the title or the last page read, the back cover; at its end closeWipeFade(60),
+ * stopStageBGM(60); SE_SY_PICTUREBOOK_END at 150). PictureBookCloseButton: BackButton's Back / BoxButton (B too),
+ * SE_SY_GALAXY_DECIDE_CANCEL. The pointer in mode PictureBook while the close button counts (isValidCloseButton).
+ * ponytail: no CS_CLICK_CLOSE (the remote's speaker); isStopOrFadeoutBgmName by the last name this book started or
+ * stopped */
+enum { PB_DEAD, PB_FADEIN, PB_WAITNOTEXT, PB_FADEINTEXT, PB_WAITWITHTEXT, PB_FADEOUTTEXT, PB_PAGENEXT, PB_FADEOUT,
+       PB_OPEN, PB_CONTENTSSELECT, PB_CONTENTSFADEOUT, PB_CLOSE };
+enum { CB_SELECT = 1, CB_SELECTED, CB_NOTSELECTED }; /* PictureBookCloseButton's nerves (cb_alive: not killed) */
 static struct {
     LytInst *l; Iab ab; Nrv n;
     int cmin, cmax, chapter, page, text, nr_c, nr_p, nr_t, dir, fast;
     char bgm[24]; int bgm_stopped; /* the stage BGM this book started, stopped since */
+    int contents;                  /* mContentsButtonPaneController: RosettaPictureBook's */
+    Btn ch[9];                     /* the chapters' buttons */
+    LytInst *bl; Btn back; int cb, cb_alive; /* PictureBookCloseButton (BackButton), its nerve, appeared and not killed */
 } pb;
+static void cb_appear(void) { pb.cb = CB_SELECT; pb.cb_alive = 1; btn_appear(&pb.back); }
+static void cb_disappear(void) { btn_disappear(&pb.back); pb.cb = CB_NOTSELECTED; }
+static int cb_try_select(void) /* PictureBookCloseButton::trySelect (canCloseWithPad) */
+{
+    if (!pb.cb_alive) return 0;
+    if (btn_try_select(&pb.back)) { se_start(SE_SY_GALAXY_DECIDE_CANCEL, NULL); pb.cb = CB_SELECTED; return 1; }
+    if (!btn_appearing(&pb.back) && (pad_pressed(PAD_CIRCLE) || pad_pressed(PAD_TRIANGLE))) { /* testCorePadTriggerB */
+        btn_disappear(&pb.back);
+        se_start(SE_SY_GALAXY_DECIDE_CANCEL, NULL);
+        pb.cb = CB_SELECTED;
+        return 1;
+    }
+    return 0;
+}
+static void cb_update(void) /* control, exeSelected / exeNotSelected: killed once hidden */
+{
+    if (!pb.cb_alive) return;
+    btn_update(&pb.back);
+    if (btn_pointing_trigger(&pb.back)) se_start(SE_SY_BUTTON_CURSOR_ON, NULL);
+    if (pb.cb != CB_SELECT && btn_hidden(&pb.back)) pb.cb_alive = 0;
+    lyt_update(pb.bl);
+}
+static int pb_close_valid(void) /* isValidCloseButton */
+{
+    return pb.contents && (nrv_is(&pb.n, PB_OPEN) || nrv_is(&pb.n, PB_CONTENTSSELECT) || pb.page == 0);
+}
+static int pb_close_selected(void) { return pb_close_valid() && pb.cb == CB_SELECTED; } /* isSelectedCloseButton */
+static void pb_hide_contents(void) { for (int i = 0; i < 9; i++) nrv_set(&pb.ch[i].n, BP_HIDDEN); } /* forceToHide */
 static const u16 *pb_msg(int c, int p, int k)
 {
     char id[64];
@@ -4538,10 +4584,10 @@ static int pb_tex(int c, int p) /* "Chapter<c>Page<p>.bti"'s material, -1 none *
 static int pb_texture_num(int c) { int n = 0; while (pb_tex(c, n + 1) >= 0) n++; return n; } /* getTextureNum */
 static int pb_page_num(int c) { for (int p = 0; p < 100; p++) if (!pb_msg(c, p + 1, 0)) return p; return 1; } /* getPageNum */
 static int pb_max_text(void) { for (int i = 0; i < 100; i++) if (!pb_msg(pb.chapter, pb.page, i)) return i - 1; return 0; } /* getCurrentMaxTextIndex */
-static int pb_speed(void) { return pb.fast ? 3 : 1; } /* getReadSpeed (no contents) */
+static int pb_speed(void) { return pb.contents || pb.fast ? 3 : 1; } /* getReadSpeed */
 static int pb_read_text(void) /* isReadedCurrentText */
 {
-    return pb.chapter < pb.nr_c || (pb.chapter == pb.nr_c && pb.page < pb.nr_p) ||
+    return pb.contents || pb.chapter < pb.nr_c || (pb.chapter == pb.nr_c && pb.page < pb.nr_p) ||
            (pb.chapter == pb.nr_c && pb.page == pb.nr_p && pb.text <= pb.nr_t);
 }
 static int pb_book_end(void) { return pb.chapter == 9 && pb.page == pb_page_num(9) && pb_max_text() == pb.text; } /* isBookEndCurrentText */
@@ -4602,14 +4648,17 @@ static void pb_bgm(const char *id) { game_bgm(id); snprintf(pb.bgm, sizeof pb.bg
 static void pb_bgm_stop(int frames) { game_bgm_stop(frames); pb.bgm_stopped = 1; }                                  /* stopStageBGM */
 static int pb_bgm_off(const char *id) { return strcmp(pb.bgm, id) || pb.bgm_stopped; }                             /* isStopOrFadeoutBgmName */
 
-void menu_picture_book(int cmin, int cmax) /* PictureBookLayout(cmin, cmax, true)::appear */
+void menu_picture_book(int cmin, int cmax, int contents) /* PictureBookLayout(cmin, cmax, !contents)::appear */
 {
-    if (!pb.l) { printf("picture book: no layout\n"); return; }
-    pb.cmin = cmin; pb.cmax = cmax; pb.chapter = cmin; pb.page = pb.text = 0;
+    if (!pb.l || (contents && !pb.bl)) { printf("picture book: no layout\n"); return; }
+    pb.contents = contents; pb.cb = 0; pb.cb_alive = 0;
+    pb.cmin = cmin; pb.cmax = contents ? gd_value("絵本既読章") : cmax; /* getChapterNumberMax */
+    pb.chapter = cmin; pb.page = pb.text = 0;
     pb.nr_c = pb.nr_p = pb.nr_t = -1; pb.dir = 1; pb.fast = 0;
-    lyt_show_rec(pb.l, "Contents", 0); /* hidePaneRecursive Contents */
-    pb.n.next = -1; nrv_set(&pb.n, PB_FADEIN);
-    printf("picture book: chapters %d .. %d\n", cmin, cmax);
+    if (!contents) lyt_show_rec(pb.l, "Contents", 0); /* hidePaneRecursive Contents */
+    else pb_hide_contents();
+    pb.n.next = -1; nrv_set(&pb.n, contents ? PB_OPEN : PB_FADEIN);
+    printf("picture book: chapters %d .. %d%s\n", pb.cmin, pb.cmax, contents ? ", contents" : "");
 }
 int menu_picture_book_alive(void) { return !nrv_is(&pb.n, PB_DEAD); }
 static void pb_init(void)
@@ -4618,17 +4667,93 @@ static void pb_init(void)
     pb.n.cur = PB_DEAD; pb.n.next = -1;
     if (!(pb.l = lyt_new("PictureBook"))) return;
     iab_init(&pb.ab, pb.l, "AButtonPosition"); /* createAndSetupIconAButton */
+    static const char *const pane[9] = {"Chapter1", "Chapter2", "Chapter3", "Chapter4", "Chapter5", "Chapter6", "Chapter7", "Chapter8", "Chapter9"};
+    static const char *const box[9] = {"BoxButton1", "BoxButton2", "BoxButton3", "BoxButton4", "BoxButton5", "BoxButton6", "BoxButton7", "BoxButton8", "BoxButton9"};
+    for (int i = 0; i < 9; i++) { /* initContentsButton (cContentsPaneName / cContentsPointingPaneName) */
+        btn_init(&pb.ch[i], pb.l, pane[i], box[i], 0, 0);
+        pb.ch[i].noapp = 1; pb.ch[i].end_disappear = 0; /* invalidateAppearance */
+        lyt_set_text_rec(pb.l, pane[i], pb_msg(i + 1, 0, 0)); /* PictureBookChapter<n>_Title */
+    }
+    if ((pb.bl = lyt_new("BackButton"))) btn_init(&pb.back, pb.bl, "Back", "BoxButton", 0, 1);
 }
 static void pb_kill(void) /* kill: startCurrentStageBGM, the 3D scene back */
 {
     nrv_set(&pb.n, PB_DEAD);
     pb.ab.on = 0;
+    if (pb.contents) pb.cb_alive = 0;
     game_bgm_stage();
 }
 static void pb_update(void)
 {
     if (!pb.l || nrv_is(&pb.n, PB_DEAD)) return;
+    if (pb.contents) for (int i = 0; i < 9; i++) btn_update(&pb.ch[i]); /* control */
     switch (nrv_begin(&pb.n)) {
+    case PB_OPEN: {
+        if (FIRST(&pb.n)) {
+            pb_update_text();
+            lyt_show_rec(pb.l, "Text", 0); lyt_show_rec(pb.l, "Title", 0); lyt_show_rec(pb.l, "PicToneDown", 0);
+            int f = lyt_material_texture(pb.l, "picturebookcoverfron"), t = lyt_material_texture(pb.l, "picturebooktitle");
+            lyt_replace_pane_texture(pb.l, "PicLeftPage", f); lyt_replace_pane_texture(pb.l, "PicTurnRightPage", f);
+            lyt_replace_pane_texture(pb.l, "PicRightPage", t); lyt_replace_pane_texture(pb.l, "PicTurnLeftPage", t);
+            lyt_start(pb.l, "Appear", 0);
+            lyt_set_frame(pb.l, 0, 0); lyt_set_rate(pb.l, 0, 0); /* setAnimFrameAndStop */
+            wipe_start(60, 0, 0); /* openWipeFade(cFadeFrame) */
+            pb_bgm("STM_PROLOGUE_01");
+        }
+        if (pb.n.step == 60) lyt_set_rate(pb.l, 0, 1.0f); /* cBookOpenFrame */
+        if (pb.n.step == 140) se_start(SE_SY_PICTUREBOOK_NEXT_ST, NULL);
+        int s0 = (int)lyt_anim_frames(pb.l, "Appear") + 60, s1 = s0 + 30;
+        if (pb.n.step == s0) { for (int i = 0; i < pb.cmax; i++) btn_appear(&pb.ch[i]); cb_appear(); }
+        if (pb.n.step >= s0) {
+            pb_alpha(fminf((float)(pb.n.step - s0) / (s1 - s0), 1.0f)); /* calcNerveRate(stepMin, stepMax) */
+            if (pb_close_valid()) menu_pointer_request(SPM_PICTUREBOOK);
+        }
+        if (pb.n.step == s1) nrv_set(&pb.n, PB_CONTENTSSELECT);
+        break;
+    }
+    case PB_CONTENTSSELECT:
+        if (pb_close_valid()) menu_pointer_request(SPM_PICTUREBOOK);
+        if (cb_try_select()) nrv_set(&pb.n, PB_CONTENTSFADEOUT);
+        else
+            for (int i = 0; i < pb.cmax; i++) {
+                if (btn_pointing_trigger(&pb.ch[i])) se_start(SE_SY_PICBOOK_CONTENTS_CUR, NULL);
+                if (btn_try_select(&pb.ch[i])) {
+                    se_start(SE_SY_TALK_OK, NULL);
+                    pb.chapter = i + 1;
+                    cb_disappear();
+                    nrv_set(&pb.n, PB_CONTENTSFADEOUT);
+                    break;
+                }
+            }
+        break;
+    case PB_CONTENTSFADEOUT: {
+        /* getPaneAnimFrameMax(the chapter's pane): ButtonDecide once chosen, else its ButtonWait */
+        int s0 = (int)lyt_anim_frames(pb.l, pb.ch[pb.chapter - 1].selected ? "ButtonDecide" : "ButtonWait"), s1 = s0 + 30;
+        if (pb.n.step >= s0) pb_alpha(1.0f - fminf((float)(pb.n.step - s0) / (s1 - s0), 1.0f));
+        if (pb.n.step < s1 && pb_close_valid()) menu_pointer_request(SPM_PICTUREBOOK);
+        if (pb_close_selected()) {
+            if (pb.n.step > s1 && !pb.cb_alive) { pb_hide_contents(); nrv_set(&pb.n, PB_CLOSE); }
+        } else {
+            if (pb.n.step == s1) wipe_start(60, 1, 0); /* closeWipeFade(cFadeFrame) */
+            if (pb.n.step > s1 && !wipe_active()) { pb_hide_contents(); nrv_set(&pb.n, PB_FADEIN); }
+        }
+        break;
+    }
+    case PB_CLOSE: {
+        if (FIRST(&pb.n)) {
+            lyt_show_rec(pb.l, "Text", 0); lyt_show_rec(pb.l, "Title", 0); lyt_show_rec(pb.l, "PicToneDown", 0);
+            lyt_start(pb.l, "End", 0);
+            int t = pb_close_selected() ? lyt_material_texture(pb.l, "picturebooktitle") : pb_tex(pb.chapter, pb.page - 1);
+            lyt_replace_pane_texture(pb.l, "PicLeftPage", t); lyt_replace_pane_texture(pb.l, "PicTurnRightPage", t);
+            int b = lyt_material_texture(pb.l, "picturebookcoverback");
+            lyt_replace_pane_texture(pb.l, "PicRightPage", b); lyt_replace_pane_texture(pb.l, "PicTurnLeftPage", b);
+        }
+        int st = (int)lyt_anim_frames(pb.l, "End");
+        if (pb.n.step == st) { wipe_start(60, 1, 0); pb_bgm_stop(60); }
+        if (pb.n.step == 150) se_start(SE_SY_PICTUREBOOK_END, NULL);
+        if (pb.n.step > st && !wipe_active()) pb_kill();
+        break;
+    }
     case PB_FADEIN:
         if (FIRST(&pb.n)) {
             pb_update_text();
@@ -4638,16 +4763,16 @@ static void pb_update(void)
             lyt_start(pb.l, "PageNext", 0);
             lyt_set_frame(pb.l, 0, pb.dir > 0 ? lyt_anim_frames(pb.l, "PageNext") : 0.0f); lyt_set_rate(pb.l, 0, 0);
             wipe_start(60 / pb_speed(), 0, 0); /* openWipeFade(cFadeFrame / getReadSpeed) */
-            pb_bgm("STM_PROLOGUE_01");
+            if (!pb.contents) pb_bgm("STM_PROLOGUE_01");
         }
         if (!wipe_active()) nrv_set(&pb.n, PB_WAITNOTEXT);
         break;
     case PB_WAITNOTEXT:
-        if (pb.n.step == (pb.fast ? 0 : 60)) nrv_set(&pb.n, PB_FADEINTEXT); /* cWaitNoTextFrame */
+        if (pb.n.step == (pb.contents || pb.fast ? 0 : 60)) nrv_set(&pb.n, PB_FADEINTEXT); /* cWaitNoTextFrame */
         break;
     case PB_FADEINTEXT: {
         if (FIRST(&pb.n)) {
-            if (pb.page == 0) lyt_show_rec(pb.l, "Title", 1);
+            if (pb.page == 0) { lyt_show_rec(pb.l, "Title", 1); if (pb.contents) cb_appear(); }
             else {
                 lyt_show_rec(pb.l, "Text", 1); lyt_show_rec(pb.l, "PicToneDown", 1);
                 lyt_start_pane(pb.l, "Text", "TextColor", 0);
@@ -4659,9 +4784,11 @@ static void pb_update(void)
                 if (pb.page == 7 && pb_bgm_off("STM_PROLOGUE_01_B")) pb_bgm("STM_PROLOGUE_01_B");
                 if (pb.page == 8) { if (pb.text >= 1) pb_bgm_stop(120); else if (pb_bgm_off("STM_PROLOGUE_01_B")) pb_bgm("STM_PROLOGUE_01_B"); }
             } else if (pb_bgm_off("STM_PROLOGUE_01")) pb_bgm("STM_PROLOGUE_01");
+            lyt_set_hpos_rec(pb.l, "Text", pb_book_end() ? 1 : 0); /* setTextBoxHorizontalPositionCenter / Left */
             lyt_set_vpos_rec(pb.l, "Text", pb_book_end() ? 1 : 0); /* setTextBoxVerticalPositionCenter / Top */
             if (pb.fast && !pb_read_text()) pb.fast = 0;
         }
+        if (pb_close_valid()) menu_pointer_request(SPM_PICTUREBOOK);
         int st = 30 / pb_speed();
         float a = fminf((float)pb.n.step / st, 1.0f); /* calcNerveRate */
         pb_alpha(a);
@@ -4671,27 +4798,35 @@ static void pb_update(void)
     }
     case PB_WAITWITHTEXT:
         if (FIRST(&pb.n)) iab_open(&pb.ab); /* openWithTurn */
-        if (pad_pressed(PAD_CROSS) || pad_pressed(PAD_RIGHT)) { /* testCorePadTriggerA / Right */
+        if (pb_close_valid()) menu_pointer_request(SPM_PICTUREBOOK);
+        if (pb_close_valid() && cb_try_select()) nrv_set(&pb.n, PB_FADEOUTTEXT);
+        else if (pad_pressed(PAD_CROSS) || pad_pressed(PAD_RIGHT)) { /* testCorePadTriggerA / Right */
             se_start(SE_SY_TALK_FOCUS_ITEM, NULL);
             if (pb.dir > 0 && !pb_read_text()) { pb.nr_c = pb.chapter; pb.nr_p = pb.page; pb.nr_t = pb.text; }
+            if (pb_close_valid()) cb_disappear();
             pb.dir = 1;
             nrv_set(&pb.n, PB_FADEOUTTEXT);
         } else if (pad_pressed(PAD_LEFT) && (pb.cmin < pb.chapter || pb.page > 0 || pb.text > 0)) {
             se_start(SE_SY_TALK_FOCUS_ITEM, NULL);
+            if (pb_close_valid()) cb_disappear();
             pb.fast = 1; pb.dir = -1;
             nrv_set(&pb.n, PB_FADEOUTTEXT);
         }
         break;
     case PB_FADEOUTTEXT: {
         if (FIRST(&pb.n)) iab_term(&pb.ab);
+        if (pb_close_valid()) menu_pointer_request(SPM_PICTUREBOOK);
         int st = 30 / pb_speed();
         float a = 1.0f - fminf((float)pb.n.step / st, 1.0f);
         pb_alpha(a);
         lyt_set_pane_alpha(pb.l, "PicToneDown", (int)(pb_tone_out(a) * 255.0f + 0.5f));
-        if (pb.n.step == st) {
+        if (pb_close_selected()) {
+            if (pb.n.step > st && !pb.cb_alive) nrv_set(&pb.n, PB_CLOSE);
+        } else if (pb.n.step == st) {
             if (pb_text_next()) nrv_set(&pb.n, PB_FADEINTEXT);
             else if (pb_page_next()) nrv_set(&pb.n, PB_PAGENEXT);
-            else { if (pb_chapter_next() && !pb_bgm_off("STM_PROLOGUE_01_B")) pb_bgm_stop(120); nrv_set(&pb.n, PB_FADEOUT); }
+            else if (pb_chapter_next()) { if (!pb_bgm_off("STM_PROLOGUE_01_B")) pb_bgm_stop(120); nrv_set(&pb.n, PB_FADEOUT); }
+            else nrv_set(&pb.n, pb.contents ? PB_CLOSE : PB_FADEOUT);
         }
         break;
     }
@@ -4708,7 +4843,7 @@ static void pb_update(void)
         if (pb.n.step > 0 && lyt_stopped(pb.l, 0)) nrv_set(&pb.n, PB_WAITNOTEXT);
         break;
     case PB_FADEOUT:
-        if (FIRST(&pb.n)) { wipe_start(60 / pb_speed(), 1, 0); pb_bgm_stop(60 / pb_speed()); }
+        if (FIRST(&pb.n)) { wipe_start(60 / pb_speed(), 1, 0); if (!pb.contents) pb_bgm_stop(60 / pb_speed()); }
         if (wipe_active()) break;
         if (pb.cmax >= pb.chapter) nrv_set(&pb.n, PB_FADEIN);
         else pb_kill();
@@ -4717,6 +4852,7 @@ static void pb_update(void)
     nrv_end(&pb.n);
     lyt_update(pb.l);
     iab_update(&pb.ab);
+    cb_update();
 }
 static void pb_draw(void)
 {
@@ -4725,6 +4861,7 @@ static void pb_draw(void)
     render_world_done();
     lyt_draw(pb.l);
     iab_draw(&pb.ab);
+    if (pb.cb_alive) lyt_draw(pb.bl); /* PictureBookCloseButton (connectToSceneLayoutDecoration) */
     wipe_draw_quad();
 }
 
@@ -4997,3 +5134,12 @@ void menu_draw(void)
     wipe_draw_quad();
     fade_draw();
 }
+
+int menu_test_point_book(const char *pane) /* tests: the pointer on a pane of the picture book (its back button's "BoxButton" when pane is NULL) */
+{
+    float x, y;
+    if (!menu_picture_book_alive() || !lyt_pane_center(pane ? pb.l : pb.bl, pane ? pane : "BoxButton", &x, &y)) return 0;
+    game_set_cursor(x, y);
+    return 1;
+}
+int menu_test_book_state(void) { return pb.n.cur * 1000 + pb.chapter * 100 + pb.page; } /* tests: the book's nerve, chapter, page */

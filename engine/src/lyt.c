@@ -56,6 +56,7 @@ struct LytInst {
     const u16 **text;
     u16 (*num)[12];  /* setTextBoxNumber's digits, per pane */
     s8 *vpos;        /* a text box's vertical position override, -1 none */
+    s8 *hpos;        /* its horizontal one */
     const float **follow; /* setFollowPos per pane */
     u8 *follow_add;
     float *pscale; /* setPaneScale per pane (1: none) */
@@ -138,6 +139,8 @@ LytInst *lyt_new(const char *name)
             l->text = mem_alloc(MEM_SCENE, h->npanes * sizeof *l->text);
             l->num = mem_alloc(MEM_SCENE, h->npanes * sizeof *l->num);
             l->vpos = mem_alloc(MEM_SCENE, h->npanes);
+            l->hpos = mem_alloc(MEM_SCENE, h->npanes);
+            memset(l->hpos, -1, h->npanes);
             l->follow = mem_alloc(MEM_SCENE, h->npanes * sizeof *l->follow);
             l->follow_add = mem_alloc(MEM_SCENE, h->npanes);
             l->pscale = mem_alloc(MEM_SCENE, h->npanes * sizeof *l->pscale);
@@ -567,9 +570,11 @@ static void draw_text(const LytInst *l, int i, const PWorld *w, float x0, float 
     /* the box on the screen (axis-aligned: text boxes are not turned), the text placed in it by its position */
     float bx = 320.0f + (w->m[0] * x0 + w->m[2]) * LYT_KX, bw = (x1 - x0) * sx * LYT_KX;
     float by = 224.0f - (w->m[4] * y0 + w->m[5]) * LYT_KY, bh = (y0 - y1) * sy * LYT_KY;
-    int hp = p->pos % 3, vp = l->vpos[i] >= 0 ? l->vpos[i] : p->pos / 3;
+    int hp = l->hpos[i] >= 0 ? l->hpos[i] : p->pos % 3, vp = l->vpos[i] >= 0 ? l->vpos[i] : p->pos / 3;
     float x = bx + (hp == 0 ? 0 : hp == 1 ? (bw - tw) / 2 : bw - tw);
-    float lh = fsy * LYT_KY;
+    int lines = 1;
+    for (const u16 *c = s; *c; c++) { if (*c == 0x1A) { c += 3 + (c[3] + 1) / 2; continue; } lines += *c == 0x0A; }
+    float lh = (lines * p->font[1] + (lines - 1) * p->line) * sy * LYT_KY; /* the text's height (lyt_text_height) */
     float y = by + (vp == 0 ? 0 : vp == 1 ? (bh - lh) / 2 : bh - lh);
     const PState *ps = &l->ps[i];
     float r = 0, g = 0, b = 0, a = 0;
@@ -585,7 +590,23 @@ static void draw_text(const LytInst *l, int i, const PWorld *w, float x0, float 
     }
     (void)r; (void)g; (void)b;
     u32 rgb = (u32)tc[0] << 16 | (u32)tc[1] << 8 | (u32)tc[2];
-    game_text(s, p->font_idx, x, y, fsx, fsy, p->space * sx, rgb, w->alpha * ta * (a / 4.0f / 255.0f), 1);
+    float al = w->alpha * ta * (a / 4.0f / 255.0f);
+    if (hp == 0 || lines == 1) { game_text(s, p->font_idx, x, y, fsx, fsy, p->space * sx, rgb, al, 1); return; }
+    /* nw4r TextWriter: each line aligned as the box's horizontal position (centre / right); line k drawn after k line
+     * feeds, so it lands where the whole text puts it */
+    u16 buf[512];
+    for (int k = 0; *s; k++) {
+        int n = 0;
+        for (int j = 0; j < k && n < 64; j++) buf[n++] = 0x0A;
+        while (*s && *s != 0x0A && n < 500) {
+            int len = *s == 0x1A ? 4 + (s[3] + 1) / 2 : 1;
+            while (len-- && *s) buf[n++] = *s++;
+        }
+        buf[n] = 0;
+        if (*s == 0x0A) s++;
+        float lw = game_text(buf, p->font_idx, 0, 0, fsx, fsy, p->space * sx, 0, 0, 0);
+        game_text(buf, p->font_idx, bx + (hp == 1 ? (bw - lw) / 2 : bw - lw), y, fsx, fsy, p->space * sx, rgb, al, 1);
+    }
 }
 
 float lyt_text_width(LytInst *l, const char *pane) /* getTextDrawRectRecursive's width: its text boxes' widest line */
@@ -683,6 +704,12 @@ void lyt_set_vpos_rec(LytInst *l, const char *pane, int v)
     int r = lyt_pane(l, pane);
     for (int i = r; r >= 0 && i < l->h->npanes; i++)
         if (l->pane[i].kind == K_TXT && under(l, i, r)) l->vpos[i] = (s8)v;
+}
+void lyt_set_hpos_rec(LytInst *l, const char *pane, int v)
+{
+    int r = lyt_pane(l, pane);
+    for (int i = r; r >= 0 && i < l->h->npanes; i++)
+        if (l->pane[i].kind == K_TXT && under(l, i, r)) l->hpos[i] = (s8)v;
 }
 
 void lyt_set_pane_frame_stop(LytInst *l, const char *pane, int ch, float frame)

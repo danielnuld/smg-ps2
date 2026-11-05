@@ -3,8 +3,8 @@
 
 #include "blob.h"
 
-#define ANIM_MAX_JOINTS 48 /* DinoPackun 46 */
-#define ANIM_MAX_DRW 160  /* DinoPackun 160 */
+#define ANIM_MAX_JOINTS 72 /* Koopa 70 (Rosetta 49, DinoPackun 46) */
+#define ANIM_MAX_DRW 224  /* RosettaReading 219 (Koopa 197, OtaRock 170, DinoPackun 160) */
 #define ANIM_TRACKS 4     /* XanimeBckTable4 */
 
 /* Skeletal animation of one skinned model instance (tools/skin.py is the reference implementation). */

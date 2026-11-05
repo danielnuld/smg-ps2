@@ -378,7 +378,7 @@ VIS = {"PowerStar": ("PowerStar", 0), "DinoPackunEggShell": ("normal", None), "C
 # models baked with a BRK's registers at a frame (Tico.cpp: ColorChange at its colour, frame 0 the yellow one)
 # startBrk + setBrkFrameAndStop(argN): one model per frame its rows use, "<class>~<frame>" baked at that frame (game.c
 # brk_model picks it by the row's arg). Butterfly: startBrk Butterfly, frame mColorIndex = arg0 (NoInit: 0)
-BRK_ARG = {"Butterfly": ("butterfly", 0)}
+BRK_ARG = {"Butterfly": ("butterfly", 0), "TicoReading": ("colorchange", 0)}  # TicoReading::init: ColorChange at arg0
 # MR::initDLMakerMatColor0 per instance: one model per colour, "<class>@<k>" with material colour 0 = the k-th colour
 # (game.c picks it). StarPiece.cpp initColors (arg3 if 0..5, else random; StarPieceDirector's pieces in turn).
 # ponytail: StarPiece1_v is RAS + an environment map (no texgen here): the map's mean colour stands in (env_mean)
@@ -888,7 +888,7 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 if sea_add:
                     blend = (2, 0, 255)
                 ind_layer = False
-                if mat is not None and tex.samples_named(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), "IndDummy"):
+                if mat is not None and tex.samples_named(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), "IndDummy", over):
                     # the screen behind, through its TEV's tint (CrystalCage's IndTex refracts a screen copy): kind 3,
                     # the frame buffer times the tint's mean. ponytail: no bend (indirect texture), one grey tint
                     tint = tex.tev(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, None, over)[:3]
