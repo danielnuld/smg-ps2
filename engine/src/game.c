@@ -20542,17 +20542,23 @@ static int in_death(V3 p) /* MR::isInDeath: a death area holds it */
 /* Mario's offence (MarioActorOffensiveMsg) against a sensor at c of radius r: 1 trample (falling onto it), 2 hip drop
  * (onto it), 3 hit all (spin, within mSensorRadiusAttack 120), 0 none */
 enum { MSG_NONE, MSG_TRAMPLE, MSG_HIPDROP, MSG_HITALL };
-/* MarioActor::cylinderPushCheck: Mario's cylinder (radius 20 + _4B0 35, height _4B4 60, 70 jumping) about his centre
- * overlaps the sensor */
-static int mario_touch(V3 c, float r)
+/* MarioActor::cylinderPushCheck (MarioActorOffensiveMsg.cpp:562): Mario's cylinders of width w, height h from his
+ * centre _2A0 (m_center) down along _4C4, then (not squatting on the ground) up along _4B8. ponytail: _4B8 / _4C4
+ * are his up / down, not the line between the _D7C / _DAC joint matrices (MarioActor.cpp:1470) */
+static int m_cylinder(V3 c, float r, float w, float h)
 {
-    V3 off = vsub(c, vadd(mario->pos, vmul(mario->up, HIT_BODY_H)));
-    float axial = vdot(off, mario->up), radial = vlen(vtangent(off, mario->up));
-    return axial > -r && r + 55.0f - radial > 0.0f && r + (mario->grounded ? 60.0f : 70.0f) - axial > 0.0f;
+    V3 off = vsub(c, mw.c);
+    float axial = -vdot(off, mario->up), radial = vlen(vtangent(off, mario->up));
+    if (axial > -r && r + w - radial > 0.0f && r + h - axial > 0.0f) return 1;
+    if (mario->squat && mario->grounded) return 0;
+    axial = -axial;
+    return axial >= -r && r + w - radial > 0.0f && r + h - axial > 0.0f;
 }
+/* attackOrPushSensor's cylinder: width 20 + _4B0 35, height _4B4 60, 70 jumping */
+static int mario_touch(V3 c, float r) { return m_cylinder(c, r, 55.0f, mario->grounded ? 60.0f : 70.0f); }
 static int mario_offence(V3 c, float r, V3 grav)
 {
-    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), rel = vsub(mc, c);
+    V3 mc = mw.c, rel = vsub(mc, c); /* his eye sensor at _2A0 */
     float d = vlen(rel), fall = mario->grounded ? 0.0f : -mario->vup;
     int above = vdot(grav, vsub(mario->pos, c)) <= 0.0f, horiz = r + 35.0f - vlen(vtangent(rel, grav)) > 0.0f; /* isUnderTarget, cylinderHorizontalCheck */
     if (mario->hip == HIP_FALL && d < r + 80.0f + fall && above && horiz) return MSG_HIPDROP;   /* mSensorRadiusHipDropAttack 80 */
@@ -20572,11 +20578,9 @@ static int mario_offence(V3 c, float r, V3 grav)
  * printHitMark (no hit mark effect in fx_tab.h) */
 static int mario_kick(V3 c, float r)
 {
-    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), off = vsub(c, mc);
-    if (vlen(off) >= r + 120.0f) return 0;
-    float axial = vdot(off, mario->up), radial = vlen(vtangent(off, mario->up));
-    if (!(axial > -r && r + 55.0f + (mario->tsi >= 5 ? 15.0f : 0.0f) - radial > 0.0f && r + (mario->grounded ? 60.0f : 70.0f) - axial > 0.0f))
-        return 0;
+    if (vlen(vsub(c, mw.c)) >= r + 120.0f) return 0;
+    if (!m_cylinder(c, r, 55.0f + (mario->tsi >= 5 ? 15.0f : 0.0f), mario->grounded ? 60.0f : 70.0f)) return 0;
+    V3 off = vsub(c, mw.c);
     if (swimming || mario->walling || hg.on || mario->slider || mario->side_step || mario->rabbit || mario->teresa || mario->magic ||
         foo_active() || dmg.st)
         return 0;                                                       /* getCurrentStatus: None or Skate */
@@ -25399,8 +25403,7 @@ int game_strspider_state(void) /* the first live StringSpider's nerve (SS_*), it
  * knocks Mario over on the ground (FlipRot: HitReaction, else no push); against another Baby it rebounds (4 x the
  * radii's ratio, Turn); a rail on StepBack kills it; kill: Death, EXPLODE_S; its face joint turned to its target.
  * Placed rows only. ponytail: appearFromLaunch / appearFromGuarder (BegomanBabyLauncher, BossBegoman's followers) not
- * ported, no fire floor death (isBindedGroundDamageFire), no star pointer bind; a spin rarely reaches it: the port's
- * mario_offence measures Mario's cylinder from HIT_BODY_H (Petari _2A0, his Spine1) and its body is 20 up */
+ * ported, no fire floor death (isBindedGroundDamageFire), no star pointer bind */
 enum { BG_NOCALCWAIT, BG_WAIT, BG_SIGNATTACK, BG_PURSUE, BG_TURN, BG_BRAKE, BG_STEPBACK, BG_RETURN, BG_PROVOKE,
        BG_TRAMPLEREACTION, BG_HITREACTION, BG_TIRED, BG_BLOW, BG_ELECTRICDEATH, BG_BROKENPIECE, BG_INWATER, BG_KEEPDISTANCE };
 /* walker fields: front mFaceVec, ttarget mTargetVec, tcenter mInitPos, qy / qz _C0, to mRotation.y, from Locator1's
