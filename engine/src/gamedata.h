@@ -59,6 +59,8 @@ int gd_player_left(void);
 void gd_add_player_left(int n);
 int gd_stocked_star_pieces(void);
 void gd_add_stocked_star_pieces(int n);
+int gd_alms(int i);              /* getStarPieceNumGivingToTicoSeed */
+void gd_alms_add(int i, int n);  /* addStarPieceGivingToTicoSeed */
 
 void gd_comet_sync(void);            /* GalaxyCometScheduler::syncWithFlags */
 void gd_comet_next(void);            /* forceToNextState (after a stage result) */

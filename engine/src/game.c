@@ -11174,6 +11174,8 @@ void game_font_init(const Scene *s) /* the FONT chunk's glyphs (also main.c's su
 }
 
 static void kinopio_reaction(const Inst *in, const float m[16]); /* NPCActor's reaction flags, Kinopio::exeReaction's voices */
+typedef struct { int c9C, c158; u8 last; } NpcReact; /* NPCActor's _9C, _158, _DD-_DF */
+static int npc_react(NpcReact *s, V3 body, float rad, V3 up, V3 pos, float near, int body_off);
 /* the talkers placed in the scene (SignBoard, Tico, Kinopio: their wait nerves' talk) */
 static int talk_row_label(int row, char *out) /* the TALK entry of a row: its <zone>_<class><id> */
 {
@@ -11999,10 +12001,17 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
  * event node starts the eating: eventFunc 0) and Common_TicoFat000 (setMessage: Wait 1 by how much is left, Point 0,
  * Test 2; the end of Fullness' talk is the metamorphosis), 280 to talk, 220 x scale up, in front. WipeOut shakes the
  * camera and shows its screen effects. The "喜び" camera only runs for arg7 6 (Good Egg's has -1). updateGuidance: PointerGuidance_TicoFat and the
- * StarPieceCounter's TicoEat mode near it. ponytail: no FullnessMeter's Shine / Flash, no item (arg0 0 / 1), no BVA eyes. Info shows InformationPlanet until A
- * ponytail (unmarked until the 2026-11-02 audit): no デブチコカメラ event camera while pointed (TicoFat.cpp:314-327), no
- * TicoFatGoodsStarPiece models (226-235), no arg7 save of the pieces fed (514-519), no Reaction voices (trampled /
- * spun / pointed, 657-677) */
+ * StarPieceCounter's TicoEat mode near it, all only once it may eat (mStartEat) and while it is not full, Mario not
+ * invincible; while near (_174) the デブチコカメラ programmable camera (startGlobalEventCamera 120, setCameraParam: at
+ * its place, 100 up and 1300 .. 1680 in front by its scale, again at each piece eaten; endGlobalEventCamera 120).
+ * arg7 (0 .. 15) its StarPieceAlmsStorage slot: the pieces given lower what it needs (initStarPieceSaveData); full
+ * at init: disappear(false) (SW_A on, its group out) and dead; disappear(true) (After / Meta) adds arg1 to the slot.
+ * Its two TicoFatGoodsStarPiece goods (NPCData TicoFatItem: StarPieceL / StarPieceR joints) play TicoFatGoodsStarPiece
+ * within 2000 of Mario, ..Far beyond (updateGoods), hidden with it. Reactions (NPCActor, npc_react: body 100 at its
+ * Center joint + 30, spin within _12C 1000) in Prep / Wait / Point: exeReaction's voices. Info shows InformationPlanet
+ * until A. ponytail: no FullnessMeter's Shine / Flash, no item (arg0 0 / 1), no BVA eyes; the goods' bpk (frames 0 /
+ * 100: their two colours) not baked (slice.py has no BPK); no Reaction nerve (its clips, AnimScaleController) and no
+ * star piece reflect voice (_DB, SE_SV_TICOFAT_STAR_PIECE_HIT: NPCActor's _E5 is not sent, as for Kinopio) */
 #define MAX_FATS 4
 static struct {
     int row, nrv, t, left, total, inflight, eat, g174, g178, item, has_rail, tk1, tk0; /* mMsgCtrl, _16C */
@@ -12011,6 +12020,8 @@ static struct {
     Launch fly;
     struct { V3 pos; int on, col; } gift[8];
     int absorb, chem; u32 lv, lv2; /* _204 (startAbsorbSound), _200 (Chem's eating sound), level sound handles */
+    int cam, save; NpcReact re; /* _170 (デブチコカメラ on), _1EC (arg7) */
+    Anim *goods; const Model *gmd; /* _94 / _98: one pose for both (the same clip, started together) */
 } fats[MAX_FATS];
 enum { TF_PREP, TF_WAIT, TF_POINT, TF_EAT, TF_CHEM, TF_TEST, TF_FULLNESS, TF_DEMO, TF_FLY, TF_WIPEOUT, TF_WIPEIN, TF_INFO,
        TF_AFTER, TF_META, TF_GONE };
@@ -12053,6 +12064,18 @@ static void fat_cam(const float *m0, int row, const char *event)
         camera_actor_start("TicoFat", event, (unsigned short)row_camset[row], v3(m0[4], m0[5], m0[6]), v3(m0[8], m0[9], m0[10]),
                            v3(m0[12], m0[13], m0[14]));
 }
+static void fat_cam_param(int k) /* TicoFat::setCameraParam: _C0 (its place) watched, 100 up, in front by its scale */
+{
+    const float *m0 = fats[k].m0;
+    V3 y = v3(m0[4], m0[5], m0[6]), z = v3(m0[8], m0[9], m0[10]), at = v3(m0[12], m0[13], m0[14]);
+    float t = (fminf(fmaxf(fats[k].scale, 1.0f), 1.9f) - 1.0f) / 0.9f; /* getLinerValueFromMinMax(scale, 1, 1.9, 1300, 1680) */
+    camera_prog_start(at, vadd(at, vadd(vmul(y, 100.0f), vmul(z, 1300.0f + t * 380.0f))), y, 120);
+}
+static void fat_disappear(int k, const Row *r, int fed) /* TicoFat::disappear (ponytail: no item, arg0 0 / 1) */
+{
+    if (fed && fats[k].save != -1) { gd_alms_add(fats[k].save, fats[k].total); printf("tico fat: slot %d now %d" "\n", fats[k].save, gd_alms(fats[k].save)); } /* addStarPieceGivingToTicoSeed */
+    if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);                                 /* callAppear..AllGroupMember: row_dead */
+}
 static int fat_event(int t, u32 v) /* TicoFat::eventFunc: 0 startEat, 1 not yet */
 {
     for (int k = 0; k < nfats; k++)
@@ -12088,7 +12111,20 @@ static void update_ticofat(void)
             fats[k].item = r->arg[0];
             fats[k].eat = r->arg[2] != -1;
             fats[k].scale = 1.0f;
+            fats[k].save = r->arg[7]; /* initStarPieceSaveData: getJMapInfoArg7WithInit */
+            if (fats[k].save != -1) { int n = fats[k].total - gd_alms(fats[k].save); fats[k].left = n <= 0 ? 0 : n; }
+            fats[k].re.c158 = 1024;
             memcpy(fats[k].m0, in->m, 64);
+            fats[k].gmd = scene_model(sc, "TicoFatGoodsStarPiece"); /* equipment(getNPCItemData TicoFatItem) */
+            if (fats[k].gmd && fats[k].gmd->skin) {
+                fats[k].goods = mem_alloc(MEM_SCENE, sizeof(Anim));
+                anim_bind(fats[k].goods, fats[k].gmd->skin);
+            }
+            if (!fats[k].left) { /* initAfterPlacement: disappear(false), makeActorDead */
+                fat_disappear(k, r, 0); row_kill(in->row); sw_changed = 1; fats[k].nrv = TF_GONE;
+                printf("tico fat row %d: fed before (slot %d)" "\n", in->row, fats[k].save);
+                continue;
+            }
             fats[k].tk1 = talk_new("Common_TicoFat001", -1, in->row, 220.0f, 280.0f);
             fats[k].tk0 = talk_new("Common_TicoFat000", -1, in->row, 220.0f, 280.0f);
             if (fats[k].tk1 >= 0) { talkers[fats[k].tk1].event = fat_event; talkers[fats[k].tk1].root_auto = 1; talkers[fats[k].tk1].front = 1; talkers[fats[k].tk1].arg = fats[k].total; }
@@ -12121,7 +12157,8 @@ static void update_ticofat(void)
         float talk = 280.0f * fminf(f->scale, 1.5f), dm = fabsf(vdot(rc, up)) <= talk ? vlen(vtangent(rc, up)) : 1e9f;
         /* updateGuidance / updatePointing (the pointer: the cursor's ray within 110 x scale of it) */
         int near = dm < talk;
-        if (f->left > 0 && !dx.on) { /* (_1E0) requestTicoSeedGuidanceForce near, requestTicoSeedGuidance(_1F4) on the screen */
+        if (!f->eat || !f->left || player_mode == PM_INVINCIBLE) near = 0; /* (ponytail: isPlayerFlying not checked) */
+        if (f->eat && f->left > 0 && player_mode != PM_INVINCIBLE && !dx.on) { /* (_1E0) requestTicoSeedGuidanceForce near, requestTicoSeedGuidance(_1F4) on the screen */
             float sx, sy;
             if (near && menu_guidance_request("PointerGuidance_TicoFat", 1)) hud_tico_eat(0);
             int a = screen_pos(base, &sx, &sy) ? area_obj("TicoSeedGuidanceCube", mario->pos) : -1;
@@ -12130,6 +12167,25 @@ static void update_ticofat(void)
             }
         }
         if (near) f->g174 = 8; else if (f->g174 > 0) f->g174--;
+        if (!f->eat || !f->left || player_mode == PM_INVINCIBLE) f->g174 = 0;
+        if (f->g174 > 0 && !f->cam) { f->cam = 1; fat_cam_param(k); } /* startGlobalEventCamera(デブチコカメラ, 120) */
+        else if (f->g174 <= 0 && f->cam) { f->cam = 0; camera_prog_end(120); }
+        if (f->goods) { /* updateGoods: tryStartBck by isNearPlayer(2000) */
+            V3 d = vsub(mario->pos, v3(f->m0[12], f->m0[13], f->m0[14]));
+            anim_play(f->goods, vlen(d) < 2000.0f ? "ticofatgoodsstarpiece/ticofatgoodsstarpiece" : "ticofatgoodsstarpiece/ticofatgoodsstarpiecefar", 1.0f, 1, 0);
+        }
+        if (f->nrv <= TF_CHEM && in->anim && in->anim->skin == in->md->skin && in->md->skin->njoints > 1) {
+            float w[16]; /* NPCActor's body sensor (100 at Center + 30) and updateReaction; exeReaction's voices */
+            mat_mul(w, in->m, in->anim->world[1]);
+            V3 body = v3(w[12] + w[4] * 30.0f, w[13] + w[5] * 30.0f, w[14] + w[6] * 30.0f);
+            int rf = npc_react(&f->re, body, 100.0f, up, base, 1000.0f, 0);
+            if (f->nrv <= TF_POINT) {
+                if (rf & 1) { se_start(SE_SM_NPC_TRAMPLED, &f->m0[12]); se_start(SE_SV_TICOFAT_TRAMPLED, &f->m0[12]); }
+                if (rf & 8) { dpd_hit_sound(); se_start(SE_SV_TICOFAT_POINT, &f->m0[12]); }
+                if (rf & 2) se_start(SE_SM_TICOFAT_SPIN, &f->m0[12]);
+                if (rf & 11) printf("tico fat row %d: reaction %s" "\n", in->row, rf & 1 ? "trampled" : rf & 2 ? "spun" : "pointed");
+            }
+        }
         int pointing = 0;
         if (f->g174 > 0) {
             V3 o, d;
@@ -12158,6 +12214,7 @@ static void update_ticofat(void)
                 if (f->left > 0) f->left--;
                 f->scale = 1.0f + (float)(f->total - f->left) / f->total * 0.9f;
                 if (f->absorb <= 0) { se_start(SE_SM_TICOFAT_ABSORB, &f->m0[12]); f->absorb = 5; } /* startAbsorbSound */
+                if (f->g174 > 0) fat_cam_param(k); /* setCameraParam */
                 if (f->nrv != TF_EAT) fat_set(k, TF_EAT);
                 continue;
             }
@@ -12194,7 +12251,9 @@ static void update_ticofat(void)
             if (f->chem > 0) { f->chem--; fat_dance_se(k, SE_SM_LV_TICOFAT_EATING); }
             if (f->t >= 76) { if (f->g178 > 0) { f->g174 = 8; fat_set(k, TF_POINT); } else { f->g174 = 0; fat_set(k, TF_WAIT); } }
             break;
-        case TF_TEST: clip = fat_size("excite", f->scale); fat_message(k, 2); talk_force(f->tk0, 0); fat_set(k, TF_FULLNESS); break;
+        case TF_TEST: clip = fat_size("excite", f->scale); fat_message(k, 2); talk_force(f->tk0, 0);
+            if (f->save == 6) fat_cam(f->m0, in->row, "喜び"); /* startMultiActorCameraTargetSelf */
+            fat_set(k, TF_FULLNESS); break;
         case TF_FULLNESS: /* Joy; its talk's end: tryMetamorphosis (tryTalkForceWithoutDemoAtEnd) */
             clip = fat_size("joy", f->scale);
             if (f->t == 1) se_start(SE_SM_TICOFAT_MAX, &f->m0[12]);
@@ -12238,11 +12297,11 @@ static void update_ticofat(void)
             if (f->t > 1 && pad_pressed(PAD_CROSS)) { pad_eat(PAD_CROSS); se_start(SE_SY_TALK_OK, NULL); info_label = NULL; fat_set(k, TF_AFTER); }
             break;
         case TF_AFTER:
-            if (f->t >= 60) { camera_event_stop(); row_kill(in->row); sw_changed = 1; fat_set(k, TF_GONE); } /* 飛行 ends; disappear: its group appears */
+            if (f->t >= 60) { camera_event_stop(); fat_disappear(k, r, 1); row_kill(in->row); sw_changed = 1; fat_set(k, TF_GONE); } /* 飛行 ends; disappear: its group appears */
             break;
         case TF_META: clip = "metamorphosis"; loop = 0;
             if (f->t == 1) { se_start(SE_SM_TICOFAT_META, &f->m0[12]); se_start(SE_SM_TICOFAT_META_ITEM, &f->m0[12]); }
-            if (f->t >= 80) { se_start(SE_SM_METAMORPHOSE_SMOKE, &f->m0[12]); row_kill(in->row); sw_changed = 1; fat_set(k, TF_GONE); }
+            if (f->t >= 80) { se_start(SE_SM_METAMORPHOSE_SMOKE, &f->m0[12]); fat_disappear(k, r, 1); row_kill(in->row); sw_changed = 1; fat_set(k, TF_GONE); }
             break;
         }
         if (f->eat && f->left == 0 && f->nrv <= TF_CHEM && !f->inflight) { fat_set(k, TF_TEST); printf("tico fat row %d: full (%d)" "\n", in->row, f->total); }
@@ -12285,6 +12344,18 @@ static const Model *fat_model(const Inst *in)
         return scene_model(sc, n);
     }
     return NULL;
+}
+static void fat_goods_draw(const Inst *in, const float m[16]) /* its goods at StarPieceL (5) / StarPieceR (8) */
+{
+    for (int k = 0; k < nfats; k++) {
+        if (fats[k].row != in->row || !fats[k].goods || in->anim->skin->njoints < 9) continue;
+        anim_update(fats[k].goods);
+        for (int j = 5; j <= 8; j += 3) {
+            float w[16];
+            mat_mul(w, m, in->anim->world[j]);
+            draw_skin(fats[k].gmd, w, fats[k].goods);
+        }
+    }
 }
 static int fat_state(int row)
 {
@@ -38718,21 +38789,16 @@ static void update_luigi(void)
  * SE_SV_KINOPIO_POINTING_SLEEP). isPointingSe: a pointing start 60 frames after the last. ponytail: the voices at the
  * start itself (Petari: in the Reaction nerve tryStartReactionAndPushNerve pushes), no AnimScaleController
  * (startHitReaction / DpdHitVibration), no star piece reflect (_E5: STAR_PIECE_HIT), no Pickel sensor */
-static struct { int row, c9C, c158; u8 last; } kre[16];
-static void kinopio_reaction(const Inst *in, const float m[16])
+/* NPCActor's sensors and updateReaction for one NPC: its body (rad at body, gravity -up) trampled / hip dropped
+ * (receiveMsgPlayerAttack, unless body_off), his spin within near of pos (checkPlayerSwingTrigger), the pointer's A
+ * on its body (isStarPointerPointing2POnPressButton). Returns the starts: 1 _D8 trampled, 2 _D9 spun, 4 _DA pointed,
+ * 8 isPointingSe (pointed 60 after the last) */
+static int npc_react(NpcReact *s, V3 body, float rad, V3 up, V3 pos, float near, int body_off)
 {
-    static const Scene *kre_sc;
-    if (kre_sc != sc) { memset(kre, 0, sizeof kre); kre_sc = sc; }
-    int k = 0;
-    while (k < 16 && kre[k].row != in->row + 1 && kre[k].row) k++;
-    if (k == 16) return;
-    if (!kre[k].row) { kre[k].row = in->row + 1; kre[k].c158 = 1024; } /* (row + 1: 0 free) */
-    const Row *r = &sc->objs[in->row];
-    V3 up = vnorm(v3(m[4], m[5], m[6])), body = vadd(v3(m[12], m[13], m[14]), vmul(up, 60.0f));
     u8 now = 0; /* _E2 trampled, _E3 spun, _E4 pointed */
-    if (r->arg[6] == -1) { /* arg6 set: the body sensor invalidated */
-        int msg = mario_offence(body, 60.0f, vmul(up, -1.0f));
-        if (msg == MSG_TRAMPLE && !kre[k].c9C) { kre[k].c9C = 30; now |= 1; mario_trample(); }
+    if (!body_off) {
+        int msg = mario_offence(body, rad, vmul(up, -1.0f));
+        if (msg == MSG_TRAMPLE && !s->c9C) { s->c9C = 30; now |= 1; mario_trample(); }
         else if (msg == MSG_HIPDROP) { /* sendMsgAwayJump */
             now |= 1;
             V3 a = vtangent(vsub(mario->pos, body), up);
@@ -38740,14 +38806,29 @@ static void kinopio_reaction(const Inst *in, const float m[16])
             m_power_jump(mario, vadd(vmul(vlen(a) > 1e-6f ? vnorm(a) : mario->face, 10.0f), vmul(mario->up, 25.0f)));
         }
     }
-    if (swing_perm && pad_pressed(PAD_SQUARE) && vlen(vsub(mario->pos, v3(m[12], m[13], m[14]))) < 450.0f) now |= 2; /* isNearPlayer(_12C) */
-    if (pointer_a() && cursor_sees(body, 60.0f)) now |= 4; /* isStarPointerPointing2POnPressButton */
-    u8 start = now & ~kre[k].last; /* updateReaction: _D8 / _D9 / _DA, the first in that order */
+    if (swing_perm && pad_pressed(PAD_SQUARE) && vlen(vsub(mario->pos, pos)) < near) now |= 2; /* isNearPlayer(_12C) */
+    if (pointer_a() && cursor_sees(body, 60.0f)) now |= 4;
+    u8 start = now & ~s->last; /* updateReaction: _D8 / _D9 / _DA, the first in that order */
     int tr = start & 1, sp = !tr && (start & 2), pt = !tr && !sp && (start & 4);
-    kre[k].last = now;
-    int pse = pt && kre[k].c158 >= 60; /* isPointingSe */
-    kre[k].c158 = pse ? 0 : kre[k].c158 < 1024 ? kre[k].c158 + 1 : 1024;
-    if (kre[k].c9C) kre[k].c9C--;
+    s->last = now;
+    int pse = pt && s->c158 >= 60; /* isPointingSe */
+    s->c158 = pse ? 0 : s->c158 < 1024 ? s->c158 + 1 : 1024;
+    if (s->c9C) s->c9C--;
+    return tr | sp | pt | pse << 3;
+}
+static struct { int row; NpcReact r; } kre[16];
+static void kinopio_reaction(const Inst *in, const float m[16])
+{
+    static const Scene *kre_sc;
+    if (kre_sc != sc) { memset(kre, 0, sizeof kre); kre_sc = sc; }
+    int k = 0;
+    while (k < 16 && kre[k].row != in->row + 1 && kre[k].row) k++;
+    if (k == 16) return;
+    if (!kre[k].row) { kre[k].row = in->row + 1; kre[k].r.c158 = 1024; } /* (row + 1: 0 free) */
+    const Row *r = &sc->objs[in->row];
+    V3 up = vnorm(v3(m[4], m[5], m[6])), body = vadd(v3(m[12], m[13], m[14]), vmul(up, 60.0f));
+    int f = npc_react(&kre[k].r, body, 60.0f, up, v3(m[12], m[13], m[14]), 450.0f, r->arg[6] != -1); /* arg6 set: the body sensor invalidated */
+    int tr = f & 1, sp = f & 2, pse = f & 8;
     int sleep = r->arg[2] == 7; /* mBehavior */
     if (tr) { se_start(SE_SM_NPC_TRAMPLED, &m[12]); se_start(sleep ? SE_SV_KINOPIO_POINTING_SLEEP : SE_SV_KINOPIO_TRAMPLED, &m[12]); }
     if (pse) { dpd_hit_sound(); se_start(sleep ? SE_SV_KINOPIO_POINTING_SLEEP : SE_SV_KINOPIO_POINTING, &m[12]); }
@@ -43228,12 +43309,13 @@ static const char *walker_clip(const Kuribo *k, int *loop)
 }
 
 static const Model *fat_model(const Inst *in);
+static void fat_goods_draw(const Inst *in, const float m[16]);
 static void inst_draw(const Inst *in, const Model *md, const float m[16])
 {
     if (in->md_bloom && md == in->md) render_bloom_model(in->md_bloom, m);
     if (in->fat && md == in->md) { /* its FatRed frame's model, posed by its own Anim (the same skin) */
         const Model *fm = fat_model(in);
-        if (fm && fm->skin && in->anim) { use_row_light(in->row, v3(m[12], m[13], m[14]), LIGHT_STRONG); draw_skin(fm, m, in->anim); return; }
+        if (fm && fm->skin && in->anim) { use_row_light(in->row, v3(m[12], m[13], m[14]), LIGHT_STRONG); draw_skin(fm, m, in->anim); fat_goods_draw(in, m); return; }
     }
     use_row_light(in->row, v3(m[12], m[13], m[14]), md->skin ? LIGHT_STRONG : LIGHT_PLANET);
     if (md->skin) { if (in->anim && md == in->md) draw_skin(md, m, in->anim); }
