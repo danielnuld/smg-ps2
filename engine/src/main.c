@@ -2090,7 +2090,8 @@ int main(void)
 #ifdef GAP_TEST /* game.c gap_test: A tapped through the opening's demos and talks (pad_force) */
     {
         extern int game_test_busy(void);
-        pad_force = game_test_busy() && frame % 40 < 3 ? PAD_CROSS : 0;
+        extern int game_test_cross(void);
+        pad_force = (game_test_busy() && frame % 40 < 3) || game_test_cross() ? PAD_CROSS : 0; /* game_test_cross: a selector answered */
     }
 #endif
 #ifdef HANACHAN_TEST

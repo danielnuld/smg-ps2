@@ -1328,6 +1328,8 @@ static float star_demo_m[16]; /* its camera's frame: at the star, facing the way
 static int obj_play(const Inst *in, const char *clip, int loop, int interp);
 static int lg_cls(const char *name);              /* LuigiNPC 1, LuigiEvent 2 (the LuigiNPC section) */
 static int luigi_took(int row);                    /* his star taken out (TakeOutStar), not just made dead at init */
+static int coach_took(int row);                    /* PenguinCoach: its TakeOutStar over */
+static int pg_branch(int k, u32 v), pg_event(int k, u32 v); /* PenguinCoach / PenguinStudent talk */
 static int luigi_scenario(char *stage, int n);    /* the current stage, its scenario */
 /* Skinned placed models (slice.py SKINNED_OBJ): a pool of poses kept by row across rebinds, the class's "wait" clip
  * (else its first) looping unless its behaviour plays another (obj_play). ponytail: 40 at once (instances and walkers), the rest drawn in
@@ -2864,6 +2866,7 @@ static const NpcTurn npc_turns[] = {
     {"Penguin", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turn", "talk", "talkturn"}},
     {"PenguinRacer", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turn", "talk", "talkturn"}},
     {"PenguinCoach", 1, 1, 2000.0f, 1.0f, 0, 0, {"wait", "turn", "talk", "talkturn"}},
+    {"PenguinStudent", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turn", "talk", "talkturn"}}, /* NPCActor::setDefaults (student_update) */
     {"Caretaker", 0, 1, 2000.0f, 3.0f, 0, 0, {"wait", "turn", "talk", "talkturn"}},
     {"HoneyBee", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turn", "talk", "talkturn"}},
     {"Rabbit", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turnsmall", "talk", "turnsmall"}}}; /* Rabbit::init: TurnSmall */
@@ -2888,8 +2891,8 @@ static int npc_mode(const NpcTurn *t, const Row *r, NpcTurn *m)
         if (b >= 0 && b < 12 && one[b]) { npc_set(m, one[b], NULL, one[b], NULL); m->near = m->talk = 0; } /* setNoTurnAction */
     } else if (!strcmp(t->cls, "Penguin")) { /* mBehavior (arg0)
      * arg0 3 Dive, 4's jet sound and shell (penguin_turtle), TalkA / TalkB: penguin_wait. ponytail (unmarked until the 2026-11-02
-     * audit): PenguinCoach has no golden shell check / star (PenguinCoach.cpp:139-185), PenguinStudent no code (its rail
-     * school, the KouraShine shell); TicoRail's colour BRK by arg; Caretaker's BodyColor BRK at arg3 (its frames bake to one colour: the BRK drives registers tex.py does not bake) and Dirt BTK (frame 0), its
+     * audit): PenguinCoach / PenguinStudent: student_update, coach_takeout;
+     * TicoRail's colour BRK by arg; Caretaker's BodyColor BRK at arg3 (its frames bake to one colour: the BRK drives registers tex.py does not bake) and Dirt BTK (frame 0), its
      * tidy-up mission (arg0 0: CountDown, Tidy, BombTimer, TakeOutStar; CareTaker.cpp:113-546) not ported (Rabbit: rabbit_lecture) */
         switch (r->arg[0]) {
         case 0: npc_set(m, "sitdown", NULL, "sitdowntalk", NULL); m->near = m->talk = 0; break; /* setMoveTalkNoTurnAction */
@@ -4652,7 +4655,7 @@ static int gap_class(const char *name)
 }
 /* ponytail (unmarked until the 2026-11-02 audit): placed classes of the early galaxies with no behaviour here
  * (drawn static, or not at all), each a whole Petari class: GhostPlayer (Cosmic Mario);
- * Battlerock BossBegoman, TicoShop; Beach Bowl PenguinStudent;
+ * Battlerock BossBegoman, TicoShop;
  * the observatory's AstroMapObj looks (update_astro_objs' ponytail) */
 static void class_make(ClassInfo *ci, const char *name)
 {
@@ -5186,15 +5189,16 @@ static void game_rebind_(void)
                 in->reach = m_trainbody->radius * in->s;
             }
     { /* NokonokoLand::mJetTurtle (initWithoutIter, makeActorDead): its shell, a JetTurtle on the Koura model (slice.py EXTRA) */
-        int tn = scene_type(s, "NokonokoLand"), tp = scene_type(s, "Penguin");
-        for (u32 q = 0; (tn >= 0 || tp >= 0) && q < s->nobjs && ninsts < insts_cap; q++) {
+        int tn = scene_type(s, "NokonokoLand"), tp = scene_type(s, "Penguin"), ts = scene_type(s, "PenguinStudent");
+        for (u32 q = 0; (tn >= 0 || tp >= 0 || ts >= 0) && q < s->nobjs && ninsts < insts_cap; q++) {
             const Row *r = &s->objs[q];
             const Model *km = tn >= 0 && r->type == tn ? scene_model(s, r->arg[0] == 1 ? "Koura~1" : "Koura~0") : NULL; /* becomeFastType / becomeSlowType: its Koura BRK frame */
             if (r->type == tp && tp >= 0 && r->arg[0] == 4) km = scene_model(s, "Koura~0"); /* Penguin SwimTurtle: RemovableTurtle(this, false), its JetTurtle (slow) */
+            if (r->type == ts && ts >= 0 && r->arg[0] == -1) km = scene_model(s, "KouraShine"); /* PenguinStudent leader: RemovableTurtle(this, true), its GoldenTurtle */
             if (!km) continue;
             Inst *in = &insts[ninsts++];
             memset(in, 0, sizeof *in);
-            in->md = km; in->row = (int)q; in->zone = r->zone; in->jet = r->type == tn ? 2 : 3; in->kmove = in->kparent = -1;
+            in->md = km; in->row = (int)q; in->zone = r->zone; in->jet = r->type == tn ? 2 : r->type == ts ? 4 : 3; in->kmove = in->kparent = -1;
             mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
             memcpy(in->m0, in->m, 64);
             in->head = row_pos(r); in->m[12] = 1e9f;
@@ -11547,7 +11551,7 @@ static void update_talkers(void)
         /* Penguin / PenguinStudent: initTalkCtrl (0, 150, 0); PenguinCoach: caps.mMessageOffset (0, 430, 0) */
         float pg_offy = in->talkcls != 12 ? 0.0f : !strcmp(sc->types + 32 * sc->objs[in->row].type, "PenguinCoach") ? 430.0f : 150.0f;
         int k = talk_new(lab, in->talkcls == 11 ? -1 : in->row, in->row, pg_offy > 0 ? pg_offy : sign || in->talkcls == 5 || (in->talkcls == 10 && !bee_lec) ? 150.0f : bee_lec ? 0.0f : tico ? 120.0f : 122.0f * 1.2f,
-                         tico ? 350.0f : 240.0f);
+                         tico || pg_offy == 430.0f ? 350.0f : 240.0f); /* PenguinCoach: setDistanceToTalk 350 */
         if (k < 0) continue;
         Talker *t = &talkers[k];
         if (!t->root_auto) { /* onRootNodeAutomatic (NPCActor::initTalkCtrl); Butler::initForAstroDome: registerBranchFunc */
@@ -11566,6 +11570,7 @@ static void update_talkers(void)
                 t->sarg = msg_get(gl);
             }
             if (in->talkcls == 5) t->branch = butler_branch;
+            if (in->talkcls == 12) { t->branch = pg_branch; t->event = pg_event; } /* PenguinCoach / PenguinStudent::init: registerBranchFunc / EventFunc */
             if (in->talkcls == 6) { t->event = luigi_event; t->branch = luigi_branch; } /* LuigiNPC::init: registerBranchFunc / EventFunc */
             if (in->talkcls == 3 && sc->objs[in->row].arg[1] == 2 && !strcmp(sc->types + 32 * sc->objs[in->row].type, "KinopioAstro")) {
                 t->event = kast_event; /* KinopioAstro::init: the messenger's eventFunc */
@@ -13038,7 +13043,7 @@ static void update_jets(void)
         Inst *in = &insts[i];
         if (!in->jet) continue;
         if (in->jet == 2 && jet.inst != i) { in->m[12] = 1e9f; continue; } /* a NokonokoLand's (陸ノコ用ジェット亀): dead until it gives it */
-        if (in->jet == 3 && jet.inst != i) continue; /* a SwimTurtle Penguin's (ジェット亀さん): on its back (penguin_wait) */
+        if ((in->jet == 3 || in->jet == 4) && jet.inst != i) continue; /* a SwimTurtle Penguin's (ジェット亀さん) / the school leader's GoldenTurtle: on its back (penguin_wait, student_after) */
         const Row *r = &sc->objs[in->row];
         if (row_step[in->row] == 0xFFFF) continue; /* killed */
         if (row_step[in->row]) { /* exeRestart */
@@ -13061,7 +13066,7 @@ static void update_jets(void)
             }
             continue;
         }
-        int type = in->jet == 3 ? 1 : in->jet == 2 ? (r->arg[0] == 1 ? 2 : 1) : r->arg[1] + 1 >= 0 && r->arg[1] + 1 <= 2 ? r->arg[1] + 1 : 0; /* NokonokoLand::initJetTurtle: becomeFastType for arg0 1 */
+        int type = in->jet == 3 || in->jet == 4 ? 1 : in->jet == 2 ? (r->arg[0] == 1 ? 2 : 1) : r->arg[1] + 1 >= 0 && r->arg[1] + 1 <= 2 ? r->arg[1] + 1 : 0; /* NokonokoLand::initJetTurtle: becomeFastType for arg0 1 */
         if (jet.inst == i && jet.phase == 1) { /* held: in front of him at his hands */
             in->head = vadd(vadd(mario->pos, vmul(mario->face, 70.0f)), vmul(mario->up, 60.0f));
             if (mario->spin_timer > 0 || jet.drop) { /* thrown (in water: dropJet, along his swim front) */
@@ -32101,6 +32106,13 @@ int game_test_busy(void);
  * (every 300 frames from 120; its zone streams in; DriftWood: 200 over it), then at +30 GAP_SHOCKWAVE spins,
  * GAP_CAPSULE turns its SW_B on; a Shellfish's item: Mario put on it at +260 */
 static const char *const gap_names[] = {"", "ShockWaveGenerator", "CapsuleCage", "DriftWood", "ShellfishCoin", "ShellfishYellowChip", "BattleShipElevator", "UFOKinoko", "CoinBox"};
+int game_test_cross(void) /* tests: a yes / no selector answered Yes (the pointer on BoxRight at 60, A at 80) */
+{
+    static int slct;
+    if (td.nrv != TD_SLCT) { slct = 0; return 0; }
+    if (++slct == 60) printf("gap test: pointer on Yes %d%c", menu_test_point("BoxRight"), 10);
+    return slct == 80;
+}
 static void gap_test(void)
 {
     static int t;
@@ -32115,6 +32127,26 @@ static void gap_test(void)
             if ((int)sc->objs[i].type == tt && n++ == want % 16) { V3 p = row_pos(&sc->objs[i]); mario->pos = vadd(p, v3(300, 100, 0)); mario->hvel = v3(0, 0, 0); }
         for (int k = 0; at == 150 && k < ninsts; k++)
             if (insts[k].breaks == 5 && !row_dead[insts[k].row]) { explosion_breaks(v3(insts[k].m[12], insts[k].m[13], insts[k].m[14]), 10.0f); break; }
+        return;
+    }
+    if (GAP_TEST == 24) { /* XF=-DGAP_TEST=24 (Beach Bowl's school): Mario by the PenguinCoach and its talk forced (120 / 200), onto the
+                           * school's leader (700), back by the coach with the golden shell and its talk forced (1000 / 1080) */
+        int tc = scene_type(sc, "PenguinCoach"), tsd = scene_type(sc, "PenguinStudent"), pc = -1, ld = -1;
+        for (u32 i = 0; i < sc->nobjs; i++) {
+            if ((int)sc->objs[i].type == tc && sc->objs[i].arg[0] == 1) pc = (int)i;
+            if ((int)sc->objs[i].type == tsd && sc->objs[i].arg[0] == -1) ld = (int)i;
+        }
+        Inst *ci = pc >= 0 ? row_inst(pc) : NULL, *li = ld >= 0 ? row_inst(ld) : NULL;
+        if (t % 60 == 0) printf("gap test 24: t %d coach row %d (n %d took %d) leader row %d (nerve %d coord %.0f) jet %d phase %d%c", t, pc, pc >= 0 ? gap_st(pc)->n : -1,
+                                pc >= 0 ? gap_st(pc)->i : -1, ld, ld >= 0 ? gap_st(ld)->n : -1, ld >= 0 ? row_coord[ld] : 0.0f, jet.inst, jet.phase, 10);
+        if (ci && (t == 120 || t == 1000)) { mario->pos = vadd(v3(ci->m[12], ci->m[13], ci->m[14]), vadd(vmul(ci->nf, 250.0f), vmul(ci->nu, 30.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+        if (ci && ((t >= 200 && t < 260) || (t >= 1080 && t < 1140))) {
+            char lab[32];
+            int k = talk_row_label(pc, lab) ? talk_new(lab, pc, pc, 430.0f, 350.0f) : -1;
+            int ok = talk_force(k, 0);
+            if (t % 20 == 0 || ok) printf("gap test 24: coach talk %d forced %d (nrv %d talk %d msgctrl %d st %d inv %d)%c", k, ok, td.nrv, k >= 0 ? talkers[k].talk : -1, td.msgctrl, td.st, td_invalid(), 10);
+        }
+        if (li && t == 700) { mario->pos = v3(li->m[12], li->m[13], li->m[14]); mario->hvel = v3(0, 0, 0); mario->vup = 0; printf("gap test 24: Mario on the leader%c", 10); }
         return;
     }
     if (GAP_TEST == 23) { /* XF=-DGAP_TEST=23: Mario 400 beside each Penguin on a rail in turn every 300 frames; its rail coord every 60 */
@@ -37355,7 +37387,7 @@ static V3 star_pos(const Inst *in, int *state)
             *state = row_dead[w - 1];
             return vadd(from, v3(0.0f, 100.0f, 0.0f));
         }
-        if ((!row_dead[w - 1] && !tbox_star_out(w - 1) && !flip_star_out(w - 1)) || (lg_cls(name) && !luigi_took(w - 1))) { *state = h > 0; return o; } /* (a Luigi absent
+        if ((!row_dead[w - 1] && !tbox_star_out(w - 1) && !flip_star_out(w - 1) && !coach_took(w - 1)) || (lg_cls(name) && !luigi_took(w - 1))) { *state = h > 0; return o; } /* (a Luigi absent
                                                                                                        * here: no star) */
     } else if (got_coins < 100 && got_purple < 100) { /* ScenePlayingResult: 100 coins, or 100 purple coins */
         *state = 0;
@@ -40094,10 +40126,16 @@ static const float *npc_rail_of(const Inst *in, NpcRail *p, u32 *n, int *cl)
 {
     const Row *r = &sc->objs[in->row];
     const char *cls = sc->types + 32 * r->type;
-    if (strcmp(cls, "Penguin") || r->path < 0 || !scene_blob_g) return NULL;
+    int student = !strcmp(cls, "PenguinStudent") && r->arg[0] == -1; /* the school's leader (its pupils: student_update) */
+    if ((strcmp(cls, "Penguin") && !student) || r->path < 0 || !scene_blob_g) return NULL;
     const float *pts = find_rail(scene_blob_g, r->zone, r->path, n, cl);
     if (!pts || *n < 2) return NULL;
     p->speed = 2.0f; p->accel = 0.1f; p->blend = 0.08f; p->ground = 0; p->move = NULL; /* setDefaults */
+    if (student) { /* PenguinStudent: _110 0.3; exeSlow Swim at 5, exeLead SwimTurtle at 7 */
+        int lead = gap_st(in->row)->n == 2;
+        p->accel = 0.3f; p->move = lead ? "swimturtle" : "swim"; p->speed = lead ? 7.0f : 5.0f;
+        return pts;
+    }
     switch (r->arg[0]) {
     case -1: case 5: p->move = "walk"; p->speed = 1.5f; p->ground = 1; break;
     case 1: p->move = "swim"; p->speed = 5.0f; break;
@@ -40196,12 +40234,167 @@ static void npc_rail_move(Inst *in) /* startMoveAction */
     } else npc_pose(in, up, dir, at, p.blend, p.blend); /* followRailPose(_114, _114) */
     if (!cl && (row_rdir[row] > 0 ? c >= len : c <= 0)) row_rdir[row] = (signed char)-row_rdir[row]; /* isRailReachedGoal: reverseRailDirection */
 }
+/* PenguinStudent.cpp after Petari (Beach Bowl's swimming school, a GroupId of them on rails): arg0 -1 the leader
+ * (RemovableTurtle(this, true): the golden shell, ペンギン用ゴールデンコウラ KouraShine on its back, its GoldenTurtle
+ * ゴールデン甲羅 an extra Inst, Inst.jet 4), else a pupil (Swim) arg1 (10) x 100 behind it. Leader: Slow (Swim at 5,
+ * _110 0.3) till its SW_A is on and no power star is out (isStageStatePowerStarAppeared: the coach's taken out), then
+ * tryAttach (its GoldenTurtle dead): Lead (SwimTurtle at 7, SE_SM_LV_PENGUIN_SWIM_JET); Mario on its push sensor (50
+ * at 50 up) or his spin (isMsgSpinStormRange), the shell within 450 of him, nothing carried: tryRemove (Mario takes
+ * the GoldenTurtle: appearAndTryTaken), Slow. Its rail: npc_rail_move. Pupil (exeSwim): the leader's coord less
+ * _168 on its own rail, posed on it (followRailPose(_114, 1)), then off it along its up turned about its front by its
+ * step in degrees, x 200 x the leader's speed / 7. branchFunc: the leader in Lead. GapSt: n its nerve, st its step,
+ * f _168, i the leader's row + 1, p / v its place and front (kept across rebinds). Talk: talkcls 12.
+ * ponytail: no KouraShine BTK (the shell drawn in its bind colours) */
+enum { PS_SWIM = 1, PS_LEAD, PS_SLOW };
+static Inst *ps_jet(int row) { FOR_KIND(k, jet) if (insts[k].jet == 4 && insts[k].row == row) return &insts[k]; return NULL; }
+static int pc_row(void) /* the scene's PenguinCoach of arg0 1-3 (the star's), -1 none */
+{
+    int ty = scene_type(sc, "PenguinCoach");
+    for (u32 i = 0; ty >= 0 && i < sc->nobjs; i++) if ((int)sc->objs[i].type == ty && sc->objs[i].arg[0] >= 1 && sc->objs[i].arg[0] <= 3) return (int)i;
+    return -1;
+}
+static int coach_took(int row) /* its TakeOutStar over: its star comes out (star_pos) */
+{
+    return !strcmp(sc->types + 32 * sc->objs[row].type, "PenguinCoach") && gap_st(row)->i;
+}
+static int ps_leader(int row) /* initAfterPlacement: the group's first member not in Swim */
+{
+    GapSt *g = gap_st(row);
+    if (!g->i) {
+        int ty = scene_type(sc, "PenguinStudent"), grp = sc->objs[row].group;
+        for (u32 i = 0; i < sc->nobjs && !g->i; i++)
+            if ((int)sc->objs[i].type == ty && sc->objs[i].arg[0] == -1 && (i == (u32)row || (grp >= 0 && sc->objs[i].group == grp))) g->i = (int)i + 1;
+        if (!g->i) g->i = -1;
+    }
+    return g->i > 0 ? g->i - 1 : -1;
+}
+static void ps_shell_place(Inst *in, Inst *jt, int on) /* its shell (initFixedPosition (-5.85, -68, 30)) on its back, or dead */
+{
+    if (!on) { jt->m[12] = 1e9f; return; }
+    float m[16], o[3] = {-5.85f, -68.0f, 30.0f};
+    basis_matrix(m, v3(in->m[12], in->m[13], in->m[14]), in->nu, in->nf, 0);
+    memcpy(jt->m, m, 64);
+    for (int j = 0; j < 3; j++) jt->m[12 + j] = m[j] * o[0] + m[4 + j] * o[1] + m[8 + j] * o[2] + m[12 + j];
+    memcpy(jt->m0, jt->m, 64);
+}
+static void ps_set(int row, int n) { gap_st(row)->n = n; gap_st(row)->st = 0; printf("penguin student row %d: nerve %d%c", row, n, 10); }
+/* 1: the pupil's own move (update_npc_turn skips the rest); 0: the leader, moved by npc_rail_move */
+static int student_update(Inst *in)
+{
+    const Row *r = &sc->objs[in->row];
+    int row = in->row;
+    GapSt *g = gap_st(row);
+    u32 n = 0; int cl = 0;
+    const float *pts = r->path >= 0 && scene_blob_g ? find_rail(scene_blob_g, r->zone, r->path, &n, &cl) : NULL;
+    if (pts && n < 2) pts = NULL;
+    if (!g->n) { /* init: its rail coord the nearest, mPosition the rail's */
+        g->f = 100.0f * (r->arg[1] != -1 ? r->arg[1] : 10); /* _168 */
+        g->p = v3(in->m[12], in->m[13], in->m[14]); g->v = in->nf;
+        if (pts) {
+            V3 dir;
+            row_coord[row] = nrail_nearest(pts, n, cl, g->p); row_rdir[row] = 1; row_speed[row] = 0;
+            g->p = nrail_at(pts, n, cl, row_coord[row], &dir);
+            printf("penguin student row %d: rail %u points%s, len %d, coord %d, group %d%c", row, n, cl ? " (loop)" : "", (int)nrail_len(pts, n, cl), (int)row_coord[row], r->group, 10);
+        }
+        ps_set(row, r->arg[0] == -1 ? PS_SLOW : PS_SWIM);
+    }
+    in->m[12] = g->p.x; in->m[13] = g->p.y; in->m[14] = g->p.z; in->nf = g->v; /* (a rebind put it back at its placement) */
+    g->st++;
+    if (g->n == PS_SWIM) { /* exeSwim */
+        int L = ps_leader(row);
+        if (g->st == 1) obj_play(in, "swim", 1, 0); /* tryStartAction Swim */
+        if (L < 0 || !pts) return 1;
+        float len = nrail_len(pts, n, cl), speed = 200.0f * row_speed[L] / 7.0f, c = row_coord[L] - g->f;
+        c = cl ? fmodf(c + 4.0f * len, len) : fminf(fmaxf(c, 0.0f), len); /* setRailCoord */
+        row_coord[row] = c;
+        V3 dir, at = nrail_at(pts, n, cl, c, &dir), up = up_at(at, in->nu);
+        npc_pose(in, up, dir, at, 0.08f, 1.0f); /* moveCoordAndFollowTrans, followRailPose(_114, 1) */
+        V3 off = rot_axis(in->nu, in->nf, 0.017453292f * (float)((g->st - 1) % 360)); /* rotAxisVecRad(up, front, step % 360 deg) */
+        in->m[12] += off.x * speed; in->m[13] += off.y * speed; in->m[14] += off.z * speed;
+        g->p = v3(in->m[12], in->m[13], in->m[14]); g->v = in->nf;
+        return 1;
+    }
+    Inst *jt = ps_jet(row);
+    int pc = pc_row(), held = jt && jet.inst >= 0 && &insts[jet.inst] == jt;
+    if (g->n == PS_SLOW) { /* exeSlow: !isStageStatePowerStarAppeared && SW_A: tryAttach */
+        if (!(pc >= 0 && coach_took(pc)) && r->sw[SW_A] >= 0 && sw_on(r, SW_A) && jt && !held) ps_set(row, PS_LEAD);
+    } else { /* exeLead */
+        in->lv[0] = se_level(SE_SM_LV_PENGUIN_SWIM_JET, &in->m[12], in->lv[0]);
+        V3 cj = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(in->nu, 50.0f));
+        float dm = vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), cj));
+        int touch = dm < 50.0f + HIT_BODY_R, storm = mario->spin_timer > 0 && dm < 50.0f + 120.0f; /* attackSensor / isMsgSpinStormRange */
+        V3 sp = jt ? v3(jt->m[12], jt->m[13], jt->m[14]) : v3(0, 0, 0);
+        if (jt && (touch || storm) && jet.inst < 0 && vlen(vsub(mario->pos, sp)) < 450.0f && (!swimming || sw_start_jet(mario, 1))) { /* tryReleaseTurtle */
+            jt->head = sp; jt->hvel = v3(0, 0, 0);
+            jet.inst = (int)(jt - insts); jet.phase = 1; jet.t = 0; jet.row = row; jet.head = sp; jet.vel = v3(0, 0, 0); jet.drop = 0;
+            printf("penguin student row %d: its golden shell taken%c", row, 10);
+            ps_set(row, PS_SLOW);
+        }
+    }
+    return 0;
+}
+static void student_after(Inst *in) /* its place kept, its shell on its back while it leads */
+{
+    GapSt *g = gap_st(in->row);
+    Inst *jt = ps_jet(in->row);
+    g->p = v3(in->m[12], in->m[13], in->m[14]); g->v = in->nf;
+    if (jt && !(jet.inst >= 0 && &insts[jet.inst] == jt)) ps_shell_place(in, jt, g->n == PS_LEAD);
+}
+/* PenguinCoach.cpp (arg0 1, Behavior_Star): branchFunc 0 isPlayerCarryAny, 1 carrying the golden shell
+ * (isPlayerTakingActor ゴールデン甲羅), 2 isOnGameEventFlagSurfingTutorialAtFirst, 3 mIsRaceComplete, 4 / 5 the race's
+ * time under 90 / 180 s; eventFunc 0 onSwitchA (the school leads), 1 mTakeOutStar->takeOut (TakeOutStar: its
+ * TakeOutStar action, SE_OJ_LV_POW_STAR_EXIST(_W in water) past sStarAppearSeStepPenguinCoach 95, at its end the star
+ * out: true then), 2 forceKillPlayerByGroundRace. setDistanceToTalk 350, mParam._8 1 (npc_turns). GapSt of its row: n
+ * 1 in TakeOutStar, st its step, i its star out.
+ * ponytail: the surfing modes (arg0 2 / 3: SurfRayTutorial, the race manager, their cameras and fades;
+ * PenguinCoach.cpp:200-300) are SurfingLv1 / Lv2's, not ported: no race time (4 / 5 false), no tutorial flag (2 false),
+ * no ground race kill (2); no TurnJointCtrl head turn (control), no reactions (exeReaction's SEs); the PowerStar demo
+ * model in its hands not drawn (the star comes from it once the action ends: star_pos) */
+static int pg_branch(int k, u32 v)
+{
+    int row = talkers[k].row;
+    if (row < 0) return 0;
+    const char *c = sc->types + 32 * sc->objs[row].type;
+    if (!strcmp(c, "PenguinStudent")) { int L = ps_leader(row); return L >= 0 && gap_st(L)->n == PS_LEAD; }
+    if (strcmp(c, "PenguinCoach")) return 0;
+    int carry = jet.inst >= 0 && jet.phase == 1;
+    return v == 0 ? carry : v == 1 ? carry && insts[jet.inst].jet == 4 : 0;
+}
+static int pg_event(int k, u32 v)
+{
+    int row = talkers[k].row;
+    if (row < 0 || strcmp(sc->types + 32 * sc->objs[row].type, "PenguinCoach")) return 1;
+    GapSt *g = gap_st(row);
+    if (v == 0) { if (sc->objs[row].sw[SW_A] >= 0) sw_set(&sc->objs[row], SW_A, 1); printf("penguin coach row %d: SW_A on%c", row, 10); return 1; }
+    if (v == 1) {
+        if (g->i) return 1;
+        if (g->n != 1) { g->n = 1; g->st = 0; printf("penguin coach row %d: TakeOutStar%c", row, 10); }
+        return 0;
+    }
+    return 1;
+}
+static int coach_takeout(Inst *in) /* 1 while its TakeOutStar runs (exeAnim) */
+{
+    GapSt *g = gap_st(in->row);
+    if (g->n != 1) return 0;
+    if (!g->st++)
+        obj_play(in, "takeoutstar", 0, 8);
+    if (g->st > 95) {
+        V3 c = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(in->nu, 200.0f));
+        in->lv[0] = se_level(in_water(c, in->nu, NULL) ? SE_OJ_LV_POW_STAR_EXIST_W : SE_OJ_LV_POW_STAR_EXIST, &c.x, in->lv[0]);
+    }
+    if (g->st > 1 && in->anim && in->anim->done) { g->i = 1; g->n = 0; sw_changed = 1; printf("penguin coach row %d: its star out%c", in->row, 10); }
+    return 1;
+}
 static void update_npc_turn(void) /* the NPCs' wait nerves: tryStartTalkAction / tryStartTurnAction */
 {
     FOR_KIND(i, npc) {
         Inst *in = &insts[i];
         if (!in->npc || !row_shown(in->row) || (in->dnpc == 3 && ros_demo)) continue;
         if ((in->talkcls == 2 || in->talkcls == 7) && row_step[in->row]) continue; /* a Tico's Meta nerve */
+        int student = !strcmp(sc->types + 32 * sc->objs[in->row].type, "PenguinStudent");
+        if (student && student_update(in)) continue; /* a pupil's exeSwim */
+        if (!strcmp(sc->types + 32 * sc->objs[in->row].type, "PenguinCoach") && coach_takeout(in)) continue; /* its TakeOutStar */
         const NpcTurn *t = &npc_turns[in->npc - 1];
         V3 p = v3(in->m[12], in->m[13], in->m[14]), to = vsub(mario->pos, p);
         float d = vlen(to);
@@ -40218,6 +40411,7 @@ static void update_npc_turn(void) /* the NPCs' wait nerves: tryStartTalkAction /
         else act = (t->near || t->talk) && !npc_turn_default(in, t) ? t->act[1] : t->act[0];
         if (!strcmp(t->cls, "Penguin") && penguin_wait(in, talking, &act)) continue;
         if (moving) npc_rail_move(in);
+        if (student) student_after(in);
         if (!strcmp(t->cls, "Rabbit") && rabbit_lecture(in, talking)) continue;
         if (act) obj_play(in, act, 1, 0); /* tryStartAction (no-op while it plays) */
     }

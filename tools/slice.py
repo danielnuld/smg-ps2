@@ -176,7 +176,7 @@ def sky_sea(b, mat3, m):
 # (FlipPanel: "?" at rest, "!" once flipped, the End face when its group is complete)
 # KuriboChief / ExterminationChecker::initKeySwitch: their own KeySwitch (game.c okeys; KeySwitchOwned: the KeySwitch
 # archive skinned for its Rotation, the placed KeySwitch rows untouched)
-EXTRA = {"NokonokoLand": ("Koura~0", "Koura~1"), "Penguin": ("Koura~0",), "Creeper": ("CreeperFlower", "CreeperLeaf"), "TripodBoss": ("TripodBossLow", "HomingKiller"), "HoneyQueen": ("HoneyQueenWing",), "TicoFat": ("TicoFatGoodsStarPiece",), "TicoShop": ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp"), "ShellfishYellowChip": ("YellowChip",), "BossKameck": ("BkDemo", "BossKameckFireBall", "Koura"), "BossKameck2": ("BkDemo", "BossKameckFireBall", "Koura"), "FireBallBeamKameck": ("BossKameckFireBall",), "BreakableTrash": ("BreakableCageBreak",), "KuriboChief": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
+EXTRA = {"NokonokoLand": ("Koura~0", "Koura~1"), "Penguin": ("Koura~0",), "PenguinStudent": ("KouraShine",), "Creeper": ("CreeperFlower", "CreeperLeaf"), "TripodBoss": ("TripodBossLow", "HomingKiller"), "HoneyQueen": ("HoneyQueenWing",), "TicoFat": ("TicoFatGoodsStarPiece",), "TicoShop": ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp"), "ShellfishYellowChip": ("YellowChip",), "BossKameck": ("BkDemo", "BossKameckFireBall", "Koura"), "BossKameck2": ("BkDemo", "BossKameckFireBall", "Koura"), "FireBallBeamKameck": ("BossKameckFireBall",), "BreakableTrash": ("BreakableCageBreak",), "KuriboChief": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
          "Rosetta": ("LightDome", "DomeHalo"),  # RosettaDemoHeavensDoor1's parts (ライトドーム, ライト後光)
          "StarReturnDemoStarter": ("PStar", "GStar", "SpinTico", "MarioHair"), "GrandStarReturnDemoStarter": ("GStar",), "FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
@@ -1724,6 +1724,8 @@ def declare_stars(keep, scenario, appear, jp):
             k = None if s32(r["args"][7]) not in (0, -1) else -1
         elif r["name"] in ("CollectTico", "DinoPackun", "OtaKing", "BossStinkBug", "BossBegoman", "BossKameck", "BossKameck2", "StinkBugParent", "TripodBoss", "TombSpider"):  # their init declarePowerStar, always
             k = None
+        elif r["name"] == "PenguinCoach":  # PenguinCoach::init: declarePowerStar for Behavior_Star / Tutorial / Race (arg0 1-3)
+            k = None if 1 <= s32(r["args"][0]) <= 3 else -1
         elif r["name"] in ("LuigiNPC", "LuigiEvent"):  # LuigiNPC::isDeclarePowerStarType: Afraid, Event, OnTree, Arrested
             t = s32(r["args"][0]) + (2 if r["name"] == "LuigiEvent" else 0)
             k = None if t == 0 or 2 <= t < 5 else -1
