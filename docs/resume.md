@@ -669,8 +669,11 @@ there needs the embedded blob and every pack rebuilt.
 - BegomanBaby (feat/begoman, 2026-11-04): BegomanBaby.cpp in begospike_update (`baby`): its values, sounds, Trample,
   Blow to its death with 1 / 3 star pieces, the rebound between Babies. Test `begoman` with XF=-DBEGO_BABY
   (BattleShipGalaxy/1): it keeps its distance / pursues / turns, a trample makes it Trample (Mario bounces). Left: its
-  launches (BegomanBabyLauncher, BossBegoman), and a spin seldom reaches it (mario_offence's cylinder from HIT_BODY_H
-  80; Petari's _2A0 is Mario's Spine1: a shared fix for small enemies). Repack: none (BegomanBaby already skinned).
+  launches (BegomanBabyLauncher, BossBegoman). Repack: none (BegomanBaby already skinned).
+- Mario's offence cylinder (fix/mario-offence-spine, 2026-11-04): mario_touch / mario_offence / mario_kick measure from
+  _2A0 (m_center: 60 up, 40 squatting; Spine1 hanging) with cylinderPushCheck's two halves (down along _4C4, then up
+  along _4B8), so low sensors (BegomanBaby's body 20 up) are spun. `begoman` XF=-DBEGO_BABY: the spin blows three
+  Babies; route EggStar 1 star f 4135.
 
 ## Next
 
