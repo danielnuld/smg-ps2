@@ -883,9 +883,12 @@ static int dino_cam; /* its damage camera is on (startDamageCamera .. endDamageC
 static struct { V3 pos, front, n; int t, valid, right; } foot[FOOT_MAX];
 static int foot_rot, foot_num, foot_cleared;
 static V3 foot_last; /* FootPrint (DinoPackun's): foot_add */
-static const Model *m_vtop, *m_vleaf;
+static const Model *m_vtop, *m_vleaf, *m_crflower, *m_crleaf;
 static int vine_try(Player *m);
 static int vine_hold(Player *m);
+static void creeper_init(void);
+static int creeper_try(Player *m), creeper_hold(Player *m);
+static int creeper_ride;
 static void pole_init(void);
 static void dossun_place(Inst *in);
 static int nrbms, nsbms; static const Model *m_jbhead, *m_rbeam, *m_mogustone, *m_moguhole;
@@ -2399,6 +2402,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nhhps = 0;
     nvines = 0; vine_ride = -1;
     pole_init();
+    creeper_init();
     nrbms = 0;
     nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0; nfgs = 0; nggs = 0; nsss = 0; ss_ride = -1; ss_reset(); kfires_reset(); nlls = 0; ndls = 0; nebl = 0; nass = 0;
     dino_cam = 0;
@@ -4527,7 +4531,7 @@ static int gap_class(const char *name)
            !strcmp(name, "ShellfishYellowChip") ? GAP_SHELLCHIP : !strcmp(name, "BattleShipElevator") ? GAP_ELEVATOR : !strcmp(name, "UFOKinoko") ? GAP_UFOKINOKO : GAP_NONE;
 }
 /* ponytail (unmarked until the 2026-11-02 audit): placed classes of the early galaxies with no behaviour here
- * (drawn static, or not at all), each a whole Petari class: Honeyhive Creeper, StinkBugParent (StinkBugParent.cpp, its 子連れカメムシデモ), GhostPlayer (Cosmic Mario);
+ * (drawn static, or not at all), each a whole Petari class: StinkBugParent (StinkBugParent.cpp, its 子連れカメムシデモ), GhostPlayer (Cosmic Mario);
  * Space Junk TombSpider, BossKameck, ChildKameck, SpiderAttachPoint (SlingShooter), NokonokoLand; PlanetRocket (a
  * PlanetMap: its own-name clip, PlanetMap.cpp:67, needs planets skinned: slice.py AUTO_SKINNED leaves planets out); Battlerock BossBegoman, TicoShop; Beach Bowl PenguinStudent;
  * the observatory's AstroMapObj looks (update_astro_objs' ponytail) */
@@ -4747,6 +4751,7 @@ static void game_rebind_(void)
     m_mhole = scene_model(s, "MogucchiHole"); m_mhill[0] = scene_model(s, "MogucchiHillA"); m_mhill[1] = scene_model(s, "MogucchiHillB"); m_mhill[2] = scene_model(s, "MogucchiHillC");
     for (int i = 0; i < NEW_WALKERS; i++) m_wnew[i] = scene_model(s, new_walkers[i].cls);
     m_vtop = scene_model(s, "PlantTop"); m_vleaf = scene_model(s, "PlantLeaf");
+    m_crflower = scene_model(s, "CreeperFlower"); m_crleaf = scene_model(s, "CreeperLeaf");
     m_fireball2 = scene_model(s, "FireBall"); m_firebubble = scene_model(s, "FireBubble");
     m_sambohead = scene_model(s, "CocoSamboHead");
     m_dino = scene_model(s, "DinoPackun"); m_dball = scene_model(s, "DinoPackunTailBall"); m_degg = scene_model(s, "DinoPackunEggShell");
@@ -13783,6 +13788,7 @@ static struct { int type, nrv, step, frames, keep; } io = {0, 0, 0, -1, 0}; /* n
 /* MarioActor::_EEB (MR::setPlayerSwingPermission): the spin's isRequestRush. True from the constructor (each scene),
  * off at GameSequenceProgress::startScene before スピン権利 (game_init), on when the spin is explained (the Gateway) */
 static int swing_perm = 1;
+static int swing_inhibit; /* MarioActor::_EF6 (setPlayerSwingInhibitTimer): isRequestRush off while it runs down */
 static void io_entry(int type) /* InformationObserver::entry: a time keep demo running is paused, else its own demo */
 {
     io.type = type;
@@ -15193,7 +15199,7 @@ static void m_swing(Player *m)
     if (m->spin_cool && --m->spin_cool == 0xd) m->spin_rec = 0x13;
     if (m->jumping && player_mode != PM_TERESA && !foo_active()) m->spin_cool = 0; /* updateSwingAction */
     if (!m->squat && m_anim_on("サマーソルト") && mario_anim->frame >= 40.0f) m_clip_stop(); /* MarioAnimator::squatSpinCheck */
-    if (!swing_perm || !pad_pressed(PAD_SQUARE) || m->spin_cool || m->walling || m_input_off()) return; /* isRequestRush */
+    if (!swing_perm || !pad_pressed(PAD_SQUARE) || m->spin_cool || swing_inhibit || m->walling || m_input_off()) return; /* isRequestRush */
     if (player_mode == PM_TORNADO || swimming || foo_active()) return; /* canRush */
     switch (mode_action("スピンアタック")) {
     case 1: break;
@@ -16477,7 +16483,7 @@ static int m_wall_update(Player *m)
         return 0;
     }
     if (m_req_jump && m_wall_start_jump(m)) return 0;
-    if (swing_perm && pad_pressed(PAD_SQUARE) && !m->spin_cool) { /* isRequestRush: 空中ひねり, tryWallPunch, setWallCancel */
+    if (swing_perm && pad_pressed(PAD_SQUARE) && !m->spin_cool && !swing_inhibit) { /* isRequestRush: 空中ひねり, tryWallPunch, setWallCancel */
         m->spin_lock = 0;
         m->walling = 0;
         mario_play("spin", 1.0f, 0);
@@ -16595,7 +16601,7 @@ static int side_step_update(Player *m) /* MarioSideStep::update: 0 ends it */
         m_try_jump(m);
         return 0;
     }
-    if (swing_perm && pad_pressed(PAD_SQUARE) && !m->spin_cool && !m_input_off()) { m_wall_punch(m); return 0; } /* isRequestRush */
+    if (swing_perm && pad_pressed(PAD_SQUARE) && !m->spin_cool && !swing_inhibit && !m_input_off()) { m_wall_punch(m); return 0; } /* isRequestRush */
     if (!m->grounded) {
         if (mw.w8) { /* keepDistFrontWall */
             float l = vlen(vtangent(vsub(mw.p4E8, mw.ground_pos), m->up));
@@ -19449,6 +19455,7 @@ static void update_mario_(void);
 static void update_mario(void)
 {
     if (hg.timer) hg.timer--; /* mHangTimer */
+    if (swing_inhibit) swing_inhibit--; /* MarioActor::movement: _EF6 */
     update_mario_();
     update_tornado_mario(mario);
     carry_inst = -1; carry_d = v3(0, 0, 0);
@@ -19644,6 +19651,12 @@ static void update_mario_(void)
     }
     if (vine_ride >= 0 || (warp.from < 0 && jb.inst < 0 && coc.inst < 0 && flf.inst < 0 && vine_try(m))) { /* Plant */
         if (vine_hold(m)) {
+            if (mario_anim) anim_update(mario_anim);
+            return;
+        }
+    }
+    if (creeper_ride >= 0 || (warp.from < 0 && jb.inst < 0 && coc.inst < 0 && flf.inst < 0 && pole_ride < 0 && creeper_try(m))) { /* Creeper */
+        if (creeper_hold(m)) {
             if (mario_anim) anim_update(mario_anim);
             return;
         }
@@ -21054,22 +21067,21 @@ static float frand(float a, float b) { return a + (b - a) * (rand() % 10001) / 1
 
 /* the rail (its Bezier polyline) by length: position, direction to its end */
 static V3 vrail_pos(int k, float d) { return rail_at(vines[k].rail, vines[k].rail_n, d < 0 ? 0 : d); }
-static V3 vrail_tan(int k, float d)
+static V3 rail_tan(const float *p, int n, float d) /* getRailDirection (to its end) at length d */
 {
-    const float *p = vines[k].rail;
-    for (int i = 0; i + 1 < vines[k].rail_n; i++) {
+    for (int i = 0; i + 1 < n; i++) {
         V3 a = v3(p[3 * i], p[3 * i + 1], p[3 * i + 2]), b = v3(p[3 * i + 3], p[3 * i + 4], p[3 * i + 5]);
         float l = vlen(vsub(b, a));
-        if (d <= l || i + 2 == vines[k].rail_n) return l > 0 ? vmul(vsub(b, a), 1.0f / l) : v3(0, 1, 0);
+        if (d <= l || i + 2 == n) return l > 0 ? vmul(vsub(b, a), 1.0f / l) : v3(0, 1, 0);
         d -= l;
     }
     return v3(0, 1, 0);
 }
-static float vrail_nearest(int k, V3 q) /* moveCoordAndTransToNearestRailPos */
+static V3 vrail_tan(int k, float d) { return rail_tan(vines[k].rail, vines[k].rail_n, d); }
+static float rail_nearest(const float *p, int n, V3 q) /* moveCoordAndTransToNearestRailPos: the length there */
 {
-    const float *p = vines[k].rail;
     float best = 1e30f, at = 0, run = 0;
-    for (int i = 0; i + 1 < vines[k].rail_n; i++) {
+    for (int i = 0; i + 1 < n; i++) {
         V3 a = v3(p[3 * i], p[3 * i + 1], p[3 * i + 2]), ab = vsub(v3(p[3 * i + 3], p[3 * i + 4], p[3 * i + 5]), a);
         float l = vlen(ab), t = l > 0 ? vdot(vsub(q, a), ab) / (l * l) : 0;
         t = t < 0 ? 0 : t > 1 ? 1 : t;
@@ -21079,6 +21091,7 @@ static float vrail_nearest(int k, V3 q) /* moveCoordAndTransToNearestRailPos */
     }
     return at;
 }
+static float vrail_nearest(int k, V3 q) { return rail_nearest(vines[k].rail, vines[k].rail_n, q); }
 static V3 vrail_dir(int k) { return vmul(vrail_tan(k, vines[k].coord), (float)vines[k].dir); } /* getRailDirection */
 static void vrail_move(int k, float v) /* moveCoordAndFollowTrans */
 {
@@ -21816,6 +21829,356 @@ static void draw_vines(void)
         }
     }
     if (ns) render_strips(st, ns);
+}
+
+/* Creeper.cpp after Petari (Ride, Honeyhive's vines). Its rail is the vine, root to head: CreeperPoints every 50 along
+ * it (sInterval; the last at its end), each kept 50 along its up from the one before. Free: the points but the root
+ * (sHeadPointNo 1) spring back to their places (sFreeBackAccelRate 0.05, friction 0.9), its binder ("bind" 100) at
+ * the rail's nearest place to Mario. Mario spinning or in the air touching it takes hold (AutoRushBegin; not in
+ * FreeInvalid): at least 100 up it, its front his; rising (his speed against its gravity, 0 -1 0: Creeper never
+ * calcGravity) HangStart (GrowPlantCatch) at 5-15, else HangDown. HangStart / HangUp (GrowPlantHangUp): a swing +5,
+ * -0.4 a frame, at most 15, turning round it 15 / 1.5 x speed degrees; at 0 HangDown (GrowPlantHangDown: +0.4 a frame
+ * to 20 back down, a swing climbs again at 5); within 80 of the root he lets go (endBindAndPlayerJump). Ridden, the
+ * points up to him bend along the rail's summed direction (killed against gravity) x his coord x arg0 / 100 (arg3 as
+ * a bee; friction 0.7), the rest follow theirs; at the head it bends 5 more times and throws him back along it, arg1
+ * 25 out, arg2 40 up (GrowPlantJump, endBindAndPlayerForceWeakGravityJump, setPlayerSwingInhibitTimer 60). Then
+ * FreeInvalid: past 20 frames with Mario within 200. CreeperFlower at the head point, CreeperLeaf (Wait) at the root as
+ * placed; the 掴まり camera. ponytail: no rail clipping (12000 from the camera); the stalk through render_strips one
+ * segment a strip (Stalk.bti's V over each segment, not 1..0 along the vine; a face one colour, the mean of its two
+ * vertex colours); no RushCancel (nothing sends it in the port); rails past 4750 cut (CR_PTS) */
+#define MAX_CREEPERS 16
+#define CR_PTS 96
+enum { CR_FREE, CR_FREEINVALID, CR_HANGSTART, CR_HANGUP, CR_HANGDOWN };
+typedef struct { V3 pos, neutral, vel, side, up, front, proj; } CrPoint;
+static struct {
+    int row, nrv, step, n, rail_n, dir, rider;
+    const float *rail;
+    float len, coord, t, speed, bend, bend_bee, jf, ju;
+    V3 pos, up, front, bend_dir;
+    float leaf_m[16];
+    CrPoint p[CR_PTS];
+    u32 lvu, lvd, upse;
+} creepers[MAX_CREEPERS];
+static int ncreepers, creeper_ride = -1, creeper_test_sq;
+static Anim *cr_leaf_anim;
+#define CR_G v3(0, -1, 0)
+
+static void cr_axis(CrPoint *p) /* makeAxisUpFront / makeAxisUpSide on its up */
+{
+    V3 f = vcross(p->side, p->up);
+    if (vlen(f) < 1e-6f) { p->side = vnorm(vcross(p->up, p->front)); p->front = vcross(p->side, p->up); }
+    else { p->front = vnorm(f); p->side = vcross(p->up, p->front); }
+}
+static void cr_point(CrPoint *p, V3 pos, V3 up, const CrPoint *prev) /* CreeperPoint::CreeperPoint */
+{
+    memset(p, 0, sizeof *p);
+    p->pos = p->neutral = pos; p->side = v3(1, 0, 0); p->up = up; p->front = v3(0, 0, 1);
+    cr_axis(p);
+    if (!prev) return;
+    V3 d = vsub(pos, prev->pos);
+    p->proj = v3(vdot(prev->side, d), vdot(prev->up, d), vdot(prev->front, d));
+}
+static void cr_local(CrPoint *p, const CrPoint *prev) /* updateLocalAxis, then 50 along its up */
+{
+    p->up = vnorm(vsub(p->pos, prev->pos));
+    cr_axis(p);
+    p->pos = vadd(prev->pos, vmul(p->up, 50.0f));
+}
+static void cr_free(CrPoint *p, const CrPoint *prev) /* updateFree */
+{
+    p->vel = vadd(p->vel, vmul(vsub(p->neutral, p->pos), 0.05f));
+    p->pos = vadd(p->pos, p->vel);
+    p->vel = vmul(p->vel, 0.9f);
+    cr_local(p, prev);
+}
+static void cr_bend_point(CrPoint *p, const CrPoint *prev, int bend, V3 dir, float t, float rate) /* updateBend */
+{
+    p->vel = vmul(p->vel, 0.7f);
+    if (bend) p->vel = vadd(p->vel, vmul(dir, t * rate));
+    p->pos = vadd(vadd(vadd(vmul(prev->side, p->proj.x), vmul(prev->up, p->proj.y)), vmul(prev->front, p->proj.z)), prev->pos);
+    p->pos = vadd(p->pos, p->vel);
+    cr_local(p, prev);
+}
+
+static void creeper_init(void)
+{
+    ncreepers = 0; creeper_ride = -1; cr_leaf_anim = NULL;
+    int ty = scene_type(sc, "Creeper");
+    for (u32 i = 0; ty >= 0 && i < sc->nobjs && ncreepers < MAX_CREEPERS; i++) {
+        const Row *r = &sc->objs[i];
+        u32 np = 0;
+        int closed = 0;
+        const float *pts = r->type == ty && r->path >= 0 ? find_rail(scene_blob_g, r->zone, r->path, &np, &closed) : NULL;
+        if (!pts || np < 2) continue;
+        typeof(&creepers[0]) o = &creepers[ncreepers++];
+        memset(o, 0, sizeof *o);
+        o->row = (int)i; o->rail = pts; o->rail_n = (int)np; o->dir = 1;
+        for (u32 j = 0; j + 1 < np; j++) o->len += vlen(vsub(v3(pts[3 * j + 3], pts[3 * j + 4], pts[3 * j + 5]), v3(pts[3 * j], pts[3 * j + 1], pts[3 * j + 2])));
+        o->bend = (r->arg[0] != -1 ? (float)r->arg[0] : 100.0f) / 100.0f; /* sDefaultBendRate */
+        o->jf = r->arg[1] != -1 ? (float)r->arg[1] : 25.0f;
+        o->ju = r->arg[2] != -1 ? (float)r->arg[2] : 40.0f;
+        o->bend_bee = r->arg[3] > 0 ? r->arg[3] / 100.0f : o->bend;
+        o->pos = rail_at(pts, np, 0);
+        o->up = v3(0, 1, 0); o->front = v3(0, 0, 1);
+        float at[3] = {o->pos.x, o->pos.y, o->pos.z};
+        mat_translate_rot_scale(o->leaf_m, at, r->rot, r->scale); /* copyTransRotateScale */
+        o->n = (int)(o->len / 50.0f) + 1; /* initPoints */
+        if (o->n > CR_PTS) o->n = CR_PTS;
+        V3 sum = v3(0, 0, 0);
+        for (int k = 0; k < o->n; k++) {
+            float d = k < o->n - 1 ? 50.0f * k : o->len;
+            V3 dir = rail_tan(pts, (int)np, d);
+            cr_point(&o->p[k], rail_at(pts, np, d), dir, k ? &o->p[k - 1] : NULL);
+            sum = vadd(sum, dir);
+        }
+        o->bend_dir = vnorm(vtangent(sum, CR_G));
+        printf("creeper %d: %d points, %d long\n", o->row, o->n, (int)o->len);
+    }
+}
+
+static void cr_set(int k, int n) { creepers[k].nrv = n; creepers[k].step = -1; }
+static void cr_anim(const char *c) { if (mario_anim) anim_play(mario_anim, c, 1.0f, 0, 15); } /* sAnimInterpoleFrame */
+static void cr_move(int k, float v) /* moveCoord */
+{
+    typeof(&creepers[0]) o = &creepers[k];
+    o->coord += o->dir * v;
+    o->coord = o->coord < 0 ? 0 : o->coord > o->len ? o->len : o->coord;
+}
+static void cr_info(int k) /* calcAndGetCurrentInfo: mPosition, mUp */
+{
+    typeof(&creepers[0]) o = &creepers[k];
+    float t0 = o->coord / 50.0f;
+    int i = (int)t0;
+    float t = t0 - i;
+    if (i > o->n - 1) i = o->n - 1;
+    if (i < o->n - 1) {
+        o->pos = vadd(vmul(o->p[i].pos, 1.0f - t), vmul(o->p[i + 1].pos, t));
+        o->up = vsub(o->p[i + 1].pos, o->p[i].pos);
+    } else {
+        o->pos = o->p[i].pos;
+        o->up = vsub(o->p[i].pos, o->p[i - 1].pos);
+    }
+    o->up = vnorm(o->up);
+}
+static void cr_bend(int k) /* bendPoints */
+{
+    typeof(&creepers[0]) o = &creepers[k];
+    int nb = (int)(o->coord / 50.0f) + 1;
+    if (nb > o->n) nb = o->n;
+    float rate = player_mode == PM_BEE ? o->bend_bee : o->bend; /* isPlayerElementModeBee */
+    for (int i = 1; i < o->n; i++) cr_bend_point(&o->p[i], &o->p[i - 1], i < nb, o->bend_dir, o->t, rate);
+}
+static void cr_let_go(int k)
+{
+    creepers[k].rider = 0; creeper_ride = -1;
+    camera_event_end(); /* endMultiActorCamera 掴まり */
+    cr_set(k, CR_FREEINVALID);
+}
+static int cr_try_jump(int k) /* tryJump */
+{
+    typeof(&creepers[0]) o = &creepers[k];
+    if (o->dir > 0 ? o->coord < o->len : o->coord > 0) return 0; /* isRailReachedGoal */
+    o->coord = o->len; o->t = 1.0f; /* moveCoordToEndPos */
+    for (int i = 0; i < 5; i++) cr_bend(k);
+    cr_info(k);
+    V3 lf = vtangent(vmul(o->bend_dir, -1.0f), CR_G);
+    lf = vlen(lf) > 1e-6f ? vnorm(lf) : v3(0, 0, 0);
+    if (vlen(lf) > 0) mario->face = lf; /* setPlayerFrontTargetVec */
+    cr_anim("growplantjump");
+    mario->pos = o->pos;
+    cr_let_go(k);
+    m_power_jump(mario, vsub(vmul(lf, o->jf), vmul(CR_G, o->ju))); /* endBindAndPlayerForceWeakGravityJump */
+    swing_inhibit = 60; /* sStepInvalidSpin */
+    if (o->upse) se_stop(o->upse);
+    se_start(SE_PV_JUMP_JOY, &mario->pos.x); se_start(SE_PM_JUMP_L, &mario->pos.x); se_start(SE_OJ_CREEPER_FLIP, &o->pos.x);
+    printf("creeper %d: jump off its head\n", o->row);
+    return 1;
+}
+static int cr_hang_up(int k, float rot, int swing) /* updateHangUp */
+{
+    typeof(&creepers[0]) o = &creepers[k];
+    if (swing) { o->speed += 5.0f; pad_rumble(RUMBLE_MIDDLE); } /* sHangUpAccel */
+    if (!o->step && o->speed >= 5.0f) o->upse = se_start(SE_OJ_CREEPER_UP_START, &mario->pos.x);
+    o->speed -= 0.4f;
+    if (o->speed > 15.0f) o->speed = 15.0f; /* sHangUpSpeedMax */
+    if (o->speed < 0) { o->speed = 0; o->dir = -o->dir; cr_set(k, CR_HANGDOWN); return 1; }
+    cr_move(k, o->speed);
+    o->lvu = se_level(SE_OJ_LV_CREEPER_UP, &mario->pos.x, o->lvu);
+    if (cr_try_jump(k)) return 1;
+    cr_info(k);
+    o->front = rot_axis(o->front, o->up, rot * 0.0174533f);
+    return 0;
+}
+
+/* AutoRushBegin: Mario's touch on its binder */
+static int creeper_try(Player *m)
+{
+    if (m->launch >= 0) return 0;
+    V3 c = vadd(m->pos, vmul(m->up, HIT_BODY_H));
+    for (int k = 0; k < ncreepers; k++) {
+        typeof(&creepers[0]) o = &creepers[k];
+        if (o->nrv == CR_FREEINVALID || (m->spin_timer <= 0 && m->grounded)) continue; /* isPlayerSwingAction, isOnGroundPlayer */
+        if (vlen(vsub(o->pos, c)) > 100.0f + HIT_BODY_R) continue;
+        o->rider = 1; creeper_ride = k;
+        se_start(SE_PV_CATCH, &m->pos.x); se_start(SE_PM_GRAB_OBJ, &m->pos.x);
+        o->coord = rail_nearest(o->rail, o->rail_n, m->pos); o->pos = rail_at(o->rail, (u32)o->rail_n, o->coord);
+        if (o->coord < 100.0f) o->coord = 100.0f; /* sHangStartCoordMin */
+        o->front = m->face;
+        o->speed = vdot(m_jv(m), vmul(CR_G, -1.0f));
+        o->dir = 1; /* setRailDirectionToEnd */
+        if (o->speed > 0) {
+            o->speed = o->speed < 5.0f ? 5.0f : o->speed > 15.0f ? 15.0f : o->speed;
+            cr_set(k, CR_HANGSTART);
+        } else { o->speed = 0; o->dir = -1; cr_set(k, CR_HANGDOWN); }
+        pad_rumble(RUMBLE_MIDDLE);
+        if (row_camset[o->row] != -1) /* startMultiActorCameraNoTarget 掴まり */
+            camera_actor_start("Creeper", "掴まり", (unsigned short)row_camset[o->row], m->up, m->face, m->pos);
+        m->hip = 0; m->spin_timer = 0; m->hvel = v3(0, 0, 0); m->vup = 0;
+        printf("creeper %d: taken at %d of %d (%s)\n", o->row, (int)o->coord, (int)o->len, o->nrv == CR_HANGSTART ? "up" : "down");
+        return 1;
+    }
+    return 0;
+}
+
+/* while Mario hangs: its base matrix (isMsgUpdateBaseMtx: makeMtxUpFrontPos mUp, mFront, mPosition) */
+static int creeper_hold(Player *m)
+{
+    if (creeper_ride < 0) return 0;
+    typeof(&creepers[0]) o = &creepers[creeper_ride];
+    V3 f = vtangent(o->front, o->up);
+    camera_event_target(o->up, o->pos);
+    m->pos = o->pos; m->up = o->up; m->hvel = v3(0, 0, 0); m->vup = 0; m->grounded = 0;
+    if (vlen(f) > 1e-3f) m->face = vnorm(f);
+    return 1;
+}
+
+static void update_creepers(void)
+{
+    int swing = pad_pressed(PAD_SQUARE) || creeper_test_sq; /* isPadSwing */
+    creeper_test_sq = 0;
+    if (!cr_leaf_anim && ncreepers && m_crleaf && m_crleaf->skin) { /* startBck(mLeafModel, "Wait") */
+        cr_leaf_anim = mem_alloc(MEM_SCENE, sizeof(Anim));
+        anim_bind(cr_leaf_anim, m_crleaf->skin);
+        anim_start(cr_leaf_anim, "creeperleaf/wait", 0);
+    }
+    if (cr_leaf_anim) anim_update(cr_leaf_anim);
+    for (int k = 0; k < ncreepers; k++) {
+        typeof(&creepers[0]) o = &creepers[k];
+        int st = ++o->step;
+        switch (o->nrv) {
+        case CR_FREE:
+            break;
+        case CR_FREEINVALID:
+            if (vlen(vsub(o->pos, mario->pos)) < 200.0f && st > 20) cr_set(k, CR_FREE); /* sDistanceNear, sStepInvalid */
+            break;
+        case CR_HANGSTART:
+            if (!st) cr_anim("growplantcatch");
+            if (!cr_hang_up(k, 15.0f, swing) && swing) cr_set(k, CR_HANGUP); /* sHangStartRotateSpeed */
+            break;
+        case CR_HANGUP:
+            if (!st) cr_anim("growplanthangup");
+            if (!cr_hang_up(k, o->speed * 1.5f, swing) && swing) { o->speed += 5.0f; pad_rumble(RUMBLE_MIDDLE); }
+            break;
+        case CR_HANGDOWN:
+            if (!st) cr_anim("growplanthangdown");
+            if (swing) { /* tryHangUp (sHangUpAccel: its 2P branch never taken) */
+                o->speed = 5.0f; o->dir = -o->dir; pad_rumble(RUMBLE_MIDDLE);
+                cr_set(k, CR_HANGUP);
+                break;
+            }
+            o->speed += 0.4f; /* sHangDownGravity, sHangDownSpeedMax */
+            o->speed = o->speed < 0 ? 0 : o->speed > 20.0f ? 20.0f : o->speed;
+            if (o->dir > 0 ? o->coord >= o->len - 80.0f : o->coord <= 80.0f) { /* isRailReachedNearGoal(sHangEndCoord) */
+                cr_let_go(k);
+                mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0; mario->jump_kind = 0; mario->air_timer = 0; /* endBindAndPlayerJump(0) */
+                se_start(SE_PV_JUMP_S, &mario->pos.x); se_start(SE_OJ_CREEPER_SWING, &o->pos.x);
+                printf("creeper %d: let go at its root\n", o->row);
+            } else {
+                cr_move(k, o->speed);
+                o->lvd = se_level(SE_OJ_LV_CREEPER_DOWN, &mario->pos.x, o->lvd);
+                cr_info(k);
+                o->front = rot_axis(o->front, o->up, o->speed * 1.5f * 0.0174533f);
+            }
+            break;
+        }
+        if (!o->rider) { /* control */
+            for (int i = 1; i < o->n; i++) cr_free(&o->p[i], &o->p[i - 1]);
+            o->coord = rail_nearest(o->rail, o->rail_n, mario->pos); o->pos = rail_at(o->rail, (u32)o->rail_n, o->coord);
+        } else {
+            cr_bend(k);
+            o->t = o->coord / o->len;
+        }
+    }
+}
+
+static void draw_creepers(void)
+{
+    static Strip st[48];
+    int tex = fx_creeper_tex(), ns = 0;
+    /* sColorPlusZ ff, sColorPlusX 96, sColorMinusX c8: each face's two, averaged (GS 0x80 = 1) */
+    static const u32 face_rgba[3] = {0x80656565u, 0x80727272u, 0x80585858u};
+    for (int k = 0; k < ncreepers; k++) {
+        typeof(&creepers[0]) o = &creepers[k];
+        if (vlen(vsub(o->p[0].pos, cam_pos)) > 12000.0f) continue;
+        for (int i = 0; tex >= 0 && i + 1 < o->n; i++) { /* draw: three faces, one segment a strip */
+            V3 e[2][3];
+            for (int j = 0; j < 2; j++) {
+                const CrPoint *p = &o->p[i + j];
+                V3 sd = vmul(p->side, 10.0f), fr = vmul(p->front, 10.0f); /* sDrawWidthX, sDrawWidthZ */
+                e[j][0] = vsub(vadd(p->pos, sd), fr); /* +X */
+                e[j][1] = vadd(p->pos, fr);           /* +Z */
+                e[j][2] = vsub(vsub(p->pos, sd), fr); /* -X */
+            }
+            static const int fa[3][2] = {{0, 1}, {1, 2}, {2, 0}};
+            for (int f = 0; f < 3; f++) {
+                Strip *s = &st[ns++];
+                for (int l = 0; l < 4; l++) { /* level 0 (v 1) at point i (to the root), level 3 (v 0) at i + 1 */
+                    float t = l / 3.0f;
+                    for (int side = 0; side < 2; side++) {
+                        V3 q = vadd(vmul(e[0][fa[f][side]], 1.0f - t), vmul(e[1][fa[f][side]], t));
+                        s->p[l][side][0] = q.x; s->p[l][side][1] = q.y; s->p[l][side][2] = q.z;
+                    }
+                }
+                s->rgba = face_rgba[f];
+                s->tex = (u16)tex;
+                if (ns == 48) { render_strips(st, ns); ns = 0; }
+            }
+        }
+        if (m_crflower) { /* mTopMtx: the head point's axes and place */
+            const CrPoint *p = &o->p[o->n - 1];
+            float m[16];
+            vleaf_mtx(m, p->side, p->up, p->front, 1.0f, p->pos);
+            render_model(m_crflower, m, 0x80, 0x80, 0x80);
+        }
+        if (m_crleaf) {
+            if (cr_leaf_anim) draw_skin(m_crleaf, o->leaf_m, cr_leaf_anim);
+            else render_model(m_crleaf, o->leaf_m, 0x80, 0x80, 0x80);
+        }
+    }
+    if (ns) render_strips(st, ns);
+}
+
+int game_test_creeper(void) /* creeper 0: Mario rising into it a third of the way up, spinning (Square) every 8 frames
+                             * up to its head and off it; then creeper 1: Mario falling onto it, down to its root */
+{
+    test_nolost = 1;
+    static int k, done, wait;
+    if (k >= ncreepers || k > 1) return -1;
+    typeof(&creepers[0]) o = &creepers[k];
+    if (creeper_ride == k) {
+        if (k == 0 && game_frame % 8 == 0) creeper_test_sq = 1;
+        wait = 0;
+    } else if (o->nrv == CR_FREE && !done) { /* in the air beside it */
+        const CrPoint *q = &o->p[o->n / 3];
+        mario->up = v3(0, 1, 0);
+        mario->pos = vadd(vsub(q->pos, vmul(mario->up, HIT_BODY_H)), vmul(q->side, 60.0f));
+        mario->hvel = v3(0, 0, 0); mario->vup = k == 0 ? 5.0f : -5.0f; mario->grounded = 0;
+    } else if (o->nrv == CR_FREEINVALID) done = 1;
+    if (done && ++wait == 90) {
+        printf("creeper test: Mario %d %d %d after creeper %d\n", (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z, o->row);
+        k++; done = 0; wait = 0;
+    }
+    return k * 100000 + o->nrv * 10000 + (int)o->coord;
 }
 
 /* HammerHeadPackun.cpp after Petari (PackunFlower, its leaf PackunLeaf a PartsModel at Spin1 turned (0, -90, -90),
@@ -42735,7 +43098,7 @@ void game_update(void)
     LQ(34, update_kgunners());
     LQ(35, update_orocks());
     LQ(36, update_hhps());
-    LQ(37, update_vines());
+    LQ(37, update_vines(); update_creepers());
     LQ(38, update_ibubbles());
     LQ(39, update_meteor());
     LQ(40, update_killers());
@@ -44043,6 +44406,7 @@ void game_draw(void)
     draw_eballs();
     RESTQ(0);
     draw_vines();
+    draw_creepers();
     RESTQ(1);
     for (int k = 0; k < norocks; k++) { /* OtaRocks' coconuts and fire balls */
         for (int b = 0; m_coco && b < 4; b++) {

@@ -603,3 +603,4 @@ int fx_whirl_tex(void) { return fx_waterplant_tex(8); }
 int fx_rope_tex(void) { return fx_waterplant_tex(9); }
 int fx_fooline_tex(int k) { return fx_waterplant_tex(10 + k); }
 int fx_marinesnow_tex(void) { return fx_waterplant_tex(12); }
+int fx_creeper_tex(void) { return fx_waterplant_tex(13); }

@@ -355,6 +355,9 @@ def pack(fs):
         # A0 x TEXA (A0 in the sprites' colour)
         img = decode_bti({k.rsplit("/", 1)[-1].lower(): v for k, v in B.rarc_files((wp / "ObjectData" / "MarineSnow.arc").read_bytes())}["marinesnow.bti"])
         out_tex.append(tex.to_ps2(np.ascontiguousarray(img), 0, 0))
+        # Creeper::init's Stalk.bti (Creeper.arc) after it (fx_creeper_tex): its TEV colour TEXC x RASC, alpha TEXA
+        img = decode_bti({k.rsplit("/", 1)[-1].lower(): v for k, v in B.rarc_files((wp / "ObjectData" / "Creeper.arc").read_bytes())}["stalk.bti"])
+        out_tex.append(tex.to_ps2(np.ascontiguousarray(img), 0, 0))
     flr = flare(wp, out_tex)
     head = struct.pack("<IIiI", len(used), len(defs), first, len(autos))
     return head + b"".join(defs) + b"".join(recs) + b"".join(autos) + flr, out_tex

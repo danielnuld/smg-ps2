@@ -40,6 +40,7 @@ int fx_ocean_tex(int k); /* OceanSphere's face (0) and back (1) textures (tools/
 int fx_whirl_tex(void); /* WhirlPoolAccelerator's texture (Whirlpool.bti, its TEV baked), -1 none */
 int fx_rope_tex(void);  /* Trapeze's rope (TrapezeRope.bti), -1 none */
 int fx_marinesnow_tex(void); /* MarineSnow.bti (tools/jpa.py), -1 none */
+int fx_creeper_tex(void);    /* Creeper.arc's Stalk.bti (tools/jpa.py), -1 none */
 int fx_fooline_tex(int k); /* MarioFoo's FooLine.bti baked: 0 its trail, 1 its braking beam (tools/jpa.py), -1 none */
 
 #endif
