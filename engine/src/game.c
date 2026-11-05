@@ -333,6 +333,7 @@ typedef struct {
     int dswitch, dsinit; /* DesertLandDownSwitch (update_dswitches) */
     int tbox;        /* TreasureBox* (update_tboxes, tbox_hit) */
     int kstair;      /* KoopaBattleMapStair(Big / Turn): breaks and falls after its switch (update_stairs) */
+    int gap;         /* #143's placed classes (update_gaps): GAP_* */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_INVINCIBLE };
 static V3 firebar_ball(const Inst *in, int j, int k);
@@ -666,6 +667,7 @@ static unsigned char *row_mp_a;  /* per OBJS row: its SW_A came on once (MapObjA
 static unsigned short *row_rhold; /* frames it still waits at a rail point */
 static const unsigned char *scene_blob_g; /* the scene blob (PATH) for rebinds */
 static int hip_hit, hip_inst;   /* Mario landed a hip drop this frame, on instance hip_inst (-1 none) */
+static int ngst; /* update_gaps: the GapSt rows */
 static int mario_ground = -1;   /* instance Mario stands on this frame, -1 in the air */
 static float cur_x = 320, cur_y = 224; /* the star pointer's stand-in, moved by the right stick (HUD units) */
 static float cur_vx, cur_vy;            /* its screen velocity (getStarPointerScreenVelocity) */
@@ -2359,6 +2361,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     ncoins = ic; /* box coins and star pieces are appended as boxes break */
     npieces = is; pieces_base = 0;
     nwrecks = 0;
+    ngst = 0;
     int t_super[3] = {scene_type(s, "SuperSpinDriver"), scene_type(s, "SuperSpinDriverPink"),
                       scene_type(s, "SuperSpinDriverGreen")}, t_spin = scene_type(s, "SpinDriver");
     launches = mem_alloc(MEM_OBJECTS, (count_type("SuperSpinDriver", 0) + count_type("SuperSpinDriverPink", 0) +
@@ -4230,12 +4233,18 @@ typedef struct {
     __typeof__(((Inst *)0)->talkcls) talkcls;
     __typeof__(((Inst *)0)->clipcls) clipcls;
     __typeof__(((Inst *)0)->halo) halo;
+    __typeof__(((Inst *)0)->gap) gap;
 } ClassInfo;
 
+/* #143's placed classes ported since the audit (update_gaps) */
+enum { GAP_NONE, GAP_SHOCKWAVE, GAP_CAPSULE };
+static int gap_class(const char *name)
+{
+    return !strcmp(name, "ShockWaveGenerator") ? GAP_SHOCKWAVE : !strcmp(name, "CapsuleCage") ? GAP_CAPSULE : GAP_NONE;
+}
 /* ponytail (unmarked until the 2026-11-02 audit): placed classes of the early galaxies with no behaviour here
  * (drawn static, or not at all), each a whole Petari class: HeavensDoor KuriboChief / ChildKuribo /
- * ExterminationKuriboKeySwitch (Enemy/KuriboChief.cpp), ShockWaveGenerator (its spin shock wave to enemies within
- * 1000, 衝撃波カメラ), CapsuleCage (SW_B open, 注目カメラ); Honeyhive HoneyQueen, Creeper, BossStinkBug, StinkBugParent, GhostPlayer (Cosmic Mario);
+ * ExterminationKuriboKeySwitch (Enemy/KuriboChief.cpp); Honeyhive HoneyQueen, Creeper, BossStinkBug, StinkBugParent, GhostPlayer (Cosmic Mario);
  * Space Junk TombSpider, BossKameck, ChildKameck, SpiderAttachPoint (SlingShooter), UFOKinoko, CoinBox,
  * PlanetRocket, NokonokoLand; Battlerock BegomanBaby, BossBegoman, BreakableTrash, UFOStrongA, TicoShop,
  * BattleShipElevator; Beach Bowl ShellfishCoin / ShellfishYellowChip (Shellfish.cpp), DriftWood, PenguinStudent;
@@ -4323,6 +4332,7 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 || strcmp(name, "KinopioAstro") == 0 ? 3 :
                   strcmp(name, "ButlerMap") == 0 ? 4 : strcmp(name, "Butler") == 0 ? 5 : lg_cls(name) ? 6 : strcmp(name, "TicoStarRing") == 0 ? 7 : strcmp(name, "TicoComet") == 0 ? 8 : 0;
     ci->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 : 0;
+    ci->gap = gap_class(name);
     ci->clipcls = strcmp(name, "Tico") == 0 || strcmp(name, "TicoBaby") == 0 || lg_cls(name) ? 1 : /* NameObjFactory: Tico, LuigiNPC */
                   strcmp(name, "SuperSpinDriver") == 0 || strcmp(name, "SuperSpinDriverPink") == 0 || strcmp(name, "SuperSpinDriverGreen") == 0 ? 2 : 0;
 }
@@ -4407,6 +4417,7 @@ static void class_apply(Inst *in, const ClassInfo *ci)
     in->talkcls = ci->talkcls;
     in->clipcls = ci->clipcls;
     in->halo = ci->halo;
+    in->gap = ci->gap;
 }
 static void game_rebind_(void)
 {
@@ -27000,6 +27011,200 @@ unsigned game_test_moves(unsigned frame)
     return pad;
 }
 
+/* ---- #143's placed classes (gap_class): row_turn their nerve (0 not set up), row_step its step (0 its first) ---- */
+static void gap_nrv(const Inst *in, int n) { row_turn[in->row] = (signed char)n; row_step[in->row] = 0; }
+/* their own state by row (kept across rebinds: game_rebind_ calls gap_place) */
+typedef struct { int row, i; float f; V3 v; } GapSt;
+static GapSt gst[64];
+static int ngst;
+static GapSt *gap_st(int row)
+{
+    for (int k = 0; k < ngst; k++) if (gst[k].row == row) return &gst[k];
+    if (ngst == 64) return &gst[63]; /* ponytail: 64 rows of these classes a scene at most */
+    memset(&gst[ngst], 0, sizeof gst[0]); gst[ngst].row = row;
+    return &gst[ngst++];
+}
+static int gap_cam_start(const Inst *in) /* startActorCameraTargetSelf: its CameraSetId's event camera, its base matrix */
+{
+    if (row_camset[in->row] == -1) return 0;
+    V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), front = vnorm(v3(in->m[8], in->m[9], in->m[10]));
+    return camera_actor_start(sc->types + 32 * sc->objs[in->row].type, "", (unsigned short)row_camset[in->row], up, front,
+                              v3(in->m[12], in->m[13], in->m[14]));
+}
+/* a walker's isMsgToEnemyAttackShockWave from `from`: Kuribo / KuriboMini requestStagger (isEnablePanch / !isDown) */
+static int walker_shock(Kuribo *e, V3 from)
+{
+    if (e->kind != WALK_KURIBO && e->kind != WALK_KMINI) return 0;
+    if (kn_in(e, KNB(KN_FLATDOWN) | KNB(KN_HIPDROPDOWN) | KNB(KN_PRESSDOWN) | KNB(KN_BLOWDOWN) | KNB(KN_BLOW))) return 0;
+    ws_stagger_punch(e, from); w_nrv(e, KN_STAGGER); ap_stagger(e);
+    return 1;
+}
+/* ShockWaveGenerator.cpp after Petari: Wait; a star piece on its collision (the body message sensor) or Mario's spin
+ * on its spin sensor (400 at 200 up) within its cylinder (isHitCylinder: across its up within the spin sensor's
+ * radius + 140), not while generating nor in a demo: startShockWave (SHOCK_WAVE_GENERATE): with a camera and Mario
+ * within sEnableCameraStartDistance 2000 the 衝撃波カメラ demo (requestStartDemoWithoutCinemaFrame) -> DemoEcho (its
+ * actor camera, a very weak rumble, endDemo at step 1), else Generate (without a camera stopSceneForDefaultHit(1)
+ * first). Generate: sendMsgShockWaveToNearEnemy (the enemies its shock sensor, 1000, reaches), the ShockWave effect,
+ * shakeCameraWeak, a strong rumble; at sStepForGenerate 50 endActorCamera, Wait. gi: 1 the demo asked, 2 its camera on.
+ * ponytail: no SpinHit BRK / BTK (one BRKC a model, no BTK on placed models); the shock reaches the ported walkers
+ * that take it (Kuribo, KuriboMini: the only enemies placed with it, HeavensDoorGalaxy 1) */
+enum { SW_WAIT = 1, SW_DEMOECHO, SW_GENERATE };
+static void shock_start(Inst *in) /* startShockWave */
+{
+    se_start(SE_OJ_SHOCK_WAVE_GENERATE, &in->m[12]);
+    printf("shock wave generator %d: start%c", in->row, 10);
+    if (row_camset[in->row] != -1) {
+        if (vlen(vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14]))) < 2000.0f) gap_st(in->row)->i |= 1; /* isPlayerInCameraStartRange */
+        else gap_nrv(in, SW_GENERATE);
+        return;
+    }
+    scene_stop = 1; /* stopSceneForDefaultHit(1) */
+    gap_nrv(in, SW_GENERATE);
+}
+static int shock_busy(const Inst *in) { return row_turn[in->row] != SW_WAIT || (gap_st(in->row)->i & 1) || pd.name || dx_busy(); }
+static void update_shock(Inst *in, int st)
+{
+    V3 p = v3(in->m[12], in->m[13], in->m[14]), up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+    if (!row_turn[in->row]) { gap_nrv(in, SW_WAIT); gap_st(in->row)->i = 0; return; }
+    if ((gap_st(in->row)->i & 1) && pd_try_start("衝撃波カメラ", in->row)) { gap_st(in->row)->i &= ~1; gap_nrv(in, SW_DEMOECHO); return; }
+    switch (row_turn[in->row]) {
+    case SW_WAIT: {
+        if (shock_busy(in)) break;
+        V3 c = vadd(p, vmul(up, 200.0f)), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+        if (mario_offence(c, 400.0f, vmul(up, -1.0f)) == MSG_HITALL && vlen(vtangent(vsub(mc, c), up)) <= 120.0f + 140.0f)
+            shock_start(in); /* isMsgPlayerSpinAttack on "spin", isHitCylinder (Mario's attack sensor 120) */
+        break;
+    }
+    case SW_DEMOECHO:
+        if (st == 0 && gap_cam_start(in)) gap_st(in->row)->i |= 2;
+        pad_rumble(RUMBLE_VERY_WEAK);
+        if (st == 1) { pd_end("衝撃波カメラ"); gap_nrv(in, SW_GENERATE); }
+        break;
+    case SW_GENERATE:
+        if (st == 0) {
+            int n = 0;
+            for (int k = 0; k < nkuribo; k++) { /* sendMsgShockWaveToNearEnemy: the enemy sensors within its 1000 */
+                Kuribo *e = &kuribo[k];
+                float br = e->kind == WALK_KMINI ? 60.0f : 75.0f * w_scale(e);
+                if (e->state == KURIBO_DEAD || !row_shown(e->row) || vlen(vsub(vsub(e->pos, vmul(e->grav, br)), p)) >= 1000.0f + br) continue;
+                n += walker_shock(e, p);
+            }
+            fx_named("ShockWaveGenerator", "ShockWave", in->m, NULL, NULL);
+            camera_shake(SHAKE_WEAK); pad_rumble(RUMBLE_STRONG);
+            printf("shock wave generator %d: generate, %d enemies staggered%c", in->row, n, 10);
+        }
+        if (st == 50) { /* sStepForGenerate */
+            if (gap_st(in->row)->i & 2) camera_event_end(); /* endActorCamera */
+            gap_st(in->row)->i &= ~2;
+            gap_nrv(in, SW_WAIT);
+        }
+        break;
+    }
+}
+/* CapsuleCage.cpp after Petari (a MapObjActor: its own-name clip at init): Wait; its SW_B on (listenStageSwitchOnB:
+ * startOpen): with a camera the 注目カメラ demo (requestStartDemoWithoutCinemaFrame) -> StartCamera (its actor camera,
+ * Open at sStepForStartCamera 50), else Open: Move clip, CAPSULE_CAGE_BREAK, a weak rumble and shake; at the clip's end
+ * again, then EndCamera (kill at sStepForEndCamera 60) or kill. kill: endActorCamera, endDemo, the row gone (its
+ * collision with it). gi: 1 the demo asked, 2 its camera on, 4 SW_B seen on */
+enum { CC_WAIT = 1, CC_STARTCAMERA, CC_OPEN, CC_ENDCAMERA };
+static void capsule_kill(Inst *in)
+{
+    if (row_camset[in->row] != -1) {
+        if (gap_st(in->row)->i & 2) camera_event_end();
+        pd_end("注目カメラ");
+    }
+    printf("capsule cage %d: gone%c", in->row, 10);
+    row_kill(in->row);
+    game_rebind();
+}
+static int update_capsule(Inst *in, int st) /* 1: killed (rebound) */
+{
+    const Row *r = &sc->objs[in->row];
+    if (!row_turn[in->row]) { gap_nrv(in, CC_WAIT); gap_st(in->row)->i = 0; obj_play(in, "CapsuleCage", 1, 0); return 0; } /* tryStartAllAnim(mObjectName) */
+    if (r->sw[SW_B] >= 0 && sw_on(r, SW_B) && !(gap_st(in->row)->i & 4)) { /* startOpen */
+        gap_st(in->row)->i |= 4;
+        if (row_camset[in->row] != -1) gap_st(in->row)->i |= 1;
+        else gap_nrv(in, CC_OPEN);
+        printf("capsule cage %d: open%c", in->row, 10);
+    }
+    if ((gap_st(in->row)->i & 1) && pd_try_start("注目カメラ", in->row)) { gap_st(in->row)->i &= ~1; gap_nrv(in, CC_STARTCAMERA); return 0; }
+    switch (row_turn[in->row]) {
+    case CC_STARTCAMERA:
+        if (st == 0 && gap_cam_start(in)) gap_st(in->row)->i |= 2;
+        if (st == 50) gap_nrv(in, CC_OPEN);
+        break;
+    case CC_OPEN:
+        if (st == 0) {
+            obj_play(in, "Move", 0, 0);
+            se_start(SE_OJ_CAPSULE_CAGE_BREAK, &in->m[12]);
+            pad_rumble(RUMBLE_WEAK); camera_shake(SHAKE_WEAK);
+        } else if (!in->anim || in->anim->done) { /* isBckStopped */
+            pad_rumble(RUMBLE_WEAK); camera_shake(SHAKE_WEAK);
+            if (row_camset[in->row] != -1) gap_nrv(in, CC_ENDCAMERA);
+            else { capsule_kill(in); return 1; }
+        }
+        break;
+    case CC_ENDCAMERA:
+        if (st == 60) { capsule_kill(in); return 1; }
+        break;
+    }
+    return 0;
+}
+static int gap_shot(V3 p) /* a star piece's isMsgStarPieceAttack on their collisions: ShockWaveGenerator's body */
+{
+    Hit h[4];
+    int n = kcl_query(p, 30.0f, h, 4);
+    for (int k = 0; k < n; k++) {
+        Inst *in = &insts[h[k].inst];
+        if (in->gap != GAP_SHOCKWAVE || !row_shown(in->row) || shock_busy(in)) continue;
+        shock_start(in);
+        return 1;
+    }
+    return 0;
+}
+#ifdef GAP_TEST
+int game_test_busy(void);
+/* XF=-DGAP_TEST=<GAP_ kind> (frames counted from Mario free): Mario 250 beside each placement of that class in turn
+ * (every 300 frames from 120; its zone streams in), then at +30 GAP_SHOCKWAVE spins, GAP_CAPSULE turns its SW_B on */
+static const char *const gap_names[] = {"", "ShockWaveGenerator", "CapsuleCage"};
+static void gap_test(void)
+{
+    static int t;
+    if (!game_test_free() || game_test_busy()) return;
+    t++;
+    int want = t >= 120 ? (t - 120) / 300 : -1, at = t >= 120 ? (t - 120) % 300 : -1, ty = scene_type(sc, gap_names[GAP_TEST]), seen = 0;
+    if (want < 0 || (at != 0 && at != 30)) return;
+    for (u32 i = 0; ty >= 0 && i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if ((int)r->type != ty || seen++ != want % 16) continue;
+        V3 x, z, p = row_pos(r);
+        row_axes(r, &x, &z);
+        V3 up = vnorm(vcross(z, x));
+        if (at == 0) {
+            mario->up = up; mario->pos = vadd(p, vadd(vmul(vnorm(x), 250.0f), vmul(up, 30.0f)));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            printf("gap test: Mario by %s %u%c", gap_names[GAP_TEST], i, 10);
+        } else if (GAP_TEST == GAP_CAPSULE) { if (r->sw[SW_B] >= 0) sw_set(r, SW_B, 1); }
+        else mario->spin_timer = SPIN_TIME;
+        return;
+    }
+}
+#endif
+static void update_gaps(void)
+{
+#ifdef GAP_TEST
+    gap_test();
+#endif
+    FOR_KIND(i, gap) {
+        Inst *in = &insts[i];
+        if (!in->gap || !row_shown(in->row) || !dx_row_moves(in->row)) continue;
+        int st = row_step[in->row];
+        if (row_step[in->row] < 0xFFFF) row_step[in->row]++;
+        if (in->gap == GAP_SHOCKWAVE) update_shock(in, st);
+        else if (in->gap == GAP_CAPSULE && update_capsule(in, st)) return;
+    }
+}
+
 /* HipDropSwitch.cpp / HipDropTimerSwitch.cpp after Petari: Off (Wait clip, SW_A off; Mario landing on it:
  * SE_OJ_PNC_KINOKO_BOUND) -> a hip drop: SwitchDown (On clip) -> at its end On (SW_A on, HIPDROP_SWITCH_ON, a shake);
  * the timer one after arg0 frames (mTimerMax 300) with its timer SEs (arg1 picks set A / B) SwitchUp (Off clip) -> Off.
@@ -32889,7 +33094,8 @@ static void update_shots(void)
         }
         if (!hit && hhp_reflects(s->pos, 30.0f)) hit = 2; /* HammerHeadPackun: isMsgStarPieceReflect */
         if (!hit && butler_shot(s->pos)) hit = 1;
-        if (!hit && hana_shot(s->pos)) hit = 1;          /* Hanachan's parts */         /* Butler: isMsgStarPieceAttack */
+        if (!hit && hana_shot(s->pos)) hit = 1;
+        if (!hit && gap_shot(s->pos)) hit = 1;          /* #143's classes (update_gaps) */          /* Hanachan's parts */         /* Butler: isMsgStarPieceAttack */
         for (int k = 0; k < ninsts && !hit; k++) { /* ItemBubble: isMsgStarPieceAttack bursts it */
             Inst *in = &insts[k];
             if (!in->ibubble || !row_shown(in->row) || vlen(vsub(s->pos, bubble_pos(in))) > 120.0f * 1.2f * sc->objs[in->row].scale[0]) continue;
@@ -38656,6 +38862,7 @@ void game_update(void)
     update_levers();
     update_dswitches();
     update_tboxes();
+    update_gaps();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
@@ -40509,7 +40716,7 @@ void game_test_hang(unsigned frame)
 }
 #endif
 
-#if defined(PULLBACK_TEST) || defined(CRATER_TEST)
+#if defined(PULLBACK_TEST) || defined(CRATER_TEST) || defined(GAP_TEST)
 /* the Gateway's pit (HeavensDoorGalaxy/1, HeavensDoorMysteriousPlanet): Mario dropped 700 up the first
  * PullBackCylinder's axis from its base (frame 300 from free): MarioRecovery takes him back to his last safe place */
 int game_test_busy(void) { return dx_busy() || talk_active(); } /* tests: a demo or a talk holds Mario */

@@ -153,6 +153,12 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
     default layout. Repack: resident.bin (layout.py LAYOUTS + PurpleCoinCounter, in the FONT chunk's LAYO) and
     HeavensDoorGalaxy (slice.py LOGIC + PurpleCoinStarter). Seen: `purple` (EggStar 5, "x093 /100"), `talk`
     HeavensDoorGalaxy/2 with XF=-DPC_TEST (the starter's switch forced at frame 300: valid, Appear, Wait).
+  - #170 ShockWaveGenerator / CapsuleCage (game.c update_gaps: Inst.gap = GAP_*, nerves in row_turn / row_step, the
+    rest in GapSt by row, kept across rebinds). Test: plain build with XF="-DGAP_TEST=<GAP_ kind> -DDEBUG_HUD
+    -UCATCHUP" (A tapped through the opening; Mario put by each placement in turn: 1 spins at the generators, 2 turns
+    the cages' SW_B on). Seen in HeavensDoorGalaxy/1: the shock wave demo and its camera, a Kuribo staggered; both
+    cages open with their camera and go. Repack HeavensDoorGalaxy (jpa.py NAMED ShockWaveGenerator: its ShockWave
+    effect; slice.py SKINNED_OBJ CapsuleCage: its Move clip).
 - mario2 (2026-11-04), #168 PlayerKick: mario_kick / mario_kicked (MarioActor::sendBodyAttack's ACTMES_KICK: his
   cylinder on the sensor, status none, not damaged, no hip drop, within 90 degrees of his front; ランニングキック, its
   voice, pad 2) taken by a staggering Kuribo (36 / 30, three star pieces) / KuriboMini (22 / 25, three), a swooning
