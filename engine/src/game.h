@@ -41,6 +41,7 @@ int game_test_vine(void);
 int game_test_creeper(void);
 int game_test_sbp(void);
 int game_test_petari(void);
+int game_test_sambo(void);
 int game_test_seesaw(int phase);
 int game_test_follow(int phase);
 int game_test_replica(int phase);

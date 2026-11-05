@@ -383,6 +383,12 @@ Second console round (2026-10-24), from Daniel's report:
   arg0 coins at 15: a wreck of its own model), no hip drop break (_8C never set), no spin break while Mario stands on
   it, its SW_A kill one star piece with its burst. Test `box` (FlipPanelEx 1): the coin now pops 15 frames later
   (logged `wreck row ...`), Mario has moved on (the test no longer takes it). WoodBox / CrystalCageL still open.
+- SamboHead (feat/sambo-head, 2026-11-05): SamboHead.cpp as a walker (WALK_SAMBOHEAD, game.c sh_update): its 14 nerves
+  (WaitUnderGround / Hide / Appear(Immediately) / Wait / PrePursue / Pursue hops / PursueEnd / HitToPlayer /
+  StarPieceHit / StampFall / StampDeath / HitBlow / BuryDeath on SinkDeath floors), the default AnimScaleController's
+  hit reaction, SW_A / appear / dead switches, arg0 _B0. Test: `sambo` (SandClock 2: trample; XF=-DSAMBO_ACT=1 spin, 2
+  star piece then kick). Only row 179 is out at the start (the others wait on their appear switches). ponytail:
+  BindStarPointer (2P pointer only). Repack: sound.py --pack SandClockGalaxy, CosmosGardenGalaxy (SE_EM_SAMBOHEAD_*).
 ## Rules
 
 - Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -
