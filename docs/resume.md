@@ -167,6 +167,11 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   10 at 30 and up, Hit effect, reflection x 1.6 / x 0.3, walkers through walker_blow, CrushedEnd FlipWeakJump,
   stopScene 5). Test `kick` (EggStar 1: a Kuribo spun, Mario walks into it: kicked, 3 pieces); `punch` now waits for
   the mushroom to bind. No pack change.
+- mario2, #174 sudden gravity turn: m_gravity_turn (MarioActor::updateGravityVec(false): a turn of 0.4 pi or more
+  holds the gravity 15 frames (_334), drops a grounded Mario off (_10._1A: tryJump, ショートジャンプ, the carried move),
+  ショートジャンプ in the air, his jump halved / x 0.75, 2D stick cleared (_10.turning), the binder offset blended 15
+  frames (_3AA), the head push over 160). Not in a launch star (doRush). Logged "mario: gravity turned N degrees".
+  Route EggStar 1: star at f 4135 as main. ponytail: _F74, _2E0.
 
 ## Console release (2026-10-23 / 24)
 

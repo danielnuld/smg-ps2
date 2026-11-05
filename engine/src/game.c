@@ -2033,10 +2033,20 @@ static V3 m_bind(V3 center, V3 vel, float r) /* returns the center after the mov
  * -gravity x 70 off it. b_floor / b_wall: Binder::storeContactPlane's deepest floor (n . gravity under -0.342) and
  * wall (|n . gravity| under 0.342) of the last m_bind, -1 none */
 static V3 m_2C4;
+static int m_3AA; /* updateGravityVec's _3AA: frames left of the binder offset's blend after a sudden gravity turn */
+static int m_334, m_flip1A; /* its _334 (frames the gravity is held), Mario _10._1A (drop off at the next move) */
+static V3 m_30C;           /* its _30C: the head at the turn */
+static V3 carry_d;         /* (below: the carried move, _184) */
 static void m_upd_2C4(const Player *m)
 {
+    V3 old = m_2C4;
     if (m->grounded) m_2C4 = vmul(m->up, m->squat ? 50.0f : 70.0f);
     else m_2C4 = vadd(vmul(m_2C4, 0.9f), vmul(m->up, 7.0f));
+    if (m_3AA) { /* the new offset eased in from the old one over 15 frames */
+        m_3AA--;
+        float rate = (float)m_3AA / 15.0f;
+        m_2C4 = vadd(vmul(m_2C4, 1.0f - rate), vmul(old, rate));
+    }
 }
 static void bind_contacts(V3 up, int *b_floor, int *b_wall)
 {
@@ -12453,8 +12463,8 @@ static float m_sz; /* (mStickPos.z, below) */
  * (checkAllWall) and his drawn axes absorb small shakes (createMtxDir, mVibrationAbsorbAngle).
  * PipeModeCube (MarioMove25D: set25Dmode / update25Dmode / updateAxisFromMode) is placed in no stage of the game
  * (only ObjNameTable names it): not ported.
- * ponytail: the gravity flip's 2D handling (MarioActorGravity: no gravity
- * flips here, _10.turning never set), checkForceGrounding, the binder's push from moving parts in 2D, the walk tilt and
+ * The sudden gravity turn (updateGravityVec, m_gravity_turn) sets _10.turning, which clears the 2D stick on the ground.
+ * ponytail: checkForceGrounding, the binder's push from moving parts in 2D, the walk tilt and
  * homing of MarioAnimator, beforeJumping2D's _628 (read nowhere) and the warps' _688 (MarioAccess setTrans) are not
  * kept */
 static struct {
@@ -12464,6 +12474,7 @@ static struct {
     V3 v6A0, v688, v694, v660, v670, v67C, abs_s, abs_f, abs_u; /* .., createMtxDir's _950 / _944 / _938 */
     float f614, f618, f61C, f620;
     int b60E, b60F, b610, b611, b624, b66C;
+    int t10;                       /* _10.turning (set by updateGravityVec's sudden turn) */
 } m2;
 static void m2_clear(void) /* clear2DStick */
 {
@@ -12507,6 +12518,7 @@ static V3 m2_norm0(V3 v, int *zero) { *zero = vdot(v, v) < 1e-12f; return *zero 
 static void m2_adjust_ground(Player *m, float *rx, float *ry) /* stick2DadjustGround */
 {
     if (!strcmp(game_stage_name, "HellProminenceGalaxy/3")) return; /* isStageCameraRotate2D */
+    if (m2.t10 && m->grounded && !m->jumping) { m2.t10 = 0; m2_clear(); m2.b66C = 0; }
     m2.side = m2.fx; m2.up = m2.fy; m2.nrm = vmul(m2.fz, -1.0f);
     m2.v6A0 = m2.nrm;
     int z;
@@ -12529,6 +12541,7 @@ static void m2_adjust_ground(Player *m, float *rx, float *ry) /* stick2DadjustGr
 }
 static void m2_adjust(Player *m, float *rx, float *ry) /* stick2Dadjust (PlaneCircularModeCube) */
 {
+    if (m2.t10 && m->grounded && !m->jumping) { m2.t10 = 0; m2_clear(); }
     float sxi = *rx, syi = *ry;
     m2.side = m2.fx; m2.up = v3(0, 1, 0); m2.nrm = vmul(m2.fz, -1.0f);
     float angle = m2_signed_h(m_camy, v3(0, 1, 0), m_camz);
@@ -13849,6 +13862,7 @@ static void m_try_jump(Player *m) /* tryJump: 1st / 2nd / 3rd jump, or the turn,
     if (m->wall) m->walk = 0;
     if (squat && m->walk > 0.3f) { m_try_squat_jump(m); return; }
     if (m->squat) { m_try_back_jump(m); return; }
+    if (m_flip1A) m->jump_kind = 0; /* _10._1A: _430 0 */
     m_set_jv(m, vadd(vmul(m->face, m->walk * MC.mJumpFrontSpeed), vmul(m->up, MC.mJumpHeight[m->jump_kind])));
     m->digital = 0; m->grounded = 0;
     m_proc_jump(m, 1);
@@ -13859,6 +13873,7 @@ static void m_try_jump(Player *m) /* tryJump: 1st / 2nd / 3rd jump, or the turn,
         mario_sound(m->bee_wall ? "ハチ壁ジャンプ" : "小ジャンプ");
         if (player_mode != PM_TERESA) { mario_sound("声小ジャンプ"); mario_sound("ジャンプ踏切"); }
         if (player_mode == PM_BEE) { m_anim("ハチジャンプ"); bee_sync_jump(m); }
+        if (m_flip1A) m_anim("ショートジャンプ"); /* changeAnimation(ショートジャンプ, 落下) */
     }
     else if (m->jump_kind == 1) { mario_sound("中ジャンプ"); mario_sound("声中ジャンプ"); mario_sound("ジャンプ踏切"); }
     else { mario_sound("大ジャンプ"); mario_sound("声大ジャンプ"); mario_sound("ジャンプ踏切"); mario_smoke(SMOKE_HIGH_JUMP); }
@@ -14312,6 +14327,13 @@ static void m_main_move(Player *m)
     if (m->s23) { m->tsi = 0; m->walk = 0; a1 = 1; mario_sound("坂滑り"); } /* sliding */
     if (m->corr_flip) a1 = 1; /* _754 */
     m->slip_floor = m_skatable(m); /* _35: isSkatableFloor */
+    if (m_flip1A) { /* _10._1A: the sudden gravity turn drops him off with the carried move */
+        m_try_jump(m);
+        m_set_jv(m, carry_d);                                 /* mJumpVec = _184 */
+        m->s420 = 0;
+        m_flip1A = 0;
+        return;
+    }
     V3 dir = m->move_dir;
     int dir_set = 0;
     if (m_req_jump) { m_try_jump(m); return; }
@@ -19018,6 +19040,43 @@ static void bh_update(Player *m)
     m->hvel = v3(0, 0, 0); m->vup = 0;
     bh.step++;
 }
+/* MarioActor::updateGravityVec(false, ..) (MarioActorGravity.cpp:157-345): a gravity turned 0.4 pi or more at once is
+ * a sudden turn: on the ground he drops off next frame (_10._1A: tryJump, ショートジャンプ, the carried move as his jump),
+ * jumping he plays ショートジャンプ and his ground normal is the new up; his jump loses its old gravity part and halves
+ * (2 / 3 pi or more, or outside 2D), else x 0.75; the 2D stick cleared, _10.turning, the binder offset blended over 15
+ * frames (_3AA); for the next 15 frames (_334) the gravity is held, and high off the ground (over 160) he is pushed
+ * along it by his head's turn. As Bee a turn of pi / 6 blends his drawn matrix over 8. ponytail: _F74 (a camera cut
+ * resets the ground too) and _2E0 (the air walk's direction, not kept here) */
+static void m_gravity_turn(Player *m, V3 up0)
+{
+    if (m->launch >= 0) { m_334 = 0; return; } /* doRush: no updateGravityVec; endRush's (true, ..) resets _334 */
+    float ang = ang_abs(up0, m->up);
+    int reset_ground = 0;
+    if (player_mode == PM_BEE && ang >= 3.1415927f / 6.0f) m_blend_mtx(8);
+    if (m_334) m->up = up0;
+    else if (ang >= 3.1415927f * 0.4f) {
+        if (!m->jumping) m_flip1A = 1;
+        else { if (m->jump_kind == 11) m->jump_kind = 0; m_anim("ショートジャンプ"); reset_ground = 1; }
+        m_334 = 15;
+        m_30C = up0;                                        /* mHeadVec */
+        V3 jv = vadd(m->hvel, vmul(up0, m->vup));
+        if (ang >= 3.1415927f * (2.0f / 3.0f) || !m2.on) jv = vmul(vtangent(jv, up0), 0.5f); /* cutGravityElementFromJumpVec */
+        else jv = vmul(jv, 0.75f);                          /* (killed along the old gravity and put back, x 0.75) */
+        m->hvel = vtangent(jv, up0); m->vup = vdot(jv, up0);
+        m2_clear(); m2.t10 = 1;
+        m_3AA = 15;
+        printf("mario: gravity turned %d degrees (grounded %d)\n", (int)(ang * 57.29578f), m->grounded);
+    }
+    if (reset_ground) m->ground_n = m->up;                  /* setGroundNorm(-gravity) */
+    if (m_334) {
+        if (m->height > 160.0f) {                           /* mVerticalSpeed */
+            V3 d = vsub(vmul(m_30C, 80.0f), vmul(m->up, 80.0f));
+            m->pos = vadd(m->pos, vmul(m->up, vdot(d, m->up))); /* push2(_240 x the part along it) */
+            m_30C = m->up;
+        }
+        m_334--;
+    }
+}
 static void update_mario_(void)
 {
     if (bh.on) { bh_update(mario); if (mario_anim) anim_update(mario_anim); return; } /* MarioActorNrvGameOverBlackHole */
@@ -19029,6 +19088,7 @@ static void update_mario_(void)
         V3 d = vsub(m->pos, v3(14760.0f, -10676.2f, 6770.0f));
         if (vlen(d) > 1e-6f) m->up = vnorm(d);
     }
+    m_gravity_turn(m, up0);
     if (!m->grounded && m->jump_kind != 13 && vdot(up0, m->up) < 0.999f) { /* in the air his velocity is a world vector
                                                       * (mJumpVec): a new gravity keeps it, not his rise along the old up.
                                                       * ponytail: not after a launch star (kind 13): our flights' ends were
