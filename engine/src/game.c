@@ -67,14 +67,21 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
     u8 nograv; /* Kuribo _C4 (arg0 set): offCalcGravity, its gravity its rotation's up */ } Kuribo; /* walking
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
+/* KuriboChief's / ExterminationChecker's KeySwitch (okeys), the ExterminationKuriboKeySwitch checkers (exts) */
+#define MAX_OKEYS 4
+static struct { int on, owner, nrv, step, demo; V3 pos, vel, up; float rate, t; } okeys[MAX_OKEYS];
+#define MAX_EXTS 4
+static struct { int row, nrv, step; V3 last; } exts[MAX_EXTS];
+static int nexts;
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
-       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU, WALK_BOMBHEI, WALK_STRSPIDER, WALK_BEGOSPIKE, WALK_KINDS };
+       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU, WALK_BOMBHEI, WALK_STRSPIDER, WALK_BEGOSPIKE, WALK_KCHIEF, WALK_KINDS };
 /* walkers ported in the release push: their classes (counted, placed and drawn through this table) */
 static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}, {"BasaBasa", WALK_BASABASA}, {"BasaBasaIce", WALK_BASABASA}, {"Jellyfish", WALK_JELLYFISH},
                                                                     {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}, {"Mogu", WALK_MOGU}, {"Mogucchi", WALK_MOGUCCHI}, {"Metbo", WALK_METBO}, {"TeresaWater", WALK_TERESAW},
                                                                     {"Snakehead", WALK_SNAKEHEAD}, {"SnakeheadSmall", WALK_SNAKEHEAD}, {"Kabokuri", WALK_KABOKURI}, {"Pukupuku", WALK_PUKUPUKU},
                                                                     {"BombHei", WALK_BOMBHEI}, {"BombHeiLauncher", WALK_BOMBHEI}, {"BombLauncher", WALK_BOMBHEI},
-                                                                    {"StringSpider", WALK_STRSPIDER}, {"BegomanSpike", WALK_BEGOSPIKE}};
+                                                                    {"StringSpider", WALK_STRSPIDER}, {"BegomanSpike", WALK_BEGOSPIKE},
+                                                                    {"KuriboChief", WALK_KCHIEF}, {"ChildKuribo", WALK_KURIBO}}; /* ChildKuribo: createNoItemKuriboActor */
 #define NEW_WALKERS ((int)(sizeof new_walkers / sizeof new_walkers[0]))
 static const Model *m_wnew[NEW_WALKERS];
 static int walker_new_kind(const char *cls)
@@ -1112,6 +1119,7 @@ static int pd_try_start(const char *name, int row)
     printf("demo: %s\n", name);
     return 1;
 }
+static void dx_end(void);
 static void pd_end(const char *name) { if (pd.name && !strcmp(pd.name, name)) { pd.name = NULL; pd.row = -1; } }
 /* Butler's star piece lecture (Butler.cpp): _160 on, _164 hits, _168 the replace count, the reaction
  * (ButlerStateStarPieceReaction: -1 none, else its step; talk: _14) and its talk, chosen at init; _171 pointed */
@@ -2304,6 +2312,9 @@ void game_init(const Scene *s, const unsigned char *blob)
     pops = mem_alloc(MEM_OBJECTS, (box_coins + 1) * sizeof(Pop));
     mario = mem_alloc(MEM_PLAYER, sizeof(Player));
     nkillers = 0;
+    memset(okeys, 0, sizeof okeys); nexts = 0; /* KeySwitch (owned), ExterminationChecker */
+    for (u32 i = 0, t = (u32)scene_type(s, "ExterminationKuriboKeySwitch"); i < s->nobjs && nexts < MAX_EXTS; i++)
+        if (s->objs[i].type == t) { memset(&exts[nexts], 0, sizeof exts[0]); exts[nexts++].row = (int)i; }
     norocks = 0;
     nhhps = 0;
     nvines = 0; vine_ride = -1;
@@ -4253,8 +4264,7 @@ static int gap_class(const char *name)
     return !strcmp(name, "ShockWaveGenerator") ? GAP_SHOCKWAVE : !strcmp(name, "CapsuleCage") ? GAP_CAPSULE : GAP_NONE;
 }
 /* ponytail (unmarked until the 2026-11-02 audit): placed classes of the early galaxies with no behaviour here
- * (drawn static, or not at all), each a whole Petari class: HeavensDoor KuriboChief / ChildKuribo /
- * ExterminationKuriboKeySwitch (Enemy/KuriboChief.cpp); Honeyhive HoneyQueen, Creeper, BossStinkBug, StinkBugParent, GhostPlayer (Cosmic Mario);
+ * (drawn static, or not at all), each a whole Petari class: Honeyhive HoneyQueen, Creeper, BossStinkBug, StinkBugParent, GhostPlayer (Cosmic Mario);
  * Space Junk TombSpider, BossKameck, ChildKameck, SpiderAttachPoint (SlingShooter), UFOKinoko, CoinBox,
  * PlanetRocket, NokonokoLand; Battlerock BegomanBaby, BossBegoman, BreakableTrash, UFOStrongA, TicoShop,
  * BattleShipElevator; Beach Bowl ShellfishCoin / ShellfishYellowChip (Shellfish.cpp), DriftWood, PenguinStudent;
@@ -14004,11 +14014,12 @@ static void m_trample_jump(Player *m, float normal)
     m->no_air_walk = 0; m->wall_free = 0; /* _2F, _22 */
 }
 static void m_trample(Player *m) { m_trample_jump(m, MC.mTrampleNormal); }
+static int m_combo; /* MarioActor _989: 全滅用クリボー stomped in a row (back to 0 with _988: initForJump) */
 /* MarioActor::doTrampleJump, an object's sensor (not ATYPE_PLAYER_AUTO_JUMP) taking his trample: off a wall, the
  * tornado's air walk and the spin back (_402, _2B), trampleJump. Its combo (_989: playSoundTrampleCombo, a 1-up at the
  * fifth 砲弾 / eighth 全滅用クリボー) counts only those two actors: 砲弾 is KoopaJrShip's boss shell (the port's cannon
- * shells are IronCannonShell, キャノン弾砲台の弾: no combo) and 全滅用クリボー the KuriboChief's children; neither is
- * ported, so neither is the count (ponytail: add it with them) */
+ * shells are IronCannonShell, キャノン弾砲台の弾: no combo) and 全滅用クリボー, the ExterminationKuriboKeySwitch's
+ * ChildKuribo (mario_trample_child). ponytail: no 砲弾 count (KoopaJrShip's boss shell not ported) */
 static void mario_trample(void)
 {
     Player *m = mario;
@@ -14016,6 +14027,15 @@ static void mario_trample(void)
     m->air_spin = MC.mAirWalkTimeTornado;
     m->spin_lock = 0;
     m_trample(m);
+}
+/* doTrampleJump on 全滅用クリボー (ChildKuribo): playSoundTrampleCombo(_989) (under 7: SE_SY_TRAMPLE_COMBO, port 11),
+ * _989 + 1, at 8 or more a 1-up (requestOneUp, incPlayerLeft), then trampleJump. ponytail: no マリオ連続踏み counter
+ * (CollectCounter's layout), no OneUpBoard */
+static void mario_trample_child(void)
+{
+    if (m_combo < 7) { u32 h = se_start(SE_SY_TRAMPLE_COMBO, NULL); if (h) se_port(h, 11, (u16)m_combo); }
+    if (++m_combo >= 8) { lives++; se_start(SE_SY_1UP, NULL); printf("trample combo: 1-up, lives %d\n", lives); }
+    mario_trample();
 }
 /* doTrampleJump on an ATYPE_PLAYER_AUTO_JUMP sensor (a spring: JumpBeamer, JumpGuarder, BegomanSpring): _988 0,
  * trampleJump(mTrampleBegoma, mTrampleLong), ヘリコプタージャンプ (changeAnimationNonStop), rumble 2, the helicopter
@@ -19344,7 +19364,7 @@ static void update_mario_(void)
         s24 = map_poly(vadd(m->pos, vmul(m->ground_n, 100.0f)), vmul(m->s904, -150.0f), NULL, &t460);
     if (!m->jumping && m->grounded && m->floor == 9) m_start_slider(m); /* checkSliderMode (isSliderFloor) */
     m_retain(m);
-    if (m->grounded) m_trample_n = 0; /* initForJump */
+    if (m->grounded) m_trample_n = m_combo = 0; /* initForJump */
     m_swing(m);
     if (m->spin_timer) m->spin_timer--;
     m->spin_t++;
@@ -21635,9 +21655,9 @@ static void ws_wander(Kuribo *k, float grav, float air, float ground, int wait, 
     }
     k->sstep++;
 }
-/* ---- WalkerStateFindPlayer: Find (Turn, mJumpStartStep 30), JumpStart, Jump (mJumpVelocity), Land ---- */
+/* ---- WalkerStateFindPlayer: Find (Turn, mJumpStartStep jstep: default 30), JumpStart, Jump (mJumpVelocity), Land ---- */
 enum { WF_FIND, WF_JUMPSTART, WF_JUMP, WF_JUMPEND };
-static void ws_find(Kuribo *k, float grav, float air, float ground, float jumpv, float turn)
+static void ws_find(Kuribo *k, float grav, float air, float ground, float jumpv, float turn, int jstep)
 {
     int s = k->sstep;
     switch (k->snrv) {
@@ -21645,7 +21665,7 @@ static void ws_find(Kuribo *k, float grav, float air, float ground, float jumpv,
         if (s == 0) w_act(k, "Turn");
         w_passive(k, grav, air, ground);
         w_turn_to(k, mario->pos, turn);
-        if (s == 30) w_snrv(k, WF_JUMPSTART);
+        if (s == jstep) w_snrv(k, WF_JUMPSTART);
         break;
     case WF_JUMPSTART:
         if (s == 0) w_act(k, "JumpStart");
@@ -21687,7 +21707,7 @@ static void ws_chase(Kuribo *k, float grav, float air, float ground, float speed
     k->sstep++;
 }
 /* ---- WalkerStateStagger (default params): punched away (mPunchPowerH / V 10, 10 clockwise), StaggerStart then
- * Stagger, turning 40 degrees a frame eased out between 60 and 120, weaving; StaggerEnd after mStaggerTime 180 ---- */
+ * Stagger, turning rot (40) degrees a frame eased out between 60 and 120, weaving; StaggerEnd after mStaggerTime (180) ---- */
 enum { WS_STAGGER, WS_STAGGEREND };
 static void ws_stagger_punch(Kuribo *k, V3 from)
 {
@@ -21703,7 +21723,7 @@ static float ease_in_out(int step, int a, int b, float v0, float v1) /* calcNerv
     t = (1.0f - cosf(t * 3.14159265f)) * 0.5f;
     return v0 + (v1 - v0) * t;
 }
-static void ws_stagger(Kuribo *k, float grav, float air, float ground)
+static void ws_stagger(Kuribo *k, float grav, float air, float ground, int time, float rot)
 {
     int s = k->sstep;
     if (k->snrv == WS_STAGGER) {
@@ -21712,7 +21732,7 @@ static void ws_stagger(Kuribo *k, float grav, float air, float ground)
         V3 d = vtangent(k->velh, k->grav);
         if (vlen(d) > 1e-6f) k->velh = vnorm(d);
         float t = ease_in_out(s, 60, 120, 1.0f, 0.0f);
-        k->front = vnorm(rot_axis(k->front, k->grav, 40.0f * t * 0.0174533f));
+        k->front = vnorm(rot_axis(k->front, k->grav, rot * t * 0.0174533f));
         float sw = sinf(fmodf(3.0f * s, 360.0f) * 0.0174533f);
         w_add_move(k, vcross(k->grav, k->velh), t * 0.5f * sw);
         w_add_move(k, k->velh, 0.35f * t);
@@ -21721,7 +21741,7 @@ static void ws_stagger(Kuribo *k, float grav, float air, float ground)
             V3 h = vtangent(k->vel, k->grav);
             if (vlen(h) > 1e-6f) k->velh = vnorm(h);
         }
-        if (s > 180) w_snrv(k, WS_STAGGEREND);
+        if (s > time) w_snrv(k, WS_STAGGEREND);
     } else {
         if (s == 0) w_act(k, "StaggerEnd");
         w_passive(k, grav, air, ground);
@@ -21747,6 +21767,7 @@ static void w_se_lv(Kuribo *k, u32 id) { float at[3] = {k->pos.x, k->pos.y, k->p
 static void w_kill(Kuribo *k)
 {
     if (k->kind == WALK_KURIBO || k->kind == WALK_KMINI) w_se(k, SE_EM_EXPLODE_S); /* Kuribo::kill, KuriboMini::kill */
+    if (k->kind == WALK_KURIBO && !strcmp(walker_cls(k), "ChildKuribo")) { k->item = 0; printf("child kuribo row %d killed in nerve %d\n", k->row, k->nrv); } /* createNoItemKuriboActor: _C5 0 */
     k->state = KURIBO_DEAD; row_kill(k->row);
     fx_at(k->kind == WALK_KMINI ? FX_KURIBOMINI_DEATH : FX_KURIBO_DEATHSMOKEKURIBO, k->pos, vmul(k->grav, -1.0f));
     if (k->item == 1) pop_coins(k->pos, vmul(k->grav, -1.0f), 1);
@@ -21799,7 +21820,7 @@ static void kuribo_update(Kuribo *k)
         break;
     case KN_FINDPLAYER:
         w_state(k, ap_find);
-        ws_find(k, KB_G, 20.0f, 5.0f);
+        ws_find(k, KB_G, 20.0f, 5.0f, 30);
         if (k->snrv == WF_JUMP && k->sstep == 1) w_se(k, SE_EM_KURIBO_FIND); /* isFindJumpBegin */
         if (k->sdead) w_nrv(k, KN_CHASE);
         break;
@@ -21811,7 +21832,7 @@ static void kuribo_update(Kuribo *k)
         break;
     case KN_STAGGER:
         if (st == 0 && k->snrv != WS_STAGGER) ap_stagger(k);
-        ws_stagger(k, KB_G);
+        ws_stagger(k, KB_G, 180, 40.0f);
         if (k->snrv == WS_STAGGER && k->sstep == 2) { w_se(k, SE_EM_CRASH_S); w_se(k, SE_PM_SPIN_HIT); } /* isStaggerStart, startBlowHitSound */
         if (k->snrv == WS_STAGGER && k->sstep >= 16) w_se_lv(k, SE_EM_LV_SWOON_S); /* isSwooning(15) */
         if (k->snrv == WS_STAGGEREND && k->sstep == 1) w_se(k, SE_EM_KURIBO_SWOON_RECOVER); /* isRecoverStart */
@@ -21878,7 +21899,8 @@ static void kuribo_update(Kuribo *k)
     if (msg == MSG_TRAMPLE && enable_stamp && !dying) {
         w_act(k, upside ? "FlatDownReverse" : "FlatDown"); w_nrv(k, KN_FLATDOWN); k->bind_off = 1; k->item = 1;
         w_se(k, SE_EM_STOMPED_S); /* requestFlatDown */
-        mario_trample(); /* doTrampleJump */
+        if (!strcmp(walker_cls(k), "ChildKuribo")) mario_trample_child(); /* doTrampleJump: 全滅用クリボー */
+        else mario_trample(); /* doTrampleJump */
     } else if (msg == MSG_HIPDROP && !dying) {
         w_act(k, upside ? "HipDropDownReverse" : "HipDropDown"); w_nrv(k, KN_HIPDROPDOWN); k->bind_off = 1; k->item = 1;
         w_se(k, SE_EM_STOMPED_S); /* requestHipDropDown */
@@ -21925,7 +21947,7 @@ static void kmini_update(Kuribo *k)
         break;
     case KN_FINDPLAYER:
         w_state(k, ap_find);
-        ws_find(k, KB_G, 20.0f, 5.0f);
+        ws_find(k, KB_G, 20.0f, 5.0f, 30);
         if (k->snrv == WF_JUMP && k->sstep == 1) w_se(k, SE_EM_KURIBOMINI_FIND); /* isFindJumpBegin */
         if (k->sdead) w_nrv(k, KN_CHASE);
         else if (deadmap) { k->item = 0; w_kill(k); return; }
@@ -21939,7 +21961,7 @@ static void kmini_update(Kuribo *k)
         break;
     case KN_STAGGER:
         if (st == 0 && k->snrv != WS_STAGGER) ap_stagger(k);
-        ws_stagger(k, KB_G);
+        ws_stagger(k, KB_G, 180, 40.0f);
         if (k->snrv == WS_STAGGER && k->sstep == 2) { w_se(k, SE_EM_CRASH_S); w_se(k, SE_PM_SPIN_HIT); } /* isStaggerStart, startBlowHitSound */
         if (k->snrv == WS_STAGGER && k->sstep >= 16) w_se_lv(k, SE_EM_LV_SWOON_S); /* isSwooning(15) */
         if (k->snrv == WS_STAGGEREND && k->sstep == 1) w_se(k, SE_EM_KURIBO_SWOON_RECOVER); /* isRecoverStart */
@@ -22017,6 +22039,398 @@ static V3 w_joint(Kuribo *k, const Model *md, int j, V3 off)
               w[2] * off.x + w[6] * off.y + w[10] * off.z + w[14]);
     V3 x = vcross(k->qy, k->qz);
     return vadd(p, vadd(vadd(vmul(x, l.x * sc3[0]), vmul(k->qy, l.y * sc3[1])), vmul(k->qz, l.z * sc3[2])));
+}
+
+/* AnimScaleController after Petari (AnimScaleController.cpp) on a walker: its scale Y (from) and velocity (to, _18),
+ * its nerve (phase: 0 Stop, 1 Anim, 2 HitReaction) and step (timer); _C = (sqrt(1 / y), y, sqrt(1 / y)).
+ * p: _0, _4, _8, _C, _20, _24, _28 of its AnimScaleParam. ponytail: DpdVibration / Crush (the 2P pointer, crushes)
+ * left out: no walker here starts them */
+enum { ASC_STOP, ASC_ANIM, ASC_HIT };
+static void asc_start(Kuribo *k, int nrv) { k->phase = nrv; k->timer = -1; }
+static void asc_scale(Kuribo *k, float f1, float f2, float lo, float hi) /* updateScale */
+{
+    k->to = ((1.0f - k->from) * f1 + k->to) * f2;
+    k->from += k->to;
+    k->from = k->from < lo ? lo : k->from > hi ? hi : k->from;
+}
+static void asc_update(Kuribo *k, const float p[7])
+{
+    if (k->phase == ASC_STOP) return;
+    k->timer++;
+    if (k->phase == ASC_HIT) {
+        if (k->timer == 0) { k->from = 1.0f; k->to = p[4]; } /* resetScale, _18 = _20 */
+        asc_scale(k, p[5], p[6], p[2], p[3]);
+    } else asc_scale(k, p[0], p[1], p[2], p[3]);
+    if (fabsf(1.0f - k->from) < 0.001f && fabsf(k->to) < 0.001f) { k->from = 1.0f; k->to = 0.0f; k->phase = ASC_STOP; } /* tryStop */
+}
+
+/* KeySwitch.cpp after Petari, the ones an owner makes (initKeySwitchByOwner: KuriboChief's, ExterminationChecker's):
+ * appearKeySwitch at a place, DemoStart (カギ出現 without the cinema frame: 40 frames; its actor camera is the owner's
+ * CameraSetId, none on the disc's two owners), Appear (Rotation at 3 easing to 1.5 over 180, 40 along gravity, 2 a frame; a bound of 10 or more:
+ * KEY_SWITCH_BOUND (2 x speed, at most 100) and calcReboundVelocity 0.6 / 0.7, under 10 Wait), Wait (Rotation at 1).
+ * Taken by Mario's body (its sensor 105 at 105 up) but in Appear's first 60 frames: KEY_SWITCH_GET, a middle rumble,
+ * kill: the owner's SW_A on, SE_SY_READ_RIDDLE_S, Get. ponytail: tryAvoid (ATYPE_KEY_SWITCH_AVOID floors) left out:
+ * no such sensor in the port */
+enum { OK_DEMOSTART, OK_APPEAR, OK_WAIT };
+static const char *const okey_demo = "\xe3\x82\xab\xe3\x82\xae\xe5\x87\xba\xe7\x8f\xbe"; /* カギ出現 */
+static void okey_se(int i, u32 id) { float at[3] = {okeys[i].pos.x, okeys[i].pos.y, okeys[i].pos.z}; se_start(id, at); }
+static void okey_appear(int owner, V3 at)
+{
+    for (int i = 0; i < MAX_OKEYS; i++)
+        if (!okeys[i].on) {
+            memset(&okeys[i], 0, sizeof okeys[i]);
+            okeys[i].on = 1; okeys[i].owner = owner; okeys[i].pos = at; okeys[i].nrv = OK_DEMOSTART; okeys[i].step = -1; okeys[i].demo = -1;
+            okeys[i].up = up_at(at, v3(0, 1, 0)); okeys[i].rate = 1.0f;
+            printf("key switch of row %d appears\n", owner);
+            return;
+        }
+}
+static void update_okeys(void)
+{
+    for (int i = 0; i < MAX_OKEYS; i++) {
+        typeof(&okeys[0]) o = &okeys[i];
+        if (!o->on) continue;
+        if (pd.name && pd.row != o->owner) continue; /* another's demo stops it */
+        o->up = up_at(o->pos, o->up); /* onCalcGravity */
+        o->step++;
+        if (o->nrv == OK_DEMOSTART) { /* mCameraInfo is always made (createActorCameraInfo) */
+            if (pd_try_start(okey_demo, o->owner)) {
+                o->demo = 0; o->nrv = OK_APPEAR; o->step = -1;
+            }
+        } else if (o->nrv == OK_APPEAR) {
+            if (o->step == 0) { o->t = 0; o->vel = vmul(o->up, 40.0f); okey_se(i, SE_OJ_KEY_SWITCH_APPEAR); } /* -40 x gravity */
+            o->rate = o->step >= 180 ? 1.5f : 3.0f + (1.5f - 3.0f) * o->step / 180.0f; /* calcNerveValue(180, 3, 1.5) */
+            o->vel = vsub(o->vel, vmul(o->up, 2.0f)); /* addVelocityToGravity 2 */
+            V3 c = vadd(vadd(o->pos, o->vel), vmul(o->up, 105.0f)), gn = o->up, wn = o->up; /* initBinder(105, 105) */
+            int wall = 0, ground = collide_n(&c, o->up, 105.0f, &gn, &wn, &wall);
+            o->pos = vsub(c, vmul(o->up, 105.0f));
+            int stop = 0;
+            if (ground) {
+                if (vlen(o->vel) >= 10.0f) {
+                    int mag = (int)vlen(o->vel) * 2;
+                    u32 h = se_start(SE_OJ_KEY_SWITCH_BOUND, &o->pos.x);
+                    if (h) se_volpitch(h, (mag > 100 ? 100 : mag) / 100.0f, 1.0f); /* startSound(.., mag): its volume level */
+                    rebound_hv(&o->vel, o->up, 0.6f, 0.7f); /* calcReboundVelocity(-gravity, 0.6, 0.7) */
+                } else stop = 1;
+            }
+            if (stop) { o->nrv = OK_WAIT; o->step = -1; }
+        } else if (o->step == 0) { o->rate = 1.0f; o->vel = v3(0, 0, 0); } /* Wait: offCalcGravity */
+        o->t += o->rate;
+        if (o->demo >= 0) { /* control: the demo's 40 frames */
+            if (o->demo >= 0x28) { pd_end(okey_demo); o->demo = -1; } /* endActorCamera, endDemo */
+            else o->demo++;
+        }
+        V3 c = vadd(o->pos, vmul(o->up, 105.0f));
+        if (o->nrv != OK_DEMOSTART && !(o->nrv == OK_APPEAR && o->step <= 60) && mario_touch(c, 105.0f)) { /* isMsgItemGet */
+            okey_se(i, SE_OJ_KEY_SWITCH_GET);
+            pad_rumble(RUMBLE_MIDDLE);
+            const Row *r = &sc->objs[o->owner];
+            if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1); /* kill: onSwitchA */
+            se_start(SE_SY_READ_RIDDLE_S, NULL);
+            float m[16];
+            basis_matrix(m, o->pos, o->up, v3(0, 0, 1), 0);
+            fx_named("KeySwitchOwned", "Get", m, NULL, NULL);
+            if (o->demo >= 0) pd_end(okey_demo);
+            o->on = 0;
+            printf("key switch of row %d taken\n", o->owner);
+            game_rebind();
+        }
+    }
+}
+static void draw_okeys(void)
+{
+    const Model *md = scene_model(sc, "KeySwitchOwned"); /* slice.py: the KeySwitch archive, skinned for its Rotation */
+    if (!md) return;
+    for (int i = 0; i < MAX_OKEYS; i++) {
+        if (!okeys[i].on) continue;
+        float m[16];
+        V3 f = vtangent(v3(0, 0, 1), okeys[i].up); /* calcMtxFromGravityAndZAxis: its front (0, 0, 1: no rotation) */
+        if (vlen(f) < 1e-3f) f = vtangent(v3(1, 0, 0), okeys[i].up);
+        basis_matrix(m, okeys[i].pos, okeys[i].up, vnorm(f), 0);
+        Anim *a = md->skin ? obj_anim((int)sc->nobjs * 3 + i, md, "KeySwitchOwned") : NULL;
+        if (a) {
+            if (a->clip_id < 0 || strcmp(sc->clips[a->clip_id].name, "keyswitchowned/rotation")) anim_start(a, "keyswitchowned/rotation", 0);
+            a->speed = okeys[i].rate; /* setBckRate */
+            anim_update(a);
+            draw_skin(md, m, a);
+        } else render_model(md, m, 0x80, 0x80, 0x80);
+    }
+}
+
+/* ExterminationChecker.cpp after Petari, ExterminationKuriboKeySwitch (createExterminationKeySwitch: _A0 0, _A1 1):
+ * its children (ChildObj: ChildKuribo, createNoItemKuriboActor, 全滅用クリボー; here the ChildKuribo rows of its zone,
+ * the one checker a zone has on the disc) watched while it is out (its SW_APPEAR); with every one dead, 30 frames on
+ * its KeySwitch (全滅用キースイッチ) appears where the last one was, and it is killed. ponytail: ExterminationChecker-
+ * Kuribo (the power star kind, 全滅スター出現) not ported */
+static void update_exts(void)
+{
+    for (int e = 0; e < nexts; e++) {
+        typeof(&exts[0]) x = &exts[e];
+        if (!row_shown(x->row)) continue;
+        if (x->nrv == 0) { /* Watching */
+            int alive = 0;
+            for (int i = 0; i < nkuribo && !alive; i++) {
+                const Kuribo *k = &kuribo[i];
+                if (sc->objs[k->row].zone != sc->objs[x->row].zone || strcmp(walker_cls(k), "ChildKuribo")) continue;
+                if (k->state != KURIBO_DEAD && row_shown(k->row)) { alive = 1; x->last = k->pos; }
+            }
+            if (!alive) { x->nrv = 1; x->step = -1; printf("extermination row %d: all down\n", x->row); }
+        } else if (++x->step == 30) { okey_appear(x->row, x->last); row_kill(x->row); } /* AppearKeySwitch */
+    }
+}
+
+/* KuriboChief.cpp after Petari (KuriboChiefParam): walker states with gravity 1.5, air 0.99, ground 0.93 (Stagger:
+ * 0.6), sight 1400 / 80 / 40 degrees; Wander 0.1 (Wait 120, Walk 300, turning 1), FindPlayer (Find 56, turning 2, Jump
+ * 35: FIND at the jump, LAND), Chase 0.2, Stagger 240 turning 0 (BLOW + the blow hit at its start, BOUND at 27, SWOON_S
+ * from 56, STAGGER 10-105, RECOVER), a kick from 70 of it; binder 300 at 300 up; its _AC from identity and _BC (0, 0, 1)
+ * blended to the ground and front at 0.05 / 0.5 (control), scaled by its AnimScaleController (0.1, 30, 0.6, 0.06, 3,
+ * 0.1). Sensors at its joints: Body 150, Head1 300 at Head (120, 0, 0), Head2 150 at Head (360, 0, 0), LegL / LegR 130
+ * at (60, -50, 0), Punch 400 at 150 up. Its body sensors hurt Mario in Wander / FindPlayer / Chase (or push him, as
+ * they do otherwise: sendMsgPushAndKillVelocityToTarget); a trample is not taken. A spin within the Punch sensor
+ * staggers it (requestStagger), or, once kickable, blows it down (setVelocityBlowAttack 25 / 35, stopSceneForDefaultHit
+ * 4 within 1000): BlowDown (BLOW, VS_BOSS_LAST_HIT) and on the ground after 5 BlowDownLand (BOUND_LAST; at its end Death,
+ * RUN, kill). Mario's kick (mario_kick: walking into a body sensor in front of him) blows it down with six star
+ * pieces; invincible Mario's touch blows it down; a star piece makes its scale react; ToEnemyAttackBlow / ShockWave
+ * stagger it; a black hole kills it with no item. kill: SW_DEAD, its KeySwitch where it is if it has SW_A (else
+ * ItemGenerator: a coin, or the kick's six star pieces). AttackSuccess and Trample are never set in Petari (left out).
+ * ponytail: BindStarPointer (the 2P pointer's isStarPointerPointing2POnPressButton: no 2P pointer here), no move limit
+ * collision (trySetMoveLimitCollision), no camera register vector (arg7: declareCameraRegisterVec), no push between
+ * enemies, its shadow the walker kit's */
+enum { KC_WANDER, KC_FINDPLAYER, KC_CHASE, KC_STAGGER, KC_BLOWDOWN, KC_BLOWDOWNLAND };
+#define KC_G1 1.5f, 0.99f, 0.93f
+#define KC_G2 1.5f, 0.99f, 0.6f
+static const float kc_asc[7] = {0.1f, 0.91f, 0.2f, 1.8f, 0.06f, 0.1f, 0.91f};
+static void kchief_sensors(Kuribo *k, V3 c[6], float r[6])
+{
+    const Model *md = walker_new_model(k->row);
+    float s = w_scale(k);
+    c[0] = w_joint(k, md, 3, v3(0, 0, 0)); r[0] = 150.0f;            /* Body */
+    c[1] = w_joint(k, md, 4, v3(120.0f, 0, 0)); r[1] = 300.0f;       /* Head1 */
+    c[2] = w_joint(k, md, 4, v3(360.0f, 0, 0)); r[2] = 150.0f;       /* Head2 */
+    c[3] = w_joint(k, md, 8, v3(60.0f, -50.0f, 0)); r[3] = 130.0f;   /* LegL */
+    c[4] = w_joint(k, md, 9, v3(60.0f, -50.0f, 0)); r[4] = 130.0f;   /* LegR */
+    c[5] = vadd(k->pos, vmul(k->qy, 150.0f * s)); r[5] = 400.0f;    /* Punch */
+    for (int i = 0; i < 6; i++) r[i] *= s;
+}
+static int kc_down(const Kuribo *k) { return k->nrv == KC_BLOWDOWN || k->nrv == KC_BLOWDOWNLAND; }
+static int kc_kick(const Kuribo *k) /* isEnableKick: WalkerStateStagger::isEnableKick (mKickEnableStep 70) */
+{
+    return k->nrv == KC_STAGGER && !k->sdead && !(k->snrv == WS_STAGGER && k->sstep - 1 < 70);
+}
+static int kc_stagger(Kuribo *k, V3 from) /* requestStagger */
+{
+    if (kc_down(k)) return 0;
+    ws_stagger_punch(k, from); w_nrv(k, KC_STAGGER); ap_stagger(k);
+    return 1;
+}
+static int kc_blowdown(Kuribo *k, V3 from) /* requestBlowDown */
+{
+    if (kc_down(k)) return 0;
+    V3 h = vnorm(vtangent(vsub(k->pos, from), k->grav));
+    k->vel = vsub(vmul(h, 25.0f), vmul(k->grav, 35.0f)); /* setVelocityBlowAttack 25 / 35 */
+    if (vlen(vsub(mario->pos, k->pos)) < 1000.0f) scene_stop = 4; /* stopSceneForDefaultHit(4) */
+    w_nrv(k, KC_BLOWDOWN);
+    return 1;
+}
+static void kchief_kill(Kuribo *k)
+{
+    k->state = KURIBO_DEAD; row_kill(k->row); /* onSwitchDead */
+    V3 up = vmul(k->grav, -1.0f);
+    if (sc->objs[k->row].sw[SW_A] >= 0) okey_appear(k->row, k->pos); /* mKeySwitch->appearKeySwitch(mPosition) */
+    else if (k->item == 1) pop_coins(k->pos, up, 1);                  /* ItemGenerator: setTypeCoin(1) */
+    else if (k->item == 6) { drop_pieces(k->pos, up, 6); w_se(k, SE_OJ_STAR_PIECE_BURST); } /* setTypeStarPeace(6) */
+    printf("kuribo chief row %d killed\n", k->row);
+}
+static void kchief_update(Kuribo *k)
+{
+    if (!k->front.x && !k->front.y && !k->front.z) { /* init */
+        k->qy = v3(0, 1, 0); k->qz = v3(0, 0, 1); k->front = v3(0, 0, 1); /* _AC (0, 0, 0, 1), _BC (0, 0, 1) */
+        k->grav = vmul(up_at(k->pos, v3(0, 1, 0)), -1.0f);
+        k->tcenter = k->pos; k->item = 1; k->from = 1.0f; k->to = 0; k->phase = ASC_STOP; /* ItemGenerator: a coin */
+        w_nrv(k, KC_WANDER); k->step = 0;
+    }
+    k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f); /* onCalcGravity */
+    if (!k->bshow) { /* ponytail: it waits for its ground's collision (a zone streamed in low has none: it would fall) */
+        Hit h[4];
+        if (!kcl_query(vsub(k->pos, vmul(k->grav, 300.0f * w_scale(k))), 320.0f * w_scale(k), h, 4)) return;
+        k->bshow = 1;
+    }
+    int st = k->step;
+    switch (k->nrv) {
+    case KC_WANDER:
+        w_state(k, ap_wander);
+        ws_wander(k, KC_G1, 120, 300, 0.1f, 1.0f);
+        if (w_sight_fan(k, 1400.0f, 80.0f, 40.0f)) w_nrv(k, KC_FINDPLAYER); /* tryFind */
+        break;
+    case KC_FINDPLAYER:
+        w_state(k, ap_find);
+        ws_find(k, KC_G1, 35.0f, 2.0f, 56);
+        if (k->sdead) w_nrv(k, KC_CHASE);
+        else {
+            if (k->snrv == WF_JUMP && k->sstep == 1) w_se(k, SE_EM_KURIBOCHIEF_FIND);    /* isFindJumpBegin */
+            if (k->snrv == WF_JUMPEND && k->sstep == 1) w_se(k, SE_EM_KURIBOCHIEF_LAND); /* isLandStart */
+        }
+        break;
+    case KC_CHASE:
+        w_state(k, ap_chase);
+        ws_chase(k, KC_G1, 0.2f, 1400.0f, 80.0f, 40.0f);
+        if (k->sdead) { w_nrv(k, KC_WANDER); k->tcenter = k->pos; } /* setWanderCenter */
+        break;
+    case KC_STAGGER:
+        if (st == 0 && k->snrv != WS_STAGGER) ap_stagger(k);
+        ws_stagger(k, KC_G2, 240, 0.0f);
+        if (k->sdead) { w_nrv(k, KC_WANDER); break; }
+        if (k->snrv == WS_STAGGER && k->sstep == 2) { w_se(k, SE_EM_KURIBOCHIEF_BLOW); w_se(k, SE_PM_SPIN_HIT); } /* isStaggerStart, startBlowHitSound */
+        if (st == 27) w_se(k, SE_EM_KURIBOCHIEF_BOUND);                                            /* sBoundSoundStep */
+        if (k->snrv == WS_STAGGER && k->sstep - 1 >= 56) w_se_lv(k, SE_EM_LV_SWOON_S);              /* isSwooning(sSwoonSoundWait) */
+        if (k->snrv == WS_STAGGER && k->sstep - 1 >= 10 && k->sstep - 1 <= 105) {                   /* isSpinning(10, 105) */
+            float at[3] = {k->pos.x, k->pos.y, k->pos.z};
+            k->lv2[0] = se_level(SE_EM_LV_KURIBOCHIEF_STAGGER, at, k->lv2[0]);
+        }
+        if (k->snrv == WS_STAGGEREND && k->sstep == 1) w_se(k, SE_EM_KURIBOCHIEF_RECOVER);          /* isRecoverStart */
+        break;
+    case KC_BLOWDOWN:
+        if (st == 0) { w_act(k, "BlowDown"); w_se(k, SE_PM_SPIN_HIT); w_se(k, SE_EM_KURIBOCHIEF_BLOW); se_start(SE_SY_VS_BOSS_LAST_HIT, NULL); }
+        w_passive(k, KC_G1);
+        turn_on_plane(&k->front, vmul(k->vel, -1.0f), k->grav, cosf(30.0f * 0.0174533f)); /* turnDirectionDegree(-mVelocity, 30) */
+        if (st > 5 && k->on_ground) { w_nrv(k, KC_BLOWDOWNLAND); k->vel = v3(0, 0, 0); }
+        break;
+    case KC_BLOWDOWNLAND:
+        if (st == 0) { w_act(k, "BlowDownLand"); w_se(k, SE_EM_KURIBOCHIEF_BOUND_LAST); }
+        if (st > 0 && w_bck_stopped(k)) {
+            float m[16];
+            basis_matrix(m, k->pos, k->qy, k->qz, 0);
+            fx_named("KuriboChief", "Death", m, NULL, NULL);
+            w_se(k, SE_EM_KURIBOCHIEF_RUN);
+            kchief_kill(k);
+            return;
+        }
+        break;
+    }
+    k->step++;
+    k->act_t += k->act_rate;
+    asc_update(k, kc_asc); /* control(): mScaleController->updateNerve, blendQuatFromGroundAndFront */
+    w_blend_quat(k, w_up_ref(k), k->front, 0.05f, 0.5f);
+    w_bind(k, 300.0f * w_scale(k));
+    k->up = k->qy;
+    /* sensors */
+    V3 c[6]; float r[6];
+    kchief_sensors(k, c, r);
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    if (mario->spin_timer <= 0) k->lvt[0] = 0;
+    if (!kc_down(k) && !k->lvt[0] && mario->spin_timer > 0 && vlen(vsub(mc, c[5])) < r[5] + 120.0f && mario_touch(c[5], r[5])) { /* Punch: isMsgPlayerHitAll */
+        m_pad_vib(1);
+        k->lvt[0] = 1; /* (once a spin: MarioActor _954, the sensors its punch hit) */
+        if (kc_kick(k)) kc_blowdown(k, mario->pos);
+        else kc_stagger(k, mario->pos);
+        printf("kuribo chief row %d spun: nerve %d\n", k->row, k->nrv);
+        return;
+    }
+    int attack = k->nrv == KC_WANDER || k->nrv == KC_FINDPLAYER || k->nrv == KC_CHASE; /* isEnableAttack */
+    for (int i = 0; i < 5; i++) {
+        V3 d = vsub(mc, c[i]);
+        float l = vlen(d);
+        if (!mario_touch(c[i], r[i])) continue;
+        if (kc_kick(k) && mario_kick(c[i], r[i]) && kc_blowdown(k, mario->pos)) { /* sendBodyAttack: isMsgPlayerKick */
+            k->item = 6; /* setTypeStarPeace(6) */
+            mario_kicked();
+            printf("kuribo chief row %d kicked\n", k->row);
+            return;
+        }
+        if (player_mode == PM_INVINCIBLE) { if (kc_blowdown(k, mario->pos)) { m_pad_vib(2); return; } } /* isMsgInvincibleAttack */
+        int took = attack && !mario->hurt_timer && mario_attack(ATK_ENEMY, c[i]); /* sendMsgEnemyAttack */
+        V3 out = vtangent(d, mario->up);
+        float want = r[i] + HIT_BODY_R, lo = vlen(out);
+        if (!took && l < want && lo > 1e-3f) { /* sendMsgPush (and the velocity towards it killed) */
+            mario->pos = vadd(mario->pos, vmul(out, (want - l) / lo));
+            V3 n = vmul(out, 1.0f / lo);
+            if (vdot(mario->hvel, n) < 0) mario->hvel = vsub(mario->hvel, vmul(n, vdot(mario->hvel, n)));
+        }
+        break;
+    }
+}
+static int kchief_shot(Kuribo *k, V3 p) /* a star piece in one of its sensors but Punch: isMsgStarPieceReflect */
+{
+    V3 c[6]; float r[6];
+    kchief_sensors(k, c, r);
+    for (int i = 0; i < 5; i++)
+        if (vlen(vsub(p, c[i])) < r[i] + 30.0f) { asc_start(k, ASC_HIT); return 1; } /* startHitReaction */
+    return 0;
+}
+int game_test_kchief(int how) /* kchief test: the KuriboChief: Mario 1200 off its front (0), spinning by it (1), walking into it (2); its row */
+{
+    for (int i = 0; i < nkuribo; i++) {
+        Kuribo *k = &kuribo[i];
+        if (how == 4 || k->kind != WALK_KCHIEF || k->state == KURIBO_DEAD || !row_shown(k->row)) continue;
+        V3 up = vmul(k->grav, -1.0f), f = vnorm(vtangent(k->qz, up));
+        mario->up = up; mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        if (how == 0) mario->pos = vadd(k->pos, vmul(f, 1200.0f));
+        else if (how == 1) { mario->pos = vadd(k->pos, vmul(f, 350.0f)); mario->spin_timer = SPIN_TIME; }
+        else { mario->pos = vadd(k->pos, vmul(f, 330.0f)); mario->face = vmul(f, -1.0f); }
+        return k->row;
+    }
+    for (int i = 0; i < MAX_OKEYS; i++) /* its key out: Mario onto it */
+        if (how == 3 && okeys[i].on && okeys[i].nrv == OK_WAIT) { mario->pos = okeys[i].pos; mario->hvel = v3(0, 0, 0); return -3; }
+    int ty = scene_type(sc, "KuriboChief");
+    for (u32 i = 0; how == 4 && ty >= 0 && i < sc->nobjs; i++)
+        if ((int)sc->objs[i].type == ty && !row_dead[i]) {
+            V3 p = row_pos(&sc->objs[i]), up = up_at(p, mario->up);
+            mario->up = up; mario->pos = vadd(p, vmul(up, 600.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return -2;
+        }
+    return -1;
+}
+int game_test_ext(int how) /* kchief test: the ExterminationKuriboKeySwitch out (its SW_APPEAR on), Mario falling onto its ChildKuribo (0), onto its key (1), 600 over its place (2); the child's row */
+{
+    if (!nexts) return -1;
+    const Row *x = &sc->objs[exts[0].row];
+    if (x->sw[SW_APPEAR] >= 0 && !sw_on(x, SW_APPEAR)) sw_set(x, SW_APPEAR, 1);
+    for (int i = 0; how == 0 && i < nkuribo; i++) {
+        Kuribo *k = &kuribo[i];
+        if (k->state == KURIBO_DEAD || !row_shown(k->row) || strcmp(walker_cls(k), "ChildKuribo")) continue;
+        V3 up = vmul(k->grav, -1.0f);
+        if (vlen(up) < 0.5f) up = up_at(k->pos, mario->up);
+        mario->up = up; mario->hvel = v3(0, 0, 0);
+        mario->pos = vadd(k->pos, vmul(up, 260.0f)); mario->vup = -10.0f; mario->grounded = 0; mario->jumping = 1;
+        return k->row;
+    }
+    for (int i = 0; how == 1 && i < MAX_OKEYS; i++)
+        if (okeys[i].on && okeys[i].owner == exts[0].row && okeys[i].nrv == OK_WAIT) { mario->pos = okeys[i].pos; mario->hvel = v3(0, 0, 0); return -3; }
+    int ty = scene_type(sc, "ChildKuribo");
+    for (u32 i = 0; how == 2 && ty >= 0 && i < sc->nobjs; i++)
+        if ((int)sc->objs[i].type == ty && !row_dead[i]) {
+            V3 p = row_pos(&sc->objs[i]), up = up_at(p, mario->up);
+            mario->up = up; mario->pos = vadd(p, vmul(up, 600.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return -2;
+        }
+    return -1;
+}
+void game_test_no_demo(void) { if (dx.on) dx_end(); dx_nreq = 0; dx.req = -1; } /* tests: the scenario's demos ended at once (HeavensDoor 1's opening) */
+void game_test_watch(V3 at) /* tests: a camera 900 behind Mario and 500 up, on `at` */
+{
+    V3 up = mario->up, d = vtangent(vsub(at, mario->pos), up);
+    d = vlen(d) > 1e-3f ? vnorm(d) : mario->face;
+    camera_set_override(1, vadd(vsub(mario->pos, vmul(d, 900.0f)), vmul(up, 500.0f)), at, up, 45.0f);
+}
+void game_test_watch_kchief(void)
+{
+    for (int i = 0; i < nkuribo; i++)
+        if (kuribo[i].kind == WALK_KCHIEF && kuribo[i].state != KURIBO_DEAD && row_shown(kuribo[i].row)) { game_test_watch(kuribo[i].pos); return; }
+    for (int i = 0; i < MAX_OKEYS; i++) if (okeys[i].on) { game_test_watch(okeys[i].pos); return; }
+    game_test_watch(vadd(mario->pos, vmul(mario->face, 300.0f)));
+}
+int game_kchief_state(void)
+{
+    for (int i = 0; i < nkuribo; i++)
+        if (kuribo[i].kind == WALK_KCHIEF && kuribo[i].state != KURIBO_DEAD && row_shown(kuribo[i].row)) {
+            printf("kuribo chief row %d: nerve %d step %d / %d step %d, %.0f from Mario, ground %d at %.0f %.0f %.0f, scale %.3f\n", kuribo[i].row, kuribo[i].nrv, kuribo[i].step, kuribo[i].snrv,
+                   kuribo[i].sstep, vlen(vsub(mario->pos, kuribo[i].pos)), kuribo[i].on_ground, kuribo[i].pos.x, kuribo[i].pos.y, kuribo[i].pos.z, kuribo[i].from);
+            { Hit h[16]; V3 c = vsub(kuribo[i].pos, vmul(kuribo[i].grav, 300.0f)); printf("  grav %.2f %.2f %.2f vel %.1f %.1f %.1f hits300 %d hits600 %d mario %.0f %.0f %.0f\n", kuribo[i].grav.x, kuribo[i].grav.y, kuribo[i].grav.z, kuribo[i].vel.x, kuribo[i].vel.y, kuribo[i].vel.z, kcl_query(c, 300.0f, h, 16), kcl_query(c, 600.0f, h, 16), mario->pos.x, mario->pos.y, mario->pos.z); }
+            return kuribo[i].nrv;
+        }
+    for (int i = 0; i < MAX_OKEYS; i++)
+        if (okeys[i].on) printf("key switch of row %d: nerve %d step %d at %.0f %.0f %.0f\n", okeys[i].owner, okeys[i].nrv, okeys[i].step, okeys[i].pos.x, okeys[i].pos.y, okeys[i].pos.z);
+    return -1;
 }
 
 /* SpinHitController (start / execute): blown off at h from the hit's side and v up, gravity g a frame; its items
@@ -22904,10 +23318,12 @@ static void bg_blow(Kuribo *k, V3 from, float h, float v);
 static int bg_blown(const Kuribo *k);
 static int th_punch(Kuribo *k, V3 from);
 static int kb_blow(Kuribo *k, V3 from);
+static int kc_stagger(Kuribo *k, V3 from);
 static int walker_blow(Kuribo *e, V3 from)
 {
     if (e->kind == WALK_STRSPIDER) { if (ss_down(e)) return 0; ss_blow(e, from); return 1; } /* isMsgExplosionAttack: Blow */
     if (e->kind == WALK_BEGOSPIKE) { if (bg_blown(e)) return 0; bg_blow(e, from, 35.0f, 15.0f); return 1; } /* isMsgExplosionAttack: calcBlowReaction */
+    if (e->kind == WALK_KCHIEF) return kc_stagger(e, from); /* isMsgToEnemyAttackBlow / ShockWave: requestStagger */
     if (e->kind == WALK_PETARI) { /* receiveMsgEnemyAttack: isMsgToEnemyAttackBlow while solid */
         if (!petari_solid(e)) return 0;
         petari_blow(e, from, PT_SPINOUT);
@@ -22949,7 +23365,7 @@ static void walker_explosion(V3 from)
     explosion_breaks(from, 250.0f);
     for (int i = 0; i < nkuribo; i++) {
         Kuribo *e = &kuribo[i];
-        if (e->state == KURIBO_DEAD || !row_shown(e->row) || vlen(vsub(e->pos, from)) > 250.0f) continue;
+        if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_KCHIEF || vlen(vsub(e->pos, from)) > 250.0f) continue; /* (KuriboChief: no isMsgExplosionAttack) */
         walker_blow(e, from);
     }
 }
@@ -26500,6 +26916,7 @@ static void update_kuribo_one(Kuribo *k)
             else if (k->kind == WALK_BOMBHEI) bomb_update(k);
             else if (k->kind == WALK_STRSPIDER) strspider_update(k);
             else if (k->kind == WALK_BEGOSPIKE) begospike_update(k);
+            else if (k->kind == WALK_KCHIEF) kchief_update(k);
             return;
         }
         if (k->kind == WALK_PETARI) { /* ponytail: still while its zone has no collision (streaming) */
@@ -26714,7 +27131,7 @@ static void update_invincible(void)
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     for (int k = 0; k < nkuribo; k++) {
         Kuribo *e = &kuribo[k];
-        if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_BUTTERFLY || e->kind == WALK_STRSPIDER || e->kind == WALK_BEGOSPIKE ||
+        if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_BUTTERFLY || e->kind == WALK_STRSPIDER || e->kind == WALK_BEGOSPIKE || e->kind == WALK_KCHIEF ||
             vlen(vsub(c, vadd(e->pos, vmul(e->up, 60.0f)))) > 60.0f + HIT_BODY_R) continue;
         if (e->kind == WALK_PETARI) { if (petari_solid(e)) petari_blow(e, mario->pos, PT_KICKOUT); continue; }
         int took = walker_blow(e, mario->pos);
@@ -33604,7 +34021,9 @@ static void update_shots(void)
         int hit = 0;
         for (int k = 0; k < nkuribo && !hit; k++) {
             Kuribo *e = &kuribo[k];
-            if (e->state == KURIBO_DEAD || !row_shown(e->row) || vlen(vsub(s->pos, vadd(e->pos, vmul(e->up, 50.0f)))) > 90.0f) continue;
+            if (e->state == KURIBO_DEAD || !row_shown(e->row)) continue;
+            if (e->kind == WALK_KCHIEF) { if (kchief_shot(e, s->pos)) { hit = 1; printf("star piece hits kuribo chief row %d\n", e->row); } continue; }
+            if (vlen(vsub(s->pos, vadd(e->pos, vmul(e->up, 50.0f)))) > 90.0f) continue;
             hit = 1;
             if (e->kind == WALK_TAKOBO) { /* isMsgStarPieceAttack: StunStart (not while pressed / blown) */
                 if (e->nrv != TN_PRESS && e->nrv != TN_HITPUNCH) w_nrv(e, TN_STUNSTART);
@@ -39499,6 +39918,8 @@ void game_update(void)
     LQ(53, update_screws());
     LQ(54, update_candles());
     update_torches();
+    if (!demo_on) update_exts();
+    update_okeys();
     update_hanachans();
     spider_coins();
     LQ(55, update_fountains());
@@ -40386,7 +40807,7 @@ void game_draw(void)
                           kuribo[i].kind == WALK_TERESA ? m_teresa :
                           kuribo[i].kind == WALK_BUTTERFLY ? brk_model(kuribo[i].row, "Butterfly", 0) : kuribo[i].kind == WALK_STINKBUG ? m_stink :
                           kuribo[i].kind == WALK_UNIZO ? m_unizo[kuribo[i].dir] : kuribo[i].kind == WALK_POIHANA ? m_poihana : kuribo[i].kind == WALK_PETARI ? m_petari :
-                          kuribo[i].kind >= WALK_GESSO ? walker_new_model(kuribo[i].row) : m_kuribo;
+                          kuribo[i].kind >= WALK_GESSO ? walker_new_model(kuribo[i].row) : walker_new_model(kuribo[i].row) ? walker_new_model(kuribo[i].row) : m_kuribo; /* (ChildKuribo) */
         if (kuribo[i].state == KURIBO_DEAD || !md || !row_shown(kuribo[i].row)) continue;
         if (kuribo[i].kind == WALK_TERESA && kuribo[i].phase == 4) continue; /* hidden in a wall */
         if (kuribo[i].kind == WALK_PETARI && kuribo[i].phase) continue; /* hideModel */
@@ -40444,6 +40865,10 @@ void game_draw(void)
                     t[5] = cx; t[6] = sx; t[9] = -sx; t[10] = cx;
                     t[13] = 30.4f - (cx * 30.4f - sx * -2.2f); t[14] = -2.2f - (sx * 30.4f + cx * -2.2f);
                     mat_mul(tmp, m, t); memcpy(m, tmp, 64);
+                }
+                if (k->kind == WALK_KCHIEF) { /* setBaseScale(mScaleController->_C x mScale) */
+                    float sy = k->from, sx = sqrtf(1.0f / sy);
+                    for (int j = 0; j < 3; j++) { m[j] *= sx; m[4 + j] *= sy; m[8 + j] *= sx; }
                 }
                 draw_skin(md, m, a);
                 if (k->kind == WALK_TAKOHEI && a->skin && a->skin->njoints > 6) { /* its Mouth joint's (0, 20, 0): the ink's start */
@@ -40507,6 +40932,7 @@ void game_draw(void)
         if (!wvis) continue;
         render_model(md, m, kuribo[i].state == KURIBO_STUN ? 0x50 : 0x90, 0x50, 0x20);
     }
+    draw_okeys();
     PROF(3);
     {
         V3 du = mario->up, df = mario->face;

@@ -633,6 +633,20 @@ there needs the embedded blob and every pack rebuilt.
   SE_DM_ARRIVE_CASTLE_STAR). Also: the HUD hides in programmable demos too (startDemoSystem). ponytail: submitLevelSE / permitLevelSE; DemoPeachCastleGate's Dark_v_x vignette left out
   and its GateLight's edges solid (VU1 batches keep no vertex alpha: slice.py DROP_MATERIALS).
 
+- KuriboChief (feat/172-kuribochief, 2026-11-04): Enemy/KuriboChief.cpp as walker kind WALK_KCHIEF (its params,
+  sensors at its joints, Stagger 240 / kick from 70, BlowDown / BlowDownLand, the kick by walking into it, the star
+  piece scale reaction: AnimScaleController asc_*), KeySwitch.cpp's owner-made key (okeys: カギ出現 40 frames, Appear
+  bounce, Wait; slice.py KeySwitchOwned = the KeySwitch archive skinned for Rotation), ExterminationChecker.cpp's
+  ExterminationKuriboKeySwitch (exts: its zone's ChildKuribo, the key 30 frames after the last is down; now LOGIC, no
+  longer drawn as a Kuribo), ChildKuribo (Kuribo with no item, MODEL_ARC / ANIM_ARC Kuribo) and the 全滅用クリボー stomp
+  combo (m_combo: SE_SY_TRAMPLE_COMBO port 11, a 1-up from the 8th). Walker kit: ws_find takes mJumpStartStep, ws_stagger
+  mStaggerTime / mRotateRateDegree. Test `kchief` (HeavensDoorGalaxy/1, XF=-DPACKS_OVERLAY=wt-audit; -DKCHIEF_KICK the
+  kick): the opening demo ended at once, the camera on the chief: it finds and chases Mario (hurt), a spin staggers it,
+  a second blows it down: killed, its key bounces out and is taken; the ChildKuribo stomped, the checker's key taken.
+  ponytail: BindStarPointer (2P pointer), move limit collision, the camera register vector, the マリオ連続踏み counter,
+  OneUpBoard, ExterminationCheckerKuribo (the power star kind), tryAvoid. The chief waits until its ground's collision is
+  in (a zone streamed low has none; walkers' zone_kcl gate let it fall through). Repack: HeavensDoorGalaxy (slice.py).
+
 ## Next
 
 **In-engine demos (the user, 2026-10-17: "haz las dos cosas, primero los videos": the movies are done (3feb30f), now
