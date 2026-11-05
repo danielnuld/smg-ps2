@@ -181,6 +181,10 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
     Default / Stand / Dash ones' talk action Talk / TalkA / TalkB at random each loop. Seen: HeavenlyBeachGalaxy/1's
     diver every few seconds. Left: SwimTurtle's shell (RemovableTurtle), PenguinCoach's golden shell talk / star,
     PenguinStudent's school (talk branches and TakeOutStar not ported).
+  - #218 Caretaker's actions (arg0 -1 / 1 BWaitStand, else Wait / TalkNormal), BRK_ARG Penguin (ColorChange arg7) and
+    Tico (arg0): their colour models "<class>~<k>" (game_rebind_'s table). Caretaker's BodyColor BRK bakes to one colour
+    (the registers it drives are not baked), its tidy-up mission is not ported. Repack: every galaxy with Penguins or
+    Ticos (full repack).
 - mario2 (2026-11-04), #168 PlayerKick: mario_kick / mario_kicked (MarioActor::sendBodyAttack's ACTMES_KICK: his
   cylinder on the sensor, status none, not damaged, no hip drop, within 90 degrees of his front; ランニングキック, its
   voice, pad 2) taken by a staggering Kuribo (36 / 30, three star pieces) / KuriboMini (22 / 25, three), a swooning

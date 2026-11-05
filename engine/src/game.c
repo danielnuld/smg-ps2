@@ -2798,9 +2798,8 @@ static int npc_mode(const NpcTurn *t, const Row *r, NpcTurn *m)
     } else if (!strcmp(t->cls, "Penguin")) { /* mBehavior (arg0)
      * arg0 3 Dive, 4's jet sound, TalkA / TalkB: penguin_wait. ponytail (unmarked until the 2026-11-02 audit): 4 SwimTurtle's
      * shell (RemovableTurtle: taken within 450 or on a spin) not ported (Penguin.cpp:296-313); PenguinCoach has no golden shell check / star (PenguinCoach.cpp:139-185), PenguinStudent no code (its rail
-     * school, the KouraShine shell); the Penguin / Tico / TicoRail colour BRK frame by arg (Penguin arg7, Tico arg0) is
-     * not in slice.py BRK_ARG; Caretaker plays wait / turn / talk instead of BWaitStand (CareTaker.cpp:84-112), no
-     * BodyColor BRK nor Dirt BTK; Rabbit arg1 0 with a rail (escape: Wait / PreJump / Move / Goal) and the UpJump /
+     * school, the KouraShine shell); TicoRail's colour BRK by arg; Caretaker's BodyColor BRK at arg3 (its frames bake to one colour: the BRK drives registers tex.py does not bake) and Dirt BTK (frame 0), its
+     * tidy-up mission (arg0 0: CountDown, Tidy, BombTimer, TakeOutStar; CareTaker.cpp:113-546); Rabbit arg1 0 with a rail (escape: Wait / PreJump / Move / Goal) and the UpJump /
      * LongJump lectures (Rabbit.cpp:512-546) not ported */
         switch (r->arg[0]) {
         case 0: npc_set(m, "sitdown", NULL, "sitdowntalk", NULL); m->near = m->talk = 0; break; /* setMoveTalkNoTurnAction */
@@ -2809,6 +2808,10 @@ static int npc_mode(const NpcTurn *t, const Row *r, NpcTurn *m)
         case 3: npc_set(m, "swimwaitsurface", "swimwaitsurface", "swimwaitsurface", "swimwaitsurface"); break;
         case 4: npc_set(m, "swimturtletalk", "swimturtletalk", "swimturtletalk", "swimturtletalk"); break;
         }
+    } else if (!strcmp(t->cls, "Caretaker")) { /* Caretaker::init: arg0 -1 / 1 BWaitStand (move and turn), else Wait and
+                                                * TalkNormal (the tidy-up mission's: its nerves not ported) */
+        if (r->arg[0] == -1 || r->arg[0] == 1) { m->act[0] = m->act[1] = "bwaitstand"; }
+        else npc_set(m, "wait", "wait", "talknormal", "talknormal");
     } else if (!strcmp(t->cls, "HoneyBee")) { /* mArg0 (arg0): its InitAction (the others: update_bees) */
         switch (r->arg[0]) {
         case 1: case 2: case 6: case 8: case 9: return 0; /* JumpLecture, Fly, DropLecture, FlyLectureA / B: own nerves */
@@ -4801,10 +4804,15 @@ static void game_rebind_(void)
             continue;
         const char *name = s->types + 32 * r->type;
         const Model *md = scene_model(s, name);
-        if (!md && !strcmp(name, "TicoReading")) { /* slice.py BRK_ARG: ColorChange stopped at arg0 (NoInit: 0) */
-            char bn[40];
-            snprintf(bn, sizeof bn, "%s~%d", name, r->arg[0] >= 0 ? r->arg[0] : 0);
-            md = scene_model(s, bn);
+        if (!md) { /* slice.py BRK_ARG: its colour BRK stopped at an arg (NoInit: 0): TicoReading / Tico ColorChange arg0,
+                    * Penguin ColorChange arg7 */
+            static const struct { const char *cls; int arg; } ba[] = {{"TicoReading", 0}, {"Tico", 0}, {"Penguin", 7}};
+            for (unsigned k = 0; k < sizeof ba / sizeof ba[0]; k++)
+                if (!strcmp(name, ba[k].cls)) {
+                    char bn[40];
+                    snprintf(bn, sizeof bn, "%s~%d", name, r->arg[ba[k].arg] >= 0 ? r->arg[ba[k].arg] : 0);
+                    md = scene_model(s, bn);
+                }
         }
         if (!md || (row_dead && !row_shown(i) && strcmp(name, "Plant"))) continue; /* Plant: its seed (a PartsModel) stays */
         if (row_step && (r->arg[2] == 1 || r->arg[2] == 2) && !row_step[i] && strcmp(name, "EarthenPipe") == 0)
