@@ -813,6 +813,21 @@ there needs the embedded blob and every pack rebuilt.
   Packs: slice.py EXTRA BossBegoman (its head, the followers' models), SKINNED_OBJ BossBegomanHead, declare_stars
   BossBegoman. ponytail: the head's BRKs, ROT_NEEDLE's volume, overlayWithPreviousScreen, the boss's
   sendMsgEnemyAttack to walkers other than Begomans.
+- TripodBoss (feat/246-tripod-boss, 2026-11-05): Megaleg after Petari in engine/src/tripod_boss.inc (#included by game.c,
+  tb_*): TripodBoss's nerves, its 22 bones (body + per leg IKJoint root / middle / end and their separated axes),
+  TripodBossLeg's nerves (Up, MoveToLandingPos, StampSign, Landing on the MovableArea sphere, LeaveOut under a pressed
+  Mario), body weighting, step points / sequences / TripodBossStepStartAreas, every part on bone * inverse(its
+  TripodBossBaseJointPosition) (FixParts, RotateParts, Core, Shell, the KillerGenerater singles), the followed gravities
+  (records moved each frame, gravity_reset) and switch cubes (area_inside takes Mario back to their design place:
+  tb_unfollow) by slice.py's new FOLW chunk (Obj_ID), hidden until SW_A / near (the low model far off), the 開始 demo
+  (StartDemo BCK on TripodBoss.bdl's Body / legs joints, its CANM, siren, MBGM_BOSS_02_A), the KillerGenerater(Circle)
+  cannons with their HomingKillers, shell / core / guard wall (ダメージ demo, 2ndDemo camera, star pieces, 02_B), the 破壊
+  demo (EndDemo, BreakDown, Explosion), the grand star (GrandStar now an ITEM_STAR, declared). Test: plain build,
+  XF="-DTB_TEST", TriLegLv1Galaxy/1 (D:/smg-ps2-wt/audit-tb.sh): seen the opening demo (740 frames), the steps of
+  sequence 2 / 0, the body with its cage shell, Mario on its top. ponytail: the killers / shell / core / wall / end
+  path not yet seen in PCSX2 (the test's Mario never got within an under cannon's 1200), TripodBossBreakMovement,
+  CameraTripodBoss*, leg shadows, DummyDisplayModel, KinokoOneUp, cannon clips, wall part collision (tripod_boss.inc
+  header).
 - BossKameck (feat/kameck, 2026-11-05): Kamella after Petari (game.c bk_*, its sequencer Vs1 / Vs2, BattleDemo,
   StateBattle's 12 nerves, MoveRail, BattlePattarn) in StarDustGalaxy 2's ThrowTutorialZone: dead until SW_A (the
   SwitchCube), カメック登場Vs1 (the DemoBossKameckStart anim camera on BossKameckBattleDemo, MBGM_BOSS_04, Mario

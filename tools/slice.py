@@ -85,6 +85,7 @@ SKINNED_OBJ += tuple(c for c in WAIT_SKINNED if c not in SKINNED_OBJ)
 SKINNED_OBJ += ("BossBegomanHead", "ChildKameck", "BkDemo")  # BkDemo: BossKameckBattleDemo (its clip names fit 31);  # BossBegoman's PartsModel (its own clips: On, Off, Turn...)
 SKINNED_OBJ += ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp")  # TicoShop: NPCData TicoShopItem goods on StarPieceR / StarPieceL (Shake)
 SKINNED_OBJ += ("TicoFatGoodsStarPiece",)  # TicoFat: NPCData TicoFatItem goods on StarPieceL / StarPieceR (TicoFatGoodsStarPiece / ..Far clips)
+SKINNED_OBJ += ("TripodBoss", "TripodBossGuardWall")  # TripodBoss: its StartDemo / EndDemo joints (Body, legs); the guard wall's 2ndDemo
 SKINNED_OBJ += ("HoneyQueenWing",)  # HoneyQueen::init: createModelObjNpc 羽 on its Center joint, startBck / startBtk HoneyQueenWing
 # MapObjActor::initialize (tryStartAllAnim): a placed class whose model archive holds a BCK of the archive's name
 # plays it from the start; such classes are drawn skinned too (AUTO_SKINNED, class -> archive, filled by placement)
@@ -125,14 +126,14 @@ OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup
              "RailCoin", "SuperSpinDriver", "StarPieceGroup", "StarPieceFlow")
 # classes whose first NameObjFactory archive is not their model (OtaKing's is FireBall, Tico's TicoBaby): the model
 # camera animations baked for a class from another archive: class -> (CANM name prefix, archive)
-CANM_ARC = {"GrandStarReturnDemoStarter": ("gsr", "DemoAstroReturn"),
+CANM_ARC = {"GrandStarReturnDemoStarter": ("gsr", "DemoAstroReturn"), "TripodBoss": ("tripodboss", "TripodBoss"), "TripodBossGuardWall": ("tbwall", "TriPodBossGuardWall"),
             "AstroDomeDemoStarter": ("adds", "AstroDomeDemoCamera"),  # initAnimCamera "AstroDomeDemoCamera.arc"  # initAnimCamera "DemoAstroReturn.arc"
             # PrologueDirector: initAnimCamera on its ModelObjs 背景書割 ("DemoLetter") and マリオの経路 ("DemoPeachCastleGate")
             "PrologueDirector": ("prologue", ("DemoLetter", "DemoPeachCastleGate")),
             "BossStinkBug": ("bsbdemo", "BossStinkBugDemo"),
             "BossKameck": ("bkdemo", "BossKameckBattleDemo"), "BossKameck2": ("bkdemo", "BossKameckBattleDemo")}  # BossKameckDemoPosition: initAnimCamera on BossKameckBattleDemo  # its DemoPositionControllers: initAnimCamera on BossStinkBugDemo
 MODEL_ARC = {"Koura~0": "Koura~koura:0", "Koura~1": "Koura~koura:1",  # NokonokoLand's JetTurtle: becomeSlowType / becomeFastType (Koura BRK frame 0 / 1)
-             "KeySwitchOwned": "KeySwitch", "ChildKameck": "Kameck", "BkDemo": "BossKameckBattleDemo", "ChildKuribo": "Kuribo", "LuigiEvent": "LuigiNPC", "TicoDomeLecture": "Tico", "PStar": "PowerStar", "GStar": "GrandStar", "OtaKing": "OtaKing", "KoopaJr": "KoopaJr", "Tico": "Tico", "Plant": "PlantSeed",
+             "KeySwitchOwned": "KeySwitch", "TripodBossKillerGenerater": "TripodBossKillerCannon", "TripodBossUpperKillerCannon": "TripodBossKillerCannon", "TripodBossUnderKillerCannon": "TripodBossKillerCannon", "TripodBossBottomKillerCannon": "TripodBossKillerCannon", "ChildKameck": "Kameck", "BkDemo": "BossKameckBattleDemo", "ChildKuribo": "Kuribo", "LuigiEvent": "LuigiNPC", "TicoDomeLecture": "Tico", "PStar": "PowerStar", "GStar": "GrandStar", "OtaKing": "OtaKing", "KoopaJr": "KoopaJr", "Tico": "Tico", "Plant": "PlantSeed",
              # the Gateway intro (HeavensDoorGalaxy 1): RunawayRabbitCollect's children, DemoRabbit, the baby Lumas; the
              # rabbits' TrickRabbitBaby and the RunawayTico's TicoBaby are their EXTRA (by arg / cast id)
              "RunawayRabbit": "TrickRabbit", "DemoRabbit": "TrickRabbit", "RunawayTico": "Tico", "TicoBaby": "TicoBaby",
@@ -173,7 +174,7 @@ def sky_sea(b, mat3, m):
 # (FlipPanel: "?" at rest, "!" once flipped, the End face when its group is complete)
 # KuriboChief / ExterminationChecker::initKeySwitch: their own KeySwitch (game.c okeys; KeySwitchOwned: the KeySwitch
 # archive skinned for its Rotation, the placed KeySwitch rows untouched)
-EXTRA = {"NokonokoLand": ("Koura~0", "Koura~1"), "Creeper": ("CreeperFlower", "CreeperLeaf"), "HoneyQueen": ("HoneyQueenWing",), "TicoFat": ("TicoFatGoodsStarPiece",), "TicoShop": ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp"), "ShellfishYellowChip": ("YellowChip",), "BossKameck": ("BkDemo", "BossKameckFireBall", "Koura"), "BossKameck2": ("BkDemo", "BossKameckFireBall", "Koura"), "FireBallBeamKameck": ("BossKameckFireBall",), "BreakableTrash": ("BreakableCageBreak",), "KuriboChief": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
+EXTRA = {"NokonokoLand": ("Koura~0", "Koura~1"), "Creeper": ("CreeperFlower", "CreeperLeaf"), "TripodBoss": ("TripodBossLow", "HomingKiller"), "HoneyQueen": ("HoneyQueenWing",), "TicoFat": ("TicoFatGoodsStarPiece",), "TicoShop": ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp"), "ShellfishYellowChip": ("YellowChip",), "BossKameck": ("BkDemo", "BossKameckFireBall", "Koura"), "BossKameck2": ("BkDemo", "BossKameckFireBall", "Koura"), "FireBallBeamKameck": ("BossKameckFireBall",), "BreakableTrash": ("BreakableCageBreak",), "KuriboChief": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
          "Rosetta": ("LightDome", "DomeHalo"),  # RosettaDemoHeavensDoor1's parts (ライトドーム, ライト後光)
          "StarReturnDemoStarter": ("PStar", "GStar", "SpinTico", "MarioHair"), "GrandStarReturnDemoStarter": ("GStar",), "FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
@@ -244,7 +245,7 @@ KCL_PARTS = {"PhantomShipBridge": {"move.kcl": "Move"}, "DarknessRoomDoorA": {"o
 # the joint a MapObjActor's own collision follows (SKIN pad 1: game.c Inst.kmove), "Move" unless named here
 COLL_JOINT = {"Shellfish": "Lid"}  # initCollisionPartsAutoEqualScaleOne "Hi" on getJointMtx(Lid)
 HOME_POS = "\u5408\u4f53\u30d6\u30ed\u30c3\u30af\u6545\u90f7\u70b9"  # 合体ブロック故郷点: AssemblyBlock's home (Petari sReturnPosName)
-LOGIC = ("TimerSwitch", "BossKameckMoveRail", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
+LOGIC = ("TimerSwitch", "BossKameckMoveRail", "TripodBossBaseJointPosition", "TripodBossStepPoint", "TripodBossStepStartArea", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
          "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "DeathCube", "DeathSphere",
          "DeathCylinder", "RestartCube", "StarPieceSpot", "WaterCube", "WaterSphere", "WaterCylinder",
          "AstroChangeStageCube", "MovieStarter", "RunawayRabbitCollect", "PhantomTorch", "PhantomBonfire", "Hanachan",
@@ -295,6 +296,7 @@ def rows(b):
     camset = int_or(b, "CameraSetId", n, -1)
     mid = int_or(b, "MessageId", n, -1)
     demo, cast = int_or(b, "DemoGroupId", n, -1), int_or(b, "CastId", n, -1)  # DemoDirector::registerDemoCast
+    oid = int_or(b, "Obj_ID", n, -1)  # JMapLinkInfo::setLinkInfo: the objinfo l_id it follows (BaseMatrixFollower)
     out = []
     for i in range(n):
         out.append(dict(name=names[i], l_id=lid[i], path=path[i], camset=camset[i], pos=[fl[f][i] for f in ROW_FIELDS[:3]],
@@ -303,7 +305,7 @@ def rows(b):
                         distant=(float_column(b, "Distant") or [None] * n)[i],
                         priority=int_or(b, "Priority", n, 0)[i], inverse=int_or(b, "Inverse", n, 0)[i],
                         gtype=(B.bcsv_column(b, "Gravity_type") or ["Normal"] * n)[i],
-                        sw=[sw[f][i] for f in SW_FIELDS], group=group[i], mid=mid[i], demo=demo[i], cast=cast[i],
+                        sw=[sw[f][i] for f in SW_FIELDS], group=group[i], mid=mid[i], demo=demo[i], cast=cast[i], oid=oid[i],
                         cls=names[i]))
     return out
 
@@ -1715,7 +1717,7 @@ def declare_stars(keep, scenario, appear, jp):
         k = STAR_DECLARERS.get(r["name"], -1)
         if r["name"] == "NoteFairy":  # declarePowerStar when arg7 is 1-3
             k = None if s32(r["args"][7]) > 0 else -1
-        elif r["name"] in ("CollectTico", "DinoPackun", "OtaKing", "BossStinkBug", "BossBegoman", "BossKameck", "BossKameck2", "StinkBugParent"):  # their init declarePowerStar, always
+        elif r["name"] in ("CollectTico", "DinoPackun", "OtaKing", "BossStinkBug", "BossBegoman", "BossKameck", "BossKameck2", "StinkBugParent", "TripodBoss"):  # their init declarePowerStar, always
             k = None
         elif r["name"] in ("LuigiNPC", "LuigiEvent"):  # LuigiNPC::isDeclarePowerStarType: Afraid, Event, OnTree, Arrested
             t = s32(r["args"][0]) + (2 if r["name"] == "LuigiEvent" else 0)
@@ -1734,7 +1736,7 @@ def declare_stars(keep, scenario, appear, jp):
         marks.append((scenario, -2))
     for sid, i in marks:
         for r in keep:
-            if r["name"] == "PowerStar" and s32(r["args"][0]) == sid:
+            if r["name"] in ("PowerStar", "GrandStar") and s32(r["args"][0]) == sid:  # GrandStar: a PowerStar (NameObjFactory)
                 r["args"] = r["args"][:7] + [i]
 
 
@@ -1805,6 +1807,11 @@ def placement(fs, galaxy, scenario):
     wire = []
     grav = [g for g in (grav_record(o, paths, wire, i) for i, o in enumerate(keep)) if g]
     out.append(chunk(b"GRAV", struct.pack("<I", len(grav)) + b"".join(grav) + struct.pack(f"<{len(wire)}f", *wire)))
+    # FOLW: (row, the l_id of the objinfo row it follows) for the planet / area rows with an Obj_ID (BaseMatrixFollower:
+    # TripodBoss's gravities and switch cubes on its TripodBossBaseJointPositions; game.c tb_*)
+    fol = [(i, o["oid"]) for i, o in enumerate(keep) if 0 <= o.get("oid", -1) < 0x8000 and ("Gravity" in o["name"] or o["name"] in ("SwitchCube", "SwitchArea"))]
+    if fol:
+        out.append(chunk(b"FOLW", struct.pack(f"<I{2 * len(fol)}h", len(fol), *[x for f in fol for x in f])))
     out.append(chunk(b"ZPAR", struct.pack(f"<I{len(zones)}i", len(zones),
                                           *[-1 if i == 0 else up_ids.get(i, 0) for i in range(len(zones))])))
     jp2en = dict(zip(B.bcsv_column(names, "jp_name"), B.bcsv_column(names, "en_name")))
