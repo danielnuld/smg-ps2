@@ -993,8 +993,8 @@ static void zone_grow(const Inst *in);
  * switch). Returns 1 (spin or hip drop), 2 (hip drop only), 3 (hit from below) or 0 for anything else. ponytail:
  * a timer block gives everything on its first hit. CrystalCageL takes 2 hits 20 frames apart (its star: star_pos);
  * BreakableCage(Rotate / L) breaks on a spin too (ponytail: in SMG only what Mario rides or throws breaks it)
- * ponytail (unmarked until the 2026-11-02 audit): PunchBox: its SW_A kill should give 1 star piece silently
- * (PunchBox.cpp:167-195: no break effect / SE), a hit hides it at step 5 and pops coins at 15. WoodBox: arg1
+ * PunchBox: a spin (not standing on it) or a shell: Break, hidden at step 5, its coins at 15; its SW_A: one star piece,
+ * its burst. ponytail (unmarked until the 2026-11-02 audit): WoodBox: arg1
  * respawn, arg3 riddle SE, arg4 1-up, arg7 power star and enemy attacks unread (WoodBox.cpp:43-110, 202-262), its
  * dead switch at the hit instead of step 15. CrystalCageL: no cracked BVA frame, wobble (RumbleCalculator 4 / 50 /
  * 0x14) nor REFLECT on the first hit, a Break effect it does not have (CrystalCage.cpp:190-345) */
@@ -1119,7 +1119,7 @@ static int piece_next;
 static const Model *m_pieces[PIECE_COLOURS];
 static int piece_colour_next(void) { int k = piece_next; piece_next = (piece_next + 1) % PIECE_COLOURS; return k; }
 #define MAX_WRECKS 16           /* break models / broken objects left (break_inst, update_wrecks) */
-static struct { const Model *brk, *left; const char *bname; float m[16]; int t, coins, pieces, row; V3 p, up; } wrecks[MAX_WRECKS];
+static struct { const Model *brk, *left; const char *bname; float m[16]; int t, coins, pieces, row, hide; V3 p, up; } wrecks[MAX_WRECKS]; /* hide: its left model gone at that t (0 never) */
 static int nwrecks;
 /* Coins popping out of what broke (Petari CoinHolder::appearCoinPop, Coin::exeMove): 25 against gravity plus up to 4
  * at random, gravity 1, 0.75 rebound off the ground (impacts of 2 and more), 0.9 / 0.995 damping on the ground / in
@@ -28916,6 +28916,7 @@ static void update_wrecks(void)
     for (int i = 0; i < nwrecks; i++) {
         if (wrecks[i].t < 0) continue;
         if (++wrecks[i].t == 16) { /* exeHit step 15 */
+            if (wrecks[i].coins || wrecks[i].pieces) printf("wreck row %d: %d coins, %d star pieces out%c", wrecks[i].row, wrecks[i].coins, wrecks[i].pieces, 10);
             pop_coins(wrecks[i].p, wrecks[i].up, wrecks[i].coins);
             drop_pieces(wrecks[i].p, wrecks[i].up, wrecks[i].pieces);
         }
@@ -28985,7 +28986,7 @@ static void break_inst(const Inst *in, int drops)
         se_start(SE_OJ_IRON_CAGE_BREAK, &p.x);
         typeof(&wrecks[0]) w = &wrecks[nwrecks++];
         memcpy(w->m, in->m, 64);
-        w->bname = "BreakableCageBreak"; w->brk = scene_model(sc, w->bname); w->left = NULL;
+        w->bname = "BreakableCageBreak"; w->brk = scene_model(sc, w->bname); w->left = NULL; w->hide = 0;
         w->t = 0; w->row = in->row; w->p = p; w->up = up; w->coins = w->pieces = 0;
         if (r->sw[SW_DEAD] >= 0) sw_set(r, SW_DEAD, 1);
         if (vlen(vsub(mario->pos, p)) < 1500.0f) scene_stop = 6;
@@ -28993,12 +28994,24 @@ static void break_inst(const Inst *in, int drops)
         printf("%s %d broken%c", name, in->row, 10);
         return;
     }
+    if (!strcmp(name, "PunchBox") && nwrecks < MAX_WRECKS) { /* doHit: collision off, Break / BreakWater; exeHit: hidden at
+        * step 5, its arg0 coins popped at 15, dead (a wreck of its own model, hide 5) */
+        float depth;
+        typeof(&wrecks[0]) w = &wrecks[nwrecks++];
+        memcpy(w->m, in->m, 64);
+        w->bname = NULL; w->brk = NULL; w->left = in->md; w->hide = 6;
+        w->t = 0; w->row = in->row; w->p = p; w->up = up; w->coins = n; w->pieces = 0;
+        fx_named(name, in_water(p, up, &depth) ? "BreakWater" : "Break", in->m, NULL, NULL);
+        row_kill(in->row);
+        printf("%s %d hit, %d coins at step 15\n", name, in->row, n);
+        return;
+    }
     if ((box || cage || statue) && nwrecks < MAX_WRECKS) {
         char v[48];
         snprintf(v, sizeof v, "%s#%s", name, statue ? "Break" : name);
         typeof(&wrecks[0]) w = &wrecks[nwrecks++];
         memcpy(w->m, in->m, 64);
-        w->bname = box ? "WoodBoxBreak" : statue ? "KoopaStatueBreak" : "CrystalCageSBreak";
+        w->bname = box ? "WoodBoxBreak" : statue ? "KoopaStatueBreak" : "CrystalCageSBreak"; w->hide = 0;
         w->brk = scene_model(sc, w->bname);
         w->left = statue || (box ? r->arg[1] != 0 : r->arg[0] != 1) ? scene_model(sc, v) : NULL;
         w->t = 0; w->row = in->row; w->p = p; w->up = up;
@@ -29115,6 +29128,8 @@ static void break_boxes(void)
         if (!in->breaks || in->breaks >= 3) continue;
         V3 p = v3(in->m[12], in->m[13], in->m[14]);
         if (hip_hit ? i != hip_inst : in->breaks == 2 || vlen(vsub(c, p)) > in->reach + 120.0f) continue;
+        if (!strcmp(sc->types + 32 * sc->objs[in->row].type, "PunchBox") && (hip_hit || mario_ground == i)) continue; /* receiveMsgPlayerAttack:
+            * a hip drop only with _8C (never set), HitAll not while he is on its body */
         unsigned short *hit = &row_step[in->row]; /* CrystalCageL: 0x8000 hit once, low bits frames until the next */
         if (strcmp(sc->types + 32 * sc->objs[in->row].type, "CrystalCageL") == 0 && !(*hit & 0x8000)) {
             *hit = 0x8000 | (SPIN_TIME + 20);
@@ -34348,7 +34363,13 @@ static void update_switches(void)
                 strncmp(sc->types + 32 * r->type, "Breakable", 9) != 0) /* BreakableCage writes its SW_A */
             {
                 if (!strncmp(sc->types + 32 * r->type, "CrystalCage", 11)) pad_rumble(RUMBLE_STRONG); /* forceBreak */
-                break_inst(&insts[i], strcmp(sc->types + 32 * r->type, "PunchBox") != 0);
+                if (!strcmp(sc->types + 32 * r->type, "PunchBox")) { /* PunchBox::kill: one star piece, its burst, gone */
+                    V3 p = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]);
+                    drop_pieces(p, up_at(p, mario->up), 1); se_start(SE_OJ_STAR_PIECE_BURST, &p.x);
+                    row_kill(insts[i].row);
+                    continue;
+                }
+                break_inst(&insts[i], 1);
             }
         }
         game_rebind();
@@ -45568,7 +45589,7 @@ void game_draw(void)
     adds_draw();
     for (int i = 0; i < nwrecks; i++) { /* wrecks: the break model's clip until it stops, the broken object for good */
         typeof(&wrecks[0]) w = &wrecks[i];
-        if (w->left) render_model(w->left, w->m, 0x80, 0x80, 0x80);
+        if (w->left && !(w->hide && (w->t < 0 || w->t >= w->hide))) render_model(w->left, w->m, 0x80, 0x80, 0x80);
         if (w->t < 0 || !w->brk) continue;
         if (!w->brk->skin) { if (w->t > 60) w->t = -1; else render_model(w->brk, w->m, 0x80, 0x80, 0x80); continue; }
         Anim *ba = obj_anim((int)sc->nobjs * 3 + i, w->brk, w->bname);

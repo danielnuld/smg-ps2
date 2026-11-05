@@ -365,6 +365,10 @@ Second console round (2026-10-24), from Daniel's report:
   StinkBugParent#Switch) on its base matrix. blob.c: a zone blob no longer clears the scene's GPOS (findNamePos was
   empty once a zone loaded). Test: `sbp` (HoneyBeeKingdom 2, overlay packs). ponytail: no BRK colours, no
   overlayWithPreviousScreen. Repack: slice_all.py HoneyBeeKingdomGalaxy.
+- PunchBox (fix/states-boxes, 2026-11-05): PunchBox.cpp's doHit / Hit (Break / BreakWater, hidden at step 5, its
+  arg0 coins at 15: a wreck of its own model), no hip drop break (_8C never set), no spin break while Mario stands on
+  it, its SW_A kill one star piece with its burst. Test `box` (FlipPanelEx 1): the coin now pops 15 frames later
+  (logged `wreck row ...`), Mario has moved on (the test no longer takes it). WoodBox / CrystalCageL still open.
 ## Rules
 
 - Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -
