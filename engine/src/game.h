@@ -96,6 +96,7 @@ int game_test_ota(void);
 int game_test_fat(void);
 void game_test_fat_nodrop(void);
 int game_test_dino(void);
+int game_test_bsb(void);
 int game_test_bubble(void);
 int game_test_fire(int phase);
 int game_test_bee(int phase);

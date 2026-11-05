@@ -1953,6 +1953,13 @@ int main(void)
             if (frame % 100 == 0) printf("ota test f %u: %d, stars %d\n", frame, st, game_stars());
         }
 #endif
+#ifdef BSB_TEST
+        if (frame >= 150 && frame % 10 == 0) { /* BossStinkBug: started, hip dropped whenever a hit is open, until its star */
+            int st = game_test_bsb();
+            if (st >= 800) st = 8000 + game_test_cage(1); /* on its star */
+            if (frame % 100 == 0) printf("bsb test f %u: %d, stars %d\n", frame, st, game_stars());
+        }
+#endif
 #if defined(DINO_TEST) && !defined(TEASER)
         if (frame >= 150 && frame % 20 == 0) { /* Mario at DinoPackun's tail ball, spinning, until its star is out */
             int st = game_test_dino();
