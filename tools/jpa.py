@@ -479,7 +479,7 @@ def flare(fs, out_tex):
 NAMED = ("KillerGunnerSingle", "TripodBoss", "TripodBossCore", "ItemBubble", "DinoPackunBall", "Mario", "Dossun", "Onimasu", "LavaStrangeRock",
          "LavaStrangeRockL", "LavaStrangeRockTable", "MogucchiHill", "PalmIsland", "KabokuriFire", "LotusLeaf", "ElectricBall",
          "MorphItemObj", "WaterColumn", "PhantomTorch", "PhantomBonfire", "ShockWaveGenerator", "DriftWood", "BossKameckBeam", "BossKameckFireBall",
-         "AirBubble", "FireBarBall", "KoopaJrShipCannonShell", "IronCannonLauncherPoint", "TreasureSpot", "CoinFlower", "CocoNut")  # (WaterColumn: MarioActor::emitEffectWaterColumn)  # MorphItemObjNeo's effect group (initEffectKeeper "MorphItemObj")
+         "AirBubble", "FireBarBall", "KoopaJrShipCannonShell", "IronCannonLauncherPoint", "TreasureSpot", "CoinFlower", "CocoNut", "SpiderThreadAttachPoint", "TombSpider", "TombSpiderGland", "TombSpiderPlanet")  # (WaterColumn: MarioActor::emitEffectWaterColumn)  # MorphItemObjNeo's effect group (initEffectKeeper "MorphItemObj")
 NAMED_ONLY = {"Mario": ("SpinLight", "SpinLightBurst", "Invincible", "Ice", "Metamorphosis", "MetamorphosisEnd", "GetAgain", "WaterBound",
                         "SkateL", "SkateR", "IceJumpLand", "IceMarioSpinLight", "FooMarioHandGlowL", "FooMarioHandGlowR",
                         "FooMarioBrakeLampL", "FooMarioBrakeLampR", "FooMarioEndL", "FooMarioEndR",
@@ -490,7 +490,8 @@ NAMED_ONLY = {"Mario": ("SpinLight", "SpinLightBurst", "Invincible", "Ice", "Met
                         "HipDropSand", "HipDropSnow", "Hovering", "HoveringWater", "WaterSpin", "FlowerSpin", "SandSpin",
                         "SnowSpin", "StageStartGroundSmoke", "StageStartGroundSand", "WaterRipple",
                         # decide(Squat)WalkAnimation: 水はね右 / 左 / 右弱 / 左弱
-                        "WaterSplashRight", "WaterSplashLeft", "WaterSplashSRight", "WaterSplashSLeft", "SlipUp")}  # 無敵中 アイス中 変身 変身解除 アイテム再ゲット  # of a big group only the rows the engine plays
+                        "WaterSplashRight", "WaterSplashLeft", "WaterSplashSRight", "WaterSplashSLeft", "SlipUp",
+                        "SpaceCocoonBlur")}  # SlingShooter::tryRelease  # 無敵中 アイス中 変身 変身解除 アイテム再ゲット  # of a big group only the rows the engine plays
 # MarioActor::initEffect's registerEffect groups: a particle by its own name (not an AutoEffectList row) on a host
 # matrix, as fx_named rows (group, particle, joint: its getRealMtx host, "" the actor)
 REGISTERED = {"Mario": (("雪煙レベル", "CrestGetFlyC", "FootR"),)}

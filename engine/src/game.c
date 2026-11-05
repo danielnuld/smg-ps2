@@ -701,6 +701,9 @@ static int kmj_carry(void);
 static int m_carry_jet(void) { return (jet.inst >= 0 && jet.phase == 1) || kmj_carry(); } /* MarioActor _468 / getCarrySensor */
 static struct { int inst, phase, t, spins; } flf = {.inst = -1}; /* the Fluff Mario rides (fluff_update) */
 static struct { int inst, phase, t, wait; V3 vel; } coc = {.inst = -1, .wait = -1}; /* SpaceCocoon Mario hangs on (cocoon_update) */
+static int sls_pad = -1;  /* the SpiderAttachPoint (SlingShooter) in its pointer command stream (mPadChannel 0), -1 none */
+static int sls_ride = -1; /* the SpiderAttachPoint Mario is bound to (its mRider), -1 none */
+static int sls_try(Player *m), sls_hold(Player *m);
 typedef struct { V3 pos, vel; int t, col; } Shot; /* star pieces shot at the pointer (update_shots); col: piece_col */
 #define MAX_SHOTS 8
 static Shot shots[MAX_SHOTS];
@@ -834,7 +837,61 @@ static const Model *m_bk, *m_bkdemo, *m_koura, *m_kfire;
 static int bsb_demo(void);
 static void bk_init(const Scene *s, const unsigned char *blob);
 static int bk_demo(void);
+enum { TN_WAITPLAYER, TN_GATEOPEN, TN_COCOON, TN_COCOONBREAK, TN_1STSTART, TN_1STJUMP, TN_ACTION1ST, TN_1STEND, TN_2NDSTART,
+       TN_ACTION2ND, TN_DEATH, TN_WAITDEMO, TN_END };
+static const char *const tn_name[] = {"WaitPlayer", "DemoGateOpen", "ActionCocoon", "DemoCocoonBreak", "DemoBattle1stStart",
+                                      "DemoBattle1stStartJumpToPlayer", "Action1st", "DemoBattle1stEnd", "DemoBattle2ndStart",
+                                      "Action2nd", "DemoDeath", "WaitDemo", "End"};
+enum { TA_WAIT, TA_ATTACKSTART, TA_ATTACKLOOP, TA_ATTACKEND, TA_DAMAGEEYE, TA_DAMAGEHIP, TA_DAMAGEGLAND, TA_SWOON,
+       TA_CHANCESTART, TA_CHANCEWAIT, TA_CHANCEDAMAGE, TA_CHANCEDAMAGELAST, TA_CHANCEEND, TA_WAITDEMO, TA_COCOONWAIT, TA_COCOONBREAK };
+static const char *const ta_name[] = {"Wait", "AttackStart", "AttackLoop", "AttackEnd", "DamageEye", "DamageHip", "DamageGland",
+                                      "Swoon", "ChanceStart", "ChanceWait", "ChanceDamage", "ChanceDamageLast", "ChanceEnd",
+                                      "WaitDemo", "CocoonWait", "CocoonBreak"};
+enum { TG_WAIT, TG_ACTIVEWAIT, TG_DAMAGESTART, TG_DAMAGEWAIT };
+enum { TV_WAIT, TV_CHANCEWAIT, TV_DAMAGESTART, TV_DAMAGEWAIT, TV_RECOVER };
+/* TombSpiderSensorCtrl::initSensor's sensors in their order */
+enum { TSS_BODY, TSS_EYE, TSS_HIP, TSS_MOUTH, TSS_GLAND, TSS_ATK = TSS_GLAND + 4, TSS_GATK, TSS_VITAL = TSS_GATK + 4,
+       TSS_COCOON = TSS_VITAL + 3, TSS_N };
+static const float tss_rad[TSS_N] = {600, 280, 600, 150, 200, 200, 200, 200, 100, 100, 100, 100, 100, 200, 200, 200, 750};
+#define TSP_RADIUS 7000.0f /* TombSpiderDemo sPlanetRadius */
+#define TSP_INSIDE 1800.0f /* sPlanetInsideRadius */
+/* TombSpider.bdl JNT1 */
+#define TSP_BODY 2
+#define TSP_EYE 12
+#define TSP_MOUTH 22
+#define TSP_HIP 36
+static const int tsp_gj[4] = {24, 25, 37, 38}; /* the glands' joints: FrontL FrontR RearL RearR (TombSpiderParts::initParts) */
+static const float tsp_gt[4][3] = {{30, 0, -10}, {-30, 0, -10}, {30, 0, -10}, {-30, 0, -10}};
+static const float tsp_gr[4][3] = {{-35, -5, 0}, {-35, 5, 0}, {-33, -5, 0}, {-33, 5, 0}};
+static const int tsp_vj[3] = {34, 3, 3}; /* the vital spots C L R: Body5, Body1, Body1 */
+static const float tsp_vt[3][3] = {{0, 0, -320}, {130, -280, -200}, {130, 280, -200}};
+static const float tsp_vr[3][3] = {{0, 180, 0}, {10, 167, 0}, {-10, 167, 0}};
+static const int tsp_aj[7] = {32, 18, 7, 28, 21, 10, 31}; /* thread attachers: WingL, Front / Center / RearHandL3, ..R3 */
+static const char *const tsp_gfx[4] = {"AcidFrontL", "AcidFrontR", "AcidRearL", "AcidRearR"};
+static struct {
+    int row, nrv, st, req; const char *req_name; /* req: the nerve its requested demo starts (requestStartDemoMarioPuppetable) */
+    int act, ast, adead, which;                  /* the action state running: 0 cocoon, 1 1st, 2 2nd (ActorStateBase mIsDead) */
+    int areq; const char *areq_name;
+    int indemo[3], energy, hit_step, wait_t, atk_t, swoon, swst;
+    float racc, rspd, posz, drot;                /* mRotateAccel, mRotateSpeed, mPosZ; TombSpiderDemo::mRotateSpeed */
+    V3 pos; float rotz;                          /* mPosition, mRotation.z */
+    int hidden, noct, pnoct, cocoon, attach, cam, puppet; /* pnoct: the planet's Noctiluca (1) / NoctilucaFast (2) */
+    const char *acam; int acam_f;                /* the planet's anim camera running, its frame */
+    int sens[TSS_N]; V3 spos[TSS_N];
+    int gl[4], glst[4], vs[3], vsst[3];
+    int acid_ready, acid_emit, acid_active, acid_t, acid_fx[5]; /* TombSpiderAcid; acid_fx: Acid, AcidFrontL.. on */
+    float acid_m[5][16];
+    float pm[16];                                /* TombSpiderDemo::mMtx */
+    Anim *anim, *planet, *coc, *gland[4], *vital[3];
+    int pk, planet_calc;                          /* the planet's collision instance, onCalcAnim */
+    u32 lv;
+} tsp = {.row = -1, .pk = -1};
+static const Model *m_tsp, *m_tsplanet, *m_tspcoc, *m_tspgland, *m_tspvital;
+static int tsp_puppet(void);
+static void tsp_scene(const Scene *s);
+static int tsp_test(int f);
 int bsb_shot(V3 at);
+static void spider_thread_scene(const Scene *s);
 #define MAX_OROCKS 4
 enum { OR_WAIT, OR_THROWCOCO, OR_THROWFIRE, OR_DOWN, OR_HIDE, OR_HIDEWAIT, OR_SHOW, OR_DEAD };
 static struct {
@@ -2286,6 +2343,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         if (stone_row(&s->objs[i]) && s->objs[i].arg[2] >= 0) box_pieces += 8; /* a star piece per stone */
         if (!strcmp(tn, "Butterfly") && s->objs[i].arg[1] < 0) box_pieces++; /* the pointer brings one out */
         if (!strcmp(tn, "StinkBugSmall") && s->objs[i].sw[SW_DEAD] < 0) box_pieces += 3; /* declareStarPiece(3) unless isValidSwitchDead */
+        if (!strcmp(tn, "TombSpider")) box_pieces += 25; /* declareStarPiece(25) */
         if (!strcmp(tn, "BossStinkBug")) box_pieces += 24; /* BossStinkBugActionSequencer: declareStarPiece(24) */
         if (!strcmp(tn, "PhantomCandlestand") || !strcmp(tn, "TeresaMansionCandlestand") || !strcmp(tn, "CandlestandIceVolcano") ||
             !strcmp(tn, "PhantomTorch") || !strcmp(tn, "PhantomBonfire")) {
@@ -2346,6 +2404,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     }
     memset(&dino, 0, sizeof dino); dino.row = -1;
     memset(&ota, 0, sizeof ota); ota.row = -1;
+    spider_thread_scene(s);
     memset(&bsb, 0, sizeof bsb); bsb.row = -1; bsb.ki[0] = bsb.ki[1] = bsb.ki[2] = -1;
     memset(&sbp, 0, sizeof sbp); sbp.row = sbp.ki = sbp.nrv = -1; pw.on = 0;
     for (u32 i = 0; i < s->nobjs; i++)
@@ -4589,7 +4648,7 @@ static int gap_class(const char *name)
 }
 /* ponytail (unmarked until the 2026-11-02 audit): placed classes of the early galaxies with no behaviour here
  * (drawn static, or not at all), each a whole Petari class: GhostPlayer (Cosmic Mario);
- * Space Junk TombSpider, SpiderAttachPoint (SlingShooter); Battlerock BossBegoman, TicoShop; Beach Bowl PenguinStudent;
+ * Battlerock BossBegoman, TicoShop; Beach Bowl PenguinStudent;
  * the observatory's AstroMapObj looks (update_astro_objs' ponytail) */
 static void class_make(ClassInfo *ci, const char *name)
 {
@@ -4793,6 +4852,8 @@ static void game_rebind_(void)
     }
     m_bubble = scene_model(s, "AirBubble");
     m_ota = scene_model(s, "OtaKing"); m_otafoot = scene_model(s, "OtaKingFoot"); m_coco = scene_model(s, "CocoNut");
+    m_tsp = scene_model(s, "TombSpider"); m_tsplanet = scene_model(s, "TombSpiderPlanet"); m_tspcoc = scene_model(s, "TombSpiderCocoon");
+    m_tspgland = scene_model(s, "TombSpiderGland"); m_tspvital = scene_model(s, "TombSpiderVitalSpot");
     m_bsb = scene_model(s, "BossStinkBug"); m_bsbwing = scene_model(s, "BossStinkBugWing"); m_bsblaunch = scene_model(s, "BossStinkBugBombLauncher");
     m_bsbbomb = scene_model(s, "BossStinkBugBomb"); m_bsbdemo = scene_model(s, "BossStinkBugDemo");
     m_bk = scene_model(s, "BossKameck"); if (!m_bk) m_bk = scene_model(s, "BossKameck2");
@@ -4841,7 +4902,7 @@ static void game_rebind_(void)
     int t_note = scene_type(s, "NoteFairy"), t_petari = scene_type(s, "Petari"), t_rockc = scene_type(s, "RockCreator"),
         t_wan = scene_type(s, "WanwanRolling"), t_wanm = scene_type(s, "WanwanRollingMini"),
         t_wang = scene_type(s, "WanwanRollingGold"), t_dino = scene_type(s, "DinoPackun"), t_ota = scene_type(s, "OtaKing"), t_bsb = scene_type(s, "BossStinkBug"),
-        t_bk1 = scene_type(s, "BossKameck"), t_bk2 = scene_type(s, "BossKameck2");
+        t_bk1 = scene_type(s, "BossKameck"), t_bk2 = scene_type(s, "BossKameck2"), t_tsp = scene_type(s, "TombSpider");
     static signed char wnk[1024]; /* walker_new_kind by type this rebind: 0 not yet, 1 no, 2 yes */
     static const Model *bloom_of[1024]; /* "<class>Bloom" by type this rebind (snprintf + lookup an object) */
     static unsigned char bloom_ok[1024];
@@ -4855,7 +4916,7 @@ static void game_rebind_(void)
             r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly ||
             r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_stink || r->type == t_note ||
             r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == t_petari || r->type == t_rockc || r->type == t_wan ||
-            r->type == t_wanm || r->type == t_wang || r->type == t_dino || r->type == t_ota || r->type == t_bsb || r->type == t_bk1 || r->type == t_bk2 ||
+            r->type == t_wanm || r->type == t_wang || r->type == t_dino || r->type == t_ota || r->type == t_bsb || r->type == t_bk1 || r->type == t_bk2 || r->type == t_tsp ||
             (r->type < 1024 ? wnk[r->type] == 2 : walker_new_kind(s->types + 32 * r->type) >= 0))
             continue;
         const char *name = s->types + 32 * r->type;
@@ -5041,6 +5102,18 @@ static void game_rebind_(void)
         in->md = scene_model(s, "StinkBugParent"); in->row = sbp.row; in->zone = r->zone; in->invisible = 1; in->kmove = in->kparent = -1;
         mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
         in->s = 1.0f; in->reach = in->md->radius * 2.0f;
+        zone_grow(in);
+    }
+    tsp.pk = -1;
+    if (tsp.row >= 0 && m_tsplanet && scene_kcl(s, "TombSpiderPlanet") && ninsts < (int)s->nobjs) { /* TombSpiderEnvironment: the planet's collision at its place */
+        const Row *r = &s->objs[tsp.row];
+        Inst *in = &insts[tsp.pk = ninsts++];
+        float one[3] = {1, 1, 1}, rot[3] = {0, 0, 0}, at[3] = {tsp.pos.x, tsp.pos.y, tsp.pos.z};
+        memset(in, 0, sizeof *in);
+        in->md = m_tsplanet; in->row = tsp.row; in->zone = r->zone; in->invisible = 1; in->kmove = in->kparent = -1;
+        mat_translate_rot_scale(in->m, at, rot, one);
+        in->s = 1.0f; in->reach = m_tsplanet->radius;
+        in->kcl = scene_kcl(s, "TombSpiderPlanet");
         zone_grow(in);
     }
     for (int i = 0, n = ninsts; i < n; i++) /* PhantomShipBridge's "Move" collision on its joint (update_bridges) */
@@ -8389,7 +8462,7 @@ static int cursor_sees(V3 p, float px);
 static int pointer_a(void);
 static void update_cocoons(void)
 {
-    menu_pointer_stream(coc.inst >= 0 && coc.phase == 2); /* BindAim: tryStartStarPointerCommandStream .. its end */
+    menu_pointer_stream((coc.inst >= 0 && coc.phase == 2) || sls_pad >= 0); /* BindAim: tryStartStarPointerCommandStream .. its end (and SlingShooter's) */
     FOR_KIND(i, cocoon) {
         Inst *in = &insts[i];
         if (!in->cocoon) continue;
@@ -19947,7 +20020,7 @@ static void update_mario_(void)
                 int mode = 0;
                 if (!m_clip_is(dx.bck)) { anim_clip_info(dx.bck, &mode); mario_play(dx.bck, 1.0f, mode == 2 || mode == 4); }
             }
-            else if (pro_puppet()) ; /* the prologue's DemoPeachCastleGate (pro_update) */
+            else if (pro_puppet() || tsp_puppet()) ; /* the prologue's DemoPeachCastleGate (pro_update) */
             else if (bsb_demo() || bk_demo() || tb_demo()) { if (!m_clip_is("battlewait")) mario_play("battlewait", 1.0f, 1); } /* BossStinkBug's demos: startBckPlayer BattleWait */
             else if (!star_demo && !gw_puppet()) mario_play("wait", 1.0f, 1);
             else if (mario_anim->clip_id < 0 || strcmp(sc->clips[mario_anim->clip_id].name, "powerstarget")) mario_play("powerstarget", 1.0f, 0);
@@ -19965,6 +20038,12 @@ static void update_mario_(void)
     }
     if (flf.inst >= 0 || (warp.from < 0 && jb.inst < 0 && coc.inst < 0 && fluff_try(m))) {
         if (flf.inst >= 0 && fluff_update(m)) {
+            if (mario_anim) anim_update(mario_anim);
+            return;
+        }
+    }
+    if (sls_ride >= 0 || (warp.from < 0 && jb.inst < 0 && coc.inst < 0 && sls_try(m))) { /* SpiderAttachPoint: bound (ACTMES_AUTORUSH_BEGIN) */
+        if (sls_hold(m)) {
             if (mario_anim) anim_update(mario_anim);
             return;
         }
@@ -29541,13 +29620,1057 @@ static void coin_to_velocity(V3 p, V3 vel)
     pops[npops].coin = ncoins; pops[npops].t = 0; pops[npops++].vel = vel;
     coins[ncoins].pos = p; coins[ncoins].row = -1; coins[ncoins++].alive = PICK_POP_NEW;
 }
-/* SpiderCoin::calcAndSetBaseMtx: its cocoon (SpaceCocoon x 0.3) 20 down and 20 along Z from it (mUp: its placement's
- * Y; ponytail: no SpiderThread to hang from, it stays at its place) */
+/* SpiderThread (MapObj/SpiderThread*.cpp): TombSpider's web, made by TombSpiderEnvironment (MR::initSpiderThread at the
+ * boss's mPosition): 8 radial lines of 8 main points 175 apart hanging from the centre and turned 45 degrees about Z
+ * (initMainThreads), an anchor at 1800 each, circle parts between the lines' points; each part (SpiderThreadPart)
+ * carries a point every 50 (sPointInterval) with its friction. Points spring to their base (updateSpring 0.02), main
+ * points to their base (0.3) and to their near points (closeToNearPoint 0.1 / 0.02), the wind (SpiderThreadWindCtrl)
+ * pushes them along -Z now and then. Actors (SpiderCoin, SpiderAttachPoint) bind to the nearest circle part point
+ * (startActorBind); the SpiderAttachPoint's hang pulls its point (updateHang). Dead until appearSpiderThread. Drawn as
+ * Petari's three strips a node (drawLine / drawPoints) in their mean grey. ponytail: no SpiderThread.bti / Indirect.bti
+ * (the strips untextured, no indirect warp), no bloom pass (drawSpiderThreadBloom), the pull level SE without its
+ * systemLevelParam, the 2P pointer (WPAD_CHAN1) left out; getPosZDiff (an inline Petari's headers keep) taken as the
+ * Z from the point to the pusher */
+#define STH_LINES 8                       /* mNumRadialLines */
+#define STH_LINE_PTS 8                    /* sMainRadialLinePointNum */
+#define STH_CUTS (STH_LINES + 6 * 4)      /* mCutPointsBufferSize */
+#define STH_MAINS (1 + STH_LINES * STH_LINE_PTS + STH_LINES + STH_CUTS)
+#define STH_PARTS (STH_LINES * (STH_LINE_PTS + 1) + STH_LINES * STH_LINE_PTS)
+#define STH_PTS (STH_MAINS + 1200)
+#define STH_NEAR 9
+#define STH_HANGS (8 * STH_LINE_PTS)      /* sHangActorNumMax */
+enum { STH_HANG_START = 1, STH_HANG_END, STH_APART }; /* ACTMES_SLING_SHOOT_ACTOR_HANG_START / _END / _APART */
+typedef struct { V3 base, pos, vel, up; float fric, prev; int wstart, wtime; } SthPt;      /* SpiderThreadPoint */
+typedef struct { int main, p, part; float dist, k; } SthNear;                             /* SpiderThreadPointNearInfo */
+typedef struct { int p, line, nn; SthNear nr[STH_NEAR]; } SthMain;                         /* SpiderThreadMainPoint */
+typedef struct { int a, b, still, cut, free, nhang, stop, touch, p0, n; V3 ptr, up, front, bmin, bmax; float dmain, dpts, tex; } SthPart;
+typedef struct { int actor, part, idx, hanging, k14; V3 at; } SthHang;                            /* SpiderThreadHangInfo */
+static struct {
+    int on, alive, bloom, pause_off, npt, nmain, npart, nrad, ncirc, nhang, shoot, ncut, cancel, pull;
+    V3 pos, front, wdir, wind, cprev;
+    float wtgt, wspd, wacc, sxp, syp;
+    u32 lv;
+    int line[STH_LINES][STH_LINE_PTS], anchor[STH_LINES], cuts[STH_CUTS], rad[STH_PARTS], circ[STH_PARTS];
+    SthPt pt[STH_PTS];
+    SthMain mp[STH_MAINS];
+    SthPart part[STH_PARTS];
+    SthHang hang[STH_HANGS];
+} sth;
+#define STH_P(m) (&sth.pt[sth.mp[m].p])
+static float sth_ease_out(float t) { return sinf(t * 1.5707963f); } /* MR::getEaseOutValue(t, 0, 1, 1) */
+static int sth_wind_start(void) { return sth.wspd != sth.wtgt ? 30 : 30 + rand() % 90; } /* getTimeToStartWind: getRandom(30, 120) */
+static int sth_wind_time(void) { return 60 + rand() % 60; }                               /* getWindTime: getRandom(60, 120) */
+static void sth_pt_init(int i, V3 p, float fric)
+{
+    SthPt *q = &sth.pt[i];
+    q->base = q->pos = p; q->vel = v3(0, 0, 0); q->fric = fric; q->up = v3(0, 1, 0);
+    q->wstart = sth_wind_start(); q->wtime = sth_wind_time(); q->prev = 0;
+}
+static void sth_level_sound(SthPt *q) /* startThreadLevelSound */
+{
+    float s = vlen(vsub(q->base, q->pos));
+    if (q->prev > 0 && s > 50.0f && fabsf(q->prev - s) > 1.0f) sth.pull = 1; /* startSystemLevelSE SE_OJ_LV_SPIDER_THREAD_PULL */
+    q->prev = s;
+}
+static int sth_spring(SthPt *q) /* updateSpring: 1 when it stopped */
+{
+    q->vel = vadd(vmul(q->vel, q->fric), vmul(vsub(q->base, q->pos), 0.02f)); /* sAccelRate */
+    q->pos = vadd(q->pos, q->vel);
+    V3 d = vsub(q->base, q->pos);
+    d.z = 0;
+    if (vlen(q->vel) < 0.1f && vlen(d) < 1.0f) { q->vel = v3(0, 0, 0); return 1; } /* sSpeedMinToStop, sDistanceToStop */
+    sth_level_sound(q);
+    return 0;
+}
+static void sth_draw_vec(SthPt *q, V3 a, V3 b) /* updateDrawVec */
+{
+    V3 d = vsub(b, a);
+    d.z = 0;
+    if (vlen(d) > 1e-6f) { d = vnorm(d); q->up = v3(d.y, -d.x, 0); }
+}
+static void sth_wind_pt(SthPt *q, float damp) /* updateWind */
+{
+    if (q->wstart > 0) q->wstart--;
+    else if (--q->wtime > 0) q->vel = vadd(q->vel, sth.wind);
+    else { q->wstart = sth_wind_start(); q->wtime = sth_wind_time(); }
+    q->vel = vmul(q->vel, damp);
+}
+static void sth_restrict(SthPt *q, V3 anchor, float len) /* restrict */
+{
+    V3 n = vsub(vadd(q->pos, q->vel), anchor);
+    if (vlen(n) <= 1e-6f) return;
+    if (vdot(n, n) >= len * len) q->vel = vsub(q->vel, vsub(n, vmul(vnorm(n), len)));
+}
+static int sth_pointing(V3 p, float rad) /* MR::isStarPointerPointing(pos, radius): the cursor's ray within rad of p */
+{
+    if (cur_idle >= 300) return 0;
+    V3 o, d;
+    cursor_ray(&o, &d);
+    V3 to = vsub(p, o);
+    float z = vdot(to, d);
+    return z > 0 && vlen(vsub(to, vmul(d, z))) <= rad;
+}
+static int sth_cursor_plane(V3 c, V3 n, V3 *out) /* MR::calcStarPointerPosOnPlane */
+{
+    V3 o, d;
+    cursor_ray(&o, &d);
+    float dn = vdot(d, n);
+    if (fabsf(dn) < 1e-6f) return 0;
+    *out = vadd(o, vmul(d, vdot(vsub(c, o), n) / dn));
+    return 1;
+}
+static float sth_dist_xy(V3 a, V3 b) { return sqrtf((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y)); } /* calcDistanceXY */
+
+/* SpiderThreadMainPoint */
+static int sth_main_new(V3 p)
+{
+    int m = sth.nmain++, i = sth.npt++;
+    sth_pt_init(i, p, 0.9f); /* sFrictionRate */
+    sth.mp[m].p = i; sth.mp[m].line = -1; sth.mp[m].nn = 0;
+    return m;
+}
+static void sth_add_near(int m, int main, int p, float k, int part) /* addNearMainPoint (main) / addNearPartPoint (p) */
+{
+    SthMain *o = &sth.mp[m];
+    if (o->nn >= STH_NEAR) return;
+    SthNear *n = &o->nr[o->nn++];
+    n->main = main; n->p = main >= 0 ? sth.mp[main].p : p; n->k = k; n->part = part;
+    n->dist = vlen(vsub(sth.pt[o->p].pos, sth.pt[n->p].pos)); /* setInfo */
+}
+static void sth_remove_near(int m, int p) /* removeNearPoint */
+{
+    SthMain *o = &sth.mp[m];
+    for (int i = 0; i < o->nn; i++)
+        if (o->nr[i].p == p) { o->nr[i] = o->nr[--o->nn]; return; }
+}
+static void sth_near_radial(int m, int p, int add) /* addNearPointToRadial / removeNearPointFromRadial */
+{
+    int l = sth.mp[m].line;
+    if (l < 0) return;
+    for (int i = 0; i < STH_LINE_PTS; i++) {
+        int q = sth.line[l][i];
+        if (!add) sth_remove_near(q, p);
+        else sth_add_near(q, -1, p, q == m ? 0.1f : 0.02f, -1); /* sNearMainPointAccelRate / sNearHangPointAccelRate */
+    }
+}
+static void sth_part_cut(int k, int ma, int mb);
+static void sth_cut_near(int m) /* cutNearPoints */
+{
+    SthMain *o = &sth.mp[m];
+    for (int i = 0; i < o->nn; i++) {
+        int other = o->nr[i].main;
+        if (other < 0 || sth.ncut >= STH_CUTS) continue;
+        sth_remove_near(other, o->p);
+        int c = sth.cuts[sth.ncut], part = o->nr[i].part;
+        sth_add_near(other, c, -1, 0.1f, part);
+        STH_P(c)->pos = sth.pt[o->p].pos;
+        sth_add_near(c, other, -1, 0.1f, part);
+        sth_part_cut(part, m, c);
+        sth.ncut++;
+    }
+}
+static void sth_main_vel(int m) /* updateVelocity */
+{
+    SthPt *q = STH_P(m);
+    sth_wind_pt(q, 0.9f); /* sWindFrictionRate */
+    V3 s = vsub(q->base, q->pos);
+    if (vlen(s) > 1.0f) q->vel = vadd(q->vel, vmul(vnorm(s), 0.3f)); /* sBasePosDiffMin, sBasePosAccelRate */
+    for (int i = 0; i < sth.mp[m].nn; i++) { /* closeToNearPoint */
+        const SthNear *n = &sth.mp[m].nr[i];
+        V3 d = vsub(sth.pt[n->p].pos, q->pos);
+        float l = vlen(d);
+        if (l < 1.0f) continue; /* sNearPointDiffMin */
+        float dd = l - n->dist;
+        if (dd < 0) continue;
+        q->vel = vadd(q->vel, vmul(vnorm(d), dd * n->k));
+    }
+}
+
+/* SpiderThreadPart */
+static int sth_part_new(int a, int b, float pad)
+{
+    int k = sth.npart++;
+    SthPart *pp = &sth.part[k];
+    memset(pp, 0, sizeof *pp);
+    pp->a = a; pp->b = b; pp->still = 1;
+    V3 A = STH_P(a)->pos, B = STH_P(b)->pos, fw = vsub(B, A);
+    pp->dmain = vlen(fw);
+    pp->n = (int)(pp->dmain / 50.0f); /* sPointInterval */
+    if (sth.npt + pp->n > STH_PTS) pp->n = STH_PTS - sth.npt;
+    pp->dpts = pp->dmain / (pp->n + 1);
+    fw = vnorm(fw);
+    pp->p0 = sth.npt; sth.npt += pp->n;
+    float len = pp->dmain - 200.0f; /* sFricitonLengthMin / Max */
+    len = len < 0 ? 0 : len > 500.0f ? 500.0f : len;
+    float ln = len / 500.0f;
+    for (int i = 0; i < pp->n; i++) {
+        int half = pp->n / 2, idx = abs(half - i);
+        float in = 1.0f - (float)idx / (float)half, e = sth_ease_out(in);
+        float fric = (0.9f * (1.0f - e) + e) * (0.9f * (1.0f - ln) + 0.9f * ln);
+        sth_pt_init(pp->p0 + i, vadd(A, vmul(fw, pp->dpts * (i + 1))), fric);
+    }
+    pp->up = v3(fw.y, -fw.x, 0); pp->front = v3(-fw.y, fw.x, 0); /* mSide (0, 0, -1) */
+    pp->bmin = v3(fminf(A.x, B.x) - pad, fminf(A.y, B.y) - pad, fminf(A.z, B.z) - pad); /* extend, padBox */
+    pp->bmax = v3(fmaxf(A.x, B.x) + pad, fmaxf(A.y, B.y) + pad, fmaxf(A.z, B.z) + pad);
+    pp->bmin.z = fminf(pp->bmin.z, fminf(A.z, B.z) - 1000.0f);
+    pp->bmax.z = fmaxf(pp->bmax.z, fmaxf(A.z, B.z) + 100.0f);
+    return k;
+}
+static void sth_part_cut(int k, int ma, int mb) /* cut */
+{
+    SthPart *pp = &sth.part[k];
+    if (ma == pp->a) { pp->a = pp->b; pp->b = mb; } else pp->b = mb;
+    if (pp->cut) pp->free = 1;
+    pp->cut = 1; pp->still = 0;
+}
+static void sth_to_line(SthPart *pp, int base) /* updatePointPosToLine / updatePointPosAndBasePosToLine (base) / updateBasePos */
+{
+    V3 A = STH_P(pp->a)->pos, fw = vsub(STH_P(pp->b)->pos, A);
+    if (base == 2 && vlen(fw) <= 1e-6f) return;
+    float dl = vlen(fw) / (pp->n + 1);
+    fw = vnorm(fw);
+    for (int i = 0; i < pp->n; i++) {
+        V3 p = vadd(A, vmul(fw, dl * (i + 1)));
+        if (base != 2) sth.pt[pp->p0 + i].pos = p;
+        if (base) sth.pt[pp->p0 + i].base = p;
+    }
+}
+static void sth_part_draw_vec(SthPart *pp) /* updateDrawVec */
+{
+    V3 a = STH_P(pp->a)->pos;
+    for (int i = 0; i < pp->n - 1; i++) { sth_draw_vec(&sth.pt[pp->p0 + i], a, sth.pt[pp->p0 + i + 1].pos); a = sth.pt[pp->p0 + i].pos; }
+    if (pp->n > 0) sth_draw_vec(&sth.pt[pp->p0 + pp->n - 1], a, STH_P(pp->b)->pos);
+}
+static void sth_hanging_pos(SthPart *pp, int h) /* updatePointPosHanging */
+{
+    V3 P = sth.pt[pp->p0 + h].pos, A = STH_P(pp->a)->pos, B = STH_P(pp->b)->pos;
+    for (int i = 0; i < h; i++) { float t = (float)(i + 1) / (h + 1); sth.pt[pp->p0 + i].pos = vadd(vmul(P, t), vmul(A, 1.0f - t)); }
+    for (int i = h + 1; i < pp->n; i++) { float t = (float)(pp->n - i) / (pp->n - h); sth.pt[pp->p0 + i].pos = vadd(vmul(P, t), vmul(B, 1.0f - t)); }
+}
+static void sth_vel_touch(SthPart *pp, int h, V3 v) /* updatePointVelocityTouch */
+{
+    for (int i = 0; i < h; i++) sth.pt[pp->p0 + i].vel = vadd(sth.pt[pp->p0 + i].vel, vmul(v, sth_ease_out((float)(i + 1) / (h + 1))));
+    for (int i = h + 1; i < pp->n; i++) sth.pt[pp->p0 + i].vel = vadd(sth.pt[pp->p0 + i].vel, vmul(v, sth_ease_out((float)(pp->n - i) / (pp->n - h))));
+}
+static void sth_part_update(SthPart *pp) /* update */
+{
+    if (pp->free) return;
+    pp->tex += -0.002f; /* sIndirectTexSpeed */
+    if (pp->cut) { /* updateCutPoints */
+        for (int i = 0; i < pp->n; i++) sth_wind_pt(&sth.pt[pp->p0 + i], 0.93f); /* sWindFrictionRate */
+        V3 a = STH_P(pp->a)->pos;
+        for (int i = 0; i < pp->n; i++) { sth_restrict(&sth.pt[pp->p0 + i], a, 50.0f); a = sth.pt[pp->p0 + i].pos; }
+        for (int i = 0; i < pp->n; i++) sth.pt[pp->p0 + i].pos = vadd(sth.pt[pp->p0 + i].pos, sth.pt[pp->p0 + i].vel);
+        if (pp->n < 2) return;
+        V3 d = vsub(sth.pt[pp->p0 + pp->n - 2].pos, sth.pt[pp->p0 + pp->n - 1].pos);
+        if (vlen(d) > 1e-6f) STH_P(pp->b)->pos = vadd(vmul(vnorm(d), 50.0f), sth.pt[pp->p0 + pp->n - 1].pos);
+        return;
+    }
+    if (pp->still) { pp->touch = 0; return; } /* (_4 is never set: no updatePointPosToLine) */
+    if (pp->nhang > 0) { sth_part_draw_vec(pp); return; }
+    if (pp->touch > 0) pp->touch--;
+    sth_to_line(pp, 2); /* updateBasePos */
+    if (pp->stop > 0) { /* updateForceAttach */
+        if (--pp->stop <= 0) pp->still = 1;
+        else {
+            float t = pp->stop / 20.0f; /* sForceAttachTime */
+            for (int i = 0; i < pp->n; i++) {
+                SthPt *q = &sth.pt[pp->p0 + i];
+                V3 v = q->vel;
+                sth_spring(q);
+                q->pos = vadd(vmul(q->pos, t), vmul(q->base, 1.0f - t));
+                q->vel = v;
+            }
+        }
+        sth_part_draw_vec(pp);
+        return;
+    }
+    pp->still = 1;
+    for (int i = 0; i < pp->n; i++) if (!sth_spring(&sth.pt[pp->p0 + i])) pp->still = 0;
+    if (!pp->still) sth_part_draw_vec(pp);
+}
+static void sth_part_start_hang(int k, int h) /* startHang */
+{
+    SthPart *pp = &sth.part[k];
+    pp->nhang++; pp->still = 0; pp->touch = 0;
+    sth_near_radial(pp->a, pp->p0 + h, 1);
+    if (sth.mp[pp->a].line != sth.mp[pp->b].line) sth_near_radial(pp->b, pp->p0 + h, 1);
+    sth_hanging_pos(pp, h);
+}
+static void sth_part_end_hang(int k, int h) /* endHang */
+{
+    SthPart *pp = &sth.part[k];
+    V3 A = STH_P(pp->a)->pos, B = STH_P(pp->b)->pos, fw = vnorm(vsub(B, A)), P = sth.pt[pp->p0 + h].pos;
+    for (int i = 0; i < pp->n; i++) {
+        if (i == h) continue;
+        float t = i < h ? sth_ease_out((float)(i + 1) / (h + 1)) : sth_ease_out((float)(pp->n - i) / (pp->n - h));
+        SthPt *q = &sth.pt[pp->p0 + i];
+        V3 v = vsub(vadd(vmul(P, t), vmul(i < h ? A : B, 1.0f - t)), q->pos);
+        q->pos = vadd(vtangent(v, fw), q->pos); /* vecKillElement along the part */
+    }
+    sth_near_radial(pp->a, pp->p0 + h, 0);
+    if (sth.mp[pp->a].line != sth.mp[pp->b].line) sth_near_radial(pp->b, pp->p0 + h, 0);
+    pp->still = 0; pp->nhang--;
+}
+static int sth_part_touch_actor(int k, int h, V3 v) /* touchActor */
+{
+    SthPart *pp = &sth.part[k];
+    if (pp->touch > 0) return 0;
+    V3 w = vadd(vmul(pp->up, vdot(pp->up, v)), vmul(pp->front, vdot(pp->front, v)));
+    sth.pt[pp->p0 + h].vel = vadd(sth.pt[pp->p0 + h].vel, w);
+    sth_vel_touch(pp, h, w);
+    pp->still = 0; pp->touch = 60; /* sActorToucnTimerMax */
+    return 1;
+}
+static void sth_part_try_touch(SthPart *pp, float rad, V3 v) /* tryTouch / findTouchPoint */
+{
+    if (pp->cut || pp->free || pp->touch > 0) return;
+    if (pp->still) {
+        V3 c = pp->ptr;
+        if (c.x < pp->bmin.x || c.y < pp->bmin.y || c.z < pp->bmin.z || c.x > pp->bmax.x || c.y > pp->bmax.y || c.z > pp->bmax.z) return;
+        sth_to_line(pp, 0);
+    }
+    for (int i = 0; i < pp->n; i++) {
+        if (!sth_pointing(sth.pt[pp->p0 + i].pos, rad)) continue;
+        sth.pt[pp->p0 + i].vel = vadd(sth.pt[pp->p0 + i].vel, v);
+        pp->touch = 5; pp->still = 0; /* sTouchTimerMax */
+        sth_vel_touch(pp, i, v);
+        return;
+    }
+}
+static float sth_part_nearest(int k, int *no, V3 p) /* calcNearestPointInfo / findNearestPointNo */
+{
+    SthPart *pp = &sth.part[k];
+    if (pp->still) sth_to_line(pp, 0);
+    *no = 0;
+    float best = sth_dist_xy(sth.pt[pp->p0].pos, p);
+    for (int i = 1; i < pp->n; i++) { float d = sth_dist_xy(sth.pt[pp->p0 + i].pos, p); if (d < best) { *no = i; best = d; } }
+    return best;
+}
+
+/* SpiderThread */
+static int sth_connect(int a, int b, int radial) /* connectMainPoint (connectPoints) */
+{
+    int k = sth_part_new(a, b, 100.0f); /* sMainPointRadius */
+    sth_add_near(a, b, -1, 0.1f, k); sth_add_near(b, a, -1, 0.1f, k);
+    if (radial) sth.rad[sth.nrad++] = k; else sth.circ[sth.ncirc++] = k;
+    return k;
+}
+static void sth_init(V3 pos) /* MR::initSpiderThread: initThread, initMainThreads */
+{
+    memset(&sth, 0, sizeof sth);
+    sth.on = 1; sth.shoot = -1; sth.cancel = -1; sth.pos = pos; sth.front = v3(0, 0, 1);
+    sth.wtgt = sth.wspd = 0.5f; sth.wdir = sth.wind = v3(0, 0, -1); /* SpiderThreadWindCtrl: sWindAccelBattle */
+    int c = sth_main_new(pos);
+    for (int i = 0; i < STH_CUTS; i++) sth.cuts[i] = sth_main_new(pos);
+    V3 down = v3(0, -1, 0);
+    float cs = cosf(6.2831853f / STH_LINES), sn = sinf(6.2831853f / STH_LINES);
+    for (int l = 0; l < STH_LINES; l++) {
+        for (int i = 0; i < STH_LINE_PTS; i++) {
+            sth.line[l][i] = sth_main_new(vadd(vmul(down, 175.0f * (i + 1)), pos)); /* sMainRadialLineInterval */
+            sth.mp[sth.line[l][i]].line = l;
+        }
+        sth.anchor[l] = sth_main_new(vadd(vmul(down, 1800.0f), pos)); /* sMainRadialLineLength */
+        sth.mp[sth.anchor[l]].line = l;
+        sth_connect(sth.line[l][0], c, 1);
+        for (int i = 0; i < STH_LINE_PTS - 1; i++) sth_connect(sth.line[l][i], sth.line[l][i + 1], 1);
+        sth_connect(sth.line[l][STH_LINE_PTS - 1], sth.anchor[l], 1);
+        down = v3(down.x * cs - down.y * sn, down.x * sn + down.y * cs, down.z); /* makeMtxRotate(0, 0, 360 / 8) */
+    }
+    for (int l = 0; l < STH_LINES; l++)
+        for (int i = 0; i < STH_LINE_PTS; i++) sth_connect(sth.line[l][i], sth.line[(l + STH_LINES + 1) % STH_LINES][i], 0);
+    printf("SpiderThread: at %.0f %.0f %.0f, %d points, %d main, %d radial / %d circle parts\n", pos.x, pos.y, pos.z, sth.npt, sth.nmain, sth.nrad, sth.ncirc);
+}
+static void sth_appear(void) { if (sth.on) sth.alive = 1; }  /* MR::appearSpiderThread */
+static void sth_stop_all(void) /* stopAllPartsPoint */
+{
+    for (int i = 0; i < sth.ncirc; i++) if (!sth.part[sth.circ[i]].still) sth.part[sth.circ[i]].stop = 20; /* sForceAttachTime */
+}
+static void sth_start_battle(void) { sth_stop_all(); sth.wspd = sth.wtgt = 0.5f; sth.wacc = 0; }  /* MR::startSpiderThreadBattle */
+static void sth_start_chance(void) { sth_stop_all(); sth.wspd = sth.wtgt = 1.0f; sth.wacc = 0; }  /* MR::startSpiderThreadChance */
+static void sth_start_battle_end(void) /* MR::startSpiderThreadBattleEnd: cutSpiderThread, startWindBattleEnd */
+{
+    static const int cut_no[6][2] = {{0, 3}, {1, 1}, {2, 0}, {4, 3}, {6, 1}, {6, 4}}; /* sCutPointNoTable */
+    sth_stop_all();
+    sth_cut_near(0);
+    for (int i = 0; i < 6; i++) sth_cut_near(sth.line[cut_no[i][0]][cut_no[i][1]]);
+    sth.wtgt = 2.0f; sth.wspd = 100.0f; sth.wacc = 0.4f;
+}
+static void sth_pause_off(void) { sth.pause_off = 1; } /* MR::pauseOffSpiderThread (requestMovementOn: the web keeps moving here anyway) */
+static void sth_on_bloom(void) { sth.bloom = 1; }      /* MR::onSpiderThreadBloom (ponytail: no bloom pass) */
+static float sth_pos_z(void) { return sth.on ? sth.pos.z : 0.0f; } /* MR::getSpiderThreadPosZ */
+static void sth_find_nearest(V3 p, int *part, int *no) /* findNearestPointPos */
+{
+    float best = 1800.0f;
+    *part = 0; *no = 0;
+    for (int i = 0; i < sth.ncirc; i++) {
+        int n = -1;
+        float d = sth_part_nearest(sth.circ[i], &n, p);
+        if (d < best) { *part = i; *no = n; best = d; }
+    }
+}
+/* MR::startActorBindToSpiderThread: actor any key of the caller's (its row); out its point (pt: sth.pt[*pt].pos the
+ * point, .base the neutral) and part (sth.part[*part].up: mUp) */
+static void sth_start_actor_bind(int actor, V3 pos, V3 vel, int *pt, int *part)
+{
+    int ci, no;
+    sth_find_nearest(pos, &ci, &no);
+    int k = sth.circ[ci];
+    *pt = sth.part[k].p0 + no; *part = k;
+    if (sth.nhang >= STH_HANGS) return;
+    SthHang *h = &sth.hang[sth.nhang++]; /* SpiderThreadHangInfo::startBind */
+    h->actor = actor; h->part = k; h->idx = no; h->hanging = 0; h->k14 = 1; h->at = pos;
+    if (vlen(vel) > 1e-6f) sth_part_touch_actor(k, no, vel);
+}
+static int sth_touch_actor(V3 pos, V3 vel) /* MR::touchActorToSpiderThread */
+{
+    int ci, no;
+    sth_find_nearest(pos, &ci, &no);
+    return sth_part_touch_actor(sth.circ[ci], no, vel);
+}
+static void sth_try_push(V3 pos, float rad) /* MR::tryPushSpiderThread: the centre and the radial lines' points */
+{
+    for (int m = 0; m < 1 + STH_LINES * STH_LINE_PTS; m++) {
+        SthPt *q = STH_P(m == 0 ? 0 : sth.line[(m - 1) / STH_LINE_PTS][(m - 1) % STH_LINE_PTS]);
+        if (sth_dist_xy(q->pos, pos) > rad || q->pos.z < pos.z) continue;
+        q->vel.z += pos.z - q->pos.z; /* getPosZDiff (see above) */
+    }
+}
+static int sth_find_hang(int actor) { for (int i = 0; i < sth.nhang; i++) if (sth.hang[i].actor == actor) return i; return 0; }
+static void sth_end_hang(int h, int cancel) /* SpiderThreadHangInfo::endHang: cancel sends ACTMES_HANG_CANCEL (sth.cancel: the actor) */
+{
+    if (cancel) sth.cancel = sth.hang[h].actor;
+    sth_part_end_hang(sth.hang[h].part, sth.hang[h].idx);
+    sth.hang[h].hanging = 0;
+}
+static int sth_send_msg(int msg, int actor) /* MR::sendMsgToSpiderThread: SpiderThread::receiveOtherMsg */
+{
+    if (!sth.on || !sth.nhang) return 0;
+    if (msg == STH_HANG_START) {
+        int h = sth_find_hang(actor);
+        if (sth.shoot >= 0) {
+            if (sth.hang[sth.shoot].k14 < sth.hang[h].k14) sth_end_hang(sth.shoot, 1);
+            else return 0;
+        }
+        sth.shoot = h; sth.hang[h].hanging = 1; sth_part_start_hang(sth.hang[h].part, sth.hang[h].idx);
+        return 1;
+    }
+    if (msg == STH_HANG_END) {
+        if (sth.shoot >= 0) sth_end_hang(sth.shoot, 0);
+        sth.shoot = -1;
+        return 1;
+    }
+    if (msg == STH_APART) {
+        int h = sth_find_hang(actor);
+        if (sth.hang[h].hanging) sth_end_hang(h, 0); /* endBind */
+        if (sth.nhang > 1) sth.hang[h] = sth.hang[sth.nhang - 1];
+        sth.shoot = -1; sth.nhang--;
+        return 1;
+    }
+    return 0;
+}
+static void sth_hang_pos(int actor, V3 pos) /* the bound actor's mPosition (HangInfo::mPosition), read by updateHangedPoint */
+{
+    for (int i = 0; i < sth.nhang; i++) if (sth.hang[i].actor == actor) sth.hang[i].at = pos;
+}
+static void update_spider_thread(void) /* SpiderThread::movement */
+{
+    if (!sth.on || !sth.alive) return;
+    if (sth.wspd != sth.wtgt) /* SpiderThreadWindCtrl::update */
+        sth.wspd = sth.wspd < sth.wtgt ? fminf(sth.wspd + sth.wacc, sth.wtgt) : fmaxf(sth.wspd - sth.wacc, sth.wtgt);
+    sth.wind = vmul(sth.wdir, sth.wspd);
+    int in = cur_idle < 300; /* isStarPointerInScreen */
+    for (int i = 0; in && i < sth.ncirc; i++) { /* updatePointerInfo */
+        SthPart *pp = &sth.part[sth.circ[i]];
+        if (pp->cut || pp->free) continue;
+        sth_cursor_plane(vmul(vadd(STH_P(pp->a)->pos, STH_P(pp->b)->pos), 0.5f), v3(0, 0, 1), &pp->ptr);
+    }
+    for (int i = 0; i < sth.nhang; i++) /* updateHangedPoint: the first hanging one (SpiderThreadPart::updateHang) */
+        if (sth.hang[i].hanging) {
+            SthPart *pp = &sth.part[sth.hang[i].part];
+            sth.pt[pp->p0 + sth.hang[i].idx].pos = sth.hang[i].at; sth.pt[pp->p0 + sth.hang[i].idx].vel = v3(0, 0, 0);
+            sth_hanging_pos(pp, sth.hang[i].idx);
+            break;
+        }
+    { /* tryTouchPoint (WPAD_CHAN0): the pointer's screen speed (HUD units a frame) at least 5 */
+        float spd = sqrtf((cur_x - sth.sxp) * (cur_x - sth.sxp) + (cur_y - sth.syp) * (cur_y - sth.syp));
+        V3 now;
+        int on = in && sth_cursor_plane(STH_P(0)->pos, sth.front, &now);
+        if (on && spd >= 5.0f) { /* sTouchPointerSpeedMin */
+            V3 v = vmul(vnorm(vsub(now, sth.cprev)), fminf(spd * 2.0f, 50.0f)); /* sTouchPointerSpeedAccelRate, sTouchSpeedMax */
+            for (int i = 0; i < sth.ncirc; i++) sth_part_try_touch(&sth.part[sth.circ[i]], 100.0f, v); /* sPartPointRadius */
+        }
+        if (on) sth.cprev = now;
+        sth.sxp = cur_x; sth.syp = cur_y;
+    }
+    sth_main_vel(0);
+    for (int l = 0; l < STH_LINES; l++) for (int i = 0; i < STH_LINE_PTS; i++) sth_main_vel(sth.line[l][i]);
+    STH_P(0)->pos = vadd(STH_P(0)->pos, STH_P(0)->vel);
+    STH_P(0)->base = STH_P(0)->pos;
+    for (int l = 0; l < STH_LINES; l++) for (int i = 0; i < STH_LINE_PTS; i++) { SthPt *q = STH_P(sth.line[l][i]); q->pos = vadd(q->pos, q->vel); }
+    for (int i = 0; i < sth.nrad; i++) sth_part_update(&sth.part[sth.rad[i]]);
+    for (int i = 0; i < sth.ncirc; i++) sth_part_update(&sth.part[sth.circ[i]]);
+    for (int i = 0; i < sth.nhang; i++)
+        if (!sth.hang[i].hanging && sth.part[sth.hang[i].part].still) sth_to_line(&sth.part[sth.hang[i].part], 1);
+    if (sth.pull) sth.lv = se_level(SE_OJ_LV_SPIDER_THREAD_PULL, NULL, sth.lv);
+    sth.pull = 0;
+}
+static void sth_draw(void) /* SpiderThread::draw: each part's three strips (sendPointsUpper / RightLower / LeftLower) */
+{
+    if (!sth.on || !sth.alive) return;
+    static float pos[2048][3];
+    static u16 idx[3 * 2048];
+    static const float ox[3][2] = {{-18, 18}, {18, -15}, {15, -18}}, oy[3][2] = {{3, 3}, {18, -18}, {-18, 18}};
+    static const u8 grey[3] = {0x3E, 0x58, 0x65}; /* (sColorMinusX + PlusX) / 2, (PlusX + MinusY) / 2, (MinusY + MinusX) / 2 at 0x80 = 1 */
+    const V3 side = v3(0, 0, -1);
+    for (int s = 0; s < 3; s++) {
+        int nv = 0, nt = 0;
+        u32 rgba = 0x80000000u | grey[s] << 16 | grey[s] << 8 | grey[s];
+        for (int j = 0; j < sth.nrad + sth.ncirc; j++) {
+            SthPart *pp = &sth.part[j < sth.nrad ? sth.rad[j] : sth.circ[j - sth.nrad]];
+            if (pp->free) continue;
+            int nodes = pp->still ? 2 : pp->n + 2;
+            if (nv + 2 * nodes > 2048 || 3 * (nt + 2 * nodes) > 3 * 2048) { render_mesh_c((const float (*)[3])pos, NULL, nv, idx, nt, NO_TEX, 1, rgba); nv = nt = 0; }
+            for (int k = 0; k < nodes; k++) {
+                V3 p, up;
+                if (k == 0) { p = STH_P(pp->a)->pos; up = pp->up; }
+                else if (k == nodes - 1) { p = STH_P(pp->b)->pos; up = pp->still ? pp->up : sth.pt[pp->p0 + pp->n - 1].up; }
+                else { p = sth.pt[pp->p0 + k - 1].pos; up = sth.pt[pp->p0 + k - 1].up; }
+                for (int e = 0; e < 2; e++) {
+                    V3 q = vadd(vadd(p, vmul(side, ox[s][e])), vmul(up, oy[s][e]));
+                    pos[nv + 2 * k + e][0] = q.x; pos[nv + 2 * k + e][1] = q.y; pos[nv + 2 * k + e][2] = q.z;
+                }
+                if (k) {
+                    u16 a = (u16)(nv + 2 * k - 2), *t = idx + 3 * nt;
+                    t[0] = a; t[1] = a + 1; t[2] = a + 2; t[3] = a + 1; t[4] = a + 3; t[5] = a + 2;
+                    nt += 2;
+                }
+            }
+            nv += 2 * nodes;
+        }
+        if (nt) render_mesh_c((const float (*)[3])pos, NULL, nv, idx, nt, NO_TEX, 1, rgba);
+    }
+}
+/* SpiderCoin's web point (startActorBindToSpiderThread at its first Wait: its mPointPos, mUp) */
+#define STH_COINS 64
+static struct { int row, pt, part; } sth_coin[STH_COINS];
+static int nsth_coin;
+static int spider_coin_web(u32 row, V3 *p, V3 *up) /* 1 bound: p its point, up -mUp (calcAndSetBaseMtx) */
+{
+    for (int i = 0; i < nsth_coin; i++)
+        if (sth_coin[i].row == (int)row) { *p = sth.pt[sth_coin[i].pt].pos; *up = vnorm(vmul(sth.part[sth_coin[i].part].up, -1.0f)); return 1; }
+    return 0;
+}
+/* SlingShooter.cpp (SpiderAttachPoint): a sticky ball on TombSpider's web (bound to its nearest web point,
+ * startActorBindToSpiderThread). Mario touching its bind sensor (80 at its point, the web's Z: ACTMES_AUTORUSH_BEGIN)
+ * is bound to it (Land, Wait); the pointer on it with A (its command stream) hangs it on the web (Aim): it follows
+ * the pointer on the web's plane (0.1 a frame, at most 300 from its neutral point); A let go 100 or more off launches
+ * it and Mario at 45 towards the neutral point (Attack: 120 frames or a map plane against its velocity, after 10);
+ * what its attack sensor (100) hits takes ACTMES_SLING_SHOOT_ATTACK (sls_attack_hit: TombSpider's parts).
+ * ponytail: the Kinopio rider paths (mIsKinopioAttached: attackSensor's npc sensor bind, SlingShooter.cpp:309-318,
+ * the CocoonLand / CocoonStretch / talk messages), the 2P pointer (mPadChannel 1, CS_DPD_HIT), the drag level SE's
+ * volume (startLevelSound's 0-100), the event cameras' target (CameraTargetMtx at mNeutralPos: the player here),
+ * map parts taking its enemy attack (tryAttackMap's sendMsgEnemyAttack / ACTMES_IS_BROKEN: the map never breaks),
+ * the shadow (initShadowVolumeSphere 100) */
+enum { SL_FREE, SL_FREEINVALID, SL_LAND, SL_WAIT, SL_AIM, SL_ATTACK, SL_ATTACKSUCCESS };
+static const char *const sl_nrv[] = {"Free", "FreeInvalid", "Land", "Wait", "Aim", "Attack", "AttackSuccess"};
+#define SLS_MAX 32
+typedef struct {
+    int row, pt, part;       /* its web point (mBasePos sth.pt[pt].pos, mNeutralPos .base) and part (mUp .up) */
+    int nrv, step, kcam;     /* kcam: mIsKinopioCameraFocused (arg3) */
+    int bound, last_dmg, pass, nplane;
+    V3 pos, vel, avel, ptr;  /* mPosition, mVelocity, mAttackVelocity, mPointerPos */
+    V3 bx, by, bz;           /* mBaseMtx's axes */
+    V3 plane[2];             /* the binder's planes this frame (getBindedPlaneNormal) */
+    float pz;                /* mPlayerZ */
+    u32 lv;
+} Sls;
+static Sls sls[SLS_MAX];
+static int nsls, sls_a_prev;
+static void sls_set(Sls *s, int n) { s->nrv = n; s->step = -1; }
+static V3 sls_base(const Sls *s) { return sth.pt[s->pt].pos; }    /* *mBasePos */
+static V3 sls_neutral(const Sls *s) { return sth.pt[s->pt].base; } /* *mNeutralPos */
+static V3 sls_up(const Sls *s) { return sth.part[s->part].up; }    /* *mUp */
+static void sls_se(const Sls *s, u32 id) { float at[3] = {s->pos.x, s->pos.y, s->pos.z}; se_start(id, at); }
+static void sls_mtx(const Sls *s, float m[16])
+{
+    mat_identity(m);
+    m[0] = s->bx.x; m[1] = s->bx.y; m[2] = s->bx.z; m[4] = s->by.x; m[5] = s->by.y; m[6] = s->by.z;
+    m[8] = s->bz.x; m[9] = s->bz.y; m[10] = s->bz.z; m[12] = s->pos.x; m[13] = s->pos.y; m[14] = s->pos.z;
+}
+static void sls_fx(const Sls *s, const char *name) { float m[16]; sls_mtx(s, m); fx_named("SpiderThreadAttachPoint", name, m, NULL, NULL); } /* emitEffect */
+static void sls_fx_hit(const Sls *s, V3 at, const char *name) /* emitEffectHit(this, at, name): addEffectHitNormal's HitMarkNormal */
+{
+    float m[16];
+    sls_mtx(s, m); m[12] = at.x; m[13] = at.y; m[14] = at.z;
+    fx_named("SpiderThreadAttachPoint", name ? name : "HitMarkNormal", m, NULL, NULL);
+}
+static void sls_cam(const Sls *s, const char *name) { camera_event_named(name, sc->objs[s->row].zone); } /* startEventCamera / ...NoTarget */
+static void sls_cam_end(void) { camera_event_end(); }                                                  /* endEventCamera */
+static void sls_bck(const char *clip, int interp) /* startBckPlayer (interp: its interpolation frames, ponytail: the clip's own) */
+{
+    (void)interp;
+    if (!mario_anim) return;
+    int mode = 0;
+    anim_clip_info(clip, &mode);
+    mario_play(clip, 1.0f, mode == 2 || mode == 4);
+}
+static void sls_end_cmd(int i) { if (sls_pad == i) sls_pad = -1; } /* endCommandStream */
+static void sls_calc_base(const Sls *s, V3 *x, V3 *y, V3 *z) /* calcBaseMtx: up -mUp, front (0, 0, -1) */
+{
+    V3 up = vnorm(vmul(sls_up(s), -1.0f)), front = v3(0, 0, -1.0f), side = vnorm(vcross(up, front));
+    front = vnorm(vcross(side, up));
+    *x = side; *y = up; *z = front;
+}
+static void sls_actor_mtx(Sls *s) /* updateActorMtx */
+{
+    if (s->nrv == SL_ATTACK || s->nrv == SL_ATTACKSUCCESS) return; /* setTrans(mPosition) only */
+    V3 up = s->nrv == SL_LAND || s->nrv == SL_WAIT ? vmul(sls_up(s), -1.0f) : vsub(sls_neutral(s), s->pos);
+    if (vlen(up) > 1e-6f) {
+        up = vnorm(up);
+        V3 front = s->bz, side = vnorm(vcross(up, front));
+        up = vnorm(vcross(front, side));
+        s->bx = side; s->by = up; s->bz = front;
+    }
+}
+static void sls_player_end(int damage) /* endBindAndPlayerJump(this, 0, 0) / endBindAndPlayerDamage(this, 0) */
+{
+    sls_ride = -1;
+    mario->up = up_at(mario->pos, mario->up);
+    m_power_jump(mario, v3(0, 0, 0));
+    if (damage) m_damage(mario, v3(0, 0, 0));
+}
+static void sls_end_bind(int i) /* endBind */
+{
+    Sls *s = &sls[i];
+    s->vel = v3(0, 0, 0); /* deleteEffect(mRider, "SpaceCocoonBlur"): sls_hold keeps it only in Attack */
+    if (sls_ride == i) sls_ride = -1;
+    s->bound = 0; /* offBind */
+    s->pos = sls_base(s);
+    sls_set(s, SL_FREEINVALID);
+}
+static void sls_start_bind(int i) /* startBind (the player) */
+{
+    Sls *s = &sls[i];
+    sls_ride = i;
+    s->pz = mario->pos.z;
+    sls_calc_base(s, &s->bx, &s->by, &s->bz); /* mCameraTargetMtx at mNeutralPos (ponytail: the cameras target the player) */
+    mario_se(SE_PV_CATCH);
+    if (!s->kcam) sls_se(s, SE_OJ_SPACE_COCOON_ATTACH);
+    sls_actor_mtx(s);
+    sls_set(s, SL_LAND);
+}
+static void sls_cancel_wait(int i) /* startCancelWait */
+{
+    Sls *s = &sls[i];
+    s->pos.z = s->pz;
+    mario->pos = v3(mario->pos.x, mario->pos.y, s->pos.z);
+    sls_player_end(0);
+    sls_end_bind(i);
+    sls_end_cmd(i);
+}
+static void sls_cancel_aim(int i) /* startCancelAim */
+{
+    Sls *s = &sls[i];
+    s->pos.z = sth_pos_z();
+    mario->pos = v3(mario->pos.x, mario->pos.y, s->pos.z);
+    sth_send_msg(STH_HANG_END, s->row);
+    sls_end_cmd(i);
+}
+static int sls_update_wait(int i, int trig) /* updateWait */
+{
+    Sls *s = &sls[i];
+    s->pos = sls_base(s);
+    V3 tgt = vadd(s->pos, vmul(s->by, 50.0f)); /* initStarPointerTarget 210 at (0, 50, 0) */
+    int pointed = sth_pointing(tgt, 210.0f);
+    if (pointed) menu_pointer_request(SPM_BLUESTARREADY);
+    if (pointed && trig && sls_pad < 0) sls_pad = i; /* tryStartStarPointerCommandStream */
+    if (sls_pad == i) {
+        if (!sth_send_msg(STH_HANG_START, s->row)) { sls_end_cmd(i); return 0; }
+        sth_cursor_plane(sls_neutral(s), v3(0, 0, 1.0f), &s->ptr);
+        sls_cam_end(); sls_cam(s, "プレーヤー射出者[狙い中]");
+        sls_set(s, SL_AIM);
+        return 1;
+    }
+    return 0;
+}
+static int sls_try_cancel(int i) /* tryCancel */
+{
+    Sls *s = &sls[i];
+    if (!pad_pressed(PAD_SQUARE) || s->step <= 10) return 0; /* isPadSwing */
+    sls_cam_end();
+    sls_bck("spin2nd", -1);
+    sls_fx(s, "Stick");
+    mario_se(SE_PV_JUMP_S); mario_se(SE_PM_JUMP_M);
+    sls_cancel_wait(i);
+    return 1;
+}
+static void sls_update_hang(Sls *s) /* updateHang */
+{
+    V3 n = sls_neutral(s);
+    float dist = vlen(vsub(s->pos, n));
+    if (cur_idle < 300) sth_cursor_plane(n, v3(0, 0, 1.0f), &s->ptr); /* isStarPointerInScreen */
+    V3 f = s->ptr;
+    if (vlen(vsub(f, n)) > 300.0f) f = vadd(n, vmul(vnorm(vsub(s->ptr, n)), 300.0f)); /* sAimDistanceMax */
+    V3 p = vadd(vmul(f, 0.1f), vmul(s->pos, 0.9f)); /* sAimFollowRate */
+    s->vel = vsub(p, s->pos);
+    if (dist < 200.0f && !m_clip_is("spidercocoonwait")) sls_bck("spidercocoonwait", 10);       /* sAimDistanceToWait */
+    if (dist > 300.0f && !m_clip_is("spidercocoonstretch")) sls_bck("spidercocoonstretch", 10); /* sAimDistanceToStretch */
+}
+static int sls_try_release(int i, int a) /* tryRelease */
+{
+    Sls *s = &sls[i];
+    if (a) return 0;
+    if (vlen(vsub(s->pos, sls_neutral(s))) < 100.0f) { /* sAimDistanceMin */
+        sth_send_msg(STH_HANG_END, s->row);
+        sls_end_cmd(i);
+        sls_cam_end(); sls_cam(s, "プレーヤー射出者[ウェイト]");
+        sls_set(s, SL_WAIT);
+        return 1;
+    }
+    sls_cancel_aim(i);
+    V3 v = vsub(sls_neutral(s), s->pos);
+    v.z = 0;
+    if (vlen(v) < 1e-6f) v = sls_up(s);
+    v = vnorm(v);
+    V3 up = vmul(v, -1.0f), front = s->bz;
+    s->vel = vmul(v, 45.0f); /* sBindAttackSpeed */
+    s->bx = vnorm(vcross(up, front)); s->by = up; s->bz = front;
+    sls_fx(s, "Stick");
+    sls_se(s, SE_OJ_SPACE_COCOON_LAUNCH);
+    sls_bck("cocoonfly", -1);
+    sls_cam_end(); sls_cam(s, "プレーヤー射出者[攻撃中]");
+    mario_se(SE_PV_JUMP_JOY); /* validatePlayerSensor: Mario's sensors stay on here */
+    if (s->kcam) {
+        const Row *r = &sc->objs[s->row];
+        if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
+        s->kcam = 0;
+    }
+    sls_set(s, SL_ATTACK);
+    printf("SpiderAttachPoint %d: launched, velocity %.0f %.0f\n", s->row, s->vel.x, s->vel.y);
+    return 1;
+}
+static int sls_try_attack_map(Sls *s) /* tryAttackMap */
+{
+    if (!s->nplane || s->step < 10) return 0; /* isBinded, sBindAttackInvalidTime */
+    int ok = 1;
+    for (int k = 0; k < s->nplane; k++) {
+        if (vdot(s->vel, s->plane[k]) > 0.0f) continue;
+        camera_shake(SHAKE_NORMAL);
+        mario_se(SE_PV_DAMAGE_S); mario_se(SE_PM_LAND_HEAVY); /* the map takes no enemy attack and is never broken */
+        ok = 0;
+    }
+    return !ok;
+}
+/* receiveMsgEnemyAttack: an enemy's attack on it while Mario rides (Land, Wait, Aim, Attack): he is hurt off it.
+ * 1 taken */
+static int sls_enemy_attack(int i)
+{
+    Sls *s = &sls[i];
+    if (s->nrv != SL_LAND && s->nrv != SL_WAIT && s->nrv != SL_AIM && s->nrv != SL_ATTACK) return 0;
+    if (s->nrv == SL_AIM) sth_send_msg(STH_HANG_END, s->row);
+    sls_end_cmd(i);
+    sls_cam_end();
+    s->pos.z = s->pz;
+    mario->pos = s->pos;
+    sls_fx(s, "Stick");
+    sls_player_end(1);
+    sls_end_bind(i);
+    return 1;
+}
+/* attackSensor: its attack sensor (sls_attacking) hit a receiver that took ACTMES_SLING_SHOOT_ATTACK; broken
+ * (ACTMES_IS_BROKEN), pass (..._PASS_THROUGH_ENABLE), last (..._IS_LAST_DAMAGE), cocoon (ATYPE_TOMB_SPIDER_COCOON),
+ * at the point between the sensors */
+static void sls_attack_hit(int i, int broken, int pass, int last, int cocoon, V3 at)
+{
+    Sls *s = &sls[i];
+    if (sls_ride != i || s->nrv != SL_ATTACK) return;
+    (void)cocoon; /* !mIsKinopioAttached: SE_BM_TSPIDER_BOUND either way */
+    if (broken) {
+        sls_fx_hit(s, at, NULL); /* emitNullEffect */
+        s->avel = s->vel; s->vel = v3(0, 0, 0);
+        s->pass = pass; s->last_dmg = last;
+        sls_set(s, SL_ATTACKSUCCESS);
+        return;
+    }
+    sls_fx_hit(s, at, "InvalidHitMark"); /* emitHitEffect */
+    sls_se(s, SE_BM_TSPIDER_BOUND);
+    sls_bck("wallhit", -1);
+    sls_cam_end();
+    sls_player_end(0);
+    sls_end_bind(i);
+}
+/* its attack sensor (ATYPE_SPRING_ATTACKER, 100 at mPosition) while Mario flies on it (Attack): 1 and where */
+static int sls_attacking(int i, V3 *at, float *rad)
+{
+    if (i < 0 || i >= nsls || sls_ride != i || sls[i].nrv != SL_ATTACK) return 0;
+    *at = sls[i].pos; *rad = 100.0f;
+    return 1;
+}
+enum { SLM_DEMO_START, SLM_BATTLE_START, SLM_RUSH_CANCEL }; /* ACTMES_TOMB_SPIDER_DEMO_START / _BATTLE_START, ACTMES_RUSH_CANCEL */
+static void sls_msg(int msg) /* receiveOtherMsg, to every SpiderAttachPoint */
+{
+    for (int i = 0; i < nsls; i++) {
+        Sls *s = &sls[i];
+        const Row *r = &sc->objs[s->row];
+        if (msg == SLM_BATTLE_START) { /* remove the camera area on battle start */
+            if (s->kcam && r->sw[SW_A] >= 0) { s->kcam = 0; sw_set(r, SW_A, 1); }
+            continue;
+        }
+        if (s->nrv == SL_LAND || s->nrv == SL_WAIT) { if (sls_ride == i) sls_cancel_wait(i); continue; }
+        if (s->nrv == SL_AIM) {
+            s->bound = 0;
+            sls_cancel_aim(i);
+            sls_bck("wait", -1);
+            sls_player_end(0);
+            sls_end_bind(i);
+            continue;
+        }
+        if (msg == SLM_RUSH_CANCEL && sls_ride == i && (s->nrv == SL_ATTACK || s->nrv == SL_ATTACKSUCCESS)) {
+            s->bound = 0;
+            sls_end_bind(i);
+            sls_player_end(0);
+        }
+    }
+}
+static int sls_try(Player *m) /* Mario's sensor touching its bind sensor: ACTMES_AUTORUSH_BEGIN */
+{
+    if (!sth.on || sls_ride >= 0) return 0;
+    V3 c = vadd(m->pos, vmul(m->up, HIT_BODY_H));
+    for (int i = 0; i < nsls; i++) {
+        Sls *s = &sls[i];
+        if (s->nrv != SL_FREE) continue; /* FreeInvalid refuses it; the rest have their rider */
+        V3 b = v3(s->pos.x, s->pos.y, sth_pos_z()); /* updateHitSensor: the web's Z */
+        if (vlen(vsub(c, b)) > 80.0f + HIT_BODY_R) continue;
+        sth_touch_actor(m->pos, vadd(m->hvel, vmul(m->up, m->vup)));
+        sls_start_bind(i);
+        m->hip = 0; m->spin_timer = 0;
+        printf("SpiderAttachPoint %d: Mario bound\n", s->row);
+        return 1;
+    }
+    return 0;
+}
+static int sls_hold(Player *m) /* Mario bound: ACTMES_UPDATE_BASEMTX (updateActorMtx, setBaseTRMtx(mRider, mBaseMtx)) */
+{
+    if (sls_ride < 0) return 0;
+    Sls *s = &sls[sls_ride];
+    sls_actor_mtx(s);
+    m->pos = s->pos; m->up = s->by; m->face = s->bz;
+    m->hvel = v3(0, 0, 0); m->vup = 0; m->grounded = 0;
+    if (s->nrv == SL_ATTACK) { float mm[16]; sls_mtx(s, mm); fx_named("Mario", "SpaceCocoonBlur", mm, NULL, &sls_ride); } /* emitEffect(mRider) .. endBind */
+    return 1;
+}
+static void update_sls(void)
+{
+    int a = pointer_a(), trig = a && !sls_a_prev; /* testCorePadButtonA / testCorePadTriggerA */
+    sls_a_prev = a;
+    if (!sth.on) return;
+    for (int i = 0; i < nsls; i++) {
+        Sls *s = &sls[i];
+        s->step++;
+        switch (s->nrv) {
+        case SL_FREE: /* exeFree */
+            s->pos = sls_base(s);
+            if (sls_ride >= 0 && !s->kcam) sls_set(s, SL_FREEINVALID); /* isPlayerInBind */
+            break;
+        case SL_FREEINVALID:
+            s->pos = sls_base(s);
+            if (sls_ride >= 0 && !s->kcam) sls_set(s, SL_FREEINVALID); /* exeFree: setNerve again while Mario is bound */
+            if (s->step > 30 && mario->grounded) sls_set(s, SL_FREE); /* sStepFreeInvalid, isOnGroundPlayer */
+            break;
+        case SL_LAND:
+            if (s->step == 0) { sls_bck("spidercocoonland", 1); sls_cam(s, "プレーヤー射出者[ウェイト]"); s->vel = v3(0, 0, 0); }
+            if (sls_update_wait(i, trig)) break;
+            if (!mario_anim || mario_anim->done) { sls_set(s, SL_WAIT); break; } /* isBckStopped(mRider) */
+            if (s->step > 10) sls_try_cancel(i); /* sStepToEnableBindCancel */
+            break;
+        case SL_WAIT:
+            if (s->step == 0) sls_bck("spidercocoonwait", -1);
+            if (!sls_update_wait(i, trig)) sls_try_cancel(i);
+            break;
+        case SL_AIM: {
+            if (s->step == 0) { mario_se(SE_PV_CATCH); s->bound = 1; sls_se(s, SE_OJ_SPACE_COCOON_ATTACH); } /* onBind */
+            float d = vlen(vsub(s->pos, sls_neutral(s)));
+            if (d >= 100.0f) { float at[3] = {s->pos.x, s->pos.y, s->pos.z}; s->lv = se_level(SE_OJ_LV_SPACE_COCOON_DRAG, at, s->lv); }
+            if (sls_try_release(i, a)) break;
+            if (!a) { /* (tryRelease has taken every A let go) */
+                sls_end_cmd(i);
+                sls_cam_end(); sls_cam(s, "プレーヤー射出者[ウェイト]");
+                s->bound = 0;
+                sth_send_msg(STH_HANG_END, s->row);
+                sls_set(s, SL_WAIT);
+                break;
+            }
+            sls_update_hang(s);
+            break;
+        }
+        case SL_ATTACK: /* sBindAttackFrictionRate 1 */
+            if (sls_try_attack_map(s) || s->step == 120) { /* sStepBindAttack */
+                printf("SpiderAttachPoint %d: flight ends at %d (%s), Mario at %.0f %.0f %.0f\n", s->row, s->step,
+                       s->step == 120 ? "time" : "map", s->pos.x, s->pos.y, s->pos.z);
+                sls_cam_end();
+                sls_player_end(0);
+                sls_end_bind(i);
+            }
+            break;
+        case SL_ATTACKSUCCESS:
+            if (s->step == 0) pad_rumble(RUMBLE_MIDDLE);
+            if (s->step == 1) { scene_stop = s->last_dmg ? 30 : 15; s->last_dmg = 0; } /* sStepToStopScene: sStepStopSceneLastDamage / AttackSuccess */
+            if (s->step == 2) {
+                if (s->pass) { s->vel = s->avel; s->pass = 0; sls_set(s, SL_ATTACK); break; }
+                sls_cam_end();
+                sls_bck("airrotation", -1);
+                sls_player_end(0);
+                sls_end_bind(i);
+            }
+            break;
+        }
+        /* LiveActor::movement: mPosition += mVelocity, through the binder (50) while bound */
+        s->nplane = 0;
+        V3 c = vadd(s->pos, s->vel);
+        if (s->bound) {
+            V3 gn, wn;
+            int wall = 0, g = collide_n(&c, up_at(c, s->by), 50.0f, &gn, &wn, &wall);
+            if (g) s->plane[s->nplane++] = gn;
+            if (wall) s->plane[s->nplane++] = wn;
+        }
+        s->pos = c;
+        sth_hang_pos(s->row, s->pos);
+        /* calcAndSetBaseMtx: mBaseMtx in Land / Wait / Aim, else its point's (calcBaseMtx) */
+        float m[16];
+        if (s->nrv == SL_LAND || s->nrv == SL_WAIT || s->nrv == SL_AIM) sls_mtx(s, m);
+        else { V3 x, y, z; Sls t = *s; sls_calc_base(s, &x, &y, &z); t.bx = x; t.by = y; t.bz = z; t.pos = sls_base(s); sls_mtx(&t, m); }
+        Inst *in = row_inst(s->row);
+        if (in) memcpy(in->m, m, 64);
+    }
+}
+static void sls_scene(const Scene *s) /* every SpiderAttachPoint: initAfterPlacement (startActorBindToSpiderThread) */
+{
+    nsls = 0; sls_pad = -1; sls_ride = -1;
+    int ty = scene_type(s, "SpiderAttachPoint");
+    for (u32 i = 0; sth.on && ty >= 0 && i < s->nobjs && nsls < SLS_MAX; i++) {
+        if ((int)s->objs[i].type != ty) continue;
+        Sls *p = &sls[nsls++];
+        memset(p, 0, sizeof *p);
+        p->row = (int)i;
+        p->kcam = s->objs[i].arg[3] != -1 ? s->objs[i].arg[3] : 0; /* getJMapInfoArg3NoInit */
+        sth_start_actor_bind((int)i, row_pos(&s->objs[i]), v3(0, 0, 0), &p->pt, &p->part);
+        p->pos = sls_base(p);
+        sls_calc_base(p, &p->bx, &p->by, &p->bz);
+        sls_set(p, SL_FREE);
+    }
+}
+static void spider_thread_scene(const Scene *s) /* the scene's TombSpider (TombSpiderEnvironment) makes the web; its SpiderCoins bind */
+{
+    memset(&sth, 0, sizeof sth); nsth_coin = 0;
+    int ty = scene_type(s, "TombSpider"), cy = scene_type(s, "SpiderCoin");
+    for (u32 i = 0; ty >= 0 && i < s->nobjs; i++)
+        if ((int)s->objs[i].type == ty) { sth_init(row_pos(&s->objs[i])); break; }
+    for (u32 i = 0; sth.on && cy >= 0 && i < s->nobjs && nsth_coin < STH_COINS; i++) {
+        if ((int)s->objs[i].type != cy) continue;
+        sth_coin[nsth_coin].row = (int)i;
+        sth_start_actor_bind((int)i, row_pos(&s->objs[i]), v3(0, 0, 0), &sth_coin[nsth_coin].pt, &sth_coin[nsth_coin].part);
+        nsth_coin++;
+    }
+    sls_scene(s);
+    tsp_scene(s);
+}
+static void tomb_test_cursor(V3 p) /* test builds: the cursor onto p's screen spot */
+{
+    V3 ce, cw, cu;
+    float fovy;
+    camera_pose(&ce, &cw, &cu, &fovy);
+    V3 fw = vnorm(vsub(cw, ce)), sd = vnorm(vcross(fw, cu)), u = vcross(sd, fw), to = vsub(p, ce);
+    float z = vdot(to, fw), k = 224.0f / tanf(fovy * 3.14159265f / 360.0f);
+    if (z > 0) { cur_x = 320.0f + k * vdot(to, sd) / z; cur_y = 224.0f - k * vdot(to, u) / z; cur_idle = 0; }
+}
+/* tomb test from 400: Mario put on the first SpiderAttachPoint (bound), A with the pointer on it (Aim), the pointer
+ * 400 below its neutral point for 60 frames, A let go (Attack): its nerves and Mario logged */
+#ifndef TOMB_AIM
+#define TOMB_AIM 120 /* frames the test aims */
+#endif
+static int tomb_test_sling(int f)
+{
+    static int last = -1, aim_t, done, k = -1;
+    if (!nsls) return -1;
+    if (k < 0) { /* the one nearest the web's centre (in view) */
+        k = 0;
+        for (int i = 1; i < nsls; i++) if (vlen(vsub(sls[i].pos, sth.pos)) < vlen(vsub(sls[k].pos, sth.pos))) k = i;
+    }
+    Sls *s = &sls[k];
+    test_r2 = 0;
+    if (last == -1) {
+        camera_start_pos_end(); /* the player moved (the start's camera ends) */
+        for (int i = 0; i < nsls; i++) printf("tomb test: SpiderAttachPoint %d at %.0f %.0f %.0f kcam %d\n", sls[i].row, sls[i].pos.x, sls[i].pos.y, sls[i].pos.z, sls[i].kcam);
+    }
+    if (s->nrv != last) { printf("tomb test f %d: attach point %d %s, ride %d, Mario %.0f %.0f %.0f\n", f, s->row, sl_nrv[s->nrv], sls_ride, mario->pos.x, mario->pos.y, mario->pos.z); last = s->nrv; }
+    if (!done && sls_ride < 0 && s->nrv == SL_FREE) { /* onto its bind sensor */
+        mario->pos = vsub(v3(s->pos.x, s->pos.y, sth_pos_z()), vmul(mario->up, HIT_BODY_H));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+    }
+    if (s->nrv == SL_WAIT && f % 2) { tomb_test_cursor(vadd(s->pos, vmul(s->by, 50.0f))); test_r2 = s->step > 90; } /* A off, then on */
+    if (s->nrv == SL_AIM) {
+        tomb_test_cursor(vadd(sls_neutral(s), v3(0, 400.0f, 0))); /* above: launched down to the floor */
+        test_r2 = ++aim_t < TOMB_AIM;
+        if (aim_t % 10 == 0) printf("tomb test f %d: aim %.0f off\n", f, vlen(vsub(s->pos, sls_neutral(s))));
+        if (aim_t == 200) {
+            Inst *in = row_inst(s->row);
+            printf("tomb test: inst %d at %.0f %.0f %.0f, point %.0f %.0f %.0f, Mario %.0f %.0f %.0f clip %s\n", in ? (int)(in - insts) : -1,
+                   in ? in->m[12] : 0, in ? in->m[13] : 0, in ? in->m[14] : 0, sth.pt[s->pt].pos.x, sth.pt[s->pt].pos.y, sth.pt[s->pt].pos.z,
+                   mario->pos.x, mario->pos.y, mario->pos.z, mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-");
+        }
+    }
+    if (s->nrv == SL_ATTACK) done = 1;
+    V3 c = sth.pos;
+    if (!done) camera_set_override(1, vadd(c, v3(0, 0, 5200.0f)), c, v3(0, 1, 0), 45); /* the web face on until the launch */
+    else camera_set_override(0, c, c, v3(0, 1, 0), 45);
+    if (done && f % 10 == 0) printf("tomb test f %d: Mario %.0f %.0f %.0f up %.2f %.2f %.2f grounded %d ride %d\n", f, mario->pos.x, mario->pos.y, mario->pos.z, mario->up.x, mario->up.y, mario->up.z, mario->grounded, sls_ride);
+    return s->nrv;
+}
+int game_test_tomb(int f) /* tomb test: the web appeared (as TombSpiderDemo's opening would), Mario held before its centre,
+                           * a touch every 120 frames; its largest stretch logged */
+{
+    static int busy, f0;
+    if (!sth.on) return -1;
+    if (!game_test_free()) busy = 1;
+    if (!busy || !game_test_free() || !hud_welcome) return -2; /* the scenario's flight in over, Mario landed */
+    if (!f0) f0 = f;
+    f = f - f0 + 150;
+#ifndef TOMB_WEB
+    if (tsp.row >= 0) return tsp_test(f); /* the boss (TOMB_WEB: the web alone, as before) */
+#endif
+    if (!sth.alive) sth_appear();
+    V3 c = sth.pos;
+    if (f >= 400) return tomb_test_sling(f);
+    mario->pos = vadd(c, v3(0, -900.0f, 2500.0f)); mario->face = v3(0, 0, -1); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+    camera_set_override(1, vadd(c, v3(0, -900.0f, 4200.0f)), vadd(c, v3(0, -900.0f, 0)), v3(0, 1, 0), 45); /* the web face on */
+    if (f % 120 == 0) printf("tomb test f %d: touch %d\n", f, sth_touch_actor(vadd(c, v3(300.0f, -700.0f, 0)), v3(0, 30.0f, -20.0f)));
+    float mx = 0;
+    int at = -1;
+    for (int i = 0; i < sth.npt; i++) { float d = vlen(vsub(sth.pt[i].pos, sth.pt[i].base)); if (d > mx) { mx = d; at = i; } }
+    if (f % 20 == 0) {
+        int still = 0;
+        for (int i = 0; i < sth.npart; i++) still += sth.part[i].still;
+        printf("tomb test f %d: stretch %.1f at point %d, %d of %d parts still, wind %.2f\n", f, mx, at, still, sth.npart, sth.wspd);
+        for (int i = 0; i < nsth_coin && f == 160; i++) {
+            V3 p, u;
+            spider_coin_web((u32)sth_coin[i].row, &p, &u);
+            V3 r = row_pos(&sc->objs[sth_coin[i].row]);
+            printf("tomb test: SpiderCoin %d at %.0f %.0f %.0f (placed %.0f %.0f %.0f)\n", sth_coin[i].row, p.x, p.y, p.z, r.x, r.y, r.z);
+        }
+    }
+    return at;
+}
+
+/* SpiderCoin::calcAndSetBaseMtx: its cocoon (SpaceCocoon x 0.3) 20 down and 20 along Z from it, up -mUp (its web
+ * part's; with no web, its placement's Y) */
 static void spider_coin_mtx(const Row *r, float m[16], float *cocoon) /* its coin (50 down) or, cocoon set, its cocoon */
 {
-    V3 x, z, p = row_pos(r);
+    V3 x, z, p = row_pos(r), up;
     row_axes(r, &x, &z);
-    V3 up = vnorm(vcross(z, x)), side = vnorm(vcross(up, v3(0, 0, 1))), front = vnorm(vcross(side, up));
+    up = vnorm(vcross(z, x));
+    spider_coin_web((u32)(r - sc->objs), &p, &up);
+    V3 side = vnorm(vcross(up, v3(0, 0, 1))), front = vnorm(vcross(side, up));
     if (!cocoon) { basis_matrix(m, vadd(p, vmul(up, -50.0f)), up, front, 0); return; } /* sModelOffset */
     basis_matrix(m, vadd(vadd(p, vmul(up, -20.0f)), vmul(front, 20.0f)), up, front, 0); /* sCocoonOffsetY / Z */
     for (int j = 0; j < 12; j++) m[j] *= *cocoon;
@@ -29682,6 +30805,7 @@ static void spider_coins(void)
         V3 x, z, p = row_pos(r);
         row_axes(r, &x, &z);
         V3 up = vnorm(vcross(z, x));
+        spider_coin_web(i, &p, &up); /* exeWait: mPosition its point */
         if (!pointer_a() || !cursor_sees(vadd(p, vmul(up, 80.0f)), 40.0f)) continue; /* initStarPointerTarget 150 at 80 up */
         spider_coin_free(i);
     }
@@ -29697,6 +30821,7 @@ static void spider_coin_free(u32 i) /* SpiderCoin::kill */
         spider_coin_mtx(r, cm, &k);
         fx_named("SpaceCocoon", "Stick", cm, NULL, NULL);
         V3 v = v3(-up.x, -up.y, 0.0f); /* -mUp in XY */
+        if (spider_coin_web(i, &p, &up)) { v = v3(up.x, up.y, 0.0f); p.z = r->pos[2]; } /* -mUp (up is -mUp); at mThreadZ */
         coin_to_velocity(p, vmul(vlen(v) > 1e-6f ? vnorm(v) : v, 20.0f)); /* appearCoinToVelocity, sCoinSpeed */
         row_kill((int)i);
         printf("SpiderCoin %u freed\n", i);
@@ -45237,6 +46362,694 @@ int game_test_dring(void) /* the first DashRing: Mario 150 before it along its a
     return drings[0].active * 10000 + drings[0].revival * 10 + (sw.ring_t > 0) + 2 * sw.on;
 }
 
+/* TombSpider (Boss/TombSpider*.cpp): Space Junk's boss in its planet (TombSpiderEnvironment: TombSpiderPlanet at its
+ * place with its collision, TombSpiderCocoon). Nerves as TombSpider.cpp: WaitPlayer (hidden; Mario within 6000:
+ * ゲートオープンデモ), DemoGateOpen (Mario puppeted from 7000 along Z through the gate to the floor, the web appears),
+ * ActionCocoon (the cocoon: a sling attack breaks it), DemoCocoonBreak / Battle1stStart / Battle1stStartJumpToPlayer
+ * (出現: the planet's Appear camera), Action1st, DemoBattle1stEnd / Battle2ndStart (１回戦終了: Battle2ndStart camera,
+ * 25 star pieces), Action2nd, DemoDeath (死亡: Death camera, the web cut, the power star). The actions
+ * (TombSpiderActionBase): Wait, AttackStart, AttackLoop (acid: the attacker sensors along its facing hurt Mario or his
+ * attach point), AttackEnd; the eye's hit swoons it (TombSpiderStateSwoon), the hip's opens the chance (the vital spots,
+ * three hits); the glands (TombSpiderGland, active in the 2nd) swoon it too. Hits come from Mario's flying attach point
+ * (sls_attacking: ACTMES_SLING_SHOOT_ATTACK / IS_BROKEN / PASS_THROUGH_ENABLE / IS_LAST_DAMAGE, sls_attack_hit).
+ * ponytail: its BRKs (Battle1st / Battle2nd colours, the cocoon's Open, the vital spot's), the BAS sound sheets, the
+ * light ctrl, the planet's low LOD (TombSpiderPlanetLow at 25000), invalidateTalkDirector, the cocoon's push only
+ * moves Mario out of its sensor (sendMsgPush), the player demo actor's SpaceCocoonBlur in the gate demo */
+static int tsp_puppet(void) { return tsp.row >= 0 && tsp.puppet && pd.name && pd.row == tsp.row; }
+static void tsp_set(int n) { tsp.nrv = n; tsp.st = -1; printf("tomb spider: %s" "\n", tn_name[n]); }
+static void tsp_aset(int n) { tsp.act = n; tsp.ast = -1; printf("tomb spider: action %d %s" "\n", tsp.which, ta_name[n]); }
+static void tsp_se(u32 id) { float at[3] = {tsp.pos.x, tsp.pos.y, tsp.pos.z}; se_start(id, at); }
+static void tsp_lv(u32 id) { float at[3] = {tsp.pos.x, tsp.pos.y, tsp.pos.z}; tsp.lv = se_level(id, at, tsp.lv); } /* startLevelSound */
+static void tsp_base(float m[16]) { float rot[3] = {0, 0, tsp.rotz}, one[3] = {1, 1, 1}, at[3] = {tsp.pos.x, tsp.pos.y, tsp.pos.z}; mat_translate_rot_scale(m, at, rot, one); }
+static void tsp_planet_mtx(float m[16]) { mat_identity(m); m[12] = tsp.pos.x; m[13] = tsp.pos.y; m[14] = tsp.pos.z; } /* the planet at its place (getRow 0) */
+static void tsp_joint(int j, float out[16]) { float b[16]; tsp_base(b); bsb_joint(tsp.anim, b, j, out); } /* getJointMtx */
+static void tsp_part_mtx(int j, const float t[3], const float r[3], float out[16]) /* PartsModel::initFixedPosition */
+{
+    float jm[16], l[16], one[3] = {1, 1, 1};
+    tsp_joint(j, jm); mat_translate_rot_scale(l, t, r, one); mat_mul(out, jm, l);
+}
+static void tsp_gland_mtx(int k, float m[16]) { tsp_part_mtx(tsp_gj[k], tsp_gt[k], tsp_gr[k], m); }
+static void tsp_vital_mtx(int k, float m[16]) { tsp_part_mtx(tsp_vj[k], tsp_vt[k], tsp_vr[k], m); }
+static void tsp_clip(Anim *a, const char *cls, const char *clip) { bsb_clip(a, cls, clip, 1); } /* startBck / startAction */
+static void tsp_bck(const char *clip) { tsp_clip(tsp.anim, "tombspider", clip); }
+static int tsp_stopped(const Anim *a) { return !a || !a->skin || a->done; }           /* isBckStopped / isActionEnd */
+static int tsp_gland_active(int k) { return tsp.gl[k] == TG_ACTIVEWAIT; }
+static int tsp_gland_damage(int k) { return tsp.gl[k] == TG_DAMAGESTART || tsp.gl[k] == TG_DAMAGEWAIT; }
+static int tsp_vital_damage(int k) { return tsp.vs[k] == TV_DAMAGESTART || tsp.vs[k] == TV_DAMAGEWAIT; }
+static int tsp_attack_enable(int k) { return tsp_gland_active(k) && !tsp_gland_damage(k); } /* isAttackEnable */
+static void tsp_gset(int k, int n) { tsp.gl[k] = n; tsp.glst[k] = -1; }
+static void tsp_vset(int k, int n) { tsp.vs[k] = n; tsp.vsst[k] = -1; }
+static void tsp_cam(const char *name) /* startEventCamera(mCameraInfo, name) */
+{
+    if (tsp.cam) camera_event_stop();
+    tsp.cam = camera_actor_start("TombSpider", name, (unsigned short)row_camset[tsp.row], v3(0, 1, 0), v3(0, 0, 1), tsp.pos);
+}
+static void tsp_cam_end(void) { if (tsp.cam) { camera_event_stop(); tsp.cam = 0; } } /* endEventCamera */
+static void tsp_acam(const char *name) { tsp.acam = name; tsp.acam_f = 0; } /* startAnimCameraTargetSelf(planet, ..) */
+static void tsp_acam_end(void) { if (tsp.acam) camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45); tsp.acam = NULL; } /* endAnimCamera */
+static int tsp_acam_done(const char *name) /* isAnimCameraEnd */
+{
+    char cn[32];
+    snprintf(cn, sizeof cn, "tspdemo/%s", name);
+    return tsp.acam && !strcmp(tsp.acam, name) && tsp.acam_f >= canm_frames(cn);
+}
+static void tsp_player_mtx(const float m[16]) /* setPlayerBaseMtx */
+{
+    mario->pos = v3(m[12], m[13], m[14]); mario->up = vnorm(v3(m[4], m[5], m[6]));
+    V3 f = vtangent(v3(m[8], m[9], m[10]), mario->up);
+    if (vlen(f) > 1e-6f) mario->face = vnorm(f);
+    mario->hvel = v3(0, 0, 0); mario->vup = 0;
+}
+static void tsp_player_rate0(void) { if (mario_anim) mario_anim->speed = 0; } /* setBckRate(getPlayerDemoActor(), 0) */
+static void tsp_demo(const char *cam) { tsp_cam(cam); sth_pause_off(); tsp_player_rate0(); } /* startTombSpiderDemo */
+static void tsp_acam_demo(const char *cam) { sth_pause_off(); tsp_player_rate0(); tsp_acam(cam); } /* startTombSpiderAnimCameraDemo */
+static void tsp_end_demo(const char *demo) { tsp_cam_end(); pd_end(demo); tsp.puppet = 0; } /* endTombSpiderDemo */
+static void tsp_end_acam_demo(const char *demo) { tsp_acam_end(); pd_end(demo); tsp.puppet = 0; } /* endTombSpiderAnimCameraDemo */
+static void tsp_request(const char *name, int nrv) { tsp_set(TN_WAITDEMO); tsp.req = nrv; tsp.req_name = name; } /* requestStartDemoMarioPuppetable */
+static void tsp_reset_player(int cur) /* TombSpiderFunction::resetPlayerPosTombSpider */
+{
+    V3 p = vadd(tsp.pos, v3(0, -TSP_INSIDE, 0)), d = vsub(mario->pos, tsp.pos);
+    if (cur && vlen(d) > 1e-6f) p = vadd(tsp.pos, vmul(vnorm(d), TSP_INSIDE - 200.0f));
+    V3 up = up_at(p, mario->up), side = vnorm(vcross(up, v3(0, 0, 1))), front = vcross(side, up);
+    float m[16];
+    basis_matrix(m, p, up, front, 0);
+    tsp_player_mtx(m);
+}
+static int tsp_rotate_left(void) /* isRotateLeftToPlayer */
+{
+    float a = (tsp.rotz - 90.0f) * 0.0174533f;
+    V3 f = v3(cosf(a), sinf(a), 0), d = vsub(mario->pos, tsp.pos);
+    d.z = 0;
+    return f.x * d.y - f.y * d.x > 0;
+}
+static float tsp_repeat(float a) { a = fmodf(a, 360.0f); return a < 0 ? a + 360.0f : a; } /* repeatDegree */
+static float tsp_rotate_speed(int n) /* calcRotateSpeedToPlayer */
+{
+    tsp.rotz = tsp_repeat(tsp.rotz);
+    float ang = tsp_repeat(atan2f(mario->pos.y - tsp.pos.y, mario->pos.x - tsp.pos.x) * 57.29578f + 90.0f); /* calcRotateZ */
+    if (tsp_rotate_left()) { if (ang < tsp.rotz) tsp.rotz -= 360.0f; }
+    else if (ang > tsp.rotz) tsp.rotz += 360.0f;
+    return (ang - tsp.rotz) / n;
+}
+static void tsp_attach(int on) { tsp.attach = on; } /* appearThreadAttacherAll / killThreadAttacherAll */
+/* sensors: TombSpiderFunction validate / invalidate */
+static void tsp_main_sens(int on) { tsp.sens[TSS_BODY] = tsp.sens[TSS_EYE] = tsp.sens[TSS_HIP] = tsp.sens[TSS_MOUTH] = on; }
+static void tsp_gland_sens(int on) { for (int k = 0; k < 4; k++) tsp.sens[TSS_GLAND + k] = on && !tsp_gland_damage(k); }
+static void tsp_vital_sens(int on) { for (int k = 0; k < 3; k++) tsp.sens[TSS_VITAL + k] = on; }
+static void tsp_attack_sens(int on) { tsp.sens[TSS_ATK] = on; for (int k = 0; k < 4; k++) tsp.sens[TSS_GATK + k] = on && !tsp_gland_damage(k); }
+/* TombSpiderAcid */
+static void tsp_end_acid(void) /* TombSpiderFunction::endAcid */
+{
+    tsp.acid_ready = tsp.acid_emit = 0; tsp.acid_t = 0;
+    for (int k = 0; k < 5; k++) tsp.acid_fx[k] = 0;
+    tsp_attack_sens(0);
+}
+static void tsp_start_acid(void) /* startAcid: emitAcidMouth, emitAcidGland */
+{
+    tsp.acid_fx[0] = 1; tsp.acid_ready = tsp.acid_emit = 1; tsp.acid_t = 0;
+    for (int k = 0; k < 4; k++) if (tsp_attack_enable(k)) tsp.acid_fx[1 + k] = 1;
+    tsp.acid_emit = 1; tsp.acid_t = 0; /* startGland */
+}
+static void tsp_ground_mtx(float out[16], const float j[16]) /* updateGroundMtx: the map under it along -its Z */
+{
+    V3 up = v3(-j[8], -j[9], -j[10]), side = v3(up.y, -up.x, 0), front = v3(0, 0, 1), from = v3(j[12], j[13], j[14]), hp = v3(0, 0, 0), n;
+    int in;
+    if (!map_line(from, vmul(up, -2500.0f), &hp, &n, &in)) hp = v3(0, 0, 0);
+    mat_identity(out);
+    out[0] = side.x; out[1] = side.y; out[2] = side.z; out[4] = up.x; out[5] = up.y; out[6] = up.z;
+    out[8] = front.x; out[9] = front.y; out[10] = front.z; out[12] = hp.x; out[13] = hp.y; out[14] = hp.z;
+}
+static void tsp_acid_update(void) /* TombSpiderAcid::update */
+{
+    if (tsp.acid_emit) { if (!tsp.acid_active && ++tsp.acid_t >= 30) tsp.acid_active = 1; } /* sStepToStartAcidGround: AcidSplash on */
+    else if (tsp.acid_active && ++tsp.acid_t >= 30) tsp.acid_active = 0;                    /* sStepToEndAcidGround */
+    if (!tsp.acid_active) return;
+    float jm[16];
+    tsp_joint(TSP_MOUTH, jm); tsp_ground_mtx(tsp.acid_m[0], jm);
+    for (int k = 0; k < 4; k++) if (tsp_gland_active(k) && !tsp_gland_damage(k)) { tsp_joint(tsp_gj[k], jm); tsp_ground_mtx(tsp.acid_m[1 + k], jm); }
+}
+/* TombSpiderSensorCtrl::update: at the player's Z */
+static void tsp_attack_pos(V3 *out, V3 at, V3 zc) /* updateAttackSensorPos */
+{
+    float l = sqrtf(zc.x * zc.x + zc.y * zc.y), d = sqrtf((at.x - mario->pos.x) * (at.x - mario->pos.x) + (at.y - mario->pos.y) * (at.y - mario->pos.y)) - 100.0f;
+    if (l > 1e-6f) { zc.x /= l; zc.y /= l; }
+    *out = v3(at.x + zc.x * d, at.y + zc.y * d, mario->pos.z);
+}
+static void tsp_sensors(void)
+{
+    float b[16], m[16];
+    float z = mario->pos.z;
+    tsp_base(b);
+    tsp.spos[TSS_BODY] = vadd(tsp.pos, vmul(v3(b[4], b[5], b[6]), -100.0f));
+    tsp.spos[TSS_COCOON] = vadd(tsp.pos, vmul(v3(b[4], b[5], b[6]), -50.0f));
+    tsp_joint(TSP_EYE, m); tsp.spos[TSS_EYE] = v3(-100.0f * m[8] + m[12], -100.0f * m[9] + m[13], z);
+    tsp_joint(TSP_HIP, m); tsp.spos[TSS_HIP] = v3(-400.0f * m[8] + m[12], -400.0f * m[9] + m[13], z);
+    tsp.spos[TSS_MOUTH] = v3(0, 0, 0); /* (a callback sensor SensorCtrl never moves) */
+    for (int k = 0; k < 4; k++) {
+        tsp_gland_mtx(k, m);
+        tsp.spos[TSS_GLAND + k] = v3(m[12], m[13], z);
+        tsp_attack_pos(&tsp.spos[TSS_GATK + k], v3(m[12], m[13], m[14]), v3(m[8], m[9], 0));
+    }
+    float a = (tsp.rotz - 90.0f) * 0.0174533f;
+    tsp_attack_pos(&tsp.spos[TSS_ATK], tsp.pos, v3(cosf(a), sinf(a), 0));
+    for (int k = 0; k < 3; k++) { tsp_vital_mtx(k, m); tsp.spos[TSS_VITAL + k] = v3(m[12], m[13], z); }
+}
+/* the sling attack's messages to its sensor k (TombSpider::receiveOtherMsg, by nerve) */
+static int tsp_chance_damage(void);
+static int tsp_msg_attack(int k, int dir) /* ACTMES_SLING_SHOOT_ATTACK */
+{
+    if (tsp.nrv == TN_COCOON) { /* TombSpiderActionCocoon */
+        if (!dir) return 0;
+        if (tsp.act == TA_COCOONWAIT) { tsp_aset(TA_COCOONBREAK); return 1; } /* isSpringAttacker */
+        return 0;
+    }
+    if (tsp.act != TA_SWOON && k == TSS_EYE && dir) { tsp_aset(TA_DAMAGEEYE); return 1; } /* tryDamageEye */
+    if (k == TSS_HIP && dir) { tsp_aset(TA_DAMAGEHIP); return 1; }                       /* tryDamageHip */
+    if (k >= TSS_GLAND && k < TSS_GLAND + 4 && dir && !tsp_gland_damage(k - TSS_GLAND)) { /* tryDamageGland */
+        tsp_gset(k - TSS_GLAND, TG_DAMAGESTART);
+        tsp.sens[k] = 0; tsp.sens[TSS_GATK + k - TSS_GLAND] = 0;
+        tsp_aset(TA_DAMAGEGLAND);
+        return 1;
+    }
+    if (tsp.act == TA_CHANCEWAIT && k >= TSS_VITAL && k < TSS_VITAL + 3 && dir && !tsp_vital_damage(k - TSS_VITAL)) { /* tryDamageVitalSpot */
+        tsp_vset(k - TSS_VITAL, TV_DAMAGESTART);
+        tsp.sens[k] = 0;
+        tsp_aset(tsp_chance_damage() ? TA_CHANCEDAMAGELAST : TA_CHANCEDAMAGE);
+        return 1;
+    }
+    return k == TSS_BODY;
+}
+static int tsp_msg_broken(int k) { return tsp.nrv == TN_COCOON ? tsp.adead || tsp.act == TA_COCOONBREAK : k != TSS_BODY; } /* ACTMES_IS_BROKEN */
+static int tsp_in_action(void) { return tsp.nrv == TN_COCOON || tsp.nrv == TN_ACTION1ST || tsp.nrv == TN_ACTION2ND; }
+static void tsp_sling(void) /* SlingShooter::attackSensor on its sensors (sensor order) */
+{
+    V3 at;
+    float rad;
+    if (!tsp_in_action() || sls_ride < 0 || !sls_attacking(sls_ride, &at, &rad)) return;
+    V3 vel = sls[sls_ride].vel;
+    for (int k = 0; k < TSS_N; k++) {
+        V3 d = vsub(tsp.spos[k], at);
+        if (!tsp.sens[k] || vlen(d) >= rad + tss_rad[k]) continue;
+        if (!tsp_msg_attack(k, vdot(d, vel) > 0)) continue; /* isAttackDirection */
+        int broken = tsp_msg_broken(k), cocoon = tsp.nrv == TN_COCOON;
+        int pass = !cocoon && tsp.act == TA_CHANCEDAMAGE, last = !cocoon && tsp.adead; /* PASS_THROUGH_ENABLE, IS_LAST_DAMAGE */
+        printf("tomb spider: sling hit sensor %d, broken %d" "\n", k, broken);
+        sls_attack_hit(sls_ride, broken, pass, last, k == TSS_COCOON, vadd(at, vmul(d, rad / (rad + tss_rad[k]))));
+        return;
+    }
+}
+static void tsp_enemy_attack(void) /* Action1st / 2nd::attackSensor in AttackLoop: its attacker (2nd: and the glands') on Mario or his attach point */
+{
+    if (tsp.act != TA_ATTACKLOOP || (tsp.nrv != TN_ACTION1ST && tsp.nrv != TN_ACTION2ND)) return;
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int k = TSS_ATK; k < TSS_ATK + (tsp.nrv == TN_ACTION2ND ? 5 : 1); k++) {
+        if (!tsp.sens[k]) continue;
+        if (sls_ride >= 0 && vlen(vsub(sls[sls_ride].pos, tsp.spos[k])) < 100.0f + 100.0f) { /* isSpringAttacker: sendMsgEnemyAttack */
+            if (sls_enemy_attack(sls_ride)) tsp.hit_step = tsp.ast;
+        } else if (sls_ride < 0 && vlen(vsub(mc, tsp.spos[k])) < 100.0f + HIT_BODY_R && !mario->hurt_timer) { /* isSensorPlayer */
+            hurt_mario(tsp.spos[k], 0); tsp.hit_step = tsp.ast;
+        }
+    }
+}
+/* TombSpiderActionBase */
+static int tsp_rnd(int a, int b) { return a + rand() % (b - a); } /* getRandom(s32, s32) */
+static void tsp_gland_clip(int k, const char *clip) { tsp_clip(tsp.gland[k], "tombspidergland", clip); }
+static int tsp_upd_wait(int lo, int hi)
+{
+    if (tsp.ast == 0) {
+        tsp_bck("wait");
+        for (int k = 0; k < 4; k++) if (!tsp_gland_damage(k)) tsp_gland_clip(k, "wait");
+        tsp.wait_t = tsp_rnd(lo, hi);
+    }
+    return tsp.ast == tsp.wait_t;
+}
+static int tsp_upd_damage(const char *clip, u32 se, int gland)
+{
+    if (tsp.ast == 0) {
+        tsp_bck(clip);
+        camera_shake(SHAKE_NORMAL);
+        tsp_end_acid();
+        if (gland) tsp_attack_sens(0);
+        tsp_se(se);
+    }
+    return tsp_stopped(tsp.anim);
+}
+static int tsp_upd_attack_start(void)
+{
+    if (tsp.ast == 0) {
+        tsp_bck("attackstart");
+        for (int k = 0; k < 4; k++) if (tsp_attack_enable(k)) tsp_gland_clip(k, "attackstart");
+        tsp_se(SE_BM_TSPIDER_PRE_ACID);
+    }
+    if (tsp_stopped(tsp.anim)) return 1;
+    tsp_lv(SE_BM_LV_TSPIDER_PRE_ACID);
+    return 0;
+}
+static int tsp_upd_attack_loop(int lo, int hi, float acc, float mx)
+{
+    if (tsp.ast == 0) {
+        tsp.rspd = 0;
+        if (tsp_rotate_left()) { tsp_bck("attackloopl"); tsp.racc = acc; }
+        else { tsp_bck("attackloopr"); tsp.racc = -acc; }
+        for (int k = 0; k < 4; k++) if (tsp_attack_enable(k)) tsp_gland_clip(k, "attackloop");
+        tsp_start_acid();
+        tsp.hit_step = -1;
+        tsp.atk_t = tsp_rnd(lo, hi);
+    }
+    if (tsp.ast == 20) tsp_attack_sens(1); /* sStepAttackLoopSensorValidate */
+    tsp.rspd += tsp.racc;
+    tsp.rspd = tsp.rspd < -mx ? -mx : tsp.rspd > mx ? mx : tsp.rspd;
+    tsp.rotz = tsp_repeat(tsp.rotz + tsp.rspd);
+    tsp_lv(SE_BM_LV_TSPIDER_ACID);
+    if ((tsp.hit_step >= 0 && tsp.ast == tsp.hit_step + 30) || tsp.ast > tsp.atk_t) { tsp_end_acid(); return 1; } /* sStepAttackLoopMin */
+    return 0;
+}
+static int tsp_upd_attack_end(void)
+{
+    if (tsp.ast == 0) { tsp_bck("attackend"); tsp_se(SE_BM_TSPIDER_ACID_END); }
+    return tsp_stopped(tsp.anim);
+}
+static void tsp_vitals(void (*f)(int)) { for (int k = 0; k < 3; k++) f(k); }
+static void tsp_vital_chance(int k) { if (tsp.vs[k] == TV_WAIT) tsp_vset(k, TV_CHANCEWAIT); }   /* startChance */
+static void tsp_vital_endchance(int k) { if (tsp.vs[k] == TV_CHANCEWAIT) tsp_vset(k, TV_WAIT); } /* endChance */
+static void tsp_vital_recover(int k) { tsp_vset(k, TV_RECOVER); }
+static const Row *tsp_row(void) { return &sc->objs[tsp.row]; }
+static void tsp_sw(int k, int on) { if (tsp_row()->sw[k] >= 0) sw_set(tsp_row(), k, on); }
+static int tsp_upd_chance_start(void)
+{
+    int *ind = &tsp.indemo[tsp.which];
+    if (*ind) { /* updateChanceStartDemo */
+        if (tsp.ast == 0) {
+            tsp_main_sens(0); tsp_gland_sens(0); tsp_vital_sens(1);
+            tsp_demo("チャンス開始[トゥームスパイダー]");
+            sls_msg(SLM_DEMO_START);
+            tsp_bck("chancestart");
+            tsp_vitals(tsp_vital_chance);
+        }
+        if (tsp_stopped(tsp.anim)) { tsp_end_demo("チャンス開始"); tsp_sw(SW_A, 1); return 1; }
+        return 0;
+    }
+    if (tsp.ast == 0) { /* updateChanceStartNoDemo */
+        tsp_bck("chancestart");
+        tsp_vitals(tsp_vital_chance);
+        tsp_main_sens(0); tsp_gland_sens(0);
+        tsp.sens[TSS_BODY] = 1;
+    }
+    if (tsp_stopped(tsp.anim)) { tsp.sens[TSS_BODY] = 0; tsp_vital_sens(1); tsp_sw(SW_A, 1); return 1; }
+    return 0;
+}
+static int tsp_upd_chance_wait(int end)
+{
+    if (tsp.ast == 0) { tsp_bck("chancewait"); tsp_attach(0); sth_start_chance(); }
+    if (tsp.ast == end - 480) { tsp_bck("chancewaitendsign"); if (tsp.anim) tsp.anim->speed = 1.0f; } /* sStepChanceStartEndSign1 */
+    if (tsp.anim && tsp.anim->done && !tsp.anim->loop && tsp.anim->clip_id >= 0 && strstr(sc->clips[tsp.anim->clip_id].name, "chancewaitendsign")) { /* isBckOneTimeAndStopped */
+        tsp_bck("chancewaitendsign");
+        if (tsp.ast > end - 240) tsp.anim->speed = 2.0f; else if (tsp.ast > end - 480) tsp.anim->speed = 1.0f;
+    }
+    return tsp.ast == end;
+}
+static int tsp_upd_chance_damage(void)
+{
+    if (tsp.ast == 0) tsp_bck("chancedamage");
+    if (tsp_stopped(tsp.anim)) { tsp_attach(0); tsp.pos.z = tsp.posz; return 1; }
+    return 0;
+}
+static int tsp_upd_chance_end(void)
+{
+    int *ind = &tsp.indemo[tsp.which];
+    if (*ind) { /* updateChanceEndDemo */
+        if (tsp.ast == 0) {
+            tsp_main_sens(1); tsp_gland_sens(1); tsp_vital_sens(0);
+            tsp_demo("チャンス開始[トゥームスパイダー]");
+            tsp_sw(SW_A, 0); tsp_attach(1); sth_start_battle(); sls_msg(SLM_DEMO_START);
+        }
+        if (tsp.ast == 30) { tsp_bck("chanceend"); tsp_vitals(tsp_vital_endchance); } /* sStepChanceEndAnim */
+        if (tsp.ast == 120) { *ind = 0; tsp_end_demo("チャンス終了"); return 1; } /* sStepChanceEndDemo */
+        return 0;
+    }
+    if (tsp.ast == 0) {
+        tsp_bck("chanceend"); tsp_vitals(tsp_vital_endchance); tsp_vital_sens(0);
+        tsp_sw(SW_A, 0); tsp_attach(1); sth_start_battle();
+    }
+    if (tsp_stopped(tsp.anim)) { tsp_main_sens(1); tsp_gland_sens(1); return 1; }
+    return 0;
+}
+static int tsp_chance_damage(void) /* startChanceDamage: 1 when its energy is out */
+{
+    tsp.energy--;
+    camera_shake(SHAKE_NORMAL);
+    tsp_attach(1);
+    if (tsp.energy <= 0) { sls_msg(SLM_DEMO_START); tsp_sw(SW_A, 0); tsp_attach(1); sth_start_battle(); }
+    return tsp.energy <= 0;
+}
+static void tsp_await(const char *name, int nrv) /* tryWaitChance*Demo: WaitDemo until its demo starts (mInDemo), else at once */
+{
+    if (!tsp.indemo[tsp.which]) { tsp_aset(nrv); return; }
+    tsp_aset(TA_WAITDEMO); tsp.areq = nrv; tsp.areq_name = name;
+}
+static int tsp_action(void) /* TombSpiderAction1st / 2nd (which), updateActorState: 1 once killed */
+{
+    int second = tsp.which == 2;
+    tsp.ast++;
+    switch (tsp.act) {
+    case TA_WAIT: if (tsp_upd_wait(second ? 30 : 60, second ? 60 : 90)) tsp_aset(TA_ATTACKSTART); break;
+    case TA_ATTACKSTART: if (tsp_upd_attack_start()) tsp_aset(TA_ATTACKLOOP); break;
+    case TA_ATTACKLOOP: if (tsp_upd_attack_loop(second ? 240 : 180, second ? 360 : 300, second ? 0.005f : 0.01f, second ? 0.4f : 0.35f)) tsp_aset(TA_ATTACKEND); break;
+    case TA_ATTACKEND: if (tsp_upd_attack_end()) tsp_aset(TA_WAIT); break;
+    case TA_DAMAGEEYE: if (tsp_upd_damage("eyedamage", SE_BM_TSPIDER_DAMAGE_EYE, 0)) tsp_aset(TA_SWOON); break;
+    case TA_DAMAGEHIP: if (tsp_upd_damage("hipdamage", SE_BM_TSPIDER_DAMAGE_HIP, 0)) tsp_await("チャンス開始", TA_CHANCESTART); break;
+    case TA_DAMAGEGLAND: if (tsp_upd_damage("glanddamage", SE_BM_TSPIDER_DAMAGE_GLAND, 1)) tsp_aset(TA_SWOON); break;
+    case TA_SWOON: /* TombSpiderStateSwoon (updateActorStateAndNextNerve: Wait) */
+        if (tsp.ast == 0) { tsp.swoon = 0; tsp.swst = -1; }
+        tsp.swst++;
+        if (tsp.swoon == 0) { if (tsp.swst == 0) tsp_bck("swoonstart"); if (tsp_stopped(tsp.anim)) { tsp.swoon = 1; tsp.swst = -1; } }
+        else if (tsp.swoon == 1) { if (tsp.swst == 0) tsp_bck("swoon"); if (tsp.swst > 180) { tsp.swoon = 2; tsp.swst = -1; } } /* sLoopStep */
+        else { if (tsp.swst == 0) tsp_bck("swoonend"); if (tsp_stopped(tsp.anim)) tsp_aset(TA_WAIT); }
+        break;
+    case TA_CHANCESTART: if (tsp_upd_chance_start()) tsp_aset(TA_CHANCEWAIT); break;
+    case TA_CHANCEWAIT: if (tsp_upd_chance_wait(second ? 600 : 900)) tsp_await("チャンス終了", TA_CHANCEEND); break;
+    case TA_CHANCEDAMAGE: if (tsp_upd_chance_damage()) tsp_aset(TA_CHANCEWAIT); break;
+    case TA_CHANCEDAMAGELAST: if (tsp.ast == 5) tsp.adead = 1; break; /* sChanceDamageLastStep: kill */
+    case TA_CHANCEEND: if (tsp_upd_chance_end()) tsp_aset(TA_WAIT); break;
+    case TA_WAITDEMO: if (pd_try_start(tsp.areq_name, tsp.row)) tsp_aset(tsp.areq); break;
+    }
+    return tsp.adead;
+}
+static void tsp_appear_action(int which) /* updateActorState's first step: appear */
+{
+    tsp.which = which; tsp.adead = 0;
+    tsp.posz = tsp.pos.z; tsp.energy = 3;
+    if (which) { tsp_main_sens(1); tsp_gland_sens(1); tsp.act = TA_WAIT; } /* (Action1st / 2nd::appear) */
+    else tsp.act = TA_COCOONWAIT;
+    tsp.ast = -1;
+}
+static int tsp_cocoon_action(void) /* TombSpiderActionCocoon */
+{
+    tsp.ast++;
+    if (tsp.act == TA_COCOONWAIT) {
+        if (tsp.ast == 0) { tsp.sens[TSS_COCOON] = 1; tsp_clip(tsp.coc, "tombspidercocoon", "wait"); }
+    } else {
+        if (tsp.ast == 0) { float at[3] = {tsp.pos.x, tsp.pos.y, tsp.pos.z}; se_start(SE_OJ_TSPIDER_COCOON_BREAK, at); }
+        if (tsp.ast == 3) tsp.adead = 1; /* sBreakStep */
+    }
+    if (sls_ride < 0 && tsp.sens[TSS_COCOON]) { /* attackSensor: sendMsgPush to the player (not in a bind) */
+        V3 d = vsub(mario->pos, tsp.spos[TSS_COCOON]);
+        float l = vlen(d), r = tss_rad[TSS_COCOON] + HIT_BODY_R;
+        if (l < r && l > 1e-3f) mario->pos = vadd(tsp.spos[TSS_COCOON], vmul(d, r / l));
+    }
+    return tsp.adead;
+}
+/* the parts' own nerves (TombSpiderGland / TombSpiderVitalSpot) */
+static void tsp_parts(void)
+{
+    for (int k = 0; k < 4; k++) {
+        int s = ++tsp.glst[k];
+        if ((tsp.gl[k] == TG_WAIT || tsp.gl[k] == TG_ACTIVEWAIT) && s == 0) tsp_gland_clip(k, "wait");
+        if (tsp.gl[k] == TG_DAMAGESTART) { if (s == 0) tsp_gland_clip(k, "damagestart"); if (tsp_stopped(tsp.gland[k])) tsp_gset(k, TG_DAMAGEWAIT); }
+        else if (tsp.gl[k] == TG_DAMAGEWAIT && s == 0) tsp_gland_clip(k, "damagewait");
+    }
+    for (int k = 0; k < 3; k++) {
+        int s = ++tsp.vsst[k];
+        Anim *a = tsp.vital[k];
+        if (s == 0) {
+            static const char *const clip[] = {"wait", "chancewait", "damagestart", "damagewait", "damageend"};
+            tsp_clip(a, "tombspidervitalspot", clip[tsp.vs[k]]);
+            if (tsp.vs[k] == TV_DAMAGESTART) { float m[16]; tsp_vital_mtx(k, m); se_start(SE_BM_TSPIDER_DAMAGE_VITAL, &m[12]); }
+        }
+        if (tsp.vs[k] == TV_RECOVER && tsp_stopped(a)) tsp_vset(k, TV_WAIT);
+    }
+}
+static void tsp_pieces(void) /* updateBattle2ndStart: 25 star pieces, each along a random direction in XY at 40 */
+{
+    for (int i = 0; i < 25; i++) {
+        float a = (float)(rand() & 0x7FFF) / 32767.0f * 6.2831853f;
+        launch_pieces(tsp.pos, v3(cosf(a), sinf(a), 0), 1, 0.0f, 40.0f);
+        tsp_se(SE_OJ_STAR_PIECE_BURST);
+    }
+}
+static int tsp_demo_step(void) /* TombSpiderDemo's update*: 1 when done */
+{
+    float m[16];
+    switch (tsp.nrv) {
+    case TN_GATEOPEN: /* updateGateOpen */
+        if (tsp.st == 0) {
+            tsp.puppet = 1;
+            tsp_demo("ゲートオープンデモ[トゥームスパイダー]");
+            float rot[3] = {270.0f, 180.0f, 0}, one[3] = {1, 1, 1}, at[3] = {tsp.pos.x, tsp.pos.y, tsp.pos.z + TSP_RADIUS};
+            mat_translate_rot_scale(tsp.pm, at, rot, one); /* makeMtxTR */
+            mario_play("cocoonfly", 0.0f, 0); if (mario_anim) mario_anim->frame = 50.0f; /* startBckWithInterpole, setBckFrameAndStop 50 */
+            sth_appear();
+        }
+        if (tsp.st <= 75) tsp.pm[14] -= 60.0f; /* sStepGateBreak, sGateOpenPlayerSpeed */
+        else {
+            V3 a = v3(tsp.pos.x, tsp.pos.y, tsp.pos.z + (TSP_RADIUS - 60.0f * 75)), b = v3(tsp.pos.x, tsp.pos.y - TSP_INSIDE, tsp.pos.z);
+            float t1 = (tsp.st - 78) / (float)(180 - 78), t2 = t1 * t1; /* getEaseInValue */
+            tsp.pm[12] = a.x * (1 - t1) + b.x * t1; tsp.pm[13] = a.y * (1 - t2) + b.y * t2; tsp.pm[14] = a.z * (1 - t1) + b.z * t1;
+        }
+        tsp_player_mtx(tsp.pm);
+        if (tsp.st == 75) {
+            mario_play("airrotation", 1.0f, 0);
+            tsp_clip(tsp.planet, "tombspiderplanet", "battlestart"); tsp.planet_calc = 1;
+            tsp.cocoon = 1;
+            se_start(SE_OJ_TSPIDER_PLANET_BREAK1, NULL);
+        }
+        if (tsp.st == 74) camera_shake(SHAKE_NORMAL);
+        if (tsp.st == 120) { tsp_cam_end(); tsp_cam("マリオ着地デモ[トゥームスパイダー]"); } /* sStepGateOpenChangeCamera */
+        if (tsp.st == 180) { /* sStepDemoGateOpen */
+            float at[3] = {mario->pos.x, mario->pos.y, mario->pos.z};
+            se_start(SE_PM_LAND_HEAVY, at); se_start(SE_PV_LAND, at);
+            tsp_reset_player(0);
+            mario_play("wait", 1.0f, 1);
+            tsp_cam_end(); /* endTombSpiderDemo(.., マリオ着地デモ) */
+            pd_end("ゲートオープンデモ[トゥームスパイダー]"); tsp.puppet = 0;
+            return 1;
+        }
+        return 0;
+    case TN_COCOONBREAK: /* updateCocoonBreak */
+        if (tsp.st == 0) {
+            tsp_acam_demo("appear");
+            tsp_reset_player(1);
+            sls_msg(SLM_BATTLE_START);
+            tsp_clip(tsp.coc, "tombspidercocoon", "open");
+            tsp_bck("appear"); if (tsp.anim) { tsp.anim->frame = 0; tsp.anim->speed = 0; } /* setBckFrameAndStop 0 */
+            tsp.hidden = 0;
+            tsp_attach(1);
+        }
+        return tsp.st == 60; /* sStepCocoonBreak */
+    case TN_1STSTART: /* updateBattle1stStart */
+        if (tsp.st == 0) { tsp_bck("appear"); tsp_se(SE_BV_TSPIDER_APPEAR); }
+        return tsp_stopped(tsp.anim);
+    case TN_1STJUMP: /* updateBattle1stStartJumpToPlayer */
+        if (tsp_acam_done("appear")) tsp_acam_end();
+        if (tsp.st == 0) { tsp_bck("jump"); tsp_se(SE_BM_TSPIDER_JUMP); tsp.drot = tsp_rotate_speed(70 - 20); } /* updateJumpRotateToPlayer */
+        if (tsp.st >= 20 && tsp.st < 70) tsp.rotz += tsp.drot;
+        if (tsp_stopped(tsp.anim)) { tsp.cocoon = 0; tsp_end_acam_demo("出現"); return 1; }
+        return 0;
+    case TN_1STEND: /* updateBattle1stEnd */
+        if (tsp.st == 0) { tsp_acam_demo("battle2ndstart"); tsp_reset_player(1); tsp_bck("chancedamagelast"); }
+        if (tsp.st == 30) { tsp_clip(tsp.planet, "tombspiderplanet", "battledamage"); se_start(SE_OJ_TSPI_PLANET_BREAK_M, NULL); }
+        return tsp_stopped(tsp.anim);
+    case TN_2NDSTART: /* updateBattle2ndStart */
+        if (tsp.st == 0) {
+            tsp_bck("battle2ndstart");
+            for (int k = 0; k < 4; k++) tsp_gset(k, TG_ACTIVEWAIT); /* startActive */
+            tsp_vitals(tsp_vital_recover);
+            tsp.drot = tsp_rotate_speed(190 - 150);
+        }
+        if (tsp.st >= 150 && tsp.st < 190) tsp.rotz += tsp.drot;
+        if (tsp_stopped(tsp.anim)) { tsp_pieces(); tsp_end_acam_demo("１回戦終了"); return 1; }
+        return 0;
+    case TN_DEATH: /* updateDeath */
+        if (tsp.st == 0) {
+            tsp_acam_demo("death"); tsp_reset_player(1);
+            se_start(SE_BV_TSPIDER_DEATH, NULL);
+            tsp_bck("death");
+            sth_start_battle_end();
+            tsp_attach(0);
+        }
+        int done = !tsp.hidden && tsp_stopped(tsp.anim);
+        if (tsp.st == 15) { /* sStepBattleEndPlanetBreak */
+            tsp_clip(tsp.planet, "tombspiderplanet", "battleend"); se_start(SE_OJ_TSPIDER_PLANET_BREAK2, NULL); tsp.planet_calc = 1;
+            sth_on_bloom(); tsp_sw(SW_B, 1);
+        }
+        if (done) {
+            tsp_joint(TSP_BODY, m); tsp.pos = v3(m[12], m[13], m[14]);
+            tsp.hidden = 1;
+            tsp_base(m); fx_named("TombSpider", "Death", m, NULL, NULL);
+            tsp_se(SE_BM_TSPIDER_EXPLOSION);
+            bgm_after_boss();
+            tsp_end_acam_demo("死亡");
+            tsp_sw(SW_A, 1);
+            note_star_row = tsp.row; note_star_at = tsp.pos; row_kill(tsp.row); /* requestAppearPowerStar(this, mPosition) */
+            printf("tomb spider: down, its star" "\n");
+            return 1;
+        }
+        return 0;
+    }
+    return 0;
+}
+static void tsp_scene(const Scene *s) /* TombSpider::init */
+{
+    memset(&tsp, 0, sizeof tsp); tsp.row = tsp.pk = -1;
+    int ty = scene_type(s, "TombSpider");
+    for (u32 i = 0; ty >= 0 && i < s->nobjs; i++)
+        if ((int)s->objs[i].type == ty) {
+            tsp.row = (int)i; tsp.pos = row_pos(&s->objs[i]); tsp.rotz = s->objs[i].rot[2];
+            tsp.nrv = TN_WAITPLAYER; tsp.st = -1;
+            tsp.indemo[0] = tsp.indemo[1] = tsp.indemo[2] = 1;
+            tsp.act = TA_WAIT; tsp.adead = 1; /* TombSpiderActionBase::init: kill */
+            Anim **an[] = {&tsp.anim, &tsp.planet, &tsp.coc, &tsp.gland[0], &tsp.gland[1], &tsp.gland[2], &tsp.gland[3], &tsp.vital[0], &tsp.vital[1], &tsp.vital[2]};
+            for (u32 k = 0; k < sizeof an / sizeof an[0]; k++) { *an[k] = mem_alloc(MEM_PLAYER, sizeof(Anim)); memset(*an[k], 0, sizeof(Anim)); }
+            for (int k = 0; k < 4; k++) tsp_gset(k, TG_WAIT);
+            for (int k = 0; k < 3; k++) tsp_vset(k, TV_WAIT);
+            printf("tomb spider: row %d at %.0f %.0f %.0f" "\n", (int)i, tsp.pos.x, tsp.pos.y, tsp.pos.z);
+            break;
+        }
+}
+static void tsp_bind(Anim *a, const Model *md) { if (a && md && md->skin && a->skin != md->skin) anim_bind(a, md->skin); }
+static void tsp_fx(void) /* the kept effects, called each frame they run */
+{
+    float m[16];
+    if (tsp.noct) { mat_identity(m); m[12] = mario->pos.x; m[13] = mario->pos.y; m[14] = mario->pos.z; fx_named("TombSpider", "Noctiluca", m, NULL, &tsp.noct); } /* setEffectHostSRT(getPlayerPos) */
+    if (tsp.pnoct) { tsp_planet_mtx(m); fx_named("TombSpiderPlanet", tsp.pnoct == 2 ? "NoctilucaFast" : "Noctiluca", m, NULL, &tsp.pnoct); }
+    if (tsp.anim && tsp.anim->skin) {
+        tsp_base(m);
+        if (tsp.acid_fx[0]) fx_named("TombSpider", "Acid", m, (const float (*)[16])tsp.anim->world, &tsp.acid_fx[0]);
+        for (int k = 0; k < 4; k++) if (tsp.acid_fx[1 + k] && !tsp_gland_damage(k)) fx_named("TombSpider", tsp_gfx[k], m, (const float (*)[16])tsp.anim->world, &tsp.acid_fx[1 + k]);
+    }
+    if (tsp.acid_active) { /* AcidSplash on the map under the mouth and the active glands (setEffectHostMtx) */
+        fx_named("TombSpider", "AcidSplash", tsp.acid_m[0], NULL, &tsp.acid_m[0]);
+        for (int k = 0; k < 4; k++) if (tsp_gland_active(k)) fx_named("TombSpiderGland", "AcidSplash", tsp.acid_m[1 + k], NULL, &tsp.acid_m[1 + k]);
+    }
+}
+static void update_tsp(void)
+{
+    if (tsp.row < 0 || tsp.nrv == TN_END || !dx_cls_moves("TombSpider")) return;
+    tsp_bind(tsp.anim, m_tsp); tsp_bind(tsp.planet, m_tsplanet); tsp_bind(tsp.coc, m_tspcoc);
+    for (int k = 0; k < 4; k++) tsp_bind(tsp.gland[k], m_tspgland);
+    for (int k = 0; k < 3; k++) tsp_bind(tsp.vital[k], m_tspvital);
+    tsp.st++;
+    switch (tsp.nrv) {
+    case TN_WAITPLAYER:
+        if (tsp.st == 0) { tsp_bck("wait"); tsp.hidden = 1; memset(tsp.sens, 0, sizeof tsp.sens); } /* invalidateHitSensors */
+        tsp.noct = vlen(vsub(mario->pos, tsp.pos)) < 18000.0f;
+        if (vlen(vsub(mario->pos, tsp.pos)) < 6000.0f) tsp_request("ゲートオープンデモ[トゥームスパイダー]", TN_GATEOPEN); /* isStartDemoGateOpen */
+        break;
+    case TN_GATEOPEN: if (tsp_demo_step()) { tsp.noct = 0; tsp.pnoct = 1; tsp_set(TN_COCOON); } break;
+    case TN_COCOON:
+        if (tsp.st == 0) tsp_appear_action(0);
+        if (tsp_cocoon_action()) tsp_request("出現", TN_COCOONBREAK);
+        break;
+    case TN_COCOONBREAK: if (tsp_demo_step()) tsp_set(TN_1STSTART); break;
+    case TN_1STSTART:
+        if (tsp.st == 0) { bgm_stop(0); bgm_boss(2); } /* BossBgmID_TombSpiderA (02_A) */
+        if (tsp_demo_step()) tsp_set(TN_1STJUMP);
+        break;
+    case TN_1STJUMP: if (tsp_demo_step()) tsp_set(TN_ACTION1ST); break;
+    case TN_ACTION1ST: case TN_ACTION2ND:
+        if (tsp.st == 0) tsp_appear_action(tsp.nrv == TN_ACTION1ST ? 1 : 2);
+        if (tsp_action()) tsp_request(tsp.nrv == TN_ACTION1ST ? "１回戦終了" : "死亡", tsp.nrv == TN_ACTION1ST ? TN_1STEND : TN_DEATH);
+        break;
+    case TN_1STEND: if (tsp_demo_step()) tsp_set(TN_2NDSTART); break;
+    case TN_2NDSTART:
+        if (tsp.st == 0) bgm_stop(30);
+        if (tsp.st == 180) bgm_boss(3); /* sSecondBgmStartStep: BossBgmID_TombSpiderB */
+        if (tsp_demo_step()) tsp_set(TN_ACTION2ND);
+        break;
+    case TN_DEATH:
+        if (tsp.st == 0) { bgm_stop(60); tsp.noct = 0; tsp.pnoct = 2; }
+        if (tsp_demo_step()) tsp.nrv = TN_END;
+        break;
+    case TN_WAITDEMO:
+        if (pd_try_start(tsp.req_name, tsp.row)) { tsp.puppet = 1; tsp_set(tsp.req); }
+        break;
+    }
+    if (tsp.nrv != TN_WAITPLAYER && tsp.nrv != TN_END) tsp_acid_update(); /* control: updateAcid */
+    if (tsp.anim && tsp.anim->skin) anim_update(tsp.anim);
+    if (tsp.planet_calc && tsp.planet && tsp.planet->skin) anim_update(tsp.planet);
+    if (tsp.cocoon && tsp.coc && tsp.coc->skin) anim_update(tsp.coc);
+    if (!tsp.hidden) { /* PartsModel::movement: only while its host shows */
+        tsp_parts();
+        for (int k = 0; k < 4; k++) if (tsp.gland[k] && tsp.gland[k]->skin) anim_update(tsp.gland[k]);
+        for (int k = 0; k < 3; k++) if (tsp.vital[k] && tsp.vital[k]->skin) anim_update(tsp.vital[k]);
+    }
+    if (tsp.acam) { /* the planet's anim camera */
+        char cn[32];
+        float pm[16];
+        snprintf(cn, sizeof cn, "tspdemo/%s", tsp.acam);
+        int cf = canm_frames(cn);
+        tsp_planet_mtx(pm);
+        if (cf) demo_camera(cn, tsp.acam_f < cf ? tsp.acam_f : cf - 1, pm);
+        tsp.acam_f++;
+    }
+    if (tsp.attach) /* TombSpiderThreadAttacher::exeFree: tryPushSpiderThread at its joint, mZOffset back */
+        for (int k = 0; k < 7; k++) { float jm[16]; tsp_joint(tsp_aj[k], jm); sth_try_push(v3(jm[12], jm[13], jm[14] - 100.0f), k ? 300.0f : 500.0f); }
+    tsp_sensors();
+    tsp_sling();
+    tsp_enemy_attack();
+    tsp_fx();
+}
+static void tsp_draw(void)
+{
+    if (tsp.row < 0) return;
+    float b[16], m[16];
+    if (m_tsplanet) { tsp_planet_mtx(b); if (m_tsplanet->skin && tsp.planet && tsp.planet->skin == m_tsplanet->skin) draw_skin(m_tsplanet, b, tsp.planet); else render_model(m_tsplanet, b, 0x80, 0x80, 0x80); }
+    if (tsp.cocoon && m_tspcoc) { tsp_base(b); if (m_tspcoc->skin && tsp.coc && tsp.coc->skin == m_tspcoc->skin) draw_skin(m_tspcoc, b, tsp.coc); else render_model(m_tspcoc, b, 0x80, 0x80, 0x80); }
+    if (tsp.hidden || !m_tsp || tsp.nrv == TN_END) return;
+    tsp_base(b);
+    if (m_tsp->skin && tsp.anim && tsp.anim->skin == m_tsp->skin) draw_skin(m_tsp, b, tsp.anim); else render_model(m_tsp, b, 0x80, 0x80, 0x80);
+    for (int k = 0; k < 4 && m_tspgland; k++) {
+        tsp_gland_mtx(k, m);
+        if (m_tspgland->skin && tsp.gland[k] && tsp.gland[k]->skin == m_tspgland->skin) draw_skin(m_tspgland, m, tsp.gland[k]); else render_model(m_tspgland, m, 0x80, 0x80, 0x80);
+    }
+    for (int k = 0; k < 3 && m_tspvital; k++) {
+        tsp_vital_mtx(k, m);
+        if (m_tspvital->skin && tsp.vital[k] && tsp.vital[k]->skin == m_tspvital->skin) draw_skin(m_tspvital, m, tsp.vital[k]); else render_model(m_tspvital, m, 0x80, 0x80, 0x80);
+    }
+}
+/* tomb test (boss): Mario put within 6000 (the gate demo), then launched from the attach point best lined up with the
+ * target (the cocoon, the eye, in a chance the vital spots, then the hip) until its star; game_test_tsp: nerve x 100 + action */
+static int tsp_test_target(V3 *t)
+{
+    if (tsp.nrv == TN_COCOON && tsp.act == TA_COCOONWAIT) { *t = tsp.spos[TSS_COCOON]; return 1; }
+    if (tsp.nrv != TN_ACTION1ST && tsp.nrv != TN_ACTION2ND) return 0;
+    if (tsp.act == TA_CHANCEWAIT) { for (int k = 0; k < 3; k++) if (tsp.sens[TSS_VITAL + k]) { *t = tsp.spos[TSS_VITAL + k]; return 1; } return 0; }
+    if (tsp.act == TA_WAIT || tsp.act == TA_ATTACKSTART || tsp.act == TA_ATTACKEND || tsp.act == TA_SWOON) { *t = tsp.spos[TSS_HIP]; return tsp.sens[TSS_HIP]; }
+    return 0;
+}
+static int tsp_test(int f)
+{
+    static int k = -1, aim_t, last = -1, lact = -1;
+    if (tsp.nrv * 100 + tsp.act != last * 100 + lact) {
+        printf("tomb test f %d: %s / %s, energy %d, ride %d, Mario %.0f %.0f %.0f" "\n", f, tn_name[tsp.nrv], ta_name[tsp.act], tsp.energy, sls_ride, mario->pos.x, mario->pos.y, mario->pos.z);
+        last = tsp.nrv; lact = tsp.act;
+    }
+    if (tsp.nrv == TN_END) return 1200;
+    if (tsp.nrv == TN_WAITPLAYER) { mario->pos = vadd(tsp.pos, v3(0, 0, 5900.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; return 0; }
+    test_r2 = 0;
+    V3 t;
+    if (pd.name || !tsp_test_target(&t)) { k = -1; return tsp.nrv * 100 + tsp.act; }
+    if (k < 0) { /* the attach point whose line to the target is clearest: the nearest free one */
+        for (int i = 0; i < nsls; i++)
+            if (sls[i].nrv == SL_FREE && (k < 0 || vlen(vsub(sls[i].pos, t)) < vlen(vsub(sls[k].pos, t)))) k = i;
+        if (k < 0) return -1;
+        aim_t = 0;
+        printf("tomb test f %d: attach point %d at %.0f %.0f for %.0f %.0f" "\n", f, sls[k].row, sls[k].pos.x, sls[k].pos.y, t.x, t.y);
+    }
+    Sls *s = &sls[k];
+    if (sls_ride < 0 && s->nrv == SL_FREE) { mario->pos = vsub(v3(s->pos.x, s->pos.y, sth_pos_z()), vmul(mario->up, HIT_BODY_H)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+    if (s->nrv == SL_WAIT && f % 2) { tomb_test_cursor(vadd(s->pos, vmul(s->by, 50.0f))); test_r2 = s->step > 30; }
+    if (s->nrv == SL_AIM) {
+        V3 n = sls_neutral(s), d = vsub(n, t);
+        d.z = 0;
+        tomb_test_cursor(vadd(n, vmul(vnorm(d), 400.0f))); /* pulled away from the target: launched at it */
+        test_r2 = ++aim_t < TOMB_AIM;
+    }
+    if (s->nrv == SL_FREEINVALID || (s->nrv == SL_FREE && sls_ride < 0 && aim_t)) k = -1; /* launched: the next */
+    camera_set_override(1, vadd(sth.pos, v3(0, 0, 5200.0f)), sth.pos, v3(0, 1, 0), 45); /* the web face on */
+    return tsp.nrv * 100 + tsp.act;
+}
+
 void game_update(void)
 {
     if (menu_update()) return; /* GameScenePauseMenu: the pause sequence alone (GamePauseSequence) */
@@ -45556,6 +47369,8 @@ void game_update(void)
     if (!demo_on) update_exts();
     update_okeys();
     update_hanachans();
+    update_spider_thread();
+    update_sls();
     spider_coins();
     LQ(55, update_fountains());
     LQ(56, update_strays());
@@ -45566,6 +47381,7 @@ void game_update(void)
     update_bk();
     update_tb();
     if (!demo_on) update_km_beams(); /* (the Kameck beams, fire balls, turtles: stopped in a demo) */
+    update_tsp();
     if (star_demo) { /* its camera ("powerstar/powerstarget"); Mario plays PowerStarGet meanwhile */
         if (!demo_camera("powerstar/powerstarget", star_demo - 1, star_demo_m)) {
             star_demo = 0; camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45);
@@ -46835,6 +48651,7 @@ void game_draw(void)
     bk_draw();
     tb_draw();
     km_draw();
+    tsp_draw();
     if (ota.row >= 0 && ota.nrv != OTA_WAITONSWITCH && ota.nrv != OTA_APPEARSTAR && ota.nrv != OTA_DEAD) { /* OtaKing, its feet */
         basis_matrix(m, ota.pos, ota.up, ota.f, 0);
         if (m_ota && m_ota->skin && ota.anim->skin == m_ota->skin) draw_skin(m_ota, m, ota.anim);
@@ -46948,6 +48765,7 @@ void game_draw(void)
     draw_sambo_heads();
     draw_hanachans();
     draw_spider_cocoons();
+    sth_draw();
     draw_gaps();
     draw_queen_wing();
     RESTQ(4);
