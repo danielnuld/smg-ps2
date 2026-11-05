@@ -1671,6 +1671,12 @@ int main(void)
             if (frame % 25 == 0) printf("petari test f %u: %d\n", frame, st);
         }
 #endif
+#ifdef SAMBO_TEST
+        if (frame >= 300 && frame < 4000) { /* SamboHeads: appear, chase, then a trample, a spin, a star piece and a kick */
+            int st = game_test_sambo();
+            if (frame % 25 == 0) printf("sambo test f %u: %d\n", frame, st);
+        }
+#endif
 #ifdef SBP_TEST
         if (frame >= 300 && frame < 4000) { /* StinkBugParent: a dash, its child stomped (the demo), its back stomped */
             int st = game_test_sbp();
