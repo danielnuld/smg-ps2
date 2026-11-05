@@ -2064,6 +2064,31 @@ int main(void)
         if (frame >= 380 && frame <= 760 && frame % 4 == 0) { printf("beamer test f %u: ", frame); game_beamer_state(); }
     }
 #endif
+#ifdef KCHIEF_TEST
+    {
+        static u32 f0;
+        u32 mf = frame;
+        if (!f0 && mf > 30 && game_test_free()) f0 = mf;
+        u32 frame = f0 ? mf - f0 + 150 : 0;
+        /* 1200 before the KuriboChief (200: it finds and chases him), a spin by it (500: Stagger), past its kick step a
+         * spin (650, or with -DKCHIEF_KICK a walk into it: BlowDown), its key (1000); then the ExterminationKuriboKeySwitch:
+         * its ChildKuribo stomped (1200), its key (1500) */
+        if (mf > 30) { game_test_no_demo(); game_test_unclip(); if (frame >= 150) game_test_watch_kchief(); } /* the Gateway's opening; the camera may not face it */
+        if (frame >= 100 && frame < 300 && frame % 20 == 0) game_test_kchief(4); /* 600 over its place: its zone in */
+        if (frame == 400) printf("kchief test f %u: before row %d\n", frame, game_test_kchief(0));
+        if (frame == 500) printf("kchief test f %u: spin row %d\n", frame, game_test_kchief(1));
+#ifdef KCHIEF_KICK
+        if (frame >= 650 && frame < 660) printf("kchief test f %u: kick row %d\n", frame, game_test_kchief(2));
+#else
+        if (frame == 650) printf("kchief test f %u: spin row %d\n", frame, game_test_kchief(1));
+#endif
+        if (frame == 1000) printf("kchief test f %u: key %d\n", frame, game_test_kchief(3));
+        if (frame >= 1060 && frame < 1200 && frame % 20 == 0) game_test_ext(2); /* 600 over its place: its zone in */
+        if (frame == 1200) printf("kchief test f %u: child row %d\n", frame, game_test_ext(0));
+        if (frame == 1500) printf("kchief test f %u: ext key %d\n", frame, game_test_ext(1));
+        if (frame >= 200 && frame <= 1600 && frame % 20 == 0) { printf("kchief test f %u: life %d lives %d\n", frame, game_life(), game_lives()); game_kchief_state(); }
+    }
+#endif
 #ifdef BEGOMAN_TEST
     {
         static u32 f0;

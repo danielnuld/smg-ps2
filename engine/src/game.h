@@ -10,7 +10,7 @@ int game_time_left(void);
 void game_update(void);
 /* After the scene's models changed (zone packs swapped): find every placed model again. */
 void game_rebind(void);
-#define KPROF_KINDS 32 /* kprof / kprof_n: update_kuribo's time by walker kind (game.c WALK_KINDS fits) */
+#define KPROF_KINDS 40 /* kprof / kprof_n: update_kuribo's time by walker kind (game.c WALK_KINDS fits) */
 /* full[z]: stage z is loaded in full. need[z]: Mario needs its collision (2: at once); soon[z]: he is heading for it; dist[z]:
  * its priority (smaller first), for the zones that fit the memory room (main.c stream_update). */
 void game_zone_sets(const unsigned char *full, unsigned char *need, unsigned char *soon, float *dist);
@@ -252,6 +252,11 @@ int game_test_free(void); /* tests: the flight in over, Mario free */
 unsigned game_test_moves(unsigned frame); /* the moves test: its pad this frame (game.c) */
 int game_test_begoman(int how); /* begoman test: Mario 900 before (0), spinning by (1), onto (2) the first BegomanSpike; its row */
 int game_begoman_state(void); /* its nerve, -1 none */
+int game_test_kchief(int how); /* kchief test: Mario 1200 before (0), spinning by (1), walking into (2) the KuriboChief, onto its key (3); its row */
+int game_kchief_state(void); /* its nerve, -1 none */
+void game_test_no_demo(void); /* tests: any demo ended at once */
+void game_test_watch_kchief(void); /* tests: the camera on the KuriboChief (or its key) */
+int game_test_ext(int how); /* kchief test: the ExterminationKuriboKeySwitch out, Mario onto its ChildKuribo (0) / its key (1) */
 int game_test_beamer(int how); /* beamer test: Mario 1000 off (0), onto the body (1), onto the spring (2) of the first JumpBeamer; its row */
 void game_beamer_state(void); /* its nerve and Mario's jump logged */
 int game_test_spidercoin(void); /* spidercoin test: R2 with the cursor on the first SpiderCoin; its row */
