@@ -1026,8 +1026,13 @@ static int breakable(const char *name, const Row *r, int *coins, int *pieces)
     }
     /* SimpleBreakableObj.cpp: IcicleRock and SandUpDownTowerBreakableWallA / B break at a spin (mBreakFlags 2),
      * TeresaMansionHoleCover at a hip drop (4), KoopaStatue at an explosion or an enemy attack (0x48: breaks 5,
-     * explosion_breaks); arg3 -1 arg6 coins (1), 3 arg6 star pieces (5). ponytail: no 1-up / power star items,
-     * ConcreteBlock / SnowBlockA (ball dash, fire) stay whole */
+     * explosion_breaks); SnowBlockA at a fire ball (0x20: breaks 7, fireball_breaks); arg3 -1 arg6 coins (1), 3 arg6
+     * star pieces (5). ponytail: no 1-up / power star items, ConcreteBlock (ball dash) stays whole */
+    if (strcmp(name, "SnowBlockA") == 0) {
+        if (r->arg[3] == -1) *coins = r->arg[6] > 0 ? r->arg[6] : 1;
+        else if (r->arg[3] == 3) *pieces = r->arg[6] > 0 ? r->arg[6] : 5;
+        return 7;
+    }
     if (strcmp(name, "SpiderMapBlock") == 0) { *coins = 1; return 2; } /* SpiderMapBlock.cpp: isMsgPlayerHipDropFloor kills it */
     if (strcmp(name, "BreakableTrash") == 0) return 5; /* BreakableCage.cpp (CAGE_TRASH): any enemy attack but fire breaks it */
     if (strcmp(name, "SpiderCoin") == 0) { *coins = 1; return 6; }     /* SpiderCoin.cpp: the pointer frees it (spider_coins; a row, no instance) */
@@ -6299,6 +6304,24 @@ int game_bee_state(void) { return player_mode == PM_BEE ? mario->air_spin : -1; 
 int game_test_fire(int phase)
 {
     if (phase == 0) set_player_mode(PM_FIRE, 1); else mario->spin_timer = SPIN_TIME;
+#ifdef FIRE_AT_SNOW /* Mario 300 off the first SnowBlockA along its X, facing it; phase 2 a ball dropped on it */
+    for (int i = 0; i < ninsts; i++)
+        if (insts[i].breaks == 7 && !row_dead[insts[i].row]) {
+            V3 up = vnorm(v3(insts[i].m[4], insts[i].m[5], insts[i].m[6])), x = vnorm(v3(insts[i].m[0], insts[i].m[1], insts[i].m[2]));
+            V3 base = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]);
+            if (phase == 0) { mario->up = up; mario->pos = vadd(base, vmul(x, 300.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+            mario->face = vmul(x, -1.0f);
+            test_nolost = 1;
+            if (phase == 2) { fireballs[0].pos = vadd(base, vmul(up, insts[i].reach)); fireballs[0].vel = v3(0, 0, 0); fireballs[0].t = 1; fireballs[0].wall = 0; }
+            return insts[i].row;
+        }
+    { /* not bound yet: Mario over the first one's row while its zone streams in */
+        int t = scene_type(sc, "SnowBlockA");
+        for (u32 i = 0; t >= 0 && i < sc->nobjs; i++)
+            if (sc->objs[i].type == t) { mario->pos = vadd(row_pos(&sc->objs[i]), vmul(mario->up, 300.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; test_nolost = 1; break; }
+    }
+    return -1;
+#endif
 #ifdef FIRE_AT_CANDLE /* Mario 400 off the first unlit CandlestandIceVolcano, facing it */
     for (int i = 0; i < ninsts; i++)
         if (insts[i].candle == 3 && row_turn[insts[i].row] == 3) {
@@ -12757,7 +12780,21 @@ static int fireball_lights_candle(V3 p) /* Candlestand::receiveMsgPlayerAttack: 
     return 0;
 }
 
-static int fireball_wall_attack(V3 p) { return fireball_hits_snowman(p) || fireball_lights_candle(p); } /* ACTMES_FIREBALL_ATTACK to a map part */
+static void break_inst(const Inst *in, int drops);
+static int fireball_breaks(V3 p) /* SimpleBreakableObj::receiveMsgPlayerAttack: isMsgFireBallAttack (mBreakFlags 0x20) */
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (in->breaks != 7 || row_dead[in->row] || vlen(vsub(p, v3(in->m[12], in->m[13], in->m[14]))) > in->reach + 40.0f) continue;
+        const Row *r = &sc->objs[in->row];
+        if (r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) continue; /* isValidSwitchA && !isOnSwitchA */
+        break_inst(in, 1);
+        game_rebind();
+        return 1;
+    }
+    return 0;
+}
+static int fireball_wall_attack(V3 p) { return fireball_hits_snowman(p) || fireball_lights_candle(p) || fireball_breaks(p); } /* ACTMES_FIREBALL_ATTACK to a map part */
 static void update_fire(void)
 {
     for (int b = 0; b < MAX_FIREBALLS; b++) {
@@ -29525,7 +29562,7 @@ static void break_inst(const Inst *in, int drops)
     V3 up = up_at(p, mario->up);
     const char *name = sc->types + 32 * r->type;
     int box = strcmp(name, "WoodBox") == 0, cage = strcmp(name, "CrystalCageS") == 0 || strcmp(name, "CrystalCageM") == 0,
-        statue = strcmp(name, "KoopaStatue") == 0;
+        statue = strcmp(name, "KoopaStatue") == 0, snow = strcmp(name, "SnowBlockA") == 0;
     { /* their break sounds: WoodBox::doHit (and its explosion out of water), PunchBox, CrystalCage::exeBreak (L its own) */
         float at[3] = {p.x, p.y, p.z}, depth;
         int wet = in_water(p, up, &depth);
@@ -29539,12 +29576,24 @@ static void break_inst(const Inst *in, int drops)
         }
         else if (!strcmp(name, "CrystalCageL")) se_start(SE_OJ_CRYSTAL_CAGE_L_BREAK, at);
         else if (statue) se_start(SE_OJ_STRANGEROCK_BREAK_S, at); /* tryStartBreak: StageEffect's stop SE */
+        else if (snow) se_start(SE_OJ_SNOW_MAN_MELT, at);
         if ((box || !strcmp(name, "PunchBox")) && sp) se_start(SE_OJ_STAR_PIECE_BURST, at);
         if (!strcmp(name, "HipDropRock")) { /* HipDropRock::exeBreak: ROCK_BREAK, its SW_B, appearItem's burst */
             se_start(SE_OJ_ROCK_BREAK, at);
             if (r->sw[SW_B] >= 0) sw_set((Row *)r, SW_B, 1);
             if (sp) se_start(SE_OJ_STAR_PIECE_BURST, at);
         }
+    }
+    if (snow) { /* SimpleBreakableObj::setStateBreak: rumble / weak shake, stopScene(5), startBreak: appearItem, the Break
+                 * effect; tryStartBreak (no ModelObj, its own Break BCK). ponytail: the model goes at once (its Break BCK not
+                 * played: SnowBlockA is drawn static) */
+        camera_shake(SHAKE_WEAK); scene_stop = 5;
+        pop_coins(p, up, n); drop_pieces(p, up, sp);
+        if (sp) se_start(SE_OJ_STAR_PIECE_BURST, &p.x);
+        fx_named(name, "Break", in->m, NULL, NULL);
+        row_kill(in->row);
+        printf("%s %d melted, %d coins, %d star pieces\n", name, in->row, n, sp);
+        return;
     }
     if (!strcmp(name, "SpiderMapBlock")) { /* SpiderMapBlock::kill */
         V3 y = v3(in->m[4], in->m[5], 0.0f); /* its Y in XY */
