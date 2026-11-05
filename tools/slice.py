@@ -82,6 +82,7 @@ SKINNED_OBJ = ("MarioFreezeIce", "MarioTornado", "MarioFireBall", "WaterColumn",
                "DemoPeachCastleGate", "PicketSwitch", "PicketSwitchBig", "CapsuleCage", "KeySwitchOwned", "ChildKuribo", "BreakableCageBreak")  # PStar / GStar: the star return demos' PowerStar / GrandStar (clip names fit 31 chars)
 SKINNED_OBJ += tuple(c for c in WAIT_SKINNED if c not in SKINNED_OBJ)
 SKINNED_OBJ += ("BossBegomanHead",)  # BossBegoman's PartsModel (its own clips: On, Off, Turn...)
+SKINNED_OBJ += ("HoneyQueenWing",)  # HoneyQueen::init: createModelObjNpc 羽 on its Center joint, startBck / startBtk HoneyQueenWing
 # MapObjActor::initialize (tryStartAllAnim): a placed class whose model archive holds a BCK of the archive's name
 # plays it from the start; such classes are drawn skinned too (AUTO_SKINNED, class -> archive, filled by placement)
 AUTO_SKINNED = {}
@@ -162,7 +163,7 @@ def sky_sea(b, mat3, m):
 # (FlipPanel: "?" at rest, "!" once flipped, the End face when its group is complete)
 # KuriboChief / ExterminationChecker::initKeySwitch: their own KeySwitch (game.c okeys; KeySwitchOwned: the KeySwitch
 # archive skinned for its Rotation, the placed KeySwitch rows untouched)
-EXTRA = {"ShellfishYellowChip": ("YellowChip",), "BreakableTrash": ("BreakableCageBreak",), "KuriboChief": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
+EXTRA = {"HoneyQueen": ("HoneyQueenWing",), "ShellfishYellowChip": ("YellowChip",), "BreakableTrash": ("BreakableCageBreak",), "KuriboChief": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
          "Rosetta": ("LightDome", "DomeHalo"),  # RosettaDemoHeavensDoor1's parts (ライトドーム, ライト後光)
          "StarReturnDemoStarter": ("PStar", "GStar", "SpinTico", "MarioHair"), "GrandStarReturnDemoStarter": ("GStar",), "FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
@@ -201,6 +202,7 @@ def morph_arcs(o):
 STAR_DECLARERS = {"FlipPanelObserver": 7, "CrystalCageL": 0, "BreakableCage": None, "BreakableCageRotate": None,
                   "BreakableCageL": None}
 COIN100 = "１００枚コイン"
+JOINT_KCL_ONLY = {"HoneyQueen"}  # every collision on a joint by index (KCL_PARTS: "<class>#<n>.<k>"), none at the model
 KCL_JOINT = {"JumpStand": "JumpStandJoint03"}  # collision at that joint's (bind pose) place
 # drawn and collided at the last frame of a BCK, the named KCLs added at their joint (PhantomShipBridge.cpp:
 # setStateMoveA, the bridge down without SW_A; createCollisionPartsFromLiveActor "Move" on joint Move).
@@ -223,7 +225,11 @@ KCL_PARTS = {"PhantomShipBridge": {"move.kcl": "Move"}, "DarknessRoomDoorA": {"o
              "DesertLandDownSwitch": {"move.kcl": "Move"},  # TypicalDoor's Open collision too
              "ShellfishCoin": {"low.kcl": "Static"}, "ShellfishYellowChip": {"low.kcl": "Static"},
              "UFOStrongA": {"movelimit.kcl": "Static"},  # UFOBase's tryCreateCollisionMoveLimit (following it: game.c update_gaps)  # Shellfish's Low (createCollisionPartsFromLiveActor): a still part
-             "BossStinkBug": {"bodyground.kcl": "Ground", "bodyhipdrop.kcl": "HipDrop"}}  # initCollision: BodyGround, BodyHipDrop (Body is its own)
+             "BossStinkBug": {"bodyground.kcl": "Ground", "bodyhipdrop.kcl": "HipDrop"},  # initCollision: BodyGround, BodyHipDrop (Body is its own)
+             # HoneyQueen::init: its ten createCollisionPartsFromLiveActor on their joints (JOINT_KCL_ONLY)
+             "HoneyQueen": {"center.kcl": "Center", "centerfur.kcl": "Center", "face.kcl": "Face", "larm01.kcl": "LArm01",
+                            "larm02.kcl": "LArm02", "lfoot001.kcl": "LFoot001", "rarm01.kcl": "RArm01",
+                            "rarm02.kcl": "RArm02", "rfoot001.kcl": "RFoot001", "tactile.kcl": "Tactile"}}
 # the joint a MapObjActor's own collision follows (SKIN pad 1: game.c Inst.kmove), "Move" unless named here
 COLL_JOINT = {"Shellfish": "Lid"}  # initCollisionPartsAutoEqualScaleOne "Hi" on getJointMtx(Lid)
 HOME_POS = "\u5408\u4f53\u30d6\u30ed\u30c3\u30af\u6545\u90f7\u70b9"  # 合体ブロック故郷点: AssemblyBlock's home (Petari sReturnPosName)
@@ -1023,6 +1029,8 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
     # the model's own collision: <archive>.kcl, else the first that is not a MoveLimit boundary (PuffballPlanetA lists
     # movelimit.kcl first: its ground was a missing invisible wall)
     kcl = kcls.get(arc.stem.lower() + ".kcl") or kcls.get({"BossStinkBug": "body.kcl"}.get(arc.stem, "")) or next((v for k, v in kcls.items() if not k.startswith("movelimit")), None)
+    if arc.stem in JOINT_KCL_ONLY:  # no collision at the model: only its joint parts (KCL_PARTS)
+        kcl = None
     if kcl and arc.stem in POSE and pose_world:  # its parts' collisions at their posed joints, one KCL
         tris = kcl_tris(kcl)
         for kn, jn in POSE[arc.stem][1].items():
@@ -1967,9 +1975,17 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
             kcls.append(name32(t) + struct.pack("<I", len(kcl)) + kcl + b"\0" * (-len(kcl) % 4))
         if collision and cls in KCL_PARTS:  # its joint collisions (KCL_PARTS)
             fl = {k.lower().rsplit("/", 1)[-1]: v for k, v in B.rarc_files(arc.read_bytes())}
+            jnames, used = None, {}
+            if cls in JOINT_KCL_ONLY:  # by joint index, "<class>#<n>.<k>" (k: the parts sharing that joint)
+                mb = next(v for k, v in fl.items() if k.endswith((".bdl", ".bmd")))
+                jnames = [j["name"] for j in skin.joints(mb, tex.blocks(mb))]
             for kn, jn in KCL_PARTS[cls].items():
                 if kn in fl:
                     pk = kcl_to_le(kcl_codes(fl[kn], fl.get(kn[:-4] + ".pa", b"")))
+                    if jnames:
+                        ji = jnames.index(jn)
+                        used[ji] = used.get(ji, -1) + 1
+                        jn = f"{ji}.{used[ji]}"
                     kcls.append(name32(f"{t}#{jn}") + struct.pack("<I", len(pk)) + pk + b"\0" * (-len(pk) % 4))
     head, data = bytearray(), bytearray()
     base = 16 + 32 * len(texts)

@@ -4387,7 +4387,7 @@ static int gap_class(const char *name)
            !strcmp(name, "ShellfishYellowChip") ? GAP_SHELLCHIP : !strcmp(name, "BattleShipElevator") ? GAP_ELEVATOR : !strcmp(name, "UFOKinoko") ? GAP_UFOKINOKO : GAP_NONE;
 }
 /* ponytail (unmarked until the 2026-11-02 audit): placed classes of the early galaxies with no behaviour here
- * (drawn static, or not at all), each a whole Petari class: Honeyhive HoneyQueen, Creeper, StinkBugParent (StinkBugParent.cpp, its 子連れカメムシデモ), GhostPlayer (Cosmic Mario);
+ * (drawn static, or not at all), each a whole Petari class: Honeyhive Creeper, StinkBugParent (StinkBugParent.cpp, its 子連れカメムシデモ), GhostPlayer (Cosmic Mario);
  * Space Junk TombSpider, BossKameck, ChildKameck, SpiderAttachPoint (SlingShooter), NokonokoLand; PlanetRocket (a
  * PlanetMap: its own-name clip, PlanetMap.cpp:67, needs planets skinned: slice.py AUTO_SKINNED leaves planets out); Battlerock BossBegoman, TicoShop; Beach Bowl PenguinStudent;
  * the observatory's AstroMapObj looks (update_astro_objs' ponytail) */
@@ -4834,6 +4834,23 @@ static void game_rebind_(void)
         in->md = o->md; in->row = o->row; in->zone = o->zone; in->s = o->s; in->reach = o->reach;
         memcpy(in->m, o->m, sizeof in->m);
         in->kcl = k; in->kmove = mj; in->kparent = i; in->invisible = 1; in->railer = NULL;
+    }
+    for (int i = 0, n = ninsts; i < n; i++) { /* "HoneyQueen#<joint>.<k>" (slice.py JOINT_KCL_ONLY): HoneyQueen::init's ten
+                                               * createCollisionPartsFromLiveActor on getJointMtx, each on its joint */
+        const Inst *o = &insts[i];
+        if (!o->md || !o->md->skin || !o->anim || o->kparent >= 0 || strcmp(s->types + 32 * s->objs[o->row].type, "HoneyQueen")) continue;
+        for (int j = 0; j < o->md->skin->njoints; j++)
+            for (int p = 0; ninsts < insts_cap; p++) {
+                char kn[48];
+                snprintf(kn, sizeof kn, "HoneyQueen#%d.%d", j, p);
+                const unsigned char *k = scene_kcl(s, kn);
+                if (!k) break;
+                Inst *in = &insts[ninsts++];
+                memset(in, 0, sizeof *in);
+                in->md = o->md; in->row = o->row; in->zone = o->zone; in->s = o->s; in->reach = o->reach;
+                memcpy(in->m, o->m, sizeof in->m);
+                in->kcl = k; in->kmove = j; in->kparent = i; in->invisible = 1; in->railer = NULL;
+            }
     }
     for (int i = 0, n = ninsts; i < n; i++) { /* a "<class>#Static" collision (slice.py KCL_PARTS): an invisible instance
                                                * at its owner's place (Shellfish's Low beside its lid's Hi) */
@@ -35563,9 +35580,11 @@ static Row dx_row(const Demo *d) /* the group's switches as a row of its zone (s
 }
 
 static void demo_actors_reset(void);
+static void hq_reset(void);
 static void dx_init(const unsigned char *blob)
 {
     ndemos = 0; dx.on = 0; dx.req = -1; dx_pos = NULL; dx_nreq = 0; dx.acam = NULL;
+    hq_reset();
     demo_actors_reset();
     const u8 *c = blob_chunk(blob, "DEMO", NULL);
     if (!c) return;
@@ -35959,6 +35978,7 @@ static void hdo_update(void)
         }
     }
 }
+static void hq_functor(int row, int part);
 static void dx_cast_hook(int row, int type, int part)
 {
     const char *cls = sc->types + 32 * sc->objs[row].type;
@@ -35970,6 +35990,7 @@ static void dx_cast_hook(int row, int type, int part)
     if (gw_cast_hook(row, type, part)) return;
     if (type == 0 && !strcmp(cls, "StarReturnDemoStarter")) { srd_appear(row); return; }
     if (type == 0 && !strcmp(cls, "GrandStarReturnDemoStarter")) { gsr_appear(row); return; }
+    if (type == 2 && !strcmp(cls, "HoneyQueen")) { hq_functor(row, part); return; }
     if (type == 2 && !strcmp(cls, "AstroCore")) { acore_start(); return; }
     if (type == 3 && !strcmp(cls, "BossBegoman")) { bb_first_contact(row); return; } /* registerDemoActionNerve: FirstContactDemo */                   /* AstroCore::startDemo: Grow */
     if (type == 3 && !strcmp(cls, "UFOKinoko")) { ufok_start(row); return; }                 /* ＵＦＯキノコ登場: startMove */
@@ -37102,6 +37123,152 @@ static void update_npc_turn(void) /* the NPCs' wait nerves: tryStartTalkAction /
         else act = (t->near || t->talk) && !npc_turn_default(in, t) ? t->act[1] : t->act[0];
         if (act) obj_play(in, act, 1, 0); /* tryStartAction (no-op while it plays) */
     }
+}
+/* HoneyQueen.cpp after Petari (Honeyhive's queen, HoneyQueenZone). Her talk (NPCActor caps: the balloon 950 up,
+ * setDistanceToTalk 0: only in her MessageArea), SE_SM_LV_HONEYQUEEN_FLY, her wing (ModelObj 羽 on her Center joint,
+ * HoneyQueenWing's BCK), her ten joint collisions (slice.py JOINT_KCL_ONLY), spins ignored. A cast of a demo
+ * (tryRegisterDemoCast: ハニークイーン謁見, sheet HoneyQueenFirst) she starts in Demo, listening to her SW_A (switchFunc:
+ * Event); her functors on its parts フェードアウト (0: closeWipeFade), フェードイン (1: openWipeFade, Fade: turnToPlayer)
+ * and 謁見 (2: talkEntry, Talk; at the demo's last step Itch: EventWait, back to her placement's front at 0.2,
+ * tryTalkNearPlayer). Event: tryTalkForceAtEnd, then her SW_B and After (tryTalkNearPlayer). Not a cast: Wait /
+ * Ready (tryTalkNearPlayerAtEnd, Talk / Wait clips).
+ * ponytail: no fur (MR::initFur: the engine draws none), no wing BTK, no LodCtrl levels, no TouchJump sensor (none made
+ * by her caps) */
+enum { HQ_WAIT, HQ_READY, HQ_DEMO, HQ_FADE, HQ_TALK, HQ_ITCH, HQ_EVENT, HQ_AFTER };
+static struct { int row, nrv, step, cast, sw_was, k; u32 lv; Anim *wing; const Model *wmd; } hq = {.row = -1};
+static void hq_set(int n) { hq.nrv = n; hq.step = 0; printf("honeyqueen row %d: nerve %d\n", hq.row, n); }
+static void hq_reset(void) { hq.row = -1; hq.wing = NULL; hq.lv = 0; hq.k = -1; }
+static int hq_talker(Inst *in) /* her mMsgCtrl (initTalkCtrl: MessageId), at her base matrix */
+{
+    char lab[32];
+    if (!talk_row_label(hq.row, lab)) return -1;
+    int k = talk_new(lab, hq.row, hq.row, 950.0f, 0.0f); /* sTalkBalloonOffset, setDistanceToTalk 0 */
+    if (k < 0) return -1;
+    talkers[k].root_auto = 1; /* onRootNodeAutomatic */
+    float m[16];
+    memcpy(m, in->m, 64);
+    for (int j = 0; j < 12; j++) m[j] /= in->s;
+    talk_place(k, m);
+    return k;
+}
+static void hq_functor(int row, int part) /* registerDemoActionFunctor on HoneyQueenFirst's parts */
+{
+    if (row != hq.row) return;
+    Inst *in = row_inst(row);
+    if (part == 0) menu_wipe(1, -1, 0); /* fadeOut: setPlayerStateWait (Mario waits in the demo), closeWipeFade */
+    else if (part == 1) { menu_wipe(0, -1, 0); hq_set(HQ_FADE); } /* fadeIn: openWipeFade */
+    else if (part == 2 && in) { /* talkEntry: Talk, tryTalkTimeKeepDemoMarioPuppetable */
+        obj_play(in, "talk", 1, 0);
+        hq.k = hq_talker(in);
+        talk_force(hq.k, 1);
+        hq_set(HQ_TALK);
+    }
+}
+static void hq_face(Inst *in, V3 to, float deg) /* MR::faceToVector(&_A0, to, deg), then setBaseTRMtx */
+{
+    NpcTurn nt = {"HoneyQueen", 0, 0, 0.0f, deg, 0.0f, 0.0f, {NULL}};
+    npc_turn_to_player(in, &nt, to);
+    basis_matrix(in->m, v3(in->m[12], in->m[13], in->m[14]), in->nu, in->nf, 0);
+    for (int j = 0; j < 12; j++) if (j % 4 != 3) in->m[j] *= in->s;
+}
+static void update_queen(void)
+{
+    if (hq.row < 0) { /* init (hq_reset at the scene's load), once her zone shows her */
+        int ty = scene_type(sc, "HoneyQueen");
+        for (u32 i = 0; ty >= 0 && i < sc->nobjs && hq.row < 0; i++) if ((int)sc->objs[i].type == ty && row_shown((int)i)) hq.row = (int)i;
+        if (hq.row < 0) return;
+        hq.cast = 0;
+        for (int d = 0; d < ndemos; d++) for (int c = 0; c < demos[d].h->ncast; c++) if (demos[d].cast[c] == hq.row) hq.cast = 1;
+        hq.sw_was = sw_on(&sc->objs[hq.row], SW_A);
+        hq_set(hq.cast ? HQ_DEMO : HQ_WAIT);
+        hq.wmd = scene_model(sc, "HoneyQueenWing");
+        if (hq.wmd && hq.wmd->skin) { /* makeActorAppeared, startBck HoneyQueenWing */
+            hq.wing = mem_alloc(MEM_SCENE, sizeof(Anim));
+            anim_bind(hq.wing, hq.wmd->skin);
+            anim_start(hq.wing, "honeyqueenwing/honeyqueenwing", 0);
+        }
+    }
+    Inst *in = row_inst(hq.row);
+    if (!in || !row_shown(hq.row) || !tk_nctl) return;
+    const Row *r = &sc->objs[hq.row];
+    hq.lv = se_level(SE_SM_LV_HONEYQUEEN_FLY, &in->m[12], hq.lv); /* control */
+    if (hq.cast) { /* listenStageSwitchOnA: switchFunc */
+        int on = sw_on(r, SW_A);
+        if (on && !hq.sw_was) hq_set(HQ_EVENT);
+        hq.sw_was = on;
+    }
+    int k = hq.k = hq_talker(in), first = hq.step++ == 0;
+    switch (hq.nrv) {
+    case HQ_WAIT: {
+        if (talk_near_at_end(k)) hq_set(HQ_READY);
+        int talking = td.st >= 0 && td.st == k && (td.nrv == TD_TALK || td.nrv == TD_SLCT || td.nrv == TD_NEXT); /* isTalkTalking */
+        obj_play(in, talking ? "talk" : "wait", 1, 0);
+        break;
+    }
+    case HQ_READY: if (k < 0 || !tk_near(&talkers[k], -1.0f)) hq_set(HQ_WAIT); break;
+    case HQ_DEMO: if (first) obj_play(in, "wait", 1, 0); break;
+    case HQ_FADE: { /* NPCActor::turnToPlayer (5) */
+        V3 to = vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14]));
+        if (vlen(to) > 1e-6f) hq_face(in, vnorm(to), 5.0f);
+        break;
+    }
+    case HQ_TALK: { /* isDemoLastStep: the last part's last step */
+        if (first) obj_play(in, "talk", 1, 0);
+        const Demo *d = &demos[dx.cur];
+        if (dx.on && !dx.paused && dx.part == d->h->nparts - 1 && dx.step >= d->parts[dx.part].total - 1) hq_set(HQ_ITCH);
+        break;
+    }
+    case HQ_ITCH: /* faceToVector(_B0's front, 0.2), tryTalkNearPlayer */
+        if (first) obj_play(in, "eventwait", 1, 0);
+        hq_face(in, in->nf0, 0.2f);
+        talk_near(k);
+        break;
+    case HQ_EVENT:
+        if (talk_force_at_end(k, 1)) { if (r->sw[SW_B] >= 0) sw_set(r, SW_B, 1); hq_set(HQ_AFTER); } /* onSwitchB */
+        break;
+    case HQ_AFTER: talk_near(k); break;
+    }
+}
+static void draw_queen_wing(void) /* ModelObj 羽 at her Center joint (joint 1) */
+{
+    Inst *in = hq.row >= 0 && hq.wing ? row_inst(hq.row) : NULL;
+    if (!in || !row_shown(hq.row) || in->invisible || !in->anim || in->anim->skin != in->md->skin || in->md->skin->njoints < 2) return;
+    float m[16];
+    mat_mul(m, in->m, in->anim->world[1]);
+    anim_update(hq.wing);
+    draw_skin(hq.wmd, m, hq.wing);
+}
+int game_test_queen(int frame) /* tests: Mario into her SwitchCylinder (switch 0: ハニークイーン謁見), A every 40 in
+                                * talks; in Itch her SW_A turned on (the YellowChipGroup's), A through the Event talk */
+{
+    static int t;
+    pad_force = 0;
+    int qt = scene_type(sc, "HoneyQueen"), qz = -1;
+    for (u32 i = 0; qt >= 0 && i < sc->nobjs; i++) if ((int)sc->objs[i].type == qt) qz = sc->objs[i].zone;
+    if (frame % 30 == 0) printf("queen test f %d: row %d nerve %d step %d dx %d part %d step %d td %d\n", frame, hq.row, hq.nrv, hq.step, dx.on, dx.part, dx.step, td.nrv);
+    if ((hq.row < 0 || hq.nrv == HQ_DEMO) && !dx_busy() && t++ % 120 == 0) { /* her zone's SwitchCylinder: Mario put at it */
+        int ty = scene_type(sc, "SwitchCylinder");
+        for (u32 i = 0; ty >= 0 && i < sc->nobjs; i++)
+            if ((int)sc->objs[i].type == ty && (int)sc->objs[i].zone == qz) {
+                mario->pos = row_pos(&sc->objs[i]); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+                printf("queen test: Mario at SwitchCylinder row %u\n", i);
+            }
+    }
+    if (hq.row < 0) return -1;
+    const Row *r = &sc->objs[hq.row];
+    if (hq.nrv == HQ_ITCH && hq.step == 120 && r->sw[SW_A] >= 0) { sw_set(r, SW_A, 1); printf("queen test: her SW_A on\n"); }
+    if (hq.nrv == HQ_AFTER && hq.step == 1) printf("queen test: SW_B %d\n", r->sw[SW_B] >= 0 ? sw_on(r, SW_B) : -1);
+    const Inst *in = row_inst(hq.row);
+    if (hq.nrv == HQ_AFTER && in && in->anim && hq.step == 60) { /* dropped 400 over her Face joint: lands on her collision */
+        float w[16];
+        mat_mul(w, in->m, in->anim->world[8]);
+        mario->pos = v3(w[12], w[13] + 400.0f, w[14]); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        printf("queen test: Mario dropped over her face at y %d\n", (int)w[13]);
+    }
+    if (hq.nrv == HQ_AFTER && hq.step > 60 && hq.step % 20 == 0 && hq.step < 300)
+        printf("queen test: Mario y %d grounded %d\n", (int)mario->pos.y, mario->grounded);
+    if ((td.nrv == TD_TALK || td.nrv == TD_SLCT) && frame % 40 < 5) pad_force = PAD_CROSS;
+    return hq.nrv;
 }
 /* Rosetta (Rosetta.cpp): WaitA from init, every sWaitActionInterval 300 steps getRandom(0, 2): 0 WaitA, 1 WaitB (her
  * move action); in a demo (startDemo: her Demo nerve) the sheet drives her (the talk anim ctrl, the actions' AnimName),
@@ -42150,6 +42317,7 @@ void game_update(void)
     LQ(4, update_talkers());
     update_bees();
     update_npc_turn();
+    update_queen();
     hud_update();
 
     LQ(5, update_talk_director());
@@ -43679,6 +43847,7 @@ void game_draw(void)
     draw_hanachans();
     draw_spider_cocoons();
     draw_gaps();
+    draw_queen_wing();
     RESTQ(4);
     if (m_bubble) for (int b = 0; b < MAX_BUBBLES; b++) { /* AirBubbleGenerator's bubbles */
         if (!bubbles[b].life || bubbles[b].nrv) continue; /* (KillWait: hidden) */
