@@ -159,6 +159,13 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
     the cages' SW_B on). Seen in HeavensDoorGalaxy/1: the shock wave demo and its camera, a Kuribo staggered; both
     cages open with their camera and go. Repack HeavensDoorGalaxy (jpa.py NAMED ShockWaveGenerator: its ShockWave
     effect; slice.py SKINNED_OBJ CapsuleCage: its Move clip).
+  - #178 DriftWood (the ice spikes drifting on HeavenlyBeach's ColdTwinFallZone rails: 3 a frame, turning, they flip
+    Mario out of water) and Shellfish (Coin / YellowChip: the open / close cycle, its item shown and taken, the lid's
+    hit and Hi collision on the Lid joint, Low still beside it, a star piece's shock). slice.py: COLL_JOINT (the joint
+    a MapObjActor's own collision follows, SKIN pad 1), KCL_PARTS "<class>#Static" parts (game.c: an invisible
+    instance at its owner), EXTRA ShellfishYellowChip YellowChip; jpa.py NAMED DriftWood (Ripple). GAP_TEST 3 / 4 / 5
+    (HeavenlyBeachGalaxy 1 / 2 / 1): a flip off a drifting spike; the coin and the chip taken from an open shell.
+    Repack HeavenlyBeachGalaxy.
 - mario2 (2026-11-04), #168 PlayerKick: mario_kick / mario_kicked (MarioActor::sendBodyAttack's ACTMES_KICK: his
   cylinder on the sensor, status none, not damaged, no hip drop, within 90 degrees of his front; ランニングキック, its
   voice, pad 2) taken by a staggering Kuribo (36 / 30, three star pieces) / KuriboMini (22 / 25, three), a swooning

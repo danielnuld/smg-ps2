@@ -2177,7 +2177,8 @@ void game_init(const Scene *s, const unsigned char *blob)
     }
 
     t_replica = scene_type(s, "CoinReplica");
-    ncoins = count_type("Coin", 0) + count_type("CoinReplica", 0) + count_type("CircleCoinGroup", 1) + count_type("RailCoin", 1);
+    ncoins = count_type("Coin", 0) + count_type("CoinReplica", 0) + count_type("CircleCoinGroup", 1) + count_type("RailCoin", 1) +
+             count_type("ShellfishCoin", 0); /* its coin (Shellfish::initCoin), hidden until it shows it */
     for (u32 i = 0; i < s->nobjs; i++) { /* room for what breakables drop */
         int c, p;
         if (breakable(s->types + 32 * s->objs[i].type, &s->objs[i], &c, &p)) {
@@ -2339,7 +2340,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     int t_karon = scene_type(s, "Karon"), t_teresa = scene_type(s, "Teresa"), t_bfly = scene_type(s, "Butterfly");
     int t_stink = scene_type(s, "StinkBugSmall"), t_uni = scene_type(s, "Unizo"), t_unil = scene_type(s, "UnizoLand"),
         t_unis = scene_type(s, "UnizoShoal"), t_poi = scene_type(s, "Poihana"), t_petari = scene_type(s, "Petari");
-    int t_gcircle = scene_type(s, "CircleCoinGroup"), t_grail = scene_type(s, "RailCoin");
+    int t_gcircle = scene_type(s, "CircleCoinGroup"), t_grail = scene_type(s, "RailCoin"), t_shellcoin = scene_type(s, "ShellfishCoin");
     insts_cap = (int)s->nobjs + TRAIN_CARS_ROOM * count_type("ChooChooTrain", 0) + 32; /* room for ChooChooTrain's cars, #Move parts */
     insts =mem_alloc(MEM_OBJECTS, insts_cap * sizeof(Inst));
     zone_spheres();
@@ -2348,6 +2349,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         const Row *r = &s->objs[i];
         int c0 = ic, p0 = ip, s0 = is;
         if (r->type == t_coin || r->type == t_replica) { coins[ic].pos = row_pos(r); coins[ic++].alive = 1; }
+        else if (r->type == t_shellcoin) { coins[ic].pos = row_pos(r); coins[ic++].alive = PICK_GONE; } /* update_shellfish shows it */
         else if (r->type == t_pc) { purple[ip].pos = row_pos(r); purple[ip++].alive = 1; }
         else if (r->type == t_piece) { pieces[is].pos = row_pos(r); pieces[is++].alive = 1; }
         else if (r->type == t_spg) is += star_group(pieces + is, r, blob);
@@ -4258,16 +4260,19 @@ typedef struct {
 } ClassInfo;
 
 /* #143's placed classes ported since the audit (update_gaps) */
-enum { GAP_NONE, GAP_SHOCKWAVE, GAP_CAPSULE };
+enum { GAP_NONE, GAP_SHOCKWAVE, GAP_CAPSULE, GAP_DRIFT, GAP_SHELLCOIN, GAP_SHELLCHIP };
+static void gap_place(Inst *in);
 static int gap_class(const char *name)
 {
-    return !strcmp(name, "ShockWaveGenerator") ? GAP_SHOCKWAVE : !strcmp(name, "CapsuleCage") ? GAP_CAPSULE : GAP_NONE;
+    return !strcmp(name, "ShockWaveGenerator") ? GAP_SHOCKWAVE : !strcmp(name, "CapsuleCage") ? GAP_CAPSULE :
+           !strcmp(name, "DriftWood") ? GAP_DRIFT : !strcmp(name, "ShellfishCoin") ? GAP_SHELLCOIN :
+           !strcmp(name, "ShellfishYellowChip") ? GAP_SHELLCHIP : GAP_NONE;
 }
 /* ponytail (unmarked until the 2026-11-02 audit): placed classes of the early galaxies with no behaviour here
  * (drawn static, or not at all), each a whole Petari class: Honeyhive HoneyQueen, Creeper, BossStinkBug, StinkBugParent, GhostPlayer (Cosmic Mario);
  * Space Junk TombSpider, BossKameck, ChildKameck, SpiderAttachPoint (SlingShooter), UFOKinoko, CoinBox,
  * PlanetRocket, NokonokoLand; Battlerock BegomanBaby, BossBegoman, BreakableTrash, UFOStrongA, TicoShop,
- * BattleShipElevator; Beach Bowl ShellfishCoin / ShellfishYellowChip (Shellfish.cpp), DriftWood, PenguinStudent;
+ * BattleShipElevator; Beach Bowl PenguinStudent;
  * the observatory AstroMapObj states (AstroStarPlate / AstroDomeEntrance / AstroRotateStepA / B: Dead / Alive /
  * Revival / Open by dome), AstroCountDownPlate (stars left), AstroOverlookObj (HUD hidden in its area) */
 static void class_make(ClassInfo *ci, const char *name)
@@ -4626,6 +4631,7 @@ static void game_rebind_(void)
         if (in->trapeze) tz_place(in);
         if (in->onimasu) oni_place(in);
         if (in->kstair) ks_place(in);
+        if (in->gap) gap_place(in);
         if (in->coco) coco_spawn(in);
         if (in->fountain || in->stray) memcpy(in->m0, in->m, 64);
         if (in->stray) in->head = row_turn[i] ? (stray_at[i % 64].x || stray_at[i % 64].y || stray_at[i % 64].z ? stray_at[i % 64] : v3(in->m[12], in->m[13], in->m[14])) : v3(in->m[12], in->m[13], in->m[14]);
@@ -4688,6 +4694,20 @@ static void game_rebind_(void)
         in->md = o->md; in->row = o->row; in->zone = o->zone; in->s = o->s; in->reach = o->reach;
         memcpy(in->m, o->m, sizeof in->m);
         in->kcl = k; in->kmove = mj; in->kparent = i; in->invisible = 1; in->railer = NULL;
+    }
+    for (int i = 0, n = ninsts; i < n; i++) { /* a "<class>#Static" collision (slice.py KCL_PARTS): an invisible instance
+                                               * at its owner's place (Shellfish's Low beside its lid's Hi) */
+        const Inst *o = &insts[i];
+        char kn[48];
+        if (!o->md || o->kparent >= 0 || ninsts >= insts_cap) continue;
+        snprintf(kn, sizeof kn, "%s#Static", s->types + 32 * s->objs[o->row].type);
+        const unsigned char *k = scene_kcl(s, kn);
+        if (!k) continue;
+        Inst *in = &insts[ninsts++];
+        memset(in, 0, sizeof *in);
+        in->md = o->md; in->row = o->row; in->zone = o->zone; in->s = o->s; in->reach = o->reach;
+        memcpy(in->m, o->m, sizeof in->m);
+        in->kcl = k; in->kmove = -1; in->kparent = i; in->invisible = 1; in->railer = NULL;
     }
     for (int i = 0, n = ninsts; i < n; i++) /* ChooChooTrain's cars (update_trains) */
         if (insts[i].train == 1 && m_trainbody)
@@ -28001,9 +28021,15 @@ unsigned game_test_moves(unsigned frame)
 }
 
 /* ---- #143's placed classes (gap_class): row_turn their nerve (0 not set up), row_step its step (0 its first) ---- */
-static void gap_nrv(const Inst *in, int n) { row_turn[in->row] = (signed char)n; row_step[in->row] = 0; }
+static void gap_nrv(const Inst *in, int n)
+{
+    row_turn[in->row] = (signed char)n; row_step[in->row] = 0;
+#ifdef GAP_TEST
+    printf("gap %d: nerve %d%c", in->row, n, 10);
+#endif
+}
 /* their own state by row (kept across rebinds: game_rebind_ calls gap_place) */
-typedef struct { int row, i; float f; V3 v; } GapSt;
+typedef struct { int row, i; float f; V3 v, p; } GapSt;
 static GapSt gst[64];
 static int ngst;
 static GapSt *gap_st(int row)
@@ -28054,7 +28080,7 @@ static int shock_busy(const Inst *in) { return row_turn[in->row] != SW_WAIT || (
 static void update_shock(Inst *in, int st)
 {
     V3 p = v3(in->m[12], in->m[13], in->m[14]), up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
-    if (!row_turn[in->row]) { gap_nrv(in, SW_WAIT); gap_st(in->row)->i = 0; return; }
+    if (!row_turn[in->row]) { gap_nrv(in, SW_WAIT); gap_st(in->row)->i = 0x40000000; return; }
     if ((gap_st(in->row)->i & 1) && pd_try_start("衝撃波カメラ", in->row)) { gap_st(in->row)->i &= ~1; gap_nrv(in, SW_DEMOECHO); return; }
     switch (row_turn[in->row]) {
     case SW_WAIT: {
@@ -28109,7 +28135,7 @@ static void capsule_kill(Inst *in)
 static int update_capsule(Inst *in, int st) /* 1: killed (rebound) */
 {
     const Row *r = &sc->objs[in->row];
-    if (!row_turn[in->row]) { gap_nrv(in, CC_WAIT); gap_st(in->row)->i = 0; obj_play(in, "CapsuleCage", 1, 0); return 0; } /* tryStartAllAnim(mObjectName) */
+    if (!row_turn[in->row]) { gap_nrv(in, CC_WAIT); gap_st(in->row)->i = 0x40000000; obj_play(in, "CapsuleCage", 1, 0); return 0; } /* tryStartAllAnim(mObjectName) */
     if (r->sw[SW_B] >= 0 && sw_on(r, SW_B) && !(gap_st(in->row)->i & 4)) { /* startOpen */
         gap_st(in->row)->i |= 4;
         if (row_camset[in->row] != -1) gap_st(in->row)->i |= 1;
@@ -28139,8 +28165,219 @@ static int update_capsule(Inst *in, int st) /* 1: killed (rebound) */
     }
     return 0;
 }
-static int gap_shot(V3 p) /* a star piece's isMsgStarPieceAttack on their collisions: ShockWaveGenerator's body */
+/* DriftWood.cpp after Petari: on its rail (moveCoordAndTransToNearestRailPos at init), front the rail's direction turned
+ * 0.05 degrees a frame about its gravity, up against it (calcMtxFromGravityAndZAxis). Wait / WaitLand: the Ripple
+ * effect, 3 a frame along the rail (moveCoordAndFollowTrans), DRIFT_WOOD_WAVE every 30-90 frames; Mario landing on it
+ * (isOnPlayer) in Wait or VibrateTakeOff: VibrateLand, leaving it in WaitLand: VibrateTakeOff. Vibrate: PLAYER_ON,
+ * 30 x sin(16 x step) along gravity damped to nothing over 45 (calcNerveValue 0.1 .. 1), then Wait(Land). Its eye
+ * sensor (300 at 60 down) flips Mario (EnemyAttackFlip, DRIFT_WOOD_ATTACK) within 140 + his radius across its up when
+ * he is out of water. gv its rail front, gf the coord, gi the wave timer.
+ * ponytail: no mirror actor (tryCreateMirrorActor), no rail clipping; the map objects its sensor hits are not sent
+ * EnemyAttack (none breakable placed by it) */
+enum { DW_WAIT = 1, DW_WAITLAND, DW_VIBRATELAND, DW_VIBRATETAKEOFF };
+static int drift_try_vibrate(Inst *in, int i)
 {
+    int n = row_turn[in->row];
+    if (mario_ground == i) { if (n == DW_VIBRATETAKEOFF || n == DW_WAIT) { gap_nrv(in, DW_VIBRATELAND); printf("drift wood %d: Mario on%c", in->row, 10); return 1; } }
+    else if (n == DW_WAITLAND) { gap_nrv(in, DW_VIBRATETAKEOFF); return 1; }
+    return 0;
+}
+static void update_drift(Inst *in, int i, int st)
+{
+    GapSt *g = gap_st(in->row);
+    const Row *r = &sc->objs[in->row];
+    u32 np = 0;
+    int closed = 0;
+    const float *pts = r->path >= 0 && scene_blob_g ? find_rail(scene_blob_g, r->zone, r->path, &np, &closed) : NULL;
+    if (!pts || np < 2) return;
+    float len = w_rail_len(pts, np), old[16];
+    V3 grav = vmul(up_at(v3(in->m[12], in->m[13], in->m[14]), v3(0, 1, 0)), -1.0f);
+    if (!row_turn[in->row]) { /* init */
+        g->f = w_rail_nearest(pts, np, row_pos(r));
+        V3 a = rail_at(pts, np, g->f), b = rail_at(pts, np, g->f + 1.0f);
+        g->v = vlen(vsub(b, a)) > 1e-6f ? vnorm(vsub(b, a)) : v3(0, 0, 1); /* getRailDirection */
+        g->i = 30 + rand() % 60; /* getRandom(30, 90) */
+        gap_nrv(in, DW_WAIT);
+        st = 0;
+    }
+    memcpy(old, in->m, 64);
+    float c = g->f + 3.0f; /* moveCoord 3 */
+    g->f = closed ? fmodf(c, len) : c > len ? len : c;
+    V3 pos = rail_at(pts, np, g->f);
+    int n = row_turn[in->row];
+    if (n == DW_WAIT || n == DW_WAITLAND) {
+        if (st == 0) fx_named("DriftWood", "Ripple", in->m, NULL, NULL);
+        float a = 0.05f * 0.0174533f, ca = cosf(a), sa = sinf(a); /* rotateVecDegree(_, gravity, 0.05) */
+        V3 k = vnorm(grav), v = g->v;
+        g->v = vadd(vadd(vmul(v, ca), vmul(vcross(k, v), sa)), vmul(k, vdot(k, v) * (1.0f - ca)));
+        drift_try_vibrate(in, i);
+        if (g->i <= 0) { se_start(SE_OJ_DRIFT_WOOD_WAVE, &in->m[12]); g->i = 30 + rand() % 60; }
+        else g->i--;
+    } else { /* exeVibrate */
+        if (st == 0) se_start(SE_OJ_DRIFT_WOOD_PLAYER_ON, &in->m[12]);
+        float t = st >= 45 ? 1.0f : 0.1f + 0.9f * st / 45.0f; /* calcNerveValue(45, 0.1, 1) */
+        pos = vadd(pos, vmul(grav, (1.0f - t) * 30.0f * sinf(16.0f * st * 0.0174533f)));
+        if (!drift_try_vibrate(in, i) && st >= 45) gap_nrv(in, mario_ground == i ? DW_WAITLAND : DW_WAIT);
+    }
+    float depth;
+    g->p = pos;
+#ifdef GAP_TEST
+    if (game_frame % 60 == 0 || (game_frame % 5 == 0 && vlen(vsub(mario->pos, pos)) < 600.0f)) printf("drift %d: nrv %d at (%d %d %d) coord %d/%d, Mario %d away (%d up), ground %d (%d), water %d%c", in->row, row_turn[in->row], (int)pos.x, (int)pos.y, (int)pos.z, (int)g->f, (int)len, (int)vlen(vsub(mario->pos, pos)), (int)vdot(vsub(mario->pos, pos), vmul(grav, -1.0f)), mario_ground == i, mario_ground, in_water(mario->pos, mario->up, &depth), 10);
+#endif
+    basis_matrix(in->m, pos, vmul(grav, -1.0f), g->v, 0); /* calcMtxFromGravityAndZAxis */
+    for (int j = 0; j < 12; j++) in->m[j] *= in->s;
+    if (mario_ground == i) carry(old, in);
+    /* attackSensor: its eye sensor (300 at 60 down) on Mario's */
+    V3 sp = vadd(pos, vmul(grav, 60.0f)), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), up = vmul(grav, -1.0f);
+    if (vlen(vsub(mc, sp)) < 300.0f + HIT_BODY_R && vlen(vtangent(vsub(sp, mc), up)) <= 140.0f + HIT_BODY_R &&
+        !in_water(mario->pos, mario->up, &depth) && mario_attack(ATK_FLIP, sp))
+        { se_start(SE_OJ_DRIFT_WOOD_ATTACK, &in->m[12]); printf("drift wood %d: flips Mario%c", in->row, 10); }
+}
+/* Shellfish.cpp after Petari (ShellfishCoin: a coin 50 up 30 in front, ShellfishYellowChip: a YellowChip of its arg0's
+ * group 100 up 50 in front): Wait (Wait clip, sStepToOpen 150) -> Open (Open clip, SHELLFISH_OPEN; the item shown at
+ * sStepToApperItem 40, rising 0.5 a frame along its up to sStepToSetPosItem 100, then put 30 up) -> OpenWait
+ * (sStepToCloseSignal 170) -> CloseSignal (CloseSignal clip, LV_SHELLFISH_SIGNAL, sStepToClose 150) -> Close (Close
+ * clip, SHELLFISH_CLOSE; its core sensor (120, at the Lid joint's (0, -100, 200)) from step 0 to 15 hits Mario
+ * strongly along its front, pushing him 40, and drops its Hi collision (the lid's) till the clip ends; the item hidden at
+ * step 5) -> Wait. A star piece (StarPieceReflect) or a thrown shell: Shock (CloseDamage / OpenDamage, interpolated
+ * 2; the item shown, sStepToRecover 540, CloseSignal). The item once taken is gone. gi: bits 0-7 the coin slot, 0x100
+ * shown, 0x200 taken, 0x400 the Hi collision dropped; gv the item's place.
+ * ponytail: no 2P pointer bind (DPDOpen: WalkerStateBindStarPointer, the 2P pointer only), no HitNormal effect, no
+ * AnimScaleController, no shadow; the chip drawn static */
+enum { SF_WAIT = 1, SF_OPEN, SF_OPENWAIT, SF_CLOSESIGNAL, SF_CLOSE, SF_SHOCK };
+static short shell_got_rows[8];
+static int nshell_got;
+static int shell_chip_got(int row) { for (int k = 0; k < nshell_got; k++) if (shell_got_rows[k] == row) return 1; return 0; }
+static V3 shell_put(const Inst *in) /* putItem: the base matrix x the item's offset */
+{
+    V3 x = vnorm(v3(in->m[0], in->m[1], in->m[2])), y = vnorm(v3(in->m[4], in->m[5], in->m[6])), z = vnorm(v3(in->m[8], in->m[9], in->m[10]));
+    int chip = in->gap == GAP_SHELLCHIP;
+    (void)x;
+    return vadd(v3(in->m[12], in->m[13], in->m[14]), vadd(vmul(y, chip ? 100.0f : 50.0f), vmul(z, chip ? 50.0f : 30.0f)));
+}
+static void shell_item(Inst *in, int show) /* ACTMES_ITEM_SHOW / HIDE (a taken item: dead, nothing) */
+{
+    GapSt *g = gap_st(in->row);
+    if (g->i & 0x200) return;
+    g->i = show ? g->i | 0x100 : g->i & ~0x100;
+    if (in->gap == GAP_SHELLCOIN) { Pickup *c = &coins[g->i & 0xFF]; c->pos = g->v; c->alive = show ? PICK_ON : PICK_GONE; }
+}
+static void shell_shock(Inst *in) /* receiveMsgPlayerAttack: isMsgJetTurtleAttack / isMsgStarPieceReflect */
+{
+    GapSt *g = gap_st(in->row);
+    obj_play(in, row_turn[in->row] == SF_WAIT ? "CloseDamage" : "OpenDamage", 0, 2);
+    if (row_turn[in->row] == SF_OPEN && row_step[in->row] > 40 && row_step[in->row] <= 100) { g->v = vadd(shell_put(in), vmul(vnorm(v3(in->m[4], in->m[5], in->m[6])), 30.0f)); shell_item(in, g->i & 0x100); } /* endBindItem */
+    gap_nrv(in, SF_SHOCK);
+    printf("shellfish %d: shock%c", in->row, 10);
+}
+static void update_shellfish(Inst *in, int st)
+{
+    GapSt *g = gap_st(in->row);
+    const Row *r = &sc->objs[in->row];
+    V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+    if (!row_turn[in->row]) { /* initItem: putItem, hidden */
+        int slot = -1;
+        for (int k = 0; k < ncoins && in->gap == GAP_SHELLCOIN; k++) if (coins[k].row == in->row) { slot = k; break; }
+        if (in->gap == GAP_SHELLCOIN && slot < 0) return;
+        g->i = 0x40000000 | (slot < 0 ? 0 : slot);
+        g->v = shell_put(in);
+        shell_item(in, 0);
+        gap_nrv(in, SF_WAIT);
+        return;
+    }
+    if ((g->i & 0x100) && !(g->i & 0x200)) { /* the item taken (its coin's gone; the chip at a touch) */
+        int taken = 0;
+        if (in->gap == GAP_SHELLCOIN) taken = coins[g->i & 0xFF].alive == PICK_GONE;
+        else if (vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), g->v)) < 80.0f + HIT_BODY_R) { /* ChipBase's sensor 80 */
+            float m[16];
+            basis_matrix(m, g->v, up, vnorm(v3(in->m[8], in->m[9], in->m[10])), 0);
+            fx_emit(FX_YELLOWCHIP_GET, m); pad_rumble(RUMBLE_MIDDLE); /* ChipBase::exeGot */
+            if (nshell_got < 8) shell_got_rows[nshell_got++] = (short)in->row;
+            taken = 1;
+        }
+        if (taken) { g->i = (g->i & ~0x100) | 0x200; printf("shellfish %d: its item taken%c", in->row, 10); }
+    }
+    switch (row_turn[in->row]) {
+    case SF_WAIT:
+        if (st == 0) obj_play(in, "Wait", 1, 0);
+        if (st == 150) gap_nrv(in, SF_OPEN); /* sStepToOpen */
+        break;
+    case SF_OPEN:
+        if (st == 0) { obj_play(in, "Open", 0, 0); se_start(SE_OJ_SHELLFISH_OPEN, &in->m[12]); g->v = shell_put(in); }
+        if (st == 40) shell_item(in, 1); /* sStepToApperItem: ITEM_SHOW, startBindItem */
+        if (st > 40 && st < 100) { g->v = vadd(g->v, vmul(up, 0.5f)); shell_item(in, g->i & 0x100); }
+        if (st == 100) { /* sStepToSetPosItem: endBindItem */
+            g->v = vadd(shell_put(in), vmul(up, 30.0f)); shell_item(in, g->i & 0x100);
+            gap_nrv(in, SF_OPENWAIT);
+        }
+        break;
+    case SF_OPENWAIT:
+        if (st == 170) gap_nrv(in, SF_CLOSESIGNAL); /* sStepToCloseSignal */
+        break;
+    case SF_CLOSESIGNAL:
+        if (st == 0) obj_play(in, "CloseSignal", 1, 0);
+        in->lv[0] = se_level(SE_OJ_LV_SHELLFISH_SIGNAL, &in->m[12], in->lv[0]);
+        if (st == 150) gap_nrv(in, SF_CLOSE); /* sStepToClose */
+        break;
+    case SF_CLOSE:
+        if (st == 0) { obj_play(in, "Close", 0, 0); se_start(SE_OJ_SHELLFISH_CLOSE, &in->m[12]); }
+        if (st == 5) shell_item(in, 0); /* sStepToDeadItem: ITEM_HIDE */
+        if (st < 15 && in->kmove >= 0 && in->anim) { /* its core sensor (sStepToHitSensorOn / Off) */
+            float jm[16];
+            mat_mul(jm, in->m, in->anim->world[in->kmove]);
+            V3 core = v3(jm[12] - 100.0f * jm[4] + 200.0f * jm[8], jm[13] - 100.0f * jm[5] + 200.0f * jm[9], jm[14] - 100.0f * jm[6] + 200.0f * jm[10]);
+            V3 z = vnorm(v3(in->m[8], in->m[9], in->m[10])), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+            if (vlen(vsub(mc, core)) < 120.0f + HIT_BODY_R && !mario->hurt_timer) {
+                if (mario_attack(ATK_STRONG, vsub(mc, z)) && !(g->i & 0x400)) { g->i |= 0x400; in->kcl = NULL; } /* sendMsgEnemyAttackStrongToDir: invalidateCollisionParts */
+                V3 v = vmul(z, 40.0f); /* pushPlayer(sHitPushPower) */
+                mario->hvel = vtangent(v, mario->up); mario->vup = vdot(v, mario->up); mario->grounded = 0;
+            }
+        }
+        if (st > 0 && (!in->anim || in->anim->done)) { /* validateCollisionParts */
+            if (g->i & 0x400) { g->i &= ~0x400; in->kcl = scene_kcl(sc, sc->types + 32 * r->type); game_rebind(); }
+            gap_nrv(in, SF_WAIT);
+        }
+        break;
+    case SF_SHOCK:
+        if (st == 0) shell_item(in, 1); /* invalidateHitSensor core, ITEM_SHOW */
+        if (st == 540) gap_nrv(in, SF_CLOSESIGNAL); /* sStepToRecover */
+        break;
+    }
+}
+static void gap_place(Inst *in) /* game_rebind_: their pose and collision again from their state */
+{
+    if (!row_turn[in->row]) return;
+    const GapSt *g = gap_st(in->row);
+    if (in->gap == GAP_DRIFT) {
+        basis_matrix(in->m, g->p, up_at(g->p, v3(0, 1, 0)), g->v, 0);
+        for (int j = 0; j < 12; j++) in->m[j] *= in->s;
+    }
+    if ((in->gap == GAP_SHELLCOIN || in->gap == GAP_SHELLCHIP) && (g->i & 0x400)) in->kcl = NULL;
+}
+static void draw_gaps(void) /* ShellfishYellowChip's chip while shown */
+{
+    const Model *md = scene_model(sc, "YellowChip");
+    FOR_KIND(i, gap) {
+        const Inst *in = &insts[i];
+        if (in->gap != GAP_SHELLCHIP || !md || !row_shown(in->row)) continue;
+        const GapSt *g = gap_st(in->row);
+        if (!(g->i & 0x100)) continue;
+        float m[16];
+        basis_matrix(m, g->v, vnorm(v3(in->m[4], in->m[5], in->m[6])), vnorm(v3(in->m[8], in->m[9], in->m[10])), coin_rot);
+        render_model(md, m, 0x80, 0x80, 0x80);
+    }
+}
+static int gap_shot(V3 p) /* a star piece: ShockWaveGenerator's body (isMsgStarPieceAttack on its collision), Shellfish's
+                           * body sensor (isMsgStarPieceReflect, 400 at 100 up) */
+{
+    FOR_KIND(i, gap) {
+        Inst *in = &insts[i];
+        if ((in->gap != GAP_SHELLCOIN && in->gap != GAP_SHELLCHIP) || !row_shown(in->row) || !row_turn[in->row]) continue;
+        V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+        if (vlen(vsub(p, vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(up, 100.0f)))) > 400.0f) continue;
+        shell_shock(in);
+        return 1;
+    }
     Hit h[4];
     int n = kcl_query(p, 30.0f, h, 4);
     for (int k = 0; k < n; k++) {
@@ -28154,22 +28391,39 @@ static int gap_shot(V3 p) /* a star piece's isMsgStarPieceAttack on their collis
 #ifdef GAP_TEST
 int game_test_busy(void);
 /* XF=-DGAP_TEST=<GAP_ kind> (frames counted from Mario free): Mario 250 beside each placement of that class in turn
- * (every 300 frames from 120; its zone streams in), then at +30 GAP_SHOCKWAVE spins, GAP_CAPSULE turns its SW_B on */
-static const char *const gap_names[] = {"", "ShockWaveGenerator", "CapsuleCage"};
+ * (every 300 frames from 120; its zone streams in; DriftWood: 200 over it), then at +30 GAP_SHOCKWAVE spins,
+ * GAP_CAPSULE turns its SW_B on; a Shellfish's item: Mario put on it at +260 */
+static const char *const gap_names[] = {"", "ShockWaveGenerator", "CapsuleCage", "DriftWood", "ShellfishCoin", "ShellfishYellowChip"};
 static void gap_test(void)
 {
     static int t;
     if (!game_test_free() || game_test_busy()) return;
     t++;
     int want = t >= 120 ? (t - 120) / 300 : -1, at = t >= 120 ? (t - 120) % 300 : -1, ty = scene_type(sc, gap_names[GAP_TEST]), seen = 0;
-    if (want < 0 || (at != 0 && at != 30)) return;
+    int shell = GAP_TEST == GAP_SHELLCOIN || GAP_TEST == GAP_SHELLCHIP;
+    if (want < 0 || (at != 0 && at != 30 && at != 50 && !(shell && at > 60))) return;
     for (u32 i = 0; ty >= 0 && i < sc->nobjs; i++) {
         const Row *r = &sc->objs[i];
         if ((int)r->type != ty || seen++ != want % 16) continue;
         V3 x, z, p = row_pos(r);
         row_axes(r, &x, &z);
         V3 up = vnorm(vcross(z, x));
-        if (at == 0) {
+        for (int k = 0; k < ninsts; k++) /* loaded: its own pose */
+            if (insts[k].row == (int)i && insts[k].gap) {
+                p = v3(insts[k].m[12], insts[k].m[13], insts[k].m[14]); up = vnorm(v3(insts[k].m[4], insts[k].m[5], insts[k].m[6]));
+                if (shell && at > 60 && (gap_st((int)i)->i & 0x100) && (gap_st((int)i)->i & 0x200) == 0) {
+                    mario->pos = vsub(gap_st((int)i)->v, vmul(mario->up, HIT_BODY_H)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+                    printf("gap test: Mario on shellfish %u's item%c", i, 10);
+                }
+                break;
+            }
+        if (at > 60) return;
+        if (GAP_TEST == GAP_DRIFT && row_turn[i]) p = gap_st((int)i)->p; /* its rail place */
+        if (GAP_TEST == GAP_DRIFT ? at == 0 || at == 50 : at == 50) {
+            if (GAP_TEST != GAP_DRIFT) return;
+            mario->up = up; mario->pos = vadd(p, vmul(up, at ? 450.0f : 1500.0f)); /* high first: its zone streams in */ mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            printf("gap test: Mario over DriftWood %u at (%d %d %d)%c", i, (int)p.x, (int)p.y, (int)p.z, 10);
+        } else if (at == 0) {
             mario->up = up; mario->pos = vadd(p, vadd(vmul(vnorm(x), 250.0f), vmul(up, 30.0f)));
             mario->hvel = v3(0, 0, 0); mario->vup = 0;
             printf("gap test: Mario by %s %u%c", gap_names[GAP_TEST], i, 10);
@@ -28187,9 +28441,18 @@ static void update_gaps(void)
     FOR_KIND(i, gap) {
         Inst *in = &insts[i];
         if (!in->gap || !row_shown(in->row) || !dx_row_moves(in->row)) continue;
+        GapSt *g = gap_st(in->row);
+        if (!(g->i & 0x40000000)) { /* its first update: no nerve yet */
+#ifdef GAP_TEST
+            printf("gap %d: first update, row_turn %d%c", in->row, row_turn[in->row], 10);
+#endif
+            g->i = 0x40000000; row_turn[in->row] = 0; row_step[in->row] = 0;
+        }
         int st = row_step[in->row];
         if (row_step[in->row] < 0xFFFF) row_step[in->row]++;
         if (in->gap == GAP_SHOCKWAVE) update_shock(in, st);
+        else if (in->gap == GAP_DRIFT) update_drift(in, i, st);
+        else if (in->gap == GAP_SHELLCOIN || in->gap == GAP_SHELLCHIP) update_shellfish(in, st);
         else if (in->gap == GAP_CAPSULE && update_capsule(in, st)) return;
     }
 }
@@ -32137,6 +32400,8 @@ static void update_switches(void)
                     n++;
                     got += row_dead[k];
                 }
+            for (u32 k = 0, ct = (u32)scene_type(sc, "ShellfishYellowChip"); yel && k < sc->nobjs; k++) /* a Shellfish's chip (setGroupID arg0) */
+                if (sc->objs[k].type == ct && sc->objs[k].arg[0] == r->arg[0]) { n++; got += shell_chip_got((int)k); }
             if (n && got == n) {
                 u32 h = se_start(yel ? SE_OJ_YELLOWCHIP_COMPLETE : SE_OJ_BLUECHIP_COMPLETE, NULL); /* noticeGet */
                 if (h) se_port(h, 11, n > 12 ? 12 : n); /* modifySe_Takezawa: port 11 the chip count */
@@ -41254,6 +41519,7 @@ void game_draw(void)
     draw_sambo_heads();
     draw_hanachans();
     draw_spider_cocoons();
+    draw_gaps();
     RESTQ(4);
     if (m_bubble) for (int b = 0; b < MAX_BUBBLES; b++) { /* AirBubbleGenerator's bubbles */
         if (!bubbles[b].life) continue;
