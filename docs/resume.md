@@ -400,6 +400,10 @@ Second console round (2026-10-24), from Daniel's report:
   there unused till now) with arg0-2, 15 active frames following Mario, 180 of revival, its Loop / Start / End /
   Revival clips (slice.py SKINNED_OBJ). Test: `dring` (OceanPhantomCave 3: the ring dash; OceanRing 2 rings are out of
   the water). ponytail: no BRK / BTK / BPK clips. Repack: slice_all.py OceanRingGalaxy, OceanPhantomCaveGalaxy.
+- SnowBlockA (feat/snow-block, 2026-11-05): SimpleBreakableObj's mBreakFlags 0x20: a fire ball on it breaks it
+  (breakable() kind 7, fireball_breaks from attackFire; SW_A gate), StageEffect SE_OJ_SNOW_MAN_MELT, stopScene 5, weak
+  shake, its items, Break effect. Test: `fire` with XF=-DFIRE_AT_SNOW (SnowCapsule 1: row 39 melts, its coin). ponytail:
+  its own Break BCK not played (drawn static: gone at once). Repack: sound.py --pack SnowCapsuleGalaxy.
 ## Rules
 
 - Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -
