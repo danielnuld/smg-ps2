@@ -2234,10 +2234,10 @@ int main(void)
         }
 #endif
 #ifdef JET_TEST
-        { /* Mario onto a JetTurtle (150), walking with it, a spin throws it (250) */
-            if (frame == 150) printf("jet test f %u: row %d\n", frame, game_test_jet(0));
-            if (frame == 250) game_test_jet(1);
-            if (frame >= 150 && frame < 700 && frame % 20 == 0) printf("jet test f %u: phase %d\n", frame, game_jet_state());
+        { /* Mario onto a JetTurtle (500: after the arrival flight), a spin throws it (600): its reset, Restart */
+            if (frame == 500) printf("jet test f %u: row %d\n", frame, game_test_jet(0));
+            if (frame == 600) game_test_jet(1);
+            if (frame >= 500 && frame < 1100 && frame % 20 == 0) printf("jet test f %u: phase %d\n", frame, game_jet_state());
         }
 #endif
 #ifdef KEY_TEST
