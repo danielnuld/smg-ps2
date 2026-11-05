@@ -35748,7 +35748,10 @@ static void srd_update(void)
         else if (menu_wipe_closed()) srd_set(SRD_AFTER);
         break;
     case SRD_AFTER:
-        if (first) { dx.paused = 0; if (on_stage("AstroGalaxy")) game_bgm_stage(); } /* resumeTimeKeepDemo, startCurrentStageBGM */
+        if (first) { /* resumeTimeKeepDemo; AstroGalaxy: startCurrentStageBGM, overlayWithPreviousScreen(cOverlayFrame 3), endStartPosCamera */
+            dx.paused = 0;
+            if (on_stage("AstroGalaxy")) { game_bgm_stage(); render_cover(3); camera_start_pos_end(); }
+        }
         if (!dx.on) { srd_set(SRD_DEAD); srd.luma = srd.hair = 0; } /* kill: the Luma and the hair with it */
         return; /* Mario no longer held */
     }
@@ -35954,8 +35957,8 @@ static void adds_draw(void) /* the SuperSpinDriver at _94 until JumpOut hides it
  * cameras (initMultiActorCamera 移動 / ウェイト / リザルト) for the demos after the first (whose sheet has its own). The
  * sheets' parts: 移動 0, ウェイト→コア突入 1, コア回復 2 .. ドーム復活 nparts - 3, リザルト画面 nparts - 2, キャスト入れ換え
  * nparts - 1. ponytail: the star's joint PowerStar taken at its base (updateRailMoveEndDir / calcOffsetStarToCore), no
- * Blur effects on the rushing star, no SpinDriverPathDrawer, no BGM changes (STM_FIRST_ASTRO / STM_SECOND_ASTRO, then
- * MBGM_GALAXY_24 / STM_ASTRO_OUT*), no rumble */
+ * Blur effects on the rushing star, no SpinDriverPathDrawer,
+ * no rumble */
 enum { GSR_DEAD, GSR_MOVE, GSR_FLYWAIT, GSR_RUSH, GSR_REVIVAL, GSR_RESULT, GSR_FADEOUT, GSR_WAITEND };
 static const char *const gsr_names[] = {"グランドスター１帰還", "グランドスター２帰還", "グランドスター３帰還", /* cGrandStarReturnDemoTable */
                                         "グランドスター４帰還", "グランドスター５帰還", "グランドスター６帰還"};
@@ -36009,6 +36012,7 @@ static void gsr_update(void)
     switch (gsr.nrv) {
     case GSR_MOVE: { /* exeMove: ReturnDemoRailMove::update(partStep + 1, partTotal) */
         int cur = dx_step(0) + 1, max = dx_total(0), sf = max - 296, ss = max - 98;
+        if (first) bgm_start(gsr.index == 0 ? "STM_FIRST_ASTRO" : "STM_SECOND_ASTRO"); /* exeMove */
         if (gsr.index != 0) { /* the first demo's sheet has its own cameras */
             if (first) gsr_camera("移動");
             if (dx_step(0) == 300) gsr_camera("ウェイト");
@@ -36073,7 +36077,11 @@ static void gsr_update(void)
         else if (menu_wipe_closed()) { camera_event_stop(); gsr_set(GSR_WAITEND); } /* endMultiActorCamera リザルト */
         break;
     case GSR_WAITEND:
-        if (first) dx.paused = 0; /* resumeTimeKeepDemo; ponytail: no BGM */
+        if (first) { /* exeWaitDemoEnd: the stage BGM by the demo, resumeTimeKeepDemo */
+            static const char *const out[6] = {"MBGM_GALAXY_24", "STM_ASTRO_OUT", "STM_ASTRO_OUT_2", "STM_ASTRO_OUT_2", "STM_ASTRO_OUT_3", "STM_ASTRO_OUT_3"};
+            bgm_start(out[gsr.index >= 0 && gsr.index < 6 ? gsr.index : 5]);
+            dx.paused = 0;
+        }
         if (!dx.on) gsr_set(GSR_DEAD);
         return;
     }
