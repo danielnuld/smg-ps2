@@ -298,6 +298,7 @@ typedef struct {
     V3 cfront;       /* CocoNut: _94 its rolling direction, cspd _8C its speed, cfall _90 its fall speed */
     float cspd, cfall;
     int cstrong;     /* CocoNut: _13C sent by a spin: light gravity, blows walkers away, until it lands */
+    int cair;        /* CocoNut: _138 frames off the ground (to 10: isInGroundGracePeriod) */
     const float *prom; u32 prom_n; /* LavaProminence: its rail (polyline); a lava ball rides it (update_prom) */
     const unsigned char *tsuki; /* Tsukidashikun: its PATH entry; pushes along it and back (update_tsuki) */
     int shoot;       /* ShootingStar: falls, bursts into star pieces (update_shooting) */
@@ -878,7 +879,9 @@ static void ota_lfoot(int k, int nrv, const char *clip)
     if (clip) { snprintf(ota.lact[k], sizeof ota.lact[k], "%s", clip); ota.lseq[k]++; }
 }
 #define MAX_BUBBLES 8 /* AirBubbleHolder's free bubbles (update_bubbles) */
-static struct { V3 pos, vel; int t, life; } bubbles[MAX_BUBBLES];
+static struct { V3 pos, vel, a4; int t, life, nrv; } bubbles[MAX_BUBBLES]; /* a4 its _A4; nrv 0 Move, 1 KillWait */
+static void sw_inc_oxygen(void);
+static void mario_named_fx(const char *name, void *key);
 static int time_limit, time_on; /* a Red / Black comet's limit (frames, 0 none); its executor: 0 to start, 1 on, 2 over */
 static int swimming, oxygen = 3600; /* Mario in water (swim_update); oxygen left (mOxygenMax 3600) */
 static V3 stray_at[64]; /* StrayTico: where the rescued ones are (kept over a rebind), by row % 64 */
@@ -1266,26 +1269,28 @@ static int nerails;
 static const Model *m_erail, *m_fireball, *m_rock;
 /* RockCreator / Rock (Petari RockCreator.cpp, Rock.cpp; WanwanRolling(Mini / Gold) are RockCreators too): see
  * update_rocks
- * ponytail (unmarked until the 2026-11-02 audit): no roll level SEs (ROCK_MOVE / WANWANROLL_MOVE / MINI / MUD), no
- * Wanwan bark every 120 within 600, no bound / break SEs, no rumble and shake on a break within 1000 / 2000
- * (Rock.cpp:539-628, 782, 909) */
+ * Its sounds as Rock.cpp:539-628 / 696-935 (rock_roll_se, rock_rumble). ponytail: SE_OJ_LV_ROCK_MOVE_MUD
+ * (isBindedGroundBrake: the binder keeps no floor code), a WanwanRollingMini's break effect / SE also when clipped
+ * (isInClippingRange not checked) */
 typedef struct { int row, type, nrocks, first, timer, valid, active, delay; float speed; const unsigned char *rail;
                  const float *pts; u32 np; int closed; float len; } RockC;
 typedef struct { int c, alive, nrv, step, railpt, on_ground, on_wall, bind, air, normalgrav, invbind, slow, ftime,
                  unfreeze, bt; float coord, rotx, gravrate, rad, rotspeed; V3 pos, prev, vel, fall, front, grav, gn, wn,
-                 fpos, bpos, bup, bfront; } Rock;
+                 fpos, bpos, bup, bfront; u32 lv[2]; int vtimer; } Rock; /* lv: its roll / glitter level sounds, vtimer mWanwanVoiceTimer */
 /* IronCannonLauncherPoint / IronCannonLauncher (Petari IronCannonShell.cpp, KoopaJrShipCannonShell.cpp): every arg0
  * frames (default 300) a shell leaves 75 (the launcher: 100) along its z at arg1 a frame (default 30), at most 3 out;
  * SW_A, when set, must be on (the Point); its appear switch shows it. A shell flies straight for 360 frames and
  * explodes on what it hits (after 10 frames) or on Mario (hurt); stomped, it drops under gravity (0.55 rebound, 0.95
  * / 0.99 damping) and misfires after 45. The Point's own model is the shell (its archive). ponytail: no star pointer
  * freeze, launchers fire only within 8000 of Mario
- * ponytail (unmarked until the 2026-11-02 audit): the shell starts 100 along Z (Petari
- * tryShotBullet(sGunPointModelOffset): 175), no launcher Shot clip / Shoot effect, its explosion is SpaceMine's
- * effect (Petari: its own Explosion, KILLER_EXPLOSION, a weak shake within 1000), no MisFire effect / SE, no
- * LocusSmoke, no HipDropDown bounce (KoopaJrShipCannonShell.cpp:183-256) */
+ * A shell (KoopaJrShipCannonShell.cpp) leaves sGunPointOffset 75 (+ sGunPointModelOffset 100 from a launcher) along Z
+ * with SE_BM_KOOPAJR_SHIP_SHOOT_NORMAL and the launcher's Shoot effect, flies with LocusSmoke and SE_EM_LV_KILLER_FLY;
+ * explosion(): its Explosion, SE_EM_KILLER_EXPLOSION, startRumbleWithShakeCameraWeak 1000 / 2000; trampled (a middle
+ * rumble) or hip-dropped (Mario hops off along -gravity: jumpPlayer) it is Down (SE_EM_STOMPED_S; the smoke ends at a
+ * rebound) and misfires at 45 (a weak shake / rumble, MisFire, SE_EM_KILLER_MISS_FIRE). IronCannonShell: base scale 1.3 (binder
+ * 75, attack 60 x it). ponytail: no launcher Shot clip (drawn static), the hop as a plain jump vector (tryFreeJumpDelay) */
 #define SHELLS_PER 3
-typedef struct { V3 pos, vel, dir; int row, t, state; } Shell; /* state 0 none, 1 flying, 2 stomped */
+typedef struct { V3 pos, vel, dir; int row, t, state, smoke; u32 lv; } Shell; /* state 0 none, 1 flying, 2 stomped; smoke: LocusSmoke on */
 static Shell *shells;
 static int nshells;
 static const Model *m_shell;
@@ -3108,9 +3113,16 @@ static void update_kiraira(void)
  * nothing. row_turn 0 waiting (row_step the interval), 1 falling (row_step its steps), 2 done. ponytail: one meteor at
  * a time per launcher (no arg2 multi meteors, no start part-way when off screen), no shadow, no break model / lava
  * column, no meteor at all before the first frame it is on screen is not checked
- * ponytail (unmarked until the 2026-11-02 audit): no CANNON_SHELL_SHOOT, METEOR_FALL, METEOR_BREAK nor rumble
- * (MeteorStrike.cpp:141 / 308 / 381) */
+ * Its sounds as MeteorStrike.cpp: a MeteorCannon's SE_OJ_CANNON_SHELL_SHOOT at appear, SE_OJ_METEOR_FALL once it is
+ * first in the view (isInScreen: 200 about it a step ahead; row_turn 3 from then), an Environment one's
+ * SE_OJ_LV_METEOR_ENV_FLY; on a DamageFire floor SE_OJ_METEOR_FALL_MAGMA, else (or on Mario) its Break's
+ * SE_OJ_METEOR_BREAK, each with startRumble (1000 / 2000, a MeteorCannon 2500 / anywhere). A meteor still out of the
+ * view when it lands goes silently */
 static int kcl_query(V3 c, float radius, Hit *out, int max);
+static void meteor_rumble(V3 p, int cannon) /* startRumble: startRumbleWithShakeCameraWeak 1000 / 2000 (MeteorCannon 2500 / FLOAT_MAX) */
+{
+    rumble_shake_weak(p, RUMBLE_STRONG, RUMBLE_MIDDLE, cannon ? 2500.0f : 1000.0f, cannon ? 3.4e38f : 2000.0f);
+}
 static V3 meteor_pos(const Inst *in, V3 *dir)
 {
     const float *p = in->meteor;
@@ -3124,30 +3136,39 @@ static void update_meteor(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     FOR_KIND(i, meteor) {
-        const Inst *in = &insts[i];
+        Inst *in = &insts[i];
         if (!in->meteor || !row_shown(in->row)) continue;
         const Row *r = &sc->objs[in->row];
         unsigned short *t = &row_step[in->row];
         signed char *ph = &row_turn[in->row];
         if (*ph == 2) continue;
+        const char *cls = sc->types + 32 * r->type;
+        int env = strcmp(cls, "MeteorStrikeEnvironment") == 0, cannon = strcmp(cls, "MeteorCannon") == 0, end = 0;
         if (*ph == 0) {
             if (*t && ++*t < r->arg[1] * 60) continue;
             *ph = 1; *t = 0;
+            if (cannon) se_start(SE_OJ_CANNON_SHELL_SHOOT, &in->m[12]); /* appear */
         }
         ++*t;
         V3 dir, p = meteor_pos(in, &dir), b = v3(in->meteor[3], in->meteor[4], in->meteor[5]);
-        int env = strcmp(sc->types + 32 * r->type, "MeteorStrikeEnvironment") == 0, end = 0;
+        V3 ahead = vadd(p, vmul(dir, r->arg[0] > 0 ? (float)r->arg[0] : 10.0f));
+        if (*ph == 1 && !render_clip_judge(&ahead.x, 200.0f, 1e9f)) { *ph = 3; se_start(SE_OJ_METEOR_FALL, &p.x); } /* showModel */
+        if (env) in->lv[0] = se_level(SE_OJ_LV_METEOR_ENV_FLY, &p.x, in->lv[0]);
         Hit h[1];
+        int brk = 0;
         if (!env && vlen(vsub(c, p)) < 90.0f + HIT_BODY_R) {
             mario_attack(ATK_STRONG, p);
             printf("meteor %d hits Mario\n", in->row);
-            end = 1;
+            end = brk = 1;
         } else if (vdot(vsub(p, b), dir) > 0)
             end = 1;
         else if (!env && kcl_query(p, 80.0f, h, 1)) {
             printf("meteor %d breaks on the ground after %d steps\n", in->row, *t);
             end = 1;
+            if (*ph == 3) { if ((h[0].attr & 0x3F) == 10) se_start(SE_OJ_METEOR_FALL_MAGMA, &p.x); else brk = 2; } /* isBindedGroundDamageFire */
+            if (*ph == 3 && brk != 2) meteor_rumble(p, cannon);
         }
+        if (brk) { se_start(SE_OJ_METEOR_BREAK, &p.x); meteor_rumble(p, cannon); } /* exeBreak */
         if (end) {
             *ph = r->arg[1] > 0 ? 0 : 2;
             *t = 1; /* the interval counts from 1 */
@@ -3848,9 +3869,11 @@ static void update_punch(void)
  * It turns as it rolls (updateRotate). A walker hit, a death area, the void or water (ponytail: not checked) bring it
  * back to its place after a break (60 frames hidden). row_turn 0 wait, 1 move, 2 broken; row_step its frames.
  * ponytail: no water ground (the _WATER sounds), no coconut-to-coconut hits, no breakables, no moving ground (velocity areas)
- * ponytail (unmarked until the 2026-11-02 audit): no RollingSmoke while rolling nor Land effect on a bounce
- * (CocoNut.cpp:279 / 285), water plays CocoNutBreak instead of WaterColumn (930-946), it comes back after a fixed
- * 60 frames instead of once clipped (112-135) */
+ * Its RollingSmoke on the ground, Land after 10 frames off it unless it bounces (CocoNut.cpp:279 / 285), WaterColumn
+ * into water (930-946), back at its place once that is out of the view (startClipped, 112-135; arg1: also hidden
+ * when it goes out of the view itself). ponytail: the effects' AttrDefault rows only (no ground attribute: water /
+ * sand), back on a frame its place is out of the view (not at the clipping's start), after 60 frames (the break's
+ * effect / WaterColumn's end not waited for) */
 static int area_inside(const Row *r, V3 p);
 static int in_water(V3 p, V3 up, float *depth);
 static int walker_blow(Kuribo *e, V3 from);
@@ -3859,7 +3882,7 @@ static void coco_spawn(Inst *in)
     const Row *r = &sc->objs[in->row];
     in->head = row_pos(r);
     in->cfront = vnorm(v3(in->m[8], in->m[9], in->m[10]));
-    in->cspd = in->cfall = 0; in->cstrong = 0;
+    in->cspd = in->cfall = 0; in->cstrong = 0; in->cair = 0;
     memcpy(in->m0, in->m, 64);
     for (int j = 0; j < 12; j++) in->m0[j] /= in->s; /* the rotation alone */
     row_turn[in->row] = 0; row_step[in->row] = 0;
@@ -3901,8 +3924,13 @@ static void update_coconuts(void)
         float rad = 55.0f * in->s;
         V3 up = up_at(in->head, mario->up);
         ++*t;
-        if (*ph == 2) { /* Break, then ReplaceReady back at its place */
-            if (*t >= 60) { coco_spawn(in); coco_place(in); }
+        if (*ph == 2) { /* Break / InWater, then ReplaceReady at its place: back once that is out of the view (startClipped) */
+            V3 sp = row_pos(&sc->objs[row]);
+            if (*t >= 60 && render_clip_judge(&sp.x, rad, 1e9f)) { coco_spawn(in); coco_place(in); }
+            continue;
+        }
+        if (sc->objs[row].arg[1] != -1 && vlen(vsub(in->head, row_pos(&sc->objs[row]))) > 1.0f && render_clip_judge(&in->head.x, rad, 1e9f)) { /* mRespawnWhenOutOfView: statusToHide */
+            *ph = 2; *t = 60; in->m[12] = 1e9f;
             continue;
         }
         V3 to = vsub(in->head, c);
@@ -3945,11 +3973,17 @@ static void update_coconuts(void)
         V3 center = vadd(in->head, vel);
         int ground = collide_n(&center, up, rad, &gn, &wn, &wall);
         in->head = center;
+        float cm[16];
+        basis_matrix(cm, in->head, up, in->cfront, 0);
         if (ground && in->cfall > 0) {
             int lv = (int)(100.0f * (in->cspd / 35.0f)); /* calcMoveSpeed: the sounds' level */
             if (lv > 100) lv = 100;
-            if (in->cfall > 2.5f) { in->cfall *= -0.5f; if (lv > 0) coco_bound(in, lv); } /* bounce */
-            else in->cfall = 0;
+            if (in->cfall > 2.5f) {
+                if (vdot(gn, up) > 0.0f) { in->cfall *= -0.5f; if (lv > 0) coco_bound(in, lv); } /* a floor: bounce */
+                if (in->cair >= 10 && in->cfall > 3.0f) fx_named("CocoNut", "LandAttrDefault", cm, NULL, NULL); /* Land */
+            } else in->cfall = 0;
+            fx_named("CocoNut", "RollingSmokeAttrDefault", cm, NULL, in); /* RollingSmoke */
+            in->cair = 0;
             if (lv >= 10) { /* SE_OJ_LV_COCONUT_ROLL, level A: pitch t / 2 + 0.5, volume t^2 */
                 float t1 = lv / 100.0f;
                 in->lv[0] = se_level(SE_OJ_LV_COCONUT_ROLL, &in->head.x, in->lv[0]);
@@ -3957,7 +3991,7 @@ static void update_coconuts(void)
             }
             in->cspd *= 0.925f;
             in->cstrong = 0;
-        }
+        } else if (!ground && in->cair < 10) in->cair++; /* isInGroundGracePeriod: _138++ */
         if (wall && vdot(in->cfront, wn) < 0) { /* reflect off the wall */
             V3 n = vnorm(vtangent(wn, up));
             in->cfront = vnorm(vsub(in->cfront, vmul(n, 2.0f * vdot(in->cfront, n))));
@@ -4012,7 +4046,13 @@ static void update_coconuts(void)
         }
         if (in->cstrong) needle_attacked(in->head, rad); /* sendMsgToEnemyAttackBlow */
         float depth;
-        if (!broken && in_water(in->head, up, &depth)) { se_start(SE_OJ_FALL_IN_WATER_M, &in->head.x); broken = 1; } /* tryDisappear: exeInWater */
+        if (!broken && in_water(in->head, up, &depth)) { /* tryDisappear: exeInWater */
+            se_start(SE_OJ_FALL_IN_WATER_M, &in->head.x);
+            float wm[16];
+            basis_matrix(wm, in->head, up, in->cfront, 0); /* makeMtxUpNoSupportPos(-gravity) */
+            fx_named("CocoNut", "WaterColumn", wm, NULL, NULL);
+            *ph = 2; *t = 0; in->m[12] = 1e9f; continue;
+        }
         if (!broken && lost(in->head)) broken = 1;
         for (int k = 0; k < nlogic && !broken; k++)
             if (logic[k].kind == LOGIC_DEATH && row_shown(logic[k].row) && area_inside(&sc->objs[logic[k].row], in->head)) broken = 1;
@@ -5623,6 +5663,20 @@ int game_test_butler_shoot(void) /* test builds: the cursor on the Butler's body
     return -1;
 }
 
+int game_test_kino(int how) /* Test builds: Mario 200 over the first Kinopio falling (0), or 150 beside it (1) */
+{
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (in->talkcls != 3 || !row_shown(in->row)) continue;
+        V3 p = v3(in->m[12], in->m[13], in->m[14]), up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+        V3 side = vnorm(vtangent(v3(1, 0, 0), up));
+        mario->up = up; mario->hvel = v3(0, 0, 0);
+        if (how == 0) { mario->pos = vadd(p, vmul(up, 200.0f)); mario->vup = -5.0f; mario->grounded = 0; }
+        else { mario->pos = vadd(p, vmul(side, 150.0f)); mario->vup = 0; }
+        return in->row;
+    }
+    return -1;
+}
 int game_test_tspot(void)
 {
     for (int i = 0; i < ninsts; i++) { /* Mario 600 from the first unopened one, the cursor on it, L1 */
@@ -8284,13 +8338,23 @@ static void update_strays(void)
     }
 }
 
-/* AirBubble.cpp: touched by Mario (130 x scale) or a spin within cSwingRange 250 it breaks and fills his oxygen
- * (incPlayerOxygen 8: all of it), its row dies. AirBubbleGenerator.cpp: every arg0 (180) frames a bubble comes out
- * 120 along its up and rises (cMoveStartAccel 7 up, then 0.3 a frame, x 0.85) for arg1 (cDefaultLife 360) frames.
- * row_step the generator's frames. ponytail: no swaying (cCoriolis), no RecoveryBubbleBreak effect, no rail bubbles
- * ponytail (unmarked until the 2026-11-02 audit): no AIR_BUBBLE_APPEAR, Generate clip nor its 6 frame delay, no
- * AIR_BUBBLE_BREAK nor middle rumble when one goes, no +-1 bob of a placed bubble (AirBubbleGenerator.cpp:59-70,
- * AirBubble.cpp:141-160); generators stop past 6000 from Mario (Petari: no such limit) */
+/* AirBubble.cpp: a placed one bobs 1 along world Y over 120 frames (exeWait); touched by Mario (130 x scale) or a
+ * spin within cSwingRange 250 it breaks (exeBreak: SE_OJ_AIR_BUBBLE_BREAK, RecoveryBubbleBreak, incPlayerOxygen 8,
+ * a middle rumble), its row dies. AirBubbleGenerator.cpp: Wait arg0 (180) frames, Generate (SE_OJ_AIR_BUBBLE_APPEAR;
+ * after sGenerateTime 6 a bubble 120 along its up); a bubble (exeMove) starts at cMoveStartAccel 7 against gravity,
+ * its _A4 turned cCorioriRotSpeed 1.5 degrees a frame about gravity: + 0.1 of it, 0.3 up, x 0.85; past its life (arg1,
+ * cDefaultLife 360) it breaks unseen (SE, effect) and waits 90 frames (KillWait: a touch still gives the oxygen).
+ * row_turn the generator's nerve, row_step its step. ponytail: no rail bubbles, the generator's Generate BCK not
+ * played (drawn static) */
+static void bubble_break(V3 p) /* AirBubble::exeBreak */
+{
+    se_start(SE_OJ_AIR_BUBBLE_BREAK, &p.x);
+    float m[16];
+    basis_matrix(m, p, up_at(p, v3(0, 1, 0)), v3(1, 0, 0), 0);
+    fx_named("AirBubble", "RecoveryBubbleBreak", m, NULL, NULL);
+    if (swimming) { for (int k = 0; k < 8; k++) sw_inc_oxygen(); mario_named_fx("AirRecover", NULL); } /* incPlayerOxygen(8): MarioAccess::incOxygen, 酸素回復 */
+    pad_rumble(RUMBLE_MIDDLE);                                  /* tryRumblePadMiddle */
+}
 static void update_bubbles(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -8301,33 +8365,64 @@ static void update_bubbles(void)
         const Row *r = &sc->objs[row];
         V3 p = v3(in->m[12], in->m[13], in->m[14]);
         if (in->bubble == 1) {
+            if (!row_step[row]++) in->head = p;                   /* _8C */
+            float t = (float)((row_step[row] - 1) % 120) / 120.0f; /* calcNerveRate(120) */
+            in->m[13] = in->head.y + sinf(t * 6.2831853f);         /* _8C + (0, 1, 0) x _B0 */
+            p = v3(in->m[12], in->m[13], in->m[14]);
             float d = vlen(vsub(c, p));
             if (d < 130.0f * in->s + HIT_BODY_R || (mario->spin_timer > 0 && d < 250.0f)) {
-                oxygen = 3600; row_kill(row);
+                bubble_break(p);
+                row_kill(row);
                 printf("air bubble row %d taken" "\n", row);
             }
             continue;
         }
-        int wait = r->arg[0] > 0 ? r->arg[0] : 180;
-        if (++row_step[row] % wait || !row_shown(row) || vlen(vsub(p, mario->pos)) > 6000.0f) continue;
-        for (int b = 0; b < MAX_BUBBLES; b++) {
+        if (!row_shown(row)) continue;
+        int wait = r->arg[0] > 0 ? r->arg[0] : 180, st = row_step[row]++;
+        if (row_turn[row] == 0) { /* exeWait */
+            if (wait - 1 == st % wait) { row_turn[row] = 1; row_step[row] = 0; }
+            continue;
+        }
+        if (st == 0) se_start(SE_OJ_AIR_BUBBLE_APPEAR, &in->m[12]); /* exeGenerate (startBck Generate) */
+        if (st <= 6) continue;                                      /* isGreaterStep(sGenerateTime) */
+        row_turn[row] = 0; row_step[row] = 0;
+        for (int b = 0; b < MAX_BUBBLES; b++) { /* appearAirBubble: appearMove */
             if (bubbles[b].life) continue;
             V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
-            bubbles[b].pos = vadd(p, vmul(up, 120.0f)); bubbles[b].t = 0;
-            bubbles[b].vel = vmul(up_at(bubbles[b].pos, up), 7.0f);
+            bubbles[b].pos = vadd(p, vmul(up, 120.0f)); bubbles[b].t = 0; bubbles[b].nrv = 0;
+            bubbles[b].vel = vmul(up_at(bubbles[b].pos, up), 7.0f); /* exeMove's first step: -gravity x cMoveStartAccel */
+            bubbles[b].a4 = v3(0, 0, 1);
             bubbles[b].life = r->arg[1] > 0 ? r->arg[1] : 360;
             break;
         }
     }
     for (int b = 0; b < MAX_BUBBLES; b++) {
         if (!bubbles[b].life) continue;
-        V3 up = up_at(bubbles[b].pos, v3(0, 1, 0));
-        bubbles[b].vel = vmul(vadd(bubbles[b].vel, vmul(up, 0.3f)), 0.85f);
-        bubbles[b].pos = vadd(bubbles[b].pos, bubbles[b].vel);
-        if (vlen(vsub(c, bubbles[b].pos)) < 130.0f + HIT_BODY_R) {
-            oxygen = 3600; bubbles[b].life = 0;
+        typeof(&bubbles[0]) o = &bubbles[b];
+        int touch = vlen(vsub(c, o->pos)) < 130.0f + HIT_BODY_R;
+        if (o->nrv == 1) { /* exeKillWait */
+            if (touch) { if (swimming) { for (int k = 0; k < 8; k++) sw_inc_oxygen(); mario_named_fx("AirRecover", NULL); } o->life = 0; } /* receiveMsgPush */
+            else if (++o->t > 90) o->life = 0;
+            continue;
+        }
+        V3 up = up_at(o->pos, v3(0, 1, 0));
+        o->a4 = rot_axis(o->a4, vmul(up, -1.0f), 1.5f * 0.0174533f); /* rotateVecDegree(_A4, gravity, cCorioriRotSpeed) */
+        o->a4 = vtangent(o->a4, up);
+        if (vlen(o->a4) < 1e-6f) o->a4 = v3((rand() % 2001 - 1000) / 1000.0f, (rand() % 2001 - 1000) / 1000.0f, (rand() % 2001 - 1000) / 1000.0f);
+        if (vlen(o->a4) > 1e-6f) o->a4 = vnorm(o->a4);
+        o->vel = vmul(vadd(vadd(o->vel, vmul(o->a4, 0.1f)), vmul(up, 0.3f)), 0.85f);
+        o->pos = vadd(o->pos, o->vel);
+        if (touch || (mario->spin_timer > 0 && vlen(vsub(c, o->pos)) < 250.0f)) { /* receiveMsgPush / SpinStormRange: exeBreak */
+            bubble_break(o->pos);
+            o->life = 0;
             printf("air bubble taken" "\n");
-        } else if (++bubbles[b].t >= bubbles[b].life) bubbles[b].life = 0;
+        } else if (++o->t > o->life) { /* isGreaterStep(mLife): hidden, KillWait */
+            se_start(SE_OJ_AIR_BUBBLE_BREAK, &o->pos.x);
+            float m[16];
+            basis_matrix(m, o->pos, up, v3(1, 0, 0), 0);
+            fx_named("AirBubble", "RecoveryBubbleBreak", m, NULL, NULL);
+            o->nrv = 1; o->t = 0;
+        }
     }
 }
 
@@ -10796,6 +10891,7 @@ void game_font_init(const Scene *s) /* the FONT chunk's glyphs (also main.c's su
     tk_font2 = s->font2; tk_font2_tex0 = (int)s->font_tex0;
 }
 
+static void kinopio_reaction(const Inst *in, const float m[16]); /* NPCActor's reaction flags, Kinopio::exeReaction's voices */
 /* the talkers placed in the scene (SignBoard, Tico, Kinopio: their wait nerves' talk) */
 static int talk_row_label(int row, char *out) /* the TALK entry of a row: its <zone>_<class><id> */
 {
@@ -10960,6 +11056,7 @@ static void update_talkers(void)
         }
         talk_place(k, m);
         if (in->talkcls == 10 && !row_turn[in->row]) continue; /* HoneyBee lectures: talk only in their Wait */
+        if (in->talkcls == 3) kinopio_reaction(in, m);
         if (tico) { /* Tico::control: SE_SM_LV_TICO_FLOAT's level A 100 x getLinerValueFromMinMax(its move, 1, 11, 0.2, 1):
                      * volume A / 100 (AudSoundObject_Takezawa); ours never moves: 0.2 */
             Inst *w = &insts[i];
@@ -14026,8 +14123,7 @@ static void m_force_free_jump(Player *m, V3 v)
 
 /* MarioActor::trampleJump(mTrampleNormal, mTrampleLong): the jump vector's part along gravity replaced by normal up
  * (x 1.2 / 1.5 on the third stomp in a row (_988 2), + extra with A held), a free jump; the stomp clips ジャンプふみ1-3
- * in turn, the hopper's ホッパーふみジャンプA / B. _988 back to 0 on the ground (initForJump). ponytail: no ふみつぶし
- * effect (not in the slice's Mario effects) */
+ * in turn, the hopper's ホッパーふみジャンプA / B, ふみつぶし (StepOn). _988 back to 0 on the ground (initForJump) */
 static int m_trample_n; /* MarioActor _988 */
 static void m_trample_jump(Player *m, float normal)
 {
@@ -14047,6 +14143,7 @@ static void m_trample_jump(Player *m, float normal)
         m_anim(m->rb68 ? "ホッパーふみジャンプB" : "ホッパーふみジャンプA"); /* mRabbit->_68 */
     }
     mario_sound("声踏み");
+    mario_named_fx("StepOn", NULL); /* playEffect(ふみつぶし) */
     m_pad_vib(0);
     m->no_air_walk = 0; m->wall_free = 0; /* _2F, _22 */
 }
@@ -14778,7 +14875,7 @@ static int teresa_through(void);
 static void m_swing(Player *m)
 {
     /* updateSwingTimer: the spin back (_946 at 13: _94C 19, at 6 of it _94E 5, then a rumble and スピン回復終了).
-     * ponytail: no スピンリング effect (not in the slice's Mario effects), no colour flash (_1AA-_1B5) */
+     * (スピンリング: updatePunching, where the punch timer runs out.) ponytail: no colour flash (_1AA-_1B5) */
     if (m->spin_rec && --m->spin_rec == 6) m->spin_end = 5;
     if (m->spin_end && --m->spin_end == 0) { m_pad_vib(0); mario_sound("スピン回復終了"); }
     if (m->spin_cool && --m->spin_cool == 0xd) m->spin_rec = 0x13;
@@ -15873,7 +15970,8 @@ static int m_wall_floor_code(int code)
 }
 /* MarioWall::startBackJump: thrown off the wall's normal (mWallBackJumpPowerXZ, up mWallBackJumpPowerY) unless he
  * jumps into it; 0 the barrier (結界ヒット: no air walk, 60 frames of _428), 1 the water wall (水弾かれ), 2 the
- * trampoline wall. ponytail: no 結界ヒット / 水壁ヒット effects (not in the slice's Mario effects) */
+ * trampoline wall; the barrier's / water wall's effects (結界ヒット BarrierBound, 水壁ヒット WaterBound: playEffectRTZ along
+ * the wall's normal at getWallPos) */
 static int m_wall_back_jump(Player *m, int type)
 {
     if (m_inhibit_wall()) return 0;
@@ -15881,6 +15979,11 @@ static int m_wall_back_jump(Player *m, int type)
     if (m->jumping && vdot(n, m_jv(m)) > 0.0f) return 0;
     m->wall_cancel_n = n; /* _24 */
     m_try_wall_jump(m, vadd(vmul(n, MC.mWallBackJumpPowerXZ), vmul(m->up, MC.mWallBackJumpPowerY)), 0);
+    if (type <= 1) { /* playEffectRTZ(_24, getWallPos) */
+        float fm[16];
+        basis_matrix(fm, vsub(vadd(m->pos, vmul(m->up, BODY_RADIUS)), vmul(m->wall_n, BODY_RADIUS)), m->up, n, 0);
+        fx_named("Mario", type == 0 ? "BarrierBound" : "WaterBound", fm, NULL, NULL);
+    }
     if (type == 0) { mario_sound("結界ヒット"); m->air_spin = 0; m->air_lock = 60; }
     else if (type == 1) mario_sound("水弾かれ");
     else if (type == 2) mario_sound("トランポリンジャンプ大");
@@ -19403,7 +19506,8 @@ static void update_mario_(void)
     m_retain(m);
     if (m->grounded) m_trample_n = m_combo = 0; /* initForJump */
     m_swing(m);
-    if (m->spin_timer) m->spin_timer--;
+    if (m->spin_timer && !--m->spin_timer && (m->spin_cool || m->spin_lock) && !swimming && mode_action("スピン回復エフェクト") == 1)
+        mario_named_fx("SpinRing", NULL); /* updatePunching: _944 run out, (_946 or _2B), スピンリング */
     m->spin_t++;
 
     int slipping = m->s23, done = landed; /* (procJump landed him: no move this frame) */
@@ -32777,8 +32881,8 @@ static void update_electric(void)
 /* FireBar (Petari FireBar.cpp): arg7 sticks (default 1) of arg0 balls (default 5) 100 apart, the first arg5 (default
  * 140) out from the core and 50 up its Y axis; they turn 0.1 * arg1 degrees a frame about that axis from its Z
  * axis. A sensor of radius 30 at the point of a stick nearest Mario burns him. Ball k of stick j:
- * ponytail (unmarked until the 2026-11-02 audit): flat tinted models: no FireBarBall effect within 5000
- * (controlEmitEffect, not in fx_tab.h), no BTK staggered 25 a ball */
+ * Its SE_OJ_LV_FIRE_BAR_CENTER, each ball's FireBarBall effect within 5000 (controlEmitEffect). ponytail: flat tinted
+ * models, no FireBarBall BTK staggered 25 a ball (no per-ball BTK frame) */
 static V3 firebar_ball(const Inst *in, int j, int k)
 {
     const Row *r = &sc->objs[in->row];
@@ -33021,9 +33125,25 @@ static void update_plants(void)
     }
 }
 
-static void shell_explode(Shell *o)
+static void shell_fx(const Shell *o, const char *name, const void *key)
 {
-    fx_at(FX_SPACEMINE_EXPLOSION, o->pos, up_at(o->pos, mario->up));
+    float m[16];
+    V3 up = up_at(o->pos, mario->up), z = vlen(o->dir) > 1e-6f ? o->dir : v3(0, 0, 1);
+    basis_matrix(m, o->pos, up, z, 0);                     /* calcMtxFromGravityAndZAxis */
+    fx_named("KoopaJrShipCannonShell", name, m, NULL, key);
+}
+static void shell_explode(Shell *o) /* explosion() */
+{
+    rumble_shake_weak(o->pos, RUMBLE_STRONG, RUMBLE_MIDDLE, 1000.0f, 2000.0f); /* sCameraShakeDistance */
+    shell_fx(o, "Explosion", NULL);
+    se_start(SE_EM_KILLER_EXPLOSION, &o->pos.x);
+    o->state = 0;
+}
+static void shell_misfire(Shell *o) /* misfire() */
+{
+    camera_shake(SHAKE_WEAK); pad_rumble(RUMBLE_WEAK);
+    shell_fx(o, "MisFire", NULL);
+    se_start(SE_EM_KILLER_MISS_FIRE, &o->pos.x);
     o->state = 0;
 }
 
@@ -33047,11 +33167,15 @@ static void update_shells(void)
             row_axes(r, &x, &z);
             z = vmul(z, r->scale[2]);
             int point = strcmp(sc->types + 32 * r->type, "IronCannonLauncherPoint") == 0;
-            o->pos = vadd(p, vmul(z, point ? 75.0f : 100.0f));
+            o->pos = vadd(p, vmul(z, 75.0f + (point ? 0.0f : 100.0f))); /* tryShotBullet(0 / sGunPointModelOffset) */
             o->vel = vmul(z, r->arg[1] >= 0 ? (float)r->arg[1] : 30.0f);
-            o->dir = z;
+            o->dir = vnorm(z);
             o->t = 0;
-            o->state = 1;
+            o->state = 1; o->smoke = 1;
+            se_start(SE_BM_KOOPAJR_SHIP_SHOOT_NORMAL, &o->pos.x); /* launch */
+            float em[16];
+            basis_matrix(em, point ? p : vadd(p, vmul(o->dir, 100.0f)), up_at(p, mario->up), o->dir, 0); /* the Launcher's mEffectMtx */
+            fx_named("IronCannonLauncherPoint", "Shoot", em, NULL, NULL);
             break;
         }
     }
@@ -33064,22 +33188,30 @@ static void update_shells(void)
         int wall;
         if (o->state == 2) o->vel = vsub(o->vel, up);
         V3 center = vadd(o->pos, o->vel);
-        int ground = collide_n(&center, up, 75.0f, &gn, &wn, &wall);
+        int ground = collide_n(&center, up, 75.0f * 1.3f, &gn, &wn, &wall); /* sBinderRadius x getBaseScale */
+        if (o->smoke) shell_fx(o, "LocusSmoke", o);
         if (o->state == 1) {
+            o->lv = se_level(SE_EM_LV_KILLER_FLY, &o->pos.x, o->lv);
             if ((ground || wall) && o->t > 10) { shell_explode(o); continue; }
             o->pos = vadd(o->pos, o->vel);
-            if (o->t >= 360) { o->state = 0; continue; }
+            if (o->t >= 360) { o->state = 0; continue; } /* exeFly: isStep(sLifeTime) (not getLifeTime) */
         } else {
+            if (o->t == 1) se_start(SE_EM_STOMPED_S, &o->pos.x); /* exeDown's first step */
             o->pos = center;
             float into = -vdot(o->vel, gn);
-            if (ground && into > 2.0f) o->vel = vadd(o->vel, vmul(gn, 1.55f * into)); /* reboundVelocityFromCollision */
+            if (ground && into > 2.0f) { o->vel = vadd(o->vel, vmul(gn, 1.55f * into)); o->smoke = 0; } /* reboundVelocityFromCollision: LocusSmoke off */
             o->vel = vmul(o->vel, ground ? 0.95f : 0.99f);
-            if (o->t >= 45) { o->state = 0; continue; } /* misfire */
+            if (o->t >= 45) { shell_misfire(o); continue; } /* sDownTime */
         }
-        if (o->state != 1 || vlen(vsub(c, o->pos)) > 60.0f + HIT_BODY_R) continue;
-        if (mario->vup < 0 && vdot(vsub(mario->pos, o->pos), up) > 30.0f) { /* trampled */
+        if (o->state != 1 || vlen(vsub(c, o->pos)) > 60.0f * 1.3f + HIT_BODY_R) continue; /* sAttackSensorRadius x getBaseScale */
+        if (mario->hip == HIP_FALL && vdot(vsub(mario->pos, o->pos), up) > 30.0f) { /* isMsgPlayerHipDrop: HipDropDown */
+            o->state = 2; o->t = 0;
+            pad_rumble(RUMBLE_MIDDLE);
+            mario->hip = 0; mario->grounded = 0; mario->hvel = v3(0, 0, 0); mario->vup = 1.0f; /* jumpPlayer(-mGravity) */
+        } else if (mario->vup < 0 && vdot(vsub(mario->pos, o->pos), up) > 30.0f) { /* trampled */
             o->state = 2;
             o->t = 0;
+            pad_rumble(RUMBLE_MIDDLE); /* tryRumblePad 中 */
             mario_trample();
         } else {
             mario_attack(ATK_EXPLOSION, o->pos);
@@ -33143,10 +33275,27 @@ static void rock_move_on_rail(Rock *o, const RockC *c, float speed, float rot, i
         }
     }
 }
+static void rock_rumble(const Rock *o) /* rumblePadAndCamera: cRumbleDistance 1000 */
+{
+    rumble_shake_weak(o->pos, RUMBLE_STRONG, RUMBLE_MIDDLE, 1000.0f, 2000.0f);
+    float d = vlen(vsub(mario->pos, o->pos));
+    if (d < 1000.0f) camera_shake(SHAKE_NORMAL); else if (d < 2000.0f) camera_shake(SHAKE_WEAK);
+}
+static void rock_roll_se(Rock *o, const RockC *c) /* startRollLevelSound(true) (cRollSoundTime reset every call), startSoundWanwanVoice */
+{
+    o->lv[0] = se_level(c->type == 0 ? SE_OJ_LV_ROCK_MOVE : c->type == 2 ? SE_EM_LV_WANWANROLLMINI_MOVE : SE_EM_LV_WANWANROLL_MOVE, &o->pos.x, o->lv[0]);
+    if (c->type == 3) o->lv[1] = se_level(SE_EM_LV_WANWANROLLGOLD_GLITTER, &o->pos.x, o->lv[1]);
+    if (c->type == 0) return;
+    if (o->vtimer < 120) { o->vtimer++; return; }                 /* cSeWanwanVoiceInterval */
+    if (vlen(vsub(mario->pos, o->pos)) <= 600.0f) {               /* cSeWanwanVoiceDistance */
+        se_start(c->type == 2 ? SE_EV_WANWANROLLMINI_WANWAN : SE_EV_WANWANROLL_WANWAN, &o->pos.x);
+        o->vtimer = 0;
+    }
+}
 static void rock_break(Rock *o, const RockC *c, int pieces) /* setNerveBreak */
 {
     V3 up = vmul(o->grav, -1.0f);
-    if (pieces && c->type <= 1) drop_pieces(o->pos, up, 9); /* appearStarPieceToDirection cStarPieceNum */
+    if (pieces && c->type <= 1) { drop_pieces(o->pos, up, 9); se_start(SE_OJ_STAR_PIECE_BURST, &o->pos.x); } /* appearStarPiece: cStarPieceNum */
     o->nrv = RK_BREAK; o->step = -1;
 }
 static int rock_reached_goal(Rock *o, const RockC *c) /* tryBreakReachedGoal */
@@ -33222,6 +33371,8 @@ static void update_rocks(void)
             int stop = c->type == 0 ? 4 : 25;
             if (st == 0) o->rotx = fmodf(-rs * appear_time, 360.0f);
             if (st < appear_time) rock_move_on_rail(o, c, 7.0f, rs, 0);
+            if (st < appear_time && c->type != 0) o->lv[0] = se_level(SE_EM_LV_WANWANROLL_STANDBY, &o->pos.x, o->lv[0]);
+            if (st == appear_time && c->type != 0) se_start(SE_EM_WANWANROLL_STANDBY_END, &o->pos.x);
             if (st > appear_time && st < appear_time + 15) {
                 int u = st - appear_time;
                 o->rotx = (15 - u) * sinf(fmodf(u * 100.0f, 360.0f) * 0.0174533f) * 5.0f / 15.0f;
@@ -33232,6 +33383,7 @@ static void update_rocks(void)
         case RK_APPEARMOVEINVALIDBIND: {
             int nr = (int)*(const u32 *)(c->rail + 12), cur = rock_point_no(c, o->coord);
             int inv = cur + 1 < nr && rock_point_arg(c, cur + 1, 2) > 0; /* isForceInvalidBindSection */
+            rock_roll_se(o, c);
             if (pointed) { o->fpos = o->pos; o->ftime = 0; o->unfreeze = o->nrv; o->nrv = RK_FREEZE; o->step = -1; break; }
             rock_move_on_rail(o, c, spd, o->rotspeed, inv);
             if (!inv && ++o->invbind > 45) { o->bind = 1; o->nrv = RK_MOVE; o->step = -1; }
@@ -33239,13 +33391,18 @@ static void update_rocks(void)
         }
         case RK_MOVE: {
             if (o->on_ground) {
-                if (o->air >= 20) fx_at(c->type == 0 ? FX_ROCK_LANDATTRDEFAULT : FX_WANWANROLLING_LAND, vadd(o->pos, vmul(o->grav, o->rad)), vmul(o->grav, -1.0f));
+                if (o->air >= 20) { /* cNoBindJudgeFrame: Land, rumblePadAndCamera, the bound SE */
+                    fx_at(c->type == 0 ? FX_ROCK_LANDATTRDEFAULT : FX_WANWANROLLING_LAND, vadd(o->pos, vmul(o->grav, o->rad)), vmul(o->grav, -1.0f));
+                    rock_rumble(o);
+                    se_start(c->type == 0 ? SE_OJ_ROCK_BOUND : SE_EM_WANWANROLL_BOUND, &o->pos.x);
+                }
                 o->air = 0;
                 if (o->normalgrav && o->gravrate != 1.5f) o->gravrate = 1.5f;
             } else {
                 if (o->air < 20) o->air++;
                 o->normalgrav = 1;
             }
+            rock_roll_se(o, c);
             if (o->on_wall && vdot(rock_rail_dir(c, o->coord), o->wn) < -0.5f) { /* isBreakByWall */
                 if (c->type == 0) { o->nrv = RK_BREAK; o->step = -1; } else o->alive = 0;
                 break;
@@ -33276,6 +33433,7 @@ static void update_rocks(void)
         }
         case RK_MOVEINVALIDBIND:
             if (st == 0) o->bind = 0;
+            rock_roll_se(o, c);
             if (!rock_reached_goal(o, c)) rock_move_on_rail(o, c, spd, o->rotspeed, 0);
             break;
         case RK_BREAK:
@@ -33283,7 +33441,14 @@ static void update_rocks(void)
                 o->bpos = o->pos; o->bup = vmul(o->grav, -1.0f);
                 o->bfront = rot_axis(o->front, o->bup, (rand() % 6283) / 1000.0f);
                 o->bt = 0;
+                if (c->type == 2) { /* no break model: makeActorDead, MiniBreak */
+                    fx_at(FX_WANWANROLLING_MINIBREAK, o->pos, o->bup); se_start(SE_EM_WANWANROLLMINI_EXPLOSION, &o->pos.x);
+                    o->alive = 0; break;
+                }
                 if (!(c->type == 0 ? m_rockbreak : m_wanwanbreak)) { o->alive = 0; break; }
+                se_start(c->type == 0 ? SE_OJ_ROCK_BREAK : SE_EM_WANWANROLL_EXPLOSION, &o->pos.x);
+                rock_rumble(o);
+                printf("rock %d: break\n", i);
             }
             { int fr = anim_clip_info(c->type == 0 ? "rockbreak/break" : "wanwanrollingbreak/break", NULL);
               if (++o->bt >= (fr > 0 ? fr : 60)) o->alive = 0; }
@@ -33325,6 +33490,7 @@ static void update_rocks(void)
             if (o->nrv != RK_FREEZE && o->nrv != RK_APPEAR) {
                 mario_attack(ATK_STRONG, o->pos);                         /* sendMsgEnemyAttackStrong */
                 if (sc->objs[c->row].arg[5] > 0 && c->type == 0 && o->nrv == RK_MOVE) o->slow = 150;
+                rock_rumble(o);
             }
         }
         if (o->nrv != RK_FREEZE) needle_attacked(o->pos, br);
@@ -33340,11 +33506,23 @@ static void update_rocks(void)
 static void update_firebars(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    static char fb_keys[32 * 64 * 4]; /* fx_keep keys: 32 FireBars of up to 64 balls */
+    int nfb = 0;
     FOR_KIND(i, firebar) {
-        const Inst *in = &insts[i];
+        Inst *in = &insts[i];
         if (!in->firebar) continue;
         const Row *r = &sc->objs[in->row];
         int sticks = r->arg[7] > 0 ? r->arg[7] : 1, balls = r->arg[0] > 0 ? r->arg[0] : 5;
+        in->lv[0] = se_level(SE_OJ_LV_FIRE_BAR_CENTER, &in->m[12], in->lv[0]); /* exeWait */
+        int fb = nfb++;
+        for (int j = 0; j < sticks && fb < 32; j++)
+            for (int k = 0; k < balls; k++) { /* FireBarBall::controlEmitEffect: its FireBarBall within 5000 */
+                V3 p = firebar_ball(in, j, k);
+                if (vlen(vsub(mario->pos, p)) >= 5000.0f || j * balls + k >= 64) continue;
+                float m[16];
+                basis_matrix(m, p, up_at(p, v3(0, 1, 0)), v3(1, 0, 0), 0);
+                fx_named("FireBarBall", "FireBarBall", m, NULL, fb_keys + 4 * (fb * 64 + j * balls + k));
+            }
         for (int j = 0; j < sticks; j++) {
             V3 a = firebar_ball(in, j, 0), ab = vsub(firebar_ball(in, j, balls - 1), a);
             float t = fminf(fmaxf(vdot(vsub(c, a), ab) / fmaxf(vdot(ab, ab), 1e-3f), 0.0f), 1.0f);
@@ -34440,6 +34618,11 @@ static int butler_shot(V3 p);
 static void update_shots(void)
 {
     Hit h[1];
+    for (int k = 0; k < ninsts; k++) { /* TreasureSpot::control: switchEmitGlow (Wait only) */
+        const Inst *in = &insts[k];
+        if (!in->tspot || row_turn[in->row] || !row_shown(in->row) || vlen(vsub(v3(in->m[12], in->m[13], in->m[14]), mario->pos)) >= 2000.0f) continue;
+        fx_named(in->tspot == 1 ? "TreasureSpot" : "CoinFlower", "Glow", in->m, NULL, in);
+    }
     for (int i = 0; i < MAX_SHOTS; i++) {
         Shot *s = &shots[i];
         if (!s->t) continue;
@@ -34550,17 +34733,17 @@ static void update_shots(void)
             giver_give(in, giver_sensor(in), vnorm(v3(in->m[4], in->m[5], in->m[6])));
             hit = 2;
         }
-        for (int k = 0; k < ninsts && !hit; k++) { /* TreasureSpot.cpp: Spout, Mario within 2000
-         * ponytail (unmarked until the 2026-11-02 audit): no Glow effect within 2000 (TreasureSpot.cpp:96-105), CoinFlower
-         * never plays Bloom (44-46), its sensor 120 at 50 up instead of 80 at 30 */
+        for (int k = 0; k < ninsts && !hit; k++) { /* TreasureSpot.cpp: Spout (sensor 80 at 30 up), Mario within 2000:
+         * appearCoinPopToDirection from its place, a CoinFlower plays Bloom (SE_OJ_COIN_FLOWER_BLOOM) and stays */
             const Inst *in = &insts[k];
             if (!in->tspot || row_turn[in->row]) continue;
             V3 p = v3(in->m[12], in->m[13], in->m[14]), up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
-            if (vlen(vsub(s->pos, vadd(p, vmul(up, 50.0f)))) > 100.0f + 20.0f || vlen(vsub(p, mario->pos)) > 2000.0f) continue;
+            if (vlen(vsub(s->pos, vadd(p, vmul(up, 30.0f)))) > 80.0f + 20.0f || vlen(vsub(p, mario->pos)) > 2000.0f) continue;
             hit = 1;
-            pop_coins(vadd(p, vmul(up, 50.0f)), up, 1);
+            pop_coins(p, up, 1);
             printf("star piece opens %s row %d" "\n", in->tspot == 1 ? "TreasureSpot" : "CoinFlower", in->row);
             if (in->tspot == 1) { row_kill(in->row); game_rebind(); break; }
+            obj_play(in, "bloom", 0, 0); /* startBck Bloom */
             se_start(SE_OJ_COIN_FLOWER_BLOOM, &in->m[12]); /* exeSpout */
             row_turn[in->row] = 1; /* the flower stays, bloomed */
         }
@@ -36862,8 +37045,52 @@ static void update_luigi(void)
  * (LuigiLetter for the talk: the hiding galaxy's picture, menu.c) until it is closed, then onGameEventFlagGetLuigiLetter;
  * 1 (PeachLetterNormal) Peach's (menu.c PeachLetter, made while isAnyPlayerLeftSupply) until it is closed, then
  * offAllPlayerLeftSupply; 2 (PeachLetter1Ups) 5 lives (20 for a Luigi supply) and SE_SY_5UP. ponytail: no OneUpBoard
- * (requestOneUp's count), no letter icon balloon (mLetterIconTalkCtrl) nor its SE_SM_LV_KINOMES_GOT_MAIL, no
- * SendLetter (the Wii's mail) */
+ * (requestOneUp's count); no SendLetter: the Wii Message Board mail (ReceiverTagMail, made only in
+ * PeachCastleFinalGalaxy, KinopioAstro.cpp:195) has no PS2 counterpart, so its letter icon (isDispLetterIcon: _198
+ * set) never shows and SE_SM_LV_KINOMES_GOT_MAIL (:263) never plays */
+/* NPCActor (NPCActor.cpp:519-560, 674-700, 759-790) for Kinopio / KinopioAstro (body 50 x 1.2 at 60 up): a trample
+ * on it (_E2, then 30 frames _9C before the next; Mario's trample jump), a hip drop (_E2, Mario jumps away), his
+ * spin within _12C sDistancePlayerIsEvent 450 (checkPlayerSwingTrigger: _E3), the pointer pressed on it (_E4); their
+ * starts (updateReaction: one a frame, trample first) play Kinopio::exeReaction's voices (mBehavior 7, asleep:
+ * SE_SV_KINOPIO_POINTING_SLEEP). isPointingSe: a pointing start 60 frames after the last. ponytail: the voices at the
+ * start itself (Petari: in the Reaction nerve tryStartReactionAndPushNerve pushes), no AnimScaleController
+ * (startHitReaction / DpdHitVibration), no star piece reflect (_E5: STAR_PIECE_HIT), no Pickel sensor */
+static struct { int row, c9C, c158; u8 last; } kre[16];
+static void kinopio_reaction(const Inst *in, const float m[16])
+{
+    static const Scene *kre_sc;
+    if (kre_sc != sc) { memset(kre, 0, sizeof kre); kre_sc = sc; }
+    int k = 0;
+    while (k < 16 && kre[k].row != in->row + 1 && kre[k].row) k++;
+    if (k == 16) return;
+    if (!kre[k].row) { kre[k].row = in->row + 1; kre[k].c158 = 1024; } /* (row + 1: 0 free) */
+    const Row *r = &sc->objs[in->row];
+    V3 up = vnorm(v3(m[4], m[5], m[6])), body = vadd(v3(m[12], m[13], m[14]), vmul(up, 60.0f));
+    u8 now = 0; /* _E2 trampled, _E3 spun, _E4 pointed */
+    if (r->arg[6] == -1) { /* arg6 set: the body sensor invalidated */
+        int msg = mario_offence(body, 60.0f, vmul(up, -1.0f));
+        if (msg == MSG_TRAMPLE && !kre[k].c9C) { kre[k].c9C = 30; now |= 1; mario_trample(); }
+        else if (msg == MSG_HIPDROP) { /* sendMsgAwayJump */
+            now |= 1;
+            V3 a = vtangent(vsub(mario->pos, body), up);
+            mario->hip = 0;
+            m_power_jump(mario, vadd(vmul(vlen(a) > 1e-6f ? vnorm(a) : mario->face, 10.0f), vmul(mario->up, 25.0f)));
+        }
+    }
+    if (swing_perm && pad_pressed(PAD_SQUARE) && vlen(vsub(mario->pos, v3(m[12], m[13], m[14]))) < 450.0f) now |= 2; /* isNearPlayer(_12C) */
+    if (pointer_a() && cursor_sees(body, 60.0f)) now |= 4; /* isStarPointerPointing2POnPressButton */
+    u8 start = now & ~kre[k].last; /* updateReaction: _D8 / _D9 / _DA, the first in that order */
+    int tr = start & 1, sp = !tr && (start & 2), pt = !tr && !sp && (start & 4);
+    kre[k].last = now;
+    int pse = pt && kre[k].c158 >= 60; /* isPointingSe */
+    kre[k].c158 = pse ? 0 : kre[k].c158 < 1024 ? kre[k].c158 + 1 : 1024;
+    if (kre[k].c9C) kre[k].c9C--;
+    int sleep = r->arg[2] == 7; /* mBehavior */
+    if (tr) { se_start(SE_SM_NPC_TRAMPLED, &m[12]); se_start(sleep ? SE_SV_KINOPIO_POINTING_SLEEP : SE_SV_KINOPIO_TRAMPLED, &m[12]); }
+    if (pse) { dpd_hit_sound(); se_start(sleep ? SE_SV_KINOPIO_POINTING_SLEEP : SE_SV_KINOPIO_POINTING, &m[12]); }
+    if (sp) { if (sleep) se_start(SE_SM_NPC_TRAMPLED, &m[12]); se_start(sleep ? SE_SV_KINOPIO_POINTING_SLEEP : SE_SV_KINOPIO_SPIN, &m[12]); }
+    if (tr || pse || sp) printf("kinopio row %d: reaction %s\n", in->row, tr ? "trampled" : sp ? "spun" : "pointed");
+}
 static int kast_letter;
 static int kast_event(int t, u32 v)
 {
@@ -41212,7 +41439,7 @@ void game_draw(void)
             continue;
         }
         if (in->meteor) { /* falling along its rail, turning about its x */
-            if (row_turn[in->row] != 1) continue;
+            if (row_turn[in->row] != 1 && row_turn[in->row] != 3) continue;
             V3 dir, p = meteor_pos(in, &dir), up = up_at(p, v3(0, 1, 0));
             float cm[16], rot[16], a = -7.5f * row_step[in->row] * 0.0174533f, tmp[16];
             basis_matrix(tmp, p, fabsf(vdot(up, dir)) > 0.99f ? vnorm(vcross(dir, v3(1, 0, 0))) : up, dir, 0);
@@ -41861,7 +42088,7 @@ void game_draw(void)
     draw_gaps();
     RESTQ(4);
     if (m_bubble) for (int b = 0; b < MAX_BUBBLES; b++) { /* AirBubbleGenerator's bubbles */
-        if (!bubbles[b].life) continue;
+        if (!bubbles[b].life || bubbles[b].nrv) continue; /* (KillWait: hidden) */
         basis_matrix(m, bubbles[b].pos, up_at(bubbles[b].pos, v3(0, 1, 0)), v3(1, 0, 0), 0);
         render_model(m_bubble, m, 0x80, 0x80, 0x80);
     }
