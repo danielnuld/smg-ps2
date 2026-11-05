@@ -953,6 +953,7 @@ static int breakable(const char *name, const Row *r, int *coins, int *pieces)
      * explosion_breaks); arg3 -1 arg6 coins (1), 3 arg6 star pieces (5). ponytail: no 1-up / power star items,
      * ConcreteBlock / SnowBlockA (ball dash, fire) stay whole */
     if (strcmp(name, "SpiderMapBlock") == 0) { *coins = 1; return 2; } /* SpiderMapBlock.cpp: isMsgPlayerHipDropFloor kills it */
+    if (strcmp(name, "BreakableTrash") == 0) return 5; /* BreakableCage.cpp (CAGE_TRASH): any enemy attack but fire breaks it */
     if (strcmp(name, "SpiderCoin") == 0) { *coins = 1; return 6; }     /* SpiderCoin.cpp: the pointer frees it (spider_coins; a row, no instance) */
     if (strcmp(name, "KoopaStatue") == 0) {
         if (r->arg[3] == -1) *coins = r->arg[6] > 0 ? r->arg[6] : 1;
@@ -4258,19 +4259,18 @@ typedef struct {
 } ClassInfo;
 
 /* #143's placed classes ported since the audit (update_gaps) */
-enum { GAP_NONE, GAP_SHOCKWAVE, GAP_CAPSULE, GAP_DRIFT, GAP_SHELLCOIN, GAP_SHELLCHIP };
+enum { GAP_NONE, GAP_SHOCKWAVE, GAP_CAPSULE, GAP_DRIFT, GAP_SHELLCOIN, GAP_SHELLCHIP, GAP_ELEVATOR };
 static void gap_place(Inst *in);
 static int gap_class(const char *name)
 {
     return !strcmp(name, "ShockWaveGenerator") ? GAP_SHOCKWAVE : !strcmp(name, "CapsuleCage") ? GAP_CAPSULE :
            !strcmp(name, "DriftWood") ? GAP_DRIFT : !strcmp(name, "ShellfishCoin") ? GAP_SHELLCOIN :
-           !strcmp(name, "ShellfishYellowChip") ? GAP_SHELLCHIP : GAP_NONE;
+           !strcmp(name, "ShellfishYellowChip") ? GAP_SHELLCHIP : !strcmp(name, "BattleShipElevator") ? GAP_ELEVATOR : GAP_NONE;
 }
 /* ponytail (unmarked until the 2026-11-02 audit): placed classes of the early galaxies with no behaviour here
  * (drawn static, or not at all), each a whole Petari class: Honeyhive HoneyQueen, Creeper, BossStinkBug, StinkBugParent, GhostPlayer (Cosmic Mario);
  * Space Junk TombSpider, BossKameck, ChildKameck, SpiderAttachPoint (SlingShooter), UFOKinoko, CoinBox,
- * PlanetRocket, NokonokoLand; Battlerock BossBegoman, BreakableTrash, UFOStrongA, TicoShop,
- * BattleShipElevator; Beach Bowl PenguinStudent;
+ * PlanetRocket, NokonokoLand; Battlerock BossBegoman, TicoShop; Beach Bowl PenguinStudent;
  * the observatory AstroMapObj states (AstroStarPlate / AstroDomeEntrance / AstroRotateStepA / B: Dead / Alive /
  * Revival / Open by dome), AstroCountDownPlate (stars left), AstroOverlookObj (HUD hidden in its area) */
 static void class_make(ClassInfo *ci, const char *name)
@@ -27364,6 +27364,20 @@ static void break_inst(const Inst *in, int drops)
         printf("%s %d broken, its coin out\n", name, in->row);
         return;
     }
+    if (!strcmp(name, "BreakableTrash") && nwrecks < MAX_WRECKS) { /* BreakableCage::exeBreak (CAGE_TRASH): IRON_CAGE_BREAK,
+        * hidden, its BreakableCageBreak's Break clip, SW_DEAD at once, stopSceneAtStep(2, 6) within 1500, SW_B off at the
+        * clip's end (kill). ponytail: stopScene at once, not at step 2; the frustum test left out; SW_B left on */
+        se_start(SE_OJ_IRON_CAGE_BREAK, &p.x);
+        typeof(&wrecks[0]) w = &wrecks[nwrecks++];
+        memcpy(w->m, in->m, 64);
+        w->bname = "BreakableCageBreak"; w->brk = scene_model(sc, w->bname); w->left = NULL;
+        w->t = 0; w->row = in->row; w->p = p; w->up = up; w->coins = w->pieces = 0;
+        if (r->sw[SW_DEAD] >= 0) sw_set(r, SW_DEAD, 1);
+        if (vlen(vsub(mario->pos, p)) < 1500.0f) scene_stop = 6;
+        row_kill(in->row);
+        printf("%s %d broken%c", name, in->row, 10);
+        return;
+    }
     if ((box || cage || statue) && nwrecks < MAX_WRECKS) {
         char v[48];
         snprintf(v, sizeof v, "%s#%s", name, statue ? "Break" : name);
@@ -28324,9 +28338,6 @@ static void update_drift(Inst *in, int i, int st)
     }
     float depth;
     g->p = pos;
-#ifdef GAP_TEST
-    if (game_frame % 60 == 0 || (game_frame % 5 == 0 && vlen(vsub(mario->pos, pos)) < 600.0f)) printf("drift %d: nrv %d at (%d %d %d) coord %d/%d, Mario %d away (%d up), ground %d (%d), water %d%c", in->row, row_turn[in->row], (int)pos.x, (int)pos.y, (int)pos.z, (int)g->f, (int)len, (int)vlen(vsub(mario->pos, pos)), (int)vdot(vsub(mario->pos, pos), vmul(grav, -1.0f)), mario_ground == i, mario_ground, in_water(mario->pos, mario->up, &depth), 10);
-#endif
     basis_matrix(in->m, pos, vmul(grav, -1.0f), g->v, 0); /* calcMtxFromGravityAndZAxis */
     for (int j = 0; j < 12; j++) in->m[j] *= in->s;
     if (mario_ground == i) carry(old, in);
@@ -28496,15 +28507,23 @@ int game_test_busy(void);
 /* XF=-DGAP_TEST=<GAP_ kind> (frames counted from Mario free): Mario 250 beside each placement of that class in turn
  * (every 300 frames from 120; its zone streams in; DriftWood: 200 over it), then at +30 GAP_SHOCKWAVE spins,
  * GAP_CAPSULE turns its SW_B on; a Shellfish's item: Mario put on it at +260 */
-static const char *const gap_names[] = {"", "ShockWaveGenerator", "CapsuleCage", "DriftWood", "ShellfishCoin", "ShellfishYellowChip"};
+static const char *const gap_names[] = {"", "ShockWaveGenerator", "CapsuleCage", "DriftWood", "ShellfishCoin", "ShellfishYellowChip", "BattleShipElevator"};
 static void gap_test(void)
 {
     static int t;
     if (!game_test_free() || game_test_busy()) return;
     t++;
-    int want = t >= 120 ? (t - 120) / 300 : -1, at = t >= 120 ? (t - 120) % 300 : -1, ty = scene_type(sc, gap_names[GAP_TEST]), seen = 0;
+    int want = t >= 120 ? (t - 120) / 300 : -1, at = t >= 120 ? (t - 120) % 300 : -1, ty = GAP_TEST < 16 ? scene_type(sc, gap_names[GAP_TEST]) : -1, seen = 0;
     int shell = GAP_TEST == GAP_SHELLCOIN || GAP_TEST == GAP_SHELLCHIP;
-    if (want < 0 || (at != 0 && at != 30 && at != 50 && !(shell && at > 60))) return;
+    if (GAP_TEST == 99) { /* XF=-DGAP_TEST=99: an explosion at each BreakableTrash in turn (every 300 frames from 120; Mario put by it) */
+        int tt = scene_type(sc, "BreakableTrash"), n = 0;
+        for (u32 i = 0; at == 0 && tt >= 0 && i < sc->nobjs; i++)
+            if ((int)sc->objs[i].type == tt && n++ == want % 16) { V3 p = row_pos(&sc->objs[i]); mario->pos = vadd(p, v3(300, 100, 0)); mario->hvel = v3(0, 0, 0); }
+        for (int k = 0; at == 150 && k < ninsts; k++)
+            if (insts[k].breaks == 5 && !row_dead[insts[k].row]) { explosion_breaks(v3(insts[k].m[12], insts[k].m[13], insts[k].m[14]), 10.0f); break; }
+        return;
+    }
+    if (want < 0 || (at != 0 && at != 30 && at != 150 && !(shell && at > 160))) return;
     for (u32 i = 0; ty >= 0 && i < sc->nobjs; i++) {
         const Row *r = &sc->objs[i];
         if ((int)r->type != ty || seen++ != want % 16) continue;
@@ -28514,17 +28533,17 @@ static void gap_test(void)
         for (int k = 0; k < ninsts; k++) /* loaded: its own pose */
             if (insts[k].row == (int)i && insts[k].gap) {
                 p = v3(insts[k].m[12], insts[k].m[13], insts[k].m[14]); up = vnorm(v3(insts[k].m[4], insts[k].m[5], insts[k].m[6]));
-                if (shell && at > 60 && (gap_st((int)i)->i & 0x100) && (gap_st((int)i)->i & 0x200) == 0) {
+                if (shell && at > 160 && (gap_st((int)i)->i & 0x100) && (gap_st((int)i)->i & 0x200) == 0) {
                     mario->pos = vsub(gap_st((int)i)->v, vmul(mario->up, HIT_BODY_H)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
                     printf("gap test: Mario on shellfish %u's item%c", i, 10);
                 }
                 break;
             }
-        if (at > 60) return;
+        if (at > 160) return;
         if (GAP_TEST == GAP_DRIFT && row_turn[i]) p = gap_st((int)i)->p; /* its rail place */
-        if (GAP_TEST == GAP_DRIFT ? at == 0 || at == 50 : at == 50) {
-            if (GAP_TEST != GAP_DRIFT) return;
-            mario->up = up; mario->pos = vadd(p, vmul(up, at ? 450.0f : 1500.0f)); /* high first: its zone streams in */ mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        if (GAP_TEST == GAP_DRIFT || GAP_TEST == GAP_ELEVATOR ? at == 0 || at == 150 : at == 150) {
+            if (GAP_TEST != GAP_DRIFT && GAP_TEST != GAP_ELEVATOR) return;
+            mario->up = up; mario->pos = vadd(p, vmul(up, at ? (GAP_TEST == GAP_ELEVATOR ? 30.0f : 450.0f) : 1500.0f)); /* high first: its zone streams in */ mario->hvel = v3(0, 0, 0); mario->vup = 0;
             printf("gap test: Mario over DriftWood %u at (%d %d %d)%c", i, (int)p.x, (int)p.y, (int)p.z, 10);
         } else if (at == 0) {
             mario->up = up; mario->pos = vadd(p, vadd(vmul(vnorm(x), 250.0f), vmul(up, 30.0f)));
@@ -28536,8 +28555,42 @@ static void gap_test(void)
     }
 }
 #endif
+/* BattleShipElevator.cpp after Petari: Wait (its rail mover still) until Mario lands on it (isMsgFloorTouch,
+ * isOnPlayer): the エレベーター上昇 time keep demo (requestStartTimeKeepDemoMarioPuppetable) -> Move: B_SHIP_ELEV_START,
+ * the rail mover started (startMapPartsFunctions), LV_B_SHIP_ELEV_MOVE while it works; at its end B_SHIP_ELEV_STOP, End.
+ * gi: 1 the demo asked */
+enum { EV_WAIT = 1, EV_MOVE, EV_END };
+static void update_elevator(Inst *in, int i, int st)
+{
+    GapSt *g = gap_st(in->row);
+    if (!row_turn[in->row]) { gap_nrv(in, EV_WAIT); return; }
+    switch (row_turn[in->row]) {
+    case EV_WAIT:
+        if (!(g->i & 1) && mario_ground == i && mario->grounded) {
+            int k = -1;
+            for (int d = 0; d < ndemos; d++) if (!strcmp(demos[d].h->name, "エレベーター上昇")) k = d;
+            g->i |= 1;
+            if (k >= 0) { dx_push(k, 0); g->f = (float)k; }
+            else gap_nrv(in, EV_MOVE);
+            printf("battle ship elevator %d: Mario on (demo %d)%c", in->row, k, 10);
+        }
+        if ((g->i & 1) && dx.on && dx.cur == (int)g->f) gap_nrv(in, EV_MOVE); /* the demo's start: its nerve */
+        break;
+    case EV_MOVE:
+        if (st == 0) se_start(SE_OJ_B_SHIP_ELEV_START, &in->m[12]);
+        in->lv[0] = se_level(SE_OJ_LV_B_SHIP_ELEV_MOVE, &in->m[12], in->lv[0]);
+        if (st > 0 && row_rdir[in->row] == 2) { /* !isRailMoverWorking */
+            se_start(SE_OJ_B_SHIP_ELEV_STOP, &in->m[12]);
+            gap_nrv(in, EV_END);
+            printf("battle ship elevator %d: up%c", in->row, 10);
+        }
+        break;
+    }
+}
 static void update_gaps(void)
 {
+    for (int i = 0; i < ninsts; i++) /* a "#Static" collision part follows its owner (UFOBase's MoveLimit: setMtx) */
+        if (insts[i].kparent >= 0 && insts[i].kmove < 0) memcpy(insts[i].m, insts[insts[i].kparent].m, 64);
 #ifdef GAP_TEST
     gap_test();
 #endif
@@ -28555,6 +28608,7 @@ static void update_gaps(void)
         if (row_step[in->row] < 0xFFFF) row_step[in->row]++;
         if (in->gap == GAP_SHOCKWAVE) update_shock(in, st);
         else if (in->gap == GAP_DRIFT) update_drift(in, i, st);
+        else if (in->gap == GAP_ELEVATOR) update_elevator(in, i, st);
         else if (in->gap == GAP_SHELLCOIN || in->gap == GAP_SHELLCHIP) update_shellfish(in, st);
         else if (in->gap == GAP_CAPSULE && update_capsule(in, st)) return;
     }
@@ -28887,6 +28941,7 @@ static void update_rotors(void)
  * the scene's start) not played */
 static const struct { const char *name; u32 st, mv, ed; } rail_se[] = {
     {"SideSpikeMoveStepA", 0, SE_OJ_LV_SIDE_SPIKE_STEP_MV, SE_OJ_SIDE_SPIKE_STEP_ED},
+    {"UFOStrongA", 0, SE_OJ_LV_UFO_MOVE, 0}, /* UFOBase::control: LV_UFO_MOVE while its rail mover works (its end SE at isDone) */
     {"BroadBeanMoveStepA", SE_OJ_STONE_FLOOR_S_START, SE_OJ_LV_STONE_FLOOR_S_MOVE, SE_OJ_STONE_FLOOR_S_END},
     {"BroadBeanMoveStepB", SE_OJ_STONE_FLOOR_S_START, SE_OJ_LV_STONE_FLOOR_S_MOVE, SE_OJ_STONE_FLOOR_S_END},
     {"RGTowerPressGroundA", SE_OJ_STONE_FLOOR_S_START, SE_OJ_LV_STONE_FLOOR_S_MOVE, SE_OJ_STONE_FLOOR_S_END},
@@ -28936,6 +28991,7 @@ static void update_railers(void)
         in->rwork = 0;
         int row = in->row, cond = r->arg[7] >> 8 & 15, stop = *(const int *)(e + 16);
         if (in->eyebeamer ? !eb_patrol(row) : !mp_running(r, row)) continue;
+        if (in->gap == GAP_ELEVATOR && row_turn[row] != EV_MOVE) continue; /* BattleShipElevator::control: not in Wait */
         u32 np = *(const u32 *)(e + 8), nr = *(const u32 *)(e + 12);
         const unsigned char *pa = e + 24 + 12 * np + 12 * nr; /* nr x {f32 coord, s32 arg0, s32 arg5} */
         float len = *(const float *)(pa + 12 * (nr - 1));
@@ -28980,6 +29036,9 @@ static void update_railers(void)
             int hold = *(const int *)(pa + 12 * (n > 0 ? nr - 1 : 0) + 8);
             if (hold > 0) row_rhold[row] = hold;
             if (type == 0) row_rdir[row] = 2;
+            if (type == 0 && !strncmp(sc->types + 32 * r->type, "UFO", 3)) { /* UFOBase::control: isDone the first time */
+                pad_rumble(RUMBLE_MIDDLE); camera_shake(SHAKE_NORMAL); se_start(SE_OJ_UFO_MOVE_END, &in->m[12]);
+            }
             else if (type == 1) row_rdir[row] = -dir;
             else if (type == 2) n = 0;
             else { row_kill(row); game_rebind(); return; }

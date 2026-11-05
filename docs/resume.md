@@ -166,6 +166,12 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
     instance at its owner), EXTRA ShellfishYellowChip YellowChip; jpa.py NAMED DriftWood (Ripple). GAP_TEST 3 / 4 / 5
     (HeavenlyBeachGalaxy 1 / 2 / 1): a flip off a drifting spike; the coin and the chip taken from an open shell.
     Repack HeavenlyBeachGalaxy.
+  - #190 Battlerock: BattleShipElevator (Wait till Mario lands on it, the エレベーター上昇 time keep demo, its rail
+    mover then, start / move / stop SEs), BreakableTrash (BreakableCage CAGE_TRASH: an explosion breaks it,
+    BreakableCageBreak's Break clip, SW_DEAD), UFOStrongA (the generic rotor / railer already moved it: now its move SE,
+    the isDone rumble, shake and end SE, its MoveLimit collision as a "#Static" part following it). GAP_TEST 6
+    (BattleShipGalaxy/3: Mario put in the elevator, its demo, up the rail), 99 (BattleShipGalaxy/2: each trash broken
+    by an explosion). Route EggStar 1: star. Repack BattleShipGalaxy.
 - mario2 (2026-11-04), #168 PlayerKick: mario_kick / mario_kicked (MarioActor::sendBodyAttack's ACTMES_KICK: his
   cylinder on the sensor, status none, not damaged, no hip drop, within 90 degrees of his front; ランニングキック, its
   voice, pad 2) taken by a staggering Kuribo (36 / 30, three star pieces) / KuriboMini (22 / 25, three), a swooning
