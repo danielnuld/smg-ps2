@@ -228,6 +228,12 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   0xE030 + digit in the text atlas's spare rows). Test: plain EggStarGalaxy/1 XF=-DHUD_TEST (coins, a life, a star:
   `hud test` lines; flash held at its peak from f 1100). Needs resident.bin (+100 B). ponytail: no counter light
   effects.
+- story, animated planets: PlanetMap::init's startAllAnim (PlanetMap.cpp:67) for the planets with an own-name BCK
+  (slice.py ANIM_PLANETS: PlanetRocket, PlanetDisk, ChoConveyorPlanetB) through AUTO_SKINNED (skinned, obj_anim
+  plays the clip; the BTK planets already scrolled through anim_btk). Seen: StarDustGalaxy/1, PlanetRocket's debris
+  (PartsA-C) turning, Mario standing on it. ponytail: PhantomHolePlanet (its collision follows the BCK's Move joint),
+  BeamGoRoundPlanet / HatchWaterPlanet (own classes), TeresaMansionPlanetB's BRK. Repack StarDustGalaxy,
+  PhantomGalaxy, FactoryGalaxy.
   Note for agents: `git stash` is shared by every worktree (one repository): a stash pushed in one worktree can be
   popped by another. Do not use it; commit WIP to the branch instead.
 
