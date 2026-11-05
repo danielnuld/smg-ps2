@@ -2118,6 +2118,10 @@ int main(void)
         if (frame >= 100 && frame < 200 && frame % 20 == 0) game_test_begoman(0); /* its zone in */
         if (frame == 200) printf("begoman test f %u: before row %d\n", frame, game_test_begoman(0));
         if (frame > 600 && frame < 640) game_test_spin_now(); /* (a flip from its last hit may stop the first) */
+#ifdef BEGO_BABY
+        if (frame > 600 && frame < 606) game_test_begoman(1); /* (a Baby keeping its distance escapes the first) */
+        if (frame > 900 && frame < 906) game_test_begoman(2);
+#endif
         if (frame == 600) printf("begoman test f %u: spin row %d\n", frame, game_test_begoman(1));
         if (frame == 900) printf("begoman test f %u: trample row %d\n", frame, game_test_begoman(2));
         if (frame >= 200 && frame <= 1100 && frame % 20 == 0) { printf("begoman test f %u: life %d\n", frame, game_life()); game_begoman_state(); }

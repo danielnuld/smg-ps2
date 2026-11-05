@@ -666,6 +666,12 @@ there needs the embedded blob and every pack rebuilt.
   OneUpBoard, ExterminationCheckerKuribo (the power star kind), tryAvoid. The chief waits until its ground's collision is
   in (a zone streamed low has none; walkers' zone_kcl gate let it fall through). Repack: HeavensDoorGalaxy (slice.py).
 
+- BegomanBaby (feat/begoman, 2026-11-04): BegomanBaby.cpp in begospike_update (`baby`): its values, sounds, Trample,
+  Blow to its death with 1 / 3 star pieces, the rebound between Babies. Test `begoman` with XF=-DBEGO_BABY
+  (BattleShipGalaxy/1): it keeps its distance / pursues / turns, a trample makes it Trample (Mario bounces). Left: its
+  launches (BegomanBabyLauncher, BossBegoman), and a spin seldom reaches it (mario_offence's cylinder from HIT_BODY_H
+  80; Petari's _2A0 is Mario's Spine1: a shared fix for small enemies). Repack: none (BegomanBaby already skinned).
+
 ## Next
 
 **In-engine demos (the user, 2026-10-17: "haz las dos cosas, primero los videos": the movies are done (3feb30f), now
