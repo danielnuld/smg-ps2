@@ -1421,3 +1421,8 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
   TicoComet / TicoShop reaction voices (npc_react). Test: `talk` XF=-DTALK_CLS=11 (KoopaJrShipLv1Galaxy/1, 50 pieces):
   30 eaten, Comprar, the demo, life up. ponytail: no popping mushrooms, Eat0..2 growth. Repack: slice_all.py + sound.py
   for KoopaJrShipLv1Galaxy, ElectricUfo / HellLavaFloating / PhantomNest galaxies (their TicoShop zones).
+- Rosetta's BGM events (feat/6-rosetta-bgm, 2026-11-05, closes #6): eventFunc 0 / 2 unless BGM_FLYING_A plays:
+  setNextStageBGM BGM_SENARIO_SEL_3 + stopStageBGM(30) / STM_ASTRO_OUT_3 + stopStageBGM(60); game.c bgm_next
+  (AudBgmMgr::mNextBGM, started by game_bgm_tick once the stage stream stops). Test: `talk` AstroGalaxy/1 XF="-DTALK_CLS=9
+  -DROS_BGM_TEST" (events 0 at f 600, 2 at f 1500: SEQ_senario_sel_3, SMG_astroout03_strm after the fades). The
+  StarPieceCounter's Flash / Wait stay engine gaps (no runtime per-pane brlan in lyt.c; noted at spc_*). No repack.

@@ -11518,9 +11518,12 @@ static void lay_draw(const char *name, int group, float a, float dx, float dy)
  * StarPieceCounter). The StarPieceCounter after Petari (spc_*): it appears while the pointer is on the screen
  * (isValidAppearSituation), counts down one every 3 frames (10 in the TicoEat mode); requestedTicoEat (the Butler's
  * lecture, TicoFat) kills the others and shows it centred (TSPiece, TPosition<n>) 94 up until a frame without the
- * request (tryEndTicoEatStarPiece). ponytail: no Flash / Wait animations, no CountUpPaneRumbler, no counter light
- * effects, the LIFE meter (MarioMeter) apart; in the Observatory TSPiece's PicNStarPiece is drawn over its
- * PicTStarPiece (layout.py bakes both into the group) */
+ * request (tryEndTicoEatStarPiece). ponytail (engine gaps: lyt.c draws layout.py's baked quads, no pane names, no
+ * runtime brlan or TEV): Flash (flash.brlan: TxtNumber / TxtTNumber C0 to (255, 255, 160) at 7, clear at 10, i.e.
+ * lerp(C0, C1, glyph) tints only the glyphs' partial texels; our glyphs are modulated quads) and Wait (wait.brlan:
+ * the Sha* shadows' trans Y 0 -> 4 -> 0 over 320 frames) not played; no CountUpPaneRumbler, no counter light effects
+ * (StarPieceCounterLight), the LIFE meter (MarioMeter) apart; in the Observatory TSPiece's PicNStarPiece is drawn over
+ * its PicTStarPiece (layout.py bakes both into the group) */
 enum { HC_HIDE, HC_APPEAR, HC_WAIT, HC_COUNTUP, HC_DISAPPEAR };
 enum { AP_HIDE, AP_APPEAR, AP_SHOW, AP_DISAPPEAR };
 typedef struct {
@@ -12041,6 +12044,9 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
     const Inst *in = &insts[row];
     V3 p = v3(in->m[12], in->m[13], in->m[14]), z = vnorm(v3(in->m[8], in->m[9], in->m[10]));
     t++;
+#ifdef ROS_BGM_TEST /* XF=-DTALK_CLS=9 -DROS_BGM_TEST: Rosetta's eventFunc 0 at 600, 2 at 1500 (her BGM events) */
+    if (ros_talk_k >= 0 && (frame == 600 || frame == 1500)) printf("talk test: rosetta event %d\n", frame == 600 ? 0 : 2), rosetta_event(ros_talk_k, frame == 600 ? 0 : 2);
+#endif
     if (phase == 0 && TALK_CLS != 1 && t < 300) { /* another class: Mario put 170 in front of it, then left to land */
         V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
         mario->pos = vadd(vadd(p, vmul(z, TALK_CLS == 9 ? 120.0f : 170.0f)), vmul(up, 30.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
@@ -36424,6 +36430,7 @@ static int dx_row_moves(int row) /* the placement moves now */
  * BGM_ / STM_ dropped (bgm_tab also has every STM_ id of SMR.szs: bosses, events); ids without a stream are logged. ponytail: no fade in, no sequenced
  * BGMs (the host: path as main.c had it) */
 static char bgm_cur[40], bgm_last[40]; /* the stream playing, the one before startStageBGM changed it */
+static char bgm_next[40]; /* AudBgmMgr::mNextBGM (setNextStageBGM): started once the stage BGM stops, "" none */
 /* AudBgmMgr's sub BGM (startSubBGM: the power-ups', the bubble's...; tools/bgmseq.py's renders): on our one stream
  * it takes the stage's place; the stage's goes on unheard (volDownStageBgmWhenSubBgmPlaying: its interrupted fader
  * at faderInterruptedVolume 0) and when the sub is over it comes back where it would be, recovering over
@@ -36484,8 +36491,15 @@ static void bgm_open_file(const char *track, int file) /* the stage track's stat
     else snprintf(path, sizeof path, "host:music/%s.pcm", track);
     audio_music(path);
 }
+static void bgm_start(const char *id);
 void game_bgm_tick(void) /* per frame (before audio_update): the stage's back when the sub is over */
 {
+    if (bgm_next[0] && !bsub.on && !audio_playing()) { /* startNextBgmWhenStopping (AudBgm::isStopping: taken as its fade over) */
+        char id[40];
+        snprintf(id, sizeof id, "%s", bgm_next);
+        bgm_next[0] = 0; /* clearNextBGM */
+        bgm_start(id);
+    }
     if (!bsub.on || audio_playing()) return;
     bsub.on = 0;
     if (!bsub.had) return;
@@ -36892,14 +36906,22 @@ static void dx_talk_host(int t, int row)
     for (int j = 0; j < 12; j++) m[j] /= in->s;
     talk_place(t, m);
 }
-/* Rosetta::eventFunc, her talk flows' events: 1 KoopaBattleVs3Galaxy opened (onGameEventFlagGalaxyOpen), 4 a fade
- * (FadeStarter(-1): closeWipeFade, when it is done openWipeFade) then her SW_A (the final battle's MovieStarter).
- * ponytail: 0 / 2 (setNextStageBGM BGM_SENARIO_SEL_3 / STM_ASTRO_OUT_3 and stopStageBGM) not played */
+/* Rosetta::eventFunc, her talk flows' events: 0 / 2 unless BGM_FLYING_A plays, setNextStageBGM BGM_SENARIO_SEL_3 and
+ * stopStageBGM(30) / STM_ASTRO_OUT_3 and stopStageBGM(60); 1 KoopaBattleVs3Galaxy opened (onGameEventFlagGalaxyOpen),
+ * 4 a fade (FadeStarter(-1): closeWipeFade, when it is done openWipeFade) then her SW_A (the final battle's
+ * MovieStarter) */
 static int rosetta_event(int t, u32 v)
 {
     static int fading;
     const Row *r = talkers[t].row >= 0 ? &sc->objs[talkers[t].row] : NULL;
     switch (v) {
+    case 0: case 2: { /* !isPlayingStageBgmName("BGM_FLYING_A") */
+        const char *fly = bgm_track("BGM_FLYING_A");
+        if (bgm_stage_playing() && fly && !strcmp(bgm_cur, fly)) return 1;
+        snprintf(bgm_next, sizeof bgm_next, "%s", v == 0 ? "BGM_SENARIO_SEL_3" : "STM_ASTRO_OUT_3"); /* setNextStageBGM */
+        bgm_stop(v == 0 ? 30 : 60);
+        return 1;
+    }
     case 1: gd_flag_try_on("KoopaBattleVs3Galaxy"); return 1;
     case 4:
         if (!fading) { fading = 1; menu_wipe(1, -1, 0); return 0; }
