@@ -32852,27 +32852,27 @@ static void capsule_kill(Inst *in)
  * end Rest arg0 frames (mRestStep 0), Up (Return clip), Wait; the power star's get (isMsgStartPowerStarGet) Stop. Its
  * three collisions Move00-02 on their joints (createCollisionPartsFromLiveActor: slice.py JOINT_KCL_ONLY). gi bit 0
  * its SW_B seen on */
-enum { TR_WAIT = 1, TR_DOWN, TR_REST, TR_UP, TR_STOP };
+enum { TRR_WAIT = 1, TRR_DOWN, TRR_REST, TRR_UP, TRR_STOP };
 static void update_trirock(Inst *in, int st)
 {
     const Row *r = &sc->objs[in->row];
     GapSt *g = gap_st(in->row);
     int sb = r->sw[SW_B] >= 0 && sw_on(r, SW_B), was = g->i & 1;
     g->i = (g->i & ~1) | sb;
-    if (!g->n) { gap_nrv(in, TR_WAIT); return; }
-    if (star_demo && g->n != TR_STOP) { gap_nrv(in, TR_STOP); return; }
-    if (sb && !was) { gap_nrv(in, TR_DOWN); printf("trirock %d: down%c", in->row, 10); return; }
+    if (!g->n) { gap_nrv(in, TRR_WAIT); return; }
+    if (star_demo && g->n != TRR_STOP) { gap_nrv(in, TRR_STOP); return; }
+    if (sb && !was) { gap_nrv(in, TRR_DOWN); printf("trirock %d: down%c", in->row, 10); return; }
     switch (g->n) {
-    case TR_DOWN:
+    case TRR_DOWN:
         if (st == 0) obj_play(in, "On", 0, 0);
-        else if (!in->anim || in->anim->done) gap_nrv(in, TR_REST); /* isBckStopped */
+        else if (!in->anim || in->anim->done) gap_nrv(in, TRR_REST); /* isBckStopped */
         break;
-    case TR_REST:
-        if (st == (r->arg[0] != -1 ? r->arg[0] : 0)) { gap_nrv(in, TR_UP); printf("trirock %d: up%c", in->row, 10); }
+    case TRR_REST:
+        if (st == (r->arg[0] != -1 ? r->arg[0] : 0)) { gap_nrv(in, TRR_UP); printf("trirock %d: up%c", in->row, 10); }
         break;
-    case TR_UP:
+    case TRR_UP:
         if (st == 0) obj_play(in, "Return", 0, 0);
-        else if (!in->anim || in->anim->done) gap_nrv(in, TR_WAIT);
+        else if (!in->anim || in->anim->done) gap_nrv(in, TRR_WAIT);
         break;
     }
 }
