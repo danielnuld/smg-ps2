@@ -61,7 +61,7 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
     char act[20]; int act_seq, act_drawn, act_frames, act_mode, act_interp; float act_t, act_rate;
     V3 bpos, bvel; int bshow; /* a second model it throws (PackunPetit's blown head) */
     V3 gpos, gup; int gok; /* walker_up: the gravity's up at gpos */
-    u32 lv2[2]; int lvt[3]; float lva[2]; /* Unizo: its land / wall-hit level sounds (kept 30 frames: frames left, levelA), the roll's sRollSoundTime */
+    u32 lv2[2]; int lvt[3], jc; float lva[2]; /* Unizo: its land / wall-hit level sounds (kept 30 frames: frames left, levelA), the roll's sRollSoundTime; mJumpCount */
     u32 lv; /* its level sound's handle (se_level) */
     u8 clipped; /* out of the view at the last draw (ClippingJudge: LiveActor::startClipped stops its movement) */
     u8 nograv; /* Kuribo _C4 (arg0 set): offCalcGravity, its gravity its rotation's up */
@@ -2540,6 +2540,7 @@ void game_init(const Scene *s, const unsigned char *blob)
             kuribo[ik].pos = row_pos(r);
             kuribo[ik].row = i;
             kuribo[ik].up = up_at(kuribo[ik].pos, v3(0, 1, 0));
+            kuribo[ik].jc = 1; /* Unizo::appear: mJumpCount sJumpNow */
             kuribo[ik++].state = KURIBO_WALK;
             for (int f = 0, boss = ik - 1; kuribo[boss].kind == WALK_BBEGO && f < BB_FOLLOWERS; f++) { /* BossBegoman::init: its followers, makeActorDead */
                 memset(&kuribo[ik], 0, sizeof(Kuribo));
@@ -3833,6 +3834,9 @@ static int cursor_sees(V3 p, float px);
 static int pointer_a(void);
 static void pop_coins(V3 p, V3 up, int n);
 static void drop_pieces(V3 p, V3 up, int n);
+static void unizo_fire(Kuribo *k, V3 at);
+static void unizo_break(Kuribo *k);
+static int unizo_breaking(const Kuribo *k);
 static void giver_give(const Inst *in, V3 at, V3 up)
 {
     const Row *r = &sc->objs[in->row];
@@ -6806,13 +6810,19 @@ int game_test_unizo(void)
     return -1;
 }
 
+void game_test_unizo_break(void) /* test builds: the first live Unizo's doBreak */
+{
+    for (int i = 0; i < nkuribo; i++)
+        if (kuribo[i].kind == WALK_UNIZO && kuribo[i].state != KURIBO_DEAD && !unizo_breaking(&kuribo[i])) { unizo_break(&kuribo[i]); return; }
+}
+
 int game_unizo_state(int *dist)
 {
     for (int i = 0; i < nkuribo; i++) {
         const Kuribo *k = &kuribo[i];
         if (k->kind != WALK_UNIZO) continue;
         *dist = (int)vlen(vsub(k->pos, mario->pos));
-        return k->state == KURIBO_DEAD ? 9 : k->phase;
+        return k->state == KURIBO_DEAD ? 9 : k->nrv;
     }
     return -1;
 }
@@ -12782,11 +12792,13 @@ static void fireball_hit_walkers(int b)
             if (!petari_solid(e)) continue;
             petari_blow(e, fireballs[b].pos, PT_KICKOUT); fireballs[b].t = 0; return;
         }
+        if (e->kind == WALK_UNIZO) { /* isMsgFireBallAttack: doBreak / doFireDown */
+            if (unizo_breaking(e)) continue;
+            unizo_fire(e, fireballs[b].pos); fireballs[b].t = 0;
+            return;
+        }
         e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up);
-        if (e->kind == WALK_UNIZO) { /* doBreak (Unizo) / doFireDown */
-            drop_pieces(e->pos, e->up, 6); se_start(SE_OJ_STAR_PIECE_BURST, &e->pos.x);
-            if (e->dir != 1) se_start(SE_EM_UNIZO_BREAK, &e->pos.x); /* not a UnizoLand's FireDown */
-        } else pop_coins(e->pos, e->up, 1);
+        pop_coins(e->pos, e->up, 1);
         printf("fire ball burns walker row %d" "\n", e->row);
         fireballs[b].t = 0;
         return;
@@ -13036,10 +13048,9 @@ static void update_jets(void)
                 if (e->kind == WALK_PETARI) { if (petari_solid(e)) petari_blow(e, p, PT_KICKOUT); continue; } /* KickOut */
                 if (e->kind == WALK_KAMECK) { km_down(e, p); continue; } /* Kameck: requestDown */
                 if (e->kind == WALK_NOKO) { if (noko_turtle(e, p, in->hvel)) printf("jet turtle row %d hits noko row %d" "\n", in->row, e->row); continue; }
+                if (e->kind == WALK_UNIZO) { if (!unizo_breaking(e)) unizo_break(e); continue; } /* isMsgJetTurtleAttack: doBreak */
                 e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up);
-                if (e->kind == WALK_UNIZO) { /* doBreak */
-                    drop_pieces(e->pos, e->up, 6); se_start(SE_OJ_STAR_PIECE_BURST, &e->pos.x); se_start(SE_EM_UNIZO_BREAK, &e->pos.x);
-                } else pop_coins(e->pos, e->up, 1);
+                pop_coins(e->pos, e->up, 1);
                 printf("jet turtle row %d blows walker row %d" "\n", in->row, e->row);
             }
             if (gone) { jet.inst = -1; jet.phase = 0; if (in->jet >= 2) in->m[12] = 1e9f; else jet_reset(in); continue; } /* (a NokonokoLand's: Restart, its Koopa back) */
@@ -20975,6 +20986,9 @@ static void teresa_update(Kuribo *k, V3 to, float d)
 static void cursor_ray(V3 *o, V3 *d);
 static int cursor_sees(V3 p, float px);
 static void drop_pieces(V3 p, V3 up, int n);
+static void unizo_fire(Kuribo *k, V3 at);
+static void unizo_break(Kuribo *k);
+static int unizo_breaking(const Kuribo *k);
 /* StinkBugSmall.cpp / StinkBugBase.cpp: a beetle at its home facing its front. Mario in its territory (within arg1
  * (1000) + 400, 200 along its up, 600 across, in front) makes it turn to him (3 degrees a frame, within arg0 of its
  * front) for 40 frames (RushStart + 10), then rush at 20 along its face until arg1 from home or a wall (Dash), stop
@@ -21086,18 +21100,30 @@ static void stink_update(Kuribo *k, V3 to, float d)
     }
 }
 
-/* Unizo.cpp (Unizo, UnizoLand, UnizoShoal): a rolling sea urchin (radius 126.36). Mario within 1500 (on the ground,
- * not hurt) makes it jump (sqrt(2 x 70 x gravity rate) up; rate 0.15 at sea, 0.8 on land) and chase him: 0.1 a frame
- * towards him turned +-45 degrees by sin(frame / 20), up to 4 (12 in all); on the ground x 0.96 chasing, x 0.9 else;
- * gravity 0.2 on the ground, 0.8 in the air (the jump's rate while jumping, floor rebound 0.6). Touching Mario hurts
- * him (EnemyAttackStrong) and bounces it (5 up, 1 back), then it rests 120 frames (CollidePlayer). Stomps and spins
- * do nothing; a star piece only shakes it; enemy attacks (PunchingKinoko, CocoNut) break it: 6 star pieces. phase 0
- * wait, 1 jump, 2 chase, 3 collide; timer its frames; to its roll angle. ponytail: no damage-floor JumpDown, no spin
- * drift, no shoal water ripples, the roll turns about the current velocity (no quaternion kept)
- * ponytail (unmarked until the 2026-11-02 audit): no UnizoBreak model (Break BCK / BRK), Death effect nor camera
- * shake on its break (Unizo.cpp:703-728: DeathSmokeKuribo stands in), no sea roll bob (sRollHeightSea 30 x |sin|),
- * no CollideEnemy bump between Unizos, Jump -> Chase at 60 frames instead of the Search BCK end, a new attack
- * blocked all through CollidePlayer */
+/* Unizo.cpp (Unizo, UnizoLand, UnizoShoal): a rolling sea urchin (radius 126.36). Wait: Mario within 1500 (it on the
+ * ground, he not hurt, mJumpCount 0) makes it jump (sqrt(2 x 70 x gravity rate) up; rate 0.15 at sea, 0.8 on land)
+ * and Jump: its Search BCK (SE_EM_UNIZO_NEEDLE), chasing from step 20, Chase at the BCK's end. updateVelocity: 0.1 a
+ * frame towards Mario turned about the gravity by 45 x sin(mFrame / 20) x min(1, speed / 4) degrees, up to 4 (12 in
+ * all); on the ground x 0.9 in Wait / CollidePlayer / CollideEnemy (still under 0.5), x 0.96 else; gravity: the jump's
+ * rate (floor rebound 0.6) until it lands (mJumpCount), then 0.2 on the ground, 0.8 in the air. Touching Mario hurts
+ * him (EnemyAttackStrong; he is pushed when that fails or in Attack) and bounces it (5 up, 1 back): Attack (its BCK,
+ * NEEDLE + STICK), CollidePlayer 120 frames. Two Unizos touching push each other (0.2 x their distance, the wall-hit
+ * sound, Shock BCK) and the sender rests 60 frames (CollideEnemy). doBreak (fire ball at sea, JetTurtle): 6 star
+ * pieces, SE_EM_UNIZO_BREAK, hidden behind its break model (UnizoBreak / UnizoLandBreak / UnizoShoalBreak, facing the
+ * camera: Break, a UnizoLand's FireDown BCK), at sea the Death effect and shakeCameraNormal (UnizoShoal: the shake),
+ * killed at the BCK's end. A fire ball on land / shoal: doFireDown (UnizoShoal: the pieces, Firedown, the break SE and
+ * shake; UnizoLand: thrown 6 off Mario, 22 up, gravity 1.1, Firedown, its pieces at step 34, killed at 50). Drawn
+ * 30 x |sin(mFrame / 60)| x min(1, horizontal speed / 4) along the gravity at sea / shoal (sRollHeightSea). nrv its
+ * nerve, step its step, len mFrame, to its roll angle, jc mJumpCount. ponytail: no damage-floor JumpDown, no spin
+ * drift, no shoal water ripples, no Blink / Angry BTP, no star pointer bind, the break model's BRK not played (its
+ * BCK's end kills it), the roll turns about the current velocity (no quaternion kept), its EnemyAttack on other
+ * enemies left out */
+static void w_nrv(Kuribo *k, int n);
+static void w_act(Kuribo *k, const char *name);
+static int w_bck_stopped(const Kuribo *k);
+static int w_akey(const Kuribo *k);
+static const char *walker_cls(const Kuribo *k);
+enum { UZ_WAIT, UZ_JUMP, UZ_CHASE, UZ_ATTACK, UZ_COLLIDEPLAYER, UZ_COLLIDEENEMY, UZ_BREAK, UZ_FIREDOWN };
 static float liner(float v, float lo, float hi, float a, float b) /* AudUtil::linerMinMax */
 {
     return v <= lo ? a : v >= hi ? b : a + (b - a) * (v - lo) / (hi - lo);
@@ -21108,15 +21134,20 @@ static void se_level_vp(u32 *h, u32 id, const float *pos, float vol, float pitch
     *h = se_level(id, pos, *h);
     if (*h) se_volpitch(*h, vol, pitch);
 }
+static void unizo_wall_se(Kuribo *k) /* startWallHitSound: at 3 or more (sWallHitSoundSpeed), kept 30 frames */
+{
+    float sp = vlen(k->vel);
+    if (sp >= 3.0f) { k->lvt[1] = 30; k->lva[1] = 100.0f * sp; }
+}
 /* Unizo::udpateInfluence's sounds (levelA 100 x speed, AudSoundObject_Takezawa): a rebound upwards at 2 or more
- * (sLandSoundLandSpeed) lands, on a wall at 3 or more (startWallHitSound: sWallHitSoundSpeed), each kept 30 frames;
- * rolling at 2 or more (sRollSoundSpeed) within 20 frames of the ground (sRollSoundTime). c: its centre */
+ * (sLandSoundLandSpeed) lands, on a wall startWallHitSound, each kept 30 frames; rolling at 2 or more
+ * (sRollSoundSpeed) within 20 frames of the ground (sRollSoundTime). c: its centre */
 static void unizo_sounds(Kuribo *k, int reb, int wall, int ground, V3 c, V3 up)
 {
     float dep, vs = vdot(k->vel, up), sp = vlen(k->vel), at[3] = {c.x, c.y, c.z};
     int wet = in_water(c, up, &dep);
     if (reb && vs >= 2.0f) { k->lvt[0] = 30; k->lva[0] = 100.0f * vs; }
-    if (reb && wall && sp >= 3.0f) { k->lvt[1] = 30; k->lva[1] = 100.0f * sp; }
+    if (reb && wall) unizo_wall_se(k);
     if (k->lvt[0] > 0) {
         float a = k->lva[0];
         k->lvt[0]--;
@@ -21138,63 +21169,150 @@ static void unizo_sounds(Kuribo *k, int reb, int wall, int ground, V3 c, V3 up)
                         a >= 200.0f ? liner(a, 200.0f, 700.0f, 0.1f, 1.0f) : 0.0f, liner(a, 50.0f, 1000.0f, wet ? 0.8f : 0.9f, 1.0f));
     }
 }
+static const char *const unizo_brk[3] = {"UnizoBreak", "UnizoLandBreak", "UnizoShoalBreak"};
+static int unizo_breaking(const Kuribo *k) { return k->nrv >= UZ_BREAK; } /* isBreakNow */
+/* appearBreakModel: at its place facing away from the camera (makeMtxFrontUp(-getCamZdir, getCamYdir)), the Unizo
+ * hidden, its sensors off; the break model's clip `clip` (act_t / act_frames: its BCK, its end the kill) */
+static void unizo_break_model(Kuribo *k, const char *clip)
+{
+    V3 eye, watch, cu;
+    float fovy;
+    char n[48];
+    camera_pose(&eye, &watch, &cu, &fovy);
+    k->qz = vnorm(vsub(watch, eye)); k->qy = vnorm(vtangent(cu, k->qz));
+    snprintf(n, sizeof n, "%s/%s", unizo_brk[k->dir], clip);
+    for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
+    snprintf(k->act, sizeof k->act, "%s", n);
+    k->act_frames = anim_clip_info(n, &k->act_mode); k->act_t = 0; k->act_seq++;
+}
+static void unizo_pieces(Kuribo *k) /* appearStarPiece(sStarPieceNum 6, 10, 40) and its burst SE */
+{
+    drop_pieces(k->pos, k->up, 6); se_start(SE_OJ_STAR_PIECE_BURST, &k->pos.x);
+}
+static void unizo_break(Kuribo *k) /* doBreak */
+{
+    unizo_pieces(k);
+    se_start(SE_EM_UNIZO_BREAK, &k->pos.x);
+    unizo_break_model(k, k->dir == 1 ? "FireDown" : "Break");
+    if (k->dir != 1) camera_shake(SHAKE_NORMAL);
+    if (k->dir == 0) { float m[16]; basis_matrix(m, k->pos, k->up, k->qz, 0); fx_named("Unizo", "Death", m, NULL, NULL); }
+    w_nrv(k, UZ_BREAK);
+    printf("unizo row %d: break" "\n", k->row);
+}
+static void unizo_fire(Kuribo *k, V3 at) /* isMsgFireBallAttack: doBreak at sea, else doFireDown(its centre - Mario) */
+{
+    if (k->dir == 0) { unizo_break(k); return; }
+    unizo_break_model(k, "Firedown");
+    if (k->dir == 2) { /* TypeShoal */
+        unizo_pieces(k); se_start(SE_EM_UNIZO_BREAK, &k->pos.x); camera_shake(SHAKE_NORMAL);
+        w_nrv(k, UZ_BREAK);
+    } else { /* setVelocitySeparateHV(direction, sFireDownHorizontal 6, sFireDownVertical 22) */
+        V3 d = vtangent(vsub(vadd(k->pos, vmul(k->up, 126.36f)), mario->pos), k->up);
+        k->vel = vadd(vmul(vlen(d) > 1e-3f ? vnorm(d) : d, 6.0f), vmul(k->up, 22.0f));
+        w_nrv(k, UZ_FIREDOWN);
+    }
+    (void)at;
+    printf("unizo row %d: fire down" "\n", k->row);
+}
 static void unizo_update(Kuribo *k, V3 to, float d)
 {
     const float R = 126.36f, rate = k->dir == 1 ? 0.8f : 0.15f;
     V3 up = k->up, c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), center = vadd(k->pos, vmul(up, R));
-    k->timer++;
+    k->len += 1.0f; /* control: mFrame++ */
+    k->step++;
+    k->act_t += k->act_rate;
     int grounded = 0;
-    { /* on the ground? a sphere a little lower touches */
+    { /* isBindedGround: a sphere a little lower touches */
         V3 probe = vsub(center, vmul(up, 4.0f));
         Hit h[4];
         grounded = kcl_query(probe, R, h, 4) > 0;
     }
-    switch (k->phase) {
-    case 0: /* Wait */
-        if (d < 1500.0f && grounded && !mario->hurt_timer) {
-            k->vel = vadd(k->vel, vmul(up, sqrtf(2.0f * 70.0f * rate)));
-            k->phase = 1; k->timer = 0;
-            se_start(SE_EM_UNIZO_NEEDLE, &k->pos.x); /* exeJump: sStartSearch 0 */
+    if (unizo_breaking(k)) { /* exeBreak / exeFireDown: the break model's BCK over (or none) kills it */
+        if (k->nrv == UZ_FIREDOWN) {
+            k->vel = vsub(k->vel, vmul(up, 1.1f)); /* sFireDownGravity */
+            V3 nc = vadd(center, k->vel), gn, wn;
+            int wall = 0;
+            if (collide_n(&nc, up, R, &gn, &wn, &wall) && vdot(k->vel, gn) < 0) k->vel = vsub(k->vel, vmul(gn, vdot(k->vel, gn)));
+            k->to += vlen(vtangent(vsub(nc, center), up)) / R;
+            k->pos = vsub(nc, vmul(up, R));
+            if (k->step == 34) unizo_pieces(k); /* sFireDownStarPiece */
         }
-        break;
-    case 1: if (k->timer >= 60) { k->phase = 2; k->timer = 0; } /* Jump (its Search animation) */
-        /* fall through */
-    case 2: { /* Chase */
-        if (k->phase == 1 && k->timer < 20) break;
+        if (k->act_frames <= 0 || w_bck_stopped(k) || (k->nrv == UZ_FIREDOWN && k->step >= 50)) { /* sDamageFloorFrame */
+            k->state = KURIBO_DEAD; row_kill(k->row);
+            printf("unizo row %d: dead" "\n", k->row);
+        }
+        return;
+    }
+    if (k->step == 0) { /* the nerves' first steps */
+        if (k->nrv == UZ_JUMP) { w_act(k, "Search"); se_start(SE_EM_UNIZO_NEEDLE, &k->pos.x); } /* sStartSearch 0 */
+        if (k->nrv == UZ_ATTACK) { w_act(k, "Attack"); se_start(SE_EM_UNIZO_NEEDLE, &k->pos.x); se_start(SE_EM_UNIZO_STICK, &k->pos.x); }
+    }
+    int chase = k->nrv == UZ_CHASE || (k->nrv == UZ_JUMP && k->step >= 20); /* sChaseCycle */
+    if (chase) { /* updateVelocity */
         V3 dir = vtangent(to, up);
         if (vlen(dir) > 1e-3f) {
             dir = vnorm(dir);
-            float sp = vlen(vtangent(k->vel, up)), cr = sinf(game_frame / 20.0f) * (sp / 4.0f < 1.0f ? sp / 4.0f : 1.0f);
-            float a = 0.0174533f * 45.0f * cr;
-            dir = vadd(vmul(dir, cosf(a)), vmul(vcross(up, dir), sinf(a)));
+            float sp = vlen(k->vel), cr = sinf(k->len / 20.0f) * (sp / 4.0f < 1.0f ? sp / 4.0f : 1.0f);
+            float a = 0.0174533f * (90.0f * cr / 2.0f); /* makeRotate(mGravity, angle) */
+            dir = vsub(vmul(dir, cosf(a)), vmul(vcross(up, dir), sinf(a)));
             if (vdot(dir, k->vel) <= 0 || sp < 4.0f) k->vel = vadd(k->vel, vmul(dir, 0.1f));
         }
-        if (k->phase == 2 && d > 1500.0f) { k->phase = 0; k->timer = 0; }
-        break;
     }
-    default: if (k->timer > 120) { k->phase = 2; k->timer = 0; } break; /* CollidePlayer */
-    }
-    /* udpateInfluence: gravity, ground brake, the move */
-    k->vel = vsub(k->vel, vmul(up, k->phase == 1 ? rate : grounded ? 0.2f : 0.8f));
-    if (grounded) k->vel = vmul(k->vel, k->phase == 2 || k->phase == 1 ? 0.96f : 0.9f);
+    /* udpateInfluence: gravity, the move, the ground brake */
+    k->vel = vsub(k->vel, vmul(up, k->jc ? rate : grounded ? 0.2f : 0.8f));
     if (vlen(k->vel) > 12.0f) k->vel = vmul(vnorm(k->vel), 12.0f);
-    if (k->phase != 2 && k->phase != 1 && grounded && vlen(k->vel) < 0.5f) k->vel = v3(0, 0, 0);
     V3 nc = vadd(center, k->vel), gn, wn;
     int wall = 0;
     int g2 = collide_n(&nc, up, R, &gn, &wn, &wall);
     int reb = 0; /* reboundVelocityFromCollision's result */
-    if (g2 && vdot(k->vel, gn) < 0) { k->vel = vsub(k->vel, vmul(gn, vdot(k->vel, gn) * (k->phase == 1 ? 1.6f : 1.0f))); reb = 1; }
+    if (g2 && vdot(k->vel, gn) < 0) { k->vel = vsub(k->vel, vmul(gn, vdot(k->vel, gn) * (k->jc ? 1.6f : 1.0f))); reb = 1; }
     if (wall && vdot(k->vel, wn) < 0) { k->vel = vsub(k->vel, vmul(wn, vdot(k->vel, wn))); reb = 1; }
+    if (grounded) {
+        if (k->nrv == UZ_WAIT || k->nrv == UZ_COLLIDEPLAYER || k->nrv == UZ_COLLIDEENEMY) {
+            k->vel = vmul(k->vel, 0.9f); /* sBrakeRate */
+            if (vlen(k->vel) < 0.5f) k->vel = v3(0, 0, 0); /* sStopSpeed */
+        } else k->vel = vmul(k->vel, 0.96f); /* sBrakeRateChase */
+        if (k->jc) k->jc--;
+    }
     unizo_sounds(k, reb, wall, g2, nc, up);
     k->to += vlen(vtangent(vsub(nc, center), up)) / R; /* rotateQuatRollBall */
     k->pos = vsub(nc, vmul(up, R));
-    if (vlen(vsub(c, vadd(k->pos, vmul(up, R)))) < 115.2f + HIT_BODY_R && !mario->hurt_timer && k->phase != 3) {
-        mario_attack(ATK_STRONG, vadd(k->pos, vmul(up, R))); /* sendMsgEnemyAttackStrong, doAttack */
-        se_start(SE_EM_UNIZO_NEEDLE, &k->pos.x); se_start(SE_EM_UNIZO_STICK, &k->pos.x); /* exeAttack's first step */
-        V3 away = vtangent(vsub(k->pos, mario->pos), up);
-        k->vel = vadd(vmul(up, 5.0f), vlen(away) > 1e-3f ? vnorm(away) : v3(0, 0, 0));
-        k->phase = 3; k->timer = 0;
-        printf("unizo row %d hits Mario" "\n", k->row);
+    switch (k->nrv) {
+    case UZ_WAIT:
+        if (!k->jc && d < 1500.0f && !mario->hurt_timer && grounded) { /* doJump */
+            k->jc = 1;
+            k->vel = vadd(k->vel, vmul(up, sqrtf(2.0f * 70.0f * rate)));
+            w_nrv(k, UZ_JUMP);
+        }
+        break;
+    case UZ_JUMP: if (w_bck_stopped(k)) w_nrv(k, UZ_CHASE); break;
+    case UZ_CHASE: if (d > 1500.0f) w_nrv(k, UZ_WAIT); break;
+    case UZ_ATTACK: if (w_bck_stopped(k)) w_nrv(k, UZ_COLLIDEPLAYER); break;
+    case UZ_COLLIDEPLAYER: if (k->step > 120) w_nrv(k, UZ_CHASE); break; /* sCollidePlayerCount */
+    case UZ_COLLIDEENEMY: if (k->step > 60) w_nrv(k, UZ_CHASE); break; /* sCollideEnemyCount */
+    }
+    /* attackSensor: its Body (115.2 at its centre) */
+    V3 kc = vadd(k->pos, vmul(up, R));
+    if (vlen(vsub(c, kc)) < 115.2f + HIT_BODY_R) {
+        if (k->nrv != UZ_ATTACK && !mario->hurt_timer) { /* sendMsgEnemyAttackStrong, doAttack */
+            mario_attack(ATK_STRONG, kc);
+            V3 away = vsub(k->pos, mario->pos);
+            k->jc = 1;
+            k->vel = vadd(vmul(up, 5.0f), vlen(away) > 1e-3f ? vmul(vnorm(away), 1.0f) : v3(0, 0, 0)); /* sReboundPlayerV / H */
+            w_nrv(k, UZ_ATTACK);
+            printf("unizo row %d hits Mario" "\n", k->row);
+        } else mario_push_out(kc, 115.2f); /* sendMsgPush */
+    }
+    for (int i = 0; i < nkuribo; i++) { /* sendMsgEnemyAttack to another Unizo's Body (sensor type 0x24) */
+        Kuribo *e = &kuribo[i];
+        if (e == k || e->kind != WALK_UNIZO || e->state == KURIBO_DEAD || unizo_breaking(e) || !row_shown(e->row)) continue;
+        V3 dv = vsub(vadd(e->pos, vmul(e->up, R)), kc);
+        float dist = vlen(dv);
+        if (dist >= 2.0f * 115.2f || dist < 1e-3f) continue;
+        e->vel = vadd(e->vel, vmul(dv, 0.2f)); /* receiveMsgEnemyAttack: addVelocityMoveToDirection(sReboundEnemy x distance) */
+        unizo_wall_se(e);
+        if (strcmp(e->act, "Shock") || w_bck_stopped(e)) w_act(e, "Shock");
+        if (k->nrv != UZ_COLLIDEENEMY) { w_nrv(k, UZ_COLLIDEENEMY); printf("unizo row %d bumps unizo row %d" "\n", k->row, e->row); }
     }
 }
 
@@ -48498,14 +48616,39 @@ void game_draw(void)
         int wvis = render_visible(wp, wr);
         kuribo[i].clipped = (u8)render_clip_judge(wp, 300.0f, 10000.0f); /* ClippingActorInfo's default sphere, 300 about it, off
                                                                * ClippingJudge's volume (this view) */
-        if (wvis) { u32 c1 = cycles(); walker_shadow(&kuribo[i]); prof_shadow += cycles() - c1; }
+        if (wvis && !(kuribo[i].kind == WALK_UNIZO && unizo_breaking(&kuribo[i]))) { u32 c1 = cycles(); walker_shadow(&kuribo[i]); prof_shadow += cycles() - c1; } /* appearBreakModel: invalidateShadowAll */
         basis_matrix(m, kuribo[i].pos, kuribo[i].up, kuribo[i].kind == WALK_STINKBUG || kuribo[i].kind == WALK_POIHANA ? stink_front(&kuribo[i]) : vsub(mario->pos, kuribo[i].pos), 0);
         if (kuribo[i].kind == WALK_UNIZO) { /* rolled about its side round its centre */
             const Kuribo *k = &kuribo[i];
             V3 f = vtangent(k->vel, k->up);
             f = vlen(f) > 1e-3f ? vnorm(f) : vnorm(vtangent(vsub(mario->pos, k->pos), k->up));
             V3 u2 = vadd(vmul(k->up, cosf(k->to)), vmul(f, sinf(k->to))), f2 = vsub(vmul(f, cosf(k->to)), vmul(k->up, sinf(k->to)));
-            basis_matrix(m, vsub(vadd(k->pos, vmul(k->up, 126.36f)), vmul(u2, 126.36f)), u2, f2, 0);
+            float rh = (k->dir == 1 ? 0.0f : 30.0f) * fabsf(sinf(k->len / 60.0f)), hr = vlen(vtangent(k->vel, k->up)) / 4.0f; /* mRollHeight, sRollCycle */
+            basis_matrix(m, vsub(vsub(vadd(k->pos, vmul(k->up, 126.36f)), vmul(u2, 126.36f)), vmul(k->up, rh * (hr >= 1.0f ? 1.0f : hr))), u2, f2, 0);
+            if (!wvis) continue;
+            if (unizo_breaking(k)) { /* its break model's clip, facing away from the camera */
+                const Model *bm = scene_model(sc, unizo_brk[k->dir]);
+                Anim *ba = bm && bm->skin ? obj_anim((int)sc->nobjs * 2 + k->row, bm, unizo_brk[k->dir]) : NULL;
+                if (!ba) continue;
+                if (kuribo[i].act_drawn != k->act_seq) { anim_start(ba, k->act, 0); kuribo[i].act_drawn = k->act_seq; }
+                anim_update(ba);
+                basis_matrix(m, k->pos, k->qy, k->qz, 0);
+                draw_skin(bm, m, ba);
+                continue;
+            }
+            if (md->skin) { /* its Search / Attack / Shock BCK */
+                Anim *a = obj_anim(w_akey(k), md, walker_cls(k));
+                if (!a) continue;
+                if (k->act[0] && k->act_drawn != k->act_seq) {
+                    char n[48];
+                    snprintf(n, sizeof n, "%s/%s", walker_cls(k), k->act);
+                    for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
+                    anim_start(a, n, 0); kuribo[i].act_drawn = k->act_seq;
+                }
+                anim_update(a);
+                draw_skin(md, m, a);
+                continue;
+            }
         }
         if (kuribo[i].kind == WALK_STINKBUG) /* its scale; flattened while dying */
             for (int j = 0; j < 12; j++) m[j] *= sc->objs[kuribo[i].row].scale[0] * (kuribo[i].phase == 6 && j >= 4 && j < 8 ? 1.0f - kuribo[i].timer / 40.0f : 1.0f);

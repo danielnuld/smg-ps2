@@ -115,6 +115,7 @@ int game_screw_state(void);
 int game_jet_state(void);
 int game_key_taken(void);
 int game_unizo_state(int *dist);
+void game_test_unizo_break(void);
 int game_stink_state(int *dist);
 int game_coco_state(int *dist);
 int game_punch_state(int *dist);
