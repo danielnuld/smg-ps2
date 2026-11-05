@@ -358,6 +358,13 @@ Second console round (2026-10-24), from Daniel's report:
   panel just flipped drawn 25 down (calcJointMove); FlipPanelObserver's Complete demo (FlipPanelComplete), its star
   after arg0 + 40 steps, SW_A once no demo runs. Test `flip` (FlipPanelEx 1) from f360, then each panel left on its
   front (one the drop misses is flipped by the test after 3 tries): demo, star, got.
+- StinkBugParent (feat/stinkbug-parent, 2026-11-05): StinkBugParent.cpp / StinkBugBase.cpp in game.c (update_sbp): its
+  17 nerves (territory, dash, back, head attack, spin / star piece guard, panic / shake under Mario, 子連れカメムシデモ with
+  the child's ChildDeath BVA kept, Mario's flight back (Mario::doPointWarp, MarioWarp _45 2: m_point_warp), ダメージ中
+  anger + 8 star pieces, HipDropDown and its power star); its collisions SwitchChildJ / Switch (slice.py KCL_PARTS
+  StinkBugParent#Switch) on its base matrix. blob.c: a zone blob no longer clears the scene's GPOS (findNamePos was
+  empty once a zone loaded). Test: `sbp` (HoneyBeeKingdom 2, overlay packs). ponytail: no BRK colours, no
+  overlayWithPreviousScreen. Repack: slice_all.py HoneyBeeKingdomGalaxy.
 ## Rules
 
 - Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -

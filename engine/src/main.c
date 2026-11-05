@@ -1671,6 +1671,12 @@ int main(void)
             if (frame % 25 == 0) printf("petari test f %u: %d\n", frame, st);
         }
 #endif
+#ifdef SBP_TEST
+        if (frame >= 300 && frame < 4000) { /* StinkBugParent: a dash, its child stomped (the demo), its back stomped */
+            int st = game_test_sbp();
+            if (frame % 25 == 0) printf("sbp test f %u: %d\n", frame, st);
+        }
+#endif
 #ifdef CREEPER_TEST
         if (frame >= 300 && frame < 3000) { /* creeper 0 climbed and jumped off, creeper 1 slid down */
             int st = game_test_creeper();
