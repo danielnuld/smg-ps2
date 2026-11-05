@@ -34179,8 +34179,8 @@ static void update_switches(void)
             continue;
         }
         if (logic[i].kind == LOGIC_CHIPS) { /* ChipGroup.cpp: SW_A once every chip of its arg0 is taken
-         * ponytail (unmarked until the 2026-11-02 audit): no SE_SY_YELLOWCHIP_GET pitched by the count (ChipBase.cpp:353),
-         * no chip counter (showChipCounter), SW_A at once instead of after the complete demo (ChipGroup.cpp:69-219) */
+         * ponytail: no ChipCounter layout (show / hide / its Complete animation, ChipGroup.cpp:69-219): SW_A at once
+         * instead of after the チップコンプリート demo's CompleteOut */
             const char *chip = sc->types[32 * r->type] == 'Y' ? "YellowChip" : "BlueChip";
             int yel = chip[0] == 'Y';
             if (r->sw[SW_APPEAR] >= 0 && row_shown(row) && !(row_step[row] & 0x8000)) { /* receiveAppearRequest */
@@ -36012,8 +36012,14 @@ static void update_items(void)
             }
         }
         else if (in->item == ITEM_CHIP) {
-            fx_emit(sc->types[32 * sc->objs[in->row].type] == 'Y' ? FX_YELLOWCHIP_GET : FX_BLUECHIP_GET, in->m);
+            const Row *cr = &sc->objs[in->row];
+            int yel = sc->types[32 * cr->type] == 'Y', got = 1;
+            fx_emit(yel ? FX_YELLOWCHIP_GET : FX_BLUECHIP_GET, in->m);
             pad_rumble(RUMBLE_MIDDLE); /* ChipBase::exeGot */
+            for (u32 k = 0; k < sc->nobjs; k++) /* getGotChipCount: its group's taken ones, this one too (noticeGet first) */
+                if (k != (u32)in->row && sc->objs[k].type == cr->type && sc->objs[k].arg[0] == cr->arg[0] && row_dead[k]) got++;
+            u32 h = se_start(yel ? SE_SY_YELLOWCHIP_GET : SE_SY_BLUECHIP_GET, NULL); /* startSystemSE(name, count): port 11 */
+            if (h) se_port(h, 11, (u16)got);
         }
         else if (in->item == ITEM_KEY) { /* KeySwitch::kill: onSwitchA */
             pad_rumble(RUMBLE_MIDDLE); /* receiveOtherMsg */
