@@ -155,6 +155,8 @@ static u32 ch_hash(const char *s)
 static int clip_id_of(const char *name)
 {
     if (!name) return -1;
+    char cut[32]; /* the packs keep 31 characters of a name (slice.py name32): longer ones match their cut */
+    if (strlen(name) > 31) { memcpy(cut, name, 31); cut[31] = 0; name = cut; }
     if (sc->nclips > CH_SIZE / 2) {
         for (u32 i = 0; i < sc->nclips; i++) if (!strcmp(sc->clips[i].name, name)) return (int)i;
         return -1;

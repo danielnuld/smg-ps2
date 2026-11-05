@@ -1833,6 +1833,7 @@ int main(void)
         if (frame >= 120 && frame < 600 && frame % 60 == 30) printf("stone test f %u: spin at row %d, pieces %d\n", frame, game_test_stone(1), game_pieces_out());
 #endif
 #ifdef BEEFLOWER_TEST
+        if (frame == 530) game_test_bee(0); /* Bee Mario from here: he lands on them (SoftTouch) */
         if (frame >= 120 && frame % 60 == 0 && frame <= 900) {
             char d[128];
             game_debug(d, sizeof d);
@@ -2182,9 +2183,9 @@ int main(void)
 #endif
 #ifdef SCREW_TEST
         { /* Mario dropped on a screw switch (150), a spin once he stands on it (180) */
-            if (frame == 150) printf("screw test f %u: row %d\n", frame, game_test_screw());
-            if (frame == 180) game_test_spin_now();
-            if (frame >= 150 && frame < 400 && frame % 10 == 0) printf("screw test f %u: state %d\n", frame, game_screw_state());
+            if (frame == 150 || frame == 400) printf("screw test f %u: row %d\n", frame, game_test_screw()); /* (again once its zone is in) */
+            if (frame == 180 || frame == 430) game_test_spin_now();
+            if (frame >= 150 && frame < 700 && frame % 10 == 0) printf("screw test f %u: state %d\n", frame, game_screw_state());
         }
 #endif
 #ifdef JET_TEST
