@@ -777,6 +777,53 @@ static struct {
 enum { OTA_WAITONSWITCH, OTA_APPEARDEMO, OTA_WAIT, OTA_THROWCOCOWAIT, OTA_THROWCOCO, OTA_THROWFIREWAIT, OTA_THROWFIRE,
        OTA_DAMAGE, OTA_POWERUP, OTA_DOWN, OTA_DOWNDEMO, OTA_APPEARSTAR, OTA_DEAD, OTA_HITBACKSTART, OTA_HITBACK,
        OTA_NEARATTACK, OTA_BUBBLEATTACK };
+/* BossStinkBug (Petari Boss/BossStinkBug.cpp, BossStinkBugActionSequencer.cpp, BossStinkBugActionBase.cpp,
+ * BossStinkBugActionGround / FlyLow / FlyHigh.cpp, BossStinkBugOpeningDemo / FlyDemo / AngryDemo / FinishDemo.cpp,
+ * BossStinkBugFunction.cpp, BossStinkBugBomb.cpp, BossStinkBugBombHolder.cpp): Honeyhive's Bugaboom, one per scene.
+ * The sequencer (bsb.seq): WaitStart until SW_A (listenStageSwitchOnA: start, appear), OpeningDemo, Ground (BossBgm
+ * StinkBugA), FlyDemo, FlyLow (8 star pieces, StinkBugB), AngryDemo, FlyHigh (16 star pieces), FinishDemo, End. Each
+ * action's nerves (bsb.nrv, Petari step bsb.st) as ActionBase's update*; it moves along its rail 0 (moveRail: the rail
+ * point raised _3C against gravity and _44 along its own up), its pose a quaternion blended to (-gravity, _EC) by 0.2
+ * (updatePose) or the demo dummy's Boss joint (setPose). Its three collisions (initCollision: Body, BodyGround,
+ * BodyHipDrop on its Body joint) are instances bsb.ki (ground: BodyGround + BodyHipDrop, fly: Body + BodyHipDrop,
+ * hit only: BodyHipDrop). A hip drop on it (Ground: any part; flying: BodyHipDrop) is a hit; Mario standing on
+ * BodyHipDrop makes it shake him off; running / flying into him (his wall or ceiling) hurts him (EnemyAttackMaximum /
+ * Strong). Bombs (16, throwBomb from the launcher's DischargePosition at 20 +-10) fall at 1.2, rebound 0.8, count 150
+ * frames and explode (280 over 10 frames, EnemyAttackExplosion); touching Mario they explode at once; a star piece
+ * blows one up. The demos: requestStartDemoMarioPuppetable (pd), Mario at BossStinkBugDemo's MarioPosition playing
+ * BattleWait, its camera the dummy's CANM (startAnimCameraTargetSelf). FinishDemo: Death, hidden, at step 60 its power
+ * star from its place, startAfterBossBGM. ponytail: no leg IK (onBindLeg / updateJointControl: the clips' legs), no
+ * BAS sounds, level SEs at full volume (no calcFlySoundVol / IIR cut-off), the wing's BTK / BVA (both wing sets
+ * drawn), no BaseMatrixFollowTarget (BossStinkBugFollowValidater), the quaternion blend done on its up / front vectors
+ * (blendQuatUpFront), no shadow, the Fall camera only as its multi-actor camera "Fall". FlyHigh's ToGround / Land /
+ * GroundRun / ToFly are never set in Petari either */
+#define BSB_BOMBS 16
+#define BSB_BODY 2      /* BossStinkBug.bdl JNT1: Body */
+#define BSB_SWITCH 45   /* Switch (the wing's initFixedPosition) */
+enum { BQ_WAITSTART, BQ_OPENING, BQ_GROUND, BQ_FLYDEMO, BQ_FLYLOW, BQ_ANGRYDEMO, BQ_FLYHIGH, BQ_FINISHDEMO, BQ_END };
+enum { BA_TRYSTART, BA_DEMO, BA_APPEARSTAR,
+       BA_START, BA_WALK, BA_DAMAGE, BA_FIND, BA_SHAKEOFF, BA_SHAKEOFFRUN, BA_RUN, BA_ATTACKSUCCESS, BA_COOLDOWN, BA_TURN,
+       BA_FLY, BA_SHAKEOFFSIGN, BA_SHAKEOFFFLY, BA_SHAKEOFFWAIT, BA_SHAKEOFFEND, BA_FALL, BA_FALLDAMAGE, BA_DASH,
+       BA_TURNSIGN, BA_FLYTURN, BA_ROLLSIGN, BA_ROLL, BA_ROLLWAIT, BA_ROLLEND, BA_TOGROUND, BA_LAND, BA_GROUNDRUN, BA_TOFLY };
+static struct {
+    int row, seq, sst, nrv, st, dead, hidden, posed, ctrl_off, cam;
+    int ki[3];                       /* its collision instances (Body, BodyGround, BodyHipDrop), -1 none */
+    const unsigned char *kcl[3];
+    int kon[3];                      /* validateCollisionParts */
+    V3 pos, vel, U, F, ec;           /* mPosition, mVelocity, _DC (as its up / front), _EC */
+    float rotz;                      /* mRotation.z */
+    V3 a14, a20;                     /* ActionBase _14, _20 */
+    float a2c, a30, a34, a38, a3c, a44, a48, a64;
+    int bombt, a50, a68, a70;
+    float spv, spvel;                /* SpringValue (_3C at rest, 0.02, 0.95) */
+    const float *rail; u32 rail_n; int closed, dir; float coord, len;
+    Anim *anim, *wing, *launcher, *demo;
+    struct { V3 pos, vel; int state, t; } bomb[BSB_BOMBS]; /* 0 dead, 1 Wait, 2 Explosion */
+    u32 lv[6], blv[BSB_BOMBS];
+} bsb = {.row = -1};
+static const Model *m_bsb, *m_bsbwing, *m_bsblaunch, *m_bsbbomb, *m_bsbdemo;
+static int bsb_demo(void);
+int bsb_shot(V3 at);
 #define MAX_OROCKS 4
 enum { OR_WAIT, OR_THROWCOCO, OR_THROWFIRE, OR_DOWN, OR_HIDE, OR_HIDEWAIT, OR_SHOW, OR_DEAD };
 static struct {
@@ -913,6 +960,7 @@ static int collide_ceil, collide_ceil_inst; /* collide_n pushed down off a face 
 #define KCL_WALL(a) ((a) >> 6 & 0xF) /* CollisionWallCode: 0 Normal .. 7 Fur, 8 NoAction (tools/slice.py kcl attributes) */
 enum { WALL_NORMAL = 0, WALL_FUR = 7 };
 static int wall_attr;            /* the last collide_n wall's codes */
+static int wall_inst = -1, mario_wall_inst = -1; /* its instance; Mario's wall this frame (isMsgWallTouch), -1 none */
 static void zone_spheres(void);
 static void zone_grow(const Inst *in);
 
@@ -1957,7 +2005,7 @@ static int collide_n(V3 *center, V3 up, float radius, V3 *ground_n, V3 *wall_n, 
         if (d > -0.3f && d < WALL_ANGLE_COS && wall) {
             *wall = 1;
             *wall_n = nrm;
-            wall_attr = hits[deepest].attr;
+            wall_attr = hits[deepest].attr; wall_inst = hits[deepest].inst;
         }
     }
     if (!ground) { /* resting check: a sphere a little lower touches ground */
@@ -2204,7 +2252,8 @@ void game_init(const Scene *s, const unsigned char *blob)
         }
         if (stone_row(&s->objs[i]) && s->objs[i].arg[2] >= 0) box_pieces += 8; /* a star piece per stone */
         if (!strcmp(tn, "Butterfly") && s->objs[i].arg[1] < 0) box_pieces++; /* the pointer brings one out */
-        if (!strcmp(tn, "StinkBugSmall")) box_pieces += 3; /* declareStarPiece(3) */
+        if (!strcmp(tn, "StinkBugSmall") && s->objs[i].sw[SW_DEAD] < 0) box_pieces += 3; /* declareStarPiece(3) unless isValidSwitchDead */
+        if (!strcmp(tn, "BossStinkBug")) box_pieces += 24; /* BossStinkBugActionSequencer: declareStarPiece(24) */
         if (!strcmp(tn, "PhantomCandlestand") || !strcmp(tn, "TeresaMansionCandlestand") || !strcmp(tn, "CandlestandIceVolcano") ||
             !strcmp(tn, "PhantomTorch") || !strcmp(tn, "PhantomBonfire")) {
             /* arg0 -1 a coin, 0 a star piece */
@@ -2264,6 +2313,24 @@ void game_init(const Scene *s, const unsigned char *blob)
     }
     memset(&dino, 0, sizeof dino); dino.row = -1;
     memset(&ota, 0, sizeof ota); ota.row = -1;
+    memset(&bsb, 0, sizeof bsb); bsb.row = -1; bsb.ki[0] = bsb.ki[1] = bsb.ki[2] = -1;
+    for (u32 i = 0; i < s->nobjs; i++)
+        if (strcmp(s->types + 32 * s->objs[i].type, "BossStinkBug") == 0) { /* BossStinkBug::init */
+            const Row *r = &s->objs[i];
+            V3 x, z;
+            row_axes(r, &x, &z);
+            bsb.row = i; bsb.pos = row_pos(r); bsb.U = up_at(bsb.pos, v3(0, 1, 0)); bsb.F = bsb.ec = vnorm(vtangent(z, bsb.U));
+            bsb.dir = 1; bsb.seq = BQ_WAITSTART; bsb.hidden = r->sw[SW_A] >= 0; /* useStageSwitchReadA: makeActorDead */
+            bsb.rail = r->path >= 0 ? find_rail_of(blob, r->zone, r->path, &bsb.rail_n, &bsb.closed, 0) : NULL;
+            for (u32 k = 0; bsb.rail && k + 1 < bsb.rail_n + (bsb.closed ? 1u : 0u); k++) {
+                u32 j = (k + 1) % bsb.rail_n;
+                bsb.len += vlen(vsub(v3(bsb.rail[3 * j], bsb.rail[3 * j + 1], bsb.rail[3 * j + 2]), v3(bsb.rail[3 * k], bsb.rail[3 * k + 1], bsb.rail[3 * k + 2])));
+            }
+            Anim **an[4] = {&bsb.anim, &bsb.wing, &bsb.launcher, &bsb.demo};
+            for (int k = 0; k < 4; k++) { *an[k] = mem_alloc(MEM_PLAYER, sizeof(Anim)); memset(*an[k], 0, sizeof(Anim)); }
+            printf("boss stink bug: row %d, rail %u points (%s, %.0f)" "\n", (int)i, bsb.rail_n, bsb.closed ? "loop" : "open", bsb.len);
+            break;
+        }
     for (u32 i = 0; i < s->nobjs; i++)
         if (strcmp(s->types + 32 * s->objs[i].type, "OtaKing") == 0) {
             V3 x, z;
@@ -4308,7 +4375,7 @@ static int gap_class(const char *name)
            !strcmp(name, "ShellfishYellowChip") ? GAP_SHELLCHIP : !strcmp(name, "BattleShipElevator") ? GAP_ELEVATOR : GAP_NONE;
 }
 /* ponytail (unmarked until the 2026-11-02 audit): placed classes of the early galaxies with no behaviour here
- * (drawn static, or not at all), each a whole Petari class: Honeyhive HoneyQueen, Creeper, BossStinkBug, StinkBugParent, GhostPlayer (Cosmic Mario);
+ * (drawn static, or not at all), each a whole Petari class: Honeyhive HoneyQueen, Creeper, StinkBugParent (StinkBugParent.cpp, its 子連れカメムシデモ), GhostPlayer (Cosmic Mario);
  * Space Junk TombSpider, BossKameck, ChildKameck, SpiderAttachPoint (SlingShooter), UFOKinoko, CoinBox,
  * PlanetRocket, NokonokoLand; Battlerock BossBegoman, TicoShop; Beach Bowl PenguinStudent;
  * the observatory AstroMapObj states (AstroStarPlate / AstroDomeEntrance / AstroRotateStepA / B: Dead / Alive /
@@ -4515,6 +4582,8 @@ static void game_rebind_(void)
     }
     m_bubble = scene_model(s, "AirBubble");
     m_ota = scene_model(s, "OtaKing"); m_otafoot = scene_model(s, "OtaKingFoot"); m_coco = scene_model(s, "CocoNut");
+    m_bsb = scene_model(s, "BossStinkBug"); m_bsbwing = scene_model(s, "BossStinkBugWing"); m_bsblaunch = scene_model(s, "BossStinkBugBombLauncher");
+    m_bsbbomb = scene_model(s, "BossStinkBugBomb"); m_bsbdemo = scene_model(s, "BossStinkBugDemo");
     m_otamagma = scene_model(s, "OtaKingMagma"); m_otalfoot = scene_model(s, "OtaKingLongFoot");
     m_otabloom = scene_model(s, "OtaKingMagmaBloom");
     m_pleaf = scene_model(s, "PackunLeaf");
@@ -4557,7 +4626,7 @@ static void game_rebind_(void)
     ninsts = 0;
     int t_note = scene_type(s, "NoteFairy"), t_petari = scene_type(s, "Petari"), t_rockc = scene_type(s, "RockCreator"),
         t_wan = scene_type(s, "WanwanRolling"), t_wanm = scene_type(s, "WanwanRollingMini"),
-        t_wang = scene_type(s, "WanwanRollingGold"), t_dino = scene_type(s, "DinoPackun"), t_ota = scene_type(s, "OtaKing");
+        t_wang = scene_type(s, "WanwanRollingGold"), t_dino = scene_type(s, "DinoPackun"), t_ota = scene_type(s, "OtaKing"), t_bsb = scene_type(s, "BossStinkBug");
     static signed char wnk[1024]; /* walker_new_kind by type this rebind: 0 not yet, 1 no, 2 yes */
     static const Model *bloom_of[1024]; /* "<class>Bloom" by type this rebind (snprintf + lookup an object) */
     static unsigned char bloom_ok[1024];
@@ -4571,7 +4640,7 @@ static void game_rebind_(void)
             r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly ||
             r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_stink || r->type == t_note ||
             r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == t_petari || r->type == t_rockc || r->type == t_wan ||
-            r->type == t_wanm || r->type == t_wang || r->type == t_dino || r->type == t_ota ||
+            r->type == t_wanm || r->type == t_wang || r->type == t_dino || r->type == t_ota || r->type == t_bsb ||
             (r->type < 1024 ? wnk[r->type] == 2 : walker_new_kind(s->types + 32 * r->type) >= 0))
             continue;
         const char *name = s->types + 32 * r->type;
@@ -4713,6 +4782,23 @@ static void game_rebind_(void)
         in->s = r->scale[0];
         in->reach = m_otamagma->radius * in->s;
         zone_grow(in);
+    }
+    bsb.ki[0] = bsb.ki[1] = bsb.ki[2] = -1;
+    if (bsb.row >= 0) { /* BossStinkBug::initCollision: Body, BodyGround, BodyHipDrop on its Body joint (update_bsb sets them) */
+        static const char *const kn[3] = {"BossStinkBug", "BossStinkBug#Ground", "BossStinkBug#HipDrop"};
+        const Row *r = &s->objs[bsb.row];
+        for (int k = 0; k < 3; k++) {
+            bsb.kcl[k] = scene_kcl(s, kn[k]);
+            if (!bsb.kcl[k] || !m_bsb || ninsts >= (int)s->nobjs) continue;
+            Inst *in = &insts[ninsts];
+            bsb.ki[k] = ninsts++;
+            memset(in, 0, sizeof *in);
+            in->md = m_bsb; in->row = bsb.row; in->zone = r->zone; in->invisible = 1; in->kmove = in->kparent = -1;
+            mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
+            in->s = 1.0f; in->reach = m_bsb->radius * 2.0f;
+            in->kcl = bsb.kon[k] && !bsb.hidden ? bsb.kcl[k] : NULL;
+            zone_grow(in);
+        }
     }
     for (int i = 0, n = ninsts; i < n; i++) /* PhantomShipBridge's "Move" collision on its joint (update_bridges) */
         if (insts[i].bridge == 1 && scene_kcl(s, "PhantomShipBridge#Move") && ninsts < (int)s->nobjs) {
@@ -19285,6 +19371,7 @@ static void update_mario_(void)
                 if (!m_clip_is(dx.bck)) { anim_clip_info(dx.bck, &mode); mario_play(dx.bck, 1.0f, mode == 2 || mode == 4); }
             }
             else if (pro_puppet()) ; /* the prologue's DemoPeachCastleGate (pro_update) */
+            else if (bsb_demo()) { if (!m_clip_is("battlewait")) mario_play("battlewait", 1.0f, 1); } /* BossStinkBug's demos: startBckPlayer BattleWait */
             else if (!star_demo && !gw_puppet()) mario_play("wait", 1.0f, 1);
             else if (mario_anim->clip_id < 0 || strcmp(sc->clips[mario_anim->clip_id].name, "powerstarget")) mario_play("powerstarget", 1.0f, 0);
             anim_update(mario_anim);
@@ -19586,7 +19673,7 @@ static void update_mario_(void)
     int ground = 0, steps = (int)(vlen(move) / brad) + 1; /* no step longer than the body: a hip drop falls
                                                                    * 150 a frame, thin floors would let it through */
     ghost_through = player_mode == PM_TERESA && m->t418;
-    collide_ceil = 0;
+    collide_ceil = 0; wall_inst = -1;
     if (pgc && hg.on) { center = vadd(center, move); b_n = 0; m->wall = 0; } /* MarioHang::start: _F44 0, offBind */
     else if (pgc) { /* Binder::bind; the faces hit: walls (the deepest), ceilings */
         center = m_bind(center, move, brad);
@@ -19614,7 +19701,7 @@ static void update_mario_(void)
                 collide_ceil = 1;
                 if (first_ceil) collide_ceil_inst = b_tri[i].inst;
             }
-            if (d > -0.3f && d < WALL_ANGLE_COS && b_dep[i] > wd) { m->wall = 1; wn = n; wall_attr = tri_attr(&b_tri[i]); wd = b_dep[i]; }
+            if (d > -0.3f && d < WALL_ANGLE_COS && b_dep[i] > wd) { m->wall = 1; wn = n; wall_attr = tri_attr(&b_tri[i]); wall_inst = b_tri[i].inst; wd = b_dep[i]; }
         }
     } else
         for (int s = 0; s < steps && !ground; s++) {
@@ -19698,7 +19785,7 @@ static void update_mario_(void)
     } else if (!ground) m->grounded = 0;
     if (!pg) m->slip_poly = m->grounded && slip_polygon(m, ground_attr & 0x3F, m->ground_n); /* updateGroundInfo: mDrawStates._C */
     if (m->grounded && !m->jumping) m->land_timer++; /* updateTimers: _3CE */
-    mario_ground = m->grounded ? ground_inst : -1; mario_ground_sub = ground_sub;
+    mario_ground = m->grounded ? ground_inst : -1; mario_ground_sub = ground_sub; mario_wall_inst = m->wall ? wall_inst : -1;
     mw.ceil = collide_ceil; mw.press1E = collide_ceil && press_at(collide_ceil_inst);
     m_map_info(m);
     if (m_check_press(m)) return;
@@ -20227,10 +20314,9 @@ static void drop_pieces(V3 p, V3 up, int n);
  * waiting (Search). Its horn (100 x scale ahead) hurts Mario (EnemyAttackStrong) and it stops (Attack); a spin or a
  * star piece makes it guard (SpinReaction, 30 frames); a hip drop kills it: 3 star pieces. phase 0 wait, 1 dash sign,
  * 2 dash, 3 dash end, 4 back, 5 attack / guard, 6 dying; from its turn in degrees from its front, to the sweep sign.
- * ponytail: no standing on its back (Panic / Shake), no star pointer swoon, arg0 -1 taken as 0, arg1 -1 as 1000
- * ponytail (unmarked until the 2026-11-02 audit): SW_A (ForceFall, gravity 2 a frame) not read, a valid SW_DEAD
- * should mean no star pieces (StinkBugSmall.cpp:55-58, 330-460), the star piece reaction also in DashEnd / Attack
- * (Petari: isNrvEnableStarPieceAttack) */
+ * Its SW_A on: ForceFall (gravity 2 a frame, bound; phase 7); a valid SW_DEAD is set at its death instead of its
+ * star pieces (kill). ponytail: no standing on its back (Panic / Shake), no star pointer swoon, arg0 -1 taken as 0,
+ * arg1 -1 as 1000 */
 static V3 stink_front(const Kuribo *k)
 {
     V3 x, z;
@@ -20249,9 +20335,19 @@ static void stink_update(Kuribo *k, V3 to, float d)
     if (k->phase == 6) { /* HipDropDown */
         if (k->timer >= 30) {
             k->state = KURIBO_DEAD; row_kill(k->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, k->pos, k->up);
-            drop_pieces(k->pos, k->up, 3);
+            if (r->sw[SW_DEAD] >= 0) sw_set(r, SW_DEAD, 1); /* kill: onSwitchDead, else its pieces */
+            else drop_pieces(k->pos, k->up, 3);
             printf("stink bug row %d: dead" "\n", k->row);
         }
+        return;
+    }
+    if (k->phase != 7 && r->sw[SW_A] >= 0 && sw_on(r, SW_A)) { k->phase = 7; k->timer = 0; k->vel = v3(0, 0, 0); } /* tryForceFall */
+    if (k->phase == 7) { /* exeForceFall: mVelocity += 2 x gravity, bound */
+        k->vel = vsub(k->vel, vmul(k->up, 2.0f));
+        V3 center = vadd(vadd(k->pos, k->vel), vmul(k->up, 100.0f * s - 2.0f)), gn, wn;
+        int wall = 0;
+        if (collide_n(&center, k->up, 100.0f * s, &gn, &wn, &wall)) k->vel = v3(0, 0, 0);
+        k->pos = vsub(center, vmul(k->up, 100.0f * s));
         return;
     }
     float above = vdot(to, k->up);
@@ -34672,7 +34768,7 @@ static void update_shots(void)
             else if (e->kind == WALK_BASABASA) { /* isMsgStarPieceAttack: Stun (isNrvEnableStun) */
                 if (e->nrv != BB_TRAMPLE && e->nrv != BB_PUNCHDOWN && e->nrv != BB_WAIT && e->nrv != BB_ATTACH) w_nrv(e, BB_STUN);
             }
-            else if (e->kind == WALK_STINKBUG) { if (e->phase != 2 && e->phase != 6) { e->phase = 5; e->timer = 0; } }
+            else if (e->kind == WALK_STINKBUG) { if (e->phase == 0 || e->phase == 1 || e->phase == 4) { e->phase = 5; e->timer = 0; } } /* isNrvEnableStarPieceAttack: Wait, Search, DashSign(End), Back */
             else if (e->kind == WALK_KARIKARI) kari_blowout(e, s->pos, 1); /* isMsgStarPieceAttack: BlowOutStarPiece */
             else if (e->kind == WALK_PACKUN) { /* isMsgStarPieceAttack: SwoonStart */
                 if (e->nrv != PN_TRAMPLEDOWN && e->nrv != PN_PUNCHDOWN) w_nrv(e, PN_SWOONSTART);
@@ -34699,6 +34795,7 @@ static void update_shots(void)
         if (!hit && hhp_reflects(s->pos, 30.0f)) hit = 2; /* HammerHeadPackun: isMsgStarPieceReflect */
         if (!hit && butler_shot(s->pos)) hit = 1;
         if (!hit && hana_shot(s->pos)) hit = 1;
+        if (!hit && bsb_shot(s->pos)) hit = 1; /* BossStinkBugBomb */
         if (!hit && gap_shot(s->pos)) hit = 1;          /* #143's classes (update_gaps) */          /* Hanachan's parts */         /* Butler: isMsgStarPieceAttack */
         for (int k = 0; k < ninsts && !hit; k++) { /* ItemBubble: isMsgStarPieceAttack bursts it */
             Inst *in = &insts[k];
@@ -40427,6 +40524,712 @@ static void fp_update(void)
     if (fp_delay && --fp_delay == 0) fp_on = 0;
 }
 
+static int bsb_demo(void) { return bsb.row >= 0 && (bsb.nrv == BA_DEMO || bsb.nrv == BA_APPEARSTAR) &&
+                            (bsb.seq == BQ_OPENING || bsb.seq == BQ_FLYDEMO || bsb.seq == BQ_ANGRYDEMO || bsb.seq == BQ_FINISHDEMO); }
+static void launch_pieces(V3 p, V3 up, int n, float h, float v);
+static V3 bsb_g(void) { return vmul(up_at(bsb.pos, v3(0, 1, 0)), -1.0f); } /* mGravity */
+static void bsb_set(int n) { bsb.nrv = n; bsb.st = -1; }
+static void bsb_seq(int n) { bsb.seq = n; bsb.sst = -1; }
+static float bsb_rate(int n) { float r = n > 0 ? (float)bsb.st / n : 1.0f; return r < 0 ? 0 : r > 1 ? 1 : r; } /* calcNerveRate */
+static float bsb_ease(float t) { t = t < 0 ? 0 : t > 1 ? 1 : t; return 0.5f - 0.5f * cosf(t * 3.14159265f); } /* getEaseInOutValue */
+static float bsb_eio(int n, float a, float b) { return a + (b - a) * bsb_ease(bsb_rate(n)); } /* calcNerveEaseInOutValue */
+static float bsb_eio2(int s0, int s1, float a, float b) { float t = (float)(bsb.st - s0) / (s1 - s0); return a + (b - a) * bsb_ease(t); }
+static void bsb_se(u32 id) { float at[3] = {bsb.pos.x, bsb.pos.y, bsb.pos.z}; se_start(id, at); }
+static void bsb_lv(int k, u32 id) { float at[3] = {bsb.pos.x, bsb.pos.y, bsb.pos.z}; bsb.lv[k] = se_level(id, at, bsb.lv[k]); }
+static void bsb_clip(Anim *a, const char *cls, const char *clip, int restart) /* startBck (restart) / tryStartBck */
+{
+    char n[32];
+    if (!a || !a->skin) return;
+    snprintf(n, sizeof n, "%s/%s", cls, clip); /* (clip names cut at 31) */
+    if (restart) a->clip_id = -1;
+    anim_start(a, n, 0);
+}
+static void bsb_bck(const char *clip, int restart) { bsb_clip(bsb.anim, "bossstinkbug", clip, restart); }
+static int bsb_bck_stopped(void) { return !bsb.anim || !bsb.anim->skin || bsb.anim->done; } /* isBckStopped */
+static int bsb_bck_len(const char *clip) /* getBckFrameMax */
+{
+    char n[32]; int mode;
+    snprintf(n, sizeof n, "bossstinkbug/%s", clip);
+    int l = anim_clip_info(n, &mode);
+    return l > 0 ? l : 1;
+}
+/* the rail (RailRider on its path 0): position and direction by coord */
+static V3 bsb_rail_at(float c, V3 *tan)
+{
+    const float *p = bsb.rail;
+    if (!p || bsb.rail_n < 2) { if (tan) *tan = bsb.F; return bsb.pos; }
+    if (bsb.closed) { while (c < 0) c += bsb.len; while (c >= bsb.len) c -= bsb.len; }
+    else c = c < 0 ? 0 : c > bsb.len ? bsb.len : c;
+    u32 n = bsb.rail_n + (bsb.closed ? 1 : 0);
+    for (u32 i = 0; i + 1 < n; i++) {
+        u32 j = (i + 1) % bsb.rail_n;
+        V3 a = v3(p[3 * i], p[3 * i + 1], p[3 * i + 2]), b = v3(p[3 * j], p[3 * j + 1], p[3 * j + 2]);
+        float l = vlen(vsub(b, a));
+        if (c <= l || i + 2 == n) {
+            if (tan) *tan = l > 0 ? vmul(vsub(b, a), 1.0f / l) : bsb.F;
+            return vadd(a, vmul(vsub(b, a), l > 0 ? (c < l ? c : l) / l : 0));
+        }
+        c -= l;
+    }
+    if (tan) *tan = bsb.F;
+    return v3(p[0], p[1], p[2]);
+}
+static float bsb_nearest(V3 q) /* calcNearestRailCoord */
+{
+    float best = 1e30f, at = 0, run = 0;
+    u32 n = bsb.rail_n + (bsb.closed ? 1 : 0);
+    for (u32 i = 0; bsb.rail && i + 1 < n; i++) {
+        u32 j = (i + 1) % bsb.rail_n;
+        V3 a = v3(bsb.rail[3 * i], bsb.rail[3 * i + 1], bsb.rail[3 * i + 2]), ab = vsub(v3(bsb.rail[3 * j], bsb.rail[3 * j + 1], bsb.rail[3 * j + 2]), a);
+        float l = vlen(ab), t = l > 0 ? vdot(vsub(q, a), ab) / (l * l) : 0;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        float dd = vlen(vsub(q, vadd(a, vmul(ab, t))));
+        if (dd < best) { best = dd; at = run + t * l; }
+        run += l;
+    }
+    return at;
+}
+static V3 bsb_rail_dir(void) { V3 t; bsb_rail_at(bsb.coord, &t); return vmul(t, (float)bsb.dir); } /* getRailDirection */
+static void bsb_move_coord(float v) /* moveCoord */
+{
+    bsb.coord += bsb.dir * v;
+    if (bsb.closed) { while (bsb.coord < 0) bsb.coord += bsb.len; while (bsb.coord >= bsb.len) bsb.coord -= bsb.len; }
+    else bsb.coord = bsb.coord < 0 ? 0 : bsb.coord > bsb.len ? bsb.len : bsb.coord;
+}
+static V3 bsb_rot(V3 v, V3 axis, float deg) /* rotateVecDegree */
+{
+    axis = vnorm(axis);
+    float a = deg * 0.0174533f, c = cosf(a), s = sinf(a);
+    return vadd(vadd(vmul(v, c), vmul(vcross(axis, v), s)), vmul(axis, vdot(axis, v) * (1 - c)));
+}
+static void bsb_turn_to(V3 *v, V3 t, float deg) /* turnDirectionDegree */
+{
+    if (vlen(t) < 1e-6f || vlen(*v) < 1e-6f) return;
+    V3 a = vnorm(*v), b = vnorm(t);
+    float d = vdot(a, b), ang = acosf(d > 1 ? 1 : d < -1 ? -1 : d) * 57.29578f;
+    if (ang <= deg) { *v = b; return; }
+    V3 ax = vcross(a, b);
+    if (vlen(ax) < 1e-6f) ax = vcross(a, bsb.U);
+    *v = vnorm(bsb_rot(a, ax, deg));
+}
+static void bsb_calc_up(V3 *up) /* calcUpVec: the pose's Y rolled by mRotation.z about its front */
+{
+    *up = bsb_rot(bsb.U, bsb.F, -bsb.rotz);
+}
+static void bsb_update_pose(void) /* updatePose */
+{
+    if (bsb.posed) return;
+    V3 g = bsb_g();
+    bsb.ec = vsub(bsb.ec, vmul(g, vdot(bsb.ec, g)));
+    if (vlen(bsb.ec) < 1e-4f) bsb.ec = bsb.F; else bsb.ec = vnorm(bsb.ec);
+    V3 u = vnorm(vadd(vmul(bsb.U, 0.8f), vmul(g, -0.2f))), f = vadd(vmul(bsb.F, 0.8f), vmul(bsb.ec, 0.2f)); /* blendQuatUpFront 0.2, 0.2 */
+    f = vsub(f, vmul(u, vdot(f, u)));
+    if (vlen(f) > 1e-4f) { bsb.U = u; bsb.F = vnorm(f); }
+    bsb.posed = 1;
+}
+/* BossStinkBugFunction */
+static V3 bsb_height(V3 p, float h3c, float h44) /* addHeightOffset, addLocalHeightOffset */
+{
+    p = vadd(p, vmul(bsb_g(), -h3c));
+    if (fabsf(h44) > 1e-6f) { V3 up; bsb_update_pose(); bsb_calc_up(&up); p = vadd(p, vmul(up, h44)); }
+    return p;
+}
+static void bsb_move_rail(float v, float h3c, float h44) /* moveRail */
+{
+    bsb_move_coord(v);
+    V3 rp = vadd(bsb_rail_at(bsb.coord, NULL), vmul(bsb_g(), -h3c));
+    bsb_turn_to(&bsb.ec, bsb_rail_dir(), 10.0f);
+    if (fabsf(h44) > 1e-6f) { V3 up; bsb_update_pose(); bsb_calc_up(&up); rp = vadd(rp, vmul(up, h44)); }
+    bsb.pos = rp;
+}
+static V3 bsb_diff_rail(float h3c, float h44) { return vsub(bsb.pos, bsb_height(bsb_rail_at(bsb.coord, NULL), h3c, h44)); } /* calcDiffCurrentRailPosition */
+static void bsb_regain(V3 d, float rate, float v, float h3c, float h44) /* regainToRail */
+{
+    bsb.rotz *= 0.9f;
+    bsb_move_coord(v);
+    V3 rp = bsb_height(bsb_rail_at(bsb.coord, NULL), h3c, h44), dif = vsub(rp, bsb.pos);
+    if (vlen(dif) < 1e-6f) bsb_turn_to(&bsb.ec, dif, 2.0f);
+    else bsb_turn_to(&bsb.ec, bsb_rail_dir(), 10.0f);
+    bsb.pos = vadd(rp, vmul(d, 1.0f - rate));
+}
+static void bsb_turn_ground(V3 v, float t, int to_end) /* turnRailGround */
+{
+    if ((bsb.dir > 0) == to_end) bsb.dir = -bsb.dir;
+    bsb.ec = bsb_rot(v, bsb_g(), bsb_ease(t) * 180.0f * -(to_end ? 1.0f : -1.0f));
+}
+static void bsb_turn_rail(V3 v, float roll0, float t, float spd, float h3c, float h44, int to_end) /* turnRail */
+{
+    float mv;
+    if (t <= 0.5f) mv = spd * bsb_ease(1.0f - t / 0.5f);
+    else { if ((bsb.dir > 0) == to_end) bsb.dir = -bsb.dir; mv = spd * bsb_ease((t - 0.5f) / 0.5f); }
+    bsb_move_coord(mv);
+    V3 rp = vadd(bsb_rail_at(bsb.coord, NULL), vmul(bsb_g(), -h3c));
+    float sg = to_end ? 1.0f : -1.0f, bend = 4.0f * t * (t - 1.0f), b2 = bend * bend;
+    float roll = roll0 * (1.0f - b2) + 90.0f * sg * b2;
+    while (roll < -180.0f) roll += 360.0f;
+    while (roll >= 180.0f) roll -= 360.0f;
+    bsb.rotz = roll;
+    bsb.ec = bsb_rot(v, bsb_g(), bsb_ease(t) * 180.0f * -sg);
+    if (fabsf(h44) > 1e-6f) { V3 up; bsb_update_pose(); bsb_calc_up(&up); rp = vadd(rp, vmul(up, h44)); }
+    bsb.pos = rp;
+}
+static void bsb_fall_vel(V3 from, float t, float f2, float f3) /* setFallVelocity */
+{
+    float k;
+    if (t < f2) { float q = 1.0f / f2 * (t - f2); q *= q; q *= q; k = 1.0f - q; }
+    else k = 1.0f - bsb_ease(1.0f / (1.0f - f2) * (t - f2));
+    bsb.vel = vsub(vadd(from, vmul(bsb_g(), k * f3)), bsb.pos);
+}
+static int bsb_player_back(float f) /* isExistPlayerBack */
+{
+    float d = bsb_nearest(mario->pos) - bsb.coord;
+    if (bsb.closed) { if (d > bsb.len / 2) d -= bsb.len; else if (d < -bsb.len / 2) d += bsb.len; }
+    if (bsb.dir < 0) d = -d;
+    return d < -f;
+}
+static void bsb_collision(int a, int b, int c) /* validateCollisionGround (0 1 1) / Fly (1 0 1) / HitOnly (0 0 1) / invalidate */
+{
+    bsb.kon[0] = a; bsb.kon[1] = b; bsb.kon[2] = c;
+    for (int k = 0; k < 3; k++) if (bsb.ki[k] >= 0 && bsb.ki[k] < ninsts) insts[bsb.ki[k]].kcl = bsb.kon[k] && !bsb.dead && !bsb.hidden ? bsb.kcl[k] : NULL;
+}
+static void bsb_base(float m[16]) /* calcAndSetBaseMtx: _DC, mPosition, mRotation (z) */
+{
+    V3 up; bsb_calc_up(&up);
+    basis_matrix(m, bsb.pos, up, bsb.F, 0);
+}
+static void bsb_joint(Anim *a, const float base[16], int j, float out[16])
+{
+    if (a && a->skin && (u32)j < a->skin->njoints) mat_mul(out, base, a->world[j]);
+    else memcpy(out, base, 64);
+}
+static void bsb_pieces(int n) /* appearStarPiece: Body's (0, 200, 0) along -gravity, 30 / 40 */
+{
+    float b[16], jm[16];
+    bsb_base(b); bsb_joint(bsb.anim, b, BSB_BODY, jm);
+    V3 p = v3(jm[12] + jm[4] * 200.0f, jm[13] + jm[5] * 200.0f, jm[14] + jm[6] * 200.0f);
+    launch_pieces(p, vmul(bsb_g(), -1.0f), n, 30.0f, 40.0f);
+    bsb_se(SE_OJ_STAR_PIECE_BURST);
+}
+static void bsb_dispose_bombs(void) { for (int i = 0; i < BSB_BOMBS; i++) bsb.bomb[i].state = 0; } /* disposeBomb: killAll */
+static float bsb_rnd(void) { return (float)(rand() & 0x7FFF) / 32767.0f * 2.0f - 1.0f; }
+static void bsb_throw_bomb(int wait) /* ActionBase::throwBomb: BossStinkBugFunction::throwBomb (20, 10) */
+{
+    if (bsb.bombt) { bsb.bombt--; return; }
+    int i = 0;
+    while (i < BSB_BOMBS && bsb.bomb[i].state) i++;
+    bsb.bombt = wait;
+    if (i == BSB_BOMBS) return;
+    float b[16], jb[16], jm[16];
+    bsb_base(b); bsb_joint(bsb.anim, b, BSB_BODY, jb);  /* the launcher on Body (initFixedPosition) */
+    bsb_joint(bsb.launcher, jb, 1, jm);                 /* DischargePosition */
+    V3 y = vmul(v3(jm[4], jm[5], jm[6]), -20.0f);
+    y = vadd(y, v3(bsb_rnd() * 10.0f, bsb_rnd() * 10.0f, bsb_rnd() * 10.0f)); /* addRandomVector */
+    bsb.bomb[i].pos = v3(jm[12], jm[13], jm[14]); bsb.bomb[i].vel = y; bsb.bomb[i].state = 1; bsb.bomb[i].t = 0;
+    bsb_se(SE_BM_BOSS_BUG_BOMB_EMIT);
+    bsb_clip(bsb.launcher, "bossstinkbugbomblauncher", "discharge", 1);
+}
+static int bsb_mine(int inst) { return inst >= 0 && (inst == bsb.ki[0] || inst == bsb.ki[1] || inst == bsb.ki[2]); }
+static void update_bsb_bombs(void)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < BSB_BOMBS; i++) {
+        typeof(&bsb.bomb[0]) o = &bsb.bomb[i];
+        if (!o->state) continue;
+        V3 g = vmul(up_at(o->pos, v3(0, 1, 0)), -1.0f);
+        float at[3] = {o->pos.x, o->pos.y, o->pos.z};
+        if (o->state == 1) { /* exeWait */
+            o->vel = vadd(o->vel, vmul(g, 1.2f)); /* addVelocityToGravity */
+            float dn = vdot(g, o->vel);
+            V3 np = vadd(o->pos, o->vel);
+            Hit h[8];
+            int n = kcl_query(np, 60.0f, h, 8), bound = 0;
+            for (int k = 0; k < n; k++) {
+                if (bsb_mine(h[k].inst)) continue;
+                np = vadd(np, vmul(h[k].n, h[k].dist));
+                float vn = vdot(o->vel, h[k].n);
+                if (vn < 0) o->vel = vsub(o->vel, vmul(h[k].n, 1.8f * vn)); /* reboundVelocityFromCollision 0.8 */
+                bound = 1;
+            }
+            if (bound && dn >= 9.5f) se_start(SE_BM_BOSS_BUG_BOMB_GROUND, at); /* (its volume by the impact: none) */
+            o->pos = np;
+            o->vel = vmul(o->vel, bound ? 0.9f : 0.98f); /* attenuateVelocity */
+            bsb.blv[i] = se_level(o->t < 112 ? SE_BM_BOSS_BUG_BOMB_COUNT1 : SE_BM_BOSS_BUG_BOMB_COUNT2, at, bsb.blv[i]);
+            if (vlen(vsub(c, o->pos)) < 60.0f + HIT_BODY_R && mario_attack(ATK_EXPLOSION, o->pos)) { /* body: sendMsgEnemyAttackExplosion */
+                fx_at(FX_KURIBO_DEATHSMOKEKURIBO, o->pos, vmul(g, -1.0f)); o->state = 0; continue; /* ponytail: Explosion effect */
+            }
+            if (o->t > 150) { o->state = 2; o->t = -1; }
+        } else { /* exeExplosion */
+            if (o->t == 0) {
+                se_start(SE_BM_BOSS_BUG_BOMB_BANG, at); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, o->pos, vmul(g, -1.0f));
+                float dm = vlen(vsub(mario->pos, o->pos));
+                if (dm < 800.0f) { pad_rumble(RUMBLE_STRONG); camera_shake(SHAKE_STRONG); } /* tryRumblePadAndCameraDistanceStrong */
+                else if (dm < 1200.0f) { pad_rumble(RUMBLE_MIDDLE); camera_shake(SHAKE_NORMAL); }
+                else if (dm < 2000.0f) { pad_rumble(RUMBLE_WEAK); camera_shake(SHAKE_WEAK); }
+                o->vel = v3(0, 0, 0);
+            }
+            float t = o->t >= 10 ? 1.0f : o->t / 10.0f, r = 280.0f * (1.0f - (1.0f - t) * (1.0f - t)); /* calcNerveEaseOutValue */
+            if (vlen(vsub(c, o->pos)) < r + HIT_BODY_R) mario_attack(ATK_EXPLOSION, o->pos);
+            if (o->t > 20) o->state = 0;
+        }
+        o->t++;
+    }
+}
+int bsb_shot(V3 at) /* BossStinkBugBomb::receiveMsgPlayerAttack isMsgStarPieceAttack: Explosion, kill */
+{
+    for (int i = 0; bsb.row >= 0 && i < BSB_BOMBS; i++)
+        if (bsb.bomb[i].state == 1 && vlen(vsub(at, bsb.bomb[i].pos)) < 60.0f + 40.0f) {
+            fx_at(FX_KURIBO_DEATHSMOKEKURIBO, bsb.bomb[i].pos, up_at(bsb.bomb[i].pos, v3(0, 1, 0)));
+            bsb.bomb[i].state = 0;
+            return 1;
+        }
+    return 0;
+}
+static int bsb_face_to(V3 target, float deg) /* isFaceToTargetDegree */
+{
+    V3 d = vsub(target, bsb.pos);
+    return vlen(d) > 1e-4f && vdot(vnorm(d), vnorm(bsb.ec)) >= cosf(deg * 0.0174533f);
+}
+static int bsb_face_hv(float h, float v) /* isFaceToPlayerDegreeHV */
+{
+    V3 g = bsb_g(), d = vsub(mario->pos, bsb.pos), dh = vsub(d, vmul(g, vdot(d, g))), fh = vsub(bsb.ec, vmul(g, vdot(bsb.ec, g)));
+    if (vlen(dh) < 1e-4f || vlen(fh) < 1e-4f) return 0;
+    if (vdot(vnorm(dh), vnorm(fh)) < cosf(h * 0.0174533f)) return 0;
+    float va = atan2f(fabsf(vdot(d, g)), vlen(dh)) * 57.29578f;
+    return va <= v;
+}
+static void bsb_hit_fx(void) { float b[16]; bsb_base(b); fx_named("BossStinkBug", "Hit", b, NULL, NULL); } /* emitEffectHit "Hit" */
+static void bsb_cam(int on) /* startEventCamera / endEventCamera "Fall" (startMultiActorCameraTargetSelf) */
+{
+    if (on && !bsb.cam) bsb.cam = camera_actor_start("BossStinkBug", "Fall", (unsigned short)row_camset[bsb.row], bsb.U, bsb.F, bsb.pos);
+    else if (!on && bsb.cam) { camera_event_stop(); bsb.cam = 0; }
+}
+static int bsb_angry(void) { return bsb.seq == BQ_FLYHIGH; } /* BossStinkBugActionFlyHigh::isAngry */
+static void bsb_fly_sound(int k) /* startSoundFly (ponytail: calcFlySoundVol / calcIIRCutOff not applied) */
+{
+    switch (k) {
+    case 0: bsb_lv(0, bsb_angry() ? SE_BM_LV_BOSS_BUG_FLY_BASE2 : SE_BM_LV_BOSS_BUG_FLY_BASE); break;
+    case 1: bsb_lv(0, SE_BM_LV_BOSS_BUG_FLY_ROTATE); bsb_lv(3, SE_BM_LV_BOSS_BUG_FLY_ROTATE2); break;
+    case 2: bsb_lv(0, SE_BM_LV_BOSS_BUG_FLY_ROLL); break;
+    default: bsb_lv(0, bsb_angry() ? SE_BM_LV_BOSS_BUG_FLY_SHAKE2 : SE_BM_LV_BOSS_BUG_FLY_SHAKE); break;
+    }
+    bsb_lv(1, SE_BM_LV_BOSS_BUG_FLY_ADD); bsb_lv(2, SE_BM_LV_BOSS_BUG_FLY_ALARM);
+}
+static float bsb_spring(void) /* SpringValue::update (0.02, 0.95) */
+{
+    bsb.spvel = (bsb.spvel + (bsb.a3c - bsb.spv) * 0.02f) * 0.95f;
+    bsb.spv += bsb.spvel;
+    return bsb.spv;
+}
+/* ActionBase::update*: 1 when done */
+static int bsb_upd(int which)
+{
+    int st = bsb.st, first = st == 0;
+    switch (which) {
+    case BA_START: /* updateGroundRegainRail(sWalkSpeed 5) */
+        if (first) { bsb_bck("groundwalk", 0); bsb.a14 = bsb_diff_rail(bsb.a3c, bsb.a44); }
+        bsb_regain(bsb.a14, bsb_rate(90), 5.0f, 0, 0); bsb.a48 = 5.0f;
+        return st > 90;
+    case BA_WALK: /* updateGroundWalk(5) */
+        if (first) bsb_bck("groundwalk", 0);
+        bsb_move_rail(5.0f, 0, 0); bsb.a48 = 5.0f;
+        return 0;
+    case BA_FIND:
+        if (first) { bsb_se(SE_BV_BOSS_BUG_ATTACK_G); bsb_bck("find", 1); bsb.a48 = 0; }
+        return bsb_bck_stopped();
+    case BA_SHAKEOFF:
+        if (first) bsb_bck("groundride", 1);
+        bsb.a48 *= 0.95f; bsb_move_rail(bsb.a48, 0, 0);
+        return st > 90;
+    case BA_SHAKEOFFRUN: case BA_RUN: case BA_GROUNDRUN: { /* updateGroundRun(sRunSpeed 20; FlyHigh 25) */
+        float sp = which == BA_GROUNDRUN ? 25.0f : 20.0f;
+        if (first) bsb_bck("groundrun", 1); /* validateAttack (attack_left / right: their attackSensor does nothing) */
+        bsb.a48 = sp * bsb_rate(60); bsb_move_rail(bsb.a48, 0, 0);
+        return st > 180;
+    }
+    case BA_ATTACKSUCCESS:
+        if (first) bsb_bck("attacksuccess", 1);
+        if (st == 12) bsb_se(SE_BV_BOSS_BUG_GLAD);
+        bsb.a48 *= 0.75f; bsb_move_rail(bsb.a48, 0, 0);
+        return st > 180;
+    case BA_COOLDOWN:
+        if (first) bsb_bck("cooldown", 1);
+        bsb_lv(4, SE_BM_LV_BOSS_BUG_BRAKE);
+        bsb.a48 *= 0.95f; bsb_move_rail(bsb.a48, 0, 0);
+        return bsb_bck_stopped();
+    case BA_TURN:
+        if (first) { bsb.a20 = bsb.ec; bsb.a50 = bsb.dir > 0; bsb_bck(bsb.a50 ? "groundturnleft" : "groundturnright", 1); bsb.a48 = 0; }
+        bsb_turn_ground(bsb.a20, bsb_rate(120), bsb.a50);
+        return st > 160;
+    case BA_DAMAGE: /* updateGroundDamage */
+        if (first) {
+            bsb.vel = v3(0, 0, 0); bsb_se(SE_BM_BOSS_BUG_PRESSED); bsb_bck("grounddamage", 1);
+            pad_rumble(RUMBLE_STRONG); camera_shake(SHAKE_STRONG); bsb_cam(1); bsb_dispose_bombs();
+            bsb.a48 = 0; bsb.ctrl_off = 1; /* offPlayerControl */
+        }
+        if (st == 9) bsb_se(SE_BV_BOSS_BUG_DAMAGE);
+        if (bsb_bck_stopped()) { bsb.ctrl_off = 0; bsb_cam(0); return 1; }
+        return 0;
+    case BA_FLY:
+        if (first) bsb_bck("flywait", 1);
+        bsb_fly_sound(0); bsb.a48 = bsb.a38; bsb_move_rail(bsb.a48, bsb.a3c, bsb.a44);
+        return 0;
+    case BA_SHAKEOFFSIGN: { /* updateFlyShakeOffSign(120) */
+        if (first) { bsb_bck("flyride", 1); bsb.spv = bsb.a3c; bsb.spvel = -15.0f; }
+        bsb_fly_sound(0);
+        bsb.a48 = st < 10 ? bsb_eio(120, bsb.a38, 3.0f) : 3.0f; /* calcShakeOffSignSpeed */
+        bsb_move_rail(bsb.a48, bsb_spring(), bsb.a44);
+        return st > 120;
+    }
+    case BA_SHAKEOFFFLY:
+        if (first) bsb_bck("flyrollright", 1);
+        bsb_fly_sound(3);
+        bsb.a48 = bsb_eio(bsb_bck_len("flyrollright"), 3.0f, bsb.a38); /* calcShakeOffSpeed */
+        bsb_move_rail(bsb.a48, bsb_spring(), bsb.a44);
+        return bsb_bck_stopped();
+    case BA_SHAKEOFFWAIT:
+        if (first) bsb_bck("flyrollwaitright", 1);
+        bsb_fly_sound(0); bsb.a48 = 35.0f; bsb_move_rail(bsb.a48, bsb.a3c, bsb.a44);
+        return st > 30;
+    case BA_SHAKEOFFEND:
+        if (first) bsb_bck("flyrollendright", 1);
+        bsb_fly_sound(0);
+        bsb.a48 = bsb_eio(bsb_bck_len("flyrollendright"), 35.0f, bsb.a38); /* calcShakeOffEndSpeed */
+        bsb_move_rail(bsb.a48, bsb.a3c, bsb.a44);
+        return bsb_bck_stopped();
+    case BA_ROLLSIGN: /* updateFlyRollSign(60) */
+        if (first) bsb_bck("flyrollsignright", 1);
+        if (st == 10) bsb_se(SE_BV_BOSS_BUG_ROLL);
+        bsb_fly_sound(0); bsb.a48 = bsb.a38; bsb_move_rail(bsb.a48, bsb.a3c, bsb.a44);
+        return st > 60;
+    case BA_ROLL:
+        if (first) bsb_bck("flyrollright", 1);
+        bsb_fly_sound(0); bsb.a48 = bsb.a38; bsb_move_rail(bsb.a48, bsb.a3c, bsb.a44);
+        return bsb_bck_stopped();
+    case BA_ROLLWAIT:
+        if (first) bsb_bck("flyrollwaitright", 1);
+        bsb_fly_sound(0); bsb.a48 = bsb.a38; bsb_move_rail(bsb.a48, bsb.a3c, bsb.a44);
+        return st > bsb.a68;
+    case BA_ROLLEND:
+        if (first) bsb_bck("flyrollendright", 1);
+        bsb_fly_sound(0); bsb.a48 = bsb.a38; bsb_move_rail(bsb.a48, bsb.a3c, bsb.a44);
+        return bsb_bck_stopped();
+    case BA_DASH: /* updateFlyDash(15) */
+        if (first) { bsb_bck("flywait", 0); bsb.a14 = bsb_diff_rail(bsb.a3c, bsb.a44); }
+        bsb_fly_sound(0);
+        bsb.a48 = st < 30 ? bsb_eio(30, 15.0f, 40.0f) : bsb_eio2(30, 100, 40.0f, bsb.a38);
+        bsb_regain(bsb.a14, bsb_rate(100), bsb.a48, bsb.a3c, bsb.a44);
+        return st > 100;
+    case BA_TURNSIGN:
+        if (first) { bsb_se(SE_BV_BOSS_BUG_TURN); bsb_bck("flyturnsign", 1); }
+        bsb_fly_sound(0); bsb.a48 = bsb.a38; bsb_move_rail(bsb.a48, bsb.a3c, bsb.a44);
+        return bsb_bck_stopped();
+    case BA_FLYTURN:
+        if (first) { bsb_bck("flyturn", 1); bsb.a20 = bsb.ec; bsb.a50 = bsb.dir > 0; }
+        bsb_fly_sound(1); bsb.a48 = 0;
+        bsb_turn_rail(bsb.a20, 0.0f, bsb_rate(120), bsb.a38, bsb.a3c, bsb.a44, bsb.a50);
+        return st > 120;
+    case BA_FALL: { /* updateFall */
+        if (first) { bsb_cam(1); bsb_bck("fall", 1); bsb.a14 = bsb.pos; bsb.a48 = 0; bsb_dispose_bombs(); }
+        bsb_lv(1, SE_BM_LV_BOSS_BUG_FLY_ADD);
+        bsb_fall_vel(bsb.a14, bsb_rate(80), 0.3f, 1100.0f);
+        /* onBind: its binder (300, 300 up) against the map, its own parts left out */
+        V3 np = vadd(bsb.pos, bsb.vel), ctr = vadd(np, vmul(bsb_g(), -300.0f));
+        Hit h[8];
+        int n = kcl_query(ctr, 300.0f, h, 8), bound = 0;
+        for (int k = 0; k < n; k++) if (!bsb_mine(h[k].inst) && vdot(h[k].n, bsb_g()) < -0.3f) { np = vadd(np, vmul(h[k].n, h[k].dist)); bound = 1; }
+        bsb.pos = np;
+        if (bound) { bsb.vel = v3(0, 0, 0); return 1; }
+        return 0;
+    }
+    case BA_FALLDAMAGE:
+        if (first) {
+            bsb_se(SE_BM_BOSS_BUG_PRESSED); bsb_bck("falldamage", 1); bsb_clip(bsb.wing, "bossstinkbugwing", "falldamage", 1);
+            pad_rumble(RUMBLE_STRONG); camera_shake(SHAKE_STRONG); bsb.a48 = 0; bsb.ctrl_off = 1; bsb_dispose_bombs();
+        }
+        if (st == 9) bsb_se(SE_BV_BOSS_BUG_DAMAGE);
+        if (bsb_bck_stopped()) { bsb.ctrl_off = 0; bsb_cam(0); return 1; }
+        return 0;
+    }
+    return 0;
+}
+/* the actions' message handling (receiveMsgPlayerAttack / receiveOtherMsg), then their nerves */
+static void bsb_ground(void) /* BossStinkBugActionGround */
+{
+    int n = bsb.nrv;
+    if (hip_hit && bsb_mine(hip_inst) && (n == BA_WALK || n == BA_FIND || n == BA_SHAKEOFF || n == BA_SHAKEOFFRUN ||
+                                         n == BA_RUN || n == BA_TURN || n == BA_COOLDOWN)) { /* isEnableHipDrop */
+        pad_rumble(RUMBLE_STRONG); camera_shake(SHAKE_NORMAL); bsb_hit_fx();
+        se_start(SE_SY_VS_BOSS_DAMAGE_1, NULL);
+        printf("boss stink bug: hip drop (ground)" "\n");
+        bsb_set(BA_DAMAGE);
+    } else if (mario->grounded && mario_ground == bsb.ki[2] && (n == BA_WALK || n == BA_RUN)) bsb_set(BA_SHAKEOFF); /* isEnableShakeStart, FloorTouch */
+    else if ((n == BA_RUN || n == BA_SHAKEOFFRUN) && ((mario_wall_inst >= 0 && (mario_wall_inst == bsb.ki[0] || mario_wall_inst == bsb.ki[1])) ||
+                                                    (collide_ceil && (collide_ceil_inst == bsb.ki[0] || collide_ceil_inst == bsb.ki[1]))) &&
+             bsb_face_to(mario->pos, 45.0f)) {
+        V3 fr = bsb_rail_at(bsb.coord + bsb.dir * 2000.0f, NULL); /* calcRailPosFrontCoord 2000 */
+        if (mario_attack(ATK_MAXIMUM, vsub(mario->pos, vsub(fr, bsb.pos)))) { /* sendMsgEnemyAttackMaximumToDir */
+            bsb_collision(0, 0, 0); bsb_set(BA_ATTACKSUCCESS);
+            printf("boss stink bug: runs Mario down" "\n");
+        }
+    }
+    bsb.st++;
+    switch (bsb.nrv) {
+    case BA_START: if (bsb_upd(BA_START)) bsb_set(BA_WALK); break;
+    case BA_WALK: {
+        bsb_upd(BA_WALK);
+        float d = vlen(vsub(mario->pos, bsb.pos));
+        if (500.0f <= d && d <= 1900.0f && bsb_face_hv(45.0f, 15.0f)) bsb_set(BA_FIND);
+        else if (bsb_player_back(2500.0f)) bsb_set(BA_TURN);
+        break;
+    }
+    case BA_DAMAGE: if (bsb_upd(BA_DAMAGE)) bsb.dead = 1; break;
+    case BA_FIND: if (bsb_upd(BA_FIND)) bsb_set(BA_RUN); break;
+    case BA_SHAKEOFF: if (bsb_upd(BA_SHAKEOFF)) bsb_set(BA_SHAKEOFFRUN); break;
+    case BA_SHAKEOFFRUN: case BA_RUN: if (bsb_upd(BA_RUN)) bsb_set(BA_COOLDOWN); break;
+    case BA_ATTACKSUCCESS: if (bsb_upd(BA_ATTACKSUCCESS)) { bsb_collision(0, 1, 1); bsb_set(BA_WALK); } break; /* endAttackSuccess */
+    case BA_COOLDOWN:
+        if (bsb_upd(BA_COOLDOWN)) {
+            V3 g = bsb_g(), d = vsub(mario->pos, bsb.pos), dh = vsub(d, vmul(g, vdot(d, g))); /* isFaceToPlayerHorizontalDegree 90 */
+            bsb_set(vlen(dh) > 1e-4f && vdot(vnorm(dh), bsb.ec) >= 0.0f ? BA_WALK : BA_TURN);
+        }
+        break;
+    case BA_TURN: if (bsb_upd(BA_TURN)) bsb_set(BA_WALK); break;
+    }
+    bsb_update_pose(); /* control: updatePose (ponytail: updateEffectFloorCodeLineToMap, SE versions) */
+}
+static void bsb_fly(int high) /* BossStinkBugActionFlyLow / FlyHigh */
+{
+    int n = bsb.nrv;
+    int hipok = high ? (n == BA_FLY || n == BA_ROLLSIGN || n == BA_ROLL || n == BA_ROLLEND || n == BA_SHAKEOFFSIGN || n == BA_SHAKEOFFFLY ||
+                        n == BA_SHAKEOFFEND || n == BA_TURNSIGN || n == BA_TOGROUND || n == BA_LAND || n == BA_GROUNDRUN || n == BA_TOFLY || n == BA_FLYTURN)
+                     : (n == BA_FLY || n == BA_SHAKEOFFSIGN || n == BA_SHAKEOFFFLY || n == BA_SHAKEOFFEND || n == BA_TURNSIGN || n == BA_FLYTURN);
+    int attackok = n != BA_FALL && n != BA_FALLDAMAGE;
+    if (hip_hit && bsb_mine(hip_inst) && hipok) {
+        pad_rumble(RUMBLE_STRONG); camera_shake(SHAKE_NORMAL); bsb_hit_fx();
+        if (hip_inst == bsb.ki[2]) { /* isHipDropableSensor: BodyHipDrop */
+            if (high) { bsb_set(n == BA_LAND || n == BA_GROUNDRUN ? BA_FALLDAMAGE : BA_FALL); se_start(SE_SY_VS_BOSS_LAST_HIT, NULL); }
+            else { se_start(SE_SY_VS_BOSS_DAMAGE_2, NULL); bsb_set(BA_FALL); }
+            printf("boss stink bug: hip drop (%s)" "\n", high ? "fly high" : "fly low");
+        }
+    } else if (mario->grounded && mario_ground == bsb.ki[2] &&
+               (high ? (n == BA_FLY || n == BA_ROLLSIGN || n == BA_ROLLEND) : n == BA_FLY)) bsb_set(BA_SHAKEOFFSIGN); /* FloorTouch */
+    else if (high && attackok && ((mario_wall_inst >= 0 && (mario_wall_inst == bsb.ki[0] || mario_wall_inst == bsb.ki[1])) ||
+                                  (collide_ceil && (collide_ceil_inst == bsb.ki[0] || collide_ceil_inst == bsb.ki[1]))) &&
+             bsb_face_to(mario->pos, 45.0f)) mario_attack(ATK_STRONG, vsub(mario->pos, vmul(bsb.ec, 50.0f))); /* sendMsgEnemyAttackStrongToDir */
+    bsb.st++;
+    switch (bsb.nrv) {
+    case BA_DASH: if (bsb_upd(BA_DASH)) bsb_set(BA_FLY); break;
+    case BA_FLY:
+        if (!high) {
+            bsb.a64 += 0.05235988f; if (bsb.a64 >= 6.2831853f) bsb.a64 -= 6.2831853f;
+            bsb.a3c = 900.0f + sinf(bsb.a64) * 100.0f;
+            bsb_throw_bomb(60);
+            bsb_upd(BA_FLY);
+            if (bsb_player_back(2000.0f)) bsb_set(BA_TURNSIGN);
+        } else {
+            bsb_throw_bomb(40);
+            bsb_upd(BA_FLY);
+            if (bsb.a70 >= 2) { if (bsb_player_back(1500.0f)) { bsb_set(BA_TURNSIGN); bsb.a70 = 0; } }
+            else if (bsb.st > bsb.a68) { bsb_set(BA_ROLLSIGN); bsb.a70++; }
+        }
+        break;
+    case BA_SHAKEOFFSIGN: if (high) bsb_throw_bomb(40); if (bsb_upd(BA_SHAKEOFFSIGN)) bsb_set(BA_SHAKEOFFFLY); break;
+    case BA_SHAKEOFFFLY: if (high) bsb_throw_bomb(40); if (bsb_upd(BA_SHAKEOFFFLY)) bsb_set(BA_SHAKEOFFWAIT); break;
+    case BA_SHAKEOFFWAIT: if (high) bsb_throw_bomb(40); if (bsb_upd(BA_SHAKEOFFWAIT)) bsb_set(BA_SHAKEOFFEND); break;
+    case BA_SHAKEOFFEND: if (bsb_upd(BA_SHAKEOFFEND)) { if (high) bsb.bombt = 0; bsb_set(BA_FLY); } break;
+    case BA_ROLLSIGN: bsb_throw_bomb(40); if (bsb_upd(BA_ROLLSIGN)) bsb_set(BA_ROLL); break;
+    case BA_ROLL: bsb_throw_bomb(40); if (bsb_upd(BA_ROLL)) bsb_set(BA_ROLLWAIT); break;
+    case BA_ROLLWAIT: bsb_throw_bomb(40); if (bsb_upd(BA_ROLLWAIT)) bsb_set(BA_ROLLEND); break;
+    case BA_ROLLEND: if (bsb_upd(BA_ROLLEND)) { bsb.bombt = 0; bsb_set(BA_FLY); } break;
+    case BA_TURNSIGN: if (bsb_upd(BA_TURNSIGN)) bsb_set(BA_FLYTURN); break;
+    case BA_FLYTURN: if (bsb_upd(BA_FLYTURN)) bsb_set(BA_FLY); break;
+    case BA_FALL: if (bsb_upd(BA_FALL)) bsb_set(BA_FALLDAMAGE); break;
+    case BA_FALLDAMAGE: if (bsb_upd(BA_FALLDAMAGE)) bsb.dead = 1; break;
+    }
+    if (bsb.nrv != BA_FALL) bsb.vel = v3(0, 0, 0); /* control: zeroVelocity but in Fall */
+}
+static const char *const bsb_demo_names[] = {"ボスカメムシオープニングデモ", "ボスカメムシ飛行デモ", "ボスカメムシ怒りデモ", "ボスカメムシ終了デモ"};
+static const char *const bsb_demo_clips[] = {"openingdemo", "flydemo", "angrydemo", "finishdemo"};
+static void bsb_demo_mtx(float m[16]) /* the DemoPositionController: initDefaultPos (the boss's placement) */
+{
+    const Row *r = &sc->objs[bsb.row];
+    float one[3] = {1, 1, 1};
+    mat_translate_rot_scale(m, r->pos, r->rot, one);
+}
+static void bsb_demo_step(int k) /* the four demos' TryStart / Demo (/ AppearPowerStar) */
+{
+    const char *name = bsb_demo_names[k], *clip = bsb_demo_clips[k];
+    char cn[32];
+    snprintf(cn, sizeof cn, "bsbdemo/%s", clip);
+    bsb.st++;
+    if (bsb.nrv == BA_TRYSTART) {
+        if (pd_try_start(name, bsb.row)) bsb_set(BA_DEMO), bsb.st = 0; /* requestStartDemoMarioPuppetable: Demo at once */
+        else return;
+    }
+    float dm[16];
+    bsb_demo_mtx(dm);
+    if (bsb.nrv == BA_DEMO) {
+        if (bsb.st == 0) {
+            render_cover(2); /* overlayWithPreviousScreen(2) */
+            if (k == 0) bgm_stop(60); else if (k != 2) bgm_stop(30);
+            bsb_clip(bsb.demo, "bossstinkbugdemo", clip, 1); /* startDemo: startBck, startAnimCameraTargetSelf */
+            bsb_bck(clip, 1);
+            bsb_clip(bsb.wing, "bossstinkbugwing", clip, 1);
+            if (k == 1) bsb_clip(bsb.launcher, "bossstinkbugbomblauncher", "flydemo", 1);
+            printf("boss stink bug: %s" "\n", clip);
+        }
+        if (k == 1) { /* FlyDemo's sounds */
+            if (bsb.st > 113) bsb_lv(1, SE_BM_LV_BOSS_BUG_FLY_ADD);
+            if (bsb.st > 260) { bsb_lv(0, SE_BM_LV_BOSS_BUG_FLY_BASE); bsb_lv(2, SE_BM_LV_BOSS_BUG_FLY_ALARM); }
+            if (bsb.st > 48 && bsb.st < 90) bsb_lv(3, SE_BM_LV_BOSS_BUG_SHAKE_BODY);
+            if (bsb.st == 230) bsb_se(SE_BM_BOSS_BUG_CLOSE_FEET);
+            if (bsb.st > 110 && bsb.st < 263) bsb_lv(4, SE_BM_LV_BOSS_BUG_FLY_START);
+        }
+        if (k == 2) { /* AngryDemo's */
+            if (bsb.st > 155) { bsb_lv(1, SE_BM_LV_BOSS_BUG_FLY_ADD); bsb_lv(2, SE_BM_LV_BOSS_BUG_FLY_ALARM); }
+            if (bsb.st > 200) bsb_lv(0, SE_BM_LV_BOSS_BUG_FLY_BASE2);
+        }
+        int cf = canm_frames(cn);
+        if (cf) demo_camera(cn, bsb.st < cf ? bsb.st : cf - 1, dm); /* (held on its last frame until endAnimCamera) */
+        if (bsb.demo && bsb.demo->skin && bsb.demo->skin->njoints > 2) { /* setPlayerBaseMtx(MarioPosition), setPose(Boss) */
+            anim_update(bsb.demo);
+            float jm[16];
+            mat_mul(jm, dm, bsb.demo->world[2]);
+            mario->pos = v3(jm[12], jm[13], jm[14]); mario->up = vnorm(v3(jm[4], jm[5], jm[6]));
+            mario->face = vnorm(vtangent(v3(jm[8], jm[9], jm[10]), mario->up));
+            mat_mul(jm, dm, bsb.demo->world[1]);
+            bsb.pos = v3(jm[12], jm[13], jm[14]); bsb.U = vnorm(v3(jm[4], jm[5], jm[6]));
+            bsb.F = vnorm(v3(jm[8], jm[9], jm[10])); bsb.ec = bsb.F; bsb.posed = 1;
+        }
+        if (bsb_bck_stopped() && bsb.st > 0) {
+            if (k == 3) { bsb_set(BA_APPEARSTAR); return; }
+            camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45); /* endDemo: endAnimCamera */
+            pd_end(name);
+            bsb.dead = 1;
+        }
+        return;
+    }
+    /* FinishDemo::exeAppearPowerStar */
+    if (bsb.st == 0) {
+        float b[16]; bsb_base(b); fx_named("BossStinkBug", "Death", b, NULL, NULL);
+        bsb_se(SE_BM_BOSS_BUG_EXPLODE); bsb.hidden = 1; bsb_collision(0, 0, 0); pad_rumble(RUMBLE_VERY_STRONG);
+    }
+    int cf = canm_frames(cn);
+    if (cf) demo_camera(cn, cf - 1, dm);
+    if (bsb.st == 60) {
+        camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45);
+        note_star_row = bsb.row; note_star_at = bsb.pos; row_kill(bsb.row); /* requestAppearPowerStar(this, mPosition) */
+        pd_end(name); render_cover(2); bgm_after_boss();
+        printf("boss stink bug: down, its star" "\n");
+    }
+    if (bsb.st > 60) { /* isEndPowerStarAppearDemo: kill (onSwitchDead) */
+        const Row *r = &sc->objs[bsb.row];
+        if (r->sw[SW_DEAD] >= 0) sw_set(r, SW_DEAD, 1);
+        bsb.dead = 1;
+    }
+}
+static void update_bsb(void)
+{
+    if (bsb.row < 0 || bsb.seq == BQ_END || !dx_cls_moves("BossStinkBug")) return;
+    const Row *r = &sc->objs[bsb.row];
+    bsb.posed = 0;
+    if (bsb.anim && m_bsb && m_bsb->skin && bsb.anim->skin != m_bsb->skin) anim_bind(bsb.anim, m_bsb->skin);
+    if (bsb.wing && m_bsbwing && m_bsbwing->skin && bsb.wing->skin != m_bsbwing->skin) anim_bind(bsb.wing, m_bsbwing->skin);
+    if (bsb.launcher && m_bsblaunch && m_bsblaunch->skin && bsb.launcher->skin != m_bsblaunch->skin) anim_bind(bsb.launcher, m_bsblaunch->skin);
+    if (bsb.demo && m_bsbdemo && m_bsbdemo->skin && bsb.demo->skin != m_bsbdemo->skin) anim_bind(bsb.demo, m_bsbdemo->skin);
+    if (bsb.seq == BQ_WAITSTART) {
+        if (r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) return; /* listenStageSwitchOnA: start */
+        bsb_seq(BQ_OPENING); bsb.hidden = 0;
+        printf("boss stink bug: start" "\n");
+    }
+    bsb.sst++;
+    if (bsb.sst == 0) { /* updateActorStateAndNextNerve: the action's appear */
+        bsb.dead = 0; bsb.st = -1; bsb.bombt = 0;
+        switch (bsb.seq) {
+        case BQ_OPENING: case BQ_FLYDEMO: case BQ_ANGRYDEMO: case BQ_FINISHDEMO: bsb.nrv = BA_TRYSTART; break;
+        case BQ_GROUND: /* exeGround: startBossBGM(StinkBugA); ActionGround::appear */
+            bgm_boss(0);
+            bsb.coord = bsb_nearest(bsb.pos); bsb_collision(0, 1, 1);
+            bsb_clip(bsb.launcher, "bossstinkbugbomblauncher", "close", 1); bsb_clip(bsb.wing, "bossstinkbugwing", "ground", 1);
+            bsb.a38 = 15.0f; bsb.a3c = bsb.a44 = 0; bsb.nrv = BA_START;
+            break;
+        case BQ_FLYLOW: case BQ_FLYHIGH: { /* exeFlyLow: appearStarPiece(8), startBossBGM(StinkBugB) / exeFlyHigh: 16 */
+            int high = bsb.seq == BQ_FLYHIGH;
+            bsb_pieces(high ? 16 : 8);
+            if (!high) bgm_boss(1);
+            bsb.coord = bsb_nearest(bsb.pos);
+            if (bsb.dir > 0) bsb.dir = -1; /* isRailGoingToEnd: reverseRailDirection */
+            bsb.a38 = high ? 20.0f : 14.0f; bsb.a3c = high ? 1000.0f : 900.0f; bsb.a44 = -400.0f; bsb.a64 = 0;
+            if (high) { /* calcKeepRollTime(60) (its constructor) */
+                float f1 = bsb.len * (2.0f / 3.0f) / bsb.a38, f2 = (float)(bsb_bck_len("flyrollright") + bsb_bck_len("flyrollendright") + 60);
+                bsb.a68 = (int)((f1 - f2) / 2); if (bsb.a68 < 0) bsb.a68 = 0;
+                bsb.a70 = 0;
+            }
+            bsb.nrv = BA_DASH; bsb_collision(1, 0, 1);
+            bsb_clip(bsb.launcher, "bossstinkbugbomblauncher", "open", 1); bsb_clip(bsb.wing, "bossstinkbugwing", "fly", 1);
+            break;
+        }
+        }
+    }
+    switch (bsb.seq) {
+    case BQ_OPENING: bsb_demo_step(0); if (bsb.dead) bsb_seq(BQ_GROUND); break;
+    case BQ_GROUND: bsb_ground(); if (bsb.dead) bsb_seq(BQ_FLYDEMO); break;
+    case BQ_FLYDEMO: bsb_demo_step(1); if (bsb.dead) bsb_seq(BQ_FLYLOW); break;
+    case BQ_FLYLOW: bsb_fly(0); if (bsb.dead) bsb_seq(BQ_ANGRYDEMO); break;
+    case BQ_ANGRYDEMO: bsb_demo_step(2); if (bsb.dead) bsb_seq(BQ_FLYHIGH); break;
+    case BQ_FLYHIGH: bsb_fly(1); if (bsb.dead) bsb_seq(BQ_FINISHDEMO); break;
+    case BQ_FINISHDEMO: bsb_demo_step(3); if (bsb.dead) bsb_seq(BQ_END); break;
+    }
+    bsb_collision(bsb.kon[0], bsb.kon[1], bsb.kon[2]); /* (its instances' collision after a rebind too) */
+    bsb.pos = vadd(bsb.pos, bsb.nrv == BA_FALL ? v3(0, 0, 0) : bsb.vel); /* (Fall moves itself against the map) */
+    bsb_update_pose();
+    /* calcAnim: its clip, the parts on their joints, its collision parts on Body */
+    float b[16], jb[16];
+    if (bsb.anim && bsb.anim->skin) anim_update(bsb.anim);
+    if (bsb.wing && bsb.wing->skin) anim_update(bsb.wing);
+    if (bsb.launcher && bsb.launcher->skin) anim_update(bsb.launcher);
+    bsb_base(b); bsb_joint(bsb.anim, b, BSB_BODY, jb);
+    for (int k = 0; k < 3; k++) if (bsb.ki[k] >= 0 && bsb.ki[k] < ninsts) memcpy(insts[bsb.ki[k]].m, jb, 64);
+    update_bsb_bombs();
+}
+static void bsb_draw(void)
+{
+    if (bsb.row < 0) return;
+    float b[16], jm[16];
+    if (bsb.seq != BQ_WAITSTART && bsb.seq != BQ_END && !bsb.hidden && m_bsb) {
+        bsb_base(b);
+        if (m_bsb->skin && bsb.anim && bsb.anim->skin == m_bsb->skin) draw_skin(m_bsb, b, bsb.anim); else render_model(m_bsb, b, 0x80, 0x80, 0x80);
+        bsb_joint(bsb.anim, b, BSB_SWITCH, jm); /* the wing (initFixedPosition Switch) */
+        if (m_bsbwing) { if (m_bsbwing->skin && bsb.wing && bsb.wing->skin == m_bsbwing->skin) draw_skin(m_bsbwing, jm, bsb.wing); else render_model(m_bsbwing, jm, 0x80, 0x80, 0x80); }
+        bsb_joint(bsb.anim, b, BSB_BODY, jm); /* the bomb launcher (Body) */
+        if (m_bsblaunch) { if (m_bsblaunch->skin && bsb.launcher && bsb.launcher->skin == m_bsblaunch->skin) draw_skin(m_bsblaunch, jm, bsb.launcher); else render_model(m_bsblaunch, jm, 0x80, 0x80, 0x80); }
+    }
+    for (int i = 0; i < BSB_BOMBS && m_bsbbomb; i++)
+        if (bsb.bomb[i].state == 1) {
+            float one[3] = {1, 1, 1}, rot[3] = {0, 0, 0}, at[3] = {bsb.bomb[i].pos.x, bsb.bomb[i].pos.y, bsb.bomb[i].pos.z};
+            mat_translate_rot_scale(b, at, rot, one); /* ponytail: no rotateQuatMoment spin */
+            render_model(m_bsbbomb, b, 0x80, 0x80, 0x80);
+        }
+}
+/* Test builds: Mario in the boss's SwitchCylinder until it starts, then dropped in a hip drop on its BodyHipDrop part
+ * whenever a hit is open; game_bsb_state: sequencer x 100 + nerve */
+int game_test_bsb(void)
+{
+    if (bsb.row < 0) return -1;
+    const Row *r = &sc->objs[bsb.row];
+    if (bsb.seq == BQ_WAITSTART) { if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1); return 0; }
+    int n = bsb.nrv, ok = (bsb.seq == BQ_GROUND && (n == BA_WALK || n == BA_TURN)) ||
+                         ((bsb.seq == BQ_FLYLOW || bsb.seq == BQ_FLYHIGH) && (n == BA_FLY || n == BA_TURNSIGN));
+    if (ok && !mario->hip && bsb.st > 20) {
+        float b[16], jb[16];
+        bsb_base(b); bsb_joint(bsb.anim, b, BSB_BODY, jb);
+        V3 lead = bsb.seq == BQ_GROUND ? v3(0, 0, 0) : vmul(bsb_rail_dir(), bsb.a48 * 10.0f); /* where it is in ~10 frames */
+        mario->pos = vadd(vadd(v3(jb[12], jb[13], jb[14]), lead), vmul(mario->up, 350.0f));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0; mario->hip = HIP_FALL; mario->hip_t = 0; mario->hurt_timer = 0;
+    }
+    return bsb.seq * 100 + bsb.nrv;
+}
+
 void game_update(void)
 {
     if (menu_update()) return; /* GameScenePauseMenu: the pause sequence alone (GamePauseSequence) */
@@ -40747,6 +41550,7 @@ void game_update(void)
     LQ(57, update_bubbles());
     LQ(58, update_dino());
     LQ(59, update_ota());
+    update_bsb();
     if (star_demo) { /* its camera ("powerstar/powerstarget"); Mario plays PowerStarGet meanwhile */
         if (!demo_camera("powerstar/powerstarget", star_demo - 1, star_demo_m)) {
             star_demo = 0; camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45);
@@ -40771,7 +41575,7 @@ void game_update(void)
     gsr_update();
     update_astro_core();
     update_astro_sky();
-    demo_on = dino_demo_on || ota_demo_on || star_demo || fat_demo() || vine_demo_on() || talk_demo() || dx.on || menu_staffroll_on() || gw_demo_on() || pd.name; /* (StaffRoll: offPlayerControl) */
+    demo_on = dino_demo_on || ota_demo_on || bsb_demo() || bsb.ctrl_off || star_demo || fat_demo() || vine_demo_on() || talk_demo() || dx.on || menu_staffroll_on() || gw_demo_on() || pd.name; /* (StaffRoll: offPlayerControl) */
     /* MarioEffect: mHealth <= 1, not in a demo / the power star get demo / a dark comet, isEnableNerveChange.
      * ponytail: mWaterLife (only ever set to 8 in Petari) not read, isPermitSE always */
     if (life <= 1 && !demo_on && !star_demo && !opening_on && !miss_running() && strcmp(bgm_comet(), "Dark")) mario_sound("ライフ警告");
@@ -41973,6 +42777,7 @@ void game_draw(void)
         else render_model(m_marioball, ry, 0x80, 0x80, 0x80);
         draw_shadow(fireballs[b].pos, up_at(fireballs[b].pos, v3(0, 1, 0)), fireballs[b].vel, 25.0f, 25.0f, 0.0f, 0.0f, 2000.0f); /* initShadowVolumeCylinder(25) */
     }
+    bsb_draw();
     if (ota.row >= 0 && ota.nrv != OTA_WAITONSWITCH && ota.nrv != OTA_APPEARSTAR && ota.nrv != OTA_DEAD) { /* OtaKing, its feet */
         basis_matrix(m, ota.pos, ota.up, ota.f, 0);
         if (m_ota && m_ota->skin && ota.anim->skin == m_ota->skin) draw_skin(m_ota, m, ota.anim);

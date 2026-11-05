@@ -1327,3 +1327,14 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
    HoneyBeeEx 1, CocoonEx 1, BreakDownPlanet 1). Earlier: class weights (`out/class_coverage.md`); left: videos.
    Blocking zone loads (a zone wanted before its prefetch ends) are the worst frames (HoneyBee ~0.4 s).
 7. Last (the user's call): sound effects (AFC -> ADPCM), music on the disc (streams in the ISO), ChangeBgmCube / RestartCube BGM changes.
+- BossStinkBug (feat/boss-stinkbug, 2026-11-05): Boss/BossStinkBug*.cpp in game.c bsb_* (update_bsb / bsb_draw): the
+  sequencer (WaitStart on SW_A, OpeningDemo, Ground, FlyDemo, FlyLow, AngryDemo, FlyHigh, FinishDemo), every action's
+  nerves and constants (ActionBase update*, BossStinkBugFunction moveRail / regainToRail / turnRail / setFallVelocity),
+  its rail 0, BGM StinkBugA / B, star pieces 8 / 16 (declareStarPiece 24), its three collisions as instances on the
+  Body joint (BodyGround / BodyHipDrop: slice.py KCL_PARTS), hip drops, the shake-off when Mario stands on it, the run /
+  fly into Mario (mario_wall_inst: Mario's wall instance), 16 bombs, the demos (pd, Mario at BossStinkBugDemo's
+  MarioPosition playing BattleWait, the dummy's CANMs "bsbdemo/*"), the power star from its place, SW_DEAD.
+  StinkBugSmall: SW_A ForceFall, SW_DEAD instead of its pieces, star piece reaction only in isNrvEnableStarPieceAttack.
+  Test `bsb` (HoneyBeeKingdomGalaxy/3, XF=-DPACKS_OVERLAY=wt-boss2): started, a hip drop in each phase, its star taken.
+  ponytail: leg IK, BAS sounds, fly SE volume / IIR, the wing's BTK / BVA, BaseMatrixFollowTarget, shadow; StinkBugParent
+  not ported (left in the class_make list). Repack: HoneyBeeKingdomGalaxy (slice_all.py + its sound.bin).
