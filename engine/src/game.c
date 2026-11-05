@@ -8257,9 +8257,16 @@ static int jbranch_update(Player *m)
  * him until he is 300 off or on the ground (FreeInvalid). A pointer sweep over it (R2 off) and star pieces push the
  * cocoon. coc.phase 1 wait, 2 aim, 3 flight; coc.wait the FreeInvalid inst. ponytail: no stalk drawn (the cocoon
  * model only, tilted along it), no CocoonWait / Stretch / Fly animations, no breakables hit at the end
- * ponytail (unmarked until the 2026-11-02 audit): no stopScene(sStepStopScene 8) on a map hit, Mario plays fall
- * instead of AirRotation when mAttackTime runs out (SpaceCocoon.cpp:345-366), no wait / aim / attack multi-actor
- * cameras */
+ * Its multi-actor cameras: ウェイト on the catch and back from a short aim, 狙い中 while aiming, 攻撃中 in the flight
+ * (no target: its base), all ended at the release; AirRotation for Mario when mAttackTime runs out. ponytail: the
+ * BindAttackSuccess stopScene(8) belongs to the breakables it would hit (not ported) */
+static void cocoon_cam(const Inst *in, const char *event) /* start(Multi)ActorCamera: its set, its base as the target */
+{
+    camera_event_stop();
+    if (row_camset[in->row] != -1)
+        camera_actor_start("SpaceCocoon", event, (unsigned short)row_camset[in->row], v3(in->m[4], in->m[5], in->m[6]),
+                           v3(in->m[8], in->m[9], in->m[10]), v3(in->m[12], in->m[13], in->m[14]));
+}
 static V3 cocoon_neutral(const Inst *in)
 {
     const Row *r = &sc->objs[in->row];
@@ -8321,6 +8328,7 @@ static int cocoon_try(Player *m)
         V3 up = vnorm(v3(in->m0[4], in->m0[5], in->m0[6])), b = vadd(in->head, vmul(up, 100.0f));
         if (vlen(vsub(c, b)) > 200.0f + HIT_BODY_R * 0.5f) continue;
         coc.inst = i; coc.phase = 1; coc.t = 0;
+        cocoon_cam(in, "ウェイト"); /* exeBindLand */
         in->hvel = vtangent(vadd(m->hvel, vmul(m->up, m->vup)), up); /* mSpringVel: his speed along side and front */
         m->hip = 0; m->spin_timer = 0;
         if (mario_anim) mario_play("cocoonland", 1.0f, 0);
@@ -8335,6 +8343,7 @@ static void cocoon_release(Player *m, V3 v)
     m->hvel = vtangent(v, m->up); m->vup = vdot(v, m->up);
     m->grounded = 0; m->jump_kind = 0; m->air_timer = 0; m->spin_lock = 0;
     coc.wait = coc.inst; coc.inst = -1; coc.phase = 0;
+    camera_event_stop(); /* endBind: endMultiActorCamera ウェイト / 狙い中 / 攻撃中 */
 }
 
 /* returns 1 while Mario hangs on or flies */
@@ -8356,7 +8365,7 @@ static int cocoon_update(Player *m)
         if ((hit && coc.t > 20) || coc.t >= time) {
             printf("space cocoon row %d: flight ends (%s) at %d" "\n", in->row, hit ? "hit" : "time", coc.t);
             cocoon_release(m, hit ? v3(0, 0, 0) : coc.vel);
-            if (mario_anim) mario_play("fall", 1.0f, 0);
+            if (mario_anim && !hit) mario_play("airrotation", 1.0f, 0); /* isStep(mAttackTime): startBckPlayer AirRotation */
             return 0;
         }
         m->hvel = v3(0, 0, 0); m->vup = 0; m->grounded = 0;
@@ -8370,16 +8379,17 @@ static int cocoon_update(Player *m)
     }
     if (coc.phase == 1 && cursor_sees(in->head, 40.0f) && menu_pointer_touch(in, 1)) /* updateBindWait: pointed (touch, "弱") */
         menu_pointer_request(SPM_BLUESTARREADY);
-    if (coc.phase == 1 && pointer_a() && cursor_sees(in->head, 40.0f)) { coc.phase = 2; coc.t = 0; } /* BindAim */
+    if (coc.phase == 1 && pointer_a() && cursor_sees(in->head, 40.0f)) { coc.phase = 2; coc.t = 0; cocoon_cam(in, "狙い中"); } /* BindAim */
     if (coc.phase == 2) {
         if (!pointer_a()) { /* tryRelease */
             float off = vlen(vsub(in->head, n));
-            if (off < 100.0f) coc.phase = 1;
+            if (off < 100.0f) { coc.phase = 1; cocoon_cam(in, "ウェイト"); }
             else {
                 coc.vel = vmul(vnorm(vsub(n, in->head)), 60.0f);
                 coc.phase = 3; coc.t = 0;
                 in->hvel = v3(0, 0, 0);
                 if (mario_anim) mario_play("cocoonfly", 1.0f, 1);
+                cocoon_cam(in, "攻撃中"); /* startMultiActorCameraNoTarget */
                 printf("space cocoon row %d: launched from %d off" "\n", in->row, (int)off);
                 return 1;
             }
