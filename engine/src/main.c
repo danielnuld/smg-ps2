@@ -1671,6 +1671,12 @@ int main(void)
             if (frame % 25 == 0) printf("petari test f %u: %d\n", frame, st);
         }
 #endif
+#ifdef DRING_TEST
+        if (frame >= 300 && frame < 1800) { /* Mario through the first DashRing, then again after its revival */
+            int st = game_test_dring();
+            if (frame % 10 == 0) printf("dring test f %u: %d\n", frame, st);
+        }
+#endif
 #ifdef SAMBO_TEST
         if (frame >= 300 && frame < 4000) { /* SamboHeads: appear, chase, then a trample, a spin, a star piece and a kick */
             int st = game_test_sambo();

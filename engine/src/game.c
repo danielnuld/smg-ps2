@@ -719,6 +719,7 @@ static struct {
     Anim *head;
 } sambos[MAX_SAMBOS];
 static int nsambos;
+static int ndrings; /* DashRing (update_drings): -1 found again at the next update */
 static const Model *m_sambohead;
 static int test_cross; /* test builds: X held (Bee Mario) */
 static unsigned char zone_kcl[64]; /* zones with collision bound (game_rebind): walkers wait in the others */
@@ -2323,7 +2324,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     scene_blob_g = blob;
     npurple = count_type("PurpleCoin", 0) + count_type("CirclePurpleCoinGroup", 1) + count_type("PurpleRailCoin", 1);
     ngroup_wait = 0;
-    nfats = 0; test_feed = 0; nsambos = 0;
+    nfats = 0; test_feed = 0; nsambos = 0; ndrings = -1;
     for (u32 i = 0; i < s->nobjs; i++) { /* the spin drivers a TicoFat's group brings out */
         const char *tn = s->types + 32 * s->objs[i].type;
         if (strncmp(tn, "SuperSpinDriver", 15) || s->objs[i].group < 0) continue;
@@ -45083,6 +45084,110 @@ int game_test_bsb(void)
     return bsb.seq * 100 + bsb.nrv;
 }
 
+/* DashRing.cpp after Petari: a ring (its model, initCommon "DashRing") whose axis is its rotation's Y (calcAxis; the
+ * side calcSubAxis). Mario's body sensor within 20 along the axis and 200 off it: ACTMES_PASS_RING (MarioState's
+ * passRing: MarioSwim / MarioFoo, the others none) with arg0 mBoostTime (300), arg1 mMaxDuration (120), arg2 / 100
+ * mSpeedScale (2.5); then 15 frames active (SE_SY_GET_DASH_RING, Start), the ring at Mario's place + velocity (back
+ * home past 2000), End and 180 frames of revival (Revival at home), Loop again once a one-time clip stops. Out of the
+ * pass (300 along or off it) with arg3 unset it turns its axis towards Mario 0.03 (vecBlendSphere). ponytail: no BRK /
+ * BTK / BPK colour clips (the BCKs only) */
+#define MAX_DRINGS 8
+static struct { int row; V3 pos, init, axis, sub; int active, revival, boost, maxd, turn; float speed; } drings[MAX_DRINGS];
+static int ndrings = -1;
+static int foo_pass_ring(V3 center, int max_dur, float speed_scale, int boost);
+static void dr_sub(int i) /* calcSubAxis */
+{
+    V3 a = drings[i].axis, s = fabsf(a.y) > 1e-6f ? v3(a.y, -a.x, 0) : v3(a.z, 0, -a.x);
+    drings[i].sub = vlen(s) > 1e-6f ? vnorm(s) : s;
+}
+static void dr_clip(int i, const char *clip) { Inst *in = row_inst(drings[i].row); if (in) obj_start(in, clip); } /* startBck */
+static void update_drings(void)
+{
+    if (ndrings < 0) {
+        int ty = scene_type(sc, "DashRing");
+        ndrings = 0;
+        for (u32 r = 0; ty >= 0 && r < sc->nobjs && ndrings < MAX_DRINGS; r++) {
+            const Row *w = &sc->objs[r];
+            if (w->type != ty) continue;
+            V3 x, z;
+            int i = ndrings++;
+            row_axes(w, &x, &z);
+            memset(&drings[i], 0, sizeof drings[i]);
+            drings[i].row = (int)r; drings[i].pos = drings[i].init = row_pos(w);
+            drings[i].axis = vnorm(vcross(z, x)); dr_sub(i);
+            drings[i].boost = w->arg[0] != -1 ? w->arg[0] : 300;
+            drings[i].maxd = w->arg[1] != -1 ? w->arg[1] : 120;
+            drings[i].speed = w->arg[2] != -1 ? w->arg[2] / 100.0f : 2.5f;
+            drings[i].turn = w->arg[3] == -1;
+            dr_clip(i, "Loop");
+        }
+    }
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ndrings; i++) {
+        if (!row_shown(drings[i].row)) continue;
+        /* control */
+        if (drings[i].active) {
+            if (!--drings[i].active) { drings[i].revival = 180; dr_clip(i, "End"); }
+            else {
+                drings[i].pos = vadd(mario->pos, vadd(mario->hvel, vmul(mario->up, mario->vup))); /* getPlayerPos + getPlayerVelocity */
+                if (vlen(vsub(drings[i].pos, drings[i].init)) > 2000.0f) { drings[i].pos = drings[i].init; drings[i].active = 0; }
+            }
+        } else if (drings[i].revival) {
+            if (!--drings[i].revival) { drings[i].pos = drings[i].init; dr_clip(i, "Revival"); }
+        } else {
+            Inst *in = row_inst(drings[i].row);
+            if (in && in->anim && !in->anim->loop && in->anim->done) dr_clip(i, "Loop"); /* isBckOneTimeAndStopped */
+        }
+        /* attackSensor: its body 1000, Mario's */
+        if (drings[i].revival || vlen(vsub(mc, drings[i].pos)) > 1000.0f + HIT_BODY_R) goto mtx;
+        {
+            V3 d = vsub(mc, drings[i].pos);
+            float along = vdot(d, drings[i].axis);
+            V3 off = vsub(d, vmul(drings[i].axis, along));
+            if (fabsf(along) < 20.0f && vlen(off) < 200.0f) {
+                if (sw.on) sw_pass_ring(drings[i].pos, drings[i].maxd, drings[i].speed, drings[i].boost);
+                else if (fo.on) foo_pass_ring(drings[i].pos, drings[i].maxd, drings[i].speed, drings[i].boost);
+                if (!drings[i].active) {
+                    drings[i].active = 15;
+                    se_start(SE_SY_GET_DASH_RING, NULL);
+                    dr_clip(i, "Start");
+                    printf("dash ring row %d passed\n", drings[i].row);
+                }
+            } else if (!drings[i].active && drings[i].turn && (fabsf(along) > 300.0f || vlen(off) > 300.0f) && vlen(d) > 1e-6f) {
+                V3 n = vnorm(d), t = vdot(drings[i].axis, n) < 0 ? vmul(n, -1.0f) : n; /* the nearer of dir / -dir */
+                float c = vdot(drings[i].axis, t), ang = acosf(c > 1 ? 1 : c);
+                V3 ax = vcross(drings[i].axis, t);
+                if (vlen(ax) > 1e-6f) drings[i].axis = vnorm(rot_axis(drings[i].axis, vnorm(ax), ang * 0.03f)); /* vecBlendSphere 0.03 */
+                dr_sub(i);
+            }
+        }
+    mtx: { /* calcAndSetBaseMtx: makeMtxFrontSidePos(axis, sub, pos) */
+            Inst *in = row_inst(drings[i].row);
+            if (!in) continue;
+            const float *sc3 = sc->objs[drings[i].row].scale;
+            V3 z = drings[i].axis, x = drings[i].sub, y = vcross(z, x);
+            float m[16] = {x.x * sc3[0], x.y * sc3[0], x.z * sc3[0], 0, y.x * sc3[1], y.y * sc3[1], y.z * sc3[1], 0,
+                           z.x * sc3[2], z.y * sc3[2], z.z * sc3[2], 0, drings[i].pos.x, drings[i].pos.y, drings[i].pos.z, 1};
+            memcpy(in->m, m, sizeof m);
+        }
+    }
+}
+
+int game_test_dring(void) /* the first DashRing: Mario 150 before it along its axis, carried through it at 10 a frame
+                           * (again each revival); 0 not yet, its active / revival frames and his ring dash */
+{
+    test_nolost = 1;
+    if (ndrings <= 0) return -1;
+    static int t;
+    if (!drings[0].active && !drings[0].revival) {
+        if (t > 100) t = 0;
+        mario->pos = vsub(vadd(drings[0].init, vmul(drings[0].axis, -150.0f + 10.0f * (t < 60 ? 0 : t - 60))), vmul(mario->up, HIT_BODY_H)); /* 60 frames to swim first */
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        t++;
+    } else t = 0;
+    return drings[0].active * 10000 + drings[0].revival * 10 + (sw.ring_t > 0) + 2 * sw.on;
+}
+
 void game_update(void)
 {
     if (menu_update()) return; /* GameScenePauseMenu: the pause sequence alone (GamePauseSequence) */
@@ -45320,6 +45425,7 @@ void game_update(void)
     update_gulls();
     update_storms();
     update_kfires();
+    update_drings();
     update_doors();
     update_lotus();
     update_trains();

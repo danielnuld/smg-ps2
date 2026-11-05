@@ -84,6 +84,7 @@ SKINNED_OBJ += ("ScrewSwitch", "ScrewSwitchReverse")  # their ScrewSwitchOn / Sc
 SKINNED_OBJ += tuple(c for c in WAIT_SKINNED if c not in SKINNED_OBJ)
 SKINNED_OBJ += ("BossBegomanHead", "ChildKameck", "BkDemo")  # BkDemo: BossKameckBattleDemo (its clip names fit 31);  # BossBegoman's PartsModel (its own clips: On, Off, Turn...)
 SKINNED_OBJ += ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp")  # TicoShop: NPCData TicoShopItem goods on StarPieceR / StarPieceL (Shake)
+SKINNED_OBJ += ("DashRing",)  # DashRing.cpp: Loop / Start / End / Revival (game.c update_drings)
 SKINNED_OBJ += ("TicoFatGoodsStarPiece",)  # TicoFat: NPCData TicoFatItem goods on StarPieceL / StarPieceR (TicoFatGoodsStarPiece / ..Far clips)
 SKINNED_OBJ += ("TripodBoss", "TripodBossGuardWall")  # TripodBoss: its StartDemo / EndDemo joints (Body, legs); the guard wall's 2ndDemo
 SKINNED_OBJ += ("HoneyQueenWing",)  # HoneyQueen::init: createModelObjNpc 羽 on its Center joint, startBck / startBtk HoneyQueenWing

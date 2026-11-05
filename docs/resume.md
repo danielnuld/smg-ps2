@@ -395,6 +395,11 @@ Second console round (2026-10-24), from Daniel's report:
   hit reaction, SW_A / appear / dead switches, arg0 _B0. Test: `sambo` (SandClock 2: trample; XF=-DSAMBO_ACT=1 spin, 2
   star piece then kick). Only row 179 is out at the start (the others wait on their appear switches). ponytail:
   BindStarPointer (2P pointer only). Repack: sound.py --pack SandClockGalaxy, CosmosGardenGalaxy (SE_EM_SAMBOHEAD_*).
+- DashRing (feat/dash-ring, 2026-11-05): DashRing.cpp in game.c (update_drings): its axis (rotation's Y) turning to
+  Mario (arg3), the pass (20 along, 200 off) sending passRing to MarioSwim / MarioFoo (sw_pass_ring / foo_pass_ring,
+  there unused till now) with arg0-2, 15 active frames following Mario, 180 of revival, its Loop / Start / End /
+  Revival clips (slice.py SKINNED_OBJ). Test: `dring` (OceanPhantomCave 3: the ring dash; OceanRing 2 rings are out of
+  the water). ponytail: no BRK / BTK / BPK clips. Repack: slice_all.py OceanRingGalaxy, OceanPhantomCaveGalaxy.
 ## Rules
 
 - Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -
