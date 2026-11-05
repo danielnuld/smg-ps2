@@ -332,6 +332,15 @@ int gd_player_left(void) { return gd.left > 99 ? 99 : gd.left; }
 void gd_add_player_left(int n) { int v = gd.left + n; gd.left = (u16)(v < 0 ? 0 : v > 99 ? 99 : v); }
 int gd_stocked_star_pieces(void) { return (int)gd.pieces; }
 void gd_add_stocked_star_pieces(int n) { int v = (int)gd.pieces + n; gd.pieces = (u32)(v < 0 ? 0 : v > 9999 ? 9999 : v); }
+/* StarPieceAlmsStorage::getValue / addValue (clamped to 0 .. sMaxValueArray) */
+int gd_alms(int i) { return i >= 0 && i < 16 ? gd.alms[i] : 0; }
+void gd_alms_add(int i, int n)
+{
+    static const int max[16] = {32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 400, 400, 600, 1200, 1600, 1000, 800, 32767};
+    if (i < 0 || i >= 16) return;
+    int v = gd.alms[i] + n;
+    gd.alms[i] = (u16)(v < 0 ? 0 : v > max[i] ? max[i] : v);
+}
 
 /* the file: "SMGD", a version, the struct (ponytail: not GameDataHolder's BinaryDataChunkHolder chunks) */
 

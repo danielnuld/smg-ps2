@@ -1395,3 +1395,16 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
   Test `bsb` (HoneyBeeKingdomGalaxy/3, XF=-DPACKS_OVERLAY=wt-boss2): started, a hip drop in each phase, its star taken.
   ponytail: leg IK, BAS sounds, fly SE volume / IIR, the wing's BTK / BVA, BaseMatrixFollowTarget, shadow; StinkBugParent
   not ported (left in the class_make list). Repack: HoneyBeeKingdomGalaxy (slice_all.py + its sound.bin).
+- Star return demos' BGM (#204, 2026-11-05): GrandStarReturnDemoStarter exeMove STM_FIRST_ASTRO / STM_SECOND_ASTRO,
+  exeWaitDemoEnd MBGM_GALAXY_24 / STM_ASTRO_OUT*; StarReturnDemoStarter's AstroGalaxy overlayWithPreviousScreen(3) and
+  endStartPosCamera. Seen with `grand` (HeavensDoorGalaxy/1 + the AstroGalaxy overlay). No repack.
+- StrayTico's LauncherCamera (#206, 2026-11-05): exeLauncherCamera 400 behind Mario along the camera Z while a launch
+  star flies him, height 150, friction 0.97. `stray` (FactoryGalaxy/2) still brings the CollectTico star. No repack.
+- TicoFat leftovers (feat/ticofat, 2026-11-05): デブチコカメラ (camera_prog_start at its place, 100 up, 1300 .. 1680 in
+  front by scale, 120 frames; again per piece eaten; ends at full), guidance / pointing / meter only after startEat,
+  not full, not invincible; arg7 the StarPieceAlmsStorage slot (gamedata.c gd_alms / gd_alms_add: fed before -> dead
+  at init with SW_A on, After / Meta add arg1), 喜び camera for arg7 6, Meta now turns SW_A on; TicoFatGoodsStarPiece
+  goods at StarPieceL / R (slice.py EXTRA / SKINNED_OBJ; ..Far beyond 2000); reactions through npc_react (Kinopio's
+  NPCActor code made shared): SE_SV_TICOFAT_TRAMPLED / POINT, SE_SM_TICOFAT_SPIN. `fat` (EggStar 2) still eats 100,
+  flies, its planet. ponytail: goods' BPK colours, Reaction clips, _DB voice, isPlayerFlying. Repack: slice_all.py +
+  sound.py for EggStar, BattleShip, Factory, HellProminence, OceanRing, SandClock, StarDust.
