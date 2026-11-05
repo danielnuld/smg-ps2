@@ -80,6 +80,7 @@ SKINNED_OBJ = ("MarioFreezeIce", "MarioTornado", "MarioFireBall", "WaterColumn",
                "PhantomShipPropellerSmall", "PhantomShipPropellerBig", "PhantomShipBridge",  # AnmModelSwitchMove without SW_A: Move at once (obj_anim: its only clip)
                "PStar", "GStar", "SpinTico", "MarioHair", "AstroCore", "LuigiNPC", "LuigiEvent",
                "DemoPeachCastleGate", "PicketSwitch", "PicketSwitchBig", "CapsuleCage", "KeySwitchOwned", "ChildKuribo", "BreakableCageBreak")  # PStar / GStar: the star return demos' PowerStar / GrandStar (clip names fit 31 chars)
+SKINNED_OBJ += ("ScrewSwitch", "ScrewSwitchReverse")  # their ScrewSwitchOn / ScrewSwitchReverseOn (game.c update_screws)
 SKINNED_OBJ += tuple(c for c in WAIT_SKINNED if c not in SKINNED_OBJ)
 SKINNED_OBJ += ("BossBegomanHead",)  # BossBegoman's PartsModel (its own clips: On, Off, Turn...)
 SKINNED_OBJ += ("HoneyQueenWing",)  # HoneyQueen::init: createModelObjNpc 羽 on its Center joint, startBck / startBtk HoneyQueenWing
@@ -203,7 +204,7 @@ STAR_DECLARERS = {"FlipPanelObserver": 7, "CrystalCageL": 0, "BreakableCage": No
                   "BreakableCageL": None}
 COIN100 = "１００枚コイン"
 JOINT_KCL_ONLY = {"HoneyQueen"}  # every collision on a joint by index (KCL_PARTS: "<class>#<n>.<k>"), none at the model
-KCL_JOINT = {"JumpStand": "JumpStandJoint03"}  # collision at that joint's (bind pose) place
+KCL_JOINT = {"JumpStand": "JumpStandJoint03", "ScrewSwitch": "Screw", "ScrewSwitchReverse": "Screw"}  # collision at that joint's (bind pose) place
 # drawn and collided at the last frame of a BCK, the named KCLs added at their joint (PhantomShipBridge.cpp:
 # setStateMoveA, the bridge down without SW_A; createCollisionPartsFromLiveActor "Move" on joint Move).
 # ponytail: the end pose for good (no MoveA / MoveB playing on the switches); PhantomShipBridge itself moves (KCL_PARTS)

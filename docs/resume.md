@@ -327,6 +327,16 @@ Second console round (2026-10-24), from Daniel's report:
   on her Center joint (BCK), her ten collisions on their joints (slice.py JOINT_KCL_ONLY: "HoneyQueen#<joint>.<k>").
   Test: `queen` (HoneyBeeKingdom 1, overlay packs): demo, talk, itch, SW_A, event talk, SW_B, Mario dropped on her lands
   and slides off. ponytail: no fur, wing BTK, LodCtrl. Repack: slice_all.py HoneyBeeKingdomGalaxy.
+- Small #143 fixes (fix/states-small, 2026-11-05): black hole inhale only for classes with an isMsgInhaleBlackHole
+  handler (walker_inhale, their kill); Butterfly's HeavensDoor up from gravity, random first frame, BURST SE;
+  QuestionCoin pose type 0 (makeMtxUpFrontPos with LiveActor's default gravity); BeeFlowerHover's nerves (SoftTouch /
+  SoftTouchWait / HardTouch / Recover, shake, rumble, arg0 NoInit); TreasureBoxPowerStar stays open, its star at
+  OpenWait step 10; AssemblyBlock SEs, Blur, Timer's Disappear; ScrewSwitch / Reverse (bind SEs, MOVE / ON SEs,
+  shake, the reverse one throws Mario 28 at step 25, EXPLODE_S, kill; slice.py: both skinned, collision at their
+  Screw joint); Poihana WalkAround / GoBack / hip drop and explosion shock. anim.c: a clip name longer than 31
+  matches its cut (packs keep 31). Tests: screw (Factory 1, again at f400 once the zone is in), beeflower (Bee Mario
+  from f530; his landing on one not seen yet), poihana, plainhole (XF=-DHOLE_TEST). Repack: Factory, BattleShip,
+  CosmosGarden, OceanFloaterLand, OceanPhantomCave (ScrewSwitch skinned + Screw-joint collision).
 ## Rules
 
 - Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -
