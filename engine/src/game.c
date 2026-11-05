@@ -22280,11 +22280,6 @@ static void kchief_update(Kuribo *k)
         w_nrv(k, KC_WANDER); k->step = 0;
     }
     k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f); /* onCalcGravity */
-    if (!k->bshow) { /* ponytail: it waits for its ground's collision (a zone streamed in low has none: it would fall) */
-        Hit h[4];
-        if (!kcl_query(vsub(k->pos, vmul(k->grav, 300.0f * w_scale(k))), 320.0f * w_scale(k), h, 4)) return;
-        k->bshow = 1;
-    }
     int st = k->step;
     switch (k->nrv) {
     case KC_WANDER:
@@ -27004,14 +26999,22 @@ static void update_kuribo(void)
     update_tako_inks();
     bg_permit_update();
 }
+/* the walker's zone has its own collision bound (full, not low: a low zone's base-pack pieces are not its planets).
+ * ponytail: walkers wait in a zone still streaming; Petari has every zone's collision and binds them to their ground
+ * at once (the streaming gap, main.c target_set) */
+static int w_zone_ground(const Kuribo *k)
+{
+    int z = sc->objs[k->row].zone;
+    return z >= 64 || (zone_kcl[z] && !zone_low[z]);
+}
 static void update_kuribo_one(Kuribo *k)
 {
     {
         k->up = walker_up(k, k->up);
         V3 to = vsub(mario->pos, k->pos);
         float d = vlen(to);
-        if (k->kind >= WALK_GESSO) { /* the release push's walkers; ponytail: still while their zone has no collision */
-            if (sc->objs[k->row].zone < 64 && !zone_kcl[sc->objs[k->row].zone] && k->kind != WALK_STRSPIDER) return; /* (a StringSpider hangs) */
+        if (k->kind >= WALK_GESSO) { /* the release push's walkers */
+            if (!w_zone_ground(k) && k->kind != WALK_STRSPIDER) return; /* (a StringSpider hangs) */
             if (k->kind == WALK_GESSO) gesso_update(k);
             else if (k->kind == WALK_BASABASA) basa_update(k);
             else if (k->kind == WALK_JELLYFISH) jelly_update(k);
@@ -27029,13 +27032,12 @@ static void update_kuribo_one(Kuribo *k)
             else if (k->kind == WALK_KCHIEF) kchief_update(k);
             return;
         }
-        if (k->kind == WALK_PETARI) { /* ponytail: still while its zone has no collision (streaming) */
-            if (sc->objs[k->row].zone >= 64 || zone_kcl[sc->objs[k->row].zone]) petari_update(k);
+        if (k->kind == WALK_PETARI) {
+            if (w_zone_ground(k)) petari_update(k);
             return;
         }
-        if (k->kind == WALK_KURIBO || k->kind == WALK_KMINI || k->kind == WALK_PACKUN || k->kind == WALK_TAKOHEI || k->kind == WALK_KOTEBUG) { /* ported after Petari (their own NonActive);
-                                       * ponytail: still while its zone has no collision (streaming) */
-            if (sc->objs[k->row].zone >= 64 || zone_kcl[sc->objs[k->row].zone]) {
+        if (k->kind == WALK_KURIBO || k->kind == WALK_KMINI || k->kind == WALK_PACKUN || k->kind == WALK_TAKOHEI || k->kind == WALK_KOTEBUG) { /* ported after Petari (their own NonActive) */
+            if (w_zone_ground(k)) {
                 if (k->kind == WALK_KURIBO) kuribo_update(k);
                 else if ((k->kind == WALK_TAKOHEI || k->kind == WALK_KOTEBUG) && !k->front.x && !k->front.y && !k->front.z &&
                          (d >= 3000.0f || !line_hits(vadd(k->pos, vmul(k->up, 100.0f)), vsub(k->pos, vmul(k->up, 200.0f))))) {
@@ -27050,7 +27052,7 @@ static void update_kuribo_one(Kuribo *k)
             return;
         }
         if (d > 3000.0f) return; /* sActiveDistance: far ones wait (their zone may be loaded low, no collision) */
-        if (sc->objs[k->row].zone < 64 && !zone_kcl[sc->objs[k->row].zone]) return; /* no ground yet: they would fall */
+        if (!w_zone_ground(k)) return; /* no ground yet: they would fall */
         int tako = k->kind == WALK_MERAMERA; /* Meramera.cpp: a stomp, hip drop or spin
                                                                              * kills it, a touch burns (requestAttack) */
         if (k->kind == WALK_TAKOBO) { takobo_update(k, to, d); return; }
