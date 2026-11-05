@@ -4792,14 +4792,15 @@ typedef struct {
 } ClassInfo;
 
 /* #143's placed classes ported since the audit (update_gaps) */
-enum { GAP_NONE, GAP_SHOCKWAVE, GAP_CAPSULE, GAP_DRIFT, GAP_SHELLCOIN, GAP_SHELLCHIP, GAP_ELEVATOR, GAP_UFOKINOKO };
+enum { GAP_NONE, GAP_SHOCKWAVE, GAP_CAPSULE, GAP_DRIFT, GAP_SHELLCOIN, GAP_SHELLCHIP, GAP_ELEVATOR, GAP_UFOKINOKO, GAP_TRIROCK };
 static void gap_place(Inst *in);
 static void ufok_start(int row);
 static int gap_class(const char *name)
 {
     return !strcmp(name, "ShockWaveGenerator") ? GAP_SHOCKWAVE : !strcmp(name, "CapsuleCage") ? GAP_CAPSULE :
            !strcmp(name, "DriftWood") ? GAP_DRIFT : !strcmp(name, "ShellfishCoin") ? GAP_SHELLCOIN :
-           !strcmp(name, "ShellfishYellowChip") ? GAP_SHELLCHIP : !strcmp(name, "BattleShipElevator") ? GAP_ELEVATOR : !strcmp(name, "UFOKinoko") ? GAP_UFOKINOKO : GAP_NONE;
+           !strcmp(name, "ShellfishYellowChip") ? GAP_SHELLCHIP : !strcmp(name, "BattleShipElevator") ? GAP_ELEVATOR : !strcmp(name, "UFOKinoko") ? GAP_UFOKINOKO :
+           !strcmp(name, "SandUpDownTriRock") ? GAP_TRIROCK : GAP_NONE;
 }
 /* ponytail (unmarked until the 2026-11-02 audit): placed classes of the early galaxies with no behaviour here
  * (drawn static, or not at all), each a whole Petari class: GhostPlayer (Cosmic Mario);
@@ -5298,14 +5299,16 @@ static void game_rebind_(void)
         memcpy(in->m, o->m, sizeof in->m);
         in->kcl = k; in->kmove = mj; in->kparent = i; in->invisible = 1; in->railer = NULL;
     }
-    for (int i = 0, n = ninsts; i < n; i++) { /* "HoneyQueen#<joint>.<k>" (slice.py JOINT_KCL_ONLY): HoneyQueen::init's ten
-                                               * createCollisionPartsFromLiveActor on getJointMtx, each on its joint */
+    for (int i = 0, n = ninsts; i < n; i++) { /* "<class>#<joint>.<k>" (slice.py JOINT_KCL_ONLY): HoneyQueen::init's ten,
+                                               * SandUpDownTriRock::init's three createCollisionPartsFromLiveActor on
+                                               * getJointMtx, each on its joint */
         const Inst *o = &insts[i];
-        if (!o->md || !o->md->skin || !o->anim || o->kparent >= 0 || strcmp(s->types + 32 * s->objs[o->row].type, "HoneyQueen")) continue;
+        const char *cn = o->md ? s->types + 32 * s->objs[o->row].type : "";
+        if (!o->md || !o->md->skin || !o->anim || o->kparent >= 0 || (strcmp(cn, "HoneyQueen") && strcmp(cn, "SandUpDownTriRock"))) continue;
         for (int j = 0; j < o->md->skin->njoints; j++)
             for (int p = 0; ninsts < insts_cap; p++) {
                 char kn[48];
-                snprintf(kn, sizeof kn, "HoneyQueen#%d.%d", j, p);
+                snprintf(kn, sizeof kn, "%s#%d.%d", cn, j, p);
                 const unsigned char *k = scene_kcl(s, kn);
                 if (!k) break;
                 Inst *in = &insts[ninsts++];
@@ -32845,6 +32848,34 @@ static void capsule_kill(Inst *in)
     row_kill(in->row);
     game_rebind();
 }
+/* SandUpDownTriRock.cpp after Petari: Wait; its SW_B coming on (listenStageSwitchOnB: startDown) Down (On clip), at its
+ * end Rest arg0 frames (mRestStep 0), Up (Return clip), Wait; the power star's get (isMsgStartPowerStarGet) Stop. Its
+ * three collisions Move00-02 on their joints (createCollisionPartsFromLiveActor: slice.py JOINT_KCL_ONLY). gi bit 0
+ * its SW_B seen on */
+enum { TR_WAIT = 1, TR_DOWN, TR_REST, TR_UP, TR_STOP };
+static void update_trirock(Inst *in, int st)
+{
+    const Row *r = &sc->objs[in->row];
+    GapSt *g = gap_st(in->row);
+    int sb = r->sw[SW_B] >= 0 && sw_on(r, SW_B), was = g->i & 1;
+    g->i = (g->i & ~1) | sb;
+    if (!g->n) { gap_nrv(in, TR_WAIT); return; }
+    if (star_demo && g->n != TR_STOP) { gap_nrv(in, TR_STOP); return; }
+    if (sb && !was) { gap_nrv(in, TR_DOWN); printf("trirock %d: down%c", in->row, 10); return; }
+    switch (g->n) {
+    case TR_DOWN:
+        if (st == 0) obj_play(in, "On", 0, 0);
+        else if (!in->anim || in->anim->done) gap_nrv(in, TR_REST); /* isBckStopped */
+        break;
+    case TR_REST:
+        if (st == (r->arg[0] != -1 ? r->arg[0] : 0)) { gap_nrv(in, TR_UP); printf("trirock %d: up%c", in->row, 10); }
+        break;
+    case TR_UP:
+        if (st == 0) obj_play(in, "Return", 0, 0);
+        else if (!in->anim || in->anim->done) gap_nrv(in, TR_WAIT);
+        break;
+    }
+}
 static int update_capsule(Inst *in, int st) /* 1: killed (rebound) */
 {
     const Row *r = &sc->objs[in->row];
@@ -33334,6 +33365,7 @@ static void update_gaps(void)
         else if (in->gap == GAP_ELEVATOR) update_elevator(in, i, st);
         else if (in->gap == GAP_UFOKINOKO) update_ufokinoko(in, st);
         else if (in->gap == GAP_SHELLCOIN || in->gap == GAP_SHELLCHIP) update_shellfish(in, st);
+        else if (in->gap == GAP_TRIROCK) update_trirock(in, st);
         else if (in->gap == GAP_CAPSULE && update_capsule(in, st)) return;
     }
 }
@@ -50889,6 +50921,22 @@ void game_test_tower(unsigned frame)
 }
 #endif
 
+/* walker test with -DTRIROCK_TEST: Mario dropped onto the first SandUpDownTriRock, its SW_B on at 300 (off at 320) */
+void game_test_trirock(unsigned frame)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (in->gap != GAP_TRIROCK) continue;
+        Row *r = (Row *)&sc->objs[in->row];
+        V3 up = v3(in->m[4], in->m[5], in->m[6]), c = v3(in->m[12], in->m[13], in->m[14]);
+        if (frame == 150) { mario->up = vnorm(up); mario->pos = vadd(c, vmul(mario->up, 1500.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+        if (frame == 300 && r->sw[SW_B] >= 0) sw_set(r, SW_B, 1);
+        if (frame == 320 && r->sw[SW_B] >= 0) sw_set(r, SW_B, 0);
+        if (frame % 20 == 0) printf("trirock test f %u: row %d sw_b %d nerve %d, Mario %.0f over it, on inst %d (parent %d)" "%c", frame, in->row, r->sw[SW_B],
+                                    gap_st(in->row)->n, vdot(vsub(mario->pos, c), vnorm(up)), mario_ground, mario_ground >= 0 ? insts[mario_ground].kparent : -9, 10);
+        return;
+    }
+}
 /* walker test with -DERMV_TEST: Mario held standing at coord 0 of the first ElectricRailMoving (its sections run by) */
 void game_test_ermv(unsigned frame)
 {
