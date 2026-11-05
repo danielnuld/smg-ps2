@@ -215,6 +215,7 @@ void game_set_draw_steps(int n); /* logic steps the next draw follows (main's ca
 /* HUD numbers */
 int game_coins(void);
 int game_life(void);
+int game_test_bk(int frame); /* bk test: the BossKameck fight a frame */
 int game_test_bbego(int frame); /* bbego test: the BossBegoman fight a frame */
 int game_lives(void);
 int game_misses(void);
