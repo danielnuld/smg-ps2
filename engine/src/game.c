@@ -1055,9 +1055,9 @@ static void zone_grow(const Inst *in);
  * a timer block gives everything on its first hit. CrystalCageL takes 2 hits 20 frames apart (its star: star_pos);
  * BreakableCage(Rotate / L) breaks on a spin too (ponytail: in SMG only what Mario rides or throws breaks it)
  * PunchBox: a spin (not standing on it) or a shell: Break, hidden at step 5, its coins at 15; its SW_A: one star piece,
- * its burst. ponytail (unmarked until the 2026-11-02 audit): WoodBox: arg1
- * respawn, arg3 riddle SE, arg4 1-up, arg7 power star and enemy attacks unread (WoodBox.cpp:43-110, 202-262), its
- * dead switch at the hit instead of step 15. CrystalCageL: no cracked BVA frame, wobble (RumbleCalculator 4 / 50 /
+ * its burst. WoodBox (WoodBox.cpp): its items, dead switch, arg3 1 riddle SE and arg4 1-up at exeHit step 15
+ * (update_wrecks), an explosion or a fire ball breaks it too, arg7 its power star (star_pos). ponytail (unmarked
+ * until the 2026-11-02 audit): CrystalCageL: no cracked BVA frame, wobble (RumbleCalculator 4 / 50 /
  * 0x14) nor REFLECT on the first hit, a Break effect it does not have (CrystalCage.cpp:190-345) */
 static int breakable(const char *name, const Row *r, int *coins, int *pieces)
 {
@@ -5367,6 +5367,9 @@ int game_test_box(void)
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
         if (in->breaks != 1) continue; /* spin-breakable */
+#ifdef BOX_WOOD /* a WoodBox with a riddle SE, a 1-up or a dead switch */
+        { const Row *r = &sc->objs[in->row]; if (strcmp(sc->types + 32 * r->type, "WoodBox") || (r->arg[3] != 1 && r->arg[4] <= 0 && r->sw[SW_DEAD] < 0)) continue; }
+#endif
 #ifdef BOX_ONLY_NEW /* the SimpleBreakableObj ones only */
         { const char *n = sc->types + 32 * sc->objs[in->row].type; if (!strncmp(n, "Punch", 5) || !strncmp(n, "Wood", 4) || !strncmp(n, "Crystal", 7)) continue; }
 #endif
@@ -12883,11 +12886,14 @@ static int fireball_lights_candle(V3 p) /* Candlestand::receiveMsgPlayerAttack: 
 }
 
 static void break_inst(const Inst *in, int drops);
-static int fireball_breaks(V3 p) /* SimpleBreakableObj::receiveMsgPlayerAttack: isMsgFireBallAttack (mBreakFlags 0x20) */
+static int woodbox_reached(const Inst *in, V3 at, float rad);
+static int fireball_breaks(V3 p) /* SimpleBreakableObj::receiveMsgPlayerAttack: isMsgFireBallAttack (mBreakFlags 0x20); a WoodBox's too */
 {
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
-        if (in->breaks != 7 || row_dead[in->row] || vlen(vsub(p, v3(in->m[12], in->m[13], in->m[14]))) > in->reach + 40.0f) continue;
+        if (row_dead[in->row]) continue;
+        if (woodbox_reached(in, p, 40.0f)) { break_inst(in, 1); game_rebind(); return 0; } /* (returns false: the ball goes on) */
+        if (in->breaks != 7 || vlen(vsub(p, v3(in->m[12], in->m[13], in->m[14]))) > in->reach + 40.0f) continue;
         const Row *r = &sc->objs[in->row];
         if (r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) continue; /* isValidSwitchA && !isOnSwitchA */
         break_inst(in, 1);
@@ -29799,6 +29805,16 @@ static void update_wrecks(void)
             if (wrecks[i].coins || wrecks[i].pieces) printf("wreck row %d: %d coins, %d star pieces out%c", wrecks[i].row, wrecks[i].coins, wrecks[i].pieces, 10);
             pop_coins(wrecks[i].p, wrecks[i].up, wrecks[i].coins);
             drop_pieces(wrecks[i].p, wrecks[i].up, wrecks[i].pieces);
+            Row *r = (Row *)&sc->objs[wrecks[i].row];
+            if (!strcmp(sc->types + 32 * r->type, "WoodBox")) { /* exeHit step 15: its 1-up (arg4), dead switch, riddle SE (arg3 1).
+                * ponytail: the 1-up given at once, no KinokoOneUp popping out 50 up (WoodBox.cpp:250-257: no item actor
+                * made at run time in the port, as the treasure boxes' and Kanina's) */
+                int one = r->arg[4] != 0 && r->arg[4] != -1;
+                if (one) { lives++; se_start(SE_SY_1UP, NULL); }
+                if (r->sw[SW_DEAD] >= 0) sw_set(r, SW_DEAD, 1);
+                if (r->arg[3] == 1) se_start(SE_SY_READ_RIDDLE_S, NULL);
+                printf("WoodBox %d step 15: 1-up %d, dead switch %d, riddle SE %d\n", wrecks[i].row, one, r->sw[SW_DEAD], r->arg[3] == 1);
+            }
         }
     }
 }
@@ -30960,7 +30976,8 @@ static void break_inst(const Inst *in, int drops)
             scene_stop = 5; camera_shake(SHAKE_NORMAL_WEAK);
             fx_named(name, "Break", in->m, NULL, NULL);
         } else fx_at(box ? FX_WOODBOXBREAK_BREAK : FX_CRYSTALCAGES_BREAK, p, up);
-        row_kill(in->row);
+        if (box) row_dead[in->row] = 1; /* its dead switch at exeHit step 15 (update_wrecks) */
+        else row_kill(in->row);
         printf("%s %d broken, %d coins, %d star pieces\n", name, in->row, n, sp);
         return;
     }
@@ -30972,13 +30989,21 @@ static void break_inst(const Inst *in, int drops)
     printf("%s %d broken, %d coins, %d star pieces\n", name, in->row, n, sp);
 }
 
+static int woodbox_reached(const Inst *in, V3 at, float rad) /* its body sensor (120 x scale, as high up its Y) within rad */
+{
+    if (in->breaks != 1 || strcmp(sc->types + 32 * sc->objs[in->row].type, "WoodBox")) return 0;
+    V3 b = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(vnorm(v3(in->m[4], in->m[5], in->m[6])), 120.0f * in->s));
+    return vlen(vsub(at, b)) < rad + 120.0f * in->s;
+}
 /* SimpleBreakableObj::receiveMsgEnemyAttack: isMsgExplosionAttack (mBreakFlags 8) breaks a KoopaStatue (breaks 5)
- * whose body the explosion reaches (its collision's reach) */
+ * whose body the explosion reaches (its collision's reach); WoodBox::receiveMsgEnemyAttack any enemy attack (ponytail:
+ * only explosions reach map objects here, the walkers' attacks only Mario, WoodBox.cpp:202) */
 static void explosion_breaks(V3 at, float rad)
 {
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
-        if (in->breaks != 5 || row_dead[in->row] || vlen(vsub(at, v3(in->m[12], in->m[13], in->m[14]))) > rad + in->reach) continue;
+        if (row_dead[in->row]) continue;
+        if (!woodbox_reached(in, at, rad) && (in->breaks != 5 || vlen(vsub(at, v3(in->m[12], in->m[13], in->m[14]))) > rad + in->reach)) continue;
         break_inst(in, 1);
         game_rebind();
         return;
@@ -37303,6 +37328,11 @@ static int star_demo_update(const Inst *in, int t, V3 sp)
     }
     return 1;
 }
+static int wreck_on(int row) /* its break model's clip still on (WoodBox::exeHit until isBckStopped: kill) */
+{
+    for (int i = 0; i < nwrecks; i++) if (wrecks[i].row == row && wrecks[i].t >= 0) return 1;
+    return 0;
+}
 static int note_star_row = -1; static V3 note_star_at; /* a star from its own place (requestAppearPowerStar(this, pos)): NoteFairy's last note, CollectTico's _94 */
 static V3 star_pos(const Inst *in, int *state)
 {
@@ -37320,6 +37350,11 @@ static V3 star_pos(const Inst *in, int *state)
         row_axes(r, &x, &z);
         float h = strcmp(name, "CrystalCageL") == 0 ? 250.0f : strncmp(name, "Breakable", 9) == 0 ? 150.0f : 0.0f;
         o = vadd(from, vmul(vcross(z, x), h * r->scale[0]));
+        if (!strcmp(name, "WoodBox") && (!row_dead[w - 1] || wreck_on(w - 1))) { /* its PowerStarDemoModel shown from exeHit
+            * step 0 at mBaseMtx (100 up in world Y: addTransMtx), requestAppearPowerStar(mPosition) at kill() */
+            *state = row_dead[w - 1];
+            return vadd(from, v3(0.0f, 100.0f, 0.0f));
+        }
         if ((!row_dead[w - 1] && !tbox_star_out(w - 1) && !flip_star_out(w - 1)) || (lg_cls(name) && !luigi_took(w - 1))) { *state = h > 0; return o; } /* (a Luigi absent
                                                                                                        * here: no star) */
     } else if (got_coins < 100 && got_purple < 100) { /* ScenePlayingResult: 100 coins, or 100 purple coins */

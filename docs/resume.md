@@ -434,6 +434,12 @@ Second console round (2026-10-24), from Daniel's report:
   accepted hit or a wall (shakeCameraWeak), sResetStep / 10000 reasons. Gesso knockOut, Poihana tryShock +
   stopScene 3, Snakehead TurtleDown (Damage, back to 300, Death, 9 pieces / a 1-up given at once). Test `jet`
   (OceanRing 1) from f500: taken, thrown, reset 1 at 300 frames, revived 105 later. The walker reactions not seen.
+- WoodBox (fix/264-woodbox, 2026-11-05): exeHit step 15 now gives the dead switch (was at the hit), arg3 1
+  SE_SY_READ_RIDDLE_S and arg4's 1-up (given at once: no KinokoOneUp actor, ponytail); explosions and fire balls
+  break it (receiveMsgEnemyAttack / isMsgFireBallAttack; the walkers' other attacks reach only Mario, ponytail); arg7
+  declares its power star (slice.py STAR_DECLARERS: no disc data has one), shown 100 up from the hit, out at kill().
+  arg1 respawn was already read (the BVA-broken box stays unless arg1 0). Test `box` + XF -DBOX_WOOD (HeavenlyBeach 1:
+  row 356's dead switch 13 at step 15).
 ## Rules
 
 - Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -
