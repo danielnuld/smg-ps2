@@ -8604,22 +8604,34 @@ static int cocoon_update(Player *m)
  * frames or 10000 from home; then it is back at home (Restart). jet.phase 1 held, 2 thrown. In water Mario jets with it
  * (MarioSwim) and dropJet throws it along his swim front. ponytail: no homing on enemies, no bounding off rebound walls,
  * no gravity in its flight, no BrakeLamp / SwimBubble / BulletWater effects, held at his hands' place as on land
- * ponytail (unmarked until the 2026-11-02 audit): arg2 1 should never come back (kill), else Restart: hidden 45,
- * blinking to step 105, KouraRevival effect and REVIVE_APPEAR (JetTurtle.cpp:107-114, 695-740); here back home at
- * once, no Explosion(Red / Gold) on a break. A thrown shell kills every walker alike (DeathSmoke, a coin): Gesso
- * knockOut, Poihana tryShock only, Snakehead TurtleDown with 9 pieces and a 1-up in Petari */
+ * attackSensor: the first walker taking its ACTMES_JET_TURTLE_ATTACK (a HitAll: walkers die, Unizo doBreak, Gesso
+ * knockOut, Poihana tryShock + stopSceneForDefaultHit 3, Snakehead TurtleDown) ends it: shakeCameraWeak, reset(0);
+ * a wall too; sResetStep: reset(1) past 5000 from home, else reset(0); past 10000 reset(1). reset: Explosion /
+ * ExplosionRed / ExplosionGold by its mShellType (arg0; a NokonokoLand's becomeFastType 1), Star for reason 1,
+ * WaterExplosion in water, SE_OJ_TURTLE_JET_BREAK_W / L, hidden; arg2 1 (_E0 off) killed, else Restart: home at step
+ * 45 (arg3 1: AppearLight, then the REVIVE_EFFECT level SE), blinking (step & 3: 0 shown, 2 hidden) unless arg3 1,
+ * at 105 shown, Wait, KouraRevival and SE_EM_NOKOLAND_REVIVE_APPEAR. row_step its Restart step (0 none) */
 static void jet_place(Inst *in)
 {
     memcpy(in->m, in->m0, 64);
     in->m[12] = in->head.x; in->m[13] = in->head.y; in->m[14] = in->head.z;
 }
 
-static void jet_reset(Inst *in)
+static void jet_reset(Inst *in, int reason) /* JetTurtle::reset */
 {
-    in->head = v3(in->m0[12], in->m0[13], in->m0[14]); in->hvel = v3(0, 0, 0);
-    jet_place(in);
-    row_turn[in->row] = 30; /* a moment before it can be taken again */
-    printf("jet turtle row %d: back home" "\n", in->row);
+    const Row *r = &sc->objs[in->row];
+    V3 p = in->head;
+    float dep;
+    int wet = in_water(p, up_at(p, mario->up), &dep), st = in->jet == 1 ? (r->arg[0] >= 0 && r->arg[0] <= 2 ? r->arg[0] : 0) : in->jet == 2 && r->arg[0] == 1;
+    static const char *const ex[3] = {"Explosion", "ExplosionRed", "ExplosionGold"};
+    fx_named("JetTurtle", wet ? "WaterExplosion" : reason ? "Star" : ex[st], in->m, NULL, NULL);
+    se_start(wet ? SE_OJ_TURTLE_JET_BREAK_W : SE_OJ_TURTLE_JET_BREAK_L, &p.x);
+    in->hvel = v3(0, 0, 0);
+    in->m[12] = 1e9f; /* hideModel */
+    printf("jet turtle row %d: reset %d" "\n", in->row, reason);
+    if (in->jet >= 2) return; /* a NokonokoLand's / a Penguin's: its owner gives it again */
+    if (r->arg[2] == 1) { row_kill(in->row); row_step[in->row] = 0xFFFF; return; } /* _E0 off: kill */
+    row_step[in->row] = 1; /* Restart */
 }
 
 /* ScrewSwitch.cpp / ScrewSwitchReverse.cpp: Mario standing on the screw (its binder, 150 up) spins: he is drawn
@@ -13007,6 +13019,11 @@ static void update_screws(void)
 static int sw_start_jet(Player *m, int type);
 static int bk_jet_hit(V3 p);
 static void km_down(Kuribo *k, V3 from);
+enum { GE_FROMBOX, GE_WAIT, GE_SEARCH, GE_WALKCHARGE, GE_WALK, GE_SINK, GE_LOST, GE_ATTACK, GE_PUNCHDOWN, GE_COMEBACK, GE_ROTATE };
+enum { SN_WAYLAY, SN_WAIT, SN_FORWARD, SN_REST, SN_BACK, SN_TURTLEDOWN };
+static void poihana_shock(Kuribo *k);
+static void ge_knock(Kuribo *k, V3 from);
+static void w_nrv(Kuribo *k, int n);
 static int noko_turtle(Kuribo *k, V3 p, V3 v);
 static void update_jets(void)
 {
@@ -13016,8 +13033,28 @@ static void update_jets(void)
         if (!in->jet) continue;
         if (in->jet == 2 && jet.inst != i) { in->m[12] = 1e9f; continue; } /* a NokonokoLand's (陸ノコ用ジェット亀): dead until it gives it */
         if (in->jet == 3 && jet.inst != i) continue; /* a SwimTurtle Penguin's (ジェット亀さん): on its back (penguin_wait) */
-        if (row_turn[in->row] > 0) row_turn[in->row]--;
         const Row *r = &sc->objs[in->row];
+        if (row_step[in->row] == 0xFFFF) continue; /* killed */
+        if (row_step[in->row]) { /* exeRestart */
+            int st = row_step[in->row]++;
+            V3 home = v3(in->m0[12], in->m0[13], in->m0[14]);
+            if (st == 45) {
+                in->head = home;
+                if (r->arg[3] == 1) fx_named("JetTurtle", "AppearLight", in->m0, NULL, NULL);
+            }
+            if (st > 45 && r->arg[3] == 1) in->lv[0] = se_level(SE_EM_LV_NOKOLAND_REVIVE_EFFECT, &home.x, in->lv[0]);
+            if (st >= 45) {
+                jet_place(in);
+                if (r->arg[3] != 1 && (st & 3) >= 2) in->m[12] = 1e9f; /* step & 3: 0 showModel, 2 hideModel */
+            }
+            if (st == 105) {
+                row_step[in->row] = 0; jet_place(in);
+                fx_named("JetTurtle", "KouraRevival", in->m, NULL, NULL);
+                se_start(SE_EM_NOKOLAND_REVIVE_APPEAR, &home.x);
+                printf("jet turtle row %d: revived" "\n", in->row);
+            }
+            continue;
+        }
         int type = in->jet == 3 ? 1 : in->jet == 2 ? (r->arg[0] == 1 ? 2 : 1) : r->arg[1] + 1 >= 0 && r->arg[1] + 1 <= 2 ? r->arg[1] + 1 : 0; /* NokonokoLand::initJetTurtle: becomeFastType for arg0 1 */
         if (jet.inst == i && jet.phase == 1) { /* held: in front of him at his hands */
             in->head = vadd(vadd(mario->pos, vmul(mario->face, 70.0f)), vmul(mario->up, 60.0f));
@@ -13036,8 +13073,11 @@ static void update_jets(void)
             int wall = 0;
             collide_n(&p, up, 60.0f, &gn, &wn, &wall);
             in->head = p;
-            int gone = wall || ++jet.t >= (const int[]){300, 480, 300}[type] ||
-                       vlen(vsub(p, v3(in->m0[12], in->m0[13], in->m0[14]))) > 10000.0f;
+            float fh = vlen(vsub(p, v3(in->m0[12], in->m0[13], in->m0[14])));
+            int gone = 0, reason = 0;
+            if (++jet.t >= (const int[]){300, 480, 300}[type]) { gone = 1; reason = fh > 5000.0f; } /* sResetStep */
+            else if (fh > 10000.0f) { gone = 1; reason = 1; }
+            else if (wall) { gone = 1; camera_shake(SHAKE_WEAK); }
             if (bk_jet_hit(p)) gone = 1; /* BossKameck: isMsgJetTurtleAttack (requestDamage) */
             hhp_blow(p, 60.0f); /* HammerHeadPackun: isMsgJetTurtleAttack */
             tbox_hit(p, 60.0f); /* TreasureBoxCracked: isMsgJetTurtleAttack */
@@ -13045,20 +13085,27 @@ static void update_jets(void)
                 Kuribo *e = &kuribo[k];
                 if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_BUTTERFLY ||
                     vlen(vsub(p, vadd(e->pos, vmul(e->up, 60.0f)))) > 60.0f + 80.0f) continue;
-                if (e->kind == WALK_PETARI) { if (petari_solid(e)) petari_blow(e, p, PT_KICKOUT); continue; } /* KickOut */
-                if (e->kind == WALK_KAMECK) { km_down(e, p); continue; } /* Kameck: requestDown */
-                if (e->kind == WALK_NOKO) { if (noko_turtle(e, p, in->hvel)) printf("jet turtle row %d hits noko row %d" "\n", in->row, e->row); continue; }
-                if (e->kind == WALK_UNIZO) { if (!unizo_breaking(e)) unizo_break(e); continue; } /* isMsgJetTurtleAttack: doBreak */
-                e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up);
-                pop_coins(e->pos, e->up, 1);
-                printf("jet turtle row %d blows walker row %d" "\n", in->row, e->row);
+                int took = 1; /* sendArbitraryMsg's answer */
+                if (e->kind == WALK_PETARI) { if (petari_solid(e)) petari_blow(e, p, PT_KICKOUT); else took = 0; } /* KickOut */
+                else if (e->kind == WALK_KAMECK) km_down(e, p); /* Kameck: requestDown */
+                else if (e->kind == WALK_NOKO) { took = noko_turtle(e, p, in->hvel); if (took) printf("jet turtle row %d hits noko row %d" "\n", in->row, e->row); }
+                else if (e->kind == WALK_UNIZO) { if (unizo_breaking(e)) took = 0; else unizo_break(e); } /* isMsgJetTurtleAttack: doBreak */
+                else if (e->kind == WALK_GESSO) { if (e->nrv == GE_PUNCHDOWN) took = 0; else ge_knock(e, p); } /* isMsgPlayerHitAll: knockOut */
+                else if (e->kind == WALK_POIHANA) { if (e->phase == 6) took = 0; else { poihana_shock(e); scene_stop = 3; } } /* tryShock, stopSceneForDefaultHit(3) */
+                else if (e->kind == WALK_SNAKEHEAD) { if (e->phase || e->nrv == SN_TURTLEDOWN) took = 0; else w_nrv(e, SN_TURTLEDOWN); } /* TurtleDown */
+                else {
+                    e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up);
+                    pop_coins(e->pos, e->up, 1);
+                    printf("jet turtle row %d blows walker row %d" "\n", in->row, e->row);
+                }
+                if (took) { camera_shake(SHAKE_WEAK); gone = 1; break; } /* shakeCameraWeak, reset(0) */
             }
-            if (gone) { jet.inst = -1; jet.phase = 0; if (in->jet >= 2) in->m[12] = 1e9f; else jet_reset(in); continue; } /* (a NokonokoLand's: Restart, its Koopa back) */
+            if (gone) { jet.inst = -1; jet.phase = 0; jet_reset(in, reason); continue; } /* (a NokonokoLand's: hidden, its Koopa back) */
             jet_place(in);
             jet.row = in->row; jet.head = in->head; jet.vel = in->hvel;
             continue;
         }
-        if (jet.inst < 0 && !row_turn[in->row] && vlen(vsub(c, vadd(in->head, vmul(mario->up, 50.0f)))) < 80.0f + HIT_BODY_R) {
+        if (jet.inst < 0 && vlen(vsub(c, vadd(in->head, vmul(mario->up, 50.0f)))) < 80.0f + HIT_BODY_R) {
             if (swimming && !sw_start_jet(mario, type == 1)) continue; /* receiveMsgTaken: startJet (ATYPE_JET_TURTLE_SLOW 1) */
             jet.inst = i; jet.phase = 1; jet.t = 0; jet.row = in->row; jet.head = in->head; jet.vel = v3(0, 0, 0); /* TakenStart */
             printf("jet turtle row %d: taken" "\n", in->row);
@@ -24770,7 +24817,6 @@ _Static_assert(WALK_KINDS <= KPROF_KINDS, "kprof: a slot a walker kind (kinds pa
  * rise. Its body (100) hurts Mario strongly (Attack: 25 back, Ink, 240); a spin or explosion knocks it out (30 away,
  * PunchDown 20 or bound: Death, a coin); a star piece spins it (StarPiece). Out of sight or 10000 off for 300 frames it
  * goes home (Wait). Arg0 0 with an appear switch: FromBox. ponytail: no star pointer swoon, no push from enemies */
-enum { GE_FROMBOX, GE_WAIT, GE_SEARCH, GE_WALKCHARGE, GE_WALK, GE_SINK, GE_LOST, GE_ATTACK, GE_PUNCHDOWN, GE_COMEBACK, GE_ROTATE };
 static V3 ge_side(const Kuribo *k) { return vnorm(vcross(k->qy, k->front)); } /* calcSideVec */
 static void ge_vel(Kuribo *k, float side, float up, float front) /* calcAndSetVelocity */
 {
@@ -28138,9 +28184,11 @@ static void tw_update(Kuribo *k)
  * arg0 / 1.5 within 300 of the end) to the end, Rest 100 / 120, MoveBack at arg1 (10) to 300, Wait (until Mario is
  * near again, unless it moves on its own). Its head / jaws (small: head 100 at (140, -70, 0) of Head; big: upper jaw
  * 250 at (100, 0, 0) of UpperJaw, lower jaw 200 at (250, 0, 0) of LowerJaw) hurt Mario strongly, its body (within 100
- * / 300 of the rail's line) hurts or pushes. Only a shell (JetTurtle) kills it. ponytail: no shell kill (TurtleDown:
- * its 9 star pieces / 1-up), no star pointer swoon, no anim scale, no smoke effect */
-enum { SN_WAYLAY, SN_WAIT, SN_FORWARD, SN_REST, SN_BACK };
+ * / 300 of the rail's line) hurts or pushes. Only a shell (JetTurtle) kills it: TurtleDown (Damage BCK,
+ * SE_EV_SNAKEHEAD_DAMAGE, back to 300 at sGoHomeSpeed 20 / race 50), killed at the BCK's end: SE_EM_EXPLODE_UNDER_WATER,
+ * Death, a small one 9 star pieces at its Head (SE_OJ_STAR_PIECE_BURST_W), a big one its 1-up at its Antenna.
+ * ponytail: no star pointer swoon, no anim scale, no smoke effect; the big one's 1-up given at once (no
+ * appearKinokoOneUpPop item actor in the port, Snakehead.cpp:196-203) */
 static const char *sn_clip(const Kuribo *k, int type, const char *what)
 {
     static const char *tb[4][4] = {{"StraightAppear", "StraightWait", "StraightForward", "StraightBack"},
@@ -28196,12 +28244,30 @@ static void snake_update(Kuribo *k)
         k->lva[1] -= bsp;
         if (k->lva[1] <= 300.0f) { k->lva[1] = 300.0f; w_nrv(k, SN_WAIT); } /* isRailReachedNearGoal(300) */
         break;
+    case SN_TURTLEDOWN: { /* exeTurtleDown: setRailDirectionToStart, back to sStartCoord at sGoHomeSpeed */
+        float sp = type >= 2 ? 50.0f : 20.0f;
+        if (st == 0) { w_act(k, "Damage"); w_se(k, SE_EV_SNAKEHEAD_DAMAGE); }
+        if (k->lva[1] < 300.0f + sp) k->lva[1] = 300.0f; else k->lva[1] -= sp;
+        if (w_bck_stopped(k)) { /* kill */
+            const Model *md = walker_new_model(k->row);
+            float m[16];
+            w_se(k, SE_EM_EXPLODE_UNDER_WATER);
+            basis_matrix(m, k->pos, k->qy, k->qz, 0);
+            fx_named(walker_cls(k), "Death", m, NULL, NULL);
+            if (small) { V3 h = w_joint(k, md, 6, v3(0, 0, 0)); drop_pieces(h, k->qy, 9); se_start(SE_OJ_STAR_PIECE_BURST_W, &h.x); }
+            else { lives++; se_start(SE_SY_1UP, NULL); } /* appearKinokoOneUpPop (ponytail: given at once) */
+            k->state = KURIBO_DEAD; row_kill(k->row);
+            printf("snakehead row %d: turtle down, dead" "\n", k->row);
+            return;
+        }
+        break;
+    }
     }
     k->act_t += k->act_rate;
     k->pos = rail_at(rail, rn, k->lva[1]);
     k->qy = k->up = vmul(k->grav, -1.0f); k->qz = vnorm(vtangent(k->front, k->qy)); /* makeMtxFrontUpPos */
     if (vlen(k->qz) < 1e-3f) k->qz = k->front;
-    if (k->phase || mario->hurt_timer) return;
+    if (k->phase || mario->hurt_timer || k->nrv == SN_TURTLEDOWN) return; /* attackSensor: none in TurtleDown */
     const Model *md = walker_new_model(k->row);
     V3 heads[2];
     float hr[2];

@@ -428,6 +428,12 @@ Second console round (2026-10-24), from Daniel's report:
   their break models skinned (SKINNED_OBJ, EXTRA). Test `unizo` (OceanRing 1) from f500: Jump, Chase, hit, Attack,
   CollidePlayer, the test's break at f950, dead ~170 frames later. ponytail: no BRK, no Blink BTP, no damage floor.
   Repack: slice_all.py OceanRingGalaxy and every galaxy with Unizo / UnizoLand / UnizoShoal rows.
+- JetTurtle (fix/262-jet, 2026-11-05): JetTurtle::reset (Explosion / ExplosionRed / ExplosionGold by mShellType,
+  Star for reason 1, WaterExplosion, SE_OJ_TURTLE_JET_BREAK_W / L), arg2 1 killed, Restart (home at step 45, blinking,
+  arg3 1 AppearLight + REVIVE_EFFECT, KouraRevival + REVIVE_APPEAR at 105); the thrown shell ends on its first
+  accepted hit or a wall (shakeCameraWeak), sResetStep / 10000 reasons. Gesso knockOut, Poihana tryShock +
+  stopScene 3, Snakehead TurtleDown (Damage, back to 300, Death, 9 pieces / a 1-up given at once). Test `jet`
+  (OceanRing 1) from f500: taken, thrown, reset 1 at 300 frames, revived 105 later. The walker reactions not seen.
 ## Rules
 
 - Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -
