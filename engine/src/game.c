@@ -1399,10 +1399,11 @@ enum { LOGIC_TIMER = 1, LOGIC_REVERSE, LOGIC_GROUP, LOGIC_BLOCKER, LOGIC_FLIPS, 
 static int area_shape(const char *name);
 /* FlipPanel (Petari FlipPanel.cpp): row_step bits. Back = flipped (ACTMES_SUCCESS to the observer); a flip locks the
  * panel until Mario stood on other ground; it flips once he has stood on it 3 frames (checkPlayerOnTop). Done: the
- * group is complete (FlipPanelNrvEnd)
- * ponytail (unmarked until the 2026-11-02 audit): its bloom model is always drawn (FlipPanel.cpp:62-104 / 156: only
- * on the back side, front for FlipPanelReverse, gone at End), no 25 sink under Mario (calcJointMove :54), the group
- * sets SW_A at once instead of after the FlipPanelComplete demo (arg0 + 40) and its star */
+ * group is complete (FlipPanelNrvEnd). Its bloom model shows on its back side (FlipPanelReverse: its front), gone at
+ * End; the panel just flipped (_CC: the lock here) has its Panel joint 25 down (calcJointMove). The observer
+ * (FlipPanelObserver) at the last flip: Complete (the FlipPanelComplete demo, its panels told GROUP_MOVE_STOP), after
+ * arg0 + 40 steps the demo ends and its declared star comes out, DemoWait: once no demo runs, its SW_A, dead.
+ * ponytail: the bloom's BRK frame is not synced (sBloomSyncStep) */
 enum { FLIP_BACK = 1, FLIP_LOCK = 2, FLIP_DONE = 4, FLIP_STEP = 8 };
 typedef struct { int row, kind; } Logic;
 static Logic *logic;
@@ -6941,6 +6942,19 @@ int game_test_pipe(void)
     return -1;
 }
 
+int game_test_flip_front(void) /* tests: Mario onto the first panel still on its front side; -1 when none is */
+{
+    for (int i = 0; i < ninsts; i++)
+        if (insts[i].flip && !(row_step[insts[i].row] & (FLIP_BACK | FLIP_DONE))) {
+            static int last = -1, same;
+            same = insts[i].row == last ? same + 1 : 0; last = insts[i].row;
+            if (same >= 3) { row_step[insts[i].row] |= FLIP_BACK; same = 0; return insts[i].row; } /* (a panel the drop misses: flipped here) */
+            int k = 0;
+            for (int j = 0; j < i; j++) k += insts[j].flip != 0;
+            return game_test_flip(k);
+        }
+    return -1;
+}
 int game_test_flip(int k)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -33748,6 +33762,10 @@ static void update_dswitches(void)
  * PowerStar (its declared star: the box gone), Empty (its SW_A arg0 (5) frames on); arg2 2 starts open. Its dead switch
  * at the clip's end. row_turn 0 Wait / 1 Open / 2 OpenWait, row_step its step. ponytail: no rising / bounding item,
  * chips and air bubbles give nothing, no flip of Mario off its half-open lid, no Light / Glow effects */
+static int flip_star_out(int row) /* a FlipPanelObserver past its Complete demo: its star requested */
+{
+    return (row_step[row] & 0x6000) == 0x6000 && !strcmp(sc->types + 32 * sc->objs[row].type, "FlipPanelObserver");
+}
 static int tbox_star_out(int row) /* a TreasureBoxPowerStar past its OpenWait step 10: its star requested */
 {
     return row_turn[row] && row_step[row] >= 11 && !strcmp(sc->types + 32 * sc->objs[row].type, "TreasureBoxPowerStar");
@@ -34240,12 +34258,23 @@ static void update_switches(void)
                 n++;
                 back += row_step[k] & FLIP_BACK;
             }
-            if (n && back == n) {
+            unsigned short *ost = &row_step[row];
+            if (!(*ost & 0x4000) && n && back == n && pd_try_start("FlipPanelComplete", row)) { /* tryStartDemo: Complete */
                 for (u32 k = 0; k < sc->nobjs; k++)
-                    if (sc->objs[k].group == r->group && sc->objs[k].zone == r->zone) row_step[k] |= FLIP_DONE;
-                sw_set(r, SW_A, 1);
-                row_dead[row] = 1;
+                    if (sc->objs[k].group == r->group && sc->objs[k].zone == r->zone && (int)k != row) row_step[k] |= FLIP_DONE; /* GROUP_MOVE_STOP */
+                *ost = (unsigned short)((*ost & 0x8000) | 0x4000);
                 printf("flip panels %d complete\n", r->group);
+            } else if ((*ost & 0x4000) && !(*ost & 0x2000)) {
+                int st = (*ost & 0x1FFF) + 1, delay = (r->arg[0] != -1 ? r->arg[0] : 0) + 40; /* mDemoDelay: arg0 (NoInit) + 0x28 */
+                *ost = (unsigned short)((*ost & 0xE000) | st);
+                if (st > delay) { /* endDemo, requestAppearPowerStar (its declared star: the declarer done), DemoWait */
+                    pd_end("FlipPanelComplete");
+                    game_rebind(); /* (star_pos: flip_star_out) */
+                    *ost |= 0x2000;
+                }
+            } else if ((*ost & 0x2000) && !pd.name && !dx.on) { /* exeDemoWait: !isDemoActive */
+                if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
+                row_dead[row] = 1; /* makeActorDead */
             }
             continue;
         }
@@ -35256,7 +35285,7 @@ static V3 star_pos(const Inst *in, int *state)
         row_axes(r, &x, &z);
         float h = strcmp(name, "CrystalCageL") == 0 ? 250.0f : strncmp(name, "Breakable", 9) == 0 ? 150.0f : 0.0f;
         o = vadd(from, vmul(vcross(z, x), h * r->scale[0]));
-        if ((!row_dead[w - 1] && !tbox_star_out(w - 1)) || (lg_cls(name) && !luigi_took(w - 1))) { *state = h > 0; return o; } /* (a Luigi absent
+        if ((!row_dead[w - 1] && !tbox_star_out(w - 1) && !flip_star_out(w - 1)) || (lg_cls(name) && !luigi_took(w - 1))) { *state = h > 0; return o; } /* (a Luigi absent
                                                                                                        * here: no star) */
     } else if (got_coins < 100 && got_purple < 100) { /* ScenePlayingResult: 100 coins, or 100 purple coins */
         *state = 0;
@@ -44487,9 +44516,14 @@ static void shop_goods_draw(const Inst *in, const float m[16])
         draw_skin(gm, w, ga[g]);
     }
 }
+static int flip_bloom_on(const Inst *in) /* FlipPanel: appear / killBloomModel: its back side shown (Reverse: front), none at End */
+{
+    int st = row_step[in->row];
+    return !(st & FLIP_DONE) && ((st & FLIP_BACK) != 0) != (strcmp(sc->types + 32 * sc->objs[in->row].type, "FlipPanelReverse") == 0);
+}
 static void inst_draw(const Inst *in, const Model *md, const float m[16])
 {
-    if (in->md_bloom && md == in->md) render_bloom_model(in->md_bloom, m);
+    if (in->md_bloom && md == in->md && (!in->flip || flip_bloom_on(in))) render_bloom_model(in->md_bloom, m);
     if (in->fat && md == in->md) { /* its FatRed frame's model, posed by its own Anim (the same skin) */
         const Model *fm = fat_model(in);
         if (fm && fm->skin && in->anim) { use_row_light(in->row, v3(m[12], m[13], m[14]), LIGHT_STRONG); draw_skin(fm, m, in->anim); fat_goods_draw(in, m); return; }
@@ -45006,7 +45040,16 @@ void game_draw(void)
             inst_draw(in, in->md, cm);
             continue;
         }
-        if (in->flip && in->md->skin) { inst_draw(in, in->md, in->m); continue; } /* turned by its clips */
+        if (in->flip && in->md->skin) { /* turned by its clips; just flipped (_CC): its Panel joint 25 down (calcJointMove) */
+            if (row_step[in->row] & FLIP_LOCK) {
+                float cm[16];
+                V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+                memcpy(cm, in->m, 64);
+                cm[12] -= 25.0f * up.x; cm[13] -= 25.0f * up.y; cm[14] -= 25.0f * up.z;
+                inst_draw(in, in->md, cm);
+            } else inst_draw(in, in->md, in->m);
+            continue;
+        }
         if (in->flip && in->md_flip[0]) { /* the face PanelA / PanelB / PanelEnd leave shown (static: no turn) */
             int turned = (row_step[in->row] & FLIP_BACK) != (strcmp(sc->types + 32 * sc->objs[in->row].type,
                                                                     "FlipPanelReverse") == 0);

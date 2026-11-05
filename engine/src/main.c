@@ -2357,7 +2357,7 @@ int main(void)
         }
 #endif
 #ifdef FLIP_TEST
-        if (frame >= 120 && frame % 40 == 0) { /* every 40 frames Mario on the next panel */
+        if (frame >= 360 && frame % 40 == 0) { /* every 40 frames Mario on the next panel (after the starter's flight in) */
             static int k, done;
             if (!done && k) {
                 char d[128];
@@ -2369,9 +2369,10 @@ int main(void)
                 printf("flip test end: %d panels\n", k - 1);
                 game_test_flip(2);
                 done = 1;
-            } else if (done == 1) {
+            } else if (done == 1) { /* then onto each panel left on its front till none is */
+                extern int game_test_flip_front(void);
                 printf("flip test after panel 2 again: %d on their back\n", game_flips_back());
-                done = 2;
+                if (game_test_flip_front() < 0) done = 2;
             } else if (done >= 2 && ++done == 8) /* its power star out and in place (210 frames): Mario on it */
                 printf("flip test: on item %d\n", game_test_item());
         }
