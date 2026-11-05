@@ -674,6 +674,9 @@ there needs the embedded blob and every pack rebuilt.
   _2A0 (m_center: 60 up, 40 squatting; Spine1 hanging) with cylinderPushCheck's two halves (down along _4C4, then up
   along _4B8), so low sensors (BegomanBaby's body 20 up) are spun. `begoman` XF=-DBEGO_BABY: the spin blows three
   Babies; route EggStar 1 star f 4135.
+- Walkers' ground gate (fix/walker-ground-gate, 2026-11-04): w_zone_ground: a walker runs once its zone is full (not
+  low: a low zone's base-pack pieces gave zone_kcl without its planets) and has collision; KuriboChief's own kcl_query
+  guard dropped. kchief (HeavensDoor 1) lands and is spun; route EggStar 1 star f 4135.
 
 ## Next
 
