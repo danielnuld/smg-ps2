@@ -2007,7 +2007,12 @@ int main(void)
 #endif
 #ifdef NPC_TEST
         { /* Mario beside each turning NPC in turn (300 frames each): their turn, tilt and action */
-#ifdef NPC_LOOK
+#ifdef KINO_TEST /* XF=-DKINO_TEST: Mario dropped on the first Kinopio at 150 (trampled), a spin beside it at 300 */
+            { extern int game_test_kino(int); static unsigned f0; if (!f0 && game_test_free()) f0 = frame; /* frames from Mario free */
+              unsigned t = f0 ? frame - f0 : 0;
+              if (t == 30 || t == 180) printf("kino test f %u: row %d\n", frame, game_test_kino(t == 180));
+              if (t >= 180 && t < 183) pad_force |= PAD_SQUARE; }
+#elif defined NPC_LOOK
             { extern void game_test_npc_look(unsigned); game_test_npc_look(frame); }
 #else
             if (frame >= 150 && frame % 300 == 150) printf("npc test f %u: visit row %d\n", frame, game_test_npc_visit((int)(frame - 150) / 300));
