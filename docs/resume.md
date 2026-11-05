@@ -195,6 +195,13 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
     Tico (arg0): their colour models "<class>~<k>" (game_rebind_'s table). Caretaker's BodyColor BRK bakes to one colour
     (the registers it drives are not baked), its tidy-up mission is not ported. Repack: every galaxy with Penguins or
     Ticos (full repack).
+  - NPC rails (round 3; game.c npc_rail_move, NPCUtil startMoveAction / tryStartMoveTalkAction): a Penguin with a rail
+    moves on it (Penguin::init's speeds by arg0: Walk 1.5 / Swim 5 / SwimSurface 5 / SwimTurtle 10 / DashA 6, on the
+    ground for Walk / Dash, reversed at an open rail's end, the Flow nerve Swim at 5), its action _11C while moving, the
+    turn / talk ones standing or in a long talk. Penguins / PenguinCoach / PenguinStudent now talk (talkcls 12: their
+    balloon 150 / 430 up). NPCSupportRail: a dead rail holder for PenguinSkater, nothing to run. Test XF="-DGAP_TEST=23
+    -DDEBUG_HUD -UCATCHUP" HeavenlyBeachGalaxy/1 (rows 339-347 walking, swimming, dashing, talking). Left: Kinopio's
+    rail (tryStartArgs at each point).
 - mario2 (2026-11-04), #168 PlayerKick: mario_kick / mario_kicked (MarioActor::sendBodyAttack's ACTMES_KICK: his
   cylinder on the sensor, status none, not damaged, no hip drop, within 90 degrees of his front; ランニングキック, its
   voice, pad 2) taken by a staggering Kuribo (36 / 30, three star pieces) / KuriboMini (22 / 25, three), a swooning
