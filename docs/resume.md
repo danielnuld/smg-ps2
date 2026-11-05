@@ -1408,3 +1408,9 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
   NPCActor code made shared): SE_SV_TICOFAT_TRAMPLED / POINT, SE_SM_TICOFAT_SPIN. `fat` (EggStar 2) still eats 100,
   flies, its planet. ponytail: goods' BPK colours, Reaction clips, _DB voice, isPlayerFlying. Repack: slice_all.py +
   sound.py for EggStar, BattleShip, Factory, HellProminence, OceanRing, SandClock, StarDust.
+- TicoShop (feat/ticoshop, 2026-11-05): talkcls 11 on the TicoComet code (tcm: need arg0 / 30, gifts every 100 /
+  need), Common_TicoShop000 (msg.py COMMON), events 3 / 4 the choice, its kill node the Demo nerve (Demo, META_ITEM /
+  META, SMOKE, the chosen 1-up / life up given at once), TicoShopGoodsOneUp / LifeUp goods at StarPieceR / L (Shake);
+  TicoComet / TicoShop reaction voices (npc_react). Test: `talk` XF=-DTALK_CLS=11 (KoopaJrShipLv1Galaxy/1, 50 pieces):
+  30 eaten, Comprar, the demo, life up. ponytail: no popping mushrooms, Eat0..2 growth. Repack: slice_all.py + sound.py
+  for KoopaJrShipLv1Galaxy, ElectricUfo / HellLavaFloating / PhantomNest galaxies (their TicoShop zones).

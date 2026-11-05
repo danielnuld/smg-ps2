@@ -308,7 +308,7 @@ typedef struct {
     const unsigned char *railer; /* map part on a rail: its PATH entry; moves along it (update_railers) */
     u8 rwork;        /* RailMoveObj _D0: its rail mover worked last frame (update_railers' StageEffect SEs) */
     int press;       /* RailMoveObjPress (RGTowerPressGroundA, ReverseGravityRoomPressGroundA / B): ATYPE_MAP_OBJ_PRESS */
-    int talkcls;     /* SignBoard 1, Tico 2, Kinopio 3, ..., TicoStarRing 7, TicoComet 8, HoneyBee 10: update_talkers */
+    int talkcls;     /* SignBoard 1, Tico 2, Kinopio 3, ..., TicoStarRing 7, TicoComet 8, HoneyBee 10, TicoShop 11: update_talkers */
     int clipcls;     /* its Petari clipping ported (obj_clipped): NPCActor's default 1, SuperSpinDriver 2; 0 never clipped */
     u32 lv[2];       /* its level sounds' handles (Tico's wait / float) */
     const Model *md_bloom; /* its "<model>Bloom" model (PlanetMap::initBloomModel, createModelObjBloomModel) or NULL */
@@ -4615,7 +4615,7 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->trapeze = strcmp(name, "Trapeze") == 0;
     ci->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
     ci->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 || strcmp(name, "KinopioAstro") == 0 ? 3 :
-                  strcmp(name, "ButlerMap") == 0 ? 4 : strcmp(name, "Butler") == 0 ? 5 : lg_cls(name) ? 6 : strcmp(name, "TicoStarRing") == 0 ? 7 : strcmp(name, "TicoComet") == 0 ? 8 : strcmp(name, "HoneyBee") == 0 ? 10 : 0;
+                  strcmp(name, "ButlerMap") == 0 ? 4 : strcmp(name, "Butler") == 0 ? 5 : lg_cls(name) ? 6 : strcmp(name, "TicoStarRing") == 0 ? 7 : strcmp(name, "TicoComet") == 0 ? 8 : strcmp(name, "HoneyBee") == 0 ? 10 : strcmp(name, "TicoShop") == 0 ? 11 : 0;
     ci->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 : 0;
     ci->gap = gap_class(name);
     ci->clipcls = strcmp(name, "Tico") == 0 || strcmp(name, "TicoBaby") == 0 || lg_cls(name) ? 1 : /* NameObjFactory: Tico, LuigiNPC */
@@ -11197,17 +11197,25 @@ static int kast_peach; /* KinopioAstro (the messenger): its Peach letter, 0 none
  * 1 / 2 the StarPieceCounter's TicoFat mode on / off, 3 tryDemo (DemoAnim: Demo, SE_SM_TICOFAT_META_ITEM / META; at 90
  * SE_SM_METAMORPHOSE_SMOKE, SE_DM_TICOFAT_MORPH_WIPE_IN; DemoFade: closeWipeWhiteFade(30), SE_DM_TICOFAT_MORPH_WIPE_OUT;
  * the wipe over: forceOpenWipeWhiteFade, forceToNextStateGalaxyCometScheduler, startGalaxyMapLayoutForTicoComet, Wait,
- * its pieces counted again; DemoEnd). ponytail: no turn to the camera in EatPre (turnQuatZDirRad), no Eat0..2 / Big0..2
- * growth, no AnimScaleController, no reaction voices */
+ * its pieces counted again; DemoEnd). Reactions (npc_react: body 100 at its Center + 100, spin within _12C 1000):
+ * startReactionSound's voices.
+ * TicoShop (TicoShop.cpp, a TicoComet): Common_TicoShop000 (350 to talk), _194 arg0 (sStarPieceNeed 30) asked for;
+ * branchFunc hasEnoughStarPiece; eventFunc 0..2 TicoEat's, 3 mChoseLifeUp, 4 mChoseOneUp; its kill node (_180, Tico::
+ * killFunc) the Demo nerve: Demo, SE_SM_TICOFAT_META_ITEM / META, at its end SE_SM_METAMORPHOSE_SMOKE and kill: the
+ * chosen KinokoOneUp / KinokoSuper. Its goods (NPCData TicoShopItem): TicoShopGoodsOneUp at StarPieceR, ..LifeUp at
+ * StarPieceL, Shake. ponytail: no turn to the camera in EatPre (turnQuatZDirRad), no Eat0..2 / Big0..2 growth, no
+ * AnimScaleController, no Reaction nerve clips, no star piece hit voice (_DB: Tico's _E5); the shop's mushrooms given
+ * at once (no appearKinokoOneUpPop / appearKinokoSuper item popping out, as the treasure boxes' here) */
 static void wipe_start(int close, int frames);
 static int wipe_active(void);
 static void hud_tico_eat(int center);
 enum { TCM_NONE, TCM_EATPRE, TCM_EATNOW, TCM_EATPST, TCM_EATEND, TCM_DEMOANIM, TCM_DEMOFADE, TCM_DEMOEND };
-static struct { int row, nrv, step, left, counter; u32 lv[2]; struct { V3 pos; int on, col; } gift[8]; } tcm = {.row = -1, .left = 20};
-static int tcm_branch(int t, u32 v) { (void)t; (void)v; return got_pieces >= 20; } /* branchFunc: getStarPieceNum >= _194 */
-static int tcm_event(int t, u32 v) /* TicoComet::eventFunc */
+static struct { int row, nrv, step, left, need, counter, life, oneup; u32 lv[2]; struct { V3 pos; int on, col; } gift[8]; NpcReact re; } tcm = {.row = -1, .left = 20, .need = 20};
+static int tcm_branch(int t, u32 v) { (void)t; (void)v; return got_pieces >= tcm.need; } /* branchFunc: getStarPieceNum >= _194 */
+static int tcm_event(int t, u32 v) /* TicoComet::eventFunc; TicoShop::eventFunc (3 / 4 its choice, no demo) */
 {
     (void)t;
+    if (tcm.row >= 0 && row_inst(tcm.row) && row_inst(tcm.row)->talkcls == 11 && v >= 3) { if (v == 3) tcm.life = 1; if (v == 4) tcm.oneup = 1; return 1; }
     if (v == 1) { tcm.counter = 1; return 1; } /* forceAppearStarPieceCounterForTicoFat */
     if (v == 2) { tcm.counter = 0; return 1; } /* disappearStarPieceCounterForTicoFat */
     if (v != 0 && v != 3) return 1;
@@ -11231,7 +11239,7 @@ static void tcm_update(Inst *in, const float *m)
     case TCM_EATNOW: {
         int inflight = 0;
         for (int g = 0; g < 8; g++) inflight += tcm.gift[g].on;
-        if (tcm.left - inflight > 0 && s % 5 == 0 && got_pieces > 0) /* isIntervalStep(100 / _194): giftStarPieceToTarget(Mouth, 1) */
+        if (tcm.left - inflight > 0 && s % (100 / tcm.need > 0 ? 100 / tcm.need : 1) == 0 && got_pieces > 0) /* isIntervalStep(100 / _194): giftStarPieceToTarget(Mouth, 1) */
             for (int g = 0; g < 8; g++) if (!tcm.gift[g].on) {
                 tcm.gift[g].on = 1; tcm.gift[g].pos = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
                 tcm.gift[g].col = piece_colour_next(); got_pieces--;
@@ -11255,7 +11263,7 @@ static void tcm_update(Inst *in, const float *m)
             gd_comet_next(); /* forceToNextStateGalaxyCometScheduler */
             menu_galaxy_map(GMAP_TICO_COMET);
             obj_play(in, "wait", 1, 0);
-            tcm.left = 20; /* clearGotCountStarPieceReceiver, _198 = _194 */
+            tcm.left = tcm.need; /* clearGotCountStarPieceReceiver, _198 = _194 */
             printf("tico comet row %d: its comet prayed for\n", in->row);
             tcm.nrv = TCM_DEMOEND; tcm.step = 0;
         }
@@ -11294,21 +11302,27 @@ static void update_talkers(void)
     rosetta_talk();
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
-        int sign = in->talkcls == 1, tico = in->talkcls == 2 || in->talkcls == 7 || in->talkcls == 8; /* 7: TicoStarRing, 8: TicoComet (Ticos) */
+        int sign = in->talkcls == 1, tico = in->talkcls == 2 || in->talkcls == 7 || in->talkcls == 8 || in->talkcls == 11; /* 7: TicoStarRing, 8: TicoComet, 11: TicoShop (Ticos) */
         if (!in->talkcls || !row_shown(in->row)) continue;
         if (in->talkcls == 8 && !gd_flag_is_on("EventCometStarter")) { insts[i].invisible = 1; continue; } /* !isRosettaTalkTrickComet: makeActorDead */
         char lab[32];
-        if (!talk_row_label(in->row, lab)) continue;
+        if (in->talkcls == 11) strcpy(lab, "Common_TicoShop000"); /* initMessage("Common_TicoShop000") */
+        else if (!talk_row_label(in->row, lab)) continue;
         /* SignBoard, Butler: NPCActor caps (talk 240, its balloon 150 up); Tico::initMessage (350, 120 up); Kinopio (122 x 1.2 up) */
         int bee_lec = in->talkcls == 10 && (sc->objs[in->row].arg[0] == 8 || sc->objs[in->row].arg[0] == 9); /* FlyLectureA / B: mTalkMtx _160, no offset */
-        int k = talk_new(lab, in->row, in->row, sign || in->talkcls == 5 || (in->talkcls == 10 && !bee_lec) ? 150.0f : bee_lec ? 0.0f : tico ? 120.0f : 122.0f * 1.2f,
+        int k = talk_new(lab, in->talkcls == 11 ? -1 : in->row, in->row, sign || in->talkcls == 5 || (in->talkcls == 10 && !bee_lec) ? 150.0f : bee_lec ? 0.0f : tico ? 120.0f : 122.0f * 1.2f,
                          tico ? 350.0f : 240.0f);
         if (k < 0) continue;
         Talker *t = &talkers[k];
         if (!t->root_auto) { /* onRootNodeAutomatic (NPCActor::initTalkCtrl); Butler::initForAstroDome: registerBranchFunc */
             t->root_auto = 1;
             if (tico && in->talkcls != 8) t->kill = tico_kill;
-            if (in->talkcls == 8) { t->event = tcm_event; t->branch = tcm_branch; t->arg = 20; tcm.row = in->row; } /* registerBranchFunc / EventFunc, setMessageArg(_194) */
+            if (in->talkcls == 8 || in->talkcls == 11) { /* registerBranchFunc / EventFunc, setMessageArg(_194) */
+                const Row *r = &sc->objs[in->row];
+                memset(&tcm, 0, sizeof tcm); tcm.row = in->row; tcm.re.c158 = 1024;
+                tcm.need = tcm.left = in->talkcls == 8 ? 20 : r->arg[0] != -1 ? r->arg[0] : 30; /* TicoShop: getJMapInfoArg0NoInit */
+                t->event = tcm_event; t->branch = tcm_branch; t->arg = tcm.need;
+            }
             if (in->talkcls == 7) { /* TicoStarRing::init: setMessageArgToCurrentGalaxyName(mGalaxyName) */
                 char gl[48];
                 int a = ring_arg(&sc->objs[in->row]);
@@ -11348,17 +11362,34 @@ static void update_talkers(void)
             w->lv[1] = se_level(SE_SM_LV_TICO_FLOAT, &m[12], w->lv[1]);
             if (w->lv[1]) se_volpitch(w->lv[1], 0.2f, 1.0f);
         }
+        if ((in->talkcls == 8 || in->talkcls == 11) && in->anim && in->anim->skin == in->md->skin && in->md->skin->njoints > 1) {
+            float w[16]; /* NPCActor's body sensor (100 at Center + 100), updateReaction; startReactionSound */
+            mat_mul(w, in->m, in->anim->world[1]);
+            V3 up = vnorm(v3(m[4], m[5], m[6])), body = v3(w[12] + w[4] * 100.0f, w[13] + w[5] * 100.0f, w[14] + w[6] * 100.0f);
+            int rf = npc_react(&tcm.re, body, 100.0f, up, v3(m[12], m[13], m[14]), 1000.0f, row_step[in->row] != 0);
+            int shop = in->talkcls == 11;
+            if (row_step[in->row] || tcm.nrv) rf = 0; /* tryReaction: in Wait / Talk only */
+            if (rf & 1) { se_start(SE_SM_NPC_TRAMPLED, &m[12]); se_start(shop ? SE_SV_TICOSHOP_TRAMPLED : SE_SV_TICOCOMET_TRAMPLED, &m[12]); }
+            if (rf & 8) { dpd_hit_sound(); se_start(shop ? SE_SV_TICOSHOP_POINT : SE_SV_TICOCOMET_POINT, &m[12]); }
+            if (rf & 2) se_start(shop ? SE_SM_TICOSHOP_SPIN : SE_SM_TICOCOMET_SPIN, &m[12]);
+            if (rf & 11) printf("tico %s row %d: reaction %s" "\n", shop ? "shop" : "comet", in->row, rf & 1 ? "trampled" : rf & 2 ? "spun" : "pointed");
+        }
         if (tico && row_step[in->row]) { /* Tico::exeMeta: Metamorphosis, at its end SE_SM_METAMORPHOSE_SMOKE and kill */
             unsigned short *ms = &row_step[in->row];
-            if (*ms == 1 && !obj_play(in, "metamorphosis", 0, 0)) *ms = 0xFFFF; /* no clip: at once */
+            int shop = in->talkcls == 11; /* TicoShop::exeDemo: Demo, its sounds; kill: the chosen mushrooms */
+            if (*ms == 1 && shop) { se_start(SE_SM_TICOFAT_META_ITEM, &m[12]); se_start(SE_SM_TICOFAT_META, &m[12]); }
+            if (*ms == 1 && !obj_play(in, shop ? "demo" : "metamorphosis", 0, 0)) *ms = 0xFFFF; /* no clip: at once */
             else if (*ms > 1 && (*ms == 0xFFFF || !in->anim || in->anim->done)) {
+                if (shop && tcm.oneup) { se_start(SE_SY_1UP, NULL); lives++; }  /* appearKinokoOneUpPop */
+                if (shop && tcm.life) change_item_status(10);                   /* appearKinokoSuper: BenefitItemLifeUp */
+                if (shop) printf("tico shop row %d: demo over, 1-up %d life up %d\n", in->row, tcm.oneup, tcm.life);
                 se_start(SE_SM_METAMORPHOSE_SMOKE, &m[12]); row_kill(in->row);
                 printf("tico row %d: metamorphosis over, killed\n", in->row);
             }
             if (*ms < 0xFFFF) ++*ms;
         } else if (in->talkcls == 7) { /* TicoStarRing::exeWait: at its talk's end, Yes chosen: setNerveMeta */
             if (talk_near_at_end(k) && tk_yesno == 1) row_step[in->row] = 1; /* tryTalkSelectLeft */
-        } else if (in->talkcls == 8) { /* TicoComet: its nerves under the talk's event nodes */
+        } else if (in->talkcls == 8 || in->talkcls == 11) { /* TicoComet / TicoShop: their nerves under the talk's event nodes */
             tcm_update(&insts[i], m);
             talk_near(k);
         } else if (in->talkcls == 4) { /* ButlerMap::exeTalk: at its talk's end the map (obj_arg0: the Grand Galaxy's) */
@@ -11924,7 +11955,7 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
 #define TALK_PICK(i) 1
 #endif
     for (int i = 0; i < ninsts && row < 0; i++)
-        if ((TALK_CLS == 9 ? insts[i].dnpc == 3 : insts[i].talkcls == TALK_CLS) && talk_row_label(insts[i].row, lab) && TALK_PICK(i)) row = i; /* 9: Rosetta */
+        if ((TALK_CLS == 9 ? insts[i].dnpc == 3 : insts[i].talkcls == TALK_CLS) && (TALK_CLS == 11 || talk_row_label(insts[i].row, lab)) && TALK_PICK(i)) row = i; /* 9: Rosetta, 11: TicoShop (Common_) */
     pad_force = 0;
     if (row < 0 && TALK_CLS == 3) { /* the Kinopios wait for their appear switch: on */
         int ty = scene_type(sc, "Kinopio");
@@ -11943,6 +11974,8 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
         printf("talk test: EventCometStarter %d" "\n", gd_flag_try_on("EventCometStarter"));
         got_pieces = 50;
     }
+    static int shop_pieces;
+    if (TALK_CLS == 11 && !shop_pieces++) got_pieces = 50; /* TicoShop: more than its 30 */
     static int ring_out;
     if (row < 0 && TALK_CLS == 7 && !ring_out++) { /* the TicoStarRings wait for their galaxy to appear: the first one out */
         int ty = scene_type(sc, "TicoStarRing");
@@ -43310,6 +43343,24 @@ static const char *walker_clip(const Kuribo *k, int *loop)
 
 static const Model *fat_model(const Inst *in);
 static void fat_goods_draw(const Inst *in, const float m[16]);
+/* TicoShop's goods (equipment TicoShopItem): TicoShopGoodsOneUp at StarPieceR (8), ..LifeUp at StarPieceL (5), Shake */
+static void shop_goods_draw(const Inst *in, const float m[16])
+{
+    static Anim *ga[2];
+    static const Scene *gsc;
+    static const char *const name[2] = {"TicoShopGoodsOneUp", "TicoShopGoodsLifeUp"}, *const clip[2] = {"ticoshopgoodsoneup/shake", "ticoshopgoodslifeup/shake"};
+    if (gsc != sc) { ga[0] = ga[1] = NULL; gsc = sc; }
+    if (in->anim->skin->njoints < 9) return;
+    for (int g = 0; g < 2; g++) {
+        const Model *gm = scene_model(sc, name[g]);
+        if (!gm || !gm->skin) continue;
+        if (!ga[g]) { ga[g] = mem_alloc(MEM_SCENE, sizeof(Anim)); anim_bind(ga[g], gm->skin); anim_play(ga[g], clip[g], 1.0f, 1, 0); }
+        anim_update(ga[g]);
+        float w[16];
+        mat_mul(w, m, in->anim->world[g ? 5 : 8]);
+        draw_skin(gm, w, ga[g]);
+    }
+}
 static void inst_draw(const Inst *in, const Model *md, const float m[16])
 {
     if (in->md_bloom && md == in->md) render_bloom_model(in->md_bloom, m);
@@ -43318,7 +43369,7 @@ static void inst_draw(const Inst *in, const Model *md, const float m[16])
         if (fm && fm->skin && in->anim) { use_row_light(in->row, v3(m[12], m[13], m[14]), LIGHT_STRONG); draw_skin(fm, m, in->anim); fat_goods_draw(in, m); return; }
     }
     use_row_light(in->row, v3(m[12], m[13], m[14]), md->skin ? LIGHT_STRONG : LIGHT_PLANET);
-    if (md->skin) { if (in->anim && md == in->md) draw_skin(md, m, in->anim); }
+    if (md->skin) { if (in->anim && md == in->md) { draw_skin(md, m, in->anim); if (in->talkcls == 11) shop_goods_draw(in, m); } }
     else render_model(md, m, 0x70, 0xB0, 0x60);
 }
 
