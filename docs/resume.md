@@ -354,6 +354,10 @@ Second console round (2026-10-24), from Daniel's report:
 - JumpStand (fix/states-jumpstand, 2026-11-05): its Bound / BoundJump / BoundHipDrop / StarPieceBound clips
   (no squash), the throw by endBindAndPlayerJump (m_power_jump, a normal jump status for Low / Middle), steered by
   the stick, Mario's TrampolineJumpLow / Middle / High clips, a star piece takes it. Test `jumpstand` (Factory 1).
+- FlipPanel (fix/states-flip, 2026-11-05): the bloom model only on the back side (Reverse: front), none at End; the
+  panel just flipped drawn 25 down (calcJointMove); FlipPanelObserver's Complete demo (FlipPanelComplete), its star
+  after arg0 + 40 steps, SW_A once no demo runs. Test `flip` (FlipPanelEx 1) from f360, then each panel left on its
+  front (one the drop misses is flipped by the test after 3 tries): demo, star, got.
 ## Rules
 
 - Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -
