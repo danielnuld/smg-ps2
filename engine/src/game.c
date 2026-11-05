@@ -2791,9 +2791,8 @@ static int npc_mode(const NpcTurn *t, const Row *r, NpcTurn *m)
         if (b == 12) npc_set(m, "starpiecewait", "starpiecewait", "starpiecewait", "starpiecewait");
         if (b >= 0 && b < 12 && one[b]) { npc_set(m, one[b], NULL, one[b], NULL); m->near = m->talk = 0; } /* setNoTurnAction */
     } else if (!strcmp(t->cls, "Penguin")) { /* mBehavior (arg0)
-     * ponytail (unmarked until the 2026-11-02 audit): arg0 3 Dive (SwimDive, S_DIVE every 120-300) and 4 SwimTurtle
-     * (its shell taken within 450 or on a spin) are not ported, no random TalkA / TalkB (Penguin.cpp:127, 261-314);
-     * PenguinCoach has no golden shell check / star (PenguinCoach.cpp:139-185), PenguinStudent no code (its rail
+     * arg0 3 Dive, 4's jet sound, TalkA / TalkB: penguin_wait. ponytail (unmarked until the 2026-11-02 audit): 4 SwimTurtle's
+     * shell (RemovableTurtle: taken within 450 or on a spin) not ported (Penguin.cpp:296-313); PenguinCoach has no golden shell check / star (PenguinCoach.cpp:139-185), PenguinStudent no code (its rail
      * school, the KouraShine shell); the Penguin / Tico / TicoRail colour BRK frame by arg (Penguin arg7, Tico arg0) is
      * not in slice.py BRK_ARG; Caretaker plays wait / turn / talk instead of BWaitStand (CareTaker.cpp:84-112), no
      * BodyColor BRK nor Dirt BTK; Rabbit arg1 0 with a rail (escape: Wait / PreJump / Move / Goal) and the UpJump /
@@ -37116,6 +37115,34 @@ static void update_bees(void)
         for (int j = 0; j < 12; j++) if (j % 4 != 3) in->m[j] *= in->s;
     }
 }
+/* Penguin::exeWait / exeDive after Petari: arg0 3 (Dive) after getRandom(sStepToDiveMin 120, sStepToDiveMax 300)
+ * steps Dive (SwimDive, SE_SV_PENGUIN_S_DIVE) till the clip stops; arg0 4 (SwimTurtle) LV_PENGUIN_SWIM_JET; arg0 -1 /
+ * 5 / 6 (Default / Stand / Dash) tryChangeTalkActionRandom: each time its looping clip loops, its talk action Talk /
+ * TalkA / TalkB at random. GapSt: n 2 diving, f the dive step, i the talk action, v.x the clip's last frame. 1: the
+ * clip is its own this frame. ponytail: SwimTurtle's shell (RemovableTurtle: Mario takes it within its pull range or
+ * by a spin, the penguin Flows) not ported; the walking / dashing modes' rails as the other NPCs' */
+static int penguin_wait(Inst *in, int talking, const char **act)
+{
+    GapSt *g = gap_st(in->row);
+    int b = sc->objs[in->row].arg[0];
+    if (b == 4) in->lv[0] = se_level(SE_SM_LV_PENGUIN_SWIM_JET, &in->m[12], in->lv[0]);
+    if (b == 3) {
+        if (g->n == 2) { /* exeDive */
+            if (!g->st++) { obj_play(in, "swimdive", 0, 0); se_start(SE_SV_PENGUIN_S_DIVE, &in->m[12]); }
+            else if (!in->anim || in->anim->done) { g->n = 0; g->st = 0; }
+            return 1;
+        }
+        if (!g->st) g->f = (float)(120 + rand() % 180); /* exeWait's first step */
+        if (++g->st == (int)g->f) { g->n = 2; g->st = 0; }
+        return 0;
+    }
+    if (b != -1 && b != 5 && b != 6) return 0;
+    static const char *const ta[3] = {"talk", "talka", "talkb"};
+    if (in->anim && in->anim->loop && in->anim->frame < g->v.x) g->i = rand() % 3; /* isBckLooped: getRandom(0, 3) */
+    g->v.x = in->anim ? in->anim->frame : 0.0f;
+    if (talking && *act && !strcmp(*act, "talk")) *act = ta[g->i];
+    return 0;
+}
 static void update_npc_turn(void) /* the NPCs' wait nerves: tryStartTalkAction / tryStartTurnAction */
 {
     FOR_KIND(i, npc) {
@@ -37134,6 +37161,7 @@ static void update_npc_turn(void) /* the NPCs' wait nerves: tryStartTalkAction /
         if (talking) act = t->talk && !npc_turn_to_player(in, t, to) ? t->act[3] : t->act[2]; /* tryStartTalkAction */
         else if (d < t->dist) act = t->near && !npc_turn_to_player(in, t, to) ? t->act[1] : t->act[0]; /* tryStartTurnAction */
         else act = (t->near || t->talk) && !npc_turn_default(in, t) ? t->act[1] : t->act[0];
+        if (!strcmp(t->cls, "Penguin") && penguin_wait(in, talking, &act)) continue;
         if (act) obj_play(in, act, 1, 0); /* tryStartAction (no-op while it plays) */
     }
 }

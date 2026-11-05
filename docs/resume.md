@@ -177,6 +177,10 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
     into GapSt (row_turn / row_step are the rotors' / railers': UFOKinoko is a rotor too). GAP_TEST 7 / 8
     (StarDustGalaxy/2). Left: PlanetRocket (a PlanetMap playing its own-name clip: slice.py AUTO_SKINNED leaves planets
     out, so no planet animates). Repack StarDustGalaxy (LOGIC CoinBox).
+  - #208 Penguin (game.c penguin_wait): arg0 3 dives (SwimDive, S_DIVE) every 120-300 steps, arg0 4's jet sound, the
+    Default / Stand / Dash ones' talk action Talk / TalkA / TalkB at random each loop. Seen: HeavenlyBeachGalaxy/1's
+    diver every few seconds. Left: SwimTurtle's shell (RemovableTurtle), PenguinCoach's golden shell talk / star,
+    PenguinStudent's school (talk branches and TakeOutStar not ported).
 - mario2 (2026-11-04), #168 PlayerKick: mario_kick / mario_kicked (MarioActor::sendBodyAttack's ACTMES_KICK: his
   cylinder on the sensor, status none, not damaged, no hip drop, within 90 degrees of his front; ランニングキック, its
   voice, pad 2) taken by a staggering Kuribo (36 / 30, three star pieces) / KuriboMini (22 / 25, three), a swooning
