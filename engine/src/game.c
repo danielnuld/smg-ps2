@@ -75,14 +75,14 @@ static struct { int on, owner, nrv, step, demo; V3 pos, vel, up; float rate, t; 
 static struct { int row, nrv, step; V3 last; } exts[MAX_EXTS];
 static int nexts;
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
-       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU, WALK_BOMBHEI, WALK_STRSPIDER, WALK_BEGOSPIKE, WALK_KCHIEF, WALK_BEGOBABY, WALK_BBEGO, WALK_KAMECK, WALK_NOKO, WALK_SAMBOHEAD, WALK_KINDS };
+       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU, WALK_BOMBHEI, WALK_STRSPIDER, WALK_BEGOSPIKE, WALK_KCHIEF, WALK_BEGOBABY, WALK_BBEGO, WALK_KAMECK, WALK_NOKO, WALK_SAMBOHEAD, WALK_BOMBTERESA, WALK_KINDS };
 /* walkers ported in the release push: their classes (counted, placed and drawn through this table) */
 static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}, {"BasaBasa", WALK_BASABASA}, {"BasaBasaIce", WALK_BASABASA}, {"Jellyfish", WALK_JELLYFISH},
                                                                     {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}, {"Mogu", WALK_MOGU}, {"Mogucchi", WALK_MOGUCCHI}, {"Metbo", WALK_METBO}, {"TeresaWater", WALK_TERESAW},
                                                                     {"Snakehead", WALK_SNAKEHEAD}, {"SnakeheadSmall", WALK_SNAKEHEAD}, {"Kabokuri", WALK_KABOKURI}, {"Pukupuku", WALK_PUKUPUKU},
                                                                     {"BombHei", WALK_BOMBHEI}, {"BombHeiLauncher", WALK_BOMBHEI}, {"BombLauncher", WALK_BOMBHEI},
                                                                     {"StringSpider", WALK_STRSPIDER}, {"BegomanSpike", WALK_BEGOSPIKE},
-                                                                    {"KuriboChief", WALK_KCHIEF}, {"ChildKuribo", WALK_KURIBO}, {"BegomanBaby", WALK_BEGOBABY}, {"BossBegoman", WALK_BBEGO}, {"FireBallBeamKameck", WALK_KAMECK}, {"ChildKameck", WALK_KAMECK}, {"NokonokoLand", WALK_NOKO}, {"SamboHead", WALK_SAMBOHEAD}}; /* ChildKuribo: createNoItemKuriboActor */
+                                                                    {"KuriboChief", WALK_KCHIEF}, {"ChildKuribo", WALK_KURIBO}, {"BegomanBaby", WALK_BEGOBABY}, {"BossBegoman", WALK_BBEGO}, {"FireBallBeamKameck", WALK_KAMECK}, {"ChildKameck", WALK_KAMECK}, {"NokonokoLand", WALK_NOKO}, {"SamboHead", WALK_SAMBOHEAD}, {"BombTeresa", WALK_BOMBTERESA}}; /* ChildKuribo: createNoItemKuriboActor */
 #define NEW_WALKERS ((int)(sizeof new_walkers / sizeof new_walkers[0]))
 #define BB_FOLLOWERS 5 /* BossBegoman: mBabyFollowerNum 3, mSpikeFollowerNum 2 (the slots after its own) */
 static const Model *m_wnew[NEW_WALKERS];
@@ -98,6 +98,7 @@ enum { PT_LURK, PT_JUMPOUT, PT_WAIT, PT_APPROACH, PT_ESCAPE, PT_SWOONSTART, PT_S
 static int petari_solid(const Kuribo *k);
 static void petari_blow(Kuribo *k, V3 from, int nrv);
 static int walker_blow(Kuribo *e, V3 from);
+int bt_enemy_explosion(Kuribo *k), bt_star(Kuribo *k);
 static int kari_slot[5];
 static int kari_cling, kari_timer; /* Karikari clinging to Mario (KarikariDirector: 5 at most), frames to its damage */
 
@@ -4198,6 +4199,7 @@ static void update_punch(void)
 static int area_inside(const Row *r, V3 p);
 static int in_water(V3 p, V3 up, float *depth);
 static int walker_blow(Kuribo *e, V3 from);
+int bt_enemy_explosion(Kuribo *k), bt_star(Kuribo *k);
 static void coco_spawn(Inst *in)
 {
     const Row *r = &sc->objs[in->row];
@@ -13710,9 +13712,14 @@ static int m_stick_front_back(const Player *m) /* checkStickFrontBack */
 static int fp_on; /* MarioFpView (fp_update) */
 static int m_input_off(void) { return fp_on || m_clip_on("landstiffen") || m_clip_on("landscenariostart"); }
 
+/* MarioActor::_B94: frames left of a BombTeresa's tongue on his hand (ACTMES_BOMB_TERESA_TONGUE_TOUCH sets 2; his
+ * upper body ハンマー投げ回転中 while it holds) */
+static int m_b94;
+static int dm_damaging(void);
 static int m_check_squat(Player *m, int a1) /* MarioModule::checkSquat: Z (R1) */
 {
     if (kari_cling || m_input_off()) return 0;
+    if (m_b94) return 0; /* _B94 */
     if (m->squat_lock) { if (!pad_held(PAD_R1)) m->squat_lock = 0; return 0; }
     if (!a1 && !m->grounded && m->height > 100.0f) return 0;
     return pad_held(PAD_R1);
@@ -15681,6 +15688,25 @@ static int teresa_through(void);
  * once a jump, then 空パンチ; on the ground MarioMagic's 地上ひねり, squatting サマーソルト; the bee's ハチスピン(空中) /
  * サマーソルト), 2 a fire ball (shootFireBall), 3 the freeze spin (doFreezeAttack), 4 Teresa's disappearing, 0 none
  * (Hopper); mSpinIntervalTime + 34 frames before the next on the ground */
+static void m_upper(const char *jp);
+static int m_upper_on(const char *jp);
+static void m_upper_stop(void);
+static int m_bomb_teresa_tongue(void) /* MarioActor::receiveOtherMsg ACTMES_BOMB_TERESA_TONGUE_TOUCH. ponytail: _468 not kept */
+{
+    if (dm_damaging()) return 0;
+    if (player_mode != PM_NORMAL && player_mode != PM_INVINCIBLE) return 0;
+    m_b94 = 2;
+    m_upper("ハンマー投げ回転中");
+    return 1;
+}
+static void m_release_bomb_teresa(Player *m) /* MarioActor::tryReleaseBombTeresa (ponytail: _38C 5 not kept) */
+{
+    if (!m_b94) return;
+    m_b94 = 0;
+    m_upper_stop();
+    if (!m->jumping) { m_stop_walk(m); m->s420 = 25; }
+    m_anim("ハンマー投げリリース");
+}
 static void m_swing(Player *m)
 {
     /* updateSwingTimer: the spin back (_946 at 13: _94C 19, at 6 of it _94E 5, then a rumble and スピン回復終了).
@@ -15699,6 +15725,7 @@ static void m_swing(Player *m)
     case 4: if (!teresa_through()) { teresa_disappear(); m->spin_cool = MC.mTeresaWallThroughTime + MC.mSpinIntervalTime; } return;
     default: return;
     }
+    m_release_bomb_teresa(m); /* trySpinJump / trySpinPunch: tryReleaseBombTeresa */
     if (m->jumping && !m->spin_lock && !m->hip) {
         m_try_spin_jump(m);
         m->spin_timer = 25; m->spin_t = 0; /* setPunchHitTimer(0x19) */
@@ -15828,6 +15855,7 @@ static int m_damage(Player *m, V3 dir) /* Mario::damage */
     if (vlen(dmg.d1C) > 1e-6f) dmg.d1C = vmul(vnorm(dmg.d1C), MC.mJumpDistDamage);
     m_stop_walk(m);
     drop_carried(); /* damageDropThrowMemoSensor */
+    m_release_bomb_teresa(m);
     if (dmg.st == DMS_DAMAGE) { dm_close(m); dmg.st = DMS_NONE; }
     dmg.req_damage = 1;
     return 1;
@@ -20329,6 +20357,7 @@ static void update_mario_(void)
     if (!m->jumping && m->grounded && m->floor == 9) m_start_slider(m); /* checkSliderMode (isSliderFloor) */
     m_retain(m);
     if (m->grounded) m_trample_n = m_combo = 0; /* initForJump */
+    if (m_b94 && !--m_b94) { if (m_upper_on("ハンマー投げ回転中")) m_upper_stop(); m_stop_anim("ハンマー投げ回転中", NULL); } /* MarioActor::update */
     m_swing(m);
     if (m->spin_timer && !--m->spin_timer && (m->spin_cool || m->spin_lock) && !swimming && mode_action("スピン回復エフェクト") == 1)
         mario_named_fx("SpinRing", NULL); /* updatePunching: _944 run out, (_946 or _2B), スピンリング */
@@ -24770,6 +24799,7 @@ static int walker_blow(Kuribo *e, V3 from)
     if (e->kind == WALK_STRSPIDER) { if (ss_down(e)) return 0; ss_blow(e, from); return 1; } /* isMsgExplosionAttack: Blow */
     if (e->kind == WALK_BEGOSPIKE || e->kind == WALK_BEGOBABY) { if (bg_blown(e)) return 0; e->item = 1; bg_blow(e, from, 35.0f, 15.0f); return 1; } /* isMsgExplosionAttack: calcBlowReaction */
     if (e->kind == WALK_KCHIEF) return kc_stagger(e, from); /* isMsgToEnemyAttackBlow / ShockWave: requestStagger */
+    if (e->kind == WALK_BOMBTERESA) return bt_enemy_explosion(e); /* isMsgExplosionAttack: Explosion */
     if (e->kind == WALK_PETARI) { /* receiveMsgEnemyAttack: isMsgToEnemyAttackBlow while solid */
         if (!petari_solid(e)) return 0;
         petari_blow(e, from, PT_SPINOUT);
@@ -24806,7 +24836,8 @@ static int walker_blow(Kuribo *e, V3 from)
 }
 
 /* sendMsgExplosionToNearActor (cExplosionDistance 250): each walker's isMsgExplosionAttack */
-static void explosion_breaks(V3 at, float rad); /* the KoopaStatues it reaches */
+static int explosion_breaks(V3 at, float rad); /* the KoopaStatues it reaches: 1 one broke */
+static int explosion_breaks_inst(int i); /* sendMsgEnemyAttackExplosionToBindedSensor: insts[i] a KoopaStatue / WoodBox: broken */
 static void walker_explosion(V3 from)
 {
     explosion_breaks(from, 250.0f);
@@ -26584,6 +26615,400 @@ int game_test_sambo(void) /* SamboHeads in turn: Mario 600 off (it appears, chas
             mario->up = up; mario->pos = vadd(k->pos, vmul(side, 150.0f));
             mario->face = vmul(side, -1.0f); mario->hvel = vmul(side, -12.0f); mario->vup = 0;
         }
+        return i * 100000 + k->nrv * 1000 + (k->step > 999 ? 999 : k->step);
+    }
+    return -1;
+}
+
+/* BombTeresa.cpp after Petari: a bomb Boo floating 150 over its shadow (binder 70 x scale about its place, damped 0.9,
+ * its quaternion _9C blended 0.1 / 0.6 to -gravity / _AC). Appear -> Wait (Mario within 1800: Chase, a laugh: turns
+ * 1.4 a frame to him, 0.9 x rate over 60 along _AC; back to Wait past 240, Mario a Teresa or 2000 off) -> TackleSign
+ * (Mario not damaged within 900, facing him within 30: turns 10, keeps 100 over his centre) -> Tackle (1.5 x rate over
+ * 50, 120 frames) -> Wander (0.5 a frame turning +-0.5 by 400 / 200). Mario's spin (SpinStormRange: 600 over its body
+ * in the spin's first 15 frames, or the spin attack) -> Drift: its tongue (_C4, sensor "tungue" 20) to his HandR (20
+ * along its Z, eased in over 15) holds him (ACTMES_BOMB_TERESA_TONGUE_TOUCH: MarioActor _B94 2, his upper body
+ * ハンマー投げ回転中), it circles him clockwise (_E0 7, a swing +20 every 40 frames) pulled to him (_E4) at 150 -> 70
+ * over 190..240; past 190 (CountDown) its body blows Mario up and a swing throws it (DriftRelease: Drift, 60 frames);
+ * into a map object (its binded sensor) or an enemy it explodes (Explosion: shake, Explosion, 20 frames). A wall
+ * between it and the tongue, or Mario refusing it: AttackTongueFailed (Return, the tongue back over 40). A star piece
+ * or Mario invincible: Disperse (MisFire, 40). After: arg1 -1 back to its place (ReadyRestart: Hide 120, Appear), else
+ * killed (its dead switch). Its tongue joints (Tongue1 / Tongue2) stretched to _C4 (rootTongueMtxCallBack /
+ * endTongueMtxCallBack, bt_tongue at the draw). ponytail: no BindStarPointer (WalkerStateBindStarPointer: the 2P
+ * pointer), no BRK (Normal / CountDown), no ShadowAppear / BallAppear (appearShadow: Polta's), no Shock / blow
+ * messages (no shock wave senders), an enemy's sensor taken as 70 about its place, the binded sensor only the map
+ * objects explosion_breaks_inst breaks (KoopaStatue), no push to other enemies but BombTeresas */
+enum { BT_APPEAR, BT_WAIT, BT_WANDER, BT_CHASE, BT_TONGUEFAILED, BT_TACKLESIGN, BT_TACKLE, BT_DRIFT, BT_DRIFTRELEASE,
+       BT_EXPLOSION, BT_DISPERSE, BT_READYRESTART };
+int bt_test_sq; /* game_test_bomb_teresa: a swing (isPadSwing) this frame */
+static float bt_rate(const Kuribo *k, int max) { return max <= 0 ? 1.0f : fminf(fmaxf((float)k->step / max, 0.0f), 1.0f); } /* calcNerveRate */
+static float bt_ease_io(float t, float a, float b) { return a + (b - a) * (1.0f - cosf(t * 3.14159265f)) * 0.5f; } /* getEaseInOutValue */
+static float bt_norm(float x, float lo, float hi) { return fminf(fmaxf((x - lo) / (hi - lo), 0.0f), 1.0f); } /* MR::normalize */
+static float bt_nabs(float x, float lo, float hi) { return x >= 0 ? bt_norm(x, lo, hi) : -bt_norm(-x, lo, hi); } /* normalizeAbs */
+static void bt_kill_grav(Kuribo *k, V3 *v) { V3 g = vnorm(k->grav); *v = vsub(*v, vmul(g, vdot(*v, g))); } /* killElement(gravity) */
+static void bt_move_dir(Kuribo *k, V3 dir, float a) /* addVelocityMoveToDirection */
+{
+    bt_kill_grav(k, &dir);
+    if (vlen(dir) < 1e-6f) return;
+    V3 v = vmul(vnorm(dir), a);
+    if (w_on_ground(k)) v = vtangent(v, k->gn);
+    k->vel = vadd(k->vel, v);
+}
+static void bt_keep_height(Kuribo *k, V3 target, float off, float a, float lim) /* addVelocityKeepHeight */
+{
+    k->vel = vadd(k->vel, vmul(k->grav, a * bt_nabs(vdot(k->grav, vsub(target, k->pos)) - off, -lim, lim)));
+}
+static void bt_normal_vel(Kuribo *k) /* updateNormalVelocity / updateDriftReleaseVelocity */
+{
+    V3 hp; /* addVelocityKeepHeightUseShadow(150, 0.4, 40): the shadow's projection (isShadowProjectedAny) */
+    if (kcl_line(k->pos, vadd(k->pos, vmul(vnorm(k->grav), 1000.0f)), &hp, NULL, NULL))
+        k->vel = vadd(k->vel, vmul(k->grav, 0.4f * bt_nabs(vlen(vsub(hp, k->pos)) - 150.0f, -40.0f, 40.0f)));
+    k->vel = vmul(k->vel, 0.9f); /* attenuateVelocity */
+    if (k->on_ground && vdot(k->vel, k->gn) < 0) k->vel = vtangent(k->vel, k->gn); /* reboundVelocityFromCollision(0, 0, 1) */
+    if (k->on_wall && vdot(k->vel, k->wn) < 0) k->vel = vtangent(k->vel, k->wn);
+    w_blend_quat(k, vmul(k->grav, -1.0f), k->front, 0.1f, 0.6f);
+}
+static void bt_turn(Kuribo *k, V3 target, float deg) { turn_on_plane(&k->front, vsub(target, k->pos), k->grav, cosf(deg * 0.0174533f)); } /* turnDirectionToTargetDegree */
+static int bt_drift_ok(const Kuribo *k) /* isEnableDrift */
+{
+    return k->nrv != BT_DRIFT && k->nrv != BT_DRIFTRELEASE && k->nrv != BT_EXPLOSION && k->nrv != BT_DISPERSE && k->nrv != BT_READYRESTART;
+}
+static int bt_hit_ok(const Kuribo *k) /* isEnableHitExplosion / isEnableStarPieceAttack */
+{
+    return k->nrv != BT_EXPLOSION && k->nrv != BT_DISPERSE && k->nrv != BT_DRIFT && k->nrv != BT_READYRESTART;
+}
+static int bt_shock_ok(const Kuribo *k) { return k->nrv != BT_EXPLOSION && k->nrv != BT_DISPERSE; } /* isEnableShockWave */
+static void bt_spin_blur(Kuribo *k, int on) /* emitEffect / deleteEffect SpinBlur (kept while lvt[2]) */
+{
+    k->lvt[2] = on;
+}
+static void bt_fx(Kuribo *k, const char *name, const void *key)
+{
+    float m[16];
+    basis_matrix(m, k->pos, k->qy, k->qz, 0);
+    for (int j = 0; j < 12; j++) m[j] *= w_scale(k);
+    fx_named("BombTeresa", name, m, NULL, key);
+}
+static void bt_revival(Kuribo *k) /* tryRevival: mDisableRespawning (arg1 -1) ReadyRestart, else kill */
+{
+    const Row *r = &sc->objs[k->row];
+    if (r->arg[1] == -1) { w_nrv(k, BT_READYRESTART); return; }
+    if (r->sw[SW_DEAD] >= 0) sw_set(r, SW_DEAD, 1);
+    k->state = KURIBO_DEAD; row_kill(k->row);
+    printf("bomb teresa row %d dead\n", k->row);
+}
+static void bt_explode(Kuribo *k) { k->vel = v3(0, 0, 0); w_nrv(k, BT_EXPLOSION); printf("bomb teresa row %d explodes (nrv %d)\n", k->row, k->nrv); }
+int bt_star(Kuribo *k) /* receiveMsgPlayerAttack: isMsgStarPieceAttack */
+{
+    if (k->nrv == BT_READYRESTART || !bt_hit_ok(k)) return 0;
+    w_nrv(k, BT_DISPERSE);
+    return 1;
+}
+int bt_enemy_explosion(Kuribo *k) /* receiveMsgEnemyAttack: isMsgExplosionAttack */
+{
+    if (k->nrv == BT_READYRESTART || !bt_hit_ok(k)) return 0;
+    bt_explode(k);
+    return 1;
+}
+static int m_bomb_teresa_tongue(void);
+static void bt_update(Kuribo *k)
+{
+    const Row *r = &sc->objs[k->row];
+    float s = w_scale(k);
+    if (!k->front.x && !k->front.y && !k->front.z) { /* init / makeActorAppeared */
+        V3 x, z;
+        row_axes(r, &x, &z);
+        k->front = vnorm(z); k->tcenter = k->pos;
+        k->grav = vmul(walker_up(k, k->up), -1.0f);
+        k->qy = vmul(k->grav, -1.0f); k->qz = vnorm(vtangent(k->front, k->qy)); /* makeQuatAndFrontFromRotate */
+        k->bpos = k->pos; k->ttarget = k->pos; k->from = 0.0f;
+        w_nrv(k, BT_APPEAR);
+    }
+    k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f); /* onCalcGravity */
+    if (k->lvt[2]) bt_fx(k, "SpinBlur", k);
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)); /* getPlayerCenterPos */
+    float near = vlen(vsub(mario->pos, k->pos));
+    if (k->nrv == BT_WAIT || k->nrv == BT_WANDER || k->nrv == BT_CHASE) w_se_lv(k, SE_EM_LV_BOMBTERE_MOVE); /* control */
+    int st = ++k->step;
+    switch (k->nrv) {
+    case BT_APPEAR:
+        if (st == 0) { k->lvt[0] = 0; k->lvt[1] = 0; w_act(k, "Appear"); bt_fx(k, "Appear", NULL); w_se(k, SE_EM_BOMBTERE_APPEAR); k->from = 0.0f; }
+        k->bpos = k->pos;
+        bt_normal_vel(k);
+        if (w_bck_stopped(k)) w_nrv(k, BT_WAIT);
+        break;
+    case BT_WAIT:
+        if (st == 0) { k->lvt[1] = 1; w_act(k, "Wait"); k->from = 0.0f; } /* validateClipping */
+        k->bpos = k->pos;
+        bt_normal_vel(k);
+        if (in_death(k->pos)) bt_revival(k);
+        else if (near < 1800.0f) w_nrv(k, BT_CHASE); /* isNearPlayerAnyTime; (_EF never set: no Wander from here) */
+        break;
+    case BT_WANDER:
+        if (st == 0) { w_act(k, "Wait"); k->from = 0.0f; }
+        k->bpos = k->pos;
+        k->front = rot_axis(k->front, vnorm(vmul(k->grav, -1.0f)), (st % 600 < 400 ? 0.5f : -0.5f) * 0.0174533f); /* rotateDirectionGravityDegree */
+        bt_move_dir(k, k->front, 0.5f);
+        bt_normal_vel(k);
+        if (in_death(k->pos)) bt_revival(k);
+        else if (near < 1800.0f) w_nrv(k, BT_CHASE);
+        break;
+    case BT_CHASE: {
+        if (st == 0) { w_act(k, "Wait"); w_se(k, SE_EV_BOMBTERE_LAUGH); k->from = 0.0f; }
+        bt_turn(k, mario->pos, 1.4f);
+        bt_move_dir(k, k->front, 0.9f * bt_rate(k, 60));
+        k->bpos = k->pos;
+        bt_normal_vel(k);
+        V3 h = vtangent(vsub(mario->pos, k->pos), vnorm(k->grav));
+        float c = vlen(h) > 1e-6f ? vdot(vnorm(h), k->front) : 1.0f;
+        if (st > 240 || player_mode == PM_TERESA || near >= 2000.0f) w_nrv(k, BT_WAIT); /* tryCheseEnd */
+        else if (!dm_damaging() && near < 900.0f && c >= cosf(30.0f * 0.0174533f)) w_nrv(k, BT_TACKLESIGN); /* tryDirectTackle */
+        break;
+    }
+    case BT_TONGUEFAILED:
+        if (st == 0) w_act(k, "Return");
+        w_se_lv(k, SE_EM_LV_BOMBTERE_TONGUE_BACK);
+        k->from = bt_ease_io(bt_rate(k, 0), 1.0f, 0.0f); /* calcNerveEaseInOutValue(0, 1, 0) */
+        bt_normal_vel(k);
+        if (st > 40) w_nrv(k, BT_WAIT);
+        break;
+    case BT_TACKLESIGN:
+        if (st == 0) { w_se(k, SE_EV_BOMBTERE_TACKLE); w_act(k, "TackleSign"); k->from = 0.0f; }
+        bt_turn(k, mario->pos, 10.0f);
+        bt_keep_height(k, mc, 100.0f, 0.6f, 100.0f);
+        bt_normal_vel(k);
+        k->bpos = k->pos;
+        if (w_bck_stopped(k)) w_nrv(k, BT_TACKLE);
+        break;
+    case BT_TACKLE:
+        if (st == 0) { w_act(k, "Tackle"); k->from = 0.0f; }
+        w_se_lv(k, SE_EM_LV_BOMBTERE_TACKLE);
+        bt_turn(k, mario->pos, 0.8f);
+        bt_move_dir(k, k->front, 1.5f * bt_rate(k, 50));
+        bt_keep_height(k, mc, 100.0f, 0.6f, 100.0f);
+        bt_normal_vel(k);
+        k->bpos = k->pos;
+        if (st > 120) w_nrv(k, BT_WANDER);
+        break;
+    case BT_DRIFT: {
+        if (st == 0) {
+            w_act(k, "Spin"); bt_spin_blur(k, 1); w_se(k, SE_EM_BOMBTERE_TONGUE_CATCH);
+            k->timer = 40; k->phase = 0; k->to = 7.0f; k->len = 7.0f; k->from = 1.0f; /* _E8 _EC _E0 _E4 _DC */
+        }
+        V3 ce, cw, cu; float fov;
+        camera_pose(&ce, &cw, &cu, &fov);
+        V3 a = vcross(k->grav, k->front), b = vcross(k->grav, vsub(mario->pos, ce));
+        if (vlen(a) > 1e-6f && vlen(b) > 1e-6f && vdot(vnorm(a), vnorm(b)) >= 0.8f) w_se_lv(k, SE_EM_LV_BOMBTERE_SWING);
+        float hm[16], bm[16]; /* calcPlayerJointMtx HandR: its place 20 along its Z */
+        V3 hand = mario_joint_pos(JOINT_HANDR);
+        if (mario_anim && mario_anim->skin && JOINT_HANDR < mario_anim->skin->njoints) {
+            mario_base(bm); mat_mul(hm, bm, mario_anim->world[JOINT_HANDR]);
+            V3 hz = v3(hm[8], hm[9], hm[10]);
+            if (vlen(hz) > 1e-6f) hand = vadd(hand, vmul(vnorm(hz), 20.0f));
+        }
+        float t = bt_rate(k, 15); /* calcNerveEaseInRate(15) */
+        t = 1.0f - cosf(t * 1.5707963f);
+        k->bpos = vadd(vmul(k->bpos, 1.0f - t), vmul(hand, t));
+        turn_on_plane(&k->front, vsub(mario->pos, k->pos), k->grav, 0.0f); /* turnDirectionToTarget(.., 0) */
+        if (k->timer <= 0 && (pad_pressed(PAD_SQUARE) || bt_test_sq)) { /* isPadSwing */
+            pad_rumble(RUMBLE_MIDDLE);
+            k->timer = 40; k->to += 20.0f; k->len += 20.0f;
+            if (st > 190) k->phase = 1;
+        }
+        /* addTeresaSpinPullVelocity(calcNerveEaseInOutValue(190, 240, 150, 70)) */
+        float pull = bt_ease_io(bt_norm((float)st, 190.0f, 240.0f), 150.0f, 70.0f);
+        V3 to = vsub(mc, k->pos);
+        if (vlen(to) > 1e-6f) bt_move_dir(k, vcross(k->grav, vnorm(to)), k->to); /* addVelocityClockwiseToTarget */
+        V3 th = to; bt_kill_grav(k, &th); /* addVelocityMoveToTarget(0, _E4, 0, 150) */
+        if (vlen(th) > 1e-6f) {
+            V3 v = vmul(vnorm(th), k->len * bt_norm(vlen(th), 0.0f, 150.0f));
+            if (w_on_ground(k)) v = vtangent(v, k->gn);
+            k->vel = vadd(k->vel, v);
+        }
+        bt_keep_height(k, mc, pull, 3.0f, 100.0f);
+        bt_normal_vel(k);
+        if (st == 190) printf("bomb teresa row %d count down\n", k->row); /* startBrk CountDown */
+        k->len = k->len + (7.0f - k->len) * 0.15f;
+        if (st < 190) k->to = k->to + (7.0f - k->to) * 0.15f;
+        else { if (k->to > 7.0f) k->to = k->to + (7.0f - k->to) * 0.15f; k->to *= 0.992f; }
+        k->timer--;
+        break;
+    }
+    case BT_DRIFTRELEASE:
+        if (st == 0) { w_act(k, "Drift"); pad_rumble(RUMBLE_STRONG); w_se(k, SE_EM_BOMBTERE_THROW); printf("bomb teresa row %d thrown\n", k->row); }
+        k->from = bt_ease_io(bt_rate(k, 12), 1.0f, 0.0f);
+        bt_normal_vel(k);
+        break;
+    case BT_EXPLOSION:
+        if (st == 0) {
+            camera_shake(SHAKE_NORMAL_STRONG); pad_rumble(RUMBLE_STRONG);
+            bt_spin_blur(k, 0); bt_fx(k, "Explosion", NULL); k->lvt[0] = 1;
+            w_se(k, SE_EM_BOMBTERE_EXPLOSION); k->from = 0.0f; k->vel = v3(0, 0, 0);
+        }
+        k->bpos = k->pos;
+        if (st > 20) bt_revival(k);
+        break;
+    case BT_DISPERSE:
+        if (st == 0) {
+            bt_spin_blur(k, 0); bt_fx(k, "MisFire", NULL); w_se(k, SE_EM_BOMBTERE_HIDE); k->lvt[0] = 1;
+            k->from = 0.0f; k->vel = v3(0, 0, 0);
+            printf("bomb teresa row %d disperses\n", k->row);
+        }
+        k->bpos = k->pos;
+        if (st > 40) bt_revival(k);
+        break;
+    case BT_READYRESTART:
+        if (st == 0) {
+            V3 x, z;
+            w_act(k, "Hide");
+            k->pos = k->tcenter; /* resetPosition(_D0), makeQuatAndFrontFromRotate */
+            row_axes(r, &x, &z);
+            k->front = vnorm(z); k->qy = vmul(k->grav, -1.0f); k->qz = vnorm(vtangent(k->front, k->qy));
+            k->vel = v3(0, 0, 0);
+        }
+        k->bpos = k->pos;
+        if (st > 120) w_nrv(k, BT_APPEAR);
+        break;
+    }
+    if (k->state == KURIBO_DEAD) return;
+    k->act_t += k->act_rate;
+    if (k->nrv != BT_EXPLOSION && k->nrv != BT_DISPERSE && k->nrv != BT_READYRESTART) { /* the Binder: 70 x scale about its place */
+        V3 up = vmul(k->grav, -1.0f), c = vadd(k->pos, k->vel), gn = up, wn = up;
+        int wall = 0;
+        wall_inst = -1;
+        k->on_ground = collide_n(&c, up, 70.0f * s, &gn, &wn, &wall);
+        k->gn = k->on_ground ? gn : up; k->on_wall = wall; k->wn = wn;
+        k->dir = wall ? wall_inst : k->on_ground ? ground_inst : -1; /* the collision it is binded to (its host's sensor) */
+        k->pos = c;
+    }
+    k->up = k->qy;
+    if (k->step < 0) return; /* a nerve just set: its first step next frame */
+    /* the tries after the nerve (exeDrift / exeDriftRelease) */
+    if (k->nrv == BT_DRIFT || k->nrv == BT_DRIFTRELEASE) {
+        if (k->dir >= 0 && explosion_breaks_inst(k->dir)) { bt_spin_blur(k, 0); bt_explode(k); return; } /* tryExplosion */
+        if (k->nrv == BT_DRIFT && k->phase) { w_nrv(k, BT_DRIFTRELEASE); return; } /* tryDriftRelease */
+        if (k->nrv == BT_DRIFT && line_hits(k->pos, k->bpos)) { printf("bomb teresa row %d: the map between it and its tongue\n", k->row); w_nrv(k, BT_TONGUEFAILED); return; } /* tryAbortDrift */
+        if (k->nrv == BT_DRIFTRELEASE && st > 60) { bt_spin_blur(k, 0); w_nrv(k, BT_WAIT); return; } /* tryDriftReleaseEnd */
+    }
+    if (k->nrv == BT_READYRESTART || k->nrv == BT_EXPLOSION || k->nrv == BT_DISPERSE) return; /* invalidateHitSensors / out */
+    V3 body = k->pos;
+    /* receiveMsgPlayerAttack / receiveOtherMsg: Mario invincible, his spin (attack or SpinStormRange 600) */
+    if (player_mode == PM_INVINCIBLE && bt_shock_ok(k) && mario_touch(body, 85.0f * s)) { w_nrv(k, BT_DISPERSE); return; }
+    if (mario->spin_timer > 0 && mario->spin_t < 15 && vlen(vsub(mc, body)) < 85.0f * s + 600.0f && mode_action("スピンアタック") < 4 && bt_drift_ok(k)) {
+        k->lvt[1] = 0; w_nrv(k, BT_DRIFT); printf("bomb teresa row %d drifts\n", k->row); return; /* requestDrift */
+    }
+    /* attackSensor: its tongue on Mario (Drift), its body on Mario / the enemies */
+    if (k->nrv == BT_DRIFT && mario_touch(k->bpos, 20.0f * s) && !m_bomb_teresa_tongue()) { printf("bomb teresa row %d: Mario refuses its tongue\n", k->row); w_nrv(k, BT_TONGUEFAILED); return; }
+    int to_player = k->nrv == BT_DRIFT ? st > 190 : bt_hit_ok(k); /* isEnableHitExplosionToPlayer */
+    if (to_player && !mario->hurt_timer && vlen(vsub(mc, body)) < 85.0f * s + HIT_BODY_R && mario_attack(ATK_EXPLOSION, body)) { bt_explode(k); return; }
+    for (int i = 0; i < nkuribo; i++) {
+        Kuribo *e = &kuribo[i];
+        if (e == k || e->state == KURIBO_DEAD || !row_shown(e->row)) continue;
+        float d = vlen(vsub(e->pos, body));
+        if (e->kind == WALK_BOMBTERESA) {
+            if (d >= 170.0f * s || e->nrv == BT_READYRESTART) continue;
+            if ((k->nrv == BT_DRIFT || k->nrv == BT_DRIFTRELEASE) && bt_enemy_explosion(e)) { pad_rumble(RUMBLE_MIDDLE); bt_explode(k); return; }
+            V3 dp = vsub(e->pos, body); /* sendMsgPush: receiveMsgPush 3 apart */
+            if (vlen(dp) < 1e-6f) dp = v3(0, 1, 0);
+            e->vel = vadd(e->vel, vmul(vnorm(dp), 3.0f));
+            continue;
+        }
+        if ((k->nrv == BT_DRIFT || k->nrv == BT_DRIFTRELEASE) && d < 85.0f * s + 70.0f && walker_blow(e, body)) { /* isEnableHitExplosionToEnemy */
+            pad_rumble(RUMBLE_MIDDLE); bt_explode(k); return;
+        }
+    }
+}
+/* rootTongueMtxCallBack / endTongueMtxCallBack: Tongue1 (9) turned 0.5 x _DC to Tongue2's last place and thinned,
+ * Tongue2 (10) blended to _C4 by _DC, turned to it from Tongue1 and 35 back along its X. Model space (m: its base
+ * with scale; ponytail: the 400..1000 thinning in model units, the same at scale 1) */
+static void bt_turn_x(float *w, V3 dir, float rate) /* turnMtxToXDirRate: setQuat (its scale dropped) */
+{
+    V3 x = vnorm(v3(w[0], w[1], w[2])), y = vnorm(v3(w[4], w[5], w[6])), z = vnorm(v3(w[8], w[9], w[10]));
+    V3 ax = vcross(x, dir);
+    if (vlen(ax) > 1e-6f) {
+        float c = vdot(x, dir), ang = acosf(c > 1 ? 1 : c < -1 ? -1 : c) * rate;
+        ax = vnorm(ax); x = rot_axis(x, ax, ang); y = rot_axis(y, ax, ang); z = rot_axis(z, ax, ang);
+    }
+    w[0] = x.x; w[1] = x.y; w[2] = x.z; w[4] = y.x; w[5] = y.y; w[6] = y.z; w[8] = z.x; w[9] = z.y; w[10] = z.z;
+}
+static V3 bt_to_local(const float *m, V3 p)
+{
+    V3 d = vsub(p, v3(m[12], m[13], m[14])), c[3] = {v3(m[0], m[1], m[2]), v3(m[4], m[5], m[6]), v3(m[8], m[9], m[10])};
+    return v3(vdot(d, c[0]) / vdot(c[0], c[0]), vdot(d, c[1]) / vdot(c[1], c[1]), vdot(d, c[2]) / vdot(c[2], c[2]));
+}
+static void bt_tongue(Kuribo *k, const float *m, Anim *a)
+{
+    if (k->from == 0.0f || !a->skin || a->skin->njoints < 11) return;
+    float *w1 = a->world[9], *w2 = a->world[10], old1[16], rel[16];
+    memcpy(old1, w1, 64);
+    V3 p1 = v3(w1[12], w1[13], w1[14]), t2 = bt_to_local(m, k->ttarget);
+    V3 dir = vsub(t2, p1);
+    dir = vlen(dir) > 1e-6f ? vnorm(dir) : vnorm(v3(w1[0], w1[1], w1[2]));
+    bt_turn_x(w1, dir, 0.5f * k->from);
+    float d = bt_ease_io(bt_norm(vlen(vsub(p1, t2)), 400.0f, 1000.0f), 1.0f, 0.5f); /* preScaleMtx(1, d, d) */
+    for (int j = 4; j < 11; j++) if (j != 7) w1[j] *= d;
+    /* Tongue2 under the new Tongue1: new1 x inverse(old1) x old2 (old1's columns orthogonal) */
+    float inv[16], tmp[16];
+    mat_identity(inv);
+    for (int c = 0; c < 3; c++) {
+        float l2 = old1[4 * c] * old1[4 * c] + old1[4 * c + 1] * old1[4 * c + 1] + old1[4 * c + 2] * old1[4 * c + 2];
+        for (int r2 = 0; r2 < 3; r2++) inv[4 * r2 + c] = old1[4 * c + r2] / l2;
+    }
+    for (int r2 = 0; r2 < 3; r2++) inv[12 + r2] = -(inv[r2] * old1[12] + inv[4 + r2] * old1[13] + inv[8 + r2] * old1[14]);
+    mat_mul(rel, inv, w2); mat_mul(tmp, w1, rel); memcpy(w2, tmp, 64);
+    V3 p2 = v3(w2[12], w2[13], w2[14]), c4 = bt_to_local(m, k->bpos);
+    p2 = vadd(vmul(p2, 1.0f - k->from), vmul(c4, k->from)); /* vecBlend(pos, _C4, _DC) */
+    dir = vsub(p2, p1);
+    dir = vlen(dir) > 1e-6f ? vnorm(dir) : vnorm(v3(w2[0], w2[1], w2[2]));
+    bt_turn_x(w2, dir, k->from);
+    p2 = vadd(p2, vmul(v3(w2[0], w2[1], w2[2]), -35.0f * k->from));
+    w2[12] = p2.x; w2[13] = p2.y; w2[14] = p2.z;
+    d = bt_ease_io(bt_norm(vlen(vsub(p2, p1)), 400.0f, 1000.0f), 1.0f, 0.5f);
+    for (int j = 4; j < 11; j++) if (j != 7) w2[j] *= d;
+    k->ttarget = v3(m[0] * p2.x + m[4] * p2.y + m[8] * p2.z + m[12], m[1] * p2.x + m[5] * p2.y + m[9] * p2.z + m[13],
+                    m[2] * p2.x + m[6] * p2.y + m[10] * p2.z + m[14]);
+}
+int game_test_bomb_teresa(void) /* the first BombTeresa: Mario 1200 off (it chases and tackles him: an explosion);
+                                 * BT_ACT 1: Mario spins by it, its tongue holds him, a swing past 190 throws it */
+{
+#ifndef BT_ACT
+#define BT_ACT 0
+#endif
+    test_nolost = 1;
+    static int placed = -1, spun;
+    bt_test_sq = 0;
+    for (int i = 0; i < nkuribo; i++) {
+        Kuribo *k = &kuribo[i];
+        if (k->kind != WALK_BOMBTERESA || k->state == KURIBO_DEAD || !row_shown(k->row)) continue;
+        V3 up = vmul(k->grav, -1.0f);
+        if (!k->front.x && !k->front.y && !k->front.z) up = up_at(k->pos, mario->up);
+        if (placed != i || vlen(vsub(mario->pos, k->pos)) > 3000.0f || zone_low[sc->objs[k->row].zone]) { /* again while its zone streams in */
+            V3 rx, rz; /* along its front, on the ground under it */
+            row_axes(&sc->objs[k->row], &rx, &rz);
+            V3 f = vnorm(vtangent(rz, up));
+            V3 g, base = k->tcenter.x || k->tcenter.y || k->tcenter.z ? k->tcenter : k->pos;
+            int ok = 0;
+            float best = -1.0f; V3 f0 = f;
+            for (int t = 0; t < 8; t++) { /* ground 500 about it, the farthest from a KoopaStatue (its swing breaks them) */
+                V3 ft = rot_axis(f0, up, t * 0.785398f), gt, p = vadd(base, vmul(ft, 500.0f));
+                if (!drop_to_ground(vadd(p, vmul(up, 300.0f)), up, 2000.0f, &gt)) continue;
+                float dmin = 1e9f;
+                for (int q = 0; q < ninsts; q++) if (insts[q].breaks == 5) dmin = fminf(dmin, vlen(vsub(p, v3(insts[q].m[12], insts[q].m[13], insts[q].m[14]))));
+                if (dmin > best) { best = dmin; ok = 1; f = ft; g = gt; }
+            }
+            if (!ok && !zone_low[sc->objs[k->row].zone]) continue;
+            if (!ok) g = vadd(base, vmul(f, 500.0f)); /* held there while its zone streams in */
+            mario->up = up; mario->pos = vadd(g, vmul(up, 5.0f));
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            mario->face = vmul(f, -1.0f);
+            placed = i; spun = 0;
+        }
+        if (BT_ACT && (k->nrv == BT_TACKLESIGN || k->nrv == BT_CHASE) && k->step > 10 && vlen(vsub(mario->pos, k->pos)) < 400.0f && !spun) { mario->spin_timer = SPIN_TIME; mario->spin_t = 0; spun = 1; }
+        if (BT_ACT && k->nrv == BT_DRIFT && k->step == 100) bt_test_sq = 1;
+        if (BT_ACT && k->nrv == BT_DRIFT && k->step == 200) bt_test_sq = 1;
+        if (k->nrv == BT_DRIFT && k->step % 20 == 0)
+            printf("bt drift %d: tongue %.0f from the hand, b94 %d, upper %d\n", k->step, vlen(vsub(k->bpos, mario_joint_pos(JOINT_HANDR))), m_b94, m_upper_on("ハンマー投げ回転中"));
+        static int said;
+        if (!said++) printf("bt test row %d zone %d at %.0f %.0f %.0f clipped %d kcl %d low %d mario %.0f\n", k->row, sc->objs[k->row].zone, k->pos.x, k->pos.y, k->pos.z, k->clipped, zone_kcl[sc->objs[k->row].zone & 63], zone_low[sc->objs[k->row].zone], vlen(vsub(mario->pos, k->pos)));
         return i * 100000 + k->nrv * 1000 + (k->step > 999 ? 999 : k->step);
     }
     return -1;
@@ -29504,7 +29929,7 @@ static void update_kuribo(void)
     for (int i = 0; i < nkuribo; i++) {
         Kuribo *k = &kuribo[i];
         if (k->state == KURIBO_DEAD || !row_shown(k->row)) continue;
-        if (k->clipped && k->kind != WALK_KARIKARI && !test_noclip) continue; /* startClipped: no movement (Karikari may ride on Mario) */
+        if (k->clipped && k->kind != WALK_KARIKARI && !test_noclip && !(k->kind == WALK_BOMBTERESA && !k->lvt[1])) continue; /* startClipped: no movement (Karikari may ride on Mario; a BombTeresa's invalidateClipping: lvt[1] 0) */
         u32 c0 = cycles();
         update_kuribo_one(k);
         kprof[k->kind] += cycles() - c0; kprof_n[k->kind]++;
@@ -29547,6 +29972,7 @@ static void update_kuribo_one(Kuribo *k)
             else if (k->kind == WALK_KAMECK) kameck_update(k);
             else if (k->kind == WALK_NOKO) noko_update(k);
             else if (k->kind == WALK_SAMBOHEAD) sh_update(k);
+            else if (k->kind == WALK_BOMBTERESA) bt_update(k);
             return;
         }
         if (k->kind == WALK_PETARI) {
@@ -31003,7 +31429,7 @@ static int woodbox_reached(const Inst *in, V3 at, float rad) /* its body sensor 
 /* SimpleBreakableObj::receiveMsgEnemyAttack: isMsgExplosionAttack (mBreakFlags 8) breaks a KoopaStatue (breaks 5)
  * whose body the explosion reaches (its collision's reach); WoodBox::receiveMsgEnemyAttack any enemy attack (ponytail:
  * only explosions reach map objects here, the walkers' attacks only Mario, WoodBox.cpp:202) */
-static void explosion_breaks(V3 at, float rad)
+static int explosion_breaks(V3 at, float rad)
 {
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
@@ -31011,8 +31437,17 @@ static void explosion_breaks(V3 at, float rad)
         if (!woodbox_reached(in, at, rad) && (in->breaks != 5 || vlen(vsub(at, v3(in->m[12], in->m[13], in->m[14]))) > rad + in->reach)) continue;
         break_inst(in, 1);
         game_rebind();
-        return;
+        return 1;
     }
+    return 0;
+}
+static int explosion_breaks_inst(int i)
+{
+    if (i < 0 || i >= ninsts || row_dead[insts[i].row]) return 0;
+    if (insts[i].breaks != 5 && (insts[i].breaks != 1 || strcmp(sc->types + 32 * sc->objs[insts[i].row].type, "WoodBox"))) return 0;
+    break_inst(&insts[i], 1);
+    game_rebind();
+    return 1;
 }
 
 /* SpiderCoin: the pointer on it (150 at 80 up) with its A frees the coin. ponytail: no rub (tryRub), no Touch spin */
@@ -38319,6 +38754,7 @@ static void update_shots(void)
             Kuribo *e = &kuribo[k];
             if (e->state == KURIBO_DEAD || !row_shown(e->row)) continue;
             if (e->kind == WALK_KCHIEF) { if (kchief_shot(e, s->pos)) { hit = 1; printf("star piece hits kuribo chief row %d\n", e->row); } continue; }
+            if (e->kind == WALK_BOMBTERESA) { if (vlen(vsub(s->pos, e->pos)) <= 85.0f * sc->objs[e->row].scale[0] && bt_star(e)) hit = 1; continue; } /* its body 85 */
             if (vlen(vsub(s->pos, vadd(e->pos, vmul(e->up, 50.0f)))) > 90.0f) continue;
             hit = 1;
             if (e->kind == WALK_TAKOBO) { /* isMsgStarPieceAttack: StunStart (not while pressed / blown) */
@@ -48270,6 +48706,7 @@ static void walker_shadow(const Kuribo *k)
     case WALK_POIHANA: rs = 80.0f; break;
     case WALK_PETARI: rs = 80.0f; start = 80.0f; break;     /* Shadow.bcsv DropStart */
     case WALK_SAMBOHEAD: if (!k->lvt[0]) return; rs = 60.0f * r->scale[1]; break; /* initShadowVolumeSphere 60 x scale; invalidateShadow */
+    case WALK_BOMBTERESA: if (k->lvt[0]) return; rs = 80.0f * r->scale[0]; start = 0.0f; break; /* initShadowVolumeSphere 80, onShadowFollowHostScale */
     default: return;                                        /* Butterfly, StinkBugSmall: none */
     }
     if (k->kind == WALK_TERESA && strcmp(sc->types + 32 * r->type, "TeresaChief") == 0) len = 3000.0f;
@@ -48904,6 +49341,7 @@ void game_draw(void)
         if (kuribo[i].kind == WALK_SNAKEHEAD && kuribo[i].phase) continue; /* Waylay: hideModel */
         if (kuribo[i].kind == WALK_KAMECK && kuribo[i].phase) continue; /* Kameck: hideModel(AndOnCalcAnim) */
         if (kuribo[i].kind == WALK_NOKO && kuribo[i].phase) continue; /* hideModel */
+        if (kuribo[i].kind == WALK_BOMBTERESA && kuribo[i].lvt[0]) continue; /* hideModel */
         if (kuribo[i].kind == WALK_BOMBHEI && (kuribo[i].nrv == BH_GONE || kuribo[i].nrv == BH_EXPLODE)) continue; /* a launcher's bomb not out; exeExplode: hideModel */
         /* out of the view: no shadow, no pose, not drawn; its clip's time goes on (anim_advance) */
         const float *wsc = sc->objs[kuribo[i].row].scale;
@@ -48997,6 +49435,7 @@ void game_draw(void)
                     t[13] = 30.4f - (cx * 30.4f - sx * -2.2f); t[14] = -2.2f - (sx * 30.4f + cx * -2.2f);
                     mat_mul(tmp, m, t); memcpy(m, tmp, 64);
                 }
+                if (k->kind == WALK_BOMBTERESA) bt_tongue(k, m, a); /* calcAndSetBaseMtx: its tongue's JointControlDelegators */
                 if (k->kind == WALK_KCHIEF || k->kind == WALK_SAMBOHEAD) { /* setBaseScale(mScaleController->_C x mScale) */
                     float sy = k->from, sx = sqrtf(1.0f / sy);
                     for (int j = 0; j < 3; j++) { m[j] *= sx; m[4 + j] *= sy; m[8 + j] *= sx; }
