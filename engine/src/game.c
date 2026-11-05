@@ -25903,7 +25903,7 @@ static void draw_shadow(V3 pos, V3 up, V3 front, float rs, float rf, float off, 
  * friction 0.85, air 0.99 with gravity 1.5; NonActive past 3000 on the ground. The ink (16 at most) falls 0.8 x 0.99,
  * breaks on the map or after 240 (INK_BREAK, Break) and hurts Mario at 50.
  * ponytail: no star pointer bind (WalkerStateBindStarPointer), no AnimScaleController push squash, no BTP blinks
- * (only an action's own BTP plays), no PressDown (the binder has no roof), no PlayerKick (Mario sends none), no move
+ * (only an action's own BTP plays), no PressDown (the binder has no roof), no move
  * limit collision; an explosion punches it as a shell does; the ink's Wait clip is not played */
 #define TAKO_INKS 16
 static struct { V3 pos, vel; int t, on, bound; } tinks[TAKO_INKS];
@@ -26102,6 +26102,7 @@ static void takohei_update(Kuribo *k)
     if (msg == MSG_TRAMPLE) { th_down_to(k, TH_FLATDOWN); mario_trample(); return; }
     if (msg == MSG_HIPDROP) { th_down_to(k, TH_HIPDROPDOWN); return; }
     if (msg == MSG_HITALL || (player_mode == PM_INVINCIBLE && mario_touch(c, 70.0f * s))) { th_punch(k, mario->pos); return; }
+    if (msg == MSG_NONE && k->nrv == TH_SWOON && mario_kick(c, 70.0f * s)) { th_punch(k, mario->pos); mario_kicked(); return; } /* receiveOtherMsg: isMsgPlayerKick, isEnableKick */
     V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     if (th_can_attack(k) && vlen(vsub(mc, c)) < 50.0f * s + HIT_BODY_R) { /* attackSensor: its attack sensor */
         if (mario->hip != HIP_FALL && mario_attack(ATK_ENEMY, c)) { /* requestAttackSuccess */
@@ -26171,7 +26172,7 @@ static void draw_tako_inks(void)
  * Blow (SpinHitController 40 / 20, no gravity, three star pieces at 10, killed bound or at 15; stopScene 3,
  * EXPLODE_S). Dead in a death area or water. Death effect, its dead switch. Its posture slerps 0.15 to upside down,
  * 0.02 to -1.8 in FlyPursueLast, 0.2 back, Blow spins it -1 rad a frame.
- * ponytail: no star pointer bind, no AnimScaleController / AnimStampController squash, no PlayerKick, no push between
+ * ponytail: no star pointer bind, no AnimScaleController / AnimStampController squash, no push between
  * walkers, no Appear effect; the posture turns the whole model about its Center joint (its base matrix) */
 enum { KT_NOCALCWAIT, KT_WAIT, KT_SEARCH, KT_ESCAPESEARCH, KT_PREESCAPE, KT_FLYSTART, KT_FLYPURSUE, KT_FLYESCAPE, KT_FLYPURSUELAST,
        KT_OVERTURNFALL, KT_OVERTURN, KT_PRERECOVER, KT_RECOVER, KT_HITTOPLAYER, KT_BLOW, KT_STAMPDEATH };
@@ -26379,6 +26380,10 @@ static void kotebug_update(Kuribo *k)
         return;
     }
     if (player_mode == PM_INVINCIBLE && mario_touch(c, br)) { kb_blow(k, mario->pos); return; }
+    if (msg == MSG_NONE && (k->nrv == KT_OVERTURN || k->nrv == KT_PRERECOVER || k->nrv == KT_RECOVER) && mario_kick(c, br)) { /* receiveOtherMsg: isMsgPlayerKick */
+        V3 u = vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), vadd(k->pos, vmul(k->qy, br)));
+        if (!(vlen(u) > 1e-6f && vdot(k->qy, vnorm(u)) > 0.25f)) { kb_blow(k, mario->pos); mario_kicked(); return; } /* not isPlayerExistUp */
+    }
     if (msg == MSG_HITALL) {
         if (k->nrv == KT_OVERTURNFALL || k->nrv == KT_OVERTURN) { kb_blow(k, mario->pos); printf("kotebug row %d: blown\n", k->row); }
         else if (k->nrv != KT_OVERTURNFALL) { kb_overturn_fall(k, mario->pos); printf("kotebug row %d: spun over\n", k->row); }

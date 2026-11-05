@@ -2302,7 +2302,7 @@ int main(void)
 #ifdef TAKO_TEST
         { /* HoneyBeeKingdom 1: a TakoHei sees Mario and shoots, a stomp, a spin; a KoteBug flees and overturns, stomped;
            * another spun over, then blown */
-            static const struct { unsigned f; int kind, k, how; } st[] = {{120, 1, 0, 3}, {300, 1, 0, 6}, {1100, 3, 0, 7},
+            static const struct { unsigned f; int kind, k, how; } st[] = {{120, 1, 0, 3}, {300, 1, 0, 8}, {1100, 3, 0, 9},
                                                                             {1500, 3, 0, 0}, {1600, 3, 0, 1}, {1640, 3, 0, 1}, {2000, 1, 0, 0},
                                                                             {2100, 1, 0, 2}};
             for (unsigned i = 0; i < sizeof st / sizeof st[0]; i++)

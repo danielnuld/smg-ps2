@@ -265,7 +265,7 @@ Second console round (2026-10-24), from Daniel's report:
   takohei_update, kotebug_update, update_tako_inks). Test `tako` (HoneyBeeKingdom 1: a TakoHei finds Mario, pursues,
   spits ink that hurts him, a stomp FlatDown, a spin PunchDown; a KoteBug flees, overturns, is stamped; another is spun
   over, then blown). They start once Mario is within 3000 with a ground under them (FlowerRoadZone streams in late).
-  ponytail: no star pointer bind, no AnimScale / AnimStamp squash, no PlayerKick, no PressDown. Repack: slice.py
+  ponytail: no star pointer bind, no AnimScale / AnimStamp squash, no PressDown. Repack: slice.py
   TakoHei EXTRA TakoHeiInk (HoneyBeeKingdom, OceanPhantomCave, OceanFloaterLand, ReverseKingdom, KoopaJrShipLv1).
 ## Rules
 
