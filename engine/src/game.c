@@ -4311,8 +4311,7 @@ static int gap_class(const char *name)
  * (drawn static, or not at all), each a whole Petari class: Honeyhive HoneyQueen, Creeper, BossStinkBug, StinkBugParent, GhostPlayer (Cosmic Mario);
  * Space Junk TombSpider, BossKameck, ChildKameck, SpiderAttachPoint (SlingShooter), UFOKinoko, CoinBox,
  * PlanetRocket, NokonokoLand; Battlerock BossBegoman, TicoShop; Beach Bowl PenguinStudent;
- * the observatory AstroMapObj states (AstroStarPlate / AstroDomeEntrance / AstroRotateStepA / B: Dead / Alive /
- * Revival / Open by dome), AstroCountDownPlate (stars left), AstroOverlookObj (HUD hidden in its area) */
+ * the observatory's AstroMapObj looks (update_astro_objs' ponytail) */
 static void class_make(ClassInfo *ci, const char *name)
 {
     ci->hazard = strcmp(name, "SpaceMine") == 0 ? 1 : strcmp(name, "NeedlePlant") == 0 || strcmp(name, "NeedlePlantFly") == 0 ? 2 :
@@ -11300,7 +11299,8 @@ static void hud_tico_eat(int center) /* MR::requestCounterLayoutAppearanceForTic
  * other counters) */
 static HudCounter hud_pc = {.lay = "PurpleCoinCounter", .group = 0, .offx = -50.0f, .dead = 1};
 static int pc_valid = -1, pc_starter = -2; /* -1 no holder, 0 made, 1 valid (mIsValid); the starter's row (-1 none, -2 not looked up) */
-static int hud_layout_off(void) { return menu_paused() || (dome_layout_off && !star_alone) || dx.on || pd.name; }
+static int astro_overlook; /* AstroOverlookObj::_8C: Mario in an AstroOverlookArea (update_astro_objs) */
+static int hud_layout_off(void) { return menu_paused() || (dome_layout_off && !star_alone) || dx.on || pd.name || astro_overlook; }
 static void pc_appear(void) /* PurpleCoinCounter::appear */
 {
     HudCounter *c = &hud_pc;
@@ -28810,8 +28810,10 @@ static void carry(const float old[16], const Inst *in)
  * on; with SW_B they run only while it is on (listenStageSwitchOnOffB: start / endMapPartsFunctions); without either
  * they start at init. SideSpikeMoveStep's star pointer stop (WalkerStateBindStarPointer) is the 2P pointer's only
  * (isStarPointerPointing2POnPressButton), so a "SideSpikeMoveStepA" is its rail mover alone in one-player */
+static int astro_rotator_dead(const char *cls);
 static int mp_running(const Row *r, int row)
 {
+    if (astro_rotator_dead(sc->types + 32 * r->type)) return 0; /* AstroMapObj::setStateDead: endMapPartsFunctions */
     if (r->sw[SW_A] >= 0 && !row_mp_a[row]) {
         if (!sw_on(r, SW_A)) return 0;
         row_mp_a[row] = 1;
@@ -35154,9 +35156,46 @@ static void gsr_appear(int row);
 static void acore_start(void);
 static void ads_demo_nerve(int part);
 static void ads_select(int start);
+/* HeavensDoorDemoObj (HeavensDoorDemoObj.cpp) HeavensDoorInsideCage / HeavensDoorInsidePlanetPartsA: Wait (PlanetPartsA:
+ * SE_OJ_LV_HD_INSIDE_SUN_WORK), Vanish (the demo's nerve action: Move; the cage's Break effect, PlanetPartsA's
+ * stopStageBGM(75); at Move's BTK end (the cage 39 frames, PlanetPartsA 119) PlanetPartsA's STM_STAR_EXIST_2, the
+ * shake stopped, kill); the cage's ミニ太陽消失 functor (startInsideCageDemo): shakeCameraMoving (StageEffect: 0.15 /
+ * 1.2) and the weak rumble while alive. ponytail: Move's BCK / BTK not played on these static models */
+static struct { int row, step, rumble; } hdo[2] = {{-1, -1, 0}, {-1, -1, 0}}; /* [0] the cage, [1] PlanetPartsA */
+static void hdo_update(void)
+{
+    static const Scene *seen;
+    static int prow = -1;
+    static u32 lv;
+    if (seen != sc) { seen = sc; hdo[0].row = hdo[1].row = -1; hdo[0].rumble = 0; int t = scene_type(sc, "HeavensDoorInsidePlanetPartsA"); prow = -1;
+                      for (u32 i = 0; t >= 0 && i < sc->nobjs; i++) if ((int)sc->objs[i].type == t) prow = (int)i; }
+    if (prow >= 0 && hdo[1].row < 0 && !row_dead[prow] && row_shown(prow)) lv = se_level(SE_OJ_LV_HD_INSIDE_SUN_WORK, sc->objs[prow].pos, lv);
+    if (hdo[0].rumble && hdo[0].row >= 0 && !row_dead[hdo[0].row]) pad_rumble(RUMBLE_WEAK); /* control: tryRumblePadWeak */
+    for (int k = 0; k < 2; k++) {
+        if (hdo[k].row < 0 || hdo[k].step < 0) continue;
+        int st = hdo[k].step++;
+        const Inst *in = row_inst(hdo[k].row);
+        if (st == 0) {
+            if (k == 0 && in) fx_named("HeavensDoorInsideCage", "Break", in->m, NULL, NULL);
+            if (k == 1) bgm_stop(75);
+        }
+        if (st > (k == 0 ? 39 : 119)) { /* isBtkStopped */
+            if (k == 1) bgm_start("STM_STAR_EXIST_2");
+            if (k == 0) { camera_shake_stop(&hdo[0]); hdo[0].rumble = 0; } /* stopShakingCameraMoving */
+            row_kill(hdo[k].row);
+            printf("heavens door demo obj: row %d killed\n", hdo[k].row);
+            hdo[k].step = -1;
+        }
+    }
+}
 static void dx_cast_hook(int row, int type, int part)
 {
     const char *cls = sc->types + 32 * sc->objs[row].type;
+    if (!strncmp(cls, "HeavensDoorInside", 17)) {
+        int k = !strcmp(cls, "HeavensDoorInsideCage") ? 0 : !strcmp(cls, "HeavensDoorInsidePlanetPartsA") ? 1 : -1;
+        if (k >= 0 && type == 3) { hdo[k].row = row; hdo[k].step = 0; printf("heavens door demo obj: %s vanish\n", cls); return; } /* tryRegisterDemoActionNerve: Vanish */
+        if (k == 0 && type == 2) { hdo[0].row = row; hdo[0].rumble = 1; camera_shake_infinity(&hdo[0], 0.15f, 1.2f); return; }
+    }
     if (gw_cast_hook(row, type, part)) return;
     if (type == 0 && !strcmp(cls, "StarReturnDemoStarter")) { srd_appear(row); return; }
     if (type == 0 && !strcmp(cls, "GrandStarReturnDemoStarter")) { gsr_appear(row); return; }
@@ -35968,6 +36007,59 @@ static int astro_opened_domes(void) /* MR::calcOpenedAstroDomeNum: the grand sta
     return n < 0 ? 0 : n > 6 ? 6 : n;
 }
 static void acore_start(void) { acore.nrv = 1; acore.step = 0; }
+/* AstroMapObjFunction getNumGrandStarForRevival by model name (the dome classes' by their dome: arg0), -1 none */
+static int astro_revival_num(const char *m, int dome)
+{
+    static const struct { const char *m; s8 n; } t[] = {
+        {"AstroDomeEntranceObservatory", 1}, {"AstroDomeEntranceWell", 1}, {"AstroBaseA", 1}, {"AstroBaseCenterB", 1},
+        {"AstroRotateStepA", 1}, {"AstroDecoratePartsA", 1}, {"AstroDecoratePartsGearA", 1}, {"AstroParking", 1},
+        {"AstroDomeEntranceKitchen", 3}, {"AstroDomeEntranceBedRoom", 3}, {"AstroBaseB", 3}, {"AstroBaseKitchen", 3},
+        {"AstroLibrary", 3}, {"AstroCountDownPlate", 5}, {"AstroDomeEntranceMachine", 5}, {"AstroDomeEntranceTower", 5},
+        {"AstroBaseC", 5}, {"AstroBaseCenterA", 5}, {"AstroBaseCenterTop", 5}, {"AstroRotateStepB", 5}};
+    for (unsigned i = 0; i < sizeof t / sizeof t[0]; i++) if (!strcmp(t[i].m, m)) return t[i].n;
+    return dome;
+}
+/* AstroMapObj with setupRotator (AstroRotateStepA / B, AstroDecoratePartsA): its map parts run only once alive
+ * (isAlreadyRevival: calcOpenedAstroDomeNum >= its grand stars; setStateAlive startMapPartsFunctions) */
+static int astro_rotator_dead(const char *cls)
+{
+    if (strncmp(cls, "Astro", 5)) return 0;
+    if (strcmp(cls, "AstroRotateStepA") && strcmp(cls, "AstroRotateStepB") && strcmp(cls, "AstroDecoratePartsA")) return 0;
+    return astro_opened_domes() < astro_revival_num(cls, -1);
+}
+/* AstroMapObj::exeWait's machine SE (isPlayMachineSE: not in 状況説明[絵本表示], グランドスター帰還[２回目以降], パワースター帰還)
+ * and AstroOverlookObj::control (the default game layout off while Mario is in an AstroOverlookArea).
+ * ponytail: the Dead / Alive / Revival colours and poses (Revival BRK / BCK / BTK frame 0 or end: the Observatory's
+ * pack has no room for a second model of each), Open's door BTK and its Close / Open collision swap, the
+ * GalaxyNamePlates, AstroCountDownPlate (its digits are texture matrix offsets the VU1 groups do not take per draw) */
+int game_test_put_at(const char *cls, float up) /* tests: Mario `up` over the first row of class cls; its row, -1 none */
+{
+    int t = scene_type(sc, cls);
+    for (u32 i = 0; t >= 0 && i < sc->nobjs; i++)
+        if ((int)sc->objs[i].type == t) { mario->pos = vadd(row_pos(&sc->objs[i]), v3(0, up, 0)); return (int)i; }
+    return -1;
+}
+int game_test_overlook(int put) /* tests: put Mario at the first AstroOverlookArea's place (-1 none); its HUD off flag */
+{
+    int t = scene_type(sc, "AstroOverlookAreaCylinder");
+    for (u32 i = 0; put && t >= 0 && i < sc->nobjs; i++)
+        if ((int)sc->objs[i].type == t) { mario->pos = vadd(row_pos(&sc->objs[i]), v3(0, 300, 0)); break; }
+    return t < 0 ? -1 : hud_layout_off();
+}
+static void update_astro_objs(void)
+{
+    static const Scene *seen;
+    static int t_over;
+    if (seen != sc) { seen = sc; t_over = scene_type(sc, "AstroOverlookObj"); astro_overlook = 0; }
+    astro_overlook = t_over >= 0 && area_obj("AstroOverlookAreaCylinder", mario->pos) >= 0;
+    int machine = !(dx.on && ((!strcmp(demos[dx.cur].h->name, "ロゼッタ状況説明デモ") && dx.part == 6) /* 状況説明[絵本表示] */ ||
+                              !strcmp(demos[dx.cur].h->name, "グランドスター帰還[２回目以降]") || !strcmp(demos[dx.cur].h->name, "パワースター帰還")));
+    for (int i = 0; machine && i < ninsts; i++) {
+        const char *c = sc->types + 32 * sc->objs[insts[i].row].type;
+        if (strncmp(c, "AstroRotateStep", 15) || astro_rotator_dead(c)) continue;
+        insts[i].lv[0] = se_level(c[15] == 'A' ? SE_OJ_LV_ASTRO_ENGINE_1 : SE_OJ_LV_ASTRO_ENGINE_2, &insts[i].m[12], insts[i].lv[0]);
+    }
+}
 static void update_astro_core(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -39536,10 +39628,7 @@ static void pro_draw(void)
  * the Lumas at TicoDemoPos2 / 3). Near Rosetta the spin demo (スピンゲット: her talks, the baby Luma, the light dome).
  * ponytail: no SpotMarkLight, foot prints, effects (smoke, the dome's light), BGM states, rumble; the rabbits' star
  * piece / blow damage not ported
- * ponytail (unmarked until the 2026-11-02 audit): RunawayTico Guide0 lacks TICO_WAIT from step 210, TICO_FLOAT_DEMO
- * from 560, the sub-BGM BGM_MEET_TICO_ZOOM_OUT at 617 and MEET_TICO_ZOOM_OUT 630-730 (RunawayTico.cpp:180-193);
- * HeavensDoorInsideCage's Vanish (Move, Break effect, shake, kill), PlanetPartsA's BGM switch to STM_STAR_EXIST_2
- * and INSIDE_SUN_WORK (HeavensDoorDemoObj.cpp:67-71) are not cast in dx_cast_hook */
+ */
 enum { GP_MEET, GP_META, GP_RAPPEAR, GP_MARIO, GP_RTALK, GP_RESCAPE, GP_CFADEOUT, GP_CFADEIN, GP_CTALK, GP_CRUN, GP_CSTART,
        GP_TOWER, GP_TOWERAFTER, GP_TFADEOUT, GP_TFADEIN, GP_SPIN1, GP_SPINT1, GP_SPIN2, GP_SPINT2, GP_SPIN3, GP_SPINT3, GP_SPIN4,
        GP_SPIN5, GP_SPINT4, GP_SPIN6, GP_SPIN7, GP_SPIN8, GP_N };
@@ -40003,6 +40092,17 @@ static void rt_update(int c)
             basis_matrix(m, mario->pos, mario->up, mario->face, 0);
             demo_camera("ticobaby/demomeettico", gw.camf, m);
             if (!dx.paused) gw.camf++;
+        }
+        { /* sWaitSeStartFrame 210, sFloatSeStartFrame 560 (level A sFloatSeMinVolume x 100: volume 0.2),
+           * sDemoCameraZoomOutBgmStartFrame 617, sDemoCameraZoomOutStartFrame 630 .. EndFrame 730 */
+            static u32 lw, lf, lz;
+            const float *at = &insts[0].m[12];
+            const Inst *ti = row_inst(row);
+            if (ti) at = &ti->m[12];
+            if (st >= 210) lw = se_level(SE_SM_LV_TICO_WAIT, at, lw);
+            if (st >= 560) { lf = se_level(SE_SM_LV_TICO_FLOAT_DEMO, at, lf); if (lf) se_volpitch(lf, 0.2f, 1.0f); }
+            if (st == 617) bgm_sub("BGM_MEET_TICO_ZOOM_OUT");
+            if (st >= 630 && st < 730) lz = se_level(SE_DM_LV_MEET_TICO_ZOOM_OUT, NULL, lz);
         }
         break;
     case RT_GUIDE1:
@@ -40765,11 +40865,13 @@ void game_update(void)
     update_dome_npcs();
     reading_update();
     rpb_update();
+    hdo_update();
     update_luigi();
     srd_update();
     adds_update();
     gsr_update();
     update_astro_core();
+    update_astro_objs();
     update_astro_sky();
     demo_on = dino_demo_on || ota_demo_on || star_demo || fat_demo() || vine_demo_on() || talk_demo() || dx.on || menu_staffroll_on() || gw_demo_on() || pd.name; /* (StaffRoll: offPlayerControl) */
     /* MarioEffect: mHealth <= 1, not in a demo / the power star get demo / a dark comet, isEnableNerveChange.
