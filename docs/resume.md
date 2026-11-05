@@ -421,6 +421,13 @@ Second console round (2026-10-24), from Daniel's report:
   ElectricRailMoving (BattleShip 2, CannonFleet 3/4, CubeBubbleExLv2, Factory 2, FlipPanelEx 1), SandUpDownTriRock
   (SandClock 1-7: SW_B On / Rest arg0 / Return, KCL Move00-02 on joints: KCL_PARTS + SKINNED_OBJ), BegomanBabyLauncher
   (CannonFleet 3/4, OceanFloaterLand 1/2).
+- Unizo (fix/states-unizo, 2026-11-05): Unizo.cpp's nerves (Wait, Jump on its Search BCK, Chase, Attack on its
+  Attack BCK, CollidePlayer, CollideEnemy: two Unizos push each other, Shock BCK), mJumpCount, the sea / shoal roll
+  bob; doBreak / doFireDown with its break model (UnizoBreak / UnizoLandBreak / UnizoShoalBreak facing away from the
+  camera, Break / FireDown / Firedown BCK, killed at its end), Death and shakeCameraNormal. slice.py: the Unizos and
+  their break models skinned (SKINNED_OBJ, EXTRA). Test `unizo` (OceanRing 1) from f500: Jump, Chase, hit, Attack,
+  CollidePlayer, the test's break at f950, dead ~170 frames later. ponytail: no BRK, no Blink BTP, no damage floor.
+  Repack: slice_all.py OceanRingGalaxy and every galaxy with Unizo / UnizoLand / UnizoShoal rows.
 ## Rules
 
 - Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -

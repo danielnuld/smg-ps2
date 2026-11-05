@@ -2274,9 +2274,10 @@ int main(void)
         }
 #endif
 #ifdef UNIZO_TEST
-        { /* Mario 800 off a Unizo (150): it chases and hits him */
-            if (frame == 150) printf("unizo test f %u: row %d\n", frame, game_test_unizo());
-            if (frame >= 150 && frame < 700 && frame % 10 == 0) {
+        { /* Mario 800 off a Unizo (500): it chases and hits him; its doBreak (950) */
+            if (frame == 500) printf("unizo test f %u: row %d\n", frame, game_test_unizo()); /* after the arrival flight */
+            if (frame == 950) game_test_unizo_break(); /* doBreak: its break model, Death, the shake */
+            if (frame >= 500 && frame < 1100 && frame % 10 == 0) {
                 int dist = 0, st = game_unizo_state(&dist);
                 printf("unizo test f %u: phase %d dist %d life %d\n", frame, st, dist, game_life());
             }
