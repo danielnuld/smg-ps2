@@ -2299,6 +2299,17 @@ int main(void)
         if (frame == 520) printf("takobo test: spin by row %d\n", game_test_enemy(6, 0, 1));
         if (frame == 640) printf("takobo test: %d alive, life %d\n", game_kind_alive(6), game_life());
 #endif
+#ifdef TAKO_TEST
+        { /* HoneyBeeKingdom 1: a TakoHei sees Mario and shoots, a stomp, a spin; a KoteBug flees and overturns, stomped;
+           * another spun over, then blown */
+            static const struct { unsigned f; int kind, k, how; } st[] = {{120, 1, 0, 3}, {300, 1, 0, 6}, {1100, 3, 0, 7},
+                                                                            {1500, 3, 0, 0}, {1600, 3, 0, 1}, {1640, 3, 0, 1}, {2000, 1, 0, 0},
+                                                                            {2100, 1, 0, 2}};
+            for (unsigned i = 0; i < sizeof st / sizeof st[0]; i++)
+                if (frame == st[i].f) printf("tako test f %u: kind %d #%d how %d: row %d\n", frame, st[i].kind, st[i].k, st[i].how, game_test_enemy(st[i].kind, st[i].k, st[i].how));
+            if (frame % 100 == 0) printf("tako test f %u: takohei %d kotebug %d alive, life %d\n", frame, game_kind_alive(1), game_kind_alive(3), game_life());
+        }
+#endif
 #ifdef KARIKARI_TEST
         if (frame == 500) printf("karikari test: R2 on row %d\n", game_test_kari_point(1));
         if (frame == 501) game_test_kari_point(0);

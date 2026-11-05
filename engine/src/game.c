@@ -4824,6 +4824,8 @@ int game_test_enemy(int kind, int k, int how)
         mario->spin_timer = how == 1 ? SPIN_TIME : 0;
         if (how == 4) { mario->pos = vadd(e->pos, vmul(e->up, 250.0f)); mario->hip = HIP_FALL; mario->hip_t = 0; }
         if (how == 6) { mario->grounded = 1; mario->face = vmul(side, -1.0f); } /* 90 off, facing it: walking into it */
+        if (how == 8) { mario->pos = vadd(vadd(e->pos, vmul(vnorm(vtangent(e->qz, e->up)), 900.0f)), vmul(e->up, 50.0f)); mario->vup = 0; } /* 900 before it */
+        if (how == 9) { mario->pos = vadd(vadd(e->pos, vmul(vnorm(vtangent(e->qz, e->up)), 600.0f)), vmul(e->up, 50.0f)); mario->vup = 0; } /* 600 before it */
         return e->row;
     }
     return -1;
@@ -22840,6 +22842,8 @@ static int ss_down(const Kuribo *k);
 static void ss_blow(Kuribo *k, V3 from);
 static void bg_blow(Kuribo *k, V3 from, float h, float v);
 static int bg_blown(const Kuribo *k);
+static int th_punch(Kuribo *k, V3 from);
+static int kb_blow(Kuribo *k, V3 from);
 static int walker_blow(Kuribo *e, V3 from)
 {
     if (e->kind == WALK_STRSPIDER) { if (ss_down(e)) return 0; ss_blow(e, from); return 1; } /* isMsgExplosionAttack: Blow */
@@ -22849,6 +22853,8 @@ static int walker_blow(Kuribo *e, V3 from)
         petari_blow(e, from, PT_SPINOUT);
         return 1;
     }
+    if (e->kind == WALK_TAKOHEI) return th_punch(e, from); /* isMsgToEnemyAttackBlow: requestPunch */
+    if (e->kind == WALK_KOTEBUG) return kb_blow(e, from); /* isMsgExplosionAttack / ToEnemyAttackBlow: Blow */
     if (e->kind == WALK_PACKUN) { /* punchDown */
         if (e->nrv == PN_TRAMPLEDOWN || e->nrv == PN_PUNCHDOWN) return 0;
         packun_punch(e, from);
@@ -25882,6 +25888,516 @@ static void bomb_update(Kuribo *k)
     }
 }
 
+static void mario_push_out(V3 c, float r);
+static void draw_shadow(V3 pos, V3 up, V3 front, float rs, float rf, float off, float start, float len);
+/* ---- TakoHei.cpp / TakoHeiInk.cpp / TakoHeiInkHolder.cpp after Petari ----
+ * Wait (120) / Walk (to a random point within 500 of home, turning 6, 0.2 from step 10, ending at 120 or near it) until
+ * Mario is in its sight (1600, ahead): FindTurn (FIND, turning 6, 20), Find (Search, 30), Pursue (Run, 0.5 to him past
+ * 700, away within it, turning 6): 650-750 off (or past step 250), or a wall 140 ahead while he is far, AttackSign
+ * (ShotStart, PRE_SPIT_OUT, turning 8), Attack (Shot: a TakoHeiInk from its Mouth at 20 ahead, 15 up; SPIT_OUT); after
+ * 300 CoolDown (60). Its attack sensor (50 at 70 up) hurts Mario in Wait / Walk / FindTurn / Find / Pursue / CoolDown
+ * unless he is hip-dropping (AttackSuccess: Attack, 8 away, 60), else its body (70 at 70 up) pushes and is pushed (12
+ * from Mario, 60 frames, 5 from enemies). A trample: FlatDown (20), a hip drop: HipDropDown (40), each a coin; a spin
+ * or a shell: PunchDown (20 away / 35 up, stopScene 2, HITPUNCH, kill at 22 or once bound after 5: three star pieces); a
+ * star piece: Swoon (StunStart, Stun, SWOON_S; 180), Recover (StunEnd, RECOVER, 20). Death effect, EXPLODE_S. Ground
+ * friction 0.85, air 0.99 with gravity 1.5; NonActive past 3000 on the ground. The ink (16 at most) falls 0.8 x 0.99,
+ * breaks on the map or after 240 (INK_BREAK, Break) and hurts Mario at 50.
+ * ponytail: no star pointer bind (WalkerStateBindStarPointer), no AnimScaleController push squash, no BTP blinks
+ * (only an action's own BTP plays), no PressDown (the binder has no roof), no PlayerKick (Mario sends none), no move
+ * limit collision; an explosion punches it as a shell does; the ink's Wait clip is not played */
+#define TAKO_INKS 16
+static struct { V3 pos, vel; int t, on, bound; } tinks[TAKO_INKS];
+enum { TH_NONACTIVE, TH_WAIT, TH_WALK, TH_FINDTURN, TH_FIND, TH_PURSUE, TH_COOLDOWN, TH_ATTACKSIGN, TH_ATTACK, TH_ATTACKSUCCESS,
+       TH_SWOON, TH_RECOVER, TH_PRESSDOWN, TH_HIPDROPDOWN, TH_FLATDOWN, TH_PUNCHDOWN };
+static int th_down(const Kuribo *k) { return k->nrv == TH_HIPDROPDOWN || k->nrv == TH_FLATDOWN || k->nrv == TH_PRESSDOWN || k->nrv == TH_PUNCHDOWN; }
+static int th_can_attack(const Kuribo *k) { return k->nrv >= TH_WAIT && k->nrv <= TH_COOLDOWN; }
+static int th_push_movable(const Kuribo *k) { return k->timer <= 0 && !th_down(k) && k->nrv != TH_NONACTIVE && k->nrv != TH_ATTACKSUCCESS && k->nrv != TH_SWOON; }
+/* reboundVelocityFromCollision(0, 0, 1): the velocity into the map taken off */
+static void w_rebound0(Kuribo *k)
+{
+    if (k->on_ground && vdot(k->vel, k->gn) < 0) k->vel = vsub(k->vel, vmul(k->gn, vdot(k->vel, k->gn)));
+    if (k->on_wall && vdot(k->vel, k->wn) < 0) k->vel = vsub(k->vel, vmul(k->wn, vdot(k->vel, k->wn)));
+}
+static void th_normal_vel(Kuribo *k) /* updateNormalVelocity / updateSwoonVelocity (the same constants) */
+{
+    if (k->on_ground) k->vel = vmul(k->vel, 0.85f);
+    else { k->vel = vadd(k->vel, vmul(k->grav, 1.5f)); k->vel = vmul(k->vel, 0.99f); }
+    w_rebound0(k);
+}
+static void th_turn(Kuribo *k, V3 target, float deg) /* turnDirectionToTargetDegree (on the gravity's plane) */
+{
+    turn_on_plane(&k->front, vsub(target, k->pos), k->grav, cosf(deg * 0.0174533f));
+}
+static int th_sight(const Kuribo *k) /* isInSightMario */
+{
+    V3 to = vsub(mario->pos, k->pos);
+    return vlen(to) < 1600.0f && vdot(to, k->qz) > 0.0f;
+}
+static int th_fall_next(const Kuribo *k) { return w_on_ground(k) && w_fall_next(k, 150.0f, 180.0f * w_scale(k), 150.0f); }
+static int th_check_front(const Kuribo *k) /* isExistMapCollision(40 up, its front x 140) */
+{
+    V3 a = vsub(k->pos, vmul(k->grav, 40.0f));
+    return line_hits(a, vadd(a, vmul(k->front, 140.0f)));
+}
+static void th_kill(Kuribo *k)
+{
+    float m[16];
+#ifdef TAKO_TEST
+    printf("takohei row %d: killed in nerve %d step %d\n", k->row, k->nrv, k->step);
+#endif
+    k->state = KURIBO_DEAD; row_kill(k->row);
+    basis_matrix(m, k->pos, k->qy, k->qz, 0);
+    fx_named("TakoHei", "Death", m, NULL, NULL);
+    w_se(k, SE_EM_EXPLODE_S);
+    if (k->item == 1) pop_coins(k->pos, k->qy, 1);
+    else if (k->item == 2) { drop_pieces(k->pos, k->qy, 3); w_se(k, SE_OJ_STAR_PIECE_BURST); }
+}
+static int th_punch(Kuribo *k, V3 from) /* requestPunch */
+{
+    if (th_down(k)) return 0;
+    V3 h = vnorm(vtangent(vsub(k->pos, from), k->grav));
+    k->vel = vadd(k->vel, vsub(vmul(h, 20.0f), vmul(k->grav, 35.0f))); /* addVelocitySeparateHV */
+    w_nrv(k, TH_PUNCHDOWN); k->item = 2;
+    return 1;
+}
+static void th_down_to(Kuribo *k, int n) { if (!th_down(k)) { w_nrv(k, n); k->item = 1; } } /* requestFlatDown / HipDropDown */
+static int th_swoon(Kuribo *k) { if (th_down(k)) return 0; w_nrv(k, TH_SWOON); return 1; } /* requestSwoon */
+static void th_spurt(V3 p, V3 v) /* spurtTakoHeiInk: a dead one started */
+{
+    for (int i = 0; i < TAKO_INKS; i++)
+        if (!tinks[i].on) { tinks[i].pos = p; tinks[i].vel = v; tinks[i].t = 0; tinks[i].on = 1; tinks[i].bound = 0; return; }
+}
+static void takohei_update(Kuribo *k)
+{
+    float s = w_scale(k);
+    if (!k->front.x && !k->front.y && !k->front.z) { /* init, initAfterPlacement */
+        kuribo_init(k);
+        k->item = 0; k->timer = 0;
+        w_nrv(k, TH_WAIT); k->step = 0;
+    }
+    k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f);
+    float d = vlen(vsub(mario->pos, k->pos));
+    int st = k->step;
+#ifdef TAKO_TEST
+    if (st == 0) printf("takohei row %d: nerve %d, d %d ground %d\n", k->row, k->nrv, (int)d, k->on_ground);
+#endif
+    switch (k->nrv) {
+    case TH_NONACTIVE:
+        if (st == 0) k->bind_off = 1;
+        k->vel = v3(0, 0, 0);
+        if (d < 3000.0f) { k->bind_off = 0; w_nrv(k, TH_WAIT); } /* tryActive */
+        break;
+    case TH_WAIT:
+        if (st == 0) w_act(k, "Wait");
+        th_normal_vel(k);
+        if (th_sight(k)) w_nrv(k, TH_FINDTURN);
+        else if (st > 120) w_nrv(k, TH_WALK);
+        else if (d >= 3000.0f && k->on_ground) { k->vel = v3(0, 0, 0); w_nrv(k, TH_NONACTIVE); }
+        break;
+    case TH_WALK: {
+        if (st == 0) { /* decideNextTargetPos */
+            w_act(k, "Walk");
+            k->ttarget = vadd(vtangent(v3(frand(-500.0f, 500.0f), frand(-500.0f, 500.0f), frand(-500.0f, 500.0f)), vnorm(k->grav)), k->tcenter);
+        }
+        th_turn(k, k->ttarget, 6.0f);
+        if (st > 10) w_add_move(k, vsub(k->ttarget, k->pos), 0.2f);
+        th_normal_vel(k);
+        V3 rest = vtangent(vsub(k->ttarget, k->pos), vnorm(k->grav));
+        if (th_sight(k)) w_nrv(k, TH_FINDTURN);
+        else if (st > 120 || vdot(rest, rest) < 400.0f) w_nrv(k, TH_WAIT); /* (squared against 400, as Petari) */
+        else if (th_fall_next(k)) { k->vel = v3(0, 0, 0); w_nrv(k, TH_WAIT); }
+        break;
+    }
+    case TH_FINDTURN:
+        if (st == 0) { w_act(k, "Turn"); w_se(k, SE_EM_TAKOHEI_FIND); }
+        th_turn(k, mario->pos, 6.0f);
+        th_normal_vel(k);
+        if (st > 20) w_nrv(k, TH_FIND);
+        break;
+    case TH_FIND:
+        if (st == 0) w_act(k, "Search");
+        th_normal_vel(k);
+        if (st > 30) w_nrv(k, TH_PURSUE);
+        break;
+    case TH_PURSUE: {
+        if (st == 0) w_act(k, "Run");
+        int far = d >= 700.0f;
+        w_add_move(k, far ? vsub(mario->pos, k->pos) : vsub(k->pos, mario->pos), 0.5f);
+        th_turn(k, mario->pos, 6.0f);
+        th_normal_vel(k);
+        if (far && th_check_front(k)) { w_nrv(k, TH_ATTACKSIGN); break; }
+        if (d >= 650.0f && (d <= 750.0f || st > 250)) w_nrv(k, TH_ATTACKSIGN); /* tryAttack */
+        else if (st > 300) w_nrv(k, TH_COOLDOWN);
+        else if (th_fall_next(k)) { k->vel = v3(0, 0, 0); w_nrv(k, TH_WAIT); }
+        break;
+    }
+    case TH_COOLDOWN: /* (its turn at 0 degrees a frame: none) */
+        if (st == 0) w_act(k, "CoolDown");
+        th_normal_vel(k);
+        if (st > 60) w_nrv(k, th_sight(k) ? TH_PURSUE : TH_WAIT);
+        break;
+    case TH_ATTACKSIGN:
+        if (st == 0) w_act(k, "ShotStart");
+        w_se_lv(k, SE_EM_TAKOHEI_LV_PRE_SPIT_OUT);
+        th_turn(k, mario->pos, 8.0f);
+        if (th_check_front(k)) k->vel = vadd(k->vel, vmul(k->front, -0.1f));
+        th_normal_vel(k);
+        if (w_bck_stopped(k)) w_nrv(k, TH_ATTACK);
+        break;
+    case TH_ATTACK:
+        if (st == 0) { /* the Mouth joint's (0, 20, 0) at the last draw (k->bpos) */
+            th_spurt(k->bshow ? k->bpos : vsub(k->pos, vmul(k->grav, 90.0f * s)), vadd(vmul(k->front, 20.0f), vmul(k->grav, -15.0f)));
+            w_act(k, "Shot"); w_se(k, SE_EM_TAKOHEI_SPIT_OUT);
+            printf("takohei row %d: ink\n", k->row);
+        }
+        th_normal_vel(k);
+        if (w_bck_stopped(k)) w_nrv(k, TH_WAIT);
+        break;
+    case TH_ATTACKSUCCESS:
+        if (st == 0) w_act(k, "Attack");
+        th_normal_vel(k);
+        if (st > 60) w_nrv(k, TH_WAIT);
+        break;
+    case TH_SWOON:
+        if (st == 0) w_act(k, "StunStart");
+        if (!strcmp(k->act, "StunStart") && w_bck_stopped(k)) w_act(k, "Stun"); /* isBckOneTimeAndStopped */
+        if (!strcmp(k->act, "Stun")) w_se_lv(k, SE_EM_LV_SWOON_S);
+        th_normal_vel(k);
+        if (st > 180) w_nrv(k, TH_RECOVER);
+        break;
+    case TH_RECOVER:
+        if (st == 0) { w_act(k, "StunEnd"); w_se(k, SE_EV_TAKOHEI_RECOVER); }
+        th_normal_vel(k);
+        if (st > 20) w_nrv(k, TH_WAIT);
+        break;
+    case TH_PRESSDOWN: case TH_HIPDROPDOWN: case TH_FLATDOWN:
+        if (st == 0) {
+            w_act(k, k->nrv == TH_FLATDOWN ? "FlatDown" : "HipDropDown");
+            w_se(k, k->nrv == TH_FLATDOWN ? SE_EM_TAKOHEI_STOMPED : SE_EM_TAKOHEI_STOMPED_L);
+            k->vel = v3(0, 0, 0);
+        }
+        if (st > (k->nrv == TH_FLATDOWN ? 20 : k->nrv == TH_HIPDROPDOWN ? 40 : 180)) { th_kill(k); return; }
+        break;
+    case TH_PUNCHDOWN:
+        if (st == 0) {
+            w_act(k, "PunchDown");
+            turn_on_plane(&k->front, vsub(mario->pos, k->pos), k->grav, -1.0f); /* turnDirectionToTarget */
+            scene_stop = 2; w_se(k, SE_EM_TAKOHEI_HITPUNCH); w_se(k, SE_PM_SPIN_HIT);
+        }
+        th_normal_vel(k);
+        if (st > 22 || ((k->on_ground || k->on_wall) && st > 5)) { th_kill(k); return; }
+        break;
+    }
+    k->step++;
+    k->act_t += k->act_rate;
+    if (k->nrv != TH_NONACTIVE) { /* control */
+        if (k->timer > 0) k->timer--;
+        w_blend_quat(k, k->on_ground ? k->gn : vmul(k->grav, -1.0f), k->front, 0.1f, 0.2f); /* updatePose */
+    }
+    w_bind(k, 90.0f * s);
+    k->up = k->qy;
+    if (k->nrv == TH_NONACTIVE || th_down(k)) return; /* invalidateHitSensors */
+    V3 c = vadd(k->pos, vmul(k->qy, 70.0f * s));
+    int msg = mario_offence(c, 70.0f * s, k->grav);
+    if (msg == MSG_TRAMPLE) { th_down_to(k, TH_FLATDOWN); mario_trample(); return; }
+    if (msg == MSG_HIPDROP) { th_down_to(k, TH_HIPDROPDOWN); return; }
+    if (msg == MSG_HITALL || (player_mode == PM_INVINCIBLE && mario_touch(c, 70.0f * s))) { th_punch(k, mario->pos); return; }
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    if (th_can_attack(k) && vlen(vsub(mc, c)) < 50.0f * s + HIT_BODY_R) { /* attackSensor: its attack sensor */
+        if (mario->hip != HIP_FALL && mario_attack(ATK_ENEMY, c)) { /* requestAttackSuccess */
+            w_add_move(k, vsub(c, mc), 8.0f);
+            w_nrv(k, TH_ATTACKSUCCESS);
+        } else mario_push_out(c, 50.0f * s);
+    } else if (!th_can_attack(k) && mario_touch(c, 70.0f * s)) { /* its body: sendMsgPush both ways */
+        mario_push_out(c, 70.0f * s);
+        if (th_push_movable(k)) {
+            V3 dir = vnorm(vsub(c, mc));
+            k->vel = vadd(k->vel, vmul(dir, 12.0f)); k->timer = 60; /* receiveMsgPush: sPushMarioAccel, sNoPushMarioTime */
+        }
+    }
+}
+static void update_tako_inks(void) /* TakoHeiInk::exeWait, attackSensor */
+{
+    for (int i = 0; i < TAKO_INKS; i++) {
+        if (!tinks[i].on) continue;
+        V3 *p = &tinks[i].pos;
+        if (tinks[i].bound || tinks[i].t > 240) { /* isBinded, sForceBreakTime */
+            float m[16];
+            se_start(SE_EM_TAKOHEI_INK_BREAK, &p->x);
+            basis_matrix(m, *p, up_at(*p, v3(0, 1, 0)), v3(0, 0, 1), 0);
+            fx_named("TakoHeiInk", "Break", m, NULL, NULL);
+            tinks[i].on = 0; continue;
+        }
+        V3 up = up_at(*p, v3(0, 1, 0));
+        tinks[i].vel = vmul(vsub(tinks[i].vel, vmul(up, 0.8f)), 0.99f);
+        tinks[i].t++;
+        V3 c = vadd(*p, tinks[i].vel), gn = up, wn = up;
+        int wall = 0;
+        tinks[i].bound = collide_n(&c, up, 50.0f, &gn, &wn, &wall) || wall; /* binder 50 about it */
+        *p = c;
+        if (vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), *p)) < 50.0f + HIT_BODY_R && mario_attack(ATK_ENEMY, *p)) {
+            float m[16];
+            se_start(SE_EM_TAKOHEI_INK_BREAK, &p->x);
+            basis_matrix(m, *p, up, v3(0, 0, 1), 0);
+            fx_named("TakoHeiInk", "Break", m, NULL, NULL);
+            tinks[i].on = 0;
+        }
+    }
+}
+static void draw_tako_inks(void)
+{
+    const Model *md = scene_model(sc, "TakoHeiInk");
+    for (int i = 0; md && i < TAKO_INKS; i++) {
+        if (!tinks[i].on) continue;
+        float m[16];
+        V3 up = up_at(tinks[i].pos, v3(0, 1, 0));
+        basis_matrix(m, tinks[i].pos, up, tinks[i].vel, 0);
+        draw_shadow(tinks[i].pos, up, v3(0, 0, 1), 50.0f, 50.0f, 0.0f, 50.0f, 1000.0f); /* initShadowVolumeSphere 50 */
+        render_model(md, m, 0x80, 0x80, 0x80);
+    }
+}
+
+/* ---- KoteBug.cpp after Petari ----
+ * Wait on the ground until Mario is within 1000 (beyond it NoCalcWait: no binder, until he is back within 1000):
+ * as Bee Mario Search (Syaka, turning 5.7, 50) then FlyPursue (Fly, 0.2 ahead, kept 100 over its shadow, turning 5.7);
+ * else EscapeSearch (Syaka, turning 9, 20), PreEscape (FIND), FlyEscape (Jitabata, turning away 11.5), after 200
+ * FlyPursueLast (Jitabata faster, 90 frames rising 60 -> 210 tipping -1.8 rad), OverturnFall (Pote, 30 up; on ground
+ * within cos 0.75: PoteSmoke, FALL_LAND), Overturn (Jitabata2, 240, on its back), PreRecover (Gu), Recover (Pon, 24 up,
+ * LAND). Past 2000 it gives up (Wait). Gravity 1.5, damping ground 0.8 / air 0.96 / falling 0.93. Its body (100 at its
+ * Center joint + 20) hurts Mario only in FlyStart / FlyPursue unless he is above it (0.25) or hip-dropping
+ * (HitToPlayer: 10 up, 10 back, then FlyStart: Wait, 20), else pushes him. A trample on its back (Overturn / Recover)
+ * or a hip drop: StampDeath (STOMPED_S, 20, a coin); else a trample, spin or star piece overturns it (TRAMPLE, 10
+ * away: OverturnFall; a star piece while over: 30 up); a spin while over, a shell, an explosion or invincible Mario:
+ * Blow (SpinHitController 40 / 20, no gravity, three star pieces at 10, killed bound or at 15; stopScene 3,
+ * EXPLODE_S). Dead in a death area or water. Death effect, its dead switch. Its posture slerps 0.15 to upside down,
+ * 0.02 to -1.8 in FlyPursueLast, 0.2 back, Blow spins it -1 rad a frame.
+ * ponytail: no star pointer bind, no AnimScaleController / AnimStampController squash, no PlayerKick, no push between
+ * walkers, no Appear effect; the posture turns the whole model about its Center joint (its base matrix) */
+enum { KT_NOCALCWAIT, KT_WAIT, KT_SEARCH, KT_ESCAPESEARCH, KT_PREESCAPE, KT_FLYSTART, KT_FLYPURSUE, KT_FLYESCAPE, KT_FLYPURSUELAST,
+       KT_OVERTURNFALL, KT_OVERTURN, KT_PRERECOVER, KT_RECOVER, KT_HITTOPLAYER, KT_BLOW, KT_STAMPDEATH };
+/* applyVelocityDampAndGravity(1.5, 0.8, 0.96, 0.93, 1) */
+static void kb_damp(Kuribo *k)
+{
+    if (!k->on_ground) k->vel = vadd(k->vel, vmul(k->grav, 1.5f));
+    V3 g = vnorm(k->grav), v = vmul(g, vdot(k->vel, g)), h = vsub(k->vel, v);
+    h = vmul(h, w_on_ground(k) ? 0.8f : 0.96f);
+    if (vdot(v, g) < 0.0f) v = vmul(v, 0.93f);
+    k->vel = vadd(h, v);
+    if (w_on_ground(k) && vlen(vtangent(k->vel, k->gn)) < 1.0f) k->vel = vmul(k->gn, vdot(k->gn, k->vel));
+}
+static void kb_turn(Kuribo *k, float deg, int away) /* turnDirection(To / From)PlayerDegreeHorizon */
+{
+    V3 to = vtangent(away ? vsub(k->pos, mario->pos) : vsub(mario->pos, k->pos), vnorm(k->grav));
+    turn_on_plane(&k->front, to, k->grav, cosf(deg * 0.0174533f));
+}
+static void kb_keep_height(Kuribo *k, float h) /* addVelocityKeepHeightUseShadow(h, 0, 1.8, 40): the shadow 1000 down */
+{
+    V3 hp;
+    if (!kcl_line(k->pos, vadd(k->pos, vmul(vnorm(k->grav), 1000.0f)), &hp, NULL, NULL)) return; /* isShadowProjected */
+    float f = vlen(vsub(hp, k->pos)) - h;
+    float n = f >= 0 ? fminf(fmaxf((f + 40.0f) / 80.0f, 0.0f), 1.0f) : -fminf(fmaxf((-f + 40.0f) / 80.0f, 0.0f), 1.0f); /* normalizeAbs */
+    k->vel = vadd(k->vel, vmul(k->grav, f >= 0 ? 0.0f : 1.8f * n));
+}
+static void kb_jump(Kuribo *k, float v) { k->vel = vsub(k->vel, vmul(k->grav, v)); } /* addVelocityJump */
+static void kb_kill(Kuribo *k)
+{
+    float m[16];
+    k->state = KURIBO_DEAD; row_kill(k->row);
+    basis_matrix(m, k->pos, k->qy, k->qz, 0);
+    fx_named("KoteBug", "Death", m, NULL, NULL);
+    if (sc->objs[k->row].sw[SW_DEAD] >= 0) sw_set(&sc->objs[k->row], SW_DEAD, 1);
+}
+static int kb_blow(Kuribo *k, V3 from) /* mSpinHitController->start, Blow */
+{
+    if (k->nrv == KT_BLOW || k->nrv == KT_STAMPDEATH) return 0;
+    spin_hit_start(k, from, 40.0f, 20.0f); k->item = 1; w_nrv(k, KT_BLOW);
+    return 1;
+}
+static void kb_overturn_fall(Kuribo *k, V3 from) /* setOverturnFall */
+{
+    w_se(k, SE_EM_KOTEBUG_TRAMPLE);
+    V3 d = vtangent(vsub(k->pos, from), vnorm(k->grav));
+    if (vlen(d) > 1e-6f) k->vel = vadd(k->vel, vmul(vnorm(d), 10.0f));
+    w_nrv(k, KT_OVERTURNFALL);
+}
+static int kb_star(Kuribo *k, V3 from) /* isMsgStarPieceAttack */
+{
+    if (k->nrv == KT_BLOW || k->nrv == KT_STAMPDEATH) return 0;
+    if (k->nrv == KT_OVERTURNFALL || k->nrv == KT_OVERTURN) kb_jump(k, 30.0f);
+    else kb_overturn_fall(k, from);
+    return 1;
+}
+static void kotebug_update(Kuribo *k)
+{
+    float s = w_scale(k);
+    if (!k->front.x && !k->front.y && !k->front.z) {
+        kuribo_init(k);
+        k->item = 0; k->from = 0.0f;
+        w_nrv(k, KT_WAIT); k->step = 0;
+    }
+    k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f);
+    float depth;
+    if (in_death(k->pos) || in_water(k->pos, vmul(k->grav, -1.0f), &depth)) { kb_kill(k); return; } /* control */
+    /* the posture (about its X): slerped to its target, Blow's turning on */
+    if (k->nrv == KT_OVERTURN || k->nrv == KT_OVERTURNFALL || k->nrv == KT_PRERECOVER || k->nrv == KT_STAMPDEATH) k->from += (3.1415927f - k->from) * 0.15f;
+    else if (k->nrv == KT_FLYPURSUELAST) k->from += (-1.8f - k->from) * 0.02f;
+    else if (k->nrv != KT_BLOW) k->from += (0.0f - k->from) * 0.2f;
+    float d = vlen(vsub(mario->pos, k->pos));
+    int bee = player_mode == PM_BEE, st = k->step;
+#ifdef TAKO_TEST
+    if (st == 0) printf("kotebug row %d: nerve %d, d %d\n", k->row, k->nrv, (int)d);
+#endif
+    switch (k->nrv) {
+    case KT_NOCALCWAIT:
+        if (st == 0) k->bind_off = 1;
+        k->vel = v3(0, 0, 0);
+        if (d < 1000.0f) { k->bind_off = 0; w_nrv(k, KT_WAIT); } /* endNoCalcWait */
+        break;
+    case KT_WAIT:
+        if (st == 0) w_act(k, "Wait");
+        if (w_on_ground(k) && d < 1000.0f) w_nrv(k, bee ? KT_SEARCH : KT_ESCAPESEARCH);
+        else if (w_on_ground(k)) w_nrv(k, KT_NOCALCWAIT);
+        else kb_damp(k);
+        break;
+    case KT_SEARCH:
+        if (st == 0) w_act(k, "Syaka");
+        kb_turn(k, 5.7f, 0);
+        if (st > 50) w_nrv(k, KT_FLYPURSUE);
+        else if (d > 1000.0f) w_nrv(k, KT_WAIT);
+        else kb_damp(k);
+        break;
+    case KT_ESCAPESEARCH:
+        if (st == 0) w_act(k, "Syaka");
+        kb_turn(k, 9.0f, 0);
+        if (st > 20) w_nrv(k, bee ? KT_FLYPURSUE : KT_PREESCAPE);
+        else if (d > 1000.0f) w_nrv(k, KT_WAIT);
+        else kb_damp(k);
+        break;
+    case KT_PREESCAPE:
+        if (st == 0) { w_act(k, "PreEscape"); w_se(k, SE_EM_KOTEBUG_FIND); }
+        kb_damp(k);
+        kb_turn(k, 9.0f, 0);
+        if (w_bck_stopped(k)) w_nrv(k, KT_FLYESCAPE);
+        break;
+    case KT_FLYSTART:
+        if (st == 0) w_act(k, "Wait");
+        w_se_lv(k, SE_EM_LV_KOTEBUG_FLY);
+        kb_damp(k);
+        kb_turn(k, 5.7f, 0);
+        if (st > 20) w_nrv(k, KT_FLYPURSUE);
+        break;
+    case KT_FLYPURSUE: case KT_FLYESCAPE: {
+        int esc = k->nrv == KT_FLYESCAPE;
+        if (st == 0) w_act(k, esc ? "Jitabata" : "Fly");
+        w_se_lv(k, SE_EM_LV_KOTEBUG_FLY);
+        kb_damp(k);
+        kb_turn(k, esc ? 11.5f : 5.7f, esc);
+        k->vel = vadd(k->vel, vmul(k->front, 0.2f));
+        kb_keep_height(k, 100.0f);
+        if (!bee && !esc) { w_nrv(k, KT_FLYESCAPE); break; }
+        if (bee && esc) { w_nrv(k, KT_FLYPURSUE); break; }
+        if (d > 2000.0f) w_nrv(k, KT_WAIT);
+        else if (esc && st > 200) w_nrv(k, KT_FLYPURSUELAST);
+        break;
+    }
+    case KT_FLYPURSUELAST: {
+        if (st == 0) w_act(k, "Jitabata");
+        w_se_lv(k, SE_EM_LV_KOTEBUG_PURSUE_LAST);
+        kb_damp(k);
+        float rate = st / 90.0f;
+        k->act_rate = 1.0f + rate; /* setBckRate */
+        k->vel = vadd(k->vel, vmul(k->front, 0.2f - 0.01f * rate));
+        kb_keep_height(k, 60.0f + 150.0f * rate);
+        if (d > 2000.0f) w_nrv(k, KT_WAIT);
+        else if (st > 90) w_nrv(k, KT_OVERTURNFALL);
+        break;
+    }
+    case KT_OVERTURNFALL:
+        if (st == 0) { w_act(k, "Pote"); w_se(k, SE_EM_KOTEBUG_OVERTURN_FALL); kb_jump(k, 30.0f); }
+        kb_damp(k);
+        if (w_on_ground(k) && vdot(k->gn, vmul(vnorm(k->grav), -1.0f)) >= 0.75f) { /* isOnGroundCos 0.75 */
+            float m[16];
+            basis_matrix(m, k->pos, k->qy, k->qz, 0);
+            fx_named("KoteBug", "PoteSmoke", m, NULL, NULL);
+            w_se(k, SE_EM_KOTEBUG_FALL_LAND);
+            w_nrv(k, KT_OVERTURN);
+        }
+        break;
+    case KT_OVERTURN:
+        if (st == 0) w_act(k, "Jitabata2");
+        w_se_lv(k, SE_EM_LV_KOTEBUG_OVERTURN);
+        kb_damp(k);
+        if (w_on_ground(k)) k->vel = vmul(k->gn, vdot(k->gn, k->vel)); /* killVelocityOnGroundH */
+        if (st > 240) w_nrv(k, KT_PRERECOVER);
+        break;
+    case KT_PRERECOVER:
+        if (st == 0) w_act(k, "Gu");
+        w_rebound0(k);
+        kb_damp(k);
+        if (w_on_ground(k)) k->vel = vmul(k->gn, vdot(k->gn, k->vel));
+        if (w_bck_stopped(k)) w_nrv(k, KT_RECOVER);
+        break;
+    case KT_RECOVER:
+        if (st == 0) { w_act(k, "Pon"); w_se(k, SE_EM_KOTEBUG_RECOVER); kb_jump(k, 24.0f); }
+        w_rebound0(k);
+        kb_damp(k);
+        if (w_on_ground(k)) { w_se(k, SE_EM_KOTEBUG_LAND); w_nrv(k, KT_WAIT); }
+        break;
+    case KT_HITTOPLAYER:
+        if (st == 0) { w_act(k, "Wait"); kb_jump(k, 10.0f); k->vel = vadd(k->vel, vmul(k->front, -10.0f)); }
+        w_rebound0(k);
+        kb_damp(k);
+        if (w_on_ground(k)) w_nrv(k, KT_FLYSTART);
+        break;
+    case KT_BLOW:
+        if (st == 0) { w_act(k, "Fly"); w_se(k, SE_PM_SPIN_HIT); scene_stop = 3; } /* startBlowHitSound, stopScene */
+        k->from -= 1.0f;
+        if (spin_hit_exec(k, 15, 10, 3, 0.0f, 3, 0, 1)) { w_se(k, SE_EM_EXPLODE_S); kb_kill(k); return; }
+        break;
+    case KT_STAMPDEATH:
+        if (st == 0) { k->vel = v3(0, 0, 0); k->act_rate = 0.0f; } /* stopBck */
+        if (st > 20) { w_se(k, SE_EM_EXPLODE_S); pop_coins(k->pos, vmul(k->grav, -1.0f), 1); kb_kill(k); return; }
+        break;
+    }
+    k->step++;
+    k->act_t += k->act_rate;
+    w_bind(k, 70.0f * s);
+    k->qy = k->up = vmul(k->grav, -1.0f); k->qz = vnorm(vtangent(k->front, k->qy)); /* calcMtxFromGravityAndZAxis */
+    if (vlen(k->qz) < 1e-3f) k->qz = k->front;
+    if (k->nrv == KT_BLOW || k->nrv == KT_STAMPDEATH) return;
+    V3 c = vadd(k->pos, vmul(k->qy, 50.4f * s)); /* the Center joint (30.4) + 20 */
+    float br = 100.0f * s;
+    int msg = mario_offence(c, br, k->grav);
+    if (mario->spin_timer <= 0) k->lvt[2] = 0;
+    if (msg == MSG_HITALL && k->lvt[2]) msg = MSG_NONE; /* MarioActor _954: each sensor punched once a spin */
+    if (msg == MSG_HITALL) k->lvt[2] = 1;
+    if (msg == MSG_HIPDROP) { w_se(k, SE_EM_STOMPED_S); w_nrv(k, KT_STAMPDEATH); printf("kotebug row %d: stamped\n", k->row); return; }
+    if (msg == MSG_TRAMPLE && k->nrv != KT_OVERTURNFALL) {
+        if (k->nrv == KT_OVERTURN || k->nrv == KT_RECOVER) { w_se(k, SE_EM_STOMPED_S); w_nrv(k, KT_STAMPDEATH); printf("kotebug row %d: stamped\n", k->row); }
+        else { w_se(k, SE_EM_KOTEBUG_TRAMPLE); k->vel = vadd(k->vel, vmul(k->front, -10.0f)); w_nrv(k, KT_OVERTURNFALL); printf("kotebug row %d: overturned\n", k->row); }
+        mario_trample();
+        return;
+    }
+    if (player_mode == PM_INVINCIBLE && mario_touch(c, br)) { kb_blow(k, mario->pos); return; }
+    if (msg == MSG_HITALL) {
+        if (k->nrv == KT_OVERTURNFALL || k->nrv == KT_OVERTURN) { kb_blow(k, mario->pos); printf("kotebug row %d: blown\n", k->row); }
+        else if (k->nrv != KT_OVERTURNFALL) { kb_overturn_fall(k, mario->pos); printf("kotebug row %d: spun over\n", k->row); }
+        return;
+    }
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    if (vlen(vsub(mc, c)) < br + HIT_BODY_R) { /* attackSensor */
+        if (mario->hip == HIP_FALL || mario->hip == HIP_LAND) return;
+        if (k->nrv == KT_FLYSTART || k->nrv == KT_FLYPURSUE) {
+            V3 u = vsub(mc, vadd(k->pos, vmul(k->qy, br)));
+            if (vlen(u) > 1e-6f && vdot(k->qy, vnorm(u)) > 0.25f) { mario_push_out(c, br); return; } /* isPlayerExistUp */
+            if (mario_attack(ATK_ENEMY, c)) { w_nrv(k, KT_HITTOPLAYER); return; }
+        }
+        mario_push_out(c, br); /* sendMsgPushAndKillVelocityToTarget */
+        V3 to = vnorm(vsub(mc, c));
+        if (vdot(k->vel, to) > 0) k->vel = vsub(k->vel, vmul(to, vdot(k->vel, to)));
+    }
+}
+
 static void update_kuribo_one(Kuribo *k);
 static void bg_permit_update(void);
 static void update_kuribo(void)
@@ -25894,6 +26410,7 @@ static void update_kuribo(void)
         update_kuribo_one(k);
         kprof[k->kind] += cycles() - c0; kprof_n[k->kind]++;
     }
+    update_tako_inks();
     bg_permit_update();
 }
 static void update_kuribo_one(Kuribo *k)
@@ -25924,10 +26441,17 @@ static void update_kuribo_one(Kuribo *k)
             if (sc->objs[k->row].zone >= 64 || zone_kcl[sc->objs[k->row].zone]) petari_update(k);
             return;
         }
-        if (k->kind == WALK_KURIBO || k->kind == WALK_KMINI || k->kind == WALK_PACKUN) { /* ported after Petari (their own NonActive);
+        if (k->kind == WALK_KURIBO || k->kind == WALK_KMINI || k->kind == WALK_PACKUN || k->kind == WALK_TAKOHEI || k->kind == WALK_KOTEBUG) { /* ported after Petari (their own NonActive);
                                        * ponytail: still while its zone has no collision (streaming) */
             if (sc->objs[k->row].zone >= 64 || zone_kcl[sc->objs[k->row].zone]) {
                 if (k->kind == WALK_KURIBO) kuribo_update(k);
+                else if ((k->kind == WALK_TAKOHEI || k->kind == WALK_KOTEBUG) && !k->front.x && !k->front.y && !k->front.z &&
+                         (d >= 3000.0f || !line_hits(vadd(k->pos, vmul(k->up, 100.0f)), vsub(k->pos, vmul(k->up, 200.0f))))) {
+                    /* ponytail: not started until Mario first comes within 3000 (sActiveDistance) and a ground is
+                     * under it: a far zone's map may not be bound yet (streamed low), Petari places them on their
+                     * ground */
+                } else if (k->kind == WALK_TAKOHEI) takohei_update(k);
+                else if (k->kind == WALK_KOTEBUG) kotebug_update(k);
                 else if (k->kind == WALK_PACKUN) packun_update(k);
                 else if (d < 3000.0f) kmini_update(k); /* ponytail: far ones wait (no clipping system) */
             }
@@ -25935,9 +26459,7 @@ static void update_kuribo_one(Kuribo *k)
         }
         if (d > 3000.0f) return; /* sActiveDistance: far ones wait (their zone may be loaded low, no collision) */
         if (sc->objs[k->row].zone < 64 && !zone_kcl[sc->objs[k->row].zone]) return; /* no ground yet: they would fall */
-        int tako = k->kind == WALK_TAKOHEI || k->kind == WALK_MERAMERA || k->kind == WALK_KMINI; /* KuriboMini.cpp:
-                                                                             * a spin blows it down (requestBlowDown);
-                                                                             * Meramera.cpp: a stomp, hip drop or spin
+        int tako = k->kind == WALK_MERAMERA; /* Meramera.cpp: a stomp, hip drop or spin
                                                                              * kills it, a touch burns (requestAttack) */
         if (k->kind == WALK_TAKOBO) { takobo_update(k, to, d); return; }
         if (k->kind == WALK_MKOOPA) { mkoopa_update(k, to, d); return; }
@@ -25951,15 +26473,7 @@ static void update_kuribo_one(Kuribo *k)
         if (k->kind == WALK_SPIDER) { jspider_update(k); return; }
         if (k->state == KURIBO_STUN) {
             if (--k->timer <= 0) k->state = KURIBO_WALK;
-        } else if (d < (tako ? 1600.0f : k->kind == WALK_KOTEBUG ? 1000.0f : 1500.0f)) { /* chase on the surface (ponytail: no turn rate, no notice
-                                                         * animation); TakoHei.cpp: sFindDistance, sPursueAccel 0.5,
-                                                         * sNormalGroundFrec 0.85
-         * ponytail (unmarked until the 2026-11-02 audit): TakoHei and KoteBug here are improvised chasers. TakoHei.cpp:
-         * Wait 120 / Walk in a 400 territory, Find, Pursue keeping 700 from Mario, ink (AttackSign, Attack:
-         * spurtTakoHeiInk), CoolDown 60, a spin PunchDown (22 frames, 20 / 35) with three star pieces. KoteBug.cpp: flees a
-         * non-bee Mario (EscapeSearch, FlyEscape), chases Bee Mario flying 100 up, hurts only in FlyStart / FlyPursue, an
-         * overturned one spun: Blow with three star pieces, stomped: StampDeath 20 frames then a coin, a star piece
-         * overturns it (240) */
+        } else if (d < (tako ? 1600.0f : 1500.0f)) { /* chase on the surface (ponytail: no turn rate, no notice animation) */
             V3 dir = vnorm(vtangent(to, k->up));
             k->vel = tako ? vadd(vmul(k->vel, 0.85f), vmul(dir, 0.5f)) : vadd(vmul(k->vel, 0.8f), vmul(dir, 4.0f * 0.2f));
         } else {
@@ -25970,23 +26484,16 @@ static void update_kuribo_one(Kuribo *k)
         k->pos = vsub(center, vmul(k->up, 45.0f));
         /* stomp: Mario falling onto its top; spin: stun; side touch: Mario knocked back */
         float above = vdot(to, k->up);
-        /* TakoHei: a spin (requestPunch) kills it too, and the hip drop (requestHipDropDown). KoteBug.cpp: a stomp or
-         * a spin overturns it for 240 frames (hOverturnTime), the next one while it lies on its back kills it; a hip
-         * drop kills it at once */
-        int kote = k->kind == WALK_KOTEBUG;
+        int kote = 0;
         if (d < (tako ? 170.0f : 130.0f) && mario->vup < 0 && above > 40.0f) {
             if (kote && k->state == KURIBO_WALK && mario->hip != HIP_FALL) { k->state = KURIBO_STUN; k->timer = 240; }
             else if (kote && k->state == KURIBO_STUN && k->timer > 210 && mario->hip != HIP_FALL)
                 return; /* the bounce off the first stomp lands on it again: not a second stomp yet, no bounce */
             else {
-                if (k->kind == WALK_TAKOHEI) { /* TakoHei: exeFlatDown / exeHipDropDown first step, then kill (at once here) */
-                    w_se(k, mario->hip == HIP_FALL ? SE_EM_TAKOHEI_STOMPED_L : SE_EM_TAKOHEI_STOMPED); w_se(k, SE_EM_EXPLODE_S);
-                }
                 k->state = KURIBO_DEAD; row_kill(k->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, k->pos, k->up); pop_coins(k->pos, k->up, 1);
             }
             mario_trample();
         } else if (d < 170.0f && mario->spin_timer > 0 && (k->state == KURIBO_WALK || (kote && k->timer < 230))) {
-            if (k->kind == WALK_TAKOHEI) { w_se(k, SE_EM_TAKOHEI_HITPUNCH); w_se(k, SE_EM_EXPLODE_S); } /* exePunchDown, kill */
             if (tako || (kote && k->state == KURIBO_STUN)) { k->state = KURIBO_DEAD; row_kill(k->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, k->pos, k->up); pop_coins(k->pos, k->up, 1); }
             else { k->state = KURIBO_STUN; k->timer = kote ? 240 : 180; }
         } else if (d < (tako ? 140.0f : 100.0f) && above <= 40.0f && k->state == KURIBO_WALK) /* not from above */
@@ -33075,6 +33582,8 @@ static void update_shots(void)
             else if (e->kind == WALK_PACKUN) { /* isMsgStarPieceAttack: SwoonStart */
                 if (e->nrv != PN_TRAMPLEDOWN && e->nrv != PN_PUNCHDOWN) w_nrv(e, PN_SWOONSTART);
             } else if (e->kind == WALK_SPIDER) { if (!jspider_star(e)) { hit = 0; continue; } }
+            else if (e->kind == WALK_TAKOHEI) { if (!th_swoon(e)) { hit = 0; continue; } } /* isMsgStarPieceAttack: requestSwoon */
+            else if (e->kind == WALK_KOTEBUG) { if (!kb_star(e, s->pos)) { hit = 0; continue; } }
             else { e->state = KURIBO_STUN; e->timer = 180; }
             printf("star piece hits walker row %d" "\n", e->row);
         }
@@ -39800,6 +40309,7 @@ void game_draw(void)
             basis_matrix(m, shots[i].pos, up_at(shots[i].pos, v3(0, 1, 0)), shots[i].vel, draw_angle(0.5f));
             render_model(m_pieces[shots[i].col], m, 0x60, 0xD0, 0xF0);
         }
+    draw_tako_inks();
     for (int i = 0; i < nkuribo; i++) {
         use_row_light(kuribo[i].row, kuribo[i].pos, LIGHT_STRONG);
         const Model *md = kuribo[i].kind == WALK_TAKOHEI ? m_takohei : kuribo[i].kind == WALK_PACKUN ? m_packun :
@@ -39863,7 +40373,21 @@ void game_draw(void)
                 basis_matrix(m, k->pos, k->qy, k->kind == WALK_BEGOSPIKE ? rot_axis(k->qz, k->qy, k->from) : k->qz, 0); /* BegomanSpike: Locator1 turned _D0 */
                 const float *sc3 = sc->objs[k->row].scale;
                 for (int j = 0; j < 3; j++) { m[j] *= sc3[0]; m[4 + j] *= sc3[1]; m[8 + j] *= sc3[2]; }
+                if (k->kind == WALK_KOTEBUG && k->from != 0.0f) { /* calcJoint: mPosture about X at its Center joint (0, 30.4, -2.2) */
+                    float cx = cosf(k->from), sx = sinf(k->from), t[16], tmp[16];
+                    mat_identity(t);
+                    t[5] = cx; t[6] = sx; t[9] = -sx; t[10] = cx;
+                    t[13] = 30.4f - (cx * 30.4f - sx * -2.2f); t[14] = -2.2f - (sx * 30.4f + cx * -2.2f);
+                    mat_mul(tmp, m, t); memcpy(m, tmp, 64);
+                }
                 draw_skin(md, m, a);
+                if (k->kind == WALK_TAKOHEI && a->skin && a->skin->njoints > 6) { /* its Mouth joint's (0, 20, 0): the ink's start */
+                    const float *w = a->world[6];
+                    V3 l = v3(w[12] + 20.0f * w[4], w[13] + 20.0f * w[5], w[14] + 20.0f * w[6]);
+                    k->bpos = v3(m[0] * l.x + m[4] * l.y + m[8] * l.z + m[12], m[1] * l.x + m[5] * l.y + m[9] * l.z + m[13],
+                                 m[2] * l.x + m[6] * l.y + m[10] * l.z + m[14]);
+                    k->bshow = 1;
+                }
                 if (k->kind == WALK_BEGOSPIKE) { /* BegomanHead at its Center joint, facing its target (calcAnimCore) */
                     const Model *hm = scene_model(sc, "BegomanSpikeHead");
                     const float *w = a->world[1];

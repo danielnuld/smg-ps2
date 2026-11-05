@@ -162,6 +162,7 @@ EXTRA = {"RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby"
          "Rosetta": ("LightDome", "DomeHalo"),  # RosettaDemoHeavensDoor1's parts (ライトドーム, ライト後光)
          "StarReturnDemoStarter": ("PStar", "GStar", "SpinTico", "MarioHair"), "GrandStarReturnDemoStarter": ("GStar",), "FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
+         "TakoHei": ("TakoHeiInk",),  # TakoHeiInkHolder (spurtTakoHeiInk)
          "PrologueDirector": ("DemoLetter", "DemoPeachCastleGate"),  # createScenery, createMarioPosDummyModel
          "MorphItemNeoFire": ("MarioFireBall",), "AirBubbleGenerator": ("AirBubble",),
          "DinoPackun": ("DinoPackunTailBall", "DinoPackunEggShell", "DinoPackunEggShell#EggBroken", "DinoPackunEggShellBreak"), "OtaKing": ("CocoNut", "OtaKingFoot", "FireBall", "FireBubble", "OtaKingMagma", "OtaKingLongFoot", "OtaKingMagmaBloom"), "OtaRock": ("CocoNut", "FireBall"), "HammerHeadPackun": ("PackunLeaf",), "Plant": ("PlantTop", "PlantLeaf"), "CocoSambo": ("CocoSamboHead",), "Hanachan": ("HanachanHead", "HanachanBody", "HanachanBodyS"), "PackunPetit": ("PackunPetitHead",),
