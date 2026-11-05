@@ -441,9 +441,15 @@ Second console round (2026-10-24), from Daniel's report:
   power star's get; its collisions Move00-02 on their joints (slice.py SKINNED_OBJ + JOINT_KCL_ONLY, game.c the
   "<class>#<joint>.<k>" parts). Test `walker` XF="-DWALKER_TEST -DTRIROCK_TEST" SandClockGalaxy/1 (Mario rides it
   down). Repack: slice_all.py SandClockGalaxy.
+- BegomanBabyLauncher (#276, 2026-11-05): BegomanLauncher.cpp mLaunchType 2: arg3 babies (WALK_BEGOBABY slots after
+  it, host = the launcher), hidden Wait while one lives, WaitForLaunch 180, Appear 90 (Launcher effect, its clip,
+  APPEAR level SE), Launch (launchBegomanBabyLauncher 100 / 10 / 30: BegomanBaby::appearFromLaunch, AfterLaunch Fly,
+  AfterLaunchOnGround Bound), Disappear 90; SW_APPEAR (dead until on, WaitAfterSwitchOn arg2), SW_B kills it and its
+  babies; a baby's death sets its row's SW_DEAD. Test `walker` XF="-DWALKER_TEST -DBLAUNCH_TEST" CannonFleetGalaxy/3
+  (launch, landing, babies killed at 900, relaunch). ponytail: no shadow, its declareCoin. Repack: slice_all.py
+  CannonFleetGalaxy, OceanFloaterLandGalaxy.
 - Static classes still to port (mario2's list, 2026-11-05; placements in): BigBubbleGenerator (CubeBubbleEx 1/2,
-  ReverseKingdom 2: Ride/BigBubble.cpp 1228 lines), BegomanBabyLauncher
-  (CannonFleet 3/4, OceanFloaterLand 1/2).
+  ReverseKingdom 2: Ride/BigBubble.cpp 1228 lines).
 - Unizo (fix/states-unizo, 2026-11-05): Unizo.cpp's nerves (Wait, Jump on its Search BCK, Chase, Attack on its
   Attack BCK, CollidePlayer, CollideEnemy: two Unizos push each other, Shock BCK), mJumpCount, the sea / shoal roll
   bob; doBreak / doFireDown with its break model (UnizoBreak / UnizoLandBreak / UnizoShoalBreak facing away from the

@@ -1940,6 +1940,8 @@ int main(void)
         { extern void game_test_ermv(unsigned); game_test_ermv(frame); }
 #elif defined TRIROCK_TEST
         { extern void game_test_trirock(unsigned); game_test_trirock(frame); }
+#elif defined BLAUNCH_TEST
+        { extern void game_test_blaunch(unsigned); game_test_blaunch(frame); }
 #elif defined HANG_TEST
         { extern void game_test_hang(unsigned); game_test_hang(frame); }
 #elif defined ICE_TEST
