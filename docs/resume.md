@@ -202,6 +202,12 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
     balloon 150 / 430 up). NPCSupportRail: a dead rail holder for PenguinSkater, nothing to run. Test XF="-DGAP_TEST=23
     -DDEBUG_HUD -UCATCHUP" HeavenlyBeachGalaxy/1 (rows 339-347 walking, swimming, dashing, talking). Left: Kinopio's
     rail (tryStartArgs at each point).
+  - Beach Bowl's swim test (game.c student_update / coach_takeout / pg_branch / pg_event): PenguinStudent's school on
+    its rail (the leader Slow / Lead with its golden shell, KouraShine as an extra JetTurtle Inst.jet 4; the pupils
+    _168 behind it, circling it), PenguinCoach arg0 1's branches (carrying, the golden shell), events (SW_A on,
+    TakeOutStar: its action, the star from it after, star_pos coach_took). slice.py: EXTRA PenguinStudent KouraShine,
+    PenguinCoach arg0 1-3 declares its star. Test XF="-DGAP_TEST=24 -DDEBUG_HUD -UCATCHUP" HeavenlyBeachGalaxy/2 (talk,
+    Yes, the school leads, the shell taken, the coach's star demo). Left: the surfing coach modes (arg0 2 / 3).
 - mario2 (2026-11-04), #168 PlayerKick: mario_kick / mario_kicked (MarioActor::sendBodyAttack's ACTMES_KICK: his
   cylinder on the sensor, status none, not damaged, no hip drop, within 90 degrees of his front; ランニングキック, its
   voice, pad 2) taken by a staggering Kuribo (36 / 30, three star pieces) / KuriboMini (22 / 25, three), a swooning
