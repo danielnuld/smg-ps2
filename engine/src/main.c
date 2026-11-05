@@ -2018,6 +2018,12 @@ int main(void)
         if (f0) game_test_pullback(mf - f0 + 150);
     }
 #endif
+#ifdef GAP_TEST /* game.c gap_test: A tapped through the opening's demos and talks (pad_force) */
+    {
+        extern int game_test_busy(void);
+        pad_force = game_test_busy() && frame % 40 < 3 ? PAD_CROSS : 0;
+    }
+#endif
 #ifdef HANACHAN_TEST
     {   /* frames from Mario free (the flight in over) + 150 */
         static u32 f0;
