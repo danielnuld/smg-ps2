@@ -148,6 +148,11 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   a chunk that is not one ends the movie ("movie: chunk n bad"), and "movie: <name> frame n" every 600 frames says
   on the console's udptty log where it stops.
 - gaps (2026-11-04, worktree D:/smg-ps2-wt/gaps, overlay out/wt-gaps): #143's placed classes with no behaviour.
+  - Rabbit arg1 2 / 3 lectures (game.c rabbit_lecture, #242): SpinLecture / JumpSpinLectureMove every 180 frames of
+    Talk outside a long talk; seen HeavenlyBeachGalaxy/1. arg1 0 (rail escape) left out: no placement uses it.
+  - SwimTurtle Penguin's shell (game.c penguin_turtle, RemovableTurtle): Koura~0 on its back, Mario takes it (touch or
+    spin within 450) as a JetTurtle (Inst.jet 3), back on it once that is gone. slice.py EXTRA Penguin Koura~0.
+    Test XF="-DGAP_TEST=22 -DDEBUG_HUD -UCATCHUP" HeavenlyBeachGalaxy/3.
   - NokonokoLand (round 2; game.c noko_update, walker WALK_NOKO): the Koopa Troopa on its rail after Petari (walk /
     look around / turn, attack, rattle on a star piece, shell by trample / hip drop / spin, ShellWait 180, its shell
     becomes its JetTurtle (an extra Inst, Inst.jet 2, Koura~0 / ~1 by arg0) Mario holds and throws, FlyAway / Dead,

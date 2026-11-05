@@ -2827,11 +2827,10 @@ static int npc_mode(const NpcTurn *t, const Row *r, NpcTurn *m)
         if (b == 12) npc_set(m, "starpiecewait", "starpiecewait", "starpiecewait", "starpiecewait");
         if (b >= 0 && b < 12 && one[b]) { npc_set(m, one[b], NULL, one[b], NULL); m->near = m->talk = 0; } /* setNoTurnAction */
     } else if (!strcmp(t->cls, "Penguin")) { /* mBehavior (arg0)
-     * arg0 3 Dive, 4's jet sound, TalkA / TalkB: penguin_wait. ponytail (unmarked until the 2026-11-02 audit): 4 SwimTurtle's
-     * shell (RemovableTurtle: taken within 450 or on a spin) not ported (Penguin.cpp:296-313); PenguinCoach has no golden shell check / star (PenguinCoach.cpp:139-185), PenguinStudent no code (its rail
+     * arg0 3 Dive, 4's jet sound and shell (penguin_turtle), TalkA / TalkB: penguin_wait. ponytail (unmarked until the 2026-11-02
+     * audit): PenguinCoach has no golden shell check / star (PenguinCoach.cpp:139-185), PenguinStudent no code (its rail
      * school, the KouraShine shell); TicoRail's colour BRK by arg; Caretaker's BodyColor BRK at arg3 (its frames bake to one colour: the BRK drives registers tex.py does not bake) and Dirt BTK (frame 0), its
-     * tidy-up mission (arg0 0: CountDown, Tidy, BombTimer, TakeOutStar; CareTaker.cpp:113-546); Rabbit arg1 0 with a rail (escape: Wait / PreJump / Move / Goal) and the UpJump /
-     * LongJump lectures (Rabbit.cpp:512-546) not ported */
+     * tidy-up mission (arg0 0: CountDown, Tidy, BombTimer, TakeOutStar; CareTaker.cpp:113-546) not ported (Rabbit: rabbit_lecture) */
         switch (r->arg[0]) {
         case 0: npc_set(m, "sitdown", NULL, "sitdowntalk", NULL); m->near = m->talk = 0; break; /* setMoveTalkNoTurnAction */
         case 1: m->act[0] = "swimwait"; m->act[1] = "swimwaittalk"; break;                  /* setMoveAction */
@@ -5107,14 +5106,15 @@ static void game_rebind_(void)
                 in->reach = m_trainbody->radius * in->s;
             }
     { /* NokonokoLand::mJetTurtle (initWithoutIter, makeActorDead): its shell, a JetTurtle on the Koura model (slice.py EXTRA) */
-        int tn = scene_type(s, "NokonokoLand");
-        for (u32 q = 0; tn >= 0 && q < s->nobjs && ninsts < insts_cap; q++) {
+        int tn = scene_type(s, "NokonokoLand"), tp = scene_type(s, "Penguin");
+        for (u32 q = 0; (tn >= 0 || tp >= 0) && q < s->nobjs && ninsts < insts_cap; q++) {
             const Row *r = &s->objs[q];
-            const Model *km = r->type == tn ? scene_model(s, r->arg[0] == 1 ? "Koura~1" : "Koura~0") : NULL; /* becomeFastType / becomeSlowType: its Koura BRK frame */
+            const Model *km = tn >= 0 && r->type == tn ? scene_model(s, r->arg[0] == 1 ? "Koura~1" : "Koura~0") : NULL; /* becomeFastType / becomeSlowType: its Koura BRK frame */
+            if (r->type == tp && tp >= 0 && r->arg[0] == 4) km = scene_model(s, "Koura~0"); /* Penguin SwimTurtle: RemovableTurtle(this, false), its JetTurtle (slow) */
             if (!km) continue;
             Inst *in = &insts[ninsts++];
             memset(in, 0, sizeof *in);
-            in->md = km; in->row = (int)q; in->zone = r->zone; in->jet = 2; in->kmove = in->kparent = -1;
+            in->md = km; in->row = (int)q; in->zone = r->zone; in->jet = r->type == tn ? 2 : 3; in->kmove = in->kparent = -1;
             mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
             memcpy(in->m0, in->m, 64);
             in->head = row_pos(r); in->m[12] = 1e9f;
@@ -5130,7 +5130,7 @@ static void game_rebind_(void)
     flf.inst = coc.inst = jb.inst = coc.wait = -1;
     jet.inst = -1;
     for (int i = 0; i < ninsts && jet_row >= 0; i++)
-        if (insts[i].row == jet_row) { jet.inst = i; insts[i].head = jet_head; insts[i].hvel = jet_vel; jet_place(&insts[i]); }
+        if (insts[i].row == jet_row && insts[i].jet) { jet.inst = i; insts[i].head = jet_head; insts[i].hvel = jet_vel; jet_place(&insts[i]); }
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
         if (in->row == ride_row[0]) { flf.inst = i; in->head = ride_head[0]; in->hvel = ride_vel[0]; fluff_place(in); }
@@ -12925,9 +12925,10 @@ static void update_jets(void)
         Inst *in = &insts[i];
         if (!in->jet) continue;
         if (in->jet == 2 && jet.inst != i) { in->m[12] = 1e9f; continue; } /* a NokonokoLand's (陸ノコ用ジェット亀): dead until it gives it */
+        if (in->jet == 3 && jet.inst != i) continue; /* a SwimTurtle Penguin's (ジェット亀さん): on its back (penguin_wait) */
         if (row_turn[in->row] > 0) row_turn[in->row]--;
         const Row *r = &sc->objs[in->row];
-        int type = in->jet == 2 ? (r->arg[0] == 1 ? 2 : 1) : r->arg[1] + 1 >= 0 && r->arg[1] + 1 <= 2 ? r->arg[1] + 1 : 0; /* NokonokoLand::initJetTurtle: becomeFastType for arg0 1 */
+        int type = in->jet == 3 ? 1 : in->jet == 2 ? (r->arg[0] == 1 ? 2 : 1) : r->arg[1] + 1 >= 0 && r->arg[1] + 1 <= 2 ? r->arg[1] + 1 : 0; /* NokonokoLand::initJetTurtle: becomeFastType for arg0 1 */
         if (jet.inst == i && jet.phase == 1) { /* held: in front of him at his hands */
             in->head = vadd(vadd(mario->pos, vmul(mario->face, 70.0f)), vmul(mario->up, 60.0f));
             if (mario->spin_timer > 0 || jet.drop) { /* thrown (in water: dropJet, along his swim front) */
@@ -12963,7 +12964,7 @@ static void update_jets(void)
                 } else pop_coins(e->pos, e->up, 1);
                 printf("jet turtle row %d blows walker row %d" "\n", in->row, e->row);
             }
-            if (gone) { jet.inst = -1; jet.phase = 0; if (in->jet == 2) in->m[12] = 1e9f; else jet_reset(in); continue; } /* (a NokonokoLand's: Restart, its Koopa back) */
+            if (gone) { jet.inst = -1; jet.phase = 0; if (in->jet >= 2) in->m[12] = 1e9f; else jet_reset(in); continue; } /* (a NokonokoLand's: Restart, its Koopa back) */
             jet_place(in);
             jet.row = in->row; jet.head = in->head; jet.vel = in->hvel;
             continue;
@@ -30777,6 +30778,21 @@ static void gap_test(void)
             if (insts[k].breaks == 5 && !row_dead[insts[k].row]) { explosion_breaks(v3(insts[k].m[12], insts[k].m[13], insts[k].m[14]), 10.0f); break; }
         return;
     }
+    if (GAP_TEST == 22) { /* XF=-DGAP_TEST=22: Mario onto each SwimTurtle Penguin (arg0 4) in turn every 300 frames (its shell taken), a spin at 150 */
+        int n = 0;
+        if (want < 0) return;
+        FOR_KIND(k, jet) {
+            if (insts[k].jet != 3 || n++ != want % 4) continue;
+            Inst *pg = row_inst(insts[k].row);
+            if (at == 0 && pg) { mario->pos = vsub(v3(pg->m[12], pg->m[13], pg->m[14]), vmul(mario->up, 20.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+                                 printf("gap test: Mario on penguin row %d%c", pg->row, 10); }
+            if (at == 150) { mario->spin_timer = SPIN_TIME; mario->spin_t = 0; printf("gap test: spin, jet phase %d%c", jet.phase, 10); }
+        }
+        int tp = scene_type(sc, "Penguin");
+        for (u32 i = 0; !n && at == 0 && tp >= 0 && i < sc->nobjs; i++) /* its zone not in yet: Mario there */
+            if ((int)sc->objs[i].type == tp && sc->objs[i].arg[0] == 4) { mario->pos = vadd(row_pos(&sc->objs[i]), v3(0, 300, 0)); mario->hvel = v3(0, 0, 0); printf("gap test: Mario to penguin row %u's zone%c", i, 10); break; }
+        return;
+    }
     if (GAP_TEST == 20) { /* XF=-DGAP_TEST=20: each NokonokoLand in turn every 300 frames: Mario dropped onto it (0), on its shell (150), a spin (200: the throw) */
         int n = 0, w = -1;
         for (int k = 0; k < nkuribo; k++) if (kuribo[k].kind == WALK_NOKO && n++ == (want < 0 ? 0 : want) % 16) w = k;
@@ -38618,13 +38634,43 @@ static void update_bees(void)
  * steps Dive (SwimDive, SE_SV_PENGUIN_S_DIVE) till the clip stops; arg0 4 (SwimTurtle) LV_PENGUIN_SWIM_JET; arg0 -1 /
  * 5 / 6 (Default / Stand / Dash) tryChangeTalkActionRandom: each time its looping clip loops, its talk action Talk /
  * TalkA / TalkB at random. GapSt: n 2 diving, f the dive step, i the talk action, v.x the clip's last frame. 1: the
- * clip is its own this frame. ponytail: SwimTurtle's shell (RemovableTurtle: Mario takes it within its pull range or
- * by a spin, the penguin Flows) not ported; the walking / dashing modes' rails as the other NPCs' */
+ * clip is its own this frame. arg0 4's shell: penguin_turtle. ponytail: the walking / dashing modes' rails as the other NPCs' */
+/* RemovableTurtle (Penguin.cpp:41-82) for arg0 4 (SwimTurtle): its shell (ペンギン用コウラ, Koura at (-5.85, -68, 30)
+ * on its base matrix) and its JetTurtle (ジェット亀さん, an extra Inst: Inst.jet 3). tryReleaseTurtle (Wait): Mario on its
+ * push sensor (80 at CenterJoint) or a spin (isMsgSpinStormRange), the shell within isPullRange 450 of him, the
+ * JetTurtle dead and nothing carried: tryRemove (the shell gone, the JetTurtle at its place taken: appearAndTryTaken),
+ * Flow; Flow: tryAttach once the JetTurtle is dead again, Wait. 1 while the shell is on (Wait).
+ * ponytail: CenterJoint as 50 over its base (no joint name lookup); Flow's Swim actions need its rail (MoveTalk, not
+ * ported: without one tryStartMoveTalkAction keeps SwimTurtleTalk) */
+static int penguin_turtle(Inst *in)
+{
+    Inst *jt = NULL;
+    FOR_KIND(k, jet) if (insts[k].jet == 3 && insts[k].row == in->row) jt = &insts[k];
+    if (!jt) return 1;
+    if (jet.inst >= 0 && &insts[jet.inst] == jt) return 0; /* Flow: its JetTurtle alive */
+    float o[3] = {-5.85f, -68.0f, 30.0f}, w[3]; /* initFixedPosition */
+    for (int j = 0; j < 3; j++) w[j] = in->m[j] * o[0] + in->m[4 + j] * o[1] + in->m[8 + j] * o[2] + in->m[12 + j];
+    memcpy(jt->m, in->m, 64);
+    for (int j = 0; j < 12; j++) if (j % 4 != 3) jt->m[j] /= in->s;
+    jt->m[12] = w[0]; jt->m[13] = w[1]; jt->m[14] = w[2];
+    memcpy(jt->m0, jt->m, 64);
+    V3 sp = v3(w[0], w[1], w[2]), cj = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(in->nu, 50.0f));
+    float dm = vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), cj));
+    int touch = dm < 80.0f + HIT_BODY_R, storm = mario->spin_timer > 0 && dm < 80.0f + 120.0f; /* his body sensor on its push sensor; his spin (mSensorRadiusAttack 120): isMsgSpinStormRange (as update_jets: swimming his cylinder is not kept) */
+    if ((touch || storm) && jet.inst < 0 && vlen(vsub(mario->pos, sp)) < 450.0f) { /* tryReleaseTurtle */
+        if (swimming && !sw_start_jet(mario, 1)) return 1; /* receiveMsgTaken: startJet (ATYPE_JET_TURTLE_SLOW) */
+        jt->head = sp; jt->hvel = v3(0, 0, 0);
+        jet.inst = (int)(jt - insts); jet.phase = 1; jet.t = 0; jet.row = in->row; jet.head = sp; jet.vel = v3(0, 0, 0); jet.drop = 0;
+        printf("penguin row %d: its shell taken%c", in->row, 10);
+        return 0;
+    }
+    return 1;
+}
 static int penguin_wait(Inst *in, int talking, const char **act)
 {
     GapSt *g = gap_st(in->row);
     int b = sc->objs[in->row].arg[0];
-    if (b == 4) in->lv[0] = se_level(SE_SM_LV_PENGUIN_SWIM_JET, &in->m[12], in->lv[0]);
+    if (b == 4 && penguin_turtle(in)) in->lv[0] = se_level(SE_SM_LV_PENGUIN_SWIM_JET, &in->m[12], in->lv[0]); /* exeWait (not Flow) */
     if (b == 3) {
         if (g->n == 2) { /* exeDive */
             if (!g->st++) { obj_play(in, "swimdive", 0, 0); se_start(SE_SV_PENGUIN_S_DIVE, &in->m[12]); }
