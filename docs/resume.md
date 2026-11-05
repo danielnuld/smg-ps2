@@ -147,6 +147,12 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   taken as read (the movie then played a stale chunk, libmpeg lost the stream); now asked again and logged ("cd:"),
   a chunk that is not one ends the movie ("movie: chunk n bad"), and "movie: <name> frame n" every 600 frames says
   on the console's udptty log where it stops.
+- gaps (2026-11-04, worktree D:/smg-ps2-wt/gaps, overlay out/wt-gaps): #143's placed classes with no behaviour.
+  - #166 PurpleCoinCounter (game.c pc_update, hud_pc): made with the scene's purple coins or its PurpleCoinStarter,
+    valid at once or at the starter's SW_APPEAR, Appear / Wait, one up every 3 frames, killed and back with the
+    default layout. Repack: resident.bin (layout.py LAYOUTS + PurpleCoinCounter, in the FONT chunk's LAYO) and
+    HeavensDoorGalaxy (slice.py LOGIC + PurpleCoinStarter). Seen: `purple` (EggStar 5, "x093 /100"), `talk`
+    HeavensDoorGalaxy/2 with XF=-DPC_TEST (the starter's switch forced at frame 300: valid, Appear, Wait).
 
 ## Console release (2026-10-23 / 24)
 

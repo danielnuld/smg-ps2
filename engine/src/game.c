@@ -4213,8 +4213,7 @@ typedef struct {
 /* ponytail (unmarked until the 2026-11-02 audit): placed classes of the early galaxies with no behaviour here
  * (drawn static, or not at all), each a whole Petari class: HeavensDoor KuriboChief / ChildKuribo /
  * ExterminationKuriboKeySwitch (Enemy/KuriboChief.cpp), ShockWaveGenerator (its spin shock wave to enemies within
- * 1000, 衝撃波カメラ), CapsuleCage (SW_B open, 注目カメラ), PurpleCoinStarter / the purple coin counter
- * (PurpleCoinHolder.cpp); Honeyhive HoneyQueen, Creeper, BossStinkBug, StinkBugParent, GhostPlayer (Cosmic Mario);
+ * 1000, 衝撃波カメラ), CapsuleCage (SW_B open, 注目カメラ); Honeyhive HoneyQueen, Creeper, BossStinkBug, StinkBugParent, GhostPlayer (Cosmic Mario);
  * Space Junk TombSpider, BossKameck, ChildKameck, SpiderAttachPoint (SlingShooter), UFOKinoko, CoinBox,
  * PlanetRocket, NokonokoLand; Battlerock BegomanBaby, BossBegoman, BreakableTrash, UFOStrongA, TicoShop,
  * BattleShipElevator; Beach Bowl ShellfishCoin / ShellfishYellowChip (Shellfish.cpp), DriftWood, PenguinStudent;
@@ -10913,10 +10912,11 @@ static void tk_balloon_pos(Talker *t)
 }
 /* a text box (layout.py fill 255) with the number n in NumberFont (setTextBoxNumberRecursive): its font size, the
  * character space, the text position (0..8: x left / centre / right, y top / centre / bottom) in the box */
+static int lay_digits; /* lay_text: its number's least digits (zeros before) */
 static void lay_text(const LayQuad *l, float dx, float dy, float a, int n)
 {
     char s[12];
-    int len = snprintf(s, sizeof s, "%d", n);
+    int len = snprintf(s, sizeof s, "%0*d", lay_digits, n);
     float sx = l->u / 16.0f / 32.0f, sy = l->v / 16.0f / 32.0f, sp = l->uw / 16.0f, tw = 0; /* NumberFont: 32 x 32 cells */
     for (int i = 0; i < len; i++) {
         const TkGlyph *gl = tk_find(tk_icon, tk_nicon, 0x1000 + s[i]);
@@ -11103,6 +11103,55 @@ static void hud_tico_eat(int center) /* MR::requestCounterLayoutAppearanceForTic
     if (!hud[2].mode && spc_change_mode(&hud[2], center ? 2 : 1)) { hud_kill(&hud[1]); hud_kill(&hud[3]); hud_kill(&hud[0]); }
     hudc.tico = 1;
 }
+/* PurpleCoinCounter.cpp after Petari, made by PurpleCoinHolder.cpp with the scene's first purple coin or its
+ * PurpleCoinStarter: valid at once (initAfterPlacement) or at the starter's SW_APPEAR (PurpleCoinStarter::start);
+ * appear (when valid and dead): Appear (CounterLayoutAppearer from (-50, 0)) -> Wait; updateCounter: one up every
+ * cInvalidCountUpInterval 3 frames while in Wait; killed with the default layout (deactivateDefaultGameLayout) and
+ * appeared again with it. ponytail: no Flash animation, CountUpPaneRumbler nor PurpleCoinCounterLight effect (as the
+ * other counters) */
+static HudCounter hud_pc = {.lay = "PurpleCoinCounter", .group = 0, .offx = -50.0f, .dead = 1};
+static int pc_valid = -1, pc_starter = -2; /* -1 no holder, 0 made, 1 valid (mIsValid); the starter's row (-1 none, -2 not looked up) */
+static int hud_layout_off(void) { return menu_paused() || (dome_layout_off && !star_alone) || dx.on || pd.name; }
+static void pc_appear(void) /* PurpleCoinCounter::appear */
+{
+    HudCounter *c = &hud_pc;
+    if (pc_valid != 1 || !c->dead) return;
+    c->dead = 0; c->wait_cd = 0;
+    hud_set(c, HC_APPEAR); hud_ap(c, AP_APPEAR);
+}
+static void pc_update(void)
+{
+    HudCounter *c = &hud_pc;
+    if (pc_starter == -2) { /* MR::createPurpleCoinHolder: purple coins or a starter; initAfterPlacement: valid without one */
+        int t = scene_type(sc, "PurpleCoinStarter");
+        pc_starter = -1;
+        for (u32 i = 0; t >= 0 && i < sc->nobjs; i++) if (sc->objs[i].type == t) { pc_starter = (int)i; break; }
+        pc_valid = pc_starter >= 0 || npurple > 0 ? pc_starter < 0 : -1;
+        if (pc_valid == 1) printf("purple coin counter: valid%c", 10);
+    }
+    if (pc_valid < 0) return;
+#ifdef PC_TEST /* XF=-DPC_TEST (HeavensDoorGalaxy/2): the starter's switch (its Tico's talk) on at frame 300 */
+    if (game_frame == 300 && pc_starter >= 0) sw_set(&sc->objs[pc_starter], SW_APPEAR, 1);
+    if (game_frame % 100 == 0) printf("pc test f %u: counter %d%c", game_frame, game_test_pc(), 10);
+#endif
+    if (!pc_valid && sw_on(&sc->objs[pc_starter], SW_APPEAR)) { /* listenNameObjStageSwitchOnAppear: start, validate */
+        pc_valid = 1; printf("purple coin counter: valid (PurpleCoinStarter row %d)%c", pc_starter, 10);
+    }
+    if (hud_layout_off()) { if (!c->dead) hud_kill(c); return; } /* deactivateDefaultGameLayout: kill */
+    pc_appear(); /* validate / activateDefaultGameLayout: appear (dead only) */
+    if (c->dead) return;
+    c->step++;
+    if (c->nrv == HC_APPEAR && c->ap == AP_SHOW) hud_set(c, HC_WAIT); /* exeAppear: isAppeared */
+    c->num = got_purple; /* control: updateCounter */
+    if (c->wait_cd > 0) c->wait_cd--;
+    else if (c->disp < c->num) {
+        if (c->nrv == HC_WAIT) { c->wait_cd = 3; c->disp++; }
+        if (c->nrv != HC_APPEAR && c->nrv != HC_WAIT) { hud_set(c, HC_APPEAR); hud_ap(c, AP_APPEAR); }
+    }
+    c->ap_step++; /* the appearer */
+    if (c->ap == AP_APPEAR && c->ap_step > 21) hud_ap(c, AP_SHOW);
+}
+int game_test_pc(void) { return hud_pc.dead ? -1 : hud_pc.nrv * 1000 + hud_pc.disp; } /* tests */
 static void hud_update(void)
 {
     if (hud_welcome && hud_welcome < 1000) hud_welcome++;
@@ -11112,6 +11161,7 @@ static void hud_update(void)
         hudc.nrv = 1; hudc.step = 0;
     }
     if (!hud_on) return;
+    pc_update();
     int busy = hud_busy();
     for (int k = 0; k < 4; k++) {
         HudCounter *c = &hud[k];
@@ -11183,9 +11233,10 @@ static float hud_hermite(float f, float f0, float v0, float s0, float f1, float 
 }
 static void hud_draw(void)
 {
-    if (menu_paused() || (dome_layout_off && !star_alone) || dx.on || pd.name) return; /* PauseMenu::appear / SphereSelector::appear / startDemoSystem (a programmable demo too): deactivateDefaultGameLayout */
-    for (int k = 0; k < 4; k++) {
-        const HudCounter *c = &hud[k];
+    if (hud_layout_off()) return; /* PauseMenu::appear / SphereSelector::appear / startDemoSystem (a programmable demo too): deactivateDefaultGameLayout */
+    for (int k = 0; k < 5; k++) {
+        const HudCounter *c = k < 4 ? &hud[k] : &hud_pc;
+        if (k == 4 && c->dead) continue;
         if (c->ap == AP_HIDE || (dome_layout_off && k)) continue;
         float f = (float)c->ap_step, a = 1.0f, r = 1.0f;
         if (c->ap == AP_APPEAR) { /* appear.brlan RLVC: (2, 0, 0) (20, 255, 38.79); the ease-out rate */
@@ -11201,9 +11252,9 @@ static void hud_draw(void)
             dx += c->disp >= 1000 ? 0.0f : c->disp >= 100 ? 13.0f : c->disp >= 10 ? 26.0f : 39.0f;
         else if (k == 1 || k == 2) /* setFollowPos: Position001 / 010 / 100 (x 52 / 26 / 0 past the counter's own place) */
             dx += c->disp >= 100 ? 0.0f : c->disp >= 10 ? 26.0f : 52.0f;
-        lay_num = c->disp;
+        lay_num = c->disp; lay_digits = k == 4 ? 3 : 0; /* PurpleCoinCounter: L"%03d" */
         lay_draw(c->lay, c->group, a, dx, dy);
-        lay_num = -1;
+        lay_num = -1; lay_digits = 0;
     }
     if (hud_welcome > 1 && hud_welcome <= 132) { /* Welcome表示: appear.brlan RLVC (0, 0) (60, 255) (100, 255) (130, 0, -23.6) */
         float f = (float)(hud_welcome - 2);
