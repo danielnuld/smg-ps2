@@ -2375,7 +2375,8 @@ void game_init(const Scene *s, const unsigned char *blob)
     int ntspots = count_type("TreasureSpot", 0) + count_type("CoinFlower", 0); /* a coin each when shot */
     for (u32 i = 0, tb = scene_type(s, "ItemBubble"); i < s->nobjs; i++) /* ItemBubble's coins (arg0 0, arg1 of them) */
         if (s->objs[i].type == (int)tb && s->objs[i].arg[0] <= 0) ntspots += s->objs[i].arg[1] > 1 ? s->objs[i].arg[1] : 1;
-    box_coins += nkuribo + ntspots; /* each drops a coin (appearCoinPop) */
+    box_coins += nkuribo + ntspots + count_type("CoinBox", 0); /* each drops a coin (appearCoinPop; CoinBox: declareCoin 1) */
+    ncoins += count_type("CoinBox", 0);
     ncoins += nkuribo + ntspots;
     coins = mem_alloc(MEM_OBJECTS, ncoins * sizeof(Pickup));
     purple = mem_alloc(MEM_OBJECTS, npurple * sizeof(Pickup));
@@ -4376,18 +4377,19 @@ typedef struct {
 } ClassInfo;
 
 /* #143's placed classes ported since the audit (update_gaps) */
-enum { GAP_NONE, GAP_SHOCKWAVE, GAP_CAPSULE, GAP_DRIFT, GAP_SHELLCOIN, GAP_SHELLCHIP, GAP_ELEVATOR };
+enum { GAP_NONE, GAP_SHOCKWAVE, GAP_CAPSULE, GAP_DRIFT, GAP_SHELLCOIN, GAP_SHELLCHIP, GAP_ELEVATOR, GAP_UFOKINOKO };
 static void gap_place(Inst *in);
+static void ufok_start(int row);
 static int gap_class(const char *name)
 {
     return !strcmp(name, "ShockWaveGenerator") ? GAP_SHOCKWAVE : !strcmp(name, "CapsuleCage") ? GAP_CAPSULE :
            !strcmp(name, "DriftWood") ? GAP_DRIFT : !strcmp(name, "ShellfishCoin") ? GAP_SHELLCOIN :
-           !strcmp(name, "ShellfishYellowChip") ? GAP_SHELLCHIP : !strcmp(name, "BattleShipElevator") ? GAP_ELEVATOR : GAP_NONE;
+           !strcmp(name, "ShellfishYellowChip") ? GAP_SHELLCHIP : !strcmp(name, "BattleShipElevator") ? GAP_ELEVATOR : !strcmp(name, "UFOKinoko") ? GAP_UFOKINOKO : GAP_NONE;
 }
 /* ponytail (unmarked until the 2026-11-02 audit): placed classes of the early galaxies with no behaviour here
  * (drawn static, or not at all), each a whole Petari class: Honeyhive HoneyQueen, Creeper, StinkBugParent (StinkBugParent.cpp, its 子連れカメムシデモ), GhostPlayer (Cosmic Mario);
- * Space Junk TombSpider, BossKameck, ChildKameck, SpiderAttachPoint (SlingShooter), UFOKinoko, CoinBox,
- * PlanetRocket, NokonokoLand; Battlerock BossBegoman, TicoShop; Beach Bowl PenguinStudent;
+ * Space Junk TombSpider, BossKameck, ChildKameck, SpiderAttachPoint (SlingShooter), NokonokoLand; PlanetRocket (a
+ * PlanetMap: its own-name clip, PlanetMap.cpp:67, needs planets skinned: slice.py AUTO_SKINNED leaves planets out); Battlerock BossBegoman, TicoShop; Beach Bowl PenguinStudent;
  * the observatory's AstroMapObj looks (update_astro_objs' ponytail) */
 static void class_make(ClassInfo *ci, const char *name)
 {
@@ -28952,16 +28954,9 @@ unsigned game_test_moves(unsigned frame)
     return pad;
 }
 
-/* ---- #143's placed classes (gap_class): row_turn their nerve (0 not set up), row_step its step (0 its first) ---- */
-static void gap_nrv(const Inst *in, int n)
-{
-    row_turn[in->row] = (signed char)n; row_step[in->row] = 0;
-#ifdef GAP_TEST
-    printf("gap %d: nerve %d%c", in->row, n, 10);
-#endif
-}
+/* ---- #143's placed classes (gap_class): their nerve, step and state in GapSt by row (row_turn / row_step are the rotors' and railers') ---- */
 /* their own state by row (kept across rebinds: game_rebind_ calls gap_place) */
-typedef struct { int row, i; float f; V3 v, p; } GapSt;
+typedef struct { int row, i, n, st; float f; V3 v, p; } GapSt; /* n its nerve (0 not set up), st its step */
 static GapSt gst[64];
 static int ngst;
 static GapSt *gap_st(int row)
@@ -28970,6 +28965,13 @@ static GapSt *gap_st(int row)
     if (ngst == 64) return &gst[63]; /* ponytail: 64 rows of these classes a scene at most */
     memset(&gst[ngst], 0, sizeof gst[0]); gst[ngst].row = row;
     return &gst[ngst++];
+}
+static void gap_nrv(const Inst *in, int n)
+{
+    gap_st(in->row)->n = (signed char)n; gap_st(in->row)->st = 0;
+#ifdef GAP_TEST
+    printf("gap %d: nerve %d%c", in->row, n, 10);
+#endif
 }
 static int gap_cam_start(const Inst *in) /* startActorCameraTargetSelf: its CameraSetId's event camera, its base matrix */
 {
@@ -29008,13 +29010,13 @@ static void shock_start(Inst *in) /* startShockWave */
     scene_stop = 1; /* stopSceneForDefaultHit(1) */
     gap_nrv(in, SW_GENERATE);
 }
-static int shock_busy(const Inst *in) { return row_turn[in->row] != SW_WAIT || (gap_st(in->row)->i & 1) || pd.name || dx_busy(); }
+static int shock_busy(const Inst *in) { return gap_st(in->row)->n != SW_WAIT || (gap_st(in->row)->i & 1) || pd.name || dx_busy(); }
 static void update_shock(Inst *in, int st)
 {
     V3 p = v3(in->m[12], in->m[13], in->m[14]), up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
-    if (!row_turn[in->row]) { gap_nrv(in, SW_WAIT); gap_st(in->row)->i = 0x40000000; return; }
+    if (!gap_st(in->row)->n) { gap_nrv(in, SW_WAIT); gap_st(in->row)->i = 0x40000000; return; }
     if ((gap_st(in->row)->i & 1) && pd_try_start("衝撃波カメラ", in->row)) { gap_st(in->row)->i &= ~1; gap_nrv(in, SW_DEMOECHO); return; }
-    switch (row_turn[in->row]) {
+    switch (gap_st(in->row)->n) {
     case SW_WAIT: {
         if (shock_busy(in)) break;
         V3 c = vadd(p, vmul(up, 200.0f)), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -29067,7 +29069,7 @@ static void capsule_kill(Inst *in)
 static int update_capsule(Inst *in, int st) /* 1: killed (rebound) */
 {
     const Row *r = &sc->objs[in->row];
-    if (!row_turn[in->row]) { gap_nrv(in, CC_WAIT); gap_st(in->row)->i = 0x40000000; obj_play(in, "CapsuleCage", 1, 0); return 0; } /* tryStartAllAnim(mObjectName) */
+    if (!gap_st(in->row)->n) { gap_nrv(in, CC_WAIT); gap_st(in->row)->i = 0x40000000; obj_play(in, "CapsuleCage", 1, 0); return 0; } /* tryStartAllAnim(mObjectName) */
     if (r->sw[SW_B] >= 0 && sw_on(r, SW_B) && !(gap_st(in->row)->i & 4)) { /* startOpen */
         gap_st(in->row)->i |= 4;
         if (row_camset[in->row] != -1) gap_st(in->row)->i |= 1;
@@ -29075,7 +29077,7 @@ static int update_capsule(Inst *in, int st) /* 1: killed (rebound) */
         printf("capsule cage %d: open%c", in->row, 10);
     }
     if ((gap_st(in->row)->i & 1) && pd_try_start("注目カメラ", in->row)) { gap_st(in->row)->i &= ~1; gap_nrv(in, CC_STARTCAMERA); return 0; }
-    switch (row_turn[in->row]) {
+    switch (gap_st(in->row)->n) {
     case CC_STARTCAMERA:
         if (st == 0 && gap_cam_start(in)) gap_st(in->row)->i |= 2;
         if (st == 50) gap_nrv(in, CC_OPEN);
@@ -29109,7 +29111,7 @@ static int update_capsule(Inst *in, int st) /* 1: killed (rebound) */
 enum { DW_WAIT = 1, DW_WAITLAND, DW_VIBRATELAND, DW_VIBRATETAKEOFF };
 static int drift_try_vibrate(Inst *in, int i)
 {
-    int n = row_turn[in->row];
+    int n = gap_st(in->row)->n;
     if (mario_ground == i) { if (n == DW_VIBRATETAKEOFF || n == DW_WAIT) { gap_nrv(in, DW_VIBRATELAND); printf("drift wood %d: Mario on%c", in->row, 10); return 1; } }
     else if (n == DW_WAITLAND) { gap_nrv(in, DW_VIBRATETAKEOFF); return 1; }
     return 0;
@@ -29124,7 +29126,7 @@ static void update_drift(Inst *in, int i, int st)
     if (!pts || np < 2) return;
     float len = w_rail_len(pts, np), old[16];
     V3 grav = vmul(up_at(v3(in->m[12], in->m[13], in->m[14]), v3(0, 1, 0)), -1.0f);
-    if (!row_turn[in->row]) { /* init */
+    if (!gap_st(in->row)->n) { /* init */
         g->f = w_rail_nearest(pts, np, row_pos(r));
         V3 a = rail_at(pts, np, g->f), b = rail_at(pts, np, g->f + 1.0f);
         g->v = vlen(vsub(b, a)) > 1e-6f ? vnorm(vsub(b, a)) : v3(0, 0, 1); /* getRailDirection */
@@ -29136,7 +29138,7 @@ static void update_drift(Inst *in, int i, int st)
     float c = g->f + 3.0f; /* moveCoord 3 */
     g->f = closed ? fmodf(c, len) : c > len ? len : c;
     V3 pos = rail_at(pts, np, g->f);
-    int n = row_turn[in->row];
+    int n = gap_st(in->row)->n;
     if (n == DW_WAIT || n == DW_WAITLAND) {
         if (st == 0) fx_named("DriftWood", "Ripple", in->m, NULL, NULL);
         float a = 0.05f * 0.0174533f, ca = cosf(a), sa = sinf(a); /* rotateVecDegree(_, gravity, 0.05) */
@@ -29194,8 +29196,8 @@ static void shell_item(Inst *in, int show) /* ACTMES_ITEM_SHOW / HIDE (a taken i
 static void shell_shock(Inst *in) /* receiveMsgPlayerAttack: isMsgJetTurtleAttack / isMsgStarPieceReflect */
 {
     GapSt *g = gap_st(in->row);
-    obj_play(in, row_turn[in->row] == SF_WAIT ? "CloseDamage" : "OpenDamage", 0, 2);
-    if (row_turn[in->row] == SF_OPEN && row_step[in->row] > 40 && row_step[in->row] <= 100) { g->v = vadd(shell_put(in), vmul(vnorm(v3(in->m[4], in->m[5], in->m[6])), 30.0f)); shell_item(in, g->i & 0x100); } /* endBindItem */
+    obj_play(in, gap_st(in->row)->n == SF_WAIT ? "CloseDamage" : "OpenDamage", 0, 2);
+    if (gap_st(in->row)->n == SF_OPEN && gap_st(in->row)->st > 40 && gap_st(in->row)->st <= 100) { g->v = vadd(shell_put(in), vmul(vnorm(v3(in->m[4], in->m[5], in->m[6])), 30.0f)); shell_item(in, g->i & 0x100); } /* endBindItem */
     gap_nrv(in, SF_SHOCK);
     printf("shellfish %d: shock%c", in->row, 10);
 }
@@ -29204,7 +29206,7 @@ static void update_shellfish(Inst *in, int st)
     GapSt *g = gap_st(in->row);
     const Row *r = &sc->objs[in->row];
     V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
-    if (!row_turn[in->row]) { /* initItem: putItem, hidden */
+    if (!gap_st(in->row)->n) { /* initItem: putItem, hidden */
         int slot = -1;
         for (int k = 0; k < ncoins && in->gap == GAP_SHELLCOIN; k++) if (coins[k].row == in->row) { slot = k; break; }
         if (in->gap == GAP_SHELLCOIN && slot < 0) return;
@@ -29226,7 +29228,7 @@ static void update_shellfish(Inst *in, int st)
         }
         if (taken) { g->i = (g->i & ~0x100) | 0x200; printf("shellfish %d: its item taken%c", in->row, 10); }
     }
-    switch (row_turn[in->row]) {
+    switch (gap_st(in->row)->n) {
     case SF_WAIT:
         if (st == 0) obj_play(in, "Wait", 1, 0);
         if (st == 150) gap_nrv(in, SF_OPEN); /* sStepToOpen */
@@ -29275,7 +29277,7 @@ static void update_shellfish(Inst *in, int st)
 }
 static void gap_place(Inst *in) /* game_rebind_: their pose and collision again from their state */
 {
-    if (!row_turn[in->row]) return;
+    if (!gap_st(in->row)->n) return;
     const GapSt *g = gap_st(in->row);
     if (in->gap == GAP_DRIFT) {
         basis_matrix(in->m, g->p, up_at(g->p, v3(0, 1, 0)), g->v, 0);
@@ -29301,7 +29303,7 @@ static int gap_shot(V3 p) /* a star piece: ShockWaveGenerator's body (isMsgStarP
 {
     FOR_KIND(i, gap) {
         Inst *in = &insts[i];
-        if ((in->gap != GAP_SHELLCOIN && in->gap != GAP_SHELLCHIP) || !row_shown(in->row) || !row_turn[in->row]) continue;
+        if ((in->gap != GAP_SHELLCOIN && in->gap != GAP_SHELLCHIP) || !row_shown(in->row) || !gap_st(in->row)->n) continue;
         V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
         if (vlen(vsub(p, vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(up, 100.0f)))) > 400.0f) continue;
         shell_shock(in);
@@ -29322,13 +29324,14 @@ int game_test_busy(void);
 /* XF=-DGAP_TEST=<GAP_ kind> (frames counted from Mario free): Mario 250 beside each placement of that class in turn
  * (every 300 frames from 120; its zone streams in; DriftWood: 200 over it), then at +30 GAP_SHOCKWAVE spins,
  * GAP_CAPSULE turns its SW_B on; a Shellfish's item: Mario put on it at +260 */
-static const char *const gap_names[] = {"", "ShockWaveGenerator", "CapsuleCage", "DriftWood", "ShellfishCoin", "ShellfishYellowChip", "BattleShipElevator"};
+static const char *const gap_names[] = {"", "ShockWaveGenerator", "CapsuleCage", "DriftWood", "ShellfishCoin", "ShellfishYellowChip", "BattleShipElevator", "UFOKinoko", "CoinBox"};
 static void gap_test(void)
 {
     static int t;
     if (!game_test_free() || game_test_busy()) return;
     t++;
-    int want = t >= 120 ? (t - 120) / 300 : -1, at = t >= 120 ? (t - 120) % 300 : -1, ty = GAP_TEST < 16 ? scene_type(sc, gap_names[GAP_TEST]) : -1, seen = 0;
+    int per = GAP_TEST == GAP_SHELLCOIN || GAP_TEST == GAP_SHELLCHIP ? 900 : 300; /* a shell: its whole open / close cycle */
+    int want = t >= 120 ? (t - 120) / per : -1, at = t >= 120 ? (t - 120) % per : -1, ty = GAP_TEST < 16 ? scene_type(sc, gap_names[GAP_TEST]) : -1, seen = 0;
     int shell = GAP_TEST == GAP_SHELLCOIN || GAP_TEST == GAP_SHELLCHIP;
     if (GAP_TEST == 99) { /* XF=-DGAP_TEST=99: an explosion at each BreakableTrash in turn (every 300 frames from 120; Mario put by it) */
         int tt = scene_type(sc, "BreakableTrash"), n = 0;
@@ -29355,7 +29358,7 @@ static void gap_test(void)
                 break;
             }
         if (at > 160) return;
-        if (GAP_TEST == GAP_DRIFT && row_turn[i]) p = gap_st((int)i)->p; /* its rail place */
+        if (GAP_TEST == GAP_DRIFT && gap_st(i)->n) p = gap_st((int)i)->p; /* its rail place */
         if (GAP_TEST == GAP_DRIFT || GAP_TEST == GAP_ELEVATOR ? at == 0 || at == 150 : at == 150) {
             if (GAP_TEST != GAP_DRIFT && GAP_TEST != GAP_ELEVATOR) return;
             mario->up = up; mario->pos = vadd(p, vmul(up, at ? (GAP_TEST == GAP_ELEVATOR ? 30.0f : 450.0f) : 1500.0f)); /* high first: its zone streams in */ mario->hvel = v3(0, 0, 0); mario->vup = 0;
@@ -29365,7 +29368,8 @@ static void gap_test(void)
             mario->hvel = v3(0, 0, 0); mario->vup = 0;
             printf("gap test: Mario by %s %u%c", gap_names[GAP_TEST], i, 10);
         } else if (GAP_TEST == GAP_CAPSULE) { if (r->sw[SW_B] >= 0) sw_set(r, SW_B, 1); }
-        else mario->spin_timer = SPIN_TIME;
+        else if (GAP_TEST == GAP_UFOKINOKO) ufok_start((int)i);
+        else { mario->spin_timer = SPIN_TIME; mario->spin_t = 0; }
         return;
     }
 }
@@ -29378,8 +29382,8 @@ enum { EV_WAIT = 1, EV_MOVE, EV_END };
 static void update_elevator(Inst *in, int i, int st)
 {
     GapSt *g = gap_st(in->row);
-    if (!row_turn[in->row]) { gap_nrv(in, EV_WAIT); return; }
-    switch (row_turn[in->row]) {
+    if (!gap_st(in->row)->n) { gap_nrv(in, EV_WAIT); return; }
+    switch (gap_st(in->row)->n) {
     case EV_WAIT:
         if (!(g->i & 1) && mario_ground == i && mario->grounded) {
             int k = -1;
@@ -29402,8 +29406,60 @@ static void update_elevator(Inst *in, int i, int st)
         break;
     }
 }
+/* UFOKinoko.cpp after Petari: a MapObjActor whose rotator runs from init (the generic rotor) and whose rail mover
+ * waits: Wait until its SW_B comes on (listenStageSwitchOnB) or its demo's ＵＦＯキノコ登場 action (dx_cast_hook):
+ * startMove -> Move (UFO_KINOKO_MOVE_ST, LV_UFO_KINOKO_MOVE, its rail mover started) -> Stop (MOVE_ED) once the rail
+ * mover stops. gi: 1 SW_B seen on. ponytail: no StageEffect (none for UFOKinoko in the port's table) */
+enum { UK_WAIT = 1, UK_MOVE, UK_STOP };
+static void ufok_start(int row) /* UFOKinoko::startMove */
+{
+    const Inst *in = row_inst(row);
+    if (in && gap_st(row)->n == UK_WAIT) { gap_nrv(in, UK_MOVE); printf("ufo kinoko %d: move%c", row, 10); }
+}
+static void update_ufokinoko(Inst *in, int st)
+{
+    GapSt *g = gap_st(in->row);
+    const Row *r = &sc->objs[in->row];
+    if (!gap_st(in->row)->n) { gap_nrv(in, UK_WAIT); return; }
+    if (r->sw[SW_B] >= 0 && sw_on(r, SW_B) && !(g->i & 1)) { g->i |= 1; ufok_start(in->row); }
+    if (gap_st(in->row)->n == UK_MOVE) {
+        if (st == 0) se_start(SE_OJ_UFO_KINOKO_MOVE_ST, &in->m[12]);
+        in->lv[0] = se_level(SE_OJ_LV_UFO_KINOKO_MOVE, &in->m[12], in->lv[0]);
+        if (st > 0 && in->railer && row_rdir[in->row] == 2) gap_nrv(in, UK_STOP); /* !isRailMoverWorking */
+    } else if (gap_st(in->row)->n == UK_STOP && st == 0) se_start(SE_OJ_UFO_KINOKO_MOVE_ED, &in->m[12]);
+}
+/* CoinBox.cpp after Petari: an invisible coin at its place (a 5 sensor): Mario's spin storm range (his spin within
+ * mSensorRadiusSpinStorm 600 of it, the first 15 frames; a tornado's) -> Hit: the CoinGet effect, at step 15 its coin
+ * out at 30 along its Y against gravity and 10 across (appearCoinToVelocity), killed. row_turn 1 Hit, row_step */
+static void update_coinboxes(void)
+{
+    int ty = scene_type(sc, "CoinBox");
+    for (u32 i = 0; ty >= 0 && i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if ((int)r->type != ty || row_dead[i] || !row_shown((int)i)) continue;
+        V3 p = row_pos(r), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+        if (!gap_st(i)->n) {
+            if (mario->spin_timer > 0 && mario->spin_t < 15 && vlen(vsub(mc, p)) < 5.0f + 600.0f) { gap_st(i)->n = 1; gap_st(i)->st = 0; }
+            continue;
+        }
+        int st = gap_st(i)->st++;
+        V3 up = up_at(p, mario->up);
+        if (st == 0) fx_at(FX_COIN_COINGET, p, up);
+        if (st == 15) {
+            V3 x, z;
+            row_axes(r, &x, &z);
+            V3 y = vnorm(vcross(z, x)), g = vmul(up, -1.0f);
+            float val = vdot(y, g);
+            V3 h = vsub(y, vmul(g, val));
+            coin_to_velocity(p, vadd(vmul(g, val * 30.0f), vmul(h, 10.0f)));
+            row_kill((int)i);
+            printf("coin box %u: its coin out%c", i, 10);
+        }
+    }
+}
 static void update_gaps(void)
 {
+    update_coinboxes();
     for (int i = 0; i < ninsts; i++) /* a "#Static" collision part follows its owner (UFOBase's MoveLimit: setMtx) */
         if (insts[i].kparent >= 0 && insts[i].kmove < 0) memcpy(insts[i].m, insts[insts[i].kparent].m, 64);
 #ifdef GAP_TEST
@@ -29415,15 +29471,16 @@ static void update_gaps(void)
         GapSt *g = gap_st(in->row);
         if (!(g->i & 0x40000000)) { /* its first update: no nerve yet */
 #ifdef GAP_TEST
-            printf("gap %d: first update, row_turn %d%c", in->row, row_turn[in->row], 10);
+            printf("gap %d: first update, row_turn %d%c", in->row, gap_st(in->row)->n, 10);
 #endif
-            g->i = 0x40000000; row_turn[in->row] = 0; row_step[in->row] = 0;
+            g->i = 0x40000000; gap_st(in->row)->n = 0; gap_st(in->row)->st = 0;
         }
-        int st = row_step[in->row];
-        if (row_step[in->row] < 0xFFFF) row_step[in->row]++;
+        int st = gap_st(in->row)->st;
+        if (gap_st(in->row)->st < 0xFFFF) gap_st(in->row)->st++;
         if (in->gap == GAP_SHOCKWAVE) update_shock(in, st);
         else if (in->gap == GAP_DRIFT) update_drift(in, i, st);
         else if (in->gap == GAP_ELEVATOR) update_elevator(in, i, st);
+        else if (in->gap == GAP_UFOKINOKO) update_ufokinoko(in, st);
         else if (in->gap == GAP_SHELLCOIN || in->gap == GAP_SHELLCHIP) update_shellfish(in, st);
         else if (in->gap == GAP_CAPSULE && update_capsule(in, st)) return;
     }
@@ -29808,7 +29865,8 @@ static void update_railers(void)
         in->rwork = 0;
         int row = in->row, cond = r->arg[7] >> 8 & 15, stop = *(const int *)(e + 16);
         if (in->eyebeamer ? !eb_patrol(row) : !mp_running(r, row)) continue;
-        if (in->gap == GAP_ELEVATOR && row_turn[row] != EV_MOVE) continue; /* BattleShipElevator::control: not in Wait */
+        if (in->gap == GAP_ELEVATOR && gap_st(row)->n != EV_MOVE) continue; /* BattleShipElevator::control: not in Wait */
+        if (in->gap == GAP_UFOKINOKO && gap_st(row)->n != UK_MOVE) continue; /* UFOKinoko: startRailMover at startMove */
         u32 np = *(const u32 *)(e + 8), nr = *(const u32 *)(e + 12);
         const unsigned char *pa = e + 24 + 12 * np + 12 * nr; /* nr x {f32 coord, s32 arg0, s32 arg5} */
         float len = *(const float *)(pa + 12 * (nr - 1));
@@ -35914,6 +35972,7 @@ static void dx_cast_hook(int row, int type, int part)
     if (type == 0 && !strcmp(cls, "GrandStarReturnDemoStarter")) { gsr_appear(row); return; }
     if (type == 2 && !strcmp(cls, "AstroCore")) { acore_start(); return; }
     if (type == 3 && !strcmp(cls, "BossBegoman")) { bb_first_contact(row); return; } /* registerDemoActionNerve: FirstContactDemo */                   /* AstroCore::startDemo: Grow */
+    if (type == 3 && !strcmp(cls, "UFOKinoko")) { ufok_start(row); return; }                 /* ＵＦＯキノコ登場: startMove */
     if (type == 2 && !strcmp(cls, "RosettaChair")) { /* RosettaChair::startDemo (朗読開始: DemoRosettaReading,
                                                      * invalidateCollisionParts) / setDefaultPose (キャスト入れ換え: its
                                                      * placement, RosettaChair, validateCollisionParts) */
