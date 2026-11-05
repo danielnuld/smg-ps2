@@ -172,6 +172,11 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
     the isDone rumble, shake and end SE, its MoveLimit collision as a "#Static" part following it). GAP_TEST 6
     (BattleShipGalaxy/3: Mario put in the elevator, its demo, up the rail), 99 (BattleShipGalaxy/2: each trash broken
     by an explosion). Route EggStar 1: star. Repack BattleShipGalaxy.
+  - #201 UFOKinoko (its rail mover waits for SW_B or its demo's ＵＦＯキノコ登場 action; move SEs) and CoinBox (a hidden
+    coin a spin within 600 brings out: CoinGet, then the coin at 30 up / 10 across). The #143 classes' nerves moved
+    into GapSt (row_turn / row_step are the rotors' / railers': UFOKinoko is a rotor too). GAP_TEST 7 / 8
+    (StarDustGalaxy/2). Left: PlanetRocket (a PlanetMap playing its own-name clip: slice.py AUTO_SKINNED leaves planets
+    out, so no planet animates). Repack StarDustGalaxy (LOGIC CoinBox).
 - mario2 (2026-11-04), #168 PlayerKick: mario_kick / mario_kicked (MarioActor::sendBodyAttack's ACTMES_KICK: his
   cylinder on the sensor, status none, not damaged, no hip drop, within 90 degrees of his front; ランニングキック, its
   voice, pad 2) taken by a staggering Kuribo (36 / 30, three star pieces) / KuriboMini (22 / 25, three), a swooning
