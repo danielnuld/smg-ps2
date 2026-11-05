@@ -337,6 +337,10 @@ Second console round (2026-10-24), from Daniel's report:
   matches its cut (packs keep 31). Tests: screw (Factory 1, again at f400 once the zone is in), beeflower (Bee Mario
   from f530; his landing on one not seen yet), poihana, plainhole (XF=-DHOLE_TEST). Repack: Factory, BattleShip,
   CosmosGarden, OceanFloaterLand, OceanPhantomCave (ScrewSwitch skinned + Screw-joint collision).
+- TicoRail (fix/states-ticorail, 2026-11-05): TicoRail.cpp's nerves (game.c update_ticorails): Wait / LookAround /
+  MoveSign (AndTurn) / Move / Stop with isGreaterEqualStepAndRandom, the Spin-timed blends, rail ends clamped, two on
+  one rail talk (TalkStart / Talk with Reaction / GoodBye, or TalkCancel), its body pushes Mario. Test `ticorail`
+  (Astro 1: nerve log, two pairs talk). ponytail: no ColorChange BRK frame, no LodCtrl.
 ## Rules
 
 - Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -
