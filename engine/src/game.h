@@ -91,6 +91,7 @@ int game_test_walker(const char *cls, int k);
 int game_test_route(const char *cls);
 int game_test_star_near(void);
 int game_test_purple(void);
+int game_test_pc(void);
 int game_test_ota(void);
 int game_test_fat(void);
 void game_test_fat_nodrop(void);

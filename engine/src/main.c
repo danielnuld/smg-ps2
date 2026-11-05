@@ -1924,7 +1924,7 @@ int main(void)
 #ifdef PURPLE_TEST
         if (frame >= 150 && frame % 4 == 0) { /* Mario through the purple coins, then onto the 100-coin star */
             int st = game_test_purple();
-            if (frame % 100 == 0) printf("purple test f %u: %d, stars %d\n", frame, st, game_stars());
+            if (frame % 100 == 0) printf("purple test f %u: %d, stars %d, counter %d\n", frame, st, game_stars(), game_test_pc());
         }
 #endif
 #if defined(OTA_TEST) && !defined(TEASER)

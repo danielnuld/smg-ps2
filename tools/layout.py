@@ -483,7 +483,8 @@ def _blit(canvas, img, m, x, y, w, h, X0, Y0):
 # drawn by game.c lay_draw: the talk balloons (talk_draw), InformationWindow (group 0 InfoWindowUp: TicoFat's Info),
 # TicoFat's FullnessMeter (StarPieceTargetMeter group 0 at the pointer, StarPieceTargetCounter), the HUD counters
 LAYOUTS = ("TalkBalloonEvent", "SignBoardBalloon", "InformationWindow", "StarPieceTargetMeter", "StarPieceTargetCounter",
-           "StarCounter", "CoinCounter", "StarPieceCounter", "PlayerLeft", "HitPointMeter", "Welcome")  # the HUD: game.c hud_draw
+           "StarCounter", "CoinCounter", "StarPieceCounter", "PlayerLeft", "HitPointMeter", "Welcome",  # the HUD: game.c hud_draw
+           "PurpleCoinCounter")  # PurpleCoinHolder's (game.c pc_update)
 
 
 def section(fsp, first_tex):
