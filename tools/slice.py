@@ -229,7 +229,8 @@ KCL_PARTS = {"PhantomShipBridge": {"move.kcl": "Move"}, "DarknessRoomDoorA": {"o
              "DesertLandDownSwitch": {"move.kcl": "Move"},  # TypicalDoor's Open collision too
              "ShellfishCoin": {"low.kcl": "Static"}, "ShellfishYellowChip": {"low.kcl": "Static"},
              "UFOStrongA": {"movelimit.kcl": "Static"},  # UFOBase's tryCreateCollisionMoveLimit (following it: game.c update_gaps)  # Shellfish's Low (createCollisionPartsFromLiveActor): a still part
-             "BossStinkBug": {"bodyground.kcl": "Ground", "bodyhipdrop.kcl": "HipDrop"},  # initCollision: BodyGround, BodyHipDrop (Body is its own)
+             "BossStinkBug": {"bodyground.kcl": "Ground", "bodyhipdrop.kcl": "HipDrop"},
+             "StinkBugParent": {"switch.kcl": "Switch"},  # createCollisionPartsFromLiveActor Switch (its own: SwitchChildJ)  # initCollision: BodyGround, BodyHipDrop (Body is its own)
              # HoneyQueen::init: its ten createCollisionPartsFromLiveActor on their joints (JOINT_KCL_ONLY)
              "HoneyQueen": {"center.kcl": "Center", "centerfur.kcl": "Center", "face.kcl": "Face", "larm01.kcl": "LArm01",
                             "larm02.kcl": "LArm02", "lfoot001.kcl": "LFoot001", "rarm01.kcl": "RArm01",
@@ -1707,7 +1708,7 @@ def declare_stars(keep, scenario, appear, jp):
         k = STAR_DECLARERS.get(r["name"], -1)
         if r["name"] == "NoteFairy":  # declarePowerStar when arg7 is 1-3
             k = None if s32(r["args"][7]) > 0 else -1
-        elif r["name"] in ("CollectTico", "DinoPackun", "OtaKing", "BossStinkBug", "BossBegoman", "BossKameck", "BossKameck2"):  # their init declarePowerStar, always
+        elif r["name"] in ("CollectTico", "DinoPackun", "OtaKing", "BossStinkBug", "BossBegoman", "BossKameck", "BossKameck2", "StinkBugParent"):  # their init declarePowerStar, always
             k = None
         elif r["name"] in ("LuigiNPC", "LuigiEvent"):  # LuigiNPC::isDeclarePowerStarType: Afraid, Event, OnTree, Arrested
             t = s32(r["args"][0]) + (2 if r["name"] == "LuigiEvent" else 0)

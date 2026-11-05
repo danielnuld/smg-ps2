@@ -578,6 +578,7 @@ static void bva_apply(const Model *md, const char *key, float frame)
 }
 static const char *bva_key; /* draw_skin: a BVA started apart from the clip (startBva), at bva_frame; else the clip's */
 static float bva_frame;
+static int sbp_bva_row = -1; /* StinkBugParent without its child (update_sbp) */
 static void draw_skin(const Model *md, const float m[16], Anim *a)
 {
     if (md == m_mario_skin) render_light(&plight.cur);
@@ -891,6 +892,17 @@ static const Model *m_vtop, *m_vleaf, *m_crflower, *m_crleaf;
 static int vine_try(Player *m);
 static int vine_hold(Player *m);
 static void creeper_init(void);
+static int pw_update(Player *m);
+static void sbp_damage_action(void);
+enum { SBP_WAIT, SBP_SEARCH, SBP_DASHSIGN, SBP_DASHSIGNEND, SBP_DASH, SBP_DASHEND, SBP_BACK, SBP_HIPDROPDOWN,
+       SBP_ATTACK, SBP_SPINREACTION, SBP_PANIC, SBP_SHAKESTART, SBP_SHAKE, SBP_RECOVER, SBP_DEMOPREPARE,
+       SBP_DEMOCHILDDOWN, SBP_DEMOANGER };
+static struct {
+    int row, nrv, step, child, head_on, sensors_on, coll_on, ki, turn, dead, wall, demo;
+    V3 pos, home, F, A4, up, vel;
+    u32 lv, lv2;
+} sbp = {.row = -1, .ki = -1};
+static struct { int on, n, left; V3 dest, axis, centre, start, dir; } pw;
 static int creeper_try(Player *m), creeper_hold(Player *m);
 static int creeper_ride;
 static void pole_init(void);
@@ -2325,6 +2337,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     memset(&dino, 0, sizeof dino); dino.row = -1;
     memset(&ota, 0, sizeof ota); ota.row = -1;
     memset(&bsb, 0, sizeof bsb); bsb.row = -1; bsb.ki[0] = bsb.ki[1] = bsb.ki[2] = -1;
+    memset(&sbp, 0, sizeof sbp); sbp.row = sbp.ki = sbp.nrv = -1; pw.on = 0;
     for (u32 i = 0; i < s->nobjs; i++)
         if (strcmp(s->types + 32 * s->objs[i].type, "BossStinkBug") == 0) { /* BossStinkBug::init */
             const Row *r = &s->objs[i];
@@ -2409,6 +2422,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nvines = 0; vine_ride = -1;
     pole_init();
     creeper_init();
+    sbp_bva_row = -1;
     nrbms = 0;
     nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0; nfgs = 0; nggs = 0; nsss = 0; ss_ride = -1; ss_reset(); kfires_reset(); nlls = 0; ndls = 0; nebl = 0; nass = 0;
     dino_cam = 0;
@@ -4563,7 +4577,7 @@ static int gap_class(const char *name)
            !strcmp(name, "ShellfishYellowChip") ? GAP_SHELLCHIP : !strcmp(name, "BattleShipElevator") ? GAP_ELEVATOR : !strcmp(name, "UFOKinoko") ? GAP_UFOKINOKO : GAP_NONE;
 }
 /* ponytail (unmarked until the 2026-11-02 audit): placed classes of the early galaxies with no behaviour here
- * (drawn static, or not at all), each a whole Petari class: StinkBugParent (StinkBugParent.cpp, its 子連れカメムシデモ), GhostPlayer (Cosmic Mario);
+ * (drawn static, or not at all), each a whole Petari class: GhostPlayer (Cosmic Mario);
  * Space Junk TombSpider, SpiderAttachPoint (SlingShooter), NokonokoLand; PlanetRocket (a
  * PlanetMap: its own-name clip, PlanetMap.cpp:67, needs planets skinned: slice.py AUTO_SKINNED leaves planets out); Battlerock BossBegoman, TicoShop; Beach Bowl PenguinStudent;
  * the observatory's AstroMapObj looks (update_astro_objs' ponytail) */
@@ -5005,6 +5019,19 @@ static void game_rebind_(void)
             in->kcl = bsb.kon[k] && !bsb.hidden ? bsb.kcl[k] : NULL;
             zone_grow(in);
         }
+    }
+    sbp.ki = -1;
+    for (u32 i = 0, t = (u32)scene_type(s, "StinkBugParent"); i < s->nobjs; i++) if (s->objs[i].type == t) sbp.row = (int)i;
+    if (sbp.row >= 0 && !sbp.dead && scene_kcl(s, "StinkBugParent#Switch") && scene_model(s, "StinkBugParent") && ninsts < (int)s->nobjs) {
+        /* createCollisionPartsFromLiveActor "Switch" on its base matrix (update_sbp moves and switches it) */
+        const Row *r = &s->objs[sbp.row];
+        Inst *in = &insts[ninsts];
+        sbp.ki = ninsts++;
+        memset(in, 0, sizeof *in);
+        in->md = scene_model(s, "StinkBugParent"); in->row = sbp.row; in->zone = r->zone; in->invisible = 1; in->kmove = in->kparent = -1;
+        mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
+        in->s = 1.0f; in->reach = in->md->radius * 2.0f;
+        zone_grow(in);
     }
     for (int i = 0, n = ninsts; i < n; i++) /* PhantomShipBridge's "Move" collision on its joint (update_bridges) */
         if (insts[i].bridge == 1 && scene_kcl(s, "PhantomShipBridge#Move") && ninsts < (int)s->nobjs) {
@@ -15810,7 +15837,7 @@ static void dm_start(Player *m)
 }
 
 /* MarioActor::selectDamagePop: auto_efx_bitmap's ダメージ中跳ねる (bit 21) for his ground's host: ザコカメムシ,
- * 子連れカメムシ (StinkBugSmall / StinkBugParent; their collision is not in the port yet: none) */
+ * 子連れカメムシ (StinkBugSmall / StinkBugParent) */
 static int m_damage_pop(void)
 {
     if (mario_ground < 0 || insts[mario_ground].row < 0) return 0;
@@ -19772,6 +19799,7 @@ static void update_mario_(void)
         if (mario_anim) anim_update(mario_anim);
         return;
     }
+    if (pw_update(m)) { if (mario_anim) anim_update(mario_anim); return; } /* MarioWarp's point warp (forceFlyPlayer) */
     if (demo_on) { /* a demo: he waits (startBckPlayer PowerStarGet when it is the star's) */
         m->hvel = v3(0, 0, 0); m->vup = 0;
         if (m->hurt_timer) m->hurt_timer--;
@@ -36799,6 +36827,7 @@ static void dx_cast_hook(int row, int type, int part)
     if (type == 0 && !strcmp(cls, "GrandStarReturnDemoStarter")) { gsr_appear(row); return; }
     if (type == 2 && !strcmp(cls, "HoneyQueen")) { hq_functor(row, part); return; }
     if (type == 2 && !strcmp(cls, "AstroCore")) { acore_start(); return; }
+    if (type == 3 && !strcmp(cls, "StinkBugParent")) { sbp_damage_action(); return; } /* registerDemoActionNerve: ダメージ中 */
     if (type == 3 && !strcmp(cls, "BossBegoman")) { bb_first_contact(row); return; } /* registerDemoActionNerve: FirstContactDemo */                   /* AstroCore::startDemo: Grow */
     if (type == 3 && !strcmp(cls, "UFOKinoko")) { ufok_start(row); return; }                 /* ＵＦＯキノコ登場: startMove */
     if (type == 2 && !strcmp(cls, "RosettaChair")) { /* RosettaChair::startDemo (朗読開始: DemoRosettaReading,
@@ -42533,6 +42562,345 @@ static void bsb_throw_bomb(int wait) /* ActionBase::throwBomb: BossStinkBugFunct
     bsb_se(SE_BM_BOSS_BUG_BOMB_EMIT);
     bsb_clip(bsb.launcher, "bossstinkbugbomblauncher", "discharge", 1);
 }
+/* StinkBugParent.cpp / StinkBugBase.cpp after Petari (HoneyBeeKingdom 2's 子連れカメムシ: a big beetle carrying its
+ * child). Home its placement, its front _A4, its gravity against its up; _B0 50 degrees, mRadius 1200. Wait (Wait,
+ * at home) a frame, then Search (Search / AngerSearch) sweeping its front 1 degree a frame within 50 of _A4 (back to
+ * Wait at the edge); Mario in its territory (within 1600, 600 along its up, 200 aside, within 50 degrees of _A4 seen
+ * from 200 / sin 50 behind it) makes DashSign (RushStart, turning to him 3 degrees a frame within 50), DashSignEnd
+ * (10), Dash (Rush: at 20, 25 without the child, towards 1200 along its front, until 1200 from home or a wall),
+ * DashEnd (RushStop), Back (Back, at 5 / 10 to home). Its head ("Face" (0, -50, 80), 160) hurts Mario (strong) when
+ * he is ahead of it within 25 of its height: Attack (Attack) unless dashing. A spin or a star piece on its body
+ * ("body" 250, 150 up): SpinReaction (SpinAction). Mario standing on its back: Panic (Loss, sensors off), Recover
+ * (60) when he leaves, else ShakeStart (Repel) at 30 / 20, Shake: the first 25 frames it flips him off along its
+ * front. A hip drop on its back within 150 of ChildCenter (joint 17) while the child lives: 子連れカメムシデモ
+ * (DemoPrepare, DemoChildDown: ChildDeath, its collision SwitchChildJ swapped for Switch, at 22 Mario flies back to
+ * 子連れカメムシデモ後ポイント (forceFlyPlayer: MarioWarp's point warp, 90 frames), SE at 48 / 65); the demo's ダメージ中
+ * (DemoAnger: Anger, Mario put at that point, turned to face it; at its end 8 star pieces 200 ahead, Wait). Without
+ * the child a hip drop on it: HipDropDown (Death) and kill: its power star. ponytail: no BRK colours (Anger / Death /
+ * ChildDeath: the port bakes BRKs static), no overlayWithPreviousScreen, no shadow, no star pointer, the hit effect */
+static void launch_pieces(V3 p, V3 up, int n, float h, float v);
+#define SBP_POINT "子連れカメムシデモ後ポイント"
+
+/* Mario::doPointWarp / MarioWarp (_45 2): along an arc (pi / 4 each side) to the point in n frames (90), his front
+ * turned to dir (setFrontVecKeepUp 0.2); しゃがみジャンプ, 声小ジャンプ; at its end しゃがみジャンプ着地 */
+static void m_point_warp(V3 dest, V3 dir, int n)
+{
+    Player *m = mario;
+    V3 disp = vsub(dest, m->pos);
+    float dist = vlen(disp), a = 0.7853982f;
+    pw.on = 1; pw.dest = dest; pw.dir = dir; pw.n = pw.left = n ? n : 90;
+    m->hvel = v3(0, 0, 0); m->vup = 0; m->hip = 0;
+    pw.axis = vcross(disp, vmul(m->up, -1.0f)); /* calcAxis (the rise is 1 frame: he is at _20 already) */
+    pw.axis = vlen(pw.axis) > 1e-6f ? vnorm(pw.axis) : v3(0, 0, 0);
+    V3 normal = vcross(pw.axis, disp);
+    normal = vlen(normal) > 1e-6f ? vnorm(normal) : v3(0, 0, 0);
+    float r = 0.5f * dist / sinf(a), h = sqrtf(r * r - 0.25f * dist * dist);
+    pw.centre = vadd(vadd(m->pos, vmul(disp, 0.5f)), vmul(normal, h));
+    pw.start = vmul(normal, -r);
+    mario_sound("声小ジャンプ");
+    m_anim("しゃがみジャンプ");
+    printf("point warp to %d %d %d\n", (int)dest.x, (int)dest.y, (int)dest.z);
+}
+static int pw_update(Player *m)
+{
+    if (!pw.on) return 0;
+    m->hvel = v3(0, 0, 0); m->vup = 0;
+    float p = 1.0f - (float)(pw.left - 1) / pw.n, a = 0.7853982f; /* updateJump */
+    m->pos = vadd(pw.centre, rot_axis(pw.start, pw.axis, -a * (1.0f - p) + a * p));
+    V3 f = vtangent(pw.dir, m->up);
+    if (vlen(f) > 1e-3f) m->face = vnorm(vadd(m->face, vmul(vsub(vnorm(f), m->face), 0.2f)));
+    if (pw.left-- > 0) return 1;
+    pw.on = 0; /* close */
+    m->grounded = 1; m->jumping = 0;
+    m_anim("しゃがみジャンプ着地");
+    printf("point warp: done at %d %d %d\n", (int)m->pos.x, (int)m->pos.y, (int)m->pos.z);
+    return 0;
+}
+
+static int sbp_moving(void) { return sbp.nrv == SBP_DASH || sbp.nrv == SBP_BACK; }
+static int sbp_demo(void) { return sbp.nrv >= SBP_DEMOPREPARE; }
+static void sbp_set(int n) { sbp.nrv = n; sbp.step = -1; }
+static int sbp_mine(int inst) { Inst *in = row_inst(sbp.row); return inst >= 0 && ((in && inst == (int)(in - insts)) || inst == sbp.ki); }
+static float sbp_dash_dist(void) { return sbp.child ? 5.0f : 10.0f; } /* sParam mDashDistance */
+static V3 sbp_side(void) { return vcross(sbp.up, sbp.F); }
+static int sbp_stopped(const Inst *in) { return !in || !in->anim || in->anim->done; } /* isBckStopped */
+static void sbp_bck(Inst *in, const char *c, int loop) { if (in) obj_play(in, c, loop, -1); }
+static V3 sbp_joint(const Inst *in, int j, V3 off) /* joint j's world place + off on it */
+{
+    if (in && in->anim && in->anim->skin && j < in->anim->skin->njoints) {
+        float jm[16];
+        mat_mul(jm, in->m, in->anim->world[j]);
+        return v3(jm[12] + jm[0] * off.x + jm[4] * off.y + jm[8] * off.z, jm[13] + jm[1] * off.x + jm[5] * off.y + jm[9] * off.z,
+                  jm[14] + jm[2] * off.x + jm[6] * off.y + jm[10] * off.z);
+    }
+    return vadd(sbp.pos, vmul(sbp.up, 150.0f));
+}
+static float sbp_angle(V3 a, V3 b) { float c = vdot(vnorm(a), vnorm(b)); return acosf(c > 1 ? 1 : c < -1 ? -1 : c) * 57.29578f; }
+static void sbp_clamp_front(void) /* clampVecAngleDeg(&_8C, _A4, _B0) */
+{
+    float ang = sbp_angle(sbp.F, sbp.A4);
+    if (ang <= 50.0f) return;
+    V3 ax = vcross(sbp.A4, sbp.F);
+    ax = vlen(ax) > 1e-6f ? vnorm(ax) : sbp.up;
+    sbp.F = rot_axis(sbp.A4, ax, 50.0f * 0.0174533f);
+}
+static int sbp_territory(void) /* isPlayerInTerritory(400, 200, 600, 200) */
+{
+    V3 v = vsub(mario->pos, sbp.pos);
+    if (vlen(v) >= 1200.0f + 400.0f) return 0;
+    if (fabsf(vdot(v, sbp.up)) > 600.0f || fabsf(vdot(v, sbp_side())) > 200.0f) return 0;
+    V3 apex = vsub(sbp.pos, vmul(sbp.A4, 200.0f / fabsf(sinf(50.0f * 0.0174533f))));
+    V3 w = vtangent(vsub(mario->pos, apex), sbp.up);
+    return vlen(w) > 1e-3f && sbp_angle(w, sbp.A4) <= 50.0f;
+}
+static void sbp_turn_to(V3 target, float deg) /* turnDirectionToTargetUseGroundNormalDegree */
+{
+    V3 t = vtangent(vsub(target, sbp.pos), sbp.up);
+    if (vlen(t) < 1e-3f) return;
+    float a = atan2f(vdot(vnorm(t), sbp_side()), vdot(vnorm(t), sbp.F)) * 57.29578f;
+    a = a > deg ? deg : a < -deg ? -deg : a;
+    sbp.F = rot_axis(sbp.F, sbp.up, -a * 0.0174533f);
+}
+static int sbp_on_player(void) { return mario->grounded && sbp_mine(mario_ground); } /* isOnPlayer(body) */
+static void sbp_collision(Inst *in)
+{
+    if (in) in->kcl = sbp.child && sbp.coll_on ? scene_kcl(sc, "StinkBugParent") : NULL;
+    if (sbp.ki >= 0 && sbp.ki < ninsts) insts[sbp.ki].kcl = !sbp.child && sbp.coll_on ? scene_kcl(sc, "StinkBugParent#Switch") : NULL;
+}
+
+static void update_sbp(void)
+{
+    if (sbp.row < 0 || sbp.dead) return;
+    Inst *in = row_inst(sbp.row);
+    if (!in) return;
+    if (sbp.nrv < 0) { /* init (StinkBugBase::init, StinkBugParent::init) */
+        V3 x, z;
+        row_axes(&sc->objs[sbp.row], &x, &z);
+        sbp.home = sbp.pos = row_pos(&sc->objs[sbp.row]);
+        sbp.up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+        sbp.F = sbp.A4 = vnorm(z);
+        sbp.child = 1; sbp.coll_on = 1; sbp.sensors_on = sbp.head_on = 1;
+        sbp_set(SBP_WAIT);
+        sbp.demo = -1; /* tryRegisterDemoCast: its demo (子連れカメムシデモ) */
+        for (int d = 0; d < ndemos; d++) for (int c = 0; c < demos[d].h->ncast; c++) if (demos[d].cast[c] == sbp.row) sbp.demo = d;
+        printf("stink bug parent %d: its demo %d\n", sbp.row, sbp.demo);
+    }
+    float old[16];
+    memcpy(old, in->m, sizeof old);
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), body = vadd(sbp.pos, vmul(sbp.up, 150.0f));
+    float dash = sbp.child ? 20.0f : 25.0f;
+    int panic = sbp.child ? 30 : 20;
+    /* receiveMsgPlayerAttack / receiveOtherMsg / attackSensor (the sensors before the nerve: the previous frame's place) */
+    if (sbp.nrv != SBP_HIPDROPDOWN && !sbp_demo()) {
+        if (hip_hit && sbp_mine(hip_inst)) { /* isMsgPlayerHipDropFloor */
+            V3 cc = sbp_joint(in, 17, v3(0, 0, 0)), d = vsub(mario->pos, cc); /* isHitChild */
+            if (!sbp.child) sbp_set(SBP_HIPDROPDOWN);
+            else if (vlen(vtangent(d, sbp.up)) <= 150.0f) sbp_set(SBP_DEMOPREPARE);
+        } else if (sbp.sensors_on && sbp.nrv != SBP_SPINREACTION && sbp.nrv != SBP_DASH && mario_offence(body, 250.0f, vmul(sbp.up, -1.0f)) == MSG_HITALL)
+            sbp_set(SBP_SPINREACTION); /* isMsgPlayerSpinAttack on body */
+        else if (sbp.nrv != SBP_PANIC && sbp.nrv != SBP_SHAKESTART && sbp.nrv != SBP_SHAKE && sbp_on_player())
+            sbp_set(SBP_PANIC); /* isMsgFloorTouch, isOnPlayer */
+        else if (sbp.nrv != SBP_ATTACK && sbp.sensors_on) {
+            if (sbp.head_on) { /* the head: isHitHorn(25), sendMsgEnemyAttackStrong */
+                V3 head = sbp_joint(in, 6, v3(0, -50.0f, 80.0f)), to = vsub(c, head);
+                if (vlen(to) < 160.0f + HIT_BODY_R && vdot(to, sbp.F) >= 0 && fabsf(vdot(sbp.up, to)) <= 25.0f + HIT_BODY_R &&
+                    !mario->hurt_timer && mario_attack(ATK_STRONG, head)) {
+                    printf("stink bug parent: head hits Mario\n");
+                    if (sbp.nrv != SBP_DASH) sbp_set(SBP_ATTACK);
+                }
+            }
+            if (sbp.nrv == SBP_SHAKE && sbp.step <= 25 && sbp_on_player() && mario->hip != HIP_FALL) /* isShakeChance */
+                mario_attack(ATK_FLIP, vsub(mario->pos, sbp.F)); /* sendMsgEnemyAttackFlipToDir(_8C) */
+        }
+    }
+    int st = ++sbp.step;
+    switch (sbp.nrv) {
+    case SBP_WAIT:
+        if (!st) { sbp_bck(in, "wait", 1); sbp.pos = sbp.home; }
+        sbp.vel = v3(0, 0, 0); sbp.pos = sbp.home; /* fixInitPos */
+        if (sbp_territory()) sbp_set(SBP_DASHSIGN);
+        else if (st > 1) sbp_set(SBP_SEARCH);
+        break;
+    case SBP_SEARCH:
+        if (!st) sbp_bck(in, sbp.child ? "search" : "angersearch", 1);
+        sbp.vel = v3(0, 0, 0); sbp.pos = sbp.home;
+        sbp.F = rot_axis(sbp.F, sbp.up, (sbp.turn ? -1.0f : 1.0f) * 0.0174533f); /* tryTurnSearch: about the gravity */
+        if (sbp_angle(sbp.F, sbp.A4) > 50.0f) { sbp_clamp_front(); sbp.turn = !sbp.turn; sbp_set(SBP_WAIT); }
+        else if (sbp_territory()) sbp_set(SBP_DASHSIGN);
+        break;
+    case SBP_DASHSIGN:
+        if (!st) { sbp_bck(in, "rushstart", 0); se_start(SE_EV_STINKBUG_L_FIND, &sbp.pos.x); }
+        sbp.lv = se_level(SE_EM_LV_STINKBUG_L_DASH_SIGN, &sbp.pos.x, sbp.lv);
+        sbp.vel = v3(0, 0, 0); sbp.pos = sbp.home;
+        sbp_turn_to(mario->pos, 3.0f); sbp_clamp_front(); /* tryTurnDashSign */
+        if (st > 0 && sbp_stopped(in)) sbp_set(SBP_DASHSIGNEND);
+        break;
+    case SBP_DASHSIGNEND:
+        if (st == 10) sbp_set(SBP_DASH);
+        break;
+    case SBP_DASH: {
+        if (!st) { sbp_bck(in, "rush", 1); sbp.sensors_on = sbp.head_on = 1; }
+        sbp.lv = se_level(SE_EM_LV_STINKBUG_L_DASH, &sbp.pos.x, sbp.lv);
+        if (vlen(vsub(sbp.pos, sbp.home)) >= 1200.0f || sbp.wall) { /* !isNear(_98, mRadius) || isBindedWall */
+            sbp.wall = 0;
+            sbp.vel = v3(0, 0, 0);
+            sbp_set(SBP_DASHEND);
+            se_start(SE_EM_STINKBUG_L_DASH_END, &sbp.pos.x);
+            printf("stink bug parent: dash ends\n");
+        } else { /* setDashVelocity */
+            float left = vlen(vsub(vadd(sbp.home, vmul(sbp.F, 1200.0f)), sbp.pos));
+            sbp.vel = vmul(sbp.F, left < dash ? left : dash);
+        }
+        break;
+    }
+    case SBP_DASHEND:
+        if (!st) sbp_bck(in, "rushstop", 0);
+        sbp.vel = v3(0, 0, 0);
+        if (st > 0 && sbp_stopped(in)) sbp_set(SBP_BACK);
+        break;
+    case SBP_BACK:
+        if (!st) { sbp_bck(in, "back", 1); sbp.head_on = 0; }
+        sbp.lv = se_level(SE_EM_LV_STINKBUG_L_BACK, &sbp.pos.x, sbp.lv);
+        if (vlen(vsub(sbp.pos, sbp.home)) < 2.0f * sbp_dash_dist()) sbp_set(SBP_WAIT);
+        else {
+            V3 a = vtangent(vnorm(vsub(sbp.home, sbp.pos)), sbp.up); /* turnVecToPlane */
+            sbp.vel = vmul(vlen(a) > 1e-6f ? vnorm(a) : a, sbp_dash_dist());
+        }
+        break;
+    case SBP_HIPDROPDOWN:
+        if (!st) {
+            sbp_bck(in, "death", 0);
+            sbp.coll_on = 0; sbp.sensors_on = 0;
+            se_start(SE_EM_STINKBUG_STOMPED_S, &sbp.pos.x); se_start(SE_EV_STINKBUG_L_STOMPED, &sbp.pos.x);
+            printf("stink bug parent: hip drop down\n");
+        }
+        sbp.vel = v3(0, 0, 0);
+        if (st > 0 && sbp_stopped(in)) { /* kill */
+            se_start(SE_EM_EXPLODE_S, &sbp.pos.x);
+            note_star_row = sbp.row; note_star_at = sbp.pos; /* requestAppearPowerStar(this, mPosition) */
+            row_kill(sbp.row);
+            sbp.dead = 1;
+            printf("stink bug parent: killed, its star\n");
+            return;
+        }
+        break;
+    case SBP_ATTACK:
+        if (!st) sbp_bck(in, "attack", 0);
+        sbp.vel = v3(0, 0, 0);
+        if (st > 0 && sbp_stopped(in)) sbp_set(SBP_BACK);
+        break;
+    case SBP_SPINREACTION:
+        if (!st) { sbp_bck(in, "spinaction", 0); se_start(SE_EM_GUARD_S, &sbp.pos.x); }
+        sbp.vel = v3(0, 0, 0);
+        if (st > 0 && sbp_stopped(in)) sbp_set(SBP_BACK);
+        break;
+    case SBP_PANIC:
+        if (!st) { sbp_bck(in, "loss", 1); sbp.head_on = 0; se_start(SE_EV_STINKBUG_L_PANIC, &sbp.pos.x); printf("stink bug parent: panic\n"); }
+        sbp.lv = se_level(SE_EM_LV_STINKBUG_L_PANIC, &sbp.pos.x, sbp.lv);
+        sbp.vel = v3(0, 0, 0);
+        if (!sbp_on_player()) sbp_set(SBP_RECOVER);
+        else if (st == panic) sbp_set(SBP_SHAKESTART);
+        break;
+    case SBP_RECOVER:
+        sbp.vel = v3(0, 0, 0);
+        sbp.lv = se_level(SE_EM_LV_STINKBUG_L_PANIC, &sbp.pos.x, sbp.lv);
+        if (st == 60) sbp_set(SBP_BACK);
+        break;
+    case SBP_SHAKESTART:
+        if (!st) sbp_bck(in, "repel", 0);
+        if (st == 40) sbp_set(SBP_SHAKE);
+        break;
+    case SBP_SHAKE:
+        if (sbp_stopped(in)) sbp_set(SBP_BACK);
+        break;
+    case SBP_DEMOPREPARE: /* tryStartDemoRegisteredMarioPuppetable */
+        if (sbp.demo >= 0 && !dx_busy() && dx_push(sbp.demo, 0)) sbp_set(SBP_DEMOCHILDDOWN);
+        else if (sbp.demo < 0) sbp_set(SBP_DEMOCHILDDOWN); /* no demo: on as if it ran */
+        break;
+    case SBP_DEMOCHILDDOWN:
+        if (!st) {
+            sbp_bck(in, "childdeath", 0);
+            se_start(SE_EV_STINKBUG_S_STOMPED, &sbp.pos.x); se_start(SE_EM_STINKBUG_STOMPED_S, &sbp.pos.x);
+            sbp.child = 0;
+            printf("stink bug parent: its child down\n");
+        }
+        if (st == 22) { /* jumpBackPlayerFromChild */
+            const float *gp = scene_gpos(SBP_POINT);
+            printf("stink bug parent: step 22, its point %s (%u names)\n", gp ? "found" : "missing", sc->ngpos);
+            if (gp) {
+                V3 p = v3(gp[0], gp[1], gp[2]), d = vsub(p, mario->pos);
+                m_point_warp(p, vlen(d) > 1e-6f ? vmul(vnorm(d), -1.0f) : mario->face, 0);
+            }
+        }
+        if (st == 48) se_start(SE_EM_EXPLODE_S, &sbp.pos.x);
+        if (st == 65) se_start(SE_EV_STINKBUG_L_SURPRISE, &sbp.pos.x);
+        sbp.vel = v3(0, 0, 0);
+        break;
+    case SBP_DEMOANGER:
+        if (!st) {
+            const float *gp = scene_gpos(SBP_POINT);
+            sbp_bck(in, "anger", 0);
+            sbp.pos = sbp.home;
+            if (gp) { /* setPlayerPosAndWait, turnDirectionToTargetUseGroundNormalDegree(180) */
+                pw.on = 0;
+                mario->pos = v3(gp[0], gp[1], gp[2]); mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 1;
+                sbp_turn_to(mario->pos, 180.0f);
+            }
+            printf("stink bug parent: anger\n");
+        }
+        sbp.lv = se_level(SE_EV_LV_STINKBUG_L_ANGRY, &sbp.pos.x, sbp.lv);
+        sbp.lv2 = se_level(SE_EM_LV_STINKBUG_L_ANGRY, &sbp.pos.x, sbp.lv2);
+        if (st > 0 && sbp_stopped(in)) { /* appearStarPieceToDirection(8, 25, 40) */
+            V3 at = vadd(sbp.pos, vmul(sbp.F, 200.0f)), dir = vnorm(vadd(sbp.F, sbp.up));
+            launch_pieces(at, dir, 8, 25.0f, 40.0f);
+            se_start(SE_OJ_STAR_PIECE_BURST_F, &at.x);
+            sbp.sensors_on = sbp.head_on = 1;
+            sbp_set(SBP_WAIT);
+            se_start(SE_EM_STINKBUG_L_ANGRY_END, &sbp.pos.x);
+        }
+        break;
+    }
+    if (sbp_moving()) { /* control: onBind, its velocity along the ground plus 2 of gravity; its binder (300) */
+        sbp.vel = vtangent(sbp.vel, sbp.up);
+        sbp.vel = vsub(sbp.vel, vmul(sbp.up, 2.0f));
+        V3 center = vadd(vadd(sbp.pos, sbp.vel), vmul(sbp.up, 300.0f)), gn, wn;
+        int wall = 0, keep = kcl_off_row;
+        kcl_off_row = sbp.row; /* setBinderExceptActor */
+        collide_n(&center, sbp.up, 300.0f, &gn, &wn, &wall);
+        kcl_off_row = keep;
+        sbp.pos = vsub(center, vmul(sbp.up, 300.0f));
+        sbp.wall = wall && sbp.nrv == SBP_DASH;
+    }
+    basis_matrix(in->m, sbp.pos, sbp.up, sbp.F, 0); /* calcMtxFromGravityAndZAxis */
+    sbp_bva_row = sbp.child ? -1 : sbp.row;
+    if (sbp.ki >= 0 && sbp.ki < ninsts) memcpy(insts[sbp.ki].m, in->m, 64);
+    sbp_collision(in);
+    if (sbp_mine(mario_ground)) carry(old, in);
+}
+
+static void sbp_damage_action(void) { if (sbp.row >= 0 && sbp_demo()) sbp_set(SBP_DEMOANGER); } /* registerDemoActionNerve ダメージ中 */
+
+int game_test_sbp(void) /* HoneyBeeKingdom 2's StinkBugParent: Mario in front (a dash), then over its child in a hip
+                         * drop (the demo, his flight back, its anger), then on its back in a hip drop: its star */
+{
+    test_nolost = 1;
+    if (sbp.row < 0) return -1;
+    if (sbp.dead) return -3;
+    static int phase, t;
+    t++;
+    V3 over = vadd(sbp_joint(row_inst(sbp.row), 17, v3(0, 0, 0)), vmul(sbp.up, 300.0f));
+    if (phase == 0) { /* 900 ahead of it */
+        if (t < 30) { mario->pos = vadd(sbp.home, vmul(sbp.A4, 900.0f)); mario->up = sbp.up; mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+        if (sbp.nrv == SBP_BACK || t > 600) { phase = 1; t = 0; }
+    } else if (phase == 1 || phase == 3) { /* over the child / its back, then a hip drop */
+        if (sbp.nrv == SBP_DASHSIGN && sbp.step < 2) t = 0; /* it stands at home: over it */
+        if (t < 2) { mario->pos = over; mario->up = sbp.up; mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0; mario->hip = HIP_FALL; mario->hip_t = 0; }
+        if (phase == 1 && sbp_demo()) { phase = 2; t = 0; }
+        if (t > 200) t = 0;
+    } else if (phase == 2 && sbp.nrv == SBP_WAIT) { phase = 3; t = 0; }
+    return phase * 1000 + sbp.nrv;
+}
+
 static int bsb_mine(int inst) { return inst >= 0 && (inst == bsb.ki[0] || inst == bsb.ki[1] || inst == bsb.ki[2]); }
 static void update_bsb_bombs(void)
 {
@@ -44365,7 +44733,9 @@ void game_update(void)
     LQ(34, update_kgunners());
     LQ(35, update_orocks());
     LQ(36, update_hhps());
-    LQ(37, update_vines(); update_creepers());
+    LQ(37, update_vines());
+    if (dx_cls_moves("Creeper")) update_creepers();
+    if (dx_cls_moves("StinkBugParent")) update_sbp(); /* a cast of its demo */
     LQ(38, update_ibubbles());
     LQ(39, update_meteor());
     LQ(40, update_killers());
@@ -44529,6 +44899,9 @@ static void inst_draw(const Inst *in, const Model *md, const float m[16])
         if (fm && fm->skin && in->anim) { use_row_light(in->row, v3(m[12], m[13], m[14]), LIGHT_STRONG); draw_skin(fm, m, in->anim); fat_goods_draw(in, m); return; }
     }
     use_row_light(in->row, v3(m[12], m[13], m[14]), md->skin ? LIGHT_STRONG : LIGHT_PLANET);
+    if (in->row == sbp_bva_row && in->anim && !strstr(sc->clips[in->anim->clip_id >= 0 ? in->anim->clip_id : 0].name, "childdeath")) {
+        bva_key = "stinkbugparent/childdeath"; bva_frame = 1e9f; /* startBva ChildDeath: its last frame kept */
+    }
     if (md->skin) { if (in->anim && md == in->md) { draw_skin(md, m, in->anim); if (in->talkcls == 11) shop_goods_draw(in, m); } }
     else render_model(md, m, 0x70, 0xB0, 0x60);
 }
