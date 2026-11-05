@@ -718,6 +718,17 @@ there needs the embedded blob and every pack rebuilt.
   low: a low zone's base-pack pieces gave zone_kcl without its planets) and has collision; KuriboChief's own kcl_query
   guard dropped. kchief (HeavensDoor 1) lands and is spun; route EggStar 1 star f 4135.
 
+- BossBegoman (feat/191-boss-begoman, 2026-11-05): BattleShipGalaxy 3 / 4's ElectricUfoZone boss after Petari
+  (game.c bbego_update, walker kind WALK_BBEGO, its 23 nerves; BossBegomanHead's 8 as hd_*): PreDemoWait, the
+  ボスベーゴマン登場 demo (FirstContactDemo, the "OpeningDemo" anim camera, stopStageBGM(60)), Ready (MBGM_BOSS_01_A,
+  Recover), the head's switch (trample: OnWeak 420 with its alarms; spin while weak: Blow into an electric rail:
+  ElectricDeath, star pieces 8 / 16, JumpToInitPos), its followers (5 Kuribo slots after its own, `host`: 3
+  BegomanBaby, 2 BegomanSpike from its last life, launched with BG_LAUNCH), the power star at its place. Test:
+  `begoman` build with XF="-DBBEGO_TEST", BattleShipGalaxy/3: demo, 3 electric hits, dead, `power star 1 got`.
+  Packs: slice.py EXTRA BossBegoman (its head, the followers' models), SKINNED_OBJ BossBegomanHead, declare_stars
+  BossBegoman. ponytail: the head's BRKs, ROT_NEEDLE's volume, overlayWithPreviousScreen, the boss's
+  sendMsgEnemyAttack to walkers other than Begomans.
+
 ## Next
 
 **In-engine demos (the user, 2026-10-17: "haz las dos cosas, primero los videos": the movies are done (3feb30f), now

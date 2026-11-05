@@ -64,7 +64,8 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
     u32 lv2[2]; int lvt[3]; float lva[2]; /* Unizo: its land / wall-hit level sounds (kept 30 frames: frames left, levelA), the roll's sRollSoundTime */
     u32 lv; /* its level sound's handle (se_level) */
     u8 clipped; /* out of the view at the last draw (ClippingJudge: LiveActor::startClipped stops its movement) */
-    u8 nograv; /* Kuribo _C4 (arg0 set): offCalcGravity, its gravity its rotation's up */ } Kuribo; /* walking
+    u8 nograv; /* Kuribo _C4 (arg0 set): offCalcGravity, its gravity its rotation's up */
+    short host; /* a BossBegoman follower (initWithoutIter: no placement of its own; its row the boss's): the boss's slot + 1 */ } Kuribo; /* walking
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
 /* KuriboChief's / ExterminationChecker's KeySwitch (okeys), the ExterminationKuriboKeySwitch checkers (exts) */
@@ -74,15 +75,16 @@ static struct { int on, owner, nrv, step, demo; V3 pos, vel, up; float rate, t; 
 static struct { int row, nrv, step; V3 last; } exts[MAX_EXTS];
 static int nexts;
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
-       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU, WALK_BOMBHEI, WALK_STRSPIDER, WALK_BEGOSPIKE, WALK_KCHIEF, WALK_BEGOBABY, WALK_KINDS };
+       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU, WALK_BOMBHEI, WALK_STRSPIDER, WALK_BEGOSPIKE, WALK_KCHIEF, WALK_BEGOBABY, WALK_BBEGO, WALK_KINDS };
 /* walkers ported in the release push: their classes (counted, placed and drawn through this table) */
 static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}, {"BasaBasa", WALK_BASABASA}, {"BasaBasaIce", WALK_BASABASA}, {"Jellyfish", WALK_JELLYFISH},
                                                                     {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}, {"Mogu", WALK_MOGU}, {"Mogucchi", WALK_MOGUCCHI}, {"Metbo", WALK_METBO}, {"TeresaWater", WALK_TERESAW},
                                                                     {"Snakehead", WALK_SNAKEHEAD}, {"SnakeheadSmall", WALK_SNAKEHEAD}, {"Kabokuri", WALK_KABOKURI}, {"Pukupuku", WALK_PUKUPUKU},
                                                                     {"BombHei", WALK_BOMBHEI}, {"BombHeiLauncher", WALK_BOMBHEI}, {"BombLauncher", WALK_BOMBHEI},
                                                                     {"StringSpider", WALK_STRSPIDER}, {"BegomanSpike", WALK_BEGOSPIKE},
-                                                                    {"KuriboChief", WALK_KCHIEF}, {"ChildKuribo", WALK_KURIBO}, {"BegomanBaby", WALK_BEGOBABY}}; /* ChildKuribo: createNoItemKuriboActor */
+                                                                    {"KuriboChief", WALK_KCHIEF}, {"ChildKuribo", WALK_KURIBO}, {"BegomanBaby", WALK_BEGOBABY}, {"BossBegoman", WALK_BBEGO}}; /* ChildKuribo: createNoItemKuriboActor */
 #define NEW_WALKERS ((int)(sizeof new_walkers / sizeof new_walkers[0]))
+#define BB_FOLLOWERS 5 /* BossBegoman: mBabyFollowerNum 3, mSpikeFollowerNum 2 (the slots after its own) */
 static const Model *m_wnew[NEW_WALKERS];
 static int walker_new_kind(const char *cls)
 {
@@ -2369,6 +2371,7 @@ void game_init(const Scene *s, const unsigned char *blob)
               count_type("KuriboMini", 0) + count_type("Karon", 0) +
               count_type("Teresa", 0) + count_type("Butterfly", 0);
     for (int i = 0; i < NEW_WALKERS; i++) nkuribo += count_type(new_walkers[i].cls, 0);
+    nkuribo += BB_FOLLOWERS * count_type("BossBegoman", 0); /* its followers (3 BegomanBaby, 2 BegomanSpike) */
     int ntspots = count_type("TreasureSpot", 0) + count_type("CoinFlower", 0); /* a coin each when shot */
     for (u32 i = 0, tb = scene_type(s, "ItemBubble"); i < s->nobjs; i++) /* ItemBubble's coins (arg0 0, arg1 of them) */
         if (s->objs[i].type == (int)tb && s->objs[i].arg[0] <= 0) ntspots += s->objs[i].arg[1] > 1 ? s->objs[i].arg[1] : 1;
@@ -2442,6 +2445,13 @@ void game_init(const Scene *s, const unsigned char *blob)
             kuribo[ik].row = i;
             kuribo[ik].up = up_at(kuribo[ik].pos, v3(0, 1, 0));
             kuribo[ik++].state = KURIBO_WALK;
+            for (int f = 0, boss = ik - 1; kuribo[boss].kind == WALK_BBEGO && f < BB_FOLLOWERS; f++) { /* BossBegoman::init: its followers, makeActorDead */
+                memset(&kuribo[ik], 0, sizeof(Kuribo));
+                kuribo[ik].kind = f < 3 ? WALK_BEGOBABY : WALK_BEGOSPIKE;
+                kuribo[ik].pos = kuribo[boss].pos; kuribo[ik].up = kuribo[boss].up;
+                kuribo[ik].row = i; kuribo[ik].host = (short)(boss + 1);
+                kuribo[ik++].state = KURIBO_DEAD;
+            }
         } else if (r->type == t_circle || r->type == t_rail)
             ip += coin_group(purple + ip, r, blob);
         else if (r->type == t_gcircle || r->type == t_grail)
@@ -20618,10 +20628,11 @@ static void poihana_update(Kuribo *k, V3 to, float d) /* to: unused, Mario is th
  * literally. setNerve: step -1, so the next frame runs the new nerve at step 0 ---- */
 static void w_nrv(Kuribo *k, int n) { k->nrv = n; k->step = -1; }
 static void w_snrv(Kuribo *k, int n) { k->snrv = n; k->sstep = -1; }
-static const char *walker_cls(const Kuribo *k) { return sc->types + 32 * sc->objs[k->row].type; }
+static const char *walker_cls(const Kuribo *k) { return k->host ? (k->kind == WALK_BEGOBABY ? "BegomanBaby" : "BegomanSpike") : sc->types + 32 * sc->objs[k->row].type; }
+static int w_akey(const Kuribo *k); /* its obj_anim key */
 /* the class whose clips a walker plays: a launcher's bomb is a BombHei */
 static const char *walker_acls(const Kuribo *k) { return k->kind == WALK_BOMBHEI ? "BombHei" : walker_cls(k); }
-static float w_scale(const Kuribo *k) { return sc->objs[k->row].scale[1]; }
+static float w_scale(const Kuribo *k) { return k->host ? 1.0f : sc->objs[k->row].scale[1]; }
 
 /* MR::startAction: its clip from frame 0, looping as its BCK says (anim_start in the draw) */
 static void w_act(Kuribo *k, const char *name)
@@ -22273,7 +22284,7 @@ static Anim *obj_anim(int row, const Model *md, const char *cls);
 static V3 w_joint(Kuribo *k, const Model *md, int j, V3 off)
 {
     V3 p = k->pos;
-    Anim *an = md && md->skin ? obj_anim(k->row, md, walker_cls(k)) : NULL;
+    Anim *an = md && md->skin ? obj_anim(w_akey(k), md, walker_cls(k)) : NULL;
     if (!an || an->skin != md->skin || j >= an->skin->njoints) return vadd(p, vmul(k->qy, 70.0f));
     const float *w = an->world[j], *sc3 = sc->objs[k->row].scale;
     V3 l = v3(w[0] * off.x + w[4] * off.y + w[8] * off.z + w[12], w[1] * off.x + w[5] * off.y + w[9] * off.z + w[13],
@@ -23555,8 +23566,10 @@ static int bg_blown(const Kuribo *k);
 static int th_punch(Kuribo *k, V3 from);
 static int kb_blow(Kuribo *k, V3 from);
 static int kc_stagger(Kuribo *k, V3 from);
+static int bb_enemy_hit(Kuribo *k, V3 from, float r);
 static int walker_blow(Kuribo *e, V3 from)
 {
+    if (e->kind == WALK_BBEGO) return bb_enemy_hit(e, from, 60.0f); /* receiveMsgEnemyAttack: an enemy's sensor rebounds it */
     if (e->kind == WALK_STRSPIDER) { if (ss_down(e)) return 0; ss_blow(e, from); return 1; } /* isMsgExplosionAttack: Blow */
     if (e->kind == WALK_BEGOSPIKE || e->kind == WALK_BEGOBABY) { if (bg_blown(e)) return 0; e->item = 1; bg_blow(e, from, 35.0f, 15.0f); return 1; } /* isMsgExplosionAttack: calcBlowReaction */
     if (e->kind == WALK_KCHIEF) return kc_stagger(e, from); /* isMsgToEnemyAttackBlow / ShockWave: requestStagger */
@@ -25611,15 +25624,23 @@ int game_strspider_state(void) /* the first live StringSpider's nerve (SS_*), it
  * Placed rows only. ponytail: appearFromLaunch / appearFromGuarder (BegomanBabyLauncher, BossBegoman's followers) not
  * ported, no fire floor death (isBindedGroundDamageFire), no star pointer bind */
 enum { BG_NOCALCWAIT, BG_WAIT, BG_SIGNATTACK, BG_PURSUE, BG_TURN, BG_BRAKE, BG_STEPBACK, BG_RETURN, BG_PROVOKE,
-       BG_TRAMPLEREACTION, BG_HITREACTION, BG_TIRED, BG_BLOW, BG_ELECTRICDEATH, BG_BROKENPIECE, BG_INWATER, BG_KEEPDISTANCE };
+       BG_TRAMPLEREACTION, BG_HITREACTION, BG_TIRED, BG_BLOW, BG_ELECTRICDEATH, BG_BROKENPIECE, BG_INWATER, BG_KEEPDISTANCE,
+       BG_LAUNCH /* a BossBegoman follower: Launch / LaunchFromGuarder (BegomanBase::exeLaunch) */ };
+enum { BBG_PREDEMOWAIT, BBG_FIRSTCONTACTDEMO, BBG_READY, BBG_NOCALCWAIT, BBG_WAIT, BBG_SIGNATTACK, BBG_PURSUE, BBG_TURN, BBG_ONWEAK, BBG_ONWEAKTURN,
+       BBG_BRAKE, BBG_STEPBACK, BBG_STEPBACKONWEAK, BBG_RETURN, BBG_PROVOKE, BBG_TRAMPLEREACTION, BBG_AWARE, BBG_HITREACTION, BBG_BLOW,
+       BBG_ELECTRICDEATH, BBG_ELECTRICRETURN, BBG_JUMPTOINITPOS, BBG_KEEPDISTANCE }; /* NrvBossBegoman */
 /* walker fields: front mFaceVec, ttarget mTargetVec, tcenter mInitPos, qy / qz _C0, to mRotation.y, from Locator1's
  * angle (_D0), lvt[0] mTiredCounter, lvt[1] mElectricCounter, lvt[2] mIsTouchElectricRail, dir mInvertSideVec, phase
  * mCanTrySetReturn, bshow mTurnAfterBlow, bvel _A8 (last gravity) */
 static struct { int nrv, step, asked; int who; float dist; } bg_permit = {0, 0, 0, -1, 99999.0f}; /* BegomanAttackPermitter */
-static int bg_request(Kuribo *k) /* requestAttack (getKind 1) */
+static int bg_swa_off(const Kuribo *k) /* isValidSwitchA && !isOnSwitchA (a follower has none) */
 {
     const Row *r = &sc->objs[k->row];
-    if (r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) return 0;
+    return !k->host && r->sw[SW_A] >= 0 && !sw_on(r, SW_A);
+}
+static int bg_request(Kuribo *k) /* requestAttack (getKind 1) */
+{
+    if (bg_swa_off(k)) return 0;
     bg_permit.asked = 1;
     float d = vlen(vsub(mario->pos, k->pos));
     if (bg_permit.nrv != 2) {
@@ -25641,9 +25662,12 @@ static void bg_rotate(Kuribo *k, float target, float tol) /* updateRotateY */
 {
     k->to = target - k->to > 0 ? fminf(k->to + tol, target) : fmaxf(k->to - tol, target);
 }
-static float bg_r(const Kuribo *k) { return k->kind == WALK_BEGOBABY ? 40.0f : 70.0f; } /* initSensor's radius (Baby 40, Spike 70) */
+static float bb_body_r(const Kuribo *k);
+static V3 bb_center(Kuribo *k);
+static float bg_r(const Kuribo *k) { return k->kind == WALK_BBEGO ? bb_body_r(k) : k->kind == WALK_BEGOBABY ? 40.0f : 70.0f; } /* initSensor's radius (Baby 40, Spike 70, BossBegoman 190) */
 static V3 bg_center(const Kuribo *k) /* its sensors' joint: Spike's Center (ponytail: 70 x scale up its Y), Baby's Locator1 (its root) */
 {
+    if (k->kind == WALK_BBEGO) return bb_center((Kuribo *)k); /* its Center joint */
     return k->kind == WALK_BEGOBABY ? k->pos : vadd(k->pos, vmul(k->qy, 70.0f * w_scale(k)));
 }
 static V3 bg_body(const Kuribo *k) { return vadd(bg_center(k), vmul(k->qy, 0.5f * bg_r(k) * w_scale(k))); } /* body: (0, 0.5 r, 0) */
@@ -25671,7 +25695,7 @@ static int bg_touch_rail(V3 c, float r, V3 *at, V3 *dir)
 }
 static int bg_fall_next(const Kuribo *k) /* isFallNextMove(150, 150): along its velocity, else its face */
 {
-    float up = 100.0f * w_scale(k) * 2.0f;
+    float up = (k->kind == WALK_BBEGO ? 160.0f : 100.0f) * w_scale(k) * 2.0f; /* getBinderRadius x scale x 2 */
     V3 f = vtangent(k->vel, k->grav);
     if (vlen(f) < 1e-3f) f = vtangent(k->front, k->grav);
     if (vlen(f) < 1e-6f) return 0;
@@ -25680,8 +25704,7 @@ static int bg_fall_next(const Kuribo *k) /* isFallNextMove(150, 150): along its 
 }
 static int bg_return(Kuribo *k) /* trySetReturnNerve */
 {
-    const Row *r = &sc->objs[k->row];
-    if (r->sw[SW_A] >= 0 && !sw_on(r, SW_A) && k->phase) { w_nrv(k, BG_RETURN); return 1; }
+    if (bg_swa_off(k) && k->phase) { w_nrv(k, k->kind == WALK_BBEGO ? BBG_RETURN : BG_RETURN); return 1; } /* setNerveReturn */
     return 0;
 }
 static int bg_near_init(const Kuribo *k) { V3 d = vsub(k->tcenter, k->pos); return vdot(d, d) < 40000.0f; }
@@ -25765,8 +25788,10 @@ static void bg_blow(Kuribo *k, V3 from, float h, float v) /* calcBlowReaction / 
 static void bg_kill(Kuribo *k)
 {
     const Row *r = &sc->objs[k->row];
+    k->state = KURIBO_DEAD;
+    if (k->host) { printf("begoman follower %d dead\n", (int)(k - kuribo)); return; } /* initWithoutIter: no dead switch */
     if (r->sw[SW_DEAD] >= 0) sw_set((Row *)r, SW_DEAD, 1);
-    k->state = KURIBO_DEAD; row_kill(k->row);
+    row_kill(k->row);
     printf("begoman spike row %d dead\n", k->row);
 }
 static void baby_kill(Kuribo *k) /* BegomanBaby::kill: Death, EXPLODE_S */
@@ -25784,7 +25809,7 @@ static void baby_kill_item(Kuribo *k) /* killWithGenItem: 3 star pieces (a star 
     baby_kill(k);
 }
 static int bg_blown(const Kuribo *k) { return k->nrv == BG_BLOW; }
-static int bg_down(const Kuribo *k) { return k->nrv == BG_BLOW || k->nrv == BG_ELECTRICDEATH || k->nrv == BG_BROKENPIECE || k->nrv == BG_INWATER; }
+static int bg_down(const Kuribo *k) { return k->nrv == BG_BLOW || k->nrv == BG_ELECTRICDEATH || k->nrv == BG_BROKENPIECE || k->nrv == BG_INWATER || k->nrv == BG_LAUNCH; }
 static void begospike_update(Kuribo *k)
 {
     const Row *r = &sc->objs[k->row];
@@ -25795,7 +25820,7 @@ static void begospike_update(Kuribo *k)
         w_nrv(k, BG_WAIT);
         if (!baby) w_se(k, SE_EM_BEGOMAN_APPEAR);
     }
-    if (!baby && k->nrv != BG_BROKENPIECE && r->sw[SW_B] >= 0 && sw_on(r, SW_B)) w_nrv(k, BG_BROKENPIECE); /* onSwitchB (Spike's) */
+    if (!baby && !k->host && k->nrv != BG_BROKENPIECE && r->sw[SW_B] >= 0 && sw_on(r, SW_B)) w_nrv(k, BG_BROKENPIECE); /* onSwitchB (Spike's) */
     if (k->nrv != BG_NOCALCWAIT) k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f);
     float s = w_scale(k), near = vlen(vsub(mario->pos, k->pos)), br = bg_r(k);
     V3 body = bg_body(k), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -25864,7 +25889,7 @@ static void begospike_update(Kuribo *k)
     case BG_NOCALCWAIT:
         if (st == 0) k->bind_off = 1;
         bg_rotate(k, 0.15f, 0.5f); k->vel = v3(0, 0, 0);
-        if (near < 1000.0f && (r->sw[SW_A] < 0 || sw_on(r, SW_A))) { k->bind_off = 0; w_nrv(k, BG_WAIT); }
+        if (near < 1000.0f && !bg_swa_off(k)) { k->bind_off = 0; w_nrv(k, BG_WAIT); }
         break;
     case BG_WAIT:
         bg_rotate(k, 0.15f, 0.5f);
@@ -25873,7 +25898,7 @@ static void begospike_update(Kuribo *k)
         bg_move(k, tgt, 0.0f, 3.0f, 0.95f, 1.0f); bg_rebound(k, 0); /* hWaitParam */
         if (!bg_near_init(k) && bg_return(k)) break;
         if (near < 1000.0f) {
-            if (r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) break;
+            if (bg_swa_off(k)) break;
             if (bg_fall_next(k)) break;
             V3 at;
             if (!bg_touch_rail(bg_check(k), br * s, &at, NULL)) { w_nrv(k, bg_request(k) ? BG_SIGNATTACK : BG_KEEPDISTANCE); break; }
@@ -26007,6 +26032,10 @@ static void begospike_update(Kuribo *k)
         if (st == 0) { k->vel = vadd(k->vel, k->grav); if (vlen(k->vel) > 1e-6f) k->vel = vmul(vnorm(k->vel), 10.0f); w_se(k, SE_EM_FALL_INTO_WATER_S); } /* sIsInWaterVel */
         if (st > 60) { bg_fx(k, "DeathWater", k->pos); w_se(k, SE_EM_BEGOMAN_DEAD_IN_WATER); if (baby) baby_kill_item(k); else bg_kill(k); return; } /* sIsInWaterTime */
         break;
+    case BG_LAUNCH: /* exeLaunch: invalidateHitSensors, applyVelocityDampAndGravity(0.98, 0.98, 0.98, 0.98, 1), Wait on the ground */
+        js_damp(k, 0.98f, 0.98f, 0.98f, 0.98f, 0.0f);
+        if (k->on_ground) w_nrv(k, BG_WAIT);
+        break;
     case BG_KEEPDISTANCE: {
         bg_rotate(k, 0.2f, 0.5f);
         if (st == 0) w_act(k, "Brake");
@@ -26031,7 +26060,7 @@ static void begospike_update(Kuribo *k)
     /* control() */
     if (k->nrv == BG_PURSUE || k->nrv == BG_TURN) { if (k->lvt[0] < 180) k->lvt[0]++; if (k->lvt[0] == 180) w_nrv(k, BG_TIRED); }
     else if (k->nrv != BG_BROKENPIECE) k->lvt[0] = 0;
-    if (k->nrv != BG_ELECTRICDEATH && k->nrv != BG_BROKENPIECE) { /* checkTouchElectricRail */
+    if (k->nrv != BG_ELECTRICDEATH && k->nrv != BG_BROKENPIECE && k->nrv != BG_LAUNCH) { /* checkTouchElectricRail (Launch: its sensors off) */
         V3 at, dir;
         int after_blow = k->nrv == BG_BLOW || (k->nrv == BG_TURN && k->bshow);
         if (!after_blow && bg_touch_rail(bg_center(k), 2.0f * br * s, &at, &dir)) { /* pushed_rail (Spike 140, Baby 80) */
@@ -26105,6 +26134,591 @@ int game_begoman_state(void)
             return kuribo[i].nrv;
         }
     return -1;
+}
+
+/* BossBegoman.cpp / BossBegomanHead.cpp after Petari (walker kind WALK_BBEGO, BattleShipGalaxy 3 / 4's ElectricUfoZone):
+ * BegomanBase's nerves with the boss's values (the bg_* helpers; sensors at its Center joint: body 190, 160 while
+ * weak, trample 180, check 190, pushed_rail 250; binder 160). PreDemoWait (offBind, spinning in the air) until its
+ * opening demo (ボスベーゴマン登場's 登場: FirstContactDemo, OpeningDemo and its "OpeningDemo" anim camera,
+ * stopStageBGM(60)), Ready (startBossBGM(Begoman), Recover: at 55 the head's edge out, the followers launched).
+ * Its head (BossBegomanHead, a PartsModel at the Center joint facing its target; Edge turned mAngle) has the switch:
+ * a trample (or hip drop: an away jump) pushes it (TrampleReaction: HopEnd, 80 frames, OnWeak 420: Shake, away
+ * from Mario within 600, alarms at 240 / 360, then Aware: Recover). While the edge is in a spin blows it (Blow 40 /
+ * 40); else a spin by its side burns Mario (EnemyAttackFire, Provoke), its body burns him by its side (HitReaction)
+ * or flips him. Blown (or turning after it while weak) into an electric rail: ElectricDeath (60; at 30 star pieces 8,
+ * then 16), its life (3) down, JumpToInitPos (a 700 high parabola, 60), SignAttack and new followers; at 0 dead:
+ * the power star at its place, startAfterBossBGM. Followers (arg7 -1: 3 BegomanBaby, else 2 BegomanSpike; Spikes
+ * from its last life) launched around it (100 off, 10 / 15 or 20 up) when all are dead; it attacks only then.
+ * ponytail: the head's BRKs (OffWait / OnWait / SignWait / Damage: one BRKC a model), the shadow's edge scale,
+ * ROT_NEEDLE's volume by speed, overlayWithPreviousScreen, its sendMsgEnemyAttack to walkers other than Begomans */
+static struct {
+    int hnrv, hstep, hseq, hdrawn; float hang; /* BossBegomanHead: nerve, step, its clip (started / drawn), mAngle */
+    float r150; int life, fkind, nobody;        /* _150, mHealth, mFollowerKind (0 Baby, 1 Spike), body invalidated */
+    V3 p0, py, pz; float pa, pv, pl;            /* mPath: ParabolicPath's mPosition, mAxisY, mAxisZ, _24, _28, _2C */
+    int cam;                                    /* the OpeningDemo camera's frame, -1 none */
+} bb;
+enum { HD_DEMOWAIT, HD_OPENINGDEMO, HD_ONWAIT, HD_OFFWAIT, HD_SWITCHON, HD_SWITCHOFF, HD_TURN, HD_TURNEND };
+static const char *const hd_clip[] = {"demowait", "openingdemo", "onwait", "offwait", "on", "off", "turn", "turnend"};
+static void hd_set(int n) { bb.hnrv = n; bb.hstep = -1; }
+static int hd_switch_on(void) { return bb.hnrv == HD_DEMOWAIT || bb.hnrv == HD_OPENINGDEMO || bb.hnrv == HD_ONWAIT || bb.hnrv == HD_SWITCHON; }
+static int hd_edge_out(void) { return bb.hnrv == HD_OFFWAIT || bb.hnrv == HD_SWITCHOFF || bb.hnrv == HD_TURN || bb.hnrv == HD_TURNEND; }
+static void hd_update(void) /* its nerves (setNerveAtBckStopped: its clip's frames) */
+{
+    int st = ++bb.hstep, mode;
+    char n[48];
+    if (st == 0) bb.hseq++; /* startAction */
+    snprintf(n, sizeof n, "bossbegomanhead/%s", hd_clip[bb.hnrv]);
+    int end = st >= anim_clip_info(n, &mode);
+    switch (bb.hnrv) {
+    case HD_OFFWAIT: bb.hang -= 0.23f; break; /* hSpikeRotate */
+    case HD_SWITCHON: if (end) hd_set(HD_ONWAIT); break;
+    case HD_SWITCHOFF: if (end) hd_set(HD_OFFWAIT); break;
+    case HD_TURN: bb.hang -= 0.2f; break; /* hSpikeRotateTurn */
+    case HD_TURNEND: bb.hang -= 0.23f; if (end) hd_set(HD_OFFWAIT); break;
+    }
+}
+static float bb_body_r(const Kuribo *k) { return k->nrv == BBG_ONWEAK || k->nrv == BBG_ONWEAKTURN ? 160.0f : 190.0f; } /* control */
+static V3 bb_center(Kuribo *k) { return w_joint(k, walker_new_model(k->row), 1, v3(0, 0, 0)); } /* the Center joint */
+static int w_akey(const Kuribo *k) { return k->host ? (int)sc->nobjs * 3 + (int)(k - kuribo) : k->row; }
+static int bb_followers_dead(const Kuribo *k) /* isDeadAllFollower (of its current kind) */
+{
+    for (int f = bb.fkind ? 3 : 0; f < (bb.fkind ? BB_FOLLOWERS : 3); f++)
+        if (k[1 + f].state != KURIBO_DEAD) return 0;
+    return 1;
+}
+static void bb_kill_followers(Kuribo *k, int kind) /* killAllFollower: 0 Baby, 1 Spike, 2 both (emitEffect Death, kill) */
+{
+    for (int f = 0; f < BB_FOLLOWERS; f++) {
+        Kuribo *e = k + 1 + f;
+        if (e->state == KURIBO_DEAD || (kind == 0 && f >= 3) || (kind == 1 && f < 3)) continue;
+        bg_fx(e, "Death", e->pos);
+        if (f < 3) baby_kill(e); else bg_kill(e); /* BegomanBaby::kill: Death, EXPLODE_S */
+    }
+}
+static void bb_launch(Kuribo *k) /* tryLaunchFollower: launchBegomanBabyFromGuarder / launchBegoman (launchBegomanCore) */
+{
+    if (!bb_followers_dead(k)) return;
+    V3 v = vtangent(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), k->pos), k->grav);
+    v = vlen(v) > 1e-6f ? vnorm(v) : k->front;
+    V3 side = vcross(k->grav, v), fr = vcross(side, k->grav);
+    int n = bb.fkind ? 2 : 3, f0 = bb.fkind ? 3 : 0;
+    float ang = 0.0f, vv = bb.fkind ? 20.0f : 15.0f; /* sBabyLaunchVelV 15, hSpikeLaunchVelV 20; VelH 10 */
+    for (int i = 0; i < n; i++) {
+        Kuribo *e = k + 1 + f0 + i;
+        V3 d = vadd(vmul(side, cosf(ang)), vmul(fr, sinf(ang)));
+        e->pos = vadd(k->pos, vmul(d, 100.0f)); /* sLaunchRadius */
+        e->vel = vsub(vmul(d, 10.0f), vmul(k->grav, vv));
+        e->front = d; e->qz = d; e->ttarget = d;
+        ang += 6.2831853f / n;
+        /* appear (BegomanBase::appear: onBind, onCalcGravity), setNerveLaunch / LaunchFromGuarder */
+        e->state = KURIBO_WALK; e->grav = k->grav; e->qy = vmul(k->grav, -1.0f); e->up = e->qy; e->bvel = e->grav;
+        e->tcenter = v3(0, 0, 0); e->phase = 0; e->to = e->from = 0; e->bshow = 0; e->item = 0; e->bind_off = 0;
+        e->lvt[0] = e->lvt[1] = e->lvt[2] = 0; e->clipped = 0; e->act[0] = 0;
+        w_nrv(e, BG_LAUNCH);
+    }
+    printf("boss begoman: %d %s launched\n", n, bb.fkind ? "spikes" : "babies");
+}
+static int bb_request(const Kuribo *k) /* BossBegoman::requestAttack: its followers dead, then the permitter (getKind 0) */
+{
+    return bb_followers_dead(k) && !bg_swa_off(k) && bg_permit.nrv != 2;
+}
+static int bb_side(const Kuribo *k) /* isPlayerExistSide(hSideCheckOffsetY 80, hSideCheckDot 0.25) */
+{
+    V3 d = vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), vadd(k->pos, vmul(k->qy, 80.0f)));
+    if (vlen(d) < 1e-6f) return 1;
+    return fabsf(vdot(k->qy, vnorm(d))) < 0.25f;
+}
+static void bb_push(V3 body, float r) /* sendMsgPush: Mario out of its body */
+{
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), out = vtangent(vsub(mc, body), mario->up);
+    float l = vlen(out), want = r + HIT_BODY_R;
+    if (l > 1e-3f && l < want) mario->pos = vadd(mario->pos, vmul(out, (want - l) / l));
+}
+static void bb_rumble(const Kuribo *k) /* tryRumblePadAndCameraDistanceMiddle(800, 1200, 2000) */
+{
+    float d = vlen(vsub(mario->pos, k->pos));
+    if (d < 800.0f) { m_pad_vib(2); camera_shake(SHAKE_NORMAL_WEAK); }
+    else if (d < 1200.0f) { m_pad_vib(0); camera_shake(SHAKE_WEAK); }
+    else if (d < 2000.0f) { m_pad_vib(1); camera_shake(SHAKE_VERY_WEAK); }
+}
+static void bb_recover(Kuribo *k, int st) /* edgeRecoverCore */
+{
+    if (st == 0) w_act(k, "Recover");
+    if (st == 55) { w_se(k, SE_BM_BBEGO_NEEDLE_ON); hd_set(HD_SWITCHOFF); bb_rumble(k); } /* tryForceRecover */
+}
+static int bb_hurt(const Kuribo *k) { return k->nrv == BBG_BLOW || k->nrv == BBG_ELECTRICDEATH || k->nrv == BBG_ELECTRICRETURN || k->nrv == BBG_JUMPTOINITPOS; }
+static int bb_enemy_hit(Kuribo *k, V3 from, float r) /* receiveMsgEnemyAttack from an enemy's sensor (ponytail: its radius r) */
+{
+    if (bb_hurt(k) || bb.nobody) return 0;
+    V3 body = bg_body(k), d = vsub(body, from);
+    if (vlen(d) < 1e-6f) return 0;
+    d = vnorm(d);
+    float br = bg_r(k) * w_scale(k);
+    if (bg_reflect(&k->vel, d, 0.0f, 0.0f)) { bg_fx(k, "Spark", vsub(body, vmul(d, br))); w_se(k, SE_EM_BEGOMAN_COLLI_BEGOMAN); } /* reboundPlaneWithEffect */
+    k->vel = vadd(k->vel, vmul(d, 6.0f * r / br)); /* addVelocityLimit (ponytail: no limit) */
+    return 0;
+}
+static int bb_touch_electric(Kuribo *k, V3 at, V3 dir) /* BossBegoman::onTouchElectric */
+{
+    if (k->nrv == BBG_ELECTRICDEATH || k->nrv == BBG_ELECTRICRETURN || k->nrv == BBG_JUMPTOINITPOS) return 0;
+    if (k->nrv == BBG_BLOW || k->nrv == BBG_ONWEAKTURN) { w_nrv(k, BBG_ELECTRICDEATH); return 0; }
+    if ((k->nrv == BBG_STEPBACK || k->nrv == BBG_STEPBACKONWEAK) && !k->on_ground) return 0;
+    k->lvt[2] = 1; /* BegomanBase::onTouchElectric */
+    if (k->lvt[1] > 40) { /* hElectricTouchTime: addVelocityOnPushedFromElectricRail (hRailPushHBoss 30, hRailPushJumpBoss 30) */
+        bg_fx(k, "FailureHit", at);
+        V3 h = vtangent(vsub(k->tcenter, bg_body(k)), k->grav);
+        if (vlen(h) > 1e-6f) k->vel = vadd(k->vel, vmul(vnorm(h), 30.0f));
+        k->vel = vadd(k->vel, vmul(k->grav, -30.0f));
+        k->lvt[1] = 0;
+        w_nrv(k, hd_edge_out() ? BBG_STEPBACK : BBG_STEPBACKONWEAK); /* setStepBackNerve */
+        return 1;
+    }
+    bg_pushed(k, bg_body(k), at, dir, 8.0f, 8.0f);
+    return 0;
+}
+static void bb_kill(Kuribo *k) /* BossBegoman::kill */
+{
+    const Row *r = &sc->objs[k->row];
+    k->state = KURIBO_DEAD;
+    if (r->sw[SW_DEAD] >= 0) sw_set((Row *)r, SW_DEAD, 1);
+    bb_kill_followers(k, 2);
+    bgm_after_boss();
+    note_star_row = k->row; note_star_at = k->pos; /* requestAppearPowerStar(this, mPosition) */
+    row_kill(k->row);
+    printf("boss begoman row %d dead\n", k->row);
+}
+static void bb_escape(Kuribo *k, float v) /* addVelocityEscapeToSide */
+{
+    V3 side = vcross(k->qy, k->qz);
+    if (k->dir) side = vmul(side, -1.0f);
+    if (vdot(k->ttarget, side) > 0 || vdot(side, mario->hvel) > 0) k->dir = !k->dir;
+    if (vlen(side) > 1e-6f) k->vel = vadd(k->vel, vmul(vnorm(side), v));
+}
+static void bb_camera(Kuribo *k) /* startAnimCameraTargetSelf(OpeningDemo): its frame in the boss's frame, ended at its end */
+{
+    if (bb.cam < 0) return;
+    float m[16];
+    basis_matrix(m, k->pos, k->qy, k->qz, 0);
+    if (!demo_camera("bossbegoman/openingdemo", bb.cam++, m)) { bb.cam = -1; printf("boss begoman: opening camera end\n"); }
+}
+static void bbego_update(Kuribo *k)
+{
+    const Row *r = &sc->objs[k->row];
+    if (!k->front.x && !k->front.y && !k->front.z) { /* init: initCore, mInitPos 10 up, PreDemoWait */
+        kuribo_init(k);
+        memset(&bb, 0, sizeof bb);
+        bb.life = 3; bb.r150 = 0.2f; bb.fkind = r->arg[7] == -1 ? 0 : 1; bb.cam = -1; bb.hdrawn = -1; /* sDefaultLife */
+        hd_set(HD_DEMOWAIT);
+        k->tcenter = vsub(k->pos, vmul(k->grav, 10.0f)); k->phase = r->arg[0] != -1; k->to = 0; k->from = 0; k->bvel = k->grav;
+        w_nrv(k, BBG_PREDEMOWAIT);
+    }
+    int prev = k->nrv;
+    if (!k->bind_off) k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f); /* (offCalcGravity in the no-calc waits) */
+    float s = w_scale(k), near = vlen(vsub(mario->pos, k->pos)), br = bg_r(k) * s;
+    V3 body = bg_body(k), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), ctr = bb_center(k), tgt = k->ttarget;
+    V3 tm = vsub(mario->pos, k->pos); /* moveAndTurnToPlayer */
+    /* the sensors: Mario's attacks on its trample / body, then its attackSensor */
+    if (k->nrv > BBG_READY && !bb.nobody) {
+        int msg = mario_offence(ctr, 180.0f * s, k->grav); /* trample */
+        if (msg == MSG_TRAMPLE) { /* receiveMsgTrample */
+            if (!bb_hurt(k) && !dm_damaging() && !(k->nrv == BBG_TRAMPLEREACTION && k->step < 5)) {
+                w_nrv(k, BBG_TRAMPLEREACTION);
+                V3 f = vtangent(vsub(ctr, mario->pos), k->grav);
+                if (vlen(f) > 1e-6f) k->front = vnorm(f);
+                V3 pv = vtangent(mario->hvel, k->grav);
+                if (vlen(pv) < 1e-3f) pv = vtangent(mario->face, k->grav);
+                V3 c = vcross(pv, k->grav);
+                if (vlen(c) > 1e-6f) k->vel = vmul(vnorm(c), 25.0f);
+                mario_trample();
+                printf("boss begoman trampled (life %d)\n", bb.life);
+            }
+        } else if (msg == MSG_HIPDROP && !bb_hurt(k)) { /* sendMsgAwayJump, TrampleReaction */
+            V3 a = vtangent(vsub(mario->pos, k->pos), k->grav);
+            mario->hip = 0; m_power_jump(mario, vadd(vmul(vlen(a) > 1e-6f ? vnorm(a) : k->qz, 10.0f), vmul(mario->up, 25.0f)));
+            w_nrv(k, BBG_TRAMPLEREACTION);
+        } else if (!bb_hurt(k) && mario_offence(body, br, k->grav) == MSG_HITALL) {
+            if (!hd_switch_on() && bb_side(k)) { if (!mario->hurt_timer) mario_attack(ATK_FIRERUN, body); w_nrv(k, BBG_PROVOKE); } /* sendMsgEnemyAttackFire */
+            else if (k->nrv == BBG_TRAMPLEREACTION && k->step <= 30) { }
+            else if (!hd_edge_out()) { bg_blow(k, mario->pos, 40.0f, 40.0f); w_nrv(k, BBG_BLOW); printf("boss begoman spun: blow\n"); } /* calcBlowReaction(hBlowVel, hBlowVerticalVel) */
+        } else if (vlen(vsub(mc, body)) < br + HIT_BODY_R) { /* attackSensor */
+            if (k->nrv == BBG_BLOW || k->nrv == BBG_ELECTRICDEATH || k->nrv == BBG_ELECTRICRETURN || k->nrv == BBG_AWARE) bb_push(body, br);
+            else if (k->nrv == BBG_JUMPTOINITPOS) { if (mario->hurt_timer || !mario_attack(ATK_FLIP_ROT, body)) bb_push(body, br); }
+            else if (mario->spin_timer > 0 || !mario->grounded) { }
+            else if (hd_edge_out() && bb_side(k)) {
+                if (!mario->hurt_timer && mario_attack(ATK_FIRERUN, body)) { /* sendMsgEnemyAttackFire */
+                    V3 d = vsub(body, mc);
+                    if (vlen(d) > 1e-6f) {
+                        d = vnorm(d);
+                        if (bg_reflect(&k->vel, d, 0.0f, 0.0f)) { bg_fx(k, "Spark", vsub(body, vmul(d, br))); w_se(k, SE_EM_BEGOMAN_COLLI); }
+                        k->vel = vadd(k->vel, vmul(d, 2.0f));
+                    }
+                    w_nrv(k, BBG_HITREACTION);
+                } else bb_push(body, br); /* sendMsgPushAndKillVelocityToTarget */
+            } else if (!mario->hurt_timer) mario_attack(ATK_FLIP_ROT, body);
+        }
+        for (int f = 0; f < BB_FOLLOWERS; f++) { /* sendMsgEnemyAttack to its followers: their rebound (ponytail: the Baby's for both) */
+            Kuribo *e = k + 1 + f;
+            if (e->state == KURIBO_DEAD || bg_down(e)) continue;
+            V3 d = vsub(bg_body(e), body);
+            float er = bg_r(e) * w_scale(e);
+            if (vlen(d) > br + er || vlen(d) < 1e-6f) continue;
+            d = vnorm(d);
+            if (bg_reflect(&e->vel, d, 0.0f, 0.0f)) { bg_fx(e, "Spark", vsub(bg_body(e), vmul(d, er))); w_se(e, SE_EM_BABYBEGO_COLLI_BEGOMAN); }
+            e->vel = vadd(e->vel, vmul(d, 4.0f * br / er));
+        }
+    }
+    int st = ++k->step;
+    switch (k->nrv) {
+    case BBG_PREDEMOWAIT:
+        if (st == 0) { w_act(k, "PreDemoWait"); k->bind_off = 1; } /* exeNoCalcWaitCore(0.005, none): offBind, offCalcGravity */
+        w_se_lv(k, SE_BM_LV_BBEGO_PRE_DEMO_FLY);
+        bg_rotate(k, 0.15f, 0.005f); k->vel = v3(0, 0, 0);
+        break;
+    case BBG_FIRSTCONTACTDEMO:
+        if (st == 0) { w_act(k, "OpeningDemo"); bb.cam = 0; hd_set(HD_OPENINGDEMO); k->vel = v3(0, 0, 0); bgm_stop(60); } /* showModel */
+        if (st > 0 && w_bck_stopped(k)) w_nrv(k, BBG_READY);
+        break;
+    case BBG_READY:
+        if (st == 0) { bgm_boss(0); k->vel = v3(0, 0, 0); } /* startBossBGM(BossBgmID_Begoman) */
+        bb_recover(k, st);
+        if (st > 0 && w_bck_stopped(k) && bb.cam < 0) { bb_launch(k); w_nrv(k, BBG_WAIT); } /* isAnimCameraEnd, endAnimCamera */
+        break;
+    case BBG_NOCALCWAIT:
+        if (st == 0) { bb_launch(k); k->bind_off = 1; }
+        bg_rotate(k, 0.15f, 0.005f); k->vel = v3(0, 0, 0); /* hNoCalcWaitRotate */
+        if (near < 1000.0f && !bg_swa_off(k)) w_nrv(k, BBG_WAIT);
+        break;
+    case BBG_WAIT: /* exeWaitCore(hWaitParam) */
+        bg_rotate(k, 0.15f, 0.005f);
+        if (st == 0) w_act(k, "Wait");
+        bg_move(k, tgt, 0.0f, 3.0f, 0.95f, 1.0f); bg_rebound(k, 0);
+        if (!bg_near_init(k) && bg_return(k)) break;
+        if (near < 1000.0f) {
+            if (bg_swa_off(k) || bg_fall_next(k)) break;
+            V3 at;
+            if (!bg_touch_rail(bg_check(k), br, &at, NULL)) { w_nrv(k, bb_request(k) ? BBG_SIGNATTACK : BBG_KEEPDISTANCE); break; }
+            V3 d = vsub(at, bg_check(k));
+            if (vlen(d) > 1e-6f && !(0.5f < vdot(vnorm(d), k->front))) w_nrv(k, bb_request(k) ? BBG_SIGNATTACK : BBG_KEEPDISTANCE);
+        } else if (k->on_ground) w_nrv(k, BBG_NOCALCWAIT);
+        break;
+    case BBG_SIGNATTACK: /* exeSignAttackCore(hSignAttackParam) */
+        if (st == 0) { w_act(k, "Attack"); w_se(k, SE_BM_BBEGO_PRE_PURSUE); }
+        bg_rotate(k, 0.5f, 0.005f);
+        bg_move(k, tgt, 0.0f, 3.0f, 0.8f, 3.0f); bg_rebound(k, 0);
+        if (!bb_request(k)) { if (!bg_return(k)) w_nrv(k, BBG_WAIT); }
+        else if (st > 0 && w_bck_stopped(k)) w_nrv(k, BBG_PURSUE);
+        break;
+    case BBG_PURSUE: /* exePursueCore(hPursueParam, Brake, Turn, sound_boss, _150) */
+        if (st == 0) w_se(k, SE_BM_BBEGO_PURSUE_START);
+        bg_rotate(k, 0.5f, 0.005f);
+        if (st == 10) w_act(k, "Attack");
+        if (st >= 10) w_se_lv(k, SE_BM_LV_BBEGO_DASH);
+        if (st == 18) k->vel = vmul(k->front, 15.0f * bb.r150);
+        if (bg_fall_next(k)) { w_nrv(k, BBG_BRAKE); break; }
+        bg_move(k, tgt, 1.3f * bb.r150, 3.0f, 0.97f, 3.0f); bg_rebound(k, st <= 18);
+        if (!bb_request(k)) { if (!bg_return(k)) w_nrv(k, BBG_WAIT); break; }
+        if (bg_touch_rail(bg_check(k), br, NULL, NULL)) { w_nrv(k, BBG_BRAKE); break; }
+        if (!bg_face_player(k, 30.0f)) { w_act(k, "Turn"); w_nrv(k, BBG_TURN); break; }
+        if (st > 180) { turn_on_plane(&k->front, tgt, k->grav, cosf(3.0f * 0.0174533f)); w_act(k, "Turn"); w_nrv(k, BBG_TURN); } /* turnDirection(3) */
+        if (!bg_return(k) && near > 2000.0f && !bg_return(k)) w_nrv(k, BBG_WAIT);
+        break;
+    case BBG_TURN: { /* exeTurnCore(hTurnParam, Brake, Pursue, false) */
+        if (st == 0) hd_set(HD_TURN); /* tryTurn */
+        if (!strcmp(k->act, "Turn") && !w_bck_stopped(k)) bg_fx(k, "EdgeSpark", vadd(k->pos, vmul(k->front, 180.0f))); /* isBckPlaying */
+        bg_rotate(k, 0.4f, 0.005f);
+        w_se_lv(k, SE_BM_LV_BBEGO_TURN);
+        if (k->on_ground && bg_fall_next(k)) { w_nrv(k, BBG_BRAKE); break; }
+        float deg = 3.0f + 7.0f * fminf((float)st / 60.0f, 1.0f); /* calcNerveValue(hTurnTime, 3, 10) */
+        bg_move(k, tgt, 0.4f, 3.0f, 0.95f, deg); bg_rebound(k, 1);
+        if (bg_touch_rail(bg_check(k), br, NULL, NULL)) { w_nrv(k, BBG_BRAKE); break; }
+        if (bg_return(k)) break;
+        int req = bb_request(k);
+        if (!req && st > 30) { if (!bg_return(k)) w_nrv(k, BBG_WAIT); break; } /* hTurnTimeCanNotAttack */
+        if (st > 60) {
+            if (req && bg_face_player(k, 30.0f)) { w_nrv(k, BBG_PURSUE); break; }
+            if (near > 2000.0f && !bg_return(k)) w_nrv(k, BBG_WAIT);
+        }
+        break;
+    }
+    case BBG_ONWEAK: case BBG_ONWEAKTURN:
+        if (st == 0) w_act(k, "Shake"); /* (startBrk(mHead, OnWait)) */
+        bg_rotate(k, 0.4f, 0.005f);
+        if (near < 600.0f) { bg_move(k, tm, -0.5f, 3.0f, 0.95f, 3.0f); bb_escape(k, 0.35f); } /* hOnWeakParam, hOnWeakSideVel */
+        else bg_move(k, tm, 0.0f, 3.0f, 0.95f, 3.0f); /* hOnWeakNoMoveParam */
+        if (k->nrv == BBG_ONWEAKTURN) { if (st > 30) w_nrv(k, BBG_ONWEAK); break; } /* hOnWeakTurnTime */
+        if (st > 420) { w_nrv(k, BBG_AWARE); break; } /* sOnWeakTime (SignWait at 240 slow, 360 fast: its BRK) */
+        if (st >= 360) w_se_lv(k, SE_BM_LV_BBEGO_ALARM_FAST);
+        else if (st >= 240) w_se_lv(k, SE_BM_LV_BBEGO_ALARM);
+        break;
+    case BBG_BRAKE: /* exeBrakeCore(Turn) */
+        bg_rotate(k, 0.2f, 0.005f);
+        w_se_lv(k, SE_EM_LV_BEGOMAN_SPARK);
+        if (st == 0) { w_act(k, "Brake"); k->vel = vsub(k->vel, vmul(k->front, vdot(k->vel, k->front))); }
+        if (k->on_ground) bg_move(k, tgt, 0.0f, 1.0f, 0.7f, 3.0f); else bg_move(k, tgt, 0.0f, 1.0f, 0.95f, 3.0f);
+        bg_rebound(k, 1);
+        if (!bg_fall_next(k) && !bg_touch_rail(bg_check(k), br, NULL, NULL) && st > 50) { w_act(k, "Brake"); w_nrv(k, BBG_TURN); }
+        break;
+    case BBG_STEPBACK: case BBG_STEPBACKONWEAK: /* exeStepBackCore(hWaitParam) */
+        bg_rotate(k, 0.2f, 0.005f);
+        bg_move(k, tgt, 0.0f, 3.0f, 0.95f, 1.0f);
+        if (k->on_ground && st > 0) w_nrv(k, k->nrv == BBG_STEPBACKONWEAK ? BBG_ONWEAK : BBG_WAIT);
+        break;
+    case BBG_RETURN: /* exeReturnCore(Wait) */
+        bg_rotate(k, 0.2f, 0.005f);
+        if (st == 0) w_act(k, "Brake");
+        if (st < 180) bg_move(k, vsub(k->tcenter, k->pos), 0.0f, 1.0f, 0.95f, 0.0f);
+        else bg_move(k, vsub(k->tcenter, k->pos), 0.2f, 1.0f, 0.95f, 3.0f);
+        bg_rebound(k, 0);
+        if (bg_near_init(k)) w_nrv(k, BBG_WAIT);
+        break;
+    case BBG_PROVOKE: /* exeProvokeCore(hWaitParam, SignAttack) */
+        bg_rotate(k, 0.3f, 0.005f);
+        if (st == 0) w_act(k, "Provoke");
+        bg_move(k, tgt, 0.0f, 3.0f, 0.95f, 1.0f); bg_rebound(k, 0);
+        k->vel = vmul(k->grav, vdot(k->grav, k->vel));
+        if (st > 120) w_nrv(k, BBG_SIGNATTACK);
+        break;
+    case BBG_TRAMPLEREACTION:
+        if (st == 0) { /* trySwitchPushTrample: the head's SwitchOn at once, so HopEnd (isSwitchOn) */
+            hd_set(HD_SWITCHON);
+            if (!hd_switch_on()) { w_act(k, "TrampleReaction"); w_se(k, SE_BM_BBEGO_NEEDLE_ON); }
+            else { w_act(k, "HopEnd"); w_se(k, SE_BM_BBEGO_STOMPED); w_se(k, SE_BM_BBEGO_NEEDLE_OFF); }
+        }
+        bg_rotate(k, 0.25f, 0.005f);
+        bg_move(k, tm, 0.0f, 3.0f, 0.95f, 3.0f);
+        if (st > 80) w_nrv(k, hd_switch_on() ? BBG_ONWEAK : BBG_SIGNATTACK); /* sTrampleReactionOnSwitchTime */
+        break;
+    case BBG_AWARE:
+        if (st == 0) k->vel = v3(0, 0, 0);
+        bg_rotate(k, 0.1f, 0.005f);
+        bg_move(k, tm, 0.0f, 3.0f, 0.95f, 0.0f);
+        bb_recover(k, st);
+        if (st > 60) { bb_launch(k); w_nrv(k, BBG_SIGNATTACK); } /* sAwareTime */
+        break;
+    case BBG_HITREACTION: /* exeHitReactionCore(hHitReactionParam, Provoke) */
+        bg_rotate(k, 0.25f, 0.005f);
+        if (st == 0) w_act(k, "HitReaction");
+        bg_move(k, tgt, 0.0f, 3.0f, 0.95f, 0.0f); bg_rebound(k, 0);
+        if (st > 0 && w_bck_stopped(k)) w_nrv(k, BBG_PROVOKE);
+        break;
+    case BBG_BLOW:
+        if (st == 0) { w_se(k, SE_EM_BEGOMAN_ROT_STOP); w_act(k, "Damage"); scene_stop = 2; } /* sStopSceneTime */
+        w_se_lv(k, SE_EM_LV_BEGOMAN_SPARK);
+        bg_move(k, tgt, 0.0f, 3.0f, 0.95f, 0.0f); bg_rebound(k, 0);
+        if (st > 20 && k->on_ground) { w_act(k, "Turn"); w_nrv(k, hd_switch_on() ? BBG_ONWEAKTURN : BBG_TURN); } /* sBlowFrame */
+        break;
+    case BBG_ELECTRICDEATH:
+        if (st == 0) { w_act(k, "electricshock"); k->vel = v3(0, 0, 0); bb.nobody = 1; w_se(k, SE_EM_BEGOMAN_ELEC_DAMAGE); bb.life--; } /* (startBrk(mHead, Damage)) */
+        if (st == 30 && (bb.life == 2 || bb.life == 1)) { /* hStarPieceEmitNum1st / 2nd */
+            V3 v = vtangent(vsub(k->tcenter, k->pos), k->grav);
+            v = vlen(v) > 1e-6f ? vnorm(v) : v;
+            v = vsub(v, k->grav);
+            v = vlen(v) > 1e-6f ? vnorm(v) : v;
+            launch_pieces(vsub(k->pos, vmul(k->grav, 200.0f)), v, bb.life == 2 ? 8 : 16, 20.0f, 40.0f);
+            w_se(k, SE_OJ_STAR_PIECE_BURST);
+        }
+        if (st > 60) { /* sElectricDeathTime */
+            scene_stop = 5; camera_shake(SHAKE_WEAK); bb.nobody = 0; /* sDeathStopSceneTime */
+            printf("boss begoman electric hit: life %d\n", bb.life);
+            if (bb.life == 0) { w_se(k, SE_BM_BBEGO_DEAD); bb_kill(k); bg_fx(k, "Death", k->pos); return; }
+            if (bb.life == 1) { bb_kill_followers(k, 1); bb.fkind = 1; }
+            w_nrv(k, BBG_JUMPTOINITPOS);
+        }
+        break;
+    case BBG_ELECTRICRETURN: /* (no nerve sets it) */
+        if (st == 0) {
+            V3 at, dir;
+            if (bg_touch_rail(bg_check(k), br, &at, &dir)) {
+                V3 a = vsub(at, k->pos), c = vcross(dir, vcross(dir, a));
+                if (vdot(a, c) > 0) c = vmul(c, -1.0f);
+                if (vlen(c) > 1e-6f) k->vel = vmul(vnorm(c), 25.0f);
+            }
+        }
+        bg_rebound(k, 0);
+        bg_move(k, tm, 0.0f, 3.0f, 0.8f, 0.0f);
+        if (st > 60) { k->front = tgt; w_nrv(k, BBG_JUMPTOINITPOS); } /* sElectricReturnTime */
+        break;
+    case BBG_JUMPTOINITPOS:
+        if (st == 0) { /* ParabolicPath::initFromUpVector(mPosition, mInitPos 10 up, -gravity, 700) */
+            w_act(k, "Shake"); w_se(k, SE_BM_BBEGO_BIG_JUMP);
+            V3 end = vsub(k->tcenter, vmul(k->grav, 10.0f)), d = vsub(end, k->pos);
+            bb.p0 = k->pos; bb.py = vmul(k->grav, -1.0f);
+            float h = vdot(bb.py, d), mx = 700.0f, disc = mx * (mx - h);
+            V3 z = vsub(d, vmul(bb.py, h));
+            bb.pl = vlen(z); bb.pz = bb.pl > 1e-6f ? vmul(z, 1.0f / bb.pl) : v3(0, 0, 0);
+            if (disc <= 0) { bb.pa = -mx; bb.pv = h + mx; } /* calcParabolicFunctionParam */
+            else if (fabsf(h) < 1e-4f) { bb.pa = -4 * mx; bb.pv = 4 * mx; }
+            else {
+                float rt = sqrtf(disc), t1 = (mx + rt) / h, t2 = (mx - rt) / h;
+                float t = t1 >= 0 && t1 <= 1 ? t1 : t2 >= 0 && t2 <= 1 ? t2 : 1.0f;
+                bb.pa = -mx / (t * t); bb.pv = -2.0f * t * bb.pa;
+            }
+            k->vel = v3(0, 0, 0);
+        }
+        bg_rotate(k, 0.1f, 0.005f);
+        { float t = fminf((float)st / 60.0f, 1.0f); k->pos = vadd(bb.p0, vadd(vmul(bb.py, t * (bb.pv + bb.pa * t)), vmul(bb.pz, bb.pl * t))); }
+        if (st > 60) { /* sJumpToInitPosTime */
+            w_nrv(k, BBG_SIGNATTACK); bb_launch(k);
+            w_se(k, SE_BM_BBEGO_NEEDLE_ON); hd_set(HD_SWITCHOFF); bb_rumble(k);
+        }
+        break;
+    case BBG_KEEPDISTANCE: /* exeKeepDistanceCore(Wait, SignAttack, Brake, 800, 600) */
+        bg_rotate(k, 0.2f, 0.005f);
+        if (st == 0) w_act(k, "Brake");
+        if (near > 1200.0f) { w_nrv(k, BBG_WAIT); break; }
+        if (near > 800.0f) bg_move(k, tm, 0.35f, 1.0f, 0.95f, 3.0f);
+        else if (near < 600.0f) { bg_move(k, tm, -0.22f, 1.0f, 0.95f, 3.0f); bb_escape(k, 0.6f); }
+        else bg_move(k, tm, 0.0f, 1.0f, 0.95f, 3.0f);
+        if (bg_fall_next(k)) { w_nrv(k, BBG_BRAKE); break; }
+        bg_rebound(k, 0);
+        if (bb_request(k)) { w_nrv(k, BBG_SIGNATTACK); break; }
+        bg_return(k);
+        break;
+    }
+    if (prev == BBG_TURN && k->nrv != BBG_TURN) hd_set(HD_TURNEND); /* endTurn: tryTurnEnd */
+    if (k->nrv != BBG_PREDEMOWAIT && k->nrv != BBG_NOCALCWAIT) k->bind_off = 0; /* endPreDemoWait / endNoCalcWait: finishNoCalcWait */
+    k->act_t += k->act_rate;
+    bb_camera(k);
+    /* control() */
+    bb.r150 = k->nrv == BBG_PURSUE || k->nrv == BBG_TURN ? fminf(bb.r150 + 0.001f, 1.0f) : 0.2f;
+    if (!bb.nobody) { /* checkTouchElectricRail(notCheckPush in Blow, the electric nerves, JumpToInitPos, OnWeakTurn) */
+        V3 at, dir;
+        int nopush = bb_hurt(k) || k->nrv == BBG_ONWEAKTURN;
+        if (!nopush && bg_touch_rail(vadd(ctr, vmul(k->qy, 125.0f * s)), 250.0f * s, &at, &dir)) { /* pushed_rail */
+            bg_pushed(k, vadd(ctr, vmul(k->qy, 125.0f * s)), at, dir, 0.5f, 0.5f);
+            V3 side = vcross(k->qy, k->qz);
+            if (k->dir) side = vmul(side, -1.0f);
+            if (vdot(side, vsub(at, k->pos)) > 0) k->dir = !k->dir;
+        }
+        if (bg_touch_rail(bg_body(k), bg_r(k) * s, &at, &dir)) bb_touch_electric(k, at, dir);
+        if (k->lvt[2]) { k->lvt[2] = 0; k->lvt[1]++; } else k->lvt[1] = 0;
+    }
+    /* BegomanBase::control: its target, its up blended 0.1 to the gravity's, its quat (up, face), the spin */
+    V3 t = vsub(mc, k->pos), gup = k->on_ground ? k->gn : vmul(k->grav, -1.0f);
+    t = vtangent(t, gup);
+    if (vlen(t) > 1e-6f) k->ttarget = vnorm(t);
+    V3 bu = vnorm(vadd(vmul(k->qy, 0.9f), vmul(k->grav, -0.1f)));
+    k->qy = vlen(bu) > 1e-6f ? bu : k->qy;
+    V3 qz = vtangent(k->front, k->qy);
+    if (vlen(qz) > 1e-3f) k->qz = vnorm(qz);
+    k->bvel = k->grav;
+    k->from += k->to;
+    if (k->nrv != BBG_JUMPTOINITPOS) w_bind(k, 160.0f * s); /* initBinder (the path sets its place) */
+    k->up = k->qy;
+    if (k->nrv > BBG_FIRSTCONTACTDEMO) { /* startRotationLevelSound */
+        k->lv2[0] = se_level(k->nrv == BBG_WAIT ? SE_BM_LV_BBEGO_ROT_SLOW : k->nrv == BBG_PURSUE ? SE_BM_LV_BBEGO_PURSUE :
+                             k->nrv == BBG_TRAMPLEREACTION || k->nrv == BBG_ONWEAK ? SE_BM_LV_BBEGO_ROT_WEAK : SE_BM_LV_BBEGO_ROT_MIDDLE, &k->pos.x, k->lv2[0]);
+        if (!hd_switch_on()) k->lv2[1] = se_level(SE_BM_LV_BBEGO_ROT_NEEDLE, &k->pos.x, k->lv2[1]); /* (its volume by speed) */
+    }
+    hd_update();
+}
+static Kuribo *bb_find(int row)
+{
+    for (int i = 0; i < nkuribo; i++)
+        if (kuribo[i].kind == WALK_BBEGO && kuribo[i].state != KURIBO_DEAD && (row < 0 || kuribo[i].row == row)) return &kuribo[i];
+    return NULL;
+}
+static void bb_first_contact(int row) /* the demo's 登場: FirstContactDemo (endPreDemoWait: finishNoCalcWait) */
+{
+    Kuribo *k = bb_find(row);
+    if (!k) return;
+    if (!k->front.x && !k->front.y && !k->front.z) bbego_update(k); /* (its init, if never out yet) */
+    k->bind_off = 0;
+    w_nrv(k, BBG_FIRSTCONTACTDEMO);
+    printf("boss begoman: opening demo\n");
+}
+static void bb_demo_update(void) /* a demo moves its cast: the boss in its opening */
+{
+    Kuribo *k = bb_find(-1);
+    if (k && (k->nrv == BBG_FIRSTCONTACTDEMO || k->nrv == BBG_READY)) bbego_update(k);
+}
+static void bb_draw_head(Kuribo *k, const float m[16], Anim *a) /* BossBegomanHead at mHeadMtx (calcAnim) */
+{
+    const Model *hm = scene_model(sc, "BossBegomanHead");
+    if (!hm || !hm->skin || !a->skin || a->skin->njoints < 2) return;
+    Anim *ha = obj_anim((int)sc->nobjs * 4 + k->row, hm, "BossBegomanHead");
+    if (!ha) return;
+    if (bb.hdrawn != bb.hseq) {
+        char n[48];
+        snprintf(n, sizeof n, "bossbegomanhead/%s", hd_clip[bb.hnrv]);
+        anim_start(ha, n, 0);
+        bb.hdrawn = bb.hseq;
+    }
+    anim_update(ha);
+    if (ha->skin->njoints > 8) { /* calcJointEdge: Edge (and its Hand1-4) turned mAngle about Edge's Y */
+        const float *e = ha->world[4];
+        V3 p = v3(e[12], e[13], e[14]), ax = v3(e[4], e[5], e[6]);
+        if (vlen(ax) > 1e-6f) {
+            ax = vnorm(ax);
+            for (int j = 4; j <= 8; j++) {
+                float *w = ha->world[j];
+                for (int c = 0; c < 3; c++) { V3 v = rot_axis(v3(w[4 * c], w[4 * c + 1], w[4 * c + 2]), ax, bb.hang); w[4 * c] = v.x; w[4 * c + 1] = v.y; w[4 * c + 2] = v.z; }
+                V3 q = vadd(p, rot_axis(vsub(v3(w[12], w[13], w[14]), p), ax, bb.hang));
+                w[12] = q.x; w[13] = q.y; w[14] = q.z;
+            }
+        }
+    }
+    /* mHeadMtx: the Center joint's, its Y kept, its front made mTargetVec (makeMtxUpFront) */
+    const float *w = a->world[1];
+    V3 cp = v3(m[0] * w[12] + m[4] * w[13] + m[8] * w[14] + m[12], m[1] * w[12] + m[5] * w[13] + m[9] * w[14] + m[13],
+               m[2] * w[12] + m[6] * w[13] + m[10] * w[14] + m[14]);
+    V3 y = v3(m[0] * w[4] + m[4] * w[5] + m[8] * w[6], m[1] * w[4] + m[5] * w[5] + m[9] * w[6], m[2] * w[4] + m[6] * w[5] + m[10] * w[6]);
+    float h[16];
+    basis_matrix(h, cp, vlen(y) > 1e-6f ? vnorm(y) : k->qy, k->ttarget, 0);
+    draw_skin(hm, h, ha);
+}
+int game_test_bbego(int frame) /* bbego test (XF=-DBBEGO_TEST, BattleShipGalaxy/3): to its SwitchCylinder, the demo, then
+                               * tramples, and spins toward the nearest electric rail while it is weak, till its star */
+{
+    Kuribo *k = bb_find(-1);
+    static int last = -1000, dead_at = -1, boss_row = -1;
+    if (k) boss_row = k->row;
+    if (!k) {
+        if (dead_at < 0) dead_at = frame;
+        int ty = scene_type(sc, "PowerStar");
+        for (u32 i = 0; frame - dead_at >= 200 && frame % 20 == 0 && ty >= 0 && i < sc->nobjs; i++) /* to its star (arg7: the declarer) */
+            if ((int)sc->objs[i].type == ty && sc->objs[i].arg[7] == boss_row) {
+                mario->pos = row_pos(&sc->objs[i]); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            printf("bbego test f %d: to the star\n", frame);
+        }
+        if (frame % 20 == 0) printf("bbego test f %d: boss dead, life Mario %d\n", frame, game_life());
+        return -1;
+    }
+    if (frame % 20 == 0) printf("bbego test f %d: nerve %d, head %d, life %d, %.0f from Mario, life Mario %d\n", frame, k->nrv, bb.hnrv, bb.life, vlen(vsub(mario->pos, k->pos)), game_life());
+    if (demo_on) return k->nrv;
+    V3 up = vmul(k->grav, -1.0f);
+    if (k->nrv == BBG_PREDEMOWAIT && frame % 20 == 0) { /* its SwitchCylinders (SW_A, the demo's switch) */
+        int ty = scene_type(sc, "SwitchCylinder");
+        for (u32 i = 0; ty >= 0 && i < sc->nobjs; i++)
+            if ((int)sc->objs[i].type == ty && sc->objs[i].zone == sc->objs[k->row].zone) {
+                V3 p = row_pos(&sc->objs[i]);
+                mario->up = up_at(p, mario->up); mario->pos = vadd(p, vmul(mario->up, 50.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+                break;
+            }
+        return k->nrv;
+    }
+    if (k->nrv <= BBG_READY || frame - last < 150) return k->nrv;
+    if (k->nrv == BBG_ONWEAK && k->step > 30) { /* a spin by it, the rail behind it */
+        V3 best = k->pos; float bd = 1e9f;
+        for (int i = 0; i < nerails; i++) {
+            V3 ab = vsub(erails[i].b, erails[i].a);
+            float t = fminf(fmaxf(vdot(vsub(k->pos, erails[i].a), ab) / fmaxf(vdot(ab, ab), 1e-3f), 0.0f), 1.0f);
+            V3 q = vadd(erails[i].a, vmul(ab, t));
+            if (vlen(vsub(q, k->pos)) < bd) { bd = vlen(vsub(q, k->pos)); best = q; }
+        }
+        V3 d = vtangent(vsub(best, k->pos), up);
+        d = vlen(d) > 1e-6f ? vnorm(d) : k->qz;
+        mario->up = up; mario->pos = vsub(k->pos, vmul(d, 170.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        mario->spin_timer = SPIN_TIME;
+        last = frame;
+        printf("bbego test f %d: spin, rail %.0f away\n", frame, bd);
+    } else if (!bb_hurt(k) && k->nrv != BBG_ONWEAK && k->nrv != BBG_ONWEAKTURN && k->nrv != BBG_TRAMPLEREACTION) { /* onto its head */
+        mario->up = up; mario->pos = vadd(bb_center(k), vmul(up, 280.0f)); mario->hvel = v3(0, 0, 0);
+        mario->vup = -10.0f; mario->grounded = 0; mario->jumping = 1;
+        last = frame;
+        printf("bbego test f %d: trample\n", frame);
+    }
+    return k->nrv;
 }
 
 /* TeresaWater.cpp after Petari: a Boo swimming between its place and arg0 (800) along its front (moveAndTurnToTarget
@@ -27241,6 +27855,7 @@ static void update_kuribo_one(Kuribo *k)
             else if (k->kind == WALK_STRSPIDER) strspider_update(k);
             else if (k->kind == WALK_BEGOSPIKE || k->kind == WALK_BEGOBABY) begospike_update(k);
             else if (k->kind == WALK_KCHIEF) kchief_update(k);
+            else if (k->kind == WALK_BBEGO) bbego_update(k);
             return;
         }
         if (k->kind == WALK_PETARI) {
@@ -27454,7 +28069,7 @@ static void update_invincible(void)
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     for (int k = 0; k < nkuribo; k++) {
         Kuribo *e = &kuribo[k];
-        if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_BUTTERFLY || e->kind == WALK_STRSPIDER || e->kind == WALK_BEGOSPIKE || e->kind == WALK_KCHIEF ||
+        if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_BUTTERFLY || e->kind == WALK_STRSPIDER || e->kind == WALK_BEGOSPIKE || e->kind == WALK_KCHIEF || e->kind == WALK_BBEGO ||
             vlen(vsub(c, vadd(e->pos, vmul(e->up, 60.0f)))) > 60.0f + HIT_BODY_R) continue;
         if (e->kind == WALK_PETARI) { if (petari_solid(e)) petari_blow(e, mario->pos, PT_KICKOUT); continue; }
         int took = walker_blow(e, mario->pos);
@@ -34755,6 +35370,7 @@ static void update_shots(void)
             else if (e->kind == WALK_PUKUPUKU) { } /* isMsgStarPieceReflect: nothing more */
             else if (e->kind == WALK_STRSPIDER) { if (ss_down(e)) { hit = 0; continue; } strspider_star(e, s->pos); }
             else if (e->kind == WALK_BEGOSPIKE) { if (bg_down(e)) { hit = 0; continue; } bg_blow(e, s->pos, 40.0f, 10.0f); } /* isMsgStarPieceAttack */
+            else if (e->kind == WALK_BBEGO) { } /* isMsgStarPieceReflect */
             else if (e->kind == WALK_BEGOBABY) { if (bg_down(e)) { hit = 0; continue; } e->item = 3; bg_blow(e, s->pos, 35.0f, 15.0f); } /* isMsgStarPieceAttack: mAppearThreeStarPiece */
             else if (e->kind == WALK_KABOKURI) w_nrv(e, KB_STARPIECE); /* requestStarPieceHitted */
             else if (e->kind == WALK_TERESAW) w_nrv(e, TW_STUN); /* isMsgStarPieceAttack: Stun */
@@ -35296,7 +35912,8 @@ static void dx_cast_hook(int row, int type, int part)
     if (gw_cast_hook(row, type, part)) return;
     if (type == 0 && !strcmp(cls, "StarReturnDemoStarter")) { srd_appear(row); return; }
     if (type == 0 && !strcmp(cls, "GrandStarReturnDemoStarter")) { gsr_appear(row); return; }
-    if (type == 2 && !strcmp(cls, "AstroCore")) { acore_start(); return; }                   /* AstroCore::startDemo: Grow */
+    if (type == 2 && !strcmp(cls, "AstroCore")) { acore_start(); return; }
+    if (type == 3 && !strcmp(cls, "BossBegoman")) { bb_first_contact(row); return; } /* registerDemoActionNerve: FirstContactDemo */                   /* AstroCore::startDemo: Grow */
     if (type == 2 && !strcmp(cls, "RosettaChair")) { /* RosettaChair::startDemo (朗読開始: DemoRosettaReading,
                                                      * invalidateCollisionParts) / setDefaultPose (キャスト入れ換え: its
                                                      * placement, RosettaChair, validateCollisionParts) */
@@ -41596,6 +42213,7 @@ void game_update(void)
     LQ(10, update_invincible());
     LQ(11, update_follow_groups());
     LQ(12, update_wrecks());
+    if (demo_on) bb_demo_update(); /* (BossBegoman: a cast of its opening demo) */
     if (!demo_on) LQ(13, update_kuribo()); /* a demo moves only its cast (requestMovementOn): walkers stop; the other
                                             * update_* by their class (lq_cls, dx_cls_moves) */
     LQ(14, kari_director());
@@ -42525,7 +43143,7 @@ void game_draw(void)
     draw_tako_inks();
     for (int i = 0; i < nkuribo; i++) {
         use_row_light(kuribo[i].row, kuribo[i].pos, LIGHT_STRONG);
-        const Model *md = kuribo[i].kind == WALK_TAKOHEI ? m_takohei : kuribo[i].kind == WALK_PACKUN ? m_packun :
+        const Model *md = kuribo[i].host ? scene_model(sc, walker_cls(&kuribo[i])) : kuribo[i].kind == WALK_TAKOHEI ? m_takohei : kuribo[i].kind == WALK_PACKUN ? m_packun :
                           kuribo[i].kind == WALK_KOTEBUG ? m_kotebug : kuribo[i].kind == WALK_SPIDER ? m_spider :
                           kuribo[i].kind == WALK_MERAMERA ? (strcmp(sc->types + 32 * sc->objs[kuribo[i].row].type, "IceMeramera") ? m_meramera : m_imeramera) : kuribo[i].kind == WALK_TAKOBO ? m_takobo :
                           kuribo[i].kind == WALK_MKOOPA ? m_mkoopa : kuribo[i].kind == WALK_KARIKARI ? m_kari :
@@ -42565,7 +43183,7 @@ void game_draw(void)
             if (!wvis) continue; /* ponytail: a walker out of the view takes no pose from the pool (MAX_OBJ_ANIM 40:
                                   * Honeyhive's 46 walkers held every pose, its HoneyBees got none and were not drawn);
                                   * its clip restarts when it is seen again */
-            Anim *a = obj_anim(k->row, md, cls);
+            Anim *a = obj_anim(w_akey(k), md, cls);
             if (!a) continue;
             if (k->act[0]) { /* ported walkers: the action their nerves started (startAction), at _A8 and its scale */
                 char n[48];
@@ -42576,7 +43194,7 @@ void game_draw(void)
                 if (!wvis) { anim_advance(a); continue; }
                 if (k->kind == WALK_BEGOSPIKE && k->nrv == BG_BROKENPIECE) { /* hideModel; mBrokenModel's Broken01 */
                     const Model *bm = scene_model(sc, "BegomanBrokenPiece");
-                    Anim *ba = bm && bm->skin ? obj_anim((int)sc->nobjs * 2 + k->row, bm, "BegomanBrokenPiece") : NULL;
+                    Anim *ba = bm && bm->skin ? obj_anim((int)sc->nobjs * 2 + w_akey(k), bm, "BegomanBrokenPiece") : NULL;
                     if (!ba) continue;
                     if (k->lvt[0] <= 1) anim_start(ba, "begomanbrokenpiece/broken01", 0);
                     anim_update(ba);
@@ -42586,7 +43204,7 @@ void game_draw(void)
                     continue;
                 }
                 anim_update(a);
-                basis_matrix(m, k->pos, k->qy, k->kind == WALK_BEGOSPIKE || k->kind == WALK_BEGOBABY ? rot_axis(k->qz, k->qy, k->from) : k->qz, 0); /* Begoman: Locator1 turned _D0 */
+                basis_matrix(m, k->pos, k->qy, k->kind == WALK_BEGOSPIKE || k->kind == WALK_BEGOBABY || k->kind == WALK_BBEGO ? rot_axis(k->qz, k->qy, k->from) : k->qz, 0); /* Begoman: Locator1 turned _D0 */
                 if (k->kind == WALK_BEGOBABY && k->nrv != BG_BLOW && a->skin && a->skin->njoints > 1) { /* calcHeadJoint: BabyBegomanFace up / front to mTargetVec */
                     float *w = a->world[1];
                     V3 bx = v3(m[0], m[1], m[2]), byv = v3(m[4], m[5], m[6]), bz = v3(m[8], m[9], m[10]);
@@ -42615,6 +43233,7 @@ void game_draw(void)
                                  m[2] * l.x + m[6] * l.y + m[10] * l.z + m[14]);
                     k->bshow = 1;
                 }
+                if (k->kind == WALK_BBEGO) bb_draw_head(k, m, a);
                 if (k->kind == WALK_BEGOSPIKE) { /* BegomanHead at its Center joint, facing its target (calcAnimCore) */
                     const Model *hm = scene_model(sc, "BegomanSpikeHead");
                     const float *w = a->world[1];
