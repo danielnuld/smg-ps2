@@ -2852,7 +2852,7 @@ static int sky_class(const char *name)
  * Modes (npc_mode): Penguin arg0 0 Sit (SitDown / SitDownTalk, no turn), 1 Swim, 2 SwimSurface, 3 Dive, 4
  * SwimTurtle; HoneyBee arg0 3 Sleep / 4 Stick (no turn), 5 Gatekeeper, 7 Flustered, 1 2 6 8 9 their own nerves
  * (update_bees); Rabbit (TurnSmall) arg1 5 LongJump no turn. ponytail: no ActorAnimCtrl interpolation (the clip switches at
- * once); the walking modes' rails (Penguin / Kinopio MoveTalk) not ported */
+ * once); Kinopio's MoveTalk rail not ported (Penguin's: npc_rail_move) */
 typedef struct { const char *cls; u8 near, talk; float dist, speed, tilt_speed, tilt_max; const char *act[4]; } NpcTurn;
 static const NpcTurn npc_turns[] = {
     {"Tico", 1, 1, 2000.0f, 4.0f, 0.5f, 12.0f, {"wait", "wait", "talk", "talk"}},
@@ -4536,6 +4536,7 @@ static void place_plants(const Inst *in)
 }
 
 static void game_rebind_(void);
+static void npc_rail_place(Inst *in);
 u32 rebind_cycles, rebinds; /* game_rebind's time and count (the route test's perf lines) */
 void game_rebind(void)
 {
@@ -4729,7 +4730,8 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->trapeze = strcmp(name, "Trapeze") == 0;
     ci->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
     ci->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 || strcmp(name, "KinopioAstro") == 0 ? 3 :
-                  strcmp(name, "ButlerMap") == 0 ? 4 : strcmp(name, "Butler") == 0 ? 5 : lg_cls(name) ? 6 : strcmp(name, "TicoStarRing") == 0 ? 7 : strcmp(name, "TicoComet") == 0 ? 8 : strcmp(name, "HoneyBee") == 0 ? 10 : strcmp(name, "TicoShop") == 0 ? 11 : 0;
+                  strcmp(name, "ButlerMap") == 0 ? 4 : strcmp(name, "Butler") == 0 ? 5 : lg_cls(name) ? 6 : strcmp(name, "TicoStarRing") == 0 ? 7 : strcmp(name, "TicoComet") == 0 ? 8 : strcmp(name, "HoneyBee") == 0 ? 10 : strcmp(name, "TicoShop") == 0 ? 11 :
+                  strcmp(name, "Penguin") == 0 || strcmp(name, "PenguinCoach") == 0 || strcmp(name, "PenguinStudent") == 0 ? 12 : 0;
     ci->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 : 0;
     ci->gap = gap_class(name);
     ci->clipcls = strcmp(name, "Tico") == 0 || strcmp(name, "TicoBaby") == 0 || lg_cls(name) ? 1 : /* NameObjFactory: Tico, LuigiNPC */
@@ -5018,6 +5020,7 @@ static void game_rebind_(void)
         in->nu = in->nu0 = vnorm(v3(in->m[4], in->m[5], in->m[6])); in->nf = in->nf0 = vnorm(v3(in->m[8], in->m[9], in->m[10]));
         if (in->rotor && row_angle) rotor_matrix(in);
         if (in->railer && row_coord) railer_place(in);
+        if (in->npc && row_rdir && row_rdir[i]) npc_rail_place(in); /* its RailRider kept: back at its coord */
         if (in->tsuki && row_coord && row_turn[i]) tsuki_place(in);
         if (in->ticorail && row_coord && row_turn[i]) ticorail_place(in);
         if (in->biri && row_coord && row_turn[i]) biri_place(in);
@@ -11516,7 +11519,9 @@ static void update_talkers(void)
         else if (!talk_row_label(in->row, lab)) continue;
         /* SignBoard, Butler: NPCActor caps (talk 240, its balloon 150 up); Tico::initMessage (350, 120 up); Kinopio (122 x 1.2 up) */
         int bee_lec = in->talkcls == 10 && (sc->objs[in->row].arg[0] == 8 || sc->objs[in->row].arg[0] == 9); /* FlyLectureA / B: mTalkMtx _160, no offset */
-        int k = talk_new(lab, in->talkcls == 11 ? -1 : in->row, in->row, sign || in->talkcls == 5 || (in->talkcls == 10 && !bee_lec) ? 150.0f : bee_lec ? 0.0f : tico ? 120.0f : 122.0f * 1.2f,
+        /* Penguin / PenguinStudent: initTalkCtrl (0, 150, 0); PenguinCoach: caps.mMessageOffset (0, 430, 0) */
+        float pg_offy = in->talkcls != 12 ? 0.0f : !strcmp(sc->types + 32 * sc->objs[in->row].type, "PenguinCoach") ? 430.0f : 150.0f;
+        int k = talk_new(lab, in->talkcls == 11 ? -1 : in->row, in->row, pg_offy > 0 ? pg_offy : sign || in->talkcls == 5 || (in->talkcls == 10 && !bee_lec) ? 150.0f : bee_lec ? 0.0f : tico ? 120.0f : 122.0f * 1.2f,
                          tico ? 350.0f : 240.0f);
         if (k < 0) continue;
         Talker *t = &talkers[k];
@@ -31903,6 +31908,18 @@ static void gap_test(void)
             if (insts[k].breaks == 5 && !row_dead[insts[k].row]) { explosion_breaks(v3(insts[k].m[12], insts[k].m[13], insts[k].m[14]), 10.0f); break; }
         return;
     }
+    if (GAP_TEST == 23) { /* XF=-DGAP_TEST=23: Mario 400 beside each Penguin on a rail in turn every 300 frames; its rail coord every 60 */
+        int tp = scene_type(sc, "Penguin"), n = 0;
+        for (u32 i = 0; want >= 0 && tp >= 0 && i < sc->nobjs; i++) {
+            if ((int)sc->objs[i].type != tp || sc->objs[i].path < 0 || n++ != want % 8) continue;
+            Inst *pg = row_inst((int)i);
+            V3 p = pg ? v3(pg->m[12], pg->m[13], pg->m[14]) : row_pos(&sc->objs[i]);
+            if (at == 0) { mario->pos = vadd(p, vadd(vmul(mario->up, 300.0f), v3(400, 0, 0))); mario->hvel = v3(0, 0, 0); mario->vup = 0; printf("gap test: Mario by penguin row %u arg0 %d%c", i, sc->objs[i].arg[0], 10); }
+            if (at % 60 == 30 && pg) printf("gap test: penguin row %u coord %.0f speed %.2f dir %d pos %.0f %.0f %.0f clip %s%c", i, row_coord[i], row_speed[i], row_rdir[i], p.x, p.y, p.z,
+                                            pg->anim && pg->anim->clip_id >= 0 ? sc->clips[pg->anim->clip_id].name : "-", 10);
+        }
+        return;
+    }
     if (GAP_TEST == 22) { /* XF=-DGAP_TEST=22: Mario onto each SwimTurtle Penguin (arg0 4) in turn every 300 frames (its shell taken), a spin at 150 */
         int n = 0;
         if (want < 0) return;
@@ -39759,14 +39776,13 @@ static void update_bees(void)
  * steps Dive (SwimDive, SE_SV_PENGUIN_S_DIVE) till the clip stops; arg0 4 (SwimTurtle) LV_PENGUIN_SWIM_JET; arg0 -1 /
  * 5 / 6 (Default / Stand / Dash) tryChangeTalkActionRandom: each time its looping clip loops, its talk action Talk /
  * TalkA / TalkB at random. GapSt: n 2 diving, f the dive step, i the talk action, v.x the clip's last frame. 1: the
- * clip is its own this frame. arg0 4's shell: penguin_turtle. ponytail: the walking / dashing modes' rails as the other NPCs' */
+ * clip is its own this frame. arg0 4's shell: penguin_turtle; its rail: npc_rail_move */
 /* RemovableTurtle (Penguin.cpp:41-82) for arg0 4 (SwimTurtle): its shell (ペンギン用コウラ, Koura at (-5.85, -68, 30)
  * on its base matrix) and its JetTurtle (ジェット亀さん, an extra Inst: Inst.jet 3). tryReleaseTurtle (Wait): Mario on its
  * push sensor (80 at CenterJoint) or a spin (isMsgSpinStormRange), the shell within isPullRange 450 of him, the
  * JetTurtle dead and nothing carried: tryRemove (the shell gone, the JetTurtle at its place taken: appearAndTryTaken),
  * Flow; Flow: tryAttach once the JetTurtle is dead again, Wait. 1 while the shell is on (Wait).
- * ponytail: CenterJoint as 50 over its base (no joint name lookup); Flow's Swim actions need its rail (MoveTalk, not
- * ported: without one tryStartMoveTalkAction keeps SwimTurtleTalk) */
+ * ponytail: CenterJoint as 50 over its base (no joint name lookup). Flow's Swim on its rail: npc_rail_of */
 static int penguin_turtle(Inst *in)
 {
     Inst *jt = NULL;
@@ -39837,6 +39853,130 @@ static int rabbit_lecture(Inst *in, int talking)
     }
     return 0;
 }
+/* NPCActor's rail (NPCActor::initialize: initRailRider; NPCUtil.cpp:326-397 startMoveAction / tryStartMoveTalkAction):
+ * at init moveCoordToNearestPos, its place the rail's (Penguin::init); each wait step adjustmentRailCoordSpeed(_10C,
+ * _110), moveRailRider, followRailPoseOnGround(_114) (_124: the rail's point dropped 1000 along gravity) or
+ * followRailPose(_114, _114) (decidePose: up -gravity, front the rail's way), reversed at an open rail's end. Its
+ * action _11C while it moves; standing (_10C and its speed 0) the turn / talk actions. NPCActor::setDefaults: _10C 2,
+ * _110 0.1, _114 0.08, _118 1. Per class (npc_rail_of): Penguin::init by arg0 (sSpeedWalk 1.5, sSpeedSwim 5,
+ * sSpeedSwimTurtle 10, sSpeedDash 6, sBlendDash 0.08), its Flow nerve Swim at sSpeedSwim. row_coord / row_speed /
+ * row_rdir its RailRider (row_rdir 0 not set up). NPCSupportRail (NPCSupportRail.cpp) is a dead actor holding a rail
+ * for PenguinSkater (not placed in these galaxies): nothing to draw or run.
+ * ponytail: a short talk's moving action _120 at _118 (isTalkTalking but not a long talk) not told apart: our
+ * balloons do not report it; Kinopio's / Caretaker's / HoneyBee's / Tico's rails (their own nerves: Kinopio's
+ * tryStartArgs at each rail point, Kinopio.cpp:372-390) not ported */
+typedef struct { float speed, accel, blend; int ground; const char *move; } NpcRail;
+static int penguin_flow(const Inst *in) /* Penguin's Flow nerve: its JetTurtle out (penguin_turtle) */
+{
+    FOR_KIND(k, jet) if (insts[k].jet == 3 && insts[k].row == in->row) return jet.inst == k;
+    return 0;
+}
+static const float *npc_rail_of(const Inst *in, NpcRail *p, u32 *n, int *cl)
+{
+    const Row *r = &sc->objs[in->row];
+    const char *cls = sc->types + 32 * r->type;
+    if (strcmp(cls, "Penguin") || r->path < 0 || !scene_blob_g) return NULL;
+    const float *pts = find_rail(scene_blob_g, r->zone, r->path, n, cl);
+    if (!pts || *n < 2) return NULL;
+    p->speed = 2.0f; p->accel = 0.1f; p->blend = 0.08f; p->ground = 0; p->move = NULL; /* setDefaults */
+    switch (r->arg[0]) {
+    case -1: case 5: p->move = "walk"; p->speed = 1.5f; p->ground = 1; break;
+    case 1: p->move = "swim"; p->speed = 5.0f; break;
+    case 2: p->move = "swimsurface"; p->speed = 5.0f; break;
+    case 4: p->move = penguin_flow(in) ? "swim" : "swimturtle"; p->speed = penguin_flow(in) ? 5.0f : 10.0f; break;
+    case 6: p->move = "dasha"; p->speed = 6.0f; p->blend = 0.08f; p->ground = 1; break;
+    }
+    return pts;
+}
+static float nrail_len(const float *p, u32 n, int cl)
+{
+    float l = 0;
+    for (u32 i = 0; i < (cl ? n : n - 1); i++) l += vlen(vsub(v3(p[3 * ((i + 1) % n)], p[3 * ((i + 1) % n) + 1], p[3 * ((i + 1) % n) + 2]), v3(p[3 * i], p[3 * i + 1], p[3 * i + 2])));
+    return l;
+}
+static V3 nrail_at(const float *p, u32 n, int cl, float d, V3 *dir) /* getRailPos, getRailDirection (to its end) at d */
+{
+    *dir = v3(0, 0, 1);
+    for (u32 i = 0; i < (cl ? n : n - 1); i++) {
+        V3 a = v3(p[3 * i], p[3 * i + 1], p[3 * i + 2]), ab = vsub(v3(p[3 * ((i + 1) % n)], p[3 * ((i + 1) % n) + 1], p[3 * ((i + 1) % n) + 2]), a);
+        float l = vlen(ab);
+        if (l > 0) *dir = vmul(ab, 1.0f / l);
+        if (d <= l || i + 1 == (cl ? n : n - 1)) return vadd(a, vmul(ab, l > 0 ? fminf(fmaxf(d, 0.0f), l) / l : 0));
+        d -= l;
+    }
+    return v3(p[0], p[1], p[2]);
+}
+static float nrail_nearest(const float *p, u32 n, int cl, V3 q) /* moveCoordToNearestPos */
+{
+    float best = 1e30f, at = 0, run = 0;
+    for (u32 i = 0; i < (cl ? n : n - 1); i++) {
+        V3 a = v3(p[3 * i], p[3 * i + 1], p[3 * i + 2]), ab = vsub(v3(p[3 * ((i + 1) % n)], p[3 * ((i + 1) % n) + 1], p[3 * ((i + 1) % n) + 2]), a);
+        float l = vlen(ab), t = l > 0 ? fminf(fmaxf(vdot(vsub(q, a), ab) / (l * l), 0.0f), 1.0f) : 0;
+        float dd = vlen(vsub(q, vadd(a, vmul(ab, t))));
+        if (dd < best) { best = dd; at = run + t * l; }
+        run += l;
+    }
+    return at;
+}
+static void npc_pose(Inst *in, V3 up, V3 front, V3 pos, float fb, float pb) /* decidePose(up blend 1, fb, pb) */
+{
+    in->m[12] += (pos.x - in->m[12]) * pb; in->m[13] += (pos.y - in->m[13]) * pb; in->m[14] += (pos.z - in->m[14]) * pb;
+    in->nf = vnorm(npc_turn_vec(in->nf, in->nu, up, 1.0f)); /* blendQuatUpFront: its up all the way */
+    in->nu = up;
+    V3 f = vtangent(front, up);
+    if (vlen(f) < 1e-6f) return;
+    in->nf = vnorm(npc_turn_vec(in->nf, in->nf, vnorm(f), fb));
+}
+static void npc_rail_place(Inst *in) /* a rebind: at its rail coord, facing its way */
+{
+    NpcRail p; u32 n; int cl; V3 dir;
+    const float *pts = npc_rail_of(in, &p, &n, &cl);
+    if (!pts) return;
+    V3 at = nrail_at(pts, n, cl, row_coord[in->row], &dir);
+    npc_pose(in, in->nu, vmul(dir, (float)row_rdir[in->row]), at, 1.0f, 1.0f);
+}
+static int npc_rail_start(Inst *in) /* 1: it has a rail (set up on the first call) */
+{
+    NpcRail p; u32 n; int cl;
+    const float *pts = npc_rail_of(in, &p, &n, &cl);
+    if (!pts) return 0;
+    if (!row_rdir[in->row]) { /* init: moveCoordToNearestPos, mPosition the rail's */
+        V3 dir;
+        row_coord[in->row] = nrail_nearest(pts, n, cl, v3(in->m[12], in->m[13], in->m[14]));
+        row_speed[in->row] = 0; row_rdir[in->row] = 1;
+        V3 at = nrail_at(pts, n, cl, row_coord[in->row], &dir);
+        in->m[12] = at.x; in->m[13] = at.y; in->m[14] = at.z;
+        printf("npc rail: row %d arg0 %d, %u points%s, len %d, coord %d%c", in->row, sc->objs[in->row].arg[0], n, cl ? " (loop)" : "",
+               (int)nrail_len(pts, n, cl), (int)row_coord[in->row], 10);
+    }
+    return 1;
+}
+static int npc_rail_moving(Inst *in) /* tryStartMoveTalkAction: not (_10C and its speed near zero) */
+{
+    NpcRail p; u32 n; int cl;
+    return npc_rail_start(in) && npc_rail_of(in, &p, &n, &cl) && !(fabsf(p.speed) < 0.001f && fabsf(row_speed[in->row]) < 0.001f);
+}
+static void npc_rail_move(Inst *in) /* startMoveAction */
+{
+    NpcRail p; u32 n; int cl;
+    const float *pts = npc_rail_of(in, &p, &n, &cl);
+    int row = in->row;
+    float len = nrail_len(pts, n, cl), s = row_speed[row], c;
+    s = fabsf(s - p.speed) < p.accel ? p.speed : s < p.speed ? s + p.accel : s - p.accel; /* adjustmentRailCoordSpeed */
+    row_speed[row] = s;
+    c = row_coord[row] + s * row_rdir[row]; /* moveRailRider */
+    c = cl ? fmodf(c + 4.0f * len, len) : fminf(fmaxf(c, 0.0f), len);
+    row_coord[row] = c;
+    V3 dir, at = nrail_at(pts, n, cl, c, &dir), pos = v3(in->m[12], in->m[13], in->m[14]);
+    V3 up = up_at(pos, in->nu);
+    dir = vmul(dir, (float)row_rdir[row]);
+    if (p.ground) { /* followRailPoseOnGround(_114): getFirstPolyOnLineToMap from 10 over it, 1000 down */
+        V3 hit;
+        if (drop_to_ground(vadd(at, vmul(up, 10.0f)), up, 1010.0f, &hit)) at = hit;
+        npc_pose(in, up, dir, at, p.blend, 1.0f);
+    } else npc_pose(in, up, dir, at, p.blend, p.blend); /* followRailPose(_114, _114) */
+    if (!cl && (row_rdir[row] > 0 ? c >= len : c <= 0)) row_rdir[row] = (signed char)-row_rdir[row]; /* isRailReachedGoal: reverseRailDirection */
+}
 static void update_npc_turn(void) /* the NPCs' wait nerves: tryStartTalkAction / tryStartTurnAction */
 {
     FOR_KIND(i, npc) {
@@ -39852,10 +39992,13 @@ static void update_npc_turn(void) /* the NPCs' wait nerves: tryStartTalkAction /
         npc_mode(t, &sc->objs[in->row], &mt);
         t = &mt;
         const char *act;
+        int moving = !talking && npc_rail_moving(in);
         if (talking) act = t->talk && !npc_turn_to_player(in, t, to) ? t->act[3] : t->act[2]; /* tryStartTalkAction */
+        else if (moving) { NpcRail nr; u32 n; int cl; npc_rail_of(in, &nr, &n, &cl); act = nr.move; } /* tryStartMoveTalkAction: _11C */
         else if (d < t->dist) act = t->near && !npc_turn_to_player(in, t, to) ? t->act[1] : t->act[0]; /* tryStartTurnAction */
         else act = (t->near || t->talk) && !npc_turn_default(in, t) ? t->act[1] : t->act[0];
         if (!strcmp(t->cls, "Penguin") && penguin_wait(in, talking, &act)) continue;
+        if (moving) npc_rail_move(in);
         if (!strcmp(t->cls, "Rabbit") && rabbit_lecture(in, talking)) continue;
         if (act) obj_play(in, act, 1, 0); /* tryStartAction (no-op while it plays) */
     }
