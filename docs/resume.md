@@ -682,6 +682,15 @@ there needs the embedded blob and every pack rebuilt.
   aligned as nw4r: the book's last text centred). RosettaPictureBook (the table's book: A, ロゼッタ絵本デモ, the
   PictureBookLayout's contents mode: Open, ContentsSelect, PictureBookCloseButton, Close). Test: `library` (with
   XF=-DRPB_ONLY=1 only the table's book: contents, chapter 1, B on its title page). ponytail: the circle wipes are fades.
+- Observatory / Gateway leftovers of #143 (feat/astro-mapobj, 2026-11-05): AstroOverlookObj (the HUD off while Mario
+  is in an AstroOverlookAreaCylinder: slice.py LOGIC keeps both rows; plain build XF=-DOVERLOOK_TEST AstroGalaxy/1),
+  AstroRotateStepA / B / AstroDecoratePartsA turn only once revived (isAlreadyRevival by
+  getNumGrandStarForRevival) with their engine level SEs, RunawayTico Guide0's TICO_WAIT / FLOAT_DEMO / zoom-out SEs
+  and BGM_MEET_TICO_ZOOM_OUT, HeavensDoorDemoObj's Vanish (cage Break, PlanetPartsA's BGM, kill at Move's end) and
+  the cage's ミニ太陽消失 shake / rumble, PlanetPartsA's SUN_WORK. SCENE_MAX_TEX 1088 -> 1280: slice_all now gives
+  AstroGalaxy layer passes (1121 textures; the old limit made its zone fail to load). Not seen: ミニ太陽消失 (only
+  after scenario 1's opening demo, not reached by a test). ponytail: AstroMapObj's Dead / Alive / Revival / Open
+  looks (a second model per object does not fit the Observatory's pack), name plates, AstroCountDownPlate's digits.
 
 - KuriboChief (feat/172-kuribochief, 2026-11-04): Enemy/KuriboChief.cpp as walker kind WALK_KCHIEF (its params,
   sensors at its joints, Stagger 240 / kick from 70, BlowDown / BlowDownLand, the kick by walking into it, the star

@@ -232,7 +232,7 @@ LOGIC = ("TimerSwitch", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "Coll
          # Mario's areas (MR::getAreaObj: game.c area_obj / foo_sphere)
          "CelestrialSphere", "TowerModeCylinder", "NonSleepCube", "EffectCylinder", "SmokeEffectColorAreaCube",
          "MessageAreaCube", "MessageAreaCylinder", "PullBackCylinder", "PlaneModeCube", "PlaneCircularModeCube",
-         "PrologueDirector", "PurpleCoinStarter", "ExterminationKuriboKeySwitch")  # areas (areaobjinfo) travel as OBJS rows too
+         "PrologueDirector", "PurpleCoinStarter", "ExterminationKuriboKeySwitch", "AstroOverlookObj", "AstroOverlookAreaCylinder")  # areas (areaobjinfo) travel as OBJS rows too
 
 
 def col(b, field, n, default=0):

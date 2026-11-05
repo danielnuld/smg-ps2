@@ -267,6 +267,8 @@ int game_test_statue(void); /* statue test: an explosion at the first standing K
 int game_test_torch(int how); /* tests: Mario into a lit PhantomTorch (0), spinning by it (1), on its item (2), by it (3); its row */
 int game_test_spc_n(void);  /* tests: star pieces got */
 int game_test_spc(void);    /* tests: the StarPieceCounter: mode * 1000 + nerve * 100 + group * 10 + CoinCounter killed */
+int game_test_overlook(int put); /* tests: Mario to the first AstroOverlookArea (put); its HUD off flag, -1 none */
+int game_test_put_at(const char *cls, float up); /* tests: Mario up over the first row of cls; its row, -1 none */
 int game_test_rpb(int put); /* library test: RosettaPictureBook's nerve (-1 none); put: Mario by the book */
 int game_test_demo(int k);   /* tests: demo k's appear switch on (-1: the running demo's step, -1 none; -2: its anim camera's frame; -3: Mario's clip * 1000 + frame) */
 void game_bgm(const char *id); /* MR::startStageBGM by its sound id (MBGM_ / BGM_ / STM_ ...) */

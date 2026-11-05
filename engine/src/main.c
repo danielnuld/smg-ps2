@@ -1475,6 +1475,9 @@ int main(void)
             }
         }
 #endif
+#if defined(PACKS) && defined(OVERLOOK_TEST)
+        if (frame == 300 || frame == 302 || frame == 400) printf("overlook test f %u: hud off %d\n", frame, game_test_overlook(frame == 300)); /* AstroGalaxy: Mario into an AstroOverlookArea */
+#endif
 #if defined(PACKS) && defined(COMET_TEST)
         if (frame == 300) { /* a comet on Good Egg: its decided scenario and warning */
             gd_set_star("HeavensDoorGalaxy", 1); /* 13 stars: EventCometStarter (StarNum 13) */
