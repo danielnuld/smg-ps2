@@ -867,21 +867,34 @@ def reads_ras(b, mat3, m):
     return bool(cin & {10, 11} or cin & {1, 3, 5, 7} and any(5 in st[10:14] for st in sts))
 
 
-def samples_named(b, mat3, m, tex1, name):
+def samples_named(b, mat3, m, tex1, name, over=None):
     """Whether a TEV stage of material m samples the TEX1 texture called `name` (IndDummy: the screen copy J3D puts
-    there at run time for indirect refraction, CrystalCage's IndTex)."""
+    there at run time for indirect refraction, CrystalCage's IndTex) and it shows: a stage lerp(TEXC, CPREV, A0..A2)
+    whose register alpha is 1 (with a BRK's registers in `over`) and no TEXA leaves PREV as it was (Rosetta's skin:
+    erase.brk fades her out through C1's alpha; normal.brk / her placed colour keep it at 1)."""
     if tex1 is None:
         return False
     nm = names(b, tex1 + u32(b, tex1 + 0x10))
     off = lambda k: mat3 + u32(b, mat3 + k)
     e = off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C
+    regs = [struct.unpack_from(">4h", b, off(0x50) + 8 * u16(b, e + 0xDC + 2 * k)) if u16(b, e + 0xDC + 2 * k) != 0xFFFF
+            else (0, 0, 0, 0) for k in range(3)]  # C0, C1, C2 (S16, 255 = 1)
+    ov = over.get(material_name(b, mat3, m), {}) if over else {}
+    for k, v in ov.get("reg", {}).items():
+        if k < 3:
+            regs[k] = tuple(round(c * 255) for c in v)
     for k in range(b[off(0x58) + b[e + 4]]):
         oi = u16(b, e + 0xBC + 2 * k)
         if oi == 0xFFFF or b[off(0x4C) + 4 * oi + 1] == 0xFF:
             continue
         t = u16(b, off(0x48) + 2 * u16(b, e + 0x84 + 2 * b[off(0x4C) + 4 * oi + 1]))
         if t < len(nm) and nm[t] == name:
-            return True
+            st = b[off(0x5C) + 20 * u16(b, e + 0xE4 + 2 * k):][:20]
+            ca, cb, cc, cd = st[1:5]
+            masked = (ca == 8 and cb not in (8, 9) and cd not in (8, 9) and cc in (3, 5, 7)
+                      and regs[(cc - 3) // 2][3] >= 255 and 4 not in st[10:14])  # GX_CC_A0 / A1 / A2 at 1, no TEXA
+            if not masked:
+                return True
     return False
 
 

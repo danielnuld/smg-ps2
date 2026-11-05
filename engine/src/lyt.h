@@ -39,6 +39,7 @@ void lyt_show_rec(LytInst *l, const char *pane, int show);           /* MR::show
 void lyt_set_text_rec(LytInst *l, const char *pane, const u16 *text); /* MR::setTextBoxMessageRecursive */
 void lyt_set_number_rec(LytInst *l, const char *pane, int n);        /* MR::setTextBoxNumberRecursive */
 void lyt_set_vpos_rec(LytInst *l, const char *pane, int v);          /* setTextBoxVerticalPosition*Recursive: 0 top 1 centre 2 bottom */
+void lyt_set_hpos_rec(LytInst *l, const char *pane, int h);          /* setTextBoxHorizontalPosition*Recursive: 0 left 1 centre 2 right */
 void lyt_set_pane_frame_stop(LytInst *l, const char *pane, int ch, float frame); /* MR::setPaneAnimFrameAndStop */
 float lyt_pane_frame(const LytInst *l, const char *pane, int ch);   /* MR::getPaneAnimFrame */
 float lyt_anim_frames(const LytInst *l, const char *anim);          /* MR::getAnimFrameMax */

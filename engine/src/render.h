@@ -79,6 +79,7 @@ void render_world_done(void);
 void render_shadow(const float world[16]);
 /* Finish the frame (VIF chain, HUD, wait for the GS) and flip; returns EE cycles spent before the vsync wait. */
 u32 render_end(void);
+void render_cover(int frames); /* MR::overlayWithPreviousScreen (CameraDirector::cover): the next frames drawn are not shown */
 /* Depth reset to far over the screen (after the sky): later draws always cover what is there */
 void render_clear_depth(void);
 u32 render_tris_drawn(void);

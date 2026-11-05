@@ -1275,7 +1275,7 @@ int render_model_visible(const Model *md, const float world[16])
     return md->vu_ngroups && !model_culled(md, world, mv);
 }
 
-#define DRW_CACHE 192 /* a skinned draw's matrices by draw index (anim.h ANIM_MAX_DRW 160) */
+#define DRW_CACHE 224 /* a skinned draw's matrices by draw index (anim.h ANIM_MAX_DRW) */
 static float dcache[DRW_CACHE][MAT_FL] __attribute__((aligned(16)));
 static u32 dstamp[DRW_CACHE], dseq = 1;
 static void draw_model_(const Model *md, const float world[16], const float (*drw)[16])
@@ -1999,6 +1999,8 @@ void render_world_done(void)
 
 void render_quads_flush(void) { draw_quads(); }
 
+static int cover_left;
+void render_cover(int frames) { cover_left = frames; } /* CameraDirector::cover: the screen on show stays for frames */
 u32 render_end(void)
 {
     u32 c0 = cycles();
@@ -2018,6 +2020,11 @@ u32 render_end(void)
     packet2_vif_open_direct(vif[cur], 0);
     packet2_vif_close_direct_manual(vif[cur], qw);
     *(volatile u64 *)0x12001000 = 2; /* no stale FINISH: the flip waits for this chain's */
+    if (cover_left > 0) { /* covered: drawn, not shown; the next frame draws over it */
+        cover_left--;
+        flush_vif();
+        return cycles() - c0;
+    }
     flip_addr = frame[back].address;
     flip_pending = 1;
     flush_vif(); /* the frame's last part goes; not waited for */

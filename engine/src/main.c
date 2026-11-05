@@ -1436,24 +1436,43 @@ int main(void)
         }
 #endif
 #if defined(PACKS) && defined(LIBRARY_TEST)
+#ifndef RPB_ONLY
+#define RPB_ONLY 0 /* XF=-DRPB_ONLY=1: every chapter read already, RosettaPictureBook alone */
+#endif
+#ifndef SEL_HOLD
+#define SEL_HOLD 180
+#endif
         { /* XF=-DLIBRARY_TEST from AstroGalaxy/1: chapters 1-3 can be read (PictureBookA..C), none read; to the library at 200:
            * ロゼッタ朗読, its talks and the picture book read through by X every second */
             static int moved;
-            pad_force = moved && frame % 60 < 8 ? PAD_CROSS : 0;
+            pad_force = moved && frame % 20 < 4 ? PAD_CROSS : 0;
             if (frame == 200 && !moved) {
                 /* (PictureBookA..C are computed: SpecialStarGrand3, 24 / 28 stars) */
                 static const char *const gs[] = {"EggStarGalaxy", "HoneyBeeKingdomGalaxy", "BattleShipGalaxy", "HeavenlyBeachGalaxy"};
                 for (int g = 0; g < 4; g++) for (int k = 1; k <= 6; k++) gd_set_star(gs[g], k);
                 gd_set_star("HeavensDoorGalaxy", 1); gd_set_star("KoopaBattleVs1Galaxy", 1); gd_set_star("SurfingLv1Galaxy", 1);
                 gd_set_star("FlipPanelExGalaxy", 1);
-                gd_set_value("絵本既読章", 0); gd_set_value("LibraryOpenNewStarCount", 0);
+                gd_set_value("絵本既読章", RPB_ONLY ? 3 : 0); gd_set_value("LibraryOpenNewStarCount", 0);
                 printf("library test: grand3 %d, value %d, stars %d\n", gd_flag_is_on("SpecialStarGrand3"), gd_value("LibraryOpenNewStarCount"), gd_star_num());
                 printf("library test: can read %d, read %d\n", gd_book_can_read(), gd_value("絵本既読章"));
                 seq_galaxy_move(SEQ_MOVE, "LibraryRoom", 1, -1, 0);
                 moved = 1;
             }
-            if (moved && frame % 120 == 0)
-                printf("library test f %u: demo %d, book %d, read %d\n", frame, game_test_demo(-1), menu_picture_book_alive(), gd_value("絵本既読章"));
+            /* then RosettaPictureBook: Mario by the table's book, A, chapter 1 on the contents, B on its title page */
+            static int rpb_t;
+            if (moved && frame % 120 == 0 && !rpb_t)
+                printf("library test f %u: demo %d, book %d, read %d, table book %d\n", frame, game_test_demo(-1), menu_picture_book_alive(), gd_value("絵本既読章"), game_test_rpb(0));
+            if (moved && !rpb_t && (gd_value("絵本既読章") == 3 || RPB_ONLY) && game_test_demo(-1) < 0 && game_test_rpb(0) == 0) rpb_t = 1;
+            if (rpb_t) {
+                rpb_t++;
+                pad_force = 0;
+                if (rpb_t == 30) game_test_rpb(1);
+                if (rpb_t == 150) pad_force = PAD_CROSS;
+                static int sel_t; if (menu_test_book_state() / 1000 == 9 && !sel_t) sel_t = rpb_t; /* ContentsSelect: 3 s on the contents, then chapter 1 */
+                if (menu_test_book_state() / 1000 == 9 && rpb_t > sel_t + SEL_HOLD && menu_test_point_book("BoxButton1") && rpb_t % 30 == 0) pad_force = PAD_CROSS;
+                if (menu_test_book_state() == 4100 && rpb_t % 30 == 0) pad_force = PAD_CIRCLE; /* chapter 1's title page: B */
+                if (rpb_t % 10 == 0 && rpb_t < 1800) printf("library test t %d: table book %d, book %d\n", rpb_t, game_test_rpb(0), menu_test_book_state());
+            }
         }
 #endif
 #if defined(PACKS) && defined(COMET_TEST)

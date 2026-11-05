@@ -70,7 +70,7 @@ int menu_test_prologue_book(void);   /* tests: page x 10 + 1 while it waits for 
  * startGalaxyMapLayoutForTicoComet, startAstroMapLayoutForChallengeGalaxyDiscover */
 enum { GMAP_ASTRO, GMAP_GALAXY, GMAP_LIST, GMAP_NEW_GALAXY, GMAP_NEW_TICO, GMAP_NEW_DOME, GMAP_TICO_COMET, GMAP_CHALLENGE };
 void menu_galaxy_map(int mode);
-void menu_picture_book(int chapter_min, int chapter_max); /* PictureBookLayout (RosettaReading's): appear */
+void menu_picture_book(int chapter_min, int chapter_max, int contents); /* PictureBookLayout: appear (contents: RosettaPictureBook's) */
 int menu_picture_book_alive(void);                         /* !isDead */
 void menu_luigi_letter(const char *galaxy, int talk); /* LuigiLetter (LuigiPicture<galaxy>): appear (talk: KinopioAstro's) */
 int menu_luigi_letter_alive(void);   /* !isDead */
@@ -94,7 +94,7 @@ void menu_result_start(void);        /* the result held for the star return demo
  * requestStarPointerMode*: the lowest asked is set up), a touch (the pointing checks' onReaction with enableTouch;
  * rumble: their "弱"; 0 when the pointer is not valid or not in the screen), SpaceCocoon's command stream on / off
  * (each step), the layout drawn over the frame (main.c) */
-enum { SPM_SAVELOAD = 2, SPM_TITLE = 4, SPM_FILESELECT, SPM_SCENARIOSELECT, SPM_PAUSEMENU, SPM_CHOOSEYESNO, SPM_DEMO = 12,
+enum { SPM_SAVELOAD = 2, SPM_TITLE = 4, SPM_FILESELECT, SPM_SCENARIOSELECT, SPM_PAUSEMENU, SPM_CHOOSEYESNO, SPM_PICTUREBOOK, SPM_DEMO = 12,
        SPM_DEMOMARIODEATH, SPM_POWERSTARGETDEMO, SPM_SPHEREONREACTION = 16, SPM_SPHEREFINGER, SPM_COMMANDSTREAM = 19,
        SPM_BLUESTAR, SPM_BLUESTARREADY, SPM_GAME = 25 };
 void menu_pointer_request(int mode);
@@ -117,6 +117,8 @@ int menu_draw_screen(void); /* game_draw: 1 when a whole-screen menu (the scenar
 const u16 *msg_get(const char *label); /* MR::getLayoutMessageDirect / getGameMessageDirect (MSGS chunk), NULL none */
 void msg_set(const u8 *msgs_chunk);    /* msg_get's chunk (menu_init's; main.c's subs.bin while a movie plays) */
 int menu_test_point_scenario(const char *pane);
+int menu_test_point_book(const char *pane); /* tests: the pointer on a picture book pane (NULL: its close button) */
+int menu_test_book_state(void);          /* tests: the picture book's nerve * 1000 + chapter * 100 + page */
 int menu_test_point_dome(const char *pane);
 int menu_test_point_file(int slot, const char *pane);
 int menu_test_point(const char *pane); /* tests: the pointer on a pane of the open pause menu / its window */
