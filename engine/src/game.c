@@ -3558,78 +3558,169 @@ static void update_beeflowers(void)
     }
 }
 
-/* TicoRail.cpp: a Luma on its rail from the nearest point: Move (speed 0 to 15 over 200 frames; at the rail's end it
- * turns back, round again on a closed rail), after 500 frames + a random bit Stop (15 to 0 over ~30), Wait 60 +
- * random, LookAround 160 (turning 1.2 degrees a frame left, right, left), MoveSign (~30, half the time it turns
- * back), Move again. row_turn 0 not started, 1 move, 2 stop, 3 wait, 4 look around, 5 sign; row_rdir its direction;
- * row_coord, row_speed, row_step. ponytail: no talk, the look-around is its facing only, the Spin / Turn BCKs not
- * played (static Tico model)
- * ponytail (unmarked until the 2026-11-02 audit): it bounces back at the rail ends (TicoRail.cpp:135-200 clamps,
- * turning only on MoveSignAndTurn), fixed waits (Petari: step + 1/300 random, forced at +300), Stop decelerates
- * over 30 frames instead of the Spin BCK */
-static void ticorail_place(Inst *in)
+static void mario_push_out(V3 c, float r);
+static V3 rot_axis(V3 v, V3 a, float ang);
+/* TicoRail.cpp after Petari: a Luma on its rail from its nearest point, its front _8C. Wait (Turn) until step 60 +
+ * (1/300 a frame, forced at +300: isGreaterEqualStepAndRandom), LookAround (turning 1.2 degrees left to 40, right to
+ * 120, left to 160), then half the time MoveSign (Spin: its front blended from back to its way), else
+ * MoveSignAndTurn (the rail reversed first), Move (Wait; its speed 0 to 15 over 200, moveCoordAndFollowTrans: clamped
+ * at an open rail's end), after 500 (+ random) Stop (Spin, 15 to 0 over the clip), Wait. Two on the same rail whose
+ * bodies (50 at 50 up) meet: the touched one, half the time and within 30 vertically, TalkStart (Spin, turning to
+ * the other, 2 a frame), Talk (Talk, Reaction 1/60 a frame, 320), GoodBye (CallBack, 1.5 away, then MoveSign); the
+ * toucher too, or TalkCancel (Spin, 15 a frame, then Move) when the other goes the other way. Its body pushes Mario.
+ * row_turn its nerve (0 not started), row_step its step, row_rdir its direction, row_coord its coordinate, in->nf
+ * its front, in->lv[1] its partner + 1. ponytail: no ColorChange BRK frame (arg0), no LodCtrl */
+enum { TR_NONE, TR_WAIT, TR_LOOKAROUND, TR_MOVESIGN, TR_MOVESIGNTURN, TR_MOVE, TR_STOP, TR_TALKSTART, TR_TALK, TR_TALKCANCEL, TR_GOODBYE };
+static void tr_nrv(Inst *in, int n) /* setNerve: step 0 next frame */
+{
+#ifdef TICORAIL_TEST
+    printf("ticorail row %d: nerve %d at coord %d dir %d\n", in->row, n, (int)row_coord[in->row], row_rdir[in->row]);
+#endif
+    row_turn[in->row] = (signed char)n; row_step[in->row] = 0xFFFF;
+}
+static int tr_frames(const char *clip) { char n[48]; int mode; snprintf(n, sizeof n, "ticorail/%s", clip); return anim_clip_info(n, &mode); }
+static int tr_random_step(int st, int step) { return st >= step + 300 || (st >= step && rand() % 300 == 0); } /* isGreaterEqualStepAndRandom */
+static float tr_rate(int st, int max) { return max <= 0 ? 1.0f : st >= max ? 1.0f : (float)st / max; } /* calcNerveRate */
+static V3 tr_blend(V3 a, V3 b, float t) { V3 v = vadd(vmul(a, 1.0f - t), vmul(b, t)); return vlen(v) > 1e-6f ? vnorm(v) : b; } /* blendVec */
+static int tr_talking(int n) { return n == TR_TALKSTART || n == TR_TALK || n == TR_TALKCANCEL || n == TR_GOODBYE; }
+static V3 tr_dir(const Inst *in) /* getRailDirection */
 {
     const unsigned char *e = in->ticorail;
     const float *p = (const float *)(e + 24);
     u32 np = *(const u32 *)(e + 8);
-    int row = in->row;
-    V3 at = rail_at(p, np, row_coord[row]), ahead = rail_at(p, np, row_coord[row] + 5.0f * row_rdir[row]);
-    V3 up = up_at(at, v3(in->m[4], in->m[5], in->m[6])), f = vsub(ahead, at);
-    float a = row_turn[row] == 4 ? 1.2f * 0.0174533f * (row_step[row] < 40 ? row_step[row] : row_step[row] < 120 ? 80 - row_step[row] : row_step[row] - 160)
-                                 : 0.0f; /* the look around */
-    basis_matrix(in->m, at, up, vlen(f) > 1e-3f ? f : v3(in->m[8], in->m[9], in->m[10]), a);
+    float c = row_coord[in->row];
+    V3 a = rail_at(p, np, c), b = rail_at(p, np, c + 1.0f), d = vsub(b, a);
+    if (vlen(d) < 1e-6f) { a = rail_at(p, np, c - 1.0f); d = vsub(rail_at(p, np, c), a); }
+    return vmul(vlen(d) > 1e-6f ? vnorm(d) : in->nf, (float)row_rdir[in->row]);
+}
+static void tr_move(Inst *in, float speed) /* moveCoordAndFollowTrans */
+{
+    const unsigned char *e = in->ticorail;
+    float len = tsuki_len(e), n = row_coord[in->row] + speed * row_rdir[in->row];
+    if (*(const unsigned short *)(e + 2)) n = fmodf(n + len, len);
+    else n = n < 0 ? 0 : n > len ? len : n;
+    row_coord[in->row] = n;
+}
+static void ticorail_place(Inst *in) /* calcAndSetBaseMtx: calcMtxFromGravityAndZAxis(gravity, _8C) */
+{
+    const unsigned char *e = in->ticorail;
+    const float *p = (const float *)(e + 24);
+    u32 np = *(const u32 *)(e + 8);
+    V3 at = rail_at(p, np, row_coord[in->row]);
+    V3 up = up_at(at, v3(in->m[4], in->m[5], in->m[6]));
+    basis_matrix(in->m, at, up, vlen(vtangent(in->nf, up)) > 1e-3f ? in->nf : v3(in->m[8], in->m[9], in->m[10]), 0);
     for (int j = 0; j < 12; j++) if (j % 4 != 3) in->m[j] *= in->s;
 }
-
 static void update_ticorails(void)
 {
     FOR_KIND(i, ticorail) {
         Inst *in = &insts[i];
-        if (!in->ticorail) continue;
+        if (!in->ticorail || !row_shown(in->row)) continue;
         int row = in->row;
-        unsigned short *t = &row_step[row];
-        signed char *ph = &row_turn[row];
         const unsigned char *e = in->ticorail;
-        const float *p = (const float *)(e + 24);
-        u32 np = *(const u32 *)(e + 8);
-        float len = tsuki_len(e);
-        if (!*ph) { /* moveCoordAndTransToNearestRailPos; Wait or Move at random */
+        if (!row_turn[row]) { /* init: moveCoordAndTransToNearestRailPos, _8C its direction; Wait or Move at random */
+            const float *p = (const float *)(e + 24);
+            u32 np = *(const u32 *)(e + 8);
             const Row *r = &sc->objs[row];
             V3 at = v3(r->pos[0], r->pos[1], r->pos[2]);
             float best = 1e30f, acc = 0, c = 0;
             for (u32 k = 0; k + 1 < np; k++) {
-                V3 a = v3(p[3 * k], p[3 * k + 1], p[3 * k + 2]), b = v3(p[3 * k + 3], p[3 * k + 4], p[3 * k + 5]);
-                V3 ab = vsub(b, a);
+                V3 a = v3(p[3 * k], p[3 * k + 1], p[3 * k + 2]), ab = vsub(v3(p[3 * k + 3], p[3 * k + 4], p[3 * k + 5]), a);
                 float l = vlen(ab), u = l > 0 ? vdot(vsub(at, a), ab) / (l * l) : 0;
                 u = u < 0 ? 0 : u > 1 ? 1 : u;
                 float d = vlen(vsub(at, vadd(a, vmul(ab, u))));
                 if (d < best) { best = d; c = acc + u * l; }
                 acc += l;
             }
-            row_coord[row] = c; row_rdir[row] = 1; row_speed[row] = 0;
-            *ph = rand() & 1 ? 1 : 3; *t = 0;
+            row_coord[row] = c; row_rdir[row] = 1; in->lv[1] = 0;
+            in->nf = tr_dir(in);
+            tr_nrv(in, rand() % 2 ? TR_MOVE : TR_WAIT);
         }
-        ++*t;
-        int closed = *(const unsigned short *)(e + 2);
-        float speed = 0;
-        switch (*ph) {
-        case 1: speed = *t < 200 ? 15.0f * *t / 200.0f : 15.0f;
-            if (*t >= 500 + (row * 37) % 120) { *ph = 2; *t = 0; }
+        int st = ++row_step[row] & 0xFFFF;
+        V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+        switch (row_turn[row]) {
+        case TR_WAIT:
+            if (st == 0) obj_play(in, "turn", 0, 0);
+            if (tr_random_step(st, 60)) tr_nrv(in, TR_LOOKAROUND);
             break;
-        case 2: speed = *t < 30 ? 15.0f * (1.0f - *t / 30.0f) : 0.0f;
-            if (*t >= 30) { *ph = 3; *t = 0; }
+        case TR_LOOKAROUND: {
+            if (st == 0) obj_play(in, "turn", 0, 0); /* tryStartBck */
+            float a = st < 40 ? 1.2f : st < 120 ? -1.2f : st < 160 ? 1.2f : 0.0f;
+            in->nf = vnorm(rot_axis(in->nf, up, a * 0.0174533f)); /* rotateVecDegree */
+            if (st == 160) tr_nrv(in, rand() % 2 ? TR_MOVESIGN : TR_MOVESIGNTURN);
             break;
-        case 3: if (*t >= 60 + (row * 53) % 60) { *ph = 4; *t = 0; } break;
-        case 4: if (*t >= 160) { *ph = 5; *t = 0; if (rand() & 1) row_rdir[row] = -row_rdir[row]; } break;
-        default: if (*t >= 30) { *ph = 1; *t = 0; } break;
         }
-        float n = row_coord[row] + speed * row_rdir[row];
-        if (n >= len || n <= 0) {
-            if (closed) n = n >= len ? n - len : n + len;
-            else { n = n >= len ? len : 0; row_rdir[row] = -row_rdir[row]; }
+        case TR_MOVESIGN: case TR_MOVESIGNTURN: {
+            if (st == 0) { obj_play(in, "spin", 0, 0); if (row_turn[row] == TR_MOVESIGNTURN) row_rdir[row] = (signed char)-row_rdir[row]; }
+            int fm = tr_frames("spin");
+            V3 d = tr_dir(in);
+            in->nf = tr_blend(vmul(d, -1.0f), d, tr_rate(st, fm));
+            if (st >= fm) tr_nrv(in, TR_MOVE);
+            break;
         }
-        row_coord[row] = n;
+        case TR_MOVE:
+            if (st == 0) obj_play(in, "wait", 1, 0);
+            tr_move(in, 15.0f * tr_rate(st, 200)); /* calcNerveValue(0, 200, 15) */
+            in->nf = tr_dir(in);
+            if (tr_random_step(st, 500)) tr_nrv(in, TR_STOP);
+            break;
+        case TR_STOP: {
+            if (st == 0) obj_play(in, "spin", 0, 0);
+            int fm = tr_frames("spin");
+            tr_move(in, 15.0f * (1.0f - tr_rate(st, fm)));
+            if (st >= fm) tr_nrv(in, TR_WAIT);
+            break;
+        }
+        case TR_TALKSTART: {
+            const Inst *o = in->lv[1] ? &insts[in->lv[1] - 1] : in;
+            V3 diff = vsub(v3(o->m[12], o->m[13], o->m[14]), v3(in->m[12], in->m[13], in->m[14]));
+            diff = vlen(diff) > 1e-6f ? vnorm(diff) : in->nf;
+            if (st == 0) { obj_play(in, "spin", 0, 0); if (vdot(diff, tr_dir(in)) > 0.0f) row_rdir[row] = (signed char)-row_rdir[row]; }
+            tr_move(in, 2.0f);
+            int fm = tr_frames("spin");
+            in->nf = tr_blend(tr_dir(in), diff, tr_rate(st, fm));
+            if (st >= fm) tr_nrv(in, TR_TALK);
+            break;
+        }
+        case TR_TALK:
+            if (st == 0) obj_play(in, "talk", 1, 0);
+            if (in->anim && in->anim->clip_id >= 0 && !strstr(sc->clips[in->anim->clip_id].name, "reaction") && rand() % 60 == 0)
+                obj_play(in, "reaction", 0, 5); /* startBckWithInterpole(Reaction, 5) */
+            else if (in->anim && in->anim->clip_id >= 0 && strstr(sc->clips[in->anim->clip_id].name, "reaction") && in->anim->done)
+                obj_play(in, "talk", 1, 0); /* isBckOneTimeAndStopped */
+            if (st == 320) tr_nrv(in, TR_GOODBYE);
+            break;
+        case TR_TALKCANCEL: {
+            if (st == 0) obj_play(in, "spin", 0, 0);
+            tr_move(in, 15.0f);
+            in->nf = tr_dir(in);
+            if (st >= tr_frames("spin")) tr_nrv(in, TR_MOVE);
+            break;
+        }
+        case TR_GOODBYE:
+            if (st == 0) { obj_play(in, "callback", 0, 0); if (vdot(in->nf, tr_dir(in)) > 0.0f) row_rdir[row] = (signed char)-row_rdir[row]; }
+            tr_move(in, 1.5f);
+            if (st >= tr_frames("callback")) { in->lv[1] = 0; tr_nrv(in, TR_MOVESIGN); } /* isBckLooped */
+            break;
+        }
         ticorail_place(in);
+        V3 body = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(up, 50.0f));
+        mario_push_out(body, 50.0f); /* attackSensor: sendMsgPush */
+        if (tr_talking(row_turn[row])) continue;
+        FOR_KIND(j, ticorail) { /* attackSensor on another TicoRail's body: ACTMES_TICO_RAIL_TOUCH */
+            Inst *o = &insts[j];
+            if (o == in || !o->ticorail || !row_shown(o->row)) continue;
+            V3 ob = vadd(v3(o->m[12], o->m[13], o->m[14]), vmul(vnorm(v3(o->m[4], o->m[5], o->m[6])), 50.0f));
+            if (vlen(vsub(ob, body)) >= 100.0f) continue;
+            int took = 0;
+            if (!tr_talking(row_turn[o->row]) && o->ticorail == in->ticorail && rand() % 2 && /* receiveOtherMsg: isSameRailActor, 1/2 */
+                fabsf(vdot(vsub(v3(in->m[12], in->m[13], in->m[14]), v3(o->m[12], o->m[13], o->m[14])), up)) <= 30.0f) {
+                o->lv[1] = (u32)(i + 1); tr_nrv(o, TR_TALKSTART); took = 1;
+            }
+            if (took) { in->lv[1] = (u32)(j + 1); tr_nrv(in, TR_TALKSTART); printf("ticorail rows %d / %d: talk\n", row, o->row); }
+            else if (row_rdir[row] != row_rdir[o->row]) tr_nrv(in, TR_TALKCANCEL); /* isRailGoingToEnd differs */
+            break;
+        }
     }
 }
 
