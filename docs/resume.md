@@ -214,6 +214,14 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   would loop their first clip), TicoFat's reaction voices, DinoPackunVs2 (the whole fiery boss: its FireStrong /
   Fire attack variants belong to it), the stomp combo (only KoopaJrShip's 砲弾 and KuriboChief's 全滅用クリボー count:
   neither ported), SE_SM_LV_KINOMES_GOT_MAIL (only with the Wii Message Board mail).
+- story, HUD counter animations: tools/layout.py tags the counters' quads (cu / cv / tu / tv of fill 0 / 255:
+  wait.brlan's Sha* y curves, flash.brlan's TxtNumber C0, the CountUpPaneRumbler pane), game.c lay_anim_y / lay_text
+  play them: Wait from each Appear, Flash + rumbler at a count up (Coin, Star, PlayerLeft's exeWait one by one,
+  Purple; StarPieceCounter: Flash up, rumbler on any change, TCounter only). The flash is lyt's lerp(C0, C1, I): the
+  glyph through C1 - C0, then C0 added (render.c Quad pad bit 1) under the digit's mask (msg.py: half-size masks
+  0xE030 + digit in the text atlas's spare rows). Test: plain EggStarGalaxy/1 XF=-DHUD_TEST (coins, a life, a star:
+  `hud test` lines; flash held at its peak from f 1100). Needs resident.bin (+100 B). ponytail: no counter light
+  effects.
   Note for agents: `git stash` is shared by every worktree (one repository): a stash pushed in one worktree can be
   popped by another. Do not use it; commit WIP to the branch instead.
 
