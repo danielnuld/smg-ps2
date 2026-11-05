@@ -2307,6 +2307,7 @@ int main(void)
                                                                             {2100, 1, 0, 2}};
             for (unsigned i = 0; i < sizeof st / sizeof st[0]; i++)
                 if (frame == st[i].f) printf("tako test f %u: kind %d #%d how %d: row %d\n", frame, st[i].kind, st[i].k, st[i].how, game_test_enemy(st[i].kind, st[i].k, st[i].how));
+            if (frame == 2100) game_test_spin_now(); /* a spin by it */
             if (frame % 100 == 0) printf("tako test f %u: takohei %d kotebug %d alive, life %d\n", frame, game_kind_alive(1), game_kind_alive(3), game_life());
         }
 #endif
