@@ -4578,8 +4578,7 @@ static int gap_class(const char *name)
 }
 /* ponytail (unmarked until the 2026-11-02 audit): placed classes of the early galaxies with no behaviour here
  * (drawn static, or not at all), each a whole Petari class: GhostPlayer (Cosmic Mario);
- * Space Junk TombSpider, SpiderAttachPoint (SlingShooter); PlanetRocket (a
- * PlanetMap: its own-name clip, PlanetMap.cpp:67, needs planets skinned: slice.py AUTO_SKINNED leaves planets out); Battlerock BossBegoman, TicoShop; Beach Bowl PenguinStudent;
+ * Space Junk TombSpider, SpiderAttachPoint (SlingShooter); Battlerock BossBegoman, TicoShop; Beach Bowl PenguinStudent;
  * the observatory's AstroMapObj looks (update_astro_objs' ponytail) */
 static void class_make(ClassInfo *ci, const char *name)
 {

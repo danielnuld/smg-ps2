@@ -89,6 +89,11 @@ SKINNED_OBJ += ("HoneyQueenWing",)  # HoneyQueen::init: createModelObjNpc 羽 on
 # MapObjActor::initialize (tryStartAllAnim): a placed class whose model archive holds a BCK of the archive's name
 # plays it from the start; such classes are drawn skinned too (AUTO_SKINNED, class -> archive, filled by placement)
 AUTO_SKINNED = {}
+# PlanetMap::init (PlanetMap.cpp:67): a planet whose archive holds animations of its name plays them all
+# (startAllAnim); the BCK ones skinned here (their BTKs play on every model: anim_btk). ponytail: PhantomHolePlanet
+# left static (its collision follows its BCK's Move joint: PlanetMap.cpp:56, no moving planet collision here);
+# BeamGoRoundPlanet / HatchWaterPlanet are classes of their own (not ported); TeresaMansionPlanetB's BRK not played
+ANIM_PLANETS = ("PlanetRocket", "PlanetDisk", "ChoConveyorPlanetB")  # HomePlanet: its BCK moves no joint
 # the demo camera sheets' anim cameras (DemoCameraKeeper AnimCameraName: a .canm of the target cast's archive): (class,
 # canm stem) per scenario, filled by demo_chunk and baked by canm_chunk (called after it)
 DEMO_CANM = set()
@@ -1792,8 +1797,8 @@ def placement(fs, galaxy, scenario):
            chunk(b"OBJS", struct.pack("<I", len(keep)) + b"".join(pack_row(r) for r in keep)),
            chunk(b"STRT", struct.pack("<I", len(starts)) + b"".join(pack_row(r) for r in starts)),
            chunk(b"PATH", struct.pack("<I", len(paths)) + b"".join(path_entry(p) for p in paths))]
-    AUTO_SKINNED.update({t: arcmap[t] for t in types if t not in planets and t not in SKINNED_OBJ and arcmap.get(t)
-                         and "#" not in arcmap[t] and auto_anim(fs, arcmap[t])})
+    AUTO_SKINNED.update({t: arcmap[t] for t in types if (t not in planets or t in ANIM_PLANETS) and t not in SKINNED_OBJ
+                         and arcmap.get(t) and "#" not in arcmap[t] and auto_anim(fs, arcmap[t])})
     out.append(obj_anim_chunk(Path(fs), set(types), galaxy))
     out.append(btp_chunk(Path(fs), set(types)))
     out.append(brkc_chunk(Path(fs)))
