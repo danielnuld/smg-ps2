@@ -75,14 +75,14 @@ static struct { int on, owner, nrv, step, demo; V3 pos, vel, up; float rate, t; 
 static struct { int row, nrv, step; V3 last; } exts[MAX_EXTS];
 static int nexts;
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
-       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU, WALK_BOMBHEI, WALK_STRSPIDER, WALK_BEGOSPIKE, WALK_KCHIEF, WALK_BEGOBABY, WALK_BBEGO, WALK_KINDS };
+       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU, WALK_BOMBHEI, WALK_STRSPIDER, WALK_BEGOSPIKE, WALK_KCHIEF, WALK_BEGOBABY, WALK_BBEGO, WALK_KAMECK, WALK_KINDS };
 /* walkers ported in the release push: their classes (counted, placed and drawn through this table) */
 static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}, {"BasaBasa", WALK_BASABASA}, {"BasaBasaIce", WALK_BASABASA}, {"Jellyfish", WALK_JELLYFISH},
                                                                     {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}, {"Mogu", WALK_MOGU}, {"Mogucchi", WALK_MOGUCCHI}, {"Metbo", WALK_METBO}, {"TeresaWater", WALK_TERESAW},
                                                                     {"Snakehead", WALK_SNAKEHEAD}, {"SnakeheadSmall", WALK_SNAKEHEAD}, {"Kabokuri", WALK_KABOKURI}, {"Pukupuku", WALK_PUKUPUKU},
                                                                     {"BombHei", WALK_BOMBHEI}, {"BombHeiLauncher", WALK_BOMBHEI}, {"BombLauncher", WALK_BOMBHEI},
                                                                     {"StringSpider", WALK_STRSPIDER}, {"BegomanSpike", WALK_BEGOSPIKE},
-                                                                    {"KuriboChief", WALK_KCHIEF}, {"ChildKuribo", WALK_KURIBO}, {"BegomanBaby", WALK_BEGOBABY}, {"BossBegoman", WALK_BBEGO}}; /* ChildKuribo: createNoItemKuriboActor */
+                                                                    {"KuriboChief", WALK_KCHIEF}, {"ChildKuribo", WALK_KURIBO}, {"BegomanBaby", WALK_BEGOBABY}, {"BossBegoman", WALK_BBEGO}, {"FireBallBeamKameck", WALK_KAMECK}, {"ChildKameck", WALK_KAMECK}}; /* ChildKuribo: createNoItemKuriboActor */
 #define NEW_WALKERS ((int)(sizeof new_walkers / sizeof new_walkers[0]))
 #define BB_FOLLOWERS 5 /* BossBegoman: mBabyFollowerNum 3, mSpikeFollowerNum 2 (the slots after its own) */
 static const Model *m_wnew[NEW_WALKERS];
@@ -693,7 +693,8 @@ static struct { int inst, cool; V3 pt, vel, side, front; } jb = {.inst = -1}; /*
 static struct { int inst, phase, t, drop, row; V3 dir, head, vel; } jet = {.inst = -1}; /* the JetTurtle Mario holds or threw
                                                                 * (update_jets; row / head / vel kept for a rebind); drop:
                                                                 * MarioSwim::dropJet's releaseThrowMemoSensor asked */
-static int m_carry_jet(void) { return jet.inst >= 0 && jet.phase == 1; } /* MarioActor _468 / getCarrySensor */
+static int kmj_carry(void);
+static int m_carry_jet(void) { return (jet.inst >= 0 && jet.phase == 1) || kmj_carry(); } /* MarioActor _468 / getCarrySensor */
 static struct { int inst, phase, t, spins; } flf = {.inst = -1}; /* the Fluff Mario rides (fluff_update) */
 static struct { int inst, phase, t, wait; V3 vel; } coc = {.inst = -1, .wait = -1}; /* SpaceCocoon Mario hangs on (cocoon_update) */
 typedef struct { V3 pos, vel; int t, col; } Shot; /* star pieces shot at the pointer (update_shots); col: piece_col */
@@ -824,7 +825,10 @@ static struct {
     u32 lv[6], blv[BSB_BOMBS];
 } bsb = {.row = -1};
 static const Model *m_bsb, *m_bsbwing, *m_bsblaunch, *m_bsbbomb, *m_bsbdemo;
+static const Model *m_bk, *m_bkdemo, *m_koura, *m_kfire;
 static int bsb_demo(void);
+static void bk_init(const Scene *s, const unsigned char *blob);
+static int bk_demo(void);
 int bsb_shot(V3 at);
 #define MAX_OROCKS 4
 enum { OR_WAIT, OR_THROWCOCO, OR_THROWFIRE, OR_DOWN, OR_HIDE, OR_HIDEWAIT, OR_SHOW, OR_DEAD };
@@ -2337,6 +2341,7 @@ void game_init(const Scene *s, const unsigned char *blob)
             printf("boss stink bug: row %d, rail %u points (%s, %.0f)" "\n", (int)i, bsb.rail_n, bsb.closed ? "loop" : "open", bsb.len);
             break;
         }
+    bk_init(s, blob);
     for (u32 i = 0; i < s->nobjs; i++)
         if (strcmp(s->types + 32 * s->objs[i].type, "OtaKing") == 0) {
             V3 x, z;
@@ -4558,7 +4563,7 @@ static int gap_class(const char *name)
 }
 /* ponytail (unmarked until the 2026-11-02 audit): placed classes of the early galaxies with no behaviour here
  * (drawn static, or not at all), each a whole Petari class: StinkBugParent (StinkBugParent.cpp, its 子連れカメムシデモ), GhostPlayer (Cosmic Mario);
- * Space Junk TombSpider, BossKameck, ChildKameck, SpiderAttachPoint (SlingShooter), NokonokoLand; PlanetRocket (a
+ * Space Junk TombSpider, SpiderAttachPoint (SlingShooter), NokonokoLand; PlanetRocket (a
  * PlanetMap: its own-name clip, PlanetMap.cpp:67, needs planets skinned: slice.py AUTO_SKINNED leaves planets out); Battlerock BossBegoman, TicoShop; Beach Bowl PenguinStudent;
  * the observatory's AstroMapObj looks (update_astro_objs' ponytail) */
 static void class_make(ClassInfo *ci, const char *name)
@@ -4765,6 +4770,8 @@ static void game_rebind_(void)
     m_ota = scene_model(s, "OtaKing"); m_otafoot = scene_model(s, "OtaKingFoot"); m_coco = scene_model(s, "CocoNut");
     m_bsb = scene_model(s, "BossStinkBug"); m_bsbwing = scene_model(s, "BossStinkBugWing"); m_bsblaunch = scene_model(s, "BossStinkBugBombLauncher");
     m_bsbbomb = scene_model(s, "BossStinkBugBomb"); m_bsbdemo = scene_model(s, "BossStinkBugDemo");
+    m_bk = scene_model(s, "BossKameck"); if (!m_bk) m_bk = scene_model(s, "BossKameck2");
+    m_bkdemo = scene_model(s, "BkDemo"); m_koura = scene_model(s, "Koura"); m_kfire = scene_model(s, "BossKameckFireBall");
     m_otamagma = scene_model(s, "OtaKingMagma"); m_otalfoot = scene_model(s, "OtaKingLongFoot");
     m_otabloom = scene_model(s, "OtaKingMagmaBloom");
     m_pleaf = scene_model(s, "PackunLeaf");
@@ -4808,7 +4815,8 @@ static void game_rebind_(void)
     ninsts = 0;
     int t_note = scene_type(s, "NoteFairy"), t_petari = scene_type(s, "Petari"), t_rockc = scene_type(s, "RockCreator"),
         t_wan = scene_type(s, "WanwanRolling"), t_wanm = scene_type(s, "WanwanRollingMini"),
-        t_wang = scene_type(s, "WanwanRollingGold"), t_dino = scene_type(s, "DinoPackun"), t_ota = scene_type(s, "OtaKing"), t_bsb = scene_type(s, "BossStinkBug");
+        t_wang = scene_type(s, "WanwanRollingGold"), t_dino = scene_type(s, "DinoPackun"), t_ota = scene_type(s, "OtaKing"), t_bsb = scene_type(s, "BossStinkBug"),
+        t_bk1 = scene_type(s, "BossKameck"), t_bk2 = scene_type(s, "BossKameck2");
     static signed char wnk[1024]; /* walker_new_kind by type this rebind: 0 not yet, 1 no, 2 yes */
     static const Model *bloom_of[1024]; /* "<class>Bloom" by type this rebind (snprintf + lookup an object) */
     static unsigned char bloom_ok[1024];
@@ -4822,7 +4830,7 @@ static void game_rebind_(void)
             r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly ||
             r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_stink || r->type == t_note ||
             r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == t_petari || r->type == t_rockc || r->type == t_wan ||
-            r->type == t_wanm || r->type == t_wang || r->type == t_dino || r->type == t_ota || r->type == t_bsb ||
+            r->type == t_wanm || r->type == t_wang || r->type == t_dino || r->type == t_ota || r->type == t_bsb || r->type == t_bk1 || r->type == t_bk2 ||
             (r->type < 1024 ? wnk[r->type] == 2 : walker_new_kind(s->types + 32 * r->type) >= 0))
             continue;
         const char *name = s->types + 32 * r->type;
@@ -12724,6 +12732,8 @@ static void update_screws(void)
 }
 
 static int sw_start_jet(Player *m, int type);
+static int bk_jet_hit(V3 p);
+static void km_down(Kuribo *k, V3 from);
 static void update_jets(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -12752,6 +12762,7 @@ static void update_jets(void)
             in->head = p;
             int gone = wall || ++jet.t >= (const int[]){300, 480, 300}[type] ||
                        vlen(vsub(p, v3(in->m0[12], in->m0[13], in->m0[14]))) > 10000.0f;
+            if (bk_jet_hit(p)) gone = 1; /* BossKameck: isMsgJetTurtleAttack (requestDamage) */
             hhp_blow(p, 60.0f); /* HammerHeadPackun: isMsgJetTurtleAttack */
             tbox_hit(p, 60.0f); /* TreasureBoxCracked: isMsgJetTurtleAttack */
             for (int k = 0; k < nkuribo; k++) { /* ACTMES_JET_TURTLE_ATTACK */
@@ -12759,6 +12770,7 @@ static void update_jets(void)
                 if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_BUTTERFLY ||
                     vlen(vsub(p, vadd(e->pos, vmul(e->up, 60.0f)))) > 60.0f + 80.0f) continue;
                 if (e->kind == WALK_PETARI) { if (petari_solid(e)) petari_blow(e, p, PT_KICKOUT); continue; } /* KickOut */
+                if (e->kind == WALK_KAMECK) { km_down(e, p); continue; } /* Kameck: requestDown */
                 e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up);
                 if (e->kind == WALK_UNIZO) { /* doBreak */
                     drop_pieces(e->pos, e->up, 6); se_start(SE_OJ_STAR_PIECE_BURST, &e->pos.x); se_start(SE_EM_UNIZO_BREAK, &e->pos.x);
@@ -19749,7 +19761,7 @@ static void update_mario_(void)
                 if (!m_clip_is(dx.bck)) { anim_clip_info(dx.bck, &mode); mario_play(dx.bck, 1.0f, mode == 2 || mode == 4); }
             }
             else if (pro_puppet()) ; /* the prologue's DemoPeachCastleGate (pro_update) */
-            else if (bsb_demo()) { if (!m_clip_is("battlewait")) mario_play("battlewait", 1.0f, 1); } /* BossStinkBug's demos: startBckPlayer BattleWait */
+            else if (bsb_demo() || bk_demo()) { if (!m_clip_is("battlewait")) mario_play("battlewait", 1.0f, 1); } /* BossStinkBug's demos: startBckPlayer BattleWait */
             else if (!star_demo && !gw_puppet()) mario_play("wait", 1.0f, 1);
             else if (mario_anim->clip_id < 0 || strcmp(sc->clips[mario_anim->clip_id].name, "powerstarget")) mario_play("powerstarget", 1.0f, 0);
             anim_update(mario_anim);
@@ -26359,8 +26371,8 @@ int game_strspider_state(void) /* the first live StringSpider's nerve (SS_*), it
  * piece: Blow (35 / 15; Stop) and killWithGenItem after 20 (1 star piece, 3 for a star piece hit, 80 up); its body
  * knocks Mario over on the ground (FlipRot: HitReaction, else no push); against another Baby it rebounds (4 x the
  * radii's ratio, Turn); a rail on StepBack kills it; kill: Death, EXPLODE_S; its face joint turned to its target.
- * Placed rows only. ponytail: appearFromLaunch / appearFromGuarder (BegomanBabyLauncher, BossBegoman's followers) not
- * ported, no fire floor death (isBindedGroundDamageFire), no star pointer bind */
+ * Placed rows and BossBegoman's followers (bb_launch: appearFromGuarder's LaunchFromGuarder). ponytail: appearFromLaunch
+ * (BegomanBabyLauncher) not ported, no fire floor death (isBindedGroundDamageFire), no star pointer bind */
 enum { BG_NOCALCWAIT, BG_WAIT, BG_SIGNATTACK, BG_PURSUE, BG_TURN, BG_BRAKE, BG_STEPBACK, BG_RETURN, BG_PROVOKE,
        BG_TRAMPLEREACTION, BG_HITREACTION, BG_TIRED, BG_BLOW, BG_ELECTRICDEATH, BG_BROKENPIECE, BG_INWATER, BG_KEEPDISTANCE,
        BG_LAUNCH /* a BossBegoman follower: Launch / LaunchFromGuarder (BegomanBase::exeLaunch) */ };
@@ -28548,6 +28560,7 @@ static void kotebug_update(Kuribo *k)
 }
 
 static void update_kuribo_one(Kuribo *k);
+static void kameck_update(Kuribo *k);
 static void bg_permit_update(void);
 static void update_kuribo(void)
 {
@@ -28594,6 +28607,7 @@ static void update_kuribo_one(Kuribo *k)
             else if (k->kind == WALK_BEGOSPIKE || k->kind == WALK_BEGOBABY) begospike_update(k);
             else if (k->kind == WALK_KCHIEF) kchief_update(k);
             else if (k->kind == WALK_BBEGO) bbego_update(k);
+            else if (k->kind == WALK_KAMECK) kameck_update(k);
             return;
         }
         if (k->kind == WALK_PETARI) {
@@ -36142,6 +36156,8 @@ static void shoot_piece(void)
 }
 
 static int butler_shot(V3 p);
+static int km_guard(Kuribo *k, V3 shot_vel);
+static int km_shot(V3 p);
 static void update_shots(void)
 {
     Hit h[1];
@@ -36185,6 +36201,7 @@ static void update_shots(void)
             else if (e->kind == WALK_STRSPIDER) { if (ss_down(e)) { hit = 0; continue; } strspider_star(e, s->pos); }
             else if (e->kind == WALK_BEGOSPIKE) { if (bg_down(e)) { hit = 0; continue; } bg_blow(e, s->pos, 40.0f, 10.0f); } /* isMsgStarPieceAttack */
             else if (e->kind == WALK_BBEGO) { } /* isMsgStarPieceReflect */
+            else if (e->kind == WALK_KAMECK) { if (!km_guard(e, s->vel)) { hit = 0; continue; } } /* isMsgStarPieceReflect: requestGuard */
             else if (e->kind == WALK_BEGOBABY) { if (bg_down(e)) { hit = 0; continue; } e->item = 3; bg_blow(e, s->pos, 35.0f, 15.0f); } /* isMsgStarPieceAttack: mAppearThreeStarPiece */
             else if (e->kind == WALK_KABOKURI) w_nrv(e, KB_STARPIECE); /* requestStarPieceHitted */
             else if (e->kind == WALK_TERESAW) w_nrv(e, TW_STUN); /* isMsgStarPieceAttack: Stun */
@@ -36229,6 +36246,7 @@ static void update_shots(void)
         if (!hit && butler_shot(s->pos)) hit = 1;
         if (!hit && hana_shot(s->pos)) hit = 1;
         if (!hit && bsb_shot(s->pos)) hit = 1; /* BossStinkBugBomb */
+        if (!hit && km_shot(s->pos)) hit = 1; /* KameckFireBall */
         if (!hit && gap_shot(s->pos)) hit = 1;          /* #143's classes (update_gaps) */          /* Hanachan's parts */         /* Butler: isMsgStarPieceAttack */
         for (int k = 0; k < ninsts && !hit; k++) { /* ItemBubble: isMsgStarPieceAttack bursts it */
             Inst *in = &insts[k];
@@ -42858,6 +42876,7 @@ static void bsb_demo_step(int k) /* the four demos' TryStart / Demo (/ AppearPow
         bsb.dead = 1;
     }
 }
+static void update_bk(void), update_km_beams(void), bk_draw(void), km_draw(void);
 static void update_bsb(void)
 {
     if (bsb.row < 0 || bsb.seq == BQ_END || !dx_cls_moves("BossStinkBug")) return;
@@ -42940,6 +42959,1041 @@ static void bsb_draw(void)
             mat_translate_rot_scale(b, at, rot, one); /* ponytail: no rotateQuatMoment spin */
             render_model(m_bsbbomb, b, 0x80, 0x80, 0x80);
         }
+}
+/* Kameck.cpp, KameckBeam.cpp, KameckFireBall.cpp, KameckTurtle.cpp, KameckBeamHolder.cpp after Petari (Magikoopa: the
+ * placed FireBallBeamKameck and BossKameck's ChildKameck, walker kind WALK_KAMECK; their beams). A beam (16, sBeamRadius
+ * 80 x its scale) follows the wand (FollowWand, its Ready effect) until shot (requestShootToPlayerCenter 12 / Ground
+ * 20): Shoot (360 frames at most) until it binds, then Explosion: a turtle beam becomes a KameckTurtle (Koura running
+ * 600 frames: 15 a frame, -25 degrees a frame of spin, slowed from 200 to 400, flip-jumping Mario till 300, rebounding
+ * off walls 0.5 with a 15 jump; trampled or touched after 300 it leaves a slow JetTurtle, vanishing when that is
+ * restarted or waits 600), a fire beam 1 / 2 / 3 KameckFireBalls (0; 30, -30; 0, 120, -120 degrees about gravity,
+ * 15 out and 15 along gravity, gravity 0.5, 0.995, rebound 0.4, 180 frames; Mario burnt). A spin within 500 of a turtle
+ * beam in flight turns it at once (requestStorm). The Kameck: Wait (attacks within 2000 with fewer than 8 beams out),
+ * AttackWait 60, Attack (shot at 9, MoveHide after 30), Hide, Move along its rail to the next point (|d| / 20 frames,
+ * eased) or 240 frames, Appear; its attack sensor (80) hurts Mario (Hit), a spin or a shell blows it down (25 / 25,
+ * gravity 1, 0.99), a trample / hip drop presses it, a star piece makes it guard (50). Death: its effect and a coin.
+ * ponytail: no WalkerStateBindStarPointer (the pointer's bind), no AnimScaleController, no NonActive at startClipped
+ * (here by distance at Wait), no point light on the fire balls, no rolling of their model, the turtle's
+ * turnDirectionToGround, the JetTurtle's appearAndTryTaken (isMsgItemPull) and its swimming jet, startBlowHitSound */
+#define KM_BEAMS 16  /* sMaxKameckBeam */
+#define KM_FIRES 16  /* sMaxKameckFireBall */
+#define KM_TURTLES 16 /* sMaxKameckBeamTurtle */
+enum { KB_NONE, KB_TURTLE, KB_FIRE1, KB_FIRE2, KB_FIRE3 }; /* KameckBeam::BeamType */
+enum { KBN_DEAD, KBN_FOLLOW, KBN_SHOOT, KBN_EXPLOSION, KBN_JETTURTLE, KBN_FIRE };
+enum { KM_OPENINGDEMO, KM_DEMOAPPEAR, KM_NONACTIVE, KM_APPEAR, KM_WAIT, KM_HIDE, KM_ATTACKWAIT, KM_ATTACK, KM_GUARD, KM_HIT,
+       KM_MOVEHIDE, KM_MOVE, KM_DOWN, KM_PRESSDOWN };
+/* src: whose wand it follows (-2 the boss, a walker's index); lis: its event listener (-1 none); list: whose
+ * ActiveActorList holds it (-1 none) */
+static struct { int nrv, st, kind, src, lis, list, turtle, fire[3]; V3 pos, vel, a4, wl; float scale; u32 lv[2]; } kmb[KM_BEAMS];
+static struct { int on, st, lis; V3 pos, vel; u32 lv; } kmf[KM_FIRES];
+/* jet: its JetTurtle (0 none, 1 Wait, 2 held, 3 thrown, 4 restarted) */
+static struct { int on, nrv, st, lis, jet, jst; V3 pos, vel, a4, b0, jpos, jvel; u32 lv; } kmt[KM_TURTLES];
+static int kmj_held = -1; /* the Kameck shell Mario holds */
+static int kmj_carry(void) { return kmj_held >= 0; }
+static void km_se(V3 p, u32 id) { se_start(id, &p.x); }
+static V3 km_g(V3 p) { return vmul(up_at(p, v3(0, 1, 0)), -1.0f); } /* calcGravity */
+static void km_fx(const char *cls, const char *name, V3 p, V3 g, const void *key) /* emitEffect (key: kept, following it) */
+{
+    float m[16];
+    V3 f = vtangent(v3(0, 0, 1), g);
+    if (vlen(f) < 1e-3f) f = vtangent(v3(1, 0, 0), g);
+    basis_matrix(m, p, vmul(g, -1.0f), vnorm(f), 0);
+    fx_named(cls, name, m, NULL, key);
+}
+static void bk_hit_beam(void);
+static void km_hit_beam(int lis) /* KameckBeamEventListener::hitBeam: ATK_SUCCESS (every type) */
+{
+    if (lis == -2) bk_hit_beam();
+    else if (lis >= 0 && kuribo[lis].state != KURIBO_DEAD) w_se(&kuribo[lis], SE_EV_KAMECK_ATK_SUCCESS);
+}
+static void kmf_kill(int i) /* KameckFireBall::kill */
+{
+    km_se(kmf[i].pos, SE_BM_KAMECK_DISAPPEAR_FIRE);
+    km_fx("BossKameckFireBall", "BeamFireVanish", kmf[i].pos, km_g(kmf[i].pos), NULL);
+    kmf[i].on = 0; kmf[i].lis = -1;
+}
+static void kmt_kill(int i) { kmt[i].on = 0; kmt[i].lis = -1; if (kmj_held == i) kmj_held = -1; kmt[i].jet = 0; } /* makeActorDead: mTurtle->kill */
+static void kmb_kill(int i) /* kill: resetBeam */
+{
+    if (kmb[i].turtle >= 0 && kmt[kmb[i].turtle].on) kmt_kill(kmb[i].turtle);
+    for (int f = 0; f < 3; f++) if (kmb[i].fire[f] >= 0 && kmf[kmb[i].fire[f]].on) kmf_kill(kmb[i].fire[f]);
+    kmb[i].nrv = KBN_DEAD; kmb[i].turtle = -1; kmb[i].fire[0] = kmb[i].fire[1] = kmb[i].fire[2] = -1; kmb[i].lis = -1; kmb[i].list = -1;
+}
+static int km_list_n(int who) { int n = 0; for (int i = 0; i < KM_BEAMS; i++) n += kmb[i].nrv != KBN_DEAD && kmb[i].list == who; return n; } /* ActiveActorList(8) */
+static void km_list_kill(int who) { for (int i = 0; i < KM_BEAMS; i++) if (kmb[i].nrv != KBN_DEAD && kmb[i].list == who) kmb_kill(i); } /* killAll */
+static V3 bk_wand(void);
+static V3 kmb_follow(int i) /* calcAnim: mFollowMtx x mWandLocalPosition */
+{
+    if (kmb[i].src == -2) return bk_wand();
+    Kuribo *k = &kuribo[kmb[i].src];
+    return w_joint(k, walker_new_model(k->row), 11, kmb[i].wl); /* Wand */
+}
+static int kmb_start(int kind, int src, float scale, V3 wl, int lis) /* startFollowKameckBeam: requestFollowWand */
+{
+    for (int i = 0; i < KM_BEAMS; i++) {
+        if (kmb[i].nrv != KBN_DEAD) continue;
+        memset(&kmb[i], 0, sizeof kmb[i]);
+        kmb[i].kind = kind; kmb[i].src = src; kmb[i].scale = scale; kmb[i].wl = wl; kmb[i].lis = lis; kmb[i].list = -1;
+        kmb[i].turtle = -1; kmb[i].fire[0] = kmb[i].fire[1] = kmb[i].fire[2] = -1;
+        kmb[i].nrv = KBN_FOLLOW; kmb[i].st = -1; kmb[i].a4 = v3(0, 0, 1);
+        kmb[i].pos = kmb_follow(i);
+        return i;
+    }
+    return -1;
+}
+static void kmb_shoot(int i, V3 dir, float speed) /* requestShoot: emitBeamEffect, onBind, sensors on */
+{
+    kmb[i].nrv = KBN_SHOOT; kmb[i].st = -1;
+    kmb[i].a4 = dir; kmb[i].vel = vmul(dir, speed);
+}
+static void kmb_shoot_to(int i, V3 at, float speed) /* requestShootToPlayerCenter / Ground */
+{
+    V3 d = vsub(at, kmb[i].pos);
+    if (vlen(d) < 1e-6f) d = km_g(kmb[i].pos); else d = vnorm(d);
+    kmb_shoot(i, d, speed);
+}
+static int kmt_appear(V3 p, V3 dir) /* getKameckBeamTurtle, appearDirection */
+{
+    for (int i = 0; i < KM_TURTLES; i++) {
+        if (kmt[i].on) continue;
+        V3 g = km_g(p), b = vtangent(dir, g);
+        memset(&kmt[i], 0, sizeof kmt[i]);
+        kmt[i].on = 1; kmt[i].nrv = 0; kmt[i].st = -1; kmt[i].lis = -1; kmt[i].pos = p; kmt[i].vel = dir;
+        kmt[i].b0 = vlen(b) > 1e-6f ? vnorm(b) : vnorm(vtangent(v3(0, 0, 1), g)); /* makeAxisVerticalZX */
+        kmt[i].a4 = kmt[i].b0;
+        return i;
+    }
+    return -1;
+}
+static int kmf_appear(V3 p, V3 dir, int lis) /* getKameckFireBall, appearDirection */
+{
+    for (int i = 0; i < KM_FIRES; i++) {
+        if (kmf[i].on) continue;
+        memset(&kmf[i], 0, sizeof kmf[i]);
+        kmf[i].on = 1; kmf[i].st = -1; kmf[i].lis = lis; kmf[i].pos = p;
+        kmf[i].vel = vadd(vmul(dir, 15.0f), vmul(km_g(p), 15.0f)); /* sInitHorizonSpeed, mGravity x sInitVerticalSpeed */
+        return i;
+    }
+    return -1;
+}
+static int kmb_turtle(int i) /* tryChangeTurtle */
+{
+    int t = kmt_appear(kmb[i].pos, kmb[i].a4);
+    if (t < 0) return 0;
+    kmt[t].lis = kmb[i].lis; /* (the turtle's listener: the beam's) */
+    kmb[i].turtle = t; kmb[i].nrv = KBN_JETTURTLE; kmb[i].st = -1;
+    return 1;
+}
+static int kmb_fire(int i) /* tryChangeFire */
+{
+    static const float ang[4][3] = {{0}, {0.0f}, {30.0f, -30.0f}, {0.0f, 120.0f, -120.0f}};
+    int n = kmb[i].kind == KB_FIRE1 ? 1 : kmb[i].kind == KB_FIRE2 ? 2 : kmb[i].kind == KB_FIRE3 ? 3 : 0, any = 0;
+    V3 g = km_g(kmb[i].pos), r = vtangent(kmb[i].a4, g);
+    r = vlen(r) > 1e-6f ? vnorm(r) : vnorm(vtangent(v3(0, 0, 1), g));
+    for (int f = 0; f < n; f++) {
+        kmb[i].fire[f] = kmf_appear(kmb[i].pos, rot_axis(r, g, ang[n][f] * 0.0174533f), kmb[i].lis);
+        any |= kmb[i].fire[f] >= 0;
+    }
+    if (!any) return 0;
+    kmb[i].nrv = KBN_FIRE; kmb[i].st = -1;
+    return 1;
+}
+static int bk_jet_hit(V3 p);
+static void km_down(Kuribo *k, V3 from);
+static void kmj_update(int t) /* the KameckTurtle's JetTurtle (becomeSlowType): taken, held, thrown (ATYPE_JET_TURTLE_SLOW) */
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    if (kmt[t].jet == 1) {
+        if (jet.inst < 0 && kmj_held < 0 && vlen(vsub(c, vadd(kmt[t].jpos, vmul(mario->up, 50.0f)))) < 80.0f + HIT_BODY_R) {
+            kmt[t].jet = 2; kmj_held = t; /* TakenStart */
+            printf("kameck turtle %d: taken\n", t);
+        }
+        return;
+    }
+    if (kmt[t].jet == 2) {
+        kmt[t].jpos = vadd(vadd(mario->pos, vmul(mario->face, 70.0f)), vmul(mario->up, 60.0f));
+        if (mario->spin_timer > 0) { kmt[t].jvel = vmul(mario->face, 20.0f); kmt[t].jet = 3; kmt[t].jst = 0; kmj_held = -1; printf("kameck turtle %d: thrown\n", t); }
+        return;
+    }
+    if (kmt[t].jet != 3) return;
+    V3 p = vadd(kmt[t].jpos, kmt[t].jvel), up = up_at(p, mario->up), gn, wn;
+    int wall = 0, gone;
+    collide_n(&p, up, 60.0f, &gn, &wn, &wall);
+    kmt[t].jpos = p;
+    gone = wall || ++kmt[t].jst >= 480; /* sResetStep (slow) */
+    if (bk_jet_hit(p)) gone = 1; /* isMsgJetTurtleAttack */
+    for (int k = 0; k < nkuribo; k++) {
+        Kuribo *e = &kuribo[k];
+        if (e->state == KURIBO_DEAD || e->kind != WALK_KAMECK || vlen(vsub(p, vadd(e->pos, vmul(e->qy, 40.0f)))) > 60.0f + 120.0f) continue;
+        km_down(e, p);
+    }
+    if (gone) { kmt[t].jet = 4; printf("kameck turtle %d: shell gone\n", t); } /* Restart */
+}
+static void update_km_beams(void)
+{
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < KM_BEAMS; i++) {
+        typeof(&kmb[0]) b = &kmb[i];
+        if (b->nrv == KBN_DEAD) continue;
+        int st = ++b->st, turt = b->kind == KB_TURTLE;
+        V3 g = km_g(b->pos);
+        float r = 80.0f * b->scale;
+        switch (b->nrv) {
+        case KBN_FOLLOW:
+            b->pos = kmb_follow(i);
+            km_fx("BossKameckBeam", turt ? "BeamTurtleReady" : "BeamFireReady", b->pos, g, b); /* emitBeamReadyEffect */
+            b->lv[0] = se_level(turt ? SE_BM_LV_KAMECK_MAGIC_TURT : SE_BM_LV_KAMECK_MAGIC_FIRE, &b->pos.x, b->lv[0]);
+            break;
+        case KBN_SHOOT: {
+            if (st == 0) km_se(b->pos, SE_BM_KAMECK_FIRE_SHOOT);
+            V3 p = vadd(b->pos, b->vel), gn, wn;
+            int wall = 0, bind = collide_n(&p, vmul(g, -1.0f), r, &gn, &wn, &wall) || wall;
+            b->pos = p;
+            km_fx("BossKameckBeam", turt ? "BeamTurtle" : "BeamFire", b->pos, g, b); /* emitBeamEffect */
+            if (mario->spin_timer > 0 && vlen(vsub(mc, b->pos)) < 500.0f && turt) { if (!kmb_turtle(i)) kmb_kill(i); break; } /* requestStorm */
+            if (vlen(vsub(mc, b->pos)) < r + HIT_BODY_R) { /* attackSensor */
+                if (mario_attack(turt ? ATK_STRONG : b->kind >= KB_FIRE1 ? ATK_FIRERUN : ATK_ENEMY, b->pos)) {
+                    if (b->kind != KB_NONE) km_hit_beam(b->lis);
+                    kmb_kill(i);
+                    break;
+                }
+            }
+            if (bind) { b->vel = v3(0, 0, 0); b->nrv = KBN_EXPLOSION; b->st = -1; break; } /* tryShootEnd */
+            if (st > 360) { kmb_kill(i); break; } /* sMaxBeamLife */
+            float depth;
+            if (in_water(b->pos, vmul(g, -1.0f), &depth)) {
+                if (b->kind != KB_NONE) km_fx("BossKameckBeam", turt ? "BeamTurtleBreak" : "BeamFireBreak", b->pos, g, NULL);
+                kmb_kill(i);
+                break;
+            }
+            b->lv[0] = se_level(turt ? SE_BM_LV_KAMECK_MAGIC_TURT : SE_BM_LV_KAMECK_MAGIC_FIRE, &b->pos.x, b->lv[0]);
+            b->lv[1] = se_level(SE_BM_LV_KAMECK_MAGIC_COMM, &b->pos.x, b->lv[1]);
+            break;
+        }
+        case KBN_EXPLOSION:
+            if (turt && kmb_turtle(i)) {
+                camera_shake(SHAKE_NORMAL_WEAK); pad_rumble(RUMBLE_STRONG);
+                km_fx("BossKameckBeam", "BeamTurtleBreak", b->pos, g, NULL);
+                break;
+            }
+            if (b->kind >= KB_FIRE1 && kmb_fire(i)) {
+                camera_shake(SHAKE_NORMAL_WEAK); pad_rumble(RUMBLE_STRONG);
+                km_fx("BossKameckBeam", "BeamFireBreak", b->pos, g, NULL);
+                km_se(b->pos, SE_BM_KAMECK_FIRE_EXPLOSION);
+                break;
+            }
+            kmb_kill(i);
+            break;
+        case KBN_JETTURTLE:
+            if (st == 0) se_start(SE_SY_APPEAR_TURTLE_JET, NULL);
+            if (!kmt[b->turtle].on) kmb_kill(i);
+            break;
+        case KBN_FIRE: {
+            if (st < 40) km_fx("BossKameckBeam", "BeamFireBurn", b->pos, g, b); /* sBurningTime */
+            int live = 0;
+            for (int f = 0; f < 3; f++) live |= b->fire[f] >= 0 && kmf[b->fire[f]].on;
+            if (!live) kmb_kill(i);
+            break;
+        }
+        }
+    }
+    for (int i = 0; i < KM_FIRES; i++) { /* KameckFireBall::exeWait */
+        typeof(&kmf[0]) f = &kmf[i];
+        if (!f->on) continue;
+        ++f->st;
+        V3 g = km_g(f->pos), gn, wn, p;
+        f->lv = se_level(SE_BM_LV_KAMECK_FIRE_BALL, &f->pos.x, f->lv);
+        f->vel = vmul(vadd(f->vel, vmul(g, 0.5f)), 0.995f); /* sGravityAccel, sFreqRate */
+        p = vadd(f->pos, f->vel);
+        int wall = 0, ground = collide_n(&p, vmul(g, -1.0f), 58.0f, &gn, &wn, &wall);
+        if (ground || wall) { /* reboundVelocityFromCollision(sReboundRate 0.4) */
+            V3 n = ground ? gn : wn;
+            float d = vdot(f->vel, n);
+            if (d < 0) f->vel = vsub(f->vel, vmul(n, 1.4f * d));
+            if (vdot(f->vel, vmul(g, -1.0f)) >= 1.0f) km_se(p, SE_BM_KAMECK_FIRE_BOUND);
+        }
+        f->pos = p;
+        if (vlen(vsub(mc, f->pos)) < 58.0f + HIT_BODY_R && mario_attack(ATK_FIRERUN, f->pos)) { km_hit_beam(f->lis); kmf_kill(i); continue; }
+        float depth;
+        if (f->st > 180 || in_water(f->pos, vmul(g, -1.0f), &depth)) kmf_kill(i); /* sLife */
+    }
+    for (int i = 0; i < KM_TURTLES; i++) { /* KameckTurtle */
+        typeof(&kmt[0]) t = &kmt[i];
+        if (!t->on) continue;
+        int st = ++t->st;
+        V3 g = km_g(t->pos), up = vmul(g, -1.0f);
+        if (t->nrv == 0) { /* Run */
+            V3 b0 = vtangent(t->b0, g);
+            t->b0 = vlen(b0) > 1e-6f ? vnorm(b0) : vnorm(vtangent(v3(0, 0, 1), g));
+            V3 c = vadd(vadd(t->pos, t->vel), vmul(up, 40.0f)), gn, wn;
+            int wall = 0, ground = collide_n(&c, up, 40.0f, &gn, &wn, &wall);
+            if (ground) t->lv = se_level(SE_EM_LV_TURTLE_SLIDE, &t->pos.x, t->lv);
+            else t->vel = vadd(t->vel, vmul(g, 0.7f)); /* sRunGravity */
+            float e = 1.0f;
+            if (st > 200) { float q = (st - 200) / 200.0f; q = q > 1 ? 1 : q; e = 1.0f - (0.5f - 0.5f * cosf(q * 3.14159265f)); } /* calcNerveEaseInOutRate */
+            t->vel = vadd(t->vel, vmul(t->b0, e * 0.5f));
+            t->a4 = rot_axis(t->a4, g, -25.0f * e * 0.0174533f); /* rotateDirectionGravityDegree(sRunSpinDegree) */
+            t->vel = vmul(t->vel, 0.98f); /* sRunFric */
+            if (ground) { float d = vdot(t->vel, gn); if (d < 0) t->vel = vsub(t->vel, vmul(gn, d)); }
+            if (wall) {
+                float d = vdot(t->vel, wn);
+                if (d < 0) { /* calcReboundVelocity(0.5) */
+                    t->vel = vsub(t->vel, vmul(wn, 1.5f * d));
+                    V3 h = vtangent(t->vel, g);
+                    if (vlen(h) > 1e-6f) t->b0 = vnorm(h);
+                    t->vel = vsub(t->vel, vmul(g, 15.0f)); /* addVelocityJump(sRunSpeed) */
+                    km_se(t->pos, SE_EM_TURTLE_REBOUND);
+                }
+            }
+            t->pos = vsub(c, vmul(up, 40.0f));
+            if (st > 600) { km_fx("BossKameckBeam", "BeamTurtleVanish", t->pos, g, NULL); km_se(t->pos, SE_BM_KAMECK_DISAPPEAR_TURT); kmt_kill(i); continue; }
+            V3 body = vadd(t->pos, vmul(up, 40.0f));
+            int msg = mario_offence(body, 50.0f, g);
+            if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) { /* receiveMsgPlayerAttack isMsgPlayerTrample */
+                if (msg == MSG_TRAMPLE) mario_trample();
+                t->nrv = 1; t->st = -1; t->jet = 1; t->jpos = t->pos; t->vel = v3(0, 0, 0); /* appearJetTurtle(false) */
+                printf("kameck turtle %d: trampled, its shell out\n", i);
+                continue;
+            }
+            if (mario_touch(body, 50.0f)) { /* attackSensor */
+                if (st < 300) { /* isEnableAttack (sEnableAttackTime) */
+                    if (mario_attack(ATK_FLIP_JUMP, body)) {
+                        V3 n = vtangent(vsub(mc, body), g);
+                        if (vlen(n) > 1e-6f) { n = vnorm(n); float d = 1.8f * vdot(t->vel, n); if (d > 0) t->vel = vsub(t->vel, vmul(n, d)); } /* reflectVelocityH(0.8) */
+                        if (vlen(t->vel) > 1e-6f) t->b0 = vnorm(t->vel);
+                        km_hit_beam(t->lis); /* hitBeam(BeamType_Turtle) */
+                    }
+                } else { t->nrv = 1; t->st = -1; t->jet = 1; t->jpos = t->pos; t->vel = v3(0, 0, 0); }
+            }
+        } else { /* Wait: its JetTurtle out */
+            kmj_update(i);
+            if (t->jet == 4 || (t->jet == 1 && st > 600)) { /* isRestart, isWait 600 */
+                km_fx("BossKameckBeam", "BeamTurtleVanish", t->jpos, g, NULL); km_se(t->jpos, SE_BM_KAMECK_DISAPPEAR_TURT);
+                kmt_kill(i);
+            }
+        }
+    }
+}
+static int km_shot(V3 p) /* a star piece: KameckFireBall isMsgStarPieceAttack (kill) */
+{
+    for (int i = 0; i < KM_FIRES; i++)
+        if (kmf[i].on && vlen(vsub(kmf[i].pos, p)) < 58.0f + 30.0f) { kmf_kill(i); return 1; }
+    return 0;
+}
+static void km_draw(void)
+{
+    float m[16];
+    const Model *km = m_koura ? m_koura : scene_model(sc, "JetTurtle");
+    for (int i = 0; i < KM_TURTLES && km; i++) {
+        if (!kmt[i].on) continue;
+        V3 p = kmt[i].nrv == 0 ? kmt[i].pos : kmt[i].jpos, g = km_g(p), f = vtangent(kmt[i].nrv == 0 ? kmt[i].a4 : mario->face, g);
+        if (kmt[i].nrv == 1 && kmt[i].jet == 4) continue;
+        basis_matrix(m, p, vmul(g, -1.0f), vlen(f) > 1e-3f ? vnorm(f) : v3(0, 0, 1), 0);
+        render_model(km, m, 0x80, 0x80, 0x80);
+    }
+    for (int i = 0; i < KM_FIRES && m_kfire; i++) {
+        if (!kmf[i].on) continue;
+        V3 g = km_g(kmf[i].pos), f = vtangent(v3(0, 0, 1), g);
+        basis_matrix(m, kmf[i].pos, vmul(g, -1.0f), vlen(f) > 1e-3f ? vnorm(f) : v3(1, 0, 0), 0);
+        render_model(m_kfire, m, 0x80, 0x80, 0x80);
+    }
+}
+
+/* the Kameck walker (Kameck.cpp); k->item its beam type, k->phase hidden (hideModel), k->lvt[2] sensors off,
+ * k->lvt[1] its beam (mBeam, -1 none), k->lvt[0] mMoveStep, k->lva its rail coords, k->to mActiveDistance */
+static int km_child(const Kuribo *k) { return !strcmp(walker_cls(k), "ChildKameck"); }
+static int km_in(const Kuribo *k, int a, int b, int c, int d, int e, int f) { int n = k->nrv; return n == a || n == b || n == c || n == d || n == e || n == f; }
+static int km_attack_ok(const Kuribo *k) { return km_in(k, KM_WAIT, KM_APPEAR, KM_ATTACKWAIT, KM_ATTACK, KM_MOVEHIDE, -1); } /* isEnableAttack */
+static int km_guard_ok(const Kuribo *k) { return km_in(k, KM_WAIT, KM_APPEAR, KM_ATTACKWAIT, KM_ATTACK, KM_GUARD, KM_MOVEHIDE); } /* isEnableGurad */
+static int km_down_ok(const Kuribo *k) { return k->state != KURIBO_DEAD && !km_in(k, KM_NONACTIVE, KM_DOWN, KM_PRESSDOWN, -1, -1, -1); } /* isEnableDown */
+static void km_reset_beam(Kuribo *k) { if (k->lvt[1] >= 0) kmb_kill(k->lvt[1]); k->lvt[1] = -1; } /* resetBeam */
+static void km_turn(Kuribo *k) { turn_on_plane(&k->front, vsub(mario->pos, k->pos), k->grav, 0.98f); } /* turnDirectionToTarget(sTurnPlayerLimit) */
+static void km_kill(Kuribo *k) /* kill: a coin, its Death effect */
+{
+    k->state = KURIBO_DEAD;
+    km_reset_beam(k);
+    pop_coins(k->pos, k->qy, 1);
+    km_fx(walker_acls(k), "Death", k->pos, k->grav, NULL);
+    if (!km_child(k)) row_kill(k->row);
+    printf("kameck row %d dead\n", k->row);
+}
+static void km_dead_force(Kuribo *k) { km_reset_beam(k); km_list_kill((int)(k - kuribo)); k->state = KURIBO_DEAD; } /* makeActorDeadForce */
+static void km_down(Kuribo *k, V3 from) /* requestDown: setVelocityBlowAttack(25, 25) */
+{
+    if (!km_down_ok(k)) return;
+    km_reset_beam(k);
+    k->bind_off = 0; k->lvt[2] = 1;
+    V3 d = vtangent(vsub(k->pos, from), k->grav);
+    d = vlen(d) > 1e-6f ? vnorm(d) : k->front;
+    k->vel = vsub(vmul(d, 25.0f), vmul(k->grav, 25.0f));
+    w_nrv(k, KM_DOWN);
+}
+static int km_guard(Kuribo *k, V3 shot_vel) /* requestGuard (isMsgStarPieceReflect) */
+{
+    if (!km_guard_ok(k)) return 0;
+    V3 v = vtangent(vmul(shot_vel, -1.0f), k->grav);
+    if (vlen(v) > 1e-6f) k->front = vnorm(v);
+    km_reset_beam(k);
+    w_nrv(k, KM_GUARD);
+    return 1;
+}
+static void km_demo_appear(Kuribo *k) /* startDemoAppear: makeActorAppeared, sensors off, DemoAppear */
+{
+    k->state = KURIBO_WALK; k->phase = 0; k->lvt[2] = 1;
+    w_nrv(k, KM_DEMOAPPEAR);
+}
+static int km_try_attack_wait(Kuribo *k) /* tryAttackWait */
+{
+    if (vlen(vsub(mario->pos, k->pos)) >= 2000.0f || km_list_n((int)(k - kuribo)) >= 8) return 0; /* sAttackRange */
+    k->lvt[1] = kmb_start(k->item, (int)(k - kuribo), 0.6f, v3(0, 110, 0), (int)(k - kuribo));
+    if (k->lvt[1] < 0) return 0;
+    w_nrv(k, KM_ATTACKWAIT);
+    return 1;
+}
+static V3 km_rp(const float *p, u32 i) { return v3(p[3 * i], p[3 * i + 1], p[3 * i + 2]); }
+static void km_rail_cum(const float *p, u32 n, float *cum) /* getRailPointCoord */
+{
+    cum[0] = 0;
+    for (u32 i = 1; i < n; i++) cum[i] = cum[i - 1] + vlen(vsub(km_rp(p, i), km_rp(p, i - 1)));
+}
+static V3 km_rail_at(const float *p, u32 n, float c) /* calcRailPosAtCoord */
+{
+    float acc = 0;
+    for (u32 i = 0; i + 1 < n; i++) {
+        V3 a = km_rp(p, i), d = vsub(km_rp(p, i + 1), a);
+        float l = vlen(d);
+        if (c <= acc + l || i + 2 == n) return l > 0 ? vadd(a, vmul(d, fminf(fmaxf((c - acc) / l, 0), 1))) : a;
+        acc += l;
+    }
+    return n ? km_rp(p, 0) : v3(0, 0, 0);
+}
+static void kameck_update(Kuribo *k)
+{
+    const Row *r = &sc->objs[k->row];
+    u32 rn = 0; int rcl = 0;
+    const float *rail = w_rail(k, &rn, &rcl);
+    if (rn > 16) rn = 16;
+    if (!k->front.x && !k->front.y && !k->front.z) { /* init: initJMapParam, its rail's start, Wait */
+        kuribo_init(k);
+        k->item = km_child(k) || r->arg[0] < 2 ? KB_FIRE1 : r->arg[0] >= 3 ? KB_FIRE3 : KB_FIRE2; /* (ChildKameck: setBeamType(2), arg0 -1) */
+        k->to = r->arg[3] != -1 ? (float)r->arg[3] : 3000.0f; /* getJMapInfoArg3NoInit */
+        k->lvt[0] = 240; k->lvt[1] = -1; k->dir = 1; k->bind_off = 1; k->phase = 0; k->lvt[2] = 0;
+        if (rail) { k->lva[0] = 0; k->pos = km_rail_at(rail, rn, 0); } /* moveCoordToStartPos, moveTransToCurrentRailPos */
+        w_nrv(k, KM_WAIT);
+        if (km_child(k)) { k->state = KURIBO_DEAD; return; } /* BossKameck::initKameckHolder: makeActorDead */
+    }
+    k->grav = km_g(k->pos); /* onCalcGravity */
+    if (k->lvt[1] >= 0 && kmb[k->lvt[1]].nrv == KBN_DEAD) k->lvt[1] = -1;
+    float near = vlen(vsub(mario->pos, k->pos));
+    V3 body = vadd(k->pos, vmul(k->qy, 40.0f));
+    /* the sensors: Mario's attacks on its body (120 at 40 up), its attack (80) on him */
+    if (!k->lvt[2] && k->state != KURIBO_DEAD) {
+        int msg = mario_offence(body, 120.0f, k->grav);
+        if (msg == MSG_HITALL) km_down(k, mario->pos); /* isMsgPlayerHitAll */
+        else if ((msg == MSG_TRAMPLE || msg == MSG_HIPDROP) && km_down_ok(k)) { /* requestPressDown */
+            if (msg == MSG_TRAMPLE) mario_trample();
+            km_reset_beam(k); k->bind_off = 0; k->lvt[2] = 1; w_nrv(k, KM_PRESSDOWN);
+        } else if (mario->hip != HIP_FALL && mario_touch(k->pos, 80.0f)) { /* attackSensor: requestAttack */
+            if (km_attack_ok(k)) { if (mario_attack(ATK_ENEMY, k->pos)) { km_reset_beam(k); w_nrv(k, KM_HIT); } else mario_push_out(k->pos, 80.0f); }
+        }
+    }
+    int st = ++k->step;
+    switch (k->nrv) {
+    case KM_OPENINGDEMO:
+        if (st == 0) { w_act(k, "Wait"); k->phase = 0; k->lvt[2] = 0; }
+        if (!in_opening) { k->phase = 1; k->lvt[2] = 1; w_nrv(k, KM_NONACTIVE); } /* tryOpeningDemoEnd: setNonActive */
+        break;
+    case KM_DEMOAPPEAR:
+        if (st == 0) { w_act(k, "Appear"); w_se(k, SE_EM_KAMECK_SMOKE); w_se(k, SE_EM_KAMECK_APPEAR); }
+        km_turn(k);
+        if (w_bck_stopped(k) && strcmp(k->act, "Wait")) w_act(k, "Wait");
+        break;
+    case KM_NONACTIVE:
+        if (in_opening) w_nrv(k, KM_OPENINGDEMO);
+        else if (near < k->to) w_nrv(k, KM_APPEAR); /* tryActive: !canNonActive */
+        break;
+    case KM_APPEAR:
+        if (st == 0) { w_act(k, "Appear"); w_se(k, SE_EM_KAMECK_SMOKE); w_se(k, SE_EM_KAMECK_APPEAR); k->phase = 0; k->lvt[2] = 0; }
+        if (near < 2000.0f) km_turn(k);
+        if (w_bck_stopped(k) && !km_try_attack_wait(k)) w_nrv(k, KM_WAIT); /* tryAppearEnd */
+        break;
+    case KM_WAIT:
+        if (st == 0) { w_act(k, "Wait"); k->lvt[2] = 0; }
+        if (in_opening) { w_nrv(k, KM_OPENINGDEMO); break; } /* tryOpeningDemo */
+        if (km_try_attack_wait(k)) break;
+        if (near >= k->to) { k->phase = 1; k->lvt[2] = 1; w_nrv(k, KM_NONACTIVE); } /* ponytail: tryNonActive at startClipped, here by distance */
+        break;
+    case KM_ATTACKWAIT:
+        if (st == 0) w_act(k, "AttackWait");
+        w_se_lv(k, SE_EM_LV_KAMECK_STAFF_TURN);
+        km_turn(k);
+        if (st > 60) w_nrv(k, KM_ATTACK); /* sAttackWaitTime */
+        break;
+    case KM_ATTACK:
+        if (st == 0) { w_act(k, "Attack"); w_se(k, SE_EM_KAMECK_STAFF_SWING); w_se(k, SE_EV_KAMECK_STAFF_SWING); }
+        if (st == 9 && k->lvt[1] >= 0) { /* requestShootToPlayerCenter(sBeamSpeed), its ActiveActorList */
+            kmb_shoot_to(k->lvt[1], vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), 12.0f);
+            kmb[k->lvt[1]].list = (int)(k - kuribo); k->lvt[1] = -1;
+        }
+        if (st > 30) w_nrv(k, KM_MOVEHIDE); /* tryAttackEnd */
+        break;
+    case KM_HIT:
+        if (st == 0) w_act(k, "Hit");
+        if (w_bck_stopped(k)) w_nrv(k, KM_MOVEHIDE);
+        break;
+    case KM_GUARD:
+        if (st == 0) w_act(k, "Guard");
+        if (st > 50) w_nrv(k, KM_MOVEHIDE); /* sGuardTime */
+        break;
+    case KM_MOVEHIDE:
+        if (st == 0) { w_act(k, "Hide"); w_se(k, SE_EM_KAMECK_HIDE); }
+        km_turn(k);
+        if (w_bck_stopped(k)) { w_nrv(k, KM_MOVE); w_se(k, SE_EM_KAMECK_SMOKE); } /* tryMove */
+        break;
+    case KM_MOVE: {
+        float cum[16];
+        if (st == 0) {
+            w_act(k, "Move"); k->phase = 1; k->lvt[2] = 1;
+            if (rail && rn > 1) {
+                km_rail_cum(rail, rn, cum);
+                float len = cum[rn - 1];
+                if ((k->dir > 0 && k->lva[0] >= len) || (k->dir < 0 && k->lva[0] <= 0)) k->dir = -k->dir; /* isRailReachedGoal: reverseRailDirection */
+                int nx = -1; /* getNextRailPointNo */
+                for (u32 j = 0; j < rn && nx < 0; j++) { u32 q = k->dir > 0 ? j : rn - 1 - j; if (k->dir > 0 ? cum[q] > k->lva[0] + 0.01f : cum[q] < k->lva[0] - 0.01f) nx = (int)q; }
+                k->lva[1] = nx >= 0 ? cum[nx] : k->lva[0];
+                k->lvt[0] = (int)(fabsf(k->lva[1] - k->lva[0]) / 20.0f);
+            }
+        }
+        w_se_lv(k, SE_EM_LV_KAMECK_WARP);
+        if (rail && rn > 1) { /* setRailCoord(calcNerveEaseInOutValue(mMoveStep, coord, next)) */
+            float q = k->lvt[0] > 0 ? fminf((float)st / k->lvt[0], 1.0f) : 1.0f, e = 0.5f - 0.5f * cosf(q * 3.14159265f);
+            float c = k->lva[0] + (k->lva[1] - k->lva[0]) * e;
+            k->pos = km_rail_at(rail, rn, c);
+            if (st >= k->lvt[0]) k->lva[0] = k->lva[1];
+        }
+        km_turn(k);
+        if (st > k->lvt[0]) w_nrv(k, KM_APPEAR); /* tryMoveEnd */
+        break;
+    }
+    case KM_DOWN:
+        if (st == 0) { w_act(k, "Down"); w_se(k, SE_EV_KAMECK_DEAD_BLOW); }
+        k->vel = vmul(vadd(k->vel, vmul(k->grav, 1.0f)), 0.99f); /* sDownGravityAccel, sDownFreq */
+        if (st > 0 && (w_bck_stopped(k) || k->on_ground || k->on_wall)) { w_se(k, SE_EM_EXPLODE_S); km_kill(k); return; }
+        break;
+    case KM_PRESSDOWN:
+        if (st == 0) { w_act(k, "Press"); w_se(k, SE_EM_STOMPED_S); w_se(k, SE_EV_KAMECK_DEAD_STOMPED); k->vel = v3(0, 0, 0); }
+        if (w_bck_stopped(k)) { w_se(k, SE_EM_EXPLODE_S); km_kill(k); return; }
+        break;
+    }
+    k->act_t += k->act_rate;
+    if (k->bind_off) k->pos = vadd(k->pos, k->vel); else w_bind(k, 70.0f); /* initBinder(70), offBind but in Down / PressDown */
+    /* control: blendQuatUpFront(-gravity, mFrontVec, sUpVecBlendRate 0.04, sFrontVecBlendRate 0.2) */
+    V3 u = vadd(vmul(k->qy, 0.96f), vmul(k->grav, -0.04f));
+    k->qy = vlen(u) > 1e-6f ? vnorm(u) : vmul(k->grav, -1.0f);
+    V3 f = vtangent(vadd(vmul(k->qz, 0.8f), vmul(k->front, 0.2f)), k->qy);
+    if (vlen(f) > 1e-3f) k->qz = vnorm(f);
+    k->up = k->qy;
+}
+static void km_holder(int boss_zone, int what) /* KameckHolder of the boss's zone: 0 startDemoAppear (dead ones), 1 endDemoAppear, 2 deadForceAll, 3 update (requestMovementOn) */
+{
+    for (int i = 0; i < nkuribo; i++) {
+        Kuribo *k = &kuribo[i];
+        if (k->kind != WALK_KAMECK || sc->objs[k->row].zone != boss_zone || !km_child(k)) continue;
+        if (!k->front.x && !k->front.y && !k->front.z) kameck_update(k); /* (its init) */
+        if (what == 0 && k->state == KURIBO_DEAD) km_demo_appear(k);
+        else if (what == 1 && k->state != KURIBO_DEAD && k->nrv == KM_DEMOAPPEAR) w_nrv(k, KM_WAIT);
+        else if (what == 2 && k->state != KURIBO_DEAD) km_dead_force(k);
+        else if (what == 3 && k->state != KURIBO_DEAD) kameck_update(k);
+    }
+}
+
+/* BossKameck.cpp, BossKameckVs1.cpp / Vs2.cpp, BossKameckSequencer.cpp, BossKameckBattleDemo.cpp,
+ * BossKameckStateBattle.cpp, BossKameckMoveRail.cpp, BossKameckBattlePattarn.cpp after Petari (Kamella; BossKameck
+ * Vs1: StarDustGalaxy 2's ThrowTutorialZone, BossKameck2 Vs2). Dead until its SW_A (startSequence: appear,
+ * hideModel); the sequencer: OpeningDemo (カメック登場Vs1: WaitAppear 120 with stopStageBGM(90), Appear: the
+ * DemoBossKameckStart anim camera on BossKameckBattleDemo at its place, MBGM_BOSS_04, Mario and it at its
+ * MarioPosition / KameckPosition), BattleLv1 (rail 0, beams 2 1), BattleLv2 (8 star pieces to Mario, rail 1, 3 1),
+ * PowerUpDemo (its ChildKamecks out at 200), BattleLv3 (16 star pieces up, rail 2, 4 1 3, final), EndDemo
+ * (ボスカメックダウンLv1: its children dead, stopStageBGM(30), startAfterBossBGM at 285, its power star at the end).
+ * The battle: Wait 60, Move (sMoveTime 90 / final 40: to a rail point, away from Mario at 500, turning 6 degrees,
+ * charging a beam at PowerStarC within 100 after 120), AttackWait 60, Attack (shot at 23 at Mario's ground, 20),
+ * Damage (a JetTurtle's hit: its beams killed, HitMarkNormal; final: Down) ends the level, a spin makes it guard
+ * (Guard flips Mario), its attack sensor (240) hurts him. Vs2 hides between moves (HideMoveStart / HideMove / End,
+ * _30 moves). ponytail: no ActorJointCtrl (Suso1 / Cap1 dynamic joints), no shadow, its quaternion blended on its up /
+ * front vectors, overlayWithPreviousScreen as a cover, appearPowerStarWithoutDemo as requestAppearPowerStar, Vs2's
+ * BossKameckBarrier (its collision, model and BRK / BTK) not made, Vs2 untested */
+enum { BKQ_WAIT, BKQ_OPENING, BKQ_LV1, BKQ_LV2, BKQ_POWERUP, BKQ_LV3, BKQ_LV4, BKQ_END, BKQ_DONE };
+enum { BKD_DEAD, BKD_TRYSTART, BKD_WAITAPPEAR, BKD_APPEAR, BKD_POWERUP, BKD_DOWN };
+enum { BKB_DEAD, BKB_WAIT, BKB_MOVE, BKB_HIDESTART, BKB_HIDEMOVE, BKB_HIDEEND, BKB_SUMMONWAIT, BKB_SUMMON, BKB_ATTACKWAIT, BKB_ATTACK,
+       BKB_DAMAGE, BKB_RECOVER, BKB_GUARD };
+static struct {
+    int row, vs2, seq, sst, dn, dst, dpend, bn, bst, hidden, dead;
+    const char *dname;
+    V3 pos, vel, c8, U, F, tgt;                 /* mPosition, mVelocity, _C8, _90 (as up / front: _A0), _20 */
+    int idx, n30, n34, n38, final, beam;        /* _2C, _30, _34, _38, mIsFinal, mBeam */
+    const int *pat; int patn, patc, summon;     /* BossKameckBattlePattarn: _0, _4, _C, _10 */
+    int nrail; struct { int no; const float *p; u32 n; } rail[4]; int cur;
+    Anim *anim, *demo; int cam; u32 lv[2];
+} bk = {.row = -1};
+static int bk_demo(void) { return bk.row >= 0 && bk.dn >= BKD_WAITAPPEAR && !bk.dead; } /* its puppet demos: Mario BattleWait */
+static V3 bk_g(void) { return km_g(bk.pos); }
+static void bk_se(u32 id) { km_se(bk.pos, id); }
+static void bk_lv(int k, u32 id) { bk.lv[k] = se_level(id, &bk.pos.x, bk.lv[k]); }
+static void bk_base(float m[16]) { basis_matrix(m, bk.pos, bk.U, bk.F, 0); for (int j = 0; j < 12; j++) m[j] *= sc->objs[bk.row].scale[j / 4]; }
+static void bk_act(const char *name) /* startAction */
+{
+    char n[48];
+    snprintf(n, sizeof n, "bosskameck/%s", name);
+    for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
+    n[31] = 0; /* (clip names cut at 31: DemoBossKameckPowerUp2's is PowerUp's, ponytail for Vs2) */
+    if (bk.anim && bk.anim->skin) { bk.anim->clip_id = -1; anim_start(bk.anim, n, 0); }
+}
+static int bk_act_end(void) { return !bk.anim || !bk.anim->skin || bk.anim->done; } /* isActionEnd */
+static V3 bk_joint(int j)
+{
+    float b[16], o[16];
+    bk_base(b);
+    if (!bk.anim || !bk.anim->skin || (u32)j >= bk.anim->skin->njoints) return bk.pos;
+    mat_mul(o, b, bk.anim->world[j]);
+    return v3(o[12], o[13], o[14]);
+}
+static V3 bk_wand(void) { return bk_joint(18); } /* PowerStarC */
+static void bk_hit_beam(void) { if (bk.row >= 0 && !bk.dead) bk_se(SE_BV_KAMECK_ATK_SUCCESS); } /* BossKameck::hitBeam */
+static void bk_demo_mtx(float m[16]) /* BossKameckDemoPosition: initDefaultPos (the boss's placement) */
+{
+    const Row *r = &sc->objs[bk.row];
+    float one[3] = {1, 1, 1};
+    mat_translate_rot_scale(m, r->pos, r->rot, one);
+}
+static void bk_cast_pose(void) /* updateCastPose: setPlayerBaseMtx(MarioPosition), setPose(KameckPosition) */
+{
+    float dm[16], jm[16];
+    bk_demo_mtx(dm);
+    if (!bk.demo || !bk.demo->skin || bk.demo->skin->njoints < 3) return;
+    anim_update(bk.demo);
+    mat_mul(jm, dm, bk.demo->world[2]);
+    mario->pos = v3(jm[12], jm[13], jm[14]); mario->up = vnorm(v3(jm[4], jm[5], jm[6]));
+    mario->face = vnorm(vtangent(v3(jm[8], jm[9], jm[10]), mario->up)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+    mat_mul(jm, dm, bk.demo->world[1]);
+    bk.pos = v3(jm[12], jm[13], jm[14]); bk.U = vnorm(v3(jm[4], jm[5], jm[6])); bk.F = vnorm(v3(jm[8], jm[9], jm[10]));
+}
+static void bk_cam(const char *clip, int start) /* startAnimCameraTargetSelf (held on its last frame) / endAnimCamera */
+{
+    char n[40];
+    float dm[16];
+    if (!clip) { camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45); return; }
+    snprintf(n, sizeof n, "bkdemo/%s", clip);
+    if (start && bk.demo && bk.demo->skin) { char b[40]; snprintf(b, sizeof b, "bkdemo/%s", clip); bk.demo->clip_id = -1; anim_start(bk.demo, b, 0); } /* startBck */
+    bk_demo_mtx(dm);
+    int cf = canm_frames(n);
+    if (cf) demo_camera(n, bk.dst < cf ? bk.dst : cf - 1, dm);
+}
+static void bk_host_demo(void) { bk.c8 = v3(0, 0, 0); bk.vel = v3(0, 0, 0); } /* startDemo / endDemo: zeroVelocity, calcGravity */
+static void bk_try_demo(const char *name, int nrv) /* startTryDemo */
+{
+    bk.dname = name;
+    if (pd_try_start(name, bk.row)) { render_cover(2); bk.dn = nrv; } else { bk.dpend = nrv; bk.dn = BKD_TRYSTART; }
+    bk.dst = -1;
+    printf("boss kameck: %s\n", name);
+}
+static void bk_demo_end(void) { pd_end(bk.dname); bk_cam(NULL, 0); bk_host_demo(); bk.dn = BKD_DEAD; } /* endDemo, endAnimCamera, kill */
+static void bk_demo_update(void) /* BossKameckBattleDemo's nerves */
+{
+    int st = ++bk.dst, v2 = bk.vs2;
+    switch (bk.dn) {
+    case BKD_TRYSTART:
+        if (pd_try_start(bk.dname, bk.row)) { render_cover(2); bk.dn = bk.dpend; bk.dst = -1; }
+        break;
+    case BKD_WAITAPPEAR:
+        if (st == 0) { bgm_stop(90); bk_host_demo(); }
+        if (st > 120) { bk.dn = BKD_APPEAR; bk.dst = -1; } /* sAppearKameckTime */
+        break;
+    case BKD_APPEAR: {
+        const char *c = v2 ? "demobosskameckstart2" : "demobosskameckstart";
+        if (st == 0) { render_cover(1); bk.hidden = 0; bk_act(c); bgm_start("MBGM_BOSS_04"); }
+        bk_cam(c, st == 0);
+        if (!v2) {
+            if (st < 270) bk_lv(0, SE_BM_LV_KAMECK_DEMO_PRE_APPEAR); /* sVs1DemoAppearSeStopTime */
+            if (st == 270) { bk_se(SE_BM_KAMECK_DEMO_SMOKE); bk_se(SE_BV_KAMECK_APPEAR); }
+        } else {
+            if (st == 60) bk_se(SE_BV_KAMECK_APPEAR); /* sVs2DemoAppearVoiceTiming */
+            if (st < 155) bk_lv(0, SE_BM_LV_KAMECK_DEMO_APPEAR);
+            if (st == 155) bk_se(SE_BM_KAMECK_DEMO_APPEA_END);
+        }
+        bk_cast_pose();
+        if (st > 0 && bk_act_end()) bk_demo_end();
+        break;
+    }
+    case BKD_POWERUP: {
+        const char *c = v2 ? "demobosskameckpowerup2" : "demobosskameckpowerup";
+        if (st == 0) { bk_act(c); bk_host_demo(); }
+        bk_cam(c, st == 0);
+        if (v2) bk_lv(0, SE_BM_LV_KAMECK_DEMO_MOVE);
+        if (st == 200) km_holder(sc->objs[bk.row].zone, 0); /* startDemoAppearKameck */
+        km_holder(sc->objs[bk.row].zone, 3);
+        bk_cast_pose();
+        if (st > 0 && bk_act_end()) { km_holder(sc->objs[bk.row].zone, 1); bk_demo_end(); } /* endDemoAppearKameck */
+        break;
+    }
+    case BKD_DOWN: {
+        const char *c = v2 ? "demobosskameckdown2" : "demobosskameckdown";
+        if (st == 0) { bk_act(c); km_holder(sc->objs[bk.row].zone, 2); bk_host_demo(); bgm_stop(30); } /* deadKameck */
+        bk_cam(c, st == 0);
+        bk_cast_pose();
+        if (st == 18) bk_se(SE_BV_KAMECK_DEAD); /* sDeadVoiceSeTiming */
+        if (st == 150) bk_se(SE_BM_KAMECK_DEAD); /* sDeadMotionSeTiming */
+        if (st == 285) bgm_after_boss(); /* sAfterBossBgmTiming */
+        if (st == 345) { bk_se(SE_BM_KAMECK_DEMO_STAFF_BREAK); se_start(SE_SY_POW_STAR_APPEAR, NULL); } /* sAppearPowerStarSeTiming */
+        if (st > 0 && bk_act_end()) {
+            bk_demo_end();
+            const Row *r = &sc->objs[bk.row];
+            note_star_row = bk.row; note_star_at = bk.pos; row_kill(bk.row); /* appearPowerStarWithoutDemo */
+            if (r->sw[SW_DEAD] >= 0) sw_set(r, SW_DEAD, 1);
+            km_list_kill(-2);
+            bk.dead = 1; bk.seq = BKQ_DONE;
+            printf("boss kameck: down, its star\n");
+        }
+        break;
+    }
+    }
+}
+static void bk_rail_pos(int i) { const typeof(bk.rail[0]) *r = &bk.rail[bk.cur]; bk.idx = i; bk.tgt = r->p ? v3(r->p[3 * i], r->p[3 * i + 1], r->p[3 * i + 2]) : bk.pos; } /* calcMovePosition */
+static void bk_select(void) /* selectPosition: calcRandomIndex */
+{
+    int n = (int)bk.rail[bk.cur].n, last = bk.idx < 0 ? n : n - 1, rnd = last <= 0 ? 0 : rand() % last;
+    if (bk.idx >= 0 && rnd >= bk.idx) rnd++;
+    bk_rail_pos(last <= 0 ? 0 : rnd);
+}
+static void bk_select_stoppable(void) /* selectStoppablePosition: calcRandomStoppableIndex (point arg0 != 0) */
+{
+    const typeof(bk.rail[0]) *r = &bk.rail[bk.cur];
+    int stop = (int)r->n; /* ponytail: the point args are not in the pack's rails: every point stoppable (both rails on the disc have arg0 -1) */
+    int last = bk.idx < 0 ? stop : stop - 1, rnd = last <= 0 ? 0 : rand() % last, v = 0;
+    for (int i = 0; i < (int)r->n; i++) { if (i == bk.idx) continue; if (v == rnd) { bk_rail_pos(i); return; } v++; }
+    bk_rail_pos(0);
+}
+static void bk_vel_to(V3 t, float a, float b, float lo, float hi, int away) /* addVelocityMoveToTarget / AwayFromTarget */
+{
+    V3 d = vtangent(away ? vsub(bk.pos, t) : vsub(t, bk.pos), bk_g());
+    float l = vlen(d);
+    if (l < 1e-6f) return;
+    float q = hi - lo != 0 ? fminf(fmaxf((l - lo) / (hi - lo), 0), 1) : l < lo ? 0 : 1;
+    bk.vel = vadd(bk.vel, vmul(d, (a + (b - a) * q) / l));
+}
+static void bk_keep_height(V3 t, float rate, float lim) /* addVelocityKeepHeight(t, 0, rate, lim): normalizeAbs */
+{
+    V3 g = bk_g();
+    float x = vdot(g, vsub(t, bk.pos)), q = fminf(fabsf(x) / lim, 1.0f);
+    bk.vel = vadd(bk.vel, vmul(g, rate * (x >= 0 ? q : -q)));
+}
+static void bk_turn(float deg) { turn_on_plane(&bk.F, vsub(mario->pos, bk.pos), bk_g(), cosf(deg * 0.0174533f)); } /* turnDirectionToPlayerDegree */
+static int bk_living_kameck(void);
+static int bk_charge(void) /* tryChargeBram */
+{
+    if (km_list_n(-2) >= 8) return 0;
+    int kind = bk.pat[bk.patc]; /* goNextPattarn */
+    if (++bk.patc >= bk.patn) bk.patc = 0;
+    bk.beam = kmb_start(kind, -2, 1.0f, v3(0, 0, 0), -2);
+    if (bk.beam < 0) return 0;
+    bk.n38 = bk_living_kameck() ? 0 : bk.n38 + 1;
+    return 1;
+}
+static int bk_living_kameck(void)
+{
+    int live = 0;
+    for (int i = 0; i < nkuribo; i++) live += kuribo[i].kind == WALK_KAMECK && kuribo[i].state != KURIBO_DEAD && km_child(&kuribo[i]) && sc->objs[kuribo[i].row].zone == sc->objs[bk.row].zone;
+    return live;
+}
+static void bk_bset(int n) { bk.bn = n; bk.bst = -1; }
+static void bk_start_move(void) { bk_bset(bk.vs2 ? BKB_HIDESTART : BKB_MOVE); }
+static int bk_enable(void) { int n = bk.bn; return n == BKB_WAIT || n == BKB_MOVE || n == BKB_HIDESTART || n == BKB_HIDEEND || n == BKB_SUMMONWAIT || n == BKB_SUMMON || n == BKB_ATTACKWAIT || n == BKB_ATTACK; } /* isEnableDamage / isEnableGuard */
+static void bk_drop_beam(void) { if (bk.beam >= 0) kmb_kill(bk.beam); bk.beam = -1; }
+static int bk_jet_hit(V3 p) /* receiveMsgPlayerAttack isMsgJetTurtleAttack: requestDamage (body 300) */
+{
+    if (bk.row < 0 || bk.dead || bk.bn == BKB_DEAD || !bk_enable() || vlen(vsub(p, bk.pos)) > 300.0f + 60.0f) return 0;
+    bk_drop_beam(); km_list_kill(-2);
+    float m[16]; basis_matrix(m, p, bk.U, bk.F, 0); fx_named("BossKameck", "HitMarkNormal", m, NULL, NULL);
+    bk_bset(BKB_DAMAGE);
+    printf("boss kameck: hit by a shell (level %d)\n", bk.seq);
+    return 1;
+}
+static void bk_battle(void) /* BossKameckStateBattle */
+{
+    int st = ++bk.bst;
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    if (bk_enable()) { /* receiveMsgPlayerAttack isMsgPlayerSpinAttack: requestGuard; attackSensor */
+        if (mario_offence(bk.pos, 300.0f, bk_g()) == MSG_HITALL) { bk_drop_beam(); bk_bset(BKB_GUARD); st = ++bk.bst; }
+        else if (vlen(vsub(mc, bk.pos)) < 240.0f + HIT_BODY_R && !mario_attack(ATK_ENEMY, bk.pos)) mario_push_out(bk.pos, 240.0f);
+    } /* (its Guard's sendMsgEnemyAttackFlipRot is under isEnableGuard, which Guard is not: never sent) */
+    switch (bk.bn) {
+    case BKB_WAIT:
+        if (st == 0) bk_act("Wait");
+        bk.vel = vmul(bk.vel, 0.96f);
+        if (st > 60) bk_start_move(); /* sWaitTime */
+        break;
+    case BKB_MOVE:
+        if (st == 0) { bk_act("Wait"); bk_select(); }
+        bk_lv(0, SE_BM_LV_KAMECK_FLOAT); /* (its volume by speed x 100: ponytail) */
+        if (st <= (bk.final ? 40 : 90)) { /* sFinalMoveTime / sMoveTime */
+            if (vlen(vsub(bk.pos, bk.tgt)) < 100.0f || vlen(vsub(mario->pos, bk.tgt)) < 400.0f) bk_select();
+            bk_vel_to(mario->pos, 1.5f, 0.0f, 0.0f, 500.0f, 1);
+        }
+        bk_turn(6.0f); /* sTurnPlayerDegree */
+        bk_vel_to(bk.tgt, 0.1f * 0.9f, 0.9f, 0.0f, 400.0f, 0);
+        bk_keep_height(bk.tgt, 0.5f, 50.0f);
+        bk.vel = vmul(bk.vel, 0.96f);
+        if (st > 120 && vlen(vsub(bk.pos, bk.tgt)) < 100.0f) { if (bk_charge()) bk_bset(BKB_ATTACKWAIT); else bk_start_move(); } /* tryAttackWait */
+        break;
+    case BKB_HIDESTART:
+        if (st == 0) { bk_act("Hide"); bk_se(SE_BM_KAMECK_HIDE_SPIN); }
+        bk.vel = v3(0, 0, 0); bk_turn(6.0f);
+        if (st > 0 && bk_act_end()) { bk_se(SE_BM_KAMECK_HIDE_SMOKE); bk_bset(BKB_HIDEMOVE); }
+        break;
+    case BKB_HIDEMOVE: {
+        if (st == 0) { bk_act("Move"); bk.hidden = 1; bk_select(); bk.n34 = 0; }
+        bk_lv(0, SE_BM_LV_KAMECK_HIDE_MOVE);
+        float v = bk.final ? 20.0f : 15.0f;
+        bk_vel_to(bk.tgt, v * 0.1f, v, 0.0f, 400.0f, 0);
+        bk_keep_height(bk.tgt, 0.5f, 50.0f);
+        bk.vel = vmul(bk.vel, 0.9f); bk_turn(6.0f);
+        if (vlen(vsub(bk.pos, bk.tgt)) < 100.0f) {
+            if (bk.n30 <= bk.n34) bk_bset(BKB_HIDEEND);
+            else if (++bk.n34 == bk.n30) bk_select_stoppable(); else bk_select();
+        }
+        break;
+    }
+    case BKB_HIDEEND:
+        if (st == 0) { bk.hidden = 0; bk_act("Appear"); bk_se(SE_BM_KAMECK_APPEAR_SMOKE); bk_se(SE_BM_KAMECK_APPEAR_SPIN); }
+        bk.vel = v3(0, 0, 0); bk_turn(6.0f);
+        if (st > 0 && bk_act_end()) {
+            if (bk.summon && bk.n38 > 3 && !bk_living_kameck()) { bk.n38 = 0; bk_bset(BKB_SUMMONWAIT); } /* trySummonKameck */
+            else if (bk_charge()) bk_bset(BKB_ATTACKWAIT);
+            else bk_start_move();
+        }
+        break;
+    case BKB_SUMMONWAIT:
+        if (st == 0) bk_act("SummonWait");
+        bk.vel = v3(0, 0, 0); bk_turn(6.0f);
+        if (st > 0 && bk_act_end()) bk_bset(BKB_SUMMON);
+        break;
+    case BKB_SUMMON:
+        if (st == 0) { /* appearKameck: KameckHolder::appearAll (Kameck::appear: its rail's start, Appear) */
+            bk_act("Summon");
+            for (int i = 0; i < nkuribo; i++) {
+                Kuribo *k = &kuribo[i];
+                if (k->kind != WALK_KAMECK || !km_child(k) || sc->objs[k->row].zone != sc->objs[bk.row].zone || k->state != KURIBO_DEAD) continue;
+                u32 rn; int rcl; const float *rl = w_rail(k, &rn, &rcl);
+                if (rl) { k->lva[0] = 0; k->dir = 1; k->pos = km_rail_at(rl, rn, 0); }
+                k->state = KURIBO_WALK; w_nrv(k, KM_APPEAR);
+            }
+        }
+        if (st > 0 && bk_act_end()) bk_bset(BKB_WAIT);
+        break;
+    case BKB_ATTACKWAIT:
+        if (st == 0) bk_act("AttackWait");
+        bk_lv(1, SE_BM_LV_KAMECK_STAFF_TURN);
+        bk_turn(6.0f);
+        bk_vel_to(bk.tgt, 0.1f * 0.9f, 0.9f, 0.0f, 400.0f, 0);
+        bk_keep_height(bk.tgt, 0.2f, 50.0f);
+        bk.vel = vmul(bk.vel, 0.9f);
+        if (st > 60) bk_bset(BKB_ATTACK); /* sAttackWaitTime */
+        break;
+    case BKB_ATTACK:
+        if (st == 0) bk_act("Attack");
+        if (st == 12) { bk_se(SE_BM_KAMECK_STAFF_SWING); bk_se(SE_BV_KAMECK_STAFF_SWING); } /* sSwingSeTiming */
+        if (st == 23 && bk.beam >= 0) { /* sShootTiming: requestShootToPlayerGround(sBeamSpeed) */
+            V3 g = bk_g();
+            kmb_shoot_to(bk.beam, vsub(mario->pos, vmul(g, 80.0f)), 20.0f);
+            kmb[bk.beam].list = -2; bk.beam = -1;
+            bk_se(SE_BM_KAMECK_STAFF_EFFECT);
+        }
+        bk.vel = vmul(bk.vel, 0.96f);
+        if (st > 30) bk_bset(BKB_WAIT); /* sAttackTime */
+        break;
+    case BKB_DAMAGE:
+        if (st == 0) {
+            bk.vel = v3(0, 0, 0);
+            if (bk.final) { bgm_stop(30); bk_act("Down"); bk_se(SE_BV_KAMECK_LAST_DAMAGE); bk_se(SE_BM_KAMECK_LAST_DAMAGE); }
+            else { bk_act("Damage"); bk_se(SE_BV_KAMECK_DAMAGE); bk_se(SE_BM_KAMECK_DAMAGE); }
+        }
+        if (st > 0 && bk_act_end()) bk.bn = BKB_DEAD; /* kill */
+        break;
+    case BKB_RECOVER:
+        if (st == 0) { bk_act("Recover"); bk_se(SE_BM_KAMECK_RECOVER); }
+        if (st > 60) { /* sRecoverMoveStartTime */
+            bk_turn(6.0f); bk_vel_to(bk.tgt, 0.1f * 0.9f, 0.9f, 0.0f, 400.0f, 0); bk_keep_height(bk.tgt, 0.5f, 50.0f); bk.vel = vmul(bk.vel, 0.96f);
+            if (vlen(vsub(bk.pos, bk.tgt)) < 100.0f) bk_start_move();
+        }
+        break;
+    case BKB_GUARD:
+        if (st == 0) { bk_act("Guard"); turn_on_plane(&bk.F, vsub(mario->pos, bk.pos), bk_g(), 0.3f); }
+        bk.vel = vmul(bk.vel, 0.96f);
+        if (st > 0 && bk_act_end()) bk_start_move();
+        break;
+    }
+    /* control: updatePose */
+    V3 g = bk_g(), up = vmul(g, -1.0f), a = vtangent(vsub(bk.vel, bk.c8), g);
+    float mag = vlen(a);
+    if (mag > 1e-6f) {
+        up = vadd(up, vmul(a, 4.0f * fminf(mag / 3.0f, 1.0f) / mag));
+        up = vlen(up) > 1e-6f ? vnorm(up) : vmul(g, -1.0f);
+    }
+    V3 u = vadd(vmul(bk.U, 0.96f), vmul(up, 0.04f)); /* blendQuatUpFront(sUpVecBlendRate, sFrontVecBlendRate) */
+    if (vlen(u) > 1e-6f) bk.U = vnorm(u);
+}
+static const int bk_pat1[] = {2, 1}, bk_pat2[] = {3, 1}, bk_pat3[] = {4, 1, 3}; /* sBeamPatternLv1-3 */
+static void bk_level(int rail, const int *pat, int n, int final, int n30, int summon)
+{
+    bk.cur = 0;
+    for (int i = 0; i < bk.nrail; i++) if (bk.rail[i].no == rail) bk.cur = i; /* getMoveRail(no) */
+    bk.pat = pat; bk.patn = n; bk.patc = 0; bk.summon = summon; bk.final = final; bk.n30 = n30;
+}
+static void bk_pieces(int n, int to_player) /* appearStarPieceToPlayer(8 / 16: 30, 65) / ToUp(16: 30, 40) */
+{
+    V3 g = bk_g(), d = vmul(g, -1.0f);
+    if (to_player) { V3 h = vtangent(vsub(mario->pos, bk.pos), g); d = vsub(vlen(h) > 1e-6f ? vnorm(h) : v3(0, 0, 0), g); d = vlen(d) > 1e-6f ? vnorm(d) : vmul(g, -1.0f); }
+    launch_pieces(bk.pos, d, n, 30.0f, to_player ? 65.0f : 40.0f);
+    bk_se(SE_OJ_STAR_PIECE_BURST);
+}
+static void update_bk(void)
+{
+    if (bk.row < 0 || bk.dead || !dx_cls_moves(sc->types + 32 * sc->objs[bk.row].type)) return;
+    const Row *r = &sc->objs[bk.row];
+    if (bk.anim && m_bk && m_bk->skin && bk.anim->skin != m_bk->skin) anim_bind(bk.anim, m_bk->skin);
+    if (bk.demo && m_bkdemo && m_bkdemo->skin && bk.demo->skin != m_bkdemo->skin) anim_bind(bk.demo, m_bkdemo->skin);
+    if (bk.seq == BKQ_WAIT) {
+        if (r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) return; /* listenStageSwitchOnA: startSequence */
+        bk.seq = BKQ_OPENING; bk.sst = -1; bk.hidden = 1;
+        printf("boss kameck: start\n");
+    }
+    int s0 = ++bk.sst;
+    switch (bk.seq) {
+    case BKQ_OPENING:
+        if (s0 == 0) bk_try_demo(bk.vs2 ? "カメック登場Vs2" : "カメック登場Vs1", BKD_WAITAPPEAR);
+        break;
+    case BKQ_LV1: if (s0 == 0) bk_level(0, bk_pat1, 2, 0, 3, 0); break;
+    case BKQ_LV2: if (s0 == 0) { bk_pieces(8, 1); bk_level(1, bk_pat2, 2, 0, 3, 0); } break;
+    case BKQ_POWERUP: if (s0 == 0) bk_try_demo(bk.vs2 ? "カメックパワーアップVs2" : "カメックパワーアップVs1", BKD_POWERUP); break;
+    case BKQ_LV3: if (s0 == 0) { if (!bk.vs2) bk_pieces(16, 0); bk_level(2, bk_pat3, 3, !bk.vs2, 3, bk.vs2); } break;
+    case BKQ_LV4: if (s0 == 0) { bk_pieces(16, 1); bk_level(3, bk_pat3, 3, 1, 4, 1); } break;
+    case BKQ_END: if (s0 == 0) bk_try_demo(bk.vs2 ? "ボスカメックダウンLv2" : "ボスカメックダウンLv1", BKD_DOWN); break;
+    }
+    int battle = bk.seq >= BKQ_LV1 && bk.seq <= BKQ_LV4 && bk.seq != BKQ_POWERUP;
+    if (battle) {
+        if (s0 == 0) bk_start_move(); /* updateActorState: appear (startMove, onCalcGravity) */
+        bk_battle();
+        if (bk.bn == BKB_DEAD) { /* updateActorStateAndNextNerve */
+            bk.seq = bk.seq == BKQ_LV1 ? BKQ_LV2 : bk.seq == BKQ_LV2 ? BKQ_POWERUP : bk.seq == BKQ_LV3 ? (bk.vs2 ? BKQ_LV4 : BKQ_END) : BKQ_END;
+            bk.sst = -1;
+        }
+    } else {
+        bk_demo_update();
+        if (bk.dn == BKD_DEAD && bk.seq != BKQ_DONE && !bk.dead) {
+            bk.seq = bk.seq == BKQ_OPENING ? BKQ_LV1 : bk.seq == BKQ_POWERUP ? BKQ_LV3 : bk.seq;
+            bk.sst = -1;
+        }
+    }
+    if (bk.dead) return;
+    bk.c8 = bk.vel;
+    bk.pos = vadd(bk.pos, bk.vel);
+    /* blendQuatUpFront's front: _A0 */
+    V3 f = vtangent(bk.F, bk.U);
+    if (vlen(f) > 1e-3f) bk.F = vnorm(f);
+    if (bk.anim && bk.anim->skin) anim_update(bk.anim);
+}
+static void bk_draw(void)
+{
+    if (bk.row < 0 || bk.dead || bk.seq == BKQ_WAIT || bk.hidden || !m_bk) return;
+    float b[16];
+    bk_base(b);
+    if (m_bk->skin && bk.anim && bk.anim->skin == m_bk->skin) draw_skin(m_bk, b, bk.anim); else render_model(m_bk, b, 0x80, 0x80, 0x80);
+}
+static void bk_init(const Scene *s, const unsigned char *blob) /* BossKameck::init: its MoveRails, makeActorDead */
+{
+    memset(&bk, 0, sizeof bk); bk.row = -1; bk.beam = -1; bk.idx = -1; bk.n30 = 1;
+    memset(kmb, 0, sizeof kmb); memset(kmf, 0, sizeof kmf); memset(kmt, 0, sizeof kmt); kmj_held = -1;
+    for (int i = 0; i < KM_BEAMS; i++) { kmb[i].turtle = -1; kmb[i].fire[0] = kmb[i].fire[1] = kmb[i].fire[2] = -1; kmb[i].lis = kmb[i].list = -1; }
+    int t1 = scene_type(s, "BossKameck"), t2 = scene_type(s, "BossKameck2"), tr = scene_type(s, "BossKameckMoveRail");
+    for (u32 i = 0; i < s->nobjs; i++) {
+        const Row *r = &s->objs[i];
+        if ((int)r->type != t1 && (int)r->type != t2) continue;
+        V3 x, z;
+        row_axes(r, &x, &z);
+        bk.row = (int)i; bk.vs2 = (int)r->type == t2; bk.pos = row_pos(r); bk.U = vmul(km_g(bk.pos), -1.0f); bk.F = vnorm(vtangent(z, bk.U));
+        for (u32 j = 0; j < s->nobjs && bk.nrail < 4; j++) /* initMoveRail: its zone's BossKameckMoveRails (arg0 the number) */
+            if ((int)s->objs[j].type == tr && s->objs[j].zone == r->zone && s->objs[j].path >= 0) {
+                int cl;
+                bk.rail[bk.nrail].no = s->objs[j].arg[0];
+                bk.rail[bk.nrail].p = find_rail_of(blob, r->zone, s->objs[j].path, &bk.rail[bk.nrail].n, &cl, 0);
+                if (bk.rail[bk.nrail].p) bk.nrail++;
+            }
+        Anim **an[2] = {&bk.anim, &bk.demo};
+        for (int k = 0; k < 2; k++) { *an[k] = mem_alloc(MEM_PLAYER, sizeof(Anim)); memset(*an[k], 0, sizeof(Anim)); }
+        printf("boss kameck: row %d (vs%d), %d move rails\n", (int)i, bk.vs2 + 1, bk.nrail);
+        break;
+    }
+}
+/* Test builds (XF=-DBK_TEST, StarDustGalaxy/2): its SW_A on, then a turtle shell: Mario dropped on a running
+ * KameckTurtle, onto the shell it leaves, then 400 before the boss facing it, a spin (the throw); till its star */
+int game_test_bk(int frame)
+{
+    static int last = -1000;
+    if (bk.row < 0) return -1;
+    const Row *r = &sc->objs[bk.row];
+    if (frame % 30 == 0) {
+        int nb[6] = {0};
+        for (int i = 0; i < KM_BEAMS; i++) nb[kmb[i].nrv]++;
+        printf("bk test f %d: seq %d, battle %d, demo %d, %.0f from Mario, life %d; at %.0f %.0f %.0f to %.0f %.0f %.0f, Mario %.0f %.0f %.0f; beams %d %d %d %d %d\n", frame, bk.seq, bk.bn, bk.dn,
+               vlen(vsub(mario->pos, bk.pos)), game_life(), bk.pos.x, bk.pos.y, bk.pos.z, bk.tgt.x, bk.tgt.y, bk.tgt.z, mario->pos.x, mario->pos.y, mario->pos.z, nb[1], nb[2], nb[3], nb[4], nb[5]);
+    }
+    if (bk.seq >= BKQ_LV3 && life < 2) life = 3; /* (test: the children's fire balls are not dodged) */
+    if (bk.dead) { /* to its star (arg7: the declarer) */
+        static int dead_at = -1;
+        int ty = scene_type(sc, "PowerStar");
+        if (dead_at < 0) dead_at = frame;
+        for (u32 i = 0; frame - dead_at >= 200 && frame % 20 == 0 && ty >= 0 && i < sc->nobjs; i++)
+            if ((int)sc->objs[i].type == ty && sc->objs[i].arg[7] == bk.row) { mario->pos = row_pos(&sc->objs[i]); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+        return 100;
+    }
+    if (bk.seq == BKQ_WAIT) { /* into the SwitchCube writing its SW_A */
+        int ty = scene_type(sc, "SwitchCube");
+        for (u32 i = 0; ty >= 0 && frame % 20 == 0 && i < sc->nobjs; i++)
+            if ((int)sc->objs[i].type == ty && sc->objs[i].zone == r->zone && sc->objs[i].sw[SW_A] == r->sw[SW_A]) {
+                mario->pos = row_pos(&sc->objs[i]); mario->up = up_at(mario->pos, mario->up); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            }
+        if (frame > 300 && r->sw[SW_A] >= 0) sw_set(r, SW_A, 1); /* (the cube's area did not write it: ponytail, test only) */
+        return 0;
+    }
+    for (int i = 0; i < KM_BEAMS; i++) /* a beam just shot: a side step out of its way */
+        if (kmb[i].nrv == KBN_SHOOT && kmb[i].st == 2 && kmb[i].list == -2) {
+            V3 sd = vnorm(vcross(vmul(bk_g(), -1.0f), vsub(mario->pos, bk.pos)));
+            mario->pos = vadd(mario->pos, vmul(sd, 450.0f)); mario->hvel = v3(0, 0, 0);
+            printf("bk test f %d: side step (beam %d)\n", frame, kmb[i].kind);
+            return bk.seq;
+        }
+    if (demo_on || frame - last < 40) return bk.seq;
+    V3 up = vmul(bk_g(), -1.0f);
+    if (kmj_held >= 0) { /* before it, a spin */
+        V3 h = vtangent(vsub(mario->pos, bk.pos), up);
+        h = vlen(h) > 1e-3f ? vnorm(h) : bk.F;
+        mario->pos = vsub(vadd(bk.pos, vmul(h, 400.0f)), vmul(up, HIT_BODY_H - 60.0f)); mario->up = up; mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        mario->face = vmul(h, -1.0f); mario->spin_timer = SPIN_TIME;
+        last = frame;
+        printf("bk test f %d: the throw\n", frame);
+        return bk.seq;
+    }
+    for (int i = 0; i < KM_TURTLES; i++) {
+        if (!kmt[i].on) continue;
+        if (kmt[i].nrv == 1 && kmt[i].jet == 1) { mario->pos = kmt[i].jpos; mario->hvel = v3(0, 0, 0); mario->vup = 0; last = frame; printf("bk test f %d: to the shell\n", frame); return bk.seq; }
+        if (kmt[i].nrv == 0 && kmt[i].st > 20) {
+            mario->up = up; mario->pos = vadd(kmt[i].pos, vmul(up, 200.0f)); mario->hvel = v3(0, 0, 0);
+            mario->vup = -10.0f; mario->grounded = 0; mario->jumping = 1; mario->hurt_timer = 0;
+            last = frame;
+            printf("bk test f %d: trample a turtle\n", frame);
+            return bk.seq;
+        }
+    }
+    return bk.seq;
 }
 /* Test builds: Mario in the boss's SwitchCylinder until it starts, then dropped in a hip drop on its BodyHipDrop part
  * whenever a hit is open; game_bsb_state: sequencer x 100 + nerve */
@@ -43283,6 +44337,8 @@ void game_update(void)
     LQ(58, update_dino());
     LQ(59, update_ota());
     update_bsb();
+    update_bk();
+    if (!demo_on) update_km_beams(); /* (the Kameck beams, fire balls, turtles: stopped in a demo) */
     if (star_demo) { /* its camera ("powerstar/powerstarget"); Mario plays PowerStarGet meanwhile */
         if (!demo_camera("powerstar/powerstarget", star_demo - 1, star_demo_m)) {
             star_demo = 0; camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45);
@@ -43309,7 +44365,7 @@ void game_update(void)
     update_astro_core();
     update_astro_objs();
     update_astro_sky();
-    demo_on = dino_demo_on || ota_demo_on || bsb_demo() || bsb.ctrl_off || star_demo || fat_demo() || vine_demo_on() || talk_demo() || dx.on || menu_staffroll_on() || gw_demo_on() || pd.name; /* (StaffRoll: offPlayerControl) */
+    demo_on = dino_demo_on || ota_demo_on || bsb_demo() || bk_demo() || bsb.ctrl_off || star_demo || fat_demo() || vine_demo_on() || talk_demo() || dx.on || menu_staffroll_on() || gw_demo_on() || pd.name; /* (StaffRoll: offPlayerControl) */
     /* MarioEffect: mHealth <= 1, not in a demo / the power star get demo / a dark comet, isEnableNerveChange.
      * ponytail: mWaterLife (only ever set to 8 in Petari) not read, isPermitSE always */
     if (life <= 1 && !demo_on && !star_demo && !opening_on && !miss_running() && strcmp(bgm_comet(), "Dark")) mario_sound("ライフ警告");
@@ -44183,6 +45239,7 @@ void game_draw(void)
         if (kuribo[i].kind == WALK_TERESA && kuribo[i].phase == 4) continue; /* hidden in a wall */
         if (kuribo[i].kind == WALK_PETARI && kuribo[i].phase) continue; /* hideModel */
         if (kuribo[i].kind == WALK_SNAKEHEAD && kuribo[i].phase) continue; /* Waylay: hideModel */
+        if (kuribo[i].kind == WALK_KAMECK && kuribo[i].phase) continue; /* Kameck: hideModel(AndOnCalcAnim) */
         if (kuribo[i].kind == WALK_BOMBHEI && (kuribo[i].nrv == BH_GONE || kuribo[i].nrv == BH_EXPLODE)) continue; /* a launcher's bomb not out; exeExplode: hideModel */
         /* out of the view: no shadow, no pose, not drawn; its clip's time goes on (anim_advance) */
         const float *wsc = sc->objs[kuribo[i].row].scale;
@@ -44528,6 +45585,8 @@ void game_draw(void)
         draw_shadow(fireballs[b].pos, up_at(fireballs[b].pos, v3(0, 1, 0)), fireballs[b].vel, 25.0f, 25.0f, 0.0f, 0.0f, 2000.0f); /* initShadowVolumeCylinder(25) */
     }
     bsb_draw();
+    bk_draw();
+    km_draw();
     if (ota.row >= 0 && ota.nrv != OTA_WAITONSWITCH && ota.nrv != OTA_APPEARSTAR && ota.nrv != OTA_DEAD) { /* OtaKing, its feet */
         basis_matrix(m, ota.pos, ota.up, ota.f, 0);
         if (m_ota && m_ota->skin && ota.anim->skin == m_ota->skin) draw_skin(m_ota, m, ota.anim);

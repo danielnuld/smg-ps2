@@ -772,6 +772,18 @@ there needs the embedded blob and every pack rebuilt.
   Packs: slice.py EXTRA BossBegoman (its head, the followers' models), SKINNED_OBJ BossBegomanHead, declare_stars
   BossBegoman. ponytail: the head's BRKs, ROT_NEEDLE's volume, overlayWithPreviousScreen, the boss's
   sendMsgEnemyAttack to walkers other than Begomans.
+- BossKameck (feat/kameck, 2026-11-05): Kamella after Petari (game.c bk_*, its sequencer Vs1 / Vs2, BattleDemo,
+  StateBattle's 12 nerves, MoveRail, BattlePattarn) in StarDustGalaxy 2's ThrowTutorialZone: dead until SW_A (the
+  SwitchCube), カメック登場Vs1 (the DemoBossKameckStart anim camera on BossKameckBattleDemo, MBGM_BOSS_04, Mario
+  BattleWait at MarioPosition), three levels on its BossKameckMoveRails with the beam patterns 2 1 / 3 1 / 4 1 3,
+  hit only by a JetTurtle (its turtle beams leave KameckTurtles: trample one, take its shell, spin it at her), star
+  pieces 8 / 16, the PowerUp demo bringing its two ChildKamecks, ボスカメックダウンLv1 and its power star. Kameck.cpp
+  as walker kind WALK_KAMECK (FireBallBeamKameck, ChildKameck), KameckBeam / KameckFireBall / KameckTurtle pools.
+  Test: plain build, XF="-DBK_TEST", StarDustGalaxy/2 (D:/smg-ps2-wt/audit-bk.sh). Packs: slice.py (EXTRA BkDemo /
+  BossKameckFireBall / Koura, SKINNED_OBJ ChildKameck / BkDemo, CANM_ARC bkdemo, LOGIC BossKameckMoveRail, MODEL_ARC
+  ChildKameck, declare_stars), jpa.py NAMED BossKameckBeam / BossKameckFireBall. ponytail: Vs2 untested and its
+  BossKameckBarrier not made, DemoBossKameckPowerUp2 cut to PowerUp's clip name, no Suso / Cap dynamic joints, no
+  shadow, no star pointer bind on Kamecks, NonActive by distance.
 
 ## Next
 
