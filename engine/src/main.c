@@ -2146,6 +2146,13 @@ int main(void)
         if (f0 && frame - f0 < 12000) game_test_bk((int)(frame - f0));
     }
 #endif
+#ifdef TB_TEST /* XF=-DTB_TEST, TriLegLv1Galaxy/1: the TripodBoss fight (game_test_tb) */
+    {
+        static u32 f0;
+        if (!f0 && frame > 30 && game_test_free()) f0 = frame;
+        if (f0 && frame - f0 < 20000) game_test_tb((int)(frame - f0));
+    }
+#endif
 #ifdef BBEGO_TEST /* begoman build with XF=-DBBEGO_TEST, BattleShipGalaxy/3: the BossBegoman fight (game_test_bbego) */
     {
         static u32 f0;

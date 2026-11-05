@@ -348,6 +348,9 @@ typedef struct {
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_INVINCIBLE };
 static V3 firebar_ball(const Inst *in, int j, int k);
 static V3 star_pos(const Inst *in, int *state);
+static V3 tb_unfollow(const Row *r, V3 p); /* TripodBoss (tripod_boss.inc): an area following its joints */
+static int tb_hidden(int row), tb_demo(void);
+static void tb_init(const Scene *s, const unsigned char *blob), update_tb(void), tb_draw(void);
 static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle);
 static void dome_init(void);
 /* slice.py BRK_ARG: a class whose colour is its BRK stopped at the frame one of its args gives (setBrkFrameAndStop) draws
@@ -1080,6 +1083,7 @@ static int row_shown(int i)
     if (strcmp(sc->types + 32 * r->type, TEST_SHOWN) == 0) return 1;
 #endif
     /* SleepControlFunc: SW_SLEEP off makes it dead, on appeared (TicoFat's planet) */
+    if (tb_hidden(i)) return 0; /* TripodBoss parts: hideTripodBossParts */
     return !row_dead[i] && !row_demo_hide[i] && (r->sw[SW_APPEAR] < 0 || sw_on(r, SW_APPEAR)) && (r->sw[SW_SLEEP] < 0 || sw_on(r, SW_SLEEP));
 }
 
@@ -2296,7 +2300,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     star_wait = mem_alloc(MEM_OBJECTS, s->nobjs * sizeof(short));
     for (u32 i = 0; i < s->nobjs; i++) {
         int a = s->objs[i].arg[7];
-        star_wait[i] = strcmp(s->types + 32 * s->objs[i].type, "PowerStar") ? 0 : a >= 0 ? a + 1 : a == -2 ? -1 : 0;
+        star_wait[i] = strcmp(s->types + 32 * s->objs[i].type, "PowerStar") && strcmp(s->types + 32 * s->objs[i].type, "GrandStar") ? 0 : a >= 0 ? a + 1 : a == -2 ? -1 : 0;
     }
     for (u32 i = 0; i < s->nobjs; i++) { /* TicoStarRing::init: dead unless its challenge galaxy (arg0) has appeared */
         int a = ring_arg(&s->objs[i]);
@@ -2356,6 +2360,7 @@ void game_init(const Scene *s, const unsigned char *blob)
             break;
         }
     bk_init(s, blob);
+    tb_init(s, blob);
     for (u32 i = 0; i < s->nobjs; i++)
         if (strcmp(s->types + 32 * s->objs[i].type, "OtaKing") == 0) {
             V3 x, z;
@@ -4585,7 +4590,7 @@ static void class_make(ClassInfo *ci, const char *name)
 {
     ci->hazard = strcmp(name, "SpaceMine") == 0 ? 1 : strcmp(name, "NeedlePlant") == 0 || strcmp(name, "NeedlePlantFly") == 0 ? 2 :
                  strcmp(name, "BlackHole") == 0 ? 3 : strcmp(name, "BlackHoleCube") == 0 ? 4 : 0;
-    ci->item = strcmp(name, "PowerStar") == 0 ? ITEM_STAR : strcmp(name, "BenefitItemOneUp") == 0 ? ITEM_ONEUP :
+    ci->item = strcmp(name, "PowerStar") == 0 || strcmp(name, "GrandStar") == 0 ? ITEM_STAR : strcmp(name, "BenefitItemOneUp") == 0 ? ITEM_ONEUP :
                strcmp(name, "BenefitItemLifeUp") == 0 ? ITEM_LIFEUP : strcmp(name, "BenefitItemInvincible") == 0 ? ITEM_INVINCIBLE : strcmp(name, "QuestionCoin") == 0 ? ITEM_QCOIN :
                strcmp(name, "YellowChip") == 0 || strcmp(name, "BlueChip") == 0 ? ITEM_CHIP :
                strcmp(name, "KeySwitch") == 0 ? ITEM_KEY : 0; /* KeySwitch.cpp: taken (isMsgItemGet), its SW_A on */
@@ -19906,7 +19911,7 @@ static void update_mario_(void)
                 if (!m_clip_is(dx.bck)) { anim_clip_info(dx.bck, &mode); mario_play(dx.bck, 1.0f, mode == 2 || mode == 4); }
             }
             else if (pro_puppet()) ; /* the prologue's DemoPeachCastleGate (pro_update) */
-            else if (bsb_demo() || bk_demo()) { if (!m_clip_is("battlewait")) mario_play("battlewait", 1.0f, 1); } /* BossStinkBug's demos: startBckPlayer BattleWait */
+            else if (bsb_demo() || bk_demo() || tb_demo()) { if (!m_clip_is("battlewait")) mario_play("battlewait", 1.0f, 1); } /* BossStinkBug's demos: startBckPlayer BattleWait */
             else if (!star_demo && !gw_puppet()) mario_play("wait", 1.0f, 1);
             else if (mario_anim->clip_id < 0 || strcmp(sc->clips[mario_anim->clip_id].name, "powerstarget")) mario_play("powerstarget", 1.0f, 0);
             anim_update(mario_anim);
@@ -34518,6 +34523,7 @@ static int area_type(int t, int *centered)
 }
 static int area_inside(const Row *r, V3 p)
 {
+    p = tb_unfollow(r, p); /* (BaseMatrixFollower: a TripodBoss joint's) */
     V3 d = vsub(p, row_pos(r)), x, z;
     int centered, shape = area_type((int)r->type, &centered);
     if (shape == 2) return vlen(d) < 500.0f * r->scale[0];
@@ -44830,6 +44836,8 @@ int game_test_bk(int frame)
     }
     return bk.seq;
 }
+
+#include "tripod_boss.inc" /* TripodBoss (Megaleg): tb_*, game_test_tb */
 /* Test builds: Mario in the boss's SwitchCylinder until it starts, then dropped in a hip drop on its BodyHipDrop part
  * whenever a hit is open; game_bsb_state: sequencer x 100 + nerve */
 int game_test_bsb(void)
@@ -45175,6 +45183,7 @@ void game_update(void)
     LQ(59, update_ota());
     update_bsb();
     update_bk();
+    update_tb();
     if (!demo_on) update_km_beams(); /* (the Kameck beams, fire balls, turtles: stopped in a demo) */
     if (star_demo) { /* its camera ("powerstar/powerstarget"); Mario plays PowerStarGet meanwhile */
         if (!demo_camera("powerstar/powerstarget", star_demo - 1, star_demo_m)) {
@@ -46441,6 +46450,7 @@ void game_draw(void)
     }
     bsb_draw();
     bk_draw();
+    tb_draw();
     km_draw();
     if (ota.row >= 0 && ota.nrv != OTA_WAITONSWITCH && ota.nrv != OTA_APPEARSTAR && ota.nrv != OTA_DEAD) { /* OtaKing, its feet */
         basis_matrix(m, ota.pos, ota.up, ota.f, 0);
