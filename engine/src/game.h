@@ -45,6 +45,7 @@ int game_test_replica(int phase);
 int game_test_invinc(void);
 int game_test_slip(void);
 int game_test_talk(int frame);
+int game_test_queen(int frame);
 /* video demos (TEASER builds): Mario played through the pad only */
 int game_demo_walk1(int frame);
 int game_demo_fat(int frame);

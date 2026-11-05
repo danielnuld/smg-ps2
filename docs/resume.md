@@ -315,6 +315,14 @@ Second console round (2026-10-24), from Daniel's report:
   the view no longer take poses from the 40-slot pool (Honeyhive's 46 walkers held all; its bees were not drawn).
   ponytail: no reaction SEs / Reaction nerve. The FlyLecture bees hover off the ground: the test drops Mario under
   them (seen in logs only).
+- HoneyQueen (feat/202-honey-queen, 2026-11-05): HoneyQueen.cpp's nerves (game.c update_queen): the cast of
+  ハニークイーン謁見 starts in Demo; her functors on HoneyQueenFirst's parts (フェードアウト closeWipeFade, フェードイン
+  openWipeFade + Fade turning to Mario at 5, 謁見 Talk + tryTalkTimeKeepDemoMarioPuppetable), at the demo's last step
+  Itch (EventWait, back to her front at 0.2, her talk near), her SW_A: Event (forced talk, then SW_B), After; not a cast
+  (scenario 2): Wait / Ready. Talk 950 up, distance 0 (only her MessageArea), SE_SM_LV_HONEYQUEEN_FLY, the wing ModelObj
+  on her Center joint (BCK), her ten collisions on their joints (slice.py JOINT_KCL_ONLY: "HoneyQueen#<joint>.<k>").
+  Test: `queen` (HoneyBeeKingdom 1, overlay packs): demo, talk, itch, SW_A, event talk, SW_B, Mario dropped on her lands
+  and slides off. ponytail: no fur, wing BTK, LodCtrl. Repack: slice_all.py HoneyBeeKingdomGalaxy.
 ## Rules
 
 - Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -

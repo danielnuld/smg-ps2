@@ -1635,6 +1635,9 @@ int main(void)
         if (frame >= 200 && frame < 2400) game_test_talk((int)frame); /* walks to the first SignBoard and reads it */
         if (frame % 30 == 0 && frame < 2400) game_test_npc_turn((int)frame);
 #endif
+#ifdef QUEEN_TEST
+        if (frame >= 200 && frame < 4000) game_test_queen((int)frame); /* HoneyBeeKingdom 1: her demo, itch and event */
+#endif
 #ifdef SLIP_TEST
         if (frame >= 300 && frame < 2400) game_test_slip(); /* Mario left still on a steep slope */
 #endif
