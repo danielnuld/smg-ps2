@@ -279,6 +279,13 @@ Second console round (2026-10-24), from Daniel's report:
   over, then blown). They start once Mario is within 3000 with a ground under them (FlowerRoadZone streams in late).
   ponytail: no star pointer bind, no AnimScale / AnimStamp squash, no PressDown. Repack: slice.py
   TakoHei EXTRA TakoHeiInk (HoneyBeeKingdom, OceanPhantomCave, OceanFloaterLand, ReverseKingdom, KoopaJrShipLv1).
+- HoneyBee (fix/states-bees, 2026-11-04): HoneyBee.cpp's own nerves (game.c update_bees): JumpLecture / DropLecture
+  (Wait, its lecture clip after 120, talk only in Wait, turning to Mario), Fly on its rail at 5 (FlyWait at points with
+  arg0), FlyLectureA / B (its clip, FLY_SOFT, the balloon at its Center joint), every bee's talk (talkcls 10, 150 up)
+  and calcFloatOffset. Test: `talk` with XF="-DTALK_CLS=10 -DTALK_ARG0=n" (HoneyBeeKingdom 1). Also: walkers out of
+  the view no longer take poses from the 40-slot pool (Honeyhive's 46 walkers held all; its bees were not drawn).
+  ponytail: no reaction SEs / Reaction nerve. The FlyLecture bees hover off the ground: the test drops Mario under
+  them (seen in logs only).
 ## Rules
 
 - Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -
