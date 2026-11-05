@@ -305,7 +305,7 @@ typedef struct {
     const unsigned char *railer; /* map part on a rail: its PATH entry; moves along it (update_railers) */
     u8 rwork;        /* RailMoveObj _D0: its rail mover worked last frame (update_railers' StageEffect SEs) */
     int press;       /* RailMoveObjPress (RGTowerPressGroundA, ReverseGravityRoomPressGroundA / B): ATYPE_MAP_OBJ_PRESS */
-    int talkcls;     /* SignBoard 1, Tico 2, Kinopio 3, ..., TicoStarRing 7: update_talkers */
+    int talkcls;     /* SignBoard 1, Tico 2, Kinopio 3, ..., TicoStarRing 7, TicoComet 8, HoneyBee 10: update_talkers */
     int clipcls;     /* its Petari clipping ported (obj_clipped): NPCActor's default 1, SuperSpinDriver 2; 0 never clipped */
     u32 lv[2];       /* its level sounds' handles (Tico's wait / float) */
     const Model *md_bloom; /* its "<model>Bloom" model (PlanetMap::initBloomModel, createModelObjBloomModel) or NULL */
@@ -2671,8 +2671,8 @@ static int sky_class(const char *name)
  * setDefaultAction: Wait, Turn, Talk, TalkTurn; Tico Wait, Wait, Talk, Talk; Kinopio's setTalkAction Talk, Talk; a
  * Kinopio setNoTurnAction mode its one action: arg2 0 1 2 SpinWait1 2 3, 6 Pickel, 7 Sleep, 11 Rightened).
  * Modes (npc_mode): Penguin arg0 0 Sit (SitDown / SitDownTalk, no turn), 1 Swim, 2 SwimSurface, 3 Dive, 4
- * SwimTurtle; HoneyBee arg0 3 Sleep / 4 Stick (no turn), 5 Gatekeeper, 7 Flustered, 1 2 6 8 9 their own nerves (not
- * here); Rabbit (TurnSmall) arg1 5 LongJump no turn. ponytail: no ActorAnimCtrl interpolation (the clip switches at
+ * SwimTurtle; HoneyBee arg0 3 Sleep / 4 Stick (no turn), 5 Gatekeeper, 7 Flustered, 1 2 6 8 9 their own nerves
+ * (update_bees); Rabbit (TurnSmall) arg1 5 LongJump no turn. ponytail: no ActorAnimCtrl interpolation (the clip switches at
  * once); the walking modes' rails (Penguin / Kinopio MoveTalk) not ported */
 typedef struct { const char *cls; u8 near, talk; float dist, speed, tilt_speed, tilt_max; const char *act[4]; } NpcTurn;
 static const NpcTurn npc_turns[] = {
@@ -2721,10 +2721,7 @@ static int npc_mode(const NpcTurn *t, const Row *r, NpcTurn *m)
         case 3: npc_set(m, "swimwaitsurface", "swimwaitsurface", "swimwaitsurface", "swimwaitsurface"); break;
         case 4: npc_set(m, "swimturtletalk", "swimturtletalk", "swimturtletalk", "swimturtletalk"); break;
         }
-    } else if (!strcmp(t->cls, "HoneyBee")) { /* mArg0 (arg0): its InitAction
-     * ponytail (unmarked until the 2026-11-02 audit): the arg0 1, 2, 6, 8, 9 bees (Fly on their rail, JumpLecture,
-     * DropLecture, FlyLectureA / B: HoneyBee.cpp:75-280) stay static, HoneyBee has no talk (talkcls) and no
-     * calcFloatOffset 120 bob */
+    } else if (!strcmp(t->cls, "HoneyBee")) { /* mArg0 (arg0): its InitAction (the others: update_bees) */
         switch (r->arg[0]) {
         case 1: case 2: case 6: case 8: case 9: return 0; /* JumpLecture, Fly, DropLecture, FlyLectureA / B: own nerves */
         case 3: npc_set(m, "sleepwait", NULL, "sleepwait", NULL); m->near = m->talk = 0; break;
@@ -4356,7 +4353,7 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->trapeze = strcmp(name, "Trapeze") == 0;
     ci->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
     ci->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 || strcmp(name, "KinopioAstro") == 0 ? 3 :
-                  strcmp(name, "ButlerMap") == 0 ? 4 : strcmp(name, "Butler") == 0 ? 5 : lg_cls(name) ? 6 : strcmp(name, "TicoStarRing") == 0 ? 7 : strcmp(name, "TicoComet") == 0 ? 8 : 0;
+                  strcmp(name, "ButlerMap") == 0 ? 4 : strcmp(name, "Butler") == 0 ? 5 : lg_cls(name) ? 6 : strcmp(name, "TicoStarRing") == 0 ? 7 : strcmp(name, "TicoComet") == 0 ? 8 : strcmp(name, "HoneyBee") == 0 ? 10 : 0;
     ci->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 : 0;
     ci->gap = gap_class(name);
     ci->clipcls = strcmp(name, "Tico") == 0 || strcmp(name, "TicoBaby") == 0 || lg_cls(name) ? 1 : /* NameObjFactory: Tico, LuigiNPC */
@@ -10923,7 +10920,9 @@ static void update_talkers(void)
         char lab[32];
         if (!talk_row_label(in->row, lab)) continue;
         /* SignBoard, Butler: NPCActor caps (talk 240, its balloon 150 up); Tico::initMessage (350, 120 up); Kinopio (122 x 1.2 up) */
-        int k = talk_new(lab, in->row, in->row, sign || in->talkcls == 5 ? 150.0f : tico ? 120.0f : 122.0f * 1.2f, tico ? 350.0f : 240.0f);
+        int bee_lec = in->talkcls == 10 && (sc->objs[in->row].arg[0] == 8 || sc->objs[in->row].arg[0] == 9); /* FlyLectureA / B: mTalkMtx _160, no offset */
+        int k = talk_new(lab, in->row, in->row, sign || in->talkcls == 5 || (in->talkcls == 10 && !bee_lec) ? 150.0f : bee_lec ? 0.0f : tico ? 120.0f : 122.0f * 1.2f,
+                         tico ? 350.0f : 240.0f);
         if (k < 0) continue;
         Talker *t = &talkers[k];
         if (!t->root_auto) { /* onRootNodeAutomatic (NPCActor::initTalkCtrl); Butler::initForAstroDome: registerBranchFunc */
@@ -10950,7 +10949,17 @@ static void update_talkers(void)
         float m[16];
         memcpy(m, in->m, 64);
         for (int j = 0; j < 12; j++) m[j] /= in->s;
+        if (bee_lec && in->anim && in->anim->skin && in->anim->skin->njoints > 1) { /* HoneyBee::control: _160 its Center joint, height eased */
+            float w[16];
+            mat_mul(w, in->m, in->anim->world[1]);
+            float y = w[13];
+            w[13] = row_coord[in->row] == 0.0f ? y : 80.0f + (9.0f * (row_coord[in->row] - 80.0f) + y) / 10.0f;
+            row_coord[in->row] = w[13];
+            for (int j = 0; j < 12; j++) w[j] /= in->s;
+            memcpy(m, w, 64);
+        }
         talk_place(k, m);
+        if (in->talkcls == 10 && !row_turn[in->row]) continue; /* HoneyBee lectures: talk only in their Wait */
         if (tico) { /* Tico::control: SE_SM_LV_TICO_FLOAT's level A 100 x getLinerValueFromMinMax(its move, 1, 11, 0.2, 1):
                      * volume A / 100 (AudSoundObject_Takezawa); ours never moves: 0.2 */
             Inst *w = &insts[i];
@@ -11527,6 +11536,8 @@ int game_test_talk(int frame) /* from the flight in's end: Mario walks to 170 in
 #endif
 #ifdef TALK_PEACH /* XF=-DTALK_CLS=3 -DTALK_PEACH (AstroGalaxy): the messenger (KinopioAstro arg1 2), Peach's letter */
 #define TALK_PICK(i) (sc->objs[insts[i].row].arg[1] == 2 && !strcmp(sc->types + 32 * sc->objs[insts[i].row].type, "KinopioAstro"))
+#elif defined(TALK_ARG0) /* XF=-DTALK_CLS=10 -DTALK_ARG0=8: the first HoneyBee of that arg0 */
+#define TALK_PICK(i) (sc->objs[insts[i].row].arg[0] == TALK_ARG0)
 #else
 #define TALK_PICK(i) 1
 #endif
@@ -35872,6 +35883,90 @@ int game_test_npc_visit(int k) /* tests: Mario put 600 off the k-th turning NPC,
     }
     return -1;
 }
+/* HoneyBee.cpp after Petari (its own nerves; arg0 0 / 3 / 4 / 5 / 7 are NPCActor turners: update_npc_turn). mArg0 1
+ * JumpLecture / 6 DropLecture: Wait, talking near Mario turns it to him, after 120 FlyLectureWait / HipDropWait once,
+ * then Wait again; 2 Fly: along its rail at 5 (moveCoordAndFollowTrans), FlyWait at points with arg0, else Wait, the
+ * FLY level SE; 8 / 9 FlyLectureA / B: that clip, FLY_SOFT, its talk balloon at its Center joint (its height eased
+ * 0.9 / 0.1 + 8 a frame, no offset). Its talk (NPCActor caps: 150 up). control(): calcFloatOffset 120 (not Sleep /
+ * Stick): while a long talk runs with it over Mario within 200, it rises to 120 (200 - d) / 200 at 5.5 a frame,
+ * else sinks 0.5 a frame (calcAndSetFloatBaseMtx: along its up). row_speed its float offset, row_step its nerve step,
+ * row_turn 1 while it may start its talk, row_coord its rail coordinate (Fly) / eased talk height (8 / 9).
+ * ponytail: no reaction SEs (trampled / spun / pointed), no Reaction nerve, no LodCtrl / fur */
+static int bee_arg0(const Row *r) { return r->arg[0] < 0 ? 0 : r->arg[0]; } /* getJMapInfoArg0NoInit over 0 */
+static void update_bees(void)
+{
+    static const NpcTurn *bt;
+    if (!bt) for (unsigned j = 0; j < sizeof npc_turns / sizeof npc_turns[0]; j++) if (!strcmp(npc_turns[j].cls, "HoneyBee")) bt = &npc_turns[j];
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (in->talkcls != 10 || !row_shown(in->row)) continue;
+        const Row *r = &sc->objs[in->row];
+        int row = in->row, a0 = bee_arg0(r), st = row_step[row];
+        V3 base = row_pos(r);
+        int talking = td.st >= 0 && talkers[td.st].row == row && (td.nrv == TD_TALK || td.nrv == TD_SLCT || td.nrv == TD_NEXT);
+        row_turn[row] = 1;
+        switch (a0) {
+        case 1: case 6: { /* exeJumpLecture / exeDropLecture: row_rdir 0 Wait, 1 its lecture clip (once: isBckLooped) */
+            const char *lec = a0 == 1 ? "flylecturewait" : "hipdropwait";
+            if (st == 0) { obj_play(in, "wait", 1, 0); row_rdir[row] = 0; }
+            if (!row_rdir[row]) {
+                if (talking) { /* tryTalkNearPlayer: turnToPlayer */
+                    V3 to = vsub(mario->pos, base);
+                    if (vlen(to) > 1e-6f) npc_turn_to_player(in, bt, vnorm(to));
+                }
+                if (st > 120) { obj_play(in, lec, 0, 0); row_rdir[row] = 1; row_step[row] = 0; st = 0; }
+            } else {
+                int mode, frames = anim_clip_info(a0 == 1 ? "honeybee/flylecturewait" : "honeybee/hipdropwait", &mode);
+                row_turn[row] = 0;
+                if (st >= frames) { row_step[row] = 0; break; } /* setNerve (itself) */
+            }
+            row_step[row]++;
+            break;
+        }
+        case 2: { /* exeFly */
+            const unsigned char *e = scene_blob_g && r->path >= 0 ? find_path(scene_blob_g, r->zone, r->path) : NULL;
+            in->lv[0] = se_level(SE_SM_LV_HONEYBEE_FLY, &in->m[12], in->lv[0]);
+            if (!e) break;
+            const float *p = (const float *)(e + 24);
+            u32 np = *(const u32 *)(e + 8), nr = *(const u32 *)(e + 12);
+            float len = tsuki_len(e);
+            int closed = *(const unsigned short *)(e + 2);
+            if (st == 0) row_coord[row] = 0, row_rdir[row] = -1; /* (its rail from its start; row_rdir: the point seen) */
+            float c = row_coord[row] + 5.0f;
+            row_coord[row] = closed ? fmodf(c, len) : fminf(c, len);
+            const unsigned char *pa = e + 24 + 12 * np + 12 * nr;
+            int no = 0;
+            for (u32 k = 0; k < nr; k++) if (*(const float *)(pa + 12 * k) <= row_coord[row]) no = (int)k; /* getCurrentRailPointNo */
+            if (no != row_rdir[row]) {
+                row_rdir[row] = (signed char)no;
+                obj_play(in, *(const int *)(pa + 12 * no + 4) > 0 ? "flywait" : "wait", 1, 0); /* getRailPointArg0WithInit (0 if unset) */
+            }
+            base = rail_at(p, np, row_coord[row]);
+            row_step[row]++;
+            break;
+        }
+        case 8: case 9: /* exeFlyLectureA / B */
+            if (st == 0) obj_play(in, a0 == 8 ? "flylecturea" : "flylectureb", 1, 0);
+            in->lv[0] = se_level(SE_SM_LV_HONEYBEE_FLY_SOFT, &in->m[12], in->lv[0]);
+            row_step[row]++;
+            break;
+        }
+        float off = fmaxf(row_speed[row] - 0.5f, 0.0f); /* calcFloatOffset */
+        if (talking && td.st_kind != TS_SHORT) {
+            V3 dir = vsub(base, mario->pos);
+            float dl = vlen(dir);
+            if (vdot(dir, mario->up) > 0.0f && dl < 200.0f) off = fminf(0.5f + 5.0f + off, 120.0f * (1.0f - dl / 200.0f));
+        }
+        if (a0 != 3 && a0 != 4) row_speed[row] = off;
+        else off = 0.0f;
+#ifdef TALK_TEST
+        if (game_frame % 30 == 0 && vlen(vsub(mario->pos, base)) < 1500.0f)
+            printf("honeybee row %d: arg0 %d step %d talking %d off %.1f\n", row, a0, row_step[row], talking, off);
+#endif
+        basis_matrix(in->m, vadd(base, vmul(in->nu, off)), in->nu, in->nf, 0); /* calcAndSetFloatBaseMtx */
+        for (int j = 0; j < 12; j++) if (j % 4 != 3) in->m[j] *= in->s;
+    }
+}
 static void update_npc_turn(void) /* the NPCs' wait nerves: tryStartTalkAction / tryStartTurnAction */
 {
     FOR_KIND(i, npc) {
@@ -40180,6 +40275,7 @@ void game_update(void)
     LQ(2, update_halos());
     LQ(3, update_railers());
     LQ(4, update_talkers());
+    update_bees();
     update_npc_turn();
     hud_update();
 
@@ -41274,6 +41370,9 @@ void game_draw(void)
         if (md->skin) { /* animated: the clip of its state (walker_clip), facing its way when it walks */
             Kuribo *k = &kuribo[i];
             const char *cls = walker_acls(k);
+            if (!wvis) continue; /* ponytail: a walker out of the view takes no pose from the pool (MAX_OBJ_ANIM 40:
+                                  * Honeyhive's 46 walkers held every pose, its HoneyBees got none and were not drawn);
+                                  * its clip restarts when it is seen again */
             Anim *a = obj_anim(k->row, md, cls);
             if (!a) continue;
             if (k->act[0]) { /* ported walkers: the action their nerves started (startAction), at _A8 and its scale */
