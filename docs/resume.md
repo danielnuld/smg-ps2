@@ -404,6 +404,12 @@ Second console round (2026-10-24), from Daniel's report:
   (breakable() kind 7, fireball_breaks from attackFire; SW_A gate), StageEffect SE_OJ_SNOW_MAN_MELT, stopScene 5, weak
   shake, its items, Break effect. Test: `fire` with XF=-DFIRE_AT_SNOW (SnowCapsule 1: row 39 melts, its coin). ponytail:
   its own Break BCK not played (drawn static: gone at once). Repack: sound.py --pack SnowCapsuleGalaxy.
+- Static classes still to port (mario2's list, 2026-11-05; placements in): BombTeresa (Phantom 1-6: tongue joints,
+  Drift on Mario's hand with MarioActor _B94 ハンマー投げ回転中, explosions), JellyfishElectric (OceanPhantomCave 1-6,
+  FishTunnel 1), BigBubbleGenerator (CubeBubbleEx 1/2, ReverseKingdom 2: Ride/BigBubble.cpp 1228 lines),
+  ElectricRailMoving (BattleShip 2, CannonFleet 3/4, CubeBubbleExLv2, Factory 2, FlipPanelEx 1), SandUpDownTriRock
+  (SandClock 1-7: SW_B On / Rest arg0 / Return, KCL Move00-02 on joints: KCL_PARTS + SKINNED_OBJ), BegomanBabyLauncher
+  (CannonFleet 3/4, OceanFloaterLand 1/2).
 ## Rules
 
 - Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -
