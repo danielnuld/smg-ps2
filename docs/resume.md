@@ -351,6 +351,9 @@ Second console round (2026-10-24), from Daniel's report:
   _EF6, in isRequestRush), the let-go at its root; CreeperFlower at its head, CreeperLeaf (Wait) at its root, Stalk.bti
   (tools/jpa.py, fx_creeper_tex) on the strips. Test: `creeper` (HoneyBeeKingdom 1, overlay packs): creeper 47 climbed
   and jumped off, creeper 63 slid down. Repack: slice_all.py resident.bin, resident_luigi.bin and HoneyBeeKingdomGalaxy.
+- JumpStand (fix/states-jumpstand, 2026-11-05): its Bound / BoundJump / BoundHipDrop / StarPieceBound clips
+  (no squash), the throw by endBindAndPlayerJump (m_power_jump, a normal jump status for Low / Middle), steered by
+  the stick, Mario's TrampolineJumpLow / Middle / High clips, a star piece takes it. Test `jumpstand` (Factory 1).
 ## Rules
 
 - Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -

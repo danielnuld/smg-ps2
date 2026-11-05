@@ -4290,44 +4290,59 @@ static void update_coconuts(void)
     }
 }
 
-/* JumpStand.cpp: Mario landing on it is held (bound); TrampleBound throws him at step 5 along -gravity at 26, 32 if
- * he pressed jump in those 5 frames; HipDropBound (a hip drop landing) sinks him 6 - ease a frame for 15 frames, then
- * 43 along its up. row_turn: 0 wait, 1 trample, 2 high trample, 3 hip drop; row_step frames; jstand_pos the held
- * place. ponytail: no stick steering on the throw; the bound is a squash of the model (jstand_squash), not its BCK
- * ponytail (unmarked until the 2026-11-02 audit): Mario jumps normally instead of TrampolineJumpLow / Middle / High
- * (clips not sliced), no StarPieceBound, mario->up set to the stand's instead of a velocity along it
- * (JumpStand.cpp:84-100, 216-244) */
+static void m_power_jump(Player *m, V3 v);
+/* JumpStand.cpp after Petari: Mario landing on it (isMsgAutoRushBegin on its body) is held (bound, a middle rumble);
+ * TrampleBound (Bound, LAND_S; A within its first 5 steps: BoundJump from that frame) throws him at step 5 along
+ * -gravity at 26 (TrampolineJumpLow, BOUND_S, PV_JUMP_M) or 32 (TrampolineJumpMiddle, BOUND_M, PV_JUMP_L), then a
+ * normal jump status; HipDropBound (BoundHipDrop, LAND_L) sinks him 6 - ease out a frame for 15 steps, then 43 along
+ * its up (TrampolineJumpHigh, BOUND_L, PV_JUMP_JOY); the sub stick steers the throw (3 x its length across it). A
+ * star piece: StarPieceBound (Bound, LAND_S). Back to Wait at its clip's end. row_turn: 0 wait, 1 trample, 2 high
+ * trample, 3 hip drop, 4 star piece; row_step its step; jstand_pos the held place. ponytail: the bound actor's base
+ * matrix is not turned to the stick (updateBindActorMtx); its collision stays on while it holds him */
 static V3 jstand_pos;
 static int jstand_prev = -1; /* mario_ground last frame */
-
-static float jstand_squash(const Inst *in)
+static int jstand_clip_over(const char *clip, int st) { char n[48]; int mode; snprintf(n, sizeof n, "jumpstand/%s", clip); return st >= anim_clip_info(n, &mode); }
+static int jstand_star(V3 p) /* a star piece shot: isMsgStarPieceAttack (not while it holds him): 1 if it took it */
 {
-    int t = row_step[in->row], ph = row_turn[in->row], n = ph == 3 ? 20 : 10;
-    return ph && t < n ? 1.0f - (ph == 3 ? 0.4f : 0.25f) * sinf(3.14159f * t / n) : 1.0f;
+    int took = 0;
+    FOR_KIND(i, jstand) {
+        const Inst *in = &insts[i];
+        if (!in->jstand || (row_turn[in->row] >= 1 && row_turn[in->row] <= 3)) continue;
+        if (vlen(vsub(p, v3(in->m[12], in->m[13], in->m[14]))) > in->reach + 30.0f) continue;
+        row_turn[in->row] = 4; row_step[in->row] = 0;
+        obj_play(in, "bound", 0, 0); se_start(SE_OJ_JUMP_STAND_LAND_S, (float *)&in->m[12]);
+        took = 1;
+    }
+    return took;
 }
-
 static void update_jumpstands(void)
 {
     int prev = jstand_prev;
     jstand_prev = mario_ground;
     FOR_KIND(i, jstand) {
-        const Inst *in = &insts[i];
+        Inst *in = &insts[i];
         if (!in->jstand) continue;
         unsigned short *t = &row_step[in->row];
         signed char *ph = &row_turn[in->row];
         V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
-        if (!*ph) {
+        if (!*ph || *ph == 4) {
+            if (*ph == 4 && jstand_clip_over("bound", ++*t)) { *ph = 0; obj_play(in, "wait", 1, 0); }
             if (mario_ground != i || prev == i || mario->launch >= 0) continue;
             *ph = hip_hit ? 3 : 1; *t = 0;
             jstand_pos = mario->pos;
             pad_rumble(RUMBLE_MIDDLE); /* tryToStartBind */
+            obj_play(in, hip_hit ? "boundhipdrop" : "bound", 0, 0);
             printf("jump stand %d: %s\n", in->row, hip_hit ? "hip drop" : "trample");
             se_start(hip_hit ? SE_OJ_JUMP_STAND_LAND_L : SE_OJ_JUMP_STAND_LAND_S, &in->m[12]); /* (HipDrop: stopSound SE_PM_HIPDROP not made) */
         }
         ++*t;
         int hold = *ph == 3 ? 15 : 5;
         if (*t <= hold) {
-            if (*ph == 1 && pad_pressed(PAD_CROSS)) *ph = 2;
+            if (*ph == 1 && pad_pressed(PAD_CROSS)) { /* testCorePadTriggerA: BoundJump from this step */
+                *ph = 2;
+                obj_play(in, "boundjump", 0, 0);
+                if (in->anim) in->anim->frame = (float)*t;
+            }
             if (*ph == 3) {
                 float u = (float)*t / 15.0f;
                 jstand_pos = vsub(jstand_pos, vmul(up, 6.0f - (1.0f - (1.0f - u) * (1.0f - u))));
@@ -4336,13 +4351,21 @@ static void update_jumpstands(void)
             mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->hip = 0;
             if (*t == hold) { /* endBindAndShootUp */
                 float v = *ph == 3 ? 43.0f : *ph == 2 ? 32.0f : 26.0f;
-                if (*ph == 3) mario->up = up;
+                V3 jv = vmul(*ph == 3 ? up : up_at(mario->pos, mario->up), v); /* High: its up; else -gravity */
+                float sl = sqrtf(pad_lx() * pad_lx() + pad_ly() * pad_ly());
+                if (sl > 0.1f) { /* calcPlayerWorldPadDir x 3 x its length, across the throw */
+                    V3 mu = vnorm(jv), cf = vnorm(vtangent(vsub(mario->pos, cam_pos), mu)), cr = vnorm(vcross(cf, mu));
+                    V3 st = vmul(vadd(vmul(cr, pad_lx()), vmul(cf, pad_ly())), 3.0f * sl);
+                    jv = vadd(jv, vtangent(st, mu));
+                }
                 se_start(*ph == 3 ? SE_OJ_JUMP_STAND_BOUND_L : *ph == 2 ? SE_OJ_JUMP_STAND_BOUND_M : SE_OJ_JUMP_STAND_BOUND_S, &in->m[12]);
                 se_start(*ph == 3 ? SE_PV_JUMP_JOY : *ph == 2 ? SE_PV_JUMP_L : SE_PV_JUMP_M, &mario->pos.x); /* startSoundPlayer */
-                mario->vup = v; mario->grounded = 0; mario->jump_kind = 0; mario->air_timer = 0;
+                m_power_jump(mario, jv); /* endBindAndPlayerJump */
+                if (*ph != 3) mario->jump_kind = 0; /* becomePlayerNormalJumpStatus */
+                mario_play(*ph == 3 ? "trampolinejumphigh" : *ph == 2 ? "trampolinejumpmiddle" : "trampolinejumplow", 1.0f, 0); /* startBckPlayer */
                 printf("jump stand %d throws at %d\n", in->row, (int)v);
             }
-        } else if (*t >= (*ph == 3 ? 20 : 10)) *ph = 0;
+        } else if (jstand_clip_over(*ph == 3 ? "boundhipdrop" : *ph == 2 ? "boundjump" : "bound", *t)) { *ph = 0; obj_play(in, "wait", 1, 0); }
     }
 }
 
@@ -36158,6 +36181,7 @@ static void update_shots(void)
             printf("star piece explodes kiraira %d" "\n", in->row);
             hit = 1;
         }
+        if (!hit && jstand_star(s->pos)) hit = 1; /* JumpStand: isMsgStarPieceAttack */
         if (!hit && hhp_reflects(s->pos, 30.0f)) hit = 2; /* HammerHeadPackun: isMsgStarPieceReflect */
         if (!hit && butler_shot(s->pos)) hit = 1;
         if (!hit && hana_shot(s->pos)) hit = 1;
@@ -43929,13 +43953,6 @@ void game_draw(void)
             float cm[16];
             basis_matrix(cm, p, up, vdot(to, to) < 1500.0f * 1500.0f ? to : fwd, 0);
             for (int j = 0; j < 12; j++) if (j % 4 != 3) cm[j] *= in->s;
-            inst_draw(in, in->md, cm);
-            continue;
-        }
-        if (in->jstand && row_turn[in->row]) { /* bound: squashed along its y */
-            float cm[16], k = jstand_squash(in);
-            memcpy(cm, in->m, 64);
-            for (int j = 4; j < 7; j++) cm[j] *= k;
             inst_draw(in, in->md, cm);
             continue;
         }
