@@ -75,14 +75,14 @@ static struct { int on, owner, nrv, step, demo; V3 pos, vel, up; float rate, t; 
 static struct { int row, nrv, step; V3 last; } exts[MAX_EXTS];
 static int nexts;
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
-       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU, WALK_BOMBHEI, WALK_STRSPIDER, WALK_BEGOSPIKE, WALK_KCHIEF, WALK_BEGOBABY, WALK_BBEGO, WALK_KAMECK, WALK_KINDS };
+       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU, WALK_BOMBHEI, WALK_STRSPIDER, WALK_BEGOSPIKE, WALK_KCHIEF, WALK_BEGOBABY, WALK_BBEGO, WALK_KAMECK, WALK_NOKO, WALK_KINDS };
 /* walkers ported in the release push: their classes (counted, placed and drawn through this table) */
 static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}, {"BasaBasa", WALK_BASABASA}, {"BasaBasaIce", WALK_BASABASA}, {"Jellyfish", WALK_JELLYFISH},
                                                                     {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}, {"Mogu", WALK_MOGU}, {"Mogucchi", WALK_MOGUCCHI}, {"Metbo", WALK_METBO}, {"TeresaWater", WALK_TERESAW},
                                                                     {"Snakehead", WALK_SNAKEHEAD}, {"SnakeheadSmall", WALK_SNAKEHEAD}, {"Kabokuri", WALK_KABOKURI}, {"Pukupuku", WALK_PUKUPUKU},
                                                                     {"BombHei", WALK_BOMBHEI}, {"BombHeiLauncher", WALK_BOMBHEI}, {"BombLauncher", WALK_BOMBHEI},
                                                                     {"StringSpider", WALK_STRSPIDER}, {"BegomanSpike", WALK_BEGOSPIKE},
-                                                                    {"KuriboChief", WALK_KCHIEF}, {"ChildKuribo", WALK_KURIBO}, {"BegomanBaby", WALK_BEGOBABY}, {"BossBegoman", WALK_BBEGO}, {"FireBallBeamKameck", WALK_KAMECK}, {"ChildKameck", WALK_KAMECK}}; /* ChildKuribo: createNoItemKuriboActor */
+                                                                    {"KuriboChief", WALK_KCHIEF}, {"ChildKuribo", WALK_KURIBO}, {"BegomanBaby", WALK_BEGOBABY}, {"BossBegoman", WALK_BBEGO}, {"FireBallBeamKameck", WALK_KAMECK}, {"ChildKameck", WALK_KAMECK}, {"NokonokoLand", WALK_NOKO}}; /* ChildKuribo: createNoItemKuriboActor */
 #define NEW_WALKERS ((int)(sizeof new_walkers / sizeof new_walkers[0]))
 #define BB_FOLLOWERS 5 /* BossBegoman: mBabyFollowerNum 3, mSpikeFollowerNum 2 (the slots after its own) */
 static const Model *m_wnew[NEW_WALKERS];
@@ -4578,7 +4578,7 @@ static int gap_class(const char *name)
 }
 /* ponytail (unmarked until the 2026-11-02 audit): placed classes of the early galaxies with no behaviour here
  * (drawn static, or not at all), each a whole Petari class: GhostPlayer (Cosmic Mario);
- * Space Junk TombSpider, SpiderAttachPoint (SlingShooter), NokonokoLand; PlanetRocket (a
+ * Space Junk TombSpider, SpiderAttachPoint (SlingShooter); PlanetRocket (a
  * PlanetMap: its own-name clip, PlanetMap.cpp:67, needs planets skinned: slice.py AUTO_SKINNED leaves planets out); Battlerock BossBegoman, TicoShop; Beach Bowl PenguinStudent;
  * the observatory's AstroMapObj looks (update_astro_objs' ponytail) */
 static void class_make(ClassInfo *ci, const char *name)
@@ -5096,6 +5096,21 @@ static void game_rebind_(void)
                 in->train = 2 + c; in->md = m_trainbody; in->kcl = scene_kcl(s, "ChooChooTrainBody"); in->anim = NULL; in->anim_want = 0;
                 in->reach = m_trainbody->radius * in->s;
             }
+    { /* NokonokoLand::mJetTurtle (initWithoutIter, makeActorDead): its shell, a JetTurtle on the Koura model (slice.py EXTRA) */
+        int tn = scene_type(s, "NokonokoLand");
+        for (u32 q = 0; tn >= 0 && q < s->nobjs && ninsts < insts_cap; q++) {
+            const Row *r = &s->objs[q];
+            const Model *km = r->type == tn ? scene_model(s, r->arg[0] == 1 ? "Koura~1" : "Koura~0") : NULL; /* becomeFastType / becomeSlowType: its Koura BRK frame */
+            if (!km) continue;
+            Inst *in = &insts[ninsts++];
+            memset(in, 0, sizeof *in);
+            in->md = km; in->row = (int)q; in->zone = r->zone; in->jet = 2; in->kmove = in->kparent = -1;
+            mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
+            memcpy(in->m0, in->m, 64);
+            in->head = row_pos(r); in->m[12] = 1e9f;
+            in->s = 1.0f; in->reach = km->radius;
+        }
+    }
     for (int i = 0; plant_first && i < ninsts; i++)
         if (insts[i].plant) { insts[i].kcl_ready = 1; place_plants(&insts[i]); }
     memset(zone_kcl, 0, sizeof zone_kcl);
@@ -12860,15 +12875,17 @@ static void update_screws(void)
 static int sw_start_jet(Player *m, int type);
 static int bk_jet_hit(V3 p);
 static void km_down(Kuribo *k, V3 from);
+static int noko_turtle(Kuribo *k, V3 p, V3 v);
 static void update_jets(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     FOR_KIND(i, jet) {
         Inst *in = &insts[i];
         if (!in->jet) continue;
+        if (in->jet == 2 && jet.inst != i) { in->m[12] = 1e9f; continue; } /* a NokonokoLand's (陸ノコ用ジェット亀): dead until it gives it */
         if (row_turn[in->row] > 0) row_turn[in->row]--;
         const Row *r = &sc->objs[in->row];
-        int type = r->arg[1] + 1 >= 0 && r->arg[1] + 1 <= 2 ? r->arg[1] + 1 : 0;
+        int type = in->jet == 2 ? (r->arg[0] == 1 ? 2 : 1) : r->arg[1] + 1 >= 0 && r->arg[1] + 1 <= 2 ? r->arg[1] + 1 : 0; /* NokonokoLand::initJetTurtle: becomeFastType for arg0 1 */
         if (jet.inst == i && jet.phase == 1) { /* held: in front of him at his hands */
             in->head = vadd(vadd(mario->pos, vmul(mario->face, 70.0f)), vmul(mario->up, 60.0f));
             if (mario->spin_timer > 0 || jet.drop) { /* thrown (in water: dropJet, along his swim front) */
@@ -12897,13 +12914,14 @@ static void update_jets(void)
                     vlen(vsub(p, vadd(e->pos, vmul(e->up, 60.0f)))) > 60.0f + 80.0f) continue;
                 if (e->kind == WALK_PETARI) { if (petari_solid(e)) petari_blow(e, p, PT_KICKOUT); continue; } /* KickOut */
                 if (e->kind == WALK_KAMECK) { km_down(e, p); continue; } /* Kameck: requestDown */
+                if (e->kind == WALK_NOKO) { if (noko_turtle(e, p, in->hvel)) printf("jet turtle row %d hits noko row %d" "\n", in->row, e->row); continue; }
                 e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up);
                 if (e->kind == WALK_UNIZO) { /* doBreak */
                     drop_pieces(e->pos, e->up, 6); se_start(SE_OJ_STAR_PIECE_BURST, &e->pos.x); se_start(SE_EM_UNIZO_BREAK, &e->pos.x);
                 } else pop_coins(e->pos, e->up, 1);
                 printf("jet turtle row %d blows walker row %d" "\n", in->row, e->row);
             }
-            if (gone) { jet.inst = -1; jet.phase = 0; jet_reset(in); continue; }
+            if (gone) { jet.inst = -1; jet.phase = 0; if (in->jet == 2) in->m[12] = 1e9f; else jet_reset(in); continue; } /* (a NokonokoLand's: Restart, its Koopa back) */
             jet_place(in);
             jet.row = in->row; jet.head = in->head; jet.vel = in->hvel;
             continue;
@@ -28686,6 +28704,252 @@ static void kotebug_update(Kuribo *k)
     }
 }
 
+/* NokonokoLand.cpp after Petari (walker kit): a Koopa Troopa on its rail (from the nearest place, no binder: it is
+ * the rail's place), arg0 1 the fast red one (WalkFastWait, 3.2 a frame; else WalkWait 1.6; its NokonokoLand BRK at
+ * arg0: slice.py BRK_ARG). Walk: at a passed rail point whose arg0 is 0 LookAround, at the rail's end TurnStart ->
+ * (rail reversed) TurnLoop (its target pose turned -PI / 139 a frame about its up until it faces the rail's way) ->
+ * TurnEnd. Its pose slerps 0.3 a frame to the target. Sensors: body 120 and attack 60 at Center + (0, 0, 30), shell
+ * 50 at Turtle + (0, 50, 0) (only in the shell nerves). The attack hurts Mario (Attack / AttackTurn); a trample or a
+ * hip drop (Mario away-jumped) puts it in its shell (ShellStart), a spin too (ShellStartPunch: stopScene 3), a star
+ * piece rattles it (Rattle / RattleTurn). ShellWait 180 frames, ShellEnd, then Walk (or Turn if it faces back). The
+ * shell touched (ShellWait / ShellEnd, or a ShellStart past step 27) or spun becomes its JetTurtle (陸ノコ用ジェット亀:
+ * Mario holds it at once, appearAndTryTaken; fast type for arg0 1) until it restarts: AppearReady. A hip drop or a
+ * thrown shell on its shell: Dead (180 frames hidden); a thrown shell on its body: FlyAway (Rotate, 15 along / 35 up,
+ * gravity 1.5, x 0.99, 33 frames), Dead. AppearReady waits for Mario 350 away: AppearStart at its first place
+ * (Appear effect, REVIVE_EFFECT, shown at 60), Appear, Walk.
+ * ponytail: no star pointer bind (WalkerStateBindStarPointer: no 2P pointer on the PS2), no explosion messages (no
+ * explosion reaches the walkers here), sensors at the rest pose's Center / Turtle (w_joint), no HitMarkNormal effect */
+enum { NK_APPEARREADY, NK_APPEARSTART, NK_APPEAR, NK_DEAD, NK_FLYAWAY, NK_WALK, NK_LOOKAROUND, NK_TURNSTART, NK_TURN, NK_TURNEND,
+       NK_ATTACK, NK_ATTACKTURN, NK_RATTLE, NK_RATTLETURN, NK_SHELLSTART, NK_SHELLWAIT, NK_SHELLEND, NK_SHELLSTARTPUNCH, NK_BECOMEJET };
+static int nk_walk(const Kuribo *k) { return k->nrv == NK_WALK || k->nrv == NK_LOOKAROUND || k->nrv == NK_TURNSTART || k->nrv == NK_TURN || k->nrv == NK_TURNEND || k->nrv == NK_APPEAR; } /* isStateWalk */
+static int nk_rattle(const Kuribo *k) { return k->nrv == NK_RATTLE || k->nrv == NK_RATTLETURN; } /* isStateRattle (no bind) */
+static int nk_shell(const Kuribo *k) { return k->nrv == NK_SHELLSTART || k->nrv == NK_SHELLWAIT || k->nrv == NK_SHELLEND; } /* isStateShell */
+static int nk_shell_on(const Kuribo *k) { return nk_shell(k) || k->nrv == NK_SHELLSTARTPUNCH; } /* the shell sensor valid */
+static int nk_body_on(const Kuribo *k) { return !nk_shell_on(k) && k->nrv != NK_DEAD && k->nrv != NK_APPEARREADY && k->nrv != NK_APPEARSTART && k->nrv != NK_BECOMEJET; }
+static int nk_carry(void) { return jet.inst >= 0 && jet.phase == 1; } /* isPlayerCarryAny */
+static void nk_set(Kuribo *k, int n)
+{
+    w_nrv(k, n);
+    printf("noko row %d: nerve %d%c", k->row, n, 10);
+}
+static V3 nk_rail_dir(Kuribo *k, const float *rail, u32 rn) { return vmul(rail_tan(rail, (int)rn, k->lva[1]), (float)k->dir); } /* getRailDirection */
+static int nk_look_rail(const Kuribo *k, V3 rd) /* isLookDirRailDirection: isSameDirection 0.01, not opposite */
+{
+    V3 f = k->front, c = vcross(f, rd);
+    return fabsf(c.x) <= 0.01f && fabsf(c.y) <= 0.01f && fabsf(c.z) <= 0.01f && vdot(f, rd) >= 0.0f;
+}
+static void nk_fx(Kuribo *k, const char *name, V3 at)
+{
+    float m[16];
+    basis_matrix(m, at, k->qy, k->qz, 0);
+    fx_named("NokonokoLand", name, m, NULL, NULL);
+}
+static int nk_take(Kuribo *k, V3 at) /* exeBecomeJetTurtle step 0: its JetTurtle at its Center, appearAndTryTaken */
+{
+    for (int i = 0; i < ninsts; i++)
+        if (insts[i].jet == 2 && insts[i].row == k->row) {
+            insts[i].head = at; insts[i].hvel = v3(0, 0, 0);
+            jet.inst = i; jet.phase = 1; jet.t = 0; jet.row = k->row; jet.head = at; jet.vel = v3(0, 0, 0); jet.drop = 0;
+            jet_place(&insts[i]);
+            printf("noko row %d: its jet turtle taken%c", k->row, 10);
+            return 1;
+        }
+    return 0;
+}
+/* a thrown JetTurtle at p with velocity v (isMsgJetTurtleAttack): receiveTurtleAttack; 1 it took it */
+static int noko_turtle(Kuribo *k, V3 p, V3 v)
+{
+    const Model *md = brk_model(k->row, "NokonokoLand", 0);
+    V3 body = w_joint(k, md, 2, v3(0, 0, 30)), shell = w_joint(k, md, 14, v3(0, 50, 0));
+    if (nk_walk(k) && vlen(vsub(p, body)) < 120.0f + 60.0f) {
+        k->vel = vlen(v) > 1e-3f ? v : vsub(body, p);
+        nk_set(k, NK_FLYAWAY);
+        return 1;
+    }
+    if (nk_shell(k) && vlen(vsub(p, shell)) < 50.0f + 60.0f) { nk_set(k, NK_DEAD); return 1; }
+    return 0;
+}
+static void noko_star(Kuribo *k) /* receiveStarPieceAttack: tryRattle */
+{
+    if (!nk_walk(k)) return;
+    nk_set(k, k->nrv == NK_TURN ? NK_RATTLETURN : NK_RATTLE);
+}
+static void noko_update(Kuribo *k)
+{
+    const Row *r = &sc->objs[k->row];
+    const unsigned char *e = r->path >= 0 && scene_blob_g ? find_path(scene_blob_g, r->zone, r->path) : NULL;
+    u32 rn = 0; int rcl = 0;
+    const float *rail = w_rail(k, &rn, &rcl);
+    if (!rail || !e || rn < 2) return;
+    float len = w_rail_len(rail, rn);
+    int fast = r->arg[0] == 1;
+    k->grav = vmul(k->up, -1.0f);
+    V3 up = k->up;
+    if (!k->front.x && !k->front.y && !k->front.z) { /* init, initAfterPlacement: moveCoordAndTransToNearestRailPos */
+        V3 x, z;
+        row_axes(r, &x, &z);
+        k->qz = vnorm(z); k->qy = vnorm(vcross(z, x)); k->dir = 1;
+        k->lva[1] = w_rail_nearest(rail, rn, k->pos); k->pos = rail_at(rail, rn, k->lva[1]);
+        k->tcenter = k->pos; /* mAppearPos */
+        k->front = k->qz;
+        nk_set(k, NK_WALK);
+    }
+    int st = ++k->step;
+    V3 rd = nk_rail_dir(k, rail, rn);
+    switch (k->nrv) {
+    case NK_APPEARREADY:
+        if (vlen(vsub(mario->pos, k->pos)) >= 350.0f) nk_set(k, NK_APPEARSTART); /* sAppearValidDistance */
+        break;
+    case NK_APPEARSTART:
+        if (st == 0) {
+            k->lva[1] = w_rail_nearest(rail, rn, k->tcenter); k->pos = rail_at(rail, rn, k->lva[1]);
+            k->dir = 1; rd = nk_rail_dir(k, rail, rn); /* !isRailGoingToEnd: reverseRailDirection */
+            k->front = vnorm(vtangent(rd, up));
+            k->phase = 1; /* hideModel */
+            nk_fx(k, "Appear", k->tcenter);
+        }
+        w_se_lv(k, SE_EM_LV_NOKOLAND_REVIVE_EFFECT);
+        if (st == 60) { /* sAppearTime */
+            k->phase = 0;
+            w_se(k, SE_EM_NOKOLAND_REVIVE_APPEAR); w_se(k, SE_EV_NOKONOKO_APPEAR);
+            nk_set(k, NK_APPEAR);
+        }
+        break;
+    case NK_APPEAR:
+        if (st == 0) w_act(k, "Appear");
+        if (w_bck_stopped(k)) nk_set(k, NK_WALK);
+        break;
+    case NK_FLYAWAY:
+        if (st == 0) {
+            w_act(k, "Rotate");
+            w_se(k, SE_EM_TURTLE_HIT); w_se(k, SE_EV_NOKONOKO_DAMAGE);
+            V3 d = vtangent(k->vel, k->grav);
+            d = vlen(d) > 1e-6f ? vnorm(d) : k->qz;
+            k->vel = vadd(vmul(d, 15.0f), vmul(up, 35.0f)); /* sFlyAwayInitSpeedHoli / Vert */
+            k->front = vmul(d, -1.0f);
+        }
+        k->vel = vmul(vadd(k->vel, vmul(k->grav, 1.5f)), 0.99f); /* sGravityAccel, sAirFrec */
+        k->pos = vadd(k->pos, k->vel);
+        if (st == 33) { k->vel = v3(0, 0, 0); nk_set(k, NK_DEAD); } /* sFlyAwayTime */
+        break;
+    case NK_DEAD:
+        if (st == 0) { k->phase = 1; nk_fx(k, "Death", k->pos); w_se(k, SE_EM_EXPLODE_S); }
+        if (st == 180) nk_set(k, NK_APPEARREADY); /* sDeadTime */
+        break;
+    case NK_WALK: {
+        if (st == 0) { w_act(k, fast ? "WalkFastWait" : "WalkWait"); }
+        float c0 = k->lva[1], c = c0 + (fast ? 3.2f : 1.6f) * (float)k->dir; /* moveCoordAndFollowTrans */
+        if (rcl) c = fmodf(c + len, len);
+        else c = c < 0 ? 0 : c > len ? len : c;
+        k->lva[1] = c; k->pos = rail_at(rail, rn, c);
+        rd = nk_rail_dir(k, rail, rn);
+        k->front = vnorm(vtangent(rd, up));
+        int goal = !rcl && (k->dir > 0 ? c >= len : c <= 0); /* isRailReachedGoal */
+        float pc = 0; int a0 = -1;
+        if (!goal && kb_next_point(e, c0, k->dir, &pc, &a0) >= 0 && (k->dir > 0 ? pc <= c : pc >= c) && a0 == 0) { nk_set(k, NK_LOOKAROUND); break; } /* the pass checker */
+        if (goal) nk_set(k, NK_TURNSTART);
+        break;
+    }
+    case NK_LOOKAROUND:
+        if (st == 0) w_act(k, "LookAround");
+        if (w_bck_stopped(k)) nk_set(k, NK_WALK);
+        break;
+    case NK_TURNSTART:
+        if (st == 0) w_act(k, "TurnStart");
+        if (w_bck_stopped(k)) { k->dir = -k->dir; nk_set(k, NK_TURN); }
+        break;
+    case NK_TURN:
+        if (st == 0) w_act(k, "TurnLoopStart");
+        else if (!strcmp(k->act, "TurnLoopStart") && w_bck_stopped(k)) w_act(k, "TurnLoop"); /* isBckOneTimeAndStopped */
+        k->front = vnorm(rot_axis(k->front, up, -3.14159265f / 139.0f)); /* mTurnAxis: ponytail: its target's up, not its base Y */
+        if (nk_look_rail(k, rd)) nk_set(k, NK_TURNEND);
+        break;
+    case NK_TURNEND:
+        if (st == 0) w_act(k, "TurnEnd");
+        if (w_bck_stopped(k)) nk_set(k, NK_WALK);
+        break;
+    case NK_ATTACK: case NK_ATTACKTURN:
+        if (st == 0) w_act(k, "Attack");
+        if (w_bck_stopped(k)) nk_set(k, k->nrv == NK_ATTACKTURN ? NK_TURN : NK_WALK);
+        break;
+    case NK_RATTLE: case NK_RATTLETURN:
+        if (st == 0) w_act(k, "Rattle");
+        w_se_lv(k, SE_EM_LV_NOKOLAND_RATTLE);
+        if (w_bck_stopped(k)) nk_set(k, k->nrv == NK_RATTLETURN ? NK_TURN : NK_WALK);
+        break;
+    case NK_SHELLSTART: case NK_SHELLSTARTPUNCH:
+        if (st == 0) {
+            int punch = k->nrv == NK_SHELLSTARTPUNCH;
+            w_act(k, punch ? "ShellStartPunch" : "ShellStart");
+            w_se(k, punch ? SE_EM_NOKOLAND_SHELL_PUNCH : SE_EM_TURTLE_SHELL_TRAMPLE);
+            w_se(k, punch ? SE_EV_NOKONOKO_PUNCH_HIT : SE_EV_NOKONOKO_TRAMPLE);
+            nk_fx(k, "ShellStart", k->pos); nk_fx(k, "ShellStartFace", k->pos);
+            if (punch) scene_stop = 3; /* sSceneStopTimePunch (sPushPower 0: no push) */
+        }
+        if (w_bck_stopped(k)) nk_set(k, NK_SHELLWAIT);
+        break;
+    case NK_SHELLWAIT:
+        if (st == 0) w_act(k, "ShellWait");
+        if (st == 180) nk_set(k, NK_SHELLEND); /* sShellWaitTime */
+        break;
+    case NK_SHELLEND:
+        if (st == 0) { w_act(k, "ShellEnd"); w_se(k, SE_EM_NOKOLAND_RECVER_SHELL); w_se(k, SE_EV_NOKONOKO_RECOVER); }
+        if (w_bck_stopped(k)) nk_set(k, nk_look_rail(k, rd) ? NK_WALK : NK_TURN);
+        break;
+    case NK_BECOMEJET:
+        if (st == 0) { k->phase = 1; if (!nk_take(k, w_joint(k, brk_model(k->row, "NokonokoLand", 0), 2, v3(0, 0, 0)))) { nk_set(k, NK_SHELLWAIT); k->phase = 0; } }
+        else if (!(jet.inst >= 0 && insts[jet.inst].row == k->row && insts[jet.inst].jet == 2)) nk_set(k, NK_APPEARREADY); /* isRestart */
+        break;
+    }
+    k->act_t += k->act_rate;
+    pk_pose(k, k->front, up, 0.3f); /* calcAndSetBaseMtx: sPoseLerpRate */
+    if (k->phase) return;
+    /* Mario's messages to its sensors */
+    const Model *md = brk_model(k->row, "NokonokoLand", 0);
+    V3 body = w_joint(k, md, 2, v3(0, 0, 30)), shell = w_joint(k, md, 14, v3(0, 50, 0));
+    if (mario->spin_timer <= 0) k->lvt[2] = 0;
+    if (nk_body_on(k)) {
+        int msg = mario_offence(body, 120.0f, k->grav);
+        if (msg == MSG_HITALL && k->lvt[2]) msg = MSG_NONE; /* each sensor punched once a spin */
+        if (msg == MSG_HITALL) k->lvt[2] = 1;
+        if (msg == MSG_TRAMPLE) { /* receiveTrample */
+            if (nk_walk(k) || nk_rattle(k)) nk_set(k, NK_SHELLSTART); else w_se(k, SE_EM_TURTLE_SHELL_TRAMPLE);
+            mario_trample();
+            return;
+        }
+        if (msg == MSG_HIPDROP && (nk_walk(k) || nk_rattle(k))) { /* receiveHipDrop: sendMsgAwayJump */
+            V3 a = vtangent(vsub(mario->pos, k->pos), k->grav);
+            mario->hip = 0; m_power_jump(mario, vadd(vmul(vlen(a) > 1e-6f ? vnorm(a) : k->qz, 10.0f), vmul(mario->up, 25.0f)));
+            nk_set(k, NK_SHELLSTART);
+            return;
+        }
+        if (msg == MSG_HITALL && (nk_walk(k) || nk_rattle(k))) { nk_set(k, NK_SHELLSTARTPUNCH); return; } /* receivePunch */
+        int enable = nk_walk(k) || nk_rattle(k); /* isEnableAttack */
+        if (enable && !mario->hurt_timer && mario->hip != HIP_FALL && mario_touch(body, 60.0f)) { /* tryAttack */
+            hurt_mario(body, 15.0f);
+            nk_set(k, k->nrv == NK_TURN ? NK_ATTACKTURN : NK_ATTACK);
+            return;
+        }
+        if ((nk_rattle(k) || nk_carry()) && mario_touch(body, 120.0f)) mario_push_out(body, 120.0f); /* sendMsgPush */
+    }
+    if (nk_shell_on(k)) {
+        int msg = mario_offence(shell, 50.0f, k->grav);
+        if (msg == MSG_HITALL && k->lvt[2]) msg = MSG_NONE;
+        if (msg == MSG_HITALL) k->lvt[2] = 1;
+        if (msg == MSG_TRAMPLE) {
+            if (k->nrv == NK_SHELLWAIT && nk_carry()) nk_set(k, NK_SHELLSTART); else w_se(k, SE_EM_TURTLE_SHELL_TRAMPLE);
+            mario_trample();
+            return;
+        }
+        if (msg == MSG_HIPDROP && nk_shell(k)) { nk_set(k, NK_DEAD); return; } /* receiveHipDrop */
+        if (msg == MSG_HITALL && nk_shell(k) && !(k->nrv == NK_SHELLSTART && st == 0) && jet.inst < 0) { nk_set(k, NK_BECOMEJET); return; } /* receiveStorm */
+        if (mario_touch(shell, 50.0f)) {
+            int take = (k->nrv == NK_SHELLWAIT || k->nrv == NK_SHELLEND || st > 27) && !nk_carry() && jet.inst < 0; /* tryJetTurtleTouch (sShellStartPeakPosFrame) */
+            if (take) nk_set(k, NK_BECOMEJET);
+            else mario_push_out(shell, 50.0f); /* attackSensor: sendMsgPush */
+        }
+    }
+}
 static void update_kuribo_one(Kuribo *k);
 static void kameck_update(Kuribo *k);
 static void bg_permit_update(void);
@@ -28735,6 +28999,7 @@ static void update_kuribo_one(Kuribo *k)
             else if (k->kind == WALK_KCHIEF) kchief_update(k);
             else if (k->kind == WALK_BBEGO) bbego_update(k);
             else if (k->kind == WALK_KAMECK) kameck_update(k);
+            else if (k->kind == WALK_NOKO) noko_update(k);
             return;
         }
         if (k->kind == WALK_PETARI) {
@@ -30231,6 +30496,25 @@ static void gap_test(void)
             if ((int)sc->objs[i].type == tt && n++ == want % 16) { V3 p = row_pos(&sc->objs[i]); mario->pos = vadd(p, v3(300, 100, 0)); mario->hvel = v3(0, 0, 0); }
         for (int k = 0; at == 150 && k < ninsts; k++)
             if (insts[k].breaks == 5 && !row_dead[insts[k].row]) { explosion_breaks(v3(insts[k].m[12], insts[k].m[13], insts[k].m[14]), 10.0f); break; }
+        return;
+    }
+    if (GAP_TEST == 20) { /* XF=-DGAP_TEST=20: each NokonokoLand in turn every 300 frames: Mario dropped onto it (0), on its shell (150), a spin (200: the throw) */
+        int n = 0, w = -1;
+        for (int k = 0; k < nkuribo; k++) if (kuribo[k].kind == WALK_NOKO && n++ == (want < 0 ? 0 : want) % 16) w = k;
+        if (w < 0 || want < 0) return;
+        Kuribo *k = &kuribo[w];
+        if (want >= 1 && k->front.x) return; /* one round: Mario stays on the deck */
+        if (!k->front.x && !k->front.y && !k->front.z) { /* not started (its zone's ground): Mario near, its zone streams in */
+            static int nt;
+            for (int q = 0; q < nkuribo; q++) if (kuribo[q].kind == WALK_NOKO) k = &kuribo[q]; /* (the last: KoopaJrShipLv1's deck streams in under it) */
+            if (nt++ % 300 == 0) { mario->pos = vadd(k->pos, vmul(k->up, 300.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+            t = 119;
+            return;
+        }
+        if (at == 0) { mario->up = k->up; mario->pos = vadd(k->pos, vmul(k->up, 300.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
+                       printf("gap test: Mario over noko row %d at (%d %d %d) nerve %d%c", k->row, (int)k->pos.x, (int)k->pos.y, (int)k->pos.z, k->nrv, 10); }
+        if (at == 150) { mario->pos = vadd(k->pos, vmul(k->qz, -60.0f)); mario->hvel = v3(0, 0, 0); printf("gap test: Mario on noko row %d's shell, nerve %d%c", k->row, k->nrv, 10); }
+        if (at == 200) { mario->spin_timer = SPIN_TIME; mario->spin_t = 0; printf("gap test: spin, jet phase %d%c", jet.phase, 10); }
         return;
     }
     if (want < 0 || (at != 0 && at != 30 && at != 150 && !(shell && at > 160))) return;
@@ -36373,6 +36657,7 @@ static void update_shots(void)
             else if (e->kind == WALK_KAMECK) { if (!km_guard(e, s->vel)) { hit = 0; continue; } } /* isMsgStarPieceReflect: requestGuard */
             else if (e->kind == WALK_BEGOBABY) { if (bg_down(e)) { hit = 0; continue; } e->item = 3; bg_blow(e, s->pos, 35.0f, 15.0f); } /* isMsgStarPieceAttack: mAppearThreeStarPiece */
             else if (e->kind == WALK_KABOKURI) w_nrv(e, KB_STARPIECE); /* requestStarPieceHitted */
+            else if (e->kind == WALK_NOKO) { if (e->phase) { hit = 0; continue; } noko_star(e); } /* receiveStarPieceAttack (isMsgStarPieceReflect in its shell) */
             else if (e->kind == WALK_TERESAW) w_nrv(e, TW_STUN); /* isMsgStarPieceAttack: Stun */
             else if (e->kind == WALK_SNAKEHEAD) { if (e->phase) { hit = 0; continue; } } /* isMsgStarPieceReflect: nothing more (Waylay: not there) */
             else if (e->kind == WALK_MOGUCCHI) { if (e->nrv != MC_SCATTER && e->nrv != MC_DIE) w_nrv(e, MC_APPEARDOWN); } /* isMsgStarPieceAttack */
@@ -45776,7 +46061,7 @@ void game_draw(void)
                           kuribo[i].kind == WALK_KMINI ? m_kmini :
                           kuribo[i].kind == WALK_KARON ? m_karon :
                           kuribo[i].kind == WALK_TERESA ? m_teresa :
-                          kuribo[i].kind == WALK_BUTTERFLY ? brk_model(kuribo[i].row, "Butterfly", 0) : kuribo[i].kind == WALK_STINKBUG ? m_stink :
+                          kuribo[i].kind == WALK_BUTTERFLY ? brk_model(kuribo[i].row, "Butterfly", 0) : kuribo[i].kind == WALK_NOKO ? brk_model(kuribo[i].row, "NokonokoLand", 0) : kuribo[i].kind == WALK_STINKBUG ? m_stink :
                           kuribo[i].kind == WALK_UNIZO ? m_unizo[kuribo[i].dir] : kuribo[i].kind == WALK_POIHANA ? m_poihana : kuribo[i].kind == WALK_PETARI ? m_petari :
                           kuribo[i].kind >= WALK_GESSO ? walker_new_model(kuribo[i].row) : walker_new_model(kuribo[i].row) ? walker_new_model(kuribo[i].row) : m_kuribo; /* (ChildKuribo) */
         if (kuribo[i].state == KURIBO_DEAD || !md || !row_shown(kuribo[i].row)) continue;
@@ -45784,6 +46069,7 @@ void game_draw(void)
         if (kuribo[i].kind == WALK_PETARI && kuribo[i].phase) continue; /* hideModel */
         if (kuribo[i].kind == WALK_SNAKEHEAD && kuribo[i].phase) continue; /* Waylay: hideModel */
         if (kuribo[i].kind == WALK_KAMECK && kuribo[i].phase) continue; /* Kameck: hideModel(AndOnCalcAnim) */
+        if (kuribo[i].kind == WALK_NOKO && kuribo[i].phase) continue; /* hideModel */
         if (kuribo[i].kind == WALK_BOMBHEI && (kuribo[i].nrv == BH_GONE || kuribo[i].nrv == BH_EXPLODE)) continue; /* a launcher's bomb not out; exeExplode: hideModel */
         /* out of the view: no shadow, no pose, not drawn; its clip's time goes on (anim_advance) */
         const float *wsc = sc->objs[kuribo[i].row].scale;

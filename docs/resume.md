@@ -148,6 +148,12 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   a chunk that is not one ends the movie ("movie: chunk n bad"), and "movie: <name> frame n" every 600 frames says
   on the console's udptty log where it stops.
 - gaps (2026-11-04, worktree D:/smg-ps2-wt/gaps, overlay out/wt-gaps): #143's placed classes with no behaviour.
+  - NokonokoLand (round 2; game.c noko_update, walker WALK_NOKO): the Koopa Troopa on its rail after Petari (walk /
+    look around / turn, attack, rattle on a star piece, shell by trample / hip drop / spin, ShellWait 180, its shell
+    becomes its JetTurtle (an extra Inst, Inst.jet 2, Koura~0 / ~1 by arg0) Mario holds and throws, FlyAway / Dead,
+    reappears 350 away). slice.py: SKINNED_OBJ + BRK_ARG NokonokoLand, EXTRA Koura~0 / Koura~1 (MODEL_ARC
+    "<arc>~<brk>:<frame>"), BRK_ARG names -1 args ~0 (args are unsigned). Test XF="-DGAP_TEST=20 -DDEBUG_HUD -UCATCHUP"
+    KoopaJrShipLv1Galaxy/1 (trample, shell taken, thrown, back) and OceanRingGalaxy/1 (the red one walking).
   - #166 PurpleCoinCounter (game.c pc_update, hud_pc): made with the scene's purple coins or its PurpleCoinStarter,
     valid at once or at the starter's SW_APPEAR, Appear / Wait, one up every 3 frames, killed and back with the
     default layout. Repack: resident.bin (layout.py LAYOUTS + PurpleCoinCounter, in the FONT chunk's LAYO) and
