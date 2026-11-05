@@ -38075,6 +38075,30 @@ static int penguin_wait(Inst *in, int talking, const char **act)
     if (talking && *act && !strcmp(*act, "talk")) *act = ta[g->i];
     return 0;
 }
+/* Rabbit.cpp exeTalk / exeJumpV / exeJumpH (Rabbit.cpp:512-546): arg1 2 (Behavior_UpJump) / 3 (Behavior_LongJump), not
+ * in a long talk (tryTalkNearPlayer, isShortTalk) past step 180 of Talk: pushNerve JumpV (SpinLecture, till its BCK
+ * stops) / JumpH (JumpSpinLectureMove, till it loops once), then popNerve (Talk from step 0). row_step its Talk step,
+ * row_rdir 1 in the lecture. 1 while the lecture holds its action. ponytail: arg1 0 (Behavior_Wait: the escape on its
+ * rail, Wait / PreJump / Move / Goal) not ported: no placement on the disc has it */
+static int rabbit_lecture(Inst *in, int talking)
+{
+    const Row *r = &sc->objs[in->row];
+    int b = r->arg[1], row = in->row;
+    if (b != 2 && b != 3) return 0;
+    if (row_rdir[row] == 1) {
+        int mode, frames = anim_clip_info(b == 2 ? "rabbit/spinlecture" : "rabbit/jumpspinlecturemove", &mode);
+        if (++row_step[row] >= frames) { row_rdir[row] = 0; row_step[row] = 0; return 0; } /* isBckStopped / isBckLooped: popNerve */
+        return 1;
+    }
+    if (talking) return 0; /* (a long talk: tryTalkNearPlayerAndStartTalkAction) */
+    if (++row_step[row] > 180) { /* isGreaterStep 180 */
+        obj_play(in, b == 2 ? "spinlecture" : "jumpspinlecturemove", 0, 0); /* startAction */
+        row_rdir[row] = 1; row_step[row] = 0;
+        printf("rabbit row %d: %s%c", row, b == 2 ? "JumpV" : "JumpH", 10);
+        return 1;
+    }
+    return 0;
+}
 static void update_npc_turn(void) /* the NPCs' wait nerves: tryStartTalkAction / tryStartTurnAction */
 {
     FOR_KIND(i, npc) {
@@ -38094,6 +38118,7 @@ static void update_npc_turn(void) /* the NPCs' wait nerves: tryStartTalkAction /
         else if (d < t->dist) act = t->near && !npc_turn_to_player(in, t, to) ? t->act[1] : t->act[0]; /* tryStartTurnAction */
         else act = (t->near || t->talk) && !npc_turn_default(in, t) ? t->act[1] : t->act[0];
         if (!strcmp(t->cls, "Penguin") && penguin_wait(in, talking, &act)) continue;
+        if (!strcmp(t->cls, "Rabbit") && rabbit_lecture(in, talking)) continue;
         if (act) obj_play(in, act, 1, 0); /* tryStartAction (no-op while it plays) */
     }
 }
