@@ -76,7 +76,7 @@ SKINNED_OBJ = ("MarioFreezeIce", "MarioTornado", "MarioFireBall", "WaterColumn",
                "Karikari", "Butterfly", "PackunPetit", "KuriboMini", "DinoPackunEggShellBreak", "PackunPetitHead",
                "RockBreak", "WanwanRollingBreak", "KoopaStatueBreak", "BegomanBrokenPiece", "PunchingKinoko", "OtaKingMagma", "OtaKingLongFoot", "WoodBoxBreak",
                "CrystalCageSBreak", "BenefitItemOneUp", "BenefitItemLifeUp", "FlipPanel", "FlipPanelReverse", "OtaRock",
-               "HammerHeadPackun", "PackunLeaf", "Plant", "Petari", "Butler", "TicoDomeLecture", "Rosetta", "ButlerExplain", "ButlerMap",
+               "HammerHeadPackun", "PackunLeaf", "Plant", "CreeperLeaf", "Petari", "Butler", "TicoDomeLecture", "Rosetta", "ButlerExplain", "ButlerMap",
                "PhantomShipPropellerSmall", "PhantomShipPropellerBig", "PhantomShipBridge",  # AnmModelSwitchMove without SW_A: Move at once (obj_anim: its only clip)
                "PStar", "GStar", "SpinTico", "MarioHair", "AstroCore", "LuigiNPC", "LuigiEvent",
                "DemoPeachCastleGate", "PicketSwitch", "PicketSwitchBig", "CapsuleCage", "KeySwitchOwned", "ChildKuribo", "BreakableCageBreak")  # PStar / GStar: the star return demos' PowerStar / GrandStar (clip names fit 31 chars)
@@ -164,7 +164,7 @@ def sky_sea(b, mat3, m):
 # (FlipPanel: "?" at rest, "!" once flipped, the End face when its group is complete)
 # KuriboChief / ExterminationChecker::initKeySwitch: their own KeySwitch (game.c okeys; KeySwitchOwned: the KeySwitch
 # archive skinned for its Rotation, the placed KeySwitch rows untouched)
-EXTRA = {"HoneyQueen": ("HoneyQueenWing",), "ShellfishYellowChip": ("YellowChip",), "BreakableTrash": ("BreakableCageBreak",), "KuriboChief": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
+EXTRA = {"Creeper": ("CreeperFlower", "CreeperLeaf"), "HoneyQueen": ("HoneyQueenWing",), "ShellfishYellowChip": ("YellowChip",), "BreakableTrash": ("BreakableCageBreak",), "KuriboChief": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
          "Rosetta": ("LightDome", "DomeHalo"),  # RosettaDemoHeavensDoor1's parts (ライトドーム, ライト後光)
          "StarReturnDemoStarter": ("PStar", "GStar", "SpinTico", "MarioHair"), "GrandStarReturnDemoStarter": ("GStar",), "FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),

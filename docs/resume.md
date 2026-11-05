@@ -341,6 +341,12 @@ Second console round (2026-10-24), from Daniel's report:
   MoveSign (AndTurn) / Move / Stop with isGreaterEqualStepAndRandom, the Spin-timed blends, rail ends clamped, two on
   one rail talk (TalkStart / Talk with Reaction / GoodBye, or TalkCancel), its body pushes Mario. Test `ticorail`
   (Astro 1: nerve log, two pairs talk). ponytail: no ColorChange BRK frame, no LodCtrl.
+- Creeper (feat/creeper, 2026-11-05): Creeper.cpp (Ride) in game.c (creeper_*): its CreeperPoints every 50 along the
+  rail spring free / bend under Mario, AutoRushBegin (spinning or in the air), HangStart / HangUp / HangDown with
+  Mario's GrowPlant* clips, the jump off its head (arg1 / arg2, setPlayerSwingInhibitTimer 60: new swing_inhibit, MarioActor
+  _EF6, in isRequestRush), the let-go at its root; CreeperFlower at its head, CreeperLeaf (Wait) at its root, Stalk.bti
+  (tools/jpa.py, fx_creeper_tex) on the strips. Test: `creeper` (HoneyBeeKingdom 1, overlay packs): creeper 47 climbed
+  and jumped off, creeper 63 slid down. Repack: slice_all.py resident.bin, resident_luigi.bin and HoneyBeeKingdomGalaxy.
 ## Rules
 
 - Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -

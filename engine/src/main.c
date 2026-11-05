@@ -1671,6 +1671,12 @@ int main(void)
             if (frame % 25 == 0) printf("petari test f %u: %d\n", frame, st);
         }
 #endif
+#ifdef CREEPER_TEST
+        if (frame >= 300 && frame < 3000) { /* creeper 0 climbed and jumped off, creeper 1 slid down */
+            int st = game_test_creeper();
+            if (frame % 25 == 0) printf("creeper test f %u: %d\n", frame, st);
+        }
+#endif
 #if defined(VINE_TEST) && !defined(TEASER)
         if (frame >= 400 && frame < 3000) { /* the Plant grown, Mario up it and off its top */
             int st = game_test_vine();
