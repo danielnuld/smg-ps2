@@ -2210,12 +2210,14 @@ int main(void)
         }
 #endif
 #ifdef PUNCH_TEST
-        { /* a spin at 150, then at 600 a hip drop; the head logged every 10 frames */
-            if (frame == 150 || frame == 600 || (frame < 150 && frame % 30 == 0 && game_test_punch(2) == -2))
-                printf("punch test f %u: row %d\n", frame, game_test_punch(frame == 600));
-            if (frame >= 150 && frame < 900 && frame % 10 == 0) {
+        { /* until one is bound Mario waits over it; then a spin 60 frames on, a hip drop 450 on; the head logged every 10 frames */
+            static unsigned b0;
+            if (!b0 && frame >= 120 && frame % 30 == 0 && game_test_punch(2) >= 0) b0 = frame;
+            unsigned t = b0 ? frame - b0 : 0;
+            if (b0 && (t == 60 || t == 510)) printf("punch test f %u: row %d\n", frame, game_test_punch(t == 510));
+            if (b0 && t >= 60 && t < 810 && frame % 10 == 0) {
                 int dist = 0, st = game_punch_state(&dist);
-                printf("punch test f %u: phase %d head %d life %d\n", frame, st, dist, game_life());
+                printf("punch test f %u: phase %d head %d life %d out %d\n", frame, st, dist, game_life(), game_pieces_out());
             }
         }
 #endif
@@ -2306,6 +2308,13 @@ int main(void)
         if (frame == 500) printf("mkoopa test: stomp row %d" "\n", game_test_enemy(7, 0, 0));
         if (frame == 800) printf("mkoopa test: hip drop row %d\n", game_test_enemy(7, 0, 4));
         if (frame == 700 || frame == 900) printf("mkoopa test f %u: %d alive, life %d\n", frame, game_kind_alive(7), game_life());
+#endif
+#ifdef KICK_TEST
+        { static unsigned f0; if (!f0 && game_test_free()) f0 = frame; /* frames from Mario free */
+          unsigned t = f0 ? frame - f0 : 0;
+          if (t == 30) printf("kick test: spin by Kuribo row %d\n", game_test_enemy(0, 0, 1));
+          if (t == 70) printf("kick test: walk into it row %d\n", game_test_enemy(0, 0, 6));
+          if (t == 140) printf("kick test: pieces out %d, kuribo alive %d\n", game_pieces_out(), game_kind_alive(0)); }
 #endif
 #ifdef KMINI_TEST
         if (frame == 120) printf("kmini test: stomp row %d\n", game_test_enemy(9, 0, 0));

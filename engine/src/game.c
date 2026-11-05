@@ -63,7 +63,8 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
     V3 gpos, gup; int gok; /* walker_up: the gravity's up at gpos */
     u32 lv2[2]; int lvt[3]; float lva[2]; /* Unizo: its land / wall-hit level sounds (kept 30 frames: frames left, levelA), the roll's sRollSoundTime */
     u32 lv; /* its level sound's handle (se_level) */
-    u8 clipped; /* out of the view at the last draw (ClippingJudge: LiveActor::startClipped stops its movement) */ } Kuribo; /* walking
+    u8 clipped; /* out of the view at the last draw (ClippingJudge: LiveActor::startClipped stops its movement) */
+    u8 nograv; /* Kuribo _C4 (arg0 set): offCalcGravity, its gravity its rotation's up */ } Kuribo; /* walking
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
@@ -1222,6 +1223,9 @@ static struct { int on, step, hidden; V3 pos, rel, axis; float scale; } bh;
 static void bgm_stop(int frames);
 static const char *bgm_comet(void);
 static void mario_sound(const char *key);
+static int mario_kick(V3 c, float r); /* sendBodyAttack ACTMES_KICK */
+static void mario_kicked(void);
+static void scatter_pieces_player(int n); /* MR::scatterStarPiecePlayer */
 static int m_anim_on(const char *jp);
 static void m_anim(const char *jp);
 static void bgm_start(const char *id);
@@ -3668,10 +3672,11 @@ static void update_birikyu(void)
  * from the base to it (ballMtxCallBack), the stalk bending between Root and Ball. ponytail: the head keeps its
  * height over the base plane, not over the ground (addVelocityKeepHeight's shadow); no collision for the head, no 2P
  * pointer snap, no breakables hit, no anim scale
- * ponytail (unmarked until the 2026-11-02 audit): no stopScene(5) on the punch (PunchingKinoko.cpp:311), no
- * scatterStarPiecePlayer(10) at speed >= 30 nor velocity reflection x 1.6 and Hit effect (160-175), walkers it
- * touches die for a coin instead of ToEnemyAttackBlow (180), no Normal / Press / Revival BRKs, no FlipWeakJump in
- * CrushedEnd */
+ * Its attackSensor (PunchingKinoko.cpp:143-190): swinging faster than 30 it flips Mario (45: maximum) and scatters 10
+ * of his star pieces, 15 a weak flip, slower a push; swinging or punched it blows walkers (sendMsgToEnemyAttackBlow);
+ * a hit: its Hit effect between them, its velocity reflected (x 1.6 along the hit) and x 0.3, Wait; in CrushedEnd it
+ * flips Mario with a weak jump. ponytail: no Normal / Press / Revival BRKs (one model, no per-instance BRK), no
+ * CS_SPIN_HIT (no CS sounds), a walker kind with no blow handler is killed for a coin as before */
 static void punch_place(Inst *in)
 {
     V3 base = v3(in->m0[12], in->m0[13], in->m0[14]), up0 = vnorm(v3(in->m0[4], in->m0[5], in->m0[6]));
@@ -3738,6 +3743,7 @@ static void update_punch(void)
             *ph = 2; *t = 0;
             se_start(SE_PM_SPIN_HIT, &in->m0[12]); /* startBlowHitSound */
             pad_rumble(RUMBLE_STRONG);
+            scene_stop = 5;                        /* stopScene(5) */
             printf("punching kinoko %d punched" "\n", row);
         } else if ((*ph == 0 || *ph == 5) && mario->hip == HIP_FALL && d < 70.0f + HIT_BODY_R && vdot(to, up) < 0) { /* requestCrush */
             *ph = 4; *t = 0; mario->hip = HIP_LAND; mario->hip_t = 0; mario->vup = 0;
@@ -3772,23 +3778,38 @@ static void update_punch(void)
         }
         }
         in->head = vadd(in->head, in->hvel);
-        if (*ph >= 1 && *ph <= 3) { /* sendMsgToEnemyAttackBlow: walkers it touches are blown away */
-            for (int k = 0; k < nkuribo; k++) {
+        V3 hit_at = in->head;
+        int hit = 0;
+        if (*ph >= 1 && *ph <= 3) { /* isEnableEnemyAttack: sendMsgToEnemyAttackBlow on the walkers it touches */
+            for (int k = 0; k < nkuribo && !hit; k++) {
                 Kuribo *e = &kuribo[k];
-                if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_PACKUN || e->kind == WALK_SPIDER ||
-                    e->kind == WALK_BUTTERFLY || e->kind == WALK_TERESA || e->kind == WALK_KARON ||
-                    vlen(vsub(in->head, vadd(e->pos, vmul(e->up, 50.0f)))) > 70.0f + 60.0f) continue;
-                if (e->kind == WALK_PETARI) { walker_blow(e, in->head); continue; } /* isMsgToEnemyAttackBlow */
-                e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up); pop_coins(e->pos, e->up, 1);
-                printf("punching kinoko %d blows walker row %d" "\n", row, e->row);
+                V3 ec = vadd(e->pos, vmul(e->up, 50.0f));
+                if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_SPIDER || e->kind == WALK_BUTTERFLY ||
+                    e->kind == WALK_TERESA || e->kind == WALK_KARON || vlen(vsub(in->head, ec)) > 70.0f + 60.0f) continue;
+                int took = walker_blow(e, in->head);
+                if (took < 0) { e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up); pop_coins(e->pos, e->up, 1); }
+                if (took) { hit = 1; hit_at = ec; printf("punching kinoko %d blows walker row %d" "\n", row, e->row); }
             }
         }
-        if (*ph == 1 && speed >= 15.0f && vlen(vsub(c, in->head)) < 70.0f + HIT_BODY_R && !mario->hurt_timer) { /* isEnableHitPlayer */
-            mario_attack(speed >= 45.0f ? ATK_FLIP_MAXIMUM : speed >= 30.0f ? ATK_FLIP : ATK_FLIP_WEAK, in->head);
-            if (speed >= 30.0f) se_start(SE_PM_WALL_HIT_BODY, &mario->pos.x); /* attackSensor: startSoundPlayer */
-            in->hvel = vmul(in->hvel, 0.3f);
-            *ph = 0; *t = 0;
+        float hs = vlen(in->hvel);
+        if (!hit && *ph == 5 && vlen(vsub(c, in->head)) < 70.0f + HIT_BODY_R && !mario->hurt_timer) /* CrushedEnd: sendMsgEnemyAttackFlipWeakJump */
+            mario_attack(ATK_FLIP_WEAK_JUMP, in->head);
+        else if (!hit && *ph == 1 && hs >= 15.0f && vlen(vsub(c, in->head)) < 70.0f + HIT_BODY_R && !mario->hurt_timer) { /* isEnableHitPlayer */
+            mario_attack(hs >= 45.0f ? ATK_FLIP_MAXIMUM : hs >= 30.0f ? ATK_FLIP : ATK_FLIP_WEAK, in->head);
+            if (hs >= 30.0f) { se_start(SE_PM_WALL_HIT_BODY, &mario->pos.x); scatter_pieces_player(10); } /* startSoundPlayer, scatterStarPiecePlayer */
+            hit = 1; hit_at = c;
             printf("punching kinoko %d hits Mario" "\n", row);
+        }
+        if (hit) { /* emitEffectHitBetweenSensors "Hit"; the velocity reflected along the hit, x 0.3; Wait */
+            float m[16];
+            memcpy(m, in->m0, sizeof m);
+            V3 mid = vmul(vadd(in->head, hit_at), 0.5f);
+            m[12] = mid.x; m[13] = mid.y; m[14] = mid.z;
+            fx_named("PunchingKinoko", "Hit", m, NULL, NULL);
+            V3 dir = vsub(in->head, hit_at);
+            dir = vlen(dir) > 1e-6f ? vnorm(dir) : v3(0, 0, 0);
+            in->hvel = vmul(vsub(in->hvel, vmul(dir, vdot(in->hvel, dir) * 1.6f)), 0.3f);
+            *ph = 0; *t = 0;
         }
         punch_place(in);
     }
@@ -3877,10 +3898,11 @@ static void update_coconuts(void)
                 V3 mv = mario->hvel;
                 float ms = vlen(mv), along = ms > 1e-3f ? vdot(vnorm(to), vmul(mv, 1.0f / ms)) : 0;
                 float cs = *ph == 1 ? vlen(vadd(vmul(in->cfront, in->cspd), vmul(up, -in->cfall))) : 0;
-                if (in->cfall >= 0 && ms > 1.0f && ms >= cs && along >= 0.7071f) { /* isValidPushedFromPlayer: a kick */
+                if (in->cfall >= 0 && ms > 1.0f && ms >= cs && along >= 0.7071f && mario_kick(in->head, rad)) { /* isValidPushedFromPlayer: a kick */
                     float k = ms; /* _94 . his velocity, _94 being his direction */
                     coco_hit(in, mv, k * 1.1f > 18.0f ? k * 1.1f : 18.0f, -0.7f * k, up);
                     se_start(SE_OJ_COCONUT_FLIP_S, &in->head.x); /* receiveOtherMsg */
+                    mario_kicked();
                     printf("coconut %d kicked" "\n", row);
                 } else { /* sendMsgPush: Mario is pushed out */
                     V3 out = vtangent(vmul(to, -1.0f), up);
@@ -4790,6 +4812,7 @@ int game_test_enemy(int kind, int k, int how)
         mario->hvel = v3(0, 0, 0); mario->vup = how == 0 ? -5.0f : 0.0f; mario->grounded = 0;
         mario->spin_timer = how == 1 ? SPIN_TIME : 0;
         if (how == 4) { mario->pos = vadd(e->pos, vmul(e->up, 250.0f)); mario->hip = HIP_FALL; mario->hip_t = 0; }
+        if (how == 6) { mario->grounded = 1; mario->face = vmul(side, -1.0f); } /* 90 off, facing it: walking into it */
         return e->row;
     }
     return -1;
@@ -6334,6 +6357,7 @@ int game_test_punch(int how)
         if (how == 0) {
             mario->pos = vadd(base, vmul(side, 150.0f));
             mario->spin_timer = SPIN_TIME;
+            if (got_pieces < 20) got_pieces = 20; /* for its scatterStarPiecePlayer */
         } else {
             mario->pos = vadd(base, vmul(up, 300.0f));
             mario->grounded = 0; mario->hip = HIP_FALL; mario->hip_t = 0;
@@ -20422,6 +20446,25 @@ static int mario_offence(V3 c, float r, V3 grav)
     }
     return MSG_NONE;
 }
+/* MarioActor::sendBodyAttack's ACTMES_KICK (MarioActorPunch.cpp:193, from MarioActorOffensiveMsg.cpp:136): within
+ * mSensorRadiusAttack, his cylinder on the sensor (width 20 + 35, + 15 at walk speed index 5 and up; height 60, 70
+ * jumping), status none or skate, no head-on wall (_8), not damaged, no hip drop (_B), the sensor less than 90 degrees
+ * from his front about the gravity. A receiver taking it calls mario_kicked. ponytail: _8 is the port's wall touch, no
+ * printHitMark (no hit mark effect in fx_tab.h) */
+static int mario_kick(V3 c, float r)
+{
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), off = vsub(c, mc);
+    if (vlen(off) >= r + 120.0f) return 0;
+    float axial = vdot(off, mario->up), radial = vlen(vtangent(off, mario->up));
+    if (!(axial > -r && r + 55.0f + (mario->tsi >= 5 ? 15.0f : 0.0f) - radial > 0.0f && r + (mario->grounded ? 60.0f : 70.0f) - axial > 0.0f))
+        return 0;
+    if (swimming || mario->walling || hg.on || mario->slider || mario->side_step || mario->rabbit || mario->teresa || mario->magic ||
+        foo_active() || dmg.st)
+        return 0;                                                       /* getCurrentStatus: None or Skate */
+    if (mario->wall || dm_damaging() || mario->hip) return 0;
+    return vdot(vtangent(off, mario->up), mario->face) > 0.0f;          /* diffAngleAbsHorizontal < HALF_PI */
+}
+static void mario_kicked(void) { mario_sound("声ランニングキック"); m_anim("ランニングキック"); m_pad_vib(2); }
 
 /* Plant.cpp, PlantStalk.cpp, PlantLeaf.cpp, PlantRailInfo.cpp, PlantPoint.cpp after Petari (the beanstalk; "vine"
  * here, FlowerGroup's members being Plant). Its rail is the stalk: PlantRailInfo points every 30 along it (the last at
@@ -21645,10 +21688,7 @@ static void w_kill(Kuribo *k)
  * a coin), a spin: Stagger, or a kick once 15 into it: BlowDown (36 / 30 away, 30, three star pieces); arg1 0 starts
  * it AppearFromBox (7 / 30 along its front, Land 15 after the ground). Dead in a death area or water, no item.
  * ponytail: no star pointer bind (BindStarPointer / AnimScaleController), no push between walkers, no shadow, no
- * velocity areas / rail-moving ground, no sounds
- * ponytail (unmarked until the 2026-11-02 audit): no PlayerKick (walking into a staggering Kuribo / KuriboMini:
- * BlowDown with three star pieces, Kuribo.cpp:310, KuriboMini.cpp:273), arg0 set should switch gravity off and take
- * it from its rotation (Kuribo.cpp:90) */
+ * velocity areas / rail-moving ground, no sounds */
 enum { KN_NONACTIVE, KN_APPEARFROMBOX, KN_BLOW, KN_BLOWLAND, KN_WANDER, KN_FINDPLAYER, KN_CHASE, KN_ATTACKSUCCESS,
        KN_STAGGER, KN_FLATDOWN, KN_HIPDROPDOWN, KN_PRESSDOWN, KN_BLOWDOWN };
 #define KB_G 1.5f, 0.99f, 0.93f
@@ -21659,7 +21699,9 @@ static void kuribo_init(Kuribo *k)
     const Row *r = &sc->objs[k->row];
     V3 x, z;
     row_axes(r, &x, &z);
-    k->grav = vmul(up_at(k->pos, v3(0, 1, 0)), -1.0f);
+    k->nograv = k->kind == WALK_KURIBO && r->arg[0] != -1; /* Kuribo::init: getJMapInfoArg0WithInit(_C4) */
+    if (k->nograv) k->grav = vnorm(vcross(z, x)); /* offCalcGravity, getUpVecFromQuat into mGravity (Kuribo.cpp:96-101) */
+    else k->grav = vmul(up_at(k->pos, v3(0, 1, 0)), -1.0f);
     k->qy = vmul(k->grav, -1.0f);
     k->qz = vnorm(vtangent(z, k->qy));
     if (vlen(k->qz) < 1e-3f) k->qz = vnorm(vtangent(x, k->qy));
@@ -21673,7 +21715,7 @@ static void kuribo_update(Kuribo *k)
 {
     float s = w_scale(k);
     if (!k->front.x && !k->front.y && !k->front.z) kuribo_init(k);
-    k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f); /* onCalcGravity */
+    if (!k->nograv) k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f); /* onCalcGravity */
     int st = k->step;
     switch (k->nrv) {
     case KN_WANDER:
@@ -21775,6 +21817,13 @@ static void kuribo_update(Kuribo *k)
             if (vlen(vsub(mario->pos, k->pos)) < 1000.0f) scene_stop = 4; /* stopSceneForDefaultHit */
             w_nrv(k, KN_BLOWDOWN); k->item = 2;
         }
+    } else if (msg == MSG_NONE && kick && enable_punch && mario_kick(c, 75.0f * s)) { /* receiveOtherMsg: isMsgPlayerKick, requestBlowDown */
+        V3 h = vnorm(vtangent(vsub(k->pos, mario->pos), k->grav));
+        k->vel = vsub(vmul(h, 36.0f), vmul(k->grav, 30.0f));
+        if (vlen(vsub(mario->pos, k->pos)) < 1000.0f) scene_stop = 4;
+        w_nrv(k, KN_BLOWDOWN); k->item = 2;
+        mario_kicked();
+        printf("kuribo %d kicked\n", k->row);
     } else if (kn_in(k, KNB(KN_WANDER) | KNB(KN_FINDPLAYER) | KNB(KN_CHASE)) && mario->hip != HIP_FALL && !mario->hurt_timer &&
                vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), c)) < 45.0f * s + HIT_BODY_R) { /* attackSensor */
         hurt_mario(c, 15.0f);
@@ -21869,6 +21918,13 @@ static void kmini_update(Kuribo *k)
         k->vel = vsub(vmul(h, 22.0f), vmul(k->grav, 25.0f));
         if (vlen(vsub(mario->pos, k->pos)) < 1000.0f) scene_stop = 4;
         w_nrv(k, KN_BLOWDOWN);
+    } else if (msg == MSG_NONE && k->nrv == KN_STAGGER && mario_kick(c, 60.0f)) { /* receiveOtherMsg: isMsgPlayerKick, isEnableKick */
+        V3 h = vnorm(vtangent(vsub(k->pos, mario->pos), k->grav));
+        k->item = 2;                                     /* setTypeStarPeace(3) */
+        k->vel = vsub(vmul(h, 22.0f), vmul(k->grav, 25.0f));
+        if (vlen(vsub(mario->pos, k->pos)) < 1000.0f) scene_stop = 4;
+        w_nrv(k, KN_BLOWDOWN);
+        mario_kicked();
     } else if (kn_in(k, KNB(KN_WANDER) | KNB(KN_FINDPLAYER) | KNB(KN_CHASE)) && mario->hip != HIP_FALL && !mario->hurt_timer &&
                vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), c)) < 40.0f + HIT_BODY_R) {
         hurt_mario(c, 15.0f);
@@ -22443,7 +22499,9 @@ static void packun_update(Kuribo *k)
         w_nrv(k, PN_TRAMPLEDOWN);
         if (msg == MSG_TRAMPLE) mario_trample();
     } else if (msg == MSG_HITALL) packun_punch(k, mario->pos);
-    else if (!mario->hurt_timer && vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), head)) < 50.0f * s + HIT_BODY_R) {
+    else if (msg == MSG_NONE && (k->nrv == PN_SWOONSTART || k->nrv == PN_SWOON) && mario_kick(head, 90.0f * s)) {
+        packun_punch(k, mario->pos); mario_kicked(); /* receiveOtherMsg: isMsgPlayerKick while swooning (stopSceneForDefaultHit 5) */
+    } else if (!mario->hurt_timer && vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), head)) < 50.0f * s + HIT_BODY_R) {
         mario_attack(ATK_STRONG, head); /* sendMsgEnemyAttackStrong */
         if (mario->hip != HIP_FALL) w_nrv(k, PN_HITWAITFORATTACK);
     }
@@ -22566,7 +22624,7 @@ static void butterfly_update(Kuribo *k)
  * Swooning, a spin: SpinOut (Damage, blown 10 away), a trample or hip drop: Smash (Press); both throw its star pieces
  * (arg1, 20) 2 every 5 frames from Head3 (20, 40), the rest at the end, then kill (its dead switch). Its body (60, 60
  * up) pushes Mario while shown (isSolidBody); a jet turtle or fire ball then: KickOut, an enemy's blow: SpinOut.
- * Its up turns 0.1 a frame to the ground's normal (control). ponytail: no 2P pointer (Freeze), no kick, no
+ * Its up turns 0.1 a frame to the ground's normal (control). ponytail: no 2P pointer (Freeze), no
  * footprints (FootPrint decals) or smoke effects, no push from enemies, no move limit collision, no AnimScaleController
  * (hit reaction); Mario's spin hits once a spin */
 /* Kuribo fields: phase hidden (hideModel), timer star pieces left, sstep mMeanderStep, to mMeanderAngle, ttarget
@@ -22751,6 +22809,7 @@ static void petari_update(Kuribo *k)
     V3 body = vadd(k->pos, vmul(k->qy, 60.0f)), c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     int msg = mario_offence(body, 60.0f, k->grav);
     if (k->nrv == PT_SWOON && msg == MSG_HITALL && !k->bshow) { k->bshow = 1; petari_blow(k, mario->pos, PT_SPINOUT); return; }
+    if (k->nrv == PT_SWOON && msg == MSG_NONE && mario_kick(body, 60.0f)) { petari_blow(k, mario->pos, PT_KICKOUT); mario_kicked(); return; } /* receiveOtherMsg: isMsgPlayerKick */
     if (k->nrv == PT_SWOON && (msg == MSG_TRAMPLE || msg == MSG_HIPDROP)) {
         if (msg == MSG_TRAMPLE) mario_trample();
         w_nrv(k, PT_SMASH);
@@ -25931,6 +25990,14 @@ static void update_kuribo_one(Kuribo *k)
 /* MR::appearStarPiece (StarPieceDirector::appearPiece, StarPiece::launch): n star pieces from p, each 40 along `up`
  * plus up to 10 at random on each axis, falling (update_launched_pieces); gettable after 25 frames */
 static void drop_pieces(V3 p, V3 up, int n) { launch_pieces(p, up, n, 10.0f, 40.0f); }
+/* MR::scatterStarPiecePlayer (MarioAccess::scatterStarPiece): SE_OJ_STAR_PIECE_BURST if he has any, then up to n of
+ * his pieces launched from him (StarPiece::launch 24, 24: 24 against gravity plus up to 24 at random on each axis) */
+static void scatter_pieces_player(int n)
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    if (got_pieces > 0) se_start(SE_OJ_STAR_PIECE_BURST, &c.x);
+    for (int i = 0; i < n && got_pieces > 0; i++) { launch_pieces(c, mario->up, 1, 24.0f, 24.0f); got_pieces--; }
+}
 /* appearStarPieceToDirection: n pieces along dir at v, up to h at random on each axis */
 static void launch_pieces(V3 p, V3 up, int n, float h, float v)
 {
