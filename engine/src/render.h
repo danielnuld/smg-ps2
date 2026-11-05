@@ -68,7 +68,7 @@ void render_strips(const Strip *st, int n);
 /* 2D quads over the frame, drawn after everything else in the chain (before the HUD text): x 0..640, y 0..448,
  * u / v / uw / vh in texels, colour 0xAABBGGRR (0x80 = 1.0) modulating the texture, tex NO_TEX for flat; vw / uh
  * (v along the width, u down the height) skew the texture (a rotated texture SRT): drawn as two triangles with
- * float coordinates (clamped off the texture), as is a quad with pad 1 */
+ * float coordinates (clamped off the texture), as is a quad with pad bit 0; pad bit 1: added (Cs x As + Cd) */
 typedef struct { float x, y, w, h, u, v, uw, vh; u32 rgba; u16 tex, pad; float vw, uh; } Quad;
 void render_quads(const Quad *q, int n);
 /* the quads queued so far drawn now (in the chain's order: what comes after covers them) */

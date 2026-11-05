@@ -1658,9 +1658,9 @@ void render_quads(const Quad *q, int n)
 static void draw_quads(void)
 {
     for (int i = 0; i < nquads;) {
-        u32 t = quads[i].tex;
+        u32 t = quads[i].tex, add = quads[i].pad & 2;
         int j = i;
-        while (j < nquads && j - i < 64 && quads[j].tex == t)
+        while (j < nquads && j - i < 64 && quads[j].tex == t && (quads[j].pad & 2) == add)
             j++;
         if (packet2_get_qw_count(vif[cur]) + 16 + TEXP + 4 + (j - i) * 10 > PACKET_QW)
             flush_vif();
@@ -1670,7 +1670,7 @@ static void draw_quads(void)
         packet2_vif_open_direct(vif[cur], 0);
         qword_t *tag = (qword_t *)vif[cur]->next;
         packet2_add_2x_s64(vif[cur], 0, GIF_REG_AD);
-        packet2_add_2x_s64(vif[cur], GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA);
+        packet2_add_2x_s64(vif[cur], add ? GS_SET_ALPHA(0, 2, 0, 1, 0) : GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA);
         packet2_add_2x_s64(vif[cur], GS_SET_TEST(1, ATEST_METHOD_GREATER, 0, 0, 0, 0, 1, ZTEST_METHOD_ALLPASS), GS_REG_TEST);
         packet2_add_2x_s64(vif[cur], GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 1), GS_REG_ZBUF);
         u32 regs = 3;
@@ -1678,7 +1678,7 @@ static void draw_quads(void)
             const Quad *q = &quads[i];
             float x0 = 2048.0f - SCREEN_W / 2 + q->x, y0 = 2048.0f - SCREEN_H / 2 + q->y * YS;
             float x1 = x0 + q->w, y1 = y0 + q->h * YS;
-            int skew = q->vw != 0.0f || q->uh != 0.0f || q->pad;
+            int skew = q->vw != 0.0f || q->uh != 0.0f || (q->pad & 1);
             skew &= t != NO_TEX; /* skewed: ST (floats: its corners may fall off the texture, clamped there) */
             packet2_add_2x_s64(vif[cur], GS_SET_PRIM(skew ? PRIM_TRIANGLE_STRIP : PRIM_SPRITE, 0, t != NO_TEX, 0, 1, 0, !skew, 0, 0), GS_REG_PRIM);
             packet2_add_2x_s64(vif[cur], GS_SET_RGBAQ(q->rgba & 0xFF, q->rgba >> 8 & 0xFF, q->rgba >> 16 & 0xFF, q->rgba >> 24, 0x3F800000), GS_REG_RGBAQ);

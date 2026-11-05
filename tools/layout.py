@@ -22,8 +22,9 @@ InformationWindow). A pane rotated 180 about y is mirrored. Pictures whose mater
 second (StarPieceTargetMeter's fill halves, TalkBalloonEvent's beak and its shadow) are masked panes: their texture
 baked white (the material's colour in the quad's), their rectangle where the mask (through its texture SRT 1) shows.
 A material's texture SRT is baked into its image (StarPieceTargetMeter's frame: scale 2 mirrored, a whole ring).
-ponytail: no other rotation, no other animated texture SRT or projections, vertex colours averaged, the brlan
-animations not played (but appear's end and the masked panes' angles).
+The HUD counters' wait.brlan (the shadows' bob) and flash.brlan (TxtNumber's C0) and their CountUpPaneRumbler pane
+are tags the engine plays (quads, below). ponytail: no other rotation, no other animated texture SRT or projections,
+vertex colours averaged, the other brlan animations not played (but appear's end and the masked panes' angles).
 """
 import math
 import struct
@@ -212,7 +213,32 @@ def quads(files, name):
             panes[i]["alpha"] = 1.0
     nfill = 0
     absolute = []  # per pane: its origin's position, its scale, its alpha, shown, group
+    # the HUD counters' runtime animations (game.c lay_draw), in a fill 0 / 255 quad's cu, cv, tu, tv: cu =
+    # wait.brlan's RLPA translation y curve's first key frame + 1 (0 none; the curve (p, b) (p + r, b + A) (p + r + 20,
+    # b + A) (p + 300, b), slopes 0, looped over 320), cv = 16 (b - the pane's y), tu = 16 A (scaled by the parents),
+    # the children moved with it; tv bit 0: a text box whose material flash.brlan's RLMC C0 animates, bit 1: under
+    # the counter's CountUpPaneRumbler pane (RUMBLER), bits 2..: r
+    wait = anim_keys(files["wait.brlan"]) if "wait.brlan" in files else {}
+    flash = {k[0] for k in anim_keys(files["flash.brlan"]) if k[1] and k[2] == b"RLMC"} if "flash.brlan" in files else set()
+    tags, mark = [], 0
+
+    def retag():
+        out[mark:] = [q[:12] + tags[-1] if q[11] in (0, 255) else q for q in out[mark:]]
     for p in panes:
+        if tags:
+            retag()
+        mark = len(out)
+        tg = tags[p["parent"]] if p["parent"] is not None else (0, 0, 0, 0)
+        tg = tg[:3] + (tg[3] & ~1 | (2 if p["name"] == RUMBLER.get(name) else 0) |
+                       (1 if p["kind"] == "txt1" and p["mat"] is not None and p["mat"] < len(mats)
+                        and mats[p["mat"]]["name"] in flash else 0),)
+        keys = wait.get((p["name"], False, b"RLPA", 1))
+        if keys and len(keys) > 1:
+            (p0, b0, _), (p1, a1, _), (p2, a2, _), (p3, b3, _) = keys
+            assert (p2 - p1, p3 - p0, a1, b3) == (20, 300, a2, b0) and not any(k[2] for k in keys), keys
+            psy = absolute[p["parent"]][1][1]
+            tg = (int(p0) + 1, round(16 * (b0 - p["t"][1]) * psy), round(16 * (a1 - b0) * psy), tg[3] | int(p1 - p0) << 2)
+        tags.append(tg)
         if p["parent"] is None:
             pos, sc, al, shown, grp = (0.0, 0.0), (1.0, 1.0), 1.0, True, 0
         else:
@@ -289,7 +315,37 @@ def quads(files, name):
                 (x0 + fw, y0 - h + fh, w - 2 * fw, fh, fi, rgba, iu, 1, iu, 0, grp, 0, 0, 0, 0, 0),
                 (x0, y0 - fh, fw, h - 2 * fh, fi, rgba, 0, iv, 1, iv, grp, 0, 0, 0, 0, 0),                   # left, right edges
                 (x0 + w - fw, y0 - fh, fw, h - 2 * fh, fi, rgba, 1, iv, 0, iv, grp, 0, 0, 0, 0, 0)]
+    if tags:
+        retag()
     return out, images
+
+
+def anim_keys(b):
+    """A BRLAN's Hermite curves -> {(pane name, is material, tag, target): [(frame, value, slope)]}."""
+    out = {}
+    o = u16(b, 0xC)
+    for _ in range(u16(b, 0xE)):
+        kind, size = b[o:o + 4], u32(b, o + 4)
+        if kind == b"pai1":
+            for e in range(u16(b, o + 14)):
+                eo = o + u32(b, o + u32(b, o + 16) + 4 * e)
+                name = b[eo:eo + 20].split(b"\0")[0].decode()
+                for t in range(b[eo + 20]):
+                    to = eo + u32(b, eo + 24 + 4 * t)
+                    for i in range(b[to + 4]):
+                        io = to + u32(b, to + 8 + 4 * i)
+                        if b[io + 2] == 2:
+                            ko = io + u32(b, io + 8)
+                            out[(name, bool(b[eo + 21]), b[to:to + 4], b[io + 1])] = [
+                                struct.unpack_from(">3f", b, ko + 12 * k) for k in range(u16(b, io + 4))]
+        o += size
+    return out
+
+
+# the counters' CountUpPaneRumbler pane (Petari CoinCounter.cpp:36, StarCounter.cpp:24, PlayerLeft.cpp:27,
+# PurpleCoinCounter.cpp:29, StarPieceCounter.cpp:40)
+RUMBLER = {"StarCounter": "Counter", "CoinCounter": "Counter", "PlayerLeft": "Counter", "PurpleCoinCounter": "Counter",
+           "StarPieceCounter": "TCounter"}
 
 
 def anim_at(b, frame):
@@ -514,14 +570,15 @@ def section(fsp, first_tex):
         for x, y, w, h, ti, rgba, u0, v0, u1, v1, grp, fill, cu, cv, tu, tv in qs:
             if fill == 255:  # a text box: u v the font size x 16, uw the character space x 16, vh the text position
                 body += struct.pack("<4hH4B4h2B4h", round(x), round(y), round(w), round(h), 0xFFFF, *rgba,
-                                    round(16 * u0), round(16 * v0), round(16 * u1), v1, grp, fill, 0, 0, 0, 0)
+                                    round(16 * u0), round(16 * v0), round(16 * u1), v1, grp, fill, cu, cv, tu, tv)
                 continue
             t = ps2[base + ti] if ti is not None else None
             sw, sh = (t["w"] * t["u_scale"], t["h"] * t["v_scale"]) if t else (0, 0)
             body += struct.pack("<4hH4B4h2B4h", round(x), round(y), round(w), round(h),
                                 0xFFFF if ti is None else first_tex + base + ti, *rgba,
                                 round(16 * u0 * sw), round(16 * v0 * sh), round(16 * (u1 - u0) * sw), round(16 * (v1 - v0) * sh),
-                                grp, fill, round(16 * cu * sw), round(16 * cv * sh), round(16 * tu * sw), round(16 * tv * sh))
+                                grp, fill, *((cu, cv, tu, tv) if not fill else
+                                             (round(16 * cu * sw), round(16 * cv * sh), round(16 * tu * sw), round(16 * tv * sh))))
     return head + body, ps2, images
 
 

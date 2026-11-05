@@ -283,6 +283,19 @@ def font_chunk(fsp, lang=LANG):
     nimg, ng = atlas(num, set(range(0x30, 0x3A)), (256, 256 - y0))
     pimg[y0:] = np.maximum(pimg[y0:], nimg)
     pg += [(0x1000 + g[0], g[1], g[2] + y0) + tuple(g[3:]) for g in ng]
+    # NumberFont's digit masks (white, its alpha) at half size in the text atlas's spare rows, codes 0xE030 + digit:
+    # game.c lay_text's flash pass adds the material's C0 under the glyph's alpha (lyt's lerp(C0, C1, I))
+    y, x = max(g[2] + g[4] for g in tg) + 1, 0
+    for g in ng:
+        m = nimg[g[2]:g[2] + g[4], g[1]:g[1] + g[3], 3].astype(np.float32)
+        m = m[:m.shape[0] // 2 * 2, :m.shape[1] // 2 * 2].reshape(m.shape[0] // 2, 2, m.shape[1] // 2, 2).mean((1, 3))
+        if x + m.shape[1] > timg.shape[1] or y + m.shape[0] > timg.shape[0]:
+            break  # no room: the flash goes without its C0 pass
+        timg[y:y + m.shape[0], x:x + m.shape[1]] = (m + 0.5).astype(np.uint8)[..., None]
+        assert 0xE000 + g[0] not in {t[0] for t in tg}
+        tg.append((0xE000 + g[0], x, y, m.shape[1], m.shape[0]) + tuple(g[5:]))
+        x += m.shape[1] + 1
+    tg.sort()
     ttex = _text_tex(timg)
     ptex = tex.to_ps2(pimg, 0, 0, hi=True)
     glyphs = b"".join(struct.pack("<HHHBBbBbx", *g) for g in tg + pg)
