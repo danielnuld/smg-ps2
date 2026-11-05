@@ -458,6 +458,15 @@ Second console round (2026-10-24), from Daniel's report:
   "<BVA>:<frame>" pose) and the 20-frame wobble (cagel_draw, drawn only: its collision stays put, ponytail); the
   break: CrystalCageLBreak's clip where it stood and the frame-2 stump at _F8 (the map below it). Test `cage`
   CosmosGarden 3 (hit, break `stump -60 below`, star got). Left: 壁スパーク effect.
+- SpinDriver / SuperSpinDriver (feat/265-spindriver, 2026-11-05): Capture (arg2, default on: Mario within 240
+  without a spin, farther than 350 since the last one, pulled to the centre, turned to the star's pose over 40 / 60,
+  let go once centred or shot by a spin), the stars' Y turn (_104 / mFrontAngle with its swing / near / capture
+  feeds), drawn with calcInitPose's up / front (arg5), calcShootMotionTime's motion steps for both, Mario's bind pose
+  as a quaternion (slerps in Capture / ShootStart, turnBindHead, SpinDriver's calcParabolicBindPose flip).
+  SuperSpinDriver binds only after Wait's 90 frames (sCanBindTime). Test `zone` + XF -DCAPTURE_TEST (EggStar 1:
+  captured at 150, let go at step 61, again after 1000 away, a spin at step 39: flight 400, motions 75 / 330 / 380;
+  -DCAPTURE_SMALL=1 on HeavenlyBeach 1: let go at step 41, flight 80, 2 / 10 / 60). ponytail: only the stars' Wait
+  clip is packed (Active / Start not played), no SpinDriverPathDrawer (no strip draw, no SpinDriverPath textures).
 ## Rules
 
 - Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -

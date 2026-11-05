@@ -2516,9 +2516,25 @@ int main(void)
             printf("pipe test f %u: %s\n", frame, d);
         }
 #endif
-#ifdef ZONE_TEST
+#ifdef CAPTURE_TEST /* XF=-DCAPTURE_TEST with `zone` (SuperSpinDriver; -DCAPTURE_SMALL=1 SpinDriver): Mario put 150 from it at 600
+                     * (Capture, let go once centred), 1000 away, 150 again and a spin at 840 (ShootStart, the flight) */
+#ifndef CAPTURE_SMALL
+#define CAPTURE_SMALL 0
+#endif
+        const int cap_small = CAPTURE_SMALL;
+        if (frame == 600 || frame == 790 || frame == 800)
+            printf("capture test f %u: by launch star %d\n", frame, game_test_capture(cap_small, frame == 790 ? 1000.0f : 150.0f));
+        pad_force = frame == 840 ? PAD_SQUARE : 0;
+        if (frame > 600 && frame <= 1400 && frame % 10 == 0) {
+            char d[128];
+            game_debug(d, sizeof d);
+            printf("capture test f %u: launch %d %s\n", frame, game_launch_state(), d);
+        }
+#elif defined(ZONE_TEST)
         if (frame == 120)
             printf("zone test: launch star %d\n", game_test_spindriver(0));
+#endif
+#ifdef ZONE_TEST
         { /* per 60 frames: frames longer than 20 ms (missed vsync) and the worst logic / draw / GS of the window */
             static u32 prev, slow, wl, wd, wg;
             if (prev && t0 - prev > (u32)(20000 * EE_MHZ)) slow++;
