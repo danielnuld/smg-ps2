@@ -2123,7 +2123,13 @@ int main(void)
         if (frame >= 200 && frame <= 1600 && frame % 20 == 0) { printf("kchief test f %u: life %d lives %d\n", frame, game_life(), game_lives()); game_kchief_state(); }
     }
 #endif
-#ifdef BEGOMAN_TEST
+#ifdef BBEGO_TEST /* begoman build with XF=-DBBEGO_TEST, BattleShipGalaxy/3: the BossBegoman fight (game_test_bbego) */
+    {
+        static u32 f0;
+        if (!f0 && frame > 30 && game_test_free()) f0 = frame;
+        if (f0 && frame - f0 < 9000) game_test_bbego((int)(frame - f0));
+    }
+#elif defined(BEGOMAN_TEST)
     {
         static u32 f0;
         u32 mf = frame;

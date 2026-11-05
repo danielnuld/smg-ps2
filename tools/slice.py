@@ -81,6 +81,7 @@ SKINNED_OBJ = ("MarioFreezeIce", "MarioTornado", "MarioFireBall", "WaterColumn",
                "PStar", "GStar", "SpinTico", "MarioHair", "AstroCore", "LuigiNPC", "LuigiEvent",
                "DemoPeachCastleGate", "PicketSwitch", "PicketSwitchBig", "CapsuleCage", "KeySwitchOwned", "ChildKuribo", "BreakableCageBreak")  # PStar / GStar: the star return demos' PowerStar / GrandStar (clip names fit 31 chars)
 SKINNED_OBJ += tuple(c for c in WAIT_SKINNED if c not in SKINNED_OBJ)
+SKINNED_OBJ += ("BossBegomanHead",)  # BossBegoman's PartsModel (its own clips: On, Off, Turn...)
 # MapObjActor::initialize (tryStartAllAnim): a placed class whose model archive holds a BCK of the archive's name
 # plays it from the start; such classes are drawn skinned too (AUTO_SKINNED, class -> archive, filled by placement)
 AUTO_SKINNED = {}
@@ -171,7 +172,8 @@ EXTRA = {"ShellfishYellowChip": ("YellowChip",), "BreakableTrash": ("BreakableCa
          "MorphItemNeoFire": ("MarioFireBall",), "AirBubbleGenerator": ("AirBubble",),
          "DinoPackun": ("DinoPackunTailBall", "DinoPackunEggShell", "DinoPackunEggShell#EggBroken", "DinoPackunEggShellBreak"), "OtaKing": ("CocoNut", "OtaKingFoot", "FireBall", "FireBubble", "OtaKingMagma", "OtaKingLongFoot", "OtaKingMagmaBloom"), "OtaRock": ("CocoNut", "FireBall"), "HammerHeadPackun": ("PackunLeaf",), "Plant": ("PlantTop", "PlantLeaf"), "CocoSambo": ("CocoSamboHead",), "Hanachan": ("HanachanHead", "HanachanBody", "HanachanBodyS"), "PackunPetit": ("PackunPetitHead",),
          "RockCreator": ("RockBreak",), "WanwanRolling": ("WanwanRollingBreak",),
-         "StringSpider": ("StringSpiderString",), "SpiderCoin": ("SpaceCocoon",), "BegomanSpike": ("BegomanSpikeHead", "BegomanBrokenPiece"), "WoodBox": ("#WoodBox", "WoodBoxBreak"), "KoopaStatue": ("#Break", "KoopaStatueBreak"), "CrystalCageS": ("#CrystalCageS", "CrystalCageSBreak"),
+         "StringSpider": ("StringSpiderString",), "SpiderCoin": ("SpaceCocoon",), "BegomanSpike": ("BegomanSpikeHead", "BegomanBrokenPiece"), "BossBegoman": ("BossBegomanHead", "BegomanBaby", "BegomanSpike", "BegomanSpikeHead", "BegomanBrokenPiece"),  # its head (PartsModel), followers
+         "WoodBox": ("#WoodBox", "WoodBoxBreak"), "KoopaStatue": ("#Break", "KoopaStatueBreak"), "CrystalCageS": ("#CrystalCageS", "CrystalCageSBreak"),
          "CrystalCageM": ("#CrystalCageM", "CrystalCageSBreak"), "RingBeamer": ("JumpBeamerBeam",), "Mogu": ("MoguStone", "MoguHole"), "Mogucchi": ("MogucchiHole", "MogucchiHillA", "MogucchiHillB", "MogucchiHillC"), "WaterPressure": ("WaterBullet",), "EyeBeamer": ("EyeBeamerBeam",), "FishGroupA": ("FishA",), "FishGroupB": ("FishB",), "FishGroupC": ("FishC",), "FishGroupD": ("FishD",), "FishGroupE": ("FishE",), "FishGroupF": ("FishF",), "SeaGullGroup": ("SeaGull",), "SunakazeKun": ("SunakazeKunTrap",), "ChooChooTrain": ("ChooChooTrainBody",), "BigFan": ("BigFanWind",), "BigFanNoLeg": ("BigFanWind",), "BombHeiLauncher": ("BombHei",), "BombLauncher": ("BombHei",), "JumpBeamer": ("JumpBeamerBeam", "JumpBeamerHead")}
 # MorphItemObjNeo::makeArchiveList: Mario's (and Luigi's: the packs serve both) model of the power-up, then the container by arg3 (0 ItemBubble, -1 CrystalBox + CrystalBoxBreak; none for BenefitItemInvincible).; IceMarioHandL / R, InvincibleMarioHandL / R (initHand: game.c hands)
 MORPH_ARCS = {"MorphItemNeoHopper": ("HopperMario", "HopperLuigi"), "MorphItemNeoBee": ("BeeMarioWing", "BeeMario", "BeeLuigi"),
@@ -1692,7 +1694,7 @@ def declare_stars(keep, scenario, appear, jp):
         k = STAR_DECLARERS.get(r["name"], -1)
         if r["name"] == "NoteFairy":  # declarePowerStar when arg7 is 1-3
             k = None if s32(r["args"][7]) > 0 else -1
-        elif r["name"] in ("CollectTico", "DinoPackun", "OtaKing", "BossStinkBug"):  # their init declarePowerStar, always
+        elif r["name"] in ("CollectTico", "DinoPackun", "OtaKing", "BossStinkBug", "BossBegoman"):  # their init declarePowerStar, always
             k = None
         elif r["name"] in ("LuigiNPC", "LuigiEvent"):  # LuigiNPC::isDeclarePowerStarType: Afraid, Event, OnTree, Arrested
             t = s32(r["args"][0]) + (2 if r["name"] == "LuigiEvent" else 0)
