@@ -8311,8 +8311,8 @@ static int fireball_hits_snowman(V3 p)
  * at 360 i / n over sCompletePlacementTime 40, eased in and out; from step 60 to sCompleteDemoTime 200 the ring
  * shrinks to 0 turning 900 degrees, eased in; SE_SM_LV_STRAYTICO_COMPLETE), then Flash (CollectTicoLight,
  * SE_SM_STRAYTICO_FUSION; the Lumas gone at 10; at 60 the demo ended, SW_A on, the power star from _94: the row dies,
- * star_wait). row_turn 1 rescued, row_step the frames since (1000: no Glad). ponytail: no bubble, no binder
- * (reboundVelocityFromCollision), no LauncherCamera nerve; the demo's cast is a StrayTico row (pd.row: update_strays
+ * star_wait). row_turn 1 rescued, row_step the frames since (1000: no Glad). LauncherCamera while a launch star
+ * flies Mario. ponytail: no bubble, no binder (reboundVelocityFromCollision); the demo's cast is a StrayTico row (pd.row: update_strays
  * runs); the sheet variant (集めチコスター出現) unhandled: no galaxy has it */
 static struct { int row, nrv, step, n; V3 c, up, d4; } ctd = {.row = -1}; /* the CollectTico in its demo: 1 CompleteDemo, 2 Flash */
 static struct { V3 e0, vel, b0, front; } strd[64]; /* StrayTico by row % 64: _E0, its velocity, _B0, mFrontVec */
@@ -8412,6 +8412,19 @@ static void update_strays(void)
                 d->b0 = c; /* exeChase's first step: _B0 */
             }
             in->lv[0] = se_level(SE_SM_LV_STRAYTICO_WAIT_GRP, &in->head.x, in->lv[0]);
+        } else if (mario->launch >= 0 && fly_on) { /* exeLauncherCamera (isActiveLauncherCamera / FlightCamera): 400
+                                                   * behind Mario along the camera's Z, 150 over him */
+            in->lv[0] = se_level(SE_SM_LV_STRAYTICO_WAIT_GRP, &in->head.x, in->lv[0]);
+            V3 ce, cw, cu;
+            float fovy;
+            camera_pose(&ce, &cw, &cu, &fovy);
+            V3 tg = vsub(mario->pos, vmul(vnorm(vsub(cw, ce)), 400.0f)), dv = vsub(tg, in->head), g = vmul(up, -1.0f);
+            if (vlen(dv) > 1e-3f) d->vel = vadd(d->vel, vmul(vnorm(dv), 0.5f)); /* addVelocityMoveToTarget */
+            float x = vdot(g, dv) - 150.0f, n = (fminf(fmaxf(fabsf(x), -200.0f), 200.0f) + 200.0f) / 400.0f;
+            d->vel = vadd(d->vel, vmul(g, 0.5f * (x >= 0 ? n : -n))); /* addVelocityKeepHeight(150, 0.5, 200) */
+            d->vel = vmul(d->vel, 0.97f); /* attenuateVelocity(sChaseFric) */
+            in->head = vadd(in->head, d->vel);
+            d->b0 = c; /* back to exeChase: its first step's _B0 */
         } else { /* exeChase: updateWarp, updateChase */
             in->lv[0] = se_level(SE_SM_LV_STRAYTICO_WAIT_GRP, &in->head.x, in->lv[0]);
             if (vlen(vsub(mario->pos, in->head)) > 2000.0f) { /* !isNearPlayerAnyTime(sWarpTryDistance) */
