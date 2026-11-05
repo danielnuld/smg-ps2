@@ -75,14 +75,14 @@ static struct { int on, owner, nrv, step, demo; V3 pos, vel, up; float rate, t; 
 static struct { int row, nrv, step; V3 last; } exts[MAX_EXTS];
 static int nexts;
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
-       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU, WALK_BOMBHEI, WALK_STRSPIDER, WALK_BEGOSPIKE, WALK_KCHIEF, WALK_BEGOBABY, WALK_BBEGO, WALK_KAMECK, WALK_NOKO, WALK_SAMBOHEAD, WALK_BOMBTERESA, WALK_KINDS };
+       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU, WALK_BOMBHEI, WALK_STRSPIDER, WALK_BEGOSPIKE, WALK_KCHIEF, WALK_BEGOBABY, WALK_BBEGO, WALK_KAMECK, WALK_NOKO, WALK_SAMBOHEAD, WALK_BOMBTERESA, WALK_JELEC, WALK_KINDS };
 /* walkers ported in the release push: their classes (counted, placed and drawn through this table) */
 static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}, {"BasaBasa", WALK_BASABASA}, {"BasaBasaIce", WALK_BASABASA}, {"Jellyfish", WALK_JELLYFISH},
                                                                     {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}, {"Mogu", WALK_MOGU}, {"Mogucchi", WALK_MOGUCCHI}, {"Metbo", WALK_METBO}, {"TeresaWater", WALK_TERESAW},
                                                                     {"Snakehead", WALK_SNAKEHEAD}, {"SnakeheadSmall", WALK_SNAKEHEAD}, {"Kabokuri", WALK_KABOKURI}, {"Pukupuku", WALK_PUKUPUKU},
                                                                     {"BombHei", WALK_BOMBHEI}, {"BombHeiLauncher", WALK_BOMBHEI}, {"BombLauncher", WALK_BOMBHEI},
                                                                     {"StringSpider", WALK_STRSPIDER}, {"BegomanSpike", WALK_BEGOSPIKE},
-                                                                    {"KuriboChief", WALK_KCHIEF}, {"ChildKuribo", WALK_KURIBO}, {"BegomanBaby", WALK_BEGOBABY}, {"BossBegoman", WALK_BBEGO}, {"FireBallBeamKameck", WALK_KAMECK}, {"ChildKameck", WALK_KAMECK}, {"NokonokoLand", WALK_NOKO}, {"SamboHead", WALK_SAMBOHEAD}, {"BombTeresa", WALK_BOMBTERESA}}; /* ChildKuribo: createNoItemKuriboActor */
+                                                                    {"KuriboChief", WALK_KCHIEF}, {"ChildKuribo", WALK_KURIBO}, {"BegomanBaby", WALK_BEGOBABY}, {"BossBegoman", WALK_BBEGO}, {"FireBallBeamKameck", WALK_KAMECK}, {"ChildKameck", WALK_KAMECK}, {"NokonokoLand", WALK_NOKO}, {"SamboHead", WALK_SAMBOHEAD}, {"BombTeresa", WALK_BOMBTERESA}, {"JellyfishElectric", WALK_JELEC}}; /* ChildKuribo: createNoItemKuriboActor */
 #define NEW_WALKERS ((int)(sizeof new_walkers / sizeof new_walkers[0]))
 #define BB_FOLLOWERS 5 /* BossBegoman: mBabyFollowerNum 3, mSpikeFollowerNum 2 (the slots after its own) */
 static const Model *m_wnew[NEW_WALKERS];
@@ -99,6 +99,7 @@ static int petari_solid(const Kuribo *k);
 static void petari_blow(Kuribo *k, V3 from, int nrv);
 static int walker_blow(Kuribo *e, V3 from);
 int bt_enemy_explosion(Kuribo *k), bt_star(Kuribo *k);
+static void je_knock(Kuribo *k);
 static int kari_slot[5];
 static int kari_cling, kari_timer; /* Karikari clinging to Mario (KarikariDirector: 5 at most), frames to its damage */
 
@@ -1421,10 +1422,17 @@ static Anim *mario_anim;
 static Anim *mario_upper; /* MarioAnimator::mXanimePlayerUpper (m_upper) */
 /* ElectricRail (Petari ElectricRail.cpp, ElectricRailHolder.cpp): one segment per pair of rail points, arg0 rails
  * stacked 100 apart against gravity (default 1) */
-typedef struct { V3 a, b, c; int h, row, on; u32 lv; } Spark; /* c: its rail's box centre (calcRailClippingInfo), its sound's place */
+typedef struct { V3 a, b, c; int h, row, on; u32 lv; float s0; int mv; } Spark; /* c: its rail's box centre (calcRailClippingInfo), its sound's place;
+                                                                         * s0 its rail coord at a, mv its ElectricRailMoving + 1 */
 static Spark *erails;
 static int nerails;
-static const Model *m_erail, *m_fireball, *m_rock;
+static const Model *m_erail, *m_fireball, *m_rock, *m_ermv, *m_erpoint;
+/* ElectricRailMoving (Petari ElectricRailMoving.cpp): arg0 lit sections (mSegmentNum 10) of arg2 (mSegmentLength,
+ * else the rail's length / (2 x arg0)) running at arg1 (mMovementSpeed 10) a frame along its rail, arg3 rails stacked
+ * (mStackHeight 1); ec: _EC, t: frames since its SW_A (Disappear 20, then Disappeared) or -1 */
+typedef struct { int row, nseg, loop, t; float ec, sp, seglen, tot; const float *pts; u32 np; } ERMove;
+static ERMove *ermv;
+static int nermv;
 /* RockCreator / Rock (Petari RockCreator.cpp, Rock.cpp; WanwanRolling(Mini / Gold) are RockCreators too): see
  * update_rocks
  * Its sounds as Rock.cpp:539-628 / 696-935 (rock_roll_se, rock_rumble). ponytail: SE_OJ_LV_ROCK_MOVE_MUD
@@ -2647,14 +2655,24 @@ void game_init(const Scene *s, const unsigned char *blob)
         L->shown = -1; L->shine = 0; L->lv = 0; L->clip_r = 0; L->appear = 0;
         nlaunches++;
     }
-    int t_erail = scene_type(s, "ElectricRail");
+    int t_erail = scene_type(s, "ElectricRail"), t_ermv = scene_type(s, "ElectricRailMoving");
     for (int pass = 0; pass < 2; pass++) { /* count the segments, then fill them */
-        int n = 0;
+        int n = 0, nm = 0;
         for (u32 i = 0; i < s->nobjs; i++) {
             const Row *r = &s->objs[i];
             u32 np; int closed;
-            const float *pts = r->type == t_erail ? find_rail(blob, r->zone, r->path, &np, &closed) : NULL;
+            const float *pts = r->type == t_erail || r->type == t_ermv ? find_rail(blob, r->zone, r->path, &np, &closed) : NULL;
             if (!pts || np < 2) continue;
+            float s0 = 0;
+            if (r->type == t_ermv && pass) { /* initMapToolInfo, initRail */
+                ERMove *m = &ermv[nm];
+                m->row = i; m->loop = closed; m->t = -1; m->ec = 0; m->pts = pts; m->np = np;
+                m->nseg = r->arg[0] > 0 ? r->arg[0] : 10;
+                m->sp = r->arg[1] != -1 ? (float)r->arg[1] : 10.0f;
+                m->tot = 0;
+                for (u32 k = 0; k < (closed ? np : np - 1); k++) { const float *a = pts + 3 * k, *b = pts + 3 * ((k + 1) % np); m->tot += vlen(vsub(v3(b[0], b[1], b[2]), v3(a[0], a[1], a[2]))); }
+                m->seglen = r->arg[2] != -1 ? (float)r->arg[2] : m->tot / (2 * m->nseg);
+            }
             V3 lo = v3(pts[0], pts[1], pts[2]), hi = lo;
             for (u32 k = 1; k < np; k++) {
                 lo = v3(fminf(lo.x, pts[3 * k]), fminf(lo.y, pts[3 * k + 1]), fminf(lo.z, pts[3 * k + 2]));
@@ -2665,13 +2683,17 @@ void game_init(const Scene *s, const unsigned char *blob)
                 const float *a = pts + 3 * k, *b = pts + 3 * ((k + 1) % np);
                 erails[n].a = v3(a[0], a[1], a[2]);
                 erails[n].b = v3(b[0], b[1], b[2]);
-                erails[n].h = r->arg[0] > 0 ? (r->arg[0] < 8 ? r->arg[0] : 8) : 1;
+                int h = r->type == t_ermv ? r->arg[3] : r->arg[0]; /* (ElectricRailMoving: arg3) */
+                erails[n].h = h > 0 ? (h < 8 ? h : 8) : 1;
                 erails[n].row = i;
                 erails[n].c = vmul(vadd(lo, hi), 0.5f); erails[n].on = 0; erails[n].lv = 0;
+                erails[n].s0 = s0; s0 += vlen(vsub(erails[n].b, erails[n].a));
+                erails[n].mv = r->type == t_ermv ? nm + 1 : 0;
             }
+            if (r->type == t_ermv) nm++;
         }
-        if (!pass) erails = mem_alloc(MEM_OBJECTS, (n + 1) * sizeof(Spark));
-        nerails = n;
+        if (!pass) { erails = mem_alloc(MEM_OBJECTS, (n + 1) * sizeof(Spark)); ermv = mem_alloc(MEM_OBJECTS, (nm + 1) * sizeof(ERMove)); }
+        nerails = n; nermv = nm;
     }
     {
         int t_fg = scene_type(s, "FlowerGroup"), t_fb = scene_type(s, "FlowerBlueGroup"), t_cb = scene_type(s, "CutBushGroup");
@@ -4224,6 +4246,7 @@ static int area_inside(const Row *r, V3 p);
 static int in_water(V3 p, V3 up, float *depth);
 static int walker_blow(Kuribo *e, V3 from);
 int bt_enemy_explosion(Kuribo *k), bt_star(Kuribo *k);
+static void je_knock(Kuribo *k);
 static void coco_spawn(Inst *in)
 {
     const Row *r = &sc->objs[in->row];
@@ -4912,7 +4935,7 @@ static void game_rebind_(void)
     m_unizo[0] = scene_model(s, "Unizo"); m_unizo[1] = scene_model(s, "UnizoLand"); m_unizo[2] = scene_model(s, "UnizoShoal");
     int t_coin = scene_type(s, "Coin"), t_pc = scene_type(s, "PurpleCoin"), t_circle = scene_type(s, "CirclePurpleCoinGroup");
     int t_rail = scene_type(s, "PurpleRailCoin"), t_piece = scene_type(s, "StarPiece"), t_kuribo = scene_type(s, "Kuribo");
-    int t_spg = scene_type(s, "StarPieceGroup"), t_flow = scene_type(s, "StarPieceFlow"), t_erail = scene_type(s, "ElectricRail"), t_tako = scene_type(s, "TakoHei"),
+    int t_spg = scene_type(s, "StarPieceGroup"), t_flow = scene_type(s, "StarPieceFlow"), t_erail = scene_type(s, "ElectricRail"), t_ermv = scene_type(s, "ElectricRailMoving"), t_tako = scene_type(s, "TakoHei"),
         t_packun = scene_type(s, "PackunPetit"), t_kote = scene_type(s, "KoteBug"),
         t_spider = scene_type(s, "JumpSpider"), t_mera = scene_type(s, "Meramera"), t_imera = scene_type(s, "IceMeramera"), t_takobo = scene_type(s, "Takobo"),
         t_mkoopa = scene_type(s, "MechanicKoopaMini"), t_kari = scene_type(s, "Karikari"), t_kmini = scene_type(s, "KuriboMini"),
@@ -4920,6 +4943,7 @@ static void game_rebind_(void)
         t_stink = scene_type(s, "StinkBugSmall"), t_uni = scene_type(s, "Unizo"), t_unil = scene_type(s, "UnizoLand"),
         t_unis = scene_type(s, "UnizoShoal"), t_poi = scene_type(s, "Poihana");
     m_erail = scene_model(s, "ElectricRail");
+    m_ermv = scene_model(s, "ElectricRailMoving"); m_erpoint = scene_model(s, "ElectricRailPoint");
     m_fireball = scene_model(s, "FireBarBall");
     m_rock = scene_model(s, "RockCreator"); m_rockbreak = scene_model(s, "RockBreak");
     m_wanwan = scene_model(s, "WanwanRolling"); m_wanwanmini = scene_model(s, "WanwanRollingMini");
@@ -4948,7 +4972,7 @@ static void game_rebind_(void)
         if (r->type == t_coin || r->type == t_pc || r->type == t_piece || r->type == t_kuribo || r->type == t_circle ||
             r->type == t_tako || r->type == t_packun || r->type == t_kote || r->type == t_spider || (r->type == t_mera || r->type == t_imera) ||
             r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly ||
-            r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_stink || r->type == t_note ||
+            r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_ermv || r->type == t_stink || r->type == t_note ||
             r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == t_petari || r->type == t_rockc || r->type == t_wan ||
             r->type == t_wanm || r->type == t_wang || r->type == t_dino || r->type == t_ota || r->type == t_bsb || r->type == t_bk1 || r->type == t_bk2 || r->type == t_tsp ||
             (r->type < 1024 ? wnk[r->type] == 2 : walker_new_kind(s->types + 32 * r->type) >= 0))
@@ -13325,6 +13349,7 @@ static void update_jets(void)
                 int took = 1; /* sendArbitraryMsg's answer */
                 if (e->kind == WALK_PETARI) { if (petari_solid(e)) petari_blow(e, p, PT_KICKOUT); else took = 0; } /* KickOut */
                 else if (e->kind == WALK_KAMECK) km_down(e, p); /* Kameck: requestDown */
+                else if (e->kind == WALK_JELEC) je_knock(e); /* JellyfishElectric: knockOut */
                 else if (e->kind == WALK_NOKO) { took = noko_turtle(e, p, in->hvel); if (took) printf("jet turtle row %d hits noko row %d" "\n", in->row, e->row); }
                 else if (e->kind == WALK_UNIZO) { if (unizo_breaking(e)) took = 0; else unizo_break(e); } /* isMsgJetTurtleAttack: doBreak */
                 else if (e->kind == WALK_GESSO) { if (e->nrv == GE_PUNCHDOWN) took = 0; else ge_knock(e, p); } /* isMsgPlayerHitAll: knockOut */
@@ -25068,6 +25093,7 @@ static int bb_enemy_hit(Kuribo *k, V3 from, float r);
 static void poihana_shock(Kuribo *k);
 static int walker_blow(Kuribo *e, V3 from)
 {
+    if (e->kind == WALK_JELEC) return 0; /* (only isMsgExplosionAttack: walker_explosion) */
     if (e->kind == WALK_BBEGO) return bb_enemy_hit(e, from, 60.0f); /* receiveMsgEnemyAttack: an enemy's sensor rebounds it */
     if (e->kind == WALK_STRSPIDER) { if (ss_down(e)) return 0; ss_blow(e, from); return 1; } /* isMsgExplosionAttack: Blow */
     if (e->kind == WALK_BEGOSPIKE || e->kind == WALK_BEGOBABY) { if (bg_blown(e)) return 0; e->item = 1; bg_blow(e, from, 35.0f, 15.0f); return 1; } /* isMsgExplosionAttack: calcBlowReaction */
@@ -25117,6 +25143,7 @@ static void walker_explosion(V3 from)
     for (int i = 0; i < nkuribo; i++) {
         Kuribo *e = &kuribo[i];
         if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_KCHIEF || vlen(vsub(e->pos, from)) > 250.0f) continue; /* (KuriboChief: no isMsgExplosionAttack) */
+        if (e->kind == WALK_JELEC) { je_knock(e); continue; } /* isMsgExplosionAttack: knockOut */
         walker_blow(e, from);
     }
 }
@@ -25733,6 +25760,123 @@ static void jelly_update(Kuribo *k)
     if (vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), body)) < 100.0f + HIT_BODY_R && !mario->hurt_timer) {
         mario_attack(ATK_STRONG, body); /* sendMsgEnemyAttackStrong */
         w_nrv(k, JF_ATTACK);
+    }
+}
+
+/* JellyfishElectric.cpp after Petari: floats bobbing (sin(_94 + 45) along gravity, _94 + 1 a frame); on a rail it
+ * moves at arg0 (5) a frame, at its end waits arg1 (60) frames (RailGoal), then turns back (arg2 1: from its start
+ * again, facing the rail, its danger off). Wait (DangerWait once damaged), every 280 frames Wait or
+ * WaitWith(Right / Left)Turn (0.2 x (1 - step / 280) a frame about its up). Its body (350, 60 below) shocks Mario
+ * (sendMsgEnemyAttackElectric: HitMarkNormal, Attack); a spin on it shocks him too. A JetTurtle or an explosion
+ * knocks it out: Damage (then DangerWait), the second time (or an invincible Mario at once) Death (stopScene 5, the
+ * binder (400) on, PRE_DEAD; at 30 or bound: DEAD, a coin). ponytail: no point light, no star pointer swoon
+ * (WalkerStateBindStarPointer: the 2P pointer), the star piece's hit reaction (AnimScaleController) not shown, no
+ * BRK / BTK clips (Wait / Damage / DangerWait colours), no DangerBrk BAS, no changeShowModelFlagSyncNearClipping 700,
+ * no push between enemies */
+enum { JE_WAIT, JE_WAITR, JE_WAITL, JE_DAMAGE, JE_DEATH, JE_ATTACK, JE_RAILGOAL };
+static void je_knock(Kuribo *k) /* knockOut */
+{
+    if (k->nrv == JE_DEATH) return; /* (its sensors invalidated) */
+    w_nrv(k, k->phase ? JE_DEATH : JE_DAMAGE);
+}
+static void jelec_update(Kuribo *k)
+{
+    const Row *r = &sc->objs[k->row];
+    u32 rn; int rcl;
+    const float *rail = w_rail(k, &rn, &rcl);
+    if (!k->front.x && !k->front.y && !k->front.z) { /* init */
+        V3 x, z;
+        row_axes(r, &x, &z);
+        k->front = vnorm(z); k->dir = 1; k->phase = 0; /* calcFrontVec; _A4 */
+        if (rail) k->lva[1] = w_rail_nearest(rail, rn, k->pos); /* moveCoordToNearestPos */
+        k->bind_off = 1; /* offBind */
+        w_nrv(k, JE_WAIT);
+    }
+    k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f);
+    int st = ++k->step;
+    switch (k->nrv) {
+    case JE_WAIT: case JE_WAITR: case JE_WAITL:
+        if (st == 0 && k->nrv == JE_WAIT) {
+            if (!k->phase && strcmp(k->act, "Wait")) w_act(k, "Wait");
+            else if (k->phase && strcmp(k->act, "DangerWait")) w_act(k, "DangerWait"); /* (startBas DangerBrk) */
+        }
+        if (k->nrv != JE_WAIT) /* waitTurn: rotateVecDegree about -gravity, Left +1 */
+            k->front = rot_axis(k->front, vnorm(k->grav), (k->nrv == JE_WAITR ? 0.2f : -0.2f) * (1.0f - st / 280.0f) * 0.0174533f);
+        if (st == 280) { /* selectNerveAfterWait */
+            int v = k->nrv == JE_WAIT ? rand() % 3 : 0;
+            w_nrv(k, v == 0 ? JE_WAIT : v == 1 ? JE_WAITR : JE_WAITL);
+        }
+        break;
+    case JE_DAMAGE:
+        if (st == 0) { w_se(k, SE_EM_JELLYELEC_DAMAGE); w_act(k, "Damage"); }
+        if (w_bck_stopped(k)) { k->phase = 1; w_act(k, "DangerWait"); w_nrv(k, JE_WAIT); }
+        break;
+    case JE_DEATH:
+        if (st == 0) { k->bind_off = 0; scene_stop = 5; w_act(k, "Death"); }
+        w_se_lv(k, SE_EM_LV_JELLYELEC_PRE_DEAD);
+        if (st == 30 || (st > 0 && (k->on_ground || k->on_wall))) { /* kill */
+            w_se(k, SE_EM_JELLYELEC_DEAD);
+            pop_coins(k->pos, vmul(k->grav, -1.0f), 1); /* appearCoinPop */
+            k->state = KURIBO_DEAD; row_kill(k->row);
+            printf("jelec row %d dead\n", k->row);
+            return;
+        }
+        break;
+    case JE_ATTACK:
+        if (st == 0) w_act(k, "Attack");
+        w_se_lv(k, SE_EM_LV_JELLYELEC_ATTACK);
+        if (w_bck_stopped(k)) w_nrv(k, JE_WAIT);
+        break;
+    case JE_RAILGOAL:
+        if (st == (r->arg[1] != -1 ? r->arg[1] : 60)) {
+            if (r->arg[2] == 1 && rail) { /* moveCoordAndTransToRailPoint(0), getRailDirection */
+                k->lva[1] = 0; k->dir = 1; k->pos = rail_at(rail, rn, 0); /* (initAndSetRailClipping: drawn anyway) */
+                V3 ahead = rail_at(rail, rn, 1.0f);
+                if (vlen(vsub(ahead, k->pos)) > 1e-3f) k->front = vnorm(vsub(ahead, k->pos));
+                k->phase = 0;
+            } else k->dir = -k->dir; /* reverseRailDirection */
+            w_nrv(k, JE_WAIT);
+        }
+        break;
+    }
+    k->act_t += k->act_rate;
+    /* control(): the rail, the bob */
+    if (k->nrv != JE_DEATH) {
+        int goal = 0;
+        if (rail) {
+            float len = w_rail_len(rail, rn), sp = r->arg[0] != -1 ? (float)r->arg[0] : 5.0f;
+            V3 was = rail_at(rail, rn, k->lva[1]);
+            k->lva[1] += sp * k->dir; /* moveCoordAndFollowTrans: the coord's move added to its position */
+            if (k->lva[1] < 0) k->lva[1] = 0;
+            if (k->lva[1] > len) k->lva[1] = len;
+            k->pos = vadd(k->pos, vsub(rail_at(rail, rn, k->lva[1]), was));
+            if ((k->dir > 0 ? k->lva[1] >= len : k->lva[1] <= 0) && k->nrv != JE_RAILGOAL) { w_nrv(k, JE_RAILGOAL); goal = 1; }
+        }
+        if (!goal) {
+            k->vel = vmul(k->grav, sinf((k->lva[0] + 45.0f) * 0.0174533f));
+            k->lva[0] += 1.0f;
+        }
+    }
+    k->pos = vadd(k->pos, k->vel);
+    if (!k->bind_off) { /* initBinder 400, on once it dies */
+        V3 c = k->pos, gn, wn;
+        int wall = 0;
+        k->on_ground = collide_n(&c, vmul(k->grav, -1.0f), 400.0f, &gn, &wn, &wall);
+        k->on_wall = wall; k->pos = c;
+    }
+    k->qy = k->up = vmul(k->grav, -1.0f); k->qz = vnorm(vtangent(k->front, k->qy)); /* makeMtxFrontUpPos */
+    if (vlen(k->qz) < 1e-3f) k->qz = k->front;
+    if (k->nrv == JE_DEATH) return;
+    V3 body = vadd(k->pos, vmul(k->grav, 60.0f));
+    int touch = vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), body)) < 350.0f + HIT_BODY_R;
+    if (player_mode == PM_INVINCIBLE && touch) { k->phase = 1; je_knock(k); return; } /* isMsgInvincibleAttack */
+    if (mario_offence(body, 350.0f, k->grav) == MSG_HITALL) touch = 1; /* isMsgPlayerSpinAttack: tryToAttackElectric */
+    if (touch && !mario->hurt_timer && mario_attack(ATK_ELECTRIC, body)) { /* tryToAttackElectric */
+        float m[16];
+        basis_matrix(m, vmul(vadd(body, vadd(mario->pos, vmul(mario->up, HIT_BODY_H))), 0.5f), k->up, k->front, 0);
+        fx_named("JellyfishElectric", "HitMarkNormal", m, NULL, NULL); /* emitEffectHitBetweenSensors */
+        w_nrv(k, JE_ATTACK);
+        printf("jelec row %d shocks Mario\n", k->row);
     }
 }
 
@@ -27796,6 +27940,7 @@ static V3 bg_check(const Kuribo *k) /* check: (0, 0.5 r, 1.5 r) in its frame */
     return vadd(k->pos, vadd(vmul(k->qy, 0.5f * r), vmul(k->qz, 1.5f * r)));
 }
 static int erail_on(const Spark *e);
+static int ermv_valid(const ERMove *m, float c);
 /* ElectricRailFunction::isTouchRail: the nearest rail point within the sphere, the rail's direction */
 static int bg_touch_rail(V3 c, float r, V3 *at, V3 *dir)
 {
@@ -27804,8 +27949,9 @@ static int bg_touch_rail(V3 c, float r, V3 *at, V3 *dir)
         if (!erail_on(e)) continue;
         V3 ab = vsub(e->b, e->a);
         float t = vdot(vsub(c, e->a), ab) / fmaxf(vdot(ab, ab), 1e-3f);
+        if (e->mv && !ermv_valid(&ermv[e->mv - 1], e->s0 + fminf(fmaxf(t, 0.0f), 1.0f) * vlen(ab))) continue; /* ElectricRailMoving::isTouchRail */
         V3 q = vadd(e->a, vmul(ab, fminf(fmaxf(t, 0.0f), 1.0f))), up = up_at(q, mario->up);
-        for (int h = 0; h < e->h; h++) {
+        for (int h = 0; h < (e->mv ? 1 : e->h); h++) {
             V3 p = vadd(q, vmul(up, 100.0f * h));
             if (vlen(vsub(c, p)) < r + 30.0f) { if (at) *at = p; if (dir) *dir = vlen(ab) > 1e-3f ? vnorm(ab) : ab; return 1; }
         }
@@ -30229,6 +30375,7 @@ static void update_kuribo_one(Kuribo *k)
             if (k->kind == WALK_GESSO) gesso_update(k);
             else if (k->kind == WALK_BASABASA) basa_update(k);
             else if (k->kind == WALK_JELLYFISH) jelly_update(k);
+            else if (k->kind == WALK_JELEC) jelec_update(k);
             else if (k->kind == WALK_KANINA) kanina_update(k);
             else if (k->kind == WALK_MOGU) mogu_update(k);
             else if (k->kind == WALK_MOGUCCHI) mogucchi_update(k);
@@ -37213,12 +37360,55 @@ static void update_pipes(void)
 }
 
 /* ElectricRail: sensors of radius 30 at the rail point nearest Mario (and every 100 above it for stacked rails) shock
- * him unless he squats; SW_A on makes it vanish (listenStageSwitchOnA: disappear). ponytail: no ElectricRailMoving, no
- * 20-frame shrink as it vanishes */
+ * him unless he squats; SW_A on makes it vanish (listenStageSwitchOnA: disappear). ElectricRailMoving: the same sensors
+ * only on its lit sections, its ElectricRailPoints at their ends; it vanishes in 20 frames (the planes 30 -> 0 wide,
+ * calcNerveEaseInValue), its points stay. ponytail: ElectricRail's 20-frame shrink; ElectricRailMoving drawn as its
+ * model stretched over its lit sections (not two planes along the whole rail, its texture scrolled by _9C, its alpha
+ * _CC), its arg4 colour (BRK frame 0 / 1) not baked, its points' shadows (initShadowVolumeSphere 35) */
 static int erail_on(const Spark *e)
 {
     const Row *r = &sc->objs[e->row];
     return row_shown(e->row) && !(r->sw[SW_A] >= 0 && sw_on(r, SW_A));
+}
+static float ermv_rep(const ERMove *m, float c) { c = fmodf(c, m->tot); return c < 0 ? c + m->tot : c; } /* getRepeatedCoord */
+static int ermv_valid(const ERMove *m, float c) /* isValidCoord: c within a lit section */
+{
+    float iv = m->tot / m->nseg;
+    return iv - m->seglen < fmodf(ermv_rep(m, c - m->ec), iv);
+}
+/* calcPointPos: the rail's point at c, on a loop rail (rail_at's polyline open) its closing segment too */
+static V3 ermv_pos(const ERMove *m, float c)
+{
+    if (!m->loop) return rail_at(m->pts, m->np, c);
+    float open = m->tot - vlen(vsub(v3(m->pts[0], m->pts[1], m->pts[2]), v3(m->pts[3 * m->np - 3], m->pts[3 * m->np - 2], m->pts[3 * m->np - 1])));
+    if (c <= open) return rail_at(m->pts, m->np, c);
+    V3 a = v3(m->pts[3 * m->np - 3], m->pts[3 * m->np - 2], m->pts[3 * m->np - 1]), b = v3(m->pts[0], m->pts[1], m->pts[2]);
+    float l = m->tot - open;
+    return vadd(a, vmul(vsub(b, a), l > 1e-3f ? (c - open) / l : 0.0f));
+}
+/* updateMovingPoints: point 2i the head of lit section i (_EC + i x the interval), 2i + 1 its tail (seglen back), each
+ * stacked 100 against gravity; a rail that is not a loop has its start and end points too, shown while a section
+ * runs over its end */
+static int ermv_points(const ERMove *m, V3 *out, int *shown_ends)
+{
+    float iv = m->tot / m->nseg, c = m->ec;
+    int n = 0, end = 0;
+    for (int i = 0; i < m->nseg; i++) {
+        out[n++] = ermv_pos(m, ermv_rep(m, c));
+        out[n++] = ermv_pos(m, ermv_rep(m, c - m->seglen));
+        if (!m->loop && ermv_rep(m, c + m->sp) - (m->seglen + 3.0f * m->sp) < 0.0f) end = 1;
+        c = ermv_rep(m, c + iv);
+    }
+    if (!m->loop) { out[n++] = ermv_pos(m, 0); out[n++] = ermv_pos(m, m->tot); }
+    *shown_ends = end;
+    return n;
+}
+static void ermv_move(ERMove *m) { m->ec = ermv_rep(m, m->ec + m->sp); } /* move: _EC (the texture matrix, _CC: drawn as lit pieces) */
+static int erail_live(const Spark *e, float t) /* a moving rail's sensor at t of segment e: only on a lit section, not once vanishing */
+{
+    if (!e->mv) return 1;
+    const ERMove *m = &ermv[e->mv - 1];
+    return m->t < 0 && ermv_valid(m, e->s0 + t * vlen(vsub(e->b, e->a)));
 }
 static void update_electric(void)
 {
@@ -37230,13 +37420,28 @@ static void update_electric(void)
         else if (e->on && row_shown(e->row)) se_start(SE_OJ_ELEC_RAIL_VANISH, &e->c.x);
         e->on = on;
     }
-    if (mario->squat) return;
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < nermv; i++) { /* exeWait / exeDisappear: move; the points (35) shock even a squat, not once vanishing (_8D) */
+        ERMove *m = &ermv[i];
+        const Row *r = &sc->objs[m->row];
+        if (!row_shown(m->row)) continue;
+        if (m->t < 0 && r->sw[SW_A] >= 0 && sw_on(r, SW_A)) m->t = 0; /* listenStageSwitchOnA: disappear */
+        if (m->t > 20) continue; /* Disappeared */
+        ermv_move(m);
+        if (m->t >= 0) { m->t++; continue; }
+        V3 pt[2 * 64 + 2];
+        int ends, n = m->nseg <= 64 ? ermv_points(m, pt, &ends) : 0, h = r->arg[3] > 0 ? (r->arg[3] < 8 ? r->arg[3] : 8) : 1;
+        for (int k = 0; k < n; k++)
+            for (int j = 0; j < h; j++)
+                if (vlen(vsub(c, vadd(pt[k], vmul(up_at(pt[k], mario->up), 100.0f * j)))) < 35.0f + HIT_BODY_R) { mario_attack(ATK_ELECTRIC, pt[k]); return; }
+    }
+    if (mario->squat) return;
     for (int i = 0; i < nerails; i++) {
         const Spark *e = &erails[i];
         if (!erail_on(e)) continue;
         V3 ab = vsub(e->b, e->a);
         float t = vdot(vsub(c, e->a), ab) / fmaxf(vdot(ab, ab), 1e-3f);
+        if (!erail_live(e, fminf(fmaxf(t, 0.0f), 1.0f))) continue; /* updateHitSensorPos: isValidCoord */
         V3 q = vadd(e->a, vmul(ab, fminf(fmaxf(t, 0.0f), 1.0f))), up = up_at(q, mario->up);
         for (int k = 0; k < e->h; k++)
             if (vlen(vsub(c, vadd(q, vmul(up, 100.0f * k)))) < 30.0f + HIT_BODY_R) {
@@ -39036,7 +39241,7 @@ static void update_shots(void)
                 if (e->phase) { hit = 0; continue; }
                 if (e->nrv == PT_SWOON) w_nrv(e, PT_SWOON);
             }
-            else if (e->kind == WALK_UNIZO || e->kind == WALK_POIHANA || e->kind == WALK_JELLYFISH) { /* isMsgStarPieceAttack: nothing more
+            else if (e->kind == WALK_UNIZO || e->kind == WALK_POIHANA || e->kind == WALK_JELLYFISH || e->kind == WALK_JELEC) { /* isMsgStarPieceAttack: nothing more
                                                                                                   * (Jellyfish: its anim scale hit reaction) */ }
             else if (e->kind == WALK_GESSO) { if (e->nrv != GE_PUNCHDOWN) w_nrv(e, GE_ROTATE); } /* isMsgStarPieceAttack: Rotate */
             else if (e->kind == WALK_METBO) { w_se(e, SE_EM_METBO_TRAMPLE); if (!mb_swoon(e) && e->nrv != MB_RECOVER && !mb_down(e)) w_nrv(e, MB_GUARD); } /* isMsgStarPieceReflect */
@@ -48971,6 +49176,7 @@ static void walker_shadow(const Kuribo *k)
     case WALK_UNIZO: rs = 106.36f; break;                   /* x sRadiusScale 1 */
     case WALK_POIHANA: rs = 80.0f; break;
     case WALK_PETARI: rs = 80.0f; start = 80.0f; break;     /* Shadow.bcsv DropStart */
+    case WALK_JELEC: rs = 230.0f; break;                    /* initShadowVolumeSphere 230 */
     case WALK_SAMBOHEAD: if (!k->lvt[0]) return; rs = 60.0f * r->scale[1]; break; /* initShadowVolumeSphere 60 x scale; invalidateShadow */
     case WALK_BOMBTERESA: if (k->lvt[0]) return; rs = 80.0f * r->scale[0]; start = 0.0f; break; /* initShadowVolumeSphere 80, onShadowFollowHostScale */
     default: return;                                        /* Butterfly, StinkBugSmall: none */
@@ -49556,10 +49762,36 @@ void game_draw(void)
                 render_model(m_fireball, m, 0xF0, 0x80, 0x20);
             }
     }
-    for (int i = 0; m_erail && i < nerails; i++) { /* the 600-long rail model stretched over each segment */
+    for (int i = 0; m_erpoint && i < nermv; i++) { /* ElectricRailMovingPoint */
+        const ERMove *mv = &ermv[i];
+        if (!row_shown(mv->row) || mv->nseg > 64) continue;
+        const Row *r = &sc->objs[mv->row];
+        V3 pt[2 * 64 + 2];
+        int ends, n = ermv_points(mv, pt, &ends), h = r->arg[3] > 0 ? (r->arg[3] < 8 ? r->arg[3] : 8) : 1;
+        if (!mv->loop && !ends) n -= 2; /* hideModelIfShown */
+        for (int k = 0; k < n; k++)
+            for (int j = 0; j < h; j++) {
+                V3 up = up_at(pt[k], v3(0, 1, 0));
+                basis_matrix(m, vadd(pt[k], vmul(up, 100.0f * j)), up, v3(0, 0, 1), 0);
+                render_model(m_erpoint, m, 0x70, 0xB0, 0x60);
+            }
+    }
+    for (int i = 0; i < nerails; i++) { /* the 600-long rail model stretched over each segment (a moving one's lit pieces) */
         const Spark *e = &erails[i];
-        if (!erail_on(e)) continue; /* exeDisappeared: hideModel */
-        V3 d = vsub(e->b, e->a), mid = vmul(vadd(e->a, e->b), 0.5f), up = up_at(mid, v3(0, 1, 0));
+        const ERMove *mv = e->mv ? &ermv[e->mv - 1] : NULL;
+        if (mv ? !row_shown(e->row) || mv->t > 20 || !m_ermv : !erail_on(e) || !m_erail) continue; /* exeDisappeared: hideModel */
+        float sl = vlen(vsub(e->b, e->a));
+        for (int piece = 0; piece < (mv ? 2 * mv->nseg : 1); piece++) {
+        V3 pa = e->a, pb = e->b;
+        if (mv) { /* lit section piece / 2 (its part before or after the rail's coord 0), within this segment */
+            float iv = mv->tot / mv->nseg, hi = ermv_rep(mv, mv->ec + (piece / 2) * iv), lo = hi - mv->seglen;
+            if (piece & 1) { if (lo >= 0) continue; lo += mv->tot; hi = mv->tot; } else if (lo < 0) lo = 0;
+            lo = fmaxf(lo, e->s0) - e->s0; hi = fminf(hi, e->s0 + sl) - e->s0;
+            if (hi - lo < 1.0f) continue;
+            V3 dd = vmul(vsub(e->b, e->a), 1.0f / fmaxf(sl, 1e-3f));
+            pa = vadd(e->a, vmul(dd, lo)); pb = vadd(e->a, vmul(dd, hi));
+        }
+        V3 d = vsub(pb, pa), mid = vmul(vadd(pa, pb), 0.5f), up = up_at(mid, v3(0, 1, 0));
         float len = vlen(d);
         if (len < 1.0f) continue;
         V3 z = vmul(d, 1.0f / len), x = vcross(up, z);
@@ -49570,10 +49802,15 @@ void game_draw(void)
         m[0] = x.x; m[1] = x.y; m[2] = x.z;
         m[4] = y.x; m[5] = y.y; m[6] = y.z;
         m[8] = z.x * len / 600.0f; m[9] = z.y * len / 600.0f; m[10] = z.z * len / 600.0f;
+        if (mv && mv->t >= 0) { /* exeDisappear: _F0 = calcNerveEaseInValue(20, 30, 0) */
+            float w = cosf(fminf(mv->t / 20.0f, 1.0f) * 1.5707963f); /* 1 - getEaseInValue's 1 - cos */
+            for (int j = 0; j < 3; j++) { m[j] *= w; m[4 + j] *= w; }
+        }
         for (int k = 0; k < e->h; k++) {
             V3 p = vadd(mid, vmul(up, 100.0f * k));
             m[12] = p.x; m[13] = p.y; m[14] = p.z;
-            render_model(m_erail, m, 0x70, 0xB0, 0x60);
+            render_model(mv ? m_ermv : m_erail, m, 0x70, 0xB0, 0x60);
+        }
         }
     }
     PROF(2);
@@ -50501,6 +50738,28 @@ void game_test_tower(unsigned frame)
 }
 #endif
 
+/* walker test with -DERMV_TEST: Mario held standing at coord 0 of the first ElectricRailMoving (its sections run by) */
+void game_test_ermv(unsigned frame)
+{
+    if (!nermv || frame < 150) return;
+    const ERMove *m = &ermv[0];
+    V3 p = ermv_pos(m, 0), up = up_at(p, mario->up);
+    mario->up = up; mario->pos = vsub(p, vmul(up, HIT_BODY_H)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+    if (frame % 20 == 0) printf("ermv test f %u: row %d ec %.0f of %.0f, coord 0 lit %d, hurt %d" "%c", frame, m->row, m->ec, m->tot, ermv_valid(m, 0), mario->hurt_timer, 10);
+}
+/* walker test with -DJELEC_TEST: Mario by the first JellyfishElectric (shocked), then it knocked out twice (Damage,
+ * DangerWait, Death) */
+void game_test_jelec(unsigned frame)
+{
+    static int row = -1;
+    if (frame == 150) printf("jelec test: row %d\n", row = game_test_walker("JellyfishElectric", 0));
+    for (int i = 0; i < nkuribo && row >= 0; i++) {
+        Kuribo *e = &kuribo[i];
+        if (e->row != row || e->state == KURIBO_DEAD) continue;
+        if (frame == 400 || frame == 700) { mario->pos = vadd(e->pos, vmul(e->up, 2000.0f)); je_knock(e); printf("jelec test f %u: knockOut, nerve %d\n", frame, e->nrv); }
+        if (frame % 30 == 0 && frame > 150) printf("jelec test f %u: nerve %d act %s danger %d\n", frame, e->nrv, e->act, e->phase);
+    }
+}
 #ifdef ICE_TEST
 /* every floor skatable (m_skatable): Mario runs from frame 500, the stick turned back at 600 (ターンブレーキ滑り床,
  * taskOnSlipTurn, _754), let go at 700, then a run again with standing turns (_750) */
