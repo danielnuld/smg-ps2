@@ -1984,6 +1984,13 @@ int main(void)
             if (frame % 100 == 0) printf("ota test f %u: %d, stars %d\n", frame, st, game_stars());
         }
 #endif
+#ifdef TOMB_TEST
+        if (frame >= 150) { /* the boss: the gate demo, launches at its cocoon / eye / hip / vital spots, then onto its star (TOMB_WEB: the web alone) */
+            int st = game_test_tomb((int)frame);
+            if (st == 1200) st = 12000 + game_test_cage(1); /* TombSpider down: on its star */
+            if (frame % 300 == 0) printf("tomb test f %u: %d, stars %d\n", frame, st, game_stars());
+        }
+#endif
 #ifdef BSB_TEST
         if (frame >= 150 && frame % 10 == 0) { /* BossStinkBug: started, hip dropped whenever a hit is open, until its star */
             int st = game_test_bsb();

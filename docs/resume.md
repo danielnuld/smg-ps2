@@ -56,8 +56,7 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   StarDust, and every other one with these classes (Hanachan: HeavenlyBeach, FlowerPlanet, EringiPlanet, ForestHome,
   WormEaten, Poihana, ReverseForestHome zones; StringSpider: OceanRing, PhantomNest, TeresaHouse; KoopaStatue:
   PhantomNest, TeresaHouse; BegomanSpike: CannonFleet).
-  Not ported: SpiderThread (the web; only the TombSpider boss makes it: initSpiderThread), so SpiderCoins stay
-  at their places.
+  SpiderThread (#198): the SpiderCoins bind to TombSpider's web (see TombSpider below).
 - agent-perf3 (EE time, third round; on fix/host-tests): the sampling profiler works in PCSX2 now (`XF=-DSAMPLE_PROF`,
   `-DPROF_FROM= -DPROF_TO=` for a route's stretch; `python3 tools/prof_map.py <emulog> <nm -n of the ELF>`: self time
   by function and strcmp / memset / sin / cos / snprintf callers) and the route test prints the EE's time each 200
@@ -1468,6 +1467,45 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
    HoneyBeeEx 1, CocoonEx 1, BreakDownPlanet 1). Earlier: class weights (`out/class_coverage.md`); left: videos.
    Blocking zone loads (a zone wanted before its prefetch ends) are the worst frames (HoneyBee ~0.4 s).
 7. Last (the user's call): sound effects (AFC -> ADPCM), music on the disc (streams in the ISO), ChangeBgmCube / RestartCube BGM changes.
+- SpiderThread (feat/198-tomb-spider, 2026-11-05): MapObj/SpiderThread*.cpp in game.c sth_* (update_spider_thread /
+  sth_draw): made at the scene's TombSpider (TombSpiderEnvironment's initSpiderThread at its place), 8 radial lines x 8
+  main points, anchors, 64 circle parts, 1101 points; springs, near-point pulls, wind (battle / chance / battle end),
+  pointer plucks (R-stick cursor speed), actor touches, hangs, cut. SpiderCoins bind to their nearest circle part point
+  (spider_coin_web). API for SlingShooter / TombSpider: sth_appear, sth_start_battle / _chance / _battle_end,
+  sth_start_actor_bind, sth_send_msg (STH_HANG_START / END / APART), sth_hang_pos, sth_touch_actor, sth_try_push,
+  sth_pos_z, sth_pause_off, sth_on_bloom; sth.cancel (ACTMES_HANG_CANCEL's actor). Test `tomb` (StarDustGalaxy/3):
+  the web appeared, the camera face on, touched every 120 frames. ponytail: untextured strips (no SpiderThread.bti /
+  Indirect.bti warp), no bloom pass, the pull level SE without its params, no 2P pointer, getPosZDiff assumed.
+- SpiderAttachPoint (feat/198-tomb-spider, 2026-11-05): Ride/SlingShooter.cpp in game.c sls_* (update_sls, Mario's
+  sls_try / sls_hold before the SpaceCocoon in the move chain): bound to its web point at load; Mario touching its bind
+  sensor (80 at the web's Z) is bound (Land SpiderCocoonLand, Wait), the pointer on it (210 at 50 up) with A hangs it
+  (Aim: the pointer on the web's plane, 0.1 a frame, at most 300; the web point follows: sth_hang_pos), A let go 100 or
+  more off launches it at 45 (Attack: 120 frames or a map plane after 10; CocoonFly), Square cancels (Spin2nd), every
+  nerve, sound and event camera name ("プレーヤー射出者[ウェイト] / [狙い中] / [攻撃中]", camera_event_named). API for
+  TombSpider: sls_attacking (its attack sensor, 100), sls_attack_hit (attackSensor after ACTMES_SLING_SHOOT_ATTACK:
+  broken / pass through / last damage), sls_enemy_attack, sls_msg (SLM_DEMO_START / BATTLE_START / RUSH_CANCEL).
+  Test `tomb` from 400 frames after the landing (XF=-DTOMB_AIM=n frames of aim): bound, Wait, Aim 300 off, launched,
+  the flight ends on the arena's inner wall (y -29206 down / -26102 up). (Mario then drifted 2450 out along +Z with
+  no planet there: TombSpider's planet collision, below, holds him in the web's plane.) ponytail: Kinopio riders, 2P pointer, the
+  drag SE's volume, the cameras' CameraTargetMtx (player-targeted here), map parts taking its attack, shadow.
+  Repack: StarDustGalaxy (jpa.py NAMED SpiderThreadAttachPoint, Mario's SpaceCocoonBlur; its sound.bin).
+- TombSpider (feat/198-tomb-spider, 2026-11-05): Boss/TombSpider*.cpp in game.c tsp_* (update_tsp / tsp_draw):
+  TombSpider's nerves (WaitPlayer: Mario within 6000 starts ゲートオープンデモ; DemoGateOpen: Mario puppeted from 7000
+  along Z through the gate to the floor, the web appears, the planet's BattleStart; ActionCocoon: a launch breaks the
+  cocoon; 出現 (the planet's Appear CANM "tspdemo/appear"), Battle1stStart (BGM BOSS_02_A), JumpToPlayer; Action1st;
+  １回戦終了 (Battle2ndStart CANM, BOSS_02_B at 180, 25 star pieces); Action2nd; 死亡 (Death CANM, the web cut,
+  BattleEnd, SW_B, SW_A, the power star from its Body)), TombSpiderActionBase / 1st / 2nd / Cocoon / StateSwoon with
+  their constants, TombSpiderSensorCtrl's 17 sensors (eye / hip / glands / vital spots at the player's Z), the sling
+  messages (ATTACK / IS_BROKEN / PASS_THROUGH / IS_LAST_DAMAGE: sls_attack_hit), the acid attackers on Mario or his
+  attach point (sls_enemy_attack), TombSpiderGland / VitalSpot nerves on their joints (initFixedPosition), the acid
+  effects, thread attachers (tryPushSpiderThread on 7 joints). TombSpiderEnvironment's planet is an instance with its
+  KCL (slice.py EXTRA TombSpider: planet, cocoon, gland, vital spot, all skinned; CANM_ARC tspdemo; declarePowerStar).
+  Test `tomb` (StarDustGalaxy/3, XF=-DPACKS_OVERLAY=wt-boss2; -DTOMB_WEB the web alone): the gate demo, a launch at
+  the cocoon, at the hip, the three vital spots, both phases, death, star taken (f ~4400). BossBgmID_TombSpiderA / B
+  taken as BOSS_02_A / B (the enum's header is not in vendor/Petari). ponytail: BRKs (Battle1st / 2nd colours, the
+  cocoon's and vital spots'), BAS sounds, light ctrl, the planet's low LOD, the cocoon's push (Mario moved out of its
+  sensor), SpaceCocoonBlur in the gate demo. Repack: StarDustGalaxy (slice_all.py, jpa.py NAMED TombSpider /
+  TombSpiderGland / TombSpiderPlanet, its sound.bin).
 - BossStinkBug (feat/boss-stinkbug, 2026-11-05): Boss/BossStinkBug*.cpp in game.c bsb_* (update_bsb / bsb_draw): the
   sequencer (WaitStart on SW_A, OpeningDemo, Ground, FlyDemo, FlyLow, AngryDemo, FlyHigh, FinishDemo), every action's
   nerves and constants (ActionBase update*, BossStinkBugFunction moveRail / regainToRail / turnRail / setFallVelocity),
