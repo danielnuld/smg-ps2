@@ -160,7 +160,7 @@ def sky_sea(b, mat3, m):
 # (FlipPanel: "?" at rest, "!" once flipped, the End face when its group is complete)
 # KuriboChief / ExterminationChecker::initKeySwitch: their own KeySwitch (game.c okeys; KeySwitchOwned: the KeySwitch
 # archive skinned for its Rotation, the placed KeySwitch rows untouched)
-EXTRA = {"KuriboChief": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
+EXTRA = {"ShellfishYellowChip": ("YellowChip",), "KuriboChief": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
          "Rosetta": ("LightDome", "DomeHalo"),  # RosettaDemoHeavensDoor1's parts (ライトドーム, ライト後光)
          "StarReturnDemoStarter": ("PStar", "GStar", "SpinTico", "MarioHair"), "GrandStarReturnDemoStarter": ("GStar",), "FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
@@ -216,7 +216,10 @@ POSE = {"NutShipFleetBridge": ("MoveA", {"move.kcl": "Move"})}
 KCL_PARTS = {"PhantomShipBridge": {"move.kcl": "Move"}, "DarknessRoomDoorA": {"open.kcl": "Open"},
              "TeresaMansionDoorA": {"open.kcl": "Open"}, "TeresaMansionDoorB": {"open.kcl": "Open"},
              "TeresaMansionEntranceDoor": {"open.kcl": "Open"},
-             "DesertLandDownSwitch": {"move.kcl": "Move"}}  # TypicalDoor's Open collision too
+             "DesertLandDownSwitch": {"move.kcl": "Move"},  # TypicalDoor's Open collision too
+             "ShellfishCoin": {"low.kcl": "Static"}, "ShellfishYellowChip": {"low.kcl": "Static"}}  # Shellfish's Low (createCollisionPartsFromLiveActor): a still part
+# the joint a MapObjActor's own collision follows (SKIN pad 1: game.c Inst.kmove), "Move" unless named here
+COLL_JOINT = {"Shellfish": "Lid"}  # initCollisionPartsAutoEqualScaleOne "Hi" on getJointMtx(Lid)
 HOME_POS = "\u5408\u4f53\u30d6\u30ed\u30c3\u30af\u6545\u90f7\u70b9"  # 合体ブロック故郷点: AssemblyBlock's home (Petari sReturnPosName)
 LOGIC = ("TimerSwitch", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
          "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "DeathCube", "DeathSphere",
@@ -1006,7 +1009,7 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                         gtab.append(tables[(info["shape"], info["group"])])
                     stats["layers"] = stats.get("layers", 0) + 1
             if skinned:
-                sk = skin_entry(b, bl, gtab)
+                sk = skin_entry(b, bl, gtab, COLL_JOINT.get(arc.stem, "Move"))
         elif n.endswith(".kcl"):
             kcls[n.split("/")[-1]] = b
     for kn in list(kcls):  # each prism's attribute resolved through its .pa (kcl_codes)
@@ -1029,7 +1032,7 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
     return groups, kcl, sk
 
 
-def skin_entry(b, bl, gtab):
+def skin_entry(b, bl, gtab, coll="Move"):
     """SKIN chunk entry (after the model name): u16 njoints, ndrw, ngroups, nmix; joints {s16 parent, u16 pad (1: the Move joint),
     f32 scale[3], rot[3] (radians), trans[3]} (bind pose locals); drw {u16 first, u16 count} (count 0: rigid, first =
     joint; else a run of mix entries); mix {u16 joint, u16 pad, f32 weight, f32 invbind[3][4]}; groups {u8 nmat,
@@ -1048,7 +1051,7 @@ def skin_entry(b, bl, gtab):
     assert all(len(t) <= 11 and max(t) < 256 for t in gtab), "matrix table does not fit u8[11]"
     out += struct.pack("<4H", len(js), len(dr), len(gtab), nmix)
     for j in js:
-        out += struct.pack("<hH9f", j["parent"], j["name"] == "Move", *j["scale"], *j["rot"], *j["trans"])  # pad 1: MapObjActor's collision joint
+        out += struct.pack("<hH9f", j["parent"], j["name"] == coll, *j["scale"], *j["rot"], *j["trans"])  # pad 1: MapObjActor's collision joint
     out += drw + mix
     for t in gtab:
         out += struct.pack("<B11B", len(t), *(list(t) + [0] * (11 - len(t))))
