@@ -6,8 +6,10 @@
 /* Petari AreaForm.cpp: cube 45-54 + 104-125 (centre origin, 1000 x scale), cylinder 241-313 (base origin, radius
  * 500 x scale_x, height 500 x scale_y along R * Y), sphere 160-166 + 277-285 (radius 500 x scale_x). Rotation order
  * as every placement: R = Rz * Ry * Rx (degrees). */
+int camera_big_bubble;
 static int inside(const CamArea *a, V3 p)
 {
+    if (a->shape == 3 && !camera_big_bubble) return 0; /* BigBubbleCameraArea::isInVolume: a box while he is in a bubble */
     V3 d = v3(p.x - a->pos[0], p.y - a->pos[1], p.z - a->pos[2]);
     if (a->shape == 2)
         return vlen(d) < 500.0f * a->scale[0];

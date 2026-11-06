@@ -1677,6 +1677,12 @@ int main(void)
             if (frame % 10 == 0) printf("dring test f %u: %d\n", frame, st);
         }
 #endif
+#ifdef BIGBUBBLE_TEST
+        if (frame >= 900 && frame < 2400) { /* BigBubble (after the stage start): Mario in, pushed by the pointer, Z out */
+            int st = game_test_bigbubble((int)frame);
+            if (frame % 50 == 0) printf("bigbubble test f %u: %d\n", frame, st);
+        }
+#endif
 #ifdef BTERESA_TEST
         if (frame >= 300 && frame < 4000) { /* BombTeresa: a chase and tackle (BT_ACT 1: Mario's spin, its tongue, a throw) */
             int st = game_test_bomb_teresa();
