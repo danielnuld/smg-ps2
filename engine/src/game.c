@@ -607,6 +607,7 @@ static const char *bva_key; /* draw_skin: a BVA started apart from the clip (sta
 static float bva_frame;
 static int sbp_bva_row = -1; /* StinkBugParent without its child (update_sbp) */
 static int nchg; /* ChipGroup states made (chip_group_of) */
+static int nfbs; /* FountainBig states made (update_fountains) */
 static void draw_skin(const Model *md, const float m[16], Anim *a)
 {
     if (md == m_mario_skin) render_light(&plight.cur);
@@ -2540,6 +2541,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     creeper_init();
     sbp_bva_row = -1;
     nchg = 0; /* ChipGroup states (chip_group_of) */
+    nfbs = 0; /* FountainBig states */
     nrbms = 0;
     nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0; nfgs = 0; nggs = 0; nsss = 0; ss_ride = -1; ss_reset(); kfires_reset(); nlls = 0; ndls = 0; nebl = 0; nass = 0;
     dino_cam = 0;
@@ -9179,13 +9181,14 @@ static void jet_reset(Inst *in, int reason) /* JetTurtle::reset */
  * waits unlit (WaitFire) until a fire ball within 150 x scale lights it (Fire: 60 frames, then its SW_A, Burn); a
  * spin only makes it flicker (30 frames). row_turn 0 burning, 1 going out, 2 out, 3 unlit, 4 lighting, 5 flicker;
  * row_step its frames */
-/* FountainBig.cpp: hidden 120 frames (Wait), its sign 80 (Sign), 30 more (SignStop), then the column (Spout, 180
- * frames; its height scale 0 to 1 over the first 20) and down over 10 (SpoutEnd). Mario within 60 of its axis, 600
- * up, is thrown up (ACTMES_FOUNTAINJUMP -> MarioFlow: mJumpHeightFlow 18 with mGravityFlow 0.3, about 540 up: here
- * 44 up with Mario's own gravity, mJumpDistFlow 2 ahead), once until he lands. row_step its cycle frame, row_turn 1
- * while he flies off it; its FountainBigSign and FountainBig effects. ponytail: no Bee Mario flip
- * ponytail (unmarked until the 2026-11-02 audit): the throw is 44 up with Mario's own gravity, not MarioFlow
- * (mJumpHeightFlow 18, mGravityFlow 0.3), no rumble */
+/* FountainBig.cpp: hidden (Wait, isStep 120), its sign (Sign: FountainBigSign, SE_OJ_LV_FOUNTAIN_BIG_SIGN, isStep 80),
+ * SignStop (isStep 30), then the column (Spout: shown, FountainBig effect, SE_OJ_FOUNTAIN_BIG_START, its sensor on,
+ * SE_OJ_LV_FOUNTAIN_BIG_SPOUT, its height scale 0 to 1 over the first 20, isStep 180) and down over 10 (SpoutEnd).
+ * Its eye sensor (60) sits on its axis from 60 to 600 up at the foot from Mario (updateHitSensor). Touching Mario: a
+ * weak rumble and ACTMES_FOUNTAINJUMP: within 60 of the sensor across his gravity MarioFlow (doFlow: mJumpHeightFlow 18
+ * up, mJumpDistFlow 2 ahead, mGravityFlow 0.3 a frame: about 540 up; refused while flowing), else a push. Bee Mario:
+ * EnemyAttackFlipWeak (on the ground) / Flip, then its sensor off till 60 frames on and Mario on the ground
+ * (mSpoutTimer). row_turn its nerve, row_step its step */
 /* SnowMan.cpp: a fire ball on its head or body melts that part (MeltHead / MeltBody: SW_A, SW_B), the second
  * one brings it down (kill: SW_DEAD). Head sensor 100 at 250 up, body 150 at 100 (scale). row_turn bit 1 head
  * melted, bit 2 body melted. ponytail: no melting animation (the model squashes as parts go), spins only shake it */
@@ -13250,29 +13253,76 @@ static int fat_demo(void) /* Test .. After: Mario waits (its demo) */
     return 0;
 }
 
+enum { FB_WAIT, FB_SIGN, FB_SIGNSTOP, FB_SPOUT, FB_SPOUTEND };
+static struct { short row, timer; u8 sens; } fbs[16]; /* mSpoutTimer, its sensor valid */
+static int nfbs;
+static int m_flow(Player *m);
 static void update_fountains(void)
 {
     FOR_KIND(i, fountain) {
         Inst *in = &insts[i];
         if (!in->fountain) continue;
-        int row = in->row, t = row_step[row] = (row_step[row] + 1) % 420;
-        float k = t < 230 ? 0 : t < 250 ? (t - 230) / 20.0f : t < 410 ? 1 : 1.0f - (t - 410) / 10.0f;
-        memcpy(in->m, in->m0, 64);
-        for (int j = 4; j < 7; j++) in->m[j] *= k > 0.01f ? k : 0.01f;
-        if (k <= 0) in->m[12] = 1e9f; /* hideModel */
-        int near = vlen(vsub(v3(in->m0[12], in->m0[13], in->m0[14]), cam_pos)) < 3000.0f; /* effects for the near ones only */
-        if (near && t >= 120 && t < 200) fx_keep(FX_FOUNTAINBIG_FOUNTAINBIGSIGN, &sc->objs[row], in->m0); /* Sign */
-        if (near && t >= 230 && t < 410) fx_keep(FX_FOUNTAINBIG_FOUNTAINBIG, (const char *)&sc->objs[row] + 1, in->m0); /* Spout */
-        if (row_turn[row] && mario->grounded) row_turn[row] = 0;
-        if (t < 230 || t >= 410 || row_turn[row]) continue;
-        V3 up = vnorm(v3(in->m0[4], in->m0[5], in->m0[6])), base = v3(in->m0[12], in->m0[13], in->m0[14]);
-        V3 rel = vsub(mario->pos, base);
-        float along = vdot(rel, up);
-        if (along < -50.0f || along > 600.0f * k || vlen(vtangent(rel, up)) > 60.0f + HIT_BODY_R * 0.5f) continue;
+        int row = in->row, f = 0;
+        while (f < nfbs && fbs[f].row != row) f++;
+        if (f == nfbs) { if (nfbs == 16) continue; fbs[nfbs].row = (short)row; fbs[nfbs].timer = -1; fbs[nfbs++].sens = 0; }
+        typeof(&fbs[0]) b = &fbs[f];
+        int nrv = row_turn[row], st = row_step[row], next = -1;
+        float at[3] = {in->m0[12], in->m0[13], in->m0[14]};
+        int near = vlen(vsub(v3(at[0], at[1], at[2]), cam_pos)) < 3000.0f; /* effects for the near ones only */
+        float k = -1.0f; /* mScale.y set this step */
+        switch (nrv) {
+        case FB_WAIT:
+            if (st == 0) { b->timer = -1; b->sens = 0; }
+            if (st == 120) next = FB_SIGN;
+            break;
+        case FB_SIGN:
+            if (near) fx_keep(FX_FOUNTAINBIG_FOUNTAINBIGSIGN, &sc->objs[row], in->m0); /* emitEffect FountainBigSign */
+            se_level(SE_OJ_LV_FOUNTAIN_BIG_SIGN, at, 0);
+            if (st == 80) next = FB_SIGNSTOP;
+            break;
+        case FB_SIGNSTOP:
+            if (st == 30) next = FB_SPOUT;
+            break;
+        case FB_SPOUT:
+            if (st == 0) { se_start(SE_OJ_FOUNTAIN_BIG_START, at); b->sens = 1; } /* showModel, its sensors on */
+            if (near) fx_keep(FX_FOUNTAINBIG_FOUNTAINBIG, (const char *)&sc->objs[row] + 1, in->m0);
+            if (b->timer != -1) {
+                if (b->timer >= 60 && mario->grounded) { b->timer = -1; b->sens = 1; }
+                else b->timer++;
+            }
+            if (st <= 20) k = st / 20.0f; /* calcNerveRate(20) */
+            se_level(SE_OJ_LV_FOUNTAIN_BIG_SPOUT, at, 0);
+            if (st == 180) { b->sens = 0; next = FB_SPOUTEND; }
+            break;
+        case FB_SPOUTEND:
+            k = 1.0f - st / 10.0f;
+            if (st == 10) next = FB_WAIT; /* hideModel */
+            break;
+        }
+        if (k >= 0.0f) { /* mScale.y (the clamp's value unused: 0 at the first step) */
+            memcpy(in->m, in->m0, 64);
+            for (int j = 4; j < 7; j++) in->m[j] *= k;
+        }
+        if (nrv == FB_WAIT || nrv == FB_SIGN || nrv == FB_SIGNSTOP || (nrv == FB_SPOUTEND && next == FB_WAIT)) in->m[12] = 1e9f;
+        else in->m[12] = in->m0[12];
+        if (next >= 0) { row_turn[row] = (signed char)next; row_step[row] = 0; } else row_step[row]++;
+        if (!b->sens) continue;
+        V3 up = vnorm(v3(in->m0[4], in->m0[5], in->m0[6])), base = v3(at[0], at[1], at[2]);
+        V3 a0 = vadd(base, vmul(up, 60.0f)); /* updateHitSensor: the foot from Mario on 60 .. 600 up */
+        float t = vdot(vsub(mario->pos, a0), up);
+        V3 sp = vadd(a0, vmul(up, t < 0 ? 0 : t > 540.0f ? 540.0f : t)), c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+        if (vlen(vsub(c, sp)) >= 60.0f + HIT_BODY_R) continue; /* its sensor on Mario's */
+        if (player_mode == PM_BEE) { /* isPlayerElementModeBee */
+            if (mario_attack(mario->grounded ? ATK_FLIP_WEAK : ATK_FLIP, sp)) { b->timer = 0; b->sens = 0; }
+            continue;
+        }
+        pad_rumble(RUMBLE_WEAK); /* tryRumblePadWeak */
         mode_touch_water(); /* receiveMsgFountainJump: touchWater */
-        mario->vup = 44.0f; mario->hvel = vmul(mario->face, 2.0f); mario->grounded = 0; mario->jump_kind = 0; mario->hip = 0;
-        row_turn[row] = 1;
-        printf("fountain row %d throws Mario up" "\n", row);
+        if (vlen(vtangent(vsub(c, sp), mario->up)) >= 60.0f) { mario_push_out(sp, 60.0f); continue; } /* receiveMsgPush */
+        if (m_flow(mario)) {
+            mario_sound("水弾かれ"); mario_sound("声噴水ジャンプ");
+            printf("fountain row %d: MarioFlow" "\n", row);
+        }
     }
 }
 
@@ -16325,7 +16375,7 @@ static void m_swing(Player *m)
  * runs in his action's place (dm_update) until it gives the frame back; closing, each leaves its after-timer (120:
  * getDamageAfterTimer, no new damage and his blink). The swim's damage waits for MarioSwim (the old hit). */
 enum { DMS_NONE, DMS_DAMAGE, DMS_FAINT, DMS_BLOWN, DMS_FLIP, DMS_FIREDANCE, DMS_FIRERUN, DMS_PARALYZE, DMS_FREEZE,
-       DMS_CRUSH, DMS_STUN };
+       DMS_CRUSH, DMS_STUN, DMS_FLOW };
 static struct {
     int st, started;                                  /* the active status; started this frame (checkDamage) */
     int req_damage, req_faint, req_blown, req_fire, req_paralyze, req_crush;
@@ -16339,6 +16389,7 @@ static struct {
     int p12, p_timer, p16, p_notdec;                           /* MarioParalyze */
     int z_frozen, z18, z_timer, z1C; float z14;                /* MarioFreeze */
     int c12, c_timer;                                          /* MarioCrush / MarioStun */
+    int w12, w14; V3 w18;                                      /* MarioFlow */
     int a41E;                                                  /* Mario::_41E (set41E) */
     V3 v7C4;                                                   /* Mario::_7C4: the last damage's direction */
     int blue;                                                  /* MarioActor::_1B4: the fire's smoke blue */
@@ -16548,6 +16599,12 @@ static int m_stun(Player *m) /* changeStatus(mStun) */
     dm_change(m, DMS_STUN);
     return 1;
 }
+static int m_flow(Player *m) /* Mario::doFlow (ACTMES_FOUNTAINJUMP) */
+{
+    if (dmg.st == DMS_FLOW || m_anim_on("空中ひねり")) return 0;
+    dm_change(m, DMS_FLOW);
+    return 1;
+}
 
 static int dm_check(Player *m) /* Mario::checkDamage (decDamageAfterTimer first): 1 a status started */
 {
@@ -16692,6 +16749,16 @@ static void dm_start(Player *m)
         dm_dec_life();
         if (life <= 0) dm_game_over();
         dmg.c_timer = 180; dmg.c12 = 0;
+        break;
+    case DMS_FLOW: /* MarioFlow::start: thrown mJumpHeightFlow up, mJumpDistFlow ahead */
+        dmg.w12 = 0; dmg.w14 = 0;
+        m_anim("中ダメージ"); /* changeAnimationNonStop */
+        m_pad_vib(2);
+        m->grounded = 0; m->jumping = 1; m->hip = 0;
+        dmg.w18 = vadd(vmul(m->face, MC.mJumpDistFlow), vmul(m->up, MC.mJumpHeightFlow));
+        m_set_jv(m, dmg.w18);
+        m->vel = vadd(m->vel, dmg.w18);
+        m_stop_walk(m);
         break;
     case DMS_STUN: /* MarioStun::start */
         m_anim("しびれ");
@@ -16994,6 +17061,31 @@ static int dm_update(Player *m) /* the status's update: 0 gives the frame back (
             }
         }
         return 1;
+    case DMS_FLOW: /* MarioFlow::update */
+        dmg.w12++;
+        if (dmg.w14 == 0) {
+            m->vel = vadd(m->vel, dmg.w18);
+            dmg.w18 = vadd(dmg.w18, vmul(m->up, -MC.mGravityFlow)); /* _240 x mGravityFlow */
+            if (dmg.w12 == 20) m_anim("中ダメージ空中");
+            if (dmg.w12 > 30 && swing_perm && pad_pressed(PAD_SQUARE)) { m_try_spin_jump(m); return 0; } /* isRequestRush */
+            if (m->grounded) {
+                m->jumping = 0;
+                m_anim("中ダメージ着地");
+                mario_smoke(SMOKE_DAMAGE_LAND); /* 共通ダメージ着地 */
+                mario_sound("吹っ飛び倒れ");
+                dmg.w18 = vtangent(dmg.w18, m->up);
+                dmg.w12 = 0;
+                dmg.w14++;
+            }
+        } else if (!m->grounded) { m->jumping = 1; dmg.w14 = 0; }
+        else {
+            m->vel = vadd(m->vel, dmg.w18);
+            dmg.w18 = vmul(dmg.w18, 0.95f);
+            if (!m_anim_on("中ダメージ着地")) return 0;
+            if (dmg.w12 > 15 && m_req_jump) { m_try_jump(m); return 0; }
+        }
+        m_set_jv(m, dmg.w18);
+        return 1;
     case DMS_CRUSH: case DMS_STUN: /* MarioCrush::update / MarioStun::update */
         if (dmg.c_timer) dmg.c_timer--;
         if (!dmg.c_timer) {
@@ -17064,6 +17156,9 @@ static void dm_close(Player *m)
         break;
     case DMS_STUN:
         m_stop_anim("しびれ", NULL);
+        break;
+    case DMS_FLOW: /* MarioFlow::close */
+        m_stop_anim("ダメージ", NULL); m_stop_anim("ダメージ着地", "wait");
         break;
     }
     dmg.st = DMS_NONE;
