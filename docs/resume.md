@@ -437,9 +437,12 @@ Second console round (2026-10-24), from Daniel's report:
   XF=-DJELEC_TEST (OceanPhantomCave 1), XF="-DWALKER_TEST -DERMV_TEST" (BattleShip 2). ponytail: in the header
   comments (point light, star pointer swoon, BRK / BAS colours; the rail drawn as its model over the lit pieces).
   Repack: slice_all.py OceanPhantomCave, FishTunnel, BattleShip, CannonFleet, CubeBubbleEx, Factory, FlipPanelEx.
+- SandUpDownTriRock (#274, 2026-11-05): Wait, SW_B on Down (On BCK), Rest arg0, Up (Return BCK), Stop at the
+  power star's get; its collisions Move00-02 on their joints (slice.py SKINNED_OBJ + JOINT_KCL_ONLY, game.c the
+  "<class>#<joint>.<k>" parts). Test `walker` XF="-DWALKER_TEST -DTRIROCK_TEST" SandClockGalaxy/1 (Mario rides it
+  down). Repack: slice_all.py SandClockGalaxy.
 - Static classes still to port (mario2's list, 2026-11-05; placements in): BigBubbleGenerator (CubeBubbleEx 1/2,
-  ReverseKingdom 2: Ride/BigBubble.cpp 1228 lines), SandUpDownTriRock
-  (SandClock 1-7: SW_B On / Rest arg0 / Return, KCL Move00-02 on joints: KCL_PARTS + SKINNED_OBJ), BegomanBabyLauncher
+  ReverseKingdom 2: Ride/BigBubble.cpp 1228 lines), BegomanBabyLauncher
   (CannonFleet 3/4, OceanFloaterLand 1/2).
 - Unizo (fix/states-unizo, 2026-11-05): Unizo.cpp's nerves (Wait, Jump on its Search BCK, Chase, Attack on its
   Attack BCK, CollidePlayer, CollideEnemy: two Unizos push each other, Shock BCK), mJumpCount, the sea / shoal roll
