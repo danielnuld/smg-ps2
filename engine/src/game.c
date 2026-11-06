@@ -38814,6 +38814,43 @@ static void update_fsrock(void)
         float c[3] = {p.x, p.y, p.z};
         if (render_visible(c, 800.0f)) fx_named("FallingSmallRock", "FallingSmallRock", m, NULL, &row_turn[i]); /* endClipped: emitEffect */
         if (n <= 16) lv[n - 1] = se_level(SE_AT_LV_FALLING_ROCK, c, lv[n - 1]);
+/* SubmarineSteam.cpp after Petari (SubmarineSteam and SubmarineVolcano, its effect group the object's name): Steam
+ * (its Steam effect, SE_OJ_LV_MARINE_STEAM_OUT, _S in SkullSharkGalaxy), or WaitForSwitchOn until its SW_A. Its body
+ * (400 at 250 up its y) on Mario: a sphere of 120 at 600 up or a cylinder 480 up its y (Mario's radius x 0.7, + 20)
+ * hits him strongly (EnemyAttackStrong). Clipped (a sphere of 800 about its sensor) its effect is off. row_turn: 0
+ * steam, 3 waiting for SW_A. ponytail: setGroupClipping (one clipping per actor here) */
+static void update_msteam(void)
+{
+    static const Scene *seen;
+    static int ty[2];
+    static u32 lv[16];
+    if (seen != sc) { seen = sc; ty[0] = scene_type(sc, "SubmarineSteam"); ty[1] = scene_type(sc, "SubmarineVolcano"); memset(lv, 0, sizeof lv);
+                      for (u32 i = 0; i < sc->nobjs; i++) if (((int)sc->objs[i].type == ty[0] || (int)sc->objs[i].type == ty[1]) && sc->objs[i].sw[SW_A] >= 0) row_turn[i] = 3; }
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    float pr = HIT_BODY_R * 0.7f;
+    int skull = !strncmp(game_stage_name, "SkullSharkGalaxy", 16);
+    for (u32 i = 0, n = 0; i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        int k = (int)r->type == ty[0] ? 0 : (int)r->type == ty[1] ? 1 : -1;
+        if (k < 0) continue;
+        n++;
+        if (!row_shown((int)i)) continue;
+        if (row_turn[i] == 3) { if (!sw_on(r, SW_A)) continue; row_turn[i] = 0; } /* exeWaitForSwitchOn */
+        float m[16], one[3] = {1, 1, 1};
+        mat_translate_rot_scale(m, r->pos, r->rot, one);
+        V3 p = row_pos(r), up = vnorm(v3(m[4], m[5], m[6])), s = vadd(p, vmul(up, 250.0f));
+        float c[3] = {s.x, s.y, s.z};
+        if (render_visible(c, 800.0f)) fx_named(k ? "SubmarineVolcano" : "SubmarineSteam", "Steam", m, NULL, &row_turn[i]);
+        if (n <= 16) { float at[3] = {p.x, p.y, p.z}; lv[n - 1] = se_level(skull ? SE_OJ_LV_MARINE_STEAM_OUT_S : SE_OJ_LV_MARINE_STEAM_OUT, at, lv[n - 1]); }
+#ifdef MSTEAM_TEST /* plain build XF=-DMSTEAM_TEST, SkullSharkGalaxy/1: Mario into the first one's column at frame 300, the next at 600 */
+        if ((game_frame == 300 && n == 1) || (game_frame == 600 && n == 6)) { mario->pos = vadd(p, vmul(up, 200.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; printf("msteam test: into %u (%s)\n", i, k ? "SubmarineVolcano" : "SubmarineSteam"); }
+#endif
+        if (vlen(vsub(mc, s)) >= 400.0f + HIT_BODY_R || mario->hurt_timer) continue; /* attackSensor: the sensors touch */
+        V3 d = vsub(mc, p);
+        float h = vdot(d, up) / 480.0f; /* HitCylinder::getParams */
+        int hit = vlen(vsub(mc, vadd(p, vmul(up, 600.0f)))) < 120.0f + pr ||
+                  (h >= 0.0f && h <= 1.0f && vlen(vsub(d, vmul(up, h * 480.0f))) < pr + 20.0f);
+        if (hit && mario_attack(ATK_STRONG, p)) printf("submarine steam %u hits\n", i);
     }
 }
 /* LavaSteam.cpp: Wait 120 frames (its Sign effect the first 90), Steam 90 (burns: a 330 cylinder up its y, a sphere
@@ -50761,6 +50798,7 @@ void game_update(void)
     LQ(27, update_plants());
     LQ(28, update_steam());
     if (dx_cls_moves("FallingSmallRock")) update_fsrock();
+    if (dx_cls_moves("SubmarineSteam") || dx_cls_moves("SubmarineVolcano")) update_msteam();
     LQ(29, update_geyser());
     LQ(30, update_assembly());
     LQ(31, update_jumpstands());

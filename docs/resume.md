@@ -1019,6 +1019,10 @@ there needs the embedded blob and every pack rebuilt.
   (HellProminenceGalaxy 1 / 4): Wait for SW_A, Move (its FallingSmallRock effect, SE_AT_LV_FALLING_ROCK) until its
   binder (10 at 800 up) touches the map. Rows kept by slice.py LOGIC, its effect by jpa.py NAMED. Test: plain build
   XF=-DFSROCK_TEST HellProminenceGalaxy/1 (SW_A on at frame 300: 13 move, one bound and dead).
+- SubmarineSteam / SubmarineVolcano (feat/307-submarine-steam, 2026-11-06): MapObj/SubmarineSteam.cpp (both names one
+  class, the effect group its name) in game.c update_msteam: Steam (SE_OJ_LV_MARINE_STEAM_OUT, _S in SkullSharkGalaxy)
+  or WaitForSwitchOn; its strong hit (sphere 120 at 600, cylinder 480, Mario's radius x 0.7 + 20). slice.py LOGIC,
+  jpa.py NAMED. Test: plain build XF=-DMSTEAM_TEST SkullSharkGalaxy/1 (both hit Mario). ponytail: group clipping.
 
 ## Next
 
