@@ -609,7 +609,7 @@ int game_test_kj(int frame) /* XF=-DKJ_TEST, KoopaJrShipLv1Galaxy/1: Mario put a
         printf("kj test f %d: nrv %d st %d d0 %d coord %.0f/%.0f pos %.0f %.0f %.0f, Mario %.0f %.0f %.0f, life %d, dx %d part %d talk %d\n", frame, kj.nrv, kj.st, kj.d0,
                kj.coord, kj.len, kj.pos.x, kj.pos.y, kj.pos.z, mario->pos.x, mario->pos.y, mario->pos.z, game_life(), dx.on, dx.part, talk_active());
     if (life < 2) life = 3;
-    if (talk_active() && frame % 24 < 6) pad_force |= PAD_CROSS; /* (A through Koopa Jr.'s talk) */
+    pad_force = talk_active() && frame % 24 < 6 ? PAD_CROSS : 0;
     static int hit_at = -1000, done_at = -1;
     if (kj.nrv == KJ_DEAD) {
         if (frame < 60) return 0;
