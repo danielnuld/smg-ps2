@@ -50990,7 +50990,8 @@ static void shop_goods_draw(const Inst *in, const float m[16])
     for (int g = 0; g < 2; g++) {
         const Model *gm = scene_model(sc, name[g]);
         if (!gm || !gm->skin) continue;
-        if (!ga[g]) { if (!(ga[g] = keep_anim())) continue; anim_bind(ga[g], gm->skin); anim_play(ga[g], clip[g], 1.0f, 1, 0); }
+        if (!ga[g] && !(ga[g] = keep_anim())) continue;
+        if (ga[g]->skin != gm->skin) { anim_bind(ga[g], gm->skin); anim_play(ga[g], clip[g], 1.0f, 1, 0); } /* (a zone swap moves the model) */
         anim_update(ga[g]);
         float w[16];
         mat_mul(w, m, in->anim->world[g ? 5 : 8]);
