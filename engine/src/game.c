@@ -4701,6 +4701,7 @@ static int stone_break(const Row *r, Plant *p)
 
 static void game_rebind_(void);
 static void npc_rail_place(Inst *in);
+static void tb_rebind_place(Inst *in); /* tripod_boss.inc */
 u32 rebind_cycles, rebinds; /* game_rebind's time and count (the route test's perf lines) */
 void game_rebind(void)
 {
@@ -5203,6 +5204,7 @@ static void game_rebind_(void)
         if (in->onimasu) oni_place(in);
         if (in->kstair) ks_place(in);
         if (in->gap) gap_place(in);
+        tb_rebind_place(in);
         if (in->coco) coco_spawn(in);
         if (in->fountain || in->stray) memcpy(in->m0, in->m, 64);
         if (in->stray) in->head = row_turn[i] ? (stray_at[i % 64].x || stray_at[i % 64].y || stray_at[i % 64].z ? stray_at[i % 64] : v3(in->m[12], in->m[13], in->m[14])) : v3(in->m[12], in->m[13], in->m[14]);
@@ -39749,7 +39751,10 @@ static int dx_cls_moves(const char *cls) /* an update_* of that class runs now *
     if (bc && !pd.name) return !strcmp(cls, bc) || !strcmp(cls, "PowerStar") || dx_always_moves(cls);
     const char *oc = !pd.name && !dx.on ? own_demo_cls() : NULL;
     if (oc) return !strcmp(cls, oc) || dx_always_moves(cls);
-    if (pd.name) return (pd.row >= 0 && !strcmp(sc->types + 32 * sc->objs[pd.row].type, cls)) || dx_always_moves(cls);
+    if (pd.name) { /* (a GrandStar is a PowerStar: its class's update) */
+        const char *pc = pd.row >= 0 ? sc->types + 32 * sc->objs[pd.row].type : "";
+        return !strcmp(strcmp(pc, "GrandStar") ? pc : "PowerStar", cls) || dx_always_moves(cls);
+    }
     if (!dx.on) return 1;
     const Demo *d = &demos[dx.cur];
     for (int i = 0; i < d->h->ngroup; i++)

@@ -919,10 +919,19 @@ there needs the embedded blob and every pack rebuilt.
   cannons with their HomingKillers, shell / core / guard wall (ダメージ demo, 2ndDemo camera, star pieces, 02_B), the 破壊
   demo (EndDemo, BreakDown, Explosion), the grand star (GrandStar now an ITEM_STAR, declared). Test: plain build,
   XF="-DTB_TEST", TriLegLv1Galaxy/1 (D:/smg-ps2-wt/audit-tb.sh): seen the opening demo (740 frames), the steps of
-  sequence 2 / 0, the body with its cage shell, Mario on its top. ponytail: the killers / shell / core / wall / end
-  path not yet seen in PCSX2 (the test's Mario never got within an under cannon's 1200), TripodBossBreakMovement,
-  CameraTripodBoss*, leg shadows, DummyDisplayModel, KinokoOneUp, cannon clips, wall part collision (tripod_boss.inc
-  header).
+  sequence 2 / 0, the body with its cage shell, Mario on its top.
+  The rest of the fight (#285, 2026-11-05): the killers chase at any angle (initWithoutIter keeps cChaseStartAngle
+  360; it was 180), GoToTarget on the shell / core sensors, the guard wall parts' collision per part (the KCL's band
+  r 739..800, y 0..440, +-22.5 degrees: requestBreak of the part hit, Mario pushed out), the core broken by a killer on
+  its collision, the parts placed again after a rebind (tb_rebind_place). Seen in PCSX2 (same test): an under cannon's
+  killer breaks the shell, the damage demo, the guard wall up, a wall part broken, a killer through the gap into the
+  core, PainDemo / BreakDown / Explosion, the grand star's appear demo and `power star 1 got`. The grand star's appear
+  demo used to hang (the demo moved only the "GrandStar" class; update_items is the "PowerStar" one: dx_cls_moves
+  maps a GrandStar to PowerStar, every galaxy's grand stars). Test only: the upper cannons' killers dive round the
+  body on its gravities (segment g40, prio 1006, Distant 2150) and hit its side, so the test sets one chasing over the
+  top through a gap. ponytail: TripodBossBreakMovement, CameraTripodBoss*, leg shadows, DummyDisplayModel,
+  KinokoOneUp, cannon clips, the BreakDown camera (shows the planet close up), the killers' shadow on a cage
+  (tripod_boss.inc header).
 - BossKameck (feat/kameck, 2026-11-05): Kamella after Petari (game.c bk_*, its sequencer Vs1 / Vs2, BattleDemo,
   StateBattle's 12 nerves, MoveRail, BattlePattarn) in StarDustGalaxy 2's ThrowTutorialZone: dead until SW_A (the
   SwitchCube), カメック登場Vs1 (the DemoBossKameckStart anim camera on BossKameckBattleDemo, MBGM_BOSS_04, Mario
