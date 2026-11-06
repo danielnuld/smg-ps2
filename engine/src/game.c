@@ -378,6 +378,9 @@ static V3 star_pos(const Inst *in, int *state);
 static V3 tb_unfollow(const Row *r, V3 p); /* TripodBoss (tripod_boss.inc): an area following its joints */
 static int tb_hidden(int row), tb_demo(void);
 static void tb_init(const Scene *s, const unsigned char *blob), update_tb(void), tb_draw(void);
+static void sf_init(const Scene *s, const unsigned char *blob), update_sf(void), sf_draw(void); /* skeletal_fish.inc */
+static int sf_jet_hit(V3 p);
+static void sf_rebind_insts(const Scene *s);
 static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle);
 static void dome_init(void);
 /* slice.py BRK_ARG: a class whose colour is its BRK stopped at the frame one of its args gives (setBrkFrameAndStop) draws
@@ -2477,6 +2480,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     bk_init(s, blob);
     tb_init(s, blob);
     kp_init(s, blob);
+    sf_init(s, blob);
     gh_reset(); /* GhostPlayer: init at its first update */
     for (u32 i = 0; i < s->nobjs; i++)
         if (strcmp(s->types + 32 * s->objs[i].type, "OtaKing") == 0) {
@@ -5194,7 +5198,7 @@ static void game_rebind_(void)
     int t_note = scene_type(s, "NoteFairy"), t_petari = scene_type(s, "Petari"), t_rockc = scene_type(s, "RockCreator"),
         t_wan = scene_type(s, "WanwanRolling"), t_wanm = scene_type(s, "WanwanRollingMini"),
         t_wang = scene_type(s, "WanwanRollingGold"), t_dino = scene_type(s, "DinoPackun"), t_ota = scene_type(s, "OtaKing"), t_bsb = scene_type(s, "BossStinkBug"),
-        t_bk1 = scene_type(s, "BossKameck"), t_bk2 = scene_type(s, "BossKameck2"), t_tsp = scene_type(s, "TombSpider");
+        t_bk1 = scene_type(s, "BossKameck"), t_bk2 = scene_type(s, "BossKameck2"), t_tsp = scene_type(s, "TombSpider"), t_sfk = scene_type(s, "SkeletalFishBoss");
     static signed char wnk[1024]; /* walker_new_kind by type this rebind: 0 not yet, 1 no, 2 yes */
     static const Model *bloom_of[1024]; /* "<class>Bloom" by type this rebind (snprintf + lookup an object) */
     static unsigned char bloom_ok[1024];
@@ -5208,7 +5212,7 @@ static void game_rebind_(void)
             r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly ||
             r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_ermv || r->type == t_stink || r->type == t_note ||
             r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == t_petari || r->type == t_rockc || r->type == t_wan ||
-            r->type == t_wanm || r->type == t_wang || r->type == t_dino || r->type == t_ota || r->type == t_bsb || r->type == t_bk1 || r->type == t_bk2 || r->type == t_tsp ||
+            r->type == t_wanm || r->type == t_wang || r->type == t_dino || r->type == t_ota || r->type == t_bsb || r->type == t_bk1 || r->type == t_bk2 || r->type == t_tsp || r->type == t_sfk ||
             (r->type < 1024 ? wnk[r->type] == 2 : walker_new_kind(s->types + 32 * r->type) >= 0))
             continue;
         const char *name = s->types + 32 * r->type;
@@ -5357,6 +5361,7 @@ static void game_rebind_(void)
     }
     bk_barrier_inst(s);
     kp_rebind(s);
+    sf_rebind_insts(s); /* SkeletalFishBoss: its joint collisions */
     if (ota.row >= 0 && m_otamagma && scene_kcl(s, "OtaKingMagma") && ninsts < (int)s->nobjs) { /* OtaKing's own row has no inst */
         /* OtaKingMagma: a PartsModel at OtaKing's placement (its own matrix), its collision there */
         const Row *r = &s->objs[ota.row];
@@ -13672,6 +13677,7 @@ static void update_jets(void)
             else if (fh > 10000.0f) { gone = 1; reason = 1; }
             else if (wall) { gone = 1; camera_shake(SHAKE_WEAK); }
             if (bk_jet_hit(p)) gone = 1; /* BossKameck: isMsgJetTurtleAttack (requestDamage) */
+            if (!gone && sf_jet_hit(p)) gone = 1; /* SkeletalFishBaby / Boss: isMsgJetTurtleAttack */
             hhp_blow(p, 60.0f); /* HammerHeadPackun: isMsgJetTurtleAttack */
             tbox_hit(p, 60.0f); /* TreasureBoxCracked: isMsgJetTurtleAttack */
             for (int k = 0; k < nkuribo; k++) { /* ACTMES_JET_TURTLE_ATTACK */
@@ -49150,6 +49156,8 @@ int game_test_bk(int frame)
 #include "tripod_boss.inc" /* TripodBoss (Megaleg): tb_*, game_test_tb */
 #include "koopa.inc" /* Koopa (Bowser): kp_*, game_test_kp */
 #include "ice_meraking.inc" /* IceMerameraKing (Baron Brr): mk_*, game_test_mk */
+#include "skeletal_fish.inc" /* SkeletalFishBaby / Boss (Kingfin): sf_* */
+#include "skeletal_fish_boss.inc" /* SkeletalFishBoss (Kingfin): sfk_*, its guards sfg_* */
 /* Test builds: Mario in the boss's SwitchCylinder until it starts, then dropped in a hip drop on its BodyHipDrop part
  * whenever a hit is open; game_bsb_state: sequencer x 100 + nerve */
 int game_test_bsb(void)
@@ -50806,6 +50814,7 @@ void game_update(void)
     update_bk();
     update_tb();
     update_kp();
+    update_sf();
     if (!demo_on) update_km_beams(); /* (the Kameck beams, fire balls, turtles: stopped in a demo) */
     update_tsp();
     if (star_demo) { /* its camera ("powerstar/powerstarget"); Mario plays PowerStarGet meanwhile */
@@ -52163,6 +52172,7 @@ void game_draw(void)
     bk_draw();
     tb_draw();
     kp_draw();
+    sf_draw();
     km_draw();
     tsp_draw();
     if (ota.row >= 0 && ota.nrv != OTA_WAITONSWITCH && ota.nrv != OTA_APPEARSTAR && ota.nrv != OTA_DEAD) { /* OtaKing, its feet */

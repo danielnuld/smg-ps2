@@ -1019,6 +1019,16 @@ there needs the embedded blob and every pack rebuilt.
   (HellProminenceGalaxy 1 / 4): Wait for SW_A, Move (its FallingSmallRock effect, SE_AT_LV_FALLING_ROCK) until its
   binder (10 at 800 up) touches the map. Rows kept by slice.py LOGIC, its effect by jpa.py NAMED. Test: plain build
   XF=-DFSROCK_TEST HellProminenceGalaxy/1 (SW_A on at frame 300: 13 move, one bound and dead).
+- Kingfin / Bonefins (feat/303-kingfin, 2026-11-05): engine/src/skeletal_fish.inc (sf_*: SkeletalFishRailControl,
+  SkeletalFishJointCalc, SkeletalFishBaby for SkeletalFishBaby / ChildSkeletalFishBaby rows on the SnakeFish model,
+  ExterminationSkeletalFishBaby: TearDrop's 全滅スター出現 star) and skeletal_fish_boss.inc (sfk_* / sfg_*:
+  SkeletalFishBoss with its Param.bcsv levels, rails by RailIDLv, 13 rail-bent joints, 16 joint collisions as
+  invisible insts (slice.py KCL_PARTS SkeletalFishBoss / SkeletalFishBossHeadA), head sensors, mouth nerves, the
+  出現 / パワーアップ / ２ / 死亡 demos on its four canms (CANM_ARC sfb), demo guards, break model, MBGM_BOSS_09_A / B and
+  the near / far states, SkeletalFishGuard / GuardHolder). A thrown JetTurtle hits them (sf_jet_hit). Clip keys over 31
+  chars shorten skeletalfish to sf (slice.py clip_key, game.c sf_clip). Tests: XF=-DSF_TEST TearDropGalaxy/1, XF=-DSFK_TEST SkullSharkGalaxy/1 (shells
+  thrown at the fish by the test): three babies and the checker's star; the whole fight to its star. ponytail: see the two files' headers (BRK colours, shadows, bloom, bird louse,
+  columns, 2P pointer, the after-demo programmable camera).
 
 ## Next
 

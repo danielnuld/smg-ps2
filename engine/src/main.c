@@ -2208,6 +2208,20 @@ int main(void)
         if (f0 && frame - f0 < 12000) game_test_mk((int)(frame - f0));
     }
 #endif
+#ifdef SFK_TEST /* XF=-DSFK_TEST, SkullSharkGalaxy/1: the SkeletalFishBoss fight (game_test_sfk) */
+    {
+        static u32 f0;
+        if (!f0 && frame > 30 && game_test_free()) f0 = frame;
+        if (f0 && frame - f0 < 20000) game_test_sfk((int)(frame - f0));
+    }
+#endif
+#ifdef SF_TEST /* XF=-DSF_TEST, TearDropGalaxy/1: shells at the SkeletalFishBabies (game_test_sf) */
+    {
+        static u32 f0;
+        if (!f0 && frame > 30 && game_test_free()) f0 = frame;
+        if (f0 && frame - f0 < 12000) game_test_sf((int)(frame - f0));
+    }
+#endif
 #ifdef TB_TEST /* XF=-DTB_TEST, TriLegLv1Galaxy/1: the TripodBoss fight (game_test_tb) */
     {
         static u32 f0;
