@@ -421,8 +421,15 @@ Second console round (2026-10-24), from Daniel's report:
   (breakable() kind 7, fireball_breaks from attackFire; SW_A gate), StageEffect SE_OJ_SNOW_MAN_MELT, stopScene 5, weak
   shake, its items, Break effect. Test: `fire` with XF=-DFIRE_AT_SNOW (SnowCapsule 1: row 39 melts, its coin). ponytail:
   its own Break BCK not played (drawn static: gone at once). Repack: sound.py --pack SnowCapsuleGalaxy.
-- Static classes still to port (mario2's list, 2026-11-05; placements in): BombTeresa (Phantom 1-6: tongue joints,
-  Drift on Mario's hand with MarioActor _B94 ハンマー投げ回転中, explosions), JellyfishElectric (OceanPhantomCave 1-6,
+- BombTeresa (feat/bomb-teresa, 2026-11-05): BombTeresa.cpp as a walker (WALK_BOMBTERESA, game.c bt_update): Appear /
+  Wait / Wander / Chase / TackleSign / Tackle / Drift / DriftRelease / AttackTongueFailed / Explosion / Disperse /
+  ReadyRestart (arg1 -1) with their constants; the tongue joints (bt_tongue: root / end JointControlDelegator
+  callbacks on Tongue1 / Tongue2); MarioActor _B94 (m_b94: the tongue on HandR, ハンマー投げ回転中 upper, his spin's
+  tryReleaseBombTeresa ハンマー投げリリース, checkSquat refused); its binded KoopaStatue breaks
+  (explosion_breaks_inst). Test: `bteresa` (Phantom 1 row 228: chase, tackle, Mario hurt; XF=-DBT_ACT=1: spin, the
+  tongue holds his hand 40+ frames, the room's wall cuts it; near the statue its swing breaks it). ponytail: no BRK,
+  no BindStarPointer, no ShadowAppear / BallAppear (Polta), no Shock. Repack: sound.py --pack PhantomGalaxy.
+- Static classes still to port (mario2's list, 2026-11-05; placements in): JellyfishElectric (OceanPhantomCave 1-6,
   FishTunnel 1), BigBubbleGenerator (CubeBubbleEx 1/2, ReverseKingdom 2: Ride/BigBubble.cpp 1228 lines),
   ElectricRailMoving (BattleShip 2, CannonFleet 3/4, CubeBubbleExLv2, Factory 2, FlipPanelEx 1), SandUpDownTriRock
   (SandClock 1-7: SW_B On / Rest arg0 / Return, KCL Move00-02 on joints: KCL_PARTS + SKINNED_OBJ), BegomanBabyLauncher

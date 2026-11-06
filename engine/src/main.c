@@ -1677,6 +1677,12 @@ int main(void)
             if (frame % 10 == 0) printf("dring test f %u: %d\n", frame, st);
         }
 #endif
+#ifdef BTERESA_TEST
+        if (frame >= 300 && frame < 4000) { /* BombTeresa: a chase and tackle (BT_ACT 1: Mario's spin, its tongue, a throw) */
+            int st = game_test_bomb_teresa();
+            if (frame % 25 == 0) printf("bteresa test f %u: %d\n", frame, st);
+        }
+#endif
 #ifdef SAMBO_TEST
         if (frame >= 300 && frame < 4000) { /* SamboHeads: appear, chase, then a trample, a spin, a star piece and a kick */
             int st = game_test_sambo();
