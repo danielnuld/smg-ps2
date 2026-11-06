@@ -195,7 +195,8 @@ static void mario_trample_auto(void); /* doTrampleJump on an ATYPE_PLAYER_AUTO_J
  * the last one, is pulled to the centre (moveBindPosToCenter) and turned to its pose over 40 (60) frames; a spin
  * then shoots, else once centred after 40 (60) he is let go (endBindAndPlayerJump). Mario's motions at
  * calcShootMotionTime's steps (SpinDriver.cpp:785, SuperSpinDriver.cpp:942).
- * ponytail: the packs hold the stars' Wait clip only (slice.py WAIT_SKINNED): Active / Start / Appear not played; no
+ * Their clips: Wait at Wait's first step, Appear, SpinDriver Active in Capture / ShootStart, SuperSpinDriver Start
+ * in ShootStart. ponytail: no BPK colour clips (Wait / Active: no runtime BPK); no
  * SpinDriverPathDrawer (SpinDriverPathDrawer.cpp: a textured strip along the path, SpinDriverPath.arc's textures; the
  * renderer has no strip draw and the packs no such textures) */
 typedef struct { float x, y, z, w; } Quat; /* JGeometry TQuat4f (q_* below) */
@@ -232,6 +233,7 @@ typedef struct {
 
 static void init_launch(Launch *L, const Row *r, const float *pts, u32 np, int parab);
 static void launch_init_pose(const Launch *L, V3 *u, V3 *f, V3 *sd);
+static void launch_play(const Launch *L, const char *clip);
 static V3 launch_pos(const Launch *L, float t);
 
 /* Mario constants: MC (Petari MarioConst.cpp gMarioConstDefault, tools/mario_const.py) */
@@ -8194,6 +8196,7 @@ static int update_launch(Player *m)
         int small = L->start < 45, st = L->cap++ - 1, n = small ? 40 : 60;
         if (st == 0) {
             if (mario_anim) mario_play("spindriverwait", 1.0f, 1); /* startBckPlayer SpinDriverWait */
+            if (small) launch_play(L, "active");
             if (!small) L->rotv = 0;
         }
         L->lv = se_level(small ? SE_OJ_LV_SPIN_DRV_SHINE : SE_OJ_LV_S_SPIN_DRV_SHINE, &L->pos.x, L->lv);
@@ -8237,6 +8240,7 @@ static int update_launch(Player *m)
         launch_sound(L, SE_OJ_S_SPIN_DRV_PREP_JUMP);
         if (in_water(L->pos, L->up, NULL)) launch_sound(L, SE_PM_SPIN_DRV_IN_WATER_1);
     }
+    if (t == 1 && !L->starter) launch_play(L, L->start < 45 ? "active" : "start"); /* exeShootStart: startBck Active / Start */
     if (t == 4 && L->start < 45) se_start(SE_SY_CS_SPIN_DRV_START, NULL); /* SpinDriver::exeShootStart step 4 */
     if (t <= L->start && !L->starter) pad_rumble(RUMBLE_MIDDLE); /* exeShootStart: tryRumblePadMiddle each step */
     if (t <= L->start) {
@@ -8434,6 +8438,24 @@ static int launch_appear_frames(const Launch *L) /* SpinDriverCamera::getAppearC
     return row_camset[L->row] != -1 ? camera_actor_frames(sc->types + 32 * sc->objs[L->row].type, "出現イベント用",
                                                           (unsigned short)row_camset[L->row]) : 0;
 }
+static void launch_play(const Launch *L, const char *clip) /* MR::startBck on the star */
+{
+    Inst *in = row_inst(L->row);
+    char n[48];
+    if (!in || !in->anim) return;
+    snprintf(n, sizeof n, "%s/%s", sc->types + 32 * sc->objs[L->row].type, clip);
+    for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
+    if (anim_start(in->anim, n, 0) && L->start >= 0) printf("launch row %d: clip %s%c", L->row, n, 10);
+}
+static int launch_clip_over(const Launch *L, const char *clip, int step) /* MR::isBckStopped: its one-shot clip played
+                                                                         * from step 0 (by length: a clipped star's
+                                                                         * anim is not stepped) */
+{
+    char n[48];
+    snprintf(n, sizeof n, "%s/%s", sc->types + 32 * sc->objs[L->row].type, clip);
+    for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
+    return step >= anim_clip_info(n, NULL);
+}
 static void update_launch_appear(void) /* SpinDriver / SuperSpinDriver: TryDemo, Appear (EmptyAppear) */
 {
     for (int i = 0; i < nlaunches; i++) {
@@ -8449,12 +8471,17 @@ static void update_launch_appear(void) /* SpinDriver / SuperSpinDriver: TryDemo,
             camera_actor_start(cls, "出現イベント用", (unsigned short)row_camset[L->row], L->pu, L->pf, L->pos); /* startAppearCamera(_E8, _D0) */
             L->appear = 1;
         }
-        if (L->appear == 1 && sc->objs[L->row].arg[4] != 1) { /* exeAppear / exeEmptyAppear first step (arg4 1: no jingle) */
-            se_start(SE_SY_SPIN_DRIVER_APPEAR, NULL);
-            launch_sound(L, L->start < 45 ? SE_OJ_SPIN_DRV_APPEAR : SE_OJ_S_SPIN_DRV_APPEAR);
+        if (L->appear == 1) { /* exeAppear / exeEmptyAppear first step (arg4 1: no jingle) */
+            if (sc->objs[L->row].arg[4] != 1) {
+                se_start(SE_SY_SPIN_DRIVER_APPEAR, NULL);
+                launch_sound(L, L->start < 45 ? SE_OJ_SPIN_DRV_APPEAR : SE_OJ_S_SPIN_DRV_APPEAR);
+            }
+            launch_play(L, "appear");
+            if (L->start >= 45) L->rotv = 0; /* SuperSpinDriver: _144 */
         }
-        if (++L->appear > cam_f + 1) { /* isGreaterStep(getAppearCameraFrames): endAppearCamera, endDemoWaitCameraInterpolating.
-                                        * ponytail: its Appear BCK's stop not waited for */
+        if (++L->appear > cam_f + 1 && launch_clip_over(L, "appear", L->appear - 1)) { /* isBckStopped and isGreaterStep(getAppearCameraFrames):
+                                                               * endAppearCamera, endDemoWaitCameraInterpolating */
+            printf("launch %d: appeared\n", i);
             if (cam_f > 0) { camera_event_stop(); pd_end("出現"); menu_cinema(0); }
             L->appear = 0;
         }
@@ -20604,7 +20631,7 @@ static void update_mario_(void)
             L->lv = se_level(L->start < 45 ? SE_OJ_LV_SPIN_DRV_SHINE : SE_OJ_LV_S_SPIN_DRV_SHINE, &L->pos.x, L->lv);
         if (!on || L->cool || m->launch == i) L->wait = -1;
         else { /* exeWait */
-            L->wait++;
+            if (++L->wait == 0) launch_play(L, "wait"); /* first step: startBck Wait */
             if (small) { if (swing) L->rotv += 0.05f; if (L->shine) L->rotv += 0.008f; }
             else if (L->wait > 90 && swing) L->rotv = fminf(L->rotv + 0.1f, 0.23f); /* addSwingSignRotateY */
         }
