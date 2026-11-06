@@ -38787,6 +38787,35 @@ static void update_shooting(void)
     }
 }
 
+/* FallingSmallRock.cpp after Petari: an effect only (its group FallingSmallRock). Wait until its SW_A, then Move: the
+ * FallingSmallRock effect and SE_AT_LV_FALLING_ROCK until its binder (10, 800 up its placement) touches the map:
+ * makeActorDead. Clipped (a sphere of 800, out of the view) its effect is off. row_turn: 0 wait, 1 move */
+static void update_fsrock(void)
+{
+    static const Scene *seen;
+    static int ty;
+    static u32 lv[16];
+    if (seen != sc) { seen = sc; ty = scene_type(sc, "FallingSmallRock"); memset(lv, 0, sizeof lv); }
+    for (u32 i = 0, n = 0; ty >= 0 && i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if ((int)r->type != ty) continue;
+        n++;
+        if (!row_shown((int)i)) continue;
+#ifdef FSROCK_TEST /* plain build XF=-DFSROCK_TEST, HellProminenceGalaxy/1: its SW_A on at frame 300, Mario 600 off the first */
+        if (game_frame == 300) { sw_set((Row *)r, SW_A, 1); if (n == 1) { mario->pos = vadd(row_pos(r), v3(600.0f, 0, 0)); mario->hvel = v3(0, 0, 0); mario->vup = 0; } }
+#endif
+        if (row_turn[i] == 0) { if (sw_on(r, SW_A)) { row_turn[i] = 1; row_step[i] = 0; printf("falling small rock %u: move\n", i); } continue; } /* exeWait: isOnSwitchA */
+        float m[16], one[3] = {1, 1, 1};
+        mat_translate_rot_scale(m, r->pos, r->rot, one);
+        V3 p = row_pos(r), up = vnorm(v3(m[4], m[5], m[6]));
+        Hit h[1];
+        if (kcl_query(vadd(p, vmul(up, 800.0f)), 10.0f, h, 1) > 0) { row_dead[i] = 1; printf("falling small rock %u: bound, dead\n", i); continue; } /* isBinded: makeActorDead */
+        if (row_step[i] < 0xFFFF) row_step[i]++;
+        float c[3] = {p.x, p.y, p.z};
+        if (render_visible(c, 800.0f)) fx_named("FallingSmallRock", "FallingSmallRock", m, NULL, &row_turn[i]); /* endClipped: emitEffect */
+        if (n <= 16) lv[n - 1] = se_level(SE_AT_LV_FALLING_ROCK, c, lv[n - 1]);
+    }
+}
 /* LavaSteam.cpp: Wait 120 frames (its Sign effect the first 90), Steam 90 (burns: a 330 cylinder up its y, a sphere
  * of 70 at 400), SteamEnd 90, again; with SW_A it waits for the switch, then steams and cycles. row_turn: 0 wait, 1
  * steam, 2 end, 3 waiting for SW_A; row_step its frames. ponytail: a burn is an ordinary hurt */
@@ -50731,6 +50760,7 @@ void game_update(void)
     LQ(26, update_shooting());
     LQ(27, update_plants());
     LQ(28, update_steam());
+    if (dx_cls_moves("FallingSmallRock")) update_fsrock();
     LQ(29, update_geyser());
     LQ(30, update_assembly());
     LQ(31, update_jumpstands());
