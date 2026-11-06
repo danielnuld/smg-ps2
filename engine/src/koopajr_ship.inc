@@ -673,6 +673,21 @@ static void update_dkj(void)
 {
     if (dkj.row < 0) return;
     if (dkj.demo == -2) { dkj.demo = -1; for (int d = 0; d < ndemos; d++) for (int c = 0; c < demos[d].h->ngroup; c++) if (demos[d].group[c] == dkj.row) dkj.demo = d; }
+#ifdef DKJ_TEST /* XF=-DDKJ_TEST (FloaterOtaKingGalaxy / TriLegLv1Galaxy): Mario at the SwitchCube writing the demo's switch
+                * (written after 300 frames if its area did not), A through Koopa Jr.'s talk; the state every 60 frames */
+    if (dkj.demo >= 0 && game_frame > 600) {
+        Row r = dx_row(&demos[dkj.demo]);
+        int sw = demos[dkj.demo].h->sw[SW_APPEAR], ty = scene_type(sc, "SwitchCube");
+        if (!sw_on(&r, SW_APPEAR) && !dx.on)
+            for (u32 i = 0; ty >= 0 && game_frame % 30 == 0 && i < sc->nobjs; i++)
+                if ((int)sc->objs[i].type == ty && sc->objs[i].sw[SW_A] == sw) {
+                    mario->pos = row_pos(&sc->objs[i]); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+                    if (game_frame > 900) sw_set(&sc->objs[i], SW_A, 1);
+                }
+        pad_force = talk_active() && game_frame % 24 < 6 ? PAD_CROSS : 0;
+        if (game_frame % 60 == 0) printf("dkj test f %u: nrv %d st %d sw %d on %d, dx %d part %d, talk %d, jr %d\n", game_frame, dkj.nrv, dkj.st, sw, sw_on(&r, SW_APPEAR), dx.on, dx.part, talk_active(), kj.jr_on);
+    }
+#endif
     if (dkj.nrv == DKJ_DEAD) return;
     int s = ++dkj.st;
     switch (dkj.nrv) {

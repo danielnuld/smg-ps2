@@ -1056,6 +1056,18 @@ there needs the embedded blob and every pack rebuilt.
   class, the effect group its name) in game.c update_msteam: Steam (SE_OJ_LV_MARINE_STEAM_OUT, _S in SkullSharkGalaxy)
   or WaitForSwitchOn; its strong hit (sphere 120 at 600, cylinder 480, Mario's radius x 0.7 + 20). slice.py LOGIC,
   jpa.py NAMED. Test: plain build XF=-DMSTEAM_TEST SkullSharkGalaxy/1 (both hit Mario). ponytail: group clipping.
+- KoopaJrShip (#302, 2026-11-06): Bowser Jr.'s airship after Petari in engine/src/koopajr_ship.inc (#included by
+  game.c, kj_* / dkj_*): KoopaJrShip's nerves on its rail, propellers / screws, cannon shells and main shells, its
+  HomingKillers, the two Kamecks, 5 JetTurtle hits (Damage / PowerUp / BreakStart / Break), its demo casts (appear,
+  turn to the front, Koopa Jr.'s ShipBattle talk as its cast クッパJr: slice.py DEMO_CAST_ALIAS), the burn / move level
+  SEs, its power star; KoopaJr on its obj joint; DemoKoopaJrShip (FloaterOtaKingGalaxy arg0 1, TriLegLv1Galaxy arg0
+  0: the entry clip and anim camera, the talk, FlyAway). slice.py: SKINNED_OBJ, EXTRA, MODEL_ARC / ANIM_ARC, TALK_NAME,
+  declare_stars. Models looked up again and anims rebound in game_rebind_ (kj_models). TicoShop's goods (#318's keep_anim pool) bound again when a
+  zone swap moves their model (KoopaJrShipLv1's TLB miss in anim_pose / draw_model_ after BattleLv1Tmp1Zone came in).
+  Test: KJ_TEST build with KoopaJrShipLv1Galaxy/1 (Mario to the SW 15 SwitchCube, the switch written after 300
+  frames: the cube's area does not write it there, A through the talk, a JetTurtle hit every 300 frames): opening
+  demo, the talk, 5 hits, the mid demo, the down demo, `power star 1 got`. DKJ_TEST (FloaterOtaKingGalaxy/1, plain):
+  the entry demo by SW 67.
 
 ## Next
 
