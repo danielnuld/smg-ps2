@@ -50921,17 +50921,24 @@ void game_test_tower(unsigned frame)
 }
 #endif
 
-/* walker test with -DTRIROCK_TEST: Mario dropped onto the first SandUpDownTriRock, its SW_B on at 300 (off at 320) */
+/* walker test with -DTRIROCK_TEST (SandClock): from frame 400 (Mario landed) Mario held over the first
+ * SandUpDownTriRock's place until it streams in, then 1500 over it; its SW_B on 150 frames later (off after 20) */
 void game_test_trirock(unsigned frame)
 {
-    for (int i = 0; i < ninsts; i++) {
+    static unsigned f0;
+    int ty = scene_type(sc, "SandUpDownTriRock");
+    for (int i = 0; i < ninsts && !f0; i++)
+        if (insts[i].gap == GAP_TRIROCK) f0 = frame;
+    for (u32 i = 0; !f0 && frame >= 400 && ty >= 0 && i < sc->nobjs; i++)
+        if ((int)sc->objs[i].type == ty) { V3 p = row_pos(&sc->objs[i]), up = up_at(p, mario->up); mario->up = up; mario->pos = vadd(p, vmul(up, 600.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; test_nolost = 1; break; }
+    for (int i = 0; f0 && i < ninsts; i++) {
         Inst *in = &insts[i];
         if (in->gap != GAP_TRIROCK) continue;
         Row *r = (Row *)&sc->objs[in->row];
         V3 up = v3(in->m[4], in->m[5], in->m[6]), c = v3(in->m[12], in->m[13], in->m[14]);
-        if (frame == 150) { mario->up = vnorm(up); mario->pos = vadd(c, vmul(mario->up, 1500.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
-        if (frame == 300 && r->sw[SW_B] >= 0) sw_set(r, SW_B, 1);
-        if (frame == 320 && r->sw[SW_B] >= 0) sw_set(r, SW_B, 0);
+        if (frame == f0) { game_test_unclip(); mario->up = vnorm(up); mario->pos = vadd(c, vmul(mario->up, 1500.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+        if (frame == f0 + 150 && r->sw[SW_B] >= 0) sw_set(r, SW_B, 1);
+        if (frame == f0 + 170 && r->sw[SW_B] >= 0) sw_set(r, SW_B, 0);
         if (frame % 20 == 0) printf("trirock test f %u: row %d sw_b %d nerve %d, Mario %.0f over it, on inst %d (parent %d)" "%c", frame, in->row, r->sw[SW_B],
                                     gap_st(in->row)->n, vdot(vsub(mario->pos, c), vnorm(up)), mario_ground, mario_ground >= 0 ? insts[mario_ground].kparent : -9, 10);
         return;
