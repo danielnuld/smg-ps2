@@ -378,6 +378,7 @@ static void tb_init(const Scene *s, const unsigned char *blob), update_tb(void),
 static void kj_init(const Scene *s, const unsigned char *blob), update_kj(void), kj_draw(void); /* KoopaJrShip (koopajr_ship.inc) */
 static int kj_jet_hit(V3 p);
 static void kj_cast_hook(int row, int type, int part), kj_rebind_place(Inst *in);
+static void dkj_init(const Scene *s), update_dkj(void), dkj_draw(void), dkj_cast_hook(int row, int type, int part); /* DemoKoopaJrShip */
 static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle);
 static void dome_init(void);
 /* slice.py BRK_ARG: a class whose colour is its BRK stopped at the frame one of its args gives (setBrkFrameAndStop) draws
@@ -2475,6 +2476,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     bk_init(s, blob);
     tb_init(s, blob);
     kj_init(s, blob);
+    dkj_init(s);
     gh_reset(); /* GhostPlayer: init at its first update */
     for (u32 i = 0; i < s->nobjs; i++)
         if (strcmp(s->types + 32 * s->objs[i].type, "OtaKing") == 0) {
@@ -41109,6 +41111,7 @@ static void dx_cast_hook(int row, int type, int part)
     }
     if (gw_cast_hook(row, type, part)) return;
     if (!strcmp(cls, "KoopaJrShip")) { kj_cast_hook(row, type, part); return; }
+    if (!strcmp(cls, "DemoKoopaJrShip")) { dkj_cast_hook(row, type, part); return; }
     if (type == 0 && !strcmp(cls, "StarReturnDemoStarter")) { srd_appear(row); return; }
     if (type == 0 && !strcmp(cls, "GrandStarReturnDemoStarter")) { gsr_appear(row); return; }
     if (type == 2 && !strcmp(cls, "HoneyQueen")) { hq_functor(row, part); return; }
@@ -50734,6 +50737,7 @@ void game_update(void)
     update_bk();
     update_tb();
     update_kj();
+    update_dkj();
     if (!demo_on) update_km_beams(); /* (the Kameck beams, fire balls, turtles: stopped in a demo) */
     update_tsp();
     if (star_demo) { /* its camera ("powerstar/powerstarget"); Mario plays PowerStarGet meanwhile */
@@ -52090,6 +52094,7 @@ void game_draw(void)
     bk_draw();
     tb_draw();
     kj_draw();
+    dkj_draw();
     km_draw();
     tsp_draw();
     if (ota.row >= 0 && ota.nrv != OTA_WAITONSWITCH && ota.nrv != OTA_APPEARSTAR && ota.nrv != OTA_DEAD) { /* OtaKing, its feet */

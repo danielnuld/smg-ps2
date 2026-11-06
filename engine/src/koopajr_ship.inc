@@ -33,7 +33,7 @@ static struct {
     Anim *anim, *banim, *panim, *jranim;
     const Model *md, *mbreak, *mpod, *mjr, *mshell, *mmain, *mkiller;
     const unsigned char *kcl;
-    int jr_on, jr_nrv, jr_st, jr_hidden, jr_angry, jr_talked, talk;
+    int jr_on, jr_nrv, jr_st, jr_hidden, jr_angry, jr_talked, talk, jr_row; /* jr_row: its owner (KoopaJrShip / DemoKoopaJrShip) */
     int hidden, break_on, pod_on, pod_hidden;
     int smoke1, smoke2, eye, sign;
     float base[16], shipm[16], podm[16], jrm[16];
@@ -279,7 +279,7 @@ static void jr_talk_start(void) /* startShipBattleTalk: tryTalkTimeKeepDemo(mMsg
     if (kj.jr_talked) return;
     kj.jr_talked = 1;
     char lab[48];
-    if (talk_row_label(kj.row, lab)) { kj.talk = talk_new(lab, kj.row, kj.row, 150.0f, 0.0f); talk_place(kj.talk, kj.jrm); talk_force(kj.talk, 1); }
+    if (talk_row_label(kj.jr_row, lab)) { kj.talk = talk_new(lab, kj.jr_row, kj.jr_row, 150.0f, 0.0f); talk_place(kj.talk, kj.jrm); talk_force(kj.talk, 1); }
     else printf("koopajr: no talk\n");
     jr_set(JR_TALKSTART);
 }
@@ -289,7 +289,7 @@ static void jr_update(void)
     int s = ++kj.jr_st;
     switch (kj.jr_nrv) {
     case JR_WAIT: jr_play(kj.jr_angry ? "waitangry" : "wait", 1); break; /* mParam.setSingleAction(Wait / WaitAngry) */
-    case JR_APPEAR: if (s == 0) jr_play("appeardemo", 0); else if (jr_done()) jr_set(JR_WAIT); break;
+    case JR_APPEAR: if (s == 0) jr_play(!strncmp(game_stage_name, "TriLegLv1Galaxy/", 16) ? "roboappeardemo" : "appeardemo", 0); /* isEqualStageName */ else if (jr_done()) jr_set(JR_WAIT); break;
     case JR_POWERUP: if (s == 0) jr_play("angrydemo", 0); else if (jr_done()) { kj.jr_angry = 1; jr_set(JR_WAIT); } break;
     case JR_ESCAPE: if (s == 0) jr_play("runawaydemo", 0); else if (jr_done()) jr_set(JR_WAIT); break;
     case JR_SHIPDAMAGE: if (s == 0) jr_play("stumble", 0); else if (jr_done()) jr_set(JR_WAIT); break;
@@ -492,6 +492,12 @@ static void kj_find_kamecks(void) /* initKameck: its two child Kamecks (createFi
 static void update_kj(void)
 {
     if (kj.row >= 0 && kj.kam[0] < 0) kj_find_kamecks();
+    if (kj.row >= 0 && kj.demo == -2) { /* tryRegisterDemoCast: Appear, makeActorDead (no demo: Move, makeActorAppeared) */
+        kj.demo = -1;
+        for (int d = 0; d < ndemos; d++) for (int c = 0; c < demos[d].h->ngroup; c++) if (demos[d].group[c] == kj.row) kj.demo = d;
+        if (kj.demo < 0) { kj_set(KJ_MOVE); kj.jr_on = 1; jr_set(JR_WAIT); }
+        printf("koopajr ship: demo %d\n", kj.demo);
+    }
     if (kj.row < 0 || kj.nrv == KJ_DEAD || kj.nrv == KJ_DONE) { if (kj.row >= 0) kj_update_shells(), kj_update_killers(); return; }
     if (kj.inst < 0 || kj.inst >= ninsts || insts[kj.inst].row != kj.row) { kj.inst = -1; for (int i = 0; i < ninsts; i++) if (insts[i].row == kj.row && insts[i].kcl) { kj.inst = i; kj.kcl = insts[i].kcl; } }
     if (scene_stop > 0) return;
@@ -556,7 +562,7 @@ static void kj_init(const Scene *s, const unsigned char *blob) /* KoopaJrShip::i
         const Row *r = &s->objs[i];
         if ((int)r->type != t) continue;
         int cl = 0;
-        kj.row = (int)i; kj.d0 = 5; kj.prop = 20.0f; kj.dir = 1; kj.e0 = v3(0, 0, 1); kj.jroff = v3(135.0f, 188.0f, 0.0f); /* sKoopaJrPos */
+        kj.row = kj.jr_row = (int)i; kj.d0 = 5; kj.prop = 20.0f; kj.dir = 1; kj.e0 = v3(0, 0, 1); kj.jroff = v3(135.0f, 188.0f, 0.0f); /* sKoopaJrPos */
         kj.roty = r->rot[1]; kj.pos = row_pos(r);
         kj.rail = find_rail_of(blob, r->zone, r->path, &kj.nrail, &cl, 0);
         if (kj.rail && kj.nrail > 16) kj.nrail = 16;
@@ -573,11 +579,8 @@ static void kj_init(const Scene *s, const unsigned char *blob) /* KoopaJrShip::i
         const Model *mm[4] = {kj.md, kj.mbreak, kj.mpod, kj.mjr};
         for (int k = 0; k < 4; k++) { *an[k] = mem_alloc(MEM_PLAYER, sizeof(Anim)); memset(*an[k], 0, sizeof(Anim)); if (mm[k] && mm[k]->skin) anim_bind(*an[k], mm[k]->skin); }
         if (kj.anim->skin) { anim_play(kj.anim, "koopajrship/koopajrship", 0.0f, 0, 0); } /* startBck KoopaJrShip, setBckRate 0 */
-        kj.demo = -1;
-        kj.nrv = KJ_DEAD; /* tryRegisterDemoCast: Appear, makeActorDead (else Move) */
-        for (int d = 0; d < ndemos; d++) for (int c = 0; c < demos[d].h->ngroup; c++) if (demos[d].group[c] == kj.row) kj.demo = d;
-        if (kj.demo < 0) kj_set(KJ_MOVE);
-        printf("koopajr ship: row %d, rail %u points (%.0f), demo %d\n", kj.row, kj.nrail, kj.len, kj.demo);
+        kj.demo = -2; kj.nrv = KJ_DEAD; /* (its demo looked up at the first update: dx_init comes after) */
+        printf("koopajr ship: row %d, rail %u points (%.0f)\n", kj.row, kj.nrail, kj.len);
         break;
     }
     if (kj.row < 0) return;
@@ -621,4 +624,104 @@ int game_test_kj(int frame) /* XF=-DKJ_TEST, KoopaJrShipLv1Galaxy/1: Mario put a
         printf("kj test f %d: hit, d0 %d -> %d\n", frame, d0, kj.d0);
     }
     return 0;
+}
+
+/* DemoKoopaJrShip.cpp after Petari: Bowser Jr.'s ship in the boss galaxies' openings (FloaterOtaKingGalaxy arg0 1,
+ * TriLegLv1Galaxy arg0 0: KoopaJrEntry / LeaveOtaKingDemo, ..TriPodDemo, their anim cameras on it), a cast of
+ * クッパＪｒ．デモ (SW 67). Appear (the sheet's appear: Koopa Jr. AppearDemo / RoboAppearDemo, the entry clip and camera,
+ * stopStageBGM(60), SE_BM_KOOPAJR_SHIP_ENTER, BGM_KOOPA_JR_APPEAR at 309), at the clip's end Talk (startShipBattleTalk,
+ * Wait) until the time keeper resumes, FlyAway (SE_BV_KOOPAJR_LAUGH_LEAVE, stopSubBGM(120), the leave clip and
+ * camera) to the part's last step: both killed. Koopa Jr. at (135, 188, 0) on its obj joint turned 5 degrees to Mario.
+ * ponytail: arg0 -1's reversed Arrival (no placement uses it) */
+enum { DKJ_DEAD, DKJ_APPEAR, DKJ_TALK, DKJ_FLYAWAY };
+static struct { int row, nrv, st, demo, cam, hidden; float base[16]; Anim *anim; const Model *md; u32 lv; char clip[32]; } dkj = {.row = -1};
+static const char *const dkj_anims[2][2] = {{"KoopaJrEntryTriPodDemo", "KoopaJrLeaveTriPodDemo"}, {"KoopaJrEntryOtaKingDemo", "KoopaJrLeaveOtaKingDemo"}};
+static void dkj_set(int n) { dkj.nrv = n; dkj.st = -1; printf("demo koopajr ship: nerve %d\n", n); }
+static void dkj_bck(const char *name) /* startBck (and startAnimCameraTargetSelf with the same name) */
+{
+    snprintf(dkj.clip, sizeof dkj.clip, "demokoopajrship/%s", name); /* (cut at 31 as the packs' names) */
+    for (char *c = dkj.clip; *c; c++) *c = (char)tolower((unsigned char)*c);
+    if (dkj.anim && dkj.anim->skin) { dkj.anim->clip_id = -1; anim_start(dkj.anim, dkj.clip, 0); }
+}
+static void dkj_cam(int on) /* the clip's anim camera, held on its last frame; endAnimCamera */
+{
+    if (!on) { camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45); return; }
+    int cf = canm_frames(dkj.clip);
+    if (cf && dkj.anim) demo_camera(dkj.clip, (int)dkj.anim->frame < cf ? (int)dkj.anim->frame : cf - 1, dkj.base);
+}
+static void dkj_cast_hook(int row, int type, int part)
+{
+    (void)part;
+    if (row != dkj.row || type != 0) return;
+    dkj_set(DKJ_APPEAR); /* appear: Appear, Koopa Jr. at sKoopaJrPos */
+}
+static int dkj_last(void) { return dx.on && dx.cur == dkj.demo && dx_last(0); } /* tryDemoEnd: クッパＪｒ．デモ's last step */
+static void update_dkj(void)
+{
+    if (dkj.row < 0) return;
+    if (dkj.demo == -2) { dkj.demo = -1; for (int d = 0; d < ndemos; d++) for (int c = 0; c < demos[d].h->ngroup; c++) if (demos[d].group[c] == dkj.row) dkj.demo = d; }
+    if (dkj.nrv == DKJ_DEAD) return;
+    int s = ++dkj.st;
+    switch (dkj.nrv) {
+    case DKJ_APPEAR:
+        if (s == 0) {
+            kj.jr_on = 1; kj.jr_hidden = 0; kj.jr_talked = 0; jr_set(JR_APPEAR);
+            if (dkj.cam >= 0) dkj_bck(dkj_anims[dkj.cam][0]); else dkj_bck("Arrival"); /* startEntryAnim */
+            bgm_stop(60); se_start(SE_BM_KOOPAJR_SHIP_ENTER, &dkj.base[12]); dkj.hidden = 1;
+        }
+        if (s >= 1 && dkj.hidden) dkj.hidden = 0;
+        if (s == 309) bgm_sub("BGM_KOOPA_JR_APPEAR"); /* sBgmStartStep */
+        dkj.lv = se_level(SE_BM_LV_KOOPAJR_SHIP_MOVE, &dkj.base[12], dkj.lv);
+        if (s > 0 && (!dkj.anim || !dkj.anim->skin || dkj.anim->done)) dkj_set(DKJ_TALK);
+        break;
+    case DKJ_TALK:
+        if (s == 0) { jr_talk_start(); dkj_bck("Wait"); }
+        dkj.lv = se_level(SE_BM_LV_KOOPAJR_SHIP_MOVE, &dkj.base[12], dkj.lv);
+        if (s > 0 && !dx.paused) dkj_set(DKJ_FLYAWAY); /* !isPauseTimeKeepDemo */
+        break;
+    case DKJ_FLYAWAY:
+        if (s == 0) { se_start(SE_BV_KOOPAJR_LAUGH_LEAVE, &kj.jrm[12]); bgm_sub_stop(120); if (dkj.cam >= 0) dkj_bck(dkj_anims[dkj.cam][1]); }
+        dkj.lv = se_level(SE_BM_LV_KOOPAJR_SHIP_MOVE, &dkj.base[12], dkj.lv);
+        if (dkj_last()) { if (dkj.cam >= 0) dkj_cam(0); kj.jr_on = 0; dkj_set(DKJ_DEAD); printf("demo koopajr ship: gone\n"); return; }
+        break;
+    }
+    if (dkj.anim && dkj.anim->skin) anim_update(dkj.anim);
+    if (dkj.cam >= 0 && dkj.nrv != DKJ_TALK) dkj_cam(1);
+    /* control: Koopa Jr. on its obj joint (11) faced to Mario */
+    float m[16];
+    if (dkj.anim && dkj.anim->skin && dkj.anim->skin->njoints > 11) mat_mul(m, dkj.base, dkj.anim->world[11]); else memcpy(m, dkj.base, 64);
+    V3 y = vnorm(kj_col(m, 1)), z = vnorm(kj_col(m, 2)), to = vnorm(vtangent(vsub(mario->pos, kj_col(m, 3)), y));
+    if (vlen(to) > 0.5f) { z = turn_to(z, to, cosf(5.0f * 0.017453292f)); basis_matrix(m, kj_col(m, 3), y, z, 0); }
+    V3 x = kj_col(m, 0), p = vadd(kj_col(m, 3), vadd(vmul(x, 135.0f), vmul(y, 188.0f)));
+    V3 f = vnorm(vtangent(vsub(mario->pos, p), y)), f0 = vnorm(vtangent(kj_col(kj.jrm, 2), y));
+    if (vlen(f0) < 0.5f) f0 = z;
+    if (vlen(f) > 0.5f) f0 = turn_to(f0, f, cosf(5.0f * 0.017453292f));
+    basis_matrix(kj.jrm, p, y, f0, 0);
+    if (kj.talk >= 0) talk_place(kj.talk, kj.jrm);
+    jr_update();
+}
+static void dkj_draw(void)
+{
+    if (dkj.row < 0 || dkj.nrv == DKJ_DEAD) return;
+    if (!dkj.hidden && dkj.md) { if (dkj.anim && dkj.anim->skin) draw_skin(dkj.md, dkj.base, dkj.anim); else render_model(dkj.md, dkj.base, 0x80, 0x80, 0x80); }
+    if (kj.jr_on && kj.mjr) { if (kj.jranim && kj.jranim->skin) draw_skin(kj.mjr, kj.jrm, kj.jranim); else render_model(kj.mjr, kj.jrm, 0x80, 0x80, 0x80); }
+}
+static void dkj_init(const Scene *s) /* DemoKoopaJrShip::init (after kj_init) */
+{
+    memset(&dkj, 0, sizeof dkj); dkj.row = -1;
+    int t = scene_type(s, "DemoKoopaJrShip");
+    for (u32 i = 0; t >= 0 && i < s->nobjs; i++) {
+        const Row *r = &s->objs[i];
+        if ((int)r->type != t) continue;
+        float one[3] = {1, 1, 1};
+        dkj.row = kj.jr_row = (int)i; dkj.demo = -2; dkj.nrv = DKJ_DEAD; /* makeActorDead */
+        dkj.cam = r->arg[0] >= 0 && r->arg[0] < 2 ? r->arg[0] : -1; /* initAnimID */
+        mat_translate_rot_scale(dkj.base, r->pos, r->rot, one); /* initDefaultPos */
+        dkj.md = scene_model(s, "DemoKoopaJrShip"); kj.mjr = scene_model(s, "KoopaJr");
+        dkj.anim = mem_alloc(MEM_PLAYER, sizeof(Anim)); memset(dkj.anim, 0, sizeof(Anim)); if (dkj.md && dkj.md->skin) anim_bind(dkj.anim, dkj.md->skin);
+        kj.jranim = mem_alloc(MEM_PLAYER, sizeof(Anim)); memset(kj.jranim, 0, sizeof(Anim)); if (kj.mjr && kj.mjr->skin) anim_bind(kj.jranim, kj.mjr->skin);
+        kj.talk = -1;
+        printf("demo koopajr ship: row %d, camera %d\n", dkj.row, dkj.cam);
+        break;
+    }
 }
