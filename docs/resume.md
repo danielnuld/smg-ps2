@@ -1004,6 +1004,17 @@ there needs the embedded blob and every pack rebuilt.
   (dx_cls_moves) fixed in #288; Koopa / KoopaJrShip (not ported) leave their grand stars undeclared (out at once).
   ponytail: the barrier's Wait BRK / BTK, no Suso / Cap dynamic joints, no
   shadow, no star pointer bind on Kamecks, NonActive by distance.
+- IceMerameraKing (feat/304-meramera-king, 2026-11-06): Baron Brr after Petari in engine/src/ice_meraking.inc
+  (#included by game.c, mk_*; walker kind WALK_MERAKING), IceVolcanoGalaxy 1's IceMountainZone: its 17 nerves, its
+  ThrowingIce pool (MoguStone.cpp: IceManIce on a ParabolicPath), IceMerameraKingShockWave (its Shock ring, sensors by
+  its joints' scales), IceMerameraKingBreak, the メラキンオープニング demo (by the arena's SwitchCubes: BeginDemo's
+  throw, 怒りデモ at part 2, 死亡デモ at part 4; its CameraTargetDemoActor through game.c dx_tgt), the pinch BGM
+  (AudBgmConductor playPinchEventBgmLevel / stopPinchEventBgmSoon / movement: game.c bgm_pinch*, bsub.id), its two
+  ChildIceMeramera (dead until AngryDemo2nd's step 90, killed in the death demo), its power star from its place.
+  sound.py --pack now reads the .inc files game.c includes (tripod_boss.inc's SEs were left out). Test: plain build,
+  XF=-DMK_TEST, IceVolcanoGalaxy/1: opening demo, three spin storms / spins while it rolls, both angry demos, death
+  demo, `power star 1 got`. ponytail: SE_DM_LV_MUTE_BGM's BGM mute, BodyIceOff's particle callback, its BRKs; its
+  children are still the improvised Meramera walker (Meramera.cpp, 1765 lines, not ported).
 
 ## Next
 
