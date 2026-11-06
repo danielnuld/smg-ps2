@@ -37,11 +37,12 @@ static const struct { const char *name; s8 joint, type, valid; float r, o[3]; } 
     {"AttackRoll", KJ_SPINE, KPT_ENEMY_ATTACK, 0, 180, {0, 0, 0}}, {"AttackRollReceiver", KJ_SPINE, KPT_RECEIVER, 0, 200, {0, 0, 0}},
     {"AttackRollStarPiece", KJ_SPINE, KPT_PUSH, 0, 200, {0, 0, 0}},
     {"ReceiverTail", KJ_TAIL2, KPT_RECEIVER, 0, 180, {50, 30, 0}}, {"ReceiverTailTop", KJ_TAIL3, KPT_RECEIVER, 0, 150, {100, 30, 0}},
-    {"DamageEscapeBody", KJ_SPINE, KPT_RECEIVER, 0, 250, {0, 50, 0}}, {"DamageEscapePush", KJ_SPINE, KPT_ATTACK, 0, 180, {-70, -30, 0}}};
+    {"DamageEscapeBody", KJ_SPINE, KPT_RECEIVER, 0, 250, {0, 50, 0}}, {"DamageEscapePush", KJ_SPINE, KPT_ATTACK, 0, 180, {-70, -30, 0}},
+    {"AttackSpin", -1, KPT_ATTACK, 0, 250, {0, 250, 0}}}; /* KoopaStateAttackSpin::init */
 enum { KS_BODY, KS_FACE, KS_WRISTL, KS_WRISTR, KS_ARML, KS_ARMR, KS_LEGL, KS_LEGR, KS_FOOTL, KS_FOOTR, KS_TAIL, KS_TAILTOP,
        KS_GUARDBODY, KS_ATTACKSHELL, KS_ATTACKFOOTL, KS_ATTACKFOOTR, KS_ATTACKHIPDROP, KS_CHASEROLLATTACK, KS_CHASEROLLFACE,
        KS_CHASEROLLSTARPIECE, KS_ATTACKROLL, KS_ATTACKROLLRECEIVER, KS_ATTACKROLLSTARPIECE, KS_RECEIVERTAIL, KS_RECEIVERTAILTOP,
-       KS_DAMAGEESCAPEBODY, KS_DAMAGEESCAPEPUSH, KS_N };
+       KS_DAMAGEESCAPEBODY, KS_DAMAGEESCAPEPUSH, KS_ATTACKSPIN, KS_N };
 /* a nerve: setNerve keeps it for the next update (Spine::changeNerve), where its step starts at 0 */
 typedef struct { s8 nrv, next; s16 st; } Nv;
 static void nv_set(Nv *n, int v) { n->next = (s8)v; }
@@ -54,7 +55,7 @@ enum { KSS_LV1, KSS_DEMOLV2, KSS_LV2, KSS_DEMOLV3, KSS_LV3 };
 enum { KBM_CHASE, KBM_WANDER, KBM_SEARCH, KBM_FIND, KBM_JUMPAWAY, KBM_GUARD, KBM_FIRESHORT, KBM_FIRELONG, KBM_SHOCKWAVE, KBM_HIPDROP,
        KBM_SPIN, KBM_ROLL, KBM_DAMAGEESCAPE };
 /* the states (ActorStateBase: its own nerve, mIsDead) */
-enum { KST_GUARD, KST_HIPDROP, KST_SHOCKWAVE, KST_FIRESHORT, KST_DAMAGEESCAPE, KST_JUMPAWAY, KST_JUMPTOPLANET, KST_POWERUP, KST_N };
+enum { KST_GUARD, KST_HIPDROP, KST_SHOCKWAVE, KST_FIRESHORT, KST_DAMAGEESCAPE, KST_JUMPAWAY, KST_JUMPTOPLANET, KST_POWERUP, KST_SPIN, KST_FIRELONG, KST_N };
 enum { KG_FACE, KG_BODY, KG_TAIL };
 enum { KH_RUN, KH_JUMPSTART, KH_JUMPUP, KH_JUMPWAITAIR, KH_JUMPATTACKDOWN, KH_LAND, KH_DAMAGE };
 enum { KW_JUMPSTART, KW_JUMP, KW_JUMPFAST, KW_LAND };
@@ -64,6 +65,8 @@ enum { KD_ESCAPESTART, KD_ESCAPESTARTLOOP, KD_ESCAPESTARTLAND, KD_ESCAPERUN, KD_
 enum { KJA_JUMPSTART, KJA_JUMP, KJA_LAND };
 enum { KJP_START, KJP_FALL, KJP_LAND, KJP_WAITPLAYER };
 enum { KP_WAITDEMO, KP_DEMO };
+enum { KSP_WAITTOSTART, KSP_RUN, KSP_START, KSP_SPIN, KSP_END, KSP_EVEN };
+enum { KFL_START, KFL_EMIT };
 typedef struct { float a, g, f, t; } KpMove;   /* MR::ActorMoveParam: accel, gravity, friction, turn degrees */
 typedef struct { float d, h, v; } KpSight;     /* MR::ActorSightParam */
 static struct {
@@ -78,7 +81,8 @@ static struct {
     /* the states' members */
     int guard_n; V3 hip_ground; int hip_max, hip_att, hip_delay, hip_time;
     int sw_max, sw_att, sw_delay; float sw_jump, sw_grav;
-    int fs_n, fs_max, fs_delay;
+    int fs_n, fs_max, fs_delay, fl_n;
+    int sp_max, sp_att; const KpMove *sp_move;
     int de_time, de_max, de_cw, de_last, de_frames; const KpMove *de_run, *de_tail; float de_rot, de_away;
     /* parts: the tail thorns, the armor / thorn breaks (KoopaParts::createCommonParts) */
     int thorn, armor_break, thorn_break; Anim *a_tb;
@@ -178,7 +182,7 @@ static void kp_rumble(int k, float n, float m, float f) /* tryRumblePadAndCamera
 static void kp_fx(const char *name) { float m[16]; kp_base(m); fx_named(kp_cls(), name, m, NULL, NULL); } /* emitEffect */
 static void kp_sensor(int s, int on) { kp.sv[s] = (u8)on; } /* validateHitSensor / invalidateHitSensor */
 /* the actor cameras (initKoopaCamera: its ActorCameraInfo, the class's name in the camera table) */
-static const char *kp_cam_cls(void) { return kp.vs == 1 ? "クッパ大王（ＶＳ１）" : "クッパ大王"; }
+static const char *kp_cam_cls(void) { return kp.vs == 1 ? "クッパ大王（ＶＳ１）" : kp.vs == 2 ? "クッパ大王（ＶＳ２）" : "クッパ大王"; }
 static void kp_cam_start(const char *name) /* startKoopaCamera / startKoopaTargetCamera */
 {
     if (row_camset[kp.row] == -1) return;
@@ -255,7 +259,8 @@ static void kp_insts(const Scene *s) /* game_rebind_: KoopaBattleMapPlanet (惑�
     static const char *const pm[3] = {"KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate"};
     int host = kp_planet_star >= 0 ? kp_planet_star : kp.row;
     for (int i = -1; i < KP_PLATES && ninsts < (int)s->nobjs; i++) {
-        const char *name = i < 0 ? "KoopaBattleMapPlanet" : pm[kpl[i].kind];
+        if (i >= 0 && kp.vs == 2 && kpl[i].kind != KPL_DAMAGE) continue;
+        const char *name = i < 0 ? (kp.vs == 2 ? "KoopaBattleMapPlanetVs2" : "KoopaBattleMapPlanet") : pm[kpl[i].kind];
         const Model *md = scene_model(s, name);
         if (!md) continue;
         Inst *in = &insts[ninsts];
@@ -298,7 +303,7 @@ static void kp_planet_init(void) /* KoopaParts::initVs1: createKoopaBattleMapPla
                        kp_planet_m[2] * v.x + kp_planet_m[6] * v.y + kp_planet_m[10] * v.z), kp_pc);
         V3 up = up_at(w, vnorm(vsub(w, kp_pc))), f = vtangent(v3(0, 0, 1), up);
         if (vlen(f) < 1e-3f) f = vtangent(v3(1, 0, 0), up);
-        kpl[i].kind = k; kpl[i].alive = 1; kpl[i].nrv = 0; kpl[i].st = 0; kpl[i].pos = w;
+        kpl[i].kind = k; kpl[i].alive = kp.vs != 2 || k == KPL_DAMAGE; /* (Vs2: createPlate's damage plates only) */ kpl[i].nrv = 0; kpl[i].st = 0; kpl[i].pos = w;
         basis_matrix(kpl[i].m, w, up, vnorm(f), 0); /* makeMtxUpNoSupportPos(-mGravity, mPosition) */
     }
     kp_planet_star = -1;
@@ -359,7 +364,7 @@ static void kp_plates_update(void) /* KoopaBattleMapDamagePlate: Break 180 (burn
             if (st >= 30) { kpl[i].nrv = 0; kp_plate_coll(i, 1); } /* isBrkStopped (Revival: 30 frames) */
         }
     }
-    if (kp_star_demo >= 0 && ++kp_star_demo == 90) kp_plate_fx(1, "GrandStarAppear", NULL); /* exeDemoGrandStarAppear: mDamagePlate (the second) */
+    if (kp_star_demo >= 0 && ++kp_star_demo == (kp.vs == 2 ? 151 : 90)) kp_plate_fx(kp.vs == 2 ? 0 : 1, "GrandStarAppear", NULL); /* exeDemoGrandStarAppear: mDamagePlate (Vs2 the first) */
 }
 
 /* --- KoopaFireStairs (MeteorStrike): flies to the stair's target at a constant speed, timed to its break; at the
@@ -650,6 +655,8 @@ static void kst_appear(int k)
     case KST_JUMPAWAY: nv_set(n, KJA_JUMPSTART); break;
     case KST_JUMPTOPLANET: break; /* (ActorStateBase::appear) */
     case KST_POWERUP: nv_set(n, KP_WAITDEMO); break;
+    case KST_SPIN: { static const KpMove s1 = {2.0f, 1.0f, 0.9f, 0.0f}; kp_sensor(KS_ATTACKSPIN, 1); kp.sp_att = 0; kp.sp_max = kp.lv; kp.sp_move = &s1; nv_set(n, KSP_WAITTOSTART); break; }
+    case KST_FIRELONG: kp.fl_n = 0; nv_set(n, KFL_START); break;
     }
 }
 static void kst_kill(int k)
@@ -665,6 +672,7 @@ static void kst_kill(int k)
         break;
     case KST_JUMPTOPLANET: kp_cam_end("ウェイト（惑星までジャンプ）"); kp_cam_end("落下（惑星までジャンプ）"); kp_cam_end("ワープ後（惑星までジャンプ）"); break;
     case KST_POWERUP: kp_cam_end("パワーアップデモ"); kp_cam_end("最終パワーアップデモ"); break;
+    case KST_SPIN: kp_sensor(KS_ATTACKSPIN, 0); break;
     }
 }
 static int kst_guard_try(int s) /* KoopaStateGuard::tryStart (a spin of Mario's on sensor s) */
@@ -956,6 +964,64 @@ static void kst_update(int k) /* ActorStateBase::update: updateNerve */
             break;
         }
         break;
+    case KST_SPIN: { /* KoopaStateAttackSpin */
+        static const KpMove run = {3.0f, 1.0f, 0.9f, 3.0f}, brake = {1.0f, 1.0f, 0.9f, 0.0f}, end = {0.0f, 1.0f, 0.9f, 0.0f},
+                            even = {0.0f, 1.0f, 0.95f, 0.5f}, spin2 = {3.0f, 1.0f, 0.9f, 0.5f};
+        switch (v) {
+        case KSP_WAITTOSTART:
+            if (st == 0) { kp_act("Wait"); kp.b.vel = v3(0, 0, 0); }
+            if (st == 30) nv_set(n, KSP_START); /* sWaitToStartStep */
+            break;
+        case KSP_RUN:
+            if (st == 0) kp_act("Run");
+            kp_to_player(&run); /* moveAndTurnKoopaToPlayer (its binded attack: none) */
+            if (kp.b.on_wall) kp_jump_add(10.0f);
+            if ((kp_near(1000.0f) || st > 120) && vdot(kp.b.vel, kp.b.grav) >= 0.0f) nv_set(n, KSP_START);
+            break;
+        case KSP_START:
+            if (st == 0) { kp_act("SpinStart"); kp.b.vel = v3(0, 0, 0); }
+            kp_turn_player(5.0f); /* sStartTurnSpeed */
+            if (kp_act_end()) nv_set(n, KSP_SPIN);
+            break;
+        case KSP_SPIN:
+            if (st == 0) { kp_act("Spin"); kp.b.vel = v3(0, 0, 0); }
+            kp_to_player(st < 60 ? kp.sp_move : &brake); /* sSpinBrakeStep */
+            if (kp.b.on_wall) kp_jump_add(15.0f); /* sWallJumpSpeed */
+            if (kp_act_end()) {
+                kp.sp_att++;
+                if (!dmg.st && kp.sp_att < kp.sp_max) { kp.sp_move = &spin2; nv_set(n, KSP_START); } else nv_set(n, KSP_END);
+            }
+            break;
+        case KSP_END:
+            if (st == 0) kp_act("SpinEnd");
+            kp_to_player(&end);
+            if (kp_act_end()) { kp.b.vel = v3(0, 0, 0); kst_kill(k); }
+            break;
+        case KSP_EVEN:
+            if (st == 0) { kp_act("SpinEven"); V3 h = vtangent(vsub(kp.b.pos, mario->pos), kp.b.grav); kp.b.vel = vmul(vlen(h) > 1e-6f ? vnorm(h) : v3(0, 0, 0), 30.0f); }
+            kp_to_player(&even);
+            if (kp_act_end()) {
+                if (!dmg.st && kp.sp_att < kp.sp_max) { kp.sp_move = &spin2; nv_set(n, KSP_SPIN); } else kst_kill(k);
+            }
+            break;
+        }
+        break;
+    }
+    case KST_FIRELONG: { /* KoopaStateAttackFireLong */
+        static const KpMove fall = {0.0f, 1.0f, 1.0f, 0.0f};
+        if (v == KFL_START) {
+            if (st == 0) { kp.b.vel = v3(0, 0, 0); kp_act("AttackFireStart"); }
+            kp_to_player(&fall);
+            if (kp_act_end()) { kp_act("AttackFire"); nv_set(n, KFL_EMIT); }
+        } else {
+            if (st == 0) kp.fl_n++;
+            kp.b.front = rot_axis(kp.b.front, kp.b.grav, 3.0f * 0.0174533f); /* rotateVecDegree(front, gravity, sTurnSpeed) */
+            kp_to_player(&fall);
+            if (st == 0) kp_fire_short(0, 0, 1); /* emitKoopaFireLongTime */
+            if (st == 15) { if (kp.fl_n >= 16) kst_kill(k); else nv_set(n, KFL_EMIT); } /* sStepEmit, sEmitNumMax */
+        }
+        break;
+    }
     case KST_POWERUP:
         if (v == KP_WAITDEMO) {
             if (!kp_try_demo("パワーアップデモ", 1)) break;
@@ -1037,6 +1103,26 @@ static void kde_attack(int s) /* KoopaStateDamageEscape::attackSensor (Mario tou
     if (kp_try_push(s)) return;
     if (nv_is(n, KD_ESCAPERUN)) kp_try_shell(s);
 }
+static int ksp_try_damage(int s) /* KoopaStateAttackSpin::tryDamage (a spin of Mario) */
+{
+    (void)s;
+    Nv *n = kst(KST_SPIN);
+    if (nv_is(n, KSP_EVEN)) return 0;
+    mario_attack(ATK_FLIP_JUMP, kp.b.pos); /* sendMsgEnemyAttackFlipJump */
+    pad_rumble(RUMBLE_STRONG);
+    kp_se(SE_BM_KOOPA_SPIN_EVEN); kp_se(SE_BV_KOOPA_GUARD);
+    scene_stop = 15; /* sEvenStopSceneStep */
+    kp.sp_att++;
+    if (kp.sp_max >= 2 && kp.sp_att >= kp.sp_max) { kst_kill(KST_SPIN); return 1; }
+    nv_set(n, KSP_EVEN);
+    return 1;
+}
+static void ksp_attack(int s) /* KoopaStateAttackSpin::attackSensor */
+{
+    if (kp_try_push(s)) return;
+    Nv *n = kst(KST_SPIN);
+    if (nv_is(n, KSP_SPIN) && n->st > 5 && n->st < 65 && kp_sdef[s].type == KPT_ATTACK) mario_attack(ATK_MAXIMUM, kp_sc(s)); /* tryKoopaAttackPlayerMaximum */
+}
 static void kh_attack(int s) /* KoopaStateAttackHipDrop::attackSensor */
 {
     if (nv_is(kst(KST_HIPDROP), KH_JUMPATTACKDOWN) && s == KS_ATTACKHIPDROP && mario_attack(ATK_MAXIMUM, kp_sc(s))) return;
@@ -1057,6 +1143,7 @@ static int kbm_state(int nrv)
     switch (nrv) {
     case KBM_GUARD: return KST_GUARD; case KBM_HIPDROP: return KST_HIPDROP; case KBM_SHOCKWAVE: return KST_SHOCKWAVE;
     case KBM_FIRESHORT: return KST_FIRESHORT; case KBM_DAMAGEESCAPE: return KST_DAMAGEESCAPE; case KBM_JUMPAWAY: return KST_JUMPAWAY;
+    case KBM_SPIN: return kp.vs != 1 ? KST_SPIN : -1; case KBM_FIRELONG: return kp.vs != 1 ? KST_FIRELONG : -1;
     }
     return -1; /* (Vs1: no AttackSpin / AttackRoll / AttackFireLong) */
 }
@@ -1142,7 +1229,12 @@ static int kbm_update(int first) /* updateActorState(sub, battleMain): 1 when it
         if (kst_run(KST_DAMAGEESCAPE)) kbm_set(KBM_SEARCH);
         if (kde_down_end()) { kbb_kill(); kbm_dead = 1; }
         break;
-    default: kbm_set(KBM_WANDER); break; /* (Vs2 / Vs3's AttackSpin / AttackRoll / AttackFireLong: their PRs) */
+    case KBM_SPIN:
+        if (!kst_run(KST_SPIN)) break;
+        if (dmg.st) kbm_jump_away(); else kbm_set(KBM_HIPDROP);
+        break;
+    case KBM_FIRELONG: if (kst_run(KST_FIRELONG)) kbm_set(KBM_SHOCKWAVE); break;
+    default: kbm_set(KBM_WANDER); break; /* (Vs3's AttackRoll: its PR) */
     }
     return kbm_dead;
 }
@@ -1152,6 +1244,7 @@ static void kbm_attack(int s) /* KoopaBattleMain::attackSensor (Mario touching K
     if (nv_is(m, KBM_HIPDROP)) { kh_attack(s); return; }
     if (nv_is(m, KBM_SHOCKWAVE)) { kw_attack(s); return; }
     if (nv_is(m, KBM_JUMPAWAY)) { /* tryKoopaAttackMapObj: not the player */ }
+    if (nv_is(m, KBM_SPIN)) { ksp_attack(s); return; }
     if (nv_is(m, KBM_DAMAGEESCAPE)) { kde_attack(s); return; }
     if (!kp_try_push(s)) kp_try_body(s);
 }
@@ -1159,6 +1252,11 @@ static int kbm_receive(int s) /* KoopaBattleMain::receiveMsgPlayerAttack (Mario'
 {
     Nv *m = &kp.main;
     if (nv_is(m, KBM_DAMAGEESCAPE)) return kde_try_damage(s);
+    if (nv_is(m, KBM_SPIN)) {
+        if (!ksp_try_damage(s)) return 0;
+        if (kp.sdead[KST_SPIN]) kbm_set(KBM_HIPDROP);
+        return 1;
+    }
     int ok = nv_is(m, KBM_CHASE) || nv_is(m, KBM_WANDER) || nv_is(m, KBM_SEARCH) || nv_is(m, KBM_FIND) || nv_is(m, KBM_JUMPAWAY) ||
              nv_is(m, KBM_FIRESHORT) || nv_is(m, KBM_FIRELONG) || (nv_is(m, KBM_HIPDROP) && kst_hip_guardable()) || nv_is(m, KBM_SHOCKWAVE);
     if (ok && kst_guard_try(s)) { kbm_set(KBM_GUARD); return 1; }
@@ -1372,11 +1470,62 @@ static void kq_update(void)
     }
     if (n->nrv == KQ_DEMOBATTLESTART || n->nrv == KQ_DEMOBATTLEEND) kp.dx_f++;
 }
+/* KoopaSequencerVs2: no stairs; the opening sheet at once (tryStartTimeKeepDemoMarioPuppetable), the down sheet with
+ * DemoKoopaVs1Down, Mario at ダウンデモ後（マリオ） after it */
+enum { KQ2_WAITDEMOBATTLESTART, KQ2_DEMOBATTLESTART, KQ2_DEMOJUMPTOPLANET, KQ2_BATTLE, KQ2_WAITDEMODOWN, KQ2_DEMODOWN, KQ2_WAITDEMO };
+static void kq2_update(void)
+{
+    Nv *n = &kp.seq;
+    int st = nv_run(n);
+    const Row *r = &sc->objs[kp.row];
+    switch (n->nrv) {
+    case KQ2_WAITDEMOBATTLESTART:
+        if (st == 0) { kp_set_pos("デモ中心"); kp_dx_request("クッパＶｓ２本戦開始"); }
+        if (kp_dx_on()) nv_set(n, KQ2_DEMOBATTLESTART);
+        break;
+    case KQ2_DEMOBATTLESTART:
+        if (st == 0) { kp.calc_grav = 0; kp_act("DemoKoopaVs2Start"); kp_acam("DemoKoopaVs2Start"); } /* initDemoSheetTalkAnim */
+        if (kp_dx_last() || !dx.on) {
+            kp_acam(NULL); kp.calc_grav = 1;
+            if (r->sw[SW_B] >= 0) sw_set(r, SW_B, 1); /* startReady */
+            nv_set(n, KQ2_DEMOJUMPTOPLANET);
+        }
+        break;
+    case KQ2_DEMOJUMPTOPLANET:
+        if (kst_run_once(KST_JUMPTOPLANET, st == 0)) { nv_set(n, KQ2_BATTLE); printf("koopa: battle\n"); }
+        break;
+    case KQ2_BATTLE:
+        if (st == 0) nv_set(&kp.sub, KSS_LV1);
+        if (ksub_update()) nv_set(n, KQ2_WAITDEMODOWN);
+        break;
+    case KQ2_WAITDEMODOWN:
+        if (st == 0) { kp_set_pos("デモ中心"); nv_set(n, KQ2_WAITDEMO); kp_dx_request("クッパＶｓ２ダウン"); }
+        break;
+    case KQ2_WAITDEMO:
+        if (kp_dx_on()) nv_set(n, KQ2_DEMODOWN);
+        break;
+    case KQ2_DEMODOWN:
+        if (st == 0) { kp_se(SE_AT_KOOPA_FALLDOWN_LV1); bgm_stop(180); kp.calc_grav = 0; kp_act("DemoKoopaVs1Down"); kp_acam("DemoKoopaVs1Down"); }
+        if (st == 20) kp_se(SE_BV_KOOPA_BATTLE_END_FALL);
+        if (kp_dx_last() || !dx.on) {
+            kp_acam(NULL); render_cover(3);
+            kp_player_at("ダウンデモ後（マリオ）");
+            const float *g = scene_gpos("デモ中心");
+            bgm_after_boss();
+            note_star_row = kp.row; note_star_at = g ? v3(g[0], g[1], g[2]) : kp.b.pos;
+            kp_star_demo = 0;
+            if (r->sw[SW_DEAD] >= 0) sw_set(r, SW_DEAD, 1);
+            row_kill(kp.row); kp.alive = 0;
+            printf("koopa: down, its grand star\n");
+        }
+        break;
+    }
+}
 
 /* --- Koopa: control (the sequencer), gravity, binder, anim, sensors ----------------------------------------------- */
 static void kp_models(const Scene *s)
 {
-    m_kp = scene_model(s, "KoopaVs1");
+    m_kp = scene_model(s, "KoopaVs1"); if (!m_kp) m_kp = scene_model(s, "KoopaVs2");
     m_kthorn = scene_model(s, "KoopaThorn"); m_karmorb = scene_model(s, "KoopaArmorBreak"); m_kthornb = scene_model(s, "KoopaThornBreak");
     m_kfire2 = scene_model(s, "KoopaFire"); m_ksw = scene_model(s, "KoopaShockWave"); m_ksws = scene_model(s, "KoopaShockWaveShadow");
     m_kmeteor = scene_model(s, "MeteorStrike"); m_kmeteorb = scene_model(s, "MeteorStrikeBreak"); m_kpshadow = scene_model(s, "KoopaPlanetShadow");
@@ -1405,7 +1554,7 @@ static void update_kp(void)
         printf("koopa: appear\n");
     }
     if (!moves || scene_stop) return;
-    kq_update(); /* Koopa::control: mSequencer->update() */
+    if (kp.vs == 2) kq2_update(); else kq_update(); /* Koopa::control: mSequencer->update() */
     if (!kp.alive) return;
     if (kp.calc_grav) kp.b.grav = vmul(up_at(vadd(kp.b.pos, vmul(kp_up(), 200.0f)), kp_up()), -1.0f); /* calcGravity */
     w_bind(&kp.b, 200.0f); /* initBinder(200, 200) */
@@ -1474,18 +1623,18 @@ static void kp_init(const Scene *s, const unsigned char *blob) /* Koopa::init (K
     memset(&kp, 0, sizeof kp); kp.row = -1; kp.dx_k = -1; kp.req = -1;
     memset(kpfst, 0, sizeof kpfst); memset(kpfs, 0, sizeof kpfs); memset(ksw, 0, sizeof ksw);
     kp_planet_ok = 0; kp_star_demo = -1; kp_planet_ki = -1;
-    int t1 = scene_type(s, "KoopaVs1");
-    for (u32 i = 0; t1 >= 0 && i < s->nobjs; i++) {
+    int t1 = scene_type(s, "KoopaVs1"), t2 = scene_type(s, "KoopaVs2");
+    for (u32 i = 0; i < s->nobjs; i++) {
         const Row *r = &s->objs[i];
-        if ((int)r->type != t1) continue;
+        if ((int)r->type != t1 && (int)r->type != t2) continue;
         V3 x, z;
         row_axes(r, &x, &z);
-        kp.row = (int)i; kp.vs = 1; kp.lv = 1; kp.calc_grav = 1; kp.thorn = 1;
+        kp.row = (int)i; kp.vs = (int)r->type == t2 ? 2 : 1; kp.lv = 1; kp.calc_grav = 1; kp.thorn = 1;
         kp.b.pos = row_pos(r); kp.b.grav = vmul(up_at(kp.b.pos, v3(0, 1, 0)), -1.0f); kp.b.front = vnorm(vtangent(z, kp_up()));
         kp.b.row = (int)i; kp.b.qy = kp_up();
         for (int k = 0; k < KS_N; k++) kp.sv[k] = (u8)kp_sdef[k].valid;
-        kp.seq.next = KQ_BATTLESTAIRS; kp.stairs.next = KSB_WAITDEMO; kp.sub.next = KSS_LV1; kp.main.next = KBM_WANDER;
-        static const s8 first[KST_N] = {KG_FACE, KH_RUN, KW_JUMPSTART, KF_START, KD_ESCAPESTART, KJA_JUMPSTART, KJP_START, KP_WAITDEMO};
+        kp.seq.next = kp.vs == 2 ? KQ2_WAITDEMOBATTLESTART : KQ_BATTLESTAIRS; kp.stairs.next = KSB_WAITDEMO; kp.sub.next = KSS_LV1; kp.main.next = KBM_WANDER;
+        static const s8 first[KST_N] = {KG_FACE, KH_RUN, KW_JUMPSTART, KF_START, KD_ESCAPESTART, KJA_JUMPSTART, KJP_START, KP_WAITDEMO, KSP_START, KFL_START};
         for (int k = 0; k < KST_N; k++) { kp.st[k].next = first[k]; kp.st[k].nrv = first[k]; kp.sdead[k] = 1; }
         kp.alive = r->sw[SW_APPEAR] < 0; kp.hidden = kp.alive; /* useStageSwitchReadAppear: makeActorDead, else hideModel */
         Anim **an[6] = {&kp.anim, &kp.a_tb, &ka_fire, &ka_mbreak, &ka_sw, &ka_sws};
