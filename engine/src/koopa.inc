@@ -1828,7 +1828,7 @@ static int kb3_enemy_blow(int s) /* KoopaBattleVs3Lv2::receiveMsgEnemyAttack (AC
 {
     Nv *n = &k3.bat;
     if (kp.lv != 2) return 0;
-    if (nv_is(n, K3B_DAMAGE)) return 0; /* (mStateDamageEscape->tryDamage: a player's spin only) */
+    if (nv_is(n, K3B_DAMAGE)) return kde_try_damage(s); /* mStateDamageEscape->tryDamage (isMsgToEnemyAttackBlow too) */
     if ((nv_is(n, K3B_ROLL) && s == KS_ATTACKROLLRECEIVER && !kp.sdead[KST_ROLL]) || nv_is(n, K3B_FIRE)) { nv_set(n, K3B_DAMAGE); return 1; }
     return 0;
 }

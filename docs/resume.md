@@ -989,8 +989,20 @@ there needs the embedded blob and every pack rebuilt.
   Vs2 (#311): KoopaSequencerVs2, KoopaStateAttackSpin (its AttackSpin sensor), KoopaStateAttackFireLong, the Vs2 planet
   (KoopaBattleMapPlanetVs2, its damage plates only, the grand star plate the first). Test: KP_TEST build with
   KoopaBattleVs2Galaxy/1 (koopa-b.sh KoopaBattleVs2Galaxy/1 "" 2): クッパＶｓ２本戦開始, three levels, クッパＶｓ２ダウン,
-  `power star 1 got`. Vs3 not started (KoopaSequencerVs3, BattleVs3Lv1 / Lv2, StairsVs3, DemoFallToPlanetVs3Lv2 / Lv3,
-  ChaseRoll / AttackRoll, FigureBall, RockBreak, RestarterVs3, ViewSwitchKeeper, the Peach / KoopaJr / ship demo casts).
+  `power star 1 got`.
+  Vs3 (#324, koopa.inc kq3_* / kb3_* / kr_* / k3_*): KoopaSequencerVs3 (WaitPlayer with KoopaViewSwitchKeeper's
+  switches hiding the Lv1 / Lv2 planets and the outer holed sun), KoopaBattleStairsVs3 (stairs registered when the
+  stairs battle starts: calcFireAttackStep from クッパ階段戦の砲弾出現, speed 30), クッパＶｓ３本戦開始, the jump,
+  KoopaBattleVs3Lv1 (ChaseRoll on a KoopaFigureBall: a spin on ChaseRollFace while it rolls on the ground breaks the
+  rock, DamageReverse), KoopaDemoFallToPlanetVs3Lv2, KoopaBattleVs3Lv2 (AttackRoll: a PunchingKinoko's blow on the roll
+  ball or in its fire: game.c kp_blow), KoopaDemoFallToPlanetVs3Lv3 (the sun swap at 266 / 267, MBGM_BOSS_KOOPA_FINAL),
+  Lv3 / Final in KoopaBattleMain (AttackRoll, its _1C / _1D) on the Lv3 planet's damage plates, クッパＶｓ３ダウン, the grand
+  star at the Lv3 planet. Parts: KoopaRock / RockBreak / RollBall, the demo casts Peach / KoopaJr / KoopaJrShip at デモ中心.
+  Test: koopa-b.sh KoopaBattleVs3Galaxy/1 "" 3 (KP_TEST: the keepers' appear switches, its SW_A 240 frames into the
+  stairs, a face spin in Lv1, a blow in Lv2, then as Vs1). Packs: slice.py EXTRA KoopaVs3, SKINNED_OBJ the rock / ball /
+  casts. ponytail: KoopaRestarterVs3, the demo meteors, the parts' FixPos, Mario's demo clips, the planets' BRKs.
+  Note: Petari's createPlate keys the damage-plates-only planet on _DD (Vs3 Lv3: true); Vs2 is made with _DC only
+  (all 14 plates, grand star plate 1 at step 90), the port's Vs2 keeps damage plates only: to check.
 - BossKameck (feat/kameck, 2026-11-05): Kamella after Petari (game.c bk_*, its sequencer Vs1 / Vs2, BattleDemo,
   StateBattle's 12 nerves, MoveRail, BattlePattarn) in StarDustGalaxy 2's ThrowTutorialZone: dead until SW_A (the
   SwitchCube), カメック登場Vs1 (the DemoBossKameckStart anim camera on BossKameckBattleDemo, MBGM_BOSS_04, Mario
