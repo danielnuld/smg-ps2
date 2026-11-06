@@ -412,6 +412,7 @@ COMMON = ("PauseMenu", "SysInfoWindow", "SysInfoWindowMini", "GameOver", "TooBad
           "DPDPointer",  # StarPointerLayout's 1P pointer, StarPointerBlur's Blur.bti as its material "Blur"
           "SelectButton",  # YesNoLayout (the talks' yes / no)
           "TimeLimit",  # TimeLimitLayout (Red / Black comets)
+          "Race",  # RaceManagerLayout (GhostPlayer's count and go, lose)
           "HitPointMeter")  # MarioMeter
 # ponytail: no DPDPointerSub (the 2P pointer) nor DPDPointerNumber (the player number, shown only with two remotes
 # connected): one pad here

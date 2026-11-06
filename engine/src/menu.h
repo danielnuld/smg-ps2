@@ -109,6 +109,16 @@ void menu_time_limit_update(void);
 void menu_time_limit_kill(void);
 int menu_time_limit_up(void);
 int menu_time_limit_left(void);        /* -1 not shown */
+/* RaceManagerLayout ("Race"): GhostPlayer's */
+void menu_race_appear(void);
+void menu_race_kill(void);
+void menu_race_count_and_go(void);
+void menu_race_lose(void);
+void menu_race_hide_records(void);
+int menu_race_counting(void);
+int menu_race_all_stopped(void);
+void menu_race_set_time(u32 frame);
+void menu_race_update(void);
 /* YesNoLayout: MR::appearYesNoSelector(yes, no) (talk_se: TalkDirector's setYesNoSelectorSE), isYesNoSelected */
 void menu_yesno_appear(const char *yes, const char *no, int talk_se);
 int menu_yesno_selected(void);       /* 1 Yes, 2 No, 0 not yet */

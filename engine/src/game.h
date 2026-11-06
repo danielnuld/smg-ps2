@@ -260,6 +260,7 @@ int game_test_npc_visit(int k);    /* tests: Mario beside the k-th turning NPC; 
 void game_test_npc_turn(int frame); /* tests: the turning NPCs near Mario, their angles */
 int game_test_hanachan(int how); /* hanachan test: Mario onto the first live Hanachan: trample (0), spin (1), hip drop (2); its row */
 int game_hanachan_state(void); /* its nerve (game.c HN_*), -1 none */
+int game_test_ghost(int f); /* ghost test: the race's appear switch on once Mario is free; GhostPlayer's nerve (game.c GH_*), -1 none */
 int game_test_strspider(int how); /* strspider test: Mario under (0), spinning by (1), onto (2) the first StringSpider; its row */
 int game_strspider_state(void); /* its nerve, -1 none */
 int game_test_free(void); /* tests: the flight in over, Mario free */

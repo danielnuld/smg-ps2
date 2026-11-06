@@ -1393,6 +1393,10 @@ static int life = MAX_LIFE, max_life = MAX_LIFE, misses, lives = START_LIVES, st
 static void miss(void);
 static int miss_running(void);
 static int miss_abyss; /* the next miss is MarioActor::exeGameOverAbyss's (a DeathArea: forceKillPlayerByAbyss) */
+static int miss_ghost; /* the next miss is forceKillPlayerByGhostRace's (EventGhostRaceDown) */
+static void gh_reset(void);
+static int gh_ctrl_off(void), gh_puppet(void); /* GhostPlayer: offPlayerControl; its clips on Mario (startBckPlayerJ) */
+static int m_dash_chance, m_item_dash; /* Mario::_436 (noticeDashChance: the race start's dash chance), _434 (the item dash) */
 /* MarioActor::exeGameOverBlackHole2 (MarioActorBlackHole.cpp): the hole's place (mBlackHolePosition), Mario's place
  * about it (mPosRelativeToBlackHole), the axis he spirals about (mBlackHoleRotateAxis), his scale, the nerve step */
 static struct { int on, step, hidden; V3 pos, rel, axis; float scale; } bh;
@@ -2460,6 +2464,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         }
     bk_init(s, blob);
     tb_init(s, blob);
+    gh_reset(); /* GhostPlayer: init at its first update */
     for (u32 i = 0; i < s->nobjs; i++)
         if (strcmp(s->types + 32 * s->objs[i].type, "OtaKing") == 0) {
             V3 x, z;
@@ -4815,7 +4820,7 @@ static int gap_class(const char *name)
            !strcmp(name, "SandUpDownTriRock") ? GAP_TRIROCK : GAP_NONE;
 }
 /* ponytail (unmarked until the 2026-11-02 audit): placed classes of the early galaxies with no behaviour here
- * (drawn static, or not at all), each a whole Petari class: GhostPlayer (Cosmic Mario);
+ * (drawn static, or not at all), each a whole Petari class (GhostPlayer: its section, update_ghost);
  * Battlerock BossBegoman, TicoShop;
  * the observatory's AstroMapObj looks (update_astro_objs' ponytail) */
 static void class_make(ClassInfo *ci, const char *name)
@@ -14222,8 +14227,9 @@ static void m_update_walk_speed(Player *m) /* updateWalkSpeed */
     if (m->slow_start) { f2 = (float)(MC.mSlowStartTime - m->slow_start) / MC.mSlowStartTime; m->slow_start--; }
     t *= f2 * f2;
     if (m->tornado || m->magic) t *= MC.mTornadoMultiply; /* mMovementStates._F || isStatusActive(MarioStatus_Magic) */
+    if (m_item_dash) t *= MC.mItemDashRatio; /* getTargetWalkSpeed: _434 */
     m->squat = 0;
-    if (m_check_squat(m, 0)) {
+    if (!m_dash_chance && !m_item_dash && m_check_squat(m, 0)) {
         m->squat = 1;
         if (m->wall) { m->tsi = 0; m->walk = 0; }
     }
@@ -15711,7 +15717,20 @@ static void m_main_move(Player *m)
     }
     V3 dir = m->move_dir;
     int dir_set = 0;
-    if (m_req_jump) { m_try_jump(m); return; }
+    int a2 = m_req_jump;
+    if (m_dash_chance) { /* _436: the race start's dash (GhostPlayer: noticePlayerDashChance) */
+        m_dash_chance--;
+        if (a2 && m_check_squat(m, 0)) {
+            if (m_sz >= 0.5f) {
+                a2 = 0; m_dash_chance = 0; m->walk = 5.0f; m_item_dash = 180;
+                mario_sound("スペシャルダッシュ強"); mario_sound("ダッシュ加速強成功"); mario_sound("声物ジャンプ");
+            }
+        } else if (a2 && m_sz >= 0.5f) {
+            a2 = 0; m_dash_chance = 0; m->walk = 2.0f; m_item_dash = 60;
+            mario_sound("スペシャルダッシュ弱"); mario_sound("声物ジャンプ");
+        }
+    }
+    if (a2) { m_try_jump(m); return; }
     if (!m->grounded) {
         if (m->drop_grace && !m->s23 && near0(m->s8F8)) m->drop_grace--;
         else { m_try_drop(m); return; }
@@ -20524,7 +20543,7 @@ static void update_mario_(void)
         return;
     }
     if (pw_update(m)) { if (mario_anim) anim_update(mario_anim); return; } /* MarioWarp's point warp (forceFlyPlayer) */
-    if (demo_on) { /* a demo: he waits (startBckPlayer PowerStarGet when it is the star's) */
+    if (demo_on || gh_ctrl_off()) { /* a demo (or offPlayerControl): he waits (startBckPlayer PowerStarGet when it is the star's) */
         m->hvel = v3(0, 0, 0); m->vup = 0;
         if (m->hurt_timer) m->hurt_timer--;
         if (mario_anim) { /* PowerStarGet once (mario_play restarts a one-shot clip, as startBck does) */
@@ -20532,7 +20551,7 @@ static void update_mario_(void)
                 int mode = 0;
                 if (!m_clip_is(dx.bck)) { anim_clip_info(dx.bck, &mode); mario_play(dx.bck, 1.0f, mode == 2 || mode == 4); }
             }
-            else if (pro_puppet() || tsp_puppet()) ; /* the prologue's DemoPeachCastleGate (pro_update) */
+            else if (pro_puppet() || tsp_puppet() || gh_puppet()) ; /* the prologue's DemoPeachCastleGate (pro_update); GhostPlayer's startBckPlayerJ */
             else if (bsb_demo() || bk_demo() || tb_demo()) { if (!m_clip_is("battlewait")) mario_play("battlewait", 1.0f, 1); } /* BossStinkBug's demos: startBckPlayer BattleWait */
             else if (!star_demo && !gw_puppet()) mario_play("wait", 1.0f, 1);
             else if (mario_anim->clip_id < 0 || strcmp(sc->clips[mario_anim->clip_id].name, "powerstarget")) mario_play("powerstarget", 1.0f, 0);
@@ -21011,6 +21030,7 @@ static void update_mario_(void)
         if (lost_n > 30) { lost_n = 0; printf("lost at %d %d %d\n", (int)m->pos.x, (int)m->pos.y, (int)m->pos.z); miss(); }
     }
     if (m->hurt_timer) m->hurt_timer--;
+    if (m_item_dash) m_item_dash--; /* Mario.cpp: _434 */
 
     { /* MarioWait (checkStart / start / update / close): 1800 frames still on the ground (no stick, A, Z, walk speed,
        * jump, slide, squat, spin; not on floor codes 27 / 28) start 特殊ウエイト1A (sleep: m->sleep 1), in a NonSleepCube
@@ -21095,7 +21115,7 @@ static void update_mario_(void)
 #if defined(CATCHUP) || defined(MISS_TEST)
 #define MISS_EVENTS 1
 #endif
-static struct { int on, f, phase, pf, wipe_f, over; } mev;
+static struct { int on, f, phase, pf, wipe_f, over, ghost; } mev; /* ghost: EventGhostRaceDown (no MissLayout, its wipe 92-200) */
 static int miss_running(void) { return mev.on; }
 static void miss_event_update(void)
 {
@@ -21114,8 +21134,8 @@ static void miss_event_update(void)
     } else {
         if (f == 30) dome_layout_off = 1;
         if (f == 30) bgm_sub("BGM_MISS"); /* sound (EventAbyss's too) */
-        if (f == 45) { menu_miss_start(); next = 1; }
-        if (f >= 100 && f <= 600) { /* doCloseWipe */
+        if (f == 45 && !mev.ghost) { menu_miss_start(); next = 1; }
+        if (mev.ghost ? f >= 92 && f <= 200 : f >= 100 && f <= 600) { /* doCloseWipe */
             if (mev.wipe_f++ == 0) menu_wipe_koopa(-1);
             else if (menu_wipe_koopa_closed()) mev.phase = 2;
         }
@@ -21133,15 +21153,18 @@ static void miss(void)
     memset(&mev, 0, sizeof mev);
     mev.on = 1;
     mev.over = lives <= 0; /* MarioActor::exeGameOver: getPlayerLeft() == 0 */
+    mev.ghost = miss_ghost && !mev.over;
     mario->hvel = v3(0, 0, 0); mario->vup = 0;
-    if (mario_anim && !bh.on) mario_play(swimming ? "deathwater" : "down", 1.0f, 0); /* changeGameOverAnimation */
+    if (mario_anim && mev.ghost) m_anim("レース負け"); /* EventGhostRaceDown::init */
+    else if (mario_anim && !bh.on) mario_play(swimming ? "deathwater" : "down", 1.0f, 0); /* changeGameOverAnimation */
     bgm_stop(10); bgm_sub_stop(10); /* (setCubeBgmChangeInvalid, clearBgmQueue) */
     if (miss_abyss && !mev.over) mario_sound("声落下死亡"); /* EventAbyss::init */
     else { mario_sound("声最終ダメージ"); mario_sound("最後の一撃"); } /* EventDown / EventGameOver::init */
-    miss_abyss = 0;
+    miss_abyss = miss_ghost = 0;
     printf("%s" "\n", mev.over ? "game over" : "mario down");
     return;
 #endif
+    miss_ghost = 0;
     time_on = 0; /* the comet's time starts over with the scenario */
     mario->pos = start_pos; mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->hurt_timer = 0; mario->hip = 0;
     safe_reset(start_pos);
@@ -48870,6 +48893,507 @@ static int tsp_test(int f)
     return tsp.nrv * 100 + tsp.act;
 }
 
+/* --- GhostPlayer.cpp / GhostPacket.cpp after Petari (Cosmic Mario's races): GhostMario (GhostLuigi when he plays)
+ * posed by Mario's clips. Dead until its SW_APPEAR (syncStageSwitchAppear: a SwitchCube at the start), then
+ * PreStartDemo0 (hidden; GHOST_MARIO_APPEAR, offPlayerControl, the camera レース開始1 on a dummy at its base, warped to
+ * ゴーストデモゴースト位置; step 1 Mario at ゴーストデモマリオ位置 watching (レース見る) and the demo レース準備; 60 shown, ゴースト出現;
+ * 107 / 111 / 146 its voices; 240 the camera レース開始2, PreStartDemo1 (240) -> レース開始3, PreStartDemo2 (A after a miss
+ * skips to it): RaceManagerLayout's count and go (Go / Count), ゴーストレース開始, Mario at レース開始時マリオ位置 (レース開始,
+ * Z crouching), the count SE every 60, its front blended 0.1 to its placed Z; the count over: Run (its packets,
+ * player control, the start dash chance, 基本). Run: each frame one packet of its .gst (GHST: frame index, size, flags;
+ * position x 4, velocity, scale / 8, rotation x 180 / 128, a clip by name or by marioAnimeTable hash, its frame / 32,
+ * the four track weights / 128, the rate / 8), the first ones skipped while track 3 (wait) is over 0.9 and 10 more;
+ * its position + velocity a frame, its base turned 0.2 a frame to the packet's rotation. Its body (ride sensor 40 at
+ * 80 up) pushes Mario (a star piece of its 50, 5 frames apart) and a trample takes 5 (10 apart); on a power star's
+ * bind sensor (75) unless Mario takes it: WinDemo (Mario at 負け時マリオ位置 watching, the camera レース終了,
+ * BGM_RACE_LOSE, Lose, ゴースト勝利 on the star; at 180 forceKillPlayerByGhostRace); Mario's powerstarget first:
+ * LostDemo (at 負け時マリオ位置, レース負け). Its clip names' SEs (sAnimSoundTable), LV_GHOST_MARIO_AMBIENT.
+ Its shell (JetTurtleShadow: Koura at its HandR) while a 水泳ジェット / カメ持ち clip ran last, until 投げ.
+ * ponytail: the upper body XanimePlayer (ひろいウエイト over PartsControl: the hand pattern, none on GhostMario's own
+ * hands; 投げ's Spine1 stop) not made, the clip attribute 1 (once and reset) taken as once, the shadow a drop shadow
+ * (initShadowVolumeSphere 50), JetTurtleShadow's draw flag (_19) not reproduced: the shell in its own colours */
+enum { GH_DEAD, GH_WAIT, GH_PRE0, GH_PRE1, GH_PRE2, GH_RUN, GH_WIN, GH_LOST };
+static struct {
+    const Scene *scene;
+    int row, nrv, next, step;
+    const u8 *pk, *end;            /* mCurrentPacket, the file's end */
+    const u8 *names; u32 nnames;   /* GHST's hash -> name table */
+    const Model *md;
+    Anim *anim;
+    V3 pos, vel, start, rot, front0; /* mPosition, mVelocity, mStartPos, mTargetRotation, mInitialDirection */
+    float scale, base[16], target[16], w[4]; /* getBaseMtx, mTargetRotationMtx, mAnimTrackWeights */
+    u8 hidden, waiting, first, killed, demo_cam, ctrl_off, frame_set, z_was, jet; /* jet: mHasJetTurtle */
+    const Model *koura;            /* JetTurtleShadow's Koura */
+    u16 piece_cd, trample_cd;
+    int pieces, star;              /* declareStarPiece 50; the power star it reached (an inst), -1 */
+    u32 lv;
+} gh = {.row = -1};
+static const struct { const char *jp; u32 bm, bv; } gh_snd[] = { /* sAnimSoundTable */
+    {"ジャンプ", SE_BM_GHOST_MARIO_JUMP_S, SE_BV_GHOST_MARIO_JUMP_S}, {"ジャンプB", SE_BM_GHOST_MARIO_JUMP_M, SE_BV_GHOST_MARIO_JUMP_M},
+    {"ジャンプC", SE_BM_GHOST_MARIO_JUMP_L, SE_BV_GHOST_MARIO_JUMP_L}, {"壁ジャンプ", SE_BM_GHOST_MARIO_JUMP_S, SE_BV_GHOST_MARIO_JUMP_S},
+    {"埋まり脱出ジャンプ", SE_BM_GHOST_MARIO_JUMP_S, SE_BV_GHOST_MARIO_JUMP_S}, {"幅とび", SE_BM_GHOST_MARIO_JUMP_L, SE_BV_GHOST_MARIO_JUMP_L},
+    {"しゃがみジャンプ", SE_BM_GHOST_MARIO_JUMP_L, SE_BV_GHOST_MARIO_JUMP_L}, {"崖つかまり開始", 0, SE_BV_GHOST_MARIO_HANG},
+    {"崖つかまり終了", 0, SE_BV_GHOST_MARIO_CLIMB}, {"壁押し", 0, SE_BV_GHOST_MARIO_HANG},
+    {"ヒップドロップ開始", SE_BM_GHOST_MARIO_HIP_DROP_TURN, SE_BV_GHOST_MARIO_HIPDROP_S},
+    {"ヒップドロップ着地", SE_BM_GHOST_MARIO_HIP_DROP_LAND, SE_BV_GHOST_MARIO_HIPDROP_E},
+    {"埋まり脱出ジャンプ", SE_BM_GHOST_MARIO_JUMP_S, SE_BV_GHOST_MARIO_JUMP_S}, {"水泳スピン", SE_BM_GHOST_MARIO_SPIN, SE_BV_GHOST_MARIO_SPIN},
+    {"水泳ジェット開始", 0, SE_BV_GHOST_MARIO_SWM_ACCEL}, {"カメ持ちリング準備", 0, SE_BV_GHOST_MARIO_TAKE},
+    {"カメ持ちリング", 0, SE_BV_GHOST_MARIO_SWM_ACCEL}, {"投げ", 0, SE_BV_GHOST_MARIO_THROW},
+    {"空中ひねり", SE_BM_GHOST_MARIO_SPIN, SE_BV_GHOST_MARIO_SPIN}, {"地上ひねり", SE_BM_GHOST_MARIO_SPIN, SE_BV_GHOST_MARIO_SPIN},
+    {"空パンチ", SE_BM_GHOST_MARIO_SPIN, SE_BV_GHOST_MARIO_SPIN}, {"アイスひねり", SE_BM_GHOST_MARIO_SPIN, SE_BV_GHOST_MARIO_SPIN},
+    {"アイスひねり移動", SE_BM_GHOST_MARIO_SPIN, SE_BV_GHOST_MARIO_SPIN}, {"スケートアクセルジャンプ", SE_BM_GHOST_MARIO_JUMP_L, SE_BV_GHOST_MARIO_JUMP_L},
+    {"スケートジャンプ2", SE_BM_GHOST_MARIO_JUMP_L, SE_BV_GHOST_MARIO_JUMP_L}, {"氷上力行右", 0, SE_BV_GHOST_MARIO_JUMP_S},
+    {"氷上力行左", 0, SE_BV_GHOST_MARIO_JUMP_S}, {"ショートジャンプ", SE_BM_GHOST_MARIO_JUMP_S, SE_BV_GHOST_MARIO_JUMP_S}};
+static void gh_set(int n) { gh.next = n; } /* setNerve: step 0 next frame */
+static void gh_play_sound(const char *jp) /* playSound(this, name): the table's first row of that name */
+{
+    for (unsigned i = 0; jp && i < sizeof gh_snd / sizeof gh_snd[0]; i++)
+        if (!strcmp(gh_snd[i].jp, jp)) {
+            if (gh_snd[i].bm) se_start(gh_snd[i].bm, &gh.pos.x);
+            if (gh_snd[i].bv) se_start(gh_snd[i].bv, &gh.pos.x);
+            return;
+        }
+}
+/* XanimePlayer::changeAnimation(name): a marioAnimeTable group (its tracks at the ghost's weights) or name, else a BCK
+ * of that name (lower case); its table name returned (getCurrentAnimationName), NULL none */
+static const char *gh_change(const char *name)
+{
+    if (!gh.anim || !name) return NULL;
+    int g = m_group_of(name);
+    if (g >= 0) {
+        anim_group(gh.anim, mario_anim_groups[g].clip, mario_anim_groups[g].n, gh.w, mario_anim_groups[g].rate, mario_anim_groups[g].interp);
+        return mario_anim_groups[g].jp;
+    }
+    for (unsigned i = 0; i < sizeof m_anims / sizeof m_anims[0]; i++) {
+        if (strcmp(m_anims[i].jp, name)) continue;
+        int mode = 0;
+        anim_clip_info(m_anims[i].clip, &mode);
+        anim_play(gh.anim, m_anims[i].clip, m_anims[i].rate, mode == 2 || mode == 4, m_anims[i].interp);
+        return m_anims[i].jp;
+    }
+    char lc[32];
+    snprintf(lc, sizeof lc, "%s", name);
+    for (char *c = lc; *c; c++) *c = (char)tolower((unsigned char)*c);
+    int mode = 0;
+    if (anim_clip_info(lc, &mode) < 0) return NULL;
+    anim_play(gh.anim, lc, 1.0f, mode == 2 || mode == 4, 0);
+    return name;
+}
+static u32 gh_hash(const char *s) { u32 h = 0; for (; *s; s++) h = (u32)(signed char)*s + h * 31; return h; } /* MR::getHashCode */
+static const char *gh_by_hash(u32 h) /* XanimeResourceTable::getGroupInfoFromHash: the table's names by their Shift-JIS
+                                      * hash (slice.py ghost_names: GHST's {u32 hash, char utf8[44]}) */
+{
+    for (u32 i = 0; i < gh.nnames; i++) if (*(const u32 *)(gh.names + 48 * i) == h) return (const char *)(gh.names + 48 * i + 4);
+    return NULL;
+}
+static const char *gh_name(const char *sjis) /* a packet's name (Shift-JIS on disc): the table's, else as it is (a BCK's) */
+{
+    const char *n = gh_by_hash(gh_hash(sjis));
+    return n ? n : sjis;
+}
+static void gh_set_anim(const char *name) /* setAnimation: changeAnimation, attribute 0 made 1 (ponytail: as once) */
+{
+    gh_change(name);
+    if (gh.anim && !gh.anim->loop && gh.anim->ntrack <= 1) gh.anim->loop = 0;
+}
+static void gh_weights(void) { if (gh.anim && gh.anim->ntrack > 1) anim_weights(gh.anim, gh.w); } /* setAnimationWeight */
+static void gh_euler(float m[16], V3 pos, V3 rot) /* makeMtxRotate (Z Y X, degrees) at pos */
+{
+    float p[3] = {pos.x, pos.y, pos.z}, r[3] = {rot.x, rot.y, rot.z}, one[3] = {1, 1, 1};
+    mat_translate_rot_scale(m, p, r, one);
+}
+static int gh_name_pos(const char *name, float m[16]) /* MR::findNamePos */
+{
+    const float *g = scene_gpos(name);
+    if (!g) { printf("ghost: no %s" "\n", name); return 0; }
+    gh_euler(m, v3(g[0], g[1], g[2]), v3(g[3], g[4], g[5]));
+    return 1;
+}
+static void gh_warp(const char *name) /* warpPosition */
+{
+    if (!gh_name_pos(name, gh.base)) return;
+    memcpy(gh.target, gh.base, 64);
+    gh.pos = v3(gh.base[12], gh.base[13], gh.base[14]);
+}
+static void gh_player_at(const float m[16], int wait) /* setPlayerPosAndWait, setPlayerBaseMtx */
+{
+    mario->pos = v3(m[12], m[13], m[14]);
+    mario->up = vnorm(v3(m[4], m[5], m[6]));
+    mario->face = vnorm(vtangent(v3(m[8], m[9], m[10]), mario->up));
+    if (wait) { mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 1; }
+}
+static void gh_cam(const char *event) /* startMultiActorCameraTargetOther / Self: the target its base matrix now */
+{
+    if (row_camset[gh.row] != -1)
+        camera_actor_start("GhostPlayer", event, (unsigned short)row_camset[gh.row], v3(gh.base[4], gh.base[5], gh.base[6]),
+                           v3(gh.base[8], gh.base[9], gh.base[10]), v3(gh.base[12], gh.base[13], gh.base[14]));
+}
+static void gh_cam_end(void) { if (row_camset[gh.row] != -1) camera_event_end_now(-1); } /* endMultiActorCamera */
+static int gh_skip(void) { return seq_is_retry() && pad_pressed(PAD_CROSS); } /* isRequestSkipDemo: hasRetryGalaxySequence, A */
+static float gh_sc(int v, int shift) { return (float)v / (shift > 0 ? (float)(256 << shift) / 256.0f : (float)(256 >> -shift) / 256.0f); } /* convToFloat */
+static u32 gh_packet(void) /* receiveGhostPacket: its size, 0 when the next is not the frame after (the end) */
+{
+    const u8 *p = gh.pk;
+    if (p + 4 > gh.end) return 0;
+    u8 fi = p[0], n = p[1];
+    u16 fl = (u16)(p[2] << 8 | p[3]);
+    if (p + n >= gh.end || (u8)(fi + 1) != p[n]) {
+        if (gh.demo_cam && gh.anim && gh.anim->done) { gh_cam_end(); gh.demo_cam = 0; } /* isBckOneTimeAndStopped: endActorCamera */
+        return 0;
+    }
+    const u8 *q = p + 4;
+#define GH_S16(i) ((s16)(q[(i)] << 8 | q[(i) + 1]))
+    if (fl & 0x0001) { gh.pos = v3(gh_sc(GH_S16(0), -2), gh_sc(GH_S16(2), -2), gh_sc(GH_S16(4), -2)); q += 6; }
+    if (fl & 0x0800) { gh.vel = v3((s8)q[0], (s8)q[1], (s8)q[2]); q += 3; }
+    if (fl & 0x0400) { gh.scale = gh_sc((s8)q[0], 3); q += 3; } /* ponytail: one scale (x) for the model */
+    if (fl & 0x0002) { gh.rot.x = fminf(fmaxf(gh_sc((s8)*q++, 7) * 180.0f, -180.0f), 180.0f); }
+    if (fl & 0x0004) { gh.rot.y = fminf(fmaxf(gh_sc((s8)*q++, 7) * 180.0f, -180.0f), 180.0f); }
+    if (fl & 0x0008) { gh.rot.z = fminf(fmaxf(gh_sc((s8)*q++, 7) * 180.0f, -180.0f), 180.0f); }
+    if (fl & 0x000E) gh_euler(gh.target, v3(0, 0, 0), gh.rot);
+    if (fl & 0x0010) {
+        const char *name = gh_name((const char *)q);
+        q += strlen((const char *)q) + 1;
+        gh_change(name);
+        gh_play_sound(name);
+        int special = !strcmp(name, "基本") || !strcmp(name, "壁押し") || !strcmp(name, "しゃがみ歩き") || !strcmp(name, "がんばり走り");
+        if (!strcmp(name, "基本")) gh_weights();
+        if (!special && gh.anim) gh.anim->loop = 0;
+    }
+    if (fl & 0x2000) {
+        u32 h = (u32)q[0] << 24 | (u32)q[1] << 16 | (u32)q[2] << 8 | q[3];
+        q += 4;
+        const char *name = gh_change(gh_by_hash(h));
+        if (name) {
+            gh_play_sound(name);
+            static const char *const sp[] = {"基本", "壁押し", "しゃがみ歩き", "がんばり走り", "スケートアクセルジャンプ", "スケートジャンプ2", "スケートジャンプ3"};
+            int special = 0;
+            for (unsigned i = 0; i < sizeof sp / sizeof sp[0]; i++) special |= !strcmp(name, sp[i]);
+            if (!strcmp(name, "基本")) gh_weights();
+            if (strstr(name, "水泳ジェット") || strstr(name, "カメ持ち")) gh.jet = 1;
+            else if (strstr(name, "投げ")) gh.jet = 0;
+            if (!special && gh.anim) gh.anim->loop = 0;
+        }
+    }
+    if (fl & 0x0020) { if (gh.anim) { gh.anim->frame = gh_sc(GH_S16(0), 5); gh.anim->phase = -1.0f; gh.frame_set = 1; } q += 2; } /* getBckCtrl()->setFrame */
+    for (int i = 0; i < 4; i++) {
+        if (!(fl & (0x0040 << i))) continue;
+        s8 v = (s8)*q++;
+        if ((u8)v == 128) v = 127;
+        gh.w[i] = gh_sc(v, 7); /* changeTrackWeight */
+        gh_weights();
+    }
+    if (fl & 0x1000) { if (gh.anim) gh.anim->speed = gh_sc((s8)*q, 3); q++; } /* setBckRate */
+#undef GH_S16
+    return n;
+}
+static void gh_appear(void) /* appear */
+{
+    gh.nrv = GH_PRE0; gh.next = -1; gh.step = 0;
+    gh.hidden = 1;
+    printf("ghost: appear (row %d)" "\n", gh.row);
+}
+static void gh_init(void) /* GhostPlayer::init (the scene's row) */
+{
+    memset(&gh, 0, sizeof gh);
+    gh.row = -1; gh.star = -1; gh.scene = sc;
+    int ty = scene_type(sc, "GhostPlayer");
+    for (u32 i = 0; ty >= 0 && i < sc->nobjs; i++) if ((int)sc->objs[i].type == ty) { gh.row = (int)i; break; }
+    if (gh.row < 0) return;
+    const u8 *g = sc->ghst;
+    int lg = gd_player_luigi();
+    u32 nm = g ? ((const u32 *)g)[0] : 0, nl = g ? ((const u32 *)g)[1] : 0, n = lg ? nl : nm;
+    gh.nnames = g ? ((const u32 *)g)[2] : 0;
+    gh.names = g ? g + 12 : NULL;
+    gh.md = scene_model(sc, lg ? "GhostLuigi" : "GhostMario");
+    gh.koura = scene_model(sc, "Koura"); /* JetTurtleShadow::init: initModelManagerWithAnm Koura */
+    if (!n || !gh.md || !gh.md->skin) { printf("ghost: row %d, no packets or model: dead" "\n", gh.row); gh.row = -1; return; } /* makeActorDead */
+    gh.pk = g + 12 + 48 * gh.nnames + (lg ? (nm + 3) / 4 * 4 : 0);
+    gh.end = gh.pk + n;
+    const Row *r = &sc->objs[gh.row];
+    gh.pos = gh.start = row_pos(r);
+    gh.scale = 1.0f;
+    gh.w[3] = 1.0f; /* initAnimation */
+    gh.anim = mem_alloc(MEM_SCENE, sizeof(Anim));
+    anim_bind(gh.anim, gh.md->skin);
+    gh_change("基本"); /* setDefaultAnimation */
+    float one[3] = {1, 1, 1};
+    mat_translate_rot_scale(gh.base, r->pos, r->rot, one);
+    memcpy(gh.target, gh.base, 64);
+    gh.front0 = v3(gh.base[8], gh.base[9], gh.base[10]); /* getRotatedAxisZ */
+    gh.nrv = GH_DEAD; gh.next = -1;
+    gh.waiting = 1; gh.first = 1;
+    gh.pieces = 50;
+    printf("ghost: row %d, %u bytes of packets (%s)" "\n", gh.row, n, lg ? "Luigi" : "Mario");
+}
+static void gh_reset(void) { gh.scene = NULL; gh.row = -1; }
+static int gh_ctrl_off(void) { return gh.row >= 0 && gh.ctrl_off; }
+static int gh_puppet(void) { return gh_ctrl_off() || (gh.row >= 0 && pd.name && pd.row == gh.row); } /* its clips on Mario */
+static V3 gh_sensor(void) { return vadd(gh.pos, vmul(v3(gh.base[4], gh.base[5], gh.base[6]), 80.0f)); } /* body: 40 at (0, 80, 0) */
+static void gh_pieces(int n) /* appearStarPiece(this, mPosition, n, 10, 40) of its 50, the burst SE */
+{
+    if (gh.pieces <= 0) return;
+    if (n > gh.pieces) n = gh.pieces;
+    gh.pieces -= n;
+    V3 up = up_at(gh.pos, mario->up);
+    drop_pieces(gh.pos, up, n);
+    se_start(in_water(gh.pos, up, NULL) ? SE_OJ_STAR_PIECE_BURST_W : SE_OJ_STAR_PIECE_BURST, &gh.pos.x);
+}
+static void gh_sensors(void) /* attackSensor (doObjCol) / receiveMsgPlayerAttack */
+{
+    V3 c = gh_sensor();
+    for (int i = 0; i < ninsts && !gh.killed; i++) { /* a power star's bind sensor */
+        Inst *in = &insts[i];
+        if (in->item != ITEM_STAR || row_dead[in->row] || !row_shown(in->row)) continue;
+        int state;
+        if (star_wait[in->row]) { star_pos(in, &state); if (state < 3) continue; }
+        float r;
+        V3 p = item_sensor(in, &r);
+        if (vlen(vsub(p, c)) >= r + 40.0f) continue;
+        if (star_demo || miss_running() || m_clip_is("powerstarget")) continue; /* getCurrentRushSensor, isPlayerConfrontDeath */
+        gh.star = i;
+        gh_set(GH_WIN);
+        gh.killed = 1;
+        printf("ghost: on the power star (row %d): it wins" "\n", in->row);
+        return;
+    }
+    if (gh.nrv == GH_RUN && mario_touch(c, 40.0f)) { /* sendMsgPush */
+        mario_push_out(c, 40.0f);
+        if (!gh.piece_cd) { gh_pieces(1); gh.piece_cd = 5; }
+    }
+    if (mario_offence(c, 40.0f, vmul(up_at(gh.pos, mario->up), -1.0f)) == MSG_TRAMPLE && !gh.trample_cd) { /* isMsgPlayerTrample */
+        mario_trample();
+        gh_pieces(5);
+        gh.trample_cd = 10;
+    }
+}
+static void gh_exe(void)
+{
+    int st = gh.step;
+    switch (gh.nrv) {
+    case GH_WAIT: case GH_RUN: /* exeWait */
+        if (menu_race_all_stopped()) menu_race_kill();
+        break;
+    case GH_PRE0:
+        if (st == 0) {
+            se_start(SE_BM_GHOST_MARIO_APPEAR, &gh.pos.x); se_start(SE_BV_GHOST_MARIO_APPEAR, &gh.pos.x);
+            gh.ctrl_off = 1;
+            gh_cam("レース開始1");
+            gh_warp("ゴーストデモゴースト位置");
+        }
+        if (st == 1) {
+            float m[16];
+            if (gh_name_pos("ゴーストデモマリオ位置", m)) gh_player_at(m, 1);
+            m_anim("レース見る");
+            pd_try_start("レース準備", gh.row);
+        }
+        if (st == 60) { gh.hidden = 0; gh_set_anim("ゴースト出現"); }
+        if (st == 107) se_start(SE_BV_GHOST_MARIO_LAND, &gh.pos.x);
+        if (st == 111) se_start(SE_BM_GHOST_MARIO_LAND, &gh.pos.x);
+        if (st == 146) se_start(SE_BV_GHOST_MARIO_PROVOKE, &gh.pos.x);
+        if (st == 240) {
+            gh_cam_end();
+            gh_cam("レース開始2");
+            gh_set(GH_PRE1);
+            gh_set_anim("レース見る");
+        } else if (gh_skip()) {
+            gh_cam_end();
+            gh_cam("レース開始3");
+            gh_set(GH_PRE2);
+            if (st < 60) { gh.hidden = 0; gh_set_anim("ゴースト出現"); }
+        }
+        break;
+    case GH_PRE1:
+        if (st == 240 || gh_skip()) { gh_cam_end(); gh_cam("レース開始3"); gh_set(GH_PRE2); }
+        break;
+    case GH_PRE2: {
+        if (st == 0) {
+            menu_race_set_time(0);
+            menu_race_appear();
+            menu_race_count_and_go();
+            menu_race_hide_records();
+            gh_set_anim("ゴーストレース開始");
+            m_anim("レース開始");
+            float m[16];
+            if (gh_name_pos("レース開始時マリオ位置", m)) gh_player_at(m, 0);
+            gh.pos = gh.start;
+            pd_end("レース準備");
+        }
+        int z = pad_held(PAD_R1);
+        if (z && !gh.z_was) { m_anim("レースクラウチング開始"); se_start(SE_PV_SQUAT, &mario->pos.x); } /* getPlayerTriggerZ */
+        else if (!z && gh.z_was) m_anim("レース開始");                                                  /* testSubPadReleaseZ */
+        gh.z_was = (u8)z;
+        if (st % 60 == 0) se_start(SE_SY_RACE_COUNT_DOWN, NULL);
+        V3 f0 = gh.front0;
+        if (vlen(f0) > 1e-6f) { /* !normalizeOrZero: its front (calcFrontVec) blended 0.1 to its placed Z */
+            f0 = vnorm(f0);
+            V3 up = v3(gh.base[4], gh.base[5], gh.base[6]), f = v3(gh.base[8], gh.base[9], gh.base[10]);
+            if (!blend_sphere(f, f0, &f, 0.1f)) f = f0; /* vecBlendSphere */
+            basis_matrix(gh.base, v3(gh.base[12], gh.base[13], gh.base[14]), vnorm(up), f, 0); /* makeMtxUpFront */
+            memcpy(gh.target, gh.base, 64);
+            gh.pos = v3(gh.base[12], gh.base[13], gh.base[14]);
+        }
+        if (!menu_race_counting()) { /* !isPlayCountAnim */
+            gh.waiting = 0;
+            se_start(SE_BV_GHOST_MARIO_RUN_START, &gh.pos.x);
+            gh_set(GH_RUN);
+            gh.ctrl_off = 0; /* onPlayerControl */
+            m_dash_chance = 5; /* noticePlayerDashChance */
+            m_anim("基本");
+            se_start(SE_SY_RACE_START, NULL);
+            gh_cam_end();
+            printf("ghost: race start" "\n");
+        }
+        break;
+    }
+    case GH_WIN:
+        if (st == 0) {
+            gh.ctrl_off = 1;
+            float m[16];
+            if (gh_name_pos("負け時マリオ位置", m)) gh_player_at(m, 1);
+            m_anim("レース見る");
+            gh_cam("レース終了");
+            gh.demo_cam = 1;
+            bgm_sub("BGM_RACE_LOSE");
+            menu_race_appear();
+            menu_race_lose();
+            gh_set_anim("ゴースト勝利");
+            se_start(SE_BV_GHOST_MARIO_WIN, &gh.pos.x);
+            pd_try_start("レース終了", gh.row);
+        }
+        if (gh.star >= 0) { /* on the star's base matrix */
+            memcpy(gh.base, insts[gh.star].m, 64);
+            memcpy(gh.target, gh.base, 64);
+            gh.pos = v3(gh.base[12], gh.base[13], gh.base[14]);
+        }
+        if (st == 180) {
+            if (gh.demo_cam) { gh_cam_end(); gh.demo_cam = 0; }
+            pd_end("レース終了");
+            miss_ghost = 1; /* forceKillPlayerByGhostRace */
+            miss();
+            printf("ghost: Mario lost the race" "\n");
+        }
+        break;
+    case GH_LOST:
+        if (st == 0) {
+            gh_warp("負け時マリオ位置");
+            gh_change("DieSwimEvent");
+            gh.vel = v3(0, 0, 0);
+            gh_set_anim("レース負け");
+            printf("ghost: Mario won the race" "\n");
+        }
+        break;
+    }
+}
+static void update_ghost(void)
+{
+    if (gh.scene != sc) gh_init();
+    if (gh.row < 0) return;
+    menu_race_update();
+    if (gh.nrv == GH_DEAD) { /* syncStageSwitchAppear */
+        if (!row_shown(gh.row)) return;
+        gh_appear();
+    }
+    gh.frame_set = 0;
+    gh_sensors();
+    if (gh.next >= 0) { gh.nrv = gh.next; gh.step = 0; gh.next = -1; }
+    gh_exe();
+    gh.step++;
+    if (gh.next >= 0) { gh.nrv = gh.next; gh.step = 0; gh.next = -1; }
+    if (!gh.waiting) { /* control */
+        gh.lv = se_level(SE_BM_LV_GHOST_MARIO_AMBIENT, &gh.pos.x, gh.lv);
+        if (gh.nrv != GH_LOST && gh.nrv != GH_WIN) {
+            if (m_clip_is("powerstarget") && gh.nrv == GH_RUN) { gh_set(GH_LOST); gh.killed = 1; }
+            else {
+                u32 delay = 0;
+                for (;;) {
+                    u32 n = gh_packet();
+                    gh.pk += n;
+                    if (!n) break; /* (the end: Petari reads the last one again) */
+                    if (gh.first) {
+                        if (gh.w[3] > 0.9f) continue;
+                        gh.first = 0; delay = 10;
+                        continue;
+                    }
+                    if (!delay) break;
+                    delay--;
+                }
+                if (gh.piece_cd) gh.piece_cd--;
+                if (gh.trample_cd) gh.trample_cd--;
+            }
+        }
+    }
+    gh.pos = vadd(gh.pos, gh.vel); /* updateBinder: no binder */
+    if (gh.anim) { /* the frame a packet set is the one posed (ModelManager::update ran before control) */
+        float sp = gh.anim->speed;
+        if (gh.frame_set) gh.anim->speed = 0.0f;
+        anim_update(gh.anim);
+        gh.anim->speed = sp;
+    }
+    { /* calcAndSetBaseMtx: its rotation 0.2 to the target's (blendMtxRotate: JMAQuatLerp), at its position */
+        V3 x, y, z;
+        Quat a = q_from_axes(v3(gh.base[0], gh.base[1], gh.base[2]), v3(gh.base[4], gh.base[5], gh.base[6]), v3(gh.base[8], gh.base[9], gh.base[10]));
+        Quat b = q_from_axes(v3(gh.target[0], gh.target[1], gh.target[2]), v3(gh.target[4], gh.target[5], gh.target[6]), v3(gh.target[8], gh.target[9], gh.target[10]));
+        if (a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w < 0) b = (Quat){-b.x, -b.y, -b.z, -b.w};
+        Quat q = q_norm((Quat){a.x + (b.x - a.x) * 0.2f, a.y + (b.y - a.y) * 0.2f, a.z + (b.z - a.z) * 0.2f, a.w + (b.w - a.w) * 0.2f});
+        q_axes(q, &x, &y, &z);
+        mat_identity(gh.base);
+        gh.base[0] = x.x; gh.base[1] = x.y; gh.base[2] = x.z;
+        gh.base[4] = y.x; gh.base[5] = y.y; gh.base[6] = y.z;
+        gh.base[8] = z.x; gh.base[9] = z.y; gh.base[10] = z.z;
+        gh.base[12] = gh.pos.x; gh.base[13] = gh.pos.y; gh.base[14] = gh.pos.z;
+    }
+    if (!gh.hidden) fx_named(gd_player_luigi() ? "GhostLuigi" : "GhostMario", "Shadow", gh.base, NULL, &gh); /* emitEffect Shadow */
+}
+static void draw_ghost(void) /* draw: not while hidden */
+{
+    if (gh.row < 0 || gh.scene != sc || gh.nrv == GH_DEAD || gh.hidden || !gh.anim) return;
+    float m[16];
+    memcpy(m, gh.base, 64);
+    for (int i = 0; i < 3; i++) { m[i] *= gh.scale; m[4 + i] *= gh.scale; m[8 + i] *= gh.scale; } /* setBaseScale */
+    use_row_light(gh.row, gh.pos, LIGHT_PLAYER);
+    draw_skin(gh.md, m, gh.anim);
+    if (gh.jet && gh.koura) { /* drawType1: the shell at mHandRPos (HandR, FixedPosition (15.59 42.5 42.93) (-17.05 -0.7 113.55)) */
+        static const float t[3] = {15.59f, 42.5f, 42.93f}, r[3] = {-17.05f, -0.7f, 113.55f}, one[3] = {1, 1, 1};
+        float lm[16], w[16], km[16];
+        mat_translate_rot_scale(lm, t, r, one);
+        mat_mul(w, m, gh.anim->world[JOINT_HANDR]);
+        mat_mul(km, w, lm);
+        render_model(gh.koura, km, 0x80, 0x80, 0x80);
+    }
+    V3 up = up_at(gh.pos, v3(gh.base[4], gh.base[5], gh.base[6]));
+    draw_shadow(gh.pos, up, v3(gh.base[8], gh.base[9], gh.base[10]), 50.0f, 50.0f, 0.0f, 50.0f, 1000.0f); /* initShadowVolumeSphere 50, onCalcShadowDropGravity */
+}
+/* ghost test: the race's SwitchCube (its SW_APPEAR) on once Mario is free; then the state every 60 frames */
+int game_test_ghost(int f)
+{
+    static int free_at = -1;
+    if (gh.row < 0) return -1;
+    if (free_at < 0) { if (!game_test_free()) return -1; free_at = f; }
+    const Row *r = &sc->objs[gh.row];
+    if (f == free_at + 30 && r->sw[SW_APPEAR] >= 0) { sw_set(r, SW_APPEAR, 1); printf("ghost test: its switch on" "\n"); }
+#ifdef GHOST_CAM /* XF=-DGHOST_CAM: the view behind the ghost while it runs */
+    if (gh.nrv == GH_RUN) {
+        V3 up = v3(gh.base[4], gh.base[5], gh.base[6]), fr = v3(gh.base[8], gh.base[9], gh.base[10]);
+        camera_set_override(1, vadd(gh.pos, vadd(vmul(up, 250.0f), vmul(fr, -450.0f))), vadd(gh.pos, vmul(up, 100.0f)), up, 45);
+    }
+#endif
+#ifdef GHOST_WIN /* XF=-DGHOST_WIN: Mario put on the power star 300 frames into the race (the ghost's LostDemo) */
+    if (gh.nrv == GH_RUN && gh.step == 300)
+        for (int i = 0; i < ninsts; i++)
+            if (insts[i].item == ITEM_STAR && row_shown(insts[i].row) && !row_dead[insts[i].row]) {
+                mario->pos = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+                printf("ghost test: Mario on the power star (row %d)" "\n", insts[i].row);
+                break;
+            }
+#endif
+    if ((f - free_at) % 60 == 0)
+        printf("ghost test f %d: nerve %d step %d hidden %d pos %.0f %.0f %.0f clip %s w %.2f %.2f %.2f %.2f | Mario %.0f %.0f %.0f %s" "\n",
+               f, gh.nrv, gh.step, gh.hidden, gh.pos.x, gh.pos.y, gh.pos.z,
+               gh.anim && gh.anim->clip_id >= 0 ? sc->clips[gh.anim->clip_id].name : "-", gh.w[0], gh.w[1], gh.w[2], gh.w[3],
+               mario->pos.x, mario->pos.y, mario->pos.z, mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-");
+    return gh.nrv;
+}
+
 void game_update(void)
 {
     if (menu_update()) return; /* GameScenePauseMenu: the pause sequence alone (GamePauseSequence) */
@@ -49189,6 +49713,7 @@ void game_update(void)
     if (!demo_on) update_exts();
     update_okeys();
     update_hanachans();
+    update_ghost();
     update_spider_thread();
     update_sls();
     spider_coins();
@@ -50669,6 +51194,7 @@ void game_draw(void)
         }
     draw_sambo_heads();
     draw_hanachans();
+    draw_ghost();
     draw_spider_cocoons();
     sth_draw();
     draw_gaps();

@@ -70,7 +70,7 @@ def class_hash(name):
     for ch in name.encode("ascii", "replace"):
         h = (h * 31 + ch) & 0xFFFFFFFF
     return h
-ACTOR_CAM = re.compile(r"(.+?)(固有|共通)(\D*)(\d+)$")
+ACTOR_CAM = re.compile(r"(.+?)(固有|共通)(.*)(\d{3})$")  # createMultiActorCameraName "%s固有%s%03d": an event may end in a digit (レース開始1)
 
 
 def actor_hash(en, mark, event):

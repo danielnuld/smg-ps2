@@ -491,6 +491,19 @@ Second console round (2026-10-24), from Daniel's report:
   the water check), the next spin kills it; tryShake WindLoop / WindEnd at its rate, tryPush 20 x scale on Mario.
   Test `stone` (CubeBubbleExLv1 1: two stones broken, 8 effects each, shaken at 2.57; OceanRing 1 repacked:
   CircleShell 8 Break1-3 effects). Repack: CircleShell / CircleStrawberry skinned (resident + their galaxies).
+- GhostPlayer (feat/270-ghost-player, 2026-11-05): Cosmic Mario's races (HoneyBeeKingdom / IceVolcano / OceanRing /
+  ReverseKingdom 4) after GhostPlayer.cpp / GhostPacket.cpp. slice.py GHST: the stage's .gst files as on disc plus
+  the marioAnimeTable / group names by their Shift-JIS getHashCode (ghost_names; the packets name clips by hash or by
+  Shift-JIS string); GhostMario / GhostLuigi skinned, posed by Mario's clips (same 30 joints), their star-field
+  texgens at the textures' mean colours (ENV_MEAN, ponytail). game.c update_ghost: the appear switch, PreStartDemo0-2
+  (レース開始1-3 cameras: camera.py's actor camera names now split the %03d set off an event ending in a digit, which
+  also fixes MorphItemObjNeo's 出現1 / 出現2), the レース準備 demo with Mario as puppet, RaceManagerLayout (menu.c
+  menu_race_*: Race in menus.bin), the packet stream, push / trample star pieces, WinDemo (BGM_RACE_LOSE, Lose,
+  forceKillPlayerByGhostRace: miss() as EventGhostRaceDown, レース負け, no MissLayout, wipe 92-200), LostDemo, the
+  shell (JetTurtleShadow's Koura at HandR). Mario: the start dash (_436 noticeDashChance, _434 item dash ratio).
+  sequence.c seq_is_retry (hasRetryGalaxySequence: A skips the start demo after a miss). Test `ghost` (+ XF
+  -DGHOST_WIN: Mario put on the star): HoneyBee 4 the ghost wins at f ~4300, OceanRing 4 (swimming, the shell) too.
+  Left: the upper-body XanimePlayer (only PartsControl's hand pattern), JetTurtleShadow's draw flag, the dash's blur.
 ## Rules
 
 - Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -

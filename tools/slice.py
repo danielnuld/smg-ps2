@@ -89,6 +89,7 @@ SKINNED_OBJ += ("DashRing",)  # DashRing.cpp: Loop / Start / End / Revival (game
 SKINNED_OBJ += ("TicoFatGoodsStarPiece",)  # TicoFat: NPCData TicoFatItem goods on StarPieceL / StarPieceR (TicoFatGoodsStarPiece / ..Far clips)
 SKINNED_OBJ += ("TripodBoss", "TripodBossGuardWall")  # TripodBoss: its StartDemo / EndDemo joints (Body, legs); the guard wall's 2ndDemo
 SKINNED_OBJ += ("HoneyQueenWing",)  # HoneyQueen::init: createModelObjNpc 羽 on its Center joint, startBck / startBtk HoneyQueenWing
+SKINNED_OBJ += ("GhostMario", "GhostLuigi")  # GhostPlayer::init: initModelManagerWithAnm GhostMario / GhostLuigi, posed by Mario's clips (game.c gh_*)
 # MapObjActor::initialize (tryStartAllAnim): a placed class whose model archive holds a BCK of the archive's name
 # plays it from the start; such classes are drawn skinned too (AUTO_SKINNED, class -> archive, filled by placement)
 AUTO_SKINNED = {}
@@ -123,7 +124,7 @@ ANIM_ARC.update({c: a for c, a in WAIT_ARC.items() if c not in ANIM_ARC})
 # black vignette on a plane before the arrival camera, blended by its vertex alpha (VU1 batches keep no vertex alpha:
 # it would black the screen out)
 DROP_MATERIALS = {("DemoPeachCastleGate", "Dark_v_x")}
-NO_DRAW = ("Hanachan", "ExterminationKuriboKeySwitch", "RunawayRabbitCollect", "SphereAir", "DimensionAir", "HomeAir", "TwilightAir", "DarknessRoomAir", "SunsetAir", "FineAir")   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
+NO_DRAW = ("Hanachan", "GhostPlayer", "ExterminationKuriboKeySwitch", "RunawayRabbitCollect", "SphereAir", "DimensionAir", "HomeAir", "TwilightAir", "DarknessRoomAir", "SunsetAir", "FineAir")   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
 OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup", "PurpleRailCoin", "CircleCoinGroup",
              "RailCoin", "SuperSpinDriver", "StarPieceGroup", "StarPieceFlow")
 # classes whose first NameObjFactory archive is not their model (OtaKing's is FireBall, Tico's TicoBaby): the model
@@ -177,7 +178,7 @@ def sky_sea(b, mat3, m):
 # (FlipPanel: "?" at rest, "!" once flipped, the End face when its group is complete)
 # KuriboChief / ExterminationChecker::initKeySwitch: their own KeySwitch (game.c okeys; KeySwitchOwned: the KeySwitch
 # archive skinned for its Rotation, the placed KeySwitch rows untouched)
-EXTRA = {"BegomanBabyLauncher": ("BegomanBaby",), "ElectricRailMoving": ("ElectricRailPoint",), "NokonokoLand": ("Koura~0", "Koura~1"), "Penguin": ("Koura~0",), "PenguinStudent": ("KouraShine",), "Creeper": ("CreeperFlower", "CreeperLeaf"), "TripodBoss": ("TripodBossLow", "HomingKiller"), "HoneyQueen": ("HoneyQueenWing",), "TicoFat": ("TicoFatGoodsStarPiece",), "TicoShop": ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp"), "ShellfishYellowChip": ("YellowChip",), "BossKameck": ("BkDemo", "BossKameckFireBall", "Koura"), "BossKameck2": ("BkDemo", "BossKameckFireBall", "Koura"), "FireBallBeamKameck": ("BossKameckFireBall",), "BreakableTrash": ("BreakableCageBreak",), "KuriboChief": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
+EXTRA = {"GhostPlayer": ("GhostMario", "GhostLuigi", "Koura"), "BegomanBabyLauncher": ("BegomanBaby",), "ElectricRailMoving": ("ElectricRailPoint",), "NokonokoLand": ("Koura~0", "Koura~1"), "Penguin": ("Koura~0",), "PenguinStudent": ("KouraShine",), "Creeper": ("CreeperFlower", "CreeperLeaf"), "TripodBoss": ("TripodBossLow", "HomingKiller"), "HoneyQueen": ("HoneyQueenWing",), "TicoFat": ("TicoFatGoodsStarPiece",), "TicoShop": ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp"), "ShellfishYellowChip": ("YellowChip",), "BossKameck": ("BkDemo", "BossKameckFireBall", "Koura"), "BossKameck2": ("BkDemo", "BossKameckFireBall", "Koura"), "FireBallBeamKameck": ("BossKameckFireBall",), "BreakableTrash": ("BreakableCageBreak",), "KuriboChief": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
          "Rosetta": ("LightDome", "DomeHalo"),  # RosettaDemoHeavensDoor1's parts (ライトドーム, ライト後光)
          "StarReturnDemoStarter": ("PStar", "GStar", "SpinTico", "MarioHair"), "GrandStarReturnDemoStarter": ("GStar",), "FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
@@ -257,7 +258,7 @@ LOGIC = ("TimerSwitch", "BossKameckMoveRail", "TripodBossBaseJointPosition", "Tr
          # Mario's areas (MR::getAreaObj: game.c area_obj / foo_sphere)
          "CelestrialSphere", "TowerModeCylinder", "NonSleepCube", "EffectCylinder", "SmokeEffectColorAreaCube",
          "MessageAreaCube", "MessageAreaCylinder", "PullBackCylinder", "PlaneModeCube", "PlaneCircularModeCube",
-         "PrologueDirector", "PurpleCoinStarter", "ExterminationKuriboKeySwitch", "AstroOverlookObj", "AstroOverlookAreaCylinder", "CoinBox")  # areas (areaobjinfo) travel as OBJS rows too
+         "PrologueDirector", "PurpleCoinStarter", "ExterminationKuriboKeySwitch", "AstroOverlookObj", "AstroOverlookAreaCylinder", "CoinBox", "GhostPlayer")  # areas (areaobjinfo) travel as OBJS rows too
 
 
 def col(b, field, n, default=0):
@@ -417,6 +418,9 @@ BRK_ARG = {"Butterfly": ("butterfly", 0), "TicoReading": ("colorchange", 0),  # 
            "NokonokoLand": ("nokonokoland", 0)}  # NokonokoLand::init: startBrk NokonokoLand, setBrkFrameAndStop(mTurtleType)  # Tico arg0, Penguin::init arg7
 # MR::initDLMakerMatColor0 per instance: one model per colour, "<class>@<k>" with material colour 0 = the k-th colour
 # (game.c picks it). StarPiece.cpp initColors (arg3 if 0..5, else random; StarPieceDirector's pieces in turn).
+# ponytail: GhostMario / GhostLuigi's materials take their BackG / Noizu / BackGStar textures on position texgens
+# (the star field seen through the ghost, not reproduced: no texgen of that kind here): their mean colours stand in
+ENV_MEAN = ("GhostMario", "GhostLuigi")
 # ponytail: StarPiece1_v is RAS + an environment map (no texgen here): the map's mean colour stands in (env_mean)
 MAT_COLOR = {"StarPiece": ("StarPiece1_v", [(0x80, 0x00, 0x99), (0xE6, 0xA0, 0x00), (0x46, 0xA1, 0x08),
                                             (0x37, 0x5A, 0xA0), (0xBE, 0x33, 0x0B), (0x80, 0x80, 0x80)])}
@@ -673,6 +677,11 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
             if mat:  # MAT_COLOR: (material, rgb)
                 over = dict(over or {})
                 over[mat[0]] = dict(over.get(mat[0], {}), mat=[c / 255 for c in mat[1]] + [1.0], env_mean=True)
+            if arc.stem in ENV_MEAN:  # every material's texgen'd textures at their mean colour (ENV_MEAN)
+                over = dict(over or {})
+                for m_ in set(shapes.values()):
+                    n_ = tex.material_name(b, bl[b"MAT3"], m_)
+                    over[n_] = dict(over.get(n_, {}), env_mean=True)
             # MapObjActor::init (tryStartAllAnim(mObjectName)), OtaKingMagma (startBtk): the model's own-name BTK, played
             # at run time (anim_btk). ponytail: every model's, not only those classes'
             anim_tex = tex.btk(lfiles[arc.stem.lower() + ".btk"]) if arc.stem.lower() + ".btk" in lfiles else None
@@ -1751,6 +1760,19 @@ def declare_stars(keep, scenario, appear, jp):
                 r["args"] = r["args"][:7] + [i]
 
 
+def ghost_names():
+    """The marioAnimeTable / group names (engine/src/mario_anims.h) by their Shift-JIS MR::getHashCode (signed chars), as
+    the .gst packets name them (by hash, or by their Shift-JIS string: game.c hashes it): n x {u32 hash, char utf8[44]}"""
+    src = (Path(__file__).resolve().parent.parent / "engine" / "src" / "mario_anims.h").read_text(encoding="utf-8")
+    out = {}
+    for n in re.findall(r'^\s*\{"([^"]+)", [{"]', src, re.M):
+        h = 0
+        for c in n.encode("shift_jis"):
+            h = ((c - 256 if c > 127 else c) + h * 31) & 0xFFFFFFFF
+        out.setdefault(h, struct.pack("<I", h) + n.encode("utf8")[:43].ljust(44, b"\0"))
+    return list(out.values())
+
+
 def placement(fs, galaxy, scenario):
     """Scenario-wide chunks (TYPE ZONE OBJS STRT PATH GRAV CAMS CARE) and what the asset packs need."""
     act, zones, objs, starts, paths, cubes, bcams, up, demos, gpos = scene(fs, galaxy, scenario)
@@ -1831,6 +1853,14 @@ def placement(fs, galaxy, scenario):
     out.append(chunk(b"CSET", struct.pack("<I", len(cset)) + b"".join(struct.pack("<Hh", i, v) for i, v in cset)))
     out.append(demo_chunk(fsp, demos, gpos, keep, jp2en, se_table()))
     out.append(canm_chunk(Path(fs), set(types), galaxy, scenario))  # after demo_chunk: DEMO_CANM
+    # GHST: GhostPlayer's packets (GhostPlayer::init: <stage>.gst / <stage>Luigi.gst of GhostData<stage>.arc, as on
+    # disc, big-endian): {u32 mario size, u32 luigi size, u32 n}, n names (ghost_names), the Mario file, pad 4, the Luigi file
+    if any(o["name"] == "GhostPlayer" for o in keep):
+        ga = fsp / "ObjectData" / f"GhostData{galaxy}.arc"
+        gf = {n.rsplit("/", 1)[-1].lower(): b for n, b in B.rarc_files(ga.read_bytes())} if ga.exists() else {}
+        gm, gl = gf.get(f"{galaxy.lower()}.gst", b""), gf.get(f"{galaxy.lower()}luigi.gst", b"")
+        hs = ghost_names()
+        out.append(chunk(b"GHST", struct.pack("<III", len(gm), len(gl), len(hs)) + b"".join(hs) + gm + b"\0" * (-len(gm) % 4) + gl))
     # GPOS: every GeneralPos by name (MR::findNamePos from code: コア中心...): {u32 n}, n x {char name[48] UTF-8, f32 pos[3], rot[3]}
     out.append(chunk(b"GPOS", struct.pack("<I", len(gpos)) +
                      b"".join(g["name"].encode("utf8")[:47].ljust(48, b"\0") + struct.pack("<6f", *g["pos"], *g["rot"]) for g in gpos)))

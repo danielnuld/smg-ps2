@@ -205,10 +205,13 @@ static int astro_galaxy_no(void)
 }
 static int astro_dome_no(void) { return gd_grand_galaxy_no(sq.before); } /* calcAproposScenarioNoOnAstroDome */
 
+static int retry; /* GameDataTemporaryInGalaxy::_4: the galaxy entered again after a miss */
+int seq_is_retry(void) { return retry; }
 void seq_galaxy_move(int type, const char *stage, int scenario, int start_id, int start_zone)
 {
     char st[32];
     int no = scenario;
+    retry = type == SEQ_MISS; /* resetGameDataGoToGalaxyRetry (_4 on) / ..First (off) */
     snprintf(st, sizeof st, "%s", stage ? stage : "");
     /* setBeforeStageScenario: the stage being left (a clear: the cleared stage and its star) */
     int cur_no;

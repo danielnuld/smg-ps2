@@ -2108,6 +2108,9 @@ int main(void)
         pad_force = (game_test_busy() && frame % 40 < 3) || game_test_cross() ? PAD_CROSS : 0; /* game_test_cross: a selector answered */
     }
 #endif
+#ifdef GHOST_TEST
+    game_test_ghost((int)frame);
+#endif
 #ifdef HANACHAN_TEST
     {   /* frames from Mario free (the flight in over) + 150 */
         static u32 f0;

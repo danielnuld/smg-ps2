@@ -46,6 +46,7 @@ static void mlay_update(void);
 static void plt_init(void);
 static void hm_init(void);
 static void tl_init(void);
+static void rcl_init_(void);
 static void mlay_draw(void);
 static void ss_update(void);
 static void wipe_update(void);
@@ -1497,6 +1498,7 @@ void menu_init(const Scene *s)
     plt_init();
     hm_init();
     tl_init();
+    rcl_init_();
     sr.l = lyt_new("ResultWindow");
     sr.info = lyt_new("InformationWindow"); /* MR::appearInformationMessageCenter's (NULL where not loaded) */
     if (sv_prompt && seq_take_result(&sr.r)) { /* a star return demo shows it at its wait's end (menu_result_start) */
@@ -1921,6 +1923,64 @@ void menu_time_limit_update(void) /* LayoutActor::movement: the nerve, control, 
     lyt_set_alpha(tl.l, ease_in_out(vc_value(&tl.fade)));
     lyt_update(tl.l);
 }
+
+/* --- RaceManagerLayout (Map/RaceManager.cpp: "Race"), GhostPlayer's: Go / Goal / Lose / TimeUp / Rank / ScoreTime pane
+ * controls, all their panes hidden at init (hideAllPane); appear / kill by its actor; moved with the scene
+ * (connectToSceneLayout: menu_race_update from game.c). ponytail: its effects (RaceStart / RaceGoal: playGo / playGoal
+ * only, no ghost race calls them) not emitted */
+static struct { LytInst *l; u8 alive; u16 text[16]; } rcl;
+static void rcl_hide_all(void) /* hideAllPane */
+{
+    static const char *const p[] = {"Go", "Goal", "Lose", "TimeUp", "Record", "BestRecord", "Rank"};
+    for (unsigned i = 0; i < sizeof p / sizeof p[0]; i++) lyt_show_pane(rcl.l, p[i], 0);
+}
+static void rcl_init_(void) { memset(&rcl, 0, sizeof rcl); rcl.l = lyt_new("Race"); if (rcl.l) rcl_hide_all(); }
+void menu_race_appear(void) { if (rcl.l) rcl.alive = 1; }
+void menu_race_kill(void) { rcl.alive = 0; }
+void menu_race_count_and_go(void) /* playCountAndGo */
+{
+    if (!rcl.l) return;
+    lyt_show_pane(rcl.l, "Go", 1);
+    lyt_show_pane(rcl.l, "BestRecord", 1);
+    lyt_start_pane(rcl.l, "Go", "Count", 0);
+}
+void menu_race_lose(void) /* playLose */
+{
+    if (!rcl.l) return;
+    lyt_show_pane(rcl.l, "Lose", 1);
+    lyt_start_pane(rcl.l, "Lose", "Lose", 0);
+    lyt_start_pane(rcl.l, "ScoreTime", "Lose", 0);
+}
+void menu_race_hide_records(void) { if (rcl.l) { lyt_show_pane(rcl.l, "Record", 0); lyt_show_pane(rcl.l, "BestRecord", 0); } } /* hideRecordPane, hideBestRecordPane */
+int menu_race_counting(void) { return rcl.l && lyt_pane_frame(rcl.l, "Go", 0) < 180.0f; } /* isPlayCountAnim */
+int menu_race_all_stopped(void) /* isAllAnimStopped */
+{
+    if (!rcl.l) return 1;
+    static const char *const p[] = {"Go", "Goal", "Lose", "TimeUp", "ScoreTime", "Rank"};
+    for (unsigned i = 0; i < sizeof p / sizeof p[0]; i++) if (!lyt_pane_stopped(rcl.l, p[i], 0)) return 0;
+    return 1;
+}
+void menu_race_set_time(u32 frame) /* setTime: updateClearTimeTextBox TimeCounter (makeClearTimeString: System_Time000) */
+{
+    if (!rcl.l) return;
+    int arg[3] = {59, 59, 99}, na = 0, n = 0;
+    if (frame < 216000) { arg[0] = (int)(frame / 3600); arg[1] = (int)(frame / 60 % 60); arg[2] = (int)(frame % 60 * 100 / 60); }
+    const u16 *s = msg_get("System_Time000"); /* ReplaceArgs: its number tags (group 6) the arguments in turn */
+    for (; s && *s && n < 14; ) {
+        if (*s == 0x1A) {
+            int len = 4 + (s[3] + 1) / 2;
+            if (s[1] == 6 && na < 3) {
+                char d[8];
+                int k = snprintf(d, sizeof d, s[2] == 5 ? "%02d" : "%d", arg[na++]);
+                for (int j = 0; j < k && n < 14; j++) rcl.text[n++] = (u16)d[j];
+            }
+            s += len;
+        } else rcl.text[n++] = *s++;
+    }
+    rcl.text[n] = 0;
+    lyt_set_text_rec(rcl.l, "TimeCounter", rcl.text);
+}
+void menu_race_update(void) { if (rcl.alive) lyt_update(rcl.l); } /* LayoutActor::movement */
 
 int menu_update(void)
 {
@@ -5118,6 +5178,7 @@ void menu_draw(void)
     if (dmu.on) { render_world_done(); dmu_draw(); }
     mlay_draw();
     if (tl.alive) { render_world_done(); lyt_draw(tl.l); } /* TimeLimitLayout */
+    if (rcl.alive) { render_world_done(); lyt_draw(rcl.l); } /* RaceManagerLayout */
     if (spg.l && !nrv_is(&spg.n, SPG_ENDWAIT)) { render_world_done(); lyt_draw(spg.l); } /* StarPointerGuidance */
     if (mono.on) { render_world_done(); lyt_draw(mono.l); iab_draw(mono_ab()); }
     if (ynl.alive) { render_world_done(); lyt_draw(ynl.l); }
