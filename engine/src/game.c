@@ -1518,7 +1518,8 @@ static int nlogic; /* pipe_zone: the exit pipe's zone, wanted in full */
  * one member with an item plays HintShake. Each member is turned a random angle about its gravity (initPosture) and
  * drawn posed by its nerve's clip (plant_pose). ponytail: the ray is stepped spheres; the HintShakeLeaf effect is not
  * in the FX table */
-typedef struct { V3 pos, up; float rot; int ok, item; short nrv; unsigned short step; char touch; } Plant;
+typedef struct { V3 pos, up; float rot; int ok, item; short nrv; unsigned short step; char touch;
+                 float s, wf, wr; signed char kind, wind, shake, brk; } Plant; /* s .. brk: SmallStoneMember */
 enum { PL_WAIT, PL_HINT, PL_WEAK, PL_MIDDLE, PL_STRONG }; /* PlantMember nerves */
 typedef struct { V3 c; float r; int hint_t, hint_i; } PlantGroupS; /* its bounding centre, sensor radius, hint timer */
 static PlantGroupS *pgroups; /* per OBJS row */
@@ -4500,12 +4501,18 @@ static void railer_place(Inst *in)
     in->m[12] = p.x; in->m[13] = p.y; in->m[14] = p.z;
 }
 
-/* SmallStone.cpp (SmallStone / CircleShell / CircleStrawberry): 8 members on a ring of 300 around it, each dropped
- * onto the ground and raised arg0; a spin within 400 of its centre (120 up) breaks them all (star pieces when arg2
- * is set: one each, ponytail for appearStarPiece's burst). They share the plant groups' members (plants)
- * ponytail (unmarked until the 2026-11-02 audit): PunchBox's break effect stands in for SmallStone's own Break
- * (SmallStone.cpp:511), members turned k x 1.3 rad instead of the one posture from gravity (:129), no wind shake
- * (tryShake 242 / 284) nor the 20 push (263) */
+/* SmallStone.cpp (SmallStone / CircleShell / CircleStrawberry): 8 members on a ring of hCircleRadius 300 across its
+ * gravity (makeAxisCrossPlane; arg1 set: gravity its rotation's -Y, else the field's), each on the ground under it
+ * (getFirstPolyOnLineToMap, 1000) and raised arg0; posture calcMtxFromGravityAndZAxis (CircleShell: x its random Y
+ * turn of +-360 degrees, scale 0.75..1.25, its Kind BVA frame (max + i) % max, then the frames and break effects
+ * shuffled). Its centre is the members' box (each +- its model's radius), its Range sensor reaches the farthest. A spin
+ * attack within hBreakSize 400 of its centre hBreakOffsetY 120 up (tryBreak) breaks every member on the next frame
+ * (mBreakTimer: its Break effect (CircleShell Break1-3 by Kind frame), SE, one star piece each launched 40 up (30 up
+ * more without gravity), SE_OJ_STAR_PIECE_BURST, hidden); the spin after that kills it (isAllMemberBreak). The spin
+ * storm (ACTMES_SPIN_STORM_RANGE) shakes the members (tryShake: WindLoop at 0.2 + 3.8 x (1 - |Mario - it| (city
+ * block across gravity) / 800), then WindEnd at that rate); each member pushes Mario off within 20 x its scale
+ * (tryPush). They share the plant groups' member table (plants).
+ * ponytail: the push reaches Mario only (the walkers have no ACTMES_PUSH receiver) */
 static signed char stone_type[1024]; /* stone_row by type: 0 not yet, 1 no, 2 yes (area_types_reset) */
 static int stone_row(const Row *r)
 {
@@ -4530,27 +4537,27 @@ static int drop_to_ground(V3 from, V3 up, float len, V3 *hit)
     return 0;
 }
 
+static void place_stones(const Inst *in);
 static void place_plants(const Inst *in)
 {
     int row = in->row;
     if (plant_state[row] || !in->kcl_ready) return;
     const Row *r = &sc->objs[row];
+    if (stone_row(r)) { place_stones(in); return; }
     V3 x, z, c = row_pos(r), up = up_at(c, v3(0, 1, 0));
     row_axes(r, &x, &z);
     x = vnorm(vtangent(x, up));
     if (vlen(x) < 0.5f) x = vnorm(vtangent(z, up));
     V3 y = vcross(up, x);
-    int ring = 0, n = plant_count(r), hits = 0, stone = stone_row(r);
-    float angle = 0, step = stone ? 6.2831853f / 8 : 6.2831853f, radius = stone ? 300.0f : 0;
+    int ring = 0, n = plant_count(r), hits = 0;
+    float angle = 0, step = 6.2831853f, radius = 0;
     for (int k = 0; k < n; k++) {
         Plant *p = &plants[plant_first[row] + k];
         V3 at = vadd(c, vadd(vmul(x, cosf(angle) * radius), vmul(y, sinf(angle) * radius)));
         p->up = up_at(at, up);
         hits += p->ok = drop_to_ground(vadd(at, vmul(p->up, 100.0f)), p->up, 1000.0f, &p->pos);
-        p->rot = stone ? k * 1.3f : (rand() % 10001) / 10000.0f * 6.2831853f - 3.1415927f; /* MR::getRandom(-PI, PI) */
-        if (stone && r->arg[0] > 0) p->pos = vadd(p->pos, vmul(p->up, (float)r->arg[0])); /* mPlacementOffset */
+        p->rot = (rand() % 10001) / 10000.0f * 6.2831853f - 3.1415927f; /* MR::getRandom(-PI, PI) */
         angle += step;
-        if (stone) continue;
         if (angle >= 6.2831f) { ring++; angle = 0; step = 6.2831853f / (ring * 6); radius = 160.0f * ring; }
     }
     plant_state[row] = hits > 0; /* none: its ground is not loaded yet, try again at the next rebind */
@@ -4566,6 +4573,98 @@ static void place_plants(const Inst *in)
     float br = (sz.x < sz.y ? (sz.y < sz.z ? sz.z : sz.y) : (sz.x < sz.z ? sz.z : sz.x)) / 2.0f;
     pgroups[row].c = vmul(vadd(hi, lo), 0.5f);
     pgroups[row].r = 160.0f + br * r->scale[1]; /* sSize + radius x scale */
+}
+
+/* SmallStone: its gravity (arg1 set: its rotation's -Y, mUseGravity off) as an up */
+static V3 stone_up(const Row *r, V3 at)
+{
+    if (r->arg[1] == -1) return up_at(at, v3(0, 1, 0));
+    V3 x, z;
+    row_axes(r, &x, &z);
+    return vnorm(vcross(z, x));
+}
+static int bva_frames(const Model *md, const char *key) /* MR::getBvaFrameMax */
+{
+    const u8 *q = md->bvas;
+    for (u32 i = 0; q && i < md->nbvas; i++) {
+        if (!strcmp((const char *)q, key)) return *(const u16 *)(q + 32);
+        q += 36 + 4u * *(const u16 *)(q + 32) * q[35];
+    }
+    return 0;
+}
+static float frand(float a, float b);
+/* SmallStone::initMember (the members' turn, scale, Kind frame) and initAfterPlacement */
+static void place_stones(const Inst *in)
+{
+    int row = in->row;
+    const Row *r = &sc->objs[row];
+    const char *cls = sc->types + 32 * r->type;
+    int shell = !strcmp(cls, "CircleShell"), straw = !strcmp(cls, "CircleStrawberry"), hits = 0;
+    Plant *mb = &plants[plant_first[row]];
+    int kmax = shell ? bva_frames(in->md, "circleshell/kind") : 0;
+    for (int k = 0; k < 8; k++) {
+        Plant *p = &mb[k];
+        p->rot = 0; p->s = 1.0f; p->kind = -1; p->wind = 0; p->shake = 0; p->brk = -1; p->wf = 0; p->wr = 1.0f;
+        if (shell) {
+            p->rot = frand(-360.0f, 360.0f) * 0.017453292f; /* hRandomRotateAngle, about its gravity */
+            p->s = frand(0.75f, 1.25f);                      /* hRandomScaleMin / Max */
+            p->kind = kmax > 0 ? (signed char)((kmax + k) % kmax) : -1;
+        }
+    }
+    if (shell || straw) /* the Kind frames (and their break effects) shuffled */
+        for (int k = 0; k < 8; k++) {
+            int j = rand() % (k + 1);
+            signed char t = mb[k].kind;
+            mb[k].kind = mb[j].kind; mb[j].kind = t;
+        }
+    V3 c = row_pos(r), up = stone_up(r, c), g = vmul(up, -1.0f);
+    V3 x = vtangent(v3(0, 0, 1), g); /* makeAxisCrossPlane: makeAxisVerticalZX, then x cross gravity */
+    if (vlen(x) < 1e-6f) x = vtangent(v3(1, 0, 0), g);
+    x = vnorm(x);
+    V3 y = vnorm(vcross(x, g));
+    float off = r->arg[0] == -1 ? 0.0f : (float)r->arg[0]; /* mPlacementOffset */
+    for (int k = 0; k < 8; k++) {
+        Plant *p = &mb[k];
+        float a = 6.2831853f / 8 * k;
+        V3 at = vadd(c, vmul(vadd(vmul(x, cosf(a)), vmul(y, sinf(a))), 300.0f)); /* hCircleRadius */
+        hits += p->ok = map_poly(vadd(at, up), vmul(g, 1000.0f), &p->pos, NULL); /* from 1 against gravity: hCheckLineLength */
+        p->up = stone_up(r, p->pos);
+        p->pos = vadd(p->pos, vmul(p->up, off));
+    }
+    plant_state[row] = hits > 0; /* none: its ground is not loaded yet, try again at the next rebind */
+    float mr = in->md->radius;
+    V3 lo = v3(0, 0, 0), hi = v3(0, 0, 0);
+    for (int k = 0, f = 1; k < 8; k++) { /* the members' box, each +- its bounding radius */
+        const Plant *p = &mb[k];
+        if (!p->ok) continue;
+        float br = mr * p->s;
+        V3 a = vsub(p->pos, v3(br, br, br)), b = vadd(p->pos, v3(br, br, br));
+        if (f) { lo = a; hi = b; f = 0; continue; }
+        if (a.x < lo.x) lo.x = a.x; if (a.y < lo.y) lo.y = a.y; if (a.z < lo.z) lo.z = a.z;
+        if (hi.x < b.x) hi.x = b.x; if (hi.y < b.y) hi.y = b.y; if (hi.z < b.z) hi.z = b.z;
+    }
+    V3 ctr = vmul(vadd(hi, lo), 0.5f);
+    float rad = 0;
+    for (int k = 0; k < 8; k++)
+        if (mb[k].ok) { float e = mr * mb[k].s + vlen(vsub(mb[k].pos, ctr)); if (rad < e) rad = e; }
+    pgroups[row].c = ctr; /* mPosition */
+    pgroups[row].r = rad; /* the Range sensor */
+}
+
+/* SmallStoneMember::doBreak */
+static int stone_break(const Row *r, Plant *p)
+{
+    const char *cls = sc->types + 32 * r->type;
+    static const char *const kind_fx[5] = {"Break2", "Break1", "Break3", "Break1", "Break3"};
+    const char *fx = p->kind < 0 ? "Break" : p->kind < 5 ? kind_fx[(int)p->kind] : NULL;
+    float m[16];
+    basis_matrix(m, p->pos, p->up, fabsf(p->up.x) > 0.99995f ? v3(0, 1, 0) : v3(1, 0, 0), p->rot);
+    int hit = fx ? fx_named(cls, fx, m, NULL, NULL) : 0;
+    se_start(strcmp(cls, "CircleStrawberry") ? SE_OJ_SMALL_STONE_BREAK : SE_OJ_STRAWBERRY_BREAK, &p->pos.x);
+    launch_pieces(r->arg[1] == -1 ? p->pos : vadd(p->pos, vmul(p->up, 30.0f)), p->up, 1, 0.0f, 40.0f); /* appearStarPiece(1, 0, 40) */
+    se_start(SE_OJ_STAR_PIECE_BURST, &p->pos.x);
+    p->ok = 0; /* hideModel */
+    return hit;
 }
 
 static void game_rebind_(void);
@@ -37418,27 +37517,58 @@ static void update_plants(void)
             continue;
         const Row *r = &sc->objs[in->row];
         int n = plant_count(r);
-        if (stone_row(r)) { /* SmallStone::tryBreak */
-            if (mario->spin_timer <= 0 || plant_state[in->row] != 1) continue;
-            V3 ctr = v3(0, 0, 0), up = v3(0, 0, 0);
-            int m = 0;
+        if (stone_row(r)) { /* SmallStone::control (movementByHost), then its sensors */
+            if (!plant_state[in->row]) continue;
+            Plant *mb = &plants[plant_first[in->row]];
+            const PlantGroupS *g = &pgroups[in->row];
+            int len_loop = 0, len_end = 0, broke = 0, fxn = 0, shook = 0;
+            char key[48];
+            snprintf(key, sizeof key, "%s/windloop", sc->types + 32 * r->type);
+            for (char *q = key; *q; q++) *q = (char)tolower((unsigned char)*q);
+            len_loop = anim_clip_info(key, NULL);
+            memcpy(strrchr(key, '/') + 1, "windend", 8);
+            len_end = anim_clip_info(key, NULL);
             for (int k = 0; k < n; k++) {
-                const Plant *p = &plants[plant_first[in->row] + k];
-                if (p->ok) { ctr = vadd(ctr, p->pos); up = p->up; m++; }
+                Plant *p = &mb[k];
+                if (p->shake) { /* animControl */
+                    if (p->wind != 1) { p->wind = 1; p->wf = 0; } /* startBck WindLoop */
+                    p->shake = 0;
+                } else if (p->wind == 1) { p->wind = 2; p->wf = 0; } /* startBck WindEnd, setBckRate(mAnimRate) */
+                if (p->brk > -1 && --p->brk == -1) { fxn += stone_break(r, p); broke++; } /* mBreakTimer */
+                if (p->wind == 1) { p->wf += p->wr; if (len_loop > 0) p->wf = fmodf(p->wf, (float)len_loop); }
+                else if (p->wind == 2 && (p->wf += p->wr) >= len_end) { p->wf = len_end; p->wind = 3; } /* stopped: offCalcAnim */
             }
-            if (!m || vlen(vsub(mario->pos, vadd(vmul(ctr, 1.0f / m), vmul(up, 120.0f)))) > 400.0f) continue;
-            for (int k = 0; k < n; k++) {
-                Plant *p = &plants[plant_first[in->row] + k];
-                if (!p->ok) continue;
-                fx_at(FX_PUNCHBOX_BREAK, p->pos, p->up);
-                if (r->arg[2] >= 0) drop_pieces(p->pos, p->up, 1);
-                se_start(strcmp(sc->types + 32 * r->type, "CircleStrawberry") ? SE_OJ_SMALL_STONE_BREAK : SE_OJ_STRAWBERRY_BREAK, &p->pos.x); /* SmallStoneMember::doBreak */
-                se_start(SE_OJ_STAR_PIECE_BURST, &p->pos.x);
-                p->ok = 0;
+            if (broke) printf("small stone %d broken (%d, %d effects)" "\n", in->row, broke, fxn);
+            int all = 1;
+            for (int k = 0; k < n; k++) all &= !mb[k].ok;
+            if (!all) /* attackSensor: each member's tryPush (ACTMES_PUSH, 20 x its scale) */
+                for (int k = 0; k < n; k++)
+                    if (mb[k].ok) mario_push_out(mb[k].pos, 20.0f * mb[k].s);
+            float gd = vlen(vsub(c, g->c));
+            if (mario->spin_timer > 0 && mario->spin_t < 15 && gd < g->r + 600.0f) /* ACTMES_SPIN_STORM_RANGE: tryShake */
+                for (int k = 0; k < n; k++) {
+                    Plant *p = &mb[k];
+                    V3 d = vtangent(vsub(mario->pos, p->pos), p->up); /* vecKillElement along its gravity */
+                    float ratio = (fabsf(d.z) + (fabsf(d.x) + fabsf(d.y))) / 800.0f; /* hWindRadius */
+                    if (ratio > 1.0f) ratio = 1.0f;
+                    if (1.0f - ratio == 0.0f) continue;
+                    p->wr = 0.2f + 3.8f * (1.0f - ratio); /* hMinAnimRate .. hMaxAnimRate */
+                    p->shake = 1;
+                    shook++;
+                }
+            if (shook && mb[0].wind != 1)
+                printf("small stone %d shaken: %d members, rate %.2f, loop %d end %d" "\n", in->row, shook, mb[0].wr, len_loop, len_end);
+            if (mario->spin_timer > 0) { /* receiveMsgPlayerAttack (a spin): tryBreak */
+                V3 up = stone_up(r, g->c);
+                if (vlen(vsub(vadd(g->c, vmul(up, 120.0f)), mario->pos)) > 400.0f) continue; /* hBreakOffsetY, hBreakSize */
+                if (all) { /* isAllMemberBreak */
+                    plant_state[in->row] = 2;
+                    row_kill(in->row);
+                    printf("small stone %d killed" "\n", in->row);
+                    continue;
+                }
+                for (int k = 0; k < n; k++) if (mb[k].ok) mb[k].brk = 0;
             }
-            plant_state[in->row] = 2; /* broken */
-            row_kill(in->row);
-            printf("small stone %d broken" "\n", in->row);
             continue;
         }
         if (plant_state[in->row] != 1) continue;
@@ -48854,6 +48984,23 @@ static Anim *plant_pose(const Inst *in, const Plant *p)
     return &a;
 }
 
+/* SmallStoneMember's pose: none started (its bind pose), WindLoop, WindEnd or WindEnd's last frame once stopped */
+static Anim *stone_pose(const Inst *in, const Plant *p)
+{
+    static Anim a;
+    if (a.skin != in->md->skin) anim_bind(&a, in->md->skin);
+    if (!p->wind) { if (a.clip_id >= 0) anim_bind(&a, in->md->skin); return &a; }
+    char n[48];
+    snprintf(n, sizeof n, "%s/%s", sc->types + 32 * sc->objs[in->row].type, p->wind == 1 ? "windloop" : "windend");
+    for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
+    anim_start(&a, n, 0);
+    a.phase = -1.0f;
+    a.speed = 0.0f;
+    a.frame = p->wf;
+    anim_update(&a);
+    return &a;
+}
+
 /* basis_matrix with its angle's cosine and sine given (the pickups share one angle a frame) */
 static void basis_matrix_cs(float m[16], V3 pos, V3 up, V3 fwd, float c, float s)
 {
@@ -49322,8 +49469,11 @@ void game_draw(void)
                 if (!p->ok) continue;
                 /* calcMtxFromGravityAndZAxis: z along x, or y when gravity is along x (isSameDirection 0.01) */
                 basis_matrix(m, p->pos, p->up, fabsf(p->up.x) > 0.99995f ? v3(0, 1, 0) : v3(1, 0, 0), p->rot);
-                for (int j = 0; j < 12; j++) if (j % 4 != 3) m[j] *= in->s;
-                if (in->md->skin) draw_skin(in->md, m, plant_pose(in, p));
+                int stone = stone_row(&sc->objs[in->row]);
+                float sc_ = stone ? p->s : in->s; /* SmallStoneMember: its own scale */
+                for (int j = 0; j < 12; j++) if (j % 4 != 3) m[j] *= sc_;
+                if (stone && p->kind >= 0) { bva_key = "circleshell/kind"; bva_frame = p->kind; } /* setBvaFrameAndStop */
+                if (in->md->skin) draw_skin(in->md, m, stone ? stone_pose(in, p) : plant_pose(in, p));
                 else inst_draw(in, in->md, m);
             }
             continue;
