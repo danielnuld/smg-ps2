@@ -1367,6 +1367,12 @@ static int luigi_scenario(char *stage, int n);    /* the current stage, its scen
  * the bind pose of the nearest free one's skin is skipped (not drawn) */
 #define MAX_OBJ_ANIM 40
 static struct { int row; unsigned last; Anim *a; } oanim[MAX_OBJ_ANIM];
+/* Anims a class binds in-game (TicoFat's goods, the Creeper leaf, HoneyQueen's wing, TicoShop's goods): taken from a
+ * pool game_init allocates, below main.c's base_mark (one allocated in-game is above it: the next zone swap frees it) */
+static Anim *keep_pool;
+static int keep_n, keep_max;
+static Anim *keep_anim(void) { return keep_n < keep_max ? &keep_pool[keep_n++] : NULL; }
+static Anim *shop_ga[2]; /* TicoShop's goods (shop_goods_draw) */
 static int ninsts;
 /* FOR_KIND(i, field): the instances whose `field` is set, in index order, listed once a rebind (inst_seq: game_rebind
  * counts the tables) instead of a walk over every instance a frame for a handful. Only for fields set nowhere but in
@@ -2443,6 +2449,11 @@ void game_init(const Scene *s, const unsigned char *blob)
                 break;
             }
     }
+    keep_n = 0;
+    keep_max = count_type("TicoFat", 0) + (count_type("Creeper", 0) > 0) + (count_type("HoneyQueen", 0) > 0) +
+               2 * (count_type("TicoShop", 0) > 0);
+    keep_pool = keep_max ? mem_alloc(MEM_PLAYER, keep_max * sizeof(Anim)) : NULL;
+    shop_ga[0] = shop_ga[1] = NULL;
     for (int i = 0; i < MAX_OBJ_ANIM; i++) {
         oanim[i].row = -1;
         if (!oanim[i].a) oanim[i].a = mem_alloc(MEM_PLAYER, sizeof(Anim));
@@ -13003,8 +13014,7 @@ static void update_ticofat(void)
             fats[k].re.c158 = 1024;
             memcpy(fats[k].m0, in->m, 64);
             fats[k].gmd = scene_model(sc, "TicoFatGoodsStarPiece"); /* equipment(getNPCItemData TicoFatItem) */
-            if (fats[k].gmd && fats[k].gmd->skin) {
-                fats[k].goods = mem_alloc(MEM_SCENE, sizeof(Anim));
+            if (fats[k].gmd && fats[k].gmd->skin && (fats[k].goods = keep_anim())) {
                 anim_bind(fats[k].goods, fats[k].gmd->skin);
             }
             if (!fats[k].left) { /* initAfterPlacement: disappear(false), makeActorDead */
@@ -23383,8 +23393,7 @@ static void update_creepers(void)
 {
     int swing = pad_pressed(PAD_SQUARE) || creeper_test_sq; /* isPadSwing */
     creeper_test_sq = 0;
-    if (!cr_leaf_anim && ncreepers && m_crleaf && m_crleaf->skin) { /* startBck(mLeafModel, "Wait") */
-        cr_leaf_anim = mem_alloc(MEM_SCENE, sizeof(Anim));
+    if (!cr_leaf_anim && ncreepers && m_crleaf && m_crleaf->skin && (cr_leaf_anim = keep_anim())) { /* startBck(mLeafModel, "Wait") */
         anim_bind(cr_leaf_anim, m_crleaf->skin);
         anim_start(cr_leaf_anim, "creeperleaf/wait", 0);
     }
@@ -42678,8 +42687,7 @@ static void update_queen(void)
         hq.sw_was = sw_on(&sc->objs[hq.row], SW_A);
         hq_set(hq.cast ? HQ_DEMO : HQ_WAIT);
         hq.wmd = scene_model(sc, "HoneyQueenWing");
-        if (hq.wmd && hq.wmd->skin) { /* makeActorAppeared, startBck HoneyQueenWing */
-            hq.wing = mem_alloc(MEM_SCENE, sizeof(Anim));
+        if (hq.wmd && hq.wmd->skin && (hq.wing = keep_anim())) { /* makeActorAppeared, startBck HoneyQueenWing */
             anim_bind(hq.wing, hq.wmd->skin);
             anim_start(hq.wing, "honeyqueenwing/honeyqueenwing", 0);
         }
@@ -50832,15 +50840,13 @@ static void fat_goods_draw(const Inst *in, const float m[16]);
 /* TicoShop's goods (equipment TicoShopItem): TicoShopGoodsOneUp at StarPieceR (8), ..LifeUp at StarPieceL (5), Shake */
 static void shop_goods_draw(const Inst *in, const float m[16])
 {
-    static Anim *ga[2];
-    static const Scene *gsc;
+    Anim **ga = shop_ga;
     static const char *const name[2] = {"TicoShopGoodsOneUp", "TicoShopGoodsLifeUp"}, *const clip[2] = {"ticoshopgoodsoneup/shake", "ticoshopgoodslifeup/shake"};
-    if (gsc != sc) { ga[0] = ga[1] = NULL; gsc = sc; }
     if (in->anim->skin->njoints < 9) return;
     for (int g = 0; g < 2; g++) {
         const Model *gm = scene_model(sc, name[g]);
         if (!gm || !gm->skin) continue;
-        if (!ga[g]) { ga[g] = mem_alloc(MEM_SCENE, sizeof(Anim)); anim_bind(ga[g], gm->skin); anim_play(ga[g], clip[g], 1.0f, 1, 0); }
+        if (!ga[g]) { if (!(ga[g] = keep_anim())) continue; anim_bind(ga[g], gm->skin); anim_play(ga[g], clip[g], 1.0f, 1, 0); }
         anim_update(ga[g]);
         float w[16];
         mat_mul(w, m, in->anim->world[g ? 5 : 8]);
