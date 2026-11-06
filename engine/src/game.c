@@ -47987,7 +47987,7 @@ static void update_tsp(void)
         break;
     case TN_COCOONBREAK: if (tsp_demo_step()) tsp_set(TN_1STSTART); break;
     case TN_1STSTART:
-        if (tsp.st == 0) { bgm_stop(0); bgm_boss(2); } /* BossBgmID_TombSpiderA (02_A) */
+        if (tsp.st == 0) { bgm_stop(0); bgm_boss(4); } /* BossBgmID_TombSpiderA (03_A) */
         if (tsp_demo_step()) tsp_set(TN_1STJUMP);
         break;
     case TN_1STJUMP: if (tsp_demo_step()) tsp_set(TN_ACTION1ST); break;
@@ -47998,7 +47998,7 @@ static void update_tsp(void)
     case TN_1STEND: if (tsp_demo_step()) tsp_set(TN_2NDSTART); break;
     case TN_2NDSTART:
         if (tsp.st == 0) bgm_stop(30);
-        if (tsp.st == 180) bgm_boss(3); /* sSecondBgmStartStep: BossBgmID_TombSpiderB */
+        if (tsp.st == 180) bgm_boss(5); /* sSecondBgmStartStep: BossBgmID_TombSpiderB (03_B) */
         if (tsp_demo_step()) tsp_set(TN_ACTION2ND);
         break;
     case TN_DEATH:

@@ -1542,8 +1542,8 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
 - TombSpider (feat/198-tomb-spider, 2026-11-05): Boss/TombSpider*.cpp in game.c tsp_* (update_tsp / tsp_draw):
   TombSpider's nerves (WaitPlayer: Mario within 6000 starts ゲートオープンデモ; DemoGateOpen: Mario puppeted from 7000
   along Z through the gate to the floor, the web appears, the planet's BattleStart; ActionCocoon: a launch breaks the
-  cocoon; 出現 (the planet's Appear CANM "tspdemo/appear"), Battle1stStart (BGM BOSS_02_A), JumpToPlayer; Action1st;
-  １回戦終了 (Battle2ndStart CANM, BOSS_02_B at 180, 25 star pieces); Action2nd; 死亡 (Death CANM, the web cut,
+  cocoon; 出現 (the planet's Appear CANM "tspdemo/appear"), Battle1stStart (BGM BOSS_03_A), JumpToPlayer; Action1st;
+  １回戦終了 (Battle2ndStart CANM, BOSS_03_B at 180, 25 star pieces); Action2nd; 死亡 (Death CANM, the web cut,
   BattleEnd, SW_B, SW_A, the power star from its Body)), TombSpiderActionBase / 1st / 2nd / Cocoon / StateSwoon with
   their constants, TombSpiderSensorCtrl's 17 sensors (eye / hip / glands / vital spots at the player's Z), the sling
   messages (ATTACK / IS_BROKEN / PASS_THROUGH / IS_LAST_DAMAGE: sls_attack_hit), the acid attackers on Mario or his
@@ -1552,7 +1552,7 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
   KCL (slice.py EXTRA TombSpider: planet, cocoon, gland, vital spot, all skinned; CANM_ARC tspdemo; declarePowerStar).
   Test `tomb` (StarDustGalaxy/3, XF=-DPACKS_OVERLAY=wt-boss2; -DTOMB_WEB the web alone): the gate demo, a launch at
   the cocoon, at the hip, the three vital spots, both phases, death, star taken (f ~4400). BossBgmID_TombSpiderA / B
-  taken as BOSS_02_A / B (the enum's header is not in vendor/Petari). ponytail: BRKs (Battle1st / 2nd colours, the
+  are BOSS_03_A / B (SoundUtil.hpp). ponytail: BRKs (Battle1st / 2nd colours, the
   cocoon's and vital spots'), BAS sounds, light ctrl, the planet's low LOD, the cocoon's push (Mario moved out of its
   sensor), SpaceCocoonBlur in the gate demo. Repack: StarDustGalaxy (slice_all.py, jpa.py NAMED TombSpider /
   TombSpiderGland / TombSpiderPlanet, its sound.bin).
