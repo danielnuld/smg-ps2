@@ -867,6 +867,8 @@ static const Model *m_bsb, *m_bsbwing, *m_bsblaunch, *m_bsbbomb, *m_bsbdemo;
 static const Model *m_bk, *m_bkdemo, *m_koura, *m_kfire;
 static int bsb_demo(void);
 static void bk_init(const Scene *s, const unsigned char *blob);
+static void kp_init(const Scene *s, const unsigned char *blob), kp_rebind(const Scene *s), update_kp(void), kp_draw(void); /* koopa.inc */
+static int kp_demo(void);
 static int bk_demo(void);
 enum { TN_WAITPLAYER, TN_GATEOPEN, TN_COCOON, TN_COCOONBREAK, TN_1STSTART, TN_1STJUMP, TN_ACTION1ST, TN_1STEND, TN_2NDSTART,
        TN_ACTION2ND, TN_DEATH, TN_WAITDEMO, TN_END };
@@ -2471,6 +2473,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         }
     bk_init(s, blob);
     tb_init(s, blob);
+    kp_init(s, blob);
     gh_reset(); /* GhostPlayer: init at its first update */
     for (u32 i = 0; i < s->nobjs; i++)
         if (strcmp(s->types + 32 * s->objs[i].type, "OtaKing") == 0) {
@@ -5350,6 +5353,7 @@ static void game_rebind_(void)
         zone_grow(in);
     }
     bk_barrier_inst(s);
+    kp_rebind(s);
     if (ota.row >= 0 && m_otamagma && scene_kcl(s, "OtaKingMagma") && ninsts < (int)s->nobjs) { /* OtaKing's own row has no inst */
         /* OtaKingMagma: a PartsModel at OtaKing's placement (its own matrix), its collision there */
         const Row *r = &s->objs[ota.row];
@@ -20777,7 +20781,7 @@ static void update_mario_(void)
                 if (!m_clip_is(dx.bck)) { anim_clip_info(dx.bck, &mode); mario_play(dx.bck, 1.0f, mode == 2 || mode == 4); }
             }
             else if (pro_puppet() || tsp_puppet() || gh_puppet()) ; /* the prologue's DemoPeachCastleGate (pro_update); GhostPlayer's startBckPlayerJ */
-            else if (bsb_demo() || bk_demo() || tb_demo()) { if (!m_clip_is("battlewait")) mario_play("battlewait", 1.0f, 1); } /* BossStinkBug's demos: startBckPlayer BattleWait */
+            else if (bsb_demo() || bk_demo() || tb_demo() || kp_demo()) { if (!m_clip_is("battlewait")) mario_play("battlewait", 1.0f, 1); } /* BossStinkBug's demos: startBckPlayer BattleWait */
             else if (!star_demo && !gw_puppet()) mario_play("wait", 1.0f, 1);
             else if (mario_anim->clip_id < 0 || strcmp(sc->clips[mario_anim->clip_id].name, "powerstarget")) mario_play("powerstarget", 1.0f, 0);
             anim_update(mario_anim);
@@ -35775,7 +35779,8 @@ static void leak_joints(Inst *in) /* initPipeHeight: Top at its height (model sp
  * Disappear fade (its brk is baked, the stair goes after 4 x 30 frames) */
 #define MAX_STAIRS 48
 enum { KS_WAITSWITCH, KS_WAITFIRE, KS_WAITFALL, KS_FALL, KS_DISAPPEAR };
-static struct { int row, nrv, step, init; V3 pos, vel; u32 lv; } kss[MAX_STAIRS];
+/* reg, fstep, a8, ac: Koopa's registerStair (koopa.inc kst_register): mFireAttackStep, _A8, _AC (its target) */
+static struct { int row, nrv, step, init, reg, fstep, a8; V3 pos, vel, ac; u32 lv; } kss[MAX_STAIRS];
 static int ks_of(int row)
 {
     for (int i = 0; i < nkss; i++) if (kss[i].row == row) return i;
@@ -49072,6 +49077,7 @@ int game_test_bk(int frame)
 }
 
 #include "tripod_boss.inc" /* TripodBoss (Megaleg): tb_*, game_test_tb */
+#include "koopa.inc" /* Koopa (Bowser): kp_*, game_test_kp */
 /* Test builds: Mario in the boss's SwitchCylinder until it starts, then dropped in a hip drop on its BodyHipDrop part
  * whenever a hit is open; game_bsb_state: sequencer x 100 + nerve */
 int game_test_bsb(void)
@@ -50725,6 +50731,7 @@ void game_update(void)
     update_bsb();
     update_bk();
     update_tb();
+    update_kp();
     if (!demo_on) update_km_beams(); /* (the Kameck beams, fire balls, turtles: stopped in a demo) */
     update_tsp();
     if (star_demo) { /* its camera ("powerstar/powerstarget"); Mario plays PowerStarGet meanwhile */
@@ -52080,6 +52087,7 @@ void game_draw(void)
     bsb_draw();
     bk_draw();
     tb_draw();
+    kp_draw();
     km_draw();
     tsp_draw();
     if (ota.row >= 0 && ota.nrv != OTA_WAITONSWITCH && ota.nrv != OTA_APPEARSTAR && ota.nrv != OTA_DEAD) { /* OtaKing, its feet */
