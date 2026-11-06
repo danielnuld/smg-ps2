@@ -14,6 +14,7 @@ enum {
 };
 
 void seq_galaxy_move(int type, const char *stage, int scenario, int start_id, int start_zone);
+int seq_is_retry(void); /* GameSequenceFunction::hasRetryGalaxySequence */
 void seq_set_cleared(int star_id);    /* GameSequenceFunction::getClearedPowerStarId: the star the clear brought */
 int seq_start_id(int *zone);          /* this scene's start (JMapIdInfo: MarioNo, zone); -1 the default */
 const char *seq_before_stage(int *scenario); /* setBeforeStageScenario: the stage left last */
