@@ -93,6 +93,10 @@ SKINNED_OBJ += ("KoopaThornBreak", "KoopaShockWave", "KoopaShockWaveShadow", "Ko
 KOOPA_PARTS = ("KoopaThorn", "KoopaArmorBreak", "KoopaThornBreak", "KoopaFire", "KoopaShockWave", "KoopaShockWaveShadow", "MeteorStrike", "MeteorStrikeBreak", "KoopaPlanetShadow")
 SKINNED_OBJ += ("TripodBoss", "TripodBossGuardWall")  # TripodBoss: its StartDemo / EndDemo joints (Body, legs); the guard wall's 2ndDemo
 SKINNED_OBJ += ("HoneyQueenWing",)  # HoneyQueen::init: createModelObjNpc 羽 on its Center joint, startBck / startBtk HoneyQueenWing
+SKINNED_OBJ += ("SnakeFish",)  # (SkeletalFishBaby)
+# SkeletalFishBoss (Kingfin): its body, its PartsModels SkeletalFishBossHeadA / ScarFlash, its guards (and the demo ones), its break model (game.c sf_*)
+SKINNED_OBJ += ("SkeletalFishBoss", "SkeletalFishBossHeadA", "SkeletalFishGuard", "SkeletalFishBossBreak", "SkeletalFishBossScarFlash")
+#  # SkeletalFishBaby::init: initModelManagerWithAnm SnakeFish (Swim / Death; game.c sf_*, its joints on its rail)
 SKINNED_OBJ += ("GhostMario", "GhostLuigi")  # GhostPlayer::init: initModelManagerWithAnm GhostMario / GhostLuigi, posed by Mario's clips (game.c gh_*)
 # MapObjActor::initialize (tryStartAllAnim): a placed class whose model archive holds a BCK of the archive's name
 # plays it from the start; such classes are drawn skinned too (AUTO_SKINNED, class -> archive, filled by placement)
@@ -128,7 +132,7 @@ ANIM_ARC.update({c: a for c, a in WAIT_ARC.items() if c not in ANIM_ARC})
 # black vignette on a plane before the arrival camera, blended by its vertex alpha (VU1 batches keep no vertex alpha:
 # it would black the screen out)
 DROP_MATERIALS = {("DemoPeachCastleGate", "Dark_v_x")}
-NO_DRAW = ("Hanachan", "GhostPlayer", "ExterminationKuriboKeySwitch", "RunawayRabbitCollect", "SphereAir", "DimensionAir", "HomeAir", "TwilightAir", "DarknessRoomAir", "SunsetAir", "FineAir")   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
+NO_DRAW = ("Hanachan", "SkeletalFishBaby", "ChildSkeletalFishBaby", "ExterminationSkeletalFishBaby", "GhostPlayer", "ExterminationKuriboKeySwitch", "RunawayRabbitCollect", "SphereAir", "DimensionAir", "HomeAir", "TwilightAir", "DarknessRoomAir", "SunsetAir", "FineAir")   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
 OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup", "PurpleRailCoin", "CircleCoinGroup",
              "RailCoin", "SuperSpinDriver", "StarPieceGroup", "StarPieceFlow")
 # classes whose first NameObjFactory archive is not their model (OtaKing's is FireBall, Tico's TicoBaby): the model
@@ -139,7 +143,7 @@ CANM_ARC = {"GrandStarReturnDemoStarter": ("gsr", "DemoAstroReturn"), "TripodBos
             "PrologueDirector": ("prologue", ("DemoLetter", "DemoPeachCastleGate")),
             "BossStinkBug": ("bsbdemo", "BossStinkBugDemo"),
             "BossKameck": ("bkdemo", "BossKameckBattleDemo"), "BossKameck2": ("bkdemo", "BossKameckBattleDemo"),
-            "TombSpider": ("tspdemo", "TombSpiderPlanet"), "KoopaVs1": ("koopa", "Koopa"), "KoopaVs2": ("koopa", "Koopa"), "KoopaVs3": ("koopa", "Koopa")}  # TombSpiderDemo: initAnimCamera on its planet (Appear, Battle2ndStart, Death)  # BossKameckDemoPosition: initAnimCamera on BossKameckBattleDemo  # its DemoPositionControllers: initAnimCamera on BossStinkBugDemo
+            "TombSpider": ("tspdemo", "TombSpiderPlanet"), "KoopaVs1": ("koopa", "Koopa"), "KoopaVs2": ("koopa", "Koopa"), "KoopaVs3": ("koopa", "Koopa"), "SkeletalFishBoss": ("sfb", "SkeletalFishBoss")}  # SkeletalFishBoss::initCamera: its four event camera anims;  # TombSpiderDemo: initAnimCamera on its planet (Appear, Battle2ndStart, Death)  # BossKameckDemoPosition: initAnimCamera on BossKameckBattleDemo  # its DemoPositionControllers: initAnimCamera on BossStinkBugDemo
 MODEL_ARC = {"Koura~0": "Koura~koura:0", "Koura~1": "Koura~koura:1",  # NokonokoLand's JetTurtle: becomeSlowType / becomeFastType (Koura BRK frame 0 / 1)
              "KeySwitchOwned": "KeySwitch", "TripodBossKillerGenerater": "TripodBossKillerCannon", "TripodBossUpperKillerCannon": "TripodBossKillerCannon", "TripodBossUnderKillerCannon": "TripodBossKillerCannon", "TripodBossBottomKillerCannon": "TripodBossKillerCannon", "ChildKameck": "Kameck", "BkDemo": "BossKameckBattleDemo", "ChildKuribo": "Kuribo", "ChildIceMeramera": "IceMeramera", "LuigiEvent": "LuigiNPC", "TicoDomeLecture": "Tico", "PStar": "PowerStar", "GStar": "GrandStar", "OtaKing": "OtaKing", "KoopaJr": "KoopaJr", "Tico": "Tico", "Plant": "PlantSeed",
              # the Gateway intro (HeavensDoorGalaxy 1): RunawayRabbitCollect's children, DemoRabbit, the baby Lumas; the
@@ -182,7 +186,7 @@ def sky_sea(b, mat3, m):
 # (FlipPanel: "?" at rest, "!" once flipped, the End face when its group is complete)
 # KuriboChief / ExterminationChecker::initKeySwitch: their own KeySwitch (game.c okeys; KeySwitchOwned: the KeySwitch
 # archive skinned for its Rotation, the placed KeySwitch rows untouched)
-EXTRA = {"IceMerameraKing": ("IceManIce", "IceMerameraKingShock", "IceMerameraKingBreak"), "KoopaVs1": KOOPA_PARTS + ("KoopaBattleMapPlanet", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate"), "GhostPlayer": ("GhostMario", "GhostLuigi", "Koura"), "BegomanBabyLauncher": ("BegomanBaby",), "ElectricRailMoving": ("ElectricRailPoint",), "NokonokoLand": ("Koura~0", "Koura~1"), "Penguin": ("Koura~0",), "PenguinStudent": ("KouraShine",), "Creeper": ("CreeperFlower", "CreeperLeaf"), "TripodBoss": ("TripodBossLow", "HomingKiller"), "HoneyQueen": ("HoneyQueenWing",), "TicoFat": ("TicoFatGoodsStarPiece",), "TicoShop": ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp"), "ShellfishYellowChip": ("YellowChip",), "BossKameck": ("BkDemo", "BossKameckFireBall", "Koura"), "BossKameck2": ("BkDemo", "BossKameckFireBall", "Koura", "BossKameckBarrier"), "FireBallBeamKameck": ("BossKameckFireBall",), "BreakableTrash": ("BreakableCageBreak",), "KuriboChief": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
+EXTRA = {"SkeletalFishBaby": ("SnakeFish",), "ChildSkeletalFishBaby": ("SnakeFish",), "SkeletalFishBoss": ("SkeletalFishBossHeadA", "SkeletalFishGuard", "SkeletalFishBossBreak", "SkeletalFishBossScarFlash", "SkeletalFishBossLight"), "IceMerameraKing": ("IceManIce", "IceMerameraKingShock", "IceMerameraKingBreak"), "KoopaVs1": KOOPA_PARTS + ("KoopaBattleMapPlanet", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate"), "GhostPlayer": ("GhostMario", "GhostLuigi", "Koura"), "BegomanBabyLauncher": ("BegomanBaby",), "ElectricRailMoving": ("ElectricRailPoint",), "NokonokoLand": ("Koura~0", "Koura~1"), "Penguin": ("Koura~0",), "PenguinStudent": ("KouraShine",), "Creeper": ("CreeperFlower", "CreeperLeaf"), "TripodBoss": ("TripodBossLow", "HomingKiller"), "HoneyQueen": ("HoneyQueenWing",), "TicoFat": ("TicoFatGoodsStarPiece",), "TicoShop": ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp"), "ShellfishYellowChip": ("YellowChip",), "BossKameck": ("BkDemo", "BossKameckFireBall", "Koura"), "BossKameck2": ("BkDemo", "BossKameckFireBall", "Koura", "BossKameckBarrier"), "FireBallBeamKameck": ("BossKameckFireBall",), "BreakableTrash": ("BreakableCageBreak",), "KuriboChief": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
          "Rosetta": ("LightDome", "DomeHalo"),  # RosettaDemoHeavensDoor1's parts (ライトドーム, ライト後光)
          "StarReturnDemoStarter": ("PStar", "GStar", "SpinTico", "MarioHair"), "GrandStarReturnDemoStarter": ("GStar",), "FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
@@ -239,7 +243,9 @@ ASTRO_MODELS = {
 POSE = {"NutShipFleetBridge": ("MoveA", {"move.kcl": "Move"})}
 # collisions on a joint of a skinned model (createCollisionPartsFromLiveActor with getJointMtx): KCL "<class>#<joint>"
 # in that joint's space, the engine moves it with the joint (PhantomShipBridge.cpp: "Move" on joint Move)
-KCL_PARTS = {"PhantomShipBridge": {"move.kcl": "Move"}, "DarknessRoomDoorA": {"open.kcl": "Open"},
+KCL_PARTS = {"PhantomShipBridge": {"move.kcl": "Move"}, "SkeletalFishBoss": dict([(f"backbone{i:02}.kcl", f"BackBone{i:02}") for i in range(1, 12)] + [("backfin.kcl", "BackFin"), ("leftfinjoint.kcl", "LeftFinJoint"), ("rightfinjoint.kcl", "RightFinJoint")]),  # SkeletalFishBoss::initCollision (sColInfo)
+             "SkeletalFishBossHeadA": {"head.kcl": "Head", "jow.kcl": "Jow"},  # SkeletalFishBossHead: Head / Jow on their joints
+             "DarknessRoomDoorA": {"open.kcl": "Open"},
              "TeresaMansionDoorA": {"open.kcl": "Open"}, "TeresaMansionDoorB": {"open.kcl": "Open"},
              "TeresaMansionEntranceDoor": {"open.kcl": "Open"},
              "DesertLandDownSwitch": {"move.kcl": "Move"},  # TypicalDoor's Open collision too
@@ -255,7 +261,7 @@ KCL_PARTS = {"PhantomShipBridge": {"move.kcl": "Move"}, "DarknessRoomDoorA": {"o
 # the joint a MapObjActor's own collision follows (SKIN pad 1: game.c Inst.kmove), "Move" unless named here
 COLL_JOINT = {"Shellfish": "Lid"}  # initCollisionPartsAutoEqualScaleOne "Hi" on getJointMtx(Lid)
 HOME_POS = "\u5408\u4f53\u30d6\u30ed\u30c3\u30af\u6545\u90f7\u70b9"  # 合体ブロック故郷点: AssemblyBlock's home (Petari sReturnPosName)
-LOGIC = ("FallingSmallRock", "TimerSwitch", "KoopaSwitchKeeper", "KoopaPowerUpSwitch", "KoopaViewSwitchKeeper", "KoopaRestarterVs3", "BossKameckMoveRail", "TripodBossBaseJointPosition", "TripodBossStepPoint", "TripodBossStepStartArea", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
+LOGIC = ("FallingSmallRock", "TimerSwitch", "SkeletalFishBossRail", "SkeletalFishBaby", "ChildSkeletalFishBaby", "ExterminationSkeletalFishBaby", "KoopaSwitchKeeper", "KoopaPowerUpSwitch", "KoopaViewSwitchKeeper", "KoopaRestarterVs3", "BossKameckMoveRail", "TripodBossBaseJointPosition", "TripodBossStepPoint", "TripodBossStepStartArea", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
          "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "DeathCube", "DeathSphere",
          "DeathCylinder", "RestartCube", "StarPieceSpot", "WaterCube", "WaterSphere", "WaterCylinder",
          "AstroChangeStageCube", "MovieStarter", "RunawayRabbitCollect", "PhantomTorch", "PhantomBonfire", "Hanachan",
@@ -1740,7 +1746,7 @@ def declare_stars(keep, scenario, appear, jp):
             k = None if s32(r["args"][7]) > 0 else -1
         elif r["name"] == "WoodBox":  # WoodBox::init: declarePowerStar when arg7 is set (no disc data has one)
             k = None if s32(r["args"][7]) not in (0, -1) else -1
-        elif r["name"] in ("CollectTico", "DinoPackun", "OtaKing", "BossStinkBug", "BossBegoman", "BossKameck", "BossKameck2", "StinkBugParent", "TripodBoss", "TombSpider", "KoopaVs1", "KoopaVs2", "KoopaVs3", "IceMerameraKing"):  # their init declarePowerStar, always
+        elif r["name"] in ("CollectTico", "DinoPackun", "OtaKing", "BossStinkBug", "BossBegoman", "BossKameck", "BossKameck2", "StinkBugParent", "TripodBoss", "TombSpider", "KoopaVs1", "KoopaVs2", "KoopaVs3", "IceMerameraKing", "ExterminationSkeletalFishBaby", "SkeletalFishBoss"):  # their init declarePowerStar, always
             k = None
         elif r["name"] == "PenguinCoach":  # PenguinCoach::init: declarePowerStar for Behavior_Star / Tutorial / Race (arg0 1-3)
             k = None if 1 <= s32(r["args"][0]) <= 3 else -1
@@ -2224,7 +2230,7 @@ def clip_key(c, clip):
     """ANIM's "<class>/<clip>" (lower case); over 31 chars a DemoBossKameck clip is "dbk..." (BossKameck2's Vs1 / Vs2
     demo clips would meet at 31: game.c bk_act)"""
     k = f"{c.lower()}/{clip}"
-    return k.replace("demobosskameck", "dbk") if len(k) > 31 else k
+    return k.replace("demobosskameck", "dbk").replace("skeletalfish", "sf") if len(k) > 31 else k  # (SkeletalFishBossHeadA's too: game.c sf_clip)
 
 
 def obj_anim_chunk(fsp, classes, galaxy=None):
