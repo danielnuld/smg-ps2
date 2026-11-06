@@ -1874,6 +1874,7 @@ int main(void)
 #endif
 #ifdef BEEFLOWER_TEST
         if (frame == 530) game_test_bee(0); /* Bee Mario from here: he lands on them (SoftTouch) */
+        pad_force = frame == 640 ? PAD_CROSS : 0; /* A closes the first Bee Mario's InformationObserver window (初出表示) */
         if (frame >= 120 && frame % 60 == 0 && frame <= 900) {
             char d[128];
             game_debug(d, sizeof d);
@@ -2339,13 +2340,14 @@ int main(void)
         }
 #endif
 #ifdef COCOON_TEST
-        { /* Mario onto a cocoon (120), aim (200), drag 150 px down (210-290), let go (300); logged every 10 frames */
+        { /* after CocoonEx's arrival flight (till ~f480, it moves Mario): onto a cocoon (520), aim (600), drag 150 px
+           * down (610-690), let go (700); logged every 10 frames */
             int ph = -1;
-            if (frame >= 120 && frame < 200 && frame % 20 == 0 && game_test_cocoon(4, 0) == 0) ph = game_test_cocoon(0, 0);
-            else if (frame >= 200 && frame < 210) ph = game_test_cocoon(1, 0);
-            else if (frame >= 210 && frame < 300) ph = game_test_cocoon(2, 150.0f * (frame - 210) / 90.0f);
-            else if (frame == 300) ph = game_test_cocoon(3, 0);
-            if (frame >= 120 && frame < 500 && frame % 10 == 0) {
+            if (frame >= 520 && frame < 600 && frame % 20 == 0 && game_test_cocoon(4, 0) == 0) ph = game_test_cocoon(0, 0);
+            else if (frame >= 600 && frame < 610) ph = game_test_cocoon(1, 0);
+            else if (frame >= 610 && frame < 700) ph = game_test_cocoon(2, 150.0f * (frame - 610) / 90.0f);
+            else if (frame == 700) ph = game_test_cocoon(3, 0);
+            if (frame >= 520 && frame < 900 && frame % 10 == 0) {
                 char d[128];
                 game_debug(d, sizeof d);
                 printf("cocoon test f %u: %d %s\n", frame, ph, d);
