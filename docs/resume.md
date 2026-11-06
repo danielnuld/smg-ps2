@@ -525,6 +525,9 @@ Second console round (2026-10-24), from Daniel's report:
   its SEs, its eye sensor (60) on the axis 60..600 at Mario's foot, a weak rumble, a push outside 60 across gravity,
   Bee Mario flipped (FlipWeak on the ground) with mSpoutTimer. Test `fountain` (HoneyBeeKingdom 1: MarioFlow, 303 up
   at step 20 as 18 x 20 - 0.3 x 190).
+- beeflower / cocoon tests (#296, 2026-11-05): beeflower's Bee Mario stopped at the first-time 初出表示 window (A now
+  pressed at f640: Bee Mario lands on flowers 21 / 22); cocoon's hooks ran inside CocoonEx's arrival flight (moved to
+  f520-700: hangs on, aims, drags, launched 419 off, the flight ends at 90). Game code unchanged.
 ## Rules
 
 - Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -
