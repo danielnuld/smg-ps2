@@ -1026,9 +1026,8 @@ there needs the embedded blob and every pack rebuilt.
   invisible insts (slice.py KCL_PARTS SkeletalFishBoss / SkeletalFishBossHeadA), head sensors, mouth nerves, the
   出現 / パワーアップ / ２ / 死亡 demos on its four canms (CANM_ARC sfb), demo guards, break model, MBGM_BOSS_09_A / B and
   the near / far states, SkeletalFishGuard / GuardHolder). A thrown JetTurtle hits them (sf_jet_hit). Clip keys over 31
-  chars shorten skeletalfish to sf (slice.py clip_key, game.c sf_clip). sound.py --pack now also reads the .inc files
-  game.c #includes (their SE names). Tests: XF=-DSF_TEST TearDropGalaxy/1, XF=-DSFK_TEST SkullSharkGalaxy/1 (shells
-  thrown at the fish by the test). ponytail: see the two files' headers (BRK colours, shadows, bloom, bird louse,
+  chars shorten skeletalfish to sf (slice.py clip_key, game.c sf_clip). Tests: XF=-DSF_TEST TearDropGalaxy/1, XF=-DSFK_TEST SkullSharkGalaxy/1 (shells
+  thrown at the fish by the test): three babies and the checker's star; the whole fight to its star. ponytail: see the two files' headers (BRK colours, shadows, bloom, bird louse,
   columns, 2P pointer, the after-demo programmable camera).
 
 ## Next
