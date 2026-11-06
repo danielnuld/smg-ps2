@@ -486,7 +486,6 @@ static void dd_rb_update(void)
     if (!dd.rb || !dd.rb->skin) return;
     dd.rb_prev = dd.rb->clip_id >= 0 ? dd.rb->frame : 0.0f;
     anim_update(dd.rb);
-    int esc = dd.rb_nrv == DDR_ESCAPEWAITING || dd.rb_nrv == DDR_ESCAPE || dd.rb_nrv == DDR_ESCAPESLOW;
     int st = ++dd.rb_st, talk = dd.rb_msg && dd.rb_talk >= 0; /* tryTalk: mIsDisplayMessage */
     switch (dd.rb_nrv) {
     case DDR_ESCAPEWAITING:
@@ -528,6 +527,7 @@ static void dd_rb_update(void)
         if (talk) talk_near(dd.rb_talk);
         break;
     }
+    int esc = dd.rb_nrv == DDR_ESCAPEWAITING || dd.rb_nrv == DDR_ESCAPE || dd.rb_nrv == DDR_ESCAPESLOW;
     if (esc && --dd.rb_cc <= 0) { dd.rb_cc = 300; dd.rb_d0 = (dd.rb_d0 + 1) % 2; dd_rb_node(dd.rb_d0); } /* control */
     if (dd.rb_talk >= 0 && !(dd.rb_nrv == DDR_PLEASURE && dd.rb_st > 30)) { /* _E0: its Spine joint */
         float m[16];
@@ -1064,7 +1064,6 @@ static void dd_demo(void)
     int st = ++dd.st[dd.cur];
     const char *name = dd_demo_names[dd.cur];
     if (dd.cur == DS_OPENING) {
-        if (*dd_nrvp() != DO_DEMOWAIT && dd_cam_end()) { dd.rb_msg = 1; dd_next_state(); return; } /* control: tryFinish */
         switch (*dd_nrvp()) {
         case DO_DEMOWAIT:
             if (!pd_try_start(name, dd.row)) { dd.st[dd.cur] = -1; break; }
@@ -1107,6 +1106,7 @@ static void dd_demo(void)
             if (dd_bck_stopped(dd.anim) && !dd.anim->loop) { dd_act("EffectWalk"); dd.rumble = 1; dd.rumble_n = 0; dd_lead("EffectWalk"); }
             break;
         }
+        if (*dd_nrvp() != DO_DEMOWAIT && dd_cam_end()) { dd.rb_msg = 1; dd_next_state(); } /* control: tryFinish */
         return;
     }
     if (*dd_nrvp() == DM_DEMOWAIT) {
@@ -1171,7 +1171,15 @@ static void update_dd(void)
             printf("dodoryu: SW_A on\n");
         }
         if (dd.anim->skin) anim_update(dd.anim);
-        if (dd.lh_on && dd.lh->skin) { anim_update(dd.lh); dd.lh90 += 0.07f; } /* DodoryuLeadHill::control */
+        if (dd.lh_on && dd.lh->skin) { /* DodoryuLeadHill: its pose, its joints 1-17 turned about X by _90 (calcJoint), control */
+            anim_update(dd.lh);
+            float c = cosf(dd.lh90), sn = sinf(dd.lh90);
+            for (u32 j = 1; j < dd.lh->skin->njoints && j <= 17; j++) {
+                float *w = dd.lh->world[j];
+                for (int i = 0; i < 3; i++) { float y = w[4 + i], z = w[8 + i]; w[4 + i] = y * c + z * sn; w[8 + i] = -y * sn + z * c; }
+            }
+            dd.lh90 += 0.07f;
+        }
         dd_move();
         if (mario->hip == HIP_LAND && mario->hip_t == 0) dd_catch_hip(); /* checkHipDrop: isPlayerHipDropLand */
         int s0 = dd.cur;
@@ -1236,13 +1244,7 @@ static void dd_draw(void)
         bva_key = k; bva_frame = 0.0f; /* startBva */
         draw_skin(dd.md, m, dd.anim);
     }
-    if (!dd.dead && dd.lh_on && dd.lhmd && dd.lh && dd.lh->skin) { /* DodoryuLeadHill on its host's base, its joints 1-17 turned about X (calcJoint) */
-        float c = cosf(dd.lh90), s = sinf(dd.lh90);
-        for (u32 j = 1; j < dd.lh->skin->njoints && j <= 17; j++) {
-            float *w = dd.lh->world[j];
-            for (int i = 0; i < 3; i++) { float y = w[4 + i], z = w[8 + i]; w[4 + i] = y * c + z * s; w[8 + i] = -y * s + z * c; }
-        }
-        dd.lh->skin_stale = 1;
+    if (!dd.dead && dd.lh_on && dd.lhmd && dd.lh && dd.lh->skin) { /* DodoryuLeadHill on its host's base */
         dd_base(m);
         draw_skin(dd.lhmd, m, dd.lh);
     }
@@ -1336,7 +1338,7 @@ int game_test_dd(int frame)
     h = vlen(h) > 1e-3f ? vnorm(h) : dd.X;
     int n = dd.nst[dd.cur], hip = 0, spin = 0;
     if (dd.cur == DS_LV1) { hip = n == L1_APPEAR || (n == L1_APPEARSTART && dd.st[dd.cur] > 16); spin = n == L1_DAMAGE && dd.st[dd.cur] > 20; }
-    if (dd.cur == DS_LV2 || dd.cur == DS_LV3) { hip = dd_l2_enable_hip() && !dd_is(L2_ESCAPE) && !dd_is(L2_CHASEHIDE); spin = dd_is(L2_ESCAPE) || dd_is(L2_RECOVER); }
+    if (dd.cur == DS_LV2 || dd.cur == DS_LV3) { hip = dd_is(L2_CHASEAPPEAR) || (dd_is(L2_CHASEMORE) && dd_step() > 30); spin = dd_is(L2_ESCAPE) || dd_is(L2_RECOVER); }
     if (hip) { /* a hip drop 500 off */
         mario->pos = vadd(vadd(dd.pos, vmul(h, 500.0f)), vmul(up, 250.0f)); mario->up = up; mario->hvel = v3(0, 0, 0);
         mario->grounded = 0; mario->hip = HIP_FALL; mario->hip_t = 0; mario->vup = 0;
@@ -1347,7 +1349,7 @@ int game_test_dd(int frame)
         mario->face = vmul(h, -1.0f); mario->spin_timer = SPIN_TIME;
         last = frame;
         printf("dd test f %d: spin\n", frame);
-    } else if (vlen(vsub(mario->pos, dd.pos)) < 900.0f && (dd.cur == DS_LV1 || dd_l2_attackable())) { /* out of its way */
+    } else if (vlen(vsub(mario->pos, dd.pos)) < 900.0f && dd.cur == DS_LV1) { /* out of its way */
         mario->pos = vadd(dd.pos, vmul(h, 1100.0f)); mario->hvel = v3(0, 0, 0);
     }
     return dd.cur;
