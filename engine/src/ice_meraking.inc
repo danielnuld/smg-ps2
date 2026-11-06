@@ -238,6 +238,7 @@ static void mk_update(Kuribo *k)
 {
     if (!k->front.x && !k->front.y && !k->front.z) mk_init(k);
     if (mk.row != k->row) return;
+    if (mk_dx_on() && dx.part == 4 && k->nrv != MK_DEATH) w_nrv(k, MK_DEATH); /* the 死亡デモ's start: its nerve DeathDemo */
     int st = ++k->step;
     V3 body = mk_joint(k, 2), mc = mk_center();
     switch (k->nrv) {
@@ -398,8 +399,7 @@ static void mk_update(Kuribo *k)
     case MK_DEATHWAIT:
         if (st == 0) bgm_stop(30);
         k->vel = v3(0, 0, 0);
-        if (mk_dx_on() && dx.part == 4) w_nrv(k, MK_DEATH); /* the demo's start: its nerve DeathDemo */
-        else if (mk.demo < 0) w_nrv(k, MK_DEATH);
+        if (mk.demo < 0) w_nrv(k, MK_DEATH);
         break;
     case MK_DEATH: {
         if (st == 0) {
@@ -435,7 +435,7 @@ static void mk_update(Kuribo *k)
     /* receiveOtherMsg: a spin storm (Mario's spin's first 15 frames, his sensor within 600) */
     int hurt = k->nrv == MK_DEATH || k->nrv == MK_EXTINGUISH || k->nrv == MK_DAMAGE || k->nrv == MK_ANGRY1 || k->nrv == MK_ANGRY2 ||
                mk_escaping(k) || k->nrv == MK_PRERECOVER || k->nrv == MK_RECOVER;
-    if (mario->spin_timer > 0 && mario->spin_t < 15 && vlen(vsub(mc, body)) < 600.0f && !hurt && k->nrv != MK_DEATHWAIT) {
+    if (mario->spin_timer > 0 && mario->spin_t < 15 && vlen(vsub(mc, body)) < 600.0f && !hurt) {
         if (vlen(vtangent(vsub(mc, k->pos), k->grav)) >= mk.r) w_nrv(k, MK_EXTINGUISH);
     }
     /* receiveMsgPlayerAttack: a spin (or the freeze spin) while it rolls */
@@ -443,7 +443,8 @@ static void mk_update(Kuribo *k)
         int freeze = player_mode == PM_ICE;
         if (--mk.ec == 0) {
             if (freeze) bgm_pinch_stop_soon(); /* stopMarioPinchBGMSoon */
-            mk_try_demo(4); w_nrv(k, MK_DEATHWAIT); /* requestStartTimeKeepDemo(死亡デモ, DeathDemo, DeathDemoWait) */
+            if (mk.demo >= 0) dx_request_at(mk.demo, 4); /* (queued: DemoStartRequestHolder) */
+            w_nrv(k, MK_DEATHWAIT); /* requestStartTimeKeepDemo(死亡デモ, DeathDemo, DeathDemoWait) */
             printf("ice merameraking: down, its death demo\n");
         } else w_nrv(k, MK_DAMAGE);
     }
