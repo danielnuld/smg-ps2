@@ -1038,6 +1038,13 @@ there needs the embedded blob and every pack rebuilt.
   XF=-DMK_TEST, IceVolcanoGalaxy/1: opening demo, three spin storms / spins while it rolls, both angry demos, death
   demo, `power star 1 got`. ponytail: SE_DM_LV_MUTE_BGM's BGM mute, BodyIceOff's particle callback, its BRKs; its
   children are still the improvised Meramera walker (Meramera.cpp, 1765 lines, not ported).
+- Meramera (feat/319-meramera, 2026-11-06): Meramera.cpp after Petari in engine/src/meramera.inc (mm_*, walker kind
+  WALK_MERAMERA: Meramera, IceMeramera, ChildIceMeramera), replacing the improvised walker: its 18 nerves, keep-height
+  over its shadow, chase / dash / turn, the attack sensor (fire / freeze), spin storm Damage -> Runaway (rolling, jumps,
+  diving into a fire floor: Sink / Float / Ignition), Down / FlatDown, star piece / fireball / explosion / invincible,
+  ReadyRestart (arg2), head effects on its Sin joint, its BTPs. IceMerameraKing's children use it (mk_child_kill: its
+  kill). Test: plain XF=-DMM_TEST HellProminenceGalaxy/1 (chase, attack success, spin: Damage, Runaway, Sink, Float,
+  Ignition, Chase). ponytail: BindStarPointer, BRK colours, element attack on enemies. MK_TEST (main too): `power star 1 got` at the king's first damage.
 - FallingSmallRock (feat/306-falling-small-rock, 2026-11-06): MapObj/FallingSmallRock.cpp in game.c update_fsrock
   (HellProminenceGalaxy 1 / 4): Wait for SW_A, Move (its FallingSmallRock effect, SE_AT_LV_FALLING_ROCK) until its
   binder (10 at 800 up) touches the map. Rows kept by slice.py LOGIC, its effect by jpa.py NAMED. Test: plain build
@@ -1068,11 +1075,6 @@ there needs the embedded blob and every pack rebuilt.
   frames: the cube's area does not write it there, A through the talk, a JetTurtle hit every 300 frames): opening
   demo, the talk, 5 hits, the mid demo, the down demo, `power star 1 got`. DKJ_TEST (FloaterOtaKingGalaxy/1, plain):
   the entry demo by SW 67.
-    if len(k) > 31:  # (SkeletalFishBossHeadA's too: game.c sf_clip; polta.inc pol_key)
-        for a, b in (("demobosskameck", "dbk"), ("skeletalfish", "sf"), ("poltaleftarm", "pla"), ("poltarightarm", "pra"),
-                     ("poltaformationrock", "pfr")):
-            k = k.replace(a, b)
-    return k
 
 ## Next
 
