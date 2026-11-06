@@ -37418,19 +37418,6 @@ static void bgb_generators(void) /* BigBubbleGenerator: control, onActive / offA
     }
 }
 
-static int bgb_erail(V3 c, float rad) /* ElectricRailFunction::isTouchRail: a rail's sensors (30) touch it */
-{
-    for (int i = 0; i < nerails; i++) {
-        const Spark *e = &erails[i];
-        if (!erail_on(e)) continue;
-        V3 ab = vsub(e->b, e->a);
-        float t = vdot(vsub(c, e->a), ab) / fmaxf(vdot(ab, ab), 1e-3f);
-        V3 q = vadd(e->a, vmul(ab, fminf(fmaxf(t, 0.0f), 1.0f))), up = up_at(q, mario->up);
-        for (int k = 0; k < e->h; k++) if (vlen(vsub(c, vadd(q, vmul(up, 100.0f * k)))) < 30.0f + rad) return 1;
-    }
-    return 0;
-}
-
 static void bgb_break(BBubble *b) { bgb_nrv(b, BGB_BREAK); }
 static void bgb_capture_exe(BBubble *b, int i)
 {
@@ -37502,7 +37489,7 @@ static void bgb_capture_exe(BBubble *b, int i)
             if (bgb_ride == i) { bgb_release(0, v3(0, 0, 0)); mario_attack(ATK_FIRERUN, b->pos); }
             brk = 1;
         }
-        if (bgb_erail(b->pos, bgb_size(b))) {
+        if (bg_touch_rail(b->pos, bgb_size(b), NULL, NULL)) {
             if (bgb_ride == i) { bgb_release(0, v3(0, 0, 0)); mario_attack(ATK_ELECTRIC, b->pos); }
             brk = 1;
         }
