@@ -38814,6 +38814,8 @@ static void update_fsrock(void)
         float c[3] = {p.x, p.y, p.z};
         if (render_visible(c, 800.0f)) fx_named("FallingSmallRock", "FallingSmallRock", m, NULL, &row_turn[i]); /* endClipped: emitEffect */
         if (n <= 16) lv[n - 1] = se_level(SE_AT_LV_FALLING_ROCK, c, lv[n - 1]);
+    }
+}
 /* SubmarineSteam.cpp after Petari (SubmarineSteam and SubmarineVolcano, its effect group the object's name): Steam
  * (its Steam effect, SE_OJ_LV_MARINE_STEAM_OUT, _S in SkullSharkGalaxy), or WaitForSwitchOn until its SW_A. Its body
  * (400 at 250 up its y) on Mario: a sphere of 120 at 600 up or a cylinder 480 up its y (Mario's radius x 0.7, + 20)
