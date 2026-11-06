@@ -375,6 +375,9 @@ static V3 star_pos(const Inst *in, int *state);
 static V3 tb_unfollow(const Row *r, V3 p); /* TripodBoss (tripod_boss.inc): an area following its joints */
 static int tb_hidden(int row), tb_demo(void);
 static void tb_init(const Scene *s, const unsigned char *blob), update_tb(void), tb_draw(void);
+static void kj_init(const Scene *s, const unsigned char *blob), update_kj(void), kj_draw(void); /* KoopaJrShip (koopajr_ship.inc) */
+static int kj_jet_hit(V3 p);
+static void kj_cast_hook(int row, int type, int part), kj_rebind_place(Inst *in);
 static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle);
 static void dome_init(void);
 /* slice.py BRK_ARG: a class whose colour is its BRK stopped at the frame one of its args gives (setBrkFrameAndStop) draws
@@ -2471,6 +2474,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         }
     bk_init(s, blob);
     tb_init(s, blob);
+    kj_init(s, blob);
     gh_reset(); /* GhostPlayer: init at its first update */
     for (u32 i = 0; i < s->nobjs; i++)
         if (strcmp(s->types + 32 * s->objs[i].type, "OtaKing") == 0) {
@@ -5323,6 +5327,7 @@ static void game_rebind_(void)
         if (in->kstair) ks_place(in);
         if (in->gap) gap_place(in);
         tb_rebind_place(in);
+        kj_rebind_place(in);
         if (in->coco) coco_spawn(in);
         if (in->fountain || in->stray) memcpy(in->m0, in->m, 64);
         if (in->stray) in->head = row_turn[i] ? (stray_at[i % 64].x || stray_at[i % 64].y || stray_at[i % 64].z ? stray_at[i % 64] : v3(in->m[12], in->m[13], in->m[14])) : v3(in->m[12], in->m[13], in->m[14]);
@@ -13665,6 +13670,7 @@ static void update_jets(void)
             else if (fh > 10000.0f) { gone = 1; reason = 1; }
             else if (wall) { gone = 1; camera_shake(SHAKE_WEAK); }
             if (bk_jet_hit(p)) gone = 1; /* BossKameck: isMsgJetTurtleAttack (requestDamage) */
+            if (kj_jet_hit(p)) gone = 1; /* KoopaJrShip: receiveMsgJetTurtleAttack */
             hhp_blow(p, 60.0f); /* HammerHeadPackun: isMsgJetTurtleAttack */
             tbox_hit(p, 60.0f); /* TreasureBoxCracked: isMsgJetTurtleAttack */
             for (int k = 0; k < nkuribo; k++) { /* ACTMES_JET_TURTLE_ATTACK */
@@ -41102,6 +41108,7 @@ static void dx_cast_hook(int row, int type, int part)
         if (k == 0 && type == 2) { hdo[0].row = row; hdo[0].rumble = 1; camera_shake_infinity(&hdo[0], 0.15f, 1.2f); return; }
     }
     if (gw_cast_hook(row, type, part)) return;
+    if (!strcmp(cls, "KoopaJrShip")) { kj_cast_hook(row, type, part); return; }
     if (type == 0 && !strcmp(cls, "StarReturnDemoStarter")) { srd_appear(row); return; }
     if (type == 0 && !strcmp(cls, "GrandStarReturnDemoStarter")) { gsr_appear(row); return; }
     if (type == 2 && !strcmp(cls, "HoneyQueen")) { hq_functor(row, part); return; }
@@ -49072,6 +49079,7 @@ int game_test_bk(int frame)
 }
 
 #include "tripod_boss.inc" /* TripodBoss (Megaleg): tb_*, game_test_tb */
+#include "koopajr_ship.inc" /* KoopaJrShip (Bowser Jr.'s airship): kj_*, game_test_kj */
 /* Test builds: Mario in the boss's SwitchCylinder until it starts, then dropped in a hip drop on its BodyHipDrop part
  * whenever a hit is open; game_bsb_state: sequencer x 100 + nerve */
 int game_test_bsb(void)
@@ -50725,6 +50733,7 @@ void game_update(void)
     update_bsb();
     update_bk();
     update_tb();
+    update_kj();
     if (!demo_on) update_km_beams(); /* (the Kameck beams, fire balls, turtles: stopped in a demo) */
     update_tsp();
     if (star_demo) { /* its camera ("powerstar/powerstarget"); Mario plays PowerStarGet meanwhile */
@@ -52080,6 +52089,7 @@ void game_draw(void)
     bsb_draw();
     bk_draw();
     tb_draw();
+    kj_draw();
     km_draw();
     tsp_draw();
     if (ota.row >= 0 && ota.nrv != OTA_WAITONSWITCH && ota.nrv != OTA_APPEARSTAR && ota.nrv != OTA_DEAD) { /* OtaKing, its feet */
