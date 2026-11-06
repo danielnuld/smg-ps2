@@ -453,6 +453,11 @@ Second console round (2026-10-24), from Daniel's report:
   declares its power star (slice.py STAR_DECLARERS: no disc data has one), shown 100 up from the hit, out at kill().
   arg1 respawn was already read (the BVA-broken box stays unless arg1 0). Test `box` + XF -DBOX_WOOD (HeavenlyBeach 1:
   row 356's dead switch 13 at step 15).
+- CrystalCageL (fix/269-cagel, 2026-11-05): the first hit sends ACTMES_REFLECT (mario_reflect: reflectWallOnSpinning
+  5 frames of mInertiaReflectSlip, walk speed at most 0.5), BVA frame 1 (slice.py EXTRA "#CrystalCageL:1": a
+  "<BVA>:<frame>" pose) and the 20-frame wobble (cagel_draw, drawn only: its collision stays put, ponytail); the
+  break: CrystalCageLBreak's clip where it stood and the frame-2 stump at _F8 (the map below it). Test `cage`
+  CosmosGarden 3 (hit, break `stump -60 below`, star got). Left: 壁スパーク effect.
 ## Rules
 
 - Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -
