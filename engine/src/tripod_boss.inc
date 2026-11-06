@@ -16,7 +16,8 @@
  * TripodBossKinokoOneUp, the cannons' 2ndDemo / Shoot clips not played and the circles' cannons without collision, the
  * core / shell break models and the parts' Warning BRKs not drawn, one 2ndDemo pose for all guard wall parts, isRideMario
  * by Mario's ground being a part (not the gravity host), end anim cameras without their blends, the gears' rotators
- * at a constant RotateSpeed */
+ * at a constant RotateSpeed, the guard wall parts' collision as their KCL's band (tb_wall_part), the killers' shadow
+ * on a BREAKABLE_CAGE (processChase's aim at it) */
 enum { TL_HOLD, TL_DEMO, TL_MOVE, TL_UP, TL_LEAVEOUT, TL_TOLAND, TL_STAMP, TL_LANDING, TL_DVIB, TL_DAMAGE, TL_BREAK };
 enum { TB_NONACTIVE, TB_TRYDEMO, TB_WAIT, TB_STEP, TB_WAITSTEP, TB_DAMAGE, TB_CHANGESEQ, TB_LEAVEOUT, TB_STARTDEMO,
        TB_DAMAGEDEMO, TB_PAINDEMO, TB_BREAKDOWN, TB_EXPLOSION, TB_DEAD };
@@ -53,7 +54,7 @@ static struct {
     float wall_rot, wall_m[16];
     Anim *wanim; const Model *wmd;
     TbCannon can[TB_CANNONS]; int ncan;
-    int brk_st;
+    int brk_st, attok;                           /* (tb.att made once: the parts placed again in a rebind) */
 } tb = {.row = -1};
 enum { TBP_FIX = 1, TBP_ROTATE, TBP_WARN };     /* rpart: how a part's row moves */
 static const signed char tb_conv[41] = {0, 1, 2, 7, 8, 9, 14, 15, 16, 21, 3, 4, 0, 1, 5, 6, 2, -1, -1, -1, 10,
@@ -333,6 +334,7 @@ static const float *tb_bone_mtx(int b)
 static void tb_attach(void) /* getJointAttachMatrix: bone * _0 (setAttachBaseMatrix: the inverse of its base) */
 {
     for (int b = 0; b < 22; b++) tb_mul(tb.att[b], tb_bone_mtx(b), tb.binv[b]);
+    tb.attok = 1;
 }
 static void tb_body_tr(void) { tb_tr(tb.body, tb.p5d4, sc->objs[tb.row].rot); } /* makeMtxTR(mBodyMtx, _5D4, mRotation) */
 static void tb_cam(const char *clip, int frame) /* startAnimCameraTargetSelf (held on its last frame) / endAnimCamera */
@@ -612,19 +614,24 @@ static void tb_update_boss(void)
 
 /* --- the parts (TripodBossFixPartsBase::updateTripodMatrix, BaseMatrixFollower) --- */
 static int tb_inst_bone(const Inst *in) { return in->row >= 0 && tb.rbone ? tb.rbone[in->row] - 1 : -1; }
-static void tb_place_inst(Inst *in, int b)
+static void tb_place_inst(Inst *in, int b, int step) /* step 0: placed again after a rebind (no turn, no carry) */
 {
     const Row *r = &sc->objs[in->row];
     float local[16], old[16];
     memcpy(old, in->m, 64);
-    if (tb.rpart[in->row] == TBP_ROTATE && tb.nrv != TB_NONACTIVE && !tb_breakdown()) { /* TripodBossRotateParts: MapPartsRotator (exeWaitOwn) */
+    if (step && tb.rpart[in->row] == TBP_ROTATE && tb.nrv != TB_NONACTIVE && !tb_breakdown()) { /* TripodBossRotateParts: MapPartsRotator (exeWaitOwn) */
         row_angle[in->row] = fmodf(row_angle[in->row] + r->arg[4] * 0.01f, 360.0f);
         tb.lv[3] = se_level(SE_BM_LV_TRIPOD_PARTS_MOVE, &in->m[12], tb.lv[3]);
     }
     if (tb.rpart[in->row] == TBP_ROTATE) { rotor_matrix(in); memcpy(local, in->m, 64); }
     else mat_translate_rot_scale(local, r->pos, r->rot, r->scale);
     tb_mul(in->m, tb.att[b], local);
-    if (mario_ground == (int)(in - insts)) carry(old, in);
+    if (step && mario_ground == (int)(in - insts)) carry(old, in);
+}
+static void tb_rebind_place(Inst *in) /* game_rebind_: a part keeps its joint's place (not its design one) */
+{
+    int b;
+    if (tb.row >= 0 && tb.attok && tb.rbone && (b = tb_inst_bone(in)) >= 0 && tb.rpart[in->row]) tb_place_inst(in, b, 0);
 }
 static void tb_followers(void) /* GraviryFollower::update: the gravity's records moved by its target's attach matrix */
 {
@@ -638,7 +645,7 @@ static void tb_followers(void) /* GraviryFollower::update: the gravity's records
         V3 t = tb_mulp(a, v3(g0->m[3][0], g0->m[3][1], g0->m[3][2]));
         g->m[3][0] = t.x; g->m[3][1] = t.y; g->m[3][2] = t.z;
     }
-    if (tb.ngf) gravity_reset(); /* (its bounds and grid made again) */
+    if (tb.ngf) { gravity_reset(); grav_epoch++; } /* (its bounds and grid made again, up_at's answers dropped) */
 }
 static V3 tb_unfollow(const Row *r, V3 p) /* area_inside: an area following a joint, p taken back to its design place */
 {
@@ -662,7 +669,33 @@ static int tbk_request_break(TbCannon *c) /* requestBreak (an explosion on its s
     tbk_set(c, TBK_STOP);
     return 1;
 }
+static V3 tb_row_world(int row);
 static void tb_explosion(V3 p, float r); /* a killer's explosion on the parts' sensors */
+/* TripodBossGuardWallPart's collision (TriPodBossGuardWall.kcl: r 739..800, y 0..440, -22.5..22.5 degrees about its Z,
+ * part k turned 45k about the wall's Y): the part a sphere at p (radius r) touches, -1 none; brk: requestBreak.
+ * ponytail: the kcl's band, not its triangles (the moving wall has no KCL in the port) */
+static int tb_wall_part(V3 p, float r, int brk)
+{
+    if (tb.wall < 0 || tb.wa_nrv < 2 || tb.wa_nrv > 3) return -1;
+    float ib[16]; tb_inv(ib, tb.wall_m);
+    V3 l = tb_mulp(ib, p); float rr = sqrtf(l.x * l.x + l.z * l.z);
+    if (l.y < -r || l.y > 440.0f + r || rr < 739.0f - r || rr > 800.0f + r) return -1;
+    int k = (int)floorf(fmodf(atan2f(l.x, l.z) * 57.29578f + 22.5f + 720.0f, 360.0f) / 45.0f) & 7;
+    if (tb.wp_nrv[k] != 2 && tb.wp_nrv[k] != 3) return -1; /* (Break: invalidateCollisionParts; Repair: validated) */
+    if (brk && tb.wp_nrv[k] == 3) { tb.wp_nrv[k] = 4; tb.wp_st[k] = -1; printf("tripod boss: guard wall part %d breaks\n", k); } /* sendMsgEnemyAttackExplosion: requestBreak (Active) */
+    return k;
+}
+static void tb_wall_push(void) /* the parts' collision against Mario: out of the band to its nearer side */
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    if (tb_wall_part(c, HIT_BODY_R, 0) < 0) return;
+    float ib[16]; tb_inv(ib, tb.wall_m);
+    V3 l = tb_mulp(ib, mario->pos); float rr = sqrtf(l.x * l.x + l.z * l.z);
+    if (rr < 1e-3f) return;
+    float to = rr > 769.5f ? 800.0f + HIT_BODY_R : 739.0f - HIT_BODY_R;
+    l.x *= to / rr; l.z *= to / rr;
+    mario->pos = tb_mulp(tb.wall_m, l);
+}
 static void tbk_killer(TbCannon *c) /* HomingKiller: Appear, Move (straight), Chase, Break (game.c update_killers' rules, its defaults) */
 {
     Killer *k = &c->k;
@@ -687,10 +720,14 @@ static void tbk_killer(TbCannon *c) /* HomingKiller: Appear, Move (straight), Ch
         V3 lvl = vnorm(vtangent(k->front, g));
         if (vlen(lvl) > 0.5f) k->front = turn_to(k->front, lvl, 0.9995f);
         if (t > 600) brk = 1;
-        if (t >= 35 && c->chase && d < 2000.0f && d > 0 && vdot(vmul(to, 1.0f / d), k->front) > 0.0f) { c->kph = 3; se_start(SE_EM_KILLER_JET, &k->pos.x); }
+        if (t >= 35 && c->chase && d < 2000.0f && d > 0 && vdot(vmul(to, 1.0f / d), k->front) > -1.0f) /* initWithoutIter: cChaseStartAngle 360 */ { c->kph = 3; se_start(SE_EM_KILLER_JET, &k->pos.x); }
         k->up = vmul(g, -1.0f);
     } else {
-        V3 tg = killer_target(k, g, 200.0f);
+        V3 tg = killer_target(k, g, 200.0f), ts = v3(0, 0, 0);
+        float tr = 0; /* GoToTarget: a BREAKABLE_CAGE sensor (the shell's killer_terget 900, the core's body 300) in its eye (750) */
+        if (tb.shell >= 0 && tb.sh_nrv == TP_WAIT) { ts = tb_row_world(tb.shell); tr = 900.0f; }
+        else if (tb.core >= 0 && tb.co_nrv == TP_WAIT) { ts = tb_row_world(tb.core); tr = 300.0f; }
+        if (tr > 0 && vlen(vsub(ts, k->pos)) < 750.0f + tr) { V3 tt = vnorm(vsub(ts, k->pos)); if (vdot(tt, tg) <= vdot(tt, k->front)) tg = k->front; } /* isUpdateChaseFrontVec */
         k->front = turn_to(k->front, tg, 1.0f - 3 * 0.0001f);
         killer_rotz(k, tg, g);
         if (d > 3000.0f) brk = 1;
@@ -698,13 +735,17 @@ static void tbk_killer(TbCannon *c) /* HomingKiller: Appear, Move (straight), Ch
     }
     c->lv = se_level(SE_EM_LV_KILLER_FLY, &k->pos.x, c->lv);
     if (!brk) k->pos = vadd(k->pos, vmul(k->front, 12.0f));
-    Hit h[1];
+    Hit h[1]; h[0].inst = -9;
     V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     if (!brk && vlen(vsub(mc, k->pos)) < 70.0f + HIT_BODY_R) { mario_attack(ATK_EXPLOSION, k->pos); brk = 1; }
     if (!brk && (c->kph == 3 || t >= 35)) {
         tb_explosion(k->pos, 70.0f); /* attackSensor: the parts' sensors it touches (sendMsgEnemyAttackExplosion) */
         if (!c->kph) return;
-        if (kcl_query(k->pos, 70.0f, h, 1)) brk = 1;
+        if (kcl_query(k->pos, 70.0f, h, 1)) { /* tryBindedBreak: the core's collision gets the explosion */
+            brk = 1;
+            if (tb.core >= 0 && tb.co_nrv == TP_WAIT && h[0].inst >= 0 && insts[h[0].inst].row == tb.core) { tb.co_nrv = TP_BREAK; tb.co_st = -1; }
+        }
+        if (!brk && tb_wall_part(k->pos, 70.0f, 1) >= 0) brk = 1;
     }
     if (brk) {
         float m[16];
@@ -769,8 +810,6 @@ static void tb_explosion(V3 p, float r)
 {
     if (tb.shell >= 0 && tb.sh_nrv == TP_WAIT && vlen(vsub(p, tb_row_world(tb.shell))) < 900.0f + r) { tb.sh_nrv = TP_BREAK; tb.sh_st = -1; } /* killer_terget */
     if (tb.core >= 0 && tb.co_nrv == TP_WAIT && vlen(vsub(p, tb_row_world(tb.core))) < 300.0f + r) { tb.co_nrv = TP_BREAK; tb.co_st = -1; } /* body (ATYPE_BREAKABLE_CAGE) */
-    if (tb.wall >= 0 && vlen(vsub(p, tb_col(tb.wall_m, 3))) < 1000.0f + r)
-        for (int k = 0; k < 8; k++) if (tb.wp_nrv[k] == 3) { tb.wp_nrv[k] = 4; tb.wp_st[k] = -1; } /* requestBreak (Active) */
     for (int i = 0; i < tb.ncan; i++) if (vlen(vsub(p, tbk_pos(&tb.can[i]))) < r) tbk_request_break(&tb.can[i]);
 }
 static void tb_update_shell_core(void)
@@ -900,7 +939,8 @@ static void update_tb(void)
         tb_tr(lm, row_pos(w), rot);
         if (b >= 0) tb_mul(tb.wall_m, tb.att[b], lm); else memcpy(tb.wall_m, lm, 64);
     }
-    for (int i = 0; i < ninsts; i++) { int b = tb_inst_bone(&insts[i]); if (b >= 0 && tb.rpart[insts[i].row]) tb_place_inst(&insts[i], b); }
+    for (int i = 0; i < ninsts; i++) { int b = tb_inst_bone(&insts[i]); if (b >= 0 && tb.rpart[insts[i].row]) tb_place_inst(&insts[i], b, 1); }
+    tb_wall_push();
     tb_followers();
     for (int i = 0; i < tb.ncan; i++) if (tb.can[i].nrv != TBK_DEAD) tbk_update(&tb.can[i]);
     tb_update_shell_core();
@@ -1068,7 +1108,7 @@ int game_test_tb(int frame)
         return 0;
     }
     if (tb.nrv == TB_WAIT || tb.nrv == TB_STEP || tb.nrv == TB_WAITSTEP || tb.nrv == TB_CHANGESEQ) {
-        static int put = 0, w0 = -1;
+        static int put = 0, w0 = -1, ttop = -1;
         if (w0 < 0 && tb.st >= 5) w0 = frame;
         if (w0 < 0) return tb.nrv;
         if (frame - w0 >= 60 && frame - w0 < 300) { /* (a look at the whole boss from afar) */
@@ -1077,21 +1117,74 @@ int game_test_tb(int frame)
         }
         if (frame - w0 == 300) camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45);
         if (!put && frame - w0 >= 300 && tb.shell >= 0) { /* onto the body, 1500 off the shell: the cannons' killers chase him over it */
-            V3 up = vnorm(tb_col(tb.body, 1)), cp = tb_mulp(tb.body, v3(0, 3300, 1500));
+            /* the body's top is the disk gravity of the highest priority (1010, radius 1000, range 4000) on its bone:
+             * dropped 600 over it, 1400 out towards an under cannon (within its 1200) */
+            int top = -1;
+            for (int k = 0; k < tb.ngf; k++) if (grav[tb.gidx[k]].kind == GRAV_DISK && (top < 0 || grav[tb.gidx[k]].priority > grav[tb.gidx[top]].priority)) top = k;
+            const Gravity *tg = &grav[tb.gidx[top < 0 ? 0 : top]]; ttop = tb.gidx[top < 0 ? 0 : top];
+            V3 dc = v3(tg->m[3][0], tg->m[3][1], tg->m[3][2]), up = vnorm(v3(tg->m[1][0], tg->m[1][1], tg->m[1][2])), cp = dc;
             for (int i = 0; i < tb.ncan; i++) if (tb.can[i].label == 0 && !tb.can[i].single && tb.can[i].coll) { cp = tbk_pos(&tb.can[i]); break; } /* by an under cannon */
-            float ib[16]; tb_inv(ib, tb.body);
-            V3 lc = tb_mulp(ib, cp); /* over the cannon, on the body's top (dropped from 3300 up) */
-            printf("tb test: under cannon at %.0f %.0f %.0f on the body\n", lc.x, lc.y, lc.z);
-            mario->pos = tb_mulp(tb.body, v3(lc.x * 0.8f, lc.y + 900.0f, lc.z * 0.8f)); mario->up = up; mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            V3 rad = vsub(cp, dc); rad = vsub(rad, vmul(up, vdot(rad, up)));
+            mario->pos = vadd(dc, vadd(vmul(up, 600.0f), vmul(vnorm(rad), 1400.0f))); mario->up = up; mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            printf("tb test: top disk %.0f %.0f %.0f, under cannon %.0f off\n", dc.x, dc.y, dc.z, vlen(vsub(cp, mario->pos)));
             int ty = scene_type(sc, "TripodBossUnderKillerCannon");
             for (u32 i = 0; ty >= 0 && i < sc->nobjs; i++) if ((int)sc->objs[i].type == ty && sc->objs[i].sw[SW_APPEAR] >= 0) sw_set(&sc->objs[i], SW_APPEAR, 1);
             put = 1; printf("tb test f %d: Mario on the body %.0f %.0f %.0f\n", frame, mario->pos.x, mario->pos.y, mario->pos.z);
         }
-        /* a killer chasing him: Mario steps aside to the shell's / core's far side so it flies into them */
-        for (int i = 0; i < tb.ncan; i++) if (tb.can[i].kph == 3 && frame % 40 == 0 && (tb.shell >= 0 || tb.core >= 0)) {
-            V3 tgt = tb.sh_nrv == TP_WAIT ? tb_row_world(tb.shell) : tb_row_world(tb.core), k = tb.can[i].k.pos, d = vsub(tgt, k);
-            mario->pos = vadd(tgt, vmul(vnorm(d), 1100.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
-            printf("tb test f %d: Mario behind the %s (killer %d)\n", frame, tb.sh_nrv == TP_WAIT ? "shell" : "core", i);
+        if (put && tb.sh_nrv == TP_DEAD && tb.wa_nrv == 3 && tb.core >= 0) {
+            /* the core (test only: the upper cannons' killers dive round the body on its gravities and seldom come
+             * back over the top): an upper cannon's killer set chasing 1400 out from the wall's axis over the top,
+             * aimed through a broken part's gap (else at part 0), Mario on the core's far side, 500 from the axis */
+            static int ck = -1, n;
+            V3 wc = tb_col(tb.wall_m, 3), wn = vnorm(tb_col(tb.wall_m, 1));
+            if (ck >= 0 && tb.can[ck].kph) return tb.nrv;
+            ck = -1;
+            if (n++ % 90) return tb.nrv;
+            int gap = 0;
+            for (int k = 0; k < 8; k++) if (tb.wp_nrv[k] == 4) gap = k;
+            float a = gap * 45.0f * 0.0174533f;
+            V3 out = vnorm(vtangent(vsub(tb_mulp(tb.wall_m, v3(sinf(a), 0, cosf(a))), wc), wn));
+            for (int i = 0; ck < 0 && i < tb.ncan; i++) {
+                TbCannon *c = &tb.can[i];
+                if (!c->label || c->kph || c->nrv != TBK_READY) continue;
+                c->kph = 3; c->kt = 40; c->k.pos = vadd(wc, vadd(vmul(wn, 350.0f), vmul(out, 1400.0f)));
+                c->k.front = vmul(out, -1.0f); c->k.up = wn; c->k.rotz = 0; tbk_set(c, TBK_SHOOT); ck = i;
+            }
+            if (ck < 0) return tb.nrv;
+            mario->pos = vadd(wc, vadd(vmul(wn, 300.0f), vmul(out, -500.0f))); mario->up = up_at(mario->pos, mario->up); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            printf("tb test f %d: killer %d at part %d's side, Mario behind the core\n", frame, ck, gap);
+            return tb.nrv;
+        }
+        /* none flying: Mario is put on the dome by the nearest ready under (upper, after the damage demo) cannon */
+        int fly = 0, nc = -1; float nd = 1e9f;
+        static int tick; tick++;
+        for (int i = 0; i < tb.ncan; i++) if (tb.can[i].kph && tb.can[i].coll) fly = 1;
+        for (int i = 0; put && !fly && tick % 120 == 0 && i < tb.ncan; i++) {
+            const TbCannon *c = &tb.can[i]; const Row *cr = &sc->objs[c->row];
+            if (c->single || !c->coll || c->nrv != TBK_READY || (cr->sw[SW_APPEAR] >= 0 && !sw_on(cr, SW_APPEAR))) continue;
+            float d = vlen(vsub(mario->pos, tbk_pos(c))); if (d < nd) { nd = d; nc = i; }
+        }
+        if (nc >= 0 && nd > 1100.0f) {
+            V3 cp = tbk_pos(&tb.can[nc]); /* out along its front and up the body: the disk gravity drops him on the dome by it */
+            mario->pos = vadd(cp, vadd(vmul(vnorm(tb_col(tb.can[nc].m, 2)), 400.0f), vmul(vnorm(tb_col(tb.body, 1)), 500.0f))); mario->up = up_at(mario->pos, mario->up); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            printf("tb test f %d: Mario by cannon %d (label %d)\n", frame, nc, tb.can[nc].label);
+        }
+        /* a killer out: Mario waits on its side of the shell (core), then steps to the far side as it nears him, so it
+         * flies into the shell (core) after him */
+        static char side[TB_CANNONS];
+        for (int i = 0; ttop >= 0 && i < tb.ncan; i++) {
+            TbCannon *c = &tb.can[i];
+            if (!c->kph || !c->coll) { side[i] = 0; continue; }
+            const Gravity *tg = &grav[ttop]; /* (on the top, 1100 out from its centre) */
+            V3 dc = v3(tg->m[3][0], tg->m[3][1], tg->m[3][2]), n = vnorm(v3(tg->m[1][0], tg->m[1][1], tg->m[1][2])), k = c->k.pos;
+            V3 out = vsub(k, dc); out = vnorm(vsub(out, vmul(n, vdot(out, n))));
+            if (c->kph == 2 && side[i] == 0) {
+                mario->pos = vadd(dc, vadd(vmul(n, 300.0f), vmul(out, c->label ? -500.0f : 1100.0f))); side[i] = c->label ? 2 : 1; /* an upper cannon's: past the core */
+            } else if (c->kph == 3 && side[i] == 1 && vlen(vsub(mario->pos, k)) < 700.0f) {
+                mario->pos = vadd(dc, vadd(vmul(n, 300.0f), vmul(out, -1100.0f))); side[i] = 2;
+            } else continue;
+            mario->up = up_at(mario->pos, mario->up); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            printf("tb test f %d: Mario %s the %s (killer %d)\n", frame, side[i] == 1 ? "before" : "behind", tb.sh_nrv == TP_WAIT ? "shell" : "core", i);
         }
     }
     return tb.nrv;
