@@ -1015,6 +1015,10 @@ there needs the embedded blob and every pack rebuilt.
   XF=-DMK_TEST, IceVolcanoGalaxy/1: opening demo, three spin storms / spins while it rolls, both angry demos, death
   demo, `power star 1 got`. ponytail: SE_DM_LV_MUTE_BGM's BGM mute, BodyIceOff's particle callback, its BRKs; its
   children are still the improvised Meramera walker (Meramera.cpp, 1765 lines, not ported).
+- FallingSmallRock (feat/306-falling-small-rock, 2026-11-06): MapObj/FallingSmallRock.cpp in game.c update_fsrock
+  (HellProminenceGalaxy 1 / 4): Wait for SW_A, Move (its FallingSmallRock effect, SE_AT_LV_FALLING_ROCK) until its
+  binder (10 at 800 up) touches the map. Rows kept by slice.py LOGIC, its effect by jpa.py NAMED. Test: plain build
+  XF=-DFSROCK_TEST HellProminenceGalaxy/1 (SW_A on at frame 300: 13 move, one bound and dead).
 
 ## Next
 
