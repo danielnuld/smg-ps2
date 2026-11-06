@@ -1541,6 +1541,12 @@ int game_test_kp(int frame)
         }
         return 3;
     }
+    if (nv_is(&kp.seq, KQ_BATTLE) && (nv_is(&kp.main, KBM_WANDER) || nv_is(&kp.main, KBM_SEARCH))) { /* in its sight, 900 ahead on the planet */
+        V3 d = vnorm(vsub(vadd(kp.b.pos, vmul(kp.b.front, 900.0f)), kp_pc)), pp = vadd(kp_pc, vmul(d, 1320.0f));
+        mario->pos = pp; mario->up = d; mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        last = frame; printf("kp test f %d: before it\n", frame);
+        return 7;
+    }
     if (de && (nv_is(dn, KD_ESCAPERUN) || nv_is(dn, KD_ESCAPEFIND) || nv_is(dn, KD_ESCAPEEND))) { /* at its tail, a spin */
         V3 t = kp_sc(KS_RECEIVERTAIL), h = vtangent(vsub(t, kp.b.pos), up);
         h = vlen(h) > 1e-3f ? vnorm(h) : vmul(kp.b.front, -1.0f);
