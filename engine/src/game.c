@@ -25801,7 +25801,7 @@ static void jelec_update(Kuribo *k)
             else if (k->phase && strcmp(k->act, "DangerWait")) w_act(k, "DangerWait"); /* (startBas DangerBrk) */
         }
         if (k->nrv != JE_WAIT) /* waitTurn: rotateVecDegree about -gravity, Left +1 */
-            k->front = rot_axis(k->front, vnorm(k->grav), (k->nrv == JE_WAITR ? 0.2f : -0.2f) * (1.0f - st / 280.0f) * 0.0174533f);
+            k->front = rot_axis(k->front, vnorm(vmul(k->grav, -1.0f)), (k->nrv == JE_WAITL ? 0.2f : -0.2f) * (1.0f - st / 280.0f) * 0.0174533f);
         if (st == 280) { /* selectNerveAfterWait */
             int v = k->nrv == JE_WAIT ? rand() % 3 : 0;
             w_nrv(k, v == 0 ? JE_WAIT : v == 1 ? JE_WAITR : JE_WAITL);
@@ -25878,6 +25878,7 @@ static void jelec_update(Kuribo *k)
         w_nrv(k, JE_ATTACK);
         printf("jelec row %d shocks Mario\n", k->row);
     }
+    if (touch) mario_push_out(body, 350.0f); /* tryToAttackElectric: sendMsgPush */
 }
 
 /* Kanina.cpp after Petari (Kanina blue: a 1-up; KaninaRed: three star pieces). Appears (Appear) with its switch, Waits
@@ -50742,6 +50743,7 @@ void game_test_tower(unsigned frame)
 void game_test_ermv(unsigned frame)
 {
     if (!nermv || frame < 150) return;
+    game_test_unclip();
     const ERMove *m = &ermv[0];
     V3 p = ermv_pos(m, 0), up = up_at(p, mario->up);
     mario->up = up; mario->pos = vsub(p, vmul(up, HIT_BODY_H)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
@@ -50752,12 +50754,17 @@ void game_test_ermv(unsigned frame)
 void game_test_jelec(unsigned frame)
 {
     static int row = -1;
+    if (frame == 150) game_test_unclip();
     if (frame == 150) printf("jelec test: row %d\n", row = game_test_walker("JellyfishElectric", 0));
     for (int i = 0; i < nkuribo && row >= 0; i++) {
         Kuribo *e = &kuribo[i];
         if (e->row != row || e->state == KURIBO_DEAD) continue;
-        if (frame == 400 || frame == 700) { mario->pos = vadd(e->pos, vmul(e->up, 2000.0f)); je_knock(e); printf("jelec test f %u: knockOut, nerve %d\n", frame, e->nrv); }
-        if (frame % 30 == 0 && frame > 150) printf("jelec test f %u: nerve %d act %s danger %d\n", frame, e->nrv, e->act, e->phase);
+        static unsigned f0;
+        if (frame % 60 == 0) printf("jelec test f %u: zone %d ground %d clipped %d at %.0f %.0f %.0f mario %.0f %.0f %.0f" "%c", frame, sc->objs[e->row].zone, w_zone_ground(e), e->clipped, e->pos.x, e->pos.y, e->pos.z, mario->pos.x, mario->pos.y, mario->pos.z, 10);
+        if (!f0 && e->act[0]) { f0 = frame; printf("jelec test f %u: it moves" "%c", frame, 10); }
+        if (f0 && frame < f0 + 200 && frame % 40 == 0) { game_test_walker("JellyfishElectric", 0); mario->pos = vadd(e->pos, vmul(vnorm(vsub(mario->pos, e->pos)), 300.0f)); } /* by it again, 300 off */
+        if (f0 && (frame == f0 + 300 || frame == f0 + 600)) { mario->pos = vadd(e->pos, vmul(e->up, 2000.0f)); je_knock(e); printf("jelec test f %u: knockOut, nerve %d\n", frame, e->nrv); }
+        if (frame % 15 == 0 && f0) printf("jelec test f %u: nerve %d act %s danger %d\n", frame, e->nrv, e->act, e->phase);
     }
 }
 #ifdef ICE_TEST
