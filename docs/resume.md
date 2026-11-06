@@ -1001,6 +1001,12 @@ there needs the embedded blob and every pack rebuilt.
   Test: koopa-b.sh KoopaBattleVs3Galaxy/1 "" 3 (KP_TEST: the keepers' appear switches, its SW_A 240 frames into the
   stairs, a face spin in Lv1, a blow in Lv2, then as Vs1). Packs: slice.py EXTRA KoopaVs3, SKINNED_OBJ the rock / ball /
   casts. ponytail: KoopaRestarterVs3, the demo meteors, the parts' FixPos, Mario's demo clips, the planets' BRKs.
+  **WIP (2026-11-06 05:55, PR #327 draft):** seen in PCSX2: the stairs battle passed by its SW_A, クッパＶｓ３本戦開始,
+  the jump, Lv1 (ChaseRoll, face spins break the rock, DamageReverse, body spins, Recover, the second round), the fall
+  demo to Lv2, Lv2's first blow (AttackRollReceiver) and body spin; then the run ended in JumpAway with a save-and-quit
+  window on screen (Mario's miss? unchecked). Not yet seen: Lv2's end, the fall into the sun, Lv3 / Final, the down demo
+  and the grand star. Open: KoopaBattleMapStair registers 0 stairs (no kstair insts in reach), the keepers' switches
+  take long to apply in WaitPlayer (thousands of frames in one run), the three placed KoopaBattleMapPlanet rows.
   Note: Petari's createPlate keys the damage-plates-only planet on _DD (Vs3 Lv3: true); Vs2 is made with _DC only
   (all 14 plates, grand star plate 1 at step 90), the port's Vs2 keeps damage plates only: to check.
 - BossKameck (feat/kameck, 2026-11-05): Kamella after Petari (game.c bk_*, its sequencer Vs1 / Vs2, BattleDemo,
