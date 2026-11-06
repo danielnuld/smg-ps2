@@ -375,6 +375,8 @@ static V3 star_pos(const Inst *in, int *state);
 static V3 tb_unfollow(const Row *r, V3 p); /* TripodBoss (tripod_boss.inc): an area following its joints */
 static int tb_hidden(int row), tb_demo(void);
 static void tb_init(const Scene *s, const unsigned char *blob), update_tb(void), tb_draw(void);
+static void dd_init(const Scene *s, const unsigned char *blob), update_dd(void), dd_draw(void); /* Dodoryu (dodoryu.inc) */
+static int dd_shot(V3 at);
 static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle);
 static void dome_init(void);
 /* slice.py BRK_ARG: a class whose colour is its BRK stopped at the frame one of its args gives (setBrkFrameAndStop) draws
@@ -2471,6 +2473,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         }
     bk_init(s, blob);
     tb_init(s, blob);
+    dd_init(s, blob);
     gh_reset(); /* GhostPlayer: init at its first update */
     for (u32 i = 0; i < s->nobjs; i++)
         if (strcmp(s->types + 32 * s->objs[i].type, "OtaKing") == 0) {
@@ -5188,7 +5191,7 @@ static void game_rebind_(void)
     int t_note = scene_type(s, "NoteFairy"), t_petari = scene_type(s, "Petari"), t_rockc = scene_type(s, "RockCreator"),
         t_wan = scene_type(s, "WanwanRolling"), t_wanm = scene_type(s, "WanwanRollingMini"),
         t_wang = scene_type(s, "WanwanRollingGold"), t_dino = scene_type(s, "DinoPackun"), t_ota = scene_type(s, "OtaKing"), t_bsb = scene_type(s, "BossStinkBug"),
-        t_bk1 = scene_type(s, "BossKameck"), t_bk2 = scene_type(s, "BossKameck2"), t_tsp = scene_type(s, "TombSpider");
+        t_bk1 = scene_type(s, "BossKameck"), t_bk2 = scene_type(s, "BossKameck2"), t_tsp = scene_type(s, "TombSpider"), t_dodo = scene_type(s, "Dodoryu");
     static signed char wnk[1024]; /* walker_new_kind by type this rebind: 0 not yet, 1 no, 2 yes */
     static const Model *bloom_of[1024]; /* "<class>Bloom" by type this rebind (snprintf + lookup an object) */
     static unsigned char bloom_ok[1024];
@@ -5202,7 +5205,7 @@ static void game_rebind_(void)
             r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly ||
             r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_ermv || r->type == t_stink || r->type == t_note ||
             r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == t_petari || r->type == t_rockc || r->type == t_wan ||
-            r->type == t_wanm || r->type == t_wang || r->type == t_dino || r->type == t_ota || r->type == t_bsb || r->type == t_bk1 || r->type == t_bk2 || r->type == t_tsp ||
+            r->type == t_wanm || r->type == t_wang || r->type == t_dino || r->type == t_ota || r->type == t_bsb || r->type == t_bk1 || r->type == t_bk2 || r->type == t_tsp || r->type == t_dodo ||
             (r->type < 1024 ? wnk[r->type] == 2 : walker_new_kind(s->types + 32 * r->type) >= 0))
             continue;
         const char *name = s->types + 32 * r->type;
@@ -40589,6 +40592,7 @@ static void update_shots(void)
         if (!hit && hhp_reflects(s->pos, 30.0f)) hit = 2; /* HammerHeadPackun: isMsgStarPieceReflect */
         if (!hit && butler_shot(s->pos)) hit = 1;
         if (!hit && hana_shot(s->pos)) hit = 1;
+        if (!hit && dd_shot(s->pos)) hit = 1;          /* Dodoryu, its hill */
         if (!hit && bsb_shot(s->pos)) hit = 1; /* BossStinkBugBomb */
         if (!hit && km_shot(s->pos)) hit = 1; /* KameckFireBall */
         if (!hit && bgb_shot(s->pos)) hit = 2; /* BigBubble: isMsgStarPieceReflect */
@@ -49072,6 +49076,7 @@ int game_test_bk(int frame)
 }
 
 #include "tripod_boss.inc" /* TripodBoss (Megaleg): tb_*, game_test_tb */
+#include "dodoryu.inc" /* Dodoryu (Major Burrows): dd_*, game_test_dd */
 /* Test builds: Mario in the boss's SwitchCylinder until it starts, then dropped in a hip drop on its BodyHipDrop part
  * whenever a hit is open; game_bsb_state: sequencer x 100 + nerve */
 int game_test_bsb(void)
@@ -50725,6 +50730,7 @@ void game_update(void)
     update_bsb();
     update_bk();
     update_tb();
+    update_dd();
     if (!demo_on) update_km_beams(); /* (the Kameck beams, fire balls, turtles: stopped in a demo) */
     update_tsp();
     if (star_demo) { /* its camera ("powerstar/powerstarget"); Mario plays PowerStarGet meanwhile */
@@ -52080,6 +52086,7 @@ void game_draw(void)
     bsb_draw();
     bk_draw();
     tb_draw();
+    dd_draw();
     km_draw();
     tsp_draw();
     if (ota.row >= 0 && ota.nrv != OTA_WAITONSWITCH && ota.nrv != OTA_APPEARSTAR && ota.nrv != OTA_DEAD) { /* OtaKing, its feet */
