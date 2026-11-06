@@ -1015,6 +1015,10 @@ there needs the embedded blob and every pack rebuilt.
   XF=-DMK_TEST, IceVolcanoGalaxy/1: opening demo, three spin storms / spins while it rolls, both angry demos, death
   demo, `power star 1 got`. ponytail: SE_DM_LV_MUTE_BGM's BGM mute, BodyIceOff's particle callback, its BRKs; its
   children are still the improvised Meramera walker (Meramera.cpp, 1765 lines, not ported).
+- SubmarineSteam / SubmarineVolcano (feat/307-submarine-steam, 2026-11-06): MapObj/SubmarineSteam.cpp (both names one
+  class, the effect group its name) in game.c update_msteam: Steam (SE_OJ_LV_MARINE_STEAM_OUT, _S in SkullSharkGalaxy)
+  or WaitForSwitchOn; its strong hit (sphere 120 at 600, cylinder 480, Mario's radius x 0.7 + 20). slice.py LOGIC,
+  jpa.py NAMED. Test: plain build XF=-DMSTEAM_TEST SkullSharkGalaxy/1 (both hit Mario). ponytail: group clipping.
 
 ## Next
 
