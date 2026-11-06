@@ -726,7 +726,12 @@ static int m_carry_jet(void) { return (jet.inst >= 0 && jet.phase == 1) || kmj_c
 static struct { int inst, phase, t, spins; } flf = {.inst = -1}; /* the Fluff Mario rides (fluff_update) */
 static struct { int inst, phase, t, wait; V3 vel; } coc = {.inst = -1, .wait = -1}; /* SpaceCocoon Mario hangs on (cocoon_update) */
 static int sls_pad = -1;  /* the SpiderAttachPoint (SlingShooter) in its pointer command stream (mPadChannel 0), -1 none */
+static int bgb_gen_type = -1; /* BigBubbleGenerator: shown before its SW_APPEAR (only its activity listens to it) */
 static int sls_ride = -1; /* the SpiderAttachPoint Mario is bound to (its mRider), -1 none */
+static int bgb_ride = -1; /* the BigBubble holding Mario (its mRider), -1 none (bb_*) */
+static int bgb_try(Player *m);
+static void bgb_init(void);
+static int bgb_hold(Player *m);
 static int sls_try(Player *m), sls_hold(Player *m);
 typedef struct { V3 pos, vel; int t, col; } Shot; /* star pieces shot at the pointer (update_shots); col: piece_col */
 #define MAX_SHOTS 8
@@ -1171,7 +1176,7 @@ static int row_shown(int i)
 #endif
     /* SleepControlFunc: SW_SLEEP off makes it dead, on appeared (TicoFat's planet) */
     if (tb_hidden(i)) return 0; /* TripodBoss parts: hideTripodBossParts */
-    return !row_dead[i] && !row_demo_hide[i] && (r->sw[SW_APPEAR] < 0 || sw_on(r, SW_APPEAR)) && (r->sw[SW_SLEEP] < 0 || sw_on(r, SW_SLEEP));
+    return !row_dead[i] && !row_demo_hide[i] && (r->sw[SW_APPEAR] < 0 || sw_on(r, SW_APPEAR) || (int)r->type == bgb_gen_type) && (r->sw[SW_SLEEP] < 0 || sw_on(r, SW_SLEEP));
 }
 
 /* The row's object is gone for good: its dead switch goes on */
@@ -2872,6 +2877,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     printf("game: %d static instances, coins %d, purple %d, star pieces %d, kuribo %d, start (%d %d %d)\n", ninsts,
            ncoins, npurple, npieces, nkuribo, (int)start_pos.x, (int)start_pos.y, (int)start_pos.z);
     os_init();
+    bgb_init();
     { /* GameDataHolder: this galaxy's scenario visited (setAlreadyVisitedStage) */
         char gal[48];
         const char *sl = strchr(game_stage_name, '/');
@@ -20579,6 +20585,12 @@ static void update_mario_(void)
             return;
         }
     }
+    if (bgb_ride >= 0 || (warp.from < 0 && jb.inst < 0 && coc.inst < 0 && bgb_try(m))) { /* in a BigBubble (ACTMES_AUTORUSH_BEGIN) */
+        if (bgb_hold(m)) {
+            if (mario_anim) anim_update(mario_anim);
+            return;
+        }
+    }
     if (coc.inst >= 0 || (warp.from < 0 && jb.inst < 0 && cocoon_try(m))) {
         if (coc.inst >= 0 && cocoon_update(m)) {
             if (mario_anim) anim_update(mario_anim);
@@ -37122,6 +37134,764 @@ static void update_collapse(void)
     }
 }
 
+static V3 bigfan_wind(V3 p, float *speed);
+/* BigBubble.cpp / BigBubbleGenerator.cpp / BigBubbleHolder.cpp / BigBubbleMoveLimitter.cpp / BigBubbleDrawer.cpp /
+ * OctahedronBezierSurface.cpp / BezierSurface.cpp after Petari. The holder's 16 bubbles (オオアワ[共有]): a generator
+ * (arg0 its interval, -1 one at a time kept still at it until Mario takes it; arg1 / arg2 its volume's min / max in
+ * hundredths; arg3 its limitter, arg4 the shape) active by its SW_APPEAR (listenStageSwitchOnOffAppear) or Mario
+ * within 1500 (off past 2000) blows one 60 up its Y: Appear (30 frames grown from 0.01 to the cube root of the volume,
+ * rising its radius) -> Wait (a Coriolis drift 0.1 x scale turning 3 degrees a frame, buoyancy 0.03 x scale, friction
+ * 0.992, BigFan winds 0.25, a bounce off the map; the timed ones break after 1200). Mario touching its bind sensor
+ * (AUTORUSH_BEGIN) -> Capture: he is eased to its centre over 30 frames (SpaceWait), the pointer's A off the bubble
+ * (50..1000 from it at its depth) blows it away from the pointer (1 near .. 0 far, PushWind, the wind SE), a pointer
+ * stroke over it spins it (0.03 of the stroke, 0.2 at most); Z escapes (SwimDive, 30 frames, then thrown 30 along
+ * gravity), the limitter's edge / a fire floor / an electric rail / a SpaceMine breaks it (Mario thrown at its speed,
+ * or hurt). Bubbles touching push apart (0.18) and the bigger one (or Mario's) swallows the other (Merged 45 frames
+ * on its nearest face, then its volume added, 5 at most). The shape: OctahedronBezierSurface's 8 triangle patches on
+ * its 6 face points (each eased by its deformation speeds: pressure 10, rebound 0.02, damped 0.93), drawn with the
+ * BezierSurface tables (bezier_tab.h) at the divide level of its screen radius. ponytail: one texture a GS pass (the
+ * env map pass, then the rainbow added at the env map's mean alpha: tools/jpa.py), no isPressedMovingWall, no ground
+ * water, no other enemies' attacks, no BigBubbleGoalArea / SwitchArea (none placed), no shadow, no Generate BCK, no
+ * pointer nozzle aim, Mario's jump lock of endBindAndPlayerJump (30) not kept */
+#include "bezier_tab.h"
+#define BGB_MAX 16
+#define BGB_GENS 16
+#define BGB_LIMS 8
+enum { BGB_DEAD, BGB_APPEAR, BGB_WAIT, BGB_CAPTURE, BGB_BREAK, BGB_ESCAPE, BGB_GOAL, BGB_MERGED };
+enum { BGS_TOP, BGS_RIGHT, BGS_BACK, BGS_LEFT, BGS_FRONT, BGS_BOTTOM }; /* Side */
+typedef struct {
+    int nrv, step, host, shape, lim, obstruct, attached, hidden, broken, exit_lim, merge_with, merge_idx, merges[6], fire;
+    V3 pos, vel, grav, spawn, moment, cori, ptr, fix, rbase, rpos, vtx[6];
+    Quat q, rq;
+    float coef[6], speed[6], scale, appear_r, volume, bind_r, binder, interp, z;
+    u32 lv;
+} BBubble;
+static BBubble bgbs[BGB_MAX];
+static struct { int row, active, step, bubble; V3 pos, up; } bgbg[BGB_GENS];
+static struct { int id, cyl, margin; V3 pos, axis, side, up, front; float rad, h, w, ph; } bgbl[BGB_LIMS];
+static int nbgbg, nbgbl, bgb_mine_type = -1;
+static float bgb_cur_px, bgb_cur_py; /* the pointer last frame (StarPointerController mScreenVel) */
+static u32 bgb_wind_lv;
+static int bgb_test_z; /* test builds: Z */
+
+static float bgb_base(const BBubble *b) { return b->shape == 0 ? 180.0f : b->shape == 1 ? 120.0f : 150.0f; } /* getBaseRadius */
+static float bgb_size(const BBubble *b) { return bgb_base(b) * b->scale; }
+static int bgb_in_exe; /* Spine::setNerve inside an exe: step -1, the update's ++ makes it 0 */
+static void bgb_nrv(BBubble *b, int n) { b->nrv = n; b->step = bgb_in_exe ? -1 : 0; }
+static V3 bgb_rand(float r) { return v3(frand(-r, r), frand(-r, r), frand(-r, r)); } /* getRandomVector */
+static void bgb_set_scale(BBubble *b, float s) /* setScale: the sensors' radius base x s, the binder 0.9 (0.95 its aim) */
+{
+    b->scale = s;
+    b->bind_r = bgb_base(b) * s * 0.95f;
+    b->binder = bgb_base(b) * s * 0.9f;
+}
+static int bgb_limit_pos(int l, V3 *p, float off) /* BigBubbleMoveLimitter::limitPosition: 1 clamped */
+{
+    if (l < 0) return 0;
+    int lim = 0;
+    off = bgbl[l].margin == 0 ? off : bgbl[l].margin == 1 ? -off : 0.0f; /* getLimitterOffset: Outside, Inside, Center */
+    if (bgbl[l].cyl) {
+        V3 d = vsub(*p, bgbl[l].pos);
+        float proj = vdot(d, bgbl[l].axis);
+        V3 o = vsub(d, vmul(bgbl[l].axis, proj));
+        o = vlen(o) > 1e-6f ? vnorm(o) : v3(0, 0, 0);
+        if (proj < 0.0f) { proj = 0.0f; lim = 1; }
+        if (proj > bgbl[l].h) { proj = bgbl[l].h; lim = 1; }
+        *p = vadd(bgbl[l].pos, vadd(vmul(bgbl[l].axis, proj), vmul(o, bgbl[l].rad + off)));
+        return lim;
+    }
+    V3 d = vsub(*p, bgbl[l].pos);
+    d = vadd(vsub(d, vmul(bgbl[l].front, vdot(d, bgbl[l].front))), vmul(bgbl[l].front, off));
+    float x = vdot(d, bgbl[l].side), y;
+    if (x < -bgbl[l].w) { d = vadd(d, vmul(bgbl[l].side, -bgbl[l].w - x)); lim = 1; }
+    else if (x > bgbl[l].w) { d = vadd(d, vmul(bgbl[l].side, bgbl[l].w - x)); lim = 1; }
+    y = vdot(d, bgbl[l].up);
+    if (y < 0.0f) { d = vadd(d, vmul(bgbl[l].up, -y)); lim = 1; }
+    else if (y > bgbl[l].ph) { d = vadd(d, vmul(bgbl[l].up, bgbl[l].ph - y)); lim = 1; }
+    *p = vadd(bgbl[l].pos, d);
+    return lim;
+}
+static void bgb_axes(const BBubble *b, V3 *x, V3 *y, V3 *z) { q_axes(b->q, x, y, z); } /* mBaseMtx's X / Y / Z */
+static void bgb_deform(BBubble *b, V3 d, int rev) /* addDeformVelocityOuter */
+{
+    V3 x, y, z;
+    bgb_axes(b, &x, &y, &z);
+    float ps = vdot(d, x), pu = vdot(d, y), pf = vdot(d, z), k = 0.8f; /* sAccelDeformPower */
+    if (!rev) {
+        if (ps < 0.0f) b->speed[BGS_RIGHT] += ps * k; else b->speed[BGS_LEFT] -= ps * k;
+        if (pu < 0.0f) b->speed[BGS_TOP] += pu * k; else b->speed[BGS_BOTTOM] -= pu * k;
+        if (pf < 0.0f) b->speed[BGS_FRONT] += pf * k; else b->speed[BGS_BACK] -= pf * k;
+    } else {
+        if (ps > 0.0f) b->speed[BGS_RIGHT] += ps * k; else b->speed[BGS_LEFT] -= ps * k;
+        if (pu > 0.0f) b->speed[BGS_TOP] += pu * k; else b->speed[BGS_BOTTOM] -= pu * k;
+        if (pf > 0.0f) b->speed[BGS_FRONT] += pf * k; else b->speed[BGS_BACK] -= pf * k;
+    }
+}
+static void bgb_pressure(BBubble *b) /* addDeformVelocityInternalOressure (its pairs as Petari has them) */
+{
+    float s = bgb_size(b), *c = b->coef;
+    float p = (c[BGS_TOP] + c[BGS_LEFT]) * (c[BGS_BACK] + c[BGS_FRONT]) * (c[BGS_RIGHT] + c[BGS_BOTTOM]) * 0.125f;
+    if (p < 0.0f) p = 0.0f;
+    if (s > 0.01f) for (int k = 0; k < 6; k++) b->speed[k] += (1.0f - p / (s * s * s)) * 10.0f;
+}
+static void bgb_rebound(BBubble *b) { float s = bgb_size(b); for (int k = 0; k < 6; k++) b->speed[k] += (s - b->coef[k]) * 0.02f; }
+static void bgb_deform_step(BBubble *b) /* updateDeformVelocity */
+{
+    for (int k = 0; k < 6; k++) {
+        b->coef[k] += b->speed[k];
+        b->speed[k] *= 0.93f;
+        if (b->coef[k] < 0.0f) b->coef[k] = b->speed[k] = 0.0f;
+    }
+}
+static void bgb_mesh(BBubble *b) /* updateMeshPoint */
+{
+    V3 x, y, z;
+    bgb_axes(b, &x, &y, &z);
+    b->vtx[BGS_TOP] = vadd(b->pos, vmul(y, b->coef[BGS_TOP]));
+    b->vtx[BGS_RIGHT] = vadd(b->pos, vmul(x, b->coef[BGS_RIGHT]));
+    b->vtx[BGS_BACK] = vsub(b->pos, vmul(z, b->coef[BGS_BACK]));
+    b->vtx[BGS_LEFT] = vsub(b->pos, vmul(x, b->coef[BGS_LEFT]));
+    b->vtx[BGS_FRONT] = vadd(b->pos, vmul(z, b->coef[BGS_FRONT]));
+    b->vtx[BGS_BOTTOM] = vsub(b->pos, vmul(y, b->coef[BGS_BOTTOM]));
+}
+static Quat bgb_moment(Quat q, V3 m) /* rotateQuatMoment */
+{
+    float r = vlen(m);
+    return r > 1e-9f ? q_norm(q_mul(q, q_axis(vmul(m, 1.0f / r), r))) : q;
+}
+static Quat bgb_rot_rate(V3 a, V3 b, float t) { return q_slerp(q_ident(), q_between(a, b), t); } /* setRotate(from, to, rate) */
+static V3 bgb_local(const BBubble *b, int i) /* calcLocalDirection */
+{
+    V3 x, y, z;
+    q_axes(b->q, &x, &y, &z);
+    return i == BGS_TOP ? y : i == BGS_RIGHT ? x : i == BGS_BACK ? vmul(z, -1.0f) : i == BGS_LEFT ? vmul(x, -1.0f) : i == BGS_FRONT ? z : vmul(y, -1.0f);
+}
+static int bgb_near_axis(const BBubble *b, V3 p) /* getNearAxisIndex */
+{
+    V3 x, y, z, d = vsub(p, b->pos);
+    q_axes(b->q, &x, &y, &z);
+    float a[3] = {vdot(d, x), vdot(d, y), vdot(d, z)};
+    int k = fabsf(a[0]) >= fabsf(a[1]) ? (fabsf(a[0]) >= fabsf(a[2]) ? 0 : 2) : (fabsf(a[1]) >= fabsf(a[2]) ? 1 : 2);
+    return k == 0 ? (a[0] >= 0.0f ? BGS_RIGHT : BGS_LEFT) : k == 1 ? (a[1] >= 0.0f ? BGS_TOP : BGS_BOTTOM) : (a[2] >= 0.0f ? BGS_FRONT : BGS_BACK);
+}
+static void bgb_normal_vel(BBubble *b) /* updateNormalVelocity */
+{
+    b->vel = vadd(b->vel, vmul(b->grav, -0.03f * b->scale)); /* addVelocityToGravity: sBuoyancyAccel */
+    b->vel = vmul(b->vel, 0.992f);                                /* sNormalFric */
+    float w;
+    V3 wd = bigfan_wind(b->pos, &w);
+    w = w < 0.0f ? 0.0f : w > 0.5f ? 1.0f : w / 0.5f;              /* normalize(sWindMinDistance 0, sWindMaxDistance 0.5) */
+    b->vel = vadd(b->vel, vmul(wd, 0.25f * w));
+    b->moment = vmul(b->moment, 0.99f);                           /* sSpinFreq */
+    if (vlen(b->fix) > 1e-6f) { /* reboundVelocityFromEachCollision(0.1, 0.1, 0.1, 0) */
+        V3 n = vnorm(b->fix);
+        float d = vdot(n, b->vel);
+        if (d < 0.0f) b->vel = vsub(b->vel, vmul(n, d * 1.1f));
+    }
+}
+static void bgb_coriolis(BBubble *b) /* addCoriolisAccel */
+{
+    V3 g = vnorm(b->grav);
+    float c = cosf(3.0f * 0.0174533f), s = sinf(3.0f * 0.0174533f); /* rotateVecDegree(sCorioriRotSpeed) */
+    V3 v = b->cori;
+    v = vadd(vadd(vmul(v, c), vmul(vcross(g, v), s)), vmul(g, vdot(g, v) * (1.0f - c)));
+    v = vsub(v, vmul(g, vdot(v, g)));
+    if (vlen(v) < 1e-6f) v = bgb_rand(1.0f);
+    b->cori = vlen(v) > 1e-6f ? vnorm(v) : v;
+    b->vel = vadd(b->vel, vmul(b->cori, b->scale * 0.1f));
+}
+
+static void bgb_release(int jump, V3 v) /* endBindAndPlayerJump (1) / WeakGravityLimitJump (0) */
+{
+    bgb_ride = -1;
+    mario->up = up_at(mario->pos, mario->up);
+    if (jump) { m_power_jump(mario, v); return; }
+    mario->hvel = vtangent(v, mario->up); mario->vup = vdot(v, mario->up);
+    mario->grounded = 0; mario->jump_kind = 0; mario->air_timer = 0;
+}
+static void bgb_kill(BBubble *b) { b->nrv = BGB_DEAD; if (bgb_ride == (int)(b - bgbs)) bgb_ride = -1; } /* makeActorDead: mRider null */
+static void bgb_fx(const BBubble *b, const char *name, V3 up, V3 at)
+{
+    float m[16];
+    basis_matrix(m, at, vlen(up) > 1e-6f ? vnorm(up) : v3(0, 1, 0), v3(1, 0, 0), 0); /* makeMtxUpNoSupportPos */
+    fx_named("BigBubble", name, m, NULL, NULL);
+    (void)b;
+}
+static void bgb_break_fx(BBubble *b) /* emitEffect Break, its SE */
+{
+    V3 x, y, z;
+    bgb_axes(b, &x, &y, &z);
+    float m[16];
+    basis_matrix(m, b->pos, y, z, 0);
+    fx_named("BigBubble", "Break", m, NULL, NULL);
+    se_start(SE_OJ_BIG_BUBBLE_BREAK, &b->pos.x);
+}
+static int bgb_generate(int g, V3 pos, V3 up, float vol, int obstruct, int action, int shape, int lim) /* generateBigBubble */
+{
+    for (int i = 0; i < BGB_MAX; i++) {
+        BBubble *b = &bgbs[i];
+        if (b->nrv != BGB_DEAD) continue;
+        memset(b, 0, sizeof *b);
+        b->host = g; b->merge_with = -1; b->merge_idx = -1;
+        b->q = b->rq = q_ident();
+        b->shape = shape; /* setShapeType (the diagonal rate: bgb_draw) */
+        b->attached = action != 1; /* setActionType 0: attached, 1 not (both clear mIsShrinkable) */
+        for (int k = 0; k < 6; k++) b->merges[k] = -1;
+        b->pos = pos;
+        b->lim = lim;
+        bgb_limit_pos(lim, &b->pos, bgb_size(b));
+        b->obstruct = obstruct;
+        b->appear_r = cbrtf(vol);
+        bgb_set_scale(b, 0.0f);
+        b->binder = 0.0f;
+        b->volume = vol;
+        bgb_mesh(b);
+        bgb_nrv(b, BGB_APPEAR); /* makeActorAppeared */
+        b->cori = bgb_rand(1.0f);
+        b->grav = vmul(up, -1.0f); /* offCalcGravity, mGravity -up */
+        b->cori = vsub(b->cori, vmul(b->grav, vdot(b->cori, b->grav)));
+        printf("big bubble %d from generator row %d: volume %.2f at %d %d %d\n", i, g >= 0 ? bgbg[g].row : -1, vol, (int)pos.x, (int)pos.y, (int)pos.z);
+        return i;
+    }
+    return -1;
+}
+
+static void bgb_init(void) /* BigBubbleHolder / BigBubbleGenerator::init + initAfterPlacement / BigBubbleMoveLimitter::init */
+{
+    memset(bgbs, 0, sizeof bgbs);
+    nbgbg = nbgbl = 0; bgb_ride = -1;
+    bgb_gen_type = scene_type(sc, "BigBubbleGenerator");
+    bgb_mine_type = scene_type(sc, "SpaceMine");
+    int tp = scene_type(sc, "BigBubbleMoveLimitterPlane"), tc = scene_type(sc, "BigBubbleMoveLimitterCylinder");
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if ((r->type == tp || r->type == tc) && (tp >= 0 || tc >= 0) && nbgbl < BGB_LIMS) {
+            int dup = 0;
+            for (int k = 0; k < nbgbl; k++) dup |= bgbl[k].id == r->arg[0]; /* addMoveLimitter: one per id */
+            if (dup) continue;
+            V3 x, z;
+            row_axes(r, &x, &z);
+            bgbl[nbgbl].id = r->arg[0]; bgbl[nbgbl].margin = r->arg[1]; bgbl[nbgbl].cyl = (int)r->type == tc;
+            bgbl[nbgbl].pos = row_pos(r); bgbl[nbgbl].side = x; bgbl[nbgbl].front = z; bgbl[nbgbl].up = bgbl[nbgbl].axis = vcross(z, x);
+            bgbl[nbgbl].rad = bgbl[nbgbl].w = r->scale[0] * 500.0f; bgbl[nbgbl].h = r->scale[1] * 500.0f; bgbl[nbgbl].ph = r->scale[1] * 1000.0f;
+            nbgbl++;
+        }
+    }
+    for (u32 i = 0; bgb_gen_type >= 0 && i < sc->nobjs && nbgbg < BGB_GENS; i++) {
+        const Row *r = &sc->objs[i];
+        if ((int)r->type != bgb_gen_type) continue;
+        V3 x, z;
+        row_axes(r, &x, &z);
+        bgbg[nbgbg].row = (int)i; bgbg[nbgbg].active = 0; bgbg[nbgbg].step = 0; bgbg[nbgbg].bubble = -1;
+        bgbg[nbgbg].pos = row_pos(r); bgbg[nbgbg].up = vnorm(vcross(z, x));
+        int l = -1;
+        for (int k = 0; k < nbgbl; k++) if (bgbl[k].id == r->arg[3]) l = k;
+        if (r->arg[3] != -1) bgb_limit_pos(l, &bgbg[nbgbg].pos, 0.0f); /* initAfterPlacement: limitBigBubblePosition */
+        nbgbg++;
+    }
+}
+static int bgb_lim_index(int id) { for (int k = 0; k < nbgbl; k++) if (bgbl[k].id == id) return k; return -1; }
+static void bgb_generators(void) /* BigBubbleGenerator: control, onActive / offActive, exeNonActive / exeActive */
+{
+    for (int g = 0; g < nbgbg; g++) {
+        const Row *r = &sc->objs[bgbg[g].row];
+        if (row_dead[bgbg[g].row]) continue;
+        if (bgbg[g].bubble >= 0 && (bgbs[bgbg[g].bubble].nrv == BGB_DEAD || bgbs[bgbg[g].bubble].host != g)) bgbg[g].bubble = -1; /* control */
+        float d = vlen(vsub(mario->pos, bgbg[g].pos));
+        if (r->sw[SW_APPEAR] >= 0) { /* listenStageSwitchOnOffAppear */
+            int on = sw_on(r, SW_APPEAR);
+            if (on && !bgbg[g].active) { bgbg[g].active = 1; bgbg[g].step = 0; }
+            else if (!on && bgbg[g].active) { bgbg[g].active = 0; bgbg[g].step = 0; }
+        } else if (!bgbg[g].active) { if (d < 1500.0f) { bgbg[g].active = 1; bgbg[g].step = 0; } } /* tryActive */
+        if (!bgbg[g].active) continue;
+        int spawn = 0, attach = 0;
+        if (r->arg[0] < 0) { if (bgbg[g].bubble < 0) spawn = attach = 1; }
+        else if (bgbg[g].step % r->arg[0] == 0) spawn = 1;
+        if (spawn) {
+            float lo = r->arg[1] != -1 ? r->arg[1] / 100.0f : 1.0f, hi = r->arg[2] != -1 ? r->arg[2] / 100.0f : 1.0f;
+            /* generateBigBubble(.., attach as its isObstruct, the generator's mIsObstruct (false) as its action type ..) */
+            int i = bgb_generate(g, vadd(bgbg[g].pos, vmul(bgbg[g].up, 60.0f)), bgbg[g].up, frand(lo, hi), attach, 0, r->arg[4], bgb_lim_index(r->arg[3]));
+            if (attach) bgbg[g].bubble = i;
+        }
+        bgbg[g].step++;
+        if (r->sw[SW_APPEAR] < 0 && d > 2000.0f) { bgbg[g].active = 0; bgbg[g].step = 0; } /* tryNonActive */
+    }
+}
+
+static void bgb_break(BBubble *b) { bgb_nrv(b, BGB_BREAK); }
+static void bgb_capture_exe(BBubble *b, int i)
+{
+    if (b->step == 0) {
+        if (mario_anim) mario_play("spacewait", 1.0f, 1); /* startBckPlayer SpaceWait */
+        se_start(SE_OJ_BIG_BUBBLE_MARIO_IN, &b->pos.x);
+        b->rbase = b->rpos;
+    }
+    if (b->attached) {
+        int pushed = 0;
+        float px = cur_x, py = cur_y, vx = px - bgb_cur_px, vy = py - bgb_cur_py;
+        V3 ce, cw, cu;
+        float fovy;
+        camera_pose(&ce, &cw, &cu, &fovy);
+        V3 fw = vnorm(vsub(cw, ce)), sx = vnorm(vcross(fw, cu)), ux = vcross(sx, fw);
+        float f = 224.0f / tanf(fovy * 3.14159265f / 360.0f), zc = vdot(vsub(b->pos, ce), fw);
+        float r2d = zc > 1.0f ? bgb_size(b) * f / zc : 1e9f; /* calcPointRadius2D */
+        if (pointer_a() && cur_idle < 300 && !cursor_sees(b->pos, r2d)) { /* addAccelPointing: A, in the screen, not on it */
+            V3 o, d;
+            cursor_ray(&o, &d);
+            float dd = vdot(d, fw);
+            V3 p = dd > 1e-3f ? vadd(o, vmul(d, zc / dd)) : b->pos; /* calcStarPointerWorldPointingPos at its depth */
+            float dist = vlen(vsub(p, b->pos));
+            if (dist > 50.0f && dist < 1000.0f) {
+                float acc = 1.0f - (dist - 50.0f) / (1000.0f - 50.0f);
+                bgb_wind_lv = se_level(SE_SY_LV_BIG_BUBBLE_WIND, NULL, bgb_wind_lv);
+                V3 dir = vnorm(vsub(b->pos, p));
+                b->vel = vadd(b->vel, vmul(dir, acc));
+                bgb_deform(b, vmul(dir, 1.5f), 0); /* sPointAccelDeformPowerRate */
+                b->ptr = p;
+                pushed = 1;
+                float m[16];
+                basis_matrix(m, p, vsub(b->pos, p), sx, 0);
+                fx_named("BigBubble", "PushWind", m, NULL, b); /* emitEffect PushWind (deleteEffect when not) */
+            }
+        }
+        (void)pushed;
+        if (cur_idle < 300 && r2d < 1e8f) { /* addAccelMoment: calcStarPointerStrokeRotateMoment */
+            float k = 1.0f / r2d, svx = vx * k, svy = vy * k, sp = sqrtf(svx * svx + svy * svy);
+            V3 bp = vsub(b->pos, ce);
+            float bx = 320.0f + vdot(bp, sx) * f / zc, by = 224.0f - vdot(bp, ux) * f / zc;
+            float dx = px - bx, dy = py - by, dl = sqrtf(dx * dx + dy * dy), ratio = dl / r2d;
+            if (sp >= 0.00726f && ratio <= 1.0f) {
+                if (sp > 0.726f) { svx *= 0.726f / sp; svy *= 0.726f / sp; }
+                V3 mo = v3(svy, svx, 0.0f), st = v3(dl > 1e-6f ? dx / dl * ratio : 0.0f, dl > 1e-6f ? -dy / dl * ratio : 0.0f, sqrtf(fmaxf(1.0f - ratio * ratio, 0.0f)));
+                Quat rq = q_between(v3(0, 0, 1), st);
+                V3 rx, ry, rz;
+                q_axes(rq, &rx, &ry, &rz);
+                mo = vadd(vadd(vmul(rx, mo.x), vmul(ry, mo.y)), vmul(rz, mo.z));
+                V3 w = vadd(vadd(vmul(sx, mo.x), vmul(ux, mo.y)), vmul(fw, -mo.z)); /* getCameraInvViewMtx mult33 */
+                b->moment = vadd(b->moment, vmul(w, 0.03f));                    /* sSpinStartScreenSpeed */
+                float l = vlen(b->moment);
+                if (l > 0.2f) b->moment = vmul(b->moment, 0.2f / l);            /* sSpinMaxScreenSpeed */
+            }
+        }
+    } else
+        bgb_coriolis(b);
+    menu_pointer_request(SPM_BIGBUBBLE); /* requestStarPointerModeBigBubble */
+    menu_guidance_request("PointerGuidance_BigBubble", 1);
+    bgb_normal_vel(b);
+    float r = fminf((float)b->step / 30.0f, 1.0f);
+    b->interp = (1.0f - cosf(3.14159265f * r)) * 0.5f; /* calcNerveEaseInOutRate(30) */
+    b->rq = q_slerp(b->rq, b->q, 0.03f);               /* sSpinPower */
+    /* (mIsShrinkable: setActionType 0 / 1 clear it, so no placed generator's bubble shrinks or flashes) */
+    if (pad_pressed(PAD_R1) || bgb_test_z) { bgb_test_z = 0; bgb_nrv(b, BGB_ESCAPE); return; } /* tryEscape: Z */
+    { /* tryBreak */
+        int brk = 0;
+        if (b->fire) { /* isBindedDamageFire */
+            if (bgb_ride == i) { bgb_release(0, v3(0, 0, 0)); mario_attack(ATK_FIRERUN, b->pos); }
+            brk = 1;
+        }
+        if (bg_touch_rail(b->pos, bgb_size(b), NULL, NULL)) {
+            if (bgb_ride == i) { bgb_release(0, v3(0, 0, 0)); mario_attack(ATK_ELECTRIC, b->pos); }
+            brk = 1;
+        }
+        if (brk || b->exit_lim) bgb_break(b);
+    }
+}
+static void bgb_exe(BBubble *b, int i)
+{
+    switch (b->nrv) {
+    case BGB_APPEAR: {
+        if (b->step == 0) { b->spawn = b->pos; b->moment = bgb_rand(0.03f); se_start(SE_OJ_BIG_BUBBLE_APPEAR, &b->pos.x); }
+        float s = 0.01f + (b->appear_r - 0.01f) * fminf((float)b->step / 30.0f, 1.0f); /* calcNerveValue(30, 0.01, mAppearRadius) */
+        bgb_set_scale(b, s);
+        b->pos = vadd(b->spawn, vmul(b->grav, -s * bgb_base(b)));
+        if (b->step >= 30) bgb_nrv(b, BGB_WAIT); /* tryAppearEnd: onCalcGravity, the sensors on (ride off) */
+        return;
+    }
+    case BGB_WAIT:
+        bgb_coriolis(b);
+        if (b->obstruct) b->vel = v3(0, 0, 0); else bgb_normal_vel(b);
+        if ((!b->obstruct && b->step > 1200) || b->exit_lim) { /* tryAutoBreak */
+            if (bgb_ride == i) bgb_release(0, b->vel);
+            bgb_break(b);
+        }
+        return;
+    case BGB_CAPTURE: bgb_capture_exe(b, i); return;
+    case BGB_BREAK:
+        if (b->step == 0) {
+            if (bgb_ride == i) bgb_release(0, b->vel); /* endBindAndPlayerWeakGravityLimitJump */
+            bgb_break_fx(b);
+            b->broken = 1;
+            b->rbase = b->rpos;
+        }
+        b->interp = fminf((float)b->step / 20.0f, 1.0f);
+        bgb_normal_vel(b);
+        if (b->step > 20) bgb_kill(b); /* tryBreakEnd */
+        return;
+    case BGB_ESCAPE: {
+        if (b->step == 0) {
+            if (mario_anim) mario_play("swimdive", 1.0f, 0); /* startBckPlayer SwimDive */
+            se_start(SE_PV_HIP_DROP, &mario->pos.x); se_start(SE_PM_PRE_HIPDROP, &mario->pos.x);
+            b->rbase = b->rpos; b->interp = 0.0f;
+        }
+        b->interp = fminf((float)b->step / 30.0f, 1.0f);
+        b->grav = vmul(up_at(b->pos, vmul(b->grav, -1.0f)), -1.0f); /* calcGravity */
+        bgb_normal_vel(b);
+        V3 ry;
+        q_axes(b->rq, NULL, &ry, NULL);
+        b->rq = q_mul(b->rq, bgb_rot_rate(ry, b->grav, 0.2f)); /* sMaxSpinSpeed */
+        if (b->step > 30) { /* tryEscapeEnd */
+            if (bgb_ride == i) bgb_release(1, vmul(b->grav, 30.0f)); /* sEscapeVelocity */
+            bgb_break_fx(b);
+            bgb_kill(b);
+        }
+        return;
+    }
+    case BGB_MERGED: {
+        BBubble *h = &bgbs[b->merge_with];
+        if (b->merge_with < 0 || h->nrv == BGB_DEAD) { bgb_kill(b); return; } /* tryMergedCancel */
+        if (b->step == 0) { b->vel = v3(0, 0, 0); b->moment = v3(0, 0, 0); } /* offBind */
+        int k = -1;
+        for (int j = 0; j < 6; j++) if (h->merges[j] == i) { k = j; break; }
+        if (k < 0) { bgb_kill(b); return; } /* (calcMergePosition: not among its merges) */
+        V3 mp = h->vtx[k], md = bgb_local(h, k);
+        float ms = fminf(bgb_size(b), bgb_size(h));
+        float acc = ms * fminf((float)b->step / 25.0f, 1.0f) * (0.75f / 100.0f); /* sTurchDeformTime, sTurchDeformAccel */
+        bgb_deform(b, vmul(md, acc), 0);
+        bgb_deform(h, vmul(md, -acc * 0.75f), 0); /* sMergeDeformAccel */
+        bgb_pressure(b); bgb_rebound(b); bgb_deform_step(b);
+        b->q = q_mul(b->q, bgb_rot_rate(bgb_local(b, b->merge_idx), vmul(md, -1.0f), 0.2f)); /* sMergeRotateRate */
+        b->pos = vsub(mp, vmul(bgb_local(b, b->merge_idx), b->coef[b->merge_idx] * 0.95f)); /* sMergeDirCorrection */
+        b->q = bgb_moment(b->q, b->moment);
+        bgb_mesh(b);
+        if (b->step >= 45) { /* tryMergedEnd: ACTMES_BIG_BUBBLE_ASSIMILATE to it */
+            V3 dir = vsub(b->pos, h->pos);
+            dir = vlen(dir) > 1e-6f ? vnorm(dir) : h->grav;
+            bgb_fx(h, "Merge", dir, vadd(h->pos, vmul(dir, bgb_size(h))));
+            h->volume += b->scale * b->scale * b->scale;
+            if (h->volume > 5.0f) h->volume = 5.0f; /* sMaxVolume */
+            bgb_set_scale(h, cbrtf(h->volume));
+            bgb_deform(h, vmul(dir, b->scale * 8.0f), 1);
+            h->merges[k] = -1;
+            se_start(SE_OJ_BIG_BUBBLE_MERGE, &h->pos.x);
+            printf("big bubble %d swallows %d: volume %.2f\n", b->merge_with, i, h->volume);
+            bgb_kill(b);
+        }
+        return;
+    }
+    default: return;
+    }
+}
+static int bgb_pushable(const BBubble *b) { return b->nrv == BGB_WAIT || b->nrv == BGB_CAPTURE; }
+static int bgb_sensors(const BBubble *b) { return b->nrv != BGB_DEAD && b->nrv != BGB_APPEAR; } /* invalidateHitSensors until Appear's end */
+static void bgb_pairs(void) /* attackSensor body to body: ACTMES_PUSH, ACTMES_BIG_BUBBLE_MERGE */
+{
+    for (int i = 0; i < BGB_MAX; i++) {
+        BBubble *a = &bgbs[i];
+        if (!bgb_sensors(a)) continue;
+        for (int j = 0; j < BGB_MAX; j++) {
+            BBubble *b = &bgbs[j];
+            if (j == i || !bgb_sensors(b) || !bgb_pushable(a) || !bgb_sensors(a)) continue;
+            V3 dir = vsub(b->pos, a->pos);
+            float dist = vlen(dir), sum = bgb_size(a) + bgb_size(b);
+            if (dist >= sum) continue;
+            if (bgb_pushable(b)) { /* receiveMsgPush */
+                dir = dist > 1e-6f ? vmul(dir, 1.0f / dist) : vnorm(bgb_rand(1.0f));
+                float mv = sum * 0.9f - dist;
+                if (mv > 0.0f) b->vel = vadd(b->vel, vmul(dir, mv / bgb_size(b) * 0.18f));
+                if (mv > 0.0f) bgb_deform(b, vmul(dir, mv * (1.1f / bgb_base(b))), 0);
+            }
+            if (a->nrv == BGB_CAPTURE || a->scale >= b->scale) {
+                int k = bgb_near_axis(a, b->pos);
+                if (a->merges[k] >= 0) continue; /* getMergeIndex */
+                if (b->nrv == BGB_WAIT && dist < sum * 0.9f) { /* requestMerged (sMargeableRate) */
+                    bgb_nrv(b, BGB_MERGED);
+                    b->merge_with = i; b->merge_idx = bgb_near_axis(b, a->pos);
+                    a->merges[k] = j;
+                }
+            }
+        }
+    }
+}
+static void bgb_mines(void) /* SpaceMine::attackSensor: an explosion on a bubble's ride sensor (Capture) breaks it */
+{
+    if (bgb_mine_type < 0) return;
+    for (int i = 0; i < BGB_MAX; i++) {
+        BBubble *b = &bgbs[i];
+        if (b->nrv != BGB_CAPTURE) continue; /* isSensorRide (valid in Capture), isEnemyAttackBreakable */
+        FOR_KIND(k, hazard) {
+            Inst *in = &insts[k];
+            if (in->hazard != 1 || !row_shown(in->row)) continue;
+            V3 p = v3(in->m[12], in->m[13], in->m[14]);
+            if (vlen(vsub(p, b->pos)) > 100.0f + bgb_size(b)) continue;
+            fx_emit(FX_SPACEMINE_EXPLOSION, in->m);
+            se_start(SE_OJ_SPACEMINE_EXPLOSION, &in->m[12]);
+            pad_rumble(RUMBLE_MIDDLE);
+            row_kill(in->row);
+            printf("SpaceMine %d exploded on big bubble %d\n", in->row, i);
+            if (bgb_ride == i) { bgb_release(0, v3(0, 0, 0)); mario_attack(ATK_EXPLOSION, p); } /* endBindAndPlayerDamageMsg */
+            bgb_break(b);
+            game_rebind();
+            return;
+        }
+    }
+}
+static void update_bigbubbles(void)
+{
+    if (bgb_gen_type < 0) return;
+    bgb_generators();
+    bgb_pairs();
+    bgb_mines();
+    for (int i = 0; i < BGB_MAX; i++) {
+        BBubble *b = &bgbs[i];
+        if (b->nrv == BGB_DEAD) continue;
+        if (b->nrv != BGB_APPEAR) /* onCalcGravity from Appear's end */
+            b->grav = vmul(up_at(b->pos, vmul(b->grav, -1.0f)), -1.0f);
+        bgb_in_exe = 1;
+        bgb_exe(b, i);
+        bgb_in_exe = 0;
+        b->step++;
+        if (b->nrv == BGB_DEAD) continue;
+        b->hidden = !render_visible(&b->pos.x, bgb_size(b) * 1.2f); /* control: isJudgedToClipFrustum */
+        if (b->nrv != BGB_MERGED) {
+            if (b->lim >= 0) { /* doMoveLimit */
+                if (bgb_limit_pos(b->lim, &b->pos, bgb_size(b))) b->exit_lim = 1;
+                V3 nx = vadd(b->pos, b->vel);
+                if (bgb_limit_pos(b->lim, &nx, bgb_size(b))) b->exit_lim = 1;
+                b->vel = vsub(nx, b->pos);
+            }
+            b->q = bgb_moment(b->q, b->moment); /* updatePose */
+            bgb_deform(b, vmul(b->grav, -0.03f * b->scale), 0);
+            V3 dv = vmul(b->vel, -1.0f);
+            if (vlen(dv) > 10.0f) dv = vmul(vnorm(dv), 10.0f); /* clampLength sMaxDeformSpeed */
+            bgb_deform(b, vmul(dv, 0.1f), 0);
+            bgb_pressure(b); bgb_rebound(b); bgb_deform_step(b);
+            bgb_mesh(b);
+            V3 to = vadd(b->pos, b->vel); /* the binder: the move against the map */
+            b->pos = b->binder > 1.0f ? m_bind(b->pos, b->vel, b->binder) : to;
+            b->fix = b->binder > 1.0f && b_n ? vsub(b->pos, to) : v3(0, 0, 0);
+            int fl, wl;
+            bind_contacts(vmul(b->grav, -1.0f), &fl, &wl);
+            b->fire = b->binder > 1.0f && b_n && fl >= 0 && (tri_attr(&b_tri[fl]) & 0x3F) == 10; /* its ground's DamageFire */
+        }
+        b->binder = 0.1f * b->bind_r + 0.9f * b->binder;
+        /* the rider's matrix (ACTMES_UPDATE_BASEMTX: updateBindActorMatrix) */
+        b->rpos = b->interp < 1.0f ? vadd(vmul(b->rbase, 1.0f - b->interp), vmul(b->pos, b->interp)) : b->pos;
+    }
+    camera_big_bubble = bgb_ride >= 0; /* isPlayerBindedBigBubble */
+    bgb_cur_px = cur_x; bgb_cur_py = cur_y;
+}
+/* Mario's sensor on a waiting bubble's bind sensor: a hip drop breaks it (isMsgPlayerHipDrop, no rider), else
+ * AUTORUSH_BEGIN binds him (requestBind) */
+static int bgb_try(Player *m)
+{
+    if (bgb_ride >= 0 || bgb_gen_type < 0) return 0;
+    V3 c = vadd(m->pos, vmul(m->up, HIT_BODY_H));
+    for (int i = 0; i < BGB_MAX; i++) {
+        BBubble *b = &bgbs[i];
+        if (b->nrv != BGB_WAIT || vlen(vsub(c, b->pos)) >= bgb_size(b) + HIT_BODY_R) continue;
+        if (m->hip == HIP_FALL) { bgb_break(b); continue; }
+        if (!mode_rush("BigBubble")) return 0;
+        bgb_ride = i;
+        b->rpos = m->pos; b->rbase = b->rpos; b->interp = 0.0f;
+        b->rq = q_from_axes(vnorm(vcross(m->up, m->face)), m->up, m->face);
+        bgb_nrv(b, BGB_CAPTURE);
+        m->hip = 0; m->spin_timer = 0;
+        printf("big bubble %d: Mario in\n", i);
+        return 1;
+    }
+    return 0;
+}
+static int bgb_hold(Player *m) /* Mario bound: setBaseTRMtx(mRider, its quat and rider position) */
+{
+    if (bgb_ride < 0) return 0;
+    BBubble *b = &bgbs[bgb_ride];
+    V3 x, y, z;
+    q_axes(b->rq, &x, &y, &z);
+    m->pos = b->rpos; m->up = y; m->face = z;
+    m->hvel = v3(0, 0, 0); m->vup = 0; m->grounded = 0;
+    return 1;
+}
+static float bgb_reach(void) { return bgb_ride >= 0 ? bgb_size(&bgbs[bgb_ride]) + 55.0f : 0.0f; } /* its ride sensor's tryGetItem (a coin's 55) */
+static int bgb_shot(V3 p) /* a star piece: isMsgStarPieceReflect, sStarPieceDeformPower 15 */
+{
+    for (int i = 0; i < BGB_MAX; i++) {
+        BBubble *b = &bgbs[i];
+        if (!bgb_sensors(b) || vlen(vsub(p, b->pos)) > bgb_size(b)) continue;
+        V3 d = vsub(b->pos, p);
+        bgb_deform(b, vmul(vlen(d) > 1e-6f ? vnorm(d) : b->grav, 15.0f), 0);
+        return 1;
+    }
+    return 0;
+}
+
+/* BigBubbleHolder::draw (sortDrawOrder: the far ones first, the merged ones last) with BigBubbleDrawer's material */
+static void bgb_bez_handles(V3 *h1, V3 *h2, V3 a, V3 b, V3 c, float k) /* calcBezierHandlePoint */
+{
+    V3 v1 = vsub(a, b), v2 = vsub(c, b);
+    float ab = vlen(v1), cb = vlen(v2);
+    if (ab < 1e-6f || cb < 1e-6f) { *h1 = vadd(b, vmul(v1, k)); *h2 = vadd(b, vmul(v2, k)); }
+    V3 v3_ = vsub(vmul(v1, ab > 1e-6f ? cb / ab : 0.0f), v2);
+    v3_ = vlen(v3_) > 1e-6f ? vnorm(v3_) : v3(0, 0, 0);
+    *h1 = vadd(b, vmul(v3_, k * vdot(v1, v3_)));
+    *h2 = vadd(b, vmul(v3_, k * vdot(v2, v3_)));
+}
+static void bgb_ctrl(const BBubble *b, V3 cp[8][13]) /* OctahedronBezierSurface::calcControlPoint */
+{
+    const V3 *v = b->vtx;
+    float k = b->shape == 0 ? 0.9f : b->shape == 1 ? 0.1f : 0.6f; /* setShapeType: the diagonal rate */
+    V3 h1, h2;
+    for (int s = 0; s < 4; s++) { cp[s][0] = v[0]; cp[s + 4][0] = v[5]; }
+    cp[0][9] = v[1]; cp[0][12] = v[2]; cp[1][9] = v[2]; cp[1][12] = v[3]; cp[2][9] = v[3]; cp[2][12] = v[4]; cp[3][9] = v[4]; cp[3][12] = v[1];
+    cp[4][9] = v[2]; cp[4][12] = v[1]; cp[5][9] = v[1]; cp[5][12] = v[4]; cp[6][9] = v[4]; cp[6][12] = v[3]; cp[7][9] = v[3]; cp[7][12] = v[2];
+    bgb_bez_handles(&h1, &h2, v[1], v[0], v[3], k); cp[0][1] = h1; cp[3][4] = h1; cp[2][1] = h2; cp[1][4] = h2;
+    bgb_bez_handles(&h1, &h2, v[2], v[0], v[4], k); cp[1][1] = h1; cp[0][4] = h1; cp[3][1] = h2; cp[2][4] = h2;
+    bgb_bez_handles(&h1, &h2, v[2], v[5], v[4], k); cp[4][1] = h1; cp[7][4] = h1; cp[6][1] = h2; cp[5][4] = h2;
+    bgb_bez_handles(&h1, &h2, v[1], v[5], v[3], k); cp[5][1] = h1; cp[4][4] = h1; cp[7][1] = h2; cp[6][4] = h2;
+    bgb_bez_handles(&h1, &h2, v[0], v[1], v[5], k); cp[0][5] = h1; cp[3][8] = h1; cp[4][8] = h2; cp[5][5] = h2;
+    bgb_bez_handles(&h1, &h2, v[0], v[2], v[5], k); cp[1][5] = h1; cp[0][8] = h1; cp[7][8] = h2; cp[4][5] = h2;
+    bgb_bez_handles(&h1, &h2, v[0], v[3], v[5], k); cp[2][5] = h1; cp[1][8] = h1; cp[6][8] = h2; cp[7][5] = h2;
+    bgb_bez_handles(&h1, &h2, v[0], v[4], v[5], k); cp[3][5] = h1; cp[2][8] = h1; cp[5][8] = h2; cp[6][5] = h2;
+    bgb_bez_handles(&h1, &h2, v[1], v[2], v[3], k); cp[0][11] = h1; cp[4][10] = h1; cp[1][10] = h2; cp[7][11] = h2;
+    bgb_bez_handles(&h1, &h2, v[2], v[3], v[4], k); cp[1][11] = h1; cp[7][10] = h1; cp[2][10] = h2; cp[6][11] = h2;
+    bgb_bez_handles(&h1, &h2, v[3], v[4], v[1], k); cp[2][11] = h1; cp[6][10] = h1; cp[3][10] = h2; cp[5][11] = h2;
+    bgb_bez_handles(&h1, &h2, v[4], v[1], v[2], k); cp[3][11] = h1; cp[5][10] = h1; cp[0][10] = h2; cp[4][11] = h2;
+    for (int g = 0; g < 2; g++) { /* the corner handles round each pole */
+        int o = 4 * g;
+        for (int s = 0; s < 4; s++) {
+            bgb_bez_handles(&h1, &h2, cp[o + s][1], cp[o + (s + 1) % 4][1], cp[o + (s + 2) % 4][1], k);
+            cp[o + s][3] = h1; cp[o + (s + 1) % 4][2] = h2;
+        }
+    }
+    static const unsigned char e6[8] = {1, 2, 3, 4, 2, 1, 4, 3}, e7[8] = {2, 3, 4, 1, 1, 4, 3, 2};
+    for (int s = 0; s < 8; s++) {
+        cp[s][6] = vsub(vadd(cp[s][10], cp[s][5]), v[e6[s]]);
+        cp[s][7] = vsub(vadd(cp[s][11], cp[s][8]), v[e7[s]]);
+    }
+}
+static void draw_bigbubbles(V3 eye, V3 right, V3 cup)
+{
+    if (bgb_gen_type < 0) return;
+    int t0 = fx_bigbubble_tex(0), t1 = fx_bigbubble_tex(1);
+    if (t0 < 0 || t1 < 0) return;
+    int ord[BGB_MAX], n = 0;
+    V3 back = vcross(right, cup), fw = vmul(back, -1.0f);
+    for (int i = 0; i < BGB_MAX; i++) { /* isDraw; sortDrawOrder */
+        BBubble *b = &bgbs[i];
+        if (b->nrv == BGB_DEAD || b->hidden || b->broken) continue;
+        b->z = vdot(fw, b->pos);
+        int k = n++;
+        for (; k > 0; k--) {
+            const BBubble *o = &bgbs[ord[k - 1]];
+            int mo = o->nrv == BGB_MERGED, mb = b->nrv == BGB_MERGED;
+            if (!(mo && !mb) && (mo != mb || o->z >= b->z)) break;
+            ord[k] = ord[k - 1];
+        }
+        ord[k] = i;
+    }
+    static float pos[8 * 36][3], uv0[8 * 36][2], uv1[8 * 36][2];
+    static u16 idx[3 * 8 * 49];
+    static const float st[8][3][2] = {{{0.25f, 0.5f}, {0, 0}, {0, 1}}, {{0.25f, 0.5f}, {0, 1}, {0.5f, 1}}, {{0.25f, 0.5f}, {0.5f, 1}, {0.5f, 0}},
+                                      {{0.25f, 0.5f}, {0.5f, 0}, {0, 0}}, {{0.75f, 0.5f}, {1, 1}, {1, 0}}, {{0.75f, 0.5f}, {1, 0}, {0.5f, 0}},
+                                      {{0.75f, 0.5f}, {0.5f, 0}, {0.5f, 1}}, {{0.75f, 0.5f}, {0.5f, 1}, {1, 1}}}; /* setST */
+    for (int o = 0; o < n; o++) {
+        const BBubble *b = &bgbs[ord[o]];
+        float zc = vdot(vsub(b->pos, eye), fw);
+        if (zc <= 1.0f) continue;
+        V3 ce, cw, cu;
+        float fovy;
+        camera_pose(&ce, &cw, &cu, &fovy);
+        float rad = bgb_size(b) * 224.0f / tanf(fovy * 3.14159265f / 360.0f) / zc; /* calcPointRadius2D */
+        int lv = rad >= 50.0f ? 6 : rad >= 30.0f ? 5 : rad >= 15.0f ? 4 : rad >= 7.0f ? 3 : rad >= 3.0f ? 2 : rad >= 0.0f ? 1 : 0;
+        int sub = lv + 1, np = (lv + 2) * (lv + 3) / 2, nv = 0, nt = 0;
+        V3 cp[8][13];
+        bgb_ctrl(b, cp);
+        for (int s = 0; s < 8; s++) {
+            int base = nv;
+            for (int r = 0, p = 0; r <= sub; r++)
+                for (int j = 0; j <= r; j++, p++) {
+                    const float *c = bez_pos[bez_first[lv] + p], *cs = bez_ts[bez_first[lv] + p], *ct = bez_tt[bez_first[lv] + p];
+                    V3 v = v3(0, 0, 0), ts = v3(0, 0, 0), tt = v3(0, 0, 0);
+                    for (int q = 0; q < 13; q++) {
+                        if (c[q] > 0.000001f) v = vadd(v, vmul(cp[s][q], c[q]));
+                        if (fabsf(cs[q]) > 0.000001f) ts = vadd(ts, vmul(cp[s][q], cs[q]));
+                        if (fabsf(ct[q]) > 0.000001f) tt = vadd(tt, vmul(cp[s][q], ct[q]));
+                    }
+                    V3 nn = vcross(ts, tt);
+                    nn = vlen(nn) > 1e-9f ? vnorm(nn) : v3(0, 0, 0);
+                    pos[nv][0] = v.x; pos[nv][1] = v.y; pos[nv][2] = v.z;
+                    float w0 = 1.0f - (float)r / sub, w1 = (float)(r - j) / sub, w2 = (float)j / sub; /* sBezierTriangleST */
+                    uv1[nv][0] = st[s][0][0] * w0 + st[s][1][0] * w1 + st[s][2][0] * w2; /* the rainbow: TEXCOORD0 (ST) */
+                    uv1[nv][1] = st[s][0][1] * w0 + st[s][1][1] * w1 + st[s][2][1] * w2;
+                    /* Bubble.bti: TEXCOORD1 GX_TG_NRM through the view rotation, its translation sEnvMatTrans 1, 1, 1.5 */
+                    float qz = vdot(nn, back) + 1.5f;
+                    uv0[nv][0] = (vdot(nn, right) + 1.0f) / qz;
+                    uv0[nv][1] = (vdot(nn, cup) + 1.0f) / qz;
+                    nv++;
+                }
+            (void)np;
+            for (int r = 0; r < sub; r++) { /* the grid's triangles (the strips' faces), the ones facing the eye (GX_CULL_BACK) */
+                int a0 = base + r * (r + 1) / 2, a1 = base + (r + 1) * (r + 2) / 2;
+                for (int j = 0; j <= r; j++) {
+                    int tri[2][3] = {{a0 + j, a1 + j, a1 + j + 1}, {a0 + j, a1 + j + 1, a0 + j + 1}};
+                    for (int h = 0; h < (j < r ? 2 : 1); h++) {
+                        const float *p0 = pos[tri[h][0]], *p1 = pos[tri[h][1]], *p2 = pos[tri[h][2]];
+                        V3 e1 = v3(p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]), e2 = v3(p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]);
+                        V3 c = v3((p0[0] + p1[0] + p2[0]) / 3.0f, (p0[1] + p1[1] + p2[1]) / 3.0f, (p0[2] + p1[2] + p2[2]) / 3.0f);
+                        V3 fn = vcross(e1, e2);
+                        if (vdot(fn, vsub(c, b->pos)) < 0.0f) fn = vmul(fn, -1.0f);
+                        if (vdot(fn, vsub(eye, c)) <= 0.0f) continue;
+                        idx[3 * nt] = (u16)tri[h][0]; idx[3 * nt + 1] = (u16)tri[h][1]; idx[3 * nt + 2] = (u16)tri[h][2]; nt++;
+                    }
+                }
+            }
+        }
+        if (!nt) continue;
+        render_mesh_c((const float (*)[3])pos, (const float (*)[2])uv0, nv, idx, nt, (u16)t0, 1, 0x80808080u);
+        render_mesh_same();
+        render_mesh_c((const float (*)[3])pos, (const float (*)[2])uv1, nv, idx, nt, (u16)t1, 2, 0x80808080u);
+    }
+}
+
+/* Test builds (CubeBubbleExLv1 1, `bigbubble`): Mario onto the first waiting bubble, then the pointer's A held 200 to
+ * its right (it drifts left) and a stroke, then Z: bubble state x 1000 + its step, -1 none yet */
+int game_test_bigbubble(int f)
+{
+    static int phase, bi = -1;
+    if (bgb_gen_type < 0) return -2;
+    if (phase == 0) {
+        for (int g = 0; g < nbgbg; g++) { /* its switch on (the SwitchCube by the start) */
+            Row *r = &sc->objs[bgbg[g].row];
+            if (r->sw[SW_APPEAR] >= 0 && !sw_on(r, SW_APPEAR)) sw_set(r, SW_APPEAR, 1);
+        }
+        float best = 1e30f;
+        for (int i = 0; i < BGB_MAX; i++) /* the nearest */
+            if (bgbs[i].nrv == BGB_WAIT && bgbs[i].step > 30 && vlen(vsub(bgbs[i].pos, mario->pos)) < best) { best = vlen(vsub(bgbs[i].pos, mario->pos)); bi = i; }
+        if (bi < 0) return -1;
+        phase = 1;
+        mario->pos = vsub(bgbs[bi].pos, vmul(mario->up, HIT_BODY_H)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return -1;
+    }
+    BBubble *b = &bgbs[bi];
+#ifndef BGB_LOOK /* XF=-DBGB_LOOK: Mario kept in it, still */
+    if (phase == 1 && b->nrv == BGB_CAPTURE && b->step > 150) phase = 2;
+#endif
+    if (phase == 2) { /* the pointer 200 right of it, A held */
+        V3 ce, cw, cu;
+        float fovy;
+        camera_pose(&ce, &cw, &cu, &fovy);
+        V3 fw = vnorm(vsub(cw, ce)), sx = vnorm(vcross(fw, cu)), ux = vcross(sx, fw), bp = vsub(b->pos, ce);
+        float fz = 224.0f / tanf(fovy * 3.14159265f / 360.0f), zc = vdot(bp, fw);
+        cur_x = 320.0f + (vdot(bp, sx) + 300.0f) * fz / zc; cur_y = 224.0f - vdot(bp, ux) * fz / zc;
+        test_r2 = 1;
+        if (b->step > 270) { test_r2 = 0; phase = 3; }
+    }
+    if (phase == 3 && b->step > 330) { bgb_test_z = 1; phase = 4; }
+    if (f % 20 == 0 && b->nrv != BGB_DEAD)
+        printf("bigbubble test f %d: bubble %d nrv %d step %d pos %d %d %d vel %.2f scale %.2f ride %d mario %d %d %d\n", f, bi, b->nrv, b->step,
+               (int)b->pos.x, (int)b->pos.y, (int)b->pos.z, vlen(b->vel), b->scale, bgb_ride, (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z);
+    return b->nrv * 1000 + (b->step > 999 ? 999 : b->step);
+}
+
 /* SpaceMine (Petari SpaceMine.cpp): sensor radius 100; touching it is an explosion on Mario and the mine is gone.
  * NeedlePlant (NeedlePlant.cpp): sensor 150 * scale above its base, radius 70 * scale; touching it pricks Mario and
  * it shakes (Shake); an enemy attack (a coconut, a rock, an explosion) breaks it (Break: a coin, arg0 0 three star
@@ -39629,6 +40399,7 @@ static void update_shots(void)
         if (!hit && hana_shot(s->pos)) hit = 1;
         if (!hit && bsb_shot(s->pos)) hit = 1; /* BossStinkBugBomb */
         if (!hit && km_shot(s->pos)) hit = 1; /* KameckFireBall */
+        if (!hit && bgb_shot(s->pos)) hit = 2; /* BigBubble: isMsgStarPieceReflect */
         if (!hit && gap_shot(s->pos)) hit = 1;          /* #143's classes (update_gaps) */          /* Hanachan's parts */         /* Butler: isMsgStarPieceAttack */
         for (int k = 0; k < ninsts && !hit; k++) { /* ItemBubble: isMsgStarPieceAttack bursts it */
             Inst *in = &insts[k];
@@ -42340,6 +43111,7 @@ void game_set_cursor(float x, float y) { cur_x = x; cur_y = y; }
 static void collect(Pickup *p, int n, float reach, int *counter, int fx, u32 se)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, BODY_RADIUS));
+    if (bgb_reach() > reach) { reach = bgb_reach(); c = bgbs[bgb_ride].pos; } /* in a BigBubble: its ride sensor gets them */
     for (int i = 0; i < n; i++)
         if (pickup_on(&p[i], 1) && vlen(vsub(p[i].pos, c)) < reach) {
             p[i].alive = PICK_GONE;
@@ -49671,6 +50443,7 @@ void game_update(void)
     LQ(17, update_collapse());
     LQ(18, update_flips());
     LQ(19, update_hip_switches());
+    update_bigbubbles();
     LQ(20, update_hazards());
     LQ(21, update_items());
     update_mis(); /* MorphItemObjNeo: by row (dx_row_moves) */
@@ -51220,6 +51993,7 @@ void game_draw(void)
     {
         V3 back = vnorm(vsub(ce, cw)), right = vnorm(vcross(cu, back));
         draw_oceanspheres(ce, right, vcross(back, right));
+        draw_bigbubbles(ce, right, vcross(back, right));
     }
     RESTQ(6);
     gw_draw();

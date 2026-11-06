@@ -448,8 +448,16 @@ Second console round (2026-10-24), from Daniel's report:
   babies; a baby's death sets its row's SW_DEAD. Test `walker` XF="-DWALKER_TEST -DBLAUNCH_TEST" CannonFleetGalaxy/3
   (launch, landing, babies killed at 900, relaunch). ponytail: no shadow, its declareCoin. Repack: slice_all.py
   CannonFleetGalaxy, OceanFloaterLandGalaxy.
-- Static classes still to port (mario2's list, 2026-11-05; placements in): BigBubbleGenerator (CubeBubbleEx 1/2,
-  ReverseKingdom 2: Ride/BigBubble.cpp 1228 lines).
+- BigBubble (feat/281-big-bubble, 2026-11-05): BigBubble.cpp, BigBubbleGenerator / Holder / MoveLimitter (slice.py
+  LOGIC Plane / Cylinder), BigBubbleCameraArea (camera.py shape 3: a box while Mario is bound), BigBubbleDrawer with
+  OctahedronBezierSurface / BezierSurface (bezier_tab.h: Petari's coefficient tables; jpa.py fx_bigbubble_tex: the
+  env map pass and the rainbow added at its mean alpha, one texture a GS pass). game.c bgb_*: the generators (switch
+  or distance), Appear / Wait / Capture / Break / Escape / Merged with Petari's constants, Mario bound (SpaceWait, the
+  pointer's A pushes, a stroke spins it, Z SwimDive out), merges, limitter breaks, fire floors, electric rails,
+  SpaceMines, star pieces deform it, its ride sensor takes coins. Test `bigbubble` (CubeBubbleExLv1 1). ponytail: no
+  isPressedMovingWall, ground water, other enemies' attacks, nozzle pointer, shadow, Generate BCK. Repack: jpa.py
+  (resident.bin + resident_luigi.bin: BigBubble effects + textures), slice_all.py + sound.py --pack
+  CubeBubbleExLv1Galaxy, CubeBubbleExLv2Galaxy, ReverseKingdomGalaxy.
 - Unizo (fix/states-unizo, 2026-11-05): Unizo.cpp's nerves (Wait, Jump on its Search BCK, Chase, Attack on its
   Attack BCK, CollidePlayer, CollideEnemy: two Unizos push each other, Shock BCK), mJumpCount, the sea / shoal roll
   bob; doBreak / doFireDown with its break model (UnizoBreak / UnizoLandBreak / UnizoShoalBreak facing away from the

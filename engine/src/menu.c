@@ -1250,7 +1250,8 @@ static void sp_setup(int m) /* StarPointerOnOffController::setup*: show / hide, 
         [SPM_CHOOSEYESNO] = {1, SPK_FINGER, 1, 1}, [SPM_PICTUREBOOK] = {1, SPK_FINGER, 1, 0}, [SPM_DEMOMARIODEATH] = {1, SPK_STAR, 0, 1},
         [SPM_SPHEREONREACTION] = {1, SPK_CROSS, 1, 1}, [SPM_SPHEREFINGER] = {1, SPK_FINGER, 1, 1},
         [SPM_COMMANDSTREAM] = {1, SPK_STAR, 1, 1}, [SPM_BLUESTAR] = {1, SPK_HAND, 1, 1},
-        [SPM_BLUESTARREADY] = {1, SPK_HAND, 1, 1}, [SPM_GAME] = {1, SPK_STAR, 1, 1}};
+        [SPM_BLUESTARREADY] = {1, SPK_HAND, 1, 1}, [SPM_GAME] = {1, SPK_STAR, 1, 1},
+        [SPM_BIGBUBBLE] = {1, SPK_STAR, 1, 1}}; /* setupBigBubble (ponytail: the star, not its nozzle) */
     int k = m >= 0 ? m : 0;
     if (tab[k].show) { if (!sp.appear) sp.appear_time = -3; sp.appear = 1; } else sp.appear = 0; /* show / hide */
     sp_change(tab[k].kind);

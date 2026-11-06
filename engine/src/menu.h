@@ -96,7 +96,7 @@ void menu_result_start(void);        /* the result held for the star return demo
  * (each step), the layout drawn over the frame (main.c) */
 enum { SPM_SAVELOAD = 2, SPM_TITLE = 4, SPM_FILESELECT, SPM_SCENARIOSELECT, SPM_PAUSEMENU, SPM_CHOOSEYESNO, SPM_PICTUREBOOK, SPM_DEMO = 12,
        SPM_DEMOMARIODEATH, SPM_POWERSTARGETDEMO, SPM_SPHEREONREACTION = 16, SPM_SPHEREFINGER, SPM_COMMANDSTREAM = 19,
-       SPM_BLUESTAR, SPM_BLUESTARREADY, SPM_GAME = 25 };
+       SPM_BLUESTAR, SPM_BLUESTARREADY, SPM_BIGBUBBLE = 23, SPM_GAME = 25 };
 void menu_pointer_request(int mode);
 int menu_pointer_touch(const void *id, int rumble);
 void menu_pointer_stream(int on);

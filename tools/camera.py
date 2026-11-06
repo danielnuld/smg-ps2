@@ -31,7 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import budget as B
 
-SHAPES = {"CubeCameraBox": 0, "CubeCameraCylinder": 1, "CubeCameraSphere": 2}
+SHAPES = {"CubeCameraBox": 0, "CubeCameraCylinder": 1, "CubeCameraSphere": 2, "BigBubbleCameraBox": 3}  # 3: a box while Mario is in a BigBubble (BigBubbleCameraArea::isInVolume)
 
 
 def category_mask(arg):

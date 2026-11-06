@@ -358,6 +358,20 @@ def pack(fs):
         # Creeper::init's Stalk.bti (Creeper.arc) after it (fx_creeper_tex): its TEV colour TEXC x RASC, alpha TEXA
         img = decode_bti({k.rsplit("/", 1)[-1].lower(): v for k, v in B.rarc_files((wp / "ObjectData" / "Creeper.arc").read_bytes())}["stalk.bti"])
         out_tex.append(tex.to_ps2(np.ascontiguousarray(img), 0, 0))
+        # BigBubbleDrawer (BigBubble.arc) after it (fx_bigbubble_tex 0, 1). Its TEV: colour Rainbow.bti (ST) + C0 E0 x
+        # TEXA of Bubble.bti (an I8 env map on the normals), alpha that TEXA, blended. One texture a pass here: 0 the
+        # env map as C0 x A, alpha A (blended: E0 A A + dst (1 - A)), 1 the rainbow halved, alpha the env map's mean
+        # (added: its share rainbow x A taken at the mean A)
+        bb = {k.rsplit("/", 1)[-1].lower(): v for k, v in B.rarc_files((wp / "ObjectData" / "BigBubble.arc").read_bytes())}
+        env = decode_bti(bb["bubble.bti"]).astype(np.float32)
+        t = np.zeros(env.shape[:2] + (4,), np.uint8)
+        t[..., :3] = (env[..., 3:4] * 0xE0 / 255 + 0.5).astype(np.uint8)
+        t[..., 3] = env[..., 3].astype(np.uint8)
+        out_tex.append(tex.to_ps2(t, 1, 1))
+        rb = decode_bti(bb["rainbow.bti"])
+        rb = np.asarray(Image.fromarray(rb, "RGBA").resize((rb.shape[1] // 2, rb.shape[0] // 2), Image.Resampling.BOX)).copy()
+        rb[..., 3] = int(env[..., 3].mean() + 0.5)
+        out_tex.append(tex.to_ps2(rb, 1, 1))
     flr = flare(wp, out_tex)
     head = struct.pack("<IIiI", len(used), len(defs), first, len(autos))
     return head + b"".join(defs) + b"".join(recs) + b"".join(autos) + flr, out_tex
@@ -479,7 +493,7 @@ def flare(fs, out_tex):
 NAMED = ("KillerGunnerSingle", "TripodBoss", "TripodBossCore", "ItemBubble", "DinoPackunBall", "Mario", "Dossun", "Onimasu", "LavaStrangeRock",
          "LavaStrangeRockL", "LavaStrangeRockTable", "MogucchiHill", "PalmIsland", "KabokuriFire", "LotusLeaf", "ElectricBall",
          "MorphItemObj", "WaterColumn", "PhantomTorch", "PhantomBonfire", "ShockWaveGenerator", "DriftWood", "BossKameckBeam", "BossKameckFireBall",
-         "AirBubble", "FireBarBall", "KoopaJrShipCannonShell", "IronCannonLauncherPoint", "TreasureSpot", "CoinFlower", "CocoNut", "SpiderThreadAttachPoint", "TombSpider", "TombSpiderGland", "TombSpiderPlanet")  # (WaterColumn: MarioActor::emitEffectWaterColumn)  # MorphItemObjNeo's effect group (initEffectKeeper "MorphItemObj")
+         "AirBubble", "FireBarBall", "KoopaJrShipCannonShell", "IronCannonLauncherPoint", "TreasureSpot", "CoinFlower", "CocoNut", "SpiderThreadAttachPoint", "TombSpider", "TombSpiderGland", "TombSpiderPlanet", "BigBubble")  # (WaterColumn: MarioActor::emitEffectWaterColumn)  # MorphItemObjNeo's effect group (initEffectKeeper "MorphItemObj")
 NAMED_ONLY = {"Mario": ("SpinLight", "SpinLightBurst", "Invincible", "Ice", "Metamorphosis", "MetamorphosisEnd", "GetAgain", "WaterBound",
                         "SkateL", "SkateR", "IceJumpLand", "IceMarioSpinLight", "FooMarioHandGlowL", "FooMarioHandGlowR",
                         "FooMarioBrakeLampL", "FooMarioBrakeLampR", "FooMarioEndL", "FooMarioEndR",
