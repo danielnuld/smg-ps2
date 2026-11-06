@@ -65,6 +65,7 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
     u32 lv; /* its level sound's handle (se_level) */
     u8 clipped; /* out of the view at the last draw (ClippingJudge: LiveActor::startClipped stops its movement) */
     u8 nograv; /* Kuribo _C4 (arg0 set): offCalcGravity, its gravity its rotation's up */
+    V3 mm[8]; /* Meramera (meramera.inc): _144, _174, _180, _198, _18C, mExtinguishMtx (place, up), its binder's fix */
     short host; /* a BossBegoman follower (initWithoutIter: no placement of its own; its row the boss's): the boss's slot + 1;
                  * -1 a Polta's BombTeresa (BombTeresaHolder, polta.inc) */ } Kuribo; /* walking
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
@@ -99,6 +100,8 @@ static const Model *walker_new_model(int row);
 static void mk_update(Kuribo *k), mk_demo_update(void), mk_draw(Kuribo *k, const Model *md, Anim *a), mk_draw_extras(void), mk_begin_demo(int row);
 static int mk_noclip(const Kuribo *k);
 int mk_shot(V3 p); /* IceMerameraKing (ice_meraking.inc) */
+static void mm_update(Kuribo *k), mm_kill(Kuribo *k), mm_btp(Kuribo *k, const Model *md); /* Meramera (meramera.inc) */
+static int mm_down_force(Kuribo *k, V3 from), mm_star(Kuribo *k), mm_fire(Kuribo *k, V3 from);
 /* Petari.cpp's nerves (petari_update) */
 enum { PT_LURK, PT_JUMPOUT, PT_WAIT, PT_APPROACH, PT_ESCAPE, PT_SWOONSTART, PT_SWOON, PT_SWOONEND, PT_LAND, PT_SMASH,
        PT_SPINOUT, PT_KICKOUT };
@@ -13434,6 +13437,7 @@ static void fireball_hit_walkers(int b)
             if (!petari_solid(e)) continue;
             petari_blow(e, fireballs[b].pos, PT_KICKOUT); fireballs[b].t = 0; return;
         }
+        if (e->kind == WALK_MERAMERA) { if (!mm_fire(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* requestFire */
         if (e->kind == WALK_UNIZO) { /* isMsgFireBallAttack: doBreak / doFireDown */
             if (unizo_breaking(e)) continue;
             unizo_fire(e, fireballs[b].pos); fireballs[b].t = 0;
@@ -25542,6 +25546,7 @@ static int walker_blow(Kuribo *e, V3 from)
     if (e->kind == WALK_BEGOSPIKE || e->kind == WALK_BEGOBABY) { if (bg_blown(e)) return 0; e->item = 1; bg_blow(e, from, 35.0f, 15.0f); return 1; } /* isMsgExplosionAttack: calcBlowReaction */
     if (e->kind == WALK_KCHIEF) return kc_stagger(e, from); /* isMsgToEnemyAttackBlow / ShockWave: requestStagger */
     if (e->kind == WALK_BOMBTERESA) return bt_enemy_explosion(e); /* isMsgExplosionAttack: Explosion */
+    if (e->kind == WALK_MERAMERA) return mm_down_force(e, from); /* isMsgExplosionAttack / isMsgInvincibleAttack: requestDownForce */
     if (e->kind == WALK_PETARI) { /* receiveMsgEnemyAttack: isMsgToEnemyAttackBlow while solid */
         if (!petari_solid(e)) return 0;
         petari_blow(e, from, PT_SPINOUT);
@@ -30919,7 +30924,7 @@ static void update_kuribo(void)
     for (int i = 0; i < nkuribo; i++) {
         Kuribo *k = &kuribo[i];
         if (k->state == KURIBO_DEAD || !row_shown(k->row)) continue;
-        if (k->clipped && k->kind != WALK_KARIKARI && !test_noclip && !(k->kind == WALK_BOMBTERESA && !k->lvt[1]) && !(k->kind == WALK_MERAKING && mk_noclip(k))) continue; /* startClipped: no movement (Karikari may ride on Mario; a BombTeresa's invalidateClipping: lvt[1] 0) */
+        if (k->clipped && k->kind != WALK_KARIKARI && !test_noclip && !(k->kind == WALK_BOMBTERESA && !k->lvt[1]) && !(k->kind == WALK_MERAKING && mk_noclip(k)) && !(k->kind == WALK_MERAMERA && k->lvt[2])) { if (k->kind == WALK_MERAMERA) k->sstep = -1; continue; } /* startClipped: no movement (Karikari may ride on Mario; a BombTeresa's invalidateClipping: lvt[1] 0) */
         u32 c0 = cycles();
         update_kuribo_one(k);
         kprof[k->kind] += cycles() - c0; kprof_n[k->kind]++;
@@ -30987,10 +30992,9 @@ static void update_kuribo_one(Kuribo *k)
             }
             return;
         }
+        if (k->kind == WALK_MERAMERA) { if (w_zone_ground(k)) mm_update(k); return; } /* Meramera.cpp (meramera.inc) */
         if (d > 3000.0f) return; /* sActiveDistance: far ones wait (their zone may be loaded low, no collision) */
         if (!w_zone_ground(k)) return; /* no ground yet: they would fall */
-        int tako = k->kind == WALK_MERAMERA; /* Meramera.cpp: a stomp, hip drop or spin
-                                                                             * kills it, a touch burns (requestAttack) */
         if (k->kind == WALK_TAKOBO) { takobo_update(k, to, d); return; }
         if (k->kind == WALK_MKOOPA) { mkoopa_update(k, to, d); return; }
         if (k->kind == WALK_KARIKARI) { kari_update(k, to, d); return; }
@@ -31001,33 +31005,6 @@ static void update_kuribo_one(Kuribo *k)
         if (k->kind == WALK_UNIZO) { unizo_update(k, to, d); return; }
         if (k->kind == WALK_POIHANA) { poihana_update(k, to, d); return; }
         if (k->kind == WALK_SPIDER) { jspider_update(k); return; }
-        if (k->state == KURIBO_STUN) {
-            if (--k->timer <= 0) k->state = KURIBO_WALK;
-        } else if (d < (tako ? 1600.0f : 1500.0f)) { /* chase on the surface (ponytail: no turn rate, no notice animation) */
-            V3 dir = vnorm(vtangent(to, k->up));
-            k->vel = tako ? vadd(vmul(k->vel, 0.85f), vmul(dir, 0.5f)) : vadd(vmul(k->vel, 0.8f), vmul(dir, 4.0f * 0.2f));
-        } else {
-            k->vel = vmul(k->vel, tako ? 0.85f : 0.8f);
-        }
-        V3 center = vadd(vadd(k->pos, vmul(k->up, 45.0f)), vsub(k->vel, vmul(k->up, 6.0f)));
-        collide(&center, k->up, 45.0f);
-        k->pos = vsub(center, vmul(k->up, 45.0f));
-        /* stomp: Mario falling onto its top; spin: stun; side touch: Mario knocked back */
-        float above = vdot(to, k->up);
-        int kote = 0;
-        if (d < (tako ? 170.0f : 130.0f) && mario->vup < 0 && above > 40.0f) {
-            if (kote && k->state == KURIBO_WALK && mario->hip != HIP_FALL) { k->state = KURIBO_STUN; k->timer = 240; }
-            else if (kote && k->state == KURIBO_STUN && k->timer > 210 && mario->hip != HIP_FALL)
-                return; /* the bounce off the first stomp lands on it again: not a second stomp yet, no bounce */
-            else {
-                k->state = KURIBO_DEAD; row_kill(k->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, k->pos, k->up); pop_coins(k->pos, k->up, 1);
-            }
-            mario_trample();
-        } else if (d < 170.0f && mario->spin_timer > 0 && (k->state == KURIBO_WALK || (kote && k->timer < 230))) {
-            if (tako || (kote && k->state == KURIBO_STUN)) { k->state = KURIBO_DEAD; row_kill(k->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, k->pos, k->up); pop_coins(k->pos, k->up, 1); }
-            else { k->state = KURIBO_STUN; k->timer = kote ? 240 : 180; }
-        } else if (d < (tako ? 140.0f : 100.0f) && above <= 40.0f && k->state == KURIBO_WALK) /* not from above */
-            hurt_mario(k->pos, 15.0f);
     }
 }
 
@@ -40659,6 +40636,7 @@ static void update_shots(void)
             if (e->state == KURIBO_DEAD || !row_shown(e->row)) continue;
             if (e->kind == WALK_KCHIEF) { if (kchief_shot(e, s->pos)) { hit = 1; printf("star piece hits kuribo chief row %d\n", e->row); } continue; }
             if (e->kind == WALK_BOMBTERESA) { if (vlen(vsub(s->pos, e->pos)) <= 85.0f * w_scale(e) && bt_star(e)) hit = 1; continue; } /* its body 85 */
+            if (e->kind == WALK_MERAMERA) { if (vlen(vsub(s->pos, e->pos)) <= 55.0f * w_scale(e) && mm_star(e)) hit = 1; continue; } /* its body 55: isMsgStarPieceAttack */
             if (e->kind == WALK_MERAKING) { hit = mk_shot(s->pos); continue; } /* its ices, its body (isMsgStarPieceReflect) */
             if (e->kind == WALK_BEGOLAUNCH || vlen(vsub(s->pos, vadd(e->pos, vmul(e->up, 50.0f)))) > 90.0f) continue; /* (BegomanLauncher: no sensor) */
             hit = 1;
@@ -49255,6 +49233,7 @@ int game_test_bk(int frame)
 #include "tripod_boss.inc" /* TripodBoss (Megaleg): tb_*, game_test_tb */
 #include "koopa.inc" /* Koopa (Bowser): kp_*, game_test_kp */
 #include "ice_meraking.inc" /* IceMerameraKing (Baron Brr): mk_*, game_test_mk */
+#include "meramera.inc" /* Meramera / IceMeramera / ChildIceMeramera: mm_*, game_test_mm */
 #include "skeletal_fish.inc" /* SkeletalFishBaby / Boss (Kingfin): sf_* */
 #include "skeletal_fish_boss.inc" /* SkeletalFishBoss (Kingfin): sfk_*, its guards sfg_* */
 #include "koopajr_ship.inc" /* KoopaJrShip (Bowser Jr.'s airship): kj_*, game_test_kj */
@@ -51895,6 +51874,7 @@ void game_draw(void)
         if (kuribo[i].state == KURIBO_DEAD || !md || !row_shown(kuribo[i].row)) continue;
         if (kuribo[i].kind == WALK_TERESA && kuribo[i].phase == 4) continue; /* hidden in a wall */
         if (kuribo[i].kind == WALK_PETARI && kuribo[i].phase) continue; /* hideModel */
+        if (kuribo[i].kind == WALK_MERAMERA && kuribo[i].phase) continue; /* Meramera: hideModel */
         if (kuribo[i].kind == WALK_SNAKEHEAD && kuribo[i].phase) continue; /* Waylay: hideModel */
         if (kuribo[i].kind == WALK_KAMECK && kuribo[i].phase) continue; /* Kameck: hideModel(AndOnCalcAnim) */
         if (kuribo[i].kind == WALK_NOKO && kuribo[i].phase) continue; /* hideModel */
@@ -51995,6 +51975,7 @@ void game_draw(void)
                     mat_mul(tmp, m, t); memcpy(m, tmp, 64);
                 }
                 if (k->kind == WALK_BOMBTERESA) bt_tongue(k, m, a); /* calcAndSetBaseMtx: its tongue's JointControlDelegators */
+                if (k->kind == WALK_MERAMERA) mm_btp(k, md);
                 if (k->kind == WALK_KCHIEF || k->kind == WALK_SAMBOHEAD) { /* setBaseScale(mScaleController->_C x mScale) */
                     float sy = k->from, sx = sqrtf(1.0f / sy);
                     for (int j = 0; j < 3; j++) { m[j] *= sx; m[4 + j] *= sy; m[8 + j] *= sx; }
