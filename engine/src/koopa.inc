@@ -191,6 +191,7 @@ static void kp_cam_end(const char *name) { if (kp.cam && !strcmp(kp.cam, name)) 
 static void kp_acam(const char *clip) /* startKoopaAnimCamera (NULL: endKoopaAnimCamera) */
 {
     kp.acam_name = clip; kp.acam = clip != NULL; kp.acam_f = 0;
+    if (clip) { char n[48]; snprintf(n, sizeof n, "koopa/%s", clip); for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c); printf("koopa: anim camera %s, %d frames\n", n, canm_frames(n)); }
     if (!clip) camera_set_override(0, v3(0, 0, 0), v3(0, 0, 0), v3(0, 1, 0), 45);
 }
 static void kp_acam_update(void)
@@ -1503,10 +1504,10 @@ int game_test_kp(int frame)
     if (kp.row < 0) return -1;
     const Row *r = &sc->objs[kp.row];
     if (frame % 30 == 0)
-        printf("kp test f %d: seq %d stairs %d(%d) sub %d main %d st hip %d sw %d de %d ja %d jtp %d pu %d | lv %d at %.0f %.0f %.0f (g %d) Mario %.0f %.0f %.0f life %d dx %d pd %s\n",
+        printf("kp test f %d: seq %d stairs %d(%d) sub %d main %d st hip %d sw %d de %d ja %d jtp %d pu %d | lv %d at %.0f %.0f %.0f (g %d) Mario %.0f %.0f %.0f life %d dx %d.%d.%d pd %s\n",
                frame, kp.seq.nrv, kp.stairs.nrv, kp.jump_idx, kp.sub.nrv, kp.main.nrv, kp.st[KST_HIPDROP].nrv, kp.st[KST_SHOCKWAVE].nrv,
                kp.st[KST_DAMAGEESCAPE].nrv, kp.st[KST_JUMPAWAY].nrv, kp.st[KST_JUMPTOPLANET].nrv, kp.st[KST_POWERUP].nrv, kp.lv,
-               kp.b.pos.x, kp.b.pos.y, kp.b.pos.z, kp.b.on_ground, mario->pos.x, mario->pos.y, mario->pos.z, game_life(), dx.on, pd.name ? pd.name : "-");
+               kp.b.pos.x, kp.b.pos.y, kp.b.pos.z, kp.b.on_ground, mario->pos.x, mario->pos.y, mario->pos.z, game_life(), dx.on, dx.part, dx.step, pd.name ? pd.name : "-");
     if (life < 3) life = 3;
     if (!kp.alive && row_dead[kp.row]) { /* to its grand star (arg7: the declarer) */
         int ty = scene_type(sc, "GrandStar");
