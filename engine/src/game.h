@@ -140,6 +140,8 @@ void game_test_hold(int set);
 int game_test_beeflower(void);
 /* Test builds: Mario at the first unbroken SmallStone ring (spin: spinning); its row or -1 */
 int game_test_stone(int spin);
+/* Test builds: Mario on the first shown, untaken chip; its row or -1 */
+int game_test_chip(void);
 /* Test builds: Mario held half way along the first LavaProminence's rail; its row, -2 streaming, -1 none */
 int game_test_prom(void);
 /* Test builds: a shot at the first unopened TreasureSpot / CoinFlower (cursor on it, L1): its row, -2 behind the

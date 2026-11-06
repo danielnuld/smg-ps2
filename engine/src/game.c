@@ -606,6 +606,7 @@ static void bva_apply(const Model *md, const char *key, float frame)
 static const char *bva_key; /* draw_skin: a BVA started apart from the clip (startBva), at bva_frame; else the clip's */
 static float bva_frame;
 static int sbp_bva_row = -1; /* StinkBugParent without its child (update_sbp) */
+static int nchg; /* ChipGroup states made (chip_group_of) */
 static void draw_skin(const Model *md, const float m[16], Anim *a)
 {
     if (md == m_mario_skin) render_light(&plight.cur);
@@ -2538,6 +2539,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     pole_init();
     creeper_init();
     sbp_bva_row = -1;
+    nchg = 0; /* ChipGroup states (chip_group_of) */
     nrbms = 0;
     nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0; nfgs = 0; nggs = 0; nsss = 0; ss_ride = -1; ss_reset(); kfires_reset(); nlls = 0; ndls = 0; nebl = 0; nass = 0;
     dino_cam = 0;
@@ -2884,6 +2886,106 @@ void game_init(const Scene *s, const unsigned char *blob)
         snprintf(gal, sizeof gal, "%.*s", sl ? (int)(sl - game_stage_name) : (int)strlen(game_stage_name), game_stage_name);
         opening_visited = sl && gd_visited(gal, atoi(sl + 1));
         if (sl) gd_set_visited(gal, atoi(sl + 1));
+    }
+}
+
+/* ChipGroup.cpp (BlueChipGroup / YellowChipGroup; ChipHolder.cpp): its chips are those of its type with its arg0
+ * (mStageSwitchArg; a ShellfishYellowChip's arg0 too). mUIPos / mUIRange: the box of its chips +- 2000 (its centre,
+ * half its diagonal) or arg2 fixed. Its appear switch (receiveAppearRequest): the chips appear, the counter shows, for
+ * arg1 frames (mFlashFrame, its chips flashing) or while Mario is within the range (mIsCounterVisible). A chip taken
+ * (noticeGet): the counter shows with the count before it, then setCount with the new one (CollectCounter over
+ * Mario); the last one asks for the チップコンプリート demo (ChipCounter: Complete, CompleteOut) with
+ * SE_OJ_*CHIP_COMPLETE (port 11 the count); its end (noticeEndCompleteDemo) puts SW_A on. ponytail: arg3's
+ * チップ集め済み already-done flag (mIsDeactivated) is not kept (no such flag in gamedata.c); the chips' FlashingCtrl
+ * for arg1 frames (ChipBase::appearFlashing, killed at its end) not ported: no disc group sets arg1 */
+#define MAX_CHIPG 32
+static struct { short row; u8 visible, done; int timer, got; V3 ui; float range; } chg[MAX_CHIPG];
+static int nchg;
+static int chip_group_of(int row) /* its state, made at its first use (init / updateUIRange) */
+{
+    for (int k = 0; k < nchg; k++) if (chg[k].row == row) return k;
+    if (nchg >= MAX_CHIPG) return -1;
+    typeof(&chg[0]) g = &chg[nchg];
+    const Row *r = &sc->objs[row];
+    const char *chip = sc->types[32 * r->type] == 'Y' ? "YellowChip" : "BlueChip";
+    memset(g, 0, sizeof *g);
+    g->row = (short)row; g->timer = -1;
+    g->ui = row_pos(r);
+    V3 lo = g->ui, hi = g->ui;
+    int n = 0;
+    for (u32 k = 0, ct = (u32)scene_type(sc, chip), cs = (u32)scene_type(sc, "ShellfishYellowChip"); k < sc->nobjs; k++) {
+        const Row *c = &sc->objs[k];
+        if ((c->type != ct && !(chip[0] == 'Y' && c->type == cs)) || c->arg[0] != r->arg[0]) continue;
+        V3 a = vsub(row_pos(c), v3(2000, 2000, 2000)), b = vadd(row_pos(c), v3(2000, 2000, 2000));
+        if (!n++) { lo = a; hi = b; continue; }
+        lo = v3(fminf(lo.x, a.x), fminf(lo.y, a.y), fminf(lo.z, a.z)); hi = v3(fmaxf(hi.x, b.x), fmaxf(hi.y, b.y), fmaxf(hi.z, b.z));
+    }
+    if (r->arg[2] >= 0) g->range = (float)r->arg[2]; /* mUIRangeFixed */
+    else if (n) { g->ui = vmul(vadd(lo, hi), 0.5f); g->range = vlen(vsub(hi, lo)) / 2.0f; }
+    else g->range = -1.0f;
+    return nchg++;
+}
+static int chip_group_total(int row) /* mTotalCount */
+{
+    const Row *r = &sc->objs[row];
+    const char *chip = sc->types[32 * r->type] == 'Y' ? "YellowChip" : "BlueChip";
+    int n = 0;
+    for (u32 k = 0, ct = (u32)scene_type(sc, chip), cs = (u32)scene_type(sc, "ShellfishYellowChip"); k < sc->nobjs; k++)
+        if ((sc->objs[k].type == ct || (chip[0] == 'Y' && sc->objs[k].type == cs)) && sc->objs[k].arg[0] == r->arg[0]) n++;
+    return n;
+}
+/* MR::noticeGetChip from a chip of `type` (0 blue, 1 yellow) and group arg0 */
+static void chip_notice_get(int yel, int grp, int chip_row)
+{
+    for (int i = 0; i < nlogic; i++) {
+        int row = logic[i].row;
+        const Row *r = &sc->objs[row];
+        if (logic[i].kind != LOGIC_CHIPS || r->arg[0] != grp || (sc->types[32 * r->type] == 'Y') != yel) continue;
+        int k = chip_group_of(row);
+        if (k < 0) return;
+        typeof(&chg[0]) g = &chg[k];
+        menu_chip_show(yel, grp, g->got); /* noticeGet: showChipCounter */
+        if (r->sw[SW_APPEAR] < 0 || r->arg[1] == -1) g->visible = 1;
+        g->got++;
+        if (g->got >= chip_group_total(row)) { /* isComplete: requestStartChipCompleteDemo */
+            menu_chip_complete(yel, grp);
+            g->done = 1;
+            u32 h = se_start(yel ? SE_OJ_YELLOWCHIP_COMPLETE : SE_OJ_BLUECHIP_COMPLETE, NULL);
+            if (h) se_port(h, 11, g->got > 12 ? 12 : g->got); /* modifySe_Takezawa: port 11 the chip count */
+            g->timer = -1; g->visible = 0;
+            printf("%s %d complete: demo asked (chip row %d)\n", sc->types + 32 * r->type, grp, chip_row);
+        }
+        menu_chip_count(yel, g->got); /* ChipHolder: setCount(getGotCount) */
+        return;
+    }
+}
+static void chip_group_update(int row)
+{
+    const Row *r = &sc->objs[row];
+    int yel = sc->types[32 * r->type] == 'Y', k = chip_group_of(row), grp = r->arg[0];
+    if (k < 0 || row_dead[row]) return;
+    typeof(&chg[0]) g = &chg[k];
+    if (r->sw[SW_APPEAR] >= 0 && row_shown(row) && !(row_step[row] & 0x8000)) { /* receiveAppearRequest */
+        row_step[row] |= 0x8000;
+        menu_chip_show(yel, grp, g->got);
+        if (r->arg[1] >= 0) { g->timer = r->arg[1]; g->visible = 0; } else { g->timer = -1; g->visible = 1; }
+        se_start(yel ? SE_OJ_YELLOWCHIP_APPEAR : SE_OJ_BLUECHIP_APPEAR, NULL);
+    }
+    if (g->visible) { /* movement */
+        if (vlen(vsub(g->ui, mario->pos)) < g->range) menu_chip_show(yel, grp, g->got);
+        else menu_chip_hide(yel, grp);
+    }
+    if (g->timer >= 0 && --g->timer < 0) { menu_chip_hide(yel, grp); g->timer = -1; g->visible = 0; }
+    int lay = menu_chip_has(yel), og; /* (a scene pack without the counter: SW_A at once) */
+    if (g->done == 1 && (!lay || (menu_chip_demo_waiting(yel) && pd_try_start("チップコンプリート", -1)))) { /* the demo starts: Complete */
+        if (lay) menu_chip_demo_start(yel);
+        g->done = 2;
+    }
+    if (g->done == 2 && (!lay || menu_chip_demo_over(yel, &og))) { /* CompleteOut's end: endDemo, noticeEndCompleteDemo: SW_A */
+        if (lay) pd_end("チップコンプリート");
+        sw_set(r, SW_A, 1);
+        row_dead[row] = 1;
+        printf("%s %d complete\n", sc->types + 32 * r->type, grp);
     }
 }
 
@@ -6348,6 +6450,26 @@ int game_test_prom(void)
         if (strncmp(sc->types + 32 * sc->objs[i].type, "LavaProminence", 14) == 0) {
             const Row *r = &sc->objs[i];
             mario->pos = v3(r->pos[0], r->pos[1], r->pos[2]);
+            mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            return -2;
+        }
+    return -1;
+}
+
+/* Test builds: Mario put on the first shown, untaken chip (ITEM_CHIP); returns its row (-1 none) */
+int game_test_chip(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (in->item != ITEM_CHIP || row_dead[in->row] || !row_shown(in->row)) continue;
+        mario->pos = v3(in->m[12], in->m[13], in->m[14]);
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return in->row;
+    }
+    for (u32 i = 0; i < sc->nobjs; i++) /* none bound: Mario at a shown chip's row, its zone streams in */
+        if (!row_dead[i] && row_shown((int)i) && (!strcmp(sc->types + 32 * sc->objs[i].type, "YellowChip") ||
+                                                  !strcmp(sc->types + 32 * sc->objs[i].type, "BlueChip"))) {
+            mario->pos = vadd(row_pos(&sc->objs[i]), vmul(mario->up, 300.0f));
             mario->hvel = v3(0, 0, 0); mario->vup = 0;
             return -2;
         }
@@ -33166,9 +33288,6 @@ static void update_drift(Inst *in, int i, int st)
  * ponytail: no 2P pointer bind (DPDOpen: WalkerStateBindStarPointer, the 2P pointer only), no HitNormal effect, no
  * AnimScaleController, no shadow; the chip drawn static */
 enum { SF_WAIT = 1, SF_OPEN, SF_OPENWAIT, SF_CLOSESIGNAL, SF_CLOSE, SF_SHOCK };
-static short shell_got_rows[8];
-static int nshell_got;
-static int shell_chip_got(int row) { for (int k = 0; k < nshell_got; k++) if (shell_got_rows[k] == row) return 1; return 0; }
 static V3 shell_put(const Inst *in) /* putItem: the base matrix x the item's offset */
 {
     V3 x = vnorm(v3(in->m[0], in->m[1], in->m[2])), y = vnorm(v3(in->m[4], in->m[5], in->m[6])), z = vnorm(v3(in->m[8], in->m[9], in->m[10]));
@@ -33213,7 +33332,7 @@ static void update_shellfish(Inst *in, int st)
             float m[16];
             basis_matrix(m, g->v, up, vnorm(v3(in->m[8], in->m[9], in->m[10])), 0);
             fx_emit(FX_YELLOWCHIP_GET, m); pad_rumble(RUMBLE_MIDDLE); /* ChipBase::exeGot */
-            if (nshell_got < 8) shell_got_rows[nshell_got++] = (short)in->row;
+            chip_notice_get(1, sc->objs[in->row].arg[0], in->row); /* MR::noticeGetChip (setGroupID arg0) */
             taken = 1;
         }
         if (taken) { g->i = (g->i & ~0x100) | 0x200; printf("shellfish %d: its item taken%c", in->row, 10); }
@@ -38219,32 +38338,7 @@ static void update_switches(void)
             printf("star piece spot %d burst\n", row);
             continue;
         }
-        if (logic[i].kind == LOGIC_CHIPS) { /* ChipGroup.cpp: SW_A once every chip of its arg0 is taken
-         * ponytail: no ChipCounter layout (show / hide / its Complete animation, ChipGroup.cpp:69-219): SW_A at once
-         * instead of after the チップコンプリート demo's CompleteOut */
-            const char *chip = sc->types[32 * r->type] == 'Y' ? "YellowChip" : "BlueChip";
-            int yel = chip[0] == 'Y';
-            if (r->sw[SW_APPEAR] >= 0 && row_shown(row) && !(row_step[row] & 0x8000)) { /* receiveAppearRequest */
-                row_step[row] |= 0x8000;
-                se_start(yel ? SE_OJ_YELLOWCHIP_APPEAR : SE_OJ_BLUECHIP_APPEAR, NULL);
-            }
-            int n = 0, got = 0;
-            for (u32 k = 0, ct = (u32)scene_type(sc, chip); k < sc->nobjs; k++) /* the chip class by index */
-                if (sc->objs[k].type == ct && sc->objs[k].arg[0] == r->arg[0]) {
-                    n++;
-                    got += row_dead[k];
-                }
-            for (u32 k = 0, ct = (u32)scene_type(sc, "ShellfishYellowChip"); yel && k < sc->nobjs; k++) /* a Shellfish's chip (setGroupID arg0) */
-                if (sc->objs[k].type == ct && sc->objs[k].arg[0] == r->arg[0]) { n++; got += shell_chip_got((int)k); }
-            if (n && got == n) {
-                u32 h = se_start(yel ? SE_OJ_YELLOWCHIP_COMPLETE : SE_OJ_BLUECHIP_COMPLETE, NULL); /* noticeGet */
-                if (h) se_port(h, 11, n > 12 ? 12 : n); /* modifySe_Takezawa: port 11 the chip count */
-                sw_set(r, SW_A, 1);
-                row_dead[row] = 1;
-                printf("%s %d complete\n", sc->types + 32 * r->type, r->arg[0]);
-            }
-            continue;
-        }
+        if (logic[i].kind == LOGIC_CHIPS) { chip_group_update(row); continue; } /* ChipGroup::movement */
         if (logic[i].kind == LOGIC_FLIPS) { /* FlipPanelObserver: all its group's panels on their back side */
             if (!row_shown(row) || r->group < 0) continue;
             if (r->sw[SW_APPEAR] >= 0 && !(row_step[row] & 0x8000)) { /* exeWait: first step after its appear switch */
@@ -40177,6 +40271,7 @@ static void update_items(void)
                 if (k != (u32)in->row && sc->objs[k].type == cr->type && sc->objs[k].arg[0] == cr->arg[0] && row_dead[k]) got++;
             u32 h = se_start(yel ? SE_SY_YELLOWCHIP_GET : SE_SY_BLUECHIP_GET, NULL); /* startSystemSE(name, count): port 11 */
             if (h) se_port(h, 11, (u16)got);
+            chip_notice_get(yel, cr->arg[0], in->row); /* MR::noticeGetChip */
         }
         else if (in->item == ITEM_KEY) { /* KeySwitch::kill: onSwitchA */
             pad_rumble(RUMBLE_MIDDLE); /* receiveOtherMsg */
@@ -50335,6 +50430,15 @@ void game_update(void)
             menu_meter_head(sx * (608.0f / 640.0f) + 32.0f, sy * (456.0f / 448.0f) - r - 38.0f);
             menu_meter_active(hud_on && !(menu_paused() || dome_layout_off || dx.on)); /* activate / deactivateDefaultGameLayout */
             menu_meter_update();
+            { /* ChipCounter (activate / deactivateChipLayout with the default layout) and CollectCounter::setPosition: his
+               * centre on the screen up by calcPointRadius2D(75) */
+                float vx = sx, vy = sy;
+                screen_pos(vadd(c, vmul(vnorm(cu), 75.0f)), &vx, &vy);
+                int shortb = 0;
+                for (int i = 0; i < 4; i++) shortb |= tk_bshort[i].nrv != BL_DEAD; /* isActiveTalkBalloonShort */
+                menu_chip_active(hud_on && !hud_layout_off());
+                menu_chip_update(shortb, sx, sy - sqrtf((vx - sx) * (vx - sx) + (vy - sy) * (vy - sy)));
+            }
         }
         io_update();
         /* MR::getMapSoundCodeFoot: the ground's (else the wall's) sound code for Mario's surface sounds; -1 none */
