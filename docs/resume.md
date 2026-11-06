@@ -985,8 +985,12 @@ there needs the embedded blob and every pack rebuilt.
   the planet / plates, SKINNED_OBJ parts, CANM_ARC koopa, LOGIC keepers, declare_stars, anim_skipped other battles'
   demo clips), jpa.py NAMED MeteorStrike / KoopaPlate*. ponytail: no face control (ActorJointCtrl), no shadows / bloom,
   no screen blur, the plates' / planet's BRKs, the binded collision's sensor is the plate under its feet, anim cameras
-  without interpolation, no attacks on other actors, pooled skinned models share one Anim. Vs2 (KoopaSequencerVs2,
-  AttackSpin, AttackFireLong) is on branch feat/koopa-vs2 (built, not yet run); Vs3 not started.
+  without interpolation, no attacks on other actors, pooled skinned models share one Anim.
+  Vs2 (#311): KoopaSequencerVs2, KoopaStateAttackSpin (its AttackSpin sensor), KoopaStateAttackFireLong, the Vs2 planet
+  (KoopaBattleMapPlanetVs2, its damage plates only, the grand star plate the first). Test: KP_TEST build with
+  KoopaBattleVs2Galaxy/1 (koopa-b.sh KoopaBattleVs2Galaxy/1 "" 2): クッパＶｓ２本戦開始, three levels, クッパＶｓ２ダウン,
+  `power star 1 got`. Vs3 not started (KoopaSequencerVs3, BattleVs3Lv1 / Lv2, StairsVs3, DemoFallToPlanetVs3Lv2 / Lv3,
+  ChaseRoll / AttackRoll, FigureBall, RockBreak, RestarterVs3, ViewSwitchKeeper, the Peach / KoopaJr / ship demo casts).
 - BossKameck (feat/kameck, 2026-11-05): Kamella after Petari (game.c bk_*, its sequencer Vs1 / Vs2, BattleDemo,
   StateBattle's 12 nerves, MoveRail, BattlePattarn) in StarDustGalaxy 2's ThrowTutorialZone: dead until SW_A (the
   SwitchCube), カメック登場Vs1 (the DemoBossKameckStart anim camera on BossKameckBattleDemo, MBGM_BOSS_04, Mario

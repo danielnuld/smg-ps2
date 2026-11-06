@@ -1537,7 +1537,7 @@ static void update_kp(void)
     const Row *r = &sc->objs[kp.row];
     if (!kp.init) { /* initAfterPlacement: its planet and plates, the stairs registered */
         kp.init = 1;
-        kp_planet_init(); kstb_register();
+        kp_planet_init(); if (kp.vs == 1) kstb_register(); /* (only KoopaSequencerVs1 makes KoopaBattleStairsVs1) */
         game_rebind();
         printf("koopa: planet %s at %.0f %.0f %.0f\n", kp_planet_ok ? "made" : "missing", kp_pc.x, kp_pc.y, kp_pc.z);
     }
@@ -1640,7 +1640,7 @@ static void kp_init(const Scene *s, const unsigned char *blob) /* Koopa::init (K
         Anim **an[6] = {&kp.anim, &kp.a_tb, &ka_fire, &ka_mbreak, &ka_sw, &ka_sws};
         for (int k = 0; k < 6; k++) { *an[k] = mem_alloc(MEM_PLAYER, sizeof(Anim)); memset(*an[k], 0, sizeof(Anim)); (*an[k])->clip_id = -1; }
         kp_models(s);
-        printf("koopa: row %d (vs1), camera set %d\n", (int)i, row_camset[i]);
+        printf("koopa: row %d (vs%d), camera set %d\n", (int)i, kp.vs, row_camset[i]);
         break;
     }
 }
