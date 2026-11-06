@@ -2199,6 +2199,11 @@ int main(void)
         static u32 f0;
         if (!f0 && frame > 30 && game_test_free()) f0 = frame;
         if (f0 && frame - f0 < 30000) game_test_kp((int)(frame - f0));
+#ifdef MK_TEST /* XF=-DMK_TEST, IceVolcanoGalaxy/1: the IceMerameraKing fight (game_test_mk) */
+    {
+        static u32 f0;
+        if (!f0 && frame > 30 && game_test_free()) f0 = frame;
+        if (f0 && frame - f0 < 12000) game_test_mk((int)(frame - f0));
     }
 #endif
 #ifdef TB_TEST /* XF=-DTB_TEST, TriLegLv1Galaxy/1: the TripodBoss fight (game_test_tb) */
