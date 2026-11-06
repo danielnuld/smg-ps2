@@ -557,9 +557,6 @@ static void kj_draw(void)
 static void kj_init(const Scene *s, const unsigned char *blob) /* KoopaJrShip::init, initAfterPlacement */
 {
     memset(&kj, 0, sizeof kj); kj.row = -1; kj.inst = -1; kj.talk = -1; kj.kam[0] = kj.kam[1] = -1;
-#ifdef KJ_OFF
-    return;
-#endif
     int t = scene_type(s, "KoopaJrShip");
     for (u32 i = 0; t >= 0 && i < s->nobjs; i++) {
         const Row *r = &s->objs[i];
@@ -599,12 +596,7 @@ static void kj_rebind_place(Inst *in) /* game_rebind_: its collision instance at
 int game_test_kj(int frame) /* XF=-DKJ_TEST, KoopaJrShipLv1Galaxy/1: Mario put at the deck's SwitchCube (SW 15: the
                              * demo), then the ship hit by a JetTurtle every 300 frames it can take one; till its star */
 {
-    if (kj.row < 0 && frame >= 60) { /* (KJ_OFF: the teleport alone) */
-        int ty = scene_type(sc, "SwitchCube");
-        for (u32 i = 0; ty >= 0 && i < sc->nobjs; i++)
-            if ((int)sc->objs[i].type == ty && sc->objs[i].sw[SW_A] == 15 && frame % 30 == 0) { mario->pos = row_pos(&sc->objs[i]); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
-        return -1;
-    }
+    if (kj.row < 0) return -1;
     if (frame % 60 == 0)
         printf("kj test f %d: nrv %d st %d d0 %d coord %.0f/%.0f pos %.0f %.0f %.0f, Mario %.0f %.0f %.0f, life %d, dx %d part %d talk %d\n", frame, kj.nrv, kj.st, kj.d0,
                kj.coord, kj.len, kj.pos.x, kj.pos.y, kj.pos.z, mario->pos.x, mario->pos.y, mario->pos.z, game_life(), dx.on, dx.part, talk_active());
