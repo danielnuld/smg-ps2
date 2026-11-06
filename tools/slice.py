@@ -92,6 +92,7 @@ SKINNED_OBJ += ("KoopaThornBreak", "KoopaShockWave", "KoopaShockWaveShadow", "Ko
 KOOPA_PARTS = ("KoopaThorn", "KoopaArmorBreak", "KoopaThornBreak", "KoopaFire", "KoopaShockWave", "KoopaShockWaveShadow", "MeteorStrike", "MeteorStrikeBreak", "KoopaPlanetShadow")
 SKINNED_OBJ += ("TripodBoss", "TripodBossGuardWall")  # TripodBoss: its StartDemo / EndDemo joints (Body, legs); the guard wall's 2ndDemo
 SKINNED_OBJ += ("HoneyQueenWing",)  # HoneyQueen::init: createModelObjNpc 羽 on its Center joint, startBck / startBtk HoneyQueenWing
+SKINNED_OBJ += ("KoopaJrShip", "KoopaJrShipBreak", "KoopaJrShipPod", "KoopaJr")  # KoopaJrShip.cpp: Arrival / Damage, its break and pod models (Break, Escape), KoopaJr's ShipBattle clips (game.c koopajr_ship.inc)
 SKINNED_OBJ += ("GhostMario", "GhostLuigi")  # GhostPlayer::init: initModelManagerWithAnm GhostMario / GhostLuigi, posed by Mario's clips (game.c gh_*)
 # MapObjActor::initialize (tryStartAllAnim): a placed class whose model archive holds a BCK of the archive's name
 # plays it from the start; such classes are drawn skinned too (AUTO_SKINNED, class -> archive, filled by placement)
@@ -185,6 +186,7 @@ EXTRA = {"KoopaVs1": KOOPA_PARTS + ("KoopaBattleMapPlanet", "KoopaPlateDamage", 
          "Rosetta": ("LightDome", "DomeHalo"),  # RosettaDemoHeavensDoor1's parts (ライトドーム, ライト後光)
          "StarReturnDemoStarter": ("PStar", "GStar", "SpinTico", "MarioHair"), "GrandStarReturnDemoStarter": ("GStar",), "FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
+         "KoopaJrShip": ("KoopaJrShipBreak", "KoopaJrShipPod", "KoopaJr", "KoopaJrShipCannonShell", "KoopaJrShipCannonMainShell", "HomingKiller"),  # KoopaJrShip::init's ModelObjs, KoopaJr, CannonShellHolders, HomingKillers
          "TakoHei": ("TakoHeiInk",),  # TakoHeiInkHolder (spurtTakoHeiInk)
          "PrologueDirector": ("DemoLetter", "DemoPeachCastleGate"),
          "BossStinkBug": ("BossStinkBugWing", "BossStinkBugBombLauncher", "BossStinkBugBomb", "BossStinkBugDemo"),
@@ -339,7 +341,7 @@ def stage_files(path):
     return {p.lower(): d for p, d in B.rarc_files(path.read_bytes(), paths=True)}
 
 
-TALK_NAME = {"KinopioAstro": "Kinopio"}  # createTalkCtrl's message name where it is not the class's
+TALK_NAME = {"KinopioAstro": "Kinopio", "KoopaJrShip": "KoopaJr", "DemoKoopaJrShip": "KoopaJr"}  # (KoopaJr: NPCActorCaps "KoopaJr" on its owner's placement)  # createTalkCtrl's message name where it is not the class's
 
 
 def scene(fs, galaxy, scenario):
@@ -1739,7 +1741,7 @@ def declare_stars(keep, scenario, appear, jp):
             k = None if s32(r["args"][7]) > 0 else -1
         elif r["name"] == "WoodBox":  # WoodBox::init: declarePowerStar when arg7 is set (no disc data has one)
             k = None if s32(r["args"][7]) not in (0, -1) else -1
-        elif r["name"] in ("CollectTico", "DinoPackun", "OtaKing", "BossStinkBug", "BossBegoman", "BossKameck", "BossKameck2", "StinkBugParent", "TripodBoss", "TombSpider", "KoopaVs1", "KoopaVs2", "KoopaVs3"):  # their init declarePowerStar, always
+        elif r["name"] in ("CollectTico", "DinoPackun", "OtaKing", "BossStinkBug", "BossBegoman", "BossKameck", "BossKameck2", "StinkBugParent", "TripodBoss", "TombSpider", "KoopaVs1", "KoopaVs2", "KoopaVs3", "KoopaJrShip"):  # their init declarePowerStar, always
             k = None
         elif r["name"] == "PenguinCoach":  # PenguinCoach::init: declarePowerStar for Behavior_Star / Tutorial / Race (arg0 1-3)
             k = None if 1 <= s32(r["args"][0]) <= 3 else -1
@@ -2341,6 +2343,9 @@ def canm_chunk(fsp, classes, galaxy=None, scenario=None):
 
 # DemoExecutor's sheets (ObjectData/DemoSheet.arc "Demo<sheet><Time|SubPart|Player|Camera|Action|Wipe|Sound>.bcsv")
 WIPES = {"フェードワイプ": 0, "白フェードワイプ": 1, "円ワイプ": 2}  # SceneWipeHolder's wipes by name
+# a cast another actor registers on its owner's placement (tryRegisterDemoCast(this, rIter) with the owner's iterator):
+# KoopaJrShip's KoopaJr (クッパJr), its sheet's actions and camera on the ship's row
+DEMO_CAST_ALIAS = {"KoopaJrShip": "クッパJr"}
 DEMO_SHEETS = ("time", "subpart", "player", "camera", "action", "wipe", "sound")
 # MR::registerDemoCast(actor, DemoName): casts by the demo's name, not its DemoGroupId (Butler::initForAstroDome /
 # initForAstroGalaxy: initDemoSheetTalkAnim registers too)
@@ -2459,7 +2464,7 @@ def demo_chunk(fsp, demos, gpos, keep, jp2en, se_ids):
         group += [i for i, r in enumerate(keep) if d["demo_name"] in DEMO_DIRECT_CAST.get(r["name"], ()) and i not in group]
         group += [i for i, r in enumerate(keep) if d["demo_name"] in DEMO_DIRECT_CAST_ELSE.get(r["name"], ()) and i not in group
                   and r.get("demo", -1) in (-1, 0xFFFF)]
-        match = lambda name, cid: [i for i in group if row_jp[i] == name and (cid < 0 or keep[i].get("cast", -1) == cid)]
+        match = lambda name, cid: [i for i in group if (row_jp[i] == name or DEMO_CAST_ALIAS.get(keep[i]["name"]) == name) and (cid < 0 or keep[i].get("cast", -1) == cid)]
         recs = {k: [] for k in DEMO_SHEETS[2:]}
         for pn, ps, bk in zip(cols("player", "PartName"), cols("player", "PosName"), cols("player", "BckName")):
             if part(pn) is not None:
