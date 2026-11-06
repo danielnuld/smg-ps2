@@ -253,6 +253,25 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   PhantomGalaxy, FactoryGalaxy.
   Note for agents: `git stash` is shared by every worktree (one repository): a stash pushed in one worktree can be
   popped by another. Do not use it; commit WIP to the branch instead.
+- Release repack (2026-11-06, main 6b9035b + #318): the old packs (all but music / movies) moved to
+  out/packs-backup-2026-11-06 (a copy ran at ~1 MB/s on D:). Full repack with main's tools (out/release_2026-11-06.sh,
+  log out/release_2026-11-06.log): lyt.py (menus.bin 939 KB, menus3d 174 KB, picturebook.bin 3288 KB new, title 1744 KB,
+  ending 1477 KB, subs 143 KB), slice_all.py (resident.bin 4.31 MB with MarioTornado, resident_luigi.bin 4.37 MB; 136 /
+  136 converted and fit 9.10 MB; down the shrink ladder: AstroGalaxy 1-5 TridentZone ratio 0.8 / 0.6 / 0.6 / 0.7 / 0.6
+  with no layers, OceanPhantomCave 1 0.5 no layers, 2 0.6, 3 0.8, 4 0.7, PhantomGalaxy 1 0.8 no layers), `zone_fit.py
+  out/packs` 906 zones, none over (tightest OceanPhantomCave 3 GhostShipCaveZone, 4 KB left; with the disc ELF 4431 KB
+  left: ROOM, not the region, is the bound now), every sound pack and the shared sound.bin (1117 SEs, 32 MEs). Every
+  line of D:/smg-ps2-wt/repack-todo.md up to #299 is in it. Checks: host tests; route EggStar 1 star at f 4215; coverage
+  (out/rel-cover.sh, one galaxy per PCSX2 lock, out/coverage.csv, logs of the failures in out/cover_logs): 118 / 123 ok
+  (KoopaJrShipLv1 1 now ok); misses PhantomGalaxy 6, BattleShip 1, CannonFleet 1 (the cover test's landings, as on
+  10-30); FactoryGalaxy 2 crashed after its first three-zone swap: TicoFat's goods Anim (and the Creeper leaf,
+  HoneyQueen's wing, TicoShop's goods) were allocated in-game above main.c's base_mark and freed by the swap (#314,
+  fixed in #318: a pool from game_init; cover Factory 2, EggStar 2, HoneyBeeKingdom 1 then ok); EggStarGalaxy 1 once
+  jumped to 0 at boot right after opening menus3d.bin (cover ELF), not again in two more boots (cover, plain): the
+  layout-dependent boot crash noted on 10-30 (10-30 tied it to EggStar 1's ME data), still open: it also
+  hit the route ELF once with #318 (out/rel-boot-EggStarGalaxy_1-route-crash1.log), the retry got the star at f 4215. Disc: build.sh plain ... FileSelect/1 disc, disc.py ->
+  out/smg-ps2.iso (3315 MB, 2472 packs, ELF from 6b9035b + #318, not the boss PRs merged since); the 10-31 ISO kept as
+  out/smg-ps2-prev.iso.
 
 ## Console release (2026-10-23 / 24)
 
