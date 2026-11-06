@@ -97,7 +97,7 @@ SKINNED_OBJ += ("SnakeFish",)  # (SkeletalFishBaby)
 # SkeletalFishBoss (Kingfin): its body, its PartsModels SkeletalFishBossHeadA / ScarFlash, its guards (and the demo ones), its break model (game.c sf_*)
 SKINNED_OBJ += ("SkeletalFishBoss", "SkeletalFishBossHeadA", "SkeletalFishGuard", "SkeletalFishBossBreak", "SkeletalFishBossScarFlash")
 #  # SkeletalFishBaby::init: initModelManagerWithAnm SnakeFish (Swim / Death; game.c sf_*, its joints on its rail)
-SKINNED_OBJ += ("KoopaJrShip", "KoopaJrShipBreak", "KoopaJrShipPod", "KoopaJr")  # KoopaJrShip.cpp: Arrival / Damage, its break and pod models (Break, Escape), KoopaJr's ShipBattle clips (game.c koopajr_ship.inc)
+SKINNED_OBJ += ("KoopaJrShip", "KoopaJrShipBreak", "KoopaJrShipPod", "KoopaJr", "DemoKoopaJrShip")  # KoopaJrShip.cpp: Arrival / Damage, its break and pod models (Break, Escape), KoopaJr's ShipBattle clips (game.c koopajr_ship.inc)
 SKINNED_OBJ += ("GhostMario", "GhostLuigi")  # GhostPlayer::init: initModelManagerWithAnm GhostMario / GhostLuigi, posed by Mario's clips (game.c gh_*)
 # MapObjActor::initialize (tryStartAllAnim): a placed class whose model archive holds a BCK of the archive's name
 # plays it from the start; such classes are drawn skinned too (AUTO_SKINNED, class -> archive, filled by placement)
@@ -123,7 +123,7 @@ def auto_anim(fsp, arc):
     return _auto_anim[arc]
 
 
-ANIM_ARC = {"BegomanBabyLauncher": "BegomanLauncher", "KeySwitchOwned": "KeySwitch", "ChildKameck": "Kameck", "BkDemo": "BossKameckBattleDemo", "ChildKuribo": "Kuribo", "ChildIceMeramera": "IceMeramera", "MorphBubble": "ItemBubble", "MorphItemNeoHopper": "PowerUpHopper", "MorphItemNeoBee": "PowerUpBee", "MorphItemNeoTeresa": "PowerUpTeresa", "MorphItemNeoIce": "PowerUpIce", "MorphItemNeoFire": "PowerUpFire", "MorphItemNeoFoo": "PowerUpFoo", "RunawayRabbit": "TrickRabbit", "DemoRabbit": "TrickRabbit", "RunawayTico": "Tico", "LuigiEvent": "LuigiNPC", "TicoDomeLecture": "Tico", "ButlerExplain": "Butler", "ButlerMap": "Butler", "PStar": "PowerStar", "GStar": "GrandStar", "CocoSambo": "CocoSamboBody", "Karikari": "Karipon", "BenefitItemOneUp": "KinokoOneUp",
+ANIM_ARC = {"DemoKoopaJrShip": "KoopaJrShip", "BegomanBabyLauncher": "BegomanLauncher", "KeySwitchOwned": "KeySwitch", "ChildKameck": "Kameck", "BkDemo": "BossKameckBattleDemo", "ChildKuribo": "Kuribo", "ChildIceMeramera": "IceMeramera", "MorphBubble": "ItemBubble", "MorphItemNeoHopper": "PowerUpHopper", "MorphItemNeoBee": "PowerUpBee", "MorphItemNeoTeresa": "PowerUpTeresa", "MorphItemNeoIce": "PowerUpIce", "MorphItemNeoFire": "PowerUpFire", "MorphItemNeoFoo": "PowerUpFoo", "RunawayRabbit": "TrickRabbit", "DemoRabbit": "TrickRabbit", "RunawayTico": "Tico", "LuigiEvent": "LuigiNPC", "TicoDomeLecture": "Tico", "ButlerExplain": "Butler", "ButlerMap": "Butler", "PStar": "PowerStar", "GStar": "GrandStar", "CocoSambo": "CocoSamboBody", "Karikari": "Karipon", "BenefitItemOneUp": "KinokoOneUp",
             "BenefitItemLifeUp": "KinokoLifeUp", "HammerHeadPackun": "PackunFlower", "Plant": "PlantSeed", "FlowerGroup": "Flower", "FlowerBlueGroup": "FlowerBlue",
             "CutBushGroup": "CutBush", "FirePressureRadiate": "FirePressure", "JumpBeamer": "JumpBeamerBody", "TreasureBoxKinokoOneUp": "TreasureBox", "TreasureBoxCoin": "TreasureBox", "TreasureBoxEmpty": "TreasureBox", "TreasureBoxGoldEmpty": "TreasureBoxGold", "TreasureBoxCrackedKinokoOneUp": "TreasureBoxCracked", "TreasureBoxCrackedAirBubble": "TreasureBoxCracked", "TreasureBoxBlueChip": "TreasureBox", "TreasureBoxYellowChip": "TreasureBox", "TreasureBoxKinokoLifeUp": "TreasureBox", "TreasureBoxCrackedKinokoLifeUp": "TreasureBoxCracked", "TreasureBoxCrackedEmpty": "TreasureBoxCracked"}  # where a class's clips are when not in its own-named archive
 ANIM_ARC.update({c: a for c, a in WAIT_ARC.items() if c not in ANIM_ARC})
@@ -150,6 +150,7 @@ MODEL_ARC = {"Koura~0": "Koura~koura:0", "Koura~1": "Koura~koura:1",  # Nokonoko
              # the Gateway intro (HeavensDoorGalaxy 1): RunawayRabbitCollect's children, DemoRabbit, the baby Lumas; the
              # rabbits' TrickRabbitBaby and the RunawayTico's TicoBaby are their EXTRA (by arg / cast id)
              "RunawayRabbit": "TrickRabbit", "DemoRabbit": "TrickRabbit", "RunawayTico": "Tico", "TicoBaby": "TicoBaby",
+             "DemoKoopaJrShip": "KoopaJrShip",  # DemoKoopaJrShip::init: initModelManagerWithAnm KoopaJrShip
              "MorphBubble": "ItemBubble"}  # MorphItemObjNeo's container アイテム泡 (startBck Move)
 # ponytail: no MiniatureGalaxyStarNumber (its digits are texture matrices per material), no MiniatureGalaxyShadow
 MINI_EXTRA = ("MiniatureGalaxyUnknown", "MiniHatenaGalaxy", "MiniatureGalaxyUnknownKoopa", "MiniKoopaGalaxy",
@@ -191,6 +192,7 @@ EXTRA = {"SkeletalFishBaby": ("SnakeFish",), "ChildSkeletalFishBaby": ("SnakeFis
          "Rosetta": ("LightDome", "DomeHalo"),  # RosettaDemoHeavensDoor1's parts (ライトドーム, ライト後光)
          "StarReturnDemoStarter": ("PStar", "GStar", "SpinTico", "MarioHair"), "GrandStarReturnDemoStarter": ("GStar",), "FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
+         "DemoKoopaJrShip": ("KoopaJr",),  # createKoopaJrObj
          "KoopaJrShip": ("KoopaJrShipBreak", "KoopaJrShipPod", "KoopaJr", "KoopaJrShipCannonShell", "KoopaJrShipCannonMainShell", "HomingKiller"),  # KoopaJrShip::init's ModelObjs, KoopaJr, CannonShellHolders, HomingKillers
          "TakoHei": ("TakoHeiInk",),  # TakoHeiInkHolder (spurtTakoHeiInk)
          "PrologueDirector": ("DemoLetter", "DemoPeachCastleGate"),
@@ -2352,7 +2354,7 @@ def canm_chunk(fsp, classes, galaxy=None, scenario=None):
 WIPES = {"フェードワイプ": 0, "白フェードワイプ": 1, "円ワイプ": 2}  # SceneWipeHolder's wipes by name
 # a cast another actor registers on its owner's placement (tryRegisterDemoCast(this, rIter) with the owner's iterator):
 # KoopaJrShip's KoopaJr (クッパJr), its sheet's actions and camera on the ship's row
-DEMO_CAST_ALIAS = {"KoopaJrShip": "クッパJr"}
+DEMO_CAST_ALIAS = {"KoopaJrShip": "クッパJr", "DemoKoopaJrShip": "クッパJr"}
 DEMO_SHEETS = ("time", "subpart", "player", "camera", "action", "wipe", "sound")
 # MR::registerDemoCast(actor, DemoName): casts by the demo's name, not its DemoGroupId (Butler::initForAstroDome /
 # initForAstroGalaxy: initDemoSheetTalkAnim registers too)
