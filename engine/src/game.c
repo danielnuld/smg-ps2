@@ -377,7 +377,7 @@ static int tb_hidden(int row), tb_demo(void);
 static void tb_init(const Scene *s, const unsigned char *blob), update_tb(void), tb_draw(void);
 static void kj_init(const Scene *s, const unsigned char *blob), update_kj(void), kj_draw(void); /* KoopaJrShip (koopajr_ship.inc) */
 static int kj_jet_hit(V3 p);
-static void kj_cast_hook(int row, int type, int part), kj_rebind_place(Inst *in);
+static void kj_cast_hook(int row, int type, int part), kj_rebind_place(Inst *in), kj_models(const Scene *s);
 static void dkj_init(const Scene *s), update_dkj(void), dkj_draw(void), dkj_cast_hook(int row, int type, int part); /* DemoKoopaJrShip */
 static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle);
 static void dome_init(void);
@@ -5184,6 +5184,7 @@ static void game_rebind_(void)
     m_wanwanbreak = scene_model(s, "WanwanRollingBreak");
     m_shell = scene_model(s, "KoopaJrShipCannonShell");
     if (!m_shell) m_shell = scene_model(s, "IronCannonLauncherPoint");
+    kj_models(s); /* koopajr_ship.inc */
     /* what Mario rides (Fluff, SpaceCocoon, JumpBranch) keeps its state across the rebuild: found again by its row */
     int ride_row[3] = {flf.inst >= 0 ? insts[flf.inst].row : -1, coc.inst >= 0 ? insts[coc.inst].row : -1,
                        jb.inst >= 0 ? insts[jb.inst].row : -1};

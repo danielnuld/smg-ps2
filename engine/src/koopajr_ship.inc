@@ -599,7 +599,12 @@ static void kj_rebind_place(Inst *in) /* game_rebind_: its collision instance at
 int game_test_kj(int frame) /* XF=-DKJ_TEST, KoopaJrShipLv1Galaxy/1: Mario put at the deck's SwitchCube (SW 15: the
                              * demo), then the ship hit by a JetTurtle every 300 frames it can take one; till its star */
 {
-    if (kj.row < 0) return -1;
+    if (kj.row < 0 && frame >= 60) { /* (KJ_OFF: the teleport alone) */
+        int ty = scene_type(sc, "SwitchCube");
+        for (u32 i = 0; ty >= 0 && i < sc->nobjs; i++)
+            if ((int)sc->objs[i].type == ty && sc->objs[i].sw[SW_A] == 15 && frame % 30 == 0) { mario->pos = row_pos(&sc->objs[i]); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+        return -1;
+    }
     if (frame % 60 == 0)
         printf("kj test f %d: nrv %d st %d d0 %d coord %.0f/%.0f pos %.0f %.0f %.0f, Mario %.0f %.0f %.0f, life %d, dx %d part %d\n", frame, kj.nrv, kj.st, kj.d0,
                kj.coord, kj.len, kj.pos.x, kj.pos.y, kj.pos.z, mario->pos.x, mario->pos.y, mario->pos.z, game_life(), dx.on, dx.part);
@@ -728,4 +733,22 @@ static void dkj_init(const Scene *s) /* DemoKoopaJrShip::init (after kj_init) */
         printf("demo koopajr ship: row %d, camera %d\n", dkj.row, dkj.cam);
         break;
     }
+}
+static void kj_bind(Anim *a, const Model *md, const char *base) /* the anim on the model's skin as it is now */
+{
+    if (!a || !md || !md->skin || a->skin == md->skin) return;
+    anim_bind(a, md->skin);
+    if (base) anim_play(a, base, 0.0f, 0, 0);
+}
+static void kj_models(const Scene *s) /* game_rebind_: the models looked up again (a zone pack in or out moves them), the
+                                       * anims bound to their skins again */
+{
+    if (kj.row >= 0) {
+        kj.md = scene_model(s, "KoopaJrShip"); kj.mbreak = scene_model(s, "KoopaJrShipBreak"); kj.mpod = scene_model(s, "KoopaJrShipPod");
+        kj.mshell = scene_model(s, "KoopaJrShipCannonShell"); kj.mmain = scene_model(s, "KoopaJrShipCannonMainShell");
+        kj.mkiller = scene_model(s, "HomingKiller");
+        kj_bind(kj.anim, kj.md, "koopajrship/koopajrship"); kj_bind(kj.banim, kj.mbreak, NULL); kj_bind(kj.panim, kj.mpod, NULL);
+    }
+    if (kj.row >= 0 || dkj.row >= 0) { kj.mjr = scene_model(s, "KoopaJr"); kj_bind(kj.jranim, kj.mjr, NULL); }
+    if (dkj.row >= 0) { dkj.md = scene_model(s, "DemoKoopaJrShip"); kj_bind(dkj.anim, dkj.md, NULL); }
 }
