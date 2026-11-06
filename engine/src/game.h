@@ -22,6 +22,8 @@ int game_test_launch(int i);
  * game_launch_state() gives the launch holding Mario (-1 none). */
 int game_test_spindriver(int small);
 int game_launch_state(void);
+/* Test builds: Mario put d from that launch star, no spin (its Capture within 240). Returns its index or -1. */
+int game_test_capture(int small, float d);
 /* Test builds: Mario just above the first breakable box, spinning. Returns its OBJS row or -1. */
 int game_test_box(void);
 /* Test builds: Mario spinning on the cage (or other declarer) holding the first event power star, its row (-2 it is
