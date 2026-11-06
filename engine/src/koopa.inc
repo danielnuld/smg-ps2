@@ -2225,8 +2225,8 @@ int game_test_kp(int frame)
         if (frame % 30 == 0) printf("kp3 test f %d: seq %d stairs %d bat %d fall %d roll %d/%d hidden %d\n", frame, kp.seq.nrv, kp.stairs.nrv,
                                     k3.bat.nrv, k3.fall.nrv, kp.st[KST_CHASEROLL].nrv, kp.st[KST_ROLL].nrv, kp.hidden);
         if (nv_is(&kp.seq, K3_WAITPLAYER)) {
-            if (frame == 60) k3_sw("KoopaViewSwitchKeeper", SW_APPEAR, 1);
-            if (frame == 120) k3_sw("KoopaSwitchKeeper", SW_APPEAR, 1);
+            if (frame >= 60) k3_sw("KoopaViewSwitchKeeper", SW_APPEAR, 1);
+            if (frame >= 120) k3_sw("KoopaSwitchKeeper", SW_APPEAR, 1);
             return 1;
         }
         if (nv_is(&kp.seq, K3_BATTLESTAIRS)) {
