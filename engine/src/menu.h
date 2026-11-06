@@ -119,6 +119,18 @@ int menu_race_counting(void);
 int menu_race_all_stopped(void);
 void menu_race_set_time(u32 frame);
 void menu_race_update(void);
+/* ChipCounter (type 0 blue, 1 yellow) and its CollectCounter: ChipHolder's calls */
+void menu_chip_show(int type, int group, int got);
+void menu_chip_hide(int type, int group);
+void menu_chip_count(int type, int count);
+void menu_chip_complete(int type, int group);
+int menu_chip_has(int type);           /* its layout is in the scene */
+int menu_chip_demo_waiting(int type);  /* TryDemo: its demo asked for */
+void menu_chip_demo_start(int type);
+int menu_chip_demo_over(int type, int *group); /* 1 once when CompleteOut ends */
+void menu_chip_active(int on);
+void menu_chip_update(int short_balloon, float x, float y);
+int menu_test_chip(int type);          /* -1 none, else alive x 1000 + nerve x 10 + count */
 /* YesNoLayout: MR::appearYesNoSelector(yes, no) (talk_se: TalkDirector's setYesNoSelectorSE), isYesNoSelected */
 void menu_yesno_appear(const char *yes, const char *no, int talk_se);
 int menu_yesno_selected(void);       /* 1 Yes, 2 No, 0 not yet */

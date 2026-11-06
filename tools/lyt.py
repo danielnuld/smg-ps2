@@ -413,7 +413,8 @@ COMMON = ("PauseMenu", "SysInfoWindow", "SysInfoWindowMini", "GameOver", "TooBad
           "SelectButton",  # YesNoLayout (the talks' yes / no)
           "TimeLimit",  # TimeLimitLayout (Red / Black comets)
           "Race",  # RaceManagerLayout (GhostPlayer's count and go, lose)
-          "HitPointMeter")  # MarioMeter
+          "HitPointMeter",  # MarioMeter
+          "BlueChipCounter", "YellowChipCounter", "CollectCounter")  # ChipHolder's ChipCounter and its CollectCounter
 # ponytail: no DPDPointerSub (the 2P pointer) nor DPDPointerNumber (the player number, shown only with two remotes
 # connected): one pad here
 # the dome's galaxy select's (AstroDomeGalaxySelector): dome.bin, loaded in the AstroDome stages only; GalaxyInfo with

@@ -1487,6 +1487,7 @@ static void spg_update(void) /* control: the guidance's spine, then checkRequest
 /* --- GamePauseSequence ----------------------------------------------------------------------------------------- */
 static char select_after[32]; /* MoviePlayingSequence (FinalBattle): the scenario select opened over the stage */
 static void subm_init(void);
+static void chc_init(const Scene *s);
 void menu_init(const Scene *s)
 {
     msgs = s->msgs; msgs2 = s->msgs2;
@@ -1500,6 +1501,7 @@ void menu_init(const Scene *s)
     hm_init();
     tl_init();
     rcl_init_();
+    chc_init(s);
     sr.l = lyt_new("ResultWindow");
     sr.info = lyt_new("InformationWindow"); /* MR::appearInformationMessageCenter's (NULL where not loaded) */
     if (sv_prompt && seq_take_result(&sr.r)) { /* a star return demo shows it at its wait's end (menu_result_start) */
@@ -1982,6 +1984,162 @@ void menu_race_set_time(u32 frame) /* setTime: updateClearTimeTextBox TimeCounte
     lyt_set_text_rec(rcl.l, "TimeCounter", rcl.text);
 }
 void menu_race_update(void) { if (rcl.alive) lyt_update(rcl.l); } /* LayoutActor::movement */
+
+/* --- ChipCounter (MapObj/ChipCounter.cpp: BlueChipCounter / YellowChipCounter, ChipHolder's) and its CollectCounter
+ * (MapObj/CollectCounter.cpp: 集め数字, the count over Mario). Hide, FrameIn (Appear), Show (Wait), FrameOut (End,
+ * then killed), TryDemo (hidden till the チップコンプリート demo starts), Complete (every pane got, Complete), CompleteOut
+ * (End; the demo's end: menu_chip_demo_over). Chip1..5 pane anims ChipGet: frame 0 empty, 1 got, played for the one
+ * just taken (the fifth set at once). Channel 1 ShowHide at 20 x _30: _30 down 0.05 a frame while a short talk balloon
+ * is out, else up (control). killed by deactivateChipLayout unless completing, appeared again by activateChipLayout
+ * unless hidden. Moved by game.c (menu_chip_update) each frame its scene moves */
+enum { CC_HIDE, CC_FRAMEIN, CC_SHOW, CC_FRAMEOUT, CC_TRYDEMO, CC_COMPLETE, CC_COMPLETEOUT };
+static const char *const chip_pane[5] = {"Chip1", "Chip2", "Chip3", "Chip4", "Chip5"}; /* sChipPainName */
+static struct {
+    LytInst *l, *cl;  /* the counter, its CollectCounter */
+    u8 alive, c_alive, over;
+    int count, group;
+    float sh;         /* _30 */
+    float follow[2];  /* CollectCounter::mFollowPosition */
+    Nrv n, cn;        /* the counter's nerve, CollectCounter's (0 Hide, 1 Show) */
+} chc[2];
+static void chc_init(const Scene *s)
+{
+    memset(chc, 0, sizeof chc);
+    for (int t = 0; t < 2; t++) { /* MR::createChipHolder: a scene with a ChipGroup of the type (ChipBase::Type_Blue 0, Yellow 1) */
+        int have = 0;
+        for (u32 i = 0; i < s->nobjs && !have; i++)
+            have = !strcmp(s->types + 32 * s->objs[i].type, t ? "YellowChipGroup" : "BlueChipGroup");
+        if (!have || !(chc[t].l = lyt_new(t ? "YellowChipCounter" : "BlueChipCounter"))) continue;
+        for (int i = 0; i < 5; i++) lyt_start_pane(chc[t].l, chip_pane[i], "ChipGet", 0);
+        lyt_start(chc[t].l, "ShowHide", 1);
+        chc[t].sh = 1.0f;
+        lyt_set_frame(chc[t].l, 1, 20.0f); /* setAnimFrameAndStop(_30 x 20) */
+        lyt_set_rate(chc[t].l, 1, 0.0f);
+        chc[t].group = -1;
+        chc[t].n.next = -1; chc[t].n.cur = CC_HIDE;
+        chc[t].cl = lyt_new("CollectCounter");
+        if (chc[t].cl) lyt_follow(chc[t].cl, "RootPane", chc[t].follow, 0); /* setFollowPos(mFollowPosition, 0) */
+    }
+}
+static int chc_hidden(int t) { return nrv_is(&chc[t].n, CC_HIDE) || nrv_is(&chc[t].n, CC_FRAMEOUT); } /* isHidden */
+static int chc_complete(int t) { return nrv_is(&chc[t].n, CC_TRYDEMO) || nrv_is(&chc[t].n, CC_COMPLETE) || nrv_is(&chc[t].n, CC_COMPLETEOUT); }
+static void chc_pane(int t, int i, float f) { lyt_set_pane_frame_stop(chc[t].l, chip_pane[i], 0, f); }
+void menu_chip_show(int t, int group, int got) /* requestShow */
+{
+    if (!chc[t].l) return;
+    if (chc_hidden(t)) {
+        chc[t].alive = 1; /* appear */
+        chc[t].count = got;
+        for (int i = 0; i < 5; i++) chc_pane(t, i, i < got ? 1.0f : 0.0f);
+        nrv_set(&chc[t].n, CC_FRAMEIN);
+    }
+    chc[t].group = group;
+}
+void menu_chip_hide(int t, int group) /* requestHide */
+{
+    if (!chc[t].l || chc[t].group != group) return;
+    if (!chc_hidden(t)) nrv_set(&chc[t].n, CC_FRAMEOUT);
+}
+void menu_chip_count(int t, int count) /* setCount: CollectCounter::setCount, the panes */
+{
+    if (!chc[t].l) return;
+    if (chc[t].cl) { /* CollectCounter: appear, Show, its number */
+        chc[t].c_alive = 1;
+        nrv_set(&chc[t].cn, 1);
+        lyt_set_number_rec(chc[t].cl, "CollectCounter", count);
+    }
+    chc[t].count = count;
+    for (int i = 0; i < 5; i++) {
+        if (i < count - 1) chc_pane(t, i, 1.0f);
+        else if (i == count - 1) { if (i == 4) chc_pane(t, i, 1.0f); else lyt_start_pane(chc[t].l, chip_pane[i], "ChipGet", 0); }
+        else chc_pane(t, i, 0.0f);
+    }
+}
+void menu_chip_complete(int t, int group) /* requestComplete: TryDemo till game.c starts チップコンプリート */
+{
+    if (!chc[t].l) return;
+    if (chc_hidden(t)) chc[t].alive = 1;
+    chc[t].group = group;
+    nrv_set(&chc[t].n, CC_TRYDEMO);
+}
+void menu_chip_demo_start(int t) { if (chc[t].l) nrv_set(&chc[t].n, CC_COMPLETE); } /* the demo's start nerve */
+int menu_chip_has(int t) { return chc[t].l != NULL; }
+int menu_chip_demo_waiting(int t) { return chc[t].l && nrv_is(&chc[t].n, CC_TRYDEMO); }
+int menu_chip_demo_over(int t, int *group) /* CompleteOut's end once (endDemo, noticeEndChipCompleteDemo) */
+{
+    if (!chc[t].over) return 0;
+    chc[t].over = 0;
+    *group = chc[t].group;
+    return 1;
+}
+void menu_chip_active(int on) /* activateChipLayout / deactivateChipLayout */
+{
+    for (int t = 0; t < 2; t++) {
+        if (!chc[t].l) continue;
+        if (on) { if (!chc_hidden(t)) chc[t].alive = 1; }
+        else if (!chc_complete(t)) { chc[t].alive = 0; chc[t].c_alive = 0; }
+    }
+}
+int menu_test_chip(int t) { return chc[t].l ? chc[t].alive * 1000 + (chc[t].n.next >= 0 ? chc[t].n.next : chc[t].n.cur) * 10 + chc[t].count : -1; }
+void menu_chip_update(int short_balloon, float x, float y) /* LayoutActor::movement of both; (x, y): Mario's centre on the
+                                                            * screen up by calcPointRadius2D(75) (CollectCounter::setPosition) */
+{
+    for (int t = 0; t < 2; t++) {
+        typeof(&chc[0]) c = &chc[t];
+        if (!c->l) continue;
+        if (c->c_alive) { /* CollectCounter: control (setPosition), Show: Appear till it stops, then killed */
+            c->follow[0] = x * (608.0f / 640.0f); c->follow[1] = y * (456.0f / 448.0f);
+            if (nrv_begin(&c->cn) == 1) {
+                if (FIRST(&c->cn)) lyt_start(c->cl, "Appear", 0);
+                if (lyt_stopped(c->cl, 0)) { nrv_set(&c->cn, 0); c->c_alive = 0; }
+            }
+            nrv_end(&c->cn);
+            lyt_update(c->cl);
+        }
+        if (!c->alive) continue;
+        switch (nrv_begin(&c->n)) {
+        case CC_FRAMEIN:
+            if (FIRST(&c->n)) lyt_start(c->l, "Appear", 0);
+            if (lyt_stopped(c->l, 0)) nrv_set(&c->n, CC_SHOW); /* tryEndFrameIn */
+            break;
+        case CC_SHOW: if (FIRST(&c->n)) lyt_start(c->l, "Wait", 0); break;
+        case CC_FRAMEOUT:
+            if (FIRST(&c->n)) lyt_start(c->l, "End", 0);
+            if (lyt_stopped(c->l, 0)) { nrv_set(&c->n, CC_HIDE); c->alive = 0; } /* tryEndFrameOut: kill */
+            break;
+        case CC_TRYDEMO: break; /* hideLayout (drawn only from Complete on: menu_draw) */
+        case CC_COMPLETE:
+            if (FIRST(&c->n)) {
+                for (int i = 0; i < 5; i++) chc_pane(t, i, 1.0f);
+                lyt_start(c->l, "Complete", 0);
+            }
+            if (lyt_stopped(c->l, 0)) nrv_set(&c->n, CC_COMPLETEOUT); /* tryEndComplete */
+            break;
+        case CC_COMPLETEOUT:
+            if (FIRST(&c->n)) lyt_start(c->l, "End", 0);
+            if (lyt_stopped(c->l, 0)) { /* tryEndFrameOut (kill), Hide; CollectCounter killed; endDemo */
+                nrv_set(&c->n, CC_HIDE);
+                c->alive = 0; c->c_alive = 0;
+                c->over = 1;
+            }
+            break;
+        }
+        nrv_end(&c->n);
+        if (!c->alive) continue;
+        c->sh += short_balloon ? -0.05f : 0.05f; /* control */
+        if (c->sh < 0.0f) c->sh = 0.0f;
+        if (c->sh > 1.0f) c->sh = 1.0f;
+        lyt_set_frame(c->l, 1, c->sh * 20.0f);
+        lyt_update(c->l);
+    }
+}
+static void chc_draw(void)
+{
+    for (int t = 0; t < 2; t++) {
+        if (chc[t].alive && !nrv_is(&chc[t].n, CC_TRYDEMO)) { render_world_done(); lyt_draw(chc[t].l); }
+        if (chc[t].c_alive) { render_world_done(); lyt_draw(chc[t].cl); }
+    }
+}
 
 int menu_update(void)
 {
@@ -5180,6 +5338,7 @@ void menu_draw(void)
     mlay_draw();
     if (tl.alive) { render_world_done(); lyt_draw(tl.l); } /* TimeLimitLayout */
     if (rcl.alive) { render_world_done(); lyt_draw(rcl.l); } /* RaceManagerLayout */
+    chc_draw(); /* ChipCounter, CollectCounter */
     if (spg.l && !nrv_is(&spg.n, SPG_ENDWAIT)) { render_world_done(); lyt_draw(spg.l); } /* StarPointerGuidance */
     if (mono.on) { render_world_done(); lyt_draw(mono.l); iab_draw(mono_ab()); }
     if (ynl.alive) { render_world_done(); lyt_draw(ynl.l); }

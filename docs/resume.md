@@ -512,6 +512,12 @@ Second console round (2026-10-24), from Daniel's report:
   sequence.c seq_is_retry (hasRetryGalaxySequence: A skips the start demo after a miss). Test `ghost` (+ XF
   -DGHOST_WIN: Mario put on the star): HoneyBee 4 the ghost wins at f ~4300, OceanRing 4 (swimming, the shell) too.
   Left: the upper-body XanimePlayer (only PartsControl's hand pattern), JetTurtleShadow's draw flag, the dash's blur.
+- ChipCounter (feat/290-chip-counter, 2026-11-05): menu.c chc_* (BlueChipCounter / YellowChipCounter / CollectCounter
+  in lyt.py COMMON: menus.bin +84 KB): Hide / FrameIn / Show / FrameOut / TryDemo / Complete / CompleteOut, Chip1-5
+  ChipGet, ShowHide by short balloons, the count over Mario; game.c chip_group_*: UI range (chips' box +- 2000 or
+  arg2), the appear switch's show (arg1 flash frames), noticeGet (show with the old count, setCount, the last one asks
+  the チップコンプリート demo: pd), SW_A at the demo's end. Test plain + XF -DCHIP_TEST (EggStar 1: five chips, counts
+  1..5, Complete, `YellowChipGroup 0 complete`). ponytail: arg3's チップ集め済み flag, the chips' flashing (arg1: no disc group sets it).
 ## Rules
 
 - Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -

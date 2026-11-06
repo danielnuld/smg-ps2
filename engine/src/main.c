@@ -1864,6 +1864,10 @@ int main(void)
             if (frame % 120 == 0) printf("prom test f %u: row %d, life %d\n", frame, row, game_life());
         }
 #endif
+#ifdef CHIP_TEST /* XF=-DCHIP_TEST (plain, EggStarGalaxy/1): Mario on a chip every 120 frames from 600; the counters' state */
+        if (frame >= 600 && frame % 120 == 0) printf("chip test f %u: on chip row %d\n", frame, game_test_chip());
+        if (frame >= 600 && frame % 20 == 0) printf("chip test f %u: blue %d yellow %d\n", frame, menu_test_chip(0), menu_test_chip(1));
+#endif
 #ifdef STONE_TEST
         if (frame >= 120 && frame < 600 && frame % 60 < 30) game_test_stone(0); /* its zone streams in, the ring drops */
         if (frame >= 120 && frame < 600 && frame % 60 == 30) printf("stone test f %u: spin at row %d, pieces %d\n", frame, game_test_stone(1), game_pieces_out());
