@@ -232,6 +232,7 @@ int game_test_kp(int frame); /* kp test: the Koopa Vs1 fight a frame */
 int game_test_mk(int frame); /* mk test: the IceMerameraKing fight a frame */
 int game_test_sfk(int frame); /* sfk test: the SkeletalFishBoss fight a frame */
 int game_test_sf(int frame); /* sf test: shells at the SkeletalFishBabies a frame */
+int game_test_pol(int frame); /* pol test: the Polta fight a frame */
 int game_test_bbego(int frame); /* bbego test: the BossBegoman fight a frame */
 int game_lives(void);
 int game_misses(void);

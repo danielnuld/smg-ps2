@@ -98,6 +98,7 @@ SKINNED_OBJ += ("SnakeFish",)  # (SkeletalFishBaby)
 SKINNED_OBJ += ("SkeletalFishBoss", "SkeletalFishBossHeadA", "SkeletalFishGuard", "SkeletalFishBossBreak", "SkeletalFishBossScarFlash")
 #  # SkeletalFishBaby::init: initModelManagerWithAnm SnakeFish (Swim / Death; game.c sf_*, its joints on its rail)
 SKINNED_OBJ += ("GhostMario", "GhostLuigi")  # GhostPlayer::init: initModelManagerWithAnm GhostMario / GhostLuigi, posed by Mario's clips (game.c gh_*)
+SKINNED_OBJ += ("PoltaLeftArm", "PoltaRightArm", "PoltaBodyBreak", "PoltaArmBreak", "PoltaFormationRock", "PoltaGroundRockBreak")  # Polta.cpp / PoltaArm.cpp / PoltaGroundRock.cpp: their ModelObjs (startAction, BreakLevel / demo BVAs)
 # MapObjActor::initialize (tryStartAllAnim): a placed class whose model archive holds a BCK of the archive's name
 # plays it from the start; such classes are drawn skinned too (AUTO_SKINNED, class -> archive, filled by placement)
 AUTO_SKINNED = {}
@@ -186,7 +187,8 @@ def sky_sea(b, mat3, m):
 # (FlipPanel: "?" at rest, "!" once flipped, the End face when its group is complete)
 # KuriboChief / ExterminationChecker::initKeySwitch: their own KeySwitch (game.c okeys; KeySwitchOwned: the KeySwitch
 # archive skinned for its Rotation, the placed KeySwitch rows untouched)
-EXTRA = {"SkeletalFishBaby": ("SnakeFish",), "ChildSkeletalFishBaby": ("SnakeFish",), "SkeletalFishBoss": ("SkeletalFishBossHeadA", "SkeletalFishGuard", "SkeletalFishBossBreak", "SkeletalFishBossScarFlash", "SkeletalFishBossLight"), "IceMerameraKing": ("IceManIce", "IceMerameraKingShock", "IceMerameraKingBreak"), "KoopaVs1": KOOPA_PARTS + ("KoopaBattleMapPlanet", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate"), "KoopaVs2": KOOPA_PARTS + ("KoopaBattleMapPlanetVs2", "KoopaPlateDamage"), "GhostPlayer": ("GhostMario", "GhostLuigi", "Koura"), "BegomanBabyLauncher": ("BegomanBaby",), "ElectricRailMoving": ("ElectricRailPoint",), "NokonokoLand": ("Koura~0", "Koura~1"), "Penguin": ("Koura~0",), "PenguinStudent": ("KouraShine",), "Creeper": ("CreeperFlower", "CreeperLeaf"), "TripodBoss": ("TripodBossLow", "HomingKiller"), "HoneyQueen": ("HoneyQueenWing",), "TicoFat": ("TicoFatGoodsStarPiece",), "TicoShop": ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp"), "ShellfishYellowChip": ("YellowChip",), "BossKameck": ("BkDemo", "BossKameckFireBall", "Koura"), "BossKameck2": ("BkDemo", "BossKameckFireBall", "Koura", "BossKameckBarrier"), "FireBallBeamKameck": ("BossKameckFireBall",), "BreakableTrash": ("BreakableCageBreak",), "KuriboChief": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
+EXTRA = {"Polta": ("PoltaLeftArm", "PoltaRightArm", "PoltaBodyBreak", "PoltaArmBreak", "PoltaFormationRock", "PoltaGroundRock", "PoltaGroundRockBreak", "PoltaRock#Color:0", "PoltaRock#Color:1", "PoltaRock#Color:2", "BombTeresa"),  # PoltaRock::setColorWhite / Black / Yellow (Color BVA frame 0 / 1 / 2); BombTeresaHolder
+         "SkeletalFishBaby": ("SnakeFish",), "ChildSkeletalFishBaby": ("SnakeFish",), "SkeletalFishBoss": ("SkeletalFishBossHeadA", "SkeletalFishGuard", "SkeletalFishBossBreak", "SkeletalFishBossScarFlash", "SkeletalFishBossLight"), "IceMerameraKing": ("IceManIce", "IceMerameraKingShock", "IceMerameraKingBreak"), "KoopaVs1": KOOPA_PARTS + ("KoopaBattleMapPlanet", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate"), "KoopaVs2": KOOPA_PARTS + ("KoopaBattleMapPlanetVs2", "KoopaPlateDamage"), "GhostPlayer": ("GhostMario", "GhostLuigi", "Koura"), "BegomanBabyLauncher": ("BegomanBaby",), "ElectricRailMoving": ("ElectricRailPoint",), "NokonokoLand": ("Koura~0", "Koura~1"), "Penguin": ("Koura~0",), "PenguinStudent": ("KouraShine",), "Creeper": ("CreeperFlower", "CreeperLeaf"), "TripodBoss": ("TripodBossLow", "HomingKiller"), "HoneyQueen": ("HoneyQueenWing",), "TicoFat": ("TicoFatGoodsStarPiece",), "TicoShop": ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp"), "ShellfishYellowChip": ("YellowChip",), "BossKameck": ("BkDemo", "BossKameckFireBall", "Koura"), "BossKameck2": ("BkDemo", "BossKameckFireBall", "Koura", "BossKameckBarrier"), "FireBallBeamKameck": ("BossKameckFireBall",), "BreakableTrash": ("BreakableCageBreak",), "KuriboChief": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
          "Rosetta": ("LightDome", "DomeHalo"),  # RosettaDemoHeavensDoor1's parts (ライトドーム, ライト後光)
          "StarReturnDemoStarter": ("PStar", "GStar", "SpinTico", "MarioHair"), "GrandStarReturnDemoStarter": ("GStar",), "FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
@@ -465,7 +467,7 @@ def bvas_entries(arc, model, shapes):
                 if sh in hid:
                     bits[g // 32] |= 1 << (g % 32)
             body += struct.pack(f"<{words}I", *bits)
-        out.append(name32(f"{model.lower()}/{n[:-4]}") + struct.pack("<HBB", max(frames, 1), loop, words) + body)
+        out.append(name32(clip_key(model, n[:-4])) + struct.pack("<HBB", max(frames, 1), loop, words) + body)
     return out
 
 
@@ -1746,7 +1748,7 @@ def declare_stars(keep, scenario, appear, jp):
             k = None if s32(r["args"][7]) > 0 else -1
         elif r["name"] == "WoodBox":  # WoodBox::init: declarePowerStar when arg7 is set (no disc data has one)
             k = None if s32(r["args"][7]) not in (0, -1) else -1
-        elif r["name"] in ("CollectTico", "DinoPackun", "OtaKing", "BossStinkBug", "BossBegoman", "BossKameck", "BossKameck2", "StinkBugParent", "TripodBoss", "TombSpider", "KoopaVs1", "KoopaVs2", "KoopaVs3", "IceMerameraKing", "ExterminationSkeletalFishBaby", "SkeletalFishBoss"):  # their init declarePowerStar, always
+        elif r["name"] in ("CollectTico", "DinoPackun", "OtaKing", "BossStinkBug", "BossBegoman", "BossKameck", "BossKameck2", "StinkBugParent", "TripodBoss", "TombSpider", "Polta", "KoopaVs1", "KoopaVs2", "KoopaVs3", "IceMerameraKing", "ExterminationSkeletalFishBaby", "SkeletalFishBoss"):  # their init declarePowerStar, always
             k = None
         elif r["name"] == "PenguinCoach":  # PenguinCoach::init: declarePowerStar for Behavior_Star / Tutorial / Race (arg0 1-3)
             k = None if 1 <= s32(r["args"][0]) <= 3 else -1
@@ -2227,10 +2229,15 @@ def btp_chunk(fsp, classes):
 
 
 def clip_key(c, clip):
-    """ANIM's "<class>/<clip>" (lower case); over 31 chars a DemoBossKameck clip is "dbk..." (BossKameck2's Vs1 / Vs2
-    demo clips would meet at 31: game.c bk_act)"""
+    """ANIM's (and BVAS') "<class>/<clip>" (lower case); over 31 chars a DemoBossKameck clip is "dbk..." (BossKameck2's
+    Vs1 / Vs2 demo clips would meet at 31: game.c bk_act), PoltaLeftArm / PoltaRightArm / PoltaFormationRock "pla" / "pra" /
+    "pfr" (polta.inc pol_key)"""
     k = f"{c.lower()}/{clip}"
-    return k.replace("demobosskameck", "dbk").replace("skeletalfish", "sf") if len(k) > 31 else k  # (SkeletalFishBossHeadA's too: game.c sf_clip)
+    if len(k) > 31:  # (SkeletalFishBossHeadA's too: game.c sf_clip; polta.inc pol_key)
+        for a, b in (("demobosskameck", "dbk"), ("skeletalfish", "sf"), ("poltaleftarm", "pla"), ("poltarightarm", "pra"),
+                     ("poltaformationrock", "pfr")):
+            k = k.replace(a, b)
+    return k
 
 
 def obj_anim_chunk(fsp, classes, galaxy=None):
