@@ -467,6 +467,13 @@ Second console round (2026-10-24), from Daniel's report:
   captured at 150, let go at step 61, again after 1000 away, a spin at step 39: flight 400, motions 75 / 330 / 380;
   -DCAPTURE_SMALL=1 on HeavenlyBeach 1: let go at step 41, flight 80, 2 / 10 / 60). ponytail: only the stars' Wait
   clip is packed (Active / Start not played), no SpinDriverPathDrawer (no strip draw, no SpinDriverPath textures).
+- SmallStone / CircleShell / CircleStrawberry (fix/275-smallstone, 2026-11-05): ring across its gravity
+  (makeAxisCrossPlane; arg1: its rotation's -Y), members on the ground by an exact line (map_poly), CircleShell's
+  random turn / scale / Kind BVA frame shuffled with its Break1-3 effect, the centre as the members' box and the Range
+  sensor from it; the spin breaks them on the next frame (own Break effects, a star piece each always: arg2 only sets
+  the water check), the next spin kills it; tryShake WindLoop / WindEnd at its rate, tryPush 20 x scale on Mario.
+  Test `stone` (CubeBubbleExLv1 1: two stones broken, 8 effects each, shaken at 2.57; OceanRing 1 repacked:
+  CircleShell 8 Break1-3 effects). Repack: CircleShell / CircleStrawberry skinned (resident + their galaxies).
 ## Rules
 
 - Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -
