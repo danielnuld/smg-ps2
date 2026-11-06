@@ -1155,14 +1155,29 @@ static int dd_shot(V3 at) /* a star piece shot: receiveMsgPlayerAttack isMsgStar
         if ((dd.sens >> k & 1) && vlen(vsub(at, dd_jp(sn[k].j, v3(sn[k].x, sn[k].y, sn[k].z)))) < sn[k].r) return 1;
     return ddh_shot(at);
 }
+static void dd_rebind(Anim *a, const Model *md) /* the zone's pack streamed again: its models moved, the clip kept */
+{
+    if (!md || !md->skin || a->skin == md->skin) return;
+    int id = a->clip_id; float fr = a->frame, sp = a->speed; int loop = a->loop, done = a->done, had = a->skin != NULL;
+    anim_bind(a, md->skin);
+    a->clip_id = -1;
+    if (had && id >= 0 && anim_play(a, sc->clips[id].name, sp, loop, 0)) { a->frame = fr; a->done = done; }
+}
+static void dd_models(void) /* scene_model again each frame (zone packs) */
+{
+    dd.md = scene_model(sc, "Dodoryu"); dd.lhmd = scene_model(sc, "DodoryuLeadHill"); dd.rbmd = scene_model(sc, "DodoryuRabbit");
+    for (int k = 0; k < 3; k++) dd.hmd[k] = scene_model(sc, dd_hill_cls[k]);
+    int fresh = !dd.anim->skin, rfresh = !dd.rb->skin;
+    dd_rebind(dd.anim, dd.md); dd_rebind(dd.lh, dd.lhmd); dd_rebind(dd.rb, dd.rbmd);
+    for (int k = 0; k < 3; k++) dd_rebind(dd.hp[k], dd.hmd[k]);
+    if (fresh && dd.anim->skin) dd_act("UnderGroundWalk");
+    if (rfresh && dd.rb->skin) dd_rb_reset(1);
+}
 static void update_dd(void)
 {
     if (dd.row < 0 || !dx_cls_moves("Dodoryu")) return;
     const Row *r = &sc->objs[dd.row];
-    if (dd.md && dd.md->skin && dd.anim->skin != dd.md->skin) { anim_bind(dd.anim, dd.md->skin); dd_act("UnderGroundWalk"); }
-    if (dd.lhmd && dd.lhmd->skin && dd.lh->skin != dd.lhmd->skin) anim_bind(dd.lh, dd.lhmd->skin);
-    if (dd.rbmd && dd.rbmd->skin && dd.rb->skin != dd.rbmd->skin) { anim_bind(dd.rb, dd.rbmd->skin); dd_rb_reset(1); }
-    for (int i = 0; i < 3; i++) if (dd.hmd[i] && dd.hmd[i]->skin && dd.hp[i]->skin != dd.hmd[i]->skin) anim_bind(dd.hp[i], dd.hmd[i]->skin);
+    dd_models();
     if (r->zone < MAX_ZONES && (!zone_kcl[r->zone] || zone_low[r->zone])) return; /* (its zone's ground in) */
     if (dd.rb_talk == -1 && (dd.rb_talk = talk_new("DandelionHillZone_DodoryuRabbit", dd.row, dd.row, 150.0f, 1500.0f)) < 0) dd.rb_talk = -2; /* createTalkCtrl (MessageId 0: its label cut at 31, msg.py), setDistanceToTalk 1500 */
     if (!dd.dead) {
@@ -1234,6 +1249,7 @@ static void update_dd(void)
 static void dd_draw(void)
 {
     if (dd.row < 0) return;
+    dd_models();
     float m[16];
     if (!dd.dead && !dd.hidden && dd.md && dd.anim && dd.anim->skin) {
         dd_base(m);
