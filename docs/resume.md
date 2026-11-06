@@ -1068,6 +1068,11 @@ there needs the embedded blob and every pack rebuilt.
   frames: the cube's area does not write it there, A through the talk, a JetTurtle hit every 300 frames): opening
   demo, the talk, 5 hits, the mid demo, the down demo, `power star 1 got`. DKJ_TEST (FloaterOtaKingGalaxy/1, plain):
   the entry demo by SW 67.
+    if len(k) > 31:  # (SkeletalFishBossHeadA's too: game.c sf_clip; polta.inc pol_key)
+        for a, b in (("demobosskameck", "dbk"), ("skeletalfish", "sf"), ("poltaleftarm", "pla"), ("poltarightarm", "pra"),
+                     ("poltaformationrock", "pfr")):
+            k = k.replace(a, b)
+    return k
 
 ## Next
 

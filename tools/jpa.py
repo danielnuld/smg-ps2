@@ -493,7 +493,7 @@ def flare(fs, out_tex):
 NAMED = ("KillerGunnerSingle", "TripodBoss", "TripodBossCore", "ItemBubble", "DinoPackunBall", "Mario", "Dossun", "Onimasu", "LavaStrangeRock",
          "LavaStrangeRockL", "LavaStrangeRockTable", "MogucchiHill", "PalmIsland", "KabokuriFire", "LotusLeaf", "ElectricBall",
          "MorphItemObj", "WaterColumn", "PhantomTorch", "PhantomBonfire", "ShockWaveGenerator", "DriftWood", "BossKameckBeam", "BossKameckFireBall",
-         "AirBubble", "FireBarBall", "KoopaJrShipCannonShell", "IronCannonLauncherPoint", "TreasureSpot", "CoinFlower", "CocoNut", "SpiderThreadAttachPoint", "TombSpider", "TombSpiderGland", "TombSpiderPlanet", "BigBubble", "MeteorStrike", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate", "IceManIce", "FallingSmallRock", "SubmarineSteam", "SubmarineVolcano")  # (WaterColumn: MarioActor::emitEffectWaterColumn)  # MorphItemObjNeo's effect group (initEffectKeeper "MorphItemObj")
+         "AirBubble", "FireBarBall", "KoopaJrShipCannonShell", "IronCannonLauncherPoint", "TreasureSpot", "CoinFlower", "CocoNut", "SpiderThreadAttachPoint", "TombSpider", "TombSpiderGland", "TombSpiderPlanet", "BigBubble", "MeteorStrike", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate", "IceManIce", "FallingSmallRock", "SubmarineSteam", "SubmarineVolcano", "PoltaRock", "PoltaGroundRock")  # (WaterColumn: MarioActor::emitEffectWaterColumn)  # MorphItemObjNeo's effect group (initEffectKeeper "MorphItemObj")
 NAMED_ONLY = {"Mario": ("SpinLight", "SpinLightBurst", "Invincible", "Ice", "Metamorphosis", "MetamorphosisEnd", "GetAgain", "WaterBound",
                         "SkateL", "SkateR", "IceJumpLand", "IceMarioSpinLight", "FooMarioHandGlowL", "FooMarioHandGlowR",
                         "FooMarioBrakeLampL", "FooMarioBrakeLampR", "FooMarioEndL", "FooMarioEndR",
@@ -556,7 +556,8 @@ def anim_effects(fs, auto, add_def):
                 continue
             end = 0xFFFF if en[i] in (None, -1, 0xFFFFFFFF) or en[i] >= 0xFFFF else en[i]
             for clip in an[i].lower().split():  # "Eat2 Excite2 Joy2": each of them
-                out.append(struct.pack("<24s24sHHHh4f", c.lower().encode()[:23], clip.encode()[:23],
+                kc, _, kk = S.clip_key(c, clip).partition("/")  # (its ANIM key: a long one shortened)
+                out.append(struct.pack("<24s24sHHHh4f", kc.encode()[:23], kk.encode()[:23],
                                        min(int(st[i] or 0), 0xFFFE), end, def_of[e[i]], j, ox[i], oy[i], oz[i], sv[i] or 1.0))
     for c, rows in REGISTERED.items():
         for name, eff, jname in rows:
