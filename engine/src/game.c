@@ -75,14 +75,14 @@ static struct { int on, owner, nrv, step, demo; V3 pos, vel, up; float rate, t; 
 static struct { int row, nrv, step; V3 last; } exts[MAX_EXTS];
 static int nexts;
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
-       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU, WALK_BOMBHEI, WALK_STRSPIDER, WALK_BEGOSPIKE, WALK_KCHIEF, WALK_BEGOBABY, WALK_BBEGO, WALK_KAMECK, WALK_NOKO, WALK_SAMBOHEAD, WALK_BOMBTERESA, WALK_JELEC, WALK_BEGOLAUNCH, WALK_KINDS };
+       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU, WALK_BOMBHEI, WALK_STRSPIDER, WALK_BEGOSPIKE, WALK_KCHIEF, WALK_BEGOBABY, WALK_BBEGO, WALK_KAMECK, WALK_NOKO, WALK_SAMBOHEAD, WALK_BOMBTERESA, WALK_JELEC, WALK_BEGOLAUNCH, WALK_MERAKING, WALK_KINDS };
 /* walkers ported in the release push: their classes (counted, placed and drawn through this table) */
 static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}, {"BasaBasa", WALK_BASABASA}, {"BasaBasaIce", WALK_BASABASA}, {"Jellyfish", WALK_JELLYFISH},
                                                                     {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}, {"Mogu", WALK_MOGU}, {"Mogucchi", WALK_MOGUCCHI}, {"Metbo", WALK_METBO}, {"TeresaWater", WALK_TERESAW},
                                                                     {"Snakehead", WALK_SNAKEHEAD}, {"SnakeheadSmall", WALK_SNAKEHEAD}, {"Kabokuri", WALK_KABOKURI}, {"Pukupuku", WALK_PUKUPUKU},
                                                                     {"BombHei", WALK_BOMBHEI}, {"BombHeiLauncher", WALK_BOMBHEI}, {"BombLauncher", WALK_BOMBHEI},
                                                                     {"StringSpider", WALK_STRSPIDER}, {"BegomanSpike", WALK_BEGOSPIKE},
-                                                                    {"KuriboChief", WALK_KCHIEF}, {"ChildKuribo", WALK_KURIBO}, {"BegomanBaby", WALK_BEGOBABY}, {"BossBegoman", WALK_BBEGO}, {"FireBallBeamKameck", WALK_KAMECK}, {"ChildKameck", WALK_KAMECK}, {"NokonokoLand", WALK_NOKO}, {"SamboHead", WALK_SAMBOHEAD}, {"BombTeresa", WALK_BOMBTERESA}, {"JellyfishElectric", WALK_JELEC}, {"BegomanBabyLauncher", WALK_BEGOLAUNCH}}; /* ChildKuribo: createNoItemKuriboActor */
+                                                                    {"KuriboChief", WALK_KCHIEF}, {"ChildKuribo", WALK_KURIBO}, {"BegomanBaby", WALK_BEGOBABY}, {"BossBegoman", WALK_BBEGO}, {"FireBallBeamKameck", WALK_KAMECK}, {"ChildKameck", WALK_KAMECK}, {"NokonokoLand", WALK_NOKO}, {"SamboHead", WALK_SAMBOHEAD}, {"BombTeresa", WALK_BOMBTERESA}, {"JellyfishElectric", WALK_JELEC}, {"BegomanBabyLauncher", WALK_BEGOLAUNCH}, {"IceMerameraKing", WALK_MERAKING}, {"ChildIceMeramera", WALK_MERAMERA}}; /* ChildKuribo: createNoItemKuriboActor */
 #define NEW_WALKERS ((int)(sizeof new_walkers / sizeof new_walkers[0]))
 #define BB_FOLLOWERS 5 /* BossBegoman: mBabyFollowerNum 3, mSpikeFollowerNum 2 (the slots after its own) */
 #define BL_BABIES(r) ((r)->arg[3] > 0 ? ((r)->arg[3] < 16 ? (r)->arg[3] : 16) : 1) /* BegomanBabyLauncher: arg3 babies (mBegomanCount 1) */
@@ -93,6 +93,9 @@ static int walker_new_kind(const char *cls)
     return -1;
 }
 static const Model *walker_new_model(int row);
+static void mk_update(Kuribo *k), mk_demo_update(void), mk_draw(Kuribo *k, const Model *md, Anim *a), mk_draw_extras(void), mk_begin_demo(int row);
+static int mk_noclip(const Kuribo *k);
+int mk_shot(V3 p); /* IceMerameraKing (ice_meraking.inc) */
 /* Petari.cpp's nerves (petari_update) */
 enum { PT_LURK, PT_JUMPOUT, PT_WAIT, PT_APPROACH, PT_ESCAPE, PT_SWOONSTART, PT_SWOON, PT_SWOONEND, PT_LAND, PT_SMASH,
        PT_SPINOUT, PT_KICKOUT };
@@ -2590,7 +2593,7 @@ void game_init(const Scene *s, const unsigned char *blob)
             kuribo[ik].row = i;
             kuribo[ik].up = up_at(kuribo[ik].pos, v3(0, 1, 0));
             kuribo[ik].jc = 1; /* Unizo::appear: mJumpCount sJumpNow */
-            kuribo[ik++].state = KURIBO_WALK;
+            kuribo[ik++].state = strcmp(s->types + 32 * r->type, "ChildIceMeramera") ? KURIBO_WALK : KURIBO_DEAD; /* IceMerameraKing::init: its children makeActorDead */
             for (int f = 0, boss = ik - 1; kuribo[boss].kind == WALK_BBEGO && f < BB_FOLLOWERS; f++) { /* BossBegoman::init: its followers, makeActorDead */
                 memset(&kuribo[ik], 0, sizeof(Kuribo));
                 kuribo[ik].kind = f < 3 ? WALK_BEGOBABY : WALK_BEGOSPIKE;
@@ -30849,7 +30852,7 @@ static void update_kuribo(void)
     for (int i = 0; i < nkuribo; i++) {
         Kuribo *k = &kuribo[i];
         if (k->state == KURIBO_DEAD || !row_shown(k->row)) continue;
-        if (k->clipped && k->kind != WALK_KARIKARI && !test_noclip && !(k->kind == WALK_BOMBTERESA && !k->lvt[1])) continue; /* startClipped: no movement (Karikari may ride on Mario; a BombTeresa's invalidateClipping: lvt[1] 0) */
+        if (k->clipped && k->kind != WALK_KARIKARI && !test_noclip && !(k->kind == WALK_BOMBTERESA && !k->lvt[1]) && !(k->kind == WALK_MERAKING && mk_noclip(k))) continue; /* startClipped: no movement (Karikari may ride on Mario; a BombTeresa's invalidateClipping: lvt[1] 0) */
         u32 c0 = cycles();
         update_kuribo_one(k);
         kprof[k->kind] += cycles() - c0; kprof_n[k->kind]++;
@@ -30895,6 +30898,7 @@ static void update_kuribo_one(Kuribo *k)
             else if (k->kind == WALK_NOKO) noko_update(k);
             else if (k->kind == WALK_SAMBOHEAD) sh_update(k);
             else if (k->kind == WALK_BOMBTERESA) bt_update(k);
+            else if (k->kind == WALK_MERAKING) mk_update(k);
             return;
         }
         if (k->kind == WALK_PETARI) {
@@ -31108,7 +31112,7 @@ static void update_invincible(void)
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     for (int k = 0; k < nkuribo; k++) {
         Kuribo *e = &kuribo[k];
-        if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_BUTTERFLY || e->kind == WALK_STRSPIDER || e->kind == WALK_BEGOSPIKE || e->kind == WALK_KCHIEF || e->kind == WALK_BBEGO ||
+        if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_BUTTERFLY || e->kind == WALK_STRSPIDER || e->kind == WALK_BEGOSPIKE || e->kind == WALK_KCHIEF || e->kind == WALK_BBEGO || e->kind == WALK_MERAKING ||
             vlen(vsub(c, vadd(e->pos, vmul(e->up, 60.0f)))) > 60.0f + HIT_BODY_R) continue;
         if (e->kind == WALK_PETARI) { if (petari_solid(e)) petari_blow(e, mario->pos, PT_KICKOUT); continue; }
         int took = walker_blow(e, mario->pos);
@@ -40518,6 +40522,7 @@ static void update_shots(void)
             if (e->state == KURIBO_DEAD || !row_shown(e->row)) continue;
             if (e->kind == WALK_KCHIEF) { if (kchief_shot(e, s->pos)) { hit = 1; printf("star piece hits kuribo chief row %d\n", e->row); } continue; }
             if (e->kind == WALK_BOMBTERESA) { if (vlen(vsub(s->pos, e->pos)) <= 85.0f * sc->objs[e->row].scale[0] && bt_star(e)) hit = 1; continue; } /* its body 85 */
+            if (e->kind == WALK_MERAKING) { hit = mk_shot(s->pos); continue; } /* its ices, its body (isMsgStarPieceReflect) */
             if (e->kind == WALK_BEGOLAUNCH || vlen(vsub(s->pos, vadd(e->pos, vmul(e->up, 50.0f)))) > 90.0f) continue; /* (BegomanLauncher: no sensor) */
             hit = 1;
             if (e->kind == WALK_TAKOBO) { /* isMsgStarPieceAttack: StunStart (not while pressed / blown) */
@@ -40795,7 +40800,7 @@ static char bgm_next[40]; /* AudBgmMgr::mNextBGM (setNextStageBGM): started once
  * it takes the stage's place; the stage's goes on unheard (volDownStageBgmWhenSubBgmPlaying: its interrupted fader
  * at faderInterruptedVolume 0) and when the sub is over it comes back where it would be, recovering over
  * faderInterruptedRecoverTime 60 frames. A stage BGM started meanwhile waits there. */
-static struct { int on, had; char stage[40]; unsigned pos, at; } bsub;
+static struct { int on, had; char stage[40]; unsigned pos, at; char id[24]; } bsub; /* id: the sub playing (isPlayingSubBgmID) */
 static int bgm_stage_playing(void) { return audio_playing() && !bsub.on; } /* MR::isPlayingStageBgm (one stream: no sub) */
 static int bgm_file; /* the state file the stage BGM plays (mbgm_tab.h: <track>@<k>.pcm, 0 its own) */
 static int on_stage(const char *galaxy) { size_t l = strlen(galaxy); return !strncmp(game_stage_name, galaxy, l) && game_stage_name[l] == '/'; }
@@ -40836,6 +40841,7 @@ static void bgm_sub(const char *id) /* MR::startSubBGM */
         bsub.at = game_frame;
     }
     bsub.on = 1;
+    snprintf(bsub.id, sizeof bsub.id, "%s", id);
     printf("bgm: sub %s -> %s\n", id, track);
     snprintf(path, sizeof path, "host:music/%s.pcm", track);
     audio_music(path);
@@ -40843,6 +40849,37 @@ static void bgm_sub(const char *id) /* MR::startSubBGM */
 static void bgm_sub_stop(int frames) /* MR::stopSubBGM(frames) */
 {
     if (bsub.on && audio_playing()) audio_fade(frames);
+}
+/* AudBgmConductor's pinch BGM (playPinchEventBgmLevel / stopPinchEventBgmSoon / movementPinchEventBgm): mStartDelay,
+ * mFadeInDelay, mStopImmediately; not over the power-ups' sub BGMs */
+static struct { int start, fade, now; } pinch = {-1, -1, 0};
+static int bgm_sub_is(const char *id) { return bsub.on && !strcmp(bsub.id, id); }
+static int pinch_powerup(void)
+{
+    return bgm_sub_is("BGM_MUTEKI_A") || bgm_sub_is("BGM_MUTEKI_B") || bgm_sub_is("BGM_FIRE_A") || bgm_sub_is("BGM_FIRE_B") ||
+           bgm_sub_is("BGM_ICE_A") || bgm_sub_is("BGM_ICE_B");
+}
+static void bgm_pinch(int second) /* MR::playLevelMarioPinchBGM */
+{
+    if (miss_running()) return;
+    if (pinch_powerup()) { pinch.start = pinch.fade = -1; return; }
+    if (star_demo) return; /* isPowerStarGetDemoActive */
+    if (pinch.start < 0) {
+        bgm_sub(second ? "BGM_PINCH_2" : "BGM_PINCH_1");
+        if (second) { audio_move_volume(0.0f, 0); pinch.fade = 2; } /* moveVolumeSubBGM(0, 0) */
+        pinch.now = 0;
+    }
+    pinch.start = 3;
+}
+static void bgm_pinch_stop_soon(void) { pinch.start = 0; pinch.now = 1; } /* MR::stopMarioPinchBGMSoon */
+static void bgm_pinch_tick(void)
+{
+    if (pinch_powerup()) return;
+    if (star_demo || miss_running()) { pinch.start = pinch.fade = -1; pinch.now = 0; return; }
+    if (pinch.start < 0) return;
+    if (pinch.fade == 0) { audio_move_volume(1.0f, 90); pinch.fade = -1; } /* moveVolumeSubBGM(1, 90) */
+    if (pinch.fade > 0) pinch.fade--;
+    if (--pinch.start <= 0) { bgm_sub_stop(pinch.now ? 1 : 90); pinch.start = pinch.fade = -1; pinch.now = 0; }
 }
 static void bgm_open_file(const char *track, int file) /* the stage track's state file */
 {
@@ -40860,6 +40897,7 @@ void game_bgm_tick(void) /* per frame (before audio_update): the stage's back wh
         bgm_next[0] = 0; /* clearNextBGM */
         bgm_start(id);
     }
+    bgm_pinch_tick();
     if (!bsub.on || audio_playing()) return;
     bsub.on = 0;
     if (!bsub.had) return;
@@ -41107,6 +41145,7 @@ static void dx_cast_hook(int row, int type, int part)
     if (type == 2 && !strcmp(cls, "HoneyQueen")) { hq_functor(row, part); return; }
     if (type == 2 && !strcmp(cls, "AstroCore")) { acore_start(); return; }
     if (type == 3 && !strcmp(cls, "StinkBugParent")) { sbp_damage_action(); return; } /* registerDemoActionNerve: ダメージ中 */
+    if (type == 3 && !strcmp(cls, "IceMerameraKing")) { mk_begin_demo(row); return; } /* registerDemoActionNerve: BeginDemo */
     if (type == 3 && !strcmp(cls, "BossBegoman")) { bb_first_contact(row); return; } /* registerDemoActionNerve: FirstContactDemo */                   /* AstroCore::startDemo: Grow */
     if (type == 3 && !strcmp(cls, "UFOKinoko")) { ufok_start(row); return; }                 /* ＵＦＯキノコ登場: startMove */
     if (type == 2 && !strcmp(cls, "RosettaChair")) { /* RosettaChair::startDemo (朗読開始: DemoRosettaReading,
@@ -41228,9 +41267,12 @@ static void dx_camera_end(void) /* DemoCameraKeeper::endCurrentCamera */
     if (dx.acam) { camera_override_end(((const DxCam *)dx.acam)->end); dx.acam = NULL; } /* endAnimCamera(AnimCameraEndFrame) */
 }
 
+/* a cast that is no placement (a CameraTargetDemoActor: IceMerameraKing's メラキン注目ターゲット), set by its owner */
+static struct { int on; V3 pos, up, front; } dx_tgt;
 static void dx_camera_first(const DxCam *c) /* DemoCameraKeeper::executeFirst */
 {
     V3 up = mario->up, front = mario->face, pos = mario->pos; /* startEventCameraTargetPlayer / NoTarget */
+    if (c->target == 2 && c->row < 0 && dx_tgt.on) { up = dx_tgt.up; front = dx_tgt.front; pos = dx_tgt.pos; }
     if (c->target == 2 && c->row >= 0) {                     /* startEventCamera(CameraTargetArg(cast)) */
         const Row *r = &sc->objs[c->row];
         float m[16], one[3] = {1, 1, 1}, rot[3] = {r->rot[0], r->rot[1], r->rot[2]};
@@ -49072,6 +49114,7 @@ int game_test_bk(int frame)
 }
 
 #include "tripod_boss.inc" /* TripodBoss (Megaleg): tb_*, game_test_tb */
+#include "ice_meraking.inc" /* IceMerameraKing (Baron Brr): mk_*, game_test_mk */
 /* Test builds: Mario in the boss's SwitchCylinder until it starts, then dropped in a hip drop on its BodyHipDrop part
  * whenever a hit is open; game_bsb_state: sequencer x 100 + nerve */
 int game_test_bsb(void)
@@ -50662,6 +50705,7 @@ void game_update(void)
     LQ(11, update_follow_groups());
     LQ(12, update_wrecks());
     if (demo_on) bb_demo_update(); /* (BossBegoman: a cast of its opening demo) */
+    if (demo_on) mk_demo_update(); /* (IceMerameraKing: its demo's casts) */
     if (!demo_on) LQ(13, update_kuribo()); /* a demo moves only its cast (requestMovementOn): walkers stop; the other
                                             * update_* by their class (lq_cls, dx_cls_moves) */
     LQ(14, kari_director());
@@ -51690,7 +51734,7 @@ void game_draw(void)
         use_row_light(kuribo[i].row, kuribo[i].pos, LIGHT_STRONG);
         const Model *md = kuribo[i].host ? scene_model(sc, walker_cls(&kuribo[i])) : kuribo[i].kind == WALK_TAKOHEI ? m_takohei : kuribo[i].kind == WALK_PACKUN ? m_packun :
                           kuribo[i].kind == WALK_KOTEBUG ? m_kotebug : kuribo[i].kind == WALK_SPIDER ? m_spider :
-                          kuribo[i].kind == WALK_MERAMERA ? (strcmp(sc->types + 32 * sc->objs[kuribo[i].row].type, "IceMeramera") ? m_meramera : m_imeramera) : kuribo[i].kind == WALK_TAKOBO ? m_takobo :
+                          kuribo[i].kind == WALK_MERAMERA ? (!strstr(sc->types + 32 * sc->objs[kuribo[i].row].type, "IceMeramera") ? m_meramera : m_imeramera) : kuribo[i].kind == WALK_TAKOBO ? m_takobo :
                           kuribo[i].kind == WALK_MKOOPA ? m_mkoopa : kuribo[i].kind == WALK_KARIKARI ? m_kari :
                           kuribo[i].kind == WALK_KMINI ? m_kmini :
                           kuribo[i].kind == WALK_KARON ? m_karon :
@@ -51770,6 +51814,7 @@ void game_draw(void)
                 }
                 a->speed = k->act_rate; /* setBckRate */
                 if (!wvis) { anim_advance(a); continue; }
+                if (k->kind == WALK_MERAKING) { mk_draw(k, md, a); continue; }
                 if (k->kind == WALK_BEGOSPIKE && k->nrv == BG_BROKENPIECE) { /* hideModel; mBrokenModel's Broken01 */
                     const Model *bm = scene_model(sc, "BegomanBrokenPiece");
                     Anim *ba = bm && bm->skin ? obj_anim((int)sc->nobjs * 2 + w_akey(k), bm, "BegomanBrokenPiece") : NULL;
@@ -52116,6 +52161,7 @@ void game_draw(void)
     draw_hhp_leaves();
     draw_rbeams();
     draw_mogu_extras();
+    mk_draw_extras();
     draw_mogucchi_extras();
     draw_whirls();
     draw_wbullets();

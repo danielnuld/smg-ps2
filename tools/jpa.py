@@ -493,7 +493,7 @@ def flare(fs, out_tex):
 NAMED = ("KillerGunnerSingle", "TripodBoss", "TripodBossCore", "ItemBubble", "DinoPackunBall", "Mario", "Dossun", "Onimasu", "LavaStrangeRock",
          "LavaStrangeRockL", "LavaStrangeRockTable", "MogucchiHill", "PalmIsland", "KabokuriFire", "LotusLeaf", "ElectricBall",
          "MorphItemObj", "WaterColumn", "PhantomTorch", "PhantomBonfire", "ShockWaveGenerator", "DriftWood", "BossKameckBeam", "BossKameckFireBall",
-         "AirBubble", "FireBarBall", "KoopaJrShipCannonShell", "IronCannonLauncherPoint", "TreasureSpot", "CoinFlower", "CocoNut", "SpiderThreadAttachPoint", "TombSpider", "TombSpiderGland", "TombSpiderPlanet", "BigBubble")  # (WaterColumn: MarioActor::emitEffectWaterColumn)  # MorphItemObjNeo's effect group (initEffectKeeper "MorphItemObj")
+         "AirBubble", "FireBarBall", "KoopaJrShipCannonShell", "IronCannonLauncherPoint", "TreasureSpot", "CoinFlower", "CocoNut", "SpiderThreadAttachPoint", "TombSpider", "TombSpiderGland", "TombSpiderPlanet", "BigBubble", "IceManIce")  # (WaterColumn: MarioActor::emitEffectWaterColumn)  # MorphItemObjNeo's effect group (initEffectKeeper "MorphItemObj")
 NAMED_ONLY = {"Mario": ("SpinLight", "SpinLightBurst", "Invincible", "Ice", "Metamorphosis", "MetamorphosisEnd", "GetAgain", "WaterBound",
                         "SkateL", "SkateR", "IceJumpLand", "IceMarioSpinLight", "FooMarioHandGlowL", "FooMarioHandGlowR",
                         "FooMarioBrakeLampL", "FooMarioBrakeLampR", "FooMarioEndL", "FooMarioEndR",

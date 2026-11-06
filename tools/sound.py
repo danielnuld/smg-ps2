@@ -1084,6 +1084,8 @@ def pack(fs, out_bin, ids_h, sources, cap=16000, budget=1850000, scene=None):
     d = baa.d
     mario_h = Path(ids_h).with_name("mario_snd.h")
     mario_table(mario_h)
+    sources = list(sources) + [str(Path(src).with_name(i)) for src in sources  # the .inc files game.c includes
+                               for i in re.findall(r'#include "(\w+\.inc)"', Path(src).read_text(errors="ignore"))]
     names = {n for src in sources for n in re.findall(r"\bSE_[A-Z0-9_]+\b", Path(src).read_text(errors="ignore"))
              if n in baa.ids and baa.ids[n][0] == 0}
     # Mario's table: only the entries the sources play (mario_sound("<key>"), its 声 voice, its water companion)
