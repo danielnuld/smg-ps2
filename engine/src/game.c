@@ -377,6 +377,7 @@ static int tb_hidden(int row), tb_demo(void);
 static void tb_init(const Scene *s, const unsigned char *blob), update_tb(void), tb_draw(void);
 static void kj_init(const Scene *s, const unsigned char *blob), update_kj(void), kj_draw(void); /* KoopaJrShip (koopajr_ship.inc) */
 static int kj_jet_hit(V3 p);
+static Anim *shop_ga[2]; /* TicoShop's goods (shop_goods_draw) */
 static void kj_cast_hook(int row, int type, int part), kj_rebind_place(Inst *in), kj_models(const Scene *s);
 static void dkj_init(const Scene *s), update_dkj(void), dkj_draw(void), dkj_cast_hook(int row, int type, int part); /* DemoKoopaJrShip */
 static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle);
@@ -2478,6 +2479,10 @@ void game_init(const Scene *s, const unsigned char *blob)
     bk_init(s, blob);
     tb_init(s, blob);
     kp_init(s, blob);
+    for (int g = 0; g < 2; g++) { /* TicoShop's goods: their anims before the zone mark (an allocation after it goes at a swap) */
+        shop_ga[g] = scene_type(s, "TicoShop") >= 0 ? mem_alloc(MEM_PLAYER, sizeof(Anim)) : NULL;
+        if (shop_ga[g]) memset(shop_ga[g], 0, sizeof(Anim));
+    }
     kj_init(s, blob);
     dkj_init(s);
     gh_reset(); /* GhostPlayer: init at its first update */
@@ -50853,15 +50858,13 @@ static void fat_goods_draw(const Inst *in, const float m[16]);
 /* TicoShop's goods (equipment TicoShopItem): TicoShopGoodsOneUp at StarPieceR (8), ..LifeUp at StarPieceL (5), Shake */
 static void shop_goods_draw(const Inst *in, const float m[16])
 {
-    static Anim *ga[2];
-    static const Scene *gsc;
+    Anim **ga = shop_ga;
     static const char *const name[2] = {"TicoShopGoodsOneUp", "TicoShopGoodsLifeUp"}, *const clip[2] = {"ticoshopgoodsoneup/shake", "ticoshopgoodslifeup/shake"};
-    if (gsc != sc) { ga[0] = ga[1] = NULL; gsc = sc; }
     if (in->anim->skin->njoints < 9) return;
     for (int g = 0; g < 2; g++) {
         const Model *gm = scene_model(sc, name[g]);
         if (!gm || !gm->skin) continue;
-        if (!ga[g]) { ga[g] = mem_alloc(MEM_SCENE, sizeof(Anim)); memset(ga[g], 0, sizeof(Anim)); }
+        if (!ga[g]) continue;
         if (ga[g]->skin != gm->skin) { anim_bind(ga[g], gm->skin); anim_play(ga[g], clip[g], 1.0f, 1, 0); } /* (a zone swap moves the model) */
         anim_update(ga[g]);
         float w[16];

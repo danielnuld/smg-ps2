@@ -606,16 +606,20 @@ int game_test_kj(int frame) /* XF=-DKJ_TEST, KoopaJrShipLv1Galaxy/1: Mario put a
         return -1;
     }
     if (frame % 60 == 0)
-        printf("kj test f %d: nrv %d st %d d0 %d coord %.0f/%.0f pos %.0f %.0f %.0f, Mario %.0f %.0f %.0f, life %d, dx %d part %d\n", frame, kj.nrv, kj.st, kj.d0,
-               kj.coord, kj.len, kj.pos.x, kj.pos.y, kj.pos.z, mario->pos.x, mario->pos.y, mario->pos.z, game_life(), dx.on, dx.part);
+        printf("kj test f %d: nrv %d st %d d0 %d coord %.0f/%.0f pos %.0f %.0f %.0f, Mario %.0f %.0f %.0f, life %d, dx %d part %d talk %d\n", frame, kj.nrv, kj.st, kj.d0,
+               kj.coord, kj.len, kj.pos.x, kj.pos.y, kj.pos.z, mario->pos.x, mario->pos.y, mario->pos.z, game_life(), dx.on, dx.part, talk_active());
     if (life < 2) life = 3;
-    if (talk_active() && (frame & 3) == 0) pad_force |= PAD_CROSS; /* (A through Koopa Jr.'s talk) */
+    if (talk_active() && frame % 24 < 6) pad_force |= PAD_CROSS; /* (A through Koopa Jr.'s talk) */
     static int hit_at = -1000, done_at = -1;
     if (kj.nrv == KJ_DEAD) {
         if (frame < 60) return 0;
         int ty = scene_type(sc, "SwitchCube");
         for (u32 i = 0; ty >= 0 && i < sc->nobjs; i++)
-            if ((int)sc->objs[i].type == ty && sc->objs[i].sw[SW_A] == 15 && frame % 30 == 0) { mario->pos = row_pos(&sc->objs[i]); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+            if ((int)sc->objs[i].type == ty && sc->objs[i].sw[SW_A] == 15 && frame % 30 == 0) {
+                mario->pos = row_pos(&sc->objs[i]); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+                if (frame % 60 == 0) printf("kj test: cube row %u zone %d sw %d on %d, demo sw %d\n", i, sc->objs[i].zone, sc->objs[i].sw[SW_A], sw_on(&sc->objs[i], SW_A), kj.demo >= 0 ? demos[kj.demo].h->sw[SW_APPEAR] : -9);
+                if (frame > 300) sw_set(&sc->objs[i], SW_A, 1); /* (the cube's area did not write it: test only, as the bk test) */
+            }
         return 0;
     }
     if (kj.nrv == KJ_DONE) {
