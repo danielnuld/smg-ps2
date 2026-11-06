@@ -13715,6 +13715,7 @@ static int m_input_off(void) { return fp_on || m_clip_on("landstiffen") || m_cli
 /* MarioActor::_B94: frames left of a BombTeresa's tongue on his hand (ACTMES_BOMB_TERESA_TONGUE_TOUCH sets 2; his
  * upper body ハンマー投げ回転中 while it holds) */
 static int m_b94;
+static int m_38c; /* MarioActor::_38C: frames of doStun (tryReleaseBombTeresa sets 5) */
 static int dm_damaging(void);
 static int m_check_squat(Player *m, int a1) /* MarioModule::checkSquat: Z (R1) */
 {
@@ -15691,20 +15692,21 @@ static int teresa_through(void);
 static void m_upper(const char *jp);
 static int m_upper_on(const char *jp);
 static void m_upper_stop(void);
-static int m_bomb_teresa_tongue(void) /* MarioActor::receiveOtherMsg ACTMES_BOMB_TERESA_TONGUE_TOUCH. ponytail: _468 not kept */
+static int m_bomb_teresa_tongue(void) /* MarioActor::receiveOtherMsg ACTMES_BOMB_TERESA_TONGUE_TOUCH */
 {
+    if (m_carry_jet()) return 0; /* _468 */
     if (dm_damaging()) return 0;
     if (player_mode != PM_NORMAL && player_mode != PM_INVINCIBLE) return 0;
     m_b94 = 2;
     m_upper("ハンマー投げ回転中");
     return 1;
 }
-static void m_release_bomb_teresa(Player *m) /* MarioActor::tryReleaseBombTeresa (ponytail: _38C 5 not kept) */
+static void m_release_bomb_teresa(Player *m) /* MarioActor::tryReleaseBombTeresa  */
 {
     if (!m_b94) return;
     m_b94 = 0;
     m_upper_stop();
-    if (!m->jumping) { m_stop_walk(m); m->s420 = 25; }
+    if (!m->jumping) { m_stop_walk(m); m_38c = 5; m->s420 = 25; }
     m_anim("ハンマー投げリリース");
 }
 static void m_swing(Player *m)
@@ -20111,6 +20113,11 @@ static void update_mario_(void)
         else k = fminf(fmaxf(m_dist_to_ceil(m) / 150.0f, 0.2f), 1.0f);
         if (k < m->press_s) m->press_s = k;
         if (--m->press_t <= 0) { m->press = 0; m->press_s = 1.0f; printf("pressed\n"); miss(); }
+        if (mario_anim) anim_update(mario_anim);
+        return;
+    }
+    if (m_38c) { /* MarioActor::doStun: still, the stick read; at its end no stick: stopWalk */
+        if (!--m_38c && fabsf(m_rx) < 1e-6f && fabsf(m_ry) < 1e-6f) m_stop_walk(m);
         if (mario_anim) anim_update(mario_anim);
         return;
     }
