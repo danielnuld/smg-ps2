@@ -2366,9 +2366,9 @@ int main(void)
         }
 #endif
 #ifdef CAGE_TEST
-        if (frame == 120 || frame == 300 || frame == 380) /* the first: its zone streams in */
+        if (frame == 520 || frame == 700 || frame == 780) /* (after an arrival flight) the first: its zone streams in */
             printf("cage test f %u: Mario spins on row %d\n", frame, game_test_cage(0));
-        if (frame == 440 || frame == 740)
+        if (frame == 840 || frame == 1140)
             printf("cage test f %u: on its star, state %d, stars %d\n", frame, game_test_cage(1), game_stars());
 #endif
 #ifdef SPIN_TEST

@@ -132,7 +132,7 @@ typedef struct {
     int corr_flip, slip_floor, slip_task; /* _754, mMovementStates._35 (isSkatableFloor), taskOnSlipTurn pushed */
     int rot_task;                      /* taskOnRotation (4) pushed: the helicopter jump's turn */
     V3 slip_from, slip_move; /* _220 (the front the slip turn left), _2B8 (its getLastMove) */
-    int slow_start, start_spin, start_spin2; /* _404, _3FA, _3FC */
+    int slow_start, start_spin, start_spin2, reflect; /* _404, _3FA, _3FC, _3F8 */
     int brake1, brake2; /* _71E, _71F */
     int drop_grace;     /* _3C0 */
     int connect, spin_lock, squat_lock, slip_front, squat_walk; /* mMovementStates._5, _2B, _21, _9, _26 */
@@ -1057,9 +1057,9 @@ static void zone_grow(const Inst *in);
  * BreakableCage(Rotate / L) breaks on a spin too (ponytail: in SMG only what Mario rides or throws breaks it)
  * PunchBox: a spin (not standing on it) or a shell: Break, hidden at step 5, its coins at 15; its SW_A: one star piece,
  * its burst. WoodBox (WoodBox.cpp): its items, dead switch, arg3 1 riddle SE and arg4 1-up at exeHit step 15
- * (update_wrecks), an explosion or a fire ball breaks it too, arg7 its power star (star_pos). ponytail (unmarked
- * until the 2026-11-02 audit): CrystalCageL: no cracked BVA frame, wobble (RumbleCalculator 4 / 50 /
- * 0x14) nor REFLECT on the first hit, a Break effect it does not have (CrystalCage.cpp:190-345) */
+ * (update_wrecks), an explosion or a fire ball breaks it too, arg7 its power star (star_pos). CrystalCageL (CrystalCage.cpp):
+ * its first hit REFLECTs Mario, cracks it (BVA frame 1) and wobbles it (cagel_draw); its break leaves the stump (frame
+ * 2) on the map below and plays CrystalCageLBreak's clip */
 static int breakable(const char *name, const Row *r, int *coins, int *pieces)
 {
     *coins = *pieces = 0;
@@ -13689,6 +13689,17 @@ static void m_front(Player *m, V3 v) /* setFrontVecKeepUp */
     m->sd = m->face;
 }
 
+/* MarioActor::receiveMessage ACTMES_REFLECT: reflectWallOnSpinning(n, 5) (front along n, _3F8 5 frames of
+ * mInertiaReflectSlip, _328 the front, doSpinWallEffect's sounds), the walk speed at most 0.5. ponytail: no 壁スパーク
+ * effect in the port's Mario effects, a 0x55 sensor wall's silence not told apart (MarioSpin.cpp:60-87) */
+static void mario_reflect(V3 n)
+{
+    m_front(mario, n);
+    mario->reflect = 5;
+    mario->move_dir = mario->face;
+    mario_sound("壁反射"); mario_sound("声スピンキャンセル");
+    if (mario->walk > 0.5f) mario->walk = 0.5f;
+}
 static void m_front_turn(Player *m, V3 v, int n) /* setFrontVecKeepUp(front, _750): the drawn front stays (_74C) */
 {
     V3 drawn = rot_axis(m->face, m->up, m->corr);
@@ -13807,6 +13818,7 @@ static float m_inertia(Player *m, float speed) /* decideInertia */
         if (m->land_timer < 30) in = MC.mInertiaJumpFinish;
         if (m->squat) in = MC.mInertiaSquat;
     }
+    if (m->reflect) { m->reflect--; in = MC.mInertiaReflectSlip; } /* _3F8 (reflectWallOnSpinning) */
     if (m->walk < 0.08f && m->land_timer > 10 && speed > 0.5f && m->squat) { m->start_spin = MC.mStartSpinTime; m->walk = 0.08f; }
     if (m->start_spin) { m->start_spin--; in = MC.mInertiaStartSpin; if (!m->start_spin) m->start_spin2 = 60; }
     if (m->start_spin2) m->start_spin2--;
@@ -31319,6 +31331,25 @@ static void spider_coin_mtx(const Row *r, float m[16], float *cocoon) /* its coi
     basis_matrix(m, vadd(vadd(p, vmul(up, -20.0f)), vmul(front, 20.0f)), up, front, 0); /* sCocoonOffsetY / Z */
     for (int j = 0; j < 12; j++) m[j] *= *cocoon;
 }
+/* CrystalCageL hit once: setBvaFrameAndStop(1) (its "#CrystalCageL:1" model), exeWait's rumble (RumbleCalculator
+ * CosMultLinear 4, HALF_PI, 50, 0x14): mPosition _DC + _D0 x cos(4 x 2 pi p + pi / 2) x (1 - p) x 50, p = n / 20 over
+ * its 20 frames from the one after the hit. ponytail: its collision stays put (drawn only) */
+static V3 cagel_d; /* _D0 of the cage hit last */
+static void inst_draw(const Inst *in, const Model *md, const float m[16]);
+static void cagel_draw(const Inst *in)
+{
+    char v[48];
+    snprintf(v, sizeof v, "%s#%s:1", "CrystalCageL", "CrystalCageL");
+    const Model *md = scene_model(sc, v);
+    float cm[16];
+    memcpy(cm, in->m, 64);
+    int e = SPIN_TIME + 20 - (row_step[in->row] & 0x7FFF);
+    if (e >= 1 && e <= 20) {
+        float p = (e - 1) / 20.0f, k = cosf(4.0f * 6.2831853f * p + 1.5707963f) * (1.0f - p) * 50.0f;
+        cm[12] += cagel_d.x * k; cm[13] += cagel_d.y * k; cm[14] += cagel_d.z * k;
+    }
+    inst_draw(in, md ? md : in->md, cm);
+}
 static void break_inst(const Inst *in, int drops)
 {
     V3 p = v3(in->m[12], in->m[13], in->m[14]);
@@ -31382,6 +31413,27 @@ static void break_inst(const Inst *in, int drops)
         if (vlen(vsub(mario->pos, p)) < 1500.0f) scene_stop = 6;
         row_kill(in->row);
         printf("%s %d broken%c", name, in->row, 10);
+        return;
+    }
+    if (!strcmp(name, "CrystalCageL") && nwrecks + 1 < MAX_WRECKS) { /* exeBreak: BVA frame 2 (the stump), mPosition at _F8
+        * (the map 1000 above to 1000 below it, the cage's own collision left out), CrystalCageLBreak's Break clip at _94
+        * (its place before), no Break effect (no effect keeper), no dead switch (tryOnSwitchDead): two wrecks, the clip
+        * at _94 and the stump at _F8 */
+        V3 cu = vnorm(v3(in->m[4], in->m[5], in->m[6])), f8 = p;
+        int keep = kcl_off_row;
+        kcl_off_row = in->row;
+        if (!map_poly(vadd(p, vmul(cu, 1000.0f * in->s)), vmul(cu, -2000.0f * in->s), &f8, NULL)) f8 = p;
+        kcl_off_row = keep;
+        for (int k = 0; k < 2; k++) {
+            typeof(&wrecks[0]) w = &wrecks[nwrecks++];
+            memcpy(w->m, in->m, 64);
+            w->bname = k ? NULL : "CrystalCageLBreak"; w->brk = k ? NULL : scene_model(sc, w->bname); w->hide = 0;
+            w->left = k ? scene_model(sc, "CrystalCageL#CrystalCageL") : NULL;
+            w->t = 0; w->row = in->row; w->p = p; w->up = up; w->coins = w->pieces = 0;
+            if (k) { w->m[12] = f8.x; w->m[13] = f8.y; w->m[14] = f8.z; }
+        }
+        row_dead[in->row] = 1;
+        printf("%s %d broken, stump %.0f below%c", name, in->row, vdot(vsub(p, f8), cu), 10);
         return;
     }
     if (!strcmp(name, "PunchBox") && nwrecks < MAX_WRECKS) { /* doHit: collision off, Break / BreakWater; exeHit: hidden at
@@ -31543,7 +31595,10 @@ static void break_boxes(void)
         unsigned short *hit = &row_step[in->row]; /* CrystalCageL: 0x8000 hit once, low bits frames until the next */
         if (strcmp(sc->types + 32 * sc->objs[in->row].type, "CrystalCageL") == 0 && !(*hit & 0x8000)) {
             *hit = 0x8000 | (SPIN_TIME + 20);
-            se_start(SE_OJ_CRYSTAL_CAGE_L_DAMAGE, &in->m[12]); /* receiveMsgPlayerAttack */
+            se_start(SE_OJ_CRYSTAL_CAGE_L_DAMAGE, &in->m[12]); /* receiveMsgPlayerAttack: REFLECT, BVA frame 1, the rumble */
+            V3 d = vsub(c, p);
+            cagel_d = vlen(d) > 1e-4f ? vnorm(d) : mario->up; /* _D0: from the cage to Mario's sensor */
+            mario_reflect(cagel_d);
             printf("CrystalCageL %d hit\n", in->row);
             continue;
         }
@@ -49092,6 +49147,10 @@ void game_draw(void)
             const Model *md = (row_step[in->row] & FLIP_DONE) && in->md_flip[1] ? in->md_flip[1] :
                               turned ? in->md_flip[0] : in->md;
             inst_draw(in, md, in->m);
+            continue;
+        }
+        if (in->breaks == 1 && (row_step[in->row] & 0x8000) && !strcmp(sc->types + 32 * sc->objs[in->row].type, "CrystalCageL")) {
+            cagel_draw(in);
             continue;
         }
         if (in->ibubble) { /* ItemBubble::calcAndSetBaseMtx: Z to the camera, Y the camera's up; its items inside */
