@@ -1957,6 +1957,7 @@ static void kstb3_update(void)
         break;
     case K3S_WAIT:
         if (st == 0) kp_act("Wait");
+        if (!nkss && st % 60 == 0) kstb3_register(); /* (a stairs zone streamed in later: their initAfterPlacement then) */
         for (int k = 0; k < nkss; k++) /* tryAttack: isRequestAttackVs3 */
             if (kss[k].reg && !k3.a6[k] && kstb_is_type(k, 0) && kss[k].nrv == KS_WAITFIRE && (kss[k].step == kss[k].fstep || kss[k].fstep < 0)) {
                 k3.a6[k] = 1; kp_fire_stairs(k, kp.jp[0]); /* emitFireStairsToTarget(useFront: ponytail, the fire's own front) */
@@ -2235,6 +2236,12 @@ int game_test_kp(int frame)
         }
         if (demo_on || frame - last < 30) return 2;
         Nv *cr = kst(KST_CHASEROLL), *ar = kst(KST_ROLL);
+        if ((nv_is(&kp.seq, K3_LV1) || nv_is(&kp.seq, K3_LV2)) && !nv_is(&k3.bat, K3B_DAMAGE)) { /* held in the air over the
+                                                                 * planet's far side, out of the shock waves' and fires' way */
+            V3 d = vsub(kp.b.pos, kp_pc);
+            float rr = vlen(d);
+            if (rr > 1.0f) { d = vmul(d, 1.0f / rr); mario->pos = vadd(kp_pc, vmul(d, -(rr + 700.0f))); mario->up = vmul(d, -1.0f); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+        }
         if (nv_is(&kp.seq, K3_LV1) && nv_is(&k3.bat, K3B_ROLL) && nv_is(cr, KR_ROLLGROUND) && cr->st > 60) { /* before its face, a spin */
             V3 up = kp_up(), f = kp_sc(KS_CHASEROLLFACE), h = vtangent(vsub(f, kp.b.pos), up);
             h = vlen(h) > 1e-3f ? vnorm(h) : kfb.b.front;
