@@ -35780,7 +35780,7 @@ static void leak_joints(Inst *in) /* initPipeHeight: Top at its height (model sp
 #define MAX_STAIRS 48
 enum { KS_WAITSWITCH, KS_WAITFIRE, KS_WAITFALL, KS_FALL, KS_DISAPPEAR };
 /* reg, fstep, a8, ac: Koopa's registerStair (koopa.inc kst_register): mFireAttackStep, _A8, _AC (its target) */
-static struct { int row, nrv, step, init, reg, fstep, a8; V3 pos, vel, ac; u32 lv; } kss[MAX_STAIRS];
+static struct { int row, nrv, step, init, reg, fstep, a8, mov; V3 pos, vel, ac; u32 lv; } kss[MAX_STAIRS]; /* mov: requestMovementOn (in a demo) */
 static int ks_of(int row)
 {
     for (int i = 0; i < nkss; i++) if (kss[i].row == row) return i;
@@ -35802,7 +35802,7 @@ static void update_stairs(void)
         Inst *in = &insts[i];
         if (!in->kstair || !row_shown(in->row)) continue;
         int k = ks_of(in->row);
-        if (k < 0) continue;
+        if (k < 0 || (!dx_row_moves(in->row) && !kss[k].mov)) continue; /* (stopped in a demo) */
         typeof(&kss[0]) o = &kss[k];
         const Row *r = &sc->objs[in->row];
         if (!o->init) { o->init = 1; o->pos = row_pos(r); ks_set(k, KS_WAITSWITCH); }

@@ -1242,8 +1242,8 @@ static void kstb_update(void)
         }
         break;
     case KSB_DEMO:
-        if (st == 264) { kstb_emit(kp.far); kp_se(SE_OJ_KOOPA_BULLET_SHOOT); }  /* requestMovementOn: they move in the demo */
-        if (st == 292) { kstb_emit(kp.nearr); kp_se(SE_OJ_KOOPA_BULLET_SHOOT); }
+        if (st == 264) { kstb_emit(kp.far); if (kp.far >= 0) kss[kp.far].mov = 1; kp_se(SE_OJ_KOOPA_BULLET_SHOOT); }  /* requestMovementOn: they move in the demo */
+        if (st == 292) { kstb_emit(kp.nearr); if (kp.nearr >= 0) kss[kp.nearr].mov = 1; kp_se(SE_OJ_KOOPA_BULLET_SHOOT); }
         if (st > 0 && kp_act_end()) {
             kp_acam(NULL);
             kp_end_demo("階段の戦い開始デモ");
@@ -1517,6 +1517,12 @@ int game_test_kp(int frame)
     }
     if (!kp.alive) { if (frame > 60 && r->sw[SW_APPEAR] >= 0) sw_set(r, SW_APPEAR, 1); return 0; }
     if (nv_is(&kp.seq, KQ_BATTLESTAIRS)) {
+        static int t0 = -1;
+        if (t0 < 0 && kp.stairs.nrv >= KSB_WAIT) t0 = frame;
+        for (int k = 0; t0 >= 0 && k < nkss; k++) { /* the climb's SwitchCubes (21, 22) */
+            const Row *q = &sc->objs[kss[k].row];
+            if ((q->sw[SW_A] == 21 && frame - t0 > 500) || (q->sw[SW_A] == 22 && frame - t0 > 1100)) sw_set(q, SW_A, 1);
+        }
         if (kp.jump_idx >= 3 && nv_is(&kp.stairs, KSB_WAIT) && r->sw[SW_A] >= 0) { sw_set(r, SW_A, 1); printf("kp test f %d: its SW_A\n", frame); }
         return 1;
     }
