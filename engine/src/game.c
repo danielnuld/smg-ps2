@@ -4817,6 +4817,7 @@ static int stone_break(const Row *r, Plant *p)
 }
 
 static void game_rebind_(void);
+static void bk_barrier_inst(const Scene *s); /* BossKameckVs2's barrier */
 static void npc_rail_place(Inst *in);
 static void tb_rebind_place(Inst *in); /* tripod_boss.inc */
 u32 rebind_cycles, rebinds; /* game_rebind's time and count (the route test's perf lines) */
@@ -5348,6 +5349,7 @@ static void game_rebind_(void)
         in->kcl_ready = 0;
         zone_grow(in);
     }
+    bk_barrier_inst(s);
     if (ota.row >= 0 && m_otamagma && scene_kcl(s, "OtaKingMagma") && ninsts < (int)s->nobjs) { /* OtaKing's own row has no inst */
         /* OtaKingMagma: a PartsModel at OtaKing's placement (its own matrix), its collision there */
         const Row *r = &s->objs[ota.row];
@@ -48582,6 +48584,7 @@ static struct {
     int nrail; struct { int no; const float *p; u32 n; } rail[4]; int cur;
     Anim *anim, *demo; int cam; u32 lv[2];
 } bk = {.row = -1};
+static int bkb_ki = -1, bkb_on; /* BossKameckVs2's BossKameckBarrier: its instance (game_rebind_), appeared */
 static int bk_demo(void) { return bk.row >= 0 && bk.dn >= BKD_WAITAPPEAR && !bk.dead; } /* its puppet demos: Mario BattleWait */
 static V3 bk_g(void) { return km_g(bk.pos); }
 static void bk_se(u32 id) { km_se(bk.pos, id); }
@@ -48590,9 +48593,10 @@ static void bk_base(float m[16]) { basis_matrix(m, bk.pos, bk.U, bk.F, 0); for (
 static void bk_act(const char *name) /* startAction */
 {
     char n[48];
-    snprintf(n, sizeof n, "bosskameck/%s", name);
+    snprintf(n, sizeof n, "%s/%s", sc->types + 32 * sc->objs[bk.row].type, name); /* BossKameck / BossKameck2 */
     for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
-    n[31] = 0; /* (clip names cut at 31: DemoBossKameckPowerUp2's is PowerUp's, ponytail for Vs2) */
+    char *d = strstr(n, "demobosskameck");
+    if (strlen(n) > 31 && d) memmove(d + 3, d + 14, strlen(d + 14) + 1), memcpy(d, "dbk", 3); /* slice.py clip_key */
     if (bk.anim && bk.anim->skin) { bk.anim->clip_id = -1; anim_start(bk.anim, n, 0); }
 }
 static int bk_act_end(void) { return !bk.anim || !bk.anim->skin || bk.anim->done; } /* isActionEnd */
@@ -48752,6 +48756,29 @@ static int bk_living_kameck(void)
     return live;
 }
 static void bk_bset(int n) { bk.bn = n; bk.bst = -1; }
+static void bk_barrier_inst(const Scene *s) /* game_rebind_ */
+{
+    bkb_ki = -1;
+    if (bk.row >= 0 && bk.vs2 && scene_model(s, "BossKameckBarrier") && ninsts < (int)s->nobjs) {
+        /* BossKameckBarrier::init: initDefaultPos on the boss's placement, its model and collision there; dead until
+         * BossKameckVs2's opening demo ends (appear), killed at its end demo. ponytail: its Wait BRK / BTK not played */
+        const Row *r = &s->objs[bk.row];
+        Inst *in = &insts[bkb_ki = ninsts++];
+        memset(in, 0, sizeof *in);
+        in->md = scene_model(s, "BossKameckBarrier"); in->row = bk.row; in->zone = r->zone; in->kmove = in->kparent = -1;
+        mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
+        in->s = r->scale[0]; in->reach = in->md->radius * in->s;
+        in->kcl = bkb_on ? scene_kcl(s, "BossKameckBarrier") : NULL; in->invisible = !bkb_on;
+        zone_grow(in);
+    }
+}
+static void bk_barrier(int on) /* BossKameckBarrier appear / kill */
+{
+    bkb_on = on;
+    if (bkb_ki < 0 || bkb_ki >= ninsts) return;
+    insts[bkb_ki].kcl = on ? scene_kcl(sc, "BossKameckBarrier") : NULL; insts[bkb_ki].invisible = !on;
+    printf("boss kameck: barrier %s\n", on ? "up" : "gone");
+}
 static void bk_start_move(void) { bk_bset(bk.vs2 ? BKB_HIDESTART : BKB_MOVE); }
 static int bk_enable(void) { int n = bk.bn; return n == BKB_WAIT || n == BKB_MOVE || n == BKB_HIDESTART || n == BKB_HIDEEND || n == BKB_SUMMONWAIT || n == BKB_SUMMON || n == BKB_ATTACKWAIT || n == BKB_ATTACK; } /* isEnableDamage / isEnableGuard */
 static void bk_drop_beam(void) { if (bk.beam >= 0) kmb_kill(bk.beam); bk.beam = -1; }
@@ -48923,7 +48950,7 @@ static void update_bk(void)
     case BKQ_POWERUP: if (s0 == 0) bk_try_demo(bk.vs2 ? "カメックパワーアップVs2" : "カメックパワーアップVs1", BKD_POWERUP); break;
     case BKQ_LV3: if (s0 == 0) { if (!bk.vs2) bk_pieces(16, 0); bk_level(2, bk_pat3, 3, !bk.vs2, 3, bk.vs2); } break;
     case BKQ_LV4: if (s0 == 0) { bk_pieces(16, 1); bk_level(3, bk_pat3, 3, 1, 4, 1); } break;
-    case BKQ_END: if (s0 == 0) bk_try_demo(bk.vs2 ? "ボスカメックダウンLv2" : "ボスカメックダウンLv1", BKD_DOWN); break;
+    case BKQ_END: if (s0 == 0) { bk_try_demo(bk.vs2 ? "ボスカメックダウンLv2" : "ボスカメックダウンLv1", BKD_DOWN); bk_barrier(0); } break;
     }
     int battle = bk.seq >= BKQ_LV1 && bk.seq <= BKQ_LV4 && bk.seq != BKQ_POWERUP;
     if (battle) {
@@ -48936,6 +48963,7 @@ static void update_bk(void)
     } else {
         bk_demo_update();
         if (bk.dn == BKD_DEAD && bk.seq != BKQ_DONE && !bk.dead) {
+            if (bk.seq == BKQ_OPENING && bk.vs2) bk_barrier(1); /* exeOpeningDemo: mBarrier->appear() */
             bk.seq = bk.seq == BKQ_OPENING ? BKQ_LV1 : bk.seq == BKQ_POWERUP ? BKQ_LV3 : bk.seq;
             bk.sst = -1;
         }
@@ -48957,7 +48985,7 @@ static void bk_draw(void)
 }
 static void bk_init(const Scene *s, const unsigned char *blob) /* BossKameck::init: its MoveRails, makeActorDead */
 {
-    memset(&bk, 0, sizeof bk); bk.row = -1; bk.beam = -1; bk.idx = -1; bk.n30 = 1;
+    memset(&bk, 0, sizeof bk); bk.row = -1; bkb_on = 0; bk.beam = -1; bk.idx = -1; bk.n30 = 1;
     memset(kmb, 0, sizeof kmb); memset(kmf, 0, sizeof kmf); memset(kmt, 0, sizeof kmt); kmj_held = -1;
     for (int i = 0; i < KM_BEAMS; i++) { kmb[i].turtle = -1; kmb[i].fire[0] = kmb[i].fire[1] = kmb[i].fire[2] = -1; kmb[i].lis = kmb[i].list = -1; }
     int t1 = scene_type(s, "BossKameck"), t2 = scene_type(s, "BossKameck2"), tr = scene_type(s, "BossKameckMoveRail");

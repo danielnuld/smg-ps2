@@ -979,8 +979,13 @@ there needs the embedded blob and every pack rebuilt.
   as walker kind WALK_KAMECK (FireBallBeamKameck, ChildKameck), KameckBeam / KameckFireBall / KameckTurtle pools.
   Test: plain build, XF="-DBK_TEST", StarDustGalaxy/2 (D:/smg-ps2-wt/audit-bk.sh). Packs: slice.py (EXTRA BkDemo /
   BossKameckFireBall / Koura, SKINNED_OBJ ChildKameck / BkDemo, CANM_ARC bkdemo, LOGIC BossKameckMoveRail, MODEL_ARC
-  ChildKameck, declare_stars), jpa.py NAMED BossKameckBeam / BossKameckFireBall. ponytail: Vs2 untested and its
-  BossKameckBarrier not made, DemoBossKameckPowerUp2 cut to PowerUp's clip name, no Suso / Cap dynamic joints, no
+  ChildKameck, declare_stars), jpa.py NAMED BossKameckBeam / BossKameckFireBall. Vs2 (#298): OceanPhantomCaveGalaxy 1
+  (GhostShipCaveZone), BK_TEST: opening demo, BossKameckBarrier up (its model and collision at the boss's placement,
+  game.c bk_barrier_inst), four levels, the PowerUp demo, down, the barrier gone, `power star 1 got`; the boss's clips
+  by its class (bosskameck2/...; Vs2 played none before), clip keys over 31 chars shorten demobosskameck to dbk
+  (slice.py clip_key, bk_act: Start2 / PowerUp2 / Down2 no longer meet Vs1's). Also: a GrandStar's appear demo
+  (dx_cls_moves) fixed in #288; Koopa / KoopaJrShip (not ported) leave their grand stars undeclared (out at once).
+  ponytail: the barrier's Wait BRK / BTK, no Suso / Cap dynamic joints, no
   shadow, no star pointer bind on Kamecks, NonActive by distance.
 
 ## Next

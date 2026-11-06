@@ -178,7 +178,7 @@ def sky_sea(b, mat3, m):
 # (FlipPanel: "?" at rest, "!" once flipped, the End face when its group is complete)
 # KuriboChief / ExterminationChecker::initKeySwitch: their own KeySwitch (game.c okeys; KeySwitchOwned: the KeySwitch
 # archive skinned for its Rotation, the placed KeySwitch rows untouched)
-EXTRA = {"GhostPlayer": ("GhostMario", "GhostLuigi", "Koura"), "BegomanBabyLauncher": ("BegomanBaby",), "ElectricRailMoving": ("ElectricRailPoint",), "NokonokoLand": ("Koura~0", "Koura~1"), "Penguin": ("Koura~0",), "PenguinStudent": ("KouraShine",), "Creeper": ("CreeperFlower", "CreeperLeaf"), "TripodBoss": ("TripodBossLow", "HomingKiller"), "HoneyQueen": ("HoneyQueenWing",), "TicoFat": ("TicoFatGoodsStarPiece",), "TicoShop": ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp"), "ShellfishYellowChip": ("YellowChip",), "BossKameck": ("BkDemo", "BossKameckFireBall", "Koura"), "BossKameck2": ("BkDemo", "BossKameckFireBall", "Koura"), "FireBallBeamKameck": ("BossKameckFireBall",), "BreakableTrash": ("BreakableCageBreak",), "KuriboChief": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
+EXTRA = {"GhostPlayer": ("GhostMario", "GhostLuigi", "Koura"), "BegomanBabyLauncher": ("BegomanBaby",), "ElectricRailMoving": ("ElectricRailPoint",), "NokonokoLand": ("Koura~0", "Koura~1"), "Penguin": ("Koura~0",), "PenguinStudent": ("KouraShine",), "Creeper": ("CreeperFlower", "CreeperLeaf"), "TripodBoss": ("TripodBossLow", "HomingKiller"), "HoneyQueen": ("HoneyQueenWing",), "TicoFat": ("TicoFatGoodsStarPiece",), "TicoShop": ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp"), "ShellfishYellowChip": ("YellowChip",), "BossKameck": ("BkDemo", "BossKameckFireBall", "Koura"), "BossKameck2": ("BkDemo", "BossKameckFireBall", "Koura", "BossKameckBarrier"), "FireBallBeamKameck": ("BossKameckFireBall",), "BreakableTrash": ("BreakableCageBreak",), "KuriboChief": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
          "Rosetta": ("LightDome", "DomeHalo"),  # RosettaDemoHeavensDoor1's parts (ライトドーム, ライト後光)
          "StarReturnDemoStarter": ("PStar", "GStar", "SpinTico", "MarioHair"), "GrandStarReturnDemoStarter": ("GStar",), "FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
@@ -2212,6 +2212,13 @@ def btp_chunk(fsp, classes):
     return chunk(b"BTPS", struct.pack("<I", len(out)) + b"".join(out))
 
 
+def clip_key(c, clip):
+    """ANIM's "<class>/<clip>" (lower case); over 31 chars a DemoBossKameck clip is "dbk..." (BossKameck2's Vs1 / Vs2
+    demo clips would meet at 31: game.c bk_act)"""
+    k = f"{c.lower()}/{clip}"
+    return k.replace("demobosskameck", "dbk") if len(k) > 31 else k
+
+
 def obj_anim_chunk(fsp, classes, galaxy=None):
     """ANIM for the skinned placed classes among `classes` (and their EXTRA models): "<class>/<clip>" lower case."""
     clips = []
@@ -2229,7 +2236,7 @@ def obj_anim_chunk(fsp, classes, galaxy=None):
                 raw = anim_clip(b)
                 z = zlib.compress(raw, 9)
                 packed[n[:-4]] = struct.pack("<II", len(raw), len(z)) + z + b"\0" * (-len(z) % 4)
-                clips.append(name32(f"{c.lower()}/{n[:-4]}") + packed[n[:-4]])
+                clips.append(name32(clip_key(c, n[:-4])) + packed[n[:-4]])
         # ActorAnimKeeper (actoranimctrl.bcsv): an action whose BckName is another clip plays that one (startAction)
         ctl = files.get("actoranimctrl.bcsv", b"")
         for act, bck in zip(B.bcsv_column(ctl, "ActorAnimName"), B.bcsv_column(ctl, "BckName")):
