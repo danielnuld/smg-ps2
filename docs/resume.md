@@ -970,6 +970,23 @@ there needs the embedded blob and every pack rebuilt.
   top through a gap. ponytail: TripodBossBreakMovement, CameraTripodBoss*, leg shadows, DummyDisplayModel,
   KinokoOneUp, cannon clips, the BreakDown camera (shows the planet close up), the killers' shadow on a cage
   (tripod_boss.inc header).
+- Koopa Vs1 (feat/300-koopa-vs1, 2026-11-06): Bowser after Petari in engine/src/koopa.inc (#included by game.c, kp_*):
+  Koopa / KoopaFunction / KoopaParts / KoopaSensorCtrl (its 27 sensors at Koopa.bdl's joints), KoopaSequencerVs1,
+  KoopaBattleStairsVs1 (registerStair: each KoopaBattleMapStair's mFireAttackStep / target, game.c kss reg / fstep / ac;
+  the stairs stop in demos but the requested ones), KoopaBattleMain with its ActorStateKeeper (a nerve change kills the
+  old state) and the states Guard / AttackHipDrop / AttackShockWave / AttackFireShort / DamageEscape / JumpAway,
+  KoopaSubSequenceBattle, KoopaDemoJumpToPlanet / PowerUp, KoopaFireStairs / FireShort / ShockWave / PlanetShadow,
+  KoopaSwitchKeeper / PowerUpSwitch (LOGIC rows), KoopaBattleMapPlanet with its damage / coin / plain plates (insts made
+  in game_rebind_: kp_insts), the sheet demos with the Koopa clip and its CANM (koopa/<clip>), the actor cameras
+  (クッパ大王（ＶＳ１）), the grand star at デモ中心. Test: plain build XF="-DKP_TEST", KoopaBattleVs1Galaxy/1
+  (D:/smg-ps2-wt/koopa-b.sh / koopa-r.sh): SW_APPEAR, the stairs demo and battle (the climb's switches 21 / 22 set by the
+  test), its SW_A, クッパＶｓ１本戦開始, the jump to the planet, three levels (hip drop on a damage plate, tail spin, body
+  spin) with the power up demos, クッパＶｓ１ダウン, `power star 1 got`. Packs: slice.py (EXTRA KoopaVs1: KOOPA_PARTS and
+  the planet / plates, SKINNED_OBJ parts, CANM_ARC koopa, LOGIC keepers, declare_stars, anim_skipped other battles'
+  demo clips), jpa.py NAMED MeteorStrike / KoopaPlate*. ponytail: no face control (ActorJointCtrl), no shadows / bloom,
+  no screen blur, the plates' / planet's BRKs, the binded collision's sensor is the plate under its feet, anim cameras
+  without interpolation, no attacks on other actors, pooled skinned models share one Anim. Vs2 (KoopaSequencerVs2,
+  AttackSpin, AttackFireLong) is on branch feat/koopa-vs2 (built, not yet run); Vs3 not started.
 - BossKameck (feat/kameck, 2026-11-05): Kamella after Petari (game.c bk_*, its sequencer Vs1 / Vs2, BattleDemo,
   StateBattle's 12 nerves, MoveRail, BattlePattarn) in StarDustGalaxy 2's ThrowTutorialZone: dead until SW_A (the
   SwitchCube), カメック登場Vs1 (the DemoBossKameckStart anim camera on BossKameckBattleDemo, MBGM_BOSS_04, Mario

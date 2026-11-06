@@ -228,6 +228,7 @@ int game_coins(void);
 int game_life(void);
 int game_test_bk(int frame); /* bk test: the BossKameck fight a frame */
 int game_test_tb(int frame); /* tb test: the TripodBoss fight a frame */
+int game_test_kp(int frame); /* kp test: the Koopa Vs1 fight a frame */
 int game_test_bbego(int frame); /* bbego test: the BossBegoman fight a frame */
 int game_lives(void);
 int game_misses(void);
