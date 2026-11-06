@@ -1029,6 +1029,10 @@ there needs the embedded blob and every pack rebuilt.
   chars shorten skeletalfish to sf (slice.py clip_key, game.c sf_clip). Tests: XF=-DSF_TEST TearDropGalaxy/1, XF=-DSFK_TEST SkullSharkGalaxy/1 (shells
   thrown at the fish by the test): three babies and the checker's star; the whole fight to its star. ponytail: see the two files' headers (BRK colours, shadows, bloom, bird louse,
   columns, 2P pointer, the after-demo programmable camera).
+- SubmarineSteam / SubmarineVolcano (feat/307-submarine-steam, 2026-11-06): MapObj/SubmarineSteam.cpp (both names one
+  class, the effect group its name) in game.c update_msteam: Steam (SE_OJ_LV_MARINE_STEAM_OUT, _S in SkullSharkGalaxy)
+  or WaitForSwitchOn; its strong hit (sphere 120 at 600, cylinder 480, Mario's radius x 0.7 + 20). slice.py LOGIC,
+  jpa.py NAMED. Test: plain build XF=-DMSTEAM_TEST SkullSharkGalaxy/1 (both hit Mario). ponytail: group clipping.
 
 ## Next
 
