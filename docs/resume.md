@@ -988,6 +988,17 @@ there needs the embedded blob and every pack rebuilt.
   ponytail: the barrier's Wait BRK / BTK, no Suso / Cap dynamic joints, no
   shadow, no star pointer bind on Kamecks, NonActive by distance.
 
+- Dodoryu (feat/301-dodoryu, 2026-11-05): Major Burrows after Petari in engine/src/dodoryu.inc (#included by game.c, dd_*):
+  its eight states (Wait, DemoOpening, Lv1, DemoAppear, Lv2, DemoAngry, Lv3 with sDodoryuChaseDataLv3, DemoDown) on their
+  own spines, DodoryuSub's MoveStateHolder (Rail / Chase / Detour by the DodoryuClosedCylinder / Escape / JumpOut), the
+  MogucchiHill of 50 DodoryuHill pieces (Lead / Wait / Fade, broken by hip drops, tramples, star pieces, spins and its eye
+  sensor), DodoryuLeadHill (joints 1-17 turned by _90), DodoryuRabbit (its rail escape, Jump / Return, its talk), the four
+  demos' anim cameras (dodoryu/<name>.canm), BGM_PINCH_3, MBGM_BOSS_05_A / B, 8 / 16 star pieces, the after-boss BGM and
+  its power star. Test: plain build, XF="-DDD_TEST", CosmosGardenGalaxy/2. Packs: slice.py SKINNED_OBJ Dodoryu* +
+  EXTRA, LOGIC DodoryuClosedCylinder, declare_stars Dodoryu, TALK_NAME DodoryuRabbit, clip_key ddlh/; jpa.py NAMED
+  DodoryuHill; sound.py now reads the .inc files game.c includes. ponytail: fur, shadows, BTK / BRK / BTP, banmt,
+  image effects, the eye sensor on map objects, the sudden-death wipes (dodoryu.inc header).
+
 ## Next
 
 **In-engine demos (the user, 2026-10-17: "haz las dos cosas, primero los videos": the movies are done (3feb30f), now

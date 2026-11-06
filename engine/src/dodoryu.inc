@@ -1330,7 +1330,9 @@ int game_test_dd(int frame)
         return 100;
     }
     if (dd.cur == DS_WAIT) {
-        if (frame > 120 && r->sw[SW_A] >= 0) sw_set(r, SW_A, 1); /* (test: the SwitchCube under the planet) */
+        float m[16];
+        if (frame % 60 == 0 && vlen(vsub(mario->pos, dd.pos)) > 3000.0f && dd_name_pos("\xe3\x83\x9e\xe3\x83\xaa\xe3\x82\xaa\xe5\x86\x8d\xe3\x82\xbb\xe3\x83\x83\xe3\x83\x88" "1", m)) dd_player_mtx(m); /* (test: to its planet, マリオ再セット1) */
+        if (frame > 600 && r->sw[SW_A] >= 0) sw_set(r, SW_A, 1); /* (test: the SwitchCube under the planet) */
         return 0;
     }
     if (demo_on || frame - last < 60) return dd.cur;
