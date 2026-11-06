@@ -518,6 +518,13 @@ Second console round (2026-10-24), from Daniel's report:
   arg2), the appear switch's show (arg1 flash frames), noticeGet (show with the old count, setCount, the last one asks
   the チップコンプリート demo: pd), SW_A at the demo's end. Test plain + XF -DCHIP_TEST (EggStar 1: five chips, counts
   1..5, Complete, `YellowChipGroup 0 complete`). ponytail: arg3's チップ集め済み flag, the chips' flashing (arg1: no disc group sets it).
+- MarioFlow / FountainBig (feat/294-flow, 2026-11-05): DMS_FLOW in the status machine (doFlow, refused while
+  flowing or in 空中ひねり; start 中ダメージ, mJumpHeightFlow 18 up + mJumpDistFlow 2 ahead, mGravityFlow 0.3 a frame,
+  中ダメージ空中 at 20, a spin after 30 spin-jumps, the landing 中ダメージ着地 / 共通ダメージ着地 / 吹っ飛び倒れ, slides
+  x 0.95, A after 15). FountainBig's nerves at Petari's steps (Wait 120, Sign 80, SignStop 30, Spout 180, SpoutEnd 10),
+  its SEs, its eye sensor (60) on the axis 60..600 at Mario's foot, a weak rumble, a push outside 60 across gravity,
+  Bee Mario flipped (FlipWeak on the ground) with mSpoutTimer. Test `fountain` (HoneyBeeKingdom 1: MarioFlow, 303 up
+  at step 20 as 18 x 20 - 0.3 x 190).
 ## Rules
 
 - Fidelity first (user requirement, 2026-10-11): behaviour is ported exactly as Petari (vendor/Petari) has it -
