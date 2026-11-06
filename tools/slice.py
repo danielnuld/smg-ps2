@@ -97,6 +97,7 @@ SKINNED_OBJ += ("SnakeFish",)  # (SkeletalFishBaby)
 # SkeletalFishBoss (Kingfin): its body, its PartsModels SkeletalFishBossHeadA / ScarFlash, its guards (and the demo ones), its break model (game.c sf_*)
 SKINNED_OBJ += ("SkeletalFishBoss", "SkeletalFishBossHeadA", "SkeletalFishGuard", "SkeletalFishBossBreak", "SkeletalFishBossScarFlash")
 #  # SkeletalFishBaby::init: initModelManagerWithAnm SnakeFish (Swim / Death; game.c sf_*, its joints on its rail)
+SKINNED_OBJ += ("KoopaJrShip", "KoopaJrShipBreak", "KoopaJrShipPod", "KoopaJr", "DemoKoopaJrShip")  # KoopaJrShip.cpp: Arrival / Damage, its break and pod models (Break, Escape), KoopaJr's ShipBattle clips (game.c koopajr_ship.inc)
 SKINNED_OBJ += ("GhostMario", "GhostLuigi")  # GhostPlayer::init: initModelManagerWithAnm GhostMario / GhostLuigi, posed by Mario's clips (game.c gh_*)
 SKINNED_OBJ += ("PoltaLeftArm", "PoltaRightArm", "PoltaBodyBreak", "PoltaArmBreak", "PoltaFormationRock", "PoltaGroundRockBreak")  # Polta.cpp / PoltaArm.cpp / PoltaGroundRock.cpp: their ModelObjs (startAction, BreakLevel / demo BVAs)
 # MapObjActor::initialize (tryStartAllAnim): a placed class whose model archive holds a BCK of the archive's name
@@ -123,7 +124,7 @@ def auto_anim(fsp, arc):
     return _auto_anim[arc]
 
 
-ANIM_ARC = {"BegomanBabyLauncher": "BegomanLauncher", "KeySwitchOwned": "KeySwitch", "ChildKameck": "Kameck", "BkDemo": "BossKameckBattleDemo", "ChildKuribo": "Kuribo", "ChildIceMeramera": "IceMeramera", "MorphBubble": "ItemBubble", "MorphItemNeoHopper": "PowerUpHopper", "MorphItemNeoBee": "PowerUpBee", "MorphItemNeoTeresa": "PowerUpTeresa", "MorphItemNeoIce": "PowerUpIce", "MorphItemNeoFire": "PowerUpFire", "MorphItemNeoFoo": "PowerUpFoo", "RunawayRabbit": "TrickRabbit", "DemoRabbit": "TrickRabbit", "RunawayTico": "Tico", "LuigiEvent": "LuigiNPC", "TicoDomeLecture": "Tico", "ButlerExplain": "Butler", "ButlerMap": "Butler", "PStar": "PowerStar", "GStar": "GrandStar", "CocoSambo": "CocoSamboBody", "Karikari": "Karipon", "BenefitItemOneUp": "KinokoOneUp",
+ANIM_ARC = {"DemoKoopaJrShip": "KoopaJrShip", "BegomanBabyLauncher": "BegomanLauncher", "KeySwitchOwned": "KeySwitch", "ChildKameck": "Kameck", "BkDemo": "BossKameckBattleDemo", "ChildKuribo": "Kuribo", "ChildIceMeramera": "IceMeramera", "MorphBubble": "ItemBubble", "MorphItemNeoHopper": "PowerUpHopper", "MorphItemNeoBee": "PowerUpBee", "MorphItemNeoTeresa": "PowerUpTeresa", "MorphItemNeoIce": "PowerUpIce", "MorphItemNeoFire": "PowerUpFire", "MorphItemNeoFoo": "PowerUpFoo", "RunawayRabbit": "TrickRabbit", "DemoRabbit": "TrickRabbit", "RunawayTico": "Tico", "LuigiEvent": "LuigiNPC", "TicoDomeLecture": "Tico", "ButlerExplain": "Butler", "ButlerMap": "Butler", "PStar": "PowerStar", "GStar": "GrandStar", "CocoSambo": "CocoSamboBody", "Karikari": "Karipon", "BenefitItemOneUp": "KinokoOneUp",
             "BenefitItemLifeUp": "KinokoLifeUp", "HammerHeadPackun": "PackunFlower", "Plant": "PlantSeed", "FlowerGroup": "Flower", "FlowerBlueGroup": "FlowerBlue",
             "CutBushGroup": "CutBush", "FirePressureRadiate": "FirePressure", "JumpBeamer": "JumpBeamerBody", "TreasureBoxKinokoOneUp": "TreasureBox", "TreasureBoxCoin": "TreasureBox", "TreasureBoxEmpty": "TreasureBox", "TreasureBoxGoldEmpty": "TreasureBoxGold", "TreasureBoxCrackedKinokoOneUp": "TreasureBoxCracked", "TreasureBoxCrackedAirBubble": "TreasureBoxCracked", "TreasureBoxBlueChip": "TreasureBox", "TreasureBoxYellowChip": "TreasureBox", "TreasureBoxKinokoLifeUp": "TreasureBox", "TreasureBoxCrackedKinokoLifeUp": "TreasureBoxCracked", "TreasureBoxCrackedEmpty": "TreasureBoxCracked"}  # where a class's clips are when not in its own-named archive
 ANIM_ARC.update({c: a for c, a in WAIT_ARC.items() if c not in ANIM_ARC})
@@ -150,6 +151,7 @@ MODEL_ARC = {"Koura~0": "Koura~koura:0", "Koura~1": "Koura~koura:1",  # Nokonoko
              # the Gateway intro (HeavensDoorGalaxy 1): RunawayRabbitCollect's children, DemoRabbit, the baby Lumas; the
              # rabbits' TrickRabbitBaby and the RunawayTico's TicoBaby are their EXTRA (by arg / cast id)
              "RunawayRabbit": "TrickRabbit", "DemoRabbit": "TrickRabbit", "RunawayTico": "Tico", "TicoBaby": "TicoBaby",
+             "DemoKoopaJrShip": "KoopaJrShip",  # DemoKoopaJrShip::init: initModelManagerWithAnm KoopaJrShip
              "MorphBubble": "ItemBubble"}  # MorphItemObjNeo's container アイテム泡 (startBck Move)
 # ponytail: no MiniatureGalaxyStarNumber (its digits are texture matrices per material), no MiniatureGalaxyShadow
 MINI_EXTRA = ("MiniatureGalaxyUnknown", "MiniHatenaGalaxy", "MiniatureGalaxyUnknownKoopa", "MiniKoopaGalaxy",
@@ -192,6 +194,8 @@ EXTRA = {"Polta": ("PoltaLeftArm", "PoltaRightArm", "PoltaBodyBreak", "PoltaArmB
          "Rosetta": ("LightDome", "DomeHalo"),  # RosettaDemoHeavensDoor1's parts (ライトドーム, ライト後光)
          "StarReturnDemoStarter": ("PStar", "GStar", "SpinTico", "MarioHair"), "GrandStarReturnDemoStarter": ("GStar",), "FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
+         "DemoKoopaJrShip": ("KoopaJr",),  # createKoopaJrObj
+         "KoopaJrShip": ("KoopaJrShipBreak", "KoopaJrShipPod", "KoopaJr", "KoopaJrShipCannonShell", "KoopaJrShipCannonMainShell", "HomingKiller"),  # KoopaJrShip::init's ModelObjs, KoopaJr, CannonShellHolders, HomingKillers
          "TakoHei": ("TakoHeiInk",),  # TakoHeiInkHolder (spurtTakoHeiInk)
          "PrologueDirector": ("DemoLetter", "DemoPeachCastleGate"),
          "BossStinkBug": ("BossStinkBugWing", "BossStinkBugBombLauncher", "BossStinkBugBomb", "BossStinkBugDemo"),
@@ -348,7 +352,7 @@ def stage_files(path):
     return {p.lower(): d for p, d in B.rarc_files(path.read_bytes(), paths=True)}
 
 
-TALK_NAME = {"KinopioAstro": "Kinopio"}  # createTalkCtrl's message name where it is not the class's
+TALK_NAME = {"KinopioAstro": "Kinopio", "KoopaJrShip": "KoopaJr", "DemoKoopaJrShip": "KoopaJr"}  # (KoopaJr: NPCActorCaps "KoopaJr" on its owner's placement)  # createTalkCtrl's message name where it is not the class's
 
 
 def scene(fs, galaxy, scenario):
@@ -1748,7 +1752,7 @@ def declare_stars(keep, scenario, appear, jp):
             k = None if s32(r["args"][7]) > 0 else -1
         elif r["name"] == "WoodBox":  # WoodBox::init: declarePowerStar when arg7 is set (no disc data has one)
             k = None if s32(r["args"][7]) not in (0, -1) else -1
-        elif r["name"] in ("CollectTico", "DinoPackun", "OtaKing", "BossStinkBug", "BossBegoman", "BossKameck", "BossKameck2", "StinkBugParent", "TripodBoss", "TombSpider", "Polta", "KoopaVs1", "KoopaVs2", "KoopaVs3", "IceMerameraKing", "ExterminationSkeletalFishBaby", "SkeletalFishBoss"):  # their init declarePowerStar, always
+        elif r["name"] in ("CollectTico", "DinoPackun", "OtaKing", "BossStinkBug", "BossBegoman", "BossKameck", "BossKameck2", "StinkBugParent", "TripodBoss", "TombSpider", "KoopaVs1", "KoopaVs2", "KoopaVs3", "IceMerameraKing", "ExterminationSkeletalFishBaby", "SkeletalFishBoss", "KoopaJrShip"):  # their init declarePowerStar, always
             k = None
         elif r["name"] == "PenguinCoach":  # PenguinCoach::init: declarePowerStar for Behavior_Star / Tutorial / Race (arg0 1-3)
             k = None if 1 <= s32(r["args"][0]) <= 3 else -1
@@ -2355,6 +2359,9 @@ def canm_chunk(fsp, classes, galaxy=None, scenario=None):
 
 # DemoExecutor's sheets (ObjectData/DemoSheet.arc "Demo<sheet><Time|SubPart|Player|Camera|Action|Wipe|Sound>.bcsv")
 WIPES = {"フェードワイプ": 0, "白フェードワイプ": 1, "円ワイプ": 2}  # SceneWipeHolder's wipes by name
+# a cast another actor registers on its owner's placement (tryRegisterDemoCast(this, rIter) with the owner's iterator):
+# KoopaJrShip's KoopaJr (クッパJr), its sheet's actions and camera on the ship's row
+DEMO_CAST_ALIAS = {"KoopaJrShip": "クッパJr", "DemoKoopaJrShip": "クッパJr"}
 DEMO_SHEETS = ("time", "subpart", "player", "camera", "action", "wipe", "sound")
 # MR::registerDemoCast(actor, DemoName): casts by the demo's name, not its DemoGroupId (Butler::initForAstroDome /
 # initForAstroGalaxy: initDemoSheetTalkAnim registers too)
@@ -2473,7 +2480,7 @@ def demo_chunk(fsp, demos, gpos, keep, jp2en, se_ids):
         group += [i for i, r in enumerate(keep) if d["demo_name"] in DEMO_DIRECT_CAST.get(r["name"], ()) and i not in group]
         group += [i for i, r in enumerate(keep) if d["demo_name"] in DEMO_DIRECT_CAST_ELSE.get(r["name"], ()) and i not in group
                   and r.get("demo", -1) in (-1, 0xFFFF)]
-        match = lambda name, cid: [i for i in group if row_jp[i] == name and (cid < 0 or keep[i].get("cast", -1) == cid)]
+        match = lambda name, cid: [i for i in group if (row_jp[i] == name or DEMO_CAST_ALIAS.get(keep[i]["name"]) == name) and (cid < 0 or keep[i].get("cast", -1) == cid)]
         recs = {k: [] for k in DEMO_SHEETS[2:]}
         for pn, ps, bk in zip(cols("player", "PartName"), cols("player", "PosName"), cols("player", "BckName")):
             if part(pn) is not None:

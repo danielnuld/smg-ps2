@@ -385,6 +385,10 @@ static void tb_init(const Scene *s, const unsigned char *blob), update_tb(void),
 static void sf_init(const Scene *s, const unsigned char *blob), update_sf(void), sf_draw(void); /* skeletal_fish.inc */
 static int sf_jet_hit(V3 p);
 static void sf_rebind_insts(const Scene *s);
+static void kj_init(const Scene *s, const unsigned char *blob), update_kj(void), kj_draw(void); /* KoopaJrShip (koopajr_ship.inc) */
+static int kj_jet_hit(V3 p);
+static void kj_cast_hook(int row, int type, int part), kj_rebind_place(Inst *in), kj_models(const Scene *s);
+static void dkj_init(const Scene *s), update_dkj(void), dkj_draw(void), dkj_cast_hook(int row, int type, int part); /* DemoKoopaJrShip */
 static int pol_demo(void), pol_shot(V3 p), pol_inst_explosion(int i); /* polta.inc */
 static void pol_init(const Scene *s), pol_find_bombs(void), pol_rebind_inst(const Scene *s), update_polta(void), pol_draw(void);
 static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle);
@@ -2498,6 +2502,8 @@ void game_init(const Scene *s, const unsigned char *blob)
     tb_init(s, blob);
     kp_init(s, blob);
     sf_init(s, blob);
+    kj_init(s, blob);
+    dkj_init(s);
     pol_init(s);
     gh_reset(); /* GhostPlayer: init at its first update */
     for (u32 i = 0; i < s->nobjs; i++)
@@ -5215,6 +5221,7 @@ static void game_rebind_(void)
     m_wanwanbreak = scene_model(s, "WanwanRollingBreak");
     m_shell = scene_model(s, "KoopaJrShipCannonShell");
     if (!m_shell) m_shell = scene_model(s, "IronCannonLauncherPoint");
+    kj_models(s); /* koopajr_ship.inc */
     /* what Mario rides (Fluff, SpaceCocoon, JumpBranch) keeps its state across the rebuild: found again by its row */
     int ride_row[3] = {flf.inst >= 0 ? insts[flf.inst].row : -1, coc.inst >= 0 ? insts[coc.inst].row : -1,
                        jb.inst >= 0 ? insts[jb.inst].row : -1};
@@ -5360,6 +5367,7 @@ static void game_rebind_(void)
         if (in->kstair) ks_place(in);
         if (in->gap) gap_place(in);
         tb_rebind_place(in);
+        kj_rebind_place(in);
         if (in->coco) coco_spawn(in);
         if (in->fountain || in->stray) memcpy(in->m0, in->m, 64);
         if (in->stray) in->head = row_turn[i] ? (stray_at[i % 64].x || stray_at[i % 64].y || stray_at[i % 64].z ? stray_at[i % 64] : v3(in->m[12], in->m[13], in->m[14])) : v3(in->m[12], in->m[13], in->m[14]);
@@ -13705,6 +13713,7 @@ static void update_jets(void)
             else if (wall) { gone = 1; camera_shake(SHAKE_WEAK); }
             if (bk_jet_hit(p)) gone = 1; /* BossKameck: isMsgJetTurtleAttack (requestDamage) */
             if (!gone && sf_jet_hit(p)) gone = 1; /* SkeletalFishBaby / Boss: isMsgJetTurtleAttack */
+            if (!gone && kj_jet_hit(p)) gone = 1; /* KoopaJrShip: receiveMsgJetTurtleAttack */
             hhp_blow(p, 60.0f); /* HammerHeadPackun: isMsgJetTurtleAttack */
             tbox_hit(p, 60.0f); /* TreasureBoxCracked: isMsgJetTurtleAttack */
             for (int k = 0; k < nkuribo; k++) { /* ACTMES_JET_TURTLE_ATTACK */
@@ -41269,6 +41278,8 @@ static void dx_cast_hook(int row, int type, int part)
         if (k == 0 && type == 2) { hdo[0].row = row; hdo[0].rumble = 1; camera_shake_infinity(&hdo[0], 0.15f, 1.2f); return; }
     }
     if (gw_cast_hook(row, type, part)) return;
+    if (!strcmp(cls, "KoopaJrShip")) { kj_cast_hook(row, type, part); return; }
+    if (!strcmp(cls, "DemoKoopaJrShip")) { dkj_cast_hook(row, type, part); return; }
     if (type == 0 && !strcmp(cls, "StarReturnDemoStarter")) { srd_appear(row); return; }
     if (type == 0 && !strcmp(cls, "GrandStarReturnDemoStarter")) { gsr_appear(row); return; }
     if (type == 2 && !strcmp(cls, "HoneyQueen")) { hq_functor(row, part); return; }
@@ -49246,6 +49257,7 @@ int game_test_bk(int frame)
 #include "ice_meraking.inc" /* IceMerameraKing (Baron Brr): mk_*, game_test_mk */
 #include "skeletal_fish.inc" /* SkeletalFishBaby / Boss (Kingfin): sf_* */
 #include "skeletal_fish_boss.inc" /* SkeletalFishBoss (Kingfin): sfk_*, its guards sfg_* */
+#include "koopajr_ship.inc" /* KoopaJrShip (Bowser Jr.'s airship): kj_*, game_test_kj */
 #include "polta.inc" /* Polta (Bouldergeist): pol_*, game_test_pol */
 /* Test builds: Mario in the boss's SwitchCylinder until it starts, then dropped in a hip drop on its BodyHipDrop part
  * whenever a hit is open; game_bsb_state: sequencer x 100 + nerve */
@@ -50905,6 +50917,8 @@ void game_update(void)
     update_tb();
     update_kp();
     update_sf();
+    update_kj();
+    update_dkj();
     update_polta();
     if (!demo_on) update_km_beams(); /* (the Kameck beams, fire balls, turtles: stopped in a demo) */
     update_tsp();
@@ -51019,7 +51033,8 @@ static void shop_goods_draw(const Inst *in, const float m[16])
     for (int g = 0; g < 2; g++) {
         const Model *gm = scene_model(sc, name[g]);
         if (!gm || !gm->skin) continue;
-        if (!ga[g]) { if (!(ga[g] = keep_anim())) continue; anim_bind(ga[g], gm->skin); anim_play(ga[g], clip[g], 1.0f, 1, 0); }
+        if (!ga[g] && !(ga[g] = keep_anim())) continue;
+        if (ga[g]->skin != gm->skin) { anim_bind(ga[g], gm->skin); anim_play(ga[g], clip[g], 1.0f, 1, 0); } /* (a zone swap moves the model) */
         anim_update(ga[g]);
         float w[16];
         mat_mul(w, m, in->anim->world[g ? 5 : 8]);
@@ -52262,6 +52277,8 @@ void game_draw(void)
     tb_draw();
     kp_draw();
     sf_draw();
+    kj_draw();
+    dkj_draw();
     pol_draw();
     km_draw();
     tsp_draw();

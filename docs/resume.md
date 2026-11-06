@@ -1027,6 +1027,47 @@ there needs the embedded blob and every pack rebuilt.
   (dx_cls_moves) fixed in #288; Koopa / KoopaJrShip (not ported) leave their grand stars undeclared (out at once).
   ponytail: the barrier's Wait BRK / BTK, no Suso / Cap dynamic joints, no
   shadow, no star pointer bind on Kamecks, NonActive by distance.
+- IceMerameraKing (feat/304-meramera-king, 2026-11-06): Baron Brr after Petari in engine/src/ice_meraking.inc
+  (#included by game.c, mk_*; walker kind WALK_MERAKING), IceVolcanoGalaxy 1's IceMountainZone: its 17 nerves, its
+  ThrowingIce pool (MoguStone.cpp: IceManIce on a ParabolicPath), IceMerameraKingShockWave (its Shock ring, sensors by
+  its joints' scales), IceMerameraKingBreak, the メラキンオープニング demo (by the arena's SwitchCubes: BeginDemo's
+  throw, 怒りデモ at part 2, 死亡デモ at part 4; its CameraTargetDemoActor through game.c dx_tgt), the pinch BGM
+  (AudBgmConductor playPinchEventBgmLevel / stopPinchEventBgmSoon / movement: game.c bgm_pinch*, bsub.id), its two
+  ChildIceMeramera (dead until AngryDemo2nd's step 90, killed in the death demo), its power star from its place.
+  sound.py --pack now reads the .inc files game.c includes (tripod_boss.inc's SEs were left out). Test: plain build,
+  XF=-DMK_TEST, IceVolcanoGalaxy/1: opening demo, three spin storms / spins while it rolls, both angry demos, death
+  demo, `power star 1 got`. ponytail: SE_DM_LV_MUTE_BGM's BGM mute, BodyIceOff's particle callback, its BRKs; its
+  children are still the improvised Meramera walker (Meramera.cpp, 1765 lines, not ported).
+- FallingSmallRock (feat/306-falling-small-rock, 2026-11-06): MapObj/FallingSmallRock.cpp in game.c update_fsrock
+  (HellProminenceGalaxy 1 / 4): Wait for SW_A, Move (its FallingSmallRock effect, SE_AT_LV_FALLING_ROCK) until its
+  binder (10 at 800 up) touches the map. Rows kept by slice.py LOGIC, its effect by jpa.py NAMED. Test: plain build
+  XF=-DFSROCK_TEST HellProminenceGalaxy/1 (SW_A on at frame 300: 13 move, one bound and dead).
+- Kingfin / Bonefins (feat/303-kingfin, 2026-11-05): engine/src/skeletal_fish.inc (sf_*: SkeletalFishRailControl,
+  SkeletalFishJointCalc, SkeletalFishBaby for SkeletalFishBaby / ChildSkeletalFishBaby rows on the SnakeFish model,
+  ExterminationSkeletalFishBaby: TearDrop's 全滅スター出現 star) and skeletal_fish_boss.inc (sfk_* / sfg_*:
+  SkeletalFishBoss with its Param.bcsv levels, rails by RailIDLv, 13 rail-bent joints, 16 joint collisions as
+  invisible insts (slice.py KCL_PARTS SkeletalFishBoss / SkeletalFishBossHeadA), head sensors, mouth nerves, the
+  出現 / パワーアップ / ２ / 死亡 demos on its four canms (CANM_ARC sfb), demo guards, break model, MBGM_BOSS_09_A / B and
+  the near / far states, SkeletalFishGuard / GuardHolder). A thrown JetTurtle hits them (sf_jet_hit). Clip keys over 31
+  chars shorten skeletalfish to sf (slice.py clip_key, game.c sf_clip). Tests: XF=-DSF_TEST TearDropGalaxy/1, XF=-DSFK_TEST SkullSharkGalaxy/1 (shells
+  thrown at the fish by the test): three babies and the checker's star; the whole fight to its star. ponytail: see the two files' headers (BRK colours, shadows, bloom, bird louse,
+  columns, 2P pointer, the after-demo programmable camera).
+- SubmarineSteam / SubmarineVolcano (feat/307-submarine-steam, 2026-11-06): MapObj/SubmarineSteam.cpp (both names one
+  class, the effect group its name) in game.c update_msteam: Steam (SE_OJ_LV_MARINE_STEAM_OUT, _S in SkullSharkGalaxy)
+  or WaitForSwitchOn; its strong hit (sphere 120 at 600, cylinder 480, Mario's radius x 0.7 + 20). slice.py LOGIC,
+  jpa.py NAMED. Test: plain build XF=-DMSTEAM_TEST SkullSharkGalaxy/1 (both hit Mario). ponytail: group clipping.
+- KoopaJrShip (#302, 2026-11-06): Bowser Jr.'s airship after Petari in engine/src/koopajr_ship.inc (#included by
+  game.c, kj_* / dkj_*): KoopaJrShip's nerves on its rail, propellers / screws, cannon shells and main shells, its
+  HomingKillers, the two Kamecks, 5 JetTurtle hits (Damage / PowerUp / BreakStart / Break), its demo casts (appear,
+  turn to the front, Koopa Jr.'s ShipBattle talk as its cast クッパJr: slice.py DEMO_CAST_ALIAS), the burn / move level
+  SEs, its power star; KoopaJr on its obj joint; DemoKoopaJrShip (FloaterOtaKingGalaxy arg0 1, TriLegLv1Galaxy arg0
+  0: the entry clip and anim camera, the talk, FlyAway). slice.py: SKINNED_OBJ, EXTRA, MODEL_ARC / ANIM_ARC, TALK_NAME,
+  declare_stars. Models looked up again and anims rebound in game_rebind_ (kj_models). TicoShop's goods (#318's keep_anim pool) bound again when a
+  zone swap moves their model (KoopaJrShipLv1's TLB miss in anim_pose / draw_model_ after BattleLv1Tmp1Zone came in).
+  Test: KJ_TEST build with KoopaJrShipLv1Galaxy/1 (Mario to the SW 15 SwitchCube, the switch written after 300
+  frames: the cube's area does not write it there, A through the talk, a JetTurtle hit every 300 frames): opening
+  demo, the talk, 5 hits, the mid demo, the down demo, `power star 1 got`. DKJ_TEST (FloaterOtaKingGalaxy/1, plain):
+  the entry demo by SW 67.
     if len(k) > 31:  # (SkeletalFishBossHeadA's too: game.c sf_clip; polta.inc pol_key)
         for a, b in (("demobosskameck", "dbk"), ("skeletalfish", "sf"), ("poltaleftarm", "pla"), ("poltarightarm", "pra"),
                      ("poltaformationrock", "pfr")):
