@@ -1934,6 +1934,10 @@ int main(void)
 #ifdef WALKER_TEST
 #ifdef TOWER_TEST
         { extern void game_test_tower(unsigned); game_test_tower(frame); }
+#elif defined JELEC_TEST
+        { extern void game_test_jelec(unsigned); game_test_jelec(frame); }
+#elif defined ERMV_TEST
+        { extern void game_test_ermv(unsigned); game_test_ermv(frame); }
 #elif defined HANG_TEST
         { extern void game_test_hang(unsigned); game_test_hang(frame); }
 #elif defined ICE_TEST

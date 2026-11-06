@@ -429,9 +429,16 @@ Second console round (2026-10-24), from Daniel's report:
   (explosion_breaks_inst). Test: `bteresa` (Phantom 1 row 228: chase, tackle, Mario hurt; XF=-DBT_ACT=1: spin, the
   tongue holds his hand 40+ frames, the room's wall cuts it; near the statue its swing breaks it). ponytail: no BRK,
   no BindStarPointer, no ShadowAppear / BallAppear (Polta), no Shock. Repack: sound.py --pack PhantomGalaxy.
-- Static classes still to port (mario2's list, 2026-11-05; placements in): JellyfishElectric (OceanPhantomCave 1-6,
-  FishTunnel 1), BigBubbleGenerator (CubeBubbleEx 1/2, ReverseKingdom 2: Ride/BigBubble.cpp 1228 lines),
-  ElectricRailMoving (BattleShip 2, CannonFleet 3/4, CubeBubbleExLv2, Factory 2, FlipPanelEx 1), SandUpDownTriRock
+- JellyfishElectric / ElectricRailMoving (#260, 2026-11-05): JellyfishElectric.cpp's nerves (Wait / WaitWith
+  Right / Left Turn every 280, Damage -> DangerWait, Death: stopScene 5, binder 400, a coin; Attack; RailGoal arg1,
+  arg2 back to its start), the sin bob, its rail at arg0, the 350 body sensor (electric, push; spin; JetTurtle /
+  explosion / invincible knockOut). ElectricRailMoving.cpp: arg0 lit sections running at arg1 (isValidCoord on the
+  rail sensors), its ElectricRailMovingPoints (35, shock even a squat), SW_A Disappear 20 frames. Tests `walker`
+  XF=-DJELEC_TEST (OceanPhantomCave 1), XF="-DWALKER_TEST -DERMV_TEST" (BattleShip 2). ponytail: in the header
+  comments (point light, star pointer swoon, BRK / BAS colours; the rail drawn as its model over the lit pieces).
+  Repack: slice_all.py OceanPhantomCave, FishTunnel, BattleShip, CannonFleet, CubeBubbleEx, Factory, FlipPanelEx.
+- Static classes still to port (mario2's list, 2026-11-05; placements in): BigBubbleGenerator (CubeBubbleEx 1/2,
+  ReverseKingdom 2: Ride/BigBubble.cpp 1228 lines), SandUpDownTriRock
   (SandClock 1-7: SW_B On / Rest arg0 / Return, KCL Move00-02 on joints: KCL_PARTS + SKINNED_OBJ), BegomanBabyLauncher
   (CannonFleet 3/4, OceanFloaterLand 1/2).
 - Unizo (fix/states-unizo, 2026-11-05): Unizo.cpp's nerves (Wait, Jump on its Search BCK, Chase, Attack on its
