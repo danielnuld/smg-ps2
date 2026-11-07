@@ -616,7 +616,7 @@ Second console round (2026-10-24), from Daniel's report:
   pad is now path_arg0 (the race id), declare_stars TeresaRacer (arg0 != 1) / PenguinRacerLeader. Test plain XF
   "-DRACE_TEST=1 -DPACKS_OVERLAY=..." PhantomGalaxy/2: talk, Yes, count, Mario carried along the judge rail wins at f
   4171, Goal, the Boo's talk, TakeOutStar, its star; =2 Mario left at the start: the Boo in at f 4282, TimeUp at 7200,
-  Lose talk, the race miss. ponytail: star pointer demo modes, the layout's effects, TeresaRacer's trample SE, the
+  Lose talk, the race miss. ponytail: star pointer demo modes, the layout's effects, the
   2D race's raster scroll, the star model in its hands. TeresaMario2D 1 (racers 0 / 1) not run. Repack: every
   galaxy with a RaceRail (PATH's path_arg0, LOGIC): PhantomGalaxy, OceanRingGalaxy, TeresaMario2DGalaxy,
   SurfingLv1Galaxy, SurfingLv2Galaxy.
@@ -671,6 +671,10 @@ Second console round (2026-10-24), from Daniel's report:
   5400: not the test card. race.inc built '<race>/hi' / '/lo' in 48 bytes; ペンギンレース[オーシャンリング]/hi is 50, cut,
   so gd_value found nothing and setRaceBestTime stored nothing. 64 now: OceanRing 2 reads best 5400 (01:30:00), a win
   at 5158 is kept.
+- TeresaRacer's trample SE (feat/441, 2026-11-07): race.inc tr_control (TeresaRacer::control): npc_react on its Body
+  (220 at (0, 25, 40)): a trample bounces Mario and plays SE_SM_TERERACER_TRAMPLE. Test plain XF "-DRACE_TEST=1
+  -DRACE_TRAMPLE -DPACKS_OVERLAY=..." PhantomGalaxy/2: Mario dropped on the Boo, `trampled` each bounce. Repack:
+  sound.py --pack PhantomGalaxy, TeresaMario2DGalaxy.
 - ChipCounter (feat/290-chip-counter, 2026-11-05): menu.c chc_* (BlueChipCounter / YellowChipCounter / CollectCounter
   in lyt.py COMMON: menus.bin +84 KB): Hide / FrameIn / Show / FrameOut / TryDemo / Complete / CompleteOut, Chip1-5
   ChipGet, ShowHide by short balloons, the count over Mario; game.c chip_group_*: UI range (chips' box +- 2000 or
