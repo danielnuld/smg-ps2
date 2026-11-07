@@ -5073,15 +5073,10 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
     ci->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 || strcmp(name, "KinopioAstro") == 0 ? 3 :
                   strcmp(name, "ButlerMap") == 0 ? 4 : strcmp(name, "Butler") == 0 ? 5 : lg_cls(name) ? 6 : strcmp(name, "TicoStarRing") == 0 ? 7 : strcmp(name, "TicoComet") == 0 ? 8 : strcmp(name, "HoneyBee") == 0 ? 10 : strcmp(name, "TicoShop") == 0 ? 11 :
-<<<<<<< HEAD
-                  strcmp(name, "Penguin") == 0 || strcmp(name, "PenguinCoach") == 0 || strcmp(name, "PenguinStudent") == 0 ? 12 : 0;
-    ci->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 :
-               strcmp(name, "DimensionAir") == 0 ? 4 : strcmp(name, "TwilightAir") == 0 || strcmp(name, "DarknessRoomAir") == 0 ? 3 : 0;
-=======
                   strcmp(name, "Penguin") == 0 || strcmp(name, "PenguinCoach") == 0 || strcmp(name, "PenguinStudent") == 0 ? 12 :
                   strcmp(name, "PenguinMaster") == 0 ? 13 : 0;
-    ci->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 : 0;
->>>>>>> fbadacd (Static classes after Petari, second batch)
+    ci->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 :
+               strcmp(name, "DimensionAir") == 0 ? 4 : strcmp(name, "TwilightAir") == 0 || strcmp(name, "DarknessRoomAir") == 0 ? 3 : 0;
     ci->gap = gap_class(name);
     ci->clipcls = strcmp(name, "Tico") == 0 || strcmp(name, "TicoBaby") == 0 || lg_cls(name) ? 1 : /* NameObjFactory: Tico, LuigiNPC */
                   strcmp(name, "SuperSpinDriver") == 0 || strcmp(name, "SuperSpinDriverPink") == 0 || strcmp(name, "SuperSpinDriverGreen") == 0 ? 2 : 0;
