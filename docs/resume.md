@@ -1196,6 +1196,11 @@ there needs the embedded blob and every pack rebuilt.
   (Body sphere 200, LegL / LegR ovals 180 x 160). ponytail: Snakehead's flat-model shadows.
   Item shadows (fix/item-shadows): BenefitItemOneUp / LifeUp / Invincible draw BenefitItemObj::init's cylinder 50
   (drop arg7, else 2000; none when arg4 is 0); stale marks: rails (the PATH polylines are sampled Bezier), Butterfly.
+  Karon (fix/karon): Karon.cpp after Petari replaces the improvised chaser (game.c kr_*: FixWait on SW_A, Wait /
+  Walk in its TerritoryMover 500 / Turn at a fall / WalkOnRail 600 ahead, Search / Pursue within 700 and 80 degrees,
+  Broken / StepBroken 300 then Recovery, HitReaction / StarPieceHit, Down when invincible Mario tramples or touches it,
+  SinkDown on a SinkDeath floor; moveAndTurnToDirection's params; its clips by startAction). Test: `karon`
+  (SandClockGalaxy/1).
 
 ## Next
 
