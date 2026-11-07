@@ -345,6 +345,13 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   flipped him through its plane. Still open: at the ScenarioStarter flight's end Mario is 135 from EyeBeamer row 200's
   beam line (Wait, under 140: burned once); the start itself is 168 from it. ponytail: no beam volume / bloom
   models. Repack: slice_all.py CannonFleetGalaxy.
+- AlreadyDoneFlagInGalaxy (feat/458-already-done-flag, 2026-11-07): sequence.c seq_done_setup / seq_done_update
+  (GameDataTemporaryInGalaxy's 64 infos: getHashCode(name) & 0x7FFF, placed zone, link id, a done bit), cleared by
+  seq_galaxy_move unless a retry after a miss (resetGameDataGoToGalaxyFirst). WaterBazooka in OceanPhantomCaveGalaxy
+  (ウォータバズーカ撃破): beaten before a miss, dead from the start (its dead switch on). Test plain XF="-DWZ_TEST
+  -DWZ_MISS -DPACKS_OVERLAY=wt-release-wz" OceanPhantomCaveGalaxy/2: the fight, a miss 60 after its death, the
+  galaxy again with "done 1". Not wired yet (Petari has them): SuperSpinDriver ドライバ出現済み (arg6 1), ChipGroup
+  チップ集め済み, OceanFloaterLandParts フローター浮上, TalkMessageCtrl's per-node flags.
 ## Console release (2026-10-23 / 24)
 
 First runs on Daniel's SCPH-75001 (ORBIT launcher, Neutrino over udpfs from nuld; console log = Neutrino's udptty

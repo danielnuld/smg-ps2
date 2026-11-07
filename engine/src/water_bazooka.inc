@@ -22,7 +22,7 @@
  * Angry (touching it shocks Mario; a hip drop on the capsule then only lands while he is hurt and not paralysed).
  * The demo camera's target (バズーカカメラターゲット, a CameraTargetDemoActor) is dx_tgt: at it, its up, the shooter's front.
  * The pinch BGM in OceanPhantomCaveGalaxy within 5000.
- * ponytail: no AlreadyDoneFlag (ウォータバズーカ撃破: the port keeps no GameDataTemporaryInGalaxy), no BRK colours (Damage /
+ * ponytail: no BRK colours (Damage /
  * PowerUp / Spin, the shooter's Normal / CoolDown, the break model's Break: baked), no center screen blur, the storm's
  * level SE without its volume parameter, no hit mark between sensors, no coconut hits (ATYPE_COCO_NUT), no frustum
  * hide (isJudgedToClipFrustum: the draw culls), the capsule's Crack effect validity check (it only matters inside
@@ -36,7 +36,7 @@ enum { WC_NORMAL, WC_CRACK, WC_BREAK, WC_DEAD };
 enum { WZJ_CANNON1 = 2, WZJ_COCKPIT = 5, WZJ_TOP = 6 }; /* AllRoot, JointRoot, Cannon1, Cannon2, Cannon3, Cockpit, Top */
 #define WZ_EBULLETS 5
 static struct {
-    int row, nrv, st, elec, life, shots, star, pinch, demo, etime, kc, kp, hidden, ms_nrv, ms_st, wc_nrv, wc_st, break_on;
+    int row, done, nrv, st, elec, life, shots, star, pinch, demo, etime, kc, kp, hidden, ms_nrv, ms_st, wc_nrv, wc_st, break_on;
     int smoke[4], spin, angry, angry_sign;
     float base[16], cannon[16], shm[16], capm[16];
     V3 pos, grav, front; /* mPosition, mGravity, the shooter's mFront */
@@ -321,6 +321,7 @@ static void wz_kill(void) /* kill: its dead switch, LiveActor::kill */
     if (r->sw[SW_DEAD] >= 0) sw_set(r, SW_DEAD, 1);
     row_dead[wz.row] = 1; sw_changed = 1;
     wz_set(WZ_DEAD);
+    seq_done_update(wz.done, 1); /* updateAlreadyDoneFlag */
 }
 static void wz_nerve(void)
 {
@@ -590,7 +591,14 @@ static void wz_init(const Scene *s) /* WaterBazooka::init */
         wz_models(s);
         wz.ms_nrv = MS_WAIT; wz.ms_st = -1; wz.wc_nrv = WC_NORMAL;
         wz_set(WZ_WAIT);
-        printf("water bazooka: row %d %s, star %d\n", wz.row, c, wz.star);
+        wz.done = -1;
+        if (!strncmp(game_stage_name, "OceanPhantomCaveGalaxy/", 23)) { /* setupAlreadyDoneFlag ウォータバズーカ撃破: beaten
+                                                                       * before a miss, dead from the start */
+            int done;
+            wz.done = seq_done_setup("ウォータバズーカ撃破", r->zone, r->l_id, &done);
+            if (done) { if (r->sw[SW_DEAD] >= 0) sw_set(r, SW_DEAD, 1); row_dead[wz.row] = 1; wz.nrv = WZ_DEAD; }
+        }
+        printf("water bazooka: row %d %s, star %d, done %d\n", wz.row, c, wz.star, row_dead[wz.row]);
         break;
     }
 }
@@ -636,6 +644,10 @@ int game_test_wz(int frame) /* XF=-DWZ_TEST (ReverseKingdomGalaxy/3, OceanPhanto
     if (talk_active()) { pad_force = frame % 24 < 6 ? PAD_CROSS : 0; return 0; }
     if (wz.nrv == WZ_DEAD) {
         if (done_at < 0) done_at = frame;
+#ifdef WZ_MISS /* -DWZ_MISS: a miss 60 after its death; the galaxy entered again (a retry), it stays dead (AlreadyDoneFlag) */
+        if (frame - done_at == 60) game_test_miss(0);
+        return 0;
+#endif
         for (int i = 0; frame - done_at >= 120 && frame % 20 == 0 && i < ninsts; i++)
             if (insts[i].item == ITEM_STAR && star_wait[insts[i].row] == wz.row + 1) { int st; V3 p = star_pos(&insts[i], &st); if (st) { mario->pos = p; mario->hvel = v3(0, 0, 0); mario->vup = 0; } }
         return 100;

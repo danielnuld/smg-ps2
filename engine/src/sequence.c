@@ -207,11 +207,28 @@ static int astro_dome_no(void) { return gd_grand_galaxy_no(sq.before); } /* calc
 
 static int retry; /* GameDataTemporaryInGalaxy::_4: the galaxy entered again after a miss */
 int seq_is_retry(void) { return retry; }
+/* AlreadyDoneFlagInGalaxy (GameDataTemporaryInGalaxy, 64 infos): {getHashCode(name) & 0x7FFF, its placed zone, its
+ * link id} and a done bit; kept over a miss, cleared when the galaxy is entered first (resetGameDataGoToGalaxyFirst) */
+static struct { unsigned short code; short zone, link; unsigned char on; } done_info[64];
+static int ndone;
+int seq_done_setup(const char *name, int zone, int link, int *done)
+{
+    unsigned h = 0;
+    for (const char *c = name; *c; c++) h = (unsigned)(signed char)*c + h * 31; /* MR::getHashCode */
+    for (int i = 0; i < ndone; i++)
+        if (done_info[i].code == (h & 0x7FFF) && done_info[i].zone == zone && done_info[i].link == link) { *done = done_info[i].on; return i; }
+    *done = 0;
+    if (ndone >= 64) return -1; /* (a MR::Vector of 64: Petari has no check) */
+    done_info[ndone].code = h & 0x7FFF; done_info[ndone].zone = (short)zone; done_info[ndone].link = (short)link; done_info[ndone].on = 0;
+    return ndone++;
+}
+void seq_done_update(int i, int on) { if (i >= 0 && i < ndone) done_info[i].on = on != 0; }
 void seq_galaxy_move(int type, const char *stage, int scenario, int start_id, int start_zone)
 {
     char st[32];
     int no = scenario;
     retry = type == SEQ_MISS; /* resetGameDataGoToGalaxyRetry (_4 on) / ..First (off) */
+    if (!retry) ndone = 0; /* resetGameDataGoToGalaxyFirst: clearAlreadyDoneFlag */
     snprintf(st, sizeof st, "%s", stage ? stage : "");
     /* setBeforeStageScenario: the stage being left (a clear: the cleared stage and its star) */
     int cur_no;
