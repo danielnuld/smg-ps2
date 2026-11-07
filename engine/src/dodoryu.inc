@@ -428,7 +428,7 @@ static void ddh_update(void)
         int crumbled = p->nrv == P_CRUMBLE && p->st >= 40; /* sCrumbleFrame */
         if (crumbled) continue;
         float r = 120.0f * p->size; /* its body sensor (sPieceSensorRadius x size) */
-        int msg = mario_offence(p->pos, r, dd.grav); /* receiveMsgPlayerAttack */
+        int msg = mario_offence(p, p->pos, r, dd.grav); /* receiveMsgPlayerAttack */
         if (msg == MSG_HIPDROP) { m_pad_vib(0); se_start(SE_EM_MOGHILL_BREAK, &p->pos.x); ddp_destroy(p); continue; }
         if (msg == MSG_TRAMPLE) { m_pad_vib(0); se_start(SE_EM_MOGHILL_BREAK, &p->pos.x); ddp_destroy(p); mario_trample(); continue; }
         if (msg == MSG_HITALL) { m_punch(p, p->pos, 0); m_pad_vib(2); se_start(SE_EM_MOGHILL_BREAK, &p->pos.x); ddh_kill3(i); continue; }
@@ -536,7 +536,7 @@ static void dd_rb_update(void)
     }
     V3 sp = v3(dd.rb_m[12], dd.rb_m[13], dd.rb_m[14]); /* attackSensor: its body (50 at Spine) pushes Mario; a trample takes */
     if (dd.rb->skin->njoints > 5) { float m[16]; mat_mul(m, dd.rb_m, dd.rb->world[5]); sp = v3(m[12], m[13], m[14]); }
-    if (mario_offence(sp, 50.0f, vmul(up_at(sp, v3(0, 1, 0)), -1.0f)) == MSG_TRAMPLE) mario_trample();
+    if (mario_offence(NULL, sp, 50.0f, vmul(up_at(sp, v3(0, 1, 0)), -1.0f)) == MSG_TRAMPLE) mario_trample();
     else if (vlen(vsub(dd_mc(), sp)) < 50.0f + HIT_BODY_R) mario_push_out(sp, 50.0f);
 }
 /* --- the states --- */
@@ -1232,7 +1232,7 @@ static void update_dd(void)
             for (int k = 0; k < 7 && !took; k++) {
                 if (!(dd.sens >> k & 1)) continue;
                 V3 s = dd_jp(sn[k].j, v3(sn[k].x, sn[k].y, sn[k].z));
-                int msg = mario_offence(s, sn[k].r, dd.grav);
+                int msg = mario_offence((const char *)&dd + k, s, sn[k].r, dd.grav);
                 if (msg != MSG_NONE) { took = 1; if (dd_catch_player(msg, k, s)) { if (msg == MSG_TRAMPLE) mario_trample(); else if (msg == MSG_HITALL) m_punch((const char *)&dd + k, s, 0); } }
             }
             for (int k = 0; k < 7; k++) {

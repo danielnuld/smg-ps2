@@ -1004,7 +1004,7 @@ static void sk_sensor(RNpc *t) /* attackSensor (Mario touches its Body) / receiv
 {
     if (!sk_attackable(t)) return;
     V3 body = vadd(rn_pos(t), vmul(t->pose.nu, 50.0f));
-    if (mario_touch(body, 50.0f) || mario_offence(body, 50.0f, vmul(t->pose.nu, -1.0f)) == MSG_HITALL) {
+    if (mario_touch(body, 50.0f) || mario_offence(NULL, body, 50.0f, vmul(t->pose.nu, -1.0f)) == MSG_HITALL) {
         pad_rumble(RUMBLE_STRONG);
         rn_set(t, SK_CAUGHT);
         printf("penguin skater row %d: caught" "\n", t->row);

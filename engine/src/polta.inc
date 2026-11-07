@@ -400,7 +400,7 @@ static void pol_rock_update(PolRock *r)
         else mario_push_out(r->pos, 120.0f);
     }
     /* receiveMsgPlayerAttack: his spin while it flies */
-    if (pol_rock_attack_ok(r) && mario_offence(r->pos, 120.0f, g) == MSG_HITALL) { m_punch(r, r->pos, 0); r->vel = v3(0, 0, 0); pol_rock_generate_kill(r); }
+    if (pol_rock_attack_ok(r) && mario_offence(r, r->pos, 120.0f, g) == MSG_HITALL) { m_punch(r, r->pos, 0); r->vel = v3(0, 0, 0); pol_rock_generate_kill(r); }
 }
 static void pol_grock_start(PolGRock *gr, V3 p) /* PoltaGroundRock::start */
 {
@@ -476,7 +476,7 @@ static void pol_grock_update(PolGRock *gr, int k)
             if (j != k && pol.grock[j].on && vlen(vsub(pol_grock_body(&pol.grock[j]), b)) < 340.0f) pol_grock_break(&pol.grock[j]);
     }
     /* receiveMsgPlayerAttack: a spin on its collision (ponytail: at its body sensor) */
-    if (gr->shown && pol_grock_break_ok(gr) && mario_offence(pol_grock_body(gr), 170.0f, gr->g) == MSG_HITALL) { m_punch(gr, pol_grock_body(gr), 0); pol_grock_break(gr); }
+    if (gr->shown && pol_grock_break_ok(gr) && mario_offence(gr, pol_grock_body(gr), 170.0f, gr->g) == MSG_HITALL) { m_punch(gr, pol_grock_body(gr), 0); pol_grock_break(gr); }
 }
 static int pol_inst_explosion(int i) /* sendMsgEnemyAttackExplosionToBindedSensor on a ground rock's collision: Break */
 {

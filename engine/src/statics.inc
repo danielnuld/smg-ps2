@@ -1029,7 +1029,7 @@ static void st_sboxes_update(void)
         if (onp && b->nrv != SB_WAIT) st_sb_nrv(b, SB_WAIT), st = ++b->st;
         /* Mario's messages: receiveMsgPlayerAttack, receiveOtherMsg (kick) */
         if (hip_hit && hip_inst == i) { st_sb_kill(in, b); continue; } /* isMsgPlayerHipDrop */
-        int msg = mario_offence(body, 160.0f * s, b->grav);
+        int msg = mario_offence(b, body, 160.0f * s, b->grav);
         if (msg == MSG_HITALL && b->nrv != SB_FALL && !onp) { /* isMsgPlayerHitAll: Spinning */
             b->slidedir = vtangent(mario->face, b->grav);
             if (vlen(b->slidedir) > 1e-6f) b->slidedir = vnorm(b->slidedir);

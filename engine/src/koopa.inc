@@ -2120,7 +2120,7 @@ static void update_kp(void)
     for (int s = 0; s < KS_N; s++) /* attackSensor: its sensors on Mario's */
         if (kp.sv[s] && kp_touch(s)) { if (b3) kb3_attack(s); else kbm_attack(s); }
     for (int s = 0; s < KS_N && !kp.spun; s++) /* receiveMsgPlayerAttack: Mario's spin on its sensors */
-        if (kp.sv[s] && mario_offence(kp_sc(s), kp.sens[s][3], kp.b.grav) == MSG_HITALL && (b3 ? kb3_receive(s) : kbm_receive(s))) { m_punch(kp.sens[s], kp_sc(s), 0); kp.spun = 1; printf("koopa: spin on %s\n", kp_sdef[s].name); }
+        if (kp.sv[s] && mario_offence(kp.sens[s], kp_sc(s), kp.sens[s][3], kp.b.grav) == MSG_HITALL && (b3 ? kb3_receive(s) : kbm_receive(s))) { m_punch(kp.sens[s], kp_sc(s), 0); kp.spun = 1; printf("koopa: spin on %s\n", kp_sdef[s].name); }
 }
 static int kp_pose(Anim *a, const Model *md, const char *clip, float frame) /* a pooled model's pose: its clip at frame */
 {

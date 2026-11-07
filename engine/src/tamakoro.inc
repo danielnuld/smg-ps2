@@ -1218,7 +1218,7 @@ static void tmt_sensors(void) /* its body (enemy, 100 at 100 up) and push (200, 
         return;
     }
     if (!tmk_riding()) {
-        int msg = mario_offence(body, 100.0f, vmul(tmk.tup, -1.0f));
+        int msg = mario_offence(NULL, body, 100.0f, vmul(tmk.tup, -1.0f));
         if (msg == MSG_TRAMPLE) { se_start(SE_OJ_SIGN_BOARD_TRAMP_PLR, &tmk.tpos.x); mario_trample(); }
         else if (msg == MSG_HIPDROP) { /* sendMsgAwayJump */
             V3 a = vtangent(vsub(mario->pos, tmk.tpos), tmk.tup);
