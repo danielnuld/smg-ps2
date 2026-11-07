@@ -13394,6 +13394,92 @@ static void update_fountains(void)
     }
 }
 
+/* Fountain.cpp and SpringJetWater.cpp: a jet of water (no model: its effect) throwing Mario up. Their "body" sensor
+ * (sSensorRadius 300, sSensorOffsetY 300 along their up) on Mario's: within sHitSphereRadius 70 of the point 350 up,
+ * or within his radius + sHitCylinderRange 10 of the 280 high axis, ACTMES_FOUNTAINJUMP (MarioActor: touchWater;
+ * pushed off past the sensor's radius across his gravity, else doFlow, 水弾かれ, 声噴水ジャンプ).
+ * Fountain: its effect (its object name), with a SW_A it waits (sensor off) till the switch is on, then Move (sensor
+ * on, the effect, SE_OJ_LV_FOUNTAIN); SW_APPEAR (syncStageSwitchAppear) hides it till on. SpringJetWater: Wait (sensor
+ * off, its Wait effect, SE_OJ_LV_SPR_JET_WATER_WAIT) till its demo's 湧き水上昇 part starts (part 1 of
+ * DemoSpringWaterRiseUp: 開始待ち, 湧き水上昇, アイビーマー回転, アイビーマー降下, 終了待ち), Jet (sensor on, Jet
+ * effect, SE_OJ_SPR_JET_WATER_JET_ST, setStageBGMState(1, 180), SE_OJ_LV_SPR_JET_WATER_JET) till its last step, End
+ * (sensor off, Jet deleted) and killed at sEndTime 60. row_turn 0 dead (appear pending) / Wait, 1 Move / Jet, 2 End,
+ * 3 killed; row_step its steps. ponytail: no clipping (startClipped / endClipped: the effects kept while within
+ * sClippingRadius of the camera: Fountain 3500, SpringJetWater 1000) */
+static int dx_first(int p), dx_last(int p), dx_has_cast(int row), dx_request(const char *name, int frameless);
+static void bgm_state(int state, int frames);
+static void jet_water_touch(V3 at, V3 up, V3 s) /* attackSensor: s its sensor's centre */
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    if (vlen(vsub(c, s)) >= 300.0f + HIT_BODY_R) return; /* the sensors apart */
+    V3 h = vadd(at, vmul(up, 350.0f)), ax = vsub(c, at);   /* sHitSphereOffsetY */
+    float proj = vdot(ax, up) / 280.0f, ortho = vlen(vsub(ax, vmul(up, vdot(ax, up)))); /* HitCylinder::getParams */
+    if (!(vlen(vsub(c, h)) < 70.0f + HIT_BODY_R) && !(proj >= 0.0f && proj <= 1.0f && ortho < HIT_BODY_R + 10.0f)) return;
+    mode_touch_water(); /* ACTMES_FOUNTAINJUMP */
+    if (vlen(vtangent(vsub(c, s), mario->up)) >= 300.0f) { mario_push_out(s, 300.0f); return; } /* receiveMsgPush */
+    if (m_flow(mario)) { mario_sound("水弾かれ"); mario_sound("声噴水ジャンプ"); printf("jet water: MarioFlow" "\n"); }
+}
+static void update_jet_waters(void)
+{
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        const char *cls = sc->types + 32 * r->type;
+        int spring = !strcmp(cls, "SpringJetWater");
+        if ((!spring && strcmp(cls, "Fountain")) || !dx_row_moves((int)i)) continue;
+        signed char *ph = &row_turn[i];
+        unsigned short *st = &row_step[i];
+        float m[16], one[3] = {1, 1, 1}, rot[3] = {r->rot[0], r->rot[1], r->rot[2]};
+        mat_translate_rot_scale(m, r->pos, rot, one);
+        V3 at = v3(r->pos[0], r->pos[1], r->pos[2]), up = vnorm(v3(m[4], m[5], m[6])), s = vadd(at, vmul(up, 300.0f));
+        int near = vlen(vsub(at, cam_pos)) < (spring ? 1000.0f : 3500.0f), sens = 0, next = -1;
+        if (*ph == 3) continue;
+        if (!spring) {
+            if (*ph == 0 && *st == 0 && r->sw[SW_APPEAR] >= 0 && !sw_on(r, SW_APPEAR)) continue; /* dead till SW_APPEAR */
+            if (*ph == 0 && r->sw[SW_A] < 0) *ph = 1; /* appear: no SW_A, Move */
+            if (*ph == 0) { if (sw_on(r, SW_A)) next = 1; } /* Wait */
+            else {
+                sens = 1;
+                if (near) fx_named(cls, cls, m, NULL, &sc->objs[i]); /* emitEffect(mFountainName) */
+                se_level(SE_OJ_LV_FOUNTAIN, &at.x, 0);
+            }
+        } else if (*ph == 0) { /* Wait */
+            if (near) fx_named(cls, "Wait", m, NULL, &sc->objs[i]);
+            se_level(SE_OJ_LV_SPR_JET_WATER_WAIT, &at.x, 0);
+            if (dx_has_cast((int)i) && dx_first(1)) next = 1; /* isDemoPartFirstStep("湧き水上昇") */
+        } else if (*ph == 1) { /* Jet */
+            if (*st == 0) { se_start(SE_OJ_SPR_JET_WATER_JET_ST, &at.x); bgm_state(1, 180); }
+            sens = 1;
+            if (near) fx_named(cls, "Jet", m, NULL, (const char *)&sc->objs[i] + 1);
+            se_level(SE_OJ_LV_SPR_JET_WATER_JET, &at.x, 0);
+            if (dx_has_cast((int)i) && dx_last(1)) next = 2;
+        } else if (*st == 60) next = 3; /* End: sEndTime, kill */
+        if (next >= 0) {
+            static const char *const nrv[2][4] = {{"Wait", "Move", "", ""}, {"Wait", "Jet", "End", "killed"}};
+            *ph = (signed char)next; *st = 0;
+            printf("jet water row %d: %s %s" "\n", (int)i, cls, nrv[spring][next]);
+        } else ++*st;
+        if (sens) jet_water_touch(at, up, s);
+    }
+}
+/* Test builds: phase 0 Mario on the first Fountain / SpringJetWater (its row, -1 none); 1 its 湧き水上昇 demo
+ * requested (1, 0 none) */
+int game_test_jwater(int phase)
+{
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        const char *cls = sc->types + 32 * r->type;
+        if (strcmp(cls, "Fountain") && strcmp(cls, "SpringJetWater")) continue;
+        if (phase == 1) return strcmp(cls, "SpringJetWater") ? 0 : dx_request("湧き水上昇", 0) != 0;
+        float m[16], one[3] = {1, 1, 1}, rot[3] = {r->rot[0], r->rot[1], r->rot[2]};
+        mat_translate_rot_scale(m, r->pos, rot, one);
+        mario->up = vnorm(v3(m[4], m[5], m[6]));
+        mario->pos = vadd(v3(r->pos[0], r->pos[1], r->pos[2]), vmul(mario->up, 20.0f));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        return (int)i;
+    }
+    return -1;
+}
+
 static void update_candles(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
@@ -41151,6 +41237,13 @@ static int dx_cls_moves(const char *cls) /* an update_* of that class runs now *
         if (!strcmp(sc->types + 32 * sc->objs[d->group[i]].type, cls)) return 1;
     return dx_always_moves(cls);
 }
+static int dx_has_cast(int row) /* a cast of the demo running (tryRegisterDemoCast) */
+{
+    if (!dx.on) return 0;
+    const Demo *d = &demos[dx.cur];
+    for (int i = 0; i < d->h->ngroup; i++) if (d->group[i] == row) return 1;
+    return 0;
+}
 static int dx_row_moves(int row) /* the placement moves now */
 {
     if (boss_demo_cls() && !pd.name) return dx_cls_moves(sc->types + 32 * sc->objs[row].type);
@@ -51147,6 +51240,7 @@ void game_update(void)
     update_sls();
     spider_coins();
     LQ(55, update_fountains());
+    update_jet_waters(); /* Fountain, SpringJetWater: by row (dx_row_moves) */
     LQ(56, update_strays());
     LQ(57, update_bubbles());
     LQ(58, update_dino());

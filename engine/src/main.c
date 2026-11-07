@@ -2208,6 +2208,13 @@ int main(void)
         if (f0 && frame - f0 < 30000) game_test_kp((int)(frame - f0));
     }
 #endif
+#ifdef JWATER_TEST /* XF=-DJWATER_TEST, CosmosGardenGalaxy/1 (Fountain) or CannonFleetGalaxy/1 (SpringJetWater, its demo requested) */
+    {
+        static u32 f0;
+        if (!f0 && frame > 30 && game_test_free()) { f0 = frame; printf("jwater test: demo %d\n", game_test_jwater(1)); }
+        if (f0 && frame - f0 < 1200 && (frame - f0) % 150 == 100) printf("jwater test f %u: row %d\n", frame, game_test_jwater(0));
+    }
+#endif
 #ifdef MK_TEST /* XF=-DMK_TEST, IceVolcanoGalaxy/1: the IceMerameraKing fight (game_test_mk) */
     {
         static u32 f0;

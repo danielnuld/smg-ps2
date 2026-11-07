@@ -81,6 +81,7 @@ int game_test_coco(int how);
 int game_test_cocoon(int phase, float drag);
 /* Test builds: Fluff steps (game.c game_test_fluff) */
 int game_test_fluff(int phase);
+int game_test_jwater(int phase); /* Fountain / SpringJetWater (JWATER_TEST) */
 int game_test_waterplant(void);
 /* Test builds: StinkBugSmall (game.c game_test_stink) */
 int game_test_stink(int how);
