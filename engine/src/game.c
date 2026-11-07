@@ -48623,6 +48623,22 @@ static void anim_joint_rot(Anim *a, int j, int axis, float ang)
     }
 }
 static void anim_joint_rotx(Anim *a, int j, float ang) { anim_joint_rot(a, j, 0, ang); }
+static void anim_joint_rot_v(Anim *a, int j, V3 ax, float ang) /* the same about a model-space axis through its origin */
+{
+    const Skin *k = a->skin;
+    const float *w = a->world[j];
+    V3 o = v3(w[12], w[13], w[14]);
+    for (u32 i = (u32)j; i < k->njoints && i < ANIM_MAX_JOINTS; i++) {
+        int under = 0;
+        for (int p = (int)i; p >= 0; p = k->joints[p].parent) if (p == j) { under = 1; break; }
+        if (!under) continue;
+        float *m = a->world[i];
+        for (int c = 0; c < 3; c++) { V3 v = rot_axis(v3(m[4 * c], m[4 * c + 1], m[4 * c + 2]), ax, ang); m[4 * c] = v.x; m[4 * c + 1] = v.y; m[4 * c + 2] = v.z; }
+        V3 t = vadd(o, rot_axis(vsub(v3(m[12], m[13], m[14]), o), ax, ang));
+        m[12] = t.x; m[13] = t.y; m[14] = t.z;
+    }
+}
+static int sy_head_turn(Inst *in); /* (syati.inc) */
 static void anim_joint_quat(Anim *a, int j, const float q[4]) /* the joint x the rotation q in its own frame (_64) */
 {
     float s = sqrtf(q[0] * q[0] + q[1] * q[1] + q[2] * q[2]);
@@ -48762,6 +48778,7 @@ static void update_obj_anims(void)
             if (insts[i].bell) { anim_pose(insts[i].anim); st_bell_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].anim->done && !insts[i].anim->loop && !insts[i].vine && !obj_play(&insts[i], sc->types + 32 * sc->objs[insts[i].row].type, 1, 0))
                 obj_play(&insts[i], "wait", 1, 8); /* a one-shot clip over: back to its own clip (tryStartAllAnim), else Wait */
+            if (sy_head_turn(&insts[i])) continue; /* (Syati's Head delegator) */
             anim_update(insts[i].anim);
         }
 }
