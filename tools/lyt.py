@@ -414,6 +414,7 @@ COMMON = ("PauseMenu", "SysInfoWindow", "SysInfoWindowMini", "GameOver", "TooBad
           "TimeLimit",  # TimeLimitLayout (Red / Black comets)
           "Race",  # RaceManagerLayout (GhostPlayer's count and go, lose)
           "HitPointMeter",  # MarioMeter
+          "WipeRing",  # SceneWipeHolder's 円ワイプ (menu.c wr_*)
           "BlueChipCounter", "YellowChipCounter", "CollectCounter")  # ChipHolder's ChipCounter and its CollectCounter
 # ponytail: no DPDPointerSub (the 2P pointer) nor DPDPointerNumber (the player number, shown only with two remotes
 # connected): one pad here

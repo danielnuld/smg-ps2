@@ -4626,10 +4626,61 @@ void menu_wipe_gameover(void) /* WipeGameOver::exeActive: its GameOver animation
     mlay.go_on = 1;
     lyt_start(mlay.gameover, "GameOver", 0);
 }
-void menu_wipe(int close, int frames, u32 rgb) { wipe_start(frames < 0 ? 30 : frames, close, rgb); } /* WipeFade::sFadeFrame */
-int menu_wipe_closed(void) { return wipe.frames && wipe.close && wipe.t >= wipe.frames; }
-int menu_wipe_active(void) { return wipe_active(); }
-void menu_wipe_force(int close) { wipe_start(1, close, wipe.rgb); wipe.t = 1; if (!close) wipe.frames = 0; }
+/* WipeRing (円ワイプ, SceneWipeHolder's, centred on Mario): its nerves Open (dead) / Close / WipeIn / WipeOut; In and Out
+ * ("Ring"'s size 16 <-> 30.6 over 60 frames) set by hand: WipeIn from frame 0 to calcRadius / calcMaxRadius of In's end,
+ * WipeOut from (1 - that) of Out's end to its end, both eased by a half sine over mAnimFrame (wipe(frame): < 1 90);
+ * "Ring" follows mCenterPos (updatePlayerPos: menu_wipe_circle_center). The fade and the ring are one holder's
+ * (setCurrent: a fade forces the ring open; the ring leaves the fade, as the system wipes are one with it here) */
+enum { WR_OPEN, WR_CLOSE, WR_WIPEIN, WR_WIPEOUT };
+static struct { LytInst *l; int nrv, step, frames; float from, pos[2]; } wr;
+static void wr_set(int n) { wr.nrv = n; wr.step = 0; }
+static float wr_radius(void) /* calcRadius: the farthest screen corner from the centre (the layout's 608 x 456) */
+{
+    float r = 0, c[4][2] = {{0, 0}, {0, 456.0f}, {608.0f, 0}, {608.0f, 456.0f}};
+    for (int i = 0; i < 4; i++) r = fmaxf(r, sqrtf((wr.pos[0] - c[i][0]) * (wr.pos[0] - c[i][0]) + (wr.pos[1] - c[i][1]) * (wr.pos[1] - c[i][1])));
+    return r;
+}
+static void wr_wipe(int frames) /* WipeRing::wipe */
+{
+    if (!wr.l) return;
+    wr.frames = frames < 1 ? 90 : frames;
+    if (wr.nrv == WR_CLOSE || wr.nrv == WR_WIPEOUT) { wr_set(WR_WIPEIN); lyt_start(wr.l, "in", 0); }
+    else { wr_set(WR_WIPEOUT); lyt_start(wr.l, "out", 0); }
+}
+static void wr_force_close(void) { if (wr.l) { lyt_start(wr.l, "in", 0); lyt_set_frame(wr.l, 0, 0); lyt_set_rate(wr.l, 0, 0); } wr_set(WR_CLOSE); }
+static void wr_update(void)
+{
+    if (!wr.l || wr.nrv == WR_OPEN) return;
+    const float pi = 3.14159265f, end = 60.0f; /* In / Out's getEnd */
+    if (wr.nrv == WR_WIPEIN) {
+        if (wr.step == 0) { wr.from = fminf(wr_radius() / sqrtf(900160.0f), 1.0f) * end; lyt_set_rate(wr.l, 0, 0); } /* calcMaxRadius */
+        float f = sinf(0.5f * (1.0f + (float)wr.step / wr.frames) * pi);
+        lyt_set_frame(wr.l, 0, wr.from * (1.0f - f));
+        lyt_set_rate(wr.l, 0, 0);
+        if (wr.step == wr.frames) { wr_set(WR_OPEN); return; }
+    } else if (wr.nrv == WR_WIPEOUT) {
+        if (wr.step == 0) { wr.from = (1.0f - fminf(wr_radius() / sqrtf(900160.0f), 1.0f)) * end; lyt_set_rate(wr.l, 0, 0); }
+        float f = sinf(0.5f * ((float)wr.step / wr.frames) * pi);
+        lyt_set_frame(wr.l, 0, wr.from * (1.0f - f) + f * end);
+        lyt_set_rate(wr.l, 0, 0);
+        if (wr.step == wr.frames) { wr_set(WR_CLOSE); return; }
+    }
+    wr.step++;
+    lyt_update(wr.l);
+}
+void menu_wipe_circle(int close, int frames) /* closeWipeCircle / openWipeCircle: forceOpen / forceClose, then wipe */
+{
+    if (close) wr_set(WR_OPEN);
+    else wr_force_close();
+    wr_wipe(frames);
+    printf("wipe circle: %s over %d at %.0f %.0f\n", close ? "close" : "open", wr.frames, wr.pos[0], wr.pos[1]);
+}
+void menu_wipe_circle_force(int close) { if (close) wr_force_close(); else wr_set(WR_OPEN); }
+void menu_wipe_circle_center(float x, float y) { wr.pos[0] = x * 608.0f / 640.0f; wr.pos[1] = y * 456.0f / 448.0f; } /* mCenterPos (640 x 448 in) */
+void menu_wipe(int close, int frames, u32 rgb) { wr_set(WR_OPEN); wipe_start(frames < 0 ? 30 : frames, close, rgb); } /* WipeFade::sFadeFrame */
+int menu_wipe_closed(void) { return (wipe.frames && wipe.close && wipe.t >= wipe.frames) || wr.nrv == WR_CLOSE; }
+int menu_wipe_active(void) { return wipe_active() || wr.nrv == WR_WIPEIN || wr.nrv == WR_WIPEOUT; }
+void menu_wipe_force(int close) { wr_set(WR_OPEN); wipe_start(1, close, wipe.rgb); wipe.t = 1; if (!close) wipe.frames = 0; }
 /* CinemaFrame.cpp: Screen (dead: End's last frame), Frame (Wait), Blank (Open's frame 0: the screen black),
  * ScreenToFrame (Appear), FrameToBlank (Close), BlankToFrame (Open), FrameToScreen (End): the moving ones go on at
  * their animation's stop (setNerveAtAnimStopped) */
@@ -4690,6 +4741,9 @@ static void mlay_init(void)
     mlay.koopa = lyt_new("WipeKoopa");
     mlay.gameover = lyt_new("GameOver");
     mlay.cinema = lyt_new("CinemaFrame");
+    memset(&wr, 0, sizeof wr);
+    wr.pos[0] = 304.0f; wr.pos[1] = 228.0f;
+    if ((wr.l = lyt_new("WipeRing"))) lyt_follow(wr.l, "Ring", wr.pos, 0);
 }
 static void mlay_update(void)
 {
@@ -4697,14 +4751,16 @@ static void mlay_update(void)
     if (mlay.ko_on) lyt_update(mlay.koopa);
     if (mlay.go_on) lyt_update(mlay.gameover);
     if (mlay.ci_on) ci_update();
+    wr_update();
 }
 static void mlay_draw(void)
 {
-    if (!mlay.tb_on && !mlay.ko_on && !mlay.go_on && !mlay.ci_on) return;
+    if (!mlay.tb_on && !mlay.ko_on && !mlay.go_on && !mlay.ci_on && (!wr.l || wr.nrv == WR_OPEN)) return;
     render_world_done();
     if (mlay.ci_on) lyt_draw(mlay.cinema); /* DrawType_CinemaFrame: under the other layouts */
     if (mlay.tb_on) lyt_draw(mlay.toobad);
     if (mlay.ko_on) lyt_draw(mlay.koopa);
+    if (wr.l && wr.nrv != WR_OPEN) lyt_draw(wr.l);
     if (mlay.go_on) lyt_draw(mlay.gameover);
 }
 

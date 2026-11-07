@@ -50,6 +50,9 @@ void menu_wipe_gameover(void);       /* WipeGameOver ("GameOver") */
 /* the demos' (game.c DemoExecutor): SceneWipeHolder's fades and CinemaFrame */
 void menu_wipe(int close, int frames, u32 rgb); /* WipeFade: closes / opens over frames (< 0: sFadeFrame 30), rgb 0xBBGGRR */
 void menu_wipe_force(int close);     /* forceOpenWipe / forceCloseWipe (the colour kept) */
+void menu_wipe_circle(int close, int frames); /* closeWipeCircle / openWipeCircle (WipeRing; frames < 1: 90) */
+void menu_wipe_circle_force(int close);       /* forceCloseWipeCircle / forceOpenWipeCircle */
+void menu_wipe_circle_center(float x, float y); /* WipeRing::updatePlayerPos: its centre on the screen (640 x 448) */
 int menu_wipe_closed(void);          /* !isWipeOpen: closed and still */
 int menu_wipe_active(void);          /* isWipeActive: closing or opening */
 void menu_cinema(int frame);         /* CinemaFrame: tryScreenToFrame (1) / tryFrameToScreen (0) */

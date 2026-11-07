@@ -766,7 +766,7 @@ static void game_test_race(void)
  * camera on Mario, Caught (TossStart, Mario's matrix blended to its over 5 frames), FadeOut (CaughtWait,
  * closeWipeCircle), FadeIn (ペンギン移動後 / マリオ移動後, Watch, SitDown / SitDownTalk), GiveUp (its talk to the end:
  * SW_A), SitDown. Without a rail: Talk. Reactions (npc_react: Body 50 at 50 up; Trampled / Spin / Pointing and their
- * voices, the Reaction nerve). ponytail: the circle wipes are fades, startTalkingSequence / startNPCTalkCamera (the
+ * voices, the Reaction nerve). ponytail: startTalkingSequence / startNPCTalkCamera (the
  * talk's own camera), the star piece reaction (_DB) */
 static RmRail *sk_rail(RNpc *t) { return &t->sr[t->ri]; } /* mRail */
 static int rr_next_point(const RmRail *rr) /* getNextRailPointNo */
@@ -948,7 +948,7 @@ static void sk_exe(RNpc *t)
         if (st > 0 && rn_action_done(t)) { rn_set(t, SK_FADEOUT); rm.bck = "tosswait"; }
         break;
     case SK_FADEOUT: /* exeFadeOut */
-        if (st == 0) { rm_player_at(p, t->pose.nu, t->pose.nf); rn_action(t, "caughtwait", 1); menu_wipe(1, -1, 0); } /* closeWipeCircle */
+        if (st == 0) { rm_player_at(p, t->pose.nu, t->pose.nf); rn_action(t, "caughtwait", 1); menu_wipe_circle(1, -1); } /* closeWipeCircle */
         if (!menu_wipe_active()) rn_set(t, SK_FADEIN);
         break;
     case SK_FADEIN: /* exeFadeIn */
@@ -974,7 +974,7 @@ static void sk_exe(RNpc *t)
             pd_end("捕まり");
             talk_forward_node(t->k);
             rm.bck = NULL;
-            menu_wipe(0, -1, 0); /* openWipeCircle */
+            menu_wipe_circle(0, -1); /* openWipeCircle */
             t->mv[0] = t->mv[1] = "sitdown"; t->tk[0] = t->tk[1] = "sitdowntalk"; t->p0 = t->p1 = 0; /* setMoveTalkNoTurnAction */
             printf("penguin skater row %d: caught, moved" "\n", t->row);
         }

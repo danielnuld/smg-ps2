@@ -16,7 +16,7 @@
  * the pieces' Normal / Fade BRKs not played, no banmt interpolation (startBck at once), no depth of field / center
  * screen blur / image effects, the eye sensor's enemy attack only on its hill's pieces (map objects: CrystalCageS
  * left), the camera register vector (declareCameraRegisterVec), isPlayerInBind / isPlayerStaggering as Mario's damage,
- * the sudden-death wipes (isStageSuddenDeathDodoryu, hasRetryGalaxySequence), the rabbit's JointRumblers, DodoryuBank
+ * the rabbit's JointRumblers, DodoryuBank
  * (appearBank never makes it appear) */
 enum { DS_WAIT, DS_OPENING, DS_LV1, DS_APPEAR, DS_LV2, DS_ANGRY, DS_LV3, DS_DOWN, DS_N };
 enum { DO_DEMOWAIT, DO_UNDERGROUND, DO_UNDERGROUNDHIDE, DO_APPEAR, DO_WALK, DO_HIDEREADY, DO_HIDE };
@@ -1138,10 +1138,14 @@ static void dd_demo(void)
 static void dd_wait(void) /* DodoryuStateWait */
 {
     int st = ++dd.st[dd.cur];
-    if (st == 0) { dd.nostep = 1; dd_act("UnderGroundWalk"); ddh.appear = DD_PIECES / 2; dd_start_hill(); dd_shift_rail(8.0f); } /* setHillAppearNumHalf */
+    if (st == 0) { dd.nostep = 1; dd_act("UnderGroundWalk"); ddh.appear = DD_PIECES / 2; dd_start_hill(); dd_shift_rail(8.0f); /* setHillAppearNumHalf */
+        if (!strcmp(game_stage_name, "CosmosGardenGalaxy/4") && seq_is_retry()) menu_wipe_circle_force(1); } /* isStageSuddenDeathDodoryu */
     dd_lv(0, SE_BM_LV_DODORYU_MOVE_U_SHALLOW);
     if (dd.on_a) dd.nextCounter++; else dd.nextCounter = 0; /* (isPlayerInBind: ponytail) */
-    if (dd.nextCounter > 30) dd_next_state();
+    if (dd.nextCounter > 30) {
+        if (!strcmp(game_stage_name, "CosmosGardenGalaxy/4") && seq_is_retry()) menu_wipe_circle(0, -1);
+        dd_next_state();
+    }
 }
 static int dd_shot(V3 at) /* a star piece shot: receiveMsgPlayerAttack isMsgStarPieceAttack (its star sensor: the hit stop) */
 {
