@@ -405,7 +405,7 @@ def scene(fs, galaxy, scenario):
     cache = {}
     sd = {n.lower(): d for n, d in B.rarc_files((st / galaxy / f"{galaxy}Scenario.arc").read_bytes())}["scenariodata.bcsv"]
     up = {}
-    act = B.active_stages(galaxy, B.scenario_masks(sd)[scenario],
+    act = B.active_stages(galaxy, B.scenario_masks(sd, galaxy)[scenario],
                           lambda s: B.arc_layers(st / f"{s}.arc", cache)["layers"] if (st / f"{s}.arc").exists() else {}, up)
     zones, objs, starts, paths = [dict(name=galaxy, pos=[0, 0, 0], rot=[0, 0, 0])], [], [], []
     cubes, bcams = [], []  # camera areas (cameracubeinfo rows) and each stage's cameraparam.bcam

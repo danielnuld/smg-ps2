@@ -290,10 +290,30 @@ def arc_layers(path, cache):
         cache[key] = dict(layers=lay, child=sorted(child))
     return cache[key]
 
-def scenario_masks(b):
-    """ScenarioData.bcsv -> {scenarioNo: callable(stage) -> layer mask} (ScenarioDataParser.cpp:217-231)."""
-    out = {}
-    for i, no in enumerate(bcsv_column(b, "ScenarioNo")):
+PLACED_HIDDEN = {("HeavenlyBeachGalaxy", 6): 3}  # PlacedHiddenStarScenarioTable.cpp cPlacedHiddenStarInfoTable
+
+
+def placed_scenario(b, galaxy, no):
+    """MR::getPlacedHiddenStarScenarioNo (SceneUtil.cpp:263) where ScenarioSelectScene::trySetCurrentScenarioNo calls
+    it (IsHidden): a hidden star plays on the layers of the normal scenario whose PowerStarId has its bit (the table
+    first), else scenario 1."""
+    nos = bcsv_column(b, "ScenarioNo")
+    col = lambda f, d: dict(zip(nos, bcsv_column(b, f) or [d] * len(nos)))
+    if not col("IsHidden", 0).get(no):
+        return no
+    if (galaxy, no) in PLACED_HIDDEN:
+        return PLACED_HIDDEN[(galaxy, no)]
+    stars = col("PowerStarId", 0)
+    normal = sum(1 for c in col("Comet", "").values() if not c)  # getNormalScenarioNum
+    return next((i for i in range(1, normal + 1) if stars.get(i, 0) & 1 << (no - 1)), 1)
+
+
+def scenario_masks(b, galaxy=""):
+    """ScenarioData.bcsv -> {scenarioNo: callable(stage) -> layer mask} (ScenarioDataParser.cpp:217-231), a hidden
+    star's by its placed scenario (getCurrentScenarioNo, not the selected one)."""
+    out, nos = {}, bcsv_column(b, "ScenarioNo")
+    for no in nos:
+        i = nos.index(placed_scenario(b, galaxy, no))
         out[no] = lambda stage, i=i: 1 | ((bcsv_column(b, stage) or [0] * (i + 1))[i] << 1)
     return out
 
@@ -382,7 +402,7 @@ def main(fs, out):
             if SCENARIO:
                 sd = {n.lower(): b for n, b in rarc_files(scen.read_bytes())}["scenariodata.bcsv"]
                 layers_of = lambda st: arc_layers(stage / f"{st}.arc", cache)["layers"] if (stage / f"{st}.arc").exists() else {}
-                for no, mask_of in scenario_masks(sd).items():
+                for no, mask_of in scenario_masks(sd, gname).items():
                     up = {}
                     act = active_stages(gname, mask_of, layers_of, up)
                     s_parts, s_objs, s_unres, per = [], set(), set(), {}
