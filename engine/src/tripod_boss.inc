@@ -13,7 +13,7 @@
  * killers blow in the wall) breaks it: SW_B, the 破壊 demo (PainDemo, BreakDownDemo, ExplosionDemo), the grand star.
  * ponytail: no TripodBossBreakMovement (the parts stay in place until their arg2 frames, then explode), no
  * CameraTripodBoss / Joint / Planet (camera areas), no leg shadows, no DummyDisplayModel (13) on top, no
- * TripodBossKinokoOneUp, the cannons' 2ndDemo / Shoot clips not played and the circles' cannons without collision, the
+ * the cannons' 2ndDemo / Shoot clips not played and the circles' cannons without collision, the
  * core / shell break models and the parts' Warning BRKs not drawn, one 2ndDemo pose for all guard wall parts, isRideMario
  * by Mario's ground being a part (not the gravity host), end anim cameras without their blends, the gears' rotators
  * at a constant RotateSpeed, the guard wall parts' collision as their KCL's band (tb_wall_part), the killers' shadow
@@ -37,6 +37,7 @@ typedef struct { int row, single, joint, label, coll, chase, nrv, st, kph, kt, w
 #define TB_CANNONS 32
 static struct {
     int row, nrv, st, pend, cur, next, c630, s634, hid638, bgm63c, f640, nseq;
+    int k1row, k1nrv, k1st, k1item; /* TripodBossKinokoOneUp: its row, 0 dead / 1 Active / 2 End, its step, its bitm */
     const char *dname;
     float body[16], ec[16], base[16], binv[22][16], att[22][16];
     TbLeg leg[3];
@@ -889,7 +890,35 @@ static void tb_update_shell_core(void)
 
 static void tb_parts_active(void) /* activeTripodBossParts: shown, ACTMES_TRIPODBOSS_STARTED */
 {
+    if (tb.k1row >= 0 && tb.k1nrv == 0) { tb.k1nrv = 1; tb.k1st = -1; } /* TripodBossKinokoOneUp: makeActorAppeared (Active) */
     game_rebind();
+}
+/* TripodBossKinokoOneUp.cpp after Petari: dead until activeTripodBossParts; Active: _BC = its placement (RT) x the
+ * boss's attach matrix of arg0's joint (concatTripodBossAttachJointMatrix), its BenefitItemOneUp (setFollowMtx(_BC),
+ * appeared at the first step: Wait, taken by a touch) kept at _BC; the boss broken (isBrokenTripodBoss) or the mushroom
+ * gone: it is killed, End */
+static void tb_kinoko_update(void)
+{
+    if (tb.k1row < 0) return;
+    if (!row_dead[tb.k1row]) { row_dead[tb.k1row] = 1; sw_changed = 1; } /* (no model of its own: only its mushroom is drawn) */
+    if (tb.k1nrv != 1) return;
+    const Row *r = &sc->objs[tb.k1row];
+    int st = ++tb.k1st, b = tb_bone(r->arg[0]);
+    float m8c[16], mbc[16];
+    tb_tr(m8c, row_pos(r), r->rot); /* getJMapInfoMatrixFromRT */
+    if (b >= 0 && tb.attok) tb_mul(mbc, tb.att[b], m8c); else memcpy(mbc, m8c, 64);
+    if (st == 0) { tb.k1item = bitem_new(mbc, 0); if (tb.k1item >= 0) bitm[tb.k1item].nrv = BI_WAIT; printf("tripod boss kinoko %d: its 1-up out (bitm %d)%c", tb.k1row, tb.k1item, 10); }
+    typeof(&bitm[0]) k = tb.k1item >= 0 ? &bitm[tb.k1item] : NULL;
+    if (k && k->on) { /* the follow matrix */
+        k->pos = v3(mbc[12], mbc[13], mbc[14]);
+        memcpy(k->base, mbc, 64);
+        for (int c = 0; c < 3; c++) { V3 ax = vnorm(v3(mbc[4 * c], mbc[4 * c + 1], mbc[4 * c + 2])); k->rot[4 * c] = ax.x; k->rot[4 * c + 1] = ax.y; k->rot[4 * c + 2] = ax.z; }
+    }
+    if (tb_breakdown() || !k || !k->on) {
+        if (k && k->on) k->on = 0; /* mOneUp->kill */
+        tb.k1nrv = 2;
+        printf("tripod boss kinoko %d: end (%s)%c", tb.k1row, tb_breakdown() ? "broken" : "taken", 10);
+    }
 }
 static void tb_parts_end(void) /* TripodBossFixParts::exeWait isEndBreakDownDemoTripodBoss: Break, kill after arg2 frames */
 {
@@ -923,6 +952,7 @@ static void update_tb(void)
     }
     if (tb.wanim && tb.wmd && tb.wmd->skin && tb.wanim->skin != tb.wmd->skin) anim_bind(tb.wanim, tb.wmd->skin);
     tb_update_boss();
+    tb_kinoko_update();
     if (tb.nrv == TB_NONACTIVE) { /* clippingModel: the low model far off, the parts near */
         V3 ce, cw, cu; float fy;
         camera_pose(&ce, &cw, &cu, &fy);
@@ -976,6 +1006,8 @@ static void tb_draw(void)
 static void tb_init(const Scene *s, const unsigned char *blob) /* TripodBoss::init, initAfterPlacement; its parts' */
 {
     memset(&tb, 0, sizeof tb); tb.row = tb.shell = tb.core = tb.wall = -1;
+    tb.k1row = tb.k1item = -1;
+    for (u32 i = 0, tk = (u32)scene_type(s, "TripodBossKinokoOneUp"); i < s->nobjs; i++) if (s->objs[i].type == tk) tb.k1row = (int)i;
     int t = scene_type(s, "TripodBoss");
     for (u32 i = 0; t >= 0 && i < s->nobjs; i++) if (s->objs[i].type == (u16)t) { tb.row = (int)i; break; }
     if (tb.row < 0) return;

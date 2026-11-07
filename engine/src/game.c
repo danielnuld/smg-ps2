@@ -1090,7 +1090,10 @@ static int t_whirl = -1;
 #define MAX_WBULLETS 16
 static struct { int alive, host, step, spin, grav, nospin, sand; V3 pos, vel, front, side; } wbs[MAX_WBULLETS]; /* sand: _B1 (WaterBazooka's) */
 static int nprs, wb_ride = -1; /* the water bullet Mario is in, -1 none */
-static const Model *m_wbullet;
+static const Model *m_wbullet, *m_fbullet;
+/* FirePressureBulletHolder's bullets (FirePressureBullet.cpp): front (_8C), its FirePressure's row */
+#define MAX_FBULLETS 16
+static struct { int alive, host, step, follow, nocoll; float speed; V3 pos, front; u32 lv; } fpbs[MAX_FBULLETS];
 static void pr_joints(Inst *in), draw_wbullets(void), update_pressures(void);
 static int wb_hold(Player *m), tz_hold(Player *m);
 static void tz_place(Inst *in), update_trapezes(void), draw_trapeze_ropes(void);
@@ -5191,7 +5194,7 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->coco = strcmp(name, "CocoNut") == 0;
     ci->cocoon = strcmp(name, "SpaceCocoon") == 0;
     ci->fluff = strcmp(name, "Fluff") == 0;
-    ci->jet = strcmp(name, "JetTurtle") == 0;
+    ci->jet = strcmp(name, "JetTurtle") == 0 || strcmp(name, "GoldenTurtle") == 0; /* GoldenTurtle: init2(rIter, 1), JETTURTLETYPE_GOLD */
     ci->fountain = strcmp(name, "FountainBig") == 0;
     ci->stray = strcmp(name, "StrayTico") == 0;
     ci->bubble = strcmp(name, "AirBubble") == 0 ? 1 : strcmp(name, "AirBubbleGenerator") == 0 ? 2 : 0;
@@ -5208,7 +5211,7 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->onimasu = strcmp(name, "Onimasu") == 0 || strcmp(name, "OnimasuPivot") == 0;
     ci->rbeamer = strcmp(name, "RingBeamer") == 0 ? 1 : strcmp(name, "JumpBeamer") == 0 ? 2 : strcmp(name, "JumpGuarder") == 0 ? 3 : 0;
     ci->sbeamer = strcmp(name, "SearchBeamer") == 0;
-    ci->pressure = strcmp(name, "WaterPressure") == 0;
+    ci->pressure = strcmp(name, "WaterPressure") == 0 ? 1 : strcmp(name, "FirePressure") == 0 ? 2 : 0; /* 2: FirePressure.cpp (its fire bullets) */
     ci->fpressure = strcmp(name, "FirePressureRadiate") == 0;
     ci->spmother = strcmp(name, "StarPieceMother") == 0;
     ci->leakpipe = strcmp(name, "WaterLeakPipe") == 0;
@@ -5378,7 +5381,8 @@ static void game_rebind_(void)
     { static const char *fn[6] = {"FishA", "FishB", "FishC", "FishD", "FishE", "FishF"}; for (int f = 0; f < 6; f++) m_fish[f] = scene_model(s, fn[f]); }
     m_gull = scene_model(s, "SeaGull"); m_sstrap = scene_model(s, "SunakazeKunTrap");
     t_whirl = scene_type(s, "WhirlPoolAccelerator");
-    m_wbullet = scene_model(s, "WaterBullet");
+    m_wbullet = scene_model(s, "WaterBullet"); m_fbullet = scene_model(s, "FireBullet");
+    memset(fpbs, 0, sizeof fpbs);
     m_mogustone = scene_model(s, "MoguStone"); m_moguhole = scene_model(s, "MoguHole");
     m_mhole = scene_model(s, "MogucchiHole"); m_mhill[0] = scene_model(s, "MogucchiHillA"); m_mhill[1] = scene_model(s, "MogucchiHillB"); m_mhill[2] = scene_model(s, "MogucchiHillC");
     for (int i = 0; i < NEW_WALKERS; i++) m_wnew[i] = scene_model(s, new_walkers[i].cls);
@@ -9467,12 +9471,14 @@ static void jet_place(Inst *in)
     in->m[12] = in->head.x; in->m[13] = in->head.y; in->m[14] = in->head.z;
 }
 
+static int jet_gold(const Inst *in) { return !strcmp(sc->types + 32 * sc->objs[in->row].type, "GoldenTurtle"); }
 static void jet_reset(Inst *in, int reason) /* JetTurtle::reset */
 {
     const Row *r = &sc->objs[in->row];
     V3 p = in->head;
     float dep;
     int wet = in_water(p, up_at(p, mario->up), &dep), st = in->jet == 1 ? (r->arg[0] >= 0 && r->arg[0] <= 2 ? r->arg[0] : 0) : in->jet == 2 && r->arg[0] == 1;
+    if (in->jet == 1 && jet_gold(in)) st = 2; /* GoldenTurtle: mShellType JETTURTLETYPE_GOLD */
     static const char *const ex[3] = {"Explosion", "ExplosionRed", "ExplosionGold"};
     fx_named("JetTurtle", wet ? "WaterExplosion" : reason ? "Star" : ex[st], in->m, NULL, NULL);
     se_start(wet ? SE_OJ_TURTLE_JET_BREAK_W : SE_OJ_TURTLE_JET_BREAK_L, &p.x);
@@ -14225,6 +14231,16 @@ static void update_jets(void)
             continue;
         }
         int type = in->jet == 3 || in->jet == 4 ? 1 : in->jet == 2 ? (r->arg[0] == 1 ? 2 : 1) : r->arg[1] + 1 >= 0 && r->arg[1] + 1 <= 2 ? r->arg[1] + 1 : 0; /* NokonokoLand::initJetTurtle: becomeFastType for arg0 1 */
+        if (in->jet == 1 && jet_gold(in)) { /* GoldenTurtle (mShellType 2): Glow while it waits (endWait deletes it), HandyGlow
+                                             * while held (exeThrowWait; deleted at the throw: GoldenTurtle::exeThrowing),
+                                             * SE_OJ_LV_JET_TURTLE_G_LIGHT held in water. ponytail: its KouraShine BTK, the
+                                             * special weapon sensor type of its throw (ATYPE_SPECIAL_WEAPON) */
+            if (jet.inst != i) fx_named("JetTurtle", "Glow", in->m, in->anim && in->anim->skin ? (const float (*)[16])in->anim->world : NULL, in);
+            else if (jet.phase == 1) {
+                fx_named("JetTurtle", "HandyGlow", in->m, in->anim && in->anim->skin ? (const float (*)[16])in->anim->world : NULL, in);
+                if (swimming) in->lv[1] = se_level(SE_OJ_LV_JET_TURTLE_G_LIGHT, &in->m[12], in->lv[1]);
+            }
+        }
         if (jet.inst == i && jet.phase == 1) { /* held: in front of him at his hands */
             in->head = vadd(vadd(mario->pos, vmul(mario->face, 70.0f)), vmul(mario->up, 60.0f));
             if (mario->spin_timer > 0 || jet.drop) { /* thrown (in water: dropJet, along his swim front) */
@@ -37354,6 +37370,77 @@ static void wb_shot(const Inst *in) /* WaterPressure::shotBullet */
         return;
     }
 }
+static void fb_shot(const Inst *in) /* FirePressure::shotBullet: callEmptyBullet, shotFireBullet at the gun point (its Z the
+                                       * Cannon1 joint's X), arg2 mBallSpeed, follow for arg3 ShotType_Follow (2), arg7 no crash */
+{
+    const Row *r = &sc->objs[in->row];
+    for (int b = 0; b < MAX_FBULLETS; b++) {
+        if (fpbs[b].alive) continue;
+        V3 p, d;
+        pr_muzzle(in, &p, &d);
+        fpbs[b] = (typeof(fpbs[0])){.alive = 1, .host = in->row, .step = -1, .follow = r->arg[3] == 2, .nocoll = r->arg[7] != -1 && r->arg[7] != 0,
+                                  .speed = r->arg[2] != -1 ? (float)r->arg[2] : 30.0f, .pos = p, .front = d};
+        printf("fire pressure %d: shot %d at (%d %d %d)%c", in->row, b, (int)p.x, (int)p.y, (int)p.z, 10);
+        return;
+    }
+}
+static void fb_kill(int b) /* FirePressureBullet::kill */
+{
+    printf("fire bullet %d: burst at step %d%c", b, fpbs[b].step, 10);
+    se_start(SE_OJ_F_PRESSURE_FIRE_BURST, &fpbs[b].pos.x);
+    fpbs[b].alive = 0;
+}
+/* FirePressureBullet::exeFly: Shot then Move (draw_fbullets), SE_OJ_LV_F_PRESSURE_BULLET; following (ShotType_Follow)
+ * every 5 steps turned 3 degrees to Mario; mVelocity front x speed; killed by its binder (100) touching the map
+ * (isCrash, but with arg7) or at step 300; its body (100) burns Mario (sendMsgEnemyAttackFire) and is killed.
+ * ponytail: enemies' / map objects' sensors do not stop it (the port keeps no sensor registry here), no FireBullet BTK
+ * (its flame scroll) */
+static void update_fbullets(void)
+{
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int b = 0; b < MAX_FBULLETS; b++) {
+        typeof(&fpbs[0]) o = &fpbs[b];
+        if (!o->alive) continue;
+        int st = ++o->step;
+        o->lv = se_level(SE_OJ_LV_F_PRESSURE_BULLET, &o->pos.x, o->lv);
+        if (o->follow && st % 5 == 0) { /* turnDirectionToTargetDegree(3) */
+            V3 to = vsub(mario->pos, o->pos);
+            if (vlen(to) > 1e-3f) {
+                to = vnorm(to);
+                float c = vdot(o->front, to);
+                if (c < cosf(3.0f * 0.0174533f)) {
+                    V3 ax = vcross(o->front, to);
+                    if (vlen(ax) > 1e-6f) o->front = vnorm(rot_axis(o->front, vnorm(ax), 3.0f * 0.0174533f));
+                } else o->front = to;
+            }
+        }
+        o->pos = vadd(o->pos, vmul(o->front, o->speed));
+        Hit h[1];
+        if (!o->nocoll && kcl_query(o->pos, 100.0f, h, 1)) { fb_kill(b); continue; } /* isCrash: isBinded */
+        if (st >= 300) { fb_kill(b); continue; }
+        if (vlen(vsub(mc, o->pos)) < 100.0f + HIT_BODY_R && mario_attack(ATK_FIRERUN, o->pos)) { fb_kill(b); continue; } /* attackSensor */
+    }
+}
+static void draw_fbullets(void)
+{
+    if (!m_fbullet) return;
+    for (int b = 0; b < MAX_FBULLETS; b++) {
+        if (!fpbs[b].alive) continue;
+        V3 g = vmul(up_at(fpbs[b].pos, v3(0, 1, 0)), -1.0f); /* calcMtxFromGravityAndZAxis(mGravity, _8C) */
+        V3 up = vtangent(vmul(g, -1.0f), fpbs[b].front);
+        if (vlen(up) < 1e-3f) up = v3(0, 1, 0);
+        float m[16];
+        basis_matrix(m, fpbs[b].pos, vnorm(up), fpbs[b].front, 0);
+        draw_shadow(fpbs[b].pos, vmul(g, -1.0f), fpbs[b].front, 75.0f, 75.0f, 0.0f, 50.0f, 2000.0f); /* initShadowVolumeSphere 75 */
+        if (!m_fbullet->skin) { render_model(m_fbullet, m, 0x80, 0x80, 0x80); continue; }
+        Anim *a = obj_anim(4 * (int)sc->nobjs + MAX_WBULLETS + b, m_fbullet, "FireBullet");
+        if (!a) continue;
+        if (fpbs[b].step <= 0 || a->clip_id < 0) anim_start(a, "firebullet/shot", 0); /* startBck Shot */
+        else if (a->done && strcmp(sc->clips[a->clip_id].name, "firebullet/move")) anim_start(a, "firebullet/move", 0); /* isBckOneTimeAndStopped: Move */
+        anim_update(a);
+        draw_skin(m_fbullet, m, a);
+    }
+}
 static void wb_release(int b, V3 v, int roll) /* endBindAndPlayerJump(WithRollLanding) */
 {
     if (wb_ride != b) return;
@@ -37473,7 +37560,7 @@ static void update_pressures(void)
             break;
         case PB_SHOT:
             if (st == 0) obj_play(in, pr_short(r) ? "ShortShot" : "Shot", 0, 0);
-            if (st == (pr_short(r) ? 54 : 16)) wb_shot(in);
+            if (st == (pr_short(r) ? 54 : 16)) { if (in->pressure == 2) fb_shot(in); else wb_shot(in); }
             if (st >= (pr_short(r) ? 88 : 58)) pr_set(k, r->group >= 0 ? PB_SYNCWAIT : PB_WAIT);
             break;
         }
@@ -37495,6 +37582,7 @@ static void update_pressures(void)
         if (vlen(vsub(mc, body)) < 70.0f + HIT_BODY_R && l > 1e-3f && l < want) mario->pos = vadd(mario->pos, vmul(out, (want - l) / l));
     }
     update_wbullets();
+    update_fbullets();
 }
 static void pr_joints(Inst *in) /* calcJointCannonV: Cannon1 turned about its Z */
 {
@@ -55323,6 +55411,7 @@ void game_draw(void)
     draw_mogucchi_extras();
     draw_whirls();
     draw_wbullets();
+    draw_fbullets();
     draw_trapeze_ropes();
     draw_eyebeams();
     draw_beam_go_round();
