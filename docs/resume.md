@@ -1028,7 +1028,8 @@ there needs the embedded blob and every pack rebuilt.
   no screen blur, the plates' / planet's BRKs, the binded collision's sensor is the plate under its feet, anim cameras
   without interpolation, no attacks on other actors, pooled skinned models share one Anim.
   Vs2 (#311): KoopaSequencerVs2, KoopaStateAttackSpin (its AttackSpin sensor), KoopaStateAttackFireLong, the Vs2 planet
-  (KoopaBattleMapPlanetVs2, its damage plates only, the grand star plate the first). Test: KP_TEST build with
+  (KoopaBattleMapPlanetVs2: createPlate's 14 plates, _DD off; the grand star plate the second at step 90, as Vs1; #346:
+  only Vs3 Lv3 keeps damage plates only). Test: KP_TEST build with
   KoopaBattleVs2Galaxy/1 (koopa-b.sh KoopaBattleVs2Galaxy/1 "" 2): クッパＶｓ２本戦開始, three levels, クッパＶｓ２ダウン,
   `power star 1 got`.
   Vs3 (#324, koopa.inc kq3_* / kb3_* / kr_* / k3_*): KoopaSequencerVs3 (WaitPlayer with KoopaViewSwitchKeeper's

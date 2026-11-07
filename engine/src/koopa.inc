@@ -273,7 +273,7 @@ static void kp_insts(const Scene *s) /* game_rebind_: KoopaBattleMapPlanet (æƒ‘æ
     int host = kp_planet_star >= 0 ? kp_planet_star : kp.row;
     for (int i = -1; i < KP_PLATES && ninsts < (int)s->nobjs; i++) {
         if (i < 0 && kp.vs == 3) { k3_insts(s, host); continue; }
-        if (i >= 0 && kp.vs != 1 && kpl[i].kind != KPL_DAMAGE) continue;
+        if (i >= 0 && kp.vs == 3 && kpl[i].kind != KPL_DAMAGE) continue;
         const char *name = i < 0 ? (kp.vs == 2 ? "KoopaBattleMapPlanetVs2" : "KoopaBattleMapPlanet") : pm[kpl[i].kind];
         const Model *md = scene_model(s, name);
         if (!md) continue;
@@ -318,7 +318,7 @@ static void kp_planet_init(void) /* KoopaParts::initVs1 / Vs2: createKoopaBattle
                        kp_planet_m[2] * v.x + kp_planet_m[6] * v.y + kp_planet_m[10] * v.z), kp_pc);
         V3 up = up_at(w, vnorm(vsub(w, kp_pc))), f = vtangent(v3(0, 0, 1), up);
         if (vlen(f) < 1e-3f) f = vtangent(v3(1, 0, 0), up);
-        kpl[i].kind = k; kpl[i].alive = kp.vs == 1 || k == KPL_DAMAGE; /* (Vs2 / Vs3 Lv3: createPlate's damage plates only) */ kpl[i].nrv = 0; kpl[i].st = 0; kpl[i].pos = w;
+        kpl[i].kind = k; kpl[i].alive = kp.vs != 3 || k == KPL_DAMAGE; /* (Vs3 Lv3, _DD: createPlate's damage plates only) */ kpl[i].nrv = 0; kpl[i].st = 0; kpl[i].pos = w;
         basis_matrix(kpl[i].m, w, up, vnorm(f), 0); /* makeMtxUpNoSupportPos(-mGravity, mPosition) */
     }
     kp_planet_star = -1;
@@ -379,7 +379,7 @@ static void kp_plates_update(void) /* KoopaBattleMapDamagePlate: Break 180 (burn
             if (st >= 30) { kpl[i].nrv = 0; kp_plate_coll(i, 1); } /* isBrkStopped (Revival: 30 frames) */
         }
     }
-    if (kp_star_demo >= 0 && ++kp_star_demo == (kp.vs != 1 ? 151 : 90)) kp_plate_fx(kp.vs != 1 ? 0 : 1, "GrandStarAppear", NULL); /* exeDemoGrandStarAppear: mDamagePlate (Vs2 the first) */
+    if (kp_star_demo >= 0 && ++kp_star_demo == (kp.vs == 3 ? 151 : 90)) kp_plate_fx(kp.vs == 3 ? 0 : 1, "GrandStarAppear", NULL); /* exeDemoGrandStarAppear: mDamagePlate (_DD, Vs3 Lv3: the first) */
 }
 
 /* --- KoopaFireStairs (MeteorStrike): flies to the stair's target at a constant speed, timed to its break; at the
