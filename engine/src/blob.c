@@ -101,6 +101,12 @@ int blob_add(Scene *s, const u8 *blob)
                     vg->uvm = mem_alloc(MEM_RENDER, 64);
                     memset(vg->uvm, 0, 64);
                 }
+                vg->proj = vg->lit == 3 && q[14] ? (const float *)(q + 16) : NULL;
+                vg->projm = NULL;
+                if (vg->proj) { /* its texgen's 12 floats (tools/slice.py assets, PROJ_AIR) before the tables */
+                    q += 48;
+                    vg->projm = mem_alloc(MEM_RENDER, 64);
+                }
                 vg->air_src = vg->lit == 3 ? (const float *)(q + 16) : NULL;
                 vg->air = NULL;
                 if (vg->air_src) { /* its 64-float tables after the header (tools/slice.py air_table), the first live */

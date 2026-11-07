@@ -81,7 +81,9 @@ extern u32 VU1EnvStrip_Start __attribute__((section(".vudata")));
 #define ENVSTRIP_PROGRAM ((u32)((u8 *)&VU1EnvStrip_Start - (u8 *)&VU1Tex_CodeStart) / 8) /* static env strips */
 extern u32 VU1Air_Start __attribute__((section(".vudata")));
 #define AIR_PROGRAM ((u32)((u8 *)&VU1Air_Start - (u8 *)&VU1Tex_CodeStart) / 8) /* camera-lit alpha batches (lit 3) */
-#define PROGRAM(vg) ((vg)->strip == 3 ? ENVSTRIP_PROGRAM : (vg)->strip == 2 ? SKINLIT_PROGRAM : (vg)->strip ? STRIP_PROGRAM :                      (vg)->lit == 3 ? AIR_PROGRAM : (vg)->lit == 2 ? ENV_PROGRAM : (vg)->lit ? LIT_PROGRAM : 0)
+extern u32 VU1AirProj_Start __attribute__((section(".vudata")));
+#define AIRPROJ_PROGRAM ((u32)((u8 *)&VU1AirProj_Start - (u8 *)&VU1Tex_CodeStart) / 8) /* the same, projected texture */
+#define PROGRAM(vg) ((vg)->strip == 3 ? ENVSTRIP_PROGRAM : (vg)->strip == 2 ? SKINLIT_PROGRAM : (vg)->strip ? STRIP_PROGRAM :                      (vg)->lit == 3 ? ((vg)->proj ? AIRPROJ_PROGRAM : AIR_PROGRAM) : (vg)->lit == 2 ? ENV_PROGRAM : (vg)->lit ? LIT_PROGRAM : 0)
 
 #define SCREEN_W 640
 /* 640 x 224 buffers shown in FRAME mode (each field reads every line): the picture is the same on both fields, so it
@@ -981,6 +983,30 @@ void render_env(const Scene *s)
     }
 }
 
+/* VU1AirProj's matrix per projected group, after the BTKs (anim_btk): GX Projmap's s, t, q of the local position
+ * (VuGroup.proj) through the BTK's UV matrix (its columns s, t, 1 act on s, t, q: the SRT after the divide, as J3D's),
+ * columns to VU mem 8..10, the constant to 15 with 1 / 127 in w (the normals' scale of the vertex alpha) */
+void render_proj(const Scene *s)
+{
+    for (u32 i = 0; i < s->nmodels; i++) {
+        const Model *md = &s->models[i];
+        for (u32 g = 0; g < md->vu_ngroups; g++) {
+            const VuGroup *vg = &md->vu[g];
+            if (!vg->proj) continue;
+            static const float id[12] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0};
+            const float *u = vg->uvm ? vg->uvm : id;
+            for (int c = 0; c < 4; c++) {
+                const float *p = vg->proj + 3 * c;
+                vg->projm[4 * c] = u[0] * p[0] + u[4] * p[1] + u[8] * p[2];
+                vg->projm[4 * c + 1] = u[1] * p[0] + u[5] * p[1] + u[9] * p[2];
+                vg->projm[4 * c + 2] = p[2];
+                vg->projm[4 * c + 3] = 0.0f;
+            }
+            vg->projm[15] = 1.0f / 127.0f;
+        }
+    }
+}
+
 /* GX lit channel (LightFunction::loadActorLightInfo: lights 0 and 1, attenuation off, the ambient register): colours
  * to VU mem 11..14 x 2 / 1 (vu1_tex.vsm doubles; the converter stores colours x gain / 2), after a FLUSHE */
 static void send_light(const RenderLight *l)
@@ -1105,7 +1131,9 @@ static packet2_t *build_chain_pass(Model *md, int xlu)
         int mode = group_mode(vg);
         if ((mode >= 2) != xlu) continue;
         emit_group(pk, vg);
-        if (vg->env)
+        if (vg->proj)
+            add_envm(pk, vg->projm);
+        else if (vg->env)
             add_envm(pk, vg->uvm);
         else if (vg->uvm)
             add_uvm(pk, vg->uvm);
@@ -1142,7 +1170,7 @@ static packet2_t *build_chain_pass(Model *md, int xlu)
             }
             packet2_utils_vu_add_start_program(pk, PROGRAM(vg));
         }
-        if (vg->uvm)
+        if (vg->uvm || vg->proj)
             add_uvm(pk, uv_ident);
     }
     packet2_chain_ret(pk, 0, 0);

@@ -141,6 +141,9 @@ ANIM_ARC.update({c: a for c, a in WAIT_ARC.items() if c not in ANIM_ARC})
 AIR = {"HomeAir": "HomeAir~appear:99", "SphereAir": "SphereAir~appear:59", "DarknessRoomAir": "DarknessRoomAir~appear:59",
        "SunsetAir": "SunsetAir~sunsetair:59", "FineAir": "FineAir", "DimensionAir": "DimensionAir~dimensionair:0",
        "TwilightAir": "TwilightAir"}
+# ProjectionMapAir (NameObjFactory: SunsetAir, FineAir; Air.cpp:160 initModel): ProjmapEffectMtxSetter with
+# updateMtxUseBaseMtx, so the Projmap texture matrices project the model's own positions (model_groups: VU1AirProj)
+PROJ_AIR = ("SunsetAir", "FineAir")
 # ponytail: materials left out of a model, the renderer cannot reproduce them: DemoPeachCastleGate's Dark_v_x, a
 # black vignette on a plane before the arrival camera, blended by its vertex alpha (VU1 batches keep no vertex alpha:
 # it would black the screen out)
@@ -889,7 +892,7 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 cam = tex.camera_alpha(b, bl[b"MAT3"], mat) if arc.stem in AIR and mat is not None else None
                 air_rows = None
                 get = geom.vtx1_attr(b, bl[b"VTX1"], mt["attr"]) if mt and mt["attr"] in info["at"] else None
-                uvs = t = None
+                uvs = t = vfac = None
                 gain, split = 1, True
                 sea_add = False
                 get0 = geom.vtx1_attr(b, bl[b"VTX1"], 13) if 13 in info["at"] else None  # TEX0, for SKY_SEA's base
@@ -1083,6 +1086,55 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                         su = (math.atan2(vz, vx) / (2 * math.pi) + 0.5) * SKY_TILES
                         sv = (math.asin(max(-1.0, min(1.0, vy / l))) / math.pi + 0.5) * SKY_TILES / 2
                         uvs.append((su * t["u_scale"], sv * t["v_scale"]))
+                elif cam and arc.stem in PROJ_AIR and mat is not None:
+                    # ProjectionMapAir: CloudsMat_v's cloud layers projected from the model's own positions (J3D Projmap,
+                    # ProjmapEffectMtxSetter::updateMtxUseBaseMtx: effect = init x base^-1). The layer that changes the
+                    # TEV's colour most is baked through it (tex.tev on its texels, the other projected layer at its mean,
+                    # R = 1: VU1Air's table does the rest); its s, t, q come from VU1AirProj (header proj: the 3x4 in
+                    # texels, the BTK's scroll composed at run time, render_proj). A texture on vertex UVs (TEX0: the
+                    # alpha gradient) is read per vertex: its alpha in the normal's w (VU1AirProj multiplies the table's).
+                    # ponytail: the other cloud layer at its mean colour (one texture per GS pass)
+                    mn_ = tex.material_name(b, bl[b"MAT3"], mat)
+                    sc = tex.stage_coords(b, bl[b"MAT3"], mat)
+                    gens = {c: tex.coord_gen(b, bl[b"MAT3"], mat, c) for c, _ in sc}
+                    vcoord = [(c, x) for c, x in sc if gens[c] and gens[c]["attr"] in info["at"] and gens[c]["proj"] is None]
+                    o2 = dict(over or {})
+                    o2[mn_] = dict(o2.get(mn_, {}), ras_a=1.0, coord_val={c: 1.0 for c, _ in vcoord})
+                    best = None
+                    for c, x in sc:
+                        if gens[c] and gens[c]["proj"] is not None and x < len(texs):
+                            bk = tex.tev(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, x, o2)
+                            sd = float(bk[..., :3].std())
+                            if best is None or sd > best[0]:
+                                best = (sd, c, x, bk)
+                    if best:
+                        _, c, x, bk = best
+                        key = ("projair", x, mat)
+                        if key not in ps2:
+                            ps2[key] = tex.to_ps2((bk * 255 + 0.5).astype(np.uint8), texs[x]["wrap_s"], texs[x]["wrap_t"], sky)
+                            airt[key] = air_table(b, bl, mat, texs, o2, mn_, cam, lfiles)
+                        t = ps2[key]
+                        pm = np.diag([t["u_scale"], t["v_scale"], 1.0]) @ gens[c]["proj"]
+                        t = dict(t, proj=[float(v) for v in pm.reshape(-1)])
+                        air_rows = airt[key]
+                        uvs = [(0.0, 0.0)] * len(used)
+                        vfac = [1.0] * len(used)
+                        for c2, x2 in vcoord:  # its texel's alpha at each vertex's UV (nearest, repeating)
+                            a2 = tex.texa(texs[x2])[..., 3].astype(np.float32) / 255
+                            g2 = geom.vtx1_attr(b, bl[b"VTX1"], gens[c2]["attr"])
+                            o2_, w2 = info["at"][gens[c2]["attr"]]
+                            for i, v in enumerate(used):
+                                k = info["keys"][v]
+                                su, sv = g2(k[o2_] if w2 == 1 else k[o2_] << 8 | k[o2_ + 1])
+                                h, w_ = a2.shape
+                                vfac[i] *= float(a2[int(sv * h) % h, int(su * w_) % w_])
+                        if anim_tex:  # sunsetair.btk / fineair.btk: the layer's SRT (anim_btk), after the divide
+                            e = btk_entry(anim_tex, mn_, dict(slot=gens[c]["slot"], maya=gens[c]["maya"],
+                                                               mtx=tex.projmap(b, bl[b"MAT3"], mat, gens[c]["slot"], True)),
+                                          t, len(groups))
+                            if e:
+                                stats.setdefault("_btk", []).append(e)
+                        stats["proj_air"] = stats.get("proj_air", 0) + 1
                 else:
                     stats["untextured"] = stats.get("untextured", 0) + 1
                 if t is None:
@@ -1167,6 +1219,8 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                            for v in used]
                     if mats:
                         nrm = [tuple(float(x) for x in skin.unit(m[:3, :3] @ n)) for m, n in zip(mats, nrm)]
+                if vfac and nrm:  # VU1AirProj: the vertex's alpha factor in its normal's w
+                    nrm = [tuple(n_[:3]) + (f_,) for n_, f_ in zip(nrm, vfac)]
                 if ras_mean and isinstance(cols, list) and split:  # per vertex the TEV's factor at its CLR0 (ras_colour)
                     mn = tex.material_name(b, bl[b"MAT3"], mat)
                     cols = [ras_colour(b, bl, mat, texs, over, mn, cv) + tuple(c[3:]) for cv, c in zip(vc, cols)]
@@ -1537,8 +1591,9 @@ def vu_groups(groups, base, stats=None, qs=1.0):
                     col += struct.pack("<4B", *(min(255, int(x * 0x80 // 255 * lk)) for x in cc[:3]), 0x80)
                 if lit or env:
                     nv = nrm[vi] if nrm else [x / nl for x in n]
-                    ln = math.sqrt(sum(x * x for x in nv)) or 1.0
-                    nb += struct.pack("<4b", *(max(-127, min(127, round(127 * x / ln))) for x in nv), 0)
+                    ln = math.sqrt(sum(x * x for x in nv[:3])) or 1.0
+                    nb += struct.pack("<4b", *(max(-127, min(127, round(127 * x / ln))) for x in nv[:3]),
+                                      max(0, min(127, round(127 * nv[3]))) if len(nv) > 3 else 0)  # w: VU1AirProj's alpha
             if uvs:
                 tri = [uvs[tris[i + k]] for k in range(3)]
                 du = 0 if t["clamp_s"] else math.floor(min(x[0] for x in tri))
@@ -2221,9 +2276,13 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
                     struct.unpack_from("<H", body, 4 * i)[0] for i in range(nbt))
                 stats["strip_list_verts"] = stats.get("strip_list_verts", 0) + len(tris)
             air = st.get("_air", {}).get(gi)  # lit byte 3: VU1Air, its table (air_table) after the header
-            vg += struct.pack("<IHHBBBBBB2x", len(tris), ti, nbt, *bl, 2 if env else 3 if air else 1 if nb else 0,
-                              1 if strip else 2 if skstrip else 3 if envstrip else 0, gi - share.get(gi, gi)) + \
-                (struct.pack("<12f", *env) if env else b"") + (struct.pack(f"<{len(air)}f", *air) if air else b"") + body
+            # byte 14: VU1AirProj (PROJ_AIR), the texgen's columns x, y, z (in steps of qs) and its constant, 12 floats
+            pj = tx.get("proj") if tx and air else None
+            pjc = [pj[r * 4 + j] * (qs if j < 3 else 1.0) for j in range(4) for r in range(3)] if pj else []
+            vg += struct.pack("<IHHBBBBBBB1x", len(tris), ti, nbt, *bl, 2 if env else 3 if air else 1 if nb else 0,
+                              1 if strip else 2 if skstrip else 3 if envstrip else 0, gi - share.get(gi, gi), 1 if pj else 0) + \
+                (struct.pack("<12f", *env) if env else b"") + struct.pack(f"<{len(pjc)}f", *pjc) + \
+                (struct.pack(f"<{len(air)}f", *air) if air else b"") + body
         body = struct.pack("<If8x", len(groups), qs) + vg
         key = (body, tuple(btk_e), tuple(e[32:] for e in bva_e))
         if len(swaps) > nsw:  # a model with SWAP keeps its own groups (game.c sets their textures per draw)

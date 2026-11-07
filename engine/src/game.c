@@ -54503,6 +54503,7 @@ void game_draw(void)
     for (u32 i = 0; i < sc->nmodels; i++)
         for (u32 g = 0; g < sc->models[i].vu_ngroups; g++)
             if (sc->models[i].vu[g].btk) anim_btk(sc->models[i].vu[g].btk, (float)game_frame, sc->models[i].vu[g].uvm);
+    render_proj(sc); /* ProjectionMapAir's texgen through those (~6000 EE cycles, 0.02 ms, OceanPhantomCave 1) */
     int sky_drawn = 0;
     for (int i = 0; i < ninsts; i++) { /* skies first, at the camera; ponytail: scaled to fit inside the far plane
                                          * (render.c FAR 120000) so the rest of the scene draws over them by depth */

@@ -2782,7 +2782,7 @@ int main(void)
         u32 t2 = cycles();
         t_logic = t1 - t0;
         t_draw = t2 - t1;
-#ifdef ROUTE_TEST
+#if defined(ROUTE_TEST) || defined(PERF_LOG) /* PERF_LOG: these lines in any build (a scene's cost) */
         { /* the EE's time over each 200 frames of the route (the draw without render_begin's flip / VIF / clear wait),
            * for the heavy places a bench path does not cross */
             extern u32 render_begin_wait;
