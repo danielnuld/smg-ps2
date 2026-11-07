@@ -301,6 +301,17 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   RPC's SIF_RPC_M_NOWAIT polling, the vblank handlers' ExitHandler. The IOP-side cause of the duplicate (BIOS FILEIO /
   sifman under PCSX2's host filesystem) is not ours to fix.
 
+- Run-time mushrooms (feat/384-kinoko-oneup, 2026-11-07): BenefitItemObj made at run time (game.c bitm, bitem_pop /
+  bitem_rise): appearKinokoOneUpPop / appearKinokoSuper (shoot -> appearThrowUp: SE_SY_ITEM_APPEAR, Appear, 10 along the
+  matrix's Y, 15 for WoodBox's _DD; Shoot with gravity 0.5, Land, Wait; taken in Wait / Shoot: 1-up or LifeUp) for Kanina
+  (blue), Snakehead (big, at Antenna), WoodBox (arg4, 50 up), KoopaStatue (SimpleBreakableObj arg3 1), TicoShop (1-up /
+  LifeUp at its kill); TreasureBoxCracked's mushroom raised out of the box (exeOpen 15 + 1.2, 130 up, exeItemBound 20).
+  slice.py KINOKO (per row for WoodBox / KoopaStatue) + MODEL_ARC BenefitItemOneUp / LifeUp. Mario's centre (calcCenterPos)
+  was not updated while swimming: his touch / offence sensors stayed where he dived (now m_center in the swim branch).
+  Test `kinoko` (OceanPhantomCaveGalaxy/1, XF=-DPACKS_OVERLAY=wt-release): a Kanina's 1-up pops, lands, is taken; a
+  treasure box's rises, bounds, is taken under water. route EggStar 1 star. ponytail: shadows, Glow / Get / Vanish effects,
+  OneUpBoard, TicoFat's mushroom (no disc row with arg0 0 / 1), TripodBossKinokoOneUp.
+
 ## Console release (2026-10-23 / 24)
 
 First runs on Daniel's SCPH-75001 (ORBIT launcher, Neutrino over udpfs from nuld; console log = Neutrino's udptty

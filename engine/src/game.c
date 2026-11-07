@@ -21641,6 +21641,7 @@ static void update_mario_(void)
         return;
     }
     if (swim_update(m)) {
+        m_center(m); /* MarioActor::calcCenterPos runs swimming too (his touch / offence sensors were left where he dived) */
         if (mario_anim) anim_update(mario_anim);
         return;
     }
@@ -38693,7 +38694,7 @@ int game_test_kinoko(int frame)
             break;
         }
     }
-    if (frame < 560 || (frame >= 600 && frame < 900)) { mario->pos = held; mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+    mario->pos = held; mario->hvel = v3(0, 0, 0); mario->vup = 0; /* held (at 560 and 900 on the mushroom) */
     if (frame == 400)
         for (int k = 0; k < nkuribo; k++)
             if (kuribo[k].kind == WALK_KANINA && !ka_red(&kuribo[k])) { printf("kinoko test: kanina row %d\n", kuribo[k].row); ka_item(&kuribo[k]); break; }
@@ -38704,7 +38705,7 @@ int game_test_kinoko(int frame)
     for (int i = 0; i < MAX_BITEMS; i++) {
         if (!bitm[i].on) continue;
         n++;
-        if (frame == 560 || frame == 900) mario->pos = vsub(bitm[i].pos, vmul(mario->up, 20.0f));
+        if (frame == 560 || frame == 900) held = mario->pos = vadd(bitm[i].pos, vmul(mario->up, frame == 560 ? -20.0f : 30.0f)); /* (over the box: inside it Mario is wall-stuck) */
         if (frame % 5 == 0) printf("kinoko test f %d: item %d nrv %d step %d at %.0f %.0f %.0f vel %.1f gnd %d\n", frame, i, bitm[i].nrv, bitm[i].step,
                                    bitm[i].pos.x, bitm[i].pos.y, bitm[i].pos.z, vlen(bitm[i].vel), bitm[i].gnd);
     }

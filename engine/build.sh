@@ -11,6 +11,7 @@
 #       (-DITEM_TEST)
 # collapse: with packs, Mario dropped onto the first CollapsePlane at frame 120 (-DCOLLAPSE_TEST)
 # box: with packs, Mario spinning on the first breakable box at frame 120 (-DBOX_TEST)
+# kinoko: OceanPhantomCaveGalaxy/1, a Kanina's and a treasure box's run-time 1-up (-DKINOKO_TEST)
 # spin: with packs, Mario caught by the first SpinDriver at frame 120 (-DSPIN_TEST)
 # moves: with packs, Mario's moves driven by the pad from his first free frame, logged a frame (-DMOVES_TEST)
 # spingate: with packs, Square tapped every 200 frames, Mario's spin logged: none before スピン権利 (-DSPINGATE_TEST)
