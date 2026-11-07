@@ -604,6 +604,20 @@ Second console round (2026-10-24), from Daniel's report:
   IceVolcanoGalaxy/1: talk, the chase, Mario sliding after it at 20: Provoke, Away, Switch, caught, moved, SW_A.
   ponytail: circle wipes as fades, startTalkingSequence / startNPCTalkCamera (the talk's own camera), the star piece
   reaction. Repack: IceVolcanoGalaxy (slice.py LOGIC NPCSupportRail).
+- PenguinRacer / PenguinRacerLeader (feat/401-penguin-race, 2026-11-07): race.inc pg_* after NPC/PenguinRacer.cpp /
+  PenguinRacerLeader.cpp: entered in the race when arg0 is 0, prep at their rail's start (RacerSwimSurfaceSoon /
+  RacerWalkSoon), the rail sections by point arg1 (Swim, Walk, StoW / WtoS: SEs, WaterColumn), point arg0 speeds,
+  updateVelocity's pull to the next point and clamps, gravity off the ground out of Swim, their binder (collide_n, 80 at
+  60 / 80), Fall on a thrown shell (pg_jet_hit from the JetTurtle's throw), Goal / Turn; Wait (chat SE, reactions:
+  npc_react, Trampled / Spin / Pointing), talks (130 up). The leader: 会話 camera, branchFunc (power star appeared:
+  rm_note_star at the appear demo / rank 1), eventFunc (the race / TakeOutStar), Pre / Post. ColorChange arg7 models
+  (slice.py BRK_ARG PenguinRacer / Leader / PenguinSkater). The race's NPCs now update before the talk director and
+  Mario (update_race after update_queen: an A at a talker starts its talk, not a jump). Test plain XF
+  "-DRACE_TEST=1 -DPACKS_OVERLAY=..." OceanRingGalaxy/2: the leader's talk, Yes, the race (the racers through
+  their land parts), Mario carried along the judge rail in at f 5158, the leader's TakeOutStar, power star got.
+  ponytail: OceanRing's water is not ported (Mario walks the ring's bed; Mario's start is not set on its surface),
+  the star piece reflect message, LodCtrl near clipping, NPCActorItem goggles. Repack: OceanRingGalaxy,
+  PeachCastleFinalGalaxy (BRK_ARG), IceVolcanoGalaxy (PenguinSkater's model).
 - ChipCounter (feat/290-chip-counter, 2026-11-05): menu.c chc_* (BlueChipCounter / YellowChipCounter / CollectCounter
   in lyt.py COMMON: menus.bin +84 KB): Hide / FrameIn / Show / FrameOut / TryDemo / Complete / CompleteOut, Chip1-5
   ChipGet, ShowHide by short balloons, the count over Mario; game.c chip_group_*: UI range (chips' box +- 2000 or
@@ -2026,7 +2040,7 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
   the Tamakoro family (TamakoroWithTutorial, BallOpener,
   JumpHole, ConcreteBlock: Mario's star ball ride is not ported), AstroDomeAsteroid
   (SphereSelector's handled transform), FlexibleSphere, BegomanSpring, Syati / TalkSyati, SpinningBox,
-  BombBird, JumpGuarder, WaterBazooka, BallBeamer, MagnumKiller, PenguinRacerLeader,
+  BombBird, JumpGuarder, WaterBazooka, BallBeamer, MagnumKiller,
   SubmarineVolcanoBigColumn, AstroChildRoom (update_astro_objs' ponytail).
 - TicoGalaxy's TicoStarRing talk (fix, 2026-11-07): a real bug, not only the test. Its talk ran in update_ticofat,
   after update_mario, so the A that should start it made Mario jump first (ts_test wants him grounded): the talk sat

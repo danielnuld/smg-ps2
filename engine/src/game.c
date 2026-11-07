@@ -1473,7 +1473,7 @@ static int miss_abyss; /* the next miss is MarioActor::exeGameOverAbyss's (a Dea
 static int miss_ghost; /* the next miss is forceKillPlayerByGhostRace's (EventGhostRaceDown) */
 static int miss_race; /* the next miss is forceKillPlayerByGroundRace's (EventRaceDown) */
 static void rm_reset(void), update_race(void); /* RaceManager and its racers (race.inc) */
-static int rm_ctrl_off(void); static const char *rm_bck(void); /* offPlayerControl; its startBckPlayer clip on Mario */
+static int rm_ctrl_off(void), pg_jet_hit(V3 p); static void rm_note_star(void); static const char *rm_bck(void); /* offPlayerControl; its startBckPlayer clip on Mario */
 static void gh_reset(void);
 static int gh_ctrl_off(void), gh_puppet(void); /* GhostPlayer: offPlayerControl; its clips on Mario (startBckPlayerJ) */
 static int m_dash_chance, m_item_dash; /* Mario::_436 (noticeDashChance: the race start's dash chance), _434 (the item dash) */
@@ -3149,7 +3149,6 @@ static const NpcTurn npc_turns[] = {
     {"Kinopio", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turn", "talk", "talk"}},
     {"KinopioAstro", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turn", "talk", "talk"}},
     {"Penguin", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turn", "talk", "talkturn"}},
-    {"PenguinRacer", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turn", "talk", "talkturn"}},
     {"PenguinCoach", 1, 1, 2000.0f, 1.0f, 0, 0, {"wait", "turn", "talk", "talkturn"}},
     {"PenguinStudent", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turn", "talk", "talkturn"}}, /* NPCActor::setDefaults (student_update) */
     {"Caretaker", 0, 1, 2000.0f, 3.0f, 0, 0, {"wait", "turn", "talk", "talkturn"}},
@@ -5350,7 +5349,7 @@ static void game_rebind_(void)
         const Model *md = scene_model(s, name);
         if (!md) { /* slice.py BRK_ARG: its colour BRK stopped at an arg (NoInit: 0): TicoReading / Tico ColorChange arg0,
                     * Penguin ColorChange arg7 */
-            static const struct { const char *cls; int arg; } ba[] = {{"TicoReading", 0}, {"Tico", 0}, {"Penguin", 7}};
+            static const struct { const char *cls; int arg; } ba[] = {{"TicoReading", 0}, {"Tico", 0}, {"Penguin", 7}, {"PenguinRacer", 7}, {"PenguinRacerLeader", 7}, {"PenguinSkater", 7}};
             for (unsigned k = 0; k < sizeof ba / sizeof ba[0]; k++)
                 if (!strcmp(name, ba[k].cls)) {
                     char bn[40];
@@ -14065,6 +14064,7 @@ static void update_jets(void)
             if (bk_jet_hit(p)) gone = 1; /* BossKameck: isMsgJetTurtleAttack (requestDamage) */
             if (!gone && sf_jet_hit(p)) gone = 1; /* SkeletalFishBaby / Boss: isMsgJetTurtleAttack */
             if (!gone && kj_jet_hit(p)) gone = 1; /* KoopaJrShip: receiveMsgJetTurtleAttack */
+            if (!gone && pg_jet_hit(p)) gone = 1; /* PenguinRacer in its race: isMsgJetTurtleAttack (race.inc) */
             hhp_blow(p, 60.0f); /* HammerHeadPackun: isMsgJetTurtleAttack */
             tbox_hit(p, 60.0f); /* TreasureBoxCracked: isMsgJetTurtleAttack */
             for (int k = 0; k < nkuribo; k++) { /* ACTMES_JET_TURTLE_ATTACK */
@@ -41022,6 +41022,7 @@ static int star_demo_update(const Inst *in, int t, V3 sp)
     V3 up = up_at(sp, v3(in->m[4], in->m[5], in->m[6]));
     if (t == 0) {
         if (!boss_demo_cls() && !pd_try_start("パワースター出現", in->row)) return 0; /* (in a boss's demo: that one goes on) */
+        rm_note_star(); /* StageStateKeeper::mIsPowerStarAppeared */
         audio_move_volume(0.0f, 5); /* moveVolumeStageBGM / SubBGM(0, 5) */
         int cr = star_cam_row(in);
         int cam = row_camset[cr] != -1 && /* startActorCameraTargetOther(getAppearCameraActor, getAppearCameraInfo, the star) */
@@ -52177,6 +52178,7 @@ void game_update(void)
     update_bees();
     update_npc_turn();
     update_queen();
+    update_race(); /* RaceManager and its racer NPCs (race.inc): their talks before the talk director and Mario */
     hud_update();
 
     LQ(5, update_talk_director());
@@ -52375,7 +52377,6 @@ void game_update(void)
     update_bitems();
     update_hanachans();
     update_ghost();
-    update_race();
     update_spider_thread();
     update_sls();
     spider_coins();
