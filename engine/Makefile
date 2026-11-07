@@ -7,6 +7,8 @@ EE_INCS += -Isrc -I$(PS2SDK)/ports/include
 EE_LIBS += -L$(PS2SDK)/ports/lib -lz -lcdvd -lmc -lmpeg -laudsrv -lpacket2 -ldraw -lgraph -ldma -lpadx -lpatches -ldebug -lm
 # movies: libmpeg's memalign / free from the packs' region (main.c __wrap_memalign)
 EE_LDFLAGS += -Wl,--wrap=memalign -Wl,--wrap=free
+# stdio streams without fstat (main.c __wrap__fstat: the host getstat RPC)
+EE_LDFLAGS += -Wl,--wrap=_fstat
 # the sampling profiler (XF=-DSAMPLE_PROF): string, memset, sine / cosine and snprintf calls counted by caller (prof.c)
 ifneq ($(findstring SAMPLE_PROF,$(EXTRA)),)
 EE_LDFLAGS += -Wl,--wrap=strcmp -Wl,--wrap=strncmp -Wl,--wrap=strstr -Wl,--wrap=memset -Wl,--wrap=cosf -Wl,--wrap=sinf -Wl,--wrap=snprintf

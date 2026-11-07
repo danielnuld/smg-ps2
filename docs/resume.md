@@ -284,6 +284,22 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   hit the route ELF once with #318 (out/rel-boot-EggStarGalaxy_1-route-crash1.log), the retry got the star at f 4215. Disc: build.sh plain ... FileSelect/1 disc, disc.py ->
   out/smg-ps2.iso (3315 MB, 2472 packs, ELF from 6b9035b + #318, not the boss PRs merged since); the 10-31 ISO kept as
   out/smg-ps2-prev.iso.
+- EggStar 1 boot crash (fix/337, 2026-11-07): found. newlib calls fstat on every stdio stream before its first read
+  or seek (__smakebuf_r, _fseeko_r); for a host: file that is a FILEIO getstat RPC, and now and then the IOP answered
+  the RPC before it (the open, payload to _fio_recv_data) a second time. The stale SIF_CMD_RPC_END completed the
+  getstat early; the getstat's own end then came for a client with no call in flight: ps2sdk's _request_end loaded
+  through the NULL packet (PCSX2 `TLB Miss ... addr=0x10 / 0x18`), and the RPCs after it lost their answers or wrote
+  them over stale buffers: a hang (padman "DMA Busy") or the EE ending in EELOAD's 0x82000 (`pc=0x82000 addr=0x0`,
+  then `pc=0x8001044`): menus3d.bin's fopen at boot, the .rhy's on 10-30. Seen with an RPC log (SifCallRpc wrapped,
+  every end checked in a copy of the SIF command handler): the duplicate end always carried the open's destination.
+  "Layout dependent" because the boot's SIF traffic decides where it lands. Fix: `__wrap__fstat` fails (Makefile
+  `--wrap=_fstat`), newlib falls back to plain buffering and lseek; nothing of ours asks fstat, and the disc build reads
+  no host files (so the console ISO never hit it). Test: plain build with `XF=-DIO_STRESS=20000` (20000 host opens /
+  closes with a sound RPC batch each before the scene): origin/main 3 / 3 runs hung at the same RPC (~4500), with the
+  fix 3 / 3 ran through (twice as fast: no getstat); then 8 / 8 plain EggStar 1 boots and route EggStar 1 star at
+  f 4215. Ruled out on the way: nested interrupts on the kernel's handler stack (0x81fc0, no nesting seen), the sound
+  RPC's SIF_RPC_M_NOWAIT polling, the vblank handlers' ExitHandler. The IOP-side cause of the duplicate (BIOS FILEIO /
+  sifman under PCSX2's host filesystem) is not ours to fix.
 
 ## Console release (2026-10-23 / 24)
 
