@@ -2015,6 +2015,177 @@ static void mesh_draw(const float (*pos)[3], const float (*uv)[2], int nvert, co
     }
 }
 
+/* ClipArea::draw / FallOutFieldDraw::draw after Petari, on the frame's 1-bit alpha (PSMCT16S's A): GX counts each
+ * volume's front faces up and back faces down in the destination alpha, then fills black where it is 0. Here A = 1 is
+ * "outside every volume so far": render_clip_begin sets it over the screen (colour kept), each volume's front faces
+ * nearer than the scene clear it, then its back faces nearer than the scene set it again, and render_clip_fill draws
+ * black at the far depth (FallOutFieldDraw's GXSetZScaleOffset(0, 1)) where it is still 1: a sprite reading the frame
+ * as its texture (TEXA: the bit as 0 / 0x80), alpha tested. The GS has no "farther" depth test nor stencil counts: a
+ * volume drawn after one nearer along a ray could set back a pixel the nearer one kept, so the caller sends them
+ * nearest first. ponytail: no blurred edge colour (sEdgeColor, the A8 captures' blur) */
+static void clip_mode(int ztst, int zwrite)
+{
+    AD(GS_SET_FBA(0), GS_REG_FBA); /* the alpha written as is (bloom_pass's; else it is forced to 1) */
+    AD(GS_SET_FRAME(frame[back].address >> 11, SCREEN_W >> 6, FB_PSM, zwrite ? 0 : 0x00FFFFFF), GS_REG_FRAME);
+    AD(GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, ztst), GS_REG_TEST);
+    AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, !zwrite), GS_REG_ZBUF);
+    AD(GS_SET_DTHE(0), GS_REG_DTHE);
+}
+static void clip_restore(void)
+{
+    AD(GS_SET_FRAME(frame[back].address >> 11, SCREEN_W >> 6, FB_PSM, 0), GS_REG_FRAME);
+    AD(test_z, GS_REG_TEST);
+    AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 0), GS_REG_ZBUF);
+    AD(GS_SET_DTHE(FB_PSM != GS_PSM_32), GS_REG_DTHE);
+    AD(GS_SET_FBA(1), GS_REG_FBA); /* the alpha forced again, as it was */
+    ad_close();
+    cur_tex = -1;
+}
+static void clip_screen(u32 a, u32 z) /* a sprite over the screen in black, alpha a, depth z */
+{
+    AD(GS_SET_PRIM(PRIM_SPRITE, 0, 0, 0, 0, 0, 0, 0, 0), GS_REG_PRIM);
+    AD(GS_SET_RGBAQ(0, 0, 0, a, 0x3F800000), GS_REG_RGBAQ);
+    AD(GS_SET_XYZ((2048 - SCREEN_W / 2) << 4, (2048 - SCREEN_H / 2) << 4, z), GS_REG_XYZ2);
+    AD(GS_SET_XYZ((2048 + SCREEN_W / 2) << 4, (2048 + SCREEN_H / 2) << 4, z), GS_REG_XYZ2);
+}
+void render_clip_begin(void)
+{
+    ad_open(12);
+    AD(GS_SET_FBA(0), GS_REG_FBA);
+    AD(GS_SET_FRAME(frame[back].address >> 11, SCREEN_W >> 6, FB_PSM, 0x00FFFFFF), GS_REG_FRAME);
+    AD(GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, ZTEST_METHOD_ALLPASS), GS_REG_TEST);
+    AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 1), GS_REG_ZBUF);
+    AD(GS_SET_DTHE(0), GS_REG_DTHE);
+    clip_screen(0x80, 0);
+    clip_restore();
+}
+void render_clip_fill(void)
+{
+    ad_open(24);
+    clip_mode(ZTEST_METHOD_ALLPASS, 1);
+    AD(GS_SET_TEST(1, ATEST_METHOD_GREATER_EQUAL, 0x80, 0, 0, 0, 1, ZTEST_METHOD_ALLPASS), GS_REG_TEST);
+    AD(GS_SET_TEXA(0, 0, 0x80), GS_REG_TEXA); /* the frame's alpha bit reads 0 or 0x80 */
+    AD(0, GS_REG_TEXFLUSH);
+    AD(GS_SET_TEX0(frame[back].address >> 6, SCREEN_W >> 6, FB_PSM, 10, FB_TH, 1, 0, 0, 0, 0, 0, 0), GS_REG_TEX0);
+    AD(GS_SET_TEX1(1, 0, 0, 0, 0, 0, 0), GS_REG_TEX1); /* nearest: each pixel its own texel */
+    AD(GS_SET_CLAMP(2, 2, 0, SCREEN_W - 1, 0, SCREEN_H - 1), GS_REG_CLAMP);
+    AD(GS_SET_PRIM(PRIM_SPRITE, 0, 1, 0, 0, 0, 1, 0, 0), GS_REG_PRIM);
+    AD(GS_SET_RGBAQ(0, 0, 0, 0x80, 0x3F800000), GS_REG_RGBAQ); /* modulated: black, the texel's alpha */
+    AD(GS_SET_UV(0, 0), GS_REG_UV);
+    AD(GS_SET_XYZ((2048 - SCREEN_W / 2) << 4, (2048 - SCREEN_H / 2) << 4, 0), GS_REG_XYZ2);
+    AD(GS_SET_UV(SCREEN_W << 4, SCREEN_H << 4), GS_REG_UV);
+    AD(GS_SET_XYZ((2048 + SCREEN_W / 2) << 4, (2048 + SCREEN_H / 2) << 4, 0), GS_REG_XYZ2);
+    AD(0, GS_REG_TEXFLUSH);
+    clip_restore();
+}
+/* a convex polygon in view space clipped by the near plane and the guard band's four planes through the eye */
+static int clip_poly(float (*v)[3], int n)
+{
+    static const float gb = 2000.0f / 2048.0f;
+    float tmp[16][3];
+    for (int pl = 0; pl < 5 && n; pl++) {
+        int m = 0;
+        for (int i = 0; i < n; i++) {
+            const float *a = v[i], *b = v[(i + 1) % n];
+            float da, db;
+#define PLANE(p) (pl == 0 ? (p)[2] - NEAR : pl == 1 ? gb * (p)[2] - proj[0] * (p)[0] : pl == 2 ? gb * (p)[2] + proj[0] * (p)[0] : \
+                  pl == 3 ? gb * (p)[2] - proj[5] * (p)[1] : gb * (p)[2] + proj[5] * (p)[1])
+            da = PLANE(a); db = PLANE(b);
+#undef PLANE
+            if (da >= 0 && m < 16) { tmp[m][0] = a[0]; tmp[m][1] = a[1]; tmp[m][2] = a[2]; m++; }
+            if ((da >= 0) != (db >= 0) && m < 16) {
+                float t = da / (da - db);
+                for (int k = 0; k < 3; k++) tmp[m][k] = a[k] + (b[k] - a[k]) * t;
+                m++;
+            }
+        }
+        n = m < 15 ? m : 15;
+        memcpy(v, tmp, sizeof(float) * 3 * n);
+    }
+    return n;
+}
+/* one volume (world triangles, outward winding): its front faces, then its back faces; inside: the camera is in it,
+ * its front pass is the whole screen. Each vertex into view space and onto the screen once; a triangle with a corner
+ * past the near plane or the guard band is clipped (clip_poly) */
+#define CLIP_VMAX 128
+static void clip_tri_out(const u64 *xyz, int n, int alpha)
+{
+    if (packet2_get_qw_count(vif[cur]) + 3 * n + 16 > PACKET_QW) { /* room: the open packet closed and opened again */
+        clip_restore();
+        ad_open(16);
+        clip_mode(ZTEST_METHOD_GREATER_EQUAL, 0);
+        AD(GS_SET_PRIM(PRIM_TRIANGLE, 0, 0, 0, 0, 0, 0, 0, 0), GS_REG_PRIM);
+        AD(GS_SET_RGBAQ(0, 0, 0, alpha, 0x3F800000), GS_REG_RGBAQ);
+    }
+    for (int k = 1; k + 1 < n; k++) { /* a fan */
+        AD(xyz[0], GS_REG_XYZ2);
+        AD(xyz[k], GS_REG_XYZ2);
+        AD(xyz[k + 1], GS_REG_XYZ2);
+    }
+}
+static u64 clip_xyz(const float *v)
+{
+    float kz = 2048.0f / v[2];
+    float sx = 2048.0f + shake_x + proj[0] * v[0] * kz, sy = 2048.0f + shake_y + proj[5] * v[1] * kz;
+    u32 sz = (u32)(((proj[10] * v[2] + proj[14]) / v[2] + 1.0f) * (float)(Z_MAX / 2));
+    return GS_SET_XYZ((int)(sx * 16), (int)(sy * 16), sz);
+}
+void render_clip_volume(const float (*pos)[3], int nvert, const u16 *idx, int ntri, int inside)
+{
+    static float vv[CLIP_VMAX][3];
+    static u64 vx[CLIP_VMAX];
+    static u8 vok[CLIP_VMAX];
+    static const float gb = 2000.0f / 2048.0f;
+    if (nvert > CLIP_VMAX) nvert = CLIP_VMAX;
+    float vdet = view[0] * (view[5] * view[10] - view[9] * view[6]) - view[4] * (view[1] * view[10] - view[9] * view[2]) +
+                 view[8] * (view[1] * view[6] - view[5] * view[2]);
+    for (int i = 0; i < nvert; i++) {
+        const float *p = pos[i];
+        float *v = vv[i];
+        v[0] = view[0] * p[0] + view[4] * p[1] + view[8] * p[2] + view[12];
+        v[1] = view[1] * p[0] + view[5] * p[1] + view[9] * p[2] + view[13];
+        v[2] = view[2] * p[0] + view[6] * p[1] + view[10] * p[2] + view[14];
+        vok[i] = v[2] >= NEAR && fabsf(proj[0] * v[0]) <= gb * v[2] && fabsf(proj[5] * v[1]) <= gb * v[2];
+        if (vok[i]) vx[i] = clip_xyz(v);
+    }
+    for (int pass_back = 0; pass_back < 2; pass_back++) {
+        int alpha = pass_back ? 0x80 : 0;
+        ad_open(16);
+        clip_mode(ZTEST_METHOD_GREATER_EQUAL, 0);
+        if (!pass_back && inside) {
+            AD(GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, ZTEST_METHOD_ALLPASS), GS_REG_TEST);
+            clip_screen(0, 0);
+            clip_restore();
+            continue;
+        }
+        AD(GS_SET_PRIM(PRIM_TRIANGLE, 0, 0, 0, 0, 0, 0, 0, 0), GS_REG_PRIM);
+        AD(GS_SET_RGBAQ(0, 0, 0, alpha, 0x3F800000), GS_REG_RGBAQ);
+        for (int t = 0; t < ntri; t++) {
+            int i0 = idx[3 * t], i1 = idx[3 * t + 1], i2 = idx[3 * t + 2];
+            if (i0 >= nvert || i1 >= nvert || i2 >= nvert) continue;
+            const float *a = vv[i0], *b = vv[i1], *c = vv[i2];
+            float e1[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]}, e2[3] = {c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+            float nx = e1[1] * e2[2] - e1[2] * e2[1], ny = e1[2] * e2[0] - e1[0] * e2[2], nz = e1[0] * e2[1] - e1[1] * e2[0];
+            /* facing: the normal towards the eye (the view origin), the winding's sense through the view (its
+             * determinant: render_begin's frame is a mirror) */
+            if ((-(nx * a[0] + ny * a[1] + nz * a[2]) * vdet > 0) == pass_back) continue;
+            if (vok[i0] && vok[i1] && vok[i2]) {
+                u64 x3[3] = {vx[i0], vx[i1], vx[i2]};
+                clip_tri_out(x3, 3, alpha);
+                continue;
+            }
+            float v[16][3];
+            memcpy(v[0], a, 12); memcpy(v[1], b, 12); memcpy(v[2], c, 12);
+            int n = clip_poly(v, 3);
+            if (n < 3) continue;
+            u64 xyz[16];
+            for (int k = 0; k < n; k++) xyz[k] = clip_xyz(v[k]);
+            clip_tri_out(xyz, n, alpha);
+        }
+        clip_restore();
+    }
+}
+
 void render_mesh2d(const float (*xy)[2], const float (*uv)[2], int nvert, const u16 *idx, int ntri, u16 tex, u32 rgba, int add)
 {
     const TexEntry *e = tex == NO_TEX ? NULL : tex_scene->tex[tex].e; /* NO_TEX: flat, the colour alone */
