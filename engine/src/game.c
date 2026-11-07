@@ -1643,8 +1643,8 @@ static int nlogic; /* pipe_zone: the exit pipe's zone, wanted in full */
  * PlantMember::tryPush) shakes it; a member shaken by a touch gives its item (update_plants). Mario's spin within the
  * group's sensor + 600 (ACTMES_SPIN_STORM_RANGE) shakes the members by distance but gives nothing. Every 300 frames
  * one member with an item plays HintShake. Each member is turned a random angle about its gravity (initPosture) and
- * drawn posed by its nerve's clip (plant_pose). ponytail: the ray is stepped spheres; the HintShakeLeaf effect is not
- * in the FX table */
+ * drawn posed by its nerve's clip (plant_pose); the hint plays the group's HintShakeLeaf (its "Bush" effects) at the
+ * member. ponytail: the ray is stepped spheres */
 typedef struct { V3 pos, up; float rot; int ok, item; short nrv; unsigned short step; char touch;
                  float s, wf, wr; signed char kind, wind, shake, brk; } Plant; /* s .. brk: SmallStoneMember */
 enum { PL_WAIT, PL_HINT, PL_WEAK, PL_MIDDLE, PL_STRONG }; /* PlantMember nerves */
@@ -10541,8 +10541,9 @@ static void update_ota_fire(V3 c)
  * (FireBall at 15, 120 over Mario), again; all four coconuts gone and Mario 4000 off (or its SW_A off) it Hides, and in
  * HideWait shows again at 3800 (SW_A on). Its body sensor (300, 180 up) hurts Mario (sendMsgEnemyAttackStrong); a
  * coconut spun back (HitBackToHost) into it, or any enemy attack, puts it Down: Death, stopScene(16) at step 2, then
- * kill (its dead switch: Good Egg's TakoBarrelA break on it). ponytail: no OtaRockDeath / coconut effects (not in
- * the FX table), no anim scale (hit reaction), no 2P freeze / reflect */
+ * kill (its dead switch: Good Egg's TakoBarrelA break on it): OtaRockDeath. Its coconuts (CocoNutBall, the CocoNut
+ * effects): CocoNutLight thrown, CocoNutBlur + Light and SpinHitMark spun back, none rebounding, CocoNutBreak at their
+ * kill. ponytail: no anim scale (hit reaction), no 2P freeze / reflect */
 
 static int orock_of(int row)
 {
@@ -10639,7 +10640,13 @@ static void update_orocks(void)
             }
             if (st == 2) scene_stop = 16;
             if (st == 3) camera_shake(SHAKE_NORMAL);
-            if (st >= 34) { se_start(SE_EM_OTAROCK_DIE, &o->pos.x); orock_set(k, OR_DEAD); row_kill(in->row); game_rebind(); return; } /* Death 34: kill */
+            if (st >= 34) { /* kill: OtaRockDeath (at Center), SE */
+                { int ok = fx_named("OtaRock", "OtaRockDeath", in->m, in->anim && in->anim->skin ? (const float (*)[16])in->anim->world : NULL, NULL);
+#ifdef OROCK_TEST
+                  printf("ota rock %d: OtaRockDeath %d%c", in->row, ok, 10);
+#endif
+                  (void)ok; }
+                se_start(SE_EM_OTAROCK_DIE, &o->pos.x); orock_set(k, OR_DEAD); row_kill(in->row); game_rebind(); return; } /* Death 34: kill */
             break;
         case OR_HIDE:
             if (!st) { obj_play(in, "hide", 0, 0); se_start(SE_EM_OTAROCK_HIDE, &o->pos.x); }
@@ -10665,12 +10672,20 @@ static void update_orocks(void)
             Hit h[1];
             int bound = q->state != 2 && kcl_query(q->pos, 60.0f, h, 1) > 0;
             float far = q->state == 1 ? vlen(vsub(q->pos, o->pos)) - 10000.0f : vlen(vsub(q->pos, mario->pos)) - 5000.0f;
-            if (bound || far > 0) { se_start(SE_OJ_COCONUT_BALL_BREAK, &q->pos.x); q->state = 0; continue; } /* tryToKill: kill */
-            float dc = vlen(vsub(c, q->pos));
+            if (bound || far > 0) { se_start(SE_OJ_COCONUT_BALL_BREAK, &q->pos.x); fx_at(FX_COCONUT_COCONUTBREAK, q->pos, q->up); q->state = 0; continue; } /* tryToKill: kill */
+            float dc = vlen(vsub(c, q->pos)), qm[16];
+            basis_matrix(qm, q->pos, q->up, vlen(q->vel) > 1e-6f ? q->vel : o->f, 0);
+            if (q->state == 1) fx_named("CocoNut", "CocoNutLight", qm, NULL, q); /* exeThrow: CocoNutLight */
+            if (q->state == 2) { fx_named("CocoNut", "CocoNutBlur", qm, NULL, (const char *)q + 1); fx_named("CocoNut", "CocoNutLight", qm, NULL, q); } /* exeHitBackToHost */
             if ((q->state == 1 || q->state == 4) && mario->spin_timer > 0 && dc < 400.0f && q->t > 1) { /* HitBackToHost */
                 q->rally++;
                 coco_hitback(q->pos, q->up, o->pos, body, &q->vel, &q->grav);
                 q->state = 2; q->t = 0;
+                { int ok = fx_named("CocoNut", "SpinHitMark", qm, NULL, NULL); /* exeHitBackToHost's first step */
+#ifdef OROCK_TEST
+                  printf("ota rock %d: coconut effects %d%c", in->row, ok, 10);
+#endif
+                  (void)ok; }
                 se_start(SE_OJ_COCONUT_BALL_VOLLEY, &q->pos.x); /* exeHitBackToHost */
                 printf("ota rock %d: coconut hit back\n", in->row);
                 continue;
@@ -10683,6 +10698,7 @@ static void update_orocks(void)
             }
             if (q->state == 2 && vlen(vsub(q->pos, body)) < 300.0f + 40.0f && o->nrv != OR_DOWN) { /* sendMsgEnemyAttack */
                 se_start(SE_OJ_COCONUT_BALL_BREAK, &q->pos.x); /* kill */
+                fx_at(FX_COCONUT_COCONUTBREAK, q->pos, q->up);
                 q->state = 0;
                 orock_set(k, OR_DOWN);
             }
@@ -13726,8 +13742,8 @@ static void update_fountains(void)
  * DemoSpringWaterRiseUp: 開始待ち, 湧き水上昇, アイビーマー回転, アイビーマー降下, 終了待ち), Jet (sensor on, Jet
  * effect, SE_OJ_SPR_JET_WATER_JET_ST, setStageBGMState(1, 180), SE_OJ_LV_SPR_JET_WATER_JET) till its last step, End
  * (sensor off, Jet deleted) and killed at sEndTime 60. row_turn 0 dead (appear pending) / Wait, 1 Move / Jet, 2 End,
- * 3 killed; row_step its steps. ponytail: no clipping (startClipped / endClipped: the effects kept while within
- * sClippingRadius of the camera: Fountain 3500, SpringJetWater 1000) */
+ * 3 killed; row_step its steps. Clipping (startClipped / endClipped): Fountain's effect and SpringJetWater's Wait kept
+ * while their sClippingRadius sphere (3500 / 1000) is in the view (render_visible) */
 static int dx_first(int p), dx_last(int p), dx_has_cast(int row), dx_request(const char *name, int frameless);
 static void bgm_state(int state, int frames);
 static void jet_water_touch(V3 at, V3 up, V3 s) /* attackSensor: s its sensor's centre */
@@ -13753,7 +13769,7 @@ static void update_jet_waters(void)
         float m[16], one[3] = {1, 1, 1}, rot[3] = {r->rot[0], r->rot[1], r->rot[2]};
         mat_translate_rot_scale(m, r->pos, rot, one);
         V3 at = v3(r->pos[0], r->pos[1], r->pos[2]), up = vnorm(v3(m[4], m[5], m[6])), s = vadd(at, vmul(up, 300.0f));
-        int near = vlen(vsub(at, cam_pos)) < (spring ? 1000.0f : 3500.0f), sens = 0, next = -1;
+        int near = render_visible(r->pos, spring ? 1000.0f : 3500.0f), sens = 0, next = -1; /* !isClipped (sClippingRadius) */
         if (*ph == 3) continue;
         if (!spring) {
             if (*ph == 0 && *st == 0 && r->sw[SW_APPEAR] >= 0 && !sw_on(r, SW_APPEAR)) continue; /* dead till SW_APPEAR */
@@ -13771,7 +13787,7 @@ static void update_jet_waters(void)
         } else if (*ph == 1) { /* Jet */
             if (*st == 0) { se_start(SE_OJ_SPR_JET_WATER_JET_ST, &at.x); bgm_state(1, 180); }
             sens = 1;
-            if (near) fx_named(cls, "Jet", m, NULL, (const char *)&sc->objs[i] + 1);
+            fx_named(cls, "Jet", m, NULL, (const char *)&sc->objs[i] + 1); /* (startClipped deletes only Wait) */
             se_level(SE_OJ_LV_SPR_JET_WATER_JET, &at.x, 0);
             if (dx_has_cast((int)i) && dx_last(1)) next = 2;
         } else if (*st == 60) next = 3; /* End: sEndTime, kill */
@@ -13887,7 +13903,7 @@ static int fireball_hits_snowman(V3 p); /* update_snowmen */
  * decorative (arg1 set); a spin within 350 puts it out (Extinguish: the effect's Extinguish, SE_OJ_PHANTOM_TOACH_OFF;
  * 15 frames later kill: arg0 -1 a coin, 0 a star piece (appearStarPiece 10, 40), soundOrder: SE_SY_CANDLE_COMBO_1..5
  * by how many of its group are left, its dead switch). row_turn 0 wait, 1 attack, 2 out; row_step its frames.
- * ponytail: no clipping (startClipped / endClipped: its effect runs while the row is shown) */
+ * Clipping: its effect only while its 500 x scale sphere is in the view (startClipped / endClipped) */
 static void update_torches(void)
 {
     static int t[2] = {-2, -2};
@@ -13918,7 +13934,7 @@ static void update_torches(void)
             }
             continue;
         }
-        fx_named(name, name, m, NULL, r); /* emitEffect(mParticle) */
+        if (render_visible(r->pos, 500.0f * s)) fx_named(name, name, m, NULL, r); /* emitEffect(mParticle) unless clipped (sphere 500 x scale) */
         if (*st == 1 && ++*n >= 30) { *st = 0; *n = 0; } /* Attack: isStep 30 */
         if (r->arg[1] != -1) continue; /* mIsDecorative */
         if (*st == 0 && vlen(vsub(c, body)) < 50.0f * s + HIT_BODY_R && !mario->hurt_timer) { /* attackSensor */
@@ -14937,14 +14953,14 @@ static void m_front(Player *m, V3 v) /* setFrontVecKeepUp */
 }
 
 /* MarioActor::receiveMessage ACTMES_REFLECT: reflectWallOnSpinning(n, 5) (front along n, _3F8 5 frames of
- * mInertiaReflectSlip, _328 the front, doSpinWallEffect's sounds), the walk speed at most 0.5. ponytail: no 壁スパーク
- * effect in the port's Mario effects, a 0x55 sensor wall's silence not told apart (MarioSpin.cpp:60-87) */
+ * mInertiaReflectSlip, _328 the front, doSpinWallEffect's sounds and 壁スパーク), the walk speed at most 0.5. ponytail: a
+ * 0x55 sensor wall's silence not told apart (MarioSpin.cpp:60-87) */
 static void mario_reflect(V3 n)
 {
     m_front(mario, n);
     mario->reflect = 5;
     mario->move_dir = mario->face;
-    mario_sound("壁反射"); mario_sound("声スピンキャンセル");
+    mario_sound("壁反射"); mario_sound("声スピンキャンセル"); mario_named_fx("WallSpark", NULL); /* playEffect 壁スパーク */
     if (mario->walk > 0.5f) mario->walk = 0.5f;
 }
 static void m_front_turn(Player *m, V3 v, int n) /* setFrontVecKeepUp(front, _750): the drawn front stays (_74C) */
@@ -20156,8 +20172,9 @@ static void sw_jet_jump(Player *m, int type) /* doJetJump: out of the water with
     m_power_jump(m, vadd(vmul(d, h * 1.25f), vmul(sw.up, v)));
     m_anim("水泳ジェット");
 }
-static void sw_jet(Player *m) /* MarioSwim::jet: with a shell he jets (mSwimFrontJetSpeed, Slow), Z brakes; else the ring dash.
-                               * ponytail: no BrakeLamp effect, no setStageBGMStateBit(4) */
+static void sw_jet(Player *m) /* MarioSwim::jet: with a shell he jets (mSwimFrontJetSpeed, Slow), Z brakes (the shell's
+                               * BrakeLamp from the press to the release); else the ring dash. ponytail: no
+                               * setStageBGMStateBit(4); KameckTurtle's shell shows no lamp */
 {
     (void)m;
     if (!m_carry_jet()) { sw.jet_t = 0; sw.jet_cool = 0; }
@@ -20168,6 +20185,10 @@ static void sw_jet(Player *m) /* MarioSwim::jet: with a shell he jets (mSwimFron
         sw.jet_t++;
         if (sw_check_lvl_z()) {
             if (sw_check_trg_z() || sw.state_t < 2) mario_sound("亀ブレーキ");
+            if (jet.inst >= 0) { /* emitEffect BrakeLamp (its Koura joint) .. forceDeleteEffect at the release */
+                const Inst *in = &insts[jet.inst];
+                fx_named("JetTurtle", "BrakeLamp", in->m, in->anim && in->anim->skin ? (const float (*)[16])in->anim->world : NULL, &jet);
+            }
             if (sw.fspeed > target) { sw.fspeed *= 0.95f; return; }
             if (sw.fspeed > 0.1f * target) { sw.fspeed *= 0.96f; return; }
         } else mario_sound("亀ジェット泳ぎ");
@@ -21339,8 +21360,10 @@ static V3 m_last_safety(void) /* getLastSafetyTrans */
  * to the place's height (or 600 over and 600 out from its base when the place is under it; 180 frames at most), then
  * round an arc about the place (calcFirstVector, updateJump) for 200 frames (+ 1 per 20 past 500 away); once his
  * shadow is past the place and he is within 300 of it, the bubble bursts and he drops (close: on his feet).
- * Its global event camera 引き戻し (the player its target) from start to close. ponytail: no 引き戻し泡 / 泡破裂 effects (not in the
- * effect packs), the binder stays off for the whole flight (_14 / _F44: Petari binds him again after 60 frames) */
+ * Its global event camera 引き戻し (the player its target) from start to close; 引き戻し泡 (BringBubble) from start to the
+ * burst, 引き戻し泡破裂 (BringBubbleBreak) at the burst and at close. ponytail: the binder stays off for the whole flight
+ * (_14 / _F44: Petari binds him again after 60 frames) */
+static int rec_bubble; /* 引き戻し泡 on (kept a frame by rec_update) */
 static int rec_update(Player *m);
 static int rec_first_vector(Player *m) /* calcFirstVector */
 {
@@ -21401,6 +21424,7 @@ static void rec_jump(Player *m) /* updateJump */
 static int rec_update(Player *m) /* MarioRecovery::update: 0 when it ends */
 {
     m->hvel = v3(0, 0, 0); m->vup = 0; /* clearVelocity */
+    if (rec_bubble) mario_named_fx("BringBubble", &rec_bubble);
     switch (rec.s1A) {
     case 0:
         rec.s1A++;
@@ -21428,6 +21452,7 @@ static int rec_update(Player *m) /* MarioRecovery::update: 0 when it ends */
         if (vdot(so, io) < 0.0f) passed = 1;
         if (passed) {
             if (distant && vlen(vsub(mw.shadow_pos, m->pos)) > 300.0f) break;
+            rec_bubble = 0; mario_named_fx("BringBubbleBreak", NULL); /* stopEffectForce 引き戻し泡, playEffect 引き戻し泡破裂 */
             mario_sound("引き戻し泡破裂");
             rec.s1A++;
         }
@@ -21455,6 +21480,7 @@ static int rec_start(Player *m) /* MarioRecovery::start */
     rec.v34 = m_last_safety();
     m_anim("引き戻し"); /* changeAnimationNonStop */
     mario_sound("声慌て");
+    rec_bubble = 1; /* playEffect 引き戻し泡 */
     if (rec.s12) {
         rec.s1A = 3; rec.s16 = 180;
         if (ang_abs(vsub(rec.v34, rec.v4C), rec.v58) >= 1.5707964f) {
@@ -21476,6 +21502,7 @@ static void rec_close(Player *m) /* MarioRecovery::close */
     camera_event_end_now(-1); /* endGlobalEventCamera(引き戻し, -1, true) */
     m->grounded = 1; m->jumping = 0; /* mMovementStates._1, jumping */
     m->s420 = 16;
+    rec_bubble = 0; mario_named_fx("BringBubbleBreak", NULL); /* stopEffectForce 引き戻し泡, playEffect 引き戻し泡破裂 */
     m_clip_stop();
     m_anim("基本");
     printf("recovery: done at %d %d %d\n", (int)m->pos.x, (int)m->pos.y, (int)m->pos.z);
@@ -33031,7 +33058,15 @@ static int in_death(V3 p);
  * his place + 10 x his velocity + its ring point (cos / sin of its angle, the ring turning 0.025 a frame) x (1 + 0.25
  * cos 3 x angle); taken at a touch. After arg1 (1200) frames FollowEnd: after 20 they drift out (0.05 x their ring
  * offset) and along his way (10); at 120 the rest vanish and its SW_A goes off; all taken but one: it dies.
- * ponytail: no StarPieceFlyingBlur effect; the pieces' velocity is their move (no binder, as in FollowPlayer) */
+ * Each piece in FollowPlayer keeps its StarPieceFlyingBlur. ponytail: the pieces' velocity is their move (no binder,
+ * as in FollowPlayer) */
+static void piece_blur(const Pickup *pc) /* exeFollowPlayer: emitEffect StarPieceFlyingBlur (deleted at its kill / take) */
+{
+    float m[16];
+    mat_identity(m);
+    m[12] = pc->pos.x; m[13] = pc->pos.y; m[14] = pc->pos.z;
+    fx_named("StarPiece", "StarPieceFlyingBlur", m, NULL, pc);
+}
 static int follow_limit;
 void game_set_piece_follow_limit(int on) { follow_limit = on; }
 static void update_follow_groups(void)
@@ -33099,6 +33134,7 @@ static void update_follow_groups(void)
                 o->off[j] = v;
                 o->vel[j] = vsub(vadd(at, vmul(v, 1.0f + 0.25f * cosf(3.0f * a))), pc->pos);
                 pc->pos = vadd(pc->pos, o->vel[j]);
+                piece_blur(pc);
             }
             o->angle += 0.025f;
             if (st > limit) { o->nrv = 1; o->step = -1; }
@@ -33111,6 +33147,7 @@ static void update_follow_groups(void)
                 if (st > 20) o->vel[j] = vadd(o->vel[j], vmul(o->off[j], 0.05f));
                 o->vel[j] = vadd(o->vel[j], vmul(way, 10.0f));
                 pc->pos = vadd(pc->pos, o->vel[j]);
+                piece_blur(pc);
             }
             if (st > 120) { /* kill, offSwitchA, allKillPieces */
                 sw_set(r, SW_A, 0);
@@ -41471,6 +41508,13 @@ static void update_plants(void)
                 if (mb[idx].ok && mb[idx].item && mb[idx].nrv == PL_WAIT) {
                     mb[idx].nrv = PL_HINT; mb[idx].step = 0;
                     g->hint_i = (idx + n + 1) % n;
+                    float hm[16]; /* emitEffect HintShakeLeaf on mHintPosition / mHintRotation (the member's) */
+                    basis_matrix(hm, mb[idx].pos, mb[idx].up, fabsf(mb[idx].up.x) > 0.99995f ? v3(0, 1, 0) : v3(1, 0, 0), mb[idx].rot);
+                    int ok = fx_named("Bush", "HintShakeLeaf", hm, NULL, NULL);
+#ifdef PLANT_TEST
+                    printf("plant group %d: HintShakeLeaf %d%c", in->row, ok, 10);
+#endif
+                    (void)ok;
                     break;
                 }
                 idx = (idx + n + 1) % n;

@@ -8,6 +8,7 @@
  * punches, ground attacks, 2 hits break an arm, repaired after 1200), the body broken again, the core: ポルタダウンデモ,
  * kill (startAfterBossBGM, its power star, its dead switch). Hit only by BombTeresa explosions (bt_update ->
  * pol_explosion); star pieces bounce off it (pol_shot). Its BombTeresas are walker slots after their row (host -1).
+ * Its Shadow / HeadShadow effect rows (PoltaShadow) are never emitted: PoltaFunction::emitEffectShadow is empty.
  * ponytail: its arms' Shadow.bcsv poles drawn as discs (no volume lines), no BTK Inner, no center screen blur
  * (startCenterScreenBlur), overlayWithPreviousScreen as render_cover, no declareCameraRegisterVec (arg7), the rocks'
  * Froat / Sign clips not played (static models per Color BVA frame), the shadow projection as a 3000 line along

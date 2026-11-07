@@ -8,8 +8,8 @@
  * (10 star pieces at Center, kill: SE, SW_DEAD).
  * ponytail: no Bind (isStarPointerPointing2POnPressButton: no 2P pointer), no AnimScaleController reaction to a star
  * piece (asc_ is the walkers' only), its Shadow.bcsv volume lines (obi1-3) not drawn (one disc a cylinder: enchu00-03
- * at Joint00..03, 130 / 100 / 70 / 20, dropped 3000), no SkeletalFishBaby effects (its AutoEffectList
- * rows are not in jpa.py NAMED), the base scale left at 1 (no row scales them), no clipping (sphere 500) */
+ * at Joint00..03, 130 / 100 / 70 / 20, dropped 3000) (its effects: SnakeFish's Swim / Death clip rows, slice.py
+ * SKINNED_OBJ; StarPointerHold is the 2P bind's), the base scale left at 1 (no row scales them), no clipping (sphere 500) */
 #define SF_BABIES 12
 static int sfk_jet_hit(V3 p); /* skeletal_fish_boss.inc */
 static void update_sfk(void), sfk_draw(void), sfk_init(const Scene *s, const unsigned char *blob);
