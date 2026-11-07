@@ -1874,3 +1874,8 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
   in its prep state. fat_rings_talk now runs it with the talkers (after update_talkers, before Mario moves). The
   `fat` XF="-DTG_TEST=2" test no longer forces it: Mario is put 200 before the ring once and lands, A starts it, the
   yes / no selector gets the pointer on BoxRight and A (as the talk test): both rings Meta, their spin drivers out.
+- MagnumKiller (2026-11-07): HomingKiller's Type_MagnumKiller in update_killers (killer 3): a straight shot always
+  (mIsLinearShot), no freeze, body / binder 70 x its scale, SE_EM_MAGKILLER_FIRING, SE_EM_LV_MAGKILLER_FLY pitched
+  1.8 .. 0.9 over 500 .. 1400 from Mario, no SandColumn (Type_HomingKiller's only, Torpedo neither now), its own
+  Shoot / Explosion (jpa.py NAMED MagnumKiller). Test: plain XF="-DST_VISIT=MagnumKiller" KoopaBattleVs3Galaxy/1:
+  fired, hits Mario. ponytail: its CSV shadow, the 400 near clip. Repack: KoopaBattleVs3Galaxy (jpa.py NAMED).

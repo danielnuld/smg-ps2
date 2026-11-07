@@ -3606,7 +3606,11 @@ static void update_meteor(void)
  * frames of straight flight, blowing up the walkers within 250 (sendMsgExplosionToNearActor); 180 frames later the
  * next one comes out. R2 with the pointer on it freezes it 20 frames, shaking along the camera's X. row_turn 0
  * appear, 1 move, 2 chase, 3 broken; row_step its frames. ponytail: no Smoke / SmokeChase trails (looping effects),
- * no propeller / BCKs, no target sensors (GoToTarget), Torpedo / MagnumKiller not handled */
+ * no propeller / BCKs, no target sensors (GoToTarget), Torpedo not handled.
+ * MagnumKiller (killer 3, Type_MagnumKiller): always a straight shot (mIsLinearShot), never frozen (tryFreeze), its
+ * body and binder 70 x its scale, SE_EM_MAGKILLER_FIRING, its fly level SE pitched 1.8 .. 0.9 over 500 .. 1400 from
+ * Mario (startMoveLevelSound); enemies it hits do not break it (tryToExplosion / receiveMsgEnemyAttack), Mario does.
+ * ponytail: its Shadow (initShadowFromCSV), the near clip at 400 (isValidShowModel) */
 static void hurt_mario(V3 from, float speed);
 static int kcl_query(V3 c, float radius, Hit *out, int max);
 static Killer *killer_of(int row)
@@ -3680,15 +3684,18 @@ static void update_killers(void)
             if (*t >= 72) {
                 float m[16];
                 basis_matrix(m, k->pos, k->up, k->front, 0);
-                fx_emit(FX_HOMINGKILLER_SHOOT, m);
-                se_start(SE_EM_KILLER_FIRING, &k->pos.x);
+                if (in->killer == 3) fx_named("MagnumKiller", "Shoot", m, NULL, NULL);
+                else fx_emit(FX_HOMINGKILLER_SHOOT, m);
+                se_start(in->killer == 3 ? SE_EM_MAGKILLER_FIRING : SE_EM_KILLER_FIRING, &k->pos.x);
+                if (in->killer == 3) printf("magnum killer %d: fired%c", in->row, 10);
                 *ph = 1; *t = 0;
             }
             continue;
         }
         V3 g = vmul(up_at(k->pos, up), -1.0f);
         int brk = 0;
-        if (!k->freeze && pointer_a() && cursor_sees(k->pos, 40.0f)) { /* tryFreeze */
+        float kr = in->killer == 3 ? 70.0f * in->s : 70.0f; /* cBodyHitSensorRadius / cBinderRadius x scale (Magnum) */
+        if (!k->freeze && in->killer != 3 && pointer_a() && cursor_sees(k->pos, 40.0f)) { /* tryFreeze (not a Magnum's) */
             k->freeze = 1; k->fpos = k->pos;
             dpd_hit_sound(); /* exeFreeze: startDPDHitSound (mFreezeTime 0) */
             printf("homing killer %d frozen\n", in->row);
@@ -3715,10 +3722,14 @@ static void update_killers(void)
             if (*t > 600) brk = 1;
             V3 to = vsub(mario->pos, k->pos);
             float d = vlen(to), start = r->arg[0] > 0 ? (float)r->arg[0] : 2000.0f;
-            if (*t >= 35 && r->arg[2] <= 0 && d < start && d > 0 &&
+            if (*t >= 35 && r->arg[2] <= 0 && in->killer != 3 && d < start && d > 0 && /* mIsLinearShot */
                 (r->arg[3] > 0 || vdot(vmul(to, 1.0f / d), k->front) > 0.0f)) { *ph = 2; se_start(SE_EM_KILLER_JET, &k->pos.x); printf("homing killer %d chases\n", in->row); } /* exeChaseStart */
             k->up = vmul(g, -1.0f);
-            in->lv[0] = se_level(SE_EM_LV_KILLER_FLY, &k->pos.x, in->lv[0]); /* processMove: startMoveLevelSound */
+            if (in->killer == 3) { /* startMoveLevelSound: getLinerValueFromMinMax(distance, 500, 1400, 1.8, 0.9) */
+                in->lv[0] = se_level(SE_EM_LV_MAGKILLER_FLY, &k->pos.x, in->lv[0]);
+                float dm = fminf(fmaxf((d - 500.0f) / 900.0f, 0.0f), 1.0f);
+                if (in->lv[0]) se_volpitch(in->lv[0], 1.0f, 1.8f + (0.9f - 1.8f) * dm);
+            } else in->lv[0] = se_level(SE_EM_LV_KILLER_FLY, &k->pos.x, in->lv[0]); /* processMove: startMoveLevelSound */
         } else if (!brk) { /* processChase */
             in->lv[0] = se_level(SE_EM_LV_KILLER_FLY, &k->pos.x, in->lv[0]); /* startMoveLevelSound(true): its alarm a Torpedo's */
             V3 tg = killer_target(k, g, in->killer == 2 ? 75.0f : 200.0f);
@@ -3731,11 +3742,11 @@ static void update_killers(void)
         if (!brk && *ph >= 1) { float dep; int wet = in_water(k->pos, vmul(g, -1.0f), &dep); if (in->killer == 2 ? !wet : wet) brk = 1; } /* isWaterBreak */
         Hit h[1];
         int ground = 0;
-        if (!brk && vlen(vsub(c, k->pos)) < 70.0f + HIT_BODY_R) {
+        if (!brk && vlen(vsub(c, k->pos)) < kr + HIT_BODY_R) {
             mario_attack(ATK_EXPLOSION, k->pos);
             printf("homing killer %d hits Mario\n", in->row);
             brk = 1;
-        } else if (!brk && (*ph == 2 || *t >= 35) && kcl_query(k->pos, 70.0f, h, 1)) {
+        } else if (!brk && (*ph == 2 || *t >= 35) && kcl_query(k->pos, kr, h, 1)) {
             printf("homing killer %d breaks on the map\n", in->row);
             brk = 1;
             ground = vdot(g, h[0].n) < -0.75f; /* cSandColumnEmitDot */
@@ -3743,10 +3754,11 @@ static void update_killers(void)
         if (brk) { /* exeBreak */
             float m[16];
             basis_matrix(m, k->pos, vmul(g, -1.0f), k->front, 0);
-            fx_emit(FX_HOMINGKILLER_EXPLOSION, m);
+            if (in->killer == 3) fx_named("MagnumKiller", "Explosion", m, NULL, NULL);
+            else fx_emit(FX_HOMINGKILLER_EXPLOSION, m);
             se_start(SE_EM_KILLER_EXPLOSION, &k->pos.x);
             rumble_shake_weak(k->pos, RUMBLE_STRONG, RUMBLE_MIDDLE, 1000.0f, 2000.0f); /* cCameraShakeDistance */
-            if (ground) fx_emit(FX_HOMINGKILLER_SANDCOLUMN, m);
+            if (ground && in->killer == 1) fx_emit(FX_HOMINGKILLER_SANDCOLUMN, m); /* (Type_HomingKiller's SandColumn) */
             walker_explosion(k->pos);
             needle_attacked(k->pos, 250.0f);
             *ph = 3; *t = 0; k->freeze = 0;
@@ -5022,7 +5034,7 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->hhp = strcmp(name, "HammerHeadPackun") == 0;
     ci->vine = strcmp(name, "Plant") == 0;
     ci->ibubble = strcmp(name, "ItemBubble") == 0;
-    ci->killer = strcmp(name, "HomingKiller") == 0 ? 1 : strcmp(name, "Torpedo") == 0 ? 2 : 0; /* Torpedo: HomingKiller's Type_Torpedo */
+    ci->killer = strcmp(name, "HomingKiller") == 0 ? 1 : strcmp(name, "Torpedo") == 0 ? 2 : strcmp(name, "MagnumKiller") == 0 ? 3 : 0; /* Torpedo, MagnumKiller: HomingKiller's Type_Torpedo / Type_MagnumKiller */
     ci->gcap = strcmp(name, "GCaptureTarget") == 0 ? 1 : strcmp(name, "BlueStarCupsulePlanet") == 0 ? 2 : strcmp(name, "UFOBlueStarCupsule") == 0 ? 3 :
                strcmp(name, "AstroDomeBlueStar") == 0 ? 4 : 0;
     ci->tspot = strcmp(name, "TreasureSpot") == 0 ? 1 : strcmp(name, "CoinFlower") == 0 ? 2 : 0;
