@@ -466,7 +466,17 @@ static int st_rail_go(const Inst *in) /* update_railers: may its rail mover run 
  * Rattle: Open (Rotation clip, its collision off until the clip stops, then Wait); Mario's spin storm range (his spin
  * within its sensor 150 + 600, the spin's first 15 frames: isMsgSpinStormRange) in Wait: Rattle (Vibration clip,
  * SE_OJ_MANHOLE_RATTLE; past sRattleTime 45 with the clip stopped, Wait). n: 0 Wait, 1 Open, 2 Rattle.
- * ponytail: isMsgPlayerUpperPunch (the port's Mario has no upper punch) */
+ * Mario's upper punch (isMsgPlayerUpperPunch) in Wait or Rattle opens it too (st_manhole_upper) */
+static int st_manhole_upper(int i)
+{
+    Inst *in = &insts[i];
+    StSt *g = st_get(in->row);
+    if (g->n != 0 && g->n != 2) return 0;
+    if (in->kcl) g->kcl = in->kcl;
+    g->n = 1; g->st = 0; obj_play(in, "rotation", 0, 0); in->kcl = NULL; /* invalidateCollisionParts */
+    printf("manhole cover %d: open (upper punch)%c", in->row, 10);
+    return 1;
+}
 static void st_manhole(Inst *in, StSt *g, int i)
 {
     if (in->kcl) g->kcl = in->kcl;

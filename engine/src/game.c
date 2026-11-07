@@ -6106,6 +6106,30 @@ int game_test_follow(int phase) /* the first StarPieceFollowGroup: its SW_A on (
     return -1;
 }
 
+#ifdef UPPER_TEST
+void game_test_upper(unsigned f) /* XF=-DUPPER_TEST (plain build, FlipPanelExGalaxy/1): from 150 every 120 frames Mario
+                                  * jumps up into the next PunchBox / WoodBox, lifted 300 over its floor */
+{
+    static int next, t;
+    test_nolost = 1;
+    if (in_opening || mario->launch >= 0) return;
+    if (t++ % 120) return;
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[(next + i) % ninsts];
+        const char *name = sc->types + 32 * sc->objs[in->row].type;
+        if (in->row < 0 || row_dead[in->row] || in->breaks != 1 || (strcmp(name, "PunchBox") && strcmp(name, "WoodBox"))) continue;
+        next = (next + i + 1) % ninsts;
+        V3 p = v3(in->m[12], in->m[13], in->m[14]);
+        mario->up = up_at(p, mario->up);
+        V3 lift = vmul(mario->up, 300.0f); /* the box lifted 300 off its floor, Mario jumping from under it */
+        in->m[12] += lift.x; in->m[13] += lift.y; in->m[14] += lift.z;
+        mario->pos = vadd(p, vmul(mario->up, 20.0f));
+        mario->hvel = v3(0, 0, 0); mario->vup = 20.0f; mario->grounded = 0; mario->jumping = 1;
+        printf("upper test f %u: under %s row %d%c", f, name, in->row, 10);
+        return;
+    }
+}
+#endif
 int game_test_replica(int phase) /* Mario held on the first CoinReplica's coin; phase 1 turns its SW_A on; returns its
                                   * coin's state (0 gone) */
 {
@@ -16472,6 +16496,8 @@ static void m_do_landing(Player *m)
 /* mainMove: the ground move. The stick turns Mario (on the spot over 10 degrees from still, at mTurnAngleSpeed /
  * Speed2 / SlowWalk running, weakened for mWeakTurnTime, a U-turn arc at 0.12 a frame), pulling it back from a run
  * brakes and turns (ターンブレーキ), then he moves mWalkSpeed x his walk speed along the ground */
+static int m_upper_punch(Player *m, int inst);
+static int m_730;
 static void m_main_move(Player *m)
 {
     int a1 = 0;
@@ -16488,6 +16514,11 @@ static void m_main_move(Player *m)
     V3 dir = m->move_dir;
     int dir_set = 0;
     int a2 = m_req_jump;
+    if (a2 && m->squat && m_dist_to_ceil(m) < 160.0f) { /* squatting under a ceiling: the uppercut, no jump */
+        m_upper_punch(m, m_730);
+        m_anim("しゃがみアッパー");
+        a2 = 0;
+    }
     if (m_dash_chance) { /* _436: the race start's dash (GhostPlayer: noticePlayerDashChance) */
         m_dash_chance--;
         if (a2 && m_check_squat(m, 0)) {
@@ -17861,9 +17892,11 @@ static int press_at(int inst) { return inst >= 0 && insts[inst].press; }
 
 /* Mario::calcDistToCeil(false): the first face up from 30 under him within 230; one under his feet that is no press
  * (sensor, Press floor code 29, nor his ground's) is looked for again from 10 over him; none: 200 */
+static int m_730 = -1; /* _730: the ceiling's part of the last calcDistToCeil */
 static float m_dist_to_ceil(Player *m)
 {
     float off = 30.0f;
+    m_730 = -1;
     for (;;) {
         V3 hp, n;
         int ci;
@@ -17873,31 +17906,18 @@ static float m_dist_to_ceil(Player *m)
             off = -10.0f;
             continue;
         }
+        m_730 = ci;
         return vlen(vsub(hp, m->pos));
     }
 }
 
 /* Mario::checkVerticalPress: a face over him within 160 (80 squatting) from 10 under, then from it (from him when it
  * is 150 or more up) along its normal another within that: two collisions, one a press object, squeeze him. Checked
- * at where he moves to; there and not where he is: he stops. ponytail: the push off a press with nothing under it
- * (vecBlendSphere of the two normals) is not done; Hang is not in the port */
-static int m_vertical_press(Player *m, int at_cur)
-{
-    V3 pos = at_cur ? m->pos : vadd(m->pos, m->vel), up = m->up, hp, cn, fp, fn;
-    float height = m->squat ? 80.0f : 160.0f;
-    int ci, fi;
-    if (!map_line(vsub(pos, vmul(up, 10.0f)), vmul(up, height), &hp, &cn, &ci)) return 0;
-    float dist = vdot(up, vsub(hp, pos));
-    V3 origin = dist < 150.0f ? hp : pos;
-    if (map_line(vsub(origin, vmul(cn, 10.0f)), vmul(cn, height), &fp, &fn, &fi)) {
-        if (ci != fi && (press_at(ci) || press_at(fi))) {
-            if (!at_cur && !m_vertical_press(m, 1)) { m->hvel = v3(0, 0, 0); m->vup = 0; m->vel = v3(0, 0, 0); return 0; }
-            return 1;
-        }
-    } else if (!at_cur && press_at(ci) && m->grounded && mario_ground != ci)
-        return 1; /* on other ground than the press over him */
-    return 0;
-}
+ * at where he moves to; there and not where he is: he stops. Hanging, from his centre (_2A0). A press over him with
+ * nothing along its normal (mDrawStates._1E): on other ground he is pressed, else pushed along it by half the overlap
+ * (vecBlendSphere of its normal and the empty floor triangle's zero: the normal at half length; height - distance
+ * under it, else 150 - distance) */
+static int m_vertical_press(Player *m, int at_cur);
 
 /* MarioActor::setPress: Mario squashed, his life gone (decLife x 6), the game over 60 frames on (_FB8). Type 0
  * (vertical) is not taken with 160 or more to the ceiling */
@@ -17913,6 +17933,40 @@ static void m_set_press(Player *m, int type)
 
 static void m_upper_stop(void);
 static void m_blend_mtx(int n);
+/* MarioActor::receiveMessage ACTMES_REFLECT_V (not damaged): _5 off, _2B, _402 0, his jump's gravity part cut */
+static void m_reflect_v(Player *m)
+{
+    if (dmg.st == DMS_DAMAGE) return;
+    m->connect = 0; m->spin_lock = 1; m->air_spin = 0;
+    m->vup = 0.0f;
+}
+static int st_manhole_upper(int inst);
+static void break_inst(const Inst *in, int drops);
+/* isMsgPlayerUpperPunch's receivers: WoodBox / PunchBox (receiveMsgPlayerAttack: doHit, ACTMES_REFLECT_V back),
+ * KoopaShipManholeCover (ManholeCover: Open from Wait / Rattle). ponytail: ItemBlock and SwitchBox are not ported */
+static int upper_punch_receive(int i)
+{
+    Inst *in = &insts[i];
+    const char *name = sc->types + 32 * sc->objs[in->row].type;
+    if (in->breaks == 1 && (!strcmp(name, "WoodBox") || !strcmp(name, "PunchBox"))) {
+        printf("upper punch: %s row %d%c", name, in->row, 10);
+        break_inst(in, 1);
+        game_rebind();
+        m_reflect_v(mario);
+        return 1;
+    }
+    if (!strcmp(name, "KoopaShipManholeCover")) return st_manhole_upper(i);
+    return 0;
+}
+static int m_upper_punch(Player *m, int inst) /* MarioActor::sendMsgUpperPunch */
+{
+    if (!mode_action("アッパーパンチ")) return 0; /* isActionOk */
+    if (inst < 0 || inst >= ninsts || insts[inst].row < 0 || row_dead[insts[inst].row]) return 0;
+    if (!upper_punch_receive(inst)) return 0;
+    mario_sound("声蹴り");
+    if (!swimming) m_anim("アッパーパンチ");
+    return 1;
+}
 static int carry_inst = -1; /* _8D4: the part that carried him since his last update (moveRelativePosition), _184 its move */
 static V3 carry_d;
 /* Mario's map info (MarioCollision.cpp checkAllWall / calcFrontFloor / calcShadowPos, MarioEnforce.cpp
@@ -17966,6 +18020,28 @@ static int m_check_wall_code(int code, int front_back) /* checkWallCode */
  * start, _1C let go, _1D let go asked in the start, _1E caught in a jump (not a fall), _20 the wall (_28 its normal in
  * it), _34 the hang's normal; def the second name of its changeAnimation */
 static struct { int on, s12, s14, s16, timer, s1A, s1B, s1C, s1D, s1E; Tri wall; V3 v28, v34; const char *def; } hg;
+static int m_vertical_press(Player *m, int at_cur)
+{
+    V3 pos = hg.on ? mw.c : m->pos, up = m->up, hp, cn, fp, fn;
+    if (!at_cur) pos = vadd(pos, m->vel);
+    float height = m->squat ? 80.0f : 160.0f;
+    int ci, fi;
+    if (!map_line(vsub(pos, vmul(up, 10.0f)), vmul(up, height), &hp, &cn, &ci)) return 0;
+    float dist = vdot(up, vsub(hp, pos));
+    V3 origin = dist < 150.0f ? hp : pos;
+    if (map_line(vsub(origin, vmul(cn, 10.0f)), vmul(cn, height), &fp, &fn, &fi)) {
+        if (ci != fi && (press_at(ci) || press_at(fi))) {
+            if (!at_cur && !m_vertical_press(m, 1)) { m->hvel = v3(0, 0, 0); m->vup = 0; m->vel = v3(0, 0, 0); return 0; }
+            return 1;
+        }
+    } else if (!at_cur && press_at(ci)) {
+        mw.press1E = 1;
+        V3 push = vmul(cn, 0.5f * fabsf(dist < 0.0f ? height - dist : 150.0f - dist));
+        if (m->grounded && mario_ground != ci) return 1; /* on other ground than the press over him (_F48) */
+        m->s350 = vadd(m->s350, push);                 /* Mario::push */
+    }
+    return 0;
+}
 
 static int m_drawn_ok;
 static float m_drawn[16];
@@ -19380,16 +19456,23 @@ static void hang_end_by(Player *m, int faint)
 }
 
 /* Mario::checkSidePressPre: a front and a back wall under 100 apart, of two parts one a press object (no Dossun),
- * facing each other (normals under -0.5): setPress 1. ponytail: the hanging case (_8C8, his hang's wall) */
-static int m_side_press_pre(void)
+ * facing each other (normals under -0.5): setPress 1. Hanging (no front and back pair): his moving part (_8C8) and
+ * the back wall, of two parts one a press (no Dossun), the back wall's hit within 100 across the gravity. ponytail:
+ * _8C8 (recordRelativePosition, not ported) is taken as his hang's wall when it moves */
+static int m_is_dossun(int i) { return i >= 0 && insts[i].row >= 0 && strstr(sc->types + 32 * sc->objs[insts[i].row].type, "Dossun") != NULL; } /* isDossun */
+static int tri_moved(const Tri *t);
+static int m_side_press_pre(Player *m)
 {
-    if (!mw.w8 || !mw.w19 || vlen(vsub(mw.p4F4, mw.p4E8)) >= 100.0f || mw.front.inst == mw.back.inst) return 0;
-    if (!press_at(mw.front.inst) && !press_at(mw.back.inst)) return 0;
-    for (int k = 0; k < 2; k++) { /* isDossun: its host's name has ドッスン */
-        int i = k ? mw.back.inst : mw.front.inst;
-        if (i >= 0 && insts[i].row >= 0 && strstr(sc->types + 32 * sc->objs[insts[i].row].type, "Dossun")) return 0;
+    if (mw.w8 && mw.w19) {
+        if (vlen(vsub(mw.p4F4, mw.p4E8)) >= 100.0f || mw.front.inst == mw.back.inst) return 0;
+        if (!press_at(mw.front.inst) && !press_at(mw.back.inst)) return 0;
+        if (m_is_dossun(mw.front.inst) || m_is_dossun(mw.back.inst)) return 0;
+        return vdot(tri_n(&mw.front), tri_n(&mw.back)) < -0.5f;
     }
-    return vdot(tri_n(&mw.front), tri_n(&mw.back)) < -0.5f;
+    if (!hg.on || !mw.w19 || hg.wall.inst < 0 || !tri_moved(&hg.wall) || hg.wall.inst == mw.back.inst) return 0;
+    if (!press_at(hg.wall.inst) && !press_at(mw.back.inst)) return 0;
+    if (m_is_dossun(hg.wall.inst) || m_is_dossun(mw.back.inst)) return 0;
+    return vlen(vtangent(vsub(m->pos, mw.p4F4), m->up)) < 100.0f;
 }
 /* MR::calcVelocityMovingPoint: how far a place on a part moved since Mario's last update (getPrevBaseMtx: kcl_pm).
  * ponytail: a part on leaves or a Move joint has no previous matrix here: still */
@@ -19515,8 +19598,11 @@ static int m_check_press(Player *m)
     for (int i = 0; i < ninsts && !near; i++)
         if (insts[i].press && vlen(vsub(m->pos, v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]))) < insts[i].reach + 300.0f)
             near = 1;
-    if (near && m_vertical_press(m, 0)) { m_set_press(m, 0); return m->press != 0; }
-    if (m_side_press_pre()) { m_set_press(m, 1); return 1; }
+    if (near && m_vertical_press(m, 0)) {
+        if (hg.on) hg.s1C = 1; /* MarioHang::forceDrop */
+        else { m_set_press(m, 0); return m->press != 0; }
+    }
+    if (m_side_press_pre(m)) { m_set_press(m, 1); return 1; }
     if (m_side_press(m)) return 1;
     if (m_wall_floor_code(29) && m->grounded && m->floor != 29) { m_set_press(m, 4); return 1; } /* checkWallFloorCode(0x1D) */
     return 0;
@@ -21427,6 +21513,7 @@ static void bh_update(Player *m)
  * degrees within 80 of him along the gravity, an edge hit within 45 degrees of his jump left out. ponytail: no
  * selectPushOff (MarioActor _FC4's bit 17: the actor table's data is not in the port) */
 static V3 at_nrm[32];
+static int at_inst[32];
 static int at_n;
 static void m_create_at_field(Player *m)
 {
@@ -21457,6 +21544,7 @@ static void m_create_at_field(Player *m)
                 }
                 if (angle_d(m, h[j].n) < a) continue;
             }
+            at_inst[at_n] = h[j].inst;
             at_nrm[at_n++] = h[j].n;
         }
     }
@@ -21464,10 +21552,11 @@ static void m_create_at_field(Player *m)
 }
 /* writeBackPhyisicalVector's jump part (Mario.cpp:1579-1638): unless the gravity is held (MarioActor _334) or walls leave
  * it alone (_22), each field face he moves into takes his velocity's part into it, and his jump's part into it halves
- * (_1C._D, the binder's edge push, is not ported: never set). ponytail: no sendMsgUpperPunch to a ceiling's sensor
- * (no receiver ported), no Fur face's entryWallWalkMode from here (the Bee's stick checks do it) */
+ * (_1C._D, the binder's edge push, is not ported: never set); rising, a face looking down (normal . gravity over 0.707)
+ * gets sendMsgUpperPunch. ponytail: no Fur face's entryWallWalkMode from here (the Bee's stick checks do it) */
 static void m_at_field_jump(Player *m)
 {
+    int rising = m->vup > 0.0f, punch[32], np = 0;
     if (m_334) at_n = 0;
     if (m->wall_free) return;
     for (int i = 0; i < at_n; i++) {
@@ -21482,7 +21571,9 @@ static void m_at_field_jump(Player *m)
         V3 jv = m_jv(m);
         float f = vdot(jv, n);
         if (f <= 0.0f) m_set_jv(m, vsub(jv, vmul(n, f * 0.5f)));
+        if (rising && -vdot(n, m->up) > 0.707f) punch[np++] = at_inst[i];
     }
+    for (int i = 0; i < np; i++) m_upper_punch(m, punch[i]); /* (after the loop: a break rebinds the parts) */
 }
 /* MarioDamage::stopHead (MarioDamage.cpp:512): his head on a face takes the damage move's part into it (half back) */
 static void dm_stop_head(Player *m, V3 n)
@@ -21508,15 +21599,19 @@ static int m_head_push_area(const Player *m)
  * (50 squatting; damaged his head, 50 before the damage's fall _18) pushes his velocity off the faces it is in, each
  * taken to its depth along its normal; jumping only the faces looking down (damaged, not the floors under 45 degrees);
  * in the head push area each also on its own; damaged the move stops on them (stopHead). As Bee (not sliding,
- * squatting, side stepping nor on a wall) the ball is at his head. Swimming: MarioSwim's own (sw_hit_head). ponytail:
- * no rush ball (_3E, MarioActorRush not ported), no Fur ceiling flag (mDrawStates._15, read by MarioAnimator), no
- * sendMsgUpperPunch (no receiver ported), MarioStatus_Wait / Bury not told apart for the Bee */
+ * squatting, side stepping nor on a wall) the ball is at his head. Swimming: MarioSwim's own (sw_hit_head). Jumping
+ * up, each face looking down (normal . gravity over 0.707) gets sendMsgUpperPunch. In a rush's flight (_3E: the
+ * port's land_type, the ScenarioStarter's) the ball is at his cap + 2 x last frame's move, every face counts, and a push
+ * over 45 degrees blows him (a fifth of it; _2B, _402 0, _428 60, _3E off), one against his up lands him (空中一回転).
+ * ponytail: no Fur ceiling flag (mDrawStates._15, read by MarioAnimator), MarioStatus_Wait / Bury not told apart for
+ * the Bee */
 static void m_check_head_point(Player *m)
 {
     float r = 40.0f;
     V3 c = vadd(m->pos, vmul(m->up, m->squat ? 50.0f : 110.0f));
-    int damaging = dmg.st == DMS_DAMAGE;
+    int damaging = dmg.st == DMS_DAMAGE, punch[32], np = 0;
     if (damaging) { c = mario_joint_drawn(13); if (!dmg.d18) r = 50.0f; }
+    if (m->land_type) c = vadd(mario_joint_drawn(13), vmul(m->prev_vel, 2.0f)); /* _2AC + _16C x 2 */
     if (player_mode == PM_BEE && !m->s23 && !m->squat && !m->side_step && !m->bee_wall) c = mario_joint_drawn(13);
     Hit h[32];
     ghost_through = player_mode == PM_TERESA && m->t418; /* isThroughWall */
@@ -21525,16 +21620,35 @@ static void m_check_head_point(Player *m)
     V3 react = v3(0, 0, 0);
     for (int i = 0; i < n; i++) {
         float g = -vdot(h[i].n, m->up); /* normal . gravity */
-        if (damaging) { if (g < -0.707f) continue; }
-        else if (m->jumping && g < 0.0f) continue;
+        if (!m->land_type) {
+            if (damaging) { if (g < -0.707f) continue; }
+            else if (m->jumping && g < 0.0f) continue;
+        }
         float k = vdot(react, h[i].n);
         if (k < h[i].dist) {
             react = vadd(vsub(react, vmul(h[i].n, k)), vmul(h[i].n, h[i].dist));
             if (m_head_push_area(m)) m->vel = vadd(m->vel, vmul(h[i].n, h[i].dist));
             if (damaging) dm_stop_head(m, h[i].n);
+            if (np < 32) punch[np++] = i;
         }
     }
     m->vel = vadd(m->vel, react);
+#ifdef UPPER_TEST
+    { static int dbg; if (n && dbg++ < 40) printf("head: n %d np %d jumping %d vup %.1f g0 %.2f inst %d%c", n, np, m->jumping, m->vup, -vdot(h[0].n, m->up), h[0].inst, 10); }
+#endif
+    if (!near0(react) && m->land_type) {
+        V3 rn = vnorm(react);
+        if (angle_d(m, rn) > 45.0f) {
+            m_blown(m, vmul(react, 0.2f));
+            m->spin_lock = 1; m->air_spin = 0; m->air_lock = 60; m->land_type = 0;
+        } else if (vdot(m->up, react) < 0.0f) {
+            m->grounded = 1; m->hvel = v3(0, 0, 0); m->vup = 0.0f;
+            m_anim("空中一回転");
+        }
+    }
+    if (m->jumping && m->vup > 0.0f) /* isRising */
+        for (int k = 0; k < np; k++)
+            if (-vdot(h[punch[k]].n, m->up) > 0.707f) m_upper_punch(m, h[punch[k]].inst);
 }
 /* MarioActor::updateGravityVec(false, ..) (MarioActorGravity.cpp:157-345): a gravity turned 0.4 pi or more at once is
  * a sudden turn: on the ground he drops off next frame (_10._1A: tryJump, ショートジャンプ, the carried move as his jump),
