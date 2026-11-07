@@ -100,7 +100,7 @@ static const Model *walker_new_model(int row);
 static void mk_update(Kuribo *k), mk_demo_update(void), mk_draw(Kuribo *k, const Model *md, Anim *a), mk_draw_extras(void), mk_begin_demo(int row);
 static int mk_noclip(const Kuribo *k);
 int mk_shot(V3 p); /* IceMerameraKing (ice_meraking.inc) */
-static int st_flag_class(const char *n), st_cast_hook(int row, int type, int part); static void st_update(void), st_draw(void), st_init(const Scene *s); /* statics.inc */
+static int st_flag_class(const char *n), st_cast_hook(int row, int type, int part), st_rail_obj(const char *n); static void st_update(void), st_draw(void), st_init(const Scene *s); /* statics.inc */
 static void mm_update(Kuribo *k), mm_kill(Kuribo *k), mm_btp(Kuribo *k, const Model *md); /* Meramera (meramera.inc) */
 static int mm_down_force(Kuribo *k, V3 from), mm_star(Kuribo *k), mm_fire(Kuribo *k, V3 from);
 /* Petari.cpp's nerves (petari_update) */
@@ -1154,7 +1154,8 @@ static int breakable(const char *name, const Row *r, int *coins, int *pieces)
         else if (r->arg[3] == 3) *pieces = r->arg[6] > 0 ? r->arg[6] : 5;
         return 5;
     }
-    if (strcmp(name, "TakoBarrelA") == 0) { /* mBreakFlags 1: only its SW_B (initCaseUseSwitchB) breaks it */
+    if (strcmp(name, "TakoBarrelA") == 0 || strcmp(name, "SunkenShip") == 0) { /* mBreakFlags 1: only its SW_B (initCaseUseSwitchB)
+        * breaks it, or (SunkenShip) its demo's action functor (setStateBreak: statics.inc st_cast_hook) */
         if (r->arg[3] == -1) *coins = r->arg[6] > 0 ? r->arg[6] : 1;
         else if (r->arg[3] == 3) *pieces = r->arg[6] > 0 ? r->arg[6] : 5;
         return 4;
@@ -3096,7 +3097,8 @@ static const NpcTurn npc_turns[] = {
     {"PenguinStudent", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turn", "talk", "talkturn"}}, /* NPCActor::setDefaults (student_update) */
     {"Caretaker", 0, 1, 2000.0f, 3.0f, 0, 0, {"wait", "turn", "talk", "talkturn"}},
     {"HoneyBee", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turn", "talk", "talkturn"}},
-    {"Rabbit", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turnsmall", "talk", "turnsmall"}}}; /* Rabbit::init: TurnSmall */
+    {"Rabbit", 1, 1, 2000.0f, 4.0f, 0, 0, {"wait", "turnsmall", "talk", "turnsmall"}}, /* Rabbit::init: TurnSmall */
+    {"PenguinMaster", 0, 0, 2000.0f, 4.0f, 0, 0, {"wait", "wait", "talk", "talk"}}}; /* PenguinMaster::init: mParam _0 / _1 off, Wait / Talk */
 static void npc_set(NpcTurn *m, const char *a0, const char *a1, const char *a2, const char *a3)
 {
     m->act[0] = a0; m->act[1] = a1; m->act[2] = a2; m->act[3] = a3;
@@ -4976,6 +4978,8 @@ typedef struct {
 /* #143's placed classes ported since the audit (update_gaps) */
 enum { GAP_NONE, GAP_SHOCKWAVE, GAP_CAPSULE, GAP_DRIFT, GAP_SHELLCOIN, GAP_SHELLCHIP, GAP_ELEVATOR, GAP_UFOKINOKO, GAP_TRIROCK };
 static void gap_place(Inst *in);
+static int st_rail_go(const Inst *in); /* statics.inc */
+static void st_chain_rebind(const Scene *s);
 static void ufok_start(int row);
 static int gap_class(const char *name)
 {
@@ -5062,16 +5066,22 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->arrow = strcmp(name, "ArrowSwitch") == 0 ? 1 : strcmp(name, "ArrowSwitchMulti") == 0 ? 2 : 0;
     ci->anmmodel = anm_kind(name);
     ci->lever = strcmp(name, "SpinLeverSwitch") == 0;
-    ci->dswitch = strcmp(name, "DesertLandDownSwitch") == 0;
+    ci->dswitch = strcmp(name, "DesertLandDownSwitch") == 0 || strcmp(name, "DesertLandUpSwitch") == 0; /* both DesertLandMoveSwitch */
     ci->tbox = strncmp(name, "TreasureBox", 11) == 0;
     ci->kstair = strncmp(name, "KoopaBattleMapStair", 19) == 0 && strcmp(name, "KoopaBattleMapStairTurnAppear") != 0;
     ci->trapeze = strcmp(name, "Trapeze") == 0;
     ci->lavarock = strcmp(name, "LavaStrangeRock") == 0 ? 1 : strcmp(name, "LavaStrangeRockL") == 0 ? 2 : strcmp(name, "LavaStrangeRockTable") == 0 ? 3 : 0;
     ci->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 || strcmp(name, "KinopioAstro") == 0 ? 3 :
                   strcmp(name, "ButlerMap") == 0 ? 4 : strcmp(name, "Butler") == 0 ? 5 : lg_cls(name) ? 6 : strcmp(name, "TicoStarRing") == 0 ? 7 : strcmp(name, "TicoComet") == 0 ? 8 : strcmp(name, "HoneyBee") == 0 ? 10 : strcmp(name, "TicoShop") == 0 ? 11 :
+<<<<<<< HEAD
                   strcmp(name, "Penguin") == 0 || strcmp(name, "PenguinCoach") == 0 || strcmp(name, "PenguinStudent") == 0 ? 12 : 0;
     ci->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 :
                strcmp(name, "DimensionAir") == 0 ? 4 : strcmp(name, "TwilightAir") == 0 || strcmp(name, "DarknessRoomAir") == 0 ? 3 : 0;
+=======
+                  strcmp(name, "Penguin") == 0 || strcmp(name, "PenguinCoach") == 0 || strcmp(name, "PenguinStudent") == 0 ? 12 :
+                  strcmp(name, "PenguinMaster") == 0 ? 13 : 0;
+    ci->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 : 0;
+>>>>>>> fbadacd (Static classes after Petari, second batch)
     ci->gap = gap_class(name);
     ci->clipcls = strcmp(name, "Tico") == 0 || strcmp(name, "TicoBaby") == 0 || lg_cls(name) ? 1 : /* NameObjFactory: Tico, LuigiNPC */
                   strcmp(name, "SuperSpinDriver") == 0 || strcmp(name, "SuperSpinDriverPink") == 0 || strcmp(name, "SuperSpinDriverGreen") == 0 ? 2 : 0;
@@ -5331,7 +5341,7 @@ static void game_rebind_(void)
             if (r->type < 1024) { bloom_of[r->type] = in->md_bloom; bloom_ok[r->type] = 1; }
         }
         if (in->seesaw) { in->rotor = 0; seesaw_matrix(in); }
-        in->railer = scene_blob_g && ((r->arg[7] > 0 && (r->arg[7] >> 30 & 1)) || in->eyebeamer) && r->path >= 0 ?
+        in->railer = scene_blob_g && ((r->arg[7] > 0 && (r->arg[7] >> 30 & 1)) || in->eyebeamer || st_rail_obj(name)) && r->path >= 0 ? /* (st_rail_obj: an objinfo RailMoveObj) */
                      find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->kcl = scene_kcl(s, name);
         in->kmove = -1; in->kparent = -1;
@@ -5548,6 +5558,7 @@ static void game_rebind_(void)
             in->s = 1.0f; in->reach = km->radius;
         }
     }
+    st_chain_rebind(s); /* statics.inc: LargeChain's parts */
     for (int i = 0; plant_first && i < ninsts; i++)
         if (insts[i].plant) { insts[i].kcl_ready = 1; place_plants(&insts[i]); }
     memset(zone_kcl, 0, sizeof zone_kcl);
@@ -12018,6 +12029,7 @@ void game_font_init(const Scene *s) /* the FONT chunk's glyphs (also main.c's su
 static void kinopio_reaction(const Inst *in, const float m[16]); /* NPCActor's reaction flags, Kinopio::exeReaction's voices */
 typedef struct { int c9C, c158; u8 last; } NpcReact; /* NPCActor's _9C, _158, _DD-_DF */
 static int npc_react(NpcReact *s, V3 body, float rad, V3 up, V3 pos, float near, int body_off);
+static void pmaster_reaction(const Inst *in, const float m[16]);
 /* the talkers placed in the scene (SignBoard, Tico, Kinopio: their wait nerves' talk) */
 static int talk_row_label(int row, char *out) /* the TALK entry of a row: its <zone>_<class><id> */
 {
@@ -12153,7 +12165,7 @@ static void update_talkers(void)
         /* SignBoard, Butler: NPCActor caps (talk 240, its balloon 150 up); Tico::initMessage (350, 120 up); Kinopio (122 x 1.2 up) */
         int bee_lec = in->talkcls == 10 && (sc->objs[in->row].arg[0] == 8 || sc->objs[in->row].arg[0] == 9); /* FlyLectureA / B: mTalkMtx _160, no offset */
         /* Penguin / PenguinStudent: initTalkCtrl (0, 150, 0); PenguinCoach: caps.mMessageOffset (0, 430, 0) */
-        float pg_offy = in->talkcls != 12 ? 0.0f : !strcmp(sc->types + 32 * sc->objs[in->row].type, "PenguinCoach") ? 430.0f : 150.0f;
+        float pg_offy = in->talkcls == 13 ? 430.0f : in->talkcls != 12 ? 0.0f : !strcmp(sc->types + 32 * sc->objs[in->row].type, "PenguinCoach") ? 430.0f : 150.0f; /* PenguinMaster: caps.mMessageOffset (0, 430, 0), setDistanceToTalk 350 */
         int k = talk_new(lab, in->talkcls == 11 ? -1 : in->row, in->row, pg_offy > 0 ? pg_offy : sign || in->talkcls == 5 || (in->talkcls == 10 && !bee_lec) ? 150.0f : bee_lec ? 0.0f : tico ? 120.0f : 122.0f * 1.2f,
                          tico || pg_offy == 430.0f ? 350.0f : 240.0f); /* PenguinCoach: setDistanceToTalk 350 */
         if (k < 0) continue;
@@ -12200,6 +12212,7 @@ static void update_talkers(void)
         talk_place(k, m);
         if (in->talkcls == 10 && !row_turn[in->row]) continue; /* HoneyBee lectures: talk only in their Wait */
         if (in->talkcls == 3) kinopio_reaction(in, m);
+        if (in->talkcls == 13) pmaster_reaction(in, m);
         if (tico) { /* Tico::control: SE_SM_LV_TICO_FLOAT's level A 100 x getLinerValueFromMinMax(its move, 1, 11, 0.2, 1):
                      * volume A / 100 (AudSoundObject_Takezawa); ours never moves: 0.2 */
             Inst *w = &insts[i];
@@ -13096,6 +13109,7 @@ static void fat_ring_appear(int k)
         talk_place(f->ring_tk, f->ring_m);
     }
     f->nrv = TF_RING; f->t = 0;
+    printf("tico galaxy row %d: its star ring, talker %d, model %d%c", f->row, f->ring_tk, f->ring_md != NULL, 10);
 }
 static void fat_ring_update(int k, Inst *in)
 {
@@ -13104,7 +13118,15 @@ static void fat_ring_update(int k, Inst *in)
     f->lv = se_level(SE_SM_LV_TICO_WAIT, &f->ring_m[12], f->lv); /* Tico::control */
     f->lv2 = se_level(SE_SM_LV_TICO_FLOAT, &f->ring_m[12], f->lv2);
     if (f->nrv == TF_RING) {
+#ifdef TG_TEST
+        if (f->ring_tk >= 0 && f->t % 120 == 1) printf("ring talk %d: talk %d near %d invalid %d msgctrl %d c40 %d nrv %d%c", f->ring_tk, talkers[f->ring_tk].talk,
+            tk_near(&talkers[f->ring_tk], 0), td_invalid(), td.msgctrl, td.c40, td.nrv, 10);
+#endif
+#if defined(TG_TEST) && TG_TEST == 2
+        if (f->ring_tk >= 0 && talk_force_at_end(f->ring_tk, 0) && tk_yesno == 1) { /* (the test forces the talk) */
+#else
         if (f->ring_tk >= 0 && talk_near_at_end(f->ring_tk) && tk_yesno == 1) { /* tryTalkSelectLeft: setNerveMeta */
+#endif
             f->nrv = TF_RINGMETA; f->t = 0;
             if (f->ring) anim_play(f->ring, "tico/metamorphosis", 1.0f, 0, 0);
             printf("tico galaxy row %d: its star ring, meta" "\n", in->row);
@@ -34728,6 +34750,9 @@ static void update_rotors(void)
  * (doAtEndPoint); SideSpikeMoveStep::exeWait the moving / stop ones. ponytail: MapObjActor::appear's start SE (at
  * the scene's start) not played */
 static const struct { const char *name; u32 st, mv, ed; } rail_se[] = {
+    {"SeaBottomBigDoorA", SE_OJ_SEABTM_B_DOOR_START, SE_OJ_LV_SEABTM_B_DOOR_MOVE, SE_OJ_SEABTM_B_DOOR_STOP},
+    {"SeaBottomBigDoorB", SE_OJ_SEABTM_B_DOOR_START, SE_OJ_LV_SEABTM_B_DOOR_MOVE, SE_OJ_SEABTM_B_DOOR_STOP},
+    {"DeathPromenadeMovePartsSpuareA", SE_OJ_DP_MOVE_STEP_START, SE_OJ_LV_DP_MOVE_STEP_MOVE, SE_OJ_DP_MOVE_STEP_START},
     {"SideSpikeMoveStepA", 0, SE_OJ_LV_SIDE_SPIKE_STEP_MV, SE_OJ_SIDE_SPIKE_STEP_ED},
     {"UFOStrongA", 0, SE_OJ_LV_UFO_MOVE, 0}, /* UFOBase::control: LV_UFO_MOVE while its rail mover works (its end SE at isDone) */
     {"BroadBeanMoveStepA", SE_OJ_STONE_FLOOR_S_START, SE_OJ_LV_STONE_FLOOR_S_MOVE, SE_OJ_STONE_FLOOR_S_END},
@@ -34777,10 +34802,11 @@ static void update_railers(void)
         const unsigned char *e = in->railer;
         int was = in->rwork; /* RailMoveObj _D0 */
         in->rwork = 0;
-        int row = in->row, cond = r->arg[7] >> 8 & 15, stop = *(const int *)(e + 16);
+        int row = in->row, cond = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) ? r->arg[7] >> 8 & 15 : 0, stop = *(const int *)(e + 16); /* (an objinfo row: MoveConditionType unset, 0) */
         if (in->eyebeamer ? !eb_patrol(row) : !mp_running(r, row)) continue;
         if (in->gap == GAP_ELEVATOR && gap_st(row)->n != EV_MOVE) continue; /* BattleShipElevator::control: not in Wait */
         if (in->gap == GAP_UFOKINOKO && gap_st(row)->n != UK_MOVE) continue; /* UFOKinoko: startRailMover at startMove */
+        if (!st_rail_go(in)) continue; /* RailDemoMoveObj: its demo started first (statics.inc) */
         u32 np = *(const u32 *)(e + 8), nr = *(const u32 *)(e + 12);
         const unsigned char *pa = e + 24 + 12 * np + 12 * nr; /* nr x {f32 coord, s32 arg0, s32 arg5} */
         float len = *(const float *)(pa + 12 * (nr - 1));
@@ -37731,7 +37757,7 @@ static int obj_start(const Inst *in, const char *clip) /* tryStartAllAnim: the c
 }
 static int anm_kind(const char *n)
 {
-    static const char *const k1[] = {"LavaObstacleRockHomeB", "LavaFallDownColumnA", "LavaFallDownColumnB", "HeavenlyBeachUnderRock", "ShutterDoorC", "ShutterDoorD", "ShutterDoorE", "MechaKoopaPartsCaterpillar", "IceVolcanoAppearStepA", "IceVolcanoAppearStepB", "IceVolcanoClimbingWall", "IceUpDownShutterDoorA"};
+    static const char *const k1[] = {"PhantomShipPropellerBig", "PhantomShipPropellerSmall", "LavaObstacleRockHomeB", "LavaFallDownColumnA", "LavaFallDownColumnB", "HeavenlyBeachUnderRock", "ShutterDoorC", "ShutterDoorD", "ShutterDoorE", "MechaKoopaPartsCaterpillar", "IceVolcanoAppearStepA", "IceVolcanoAppearStepB", "IceVolcanoClimbingWall", "IceUpDownShutterDoorA"};
     static const char *const k2[] = {"LavaBreakRockA", "HeavenlyBeachTopRock", "LavaBreakColumn"}; /* LavaBreakColumn: ponytail, no LavaColumn effect */
     static const char *const k3[] = {"LavaBreakBridge", "LavaBreakRockB", "LavaBreakRockC", "LavaBreakRockD"};
     for (u32 i = 0; i < sizeof k1 / sizeof *k1; i++) if (!strcmp(n, k1[i])) return 1;
@@ -37805,7 +37831,7 @@ static void update_levers(void)
     }
 }
 
-/* DesertLandMoveSwitch.cpp after Petari (DesertLandDownSwitch): a hip drop switch: its button (the Move collision on
+/* DesertLandMoveSwitch.cpp after Petari (DesertLandDownSwitch, DesertLandUpSwitch): a hip drop switch: its button (the Move collision on
  * its Move joint) springs down under Mario landing (a spring 0.35 / 0.75 kicked -10, not drawn here); a hip drop on it
  * presses it (SwitchDown: On clip from step 6, at its end HIPDROP_SWITCH_ON and a shake), its SW_A on; with arg0 it
  * comes back after that many frames (the timer SEs every second, faster at the end), else when its SW_A goes off
@@ -44390,6 +44416,30 @@ static void kinopio_reaction(const Inst *in, const float m[16])
     if (pse) { dpd_hit_sound(); se_start(sleep ? SE_SV_KINOPIO_POINTING_SLEEP : SE_SV_KINOPIO_POINTING, &m[12]); }
     if (sp) { if (sleep) se_start(SE_SM_NPC_TRAMPLED, &m[12]); se_start(sleep ? SE_SV_KINOPIO_POINTING_SLEEP : SE_SV_KINOPIO_SPIN, &m[12]); }
     if (tr || pse || sp) printf("kinopio row %d: reaction %s\n", in->row, tr ? "trampled" : sp ? "spun" : "pointed");
+}
+/* PenguinMaster.cpp after Petari: an NPCActor without NPCActor's sensor (caps.mSensor off) but two push sensors, body
+ * (150 at 100 up) and head (150 at 260 up, 100 ahead); Wait: tryTalkNearPlayerAndStartTalkAction (its row's message,
+ * 350 to talk, its balloon 430 up), tryStartReactionAndPushNerve -> Reaction: SE_SV_PENGUIN_OLD_TRAMPLED and
+ * SE_SM_PENGUIN_TRAMPLED trampled, SE_SV_PENGUIN_OLD_POINTED_2P and the DPD hit sound pointed (isPointingSe),
+ * SE_SV_PENGUIN_OLD_SPIN_HIT spun (receiveMsgPlayerAttack's spin: _E3). 
+ * ponytail: its clips Trampled / Reaction / Pointing not played (the turn table's Wait / Talk run), the voices at the reaction's start (as kinopio_reaction), no star piece voice (_DB: STAR_PIECE: the port's
+ * shots do not reach NPCs' _E5), the body push sensor (only the head takes tramples here) */
+static struct { int row; NpcReact r; } pmre[4];
+static void pmaster_reaction(const Inst *in, const float m[16])
+{
+    static const Scene *pm_sc;
+    if (pm_sc != sc) { memset(pmre, 0, sizeof pmre); pm_sc = sc; }
+    int k = 0;
+    while (k < 4 && pmre[k].row != in->row + 1 && pmre[k].row) k++;
+    if (k == 4) return;
+    if (!pmre[k].row) { pmre[k].row = in->row + 1; pmre[k].r.c158 = 1024; }
+    V3 up = vnorm(v3(m[4], m[5], m[6])), fr = vnorm(v3(m[8], m[9], m[10])), p = v3(m[12], m[13], m[14]);
+    V3 head = vadd(p, vadd(vmul(up, 260.0f), vmul(fr, 100.0f)));
+    int f = npc_react(&pmre[k].r, head, 150.0f, up, p, 450.0f, 0); /* (a trample lands on its head) */
+    if (f & 1) { se_start(SE_SV_PENGUIN_OLD_TRAMPLED, &m[12]); se_start(SE_SM_PENGUIN_TRAMPLED, &m[12]); }
+    else if (f & 8) { se_start(SE_SV_PENGUIN_OLD_POINTED_2P, &m[12]); dpd_hit_sound(); }
+    else if (f & 2) { se_start(SE_SV_PENGUIN_OLD_SPIN_HIT, &m[12]); }
+    if (f & 11) printf("penguin master row %d: reaction %s\n", in->row, f & 1 ? "trampled" : f & 2 ? "spun" : "pointed");
 }
 static int kast_letter;
 static int kast_event(int t, u32 v)
