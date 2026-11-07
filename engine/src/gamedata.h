@@ -44,6 +44,7 @@ int gd_just_open_galaxy(void);                   /* isJustOpenGalaxyWithoutChall
 int gd_is_special_star(const char *galaxy, int star, const char *kind); /* GameDataConst::isPowerStarSpecial */
 int gd_question_galaxy(const char *galaxy);      /* GameDataConst::isQuestionGalaxy */
 int gd_flag_try_on(const char *name);
+int gd_flag_depends(const char *name, const char *other); /* GameEventFlagTable::isDependedAnother */
 int gd_grand_galaxy_no(const char *galaxy);     /* GameDataConst::getIncludedGrandGalaxyId (its dome) */
 int gd_is_grand_star(const char *galaxy, int star); /* GameDataConst::isGrandStar */
 int gd_galaxy_open(const char *galaxy);         /* GalaxyStatusAccessor::isOpened (no stars: open) */

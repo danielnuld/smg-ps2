@@ -1835,3 +1835,25 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
   blend 3: blended with depth writes). Test: plain build XF="-DST_FLAG_TEST=k -DPACKS_OVERLAY=wt-states" (the camera
   on flag k): PeachCastleGardenGalaxy/1, KoopaJrShipLv1Galaxy/1. ponytail: FlagSurfing (OceanRingPipe's flags), the
   stick's texel. tools/class_coverage.py now reads game.c's .inc files too.
+  Map objects (statics.inc st_objs_update, by class kind; StSt state by row): TransparentWall
+  (InvisibleWaterfallTwinFallLake, StatusFloor: collision only in arg4's player modes / skating), MirrorModelTwinFallLake
+  hidden (mirror only), UFOKinokoUnderConstruction (dead before EventKinopioExplorerRescued, UFOKinokoLandingAstro's
+  model after EventKinopioExplorerOrganize), LavaShellTower (its 開始 demo nerve: shake, level SE, rumble),
+  AstroDomeDemoAstroGalaxy (slice.py BRK_STEPS by grand stars 3 / 5), the still ones (LavaGalaxyParts, GlaringLight,
+  SimpleMirrorObj, CoconutTree), SurprisedGalaxy (Surp*: dead until SpecialStarGreenAll / the complete ending, touch:
+  wipe, scenario select), LavaBallRisingPlanetLava, TimerMoveWall, ManholeCover (KoopaShipManholeCover), LargeChain
+  (its parts as instances, EXTRA LargeChainFixPoint, the Break demo action), RailMoveObj / RailDemoMoveObj objinfo rows
+  (DeathPromenadeMovePartsSpuareA, SeaBottomBigDoorA / B: update_railers, their StageEffect SEs, the door's actor
+  camera), SunkenShip (SimpleBreakableObj broken by its demo's functor), AstroMapBoard (dead before grand star 2),
+  PenguinMaster (talkcls 13: talk 350 / 430 up, reaction voices), DesertLandUpSwitch (DesertLandMoveSwitch), the
+  PhantomShipPropellers (AnmModelSwitchMove). TicoGalaxy (game.c's TicoFat port, fat 2): its exclamation galaxy's
+  star pieces (gd_tico_galaxy, given 5 a piece every 2 frames, saved as given), InformationGalaxy with the short
+  name, the galaxy's flag; fed before: its TicoStarRing (Tico~5 at the paired spin driver, AstroGalaxy_TicoCommon000,
+  Yes: Meta, the spin driver out). Tests: plain XF="-DST_VISIT=<Class> [-DST_VISIT_K=k -DST_VISIT_D=d]" (camera on
+  that row), `fat` XF="-DTG_TEST=1|2" AstroGalaxy/1 (feed both / their rings), -DST_TWALL_TEST, -DST_SURP_TEST.
+  Left (statics agent): TeresaPicture / KinokoOneUpPicture (per-instance BTK frame: the engine's BTKs run per model),
+  SeaBottomTriplePropeller (one KCL on three joints), the Tamakoro family (TamakoroWithTutorial, BallOpener,
+  JumpHole, ConcreteBlock: Mario's star ball ride is not ported), ClipAreaDropLaser (clip areas), AstroDomeAsteroid
+  (SphereSelector's handled transform), FlexibleSphere, BegomanSpring, Syati / TalkSyati, TeresaRacer, SpinningBox,
+  BombBird, JumpGuarder, WaterBazooka, BallBeamer, MagnumKiller, PenguinSkater, PenguinRacerLeader,
+  SubmarineVolcanoBigColumn, AstroChildRoom (update_astro_objs' ponytail).

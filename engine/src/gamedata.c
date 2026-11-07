@@ -290,6 +290,12 @@ int gd_tico_galaxy(int i, const char **g, int *given, int *max)
     return 0;
 }
 
+int gd_flag_depends(const char *name, const char *other) /* GameEventFlagTable::isExist && isDependedAnother (event flags) */
+{
+    int i = find_flag(name);
+    if (i < 0 || gd_flags[i].type != GT_EVENTFLAG) return 0;
+    return (gd_flags[i].s1 && !strcmp(gd_flags[i].s1, other)) || (gd_flags[i].s2 && !strcmp(gd_flags[i].s2, other));
+}
 int gd_flag_try_on(const char *name) /* GameEventFlagChecker::tryOn */
 {
     if (!gd_flag_can_on(name)) return 0;
