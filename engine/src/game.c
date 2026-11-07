@@ -126,6 +126,7 @@ static const Model *walker_new_model(int row);
 static void mk_update(Kuribo *k), mk_demo_update(void), mk_draw(Kuribo *k, const Model *md, Anim *a), mk_draw_extras(void), mk_begin_demo(int row);
 static int mk_noclip(const Kuribo *k);
 int mk_shot(V3 p); /* IceMerameraKing (ice_meraking.inc) */
+static int st_mapboard; /* AstroMapBoard shown: 1 its picture to capture (game_draw), 2 done */
 static int st_flag_class(const char *n), st_cast_hook(int row, int type, int part), st_rail_obj(const char *n); static void st_update(void), st_draw(void), st_init(const Scene *s); static int st_shot(V3 p); static void st_column_strike(V3 c, float r); /* statics.inc */
 static void mm_update(Kuribo *k), mm_kill(Kuribo *k), mm_btp(Kuribo *k, const Model *md); /* Meramera (meramera.inc) */
 static void ts_update(Kuribo *k), ts_draw(Kuribo *k, const Model *md, float *m, Anim *a); static int ts_dead_req(Kuribo *k), ts_star(Kuribo *k); /* Teresa (teresa.inc) */
@@ -2784,6 +2785,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     }
     dx_init(blob);
     st_init(s);
+    render_target_reserve(st_mapboard); /* AstroMapBoard's picture: its VRAM out of the cache */
     gw_init();
     pro_init();
     mi_init();
@@ -54044,6 +54046,12 @@ void game_draw(void)
     bloom_update();
     render_light(default_light(LIGHT_PLANET));
     if (menu_draw_screen()) return;
+    if (st_mapboard == 1) { /* GalaxyMapController::initialize's capture (AstroMapBoard::initAfterPlacement) */
+        float e2[3] = {0, 0, 1000.0f}, t2[3] = {0, 0, 0}, u2[3] = {0, 1.0f, 0};
+        render_begin(e2, t2, u2);
+        if (menu_gm_capture()) render_target_capture();
+        st_mapboard = 2;
+    }
 #ifdef OVERVIEW_TEST
     { /* the whole galaxy: a camera orbiting the box of the placed objects (the middle 90 % on each axis, so a far
        * stray row does not shrink the rest), a third of a turn every 20 s */

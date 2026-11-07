@@ -65,6 +65,10 @@ void render_mesh_vc(const float (*pos)[3], const float (*uv)[2], const u32 *rgba
 u8 *render_i8_pixels(int slot);
 void render_i8_upload(int slot);
 void render_i8_aref(int a);
+/* GalaxyMapController::capture for AstroMapBoard: reserve (at a scene's start, 1 when the board shows), then after
+ * render_begin and the 2D queued, render_target_capture puts that frame into the scene's dummy texture (MapDummy) */
+void render_target_reserve(int on);
+void render_target_capture(void);
 /* a grid of ncols x nrows world vertices (vertex c x nrows + k, uv 0..1 over tex), each moved by k_shift x shift[c],
  * drawn as strips between columns c and c + 1 where col_on[c]; blended, depth written, colour 0xAABBGGRR (0x80 = 1.0)
  * modulating the texture. pos's view-space places are kept while pos and the view stay: one grid drawn shifted */

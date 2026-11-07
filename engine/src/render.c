@@ -187,6 +187,11 @@ static u64 test_z;               /* TEST with the depth test only */
 #define I8_TBP (VRAM_WORDS / 64 - 64)
 #define I8_CBP (VRAM_WORDS / 64 - 68)
 static void i8_state(void);
+/* render_target_*: AstroMapBoard's MapDummy (GalaxyMapController::capture): the galaxy map drawn in the back buffer,
+ * scaled into a 256 x 256 PSMCT16 picture under the I8 texture (out of the cache while reserved), the scene texture
+ * marked dummy (slice.py DUMMY_TEX) pinned to it */
+#define TGT_TBP ((VRAM_WORDS / 64 - I8_BLOCKS - 512) & ~31)
+static int tgt_tex = -1;
 
 void mat_identity(float m[16]) /* stored one by one: memset's call costs more than the 16 stores */
 {
@@ -610,7 +615,7 @@ static void flush_vif(void);
  * send and wait for the chain built so far (textures marked before that may have been evicted since). */
 static int tex_need(u32 t)
 {
-    if (t == NO_TEX || t == I8_TEX)
+    if (t == NO_TEX || t == I8_TEX || (int)t == tgt_tex)
         return 0;
     tex_last[t] = chain_seq;
     if (tex_block[t] >= 0)
@@ -628,7 +633,7 @@ static int tex_need(u32 t)
         /* no room: evict the least recently used texture whose chain has completed */
         int lru = -1;
         for (u32 i = 0; i < tex_scene->ntex; i++)
-            if (tex_block[i] >= 0 && tex_last[i] <= done_seq && (lru < 0 || tex_last[i] < tex_last[lru]))
+            if (tex_block[i] >= 0 && (int)i != tgt_tex && tex_last[i] <= done_seq && (lru < 0 || tex_last[i] < tex_last[lru]))
                 lru = i;
         if (lru >= 0) {
             tex_free(lru);
@@ -677,6 +682,7 @@ static void model_textures(const Model *md)
 static void tex_setup(u32 i)
 {
     const TexEntry *t = tex_scene->tex[i].e;
+    if ((int)i == tgt_tex) tgt_tex = -1; /* set up again: uploaded as any */
     tex_block[i] = -1;
     tex_nblk[i] = blocks_of(t);
     tex_last[i] = 0;
@@ -766,6 +772,7 @@ void render_release(Scene *s, u32 first_tex, u32 first_model)
             packet2_free(pk);
             *c = NULL;
         }
+    if (tgt_tex >= (int)first_tex) { tex_block[tgt_tex] = -1; tgt_tex = -1; } /* its blocks are not the cache's */
     for (u32 t = first_tex; t < s->ntex; t++)
         if (tex_block[t] >= 0)
             tex_free(t);
@@ -2011,6 +2018,58 @@ static void bloom_pass(void)
     AD(0, GS_REG_TEXFLUSH);
     ad_close();
     cur_tex = -1;
+}
+
+/* render_target_reserve(1) at a scene's start takes the picture's blocks from the cache (0 gives them back);
+ * render_target_capture, with the frame drawn so far (render_begin, the 2D queued) in the back buffer: that frame
+ * scaled into the picture (GX capture's half size: here 256 x 256, the dummy's UVs span it), the scene's dummy
+ * texture pinned there. The frame is drawn over by the next one, never shown */
+void render_target_reserve(int on)
+{
+    int end = on ? TGT_TBP : VRAM_WORDS / 64 - I8_BLOCKS;
+    if (!block_tex || end == block_end) return;
+    render_flip_wait();
+    dma_channel_wait(DMA_CHANNEL_VIF1, 0);
+    dma_channel_wait(DMA_CHANNEL_GIF, 0);
+    for (int b = end; b < block_end; b++)
+        if (block_tex[b] >= 0) tex_free(block_tex[b]);
+    block_end = end;
+}
+void render_target_capture(void)
+{
+    if (!tex_scene || block_end != TGT_TBP) return;
+    int t = -1;
+    for (u32 i = 0; i < tex_scene->ntex && t < 0; i++)
+        if (tex_scene->tex[i].e->dummy) t = (int)i;
+    if (t < 0) return;
+    render_world_done();
+    u32 fb = frame[back].address, fw = SCREEN_W >> 6;
+    ad_open(20);
+    AD(GS_SET_FRAME(TGT_TBP >> 5, 4, GS_PSM_16, 0), GS_REG_FRAME);
+    AD(GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, ZTEST_METHOD_ALLPASS), GS_REG_TEST);
+    AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 1), GS_REG_ZBUF);
+    AD(GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA);
+    AD(GS_SET_DTHE(0), GS_REG_DTHE);
+    ad_source_psm(fb, fw, FB_PSM, 10, FB_TH, SCREEN_W, SCREEN_H, 0);
+    ad_sprite(0, 0, 256, 256, 0, 0, SCREEN_W, SCREEN_H, 0x80);
+    AD(GS_SET_FRAME(fb >> 11, fw, FB_PSM, 0), GS_REG_FRAME);
+    AD(test_z, GS_REG_TEST);
+    AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 0), GS_REG_ZBUF);
+    AD(GS_SET_DTHE(FB_PSM != GS_PSM_32), GS_REG_DTHE);
+    AD(0, GS_REG_TEXFLUSH);
+    ad_close();
+    flush_vif();
+    dma_channel_wait(DMA_CHANNEL_VIF1, 0);
+    if (tex_block[t] >= 0) tex_free(t);
+    tgt_tex = t;
+    tex_block[t] = TGT_TBP;
+    qword_t *p = tex_packets + TEXP * t;
+    p[1].dw[0] = GS_SET_TEX0(TGT_TBP, 4, GS_PSM_16, 8, 8, 0, 0, 0, 0, 0, 0, 0);
+    p[2].dw[0] = GS_SET_TEX1(1, 0, 1, 1, 0, 0, 0);
+    p[7].dw[0] = 0;
+    FlushCache(0);
+    cur_tex = -1;
+    printf("render: capture to texture %d" "\n", t);
 }
 
 #define MESH_MAX 2048

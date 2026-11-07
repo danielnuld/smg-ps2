@@ -324,6 +324,7 @@ static void st_surp(Inst *in, StSt *g)
 /* the scene's start (game_init): the classes dead from their init */
 static void st_init(const Scene *s)
 {
+    st_mapboard = 0;
     for (u32 i = 0; i < s->nobjs; i++) {
         const char *n = s->types + 32 * s->objs[i].type;
         if (st_kind_name(n) == ST_SURP && s->objs[i].sw[SW_APPEAR] < 0) { /* SurprisedGalaxy::init */
@@ -335,10 +336,12 @@ static void st_init(const Scene *s)
             row_dead[i] = 0;
 #endif
         }
-        /* AstroMapBoard.cpp: makeActorDead unless isButlerMapAppear (hasGrandStar(2)). ponytail: initAfterPlacement's
-         * changeModelDataTexAll(MapDummy, getGalaxyMapResTIMG): the galaxy map's picture on its board is not made (no
-         * render-to-texture of the map layout here), its dummy texture stays */
-        if (!strcmp(n, "AstroMapBoard")) row_dead[i] = !st_grand(2);
+        /* AstroMapBoard.cpp: makeActorDead unless isButlerMapAppear (hasGrandStar(2)); initAfterPlacement's
+         * changeModelDataTexAll(MapDummy, getGalaxyMapResTIMG): the galaxy map captured at the first frame (game_draw) */
+        if (!strcmp(n, "AstroMapBoard")) { row_dead[i] = !st_grand(2); if (!row_dead[i]) st_mapboard = 1; }
+#ifdef ST_MAPBOARD_TEST /* XF=-DST_MAPBOARD_TEST (AstroGalaxy): the board shown without the grand star */
+        if (!strcmp(n, "AstroMapBoard")) { row_dead[i] = 0; st_mapboard = 1; }
+#endif
         /* AstroChildRoom (AstroMapObj.cpp: moreInlines' AstroDomeEntrance / AstroLibrary / AstroChildRoom / AstroParking):
          * drawn as the generic instance; ponytail: its Dead / Alive / Revival / Open looks are update_astro_objs' ponytail
          * (one model per object fits the Observatory's pack) */
@@ -1221,6 +1224,18 @@ static void st_col_test(void)
 #endif
 static void st_update(void)
 {
+#ifdef ST_MAPBOARD_TEST /* the camera on the board, 2500 in front of it */
+    {
+        int t = scene_type(sc, "AstroMapBoard");
+        for (u32 i = 0; t >= 0 && i < sc->nobjs; i++)
+            if ((int)sc->objs[i].type == t) {
+                V3 x, z, p = row_pos(&sc->objs[i]);
+                row_axes(&sc->objs[i], &x, &z);
+                camera_set_override(1, vadd(p, vmul(z, 2500.0f)), p, vcross(z, x), 45.0f);
+                break;
+            }
+    }
+#endif
 #ifdef ST_COL_TEST
     st_col_test();
 #endif

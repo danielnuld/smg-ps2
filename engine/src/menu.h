@@ -142,6 +142,7 @@ int menu_test_chip(int type);          /* -1 none, else alive x 1000 + nerve x 1
 void menu_yesno_appear(const char *yes, const char *no, int talk_se);
 int menu_yesno_selected(void);       /* 1 Yes, 2 No, 0 not yet */
 int menu_take_save_request(void);    /* main.c: 1 once per request */
+int menu_gm_capture(void); /* GalaxyMapController::capture: the galaxy map queued for render_target_capture */
 int menu_draw_screen(void); /* game_draw: 1 when a whole-screen menu (the scenario select) drew the frame */
 const u16 *msg_get(const char *label); /* MR::getLayoutMessageDirect / getGameMessageDirect (MSGS chunk), NULL none */
 void msg_set(const u8 *msgs_chunk);    /* msg_get's chunk (menu_init's; main.c's subs.bin while a movie plays) */

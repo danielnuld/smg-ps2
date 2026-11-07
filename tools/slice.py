@@ -298,6 +298,7 @@ HOME_POS = "\u5408\u4f53\u30d6\u30ed\u30c3\u30af\u6545\u90f7\u70b9"  # 合体ブ
 # whose texture game.c's statics.inc (Flag) draws the cloth with
 TEX_ONLY = ("Flag", "FlagKoopaA", "FlagKoopaB", "FlagRaceA", "FlagKoopaCastle", "FlagPeachCastleA", "FlagPeachCastleB",
             "FlagPeachCastleC", "FlagSurfing", "FlagTamakoro")
+DUMMY_TEX = ("MapDummy",)  # AstroMapBoard: GalaxyMapController::capture's picture (TEXT pad0 1: render_target_capture)
 LOGIC = ("SnowFloor", "SnowplowSwitch", "FallOutFieldDraw", "ClipFieldSwitch", "RaceRail", "NPCSupportRail", "BallRail", "SphereRailDash", "FluffWind", "Fountain", "SpringJetWater", "FallingSmallRock", "SubmarineSteam", "SubmarineVolcano", "TimerSwitch", "SkeletalFishBossRail", "SkeletalFishBaby", "ChildSkeletalFishBaby", "ExterminationSkeletalFishBaby", "KoopaSwitchKeeper", "KoopaPowerUpSwitch", "KoopaViewSwitchKeeper", "KoopaRestarterVs3", "BossKameckMoveRail", "TripodBossBaseJointPosition", "TripodBossStepPoint", "TripodBossStepStartArea", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
          "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "DeathCube", "DeathSphere",
          "DeathCylinder", "RestartCube", "StarPieceSpot", "WaterCube", "WaterSphere", "WaterCylinder",
@@ -951,6 +952,8 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                             baked[..., :3] = np.clip(baked[..., :3] / g0 + 0.5, 0, 255).astype(np.uint8)
                         ps2[key] = tex.to_ps2(baked, x["wrap_s"], x["wrap_t"], sky)
                         gains[key] = binfo.get("gain", 1)
+                        if tex.names(b, bl[b"TEX1"] + tex.u32(b, bl[b"TEX1"] + 0x10))[mt["tex"]] in DUMMY_TEX:
+                            ps2[key]["dummy"] = 1  # setupPrepareChangeDummyTexture: retargeted at run time
                     t = ps2[key]
                     air_rows = airt.get(key)
                     gain = gains[key]
@@ -2170,7 +2173,7 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
         for gi, ((verts, tris, uvs, tx, _, _, bl, _, _), (pos, col, uv, nb)) in enumerate(zip(groups, vgs)):
             ti = 0xFFFF
             if tx:
-                key = tx["pix"] + tx["clut"] + bytes((tx["clamp_s"], tx["clamp_t"]))
+                key = tx["pix"] + tx["clut"] + bytes((tx["clamp_s"], tx["clamp_t"], tx.get("dummy", 0)))
                 ti = tex_id.setdefault(key, len(texts))
                 if ti == len(texts):
                     texts.append(dict(tx, lod=[0.0, 0.0]))
@@ -2249,9 +2252,9 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
         size = base + len(data) - pix
         clut = base + len(data)
         data += tx["clut"]
-        head += struct.pack("<HHBBBBIIIBBBxh6x", tx["w"], tx["h"], tx["psm"], tx["clamp_s"], tx["clamp_t"], tx["alpha"],
+        head += struct.pack("<HHBBBBIIIBBBBh6x", tx["w"], tx["h"], tx["psm"], tx["clamp_s"], tx["clamp_t"], tx["alpha"],
                             pix, size, clut, tx["w"].bit_length() - 1, tx["h"].bit_length() - 1,
-                            len(tx.get("mips", [])), lod_k(tx.get("lod", (0, 0))))
+                            len(tx.get("mips", [])), tx.get("dummy", 0), lod_k(tx.get("lod", (0, 0))))
     stats.update(models=stats.get("models", 0) + len(models_), kcls=stats.get("kcls", 0) + len(kcls),
                  textures=stats.get("textures", 0) + len(texts))
     return [chunk(b"TEXT", struct.pack("<I12x", len(texts)) + bytes(head) + bytes(data)),
