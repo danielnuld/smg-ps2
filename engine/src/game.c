@@ -2799,7 +2799,11 @@ void game_init(const Scene *s, const unsigned char *blob)
     }
     dx_init(blob);
     st_init(s);
-    render_target_reserve(st_mapboard || scene_type(s, "MirrorAreaCube") >= 0); /* AstroMapBoard's picture, the mirror's: their VRAM out of the cache */
+    { /* AstroMapBoard's picture, the mirror's, the raster scroll's bands (a TeresaRacer of a racer id): their VRAM out of the cache */
+        int tr = scene_type(s, "TeresaRacer"), raster = 0;
+        for (u32 i = 0; tr >= 0 && i < s->nobjs; i++) raster |= (int)s->objs[i].type == tr && s->objs[i].arg[0] != -1;
+        render_target_reserve(st_mapboard || scene_type(s, "MirrorAreaCube") >= 0 || raster);
+    }
     gw_init();
     pro_init();
     mi_init();
@@ -53453,6 +53457,7 @@ void game_update(void)
     wipe_ring_center();
     if (menu_update()) return; /* GameScenePauseMenu: the pause sequence alone (GamePauseSequence) */
     if (scene_stop > 0) { scene_stop--; return; } /* SceneFunction stopScene: everything holds */
+    mario_update_raster(); /* MarioActor::updateRasterScroll */
     /* GameSceneScenarioOpeningCameraState: the stage's StartScenario<n>.canm (CANM "stage/startscenario", world
      * space), Mario hidden, ScenarioTitle on until 60 frames before its end; then the ScenarioStarter flies Mario
      * in. The other actors move meanwhile (GameScene::exeScenarioOpeningCamera: executeMovementList). start():
@@ -55531,6 +55536,7 @@ void game_draw(void)
 #endif
     PROF(6);
     render_world_done(); /* the blended instances (an Air's sky) under the HUD and talks */
+    mario_draw_raster(); /* MarioActor::drawRasterScroll (its draw: the 3D done) */
     talk_draw();
     wipe_draw();
     menu_draw();
