@@ -232,16 +232,16 @@ static void st_flag_test(void)
 }
 #endif
 /* ---- MapObj classes by placed type: their per-row state (StSt, kept across rebinds) ---- */
-enum { ST_NONE = 1, ST_TWALL, ST_MIRRORMODEL, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL };
+enum { ST_NONE = 1, ST_TWALL, ST_MIRRORMODEL, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN };
 /* Placed classes whose Petari behaviour is the model drawn with its animations and collision (the engine's generic
  * instance does that): LavaGalaxyParts.cpp (LavaShellTowerStep, LavaStepA / B / C: startBtk / Brk / Bpk / Btp of its
  * name, collision, clipping; ponytail: the steps' DLMakerProjmapEffectMtxSetter lava glow is baked at slice time and
  * LodCtrlPlanet's low models are the zones' low packs), GlaringLight (TeresaRoomGlaringLight: SimpleMapObj in
  * DrawBufferType_GlaringLight; ponytail: drawn with the map objects, not in that buffer's order), SimpleMirrorObj
  * (MirrorReflectionTwinFallLake: the mirror's surface; ponytail: no mirror camera, its reflection texture is drawn as
- * the model's own) */
+ * the model's own), CoconutTree.cpp (its model, collision, a clipping sphere of 2000) */
 static const char *const st_still[] = {"LavaShellTowerStep", "LavaStepA", "LavaStepB", "LavaStepC", "TeresaRoomGlaringLight",
-                                       "MirrorReflectionTwinFallLake"};
+                                       "MirrorReflectionTwinFallLake", "CoconutTree"};
 static signed char st_kinds[1024];
 static const Scene *st_kinds_sc;
 static int st_kind_name(const char *n)
@@ -251,6 +251,11 @@ static int st_kind_name(const char *n)
     if (!strcmp(n, "UFOKinokoUnderConstruction")) return ST_UFOKC;
     if (!strcmp(n, "LavaShellTower")) return ST_SHELLTOWER;
     if (!strcmp(n, "AstroDomeDemoAstroGalaxy")) return ST_DOMEGALAXY;
+    if (!strcmp(n, "LavaBallRisingPlanetLava")) return ST_LAVABALL;
+    if (!strcmp(n, "KoopaShipManholeCover")) return ST_MANHOLE; /* ManholeCover */
+    if (!strcmp(n, "LargeChain")) return ST_CHAIN;
+    if (!strcmp(n, "TrialBubbleTimerMoveWallA")) return ST_TMWALL; /* TimerMoveWall */
+    if (!strcmp(n, "SurprisedGalaxy") || (!strncmp(n, "Surp", 4) && strlen(n) > 10 && !strcmp(n + strlen(n) - 6, "Galaxy"))) return ST_SURP;
     for (u32 k = 0; k < sizeof st_still / sizeof *st_still; k++) if (!strcmp(n, st_still[k])) return ST_STILL;
     return ST_NONE;
 }
@@ -261,7 +266,7 @@ static int st_kind(int type)
     if (!st_kinds[type]) st_kinds[type] = (signed char)st_kind_name(sc->types + 32 * type);
     return st_kinds[type];
 }
-typedef struct { int row, n, st, on; const unsigned char *kcl; } StSt; /* n its nerve, st its step */
+typedef struct { int row, n, st, on; const unsigned char *kcl; u32 lv[3]; V3 off; } StSt; /* n its nerve, st its step */
 static StSt st_st[128];
 static int nst_st;
 static const Scene *st_st_sc;
@@ -274,11 +279,63 @@ static StSt *st_get(int row)
     return &st_st[nst_st++];
 }
 static int st_grand(int n) { char f[24]; snprintf(f, sizeof f, "SpecialStarGrand%d", n); return gd_flag_is_on(f); } /* hasGrandStar */
+/* SurprisedGalaxy.cpp after Petari (SurprisedGalaxy, Surp<galaxy>: the observatory's surprise galaxies): mGalaxyName
+ * SurfingLv1Galaxy for "SurprisedGalaxy", else its name after "Surp"; the MiniSurprisedGalaxy model (slice.py
+ * MODEL_ARC) playing MiniSurprisedGalaxy (its BTK); far clipping 200 m; its appear switch (useStageSwitchReadAppear),
+ * else out only once SpecialStarGreenAll is on for a galaxy whose Appear<galaxy> flag depends on it
+ * (isGalaxyAppearGreenDriver), for the rest once the complete ending was seen with both (ViewCompleteMarioAndLuigi).
+ * Its body (a map object sensor of its model's bounding radius) touched by Mario (attackSensor): Exit: submitTrigSE,
+ * closeSystemWipeWhiteFade, stopStageBGM / stopSubBGM(90), ギャラクシー移動 demo; once the wipe is closed its
+ * galaxy's flag on (onGameEventFlagGalaxyOpen), endDemo, permitTrigSE, requestStartScenarioSelect(galaxy).
+ * ponytail: ACTMES_IS_RUSH_TAKEOVER (a ride carrying Mario in) is not sent by the port's rides */
+static const char *st_surp_galaxy(const char *n) { return !strcmp(n, "SurprisedGalaxy") ? "SurfingLv1Galaxy" : n + 4; }
+static void st_surp(Inst *in, StSt *g)
+{
+    const char *gal = st_surp_galaxy(sc->types + 32 * sc->objs[in->row].type);
+    if (g->n == 0) { /* Wait */
+        float c[3] = {in->m[12], in->m[13], in->m[14]};
+        if (!dx_busy() && mario_touch(v3(c[0], c[1], c[2]), in->md->radius * in->s)) {
+            g->n = 1; g->st = 0;
+            printf("surprised galaxy %d (%s): exit%c", in->row, gal, 10);
+        }
+        return;
+    }
+    if (g->n == 1) {
+        if (g->st == 0) {
+            menu_wipe(1, -1, 0xFFFFFF); /* closeSystemWipeWhiteFade */
+            bgm_stop(90);               /* stopStageBGM(90), stopSubBGM(90) */
+            dx_request("ギャラクシー移動", 0); /* tryStartDemo */
+        }
+        if (menu_wipe_active()) return; /* isSystemWipeActive */
+        gd_flag_try_on(gal);            /* onGameEventFlagGalaxyOpen */
+        if (dx.on && !strcmp(demos[dx.cur].h->name, "ギャラクシー移動")) dx_end(); /* endDemo */
+        seq_galaxy_move(SEQ_SCENARIO_SELECT, gal, -1, -1, 0); /* requestStartScenarioSelect */
+        menu_wipe(0, -1, 0xFFFFFF);
+        g->n = 2;
+        printf("surprised galaxy %d: to %s's scenario select%c", in->row, gal, 10);
+    }
+}
 /* the scene's start (game_init): the classes dead from their init */
 static void st_init(const Scene *s)
 {
     for (u32 i = 0; i < s->nobjs; i++) {
         const char *n = s->types + 32 * s->objs[i].type;
+        if (st_kind_name(n) == ST_SURP && s->objs[i].sw[SW_APPEAR] < 0) { /* SurprisedGalaxy::init */
+            char f[48];
+            snprintf(f, sizeof f, "Appear%s", st_surp_galaxy(n));
+            if (gd_flag_depends(f, "SpecialStarGreenAll")) row_dead[i] = !gd_flag_is_on("SpecialStarGreenAll"); /* isGalaxyAppearGreenDriver */
+            else row_dead[i] = !gd_flag_is_on("ViewCompleteMarioAndLuigi"); /* isOnGameEventFlagViewCompleteEndingMarioAndLuigi */
+#ifdef ST_SURP_TEST
+            row_dead[i] = 0;
+#endif
+        }
+        /* AstroMapBoard.cpp: makeActorDead unless isButlerMapAppear (hasGrandStar(2)). ponytail: initAfterPlacement's
+         * changeModelDataTexAll(MapDummy, getGalaxyMapResTIMG): the galaxy map's picture on its board is not made (no
+         * render-to-texture of the map layout here), its dummy texture stays */
+        if (!strcmp(n, "AstroMapBoard")) row_dead[i] = !st_grand(2);
+        /* AstroChildRoom (AstroMapObj.cpp: moreInlines' AstroDomeEntrance / AstroLibrary / AstroChildRoom / AstroParking):
+         * drawn as the generic instance; ponytail: its Dead / Alive / Revival / Open looks are update_astro_objs' ponytail
+         * (one model per object fits the Observatory's pack) */
         /* UFOKinokoUnderConstruction::init: isUFOKinokoBeforeConstruction (EventKinopioExplorerRescued off): dead */
         if (!strcmp(n, "UFOKinokoUnderConstruction") && !gd_flag_is_on("EventKinopioExplorerRescued")) row_dead[i] = 1;
     }
@@ -320,9 +377,167 @@ static void st_shelltower(Inst *in, StSt *g)
         printf("lava shell tower %d: done%c", in->row, 10);
     }
 }
+/* LavaBallRisingPlanetLava.cpp after Petari: WaitSmall 120 -> ScaleUp (1 -> 1.1 over 240) -> WaitBig 120 -> ScaleDown
+ * (1.1 -> 1 over 240) -> WaitSmall; SE_AT_LV_MAGMA_WIND_RISING always, SE_OJ_LV_LAVA_MOVE_RISING while it scales.
+ * n: 0 WaitSmall, 1 ScaleUp, 2 WaitBig, 3 ScaleDown */
+static void st_lavaball(Inst *in, StSt *g)
+{
+    const Row *r = &sc->objs[in->row];
+    g->lv[0] = se_level(SE_AT_LV_MAGMA_WIND_RISING, &in->m[12], g->lv[0]);
+    float k = g->n == 0 ? 1.0f : g->n == 2 ? 1.1f : 0.0f;
+    if (g->n == 1 || g->n == 3) {
+        g->lv[1] = se_level(SE_OJ_LV_LAVA_MOVE_RISING, &in->m[12], g->lv[1]);
+        float t = (float)g->st / 240.0f; /* calcNerveValue(240, a, b) */
+        k = g->n == 1 ? 1.0f + 0.1f * t : 1.1f - 0.1f * t;
+        if (g->st >= 240) { g->n = (g->n + 1) & 3; g->st = -1; }
+    } else if (g->st >= 120) { g->n++; g->st = -1; } /* !isLessStep(120) */
+    float s[3] = {r->scale[0] * k, r->scale[1] * k, r->scale[2] * k};
+    mat_translate_rot_scale(in->m, r->pos, r->rot, s);
+    in->s = s[0];
+}
+/* TimerMoveWall.cpp after Petari (TrialBubbleTimerMoveWallA): Wait; its SW_B coming on (listenStageSwitchOnB) ->
+ * MoveFront: arg0 frames (300) at arg1 / arg0 (1000 / 300) a frame along its front (TRIBBL_T_MVWALL_ST, LV_..MV) ->
+ * MoveBack the same way back -> TRIBBL_T_MVWALL_ED, Wait. n: 0 Wait, 1 front, 2 back; off its place's offset */
+static void st_tmwall(Inst *in, StSt *g)
+{
+    const Row *r = &sc->objs[in->row];
+    int timer = r->arg[0] != -1 ? r->arg[0] : 300;
+    float len = r->arg[1] != -1 ? (float)r->arg[1] : 1000.0f;
+    int swb = r->sw[SW_B] >= 0 && sw_on(r, SW_B);
+    if (g->n == 0 && swb && !g->on) { g->n = 1; g->st = 0; printf("timer move wall %d: move%c", in->row, 10); }
+    g->on = swb;
+    if (g->n) {
+        V3 x, z;
+        row_axes(r, &x, &z);
+        if (g->st == 0) se_start(SE_OJ_TRIBBL_T_MVWALL_ST, &in->m[12]);
+        g->lv[0] = se_level(SE_OJ_LV_TRIBBL_T_MVWALL_MV, &in->m[12], g->lv[0]);
+        g->off = vadd(g->off, vmul(vnorm(z), (g->n == 1 ? 1.0f : -1.0f) * len / timer));
+        if (g->st + 1 >= timer) { /* isStep(mTimer): the velocity zeroed */
+            if (g->n == 1) { g->n = 2; g->st = -1; }
+            else { se_start(SE_OJ_TRIBBL_T_MVWALL_ED, &in->m[12]); g->n = 0; g->off = v3(0, 0, 0); }
+        }
+    }
+    mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
+    in->m[12] += g->off.x; in->m[13] += g->off.y; in->m[14] += g->off.z;
+}
+/* RailMoveObj.cpp after Petari, its objinfo placements (DeathPromenadeMovePartsSpuareA; RailDemoMoveObj:
+ * SeaBottomBigDoorA / B): MapPartsRailMover on its rail (game.c update_railers: the rail points' speeds and stops,
+ * StageEffect's start / moving / stop SEs), MoveConditionType unconditional (no mappartsinfo columns), its SW_B the
+ * start (initCaseUseSwitchB: Wait until listenStageSwitchOnB; mp_running). RailDemoMoveObj::tryStartMove: its
+ * DemoCtrlBase first (tryStartDemo(its name), startActorCameraNoTarget, Demo's camera shaking: DemoParamCommonDataTable
+ * 0.1 / 2.2, pad rumble 中 each frame; at its camera's last frame end: endDemo, endActorCamera, stopShakingCamera).
+ * ponytail: tryStartDemo's scene pause for the actors not cast (no demo named after an object in the port's demo
+ * executor: Mario keeps control while its camera runs) */
+static const char *const st_rail_objs[] = {"DeathPromenadeMovePartsSpuareA", "SeaBottomBigDoorA", "SeaBottomBigDoorB"};
+static int st_rail_obj(const char *n)
+{
+    for (u32 k = 0; k < sizeof st_rail_objs / sizeof *st_rail_objs; k++) if (!strcmp(n, st_rail_objs[k])) return 1 + (k > 0);
+    return 0;
+}
+static int st_rail_go(const Inst *in) /* update_railers: may its rail mover run (RailDemoMoveObj: its demo's camera) */
+{
+    const char *n = sc->types + 32 * sc->objs[in->row].type;
+    if (st_rail_obj(n) != 2) return 1;
+    StSt *g = st_get(in->row);
+    if (g->n == 0) { /* tryStartMove: DemoCtrlBase::tryStart */
+        g->n = 1; g->st = 0; g->on = 0;
+        if (row_camset[in->row] != -1) {
+            V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), front = vnorm(v3(in->m[8], in->m[9], in->m[10]));
+            g->on = camera_actor_frames(n, "", (unsigned short)row_camset[in->row]);
+            camera_actor_start(n, "", (unsigned short)row_camset[in->row], up, front, v3(in->m[12], in->m[13], in->m[14]));
+        }
+        camera_shake_infinity(g, 0.1f, 2.2f); /* MR::Demo::isExistCameraShaking */
+        printf("rail demo move obj %d: demo (%d frames)%c", in->row, g->on, 10);
+    }
+    if (g->n == 1) { /* DemoCtrlBase::update: the rumble, its end at the camera's frames */
+        pad_rumble(RUMBLE_MIDDLE);
+        if (g->st >= g->on) { camera_event_stop(); camera_shake_stop(g); g->n = 2; printf("rail demo move obj %d: demo end%c", in->row, 10); }
+        g->st++;
+    }
+    return 1;
+}
+/* ManholeCover.cpp after Petari (KoopaShipManholeCover): Wait; a hip drop on it (isMsgPlayerHipDropFloor) in Wait or
+ * Rattle: Open (Rotation clip, its collision off until the clip stops, then Wait); Mario's spin storm range (his spin
+ * within its sensor 150 + 600, the spin's first 15 frames: isMsgSpinStormRange) in Wait: Rattle (Vibration clip,
+ * SE_OJ_MANHOLE_RATTLE; past sRattleTime 45 with the clip stopped, Wait). n: 0 Wait, 1 Open, 2 Rattle.
+ * ponytail: isMsgPlayerUpperPunch (the port's Mario has no upper punch) */
+static void st_manhole(Inst *in, StSt *g, int i)
+{
+    if (in->kcl) g->kcl = in->kcl;
+    V3 p = v3(in->m[12], in->m[13], in->m[14]), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    if ((g->n == 0 || g->n == 2) && hip_hit && hip_inst == i) {
+        g->n = 1; g->st = 0; obj_play(in, "rotation", 0, 0); in->kcl = NULL; /* invalidateCollisionParts */
+        printf("manhole cover %d: open%c", in->row, 10);
+    } else if (g->n == 0 && mario->spin_timer > 0 && mario->spin_t < 15 && vlen(vsub(mc, p)) < 150.0f + 600.0f) {
+        g->n = 2; g->st = 0; obj_play(in, "vibration", 0, 0); se_start(SE_OJ_MANHOLE_RATTLE, &in->m[12]);
+        printf("manhole cover %d: rattle%c", in->row, 10);
+    }
+    int stopped = !in->anim || in->anim->done;
+    if (g->n == 1) {
+        in->kcl = NULL;
+        if (g->st > 0 && stopped) { in->kcl = g->kcl; g->n = 0; } /* validateCollisionParts */
+    } else if (g->n == 2 && g->st > 45 && stopped) g->n = 0;
+}
+/* LargeChain.cpp / LargeChainParts.cpp after Petari: arg0 / sPartsLength 200 parts (LargeChain, its collision), part i
+ * at its place + (0, 200 i, 0) with its rotation (the row's own instance is part 0), a LargeChainFixPoint (slice.py
+ * EXTRA) on part 0 (固定鎖 下) and one 200 over the last with its rotation + (180, 90, 0) (固定鎖 上); useStageSwitchSleep.
+ * Its demo's action (registerDemoActionNerve: st_cast_hook): Break: every sBreakInterval 5 frames the next part
+ * breaks (the lower fixed point with the first, the upper with the last: LargeChainParts::kill: its Break effect,
+ * SE_OJ_LARGE_CHAIN_BREAK), at the last the chain is killed. StSt: n 1 Break, on the parts broken */
+static void st_chain_rebind(const Scene *s) /* game_rebind_: its parts as instances (the unbroken ones) */
+{
+    for (u32 q = 0; q < s->nobjs && ninsts + 32 < insts_cap; q++) {
+        const Row *r = &s->objs[q];
+        if (strcmp(s->types + 32 * r->type, "LargeChain") || !row_shown((int)q)) continue;
+        const Model *ml = scene_model(s, "LargeChain"), *mf = scene_model(s, "LargeChainFixPoint");
+        int n = r->arg[0] > 0 ? (int)(r->arg[0] / 200.0f) : 0, broken = st_get((int)q)->on;
+        for (int k = 0; k <= n; k++) { /* k 0: the lower fixed point, 1 .. n - 1 parts, n: the upper fixed point */
+            const Model *md = k == 0 || k == n ? mf : ml;
+            if (!md || (k < n ? k : n - 1) < broken || (k == 0 && broken > 0)) continue;
+            float pos[3] = {r->pos[0], r->pos[1] + 200.0f * (k == n ? n - 1 : k), r->pos[2]}, rot[3] = {r->rot[0], r->rot[1], r->rot[2]};
+            if (k == n) { pos[1] += 200.0f; rot[1] += 90.0f; rot[0] += 180.0f; }
+            Inst *in = &insts[ninsts++];
+            memset(in, 0, sizeof *in);
+            in->md = md; in->row = (int)q; in->zone = r->zone; in->kmove = in->kparent = -1;
+            in->kcl = scene_kcl(s, md == mf ? "LargeChainFixPoint" : "LargeChain");
+            mat_translate_rot_scale(in->m, pos, rot, r->scale);
+            in->s = r->scale[0]; in->reach = md->radius * in->s;
+        }
+    }
+}
+static int st_chain(Inst *in, StSt *g) /* 1: rebound */
+{
+    if (in->md != scene_model(sc, "LargeChain") || in->m[13] != sc->objs[in->row].pos[1]) return 0; /* part 0 (the row's own) runs it */
+    if (g->on > 0) { in->invisible = 1; in->kcl = NULL; }
+    if (g->n != 1 || g->st % 5) return 0;
+    int n = sc->objs[in->row].arg[0] > 0 ? (int)(sc->objs[in->row].arg[0] / 200.0f) : 0, step = g->st / 5;
+    float m[16];
+    memcpy(m, in->m, 64);
+    m[13] += 200.0f * step;
+    fx_named("LargeChain", "Break", m, NULL, g); /* LargeChainParts::kill */
+    se_start(SE_OJ_LARGE_CHAIN_BREAK, &m[12]);
+    g->on = step + 1;
+    printf("large chain %d: part %d broken%c", in->row, step, 10);
+    if (step >= n - 1) { g->n = 2; row_kill(in->row); }
+    g->st++;
+    game_rebind();
+    return 1;
+}
 static int st_cast_hook(int row, int type, int part) /* dx_cast_hook: the demo actions of these classes */
 {
     (void)part;
+    if (type == 2 && !strcmp(sc->types + 32 * sc->objs[row].type, "SunkenShip")) { /* SimpleBreakableObj: isDemoCast:
+        * tryRegisterDemoActionFunctor(setStateBreak) */
+        const Inst *in = row_inst(row);
+        if (in && !row_dead[row]) { /* startBreak: the riddle SE (arg4 1, a riddle type stop), tryStartBreak: its StageEffect stop SE */
+            printf("sunken ship %d: break (demo)%c", row, 10);
+            if (sc->objs[row].arg[4] == 1) se_start(SE_SY_READ_RIDDLE_S, NULL);
+            se_start(SE_OJ_SUNKEN_SHIP_BREAK, &in->m[12]);
+            break_inst(in, 1); game_rebind();
+        }
+        return 1;
+    }
+    if (type == 3 && st_kind(sc->objs[row].type) == ST_CHAIN) { st_get(row)->n = 1; st_get(row)->st = 0; printf("large chain %d: break%c", row, 10); return 1; }
     if (type == 3 && st_kind(sc->objs[row].type) == ST_SHELLTOWER) {
         StSt *g = st_get(row);
         g->n = LST_DEMO; g->st = 0;
@@ -356,6 +571,11 @@ static void st_objs_update(void)
             }
             break;
         case ST_SHELLTOWER: st_shelltower(in, g); break;
+        case ST_SURP: st_surp(in, g); break;
+        case ST_LAVABALL: st_lavaball(in, g); break;
+        case ST_TMWALL: st_tmwall(in, g); break;
+        case ST_MANHOLE: st_manhole(in, g, i); break;
+        case ST_CHAIN: if (st_chain(in, g)) return; break;
         case ST_DOMEGALAXY: { /* AstroDomeDemoAstroGalaxy::init: setBrkFrameAndStop 2 with grand star 5, 1 with 3, else 0
                                * (slice.py BRK_STEPS: "<class>~<frame>") */
             char n[40];
@@ -383,8 +603,39 @@ static void st_twall_test(void)
     if (game_frame == 1000) { player_mode = PM_NORMAL; printf("twall test: normal%c", 10); }
 }
 #endif
+#ifdef ST_VISIT /* plain build XF='-DST_VISIT=Class [-DST_VISIT_K=k] [-DST_VISIT_D=d]': from frame 60 Mario held 300
+                * over its k-th row, the camera looking at it from d (1500) along its Z and 600 up */
+#ifndef ST_VISIT_K
+#define ST_VISIT_K 0
+#endif
+#ifndef ST_VISIT_D
+#define ST_VISIT_D 1500.0f
+#endif
+#define ST_STR_(x) #x
+#define ST_STR(x) ST_STR_(x)
+static void st_visit(void)
+{
+    const char *cls = ST_STR(ST_VISIT);
+    if (game_frame < 60) return;
+    int k = 0;
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if (strcmp(sc->types + 32 * r->type, cls) || k++ != ST_VISIT_K) continue;
+        V3 x, z, p = row_pos(r);
+        row_axes(r, &x, &z);
+        V3 up = vnorm(vcross(z, x));
+        if (game_frame < 90) { mario->pos = vadd(p, vadd(vmul(up, 300.0f), vmul(z, 400.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+        camera_set_override(1, vadd(p, vadd(vmul(vnorm(z), ST_VISIT_D), vmul(up, 600.0f))), p, up, 45.0f);
+        if (game_frame % 120 == 60) printf("visit f %u: %s row %u shown %d dead %d%c", game_frame, cls, i, row_shown((int)i), row_dead[i], 10);
+        return;
+    }
+}
+#endif
 static void st_update(void)
 {
+#ifdef ST_VISIT
+    st_visit();
+#endif
 #ifdef ST_TWALL_TEST
     st_twall_test();
 #endif
