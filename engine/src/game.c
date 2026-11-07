@@ -25596,7 +25596,24 @@ static void update_exts(void)
 {
     for (int e = 0; e < nexts; e++) {
         typeof(&exts[0]) x = &exts[e];
-        if (!row_shown(x->row)) continue;
+#ifdef EXT_STAR_TEST /* XF=-DEXT_STAR_TEST (StarDustGalaxy/3): from frame 200 Mario held 800 over the checker, the camera
+                       * on it, its sleep switch on (useStageSwitchSleep); from 300 its ChildKuribos die one every 10 frames */
+        if (x->star && game_frame >= 200) {
+            const Row *xr = &sc->objs[x->row];
+            V3 p = row_pos(xr), up = up_at(p, mario->up);
+            if (xr->sw[SW_SLEEP] >= 0 && !sw_on(xr, SW_SLEEP)) { sw_set(xr, SW_SLEEP, 1); printf("ext test: sleep switch on%c", 10); }
+            if (x->nrv < 2) { mario->pos = vadd(p, vmul(up, 800.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+            camera_set_override(1, vadd(p, vadd(vmul(up, 1500.0f), v3(0, 0, 3000.0f))), p, up, 45.0f);
+            if (game_frame % 60 == 0) printf("ext test f %u: checker nrv %d step %d shown %d%c", game_frame, x->nrv, x->step, row_shown(x->row), 10);
+        }
+        if (x->star && game_frame >= 300 && game_frame % 10 == 0)
+            for (int i = 0; i < nkuribo; i++) {
+                Kuribo *k = &kuribo[i];
+                if (sc->objs[k->row].zone != sc->objs[x->row].zone || strcmp(walker_cls(k), "ChildKuribo") || k->state == KURIBO_DEAD) continue;
+                k->state = KURIBO_DEAD; row_kill(k->row); printf("ext test: child row %d killed%c", k->row, 10); break;
+            }
+#endif
+        if (!row_shown(x->row) || (demo_on && pd.row != x->row)) continue;
         if (x->nrv == 0) { /* Watching */
             int alive = 0;
             for (int i = 0; i < nkuribo && !alive; i++) {
@@ -53835,7 +53852,7 @@ void game_update(void)
     LQ(53, update_screws());
     LQ(54, update_candles());
     update_torches();
-    if (!demo_on) update_exts();
+    update_exts(); /* (in a demo: only the one whose 全滅スター出現 runs, tryStartDemo's owner) */
     update_okeys();
     update_bitems();
     update_bbd_bombs();
@@ -54812,12 +54829,15 @@ void game_draw(void)
         if (!w->brk->skin) { if (w->t > 60) w->t = -1; else render_model(w->brk, w->m, 0x80, 0x80, 0x80); continue; }
         Anim *ba = obj_anim((int)sc->nobjs * 3 + i, w->brk, w->bname);
         if (!ba) continue;
-        if (w->t <= 1) { /* "<archive lowercase>/break" */
+        static int wclip[MAX_WRECKS]; /* the clip it started (a wreck bound late, obj_anim's slots all taken at its break, still
+                                       * plays its Break from the start, not obj_anim's looping first clip) */
+        if (w->t <= 1 || ba->clip_id != wclip[i]) { /* "<archive lowercase>/break" */
             char clip[48];
             int k = 0;
             for (; w->bname[k] && k < 40; k++) clip[k] = (char)tolower((unsigned char)w->bname[k]);
             strcpy(clip + k, "/break");
             anim_start(ba, clip, 0);
+            wclip[i] = ba->clip_id;
         }
         anim_update(ba);
         if (ba->done && w->t > 16) { w->t = -1; continue; } /* isBckStopped: kill */

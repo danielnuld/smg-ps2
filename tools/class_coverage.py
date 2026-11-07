@@ -34,10 +34,13 @@ def engine_classes():
 DOME_GALAXY = re.compile(r"(Surp|Mini)[A-Za-z0-9]{4,}Galaxy")
 # Petari classes whose every nerve waits: nothing to port (CoinSpot: nothing sets mIsInTornado, CoinSpot.cpp)
 IDLE = ("CoinSpot",)
+# placed classes ported under other names (their code does not spell the class): AstroDomeGalaxySelector (game.c
+# dm_selector_*), FileSelector (menu.c fs_*)
+ELSEWHERE = ("AstroDomeGalaxySelector", "FileSelector")
 
 
 STATIC_KINDS = ("SimpleMapObj", "SimpleEnvironmentObj", "Sky", "SimpleMapObjNoSilhouetted", "SimpleMapObjFarMax",
-                "SimpleMapObjPush")
+                "SimpleMapObjPush", "InvisiblePolygonObj")  # InvisiblePolygonObj: its collision only (no model on disc)
 
 
 def factory_kinds():
@@ -55,7 +58,7 @@ def classify(fs):
     for cls, n in place.items():
         if cls in names or any(cls.startswith(p) for p in prefixes) or "Gravity" in cls or DOME_GALAXY.fullmatch(cls):
             kind = "behaviour"
-        elif cls in planets or cls in IDLE:
+        elif cls in planets or cls in IDLE or cls in ELSEWHERE:
             kind = "behaviour"  # planets: drawn and collided, that is all they do
         elif kinds.get(cls) in STATIC_KINDS and S.model_archive(fsp, cls, planets):
             kind = "complete"

@@ -336,6 +336,20 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   the bird keeps its rail in from / to); BombBirdBomb in jpa.py NAMED (LocusSmoke kept from its drop, Explosion).
   Test `bombbird` gains a star piece at 860 (its scale 1.14 .. 0.92 .. 1). Left: the press between roof and ground (the
   walker binder keeps no roof nor press sensor), the bomb's Normal / Signal BRKs (baked).
+- Small map objects (feat/449-small-mapobjs, 2026-11-07): statics.inc SimpleTimerObj (HeavenlyBeachTimerStepA / B: the
+  timer switch's demo makes it appear, Appear effect + start SE, arg7 frames, FlashingCtrl blink over the last 120, kill
+  with its Appear smoke), WaterfallCaveCover (a thrown shell in its 500 sensor: st_jet_hit; the WaterfallCaveCoverBreak
+  wreck plays Break, riddle SE at 90, killed at the clip's end: SW_DEAD), CannonFortressBreakStep (A and RotateA / B / C:
+  ROT level SE, SW_B: fall 15 a frame down its up for 350, carried), ItemAppearStone (its move SE, SW_B: break SE,
+  kill); game.c update_exts: ExterminationCheckerKuribo (power star kind: 全滅スター出現, TOTAL_COMPLETE, its star,
+  slice.py declare_stars) and update_exts now runs in its own demo. Fixed: a wreck bound late (obj_anim's 40 slots
+  full at the break) looped its first clip for ever; it now starts Break when bound. class_coverage.py counts menu.c,
+  Surp / Mini<galaxy>, CoinSpot (idle), InvisiblePolygonObj (collision only), the dome selector / FileSelector.
+  Tests (plain, overlay wt-audit): XF="-DST_VISIT=HeavenlyBeachTimerStepA -DST_VISIT_SWA_OF=HipDropTimerSwitch"
+  HeavenlyBeach 1 (appear f ~400, killed 1020 later), "-DST_VISIT=WaterfallCaveCover -DST_VISIT_JET" HeavenlyBeach 3
+  (killed, dead switch 55), "-DEXT_STAR_TEST" StarDust 3 (children killed, its star's appear demo),
+  "-DST_VISIT=CannonFortressRotateBreakStepA -DST_VISIT_SWB" CannonFleet 1. A worktree's slice.py needs the whole
+  vendor/Petari/include (demo_dead_classes): a stub one leaves the demo casts out of the hide list.
 
 - BeamGoRoundPlanet (fix/457-beam-go-round, 2026-11-07, coverage CannonFleetGalaxy 1): BeamGoRoundPlanet.cpp in game.c
   (bgr_*): its BCK plays (slice.py ANIM_PLANETS), its own collision kept and its Move KCL on joints move1 / move2
