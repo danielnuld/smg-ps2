@@ -232,7 +232,7 @@ static void st_flag_test(void)
 }
 #endif
 /* ---- MapObj classes by placed type: their per-row state (StSt, kept across rebinds) ---- */
-enum { ST_NONE = 1, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP };
+enum { ST_NONE = 1, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP, ST_TIMER, ST_WCC, ST_CFSTEP, ST_IASTONE };
 /* Placed classes whose Petari behaviour is the model drawn with its animations and collision (the engine's generic
  * instance does that): LavaGalaxyParts.cpp (LavaShellTowerStep, LavaStepA / B / C: startBtk / Brk / Bpk / Btp of its
  * name, collision, clipping; ponytail: the steps' DLMakerProjmapEffectMtxSetter lava glow is baked at slice time and
@@ -260,6 +260,10 @@ static int st_kind_name(const char *n)
     if (!strcmp(n, "TrialBubbleTimerMoveWallA")) return ST_TMWALL; /* TimerMoveWall */
     if (!strcmp(n, "TeresaPicture") || !strcmp(n, "KinokoOneUpPicture")) return ST_TEXSW; /* SimpleTextureSwitchChangeObj */
     if (!strcmp(n, "SeaBottomTriplePropeller")) return ST_TRIPROP;
+    if (!strcmp(n, "HeavenlyBeachTimerStepA") || !strcmp(n, "HeavenlyBeachTimerStepB")) return ST_TIMER; /* SimpleTimerObj */
+    if (!strcmp(n, "WaterfallCaveCover")) return ST_WCC;
+    if (!strcmp(n, "CannonFortressBreakStepA") || !strncmp(n, "CannonFortressRotateBreakStep", 29)) return ST_CFSTEP; /* CannonFortressBreakStep */
+    if (!strcmp(n, "ItemAppearStoneSpinDriver")) return ST_IASTONE; /* ItemAppearStone */
     if (!strcmp(n, "SurprisedGalaxy") || (!strncmp(n, "Surp", 4) && strlen(n) > 10 && !strcmp(n + strlen(n) - 6, "Galaxy"))) return ST_SURP;
     for (u32 k = 0; k < sizeof st_still / sizeof *st_still; k++) if (!strcmp(n, st_still[k])) return ST_STILL;
     return ST_NONE;
@@ -564,7 +568,132 @@ static int st_cast_hook(int row, int type, int part) /* dx_cast_hook: the demo a
         printf("lava shell tower %d: demo%c", row, 10);
         return 1;
     }
+    if (type == 0 && st_kind(sc->objs[row].type) == ST_TIMER) { /* the demo's appear: SimpleTimerObj::appear */
+        StSt *g = st_get(row);
+        g->n = 1; g->st = 0; g->on = 1; g->t2 = sc->objs[row].arg[7] != -1 ? sc->objs[row].arg[7] : 600; /* mTimeLimit (arg7) */
+        printf("timer obj %d: appear, %d frames%c", row, g->t2, 10);
+        return 0; /* (dx_cast_hook's own appear cases go on) */
+    }
     return 0;
+}
+/* SimpleTimerObj.cpp after Petari (HeavenlyBeachTimerStepA / B: casts their HipDropTimerSwitch's demo makes appear):
+ * appear (MapObjActor::appear: its Appear effect, the StageEffect start SE SE_OJ_O_APPEAR_BRDG_APPEAR), Timer: arg7
+ * (sDefaultTimeLimit 600) frames left; at sBlinkTime (120) left FlashingCtrl::start(120): not drawn on the even
+ * intervals (10 frames, 5 under 90) of its timer, drawn in demos; at 0 kill: the Appear effect, dead (its collision
+ * with it). g->n 1 Timer, g->on its appear to do, g->t2 mTimeLeft. ponytail: its shadow (validateShadow) not drawn */
+static int st_timer(Inst *in, StSt *g)
+{
+    const char *n = sc->types + 32 * sc->objs[in->row].type;
+    if (g->n != 1) return 0;
+    if (g->on) { /* appear */
+        g->on = 0;
+        fx_named(n, "Appear", in->m, NULL, NULL);
+        se_start(SE_OJ_O_APPEAR_BRDG_APPEAR, &in->m[12]);
+    }
+    g->t2--; /* control */
+    int ft = g->t2 - 1; /* FlashingCtrl::movement after it: started at 120, one less each frame */
+    in->invisible = g->t2 <= 120 && ft > 0 && !dx.on && !((ft / (ft < 90 ? 5 : 10)) & 1); /* isNowOn: offEntryDrawBuffer */
+    if (g->t2 > 0) return 0;
+    fx_named(n, "Appear", in->m, NULL, NULL); /* kill */
+    g->n = 0;
+    row_kill(in->row);
+    printf("timer obj %d: time up, killed%c", in->row, 10);
+    game_rebind();
+    return 1;
+}
+/* WaterfallCaveCover.cpp after Petari: Wait; a thrown shell in its body sensor (500 about it, the shell's 50:
+ * isMsgJetTurtleAttack) -> Break: its sensor and collision off, MapObjActorUtil::startBreak (its ModelObj
+ * WaterfallCaveCoverBreak plays Break, its own model hidden), startRumbleWithShakeCameraStrong(中, 弱, 1000, far),
+ * SE_OJ_WATERFALL_COVER_BREAK; at step 90 SE_SY_READ_RIDDLE_S; at the break clip's end kill (its SW_DEAD).
+ * g->n 0 Wait, 1 Break, 2 gone */
+static void st_wcc_break(Inst *in, StSt *g)
+{
+    g->n = 1; g->st = 0;
+    V3 p = v3(in->m[12], in->m[13], in->m[14]);
+    float d = vlen(vsub(mario->pos, p));
+    if (d <= 1000.0f) { pad_rumble(RUMBLE_MIDDLE); camera_shake(SHAKE_STRONG); }
+    else { pad_rumble(RUMBLE_WEAK); camera_shake(SHAKE_NORMAL); }
+    se_start(SE_OJ_WATERFALL_COVER_BREAK, &p.x);
+    const Model *bm = scene_model(sc, "WaterfallCaveCoverBreak");
+    if (bm && nwrecks < MAX_WRECKS) { /* startBreak: the ModelObj's Break */
+        typeof(&wrecks[0]) w = &wrecks[nwrecks++];
+        memcpy(w->m, in->m, 64);
+        w->bname = "WaterfallCaveCoverBreak"; w->brk = bm; w->left = NULL; w->hide = 0;
+        w->t = 0; w->row = in->row; w->p = p; w->up = up_at(p, mario->up); w->coins = w->pieces = 0;
+    }
+    printf("waterfall cave cover %d: break (wreck %d)%c", in->row, bm != NULL, 10);
+}
+static int st_wcc(Inst *in, StSt *g)
+{
+    if (in->kcl) g->kcl = in->kcl;
+    if (g->n == 0) return 0;
+    in->kcl = NULL; in->invisible = 1; /* invalidateCollisionParts, hideModel */
+    if (g->st == 90) se_start(SE_SY_READ_RIDDLE_S, NULL);
+    if (g->n == 1 && g->st > 0 && !wreck_on(in->row)) { /* isBreakStopped (no ModelObj: killed at once) */
+        g->n = 2;
+        row_kill(in->row);
+        printf("waterfall cave cover %d: killed, dead switch %d%c", in->row, sc->objs[in->row].sw[SW_DEAD], 10);
+        game_rebind();
+        return 1;
+    }
+    return 0;
+}
+static int st_jet_hit(V3 p) /* a thrown JetTurtle at p (receiveMsgPlayerAttack isMsgJetTurtleAttack): 1 taken */
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (st_kind(sc->objs[in->row].type) != ST_WCC || !row_shown(in->row)) continue;
+        StSt *g = st_get(in->row);
+        if (g->n == 0 && vlen(vsub(p, v3(in->m[12], in->m[13], in->m[14]))) < 500.0f + 50.0f) { st_wcc_break(in, g); return 1; }
+    }
+    return 0;
+}
+/* CannonFortressBreakStep.cpp after Petari (CannonFortressBreakStepA, CannonFortressRotateBreakStepA / B / C: their
+ * MapPartsRotator is update_rotors'): Wait (but the class "CannonFortressBreakStep": SE_OJ_LV_CNFORT_BKSTEP_ROT); its
+ * SW_B coming on (listenStageSwitchOnB: startFall) -> FallStart (SE_OJ_CNFORT_BKSTEP_FALL_ST) -> Fall: sFallSpeed 15
+ * a frame down its up (SE_OJ_LV_CNFORT_BKSTEP_FALL) for sStepForFall 350 frames -> Break (SE_OJ_CNFORT_BKSTEP_FALL_ED),
+ * kill. g->n 0 Wait, 1 Fall, g->k the way down, g->on the switch seen */
+static int st_cfstep(Inst *in, StSt *g, int i)
+{
+    const Row *r = &sc->objs[in->row];
+    int swb = r->sw[SW_B] >= 0 && sw_on(r, SW_B);
+    if (g->n == 0) {
+        g->lv[0] = se_level(SE_OJ_LV_CNFORT_BKSTEP_ROT, &in->m[12], g->lv[0]); /* (no name is "CannonFortressBreakStep") */
+        if (swb && !g->on) {
+            g->n = 1; g->st = 0; g->k = 0.0f;
+            se_start(SE_OJ_CNFORT_BKSTEP_FALL_ST, &in->m[12]);
+            printf("cannon fortress break step %d: fall%c", in->row, 10);
+        }
+        g->on = swb;
+        if (g->n == 0) return 0;
+    }
+    float old[16];
+    memcpy(old, in->m, 64);
+    if (!in->rotor) mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale); /* (update_rotors places the rotating ones) */
+    g->k += 15.0f; /* mVelocity: -sFallSpeed x its up */
+    V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+    in->m[12] -= up.x * g->k; in->m[13] -= up.y * g->k; in->m[14] -= up.z * g->k;
+    if (mario_ground == i) carry(old, in);
+    g->lv[1] = se_level(SE_OJ_LV_CNFORT_BKSTEP_FALL, &in->m[12], g->lv[1]);
+    if (g->st < 350) return 0; /* isStep(sStepForFall) */
+    se_start(SE_OJ_CNFORT_BKSTEP_FALL_ED, &in->m[12]);
+    row_kill(in->row);
+    printf("cannon fortress break step %d: broken, %d down%c", in->row, (int)g->k, 10);
+    game_rebind();
+    return 1;
+}
+/* ItemAppearStone.cpp after Petari (ItemAppearStoneSpinDriver: its own BCK and its collision on joint Move, the
+ * generic skinned instance): Wait: SE_OJ_LV_ITEM_APR_STONE_MV; its SW_B on: SE_OJ_ITEM_APR_STONE_BREAK, kill */
+static int st_iastone(Inst *in, StSt *g)
+{
+    const Row *r = &sc->objs[in->row];
+    g->lv[0] = se_level(SE_OJ_LV_ITEM_APR_STONE_MV, &in->m[12], g->lv[0]);
+    if (r->sw[SW_B] < 0 || !sw_on(r, SW_B)) return 0;
+    se_start(SE_OJ_ITEM_APR_STONE_BREAK, &in->m[12]);
+    row_kill(in->row);
+    printf("item appear stone %d: broken%c", in->row, 10);
+    game_rebind();
+    return 1;
 }
 static void st_objs_update(void)
 {
@@ -608,6 +737,10 @@ static void st_objs_update(void)
         case ST_CHAIN: if (st_chain(in, g)) return; break;
         case ST_BIGCOL: st_column(in, g); break;
         case ST_FLEX: st_flex(in, g, i); break;
+        case ST_TIMER: if (st_timer(in, g)) return; break;
+        case ST_WCC: if (st_wcc(in, g)) return; break;
+        case ST_CFSTEP: if (st_cfstep(in, g, i)) return; break;
+        case ST_IASTONE: if (st_iastone(in, g)) return; break;
         case ST_TEXSW: { /* SimpleMapObj::init: TexChange (BTK) at arg1 (setupInitInfoTextureChangeArg1; -1 none),
                           * SimpleTextureSwitchChangeObj::changeTexture on its SW_A's rise: frame 1 for good (slice.py
                           * BRK_STEPS: "<class>~<frame>") */
@@ -1165,6 +1298,17 @@ static void st_visit(void)
         if (game_frame < 90 || (game_frame >= 400 && game_frame < 430)) { mario->pos = vadd(p, vadd(vmul(up, 300.0f), vmul(z, 400.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; } /* (again after a launch star's start) */
         camera_set_override(1, vadd(p, vadd(vmul(vnorm(z), ST_VISIT_D), vmul(up, 600.0f))), p, up, 45.0f);
         if (game_frame % 120 == 60) printf("visit f %u: %s row %u shown %d dead %d%c", game_frame, cls, i, row_shown((int)i), row_dead[i], 10);
+#ifdef ST_VISIT_SWB /* -DST_VISIT_SWB: its SW_B on at frame 300 */
+        if (game_frame == 300 && r->sw[SW_B] >= 0) { sw_set(r, SW_B, 1); printf("visit: row %u SW_B on%c", i, 10); }
+#endif
+#ifdef ST_VISIT_JET /* -DST_VISIT_JET: a thrown shell's attack at its place at frame 300 (st_jet_hit) */
+        if (game_frame == 300) printf("visit: shell at row %u taken %d%c", i, st_jet_hit(v3(row_inst((int)i) ? row_inst((int)i)->m[12] : p.x, row_inst((int)i) ? row_inst((int)i)->m[13] : p.y, row_inst((int)i) ? row_inst((int)i)->m[14] : p.z)), 10);
+#endif
+#ifdef ST_VISIT_SWA_OF /* -DST_VISIT_SWA_OF=Class: that class's first row's SW_A on at frame 300 (a switch) */
+        if (game_frame == 300)
+            for (u32 j = 0; j < sc->nobjs; j++)
+                if (!strcmp(sc->types + 32 * sc->objs[j].type, ST_STR(ST_VISIT_SWA_OF))) { sw_set(&sc->objs[j], SW_A, 1); printf("visit: %s row %u SW_A on%c", ST_STR(ST_VISIT_SWA_OF), j, 10); break; }
+#endif
         return;
     }
 }
