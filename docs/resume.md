@@ -1573,6 +1573,13 @@ there needs the embedded blob and every pack rebuilt.
   mario_offence(id, ..) takes the receiver's host: tryPunchAirAfter's list (a punched host no longer sees the spin, 8
   at most) and, out of a spin's own clip (_3E5: spin2nd, jump kind 8, 地上ひねり ..), the 45-degree front check
   (m_punch_ok). ponytail: one entry a host, not a sensor (KuriboChief's parts, Dodoryu's).
+- StinkBugSmall (feat/476-stinkbug): stink.inc after StinkBugSmall.cpp / StinkBugBase.cpp replaces the phase walker:
+  every nerve (Wait / Search sweeping within arg0 (default 180) / DashSign / DashSignEnd / Dash 20 to arg1 / DashEnd /
+  Back / Attack / SpinReaction / HipDropDown / Panic / ShakeStart / Shake / Recover / ForceFall), isPlayerInTerritory,
+  its Switch collision as an invisible instance moved on its base matrix (Mario stands on it and is carried; on it:
+  Panic 90, Repel, Shake flips him; its own binder leaves it out), head (100 x s at Face) / arg7 body sensors in the
+  hit-sensor list and push pass. Test: `stink` HoneyBeeKingdomGalaxy/2 (RushStart, Rush, `horn hits Mario`, on its
+  back: Loss, Repel, `shake flips Mario 1`, a hip drop: dead). ponytail: no DPDSwoon (2P pointer), no Death BRK.
 - Poihana (feat/471-poihana): poihana.inc after Poihana.cpp replaces the phase walker: every nerve (NonActive past
   3500, Wait / WalkAround / SleepStart / Sleep / GetUp / Search / ChasePlayer / ShootUpCharge / ShootUp / GoBack / Shock
   / SwoonLand / Swoon / Recover / Shake / Drown / Hide / Appear), its binder sensor (125 at (0, 130, 120), trampled 200
