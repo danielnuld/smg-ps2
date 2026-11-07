@@ -1146,6 +1146,12 @@ there needs the embedded blob and every pack rebuilt.
   PUT_XYZ, the camera on it unless PUT_NOCAM). ponytail: event cameras, the Hide one's baby launch and its return to
   hiding, the trample sensor at SpringJoint5, the head's own clips. Repack: slice_all.py CannonFleetGalaxy,
   OceanFloaterLandGalaxy. (The rest of the static list's second half went in with #343 / #345.)
+- Ponytail audit (2026-11-07, worktree audit): every `ponytail:` mark harvested and split (a) engine gap / (b) Petari
+  code the port can run: D:/smg-ps2-wt/ponytail-ledger-2026-11-07.md. Walker shadows (fix/shadows): walker_shadow now
+  draws Petari's initShadow* for Gesso, BasaBasa, Jellyfish (1900), Kanina (not under ground), Mogu (from HitBlow),
+  Metbo, TeresaWater, Kabokuri, Pukupuku, BombHei, StringSpider (arg2 drop), Kameck, NokonokoLand, BegomanLauncher,
+  the Begomans at their joint (BossBegoman 200 x its head's Edge scale, 4000 down) and KuriboChief's Shadow.bcsv
+  (Body sphere 200, LegL / LegR ovals 180 x 160). ponytail: Snakehead's flat-model shadows.
 
 ## Next
 
