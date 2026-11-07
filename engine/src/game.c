@@ -1152,7 +1152,13 @@ static int breakable(const char *name, const Row *r, int *coins, int *pieces)
     /* SimpleBreakableObj.cpp: IcicleRock and SandUpDownTowerBreakableWallA / B break at a spin (mBreakFlags 2),
      * TeresaMansionHoleCover at a hip drop (4), KoopaStatue at an explosion or an enemy attack (0x48: breaks 5,
      * explosion_breaks); SnowBlockA at a fire ball (0x20: breaks 7, fireball_breaks); arg3 -1 arg6 coins (1), 3 arg6
-     * star pieces (5). ponytail: no 1-up / power star items, ConcreteBlock (ball dash) stays whole */
+     * star pieces (5); ConcreteBlock at a Tamakoro's ball dash (0x180: breaks 8, tamakoro.inc tmk_bump_msg). ponytail: no
+ * 1-up / power star items */
+    if (strcmp(name, "ConcreteBlock") == 0) {
+        if (r->arg[3] == -1) *coins = r->arg[6] > 0 ? r->arg[6] : 1;
+        else if (r->arg[3] == 3) *pieces = r->arg[6] > 0 ? r->arg[6] : 5;
+        return 8;
+    }
     if (strcmp(name, "SnowBlockA") == 0) {
         if (r->arg[3] == -1) *coins = r->arg[6] > 0 ? r->arg[6] : 1;
         else if (r->arg[3] == 3) *pieces = r->arg[6] > 0 ? r->arg[6] : 5;
@@ -33248,6 +33254,20 @@ static void break_inst(const Inst *in, int drops)
         printf("%s %d broken, stump %.0f below%c", name, in->row, vdot(vsub(p, f8), cu), 10);
         return;
     }
+    if (!strcmp(name, "ConcreteBlock") && nwrecks < MAX_WRECKS) { /* SimpleBreakableObj::setStateBreak: startRumbleWithShakeCameraWeak
+        * (中), stopScene(5), startBreak: appearItem, its ModelObj ConcreteBlockBreak's Break (its effects), the stop SE */
+        typeof(&wrecks[0]) w = &wrecks[nwrecks++];
+        memcpy(w->m, in->m, 64);
+        w->bname = "ConcreteBlockBreak"; w->brk = scene_model(sc, w->bname); w->left = NULL; w->hide = 0;
+        w->t = 0; w->row = in->row; w->p = p; w->up = up; w->coins = w->pieces = 0;
+        pad_rumble(RUMBLE_MIDDLE); camera_shake(SHAKE_WEAK); scene_stop = 5;
+        pop_coins(p, up, n); drop_pieces(p, up, sp);
+        if (sp) se_start(SE_OJ_STAR_PIECE_BURST, &p.x);
+        se_start(SE_OJ_STRANGEROCK_BREAK_M, &p.x);
+        row_kill(in->row);
+        printf("%s %d broken, %d coins, %d star pieces\n", name, in->row, n, sp);
+        return;
+    }
     if (!strcmp(name, "PunchBox") && nwrecks < MAX_WRECKS) { /* doHit: collision off, Break / BreakWater; exeHit: hidden at
         * step 5, its arg0 coins popped at 15, dead (a wreck of its own model, hide 5) */
         float depth;
@@ -33388,7 +33408,7 @@ static void break_boxes(void)
         }
     }
     for (int i = 0; i < ninsts; i++) /* SimpleBreakableObj::initCaseUseSwitchB: SW_B on breaks it */
-        if ((insts[i].breaks == 4 || insts[i].breaks == 5) && !row_dead[insts[i].row] && sc->objs[insts[i].row].sw[SW_B] >= 0 &&
+        if ((insts[i].breaks == 4 || insts[i].breaks == 5 || insts[i].breaks == 8) && !row_dead[insts[i].row] && sc->objs[insts[i].row].sw[SW_B] >= 0 &&
             sw_on(&sc->objs[insts[i].row], SW_B)) {
             break_inst(&insts[i], 1);
             game_rebind();
@@ -39605,7 +39625,7 @@ static void update_switches(void)
         }
         for (int i = 0; i < ninsts; i++) { /* PunchBox::kill / CrystalCage::forceBreak on SW_A */
             const Row *r = &sc->objs[insts[i].row];
-            if (insts[i].breaks && r->sw[SW_A] >= 0 && sw_on(r, SW_A) && !row_dead[insts[i].row] &&
+            if (insts[i].breaks && insts[i].breaks != 8 && r->sw[SW_A] >= 0 && sw_on(r, SW_A) && !row_dead[insts[i].row] && /* (ConcreteBlock: SW_A only lets it break) */
                 strncmp(sc->types + 32 * r->type, "Breakable", 9) != 0) /* BreakableCage writes its SW_A */
             {
                 if (!strncmp(sc->types + 32 * r->type, "CrystalCage", 11)) pad_rumble(RUMBLE_STRONG); /* forceBreak */

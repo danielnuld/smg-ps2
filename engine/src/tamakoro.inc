@@ -31,7 +31,7 @@ enum { TMKM_SET_UP_JUMP_HOLE, TMKM_SHOOT_JUMP_HOLE, TMKM_END_JUMP_HOLE, TMKM_END
 static struct {
     int row, nrv, st, hidden, sensors, bind_sensor, bind_off, ctrl_off, air, bgm_steps, star_id;
     V3 pos, vel, grav, fix, gn, wn, gp, wp;
-    int ground, wall;
+    int ground, wall, wall_row; /* wall_row: the placement its wall is on, -1 the map */
     Quat ball;                 /* mBallRotateQuat */
     V3 my, mz;                 /* mMarioRotateQuat (its Y, Z) */
     V3 ring_up, kick, bind_req, mario_up, mario_pos, moment, mario_front, dir_mario, accel_dir;
@@ -475,7 +475,100 @@ static int tmk_msg(int msg)
     }
     return 0;
 }
-static int tmk_bump_msg(int ground) { (void)ground; return 0; } /* ponytail: no ACTMES_BALL_DASH_WALL / GROUND receiver ported yet (Tamakoro.cpp:432, WoodBox / SimpleBreakableObj / FallDownBridge / PunchBox) */
+/* FallDownBridge.cpp after Petari: a bridge that tips over about its foot (its local Z; at its X 400 x scale end when
+ * it leans the other way). A jumping Tamakoro hitting it as a wall (ACTMES_BALL_DASH_WALL, its wall normal not along
+ * the bridge: |x . n| >= 0.1) pushes it 0.45 degrees a frame (SE_OJ_CHAL_FD_BRIDGE_HIT, Quake 80); control: pulled
+ * by sin(|angle| - 9.090277) x 0.06, kept within 0..90 degrees (bouncing x -0.5, its END SE and shakes), x 0.99 a
+ * frame; once fallen past 9.09 degrees it stays down. Its collision follows its matrix. */
+#define FDB_MAX 4
+static struct { int row, quake, done; float ang, vel; float m0[16]; u32 lv; } fdbs[FDB_MAX];
+static int nfdbs;
+static void fdb_init(const Scene *s)
+{
+    nfdbs = 0;
+    int t = scene_type(s, "FallDownBridge");
+    for (u32 i = 0; t >= 0 && i < s->nobjs && nfdbs < FDB_MAX; i++)
+        if ((int)s->objs[i].type == t) {
+            typeof(&fdbs[0]) b = &fdbs[nfdbs++];
+            memset(b, 0, sizeof *b); b->row = (int)i; b->quake = -1;
+            Inst *in = row_inst((int)i);
+            if (in) memcpy(b->m0, in->m, 64);
+            else { float one[3] = {1, 1, 1}; mat_translate_rot_scale(b->m0, s->objs[i].pos, s->objs[i].rot, s->objs[i].scale); (void)one; }
+        }
+}
+static void update_fdbs(void) /* control, calcAndSetBaseMtx, exeQuake */
+{
+    for (int k = 0; k < nfdbs; k++) {
+        typeof(&fdbs[0]) b = &fdbs[k];
+        float v = sinf((fabsf(b->ang) - 9.090277f) * 0.017453293f);
+        if (b->ang < 0.0f) v = -v;
+        b->vel += v * 0.06f;
+        b->ang += b->vel;
+        if (!b->done && fabsf(b->vel) >= 0.06f) b->lv = se_level(SE_OJ_LV_CHAL_FD_BRIDGE_FL, &b->m0[12], b->lv);
+        int hit = 0;
+        if (b->ang > 90.0f) { b->ang = 90.0f; hit = 1; }
+        if (b->ang < 0.0f) { b->ang = 0.0f; hit = 1; }
+        if (hit) {
+            if (fabsf(b->vel) > 1.0f) { se_start(SE_OJ_CHAL_FD_BRIDGE_END, &b->m0[12]); camera_shake(SHAKE_NORMAL); } /* sShakeCameraNormalVelocity */
+            else if (fabsf(b->vel) > 0.5f) camera_shake(SHAKE_WEAK);
+            b->vel *= -0.5f;
+            if (fabsf(b->vel) < 0.06f) { b->vel = 0.0f; if (fabsf(b->ang) > 9.090277f && !b->done) { b->done = 1; printf("fall down bridge %d: down at %.1f degrees\n", b->row, b->ang); } }
+        }
+        if (fabsf(b->ang) < 0.1f && fabsf(b->vel) < 0.06f) b->ang = b->vel = 0.0f;
+        b->vel *= 0.99f;
+        if (b->quake >= 0 && ++b->quake > 80) b->quake = -1; /* exeQuake: sQuakeTime */
+        Inst *in = row_inst(b->row);
+        if (!in) continue;
+        float sx = vlen(v3(b->m0[0], b->m0[1], b->m0[2])), cx = b->ang >= 0.0f ? 0.0f : sx * 400.0f; /* (local: the scale's x) */
+        float r = b->ang * 0.017453293f, c = cosf(r), s = sinf(r), loc[16];
+        mat_identity(loc); /* T(c) x rotZ x T(-c) */
+        loc[0] = c; loc[1] = s; loc[4] = -s; loc[5] = c;
+        loc[12] = cx - c * cx; loc[13] = -s * cx;
+        float *m0 = b->m0, w[16];
+        float n0[16]; memcpy(n0, m0, 64); /* the placement's rotation without its scale */
+        for (int j = 0; j < 3; j++) { float l = vlen(v3(n0[4 * j], n0[4 * j + 1], n0[4 * j + 2])); if (l > 1e-6f) for (int q = 0; q < 3; q++) n0[4 * j + q] /= l; }
+        mat_mul(w, n0, loc);
+        for (int j = 0; j < 3; j++) { float l = vlen(v3(m0[4 * j], m0[4 * j + 1], m0[4 * j + 2])); for (int q = 0; q < 3; q++) w[4 * j + q] *= l; }
+        memcpy(in->m, w, 64);
+    }
+}
+static int fdb_hit(int row) /* receiveOtherMsg ACTMES_BALL_DASH_WALL from the ball */
+{
+    for (int k = 0; k < nfdbs; k++) {
+        typeof(&fdbs[0]) b = &fdbs[k];
+        if (b->row != row) continue;
+        if (b->done || b->quake >= 0 || !tmk.wall) return 0;
+        V3 n = tmk.wn, x = vnorm(v3(b->m0[0], b->m0[1], b->m0[2]));
+        tmk_normz(&n);
+        float d = vdot(x, n);
+        if (fabsf(d) < 0.1f) return 0;
+        se_start(SE_OJ_CHAL_FD_BRIDGE_HIT, &b->m0[12]);
+        b->vel += d < 0.0f ? -0.45f : 0.45f;
+        b->quake = 0;
+        printf("fall down bridge %d: hit, %.2f\n", row, b->vel);
+        return 1;
+    }
+    return 0;
+}
+/* sendMsgToWallSensor(ACTMES_BALL_DASH_WALL / GROUND, Body): to the part its wall is on (both messages go to the wall's
+ * sensor): ConcreteBlock (SimpleBreakableObj mBreakFlags 0x180), WoodBox / PunchBox (doHit), FallDownBridge (the wall one) */
+static int tmk_bump_msg(int ground)
+{
+    if (!tmk.wall || tmk.wall_row < 0 || row_dead[tmk.wall_row]) return 0;
+    Inst *in = row_inst(tmk.wall_row);
+    if (!in) return 0;
+    const Row *r = &sc->objs[in->row];
+    const char *name = sc->types + 32 * r->type;
+    if (in->breaks == 8 || (in->breaks == 1 && (!strcmp(name, "WoodBox") || !strcmp(name, "PunchBox")))) {
+        if (in->breaks == 8 && r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) return 0; /* setStateBreak: isValidSwitchA && !isOnSwitchA */
+        printf("tamakoro: ball dash %s breaks %s row %d\n", ground ? "ground" : "wall", name, in->row);
+        break_inst(in, 1);
+        game_rebind();
+        return 1;
+    }
+    if (!ground && !strcmp(name, "FallDownBridge")) return fdb_hit(in->row);
+    return 0;
+}
 
 /* JumpHole.cpp / BallOpener.cpp after Petari: a hole the Tamakoro rolls into. Its body sensor (ATYPE_JUMP_HOLE, 200)
  * takes the ball's ACTMES_SPHERE_PLAYER_BINDED when the ball's centre is within 200 of its axis and 160 along it
@@ -904,7 +997,8 @@ static void tmk_bind_move(void) /* LiveActor::movement's binder: the move agains
     bind_contacts(vmul(tmk.grav, -1.0f), &fl, &wl);
     tmk.ground = fl >= 0; tmk.wall = wl >= 0;
     if (tmk.ground) { tmk.gn = tri_n(&b_tri[fl]); tmk.gp = vsub(np, vmul(tmk.gn, TMK_R)); }
-    if (tmk.wall) { tmk.wn = tri_n(&b_tri[wl]); tmk.wp = vsub(np, vmul(tmk.wn, TMK_R)); }
+    tmk.wall_row = -1;
+    if (tmk.wall) { tmk.wn = tri_n(&b_tri[wl]); tmk.wp = vsub(np, vmul(tmk.wn, TMK_R)); if (b_tri[wl].inst >= 0 && b_tri[wl].inst < ninsts) tmk.wall_row = insts[b_tri[wl].inst].row; }
     tmk.pos = np;
 }
 static void tmk_update_mario_mtx(void) /* updateBindActorMatrix (ACTMES_UPDATE_BASEMTX) */
@@ -1161,6 +1255,7 @@ static void tmk_init(const Scene *s) /* Tamakoro::init / TamakoroTutorial::init 
             if ((int)s->objs[k].type == ps && s->objs[k].arg[7] == (int)i) tmk.star_id = s->objs[k].arg[0];
         tmk_set(TMK_STANDBYBIND);
         ho_init(s);
+        fdb_init(s);
         tmr_init_all(s);
         int tt = scene_type(s, "TamakoroTutorial"); /* initChildObj(mTutorial, rIter, 0): its zone's */
         for (u32 k = 0; tt >= 0 && k < s->nobjs; k++) {
@@ -1193,6 +1288,7 @@ static void update_tmk(void)
 {
     if (tmk.row < 0 || tmk.nrv == TMK_DEAD) return;
     update_holes();
+    update_fdbs();
     update_tmrs();
     if (tmk.nrv != TMK_BINDEND && !row_shown(tmk.row)) return;
     tmk.grav = vmul(up_at(tmk.pos, vmul(tmk.grav, -1.0f)), -1.0f); /* onCalcGravity */
@@ -1299,6 +1395,28 @@ int game_test_tmk(int f)
             next_at = t + 120;
         }
         if (tmk.nrv == TMK_BINDEND) ended = 1;
+#elif defined(TMK_DASH) /* the ball jumping at each ConcreteBlock / FallDownBridge in turn (from 450 before its -X / 650 before its +X face) */
+        static int k = -1, next_at = 60;
+        pad_force_stick = 0;
+        if (t >= next_at && (tmk.nrv == TMK_WAIT || tmk.nrv == TMK_LAND || tmk.nrv == TMK_BUMPWALL)) {
+            int tc = scene_type(sc, "ConcreteBlock"), tf = scene_type(sc, "FallDownBridge"), found = -1;
+            for (u32 i = (u32)(k + 1); i < sc->nobjs && found < 0; i++) if ((int)sc->objs[i].type == tc || (int)sc->objs[i].type == tf) found = (int)i;
+            if (found < 0) { ended = 1; printf("tk test f %d: END_BALL_BIND %d\n", f, tmk_msg(TMKM_END_BALL_BIND)); }
+            else {
+                k = found;
+                const Row *r = &sc->objs[k];
+                V3 x, z, c = row_pos(r);
+                row_axes(r, &x, &z);
+                V3 up = vmul(tmk.grav, -1.0f), h = vnorm(vtangent(x, up));
+                int fdb = (int)r->type == tf;
+                if (fdb) h = vmul(h, -1.0f); /* (it falls away from its +X face: hit from there) */
+                tmk.pos = vadd(vadd(c, vmul(h, fdb ? -650.0f : -450.0f * r->scale[0])), vmul(up, fdb ? 900.0f : 160.0f)); /* (the bridge over the blocks by its +X face) */
+                tmk.vel = vmul(h, 25.0f);
+                tmk_set(TMK_JUMP);
+                printf("tk test f %d: ball jumping at %s row %d\n", f, fdb ? "fall down bridge" : "concrete block", k);
+                next_at = t + 150;
+            }
+        }
 #elif defined(TMK_RAILS) /* the ball put on each SphereRailDash / BallRail start in turn, then END_BALL_BIND */
         static int rail = -1, next_at = 60;
         if (t >= next_at && tmk.nrv == TMK_WAIT) {
