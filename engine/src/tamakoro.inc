@@ -477,6 +477,227 @@ static int tmk_msg(int msg)
 }
 static int tmk_bump_msg(int ground) { (void)ground; return 0; } /* ponytail: no ACTMES_BALL_DASH_WALL / GROUND receiver ported yet (Tamakoro.cpp:432, WoodBox / SimpleBreakableObj / FallDownBridge / PunchBox) */
 
+/* JumpHole.cpp / BallOpener.cpp after Petari: a hole the Tamakoro rolls into. Its body sensor (ATYPE_JUMP_HOLE, 200)
+ * takes the ball's ACTMES_SPHERE_PLAYER_BINDED when the ball's centre is within 200 of its axis and 160 along it
+ * (sLaunchValidHeight): the ball's velocity is kept as the bind's and zeroed. SetCenter: the ball held in the hole's
+ * BindCone (400 deep, 200 wide, along the gravity at its place: bindSpereToCone, updateBindPositionAndVelocity 0.9,
+ * gravity 1.2 a frame, kept within 200 - its radius, damped 0.98 -> 0.7 over steps 40-90), its velocity the move;
+ * settled more than sLaunchFixTime frames (JumpHole 10, BallOpener 20) or after 180: JumpHole SetUp (SET_UP_JUMP_HOLE,
+ * 45 steps) then RailMove (SHOOT_JUMP_HOLE: a parabola from the ball to its rail's end, its height by the rail's start,
+ * gravity 1.2; at its end the velocity of its last step and END_JUMP_HOLE); BallOpener Open (SET_UP_JUMP_HOLE, at 45
+ * END_BALL_BIND, SE_OJ_BALL_OPN_OPEN, SE_SY_TAMAKORO_GOAL, its SW_A). Their collision (JumpHole / BallOpener.kcl)
+ * stays a static instance. */
+enum { HO_WAIT, HO_SETCENTER, HO_SETUP, HO_RAILMOVE };
+#define HO_MAX 4
+typedef struct { V3 pos, dir, vertex; float height, radius, gen; } HoCone; /* BindCone */
+static struct {
+    int row, opener, nrv, st, bound, settled;
+    V3 pos, grav, bvel, init_vel;
+    HoCone cone;
+    /* JumpHole's launch */
+    V3 lstart, lgrav, ldir;
+    float ldist, lquad, llin, ldur, ltime;
+    u32 lv;
+} hos[HO_MAX];
+static int nhos;
+static void ho_cone_set(HoCone *c, V3 pos, V3 dir) /* setPosition / setDirection: calcVertexPosition */
+{
+    c->pos = pos; c->dir = dir; c->vertex = vadd(pos, vmul(dir, c->height));
+}
+static int ho_cone_in(const HoCone *c, V3 p) /* BindCone::isInPoint */
+{
+    float h = vdot(c->dir, vsub(p, c->pos)), r = c->radius - h * (c->radius / c->height);
+    V3 d = vsub(p, vadd(c->pos, vmul(c->dir, h)));
+    return vdot(d, d) < r * r;
+}
+/* MR::bindSpereToCone: 1 bound; *pos, *n its result's position and normal (BindResult: (0, 0, 0) when unset) */
+static int ho_bind_cone(V3 *pos, V3 *n, V3 mv, V3 sp, float sr, const HoCone *c)
+{
+    V3 nx = vadd(sp, mv);
+    float eh = c->gen / c->radius * sr;
+    V3 radial = vtangent(vsub(nx, c->pos), c->dir);
+    *pos = v3(0, 0, 0); *n = v3(0, 0, 0);
+    if (tmk_zero(radial)) {
+        radial = vtangent(mv, c->dir);
+        if (tmk_zero(radial)) {
+            float h = vdot(c->dir, vsub(c->vertex, nx));
+            if (-sr < h && h < 0.0f) { *pos = vadd(c->vertex, vmul(c->dir, sr)); *n = c->dir; return 1; }
+            if (0.0f <= h && h < eh) { *pos = vsub(c->vertex, vmul(c->dir, eh)); *n = vmul(c->dir, -1.0f); return 1; }
+            *pos = nx;
+            return 0;
+        }
+    }
+    radial = vadd(vmul(vnorm(radial), c->radius), c->pos);
+    V3 gd = vmul(vsub(radial, c->vertex), 1.0f / c->gen);
+    float along = vdot(gd, vsub(nx, c->vertex));
+    int within = 0.0f < along && along < c->gen;
+    along = clampf(along, 0.0f, c->gen);
+    V3 closest = vadd(c->vertex, vmul(gd, along)), cd = vsub(nx, closest);
+    float dist = vlen(cd);
+    cd = dist > 0.0f ? vmul(cd, 1.0f / dist) : v3(0, 0, 0);
+    int was = ho_cone_in(c, sp), is = ho_cone_in(c, nx);
+    if (was) {
+        float bd = vdot(c->dir, vsub(c->pos, sp)) - sr, ma = vdot(c->dir, mv);
+        V3 bp = vadd(sp, vmul(mv, ma - bd));
+        bp = vtangent(vsub(bp, c->pos), c->dir); /* killElement(bp - mPosition, mDirection) */
+        if (vdot(bp, bp) < c->radius * c->radius && vdot(c->dir, vsub(c->vertex, nx)) < eh) {
+            *pos = vsub(c->vertex, vmul(c->dir, eh)); *n = vmul(c->dir, -1.0f);
+            return 1;
+        }
+    }
+    if (within && was != is) { *n = vmul(cd, -1.0f); return 1; } /* (Petari leaves its position unset here: (0, 0, 0)) */
+    if (dist < sr) { *pos = vadd(nx, vmul(cd, sr - dist)); *n = cd; return 1; }
+    *pos = nx;
+    return 0;
+}
+static void ho_bind_hole(int h) /* bindHole: the ball (tmk) moved in the cone, its velocity set to the move */
+{
+    typeof(&hos[0]) o = &hos[h];
+    V3 prev = tmk.pos, pos, n;
+    o->bvel = vadd(o->bvel, vmul(o->grav, 1.2f)); /* sGravityAcc */
+    int b = ho_bind_cone(&pos, &n, o->bvel, prev, TMK_R, &o->cone);
+    if (b) { float d = vdot(o->bvel, n); if (d < 0.0f) o->bvel = vadd(o->bvel, vmul(n, -d * 0.9f)); } /* updateBindPositionAndVelocity sHoleRefrecRate */
+    V3 lv = vtangent(o->bvel, o->grav), lo = vtangent(vsub(pos, o->pos), o->grav);
+    float lim = 200.0f - TMK_R; /* sHoleRadius */
+    if (vdot(lv, lo) > 0.0f && vdot(lo, lo) > lim * lim) {
+        float dist = vlen(lo);
+        lo = vmul(lo, 1.0f / dist);
+        pos = vsub(pos, vmul(lo, dist - lim));
+        V3 tg = vsub(lv, vmul(lo, vdot(lv, lo)));
+        tg = tmk_zero(tg) ? o->grav : vnorm(tg);
+        o->bvel = vadd(vsub(o->bvel, lv), vmul(tg, vlen(lv)));
+    }
+    float r = (float)(o->st - 40) / 50.0f; /* calcNerveValue(40, 90, 0.98, 0.7) */
+    r = clampf(r, 0.0f, 1.0f);
+    o->bvel = vmul(o->bvel, 0.98f + (0.7f - 0.98f) * r);
+    tmk.vel = vsub(pos, prev);
+    V3 d = vsub(pos, prev);
+    if (vdot(d, d) < 0.1f * 0.1f) o->bvel = v3(0, 0, 0);
+}
+static int ho_binded(int h) /* receiveOtherMsg ACTMES_SPHERE_PLAYER_BINDED from the ball's Body: 1 taken */
+{
+    typeof(&hos[0]) o = &hos[h];
+    if (o->nrv != HO_WAIT || o->bound) return 0;
+    V3 off = vsub(o->pos, tmk.pos), lat = vtangent(off, o->grav);
+    V3 ax = vsub(off, lat);
+    if (vdot(lat, lat) > 200.0f * 200.0f || vdot(ax, ax) > 160.0f * 160.0f) return 0; /* sHoleRadius, sLaunchValidHeight */
+    o->bound = 1;
+    o->init_vel = o->bvel = tmk.vel;
+    tmk.vel = v3(0, 0, 0);
+    return 1;
+}
+static void ho_parabolic(float *acc, float *vel, float mx, float end) /* MR::calcParabolicFunctionParam */
+{
+    float d = mx * (mx - end);
+    if (d <= 0.0f) { *acc = -mx; *vel = end + mx; return; }
+    if (fabsf(end) < 0.0001f) { *acc = mx * -4.0f; *vel = mx * 4.0f; return; }
+    float r = sqrtf(d), t1 = (mx + r) / end, t2 = (mx - r) / end, t = 0.0f <= t1 && t1 <= 1.0f ? t1 : 0.0f <= t2 && t2 <= 1.0f ? t2 : 1.0f;
+    *acc = -mx / (t * t);
+    *vel = -2.0f * t * *acc;
+}
+static void ho_parabola(int h) /* initParabola */
+{
+    typeof(&hos[0]) o = &hos[h];
+    const Row *r = &sc->objs[o->row];
+    u32 n = 0; int closed = 0;
+    const float *rail = r->path >= 0 && scene_blob_g ? find_rail(scene_blob_g, r->zone, r->path, &n, &closed) : NULL;
+    V3 start = rail ? rail_at(rail, n, 0.0f) : o->pos, end = rail ? v3(rail[3 * n - 3], rail[3 * n - 2], rail[3 * n - 1]) : o->pos, p = tmk.pos;
+    o->lgrav = vmul(up_at(end, vmul(o->grav, -1.0f)), -1.0f); /* calcGravityVector at its end */
+    if (tmk_zero(o->lgrav)) o->lgrav = v3(0, -1, 0);
+    float sh = vdot(o->lgrav, vsub(start, p)), eh = vdot(o->lgrav, vsub(end, p));
+    o->ldir = vsub(vsub(end, p), vmul(o->lgrav, eh));
+    o->ldist = vlen(o->ldir);
+    o->ldir = o->ldist > 0.0f ? vmul(o->ldir, 1.0f / o->ldist) : v3(0, 0, 0);
+    ho_parabolic(&o->lquad, &o->llin, sh, eh); /* calcParabolicFunctionParam */
+    o->lstart = p;
+    o->ldur = sqrtf(fabsf(2.0f * o->lquad / 1.2f));
+}
+static void ho_set(int h, int n) { hos[h].nrv = n; hos[h].st = -1; }
+static void update_holes(void) /* JumpHole / BallOpener: control, their nerves */
+{
+    for (int h = 0; h < nhos; h++) {
+        typeof(&hos[0]) o = &hos[h];
+        if (!row_shown(o->row)) continue;
+        int st = ++o->st;
+        switch (o->nrv) {
+        case HO_WAIT:
+            if (o->bound) { ho_bind_hole(h); ho_set(h, HO_SETCENTER); }
+            break;
+        case HO_SETCENTER:
+            if (st == 0) o->settled = 0;
+            ho_bind_hole(h);
+            if (vdot(o->bvel, o->bvel) < 0.0001f) o->settled++; else o->settled = 0;
+            if (o->opener && o->settled == 1) camera_shake(SHAKE_WEAK);
+            o->lv = se_level(o->opener ? SE_OJ_LV_BALL_OPN_SETTING : SE_OJ_LV_JUMP_HOLE_SETTING, &o->pos.x, o->lv);
+            if (o->settled > (o->opener ? 20 : 10) || st > 180) { /* sLaunchFixTime, sForceSetCenterTime */
+                ho_set(h, HO_SETUP);
+                if (!o->opener) o->bvel = v3(0, 0, 0);
+            }
+            break;
+        case HO_SETUP: /* JumpHole SetUp / BallOpener Open */
+            if (st == 0) tmk_msg(TMKM_SET_UP_JUMP_HOLE);
+            if (o->opener) {
+                if (st == 45) { /* sSetUpTime */
+                    tmk.vel = v3(0, 0, 0);
+                    tmk_msg(TMKM_END_BALL_BIND);
+                    o->bound = 0;
+                    se_start(SE_OJ_BALL_OPN_OPEN, &o->pos.x); se_start(SE_SY_TAMAKORO_GOAL, NULL);
+                    if (sc->objs[o->row].sw[SW_A] >= 0) sw_set(&sc->objs[o->row], SW_A, 1);
+                    printf("ball opener %d: open\n", o->row);
+                    ho_set(h, HO_WAIT);
+                }
+            } else if (st > 45) ho_set(h, HO_RAILMOVE);
+            break;
+        case HO_RAILMOVE: {
+            if (st == 0) {
+                o->ltime = 0.0f;
+                ho_parabola(h);
+                camera_shake(SHAKE_NORMAL);
+                se_start(SE_OJ_JUMP_HOLE_FLIP, &o->pos.x); se_start(SE_PV_JUMP_JOY, &mario->pos.x); se_start(SE_PM_JUMP_LONG, &mario->pos.x);
+                tmk_msg(TMKM_SHOOT_JUMP_HOLE);
+            }
+            float hz = o->ldist * o->ltime, vt = o->ltime * (o->llin + o->lquad * o->ltime);
+            V3 p = vadd(vadd(o->lstart, vmul(o->lgrav, vt)), vmul(o->ldir, hz)), prev = tmk.pos;
+            tmk.pos = p;
+            o->ltime += 1.0f / o->ldur;
+            if (o->ltime >= 1.0f) {
+                tmk.vel = vsub(p, prev);
+                tmk_msg(TMKM_END_JUMP_HOLE);
+                o->bound = 0;
+                printf("jump hole %d: launched to %.0f %.0f %.0f\n", o->row, p.x, p.y, p.z);
+                ho_set(h, HO_WAIT);
+            }
+            break;
+        }
+        }
+    }
+}
+static void ho_init(const Scene *s) /* JumpHole / BallOpener::init, initAfterPlacement */
+{
+    nhos = 0;
+    int tj = scene_type(s, "JumpHole"), to = scene_type(s, "BallOpener");
+    for (u32 i = 0; i < s->nobjs && nhos < HO_MAX; i++) {
+        const Row *r = &s->objs[i];
+        if ((int)r->type != tj && (int)r->type != to) continue;
+        typeof(&hos[0]) o = &hos[nhos++];
+        memset(o, 0, sizeof *o);
+        o->row = (int)i; o->opener = (int)r->type == to; o->pos = row_pos(r);
+        o->grav = vmul(up_at(o->pos, v3(0, 1, 0)), -1.0f); /* calcGravityVector */
+        o->cone.height = 400.0f; o->cone.radius = 200.0f; /* sHoleDepth, sHoleRadius */
+        o->cone.gen = sqrtf(400.0f * 400.0f + 200.0f * 200.0f);
+        ho_cone_set(&o->cone, o->pos, o->grav);
+        ho_set(nhos - 1, HO_WAIT);
+    }
+}
+static int ho_try_bind(void) /* attackSensor: isBindedJumpHole (its Body on an ATYPE_JUMP_HOLE sensor, 200) */
+{
+    for (int h = 0; h < nhos; h++)
+        if (row_shown(hos[h].row) && vlen(vsub(tmk.pos, hos[h].pos)) < TMK_R + 200.0f && ho_binded(h)) {
+            printf("tamakoro: in %s row %d\n", hos[h].opener ? "ball opener" : "jump hole", hos[h].row);
+            return 1;
+        }
+    return 0;
+}
 static void tmk_control(void) /* control */
 {
     if (tmk.ground || tmk_ride_rail() || tmk.nrv == TMK_DASHRAIL || tmk.nrv == TMK_JUMPHOLE) { /* updateMoment: isGroundMomentBall */
@@ -767,6 +988,7 @@ static void tmk_init(const Scene *s) /* Tamakoro::init / TamakoroTutorial::init 
         for (u32 k = 0; ps >= 0 && k < s->nobjs; k++)
             if ((int)s->objs[k].type == ps && s->objs[k].arg[7] == (int)i) tmk.star_id = s->objs[k].arg[0];
         tmk_set(TMK_STANDBYBIND);
+        ho_init(s);
         int tt = scene_type(s, "TamakoroTutorial"); /* initChildObj(mTutorial, rIter, 0): its zone's */
         for (u32 k = 0; tt >= 0 && k < s->nobjs; k++) {
             const Row *q = &s->objs[k];
@@ -797,6 +1019,7 @@ static void tmk_init(const Scene *s) /* Tamakoro::init / TamakoroTutorial::init 
 static void update_tmk(void)
 {
     if (tmk.row < 0 || tmk.nrv == TMK_DEAD) return;
+    update_holes();
     if (tmk.nrv != TMK_BINDEND && !row_shown(tmk.row)) return;
     tmk.grav = vmul(up_at(tmk.pos, vmul(tmk.grav, -1.0f)), -1.0f); /* onCalcGravity */
     tmt_exe();
@@ -804,6 +1027,7 @@ static void update_tmk(void)
     if (tmk.nrv == TMK_DEAD) return;
     tmk_control();
     tmk_bind_move();
+    if (tmk_enemy_attack_on() && ho_try_bind()) tmk_set(TMK_JUMPHOLE); /* isEnableBallBind: isBindedJumpHole */
     if (tmk.nrv == TMK_STANDBYBIND || tmk.nrv == TMK_STANDBYTUTORIAL) mario_push_out(tmk.pos, TMK_R); /* attackSensor: isEnablePushPlayer */
     tmt_sensors();
     if (tmk.ta && tmk.ta->skin && tmk.ta->clip_id >= 0) anim_update(tmk.ta);
@@ -881,7 +1105,25 @@ int game_test_tmk(int f)
         int t = f - bound_at;
         pad_force_stick = 1; pad_force_lx = t < 150 ? 0.0f : 0.3f; pad_force_ly = 0.4f;
         if (t == 120) pad_force = PAD_CROSS;
+#ifdef TMK_HOLES /* the ball dropped 300 over each JumpHole in turn, then the BallOpener: its star */
+        static int hole = -1, next_at = 60;
+        if (hole >= 0 && hole < nhos) pad_force_stick = 0;
+        static int done[HO_MAX];
+        if (t >= next_at && tmk.nrv == TMK_WAIT) {
+            hole = -1;
+            for (int h = 0; h < nhos && hole < 0; h++) if (!done[h] && !hos[h].opener) hole = h;
+            for (int h = 0; h < nhos && hole < 0; h++) if (!done[h]) hole = h;
+        }
+        if (hole >= 0 && !done[hole] && t >= next_at && tmk.nrv == TMK_WAIT) {
+            done[hole] = 1;
+            tmk.pos = vsub(hos[hole].pos, vmul(hos[hole].grav, 300.0f)); tmk.vel = v3(0, 0, 0);
+            printf("tk test f %d: ball over %s row %d\n", f, hos[hole].opener ? "ball opener" : "jump hole", hos[hole].row);
+            next_at = t + 120;
+        }
+        if (tmk.nrv == TMK_BINDEND) ended = 1;
+#else
         if (t == 420) { ended = 1; pad_force_stick = 0; printf("tk test f %d: END_BALL_BIND %d\n", f, tmk_msg(TMKM_END_BALL_BIND)); }
+#endif
     }
     if (ended && tmk.nrv == TMK_DEAD && f % 20 == 0) { /* to its star */
         int ps = scene_type(sc, "PowerStar");
