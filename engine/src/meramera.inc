@@ -577,7 +577,7 @@ static void mm_update(Kuribo *k)
             printf("meramera row %d: flat down\n", k->row);
             return;
         }
-    } else if (off == MSG_HITALL && mm_disabled(k) && mm_down_force(k, mc)) return; /* requestDown */
+    } else if (off == MSG_HITALL && mm_disabled(k) && mm_down_force(k, mc)) { m_punch(k, body, 0); return; } /* requestDown */
     if (mario_touch(body, br)) {
         if (mm_disabled(k)) { if (mm_down_force(k, mc)) { if (mario_kick(body, br)) mario_kicked(); return; } } /* requestDown, sendMsgKick */
         else if (mm_push_moved(k)) { V3 d = vsub(body, mc); if (vlen(d) > 1e-6f) k->vel = vadd(k->vel, vmul(vnorm(d), 0.5f)); }

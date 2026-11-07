@@ -383,7 +383,7 @@ static void ts_update(Kuribo *k)
     /* Mario's messages (MarioActor::attackSensor on its sensors: body 85 x scale the larger) */
     V3 mc = mw.c;
     float dm = vlen(vsub(mc, k->pos));
-    if (player_mode == PM_INVINCIBLE && mario_touch(k->pos, 85.0f * sx) && ts_dead_req(k)) return; /* isMsgInvincibleAttack */
+    if (player_mode == PM_INVINCIBLE && mario_touch(k->pos, 85.0f * sx) && ts_dead_req(k)) { m_invincible_hit(k->pos); return; } /* isMsgInvincibleAttack */
     if (mario->spin_timer > 0 && mario->spin_t < 15 && dm < 85.0f * sx + 600.0f && mode_action("スピンアタック") < 4 && ts_can_drift(k)) {
         ts_set_nrv(k, TS_DRIFT); printf("teresa row %d drifts\n", k->row); return; /* SpinStormRange: requestDrift */
     }

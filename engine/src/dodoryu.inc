@@ -431,7 +431,7 @@ static void ddh_update(void)
         int msg = mario_offence(p->pos, r, dd.grav); /* receiveMsgPlayerAttack */
         if (msg == MSG_HIPDROP) { m_pad_vib(0); se_start(SE_EM_MOGHILL_BREAK, &p->pos.x); ddp_destroy(p); continue; }
         if (msg == MSG_TRAMPLE) { m_pad_vib(0); se_start(SE_EM_MOGHILL_BREAK, &p->pos.x); ddp_destroy(p); mario_trample(); continue; }
-        if (msg == MSG_HITALL) { m_pad_vib(2); se_start(SE_EM_MOGHILL_BREAK, &p->pos.x); ddh_kill3(i); continue; }
+        if (msg == MSG_HITALL) { m_punch(p, p->pos, 0); m_pad_vib(2); se_start(SE_EM_MOGHILL_BREAK, &p->pos.x); ddh_kill3(i); continue; }
         if (vlen(vsub(mc, p->pos)) < r + HIT_BODY_R) { /* attackSensor */
             if (dm_damaging()) { ddp_destroy(p); continue; }
             if (mario->hip == HIP_FALL) continue;
@@ -1233,7 +1233,7 @@ static void update_dd(void)
                 if (!(dd.sens >> k & 1)) continue;
                 V3 s = dd_jp(sn[k].j, v3(sn[k].x, sn[k].y, sn[k].z));
                 int msg = mario_offence(s, sn[k].r, dd.grav);
-                if (msg != MSG_NONE) { took = 1; if (dd_catch_player(msg, k, s) && msg == MSG_TRAMPLE) mario_trample(); }
+                if (msg != MSG_NONE) { took = 1; if (dd_catch_player(msg, k, s)) { if (msg == MSG_TRAMPLE) mario_trample(); else if (msg == MSG_HITALL) m_punch((const char *)&dd + k, s, 0); } }
             }
             for (int k = 0; k < 7; k++) {
                 if (!(dd.sens >> k & 1)) continue;

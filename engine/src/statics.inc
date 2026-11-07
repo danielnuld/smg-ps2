@@ -1021,6 +1021,7 @@ static void st_sboxes_update(void)
             if (vlen(b->slidedir) > 1e-6f) b->slidedir = vnorm(b->slidedir);
             b->rot = 0.5f; b->slide = 25.0f;
             se_start(SE_PM_SPIN_HIT, &b->pos.x); /* startSpinHitSound (CS), startBlowHitSound */
+            m_punch(b, body, 0);
             st_sb_nrv(b, SB_SPINNING); st = ++b->st;
             printf("spinning box %d: spinning%c", in->row, 10);
         } else if (b->nrv != SB_SPINNING && !(b->nrv == SB_SLIDING && st < 30) && !onp && st_sb_side(b, &side) && mario_kick(body, 160.0f * s)) {

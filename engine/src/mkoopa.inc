@@ -201,6 +201,7 @@ static void mkoopa_update(Kuribo *k, V3 to, float d)
     }
     if (msg == MSG_HIPDROP) { mkm_nrv(k, MKM_HIPDROPPED); printf("mechanic koopa mini row %d hip dropped\n", k->row); return; }
     if (msg == MSG_HITALL) {
+        m_punch(k, body, 0);
         if (!(k->nrv == MKM_SPINHIT && st < 120)) { mkm_nrv(k, MKM_SPINHIT); printf("mechanic koopa mini row %d spun\n", k->row); }
         return;
     }
