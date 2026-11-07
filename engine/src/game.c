@@ -1554,6 +1554,16 @@ static const Model *m_erail, *m_fireball, *m_rock, *m_ermv, *m_erpoint;
 typedef struct { int row, nseg, loop, t; float ec, sp, seglen, tot; const float *pts; u32 np; } ERMove;
 static ERMove *ermv;
 static int nermv;
+/* ElectricRail::initPoints: an ElectricRailPoint (35: its sensor, initShadowVolumeSphere) at each rail point without a
+ * point arg0, arg0 (mRailHeight) of them stacked 100 apart against gravity, only the lowest with a shadow; and
+ * ElectricRail::initShadow (arg1 > 0 or arg2 > 0): cylinders of 20 at the rail's start / end dropped arg2 (else arg1),
+ * joined by a volume line (arg1) or the separators' strip, 40 wide and 300 deep along gravity (arg2) */
+typedef struct { V3 p; int row; char shadow; } ERPoint;
+static ERPoint *erpts;
+static int nerpts;
+typedef struct { int row, strip; float drop; const float *pts; u32 np; int closed; } ERShadow;
+static ERShadow *ershadows;
+static int nershadows;
 /* RockCreator / Rock (Petari RockCreator.cpp, Rock.cpp; WanwanRolling(Mini / Gold) are RockCreators too): see
  * update_rocks
  * Its sounds as Rock.cpp:539-628 / 696-935 (rock_roll_se, rock_rumble). ponytail: SE_OJ_LV_ROCK_MOVE_MUD
@@ -2869,6 +2879,37 @@ void game_init(const Scene *s, const unsigned char *blob)
         }
         if (!pass) { erails = mem_alloc(MEM_OBJECTS, (n + 1) * sizeof(Spark)); ermv = mem_alloc(MEM_OBJECTS, (nm + 1) * sizeof(ERMove)); }
         nerails = n; nermv = nm;
+    }
+    for (int pass = 0; pass < 2; pass++) { /* ElectricRail::initPoints / initShadow */
+        int n = 0, ns = 0;
+        for (u32 i = 0; i < s->nobjs; i++) {
+            const Row *r = &s->objs[i];
+            const unsigned char *e = r->type == t_erail ? find_path(blob, r->zone, r->path) : NULL;
+            if (!e) continue;
+            u32 np = *(const u32 *)(e + 8), nr = *(const u32 *)(e + 12);
+            int h = r->arg[0] > 0 ? r->arg[0] : 1;
+            const float *raw = (const float *)(e + 24 + 12 * np);
+            for (u32 k = 0; k < nr; k++) {
+                if (*(const int *)(e + 24 + 12 * np + 12 * nr + 12 * k + 4) != -1) continue; /* getRailPointArg0NoInit */
+                for (int j = 0; j < h; j++, n++) {
+                    if (!pass) continue;
+                    V3 p = v3(raw[3 * k], raw[3 * k + 1], raw[3 * k + 2]);
+                    erpts[n].p = vadd(p, vmul(up_at(p, v3(0, 1, 0)), 100.0f * j));
+                    erpts[n].row = i; erpts[n].shadow = j == 0;
+                }
+            }
+            if (r->arg[1] > 0 || r->arg[2] > 0) {
+                if (pass) {
+                    ERShadow *d = &ershadows[ns];
+                    d->row = i; d->strip = r->arg[2] > 0; d->drop = (float)(d->strip ? r->arg[2] : r->arg[1]);
+                    d->pts = find_rail(blob, r->zone, r->path, &d->np, &d->closed);
+                    if (!d->pts || d->np < 2) continue;
+                }
+                ns++;
+            }
+        }
+        if (!pass) { erpts = mem_alloc(MEM_OBJECTS, (n + 1) * sizeof(ERPoint)); ershadows = mem_alloc(MEM_OBJECTS, (ns + 1) * sizeof(ERShadow)); }
+        nerpts = n; nershadows = ns;
     }
     {
         int t_fg = scene_type(s, "FlowerGroup"), t_fb = scene_type(s, "FlowerBlueGroup"), t_cb = scene_type(s, "CutBushGroup");
@@ -41220,7 +41261,7 @@ static void update_pipes(void)
  * only on its lit sections, its ElectricRailPoints at their ends; it vanishes in 20 frames (the planes 30 -> 0 wide,
  * calcNerveEaseInValue), its points stay. ponytail: ElectricRail's 20-frame shrink; ElectricRailMoving drawn as its
  * model stretched over its lit sections (not two planes along the whole rail, its texture scrolled by _9C, its alpha
- * _CC), its arg4 colour (BRK frame 0 / 1) not baked, its points' shadows (initShadowVolumeSphere 35) */
+ * _CC), its arg4 colour (BRK frame 0 / 1) not baked */
 static int erail_on(const Spark *e)
 {
     const Row *r = &sc->objs[e->row];
@@ -41290,6 +41331,22 @@ static void update_electric(void)
         for (int k = 0; k < n; k++)
             for (int j = 0; j < h; j++)
                 if (vlen(vsub(c, vadd(pt[k], vmul(up_at(pt[k], mario->up), 100.0f * j)))) < 35.0f + HIT_BODY_R) { mario_attack(ATK_ELECTRIC, pt[k]); return; }
+    }
+#ifdef ERPOINT_TEST
+    { static int tt; static const Scene *ts; if (ts != sc) { ts = sc; tt = 0; }
+      int game_test_free(void);
+      if (nerpts && game_test_free() && ++tt > 60 && tt < 3000) { V3 p = erpts[nerpts / 2].p, up = up_at(p, mario->up);
+        mario->pos = vadd(p, vmul(up, 250.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        if (tt == 61 || tt == 900) { int hit = 0; V3 ga, gn; for (int k = 0; k < nerpts; k++) hit += erpts[k].shadow && map_drop(erpts[k].p, up_at(erpts[k].p, v3(0, 1, 0)), 50.0f, 1000.0f, &ga, &gn);
+          printf("erpoint test: %d points (row %d), model %d, %d point shadows on the ground, %d rail shadows%c", nerpts, erpts[0].row, m_erpoint != NULL, hit, nershadows, 10); } } }
+#endif
+    for (int i = 0; i < nerpts; i++) { /* ElectricRailPoint::attackSensor (35): active an electric attack (a squat too), once its
+                                     * rail has disappeared (mIsActive off) a push */
+        const ERPoint *q = &erpts[i];
+        if (!row_shown(q->row) || vlen(vsub(c, q->p)) >= 35.0f + HIT_BODY_R) continue;
+        const Row *r = &sc->objs[q->row];
+        if (!(r->sw[SW_A] >= 0 && sw_on(r, SW_A))) { mario_attack(ATK_ELECTRIC, q->p); return; }
+        mario_push_out(q->p, 35.0f);
     }
     if (mario->squat) return;
     for (int i = 0; i < nerails; i++) {
@@ -53935,6 +53992,48 @@ static void draw_shadow(V3 pos, V3 up, V3 front, float rs, float rf, float off, 
     render_shadow(m);
 }
 
+/* a volume line / strip piece of width 2 w between a and b dropped along -up from `start` above to `len` below: its
+ * ground cut as one oval from the two drop points (render_shadow's disc stretched along it) */
+static void shadow_line(V3 a, V3 b, V3 up, float w, float start, float len)
+{
+    V3 mid = vmul(vadd(a, b), 0.5f), ga, gb, na, nb;
+    if (vlen(vsub(mid, cam_pos)) > 3000.0f + 0.5f * vlen(vsub(b, a))) return;
+    if (!map_drop(a, up, start, len, &ga, &na) || !map_drop(b, up, start, len, &gb, &nb)) return;
+    V3 n = vnorm(vadd(na, nb)), along = vtangent(vsub(gb, ga), n);
+    float l = vlen(along), m[16];
+    if (l < 1e-3f) return;
+    basis_matrix(m, vadd(vmul(vadd(ga, gb), 0.5f), vmul(n, 3.0f)), n, along, 0);
+    for (int j = 0; j < 3; j++) { m[j] *= w; m[8 + j] *= 0.5f * l + w; }
+    render_shadow(m);
+}
+/* ElectricRail::initShadow: the start / end cylinders (20, dropped from 50 above to d->drop) and the line between their
+ * shadows (arg1) or the ElectricRailShadowDrawer strip over the separators every 200 (40 wide, 300 along gravity).
+ * ponytail: the volumes' ground cuts as ovals (render_shadow: one disc a shape); a strip piece only where both its
+ * separators reach the ground within 300 */
+static void erail_shadow(const ERShadow *d)
+{
+    if (!row_shown(d->row)) return;
+    V3 a = v3(d->pts[0], d->pts[1], d->pts[2]), b = d->closed ? a : v3(d->pts[3 * (d->np - 1)], d->pts[3 * (d->np - 1) + 1], d->pts[3 * (d->np - 1) + 2]);
+    V3 ua = up_at(a, v3(0, 1, 0)), ub = up_at(b, v3(0, 1, 0));
+    draw_shadow(a, ua, v3(0, 0, 1), 20.0f, 20.0f, 0.0f, 50.0f, d->drop);
+    draw_shadow(b, ub, v3(0, 0, 1), 20.0f, 20.0f, 0.0f, 50.0f, d->drop);
+    if (!d->strip) { shadow_line(a, b, ua, 20.0f, 50.0f, d->drop); return; } /* addShadowVolumeLine start .. end */
+    V3 prev = a; /* initSeparators: every 200 along the rail, its last at the end */
+    float next = 200.0f, at = 0.0f;
+    u32 segs = d->closed ? d->np : d->np - 1;
+    for (u32 k = 0; k < segs; k++) {
+        V3 p = v3(d->pts[3 * k], d->pts[3 * k + 1], d->pts[3 * k + 2]), q = v3(d->pts[3 * ((k + 1) % d->np)], d->pts[3 * ((k + 1) % d->np) + 1], d->pts[3 * ((k + 1) % d->np) + 2]);
+        float l = vlen(vsub(q, p));
+        while (l > 0.0f && at + l >= next) {
+            V3 s = vadd(p, vmul(vsub(q, p), (next - at) / l));
+            shadow_line(prev, s, up_at(s, v3(0, 1, 0)), 20.0f, 0.0f, 300.0f);
+            prev = s; next += 200.0f;
+        }
+        at += l;
+    }
+    shadow_line(prev, b, ub, 20.0f, 0.0f, 300.0f);
+}
+
 /* the walkers' shadows (their init: initShadowVolumeSphere / Oval, Shadow.bcsv's first row) */
 static void walker_shadow(const Kuribo *k)
 {
@@ -54613,6 +54712,17 @@ void game_draw(void)
                 render_model(m_fireball, m, 0xF0, 0x80, 0x20);
             }
     }
+    for (int i = 0; i < nerpts; i++) { /* ElectricRailPoint: its own mRotation (0), shown with its rail */
+        const ERPoint *q = &erpts[i];
+        if (!row_shown(q->row)) continue;
+        if (m_erpoint) {
+            mat_identity(m);
+            m[12] = q->p.x; m[13] = q->p.y; m[14] = q->p.z;
+            render_model(m_erpoint, m, 0x80, 0x80, 0x80);
+        }
+        if (q->shadow) draw_shadow(q->p, up_at(q->p, v3(0, 1, 0)), v3(0, 0, 1), 35.0f, 35.0f, 0.0f, 50.0f, 1000.0f); /* initShadowVolumeSphere 35 */
+    }
+    for (int i = 0; i < nershadows; i++) erail_shadow(&ershadows[i]);
     for (int i = 0; m_erpoint && i < nermv; i++) { /* ElectricRailMovingPoint */
         const ERMove *mv = &ermv[i];
         if (!row_shown(mv->row) || mv->nseg > 64) continue;
@@ -54625,6 +54735,7 @@ void game_draw(void)
                 V3 up = up_at(pt[k], v3(0, 1, 0));
                 basis_matrix(m, vadd(pt[k], vmul(up, 100.0f * j)), up, v3(0, 0, 1), 0);
                 render_model(m_erpoint, m, 0x70, 0xB0, 0x60);
+                if (j == 0) draw_shadow(pt[k], up, v3(0, 0, 1), 35.0f, 35.0f, 0.0f, 50.0f, 1000.0f); /* the lowest: initShadowVolumeSphere 35 */
             }
     }
     for (int i = 0; i < nerails; i++) { /* the 600-long rail model stretched over each segment (a moving one's lit pieces) */
