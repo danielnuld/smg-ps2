@@ -2577,13 +2577,14 @@ int main(void)
         if (frame == 700) printf("karikari test: hip drop by row %d" "\n", game_test_enemy(8, 0, 5));
 #endif
 #ifdef MKOOPA_TEST
-        if (frame >= 120 && frame < 400 && frame % 10 == 0) { /* held 200 off: it hops, closes in, fires */
-            int row = game_test_enemy(7, 0, 3);
-            if (frame % 30 == 0) printf("mkoopa test f %u: by row %d, life %d" "\n", frame, row, game_life());
-        }
-        if (frame == 500) printf("mkoopa test: stomp row %d" "\n", game_test_enemy(7, 0, 0));
-        if (frame == 800) printf("mkoopa test: hip drop row %d\n", game_test_enemy(7, 0, 4));
-        if (frame == 700 || frame == 900) printf("mkoopa test f %u: %d alive, life %d\n", frame, game_kind_alive(7), game_life());
+        { static int t; void game_mkm_state(char *out, int n); /* once Mario is free: 600 before it (Find, Pursue, fire), a stomp, a spin, a hip drop */
+          if (game_test_free()) t++;
+          if (t == 1) game_test_unclip();
+          if (t == 20) printf("mkoopa test: 600 before row %d\n", game_test_enemy(7, 0, 9));
+          if (t == 500) printf("mkoopa test: stomp row %d\n", game_test_enemy(7, 0, 0));
+          if (t == 800) printf("mkoopa test: spin by row %d\n", game_test_enemy(7, 0, 1));
+          if (t == 1100) printf("mkoopa test: hip drop row %d\n", game_test_enemy(7, 0, 4));
+          if (t > 0 && t <= 1300 && t % 15 == 0) { char w[128]; game_mkm_state(w, sizeof w); printf("mkoopa test t %d: %d alive, life %d, %s\n", t, game_kind_alive(7), game_life(), w); } }
 #endif
 #ifdef KICK_TEST
         { static unsigned f0; if (!f0 && game_test_free()) f0 = frame; /* frames from Mario free */

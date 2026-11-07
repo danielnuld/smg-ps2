@@ -1300,6 +1300,11 @@ there needs the embedded blob and every pack rebuilt.
   so it shows as the DummyDisplayModel inside and the model gone at 0), arg7 6 KeySwitch (okeys), coin, TeresaChief's
   power star (slice.py declare_stars) and after-boss BGM. Test: `teresa` (TransformationExGalaxy/1: Shay (its coin inside at half), Chase, attack,
   Drift). Repack: slice_all.py PhantomGalaxy, OceanPhantomCaveGalaxy; sound.py --pack those and TransformationExGalaxy.
+- MechanicKoopaMini (fix/mkoopa): MechanicKoopaMini.cpp after Petari replaces the improvised one (mkoopa.inc mkm_*):
+  WalkOnRail (600 ahead) / Turn at its end / Wait 120, JumpStart (45 up) at a map wall ahead, Find (26 up) / Pursue (1.3)
+  / PreFire / Fire 120 (the fire sensor ahead to Mario's centre, its Fire effect) / FireEnd, Trample / SpinHit then Fire,
+  HipDropped (Break, a coin); explosions kill it (a coin), fire balls and blows do nothing; its binder 120 at (0, 110,
+  20); calcRotate's up. Test: `mkoopa` (FactoryGalaxy/1). Repack: sound.py --pack FactoryGalaxy, CannonFleetGalaxy.
 
 ## Next
 

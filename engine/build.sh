@@ -98,7 +98,7 @@
 # karikari: with packs, Mario held by Karikari (they cling, bite), then a hip drop throws them off (-DKARIKARI_TEST)
 # crater: with packs, Mario dropped into a Gateway crater over its invisible WarpPod, taken to the other one (-DCRATER_TEST)
 # pullback: with packs, Mario dropped into the Gateway's pit over its PullBackCylinder (-DPULLBACK_TEST)
-# mkoopa: with packs, Mario held by a MechanicKoopaMini (it fires), then stomps it (-DMKOOPA_TEST)
+# mkoopa: with packs (Factory 1), Mario 600 before a MechanicKoopaMini (Find, Pursue, fire), a stomp, a spin, a hip drop (-DMKOOPA_TEST)
 # killer: with packs, Mario put 1500 in front of the first HomingKiller launcher, then left there (-DKILLER_TEST)
 # meteor: with packs, Mario held half way down the first MeteorStrike's rail (-DMETEOR_TEST)
 # takobo: with packs, Mario held by a Takobo (it punches), then stomps one and spins another (-DTAKOBO_TEST)
