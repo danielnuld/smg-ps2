@@ -1341,8 +1341,9 @@ int game_test_dd(int frame)
     if (dd.dead) { /* to its star (arg7: the declarer) */
         int ty = scene_type(sc, "PowerStar");
         if (dead_at < 0) dead_at = frame;
-        for (u32 i = 0; frame - dead_at >= 200 && frame % 20 == 0 && ty >= 0 && i < sc->nobjs; i++)
-            if ((int)sc->objs[i].type == ty && sc->objs[i].arg[7] == dd.row) { mario->pos = row_pos(&sc->objs[i]); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+        for (u32 i = 0; frame - dead_at >= 200 && frame % 20 == 0 && ty >= 0 && i < sc->nobjs; i++) /* (packs sliced before
+                                                                      * Dodoryu was a declarer: its star's arg7 is -1) */
+            if ((int)sc->objs[i].type == ty && (sc->objs[i].arg[7] == dd.row || sc->objs[i].arg[7] == -1)) { mario->pos = row_pos(&sc->objs[i]); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
         return 100;
     }
     if (dd.cur == DS_WAIT) {
@@ -1367,6 +1368,10 @@ int game_test_dd(int frame)
         mario->face = vmul(h, -1.0f); mario->spin_timer = SPIN_TIME;
         last = frame;
         printf("dd test f %d: spin\n", frame);
+    } else if (dd.cur != DS_LV1 && dd_is(L2_CHASEHIDE) && vlen(vsub(mario->pos, dd.pos)) >= 400.0f) { /* within its x14 */
+        mario->pos = vadd(vadd(dd.pos, vmul(h, 400.0f)), vmul(up, 50.0f)); mario->up = up; mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        last = frame;
+        printf("dd test f %d: near it\n", frame);
     } else if (vlen(vsub(mario->pos, dd.pos)) < 900.0f && dd.cur == DS_LV1) { /* out of its way */
         mario->pos = vadd(dd.pos, vmul(h, 1100.0f)); mario->hvel = v3(0, 0, 0);
     }
