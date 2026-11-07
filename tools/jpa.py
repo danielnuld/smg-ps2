@@ -493,7 +493,7 @@ def flare(fs, out_tex):
 NAMED = ("ClipAreaDropLaser", "KillerGunnerSingle", "SpinningBox", "FlexibleSandPlanetPartsA", "MagnumKiller", "TripodBoss", "TripodBossCore", "ItemBubble", "DinoPackunBall", "Mario", "Dossun", "Onimasu", "LavaStrangeRock",
          "LavaStrangeRockL", "LavaStrangeRockTable", "MogucchiHill", "PalmIsland", "KabokuriFire", "LotusLeaf", "ElectricBall",
          "MorphItemObj", "WaterColumn", "PhantomTorch", "PhantomBonfire", "ShockWaveGenerator", "DriftWood", "BossKameckBeam", "BossKameckFireBall",
-         "AirBubble", "FireBarBall", "KoopaJrShipCannonShell", "IronCannonLauncherPoint", "TreasureSpot", "CoinFlower", "CocoNut", "SpiderThreadAttachPoint", "TombSpider", "TombSpiderGland", "TombSpiderPlanet", "BigBubble", "MeteorStrike", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate", "IceManIce", "FallingSmallRock", "SubmarineSteam", "SubmarineVolcano", "PoltaRock", "PoltaGroundRock", "DodoryuHill", "Fluff", "FluffWind", "Fountain", "SpringJetWater", "LargeChain")  # (WaterColumn: MarioActor::emitEffectWaterColumn)  # MorphItemObjNeo's effect group (initEffectKeeper "MorphItemObj")
+         "AirBubble", "PackunFlower", "FireBarBall", "KoopaJrShipCannonShell", "IronCannonLauncherPoint", "TreasureSpot", "CoinFlower", "CocoNut", "SpiderThreadAttachPoint", "TombSpider", "TombSpiderGland", "TombSpiderPlanet", "BigBubble", "MeteorStrike", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate", "IceManIce", "FallingSmallRock", "SubmarineSteam", "SubmarineVolcano", "PoltaRock", "PoltaGroundRock", "DodoryuHill", "Fluff", "FluffWind", "Fountain", "SpringJetWater", "LargeChain")  # (WaterColumn: MarioActor::emitEffectWaterColumn)  # MorphItemObjNeo's effect group (initEffectKeeper "MorphItemObj")
 NAMED_ONLY = {"Mario": ("SpinLight", "SpinLightBurst", "Invincible", "Ice", "Metamorphosis", "MetamorphosisEnd", "GetAgain", "WaterBound",
                         "SkateL", "SkateR", "IceJumpLand", "IceMarioSpinLight", "FooMarioHandGlowL", "FooMarioHandGlowR",
                         "FooMarioBrakeLampL", "FooMarioBrakeLampR", "FooMarioEndL", "FooMarioEndR",
@@ -511,7 +511,12 @@ NAMED_ONLY = {"Mario": ("SpinLight", "SpinLightBurst", "Invincible", "Ice", "Met
 REGISTERED = {"Mario": (("雪煙レベル", "CrestGetFlyC", "FootR"),),
               "TamakoroTutorial": (("hitmarknormal", "HitMarkNormal", None),),  # TamakoroTutorial::init: addEffectHitNormal
               **{c: (("hitmarknormal", "HitMarkNormal", None),) for c in ("Gesso", "BasaBasa", "BasaBasaIce", "Metbo", "PackunPetit", "Kanina",
-                 "KaninaRed", "Jellyfish", "JellyfishElectric", "NokonokoLand", "BossKameck")}}  # their init's addEffectHitNormal (game.c w_hit_mark, bk_*)
+                 "KaninaRed", "Jellyfish", "JellyfishElectric", "NokonokoLand", "BossKameck", "StinkBugSmall", "StinkBugParent",
+                 "NeedlePlant", "NeedlePlantFly", "Shellfish", "ShellfishCoin", "ShellfishYellowChip")},  # their init's addEffectHitNormal (game.c w_hit_mark, hit_mark_between, bk_*)
+              # SlingShooter::init: addEffectHitNormal, addEffect InvalidHitMark (game.c sls_fx_hit)
+              "SpiderThreadAttachPoint": (("hitmarknormal", "HitMarkNormal", None), ("invalidhitmark", "InvalidHitMark", None)),
+              # addEffectHitNormal(this, "Hit"): KoopaBattleMap(Coin / Damage)Plate, KoopaFireStairs (koopa.inc)
+              **{c: (("hit", "HitMarkNormal", None),) for c in ("KoopaPlate", "KoopaPlateCoin", "KoopaPlateDamage", "KoopaFireStairs")}}
 # and its animation rows for these clips (game.c draw_skin: Mario's clips as "mario/<clip>")
 NAMED_ANIMS = {"Mario": ("spaceflystart", "spaceflyloop", "spaceflyend", "spaceflyshort", "spaceflyshortstart",
                          "landscenariostart", "powerstarget", "sleep", "sleeplie", "spinlow", "foospin", "skatel", "skater",

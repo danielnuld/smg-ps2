@@ -444,7 +444,8 @@ static void kp_fire_stairs_update(void)
                 V3 h = vadd(f->pos, vmul(vlen(f->vel) > 1e-6f ? vnorm(f->vel) : v3(0, 0, 0), 100.0f));
                 float hm[16];
                 basis_matrix(hm, h, up, f->front, 0);
-                fx_named("MeteorStrike", "Hit", hm, NULL, NULL); /* emitEffectHit (setEffectBaseScale 2) */
+                for (int q = 0; q < 12; q++) if (q % 4 != 3) hm[q] *= 2.0f; /* setEffectBaseScale 2 */
+                fx_named("KoopaFireStairs", "Hit", hm, NULL, NULL); /* emitEffectHit */
                 fx_named("MeteorStrike", "MeteorStrikeBreak", m, NULL, NULL);
                 f->vel = v3(0, 0, 0);
                 se_start(SE_OJ_KOOPA_FIRE_EXPLODE, &f->pos.x);

@@ -1506,6 +1506,8 @@ static void mario_sound(const char *key);
 static int mario_kick(V3 c, float r); /* sendBodyAttack ACTMES_KICK */
 static V3 m_kick_c; /* the sensor mario_kick last took (printHitMark) */
 static void m_print_hit_mark(V3 sensor);
+static void hit_mark_at(const char *cls, V3 at);
+static void hit_mark_between(const char *cls, V3 s1, float r1, V3 s2, float r2);
 static void m_punch(const void *id, V3 at, int how); /* reactionPunch: a receiver took his spin */
 static void m_invincible_hit(V3 s);
 static const void *m_punched[8]; /* MarioActor _954: the sensors punched this spin */
@@ -22719,7 +22721,7 @@ static void stink_update(Kuribo *k, V3 to, float d)
     if (k->phase != 5 && k->phase != 6) { /* the horn */
         V3 horn = vadd(vadd(k->pos, vmul(f, 100.0f * s)), vmul(k->up, 70.0f * s)), hc = vsub(c, horn);
         if (vlen(hc) < 100.0f * s + HIT_BODY_R && vdot(vsub(c, k->pos), f) > 0 && !mario->hurt_timer) {
-            mario_attack(ATK_STRONG, k->pos); /* sendMsgEnemyAttackStrong */
+            if (mario_attack(ATK_STRONG, k->pos)) hit_mark_between("StinkBugSmall", horn, 100.0f * s, c, HIT_BODY_R); /* sendMsgEnemyAttackStrong: emitEffectHitBetweenSensors */
             if (k->phase != 2) { k->phase = 5; k->timer = 0; }
             printf("stink bug row %d: horn hits Mario" "\n", k->row);
         }
@@ -24572,6 +24574,7 @@ static int hhp_blow(V3 p, float rad)
         hhp_sensors(in, k, sp, sr);
         for (int s = 0; s < 6; s++)
             if (vlen(vsub(p, sp[s])) < sr[s] + rad) {
+                hit_mark_at("PackunFlower", vadd(vmul(sp[s], rad / (rad + sr[s])), vmul(p, sr[s] / (rad + sr[s])))); /* emitEffectHit */
                 scene_stop = 8;
                 pad_rumble(RUMBLE_MIDDLE); /* receiveMsgPlayerAttack: a jet turtle / fire ball */
                 hhp_set(k, HH_BLOWKILL);
@@ -24881,14 +24884,28 @@ static void w_se(Kuribo *k, u32 id) { float at[3] = {k->pos.x, k->pos.y, k->pos.
 static void w_se_lv(Kuribo *k, u32 id) { float at[3] = {k->pos.x, k->pos.y, k->pos.z}; k->lv = se_level(id, at, k->lv); }
 /* emitEffectHitBetweenSensors(this, its sensor (s, r), Mario's body, 0, nullptr): addEffectHitNormal's HitMarkNormal at
  * calcPosBetweenSensors (jpa.py REGISTERED: the class's hitmarknormal row) */
-static void w_hit_mark(Kuribo *k, V3 s, float r)
+/* MR::emitEffectHit(cls, at): its HitMarkNormal at a place (setGlobalTranslation; jpa.py REGISTERED / NAMED rows) */
+static void hit_mark_at(const char *cls, V3 at)
 {
-    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), d = vsub(mc, s);
-    float dist = vlen(d), m[16];
-    d = dist > 1e-6f ? vmul(d, 1.0f / dist) : v3(0, 0, 0);
-    basis_matrix(m, vadd(s, vmul(d, (r + HIT_BODY_R - dist) / 2.0f + r)), k->up, k->front, 0);
-    fx_named(walker_cls(k), "HitMarkNormal", m, NULL, NULL);
+    float m[16];
+    mat_identity(m);
+    m[12] = at.x; m[13] = at.y; m[14] = at.z;
+    int ok = fx_named(cls, "HitMarkNormal", m, NULL, NULL);
+#if defined(HAZARD_TEST) || defined(KICK_TEST)
+    printf("hit mark %s: %d%c", cls, ok, 10);
+#endif
+    (void)ok;
 }
+/* emitEffectHitBetweenSensors(cls, sensor 1 (s1, r1), sensor 2 (s2, r2), 0): calcPosBetweenSensors, from s1 towards s2
+ * by (r1 + r2 - their distance) / 2 + r1 */
+static void hit_mark_between(const char *cls, V3 s1, float r1, V3 s2, float r2)
+{
+    V3 d = vsub(s2, s1);
+    float dist = vlen(d);
+    d = dist > 1e-6f ? vmul(d, 1.0f / dist) : v3(0, 0, 0);
+    hit_mark_at(cls, vadd(s1, vmul(d, (r1 + r2 - dist) / 2.0f + r1)));
+}
+static void w_hit_mark(Kuribo *k, V3 s, float r) { hit_mark_between(walker_cls(k), s, r, vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), HIT_BODY_R); }
 
 /* The walker kit's kill: DeathSmokeKuribo, its switch, its item (ItemGenerator: 1 a coin, 2 three star pieces) */
 static void w_kill(Kuribo *k)
@@ -35394,7 +35411,7 @@ static void update_drift(Inst *in, int i, int st)
  * step 5) -> Wait. A star piece (StarPieceReflect) or a thrown shell: Shock (CloseDamage / OpenDamage, interpolated
  * 2; the item shown, sStepToRecover 540, CloseSignal). The item once taken is gone. gi: bits 0-7 the coin slot, 0x100
  * shown, 0x200 taken, 0x400 the Hi collision dropped; gv the item's place.
- * ponytail: no 2P pointer bind (DPDOpen: WalkerStateBindStarPointer, the 2P pointer only), no HitNormal effect, no
+ * ponytail: no 2P pointer bind (DPDOpen: WalkerStateBindStarPointer, the 2P pointer only), no
  * AnimScaleController, no shadow; the chip drawn static */
 enum { SF_WAIT = 1, SF_OPEN, SF_OPENWAIT, SF_CLOSESIGNAL, SF_CLOSE, SF_SHOCK };
 static V3 shell_put(const Inst *in) /* putItem: the base matrix x the item's offset */
@@ -35411,8 +35428,10 @@ static void shell_item(Inst *in, int show) /* ACTMES_ITEM_SHOW / HIDE (a taken i
     g->i = show ? g->i | 0x100 : g->i & ~0x100;
     if (in->gap == GAP_SHELLCOIN) { Pickup *c = &coins[g->i & 0xFF]; c->pos = g->v; c->alive = show ? PICK_ON : PICK_GONE; }
 }
-static void shell_shock(Inst *in) /* receiveMsgPlayerAttack: isMsgJetTurtleAttack / isMsgStarPieceReflect */
+static void shell_shock(Inst *in, V3 p) /* receiveMsgPlayerAttack: isMsgJetTurtleAttack / isMsgStarPieceReflect (a star
+                                          * piece's 30 at p on its body sensor: emitEffectHitBetweenSensors) */
 {
+    hit_mark_between(sc->types + 32 * sc->objs[in->row].type, p, 30.0f, vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(vnorm(v3(in->m[4], in->m[5], in->m[6])), 100.0f)), 400.0f);
     GapSt *g = gap_st(in->row);
     obj_play(in, gap_st(in->row)->n == SF_WAIT ? "CloseDamage" : "OpenDamage", 0, 2);
     if (gap_st(in->row)->n == SF_OPEN && gap_st(in->row)->st > 40 && gap_st(in->row)->st <= 100) { g->v = vadd(shell_put(in), vmul(vnorm(v3(in->m[4], in->m[5], in->m[6])), 30.0f)); shell_item(in, g->i & 0x100); } /* endBindItem */
@@ -35477,6 +35496,7 @@ static void update_shellfish(Inst *in, int st)
             V3 core = v3(jm[12] - 100.0f * jm[4] + 200.0f * jm[8], jm[13] - 100.0f * jm[5] + 200.0f * jm[9], jm[14] - 100.0f * jm[6] + 200.0f * jm[10]);
             V3 z = vnorm(v3(in->m[8], in->m[9], in->m[10])), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
             if (vlen(vsub(mc, core)) < 120.0f + HIT_BODY_R && !mario->hurt_timer) {
+                hit_mark_between(sc->types + 32 * sc->objs[in->row].type, core, 120.0f, mc, HIT_BODY_R); /* emitEffectHitBetweenSensors */
                 if (mario_attack(ATK_STRONG, vsub(mc, z)) && !(g->i & 0x400)) { g->i |= 0x400; in->kcl = NULL; } /* sendMsgEnemyAttackStrongToDir: invalidateCollisionParts */
                 V3 v = vmul(z, 40.0f); /* pushPlayer(sHitPushPower) */
                 mario->hvel = vtangent(v, mario->up); mario->vup = vdot(v, mario->up); mario->grounded = 0;
@@ -35524,7 +35544,7 @@ static int gap_shot(V3 p) /* a star piece: ShockWaveGenerator's body (isMsgStarP
         if ((in->gap != GAP_SHELLCOIN && in->gap != GAP_SHELLCHIP) || !row_shown(in->row) || !gap_st(in->row)->n) continue;
         V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
         if (vlen(vsub(p, vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(up, 100.0f)))) > 400.0f) continue;
-        shell_shock(in);
+        shell_shock(in, p);
         return 1;
     }
     Hit h[4];
@@ -40456,8 +40476,11 @@ static void update_hazards(void)
             r = 70.0f * in->s;
         }
         if (vlen(vsub(c, p)) > r + HIT_BODY_R || (in->hazard == 2 && mario->hurt_timer)) continue;
-        mario_attack(in->hazard == 1 ? ATK_EXPLOSION : ATK_ENEMY, p);
-        if (in->hazard == 2) { obj_play(in, "shake", 0, 0); se_start(SE_OJ_LEAVES_SWING, &in->m[12]); } /* sendMsgEnemyAttack: Shake */
+        int took = mario_attack(in->hazard == 1 ? ATK_EXPLOSION : ATK_ENEMY, p);
+        if (in->hazard == 2) { /* sendMsgEnemyAttack: emitEffectHitBetweenSensors, Shake */
+            if (took) hit_mark_between(sc->types + 32 * sc->objs[in->row].type, p, r, c, HIT_BODY_R);
+            obj_play(in, "shake", 0, 0); se_start(SE_OJ_LEAVES_SWING, &in->m[12]);
+        }
         if (in->hazard == 1) {
             fx_emit(FX_SPACEMINE_EXPLOSION, in->m);
             se_start(SE_OJ_SPACEMINE_EXPLOSION, &in->m[12]);
@@ -49817,6 +49840,7 @@ static void update_sbp(void)
                 V3 head = sbp_joint(in, 6, v3(0, -50.0f, 80.0f)), to = vsub(c, head);
                 if (vlen(to) < 160.0f + HIT_BODY_R && vdot(to, sbp.F) >= 0 && fabsf(vdot(sbp.up, to)) <= 25.0f + HIT_BODY_R &&
                     !mario->hurt_timer && mario_attack(ATK_STRONG, head)) {
+                    hit_mark_between("StinkBugParent", head, 160.0f, c, HIT_BODY_R); /* emitEffectHitBetweenSensors */
                     printf("stink bug parent: head hits Mario\n");
                     if (sbp.nrv != SBP_DASH) sbp_set(SBP_ATTACK);
                 }

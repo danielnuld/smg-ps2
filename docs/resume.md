@@ -1367,6 +1367,14 @@ there needs the embedded blob and every pack rebuilt.
   sensor (the eye over all three groups); Butterfly's attackSensor in Hive perches on an NPC sensor (PerchOn). Test:
   plain XF=-DPERCH_TEST PeachCastleGardenGalaxy/1 (a Butterfly put by the Kinopio nearest its home: `perch on NPC`),
   `walker` prints `homing f ...: sensors n`. ponytail: walkers outside wp_sensors are one point; NPC joints taken as joint 1.
+- More hit marks (feat/hitmark-more): game.c hit_mark_at / hit_mark_between (emitEffectHit, calcPosBetweenSensors) for
+  StinkBugSmall / StinkBugParent (horn on Mario), NeedlePlant(Fly) (its prick taken), Shellfish (core on Mario, a star
+  piece on its body), HammerHeadPackun (PackunFlower's HitMarkNormal row, jpa.py NAMED) blown; jpa.py REGISTERED rows
+  for those, SpiderThreadAttachPoint (HitMarkNormal / InvalidHitMark: sls_fx_hit found none) and the "Hit" rename of
+  KoopaPlate(Coin / Damage) / KoopaFireStairs (koopa.inc emitted "Hit" with no row). Seen in PCSX2 (EggStar 1 slice in
+  the overlay, a test hook repeating the marks before the camera). Not ported: StringSpider's (2P pointer only),
+  JetTurtle / TombSpiderParts (added, never emitted), DharmaSambo / MarblePlanet / MogucchiShooter (classes not ported).
+  Repack: slice_all.py every galaxy (PTCL rows).
 
 ## Next
 
