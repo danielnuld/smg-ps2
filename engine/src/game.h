@@ -236,6 +236,7 @@ int game_test_mm(int frame); /* mm test: a placed Meramera a frame */
 int game_test_sfk(int frame); /* sfk test: the SkeletalFishBoss fight a frame */
 int game_test_sf(int frame); /* sf test: shells at the SkeletalFishBabies a frame */
 int game_test_kj(int frame); /* kj test: the KoopaJrShip fight a frame */
+int game_test_wz(int frame); /* wz test: the WaterBazooka fight a frame */
 int game_test_pol(int frame); /* pol test: the Polta fight a frame */
 int game_test_tmk(int frame); /* tk test: the Tamakoro ride a frame */
 int game_test_bbego(int frame); /* bbego test: the BossBegoman fight a frame */
