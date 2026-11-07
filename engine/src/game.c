@@ -130,6 +130,7 @@ static void st_mirror_pass(V3 ce, V3 cw, V3 cu);
 static int st_mapboard; /* AstroMapBoard shown: 1 its picture to capture (game_draw), 2 done */
 static int st_flag_class(const char *n), st_cast_hook(int row, int type, int part), st_rail_obj(const char *n); static void st_update(void), st_draw(void), st_init(const Scene *s); static int st_shot(V3 p), st_jet_hit(V3 p); static void st_column_strike(V3 c, float r); /* statics.inc */
 static void mm_update(Kuribo *k), mm_kill(Kuribo *k), mm_btp(Kuribo *k, const Model *md); /* Meramera (meramera.inc) */
+static void poihana_update(Kuribo *k); /* Poihana (poihana.inc) */
 static void ts_update(Kuribo *k), ts_draw(Kuribo *k, const Model *md, float *m, Anim *a); static int ts_dead_req(Kuribo *k), ts_star(Kuribo *k); /* Teresa (teresa.inc) */
 static void mkoopa_update(Kuribo *k, V3 to, float d); static int mkm_star(Kuribo *e), mkm_explosion(Kuribo *e); /* MechanicKoopaMini (mkoopa.inc) */
 static int mm_down_force(Kuribo *k, V3 from), mm_star(Kuribo *k), mm_fire(Kuribo *k, V3 from);
@@ -7365,8 +7366,8 @@ int game_test_note(int phase)
     return -1;
 }
 
-/* Test builds: Mario 600 in front of the first Poihana (how 0) or spinning by it (1); its row, -1 none.
- * game_poihana_state: its phase */
+/* Test builds: Mario 300 in front of the first Poihana (how 0), spinning 90 in front of it (1) or 100 behind it
+ * (2); its row, -1 none. game_poihana_state: its nerve (poihana.inc PH_*) */
 int game_test_poihana(int how)
 {
     for (int i = 0; i < nkuribo; i++) {
@@ -7375,9 +7376,9 @@ int game_test_poihana(int how)
         int bound = 0, zone = sc->objs[k->row].zone;
         for (int j = 0; j < ninsts && !bound; j++) bound = insts[j].kcl && insts[j].zone == zone;
         test_nolost = !bound; /* held there (no miss) while its zone streams in */
-        mario->pos = vadd(k->pos, vmul(stink_front(k), how ? 150.0f : 300.0f));
+        mario->pos = vadd(k->pos, vmul(k->front.x || k->front.y || k->front.z ? k->front : stink_front(k), how == 2 ? -100.0f : how ? 90.0f : 300.0f));
         mario->up = k->up;
-        if (how) mario->spin_timer = SPIN_TIME;
+        if (how == 1) { mario->spin_timer = SPIN_TIME; mario->face = vmul(k->front, -1.0f); } /* facing it (tryPunchAirAfter's front check) */
         mario->hvel = v3(0, 0, 0); mario->vup = 0;
         return bound ? k->row : -2;
     }
@@ -7386,7 +7387,7 @@ int game_test_poihana(int how)
 
 int game_poihana_state(void)
 {
-    for (int i = 0; i < nkuribo; i++) if (kuribo[i].kind == WALK_POIHANA) return kuribo[i].phase;
+    for (int i = 0; i < nkuribo; i++) if (kuribo[i].kind == WALK_POIHANA) return kuribo[i].nrv;
     return -1;
 }
 
@@ -14166,7 +14167,7 @@ static int bk_jet_hit(V3 p);
 static void km_down(Kuribo *k, V3 from);
 enum { GE_FROMBOX, GE_WAIT, GE_SEARCH, GE_WALKCHARGE, GE_WALK, GE_SINK, GE_LOST, GE_ATTACK, GE_PUNCHDOWN, GE_COMEBACK, GE_ROTATE };
 enum { SN_WAYLAY, SN_WAIT, SN_FORWARD, SN_REST, SN_BACK, SN_TURTLEDOWN };
-static void poihana_shock(Kuribo *k);
+static int poihana_shock(Kuribo *k);
 static void ge_knock(Kuribo *k, V3 from);
 static void w_nrv(Kuribo *k, int n);
 static int noko_turtle(Kuribo *k, V3 p, V3 v);
@@ -14243,7 +14244,7 @@ static void update_jets(void)
                 else if (e->kind == WALK_NOKO) { took = noko_turtle(e, p, in->hvel); if (took) printf("jet turtle row %d hits noko row %d" "\n", in->row, e->row); }
                 else if (e->kind == WALK_UNIZO) { if (unizo_breaking(e)) took = 0; else unizo_break(e); } /* isMsgJetTurtleAttack: doBreak */
                 else if (e->kind == WALK_GESSO) { if (e->nrv == GE_PUNCHDOWN) took = 0; else ge_knock(e, p); } /* isMsgPlayerHitAll: knockOut */
-                else if (e->kind == WALK_POIHANA) { if (e->phase == 6) took = 0; else { poihana_shock(e); scene_stop = 3; } } /* tryShock, stopSceneForDefaultHit(3) */
+                else if (e->kind == WALK_POIHANA) { if (!poihana_shock(e)) took = 0; else scene_stop = 3; } /* tryShock, stopSceneForDefaultHit(3) */
                 else if (e->kind == WALK_SNAKEHEAD) { if (e->phase || e->nrv == SN_TURTLEDOWN) took = 0; else w_nrv(e, SN_TURTLEDOWN); } /* TurtleDown */
                 else {
                     e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up);
@@ -23104,96 +23105,6 @@ static void unizo_update(Kuribo *k, V3 to, float d)
     }
 }
 
-/* Poihana.cpp: an ape at its home. Mario within 800 (sSearchRadius) makes it turn to him (4 degrees a frame, 30
- * frames) and chase him (0.5 a frame up to 10, turning 4); farther than 1100 it walks home (0.5 up to 5). Mario on
- * the ground within 100 in front is caught (ShootUpCharge, 20 frames) and thrown up at sqrt(2 x arg0) (default 1000);
- * caught in the air he goes up at once. Idle it walks round home (WalkAround: 120 frames every 180). A spin knocks it
- * out (Shock, then Swoon 110 frames, Recover 30); a stomp bounces Mario off. Ground friction x 0.95 ahead, x 0.8 to the
- * side. phase 0 wait, 1 search, 2 chase, 3 charge, 4 back home, 5 walk around, 6 shock / swoon; from its turn from its
- * front (degrees); timer its frames. ponytail: no sleep, no drowning, no back attack flip, no star pointer swoon
- * WalkAround (Poihana.cpp:248-271): its front turned getRandom(-2, 2) degrees a frame, 0.5 ahead, GoBack past 350
- * from home; ChasePlayer goes back past sDistanceForNeedBack 2000 from home or 1100 from Mario; GoBack turns 2 to home
- * at 0.5 (Search again within 800 after 120, Wait within 100 of home); a hip drop landing within 500 or an explosion
- * shocks it (tryHipDropShock, isMsgExplosionAttack). ponytail: the Shock nerve's 30 up reaction is not kept */
-static void poihana_shock(Kuribo *k) /* tryShock */
-{
-    if (k->phase == 6) return;
-    k->phase = 6; k->timer = 0; k->vel = v3(0, 0, 0);
-    printf("poihana row %d: knocked out" "\n", k->row);
-}
-static V3 stink_front(const Kuribo *k);
-static void poihana_update(Kuribo *k, V3 to, float d) /* to: unused, Mario is the target */
-{
-    (void)to;
-    const Row *r = &sc->objs[k->row];
-    V3 up = k->up, f = stink_front(k), home = row_pos(r);
-    k->timer++;
-    float speed_max = 0, accel = 0;
-    V3 target = mario->pos;
-    if (k->phase == 6) { /* Shock / Swoon / Recover */
-        if (k->timer >= 12 + 110 + 30) { k->phase = 0; k->timer = 0; }
-    } else if ((mario->spin_timer > 0 && d < 250.0f) || (mario->hip == HIP_LAND && d < 500.0f)) { /* isMsgPlayerHitAll / tryHipDropShock */
-        poihana_shock(k);
-    }
-    switch (k->phase) {
-    case 0:
-        if (d < 800.0f) { k->phase = 1; k->timer = 0; }
-        else if (k->timer >= 180) { k->phase = 5; k->timer = 0; }
-        break;
-    case 1: if (k->timer >= 30) { k->phase = 2; k->timer = 0; } break;
-    case 2: speed_max = 10.0f; accel = 0.5f;
-        if (vlen(vsub(k->pos, home)) > 2000.0f || d > 1100.0f) { k->phase = 4; k->timer = 0; } /* isNeedForBackHome */
-        break;
-    case 3:
-        if (k->timer >= 20) { /* ShootUp: Mario thrown up */
-            float h = r->arg[0] > 0 ? (float)r->arg[0] : 1000.0f;
-            mario->vup = sqrtf(2.0f * h); mario->hvel = v3(0, 0, 0); mario->grounded = 0; mario->jump_kind = 0;
-            printf("poihana row %d: throws Mario up at %d" "\n", k->row, (int)mario->vup);
-            k->phase = 4; k->timer = 0;
-        } else { mario->pos = vadd(k->pos, vmul(f, 100.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; } /* held */
-        break;
-    case 4: target = home; speed_max = 1e9f; accel = 0.5f; /* exeGoBack */
-        if (d < 800.0f && k->timer > 120) { k->phase = 1; k->timer = 0; }
-        else if (vlen(vsub(home, k->pos)) < 100.0f) { k->phase = 0; k->timer = 0; }
-        break;
-    case 5: /* exeWalkAround */
-        if (k->timer == 1) k->lvt[0] = rand() % 4 - 2; /* mRandDir = getRandom(-2, 2) */
-        k->from += (float)k->lvt[0]; /* rotateVecDegree(mFrontVec, gravity, mRandDir) */
-        speed_max = 1e9f; accel = 0.5f;
-        if (vlen(vsub(home, k->pos)) > 350.0f) { k->phase = 4; k->timer = 0; }
-        else if (d < 800.0f) { k->phase = 1; k->timer = 0; }
-        else if (k->timer > 120) { k->phase = 0; k->timer = 0; }
-        break;
-    }
-    if (k->phase == 1 || k->phase == 2 || k->phase == 4) { /* turnDirectionToTargetUseGroundNormalDegree */
-        V3 t = vtangent(vsub(target, k->pos), up);
-        if (vlen(t) > 1e-3f) {
-            float turn = atan2f(vdot(t, vcross(up, f)), vdot(t, f)) * 57.29578f, rate = k->phase == 4 || k->phase == 5 ? 2.0f : 4.0f;
-            k->from += turn > rate ? rate : turn < -rate ? -rate : turn;
-            f = stink_front(k);
-        }
-    }
-    if (accel > 0 && vdot(k->vel, f) < speed_max) k->vel = vadd(k->vel, vmul(f, accel));
-    V3 ahead = vmul(f, vdot(k->vel, f)), side = vsub(vtangent(k->vel, up), ahead); /* controlVelocity */
-    k->vel = vadd(vmul(ahead, 0.95f), vmul(side, 0.8f));
-    if (k->phase == 3 || k->phase == 6) k->vel = v3(0, 0, 0);
-    V3 center = vadd(vadd(k->pos, k->vel), vmul(up, 125.0f - 2.0f)), gn, wn;
-    int wall = 0;
-    collide_n(&center, up, 125.0f, &gn, &wn, &wall);
-    k->pos = vsub(center, vmul(up, 125.0f));
-    /* Mario: caught in front, bounced off its head */
-    V3 rel = vsub(mario->pos, k->pos);
-    float above = vdot(rel, up), fw = vdot(rel, f);
-    if ((k->phase == 2 || k->phase == 1) && vlen(vtangent(rel, up)) < 100.0f + HIT_BODY_R && fw > 0 && above < 150.0f && above > -60.0f &&
-        !mario->hurt_timer) { /* AutoRushBegin: on the ground a charge, in the air thrown at once */
-        k->phase = 3; k->timer = mario->grounded ? 0 : 20;
-        printf("poihana row %d: catches Mario" "\n", k->row);
-    } else if (mario->vup < 0 && above > 150.0f && above < 300.0f && vlen(vtangent(rel, up)) < 150.0f) { /* trampled */
-        mario_trample();
-    }
-}
-
-
 /* ---- walker kit: Petari's LiveActor nerve stepping (Spine::update), Binder (a sphere 70 x scale over its feet),
  * ActorMovementUtil / MathUtil helpers and WalkerState* (Wander, FindPlayer, Chase, Stagger) for the walkers ported
  * literally. setNerve: step -1, so the next frame runs the new nerve at step 0 ---- */
@@ -26847,7 +26758,7 @@ static int th_punch(Kuribo *k, V3 from);
 static int kb_blow(Kuribo *k, V3 from);
 static int kc_stagger(Kuribo *k, V3 from);
 static int bb_enemy_hit(Kuribo *k, V3 from, float r);
-static void poihana_shock(Kuribo *k);
+static int poihana_shock(Kuribo *k);
 static int bg_shaking(const Kuribo *k);
 static int walker_blow(Kuribo *e, V3 from)
 {
@@ -26865,7 +26776,7 @@ static int walker_blow(Kuribo *e, V3 from)
         return 1;
     }
     if (e->kind == WALK_TAKOHEI) return th_punch(e, from); /* isMsgToEnemyAttackBlow: requestPunch */
-    if (e->kind == WALK_POIHANA) { if (e->phase == 6) return 0; poihana_shock(e); return 1; } /* isMsgExplosionAttack: tryShock */
+    if (e->kind == WALK_POIHANA) return poihana_shock(e); /* isMsgExplosionAttack: tryShock */
     if (e->kind == WALK_KOTEBUG) return kb_blow(e, from); /* isMsgExplosionAttack / ToEnemyAttackBlow: Blow */
     if (e->kind == WALK_PACKUN) { /* punchDown */
         if (e->nrv == PN_TRAMPLEDOWN || e->nrv == PN_PUNCHDOWN) return 0;
@@ -32651,6 +32562,7 @@ static int nk_shell_on(const Kuribo *k);
 static V3 mkm_body(Kuribo *k);
 static int mkm_hipdropped(const Kuribo *k);
 static int mm_push_moved(const Kuribo *k);
+static int ph_sensors_on(const Kuribo *k);
 typedef struct { V3 c; float r; u8 atk, body, own, map; } WSen; /* atk: ATYPE_ENEMY_ATTACK; body: the class's body / own type sensor; own: the class's own sensor type (Kuribo / Karikari); map: a MapObj sensor (PackunPetit) */
 static int wp_sensors(Kuribo *k, WSen *o)
 {
@@ -32711,6 +32623,10 @@ static int wp_sensors(Kuribo *k, WSen *o)
         return 3;
     }
     case WALK_MERAMERA: o[0] = (WSen){k->pos, 55.0f * s, 0, 1, 0}; return 1; /* body 55 x s */
+    case WALK_POIHANA: /* body 70 at Body (its binder is no enemy sensor) */
+        if (!ph_sensors_on(k)) return 0;
+        o[0] = (WSen){w_joint(k, m_poihana, 1, v3(0, 0, 0)), 70.0f, 0, 1, 0};
+        return 1;
     case WALK_MKOOPA: /* body 130 x s at JointRoot (48, 13, 0); none HipDropped */
         if (mkm_hipdropped(k)) return 0;
         o[0] = (WSen){mkm_body(k), 130.0f * s, 0, 1, 0};
@@ -32827,6 +32743,11 @@ static int wp_receive_(Kuribo *b, const WSen *rb, Kuribo *a, const WSen *sa) /* 
         }
         return 1;
     }
+    case WALK_POIHANA: { /* from an enemy or map object: sReceivePushPower 1.5 away from the sender's actor */
+        V3 d = vsub(b->pos, a->pos);
+        if (vlen(d) > 1e-6f) b->vel = vadd(b->vel, vmul(vnorm(d), 1.5f));
+        return 1;
+    }
     case WALK_BOMBHEI: /* not SpinHit: addVelocityFromPush 2 */
         if (b->nrv == BH_SPINHIT) return 0;
         wp_from_push(b, 2.0f, sa->c, rb->c, 0);
@@ -32902,6 +32823,13 @@ static void wp_attack(Kuribo *a, const WSen *sa, Kuribo *b, const WSen *rb) /* a
         }
         break;
     case WALK_NOKO: if (!rb->map) wp_receive(b, rb, a, sa); break;      /* any but the player */
+    case WALK_POIHANA: /* pushed: its velocity into the receiver's actor cut */
+        if (!wp_receive(b, rb, a, sa)) break;
+        {
+            V3 d = vsub(a->pos, b->pos);
+            if (vlen(d) > 1e-6f) { d = vnorm(d); float f = vdot(a->vel, d); if (f < 0.0f) a->vel = vsub(a->vel, vmul(d, f)); }
+        }
+        break;
     }
 }
 #define WP_MAX 256
@@ -32942,7 +32870,7 @@ static void update_kuribo(void)
     for (int i = 0; i < nkuribo; i++) {
         Kuribo *k = &kuribo[i];
         if (k->state == KURIBO_DEAD || !row_shown(k->row)) continue;
-        if (k->clipped && k->kind != WALK_KARIKARI && !test_noclip && !(k->kind == WALK_BOMBTERESA && !k->lvt[1]) && !(k->kind == WALK_MERAKING && mk_noclip(k)) && !(k->kind == WALK_MERAMERA && k->lvt[2]) && !(k->kind == WALK_TERESA && k->lvt[1]) && !(k->kind == WALK_MKOOPA && k->lvt[2]) && !(k->kind == WALK_BOMBBIRD && bbd_noclip(k))) { if (k->kind == WALK_MERAMERA) k->sstep = -1; continue; } /* startClipped: no movement (Karikari may ride on Mario; a BombTeresa's invalidateClipping: lvt[1] 0) */
+        if (k->clipped && k->kind != WALK_KARIKARI && !test_noclip && !(k->kind == WALK_BOMBTERESA && !k->lvt[1]) && !(k->kind == WALK_MERAKING && mk_noclip(k)) && !(k->kind == WALK_MERAMERA && k->lvt[2]) && !(k->kind == WALK_TERESA && k->lvt[1]) && !(k->kind == WALK_MKOOPA && k->lvt[2]) && !(k->kind == WALK_BOMBBIRD && bbd_noclip(k)) && !(k->kind == WALK_POIHANA && k->dir)) { if (k->kind == WALK_MERAMERA) k->sstep = -1; continue; } /* startClipped: no movement (Karikari may ride on Mario; a BombTeresa's invalidateClipping: lvt[1] 0) */
         u32 c0 = cycles();
         update_kuribo_one(k);
         kprof[k->kind] += cycles() - c0; kprof_n[k->kind]++;
@@ -33225,6 +33153,7 @@ static void update_kuribo_one(Kuribo *k)
         }
         if (k->kind == WALK_MERAMERA) { if (w_zone_ground(k)) mm_update(k); return; } /* Meramera.cpp (meramera.inc) */
         if (k->kind == WALK_TERESA) { if (w_zone_ground(k)) ts_update(k); return; } /* Teresa.cpp (teresa.inc) */
+        if (k->kind == WALK_POIHANA) { if (w_zone_ground(k)) poihana_update(k); return; } /* Poihana.cpp (poihana.inc): its own NonActive */
         if (k->kind == WALK_MKOOPA) { if (w_zone_ground(k)) mkoopa_update(k, to, d); return; } /* MechanicKoopaMini.cpp (mkoopa.inc) */
         if (d > 3000.0f) return; /* sActiveDistance: far ones wait (their zone may be loaded low, no collision) */
         if (!w_zone_ground(k)) return; /* no ground yet: they would fall */
@@ -33234,7 +33163,6 @@ static void update_kuribo_one(Kuribo *k)
         if (k->kind == WALK_BUTTERFLY) { butterfly_update(k); return; }
         if (k->kind == WALK_STINKBUG) { stink_update(k, to, d); return; }
         if (k->kind == WALK_UNIZO) { unizo_update(k, to, d); return; }
-        if (k->kind == WALK_POIHANA) { poihana_update(k, to, d); return; }
         if (k->kind == WALK_SPIDER) { jspider_update(k); return; }
     }
 }
@@ -52154,6 +52082,7 @@ int game_test_bk(int frame)
 #include "koopa.inc" /* Koopa (Bowser): kp_*, game_test_kp */
 #include "ice_meraking.inc" /* IceMerameraKing (Baron Brr): mk_*, game_test_mk */
 #include "meramera.inc" /* Meramera / IceMeramera / ChildIceMeramera: mm_*, game_test_mm */
+#include "poihana.inc" /* Poihana: ph_* */
 #include "teresa.inc" /* Teresa / TeresaChief: ts_* */
 #include "mkoopa.inc" /* MechanicKoopaMini: mkm_* */
 #include "skeletal_fish.inc" /* SkeletalFishBaby / Boss (Kingfin): sf_* */
@@ -54245,7 +54174,7 @@ static void walker_shadow(const Kuribo *k)
     case WALK_KMINI: rs = 40.0f; break;
     case WALK_TERESA: if (k->phase || k->len <= 0.0f) return; rs = k->len * r->scale[0]; start = 0.0f; break; /* setShadowVolumeSphereRadius, onShadowFollowHostScale */
     case WALK_UNIZO: rs = 106.36f; break;                   /* x sRadiusScale 1 */
-    case WALK_POIHANA: rs = 80.0f; break;
+    case WALK_POIHANA: if (!k->item || k->phase) return; rs = 80.0f; break; /* offCalcShadow (NonActive), hideModel */
     case WALK_PETARI: rs = 80.0f; start = 80.0f; break;     /* Shadow.bcsv DropStart */
     case WALK_JELEC: rs = 230.0f; break;                    /* initShadowVolumeSphere 230 */
     case WALK_SAMBOHEAD: if (!k->lvt[0]) return; rs = 60.0f * r->scale[1]; break; /* initShadowVolumeSphere 60 x scale; invalidateShadow */
@@ -55015,6 +54944,7 @@ void game_draw(void)
         if (kuribo[i].kind == WALK_TERESA && kuribo[i].phase) continue; /* hideModel */
         if (kuribo[i].kind == WALK_PETARI && kuribo[i].phase) continue; /* hideModel */
         if (kuribo[i].kind == WALK_MERAMERA && kuribo[i].phase) continue; /* Meramera: hideModel */
+        if (kuribo[i].kind == WALK_POIHANA && kuribo[i].phase) continue; /* Poihana Hide: hideModel */
         if (kuribo[i].kind == WALK_SNAKEHEAD && kuribo[i].phase) continue; /* Waylay: hideModel */
         if (kuribo[i].kind == WALK_KAMECK && kuribo[i].phase) continue; /* Kameck: hideModel(AndOnCalcAnim) */
         if (kuribo[i].kind == WALK_NOKO && kuribo[i].phase) continue; /* hideModel */
@@ -55103,7 +55033,7 @@ void game_draw(void)
                     V3 z = vtangent(t, y);
                     if (vlen(z) > 1e-3f) { z = vnorm(z); V3 x = vcross(y, z); w[0] = x.x; w[1] = x.y; w[2] = x.z; w[8] = z.x; w[9] = z.y; w[10] = z.z; }
                 }
-                const float *sc3 = sc->objs[k->row].scale;
+                const float *sc3 = k->kind == WALK_POIHANA ? &k->mm[0].x : sc->objs[k->row].scale; /* Poihana: its mScale (Bound / Shake) */
                 for (int j = 0; j < 3; j++) { m[j] *= sc3[0]; m[4 + j] *= sc3[1]; m[8 + j] *= sc3[2]; }
                 if (k->kind == WALK_KOTEBUG && k->from != 0.0f) { /* calcJoint: mPosture about X at its Center joint (0, 30.4, -2.2) */
                     float cx = cosf(k->from), sx = sinf(k->from), t[16], tmp[16];
