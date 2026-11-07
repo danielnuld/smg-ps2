@@ -17,6 +17,7 @@
  * MechanicKoopaMinis; its Fire effect kept while it is drawn (its joint) */
 enum { MKM_WAIT, MKM_WALKONRAIL, MKM_TURN, MKM_JUMPSTART, MKM_JUMPEND, MKM_FIND, MKM_PURSUE, MKM_PREFIRE, MKM_FIRE,
        MKM_FIREEND, MKM_ATTACKHIT, MKM_SPINHIT, MKM_TRAMPLE, MKM_HIPDROPPED };
+static int mkm_hipdropped(const Kuribo *k) { return k->nrv == MKM_HIPDROPPED; } /* invalidateHitSensors */
 static void mkm_nrv(Kuribo *k, int n) /* setNerve: FireAttack's onEnd (deleteEffect Fire, the fire sensor off) */
 {
     if (k->nrv == MKM_FIRE) k->lvt[1] = 0;

@@ -4826,7 +4826,8 @@ static void railer_place(Inst *in)
  * storm (ACTMES_SPIN_STORM_RANGE) shakes the members (tryShake: WindLoop at 0.2 + 3.8 x (1 - |Mario - it| (city
  * block across gravity) / 800), then WindEnd at that rate); each member pushes Mario off within 20 x its scale
  * (tryPush). They share the plant groups' member table (plants).
- * ponytail: the push reaches Mario only (walker_push_pass takes walker pairs, not map objects) */
+ * Its push reaches Mario only: attackSensor pushes a player or enemy, but the Range sensor (MapObjSimple) is in
+ * SensorHitChecker's simple group, checked against the player, ride and eye groups only (never the enemies) */
 static signed char stone_type[1024]; /* stone_row by type: 0 not yet, 1 no, 2 yes (area_types_reset) */
 static int stone_row(const Row *r)
 {
@@ -32522,10 +32523,28 @@ static void bg_permit_update(void);
  * and 1.5 up (ReboundEach); its body pushes; it takes 1.5 (ReboundEach). SamboHead (100 x s at 100 x s up): pushes;
  * takes 2 out of the ground. KoteBug (100 x s at Center + 20 x s): pushes (not blown / stamped); takes 2 across
  * gravity (addVelocityFromPushHorizon). Karon (90 x s at 90 x s up): sendMsgPushAndKillVelocityToTarget, takes 2
- * (not broken). ponytail: the other walkers' sensors are not in the pass (their attackSensor / receiveMsgPush not
- * ported with them: they neither push nor are pushed); no map object sensors */
+ * (not broken). KuriboMini (body 60 / attack 40 at 60 up): its body pushes an enemy and kills its velocity into it
+ * unless down; takes 1.5 on its body from an enemy. Takobo (body 70 x s at 70 x s up, none in Press / HitPunch),
+ * PackunPetit (body 90 / attack 50 at Head (50, 0, 0), stalk 100; body and stalk MapObj sensors), NokonokoLand (body
+ * 120 / attack 60 at Center (0, 0, 30), or its shell 50), Kabokuri (body 100 / attack 70 x s, not trampled): push, take
+ * none. Meramera (body 55 x s): pushes; takes 0.5 from the sender in Wait / Walk / Damage / ChaseDash / ChaseTurn /
+ * AttackSuccess (isPushMoved). MechanicKoopaMini (body 130 x s at JointRoot (48, 13, 0)): pushes, takes 3
+ * (addVelocityFromPush). Metbo (body 100 / attack 80): pushes and takes 1.5 from the sender's actor, not down. BombHei
+ * (body 60 x s at 60 x s up): its body pushes and kills its velocity into it (not Launch / Explode), takes 2 (not
+ * SpinHit). TakoHei (body 70 / attack 50 x s at 70 x s up): its body pushes and, isPushMovable, cuts its velocity into
+ * it; takes 5 from the sender on its body (isPushMovable: not down, NonActive, AttackSuccess or Swoon, its no-push
+ * time _E4 (20) out). No MapObj pair is checked. ponytail: Teresa, BombTeresa (its explosion first), BombBird, Poihana,
+ * StinkBugSmall, StringSpider and Snakehead are not in the pass; TakoHei's BlinkTwice / scale velocity and BombHei's
+ * thrown rebound are not played; the walkers outside wp_sensors are one point in the sensor list */
 static int kr_broken(const Kuribo *k);
-typedef struct { V3 c; float r; u8 atk, body, own; } WSen; /* atk: ATYPE_ENEMY_ATTACK; body: the class's body / own type sensor; own: the class's own sensor type (Kuribo / Karikari) */
+static int th_down(const Kuribo *k);
+static int mb_down(const Kuribo *k);
+static int nk_body_on(const Kuribo *k);
+static int nk_shell_on(const Kuribo *k);
+static V3 mkm_body(Kuribo *k);
+static int mkm_hipdropped(const Kuribo *k);
+static int mm_push_moved(const Kuribo *k);
+typedef struct { V3 c; float r; u8 atk, body, own, map; } WSen; /* atk: ATYPE_ENEMY_ATTACK; body: the class's body / own type sensor; own: the class's own sensor type (Kuribo / Karikari); map: a MapObj sensor (PackunPetit) */
 static int wp_sensors(Kuribo *k, WSen *o)
 {
     float s = w_scale(k);
@@ -32570,6 +32589,51 @@ static int wp_sensors(Kuribo *k, WSen *o)
     case WALK_SAMBOHEAD: o[0] = (WSen){vadd(k->pos, vmul(k->qy, 100.0f * s)), 100.0f * s, 0, 1, 0}; return 1;
     case WALK_KOTEBUG: o[0] = (WSen){vadd(k->pos, vmul(k->qy, 50.4f * s)), 100.0f * s, 0, 1, 0}; return 1;
     case WALK_KARON: o[0] = (WSen){vadd(k->pos, vmul(up, 90.0f * s)), 90.0f * s, 0, 1, 0}; return 1;
+    case WALK_KMINI: { /* body 60 / attack 40 at 60 up */
+        V3 c = vadd(k->pos, vmul(up, 60.0f));
+        o[0] = (WSen){c, 60.0f, 0, 1, 0}; o[1] = (WSen){c, 40.0f, 1, 0, 0};
+        return 2;
+    }
+    case WALK_TAKOBO: /* body 70 x s at 70 x s up (invalidateHitSensors in Press / HitPunch) */
+        if (k->nrv == TN_PRESS || k->nrv == TN_HITPUNCH) return 0;
+        o[0] = (WSen){vadd(k->pos, vmul(up, 70.0f * s)), 70.0f * s, 0, 1, 0};
+        return 1;
+    case WALK_PACKUN: { /* body (MapObj) 90 / attack 50 at Head (50, 0, 0); stalk (MapObj) 100 */
+        V3 h = w_joint(k, m_packun, 5, v3(50.0f, 0, 0));
+        o[0] = (WSen){h, 90.0f * s, 0, 1, 0, 1}; o[1] = (WSen){h, 50.0f * s, 1, 0, 0}; o[2] = (WSen){k->pos, 100.0f, 0, 0, 0, 1};
+        return 3;
+    }
+    case WALK_MERAMERA: o[0] = (WSen){k->pos, 55.0f * s, 0, 1, 0}; return 1; /* body 55 x s */
+    case WALK_MKOOPA: /* body 130 x s at JointRoot (48, 13, 0); none HipDropped */
+        if (mkm_hipdropped(k)) return 0;
+        o[0] = (WSen){mkm_body(k), 130.0f * s, 0, 1, 0};
+        return 1;
+    case WALK_METBO: { /* body 100 / attack 80 at its joint 2 */
+        V3 b = w_joint(k, walker_new_model(k->row), 2, v3(0, 0, 0));
+        o[0] = (WSen){b, 100.0f, 0, 1, 0}; o[1] = (WSen){b, 80.0f, 1, 0, 0};
+        return 2;
+    }
+    case WALK_KABOKURI: /* body 100 x s at 100 x s up, attack 70 x s at 70 x s up */
+        o[0] = (WSen){vadd(k->pos, vmul(k->qy, 100.0f * s)), 100.0f * s, 0, 1, 0}; o[1] = (WSen){vadd(k->pos, vmul(k->qy, 70.0f * s)), 70.0f * s, 1, 0, 0};
+        return 2;
+    case WALK_BOMBHEI: /* body 60 x s at 60 x s up */
+        if (k->nrv == BH_GONE) return 0;
+        o[0] = (WSen){vadd(k->pos, vmul(up, 60.0f * s)), 60.0f * s, 0, 1, 0};
+        return 1;
+    case WALK_TAKOHEI: { /* attack 50 x s / body 70 x s at 70 x s up */
+        V3 c = vadd(k->pos, vmul(k->qy, 70.0f * s));
+        o[0] = (WSen){c, 70.0f * s, 0, 1, 0}; o[1] = (WSen){c, 50.0f * s, 1, 0, 0};
+        return 2;
+    }
+    case WALK_NOKO: { /* body 120 / attack 60 at Center (0, 0, 30), or the shell 50 at Turtle (0, 50, 0) */
+        if (k->phase) return 0;
+        const Model *md = brk_model(k->row, "NokonokoLand", 0);
+        if (nk_shell_on(k)) { o[0] = (WSen){w_joint(k, md, 14, v3(0, 50, 0)), 50.0f, 0, 1, 0}; return 1; }
+        if (!nk_body_on(k)) return 0;
+        V3 b = w_joint(k, md, 2, v3(0, 0, 30));
+        o[0] = (WSen){b, 120.0f, 0, 1, 0}; o[1] = (WSen){b, 60.0f, 1, 0, 0};
+        return 2;
+    }
     }
     return -1; /* its sensors not listed */
 }
@@ -32629,8 +32693,39 @@ static int wp_receive_(Kuribo *b, const WSen *rb, Kuribo *a, const WSen *sa) /* 
         if (kr_broken(b)) return 0;
         wp_from_push(b, 2.0f, sa->c, rb->c, 0);
         return 1;
+    case WALK_KMINI: /* not down, not on its attack sensor; from an enemy */
+        if (rb->atk || sa->map || kn_in(b, 1 << KN_FLATDOWN | 1 << KN_HIPDROPDOWN | 1 << KN_PRESSDOWN | 1 << KN_BLOWDOWN)) return 0;
+        wp_from_push(b, 1.5f, sa->c, rb->c, 0);
+        return 1;
+    case WALK_MKOOPA: wp_from_push(b, 3.0f, sa->c, rb->c, 0); return 1; /* (not from the player) */
+    case WALK_TAKOHEI: { /* not on its attack sensor, from an enemy: isPushMovable: += 5 from the sender, sNoPushTime 20 */
+        if (rb->atk || sa->map) return 0;
+        if (b->lvt[0] > 0 || th_down(b) || b->nrv == TH_NONACTIVE || b->nrv == TH_ATTACKSUCCESS || b->nrv == TH_SWOON) return 1;
+        V3 d = vsub(rb->c, sa->c);
+        if (vlen(d) > 1e-6f) b->vel = vadd(b->vel, vmul(vnorm(d), 5.0f));
+        b->lvt[0] = 20;
+        return 1;
     }
-    return 0; /* KuriboChief, Jellyfish, JellyfishElectric: LiveActor::receiveMsgPush */
+    case WALK_METBO: { /* not down: 1.5 away from the sender's actor */
+        if (mb_down(b)) return 0;
+        V3 d = vsub(b->pos, a->pos);
+        if (vlen(d) > 1e-6f) b->vel = vadd(b->vel, vmul(vnorm(d), 1.5f));
+        return 1;
+    }
+    case WALK_MERAMERA: { /* on its body, from an enemy: isPushMoved: 0.5 from the sender */
+        if (!rb->body || sa->map) return 0;
+        if (mm_push_moved(b)) {
+            V3 d = vsub(rb->c, sa->c);
+            if (vlen(d) > 1e-6f) b->vel = vadd(b->vel, vmul(vnorm(d), 0.5f));
+        }
+        return 1;
+    }
+    case WALK_BOMBHEI: /* not SpinHit: addVelocityFromPush 2 */
+        if (b->nrv == BH_SPINHIT) return 0;
+        wp_from_push(b, 2.0f, sa->c, rb->c, 0);
+        return 1;
+    }
+    return 0; /* KuriboChief, Jellyfish, JellyfishElectric, Takobo, PackunPetit, Kabokuri, NokonokoLand: LiveActor::receiveMsgPush */
 }
 static int wp_taken[WALK_KINDS]; /* (test builds: the pushes taken by kind) */
 static int wp_receive(Kuribo *b, const WSen *rb, Kuribo *a, const WSen *sa)
@@ -32681,6 +32776,25 @@ static void wp_attack(Kuribo *a, const WSen *sa, Kuribo *b, const WSen *rb) /* a
     case WALK_SAMBOHEAD: if (sa->body) wp_receive(b, rb, a, sa); break;
     case WALK_KOTEBUG: if (sa->body && a->nrv != KT_BLOW && a->nrv != KT_STAMPDEATH) wp_receive(b, rb, a, sa); break;
     case WALK_KARON: if (sa->body && !kr_broken(a)) wp_push_kill(a, sa, b, rb); break;
+    case WALK_KMINI: /* not down, not its attack sensor: an enemy */
+        if (!sa->atk && !rb->map && !kn_in(a, 1 << KN_FLATDOWN | 1 << KN_HIPDROPDOWN | 1 << KN_PRESSDOWN | 1 << KN_BLOWDOWN)) wp_push_kill(a, sa, b, rb);
+        break;
+    case WALK_TAKOBO: wp_receive(b, rb, a, sa); break;                 /* an enemy or map object */
+    case WALK_PACKUN: if (!rb->map) wp_receive(b, rb, a, sa); break;    /* an enemy */
+    case WALK_MERAMERA: if (sa->body && !rb->map) wp_receive(b, rb, a, sa); break;
+    case WALK_MKOOPA: if (!rb->map) wp_receive(b, rb, a, sa); break;
+    case WALK_METBO: if (!mb_down(a)) wp_receive(b, rb, a, sa); break; /* any but the player */
+    case WALK_KABOKURI: if (!sa->atk && !rb->map && a->nrv != KB_TRAMPLED) wp_receive(b, rb, a, sa); break; /* isEnablePush */
+    case WALK_BOMBHEI: if (sa->body && !rb->map && a->nrv != BH_LAUNCH && a->nrv != BH_EXPLODE) wp_push_kill(a, sa, b, rb); break;
+    case WALK_TAKOHEI: /* not its attack sensor, an enemy; pushed and isPushMovable: its velocity into it cut */
+        if (sa->atk || rb->map || !wp_receive(b, rb, a, sa)) break;
+        if (a->lvt[0] > 0 || th_down(a) || a->nrv == TH_NONACTIVE || a->nrv == TH_ATTACKSUCCESS || a->nrv == TH_SWOON) break;
+        {
+            V3 d = vsub(sa->c, rb->c);
+            if (vlen(d) > 1e-6f) { d = vnorm(d); float f = vdot(a->vel, d); if (f < 0.0f) a->vel = vsub(a->vel, vmul(d, f)); }
+        }
+        break;
+    case WALK_NOKO: if (!rb->map) wp_receive(b, rb, a, sa); break;      /* any but the player */
     }
 }
 #define WP_MAX 256
@@ -32693,6 +32807,7 @@ static void walker_push_pass(void) /* ponytail: the first WP_MAX walkers with se
     for (int i = 0; i < nkuribo && n < WP_MAX; i++) {
         Kuribo *k = &kuribo[i];
         if (k->state == KURIBO_DEAD || !row_shown(k->row) || (k->clipped && !test_noclip) || k->host) continue; /* (clipped: invalidateBySystem) */
+        if (k->kind == WALK_TAKOHEI && k->lvt[0] > 0) k->lvt[0]--; /* control: _E4 */
         int c = wp_sensors(k, sen[n]);
         if (c < 0) { hs_add(k->pos, 0.0f, k->kind == WALK_BUTTERFLY ? HS_ANIMAL : HS_ENEMY, k->row); continue; } /* ponytail: one point at its place */
         for (int x = 0; x < c; x++) hs_add(sen[n][x].c, sen[n][x].r, HS_ENEMY, k->row);
@@ -32703,12 +32818,12 @@ static void walker_push_pass(void) /* ponytail: the first WP_MAX walkers with se
             for (int x = 0; x < ns[i]; x++)
                 for (int y = 0; y < ns[j]; y++) {
                     const WSen *p = &sen[i][x], *q = &sen[j][y];
-                    if (vlen(vsub(p->c, q->c)) >= p->r + q->r) continue;
+                    if ((p->map && q->map) || vlen(vsub(p->c, q->c)) >= p->r + q->r) continue; /* (no MapObj pair is checked) */
                     wp_attack(&kuribo[ki[i]], p, &kuribo[ki[j]], q);
                     wp_attack(&kuribo[ki[j]], q, &kuribo[ki[i]], p);
                 }
-#ifdef WALKER_TEST
-    if (game_frame % 60 == 0) {
+#if defined(WALKER_TEST) || defined(PUSH_TEST)
+    if (game_frame && game_frame % 60 == 0) {
         printf("walker push f %u:", game_frame);
         for (int k = 0; k < WALK_KINDS; k++) if (wp_taken[k]) printf(" kind %d took %d", k, wp_taken[k]);
         printf("%c", 10);
@@ -53261,6 +53376,28 @@ void game_update(void)
     hip_hit = 0;
     if (!opening_on) game_frame++; /* frames of play: the starter flight begins at 2 */
     hs_flip();
+#ifdef PUSH_TEST
+    if (game_frame == 200) { /* Mario by the walker with the most of its kind within 1500 (they gather on him) */
+        int best = -1, bn = 0;
+        for (int i = 0; i < nkuribo; i++) {
+            int n = 0;
+            if (kuribo[i].state == KURIBO_DEAD || !row_shown(kuribo[i].row)) continue;
+            for (int j = 0; j < nkuribo; j++) n += kuribo[j].kind == kuribo[i].kind && kuribo[j].state != KURIBO_DEAD && vlen(vsub(kuribo[j].pos, kuribo[i].pos)) < 1500.0f;
+            if (n > bn) { bn = n; best = i; }
+        }
+        if (best >= 0) {
+            Kuribo *b = &kuribo[best];
+            V3 side = vnorm(vtangent(v3(1, 0, 0), b->up));
+            for (int j = 0, n = 0; j < nkuribo && n < 2; j++) /* two more of its kind put against it, 40 and 80 aside */
+                if (j != best && kuribo[j].kind == b->kind && kuribo[j].state != KURIBO_DEAD && vlen(vsub(kuribo[j].pos, b->pos)) < 1500.0f)
+                    { kuribo[j].pos = vadd(b->pos, vmul(side, 40.0f * ++n)); kuribo[j].vel = v3(0, 0, 0); }
+            test_noclip = 1;
+            mario->up = b->up;
+            mario->pos = vadd(b->pos, vadd(vmul(b->up, 300.0f), vmul(side, -600.0f)));
+            printf("push test: Mario by walker row %d kind %d, %d of its kind near%c", kuribo[best].row, kuribo[best].kind, bn, 10);
+        }
+    }
+#endif
 #ifdef PERCH_TEST
     if (game_frame == 250) { /* Mario by the Butterfly whose home is nearest an NPC sensor */
         float bd = 1e9f; V3 at = mario->pos;
