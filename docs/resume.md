@@ -1098,6 +1098,12 @@ there needs the embedded blob and every pack rebuilt.
   star, `power star 1 got`). ponytail: the left stick is the remote's tilt, the tutorial's raise check passes, no
   PlayerActionGuidance layout, no BGM tempo / track mutes, no ACTMES_BALL_DASH_WALL / GROUND receivers yet (WoodBox,
   SimpleBreakableObj, FallDownBridge, PunchBox), the SignBoard's CSV shadow.
+- JumpHole / BallOpener (feat/361-jump-hole, 2026-11-07): MapObj/JumpHole.cpp, BallOpener.cpp and GeometryBindUtil's
+  BindCone (bindSpereToCone, updateBindPositionAndVelocity) in tamakoro.inc (ho_*): the ball's Body on their body
+  sensor binds it (within 200 of the axis, 160 along it), SetCenter in the cone (400 deep, 200 wide), then JumpHole's
+  parabola to its rail's end (SET_UP / SHOOT / END_JUMP_HOLE) or BallOpener's Open (END_BALL_BIND at 45, its SW_A,
+  SE_SY_TAMAKORO_GOAL). Their models and collision stay static instances. Test: plain XF="-DTMK_TEST -DTMK_HOLES"
+  TamakoroExLv1Galaxy/1 (both JumpHoles launch, the BallOpener opens: `power star 1 got`).
 - FallingSmallRock (feat/306-falling-small-rock, 2026-11-06): MapObj/FallingSmallRock.cpp in game.c update_fsrock
   (HellProminenceGalaxy 1 / 4): Wait for SW_A, Move (its FallingSmallRock effect, SE_AT_LV_FALLING_ROCK) until its
   binder (10 at 800 up) touches the map. Rows kept by slice.py LOGIC, its effect by jpa.py NAMED. Test: plain build
