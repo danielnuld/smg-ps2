@@ -147,6 +147,12 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   a chunk that is not one ends the movie ("movie: chunk n bad"), and "movie: <name> frame n" every 600 frames says
   on the console's udptty log where it stops.
 - gaps (2026-11-04, worktree D:/smg-ps2-wt/gaps, overlay out/wt-gaps): #143's placed classes with no behaviour.
+  - Fountain / SpringJetWater (#331, game.c update_jet_waters): Fountain.cpp (its effect, SE_OJ_LV_FOUNTAIN, SW_A
+    Wait / Move, SW_APPEAR) and SpringJetWater.cpp (Wait / Jet / End on DemoSpringWaterRiseUp part 1 湧き水上昇, kill
+    at 60, setStageBGMState(1, 180)); both ACTMES_FOUNTAINJUMP (sphere 70 at 350 up or the 280 cylinder: MarioFlow).
+    Test XF=-DJWATER_TEST: CosmosGardenGalaxy/1 (Fountain row 200: MarioFlow each time), CannonFleetGalaxy/1 (its
+    demo requested: Jet at part 1, End 240 frames later, killed at 60). slice.py LOGIC, jpa.py NAMED for both.
+    CoinSpot needs nothing: in Petari nothing sets mIsInTornado (CoinSpot.cpp), it only waits.
   - FluffWind (#328, game.c fluff_wind_*): FluffWind.cpp's effects along its rail (one every 600, kept: forever
     emitters) and FluffWindHolder::calcWindInfo feeding Fluff::updateWind (push along the rail, side speed 6, front and
     up lean into the wind, RideFlyOnWind / RideSpinUpOnWind, initAfterPlacement facing the wind; Fluff's SEs, Splash /
