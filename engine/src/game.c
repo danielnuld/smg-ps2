@@ -389,6 +389,7 @@ typedef struct {
     int fpressure;   /* FirePressureRadiate: a flame on a cycle (update_fpressures, fpr_joints) */
     int spmother;    /* StarPieceMother: its star pieces at a touch, or along its rail (update_spmothers) */
     int leakpipe;    /* WaterLeakPipe: stretched to its height, leaking (update_leakpipes, leak_joints) */
+    int bell;        /* MagicBell: its two Swingers (statics.inc st_bells_update, st_bell_joints) */
     int eyebeamer;   /* EyeBeamer: turns, goes to its rail and patrols it, its beam burning (update_eyebeamers) */
     int leaves;      /* CoconutTreeLeaf: its leaves sway, each with its collision (update_leaves, leaf_joints, lf_mats) */
     int palm;        /* PalmIsland: bobs on the water (update_palms) */
@@ -1095,7 +1096,7 @@ static void tz_place(Inst *in), update_trapezes(void), draw_trapeze_ropes(void);
 static int ntzs, tz_ride = -1; /* the Trapeze Mario holds, -1 none */
 static int nonis, nfprs; static void oni_place(Inst *in), update_onimasu(void), update_lavarocks(void), update_fpressures(void), fpr_joints(Inst *in);
 static int nspms; static void update_spmothers(void);
-static void update_leakpipes(void), leak_joints(Inst *in);
+static void update_leakpipes(void), leak_joints(Inst *in), st_bell_joints(Inst *in);
 static int nkss; static void update_stairs(void), ks_place(Inst *in);
 static int nebs; static const Model *m_ebeam; static int eb_patrol(int row); static void update_eyebeamers(void), eb_place(Inst *in), draw_eyebeams(void);
 static int nmhills; static const Model *m_mhole, *m_mhill[3];
@@ -5102,6 +5103,7 @@ typedef struct {
     __typeof__(((Inst *)0)->fpressure) fpressure;
     __typeof__(((Inst *)0)->spmother) spmother;
     __typeof__(((Inst *)0)->leakpipe) leakpipe;
+    __typeof__(((Inst *)0)->bell) bell;
     __typeof__(((Inst *)0)->eyebeamer) eyebeamer;
     __typeof__(((Inst *)0)->leaves) leaves;
     __typeof__(((Inst *)0)->palm) palm;
@@ -5133,7 +5135,7 @@ typedef struct {
 enum { GAP_NONE, GAP_SHOCKWAVE, GAP_CAPSULE, GAP_DRIFT, GAP_SHELLCOIN, GAP_SHELLCHIP, GAP_ELEVATOR, GAP_UFOKINOKO, GAP_TRIROCK };
 static void gap_place(Inst *in);
 static int st_rail_go(const Inst *in); /* statics.inc */
-static void st_chain_rebind(const Scene *s);
+static void st_chain_rebind(const Scene *s), st_wt_rebind(const Scene *s);
 static void ufok_start(int row);
 static int gap_class(const char *name)
 {
@@ -5206,6 +5208,7 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->fpressure = strcmp(name, "FirePressureRadiate") == 0;
     ci->spmother = strcmp(name, "StarPieceMother") == 0;
     ci->leakpipe = strcmp(name, "WaterLeakPipe") == 0;
+    ci->bell = strcmp(name, "MagicBell") == 0;
     ci->eyebeamer = strcmp(name, "EyeBeamer") == 0;
     ci->leaves = strcmp(name, "CoconutTreeLeaf") == 0;
     ci->palm = strcmp(name, "PalmIsland") == 0;
@@ -5298,6 +5301,7 @@ static void class_apply(Inst *in, const ClassInfo *ci)
     in->fpressure = ci->fpressure;
     in->spmother = ci->spmother;
     in->leakpipe = ci->leakpipe;
+    in->bell = ci->bell;
     in->eyebeamer = ci->eyebeamer;
     in->leaves = ci->leaves;
     in->palm = ci->palm;
@@ -5719,6 +5723,7 @@ static void game_rebind_(void)
         }
     }
     st_chain_rebind(s); /* statics.inc: LargeChain's parts */
+    st_wt_rebind(s); /* statics.inc: WatchTowerRotateStep's lifts */
     for (int i = 0; plant_first && i < ninsts; i++)
         if (insts[i].plant) { insts[i].kcl_ready = 1; place_plants(&insts[i]); }
     memset(zone_kcl, 0, sizeof zone_kcl);
@@ -46705,6 +46710,7 @@ static struct {
     Dn gs; int back_on;
     /* AstroDomeComet: its row, the comet galaxy (-1 dead), Confirm, its colour's model */
     int c_row, c_gi, c_confirm; const Model *c_md;
+    int a_row, a_on; /* AstroDomeAsteroid: its row, appeared (SelectStart .. SelectEnd) */
 } dm;
 static Inst *dm_inst(int row) /* its instance now (game_rebind renumbers them) */
 {
@@ -47184,6 +47190,8 @@ static void dm_msg(int msg)
     switch (msg) {
     case M_SELECT_START:
         butler_sync(1);
+        dm.a_on = 1; /* AstroDomeAsteroid: trySyncAppearMsgSelectStart */
+        if (dm.a_row >= 0) printf("dome asteroid %d: appear%c", dm.a_row, 10);
         ads_select(1);
         dm_handle_appear();
         for (int i = 0; i < dm.ng; i++) dm_galaxy_appear(i);
@@ -47196,6 +47204,7 @@ static void dm_msg(int msg)
         break;
     case M_SELECT_END:
         butler_sync(0);
+        dm.a_on = 0;
         ads_select(0);
         dm.c_gi = -1; /* AstroDomeComet::kill */
         dn_set(&dm.hd, HD_DISAPPEAR);
@@ -47403,6 +47412,9 @@ static void dome_init(void)
     }
     for (u32 r = 0; r < sc->nobjs; r++)
         if (!strcmp(sc->types + 32 * sc->objs[r].type, "AstroDomeComet")) dm.c_row = (int)r;
+    dm.a_row = scene_type(sc, "AstroDomeAsteroid") < 0 ? -1 : -2;
+    for (u32 r = 0; dm.a_row == -2 && r < sc->nobjs; r++)
+        if ((int)sc->objs[r].type == scene_type(sc, "AstroDomeAsteroid")) dm.a_row = (int)r;
     for (int i = 0; i < ninsts; i++) /* SphereSelectorHandle: its place */
         if (!strcmp(sc->types + 32 * sc->objs[insts[i].row].type, "SphereSelectorHandle")) dm.hpos = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]);
     for (int i = 0; i < dm.ng; i++) { /* MiniatureGalaxyHolder::calcIndex: by the stars to open, a Koopa one last */
@@ -47434,6 +47446,19 @@ static void dome_update(void)
     dm_bluestar_update();
     dm_selector_update();
     dm_handle_update();
+    if (dm.a_row >= 0) { /* AstroDomeAsteroid after Petari: dead (makeActorDead) but from the select's start to its end
+                          * (trySyncAppearMsgSelectStart), its own BCK at rate 1 (the generic skinned instance), placed
+                          * at calcHandledTrans(0) turned by calcHandledRotateMtx(0): the handle's base. ponytail: its
+                          * demo cast (registerDemoSimpleCastAll) moves it in demos as the port's dome does */
+        Inst *in = dm_inst(dm.a_row);
+        if (in) {
+            const Mx *h = dm_handle_mtx();
+            in->invisible = !dm.a_on;
+            mat_identity(in->m);
+            in->m[0] = h->x.x; in->m[1] = h->x.y; in->m[2] = h->x.z; in->m[4] = h->y.x; in->m[5] = h->y.y; in->m[6] = h->y.z;
+            in->m[8] = h->z.x; in->m[9] = h->z.y; in->m[10] = h->z.z; in->m[12] = h->p.x; in->m[13] = h->p.y; in->m[14] = h->p.z;
+        }
+    }
     for (int i = 0; i < dm.ng; i++) dm_galaxy_update(i);
     dm_comet_update();
     dm_camera_update();
@@ -48818,6 +48843,7 @@ static void update_obj_anims(void)
             if (insts[i].fpressure) { anim_pose(insts[i].anim); fpr_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].leaves) { anim_pose(insts[i].anim); leaf_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].leakpipe) { anim_pose(insts[i].anim); leak_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
+            if (insts[i].bell) { anim_pose(insts[i].anim); st_bell_joints(&insts[i]); anim_skin(insts[i].anim); continue; }
             if (insts[i].anim->done && !insts[i].anim->loop && !insts[i].vine && !obj_play(&insts[i], sc->types + 32 * sc->objs[insts[i].row].type, 1, 0))
                 obj_play(&insts[i], "wait", 1, 8); /* a one-shot clip over: back to its own clip (tryStartAllAnim), else Wait */
             anim_update(insts[i].anim);

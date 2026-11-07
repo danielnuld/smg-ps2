@@ -350,6 +350,15 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   (killed, dead switch 55), "-DEXT_STAR_TEST" StarDust 3 (children killed, its star's appear demo),
   "-DST_VISIT=CannonFortressRotateBreakStepA -DST_VISIT_SWB" CannonFleet 1. A worktree's slice.py needs the whole
   vendor/Petari/include (demo_dead_classes): a stub one leaves the demo casts out of the hide list.
+- WatchTowerRotateStep, MagicBell, AstroDomeAsteroid (feat/469-mapobjs-2, 2026-11-07): statics.inc st_wtower (its model
+  turned about its front, the four WatchTowerRotateStepLift PartsModels at the WindmillLift joints, level, as extra
+  instances: st_wt_rebind; a demo cast waits for MoveStart: 180 eased frames, then 0.3 a frame; Mario carried),
+  st_bells_* (MagicBell's two Swingers on the Bell model's polySurface1 / 2 joints: Inst.bell, st_bell_joints; rung by
+  mario_offence or the pointer moving over it, SW_A, Ring effect kept, StarWandHitMark), game.c dome: AstroDomeAsteroid
+  shown from the select's start to its end on the handle's base. Tests: XF="-DST_VISIT=WatchTowerRotateStep
+  -DST_VISIT_SWA_OF=HipDropSwitch -DST_VISIT_SWA_K=1 -DST_VISIT_D=4000.0f" HoneyBeeKingdom 2 (its demo, 19.5 degrees
+  eased, then turning), -DST_BELL_TEST ReverseKingdom 2 (two hits at 300 / 700, SW_A, still again), `dome`
+  XF=-DDOME_COMET AstroDome/1 (the asteroid with the select).
 
 - BeamGoRoundPlanet (fix/457-beam-go-round, 2026-11-07, coverage CannonFleetGalaxy 1): BeamGoRoundPlanet.cpp in game.c
   (bgr_*): its BCK plays (slice.py ANIM_PLANETS), its own collision kept and its Move KCL on joints move1 / move2
