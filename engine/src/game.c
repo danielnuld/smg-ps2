@@ -131,6 +131,7 @@ static int st_mapboard; /* AstroMapBoard shown: 1 its picture to capture (game_d
 static int st_flag_class(const char *n), st_cast_hook(int row, int type, int part), st_rail_obj(const char *n); static void st_update(void), st_draw(void), st_init(const Scene *s); static int st_shot(V3 p), st_jet_hit(V3 p); static void st_column_strike(V3 c, float r); /* statics.inc */
 static void mm_update(Kuribo *k), mm_kill(Kuribo *k), mm_btp(Kuribo *k, const Model *md); /* Meramera (meramera.inc) */
 static void poihana_update(Kuribo *k); /* Poihana (poihana.inc) */
+static void stink_update(Kuribo *k); static int sb_star(Kuribo *k), sb_body_push(const Kuribo *k); /* StinkBugSmall (stink.inc) */
 static void ts_update(Kuribo *k), ts_draw(Kuribo *k, const Model *md, float *m, Anim *a); static int ts_dead_req(Kuribo *k), ts_star(Kuribo *k); /* Teresa (teresa.inc) */
 static void mkoopa_update(Kuribo *k, V3 to, float d); static int mkm_star(Kuribo *e), mkm_explosion(Kuribo *e); /* MechanicKoopaMini (mkoopa.inc) */
 static int mm_down_force(Kuribo *k, V3 from), mm_star(Kuribo *k), mm_fire(Kuribo *k, V3 from);
@@ -3428,7 +3429,6 @@ static void cocoon_place(Inst *in);
 static void fluff_place(Inst *in);
 static void fluff_face_wind(Inst *in);
 static void jet_place(Inst *in);
-static V3 stink_front(const Kuribo *k);
 static void place_waterplants(void);
 static void tsuki_place(Inst *in)
 {
@@ -5631,6 +5631,18 @@ static void game_rebind_(void)
         in->s = 1.0f; in->reach = in->md->radius * 2.0f;
         zone_grow(in);
     }
+    for (u32 i = 0, t = (u32)scene_type(s, "StinkBugSmall"); i < s->nobjs && ninsts < (int)s->nobjs; i++) { /* StinkBugSmall: its Switch collision (stink.inc moves it) */
+        const Row *r = &s->objs[i];
+        const u8 *kc = scene_kcl(s, "StinkBugSmall");
+        if (r->type != t || r->arg[7] != -1 || !kc || !scene_model(s, "StinkBugSmall") || (row_dead && !row_shown(i))) continue;
+        Inst *in = &insts[ninsts++];
+        memset(in, 0, sizeof *in);
+        in->md = scene_model(s, "StinkBugSmall"); in->row = (int)i; in->zone = r->zone; in->invisible = 1; in->kmove = in->kparent = -1;
+        in->kcl = kc;
+        mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
+        in->s = r->scale[0]; in->reach = in->md->radius * 2.0f + (r->arg[1] > 0 ? (float)r->arg[1] : 1000.0f); /* (its dash range) */
+        zone_grow(in);
+    }
     tsp.pk = -1;
     if (tsp.row >= 0 && m_tsplanet && scene_kcl(s, "TombSpiderPlanet") && ninsts < (int)s->nobjs) { /* TombSpiderEnvironment: the planet's collision at its place */
         const Row *r = &s->objs[tsp.row];
@@ -7385,7 +7397,7 @@ int game_test_poihana(int how)
         int bound = 0, zone = sc->objs[k->row].zone;
         for (int j = 0; j < ninsts && !bound; j++) bound = insts[j].kcl && insts[j].zone == zone;
         test_nolost = !bound; /* held there (no miss) while its zone streams in */
-        mario->pos = vadd(k->pos, vmul(k->front.x || k->front.y || k->front.z ? k->front : stink_front(k), how == 2 ? -100.0f : how ? 90.0f : 300.0f));
+        mario->pos = vadd(k->pos, vmul(k->front, how == 2 ? -100.0f : how ? 90.0f : 300.0f));
         mario->up = k->up;
         if (how == 1) { mario->spin_timer = SPIN_TIME; mario->face = vmul(k->front, -1.0f); } /* facing it (tryPunchAirAfter's front check) */
         mario->hvel = v3(0, 0, 0); mario->vup = 0;
@@ -7437,9 +7449,11 @@ int game_test_stink(int how)
     for (int i = 0; i < nkuribo; i++) {
         Kuribo *k = &kuribo[i];
         if (k->kind != WALK_STINKBUG || k->state == KURIBO_DEAD) continue;
-        V3 f = stink_front(k);
+        if (!k->front.x && !k->front.y && !k->front.z) { mario->pos = k->pos; mario->up = k->up; mario->hvel = v3(0, 0, 0); mario->vup = 0; return -2; } /* not updated yet (sb_init): Mario by it */
+        V3 f = k->front;
         mario->up = k->up;
         if (how == 0) mario->pos = vadd(k->pos, vmul(f, 600.0f));
+        else if (how == 2) { mario->pos = vadd(k->pos, vmul(k->up, 250.0f)); mario->grounded = 0; } /* onto its back */
         else { mario->pos = vadd(k->pos, vmul(k->up, 250.0f)); mario->grounded = 0; mario->hip = HIP_FALL; mario->hip_t = 0; }
         mario->hvel = v3(0, 0, 0); mario->vup = 0;
         return k->row;
@@ -7453,7 +7467,7 @@ int game_stink_state(int *dist)
         const Kuribo *k = &kuribo[i];
         if (k->kind != WALK_STINKBUG) continue;
         *dist = (int)vlen(vsub(k->pos, row_pos(&sc->objs[k->row])));
-        return k->state == KURIBO_DEAD ? 9 : k->phase;
+        return k->state == KURIBO_DEAD ? 99 : k->nrv;
     }
     return -1;
 }
@@ -14255,6 +14269,7 @@ static void update_jets(void)
                 else if (e->kind == WALK_GESSO) { if (e->nrv == GE_PUNCHDOWN) took = 0; else ge_knock(e, p); } /* isMsgPlayerHitAll: knockOut */
                 else if (e->kind == WALK_POIHANA) { if (!poihana_shock(e)) took = 0; else scene_stop = 3; } /* tryShock, stopSceneForDefaultHit(3) */
                 else if (e->kind == WALK_SNAKEHEAD) { if (e->phase || e->nrv == SN_TURTLEDOWN) took = 0; else w_nrv(e, SN_TURTLEDOWN); } /* TurtleDown */
+                else if (e->kind == WALK_STINKBUG) took = 0; /* StinkBugSmall: no isMsgJetTurtleAttack */
                 else {
                     e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up);
                     pop_coins(e->pos, e->up, 1);
@@ -22787,117 +22802,6 @@ static void drop_pieces(V3 p, V3 up, int n);
 static void unizo_fire(Kuribo *k, V3 at);
 static void unizo_break(Kuribo *k);
 static int unizo_breaking(const Kuribo *k);
-/* StinkBugSmall.cpp / StinkBugBase.cpp: a beetle at its home facing its front. Mario in its territory (within arg1
- * (1000) + 400, 200 along its up, 600 across, in front) makes it turn to him (3 degrees a frame, within arg0 of its
- * front) for 40 frames (RushStart + 10), then rush at 20 along its face until arg1 from home or a wall (Dash), stop
- * (DashEnd, 20 frames) and walk back at 5 (Back). With arg0 > 0 it sweeps its front +-arg0 at 1 degree a frame while
- * waiting (Search). Its horn (100 x scale ahead) hurts Mario (EnemyAttackStrong) and it stops (Attack); a spin or a
- * star piece makes it guard (SpinReaction, 30 frames); a hip drop kills it: 3 star pieces. phase 0 wait, 1 dash sign,
- * 2 dash, 3 dash end, 4 back, 5 attack / guard, 6 dying; from its turn in degrees from its front, to the sweep sign.
- * Its SW_A on: ForceFall (gravity 2 a frame, bound; phase 7); a valid SW_DEAD is set at its death instead of its
- * star pieces (kill). ponytail: no standing on its back (Panic / Shake), no star pointer swoon, arg0 -1 taken as 0,
- * arg1 -1 as 1000 */
-static V3 stink_front(const Kuribo *k)
-{
-    V3 x, z;
-    row_axes(&sc->objs[k->row], &x, &z);
-    V3 f = vnorm(vtangent(z, k->up));
-    float a = k->from * 0.0174533f;
-    return vadd(vmul(f, cosf(a)), vmul(vcross(k->up, f), sinf(a)));
-}
-
-static void stink_update(Kuribo *k, V3 to, float d)
-{
-    const Row *r = &sc->objs[k->row];
-    float s = r->scale[0], range = r->arg[1] > 0 ? (float)r->arg[1] : 1000.0f, sweep = r->arg[0] > 0 ? (float)r->arg[0] : 0;
-    V3 home = row_pos(r), f = stink_front(k), c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    k->timer++;
-    if (k->phase == 6) { /* HipDropDown */
-        if (k->timer >= 30) {
-            k->state = KURIBO_DEAD; row_kill(k->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, k->pos, k->up);
-            if (r->sw[SW_DEAD] >= 0) sw_set(r, SW_DEAD, 1); /* kill: onSwitchDead, else its pieces */
-            else drop_pieces(k->pos, k->up, 3);
-            printf("stink bug row %d: dead" "\n", k->row);
-        }
-        return;
-    }
-    if (k->phase != 7 && r->sw[SW_A] >= 0 && sw_on(r, SW_A)) { k->phase = 7; k->timer = 0; k->vel = v3(0, 0, 0); } /* tryForceFall */
-    if (k->phase == 7) { /* exeForceFall: mVelocity += 2 x gravity, bound */
-        k->vel = vsub(k->vel, vmul(k->up, 2.0f));
-        V3 center = vadd(vadd(k->pos, k->vel), vmul(k->up, 100.0f * s - 2.0f)), gn, wn;
-        int wall = 0;
-        if (collide_n(&center, k->up, 100.0f * s, &gn, &wn, &wall)) k->vel = v3(0, 0, 0);
-        k->pos = vsub(center, vmul(k->up, 100.0f * s));
-        return;
-    }
-    float above = vdot(to, k->up);
-    if (mario->hip == HIP_FALL && d < 150.0f * s + HIT_BODY_R && above > 0) { /* isMsgPlayerHipDrop */
-        k->phase = 6; k->timer = 0; mario->hip = HIP_LAND; mario->hip_t = 0; mario->vup = 15.0f;
-        printf("stink bug row %d: hip drop" "\n", k->row);
-        return;
-    }
-    if (k->phase != 2 && k->phase != 5 && mario->spin_timer > 0 && d < 200.0f * s) { k->phase = 5; k->timer = 0; } /* guard */
-    if (k->phase != 5 && k->phase != 6) { /* the horn */
-        V3 horn = vadd(vadd(k->pos, vmul(f, 100.0f * s)), vmul(k->up, 70.0f * s)), hc = vsub(c, horn);
-        if (vlen(hc) < 100.0f * s + HIT_BODY_R && vdot(vsub(c, k->pos), f) > 0 && !mario->hurt_timer) {
-            if (mario_attack(ATK_STRONG, k->pos)) hit_mark_between("StinkBugSmall", horn, 100.0f * s, c, HIT_BODY_R); /* sendMsgEnemyAttackStrong: emitEffectHitBetweenSensors */
-            if (k->phase != 2) { k->phase = 5; k->timer = 0; }
-            printf("stink bug row %d: horn hits Mario" "\n", k->row);
-        }
-    }
-    V3 side = vcross(k->up, f), from_home = vsub(mario->pos, k->pos);
-    int seen = vlen(vsub(mario->pos, k->pos)) < range + 400.0f && fabsf(vdot(from_home, k->up)) <= 200.0f &&
-               fabsf(vdot(from_home, side)) <= 600.0f && vdot(from_home, f) > 0; /* isPlayerInTerritory */
-    float speed = 0;
-    switch (k->phase) {
-    case 0: /* Wait / Search */
-        k->pos = home;
-        if (seen) { k->phase = 1; k->timer = 0; break; }
-        if (sweep > 0) {
-            if (k->to == 0) k->to = 1;
-            k->from += k->to;
-            if (fabsf(k->from) > sweep) { k->from = k->from > 0 ? sweep : -sweep; k->to = -k->to; }
-        }
-        break;
-    case 1: { /* DashSign: turn to Mario within +-arg0 of its front */
-        k->pos = home;
-        V3 t = vtangent(to, k->up);
-        if (vlen(t) > 1e-3f) {
-            float turn = atan2f(vdot(t, side), vdot(t, f)) * 57.29578f;
-            k->from += turn > 3 ? 3 : turn < -3 ? -3 : turn;
-            float lim = sweep > 0 ? sweep : 0;
-            if (k->from > lim) k->from = lim;
-            if (k->from < -lim) k->from = -lim;
-        }
-        if (k->timer >= 40) { k->phase = 2; k->timer = 0; }
-        break;
-    }
-    case 2: speed = 20.0f; break; /* Dash */
-    case 3: if (k->timer >= 20) { k->phase = 4; k->timer = 0; } break;
-    case 4: { /* Back */
-        V3 h = vtangent(vsub(home, k->pos), k->up);
-        if (vlen(h) < 10.0f) { k->pos = home; k->phase = 0; k->timer = 0; break; }
-        k->vel = vmul(vnorm(h), 5.0f);
-        break;
-    }
-    default: if (k->timer >= 30) { k->phase = 4; k->timer = 0; } break; /* Attack / SpinReaction */
-    }
-    if (k->phase == 2 || k->phase == 4) { /* moving: on the ground, walls stop the dash */
-        if (k->phase == 2) {
-            float left = range - vlen(vtangent(vsub(k->pos, home), k->up));
-            k->vel = vmul(f, left < speed ? (left > 0 ? left : 0) : speed);
-        }
-        V3 center = vadd(vadd(k->pos, k->vel), vmul(k->up, 100.0f * s - 2.0f)), gn, wn;
-        int wall = 0;
-        collide_n(&center, k->up, 100.0f * s, &gn, &wn, &wall);
-        k->pos = vsub(center, vmul(k->up, 100.0f * s));
-        if (k->phase == 2 && (wall || vlen(vtangent(vsub(k->pos, home), k->up)) >= range - 1.0f)) {
-            k->phase = 3; k->timer = 0; k->vel = v3(0, 0, 0);
-            printf("stink bug row %d: dash ends%s" "\n", k->row, wall ? " at a wall" : "");
-        }
-    }
-}
-
 /* Unizo.cpp (Unizo, UnizoLand, UnizoShoal): a rolling sea urchin (radius 126.36). Wait: Mario within 1500 (it on the
  * ground, he not hurt, mJumpCount 0) makes it jump (sqrt(2 x 70 x gravity rate) up; rate 0.15 at sea, 0.8 on land)
  * and Jump: its Search BCK (SE_EM_UNIZO_NEEDLE), chasing from step 20, Chase at the BCK's end. updateVelocity: 0.1 a
@@ -32632,6 +32536,13 @@ static int wp_sensors(Kuribo *k, WSen *o)
         return 3;
     }
     case WALK_MERAMERA: o[0] = (WSen){k->pos, 55.0f * s, 0, 1, 0}; return 1; /* body 55 x s */
+    case WALK_STINKBUG: { /* head (EnemyAttack 100 x s at Face (0, -30 x s, 0)); arg7: body 110 x s at 10 x s up */
+        if (!k->lvt[2]) return 0;
+        int n = 0;
+        if (k->lvt[1]) o[n++] = (WSen){w_joint(k, m_stink, 6, v3(0, -30.0f * s, 0)), 100.0f * s, 1, 0, 0};
+        if (k->item) o[n++] = (WSen){vadd(k->pos, vmul(k->qy, 10.0f * s)), 110.0f * s, 0, 1, 0};
+        return n;
+    }
     case WALK_POIHANA: /* body 70 at Body (its binder is no enemy sensor) */
         if (!ph_sensors_on(k)) return 0;
         o[0] = (WSen){w_joint(k, m_poihana, 1, v3(0, 0, 0)), 70.0f, 0, 1, 0};
@@ -32832,6 +32743,7 @@ static void wp_attack(Kuribo *a, const WSen *sa, Kuribo *b, const WSen *rb) /* a
         }
         break;
     case WALK_NOKO: if (!rb->map) wp_receive(b, rb, a, sa); break;      /* any but the player */
+    case WALK_STINKBUG: if (sa->body && sb_body_push(a)) wp_receive(b, rb, a, sa); break; /* _C4: its body pushes */
     case WALK_POIHANA: /* pushed: its velocity into the receiver's actor cut */
         if (!wp_receive(b, rb, a, sa)) break;
         {
@@ -33163,6 +33075,7 @@ static void update_kuribo_one(Kuribo *k)
         if (k->kind == WALK_MERAMERA) { if (w_zone_ground(k)) mm_update(k); return; } /* Meramera.cpp (meramera.inc) */
         if (k->kind == WALK_TERESA) { if (w_zone_ground(k)) ts_update(k); return; } /* Teresa.cpp (teresa.inc) */
         if (k->kind == WALK_POIHANA) { if (w_zone_ground(k)) poihana_update(k); return; } /* Poihana.cpp (poihana.inc): its own NonActive */
+        if (k->kind == WALK_STINKBUG) { if (w_zone_ground(k)) stink_update(k); return; } /* StinkBugSmall.cpp (stink.inc) */
         if (k->kind == WALK_MKOOPA) { if (w_zone_ground(k)) mkoopa_update(k, to, d); return; } /* MechanicKoopaMini.cpp (mkoopa.inc) */
         if (d > 3000.0f) return; /* sActiveDistance: far ones wait (their zone may be loaded low, no collision) */
         if (!w_zone_ground(k)) return; /* no ground yet: they would fall */
@@ -33170,7 +33083,6 @@ static void update_kuribo_one(Kuribo *k)
         if (k->kind == WALK_KARIKARI) { kari_update(k, to, d); return; }
         if (k->kind == WALK_KARON) { karon_update(k, to, d); return; }
         if (k->kind == WALK_BUTTERFLY) { butterfly_update(k); return; }
-        if (k->kind == WALK_STINKBUG) { stink_update(k, to, d); return; }
         if (k->kind == WALK_UNIZO) { unizo_update(k, to, d); return; }
         if (k->kind == WALK_SPIDER) { jspider_update(k); return; }
     }
@@ -43354,7 +43266,7 @@ static void update_shots(void)
             else if (e->kind == WALK_BASABASA) { /* isMsgStarPieceAttack: Stun (isNrvEnableStun) */
                 if (e->nrv != BB_TRAMPLE && e->nrv != BB_PUNCHDOWN && e->nrv != BB_WAIT && e->nrv != BB_ATTACH) w_nrv(e, BB_STUN);
             }
-            else if (e->kind == WALK_STINKBUG) { if (e->phase == 0 || e->phase == 1 || e->phase == 4) { e->phase = 5; e->timer = 0; } } /* isNrvEnableStarPieceAttack: Wait, Search, DashSign(End), Back */
+            else if (e->kind == WALK_STINKBUG) { if (!sb_star(e)) { hit = 0; continue; } } /* isMsgStarPieceReflect: SpinReaction in isNrvEnableStarPieceAttack */
             else if (e->kind == WALK_KARIKARI) kari_blowout(e, s->pos, 1); /* isMsgStarPieceAttack: BlowOutStarPiece */
             else if (e->kind == WALK_PACKUN) { /* isMsgStarPieceAttack: SwoonStart */
                 if (e->nrv != PN_TRAMPLEDOWN && e->nrv != PN_PUNCHDOWN) w_nrv(e, PN_SWOONSTART);
@@ -52113,6 +52025,7 @@ int game_test_bk(int frame)
 #include "ice_meraking.inc" /* IceMerameraKing (Baron Brr): mk_*, game_test_mk */
 #include "meramera.inc" /* Meramera / IceMeramera / ChildIceMeramera: mm_*, game_test_mm */
 #include "poihana.inc" /* Poihana: ph_* */
+#include "stink.inc" /* StinkBugSmall: sb_* */
 #include "teresa.inc" /* Teresa / TeresaChief: ts_* */
 #include "mkoopa.inc" /* MechanicKoopaMini: mkm_* */
 #include "skeletal_fish.inc" /* SkeletalFishBaby / Boss (Kingfin): sf_* */
@@ -54990,7 +54903,7 @@ void game_draw(void)
         kuribo[i].clipped = (u8)render_clip_judge(wp, 300.0f, 10000.0f); /* ClippingActorInfo's default sphere, 300 about it, off
                                                                * ClippingJudge's volume (this view) */
         if (wvis && !(kuribo[i].kind == WALK_UNIZO && unizo_breaking(&kuribo[i]))) { u32 c1 = cycles(); walker_shadow(&kuribo[i]); prof_shadow += cycles() - c1; } /* appearBreakModel: invalidateShadowAll */
-        basis_matrix(m, kuribo[i].pos, kuribo[i].up, kuribo[i].kind == WALK_STINKBUG || kuribo[i].kind == WALK_POIHANA ? stink_front(&kuribo[i]) : vsub(mario->pos, kuribo[i].pos), 0);
+        basis_matrix(m, kuribo[i].pos, kuribo[i].up, vsub(mario->pos, kuribo[i].pos), 0);
         if (kuribo[i].kind == WALK_UNIZO) { /* rolled about its side round its centre */
             const Kuribo *k = &kuribo[i];
             V3 f = vtangent(k->vel, k->up);
@@ -55023,8 +54936,6 @@ void game_draw(void)
                 continue;
             }
         }
-        if (kuribo[i].kind == WALK_STINKBUG) /* its scale; flattened while dying */
-            for (int j = 0; j < 12; j++) m[j] *= sc->objs[kuribo[i].row].scale[0] * (kuribo[i].phase == 6 && j >= 4 && j < 8 ? 1.0f - kuribo[i].timer / 40.0f : 1.0f);
         if (md->skin) { /* animated: the clip of its state (walker_clip), facing its way when it walks */
             Kuribo *k = &kuribo[i];
             const char *cls = walker_acls(k);

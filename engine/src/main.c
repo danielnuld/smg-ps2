@@ -2435,10 +2435,12 @@ int main(void)
         }
 #endif
 #ifdef STINK_TEST
-        { /* Mario in front of a stink bug (150, 300), then a hip drop on it (500) */
-            if (frame == 150 || frame == 300 || frame == 500)
-                printf("stink test f %u: row %d\n", frame, game_test_stink(frame == 500));
-            if (frame >= 150 && frame < 600 && frame % 10 == 0) {
+        { /* once Mario is free (at): 600 in front of a stink bug (it dashes), onto its back (at + 300: Panic, Shake), a hip
+           * drop on it (at + 600) */
+            static u32 at;
+            if (!at && frame >= 150 && game_test_free() && game_test_stink(0) >= 0) { at = frame; printf("stink test f %u: placed\n", frame); }
+            if (at && (frame == at + 300 || frame == at + 600)) printf("stink test f %u: row %d\n", frame, game_test_stink(frame == at + 300 ? 2 : 1));
+            if (at && frame < at + 700 && frame % 10 == 0) {
                 int dist = 0, st = game_stink_state(&dist);
                 printf("stink test f %u: phase %d dist %d life %d\n", frame, st, dist, game_life());
             }
