@@ -12,6 +12,7 @@ void render_set_fovy(float deg);
 void render_set_shake(float x, float y);
 /* the environment-mapped groups' VU1Env matrices for this frame's projection (after render_set_fovy / shake) */
 void render_env(const Scene *s);
+void render_proj(const Scene *s); /* VU1AirProj: the projected groups' texgen through their BTK (after anim_btk) */
 /* Upload the scene's textures from index first_tex on to VRAM (their GS state packets too) and build the prebuilt
  * chains of the models from first_model on. Call after blob_load / blob_add (0, 0 the first time). */
 void render_load_textures(const Scene *s, u32 first_tex, u32 first_model);

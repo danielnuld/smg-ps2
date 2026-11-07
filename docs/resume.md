@@ -1371,6 +1371,22 @@ there needs the embedded blob and every pack rebuilt.
   table; one fade table per model a frame; DarknessRoomAir / TwilightAir / DimensionAir still without run-time fades.
   Repack: slice_all.py EggStarGalaxy, TearDropGalaxy, OceanFloaterLandGalaxy, OceanPhantomCaveGalaxy, HeavensDoorGalaxy.
 
+- ProjectionMapAir (feat/470-projmap-air, 2026-11-07): SunsetAir / FineAir (Air.cpp:160 initModel,
+  ProjmapEffectMtxSetter::updateMtxUseBaseMtx: the Projmap texture matrices project the model's own positions) only in
+  OceanPhantomCave's GhostShipCaveZone (Sunset in 1 / 4 / 5, Fine in 2). slice.py PROJ_AIR: CloudsMat_v's projected
+  layer that changes the TEV's colour most is baked through it (the other at its mean, R = 1), the group header byte 14
+  + 12 floats: the texgen (tex.projmap x the texture's UV scale) in position steps; TEX0's texture (the alpha gradient)
+  read per vertex into the normal's w (x 127); the layer's BTK entry as any. Engine: render_proj (after anim_btk) puts
+  the BTK's UV matrix over it (the SRT after the divide, as J3D) into VU mem 8..10 / 15; vu1_tex.vsm VU1AirProj (VU1Air
+  with s, t, q from the local position, STQ = (s, t, q) / w: the GS divides per pixel, so q crossing 0 over the dome is
+  GX's own; alpha = table x the normal's w). Fixed on the way: VU1Air set ST's z to 1 after the divide (Q = 1: HomeAir's
+  texture sampled at s / w); 1 first, then / w. Cost: render_proj ~6000 EE cycles (0.02 ms: it walks every model's
+  groups), VU1AirProj one FMAC more per vertex than VU1Air (199 vertices), one 128 x 128 PSMT4 texture (8 KB).
+  main.c's route perf lines now also with XF=-DPERF_LOG in any build. Seen: plain OceanPhantomCave/2 (FineAir: blue sky,
+  white clouds), /1 (SunsetAir: green-teal clouds, as the TEV gives with its sunsetair.brk frame 59; the old mean colour
+  was (0, 114, 0) too), EggStar 3; route EggStar 1 star at f 4215. ponytail: the second cloud layer at its mean (one
+  texture per GS pass); SphereAir is a PriorDrawAir (no Projmap), its texture still at the mean.
+  Repack: slice_all.py OceanPhantomCaveGalaxy (packs with VU1AirProj groups need this engine).
 - Pack room (fix/461-pack-room, 2026-11-07): slice_all's ROOM 9.1e6 was measured on 10-29 with a 13824 KB region; the
   region is 17152 KB now (the linked blob left the ELF on 10-31), so the room had not grown with it. main.c's room line
   now prints `region left N KB` (the region free after scene, resident, sound, common, menus): AstroGalaxy/1 9560 KB

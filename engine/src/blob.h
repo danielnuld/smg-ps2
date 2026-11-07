@@ -40,6 +40,9 @@ typedef struct {
     const float *env;    /* lit 2: rows s, t, q of the texgen on the view normal, columns n.x, n.y, n.z, 1 (tex.env_mtx) */
     float *air;          /* lit 3 (camera-lit alpha, VU1Air): 16 qwords for VU mem 1008..1023, from air_src (render_air_fade) */
     const float *air_src; /* its tables (tools/slice.py air_table): at rest, then [62] Appear's, [63] Disappear's */
+    const float *proj;   /* lit 3 with header byte 14 (VU1AirProj, ProjectionMapAir): the texgen's columns x, y, z (in
+                          * position steps) and its constant, 3 floats each: s, t, q of the projected texture */
+    float *projm;        /* with proj: those through the BTK's UV matrix (render_proj), VU mem 8..10 and 15 */
     u16 swap[8];         /* its swappable textures (SWAP chunk; [0] its own), scene indices */
     u8 nswap, swap_kind; /* how many; 0 Mario's eyelids (the blink), 1 his ColorChange body / cap (calcAnim) */
     u8 hide;             /* skinned: left out of the draw (its shape hidden by a BVA at its frame: game.c bva_apply) */

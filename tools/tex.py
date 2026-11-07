@@ -346,6 +346,19 @@ def material_stages(b, mat3, m):
     return out
 
 
+def stage_coords(b, mat3, m):
+    """Material m's texture stages in order -> [(texture coordinate, TEX1 index)] (material_stages' TEV orders)."""
+    off = lambda k: mat3 + u32(b, mat3 + k)
+    e = off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C
+    out = []
+    for k in range(b[off(0x58) + b[e + 4]]):
+        oi = u16(b, e + 0xBC + 2 * k)
+        if oi == 0xFFFF or b[off(0x4C) + 4 * oi + 1] == 0xFF:
+            continue
+        out.append((b[off(0x4C) + 4 * oi], u16(b, off(0x48) + 2 * u16(b, e + 0x84 + 2 * b[off(0x4C) + 4 * oi + 1]))))
+    return out
+
+
 def material_tex(b, mat3, m, tex1=None):
     """Material m -> dict(tex = TEX1 index, attr = VTX1 attribute of its coords (13 = TEX0), mtx = 2x3 or None,
     projected = bool), or None when no TEV stage samples a texture. With tex1 (TEX1 block offset) a colour texture wins
