@@ -1495,6 +1495,7 @@ static int miss_abyss; /* the next miss is MarioActor::exeGameOverAbyss's (a Dea
 static int miss_ghost; /* the next miss is forceKillPlayerByGhostRace's (EventGhostRaceDown) */
 static int miss_race; /* the next miss is forceKillPlayerByGroundRace's (EventRaceDown) */
 static void rm_reset(void), update_race(void); /* RaceManager and its racers (race.inc) */
+static void update_syati(void), draw_syati_rings(void); static int sy_took(int row), sy_bva(const Inst *in, const char **key, float *frame), sy_miss_anim(void); /* Syati (syati.inc) */
 static void or_init(void), or_update(void), draw_oceanrings(void); static int or_in_water(V3 p, V3 up, float *depth), or_row(V3 p); /* OceanRing (ocean_ring.inc) */
 static int rm_ctrl_off(void), pg_jet_hit(V3 p); static void rm_note_star(void); static const char *rm_bck(void); /* offPlayerControl; its startBckPlayer clip on Mario */
 static void gh_reset(void);
@@ -22479,7 +22480,7 @@ static void miss(void)
     mev.over = lives <= 0; /* MarioActor::exeGameOver: getPlayerLeft() == 0 */
     mev.ghost = miss_ghost && !mev.over;
     mario->hvel = v3(0, 0, 0); mario->vup = 0;
-    if (mario_anim && (mev.ghost || (miss_race && !mev.over))) m_anim("レース負け"); /* EventGhostRaceDown / EventRaceDown::init */
+    if (mario_anim && (mev.ghost || (miss_race && !mev.over))) m_anim(sy_miss_anim() ? "水中レース負け" : "レース負け"); /* EventGhostRaceDown / EventRaceDown::init (forceKill 1: changeGameOverAnimation 10) */
     else if (mario_anim && !bh.on) mario_play(swimming ? "deathwater" : "down", 1.0f, 0); /* changeGameOverAnimation */
     bgm_stop(10); bgm_sub_stop(10); /* (setCubeBgmChangeInvalid, clearBgmQueue) */
     if (miss_abyss && !mev.over) mario_sound("声落下死亡"); /* EventAbyss::init */
@@ -42138,7 +42139,7 @@ static V3 star_pos(const Inst *in, int *state)
             *state = row_dead[w - 1];
             return vadd(from, v3(0.0f, 100.0f, 0.0f));
         }
-        if ((!row_dead[w - 1] && !tbox_star_out(w - 1) && !flip_star_out(w - 1) && !coach_took(w - 1) && !race_took(w - 1)) || (lg_cls(name) && !luigi_took(w - 1))) { *state = h > 0; return o; } /* (a Luigi absent
+        if ((!row_dead[w - 1] && !tbox_star_out(w - 1) && !flip_star_out(w - 1) && !coach_took(w - 1) && !race_took(w - 1) && !sy_took(w - 1)) || (lg_cls(name) && !luigi_took(w - 1))) { *state = h > 0; return o; } /* (a Luigi absent
                                                                                                        * here: no star) */
     } else if (got_coins < 100 && got_purple < 100) { /* ScenePlayingResult: 100 coins, or 100 purple coins */
         *state = 0;
@@ -51815,6 +51816,7 @@ int game_test_bk(int frame)
 #include "statics.inc" /* placed classes once drawn still (Flag ...): st_* */
 #include "race.inc" /* RaceManager, RaceRail (PlayerRacer), TeresaRacer: rm_*, game_test_race */
 #include "ocean_ring.inc" /* OceanRing: or_* */
+#include "syati.inc" /* Syati / TalkSyati, PrizeRing: sy_*, prg_* */
 /* Test builds: Mario in the boss's SwitchCylinder until it starts, then dropped in a hip drop on its BodyHipDrop part
  * whenever a hit is open; game_bsb_state: sequencer x 100 + nerve */
 int game_test_bsb(void)
@@ -53286,6 +53288,7 @@ void game_update(void)
     update_queen();
     or_update(); /* OceanRing::movement (ocean_ring.inc): its points near Mario before his swim reads them */
     update_race(); /* RaceManager and its racer NPCs (race.inc): their talks before the talk director and Mario */
+    update_syati(); /* Syati / TalkSyati and its PrizeRings (syati.inc): likewise */
     hud_update();
 
     LQ(5, update_talk_director());
@@ -53646,6 +53649,7 @@ static void inst_draw(const Inst *in, const Model *md, const float m[16])
     if (in->row == sbp_bva_row && in->anim && !strstr(sc->clips[in->anim->clip_id >= 0 ? in->anim->clip_id : 0].name, "childdeath")) {
         bva_key = "stinkbugparent/childdeath"; bva_frame = 1e9f; /* startBva ChildDeath: its last frame kept */
     }
+    sy_bva(in, &bva_key, &bva_frame); /* Syati's eyes (startBva Open / Blink) */
     if (md->skin) { if (in->anim && md == in->md) { draw_skin(md, m, in->anim); if (in->talkcls == 11) shop_goods_draw(in, m); } }
     else render_model(md, m, 0x70, 0xB0, 0x60);
 }
@@ -55104,6 +55108,7 @@ void game_draw(void)
         draw_bigbubbles(ce, right, vcross(back, right));
     }
     st_draw();
+    draw_syati_rings();
     RESTQ(6);
     gw_draw();
     pro_draw();
