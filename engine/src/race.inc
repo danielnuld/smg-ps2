@@ -528,7 +528,7 @@ static int tr_event(int k, u32 v) /* eventFunc: mTakeOutStar->takeOut() */
     (void)v;
     RNpc *t = rn_of_talker(k);
     if (!t || t->tos == 2) return 1;
-    if (t->tos == 0) { t->tos = 1; t->tos_step = 0; rn_push(t, TRC_TAKEOUT); rn_action(t, "takeoutstarteresaracer", 0); printf("teresa racer row %d: TakeOutStar" "\n", t->row); }
+    if (t->tos == 0) { t->tos = 1; t->tos_step = 0; rn_push(t, TRC_TAKEOUT); rn_action(t, "takeoutstarteresaracer", 0); tos_appear(t->row, "TakeOutStarTeresaRacer"); printf("teresa racer row %d: TakeOutStar" "\n", t->row); }
     return 0;
 }
 static void rn_takeout(RNpc *t) /* TakeOutStar::exeAnim (sStarAppearSeStepTeresaRacer 89), exeDemo: the star out */
@@ -538,7 +538,7 @@ static void rn_takeout(RNpc *t) /* TakeOutStar::exeAnim (sStarAppearSeStepTeresa
     V3 c = vadd(rn_pos(t), vmul(t->pose.nu, 200.0f));
     if (t->tos_step++ > 89) t->lv2 = se_level(in_water(c, t->pose.nu, NULL) ? SE_OJ_LV_POW_STAR_EXIST_W : SE_OJ_LV_POW_STAR_EXIST, &c.x, t->lv2);
     if (t->tos_step > 1 && (!in || rn_action_done(t))) {
-        t->took = 1; t->tos = 2; sw_changed = 1; rn_pop(t);
+        tos_kill(); t->took = 1; t->tos = 2; sw_changed = 1; rn_pop(t);
         printf("teresa racer row %d: its star out" "\n", t->row);
     }
 }
@@ -1101,7 +1101,7 @@ static int pgl_event(int k, u32 v) /* PenguinRacerLeader::eventFunc */
     if (v == 0) { rm_start_with_wipe(); return 1; }
     if (v == 1) {
         if (t->tos == 2) { rn_cam(t, 0); return 1; }
-        if (t->tos == 0) { t->tos = 1; t->tos_step = 0; rn_push(t, PG_TAKEOUT); rn_action(t, "takeoutstar", 0); printf("penguin racer leader row %d: TakeOutStar" "\n", t->row); }
+        if (t->tos == 0) { t->tos = 1; t->tos_step = 0; rn_push(t, PG_TAKEOUT); rn_action(t, "takeoutstar", 0); tos_appear(t->row, "TakeOutStar"); printf("penguin racer leader row %d: TakeOutStar" "\n", t->row); }
         return 0;
     }
     return 1;

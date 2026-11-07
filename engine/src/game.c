@@ -44275,6 +44275,54 @@ static void star_bck(Anim *a, const char *cls, const char *clip)
     for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
     anim_start(a, n, 0);
 }
+/* TakeOutStar's mStarModel (NPCUtil.cpp:619-700; createPowerStarDemoModel: the PowerStar model at the NPC's base
+ * matrix: "PStar", an EXTRA of the NPC classes): exeAnim's first step appear + startBck(mAnimName); exeDemo's first
+ * step the power star out at its PowerStar joint (appearPowerStarContinueCurrentDemo) and the model killed. One at a
+ * time. ponytail: no PowerStar::setupColor (the star's colour), as the other PStar uses */
+static int tos_row = -1;
+static Anim *tos_anim(void)
+{
+    const Model *md = scene_model(sc, "PStar");
+    return md && md->skin ? obj_anim((int)sc->nobjs * 8, md, "PStar") : NULL;
+}
+static int tos_mtx(float m[16]) /* the NPC's base matrix (its scale off) */
+{
+    const Inst *in = row_inst(tos_row);
+    if (!in) return 0;
+    memcpy(m, in->m, 64);
+    for (int c = 0; c < 3; c++) {
+        float l = sqrtf(m[4 * c] * m[4 * c] + m[4 * c + 1] * m[4 * c + 1] + m[4 * c + 2] * m[4 * c + 2]);
+        if (l > 1e-6f) for (int j = 0; j < 3; j++) m[4 * c + j] /= l;
+    }
+    return 1;
+}
+static void tos_appear(int row, const char *clip)
+{
+    tos_row = row;
+    star_bck(tos_anim(), "PStar", clip);
+}
+static void tos_kill(void)
+{
+    float m[16];
+    Anim *a = tos_anim();
+    if (tos_row >= 0 && a && tos_mtx(m)) {
+        const float *w = a->world[0]; /* the PowerStar joint */
+        note_star_row = tos_row;
+        note_star_at = v3(m[0] * w[12] + m[4] * w[13] + m[8] * w[14] + m[12], m[1] * w[12] + m[5] * w[13] + m[9] * w[14] + m[13],
+                          m[2] * w[12] + m[6] * w[13] + m[10] * w[14] + m[14]);
+        printf("take out star row %d: its star out at %d %d %d" "\n", tos_row, (int)note_star_at.x, (int)note_star_at.y, (int)note_star_at.z);
+    }
+    tos_row = -1;
+}
+static void tos_draw(void)
+{
+    float m[16];
+    const Model *md = scene_model(sc, "PStar");
+    Anim *a = tos_anim();
+    if (tos_row < 0 || !md || !a || !tos_mtx(m)) return;
+    anim_update(a);
+    draw_skin(md, m, a);
+}
 static void rd_start_frames(Anim *a, int sf) /* ReturnDemoRailMove::update's first step: setBckFrame / setResultFlyStartFrame */
 {
     int fm = a ? anim_length(a) : 0;
@@ -45438,13 +45486,15 @@ static int coach_takeout(Inst *in) /* 1 while its TakeOutStar runs (exeAnim) */
 {
     GapSt *g = gap_st(in->row);
     if (g->n != 1) return 0;
-    if (!g->st++)
+    if (!g->st++) {
         obj_play(in, "takeoutstar", 0, 8);
+        tos_appear(in->row, "TakeOutStarPenguinCoach");
+    }
     if (g->st > 95) {
         V3 c = vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(in->nu, 200.0f));
         in->lv[0] = se_level(in_water(c, in->nu, NULL) ? SE_OJ_LV_POW_STAR_EXIST_W : SE_OJ_LV_POW_STAR_EXIST, &c.x, in->lv[0]);
     }
-    if (g->st > 1 && in->anim && in->anim->done) { g->i = 1; g->n = 0; sw_changed = 1; printf("penguin coach row %d: its star out%c", in->row, 10); }
+    if (g->st > 1 && in->anim && in->anim->done) { tos_kill(); g->i = 1; g->n = 0; sw_changed = 1; printf("penguin coach row %d: its star out%c", in->row, 10); }
     return 1;
 }
 static void update_npc_turn(void) /* the NPCs' wait nerves: tryStartTalkAction / tryStartTurnAction */
@@ -46388,10 +46438,10 @@ static void update_luigi(void)
             else if (in->anim && in->anim->done) { lg_set(k, LG_WAIT); continue; }
             break;
         case LG_TAKEOUT: /* exeTakeOutStar (TakeOutStar::exeAnim: the action, then the star out: exeDemo) */
-            if (first) obj_play(in, "takeoutstar", 0, 8);
+            if (first) { obj_play(in, "takeoutstar", 0, 8); tos_appear(in->row, "TakeOutStar"); }
             if (lg[k].step == 87) se_start(SE_SV_LUIGI_LIFT_UP, &c.x); /* sLiftUpSeTiming */
             if (lg[k].step > 87) in->lv[0] = se_level(SE_OJ_LV_POW_STAR_EXIST, &c.x, in->lv[0]);
-            if (!first && in->anim && in->anim->done) { lg[k].took = 1; lg_set(k, LG_WAIT); continue; } /* exeDemo, Term: its star comes out once he is gone (star_wait) */
+            if (!first && in->anim && in->anim->done) { tos_kill(); lg[k].took = 1; lg_set(k, LG_WAIT); continue; } /* exeDemo, Term: its star comes out once he is gone (star_wait) */
             break;
         case LG_TREEWAIT:
             if (first) obj_play(in, "treewait", 1, 8);
@@ -54685,6 +54735,7 @@ void game_draw(void)
 #endif
     srd_draw();
     gsr_draw();
+    tos_draw();
     adds_draw();
     for (int i = 0; i < nwrecks; i++) { /* wrecks: the break model's clip until it stops, the broken object for good */
         typeof(&wrecks[0]) w = &wrecks[i];
