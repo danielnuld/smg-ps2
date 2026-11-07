@@ -2607,6 +2607,8 @@ int main(void)
         if (frame >= 120 && frame < 300) game_test_enemy(12, 0, 3); /* by a butterfly while the camera settles */
         if (frame == 300 || frame == 360) printf("butterfly test f %u: pointer on row %d, pieces %d\n", frame, game_test_point_walker(12), game_pieces_out());
         if (frame == 420) printf("butterfly test: pieces %d\n", game_pieces_out());
+        if (frame == 480) game_test_enemy(12, 0, 3); /* then still: he falls asleep at 1800, it perches on his cap */
+        if (frame >= 480 && frame % 120 == 0 && frame <= 3300) { char w[128]; game_walker_state(12, w, sizeof w); printf("butterfly test f %u: %s\n", frame, w); }
 #endif
 #ifdef ENEMY_TEST
         if (frame == 120) printf("enemy test: stomp TakoHei row %d\n", game_test_enemy(1, 0, 0));

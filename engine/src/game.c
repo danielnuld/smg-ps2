@@ -6647,8 +6647,8 @@ void game_walker_state(int kind, char *out, int n) /* test builds: the first liv
     for (int i = 0; i < nkuribo; i++) {
         const Kuribo *e = &kuribo[i];
         if (e->kind != kind || e->state == KURIBO_DEAD) continue;
-        snprintf(out, n, "row %d phase %d timer %d dist %d facing %d", e->row, e->phase, e->timer, (int)vlen(vsub(mario->pos, e->pos)),
-                 vdot(mario->face, vsub(e->pos, mario->pos)) > 0);
+        snprintf(out, n, "row %d phase %d timer %d dist %d facing %d nrv %d sleep %d", e->row, e->phase, e->timer, (int)vlen(vsub(mario->pos, e->pos)),
+                 vdot(mario->face, vsub(e->pos, mario->pos)) > 0, e->nrv, mario->sleep);
         return;
     }
     snprintf(out, n, "none");
@@ -17940,6 +17940,16 @@ static V3 mario_joint_drawn(int j) /* getRealPos: a joint as last calculated (on
     mat_mul(w, m_drawn, mario_anim->world[j]);
     return v3(w[12], w[13], w[14]);
 }
+static V3 mario_joint_at(int j, V3 o) /* calcPlayerJointMtx(j) applied to the point o */
+{
+    float w[16], b[16];
+    if (!mario_anim || !mario_anim->skin || j >= mario_anim->skin->njoints) return vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    if (m_drawn_ok) mat_mul(w, m_drawn, mario_anim->world[j]);
+    else { mario_base(b); mat_mul(w, b, mario_anim->world[j]); }
+    return v3(w[0] * o.x + w[4] * o.y + w[8] * o.z + w[12], w[1] * o.x + w[5] * o.y + w[9] * o.z + w[13],
+              w[2] * o.x + w[6] * o.y + w[10] * o.z + w[14]);
+}
+static int mario_sleeping(void) { return mario->sleep == 1 || mario->sleep == 2; } /* MarioActor::isSleeping: 特殊ウエイト1A / 1B */
 /* MarioActor::calcCenterPos (_2A0): along his up by the binder's radius, eased to 60 (40 squatting; as Teresa to 100,
  * the centre 20 over it); hanging his Spine1 */
 static void m_center(Player *m)
@@ -21959,7 +21969,7 @@ static void update_mario_(void)
                 m_anim_ip(m->sleep == 3 ? "戦闘ウエイト" : "特殊ウエイト1A", -1);
                 if (player_mode == PM_TERESA && m->sleep == 1) teresa_anim("sleepstart", -1); /* changeSpecialModeAnimation */
             }
-        } else if (m->sleep == 1 && ++still_t == (player_mode == PM_TERESA ? 210 : 1800)) { /* update: _14 0 -> 1 */
+        } else if (m->sleep == 1 && (++still_t, !m_carry_jet()) && still_t == (player_mode == PM_TERESA ? 210 : 1800)) { /* update: _14 0 -> 1 (not carrying: _468) */
             still_t = 0;
             m->sleep = 2;
             m_anim_ip("特殊ウエイト1B", -1);
@@ -25811,9 +25821,18 @@ static float converge(float v, float to, float step) { return v < to ? (v + step
  * 0.97, rate to 3, 30 frames), Hive while B (L1) is held with the pointer within 100 pixels (towards where it points
  * 0.05, at most 2.5, rate to 1.2); it turns its front to its way (at most acos 0.997 a frame) when faster than 0.5;
  * arg1 -1: a star piece once the pointer is within 10 pixels; binder 30; its colour the BRK frame arg0 (slice.py
- * BRK_ARG). ponytail: no perching (NPC sensors; sleeping Mario: the port's Mario never sleeps). In HeavensDoorGalaxy its up from
+ * BRK_ARG). Waiting within 500 of a sleeping Mario (tryPerchOnSleepingMario) it waits 300 frames, then flies to his cap
+ * (CapPosition x (0, 50.2, 24.9)) 0.05 a frame, at most 2, until within 10 as its clip passes frame 0; then blends
+ * to it 0.7 a frame (rate to 0.5) until frame 0 again; then sits on it playing Wait until he wakes (Butterfly, Wait).
+ * ponytail: no PerchOn from Hive onto an NPC's sensor (attackSensor isSensorNpc: the port's NPCs keep no common
+ * sensor list). In HeavensDoorGalaxy its up from
  * gravity (makeQuatUpNoSupport), else its rotation; its clip from a random frame; STAR_PIECE_BURST with its piece */
-enum { BN_WAIT, BN_RUNAWAY, BN_HIVE };
+enum { BN_WAIT, BN_RUNAWAY, BN_HIVE, BN_GOTOSLEEPING, BN_READYTOPERCH, BN_PERCHSLEEPING };
+static int bfly_pass0(const Kuribo *k) /* checkPassBckFrame(0) on its looping clip (the frame from setBckFrameAtRandom on) */
+{
+    float n = (float)k->act_frames, f = k->act_t + k->from;
+    return n > 0.0f && k->act_rate > 0.0f && floorf(f / n) != floorf((f - k->act_rate) / n);
+}
 static int bfly_run_away(Kuribo *k, V3 home)
 {
     float sx, sy;
@@ -25870,6 +25889,7 @@ static void butterfly_update(Kuribo *k)
     case BN_WAIT:
         if (bfly_run_away(k, home)) break;
         if (pad_held(PAD_L1) && cursor_sees(k->pos, 100.0f) && vlen(vsub(k->pos, home)) <= 500.0f) { w_nrv(k, BN_HIVE); break; } /* tryHive */
+        if (vlen(vsub(mario->pos, k->pos)) <= 500.0f && mario_sleeping()) { w_nrv(k, BN_GOTOSLEEPING); break; } /* tryPerchOnSleepingMario */
         k->act_rate = converge(k->act_rate, 1.0f, 0.02f);
         k->vel = vmul(k->vel, 0.99f);
         if (vlen(vsub(home, k->pos)) > 1e-3f) {
@@ -25893,6 +25913,26 @@ static void butterfly_update(Kuribo *k)
         k->act_rate = converge(k->act_rate, 1.2f, 0.02f);
         break;
     }
+    case BN_GOTOSLEEPING: {
+        if (k->step < 300) break; /* isLessStep(sGotoSleepingMarioWaitTime) */
+        V3 cap = mario_joint_at(13, v3(0.0f, 50.2f, 24.9f)), d = vsub(cap, k->pos); /* CapPosition, sMarioCapPosOffset */
+        if (vlen(d) > 1e-6f) k->vel = vadd(k->vel, vmul(vnorm(d), 0.05f));
+        if (vlen(k->vel) > 2.0f) k->vel = vmul(vnorm(k->vel), 2.0f);
+        if (vlen(vsub(k->pos, cap)) < 10.0f && bfly_pass0(k)) { k->vel = v3(0, 0, 0); w_nrv(k, BN_READYTOPERCH); }
+        break;
+    }
+    case BN_READYTOPERCH: {
+        V3 cap = mario_joint_at(13, v3(0.0f, 50.2f, 24.9f));
+        k->pos = vadd(vmul(k->pos, 0.3f), vmul(cap, 0.7f)); /* vecBlend(sTransBlendRatio) */
+        k->act_rate = converge(k->act_rate, 0.5f, 0.02f);
+        if (bfly_pass0(k)) w_nrv(k, BN_PERCHSLEEPING);
+        break;
+    }
+    case BN_PERCHSLEEPING:
+        if (k->step == 0) { w_act(k, "Wait"); k->from = 0.0f; k->bshow = 0; }
+        k->pos = mario_joint_at(13, v3(0.0f, 50.2f, 24.9f));
+        if (!mario_sleeping()) { w_act(k, "Butterfly"); w_nrv(k, BN_WAIT); }
+        break;
     }
     k->step++;
     k->act_t += k->act_rate;
