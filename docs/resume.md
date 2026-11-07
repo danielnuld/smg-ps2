@@ -1869,3 +1869,8 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
   (SphereSelector's handled transform), FlexibleSphere, BegomanSpring, Syati / TalkSyati, TeresaRacer, SpinningBox,
   BombBird, JumpGuarder, WaterBazooka, BallBeamer, MagnumKiller, PenguinSkater, PenguinRacerLeader,
   SubmarineVolcanoBigColumn, AstroChildRoom (update_astro_objs' ponytail).
+- TicoGalaxy's TicoStarRing talk (fix, 2026-11-07): a real bug, not only the test. Its talk ran in update_ticofat,
+  after update_mario, so the A that should start it made Mario jump first (ts_test wants him grounded): the talk sat
+  in its prep state. fat_rings_talk now runs it with the talkers (after update_talkers, before Mario moves). The
+  `fat` XF="-DTG_TEST=2" test no longer forces it: Mario is put 200 before the ring once and lands, A starts it, the
+  yes / no selector gets the pointer on BoxRight and A (as the talk test): both rings Meta, their spin drivers out.

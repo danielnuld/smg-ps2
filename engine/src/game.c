@@ -6914,6 +6914,7 @@ void game_test_fat_nodrop(void) { test_fat_nodrop = 1; }
 static const char *info_label; /* (talk_draw) */
 static int fat_state(int row); /* update_ticofat's table: eaten x 1000 + its nerve */
 static int fat_ring_at(int row, V3 *p, V3 *front); /* a TicoGalaxy's TicoStarRing out: its place */
+static int td_selecting(void); /* the talk's yes / no selector up (TalkDirector exeSlct) */
 int game_test_fat(void)
 {
     static int f0;
@@ -6927,9 +6928,13 @@ int game_test_fat(void)
         if (fat_state(in->row) % 1000 < 5 && (vlen(vsub(mario->pos, base)) > 400.0f || vlen(vsub(mario->pos, base)) < 150.0f)) { /* while it eats */ mario->pos = vadd(vadd(base, vmul(vnorm(vtangent(z, up)), 240.0f)), vmul(up, 40.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
         if (got_pieces < 10) got_pieces = 10; /* (TicoGalaxy gifts 5 a piece) */
         V3 rp, rf;
-        if (fat_ring_at(in->row, &rp, &rf)) { /* its TicoStarRing: Mario 200 before it, A pressed now and then (Yes) */
-            mario->pos = vadd(rp, vmul(rf, 200.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
-            pad_force = (f0 & 15) == 0 ? PAD_CROSS : 0;
+        if (fat_ring_at(in->row, &rp, &rf)) { /* its TicoStarRing: Mario put 200 before it, then left to land (the talk
+                                                * needs him grounded: isEnableTalkPlayerStateEvent), A pressed now and then (Yes) */
+            if (vlen(vsub(mario->pos, vadd(rp, vmul(rf, 200.0f)))) > 400.0f) { mario->pos = vadd(rp, vmul(rf, 200.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+            static int slct; /* its yes / no selector: the pointer on Yes, A once it is in (as the talk test) */
+            slct = td_selecting() ? slct + 1 : 0;
+            if (slct == 60) printf("fat test: pointer on BoxRight %d%c", menu_test_point("BoxRight"), 10);
+            pad_force = slct ? (slct == 80 ? PAD_CROSS : 0) : (f0 & 15) == 0 ? PAD_CROSS : 0;
             return fat_state(in->row);
         }
         test_feed = 1;
@@ -11786,6 +11791,7 @@ static void td_init_state(int k) /* initState: TalkStateHolder::getState and the
     td.st_msgid = tk_message_id(t);
 }
 static void td_set(int n) { td.nrv = n; td.step = 0; }
+static int td_selecting(void) { return td.nrv == TD_SLCT; }
 static int td_demo_type(const Talker *t, int demo) /* getDemoType: 2 / 3 in a time keep demo (with / without pause) */
 {
     if (t->talk == 1) return 0;
@@ -12997,7 +13003,7 @@ static struct {
     int cam, save; NpcReact re; /* _170 (デブチコカメラ on), _1EC (arg7) */
     Anim *goods; const Model *gmd; /* _94 / _98: one pose for both (the same clip, started together) */
     const char *gal; /* TicoGalaxy: mGalaxyName (getExclamationGalaxyNameFromIndex(_1EC)), NULL for a TicoFat */
-    int ring_tk, ring_row; Anim *ring; const Model *ring_md; float ring_m[16]; /* TicoGalaxy's TicoStarRing (mStarRing) */
+    int ring_tk, ring_row, ring_yes; Anim *ring; const Model *ring_md; float ring_m[16]; /* TicoGalaxy's TicoStarRing (mStarRing) */
 } fats[MAX_FATS];
 enum { TF_PREP, TF_WAIT, TF_POINT, TF_EAT, TF_CHEM, TF_TEST, TF_FULLNESS, TF_DEMO, TF_FLY, TF_WIPEOUT, TF_WIPEIN, TF_INFO,
        TF_AFTER, TF_META, TF_GONE, TF_RING, TF_RINGMETA, TF_HIDDEN };
@@ -13116,14 +13122,10 @@ static void fat_ring_update(int k, Inst *in)
     f->lv2 = se_level(SE_SM_LV_TICO_FLOAT, &f->ring_m[12], f->lv2);
     if (f->nrv == TF_RING) {
 #ifdef TG_TEST
-        if (f->ring_tk >= 0 && f->t % 120 == 1) printf("ring talk %d: talk %d near %d invalid %d msgctrl %d c40 %d nrv %d%c", f->ring_tk, talkers[f->ring_tk].talk,
-            tk_near(&talkers[f->ring_tk], 0), td_invalid(), td.msgctrl, td.c40, td.nrv, 10);
+        if (f->ring_tk >= 0 && f->t % 120 == 1) printf("ring talk %d: talk %d near %d grounded %d msgctrl %d c40 %d nrv %d%c", f->ring_tk, talkers[f->ring_tk].talk,
+            tk_near(&talkers[f->ring_tk], 0), mario->grounded, td.msgctrl, td.c40, td.nrv, 10);
 #endif
-#if defined(TG_TEST) && TG_TEST == 2
-        if (f->ring_tk >= 0 && talk_force_at_end(f->ring_tk, 0) && tk_yesno == 1) { /* (the test forces the talk) */
-#else
-        if (f->ring_tk >= 0 && talk_near_at_end(f->ring_tk) && tk_yesno == 1) { /* tryTalkSelectLeft: setNerveMeta */
-#endif
+        if (f->ring_yes) { /* tryTalkSelectLeft (fat_rings_talk): setNerveMeta */
             f->nrv = TF_RINGMETA; f->t = 0;
             if (f->ring) anim_play(f->ring, "tico/metamorphosis", 1.0f, 0, 0);
             printf("tico galaxy row %d: its star ring, meta" "\n", in->row);
@@ -13134,6 +13136,15 @@ static void fat_ring_update(int k, Inst *in)
         if (sc->objs[f->row].sw[SW_A] >= 0) sw_set(&sc->objs[f->row], SW_A, 1);
         row_kill(in->row); sw_changed = 1; f->nrv = TF_GONE; /* kill: _194->appear() (group_wait) */
         printf("tico galaxy row %d: its star ring gone, its spin driver out" "\n", in->row);
+    }
+}
+/* TicoStarRing::exeWait's talk (tryTalkSelectLeft), run with the talkers before Mario moves (update_talkers' place:
+ * the A that starts it is eaten before it makes him jump) */
+static void fat_rings_talk(void)
+{
+    for (int k = 0; k < nfats; k++) {
+        typeof(&fats[0]) f = &fats[k];
+        f->ring_yes = f->nrv == TF_RING && f->ring_tk >= 0 && talk_near_at_end(f->ring_tk) && tk_yesno == 1;
     }
 }
 static int fat_ring_at(int row, V3 *p, V3 *front)
@@ -51429,6 +51440,7 @@ void game_update(void)
     update_airs(); /* registerDemoSimpleCastAll: they move in demos too */
     LQ(3, update_railers());
     LQ(4, update_talkers());
+    fat_rings_talk(); /* TicoGalaxy's TicoStarRing */
     update_bees();
     update_npc_turn();
     update_queen();
