@@ -231,9 +231,165 @@ static void st_flag_test(void)
     }
 }
 #endif
+/* ---- MapObj classes by placed type: their per-row state (StSt, kept across rebinds) ---- */
+enum { ST_NONE = 1, ST_TWALL, ST_MIRRORMODEL, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL };
+/* Placed classes whose Petari behaviour is the model drawn with its animations and collision (the engine's generic
+ * instance does that): LavaGalaxyParts.cpp (LavaShellTowerStep, LavaStepA / B / C: startBtk / Brk / Bpk / Btp of its
+ * name, collision, clipping; ponytail: the steps' DLMakerProjmapEffectMtxSetter lava glow is baked at slice time and
+ * LodCtrlPlanet's low models are the zones' low packs), GlaringLight (TeresaRoomGlaringLight: SimpleMapObj in
+ * DrawBufferType_GlaringLight; ponytail: drawn with the map objects, not in that buffer's order), SimpleMirrorObj
+ * (MirrorReflectionTwinFallLake: the mirror's surface; ponytail: no mirror camera, its reflection texture is drawn as
+ * the model's own) */
+static const char *const st_still[] = {"LavaShellTowerStep", "LavaStepA", "LavaStepB", "LavaStepC", "TeresaRoomGlaringLight",
+                                       "MirrorReflectionTwinFallLake"};
+static signed char st_kinds[1024];
+static const Scene *st_kinds_sc;
+static int st_kind_name(const char *n)
+{
+    if (!strcmp(n, "InvisibleWaterfallTwinFallLake") || !strcmp(n, "StatusFloor")) return ST_TWALL; /* TransparentWall */
+    if (!strcmp(n, "MirrorModelTwinFallLake")) return ST_MIRRORMODEL; /* SimpleMirrorReflectionObj */
+    if (!strcmp(n, "UFOKinokoUnderConstruction")) return ST_UFOKC;
+    if (!strcmp(n, "LavaShellTower")) return ST_SHELLTOWER;
+    if (!strcmp(n, "AstroDomeDemoAstroGalaxy")) return ST_DOMEGALAXY;
+    for (u32 k = 0; k < sizeof st_still / sizeof *st_still; k++) if (!strcmp(n, st_still[k])) return ST_STILL;
+    return ST_NONE;
+}
+static int st_kind(int type)
+{
+    if (st_kinds_sc != sc) { memset(st_kinds, 0, sizeof st_kinds); st_kinds_sc = sc; }
+    if (type >= 1024) return st_kind_name(sc->types + 32 * type);
+    if (!st_kinds[type]) st_kinds[type] = (signed char)st_kind_name(sc->types + 32 * type);
+    return st_kinds[type];
+}
+typedef struct { int row, n, st, on; const unsigned char *kcl; } StSt; /* n its nerve, st its step */
+static StSt st_st[128];
+static int nst_st;
+static const Scene *st_st_sc;
+static StSt *st_get(int row)
+{
+    if (st_st_sc != sc) { nst_st = 0; st_st_sc = sc; }
+    for (int k = 0; k < nst_st; k++) if (st_st[k].row == row) return &st_st[k];
+    if (nst_st == 128) return &st_st[127]; /* ponytail: 128 rows of these classes a scene */
+    memset(&st_st[nst_st], 0, sizeof st_st[0]); st_st[nst_st].row = row;
+    return &st_st[nst_st++];
+}
+static int st_grand(int n) { char f[24]; snprintf(f, sizeof f, "SpecialStarGrand%d", n); return gd_flag_is_on(f); } /* hasGrandStar */
+/* the scene's start (game_init): the classes dead from their init */
+static void st_init(const Scene *s)
+{
+    for (u32 i = 0; i < s->nobjs; i++) {
+        const char *n = s->types + 32 * s->objs[i].type;
+        /* UFOKinokoUnderConstruction::init: isUFOKinokoBeforeConstruction (EventKinopioExplorerRescued off): dead */
+        if (!strcmp(n, "UFOKinokoUnderConstruction") && !gd_flag_is_on("EventKinopioExplorerRescued")) row_dead[i] = 1;
+    }
+}
+/* TransparentWall.cpp after Petari (InvisibleWaterfallTwinFallLake, StatusFloor: InvisiblePolygonObj, never drawn):
+ * its collision off from init, on while Mario is in a mode of arg4's bits 0..9 (isPlayerElementMode), skating (bit
+ * 10) or, with bit 11, while not in Teresa Mario's disappearing (isPlayerTeresaDisappear); off again when none holds
+ * (with bit 11: as soon as he disappears). ponytail: its body sensor's ATYPE_ICEJUMP_WALL (no wall jump off ice) */
+static void st_twall(Inst *in, StSt *g)
+{
+    int bits = sc->objs[in->row].arg[4] == -1 ? 0 : sc->objs[in->row].arg[4];
+    if (in->kcl) { g->kcl = in->kcl; if (!g->on) in->kcl = NULL; } /* (a rebind brings it back: kept and taken again) */
+    int mode = 0;
+    for (int b = 0; b < 10; b++) if ((bits >> b & 1) && player_mode == b) mode = 1;
+    if ((bits & 1024) && skate_active()) mode = 1;
+    if (!g->on) {
+        if ((bits & 2048) && !teresa_through()) mode = 1;
+        if (mode) { g->on = 1; in->kcl = g->kcl; printf("transparent wall %d: collision on%c", in->row, 10); }
+    } else {
+        int off = !mode;
+        if (bits & 2048) off = teresa_through();
+        if (off) { g->on = 0; in->kcl = NULL; printf("transparent wall %d: collision off%c", in->row, 10); }
+    }
+}
+/* LavaShellTower.cpp after Petari: Wait until its 開始 demo's action (registerDemoActionNerve: st_cast_hook), Demo
+ * (shakeCameraInfinity 0.1 / 2.2, overlayWithPreviousScreen(2), SE_DM_LV_SHELL_TOWER and a strong rumble each frame;
+ * past step 1 at the demo's last step stopShakingCamera) -> Done */
+enum { LST_WAIT, LST_DEMO, LST_DONE };
+static void st_shelltower(Inst *in, StSt *g)
+{
+    static u32 lv;
+    if (g->n != LST_DEMO) return;
+    if (g->st == 0) { camera_shake_infinity(g, 0.1f, 2.2f); render_cover(2); }
+    lv = se_level(SE_DM_LV_SHELL_TOWER, NULL, lv); /* startSystemLevelSE */
+    pad_rumble(RUMBLE_STRONG);
+    const Demo *d = dx.on ? &demos[dx.cur] : NULL;
+    if (g->st > 1 && (!d || (dx.part == d->h->nparts - 1 && dx.step >= d->parts[dx.part].total - 1))) { /* isDemoLastStep */
+        camera_shake_stop(g); g->n = LST_DONE; g->st = 0;
+        printf("lava shell tower %d: done%c", in->row, 10);
+    }
+}
+static int st_cast_hook(int row, int type, int part) /* dx_cast_hook: the demo actions of these classes */
+{
+    (void)part;
+    if (type == 3 && st_kind(sc->objs[row].type) == ST_SHELLTOWER) {
+        StSt *g = st_get(row);
+        g->n = LST_DEMO; g->st = 0;
+        printf("lava shell tower %d: demo%c", row, 10);
+        return 1;
+    }
+    return 0;
+}
+static void st_objs_update(void)
+{
+    static int organize = -1;
+    static const Scene *seen;
+    if (seen != sc) { seen = sc; organize = gd_flag_is_on("EventKinopioExplorerOrganize"); }
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        int k = st_kind(sc->objs[in->row].type);
+        if (k == ST_NONE || k == ST_STILL) continue;
+        StSt *g = st_get(in->row);
+#ifdef ST_TWALL_TEST
+        if (!g->st) printf("st kind %d row %d kcl %p%c", k, in->row, (const void *)in->kcl, 10);
+#endif
+        switch (k) {
+        case ST_TWALL: st_twall(in, g); break;
+        case ST_MIRRORMODEL: in->invisible = 1; break; /* connectToSceneMirrorMapObjNoMovement: drawn in the mirror only
+                                                         * (ponytail: no mirror pass, so never) */
+        case ST_UFOKC: /* UFOKinokoUnderConstruction::init: UFOKinokoLandingAstro's model (and collision) once
+                        * isUFOKinokoUnderConstruction is over (EventKinopioExplorerOrganize on) */
+            if (organize) {
+                const Model *md = scene_model(sc, "UFOKinokoLandingAstro");
+                if (md && in->md != md) { in->md = md; in->kcl = scene_kcl(sc, "UFOKinokoLandingAstro"); in->reach = md->radius * in->s; }
+            }
+            break;
+        case ST_SHELLTOWER: st_shelltower(in, g); break;
+        case ST_DOMEGALAXY: { /* AstroDomeDemoAstroGalaxy::init: setBrkFrameAndStop 2 with grand star 5, 1 with 3, else 0
+                               * (slice.py BRK_STEPS: "<class>~<frame>") */
+            char n[40];
+            snprintf(n, sizeof n, "AstroDomeDemoAstroGalaxy~%d", st_grand(5) ? 2 : st_grand(3) ? 1 : 0);
+            const Model *md = scene_model(sc, n);
+            if (md) in->md = md;
+            break;
+        }
+        }
+        if (g->st < 0x7FFF) g->st++;
+    }
+}
+
+#ifdef ST_TWALL_TEST /* plain build XF=-DST_TWALL_TEST, HeavenlyBeachGalaxy/1: Mario Ice from frame 300 to 400 */
+static void st_twall_test(void)
+{
+    if (game_frame == 100)
+        for (u32 i = 0; i < sc->nobjs; i++)
+            if (st_kind(sc->objs[i].type) == ST_TWALL) {
+                mario->pos = vadd(row_pos(&sc->objs[i]), v3(0, 600.0f, 0)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+                printf("twall test: Mario over row %u (%d %d %d)%c", i, (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z, 10);
+                break;
+            }
+    if (game_frame == 900) { player_mode = PM_ICE; printf("twall test: ice, Mario (%d %d %d)%c", (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z, 10); }
+    if (game_frame == 1000) { player_mode = PM_NORMAL; printf("twall test: normal%c", 10); }
+}
+#endif
 static void st_update(void)
 {
+#ifdef ST_TWALL_TEST
+    st_twall_test();
+#endif
     st_flags_update();
+    st_objs_update();
 #ifdef ST_FLAG_TEST
     st_flag_test();
 #endif

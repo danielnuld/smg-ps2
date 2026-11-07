@@ -100,7 +100,7 @@ static const Model *walker_new_model(int row);
 static void mk_update(Kuribo *k), mk_demo_update(void), mk_draw(Kuribo *k, const Model *md, Anim *a), mk_draw_extras(void), mk_begin_demo(int row);
 static int mk_noclip(const Kuribo *k);
 int mk_shot(V3 p); /* IceMerameraKing (ice_meraking.inc) */
-static int st_flag_class(const char *n); static void st_update(void), st_draw(void); /* statics.inc */
+static int st_flag_class(const char *n), st_cast_hook(int row, int type, int part); static void st_update(void), st_draw(void), st_init(const Scene *s); /* statics.inc */
 static void mm_update(Kuribo *k), mm_kill(Kuribo *k), mm_btp(Kuribo *k, const Model *md); /* Meramera (meramera.inc) */
 static int mm_down_force(Kuribo *k, V3 from), mm_star(Kuribo *k), mm_fire(Kuribo *k, V3 from);
 /* Petari.cpp's nerves (petari_update) */
@@ -2691,6 +2691,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         }
     }
     dx_init(blob);
+    st_init(s);
     gw_init();
     pro_init();
     mi_init();
@@ -41716,6 +41717,7 @@ static void hq_functor(int row, int part);
 static void dx_cast_hook(int row, int type, int part)
 {
     const char *cls = sc->types + 32 * sc->objs[row].type;
+    if (st_cast_hook(row, type, part)) return; /* statics.inc */
     if (!strncmp(cls, "HeavensDoorInside", 17)) {
         int k = !strcmp(cls, "HeavensDoorInsideCage") ? 0 : !strcmp(cls, "HeavensDoorInsidePlanetPartsA") ? 1 : -1;
         if (k >= 0 && type == 3) { hdo[k].row = row; hdo[k].step = 0; printf("heavens door demo obj: %s vanish\n", cls); return; } /* tryRegisterDemoActionNerve: Vanish */
