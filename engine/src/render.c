@@ -1901,7 +1901,16 @@ void render_mesh(const float (*pos)[3], const float (*uv)[2], int nvert, const u
     render_mesh_c(pos, uv, nvert, idx, ntri, tex, blend, 0x80808080u);
 }
 
+static void mesh_draw(const float (*pos)[3], const float (*uv)[2], int nvert, const u16 *idx, int ntri, u16 tex, int blend, u32 rgba, const u32 *vc);
 void render_mesh_c(const float (*pos)[3], const float (*uv)[2], int nvert, const u16 *idx, int ntri, u16 tex, int blend, u32 rgba)
+{
+    mesh_draw(pos, uv, nvert, idx, ntri, tex, blend, rgba, NULL);
+}
+void render_mesh_vc(const float (*pos)[3], const float (*uv)[2], const u32 *rgba, int nvert, const u16 *idx, int ntri, u16 tex, int blend)
+{
+    mesh_draw(pos, uv, nvert, idx, ntri, tex, blend, 0x80808080u, rgba);
+}
+static void mesh_draw(const float (*pos)[3], const float (*uv)[2], int nvert, const u16 *idx, int ntri, u16 tex, int blend, u32 rgba, const u32 *vc)
 {
     /* each vertex's XYZ2 and UV once (a vertex is in ~6 triangles: their conversions were made a triangle) */
     static u64 mxyz[MESH_MAX], muv[MESH_MAX];
@@ -1928,18 +1937,19 @@ void render_mesh_c(const float (*pos)[3], const float (*uv)[2], int nvert, const
             muv[v] = GS_SET_UV((int)(uv[v][0] * e->w * 16) & 0x3FFF, (int)(uv[v][1] * e->h * 16) & 0x3FFF);
     for (int t0 = 0; t0 < ntri; t0 += 40) { /* 40 triangles a GIF packet */
         int n = ntri - t0 < 40 ? ntri - t0 : 40;
-        if (packet2_get_qw_count(vif[cur]) + 16 + TEXP + 6 * 3 * n + 8 > PACKET_QW)
+        if (packet2_get_qw_count(vif[cur]) + 16 + TEXP + 9 * 3 * n + 8 > PACKET_QW) /* UV, (RGBAQ,) XYZ2 */
             flush_vif();
         set_tex(tex);
         ad_open(0);
         AD(blend == 2 ? GS_SET_ALPHA(0, 2, 0, 1, 0) : GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA); /* 2: Cs x As + Cd */
-        AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, blend ? 1 : 0), GS_REG_ZBUF);
-        AD(GS_SET_PRIM(PRIM_TRIANGLE, 0, e != NULL, 0, blend ? 1 : 0, 0, 1, 0, 0), GS_REG_PRIM);
+        AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, blend == 1 || blend == 2 ? 1 : 0), GS_REG_ZBUF); /* 3: blended, depth written */
+        AD(GS_SET_PRIM(PRIM_TRIANGLE, vc != NULL, e != NULL, 0, blend ? 1 : 0, 0, 1, 0, 0), GS_REG_PRIM);
         AD(GS_SET_RGBAQ(rgba & 0xFF, rgba >> 8 & 0xFF, rgba >> 16 & 0xFF, rgba >> 24, 0x3F800000), GS_REG_RGBAQ);
         for (int t = t0; t < t0 + n; t++) {
             const u16 *ix = idx + 3 * t;
             if (ix[0] >= nvert || ix[1] >= nvert || ix[2] >= nvert || !mok[ix[0]] || !mok[ix[1]] || !mok[ix[2]]) continue;
             for (int v = 0; v < 3; v++) {
+                if (vc) { u32 c = vc[ix[v]]; AD(GS_SET_RGBAQ(c & 0xFF, c >> 8 & 0xFF, c >> 16 & 0xFF, c >> 24, 0x3F800000), GS_REG_RGBAQ); }
                 if (e) AD(muv[ix[v]], GS_REG_UV);
                 AD(mxyz[ix[v]], GS_REG_XYZ2);
             }

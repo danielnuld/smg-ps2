@@ -1779,3 +1779,11 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
   (AudBgmMgr::mNextBGM, started by game_bgm_tick once the stage stream stops). Test: `talk` AstroGalaxy/1 XF="-DTALK_CLS=9
   -DROS_BGM_TEST" (events 0 at f 600, 2 at f 1500: SEQ_senario_sel_3, SMG_astroout03_strm after the fades). The
   StarPieceCounter's Flash / Wait stay engine gaps (no runtime per-pane brlan in lyt.c; noted at spc_*). No repack.
+- Static classes, first half (statics agent, 2026-11-06): engine/src/statics.inc (#included by game.c, st_*: st_update
+  after update_gaps, st_draw in the world pass) ports the placed classes class_coverage listed as static.
+  Flag (#329): Flag.cpp's cloth (SwingRopePoint rows, wind, random gusts, light colours, SE_OJ_FLAG, the stick) for
+  Flag / FlagKoopaA / B / FlagRaceA / FlagKoopaCastle / FlagPeachCastleA / B / C / FlagTamakoro; slice.py TEX_ONLY
+  gives their archives' lone .bti as an empty-group model (its texture); render.c render_mesh_vc (a colour a vertex,
+  blend 3: blended with depth writes). Test: plain build XF="-DST_FLAG_TEST=k -DPACKS_OVERLAY=wt-states" (the camera
+  on flag k): PeachCastleGardenGalaxy/1, KoopaJrShipLv1Galaxy/1. ponytail: FlagSurfing (OceanRingPipe's flags), the
+  stick's texel. tools/class_coverage.py now reads game.c's .inc files too.
