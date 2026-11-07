@@ -911,7 +911,7 @@ static void pol_player_at(const char *name) /* setPlayerPos(GeneralPos) */
     if (!gp) { printf("polta: no %s\n", name); return; }
     float m[16], one[3] = {1, 1, 1};
     mat_translate_rot_scale(m, gp, gp + 3, one);
-    mario->pos = v3(gp[0], gp[1], gp[2]); mario->up = vnorm(v3(m[4], m[5], m[6]));
+    m_set_trans(v3(gp[0], gp[1], gp[2])); mario->up = vnorm(v3(m[4], m[5], m[6]));
     mario->face = vnorm(vtangent(v3(m[8], m[9], m[10]), mario->up)); mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 1;
 }
 static void pol_cam(const char *clip) /* startAnimCameraTargetSelf (its base matrix) / NULL endAnimCamera */
