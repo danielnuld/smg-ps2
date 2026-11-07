@@ -486,7 +486,7 @@ BRK_STEPS = {"TicoFat": ("fatred", (0, 20, 39, 59)), "TicoGalaxy": ("fatred", (0
 # a class that picks one of several BRKs at run time (MR::startBrk by name): its model baked at frame 0 of each, "<class>~<k>".
 # AstroDomeComet::appear: cCometBrkName[getCometNameId]
 BRK_NAMES = {"AstroDomeComet": ("red", "blue", "white", "yellow", "purple")}
-BRK_POSE = {"Tico": ("colorchange", 0), "TicoFat": ("normal", 0), "Rosetta": ("normal", 0), "DinoPackunEggShellBreak": ("break", 0),
+BRK_POSE = {"Tico": ("colorchange", 0), "TicoFat": ("normal", 0), "Rosetta": ("normal", 0), "Teresa": ("teresa", 0), "DinoPackunEggShellBreak": ("break", 0),
             "WaterBazooka": ("damage", 0), "ElectricBazooka": ("damage", 0), "WaterBazookaCapsule": ("damage", 0), "MogucchiShooter": ("normal", 0),  # startBrk + setBrkFrameAndStop(0) / startBrk Normal
             "WaterBazookaBreak": ("break", 0), "ElectricBazookaBreak": ("break", 0),
             "HanachanHead": ("normal", 0), "HanachanBody": ("normal", 0), "HanachanBodyS": ("normal", 0),

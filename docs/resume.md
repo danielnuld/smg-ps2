@@ -1305,6 +1305,15 @@ there needs the embedded blob and every pack rebuilt.
   table; one fade table per model a frame; DarknessRoomAir / TwilightAir / DimensionAir still without run-time fades.
   Repack: slice_all.py EggStarGalaxy, TearDropGalaxy, OceanFloaterLandGalaxy, OceanPhantomCaveGalaxy, HeavensDoorGalaxy.
 
+- Teresa's body alpha (feat/451-teresa-alpha, 2026-11-07): body_m_v's last TEV stage is lerp(IndDummy screen copy, the
+  body, C1.a): Petari's Erase / Appear fade. slice.py took it for a screen tint (blend kind 3: no body texture) since
+  C1.a is 0 in the material and the stage's alpha reads TEXA; now BRK_POSE Teresa (teresa.brk frame 0: C1.a 1) and
+  tex.samples_named ignores TEXA in the alpha of an opaque material: the body bakes as an opaque textured group and
+  ts_draw's constant alpha (the Erase / Appear BRK's C1.a) blends it over the frame, as the lerp with the screen copy
+  does. The same rule turns TeresaMario / TeresaLuigi's body_m_v, Cap_v, Eye_v and TeresaChief's body textured (their
+  fades: teresa_draw's / ts_draw's alpha). Test: `teresa` TransformationExGalaxy/1 (Shay: the Boo half see-through,
+  its coin inside). Pack: PhantomGalaxy 1 now needs ratio 0.7 (stream 8.91 MB) with everything merged so far.
+  Repack: slice_all.py PhantomGalaxy, OceanPhantomCaveGalaxy, TransformationExGalaxy, TeresaMario2DGalaxy.
 - ClipArea edge (feat/444-clip-edge, 2026-11-07): FallOutFieldDraw::draw's sEdgeColor (0, 46, 200, 128) after the
   fill (render.c clip_edge): the outside mask (the frame's alpha bit through TEXA, HIGHLIGHT2: colour the vertex alpha,
   alpha the texel's) at a quarter in bloom_q (four bilinear taps), then the edge colour x that mask over the frame's
