@@ -2725,8 +2725,7 @@ int main(void)
             if (game_life() > 0 && game_life() < 3) game_test_life(3);
             life0 = game_life();
             if (frame == 1200)
-                printf("cover: %s ok, slow %u, worst %u us, runtime %u KB, arena peak %u KB, lives %d, misses %d, hits %d
-", scen, slow,
+                printf("cover: %s ok, slow %u, worst %u us, runtime %u KB, arena peak %u KB, lives %d, misses %d, hits %d\n", scen, slow,
                        (u32)(worst / EE_MHZ), mem_total() >> 10, mem_peak() >> 10, game_lives(), game_misses(), hits);
         }
 #endif
