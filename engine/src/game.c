@@ -1398,6 +1398,7 @@ static int obj_play(const Inst *in, const char *clip, int loop, int interp);
 static int lg_cls(const char *name);              /* LuigiNPC 1, LuigiEvent 2 (the LuigiNPC section) */
 static int luigi_took(int row);                    /* his star taken out (TakeOutStar), not just made dead at init */
 static int coach_took(int row);                    /* PenguinCoach: its TakeOutStar over */
+static int race_took(int row);                     /* TeresaRacer / PenguinRacerLeader: its TakeOutStar over (race.inc) */
 static int pg_branch(int k, u32 v), pg_event(int k, u32 v); /* PenguinCoach / PenguinStudent talk */
 static int luigi_scenario(char *stage, int n);    /* the current stage, its scenario */
 /* Skinned placed models (slice.py SKINNED_OBJ): a pool of poses kept by row across rebinds, the class's "wait" clip
@@ -1445,6 +1446,9 @@ static void miss(void);
 static int miss_running(void);
 static int miss_abyss; /* the next miss is MarioActor::exeGameOverAbyss's (a DeathArea: forceKillPlayerByAbyss) */
 static int miss_ghost; /* the next miss is forceKillPlayerByGhostRace's (EventGhostRaceDown) */
+static int miss_race; /* the next miss is forceKillPlayerByGroundRace's (EventRaceDown) */
+static void rm_reset(void), update_race(void); /* RaceManager and its racers (race.inc) */
+static int rm_ctrl_off(void); static const char *rm_bck(void); /* offPlayerControl; its startBckPlayer clip on Mario */
 static void gh_reset(void);
 static int gh_ctrl_off(void), gh_puppet(void); /* GhostPlayer: offPlayerControl; its clips on Mario (startBckPlayerJ) */
 static int m_dash_chance, m_item_dash; /* Mario::_436 (noticeDashChance: the race start's dash chance), _434 (the item dash) */
@@ -2532,6 +2536,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     pol_init(s);
     tmk_init(s);
     gh_reset(); /* GhostPlayer: init at its first update */
+    rm_reset(); /* RaceManager: init at its first update (race.inc) */
     for (u32 i = 0; i < s->nobjs; i++)
         if (strcmp(s->types + 32 * s->objs[i].type, "OtaKing") == 0) {
             V3 x, z;
@@ -11147,6 +11152,7 @@ typedef struct {
     int (*event)(int t, u32 v);  /* mEventFunc; kill: mKillFunc */
     int (*kill)(int t, u32 v);
     int (*branch)(int t, u32 v); /* mBranchFunc (registerBranchFunc), NULL: none */
+    int (*anime)(int t, u32 v);  /* mAnimeFunc (registerAnimeFunc), NULL: none */
     float sx, sy, sz;            /* _1C: the balloon's screen place (z > 0: behind the camera) */
 } Talker;
 static Talker talkers[MAX_TALKERS];
@@ -11319,7 +11325,10 @@ static int tk_root_eve(int k) /* rootNodeEve: 1 when the event part is over */
     if (n->group <= 1) {
         if (!t->event) return 1;
         if (!t->event(k, var)) return 0;
-    } else if (n->group == 4) return 1; /* mAnimeFunc: none here */
+    } else if (n->group == 4) { /* mAnimeFunc */
+        if (!t->anime) return 1;
+        if (!t->anime(k, var)) return 0;
+    }
     else if (n->group == 3) { tk_root_pst(t); return 1; }
     else if (n->group == 5) { if (r) sw_set(r, SW_A, 1); }
     else if (n->group == 6) { if (r) sw_set(r, SW_B, 1); }
@@ -21424,7 +21433,7 @@ static void update_mario_(void)
         return;
     }
     if (pw_update(m)) { if (mario_anim) anim_update(mario_anim); return; } /* MarioWarp's point warp (forceFlyPlayer) */
-    if (demo_on || gh_ctrl_off()) { /* a demo (or offPlayerControl): he waits (startBckPlayer PowerStarGet when it is the star's) */
+    if (demo_on || gh_ctrl_off() || rm_ctrl_off()) { /* a demo (or offPlayerControl): he waits (startBckPlayer PowerStarGet when it is the star's) */
         m->hvel = v3(0, 0, 0); m->vup = 0;
         if (m->hurt_timer) m->hurt_timer--;
         if (mario_anim) { /* PowerStarGet once (mario_play restarts a one-shot clip, as startBck does) */
@@ -21433,6 +21442,7 @@ static void update_mario_(void)
                 if (!m_clip_is(dx.bck)) { anim_clip_info(dx.bck, &mode); mario_play(dx.bck, 1.0f, mode == 2 || mode == 4); }
             }
             else if (pro_puppet() || tsp_puppet() || gh_puppet()) ; /* the prologue's DemoPeachCastleGate (pro_update); GhostPlayer's startBckPlayerJ */
+            else if (rm_bck()) { int mode = 0; if (!m_clip_is(rm_bck())) { anim_clip_info(rm_bck(), &mode); mario_play(rm_bck(), 1.0f, mode == 2 || mode == 4); } } /* the race's startBckPlayer */
             else if (bsb_demo() || bk_demo() || tb_demo() || kp_demo() || pol_demo()) { if (!m_clip_is("battlewait")) mario_play("battlewait", 1.0f, 1); } /* BossStinkBug's demos: startBckPlayer BattleWait */
             else if (!star_demo && !gw_puppet()) mario_play("wait", 1.0f, 1);
             else if (mario_anim->clip_id < 0 || strcmp(sc->clips[mario_anim->clip_id].name, "powerstarget")) mario_play("powerstarget", 1.0f, 0);
@@ -22048,16 +22058,16 @@ static void miss(void)
     mev.over = lives <= 0; /* MarioActor::exeGameOver: getPlayerLeft() == 0 */
     mev.ghost = miss_ghost && !mev.over;
     mario->hvel = v3(0, 0, 0); mario->vup = 0;
-    if (mario_anim && mev.ghost) m_anim("レース負け"); /* EventGhostRaceDown::init */
+    if (mario_anim && (mev.ghost || (miss_race && !mev.over))) m_anim("レース負け"); /* EventGhostRaceDown / EventRaceDown::init */
     else if (mario_anim && !bh.on) mario_play(swimming ? "deathwater" : "down", 1.0f, 0); /* changeGameOverAnimation */
     bgm_stop(10); bgm_sub_stop(10); /* (setCubeBgmChangeInvalid, clearBgmQueue) */
     if (miss_abyss && !mev.over) mario_sound("声落下死亡"); /* EventAbyss::init */
     else { mario_sound("声最終ダメージ"); mario_sound("最後の一撃"); } /* EventDown / EventGameOver::init */
-    miss_abyss = miss_ghost = 0;
+    miss_abyss = miss_ghost = miss_race = 0;
     printf("%s" "\n", mev.over ? "game over" : "mario down");
     return;
 #endif
-    miss_ghost = 0;
+    miss_ghost = miss_race = 0;
     time_on = 0; /* the comet's time starts over with the scenario */
     mario->pos = start_pos; mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->hurt_timer = 0; mario->hip = 0;
     safe_reset(start_pos);
@@ -40737,7 +40747,7 @@ static V3 star_pos(const Inst *in, int *state)
             *state = row_dead[w - 1];
             return vadd(from, v3(0.0f, 100.0f, 0.0f));
         }
-        if ((!row_dead[w - 1] && !tbox_star_out(w - 1) && !flip_star_out(w - 1) && !coach_took(w - 1)) || (lg_cls(name) && !luigi_took(w - 1))) { *state = h > 0; return o; } /* (a Luigi absent
+        if ((!row_dead[w - 1] && !tbox_star_out(w - 1) && !flip_star_out(w - 1) && !coach_took(w - 1) && !race_took(w - 1)) || (lg_cls(name) && !luigi_took(w - 1))) { *state = h > 0; return o; } /* (a Luigi absent
                                                                                                        * here: no star) */
     } else if (got_coins < 100 && got_purple < 100) { /* ScenePlayingResult: 100 coins, or 100 purple coins */
         *state = 0;
@@ -50347,6 +50357,7 @@ int game_test_bk(int frame)
 #include "polta.inc" /* Polta (Bouldergeist): pol_*, game_test_pol */
 #include "tamakoro.inc" /* Tamakoro (the star ball), TamakoroTutorial: tk_*, game_test_tk */
 #include "statics.inc" /* placed classes once drawn still (Flag ...): st_* */
+#include "race.inc" /* RaceManager, RaceRail (PlayerRacer), TeresaRacer: rm_*, game_test_race */
 /* Test builds: Mario in the boss's SwitchCylinder until it starts, then dropped in a hip drop on its BodyHipDrop part
  * whenever a hit is open; game_bsb_state: sequencer x 100 + nerve */
 int game_test_bsb(void)
@@ -51998,6 +52009,7 @@ void game_update(void)
     update_okeys();
     update_hanachans();
     update_ghost();
+    update_race();
     update_spider_thread();
     update_sls();
     spider_coins();

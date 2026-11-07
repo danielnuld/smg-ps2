@@ -569,6 +569,21 @@ Second console round (2026-10-24), from Daniel's report:
   sequence.c seq_is_retry (hasRetryGalaxySequence: A skips the start demo after a miss). Test `ghost` (+ XF
   -DGHOST_WIN: Mario put on the star): HoneyBee 4 the ghost wins at f ~4300, OceanRing 4 (swimming, the shell) too.
   Left: the upper-body XanimePlayer (only PartsControl's hand pattern), JetTurtleShadow's draw flag, the dash's blur.
+- Race system (feat/376-race-teresa, 2026-11-07): engine/src/race.inc (#included by game.c, rm_* / rn_*) after
+  Map/RaceManager.cpp, Map/RaceRail.cpp (PlayerRacer) and NPC/TeresaRacer.cpp: RaceManager's nerves (Prep, the wipes,
+  Intro 110, Count with the event BGM at 166, Race with its max time and playRank, Demo, Goal WIN / LOSE / TimeUp, Rank,
+  back), best times in the game data (<race>/hi, /lo), the goal plane at the judge rail's end; PlayerRacer (Mario's
+  centre on the judge rail, its prep / reset per race, the RaceRail固有 actor camera); TeresaRacer (talk 500, its
+  branch / anime / event functions: Talker.anime is new, Close / Defeat / Open; Move by its rail points' arg0,
+  Goal, Post: forced talk, the star by TakeOutStar or forceKillPlayerByGroundRace: miss_race, EventRaceDown's レース負け).
+  menu.c RaceManagerLayout: playGo / playGoal / playTimeUp / playRank, the best time. slice.py: LOGIC RaceRail, PATH's
+  pad is now path_arg0 (the race id), declare_stars TeresaRacer (arg0 != 1) / PenguinRacerLeader. Test plain XF
+  "-DRACE_TEST=1 -DPACKS_OVERLAY=..." PhantomGalaxy/2: talk, Yes, count, Mario carried along the judge rail wins at f
+  4171, Goal, the Boo's talk, TakeOutStar, its star; =2 Mario left at the start: the Boo in at f 4282, TimeUp at 7200,
+  Lose talk, the race miss. ponytail: star pointer demo modes, the layout's effects, TeresaRacer's trample SE, the
+  2D race's raster scroll, the star model in its hands. TeresaMario2D 1 (racers 0 / 1) not run. Repack: every
+  galaxy with a RaceRail (PATH's path_arg0, LOGIC): PhantomGalaxy, OceanRingGalaxy, TeresaMario2DGalaxy,
+  SurfingLv1Galaxy, SurfingLv2Galaxy.
 - ChipCounter (feat/290-chip-counter, 2026-11-05): menu.c chc_* (BlueChipCounter / YellowChipCounter / CollectCounter
   in lyt.py COMMON: menus.bin +84 KB): Hide / FrameIn / Show / FrameOut / TryDemo / Complete / CompleteOut, Chip1-5
   ChipGet, ShowHide by short balloons, the count over Mario; game.c chip_group_*: UI range (chips' box +- 2000 or
@@ -1937,7 +1952,7 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
   Left (statics agent): TeresaPicture / KinokoOneUpPicture (per-instance BTK frame: the engine's BTKs run per model),
   SeaBottomTriplePropeller (one KCL on three joints), the Tamakoro family (TamakoroWithTutorial, BallOpener,
   JumpHole, ConcreteBlock: Mario's star ball ride is not ported), ClipAreaDropLaser (clip areas), AstroDomeAsteroid
-  (SphereSelector's handled transform), FlexibleSphere, BegomanSpring, Syati / TalkSyati, TeresaRacer, SpinningBox,
+  (SphereSelector's handled transform), FlexibleSphere, BegomanSpring, Syati / TalkSyati, SpinningBox,
   BombBird, JumpGuarder, WaterBazooka, BallBeamer, MagnumKiller, PenguinSkater, PenguinRacerLeader,
   SubmarineVolcanoBigColumn, AstroChildRoom (update_astro_objs' ponytail).
 - TicoGalaxy's TicoStarRing talk (fix, 2026-11-07): a real bug, not only the test. Its talk ran in update_ticofat,

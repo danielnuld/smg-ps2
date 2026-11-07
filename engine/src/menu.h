@@ -119,6 +119,13 @@ int menu_race_counting(void);
 int menu_race_all_stopped(void);
 void menu_race_set_time(u32 frame);
 void menu_race_update(void);
+void menu_race_hide_all(void);
+void menu_race_show(const char *pane);
+void menu_race_go(void);
+void menu_race_goal(void);
+void menu_race_time_up(void);
+void menu_race_rank(u32 rank);
+void menu_race_set_best_time(u32 frame);
 /* ChipCounter (type 0 blue, 1 yellow) and its CollectCounter: ChipHolder's calls */
 void menu_chip_show(int type, int group, int got);
 void menu_chip_hide(int type, int group);
