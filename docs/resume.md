@@ -1464,6 +1464,11 @@ there needs the embedded blob and every pack rebuilt.
   mario_offence(id, ..) takes the receiver's host: tryPunchAirAfter's list (a punched host no longer sees the spin, 8
   at most) and, out of a spin's own clip (_3E5: spin2nd, jump kind 8, 地上ひねり ..), the 45-degree front check
   (m_punch_ok). ponytail: one entry a host, not a sensor (KuriboChief's parts, Dodoryu's).
+- Upper punch scenes (feat/upper-scenes): XF="-DUPPER_TEST -DSQUAT_UPPER" HeavenlyBeachGalaxy/1 (each WoodBox lifted 150,
+  Mario squatting under it jumps: the squat uppercut, `upper punch: WoodBox row 334` with `squat 1`). The
+  KoopaShipManholeCover (KoopaJrShipLv1 1 / StarDust 2) sits in the KoopaJr battle zone (KoopaJrShipBattleLv1Tmp1Zone):
+  UPPER_TEST puts Mario under it, but the battle's talk demo holds him (no punch seen); in play only a hip drop / spin
+  reaches it. Hang press: no scene found where a press meets a hanging Mario (not seen).
 - Hit sensor list (feat/hit-sensors): SensorHitChecker's groups as one list a frame (hs_add, hs_flip: the last frame's
   whole list in hs_last), filled by the walkers (walker_push_pass: their wp_sensors, else one point at their place),
   the NPCs (npc_sensor: NPCActorCaps' Body sensor by talkcls, TicoFat's), pickups (Coin 55 at 70 up, StarPiece 30),
