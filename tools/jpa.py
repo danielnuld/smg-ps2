@@ -508,7 +508,8 @@ NAMED_ONLY = {"Mario": ("SpinLight", "SpinLightBurst", "Invincible", "Ice", "Met
                         "SpaceCocoonBlur")}  # SlingShooter::tryRelease  # 無敵中 アイス中 変身 変身解除 アイテム再ゲット  # of a big group only the rows the engine plays
 # MarioActor::initEffect's registerEffect groups: a particle by its own name (not an AutoEffectList row) on a host
 # matrix, as fx_named rows (group, particle, joint: its getRealMtx host, "" the actor)
-REGISTERED = {"Mario": (("雪煙レベル", "CrestGetFlyC", "FootR"),)}
+REGISTERED = {"Mario": (("雪煙レベル", "CrestGetFlyC", "FootR"),),
+              "TamakoroTutorial": (("hitmarknormal", "HitMarkNormal", None),)}  # TamakoroTutorial::init: addEffectHitNormal
 # and its animation rows for these clips (game.c draw_skin: Mario's clips as "mario/<clip>")
 NAMED_ANIMS = {"Mario": ("spaceflystart", "spaceflyloop", "spaceflyend", "spaceflyshort", "spaceflyshortstart",
                          "landscenariostart", "powerstarget", "sleep", "sleeplie", "spinlow", "foospin", "skatel", "skater",

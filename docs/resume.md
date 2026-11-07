@@ -1084,6 +1084,20 @@ there needs the embedded blob and every pack rebuilt.
   ReadyRestart (arg2), head effects on its Sin joint, its BTPs. IceMerameraKing's children use it (mk_child_kill: its
   kill). Test: plain XF=-DMM_TEST HellProminenceGalaxy/1 (chase, attack success, spin: Damage, Runaway, Sink, Float,
   Ignition, Chase). ponytail: BindStarPointer, BRK colours, element attack on enemies. MK_TEST (main too): `power star 1 got` at the king's first damage.
+- Tamakoro (feat/342-tamakoro, 2026-11-07): Ride/Tamakoro.cpp (TamakoroWithTutorial), TamakoroTutorial.cpp,
+  SpherePadController / SphereAccelSensorController and AudTamakoroBgmCtrl in engine/src/tamakoro.inc (tmk_*, tmt_*;
+  the talk system owns tk_*): its 20 nerves, binder 150, Bind / Body / Hit sensors, Mario bound (game.c update_mario_:
+  tmk_try / tmk_hold, setPlayerBaseMtx from its Mario quat, Land/BallLand.. BCKs and the タマコロ移動 / タマコロしゃがみ
+  groups' weights, Spine2 turned by setPlayerUpperRotateY), its enemy trample (mario_offence / mario_trample answer for
+  its Body while bound), the enemy attacks Mario takes sent to it (explosion: upset), push off while bound, items
+  through its Body (collect), star pieces reflect, the Ring joint upright, the star BVA, its star at BindEnd from its
+  place, BGM_TAMAKORO(_2) and back. The tutorial SignBoard (Common_TamakoroTutorial000 / 007, or the placed
+  <zone>_SignBoard<id>) with Down/Revival actions. The messages other objects send it are tmk_msg (JumpHole, BallRail,
+  SphereRailDash, BallOpener: next PRs). Test: plain XF=-DTMK_TEST TamakoroExLv1Galaxy/1 (the tutorial's talks paged,
+  Mario onto the ball, tutorial, BGM_TAMAKORO, rolling, a jump, wall hits, END_BALL_BIND as a BallOpener would: its
+  star, `power star 1 got`). ponytail: the left stick is the remote's tilt, the tutorial's raise check passes, no
+  PlayerActionGuidance layout, no BGM tempo / track mutes, no ACTMES_BALL_DASH_WALL / GROUND receivers yet (WoodBox,
+  SimpleBreakableObj, FallDownBridge, PunchBox), the SignBoard's CSV shadow.
 - FallingSmallRock (feat/306-falling-small-rock, 2026-11-06): MapObj/FallingSmallRock.cpp in game.c update_fsrock
   (HellProminenceGalaxy 1 / 4): Wait for SW_A, Move (its FallingSmallRock effect, SE_AT_LV_FALLING_ROCK) until its
   binder (10 at 800 up) touches the map. Rows kept by slice.py LOGIC, its effect by jpa.py NAMED. Test: plain build
