@@ -194,7 +194,7 @@ static void mario_trample_auto(void); /* doTrampleJump on an ATYPE_PLAYER_AUTO_J
  * default 300). Path: rails of at most 2 points are a parabola from the star to the rail's end whose top is the
  * rail's start (initFromMaxHeight); longer rails are followed by length with the star's offset eased out over the
  * first half. The operate ring never moves Mario (SuperSpinDriver _17D is never set: radius rate 0, no -75 offset, no
- * pointer steering). ponytail: rails are straight segments between control points (the game's are Bezier).
+ * pointer steering). The rails are the PATH chunk's polylines (slice.py samples their Bezier parts).
  * SuperSpinDriverPink / Green are the same class (Green needs no star).
  * SpinDriver (SpinDriver.cpp): bind radius 300, ShootStart 20 frames (a dip 200 under it along its up); on a rail the same path for arg0 frames (default
  * 300), else Mario is thrown along its Y axis at arg0 (default 40).
@@ -1685,8 +1685,8 @@ static const float *find_rail_of(const unsigned char *blob, int zone, int id, u3
 }
 #define find_rail(blob, zone, id, npts, closed) find_rail_of(blob, zone, id, npts, closed, 0)
 
-/* RailCoin::placementNormalRail: count coins evenly spaced by length (loop rails: length / n).
- * ponytail: straight segments between control points; the game's rails are Bezier curves. */
+/* RailCoin::placementNormalRail: count coins evenly spaced by length (loop rails: length / n) along the rail's
+ * polyline (its Bezier parts sampled by slice.py) */
 static int place_on_rail(Pickup *out, const float *pts, u32 np, int closed, int count)
 {
     float total = 0;
@@ -22408,11 +22408,6 @@ static void teresa_update(Kuribo *k, V3 to, float d)
     k->pos = vsub(center, vmul(k->up, 70.0f));
 }
 
-/* Butterfly.cpp, with the right-stick pointer: at rest it drifts back to its home (accel 0.01 towards it, at most 2,
- * damp 0.99); the pointer on it (its 3D target radius 100) within 500 of home makes it run away (12 a frame away from
- * the pointer's ray, damp 0.97, 30 frames); the pointer within 10 pixels of it brings out its star piece once (arg1
- * unset). phase 0 rest, 1 running; dir: its piece is out. ponytail: no Hive (following a slow pointer), no perching,
- * no sleeping-Mario visit, it faces Mario like the walkers */
 static void cursor_ray(V3 *o, V3 *d);
 static int cursor_sees(V3 p, float px);
 static void drop_pieces(V3 p, V3 up, int n);
@@ -25823,8 +25818,8 @@ static float converge(float v, float to, float step) { return v < to ? (v + step
  * RunAway when the pointer sweeps onto it (moving towards it, B up, within 500 of home: 12 away on the screen, damp
  * 0.97, rate to 3, 30 frames), Hive while B (L1) is held with the pointer within 100 pixels (towards where it points
  * 0.05, at most 2.5, rate to 1.2); it turns its front to its way (at most acos 0.997 a frame) when faster than 0.5;
- * arg1 -1: a star piece once the pointer is within 10 pixels; binder 30. ponytail: no perching (NPC sensors, sleeping
- * Mario), all of them the BRK's first colour (arg0 needs a per-instance BRK). In HeavensDoorGalaxy its up from
+ * arg1 -1: a star piece once the pointer is within 10 pixels; binder 30; its colour the BRK frame arg0 (slice.py
+ * BRK_ARG). ponytail: no perching (NPC sensors; sleeping Mario: the port's Mario never sleeps). In HeavensDoorGalaxy its up from
  * gravity (makeQuatUpNoSupport), else its rotation; its clip from a random frame; STAR_PIECE_BURST with its piece */
 enum { BN_WAIT, BN_RUNAWAY, BN_HIVE };
 static int bfly_run_away(Kuribo *k, V3 home)
@@ -40369,7 +40364,7 @@ static void update_firebars(void)
  * with arg2, PreEscape (30) and Escape: 7 along its Z, kept on the ground (its gravity its placed down: offCalcGravity)
  * at 5, 1 a frame (at most 20) in the air with x 0.95, off a wall it jumps 20; after 600 frames blinking faster it
  * vanishes. row_turn 0 wait, 1 appear ground, 2 pre-escape, 3 escape, 4 gone; row_step its frames.
- * ponytail: arg2 2 (fleeing Mario) runs as 1, no shadow, no Glow / Move / Vanish effects */
+ * ponytail: arg2 2 (fleeing Mario) runs as 1, no Glow / Move / Vanish effects */
 static void benefit_update(Inst *in)
 {
     const Row *r = &sc->objs[in->row];
@@ -52821,6 +52816,15 @@ void game_draw(void)
             render_model(m_pieces[shots[i].col], m, 0x60, 0xD0, 0xF0);
         }
     draw_tako_inks();
+    FOR_KIND(i, item) { /* BenefitItemObj::init: initShadowVolumeCylinder 50, setShadowDropLength arg7 (2000) when arg4 is
+                         * -1 / 1 / 2 / 3 (_DC; 0 none); exeEscape recalculates it each frame */
+        const Inst *in = &insts[i];
+        if (in->item != ITEM_ONEUP && in->item != ITEM_LIFEUP && in->item != ITEM_INVINCIBLE) continue;
+        const Row *r = &sc->objs[in->row];
+        if (in->invisible || !row_shown(in->row) || r->arg[4] < -1 || r->arg[4] > 3 || !r->arg[4]) continue;
+        draw_shadow(v3(in->m[12], in->m[13], in->m[14]), vnorm(v3(in->m[4], in->m[5], in->m[6])), v3(in->m[8], in->m[9], in->m[10]), 50.0f, 50.0f,
+                    0.0f, 50.0f, r->arg[7] != -1 ? (float)r->arg[7] : 2000.0f);
+    }
     for (int i = 0; i < nkuribo; i++) {
         use_row_light(kuribo[i].row, kuribo[i].pos, LIGHT_STRONG);
         const Model *md = kuribo[i].host ? scene_model(sc, walker_cls(&kuribo[i])) : kuribo[i].kind == WALK_TAKOHEI ? m_takohei : kuribo[i].kind == WALK_PACKUN ? m_packun :
