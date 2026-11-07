@@ -1170,17 +1170,13 @@ static int breakable(const char *name, const Row *r, int *coins, int *pieces)
     /* SimpleBreakableObj.cpp: IcicleRock and SandUpDownTowerBreakableWallA / B break at a spin (mBreakFlags 2),
      * TeresaMansionHoleCover at a hip drop (4), KoopaStatue at an explosion or an enemy attack (0x48: breaks 5,
      * explosion_breaks); SnowBlockA at a fire ball (0x20: breaks 7, fireball_breaks); arg3 -1 arg6 coins (1), 3 arg6
-<<<<<<< HEAD
-     * star pieces (5); ConcreteBlock at a Tamakoro's ball dash (0x180: breaks 8, tamakoro.inc tmk_bump_msg). ponytail: no
- * 1-up / power star items */
+     * star pieces (5); ConcreteBlock at a Tamakoro's ball dash (0x180: breaks 8, tamakoro.inc tmk_bump_msg); arg3 1 its
+     * KinokoOneUp (bitem_pop). ponytail: no power star item */
     if (strcmp(name, "ConcreteBlock") == 0) {
         if (r->arg[3] == -1) *coins = r->arg[6] > 0 ? r->arg[6] : 1;
         else if (r->arg[3] == 3) *pieces = r->arg[6] > 0 ? r->arg[6] : 5;
         return 8;
     }
-=======
-     * star pieces (5). arg3 1 its KinokoOneUp (bitem_pop). ponytail: no power star item, ConcreteBlock (ball dash) stays whole */
->>>>>>> 4f70225 (Run-time 1-up / life-up mushrooms after Petari (createKinokoOneUp, appearKinokoOneUpPop, TreasureBoxCracked's item))
     if (strcmp(name, "SnowBlockA") == 0) {
         if (r->arg[3] == -1) *coins = r->arg[6] > 0 ? r->arg[6] : 1;
         else if (r->arg[3] == 3) *pieces = r->arg[6] > 0 ? r->arg[6] : 5;
