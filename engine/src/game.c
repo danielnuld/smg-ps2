@@ -79,14 +79,17 @@ static void bitem_rise(const float *box, int life);
 #define MAX_BITEMS 8
 enum { BI_SHOOT, BI_WAIT, BI_RISE, BI_BOUND };
 static struct { int on, life, nrv, step, gnd, gattr, wall, restart; V3 pos, vel, a4, gn, wn, box, up, target; float rot[16], f0[16], base[16]; const char *clip; } bitm[MAX_BITEMS];
+/* BombBirdBomb (BombBird's mBombs, game.c bbd_*) */
+#define BBD_BOMBS 24 /* mBombs: 3 a bird */
+static struct { int on, nrv, t, owner, bnd; V3 pos, vel, n; float s; } bbd_b[BBD_BOMBS];
 #define MAX_EXTS 4
 static struct { int row, nrv, step; V3 last; } exts[MAX_EXTS];
 static int nexts;
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
-       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU, WALK_BOMBHEI, WALK_STRSPIDER, WALK_BEGOSPIKE, WALK_BEGOSPRING, WALK_KCHIEF, WALK_BEGOBABY, WALK_BBEGO, WALK_KAMECK, WALK_NOKO, WALK_SAMBOHEAD, WALK_BOMBTERESA, WALK_JELEC, WALK_BEGOLAUNCH, WALK_MERAKING, WALK_KINDS };
+       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU, WALK_BOMBHEI, WALK_STRSPIDER, WALK_BEGOSPIKE, WALK_BEGOSPRING, WALK_KCHIEF, WALK_BEGOBABY, WALK_BBEGO, WALK_KAMECK, WALK_NOKO, WALK_SAMBOHEAD, WALK_BOMBTERESA, WALK_JELEC, WALK_BEGOLAUNCH, WALK_MERAKING, WALK_BOMBBIRD, WALK_KINDS };
 /* walkers ported in the release push: their classes (counted, placed and drawn through this table) */
 static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}, {"BasaBasa", WALK_BASABASA}, {"BasaBasaIce", WALK_BASABASA}, {"Jellyfish", WALK_JELLYFISH},
-                                                                    {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}, {"Mogu", WALK_MOGU}, {"Mogucchi", WALK_MOGUCCHI}, {"Metbo", WALK_METBO}, {"TeresaWater", WALK_TERESAW},
+                                                                    {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}, {"BombBird", WALK_BOMBBIRD}, {"Mogu", WALK_MOGU}, {"Mogucchi", WALK_MOGUCCHI}, {"Metbo", WALK_METBO}, {"TeresaWater", WALK_TERESAW},
                                                                     {"Snakehead", WALK_SNAKEHEAD}, {"SnakeheadSmall", WALK_SNAKEHEAD}, {"Kabokuri", WALK_KABOKURI}, {"Pukupuku", WALK_PUKUPUKU},
                                                                     {"BombHei", WALK_BOMBHEI}, {"BombHeiLauncher", WALK_BOMBHEI}, {"BombLauncher", WALK_BOMBHEI},
                                                                     {"StringSpider", WALK_STRSPIDER}, {"BegomanSpike", WALK_BEGOSPIKE}, {"BegomanSpring", WALK_BEGOSPRING}, {"BegomanSpringHide", WALK_BEGOSPRING},
@@ -2626,6 +2629,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     nkillers = 0;
     memset(okeys, 0, sizeof okeys); nexts = 0; /* KeySwitch (owned), ExterminationChecker */
     memset(bitm, 0, sizeof bitm); /* the run-time mushrooms */
+    memset(bbd_b, 0, sizeof bbd_b); /* BombBirds' bombs */
     for (u32 i = 0, t = (u32)scene_type(s, "ExterminationKuriboKeySwitch"); i < s->nobjs && nexts < MAX_EXTS; i++)
         if (s->objs[i].type == t) { memset(&exts[nexts], 0, sizeof exts[0]); exts[nexts++].row = (int)i; }
     norocks = 0;
@@ -27016,6 +27020,305 @@ static float w_rail_nearest(const float *p, u32 n, V3 q) /* moveCoordToNearestPo
     return at;
 }
 
+/* BombBird.cpp / BombBirdBomb.cpp after Petari: a bird flying along its rail (doFly: flyAndTurnAlongRailSearchingPlayer
+ * 200 / 0.3 / 0.96, turning 4.58 degrees a frame; arg0 set (mSearchPlayer): along it horizontally, gravity 1 and kept
+ * 800 over the ground (addVelocityToUpFromGround 10), else on its rail in 3D without gravity). FlyOnRail (Wait) until
+ * Mario is within 2000 (horizontally, no demo) at the action's end: FlyOnRailSearch (Born; at 54 it holds one of its
+ * three bombs at BombPos, at the joint's scale), FlyWithAttack (Attack: at 130 the bomb dropped, SE_EM_BOMBBIRD_DROP_BOMB,
+ * 10 along gravity), again while he is near; its SW_B on: Escape (away from him, 5 ahead and 5 up; killed once
+ * clipped). Its body (100 at 100 up) hurts Mario but when it is down or he is over it or hip-dropping (a push). A
+ * spin, trample, hip drop or star piece in flight: its bomb gone, 10 / 20 off him, Damage, Fall (0 / 1.2 / 0.98) to the
+ * ground: SwoonStart, Swoon 240, SwoonEnd (back up from 30: a jump of 10, doFly, 5 over the ground) to FlyOnRail;
+ * swooning, a trample or hip drop: Trample (DownStep, at 36 a coin 100 up: dead); a spin or a kick: Blow
+ * (SpinHitController 25 / 20 / 4, 1.5, 30 / 40, three star pieces). A SinkDeath floor: SinkDown (dead at its end).
+ * The bomb: Hold (Normal), then Wait 150 (Signal): gravity 1.2, rebounds 0.4 above 5 (SE_EM_BOMBBIRDBOMB_LAND from
+ * 5.5); touching Mario it explodes on him; then Explosion (its sensor eased out to 280 in 10, killed after 20; a strong
+ * rumble / camera shake by distance 800 / 1200 / 2000). ponytail: no star pointer bind (WalkerStateBindStarPointer),
+ * no anim scale hit reaction, no press between roof and ground, no shifting sand (calcVelocityAreaOrRailMoveOnGround),
+ * the ground under it a line probe (bb_ground), the bomb's BRKs (Normal / Signal) and LocusSmoke / Explosion / Death
+ * effects not drawn (jpa.py NAMED) */
+enum { BD_FLY, BD_SEARCH, BD_ATTACK, BD_BLOW, BD_ESCAPE, BD_DAMAGE, BD_FALL, BD_SWOONSTART, BD_SWOON, BD_SWOONEND, BD_TRAMPLE, BD_SINKDOWN };
+enum { BDB_HOLD, BDB_WAIT, BDB_EXPLOSION };
+static V3 sbm_turn(V3 v, V3 to, float deg);
+static void w_move_turn(Kuribo *k, V3 dir, float accel, float grav, float fric, float turn);
+static void bbd_up_from_ground(Kuribo *k, float v);
+static void bbd_bomb_kill(int i) { bbd_b[i].on = 0; } /* kill: deleteEffect LocusSmoke */
+static void bbd_kill_bombs(const Kuribo *k) /* killAllBomb */
+{
+    for (int i = 0; i < BBD_BOMBS; i++) if (bbd_b[i].on && bbd_b[i].owner == (int)(k - kuribo)) bbd_bomb_kill(i);
+}
+static void bbd_kill(Kuribo *k, int effect)
+{
+    if (effect) { float m[16]; basis_matrix(m, k->pos, k->qy, k->qz, 0); fx_named("BombBird", effect == 2 ? "SinkDeath" : "Death", m, NULL, NULL); }
+    bbd_kill_bombs(k); k->lvt[0] = -1;
+    k->state = KURIBO_DEAD; row_kill(k->row);
+    printf("bomb bird row %d: dead\n", k->row);
+}
+static float bbd_dist_h(const Kuribo *k) { return vlen(vtangent(vsub(mario->pos, k->pos), k->grav)); } /* calcDistanceToPlayerH */
+static void bbd_fly(Kuribo *k) /* doFly */
+{
+    u32 n; int cl;
+    const float *p = w_rail(k, &n, &cl);
+    int search = k->dir;
+    if (p) { /* flyAndTurnAlongRailSearchingPlayer */
+        float len = w_rail_len(p, n), cm = w_rail_nearest(p, n, vadd(mario->pos, vmul(mario->up, HIT_BODY_H))), cur = k->from;
+        if (cl) { /* setRailDirectionCloseToNearestPos */
+            float d1 = cur < cm ? cm - cur : cm + (len - cur), d2 = cur < cm ? cur + (len - cm) : cur - cm;
+            k->to = d2 < d1 ? -1.0f : 1.0f;
+        } else k->to = cur < cm ? 1.0f : -1.0f;
+        float c = w_rail_nearest(p, n, k->pos); /* calcMovingDirectionAlongRail(200, search) */
+        k->from = c;
+        if (!cl && (k->to > 0 ? c >= len : c <= 0.0f)) k->to = -k->to; /* isRailReachedGoal: reverseRailDirection */
+        V3 rp = rail_at(p, n, c), d = vsub(rail_at(p, n, c + 1.0f), rail_at(p, n, c - 1.0f));
+        if (k->to < 0) d = vmul(d, -1.0f);
+        V3 fi = vsub(rp, k->pos);
+        if (search) { fi = vtangent(fi, vnorm(k->grav)); d = vtangent(d, vnorm(k->grav)); }
+        d = vlen(d) > 1e-6f ? vnorm(d) : d;
+        V3 to = vadd(vmul(fi, 1.0f / 200.0f), d);
+        if (vlen(to) > 1e-6f) k->front = sbm_turn(k->front, vnorm(to), 4.5836625f); /* turnVecToVecDegree */
+    }
+    k->vel = vmul(vadd(k->vel, vmul(k->front, 0.3f)), 0.96f); /* hFlyVel, hDamp */
+    if (k->on_ground && vdot(k->vel, k->gn) < 0) k->vel = vtangent(k->vel, k->gn); /* reboundVelocityFromCollision(0, 0, 1) */
+    if (k->on_wall == 2 && vdot(k->vel, k->wn) < 0) k->vel = vtangent(k->vel, k->wn);
+    float g = search ? 1.0f : 0.0f; /* hGravity, addVelocityToGravityOrGround */
+    k->vel = vadd(k->vel, k->on_ground ? vmul(k->gn, -g) : vmul(k->grav, g));
+    if (search) bbd_up_from_ground(k, 10.0f); /* hSearchKeepHeightAccUp */
+}
+static void bbd_up_from_ground(Kuribo *k, float v) /* addVelocityToUpFromGround: kept hSearchKeepHeight 800 over it */
+{
+    float proj = bb_ground(k);
+    if (proj < 0.0f || proj >= 800.0f) return;
+    if (800.0f - proj < v) v = 800.0f - proj;
+    V3 u = vmul(k->grav, -1.0f); /* addVelocityLimit */
+    float f = vdot(u, k->vel);
+    if (v > f) k->vel = vadd(k->vel, vmul(u, v - f));
+}
+static int bbd_swoon(const Kuribo *k) { return k->nrv == BD_SWOONSTART || k->nrv == BD_SWOON || (k->nrv == BD_SWOONEND && k->step < 30); }
+static int bbd_noclip(const Kuribo *k) /* invalidateClipping: mSearchPlayer, or down (Blow .. SinkDown); Escape's startClipped kills it */
+{
+    return !k->phase || k->dir || !(k->nrv == BD_FLY || k->nrv == BD_SEARCH || k->nrv == BD_ATTACK);
+}
+static int bbd_flying(const Kuribo *k) { return k->nrv == BD_FLY || k->nrv == BD_SEARCH || k->nrv == BD_ATTACK || k->nrv == BD_SWOONEND; }
+static void bbd_damage(Kuribo *k) /* receiveMsgPlayerAttack in flight: its held bomb killed, setVelocitySeparateHV(10, 20), Damage */
+{
+    if (k->lvt[0] >= 0) { bbd_bomb_kill(k->lvt[0]); k->lvt[0] = -1; }
+    V3 h = vtangent(vsub(k->pos, mario->pos), vnorm(k->grav));
+    k->vel = vsub(vmul(vlen(h) > 1e-6f ? vnorm(h) : v3(0, 0, 0), 10.0f), vmul(k->grav, 20.0f));
+    w_nrv(k, BD_DAMAGE);
+}
+static int bbd_star(Kuribo *k) /* receiveMsgPlayerAttack: isMsgStarPieceAttack (taken in every nerve) */
+{
+    if (bbd_swoon(k)) return 1; /* startHitReaction (ponytail: no anim scale) */
+    if (bbd_flying(k)) bbd_damage(k);
+    return 1;
+}
+static void bbd_ground_move(Kuribo *k, float fric) /* moveAndTurnToPlayer(0, 1.2, fric, 0) */
+{
+    w_move_turn(k, vsub(mario->pos, k->pos), 0.0f, 1.2f, fric, 0.0f);
+}
+static void bbd_update(Kuribo *k)
+{
+    const Row *r = &sc->objs[k->row];
+    const Model *md = walker_new_model(k->row);
+    if (!k->phase) { /* init: mFront (0, 0, 1), mSearchPlayer (arg0), its rail at its start going to its end */
+        k->phase = 1;
+        k->front = v3(0, 0, 1);
+        k->dir = r->arg[0] != -1;
+        k->grav = vmul(walker_up(k, v3(0, 1, 0)), -1.0f);
+        k->lvt[0] = -1; k->bshow = 0; k->from = 0.0f; k->to = 1.0f;
+        w_nrv(k, BD_FLY);
+    }
+    k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f); /* onCalcGravity */
+    if (k->nrv != BD_BLOW && k->nrv != BD_TRAMPLE && k->nrv != BD_SINKDOWN && k->on_ground && (k->lvt[1] & 0x3F) == 25) w_nrv(k, BD_SINKDOWN); /* isBindedGroundSinkDeath */
+    int swb = r->sw[SW_B] >= 0 && sw_on(r, SW_B), demo = pd.name != NULL;
+    int st = ++k->step;
+    switch (k->nrv) {
+    case BD_FLY:
+        if (st == 0) w_act(k, "Wait");
+        bbd_fly(k);
+        if (swb) w_nrv(k, BD_ESCAPE);
+        else if (bbd_dist_h(k) < 2000.0f && !demo && w_bck_stopped(k)) w_nrv(k, BD_SEARCH);
+        else if (w_bck_stopped(k)) w_nrv(k, BD_FLY);
+        break;
+    case BD_SEARCH:
+        if (st == 0) { w_act(k, "Born"); k->bshow = 0; }
+        bbd_fly(k);
+        if (swb) { w_nrv(k, BD_ESCAPE); break; }
+        if (st == 54) { /* its first dead bomb held: hold(mPosition) */
+            k->bshow = 1; k->lvt[0] = -1;
+            for (int i = 0, own = 0; i < BBD_BOMBS && own < 3; i++) {
+                if (bbd_b[i].on && bbd_b[i].owner == (int)(k - kuribo)) { own++; continue; }
+                if (bbd_b[i].on) continue;
+                memset(&bbd_b[i], 0, sizeof bbd_b[i]);
+                bbd_b[i].on = 1; bbd_b[i].owner = (int)(k - kuribo); bbd_b[i].pos = k->pos; bbd_b[i].nrv = BDB_HOLD; bbd_b[i].t = -1; bbd_b[i].s = 1.0f;
+                k->lvt[0] = i;
+                break;
+            }
+        } else if (st > 54) k->bshow = 1; /* (its scale: the joint's, below) */
+        if (w_bck_stopped(k) && !demo) {
+            if (k->lvt[0] >= 0) { bbd_b[k->lvt[0]].s = 1.0f; w_nrv(k, BD_ATTACK); }
+            else w_nrv(k, BD_FLY);
+        }
+        break;
+    case BD_ATTACK:
+        if (st == 0) w_act(k, "Attack");
+        bbd_fly(k);
+        if (swb) { w_nrv(k, BD_ESCAPE); break; }
+        if (k->lvt[0] >= 0) bbd_b[k->lvt[0]].vel = v3(0, 0, 0);
+        if (st == 130 && k->lvt[0] >= 0) { /* start(mPosition, -mGravity x hBombFallUpVel) */
+            typeof(&bbd_b[0]) b = &bbd_b[k->lvt[0]];
+            se_start(SE_EM_BOMBBIRD_DROP_BOMB, &b->pos.x);
+            b->pos = k->pos; b->vel = vmul(k->grav, 10.0f); b->nrv = BDB_WAIT; b->t = -1;
+            k->lvt[0] = -1; k->bshow = 0;
+            printf("bomb bird row %d: bomb dropped\n", k->row);
+        }
+        if (w_bck_stopped(k)) w_nrv(k, bbd_dist_h(k) < 2000.0f ? BD_SEARCH : BD_FLY);
+        break;
+    case BD_BLOW:
+        if (st == 0) { w_act(k, "DownSpin"); w_se(k, SE_EV_BOMBBIRD_DEAD); w_se(k, SE_EM_BOMBBIRD_DAMAGE); w_se(k, SE_PM_SPIN_HIT); } /* startBlowHitSound */
+        if (spin_hit_exec(k, 25, 20, 4, 1.5f, 3, 0, 1)) { w_se(k, SE_EM_EXPLODE_S); bbd_kill(k, 1); return; }
+        break;
+    case BD_ESCAPE: {
+        if (st == 0) w_act(k, "Wait");
+        V3 e = vtangent(vsub(k->pos, vadd(mario->pos, vmul(mario->up, HIT_BODY_H))), vnorm(k->grav));
+        if (vlen(e) > 0.001f) w_move_turn(k, vnorm(e), 0.3f, 1.0f, 0.96f, 4.5836625f); /* moveAndTurnToDirection */
+        k->vel = vsub(vmul(k->front, 5.0f), vmul(k->grav, 5.0f)); /* hEscapeVel, hEscapeUpVel */
+        if (w_bck_stopped(k)) w_nrv(k, BD_ESCAPE);
+        break;
+    }
+    case BD_DAMAGE:
+        if (st == 0) { w_act(k, "Damage"); w_se(k, SE_EV_BOMBBIRD_DAMAGE); w_se(k, SE_EM_BOMBBIRD_DAMAGE); }
+        bbd_ground_move(k, 0.98f); /* hFallParam */
+        if (w_bck_stopped(k)) w_nrv(k, BD_FALL);
+        break;
+    case BD_FALL:
+        if (st == 0) w_act(k, "Fall");
+        bbd_ground_move(k, 0.98f);
+        if (w_on_ground(k)) { w_act(k, "SwoonStart"); w_nrv(k, BD_SWOONSTART); }
+        break;
+    case BD_SWOONSTART: case BD_SWOON: case BD_SWOONEND: case BD_TRAMPLE: case BD_SINKDOWN:
+        if (st == 0) {
+            if (k->nrv == BD_SWOON) w_act(k, "Swoon");
+            if (k->nrv == BD_SWOONEND) { w_act(k, "SwoonEnd"); w_se(k, SE_EV_BOMBBIRD_RECOVER); }
+            if (k->nrv == BD_TRAMPLE) { w_act(k, "DownStep"); w_se(k, SE_EM_STOMPED_S); }
+            if (k->nrv == BD_SINKDOWN) w_act(k, "SinkDown");
+        }
+        if (k->nrv == BD_SWOONSTART || k->nrv == BD_SWOON) w_se_lv(k, SE_EM_LV_SWOON_S);
+        if (k->nrv == BD_SINKDOWN) { w_se_lv(k, SE_EM_LV_SINK); k->lv2[0] = se_level(SE_EV_LV_BOMBBIRD_SINK, &k->pos.x, k->lv2[0]); }
+        if (k->nrv != BD_SINKDOWN && w_on_ground(k)) k->vel = vtangent(k->vel, vnorm(k->grav)); /* vecKillElement(mVelocity, mGravity) */
+        bbd_ground_move(k, 0.8f); /* hOnGroundParam */
+        if (k->nrv == BD_SWOONSTART && w_bck_stopped(k)) w_nrv(k, BD_SWOON);
+        else if (k->nrv == BD_SWOON && st > 240) w_nrv(k, BD_SWOONEND); /* hSwoonTime */
+        else if (k->nrv == BD_SWOONEND) {
+            if (st >= 30) { /* hSwoonEndFlyStartTime */
+                if (st == 30) k->vel = vsub(k->vel, vmul(k->grav, 10.0f)); /* addVelocityJump(hSwoonEndJump) */
+                bbd_fly(k);
+                bbd_up_from_ground(k, 5.0f);
+            }
+            if (w_bck_stopped(k)) w_nrv(k, BD_FLY);
+        } else if (k->nrv == BD_TRAMPLE && st == 36) { /* a coin 100 over it */
+            pop_coins(vsub(k->pos, vmul(k->grav, 100.0f)), vmul(k->grav, -1.0f), 1);
+            w_se(k, SE_EM_EXPLODE_S); bbd_kill(k, 1); return;
+        } else if (k->nrv == BD_SINKDOWN && w_bck_stopped(k)) { bbd_kill(k, 2); return; }
+        break;
+    }
+    k->act_t += k->act_rate;
+    if (k->nrv == BD_ESCAPE && k->clipped) { bbd_kill(k, 0); return; } /* startClipped in Escape: kill */
+    w_bind(k, 100.0f); /* initBinder(100, 100) */
+    k->lvt[1] = k->on_ground ? ground_attr : 0;
+    k->qy = vmul(k->grav, -1.0f); /* calcMtxFromGravityAndZAxis */
+    if (vlen(vtangent(k->front, k->qy)) > 1e-6f) k->qz = vnorm(vtangent(k->front, k->qy));
+    k->up = k->qy;
+    if (k->bshow && k->lvt[0] >= 0 && md && md->skin) { /* mFixedPos (BombPos, its scale kept) */
+        Anim *an = obj_anim(w_akey(k), md, "BombBird");
+        bbd_b[k->lvt[0]].pos = w_joint(k, md, 11, v3(0, 0, 0));
+        if (an && an->skin == md->skin && k->nrv == BD_SEARCH && k->step > 54) bbd_b[k->lvt[0]].s = vlen(v3(an->world[11][0], an->world[11][1], an->world[11][2]));
+    }
+    /* the body sensor (100 at 100 up): Mario's attacks, then attackSensor */
+    if (k->nrv == BD_BLOW || k->nrv == BD_TRAMPLE || k->nrv == BD_SINKDOWN) return;
+    V3 c = vsub(k->pos, vmul(k->grav, 100.0f)), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    int msg = mario_offence(c, 100.0f, k->grav);
+    if (bbd_swoon(k)) {
+        if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) { if (msg == MSG_TRAMPLE) mario_trample(); w_nrv(k, BD_TRAMPLE); return; }
+        if (msg == MSG_HITALL || (k->nrv != BD_SWOONEND && mario_kick(c, 100.0f))) { /* isMsgPlayerHitAll / receiveOtherMsg isMsgPlayerKick */
+            if (msg != MSG_HITALL) mario_kicked();
+            spin_hit_start(k, mario->pos, 30.0f, 40.0f); k->item = 1; w_nrv(k, BD_BLOW); return;
+        }
+    } else if (bbd_flying(k) && msg != MSG_NONE) {
+        if (msg == MSG_TRAMPLE) mario_trample();
+        if (msg == MSG_HIPDROP) { V3 a = vtangent(vsub(mario->pos, k->pos), k->grav); mario->hip = 0; m_power_jump(mario, vadd(vmul(vlen(a) > 1e-6f ? vnorm(a) : k->qz, 10.0f), vmul(mario->up, 25.0f))); } /* sendMsgAwayJump */
+        bbd_damage(k);
+        return;
+    }
+    if (vlen(vsub(mc, c)) >= 100.0f + HIT_BODY_R) return;
+    int above = vdot(vmul(k->grav, -1.0f), vnorm(vsub(mc, c))) > 0.25f; /* isPlayerExistUp(100, 0.25) */
+    if (k->nrv == BD_ESCAPE || k->nrv == BD_DAMAGE || k->nrv == BD_FALL || k->nrv == BD_SWOONSTART || k->nrv == BD_SWOON || k->nrv == BD_SWOONEND ||
+        above || mario->hip == HIP_FALL || mario->hip == HIP_LAND || mario->hurt_timer || !mario_attack(ATK_ENEMY, c))
+        mario_push_out(c, 100.0f); /* sendMsgPushAndKillVelocityToTarget */
+}
+static void update_bbd_bombs(void)
+{
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < BBD_BOMBS; i++) {
+        typeof(&bbd_b[0]) b = &bbd_b[i];
+        if (!b->on || pd.name) continue;
+        V3 g = vmul(up_at(b->pos, v3(0, 1, 0)), -1.0f); /* onCalcGravity */
+        int st = ++b->t;
+        if (b->nrv == BDB_HOLD) { b->vel = v3(0, 0, 0); continue; } /* exeHold: the bird places it */
+        if (b->nrv == BDB_WAIT) {
+            float dn = vdot(g, b->vel);
+            b->vel = vadd(b->vel, vmul(g, 1.2f)); /* addVelocityToGravity(sGravityAccel) */
+            if (b->bnd) { /* reboundVelocityFromCollision(sReboundRate 0.4, sReboundSpeedMin 5, 1) */
+                float f = vdot(b->n, b->vel);
+                if (f < -5.0f) { b->vel = vsub(b->vel, vmul(b->n, f * 1.4f)); if (dn >= 5.5f) se_start(SE_EM_BOMBBIRDBOMB_LAND, &b->pos.x); }
+                else if (f < 0.0f) b->vel = vsub(b->vel, vmul(b->n, f));
+            }
+            if (st > 150) { b->nrv = BDB_EXPLOSION; b->t = -1; } /* sWaitTime */
+            else if (!mario->hurt_timer && vlen(vsub(mc, b->pos)) < 60.0f + HIT_BODY_R && mario_attack(ATK_EXPLOSION, b->pos)) { /* attackSensor */
+                float m[16]; basis_matrix(m, b->pos, vmul(g, -1.0f), v3(0, 0, 1), 0);
+                fx_named("BombBirdBomb", "Explosion", m, NULL, NULL);
+                se_start(SE_EM_BOMB_EXPLOSION, &b->pos.x);
+                bbd_bomb_kill(i);
+                continue;
+            }
+        } else { /* exeExplosion */
+            if (st == 0) {
+                float m[16]; basis_matrix(m, b->pos, vmul(g, -1.0f), v3(0, 0, 1), 0);
+                fx_named("BombBirdBomb", "Explosion", m, NULL, NULL);
+                se_start(SE_EM_BOMB_EXPLOSION, &b->pos.x);
+                float dm = vlen(vsub(mario->pos, b->pos)); /* tryRumblePadAndCameraDistanceStrong(800, 1200, 2000) */
+                if (dm < 800.0f) { pad_rumble(RUMBLE_STRONG); camera_shake(SHAKE_STRONG); }
+                else if (dm < 1200.0f) { pad_rumble(RUMBLE_MIDDLE); camera_shake(SHAKE_NORMAL); }
+                else if (dm < 2000.0f) { pad_rumble(RUMBLE_WEAK); camera_shake(SHAKE_WEAK); }
+                b->vel = v3(0, 0, 0);
+                printf("bomb bird bomb %d: explodes\n", i);
+            }
+            float t = st >= 10 ? 1.0f : st / 10.0f, rad = 280.0f * (1.0f - (1.0f - t) * (1.0f - t)); /* calcNerveEaseOutValue(10, 0, 280) */
+            if (!mario->hurt_timer && vlen(vsub(mc, b->pos)) < rad + HIT_BODY_R) mario_attack(ATK_EXPLOSION, b->pos); /* sendMsgEnemyAttackExplosion */
+            tbox_hit(b->pos, rad);
+            explosion_breaks(b->pos, rad);
+            if (st > 20) { bbd_bomb_kill(i); continue; } /* sExplosionTime */
+        }
+        V3 c = vadd(b->pos, b->vel), gn, wn; /* initBinder(60, 0) */
+        int wall = 0;
+        int ground = collide_n(&c, vmul(g, -1.0f), 60.0f, &gn, &wn, &wall);
+        b->bnd = ground || wall; b->n = ground ? gn : wn;
+        b->pos = c;
+    }
+}
+static void draw_bbd_bombs(void)
+{
+    const Model *md = scene_model(sc, "BombBirdBomb");
+    for (int i = 0; md && i < BBD_BOMBS; i++) {
+        if (!bbd_b[i].on || bbd_b[i].nrv == BDB_EXPLOSION) continue; /* exeExplosion: hideModel */
+        float m[16];
+        mat_identity(m); /* setBaseTRMtx(_8C): its quaternion never turns (_9C stays zero) */
+        for (int k = 0; k < 3; k++) m[5 * k] = bbd_b[i].s;
+        m[12] = bbd_b[i].pos.x; m[13] = bbd_b[i].pos.y; m[14] = bbd_b[i].pos.z;
+        render_model(md, m, 0x80, 0x80, 0x80);
+    }
+}
+
 /* Jellyfish.cpp after Petari: floats bobbing (sin(_94 + 45) along gravity, _94 + 1 a frame); on a rail it moves at
  * arg0 (5) a frame, at its end waits arg1 (60) frames, then turns back (arg2 1: from its start again). Wait (turning
  * 0.2 a frame either way or not, chosen every 280 frames; not on a rail with arg2 1) until Mario is within 1000: Find
@@ -31947,7 +32250,7 @@ static void update_kuribo(void)
     for (int i = 0; i < nkuribo; i++) {
         Kuribo *k = &kuribo[i];
         if (k->state == KURIBO_DEAD || !row_shown(k->row)) continue;
-        if (k->clipped && k->kind != WALK_KARIKARI && !test_noclip && !(k->kind == WALK_BOMBTERESA && !k->lvt[1]) && !(k->kind == WALK_MERAKING && mk_noclip(k)) && !(k->kind == WALK_MERAMERA && k->lvt[2]) && !(k->kind == WALK_TERESA && k->lvt[1]) && !(k->kind == WALK_MKOOPA && k->lvt[2])) { if (k->kind == WALK_MERAMERA) k->sstep = -1; continue; } /* startClipped: no movement (Karikari may ride on Mario; a BombTeresa's invalidateClipping: lvt[1] 0) */
+        if (k->clipped && k->kind != WALK_KARIKARI && !test_noclip && !(k->kind == WALK_BOMBTERESA && !k->lvt[1]) && !(k->kind == WALK_MERAKING && mk_noclip(k)) && !(k->kind == WALK_MERAMERA && k->lvt[2]) && !(k->kind == WALK_TERESA && k->lvt[1]) && !(k->kind == WALK_MKOOPA && k->lvt[2]) && !(k->kind == WALK_BOMBBIRD && bbd_noclip(k))) { if (k->kind == WALK_MERAMERA) k->sstep = -1; continue; } /* startClipped: no movement (Karikari may ride on Mario; a BombTeresa's invalidateClipping: lvt[1] 0) */
         u32 c0 = cycles();
         update_kuribo_one(k);
         kprof[k->kind] += cycles() - c0; kprof_n[k->kind]++;
@@ -32205,6 +32508,7 @@ static void update_kuribo_one(Kuribo *k)
             else if (k->kind == WALK_SAMBOHEAD) sh_update(k);
             else if (k->kind == WALK_BOMBTERESA) bt_update(k);
             else if (k->kind == WALK_MERAKING) mk_update(k);
+            else if (k->kind == WALK_BOMBBIRD) bbd_update(k);
             return;
         }
         if (k->kind == WALK_PETARI) {
@@ -38775,6 +39079,34 @@ int game_test_kinoko(int frame)
     return n;
 }
 #endif
+#ifdef BOMBBIRD_TEST
+/* bombbird test (SandClockGalaxy): Mario held 400 under the first BombBird until 700 (it searches, holds and drops its
+ * bombs), then a hit at 700 (bbd_damage: Damage, Fall, Swoon), Mario dropped onto it at 900 (Trample, its coin) */
+int game_test_bombbird(int frame)
+{
+    game_test_unclip(); /* (Mario under it: its view is elsewhere) */
+    Kuribo *k = NULL;
+    for (int i = 0; i < nkuribo && !k; i++) if (kuribo[i].kind == WALK_BOMBBIRD && kuribo[i].state != KURIBO_DEAD) k = &kuribo[i];
+    if (!k) {
+        int t = scene_type(sc, "BombBird");
+        for (u32 i = 0; t >= 0 && frame < 300 && i < sc->nobjs; i++)
+            if ((int)sc->objs[i].type == t) { V3 p = row_pos(&sc->objs[i]); mario->up = up_at(p, mario->up); mario->pos = vsub(p, vmul(mario->up, 400.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; break; }
+        if (frame % 50 == 0) printf("bombbird test f %d: no bird\n", frame);
+        return -1;
+    }
+    V3 up = vmul(k->grav, -1.0f);
+    if (frame < 700) { mario->up = up_at(k->pos, mario->up); mario->pos = vsub(k->pos, vmul(up, 400.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+    if (frame == 700) { printf("bombbird test: hit\n"); bbd_damage(k); }
+    if (frame == 900) { mario->pos = vadd(k->pos, vmul(up, 260.0f)); mario->hvel = v3(0, 0, 0); mario->vup = -5.0f; mario->grounded = 0; mario->jumping = 1; }
+    if (frame % 10 == 0) {
+        printf("bombbird test f %d: row %d nrv %d step %d at %.0f %.0f %.0f vel %.1f gnd %d held %d coins %d\n", frame, k->row, k->nrv, k->step,
+               k->pos.x, k->pos.y, k->pos.z, vlen(k->vel), k->on_ground, k->lvt[0], got_coins);
+        for (int i = 0; i < BBD_BOMBS; i++)
+            if (bbd_b[i].on) printf("  bomb %d nrv %d t %d at %.0f %.0f %.0f s %.2f\n", i, bbd_b[i].nrv, bbd_b[i].t, bbd_b[i].pos.x, bbd_b[i].pos.y, bbd_b[i].pos.z, bbd_b[i].s);
+    }
+    return k->nrv;
+}
+#endif
 static void update_tboxes(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -42146,6 +42478,7 @@ static void update_shots(void)
             else if (e->kind == WALK_KAMECK) { if (!km_guard(e, s->vel)) { hit = 0; continue; } } /* isMsgStarPieceReflect: requestGuard */
             else if (e->kind == WALK_BEGOBABY) { if (bg_down(e)) { hit = 0; continue; } e->item = 3; bg_blow(e, s->pos, 35.0f, 15.0f); } /* isMsgStarPieceAttack: mAppearThreeStarPiece */
             else if (e->kind == WALK_KABOKURI) w_nrv(e, KB_STARPIECE); /* requestStarPieceHitted */
+            else if (e->kind == WALK_BOMBBIRD) bbd_star(e);
             else if (e->kind == WALK_NOKO) { if (e->phase) { hit = 0; continue; } noko_star(e); } /* receiveStarPieceAttack (isMsgStarPieceReflect in its shell) */
             else if (e->kind == WALK_SAMBOHEAD) { if (!sh_star(e)) { hit = 0; continue; } }
             else if (e->kind == WALK_TERESAW) w_nrv(e, TW_STUN); /* isMsgStarPieceAttack: Stun */
@@ -52503,6 +52836,7 @@ void game_update(void)
     if (!demo_on) update_exts();
     update_okeys();
     update_bitems();
+    update_bbd_bombs();
     update_hanachans();
     update_ghost();
     update_spider_thread();
@@ -52835,6 +53169,7 @@ static void walker_shadow(const Kuribo *k)
     case WALK_BOMBTERESA: if (k->lvt[0]) return; rs = 80.0f * r->scale[0]; start = 0.0f; break; /* initShadowVolumeSphere 80, onShadowFollowHostScale */
     case WALK_GESSO: rs = 90.0f; break;                     /* Gesso.cpp:86 */
     case WALK_BASABASA: rs = 100.0f; break;                 /* BasaBasa.cpp:67 */
+    case WALK_BOMBBIRD: if (k->nrv == BD_SINKDOWN) return; rs = 100.0f; break; /* BombBird.cpp: initShadowVolumeSphere(body 100), exeSinkDown's invalidateShadow */
     case WALK_JELLYFISH: rs = 100.0f; len = 1900.0f; break; /* Jellyfish.cpp:86-87 */
     case WALK_KANINA: if (k->nrv == KA_UNDER) return; rs = 80.0f; break; /* Kanina.cpp:202, exeWaitUnderGround's invalidateShadow */
     case WALK_MOGU: if (k->nrv != MG_HITBLOW) return; rs = 60.0f * r->scale[1]; break; /* Mogu.cpp:98-99: valid from HitBlow (441) */
@@ -53743,6 +54078,7 @@ void game_draw(void)
     }
     draw_okeys();
     draw_bitems();
+    draw_bbd_bombs();
     PROF(3);
     {
         V3 du = mario->up, df = mario->face;

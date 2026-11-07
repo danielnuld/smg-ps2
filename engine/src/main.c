@@ -2327,6 +2327,13 @@ int main(void)
 #ifdef SPIDERCOIN_TEST
         if (frame >= 150 && frame <= 900 && frame % 30 == 0) printf("spidercoin test f %u: row %d, coins %d\n", frame, game_test_spidercoin(), game_coins());
 #endif
+#ifdef BOMBBIRD_TEST
+    {
+        static u32 f0;
+        if (!f0 && frame > 30 && game_test_free()) f0 = frame;
+        if (f0 && frame - f0 + 150 <= 1200) game_test_bombbird((int)(frame - f0 + 150));
+    }
+#endif
 #ifdef KINOKO_TEST
     {
         static u32 f0;

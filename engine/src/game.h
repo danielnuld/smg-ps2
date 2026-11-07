@@ -289,6 +289,7 @@ int game_test_beamer(int how); /* beamer test: Mario 1000 off (0), onto the body
 void game_beamer_state(void); /* its nerve and Mario's jump logged */
 int game_test_spidercoin(void); /* spidercoin test: R2 with the cursor on the first SpiderCoin; its row */
 void game_test_unclip(void); /* tests: the walkers move though off the view */
+int game_test_bombbird(int frame); /* bombbird test: a BombBird's bombs, a hit, a trample */
 int game_test_kinoko(int frame); /* kinoko test: a Kanina's and a treasure box's run-time mushrooms */
 int game_test_spiderblock(void); /* spiderblock test: a hip drop onto the first SpiderMapBlock; its row */
 int game_test_statue(void); /* statue test: an explosion at the first standing KoopaStatue; its row */
