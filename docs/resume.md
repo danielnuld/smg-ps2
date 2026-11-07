@@ -1305,6 +1305,12 @@ there needs the embedded blob and every pack rebuilt.
   table; one fade table per model a frame; DarknessRoomAir / TwilightAir / DimensionAir still without run-time fades.
   Repack: slice_all.py EggStarGalaxy, TearDropGalaxy, OceanFloaterLandGalaxy, OceanPhantomCaveGalaxy, HeavensDoorGalaxy.
 
+- ClipArea edge (feat/444-clip-edge, 2026-11-07): FallOutFieldDraw::draw's sEdgeColor (0, 46, 200, 128) after the
+  fill (render.c clip_edge): the outside mask (the frame's alpha bit through TEXA, HIGHLIGHT2: colour the vertex alpha,
+  alpha the texel's) at a quarter in bloom_q (four bilinear taps), then the edge colour x that mask over the frame's
+  inside pixels (DATE), alpha bit kept: a soft blue rim at the boundary. 0.0 ms of EE. Test: plain XF="-DCA_TEST=1"
+  DarkRoomGalaxy/1. ponytail: added at half (no per-pixel blend factor from a texture's colour on the GS: Petari lerps),
+  blurTexture's 5 small taps left to the quarter's bilinear upscale.
 - Mirror (feat/437-mirror, 2026-11-07): GameScene::drawMirror / MirrorCamera / SimpleMirrorObj /
   SimpleMirrorReflectionObj after Petari (statics.inc st_mirror_*): while Mario is in a MirrorAreaCube (slice.py
   LOGIC), the frame first drawn by the mirror camera (eye, target, up reflected in the plane of
