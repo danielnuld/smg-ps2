@@ -15,6 +15,7 @@ typedef struct { u32 top, used[MEM_TYPES]; } MemMark;
 void mem_mark(MemMark *m);
 void mem_release(const MemMark *m);
 u32 mem_total(void);
+u32 mem_peak(void); /* the arena's most in use so far */
 const char *mem_name(int type);
 void mem_report(void);
 

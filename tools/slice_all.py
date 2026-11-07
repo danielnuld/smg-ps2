@@ -19,8 +19,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 import budget as B
 import slice as SL
 
-ROOM = 9.1e6  # room for scenario data and the menu packs beside it (main.c PACK_ROOM): the pack region (13824 KB in test builds) less resident.bin (3.9 MB), sound.bin's EE part and menus(3d).bin (0.9 MB): 9.18e6 measured
-# (main.c "packs: ... room N KB" + scene.bin + common.bin; 13824 KB region), less ~75 KB for sector rounding and ELF growth; 10.4e6 overran it in AstroGalaxy
+ROOM = 11.8e6  # room for scenario data and the menu packs beside it (main.c PACK_ROOM): the pack region less resident.bin, sound.bin's EE part and menus(3d).bin;
+# measured 2026-11-07: 11415 KB (11.69e6) with a 17152 KB region (main.c "packs: ... region left N KB" + scene.bin + common.bin + map.bin,
+# AstroGalaxy/1, resident.bin 4.46 MB) and 768 KB more since mem.c's arena went 6 -> 5.25 MB: ~0.65 MB of margin for ELF growth,
+# a larger sound.bin EE part and resident_luigi.bin (tools/zone_fit.py --elf checks the real ELF)
 # the menus' packs main.c loads beside a galaxy's own (scene_load: mp_names / mp_scene) come out of its room
 # (mappics.bin is not one: menu.c reads one GalaxyDetail picture at a time into a 64 KB MEM_SCENE buffer, packs_read)
 MENU_PACKS = {"FileSelect": ("title.bin", "title3d.bin"), "AstroDome": ("dome.bin",), "AstroGalaxy": ("map.bin",), "EpilogueDemoStage": ("ending.bin",),
