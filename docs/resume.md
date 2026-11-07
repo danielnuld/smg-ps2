@@ -1448,8 +1448,10 @@ there needs the embedded blob and every pack rebuilt.
   each sensor once a spin, 8 at most; 5 stun frames, walk cut to 0.1 on the ground, jumpHop unless _2B, printHitMark
   unless the receiver takes ACTMES_HITMARK_EMIT (Begomans, Karikari, CocoNut), pad 2, the Begomans' 20 push, swim
   hitPunch. ACTMES_INVINCIBLE_ATTACK taken (update_invincible, the walkers' own invincible branches, Karon's trample):
-  m_invincible_hit (pad 2, printHitMark). Test: `kick` prints `spin reaction: 1 punched`. ponytail: the receivers can
-  still see the spin again (no sensor list in mario_offence); no 45-degree front check outside spin2nd.
+  m_invincible_hit (pad 2, printHitMark). Test: `kick` prints `spin reaction: 1 punched`. Then (feat/spin-sensors)
+  mario_offence(id, ..) takes the receiver's host: tryPunchAirAfter's list (a punched host no longer sees the spin, 8
+  at most) and, out of a spin's own clip (_3E5: spin2nd, jump kind 8, 地上ひねり ..), the 45-degree front check
+  (m_punch_ok). ponytail: one entry a host, not a sensor (KuriboChief's parts, Dodoryu's).
 - Hit sensor list (feat/hit-sensors): SensorHitChecker's groups as one list a frame (hs_add, hs_flip: the last frame's
   whole list in hs_last), filled by the walkers (walker_push_pass: their wp_sensors, else one point at their place),
   the NPCs (npc_sensor: NPCActorCaps' Body sensor by talkcls, TicoFat's), pickups (Coin 55 at 70 up, StarPiece 30),

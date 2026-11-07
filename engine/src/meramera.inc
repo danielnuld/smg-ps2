@@ -568,7 +568,7 @@ static void mm_update(Kuribo *k)
      * its attack sensor on him (attackSensor) */
     V3 body = k->pos, mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     float br = 55.0f * s;
-    int off = mario_offence(body, br, k->grav);
+    int off = mario_offence(k, body, br, k->grav);
     if (off == MSG_TRAMPLE || off == MSG_HIPDROP) { /* requestFlatDown */
         if (mm_disabled(k)) {
             mm_fx(k, "HitMark", vmul(vadd(body, mc), 0.5f), up, NULL);

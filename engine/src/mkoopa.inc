@@ -193,7 +193,7 @@ static void mkoopa_update(Kuribo *k, V3 to, float d)
     /* Mario's attacks on its body (receiveMsgPlayerAttack) */
     V3 body = mkm_body(k), mc = mw.c;
     float br = 130.0f * sy;
-    int msg = mario_offence(body, br, k->grav);
+    int msg = mario_offence(k, body, br, k->grav);
     if (msg == MSG_TRAMPLE && vdot(vsub(mc, body), up) <= HIT_BODY_R + br - 80.0f) { /* hTrampleUpRangeSub */
         mario_trample(); w_se(k, SE_EM_MKOOPAMINI_TRAMPLE);
         if (k->nrv != MKM_SPINHIT && k->nrv != MKM_TRAMPLE) mkm_nrv(k, MKM_TRAMPLE);

@@ -23330,7 +23330,28 @@ static int m_cylinder(V3 c, float r, float w, float h)
 }
 /* attackOrPushSensor's cylinder: width 20 + _4B0 35, height _4B4 60, 70 jumping */
 static int mario_touch(V3 c, float r) { return m_cylinder(c, r, 55.0f, mario->grounded ? 60.0f : 70.0f); }
-static int mario_offence(V3 c, float r, V3 grav)
+/* MarioActor::_3E5: a spin's own clip on (spin2nd; not terminated: the jump of kind 8, 地上ひねり, サマーソルト, 水泳スピン,
+ * 水上スピン, しゃがみスピン, フーファイタースピン) */
+static int m_spin_clip(void)
+{
+    if (mario_anim && mario_anim->clip_id >= 0 && !strcmp(sc->clips[mario_anim->clip_id].name, "spin2nd")) return 1;
+    if (!mario_anim || mario_anim->done) return 0;
+    return (mario->jumping && mario->jump_kind == 8) || m_anim_on("地上ひねり") || m_anim_on("サマーソルト") || m_anim_on("水泳スピン") ||
+           m_anim_on("水上スピン") || m_anim_on("しゃがみスピン") || m_anim_on("フーファイタースピン");
+}
+/* tryPunchAirAfter's checks before sendPunch: the host `id` not punched yet this spin (_954, 8 at most: m_punch keeps
+ * them), and out of a spin's own clip (_3E5) the sensor within 45 degrees of his front about the gravity */
+static int m_punch_ok(const void *id, V3 c)
+{
+    if (id) for (int i = 0; i < m_npunched; i++) if (m_punched[i] == id) return 0;
+    if (m_npunched >= 8) return 0;
+    if (!m_spin_clip() && player_mode != PM_INVINCIBLE) {
+        V3 v = vtangent(vsub(c, mw.c), vmul(mario->up, -1.0f));
+        if (vlen(v) > 1e-6f && ang_abs(vnorm(v), mario->face) >= 3.1415927f / 4.0f) return 0;
+    }
+    return 1;
+}
+static int mario_offence(const void *id, V3 c, float r, V3 grav)
 {
     tmk_offence = 0;
     if (tmk_riding()) return tmk_trample_on(c, r) ? MSG_TRAMPLE : MSG_NONE; /* bound: the Tamakoro's Body sensor (sendMsgPlayerTrample) */
@@ -23343,7 +23364,7 @@ static int mario_offence(V3 c, float r, V3 grav)
          * ponytail: at the offence found, not at its message taken (a pattern playing is not restarted) */
         if (!mario->grounded && mario->vup < 0 && mario->hip != HIP_FALL && d < r + 80.0f + 1.5f * fall && above && horiz)
             return MSG_TRAMPLE;                                                                 /* mSensorRadiusTrampleAttack 80 */
-        if (mario->spin_timer > 0 && mario_touch(c, r)) { m_pad_vib(1); return MSG_HITALL; }  /* sendBodyAttack */
+        if (mario->spin_timer > 0 && m_punch_ok(id, c) && mario_touch(c, r)) { m_pad_vib(1); return MSG_HITALL; }  /* tryPunchAirAfter */
     }
     return MSG_NONE;
 }
@@ -23387,9 +23408,8 @@ static void m_invincible_hit(V3 s) { m_pad_vib(2); m_print_hit_mark(s); }
  * frames of doStun (_38C), on the ground his walk cut to 0.1 (target index 1), jumpHop unless _2B, printHitMark unless
  * the receiver takes ACTMES_HITMARK_EMIT (how 1: the Begomans, Karikari, CocoNut, Butler), startPadVib(2); an
  * ATYPE_BEGOMAN sensor (how 2) stops his walk and pushes him 20 away along the ground; swimming, MarioSwim::hitPunch.
- * ponytail: the receivers still see the spin again in the same spin (the port's offence has no sensor list: those
- * keeping their own once-a-spin flag do as Petari) and the 45-degree front check of a spin not in spin2nd (_3E5) is
- * not made */
+ * mario_offence(id, ..) keeps a punched host from seeing the spin again and makes the 45-degree front check
+ * (m_punch_ok); the hosts are the receivers' (one for all of a host's sensors) */
 static void m_punch(const void *id, V3 at, int how)
 {
     Player *m = mario;
@@ -24050,7 +24070,7 @@ static void update_vines(void)
             float d = vlen(vsub(c, seed));
             if (d < 50.0f + HIT_BODY_R && d > 1e-3f) /* attackSensor: sendMsgPush at 50 */
                 mario->pos = vadd(mario->pos, vmul(vtangent(vsub(c, seed), mario->up), (50.0f + HIT_BODY_R - d) / d));
-            if (mario_offence(seed, 300.0f, vmul(up_at(o->pos, mario->up), -1.0f)) == MSG_HITALL) { /* a spin */
+            if (mario_offence(o, seed, 300.0f, vmul(up_at(o->pos, mario->up), -1.0f)) == MSG_HITALL) { /* a spin */
                 o->top_on = 1;
                 m_punch(o, seed, 0);
                 vine_start_grow(k);
@@ -24786,7 +24806,7 @@ static void update_hhps(void)
             }
         if (mario->spin_timer <= 0) o->spun = 0;
         /* Mario's attacks on its body (receiveMsgPlayerAttack) */
-        int msg = mario_offence(sp[0], sr[0], vmul(o->up, -1.0f));
+        int msg = mario_offence(o, sp[0], sr[0], vmul(o->up, -1.0f));
         if (killing) {
             if (msg == MSG_TRAMPLE) mario_trample();
         } else if (hhp_chance(k) && msg == MSG_HIPDROP) { /* sendMsgAwayJump */
@@ -25127,7 +25147,7 @@ static void kuribo_update(Kuribo *k)
     int enable_stamp = !kn_in(k, KNB(KN_NONACTIVE) | KNB(KN_FLATDOWN) | KNB(KN_HIPDROPDOWN) | KNB(KN_PRESSDOWN) | KNB(KN_BLOWDOWN) | KNB(KN_BLOW));
     int enable_punch = !kn_in(k, KNB(KN_FLATDOWN) | KNB(KN_HIPDROPDOWN) | KNB(KN_PRESSDOWN) | KNB(KN_BLOWDOWN) | KNB(KN_BLOW));
     int dying = kn_in(k, KNB(KN_NONACTIVE) | KNB(KN_FLATDOWN) | KNB(KN_HIPDROPDOWN) | KNB(KN_PRESSDOWN) | KNB(KN_BLOWDOWN));
-    int msg = mario_offence(c, 75.0f * s, k->grav);
+    int msg = mario_offence(k, c, 75.0f * s, k->grav);
     int kick = k->nrv == KN_STAGGER && !(k->snrv == WS_STAGGER && k->sstep - 1 < 15); /* isEnableKick */
     int upside = k->nrv == KN_STAGGER && !(k->snrv == WS_STAGGEREND && k->sstep - 1 > 15); /* isUpsideDown */
     if (msg == MSG_TRAMPLE && enable_stamp && !dying) {
@@ -25234,7 +25254,7 @@ static void kmini_update(Kuribo *k)
     V3 c = vsub(k->pos, vmul(k->grav, 60.0f));
     int down = kn_in(k, KNB(KN_FLATDOWN) | KNB(KN_HIPDROPDOWN) | KNB(KN_PRESSDOWN) | KNB(KN_BLOWDOWN)); /* isDown */
     if (down) return;
-    int msg = mario_offence(c, 60.0f, k->grav);
+    int msg = mario_offence(k, c, 60.0f, k->grav);
     if (msg == MSG_TRAMPLE) {
         w_act(k, "FlatDown"); w_nrv(k, KN_FLATDOWN); k->bind_off = 1; k->item = 1;
         w_se(k, SE_EM_STOMPED_S); /* requestFlatDown */
@@ -25943,7 +25963,7 @@ static void takobo_update(Kuribo *k, V3 to, float d)
     /* sensors */
     V3 c = vsub(k->pos, vmul(k->grav, 70.0f * s)), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     if (k->nrv == TN_PRESS || k->nrv == TN_HITPUNCH) return;
-    int msg = mario_offence(c, 70.0f * s, k->grav);
+    int msg = mario_offence(k, c, 70.0f * s, k->grav);
     if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) {
         w_nrv(k, TN_PRESS);
         w_se(k, SE_EM_TAKOBO_STOMPED); /* tryPress */
@@ -26194,7 +26214,7 @@ static void kari_update(Kuribo *k, V3 to, float d)
         printf("karikari %d clings (%d)" "\n", k->row, kari_cling);
         return;
     }
-    if (n != RN_PRECLING && mario_offence(c, 100.0f, k->grav) == MSG_HITALL) { m_punch(k, c, 1); kari_blowout(k, mario->pos, 0); } /* isMsgPlayerHitAll (Karikari takes HITMARK_EMIT) */
+    if (n != RN_PRECLING && mario_offence(k, c, 100.0f, k->grav) == MSG_HITALL) { m_punch(k, c, 1); kari_blowout(k, mario->pos, 0); } /* isMsgPlayerHitAll (Karikari takes HITMARK_EMIT) */
     (void)d;
 }
 
@@ -26365,7 +26385,7 @@ static void packun_update(Kuribo *k)
     if (k->nrv == PN_TRAMPLEDOWN || k->nrv == PN_PUNCHDOWN || k->nrv == PN_NONACTIVE) return;
     /* sensors: Mario's offence on its body (Head + (50, 0, 0), 90); its attack (same place, 50) on him */
     V3 head = w_joint(k, m_packun, 5, v3(50.0f, 0, 0));
-    int busy = k->nrv == PN_HITWAITFORATTACK || k->nrv == PN_HIT, msg = busy ? MSG_NONE : mario_offence(head, 90.0f * s, k->grav);
+    int busy = k->nrv == PN_HITWAITFORATTACK || k->nrv == PN_HIT, msg = busy ? MSG_NONE : mario_offence(k, head, 90.0f * s, k->grav);
     if (k->nrv == PN_ATTACK && (msg == MSG_TRAMPLE || msg == MSG_HIPDROP || msg == MSG_HITALL)) msg = MSG_NONE;
     if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) {
         w_nrv(k, PN_TRAMPLEDOWN);
@@ -26755,7 +26775,7 @@ static void petari_update(Kuribo *k)
     /* sensors */
     if (mario->spin_timer <= 0) k->bshow = 0;
     V3 body = vadd(k->pos, vmul(k->qy, 60.0f)), c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    int msg = mario_offence(body, 60.0f, k->grav);
+    int msg = mario_offence(k, body, 60.0f, k->grav);
     if (k->nrv == PT_SWOON && msg == MSG_HITALL && !k->bshow) { k->bshow = 1; m_punch(k, body, 0); petari_blow(k, mario->pos, PT_SPINOUT); return; }
     if (k->nrv == PT_SWOON && msg == MSG_NONE && mario_kick(body, 60.0f)) { petari_blow(k, mario->pos, PT_KICKOUT); mario_kicked(); return; } /* receiveOtherMsg: isMsgPlayerKick */
     if (k->nrv == PT_SWOON && (msg == MSG_TRAMPLE || msg == MSG_HIPDROP)) {
@@ -27004,7 +27024,7 @@ static void gesso_update(Kuribo *k)
     k->up = k->qy; k->qz = k->front;
     /* sensors */
     if (k->nrv == GE_PUNCHDOWN) return;
-    int msg = mario_offence(k->pos, 100.0f, k->grav);
+    int msg = mario_offence(k, k->pos, 100.0f, k->grav);
     if (msg == MSG_HITALL) { m_punch(k, k->pos, 0); ge_knock(k, mario->pos); return; }
     if (vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), k->pos)) < 100.0f + HIT_BODY_R && !mario->hurt_timer) { /* attackSensor */
         mario_attack(ATK_STRONG, k->pos); /* sendMsgEnemyAttackStrong */
@@ -27258,7 +27278,7 @@ static void basa_update(Kuribo *k)
     k->up = k->qy;
     /* sensors: body 90, attack 60 at JointRoot (its centre) */
     if (k->nrv == BB_TRAMPLE || k->nrv == BB_PUNCHDOWN || k->nrv == BB_HITBACK) return;
-    int msg = mario_offence(k->pos, 90.0f, k->grav);
+    int msg = mario_offence(k, k->pos, 90.0f, k->grav);
     if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) {
         if (ice) mario_attack(ATK_FREEZE, k->pos); /* sendMsgEnemyAttackFreeze (no Ice Mario) */
         else { pad_rumble(RUMBLE_STRONG); /* tryRumbleDefaultHit */ w_nrv(k, BB_TRAMPLE); if (msg == MSG_TRAMPLE) mario_trample(); }
@@ -27530,7 +27550,7 @@ static void bbd_update(Kuribo *k)
     /* the body sensor (100 at 100 up): Mario's attacks, then attackSensor */
     if (k->nrv == BD_BLOW || k->nrv == BD_TRAMPLE || k->nrv == BD_SINKDOWN) return;
     V3 c = vsub(k->pos, vmul(k->grav, 100.0f)), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    int msg = mario_offence(c, 100.0f, k->grav);
+    int msg = mario_offence(k, c, 100.0f, k->grav);
     if (bbd_swoon(k)) {
         if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) { if (msg == MSG_TRAMPLE) mario_trample(); w_nrv(k, BD_TRAMPLE); return; }
         if (msg == MSG_HITALL || (k->nrv != BD_SWOONEND && mario_kick(c, 100.0f))) { /* isMsgPlayerHitAll / receiveOtherMsg isMsgPlayerKick */
@@ -27755,7 +27775,7 @@ static void jelly_update(Kuribo *k)
     if (vlen(k->qz) < 1e-3f) k->qz = k->front;
     if (k->nrv == JF_DEATH) return;
     V3 body = vsub(k->pos, vmul(k->grav, 30.0f));
-    if (mario_offence(body, 100.0f, k->grav) == MSG_HITALL) { /* knockOut */
+    if (mario_offence(k, body, 100.0f, k->grav) == MSG_HITALL) { /* knockOut */
         m_punch(k, body, 0);
         V3 d = vnorm(vsub(k->pos, mario->pos));
         k->vel = vmul(d, 40.0f); k->front = vmul(d, -1.0f);
@@ -27875,7 +27895,7 @@ static void jelec_update(Kuribo *k)
     V3 body = vadd(k->pos, vmul(k->grav, 60.0f));
     int touch = vlen(vsub(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), body)) < 350.0f + HIT_BODY_R;
     if (player_mode == PM_INVINCIBLE && touch) { m_invincible_hit(body); k->phase = 1; je_knock(k); return; } /* isMsgInvincibleAttack */
-    if (mario_offence(body, 350.0f, k->grav) == MSG_HITALL) touch = 1; /* isMsgPlayerSpinAttack: tryToAttackElectric */
+    if (mario_offence(NULL, body, 350.0f, k->grav) == MSG_HITALL) touch = 1; /* isMsgPlayerSpinAttack: tryToAttackElectric */
     if (touch && !mario->hurt_timer && mario_attack(ATK_ELECTRIC, body)) { /* tryToAttackElectric */
         float m[16];
         basis_matrix(m, vmul(vadd(body, vadd(mario->pos, vmul(mario->up, HIT_BODY_H))), 0.5f), k->up, k->front, 0);
@@ -28114,7 +28134,7 @@ static void kanina_update(Kuribo *k)
     if (k->nrv == KA_UNDER || k->nrv == KA_DIG || k->nrv == KA_DAMAGEHIP || k->nrv == KA_DAMAGEFB || k->nrv == KA_APPEAR) return;
     /* sensors at Body: body 100, attack 80 */
     V3 body = w_joint(k, walker_new_model(k->row), 2, v3(0, 0, 0));
-    int msg = mario_offence(body, 100.0f, k->grav);
+    int msg = mario_offence(k, body, 100.0f, k->grav);
     if (player_mode == PM_INVINCIBLE && (msg == MSG_TRAMPLE || mario_touch(body, 100.0f))) { m_invincible_hit(body); ka_item(k); ka_kill(k); return; } /* invincible */
     if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) { /* receiveTrample / receiveHipDrop: it guards */
         if (k->nrv != KA_ATTACK) {
@@ -28209,7 +28229,7 @@ static void mg_stone(Kuribo *k) /* MoguStone: Taken (in its hand), Throw, Fall *
     Hit h[1];
     if (kcl_query(k->bpos, 40.0f, h, 1)) { mg_stone_break(k, SE_EM_MOGU_SPANA_BREAK); return; } /* isBinded */
     V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    if (k->bshow == 2 && mario_offence(k->bpos, 80.0f, k->grav) == MSG_HITALL) { m_punch(&k->bpos, k->bpos, 0); mg_stone_break(k, SE_BM_ICEMERAKING_STONE_BREAK); return; }
+    if (k->bshow == 2 && mario_offence(&k->bpos, k->bpos, 80.0f, k->grav) == MSG_HITALL) { m_punch(&k->bpos, k->bpos, 0); mg_stone_break(k, SE_BM_ICEMERAKING_STONE_BREAK); return; }
     if (vlen(vsub(mc, k->bpos)) < 80.0f + HIT_BODY_R && !mario->hurt_timer) { /* attackSensor: sendMsgEnemyAttack */
         hurt_mario(k->bpos, 15.0f);
         mg_stone_break(k, SE_BM_ICEMERAKING_STONE_BREAK);
@@ -28352,7 +28372,7 @@ static void mogu_update(Kuribo *k)
     if (hidden) return;
     V3 head = w_joint(k, walker_new_model(k->row), 10, vmul(v3(-55.0f, 0, 13.0f), sy));
     int swoon = k->nrv == MG_SWOONSTART || k->nrv == MG_SWOONEND || k->nrv == MG_SWOON || k->nrv == MG_HIPREACT;
-    int msg = mario_offence(head, 150.0f * sy, k->grav);
+    int msg = mario_offence(k, head, 150.0f * sy, k->grav);
     if (player_mode == PM_INVINCIBLE && mario_touch(head, 150.0f * sy)) { m_invincible_hit(head); mg_blow(k); return; } /* isMsgInvincibleAttack */
     if (swoon && (msg == MSG_TRAMPLE || msg == MSG_HIPDROP)) { w_nrv(k, MG_STAMPDEATH); if (msg == MSG_TRAMPLE) mario_trample(); return; }
     if (swoon && msg == MSG_HITALL) { m_punch(k, head, 0); mg_blow(k); return; }
@@ -28432,7 +28452,7 @@ static void mhill_update(int h) /* the mounds: crumbling, Mario on them */
         if (o->alive[i] == 2 && ++o->age[i] >= 40) { o->alive[i] = 0; continue; } /* sCrumbleFrame */
         V3 c = vadd(o->pos[i], vmul(o->up[i], 60.0f));
         int brk = mario->hip == HIP_LAND && mario->hip_t == 0 && vlen(vsub(o->pos[i], mc)) < 300.0f; /* control: sAppearDist */
-        int msg = mario_offence(c, 120.0f, vmul(o->up[i], -1.0f));
+        int msg = mario_offence(&o->pos[i], c, 120.0f, vmul(o->up[i], -1.0f));
         if (brk || msg == MSG_TRAMPLE || msg == MSG_HIPDROP) {
             se_start(SE_EM_MOGHILL_BREAK, &o->pos[i].x);
             float m[16];
@@ -28544,7 +28564,7 @@ static void mogucchi_update(Kuribo *k)
     const Model *md = walker_new_model(k->row);
     V3 head = w_joint(k, md, 6, v3(40.0f, 0, -8.0f)), body = w_joint(k, md, 3, v3(0, 0, 0)), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     int down = k->nrv == MC_DOWN || k->nrv == MC_APPEARDOWN || k->nrv == MC_DIVE, early = k->nrv == MC_APPEARDOWN && st < 10;
-    int spin = mario->spin_timer > 0 && mario_touch(md0, 180.0f), bm = mario_offence(body, 120.0f, k->grav), hm = mario_offence(head, 83.0f, k->grav);
+    int spin = mario->spin_timer > 0 && mario_touch(md0, 180.0f), bm = mario_offence(k, body, 120.0f, k->grav), hm = mario_offence(k, head, 83.0f, k->grav);
     if (spin || bm == MSG_HITALL || hm == MSG_HITALL) {
         if (k->nrv == MC_STROLL && spin) { /* sendMsgEnemyAttackCounterSpin */
             w_se(k, SE_EM_MOGUCCHI_REFRECT);
@@ -28797,7 +28817,7 @@ static void jspider_update(Kuribo *k)
     if (js_down(k)) return;
     /* receiveMsgPlayerAttack, then attackSensor: its body 100 x scale, 60 x scale up */
     V3 body = vadd(k->pos, vmul(k->qy, 60.0f * s)), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    int msg = mario_offence(body, 100.0f * s, k->grav);
+    int msg = mario_offence(k, body, 100.0f * s, k->grav);
     if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) {
         w_se(k, SE_EM_STOMPED_S); w_se(k, SE_EV_JUMPSPIDER_DEAD);
         if (msg == MSG_TRAMPLE) mario_trample();
@@ -28981,7 +29001,7 @@ static void sh_update(Kuribo *k)
     if (sh_out(k)) return;
     /* receiveMsgPlayerAttack / receiveOtherMsg, then attackSensor: its body 100 x scale, 100 x scale up */
     V3 body = vadd(k->pos, vmul(k->qy, 100.0f * s)), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    int msg = mario_offence(body, 100.0f * s, k->grav);
+    int msg = mario_offence(k, body, 100.0f * s, k->grav);
     if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) {
         w_se(k, SE_EM_STOMPED_S);
         if (msg == MSG_TRAMPLE) mario_trample();
@@ -29574,7 +29594,7 @@ static void metbo_update(Kuribo *k)
     k->up = k->qy;
     if (mb_down(k) || k->nrv == MB_NONACTIVE) return;
     /* sensors at its feet: body 100, attack 80 */
-    int msg = mario_offence(k->pos, 100.0f, k->grav);
+    int msg = mario_offence(k, k->pos, 100.0f, k->grav);
     if (player_mode == PM_INVINCIBLE && mario_touch(k->pos, 100.0f)) { m_invincible_hit(k->pos); spin_hit_start(k, mario->pos, 40.0f, 20.0f); k->timer = 1; k->item = 2; w_nrv(k, MB_BLOWDOWN); return; }
     if (msg == MSG_HIPDROP && k->nrv != MB_RECOVER && k->nrv != MB_SWOONSTART) {
         w_se(k, SE_EM_METBO_TRAMPLE);
@@ -29722,7 +29742,7 @@ static void strspider_update(Kuribo *k)
     V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), body = ss_body(k);
     float near = vlen(vsub(mario->pos, k->pos));
     if (!ss_down(k)) { /* the sensors before the nerve: Mario's attacks, then its attackSensor */
-        int msg = mario_offence(body, 80.0f * s, k->grav);
+        int msg = mario_offence(k, body, 80.0f * s, k->grav);
         if (player_mode == PM_INVINCIBLE && mario_touch(body, 80.0f * s)) { m_invincible_hit(body); ss_blow(k, mario->pos); printf("string spider row %d blown\n", k->row); }
         else if (msg == MSG_HIPDROP || msg == MSG_TRAMPLE) {
             V3 v = vtangent(vsub(mario->pos, body), k->grav);
@@ -30150,7 +30170,7 @@ static void begospike_update(Kuribo *k)
     V3 body = bg_body(k), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     /* the sensors: Mario's attacks on its body, then its attackSensor */
     if (!bg_down(k) && k->nrv != BG_HIDE) {
-        int msg = mario_offence(body, br * s, k->grav);
+        int msg = mario_offence(k, body, br * s, k->grav);
         if (msg == MSG_TRAMPLE && spring) { /* receiveMsgPlayerTrample: its body (ATYPE_BEGOMAN) Shakes it; shaking, the spring
                                              * head's trample sensor (ATYPE_PLAYER_AUTO_JUMP) bounces Mario up: Trample */
             if (k->nrv == BG_SHAKE) { mario_trample_auto(); w_nrv(k, BG_TRAMPLE); }
@@ -30787,7 +30807,7 @@ static void bbego_update(Kuribo *k)
     V3 tm = vsub(mario->pos, k->pos); /* moveAndTurnToPlayer */
     /* the sensors: Mario's attacks on its trample / body, then its attackSensor */
     if (k->nrv > BBG_READY && !bb.nobody) {
-        int msg = mario_offence(ctr, 180.0f * s, k->grav); /* trample */
+        int msg = mario_offence(k, ctr, 180.0f * s, k->grav); /* trample */
         if (msg == MSG_TRAMPLE) { /* receiveMsgTrample */
             if (!bb_hurt(k) && !dm_damaging() && !(k->nrv == BBG_TRAMPLEREACTION && k->step < 5)) {
                 w_nrv(k, BBG_TRAMPLEREACTION);
@@ -30804,7 +30824,7 @@ static void bbego_update(Kuribo *k)
             V3 a = vtangent(vsub(mario->pos, k->pos), k->grav);
             mario->hip = 0; m_power_jump(mario, vadd(vmul(vlen(a) > 1e-6f ? vnorm(a) : k->qz, 10.0f), vmul(mario->up, 25.0f)));
             w_nrv(k, BBG_TRAMPLEREACTION);
-        } else if (!bb_hurt(k) && mario_offence(body, br, k->grav) == MSG_HITALL) {
+        } else if (!bb_hurt(k) && mario_offence(k, body, br, k->grav) == MSG_HITALL) {
             if (!hd_switch_on() && bb_side(k)) { if (!mario->hurt_timer) mario_attack(ATK_FIRERUN, body); w_nrv(k, BBG_PROVOKE); } /* sendMsgEnemyAttackFire */
             else if (k->nrv == BBG_TRAMPLEREACTION && k->step <= 30) { }
             else if (!hd_edge_out()) { m_punch(k, body, 2); bg_blow(k, mario->pos, 40.0f, 40.0f); w_nrv(k, BBG_BLOW); printf("boss begoman spun: blow\n"); } /* calcBlowReaction(hBlowVel, hBlowVerticalVel) */
@@ -31453,7 +31473,7 @@ static void kabo_update(Kuribo *k)
     k->up = k->qy;
     int enable_attack = k->nrv == KB_WAIT || k->nrv == KB_WALK || k->nrv == KB_DROPFIRE; /* isEnableAttack (isEnableTrampled: all of ours) */
     V3 body = vadd(k->pos, vmul(k->qy, 100.0f * sy)), att = vadd(k->pos, vmul(k->qy, 70.0f * sy));
-    int msg = mario_offence(body, 100.0f * sy, k->grav);
+    int msg = mario_offence(k, body, 100.0f * sy, k->grav);
     if (msg == MSG_HIPDROP || msg == MSG_HITALL) { /* requestHipDropped / requestHitAttacked: Break */
         if (msg == MSG_HIPDROP) w_se(k, SE_EM_STOMPED_S); else m_punch(k, body, 0);
         w_se(k, SE_EM_KABOKURI_BREAK_PUMP); /* exeBreak */
@@ -31597,7 +31617,7 @@ static void puku_update(Kuribo *k)
     if (k->nrv == PK_TRAMPLED || k->nrv == PK_BLOWN) return;
     {
         V3 c = w_joint(k, walker_new_model(k->row), 1, v3(0, 0, 0));
-        int msg = mario_offence(c, 60.0f, k->grav);
+        int msg = mario_offence(k, c, 60.0f, k->grav);
         if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) { if (msg == MSG_TRAMPLE) mario_trample(); w_nrv(k, PK_TRAMPLED); return; }
         if (msg == MSG_HITALL) { /* setVelocityBlowAttack 35 / 20 */
             m_punch(k, k->pos, 0);
@@ -31769,7 +31789,7 @@ static void bomb_update(Kuribo *k)
     if (vlen(k->qz) < 1e-3f) k->qz = k->front;
     if (k->nrv == BH_LAUNCH) return;
     V3 body = vadd(k->pos, vmul(up, 60.0f * scl));
-    int msg = mario_offence(body, 60.0f * scl, k->grav);
+    int msg = mario_offence(k, body, 60.0f * scl, k->grav);
     if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) {
         if (k->nrv == BH_PHYSICS || k->nrv == BH_STOP || k->nrv == BH_SPINHIT) return;
         bh_light(k); w_nrv(k, BH_TRAMPLE);
@@ -31994,7 +32014,7 @@ static void takohei_update(Kuribo *k)
     k->up = k->qy;
     if (k->nrv == TH_NONACTIVE || th_down(k)) return; /* invalidateHitSensors */
     V3 c = vadd(k->pos, vmul(k->qy, 70.0f * s));
-    int msg = mario_offence(c, 70.0f * s, k->grav);
+    int msg = mario_offence(k, c, 70.0f * s, k->grav);
     if (msg == MSG_TRAMPLE) { th_down_to(k, TH_FLATDOWN); mario_trample(); return; }
     if (msg == MSG_HIPDROP) { th_down_to(k, TH_HIPDROPDOWN); return; }
     if (msg == MSG_HITALL || (player_mode == PM_INVINCIBLE && mario_touch(c, 70.0f * s))) { if (msg == MSG_HITALL) m_punch(k, c, 0); else m_invincible_hit(c); th_punch(k, mario->pos); return; }
@@ -32264,7 +32284,7 @@ static void kotebug_update(Kuribo *k)
     if (k->nrv == KT_BLOW || k->nrv == KT_STAMPDEATH) return;
     V3 c = vadd(k->pos, vmul(k->qy, 50.4f * s)); /* the Center joint (30.4) + 20 */
     float br = 100.0f * s;
-    int msg = mario_offence(c, br, k->grav);
+    int msg = mario_offence(k, c, br, k->grav);
     if (mario->spin_timer <= 0) k->lvt[2] = 0;
     if (msg == MSG_HITALL && k->lvt[2]) msg = MSG_NONE; /* MarioActor _954: each sensor punched once a spin */
     if (msg == MSG_HITALL) k->lvt[2] = 1;
@@ -32505,7 +32525,7 @@ static void noko_update(Kuribo *k)
     V3 body = w_joint(k, md, 2, v3(0, 0, 30)), shell = w_joint(k, md, 14, v3(0, 50, 0));
     if (mario->spin_timer <= 0) k->lvt[2] = 0;
     if (nk_body_on(k)) {
-        int msg = mario_offence(body, 120.0f, k->grav);
+        int msg = mario_offence(k, body, 120.0f, k->grav);
         if (msg == MSG_HITALL && k->lvt[2]) msg = MSG_NONE; /* each sensor punched once a spin */
         if (msg == MSG_HITALL) k->lvt[2] = 1;
         if (msg == MSG_TRAMPLE) { /* receiveTrample */
@@ -32529,7 +32549,7 @@ static void noko_update(Kuribo *k)
         if ((nk_rattle(k) || nk_carry()) && mario_touch(body, 120.0f)) mario_push_out(body, 120.0f); /* sendMsgPush */
     }
     if (nk_shell_on(k)) {
-        int msg = mario_offence(shell, 50.0f, k->grav);
+        int msg = mario_offence(k, shell, 50.0f, k->grav);
         if (msg == MSG_HITALL && k->lvt[2]) msg = MSG_NONE;
         if (msg == MSG_HITALL) k->lvt[2] = 1;
         if (msg == MSG_TRAMPLE) {
@@ -33083,7 +33103,7 @@ static void karon_update(Kuribo *k, V3 to, float d)
     /* the body sensor (90 x scale at 90 x scale up): Mario's attacks, then attackSensor */
     if (k->nrv == KR_SINKDOWN || k->nrv == KR_DEATH) return;
     V3 c = vsub(k->pos, vmul(k->grav, 90.0f * s)), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-    int msg = kr_broken(k) && k->nrv != KR_RECOVER ? MSG_NONE : mario_offence(c, 90.0f * s, k->grav);
+    int msg = kr_broken(k) && k->nrv != KR_RECOVER ? MSG_NONE : mario_offence(k, c, 90.0f * s, k->grav);
     if (msg == MSG_TRAMPLE) {
         mario_trample();
         if (player_mode == PM_INVINCIBLE) { m_invincible_hit(c); kr_pieces(k); w_nrv(k, KR_DEATH); } /* checkAndTryTrampleAttack */
@@ -35301,7 +35321,7 @@ static void hn_mario(int k) /* the parts' sensors and Mario: attackSensor / rece
             if (n != HN_HIPDROPPED && n != HN_OVERHIPDROPPED) { m_invincible_hit(s); hn_blow(k, mario->pos); printf("hanachan row %d blown\n", h->row); }
             return;
         }
-        int msg = p->nrv == HN_HIPDROPPED || p->nrv == HN_OVERHIPDROPPED ? MSG_NONE : mario_offence(s, 85.0f, p->grav);
+        int msg = p->nrv == HN_HIPDROPPED || p->nrv == HN_OVERHIPDROPPED ? MSG_NONE : mario_offence(h, s, 85.0f, p->grav);
         if (msg == MSG_HIPDROP) {
             if (n != HN_HIPDROPPED && n != HN_OVERHIPDROPPED) {
                 hn_set(k, n == HN_OVERTURN || n == HN_OVERTURNBOUND || n == HN_OVERTURNWAIT || n == HN_RECOVER ? HN_OVERHIPDROPPED : HN_HIPDROPPED);
@@ -35577,7 +35597,7 @@ static void update_shock(Inst *in, int st)
     case SW_WAIT: {
         if (shock_busy(in)) break;
         V3 c = vadd(p, vmul(up, 200.0f)), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
-        if (mario_offence(c, 400.0f, vmul(up, -1.0f)) == MSG_HITALL && vlen(vtangent(vsub(mc, c), up)) <= 120.0f + 140.0f)
+        if (mario_offence(in, c, 400.0f, vmul(up, -1.0f)) == MSG_HITALL && vlen(vtangent(vsub(mc, c), up)) <= 120.0f + 140.0f)
             { m_punch(in, c, 0); shock_start(in); } /* isMsgPlayerSpinAttack on "spin", isHitCylinder (Mario's attack sensor 120) */
         break;
     }
@@ -37032,7 +37052,7 @@ static void update_rbeamers(void)
                 float jm[16];
                 mat_mul(jm, in->m, in->anim->world[1]);
                 body = v3(jm[12] + jm[4] * 35.0f, jm[13] + jm[5] * 35.0f, jm[14] + jm[6] * 35.0f);
-                int jmsg = o->jon ? mario_offence(jb_spring(in), 145.0f, vmul(up, -1.0f)) : MSG_NONE;
+                int jmsg = o->jon ? mario_offence(o, jb_spring(in), 145.0f, vmul(up, -1.0f)) : MSG_NONE;
                 if (jmsg == MSG_TRAMPLE || jmsg == MSG_HIPDROP) { /* ATYPE_PLAYER_AUTO_JUMP: a hip drop tramples it too */
                     m_set_jv(mario, up); /* setPlayerJumpVec(up) */
                     mario_trample_auto();
@@ -37043,7 +37063,7 @@ static void update_rbeamers(void)
                 }
             }
             float br = o->br;
-            int msg = o->nrv == RB_HIDE || o->nrv == RB_DOWN ? MSG_NONE : mario_offence(body, br, vmul(up, -1.0f));
+            int msg = o->nrv == RB_HIDE || o->nrv == RB_DOWN ? MSG_NONE : mario_offence(o, body, br, vmul(up, -1.0f));
             if (msg == MSG_TRAMPLE) { mario_trample(); o->nrv = RB_HOPSTART; o->step = -1; }
             else if (msg == MSG_HIPDROP) { m_set_jv(mario, vmul(up, 15.0f)); mario->grounded = 0; mario->hip = 0; } /* forceJumpPlayer */
             else if (msg == MSG_HITALL && o->nrv != RB_HOPSTART) { m_punch(o, body, 0); o->nrv = RB_HOPSTART; o->step = -1; }
@@ -42076,7 +42096,7 @@ static void update_rocks(void)
             V3 side = vcross(vmul(o->grav, -1.0f), o->front);
             (void)side;
             V3 weak = vadd(o->pos, vmul(o->front, -150.0f * s));
-            if (mario_offence(weak, 125.0f * s, o->grav) == MSG_HITALL) { m_punch(o, weak, 0); rock_break(o, c, 1); continue; }
+            if (mario_offence(o, weak, 125.0f * s, o->grav) == MSG_HITALL) { m_punch(o, weak, 0); rock_break(o, c, 1); continue; }
         }
         if (vlen(vsub(mc, o->pos)) < br + HIT_BODY_R && !mario->hurt_timer) {
             if (o->nrv != RK_FREEZE && o->nrv != RK_APPEAR) {
@@ -42896,7 +42916,7 @@ static void mi_update_one(int i)
     if (k->sensor_off) return;
     V3 sc_ = vadd(k->pos, vmul(up, k->sens_off)), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     if (k->nrv == MI_WAIT && k->container == 2 && !k->box_dead) {
-        int msg = mario_offence(sc_, k->sens_r, k->grav);
+        int msg = mario_offence(k, sc_, k->sens_r, k->grav);
         if (msg == MSG_HITALL || msg == MSG_HIPDROP) { /* receiveMsgPlayerAttack: the box breaks */
             if (msg == MSG_HITALL) m_punch(k, sc_, 0);
             k->box_dead = 1; k->break_on = 1;
@@ -46387,7 +46407,7 @@ static void update_luigi(void)
             break;
         }
         if (lg[k].type == LT_ONTREE && (lg[k].nrv == LG_TREEWAIT || lg[k].nrv == LG_TREETOUCH)) {
-            int msg = mario_offence(c, 50.0f, vmul(up, -1.0f)); /* receiveMsgPlayerAttack: spin, trample, hip drop */
+            int msg = mario_offence(NULL, c, 50.0f, vmul(up, -1.0f)); /* receiveMsgPlayerAttack: spin, trample, hip drop */
             if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) se_start(SE_SM_NPC_TRAMPLED, &c.x);
             if (msg != MSG_NONE) { lg_set(k, LG_TREEFALL); continue; }
             if (lg[k].nrv == LG_TREEWAIT && mario_touch(c, 50.0f)) { lg_set(k, LG_TREETOUCH); continue; } /* attackSensor */
@@ -46419,7 +46439,7 @@ static int npc_react(NpcReact *s, V3 body, float rad, V3 up, V3 pos, float near,
 {
     u8 now = 0; /* _E2 trampled, _E3 spun, _E4 pointed */
     if (!body_off) {
-        int msg = mario_offence(body, rad, vmul(up, -1.0f));
+        int msg = mario_offence(NULL, body, rad, vmul(up, -1.0f));
         if (msg == MSG_TRAMPLE && !s->c9C) { s->c9C = 30; now |= 1; mario_trample(); }
         else if (msg == MSG_HIPDROP) { /* sendMsgAwayJump */
             now |= 1;
@@ -50205,7 +50225,7 @@ static void update_sbp(void)
             V3 cc = sbp_joint(in, 17, v3(0, 0, 0)), d = vsub(mario->pos, cc); /* isHitChild */
             if (!sbp.child) sbp_set(SBP_HIPDROPDOWN);
             else if (vlen(vtangent(d, sbp.up)) <= 150.0f) sbp_set(SBP_DEMOPREPARE);
-        } else if (sbp.sensors_on && sbp.nrv != SBP_SPINREACTION && sbp.nrv != SBP_DASH && mario_offence(body, 250.0f, vmul(sbp.up, -1.0f)) == MSG_HITALL)
+        } else if (sbp.sensors_on && sbp.nrv != SBP_SPINREACTION && sbp.nrv != SBP_DASH && mario_offence(&sbp, body, 250.0f, vmul(sbp.up, -1.0f)) == MSG_HITALL)
             { m_punch(&sbp, body, 0); sbp_set(SBP_SPINREACTION); } /* isMsgPlayerSpinAttack on body */
         else if (sbp.nrv != SBP_PANIC && sbp.nrv != SBP_SHAKESTART && sbp.nrv != SBP_SHAKE && sbp_on_player())
             sbp_set(SBP_PANIC); /* isMsgFloorTouch, isOnPlayer */
@@ -51183,7 +51203,7 @@ static void update_km_beams(void)
             t->pos = vsub(c, vmul(up, 40.0f));
             if (st > 600) { km_fx("BossKameckBeam", "BeamTurtleVanish", t->pos, g, NULL); km_se(t->pos, SE_BM_KAMECK_DISAPPEAR_TURT); kmt_kill(i); continue; }
             V3 body = vadd(t->pos, vmul(up, 40.0f));
-            int msg = mario_offence(body, 50.0f, g);
+            int msg = mario_offence(NULL, body, 50.0f, g);
             if (msg == MSG_TRAMPLE || msg == MSG_HIPDROP) { /* receiveMsgPlayerAttack isMsgPlayerTrample */
                 if (msg == MSG_TRAMPLE) mario_trample();
                 t->nrv = 1; t->st = -1; t->jet = 1; t->jpos = t->pos; t->vel = v3(0, 0, 0); /* appearJetTurtle(false) */
@@ -51323,7 +51343,7 @@ static void kameck_update(Kuribo *k)
     V3 body = vadd(k->pos, vmul(k->qy, 40.0f));
     /* the sensors: Mario's attacks on its body (120 at 40 up), its attack (80) on him */
     if (!k->lvt[2] && k->state != KURIBO_DEAD) {
-        int msg = mario_offence(body, 120.0f, k->grav);
+        int msg = mario_offence(k, body, 120.0f, k->grav);
         if (msg == MSG_HITALL) { m_punch(k, body, 0); km_down(k, mario->pos); } /* isMsgPlayerHitAll */
         else if ((msg == MSG_TRAMPLE || msg == MSG_HIPDROP) && km_down_ok(k)) { /* requestPressDown */
             if (msg == MSG_TRAMPLE) mario_trample();
@@ -51683,7 +51703,7 @@ static void bk_battle(void) /* BossKameckStateBattle */
     int st = ++bk.bst;
     V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     if (bk_enable()) { /* receiveMsgPlayerAttack isMsgPlayerSpinAttack: requestGuard; attackSensor */
-        if (mario_offence(bk.pos, 300.0f, bk_g()) == MSG_HITALL) { m_punch(&bk, bk.pos, 0); bk_drop_beam(); bk_bset(BKB_GUARD); st = ++bk.bst; }
+        if (mario_offence(&bk, bk.pos, 300.0f, bk_g()) == MSG_HITALL) { m_punch(&bk, bk.pos, 0); bk_drop_beam(); bk_bset(BKB_GUARD); st = ++bk.bst; }
         else if (vlen(vsub(mc, bk.pos)) < 240.0f + HIT_BODY_R && !mario_attack(ATK_ENEMY, bk.pos)) mario_push_out(bk.pos, 240.0f);
     } /* (its Guard's sendMsgEnemyAttackFlipRot is under isEnableGuard, which Guard is not: never sent) */
     switch (bk.bn) {
@@ -53068,7 +53088,7 @@ static void gh_sensors(void) /* attackSensor (doObjCol) / receiveMsgPlayerAttack
         mario_push_out(c, 40.0f);
         if (!gh.piece_cd) { gh_pieces(1); gh.piece_cd = 5; }
     }
-    if (mario_offence(c, 40.0f, vmul(up_at(gh.pos, mario->up), -1.0f)) == MSG_TRAMPLE && !gh.trample_cd) { /* isMsgPlayerTrample */
+    if (mario_offence(NULL, c, 40.0f, vmul(up_at(gh.pos, mario->up), -1.0f)) == MSG_TRAMPLE && !gh.trample_cd) { /* isMsgPlayerTrample */
         mario_trample();
         gh_pieces(5);
         gh.trample_cd = 10;
