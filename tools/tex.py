@@ -927,8 +927,9 @@ def samples_named(b, mat3, m, tex1, name, over=None):
         if t < len(nm) and nm[t] == name:
             st = b[off(0x5C) + 20 * u16(b, e + 0xE4 + 2 * k):][:20]
             ca, cb, cc, cd = st[1:5]
+            # GX_CC_A0 / A1 / A2 at 1, no TEXA (an opaque material's alpha shows nowhere: Teresa's body_m_v)
             masked = (ca == 8 and cb not in (8, 9) and cd not in (8, 9) and cc in (3, 5, 7)
-                      and regs[(cc - 3) // 2][3] >= 255 and 4 not in st[10:14])  # GX_CC_A0 / A1 / A2 at 1, no TEXA
+                      and regs[(cc - 3) // 2][3] >= 255 and (4 not in st[10:14] or material_blend(b, mat3, m)[0] == 0))
             if not masked:
                 return True
     return False

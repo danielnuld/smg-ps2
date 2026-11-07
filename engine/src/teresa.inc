@@ -20,7 +20,8 @@
  * ponytail: no point light (requestPointLight: the port's lights are the area ones); no star pointer shy (the 2P
  * pointer); isInShadeFromTheSun taken as true (no SunLightArea where Teresas are placed, no Sunshade collision);
  * no MarioSearchLight (not in the port); its transparency a constant alpha on its groups without texture alpha
- * (render: one alpha a pass); the actions' BTPs (Normal / Love) are the clips' same-name ones; the dummy model's
+ * (render: one alpha a pass): body_m_v's lerp(screen copy, body, C1.a) is that blend (slice.py BRK_POSE teresa: the
+ * body baked opaque, its texture); the actions' BTPs (Normal / Love) are the clips' same-name ones; the dummy model's
  * InTeresa / InRotation clips not played; pushes only between Teresas */
 enum { TS_APPEARWALL, TS_APPEARGROUND, TS_WAIT, TS_WALK, TS_RAILWALK, TS_RAILTURN, TS_LOVEFIND, TS_LOVECHASE, TS_LOVEHIT,
        TS_LOVEEND, TS_CHASE, TS_SHAY, TS_AGGRESSIVE, TS_ATTACKSUCCESS, TS_DRIFT, TS_HIDEWALL, TS_HIDEWATER, TS_ASCENSION,
