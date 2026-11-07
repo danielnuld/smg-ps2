@@ -1353,6 +1353,13 @@ there needs the embedded blob and every pack rebuilt.
   (tryPushEach, ReboundEach), SamboHead, KoteBug, Karon (addVelocityFromPush / Horizon / Limit,
   sendMsgPushAndKillVelocityToTarget); sensors invalidated in their down nerves. Test: `walker` prints `walker push f`
   (the Karikari pack pushes itself apart). ponytail: other walkers' sensors and map objects are not in the pass.
+- Spin reaction (feat/spin-reaction): MarioActor::tryPunchAirAfter / reactionPunch (game.c m_punch) at every receiver
+  site taking his spin (the MSG_HITALL branches, the spin_timer receivers marked isMsgPlayerHitAll / requestPunch):
+  each sensor once a spin, 8 at most; 5 stun frames, walk cut to 0.1 on the ground, jumpHop unless _2B, printHitMark
+  unless the receiver takes ACTMES_HITMARK_EMIT (Begomans, Karikari, CocoNut), pad 2, the Begomans' 20 push, swim
+  hitPunch. ACTMES_INVINCIBLE_ATTACK taken (update_invincible, the walkers' own invincible branches, Karon's trample):
+  m_invincible_hit (pad 2, printHitMark). Test: `kick` prints `spin reaction: 1 punched`. ponytail: the receivers can
+  still see the spin again (no sensor list in mario_offence); no 45-degree front check outside spin2nd.
 
 ## Next
 

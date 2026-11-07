@@ -438,6 +438,7 @@ static void mk_update(Kuribo *k)
     }
     /* receiveMsgPlayerAttack: a spin (or the freeze spin) while it rolls */
     if (mk_escaping(k) && mario_offence(body, mk.r, k->grav) == MSG_HITALL) {
+        m_punch(k, body, 0);
         int freeze = player_mode == PM_ICE;
         if (--mk.ec == 0) {
             if (freeze) bgm_pinch_stop_soon(); /* stopMarioPinchBGMSoon */
