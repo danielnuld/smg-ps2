@@ -500,7 +500,7 @@ def flare(fs, out_tex):
 NAMED = ("ClipAreaDropLaser", "KillerGunnerSingle", "SpinningBox", "FlexibleSandPlanetPartsA", "MagnumKiller", "TripodBoss", "TripodBossCore", "ItemBubble", "DinoPackunBall", "Mario", "Dossun", "Onimasu", "LavaStrangeRock",
          "LavaStrangeRockL", "LavaStrangeRockTable", "MogucchiHill", "PalmIsland", "KabokuriFire", "LotusLeaf", "ElectricBall",
          "MorphItemObj", "WaterColumn", "PhantomTorch", "PhantomBonfire", "ShockWaveGenerator", "DriftWood", "BossKameckBeam", "BossKameckFireBall",
-         "AirBubble", "PackunFlower", "Bush", "StarPiece", "FireBarBall", "KoopaJrShipCannonShell", "IronCannonLauncherPoint", "TreasureSpot", "CoinFlower", "CocoNut", "SpiderThreadAttachPoint", "TombSpider", "TombSpiderGland", "TombSpiderPlanet", "BigBubble", "MeteorStrike", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate", "IceManIce", "FallingSmallRock", "SubmarineSteam", "SubmarineVolcano", "PoltaRock", "PoltaGroundRock", "DodoryuHill", "Fluff", "FluffWind", "Fountain", "SpringJetWater", "LargeChain", "BombBirdBomb", "HeavenlyBeachTimerStepA", "HeavenlyBeachTimerStepB")  # (WaterColumn: MarioActor::emitEffectWaterColumn)  # MorphItemObjNeo's effect group (initEffectKeeper "MorphItemObj")
+         "AirBubble", "PackunFlower", "Bush", "StarPiece", "FireBarBall", "KoopaJrShipCannonShell", "IronCannonLauncherPoint", "TreasureSpot", "CoinFlower", "CocoNut", "SpiderThreadAttachPoint", "TombSpider", "TombSpiderGland", "TombSpiderPlanet", "BigBubble", "MeteorStrike", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate", "IceManIce", "FallingSmallRock", "SubmarineSteam", "SubmarineVolcano", "PoltaRock", "PoltaGroundRock", "DodoryuHill", "Fluff", "FluffWind", "Fountain", "SpringJetWater", "LargeChain", "BombBirdBomb", "Bell", "HeavenlyBeachTimerStepA", "HeavenlyBeachTimerStepB")  # (WaterColumn: MarioActor::emitEffectWaterColumn)  # MorphItemObjNeo's effect group (initEffectKeeper "MorphItemObj")
 NAMED_ONLY = {"Mario": ("SpinLight", "SpinLightBurst", "Invincible", "Ice", "Metamorphosis", "MetamorphosisEnd", "GetAgain", "WaterBound",
                         "SkateL", "SkateR", "IceJumpLand", "IceMarioSpinLight", "FooMarioHandGlowL", "FooMarioHandGlowR",
                         "FooMarioBrakeLampL", "FooMarioBrakeLampR", "FooMarioEndL", "FooMarioEndR",
@@ -521,6 +521,7 @@ NAMED_ONLY = {"Mario": ("SpinLight", "SpinLightBurst", "Invincible", "Ice", "Met
 # matrix, as fx_named rows (group, particle, joint: its getRealMtx host, "" the actor)
 REGISTERED = {"Mario": (("雪煙レベル", "CrestGetFlyC", "FootR"),),
               "TamakoroTutorial": (("hitmarknormal", "HitMarkNormal", None),),  # TamakoroTutorial::init: addEffectHitNormal
+              "Bell": (("starwandhitmark", "StarWandHitMark", None),),  # MagicBell::init: addEffect StarWandHitMark (statics.inc st_bell_ring)
               **{c: (("hitmarknormal", "HitMarkNormal", None),) for c in ("Gesso", "BasaBasa", "BasaBasaIce", "Metbo", "PackunPetit", "Kanina",
                  "KaninaRed", "Jellyfish", "JellyfishElectric", "NokonokoLand", "BossKameck", "StinkBugSmall", "StinkBugParent",
                  "NeedlePlant", "NeedlePlantFly", "Shellfish", "ShellfishCoin", "ShellfishYellowChip")},  # their init's addEffectHitNormal (game.c w_hit_mark, hit_mark_between, bk_*)

@@ -232,7 +232,7 @@ static void st_flag_test(void)
 }
 #endif
 /* ---- MapObj classes by placed type: their per-row state (StSt, kept across rebinds) ---- */
-enum { ST_NONE = 1, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP, ST_TIMER, ST_WCC, ST_CFSTEP, ST_IASTONE };
+enum { ST_NONE = 1, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP, ST_WTOWER, ST_TIMER, ST_WCC, ST_CFSTEP, ST_IASTONE };
 /* Placed classes whose Petari behaviour is the model drawn with its animations and collision (the engine's generic
  * instance does that): LavaGalaxyParts.cpp (LavaShellTowerStep, LavaStepA / B / C: startBtk / Brk / Bpk / Btp of its
  * name, collision, clipping; ponytail: the steps' DLMakerProjmapEffectMtxSetter lava glow is baked at slice time and
@@ -260,6 +260,7 @@ static int st_kind_name(const char *n)
     if (!strcmp(n, "TrialBubbleTimerMoveWallA")) return ST_TMWALL; /* TimerMoveWall */
     if (!strcmp(n, "TeresaPicture") || !strcmp(n, "KinokoOneUpPicture")) return ST_TEXSW; /* SimpleTextureSwitchChangeObj */
     if (!strcmp(n, "SeaBottomTriplePropeller")) return ST_TRIPROP;
+    if (!strcmp(n, "WatchTowerRotateStep")) return ST_WTOWER;
     if (!strcmp(n, "HeavenlyBeachTimerStepA") || !strcmp(n, "HeavenlyBeachTimerStepB")) return ST_TIMER; /* SimpleTimerObj */
     if (!strcmp(n, "WaterfallCaveCover")) return ST_WCC;
     if (!strcmp(n, "CannonFortressBreakStepA") || !strncmp(n, "CannonFortressRotateBreakStep", 29)) return ST_CFSTEP; /* CannonFortressBreakStep */
@@ -508,6 +509,82 @@ static void st_manhole(Inst *in, StSt *g, int i)
  * Its demo's action (registerDemoActionNerve: st_cast_hook): Break: every sBreakInterval 5 frames the next part
  * breaks (the lower fixed point with the first, the upper with the last: LargeChainParts::kill: its Break effect,
  * SE_OJ_LARGE_CHAIN_BREAK), at the last the chain is killed. StSt: n 1 Break, on the parts broken */
+/* WatchTowerRotateStep.cpp after Petari: its model turned about its front (mRotateVec, its up, rotateVecDegree'd:
+ * makeMtxFrontUpPos), its four WatchTowerRotateStepLift PartsModels (slice.py EXTRA, their collision) at its joints
+ * WindmillLift01-04 (the model's JNT1: (1300, 0, 0), (-1300, 0, 0), (0, 1300, 0), (0, -1300, 0)) with its placed
+ * rotation (mIsCalcOwnMtx off: LiveActor::calcAndSetBaseMtx). A demo cast waits (Wait) until its demo's MoveStart
+ * (registerDemoActionNerve: st_cast_hook): SE_SY_READ_RIDDLE_S, SE_OJ_WATCH_TOWER_START, 180 frames turning
+ * getEaseInValue(step, 0, sRotateSpeed 0.3, 180) a frame; then Move: 0.3 a frame. SE_OJ_LV_WATCH_TOWER_ROTATE while
+ * it turns. Mario on it or a lift is carried. StSt: n 0 Wait, 1 MoveStart, 2 Move; k its angle (degrees).
+ * ponytail: the lifts' shadow volumes (initShadowVolumeBox 600 x 200 x 400) not drawn */
+static const float st_wt_joint[4][3] = {{1300.0f, 0, 0}, {-1300.0f, 0, 0}, {0, 1300.0f, 0}, {0, -1300.0f, 0}};
+static void st_wt_matrix(const Row *r, float ang, float m[16]) /* calcAndSetBaseMtx */
+{
+    float base[16], rz[16];
+    mat_translate_rot_scale(base, r->pos, r->rot, r->scale);
+    float t = ang * 0.0174533f, c = cosf(t), s = sinf(t);
+    mat_identity(rz); /* about its own Z (its front) */
+    rz[0] = c; rz[1] = s; rz[4] = -s; rz[5] = c;
+    mat_mul(m, base, rz);
+}
+static void st_wt_lift(const Row *r, const float tm[16], int k, float m[16]) /* attachLift: the joint's place, its rotation */
+{
+    mat_translate_rot_scale(m, r->pos, r->rot, r->scale); /* (PartsModel: the host's rotation and scale) */
+    const float *j = st_wt_joint[k];
+    m[12] = tm[0] * j[0] + tm[4] * j[1] + tm[8] * j[2] + tm[12];
+    m[13] = tm[1] * j[0] + tm[5] * j[1] + tm[9] * j[2] + tm[13];
+    m[14] = tm[2] * j[0] + tm[6] * j[1] + tm[10] * j[2] + tm[14];
+}
+static void st_wt_rebind(const Scene *s) /* game_rebind_: the lifts as instances */
+{
+    for (u32 q = 0; q < s->nobjs && ninsts + 4 < insts_cap; q++) {
+        const Row *r = &s->objs[q];
+        if (strcmp(s->types + 32 * r->type, "WatchTowerRotateStep") || !row_shown((int)q)) continue;
+        const Model *md = scene_model(s, "WatchTowerRotateStepLift");
+        if (!md) continue;
+        float tm[16];
+        st_wt_matrix(r, st_get((int)q)->k, tm);
+        for (int k = 0; k < 4; k++) {
+            Inst *in = &insts[ninsts++];
+            memset(in, 0, sizeof *in);
+            in->md = md; in->row = (int)q; in->zone = r->zone; in->kmove = in->kparent = -1;
+            in->kcl = scene_kcl(s, "WatchTowerRotateStepLift");
+            st_wt_lift(r, tm, k, in->m);
+            in->s = r->scale[0]; in->reach = md->radius * in->s;
+        }
+    }
+}
+static void st_wtower(Inst *in, StSt *g, int i)
+{
+    const Row *r = &sc->objs[in->row];
+    if (in->md != scene_model(sc, "WatchTowerRotateStep")) return; /* (its lifts: placed by the tower's instance) */
+    if (!g->on) { /* init: Move unless a demo cast (tryRegisterDemoCast) */
+        g->on = 1; g->n = 2;
+        for (int d = 0; d < ndemos; d++) for (int c = 0; c < demos[d].h->ncast; c++) if (demos[d].cast[c] == in->row) g->n = 0;
+        printf("watch tower %d: %s%c", in->row, g->n ? "Move" : "Wait (demo cast)", 10);
+    }
+    if (g->n == 0) return;
+    float d = 0.3f; /* sRotateSpeed */
+    if (g->n == 1) {
+        if (g->t2 == 0) { se_start(SE_SY_READ_RIDDLE_S, NULL); se_start(SE_OJ_WATCH_TOWER_START, &in->m[12]); }
+        d = 0.3f * (1.0f - cosf(g->t2 / 180.0f * 1.5707963f)); /* getEaseInValue(step, 0, 0.3, 180) */
+        if (++g->t2 >= 180) { g->n = 2; printf("watch tower %d: Move, %.1f turned%c", in->row, g->k + d, 10); } /* isStep(sStepForMoveStart) */
+    }
+    g->lv[0] = se_level(SE_OJ_LV_WATCH_TOWER_ROTATE, &in->m[12], g->lv[0]);
+    g->k = fmodf(g->k + d, 360.0f);
+    float old[16], tm[16];
+    memcpy(old, in->m, 64);
+    st_wt_matrix(r, g->k, tm);
+    memcpy(in->m, tm, 64);
+    if (mario_ground == i) carry(old, in);
+    for (int j = 0, k = 0; j < ninsts && k < 4; j++) { /* attachLift */
+        Inst *l = &insts[j];
+        if (l->row != in->row || l == in) continue;
+        memcpy(old, l->m, 64);
+        st_wt_lift(r, tm, k++, l->m);
+        if (mario_ground == j) carry(old, l);
+    }
+}
 static void st_chain_rebind(const Scene *s) /* game_rebind_: its parts as instances (the unbroken ones) */
 {
     for (u32 q = 0; q < s->nobjs && ninsts + 32 < insts_cap; q++) {
@@ -559,6 +636,11 @@ static int st_cast_hook(int row, int type, int part) /* dx_cast_hook: the demo a
             se_start(SE_OJ_SUNKEN_SHIP_BREAK, &in->m[12]);
             break_inst(in, 1); game_rebind();
         }
+        return 1;
+    }
+    if (type == 3 && st_kind(sc->objs[row].type) == ST_WTOWER) { /* registerDemoActionNerve: MoveStart */
+        StSt *g = st_get(row);
+        if (g->n == 0) { g->n = 1; g->t2 = 0; printf("watch tower %d: MoveStart (demo)%c", row, 10); }
         return 1;
     }
     if (type == 3 && st_kind(sc->objs[row].type) == ST_CHAIN) { st_get(row)->n = 1; st_get(row)->st = 0; printf("large chain %d: break%c", row, 10); return 1; }
@@ -737,6 +819,7 @@ static void st_objs_update(void)
         case ST_CHAIN: if (st_chain(in, g)) return; break;
         case ST_BIGCOL: st_column(in, g); break;
         case ST_FLEX: st_flex(in, g, i); break;
+        case ST_WTOWER: st_wtower(in, g, i); break;
         case ST_TIMER: if (st_timer(in, g)) return; break;
         case ST_WCC: if (st_wcc(in, g)) return; break;
         case ST_CFSTEP: if (st_cfstep(in, g, i)) return; break;
@@ -1304,10 +1387,13 @@ static void st_visit(void)
 #ifdef ST_VISIT_JET /* -DST_VISIT_JET: a thrown shell's attack at its place at frame 300 (st_jet_hit) */
         if (game_frame == 300) printf("visit: shell at row %u taken %d%c", i, st_jet_hit(v3(row_inst((int)i) ? row_inst((int)i)->m[12] : p.x, row_inst((int)i) ? row_inst((int)i)->m[13] : p.y, row_inst((int)i) ? row_inst((int)i)->m[14] : p.z)), 10);
 #endif
-#ifdef ST_VISIT_SWA_OF /* -DST_VISIT_SWA_OF=Class: that class's first row's SW_A on at frame 300 (a switch) */
+#ifdef ST_VISIT_SWA_OF /* -DST_VISIT_SWA_OF=Class [-DST_VISIT_SWA_K=k]: that class's k-th row's SW_A on at frame 300 (a switch) */
+#ifndef ST_VISIT_SWA_K
+#define ST_VISIT_SWA_K 0
+#endif
         if (game_frame == 300)
-            for (u32 j = 0; j < sc->nobjs; j++)
-                if (!strcmp(sc->types + 32 * sc->objs[j].type, ST_STR(ST_VISIT_SWA_OF))) { sw_set(&sc->objs[j], SW_A, 1); printf("visit: %s row %u SW_A on%c", ST_STR(ST_VISIT_SWA_OF), j, 10); break; }
+            for (u32 j = 0, n = 0; j < sc->nobjs; j++)
+                if (!strcmp(sc->types + 32 * sc->objs[j].type, ST_STR(ST_VISIT_SWA_OF)) && n++ == ST_VISIT_SWA_K) { sw_set(&sc->objs[j], SW_A, 1); printf("visit: %s row %u SW_A on%c", ST_STR(ST_VISIT_SWA_OF), j, 10); break; }
 #endif
         return;
     }
@@ -1377,6 +1463,170 @@ static void st_col_test(void)
     }
 }
 #endif
+/* MagicBell.cpp / Swinger.cpp after Petari (ReverseKingdomGalaxy's bell): its Bell model's polySurface2 (the bell,
+ * mBellSwinger: length 100, gravity 0.6, damping 0.99) and polySurface1 (the clapper, mBellRodSwinger: 50, 0.3, 0.95)
+ * hang from mPosition along its gravity. Wait: tryRing; Ring: on the first step its SW_A on (SE_OJ_HAPPY_BELL_SWITCH_ON)
+ * if valid and off, SE_OJ_HAPPY_BELL_RING; both swingers updated, the clapper pushed out of the bell when they meet
+ * (their directions' dot under 0.95), the hit mark there; past step 10 tryRing again; back to Wait (Ring effect off)
+ * once the bell hangs (y under -0.99) and is still (acceleration under 0.1). A player attack on its body (70 at
+ * (0, -80, 0) of the bell) in Wait or past step 10 of Ring: startRing from Mario 100 down, the hit 200 off; tryRing:
+ * the star pointer on its target (100 at (0, -80, 0)) moving over 8 a frame on screen: startRing along the pointer's
+ * world motion at its pointed place. startRing: the bell's acceleration set to that direction x (5 + its speed),
+ * StarWandHitMark at the hit, Ring. Its body pushes Mario. ponytail: star pieces / 2P attacks (only Mario's
+ * mario_offence), the shadow sphere (100), isExecScenarioStarter left out */
+typedef struct { V3 p8, acc, d, x, y, z; float len, g, damp; } StSwing; /* Swinger: _8, mAcceleration, _20, _3C / _48 / _54 */
+typedef struct { int row, nrv, st; V3 pos, grav, hit; StSwing b, r; } StBell;
+#define ST_BELLS 4
+static StBell st_bells[ST_BELLS];
+static int st_nbells;
+static const Scene *st_bell_sc;
+static void st_swing_init(StSwing *s, V3 pos, const float m[16], float len, float g, float damp)
+{
+    memset(s, 0, sizeof *s);
+    s->len = len; s->g = g; s->damp = damp; s->d = v3(0, -1.0f, 0);
+    s->x = vnorm(v3(m[0], m[1], m[2])); s->y = vnorm(v3(m[4], m[5], m[6])); s->z = vnorm(v3(m[8], m[9], m[10]));
+    s->p8 = v3(pos.x, pos.y - len, pos.z);
+}
+static void st_swing_update(StSwing *s, V3 pos, V3 grav) /* Swinger::update, updateSwingMtx */
+{
+    s->acc = vadd(vmul(s->acc, s->damp), vmul(grav, s->g));
+    s->p8 = vadd(s->p8, s->acc);
+    s->d = vsub(s->p8, pos);
+    s->d = vlen(s->d) < 1e-6f ? v3(0, -1.0f, 0) : vnorm(s->d);
+    s->p8 = vadd(vmul(s->d, s->len), pos);
+    s->acc = vsub(s->acc, vmul(s->d, vdot(s->d, s->acc)));
+    s->y = vmul(s->d, -1.0f);
+    V3 old = s->x;
+    s->x = vcross(s->y, s->z);
+    if (vlen(s->x) < 1e-6f) s->x = old;
+    s->x = vnorm(s->x);
+    s->z = vnorm(vcross(s->x, s->y));
+}
+static StBell *st_bell(int row)
+{
+    if (st_bell_sc != sc) { st_nbells = 0; st_bell_sc = sc; }
+    for (int k = 0; k < st_nbells; k++) if (st_bells[k].row == row) return &st_bells[k];
+    if (st_nbells == ST_BELLS) return NULL;
+    StBell *o = &st_bells[st_nbells++];
+    const Row *r = &sc->objs[row];
+    float m[16];
+    memset(o, 0, sizeof *o);
+    o->row = row; o->pos = row_pos(r); o->grav = vmul(up_at(o->pos, v3(0, 1, 0)), -1.0f); /* calcGravity */
+    mat_translate_rot_scale(m, r->pos, r->rot, r->scale); /* makeMtxTR */
+    st_swing_init(&o->b, o->pos, m, 100.0f, 0.6f, 0.99f);
+    st_swing_init(&o->r, o->pos, m, 50.0f, 0.3f, 0.95f);
+    return o;
+}
+static void st_bell_mtx(const StSwing *s, V3 pos, float sc3, float m[16]) /* its joint: the swing axes x its scale at mPosition */
+{
+    mat_identity(m);
+    m[0] = s->x.x * sc3; m[1] = s->x.y * sc3; m[2] = s->x.z * sc3;
+    m[4] = s->y.x * sc3; m[5] = s->y.y * sc3; m[6] = s->y.z * sc3;
+    m[8] = s->z.x * sc3; m[9] = s->z.y * sc3; m[10] = s->z.z * sc3;
+    m[12] = pos.x; m[13] = pos.y; m[14] = pos.z;
+}
+static V3 st_bell_body(const StBell *o) /* its sensor: (0, -80, 0) in the bell's frame (getBaseMtx: mSurface2Mtx) */
+{
+    return vadd(o->pos, vmul(o->b.y, -80.0f));
+}
+static void st_bell_ring(StBell *o, V3 dir, V3 hit) /* startRing */
+{
+    float v = vlen(o->b.acc);
+    o->b.acc = vmul(dir, 5.0f + v);
+    o->hit = hit;
+    float m[16];
+    mat_identity(m); m[12] = hit.x; m[13] = hit.y; m[14] = hit.z;
+    fx_named("Bell", "starwandhitmark", m, NULL, NULL);
+    o->nrv = 1; o->st = -1;
+}
+static int st_bell_try_ring(StBell *o) /* tryRing: isStarPointerPointing (100 at the body) and its screen speed over 8 */
+{
+    if (cur_vx * cur_vx + cur_vy * cur_vy <= 64.0f || !sth_pointing(st_bell_body(o), 100.0f)) return 0;
+    V3 eo, ed, ce, cw, cu;
+    float fovy;
+    cursor_ray(&eo, &ed);
+    camera_pose(&ce, &cw, &cu, &fovy);
+    V3 fw = vnorm(vsub(cw, ce)), sd = vnorm(vcross(fw, cu)), up = vcross(sd, fw);
+    V3 dir = vadd(vmul(sd, cur_vx), vmul(up, -cur_vy)); /* getStarPointerWorldVelocityDirection */
+    dir = vlen(dir) < 1e-6f ? v3(1, 0, 0) : vnorm(dir);
+    V3 hit = vadd(eo, vmul(ed, vdot(vsub(o->pos, eo), ed))); /* calcStarPointerWorldPointingPos at its depth */
+    st_bell_ring(o, dir, hit);
+    return 1;
+}
+static void st_bells_update(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (!in->bell || !row_shown(in->row)) continue;
+        StBell *o = st_bell(in->row);
+        if (!o) continue;
+        const Row *r = &sc->objs[in->row];
+        int st = ++o->st;
+        V3 body = st_bell_body(o);
+        int hit = mario_offence(o, body, 70.0f, o->grav) != MSG_NONE; /* receiveMsgPlayerAttack */
+#ifdef ST_BELL_TEST /* plain XF=-DST_BELL_TEST, ReverseKingdomGalaxy/2: from 60 the camera on the bell, Mario held 600 off,
+                     * at 300 and 700 a hit as Mario's spin from there; its state every 30 frames */
+        if (game_frame >= 60) {
+            V3 side = vnorm(vcross(o->grav, v3(0, 0, 1)));
+            if (game_frame < 900) { mario->pos = vadd(o->pos, vadd(vmul(side, 600.0f), vmul(o->grav, 150.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+            camera_set_override(1, vadd(o->pos, vadd(v3(0, 0, 900.0f), vmul(o->grav, -200.0f))), vadd(o->pos, vmul(o->grav, 80.0f)), vmul(o->grav, -1.0f), 45.0f);
+            if (game_frame == 300 || game_frame == 700) hit = 1;
+            if (game_frame % 30 == 0) printf("bell test f %u: nrv %d st %d bell (%.2f %.2f %.2f) clapper (%.2f %.2f %.2f) sw_a %d%c", game_frame, o->nrv, o->st,
+                                           o->b.d.x, o->b.d.y, o->b.d.z, o->r.d.x, o->r.d.y, o->r.d.z, r->sw[SW_A] >= 0 && sw_on(r, SW_A), 10);
+        }
+#endif
+        if (hit && (o->nrv == 0 || st > 10)) {
+            V3 d = vsub(o->pos, mario->pos);
+            d.y += 100.0f;
+            d = vlen(d) < 1e-6f ? d : vnorm(d);
+            st_bell_ring(o, d, vadd(vmul(d, -200.0f), o->pos));
+            st = ++o->st;
+            printf("magic bell %d: hit%c", in->row, 10);
+        }
+        if (o->nrv == 0) { /* exeWait */
+            if (st_bell_try_ring(o)) { st = ++o->st; printf("magic bell %d: pointer%c", in->row, 10); }
+        }
+        if (o->nrv == 1) { /* exeRing */
+            if (st == 0) {
+                if (r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) { sw_set(r, SW_A, 1); se_start(SE_OJ_HAPPY_BELL_SWITCH_ON, &o->pos.x); }
+                se_start(SE_OJ_HAPPY_BELL_RING, &o->pos.x);
+            }
+            st_swing_update(&o->b, o->pos, o->grav);
+            st_swing_update(&o->r, o->pos, o->grav);
+            if (vdot(o->b.d, o->r.d) < 0.95f) { /* the clapper meets the bell */
+                V3 v = vsub(o->b.d, o->r.d);
+                v = vsub(v, vmul(o->r.d, vdot(o->r.d, v)));
+                v = vlen(v) < 1e-6f ? v3(0, 0, 0) : vnorm(v);
+                float a = vdot(o->b.acc, v), b = vdot(o->r.acc, v), b0 = b >= 0.0f ? 0.0f : b;
+                if (a - b0 > 0.0f) {
+                    o->r.acc = vadd(o->r.acc, vsub(vmul(v, a - b0), o->r.acc)); /* accel(v x (a - b0) - its acceleration) */
+                    o->hit = o->r.p8;
+                }
+            }
+            float m[16];
+            st_bell_mtx(&o->r, o->pos, r->scale[0], m);
+            fx_named("Bell", "Ring", m, NULL, o); /* (kept while it rings: deleteEffect at Wait) */
+            if (!(st > 10 && st_bell_try_ring(o)) && o->b.d.y < -0.99f && vdot(o->b.acc, o->b.acc) < 0.1f * 0.1f) {
+                o->nrv = 0; o->st = -1;
+                printf("magic bell %d: still%c", in->row, 10);
+            }
+        }
+        mario_push_out(body, 70.0f); /* attackSensor: sendMsgPush */
+    }
+}
+static void st_bell_joints(Inst *in) /* polySurface2 (the bell, also its base) and polySurface1 (the clapper): the
+                                       * swing matrices, the instance at its place */
+{
+    StBell *o = st_bell(in->row);
+    Anim *a = in->anim;
+    if (!o || !a || !a->skin || a->skin->njoints < 3) return;
+    float inv[16], m[16];
+    const Row *r = &sc->objs[in->row];
+    mat_identity(in->m); in->m[12] = o->pos.x; in->m[13] = o->pos.y; in->m[14] = o->pos.z;
+    mat_identity(inv); inv[12] = -o->pos.x; inv[13] = -o->pos.y; inv[14] = -o->pos.z;
+    st_bell_mtx(&o->b, o->pos, r->scale[0], m); mat_mul(a->world[2], inv, m); memcpy(a->world[0], a->world[2], 64);
+    st_bell_mtx(&o->r, o->pos, r->scale[0], m); mat_mul(a->world[1], inv, m);
+}
 static void st_update(void)
 {
 #ifdef ST_MAPBOARD_TEST /* the camera on the board, 2500 in front of it */
@@ -1408,6 +1658,7 @@ static void st_update(void)
 #endif
     st_flags_update();
     st_objs_update();
+    st_bells_update();
     st_bbeamers_update();
     st_sboxes_update();
 #ifdef ST_FLAG_TEST
