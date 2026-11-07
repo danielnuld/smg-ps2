@@ -232,7 +232,7 @@ static void st_flag_test(void)
 }
 #endif
 /* ---- MapObj classes by placed type: their per-row state (StSt, kept across rebinds) ---- */
-enum { ST_NONE = 1, ST_TWALL, ST_MIRRORMODEL, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL };
+enum { ST_NONE = 1, ST_TWALL, ST_MIRRORMODEL, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX };
 /* Placed classes whose Petari behaviour is the model drawn with its animations and collision (the engine's generic
  * instance does that): LavaGalaxyParts.cpp (LavaShellTowerStep, LavaStepA / B / C: startBtk / Brk / Bpk / Btp of its
  * name, collision, clipping; ponytail: the steps' DLMakerProjmapEffectMtxSetter lava glow is baked at slice time and
@@ -255,6 +255,7 @@ static int st_kind_name(const char *n)
     if (!strcmp(n, "KoopaShipManholeCover")) return ST_MANHOLE; /* ManholeCover */
     if (!strcmp(n, "LargeChain")) return ST_CHAIN;
     if (!strcmp(n, "SubmarineVolcanoBigColumn")) return ST_BIGCOL;
+    if (!strcmp(n, "FlexibleSandPlanetPartsA")) return ST_FLEX; /* FlexibleSphere */
     if (!strcmp(n, "TrialBubbleTimerMoveWallA")) return ST_TMWALL; /* TimerMoveWall */
     if (!strcmp(n, "SurprisedGalaxy") || (!strncmp(n, "Surp", 4) && strlen(n) > 10 && !strcmp(n + strlen(n) - 6, "Galaxy"))) return ST_SURP;
     for (u32 k = 0; k < sizeof st_still / sizeof *st_still; k++) if (!strcmp(n, st_still[k])) return ST_STILL;
@@ -267,9 +268,10 @@ static int st_kind(int type)
     if (!st_kinds[type]) st_kinds[type] = (signed char)st_kind_name(sc->types + 32 * type);
     return st_kinds[type];
 }
-typedef struct { int row, n, st, on; const unsigned char *kcl; u32 lv[3]; V3 off; } StSt; /* n its nerve, st its step */
+typedef struct { int row, n, st, on, t2, t3; const unsigned char *kcl; u32 lv[3]; V3 off; float k; } StSt; /* n its nerve, st its step */
 static StSt st_st[128];
 static void st_column(Inst *in, StSt *g); /* SubmarineVolcanoBigColumn (below) */
+static void st_flex(Inst *in, StSt *g, int i); /* FlexibleSphere (below) */
 static int nst_st;
 static const Scene *st_st_sc;
 static StSt *st_get(int row)
@@ -579,6 +581,7 @@ static void st_objs_update(void)
         case ST_MANHOLE: st_manhole(in, g, i); break;
         case ST_CHAIN: if (st_chain(in, g)) return; break;
         case ST_BIGCOL: st_column(in, g); break;
+        case ST_FLEX: st_flex(in, g, i); break;
         case ST_DOMEGALAXY: { /* AstroDomeDemoAstroGalaxy::init: setBrkFrameAndStop 2 with grand star 5, 1 with 3, else 0
                                * (slice.py BRK_STEPS: "<class>~<frame>") */
             char n[40];
@@ -796,6 +799,76 @@ static void st_columns_draw(void)
         if (st_kind(sc->objs[in->row].type) != ST_BIGCOL || st_get(in->row)->n != 1) continue;
         Anim *a = obj_anim(16 * (int)sc->nobjs + in->row, md, "SubmarineVolcanoBigColumnBreak");
         if (a) draw_skin(md, in->m, a); /* (its base matrix, the column's) */
+    }
+}
+
+/* FlexibleSphere.cpp after Petari (FlexibleSandPlanetPartsA): idle until its SW_A is on (Wind effect), or without
+ * one until Mario stands on it; then it grows by arg2 / 10000 (0.002) a frame up to arg0 / 10000 (1) and shrinks to
+ * arg1 / 10000 (0.1), its collision scaled with it, its move level SE; at either end a quake: 60 frames of
+ * shakeCameraInfinity(0.2, 3) and the earthquake level SE within 4000, a numb rumble with Mario on it. arg3 1: it
+ * starts shrinking with a countdown (the timer SEs every 60 frames by what is left: 0..120 QUASI_0, ..600 _1, else
+ * _2) and at its end vanishes (TIMER_A_0, VANISH, its dead switch). StSt: k its scale, n 0 grow / 1 shrink, on
+ * enabled, t2 the shake timer, t3 mTimer. ponytail: its texture scaled 0.05 / scale + 0.95 (the shape callback's
+ * texture matrix), the move SE's level parameter */
+static void st_flex(Inst *in, StSt *g, int i)
+{
+    const Row *r = &sc->objs[in->row];
+    float mx = r->arg[0] != -1 ? r->arg[0] / 10000.0f : 1.0f, mn = r->arg[1] != -1 ? r->arg[1] / 10000.0f : 0.1f;
+    float rate = r->arg[2] != -1 ? r->arg[2] / 10000.0f : 0.002f;
+    int vanish = r->arg[3] == 1;
+    if (g->k == 0.0f) { /* init: mScale (the row's) */
+        g->k = r->scale[0];
+        if (vanish) { g->n = 1; g->t3 = (int)((g->k - mn) / rate); }
+    }
+    V3 p = v3(in->m[12], in->m[13], in->m[14]);
+    float d = vlen(vsub(mario->pos, p));
+    if (g->t2) {
+        if (d < 4000.0f) g->lv[1] = se_level(SE_AT_LV_EARTHQUAKE, NULL, g->lv[1]);
+        if (--g->t2 == 0) camera_shake_stop(g);
+        goto place;
+    }
+    if (!g->on) {
+        if (r->sw[SW_A] >= 0) {
+            if (!sw_on(r, SW_A)) goto place;
+            g->on = 1;
+            fx_named("FlexibleSandPlanetPartsA", "Wind", in->m, NULL, NULL);
+        } else if (mario_ground == i) g->on = 1; /* isActorOnPlayer */
+        else goto place;
+        printf("flexible sphere %d: on%c", in->row, 10);
+    }
+    g->lv[0] = se_level(SE_OJ_LV_FLEX_SPHERE_MOVE, &in->m[12], g->lv[0]);
+    int quake = 0;
+    if (g->n == 0) {
+        if (g->k < mx) g->k += rate;
+        else { g->n = 1; quake = 1; }
+    } else if (g->k > mn) {
+        g->k -= rate;
+        if (vanish && g->t3 > 0) {
+            if (!miss_running() && !star_demo && g->t3 % 60 == 0)
+                se_start(g->t3 <= 120 ? SE_SY_TIMER_A_QUASI_0 : g->t3 <= 600 ? SE_SY_TIMER_A_1 : SE_SY_TIMER_A_2, NULL);
+            g->t3--;
+        }
+    } else if (vanish) { /* kill: its dead switch, Vanish */
+        se_start(SE_SY_TIMER_A_0, NULL);
+        se_start(SE_OJ_FLEX_SPHERE_VANISH, &in->m[12]);
+        fx_named("FlexibleSandPlanetPartsA", "Vanish", in->m, NULL, NULL);
+        if (r->sw[SW_DEAD] >= 0) sw_set((Row *)r, SW_DEAD, 1);
+        printf("flexible sphere %d: vanish%c", in->row, 10);
+        row_kill(in->row);
+        return;
+    } else { g->n = 0; quake = 1; }
+    if (quake && !g->t2) {
+        g->t2 = 60;
+        if (d < 4000.0f) camera_shake_infinity(g, 0.2f, 3.0f);
+        if (mario_ground == i) pad_rumble(RUMBLE_NUMB); /* マリオ[しびれ] */
+        printf("flexible sphere %d: quake at scale %d / 1000%c", in->row, (int)(g->k * 1000.0f), 10);
+    }
+place: {
+        float old[16], s[3] = {g->k, g->k, g->k};
+        memcpy(old, in->m, sizeof old);
+        mat_translate_rot_scale(in->m, r->pos, r->rot, s);
+        in->s = g->k; in->reach = in->md ? in->md->radius * g->k : in->reach;
+        if (mario_ground == i) carry(old, in); /* (Mario on it moves with its surface) */
     }
 }
 
