@@ -2391,7 +2391,7 @@ int main(void)
             if (frame >= 150 && frame < 600 && frame % 10 == 0) {
                 char d[128];
                 game_debug(d, sizeof d);
-                printf("fluff test f %u: %d spins %d %s\n", frame, r, game_test_fluff(2), d);
+                printf("fluff test f %u: %d spins %d wind %d %s\n", frame, r, game_test_fluff(2), game_test_fluff(4), d);
             }
         }
 #endif

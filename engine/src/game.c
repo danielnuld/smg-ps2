@@ -747,7 +747,8 @@ static struct { int inst, phase, t, drop, row; V3 dir, head, vel; } jet = {.inst
                                                                 * MarioSwim::dropJet's releaseThrowMemoSensor asked */
 static int kmj_carry(void);
 static int m_carry_jet(void) { return (jet.inst >= 0 && jet.phase == 1) || kmj_carry(); } /* MarioActor _468 / getCarrySensor */
-static struct { int inst, phase, t, spins; } flf = {.inst = -1}; /* the Fluff Mario rides (fluff_update) */
+static struct { int inst, phase, t, spins, wtimer; V3 up, front, tup, wdir; float wdist; } flf = {.inst = -1, .wtimer = -1}; /* the Fluff Mario rides (fluff_update): mUp, mFront, mTargetUpVec, mWindDir, mWindDistance, mWindSpinTimer */
+static int nfwind = -1; /* FluffWindHolder's rails (fluff_wind_init), -1 not gathered */
 static struct { int inst, phase, t, wait; V3 vel; } coc = {.inst = -1, .wait = -1}; /* SpaceCocoon Mario hangs on (cocoon_update) */
 static int sls_pad = -1;  /* the SpiderAttachPoint (SlingShooter) in its pointer command stream (mPadChannel 0), -1 none */
 static int bgb_gen_type = -1; /* BigBubbleGenerator: shown before its SW_APPEAR (only its activity listens to it) */
@@ -2584,6 +2585,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     sbp_bva_row = -1;
     nchg = 0; /* ChipGroup states (chip_group_of) */
     nfbs = 0; /* FountainBig states */
+    nfwind = -1; /* FluffWind rails */
     nrbms = 0;
     nsbms = 0; nmhills = 0; nprs = 0; wb_ride = -1; memset(wbs, 0, sizeof wbs); ntzs = 0; tz_ride = -1; nonis = 0; nfprs = 0; nspms = 0; nkss = 0; nebs = 0; nlfs = 0; npls = 0; nfgs = 0; nggs = 0; nsss = 0; ss_ride = -1; ss_reset(); kfires_reset(); nlls = 0; ndls = 0; nebl = 0; nass = 0;
     dino_cam = 0;
@@ -3279,6 +3281,7 @@ static V3 sambo_hpos(int k);
 static V3 cocoon_neutral(const Inst *in);
 static void cocoon_place(Inst *in);
 static void fluff_place(Inst *in);
+static void fluff_face_wind(Inst *in);
 static void jet_place(Inst *in);
 static V3 stink_front(const Kuribo *k);
 static void place_waterplants(void);
@@ -5381,7 +5384,7 @@ static void game_rebind_(void)
         if (in->fountain || in->stray) memcpy(in->m0, in->m, 64);
         if (in->stray) in->head = row_turn[i] ? (stray_at[i % 64].x || stray_at[i % 64].y || stray_at[i % 64].z ? stray_at[i % 64] : v3(in->m[12], in->m[13], in->m[14])) : v3(in->m[12], in->m[13], in->m[14]);
         if (in->jet) { memcpy(in->m0, in->m, 64); in->head = v3(in->m[12], in->m[13], in->m[14]); in->hvel = v3(0, 0, 0); }
-        if (in->fluff) { memcpy(in->m0, in->m, 64); in->head = v3(in->m[12], in->m[13], in->m[14]); in->hvel = v3(0, 0, 0); }
+        if (in->fluff) { memcpy(in->m0, in->m, 64); in->head = v3(in->m[12], in->m[13], in->m[14]); in->hvel = v3(0, 0, 0); fluff_face_wind(in); }
         if (in->cocoon) { /* at rest at its neutral point, arg1 (default 100) up its axis */
             memcpy(in->m0, in->m, 64);
             in->head = cocoon_neutral(in);
@@ -6674,7 +6677,7 @@ int game_test_giver(int kind)
  * 1 the cursor on the cocoon and R2 held; 2 the cursor `drag` px lower; 3 R2 let go. Returns coc.phase (0 none) for
  * phases 1-3; 4 only coc.phase */
 /* Test builds: phase 0 Mario spinning by the first Fluff (its row, -2 streaming, -1 none); 1 Mario jumping into it
- * (its row_turn, or 9 riding); 2 flf.spins (-1 not riding); 3 Square pressed this frame */
+ * (its row_turn, or 9 riding); 2 flf.spins (-1 not riding); 3 Square pressed this frame; 4 flf.wdist (-2 not riding) */
 /* Test builds: Mario 300 off the first water plant placed (how many so far, -1 none yet) */
 int game_test_waterplant(void)
 {
@@ -6689,6 +6692,7 @@ int game_test_waterplant(void)
 int game_test_fluff(int phase)
 {
     if (phase == 2) return flf.inst >= 0 ? flf.spins : -1;
+    if (phase == 4) return flf.inst >= 0 ? (int)flf.wdist : -2; /* mWindDistance */
     if (phase == 3) { test_sq = 1; return 0; }
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
@@ -9187,8 +9191,14 @@ static int cocoon_update(Player *m)
  * blooms again at home. Mario in the air within 150 of it while it floats takes hold (RideStart: up 0.2 a frame to
  * 15, his speed along the ground kept), then flies (RideFly: x 0.98 a frame, the stick 0.2 along the ground, gravity
  * 0.15); a spin lifts him (RideSpinUp: +0.8 a frame for 30 frames, 3 times; after the last it falls turning), X jumps
- * off (18 up), touching the map lets go. row_turn 0 on its leaf, 1 floating, 2 gone; flf.phase 1 start, 2 fly, 3 spin
- * up; row_step its frames. ponytail: no FluffWind, no leaf model, no Bloom / Spin animations, Mario hangs 130 under it */
+ * off (18 up), touching the map lets go. Near a FluffWind rail (updateWind: within sDistanceToWindFar 1500) the wind
+ * pushes it along the rail (0.08 far to 0.3 near, eased in), its side speed held to 6, its front blends to the wind
+ * (0.08) and its up leans into it (sBlendRateWindUp 0.5); within 300 it flies on the wind (RideFlyOnWind: HardWind,
+ * the stick only across the wind; a spin within 30 frames of it lifts at 1.3). row_turn 0 on its leaf, 1 floating,
+ * 2 gone; flf.phase 1 start, 2 fly, 3 spin up, 4 fly on the wind, 5 spin up on the wind; row_step its frames.
+ * ponytail: no leaf model, no Bloom / Spin / Mario Fluff* animations (RideStart's FluffStart 40 frames, SpinUp's
+ * Spin1st-3rd 90), the camera not on its CameraTargetMtx, its damage sensors (DamageMario / Middle / Head) not kept,
+ * Mario hangs 130 under it */
 /* JetTurtle.cpp (on land): a Koopa shell waiting at its home. Mario touching it takes it (TakenStart: held in front
  * of him); a spin throws it along his front (Throwing) at sThrowSpdStraight (30, arg1 0: 20) a frame; it blows away the
  * walkers it touches (JetTurtleAttack: Unizos too) and is gone (reset) on a wall, after sResetStep (300, arg1 0: 480)
@@ -13760,6 +13770,84 @@ static void update_jets(void)
     }
 }
 
+static V3 rail_tan(const float *p, int n, float d);
+static float rail_nearest(const float *p, int n, V3 q);
+/* FluffWind.cpp: a rail of wind for the Fluffs (FluffWindHolder わたげ風, 8). Its FluffWindEffects: a FluffWind
+ * effect every sEffectEmitterInterval (600) along the rail (length / 600 + 1 of them, spaced length / (n - 1)), each
+ * on makeMtxFrontUpPos(the rail's direction there, Y up, its point), emitted at BrowWind's first step and again at
+ * its re-set after getRandom(60, 240) frames: its emitters are forever ones (max frame 0) that the re-emit keeps, so
+ * kept here every frame; its SW_B (listenStageSwitchOnB makeActorDead) kills them. calcWindInfo: over every FluffWind in
+ * the holder (dead ones too) the nearest rail point, its direction and distance (from 1000000).
+ * ponytail: the effects' validateClipping at step 180 not kept (fx has no clipping) */
+#define FWIND_MAX 8
+#define FWIND_FX 24
+static struct { const Row *r; const float *p; u32 n; int nfx, dead; float step; char key[FWIND_FX]; } fwind[FWIND_MAX];
+
+static void fluff_wind_init(void)
+{
+    if (nfwind >= 0 || !sc || !scene_blob_g) return;
+    nfwind = 0;
+    for (u32 i = 0; i < sc->nobjs && nfwind < FWIND_MAX; i++) {
+        const Row *r = &sc->objs[i];
+        int cl;
+        u32 n;
+        if (strcmp(sc->types + 32 * r->type, "FluffWind") || r->path < 0) continue;
+        const float *p = find_rail(scene_blob_g, r->zone, r->path, &n, &cl);
+        if (!p || n < 2) continue;
+        float len = w_rail_len(p, n);
+        int c = (int)(len / 600.0f) + 1; /* sEffectEmitterInterval */
+        if (c > FWIND_FX) c = FWIND_FX;
+        fwind[nfwind].r = r; fwind[nfwind].p = p; fwind[nfwind].n = n; fwind[nfwind].dead = 0;
+        fwind[nfwind].nfx = c; fwind[nfwind].step = c > 1 ? len / (float)(c - 1) : 0;
+        nfwind++;
+    }
+}
+
+/* FluffFunction::calcFluffWindInfo: 0 (dir zero, dist -1) with no FluffWind in the scene */
+static int fluff_wind_info(V3 pos, V3 *dir, float *dist)
+{
+    fluff_wind_init();
+    *dir = v3(0, 0, 0); *dist = -1.0f;
+    if (nfwind <= 0) return 0;
+    float best = 1000000.0f;
+    V3 bd = v3(0, 0, 0);
+    for (int k = 0; k < nfwind; k++) {
+        float c = rail_nearest(fwind[k].p, (int)fwind[k].n, pos), d = vlen(vsub(rail_at(fwind[k].p, fwind[k].n, c), pos));
+        if (d < best) { best = d; bd = rail_tan(fwind[k].p, (int)fwind[k].n, c); }
+    }
+    *dir = bd; *dist = best;
+    return 1;
+}
+
+static void update_fluff_winds(void) /* FluffWindEffect::exeBrowWind */
+{
+    fluff_wind_init();
+    for (int k = 0; k < nfwind; k++) {
+        if (fwind[k].dead || sw_on(fwind[k].r, SW_B)) { fwind[k].dead = 1; continue; } /* makeActorDead */
+        for (int e = 0; e < fwind[k].nfx; e++) {
+            float d = e * fwind[k].step;
+            V3 p = rail_at(fwind[k].p, fwind[k].n, d), f = rail_tan(fwind[k].p, (int)fwind[k].n, d);
+            V3 u = vnorm(vtangent(v3(0, 1, 0), f)), sd = vcross(u, f); /* makeMtxFrontUpPos */
+            float m[16] = {sd.x, sd.y, sd.z, 0, u.x, u.y, u.z, 0, f.x, f.y, f.z, 0, p.x, p.y, p.z, 1};
+            fx_named("FluffWind", "FluffWind", m, NULL, &fwind[k].key[e]);
+        }
+    }
+}
+
+static void fluff_face_wind(Inst *in) /* Fluff::initAfterPlacement: facing the wind, its up kept */
+{
+    V3 dir;
+    float dist;
+    if (!fluff_wind_info(v3(in->m0[12], in->m0[13], in->m0[14]), &dir, &dist)) return;
+    float sx = vlen(v3(in->m0[0], in->m0[1], in->m0[2])), sy = vlen(v3(in->m0[4], in->m0[5], in->m0[6])), sz = vlen(v3(in->m0[8], in->m0[9], in->m0[10]));
+    V3 up = vnorm(v3(in->m0[4], in->m0[5], in->m0[6])), f = vnorm(vtangent(dir, up)), s; /* makeAxisUpFront */
+    if (vlen(f) < 0.001f) return;
+    s = vcross(up, f);
+    in->m0[0] = s.x * sx; in->m0[1] = s.y * sx; in->m0[2] = s.z * sx;
+    in->m0[8] = f.x * sz; in->m0[9] = f.y * sz; in->m0[10] = f.z * sz;
+    (void)sy;
+}
+
 static void fluff_place(Inst *in)
 {
     memcpy(in->m, in->m0, 64);
@@ -13770,6 +13858,7 @@ static void fluff_place(Inst *in)
 static void update_fluffs(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    update_fluff_winds();
     FOR_KIND(i, fluff) {
         Inst *in = &insts[i];
         if (!in->fluff || flf.inst == i) continue;
@@ -13785,7 +13874,9 @@ static void update_fluffs(void)
         }
         if (mario->spin_timer > 0 && vlen(vsub(c, in->head)) < 150.0f + 100.0f && (*ph == 0 || *t > 60)) {
             in->hvel = vmul(up, *ph == 0 ? 10.0f : 5.0f); /* receiveMsgPlayerSpinAttack */
+            pad_rumble(RUMBLE_MIDDLE);
             *ph = 1; *t = 0;
+            se_start(SE_OJ_FLUFF_RISE_UP_BLOW, &in->head.x); /* exeFreeWaitAir */
             printf("fluff row %d: up" "\n", row);
         }
         if (*ph == 1) { /* FreeWaitAir */
@@ -13793,14 +13884,19 @@ static void update_fluffs(void)
             float down = -vdot(in->hvel, up);
             if (down > 0.8f) in->hvel = vmul(vnorm(in->hvel), 0.8f);
             V3 p = vadd(in->head, in->hvel);
-            if (vdot(in->hvel, up) < 0 && collide(&p, up, 50.0f)) { *ph = 2; *t = 0; /* isOnGround, coming down */ printf("fluff row %d: lands, gone" "\n", row); }
+            if (vdot(in->hvel, up) < 0 && collide(&p, up, 50.0f)) { /* isOnGround: Splash, SE_OJ_FLUFF_BREAK */
+                *ph = 2; *t = 0;
+                fx_named("Fluff", "Splash", in->m, NULL, NULL);
+                se_start(SE_OJ_FLUFF_BREAK, &p.x);
+                printf("fluff row %d: lands, gone" "\n", row);
+            }
             in->head = p;
         }
         fluff_place(in);
     }
 }
 
-static int fluff_try(Player *m)
+static int fluff_try(Player *m) /* receiveOtherMsg isMsgAutoRushBegin */
 {
     if (flf.inst >= 0 || m->grounded || m->launch >= 0) return 0;
     V3 c = vadd(m->pos, vmul(m->up, HIT_BODY_H));
@@ -13810,60 +13906,157 @@ static int fluff_try(Player *m)
         V3 up = up_at(in->head, m->up), v = vadd(m->hvel, vmul(m->up, m->vup));
         if (vdot(v, up) < 0) v = vtangent(v, up); /* no falling speed */
         in->hvel = v;
+        flf.up = vnorm(v3(in->m0[4], in->m0[5], in->m0[6])); /* mBaseMtx's Y */
+        flf.front = vtangent(v, flf.up);
+        flf.front = vlen(flf.front) > 0.001f ? vnorm(flf.front) : m->face; /* getPlayerFrontVec */
+        flf.front = vnorm(vtangent(flf.front, flf.up)); /* makeAxisUpFront */
+        flf.tup = flf.up;
         flf.inst = i; flf.phase = 1; flf.t = 0; flf.spins = 3;
         m->hip = 0; m->spin_timer = 0;
+        fx_named("Fluff", "Splash", in->m, NULL, NULL);
+        pad_rumble(RUMBLE_WEAK);
+        se_start(SE_PV_CATCH, &m->pos.x); se_start(SE_PM_GRAB_OBJ, &m->pos.x);
+        if (in->row >= 0) sw_set(&sc->objs[in->row], SW_A, 1);
         printf("fluff row %d: Mario takes hold" "\n", in->row);
         return 1;
     }
     return 0;
 }
 
-static void fluff_end(Player *m, float jump)
+static void fluff_end(Player *m, float jump) /* Fluff::endBind */
 {
     Inst *in = &insts[flf.inst];
     V3 up = up_at(in->head, m->up), v = vadd(vtangent(in->hvel, up), vmul(up, jump));
     m->hvel = vtangent(v, m->up); m->vup = jump > 0 ? vdot(v, m->up) : 0;
     m->grounded = 0; m->jump_kind = 0; m->air_timer = 0; m->spin_lock = 0;
+    se_start(SE_PV_JUMP_S, &m->pos.x);
+    if (jump > 0) se_start(SE_PM_JUMP_M, &m->pos.x);
+    if (in->row >= 0) sw_set(&sc->objs[in->row], SW_A, 0);
+    fx_named("Fluff", "Splash", in->m, NULL, NULL);
+    se_start(SE_OJ_FLUFF_BREAK, &in->head.x);
     row_turn[in->row] = 2; row_step[in->row] = 0; /* FreeWaitInvalid */
     fluff_place(in);
     printf("fluff row %d: %s" "\n", in->row, jump > 0 ? "jump off" : "let go");
     flf.inst = -1;
 }
 
-/* returns 1 while Mario rides */
+static int fluff_try_spin_up(int step) /* Fluff::trySpinUp */
+{
+    flf.wtimer--;
+    if (flf.spins > 0 && (pad_pressed(PAD_SQUARE) || test_sq) && flf.t > step) { /* isPadSwing, isGreaterStep */
+        flf.phase = flf.wtimer > 0 ? 5 : 3; flf.t = -1; /* RideSpinUpOnWind / RideSpinUp */
+        return 1;
+    }
+    return 0;
+}
+
+static void fluff_update_wind(Inst *in, V3 grav) /* Fluff::updateWind */
+{
+    V3 wf = v3(0, 0, 0);
+    flf.wdir = v3(0, 0, 0);
+    fluff_wind_info(in->head, &flf.wdir, &flf.wdist);
+    float near = flf.wdist > 0.0f ? 1.0f - fminf(fmaxf((flf.wdist - 200.0f) / (1500.0f - 200.0f), 0.0f), 1.0f) : 0.0f; /* sDistanceToWindNear / Far */
+    float ease = 1.0f - cosf(near * 1.5707963f); /* getEaseInValue(x, 0, 1, 1) */
+    if (flf.wdist > 0.0f) {
+        in->hvel = vadd(in->hvel, vmul(flf.wdir, 0.08f + (0.3f - 0.08f) * ease)); /* sWindAccelFar / Near */
+        float vh = vdot(in->hvel, flf.wdir);
+        in->hvel = vsub(in->hvel, vmul(flf.wdir, vh));
+        float vv = vdot(in->hvel, grav);
+        in->hvel = vsub(in->hvel, vmul(grav, vv));
+        if (vlen(in->hvel) > 6.0f) in->hvel = vmul(vnorm(in->hvel), 6.0f); /* restrictVelocity sRideFrontSpeedMax */
+        in->hvel = vadd(in->hvel, vadd(vmul(flf.wdir, vh), vmul(grav, vv)));
+        wf = flf.wdir;
+    } else wf = flf.front;
+    if (flf.spins > 0) {
+        if (pad_lx() == 0.0f || pad_ly() == 0.0f) flf.front = vadd(vmul(flf.front, 1.0f - 0.08f), vmul(wf, 0.08f)); /* sBlendRateToWind */
+        in->lv[1] = se_level(SE_OJ_LV_FLUFF_FLY, &in->head.x, in->lv[1]);
+    } else {
+        flf.front = rot_axis(flf.front, flf.up, 10.0f * 0.0174533f); /* sRideFallRotateSpeed */
+        in->lv[1] = se_level(SE_OJ_LV_FLUFF_FLY_FALL, &in->head.x, in->lv[1]);
+    }
+    in->hvel = vadd(in->hvel, vmul(grav, 0.15f)); /* sRideGravity */
+    flf.front = vnorm(vtangent(flf.front, flf.up)); /* makeMtxUpFront */
+    if (flf.wdist > 0.0f) flf.tup = vadd(vmul(flf.up, 1.0f - ease * 0.5f), vmul(flf.wdir, ease * 0.5f)); /* sBlendRateWindUp */
+    else flf.tup = flf.up;
+}
+
+/* Fluff::updateRide: 1 when Mario let go (A, or the binder touched the map: checked after the move) */
+static int fluff_update_ride(Player *m, Inst *in, V3 grav)
+{
+    if (pad_pressed(PAD_CROSS)) { fluff_end(m, 18.0f); return 1; } /* sJumpSpeedY */
+    in->hvel = vmul(in->hvel, 0.98f); /* sRideFrictionRate */
+    flf.up = vnorm(vadd(vmul(flf.up, 1.0f - 0.01f), vmul(grav, -0.01f))); /* sBlendRateAxisY */
+    V3 cam_fwd = vnorm(vtangent(vsub(m->pos, cam_pos), flf.up)), cam_right = vnorm(vcross(cam_fwd, flf.up));
+    V3 f = vtangent(vadd(vmul(cam_right, pad_lx()), vmul(cam_fwd, pad_ly())), flf.up); /* calcWorldStickDirectionXZ */
+    if (vlen(f) > 0.001f) {
+        f = vnorm(f);
+        if (vlen(flf.wdir) > 0.001f) f = vtangent(f, flf.wdir);
+        if (vlen(f) > 0.001f) flf.front = vadd(vmul(flf.front, 1.0f - 0.1f), vmul(vnorm(f), 0.1f)); /* sRideFrontBlendRate */
+        flf.front = vnorm(flf.front);
+        in->hvel = vadd(in->hvel, vmul(f, 0.2f)); /* sRideMoveFrontAccel */
+        in->lv[0] = se_level(SE_OJ_LV_FLUFF_SIDE_MOVE, &in->head.x, in->lv[0]);
+    }
+    fluff_update_wind(in, grav);
+    return 0;
+}
+
+/* returns 1 while Mario rides. flf.phase 1 RideStart, 2 RideFly, 3 RideSpinUp, 4 RideFlyOnWind, 5 RideSpinUpOnWind */
 static int fluff_update(Player *m)
 {
     Inst *in = &insts[flf.inst];
-    V3 up = up_at(in->head, m->up);
-    flf.t++;
-    if (pad_pressed(PAD_CROSS)) { fluff_end(m, 18.0f); return 0; } /* updateRide: A jumps off */
+    V3 up = up_at(in->head, m->up), grav = vmul(up, -1.0f);
+    int first = ++flf.t == 0;
     if (flf.phase == 1) { /* RideStart */
-        if (vdot(in->hvel, up) < 15.0f) in->hvel = vadd(in->hvel, vmul(up, 0.2f));
-        if (flf.t >= 40) { flf.phase = 2; flf.t = 0; }
-    }
-    if (flf.phase >= 2 && flf.spins > 0 && (pad_pressed(PAD_SQUARE) || test_sq) && (flf.phase == 2 || flf.t > 60)) { /* trySpinUp */
-        flf.spins--; flf.phase = 3; flf.t = 0;
-        printf("fluff row %d: spin up, %d left" "\n", in->row, flf.spins);
+        if (vdot(in->hvel, flf.up) < 15.0f) in->hvel = vadd(in->hvel, vmul(flf.up, 0.2f)); /* sRideStartUpSpeedMax / Accel */
+        if (fluff_update_ride(m, in, grav)) return 0;
+        if (flf.t >= 40) { flf.phase = 2; flf.t = -1; } /* isBckStoppedPlayer (FluffStart) */
+    } else if (flf.phase == 2) { /* RideFly */
+        if (fluff_update_ride(m, in, grav)) return 0;
+        if (!fluff_try_spin_up(0) && flf.wdist > 0.0f && flf.wdist < 300.0f) { flf.phase = 4; flf.t = -1; printf("fluff row %d: on the wind (%d)" "\n", in->row, (int)flf.wdist); } /* sWindDistanceMin / Max */
+    } else if (flf.phase == 4) { /* RideFlyOnWind */
+        if (fluff_update_ride(m, in, grav)) return 0;
+        flf.wtimer = 30; /* sWindRemainTime */
+        if (!fluff_try_spin_up(0)) {
+            pad_rumble(RUMBLE_WEAK);
+            if (flf.wdist > 300.0f + 100.0f) { flf.phase = 2; flf.t = -1; }
+        }
+    } else { /* RideSpinUp(OnWind) */
+        if (first) {
+            se_start(flf.phase == 5 ? SE_PV_JUMP_JOY : SE_PV_TWIST_START, &m->pos.x);
+            pad_rumble(RUMBLE_MIDDLE);
+            if (flf.spins > 0) {
+                flf.spins--;
+                se_start(SE_OJ_FLUFF_LOSE, &in->head.x);
+                se_start(flf.spins == 2 ? SE_OJ_FLUFF_RISE_UP_1 : flf.spins == 1 ? SE_OJ_FLUFF_RISE_UP_2 : SE_OJ_FLUFF_RISE_UP_4, &in->head.x);
+            }
+            printf("fluff row %d: spin up%s, %d left" "\n", in->row, flf.phase == 5 ? " on the wind" : "", flf.spins);
+        }
+        if (fluff_update_ride(m, in, grav)) return 0;
+        if (flf.spins >= 0 && flf.t < 30) { /* sStepSpinUpAccel */
+            in->hvel = vadd(in->hvel, vmul(flf.up, flf.phase == 5 ? 1.3f : 0.8f)); /* sSpinUpAccelOnWindY / sSpinUpAccelY */
+            pad_rumble(RUMBLE_VERY_WEAK);
+        }
+        if (flf.wdist > 0.0f && flf.wdist < 300.0f) flf.wtimer = 30;
+        if (!fluff_try_spin_up(60) && flf.t > 90) { flf.phase = 2; flf.t = -1; } /* sStepToSpinUp2nd; isBckStopped (Spin1st-3rd) */
     }
     test_sq = 0;
-    if (flf.phase == 3 && flf.t <= 30) in->hvel = vadd(in->hvel, vmul(up, 0.8f));
-    if (flf.phase == 3 && flf.t > 90) { flf.phase = 2; flf.t = 0; }
-    in->hvel = vmul(in->hvel, 0.98f); /* friction, the stick, gravity */
-    V3 cam_fwd = vnorm(vtangent(vsub(m->pos, cam_pos), up)), cam_right = vnorm(vcross(cam_fwd, up));
-    V3 stick = vadd(vmul(cam_right, pad_lx()), vmul(cam_fwd, pad_ly()));
-    if (vlen(stick) > 0.1f) { in->hvel = vadd(in->hvel, vmul(vnorm(stick), 0.2f)); m->face = vnorm(stick); }
-    in->hvel = vsub(in->hvel, vmul(up, 0.15f));
-    V3 h = vtangent(in->hvel, up);
-    if (vlen(h) > 6.0f) in->hvel = vadd(vmul(vnorm(h), 6.0f), vmul(up, vdot(in->hvel, up))); /* restrictVelocity 6 */
+    if (flf.phase == 4) fx_named("Fluff", "HardWind", in->m, NULL, &flf); /* RideFlyOnWind's emitEffect, deleted in RideFly */
+    fx_named("Fluff", "Blur", in->m, NULL, in); /* emitEffect Blur at the bind, deleteEffect at endBind */
     V3 p = vadd(in->head, in->hvel);
     int wall = 0;
     V3 gn, wn, q = vsub(p, vmul(up, 80.0f)); /* initBinder(50, -80) */
-    if (flf.phase >= 2 && (collide_n(&q, up, 50.0f, &gn, &wn, &wall) || wall)) { /* RideStart: offBind */ in->head = p; fluff_end(m, 0); return 0; } /* isBinded */
+    if (flf.phase >= 2 && (collide_n(&q, up, 50.0f, &gn, &wn, &wall) || wall)) { in->head = p; fluff_end(m, 0); return 0; } /* isBinded (RideStart: offBind) */
     in->head = p;
-    m->pos = vsub(p, vmul(up, 130.0f)); /* hanging under it */
+    m->pos = vsub(p, vmul(flf.tup, 130.0f)); /* hanging under it: MarioHang on makeMtxUpFrontPos(mTargetUpVec, mFront) */
     m->up = up;
+    m->face = flf.front;
     m->hvel = v3(0, 0, 0); m->vup = 0; m->grounded = 0;
+    float s0 = vlen(v3(in->m0[0], in->m0[1], in->m0[2])), s1 = vlen(v3(in->m0[4], in->m0[5], in->m0[6])), s2 = vlen(v3(in->m0[8], in->m0[9], in->m0[10]));
+    V3 fu = vnorm(flf.tup), ff = vnorm(vtangent(flf.front, fu)), fs = vcross(fu, ff); /* calcAndSetBaseMtx */
     fluff_place(in);
+    in->m[0] = fs.x * s0; in->m[1] = fs.y * s0; in->m[2] = fs.z * s0;
+    in->m[4] = fu.x * s1; in->m[5] = fu.y * s1; in->m[6] = fu.z * s1;
+    in->m[8] = ff.x * s2; in->m[9] = ff.y * s2; in->m[10] = ff.z * s2;
     return 1;
 }
 
