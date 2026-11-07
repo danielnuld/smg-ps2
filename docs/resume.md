@@ -1894,3 +1894,12 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
   after a launch star start): up, open, 4 babies out. ponytail: no Hit clip at a staggering Mario, its body's enemy
   attack on other babies, the Green / OnAndOff BRKs. Repack: OceanFloaterLandGalaxy (slice.py SKINNED_OBJ JumpGuarder
   + head, EXTRA JumpGuarderHead / BegomanBaby), sound.py --pack (JGUARDER / BABYBEGO SEs).
+- BallBeamer (2026-11-07): BallBeamer.cpp + RingBeam.cpp (mFollowGravity) in statics.inc (st_bbeamers_*): 50 under
+  its row; Wait until Mario is within 3000, Attack 360 (charge SE 75..118, Charge at 75, at 119 Sign, ROT_HEAD and
+  the next of its 12 rings), Inter 120, again while SW_A is on; SW_B: Vanish, killed. A ring's point crawls arg0 (12)
+  a frame along the front kept square to the gravity ahead, its centre the foot on the beamer's Y axis, its radius
+  their distance (2000 at most, JumpBeamerBeam's Spread at radius / 2000), arg1 (530) frames; Mario 5 off its circle
+  is shocked. Body 120 pushes Mario, star pieces bounce (st_shot), collision Head.kcl at the Head joint (slice.py
+  KCL_JOINT). Test: plain XF=-DST_BB_TEST OceanFloaterLandGalaxy/1 (rings round the planet, Mario shocked).
+  ponytail: Erase BRK, bloom, ring shadows, shadow volume. Repack: OceanFloaterLandGalaxy, OceanPhantomCaveGalaxy
+  (KCL_JOINT BallBeamer, EXTRA JumpBeamerBeam) + sound.py --pack.
