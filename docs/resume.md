@@ -1363,9 +1363,10 @@ there needs the embedded blob and every pack rebuilt.
   OceanPhantomCave 1-4 (9.16-10.33) and PhantomGalaxy 1 / 3 (9.71 / 8.82) were over the old room; the growth is the
   layer passes (#4xx tex.layers) and full geometry, not one class (Astro's main stage 8.77 MB: AstroBase* 0.3-0.6 MB
   each, UFOKinokoLandingAstro 0.54, GrandStar's 0.24 shared, TicoGalaxy's four fatred BRK_STEPS copies 0.18 each).
-  Ratios with main's tools and the release's map.bin / letter.bin (old ROOM -> new): AstroGalaxy 1-4 0.5 no layers ->
-  0.99 every layer, OceanPhantomCave 1 0.5 no layers -> 0.99, PhantomGalaxy 1 0.7 no layers -> 0.99, PhantomGalaxy 3
-  0.9 fewer layers -> 0.99; every other scenario was and stays 0.99. Seen in PCSX2 (overlay): AstroGalaxy/1,
+  Ratios with main's tools and the release's map.bin / letter.bin (old ROOM -> new): AstroGalaxy 1-5 0.5 no layers
+  and still over the room (7.97-8.39 MB of 7.71) -> 0.99 every layer, OceanPhantomCave 1 / 2 0.5 no layers, 3 / 4 0.8 /
+  0.7 fewer layers -> 0.99, PhantomGalaxy 1 0.7 no layers -> 0.99, PhantomGalaxy 3 0.9 fewer layers -> 0.99; every
+  other scenario was and stays 0.99. Seen in PCSX2 (overlay): AstroGalaxy/1,
   PhantomGalaxy/1, OceanPhantomCave/1 boot and swap zones; route EggStar 1 star at f 4215. ponytail: the arena's 5.25 MB
   holds ~0.8 MB over the most seen; a scene over it stops with "mem: out of memory" (the cover line's peak shows it).
   Next if room runs short again: the Luigi power-up models (InvincibleLuigi 310 KB, TeresaLuigi, ...) ride in every
