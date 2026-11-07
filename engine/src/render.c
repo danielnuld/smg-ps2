@@ -190,7 +190,7 @@ static void i8_state(void);
 /* render_target_*: AstroMapBoard's MapDummy (GalaxyMapController::capture): the galaxy map drawn in the back buffer,
  * scaled into a 256 x 256 PSMCT16 picture under the I8 texture (out of the cache while reserved), the scene texture
  * marked dummy (slice.py DUMMY_TEX) pinned to it */
-#define TGT_TBP ((VRAM_WORDS / 64 - I8_BLOCKS - 512) & ~31)
+#define TGT_TBP ((VRAM_WORDS / 64 - I8_BLOCKS - 640) & ~31) /* 640: the mirror's 320 x 224 PSMCT16 (20 pages) */
 static int tgt_tex = -1;
 
 void mat_identity(float m[16]) /* stored one by one: memset's call costs more than the 16 stores */
@@ -2070,6 +2070,131 @@ void render_target_capture(void)
     FlushCache(0);
     cur_tex = -1;
     printf("render: capture to texture %d" "\n", t);
+}
+
+/* GameScene::drawMirror: the mirror camera's frame (render_begin with the reflected camera, the MirrorMapObj models)
+ * scaled to 320 x 224 into the target blocks (CaptureScreenIndirect), its view kept; then render_mirror_surface draws
+ * a SimpleMirrorObj (the MirrorReflectionMtxSetter texgen: each vertex through the mirror camera's view and
+ * projection, here into that picture), its material's alpha */
+static float mview[16];
+static u32 mirror_gen; /* the view_gen the picture is for: the next render_begin's */
+void render_mirror_capture(void)
+{
+    if (block_end != TGT_TBP) return;
+    render_world_done();
+    u32 fb = frame[back].address, fw = SCREEN_W >> 6;
+    ad_open(20);
+    AD(GS_SET_FRAME(TGT_TBP >> 5, 5, GS_PSM_16, 0), GS_REG_FRAME);
+    AD(GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, ZTEST_METHOD_ALLPASS), GS_REG_TEST);
+    AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 1), GS_REG_ZBUF);
+    AD(GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA);
+    AD(GS_SET_DTHE(0), GS_REG_DTHE);
+    ad_source_psm(fb, fw, FB_PSM, 10, FB_TH, SCREEN_W, SCREEN_H, 0);
+    ad_sprite(0, 0, 320, 224, 0, 0, SCREEN_W, SCREEN_H, 0x80);
+    AD(GS_SET_FRAME(fb >> 11, fw, FB_PSM, 0), GS_REG_FRAME);
+    AD(test_z, GS_REG_TEST);
+    AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 0), GS_REG_ZBUF);
+    AD(GS_SET_DTHE(FB_PSM != GS_PSM_32), GS_REG_DTHE);
+    AD(0, GS_REG_TEXFLUSH);
+    ad_close();
+    flush_vif();
+    dma_channel_wait(DMA_CHANNEL_VIF1, 0);
+    memcpy(mview, view, 64);
+    mirror_gen = view_gen + 1;
+}
+/* a static strip group's vertices (VU1Strip data) in world space through m, and whether each ends a triangle */
+static int strip_verts(const Model *md, const VuGroup *vg, const float m[16], float (*w)[3], u8 *tri, int max)
+{
+    int n = 0;
+    const u8 *d = vg->data;
+    for (u32 b = 0; b < vg->nbatch; b++) {
+        u32 ne = vg->batch[2 * b];
+        const s16 *p = (const s16 *)d;
+        for (u32 k = 0; k < ne && n < max; k++, n++) {
+            float x = p[4 * k] * md->qscale, y = p[4 * k + 1] * md->qscale, z = p[4 * k + 2] * md->qscale;
+            w[n][0] = m[0] * x + m[4] * y + m[8] * z + m[12];
+            w[n][1] = m[1] * x + m[5] * y + m[9] * z + m[13];
+            w[n][2] = m[2] * x + m[6] * y + m[10] * z + m[14];
+            tri[n] = k >= 2 && p[4 * k + 3] != -32768;
+        }
+        d += (8 * ne + 15) & ~15u;
+        if (vg->tex != NO_TEX) d += (4 * ne + 15) & ~15u;
+        d += (4 * ne + 15) & ~15u;
+    }
+    return n;
+}
+/* MirrorCamera::setMirrorMapInfo(J3DModelData): the mirror's plane from its model's first vertex and the first
+ * triangle's normal (towards the model's y axis); 0 if it has no static strip group */
+int render_mirror_plane(const Model *md, const float m[16], float n[3], float p[3])
+{
+    static float w[3][3];
+    u8 t[3];
+    for (u32 g = 0; g < md->vu_ngroups; g++) {
+        if (md->vu[g].strip != 1 || strip_verts(md, &md->vu[g], m, w, t, 3) < 3) continue;
+        float a[3] = {w[1][0] - w[0][0], w[1][1] - w[0][1], w[1][2] - w[0][2]}, b[3] = {w[2][0] - w[0][0], w[2][1] - w[0][1], w[2][2] - w[0][2]};
+        float c[3] = {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+        float l = sqrtf(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]);
+        if (l < 1e-6f) continue;
+        float s = c[0] * m[4] + c[1] * m[5] + c[2] * m[6] < 0.0f ? -1.0f / l : 1.0f / l;
+        for (int k = 0; k < 3; k++) { n[k] = c[k] * s; p[k] = w[0][k]; }
+        return 1;
+    }
+    return 0;
+}
+#define MIRROR_MAX 1024
+int render_mirror_surface(const Model *md, const float m[16])
+{
+    if (mirror_gen != view_gen) return 0;
+    static float w[MIRROR_MAX][3];
+    static u8 tri[MIRROR_MAX];
+    static u64 xyz[MIRROR_MAX], uv[MIRROR_MAX];
+    static u8 ok[MIRROR_MAX];
+    for (u32 g = 0; g < md->vu_ngroups; g++) {
+        const VuGroup *vg = &md->vu[g];
+        if (vg->strip != 1) continue;
+        int n = strip_verts(md, vg, m, w, tri, MIRROR_MAX);
+        for (int v = 0; v < n; v++) {
+            const float *p = w[v];
+            float xv = view[0] * p[0] + view[4] * p[1] + view[8] * p[2] + view[12];
+            float yv = view[1] * p[0] + view[5] * p[1] + view[9] * p[2] + view[13];
+            float zv = view[2] * p[0] + view[6] * p[1] + view[10] * p[2] + view[14];
+            float mx = mview[0] * p[0] + mview[4] * p[1] + mview[8] * p[2] + mview[12];
+            float my = mview[1] * p[0] + mview[5] * p[1] + mview[9] * p[2] + mview[13];
+            float mz = mview[2] * p[0] + mview[6] * p[1] + mview[10] * p[2] + mview[14];
+            ok[v] = zv >= NEAR && zv <= FAR && mz >= NEAR;
+            if (!ok[v]) continue;
+            float kz = 2048.0f / zv, sx = 2048.0f + shake_x + proj[0] * xv * kz, sy = 2048.0f + shake_y + proj[5] * yv * kz;
+            ok[v] = sx >= 0 && sx <= 4095 && sy >= 0 && sy <= 4095;
+            u32 sz = (u32)(((proj[10] * zv + proj[14]) / zv + 1.0f) * (float)(Z_MAX / 2));
+            xyz[v] = GS_SET_XYZ((int)(sx * 16), (int)(sy * 16), sz);
+            /* the picture's texel: the mirror camera's screen (shake left out) at half size */
+            float u = (SCREEN_W / 2 + proj[0] * mx * 2048.0f / mz) * (320.0f / SCREEN_W);
+            float t = (SCREEN_H / 2 + proj[5] * my * 2048.0f / mz) * (224.0f / SCREEN_H);
+            uv[v] = GS_SET_UV((int)(fminf(fmaxf(u, 0.0f), 319.0f) * 16), (int)(fminf(fmaxf(t, 0.0f), 223.0f) * 16));
+        }
+        int a = vg->alpha * 0x80 / 255; /* the material's constant alpha (MirrorMat_v_x: 110) */
+        for (int v0 = 2; v0 < n;) {
+            int cnt = 0;
+            if (packet2_get_qw_count(vif[cur]) + 16 + 6 * 40 + 8 > PACKET_QW) flush_vif();
+            ad_open(0);
+            AD(0, GS_REG_TEXFLUSH);
+            AD(GS_SET_TEX0(TGT_TBP, 5, GS_PSM_16, 9, 8, 0, 0, 0, 0, 0, 0, 0), GS_REG_TEX0);
+            AD(GS_SET_TEX1(1, 0, 1, 1, 0, 0, 0), GS_REG_TEX1);
+            AD(GS_SET_CLAMP(2, 2, 0, 319, 0, 223), GS_REG_CLAMP);
+            AD(test_z, GS_REG_TEST);
+            AD(GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA);
+            AD(GS_SET_PRIM(PRIM_TRIANGLE, 0, 1, 0, 1, 0, 1, 0, 0), GS_REG_PRIM);
+            AD(GS_SET_RGBAQ(0x80, 0x80, 0x80, a, 0x3F800000), GS_REG_RGBAQ);
+            for (; v0 < n && cnt < 40; v0++) {
+                if (!tri[v0] || !ok[v0] || !ok[v0 - 1] || !ok[v0 - 2]) continue;
+                for (int k = v0 - 2; k <= v0; k++) { AD(uv[k], GS_REG_UV); AD(xyz[k], GS_REG_XYZ2); }
+                cnt++;
+            }
+            ad_close();
+        }
+    }
+    cur_tex = -1; /* TEX0, ALPHA changed */
+    return 1;
 }
 
 #define MESH_MAX 2048

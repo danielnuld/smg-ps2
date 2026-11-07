@@ -126,6 +126,7 @@ static const Model *walker_new_model(int row);
 static void mk_update(Kuribo *k), mk_demo_update(void), mk_draw(Kuribo *k, const Model *md, Anim *a), mk_draw_extras(void), mk_begin_demo(int row);
 static int mk_noclip(const Kuribo *k);
 int mk_shot(V3 p); /* IceMerameraKing (ice_meraking.inc) */
+static void st_mirror_pass(V3 ce, V3 cw, V3 cu);
 static int st_mapboard; /* AstroMapBoard shown: 1 its picture to capture (game_draw), 2 done */
 static int st_flag_class(const char *n), st_cast_hook(int row, int type, int part), st_rail_obj(const char *n); static void st_update(void), st_draw(void), st_init(const Scene *s); static int st_shot(V3 p); static void st_column_strike(V3 c, float r); /* statics.inc */
 static void mm_update(Kuribo *k), mm_kill(Kuribo *k), mm_btp(Kuribo *k, const Model *md); /* Meramera (meramera.inc) */
@@ -2786,7 +2787,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     }
     dx_init(blob);
     st_init(s);
-    render_target_reserve(st_mapboard); /* AstroMapBoard's picture: its VRAM out of the cache */
+    render_target_reserve(st_mapboard || scene_type(s, "MirrorAreaCube") >= 0); /* AstroMapBoard's picture, the mirror's: their VRAM out of the cache */
     gw_init();
     pro_init();
     mi_init();
@@ -54136,6 +54137,7 @@ void game_draw(void)
     float eye[3] = {ce.x, ce.y, ce.z}, target[3] = {cw.x, cw.y, cw.z}, up[3] = {cu.x, cu.y, cu.z};
     float m[16];
     PROF(0);
+    st_mirror_pass(ce, cw, cu); /* GameScene::drawMirror */
     render_begin(eye, target, up);
     render_env(sc);
     /* BTK texture scrolls (lava, water): every model's at the game's frame. ponytail: one frame for all instances,

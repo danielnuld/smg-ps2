@@ -69,6 +69,12 @@ void render_i8_aref(int a);
  * render_begin and the 2D queued, render_target_capture puts that frame into the scene's dummy texture (MapDummy) */
 void render_target_reserve(int on);
 void render_target_capture(void);
+/* GameScene::drawMirror: after render_begin with the reflected camera and the mirror's models, the picture taken
+ * (render_mirror_capture); in the frame that follows, render_mirror_surface draws a mirror's surface model textured
+ * by it (0: no picture this frame). render_mirror_plane: a mirror model's plane (first vertex, first triangle's normal) */
+void render_mirror_capture(void);
+int render_mirror_surface(const Model *md, const float world[16]);
+int render_mirror_plane(const Model *md, const float world[16], float n[3], float p[3]);
 /* a grid of ncols x nrows world vertices (vertex c x nrows + k, uv 0..1 over tex), each moved by k_shift x shift[c],
  * drawn as strips between columns c and c + 1 where col_on[c]; blended, depth written, colour 0xAABBGGRR (0x80 = 1.0)
  * modulating the texture. pos's view-space places are kept while pos and the view stay: one grid drawn shifted */
