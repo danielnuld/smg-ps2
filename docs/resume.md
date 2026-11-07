@@ -712,8 +712,12 @@ Second console round (2026-10-24), from Daniel's report:
   takes the Syati's own star, not the bubble's), the retry (SYATI_TEST=2, OceanRing 1: Mario kept 1500 behind and 800
   over it: rail end at f ~6000, Turn, WaitAllRingDisappear, 再挑戦デモ, Failure talk, 水中レース負け, the stage again),
   TalkSyati (SYATI_TEST=3, OceanRing 2: StartWait / StartTalk, its talk read). Nothing failed. ponytail: BTK / BRK colours,
-  the head turn joint, shadow, tryPlayerKillTakingActor, sendMsgPush, OceanPhantomCave's BGM calls. Repack:
-  OceanRingGalaxy, OceanPhantomCaveGalaxy (slice_all.py + sound.py --pack).
+  the flat-model shadow (no model volume, as Snakehead's), tryPlayerKillTakingActor (the port's damageDropThrowMemoSensor
+  is empty). Repack: OceanRingGalaxy, OceanPhantomCaveGalaxy (slice_all.py + sound.py --pack).
+  Since (feat/syati-head): calcHeadJoint (sy_head_turn: the Head joint and its children turned to Mario by pi / 6 at
+  most on the shore; SYATI_TEST=3 puts Mario 45 degrees aside), its sensors in the HitSensor list (hs_add) and
+  sendMsgPush to the walkers' sensors (wp_receive with a sender at its place), OceanPhantomCave's retry BGM
+  (stopStageBGM(60) / MBGM_GALAXY_05 unless STM_GALAXY_05 plays: SYATI_TEST=2 OceanPhantomCaveGalaxy/3).
 - Race best time key (fix/436, 2026-11-07): the penguin race's RECORD read 00:00:00 (OceanRing 2) while Phantom's read
   5400: not the test card. race.inc built '<race>/hi' / '/lo' in 48 bytes; ペンギンレース[オーシャンリング]/hi is 50, cut,
   so gd_value found nothing and setRaceBestTime stored nothing. 64 now: OceanRing 2 reads best 5400 (01:30:00), a win

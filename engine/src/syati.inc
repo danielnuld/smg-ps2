@@ -16,9 +16,16 @@
  * PrizeRing: Start (SE_OJ_PRIZE_RING_APPEAR, Start), Loop (its life: 800, arg3), Timeout (Timeout.brk's 321 frames,
  * SE_OJ_PRIZE_RING_BLINK at its flash frames, SE_OJ_PRIZE_RING_DISAPPEAR), Pass (End, a middle rumble, the number's
  * system SE, SE_SY_TOTAL_COMPLETE for the last), hidden till killed; Number.bva at the number - 1.
- * ponytail: no BTK / BRK colours on these models (PrizeRing at Loop's frame 0: slice.py BRK_POSE; the BRK's lengths kept), no head turn to Mario (calcHeadJoint), no
- * shadow volume, tryPlayerKillTakingActor, no push of other actors (sendMsgPush), OceanPhantomCave's BGM stop / start
- * in the retry */
+ * Its Head joint turned to Mario on the shore (calcHeadJoint: sy_head_turn); its sensors in the HitSensor list and
+ * pushing the walkers' (sendMsgPush); OceanPhantomCave's retry: the stage BGM stopped / MBGM_GALAXY_05.
+ * ponytail: no BTK / BRK colours on these models (PrizeRing at Loop's frame 0: slice.py BRK_POSE; the BRK's lengths
+ * kept), no flat-model shadow volume (ShadowVolumeOval: no model volume, as Snakehead's), tryPlayerKillTakingActor
+ * (the port's damageDropThrowMemoSensor is empty: drop_carried), pushes only to the walkers (their receiveMsgPush) */
+static int sy_bgm_05(void) /* isPlayingStageBgmName("STM_GALAXY_05") */
+{
+    const char *t = bgm_track("STM_GALAXY_05");
+    return bgm_stage_playing() && t && !strcmp(bgm_cur, t);
+}
 enum { SY_WAIT, SY_FADEOUT_START, SY_BLANK_START, SY_FADEIN_START, SY_TALK_START, SY_READY, SY_COUNT, SY_SWIM, SY_EMIT,
        SY_STAR, SY_END, SY_WAIT_RINGS, SY_FADEOUT_RETRY, SY_BLANK_RETRY, SY_FADEIN_RETRY, SY_TALK_RETRY, SY_KILL, SY_HIDE,
        SY_WAIT_SHORE, SY_WAIT_TALK, SY_TALK_NORMAL, SY_DEMO_START };
@@ -269,7 +276,10 @@ static void sy_exe(Syati *s)
         if (st == 30) sy_set(s, s->nrv == SY_BLANK_START ? SY_FADEIN_START : SY_FADEIN_RETRY);
         break;
     case SY_FADEIN_START: case SY_FADEIN_RETRY: /* exeFadeinBeforeTalk */
-        if (st == 0) { menu_wipe(0, -1, 0); sy_cam(s, "会話", 1); sy_bck(s, "talk", 0); }
+        if (st == 0) {
+            menu_wipe(0, -1, 0); sy_cam(s, "会話", 1); sy_bck(s, "talk", 0);
+            if (s->nrv == SY_FADEIN_RETRY && on_stage("OceanPhantomCaveGalaxy") && !sy_bgm_05()) bgm_stop(60); /* stopStageBGM(0x3C) */
+        }
         sy_pose_mario(s);
         if (!menu_wipe_active()) sy_set(s, s->nrv == SY_FADEIN_START ? SY_TALK_START : SY_TALK_RETRY);
         break;
@@ -340,7 +350,10 @@ static void sy_exe(Syati *s)
         if (sy_rings_alive() == 0 && s->count != s->nrings) sy_request(s, "再挑戦デモ", SY_FADEOUT_RETRY);
         break;
     case SY_TALK_RETRY: /* exeTalkRetryMission */
-        if (st == 0) { sy_balloon(s, ring ? v3(16.0f, 192.0f, -300.0f) : v3(47.0f, 179.0f, -300.0f)); sy_bck(s, "failure", 0); }
+        if (st == 0) {
+            sy_balloon(s, ring ? v3(16.0f, 192.0f, -300.0f) : v3(47.0f, 179.0f, -300.0f)); sy_bck(s, "failure", 0);
+            if (on_stage("OceanPhantomCaveGalaxy") && !sy_bgm_05()) bgm_start("MBGM_GALAXY_05"); /* startStageBGM */
+        }
         sy_pose_mario(s);
         sy_blink(s);
         if (talk_force_at_end(s->k, 0)) { pd_end("再挑戦デモ"); rm.bck = NULL; sy_cam(s, "会話", 0); sy_set(s, SY_KILL); }
@@ -376,16 +389,58 @@ static void sy_exe(Syati *s)
         break;
     }
 }
-static void sy_sensor(Syati *s) /* attackSensor: Mario at its head, body or tail: FlipMaximum */
+static void sy_sensor(Syati *s) /* its head, body and tail sensors (EnemySimple) in the HitSensor list; attackSensor: Mario
+                                  * FlipMaximum, any other sensor sendMsgPush (the walkers' receiveMsgPush: wp_receive) */
 {
     if (!s->sensors || !s->shown || s->dead) return;
-    V3 h, b = s->pos, t;
-    sy_head(s, &h, 6, v3(0.0f, -60.0f, 0.0f)); /* Jaw */
-    sy_head(s, &t, 13, v3(0, 0, 0));           /* Spin2 */
-    if (mario_touch(h, 200.0f) || mario_touch(b, 230.0f) || mario_touch(t, 150.0f)) {
-        V3 c = mario_touch(h, 200.0f) ? h : mario_touch(b, 230.0f) ? b : t;
-        if (mario_attack(ATK_FLIP_MAXIMUM, c)) se_start(SE_SM_SYATI_TRAMPLED, &s->pos.x);
+    V3 c[3];
+    const float r[3] = {200.0f, 230.0f, 150.0f};
+    sy_head(s, &c[0], 6, v3(0.0f, -60.0f, 0.0f)); /* Jaw */
+    c[1] = s->pos;
+    sy_head(s, &c[2], 13, v3(0, 0, 0));           /* Spin2 */
+    for (int j = 0; j < 3; j++) hs_add(c[j], r[j], HS_ENEMY, s->row);
+    for (int j = 0; j < 3; j++)
+        if (mario_touch(c[j], r[j])) { if (mario_attack(ATK_FLIP_MAXIMUM, c[j])) se_start(SE_SM_SYATI_TRAMPLED, &s->pos.x); break; }
+    static Kuribo a; /* the sender's actor (its mPosition) */
+    a.pos = s->pos;
+    for (int i = 0; i < nkuribo; i++) {
+        Kuribo *k = &kuribo[i];
+        WSen o[5];
+        if (k->state == KURIBO_DEAD || !row_shown(k->row) || (k->clipped && !test_noclip) || k->host) continue;
+        int n = wp_sensors(k, o);
+        for (int x = 0; x < n; x++)
+            for (int j = 0; j < 3; j++) {
+                if (vlen(vsub(o[x].c, c[j])) >= o[x].r + r[j]) continue;
+                WSen sa = {c[j], r[j], 0, 1, 0, 0};
+                if (wp_receive(k, &o[x], &a, &sa)) printf("syati row %d: pushed walker row %d" "\n", s->row, k->row);
+            }
     }
+}
+static int sy_head_turn(Inst *in) /* calcHeadJoint (the Head joint's delegator) in WaitOnShore / WaitTalkNormal / TalkNormal:
+                            * turnQuat of its front (_8C's Z) to Mario's direction flattened on Y, by pi / 6 at most,
+                            * concatenated onto the joint's matrix (its children with it); 1 when it posed the model */
+{
+    Syati *s = NULL;
+    for (int i = 0; sy_scene == sc && i < nsys; i++) if (sys[i].row == in->row) s = &sys[i];
+    if (!s || !(s->nrv == SY_WAIT_SHORE || s->nrv == SY_WAIT_TALK || s->nrv == SY_TALK_NORMAL) || !in->anim || !in->anim->skin) return 0;
+    V3 d = vsub(mario->pos, s->pos);
+    if (vlen(d) < 1e-6f) return 0;
+    d = vnorm(d); d.y = 0.0f;
+    if (vlen(d) < 1e-6f) return 0;
+    d = vnorm(d);
+    V3 z;
+    q_axes(s->q, NULL, NULL, &z);
+    z = vnorm(z);
+    float between = acosf(fminf(fmaxf(vdot(z, d), -1.0f), 1.0f)), rate = between <= 3.14159265f / 6.0f ? 1.0f : (3.14159265f / 6.0f) / between;
+    V3 ax = vcross(z, d);
+    anim_pose(in->anim);
+    if (vlen(ax) > 1e-6f && in->anim->skin->njoints > 2) { /* the rotation in the joint's own frame: about its matrix x ax */
+        const float *w = in->anim->world[2];
+        anim_joint_rot_v(in->anim, 2, vnorm(v3(w[0] * ax.x + w[4] * ax.y + w[8] * ax.z, w[1] * ax.x + w[5] * ax.y + w[9] * ax.z,
+                                                w[2] * ax.x + w[6] * ax.y + w[10] * ax.z)), between * rate);
+    }
+    anim_skin(in->anim);
+    return 1;
 }
 static void sy_init(void)
 {
@@ -492,11 +547,11 @@ static int sy_miss_anim(void) { int w = sy_miss_water; sy_miss_water = 0; return
 static void game_test_sy(Syati *s)
 {
     static int free_at = -1, t;
-#if SYATI_TEST == 3 /* (OceanRingGalaxy/2) the TalkSyati: Mario put 400 in front of it once free, A every 30 frames */
+#if SYATI_TEST == 3 /* (OceanRingGalaxy/2) the TalkSyati: Mario put 400 in front and 400 aside once free, A every 30 frames */
     if (s->ring) return;
     pad_force = 0;
     if (free_at < 0) { if (!game_test_free()) return; free_at = t; printf("syati test: free" "\n"); }
-    if (++t - free_at == 60) { V3 z; q_axes(s->q, NULL, NULL, &z); mario->pos = vadd(s->pos, vmul(z, 400.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+    if (++t - free_at == 60) { V3 x, z; q_axes(s->q, &x, NULL, &z); mario->pos = vadd(s->pos, vadd(vmul(z, 400.0f), vmul(x, 400.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; } /* (45 degrees off its front: the head turns 30) */
     if (t - free_at > 90 && (t % 30) < 3) pad_force = PAD_CROSS;
     if (t % 60 == 0) printf("syati test t %d: talk syati nerve %d shown %d | talk %d" "\n", t, s->nrv, s->shown, td.nrv);
     return;
