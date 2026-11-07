@@ -53,6 +53,22 @@ static V3 pick_up(const Pickup *cp);
 static V3 walker_up(void *k, V3 prev);
 enum { PICK_GONE, PICK_ON, PICK_POP_NEW, PICK_POP_BLINK }; /* alive: popping coins cannot be taken while new and
                                                              * are not drawn on their blink frames */
+/* The HitSensor list (SensorHitChecker's groups): every host adds its valid sensors (their place, radius and kind)
+ * each frame with hs_add; hs_flip at the frame's start keeps the last frame's whole list (hs_last / hs_nlast) for the
+ * checks, so every host is seen once whatever the update order (Petari: SensorHitChecker::movement after the actors'
+ * movement, the hits read in their next attackSensor). Clipped or dead hosts add none (doObjColGroup's isClipped,
+ * attackSensor's isDead). ponytail: HS_MAX sensors a frame (the scenes add far fewer) */
+enum { HS_ENEMY, HS_ANIMAL, HS_NPC, HS_MAPOBJ, HS_SIMPLE }; /* isSensorEnemy / ATYPE_ANIMAL / isSensorNpc / isSensorMapObj / mSimpleGroup */
+typedef struct { V3 c; float r; u8 kind; short host; } HSen; /* host: its placement row, -1 none */
+#define HS_MAX 512
+static HSen hs_buf[2][HS_MAX];
+static int hs_cnt[2], hs_cur;
+#define hs_last (hs_buf[hs_cur ^ 1])
+#define hs_nlast (hs_cnt[hs_cur ^ 1])
+static void hs_add(V3 c, float r, int kind, int host)
+{
+    if (hs_cnt[hs_cur] < HS_MAX) hs_buf[hs_cur][hs_cnt[hs_cur]++] = (HSen){c, r, (u8)kind, (short)host};
+}
 typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; float from, to, len;
     /* the walkers ported literally (walker kit): nerve / step, the WalkerState's nerve / step, _B8 (front), _A8 as its
      * axes, the binder's ground / wall, TerritoryMover, WalkerStateStagger's mVelH, ItemGenerator, the action */
@@ -12271,6 +12287,22 @@ static void rosetta_talk(void) /* Rosetta's mMsgCtrl outside demos, in the Obser
         return;
     }
 }
+/* NPCActor::initialize's Body sensor (NPCActorCaps mSensorSize / mSensorOffset / mSensorJoint), by talkcls: SignBoard
+ * 100 at (0, 130, 0); Tico / TicoStarRing 60 at Body; Kinopio / KinopioAstro (Kinopio::init: body 50 x 1.2 at 60 up,
+ * none with arg6 set); Butler / ButlerMap 50 at Body; LuigiNPC 50 at (0, 50, 0); TicoComet / TicoShop 100 at Center
+ * + (0, 100, 0); HoneyBee 70 at Center + (0, -20, 0); the Penguins and PenguinMaster none (caps.mSensor off).
+ * ponytail: Body / Center taken as the skin's joint 1 */
+static void npc_sensor(const Inst *in, const float m[16])
+{
+    static const float tab[14][3] = {{0}, {100, 130, 0}, {60, 0, 1}, {60, 60, 0}, {50, 0, 1}, {50, 0, 1}, {50, 50, 0}, {60, 0, 1},
+                                     {100, 100, 1}, {0}, {70, -20, 1}, {100, 100, 1}, {0}, {0}}; /* radius, offset y, at the joint */
+    const float *t = tab[in->talkcls];
+    if (t[0] == 0.0f || (in->talkcls == 3 && sc->objs[in->row].arg[6] != -1)) return;
+    float w[16];
+    memcpy(w, m, 64);
+    if (t[2] != 0.0f && in->anim && in->anim->skin && in->anim->skin->njoints > 1) mat_mul(w, in->m, in->anim->world[1]);
+    hs_add(vadd(v3(w[12], w[13], w[14]), vmul(vnorm(v3(w[4], w[5], w[6])), t[1])), t[0], HS_NPC, in->row);
+}
 static void update_talkers(void)
 {
     if (!tk_nctl) return;
@@ -12331,6 +12363,7 @@ static void update_talkers(void)
             memcpy(m, w, 64);
         }
         talk_place(k, m);
+        npc_sensor(in, m);
         if (in->talkcls == 10 && !row_turn[in->row]) continue; /* HoneyBee lectures: talk only in their Wait */
         if (in->talkcls == 3) kinopio_reaction(in, m);
         if (in->talkcls == 13) pmaster_reaction(in, m);
@@ -13400,6 +13433,7 @@ static void update_ticofat(void)
             float w[16]; /* NPCActor's body sensor (100 at Center + 30) and updateReaction; exeReaction's voices */
             mat_mul(w, in->m, in->anim->world[1]);
             V3 body = v3(w[12] + w[4] * 30.0f, w[13] + w[5] * 30.0f, w[14] + w[6] * 30.0f);
+            hs_add(body, 100.0f, HS_NPC, in->row); /* TicoFat caps: 100 at Center + (0, 30, 0) */
             int rf = npc_react(&f->re, body, 100.0f, up, base, 1000.0f, 0);
             if (f->nrv <= TF_POINT) {
                 if (rf & 1) { se_start(SE_SM_NPC_TRAMPLED, &f->m0[12]); se_start(SE_SV_TICOFAT_TRAMPLED, &f->m0[12]); }
@@ -18087,9 +18121,7 @@ static int mario_sleeping(void) { return mario->sleep == 1 || mario->sleep == 2;
  * along x by _110 / mLookMaxAngleH x mLookShoulderMoveMax (_110 eased 0.1 to h). updateJointRumble (doLanding's
  * addRumblePower(5, 60)): ArmL1 / ArmR2 moved along y by -5 x sin(t x 2 pi / 30) (faded over the last 30), Spine2 x
  * rotZ(0.7 x t / 60) on a slope over 5 degrees at speed index 0 (negated facing up it, 0.9 x the last sideways), kept
- * after the rumble ends. ponytail: the look target's candidates are the walkers and the coins / purple coins / star
- * pieces, at their places (the port keeps no common sensor list: no map object, item or NPC sensor, no sensor
- * offsets) */
+ * after the rumble ends. The look target's candidates: the sensor list (hs_last) */
 static struct {
     float f58, f5C, f110, f118, hip, f70; /* _58 _5C _110 _118, Spine2's _AC angle, _70 */
     V3 f60;                               /* _60: last front */
@@ -18136,20 +18168,46 @@ static void m_lock_on_try(Player *m, V3 p, float *best, V3 *tp, int *has) /* try
     float a = ang_abs(vnorm(v), vnorm(f)) * 57.29578f;
     if (!*has || a < *best) { *best = a; *tp = p; *has = 1; }
 }
+/* hs_flip: a new frame's sensor list, with the sensors of the hosts that keep no update of their own: Coin (coin 55 at
+ * 70 up, ATYPE_COIN) / PurpleCoin, StarPiece (body 30), KinokoOneUp / KinokoSuper / Invincible, placed or run-time
+ * (BenefitItemObj: body 50 at 50 up), WoodBox (body 120 x s at 120 x s up), PunchBox (90 x s at 90 x s up), CrystalCageS (130 x s at its place)
+ * and the ItemBlocks (CoinBlock 100 at 100 up its joint) */
+static void hs_flip(void)
+{
+    hs_cur ^= 1;
+    hs_cnt[hs_cur] = 0;
+    const Pickup *const set[3] = {coins, purple, pieces};
+    const int n[3] = {ncoins, npurple, npieces};
+    for (int k = 0; k < 3; k++)
+        for (int i = 0; i < n[k]; i++) {
+            const Pickup *p = &set[k][i];
+            if (p->alive == PICK_GONE || (p->row >= 0 && !row_shown(p->row))) continue;
+            hs_add(k < 2 ? vadd(p->pos, vmul(pick_up(p), 70.0f)) : p->pos, k < 2 ? 55.0f : 30.0f, HS_SIMPLE, p->row);
+        }
+    for (int i = 0; i < MAX_BITEMS; i++)
+        if (bitm[i].on) hs_add(vadd(bitm[i].pos, vmul(bitm[i].up, 50.0f)), 50.0f, HS_MAPOBJ, -1);
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (in->row < 0 || row_dead[in->row] || in->invisible || !row_shown(in->row)) continue;
+        if (in->item == ITEM_ONEUP || in->item == ITEM_LIFEUP || in->item == ITEM_INVINCIBLE) { /* placed BenefitItemObjs */
+            hs_add(vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(vnorm(v3(in->m[4], in->m[5], in->m[6])), 50.0f)), 50.0f, HS_MAPOBJ, in->row);
+            continue;
+        }
+        if (!in->breaks) continue;
+        const char *name = sc->types + 32 * sc->objs[in->row].type;
+        float r = !strcmp(name, "WoodBox") ? 120.0f : !strcmp(name, "PunchBox") ? 90.0f : !strcmp(name, "CrystalCageS") ? 130.0f : in->breaks == 3 ? 100.0f : 0.0f;
+        if (r == 0.0f) continue;
+        float up = name[0] == 'C' ? 0.0f : r * (in->breaks == 3 ? 1.0f : in->s);
+        hs_add(vadd(v3(in->m[12], in->m[13], in->m[14]), vmul(vnorm(v3(in->m[4], in->m[5], in->m[6])), up)), in->breaks == 3 ? r : r * in->s, HS_MAPOBJ, in->row);
+    }
+}
 static void m_set_homing(Player *m) /* setHoming */
 {
     float h = 0.0f, best = 0.0f;
     int has = 0;
     V3 tp = v3(0, 0, 0);
-    if (!tmk_riding() && !mario_sleeping() && !(m->jumping && m->jump_kind == 5)) { /* getLookTargetSensor: _934, isSleeping */
-        for (int i = 0; i < nkuribo; i++)
-            if (kuribo[i].state != KURIBO_DEAD && row_shown(kuribo[i].row)) m_lock_on_try(m, kuribo[i].pos, &best, &tp, &has);
-        const Pickup *const set[3] = {coins, purple, pieces};
-        const int n[3] = {ncoins, npurple, npieces};
-        for (int k = 0; k < 3; k++)
-            for (int i = 0; i < n[k]; i++)
-                if (set[k][i].alive != PICK_GONE && (set[k][i].row < 0 || row_shown(set[k][i].row))) m_lock_on_try(m, set[k][i].pos, &best, &tp, &has);
-    }
+    if (!tmk_riding() && !mario_sleeping() && !(m->jumping && m->jump_kind == 5)) /* getLookTargetSensor: _934, isSleeping */
+        for (int i = 0; i < hs_nlast; i++) m_lock_on_try(m, hs_last[i].c, &best, &tp, &has); /* the eye (2000) over every sensor */
     if (!has && talk_system() && td.demo == 1 && talkers[td.st].row >= 0) { /* isNormalTalking: getTalkingActor's place, its height over it */
         const Talker *t = &talkers[td.st];
         tp = vadd(v3(t->m[12], t->m[13], t->m[14]), vmul(m->up, talk_head_height(sc->types + 32 * sc->objs[t->row].type)));
@@ -18181,7 +18239,7 @@ static void m_set_homing(Player *m) /* setHoming */
     mxf.sh_l = h < 0.0f ? -mxf.f110 / MC.mLookMaxAngleH * MC.mLookShoulderMoveMax : 0.0f;
     mxf.sh_r = h > 0.0f ? mxf.f110 / MC.mLookMaxAngleH * MC.mLookShoulderMoveMax : 0.0f;
 #ifdef WALKER_TEST
-    if (game_frame % 30 == 0) printf("homing f %u: target %d h %.2f q %.2f %.2f %.2f %.2f tilt %.3f %.3f rumble %d arm %.2f\n", game_frame, has, h,
+    if (game_frame % 30 == 0) printf("homing f %u: sensors %d target %d h %.2f q %.2f %.2f %.2f %.2f tilt %.3f %.3f rumble %d arm %.2f\n", game_frame, hs_nlast, has, h,
                                      mxf.q7C[0], mxf.q7C[1], mxf.q7C[2], mxf.q7C[3], mxf.f58, mxf.f5C, mxf.t74, mxf.arm_y);
 #endif
 }
@@ -26235,10 +26293,17 @@ static float converge(float v, float to, float step) { return v < to ? (v + step
  * BRK_ARG). Waiting within 500 of a sleeping Mario (tryPerchOnSleepingMario) it waits 300 frames, then flies to his cap
  * (CapPosition x (0, 50.2, 24.9)) 0.05 a frame, at most 2, until within 10 as its clip passes frame 0; then blends
  * to it 0.7 a frame (rate to 0.5) until frame 0 again; then sits on it playing Wait until he wakes (Butterfly, Wait).
- * ponytail: no PerchOn from Hive onto an NPC's sensor (attackSensor isSensorNpc: the port's NPCs keep no common
- * sensor list). In HeavensDoorGalaxy its up from
+ * attackSensor: in Hive its body (30 at its place) on an NPC's sensor (hs_last) perches on it (PerchOn: within both
+ * radii it stops, rate to 0.7; else towards it 0.05 a frame, at most 2.5, rate to 1.2; the pointer can still chase it
+ * off). In HeavensDoorGalaxy its up from
  * gravity (makeQuatUpNoSupport), else its rotation; its clip from a random frame; STAR_PIECE_BURST with its piece */
-enum { BN_WAIT, BN_RUNAWAY, BN_HIVE, BN_GOTOSLEEPING, BN_READYTOPERCH, BN_PERCHSLEEPING };
+enum { BN_WAIT, BN_RUNAWAY, BN_HIVE, BN_GOTOSLEEPING, BN_READYTOPERCH, BN_PERCHSLEEPING, BN_PERCHON };
+static const HSen *bfly_npc(int row) /* the NPC sensor its mPerchTarget is (lvt[0]: its host row + 1), NULL none */
+{
+    for (int i = 0; i < hs_nlast; i++)
+        if (hs_last[i].kind == HS_NPC && hs_last[i].host == row) return &hs_last[i];
+    return NULL;
+}
 static int bfly_pass0(const Kuribo *k) /* checkPassBckFrame(0) on its looping clip (the frame from setBckFrameAtRandom on) */
 {
     float n = (float)k->act_frames, f = k->act_t + k->from;
@@ -26295,6 +26360,20 @@ static void butterfly_update(Kuribo *k)
             }
         }
     }
+#ifdef PERCH_TEST
+    static int ptried[16], npt;
+    int seen = 0;
+    for (int i = 0; i < npt; i++) seen |= ptried[i] == k->row;
+    if (game_frame >= 300 && !seen && npt < 16 && k->nrv == BN_WAIT) {
+        ptried[npt++] = k->row; /* Hive by the NPC sensor nearest its home (within 600 of it) */
+        const HSen *b = NULL;
+        for (int i = 0; i < hs_nlast; i++)
+            if (hs_last[i].kind == HS_NPC && vlen(vsub(hs_last[i].c, home)) < 600.0f && (!b || vlen(vsub(hs_last[i].c, home)) < vlen(vsub(b->c, home)))) b = &hs_last[i];
+        printf("perch test: butterfly row %d npc %d%c", k->row, b ? b->host : -1, 10);
+        if (b) { k->pos = vadd(b->c, vmul(vnorm(vsub(home, b->c)), b->r + 25.0f)); w_nrv(k, BN_HIVE); }
+    }
+    if (game_frame % 60 == 0 && k->nrv == BN_PERCHON) printf("perch test: butterfly row %d on npc %d at %.0f %.0f %.0f%c", k->row, k->lvt[0] - 1, k->pos.x, k->pos.y, k->pos.z, 10);
+#endif
     if (!k->dir && cursor_sees(k->pos, 10.0f)) { drop_pieces(k->pos, vmul(k->grav, -1.0f), 1); w_se(k, SE_OJ_STAR_PIECE_BURST); k->dir = 1; } /* tryAppearStarPeace */
     switch (k->nrv) {
     case BN_WAIT:
@@ -26322,6 +26401,26 @@ static void butterfly_update(Kuribo *k)
         k->vel = vadd(k->vel, vmul(vsub(p, k->pos), 0.05f));
         if (vlen(k->vel) > 2.5f) k->vel = vmul(vnorm(k->vel), 2.5f);
         k->act_rate = converge(k->act_rate, 1.2f, 0.02f);
+        for (int i = 0; i < hs_nlast; i++) /* attackSensor: isSensorNpc, in Hive */
+            if (hs_last[i].kind == HS_NPC && vlen(vsub(hs_last[i].c, k->pos)) < 30.0f + hs_last[i].r) {
+                k->lvt[0] = hs_last[i].host + 1;
+                printf("butterfly row %d: perch on NPC row %d%c", k->row, hs_last[i].host, 10);
+                w_nrv(k, BN_PERCHON);
+                break;
+            }
+        break;
+    }
+    case BN_PERCHON: {
+        const HSen *t = bfly_npc(k->lvt[0] - 1);
+        if (!t || vlen(vsub(t->c, k->pos)) < 30.0f + t->r) { /* isNear(body, mPerchTarget, both radii) */
+            k->vel = v3(0, 0, 0);
+            k->act_rate = converge(k->act_rate, 0.7f, 0.02f);
+        } else {
+            k->vel = vadd(k->vel, vmul(vnorm(vsub(t->c, k->pos)), 0.05f));
+            if (vlen(k->vel) > 2.5f) k->vel = vmul(vnorm(k->vel), 2.5f);
+            k->act_rate = converge(k->act_rate, 1.2f, 0.02f);
+        }
+        bfly_run_away(k, home);
         break;
     }
     case BN_GOTOSLEEPING: {
@@ -32402,7 +32501,7 @@ static int wp_sensors(Kuribo *k, WSen *o)
     case WALK_KOTEBUG: o[0] = (WSen){vadd(k->pos, vmul(k->qy, 50.4f * s)), 100.0f * s, 0, 1, 0}; return 1;
     case WALK_KARON: o[0] = (WSen){vadd(k->pos, vmul(up, 90.0f * s)), 90.0f * s, 0, 1, 0}; return 1;
     }
-    return 0;
+    return -1; /* its sensors not listed */
 }
 static void wp_from_push(Kuribo *k, float a, V3 from, V3 to, int horizon) /* addVelocityFromPush(Horizon) */
 {
@@ -32524,7 +32623,10 @@ static void walker_push_pass(void) /* ponytail: the first WP_MAX walkers with se
     for (int i = 0; i < nkuribo && n < WP_MAX; i++) {
         Kuribo *k = &kuribo[i];
         if (k->state == KURIBO_DEAD || !row_shown(k->row) || (k->clipped && !test_noclip) || k->host) continue; /* (clipped: invalidateBySystem) */
-        if ((ns[n] = (u8)wp_sensors(k, sen[n]))) ki[n++] = (short)i;
+        int c = wp_sensors(k, sen[n]);
+        if (c < 0) { hs_add(k->pos, 0.0f, k->kind == WALK_BUTTERFLY ? HS_ANIMAL : HS_ENEMY, k->row); continue; } /* ponytail: one point at its place */
+        for (int x = 0; x < c; x++) hs_add(sen[n][x].c, sen[n][x].r, HS_ENEMY, k->row);
+        if ((ns[n] = (u8)c)) ki[n++] = (short)i;
     }
     for (int i = 0; i < n; i++)
         for (int j = i + 1; j < n; j++)
@@ -52928,6 +53030,20 @@ void game_update(void)
     }
     hip_hit = 0;
     if (!opening_on) game_frame++; /* frames of play: the starter flight begins at 2 */
+    hs_flip();
+#ifdef PERCH_TEST
+    if (game_frame == 250) { /* Mario by the Butterfly whose home is nearest an NPC sensor */
+        float bd = 1e9f; V3 at = mario->pos;
+        for (int i = 0; i < nkuribo; i++) {
+            if (kuribo[i].kind != WALK_BUTTERFLY) continue;
+            V3 h = row_pos(&sc->objs[kuribo[i].row]);
+            for (int j = 0; j < hs_nlast; j++)
+                if (hs_last[j].kind == HS_NPC && vlen(vsub(hs_last[j].c, h)) < bd) { bd = vlen(vsub(hs_last[j].c, h)); at = h; }
+        }
+        printf("perch test: nearest butterfly home %.0f from an NPC%c", bd, 10);
+        mario->pos = vadd(at, vmul(mario->up, 200.0f));
+    }
+#endif
     LQ(1, update_rotors());
     LQ(2, update_halos());
 #ifdef PUT_TEST

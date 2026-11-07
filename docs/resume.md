@@ -1360,6 +1360,13 @@ there needs the embedded blob and every pack rebuilt.
   hitPunch. ACTMES_INVINCIBLE_ATTACK taken (update_invincible, the walkers' own invincible branches, Karon's trample):
   m_invincible_hit (pad 2, printHitMark). Test: `kick` prints `spin reaction: 1 punched`. ponytail: the receivers can
   still see the spin again (no sensor list in mario_offence); no 45-degree front check outside spin2nd.
+- Hit sensor list (feat/hit-sensors): SensorHitChecker's groups as one list a frame (hs_add, hs_flip: the last frame's
+  whole list in hs_last), filled by the walkers (walker_push_pass: their wp_sensors, else one point at their place),
+  the NPCs (npc_sensor: NPCActorCaps' Body sensor by talkcls, TicoFat's), pickups (Coin 55 at 70 up, StarPiece 30),
+  BenefitItems (50 at 50 up), WoodBox / PunchBox / CrystalCageS / ItemBlocks. setHoming's look target takes every
+  sensor (the eye over all three groups); Butterfly's attackSensor in Hive perches on an NPC sensor (PerchOn). Test:
+  plain XF=-DPERCH_TEST PeachCastleGardenGalaxy/1 (a Butterfly put by the Kinopio nearest its home: `perch on NPC`),
+  `walker` prints `homing f ...: sensors n`. ponytail: walkers outside wp_sensors are one point; NPC joints taken as joint 1.
 
 ## Next
 
