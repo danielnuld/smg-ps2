@@ -13725,6 +13725,7 @@ static void update_candles(void)
  * frames, 3000 from Mario or a hit puts it out. A hit (ACTMES_FIREBALL_ATTACK, sensor 80) kills walkers (a coin;
  * a Unizo: 6 star pieces), melts SnowMen (update_snowmen). ponytail: Mario keeps his colours (no fire textures),
  * no fire throw / spin animations, no BGM_FIRE */
+static void kr_star(Kuribo *k, int fire);
 static void fireball_hit_walkers(int b)
 {
     if (hhp_blow(fireballs[b].pos, 80.0f)) { fireballs[b].t = 0; return; } /* HammerHeadPackun: isMsgFireBallAttack */
@@ -13737,6 +13738,7 @@ static void fireball_hit_walkers(int b)
             petari_blow(e, fireballs[b].pos, PT_KICKOUT); fireballs[b].t = 0; return;
         }
         if (e->kind == WALK_MERAMERA) { if (!mm_fire(e, fireballs[b].pos)) continue; fireballs[b].t = 0; return; } /* requestFire */
+        if (e->kind == WALK_KARON) { kr_star(e, 1); fireballs[b].t = 0; return; } /* isMsgFireBallAttack: hit reaction, StarPieceHit */
         if (e->kind == WALK_UNIZO) { /* isMsgFireBallAttack: doBreak / doFireDown */
             if (unizo_breaking(e)) continue;
             unizo_fire(e, fireballs[b].pos); fireballs[b].t = 0;
@@ -22323,42 +22325,6 @@ static void kari_bite(void) /* Mario::checkKarikariDamage */
     if (--kari_timer > 0) return;
     kari_timer = 120;
     if (life > 1) { m_pad_vib(2); life--; printf("karikari bite: life %d" "\n", life); }
-}
-
-/* Karon.cpp (Dry Bones): within 700 of Mario it pursues him (accel 0.25, damp 0.95), beyond 1200 it waits; a stomp,
- * hip drop or spin breaks it into a heap (Broken / StepBroken) for 300 frames, then Recovery (~60) and it waits again:
- * it never dies. Touching Mario from the side hurts him and bounces it back (HitReaction, 30 frames); a star piece
- * staggers it. phase 0 wait, 1 pursue, 2 broken (timer to 360), 3 hit reaction; timer its frames. ponytail: no
- * territory walk or rail, faces Mario at once, the heap is the model squashed */
-static void karon_update(Kuribo *k, V3 to, float d)
-{
-    float above = vdot(to, k->up), s = sc->objs[k->row].scale[1];
-    V3 dir = vnorm(vtangent(to, k->up));
-    k->timer++;
-    if (k->phase == 2) {
-        if (k->timer >= 360) { k->phase = 0; k->timer = 0; }
-    } else if (d < 180.0f * s && ((mario->vup < 0 && above > 80.0f * s) || mario->spin_timer > 0 || mario->hip == HIP_FALL)) {
-        if (mario->vup < 0 && above > 80.0f * s && mario->hip != HIP_FALL) mario_trample(); /* touch jump */
-        k->phase = 2; k->timer = 0;
-        printf("karon %d broken" "\n", k->row);
-    } else if (k->phase == 3) {
-        if (k->timer >= 30) { k->phase = 0; k->timer = 0; }
-    } else if (d < 130.0f * s && above <= 80.0f * s && !mario->hurt_timer) {
-        hurt_mario(k->pos, 15.0f);
-        k->vel = vadd(vmul(dir, -10.0f), vmul(k->up, 20.0f));
-        k->phase = 3; k->timer = 0;
-    } else if (k->phase == 0 && d < 700.0f) { k->phase = 1; k->timer = 0; }
-    else if (k->phase == 1 && d > 1200.0f) { k->phase = 0; k->timer = 0; }
-    float accel = k->phase == 1 ? 0.25f : 0.0f, damp = k->phase == 1 ? 0.95f : 0.8f;
-    V3 vu = vmul(k->up, vdot(k->vel, k->up)), vh = vsub(k->vel, vu);
-    vh = vadd(vmul(vh, damp), vmul(dir, accel));
-    if (k->phase == 2) vh = v3(0, 0, 0);
-    vu = vsub(vu, vmul(k->up, 1.2f));
-    V3 center = vadd(vadd(k->pos, vmul(k->up, 60.0f)), vadd(vh, vu));
-    int ground = collide(&center, k->up, 60.0f);
-    k->pos = vsub(center, vmul(k->up, 60.0f));
-    if (ground && vdot(vu, k->up) < 0) vu = v3(0, 0, 0);
-    k->vel = vadd(vh, vu);
 }
 
 /* Teresa.cpp (Boo): floats 150 over the ground (addVelocityKeepHeightUseShadow, damp 0.9); when Mario faces it (his
@@ -31610,6 +31576,217 @@ static int w_zone_ground(const Kuribo *k)
     int z = sc->objs[k->row].zone;
     return z >= 64 || (zone_kcl[z] && !zone_low[z]);
 }
+/* Karon.cpp after Petari (Dry Bones): binder 70 at 70; its body sensor 90 x scale at 90 x scale up; shadow 60.
+ * SW_A: FixWait (Wait, its clip stopped unless arg0 is set) until on. Wait (120, 60 after a star piece) turning to
+ * nothing (hNoMoveNoTurn: gravity 1.2, friction 0.8; 2 / 0.95 in the air), then WalkOnRail on a rail (600 ahead,
+ * hWalk 0.12 / 1.2 / 0.95 / 2) or Walk to TerritoryMover(500)'s next target (180 frames or within 40; a fall ahead:
+ * Turn to a new target, hSearch, Walk again once it faces it within 4 degrees after 10). Mario within 700 and within
+ * 80 degrees of its front: Search (FIND, its clip), then Pursue (10 up, hPursue 0.25 / 1.2 / 0.95 / 2) until he is
+ * past 1200 or out of the 80 degrees. Its body: Mario standing on its top (isPlayerExistUp 0.25) touch-jumps off it:
+ * StepBroken; touching it from the side on the ground hurts him (not hip-dropping, not in HitReaction / FixWait):
+ * HitReaction (10 back, 20 up, AttackHit, ATK_SUCCESS); else it pushes him. A trample: StepBroken (invincible: Down and
+ * three star pieces), a hip drop: StepBroken, a spin or a shell: Broken (SpinBreak); both 300 frames on the ground,
+ * then Recover (Recovery) and Wait. A star piece: StarPieceHit (StarPiece), a fire ball: the same with a hit reaction
+ * (AnimScaleController's defaults). A death area, water: kill; a SinkDeath floor: SinkDown (its clip, the sink level
+ * SEs, no shadow) then kill. kill: Death, EXPLODE_S, SW_DEAD (walker_inhale).
+ * ponytail: no star pointer bind (WalkerStateBindStarPointer: the 2P pointer), no push between enemies, no move limit
+ * collision, no velocity areas / rail-moving ground, no danger floor codes in the fall check */
+enum { KR_FIXWAIT, KR_WAIT, KR_SPWAIT, KR_WALK, KR_TURN, KR_WALKRAIL, KR_SEARCH, KR_PURSUE, KR_BROKEN, KR_STEPBROKEN,
+       KR_RECOVER, KR_HITREACTION, KR_SPHIT, KR_DEATH, KR_SINKDOWN };
+static const float kr_asc[7] = {0.2f, 0.91f, 0.2f, 1.8f, 0.06f, 0.12f, 0.91f}; /* AnimScaleParam's defaults (AnimScaleController(0)) */
+static void walker_inhale(Kuribo *e);
+static int kr_broken(const Kuribo *k) { return k->nrv == KR_BROKEN || k->nrv == KR_STEPBROKEN || k->nrv == KR_RECOVER || k->nrv == KR_DEATH; }
+/* moveAndTurnToDirection (ActorMovementUtil.cpp:1203): its front turned deg on gravity's plane and onto the ground,
+ * accel along it, x friction, rebound, then gravity (or into the ground) */
+static void kr_move(Kuribo *k, V3 dir, float accel, float grav, float fric, float deg)
+{
+    turn_on_plane(&k->front, dir, k->grav, cosf(deg * 0.0174533f));
+    if (k->on_ground) { V3 f = vtangent(k->front, k->gn); if (vlen(f) > 1e-6f) k->front = vnorm(f); } /* turnDirectionToGround */
+    w_add_move(k, k->front, accel);
+    k->vel = vmul(k->vel, fric);
+    if (k->on_ground && vdot(k->vel, k->gn) < 0) k->vel = vsub(k->vel, vmul(k->gn, vdot(k->vel, k->gn))); /* reboundVelocityFromCollision 0 0 1 */
+    if (k->on_wall && vdot(k->vel, k->wn) < 0) k->vel = vsub(k->vel, vmul(k->wn, vdot(k->vel, k->wn)));
+    k->vel = k->on_ground ? vsub(k->vel, vmul(k->gn, grav)) : vadd(k->vel, vmul(k->grav, grav)); /* addVelocityToGravityOrGround */
+}
+static void kr_to_player(Kuribo *k, float a, float g, float f, float d) { kr_move(k, vsub(mario->pos, k->pos), a, g, f, d); }
+static void kr_nomove(Kuribo *k) { if (w_on_ground(k)) kr_to_player(k, 0.0f, 1.2f, 0.8f, 0.0f); else kr_to_player(k, 0.0f, 2.0f, 0.95f, 0.0f); }
+static int kr_face_player(const Kuribo *k) /* calcDistanceToPlayer < 700 && isFaceToPlayerDegree 80 */
+{
+    V3 to = vsub(mario->pos, k->pos);
+    return vlen(to) < 700.0f && vlen(to) > 1e-6f && vdot(vnorm(to), vnorm(k->front)) >= cosf(80.0f * 0.0174533f);
+}
+static void kr_target(Kuribo *k) /* TerritoryMover::decideNextTargetPos (500) */
+{
+    V3 v = v3(frand(-1.0f, 1.0f), frand(-1.0f, 1.0f), frand(-1.0f, 1.0f));
+    if (vlen(v) > 1e-6f) v = vnorm(v);
+    k->ttarget = vadd(k->tcenter, vmul(vtangent(v, vnorm(k->grav)), 500.0f));
+}
+static int kr_fall_next(const Kuribo *k, int by_vel) /* isFallNextMove: isFallOrDangerNextMove 150 / 140 / 150 */
+{
+    V3 f = vtangent(by_vel ? k->vel : k->front, k->grav);
+    if (vlen(f) < 1e-6f) return 0;
+    V3 s = vsub(vadd(k->pos, vmul(vnorm(f), 150.0f)), vmul(k->grav, 140.0f));
+    return !line_hits(s, vadd(s, vmul(k->grav, 290.0f)));
+}
+static void kr_pieces(Kuribo *k) { drop_pieces(k->pos, vmul(k->grav, -1.0f), 3); w_se(k, SE_OJ_STAR_PIECE_BURST); } /* appearStarPiece 3, 10, 40 */
+static void kr_star(Kuribo *k, int fire) /* isMsgStarPieceAttack / isMsgFireBallAttack */
+{
+    if (kr_broken(k) || k->nrv == KR_SINKDOWN) return;
+    if (fire) asc_start(k, ASC_HIT); /* startHitReaction */
+    w_nrv(k, KR_SPHIT);
+}
+static void karon_update(Kuribo *k, V3 to, float d)
+{
+    (void)to; (void)d;
+    const Row *r = &sc->objs[k->row];
+    float s = w_scale(k);
+    u32 rn; int rcl;
+    const float *rail = w_rail(k, &rn, &rcl);
+    if (!k->front.x && !k->front.y && !k->front.z) { /* init */
+        V3 x, z;
+        row_axes(r, &x, &z);
+        k->grav = vmul(up_at(k->pos, v3(0, 1, 0)), -1.0f);
+        k->qy = vmul(k->grav, -1.0f);
+        k->front = k->qz = vlen(vtangent(z, k->qy)) > 1e-3f ? vnorm(vtangent(z, k->qy)) : vnorm(vtangent(x, k->qy));
+        k->tcenter = k->pos;
+        k->from = 1.0f; k->to = 0.0f; k->phase = ASC_STOP;
+        k->dir = 1;
+        w_nrv(k, r->sw[SW_A] >= 0 ? KR_FIXWAIT : KR_WAIT);
+    }
+    if (k->nrv != KR_BROKEN && k->nrv != KR_STEPBROKEN && k->nrv != KR_RECOVER) k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f); /* onCalcGravity */
+    /* control */
+    asc_update(k, kr_asc);
+    float depth;
+    if (in_death(k->pos) || in_water(k->pos, vmul(k->grav, -1.0f), &depth)) { walker_inhale(k); return; }
+    if (!kr_broken(k) && k->nrv != KR_SINKDOWN && k->on_ground) {
+        Tri t; /* isBindedGroundSinkDeath (CollisionFloorCode_SinkDeath 25) */
+        if (map_poly(vadd(k->pos, vmul(k->gn, 20.0f)), vmul(k->gn, -60.0f), NULL, &t) && (tri_attr(&t) & 0x3F) == 25) w_nrv(k, KR_SINKDOWN);
+    }
+    int st = k->step;
+    switch (k->nrv) {
+    case KR_FIXWAIT:
+        if (st == 0) { w_act(k, "Wait"); if (r->arg[0] == -1) k->act_rate = 0.0f; } /* stopBck unless mStopSwAnim */
+        kr_to_player(k, 0.0f, 1.2f, 0.8f, 0.0f);
+        if (sw_on(r, SW_A)) w_nrv(k, KR_WAIT);
+        break;
+    case KR_WAIT: case KR_SPWAIT:
+        if (st == 0) w_act(k, "Wait");
+        kr_nomove(k);
+        if (kr_face_player(k)) w_nrv(k, KR_SEARCH);
+        else if (st > (k->nrv == KR_SPWAIT ? 60 : 120)) {
+            if (rail) { k->lva[1] = w_rail_nearest(rail, rn, k->pos); w_nrv(k, KR_WALKRAIL); }
+            else { kr_target(k); w_nrv(k, KR_WALK); }
+        }
+        break;
+    case KR_WALK: {
+        if (st == 0) w_act(k, "Walk");
+        kr_move(k, vsub(k->ttarget, k->pos), 0.12f, 1.2f, 0.95f, 2.0f);
+        V3 rest = vtangent(vsub(k->ttarget, k->pos), vnorm(k->grav));
+        if (st > 180 || vlen(rest) < 40.0f) w_nrv(k, KR_WAIT);
+        else if (k->on_ground && kr_fall_next(k, 1)) w_nrv(k, KR_TURN);
+        else if (kr_face_player(k)) w_nrv(k, KR_SEARCH);
+        break;
+    }
+    case KR_TURN:
+        if (st == 0) { w_act(k, "Walk"); kr_target(k); }
+        kr_move(k, vsub(k->ttarget, k->pos), 0.0f, 1.2f, 0.95f, 2.0f);
+        if (kr_face_player(k)) w_nrv(k, KR_PURSUE);
+        else if (st > 10) { /* isFaceToTargetHorizontalDegree(_C x 2: 4) */
+            V3 h = vtangent(vsub(k->ttarget, k->pos), vnorm(k->grav)), f = vtangent(k->front, vnorm(k->grav));
+            if (vlen(h) > 1e-6f && vlen(f) > 1e-6f && vdot(vnorm(h), vnorm(f)) >= cosf(4.0f * 0.0174533f))
+                w_nrv(k, k->on_ground && kr_fall_next(k, 0) ? KR_TURN : KR_WALK);
+        }
+        break;
+    case KR_WALKRAIL: { /* moveAndTurnAlongRail 600: calcMovingDirectionAlongRailH */
+        if (st == 0) w_act(k, "Walk");
+        float len = w_rail_len(rail, rn), c = w_rail_nearest(rail, rn, k->pos);
+        if (!rcl && (k->dir > 0 ? c >= len : c <= 0.0f)) k->dir = -k->dir; /* isRailReachedGoal: reverseRailDirection */
+        V3 p = rail_at(rail, rn, c), dv = vsub(rail_at(rail, rn, c + (k->dir > 0 ? 1.0f : -1.0f)), p);
+        if (vlen(dv) > 1e-6f) dv = vnorm(dv);
+        V3 from = vtangent(vsub(p, k->pos), vnorm(k->grav)), dh = vtangent(dv, vnorm(k->grav));
+        V3 mv = vadd(vmul(from, 1.0f / 600.0f), dh);
+        if (vlen(mv) > 1e-6f) kr_move(k, mv, 0.12f, 1.2f, 0.95f, 2.0f);
+        else kr_move(k, k->front, 0.12f, 1.2f, 0.95f, 2.0f);
+        if (kr_face_player(k)) w_nrv(k, KR_SEARCH);
+        break;
+    }
+    case KR_SEARCH:
+        if (st == 0) { w_act(k, "Search"); w_se(k, SE_EV_KARON_FIND); }
+        kr_to_player(k, 0.0f, 1.2f, 0.95f, 2.0f);
+        if (st > 0 && w_bck_stopped(k)) w_nrv(k, KR_PURSUE);
+        break;
+    case KR_PURSUE:
+        if (st == 0) { w_act(k, "Pursue"); k->vel = vsub(k->vel, vmul(k->grav, 10.0f)); }
+        kr_to_player(k, 0.25f, 1.2f, 0.95f, 2.0f);
+        if (vlen(vsub(mario->pos, k->pos)) > 1200.0f || !(vdot(vnorm(vsub(mario->pos, k->pos)), vnorm(k->front)) >= cosf(80.0f * 0.0174533f)))
+            w_nrv(k, KR_WAIT);
+        break;
+    case KR_BROKEN: case KR_STEPBROKEN:
+        if (st == 0) { w_act(k, k->nrv == KR_BROKEN ? "SpinBreak" : "StepBreak"); w_se(k, SE_EM_KARON_BROKEN); w_se(k, SE_EV_KARON_DAMAGE); }
+        if (k->on_ground) k->vel = vmul(k->gn, vdot(k->gn, k->vel)); /* the velocity along its ground's normal only */
+        else k->vel = vadd(vmul(k->grav, vdot(k->grav, k->vel)), vmul(k->grav, 1.0f)); /* forceBindOnGround(1, 0.8) */
+        if (st > 300) w_nrv(k, KR_RECOVER);
+        break;
+    case KR_RECOVER:
+        if (st == 0) { w_act(k, "Recovery"); w_se(k, SE_EM_KARON_RECOVER); }
+        if (w_on_ground(k)) k->vel = vmul(k->grav, vdot(k->grav, k->vel));
+        kr_to_player(k, 0.0f, 1.2f, 0.8f, 0.0f);
+        if (st > 0 && w_bck_stopped(k)) w_nrv(k, KR_WAIT); /* onCalcGravity */
+        break;
+    case KR_HITREACTION: case KR_SPHIT:
+        if (st == 0) w_act(k, k->nrv == KR_SPHIT ? "StarPiece" : "AttackHit");
+        w_se_lv(k, SE_EV_LV_KARON_ATK_SUCCESS);
+        if (k->nrv == KR_SPHIT) kr_nomove(k);
+        else if (w_on_ground(k)) kr_to_player(k, 0.0f, 1.2f, 0.8f, 5.0f);
+        else kr_to_player(k, 0.0f, 2.0f, 0.95f, 5.0f);
+        if (w_on_ground(k) && st > 0 && w_bck_stopped(k)) w_nrv(k, k->nrv == KR_SPHIT ? KR_SPWAIT : KR_WAIT);
+        break;
+    case KR_DEATH:
+        if (st == 0) { w_act(k, "Down"); w_se(k, SE_EM_KARON_BROKEN); w_se(k, SE_EV_KARON_DAMAGE); }
+        kr_to_player(k, 0.0f, 1.2f, 0.8f, 0.0f);
+        if (st > 0 && w_bck_stopped(k)) { walker_inhale(k); return; }
+        break;
+    case KR_SINKDOWN:
+        if (st == 0) w_act(k, "SinkDown");
+        if (w_on_ground(k)) k->vel = vmul(k->grav, vdot(k->grav, k->vel));
+        w_se_lv(k, SE_EV_LV_KARON_SINK); /* (and SE_EM_LV_KARON_SINK: one level handle a walker) */
+        kr_to_player(k, 0.0f, 1.2f, 0.8f, 0.0f);
+        if (st > 0 && w_bck_stopped(k)) { walker_inhale(k); return; }
+        break;
+    }
+#ifdef KARON_TEST
+    if (k->step == -1) printf("karon row %d: nerve %d" "%c", k->row, k->nrv, 10);
+#endif
+    k->step++;
+    k->act_t += k->act_rate;
+    w_bind(k, 70.0f);
+    k->qy = vmul(k->grav, -1.0f);
+    k->qz = vlen(vtangent(k->front, k->qy)) > 1e-6f ? vnorm(vtangent(k->front, k->qy)) : k->qz; /* LiveActor::calcAndSetBaseMtx */
+    k->up = k->qy;
+    /* the body sensor (90 x scale at 90 x scale up): Mario's attacks, then attackSensor */
+    if (k->nrv == KR_SINKDOWN || k->nrv == KR_DEATH) return;
+    V3 c = vsub(k->pos, vmul(k->grav, 90.0f * s)), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    int msg = kr_broken(k) && k->nrv != KR_RECOVER ? MSG_NONE : mario_offence(c, 90.0f * s, k->grav);
+    if (msg == MSG_TRAMPLE) {
+        mario_trample();
+        if (player_mode == PM_INVINCIBLE) { kr_pieces(k); w_nrv(k, KR_DEATH); }
+        else w_nrv(k, KR_STEPBROKEN);
+        return;
+    }
+    if (msg == MSG_HIPDROP) { w_nrv(k, KR_STEPBROKEN); return; }
+    if (msg == MSG_HITALL) { w_se(k, SE_PM_SPIN_HIT); w_nrv(k, KR_BROKEN); return; } /* startBlowHitSound */
+    if (kr_broken(k) || vlen(vsub(mc, c)) >= 90.0f * s + HIT_BODY_R) return;
+    V3 cu = vnorm(vsub(mc, vsub(k->pos, vmul(k->grav, 90.0f * s)))); /* isPlayerExistUp(90 x scale, 0.25) */
+    int up = vdot(vmul(k->grav, -1.0f), cu) > 0.25f;
+    if (up && mario->grounded) { if (mario_touch_jump(c)) w_nrv(k, KR_STEPBROKEN); } /* sendMsgTouchJump */
+    else if (k->nrv != KR_HITREACTION && k->nrv != KR_FIXWAIT && !up && mario->grounded && mario->hip != HIP_FALL && mario->hip != HIP_LAND && !mario->hurt_timer) {
+        hurt_mario(c, 15.0f); /* sendMsgEnemyAttack */
+        V3 h = vtangent(vsub(c, mc), vnorm(k->grav));
+        if (vlen(h) > 1e-6f) k->vel = vadd(k->vel, vmul(vnorm(h), 10.0f));
+        k->vel = vsub(k->vel, vmul(k->grav, 20.0f));
+        w_nrv(k, KR_HITREACTION);
+    } else mario_push_out(c, 90.0f * s); /* sendMsgPushAndKillVelocityToTarget */
+}
 static void update_kuribo_one(Kuribo *k)
 {
     {
@@ -31829,6 +32006,10 @@ static void update_invincible(void)
         if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_BUTTERFLY || e->kind == WALK_STRSPIDER || e->kind == WALK_BEGOSPIKE || e->kind == WALK_BEGOSPRING || e->kind == WALK_KCHIEF || e->kind == WALK_BBEGO || e->kind == WALK_MERAKING ||
             vlen(vsub(c, vadd(e->pos, vmul(e->up, 60.0f)))) > 60.0f + HIT_BODY_R) continue;
         if (e->kind == WALK_PETARI) { if (petari_solid(e)) petari_blow(e, mario->pos, PT_KICKOUT); continue; }
+        if (e->kind == WALK_KARON) { /* isMsgInvincibleAttack: Death, three star pieces, startBlowHitSound */
+            if (e->nrv != KR_BROKEN && e->nrv != KR_STEPBROKEN && e->nrv != KR_DEATH && e->nrv != KR_SINKDOWN) { w_nrv(e, KR_DEATH); kr_pieces(e); w_se(e, SE_PM_SPIN_HIT); }
+            continue;
+        }
         int took = walker_blow(e, mario->pos);
         if (took < 0) { e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up); pop_coins(e->pos, e->up, 1); }
         if (took) printf("invincible mario hits walker row %d\n", e->row);
@@ -41503,7 +41684,7 @@ static void update_shots(void)
                 }
             }
             else if (e->kind == WALK_MKOOPA) { e->phase = 6; e->timer = 0; }
-            else if (e->kind == WALK_KARON) { if (e->phase != 2) { e->phase = 3; e->timer = 0; } }
+            else if (e->kind == WALK_KARON) kr_star(e, 0);
             else if (e->kind == WALK_BUTTERFLY || e->kind == WALK_TERESA) { hit = 0; continue; }
             else if (e->kind == WALK_PETARI) { /* isMsgStarPieceAttack: a hit reaction; Swoon starts over */
                 if (e->phase) { hit = 0; continue; }
@@ -52128,7 +52309,8 @@ static void walker_shadow(const Kuribo *k)
     const Row *r = &sc->objs[k->row];
     float rs = 0, rf = 0, off = 0, start = 50.0f, len = 1000.0f;
     switch (k->kind) {
-    case WALK_KURIBO: case WALK_KARON: rs = 60.0f; break;
+    case WALK_KURIBO: rs = 60.0f; break;
+    case WALK_KARON: if (k->nrv == KR_SINKDOWN) return; rs = 60.0f; break; /* Karon.cpp:135, exeSinkDown's invalidateShadow */
     case WALK_TAKOHEI: rs = 60.0f; break;                   /* sShadowRadius */
     case WALK_PACKUN: rs = 50.0f; break;                    /* Shadow.bcsv PackunPetit */
     case WALK_KOTEBUG: case WALK_TAKOBO: rs = 70.0f * r->scale[1]; break;
@@ -52915,8 +53097,6 @@ void game_draw(void)
         }
         if (kuribo[i].kind == WALK_STINKBUG) /* its scale; flattened while dying */
             for (int j = 0; j < 12; j++) m[j] *= sc->objs[kuribo[i].row].scale[0] * (kuribo[i].phase == 6 && j >= 4 && j < 8 ? 1.0f - kuribo[i].timer / 40.0f : 1.0f);
-        if (kuribo[i].kind == WALK_KARON && kuribo[i].phase == 2) /* a heap of bones (ponytail: squashed) */
-            for (int j = 4; j < 7; j++) m[j] *= kuribo[i].timer < 300 ? 0.3f : 0.3f + 0.7f * (kuribo[i].timer - 300) / 60.0f;
         if (md->skin) { /* animated: the clip of its state (walker_clip), facing its way when it walks */
             Kuribo *k = &kuribo[i];
             const char *cls = walker_acls(k);
@@ -52968,7 +53148,7 @@ void game_draw(void)
                 }
                 if (k->kind == WALK_BOMBTERESA) bt_tongue(k, m, a); /* calcAndSetBaseMtx: its tongue's JointControlDelegators */
                 if (k->kind == WALK_MERAMERA) mm_btp(k, md);
-                if (k->kind == WALK_KCHIEF || k->kind == WALK_SAMBOHEAD) { /* setBaseScale(mScaleController->_C x mScale) */
+                if (k->kind == WALK_KCHIEF || k->kind == WALK_SAMBOHEAD || k->kind == WALK_KARON) { /* setBaseScale(mScaleController->_C x mScale) */
                     float sy = k->from, sx = sqrtf(1.0f / sy);
                     for (int j = 0; j < 3; j++) { m[j] *= sx; m[4 + j] *= sy; m[8 + j] *= sx; }
                 }

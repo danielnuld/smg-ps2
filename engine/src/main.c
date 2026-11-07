@@ -2563,8 +2563,11 @@ int main(void)
         if (frame == 360) printf("kmini test: %d alive\n", game_kind_alive(9));
 #endif
 #ifdef KARON_TEST
-        if (frame == 120) printf("karon test: stomp row %d\n", game_test_enemy(10, 0, 0));
-        if (frame >= 200 && frame < 600 && frame % 60 == 0) printf("karon test f %u: %d up, life %d\n", frame, game_kind_alive(10), game_life());
+        { static int t; if (game_test_free()) t++; /* once Mario is free: a stomp, a spin by the other, then 600 before the first */
+          if (t == 60) printf("karon test: stomp row %d\n", game_test_enemy(10, 0, 0));
+          if (t == 500) printf("karon test: spin by row %d\n", game_test_enemy(10, 1, 1));
+          if (t == 1000) printf("karon test: 600 before row %d\n", game_test_enemy(10, 0, 9));
+          if (t > 0 && t < 1400 && t % 100 == 0) printf("karon test t %d: %d up, life %d\n", t, game_kind_alive(10), game_life()); }
 #endif
 #ifdef TERESA_TEST
         if (frame == 120) { game_test_enemy(11, 0, 3); game_test_hold(1); } /* 200 off a Boo, his back to it */
