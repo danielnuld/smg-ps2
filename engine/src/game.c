@@ -14566,9 +14566,7 @@ static float m_sz; /* (mStickPos.z, below) */
  * (only ObjNameTable names it): not ported.
  * The sudden gravity turn (updateGravityVec, m_gravity_turn) sets _10.turning, which clears the 2D stick on the ground.
  * A moving part's face in 2D pushes him: createAtField (m_create_at_field).
- * ponytail: checkForceGrounding, the walk tilt and
- * homing of MarioAnimator, beforeJumping2D's _628 (read nowhere) and the warps' _688 (MarioAccess setTrans) are not
- * kept */
+ * ponytail: checkForceGrounding and beforeJumping2D's _628 (read nowhere) are not kept */
 static struct {
     int on, circ, was, was_circ;   /* mMovementStates._37, _10._15; last frame's (_20._37, _28 bit 10) */
     V3 fx, fy, fz;                 /* _F4: the area's rotation (its columns) */
@@ -14578,6 +14576,11 @@ static struct {
     int b60E, b60F, b610, b611, b624, b66C;
     int t10;                       /* _10.turning (set by updateGravityVec's sudden turn) */
 } m2;
+static void m_set_trans(V3 p) /* MarioAccess::setTrans (MR::setPlayerPos): in 2D his plane point _688 too */
+{
+    mario->pos = p;
+    if (m2.on) m2.v688 = p;
+}
 static void m2_clear(void) /* clear2DStick */
 {
     m2.b60E = m2.b60F = m2.b610 = m2.b611 = 0;
@@ -16377,6 +16380,7 @@ static int m_wall_update(Player *m);
 
 /* doLanding: the landing clip by the jump, a run on (the stick full, or more than 6 forward kept as walk speed), the
  * hard landing over mHardLandingHeight */
+static void m_add_rumble_power(float power, int time);
 static void m_do_landing(Player *m)
 {
     int hard = 0, keep = 0;
@@ -16410,6 +16414,7 @@ static void m_do_landing(Player *m)
     case 2: case 4: case 6: m_pad_vib(3); break;
     default: m_pad_vib(2); break;
     }
+    m_add_rumble_power(5.0f, 60); /* getAnimator()->addRumblePower(5, 0x3C) */
     m->squat_lock = 0;
     m->air_spin = MC.mAirWalkTime;
     if (vdot(vsub(m->jump_from, m->pos), m->up) > MC.mHardLandingHeight) hard = 1;
@@ -17968,6 +17973,135 @@ static V3 mario_joint_at(int j, V3 o) /* calcPlayerJointMtx(j) applied to the po
               w[2] * o.x + w[6] * o.y + w[10] * o.z + w[14]);
 }
 static int mario_sleeping(void) { return mario->sleep == 1 || mario->sleep == 2; } /* MarioActor::isSleeping: 特殊ウエイト1A / 1B */
+/* MarioAnimator::setTilt / resetTilt / setHoming / updateJointRumble / addRumblePower: Mario's joint transforms
+ * (XjointTransform _64 a local matrix after the clip's, _2C an offset on the local translation), applied when he is
+ * drawn (m_apply_joint_xf). setTilt (基本 / がんばり走り): Spine1 x orderRotateMtx(0, (0, _58, _5C)): _58 eases (0.1 up, 0.05
+ * down) to his front's turn this frame (1 - cos, signed by the gravity) x mTiltRatio x walk speed (at most 90
+ * degrees), _5C to walk speed x mLookDownRatio and -_3F4 x pi / 4. setHoming: the Head x _7C, blended 0.1 a frame
+ * (quaternion lerp) to orderRotateMtx(5, (0, h, -v)) towards the look target (getLookTargetSensor: the sensor nearest
+ * his front within 500, trySetLockOnTarget; none rushing or asleep) or the normal talk's actor (its キャラの身長 over
+ * it, else 150) from his cap (_2AC): v the elevation (at most mLookMaxAngleVP, 1 in a talk; -mLookMaxAngleVM), h the
+ * turn from his front (at most mLookMaxAngleH, signed); else to identity; ShoulderR (h > 0) / ShoulderL (h < 0) moved
+ * along x by _110 / mLookMaxAngleH x mLookShoulderMoveMax (_110 eased 0.1 to h). updateJointRumble (doLanding's
+ * addRumblePower(5, 60)): ArmL1 / ArmR2 moved along y by -5 x sin(t x 2 pi / 30) (faded over the last 30), Spine2 x
+ * rotZ(0.7 x t / 60) on a slope over 5 degrees at speed index 0 (negated facing up it, 0.9 x the last sideways), kept
+ * after the rumble ends. ponytail: the look target's candidates are the walkers and the coins / purple coins / star
+ * pieces, at their places (the port keeps no common sensor list: no map object, item or NPC sensor, no sensor
+ * offsets) */
+static struct {
+    float f58, f5C, f110, f118, hip, f70; /* _58 _5C _110 _118, Spine2's _AC angle, _70 */
+    V3 f60;                               /* _60: last front */
+    float q7C[4];                         /* _7C as a quaternion */
+    int tilt, hip_on, t74;                /* _28 on Spine1 (not identity), Spine2's _64 set, _74 */
+    float sh_l, sh_r, arm_y;              /* ShoulderL / R _2C.x, ArmL1 / ArmR2 _2C.y */
+} mxf = {.q7C = {0, 0, 0, 1}};
+static void m_add_rumble_power(float power, int time) /* addRumblePower */
+{
+    if (mxf.f70 < power) mxf.f70 = power;
+    mxf.t74 = time;
+}
+static void m_reset_tilt(void) { mxf.tilt = 0; mxf.f58 = mxf.f5C = 0.0f; mxf.f60 = v3(0, 0, 0); } /* resetTilt */
+static void m_set_tilt(Player *m) /* setTilt */
+{
+    float tilt = 0.0f;
+    if (vlen(mxf.f60) > 1e-6f) {
+        tilt = 1.0f - vdot(mxf.f60, m->face);
+        if (tilt > 0.001f) { if (vdot(vcross(mxf.f60, m->face), vmul(m->up, -1.0f)) < 0.0f) tilt = -tilt; }
+        else tilt = 0.0f;
+    }
+    mxf.f60 = m->face;
+    tilt *= MC.mTiltRatio * m->walk;
+    if (fabsf(tilt) >= 1.5707964f) tilt *= 1.5707964f / fabsf(tilt);
+    if (fabsf(tilt) > fabsf(mxf.f58)) mxf.f58 = 0.9f * mxf.f58 + 0.1f * tilt;
+    else mxf.f58 = 0.95f * mxf.f58 + 0.05f * tilt;
+    float f4 = 0.9f * mxf.f5C + 0.1f * m->walk * MC.mLookDownRatio, f5 = -m->start_spin_ratio * 3.1415927f / 4.0f;
+    mxf.f5C = 0.97f * f4 + 0.03f * f5;
+    mxf.tilt = 1;
+}
+static float talk_head_height(const char *cls) /* getFaceLookHeight: the キャラの身長 table by ObjNameTable's name */
+{
+    static const struct { const char *cls; float h; } t[] = {
+        {"Peach", 180.0f}, {"PenguinCoach", 500.0f}, {"PenguinMaster", 500.0f}, {"Tico", 100.0f}, {"TicoFat", 200.0f},
+        {"Kinopio", 100.0f}, {"KinopioAstro", 100.0f}, {"Penguin", 160.0f}, {"Rosetta", 240.0f}, {"Rabbit", 100.0f},
+        {"TrickRabbit", 100.0f}, {"TalkSyati", 220.0f}}; /* (クッパJｒ / ルイージ: no ObjNameTable name matches) */
+    for (u32 i = 0; i < sizeof t / sizeof t[0]; i++) if (!strcmp(cls, t[i].cls)) return t[i].h;
+    return 150.0f;
+}
+static void m_lock_on_try(Player *m, V3 p, float *best, V3 *tp, int *has) /* trySetLockOnTarget */
+{
+    V3 g = vmul(m->up, -1.0f), v = vtangent(vsub(p, m->pos), g), f = vtangent(m->face, g);
+    if (vlen(vsub(p, m->pos)) > 500.0f || vlen(v) < 1e-6f || vlen(f) < 1e-6f) return;
+    float a = ang_abs(vnorm(v), vnorm(f)) * 57.29578f;
+    if (!*has || a < *best) { *best = a; *tp = p; *has = 1; }
+}
+static void m_set_homing(Player *m) /* setHoming */
+{
+    float h = 0.0f, best = 0.0f;
+    int has = 0;
+    V3 tp = v3(0, 0, 0);
+    if (!tmk_riding() && !mario_sleeping() && !(m->jumping && m->jump_kind == 5)) { /* getLookTargetSensor: _934, isSleeping */
+        for (int i = 0; i < nkuribo; i++)
+            if (kuribo[i].state != KURIBO_DEAD && row_shown(kuribo[i].row)) m_lock_on_try(m, kuribo[i].pos, &best, &tp, &has);
+        const Pickup *const set[3] = {coins, purple, pieces};
+        const int n[3] = {ncoins, npurple, npieces};
+        for (int k = 0; k < 3; k++)
+            for (int i = 0; i < n[k]; i++)
+                if (set[k][i].alive != PICK_GONE && (set[k][i].row < 0 || row_shown(set[k][i].row))) m_lock_on_try(m, set[k][i].pos, &best, &tp, &has);
+    }
+    if (!has && talk_system() && td.demo == 1 && talkers[td.st].row >= 0) { /* isNormalTalking: getTalkingActor's place, its height over it */
+        const Talker *t = &talkers[td.st];
+        tp = vadd(v3(t->m[12], t->m[13], t->m[14]), vmul(m->up, talk_head_height(sc->types + 32 * sc->objs[t->row].type)));
+        has = 1;
+    }
+    float q[4] = {0, 0, 0, 1};
+    if (has) {
+        V3 to = vsub(tp, mario_joint_drawn(13)); /* _2AC */
+        float up = vdot(to, m->up), va = 0.0f;
+        to = vsub(to, vmul(m->up, up));
+        if (vlen(to) >= 10.0f) {
+            va = atan2f(up, vlen(to));
+            if (talk_system()) { if (va > 1.0f) va = 1.0f; } /* MarioStatus_Talk */
+            else if (va > MC.mLookMaxAngleVP) va = MC.mLookMaxAngleVP;
+            if (va < -MC.mLookMaxAngleVM) va = -MC.mLookMaxAngleVM;
+        }
+        h = vlen(to) > 1e-6f ? ang_abs(vnorm(to), m->face) : 0.0f;
+        if (h > MC.mLookMaxAngleH) h = MC.mLookMaxAngleH;
+        if (vdot(vcross(to, m->face), m->up) < 0.0f) h = -h;
+        float cz = cosf(-va * 0.5f), sz = sinf(-va * 0.5f), cy = cosf(h * 0.5f), sy = sinf(h * 0.5f);
+        q[0] = -sz * sy; q[1] = cz * sy; q[2] = sz * cy; q[3] = cz * cy; /* rotZ(-v) rotY(h) */
+    }
+    float d = 0.0f, l = 0.0f;
+    for (int i = 0; i < 4; i++) d += mxf.q7C[i] * q[i];
+    for (int i = 0; i < 4; i++) { mxf.q7C[i] += 0.1f * ((d < 0.0f ? -q[i] : q[i]) - mxf.q7C[i]); l += mxf.q7C[i] * mxf.q7C[i]; }
+    l = sqrtf(l);
+    for (int i = 0; i < 4; i++) mxf.q7C[i] /= l;
+    mxf.f110 = 0.9f * mxf.f110 + 0.1f * h;
+    mxf.sh_l = h < 0.0f ? -mxf.f110 / MC.mLookMaxAngleH * MC.mLookShoulderMoveMax : 0.0f;
+    mxf.sh_r = h > 0.0f ? mxf.f110 / MC.mLookMaxAngleH * MC.mLookShoulderMoveMax : 0.0f;
+#ifdef WALKER_TEST
+    if (game_frame % 30 == 0) printf("homing f %u: target %d h %.2f q %.2f %.2f %.2f %.2f tilt %.3f %.3f rumble %d arm %.2f\n", game_frame, has, h,
+                                     mxf.q7C[0], mxf.q7C[1], mxf.q7C[2], mxf.q7C[3], mxf.f58, mxf.f5C, mxf.t74, mxf.arm_y);
+#endif
+}
+static float angle_d(const Player *m, V3 n);
+static void m_update_joint_rumble(Player *m) /* updateJointRumble */
+{
+    if (!mxf.t74) { mxf.f118 = 0.0f; return; }
+    mxf.t74--;
+    float sn = sinf((float)mxf.t74 * 6.2831855f / 30.0f);
+    if (mxf.t74 < 30) sn *= (float)mxf.t74 / 30.0f;
+    mxf.arm_y = sn * -mxf.f70;
+    float hip = 0.7f * ((float)mxf.t74 / 60.0f);
+    if (m->grounded && !m->jumping && !m2.on && m->tsi == 0 && angle_d(m, m->ground_n) > 5.0f) {
+        V3 dir = vtangent(m->ground_n, m->up);
+        dir = vlen(dir) > 1e-6f ? vnorm(dir) : v3(0, 0, 0);
+        float fd = vdot(m->face, dir);
+        hip = fd < -0.707f ? -hip : fd > 0.707f ? hip : 0.9f * mxf.f118;
+        mxf.hip = hip;
+    } else mxf.hip = 0.0f;
+    mxf.hip_on = 1;
+    mxf.f118 = hip;
+}
 /* MarioActor::calcCenterPos (_2A0): along his up by the binder's radius, eased to 60 (40 squatting; as Teresa to 100,
  * the centre 20 over it); hanging his Spine1 */
 static void m_center(Player *m)
@@ -22032,6 +22166,9 @@ static void update_mario_(void)
                 else { if (m->turning || m->turn_brake) m_decide_walk_speed(m); m_update_brake(m); }
             }
         } else if (!m->grounded && !busy && (m->jumping || !m->drop_grace)) mario_play("fall", 1.0f, 1); /* 落下 */
+        if (m_group_on("基本") || m_anim_on("がんばり走り")) m_set_tilt(m); else m_reset_tilt(); /* setTilt / resetTilt */
+        m_set_homing(m);
+        m_update_joint_rumble(m);
         anim_update(mario_anim);
     }
     m_correction(m);
@@ -23747,7 +23884,7 @@ static void update_vines(void)
             if (vine_hang_up(k, rs >= 30.0f ? 30.0f : rs)) break;
             if (o->dir > 0 && o->coord >= o->len) { /* tryReachGoal */
                 o->coord = o->len; o->pos = vrail_pos(k, o->len);
-                mario->pos = o->pos;
+                m_set_trans(o->pos); /* setPlayerPos(endPoint) */
                 const VPoint *tip = &o->stalk[0];
                 V3 g = vmul(up_at(o->pos, tip->up), -1.0f), ef = vtangent(tip->up, g);
                 if (vlen(ef) > 1e-3f) mario->face = vnorm(ef);
@@ -47086,6 +47223,48 @@ static void anim_joint_rot(Anim *a, int j, int axis, float ang)
     }
 }
 static void anim_joint_rotx(Anim *a, int j, float ang) { anim_joint_rot(a, j, 0, ang); }
+static void anim_joint_quat(Anim *a, int j, const float q[4]) /* the joint x the rotation q in its own frame (_64) */
+{
+    float s = sqrtf(q[0] * q[0] + q[1] * q[1] + q[2] * q[2]);
+    if (s < 1e-6f) return;
+    const float *w = a->world[j];
+    V3 ax = vadd(vadd(vmul(v3(w[0], w[1], w[2]), q[0] / s), vmul(v3(w[4], w[5], w[6]), q[1] / s)), vmul(v3(w[8], w[9], w[10]), q[2] / s));
+    float ang = 2.0f * atan2f(s, q[3]);
+    const Skin *k = a->skin;
+    V3 o = v3(w[12], w[13], w[14]);
+    ax = vnorm(ax);
+    for (u32 i = (u32)j; i < k->njoints && i < ANIM_MAX_JOINTS; i++) {
+        int under = 0;
+        for (int p = (int)i; p >= 0; p = k->joints[p].parent) if (p == j) { under = 1; break; }
+        if (!under) continue;
+        float *m = a->world[i];
+        for (int c = 0; c < 3; c++) { V3 v = rot_axis(v3(m[4 * c], m[4 * c + 1], m[4 * c + 2]), ax, ang); m[4 * c] = v.x; m[4 * c + 1] = v.y; m[4 * c + 2] = v.z; }
+        V3 t = vadd(o, rot_axis(vsub(v3(m[12], m[13], m[14]), o), ax, ang));
+        m[12] = t.x; m[13] = t.y; m[14] = t.z;
+    }
+}
+static void anim_joint_move(Anim *a, int j, V3 off) /* the joint's local translation + off (_2C: its parent's axes) */
+{
+    const Skin *k = a->skin;
+    int pj = k->joints[j].parent;
+    V3 d = off;
+    if (pj >= 0) { const float *w = a->world[pj]; d = vadd(vadd(vmul(v3(w[0], w[1], w[2]), off.x), vmul(v3(w[4], w[5], w[6]), off.y)), vmul(v3(w[8], w[9], w[10]), off.z)); }
+    for (u32 i = (u32)j; i < k->njoints && i < ANIM_MAX_JOINTS; i++) {
+        int under = 0;
+        for (int p = (int)i; p >= 0; p = k->joints[p].parent) if (p == j) { under = 1; break; }
+        if (under) { a->world[i][12] += d.x; a->world[i][13] += d.y; a->world[i][14] += d.z; }
+    }
+}
+static void m_apply_joint_xf(Anim *a) /* MarioAnimator's XjointTransforms on the posed joints, parents first */
+{
+    if (!a->skin || a->skin->njoints <= JOINT_PARTSCONTROL) return;
+    if (mxf.tilt) { anim_joint_rot(a, 10, 1, mxf.f58); anim_joint_rot(a, 10, 2, mxf.f5C); } /* Spine1 x rotY rotZ */
+    if (mxf.hip_on && mxf.hip != 0.0f) anim_joint_rot(a, 11, 2, mxf.hip); /* Spine2 x _AC */
+    anim_joint_quat(a, 12, mxf.q7C);                                      /* Head x _7C */
+    if (mxf.sh_l != 0.0f) anim_joint_move(a, 19, v3(mxf.sh_l, 0, 0));    /* ShoulderL / R _2C.x */
+    if (mxf.sh_r != 0.0f) anim_joint_move(a, 24, v3(mxf.sh_r, 0, 0));
+    if (mxf.arm_y != 0.0f) { anim_joint_move(a, 20, v3(0, mxf.arm_y, 0)); anim_joint_move(a, 26, v3(0, mxf.arm_y, 0)); } /* ArmL1 / ArmR2 _2C.y */
+}
 static void mode_draw_parts(const float m[16])
 {
     teresa_draw(m);
@@ -48820,7 +48999,7 @@ static void update_sbp(void)
             sbp.pos = sbp.home;
             if (gp) { /* setPlayerPosAndWait, turnDirectionToTargetUseGroundNormalDegree(180) */
                 pw.on = 0;
-                mario->pos = v3(gp[0], gp[1], gp[2]); mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 1;
+                m_set_trans(v3(gp[0], gp[1], gp[2])); mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 1;
                 sbp_turn_to(mario->pos, 180.0f);
             }
             printf("stink bug parent: anger\n");
@@ -51372,7 +51551,7 @@ static void gh_warp(const char *name) /* warpPosition */
 }
 static void gh_player_at(const float m[16], int wait) /* setPlayerPosAndWait, setPlayerBaseMtx */
 {
-    mario->pos = v3(m[12], m[13], m[14]);
+    m_set_trans(v3(m[12], m[13], m[14]));
     mario->up = vnorm(v3(m[4], m[5], m[6]));
     mario->face = vnorm(vtangent(v3(m[8], m[9], m[10]), mario->up));
     if (wait) { mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 1; }
@@ -53437,6 +53616,8 @@ void game_draw(void)
             anim_skin(mario_anim);
             stilt_at = game_frame;
         }
+        static unsigned jxf_at = ~0u;
+        if (mario_anim->skin && jxf_at != game_frame) { m_apply_joint_xf(mario_anim); anim_skin(mario_anim); jxf_at = game_frame; } /* MarioAnimator's joint transforms */
         static unsigned hand_at = ~0u;
         int hands_on = hand_anim[0] && player_mode != PM_HOPPER && disp_model != 1 && !fp_on; /* updateHand: _A58 */
         if (disp_model != 5 && mario_anim->skin && mario_anim->skin->njoints > JOINT_HANDR0_ && hand_at != game_frame) {

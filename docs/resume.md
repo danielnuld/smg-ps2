@@ -1265,6 +1265,12 @@ there needs the embedded blob and every pack rebuilt.
   PerchOnSleepingMario (within 500 of Mario in 特殊ウエイト1A / 1B: 300 frames, then to his CapPosition x (0, 50.2, 24.9),
   Wait on it until he wakes); MarioWait's 1A -> 1B not while carrying (_468). Test: `butterfly` (HeavensDoor 2: Mario
   left still from 480: sleep at ~2400, nrv 3 / 4 / 5). ponytail: PerchOn onto an NPC sensor (no common NPC sensor list).
+- Mario joint transforms (feat/mario-tilt): MarioAnimator::setTilt (Spine1 by the turn and walk speed in 基本 /
+  がんばり走り), setHoming (Head eased to the lock-on target or the normal talk's actor, the shoulders moved),
+  updateJointRumble (doLanding's addRumblePower(5, 60): ArmL1 / ArmR2 bob, Spine2 on slopes); m_apply_joint_xf puts
+  them on the drawn pose. MarioAccess::setTrans (m_set_trans) keeps the 2D plane point _688 on setPlayerPos warps
+  (Koopa / Polta demos, the ghost race, StinkBugParent's demo end, the Plant's top). Test: `walker` prints `homing f`.
+  ponytail: lock-on candidates only walkers and pickups at their places (no common sensor list).
 
 ## Next
 

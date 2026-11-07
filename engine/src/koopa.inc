@@ -165,7 +165,7 @@ static void kp_player_at(const char *name) /* MR::setPlayerPosAndWait */
 {
     float m[16];
     if (!kp_gpos(name, m)) return;
-    mario->pos = v3(m[12], m[13], m[14]); mario->up = vnorm(v3(m[4], m[5], m[6])); mario->face = vnorm(v3(m[8], m[9], m[10]));
+    m_set_trans(v3(m[12], m[13], m[14])); mario->up = vnorm(v3(m[4], m[5], m[6])); mario->face = vnorm(v3(m[8], m[9], m[10]));
     mario->hvel = v3(0, 0, 0); mario->vup = 0;
 }
 static int kp_sight(const KpSight *s) /* isKoopaSightPlayer: isInSightFanPlayer(front) */
