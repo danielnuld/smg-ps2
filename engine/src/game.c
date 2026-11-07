@@ -6198,18 +6198,36 @@ void game_test_upper(unsigned f) /* XF=-DUPPER_TEST (plain build, FlipPanelExGal
     static int next, t;
     test_nolost = 1;
     if (in_opening || mario->launch >= 0) return;
+#ifdef SQUAT_UPPER /* XF="-DUPPER_TEST -DSQUAT_UPPER": the box lifted 150, Mario standing under it squats (R1) and jumps */
+    int u = t % 120;
+    pad_force = u >= 1 && u < 40 ? PAD_R1 | (u >= 30 && u < 33 ? PAD_CROSS : 0) : 0;
+    if (u == 35) printf("upper test f %u: squat %d clip %s%c", f, mario->squat, mario_anim && mario_anim->clip_id >= 0 ? sc->clips[mario_anim->clip_id].name : "-", 10);
+#endif
     if (t++ % 120) return;
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[(next + i) % ninsts];
         const char *name = sc->types + 32 * sc->objs[in->row].type;
-        if (in->row < 0 || row_dead[in->row] || in->breaks != 1 || (strcmp(name, "PunchBox") && strcmp(name, "WoodBox"))) continue;
+        int cover = !strcmp(name, "KoopaShipManholeCover");
+        if (in->row < 0 || row_dead[in->row] || ((in->breaks != 1 || (strcmp(name, "PunchBox") && strcmp(name, "WoodBox"))) && !cover)) continue;
         next = (next + i + 1) % ninsts;
         V3 p = v3(in->m[12], in->m[13], in->m[14]);
         mario->up = up_at(p, mario->up);
+        mario->hvel = v3(0, 0, 0);
+        if (cover) { /* KoopaShipManholeCover: Mario jumping up into it from 250 under it */
+            mario->pos = vsub(p, vmul(mario->up, 250.0f));
+            mario->vup = 20.0f; mario->grounded = 0; mario->jumping = 1;
+            printf("upper test f %u: under %s row %d%c", f, name, in->row, 10);
+            return;
+        }
+#ifdef SQUAT_UPPER
+        V3 lift = vmul(mario->up, 150.0f);
+        mario->pos = p; mario->vup = 0.0f; mario->grounded = 1; mario->jumping = 0;
+#else
         V3 lift = vmul(mario->up, 300.0f); /* the box lifted 300 off its floor, Mario jumping from under it */
-        in->m[12] += lift.x; in->m[13] += lift.y; in->m[14] += lift.z;
         mario->pos = vadd(p, vmul(mario->up, 20.0f));
-        mario->hvel = v3(0, 0, 0); mario->vup = 20.0f; mario->grounded = 0; mario->jumping = 1;
+        mario->vup = 20.0f; mario->grounded = 0; mario->jumping = 1;
+#endif
+        in->m[12] += lift.x; in->m[13] += lift.y; in->m[14] += lift.z;
         printf("upper test f %u: under %s row %d%c", f, name, in->row, 10);
         return;
     }
