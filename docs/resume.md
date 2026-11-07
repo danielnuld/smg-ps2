@@ -1142,6 +1142,11 @@ there needs the embedded blob and every pack rebuilt.
   its push-out reactions (b_fix: Binder's fix reaction, without the move it cut); the Tamakoro rebounds on it (the
   dash's launch kept its rise: TamakoroExLv2's dashes chain 54 -> 57 -> 58 -> BallRail 59). Test: plain
   XF="-DTMK_TEST -DTMK_RAILS" TamakoroExLv2Galaxy/1.
+- Ball dash receivers (feat/378-ball-dash, 2026-11-07): the jumping Tamakoro's ACTMES_BALL_DASH_WALL / GROUND go to the
+  part its wall is on (sendMsgToWallSensor, both): ConcreteBlock (SimpleBreakableObj 0x180: breaks 8 in game.c, its
+  ConcreteBlockBreak model's Break and SE_OJ_STRANGEROCK_BREAK_M; SW_A only gates it, SW_B breaks it), WoodBox /
+  PunchBox (doHit), FallDownBridge.cpp (tamakoro.inc fdb_*: its fall about Z, quake, END SE, shakes, its collision
+  following). Test: plain XF="-DTMK_TEST -DTMK_DASH" TamakoroExLv2Galaxy/1 (blocks broken, the bridge down at 90).
 - FallingSmallRock (feat/306-falling-small-rock, 2026-11-06): MapObj/FallingSmallRock.cpp in game.c update_fsrock
   (HellProminenceGalaxy 1 / 4): Wait for SW_A, Move (its FallingSmallRock effect, SE_AT_LV_FALLING_ROCK) until its
   binder (10 at 800 up) touches the map. Rows kept by slice.py LOGIC, its effect by jpa.py NAMED. Test: plain build
