@@ -1335,6 +1335,10 @@ there needs the embedded blob and every pack rebuilt.
   SkeletalFishBaby from their Shadow.bcsv rows (spheres, ovals, oval poles at their joints) with their invalidate /
   validate points (Koopa's デモ用 group, Dodoryu's dd.nostep, BossKameck's appear demo, Polta's repair / power-up).
   ponytail: volume boxes / lines and flat models (TripodBoss legs, Snakehead) are not drawn (one disc a shape).
+- Hit marks (feat/hitmark): addEffectHitNormal's HitMarkNormal (jpa.py REGISTERED rows) emitted by Gesso, BasaBasa,
+  Metbo, PackunPetit, Kanina, Jellyfish (their attack on Mario: emitEffectHitBetweenSensors, game.c w_hit_mark) and
+  NokonokoLand (receivePunch); MarioActor::printHitMark (パンチヒット: jpa.py NAMED_ONLY Mario PunchHit) on kicks and
+  ATK_FLIP_MAXIMUM. Test: `kick` (EggStar 1: hit mark 1). Repack: slice_all.py every galaxy (PTCL).
 - Upper punch and press leftovers (feat/mario-upper): MarioActor::sendMsgUpperPunch (isActionOk アッパーパンチ, 声蹴り,
   its clip) from checkHeadPoint and the at field's jump part (rising, faces looking down) and the squat uppercut under a
   ceiling within 160 (calcDistToCeil's _730, しゃがみアッパー, no jump); receivers WoodBox / PunchBox (doHit, REFLECT_V
