@@ -2469,13 +2469,13 @@ void game_init(const Scene *s, const unsigned char *blob)
         if (strncmp(tn, "SuperSpinDriver", 15) || s->objs[i].group < 0) continue;
         for (u32 k = 0; k < s->nobjs && ngroup_wait < MAX_GROUP_WAIT; k++)
             if (s->objs[k].group == s->objs[i].group && s->objs[k].zone == s->objs[i].zone &&
-                strcmp(s->types + 32 * s->objs[k].type, "TicoFat") == 0) {
+                (strcmp(s->types + 32 * s->objs[k].type, "TicoFat") == 0 || strcmp(s->types + 32 * s->objs[k].type, "TicoGalaxy") == 0)) {
                 group_wait[ngroup_wait].row = i; group_wait[ngroup_wait++].fat = k;
                 break;
             }
     }
     keep_n = 0;
-    keep_max = count_type("TicoFat", 0) + (count_type("Creeper", 0) > 0) + (count_type("HoneyQueen", 0) > 0) +
+    keep_max = count_type("TicoFat", 0) + 2 * count_type("TicoGalaxy", 0) + (count_type("Creeper", 0) > 0) + (count_type("HoneyQueen", 0) > 0) +
                2 * (count_type("TicoShop", 0) > 0);
     keep_pool = keep_max ? mem_alloc(MEM_PLAYER, keep_max * sizeof(Anim)) : NULL;
     shop_ga[0] = shop_ga[1] = NULL;
@@ -5000,7 +5000,7 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->flip = strcmp(name, "FlipPanel") == 0 || strcmp(name, "FlipPanelReverse") == 0;
     ci->dnpc = strcmp(name, "Butler") == 0 ? 1 : strcmp(name, "TicoDomeLecture") == 0 ? 2 : strcmp(name, "Rosetta") == 0 ? 3 :
                strcmp(name, "ButlerExplain") == 0 ? 4 : strcmp(name, "ButlerMap") == 0 ? 5 : 0;
-    ci->fat = strcmp(name, "TicoFat") == 0;
+    ci->fat = strcmp(name, "TicoFat") == 0 ? 1 : strcmp(name, "TicoGalaxy") == 0 ? 2 : 0; /* 2: TicoGalaxy (a TicoFat) */
     ci->sambo = strcmp(name, "CocoSambo") == 0;
     ci->sky = sky_class(name);
     ci->sun = strcmp(name, "BrightSun") == 0;
@@ -6905,6 +6905,7 @@ void game_test_fat_nodrop(void) { test_fat_nodrop = 1; }
 
 static const char *info_label; /* (talk_draw) */
 static int fat_state(int row); /* update_ticofat's table: eaten x 1000 + its nerve */
+static int fat_ring_at(int row, V3 *p, V3 *front); /* a TicoGalaxy's TicoStarRing out: its place */
 int game_test_fat(void)
 {
     static int f0;
@@ -6916,7 +6917,13 @@ int game_test_fat(void)
         V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), z = vnorm(v3(in->m[8], in->m[9], in->m[10]));
         V3 base = v3(in->m[12], in->m[13], in->m[14]);
         if (fat_state(in->row) % 1000 < 5 && (vlen(vsub(mario->pos, base)) > 400.0f || vlen(vsub(mario->pos, base)) < 150.0f)) { /* while it eats */ mario->pos = vadd(vadd(base, vmul(vnorm(vtangent(z, up)), 240.0f)), vmul(up, 40.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
-        if (got_pieces < 3) got_pieces = 3;
+        if (got_pieces < 10) got_pieces = 10; /* (TicoGalaxy gifts 5 a piece) */
+        V3 rp, rf;
+        if (fat_ring_at(in->row, &rp, &rf)) { /* its TicoStarRing: Mario 200 before it, A pressed now and then (Yes) */
+            mario->pos = vadd(rp, vmul(rf, 200.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            pad_force = (f0 & 15) == 0 ? PAD_CROSS : 0;
+            return fat_state(in->row);
+        }
         test_feed = 1;
         pad_force = (talk_active() || info_label) && (f0 & 3) == 0 ? PAD_CROSS : 0; /* its talks' pages, the info:
                                                                                       * A held 6 frames in 24 */
@@ -11448,6 +11455,7 @@ typedef struct { int nrv, step, talker, kind, interval, mode; const u16 *page; T
 enum { BK_EVENT, BK_SIGN, BK_SHORT };
 static TkBalloon tk_bev, tk_bsign, tk_bshort[4];
 static const char *info_label; /* MR::appearInformationMessage's message (TALK label) while it shows, NULL none */
+static const u16 *info_sarg; /* setInformationMessageReplaceString's string (TicoGalaxy: the galaxy's short name) */
 static const u16 *info_text;   /* the same by a layout message (getLayoutMessageDirect: InformationObserver), NULL none */
 static int meter_eaten = -1, meter_total; /* FullnessMeter (TicoFat's): shown while pointed at (-1 hidden), its numbers */
 /* a masked pane (tools/layout.py: the part its mask shows) at screen (x, y), its texture SRT turned by deg degrees
@@ -12838,6 +12846,7 @@ static void talk_draw(void)
         int c = talk_ctl(info_label, -1);
         lay_draw("InformationWindow", 0, 1.0f, 0, 0);
         tk_text_grey = 255;
+        tk_sarg = info_sarg;
         if (c >= 0) tk_text_box(tk_text + tk_msg[tk_ctl[c].msg].off, tk_hx(-256), tk_hy(162), tk_lf * TK_KY, 1.0f, NULL, 0, 0);
         tk_text_grey = 77;
         int plain = tk_abtn.plain;
@@ -12973,13 +12982,15 @@ static struct {
     float scale, flyd, flylen, m0[16]; /* m0: its matrix without its scale (setScale works on it) */
     float scr[16], lit[16]; /* _17C, _1AC: its screen effects' host matrices (updateScreenEffect) */
     Launch fly;
-    struct { V3 pos; int on, col; } gift[8];
+    struct { V3 pos; int on, col, n; } gift[8]; /* n: the pieces it carries (giftToTarget's numGift) */
     int absorb, chem; u32 lv, lv2; /* _204 (startAbsorbSound), _200 (Chem's eating sound), level sound handles */
     int cam, save; NpcReact re; /* _170 (デブチコカメラ on), _1EC (arg7) */
     Anim *goods; const Model *gmd; /* _94 / _98: one pose for both (the same clip, started together) */
+    const char *gal; /* TicoGalaxy: mGalaxyName (getExclamationGalaxyNameFromIndex(_1EC)), NULL for a TicoFat */
+    int ring_tk, ring_row; Anim *ring; const Model *ring_md; float ring_m[16]; /* TicoGalaxy's TicoStarRing (mStarRing) */
 } fats[MAX_FATS];
 enum { TF_PREP, TF_WAIT, TF_POINT, TF_EAT, TF_CHEM, TF_TEST, TF_FULLNESS, TF_DEMO, TF_FLY, TF_WIPEOUT, TF_WIPEIN, TF_INFO,
-       TF_AFTER, TF_META, TF_GONE };
+       TF_AFTER, TF_META, TF_GONE, TF_RING, TF_RINGMETA, TF_HIDDEN };
 static const char *fat_size(const char *base, float scale) /* getActionName */
 {
     static char buf[24];
@@ -13026,15 +13037,25 @@ static void fat_cam_param(int k) /* TicoFat::setCameraParam: _C0 (its place) wat
     float t = (fminf(fmaxf(fats[k].scale, 1.0f), 1.9f) - 1.0f) / 0.9f; /* getLinerValueFromMinMax(scale, 1, 1.9, 1300, 1680) */
     camera_prog_start(at, vadd(at, vadd(vmul(y, 100.0f), vmul(z, 1300.0f + t * 380.0f))), y, 120);
 }
+static void fat_ring_appear(int k);
 static void fat_disappear(int k, const Row *r, int fed) /* TicoFat::disappear (ponytail: no item, arg0 0 / 1) */
 {
+    if (fats[k].gal) { /* TicoGalaxy::disappear: true onGameEventFlagGalaxyOpen (a star piece galaxy: open by its pieces)
+                        * and its group appears (the caller's row_kill: group_wait); false its TicoStarRing appears */
+        if (fed) gd_flag_try_on(fats[k].gal);
+        else fat_ring_appear(k);
+        return;
+    }
     if (fed && fats[k].save != -1) { gd_alms_add(fats[k].save, fats[k].total); printf("tico fat: slot %d now %d" "\n", fats[k].save, gd_alms(fats[k].save)); } /* addStarPieceGivingToTicoSeed */
     if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);                                 /* callAppear..AllGroupMember: row_dead */
 }
 static int fat_event(int t, u32 v) /* TicoFat::eventFunc: 0 startEat, 1 not yet */
 {
     for (int k = 0; k < nfats; k++)
-        if (fats[k].tk1 == t) { if (v == 1) return 0; if (v == 0) fats[k].eat = 1; }
+        if (fats[k].tk1 == t) {
+            if (v == 1) return 0;
+            if (v == 0) { fats[k].eat = 1; if (fats[k].gal) gd_set_value("TicoGalaxyAlreadyTalk", gd_value("TicoGalaxyAlreadyTalk") | 1 << fats[k].save); } /* TicoGalaxy::startEat: setTicoGalaxyAlreadyTalk */
+        }
     return 1;
 }
 static void fat_message(int k, int msg) /* TicoFat::setMessage */
@@ -13046,6 +13067,80 @@ static void fat_message(int k, int msg) /* TicoFat::setMessage */
     if (msg == 1) n = v5 == 1.0f ? 1 : v5 >= 0.5f ? 2 : v5 >= 0.25f ? 3 : v5 >= 0.05f ? 4 : 5;
     else if (msg == 2) n = 6;
     for (int i = 0; i < n; i++) talk_forward_node(tk);
+}
+/* TicoGalaxy's TicoStarRing (initWithoutIter: Tico::initBase(5), its ColorChange frame 5 (slice.py "Tico~5"),
+ * initMessage AstroGalaxy_TicoCommon000 with the galaxy's name; initialize: at its paired group member's place (the
+ * spin driver its group brings out) with the TicoGalaxy's base matrix, dead until disappear(false)). exeWait: at its
+ * talk's end Yes (tryTalkSelectLeft): Meta (Tico::exeMeta: Metamorphosis, SE_SM_METAMORPHOSE_SMOKE, kill); kill: the
+ * paired member appears and the TicoGalaxy's SW_A goes on (the row killed here: group_wait brings its member out).
+ * ponytail: no reaction (tryReaction) and no float / wait level SEs' volume tweak; Tico's talk distance 350 */
+static void fat_ring_appear(int k)
+{
+    typeof(&fats[0]) f = &fats[k];
+    const Row *r = &sc->objs[f->row];
+    float one[3] = {1, 1, 1};
+    mat_translate_rot_scale(f->ring_m, r->pos, r->rot, one);
+    if (f->ring_row > 0) { const Row *p = &sc->objs[f->ring_row - 1]; f->ring_m[12] = p->pos[0]; f->ring_m[13] = p->pos[1]; f->ring_m[14] = p->pos[2]; }
+    f->ring_md = scene_model(sc, "Tico~5");
+    if (f->ring_md && f->ring_md->skin && (f->ring = keep_anim())) {
+        anim_bind(f->ring, f->ring_md->skin);
+        anim_play(f->ring, "tico/wait", 1.0f, 1, 0);
+        f->ring->frame = (float)(rand() % 100); /* setBckFrameAtRandom */
+    }
+    f->ring_tk = talk_new("AstroGalaxy_TicoCommon000", -1, f->row, 120.0f, 350.0f);
+    if (f->ring_tk >= 0) {
+        char gl[48];
+        snprintf(gl, sizeof gl, "GalaxyName_%s", f->gal);
+        talkers[f->ring_tk].sarg = msg_get(gl); /* setMessageArgToCurrentGalaxyName */
+        talkers[f->ring_tk].root_auto = 1;
+        talk_place(f->ring_tk, f->ring_m);
+    }
+    f->nrv = TF_RING; f->t = 0;
+}
+static void fat_ring_update(int k, Inst *in)
+{
+    typeof(&fats[0]) f = &fats[k];
+    f->t++;
+    f->lv = se_level(SE_SM_LV_TICO_WAIT, &f->ring_m[12], f->lv); /* Tico::control */
+    f->lv2 = se_level(SE_SM_LV_TICO_FLOAT, &f->ring_m[12], f->lv2);
+    if (f->nrv == TF_RING) {
+        if (f->ring_tk >= 0 && talk_near_at_end(f->ring_tk) && tk_yesno == 1) { /* tryTalkSelectLeft: setNerveMeta */
+            f->nrv = TF_RINGMETA; f->t = 0;
+            if (f->ring) anim_play(f->ring, "tico/metamorphosis", 1.0f, 0, 0);
+            printf("tico galaxy row %d: its star ring, meta" "\n", in->row);
+        } else if (f->ring && f->ring_tk >= 0)
+            anim_play(f->ring, talk_active() ? "tico/talk" : "tico/wait", 1.0f, 1, 6);
+    } else if (!f->ring || f->ring->done || f->t > 300) {
+        se_start(SE_SM_METAMORPHOSE_SMOKE, &f->ring_m[12]);
+        if (sc->objs[f->row].sw[SW_A] >= 0) sw_set(&sc->objs[f->row], SW_A, 1);
+        row_kill(in->row); sw_changed = 1; f->nrv = TF_GONE; /* kill: _194->appear() (group_wait) */
+        printf("tico galaxy row %d: its star ring gone, its spin driver out" "\n", in->row);
+    }
+}
+static int fat_ring_at(int row, V3 *p, V3 *front)
+{
+    for (int k = 0; k < nfats; k++)
+        if (fats[k].row == row && fats[k].nrv == TF_RING) {
+            *p = v3(fats[k].ring_m[12], fats[k].ring_m[13], fats[k].ring_m[14]);
+            *front = vnorm(v3(fats[k].ring_m[8], fats[k].ring_m[9], fats[k].ring_m[10]));
+            return 1;
+        }
+    return 0;
+}
+static int fat_ring_draw(const Inst *in) /* the TicoGalaxy's row drawn as its TicoStarRing */
+{
+    for (int k = 0; k < nfats; k++) {
+        if (fats[k].row != in->row) continue;
+        if (fats[k].nrv == TF_HIDDEN) return 1;
+        if (fats[k].nrv != TF_RING && fats[k].nrv != TF_RINGMETA) return 0;
+        if (fats[k].ring && fats[k].ring_md) {
+            anim_update(fats[k].ring);
+            use_row_light(in->row, v3(fats[k].ring_m[12], fats[k].ring_m[13], fats[k].ring_m[14]), LIGHT_STRONG);
+            draw_skin(fats[k].ring_md, fats[k].ring_m, fats[k].ring);
+        }
+        return 1;
+    }
+    return 0;
 }
 static int meter_was; /* the meter was shown last frame (2) */
 static void update_ticofat(void)
@@ -13067,12 +13162,33 @@ static void update_ticofat(void)
             fats[k].eat = r->arg[2] != -1;
             fats[k].scale = 1.0f;
             fats[k].save = r->arg[7]; /* initStarPieceSaveData: getJMapInfoArg7WithInit */
-            if (fats[k].save != -1) { int n = fats[k].total - gd_alms(fats[k].save); fats[k].left = n <= 0 ? 0 : n; }
+            fats[k].ring_tk = -1;
+            if (in->fat == 2) { /* TicoGalaxy::initStarPieceSaveData: arg7 its exclamation galaxy's index; the pieces it needs
+                                 * (getStarPieceNumToOpenExclamationGalaxy) less those given (getStarPieceNumGivingToTicoGalaxy) */
+                int given = 0, max = 0;
+                if (!gd_tico_galaxy(fats[k].save, &fats[k].gal, &given, &max)) fats[k].gal = "unknown";
+                fats[k].total = max > 0 ? max : 1; fats[k].left = max - given <= 0 ? 0 : max - given;
+                for (int g = 0; g < ngroup_wait; g++) if (group_wait[g].fat == in->row) fats[k].ring_row = group_wait[g].row + 1;
+#ifdef TG_TEST /* `fat` build XF=-DTG_TEST=1 (AstroGalaxy/1): the first TicoGalaxy out and hungry; =2: fed before (its star ring) */
+                if (TG_TEST == 2) fats[k].left = 0;
+                if (0)
+#endif
+                if (!gd_galaxy_appear(fats[k].gal)) { /* enableAppear: isAppearGalaxy, else makeActorDead (its group stays out) */
+                    fats[k].nrv = TF_HIDDEN; in->invisible = 1;
+                    printf("tico galaxy row %d (%s): not out yet" "\n", in->row, fats[k].gal);
+                    continue;
+                }
+            } else if (fats[k].save != -1) { int n = fats[k].total - gd_alms(fats[k].save); fats[k].left = n <= 0 ? 0 : n; }
             fats[k].re.c158 = 1024;
             memcpy(fats[k].m0, in->m, 64);
             fats[k].gmd = scene_model(sc, "TicoFatGoodsStarPiece"); /* equipment(getNPCItemData TicoFatItem) */
             if (fats[k].gmd && fats[k].gmd->skin && (fats[k].goods = keep_anim())) {
                 anim_bind(fats[k].goods, fats[k].gmd->skin);
+            }
+            if (!fats[k].left && in->fat == 2) { /* initAfterPlacement: disappear(false) (its TicoStarRing), makeActorDead */
+                fat_disappear(k, r, 0);
+                printf("tico galaxy row %d (%s): fed before, its star ring" "\n", in->row, fats[k].gal);
+                continue;
             }
             if (!fats[k].left) { /* initAfterPlacement: disappear(false), makeActorDead */
                 fat_disappear(k, r, 0); row_kill(in->row); sw_changed = 1; fats[k].nrv = TF_GONE;
@@ -13083,6 +13199,9 @@ static void update_ticofat(void)
             fats[k].tk0 = talk_new("Common_TicoFat000", -1, in->row, 220.0f, 280.0f);
             if (fats[k].tk1 >= 0) { talkers[fats[k].tk1].event = fat_event; talkers[fats[k].tk1].root_auto = 1; talkers[fats[k].tk1].front = 1; talkers[fats[k].tk1].arg = fats[k].total; }
             if (fats[k].tk0 >= 0) { talkers[fats[k].tk0].front = 1; talkers[fats[k].tk0].arg = fats[k].total; }
+            if (in->fat == 2 && fats[k].tk1 >= 0 && (gd_value("TicoGalaxyAlreadyTalk") >> fats[k].save & 1)) { /* TicoGalaxy::init */
+                talk_forward_node(fats[k].tk1); talk_forward_node(fats[k].tk1);
+            }
             u32 np = 0; int closed;
             const float *pts = r->path >= 0 ? find_rail(scene_blob_g, r->zone, r->path, &np, &closed) : NULL;
             if (pts && np >= 2) { /* SpinDriverShootPath::initUsingParabolic from its place */
@@ -13095,7 +13214,8 @@ static void update_ticofat(void)
             }
         }
         typeof(&fats[0]) f = &fats[k];
-        if (f->nrv == TF_GONE) continue;
+        if (f->nrv == TF_GONE || f->nrv == TF_HIDDEN) continue;
+        if (f->nrv == TF_RING || f->nrv == TF_RINGMETA) { fat_ring_update(k, in); continue; }
         f->t++;
         for (int c = 0; c < 2; c++) { /* its talks follow it: base matrix, 220 x scale up (setScale) */
             int tk = c ? f->tk1 : f->tk0;
@@ -13150,11 +13270,14 @@ static void update_ticofat(void)
         }
         if (pointing) f->g178 = 4; else if (f->g178 > 0) f->g178--;
         int feeding = f->eat && f->left > 0 && f->nrv <= TF_CHEM;
-        if (feeding && f->g178 > 0 && (pad_held(PAD_L1) || test_feed) && f->t % 5 == 0 && got_pieces > 0) /* shootStarPiece */
+        int gn = f->gal ? (f->left < 5 ? f->left : 5) : 1; /* TicoGalaxy::shootStarPiece: min(_1E0, 5) a piece */
+        for (int g = 0; g < 8; g++) if (f->gift[g].on) gn = f->left - f->inflight < gn ? f->left - f->inflight : gn; /* giftToTarget: the receiver's count */
+        if (feeding && f->g178 > 0 && (pad_held(PAD_L1) || test_feed) && f->t % (f->gal ? 2 : 5) == 0 && got_pieces >= gn && gn > 0) /* shootStarPiece every _1F0 */
             for (int g = 0; g < 8; g++) if (!f->gift[g].on) {
                 f->gift[g].on = 1; f->gift[g].pos = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
                 f->gift[g].col = piece_colour_next(); /* giftToTarget: getDeadStarPiece */
-                got_pieces--; f->inflight++;
+                f->gift[g].n = gn;
+                got_pieces -= gn; f->inflight += gn;
                 pad_rumble(RUMBLE_VERY_WEAK);
                 se_start(SE_SY_CS_FEED_PIECE, NULL);
                 break;
@@ -13162,10 +13285,12 @@ static void update_ticofat(void)
         for (int g = 0; g < 8; g++) { /* the gifted pieces, flying to its Mouth */
             if (!f->gift[g].on) continue;
             V3 to = vsub(mouth, f->gift[g].pos);
-            if (vlen(to) < 40.0f) { /* receiveStarPiece(1) */
-                f->gift[g].on = 0; f->inflight--;
+            if (vlen(to) < 40.0f) { /* receiveStarPiece(n) */
+                int n = f->gift[g].n < f->left ? f->gift[g].n : f->left;
+                f->gift[g].on = 0; f->inflight -= f->gift[g].n;
                 pad_rumble(RUMBLE_VERY_WEAK);
-                if (f->left > 0) f->left--;
+                f->left -= n;
+                if (f->gal) gd_alms_add(f->save + 8, n); /* TicoGalaxy::addStarPieceSaveData: addStarPieceGivingToTicoGalaxy */
                 f->scale = 1.0f + (float)(f->total - f->left) / f->total * 0.9f;
                 if (f->absorb <= 0) { se_start(SE_SM_TICOFAT_ABSORB, &f->m0[12]); f->absorb = 5; } /* startAbsorbSound */
                 if (f->g174 > 0) fat_cam_param(k); /* setCameraParam */
@@ -13247,7 +13372,8 @@ static void update_ticofat(void)
             if (f->t >= 60 && !wipe_active()) fat_set(k, TF_INFO);
             break;
         case TF_INFO: /* exeInfo: InformationPlanet until A */
-            info_label = "InformationPlanet";
+            info_label = f->gal ? "InformationGalaxy" : "InformationPlanet"; /* appearInformation */
+            if (f->gal) { char gl[48]; snprintf(gl, sizeof gl, "GalaxyNameShort_%s", f->gal); info_sarg = msg_get(gl); } /* setInformationMessageReplaceString */
             if (f->t > 1 && pad_pressed(PAD_CROSS)) { pad_eat(PAD_CROSS); se_start(SE_SY_TALK_OK, NULL); info_label = NULL; fat_set(k, TF_AFTER); }
             break;
         case TF_AFTER:
@@ -13294,7 +13420,7 @@ static const Model *fat_model(const Inst *in)
         float v = fminf((fats[k].scale - 1.0f) / 0.9f, 1.0f);
         int step = fats[k].nrv == TF_DEMO && fats[k].t >= 89 ? 0 : (int)(v * 3.0f + 0.5f);
         char n[24];
-        snprintf(n, sizeof n, "TicoFat~%d", step < 0 ? 0 : step);
+        snprintf(n, sizeof n, "%s~%d", fats[k].gal ? "TicoGalaxy" : "TicoFat", step < 0 ? 0 : step);
         return scene_model(sc, n);
     }
     return NULL;
@@ -51503,6 +51629,7 @@ static void inst_draw(const Inst *in, const Model *md, const float m[16])
 {
     if (in->md_bloom && md == in->md && (!in->flip || flip_bloom_on(in))) render_bloom_model(in->md_bloom, m);
     if (in->fat && md == in->md) { /* its FatRed frame's model, posed by its own Anim (the same skin) */
+        if (fat_ring_draw(in)) return; /* TicoGalaxy: hidden, or its TicoStarRing */
         const Model *fm = fat_model(in);
         if (fm && fm->skin && in->anim) { use_row_light(in->row, v3(m[12], m[13], m[14]), LIGHT_STRONG); draw_skin(fm, m, in->anim); fat_goods_draw(in, m); return; }
     }
