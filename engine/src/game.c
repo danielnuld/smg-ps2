@@ -66,6 +66,7 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
     u8 clipped; /* out of the view at the last draw (ClippingJudge: LiveActor::startClipped stops its movement) */
     u8 nograv; /* Kuribo _C4 (arg0 set): offCalcGravity, its gravity its rotation's up */
     V3 mm[8]; /* Meramera (meramera.inc): _144, _174, _180, _198, _18C, mExtinguishMtx (place, up), its binder's fix */
+    u8 pushable; /* Karikari mIsPushable */
     short host; /* a BossBegoman follower (initWithoutIter: no placement of its own; its row the boss's): the boss's slot + 1;
                  * -1 a Polta's BombTeresa (BombTeresaHolder, polta.inc) */ } Kuribo; /* walking
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
@@ -4790,7 +4791,7 @@ static void railer_place(Inst *in)
  * storm (ACTMES_SPIN_STORM_RANGE) shakes the members (tryShake: WindLoop at 0.2 + 3.8 x (1 - |Mario - it| (city
  * block across gravity) / 800), then WindEnd at that rate); each member pushes Mario off within 20 x its scale
  * (tryPush). They share the plant groups' member table (plants).
- * ponytail: the push reaches Mario only (the walkers have no ACTMES_PUSH receiver) */
+ * ponytail: the push reaches Mario only (walker_push_pass takes walker pairs, not map objects) */
 static signed char stone_type[1024]; /* stone_row by type: 0 not yet, 1 no, 2 yes (area_types_reset) */
 static int stone_row(const Row *r)
 {
@@ -24776,7 +24777,7 @@ static void w_kill(Kuribo *k)
  * hip-dropping (AttackSuccess: Hit, turning to him, 60); a trample: FlatDown (20, a coin), a hip drop: HipDropDown (40,
  * a coin), a spin: Stagger, or a kick once 15 into it: BlowDown (36 / 30 away, 30, three star pieces); arg1 0 starts
  * it AppearFromBox (7 / 30 along its front, Land 15 after the ground). Dead in a death area or water, no item.
- * ponytail: no star pointer bind (BindStarPointer / AnimScaleController), no push between walkers, no
+ * ponytail: no star pointer bind (BindStarPointer / AnimScaleController), no
  * velocity areas / rail-moving ground, no sounds */
 enum { KN_NONACTIVE, KN_APPEARFROMBOX, KN_BLOW, KN_BLOWLAND, KN_WANDER, KN_FINDPLAYER, KN_CHASE, KN_ATTACKSUCCESS,
        KN_STAGGER, KN_FLATDOWN, KN_HIPDROPDOWN, KN_PRESSDOWN, KN_BLOWDOWN };
@@ -25341,8 +25342,8 @@ static void update_exts(void)
  * stagger it; a black hole kills it with no item. kill: SW_DEAD, its KeySwitch where it is if it has SW_A (else
  * ItemGenerator: a coin, or the kick's six star pieces). AttackSuccess and Trample are never set in Petari (left out).
  * ponytail: BindStarPointer (the 2P pointer's isStarPointerPointing2POnPressButton: no 2P pointer here), no move limit
- * collision (trySetMoveLimitCollision), no camera register vector (arg7: declareCameraRegisterVec), no push between
- * enemies, its shadow the walker kit's */
+ * collision (trySetMoveLimitCollision), no camera register vector (arg7: declareCameraRegisterVec), its
+ * shadow the walker kit's */
 enum { KC_WANDER, KC_FINDPLAYER, KC_CHASE, KC_STAGGER, KC_BLOWDOWN, KC_BLOWDOWNLAND };
 #define KC_G1 1.5f, 0.99f, 0.93f
 #define KC_G2 1.5f, 0.99f, 0.6f
@@ -25725,7 +25726,7 @@ static void takobo_update(Kuribo *k, V3 to, float d)
  * his spin blows them all out (BlowOut), a hip drop landing throws them off (43 out, 33 up: DPDAttacked), R2 with the
  * pointer on one releases it (one per 10 frames: requestRelease). A spin on a free one: BlowOut (10 out, 38 up, 1.3,
  * dead on the ground or after 60, a star piece); a star piece: BlowOutStarPiece (three); dead in a death area / water.
- * ponytail: no Frozen / FrozenRecover / Release (Mario's star spin), no tornado, no push between them, the pointer's
+ * ponytail: no Frozen / FrozenRecover / Release (Mario's star spin), no tornado, the pointer's
  * screen velocity taken from where it points (fromCursorPos) */
 static int pointer_a(void);
 static int cursor_sees(V3 p, float px);
@@ -25835,43 +25836,43 @@ static void kari_update(Kuribo *k, V3 to, float d)
     float d2 = vdot(vsub(mario->pos, k->pos), vsub(mario->pos, k->pos));
     switch (k->nrv) {
     case RN_FALL:
-        if (st == 0) { w_act(k, "Wait"); k->bind_off = 0; }
+        if (st == 0) { w_act(k, "Wait"); k->bind_off = 0; k->pushable = 1; }
         kari_env(k); k->vel = vadd(k->vel, vmul(k->grav, g));
         if (w_on_ground(k)) { fx_at(FX_KARIPON_SMOKELAND, k->pos, vmul(k->grav, -1.0f)); w_nrv(k, RN_LAND); }
         break;
     case RN_LAND:
         kari_env(k); k->vel = vadd(k->vel, vmul(k->grav, g));
-        if (st == 0) { w_act(k, "Land"); k->bind_off = 0; k->vel = v3(0, 0, 0); }
+        if (st == 0) { w_act(k, "Land"); k->bind_off = 0; k->vel = v3(0, 0, 0); k->pushable = 1; }
         if (kari_dpd(k)) break;
         if (st > 90) { w_nrv(k, d2 < 1000.0f * 1000.0f ? RN_PURSUE : RN_WAIT); break; }
         if (st == 20) { w_act(k, "Wait"); break; }
         if (st > 20) kari_turn(k, toh, 0.25f);
         break;
     case RN_NOCALCWAIT:
-        if (st == 0) k->bind_off = 1;
+        if (st == 0) { k->bind_off = 1; k->pushable = 0; }
         k->vel = v3(0, 0, 0);
         if (sqrtf(d2) < 1000.0f) w_nrv(k, RN_WAIT);
         break;
     case RN_WAIT:
         kari_env(k); k->vel = vadd(k->vel, vmul(k->grav, g));
-        if (st == 0) { k->bind_off = 0; w_act(k, "Wait"); }
+        if (st == 0) { k->bind_off = 0; w_act(k, "Wait"); k->pushable = 1; }
         if (kari_dpd(k)) break;
         if (d2 < 1000.0f * 1000.0f) { w_nrv(k, RN_PREPURSUE); break; }
         if (w_on_ground(k)) w_nrv(k, RN_NOCALCWAIT);
         break;
     case RN_PREPURSUE:
-        if (st == 0) { k->bind_off = 0; w_act(k, "Search"); w_se(k, SE_EM_KARIKARI_FIND); }
+        if (st == 0) { k->bind_off = 0; w_act(k, "Search"); w_se(k, SE_EM_KARIKARI_FIND); k->pushable = 0; }
         kari_env(k); k->vel = vadd(k->vel, vmul(k->grav, g));
         if (kari_dpd(k)) break;
-        if (st < 11) { kari_turn(k, vsub(mario->pos, k->pos), 0.25f); break; }
-        if (st == 11) { k->vel = vsub(k->vel, vmul(k->grav, 50.0f)); break; }
+        if (st < 11) { kari_turn(k, vsub(mario->pos, k->pos), 0.25f); k->pushable = 1; break; }
+        if (st == 11) { k->vel = vsub(k->vel, vmul(k->grav, 50.0f)); k->pushable = 0; break; }
         if (w_on_ground(k)) { w_nrv(k, RN_PURSUE); fx_at(FX_KARIPON_SMOKELAND, k->pos, vmul(k->grav, -1.0f)); }
         break;
     case RN_PURSUE:
-        if (st == 0) { k->bind_off = 0; w_act(k, "Jump"); }
+        if (st == 0) { k->bind_off = 0; w_act(k, "Jump"); k->pushable = 1; }
         kari_env(k); k->vel = vadd(k->vel, vmul(k->grav, g));
         if (kari_dpd(k)) break;
-        if (st < 11) { kari_turn(k, toh, 0.25f); break; }
+        if (st < 11) { kari_turn(k, toh, 0.25f); k->pushable = 1; break; }
         if (st == 11) { k->vel = vadd(vsub(k->vel, vmul(k->grav, 33.0f)), vmul(toh, 10.0f)); w_se(k, SE_EM_KARIKARI_JUMP2); break; }
         if (w_on_ground(k)) {
             fx_at(FX_KARIPON_SMOKELAND, k->pos, vmul(k->grav, -1.0f));
@@ -25879,10 +25880,10 @@ static void kari_update(Kuribo *k, V3 to, float d)
             if (d2 > 1000.0f * 1000.0f) { w_nrv(k, RN_WAIT); break; }
             kari_turn(k, toh, 0.25f);
             w_nrv(k, RN_PURSUE);
-        }
+        } else k->pushable = 0;
         break;
     case RN_WATCHFOR:
-        if (st == 0) { k->bind_off = 0; w_act(k, "Glad"); }
+        if (st == 0) { k->bind_off = 0; w_act(k, "Glad"); k->pushable = 1; }
         kari_env(k); k->vel = vadd(k->vel, vmul(k->grav, 1.4f));
         if (kari_dpd(k)) break;
         if (!w_on_ground(k)) break;
@@ -25895,7 +25896,7 @@ static void kari_update(Kuribo *k, V3 to, float d)
         if (st > 45) w_nrv(k, RN_WATCHFOR);
         break;
     case RN_PRECLING: {
-        if (st == 0) { k->bind_off = 1; w_act(k, "Wait"); }
+        if (st == 0) { k->bind_off = 1; w_act(k, "Wait"); k->pushable = 0; }
         w_se_lv(k, SE_EM_LV_KARIKARI_CLING);
         if (kari_dpd(k)) break;
         float m[16], t = st / 3.0f;
@@ -25905,7 +25906,7 @@ static void kari_update(Kuribo *k, V3 to, float d)
         break;
     }
     case RN_CLING: {
-        if (st == 0) { k->bind_off = 1; w_act(k, "Bite"); k->vel = v3(0, 0, 0); if (kari_cling == 1) kari_timer = 120; w_se(k, SE_EM_KARIKARI_TOUCH); }
+        if (st == 0) { k->bind_off = 1; w_act(k, "Bite"); k->vel = v3(0, 0, 0); k->pushable = 0; if (kari_cling == 1) kari_timer = 120; w_se(k, SE_EM_KARIKARI_TOUCH); }
         w_se_lv(k, SE_EM_LV_KARIKARI_CLING);
         if (kari_dpd(k)) break;
         float m[16];
@@ -25915,12 +25916,12 @@ static void kari_update(Kuribo *k, V3 to, float d)
         break;
     }
     case RN_DPDATTACKED:
-        if (st == 0) { k->bind_off = 0; w_act(k, "SpinX"); k->act_rate = 2.0f; w_se(k, SE_EM_KARIKARI_RELEASE); }
+        if (st == 0) { k->bind_off = 0; w_act(k, "SpinX"); k->act_rate = 2.0f; w_se(k, SE_EM_KARIKARI_RELEASE); k->pushable = 1; }
         kari_env(k); k->vel = vadd(k->vel, vmul(k->grav, 2.4f));
         if (w_on_ground(k)) { fx_at(FX_KARIPON_SMOKELAND, k->pos, vmul(k->grav, -1.0f)); w_nrv(k, RN_LAND); }
         break;
     case RN_BLOWOUT: case RN_BLOWOUTSTARPIECE:
-        if (st == 0) { k->bind_off = 0; w_act(k, "SpinX"); k->act_rate = 2.0f;
+        if (st == 0) { k->bind_off = 0; w_act(k, "SpinX"); k->act_rate = 2.0f; k->pushable = 1;
                        if (k->nrv == RN_BLOWOUT) { w_se(k, SE_EM_KARIKARI_BLOW); w_se(k, SE_PM_SPIN_HIT); } } /* exeBlowOut */
         kari_env(k); k->vel = vadd(k->vel, vmul(k->grav, 1.3f));
         if (((k->on_ground || k->on_wall) && st > 0) || st > 60) { kari_dead(k, k->nrv == RN_BLOWOUT ? 1 : 3); return; }
@@ -26289,7 +26290,7 @@ static void butterfly_update(Kuribo *k)
  * (arg1, 20) 2 every 5 frames from Head3 (20, 40), the rest at the end, then kill (its dead switch). Its body (60, 60
  * up) pushes Mario while shown (isSolidBody); a jet turtle or fire ball then: KickOut, an enemy's blow: SpinOut.
  * Its up turns 0.1 a frame to the ground's normal (control). ponytail: no 2P pointer (Freeze), no
- * footprints (FootPrint decals) or smoke effects, no push from enemies, no move limit collision, no AnimScaleController
+ * footprints (FootPrint decals) or smoke effects, no move limit collision, no AnimScaleController
  * (hit reaction); Mario's spin hits once a spin */
 /* Kuribo fields: phase hidden (hideModel), timer star pieces left, sstep mMeanderStep, to mMeanderAngle, ttarget
  * mTargetDir, tcenter mBodyCenter, bshow its spin latch */
@@ -26569,7 +26570,7 @@ _Static_assert(WALK_KINDS <= KPROF_KINDS, "kprof: a slot a walker kind (kinds pa
  * Its up turns 0.5 a frame on its front's plane to its target (calcAndSetUpVecTarget); out of the water it does not
  * rise. Its body (100) hurts Mario strongly (Attack: 25 back, Ink, 240); a spin or explosion knocks it out (30 away,
  * PunchDown 20 or bound: Death, a coin); a star piece spins it (StarPiece). Out of sight or 10000 off for 300 frames it
- * goes home (Wait). Arg0 0 with an appear switch: FromBox. ponytail: no star pointer swoon, no push from enemies */
+ * goes home (Wait). Arg0 0 with an appear switch: FromBox. ponytail: no star pointer swoon */
 static V3 ge_side(const Kuribo *k) { return vnorm(vcross(k->qy, k->front)); } /* calcSideVec */
 static void ge_vel(Kuribo *k, float side, float up, float front) /* calcAndSetVelocity */
 {
@@ -26705,6 +26706,10 @@ static void gesso_update(Kuribo *k)
     k->act_t += k->act_rate;
     /* control(): its up turned to the target on its front's plane, no rising out of the water */
     turn_on_plane(&k->qy, k->gup, k->front, cosf(0.5f * 0.0174533f));
+    if (vdot(k->vel, k->velh) < 0.0f) k->vel = vsub(k->vel, vmul(k->velh, vdot(k->velh, k->vel))); /* _C8: the pushes taken */
+    k->vel = vadd(k->vel, k->velh);
+    k->velh = vmul(k->velh, 0.7f);
+    if (v_near0(k->velh, 0.001f)) k->velh = v3(0, 0, 0);
     float depth;
     if (!in_water(vadd(k->pos, vmul(up, 50.0f)), up, &depth) && vdot(k->vel, up) > 0.0f) k->vel = vtangent(k->vel, up);
     /* the binder: 150 about its centre */
@@ -26738,7 +26743,7 @@ static void gesso_update(Kuribo *k)
  * (8 frames, a coin; the Ice one hurts unless Ice Mario); a spin: PunchDown (SpinHitController 20 / 20 / 5, 20 / 10,
  * three star pieces; the Ice one ignores it); a star piece: Stun (Swoon). Out of sight beyond 2500 for 180 frames it
  * goes home. ponytail: no hang model, no star pointer swoon, no stamp squash, the shadow's ground probe a line 2000
- * down, no push between enemies, no SpinStorm on the Ice one */
+ * down, no SpinStorm on the Ice one */
 enum { BB_WAIT, BB_AIRWAIT, BB_CHASESTART, BB_CHASE, BB_QTSTART, BB_QT, BB_PUNCHDOWN, BB_TRAMPLE, BB_ATTACKSTART, BB_ATTACK,
        BB_ATTACKEND, BB_ATTACKENDREC, BB_HITBACK, BB_HITBACKEND, BB_COMEHOME, BB_ATTACH, BB_STUN };
 static const float *bb_rail(const Kuribo *k, u32 *n, int *closed)
@@ -27326,7 +27331,7 @@ static void draw_bbd_bombs(void)
  * horizontal), or ThreatWith(Left / Right)Turn (SearchRotate) when he is 35 off its front; past 1500 Wait. Its body
  * (100 at 30 up) hurts Mario strongly (Attack); a spin or explosion knocks it out (40 away, Death 30 or bound: its
  * effect, a coin). ponytail: no point light, no star pointer swoon, the star piece's hit reaction (anim scale) not
- * shown, no push between enemies */
+ * shown */
 enum { JF_WAIT, JF_WAITR, JF_WAITL, JF_FIND, JF_THREAT, JF_THREATR, JF_THREATL, JF_DEATH, JF_ATTACK, JF_RAILGOAL };
 static V3 jf_side(const Kuribo *k) { return vnorm(vcross(vmul(k->grav, -1.0f), k->front)); }
 static void jf_face(Kuribo *k) /* faceToMario */
@@ -27481,8 +27486,7 @@ static void jelly_update(Kuribo *k)
  * knocks it out: Damage (then DangerWait), the second time (or an invincible Mario at once) Death (stopScene 5, the
  * binder (400) on, PRE_DEAD; at 30 or bound: DEAD, a coin). ponytail: no point light, no star pointer swoon
  * (WalkerStateBindStarPointer: the 2P pointer), the star piece's hit reaction (AnimScaleController) not shown, no
- * BRK / BTK clips (Wait / Damage / DangerWait colours), no DangerBrk BAS, no changeShowModelFlagSyncNearClipping 700,
- * no push between enemies */
+ * BRK / BTK clips (Wait / Damage / DangerWait colours), no DangerBrk BAS, no changeShowModelFlagSyncNearClipping 700 */
 enum { JE_WAIT, JE_WAITR, JE_WAITL, JE_DAMAGE, JE_DEATH, JE_ATTACK, JE_RAILGOAL };
 static void je_knock(Kuribo *k) /* knockOut */
 {
@@ -27601,7 +27605,7 @@ static void jelec_update(Kuribo *k)
  * throws Mario away); a front punch guards (30 back); a punch from behind (60 / 30 behind within 800), a fire ball,
  * a jet turtle or invincible Mario knocks it down (25 / 25 away, PunchDown 15: its item, Death). Gravity 1.5 off the
  * ground (1 knocked down, 2.2 rebounding), friction 0.93 / 0.99 (0.88 guarding) while it stays put. Its 1-up a KinokoOneUp popped out (bitem_pop). ponytail:
- * no joint rumbler, blink BTP, star pointer, enemy push or
+ * no joint rumbler, blink BTP, star pointer or
  * base-matrix slerp */
 enum { KA_APPEAR, KA_WAIT, KA_ATTACK, KA_VAUNT, KA_GUARD, KA_GUARDEND, KA_DAMAGEFB, KA_DAMAGEHIP, KA_DIG, KA_UNDER,
        KA_FIND, KA_BREAK, KA_REBOUNDEACH, KA_TURN, KA_TURNEND, KA_WALK, KA_RUN, KA_RUNREB, KA_HITWALL };
@@ -28534,7 +28538,7 @@ static void jspider_update(Kuribo *k)
  * StampDeath (Press, 35 frames, a coin); a spin: HitBlow (SpinHitController 15 / 10 / 3, three star pieces); a star
  * piece: StarPieceHit (a hit reaction if already in it), a kick in it blows it; a SinkDeath floor: BuryDeath (Sink).
  * kill: Death, SE_EM_EXPLODE_S, its dead switch. ponytail: no BindStarPointer (WalkerStateBindStarPointer's
- * tryStartPointBind is the 2P pointer's only), no push between enemies */
+ * tryStartPointBind is the 2P pointer's only) */
 enum { SH_WAITUNDER, SH_HIDE, SH_APPEAR, SH_APPEARIMM, SH_WAIT, SH_PREPURSUE, SH_PURSUE, SH_PURSUEEND, SH_HITTOPLAYER,
        SH_STARPIECEHIT, SH_STAMPFALL, SH_STAMPDEATH, SH_HITBLOW, SH_BURYDEATH };
 static const float sh_asc[7] = {0.2f, 0.91f, 0.2f, 1.8f, 0.06f, 0.12f, 0.91f}; /* AnimScaleParam's defaults (nullptr) */
@@ -31765,8 +31769,8 @@ static void draw_tako_inks(void)
  * Blow (SpinHitController 40 / 20, no gravity, three star pieces at 10, killed bound or at 15; stopScene 3,
  * EXPLODE_S). Dead in a death area or water. Death effect, its dead switch. Its posture slerps 0.15 to upside down,
  * 0.02 to -1.8 in FlyPursueLast, 0.2 back, Blow spins it -1 rad a frame.
- * ponytail: no star pointer bind, no AnimScaleController / AnimStampController squash, no push between
- * walkers, no Appear effect; the posture turns the whole model about its Center joint (its base matrix) */
+ * ponytail: no star pointer bind, no AnimScaleController / AnimStampController squash, no
+ * Appear effect; the posture turns the whole model about its Center joint (its base matrix) */
 enum { KT_NOCALCWAIT, KT_WAIT, KT_SEARCH, KT_ESCAPESEARCH, KT_PREESCAPE, KT_FLYSTART, KT_FLYPURSUE, KT_FLYESCAPE, KT_FLYPURSUELAST,
        KT_OVERTURNFALL, KT_OVERTURN, KT_PRERECOVER, KT_RECOVER, KT_HITTOPLAYER, KT_BLOW, KT_STAMPDEATH };
 /* applyVelocityDampAndGravity(1.5, 0.8, 0.96, 0.93, 1) */
@@ -32245,6 +32249,211 @@ static void noko_update(Kuribo *k)
 static void update_kuribo_one(Kuribo *k);
 static void kameck_update(Kuribo *k);
 static void bg_permit_update(void);
+
+/* Pushes between walkers (HitSensorKeeper: every overlapping pair of their sensors runs each side's attackSensor, a
+ * sent ACTMES_PUSH the receiver's receiveMsgPush), for the classes whose push Petari has:
+ * Kuribo (body ATYPE_KURIBO 75 x s / attack 45 x s at 75 x s up): its body pushes an enemy sensor and kills its velocity
+ * into it (sendMsgPushAndKillVelocityToTarget) unless down (isEnablePushMove); takes one on its body: addVelocityFromPush
+ * 1.5. KuriboChief (Body / Head1 / Head2 / LegL / LegR; not Punch): sendMsgPushAndKillVelocityToTarget, takes none.
+ * Karikari (ATYPE_KARIKARI 100 at 30 up): pushes while mIsPushable (not clinging / blown), takes one off its sensor,
+ * not clinging / blown: + the direction from the sender's actor. Petari (body 60 at 60 up, spin 100): its body pushes
+ * while solid, takes 3 (addVelocityFromPush). Gesso (100): takes one into _C8 (x 0.2 + the direction; control adds it,
+ * x 0.7). BasaBasa (body 90 / attack 60): both push (not down / hit back) and kill its velocity into the other; its
+ * body takes 1.5 from the sender's actor. Jellyfish (100 at 30 up, not dying) / JellyfishElectric (350 at 60 down):
+ * push, take none. Kanina (body 100 / attack 80 at Body): its attack pushes (not in ReboundEach) and rebounds 1.5 back
+ * and 1.5 up (ReboundEach); its body pushes; it takes 1.5 (ReboundEach). SamboHead (100 x s at 100 x s up): pushes;
+ * takes 2 out of the ground. KoteBug (100 x s at Center + 20 x s): pushes (not blown / stamped); takes 2 across
+ * gravity (addVelocityFromPushHorizon). Karon (90 x s at 90 x s up): sendMsgPushAndKillVelocityToTarget, takes 2
+ * (not broken). ponytail: the other walkers' sensors are not in the pass (their attackSensor / receiveMsgPush not
+ * ported with them: they neither push nor are pushed); no map object sensors */
+static int kr_broken(const Kuribo *k);
+typedef struct { V3 c; float r; u8 atk, body, own; } WSen; /* atk: ATYPE_ENEMY_ATTACK; body: the class's body / own type sensor; own: the class's own sensor type (Kuribo / Karikari) */
+static int wp_sensors(Kuribo *k, WSen *o)
+{
+    float s = w_scale(k);
+    V3 up = vmul(k->grav, -1.0f);
+    switch (k->kind) {
+    case WALK_KURIBO: {
+        V3 c = vadd(k->pos, vmul(up, 75.0f * s));
+        o[0] = (WSen){c, 75.0f * s, 0, 1, 1}; o[1] = (WSen){c, 45.0f * s, 1, 0, 0};
+        return 2;
+    }
+    case WALK_KCHIEF: {
+        V3 c[6]; float r[6];
+        kchief_sensors(k, c, r);
+        for (int i = 0; i < 5; i++) o[i] = (WSen){c[i], r[i], 0, 1, 0};
+        return 5;
+    }
+    case WALK_KARIKARI:
+        if (k->nrv == RN_PRESS) return 0; /* invalidateHitSensors */
+        o[0] = (WSen){vadd(k->pos, vmul(up, 30.0f)), 100.0f, 0, 1, 1};
+        return 1;
+    case WALK_PETARI:
+        o[0] = (WSen){vadd(k->pos, vmul(k->qy, 60.0f)), 60.0f, 0, 1, 0}; o[1] = (WSen){k->pos, 100.0f, 0, 0, 0};
+        return 2;
+    case WALK_GESSO:
+        if (k->nrv == GE_FROMBOX || k->nrv == GE_PUNCHDOWN) return 0; /* invalidateHitSensors */
+        o[0] = (WSen){k->pos, 100.0f, 0, 1, 0}; return 1;
+    case WALK_BASABASA:
+        if (k->nrv == BB_TRAMPLE || k->nrv == BB_PUNCHDOWN || k->nrv == BB_ATTACH) return 0;
+        o[0] = (WSen){k->pos, 90.0f, 0, 1, 0}; o[1] = (WSen){k->pos, 60.0f, 1, 0, 0}; return 2;
+    case WALK_JELLYFISH:
+        if (k->nrv == JF_DEATH) return 0;
+        o[0] = (WSen){vadd(k->pos, vmul(up, 30.0f)), 100.0f, 0, 1, 0}; return 1;
+    case WALK_JELEC:
+        if (k->nrv == JE_DEATH) return 0;
+        o[0] = (WSen){vadd(k->pos, vmul(k->grav, 60.0f)), 350.0f, 0, 1, 0}; return 1;
+    case WALK_KANINA: {
+        if (k->nrv == KA_DAMAGEHIP || k->nrv == KA_DAMAGEFB) return 0;
+        V3 b = w_joint(k, walker_new_model(k->row), 2, v3(0, 0, 0));
+        o[0] = (WSen){b, 100.0f, 0, 1, 0}; o[1] = (WSen){b, 80.0f, 1, 0, 0};
+        return 2;
+    }
+    case WALK_SAMBOHEAD: o[0] = (WSen){vadd(k->pos, vmul(k->qy, 100.0f * s)), 100.0f * s, 0, 1, 0}; return 1;
+    case WALK_KOTEBUG: o[0] = (WSen){vadd(k->pos, vmul(k->qy, 50.4f * s)), 100.0f * s, 0, 1, 0}; return 1;
+    case WALK_KARON: o[0] = (WSen){vadd(k->pos, vmul(up, 90.0f * s)), 90.0f * s, 0, 1, 0}; return 1;
+    }
+    return 0;
+}
+static void wp_from_push(Kuribo *k, float a, V3 from, V3 to, int horizon) /* addVelocityFromPush(Horizon) */
+{
+    V3 d = vsub(to, from), g = k->grav;
+    float gl = vlen(g);
+    if (gl > 1e-6f) g = vmul(g, 1.0f / gl);
+    if (horizon || a < vdot(k->vel, vmul(g, -1.0f))) d = vtangent(d, g);
+    if (vlen(d) < 1e-6f) return;
+    d = vmul(vnorm(d), a);
+    if (horizon) { k->vel = vadd(k->vel, d); return; }
+    float len = vlen(d), f = vdot(vnorm(d), k->vel); /* addVelocityLimit */
+    if (len > f) k->vel = vadd(k->vel, vmul(vnorm(d), len - f));
+}
+static int wp_receive_(Kuribo *b, const WSen *rb, Kuribo *a, const WSen *sa) /* b's receiveMsgPush from a's sa */
+{
+    (void)sa;
+    switch (b->kind) {
+    case WALK_KURIBO:
+        if (rb->atk || kn_in(b, 1 << KN_FLATDOWN | 1 << KN_HIPDROPDOWN | 1 << KN_PRESSDOWN | 1 << KN_BLOWDOWN)) return 0;
+        wp_from_push(b, 1.5f, sa->c, rb->c, 0);
+        return 1;
+    case WALK_KARIKARI: {
+        if (!rb->own || b->nrv == RN_CLING || b->nrv == RN_PRECLING || b->nrv == RN_BLOWOUT || b->nrv == RN_BLOWOUTSTARPIECE) return 0;
+        V3 d = vsub(b->pos, a->pos);
+        if (vlen(d) > 1e-6f) b->vel = vadd(b->vel, vnorm(d));
+        return 1;
+    }
+    case WALK_PETARI:
+        if (!rb->body || !petari_solid(b)) return 0;
+        wp_from_push(b, 3.0f, sa->c, rb->c, 0);
+        return 1;
+    case WALK_GESSO: {
+        V3 d = vsub(b->pos, a->pos);
+        b->velh = vadd(vmul(b->velh, 0.2f), vlen(d) > 1e-6f ? vnorm(d) : v3(0, 0, 0)); /* _C8.scaleAdd(0.2, _C8, dir) */
+        return 1;
+    }
+    case WALK_BASABASA: {
+        V3 d = vsub(b->pos, a->pos); /* (not DPDSwoon: the 2P pointer's) */
+        b->vel = vadd(b->vel, vmul(vlen(d) > 1e-6f ? vnorm(d) : d, 1.5f));
+        return 1;
+    }
+    case WALK_KANINA:
+        wp_from_push(b, 1.5f, sa->c, rb->c, 0);
+        w_nrv(b, KA_REBOUNDEACH); /* (not from a coconut) */
+        return 1;
+    case WALK_SAMBOHEAD:
+        if (b->nrv == SH_WAITUNDER || b->nrv == SH_HIDE || b->nrv == SH_STAMPFALL || b->nrv == SH_STAMPDEATH || b->nrv == SH_HITBLOW) return 0;
+        wp_from_push(b, 2.0f, sa->c, rb->c, 0);
+        return 1;
+    case WALK_KOTEBUG:
+        if (b->nrv == KT_BLOW || b->nrv == KT_STAMPDEATH) return 0;
+        wp_from_push(b, 2.0f, sa->c, rb->c, 1);
+        return 1;
+    case WALK_KARON:
+        if (kr_broken(b)) return 0;
+        wp_from_push(b, 2.0f, sa->c, rb->c, 0);
+        return 1;
+    }
+    return 0; /* KuriboChief, Jellyfish, JellyfishElectric: LiveActor::receiveMsgPush */
+}
+static int wp_taken[WALK_KINDS]; /* (test builds: the pushes taken by kind) */
+static int wp_receive(Kuribo *b, const WSen *rb, Kuribo *a, const WSen *sa)
+{
+    int r = wp_receive_(b, rb, a, sa);
+    wp_taken[b->kind] += r;
+    return r;
+}
+static void wp_push_kill(Kuribo *a, const WSen *sa, Kuribo *b, const WSen *rb) /* sendMsgPushAndKillVelocityToTarget */
+{
+    if (!wp_receive(b, rb, a, sa)) return;
+    V3 d = vsub(sa->c, rb->c);
+    if (vlen(d) < 1e-6f) return;
+    d = vnorm(d);
+    float f = vdot(a->vel, d);
+    if (f < 0.0f) a->vel = vsub(a->vel, vmul(d, f));
+}
+static void wp_attack(Kuribo *a, const WSen *sa, Kuribo *b, const WSen *rb) /* a's attackSensor(sa, rb): rb an enemy's */
+{
+    switch (a->kind) {
+    case WALK_KURIBO:
+        if (sa->own && !kn_in(a, 1 << KN_FLATDOWN | 1 << KN_HIPDROPDOWN | 1 << KN_PRESSDOWN | 1 << KN_BLOWDOWN)) wp_push_kill(a, sa, b, rb);
+        break;
+    case WALK_KCHIEF: wp_push_kill(a, sa, b, rb); break;
+    case WALK_KARIKARI:
+        if (a->nrv == RN_CLING || a->nrv == RN_PRECLING || a->nrv == RN_BLOWOUT || a->nrv == RN_BLOWOUTSTARPIECE) break;
+        if (a->pushable) wp_receive(b, rb, a, sa);
+        break;
+    case WALK_PETARI: if (sa->body && petari_solid(a)) wp_receive(b, rb, a, sa); break;
+    case WALK_BASABASA: {
+        if (a->nrv == BB_TRAMPLE || a->nrv == BB_PUNCHDOWN || a->nrv == BB_HITBACK) break;
+        wp_receive(b, rb, a, sa);
+        V3 d = vsub(a->pos, b->pos);
+        if (vlen(d) > 1e-6f) { d = vnorm(d); float f = vdot(a->vel, d); if (f < 0.0f) a->vel = vsub(a->vel, vmul(d, f)); }
+        break;
+    }
+    case WALK_JELLYFISH: if (a->nrv != JF_DEATH) wp_receive(b, rb, a, sa); break;
+    case WALK_JELEC: wp_receive(b, rb, a, sa); break;
+    case WALK_KANINA:
+        if (!sa->atk) { wp_receive(b, rb, a, sa); break; }
+        if (!rb->atk && a->nrv != KA_REBOUNDEACH && wp_receive(b, rb, a, sa)) { /* tryPushEach */
+            V3 up = vmul(a->grav, -1.0f), d = vtangent(vsub(sa->c, rb->c), up);
+            if (vlen(d) > 1e-6f) d = vnorm(d);
+            a->vel = vadd(a->vel, vadd(vmul(d, 1.5f), vmul(up, 1.5f)));
+            w_nrv(a, KA_REBOUNDEACH);
+        }
+        break;
+    case WALK_SAMBOHEAD: if (sa->body) wp_receive(b, rb, a, sa); break;
+    case WALK_KOTEBUG: if (sa->body && a->nrv != KT_BLOW && a->nrv != KT_STAMPDEATH) wp_receive(b, rb, a, sa); break;
+    case WALK_KARON: if (sa->body && !kr_broken(a)) wp_push_kill(a, sa, b, rb); break;
+    }
+}
+#define WP_MAX 256
+static void walker_push_pass(void) /* ponytail: the first WP_MAX walkers with sensors (a scene has far fewer) */
+{
+    static WSen sen[WP_MAX][5];
+    static u8 ns[WP_MAX];
+    static short ki[WP_MAX];
+    int n = 0;
+    for (int i = 0; i < nkuribo && n < WP_MAX; i++) {
+        Kuribo *k = &kuribo[i];
+        if (k->state == KURIBO_DEAD || !row_shown(k->row) || (k->clipped && !test_noclip) || k->host) continue; /* (clipped: invalidateBySystem) */
+        if ((ns[n] = (u8)wp_sensors(k, sen[n]))) ki[n++] = (short)i;
+    }
+    for (int i = 0; i < n; i++)
+        for (int j = i + 1; j < n; j++)
+            for (int x = 0; x < ns[i]; x++)
+                for (int y = 0; y < ns[j]; y++) {
+                    const WSen *p = &sen[i][x], *q = &sen[j][y];
+                    if (vlen(vsub(p->c, q->c)) >= p->r + q->r) continue;
+                    wp_attack(&kuribo[ki[i]], p, &kuribo[ki[j]], q);
+                    wp_attack(&kuribo[ki[j]], q, &kuribo[ki[i]], p);
+                }
+#ifdef WALKER_TEST
+    if (game_frame % 60 == 0) {
+        printf("walker push f %u:", game_frame);
+        for (int k = 0; k < WALK_KINDS; k++) if (wp_taken[k]) printf(" kind %d took %d", k, wp_taken[k]);
+        printf("%c", 10);
+    }
+#endif
+}
 static void update_kuribo(void)
 {
     for (int i = 0; i < nkuribo; i++) {
@@ -32255,6 +32464,7 @@ static void update_kuribo(void)
         update_kuribo_one(k);
         kprof[k->kind] += cycles() - c0; kprof_n[k->kind]++;
     }
+    walker_push_pass();
     update_tako_inks();
     bg_permit_update();
 }
@@ -32279,7 +32489,7 @@ static int w_zone_ground(const Kuribo *k)
  * then Recover (Recovery) and Wait. A star piece: StarPieceHit (StarPiece), a fire ball: the same with a hit reaction
  * (AnimScaleController's defaults). A death area, water: kill; a SinkDeath floor: SinkDown (its clip, the sink level
  * SEs, no shadow) then kill. kill: Death, EXPLODE_S, SW_DEAD (walker_inhale).
- * ponytail: no star pointer bind (WalkerStateBindStarPointer: the 2P pointer), no push between enemies, no move limit
+ * ponytail: no star pointer bind (WalkerStateBindStarPointer: the 2P pointer), no move limit
  * collision, no velocity areas / rail-moving ground, no danger floor codes in the fall check */
 enum { KR_FIXWAIT, KR_WAIT, KR_SPWAIT, KR_WALK, KR_TURN, KR_WALKRAIL, KR_SEARCH, KR_PURSUE, KR_BROKEN, KR_STEPBROKEN,
        KR_RECOVER, KR_HITREACTION, KR_SPHIT, KR_DEATH, KR_SINKDOWN };
@@ -32547,7 +32757,7 @@ static void update_kuribo_one(Kuribo *k)
 }
 
 /* Breakables (breakable()): Mario's spin near one, or his hip drop landing on it, breaks it; collision goes at once,
- * then its drops appear. ponytail: no upper punch, drops appear where the box was instead of popping out, a broken
+ * then its drops appear (WoodBox / PunchBox: the upper punch too, upper_punch_receive). ponytail: drops appear where the box was instead of popping out, a broken
  * HipDropRock is gone (no wreck left, no HipDropRockBreak model: PunchBox's break effect stands in for it, its dead switch at once instead of at step 30), no star
  * piece on a switch kill */
 /* MR::appearStarPiece (StarPieceDirector::appearPiece, StarPiece::launch): n star pieces from p, each 40 along `up`
