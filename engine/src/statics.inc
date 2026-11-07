@@ -872,6 +872,206 @@ place: {
     }
 }
 
+/* SpinningBox.cpp after Petari (SpinningBox; IceBox is Mario's freeze's, not placed): its own body (binder 140 at 80
+ * up, gravity at its place, its collision the instance's KCL moved with it and left out of its own binding), the
+ * quaternion mRotate as its axes (its up turned 0.125 a frame to the ground's normal, then about it by -mRotateSpeed).
+ * Fall (step > 30 on the ground: Wait), Wait (on the ground its gravity the ground's for the damping), Sliding (a kick
+ * from Mario's side: Mario's front at 17, -0.08 a frame, rotate 0.02; walls / slopes over cos 0.4 bounce it at half
+ * speed, BOUND SE), Spinning (a spin: Mario's front at 25, -0.01 a frame, rotate 0.5 -> 0.1, the SPIN SE each 2 of
+ * turn, Blur; a wall or slope breaks it); both bind to the ground below within 65 (forceBindOnGround) and Wait under
+ * 0.1. Spinning into Mario on the ground from its side: strong (over 10) / flip weak attack and its reflection
+ * (mSlideSpeed = 0.5: Petari's bug kept), else a push; Sliding pushes him; both blow the walkers they touch
+ * (sendMsgToEnemyAttackBlow) and break on one. Mario standing on it: Wait. A hip drop, a death area, water: kill:
+ * BREAK, STAR_PIECE_BURST, its 3 star pieces 50 up (10 / 40), Break.
+ * ponytail: no 2P pointer (Pointed), no box-against-box reflection (AttributeGroupReflectSpinningBox), no electric
+ * floor (isBindedDamageElectric), no shadow volume, no black hole, the slide SE's level parameter, no map object
+ * sensors (only walkers) hit */
+#define ST_SBOX_MAX 8
+enum { SB_FALL, SB_WAIT, SB_SLIDING, SB_SPINNING };
+typedef struct { int row, nrv, st, ground, onground, wall; float rot, slide, spin; V3 pos, vel, grav, gn, wn, slidedir, qy, qz; u32 lv; } StSb;
+static StSb st_sbs[ST_SBOX_MAX];
+static int st_nsbs;
+static const Scene *st_sb_sc;
+static StSb *st_sb(const Inst *in)
+{
+    if (st_sb_sc != sc) { st_nsbs = 0; st_sb_sc = sc; }
+    for (int k = 0; k < st_nsbs; k++) if (st_sbs[k].row == in->row) return &st_sbs[k];
+    if (st_nsbs == ST_SBOX_MAX) return NULL;
+    StSb *b = &st_sbs[st_nsbs++];
+    memset(b, 0, sizeof *b);
+    const Row *r = &sc->objs[in->row];
+    b->row = in->row; b->pos = row_pos(r); b->nrv = SB_FALL; b->st = -1;
+    b->qy = vnorm(v3(in->m[4], in->m[5], in->m[6])); b->qz = vnorm(v3(in->m[8], in->m[9], in->m[10]));
+    b->slidedir = v3(1, 0, 0);
+    b->grav = vmul(up_at(b->pos, b->qy), -1.0f);
+    return b;
+}
+static void st_sb_nrv(StSb *b, int n) { b->nrv = n; b->st = -1; }
+static void st_sb_rebound(StSb *b) /* reboundVelocityFromCollision(0, 0, 1) */
+{
+    if (b->ground && vdot(b->vel, b->gn) < 0) b->vel = vsub(b->vel, vmul(b->gn, vdot(b->vel, b->gn)));
+    if (b->wall && vdot(b->vel, b->wn) < 0) b->vel = vsub(b->vel, vmul(b->wn, vdot(b->vel, b->wn)));
+}
+static void st_sb_damp(StSb *b, V3 grav, float g, float gd, float ad, float vd, float hmin) /* applyVelocityDampAndGravity (as js_damp) */
+{
+    if (!b->ground) b->vel = vadd(b->vel, vmul(grav, g));
+    V3 v = vmul(grav, vdot(grav, b->vel)), h = vsub(b->vel, v);
+    h = vmul(h, b->ground ? gd : ad);
+    if (vdot(v, grav) < 0) v = vmul(v, vd);
+    b->vel = vadd(h, v);
+    if (b->ground && vlen(vtangent(b->vel, b->gn)) < hmin) b->vel = vmul(b->gn, vdot(b->gn, b->vel));
+}
+static void st_sb_force_bind(StSb *b) /* forceBindOnGround(65, 0.5): the ground below within 65, half the way */
+{
+    V3 hp, n;
+    int inst;
+    if (kcl_line(b->pos, vadd(b->pos, vmul(b->grav, 65.0f)), &hp, &n, &inst) && insts[inst].row != b->row)
+        b->pos = vadd(b->pos, vmul(vsub(hp, b->pos), 0.5f));
+}
+static int st_sb_wall_or_slope(const StSb *b, V3 *n) /* isBindedWallOrSlopeGround(cos 0.4) */
+{
+    if (b->wall) { *n = b->wn; return 1; }
+    if (b->ground && vdot(b->gn, vmul(b->grav, -1.0f)) < 0.4f) { *n = b->gn; return 1; }
+    return 0;
+}
+static void st_sb_kill(Inst *in, StSb *b) /* SpinningBox::kill */
+{
+    se_start(SE_OJ_SPIN_BOX_BREAK, &b->pos.x);
+    se_start(SE_OJ_STAR_PIECE_BURST, &b->pos.x);
+    launch_pieces(vsub(b->pos, vmul(b->grav, 50.0f)), vmul(b->grav, -1.0f), 3, 10.0f, 40.0f);
+    fx_named("SpinningBox", "Break", in->m, NULL, NULL);
+    printf("spinning box %d: break%c", in->row, 10);
+    row_kill(in->row);
+}
+static int st_sb_side(const StSb *b, V3 *up) /* isPlayerExistSide(0, 0.25) */
+{
+    *up = vmul(b->grav, -1.0f);
+    V3 d = vsub(mario->pos, b->pos);
+    return vlen(d) < 1e-3f || fabsf(vdot(*up, vnorm(d))) < 0.25f;
+}
+static void st_sboxes_update(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        const Row *r = &sc->objs[in->row];
+        if (row_dead[in->row] || strcmp(sc->types + 32 * r->type, "SpinningBox")) continue;
+        StSb *b = st_sb(in);
+        if (!b) continue;
+        int st = ++b->st, onp = mario_ground == i;
+        float s = r->scale[0], dep;
+        V3 up = vmul(b->grav, -1.0f), body = vadd(b->pos, vmul(b->qy, -40.0f * s)), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), side;
+        /* control */
+        if (in_death(b->pos) || in_water(b->pos, up, &dep)) { st_sb_kill(in, b); continue; }
+        V3 sd = b->slidedir, norm;
+        if (b->ground) { norm = b->gn; float k = vdot(norm, b->grav); if (fabsf(k) > 1e-6f) sd = vadd(sd, vmul(b->grav, -vdot(norm, sd) / k)); } /* calcPlanarProjectedVec */
+        else { norm = up; sd = vtangent(sd, norm); }
+        if (vlen(sd) > 1e-6f) b->slidedir = vnorm(sd);
+        V3 ax = vcross(b->qy, norm); /* rotY.setRotate(up, norm, 0.125) */
+        if (vlen(ax) > 1e-6f) {
+            float c = vdot(b->qy, norm), a = acosf(c > 1 ? 1 : c < -1 ? -1 : c) * 0.125f;
+            ax = vnorm(ax); b->qy = vnorm(rot_axis(b->qy, ax, a)); b->qz = vnorm(rot_axis(b->qz, ax, a));
+        }
+        b->qz = vnorm(vtangent(rot_axis(b->qz, b->qy, -b->rot), b->qy)); /* setRotate(up, -mRotateSpeed) */
+        if (onp && b->nrv != SB_WAIT) st_sb_nrv(b, SB_WAIT), st = ++b->st;
+        /* Mario's messages: receiveMsgPlayerAttack, receiveOtherMsg (kick) */
+        if (hip_hit && hip_inst == i) { st_sb_kill(in, b); continue; } /* isMsgPlayerHipDrop */
+        int msg = mario_offence(body, 160.0f * s, b->grav);
+        if (msg == MSG_HITALL && b->nrv != SB_FALL && !onp) { /* isMsgPlayerHitAll: Spinning */
+            b->slidedir = vtangent(mario->face, b->grav);
+            if (vlen(b->slidedir) > 1e-6f) b->slidedir = vnorm(b->slidedir);
+            b->rot = 0.5f; b->slide = 25.0f;
+            se_start(SE_PM_SPIN_HIT, &b->pos.x); /* startSpinHitSound (CS), startBlowHitSound */
+            st_sb_nrv(b, SB_SPINNING); st = ++b->st;
+            printf("spinning box %d: spinning%c", in->row, 10);
+        } else if (b->nrv != SB_SPINNING && !(b->nrv == SB_SLIDING && st < 30) && !onp && st_sb_side(b, &side) && mario_kick(body, 160.0f * s)) {
+            b->slidedir = mario->face; b->slide = 17.0f; /* isMsgPlayerKick: Sliding */
+            mario_kicked();
+            st_sb_nrv(b, SB_SLIDING); st = ++b->st;
+            printf("spinning box %d: kicked%c", in->row, 10);
+        }
+        /* its nerve */
+        V3 n;
+        switch (b->nrv) {
+        case SB_FALL:
+            st_sb_rebound(b);
+            st_sb_damp(b, b->grav, 3.0f, 0.6f, 0.6f, 0.6f, 10.0f);
+            if (b->ground && st > 30) st_sb_nrv(b, SB_WAIT);
+            break;
+        case SB_WAIT: {
+            if (st == 0) { b->onground = 0; b->rot = 0.0f; }
+            V3 g = b->grav;
+            if (b->ground) { b->onground = 1; g = vmul(b->gn, -1.0f); }
+            st_sb_rebound(b);
+            if (b->onground) st_sb_damp(b, g, 3.0f, 0.0f, 0.0f, 0.6f, 10.0f);
+            else st_sb_damp(b, g, 3.0f, 0.6f, 0.6f, 0.6f, 10.0f);
+            break;
+        }
+        case SB_SLIDING: case SB_SPINNING: {
+            int spin = b->nrv == SB_SPINNING;
+            if (spin) {
+                fx_named("SpinningBox", "Blur", in->m, NULL, b); /* emitEffect Blur, deleted at its end */
+                if (st == 0) b->spin = 0.0f;
+                b->rot = fminf(fmaxf(b->rot - 0.001f, 0.1f), 0.5f);
+                b->slide = fminf(fmaxf(b->slide - 0.01f, 0.0f), 25.0f);
+                b->spin += b->rot;
+                if (b->spin > 2.0f) { while (b->spin > 2.0f) b->spin -= 2.0f; se_start(SE_OJ_SPIN_BOX_SPIN, &b->pos.x); }
+            } else {
+                if (st == 0) b->rot = 0.02f;
+                b->rot = 0.02f; /* clamp(rot - 0.01, 0.02, 0.02) */
+                b->slide = fminf(fmaxf(b->slide - 0.08f, 0.0f), 17.0f);
+            }
+            b->lv = se_level(SE_OJ_LV_SPIN_BOX_SLIDE, &b->pos.x, b->lv);
+            if (b->slide <= 0.1f) { st_sb_nrv(b, SB_WAIT); break; }
+            st_sb_rebound(b);
+            b->vel = vmul(b->slidedir, b->slide);
+            if (!b->ground) st_sb_force_bind(b);
+            if (st_sb_wall_or_slope(b, &n)) {
+                if (spin) { st_sb_kill(in, b); goto next; }
+                se_start(SE_OJ_SPIN_BOX_BOUND, &b->pos.x);
+                b->slidedir = vsub(b->slidedir, vmul(n, 2.0f * vdot(b->slidedir, n))); /* calcReflectionVector(1, 0) */
+                b->slide *= 0.5f;
+                if (vlen(b->slidedir) > 1e-6f) b->slidedir = vnorm(b->slidedir);
+            }
+            /* attackSensor: Mario from its side, walkers */
+            if (!onp && st_sb_side(b, &side) && vlen(vsub(mc, body)) < 160.0f * s + HIT_BODY_R) {
+                if (spin) {
+                    if (mario->spin_timer <= 0 && mario->grounded) {
+                        int hit = !mario->hurt_timer && mario_attack(b->slide > 10.0f ? ATK_STRONG : ATK_FLIP_WEAK, body);
+                        if (hit) { /* hitReflection */
+                            V3 d = vsub(body, mc);
+                            if (vlen(d) > 1e-6f) { d = vnorm(d); b->slidedir = vsub(b->slidedir, vmul(d, 2.0f * vdot(b->slidedir, d))); b->slide = 0.5f; if (vlen(b->slidedir) > 1e-6f) b->slidedir = vnorm(b->slidedir); }
+                        } else mario_push_out(body, 160.0f * s);
+                    }
+                } else mario_push_out(body, 160.0f * s);
+            }
+            for (int w = 0; w < nkuribo; w++) { /* sendMsgToEnemyAttackBlow */
+                Kuribo *e = &kuribo[w];
+                if (e->state == KURIBO_DEAD || !row_shown(e->row) || vlen(vsub(vadd(e->pos, vmul(e->up, 50.0f)), body)) > 160.0f * s + 60.0f) continue;
+                if (walker_blow(e, body) == 1) { st_sb_kill(in, b); goto next; }
+            }
+            break;
+        }
+        }
+        { /* the binder (its own collision left out), its base matrix, Mario carried */
+            float old[16];
+            memcpy(old, in->m, sizeof old);
+            V3 c = vadd(b->pos, vadd(b->vel, vmul(up, 80.0f)));
+            int keep = kcl_off_row;
+            kcl_off_row = in->row;
+            b->ground = collide_n(&c, up, 140.0f, &b->gn, &b->wn, &b->wall);
+            kcl_off_row = keep;
+            if (!b->ground) b->gn = up;
+            b->pos = vsub(c, vmul(up, 80.0f));
+            b->grav = vmul(up_at(b->pos, up), -1.0f);
+            V3 x = vcross(b->qy, b->qz);
+            float m[16] = {x.x * s, x.y * s, x.z * s, 0, b->qy.x * s, b->qy.y * s, b->qy.z * s, 0, b->qz.x * s, b->qz.y * s, b->qz.z * s, 0, b->pos.x, b->pos.y, b->pos.z, 1};
+            memcpy(in->m, m, sizeof m);
+            if (onp) carry(old, in);
+        }
+    next:;
+    }
+}
+
 #ifdef ST_TWALL_TEST /* plain build XF=-DST_TWALL_TEST, HeavenlyBeachGalaxy/1: Mario Ice from frame 300 to 400 */
 static void st_twall_test(void)
 {
@@ -912,6 +1112,30 @@ static void st_visit(void)
         if (game_frame % 120 == 60) printf("visit f %u: %s row %u shown %d dead %d%c", game_frame, cls, i, row_shown((int)i), row_dead[i], 10);
         return;
     }
+}
+#endif
+#ifdef ST_SB_TEST /* plain build XF=-DST_SB_TEST, ReverseKingdomGalaxy/1: from 400 Mario 190 off the first SpinningBox
+                    * facing it, at 460 a spin (Spinning), the camera on it; its nerve and place logged */
+static void st_sb_test(void)
+{
+    if (game_frame < 400) return;
+    for (int k = 0; k < st_nsbs && st_sb_sc == sc; k++) {
+        StSb *b = &st_sbs[k];
+        V3 up = vmul(b->grav, -1.0f), f = vnorm(vtangent(v3(1, 0, 0), up));
+        static int t0;
+        if (!t0) t0 = (int)game_frame;
+        if ((int)game_frame < t0 + 40) { mario->pos = vadd(vadd(b->pos, vmul(f, 190.0f)), vmul(up, 50.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->face = vmul(f, -1.0f); }
+        if ((int)game_frame == t0 + 60) mario->spin_timer = SPIN_TIME;
+        camera_set_override(1, vadd(b->pos, vadd(vmul(up, 1200.0f), vmul(f, 2500.0f))), b->pos, up, 45.0f);
+        if (game_frame % 30 == 0) printf("sb test f %u: row %d nrv %d slide %d at (%d %d %d) ground %d%c", game_frame, b->row, b->nrv, (int)b->slide, (int)b->pos.x, (int)b->pos.y, (int)b->pos.z, b->ground, 10);
+        return;
+    }
+    for (u32 i = 0; i < sc->nobjs; i++) /* none bound yet: Mario to the first one's row (its zone streams in) */
+        if (!strcmp(sc->types + 32 * sc->objs[i].type, "SpinningBox")) {
+            if (game_frame % 60 == 0) printf("sb test f %u: to row %u shown %d%c", game_frame, i, row_shown((int)i), 10);
+            mario->pos = vadd(row_pos(&sc->objs[i]), v3(0, 400.0f, 0)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            break;
+        }
 }
 #endif
 #ifdef ST_BB_TEST /* plain build XF=-DST_BB_TEST, OceanFloaterLandGalaxy/1: from frame 60 Mario dropped 800 along the
@@ -962,6 +1186,9 @@ static void st_update(void)
 #ifdef ST_BB_TEST
     st_bb_test();
 #endif
+#ifdef ST_SB_TEST
+    st_sb_test();
+#endif
 #ifdef ST_VISIT
     st_visit();
 #endif
@@ -971,6 +1198,7 @@ static void st_update(void)
     st_flags_update();
     st_objs_update();
     st_bbeamers_update();
+    st_sboxes_update();
 #ifdef ST_FLAG_TEST
     st_flag_test();
 #endif
