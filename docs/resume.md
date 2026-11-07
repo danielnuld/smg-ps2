@@ -1350,6 +1350,27 @@ there needs the embedded blob and every pack rebuilt.
   table; one fade table per model a frame; DarknessRoomAir / TwilightAir / DimensionAir still without run-time fades.
   Repack: slice_all.py EggStarGalaxy, TearDropGalaxy, OceanFloaterLandGalaxy, OceanPhantomCaveGalaxy, HeavensDoorGalaxy.
 
+- Pack room (fix/461-pack-room, 2026-11-07): slice_all's ROOM 9.1e6 was measured on 10-29 with a 13824 KB region; the
+  region is 17152 KB now (the linked blob left the ELF on 10-31), so the room had not grown with it. main.c's room line
+  now prints `region left N KB` (the region free after scene, resident, sound, common, menus): AstroGalaxy/1 9560 KB
+  left + scene / common 1018 + map.bin 837 = 11415 KB of ROOM-equivalent (zone_fit.py ROOM_KB / ROOM_REGION_KB 11415 /
+  17152). mem.c's arena 6 -> 5.25 MB (peak now logged: `mem: runtime ... peak`, cover lines' `arena peak`; most seen
+  4470 KB, KoopaBattleVs3/1's cover run, 4.43 MB PhantomGalaxy/3 at boot): +768 KB of region (17920 KB). ROOM 11.8e6,
+  PACK_ROOM 11.9e6: ~0.65 MB of margin (zone_fit --elf on a plain ELF: 355 overlay zones fit, tightest AstroGalaxy/3
+  TridentZone 704 KB left with map.bin and letter.bin). blob.h SCENE_MAX_TEX 1280 -> 2048 (AstroGalaxy 1 at 0.99 with
+  every layer: 1297 textures; "blob: too many textures" was the "packs: zone 0 failed" screen). Measured at 0.99 with
+  every layer (scratch boss2-measure.py, every scenario): only AstroGalaxy 1-5 (9.95-10.37 MB stream, TridentZone),
+  OceanPhantomCave 1-4 (9.16-10.33) and PhantomGalaxy 1 / 3 (9.71 / 8.82) were over the old room; the growth is the
+  layer passes (#4xx tex.layers) and full geometry, not one class (Astro's main stage 8.77 MB: AstroBase* 0.3-0.6 MB
+  each, UFOKinokoLandingAstro 0.54, GrandStar's 0.24 shared, TicoGalaxy's four fatred BRK_STEPS copies 0.18 each).
+  Ratios with main's tools and the release's map.bin / letter.bin (old ROOM -> new): AstroGalaxy 1-4 0.5 no layers ->
+  0.99 every layer, OceanPhantomCave 1 0.5 no layers -> 0.99, PhantomGalaxy 1 0.7 no layers -> 0.99, PhantomGalaxy 3
+  0.9 fewer layers -> 0.99; every other scenario was and stays 0.99. Seen in PCSX2 (overlay): AstroGalaxy/1,
+  PhantomGalaxy/1, OceanPhantomCave/1 boot and swap zones; route EggStar 1 star at f 4215. ponytail: the arena's 5.25 MB
+  holds ~0.8 MB over the most seen; a scene over it stops with "mem: out of memory" (the cover line's peak shows it).
+  Next if room runs short again: the Luigi power-up models (InvincibleLuigi 310 KB, TeresaLuigi, ...) ride in every
+  common.bin for both players; TicoFat's fatred colour copies could share one mesh.
+  Repack: slice_all.py every galaxy (ROOM 11.8e6), then zone_fit.py out/packs --elf on the disc ELF.
 - Teresa's body alpha (feat/451-teresa-alpha, 2026-11-07): body_m_v's last TEV stage is lerp(IndDummy screen copy, the
   body, C1.a): Petari's Erase / Appear fade. slice.py took it for a screen tint (blend kind 3: no body texture) since
   C1.a is 0 in the material and the stage's alpha reads TEXA; now BRK_POSE Teresa (teresa.brk frame 0: C1.a 1) and

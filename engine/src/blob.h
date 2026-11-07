@@ -90,7 +90,7 @@ typedef struct {
 } Model;
 
 #define SCENE_MAX_MODELS 512
-#define SCENE_MAX_TEX 1280 /* AstroGalaxy 1-5 need up to 1121 with layer passes (slice_all LAYER_STEPS) and menus.bin */
+#define SCENE_MAX_TEX 2048 /* AstroGalaxy 1 needs 1291 at ratio 0.99 with every layer pass (slice_all ROOM 11.8e6) and menus.bin */
 #define SCENE_MAX_PACKS 64
 typedef struct { const TexEntry *e; const u8 *base; } TexRef;
 

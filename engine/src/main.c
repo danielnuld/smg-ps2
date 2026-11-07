@@ -483,7 +483,7 @@ static u32 size_full[64], size_low[64]; /* each stage pack's bytes */
 static u32 zone_room, zone_room_bg, zone_region; /* what the stage packs may use: in all / beside the packs a background
                                                 * swap replaces / at most (the region free: no more fits) */
 static u32 resident_bytes;
-#define PACK_ROOM 9200000u /* room for scenario data, resident.bin aside (the region less resident.bin, sound.bin's EE part and the menus' packs) (tools/slice_all.py packs to ROOM 9.1e6 less letter.bin, ~75 KB under it, a margin) */
+#define PACK_ROOM 11900000u /* room for scenario data, resident.bin aside (the region less resident.bin, sound.bin's EE part and the menus' packs) (tools/slice_all.py packs to ROOM 11.8e6 less letter.bin, 100 KB under it, a margin) */
 static MemMark base_mark;
 
 /* Next zone's packs, read a slice per frame (a launch star's flight hides it); stages whose pack does not change
@@ -877,7 +877,7 @@ static const u8 *load_packs(Scene *s)
                 printf("packs: zone %s never fits: %u KB in full, region %u KB (it stays low)\n", (const char *)(zn + 4 + 56 * z), c >> 10, zone_region >> 10);
         }
     }
-    printf("packs: %s, %u zones (room %u KB, %u KB in the background), base %u models, %u textures, %u KB read\n", scen, nzones, zone_room >> 10, zone_room_bg >> 10, s->nmodels, s->ntex,
+    printf("packs: %s, %u zones (room %u KB, %u KB in the background, region left %u KB), base %u models, %u textures, %u KB read\n", scen, nzones, zone_room >> 10, zone_room_bg >> 10, zone_region >> 10, s->nmodels, s->ntex,
            pack_bytes >> 10);
     return scene_blob;
 }
@@ -2725,8 +2725,9 @@ int main(void)
             if (game_life() > 0 && game_life() < 3) game_test_life(3);
             life0 = game_life();
             if (frame == 1200)
-                printf("cover: %s ok, slow %u, worst %u us, runtime %u KB, lives %d, misses %d, hits %d\n", scen, slow,
-                       (u32)(worst / EE_MHZ), mem_total() >> 10, game_lives(), game_misses(), hits);
+                printf("cover: %s ok, slow %u, worst %u us, runtime %u KB, arena peak %u KB, lives %d, misses %d, hits %d
+", scen, slow,
+                       (u32)(worst / EE_MHZ), mem_total() >> 10, mem_peak() >> 10, game_lives(), game_misses(), hits);
         }
 #endif
         stream_update(&scene);

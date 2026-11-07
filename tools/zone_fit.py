@@ -6,7 +6,7 @@ if a zone is over it (tools/disc.py runs it on the disc's ELF).
 For each <Galaxy>/<n>/scene.bin: each zone's chain (ZPAR) in full, every other stage low, plus scene.bin and
 common.bin, each pack rounded to whole sectors (main.c PACK_ALLOC), against slice_all.room (ROOM less the galaxy's menu
 packs and letter.bin), or room_kb less those (ROOM measured on the PS2: the "packs: ... room N KB" line plus scene.bin
-and common.bin and the menu packs, 8962 KB with a 13824 KB region). Prints the zones over it and the tightest.
+and common.bin and the menu packs, 11415 KB with a 17152 KB region). Prints the zones over it and the tightest.
 """
 import struct
 import sys
@@ -45,7 +45,7 @@ def elf_end(path):
 # 16866 and 16936 KB 13312 KB, 17209 KB 13056 KB, 10732 KB (packs builds, no linked blob) 19456 KB. HEAP_KB is the lowest constant that fits them all (30355-30433), so
 # the region here is never above the PS2's
 HEAP_KB = 30355
-ROOM_KB, ROOM_REGION_KB = 8962, 13824  # ROOM measured with a 13824 KB region (the docstring)
+ROOM_KB, ROOM_REGION_KB = 11415, 17152  # ROOM measured with a 17152 KB region (2026-11-07, resident.bin 4.46 MB: slice_all.ROOM)
 
 
 def region_kb(elf):
