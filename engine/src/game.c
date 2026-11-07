@@ -363,6 +363,8 @@ typedef struct {
     int palm;        /* PalmIsland: bobs on the water (update_palms) */
     int sstorm;      /* SunakazeKun 1, TwisterSan 2, TwisterSanSlim 3: catches Mario, a spin throws him up (update_storms, ss_hold) */
     int tdoor;       /* TypicalDoor 1, DarknessRoomDoor 2, TypicalDoorOpen 3 (update_doors, door_place) */
+    int clipa;       /* a clip area's shape (clip_area.inc CA_*): not drawn, its volume masks the ClippedMapParts */
+    int clipp;       /* SimpleClipPartsObj 1, DarknessRoomDoorA 2 (ClippedMapParts with arg0 -1), ClipAreaDropLaser 3 */
     int lotus;       /* LotusLeaf: shakes under Mario (update_lotus) */
     int train;       /* ChooChooTrain 1, its cars 2 + n (update_trains) */
     int vflow;       /* LavaHomeVolcanoFlow (update_volcanoflows) */
@@ -471,6 +473,15 @@ static unsigned *row_larea_t;
 static struct { int area, from, t, n; RenderLight cur; } plight; /* the player's ActorLightCtrl (area -1: none yet) */
 static int area_inside(const Row *r, V3 p);
 static int area_obj(const char *cls, V3 p);
+/* clip_area.inc */
+static int ca_shape_of(const char *name);
+static int ca_parts_of(const char *name);
+static int ca_solid(const Inst *in);
+static int ca_holder(void);
+static int ca_clipped(const Inst *in);
+static void ca_update(void);
+static void ca_draw(V3 eye);
+static void ca_lasers_draw(V3 eye, float fovy);
 static void safe_reset(V3 p);
 static int screen_pos(V3 p, float *x, float *y);
 static unsigned game_frame;
@@ -1925,6 +1936,7 @@ static int kcl_each(V3 c, float radius, KclEach fn, void *ctx)
         if (in->screw == 2 && row_turn && row_turn[in->row] == 3) continue; /* ScrewSwitchReverse: invalidateCollisionParts at its throw */
         if (in->otamagma && ota.nrv == OTA_DEAD) continue;            /* drawn till then (game_draw) */
         if (in->tdoor && !door_solid(in)) continue;
+        if (in->clipp && !ca_solid(in)) continue;                    /* SimpleClipPartsObj: its SW_A */
         const float (*mats)[16] = (const float (*)[16])in->m;
         const int *lcoll = NULL;
         int nm = in->leaves ? lf_mats(in, &mats, &lcoll) : 0;
@@ -5004,6 +5016,8 @@ typedef struct {
     __typeof__(((Inst *)0)->palm) palm;
     __typeof__(((Inst *)0)->sstorm) sstorm;
     __typeof__(((Inst *)0)->tdoor) tdoor;
+    __typeof__(((Inst *)0)->clipa) clipa;
+    __typeof__(((Inst *)0)->clipp) clipp;
     __typeof__(((Inst *)0)->lotus) lotus;
     __typeof__(((Inst *)0)->train) train;
     __typeof__(((Inst *)0)->vflow) vflow;
@@ -5105,6 +5119,8 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->leaves = strcmp(name, "CoconutTreeLeaf") == 0;
     ci->palm = strcmp(name, "PalmIsland") == 0;
     ci->sstorm = strcmp(name, "SunakazeKun") == 0 ? 1 : strcmp(name, "TwisterSan") == 0 ? 2 : strcmp(name, "TwisterSanSlim") == 0 ? 3 : 0;
+    ci->clipa = ca_shape_of(name);
+    ci->clipp = strcmp(name, "ClipAreaDropLaser") == 0 ? 3 : ca_parts_of(name);
     ci->tdoor = strcmp(name, "TeresaMansionDoorA") == 0 || strcmp(name, "TeresaMansionDoorB") == 0 ? 1 : strcmp(name, "DarknessRoomDoorA") == 0 ? 2 : strcmp(name, "TeresaMansionEntranceDoor") == 0 ? 3 : 0;
     ci->lotus = strcmp(name, "LotusLeaf") == 0;
     ci->train = strcmp(name, "ChooChooTrain") == 0;
@@ -5196,6 +5212,8 @@ static void class_apply(Inst *in, const ClassInfo *ci)
     in->palm = ci->palm;
     in->sstorm = ci->sstorm;
     in->tdoor = ci->tdoor;
+    in->clipa = ci->clipa;
+    in->clipp = ci->clipp;
     in->lotus = ci->lotus;
     in->train = ci->train;
     in->vflow = ci->vflow;
@@ -50376,6 +50394,7 @@ int game_test_bk(int frame)
 #include "koopajr_ship.inc" /* KoopaJrShip (Bowser Jr.'s airship): kj_*, game_test_kj */
 #include "polta.inc" /* Polta (Bouldergeist): pol_*, game_test_pol */
 #include "tamakoro.inc" /* Tamakoro (the star ball), TamakoroTutorial: tk_*, game_test_tk */
+#include "clip_area.inc" /* ClipArea*, ClipFieldSwitch, FallOutFieldDraw, SimpleClipPartsObj, ClipAreaDropLaser: ca_* */
 #include "statics.inc" /* placed classes once drawn still (Flag ...): st_* */
 #include "race.inc" /* RaceManager, RaceRail (PlayerRacer), TeresaRacer: rm_*, game_test_race */
 /* Test builds: Mario in the boss's SwitchCylinder until it starts, then dropped in a hip drop on its BodyHipDrop part
@@ -51826,6 +51845,7 @@ void game_update(void)
     put_test();
 #endif
     update_airs(); /* registerDemoSimpleCastAll: they move in demos too */
+    ca_update();
     LQ(3, update_railers());
     LQ(4, update_talkers());
     fat_rings_talk(); /* TicoGalaxy's TicoStarRing */
@@ -52727,6 +52747,7 @@ void game_draw(void)
         FOR_KIND(i, halo) if (insts[i].halo >= 3 && !insts[i].invisible) inst_draw(&insts[i], insts[i].md, insts[i].m);
         render_xlu_now(0);
     }
+    ca_draw(ce); /* GameScene::draw3D: the ClippedMapParts, the clip areas, FallOutFieldDraw */
     PROF(1);
 #ifdef BENCH
     /* the instances' draw by class over the bench's frames 61..1860, the dearest printed at its end */
@@ -52743,6 +52764,7 @@ void game_draw(void)
         IT_MARK(in->row >= 0 ? (int)sc->objs[in->row].type : 1023);
         if (in->invisible || in->sky || in->sun) continue;
         if (air_prior && in->halo >= 3) continue; /* drawn before the planets */
+        if (in->clipa || in->clipp == 3 || (in->clipp && ca_holder() && ca_clipped(in))) continue; /* ca_draw */
         if (in->plant) {
             if (plant_first[in->row] < 0) continue;
             int n = plant_count(&sc->objs[in->row]);
@@ -53622,6 +53644,7 @@ void game_draw(void)
     RESTQ(7);
     PROF(5);
     { float e3[3] = {ce.x, ce.y, ce.z}; fx_set_eye(e3); }
+    ca_lasers_draw(ce, fovy); /* DrawType_ClipAreaDropLaser */
     fx_draw();
 #ifndef NO_FLARE
     lens_flare_draw(ce, cw, cu, fovy);

@@ -59,6 +59,12 @@ void render_mesh_vc(const float (*pos)[3], const float (*uv)[2], const u32 *rgba
 /* render_mesh on the screen: x 0..640, y 0..448 (HUD units), over everything; colour 0xAABBGGRR (0x80 = 1.0)
  * modulating the texture, additive (Cs x As + Cd) or blended */
 void render_mesh2d(const float (*xy)[2], const float (*uv)[2], int nvert, const u16 *idx, int ntri, u16 tex, u32 rgba, int add);
+/* ClipArea / FallOutFieldDraw (render.c): begin (every pixel outside), each volume's front then back faces (world
+ * triangles, outward winding: its front then back faces; inside: the camera in it), nearest volume first, then the
+ * fill (black, far depth) */
+void render_clip_begin(void);
+void render_clip_volume(const float (*pos)[3], int nvert, const u16 *idx, int ntri, int inside);
+void render_clip_fill(void);
 void render_text(float x, float y, const char *s);
 /* a fatal error printed and shown on screen for good (printf format); it does not return */
 void render_fatal(const char *fmt, ...) __attribute__((noreturn, format(printf, 1, 2)));

@@ -1223,6 +1223,21 @@ there needs the embedded blob and every pack rebuilt.
   table; one fade table per model a frame; DarknessRoomAir / TwilightAir / DimensionAir still without run-time fades.
   Repack: slice_all.py EggStarGalaxy, TearDropGalaxy, OceanFloaterLandGalaxy, OceanPhantomCaveGalaxy, HeavensDoorGalaxy.
 
+- ClipArea system (feat/388-clip-area, 2026-11-07): engine/src/clip_area.inc (ca_*) after Petari ClipArea*.cpp,
+  ClipFieldSwitch, FallOutFieldDraw, SimpleClipPartsObj, ClipAreaDrop(Holder), ClipAreaDropLaser: the clip areas (sphere,
+  centre / bottom box, top / bottom cone in their base matrix over their scale; moved by the railer), isInClipArea (the
+  holder active by FallOutFieldDraw's appear switch), ClipFieldSwitch's SW_A / SW_B by Mario, SimpleClipPartsObj's
+  collision by its SW_A, the drops (eased 15 / 60-240) the lasers leave at points with arg0 (Splash, SE, their 64-place
+  line). Drawing (GameScene::draw3D): the ClippedMapParts first, then render_clip_* on the frame's alpha bit (FBA 0:
+  the engine had it forced to 1): A = 1 over the screen, each volume's front faces nearer than the scene clear it, its
+  back faces set it, nearest volume first; a sprite reading the frame as its texture (TEXA) fills black at the far
+  depth where A = 1, so the skies and actors drawn after show there as in Petari. Test: plain XF="-DCA_TEST=1"
+  (DarkRoomGalaxy/1: Mario at clip area 1, the state and ca_draw's time logged: 1.8 ms with the room's parts);
+  KoopaBattleVs2Galaxy/1 starts and plays as before. ponytail: no blurred edge colour; a volume behind a nearer one
+  along a ray can set back what that one kept (one bit, no count); ClipAreaCollisionFilter (Teresa, KameckBeam) not
+  ported; the sky drawn first goes black where Petari's sky would show.
+  Repack: slice_all.py DarkRoomGalaxy, PhantomGalaxy, KoopaBattleVs2Galaxy (LOGIC FallOutFieldDraw / ClipFieldSwitch,
+  jpa.py NAMED ClipAreaDropLaser).
 - BegomanSpring / BegomanSpringHide (feat/350-begoman-spring, 2026-11-07): BegomanSpring.cpp as walker WALK_BEGOSPRING in
   begospike_update (BegomanBase's nerves shared with the Spike): a trample on its body Shakes it (180), shaking a trample
   bounces Mario off its spring (doTrampleJump: Trample 180, then SignAttack), Blow ends in Shake, ElectricDeath kills it
@@ -1965,7 +1980,7 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
   that row), `fat` XF="-DTG_TEST=1|2" AstroGalaxy/1 (feed both / their rings), -DST_TWALL_TEST, -DST_SURP_TEST.
   Left (statics agent): TeresaPicture / KinokoOneUpPicture (per-instance BTK frame: the engine's BTKs run per model),
   SeaBottomTriplePropeller (one KCL on three joints), the Tamakoro family (TamakoroWithTutorial, BallOpener,
-  JumpHole, ConcreteBlock: Mario's star ball ride is not ported), ClipAreaDropLaser (clip areas), AstroDomeAsteroid
+  JumpHole, ConcreteBlock: Mario's star ball ride is not ported), AstroDomeAsteroid
   (SphereSelector's handled transform), FlexibleSphere, BegomanSpring, Syati / TalkSyati, SpinningBox,
   BombBird, JumpGuarder, WaterBazooka, BallBeamer, MagnumKiller, PenguinRacerLeader,
   SubmarineVolcanoBigColumn, AstroChildRoom (update_astro_objs' ponytail).
