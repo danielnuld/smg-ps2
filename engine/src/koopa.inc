@@ -19,8 +19,8 @@
  * KoopaDemoFallToPlanetVs3Lv2 / Lv3, Lv3 / Final in KoopaBattleMain (AttackRoll) on the Lv3 planet's damage plates,
  * KoopaFigureBall, KoopaRockBreak, the three planets and the holed suns (insts), the demo casts Peach / KoopaJr /
  * KoopaJrShip (ModelObjNpc at デモ中心 with their clips), the keepers read by switch (KoopaViewSwitchKeeper,
- * KoopaSwitchKeeper). ponytail: KoopaRestarterVs3 (tryRestartKoopa after a miss: no restart in the port's boss
- * zones), the demo meteors (MeteorStrike's DemoKoopaBattleStairsVs3Start0n), the parts' FixPos (Koopa's base), Mario's
+ * KoopaSwitchKeeper), KoopaRestarterVs3 (tryRestartKoopa on its appear switch). ponytail: the demo meteors
+ * (MeteorStrike's DemoKoopaBattleStairsVs3Start0n), the parts' FixPos (Koopa's base), Mario's
  * demo clips (startBckPlayer), the fires' useFront, the casts' end (the sheets' cast groups) */
 #define KP_FIRE_SHORT 32   /* sFireShortNum */
 #define KP_FIRE_STAIRS 16  /* sFireStairsNum */
@@ -297,10 +297,11 @@ static void kp_plate_coll(int i, int on) /* validate / invalidateCollisionParts,
     insts[kpl[i].ki].invisible = !kpl[i].alive;
 }
 static void kp_plate_fx(int i, const char *name, const void *key) { fx_named(i < 6 ? "KoopaPlateDamage" : i < 10 ? "KoopaPlateCoin" : "KoopaPlate", name, kpl[i].m, NULL, key); } /* emitEffect (key: kept) */
-static void kp_planet_init(void) /* KoopaParts::initVs1: createKoopaBattleMapPlanet(惑星中心), createPlate */
+static void kp_planet_init(void) /* KoopaParts::initVs1 / Vs2: createKoopaBattleMapPlanet(惑星中心), initVs3: the Lv3 one
+                                   * (惑星Ｌｖ３) holds the plates; createPlate */
 {
     float one[3] = {1, 1, 1};
-    const float *g = scene_gpos("惑星中心");
+    const float *g = scene_gpos(kp.vs == 3 ? "惑星Ｌｖ３" : "惑星中心");
     kp_planet_ok = g != NULL;
     if (!g) return;
     mat_translate_rot_scale(kp_planet_m, g, g + 3, one);
@@ -785,7 +786,7 @@ static void kst_update(int k) /* ActorStateBase::update: updateNerve */
             kp_to_player(&fall);
             if (kp_act_end()) {
                 kp.hip_att++;
-                if (kp.hip_att >= kp.hip_max || dmg.st) kst_kill(k); else nv_set(n, KH_RUN);
+                if (kp.hip_att >= kp.hip_max || dm_damaging()) kst_kill(k); else nv_set(n, KH_RUN);
             }
             break;
         case KH_DAMAGE: break;
@@ -1009,7 +1010,7 @@ static void kst_update(int k) /* ActorStateBase::update: updateNerve */
             if (kp.b.on_wall) kp_jump_add(15.0f); /* sWallJumpSpeed */
             if (kp_act_end()) {
                 kp.sp_att++;
-                if (!dmg.st && kp.sp_att < kp.sp_max) { kp.sp_move = &spin2; nv_set(n, KSP_START); } else nv_set(n, KSP_END);
+                if (!dm_damaging() && kp.sp_att < kp.sp_max) { kp.sp_move = &spin2; nv_set(n, KSP_START); } else nv_set(n, KSP_END);
             }
             break;
         case KSP_END:
@@ -1021,7 +1022,7 @@ static void kst_update(int k) /* ActorStateBase::update: updateNerve */
             if (st == 0) { kp_act("SpinEven"); V3 h = vtangent(vsub(kp.b.pos, mario->pos), kp.b.grav); kp.b.vel = vmul(vlen(h) > 1e-6f ? vnorm(h) : v3(0, 0, 0), 30.0f); }
             kp_to_player(&even);
             if (kp_act_end()) {
-                if (!dmg.st && kp.sp_att < kp.sp_max) { kp.sp_move = &spin2; nv_set(n, KSP_SPIN); } else kst_kill(k);
+                if (!dm_damaging() && kp.sp_att < kp.sp_max) { kp.sp_move = &spin2; nv_set(n, KSP_SPIN); } else kst_kill(k);
             }
             break;
         }
@@ -1249,7 +1250,7 @@ static int kbm_update(int first) /* updateActorState(sub, battleMain): 1 when it
         kbm_set(kp.vs == 1 ? KBM_WANDER : kp.vs == 2 ? KBM_SPIN : KBM_ROLL);
         break;
     case KBM_HIPDROP:
-        if (kst_run(KST_HIPDROP)) { if (dmg.st) kbm_jump_away(); else kbm_main_attack(); }
+        if (kst_run(KST_HIPDROP)) { if (dm_damaging()) kbm_jump_away(); else kbm_main_attack(); }
         else if (nv_is(kst(KST_HIPDROP), KH_DAMAGE)) kbm_set(KBM_DAMAGEESCAPE);
         break;
     case KBM_DAMAGEESCAPE:
@@ -1258,7 +1259,7 @@ static int kbm_update(int first) /* updateActorState(sub, battleMain): 1 when it
         break;
     case KBM_SPIN:
         if (!kst_run(KST_SPIN)) break;
-        if (dmg.st) kbm_jump_away(); else kbm_set(KBM_HIPDROP);
+        if (dm_damaging()) kbm_jump_away(); else kbm_set(KBM_HIPDROP);
         break;
     case KBM_FIRELONG: if (kst_run(KST_FIRELONG)) kbm_set(KBM_SHOCKWAVE); break;
     case KBM_ROLL:
@@ -1568,6 +1569,7 @@ static struct {
     int delay[2], roll_time, r1c, r1d; /* ChaseRoll / AttackRoll: mRollDelay, mRollTime, _1C, _1D */
     u8 a6[MAX_STAIRS];            /* KoopaBattleMapStair::_A6 (fired at) */
     int casts;                    /* the demo casts appeared */
+    int restarter;                /* KoopaRestarterVs3 alive (syncStageSwitchAppear) */
 } k3;
 static struct { int on; Kuribo b; float ang, r; const KpMove *mp; } kfb; /* KoopaFigureBall (b.pos: the sphere's bottom) */
 static void k3p_hide(int p, int h) { k3p[p].hidden = h; if (k3p[p].ki >= 0 && k3p[p].ki < ninsts) insts[k3p[p].ki].invisible = h || k3p[p].dead; }
@@ -1698,7 +1700,7 @@ static void kr_update(int k)
         if (st == 24) kp_jump_set(c ? 30.0f : 20.0f); /* sStartStepToJump, sStartJumpSpeed */
         if (st > 24) kp_to_player(&start);
         if (kp_act_end()) { kfb_appear(c ? 260.0f : 230.0f, kfb.mp); nv_set(n, KR_ROLLAIR); }
-        else if (c && dmg.st) nv_set(n, KR_ENDAIR);
+        else if (c && dm_damaging()) nv_set(n, KR_ENDAIR);
         break;
     case KR_ROLLAIR:
         if (st == 0) { kp_act(c ? "ChaseRoll" : "AttackRoll"); kpr_act(part, "AttackRoll"); }
@@ -1706,7 +1708,7 @@ static void kr_update(int k)
         kfb_movement(); kp.b.pos = kfb_c(); kp_ballm = 1;
         if (!c) kp_lv(2, SE_BM_LV_KOOPA_ATTACK_ROLL);
         if (kfb.b.on_ground) nv_set(n, KR_ROLLGROUND);
-        else if (dmg.st) nv_set(n, KR_ENDAIR);
+        else if (dm_damaging()) nv_set(n, KR_ENDAIR);
         break;
     case KR_ROLLGROUND:
         if (st == 0) { if (c) kp_cam_end("ロール追跡開始"); else kp_cam_start("ローリング攻撃"); } /* (RollingSmoke: its effect) */
@@ -1715,9 +1717,9 @@ static void kr_update(int k)
         /* sendMsgEnemyAttackToBindedSensor: ponytail (no binded sensors, as the header says) */
         if (!c) kp_lv(2, SE_BM_LV_KOOPA_ATTACK_ROLL);
         kp_lv(1, SE_BM_LV_KOOPA_CHACE_ROLL);
-        if (c ? (dmg.st || st > 900) : (st > k3.roll_time || dmg.st)) { /* sStepRollGround / mRollTime */
+        if (c ? (dm_damaging() || st > 900) : (st > k3.roll_time || dm_damaging())) { /* sStepRollGround / mRollTime */
             kfb_kill(); kp_ballm = 0;
-            if (!c && !dmg.st && kp.vs == 3 && kp.lv == 3) kst_kill(k); else nv_set(n, KR_ENDAIR);
+            if (!c && !dm_damaging() && kp.vs == 3 && kp.lv == 3) kst_kill(k); else nv_set(n, KR_ENDAIR);
         }
         break;
     case KR_ENDAIR:
@@ -1775,13 +1777,13 @@ static int kb3_update(int first) /* 1 when it is killed */
     if (st == 0 && sk >= 0) kst_appear(sk); /* startState */
     switch (v) {
     case K3B_ROLL:
-        if (kst_run(sk)) nv_set(n, dmg.st ? K3B_JUMPAWAY : kb3_base());
+        if (kst_run(sk)) nv_set(n, dm_damaging() ? K3B_JUMPAWAY : kb3_base());
         break;
     case K3B_SHOCK:
-        if (kst_run(sk)) nv_set(n, dmg.st ? K3B_JUMPAWAY : K3B_ROLL);
+        if (kst_run(sk)) nv_set(n, dm_damaging() ? K3B_JUMPAWAY : K3B_ROLL);
         break;
     case K3B_FIRE:
-        if (kst_run(sk)) nv_set(n, kp.lv == 1 ? K3B_SHOCK : dmg.st ? K3B_JUMPAWAY : K3B_ROLL);
+        if (kst_run(sk)) nv_set(n, kp.lv == 1 ? K3B_SHOCK : dm_damaging() ? K3B_JUMPAWAY : K3B_ROLL);
         break;
     case K3B_DAMAGE:
         if (st == 0) { /* mStateDamageEscape->appear(), startDamageReverse */
@@ -1974,6 +1976,13 @@ static void kq3_update(void)
     Nv *n = &kp.seq;
     int st = nv_run(n);
     const Row *r = &sc->objs[kp.row];
+    int rs = k3_sw_on("KoopaRestarterVs3", SW_APPEAR);
+    if (rs && !k3.restarter && kp.hidden) { /* KoopaRestarterVs3::appear: tryRestartKoopa (ponytail: no face control) */
+        kp.hidden = 0;
+        k3_casts_act("DemoKoopaVs3Wait");
+        printf("koopa: restarted\n");
+    }
+    k3.restarter = rs;
     switch (n->nrv) {
     case K3_WAITPLAYER:
         if (st == 0) { kp_set_pos("デモ中心"); kp_act("Wait"); k3p_hide(K3P_LV3, 1); }
@@ -2226,7 +2235,14 @@ int game_test_kp(int frame)
                                     k3.bat.nrv, k3.fall.nrv, kp.st[KST_CHASEROLL].nrv, kp.st[KST_ROLL].nrv, kp.hidden);
         if (nv_is(&kp.seq, K3_WAITPLAYER)) {
             if (frame >= 60) k3_sw("KoopaViewSwitchKeeper", SW_APPEAR, 1);
-            if (frame >= 120) k3_sw("KoopaSwitchKeeper", SW_APPEAR, 1);
+            int ty = scene_type(sc, "KoopaBattleMapStairBig"), in_zone = 0;
+            for (u32 i = 0; frame >= 120 && ty >= 0 && i < sc->nobjs; i++) /* Mario on the stairs' foot: the boss zone in */
+                if ((int)sc->objs[i].type == ty) {
+                    V3 p = row_pos(&sc->objs[i]), up = up_at(p, v3(0, 1, 0));
+                    mario->pos = vadd(p, vmul(up, 150.0f)); mario->up = up; mario->hvel = v3(0, 0, 0); mario->vup = 0; break;
+                }
+            for (int i = 0; i < ninsts; i++) if (insts[i].kstair) in_zone = 1;
+            if (in_zone) k3_sw("KoopaSwitchKeeper", SW_APPEAR, 1); /* (its foot cube, over a death area, written: test only) */
             return 1;
         }
         if (nv_is(&kp.seq, K3_BATTLESTAIRS)) {
@@ -2236,11 +2252,22 @@ int game_test_kp(int frame)
         }
         if (demo_on || frame - last < 30) return 2;
         Nv *cr = kst(KST_CHASEROLL), *ar = kst(KST_ROLL);
-        if ((nv_is(&kp.seq, K3_LV1) || nv_is(&kp.seq, K3_LV2)) && !nv_is(&k3.bat, K3B_DAMAGE)) { /* held in the air over the
-                                                                 * planet's far side, out of the shock waves' and fires' way */
+        if (((nv_is(&kp.seq, K3_LV1) || nv_is(&kp.seq, K3_LV2)) && !nv_is(&k3.bat, K3B_DAMAGE)) ||
+            ((nv_is(&kp.seq, K3_LV3) || nv_is(&kp.seq, K3_FINAL)) && (nv_is(&kp.main, KBM_ROLL) || nv_is(&kp.main, KBM_SHOCKWAVE)))) { /* held on the planet's far side, out of
+                                                       * the shock waves' and fires' way (200 over it; 700: out of its gravity);
+                                                       * a fire ball near: a side step to the other side of its path */
+            static float side = 1.0f;
+            static int moved = -1000;
             V3 d = vsub(kp.b.pos, kp_pc);
             float rr = vlen(d);
-            if (rr > 1.0f) { d = vmul(d, 1.0f / rr); mario->pos = vadd(kp_pc, vmul(d, -(rr + 700.0f))); mario->up = vmul(d, -1.0f); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+            for (int i = 0; i < KP_FIRE_SHORT; i++)
+                if (kpfs[i].on && kpfs[i].nrv == 0 && vlen(vsub(kpfs[i].pos, mario->pos)) < 600.0f && frame - moved > 60) { side = -side; moved = frame; }
+            if (rr > 1.0f && !dmg.st) {
+                d = vmul(d, 1.0f / rr);
+                V3 t = vtangent(kp.b.front, d), h = vnorm(vadd(vmul(d, -1.0f), vmul(vlen(t) > 1e-3f ? vnorm(t) : t, 0.5f * side)));
+                mario->pos = vadd(kp_pc, vmul(h, rr + 200.0f)); mario->up = h; mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            } else if (dmg.st && !mario->grounded) /* a damage state (airborne 360: a miss): pulled down onto the planet */
+                mario->pos = vsub(mario->pos, vmul(vnorm(vsub(mario->pos, kp_pc)), 15.0f));
         }
         if (nv_is(&kp.seq, K3_LV1) && nv_is(&k3.bat, K3B_ROLL) && nv_is(cr, KR_ROLLGROUND) && cr->st > 60) { /* before its face, a spin */
             V3 up = kp_up(), f = kp_sc(KS_CHASEROLLFACE), h = vtangent(vsub(f, kp.b.pos), up);
@@ -2250,7 +2277,7 @@ int game_test_kp(int frame)
             last = frame; printf("kp test f %d: face spin\n", frame);
             return 8;
         }
-        if (nv_is(&kp.seq, K3_LV2) && nv_is(&k3.bat, K3B_ROLL) && nv_is(ar, KR_ROLLGROUND) && ar->st > 60) {
+        if (nv_is(&kp.seq, K3_LV2) && nv_is(&k3.bat, K3B_ROLL) && nv_is(ar, KR_ROLLGROUND) && ar->st > 10) {
             V3 at; kp_blow(kp_sc(KS_ATTACKROLLRECEIVER), 1.0f, &at);
             last = frame; printf("kp test f %d: blow\n", frame);
             return 9;
