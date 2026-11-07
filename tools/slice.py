@@ -150,7 +150,7 @@ CANM_ARC = {"GrandStarReturnDemoStarter": ("gsr", "DemoAstroReturn"), "TripodBos
             "BossStinkBug": ("bsbdemo", "BossStinkBugDemo"),
             "BossKameck": ("bkdemo", "BossKameckBattleDemo"), "BossKameck2": ("bkdemo", "BossKameckBattleDemo"),
             "TombSpider": ("tspdemo", "TombSpiderPlanet"), "KoopaVs1": ("koopa", "Koopa"), "KoopaVs2": ("koopa", "Koopa"), "KoopaVs3": ("koopa", "Koopa"), "SkeletalFishBoss": ("sfb", "SkeletalFishBoss")}  # SkeletalFishBoss::initCamera: its four event camera anims;  # TombSpiderDemo: initAnimCamera on its planet (Appear, Battle2ndStart, Death)  # BossKameckDemoPosition: initAnimCamera on BossKameckBattleDemo  # its DemoPositionControllers: initAnimCamera on BossStinkBugDemo
-MODEL_ARC = {"Koura~0": "Koura~koura:0", "Koura~1": "Koura~koura:1",  # NokonokoLand's JetTurtle: becomeSlowType / becomeFastType (Koura BRK frame 0 / 1)
+MODEL_ARC = {"Tico~5": "Tico~colorchange:5", "Koura~0": "Koura~koura:0", "Koura~1": "Koura~koura:1",  # NokonokoLand's JetTurtle: becomeSlowType / becomeFastType (Koura BRK frame 0 / 1)
              "KeySwitchOwned": "KeySwitch", "TripodBossKillerGenerater": "TripodBossKillerCannon", "TripodBossUpperKillerCannon": "TripodBossKillerCannon", "TripodBossUnderKillerCannon": "TripodBossKillerCannon", "TripodBossBottomKillerCannon": "TripodBossKillerCannon", "ChildKameck": "Kameck", "BkDemo": "BossKameckBattleDemo", "ChildKuribo": "Kuribo", "ChildIceMeramera": "IceMeramera", "LuigiEvent": "LuigiNPC", "TicoDomeLecture": "Tico", "PStar": "PowerStar", "GStar": "GrandStar", "OtaKing": "OtaKing", "KoopaJr": "KoopaJr", "Tico": "Tico", "Plant": "PlantSeed",
              # the Gateway intro (HeavensDoorGalaxy 1): RunawayRabbitCollect's children, DemoRabbit, the baby Lumas; the
              # rabbits' TrickRabbitBaby and the RunawayTico's TicoBaby are their EXTRA (by arg / cast id)
@@ -193,7 +193,8 @@ def sky_sea(b, mat3, m):
 # (FlipPanel: "?" at rest, "!" once flipped, the End face when its group is complete)
 # KuriboChief / ExterminationChecker::initKeySwitch: their own KeySwitch (game.c okeys; KeySwitchOwned: the KeySwitch
 # archive skinned for its Rotation, the placed KeySwitch rows untouched)
-EXTRA = {"UFOKinokoUnderConstruction": ("UFOKinokoLandingAstro",),  # its init: that model once isUFOKinokoUnderConstruction is over (statics.inc)
+EXTRA = {"UFOKinokoUnderConstruction": ("UFOKinokoLandingAstro",),
+         "TicoGalaxy": ("TicoFatGoodsStarPiece", "Tico~5"),  # TicoFat's goods; its TicoStarRing (Tico::initBase(5): ColorChange 5)  # its init: that model once isUFOKinokoUnderConstruction is over (statics.inc)
          "Polta": ("PoltaLeftArm", "PoltaRightArm", "PoltaBodyBreak", "PoltaArmBreak", "PoltaFormationRock", "PoltaGroundRock", "PoltaGroundRockBreak", "PoltaRock#Color:0", "PoltaRock#Color:1", "PoltaRock#Color:2", "BombTeresa"),  # PoltaRock::setColorWhite / Black / Yellow (Color BVA frame 0 / 1 / 2); BombTeresaHolder
          "SkeletalFishBaby": ("SnakeFish",), "ChildSkeletalFishBaby": ("SnakeFish",), "SkeletalFishBoss": ("SkeletalFishBossHeadA", "SkeletalFishGuard", "SkeletalFishBossBreak", "SkeletalFishBossScarFlash", "SkeletalFishBossLight"), "IceMerameraKing": ("IceManIce", "IceMerameraKingShock", "IceMerameraKingBreak"), "KoopaVs1": KOOPA_PARTS + ("KoopaBattleMapPlanet", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate"), "KoopaVs2": KOOPA_PARTS + ("KoopaBattleMapPlanetVs2", "KoopaPlateDamage"), "GhostPlayer": ("GhostMario", "GhostLuigi", "Koura"), "BegomanBabyLauncher": ("BegomanBaby",), "ElectricRailMoving": ("ElectricRailPoint",), "NokonokoLand": ("Koura~0", "Koura~1"), "Penguin": ("Koura~0",), "PenguinStudent": ("KouraShine",), "Creeper": ("CreeperFlower", "CreeperLeaf"), "TripodBoss": ("TripodBossLow", "HomingKiller"), "Dodoryu": ("DodoryuHillA", "DodoryuHillB", "DodoryuHillC", "DodoryuLeadHill", "DodoryuRabbit"), "HoneyQueen": ("HoneyQueenWing",), "TicoFat": ("TicoFatGoodsStarPiece",), "TicoShop": ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp"), "ShellfishYellowChip": ("YellowChip",), "BossKameck": ("BkDemo", "BossKameckFireBall", "Koura"), "BossKameck2": ("BkDemo", "BossKameckFireBall", "Koura", "BossKameckBarrier"), "FireBallBeamKameck": ("BossKameckFireBall",), "BreakableTrash": ("BreakableCageBreak",), "KuriboChief": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
          "Rosetta": ("LightDome", "DomeHalo"),  # RosettaDemoHeavensDoor1's parts (ライトドーム, ライト後光)
@@ -452,7 +453,7 @@ MAT_COLOR = {"StarPiece": ("StarPiece1_v", [(0x80, 0x00, 0x99), (0xE6, 0xA0, 0x0
                                             (0x37, 0x5A, 0xA0), (0xBE, 0x33, 0x0B), (0x80, 0x80, 0x80)])}
 # a BRK stopped at a frame the actor sets at run time: its model baked at these frames, "<class>~<k>" (game.c picks k).
 # TicoFat::setScale: FatRed at (scale - 1) / 0.9 of its frame max (59); Normal frame 0 has the same colours as FatRed 0
-BRK_STEPS = {"TicoFat": ("fatred", (0, 20, 39, 59)),
+BRK_STEPS = {"TicoFat": ("fatred", (0, 20, 39, 59)), "TicoGalaxy": ("fatred", (0, 20, 39, 59)),  # TicoGalaxy: a TicoFat
              "AstroDomeDemoAstroGalaxy": ("astrodomedemoastrogalaxy", (0, 1, 2))}  # its init: setBrkFrameAndStop by grand stars (statics.inc)
 # a class that picks one of several BRKs at run time (MR::startBrk by name): its model baked at frame 0 of each, "<class>~<k>".
 # AstroDomeComet::appear: cCometBrkName[getCometNameId]
