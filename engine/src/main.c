@@ -2243,6 +2243,13 @@ int main(void)
         if (f0 && frame - f0 < 12000) game_test_sf((int)(frame - f0));
     }
 #endif
+#ifdef TMK_TEST /* XF=-DTMK_TEST, TamakoroExLv1Galaxy/1: the Tamakoro ride (game_test_tmk) */
+    {
+        static u32 f0;
+        if (!f0 && frame > 30 && game_test_free()) f0 = frame;
+        if (f0 && frame - f0 < 4000) game_test_tmk((int)(frame - f0));
+    }
+#endif
 #ifdef POL_TEST /* XF=-DPOL_TEST, PhantomGalaxy/3: the Polta fight (game_test_pol) */
     {
         static u32 f0;

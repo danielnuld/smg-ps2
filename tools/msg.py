@@ -42,7 +42,8 @@ DIRECT = {"ButlerMap": ("AstroGalaxy_ButlerMap001",),  # ButlerMap::init: its ma
           "Rosetta": ("AstroGalaxy_Rosetta300", "AstroGalaxy_Rosetta400", "AstroGalaxy_Rosetta080", "AstroGalaxy_Rosetta020",
                       "AstroGalaxy_Rosetta030", "AstroGalaxy_Rosetta040", "AstroGalaxy_Rosetta050", "AstroGalaxy_Rosetta060",
                       "AstroGalaxy_Rosetta084", "AstroGalaxy_Rosetta054")}
-COMMON = {"Tico": ("Common_Tico000",), "TicoFat": ("Common_TicoFat000", "Common_TicoFat001", "InformationPlanet"), "TicoGalaxy": ("Common_TicoFat000", "Common_TicoFat001", "InformationGalaxy"), "TicoShop": ("Common_TicoShop000",)}
+COMMON = {"TamakoroTutorial": ("Common_TamakoroTutorial000", "Common_TamakoroTutorial007"),  # TamakoroTutorial::init: createTalkCtrlDirect(OnRootNodeAutomatic)
+          "Tico": ("Common_Tico000",), "TicoFat": ("Common_TicoFat000", "Common_TicoFat001", "InformationPlanet"), "TicoGalaxy": ("Common_TicoFat000", "Common_TicoFat001", "InformationGalaxy"), "TicoShop": ("Common_TicoShop000",)}
 
 
 def _arc(fsp, rel):
