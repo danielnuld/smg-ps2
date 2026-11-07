@@ -1136,6 +1136,17 @@ there needs the embedded blob and every pack rebuilt.
   (LightFunction.cpp:193-195) and VU1 batches have no vertex alpha (drawn flat they flood the screen); so no PriorDrawAir.
   Repack: slice_all.py the galaxies with DimensionAir / TwilightAir / DarknessRoomAir.
 
+- BegomanSpring / BegomanSpringHide (feat/350-begoman-spring, 2026-11-07): BegomanSpring.cpp as walker WALK_BEGOSPRING in
+  begospike_update (BegomanBase's nerves shared with the Spike): a trample on its body Shakes it (180), shaking a trample
+  bounces Mario off its spring (doTrampleJump: Trample 180, then SignAttack), Blow ends in Shake, ElectricDeath kills it
+  with a coin, its SW_B kills it, the Hide one waits unbound until Mario is within 1000 (Hop: Appear, then Wait); its
+  BegomanSpringHead drawn at its Center (slice.py EXTRA). Test: `begoman` with XF="-DBEGO_SPRING -DPUT_TEST=BegomanSpring
+  -DPUT_NOCAM -DPUT_XYZ=-46561,18095,-20171 -DPUT_UP=1500 -DPUT_AT=1" (CannonFleetGalaxy/3): it pursues, a spin blows it
+  into Shake, then it pursues again. New test hook PUT_TEST (game.c put_test: Mario put on a class's first row or at
+  PUT_XYZ, the camera on it unless PUT_NOCAM). ponytail: event cameras, the Hide one's baby launch and its return to
+  hiding, the trample sensor at SpringJoint5, the head's own clips. Repack: slice_all.py CannonFleetGalaxy,
+  OceanFloaterLandGalaxy. (The rest of the static list's second half went in with #343 / #345.)
+
 ## Next
 
 **In-engine demos (the user, 2026-10-17: "haz las dos cosas, primero los videos": the movies are done (3feb30f), now

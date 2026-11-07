@@ -77,13 +77,13 @@ static struct { int on, owner, nrv, step, demo; V3 pos, vel, up; float rate, t; 
 static struct { int row, nrv, step; V3 last; } exts[MAX_EXTS];
 static int nexts;
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
-       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU, WALK_BOMBHEI, WALK_STRSPIDER, WALK_BEGOSPIKE, WALK_KCHIEF, WALK_BEGOBABY, WALK_BBEGO, WALK_KAMECK, WALK_NOKO, WALK_SAMBOHEAD, WALK_BOMBTERESA, WALK_JELEC, WALK_BEGOLAUNCH, WALK_MERAKING, WALK_KINDS };
+       WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU, WALK_BOMBHEI, WALK_STRSPIDER, WALK_BEGOSPIKE, WALK_BEGOSPRING, WALK_KCHIEF, WALK_BEGOBABY, WALK_BBEGO, WALK_KAMECK, WALK_NOKO, WALK_SAMBOHEAD, WALK_BOMBTERESA, WALK_JELEC, WALK_BEGOLAUNCH, WALK_MERAKING, WALK_KINDS };
 /* walkers ported in the release push: their classes (counted, placed and drawn through this table) */
 static const struct { const char *cls; int kind; } new_walkers[] = {{"Gesso", WALK_GESSO}, {"BasaBasa", WALK_BASABASA}, {"BasaBasaIce", WALK_BASABASA}, {"Jellyfish", WALK_JELLYFISH},
                                                                     {"Kanina", WALK_KANINA}, {"KaninaRed", WALK_KANINA}, {"Mogu", WALK_MOGU}, {"Mogucchi", WALK_MOGUCCHI}, {"Metbo", WALK_METBO}, {"TeresaWater", WALK_TERESAW},
                                                                     {"Snakehead", WALK_SNAKEHEAD}, {"SnakeheadSmall", WALK_SNAKEHEAD}, {"Kabokuri", WALK_KABOKURI}, {"Pukupuku", WALK_PUKUPUKU},
                                                                     {"BombHei", WALK_BOMBHEI}, {"BombHeiLauncher", WALK_BOMBHEI}, {"BombLauncher", WALK_BOMBHEI},
-                                                                    {"StringSpider", WALK_STRSPIDER}, {"BegomanSpike", WALK_BEGOSPIKE},
+                                                                    {"StringSpider", WALK_STRSPIDER}, {"BegomanSpike", WALK_BEGOSPIKE}, {"BegomanSpring", WALK_BEGOSPRING}, {"BegomanSpringHide", WALK_BEGOSPRING},
                                                                     {"KuriboChief", WALK_KCHIEF}, {"ChildKuribo", WALK_KURIBO}, {"BegomanBaby", WALK_BEGOBABY}, {"BossBegoman", WALK_BBEGO}, {"FireBallBeamKameck", WALK_KAMECK}, {"ChildKameck", WALK_KAMECK}, {"NokonokoLand", WALK_NOKO}, {"SamboHead", WALK_SAMBOHEAD}, {"BombTeresa", WALK_BOMBTERESA}, {"JellyfishElectric", WALK_JELEC}, {"BegomanBabyLauncher", WALK_BEGOLAUNCH}, {"IceMerameraKing", WALK_MERAKING}, {"ChildIceMeramera", WALK_MERAMERA}}; /* ChildKuribo: createNoItemKuriboActor */
 #define NEW_WALKERS ((int)(sizeof new_walkers / sizeof new_walkers[0]))
 #define POL_GROCKS 16 /* PoltaGroundRockHolder sMaxPoltaGroundRock (polta.inc) */
@@ -26086,12 +26086,14 @@ static int kb_blow(Kuribo *k, V3 from);
 static int kc_stagger(Kuribo *k, V3 from);
 static int bb_enemy_hit(Kuribo *k, V3 from, float r);
 static void poihana_shock(Kuribo *k);
+static int bg_shaking(const Kuribo *k);
 static int walker_blow(Kuribo *e, V3 from)
 {
     if (e->kind == WALK_JELEC || e->kind == WALK_BEGOLAUNCH) return 0; /* (JellyfishElectric: only isMsgExplosionAttack, walker_explosion; BegomanLauncher: none) */
     if (e->kind == WALK_BBEGO) return bb_enemy_hit(e, from, 60.0f); /* receiveMsgEnemyAttack: an enemy's sensor rebounds it */
     if (e->kind == WALK_STRSPIDER) { if (ss_down(e)) return 0; ss_blow(e, from); return 1; } /* isMsgExplosionAttack: Blow */
     if (e->kind == WALK_BEGOSPIKE || e->kind == WALK_BEGOBABY) { if (bg_blown(e)) return 0; e->item = 1; bg_blow(e, from, 35.0f, 15.0f); return 1; } /* isMsgExplosionAttack: calcBlowReaction */
+    if (e->kind == WALK_BEGOSPRING) { if (bg_blown(e) || bg_shaking(e)) return 0; bg_blow(e, from, 35.0f, 15.0f); return 1; } /* BegomanSpring::receiveMsgEnemyAttack */
     if (e->kind == WALK_KCHIEF) return kc_stagger(e, from); /* isMsgToEnemyAttackBlow / ShockWave: requestStagger */
     if (e->kind == WALK_BOMBTERESA) return bt_enemy_explosion(e); /* isMsgExplosionAttack: Explosion */
     if (e->kind == WALK_MERAMERA) return mm_down_force(e, from); /* isMsgExplosionAttack / isMsgInvincibleAttack: requestDownForce */
@@ -28910,7 +28912,9 @@ int game_strspider_state(void) /* the first live StringSpider's nerve (SS_*), it
 enum { BG_NOCALCWAIT, BG_WAIT, BG_SIGNATTACK, BG_PURSUE, BG_TURN, BG_BRAKE, BG_STEPBACK, BG_RETURN, BG_PROVOKE,
        BG_TRAMPLEREACTION, BG_HITREACTION, BG_TIRED, BG_BLOW, BG_ELECTRICDEATH, BG_BROKENPIECE, BG_INWATER, BG_KEEPDISTANCE,
        BG_LAUNCH /* a BossBegoman follower: Launch / LaunchFromGuarder (BegomanBase::exeLaunch) */,
-       BG_AFTERLAUNCH, BG_AFTERLAUNCHONGROUND /* a BegomanBabyLauncher's baby (appearFromLaunch) */ };
+       BG_AFTERLAUNCH, BG_AFTERLAUNCHONGROUND, /* a BegomanBabyLauncher's baby (appearFromLaunch) */
+       BG_SHAKE, BG_TRAMPLE, BG_HIDE, BG_HOP /* BegomanSpring's */ };
+static int bg_shaking(const Kuribo *k) { return k->nrv == BG_SHAKE; }
 enum { BBG_PREDEMOWAIT, BBG_FIRSTCONTACTDEMO, BBG_READY, BBG_NOCALCWAIT, BBG_WAIT, BBG_SIGNATTACK, BBG_PURSUE, BBG_TURN, BBG_ONWEAK, BBG_ONWEAKTURN,
        BBG_BRAKE, BBG_STEPBACK, BBG_STEPBACKONWEAK, BBG_RETURN, BBG_PROVOKE, BBG_TRAMPLEREACTION, BBG_AWARE, BBG_HITREACTION, BBG_BLOW,
        BBG_ELECTRICDEATH, BBG_ELECTRICRETURN, BBG_JUMPTOINITPOS, BBG_KEEPDISTANCE }; /* NrvBossBegoman */
@@ -29008,7 +29012,7 @@ static void bg_fx(Kuribo *k, const char *name, V3 at)
 {
     float m[16];
     basis_matrix(m, at, k->qy, k->qz, 0);
-    fx_named(walker_cls(k), name, m, NULL, NULL);
+    fx_named(k->kind == WALK_BEGOSPRING ? "BegomanSpring" : walker_cls(k), name, m, NULL, NULL); /* (BegomanSpringHide: initCore's BegomanSpring) */
 }
 static void bg_rebound(Kuribo *k, int spark) /* reboundWallAndGround(&mFaceVec, spark) */
 {
@@ -29102,24 +29106,43 @@ static void baby_kill_item(Kuribo *k) /* killWithGenItem: 3 star pieces (a star 
 }
 static int bg_blown(const Kuribo *k) { return k->nrv == BG_BLOW; }
 static int bg_down(const Kuribo *k) { return k->nrv == BG_BLOW || k->nrv == BG_ELECTRICDEATH || k->nrv == BG_BROKENPIECE || k->nrv == BG_INWATER || k->nrv == BG_LAUNCH; }
+/* BegomanSpringHead::getHopEndBckFrameMax. ponytail: the head is drawn still (no HopStart / HopWait / HopEnd / HopJump
+ * clips nor its Green / OnAndOff BRKs on it: one pose per walker), the body's HopEnd length stands for the head's */
+static int bg_hopend(void) { int mode; return anim_clip_info("begomanspring/hopend", &mode); }
 static void begospike_update(Kuribo *k)
 {
     const Row *r = &sc->objs[k->row];
     int baby = k->kind == WALK_BEGOBABY; /* BegomanBaby: its own sensors, sounds, Trample, Blow to its death */
+    /* BegomanSpring.cpp (BegomanSpring / BegomanSpringHide): BegomanBase's nerves as the Spike's but a trample on its
+     * body Shakes it (180), shaking a trample on its spring head (ATYPE_PLAYER_AUTO_JUMP) bounces Mario (doTrampleJump):
+     * Trample (180, then SignAttack); Blow ends in Shake; ElectricDeath kills it with a coin; its SW_B kills it; Hide
+     * (mType 1) waits unbound until Mario is within 1000, then Hop (Appear) and Wait. ponytail: its event cameras
+     * (MultiEventCamera on a Trample), the Hide one's BegomanBaby launch in Shake and its return to hiding when both
+     * places are out of the view (BegomanSpring.cpp:375-383, 227-235), the trample sensor at SpringJoint5 (the body's
+     * stands in), the head's own clips (bg_hopend) */
+    int spring = k->kind == WALK_BEGOSPRING; /* BegomanSpring: Shake under a trample, its spring head's Trample (see BG_SHAKE) */
     if (!k->front.x && !k->front.y && !k->front.z) { /* initCore */
         kuribo_init(k);
         k->tcenter = k->pos; k->phase = r->arg[0] != -1; k->to = 0; k->from = 0; k->bvel = k->grav; k->bshow = 0;
         w_nrv(k, BG_WAIT);
         if (!baby) w_se(k, SE_EM_BEGOMAN_APPEAR);
+        if (spring && !strcmp(sc->types + 32 * r->type, "BegomanSpringHide")) { k->item = 1; w_nrv(k, BG_HIDE); } /* mType 1: Hide */
     }
-    if (!baby && !k->host && k->nrv != BG_BROKENPIECE && r->sw[SW_B] >= 0 && sw_on(r, SW_B)) w_nrv(k, BG_BROKENPIECE); /* onSwitchB (Spike's) */
+    if (!baby && !k->host && k->nrv != BG_BROKENPIECE && r->sw[SW_B] >= 0 && sw_on(r, SW_B)) { /* onSwitchB (Spike's); Spring: kill */
+        if (spring) { bg_fx(k, "Death", k->pos); w_se(k, SE_EM_EXPLODE_S); bg_kill(k); return; }
+        w_nrv(k, BG_BROKENPIECE);
+    }
     if (k->nrv != BG_NOCALCWAIT) k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f);
     float s = w_scale(k), near = vlen(vsub(mario->pos, k->pos)), br = bg_r(k);
     V3 body = bg_body(k), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     /* the sensors: Mario's attacks on its body, then its attackSensor */
-    if (!bg_down(k)) {
+    if (!bg_down(k) && k->nrv != BG_HIDE) {
         int msg = mario_offence(body, br * s, k->grav);
-        if (msg == MSG_TRAMPLE && baby) { /* receiveMsgTrample (its body is ATYPE_BEGOMAN): Trample, Mario's trample jump */
+        if (msg == MSG_TRAMPLE && spring) { /* receiveMsgPlayerTrample: its body (ATYPE_BEGOMAN) Shakes it; shaking, the spring
+                                             * head's trample sensor (ATYPE_PLAYER_AUTO_JUMP) bounces Mario up: Trample */
+            if (k->nrv == BG_SHAKE) { mario_trample_auto(); w_nrv(k, BG_TRAMPLE); }
+            else if (k->nrv != BG_TRAMPLE) { mario_trample(); w_nrv(k, BG_SHAKE); }
+        } else if (msg == MSG_TRAMPLE && baby) { /* receiveMsgTrample (its body is ATYPE_BEGOMAN): Trample, Mario's trample jump */
             w_nrv(k, BG_TRAMPLEREACTION);
             mario_trample();
         } else if (msg == MSG_TRAMPLE) {
@@ -29304,6 +29327,12 @@ static void begospike_update(Kuribo *k)
             break;
         }
         if (st == 0) { w_se(k, SE_EM_BEGOMAN_ROT_STOP); w_act(k, "Damage"); scene_stop = 2; } /* sStopSceneTime */
+        if (spring) { /* BegomanSpring::exeBlow: on the ground after sBlowFrame 20, Turn's clip and Shake */
+            w_se_lv(k, SE_EM_LV_BEGOMAN_SPARK); k->lv2[0] = se_level(SE_EM_LV_BEGOMAN_ROT_MIDDLE, &k->pos.x, k->lv2[0]);
+            bg_move(k, tgt, 0.0f, 3.0f, 0.95f, 1.0f); bg_rebound(k, 0);
+            if (st > 20 && k->on_ground) { w_act(k, "Turn"); w_nrv(k, BG_SHAKE); }
+            break;
+        }
         float dep;
         if (in_water(k->pos, k->qy, &dep)) { w_nrv(k, BG_INWATER); break; }
         w_se_lv(k, SE_EM_LV_BEGOMAN_SPARK);
@@ -29313,6 +29342,10 @@ static void begospike_update(Kuribo *k)
     }
     case BG_ELECTRICDEATH:
         if (st == 0) { w_act(k, "electricshock"); k->vel = v3(0, 0, 0); w_se(k, SE_EM_BEGOMAN_ELEC_DAMAGE); }
+        if (st > 20 && spring) { /* BegomanSpring: kill (Death, EXPLODE_S) and its coin 80 up (generateItem) */
+            scene_stop = 5; camera_shake(SHAKE_WEAK); w_se(k, SE_EM_EXPLODE_S); bg_fx(k, "Death", k->pos);
+            pop_coins(vsub(k->pos, vmul(k->grav, 80.0f)), vmul(k->grav, -1.0f), 1); bg_kill(k); return;
+        }
         if (st > 20) { scene_stop = 5; camera_shake(SHAKE_WEAK); w_se(k, SE_EM_EXPLODE_S); bg_fx(k, "Death", k->pos); w_nrv(k, BG_BROKENPIECE); } /* sElectricDeathTime, sDeathStopSceneTime */
         break;
     case BG_BROKENPIECE:
@@ -29323,6 +29356,34 @@ static void begospike_update(Kuribo *k)
     case BG_INWATER:
         if (st == 0) { k->vel = vadd(k->vel, k->grav); if (vlen(k->vel) > 1e-6f) k->vel = vmul(vnorm(k->vel), 10.0f); w_se(k, SE_EM_FALL_INTO_WATER_S); } /* sIsInWaterVel */
         if (st > 60) { bg_fx(k, "DeathWater", k->pos); w_se(k, SE_EM_BEGOMAN_DEAD_IN_WATER); if (baby) baby_kill_item(k); else bg_kill(k); return; } /* sIsInWaterTime */
+        break;
+    case BG_SHAKE: /* BegomanSpring::exeShake (sShakeTime 180) */
+        if (st == 0) w_act(k, "Shake");
+        bg_rotate(k, 0.17f, 0.5f);
+        w_se_lv(k, SE_EM_LV_BEGOMAN_SHAKE);
+        bg_move(k, tgt, 0.0f, 3.0f, 0.95f, 1.0f); bg_rebound(k, 0); /* hWaitParam */
+        k->vel = vmul(k->grav, vdot(k->grav, k->vel));
+        if (st == 180 - bg_hopend()) w_act(k, "HopEnd");
+        if (st > 180) w_nrv(k, BG_WAIT);
+        break;
+    case BG_TRAMPLE: /* exeTrample (sTrampleTime 180) */
+        if (st == 0) { w_act(k, "Shake"); w_se(k, SE_EM_BEGOMAN_TRAMPLE); }
+        bg_rotate(k, 0.25f, 0.5f);
+        bg_move(k, tgt, 0.0f, 3.0f, 0.95f, 1.0f); bg_rebound(k, 0); /* hStopParam */
+        k->vel = vmul(k->grav, vdot(k->grav, k->vel));
+        if (st == 180 - bg_hopend()) w_act(k, "HopEnd");
+        if (st > 180) w_nrv(k, BG_SIGNATTACK);
+        break;
+    case BG_HIDE: /* exeHide: no binding, until Mario is within 1000 */
+        if (st == 0) { w_act(k, "Hide"); k->bind_off = 1; }
+        bg_rotate(k, 0.0f, 1.0f);
+        k->vel = v3(0, 0, 0);
+        if (vlen(vsub(mc, k->pos)) < 1000.0f) { k->bind_off = 0; w_nrv(k, BG_HOP); }
+        break;
+    case BG_HOP: /* exeHop */
+        if (st == 0) { w_act(k, "Appear"); w_se(k, SE_EM_BEGOMAN_FLYOUT); bg_rotate(k, 0.5f, 0.5f); }
+        bg_rotate(k, 0.0f, 1.0f / 44.0f); /* sHopRotateBrakeTime */
+        if (st > 0 && w_bck_stopped(k)) w_nrv(k, BG_WAIT);
         break;
     case BG_AFTERLAUNCH: /* BegomanBaby::exeAfterLaunch */
         if (st == 0) w_act(k, "Fly");
@@ -29402,7 +29463,10 @@ static void begospike_update(Kuribo *k)
     k->up = k->qy;
 }
 
-#ifdef BEGO_BABY /* begoman test on BegomanBaby (XF=-DBEGO_BABY, BattleShipGalaxy/1) */
+#ifdef BEGO_SPRING /* begoman test on BegomanSpring (XF=-DBEGO_SPRING, CannonFleetGalaxy/3 with PUT_XYZ at its zone) */
+#define BEGO_TEST_KIND WALK_BEGOSPRING
+#define BEGO_TEST_CLS "BegomanSpring"
+#elif defined(BEGO_BABY) /* begoman test on BegomanBaby (XF=-DBEGO_BABY, BattleShipGalaxy/1) */
 #define BEGO_TEST_KIND WALK_BEGOBABY
 #define BEGO_TEST_CLS "BegomanBaby"
 #else
@@ -31511,7 +31575,7 @@ static void update_kuribo_one(Kuribo *k)
             else if (k->kind == WALK_PUKUPUKU) puku_update(k);
             else if (k->kind == WALK_BOMBHEI) bomb_update(k);
             else if (k->kind == WALK_STRSPIDER) strspider_update(k);
-            else if (k->kind == WALK_BEGOSPIKE || k->kind == WALK_BEGOBABY) begospike_update(k);
+            else if (k->kind == WALK_BEGOSPIKE || k->kind == WALK_BEGOBABY || k->kind == WALK_BEGOSPRING) begospike_update(k);
             else if (k->kind == WALK_KCHIEF) kchief_update(k);
             else if (k->kind == WALK_BBEGO) bbego_update(k);
             else if (k->kind == WALK_KAMECK) kameck_update(k);
@@ -31704,7 +31768,7 @@ static void update_invincible(void)
     V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
     for (int k = 0; k < nkuribo; k++) {
         Kuribo *e = &kuribo[k];
-        if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_BUTTERFLY || e->kind == WALK_STRSPIDER || e->kind == WALK_BEGOSPIKE || e->kind == WALK_KCHIEF || e->kind == WALK_BBEGO || e->kind == WALK_MERAKING ||
+        if (e->state == KURIBO_DEAD || !row_shown(e->row) || e->kind == WALK_BUTTERFLY || e->kind == WALK_STRSPIDER || e->kind == WALK_BEGOSPIKE || e->kind == WALK_BEGOSPRING || e->kind == WALK_KCHIEF || e->kind == WALK_BBEGO || e->kind == WALK_MERAKING ||
             vlen(vsub(c, vadd(e->pos, vmul(e->up, 60.0f)))) > 60.0f + HIT_BODY_R) continue;
         if (e->kind == WALK_PETARI) { if (petari_solid(e)) petari_blow(e, mario->pos, PT_KICKOUT); continue; }
         int took = walker_blow(e, mario->pos);
@@ -41269,7 +41333,7 @@ static void update_shots(void)
             else if (e->kind == WALK_BOMBHEI) { if (e->nrv == BH_GONE) { hit = 0; continue; } } /* isMsgStarPieceReflect */
             else if (e->kind == WALK_PUKUPUKU) { } /* isMsgStarPieceReflect: nothing more */
             else if (e->kind == WALK_STRSPIDER) { if (ss_down(e)) { hit = 0; continue; } strspider_star(e, s->pos); }
-            else if (e->kind == WALK_BEGOSPIKE) { if (bg_down(e)) { hit = 0; continue; } bg_blow(e, s->pos, 40.0f, 10.0f); } /* isMsgStarPieceAttack */
+            else if (e->kind == WALK_BEGOSPIKE || e->kind == WALK_BEGOSPRING) { if (bg_down(e) || e->nrv == BG_HIDE) { hit = 0; continue; } bg_blow(e, s->pos, 40.0f, 10.0f); } /* isMsgStarPieceAttack */
             else if (e->kind == WALK_BBEGO) { } /* isMsgStarPieceReflect */
             else if (e->kind == WALK_KAMECK) { if (!km_guard(e, s->vel)) { hit = 0; continue; } } /* isMsgStarPieceReflect: requestGuard */
             else if (e->kind == WALK_BEGOBABY) { if (bg_down(e)) { hit = 0; continue; } e->item = 3; bg_blow(e, s->pos, 35.0f, 15.0f); } /* isMsgStarPieceAttack: mAppearThreeStarPiece */
@@ -42742,6 +42806,40 @@ int game_test_put_at(const char *cls, float up) /* tests: Mario `up` over the fi
         if ((int)sc->objs[i].type == t) { mario->pos = vadd(row_pos(&sc->objs[i]), v3(0, up, 0)); return (int)i; }
     return -1;
 }
+#ifdef PUT_TEST
+#ifndef PUT_UP
+#define PUT_UP 300
+#endif
+#ifndef PUT_AT
+#define PUT_AT 60
+#endif
+#define PUT_STR_(x) #x
+#define PUT_STR(x) PUT_STR_(x)
+/* XF=-DPUT_TEST=<class> [-DPUT_UP=n] (plain): 60 frames after Mario is free he is put PUT_UP over the first row of that
+ * class, the camera 3000 off it; its row printed every 60 frames after */
+static void put_test(void)
+{
+    static int t, row = -1;
+    if (!game_test_free() && row < 0) return;
+    if (++t == PUT_AT) {
+#ifdef PUT_XYZ /* -DPUT_XYZ=x,y,z: there instead (a row of a zone not streamed in yet) */
+        { static const float xyz[3] = {PUT_XYZ}; mario->pos = v3(xyz[0], xyz[1] + PUT_UP, xyz[2]); row = 0; }
+#else
+        row = game_test_put_at(PUT_STR(PUT_TEST), PUT_UP);
+#endif
+#ifndef PUT_NOCAM
+        if (row >= 0) { camera_start_pos_end(); camera_set_override(1, vadd(mario->pos, v3(0, 1000, 3000)), vadd(mario->pos, v3(0, 1000, 0)), v3(0, 1, 0), 45.0f); }
+#endif
+        printf("put test: %s row %d" "\n", PUT_STR(PUT_TEST), row);
+    }
+    if (row >= 0 && t % 60 == 0) {
+        const Inst *in = NULL;
+        for (int i = 0; i < ninsts; i++) if (insts[i].row == row) { in = &insts[i]; break; }
+        printf("put test f %d: row %d at %d %d %d, mario %d %d %d" "\n", t, row, in ? (int)in->m[12] : 0, in ? (int)in->m[13] : 0,
+               in ? (int)in->m[14] : 0, (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z);
+    }
+}
+#endif
 int game_test_overlook(int put) /* tests: put Mario at the first AstroOverlookArea's place (-1 none); its HUD off flag */
 {
     int t = scene_type(sc, "AstroOverlookAreaCylinder");
@@ -51325,6 +51423,9 @@ void game_update(void)
     if (!opening_on) game_frame++; /* frames of play: the starter flight begins at 2 */
     LQ(1, update_rotors());
     LQ(2, update_halos());
+#ifdef PUT_TEST
+    put_test();
+#endif
     update_airs(); /* registerDemoSimpleCastAll: they move in demos too */
     LQ(3, update_railers());
     LQ(4, update_talkers());
@@ -52605,7 +52706,7 @@ void game_draw(void)
                     continue;
                 }
                 anim_update(a);
-                basis_matrix(m, k->pos, k->qy, k->kind == WALK_BEGOSPIKE || k->kind == WALK_BEGOBABY || k->kind == WALK_BBEGO ? rot_axis(k->qz, k->qy, k->from) : k->qz, 0); /* Begoman: Locator1 turned _D0 */
+                basis_matrix(m, k->pos, k->qy, k->kind == WALK_BEGOSPIKE || k->kind == WALK_BEGOSPRING || k->kind == WALK_BEGOBABY || k->kind == WALK_BBEGO ? rot_axis(k->qz, k->qy, k->from) : k->qz, 0); /* Begoman: Locator1 turned _D0 */
                 if (k->kind == WALK_BEGOBABY && k->nrv != BG_BLOW && a->skin && a->skin->njoints > 1) { /* calcHeadJoint: BabyBegomanFace up / front to mTargetVec */
                     float *w = a->world[1];
                     V3 bx = v3(m[0], m[1], m[2]), byv = v3(m[4], m[5], m[6]), bz = v3(m[8], m[9], m[10]);
@@ -52637,8 +52738,8 @@ void game_draw(void)
                     k->bshow = 1;
                 }
                 if (k->kind == WALK_BBEGO) bb_draw_head(k, m, a);
-                if (k->kind == WALK_BEGOSPIKE) { /* BegomanHead at its Center joint, facing its target (calcAnimCore) */
-                    const Model *hm = scene_model(sc, "BegomanSpikeHead");
+                if (k->kind == WALK_BEGOSPIKE || (k->kind == WALK_BEGOSPRING && k->nrv != BG_HIDE)) { /* BegomanHead at its Center joint, facing its target (calcAnimCore) */
+                    const Model *hm = scene_model(sc, k->kind == WALK_BEGOSPRING ? "BegomanSpringHead" : "BegomanSpikeHead");
                     const float *w = a->world[1];
                     V3 cp = v3(m[0] * w[12] + m[4] * w[13] + m[8] * w[14] + m[12], m[1] * w[12] + m[5] * w[13] + m[9] * w[14] + m[13],
                                m[2] * w[12] + m[6] * w[13] + m[10] * w[14] + m[14]);
