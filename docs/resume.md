@@ -1573,6 +1573,9 @@ there needs the embedded blob and every pack rebuilt.
   mario_offence(id, ..) takes the receiver's host: tryPunchAirAfter's list (a punched host no longer sees the spin, 8
   at most) and, out of a spin's own clip (_3E5: spin2nd, jump kind 8, 地上ひねり ..), the 45-degree front check
   (m_punch_ok). ponytail: one entry a host, not a sensor (KuriboChief's parts, Dodoryu's).
+- StringSpider push (feat/strspider-push): in walker_push_pass after StringSpider.cpp (body 80 x s: receiveMsgPush half the
+  overlap with _C4 kept; an enemy taking its push reflects its velocity 0.25, SE_EM_STRSPIDER_COLLISION from 3). Test:
+  plain XF="-DPUSH_TEST -DPUSH_KIND=WALK_STRSPIDER" KoopaJrShipLv1Galaxy/1 (`kind 29 took 12`). ponytail: the SE's volume.
 - StinkBugSmall (feat/476-stinkbug): stink.inc after StinkBugSmall.cpp / StinkBugBase.cpp replaces the phase walker:
   every nerve (Wait / Search sweeping within arg0 (default 180) / DashSign / DashSignEnd / Dash 20 to arg1 / DashEnd /
   Back / Attack / SpinReaction / HipDropDown / Panic / ShakeStart / Shake / Recover / ForceFall), isPlayerInTerritory,

@@ -32464,8 +32464,9 @@ static void bg_permit_update(void);
  * (body 60 x s at 60 x s up): its body pushes and kills its velocity into it (not Launch / Explode), takes 2 (not
  * SpinHit). TakoHei (body 70 / attack 50 x s at 70 x s up): its body pushes and, isPushMovable, cuts its velocity into
  * it; takes 5 from the sender on its body (isPushMovable: not down, NonActive, AttackSuccess or Swoon, its no-push
- * time _E4 (20) out). No MapObj pair is checked. ponytail: Teresa, BombTeresa (its explosion first), BombBird, Poihana,
- * StinkBugSmall, StringSpider and Snakehead are not in the pass; TakoHei's BlinkTwice / scale velocity and BombHei's
+ * time _E4 (20) out). No MapObj pair is checked. Poihana / StinkBugSmall: theirs
+ * (poihana.inc, stink.inc). StringSpider (body 80 x s): takes half the overlap, its velocity reflected (0.25) off an
+ * enemy taking its push. ponytail: Teresa, BombTeresa (its explosion first), BombBird and Snakehead are not in the pass; TakoHei's BlinkTwice / scale velocity and BombHei's
  * thrown rebound are not played; the walkers outside wp_sensors are one point in the sensor list */
 static int kr_broken(const Kuribo *k);
 static int th_down(const Kuribo *k);
@@ -32476,6 +32477,10 @@ static V3 mkm_body(Kuribo *k);
 static int mkm_hipdropped(const Kuribo *k);
 static int mm_push_moved(const Kuribo *k);
 static int ph_sensors_on(const Kuribo *k);
+static int ss_down(const Kuribo *k);
+static V3 ss_body(const Kuribo *k);
+static V3 ss_kill_c4(const Kuribo *k, V3 v);
+static void ss_reflect(V3 *v, V3 n, float rate, float cosmin);
 typedef struct { V3 c; float r; u8 atk, body, own, map; } WSen; /* atk: ATYPE_ENEMY_ATTACK; body: the class's body / own type sensor; own: the class's own sensor type (Kuribo / Karikari); map: a MapObj sensor (PackunPetit) */
 static int wp_sensors(Kuribo *k, WSen *o)
 {
@@ -32543,6 +32548,7 @@ static int wp_sensors(Kuribo *k, WSen *o)
         if (k->item) o[n++] = (WSen){vadd(k->pos, vmul(k->qy, 10.0f * s)), 110.0f * s, 0, 1, 0};
         return n;
     }
+    case WALK_STRSPIDER: o[0] = (WSen){ss_body(k), 80.0f * sc->objs[k->row].scale[1], 0, 1, 0}; return 1; /* body 80 x scale.y at (0, -13, 13) */
     case WALK_POIHANA: /* body 70 at Body (its binder is no enemy sensor) */
         if (!ph_sensors_on(k)) return 0;
         o[0] = (WSen){w_joint(k, m_poihana, 1, v3(0, 0, 0)), 70.0f, 0, 1, 0};
@@ -32663,6 +32669,13 @@ static int wp_receive_(Kuribo *b, const WSen *rb, Kuribo *a, const WSen *sa) /* 
         }
         return 1;
     }
+    case WALK_STRSPIDER: { /* not down, not from the player: half the overlap, along the line between the sensors (_C4 kept) */
+        if (ss_down(b)) return 0;
+        V3 d = vsub(rb->c, sa->c);
+        float l = vlen(d);
+        if (l > 1e-6f) b->vel = vadd(b->vel, ss_kill_c4(b, vmul(d, 0.5f * ((rb->r + sa->r) - l) / l)));
+        return 1;
+    }
     case WALK_POIHANA: { /* from an enemy or map object: sReceivePushPower 1.5 away from the sender's actor */
         V3 d = vsub(b->pos, a->pos);
         if (vlen(d) > 1e-6f) b->vel = vadd(b->vel, vmul(vnorm(d), 1.5f));
@@ -32744,6 +32757,14 @@ static void wp_attack(Kuribo *a, const WSen *sa, Kuribo *b, const WSen *rb) /* a
         break;
     case WALK_NOKO: if (!rb->map) wp_receive(b, rb, a, sa); break;      /* any but the player */
     case WALK_STINKBUG: if (sa->body && sb_body_push(a)) wp_receive(b, rb, a, sa); break; /* _C4: its body pushes */
+    case WALK_STRSPIDER: /* an enemy taking its push: its velocity reflected off it (0.25), the collision SE from 3 */
+        if (ss_down(a) || rb->map || !wp_receive(b, rb, a, sa)) break;
+        {
+            V3 d = vsub(sa->c, rb->c);
+            ss_reflect(&a->vel, vlen(d) > 1e-6f ? vnorm(d) : d, 0.25f, 1.0f);
+            if (vlen(a->vel) >= 3.0f) w_se(a, SE_EM_STRSPIDER_COLLISION); /* ponytail: its volume (0..100 over 0..15) not set */
+        }
+        break;
     case WALK_POIHANA: /* pushed: its velocity into the receiver's actor cut */
         if (!wp_receive(b, rb, a, sa)) break;
         {
@@ -53499,11 +53520,14 @@ void game_update(void)
     if (!opening_on) game_frame++; /* frames of play: the starter flight begins at 2 */
     hs_flip();
 #ifdef PUSH_TEST
-    if (game_frame == 200) { /* Mario by the walker with the most of its kind within 1500 (they gather on him) */
+    if (game_frame == 200) { /* Mario by the walker with the most of its kind within 1500 (they gather on him); XF -DPUSH_KIND=k: of that kind */
         int best = -1, bn = 0;
         for (int i = 0; i < nkuribo; i++) {
             int n = 0;
             if (kuribo[i].state == KURIBO_DEAD || !row_shown(kuribo[i].row)) continue;
+#ifdef PUSH_KIND
+            if (kuribo[i].kind != PUSH_KIND) continue;
+#endif
             for (int j = 0; j < nkuribo; j++) n += kuribo[j].kind == kuribo[i].kind && kuribo[j].state != KURIBO_DEAD && vlen(vsub(kuribo[j].pos, kuribo[i].pos)) < 1500.0f;
             if (n > bn) { bn = n; best = i; }
         }
