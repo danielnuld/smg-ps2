@@ -352,6 +352,12 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   -DWZ_MISS -DPACKS_OVERLAY=wt-release-wz" OceanPhantomCaveGalaxy/2: the fight, a miss 60 after its death, the
   galaxy again with "done 1". Not wired yet (Petari has them): SuperSpinDriver ドライバ出現済み (arg6 1), ChipGroup
   チップ集め済み, OceanFloaterLandParts フローター浮上, TalkMessageCtrl's per-node flags.
+- Coverage test (fix/459-cover-hits, 2026-11-07): the cover build keeps Mario's life at 3 and counts the hits ("hits N"
+  in the cover line): the 2026-11-06 misses BattleShipGalaxy 1 / CannonFleetGalaxy 1 were a Metbo walking into the still
+  Mario after the test's launch star (metbo_update), now ok. EggStarGalaxy 1 (boot TLB miss) was #337 / #382,
+  FactoryGalaxy 2 (VIF error after a zone swap) #314 / #318. PhantomGalaxy 6 still misses: the restart start (MarioNo 1,
+  -49400 -49829 5200, up -Y) has no ground under it; Mario falls 1490 into BlackHoleCube row 73 (scale 14 / 0.5 / 15),
+  again after every restart; the test's launch star landing (-57281 -49951 7959) has none either. Open.
 ## Console release (2026-10-23 / 24)
 
 First runs on Daniel's SCPH-75001 (ORBIT launcher, Neutrino over udpfs from nuld; console log = Neutrino's udptty
