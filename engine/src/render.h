@@ -54,7 +54,8 @@ void render_mesh(const float (*pos)[3], const float (*uv)[2], int nvert, const u
 /* the next render_mesh / render_mesh_c draws the same vertices as the last one: their projection is kept */
 void render_mesh_same(void);
 void render_mesh_c(const float (*pos)[3], const float (*uv)[2], int nvert, const u16 *idx, int ntri, u16 tex, int blend, u32 rgba);
-/* the same with a colour a vertex (Gouraud, 0xAABBGGRR, 0x80 = 1.0); blend 3: alpha blended writing depth */
+/* the same with a colour a vertex (Gouraud, 0xAABBGGRR, 0x80 = 1.0); blend 3: alpha blended writing depth;
+ * 0x200 | FIX: the colour x FIX (0x80 = 1.0) taken off the frame, depth kept (OceanRing's screen tint) */
 void render_mesh_vc(const float (*pos)[3], const float (*uv)[2], const u32 *rgba, int nvert, const u16 *idx, int ntri, u16 tex, int blend);
 /* a 128 x 128 8-bit intensity texture the EE rewrites each frame (SnowFloor's GX_TF_I8): render_i8_pixels flips the
  * slot's buffer and returns it to fill, render_i8_upload sends it (the frame's chain, in order); then render_grid with
