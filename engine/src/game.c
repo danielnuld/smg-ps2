@@ -5686,10 +5686,11 @@ static void game_rebind_(void)
     }
     for (int i = 0, n = ninsts; i < n; i++) { /* "<class>#<joint>.<k>" (slice.py JOINT_KCL_ONLY): HoneyQueen::init's ten,
                                                * SandUpDownTriRock::init's three createCollisionPartsFromLiveActor on
-                                               * getJointMtx, each on its joint */
+                                               * getJointMtx, each on its joint (also while the owner waits for a
+                                               * pose, the pool full at rebind: kcl_query poses it once it has one) */
         const Inst *o = &insts[i];
         const char *cn = o->md ? s->types + 32 * s->objs[o->row].type : "";
-        if (!o->md || !o->md->skin || !o->anim || o->kparent >= 0 || (strcmp(cn, "HoneyQueen") && strcmp(cn, "SandUpDownTriRock") && strcmp(cn, "SeaBottomTriplePropeller") && strcmp(cn, "BeamGoRoundPlanet"))) continue;
+        if (!o->md || !o->md->skin || o->kparent >= 0 || (strcmp(cn, "HoneyQueen") && strcmp(cn, "SandUpDownTriRock") && strcmp(cn, "SeaBottomTriplePropeller") && strcmp(cn, "BeamGoRoundPlanet"))) continue;
         for (int j = 0; j < o->md->skin->njoints; j++)
             for (int p = 0; ninsts < insts_cap; p++) {
                 char kn[48];
@@ -5698,7 +5699,9 @@ static void game_rebind_(void)
                 if (!k) break;
                 Inst *in = &insts[ninsts++];
                 memset(in, 0, sizeof *in);
-                in->md = o->md; in->row = o->row; in->zone = o->zone; in->s = o->s; in->reach = o->reach;
+                in->md = o->md; in->row = o->row; in->zone = o->zone; in->s = o->s;
+                in->reach = o->reach + kcl_radius(k) * o->s; /* the joint within its owner's reach, its KCL around it
+                                                             * (BeamGoRoundPlanet's Move reaches 2600, its model 1809) */
                 memcpy(in->m, o->m, sizeof in->m);
                 in->kcl = k; in->kmove = j; in->kparent = i; in->invisible = 1; in->railer = NULL;
             }
@@ -38431,11 +38434,15 @@ static void update_stairs(void)
  * rail's start over 500 (GotoPatrol, eased), and Patrols along the rail (MapPartsRailMover: the railer). Its beam is
  * on while it Waits or Patrols: Mario within 140 of its line burns (EnemyAttackHeatBeam). With arg1 (>= 0) its
  * BeamSurface effect sits on the water arg1 under its rail's start. The beam (EyeBeamerBeam) is drawn at the Beam
- * joint stretched by arg0 / 2000. ponytail: no MercatorCube, no demo casts, no beam volume / bloom models, a burn is
- * a hurt */
+ * joint stretched by arg0 / 2000. A demo's cast (tryRegisterDemoCast) starts in DemoStartWait (its beam on), the
+ * demo's アイビーマー回転 action turns it (DemoTurn, eased over that part's steps), アイビーマー降下 takes it to its
+ * rail's start (DemoGotoPatrol), each followed by DemoWait (beam off) until the demo's last step, then Patrol. The burn
+ * test is on Mario's position (isInBeamRange(*getPlayerPos())). ponytail: no MercatorCube, no beam volume / bloom
+ * models, a burn is a hurt; the two demo actions told apart by the nerve they come in (DemoStartWait: 回転, DemoWait:
+ * 降下, the order of DemoSpringWaterRiseUp's parts) as the demo blob keeps no part names */
 #define MAX_EYEBS 16
-enum { EB_WAIT, EB_TURN, EB_GOTO, EB_PATROL };
-static struct { int row, nrv, step, init; Quat cc, dc; V3 ec, f8, p104; u32 lv; } ebs[MAX_EYEBS];
+enum { EB_WAIT, EB_TURN, EB_GOTO, EB_PATROL, EB_DSTART, EB_DWAIT, EB_DTURN, EB_DGOTO };
+static struct { int row, nrv, step, init, part; Quat cc, dc; V3 ec, f8, p104; u32 lv; } ebs[MAX_EYEBS];
 
 static int eb_of(int row)
 {
@@ -38466,9 +38473,29 @@ static int eb_beam_mtx(const Inst *in, float out[16]) /* calcAnim: _9C, the Beam
     mat_mul(out, j, s);
     return 1;
 }
+static int dx_last(int p), dx_step(int p), dx_total(int p);
+static void eb_demo_action(int row, int part) /* registerDemoActionNerve: アイビーマー回転 -> DemoTurn, 降下 -> DemoGotoPatrol */
+{
+    int k = eb_of(row);
+    if (k < 0 || !ebs[k].init) return;
+    if (ebs[k].nrv == EB_DSTART) eb_set(k, EB_DTURN);
+    else if (ebs[k].nrv == EB_DWAIT) eb_set(k, EB_DGOTO);
+    ebs[k].part = part;
+    printf("eye beamer row %d: demo %s, part %d" "\n", row, ebs[k].nrv == EB_DTURN ? "turn" : "goto patrol", part);
+}
+static float eb_demo_ease(int k) /* getEaseInOutValue(calcDemoPartStepRate(part)) */
+{
+    float t = dx_total(ebs[k].part) > 0 ? (float)dx_step(ebs[k].part) / dx_total(ebs[k].part) : 1.0f;
+    return (1.0f - cosf(3.14159265f * t)) * 0.5f;
+}
 static void update_eyebeamers(void)
 {
-    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+#ifdef EB_DEMO_TEST /* XF=-DEB_DEMO_TEST with PUT_TEST / PUT_XYZ by CannonFleetGalaxy/1's BreakableCage: 300 frames
+                    * after it is shown, its dead switch (DemoSpringWaterRiseUp's start) put on */
+    { static int t; int ct = scene_type(sc, "BreakableCage");
+      for (u32 i = 0; ct >= 0 && i < sc->nobjs; i++)
+          if ((int)sc->objs[i].type == ct && sc->objs[i].sw[SW_DEAD] >= 0 && row_shown((int)i) && ++t == 300) { row_kill((int)i); printf("eb demo test: cage row %d broken" "\n", (int)i); } }
+#endif
     FOR_KIND(i, eyebeamer) {
         Inst *in = &insts[i];
         if (!in->eyebeamer || !row_shown(in->row)) continue;
@@ -38483,6 +38510,8 @@ static void update_eyebeamers(void)
             o->ec = o->f8 = o->p104 = row_pos(r);
             if (in->railer) { const unsigned char *e = in->railer; o->p104 = rail_at((const float *)(e + 24), *(const u32 *)(e + 8), 0); } /* calcRailStartPos */
             eb_set(k, r->arg[2] == 0 ? EB_PATROL : EB_WAIT); /* initStartNerve */
+            for (int d = 0; d < ndemos; d++) /* tryRegisterDemoCast */
+                for (int c = 0; c < demos[d].h->ncast; c++) if (demos[d].cast[c] == in->row) eb_set(k, EB_DSTART);
         }
         int st = ++o->step;
         V3 xd;
@@ -38504,6 +38533,23 @@ static void update_eyebeamers(void)
             if (st > 500) eb_set(k, EB_PATROL);
             break;
         }
+        case EB_DTURN: /* exeDemoTurn */
+            if (st == 0) se_start(SE_OJ_EYE_BEAMER_TURN, &in->m[12]);
+            o->dc = q_mul(q_axis(xd, 3.14159265f * eb_demo_ease(k)), o->cc);
+            if (dx_last(o->part)) { o->dc = q_mul(q_axis(xd, 3.14159265f), o->cc); eb_set(k, EB_DWAIT); }
+            break;
+        case EB_DGOTO: /* exeDemoGotoPatrol */
+            o->ec = vadd(o->f8, vmul(vsub(o->p104, o->f8), eb_demo_ease(k)));
+            if (dx_last(o->part)) eb_set(k, EB_DWAIT);
+            break;
+        case EB_DWAIT: { /* isDemoLastStep: the last part's last step */
+            const Demo *d = &demos[dx.cur];
+            if (dx.on && dx.part == d->h->nparts - 1 && dx.step >= d->parts[dx.part].total - 1) {
+                eb_set(k, EB_PATROL);
+                printf("eye beamer row %d: patrol" "\n", in->row);
+            }
+            break;
+        }
         case EB_PATROL:
             if (st == 0) o->dc = q_mul(q_axis(xd, 3.14159265f), o->cc);
             if (in->railer && row_coord) { const unsigned char *e = in->railer; o->ec = rail_at((const float *)(e + 24), *(const u32 *)(e + 8), row_coord[in->row]); }
@@ -38521,9 +38567,10 @@ static void update_eyebeamers(void)
             fx_named("EyeBeamer", "BeamSurface", m, NULL, &ebs[k]);
         }
         float bm[16];
-        if (o->nrv != EB_WAIT && o->nrv != EB_PATROL) continue; /* isOnBeam */
+        if (o->nrv != EB_DSTART && o->nrv != EB_WAIT && o->nrv != EB_PATROL) continue; /* isOnBeam */
         if (!eb_beam_mtx(in, bm)) continue;
-        V3 dn = vmul(vnorm(v3(in->m[4], in->m[5], in->m[6])), -1.0f), b = v3(bm[12], bm[13], bm[14]); /* isInBeamRange */
+        V3 mc = mario->pos; /* isInBeamRange(*MR::getPlayerPos()) */
+        V3 dn = vmul(vnorm(v3(in->m[4], in->m[5], in->m[6])), -1.0f), b = v3(bm[12], bm[13], bm[14]);
         float d = vdot(dn, vsub(mc, b));
         if (d >= 0 && d <= eb_len(r) && vlen(vsub(mc, vadd(b, vmul(dn, d)))) < 140.0f) mario_attack(ATK_HEATBEAM, vadd(b, vmul(dn, d)));
     }
@@ -43976,6 +44023,7 @@ static void dx_cast_hook(int row, int type, int part)
     if (type == 3 && !strcmp(cls, "IceMerameraKing")) { mk_begin_demo(row); return; } /* registerDemoActionNerve: BeginDemo */
     if (type == 3 && !strcmp(cls, "BossBegoman")) { bb_first_contact(row); return; } /* registerDemoActionNerve: FirstContactDemo */                   /* AstroCore::startDemo: Grow */
     if (type == 3 && !strcmp(cls, "UFOKinoko")) { ufok_start(row); return; }                 /* ＵＦＯキノコ登場: startMove */
+    if (type == 3 && !strcmp(cls, "EyeBeamer")) { eb_demo_action(row, part); return; }
     if (type == 2 && !strcmp(cls, "RosettaChair")) { /* RosettaChair::startDemo (朗読開始: DemoRosettaReading,
                                                      * invalidateCollisionParts) / setDefaultPose (キャスト入れ換え: its
                                                      * placement, RosettaChair, validateCollisionParts) */

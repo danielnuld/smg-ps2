@@ -22,5 +22,7 @@ int kcl_check_arrow(const unsigned char *kcl, const float o[3], const float dir[
 void kcl_prism_pos(const unsigned char *kcl, int prism, int v, float out[3]);
 const float *kcl_edge_normal(const unsigned char *kcl, int prism, int e);
 void kcl_collide_pos(const unsigned char *kcl, int prism, int flag, float c[3]);
+/* the farthest corner of any prism's face from the KCL's origin (its reach in object space) */
+float kcl_radius(const unsigned char *kcl);
 
 #endif
