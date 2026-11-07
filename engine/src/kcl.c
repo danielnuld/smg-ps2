@@ -263,3 +263,17 @@ void kcl_collide_pos(const unsigned char *k, int i, int flag, float c[3])
     d = (c[0] - o[0]) * n[0] + (c[1] - o[1]) * n[1] + (c[2] - o[2]) * n[2];
     for (int j = 0; j < 3; j++) c[j] -= n[j] * d;
 }
+
+float kcl_radius(const unsigned char *k)
+{
+    float r2 = 0;
+    int n = (int)((H(k)->octree - H(k)->prism) / sizeof(Prism));
+    for (int i = 1; i < n; i++)
+        for (int v = 0; v < 3; v++) {
+            float p[3];
+            kcl_prism_pos(k, i, v, p);
+            float d = p[0] * p[0] + p[1] * p[1] + p[2] * p[2];
+            if (d > r2) r2 = d;
+        }
+    return sqrtf(r2);
+}

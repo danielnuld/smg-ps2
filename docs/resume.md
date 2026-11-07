@@ -389,6 +389,17 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   FactoryGalaxy 2 (VIF error after a zone swap) #314 / #318. PhantomGalaxy 6 still misses: the restart start (MarioNo 1,
   -49400 -49829 5200, up -Y) has no ground under it; Mario falls 1490 into BlackHoleCube row 73 (scale 14 / 0.5 / 15),
   again after every restart; the test's launch star landing (-57281 -49951 7959) has none either. Open.
+- CannonFleetGalaxy 1 drum (fix/489-eyebeamer-demo, 2026-11-07): after the ScenarioStarter flight Mario fell through
+  BeamGoRoundPlanet's bottom face (its "#<joint>.<k>" Move collisions took the model's reach, 1809, while the KCL
+  reaches 2600 from the planet's origin: left out of the collision walk; and they were not made at all when the pose
+  pool was full at rebind), ended 35 inside the drum, nearer EyeBeamer row 200's beam (135 < 140) and was burned.
+  Now joint KCLs reach owner + kcl_radius and are made without a pose yet: Mario lands at the start (7268 7355 -30959,
+  170 from every beam), no burn (cover hits 2: later, an enemy at the test's launch star landing). EyeBeamer: its demo
+  nerves (DemoStartWait beam on, アイビーマー回転 DemoTurn, 降下 DemoGotoPatrol, DemoWait beam off till the demo's
+  last step, then Patrol) and the burn on Mario's position. Test: plain XF="-DPACKS_OVERLAY=wt-release
+  -DPUT_TEST=BreakableCage -DPUT_XYZ=-60186,5985,18254 -DPUT_UP=600 -DPUT_AT=420 -DEB_DEMO_TEST" CannonFleetGalaxy/1:
+  the cage broken, DemoSpringWaterRiseUp's 11 EyeBeamers turn (part 2), go down (part 3), patrol at its end.
+  ponytail: the two actions told apart by the nerve they arrive in (the demo blob keeps no part names).
 ## Console release (2026-10-23 / 24)
 
 First runs on Daniel's SCPH-75001 (ORBIT launcher, Neutrino over udpfs from nuld; console log = Neutrino's udptty
