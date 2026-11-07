@@ -312,6 +312,17 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   treasure box's rises, bounds, is taken under water. route EggStar 1 star. ponytail: shadows, Glow / Get / Vanish effects,
   OneUpBoard, TicoFat's mushroom (no disc row with arg0 0 / 1), TripodBossKinokoOneUp.
 
+- BombBird (feat/406-bombbird, 2026-11-07): BombBird.cpp / BombBirdBomb.cpp as walker kind WALK_BOMBBIRD (game.c bbd_*):
+  doFly (flyAndTurnAlongRailSearchingPlayer 200 / 0.3 / 0.96, 4.58 degrees; arg0: horizontal, gravity 1, 800 over the
+  ground), FlyOnRail / FlyOnRailSearch (a bomb held at BombPos from 54) / FlyWithAttack (dropped at 130), Escape on SW_B,
+  Damage / Fall / Swoon 240 / SwoonEnd, Trample (a coin), Blow (SpinHitController 25 / 20 / 4, three star pieces),
+  SinkDown; its bombs (bbd_b: Hold, Wait 150 bouncing 0.4, Explosion eased to 280; touching Mario they explode on him).
+  Clipping as Petari's (a searching or downed bird keeps moving off the view). Test `bombbird` (SandClockGalaxy/1,
+  XF=-DPACKS_OVERLAY=wt-release-bird): two birds search, hold and drop bombs (one explodes on Mario, the others bounce
+  and explode at 150), a hit at 700: Damage, Fall, Swoon; a trample at 900: dead, its coin. route EggStar 1 star.
+  ponytail: star pointer bind, anim scale reaction, press between roof and ground, shifting sand, the bomb's BRKs and the
+  effects (jpa.py NAMED).
+
 ## Console release (2026-10-23 / 24)
 
 First runs on Daniel's SCPH-75001 (ORBIT launcher, Neutrino over udpfs from nuld; console log = Neutrino's udptty
