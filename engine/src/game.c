@@ -43812,6 +43812,11 @@ void game_bgm_first(void) /* GameScene::startStagePlayFirst: the stage BGM, unle
                            * or the ScenarioStarter starts it */
 {
     if (!opening_frames() && starter < 0) game_bgm_stage();
+    /* its wipe: startStagePlayRetry openWipeCircle; startStagePlayFirst without the opening camera nor the
+     * ScenarioStarter: openWipeCircle, but HeavensDoor's openWipeFade(180) (the prologue's), FileSelect's (30) and the
+     * epilogue's none (menu.c / the prologue) */
+    if (seq_is_retry() || (!opening_frames() && starter < 0 && !on_stage("HeavensDoorGalaxy") && !on_stage("FileSelect") && !on_stage("EpilogueDemoStage")))
+        menu_wipe_circle(0, -1);
 }
 static void bgm_stop(int frames) /* stopStageBGM(frames) */
 {
@@ -45801,8 +45806,7 @@ static void rosetta_update(Inst *in)
  * requestStartDemoMarioPuppetableWithoutCinemaFrame ロゼッタ絵本デモ, DemoWait till it starts), FadeOut
  * (SE_SY_TALK_START, the button term, closeWipeCircle(hFadeOutFrame 60), stopStageBGM(60), Mario's Wait; past 60
  * the PictureBookLayout(1, getPictureBookChapterCanRead, contents) appears), Reading (its end: endDemo), FadeIn
- * (openWipeCircle(hFadeInFrame 60); past 60 Wait). ponytail: the circle wipes are the fade (no WipeCircle, as
- * AstroChangeStageCube's) */
+ * (openWipeCircle(hFadeInFrame 60); past 60 Wait) */
 enum { RPB_WAIT, RPB_DEMOWAIT, RPB_FADEOUT, RPB_READING, RPB_FADEIN };
 static struct { int row, nrv, step, valid; const Scene *s; } rpb = {-1, 0, 0, 0, NULL};
 static void rpb_set(int n) { rpb.nrv = n; rpb.step = 0; }
@@ -45835,7 +45839,7 @@ static void rpb_update(void)
         if (rpb.step == 0) {
             se_start(SE_SY_TALK_START, NULL);
             tk_abtn_term();
-            menu_wipe(1, 60, 0); /* closeWipeCircle(hFadeOutFrame) */
+            menu_wipe_circle(1, 60); /* closeWipeCircle(hFadeOutFrame) */
             bgm_stop(60);
         }
         if (rpb.step > 60) { menu_picture_book(1, gd_book_can_read(), 1); rpb_set(RPB_READING); return; }
@@ -45844,7 +45848,7 @@ static void rpb_update(void)
         if (!menu_picture_book_alive()) { pd_end("ロゼッタ絵本デモ"); rpb_set(RPB_FADEIN); return; }
         break;
     case RPB_FADEIN:
-        if (rpb.step == 0) menu_wipe(0, 60, 0); /* openWipeCircle(hFadeInFrame) */
+        if (rpb.step == 0) menu_wipe_circle(0, 60); /* openWipeCircle(hFadeInFrame) */
         if (rpb.step > 60) { rpb_set(RPB_WAIT); return; }
         break;
     }
@@ -46143,8 +46147,10 @@ static void dx_keepers(const Demo *d) /* DemoExecutor::movement's keepers (not w
     for (int i = 0; i < d->h->nwipe; i++) { /* DemoWipeKeeper::executeType */
         const DxWipe *w = &d->wipe[i];
         if (!dx_first(w->part)) continue;
-        u32 rgb = w->kind == 1 ? 0xFFFFFF : 0; /* 白フェードワイプ; ponytail: 円ワイプ as the fade */
-        if (w->type < 2) menu_wipe(w->type == 1, w->frame, rgb);
+        u32 rgb = w->kind == 1 ? 0xFFFFFF : 0; /* 白フェードワイプ */
+        if (w->kind == 2 && w->type < 2) menu_wipe_circle(w->type == 1, w->frame); /* 円ワイプ */
+        else if (w->kind == 2) menu_wipe_circle_force(w->type == 3);
+        else if (w->type < 2) menu_wipe(w->type == 1, w->frame, rgb);
         else menu_wipe_force(w->type == 3);
     }
     for (int i = 0; i < d->h->nsnd; i++) { /* DemoSoundKeeper::executeType */
@@ -53474,8 +53480,22 @@ int game_test_ghost(int f)
     return gh.nrv;
 }
 
+static void wipe_ring_center(void) /* WipeRing::updatePlayerPos: getMarioCenterPos (canCenterOnMario), calcScreenPosition */
+{
+    V3 c = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)); /* getPlayerCenterPos */
+    float x, y;
+#ifdef WIPE_TEST /* XF=-DWIPE_TEST: the circle closes over 900 frames from game frame 600, opens over 900 from 1800 */
+    if (game_frame == 600) { menu_wipe_circle(1, 900); printf("wipe test: close" "\n"); }
+    if (game_frame == 1800) { menu_wipe_circle(0, 900); printf("wipe test: open" "\n"); }
+#endif
+    if (!strcmp(game_stage_name, "IceVolcanoGalaxy/1") && vlen(vsub(mario->pos, v3(15060.0f, -11800.0f, 1260.0f))) < 600.0f) return;
+    if (!strcmp(game_stage_name, "CosmosGardenGalaxy/4")) return; /* isStageSuddenDeathDodoryu */
+    if (screen_pos(c, &x, &y)) menu_wipe_circle_center(x, y);
+    else menu_wipe_circle_center(320.0f, 224.0f);
+}
 void game_update(void)
 {
+    wipe_ring_center();
     if (menu_update()) return; /* GameScenePauseMenu: the pause sequence alone (GamePauseSequence) */
     if (scene_stop > 0) { scene_stop--; return; } /* SceneFunction stopScene: everything holds */
     /* GameSceneScenarioOpeningCameraState: the stage's StartScenario<n>.canm (CANM "stage/startscenario", world

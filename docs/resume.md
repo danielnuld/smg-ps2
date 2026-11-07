@@ -662,7 +662,7 @@ Second console round (2026-10-24), from Daniel's report:
   (ペンギン移動後 / マリオ移動後, Watch, SitDown), GiveUp (SW_A: IceVolcano 1's SuperSpinDriver), SitDown; reactions by
   npc_react (Trampled / Spin / Pointing and their voices). Test plain XF "-DRACE_TEST=3 -DPACKS_OVERLAY=..."
   IceVolcanoGalaxy/1: talk, the chase, Mario sliding after it at 20: Provoke, Away, Switch, caught, moved, SW_A.
-  ponytail: circle wipes as fades, startTalkingSequence / startNPCTalkCamera (the talk's own camera), the star piece
+  ponytail: startTalkingSequence / startNPCTalkCamera (the talk's own camera), the star piece
   reaction. Repack: IceVolcanoGalaxy (slice.py LOGIC NPCSupportRail).
 - PenguinRacer / PenguinRacerLeader (feat/401-penguin-race, 2026-11-07): race.inc pg_* after NPC/PenguinRacer.cpp /
   PenguinRacerLeader.cpp: entered in the race when arg0 is 0, prep at their rail's start (RacerSwimSurfaceSoon /
@@ -716,6 +716,18 @@ Second console round (2026-10-24), from Daniel's report:
   Test plain XF "-DRACE_TEST=1 -DPACKS_OVERLAY=..." PhantomGalaxy/2 (the star circles the Boo, out 280 in front of it)
   and OceanRingGalaxy/2 (the leader's). ponytail: no PowerStar::setupColor. Repack: slice_all.py every galaxy with
   those NPCs.
+- Circle wipes (feat/wipe-circle, 2026-11-07): menu.c wr_* after Screen/WipeRing.cpp (円ワイプ, SceneWipeHolder's):
+  WipeRing.arc in lyt.py COMMON (menus.bin), its nerves Open / Close / WipeIn / WipeOut, the In / Out frames set by
+  hand from calcRadius / calcMaxRadius (sqrt 900160) with the half-sine easing, mAnimFrame (wipe(< 1): 90), "Ring"
+  following mCenterPos: Mario's centre on the screen (game.c wipe_ring_center: canCenterOnMario's IceVolcano 1 spot and
+  CosmosGarden 4). menu_wipe_circle / _force / _center; a fade forces the ring open (setCurrent), isWipeActive /
+  isWipeBlank see both. Used by: GameScene::startStagePlayFirst (no opening camera nor ScenarioStarter; not
+  HeavensDoor / FileSelect / the epilogue) and startStagePlayRetry (game_bgm_first), DemoWipeKeeper's 円ワイプ rows,
+  PenguinSkater's Caught / FadeIn, RosettaPictureBook, Dodoryu's sudden death (CosmosGarden 4 retry: forceClose at
+  Wait's start, open after 30). Test plain XF "-DWIPE_TEST -DPACKS_OVERLAY=..." EggStarGalaxy/1 (closes over 900 frames
+  at game frame 600 on Mario, opens at 1800); SYATI_TEST=2 OceanRing 1: the retry opens it. ponytail:
+  AstroChangeStageCube's closeSystemWipeCircleWithCaptureScreen (the system holder: still the fade), SurfRay (not
+  ported). Repack: lyt.py menus.bin.
 - TeresaRacer's trample SE (feat/441, 2026-11-07): race.inc tr_control (TeresaRacer::control): npc_react on its Body
   (220 at (0, 25, 40)): a trample bounces Mario and plays SE_SM_TERERACER_TRAMPLE. Test plain XF "-DRACE_TEST=1
   -DRACE_TRAMPLE -DPACKS_OVERLAY=..." PhantomGalaxy/2: Mario dropped on the Boo, `trampled` each bounce. Repack:
@@ -1107,7 +1119,7 @@ there needs the embedded blob and every pack rebuilt.
   also GrandStarReturnDemoStarter's 2), lyt text boxes' horizontal position (setTextBoxHorizontalPosition*, lines
   aligned as nw4r: the book's last text centred). RosettaPictureBook (the table's book: A, ロゼッタ絵本デモ, the
   PictureBookLayout's contents mode: Open, ContentsSelect, PictureBookCloseButton, Close). Test: `library` (with
-  XF=-DRPB_ONLY=1 only the table's book: contents, chapter 1, B on its title page). ponytail: the circle wipes are fades.
+  XF=-DRPB_ONLY=1 only the table's book: contents, chapter 1, B on its title page). (Circle wipes: feat/wipe-circle.)
 - Observatory / Gateway leftovers of #143 (feat/astro-mapobj, 2026-11-05): AstroOverlookObj (the HUD off while Mario
   is in an AstroOverlookAreaCylinder: slice.py LOGIC keeps both rows; plain build XF=-DOVERLOOK_TEST AstroGalaxy/1),
   AstroRotateStepA / B / AstroDecoratePartsA turn only once revived (isAlreadyRevival by
