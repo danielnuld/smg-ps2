@@ -1104,6 +1104,13 @@ there needs the embedded blob and every pack rebuilt.
   parabola to its rail's end (SET_UP / SHOOT / END_JUMP_HOLE) or BallOpener's Open (END_BALL_BIND at 45, its SW_A,
   SE_SY_TAMAKORO_GOAL). Their models and collision stay static instances. Test: plain XF="-DTMK_TEST -DTMK_HOLES"
   TamakoroExLv1Galaxy/1 (both JumpHoles launch, the BallOpener opens: `power star 1 got`).
+- BallRail / SphereRailDash (feat/367-rails, 2026-11-07): MapObj/BallRail.cpp and SphereRailDash.cpp in tamakoro.inc
+  (tmr_*, rows kept by slice.py LOGIC): BallRail's Wait (its sensor at the rail's place nearest Mario), SetUp, Run
+  (gravity x arg0 / 1000 along the rail, x arg1 / 1000, at least 6, forward), END_BALL_RAIL; the ball's RideRail
+  (Fast) nerves; SphereRailDash's cubic RailMove to arg1's end speed, END_RAIL_DASH and DashRailEnd. m_bind now keeps
+  its push-out reactions (b_fix: Binder's fix reaction, without the move it cut); the Tamakoro rebounds on it (the
+  dash's launch kept its rise: TamakoroExLv2's dashes chain 54 -> 57 -> 58 -> BallRail 59). Test: plain
+  XF="-DTMK_TEST -DTMK_RAILS" TamakoroExLv2Galaxy/1.
 - FallingSmallRock (feat/306-falling-small-rock, 2026-11-06): MapObj/FallingSmallRock.cpp in game.c update_fsrock
   (HellProminenceGalaxy 1 / 4): Wait for SW_A, Move (its FallingSmallRock effect, SE_AT_LV_FALLING_ROCK) until its
   binder (10 at 800 up) touches the map. Rows kept by slice.py LOGIC, its effect by jpa.py NAMED. Test: plain build

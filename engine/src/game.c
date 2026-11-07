@@ -2214,6 +2214,7 @@ static int collide(V3 *center, V3 up, float radius) { return collide_n(center, u
 static int b_n;
 static float b_dep[BIND_MAX];
 static Tri b_tri[BIND_MAX];
+static V3 b_fix; /* m_bind: the push-out reactions summed (the fix reaction, without the move it cut) */
 static int bind_find(V3 *pos, V3 *mv, int *rest, float r, int skip0)
 {
     int steps = (int)(vlen(*mv) / 35.0f) + 1;
@@ -2254,18 +2255,21 @@ static V3 m_bind(V3 center, V3 vel, float r) /* returns the center after the mov
 {
     V3 pos = center, mv = vel;
     int rest;
-    b_n = 0;
+    b_n = 0; b_fix = v3(0, 0, 0);
     int first = bind_find(&pos, &mv, &rest, r, 1);
     if (!first) return pos;
     V3 react = bind_reaction(0);
     pos = vadd(pos, react);
+    b_fix = react; /* Binder::mFixReactionVector */
     if (rest) { /* moveAlongHittedPlanes */
         V3 rem = vsub(vel, mv), n = vlen(react) > 1e-6f ? vnorm(react) : v3(0, 0, 0);
         float d = vdot(rem, n);
         if (d < 0.0f) rem = vsub(rem, vmul(n, d));
         if (vdot(vel, rem) >= 0.0f) {
             bind_find(&pos, &rem, &rest, r, 1);
-            pos = vadd(pos, bind_reaction(first));
+            V3 r2 = bind_reaction(first);
+            pos = vadd(pos, r2);
+            b_fix = vadd(b_fix, r2);
         }
     }
     return pos;

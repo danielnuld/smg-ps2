@@ -698,6 +698,178 @@ static int ho_try_bind(void) /* attackSensor: isBindedJumpHole (its Body on an A
         }
     return 0;
 }
+/* BallRail.cpp / SphereRailDash.cpp after Petari: rails the Tamakoro rides. BallRail (arg0 acceleration x 1000, 1.5;
+ * arg1 deceleration x 1000, 0.995): its bind sensor (100 at 100 up) follows the rail's nearest place to Mario (Wait); the
+ * ball touching it, not moving away and not under it (SPHERE_PLAYER_BINDED: else stopped), is taken: SetUp (from its
+ * place to 150 under the rail point over 15 steps eased in, the rider at 3 a step, a strong rumble at 15, 45 steps),
+ * Run (along the rail by the gravity's pull on its direction x the acceleration, slowed by the deceleration, at least
+ * 6 and only forward; the ball 150 under it), at the goal its velocity the rail's direction x the speed and
+ * END_BALL_RAIL; NoBind 60 steps. SphereRailDash (arg0 200 unused, arg1 the end speed 50): its body (200 at the rail's
+ * start) binds the ball, RailMove along the rail by a cubic in time (from the ball's speed along it to the end speed,
+ * duration 3 x length / (speed + 2 x end)), the ball's offset from the rail's start fading to none, its side velocity
+ * x 0.85 a frame; at the goal the ball there at end speed along the rail and END_RAIL_DASH. */
+typedef struct { const float *p; u32 n; float len, coord, speed; int dir; } TmRail; /* RailRider: dir +1 to the end */
+static float tmr_total(const float *p, u32 n)
+{
+    float l = 0.0f;
+    for (u32 i = 0; i + 1 < n; i++) l += vlen(vsub(v3(p[3 * i + 3], p[3 * i + 4], p[3 * i + 5]), v3(p[3 * i], p[3 * i + 1], p[3 * i + 2])));
+    return l;
+}
+static int tmr_init(TmRail *r, int row)
+{
+    const Row *q = &sc->objs[row];
+    int closed = 0;
+    r->p = q->path >= 0 && scene_blob_g ? find_rail(scene_blob_g, q->zone, q->path, &r->n, &closed) : NULL;
+    if (!r->p || r->n < 2) return 0;
+    r->len = tmr_total(r->p, r->n); r->coord = 0.0f; r->speed = 0.0f; r->dir = 1;
+    return 1;
+}
+static V3 tmr_pos(const TmRail *r) { return rail_at(r->p, r->n, r->coord); }
+static V3 tmr_dir(const TmRail *r) /* getRailDirection (the way it goes) */
+{
+    float a = r->coord, b = r->coord + 1.0f;
+    if (b > r->len) { a = r->len - 1.0f; b = r->len; }
+    V3 d = vsub(rail_at(r->p, r->n, b), rail_at(r->p, r->n, a));
+    d = vlen(d) > 1e-6f ? vnorm(d) : v3(0, 0, 1);
+    return r->dir > 0 ? d : vmul(d, -1.0f);
+}
+static void tmr_move(TmRail *r) { r->coord = clampf(r->coord + r->dir * r->speed, 0.0f, r->len); } /* moveRailRider */
+static int tmr_goal(const TmRail *r) { return r->dir > 0 ? r->coord >= r->len : r->coord <= 0.0f; } /* isRailReachedGoal */
+enum { TMRB_WAIT, TMRB_SETUP, TMRB_RUN, TMRB_NOBIND };
+enum { TMRD_WAIT, TMRD_RAILMOVE };
+#define TMR_MAX 8
+static struct {
+    int row, dash, nrv, st, bound;
+    TmRail r;
+    float acc, dec, end_speed, b0, b4, b8;
+    int bc;
+    V3 pos, grav, p94, off, side;
+} tmrs[TMR_MAX];
+static int ntmrs;
+static void tmr_set(int i, int n) { tmrs[i].nrv = n; tmrs[i].st = -1; }
+static int tmr_binded(int i) /* receiveOtherMsg ACTMES_SPHERE_PLAYER_BINDED: 1 taken */
+{
+    typeof(&tmrs[0]) o = &tmrs[i];
+    if (o->dash) { o->bound = 1; return 1; }
+    if (o->nrv != TMRB_WAIT) return 0;
+    V3 v = tmk.vel, d = vsub(tmk.pos, vadd(o->pos, vmul(o->grav, -100.0f))); /* its sensor: 100 up */
+    if (vdot(d, v) > 0.0f) return 0;
+    if (vdot(o->grav, d) > 0.0f) { tmk.vel = v3(0, 0, 0); return 0; }
+    o->bound = 1;
+    return 1;
+}
+static V3 tmr_sensor(int i) { return tmrs[i].dash ? tmrs[i].pos : vadd(tmrs[i].pos, vmul(tmrs[i].grav, -100.0f)); }
+static float tmr_radius(int i) { return tmrs[i].dash ? 200.0f : 100.0f; }
+static void update_tmrs(void)
+{
+    for (int i = 0; i < ntmrs; i++) {
+        typeof(&tmrs[0]) o = &tmrs[i];
+        int st = ++o->st;
+        if (o->dash) {
+            if (o->nrv == TMRD_WAIT) {
+                if (!o->bound) continue;
+                o->r.coord = 0.0f; o->r.dir = 1;
+                o->off = vsub(tmk.pos, tmr_pos(&o->r));
+                V3 d = tmr_dir(&o->r), v = tmk.vel;
+                float sp = vdot(d, v);
+                if (sp < 0.0f) { sp = 0.0f; o->side = v; } else o->side = vsub(v, vmul(d, sp));
+                float e = o->end_speed, dur = 3.0f * o->r.len / (sp + 2.0f * e), acc = 2.0f * (e - sp) / dur;
+                o->b0 = -acc / (2.0f * dur) / 3.0f; o->b4 = acc / 2.0f; o->b8 = sp;
+                o->bc = (int)(dur + (dur - (int)dur > 0.0001f ? 1.0f : 0.0f));
+                if (o->bc < 0) o->bc = 0;
+                tmr_set(i, TMRD_RAILMOVE);
+                st = ++o->st;
+            }
+            if (o->nrv == TMRD_RAILMOVE) {
+                if (st == 0) tmk.vel = v3(0, 0, 0);
+                if (st + 1 >= o->bc) o->r.coord = o->r.len;
+                else { float t = (float)(st + 1); o->r.coord = clampf(t * (o->b8 + t * (o->b4 + o->b0 * t)), 0.0f, o->r.len); }
+                float prog = o->r.coord / o->r.len;
+                o->off = vadd(o->off, o->side);
+                o->side = vmul(o->side, 0.85f);
+                V3 p = vadd(tmr_pos(&o->r), vmul(o->off, 1.0f - prog)); /* (multInLine2: x (1 - progress)) */
+                tmk.vel = vsub(p, tmk.pos);
+                if (tmr_goal(&o->r)) {
+                    tmk.pos = p;
+                    tmk.vel = vmul(tmr_dir(&o->r), o->end_speed);
+                    tmk_msg(TMKM_END_RAIL_DASH);
+                    o->bound = 0;
+                    printf("sphere rail dash %d: end at %.0f %.0f %.0f\n", o->row, p.x, p.y, p.z);
+                    tmr_set(i, TMRD_WAIT);
+                }
+            }
+            continue;
+        }
+        switch (o->nrv) {
+        case TMRB_WAIT:
+            o->r.coord = w_rail_nearest(o->r.p, o->r.n, mario->pos); /* moveCoordToNearestPos */
+            o->pos = tmr_pos(&o->r);
+            if (o->bound) tmr_set(i, TMRB_SETUP);
+            break;
+        case TMRB_SETUP: {
+            if (st == 0) { o->p94 = tmk.pos; tmk.vel = v3(0, 0, 0); o->r.speed = 0.0f; }
+            o->r.coord = clampf(o->r.coord + 3.0f * o->r.dir, 0.0f, o->r.len); /* moveCoord 3 */
+            o->pos = tmr_pos(&o->r);
+            V3 to = vadd(o->pos, vmul(o->grav, -TMK_R)), p;
+            if (st < 15) { float t = ease_in_f((float)st / 15.0f); p = vadd(vmul(o->p94, 1.0f - t), vmul(to, t)); } /* calcNerveEaseInRate */
+            else p = to;
+            if (st == 15) pad_rumble(RUMBLE_STRONG);
+            tmk.vel = vsub(p, tmk.pos);
+            if (st > 45) tmr_set(i, TMRB_RUN);
+            break;
+        }
+        case TMRB_RUN: {
+            if (st == 0) o->r.speed = 0.0f;
+            V3 d = tmr_dir(&o->r);
+            float a = vdot(vmul(o->grav, o->acc), d), sp = o->r.speed + a; /* accelerateRailCoordSpeed */
+            if (sp < 0.0f) { sp = -sp; o->r.dir = -o->r.dir; }
+            o->r.speed = sp * o->dec; /* slowDownRailCoordSpeed */
+            if (o->r.dir < 0 || o->r.speed < 6.0f) { o->r.dir = 1; o->r.speed = 6.0f; }
+            tmr_move(&o->r);
+            o->pos = tmr_pos(&o->r);
+            tmk.vel = vsub(vadd(o->pos, vmul(o->grav, -TMK_R)), tmk.pos);
+            if (tmr_goal(&o->r)) {
+                tmk.vel = vmul(tmr_dir(&o->r), o->r.speed);
+                tmk_msg(TMKM_END_BALL_RAIL);
+                o->bound = 0;
+                printf("ball rail %d: end at %.0f %.0f %.0f, speed %.1f\n", o->row, o->pos.x, o->pos.y, o->pos.z, o->r.speed);
+                tmr_set(i, TMRB_NOBIND);
+            }
+            break;
+        }
+        case TMRB_NOBIND: if (st > 60) tmr_set(i, TMRB_WAIT); break;
+        }
+    }
+}
+static void tmr_init_all(const Scene *s) /* BallRail / SphereRailDash::init */
+{
+    ntmrs = 0;
+    int tb = scene_type(s, "BallRail"), td_ = scene_type(s, "SphereRailDash");
+    for (u32 i = 0; i < s->nobjs && ntmrs < TMR_MAX; i++) {
+        const Row *q = &s->objs[i];
+        if ((int)q->type != tb && (int)q->type != td_) continue;
+        typeof(&tmrs[0]) o = &tmrs[ntmrs];
+        memset(o, 0, sizeof *o);
+        o->row = (int)i; o->dash = (int)q->type == td_;
+        if (!tmr_init(&o->r, (int)i)) { printf("tamakoro: rail row %d without its rail\n", (int)i); continue; }
+        o->pos = tmr_pos(&o->r);
+        o->grav = vmul(up_at(o->pos, v3(0, 1, 0)), -1.0f); /* onCalcGravity */
+        o->acc = q->arg[0] != -1 ? q->arg[0] / 1000.0f : 1.5f; /* getJMapInfoArg0NoInit mAcceleration / 1000 */
+        o->dec = q->arg[1] != -1 ? q->arg[1] / 1000.0f : 0.995f;
+        o->end_speed = q->arg[1] != -1 ? (float)q->arg[1] : 50.0f; /* SphereRailDash arg1 _A0 */
+        tmr_set(ntmrs, o->dash ? TMRD_WAIT : TMRB_WAIT);
+        ntmrs++;
+    }
+}
+static int tmr_try_bind(int dash) /* attackSensor: isBindedSphereDash / isBindedBallRail */
+{
+    for (int i = 0; i < ntmrs; i++)
+        if (tmrs[i].dash == dash && vlen(vsub(tmk.pos, tmr_sensor(i))) < TMK_R + tmr_radius(i) && tmr_binded(i)) {
+            printf("tamakoro: on %s row %d\n", dash ? "sphere rail dash" : "ball rail", tmrs[i].row);
+            return 1;
+        }
+    return 0;
+}
 static void tmk_control(void) /* control */
 {
     if (tmk.ground || tmk_ride_rail() || tmk.nrv == TMK_DASHRAIL || tmk.nrv == TMK_JUMPHOLE) { /* updateMoment: isGroundMomentBall */
@@ -727,7 +899,7 @@ static void tmk_bind_move(void) /* LiveActor::movement's binder: the move agains
 {
     if (tmk.bind_off) { tmk.pos = vadd(tmk.pos, tmk.vel); tmk.ground = tmk.wall = 0; tmk.fix = v3(0, 0, 0); return; }
     V3 to = vadd(tmk.pos, tmk.vel), np = m_bind(tmk.pos, tmk.vel, TMK_R);
-    tmk.fix = vsub(np, to);
+    tmk.fix = b_fix; (void)to;
     int fl, wl;
     bind_contacts(vmul(tmk.grav, -1.0f), &fl, &wl);
     tmk.ground = fl >= 0; tmk.wall = wl >= 0;
@@ -989,6 +1161,7 @@ static void tmk_init(const Scene *s) /* Tamakoro::init / TamakoroTutorial::init 
             if ((int)s->objs[k].type == ps && s->objs[k].arg[7] == (int)i) tmk.star_id = s->objs[k].arg[0];
         tmk_set(TMK_STANDBYBIND);
         ho_init(s);
+        tmr_init_all(s);
         int tt = scene_type(s, "TamakoroTutorial"); /* initChildObj(mTutorial, rIter, 0): its zone's */
         for (u32 k = 0; tt >= 0 && k < s->nobjs; k++) {
             const Row *q = &s->objs[k];
@@ -1020,6 +1193,7 @@ static void update_tmk(void)
 {
     if (tmk.row < 0 || tmk.nrv == TMK_DEAD) return;
     update_holes();
+    update_tmrs();
     if (tmk.nrv != TMK_BINDEND && !row_shown(tmk.row)) return;
     tmk.grav = vmul(up_at(tmk.pos, vmul(tmk.grav, -1.0f)), -1.0f); /* onCalcGravity */
     tmt_exe();
@@ -1027,7 +1201,11 @@ static void update_tmk(void)
     if (tmk.nrv == TMK_DEAD) return;
     tmk_control();
     tmk_bind_move();
-    if (tmk_enemy_attack_on() && ho_try_bind()) tmk_set(TMK_JUMPHOLE); /* isEnableBallBind: isBindedJumpHole */
+    if (tmk_enemy_attack_on()) { /* isEnableBallBind: isBindedSphereDash, isBindedJumpHole, isBindedBallRail */
+        if (tmr_try_bind(1)) tmk_set(TMK_DASHRAIL);
+        else if (ho_try_bind()) tmk_set(TMK_JUMPHOLE);
+        else if (tmr_try_bind(0)) tmk_set(TMK_RIDERAIL);
+    }
     if (tmk.nrv == TMK_STANDBYBIND || tmk.nrv == TMK_STANDBYTUTORIAL) mario_push_out(tmk.pos, TMK_R); /* attackSensor: isEnablePushPlayer */
     tmt_sensors();
     if (tmk.ta && tmk.ta->skin && tmk.ta->clip_id >= 0) anim_update(tmk.ta);
@@ -1121,6 +1299,18 @@ int game_test_tmk(int f)
             next_at = t + 120;
         }
         if (tmk.nrv == TMK_BINDEND) ended = 1;
+#elif defined(TMK_RAILS) /* the ball put on each SphereRailDash / BallRail start in turn, then END_BALL_BIND */
+        static int rail = -1, next_at = 60;
+        if (t >= next_at && tmk.nrv == TMK_WAIT) {
+            if (++rail < ntmrs) {
+                typeof(&tmrs[0]) o = &tmrs[rail];
+                V3 st = rail_at(o->r.p, o->r.n, 0.0f);
+                tmk.pos = o->dash ? st : vsub(st, vmul(o->grav, 260.0f)); tmk.vel = v3(0, 0, 0);
+                printf("tk test f %d: ball at %s row %d\n", f, o->dash ? "sphere rail dash" : "ball rail", o->row);
+                next_at = t + 150;
+            } else { ended = 1; printf("tk test f %d: END_BALL_BIND %d\n", f, tmk_msg(TMKM_END_BALL_BIND)); }
+        }
+        if (rail >= 0) pad_force_stick = 0;
 #else
         if (t == 420) { ended = 1; pad_force_stick = 0; printf("tk test f %d: END_BALL_BIND %d\n", f, tmk_msg(TMKM_END_BALL_BIND)); }
 #endif
