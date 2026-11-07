@@ -84,7 +84,7 @@
 # ticorail: with packs, the first TicoRail's rail coordinate logged (-DTICORAIL_TEST)
 # butterfly: with packs, the pointer on a Butterfly (star piece, it runs away) (-DBUTTERFLY_TEST)
 # beeflower: with packs, Mario dropped onto BeeFlowerHovers (he goes through) (-DBEEFLOWER_TEST)
-# teresa: with packs, Mario held by a Teresa (Boo), then a spin drifts it (-DTERESA_TEST)
+# teresa: with packs (TransformationEx 1), Mario on the ground by a Teresa: facing it (Shay), his back to it (Chase), a spin (Drift), a star piece (-DTERESA_TEST)
 # prom: with packs, Mario held on a LavaProminence's rail (-DPROM_TEST)
 # karon: with packs, a Karon stomped: it breaks and comes back (-DKARON_TEST)
 # kmini: with packs, a KuriboMini stomped, another spun (-DKMINI_TEST)
