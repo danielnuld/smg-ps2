@@ -100,7 +100,7 @@ static struct { int on, life, nrv, step, gnd, gattr, wall, restart; V3 pos, vel,
 #define BBD_BOMBS 24 /* mBombs: 3 a bird */
 static struct { int on, nrv, t, owner, bnd; V3 pos, vel, n; float s; } bbd_b[BBD_BOMBS];
 #define MAX_EXTS 4
-static struct { int row, nrv, step; V3 last; } exts[MAX_EXTS];
+static struct { int row, nrv, step, star; V3 last; } exts[MAX_EXTS]; /* star: ExterminationCheckerKuribo (_A0) */
 static int nexts;
 enum { WALK_KURIBO, WALK_TAKOHEI, WALK_PACKUN, WALK_KOTEBUG, WALK_SPIDER, WALK_MERAMERA, WALK_TAKOBO, WALK_MKOOPA, WALK_KARIKARI, WALK_KMINI, WALK_KARON, WALK_TERESA, WALK_BUTTERFLY, WALK_STINKBUG, WALK_UNIZO, WALK_POIHANA, WALK_PETARI,
        WALK_GESSO, WALK_BASABASA, WALK_JELLYFISH, WALK_KANINA, WALK_MOGU, WALK_MOGUCCHI, WALK_METBO, WALK_TERESAW, WALK_SNAKEHEAD, WALK_KABOKURI, WALK_PUKUPUKU, WALK_BOMBHEI, WALK_STRSPIDER, WALK_BEGOSPIKE, WALK_BEGOSPRING, WALK_KCHIEF, WALK_BEGOBABY, WALK_BBEGO, WALK_KAMECK, WALK_NOKO, WALK_SAMBOHEAD, WALK_BOMBTERESA, WALK_JELEC, WALK_BEGOLAUNCH, WALK_MERAKING, WALK_BOMBBIRD, WALK_KINDS };
@@ -128,7 +128,7 @@ static int mk_noclip(const Kuribo *k);
 int mk_shot(V3 p); /* IceMerameraKing (ice_meraking.inc) */
 static void st_mirror_pass(V3 ce, V3 cw, V3 cu);
 static int st_mapboard; /* AstroMapBoard shown: 1 its picture to capture (game_draw), 2 done */
-static int st_flag_class(const char *n), st_cast_hook(int row, int type, int part), st_rail_obj(const char *n); static void st_update(void), st_draw(void), st_init(const Scene *s); static int st_shot(V3 p); static void st_column_strike(V3 c, float r); /* statics.inc */
+static int st_flag_class(const char *n), st_cast_hook(int row, int type, int part), st_rail_obj(const char *n); static void st_update(void), st_draw(void), st_init(const Scene *s); static int st_shot(V3 p), st_jet_hit(V3 p); static void st_column_strike(V3 c, float r); /* statics.inc */
 static void mm_update(Kuribo *k), mm_kill(Kuribo *k), mm_btp(Kuribo *k, const Model *md); /* Meramera (meramera.inc) */
 static void ts_update(Kuribo *k), ts_draw(Kuribo *k, const Model *md, float *m, Anim *a); static int ts_dead_req(Kuribo *k), ts_star(Kuribo *k); /* Teresa (teresa.inc) */
 static void mkoopa_update(Kuribo *k, V3 to, float d); static int mkm_star(Kuribo *e), mkm_explosion(Kuribo *e); /* MechanicKoopaMini (mkoopa.inc) */
@@ -2673,8 +2673,8 @@ void game_init(const Scene *s, const unsigned char *blob)
     memset(okeys, 0, sizeof okeys); nexts = 0; /* KeySwitch (owned), ExterminationChecker */
     memset(bitm, 0, sizeof bitm); /* the run-time mushrooms */
     memset(bbd_b, 0, sizeof bbd_b); /* BombBirds' bombs */
-    for (u32 i = 0, t = (u32)scene_type(s, "ExterminationKuriboKeySwitch"); i < s->nobjs && nexts < MAX_EXTS; i++)
-        if (s->objs[i].type == t) { memset(&exts[nexts], 0, sizeof exts[0]); exts[nexts++].row = (int)i; }
+    for (u32 i = 0, t = (u32)scene_type(s, "ExterminationKuriboKeySwitch"), t2 = (u32)scene_type(s, "ExterminationCheckerKuribo"); i < s->nobjs && nexts < MAX_EXTS; i++)
+        if (s->objs[i].type == t || s->objs[i].type == t2) { memset(&exts[nexts], 0, sizeof exts[0]); exts[nexts].star = s->objs[i].type == t2; exts[nexts++].row = (int)i; }
     norocks = 0;
     nhhps = 0;
     nvines = 0; vine_ride = -1;
@@ -14228,6 +14228,7 @@ static void update_jets(void)
             if (!gone && kj_jet_hit(p)) gone = 1; /* KoopaJrShip: receiveMsgJetTurtleAttack */
             if (!gone && wz_jet_hit(p)) gone = 1; /* WaterBazooka: isMsgJetTurtleAttack */
             if (!gone && pg_jet_hit(p)) gone = 1; /* PenguinRacer in its race: isMsgJetTurtleAttack (race.inc) */
+            if (!gone && st_jet_hit(p)) gone = 1; /* WaterfallCaveCover: isMsgJetTurtleAttack (statics.inc) */
             hhp_blow(p, 60.0f); /* HammerHeadPackun: isMsgJetTurtleAttack */
             tbox_hit(p, 60.0f); /* TreasureBoxCracked: isMsgJetTurtleAttack */
             for (int k = 0; k < nkuribo; k++) { /* ACTMES_JET_TURTLE_ATTACK */
@@ -25587,13 +25588,32 @@ static void draw_bitems(void)
 /* ExterminationChecker.cpp after Petari, ExterminationKuriboKeySwitch (createExterminationKeySwitch: _A0 0, _A1 1):
  * its children (ChildObj: ChildKuribo, createNoItemKuriboActor, 全滅用クリボー; here the ChildKuribo rows of its zone,
  * the one checker a zone has on the disc) watched while it is out (its SW_APPEAR); with every one dead, 30 frames on
- * its KeySwitch (全滅用キースイッチ) appears where the last one was, and it is killed. ponytail: ExterminationChecker-
- * Kuribo (the power star kind, 全滅スター出現) not ported */
+ * its KeySwitch (全滅用キースイッチ) appears where the last one was, and it is killed. ExterminationCheckerKuribo
+ * (createExterminationPowerStar: _A0 1, its declared power star): TryStartDemoAppear (stopStageBGM(10), from step 6
+ * tryStartDemo 全滅スター出現), AppearStar (SE_SY_TOTAL_COMPLETE; at step 120 endDemo, startAfterBossBGM,
+ * requestAppearPowerStar, kill) */
 static void update_exts(void)
 {
     for (int e = 0; e < nexts; e++) {
         typeof(&exts[0]) x = &exts[e];
-        if (!row_shown(x->row)) continue;
+#ifdef EXT_STAR_TEST /* XF=-DEXT_STAR_TEST (StarDustGalaxy/3): from frame 200 Mario held 800 over the checker, the camera
+                       * on it, its sleep switch on (useStageSwitchSleep); from 300 its ChildKuribos die one every 10 frames */
+        if (x->star && game_frame >= 200) {
+            const Row *xr = &sc->objs[x->row];
+            V3 p = row_pos(xr), up = up_at(p, mario->up);
+            if (xr->sw[SW_SLEEP] >= 0 && !sw_on(xr, SW_SLEEP)) { sw_set(xr, SW_SLEEP, 1); printf("ext test: sleep switch on%c", 10); }
+            if (x->nrv < 2) { mario->pos = vadd(p, vmul(up, 800.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+            camera_set_override(1, vadd(p, vadd(vmul(up, 1500.0f), v3(0, 0, 3000.0f))), p, up, 45.0f);
+            if (game_frame % 60 == 0) printf("ext test f %u: checker nrv %d step %d shown %d%c", game_frame, x->nrv, x->step, row_shown(x->row), 10);
+        }
+        if (x->star && game_frame >= 300 && game_frame % 10 == 0)
+            for (int i = 0; i < nkuribo; i++) {
+                Kuribo *k = &kuribo[i];
+                if (sc->objs[k->row].zone != sc->objs[x->row].zone || strcmp(walker_cls(k), "ChildKuribo") || k->state == KURIBO_DEAD) continue;
+                k->state = KURIBO_DEAD; row_kill(k->row); printf("ext test: child row %d killed%c", k->row, 10); break;
+            }
+#endif
+        if (!row_shown(x->row) || (demo_on && pd.row != x->row)) continue;
         if (x->nrv == 0) { /* Watching */
             int alive = 0;
             for (int i = 0; i < nkuribo && !alive; i++) {
@@ -25602,7 +25622,15 @@ static void update_exts(void)
                 if (k->state != KURIBO_DEAD && row_shown(k->row)) { alive = 1; x->last = k->pos; }
             }
             if (!alive) { x->nrv = 1; x->step = -1; printf("extermination row %d: all down\n", x->row); }
-        } else if (++x->step == 30) { okey_appear(x->row, x->last); row_kill(x->row); } /* AppearKeySwitch */
+        } else if (!x->star) { if (++x->step == 30) { okey_appear(x->row, x->last); row_kill(x->row); } } /* AppearKeySwitch */
+        else if (x->nrv == 1) { /* TryStartDemoAppear */
+            if (++x->step == 0) bgm_stop(10);
+            if (x->step > 5 && pd_try_start("全滅スター出現", x->row)) { x->nrv = 2; x->step = -1; }
+        } else if (x->nrv == 2 && ++x->step == 0) se_start(SE_SY_TOTAL_COMPLETE, NULL); /* AppearStar */
+        else if (x->nrv == 2 && x->step == 120) {
+            pd_end("全滅スター出現"); bgm_after_boss(); row_kill(x->row); x->nrv = 3; /* requestAppearPowerStar, kill */
+            printf("extermination row %d: its power star out\n", x->row);
+        }
     }
 }
 
@@ -53824,7 +53852,7 @@ void game_update(void)
     LQ(53, update_screws());
     LQ(54, update_candles());
     update_torches();
-    if (!demo_on) update_exts();
+    update_exts(); /* (in a demo: only the one whose 全滅スター出現 runs, tryStartDemo's owner) */
     update_okeys();
     update_bitems();
     update_bbd_bombs();
@@ -54801,12 +54829,15 @@ void game_draw(void)
         if (!w->brk->skin) { if (w->t > 60) w->t = -1; else render_model(w->brk, w->m, 0x80, 0x80, 0x80); continue; }
         Anim *ba = obj_anim((int)sc->nobjs * 3 + i, w->brk, w->bname);
         if (!ba) continue;
-        if (w->t <= 1) { /* "<archive lowercase>/break" */
+        static int wclip[MAX_WRECKS]; /* the clip it started (a wreck bound late, obj_anim's slots all taken at its break, still
+                                       * plays its Break from the start, not obj_anim's looping first clip) */
+        if (w->t <= 1 || ba->clip_id != wclip[i]) { /* "<archive lowercase>/break" */
             char clip[48];
             int k = 0;
             for (; w->bname[k] && k < 40; k++) clip[k] = (char)tolower((unsigned char)w->bname[k]);
             strcpy(clip + k, "/break");
             anim_start(ba, clip, 0);
+            wclip[i] = ba->clip_id;
         }
         anim_update(ba);
         if (ba->done && w->t > 16) { w->t = -1; continue; } /* isBckStopped: kill */

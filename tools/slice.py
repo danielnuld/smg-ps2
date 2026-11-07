@@ -98,7 +98,7 @@ SKINNED_OBJ += ("KoopaThornBreak", "KoopaShockWave", "KoopaShockWaveShadow", "Ko
 KOOPA_PARTS = ("KoopaThorn", "KoopaArmorBreak", "KoopaThornBreak", "KoopaFire", "KoopaShockWave", "KoopaShockWaveShadow", "MeteorStrike", "MeteorStrikeBreak", "KoopaPlanetShadow")
 SKINNED_OBJ += ("TripodBoss", "TripodBossGuardWall")  # TripodBoss: its StartDemo / EndDemo joints (Body, legs); the guard wall's 2ndDemo
 SKINNED_OBJ += ("HoneyQueenWing",)  # HoneyQueen::init: createModelObjNpc 羽 on its Center joint, startBck / startBtk HoneyQueenWing
-SKINNED_OBJ += ("TamakoroWithTutorial", "TamakoroTutorial", "ConcreteBlockBreak")  # Tamakoro.cpp: its Ring joint upright, its Tamakoro BVA; TamakoroTutorial: a SignBoard with its actions (game.c tamakoro.inc)
+SKINNED_OBJ += ("TamakoroWithTutorial", "TamakoroTutorial", "ConcreteBlockBreak", "WaterfallCaveCoverBreak")  # Tamakoro.cpp: its Ring joint upright, its Tamakoro BVA; TamakoroTutorial: a SignBoard with its actions (game.c tamakoro.inc)
 SKINNED_OBJ += ("Dodoryu", "DodoryuLeadHill", "DodoryuRabbit", "DodoryuHillA", "DodoryuHillB", "DodoryuHillC")  # Dodoryu.cpp: the boss, its DodoryuLeadHill / DodoryuRabbit / DodoryuHill pieces (Lead, Fade) (game.c dd_*)
 SKINNED_OBJ += ("SnakeFish",)  # (SkeletalFishBaby)
 # SkeletalFishBoss (Kingfin): its body, its PartsModels SkeletalFishBossHeadA / ScarFlash, its guards (and the demo ones), its break model (game.c sf_*)
@@ -203,6 +203,7 @@ def sky_sea(b, mat3, m):
 # KuriboChief / ExterminationChecker::initKeySwitch: their own KeySwitch (game.c okeys; KeySwitchOwned: the KeySwitch
 # archive skinned for its Rotation, the placed KeySwitch rows untouched)
 EXTRA = {"ConcreteBlock": ("ConcreteBlockBreak",),  # SimpleBreakableObj: its break ModelObj (game.c break_inst)
+         "WaterfallCaveCover": ("WaterfallCaveCoverBreak",),  # MapObjActor::tryCreateBreakModel (statics.inc st_wcc)
          "Syati": ("PrizeRing",),  # Syati::initRings: its five PrizeRings (game.c syati.inc)
          "TeresaRacer": ("PStar",), "PenguinRacerLeader": ("PStar",), "PenguinCoach": ("PStar",), "LuigiNPC": ("PStar",), "LuigiEvent": ("PStar",),  # TakeOutStar's mStarModel (game.c tos_*)
          "UFOKinokoUnderConstruction": ("UFOKinokoLandingAstro",), "LargeChain": ("LargeChainFixPoint",),  # LargeChain: its fixed points
@@ -1929,7 +1930,7 @@ def declare_stars(keep, scenario, appear, jp):
             k = None if s32(r["args"][7]) > 0 else -1
         elif r["name"] == "WoodBox":  # WoodBox::init: declarePowerStar when arg7 is set (no disc data has one)
             k = None if s32(r["args"][7]) not in (0, -1) else -1
-        elif r["name"] in ("CollectTico", "DinoPackun", "OtaKing", "BossStinkBug", "BossBegoman", "BossKameck", "BossKameck2", "StinkBugParent", "TripodBoss", "TombSpider", "KoopaVs1", "KoopaVs2", "KoopaVs3", "IceMerameraKing", "ExterminationSkeletalFishBaby", "SkeletalFishBoss", "KoopaJrShip", "Dodoryu", "TamakoroWithTutorial", "TeresaChief", "Syati"):  # their init declarePowerStar, always (Syati: the class, not TalkSyati)
+        elif r["name"] in ("CollectTico", "DinoPackun", "OtaKing", "BossStinkBug", "BossBegoman", "BossKameck", "BossKameck2", "StinkBugParent", "TripodBoss", "TombSpider", "KoopaVs1", "KoopaVs2", "KoopaVs3", "IceMerameraKing", "ExterminationSkeletalFishBaby", "ExterminationCheckerKuribo", "SkeletalFishBoss", "KoopaJrShip", "Dodoryu", "TamakoroWithTutorial", "TeresaChief", "Syati"):  # their init declarePowerStar, always (Syati: the class, not TalkSyati)
             k = None
         elif r["name"] in ("WaterBazooka", "ElectricBazooka"):  # WaterBazooka::init: getJMapInfoArg0NoInit(bool): declarePowerStar
             k = None if s32(r["args"][0]) != -1 else -1
