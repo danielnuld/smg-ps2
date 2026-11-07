@@ -2292,6 +2292,13 @@ int main(void)
         if (f0 && frame - f0 < 20000) game_test_tb((int)(frame - f0));
     }
 #endif
+#ifdef WZ_TEST /* XF=-DWZ_TEST, ReverseKingdomGalaxy/3: the WaterBazooka fight (game_test_wz) */
+    {
+        static u32 f0;
+        if (!f0 && frame > 30 && game_test_free()) f0 = frame;
+        if (f0 && frame - f0 < 20000) game_test_wz((int)(frame - f0));
+    }
+#endif
 #ifdef KJ_TEST /* XF=-DKJ_TEST, KoopaJrShipLv1Galaxy/1: the KoopaJrShip fight (game_test_kj) */
     {
         static u32 f0;

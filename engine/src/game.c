@@ -425,6 +425,8 @@ static void kj_init(const Scene *s, const unsigned char *blob), update_kj(void),
 static int kj_jet_hit(V3 p);
 static void kj_cast_hook(int row, int type, int part), kj_rebind_place(Inst *in), kj_models(const Scene *s);
 static void dkj_init(const Scene *s), update_dkj(void), dkj_draw(void), dkj_cast_hook(int row, int type, int part); /* DemoKoopaJrShip */
+static void wz_init(const Scene *s), update_wz(void), wz_draw(void), wz_models(const Scene *s), wz_rebind_place(Inst *in), wz_rebind_insts(const Scene *s); /* water_bazooka.inc */
+static int wz_jet_hit(V3 p);
 static int pol_demo(void), pol_shot(V3 p), pol_inst_explosion(int i); /* polta.inc */
 static void pol_init(const Scene *s), pol_find_bombs(void), pol_rebind_inst(const Scene *s), update_polta(void), pol_draw(void);
 /* tamakoro.inc: Tamakoro (the star ball), its TamakoroTutorial */
@@ -1080,7 +1082,7 @@ const char *game_stage_name = ""; /* the galaxy being played (main.c: its pack n
 static void draw_mogu_extras(void), draw_mogucchi_extras(void), draw_whirls(void), update_whirls(void);
 static int t_whirl = -1;
 #define MAX_WBULLETS 16
-static struct { int alive, host, step, spin, grav, nospin; V3 pos, vel, front, side; } wbs[MAX_WBULLETS];
+static struct { int alive, host, step, spin, grav, nospin, sand; V3 pos, vel, front, side; } wbs[MAX_WBULLETS]; /* sand: _B1 (WaterBazooka's) */
 static int nprs, wb_ride = -1; /* the water bullet Mario is in, -1 none */
 static const Model *m_wbullet;
 static void pr_joints(Inst *in), draw_wbullets(void), update_pressures(void);
@@ -2585,6 +2587,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     sf_init(s, blob);
     kj_init(s, blob);
     dkj_init(s);
+    wz_init(s);
     pol_init(s);
     tmk_init(s);
     gh_reset(); /* GhostPlayer: init at its first update */
@@ -5344,6 +5347,7 @@ static void game_rebind_(void)
     m_shell = scene_model(s, "KoopaJrShipCannonShell");
     if (!m_shell) m_shell = scene_model(s, "IronCannonLauncherPoint");
     kj_models(s); /* koopajr_ship.inc */
+    wz_models(s); /* water_bazooka.inc */
     tmk_models(s); /* tamakoro.inc */
     /* what Mario rides (Fluff, SpaceCocoon, JumpBranch) keeps its state across the rebuild: found again by its row */
     int ride_row[3] = {flf.inst >= 0 ? insts[flf.inst].row : -1, coc.inst >= 0 ? insts[coc.inst].row : -1,
@@ -5493,6 +5497,7 @@ static void game_rebind_(void)
         if (in->gap) gap_place(in);
         tb_rebind_place(in);
         kj_rebind_place(in);
+        wz_rebind_place(in);
         if (in->coco) coco_spawn(in);
         if (in->fountain || in->stray) memcpy(in->m0, in->m, 64);
         if (in->stray) in->head = row_turn[i] ? (stray_at[i % 64].x || stray_at[i % 64].y || stray_at[i % 64].z ? stray_at[i % 64] : v3(in->m[12], in->m[13], in->m[14])) : v3(in->m[12], in->m[13], in->m[14]);
@@ -5578,6 +5583,7 @@ static void game_rebind_(void)
         in->kcl = scene_kcl(s, "TombSpiderPlanet");
         zone_grow(in);
     }
+    wz_rebind_insts(s); /* WaterBazooka's Cannon1 and capsule collisions */
     for (int i = 0, n = ninsts; i < n; i++) /* PhantomShipBridge's "Move" collision on its joint (update_bridges) */
         if (insts[i].bridge == 1 && scene_kcl(s, "PhantomShipBridge#Move") && ninsts < (int)s->nobjs) {
             Inst *in = &insts[ninsts++];
@@ -14135,6 +14141,7 @@ static void update_jets(void)
             if (bk_jet_hit(p)) gone = 1; /* BossKameck: isMsgJetTurtleAttack (requestDamage) */
             if (!gone && sf_jet_hit(p)) gone = 1; /* SkeletalFishBaby / Boss: isMsgJetTurtleAttack */
             if (!gone && kj_jet_hit(p)) gone = 1; /* KoopaJrShip: receiveMsgJetTurtleAttack */
+            if (!gone && wz_jet_hit(p)) gone = 1; /* WaterBazooka: isMsgJetTurtleAttack */
             if (!gone && pg_jet_hit(p)) gone = 1; /* PenguinRacer in its race: isMsgJetTurtleAttack (race.inc) */
             hhp_blow(p, 60.0f); /* HammerHeadPackun: isMsgJetTurtleAttack */
             tbox_hit(p, 60.0f); /* TreasureBoxCracked: isMsgJetTurtleAttack */
@@ -37121,7 +37128,8 @@ static void update_wbullets(void)
         /* AutoRushBegin: Mario touching it */
         if (wb_ride < 0 && vlen(vsub(mc, o->pos)) < 100.0f + HIT_BODY_R && mario->launch < 0 && pole_ride < 0) {
             float c = vlen(o->vel) > 1e-6f ? vdot(vnorm(o->vel), g) : 0.0f;
-            if (mario->grounded && c > cosf(60.0f * 0.0174533f)) { /* isNearAngleDegree(velocity, gravity, 60): it pops */
+            if (mario->grounded && c > cosf(60.0f * 0.0174533f) && o->sand) o->vel = vtangent(o->vel, g); /* _B1: killVelocityVertical */
+            else if (mario->grounded && c > cosf(60.0f * 0.0174533f)) { /* isNearAngleDegree(velocity, gravity, 60): it pops */
                 V3 away = vtangent(vsub(mario->pos, o->pos), mario->up);
                 if (vlen(away) > 1e-3f) { mario->hvel = vmul(vnorm(away), 5.0f); mario->vup = 15.0f; mario->grounded = 0; } /* FLIP_VERYWEAK */
                 wb_kill(b);
@@ -51583,6 +51591,7 @@ int game_test_bk(int frame)
 #include "skeletal_fish.inc" /* SkeletalFishBaby / Boss (Kingfin): sf_* */
 #include "skeletal_fish_boss.inc" /* SkeletalFishBoss (Kingfin): sfk_*, its guards sfg_* */
 #include "koopajr_ship.inc" /* KoopaJrShip (Bowser Jr.'s airship): kj_*, game_test_kj */
+#include "water_bazooka.inc" /* WaterBazooka / ElectricBazooka: wz_*, game_test_wz */
 #include "polta.inc" /* Polta (Bouldergeist): pol_*, game_test_pol */
 #include "tamakoro.inc" /* Tamakoro (the star ball), TamakoroTutorial: tk_*, game_test_tk */
 #include "clip_area.inc" /* ClipArea*, ClipFieldSwitch, FallOutFieldDraw, SimpleClipPartsObj, ClipAreaDropLaser: ca_* */
@@ -53274,6 +53283,7 @@ void game_update(void)
     update_sf();
     update_kj();
     update_dkj();
+    update_wz();
     update_polta();
     update_tmk();
     if (!demo_on) update_km_beams(); /* (the Kameck beams, fire balls, turtles: stopped in a demo) */
@@ -54718,6 +54728,7 @@ void game_draw(void)
     sf_draw();
     kj_draw();
     dkj_draw();
+    wz_draw();
     pol_draw();
     tmk_draw();
     km_draw();

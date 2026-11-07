@@ -322,6 +322,15 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   and explode at 150), a hit at 700: Damage, Fall, Swoon; a trample at 900: dead, its coin. route EggStar 1 star.
   ponytail: star pointer bind, anim scale reaction, press between roof and ground, shifting sand, the bomb's BRKs and the
   effects (jpa.py NAMED).
+- WaterBazooka (feat/411-water-bazooka, 2026-11-07): WaterBazooka.cpp, WaterBazookaCapsule.cpp, MogucchiShooter.cpp,
+  ElectricPressureBullet.cpp in engine/src/water_bazooka.inc (wz_*): its 16 nerves, the Cannon1 joint as mBaseMtx (its
+  children carried), aimAtMario, WaterPressureBullets (wbs, new `sand` flag: _B1) or ElectricBazooka's five electric
+  bullets, the shooter's 13 nerves, the capsule's Normal / Crack / Break BVAs, the Cannon1 (slice.py KCL_PARTS) and
+  capsule collisions as two invisible instances it moves, Panic / Storm, the three demos as its sheet's last three
+  parts, the break model, the power star at Cockpit (arg0; slice.py declare_stars). Test `XF=-DWZ_TEST` (plain build,
+  ReverseKingdomGalaxy/3, FactoryGalaxy/3, OceanPhantomCaveGalaxy/2; overlay wt-release-wz): a bullet takes Mario (the
+  Mogucchi laughs), three hip drops on the capsule: crack, anger, break, its star taken (RK 3, Factory 3; OPC 2 none).
+  The worktree's slice.py needs vendor/Petari (headers + NameObjFactory.cpp) for demo_dead_classes.
 
 ## Console release (2026-10-23 / 24)
 

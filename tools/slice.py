@@ -82,6 +82,7 @@ SKINNED_OBJ = ("SeaBottomTriplePropeller", "NokonokoLand", "BegomanBabyLauncher"
                "PStar", "GStar", "SpinTico", "MarioHair", "AstroCore", "LuigiNPC", "LuigiEvent",
                "DemoPeachCastleGate", "PicketSwitch", "PicketSwitchBig", "CapsuleCage", "KeySwitchOwned", "ChildKuribo", "ChildIceMeramera", "BreakableCageBreak")  # PStar / GStar: the star return demos' PowerStar / GrandStar (clip names fit 31 chars)
 SKINNED_OBJ += ("ScrewSwitch", "ScrewSwitchReverse")  # their ScrewSwitchOn / ScrewSwitchReverseOn (game.c update_screws)
+SKINNED_OBJ += ("WaterBazookaCapsule", "MogucchiShooter", "WaterBazookaBreak", "ElectricBazookaBreak", "ElectricBullet")  # WaterBazooka.cpp's parts (game.c water_bazooka.inc): the capsule's BVAs, the shooter's actions, the break models' Break, ElectricPressureBullet's Shot / Move
 SKINNED_OBJ += tuple(c for c in WAIT_SKINNED if c not in SKINNED_OBJ)
 SKINNED_OBJ += ("BossBegomanHead", "ChildKameck", "BkDemo")  # BkDemo: BossKameckBattleDemo (its clip names fit 31);  # BossBegoman's PartsModel (its own clips: On, Off, Turn...)
 SKINNED_OBJ += ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp")  # TicoShop: NPCData TicoShopItem goods on StarPieceR / StarPieceL (Shake)
@@ -218,7 +219,7 @@ EXTRA = {"ConcreteBlock": ("ConcreteBlockBreak",),  # SimpleBreakableObj: its br
          "RockCreator": ("RockBreak",), "WanwanRolling": ("WanwanRollingBreak",), "Unizo": ("UnizoBreak",), "UnizoLand": ("UnizoLandBreak",), "UnizoShoal": ("UnizoShoalBreak",),
          "StringSpider": ("StringSpiderString",), "SpiderCoin": ("SpaceCocoon",), "BegomanSpike": ("BegomanSpikeHead", "BegomanBrokenPiece"), "BegomanSpring": ("BegomanSpringHead",), "BegomanSpringHide": ("BegomanSpringHead",), "BossBegoman": ("BossBegomanHead", "BegomanBaby", "BegomanSpike", "BegomanSpikeHead", "BegomanBrokenPiece"),  # its head (PartsModel), followers
          "WoodBox": ("#WoodBox", "WoodBoxBreak"), "KoopaStatue": ("#Break", "KoopaStatueBreak"), "CrystalCageS": ("#CrystalCageS", "CrystalCageSBreak"),
-         "CrystalCageM": ("#CrystalCageM", "CrystalCageSBreak"), "CrystalCageL": ("#CrystalCageL:1", "#CrystalCageL", "CrystalCageLBreak"), "RingBeamer": ("JumpBeamerBeam",), "BallBeamer": ("JumpBeamerBeam",), "SubmarineVolcanoBigColumn": ("SubmarineVolcanoBigColumnBreak",), "Mogu": ("MoguStone", "MoguHole"), "Mogucchi": ("MogucchiHole", "MogucchiHillA", "MogucchiHillB", "MogucchiHillC"), "WaterPressure": ("WaterBullet",), "EyeBeamer": ("EyeBeamerBeam",), "FishGroupA": ("FishA",), "FishGroupB": ("FishB",), "FishGroupC": ("FishC",), "FishGroupD": ("FishD",), "FishGroupE": ("FishE",), "FishGroupF": ("FishF",), "SeaGullGroup": ("SeaGull",), "SunakazeKun": ("SunakazeKunTrap",), "ChooChooTrain": ("ChooChooTrainBody",), "BigFan": ("BigFanWind",), "BigFanNoLeg": ("BigFanWind",), "BombHeiLauncher": ("BombHei",), "BombBird": ("BombBirdBomb",), "BombLauncher": ("BombHei",), "JumpBeamer": ("JumpBeamerBeam", "JumpBeamerHead"), "JumpGuarder": ("JumpGuarderHead", "BegomanBaby")}
+         "CrystalCageM": ("#CrystalCageM", "CrystalCageSBreak"), "CrystalCageL": ("#CrystalCageL:1", "#CrystalCageL", "CrystalCageLBreak"), "RingBeamer": ("JumpBeamerBeam",), "BallBeamer": ("JumpBeamerBeam",), "SubmarineVolcanoBigColumn": ("SubmarineVolcanoBigColumnBreak",), "Mogu": ("MoguStone", "MoguHole"), "Mogucchi": ("MogucchiHole", "MogucchiHillA", "MogucchiHillB", "MogucchiHillC"), "WaterPressure": ("WaterBullet",), "EyeBeamer": ("EyeBeamerBeam",), "FishGroupA": ("FishA",), "FishGroupB": ("FishB",), "FishGroupC": ("FishC",), "FishGroupD": ("FishD",), "FishGroupE": ("FishE",), "FishGroupF": ("FishF",), "SeaGullGroup": ("SeaGull",), "SunakazeKun": ("SunakazeKunTrap",), "ChooChooTrain": ("ChooChooTrainBody",), "BigFan": ("BigFanWind",), "BigFanNoLeg": ("BigFanWind",), "BombHeiLauncher": ("BombHei",), "BombBird": ("BombBirdBomb",), "WaterBazooka": ("WaterBazookaCapsule", "MogucchiShooter", "WaterBazookaBreak", "WaterBullet"), "ElectricBazooka": ("WaterBazookaCapsule", "MogucchiShooter", "ElectricBazookaBreak", "ElectricBullet"), "BombLauncher": ("BombHei",), "JumpBeamer": ("JumpBeamerBeam", "JumpBeamerHead"), "JumpGuarder": ("JumpGuarderHead", "BegomanBaby")}
 # MorphItemObjNeo::makeArchiveList: Mario's (and Luigi's: the packs serve both) model of the power-up, then the container by arg3 (0 ItemBubble, -1 CrystalBox + CrystalBoxBreak; none for BenefitItemInvincible).; IceMarioHandL / R, InvincibleMarioHandL / R (initHand: game.c hands)
 MORPH_ARCS = {"MorphItemNeoHopper": ("HopperMario", "HopperLuigi"), "MorphItemNeoBee": ("BeeMarioWing", "BeeMario", "BeeLuigi"),
               "MorphItemNeoTeresa": ("TeresaMario", "TeresaLuigi"), "MorphItemNeoIce": ("IceMario", "IceLuigi", "IceMarioHandL", "IceMarioHandR"),
@@ -281,7 +282,8 @@ KCL_PARTS = {"PhantomShipBridge": {"move.kcl": "Move"}, "SkeletalFishBoss": dict
              "ShellfishCoin": {"low.kcl": "Static"}, "ShellfishYellowChip": {"low.kcl": "Static"},
              "UFOStrongA": {"movelimit.kcl": "Static"},  # UFOBase's tryCreateCollisionMoveLimit (following it: game.c update_gaps)  # Shellfish's Low (createCollisionPartsFromLiveActor): a still part
              "BossStinkBug": {"bodyground.kcl": "Ground", "bodyhipdrop.kcl": "HipDrop"},
-             "StinkBugParent": {"switch.kcl": "Switch"},  # createCollisionPartsFromLiveActor Switch (its own: SwitchChildJ)  # initCollision: BodyGround, BodyHipDrop (Body is its own)
+             "StinkBugParent": {"switch.kcl": "Switch"},
+             "WaterBazooka": {"cannon1.kcl": "Cannon1"}, "ElectricBazooka": {"cannon1.kcl": "Cannon1"},  # initCollisionParts Cannon1 on its joint (AllRoot: its own, at the base)  # createCollisionPartsFromLiveActor Switch (its own: SwitchChildJ)  # initCollision: BodyGround, BodyHipDrop (Body is its own)
              "SandUpDownTriRock": {"move00.kcl": "Move00", "move01.kcl": "Move01", "move02.kcl": "Move02"},  # init: Move0<i> on its joint
              # SeaBottomTriplePropeller::init: PropellerCap its own collision (on the root), Propeller on each of three joints
              "SeaBottomTriplePropeller": {"propellercap.kcl": "SeaBottomTriplePropeller", "propeller.kcl": ("Propeller1", "Propeller2", "Propeller3")},
@@ -482,6 +484,8 @@ BRK_STEPS = {"TicoFat": ("fatred", (0, 20, 39, 59)), "TicoGalaxy": ("fatred", (0
 # AstroDomeComet::appear: cCometBrkName[getCometNameId]
 BRK_NAMES = {"AstroDomeComet": ("red", "blue", "white", "yellow", "purple")}
 BRK_POSE = {"Tico": ("colorchange", 0), "TicoFat": ("normal", 0), "Rosetta": ("normal", 0), "DinoPackunEggShellBreak": ("break", 0),
+            "WaterBazooka": ("damage", 0), "ElectricBazooka": ("damage", 0), "WaterBazookaCapsule": ("damage", 0), "MogucchiShooter": ("normal", 0),  # startBrk + setBrkFrameAndStop(0) / startBrk Normal
+            "WaterBazookaBreak": ("break", 0), "ElectricBazookaBreak": ("break", 0),
             "HanachanHead": ("normal", 0), "HanachanBody": ("normal", 0), "HanachanBodyS": ("normal", 0)}  # HanachanParts::init: startBrk Normal  # TicoFat: startBrk Normal, frame 0 (ponytail: FatRed as it grows)
 
 
@@ -1916,6 +1920,8 @@ def declare_stars(keep, scenario, appear, jp):
             k = None if s32(r["args"][7]) not in (0, -1) else -1
         elif r["name"] in ("CollectTico", "DinoPackun", "OtaKing", "BossStinkBug", "BossBegoman", "BossKameck", "BossKameck2", "StinkBugParent", "TripodBoss", "TombSpider", "KoopaVs1", "KoopaVs2", "KoopaVs3", "IceMerameraKing", "ExterminationSkeletalFishBaby", "SkeletalFishBoss", "KoopaJrShip", "Dodoryu", "TamakoroWithTutorial", "TeresaChief"):  # their init declarePowerStar, always
             k = None
+        elif r["name"] in ("WaterBazooka", "ElectricBazooka"):  # WaterBazooka::init: getJMapInfoArg0NoInit(bool): declarePowerStar
+            k = None if s32(r["args"][0]) != -1 else -1
         elif r["name"] == "TeresaRacer":  # TeresaRacer::init: declarePowerStar unless dead (arg0 0 Mario's, 1 Luigi's; ponytail: Mario's)
             k = None if s32(r["args"][0]) != 1 else -1
         elif r["name"] == "PenguinRacerLeader":  # PenguinRacerLeader::init: declarePowerStar when mRaceDisabled (arg0 NoInit 0) is 0
