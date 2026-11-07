@@ -1975,6 +1975,8 @@ void menu_race_rank(u32 rank) /* playRank: Rank's anim stopped at the rank's fra
 }
 void menu_race_hide_records(void) { if (rcl.l) { lyt_show_pane(rcl.l, "Record", 0); lyt_show_pane(rcl.l, "BestRecord", 0); } } /* hideRecordPane, hideBestRecordPane */
 int menu_race_counting(void) { return rcl.l && lyt_pane_frame(rcl.l, "Go", 0) < 180.0f; } /* isPlayCountAnim */
+int menu_race_go_playing(void) { return rcl.l && !lyt_pane_stopped(rcl.l, "Go", 0); } /* isPlayCountAndGoAnim */
+int menu_race_alive(void) { return rcl.alive; } /* !isDead */
 int menu_race_all_stopped(void) /* isAllAnimStopped */
 {
     if (!rcl.l) return 1;

@@ -654,6 +654,19 @@ Second console round (2026-10-24), from Daniel's report:
   at f 5158, star got. ponytail: Water.bti's two stages as one sample, the screen term as a subtraction, no indirect
   warp, bloom drawer, OceanRingPipe (arg0 0), WaterSurface.kcl. Repack: resident.bin + resident_luigi.bin (jpa.py
   Water.bti), sound.py --pack OceanRingGalaxy, SurfingLv1Galaxy.
+- Syati / TalkSyati, PrizeRing (feat/434-syati, 2026-11-07): engine/src/syati.inc (sy_*, prg_*) after NPC/Syati.cpp and
+  MapObj/PrizeRing.cpp: SW_A (its SwitchCube) -> 開始デモ (wipes, Mario at sMarioMoveLocalOffsetRing in SwimWait: race.inc's
+  rm.bck), the 会話 camera and forced talk (SyatiRing labels: slice.py TALK_NAME), TurnReverse, the count (RaceManager
+  layout without its records: menu.c menu_race_go_playing / alive), the swim along its rail (point arg1 speeds, 3 when
+  Mario is 5000 off, the pose slerp with its roll), EmitRing 600 ahead at points with arg0 0, rings numbered by those
+  left (Number BVA), each one a life and its SE, all: the star from its Head (note_star_row, sy_took), killed once out;
+  the rail's end first: Turn, the 再挑戦デモ, Failure talk, forceKillPlayerByWaterRace (miss: 水中レース負け). TalkSyati:
+  HideOnShore, WaitOnShore after the star / WaitTalkNormal - TalkNormal. Eyes Open / Blink, the flip sensors. slice.py:
+  EXTRA Syati -> PrizeRing (skinned, BRK_POSE Loop 0), declare_stars Syati. Test XF "-DSYATI_TEST -DPACKS_OVERLAY=..."
+  OceanRingGalaxy/1: into the SwitchCube, the talk, the count, Mario put in each ring: 8 of 8 at ~f 6300, the star demo,
+  power star got. Not run: OceanPhantomCave 3 (deep sea mode), the retry (SYATI_TEST=2). ponytail: BTK / BRK colours,
+  the head turn joint, shadow, tryPlayerKillTakingActor, sendMsgPush, OceanPhantomCave's BGM calls. Repack:
+  OceanRingGalaxy, OceanPhantomCaveGalaxy (slice_all.py + sound.py --pack).
 - ChipCounter (feat/290-chip-counter, 2026-11-05): menu.c chc_* (BlueChipCounter / YellowChipCounter / CollectCounter
   in lyt.py COMMON: menus.bin +84 KB): Hide / FrameIn / Show / FrameOut / TryDemo / Complete / CompleteOut, Chip1-5
   ChipGet, ShowHide by short balloons, the count over Mario; game.c chip_group_*: UI range (chips' box +- 2000 or

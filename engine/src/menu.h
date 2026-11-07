@@ -116,6 +116,8 @@ void menu_race_count_and_go(void);
 void menu_race_lose(void);
 void menu_race_hide_records(void);
 int menu_race_counting(void);
+int menu_race_go_playing(void);
+int menu_race_alive(void);
 int menu_race_all_stopped(void);
 void menu_race_set_time(u32 frame);
 void menu_race_update(void);

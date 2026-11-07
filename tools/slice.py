@@ -89,6 +89,7 @@ SKINNED_OBJ += ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp")  # TicoShop: NPCDat
 SKINNED_OBJ += ("CircleShell", "CircleStrawberry")  # SmallStone.cpp: WindLoop / WindEnd, CircleShell's Kind BVA (game.c stone_pose)
 SKINNED_OBJ += ("IceMerameraKingShock", "IceMerameraKingBreak")  # IceMerameraKing: its ShockWave's Shock, its break model's Break
 SKINNED_OBJ += ("DashRing",)  # DashRing.cpp: Loop / Start / End / Revival (game.c update_drings)
+SKINNED_OBJ += ("PrizeRing",)  # PrizeRing.cpp: Start / Loop / End, its Number BVA (game.c syati.inc)
 SKINNED_OBJ += ("JumpGuarder", "JumpGuarderHead")  # JumpGuarder (game.c update_rbeamers: rbeamer 3) and its head
 SKINNED_OBJ += ("SubmarineVolcanoBigColumnBreak",)  # SubmarineVolcanoBigColumn: its break model's Break (statics.inc)
 SKINNED_OBJ += ("TicoFatGoodsStarPiece",)  # TicoFat: NPCData TicoFatItem goods on StarPieceL / StarPieceR (TicoFatGoodsStarPiece / ..Far clips)
@@ -201,6 +202,7 @@ def sky_sea(b, mat3, m):
 # KuriboChief / ExterminationChecker::initKeySwitch: their own KeySwitch (game.c okeys; KeySwitchOwned: the KeySwitch
 # archive skinned for its Rotation, the placed KeySwitch rows untouched)
 EXTRA = {"ConcreteBlock": ("ConcreteBlockBreak",),  # SimpleBreakableObj: its break ModelObj (game.c break_inst)
+         "Syati": ("PrizeRing",),  # Syati::initRings: its five PrizeRings (game.c syati.inc)
          "UFOKinokoUnderConstruction": ("UFOKinokoLandingAstro",), "LargeChain": ("LargeChainFixPoint",),  # LargeChain: its fixed points
          "TicoGalaxy": ("TicoFatGoodsStarPiece", "Tico~5"),  # TicoFat's goods; its TicoStarRing (Tico::initBase(5): ColorChange 5)  # its init: that model once isUFOKinokoUnderConstruction is over (statics.inc)
          "Polta": ("PoltaLeftArm", "PoltaRightArm", "PoltaBodyBreak", "PoltaArmBreak", "PoltaFormationRock", "PoltaGroundRock", "PoltaGroundRockBreak", "PoltaRock#Color:0", "PoltaRock#Color:1", "PoltaRock#Color:2", "BombTeresa"),  # PoltaRock::setColorWhite / Black / Yellow (Color BVA frame 0 / 1 / 2); BombTeresaHolder
@@ -384,7 +386,7 @@ def stage_files(path):
     return {p.lower(): d for p, d in B.rarc_files(path.read_bytes(), paths=True)}
 
 
-TALK_NAME = {"TamakoroTutorial": "SignBoard", "KinopioAstro": "Kinopio", "KoopaJrShip": "KoopaJr", "DemoKoopaJrShip": "KoopaJr", "Dodoryu": "DodoryuRabbit"}  # (KoopaJr: NPCActorCaps "KoopaJr" on its owner's placement)  # createTalkCtrl's message name where it is not the class's
+TALK_NAME = {"Syati": "SyatiRing", "TalkSyati": "SyatiRing", "TamakoroTutorial": "SignBoard", "KinopioAstro": "Kinopio", "KoopaJrShip": "KoopaJr", "DemoKoopaJrShip": "KoopaJr", "Dodoryu": "DodoryuRabbit"}  # (KoopaJr: NPCActorCaps "KoopaJr" on its owner's placement)  # createTalkCtrl's message name where it is not the class's
 
 
 def scene(fs, galaxy, scenario):
@@ -487,7 +489,8 @@ BRK_NAMES = {"AstroDomeComet": ("red", "blue", "white", "yellow", "purple")}
 BRK_POSE = {"Tico": ("colorchange", 0), "TicoFat": ("normal", 0), "Rosetta": ("normal", 0), "DinoPackunEggShellBreak": ("break", 0),
             "WaterBazooka": ("damage", 0), "ElectricBazooka": ("damage", 0), "WaterBazookaCapsule": ("damage", 0), "MogucchiShooter": ("normal", 0),  # startBrk + setBrkFrameAndStop(0) / startBrk Normal
             "WaterBazookaBreak": ("break", 0), "ElectricBazookaBreak": ("break", 0),
-            "HanachanHead": ("normal", 0), "HanachanBody": ("normal", 0), "HanachanBodyS": ("normal", 0)}  # HanachanParts::init: startBrk Normal  # TicoFat: startBrk Normal, frame 0 (ponytail: FatRed as it grows)
+            "HanachanHead": ("normal", 0), "HanachanBody": ("normal", 0), "HanachanBodyS": ("normal", 0),
+            "PrizeRing": ("loop", 0)}  # PrizeRing::exeStart: startBrk Loop, setBrkFrameAndStop(0) (ponytail: Loop / Timeout / End not played)  # HanachanParts::init: startBrk Normal  # TicoFat: startBrk Normal, frame 0 (ponytail: FatRed as it grows)
 
 
 def bvas_entries(arc, model, shapes):
@@ -1921,7 +1924,7 @@ def declare_stars(keep, scenario, appear, jp):
             k = None if s32(r["args"][7]) > 0 else -1
         elif r["name"] == "WoodBox":  # WoodBox::init: declarePowerStar when arg7 is set (no disc data has one)
             k = None if s32(r["args"][7]) not in (0, -1) else -1
-        elif r["name"] in ("CollectTico", "DinoPackun", "OtaKing", "BossStinkBug", "BossBegoman", "BossKameck", "BossKameck2", "StinkBugParent", "TripodBoss", "TombSpider", "KoopaVs1", "KoopaVs2", "KoopaVs3", "IceMerameraKing", "ExterminationSkeletalFishBaby", "SkeletalFishBoss", "KoopaJrShip", "Dodoryu", "TamakoroWithTutorial", "TeresaChief"):  # their init declarePowerStar, always
+        elif r["name"] in ("CollectTico", "DinoPackun", "OtaKing", "BossStinkBug", "BossBegoman", "BossKameck", "BossKameck2", "StinkBugParent", "TripodBoss", "TombSpider", "KoopaVs1", "KoopaVs2", "KoopaVs3", "IceMerameraKing", "ExterminationSkeletalFishBaby", "SkeletalFishBoss", "KoopaJrShip", "Dodoryu", "TamakoroWithTutorial", "TeresaChief", "Syati"):  # their init declarePowerStar, always (Syati: the class, not TalkSyati)
             k = None
         elif r["name"] in ("WaterBazooka", "ElectricBazooka"):  # WaterBazooka::init: getJMapInfoArg0NoInit(bool): declarePowerStar
             k = None if s32(r["args"][0]) != -1 else -1
