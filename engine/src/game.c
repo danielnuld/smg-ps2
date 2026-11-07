@@ -14333,7 +14333,8 @@ static float m_sz; /* (mStickPos.z, below) */
  * PipeModeCube (MarioMove25D: set25Dmode / update25Dmode / updateAxisFromMode) is placed in no stage of the game
  * (only ObjNameTable names it): not ported.
  * The sudden gravity turn (updateGravityVec, m_gravity_turn) sets _10.turning, which clears the 2D stick on the ground.
- * ponytail: checkForceGrounding, the binder's push from moving parts in 2D, the walk tilt and
+ * A moving part's face in 2D pushes him: createAtField (m_create_at_field).
+ * ponytail: checkForceGrounding, the walk tilt and
  * homing of MarioAnimator, beforeJumping2D's _628 (read nowhere) and the warps' _688 (MarioAccess setTrans) are not
  * kept */
 static struct {
@@ -15784,7 +15785,7 @@ static void m_cancel_tornado(Player *m) /* cancelTornadoJump */
     m->spin_lock = 1;
     ss_boost.t = 0; /* _426 */
 }
-/* resetTornado: the tornado off (_F, _544), mYAngleOffset 0. ponytail: no calcTornadoTilt, no AtField of 150 while in it */
+/* resetTornado: the tornado off (_F, _544), mYAngleOffset 0. ponytail: no calcTornadoTilt (its 150 AtField: m_create_at_field) */
 static void m_reset_tornado(Player *m)
 {
     m->tornado = 0; m->tornado_t = 0;
@@ -21026,6 +21027,70 @@ static void bh_update(Player *m)
     m->hvel = v3(0, 0, 0); m->vup = 0;
     bh.step++;
 }
+/* Mario::createAtField (MarioCollision.cpp:144-243): the faces round him, kept for writeBackPhyisicalVector (_57C, _578,
+ * at most 32): two balls of 50 at 50 and 100 up (one of 40 at 40 squatting, of 40 at his place swimming); not the
+ * floors (under 45 degrees, 60 on NoSlip). In a PlaneModeCube a face of a moving part not his ground's pushes him its
+ * depth and is kept. In a tornado jump (_F, _544 over 1) the field is 150 at his place, only the faces of 60 to 120
+ * degrees within 80 of him along the gravity, an edge hit within 45 degrees of his jump left out. ponytail: no
+ * selectPushOff (MarioActor _FC4's bit 17: the actor table's data is not in the port) */
+static V3 at_nrm[32];
+static int at_n;
+static void m_create_at_field(Player *m)
+{
+    int force = m->tornado && m->tornado_t > 1;
+    float r = 50.0f, off = 50.0f;
+    int count = 2;
+    if (swimming) { r = 40.0f; off = 0.0f; }
+    if (m->squat) { r = 40.0f; count = 1; off = 40.0f; }
+    if (force) { r = 150.0f; off = 0.0f; }
+    at_n = 0;
+    ghost_through = player_mode == PM_TERESA && m->t418; /* isThroughWall */
+    for (int i = 0; i < count && at_n < 32; i++) {
+        V3 c = vadd(m->pos, vmul(m->up, off * (i + 1)));
+        Hit h[32];
+        int n = kcl_query(c, r, h, 32);
+        for (int j = 0; j < n && at_n < 32; j++) {
+            if (force) {
+                float a = angle_d(m, h[j].n);
+                if (a < 60.0f || a > 120.0f) continue;
+                if (fabsf(vdot(vsub(h[j].pos, c), m->up)) > 80.0f) continue;
+                if (h[j].flag >= 2 && h[j].flag <= 4 && ang_abs_h(m_jv(m), vmul(h[j].n, -1.0f), m->up) < 0.7853982f) continue;
+            } else if (!swimming) {
+                Tri t = {h[j].inst, h[j].sub, h[j].prism, h[j].inst < 0 ? kcl_icestep : insts[h[j].inst].kcl};
+                float a = (tri_attr(&t) & 0x3F) == 3 ? 60.0f : 45.0f; /* CollisionFloorCode_NoSlip */
+                if (m2.on && tri_moved(&t) && t.inst != m_gtri.inst) {
+                    a = -1.0f;
+                    m->s350 = vadd(m->s350, vmul(h[j].n, h[j].dist)); /* push */
+                }
+                if (angle_d(m, h[j].n) < a) continue;
+            }
+            at_nrm[at_n++] = h[j].n;
+        }
+    }
+    ghost_through = 0;
+}
+/* writeBackPhyisicalVector's jump part (Mario.cpp:1579-1638): unless the gravity is held (MarioActor _334) or walls leave
+ * it alone (_22), each field face he moves into takes his velocity's part into it, and his jump's part into it halves
+ * (_1C._D, the binder's edge push, is not ported: never set). ponytail: no sendMsgUpperPunch to a ceiling's sensor
+ * (no receiver ported), no Fur face's entryWallWalkMode from here (the Bee's stick checks do it) */
+static void m_at_field_jump(Player *m)
+{
+    if (m_334) at_n = 0;
+    if (m->wall_free) return;
+    for (int i = 0; i < at_n; i++) {
+        V3 n = at_nrm[i];
+        float d = vdot(m->vel, n);
+        if (d >= 0.0f) continue;
+#if defined(MARIO2D_TEST) || defined(ROUTE_TEST)
+        static int shown;
+        if (shown++ < 12) printf("atfield: %d faces, cut %.1f into n %.2f %.2f %.2f, jump part %.1f\n", at_n, d, n.x, n.y, n.z, vdot(m_jv(m), n));
+#endif
+        m->vel = vsub(m->vel, vmul(n, d));
+        V3 jv = m_jv(m);
+        float f = vdot(jv, n);
+        if (f <= 0.0f) m_set_jv(m, vsub(jv, vmul(n, f * 0.5f)));
+    }
+}
 /* MarioActor::updateGravityVec(false, ..) (MarioActorGravity.cpp:157-345): a gravity turned 0.4 pi or more at once is
  * a sudden turn: on the ground he drops off next frame (_10._1A: tryJump, ショートジャンプ, the carried move as his jump),
  * jumping he plays ショートジャンプ and his ground normal is the new up; his jump loses its old gravity part and halves
@@ -21327,6 +21392,7 @@ static void update_mario_(void)
         if (mario_anim) anim_update(mario_anim);
         return;
     }
+    m_create_at_field(m); /* createAtField (Mario::update, before the action) */
     m2_check(m); /* check2DMode (before inputStick) */
     m_input_stick(m);
 #ifdef SLOPE_TEST
@@ -21454,6 +21520,7 @@ static void update_mario_(void)
         k = k > 1.0f ? 1.0f : k < -1.0f ? -1.0f : k;
         m2.v688 = vadd(m2.v688, vmul(m2.v6A0, k));
     }
+    if (m->jumping && !swimming) m_at_field_jump(m); /* writeBackPhyisicalVector: the field (fixPositionInTower after the move) */
     float brad = BODY_RADIUS;
     V3 boff = vmul(m->up, BODY_RADIUS);
     m_upd_2C4(m);
@@ -21542,11 +21609,8 @@ static void update_mario_(void)
             }
         }
     }
-    /* writeBackPhyisicalVector: a wall halves the jump's part into it; on the ground walking into one slows the walk */
-    if (m->wall && m->jumping && !m->wall_free) {
-        float into = vdot(m_jv(m), m->wall_n);
-        if (into <= 0) m_set_jv(m, vsub(m_jv(m), vmul(m->wall_n, into * 0.5f)));
-    } else if (m->wall && !m->jumping && vdot(m->vel, m->wall_n) < 0) {
+    /* writeBackPhyisicalVector: on the ground walking into a wall slows the walk (the jump's part: m_at_field_jump) */
+    if (m->wall && !m->jumping && vdot(m->vel, m->wall_n) < 0) {
         float slow = 1.0f - clamp01((-vdot(m->wall_n, m->face) - 0.3f) * 1.4285715f);
         m->tsi = 0;
         m->walk *= slow;

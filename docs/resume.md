@@ -352,8 +352,8 @@ Second console round (2026-10-24), from Daniel's report:
 - feat/mario-sidestep: MarioSideStep after Petari (doSideStep, start / close / update, checkWallPush at the end of
   decideWalkAnimation): walking square into a wall Mario leans on it (壁押し), waits (壁ウエイト), walks along it
   (壁右歩き / 壁左歩き at 6), A jumps off, the spin punches off. Test: `build.sh sidestep <blob> KoopaJrShipLv1Galaxy/1`
-  (the nearest vertical wall: lean, wait, walk; the airship's cannon shells interrupt it now and then). ponytail:
-  checkWallJumpCode (barrier / water walls) not ported.
+  (the nearest vertical wall: lean, wait, walk; the airship's cannon shells interrupt it now and then).
+  checkWallJumpCode (barrier / water / trampoline walls: m_check_wall_jump_code) was ported since.
 - feat/mario-slider: MarioSlider after Petari (checkSliderMode / startSlider, start / update / close, calcGroundAccel,
   calcWallHit, postureCtrl, setHipSliderTilt; checkGroundOnSlope's 100 and steep faces on it; no ground spin on it):
   on Slider floors (code 9: ForestHomePlanet in HoneyBeeKingdom, HugeBattleShipPlanet, IceMountainPlanet,
@@ -368,7 +368,14 @@ Second console round (2026-10-24), from Daniel's report:
   TeresaMario2DGalaxy, KoopaBattleVs1/2/3Galaxy, CannonFleetGalaxy, HellProminenceGalaxy, StarDustGalaxy,
   DarkRoomGalaxy, SandClockGalaxy, CosmosGardenGalaxy, BattleShipGalaxy (dev overlay: out/wt-states for TeresaMario2D 1
   and KoopaBattleVs1 1). Test: `XF=-DPACKS_OVERLAY=wt-states build.sh 2d <blob> TeresaMario2DGalaxy/1`. ponytail:
-  PipeModeCube (MarioMove25D), the gravity flip's 2D handling, checkForceGrounding not ported.
+  checkForceGrounding not ported (the port's checkGround keeps him on the ground). The gravity flip's 2D x 0.75 is in
+  m_gravity_turn. PipeModeCube (MarioMove25D): no StageData archive places one (all scanned, 2026-11-06), not ported.
+- feat/mario-atfield (#336): Mario::createAtField after Petari (MarioCollision.cpp:144-243) and its jump part of
+  writeBackPhyisicalVector (Mario.cpp:1579-1638): the faces round him (2 balls of 50 at 50 / 100 up, 40 squatting) that
+  are no floors (45 degrees, 60 NoSlip) cut the velocity into them and halve the jump's part; the tornado jump's 150 field
+  (60-120 degrees within 80); in 2D a moving part's face (not his ground's) pushes him its depth. Replaces the binder-wall
+  stand-in. Test: `2d` prints `atfield:` cuts; the route still gets EggStar 1's star. ponytail: selectPushOff (_FC4 bit
+  17), sendMsgUpperPunch, the Bee's Fur entryWallWalkMode from it, the swimming branch (MarioSwim's knockback).
 - feat/mario-jetswim: MarioSwim with a carried JetTurtle after Petari (startJet, jet, dropJet, doJetJump and every
   mJetTimer branch of start / update: the jet speed mSwimFrontJetSpeed (Slow), Z brakes, the T inertias, the jet's
   rotation ratios, the floor's mTurboReductionHitFloor, the stream's mTurboReductionStream, the jet jump out of the
