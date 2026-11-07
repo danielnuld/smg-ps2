@@ -1025,7 +1025,7 @@ static int creeper_try(Player *m), creeper_hold(Player *m);
 static int creeper_ride;
 static void pole_init(void);
 static void dossun_place(Inst *in);
-static int nrbms, nsbms; static const Model *m_jbhead, *m_rbeam, *m_mogustone, *m_moguhole;
+static int nrbms, nsbms; static const Model *m_jghead, *m_jbhead, *m_rbeam, *m_mogustone, *m_moguhole;
 const char *game_stage_name = ""; /* the galaxy being played (main.c: its pack name) */
 static void draw_mogu_extras(void), draw_mogucchi_extras(void), draw_whirls(void), update_whirls(void);
 static int t_whirl = -1;
@@ -2555,6 +2555,7 @@ void game_init(const Scene *s, const unsigned char *blob)
               count_type("Teresa", 0) + count_type("Butterfly", 0);
     for (int i = 0; i < NEW_WALKERS; i++) nkuribo += count_type(new_walkers[i].cls, 0);
     nkuribo += BB_FOLLOWERS * count_type("BossBegoman", 0); /* its followers (3 BegomanBaby, 2 BegomanSpike) */
+    nkuribo += 4 * count_type("JumpGuarder", 0); /* JumpGuarder: its sBabyNum BegomanBabies */
     nkuribo += POL_BOMBS * count_type("Polta", 0); /* BombTeresaHolder: sBombTeresaBufferSize (polta.inc) */
     for (u32 i = 0, t = scene_type(s, "BegomanBabyLauncher"); i < s->nobjs; i++) if (s->objs[i].type == (int)t) nkuribo += BL_BABIES(&s->objs[i]); /* its babies */
     int ntspots = count_type("TreasureSpot", 0) + count_type("CoinFlower", 0); /* a coin each when shot */
@@ -2656,6 +2657,13 @@ void game_init(const Scene *s, const unsigned char *blob)
                 memset(&kuribo[ik], 0, sizeof(Kuribo));
                 kuribo[ik].kind = WALK_BOMBTERESA; kuribo[ik].pos = row_pos(r); kuribo[ik].up = up_at(kuribo[ik].pos, v3(0, 1, 0));
                 kuribo[ik].row = i; kuribo[ik].host = -1;
+                kuribo[ik++].state = KURIBO_DEAD;
+            }
+        } else if (!strcmp(s->types + 32 * r->type, "JumpGuarder")) {
+            for (int f = 0; f < 4; f++) { /* JumpGuarder::init: mBabies (sBabyNum JumpGuarderBaby), initWithoutIter, makeActorDead */
+                memset(&kuribo[ik], 0, sizeof(Kuribo));
+                kuribo[ik].kind = WALK_BEGOBABY; kuribo[ik].pos = row_pos(r); kuribo[ik].up = up_at(kuribo[ik].pos, v3(0, 1, 0));
+                kuribo[ik].row = i; kuribo[ik].host = -2;
                 kuribo[ik++].state = KURIBO_DEAD;
             }
         } else if (r->type == t_circle || r->type == t_rail)
@@ -5060,7 +5068,7 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->bridge = strcmp(name, "PhantomShipBridge") == 0;
     ci->dossun = strcmp(name, "Dossun") == 0;
     ci->onimasu = strcmp(name, "Onimasu") == 0 || strcmp(name, "OnimasuPivot") == 0;
-    ci->rbeamer = strcmp(name, "RingBeamer") == 0 ? 1 : strcmp(name, "JumpBeamer") == 0 ? 2 : 0;
+    ci->rbeamer = strcmp(name, "RingBeamer") == 0 ? 1 : strcmp(name, "JumpBeamer") == 0 ? 2 : strcmp(name, "JumpGuarder") == 0 ? 3 : 0;
     ci->sbeamer = strcmp(name, "SearchBeamer") == 0;
     ci->pressure = strcmp(name, "WaterPressure") == 0;
     ci->fpressure = strcmp(name, "FirePressureRadiate") == 0;
@@ -5220,7 +5228,7 @@ static void game_rebind_(void)
     m_otamagma = scene_model(s, "OtaKingMagma"); m_otalfoot = scene_model(s, "OtaKingLongFoot");
     m_otabloom = scene_model(s, "OtaKingMagmaBloom");
     m_pleaf = scene_model(s, "PackunLeaf");
-    m_rbeam = scene_model(s, "JumpBeamerBeam"); m_jbhead = scene_model(s, "JumpBeamerHead"); m_ebeam = scene_model(s, "EyeBeamerBeam");
+    m_rbeam = scene_model(s, "JumpBeamerBeam"); m_jbhead = scene_model(s, "JumpBeamerHead"); m_jghead = scene_model(s, "JumpGuarderHead"); m_ebeam = scene_model(s, "EyeBeamerBeam");
     { static const char *fn[6] = {"FishA", "FishB", "FishC", "FishD", "FishE", "FishF"}; for (int f = 0; f < 6; f++) m_fish[f] = scene_model(s, fn[f]); }
     m_gull = scene_model(s, "SeaGull"); m_sstrap = scene_model(s, "SunakazeKunTrap");
     t_whirl = scene_type(s, "WhirlPoolAccelerator");
@@ -28945,7 +28953,7 @@ enum { BBG_PREDEMOWAIT, BBG_FIRSTCONTACTDEMO, BBG_READY, BBG_NOCALCWAIT, BBG_WAI
  * angle (_D0), lvt[0] mTiredCounter, lvt[1] mElectricCounter, lvt[2] mIsTouchElectricRail, dir mInvertSideVec, phase
  * mCanTrySetReturn, bshow mTurnAfterBlow, bvel _A8 (last gravity) */
 static struct { int nrv, step, asked; int who; float dist; } bg_permit = {0, 0, 0, -1, 99999.0f}; /* BegomanAttackPermitter */
-static int bg_noiter(const Kuribo *k) { return k->host > 0 && kuribo[k->host - 1].kind == WALK_BBEGO; } /* initWithoutIter: a BossBegoman follower */
+static int bg_noiter(const Kuribo *k) { return k->host == -2 || (k->host > 0 && kuribo[k->host - 1].kind == WALK_BBEGO); } /* initWithoutIter: a BossBegoman follower, a JumpGuarder's baby */
 static int bg_swa_off(const Kuribo *k) /* isValidSwitchA && !isOnSwitchA (a follower has none) */
 {
     const Row *r = &sc->objs[k->row];
@@ -35039,8 +35047,8 @@ static void update_dossuns(void)
  * killed. ponytail: the shake level SEs, the head's BRK colours, the force jump's
  * speed guessed (15); the head's clip end read off its drawn pose (unseen: HopStart 30, HopJump 20 frames) */
 #define MAX_RBEAMERS 64
-enum { RB_WAIT, RB_ATTACK, RB_INTER, RB_HIDE, RB_UP, RB_DOWN, RB_PREOPEN, RB_CLOSE, RB_HOPSTART, RB_HOPWAIT, RB_HOPJUMP, RB_HOPEND };
-static struct { int row, nrv, step, alive[3], life[3], hseq, hdrawn, jon, cam; float rad[3], br; u32 lv, lvb[3]; const char *hclip; V3 c4; } rbms[MAX_RBEAMERS];
+enum { RB_WAIT, RB_ATTACK, RB_INTER, RB_HIDE, RB_UP, RB_DOWN, RB_PREOPEN, RB_CLOSE, RB_HOPSTART, RB_HOPWAIT, RB_HOPJUMP, RB_HOPEND, RB_OPEN };
+static struct { int row, nrv, step, alive[3], life[3], hseq, hdrawn, jon, cam, nact, act[4]; float rad[3], br, hry; u32 lv, lvb[3], lvs; const char *hclip; V3 c4; } rbms[MAX_RBEAMERS]; /* hry: JumpGuarder's head rotation Y, act its babies out (mActiveBabies) */
 static int jb_cam_owner = -1; /* the beamer whose event camera runs (mIsEventCamera) */
 static void jb_cam_end(int k) /* JumpEmitter::endEventCamera */
 {
@@ -35067,7 +35075,21 @@ static void jb_cam_update(int k) /* JumpEmitter::updateEventCamera */
 }
 
 static void jb_head(int k, const char *clip) { rbms[k].hclip = clip; rbms[k].hseq++; } /* startBck(mHeadModel) */
-static Anim *jb_head_anim(int row) { return m_jbhead && m_jbhead->skin ? obj_anim(14 * (int)sc->nobjs + row, m_jbhead, "JumpBeamerHead") : NULL; }
+static int jg_row(int row) { return !strcmp(sc->types + 32 * sc->objs[row].type, "JumpGuarder"); }
+static const Model *jb_hmd(int row) { return jg_row(row) ? m_jghead : m_jbhead; } /* mHeadModel */
+static Anim *jb_head_anim(int row) { const Model *hm = jb_hmd(row); return hm && hm->skin ? obj_anim(14 * (int)sc->nobjs + row, hm, jg_row(row) ? "JumpGuarderHead" : "JumpBeamerHead") : NULL; }
+static int rbm_of(int row);
+static void jb_head_mtx(const Inst *in, float hm[16]) /* JumpBeamer's head: at the body's Top; JumpGuarder's (_90, control):
+                                                       * its Body joint x makeMtxTRS((0, 44, 0), the head's rotation) */
+{
+    if (!in->anim || !in->anim->skin || in->anim->skin->njoints < 3) { memcpy(hm, in->m, 64); return; } /* (no pose yet) */
+    if (in->rbeamer != 3) { mat_mul(hm, in->m, in->anim->world[2]); return; }
+    int k = rbm_of(in->row);
+    float bm[16], t[16], pos[3] = {0.0f, 44.0f, 0.0f}, rot[3] = {0.0f, k >= 0 ? rbms[k].hry : 0.0f, 0.0f}, one[3] = {1.0f, 1.0f, 1.0f};
+    mat_mul(bm, in->m, in->anim->world[1]);
+    mat_translate_rot_scale(t, pos, rot, one);
+    mat_mul(hm, bm, t);
+}
 static int jb_head_stopped(int k, int st, int unseen) /* isBckStopped(mHeadModel): its clip started by draw_rbeams */
 {
     Anim *a = rbms[k].hdrawn == rbms[k].hseq ? jb_head_anim(rbms[k].row) : NULL;
@@ -35077,8 +35099,8 @@ static V3 jb_spring(const Inst *in) /* the Jump sensor: the head (at the body's 
 {
     float hm[16], jm[16];
     Anim *ha = jb_head_anim(in->row);
-    mat_mul(hm, in->m, in->anim->world[2]);
-    if (ha && ha->skin == m_jbhead->skin && ha->skin->njoints > 4) { mat_mul(jm, hm, ha->world[4]); memcpy(hm, jm, sizeof hm); }
+    jb_head_mtx(in, hm);
+    if (ha && ha->skin == jb_hmd(in->row)->skin && ha->skin->njoints > 4) { mat_mul(jm, hm, ha->world[4]); memcpy(hm, jm, sizeof hm); }
     return v3(hm[12] - hm[4] * 100.0f, hm[13] - hm[5] * 100.0f, hm[14] - hm[6] * 100.0f);
 }
 
@@ -35119,6 +35141,78 @@ static void rbm_group_nerve(int row, int nrv) /* sendMsgToGroupMember ACTMES_GRO
     for (int i = 0; i < nrbms; i++)
         if (rbm_same_group(r, &sc->objs[rbms[i].row])) { rbms[i].nrv = nrv; rbms[i].step = -1; }
 }
+/* JumpGuarder.cpp after Petari (rbeamer 3, a JumpEmitter as JumpBeamer above): hidden (Down's last frame) until the
+ * group is within sAppearDistance 2000 / 500 (Up), back Down beyond sDisappearDistance 2200; its head (JumpGuarderHead
+ * at its Body joint, 44 up) turns to Mario 3 degrees a frame (updateRotate) in Hide, Wait, PreOpen, Open (< 70) and
+ * Inter; Wait: with a baby dead, every sAttack 360 frames PreOpen -> Open: SHUTTER_OPEN, its dead babies (arg2, 4) out
+ * round the head's Y 64 off (appearFromGuarder: LaunchFromGuarder), held there until step sOpen 70, then sent at the
+ * baby speed (arg1: 16, 8, 4) along their way, LAUNCH_BABY; Close (its clip, SHUTTER_CLOSE level SE), Inter. The hops
+ * as JumpBeamer's, the shake level SE in HopStart / HopWait, its babies out killed at HopStart's step 10.
+ * ponytail: no Hit clip at a staggering Mario (no such state in the port's Mario), its body's enemy attack on babies
+ * not its own, the Green / OnAndOff BRKs, its shadow radius */
+static int jg_babies(int row, int *out) /* mBabies: the walkers it hosts (host -2) */
+{
+    int n = 0;
+    for (int i = 0; i < nkuribo && n < 4; i++) if (kuribo[i].host == -2 && kuribo[i].row == row) out[n++] = i;
+    return n;
+}
+static int jg_nbabies(int row) { int a = sc->objs[row].arg[2]; return a >= 0 && a <= 4 ? a : 4; } /* mNumBabies (arg2) */
+static int jg_baby_dead(int row) /* enableAttack's isDead */
+{
+    int b[4], n = jg_babies(row, b), m = jg_nbabies(row);
+    for (int i = 0; i < n && i < m; i++) if (kuribo[b[i]].state == KURIBO_DEAD) return 1;
+    return 0;
+}
+static void jg_rotate(const Inst *in, typeof(&rbms[0]) o) /* JumpEmitter::updateRotate: its head's Y to Mario, 3 a frame */
+{
+    V3 d = vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14]));
+    V3 ax = vnorm(v3(in->m[0], in->m[1], in->m[2])), az = vnorm(v3(in->m[8], in->m[9], in->m[10]));
+    float x = vdot(d, ax), z = vdot(d, az), l = sqrtf(x * x + z * z);
+    if (l < 1e-6f) return;
+    x /= l; z /= l;
+    float a = z == 0.0f ? (x >= 0.0f ? 90.0f : -90.0f) : z >= 0.0f ? atan2f(x, z) * 57.29578f : 180.0f - atan2f(x, -z) * 57.29578f;
+    float diff = fmodf(a - o->hry + 180.0f, 360.0f);
+    if (diff < 0.0f) diff += 360.0f;
+    diff -= 180.0f; /* MR::repeat(-180, 360) */
+    if (fabsf(diff) < 3.0f) o->hry = a; else o->hry += diff > 0.0f ? 3.0f : -3.0f;
+    o->hry = fmodf(o->hry + 180.0f, 360.0f);
+    if (o->hry < 0.0f) o->hry += 360.0f;
+    o->hry -= 180.0f;
+}
+static void jg_open(Inst *in, typeof(&rbms[0]) o, int st) /* JumpGuarder::exeOpen */
+{
+    const Row *r = &sc->objs[in->row];
+    if (st < 70) jg_rotate(in, o);
+    float hm[16];
+    jb_head_mtx(in, hm);
+    V3 y = vnorm(v3(hm[4], hm[5], hm[6])), z = vnorm(v3(hm[8], hm[9], hm[10])), p = v3(in->m[12], in->m[13], in->m[14]);
+    if (st == 0) {
+        obj_play(in, "Open", 0, 0);
+        se_start(SE_EM_JGUARDER_SHUTTER_OPEN, &in->m[12]);
+        int b[4], n = jg_babies(in->row, b), m = jg_nbabies(in->row);
+        o->nact = 0;
+        for (int i = 0; i < n && i < m; i++) if (kuribo[b[i]].state == KURIBO_DEAD) o->act[o->nact++] = b[i];
+        for (int i = 0; i < o->nact; i++) { /* appearFromGuarder: BegomanBase::appear, LaunchFromGuarder */
+            Kuribo *e = &kuribo[o->act[i]];
+            e->state = KURIBO_WALK; e->grav = vmul(y, -1.0f); e->qy = e->up = y; e->bvel = e->grav;
+            e->tcenter = v3(0, 0, 0); e->phase = 0; e->to = e->from = 0; e->bshow = 0; e->item = 0; e->bind_off = 0;
+            e->lvt[0] = e->lvt[1] = e->lvt[2] = 0; e->clipped = 0; e->act[0] = 0;
+            w_nrv(e, BG_LAUNCH);
+        }
+        printf("jump guarder %d: open, %d babies out%c", in->row, o->nact, 10);
+    }
+    float spd = r->arg[1] == 1 ? 8.0f : r->arg[1] == 2 ? 4.0f : 16.0f; /* mBabyVelocity */
+    for (int i = 0; st <= 70 && i < o->nact; i++) {
+        Kuribo *e = &kuribo[o->act[i]];
+        float ang = 6.2831853f / o->nact * (i + 1); /* rotateVecDegree(&zDir, yDir, 360 / n), each in turn */
+        V3 d = vadd(vmul(z, cosf(ang)), vmul(vcross(y, z), sinf(ang)));
+        if (st < 70) { e->pos = vadd(p, vmul(d, 64.0f)); e->vel = v3(0, 0, 0); } /* sBabyOffset */
+        else { e->vel = vmul(d, spd); e->front = d; e->qz = d; e->ttarget = d; }
+    }
+    if (st == 70) se_start(SE_EM_JGUARDER_LAUNCH_BABY, &in->m[12]);
+    if (st == 74) o->nact = 0; /* sOpenInt */
+    if (st > 0 && (!in->anim || in->anim->done)) { o->nrv = RB_CLOSE; o->step = -1; }
+}
 static void update_rbeamers(void)
 {
     FOR_KIND(i, rbeamer) { /* the beamers in reach (their rows found once) */
@@ -35128,8 +35222,9 @@ static void update_rbeamers(void)
         if (k < 0) continue;
         typeof(&rbms[0]) o = &rbms[k];
         const Row *r = &sc->objs[in->row];
-        int jb = in->rbeamer == 2;
+        int jb = in->rbeamer >= 2, jg = in->rbeamer == 3; /* JumpBeamer, JumpGuarder (both JumpEmitters) */
         if (jb) jb_cam_update(k); /* (control: updateEventCamera) */
+        if (jg && !o->hclip) o->hry = 0.0f;
         if (jb && !o->hclip) { o->nrv = RB_HIDE; o->step = -1; o->br = 145.0f; jb_head(k, "Wait"); obj_play(in, "Down", 0, 0); if (in->anim) in->anim->frame = (float)anim_length(in->anim) - 1.0f; }
         if (r->sw[SW_B] >= 0 && !sw_on(r, SW_B) && o->nrv != RB_INTER) { /* syncSwitchOffB */
             o->nrv = RB_INTER; o->step = -1;
@@ -35139,30 +35234,55 @@ static void update_rbeamers(void)
         switch (o->nrv) {
         case RB_WAIT:
             if (!jb) { if (rbm_near(in->row, 3000.0f, 500.0f)) rbm_group_nerve(in->row, RB_ATTACK); break; }
+            if (jg) { /* JumpGuarder::exeWait: sDisappearDistance 2200, enableAttack (a baby dead: every sAttack 360) */
+                jg_rotate(in, o);
+                if (!rbm_near(in->row, 2200.0f, 500.0f)) rbm_group_nerve(in->row, RB_DOWN);
+                else if (jg_baby_dead(in->row) && st % 360 == 0) { o->nrv = RB_PREOPEN; o->step = -1; }
+                break;
+            }
             if (!rbm_near(in->row, 3200.0f, 500.0f)) rbm_group_nerve(in->row, RB_DOWN);
             else if (r->sw[SW_B] < 0 || sw_on(r, SW_B)) { o->nrv = RB_PREOPEN; o->step = -1; }
             break;
         case RB_HIDE:
+            if (jg) jg_rotate(in, o);
             if (st == 0) jb_head(k, "Wait");
-            if (rbm_near(in->row, 3000.0f, 500.0f)) rbm_group_nerve(in->row, RB_UP);
+            if (rbm_near(in->row, jg ? 2000.0f : 3000.0f, 500.0f)) rbm_group_nerve(in->row, RB_UP); /* sAppearDistance */
             break;
         case RB_UP: case RB_DOWN:
             if (st == 0) { obj_play(in, o->nrv == RB_UP ? "Up" : "Down", 0, 0); se_start(o->nrv == RB_UP ? SE_EM_JGUARDER_APPEAR : SE_EM_JGUARDER_HIDE, &in->m[12]); }
             if (st > 0 && (!in->anim || in->anim->done)) { o->nrv = o->nrv == RB_UP ? RB_WAIT : RB_HIDE; o->step = -1; }
             break;
         case RB_PREOPEN:
+            if (jg) {
+                jg_rotate(in, o);
+                if (!rbm_near(in->row, 2200.0f, 500.0f)) rbm_group_nerve(in->row, RB_DOWN);
+                else if (st == 0) { o->nrv = RB_OPEN; o->step = -1; }
+                break;
+            }
             if (!rbm_near(in->row, 3200.0f, 500.0f)) rbm_group_nerve(in->row, RB_INTER);
             else { o->nrv = RB_ATTACK; o->step = -1; }
             break;
         case RB_CLOSE:
+            if (jg) { /* JumpGuarder::exeClose */
+                if (st == 0) obj_play(in, "Close", 0, 0);
+                o->lvs = se_level(SE_EM_LV_JGUARDER_SHUTTER_CLOSE, &in->m[12], o->lvs);
+                if (st > 0 && (!in->anim || in->anim->done)) { o->nrv = RB_INTER; o->step = -1; }
+                break;
+            }
             if (!in->anim || in->anim->done) { o->nrv = RB_INTER; o->step = -1; }
             break;
+        case RB_OPEN: jg_open(in, o, st); break;
         case RB_HOPSTART:
             if (st == 0) { jb_head(k, "HopStart"); obj_play(in, "Damage", 0, 0); se_start(SE_EM_JGUARDER_HIT, &in->m[12]); o->br = 120.0f; }
+            if (jg) { /* JumpGuarder::exeHopStart: its shake, its babies out gone at step 10 */
+                o->lvs = se_level(SE_EM_LV_JGUARDER_SHAKE, &in->m[12], o->lvs);
+                if (st == 10) { for (int a = 0; a < o->nact; a++) kuribo[o->act[a]].state = KURIBO_DEAD; o->nact = 0; }
+            }
             if (st > 0 && jb_head_stopped(k, st, 30)) { o->nrv = RB_HOPWAIT; o->step = -1; }
             break;
         case RB_HOPWAIT:
             if (st == 0) { if (in->anim) in->anim->speed = 0.0f; jb_head(k, "HopWait"); o->jon = 1; } /* stopBck */
+            if (jg) o->lvs = se_level(SE_EM_LV_JGUARDER_SHAKE, &in->m[12], o->lvs);
             if (st == 300) { o->nrv = RB_HOPEND; o->step = -1; }
             break;
         case RB_HOPJUMP:
@@ -35188,6 +35308,12 @@ static void update_rbeamers(void)
             }
             break;
         case RB_INTER:
+            if (jg) { /* JumpGuarder::exeInter */
+                jg_rotate(in, o);
+                if (!rbm_near(in->row, 2200.0f, 500.0f)) rbm_group_nerve(in->row, RB_DOWN);
+                else { o->nrv = RB_WAIT; o->step = -1; }
+                break;
+            }
             if (st >= 80 && !o->alive[0] && !o->alive[1] && !o->alive[2]) { o->nrv = RB_WAIT; o->step = -1; }
             break;
         }
@@ -35251,23 +35377,24 @@ static void update_rbeamers(void)
 }
 static void draw_rbeams(void)
 {
-    for (int k = 0; m_jbhead && m_jbhead->skin && k < nrbms; k++) { /* JumpBeamer's head at the body's Top */
+    for (int k = 0; k < nrbms; k++) { /* JumpBeamer's head at the body's Top, JumpGuarder's at its Body (jb_head_mtx) */
         const Inst *in = NULL;
-        for (int i = 0; i < ninsts && !in; i++) if (insts[i].rbeamer == 2 && insts[i].row == rbms[k].row) in = &insts[i];
-        if (!in || !row_shown(in->row) || !in->anim || !in->anim->skin || in->anim->skin->njoints < 3 || !rbms[k].hclip) continue;
-        Anim *a = obj_anim(14 * (int)sc->nobjs + in->row, m_jbhead, "JumpBeamerHead");
+        for (int i = 0; i < ninsts && !in; i++) if (insts[i].rbeamer >= 2 && insts[i].row == rbms[k].row) in = &insts[i];
+        const Model *hmd = in ? jb_hmd(in->row) : NULL;
+        if (!in || !hmd || !hmd->skin || !row_shown(in->row) || !in->anim || !in->anim->skin || in->anim->skin->njoints < 3 || !rbms[k].hclip) continue;
+        Anim *a = jb_head_anim(in->row);
         if (!a) continue;
         if (rbms[k].hdrawn != rbms[k].hseq) {
             char n[48];
-            snprintf(n, sizeof n, "jumpbeamerhead/%s", rbms[k].hclip);
+            snprintf(n, sizeof n, "%s/%s", in->rbeamer == 3 ? "jumpguarderhead" : "jumpbeamerhead", rbms[k].hclip);
             for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
             anim_play(a, n, 1.0f, !strcmp(rbms[k].hclip, "Wait") || !strcmp(rbms[k].hclip, "HopWait"), 0);
             rbms[k].hdrawn = rbms[k].hseq;
         }
         anim_update(a);
         float m[16];
-        mat_mul(m, in->m, in->anim->world[2]);
-        draw_skin(m_jbhead, m, a);
+        jb_head_mtx(in, m);
+        draw_skin(hmd, m, a);
     }
     if (!m_rbeam || !m_rbeam->skin) return;
     for (int k = 0; k < nrbms; k++) {
