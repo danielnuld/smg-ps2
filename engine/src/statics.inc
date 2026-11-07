@@ -589,6 +589,167 @@ static void st_objs_update(void)
     }
 }
 
+/* BallBeamer.cpp after Petari (with RingBeam.cpp's rings, mFollowGravity _9c on): placed 50 under its row along world
+ * Y; Wait (Wait clip) until Mario is within 3000 (isNearPlayer), then setupAttack (no SW_A, or SW_A on): Attack 360
+ * frames: each 120 the charge level SE from 75 to 118, the Charge effect at 75, at 119 Sign, SE_EM_BALLBEAMER_ROT_HEAD
+ * and the first of its 12 rings not out appears; Inter 120, then Attack again while SW_A is on (syncSwitchOnA's _90),
+ * else Wait. Its SW_B: Vanish, killed with its rings. A ring (JumpBeamerBeam, its Spread clip at radius / 2000) starts
+ * 75 up its Y along its Z; each frame its point _c0 goes arg0 (12) along the front kept square to the gravity ahead
+ * (makeMtxUpFront), the ring's centre the foot of _c0 on the beamer's Y axis, its radius their distance (2000 at
+ * most), arg1 (530) frames; Mario's sensor 5 off its circle (square to its Y) is shocked (EnemyAttackElectric); its
+ * move SE at the circle's point nearest the camera. The beamer's body (120, 20 down its Y) pushes Mario, star pieces
+ * bounce off it (isMsgStarPieceReflect); its collision the Head KCL at the Head joint's init pose (slice.py KCL_JOINT).
+ * ponytail: no Erase BRK fade, no bloom model, no ring shadows (JumpBeamerBeamShadow / RingBeamShadowDrawer), no
+ * shadow volume, no light control (the engine's shared lighting) */
+#define ST_BB_MAX 8
+#define ST_BB_RINGS 12
+enum { BBM_WAIT, BBM_ATTACK, BBM_INTER };
+typedef struct { int on, st; float rad; V3 a8, c0, ec; u32 lv; } StBbRing;
+typedef struct { int row, nrv, st, on90, swa, swb; u32 lv; StBbRing b[ST_BB_RINGS]; } StBb;
+static StBb st_bbs[ST_BB_MAX];
+static int st_nbbs;
+static const Scene *st_bb_sc;
+static StBb *st_bb(int row)
+{
+    if (st_bb_sc != sc) { st_nbbs = 0; st_bb_sc = sc; }
+    for (int k = 0; k < st_nbbs; k++) if (st_bbs[k].row == row) return &st_bbs[k];
+    if (st_nbbs == ST_BB_MAX) return NULL;
+    StBb *o = &st_bbs[st_nbbs++];
+    memset(o, 0, sizeof *o);
+    o->row = row; o->nrv = BBM_WAIT; o->st = -1;
+    return o;
+}
+static void st_bb_nrv(StBb *o, int n) { o->nrv = n; o->st = -1; }
+static void st_bb_setup_attack(StBb *o, const Row *r) /* setupAttack */
+{
+    if (r->sw[SW_A] < 0 || sw_on(r, SW_A)) { if (o->nrv != BBM_ATTACK) st_bb_nrv(o, BBM_ATTACK); }
+}
+static void st_bb_place(Inst *in) /* its matrix: the row's, 50 down world Y */
+{
+    const Row *r = &sc->objs[in->row];
+    float p[3] = {r->pos[0], r->pos[1] - 50.0f, r->pos[2]};
+    mat_translate_rot_scale(in->m, p, r->rot, r->scale);
+}
+static void st_bb_ring(Inst *in, StBb *o, StBbRing *b) /* RingBeam::exeSpread, attackSensor */
+{
+    const Row *r = &sc->objs[in->row];
+    V3 bp = v3(in->m[12], in->m[13], in->m[14]), y = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+    float speed = r->arg[0] != -1 ? (float)r->arg[0] : 12.0f;
+    int life = r->arg[1] != -1 ? r->arg[1] : 530;
+    if (b->st == 0) {
+        if (!star_demo) se_start(SE_EM_JUMPRING_APPEAR, &b->c0.x);
+        b->a8 = vnorm(v3(in->m[8], in->m[9], in->m[10])); /* extractMtxZDir */
+        b->c0 = vadd(bp, vmul(y, 75.0f));
+    }
+    V3 up = up_at(vadd(b->c0, vmul(b->a8, speed)), y); /* -_b4 */
+    V3 f = vtangent(b->a8, up);
+    if (vlen(f) > 1e-6f) b->a8 = vnorm(f); /* makeMtxUpFront(-_b4, _a8): its Z */
+    b->ec = vadd(bp, vmul(y, vdot(vsub(b->c0, bp), y))); /* calcPerpendicFootToLine */
+    b->c0 = vadd(b->c0, vmul(b->a8, speed));
+    b->rad = vlen(vsub(b->c0, b->ec));
+    if (b->rad > 2000.0f) b->rad = 2000.0f; /* setRadius */
+    if (!star_demo) {
+        V3 ce = vsub(cam_pos, b->ec), sp = b->ec;
+        if (vlen(ce) > 1e-3f) {
+            V3 h = vtangent(ce, y);
+            float k = 1.0f - fabsf(vdot(y, vnorm(ce)));
+            if (vlen(h) > 1e-6f) sp = vadd(b->ec, vmul(vnorm(h), b->rad * k));
+        }
+        b->lv = se_level(SE_EM_LV_RINGBEAM_MOVE, &sp.x, b->lv);
+    }
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), d = vsub(mc, b->ec);
+    if (vlen(d) < b->rad + HIT_BODY_R && !mario->hurt_timer && !mario_hidden) { /* the sensors meet */
+        V3 h = vtangent(d, y);
+        if (vlen(h) > 1e-6f && vlen(vsub(vmul(vnorm(h), b->rad), d)) <= 5.0f + HIT_BODY_R) {
+            if (mario_attack(ATK_ELECTRIC, b->ec)) printf("ball beamer %d: ring shocks Mario%c", o->row, 10);
+        }
+    }
+    if (++b->st > life) b->on = 0; /* isGreaterEqualStep(mLife): kill */
+}
+static void st_bbeamers_update(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        const Row *r = &sc->objs[in->row];
+        if (row_dead[in->row] || strcmp(sc->types + 32 * r->type, "BallBeamer")) continue;
+        StBb *o = st_bb(in->row);
+        if (!o) continue;
+        st_bb_place(in);
+        int swa = r->sw[SW_A] >= 0 && sw_on(r, SW_A), swb = r->sw[SW_B] >= 0 && sw_on(r, SW_B);
+        if (swa && !o->swa) { o->on90 = 1; st_bb_setup_attack(o, r); } /* syncSwitchOnA */
+        if (!swa && o->swa) o->on90 = 0;                                /* syncSwitchOffA */
+        o->swa = swa;
+        if (swb && !o->swb) { /* syncSwitchOnB: Vanish, kill (and its rings) */
+            fx_named("BallBeamer", "Vanish", in->m, in->anim ? (const float (*)[16])in->anim->world : NULL, NULL);
+            for (int b = 0; b < ST_BB_RINGS; b++) o->b[b].on = 0;
+            o->swb = 1;
+            printf("ball beamer %d: vanish%c", in->row, 10);
+            row_kill(in->row);
+            continue;
+        }
+        o->swb = swb;
+        int st = ++o->st;
+        switch (o->nrv) {
+        case BBM_WAIT:
+            if (st == 0) obj_play(in, "Wait", 1, 0);
+            if (vlen(vsub(mario->pos, v3(in->m[12], in->m[13], in->m[14]))) < 3000.0f) st_bb_setup_attack(o, r);
+            break;
+        case BBM_ATTACK:
+            if (st >= 360) { st_bb_nrv(o, BBM_INTER); break; }
+            if (st % 120 >= 75 && st % 120 < 119) o->lv = se_level(SE_EM_LV_RINGBEAM_CHARGE, &in->m[12], o->lv);
+            if (st % 120 == 75) fx_named("BallBeamer", "Charge", in->m, in->anim ? (const float (*)[16])in->anim->world : NULL, NULL);
+            if (st % 120 == 119) {
+                obj_play(in, "Sign", 0, 0);
+                se_start(SE_EM_BALLBEAMER_ROT_HEAD, &in->m[12]);
+                for (int b = 0; b < ST_BB_RINGS; b++) /* tryAttack */
+                    if (!o->b[b].on) { memset(&o->b[b], 0, sizeof o->b[b]); o->b[b].on = 1; printf("ball beamer %d: ring %d%c", in->row, b, 10); break; }
+            }
+            break;
+        case BBM_INTER:
+            if (st >= 120) st_bb_nrv(o, o->on90 ? BBM_ATTACK : BBM_WAIT);
+            break;
+        }
+        for (int b = 0; b < ST_BB_RINGS; b++) if (o->b[b].on) st_bb_ring(in, o, &o->b[b]);
+        /* attackSensor: its body pushes Mario (sendMsgPush) */
+        V3 y = vnorm(v3(in->m[4], in->m[5], in->m[6])), body = vsub(v3(in->m[12], in->m[13], in->m[14]), vmul(y, 20.0f));
+        V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), out = vtangent(vsub(mc, body), mario->up);
+        float l = vlen(out), want = 120.0f + HIT_BODY_R * 0.6f;
+        if (vlen(vsub(mc, body)) < 120.0f + HIT_BODY_R && l > 1e-3f && l < want) mario->pos = vadd(mario->pos, vmul(out, (want - l) / l));
+    }
+}
+static int st_shot(V3 p) /* a star piece: BallBeamer's body reflects it (receiveMsgPlayerAttack) */
+{
+    for (int k = 0; k < st_nbbs && st_bb_sc == sc; k++) {
+        const Inst *in = row_inst(st_bbs[k].row);
+        if (!in || row_dead[in->row]) continue;
+        V3 body = vsub(v3(in->m[12], in->m[13], in->m[14]), vmul(vnorm(v3(in->m[4], in->m[5], in->m[6])), 20.0f));
+        if (vlen(vsub(p, body)) < 120.0f + 30.0f) return 1;
+    }
+    return 0;
+}
+static void st_bbeamers_draw(void)
+{
+    if (!m_rbeam || !m_rbeam->skin || st_bb_sc != sc) return;
+    for (int k = 0; k < st_nbbs; k++) {
+        StBb *o = &st_bbs[k];
+        const Row *r = &sc->objs[o->row];
+        if (!row_shown(o->row)) continue;
+        Anim *a = NULL;
+        for (int b = 0; b < ST_BB_RINGS; b++) {
+            const StBbRing *q = &o->b[b];
+            if (!q->on) continue;
+            if (!a && !(a = obj_anim(16 * (int)sc->nobjs + o->row, m_rbeam, "JumpBeamerBeam"))) return; /* (one pose drawn for each ring in turn) */
+            if (a->clip_id < 0 || strcmp(sc->clips[a->clip_id].name, "jumpbeamerbeam/spread")) anim_start(a, "jumpbeamerbeam/spread", 0);
+            a->speed = 0.0f; a->frame = q->rad / 2000.0f * (float)anim_length(a); /* setBckFrameAndStop */
+            anim_update(a);
+            float m[16];
+            mat_translate_rot_scale(m, r->pos, r->rot, r->scale);
+            m[12] = q->ec.x; m[13] = q->ec.y; m[14] = q->ec.z;
+            draw_skin(m_rbeam, m, a);
+        }
+    }
+}
+
 #ifdef ST_TWALL_TEST /* plain build XF=-DST_TWALL_TEST, HeavenlyBeachGalaxy/1: Mario Ice from frame 300 to 400 */
 static void st_twall_test(void)
 {
@@ -631,8 +792,35 @@ static void st_visit(void)
     }
 }
 #endif
+#ifdef ST_BB_TEST /* plain build XF=-DST_BB_TEST, OceanFloaterLandGalaxy/1: from frame 60 Mario dropped 800 along the
+                    * first BallBeamer's Z and 300 up (then left there), the camera behind him on the beamer */
+static void st_bb_test(void)
+{
+    static int put;
+    if (game_frame < 60) return;
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if (strcmp(sc->types + 32 * r->type, "BallBeamer")) continue;
+        V3 x, z, p = row_pos(r);
+        row_axes(r, &x, &z);
+        z = vnorm(z);
+        V3 y = vnorm(vcross(z, x));
+        if (game_frame >= 400 && vlen(vsub(mario->pos, p)) > 1500.0f && put++ < 20) { mario->pos = vadd(p, vadd(vmul(z, 800.0f), vmul(y, 300.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+        camera_set_override(1, vadd(p, vadd(vmul(z, 2200.0f), vmul(y, 900.0f))), p, y, 45.0f);
+        if (game_frame % 60 == 0) {
+            StBb *o = st_bb((int)i);
+            printf("bb test f %u: Mario %d off, nrv %d st %d, rings%c", game_frame, (int)vlen(vsub(mario->pos, p)), o ? o->nrv : -1, o ? o->st : -1, 10);
+            for (int b = 0; o && b < ST_BB_RINGS; b++) if (o->b[b].on) printf("  ring %d st %d rad %d%c", b, o->b[b].st, (int)o->b[b].rad, 10);
+        }
+        return;
+    }
+}
+#endif
 static void st_update(void)
 {
+#ifdef ST_BB_TEST
+    st_bb_test();
+#endif
 #ifdef ST_VISIT
     st_visit();
 #endif
@@ -641,6 +829,7 @@ static void st_update(void)
 #endif
     st_flags_update();
     st_objs_update();
+    st_bbeamers_update();
 #ifdef ST_FLAG_TEST
     st_flag_test();
 #endif
@@ -648,4 +837,5 @@ static void st_update(void)
 static void st_draw(void)
 {
     st_flags_draw();
+    st_bbeamers_draw();
 }
