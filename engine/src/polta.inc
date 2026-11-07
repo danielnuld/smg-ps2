@@ -8,7 +8,7 @@
  * punches, ground attacks, 2 hits break an arm, repaired after 1200), the body broken again, the core: ポルタダウンデモ,
  * kill (startAfterBossBGM, its power star, its dead switch). Hit only by BombTeresa explosions (bt_update ->
  * pol_explosion); star pieces bounce off it (pol_shot). Its BombTeresas are walker slots after their row (host -1).
- * ponytail: no shadows (initShadowFromCSV / PoltaShadow effect rows only), no BTK Inner, no center screen blur
+ * ponytail: its arms' Shadow.bcsv poles drawn as discs (no volume lines), no BTK Inner, no center screen blur
  * (startCenterScreenBlur), overlayWithPreviousScreen as render_cover, no declareCameraRegisterVec (arg7), the rocks'
  * Froat / Sign clips not played (static models per Color BVA frame), the shadow projection as a 3000 line along
  * gravity (addVelocityKeepHeightUseShadow), a spin on a ground rock's collision taken at its body sensor, four
@@ -26,6 +26,7 @@ typedef struct { int nrv, st, dead; } PolSt; /* an ActorStateBase / NerveExecuto
 typedef struct { Anim *a; char key[32]; char bva[32]; int bva_clip; float bva_f; } PolMd; /* a model's action and BVA */
 typedef struct {                       /* PoltaArm */
     int left, alive, hidden, nrv, st, c8, cc, ctr;   /* mIsLeftArm, !isDead, hideModel, _C8 / _CC, mBrokenCounter */
+    int noshadow;                        /* invalidateShadowAll (Repair, the power-up demo) */
     PolMd md; const Model *m;
     int br_on; PolMd br; float brm[16];  /* mBreakModel (PoltaArmBreak) on _98 */
     int fo_on; PolMd fo;                 /* mFormationModel (PoltaFormationRock) */
@@ -253,14 +254,14 @@ static void pol_arm_update(PolArm *a)
         break;
     case POA_REPAIR:
         if (st == 0) {
-            a->hidden = 0; /* invalidateShadowAll, showModel */
+            a->hidden = 0; a->noshadow = 1; /* invalidateShadowAll, showModel */
             pol_arm_act(a, "Repair");
             a->fo_on = 1; pol_act(&a->fo, pol.fom, "PoltaFormationRock", a->left ? "RepairArmL" : "RepairArmR");
             a->c8 = a->cc;
             printf("polta: %s arm repairs\n", a->left ? "left" : "right");
         }
         if (pol_end(&a->md)) {
-            pol_arm_act(a, "RepairWait");
+            pol_arm_act(a, "RepairWait"); a->noshadow = 0; /* validateShadowAll */
             pol_bva(&a->md, pol_arm_name(a), "BreakLevel", 0.0f);
             pol_arm_nrv(a, POA_WAITREPAIREND);
         }
@@ -968,11 +969,13 @@ static void pol_demo_update(void) /* PoltaDemo's nerves */
             pol_arm_start(&pol.arm[0]); pol_arm_start(&pol.arm[1]);
             pol_cam("PowerUpDemo"); pol_body_act("PowerUpDemo");
             pol_arm_act(&pol.arm[0], "PowerUpDemo"); pol_arm_act(&pol.arm[1], "PowerUpDemo");
+            pol.arm[0].noshadow = pol.arm[1].noshadow = 1; /* invalidateShadowAll */
             pol_player_at("ポルタデモプレイヤー位置");
             pol_formation(1, "PowerUpDemo", "PowerUpDemoArmL", "PowerUpDemoArmR");
         }
         if (st > 0 && pol_end(&pol.md)) {
             pd_end("ポルタパワーアップデモ"); pol_cam(NULL); bgm_start("MBGM_BOSS_09_B");
+            pol.arm[0].noshadow = pol.arm[1].noshadow = 0; /* validateShadowAll */
             pol_formation(0, NULL, NULL, NULL); pol.dm.dead = 1;
         }
         break;
@@ -1077,6 +1080,19 @@ static void pol_draw(void)
     for (int k = 0; k < 2; k++) {
         PolArm *a = &pol.arm[k];
         if (a->alive && !a->hidden) pol_draw_md(a->m, b, &a->md, pol.pos);
+        if (a->alive && !a->hidden && !a->noshadow && a->md.a && a->md.a->skin) { /* initShadowFromCSV: its VolumeOvalPoles (shoulder, elbow, hand
+            * 283.69 out, the fingers' joints, A3..D3 200 / 150 out), dropped 2000. ponytail: the poles as their ovals, its VolumeLines not drawn */
+            static const struct { int j; float x, z, ox; } sh[] = {{3, 100, 100, 0}, {5, 100, 100, 0}, {7, 250, 250, 283.69f}, {8, 30, 120, 0}, {9, 50, 80, 0},
+                {12, 30, 120, 0}, {13, 50, 80, 0}, {16, 30, 120, 0}, {17, 50, 80, 0}, {20, 30, 120, 0}, {21, 50, 80, 0}, {9, 50, 80, 200}, {13, 50, 80, 150},
+                {17, 50, 80, 200}, {21, 50, 80, 200}};
+            for (unsigned i = 0; i < sizeof sh / sizeof sh[0]; i++) {
+                if (sh[i].j >= (int)a->md.a->skin->njoints) continue;
+                float w[16];
+                mat_mul(w, b, a->md.a->world[sh[i].j]);
+                V3 p = v3(w[12] + w[0] * sh[i].ox, w[13] + w[1] * sh[i].ox, w[14] + w[2] * sh[i].ox);
+                draw_shadow(p, pol.U, v3(w[8], w[9], w[10]), sh[i].x, sh[i].z, 0.0f, 50.0f, 2000.0f);
+            }
+        }
         if (a->br_on) pol_draw_md(pol.abrm, a->brm, &a->br, pol.pos);
         if (a->fo_on) pol_draw_md(pol.fom, b, &a->fo, pol.pos);
     }
@@ -1089,6 +1105,7 @@ static void pol_draw(void)
         m[8] = r->z.x; m[9] = r->z.y; m[10] = r->z.z; m[12] = r->pos.x; m[13] = r->pos.y; m[14] = r->pos.z;
         use_row_light(pol.row, r->pos, LIGHT_STRONG);
         render_model(pol.rockm[r->type], m, 0x80, 0x80, 0x80);
+        draw_shadow(r->pos, up_at(r->pos, pol.U), r->z, 120.0f, 100.0f, 0.0f, 50.0f, 2000.0f); /* initShadowFromCSV: 本体 VolumeOval (120, 80, 100) dropped 2000 */
     }
     for (int i = 0; i < POL_GBREAKS; i++) {
         if (pol.gbr_of[i] < 0) continue;

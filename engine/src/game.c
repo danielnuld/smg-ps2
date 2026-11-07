@@ -3586,7 +3586,7 @@ static void update_kiraira(void)
  * point 0 towards point 1 at arg0 a frame (default 10), turning 7.5 degrees a frame, until it hits the map (binder 80)
  * or passes point 1; its body (90) hits Mario (a strong attack) and breaks it. MeteorStrikeEnvironment ones touch
  * nothing. row_turn 0 waiting (row_step the interval), 1 falling (row_step its steps), 2 done. ponytail: one meteor at
- * a time per launcher (no arg2 multi meteors, no start part-way when off screen), no shadow, no break model / lava
+ * a time per launcher (no arg2 multi meteors, no start part-way when off screen), no break model / lava
  * column, no meteor at all before the first frame it is on screen is not checked
  * Its sounds as MeteorStrike.cpp: a MeteorCannon's SE_OJ_CANNON_SHELL_SHOOT at appear, SE_OJ_METEOR_FALL once it is
  * first in the view (isInScreen: 200 about it a step ahead; row_turn 3 from then), an Environment one's
@@ -3665,7 +3665,7 @@ static void update_meteor(void)
  * MagnumKiller (killer 3, Type_MagnumKiller): always a straight shot (mIsLinearShot), never frozen (tryFreeze), its
  * body and binder 70 x its scale, SE_EM_MAGKILLER_FIRING, its fly level SE pitched 1.8 .. 0.9 over 500 .. 1400 from
  * Mario (startMoveLevelSound); enemies it hits do not break it (tryToExplosion / receiveMsgEnemyAttack), Mario does.
- * ponytail: its Shadow (initShadowFromCSV), the near clip at 400 (isValidShowModel) */
+ * ponytail: the near clip at 400 (isValidShowModel) */
 static void hurt_mario(V3 from, float speed);
 static int kcl_query(V3 c, float radius, Hit *out, int max);
 static Killer *killer_of(int row)
@@ -50319,7 +50319,7 @@ static void km_holder(int boss_zone, int what) /* KameckHolder of the boss's zon
  * charging a beam at PowerStarC within 100 after 120), AttackWait 60, Attack (shot at 23 at Mario's ground, 20),
  * Damage (a JetTurtle's hit: its beams killed, HitMarkNormal; final: Down) ends the level, a spin makes it guard
  * (Guard flips Mario), its attack sensor (240) hurts him. Vs2 hides between moves (HideMoveStart / HideMove / End,
- * _30 moves). ponytail: no ActorJointCtrl (Suso1 / Cap1 dynamic joints), no shadow, its quaternion blended on its up /
+ * _30 moves). ponytail: no ActorJointCtrl (Suso1 / Cap1 dynamic joints), its Shadow.bcsv box / lines (bk_draw: spheres, ovals), its quaternion blended on its up /
  * front vectors, overlayWithPreviousScreen as a cover, appearPowerStarWithoutDemo as requestAppearPowerStar, Vs2's
  * BossKameckBarrier (its collision, model and BRK / BTK) not made, Vs2 untested */
 enum { BKQ_WAIT, BKQ_OPENING, BKQ_LV1, BKQ_LV2, BKQ_POWERUP, BKQ_LV3, BKQ_LV4, BKQ_END, BKQ_DONE };
@@ -50399,6 +50399,7 @@ static void bk_try_demo(const char *name, int nrv) /* startTryDemo */
     printf("boss kameck: %s\n", name);
 }
 static void bk_demo_end(void) { pd_end(bk.dname); bk_cam(NULL, 0); bk_host_demo(); bk.dn = BKD_DEAD; } /* endDemo, endAnimCamera, kill */
+static int bk_noshadow; /* invalidateShadowAll (startDemoAppearVs1 / Vs2) until its appear SE stop time (validateShadowAll) */
 static void bk_demo_update(void) /* BossKameckBattleDemo's nerves */
 {
     int st = ++bk.dst, v2 = bk.vs2;
@@ -50407,7 +50408,7 @@ static void bk_demo_update(void) /* BossKameckBattleDemo's nerves */
         if (pd_try_start(bk.dname, bk.row)) { render_cover(2); bk.dn = bk.dpend; bk.dst = -1; }
         break;
     case BKD_WAITAPPEAR:
-        if (st == 0) { bgm_stop(90); bk_host_demo(); }
+        if (st == 0) { bgm_stop(90); bk_host_demo(); bk_noshadow = 1; }
         if (st > 120) { bk.dn = BKD_APPEAR; bk.dst = -1; } /* sAppearKameckTime */
         break;
     case BKD_APPEAR: {
@@ -50416,11 +50417,11 @@ static void bk_demo_update(void) /* BossKameckBattleDemo's nerves */
         bk_cam(c, st == 0);
         if (!v2) {
             if (st < 270) bk_lv(0, SE_BM_LV_KAMECK_DEMO_PRE_APPEAR); /* sVs1DemoAppearSeStopTime */
-            if (st == 270) { bk_se(SE_BM_KAMECK_DEMO_SMOKE); bk_se(SE_BV_KAMECK_APPEAR); }
+            if (st == 270) { bk_se(SE_BM_KAMECK_DEMO_SMOKE); bk_se(SE_BV_KAMECK_APPEAR); bk_noshadow = 0; }
         } else {
             if (st == 60) bk_se(SE_BV_KAMECK_APPEAR); /* sVs2DemoAppearVoiceTiming */
             if (st < 155) bk_lv(0, SE_BM_LV_KAMECK_DEMO_APPEAR);
-            if (st == 155) bk_se(SE_BM_KAMECK_DEMO_APPEA_END);
+            if (st == 155) { bk_se(SE_BM_KAMECK_DEMO_APPEA_END); bk_noshadow = 0; }
         }
         bk_cast_pose();
         if (st > 0 && bk_act_end()) bk_demo_end();
@@ -50733,6 +50734,19 @@ static void bk_draw(void)
     float b[16];
     bk_base(b);
     if (m_bk->skin && bk.anim && bk.anim->skin == m_bk->skin) draw_skin(m_bk, b, bk.anim); else render_model(m_bk, b, 0x80, 0x80, 0x80);
+    if (bk_noshadow || !bk.anim || !bk.anim->skin) return;
+    /* initShadowFromCSV: Shadow.bcsv's spheres / ovals at their joints (offset in the joint's frame), dropped 1000. ponytail:
+     * its VolumeBox (Wand) and VolumeLines (the arms) not drawn (one disc a sphere / oval) */
+    static const struct { int j; float x, z, ox; } sh[] = {{2, 140, 140, 0}, {18, 65, 65, 0}, {16, 55, 55, 50}, {23, 100, 100, 0}, {3, 200, 100, 0},
+                                                         {5, 200, 75, 0}, {11, 55, 55, 50}, {14, 60, 60, 0}, {15, 80, 80, 0}, {10, 80, 80, 0}, {9, 60, 60, 0}};
+    V3 up = vmul(km_g(bk.pos), -1.0f);
+    for (unsigned i = 0; i < sizeof sh / sizeof sh[0]; i++) {
+        if (sh[i].j >= (int)bk.anim->skin->njoints) continue;
+        float w[16];
+        mat_mul(w, b, bk.anim->world[sh[i].j]);
+        V3 p = v3(w[12] + w[0] * sh[i].ox, w[13] + w[1] * sh[i].ox, w[14] + w[2] * sh[i].ox);
+        draw_shadow(p, up, v3(w[8], w[9], w[10]), sh[i].x, sh[i].z, 0.0f, 50.0f, 1000.0f);
+    }
 }
 static void bk_init(const Scene *s, const unsigned char *blob) /* BossKameck::init: its MoveRails, makeActorDead */
 {
@@ -53308,6 +53322,13 @@ void game_draw(void)
             if (!k || row_turn[in->row] == 3) continue;
             float cm[16], rz[16], tm[16];
             V3 kup = vlen(k->up) > 0.5f ? k->up : up_at(k->pos, v3(in->m[4], in->m[5], in->m[6]));
+            if (row_turn[in->row] == 1 || row_turn[in->row] == 2) { /* validateShadow from Appear's end: initShadowVolumeOval (60, 60, 100) x
+                * its scale dropped 2000; a MagnumKiller's Shadow.bcsv 本体 VolumeOvalPole (240, 240, 400) dropped 1000 (ponytail: its pole as
+                * the oval) */
+                V3 g = up_at(k->pos, kup);
+                if (in->killer == 3) draw_shadow(k->pos, g, k->front, 240.0f, 400.0f, 0.0f, 50.0f, 1000.0f);
+                else draw_shadow(k->pos, g, k->front, 60.0f * in->s, 100.0f * in->s, 0.0f, 50.0f, 2000.0f);
+            }
             basis_matrix(tm, k->pos, vnorm(vtangent(kup, k->front)), k->front, 0); /* makeMtxFrontUpPos, then rotation z */
             mat_identity(rz);
             rz[0] = rz[5] = cosf(k->rotz * 0.0174533f); rz[1] = sinf(k->rotz * 0.0174533f); rz[4] = -rz[1];
@@ -53319,6 +53340,14 @@ void game_draw(void)
         if (in->meteor) { /* falling along its rail, turning about its x */
             if (row_turn[in->row] != 1 && row_turn[in->row] != 3) continue;
             V3 dir, p = meteor_pos(in, &dir), up = up_at(p, v3(0, 1, 0));
+            if (strcmp(sc->types + 32 * sc->objs[in->row].type, "MeteorStrikeEnvironment")) { /* exeMove (bound ones): cShadowRadius 120 grown
+                * over its last cShowShadowFrame 150 steps (setShadowVolumeSphereRadius getLinerValue), dropped 3000, drawn while hidden */
+                const float *mp = in->meteor;
+                float sp = sc->objs[in->row].arg[0] > 0 ? (float)sc->objs[in->row].arg[0] : 10.0f;
+                int total = (int)(vlen(vsub(v3(mp[3], mp[4], mp[5]), v3(mp[0], mp[1], mp[2]))) / sp) + 1, st = row_step[in->row] - 1;
+                int fr = total > 150 ? st + 150 - total : st;
+                if (fr >= 0) { float rr = 120.0f * fr / (total < 150 ? total : 150); draw_shadow(p, up, dir, rr, rr, 0.0f, 50.0f, 3000.0f); }
+            }
             float cm[16], rot[16], a = -7.5f * row_step[in->row] * 0.0174533f, tmp[16];
             basis_matrix(tmp, p, fabsf(vdot(up, dir)) > 0.99f ? vnorm(vcross(dir, v3(1, 0, 0))) : up, dir, 0);
             mat_identity(rot);
