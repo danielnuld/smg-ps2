@@ -100,6 +100,7 @@ static const Model *walker_new_model(int row);
 static void mk_update(Kuribo *k), mk_demo_update(void), mk_draw(Kuribo *k, const Model *md, Anim *a), mk_draw_extras(void), mk_begin_demo(int row);
 static int mk_noclip(const Kuribo *k);
 int mk_shot(V3 p); /* IceMerameraKing (ice_meraking.inc) */
+static int st_flag_class(const char *n); static void st_update(void), st_draw(void); /* statics.inc */
 static void mm_update(Kuribo *k), mm_kill(Kuribo *k), mm_btp(Kuribo *k, const Model *md); /* Meramera (meramera.inc) */
 static int mm_down_force(Kuribo *k, V3 from), mm_star(Kuribo *k), mm_fire(Kuribo *k, V3 from);
 /* Petari.cpp's nerves (petari_update) */
@@ -5283,7 +5284,8 @@ static void game_rebind_(void)
         class_apply(in, class_of(r->type, name)); /* the class-name tests, once a class a rebind */
         in->invisible = strncmp(name, "InvisibleWall", 13) == 0 || strcmp(name, "IronCannonLauncherPoint") == 0 || strcmp(name, "ElectricBall") == 0 ||
                         strcmp(name, "StarReturnDemoStarter") == 0 || strcmp(name, "GrandStarReturnDemoStarter") == 0 || /* their stars: srd_draw / gsr_draw */
-                        strcmp(name, "AstroDomeDemoStarter") == 0; /* its SuperSpinDriver: adds_draw */
+                        strcmp(name, "AstroDomeDemoStarter") == 0 || /* its SuperSpinDriver: adds_draw */
+                        st_flag_class(name); /* Flag: its cloth (statics.inc st_draw) */
         if (in->flip) {
             char v[48];
             snprintf(v, sizeof v, "%s#PanelA", name);
@@ -49243,6 +49245,7 @@ int game_test_bk(int frame)
 #include "skeletal_fish_boss.inc" /* SkeletalFishBoss (Kingfin): sfk_*, its guards sfg_* */
 #include "koopajr_ship.inc" /* KoopaJrShip (Bowser Jr.'s airship): kj_*, game_test_kj */
 #include "polta.inc" /* Polta (Bouldergeist): pol_*, game_test_pol */
+#include "statics.inc" /* placed classes once drawn still (Flag ...): st_* */
 /* Test builds: Mario in the boss's SwitchCylinder until it starts, then dropped in a hip drop on its BodyHipDrop part
  * whenever a hit is open; game_bsb_state: sequencer x 100 + nerve */
 int game_test_bsb(void)
@@ -50815,6 +50818,7 @@ void game_update(void)
     update_dswitches();
     update_tboxes();
     update_gaps();
+    st_update();
     { /* MarioAnimator spinEntry / spinUpdate / spinClose, MarioMagic::update: スピンライト (SpinLight, at HandL) kept
        * while 空中ひねり runs to its frame 30 or 地上ひねり to MarioMagic's 25th frame; the ground one ends in
        * スピンライト消去 (SpinLightBurst at the hip) */
@@ -52411,6 +52415,7 @@ void game_draw(void)
         draw_oceanspheres(ce, right, vcross(back, right));
         draw_bigbubbles(ce, right, vcross(back, right));
     }
+    st_draw();
     RESTQ(6);
     gw_draw();
     pro_draw();

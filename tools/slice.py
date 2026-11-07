@@ -268,6 +268,10 @@ KCL_PARTS = {"PhantomShipBridge": {"move.kcl": "Move"}, "SkeletalFishBoss": dict
 # the joint a MapObjActor's own collision follows (SKIN pad 1: game.c Inst.kmove), "Move" unless named here
 COLL_JOINT = {"Shellfish": "Lid"}  # initCollisionPartsAutoEqualScaleOne "Hi" on getJointMtx(Lid)
 HOME_POS = "\u5408\u4f53\u30d6\u30ed\u30c3\u30af\u6545\u90f7\u70b9"  # 合体ブロック故郷点: AssemblyBlock's home (Petari sReturnPosName)
+# Flag.cpp: the cloth's texture alone (loadTexFromArc(mObjName): <name>.arc's <name>.bti), a model with one empty group
+# whose texture game.c's statics.inc (Flag) draws the cloth with
+TEX_ONLY = ("Flag", "FlagKoopaA", "FlagKoopaB", "FlagRaceA", "FlagKoopaCastle", "FlagPeachCastleA", "FlagPeachCastleB",
+            "FlagPeachCastleC", "FlagSurfing", "FlagTamakoro")
 LOGIC = ("FallingSmallRock", "SubmarineSteam", "SubmarineVolcano", "TimerSwitch", "SkeletalFishBossRail", "SkeletalFishBaby", "ChildSkeletalFishBaby", "ExterminationSkeletalFishBaby", "KoopaSwitchKeeper", "KoopaPowerUpSwitch", "KoopaViewSwitchKeeper", "KoopaRestarterVs3", "BossKameckMoveRail", "TripodBossBaseJointPosition", "TripodBossStepPoint", "TripodBossStepStartArea", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
          "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "DeathCube", "DeathSphere",
          "DeathCylinder", "RestartCube", "StarPieceSpot", "WaterCube", "WaterSphere", "WaterCylinder",
@@ -1073,6 +1077,10 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 sk = skin_entry(b, bl, gtab, COLL_JOINT.get(arc.stem, "Move"))
         elif n.endswith(".kcl"):
             kcls[n.split("/")[-1]] = b
+    if not groups and arc.stem in TEX_ONLY:  # TEX_ONLY: its texture in an empty group
+        bti = next(v for k, v in files.items() if k.lower().rsplit("/", 1)[-1] == arc.stem.lower() + ".bti")
+        groups.append(([], [], [], tex.to_ps2(np.ascontiguousarray(jpa.decode_bti(bti)), bti[6], bti[7]), None, None,
+                       (1, 1, 255), False, 1))
     for kn in list(kcls):  # each prism's attribute resolved through its .pa (kcl_codes)
         kcls[kn] = kcl_codes(kcls[kn], next((v for k, v in files.items() if k.lower().split("/")[-1] == kn[:-4] + ".pa"), b""))
     # the model's own collision: <archive>.kcl, else the first that is not a MoveLimit boundary (PuffballPlanetA lists
