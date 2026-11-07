@@ -1885,3 +1885,12 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
   1.8 .. 0.9 over 500 .. 1400 from Mario, no SandColumn (Type_HomingKiller's only, Torpedo neither now), its own
   Shoot / Explosion (jpa.py NAMED MagnumKiller). Test: plain XF="-DST_VISIT=MagnumKiller" KoopaBattleVs3Galaxy/1:
   fired, hits Mario. ponytail: its CSV shadow, the 400 near clip. Repack: KoopaBattleVs3Galaxy (jpa.py NAMED).
+- JumpGuarder (2026-11-07): JumpGuarder.cpp in update_rbeamers as rbeamer 3 (a JumpEmitter beside JumpBeamer):
+  Hide (Down's last frame) until its group is within 2000 / 500, Up, Down beyond 2200; its head (JumpGuarderHead at
+  the Body joint, 44 up) turned to Mario 3 a frame; with a baby dead, every 360 frames Open: its arg2 (4) babies
+  (BegomanBaby walkers hosted with host -2, LaunchFromGuarder) round the head 64 out until step 70, then sent at
+  arg1's speed (16 / 8 / 4), Close, Inter; the hops as JumpBeamer's plus the shake SE, babies out killed at HopStart
+  step 10. Test: plain XF="-DST_VISIT=JumpGuarder" OceanFloaterLandGalaxy/1 (ST_VISIT now also holds Mario at 400..430,
+  after a launch star start): up, open, 4 babies out. ponytail: no Hit clip at a staggering Mario, its body's enemy
+  attack on other babies, the Green / OnAndOff BRKs. Repack: OceanFloaterLandGalaxy (slice.py SKINNED_OBJ JumpGuarder
+  + head, EXTRA JumpGuarderHead / BegomanBaby), sound.py --pack (JGUARDER / BABYBEGO SEs).

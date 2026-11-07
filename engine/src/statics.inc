@@ -604,7 +604,7 @@ static void st_twall_test(void)
 }
 #endif
 #ifdef ST_VISIT /* plain build XF='-DST_VISIT=Class [-DST_VISIT_K=k] [-DST_VISIT_D=d]': from frame 60 Mario held 300
-                * over its k-th row, the camera looking at it from d (1500) along its Z and 600 up */
+                * (and from 400 to 430) over its k-th row, the camera looking at it from d (1500) along its Z and 600 up */
 #ifndef ST_VISIT_K
 #define ST_VISIT_K 0
 #endif
@@ -624,7 +624,7 @@ static void st_visit(void)
         V3 x, z, p = row_pos(r);
         row_axes(r, &x, &z);
         V3 up = vnorm(vcross(z, x));
-        if (game_frame < 90) { mario->pos = vadd(p, vadd(vmul(up, 300.0f), vmul(z, 400.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+        if (game_frame < 90 || (game_frame >= 400 && game_frame < 430)) { mario->pos = vadd(p, vadd(vmul(up, 300.0f), vmul(z, 400.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; } /* (again after a launch star's start) */
         camera_set_override(1, vadd(p, vadd(vmul(vnorm(z), ST_VISIT_D), vmul(up, 600.0f))), p, up, 45.0f);
         if (game_frame % 120 == 60) printf("visit f %u: %s row %u shown %d dead %d%c", game_frame, cls, i, row_shown((int)i), row_dead[i], 10);
         return;
