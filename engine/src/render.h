@@ -56,6 +56,19 @@ void render_mesh_same(void);
 void render_mesh_c(const float (*pos)[3], const float (*uv)[2], int nvert, const u16 *idx, int ntri, u16 tex, int blend, u32 rgba);
 /* the same with a colour a vertex (Gouraud, 0xAABBGGRR, 0x80 = 1.0); blend 3: alpha blended writing depth */
 void render_mesh_vc(const float (*pos)[3], const float (*uv)[2], const u32 *rgba, int nvert, const u16 *idx, int ntri, u16 tex, int blend);
+/* a 128 x 128 8-bit intensity texture the EE rewrites each frame (SnowFloor's GX_TF_I8): render_i8_pixels flips the
+ * slot's buffer and returns it to fill, render_i8_upload sends it (the frame's chain, in order); then render_grid with
+ * tex I8_TEX draws it as colour x 1, alpha I / 255, alpha-tested I / 2 > render_i8_aref's a (GS units) */
+#define I8_TEX 0xFFFE
+#define I8_SLOTS 2
+u8 *render_i8_pixels(int slot);
+void render_i8_upload(int slot);
+void render_i8_aref(int a);
+/* a grid of ncols x nrows world vertices (vertex c x nrows + k, uv 0..1 over tex), each moved by k_shift x shift[c],
+ * drawn as strips between columns c and c + 1 where col_on[c]; blended, depth written, colour 0xAABBGGRR (0x80 = 1.0)
+ * modulating the texture. pos's view-space places are kept while pos and the view stay: one grid drawn shifted */
+void render_grid(const float (*pos)[3], const float (*shift)[3], float k_shift, const float (*uv)[2], int ncols, int nrows,
+                 const u8 *col_on, u16 tex, u32 rgba);
 /* render_mesh on the screen: x 0..640, y 0..448 (HUD units), over everything; colour 0xAABBGGRR (0x80 = 1.0)
  * modulating the texture, additive (Cs x As + Cd) or blended */
 void render_mesh2d(const float (*xy)[2], const float (*uv)[2], int nvert, const u16 *idx, int ntri, u16 tex, u32 rgba, int add);
