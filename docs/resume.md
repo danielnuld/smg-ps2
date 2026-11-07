@@ -1282,6 +1282,13 @@ there needs the embedded blob and every pack rebuilt.
   them on the drawn pose. MarioAccess::setTrans (m_set_trans) keeps the 2D plane point _688 on setPlayerPos warps
   (Koopa / Polta demos, the ghost race, StinkBugParent's demo end, the Plant's top). Test: `walker` prints `homing f`.
   ponytail: lock-on candidates only walkers and pickups at their places (no common sensor list).
+- Teresa (fix/teresa): Teresa.cpp after Petari replaces the improvised Boo (teresa.inc ts_*, TeresaChief a walker too):
+  its 19 nerves (appear from ground / wall on SW_APPEAR, Wait / Walk / RailWalk, Shay, Chase, Aggressive, AttackSuccess,
+  Drift into HideWall, HideWater, Stop on a star piece, Ascension by a fire ball / invincible Mario / GlaringLightArea,
+  Boo Mario's Love nerves), its transparency (Erase / Appear BRK alpha: the body is slice.py's IndDummy screen tint,
+  so it shows as the DummyDisplayModel inside and the model gone at 0), arg7 6 KeySwitch (okeys), coin, TeresaChief's
+  power star (slice.py declare_stars) and after-boss BGM. Test: `teresa` (TransformationExGalaxy/1: Shay (its coin inside at half), Chase, attack,
+  Drift). Repack: slice_all.py PhantomGalaxy, OceanPhantomCaveGalaxy; sound.py --pack those and TransformationExGalaxy.
 
 ## Next
 

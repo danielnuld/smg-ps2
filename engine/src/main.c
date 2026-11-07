@@ -2598,10 +2598,15 @@ int main(void)
           if (t > 0 && t < 1400 && t % 100 == 0) printf("karon test t %d: %d up, life %d\n", t, game_kind_alive(10), game_life()); }
 #endif
 #ifdef TERESA_TEST
-        if (frame == 120) { game_test_enemy(11, 0, 3); game_test_hold(1); } /* 200 off a Boo, his back to it */
-        if (frame > 120 && frame < 400) game_test_hold(0); /* held still: it comes to him */
-        if (frame % 30 == 0 && frame >= 120 && frame <= 600) { char w[96]; game_walker_state(11, w, sizeof w); printf("teresa test f %u: life %d, %s\n", frame, game_life(), w); }
-        if (frame == 450) printf("teresa test: spin by row %d\n", game_test_enemy(11, 0, 1));
+        { static int t, t0; void game_teresa_state(char *out, int n); int game_teresa_test_place(int how); /* once Mario is free */
+          if (game_test_free()) t++;
+          if (t == 1) game_test_unclip(); /* (Mario's back to it: the camera may leave it off the view) */
+          if (!t0 && t == 20) game_test_enemy(11, 0, 3); /* to the Teresas: their zone streamed in */
+          if (!t0 && t >= 90 && t % 30 == 0) { int r = game_teresa_test_place(0); if (r >= 0) { t0 = t; printf("teresa test: facing row %d\n", r); } } /* Shay */
+          if (t0 && t == t0 + 150) printf("teresa test: his back to row %d\n", game_teresa_test_place(1)); /* Chase */
+          if (t0 && t == t0 + 450) printf("teresa test: spin by row %d\n", game_teresa_test_place(2)); /* Drift */
+          if (t0 && t == t0 + 700) printf("teresa test: star piece at it: %d\n", game_test_shoot(11)); /* Stop */
+          if (t0 && t >= t0 && t <= t0 + 900 && t % 15 == 0) { char w[160]; game_teresa_state(w, sizeof w); printf("teresa test t %d: life %d, %s\n", t - t0, game_life(), w); } }
 #endif
 #ifdef BUTTERFLY_TEST
         if (frame >= 120 && frame < 300) game_test_enemy(12, 0, 3); /* by a butterfly while the camera settles */
