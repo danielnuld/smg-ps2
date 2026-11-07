@@ -1332,6 +1332,12 @@ there needs the embedded blob and every pack rebuilt.
   (mDrawStates._1E), a hang force-dropped instead of pressed; checkSidePressPre's hanging case. Test: plain
   XF=-DUPPER_TEST HeavenlyBeachGalaxy/1 (WoodBoxes lifted 300, Mario jumping under each: `upper punch:` and broken).
   ponytail: ItemBlock / SwitchBox not ported; _8C8 taken as the hang's wall when it moves.
+- Walker pushes (feat/walker-push): walker_push_pass after the walkers' update runs each overlapping pair of their
+  sensors through both attackSensors and the receiver's receiveMsgPush, after Petari for Kuribo, KuriboChief, Karikari
+  (mIsPushable kept per nerve), Petari, Gesso (_C8 in control), BasaBasa, Jellyfish, JellyfishElectric, Kanina
+  (tryPushEach, ReboundEach), SamboHead, KoteBug, Karon (addVelocityFromPush / Horizon / Limit,
+  sendMsgPushAndKillVelocityToTarget); sensors invalidated in their down nerves. Test: `walker` prints `walker push f`
+  (the Karikari pack pushes itself apart). ponytail: other walkers' sensors and map objects are not in the pass.
 
 ## Next
 
