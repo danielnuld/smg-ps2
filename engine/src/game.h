@@ -228,10 +228,14 @@ int game_coins(void);
 int game_life(void);
 int game_test_bk(int frame); /* bk test: the BossKameck fight a frame */
 int game_test_tb(int frame); /* tb test: the TripodBoss fight a frame */
+int game_test_dd(int frame); /* dd test: the Dodoryu fight a frame */
 int game_test_kp(int frame); /* kp test: the Koopa Vs1 fight a frame */
 int game_test_mk(int frame); /* mk test: the IceMerameraKing fight a frame */
+int game_test_mm(int frame); /* mm test: a placed Meramera a frame */
 int game_test_sfk(int frame); /* sfk test: the SkeletalFishBoss fight a frame */
 int game_test_sf(int frame); /* sf test: shells at the SkeletalFishBabies a frame */
+int game_test_kj(int frame); /* kj test: the KoopaJrShip fight a frame */
+int game_test_pol(int frame); /* pol test: the Polta fight a frame */
 int game_test_bbego(int frame); /* bbego test: the BossBegoman fight a frame */
 int game_lives(void);
 int game_misses(void);

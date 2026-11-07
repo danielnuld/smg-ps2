@@ -21,7 +21,7 @@
  * a CameraTargetDemoActor at its placement, at its place in the death demo) through dx_tgt.
  * ponytail: the SE_DM_LV_MUTE_BGM's BGM mute (JAudio's flag, no such service: the SE alone); BodyIceOff's
  * MerameraParticleCallBack (SpinPullParticleCallBack: no particle callbacks); the BRKs (normal / goout / recover / down:
- * one baked colour a model); its children are the port's Meramera walker (Meramera.cpp not ported: issue left open) */
+ * one baked colour a model); its children: meramera.inc (Meramera.cpp) */
 enum { MK_SEARCH, MK_BEGINDEMO, MK_THROW, MK_THROW2ND, MK_EXTINGUISH, MK_ESCAPE, MK_ESCAPEJUMP, MK_DAMAGE, MK_PRERECOVER,
        MK_RECOVER, MK_PREATTACK, MK_ATTACK, MK_ATTACKAFTER, MK_ANGRY1, MK_ANGRY2, MK_DEATHWAIT, MK_DEATH };
 #define MK_ICES 6
@@ -113,9 +113,7 @@ static Kuribo *mk_child(int i) /* its ChildObj: the ChildIceMeramera of its zone
 }
 static void mk_child_kill(Kuribo *e) /* Meramera::kill: Break, appearCoinPop 1 */
 {
-    if (e->state == KURIBO_DEAD) return;
-    e->state = KURIBO_DEAD; row_kill(e->row);
-    fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up); pop_coins(e->pos, e->up, 1);
+    if (e->state != KURIBO_DEAD) mm_kill(e);
 }
 static void mk_ice_break(MkIce *c, int sound)
 {
