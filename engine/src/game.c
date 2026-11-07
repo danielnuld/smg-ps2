@@ -25210,22 +25210,23 @@ static V3 w_joint(Kuribo *k, const Model *md, int j, V3 off)
  * left out: no walker here starts them */
 enum { ASC_STOP, ASC_ANIM, ASC_HIT };
 static void asc_start(Kuribo *k, int nrv) { k->phase = nrv; k->timer = -1; }
-static void asc_scale(Kuribo *k, float f1, float f2, float lo, float hi) /* updateScale */
+static void asc_scale(float *y, float *v, float f1, float f2, float lo, float hi) /* updateScale */
 {
-    k->to = ((1.0f - k->from) * f1 + k->to) * f2;
-    k->from += k->to;
-    k->from = k->from < lo ? lo : k->from > hi ? hi : k->from;
+    *v = ((1.0f - *y) * f1 + *v) * f2;
+    *y += *v;
+    *y = *y < lo ? lo : *y > hi ? hi : *y;
 }
-static void asc_update(Kuribo *k, const float p[7])
+static void asc_core(int *nrv, int *t, float *y, float *v, const float p[7]) /* updateNerve on its nerve, step, scale, velocity */
 {
-    if (k->phase == ASC_STOP) return;
-    k->timer++;
-    if (k->phase == ASC_HIT) {
-        if (k->timer == 0) { k->from = 1.0f; k->to = p[4]; } /* resetScale, _18 = _20 */
-        asc_scale(k, p[5], p[6], p[2], p[3]);
-    } else asc_scale(k, p[0], p[1], p[2], p[3]);
-    if (fabsf(1.0f - k->from) < 0.001f && fabsf(k->to) < 0.001f) { k->from = 1.0f; k->to = 0.0f; k->phase = ASC_STOP; } /* tryStop */
+    if (*nrv == ASC_STOP) return;
+    ++*t;
+    if (*nrv == ASC_HIT) {
+        if (*t == 0) { *y = 1.0f; *v = p[4]; } /* resetScale, _18 = _20 */
+        asc_scale(y, v, p[5], p[6], p[2], p[3]);
+    } else asc_scale(y, v, p[0], p[1], p[2], p[3]);
+    if (fabsf(1.0f - *y) < 0.001f && fabsf(*v) < 0.001f) { *y = 1.0f; *v = 0.0f; *nrv = ASC_STOP; } /* tryStop */
 }
+static void asc_update(Kuribo *k, const float p[7]) { asc_core(&k->phase, &k->timer, &k->from, &k->to, p); }
 
 /* KeySwitch.cpp after Petari, the ones an owner makes (initKeySwitchByOwner: KuriboChief's, ExterminationChecker's):
  * appearKeySwitch at a place, DemoStart (カギ出現 without the cinema frame: 40 frames; its actor camera is the owner's
@@ -27250,9 +27251,9 @@ static float w_rail_nearest(const float *p, u32 n, V3 q) /* moveCoordToNearestPo
  * The bomb: Hold (Normal), then Wait 150 (Signal): gravity 1.2, rebounds 0.4 above 5 (SE_EM_BOMBBIRDBOMB_LAND from
  * 5.5); touching Mario it explodes on him; then Explosion (its sensor eased out to 280 in 10, killed after 20; a strong
  * rumble / camera shake by distance 800 / 1200 / 2000). ponytail: no star pointer bind (WalkerStateBindStarPointer),
- * no anim scale hit reaction, no press between roof and ground, no shifting sand (calcVelocityAreaOrRailMoveOnGround),
- * the ground under it a line probe (bb_ground), the bomb's BRKs (Normal / Signal) and LocusSmoke / Explosion / Death
- * effects not drawn (jpa.py NAMED) */
+ * no press between roof and ground (isPressedRoofAndGround: the walker binder keeps no roof nor its press sensor), no
+ * shifting sand (calcVelocityAreaOrRailMoveOnGround), the ground under it a line probe (bb_ground), the bomb's BRKs
+ * (Normal / Signal: BRKs are baked) and its turning quaternion (_9C stays zero) */
 enum { BD_FLY, BD_SEARCH, BD_ATTACK, BD_BLOW, BD_ESCAPE, BD_DAMAGE, BD_FALL, BD_SWOONSTART, BD_SWOON, BD_SWOONEND, BD_TRAMPLE, BD_SINKDOWN };
 enum { BDB_HOLD, BDB_WAIT, BDB_EXPLOSION };
 static V3 sbm_turn(V3 v, V3 to, float deg);
@@ -27309,6 +27310,7 @@ static void bbd_up_from_ground(Kuribo *k, float v) /* addVelocityToUpFromGround:
     float f = vdot(u, k->vel);
     if (v > f) k->vel = vadd(k->vel, vmul(u, v - f));
 }
+static const float bbd_asc[7] = {0.2f, 0.91f, 0.2f, 1.8f, 0.06f, 0.12f, 0.91f}; /* AnimScaleParam() _0 _4 _8 _C _20 _24 _28 */
 static int bbd_swoon(const Kuribo *k) { return k->nrv == BD_SWOONSTART || k->nrv == BD_SWOON || (k->nrv == BD_SWOONEND && k->step < 30); }
 static int bbd_noclip(const Kuribo *k) /* invalidateClipping: mSearchPlayer, or down (Blow .. SinkDown); Escape's startClipped kills it */
 {
@@ -27324,7 +27326,7 @@ static void bbd_damage(Kuribo *k) /* receiveMsgPlayerAttack in flight: its held 
 }
 static int bbd_star(Kuribo *k) /* receiveMsgPlayerAttack: isMsgStarPieceAttack (taken in every nerve) */
 {
-    if (bbd_swoon(k)) return 1; /* startHitReaction (ponytail: no anim scale) */
+    if (bbd_swoon(k)) { k->lvt[2] = ASC_HIT; k->timer = -1; return 1; } /* startHitReaction */
     if (bbd_flying(k)) bbd_damage(k);
     return 1;
 }
@@ -27342,8 +27344,10 @@ static void bbd_update(Kuribo *k)
         k->dir = r->arg[0] != -1;
         k->grav = vmul(walker_up(k, v3(0, 1, 0)), -1.0f);
         k->lvt[0] = -1; k->bshow = 0; k->from = 0.0f; k->to = 1.0f;
+        k->lvt[2] = ASC_STOP; k->len = 1.0f; k->lva[0] = 0.0f; /* mScaleController */
         w_nrv(k, BD_FLY);
     }
+    asc_core(&k->lvt[2], &k->timer, &k->len, &k->lva[0], bbd_asc); /* control: mScaleController->updateNerve */
     k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f); /* onCalcGravity */
     if (k->nrv != BD_BLOW && k->nrv != BD_TRAMPLE && k->nrv != BD_SINKDOWN && k->on_ground && (k->lvt[1] & 0x3F) == 25) w_nrv(k, BD_SINKDOWN); /* isBindedGroundSinkDeath */
     int swb = r->sw[SW_B] >= 0 && sw_on(r, SW_B), demo = pd.name != NULL;
@@ -27520,6 +27524,7 @@ static void update_bbd_bombs(void)
         int ground = collide_n(&c, vmul(g, -1.0f), 60.0f, &gn, &wn, &wall);
         b->bnd = ground || wall; b->n = ground ? gn : wn;
         b->pos = c;
+        if (b->on && b->nrv != BDB_HOLD) { float m[16]; basis_matrix(m, b->pos, vmul(g, -1.0f), v3(0, 0, 1), 0); fx_named("BombBirdBomb", "LocusSmoke", m, NULL, b); } /* start: emitEffect LocusSmoke (kill: deleteEffect) */
     }
 }
 static void draw_bbd_bombs(void)
@@ -39650,7 +39655,8 @@ int game_test_kinoko(int frame)
 #endif
 #ifdef BOMBBIRD_TEST
 /* bombbird test (SandClockGalaxy): Mario held 400 under the first BombBird until 700 (it searches, holds and drops its
- * bombs), then a hit at 700 (bbd_damage: Damage, Fall, Swoon), Mario dropped onto it at 900 (Trample, its coin) */
+ * bombs), then a hit at 700 (bbd_damage: Damage, Fall, Swoon), a star piece at 860 (its hit reaction's scale), Mario
+ * dropped onto it at 900 (Trample, its coin) */
 int game_test_bombbird(int frame)
 {
     game_test_unclip(); /* (Mario under it: its view is elsewhere) */
@@ -39666,6 +39672,8 @@ int game_test_bombbird(int frame)
     V3 up = vmul(k->grav, -1.0f);
     if (frame < 700) { mario->up = up_at(k->pos, mario->up); mario->pos = vsub(k->pos, vmul(up, 400.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
     if (frame == 700) { printf("bombbird test: hit\n"); bbd_damage(k); }
+    if (frame == 860 && bbd_swoon(k)) { printf("bombbird test: a star piece in its swoon\n"); bbd_star(k); } /* startHitReaction */
+    if (frame >= 860 && frame < 900 && frame % 4 == 0) printf("bombbird test f %d: scale nrv %d y %.3f\n", frame, k->lvt[2], k->len);
     if (frame == 900) { mario->pos = vadd(k->pos, vmul(up, 260.0f)); mario->hvel = v3(0, 0, 0); mario->vup = -5.0f; mario->grounded = 0; mario->jumping = 1; }
     if (frame % 10 == 0) {
         printf("bombbird test f %d: row %d nrv %d step %d at %.0f %.0f %.0f vel %.1f gnd %d held %d coins %d\n", frame, k->row, k->nrv, k->step,
@@ -54605,8 +54613,8 @@ void game_draw(void)
                 if (k->kind == WALK_MERAMERA) mm_btp(k, md);
                 if (k->kind == WALK_TERESA) { ts_draw(k, md, m, a); continue; } /* its _D4, transparency, dummy model */
                 if (k->kind == WALK_MKOOPA && k->nrv == MKM_FIRE) fx_named(walker_cls(k), "Fire", m, (const float (*)[16])a->world, k); /* emitEffect Fire (its joint) */
-                if (k->kind == WALK_KCHIEF || k->kind == WALK_SAMBOHEAD || k->kind == WALK_KARON) { /* setBaseScale(mScaleController->_C x mScale) */
-                    float sy = k->from, sx = sqrtf(1.0f / sy);
+                if (k->kind == WALK_KCHIEF || k->kind == WALK_SAMBOHEAD || k->kind == WALK_KARON || (k->kind == WALK_BOMBBIRD && k->len > 0.0f)) { /* setBaseScale(mScaleController->_C x mScale) */
+                    float sy = k->kind == WALK_BOMBBIRD ? k->len : k->from, sx = sqrtf(1.0f / sy);
                     for (int j = 0; j < 3; j++) { m[j] *= sx; m[4 + j] *= sy; m[8 + j] *= sx; }
                 }
                 draw_skin(md, m, a);

@@ -331,6 +331,11 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   ReverseKingdomGalaxy/3, FactoryGalaxy/3, OceanPhantomCaveGalaxy/2; overlay wt-release-wz): a bullet takes Mario (the
   Mogucchi laughs), three hip drops on the capsule: crack, anger, break, its star taken (RK 3, Factory 3; OPC 2 none).
   The worktree's slice.py needs vendor/Petari (headers + NameObjFactory.cpp) for demo_dead_classes.
+- BombBird leftovers (feat/bombbird-ponytails, 2026-11-07): its AnimScaleController (default AnimScaleParam: a star
+  piece in its swoon starts the hit reaction, drawn as setBaseScale(_C)); asc_* now run on any four fields (asc_core:
+  the bird keeps its rail in from / to); BombBirdBomb in jpa.py NAMED (LocusSmoke kept from its drop, Explosion).
+  Test `bombbird` gains a star piece at 860 (its scale 1.14 .. 0.92 .. 1). Left: the press between roof and ground (the
+  walker binder keeps no roof nor press sensor), the bomb's Normal / Signal BRKs (baked).
 
 ## Console release (2026-10-23 / 24)
 
