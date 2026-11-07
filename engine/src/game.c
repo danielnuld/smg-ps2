@@ -397,6 +397,13 @@ static void kj_cast_hook(int row, int type, int part), kj_rebind_place(Inst *in)
 static void dkj_init(const Scene *s), update_dkj(void), dkj_draw(void), dkj_cast_hook(int row, int type, int part); /* DemoKoopaJrShip */
 static int pol_demo(void), pol_shot(V3 p), pol_inst_explosion(int i); /* polta.inc */
 static void pol_init(const Scene *s), pol_find_bombs(void), pol_rebind_inst(const Scene *s), update_polta(void), pol_draw(void);
+/* tamakoro.inc: Tamakoro (the star ball), its TamakoroTutorial */
+static void tmk_init(const Scene *s), tmk_models(const Scene *s), update_tmk(void), tmk_draw(void), tmk_upper(void), tmk_trample_reaction(void);
+static int tmk_try(Player *m), tmk_hold(Player *m);
+static int tmk_riding(void), tmk_enemy_attack(int msg, V3 from), tmk_trample_on(V3 c, float r), tmk_shot(V3 p);
+static float tmk_reach(void);
+static V3 tmk_body(void);
+static int tmk_offence;
 static void basis_matrix(float m[16], V3 pos, V3 up, V3 fwd, float angle);
 static void dome_init(void);
 /* slice.py BRK_ARG: a class whose colour is its BRK stopped at the frame one of its args gives (setBrkFrameAndStop) draws
@@ -2515,6 +2522,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     kj_init(s, blob);
     dkj_init(s);
     pol_init(s);
+    tmk_init(s);
     gh_reset(); /* GhostPlayer: init at its first update */
     for (u32 i = 0; i < s->nobjs; i++)
         if (strcmp(s->types + 32 * s->objs[i].type, "OtaKing") == 0) {
@@ -5261,6 +5269,7 @@ static void game_rebind_(void)
     m_shell = scene_model(s, "KoopaJrShipCannonShell");
     if (!m_shell) m_shell = scene_model(s, "IronCannonLauncherPoint");
     kj_models(s); /* koopajr_ship.inc */
+    tmk_models(s); /* tamakoro.inc */
     /* what Mario rides (Fluff, SpaceCocoon, JumpBranch) keeps its state across the rebuild: found again by its row */
     int ride_row[3] = {flf.inst >= 0 ? insts[flf.inst].row : -1, coc.inst >= 0 ? insts[coc.inst].row : -1,
                        jb.inst >= 0 ? insts[jb.inst].row : -1};
@@ -5271,7 +5280,8 @@ static void game_rebind_(void)
     int t_note = scene_type(s, "NoteFairy"), t_petari = scene_type(s, "Petari"), t_rockc = scene_type(s, "RockCreator"),
         t_wan = scene_type(s, "WanwanRolling"), t_wanm = scene_type(s, "WanwanRollingMini"),
         t_wang = scene_type(s, "WanwanRollingGold"), t_dino = scene_type(s, "DinoPackun"), t_ota = scene_type(s, "OtaKing"), t_bsb = scene_type(s, "BossStinkBug"),
-        t_bk1 = scene_type(s, "BossKameck"), t_bk2 = scene_type(s, "BossKameck2"), t_tsp = scene_type(s, "TombSpider"), t_sfk = scene_type(s, "SkeletalFishBoss"), t_pol = scene_type(s, "Polta"), t_dodo = scene_type(s, "Dodoryu");
+        t_bk1 = scene_type(s, "BossKameck"), t_bk2 = scene_type(s, "BossKameck2"), t_tsp = scene_type(s, "TombSpider"), t_sfk = scene_type(s, "SkeletalFishBoss"), t_pol = scene_type(s, "Polta"), t_dodo = scene_type(s, "Dodoryu"),
+        t_tama = scene_type(s, "TamakoroWithTutorial"), t_tamat = scene_type(s, "TamakoroTutorial");
     static signed char wnk[1024]; /* walker_new_kind by type this rebind: 0 not yet, 1 no, 2 yes */
     static const Model *bloom_of[1024]; /* "<class>Bloom" by type this rebind (snprintf + lookup an object) */
     static unsigned char bloom_ok[1024];
@@ -5285,7 +5295,7 @@ static void game_rebind_(void)
             r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly ||
             r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_ermv || r->type == t_stink || r->type == t_note ||
             r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == t_petari || r->type == t_rockc || r->type == t_wan ||
-            r->type == t_wanm || r->type == t_wang || r->type == t_dino || r->type == t_ota || r->type == t_bsb || r->type == t_bk1 || r->type == t_bk2 || r->type == t_tsp || r->type == t_sfk || r->type == t_pol || r->type == t_dodo ||
+            r->type == t_wanm || r->type == t_wang || r->type == t_dino || r->type == t_ota || r->type == t_bsb || r->type == t_bk1 || r->type == t_bk2 || r->type == t_tsp || r->type == t_sfk || r->type == t_pol || r->type == t_dodo || r->type == t_tama || r->type == t_tamat ||
             (r->type < 1024 ? wnk[r->type] == 2 : walker_new_kind(s->types + 32 * r->type) >= 0))
             continue;
         const char *name = s->types + 32 * r->type;
@@ -16078,6 +16088,7 @@ static int m_combo; /* MarioActor _989: 全滅用クリボー stomped in a row (
 static void mario_trample(void)
 {
     Player *m = mario;
+    if (tmk_offence) { tmk_offence = 0; tmk_trample_reaction(); return; } /* the Tamakoro's Body sent it */
     if (m->walling) m->walling = 0; /* closeStatus */
     m->air_spin = MC.mAirWalkTimeTornado;
     m->spin_lock = 0;
@@ -17721,6 +17732,7 @@ static int mario_attack(int msg, V3 from)
 {
     Player *m = mario;
     if (player_mode == PM_TERESA) { if (msg == ATK_HEATBEAM) { set_player_mode(PM_NORMAL, 1); return 1; } return 0; }
+    if (tmk_riding()) return tmk_enemy_attack(msg, from); /* _934: sendArbitraryMsg to the rush host (Tamakoro) */
     if (player_mode == PM_ICE && msg == ATK_FREEZE) msg = ATK_ENEMY;
     if (msg == ATK_EXTRA_DAMAGE) { if (player_mode == PM_INVINCIBLE) return 0; dm_dec_life(); return 1; }
     switch (msg) {
@@ -21442,6 +21454,12 @@ static void update_mario_(void)
             return;
         }
     }
+    if (tmk_riding() || (warp.from < 0 && jb.inst < 0 && coc.inst < 0 && tmk_try(m))) { /* on a Tamakoro (ACTMES_AUTORUSH_BEGIN) */
+        if (tmk_hold(m)) {
+            if (mario_anim) anim_update(mario_anim);
+            return;
+        }
+    }
     if (coc.inst >= 0 || (warp.from < 0 && jb.inst < 0 && cocoon_try(m))) {
         if (coc.inst >= 0 && cocoon_update(m)) {
             if (mario_anim) anim_update(mario_anim);
@@ -22975,6 +22993,8 @@ static int m_cylinder(V3 c, float r, float w, float h)
 static int mario_touch(V3 c, float r) { return m_cylinder(c, r, 55.0f, mario->grounded ? 60.0f : 70.0f); }
 static int mario_offence(V3 c, float r, V3 grav)
 {
+    tmk_offence = 0;
+    if (tmk_riding()) return tmk_trample_on(c, r) ? MSG_TRAMPLE : MSG_NONE; /* bound: the Tamakoro's Body sensor (sendMsgPlayerTrample) */
     V3 mc = mw.c, rel = vsub(mc, c); /* his eye sensor at _2A0 */
     float d = vlen(rel), fall = mario->grounded ? 0.0f : -mario->vup;
     int above = vdot(grav, vsub(mario->pos, c)) <= 0.0f, horiz = r + 35.0f - vlen(vtangent(rel, grav)) > 0.0f; /* isUnderTarget, cylinderHorizontalCheck */
@@ -40809,6 +40829,7 @@ static void teresa_reflect(Player *m, V3 n, int effect);
 static void foo_hit_wall(Player *m, V3 n);
 static void mario_push_out(V3 c, float r)
 {
+    if (tmk_riding()) return; /* receiveMsgPush while bound: to the Tamakoro, which takes none */
     V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), delta = vsub(c, mc), radial = vtangent(delta, mario->up);
     float axial = vdot(delta, mario->up), sp = 100.0f + r - vlen(delta);
     if (sp < 0.0f || axial <= -r) return;
@@ -41539,6 +41560,7 @@ static void update_shots(void)
         if (!hit) hit = pol_shot(s->pos); /* PoltaRock: isMsgStarPieceAttack; Polta: isMsgStarPieceReflect */
         if (!hit && bgb_shot(s->pos)) hit = 2; /* BigBubble: isMsgStarPieceReflect */
         if (!hit && st_shot(s->pos)) hit = 2;          /* BallBeamer: isMsgStarPieceReflect (statics.inc) */
+        if (!hit && tmk_shot(s->pos)) hit = 2; /* Tamakoro: isMsgStarPieceReflect */
         if (!hit && gap_shot(s->pos)) hit = 1;          /* #143's classes (update_gaps) */          /* Hanachan's parts */         /* Butler: isMsgStarPieceAttack */
         for (int k = 0; k < ninsts && !hit; k++) { /* ItemBubble: isMsgStarPieceAttack bursts it */
             Inst *in = &insts[k];
@@ -44331,6 +44353,7 @@ static void collect(Pickup *p, int n, float reach, int *counter, int fx, u32 se)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, BODY_RADIUS));
     if (bgb_reach() > reach) { reach = bgb_reach(); c = bgbs[bgb_ride].pos; } /* in a BigBubble: its ride sensor gets them */
+    if (tmk_reach() > reach) { reach = tmk_reach(); c = tmk_body(); } /* on a Tamakoro: its Body sensor's tryGetItem */
     for (int i = 0; i < n; i++)
         if (pickup_on(&p[i], 1) && vlen(vsub(p[i].pos, c)) < reach) {
             p[i].alive = PICK_GONE;
@@ -50131,6 +50154,7 @@ int game_test_bk(int frame)
 #include "skeletal_fish_boss.inc" /* SkeletalFishBoss (Kingfin): sfk_*, its guards sfg_* */
 #include "koopajr_ship.inc" /* KoopaJrShip (Bowser Jr.'s airship): kj_*, game_test_kj */
 #include "polta.inc" /* Polta (Bouldergeist): pol_*, game_test_pol */
+#include "tamakoro.inc" /* Tamakoro (the star ball), TamakoroTutorial: tk_*, game_test_tk */
 #include "statics.inc" /* placed classes once drawn still (Flag ...): st_* */
 /* Test builds: Mario in the boss's SwitchCylinder until it starts, then dropped in a hip drop on its BodyHipDrop part
  * whenever a hit is open; game_bsb_state: sequencer x 100 + nerve */
@@ -51801,6 +51825,7 @@ void game_update(void)
     update_kj();
     update_dkj();
     update_polta();
+    update_tmk();
     if (!demo_on) update_km_beams(); /* (the Kameck beams, fire balls, turtles: stopped in a demo) */
     update_tsp();
     if (star_demo) { /* its camera ("powerstar/powerstarget"); Mario plays PowerStarGet meanwhile */
@@ -53092,6 +53117,8 @@ void game_draw(void)
             anim_skin(mario_anim);
             tilt_at = game_frame;
         }
+        static unsigned tku_at = ~0u;
+        if (tmk_riding() && tku_at != game_frame) { tmk_upper(); anim_skin(mario_anim); tku_at = game_frame; } /* setPlayerUpperRotateY */
         static unsigned upper_at = ~0u;
         if (mario_upper && mario_upper->clip_id >= 0 && mario_anim->skin && upper_at != game_frame) { /* XanimePlayerUpper */
             anim_update(mario_upper);
@@ -53199,6 +53226,7 @@ void game_draw(void)
     kj_draw();
     dkj_draw();
     pol_draw();
+    tmk_draw();
     km_draw();
     tsp_draw();
     if (ota.row >= 0 && ota.nrv != OTA_WAITONSWITCH && ota.nrv != OTA_APPEARSTAR && ota.nrv != OTA_DEAD) { /* OtaKing, its feet */
