@@ -6,8 +6,10 @@
 #include <loadfile.h>
 #include <sbv_patches.h>
 #include <sifrpc.h>
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 
 #include "anim.h"
 #include "audio.h"
@@ -324,6 +326,22 @@ u32 disc_read_async(u32 lsn, u32 sectors, void *dst)
 }
 int disc_read_done(u32 seq) { return seq != cd_seq || !sceCdSync(1); }
 #endif
+
+/* newlib asks fstat of every stdio stream before its first read or seek (__smakebuf_r, _fseeko_r): for a host: file
+ * that is a FILEIO getstat RPC, and now and then the IOP answered the RPC before it (the open) a second time. That
+ * stale SIF_CMD_RPC_END was taken for the getstat's, whose own end then came for a client with no call in flight:
+ * _request_end loaded through its NULL packet (TLB miss at 0x10 / 0x18), freed whatever it held, and the RPCs after it
+ * lost their answers or wrote them over stale buffers (a hang, or the EE ending in EELOAD's 0x82000: the EggStar 1 boot
+ * crash right after menus3d.bin opened, 2026-11-06; the .rhy crash of 10-30). The stress test (XF=-DIO_STRESS=n) hit
+ * it at the same RPC every run. So fstat fails here (Makefile --wrap=_fstat): newlib falls back to plain buffering and
+ * lseek, nothing else of ours asks it, and the disc build reads no host files. */
+int __wrap__fstat(int fd, struct stat *st);
+int __wrap__fstat(int fd, struct stat *st)
+{
+    (void)fd; (void)st;
+    errno = ENOSYS;
+    return -1;
+}
 
 static int pack_open(Pack *p, const char *path)
 {
@@ -1035,6 +1053,16 @@ int main(void)
     pick_scenario();
     pk_init();
     mem_mark(&boot_mark);
+#ifdef IO_STRESS /* XF=-DIO_STRESS=n: n host opens / closes before the scene, a sound RPC batch after each (a boot's SIF
+                  * traffic many times over: __wrap__fstat) */
+    for (int i = 0; i < IO_STRESS; i++) {
+        Pack sp;
+        if (pack_open(&sp, "menus3d.bin")) pack_close(&sp);
+        se_flush();
+        if (i % 500 == 0) printf("io stress %d\n", i);
+    }
+    printf("io stress done\n");
+#endif
     scene_load();
 #else
     const u8 *blob = blob_load(&scene, slice_blob) == 0 ? slice_blob : NULL;
