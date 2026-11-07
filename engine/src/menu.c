@@ -1927,11 +1927,11 @@ void menu_time_limit_update(void) /* LayoutActor::movement: the nerve, control, 
     lyt_update(tl.l);
 }
 
-/* --- RaceManagerLayout (Map/RaceManager.cpp: "Race"), GhostPlayer's: Go / Goal / Lose / TimeUp / Rank / ScoreTime pane
- * controls, all their panes hidden at init (hideAllPane); appear / kill by its actor; moved with the scene
- * (connectToSceneLayout: menu_race_update from game.c). ponytail: its effects (RaceStart / RaceGoal: playGo / playGoal
- * only, no ghost race calls them) not emitted */
-static struct { LytInst *l; u8 alive; u16 text[16]; } rcl;
+/* --- RaceManagerLayout (Map/RaceManager.cpp: "Race"), RaceManager's and GhostPlayer's: Go / Goal / Lose / TimeUp / Rank /
+ * ScoreTime pane controls, all their panes hidden at init (hideAllPane); appear / kill by its actor; moved with the
+ * scene (connectToSceneLayout: menu_race_update from game.c). ponytail: its effects (RaceStart / RaceGoal: playGo /
+ * playGoal) not emitted (no layout effect keeper) */
+static struct { LytInst *l; u8 alive; u16 text[16], best[16]; } rcl;
 static void rcl_hide_all(void) /* hideAllPane */
 {
     static const char *const p[] = {"Go", "Goal", "Lose", "TimeUp", "Record", "BestRecord", "Rank"};
@@ -1940,6 +1940,8 @@ static void rcl_hide_all(void) /* hideAllPane */
 static void rcl_init_(void) { memset(&rcl, 0, sizeof rcl); rcl.l = lyt_new("Race"); if (rcl.l) rcl_hide_all(); }
 void menu_race_appear(void) { if (rcl.l) rcl.alive = 1; }
 void menu_race_kill(void) { rcl.alive = 0; }
+void menu_race_hide_all(void) { if (rcl.l) rcl_hide_all(); }
+void menu_race_show(const char *pane) { if (rcl.l) lyt_show_pane(rcl.l, pane, 1); } /* MR::showPane */
 void menu_race_count_and_go(void) /* playCountAndGo */
 {
     if (!rcl.l) return;
@@ -1947,12 +1949,29 @@ void menu_race_count_and_go(void) /* playCountAndGo */
     lyt_show_pane(rcl.l, "BestRecord", 1);
     lyt_start_pane(rcl.l, "Go", "Count", 0);
 }
-void menu_race_lose(void) /* playLose */
+void menu_race_go(void) /* playGo (ponytail: no RaceStart effect) */
 {
     if (!rcl.l) return;
-    lyt_show_pane(rcl.l, "Lose", 1);
-    lyt_start_pane(rcl.l, "Lose", "Lose", 0);
-    lyt_start_pane(rcl.l, "ScoreTime", "Lose", 0);
+    lyt_show_pane(rcl.l, "Go", 1);
+    lyt_start_pane(rcl.l, "Go", "Count", 0);
+    lyt_set_pane_frame(rcl.l, "Go", 0, 180.0f);
+}
+static void rcl_play(const char *pane) /* playGoal / playLose / playTimeUp: the pane's own anim and ScoreTime's */
+{
+    if (!rcl.l) return;
+    lyt_show_pane(rcl.l, pane, 1);
+    lyt_start_pane(rcl.l, pane, pane, 0);
+    lyt_start_pane(rcl.l, "ScoreTime", pane, 0);
+}
+void menu_race_lose(void) { rcl_play("Lose"); }     /* playLose */
+void menu_race_goal(void) { rcl_play("Goal"); }     /* playGoal (ponytail: no RaceGoal effect) */
+void menu_race_time_up(void) { rcl_play("TimeUp"); } /* playTimeUp */
+void menu_race_rank(u32 rank) /* playRank: Rank's anim stopped at the rank's frame */
+{
+    if (!rcl.l) return;
+    lyt_show_pane(rcl.l, "Rank", 1);
+    lyt_start_pane(rcl.l, "Rank", "Rank", 0);
+    lyt_set_pane_frame_stop(rcl.l, "Rank", 0, (float)rank);
 }
 void menu_race_hide_records(void) { if (rcl.l) { lyt_show_pane(rcl.l, "Record", 0); lyt_show_pane(rcl.l, "BestRecord", 0); } } /* hideRecordPane, hideBestRecordPane */
 int menu_race_counting(void) { return rcl.l && lyt_pane_frame(rcl.l, "Go", 0) < 180.0f; } /* isPlayCountAnim */
@@ -1963,7 +1982,7 @@ int menu_race_all_stopped(void) /* isAllAnimStopped */
     for (unsigned i = 0; i < sizeof p / sizeof p[0]; i++) if (!lyt_pane_stopped(rcl.l, p[i], 0)) return 0;
     return 1;
 }
-void menu_race_set_time(u32 frame) /* setTime: updateClearTimeTextBox TimeCounter (makeClearTimeString: System_Time000) */
+static void rcl_time(const char *box, u16 *text, u32 frame) /* updateClearTimeTextBox (makeClearTimeString: System_Time000) */
 {
     if (!rcl.l) return;
     int arg[3] = {59, 59, 99}, na = 0, n = 0;
@@ -1975,14 +1994,16 @@ void menu_race_set_time(u32 frame) /* setTime: updateClearTimeTextBox TimeCounte
             if (s[1] == 6 && na < 3) {
                 char d[8];
                 int k = snprintf(d, sizeof d, s[2] == 5 ? "%02d" : "%d", arg[na++]);
-                for (int j = 0; j < k && n < 14; j++) rcl.text[n++] = (u16)d[j];
+                for (int j = 0; j < k && n < 14; j++) text[n++] = (u16)d[j];
             }
             s += len;
-        } else rcl.text[n++] = *s++;
+        } else text[n++] = *s++;
     }
-    rcl.text[n] = 0;
-    lyt_set_text_rec(rcl.l, "TimeCounter", rcl.text);
+    text[n] = 0;
+    lyt_set_text_rec(rcl.l, box, text);
 }
+void menu_race_set_time(u32 frame) { rcl_time("TimeCounter", rcl.text, frame); }          /* setTime */
+void menu_race_set_best_time(u32 frame) { rcl_time("BestTimeCounter", rcl.best, frame); } /* setBestTime */
 void menu_race_update(void) { if (rcl.alive) lyt_update(rcl.l); } /* LayoutActor::movement */
 
 /* --- ChipCounter (MapObj/ChipCounter.cpp: BlueChipCounter / YellowChipCounter, ChipHolder's) and its CollectCounter

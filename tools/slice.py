@@ -21,7 +21,7 @@ Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
   'OBJS'  u32 n, n × ROW;  'STRT' same layout (Mario start points, arg0 their MarioNo, arg1 their Camera_id)
           ROW = {u16 type, u16 zone, s32 l_id, s32 path_id, f32 pos[3], f32 rot[3], f32 scale[3], s32 arg[8],
                  s16 sw[5] (SW_FIELDS, -1 none), s16 group (GroupId, -1 none)}  (92 B)
-  'PATH'  u32 n, n × {u16 zone, u16 closed, s32 id, u32 npts, u32 nraw, s32 stop_type (path_arg1), s32 pad,
+  'PATH'  u32 n, n × {u16 zone, u16 closed, s32 id, u32 npts, u32 nraw, s32 stop_type (path_arg1), s32 path_arg0 (RaceRail's race id),
           f32 pts[npts][3], f32 raw[nraw][3], nraw × {f32 coord, s32 arg0, s32 arg5}, nraw × {s32 arg1, s32 arg2}}:
           pts the rail as a polyline (Bezier parts sampled, bezier_polyline), raw its JMap points (pnt0), each with its
           distance along pts and its point_arg0 / point_arg5 (map parts: speed, stop time), point_arg1 / 2 (Rock)
@@ -282,7 +282,7 @@ HOME_POS = "\u5408\u4f53\u30d6\u30ed\u30c3\u30af\u6545\u90f7\u70b9"  # 合体ブ
 # whose texture game.c's statics.inc (Flag) draws the cloth with
 TEX_ONLY = ("Flag", "FlagKoopaA", "FlagKoopaB", "FlagRaceA", "FlagKoopaCastle", "FlagPeachCastleA", "FlagPeachCastleB",
             "FlagPeachCastleC", "FlagSurfing", "FlagTamakoro")
-LOGIC = ("BallRail", "SphereRailDash", "FluffWind", "Fountain", "SpringJetWater", "FallingSmallRock", "SubmarineSteam", "SubmarineVolcano", "TimerSwitch", "SkeletalFishBossRail", "SkeletalFishBaby", "ChildSkeletalFishBaby", "ExterminationSkeletalFishBaby", "KoopaSwitchKeeper", "KoopaPowerUpSwitch", "KoopaViewSwitchKeeper", "KoopaRestarterVs3", "BossKameckMoveRail", "TripodBossBaseJointPosition", "TripodBossStepPoint", "TripodBossStepStartArea", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
+LOGIC = ("RaceRail", "BallRail", "SphereRailDash", "FluffWind", "Fountain", "SpringJetWater", "FallingSmallRock", "SubmarineSteam", "SubmarineVolcano", "TimerSwitch", "SkeletalFishBossRail", "SkeletalFishBaby", "ChildSkeletalFishBaby", "ExterminationSkeletalFishBaby", "KoopaSwitchKeeper", "KoopaPowerUpSwitch", "KoopaViewSwitchKeeper", "KoopaRestarterVs3", "BossKameckMoveRail", "TripodBossBaseJointPosition", "TripodBossStepPoint", "TripodBossStepStartArea", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
          "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "DeathCube", "DeathSphere",
          "DeathCylinder", "RestartCube", "StarPieceSpot", "WaterCube", "WaterSphere", "WaterCylinder",
          "AstroChangeStageCube", "MovieStarter", "RunawayRabbitCollect", "PhantomTorch", "PhantomBonfire", "Hanachan",
@@ -427,7 +427,7 @@ def scene(fs, galaxy, scenario):
             npt = len(p0[0])
             paths.append(dict(zone=zid, id=pid, closed=int(str(closed[i] if i < len(closed) else "").lower() == "close"),
                               pts=list(zip(*p0)), cin=list(zip(*p1)) or list(zip(*p0)), cout=list(zip(*p2)) or list(zip(*p0)),
-                              stop=int_or(info, "path_arg1", len(ids), -1)[i], arg0=int_or(pts, "point_arg0", npt, -1),
+                              stop=int_or(info, "path_arg1", len(ids), -1)[i], parg0=int_or(info, "path_arg0", len(ids), -1)[i], arg0=int_or(pts, "point_arg0", npt, -1),
                               arg5=int_or(pts, "point_arg5", npt, -1), arg1=int_or(pts, "point_arg1", npt, -1),
                               arg2=int_or(pts, "point_arg2", npt, -1)))
     for o in objs:
@@ -1690,7 +1690,7 @@ def path_entry(p):
         along.append(along[-1] + math.dist(dense[i - 1], dense[i]))
     n = len(p["pts"])
     a0, a5, a1, a2 = (p.get(k, [-1] * n) for k in ("arg0", "arg5", "arg1", "arg2"))
-    return (struct.pack("<HHiIIii", p["zone"], p["closed"], p["id"], len(dense), n, p.get("stop", -1), 0) +
+    return (struct.pack("<HHiIIii", p["zone"], p["closed"], p["id"], len(dense), n, p.get("stop", -1), p.get("parg0", -1)) +
             b"".join(struct.pack("<3f", *pt) for pt in dense) + b"".join(struct.pack("<3f", *pt) for pt in p["pts"]) +
             b"".join(struct.pack("<fii", along[marks[i]] if i < len(marks) else along[-1], a0[i], a5[i]) for i in range(n)) +
             b"".join(struct.pack("<ii", a1[i], a2[i]) for i in range(n)))
@@ -1864,6 +1864,10 @@ def declare_stars(keep, scenario, appear, jp):
             k = None if s32(r["args"][7]) not in (0, -1) else -1
         elif r["name"] in ("CollectTico", "DinoPackun", "OtaKing", "BossStinkBug", "BossBegoman", "BossKameck", "BossKameck2", "StinkBugParent", "TripodBoss", "TombSpider", "KoopaVs1", "KoopaVs2", "KoopaVs3", "IceMerameraKing", "ExterminationSkeletalFishBaby", "SkeletalFishBoss", "KoopaJrShip", "Dodoryu", "TamakoroWithTutorial"):  # their init declarePowerStar, always
             k = None
+        elif r["name"] == "TeresaRacer":  # TeresaRacer::init: declarePowerStar unless dead (arg0 0 Mario's, 1 Luigi's; ponytail: Mario's)
+            k = None if s32(r["args"][0]) != 1 else -1
+        elif r["name"] == "PenguinRacerLeader":  # PenguinRacerLeader::init: declarePowerStar when mRaceDisabled (arg0 NoInit 0) is 0
+            k = None if s32(r["args"][0]) in (0, -1) else -1
         elif r["name"] == "PenguinCoach":  # PenguinCoach::init: declarePowerStar for Behavior_Star / Tutorial / Race (arg0 1-3)
             k = None if 1 <= s32(r["args"][0]) <= 3 else -1
         elif r["name"] in ("LuigiNPC", "LuigiEvent"):  # LuigiNPC::isDeclarePowerStarType: Afraid, Event, OnTree, Arrested
