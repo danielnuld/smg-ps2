@@ -2194,6 +2194,13 @@ int main(void)
         if (f0 && frame - f0 < 12000) game_test_bk((int)(frame - f0));
     }
 #endif
+#ifdef DD_TEST /* XF=-DDD_TEST, CosmosGardenGalaxy/2: the Dodoryu fight (game_test_dd) */
+    {
+        static u32 f0;
+        if (!f0 && frame > 30 && game_test_free()) f0 = frame;
+        if (f0 && frame - f0 < 30000) game_test_dd((int)(frame - f0));
+    }
+#endif
 #ifdef KP_TEST /* XF=-DKP_TEST, KoopaBattleVs1Galaxy/1: the Koopa Vs1 fight (game_test_kp) */
     {
         static u32 f0;
