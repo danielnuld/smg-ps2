@@ -142,7 +142,7 @@ static void rm_renew_time(void) /* renewTime */
 {
     rm.time = (u32)rm.step;
     if (rm.time < rm.best) {
-        char hi[48], lo[48];
+        char hi[64], lo[64]; /* (ペンギンレース[オーシャンリング]/hi is 50 bytes: 48 cut it, its best time read 0 and never kept) */
         snprintf(hi, sizeof hi, "%s/hi", rm_struct[rm.race].name); snprintf(lo, sizeof lo, "%s/lo", rm_struct[rm.race].name);
         gd_set_value(hi, (int)(rm.time >> 16)); gd_set_value(lo, (int)(rm.time & 0xFFFF)); /* setRaceBestTime */
     }
@@ -234,7 +234,7 @@ static void rm_init(void)
             rm.row = (int)i;
             rm.race = rr_parg0(&rm.rail);
             if (rm.race < 0 || rm.race > 4) rm.race = 0; /* (getRailArg0WithInit -1: sRaceStruct[-1]) */
-            char hi[48], lo[48];
+            char hi[64], lo[64]; /* (renewTime's) */
             snprintf(hi, sizeof hi, "%s/hi", rm_struct[rm.race].name); snprintf(lo, sizeof lo, "%s/lo", rm_struct[rm.race].name);
             rm.best = (u32)gd_value(hi) << 16 | (u32)gd_value(lo); /* getRaceBestTime */
             V3 d, e = nrail_at(rm.rail.pts, rm.rail.np, rm.rail.cl, rm.rail.len, &d); /* calcRailEndPointPosAndDirection */

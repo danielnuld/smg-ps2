@@ -667,6 +667,10 @@ Second console round (2026-10-24), from Daniel's report:
   power star got. Not run: OceanPhantomCave 3 (deep sea mode), the retry (SYATI_TEST=2). ponytail: BTK / BRK colours,
   the head turn joint, shadow, tryPlayerKillTakingActor, sendMsgPush, OceanPhantomCave's BGM calls. Repack:
   OceanRingGalaxy, OceanPhantomCaveGalaxy (slice_all.py + sound.py --pack).
+- Race best time key (fix/436, 2026-11-07): the penguin race's RECORD read 00:00:00 (OceanRing 2) while Phantom's read
+  5400: not the test card. race.inc built '<race>/hi' / '/lo' in 48 bytes; ペンギンレース[オーシャンリング]/hi is 50, cut,
+  so gd_value found nothing and setRaceBestTime stored nothing. 64 now: OceanRing 2 reads best 5400 (01:30:00), a win
+  at 5158 is kept.
 - ChipCounter (feat/290-chip-counter, 2026-11-05): menu.c chc_* (BlueChipCounter / YellowChipCounter / CollectCounter
   in lyt.py COMMON: menus.bin +84 KB): Hide / FrameIn / Show / FrameOut / TryDemo / Complete / CompleteOut, Chip1-5
   ChipGet, ShowHide by short balloons, the count over Mario; game.c chip_group_*: UI range (chips' box +- 2000 or
