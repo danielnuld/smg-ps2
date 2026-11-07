@@ -13,7 +13,7 @@
  * 20); a point with arg0 > 0 passed: Splash, SE_OJ_DROP_LASER_SPLASH and a ClipAreaDrop of that radius there (eased
  * out to it over 15 frames, eased in-out to 0 from 60 to 240, then dead); its appear switch off: Wait (the line
  * shrinks a point a frame). ponytail: the sky drawn before (Petari: after, where the fill left the far depth) goes
- * black; no edge colour (render.c); ClipAreaCollisionFilter's Teresa / KameckBeam exceptions not ported */
+ * black; the edge colour added, not lerped (render.c clip_edge); ClipAreaCollisionFilter's Teresa / KameckBeam exceptions not ported */
 enum { CA_SPHERE = 1, CA_CENTERBOX, CA_BOTTOMBOX, CA_TOPCONE, CA_BOTTOMCONE };
 static int ca_shape_of(const char *name)
 {

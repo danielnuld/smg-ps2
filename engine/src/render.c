@@ -2353,7 +2353,7 @@ void render_grid(const float (*pos)[3], const float (*shift)[3], float k_shift, 
  * black at the far depth (FallOutFieldDraw's GXSetZScaleOffset(0, 1)) where it is still 1: a sprite reading the frame
  * as its texture (TEXA: the bit as 0 / 0x80), alpha tested. The GS has no "farther" depth test nor stencil counts: a
  * volume drawn after one nearer along a ray could set back a pixel the nearer one kept, so the caller sends them
- * nearest first. ponytail: no blurred edge colour (sEdgeColor, the A8 captures' blur) */
+ * nearest first; the edge colour (clip_edge) before the fill */
 static void clip_mode(int ztst, int zwrite)
 {
     AD(GS_SET_FBA(0), GS_REG_FBA); /* the alpha written as is (bloom_pass's; else it is forced to 1) */
@@ -2390,9 +2390,50 @@ void render_clip_begin(void)
     clip_screen(0x80, 0);
     clip_restore();
 }
+/* FallOutFieldDraw::draw's edge: the outside mask (the frame's alpha bit) at a quarter (bloom_q: free until the bloom
+ * pass), four bilinear taps; then sEdgeColor (0, 46, 200, alpha 128) x that mask over the frame, its alpha bit kept,
+ * on the inside alone (DATE; drawn after the fill: the same as Petari's edge then fill), a soft blue rim inside the
+ * boundary. ponytail: added at half (the GS blend has
+ * no per-pixel factor from a texture's colour: Petari lerps by the blurred mask), blurTexture's 5 taps of 0.004 left
+ * to the quarter's bilinear spread */
+static void clip_edge(void)
+{
+    u32 fb = frame[back].address, fw = SCREEN_W >> 6;
+    AD(GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, ZTEST_METHOD_ALLPASS), GS_REG_TEST);
+    AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 1), GS_REG_ZBUF);
+    AD(GS_SET_DTHE(0), GS_REG_DTHE);
+    ad_target(bloom_q, 3, 160, 56);
+    AD(GS_SET_TEXA(0, 0, 0x80), GS_REG_TEXA); /* the frame's alpha bit reads 0 or 0x80 */
+    AD(GS_SET_ALPHA(0, 2, 0, 1, 0), GS_REG_ALPHA); /* Cs x As + Cd */
+    AD(0, GS_REG_TEXFLUSH);
+    AD(GS_SET_TEX0(fb >> 6, fw, FB_PSM, 10, FB_TH, 1, 3, 0, 0, 0, 0, 0), GS_REG_TEX0); /* HIGHLIGHT2: colour Af, alpha At */
+    AD(GS_SET_TEX1(1, 0, 1, 1, 0, 0, 0), GS_REG_TEX1);
+    AD(GS_SET_CLAMP(2, 2, 0, SCREEN_W - 1, 0, SCREEN_H - 1), GS_REG_CLAMP);
+    AD(GS_SET_PRIM(PRIM_SPRITE, 0, 1, 0, 1, 0, 1, 0, 0), GS_REG_PRIM);
+    AD(GS_SET_RGBAQ(0, 0, 0, 0x20, 0x3F800000), GS_REG_RGBAQ);
+    for (int k = 0; k < 4; k++) {
+        int du = (k & 1) ? 24 : 8, dv = (k & 2) ? 24 : 8; /* half and one and a half texels in (UV is unsigned) */
+        AD(GS_SET_UV(du & 0x3FFF, dv & 0x3FFF), GS_REG_UV);
+        AD(GS_SET_XYZ((2048 - SCREEN_W / 2) << 4, (2048 - SCREEN_H / 2) << 4, 0), GS_REG_XYZ2);
+        AD(GS_SET_UV(((SCREEN_W << 4) + du) & 0x3FFF, ((SCREEN_H << 4) + dv) & 0x3FFF), GS_REG_UV);
+        AD(GS_SET_XYZ((2048 - SCREEN_W / 2 + 160) << 4, (2048 - SCREEN_H / 2 + 56) << 4, 0), GS_REG_XYZ2);
+    }
+    AD(GS_SET_FRAME(fb >> 11, fw, FB_PSM, 0xFF000000), GS_REG_FRAME); /* colour only */
+    AD(GS_SET_TEST(0, 0, 0, 0, 1, 0, 1, ZTEST_METHOD_ALLPASS), GS_REG_TEST); /* DATE: the inside alone (its alpha bit 0) */
+    AD(GS_SET_ALPHA(0, 2, 2, 1, 0x40), GS_REG_ALPHA); /* Cs x 128 / 255 + Cd */
+    AD(0, GS_REG_TEXFLUSH);
+    AD(GS_SET_TEX0(bloom_q >> 6, 3, GS_PSM_32, 8, 6, 0, 0, 0, 0, 0, 0, 0), GS_REG_TEX0);
+    AD(GS_SET_CLAMP(2, 2, 0, 159, 0, 55), GS_REG_CLAMP);
+    AD(GS_SET_RGBAQ(0, 46, 200, 0x80, 0x3F800000), GS_REG_RGBAQ); /* sEdgeColor x the mask */
+    AD(GS_SET_UV(0, 0), GS_REG_UV);
+    AD(GS_SET_XYZ((2048 - SCREEN_W / 2) << 4, (2048 - SCREEN_H / 2) << 4, 0), GS_REG_XYZ2);
+    AD(GS_SET_UV(160 << 4, 56 << 4), GS_REG_UV);
+    AD(GS_SET_XYZ((2048 + SCREEN_W / 2) << 4, (2048 + SCREEN_H / 2) << 4, 0), GS_REG_XYZ2);
+    AD(GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA);
+}
 void render_clip_fill(void)
 {
-    ad_open(24);
+    ad_open(64);
     clip_mode(ZTEST_METHOD_ALLPASS, 1);
     AD(GS_SET_TEST(1, ATEST_METHOD_GREATER_EQUAL, 0x80, 0, 0, 0, 1, ZTEST_METHOD_ALLPASS), GS_REG_TEST);
     AD(GS_SET_TEXA(0, 0, 0x80), GS_REG_TEXA); /* the frame's alpha bit reads 0 or 0x80 */
@@ -2407,6 +2448,7 @@ void render_clip_fill(void)
     AD(GS_SET_UV(SCREEN_W << 4, SCREEN_H << 4), GS_REG_UV);
     AD(GS_SET_XYZ((2048 + SCREEN_W / 2) << 4, (2048 + SCREEN_H / 2) << 4, 0), GS_REG_XYZ2);
     AD(0, GS_REG_TEXFLUSH);
+    clip_edge();
     clip_restore();
 }
 /* a convex polygon in view space clipped by the near plane and the guard band's four planes through the eye */
