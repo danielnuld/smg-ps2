@@ -1937,3 +1937,11 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
   within 4000, numb rumble on it); arg3 1: shrinking countdown with the timer SEs, then Vanish and its dead switch.
   Test: plain XF="-DST_VISIT=FlexibleSandPlanetPartsA -DST_VISIT_D=4000" SandClockGalaxy/1: on, quakes at 1.05 and
   0.5. ponytail: the shape callback's texture scale, the move SE's parameter. Repack: SandClockGalaxy (jpa.py NAMED).
+- SpinningBox (2026-11-07): SpinningBox.cpp in statics.inc (st_sboxes_*): its own binder (140 at 80 up, its KCL
+  left out through kcl_off_row) and quaternion axes; Fall / Wait / Sliding (Mario's kick from its side: 17, -0.08,
+  wall / slope bounce at half speed) / Spinning (a spin: 25, -0.01, a wall or slope breaks it), forceBindOnGround,
+  Mario on it: Wait (carried), attacks on Mario from its side while spinning (strong over 10, else flip weak, then
+  Petari's mSlideSpeed = 0.5 bug), pushes, walkers blown (and it breaks), hip drop / death area / water: Break with
+  its 3 star pieces. Test: plain XF=-DST_SB_TEST ReverseKingdomGalaxy/1: kicked, slides over the planet, Wait.
+  ponytail: 2P pointer, box-to-box reflection, electric floor, its SpinningBox BRK, shadow. Repack: ReverseKingdomGalaxy
+  (jpa.py NAMED SpinningBox: Break / Blur).
