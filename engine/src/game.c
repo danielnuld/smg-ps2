@@ -289,7 +289,7 @@ typedef struct {
     int dnpc;        /* Butler 1, TicoDomeLecture 2, Rosetta 3, ButlerExplain 4: demo casts (update_dome_npcs) */
     int hipsw;       /* hip drop switch (update_hip_switches): 1 HipDropSwitch, 2 HipDropTimerSwitch, 3 PicketSwitch(Big) */
     int rotor;       /* map part with a RotateSpeed: turns (rotor_matrix), carries Mario */
-    int halo;        /* ZoneHalo 1 / PowerStarHalo 2: shown only from afar (update_halos) */
+    int halo;        /* ZoneHalo 1 / PowerStarHalo 2: shown only from afar (update_halos); Air 3, AirFar100m 4 (update_airs) */
     int seesaw;      /* PhantomShipHandle: MapPartsSeesaw1AxisRotator, turned by Mario's weight (update_seesaws) */
     int sky;         /* sky dome (Petari Sky): centred on the camera, drawn first */
     int sun;         /* BrightSun: its Sun model far off the camera along its rotation, drawn with the skies */
@@ -5066,7 +5066,8 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->talkcls = strcmp(name, "SignBoard") == 0 ? 1 : strcmp(name, "Tico") == 0 ? 2 : strcmp(name, "Kinopio") == 0 || strcmp(name, "KinopioAstro") == 0 ? 3 :
                   strcmp(name, "ButlerMap") == 0 ? 4 : strcmp(name, "Butler") == 0 ? 5 : lg_cls(name) ? 6 : strcmp(name, "TicoStarRing") == 0 ? 7 : strcmp(name, "TicoComet") == 0 ? 8 : strcmp(name, "HoneyBee") == 0 ? 10 : strcmp(name, "TicoShop") == 0 ? 11 :
                   strcmp(name, "Penguin") == 0 || strcmp(name, "PenguinCoach") == 0 || strcmp(name, "PenguinStudent") == 0 ? 12 : 0;
-    ci->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 : 0;
+    ci->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 :
+               strcmp(name, "DimensionAir") == 0 ? 4 : strcmp(name, "TwilightAir") == 0 || strcmp(name, "DarknessRoomAir") == 0 ? 3 : 0;
     ci->gap = gap_class(name);
     ci->clipcls = strcmp(name, "Tico") == 0 || strcmp(name, "TicoBaby") == 0 || lg_cls(name) ? 1 : /* NameObjFactory: Tico, LuigiNPC */
                   strcmp(name, "SuperSpinDriver") == 0 || strcmp(name, "SuperSpinDriverPink") == 0 || strcmp(name, "SuperSpinDriverGreen") == 0 ? 2 : 0;
@@ -34093,7 +34094,7 @@ static void update_halos(void)
 {
     FOR_KIND(i, halo) {
         Inst *in = &insts[i];
-        if (!in->halo) continue;
+        if (!in->halo || in->halo > 2) continue;
         const Row *r = &sc->objs[in->row];
         float far = r->arg[0] != -1 ? (float)r->arg[0] : 70.0f;
         V3 p = v3(in->m[12], in->m[13], in->m[14]);
@@ -34103,6 +34104,62 @@ static void update_halos(void)
         else if (*hidden && (near < out ? out < d : d < out)) *hidden = 0;     /* isDistanceAppear */
         if (in->invisible != *hidden) printf("halo %d %s at %d\n", in->row, *hidden ? "hidden" : "shown", (int)d);
         in->invisible = *hidden;
+    }
+}
+
+/* Air.cpp (NameObjFactory: HomeAir / DarknessRoomAir / TwilightAir Air, SphereAir PriorDrawAir, SunsetAir / FineAir
+ * ProjectionMapAir, DimensionAir AirFar100m): no demo cast places one, so appear at init: In (Appear at its end) within
+ * arg0 (mDistance, 70) x 100 of Mario, else Out and hidden (Disappear at its end). exeIn: past (arg0 + 20) x 100 its
+ * Disappear, Out; exeOut: hidden once a Disappear anim stopped (isAnyAnimStopped: none, never), within arg0 x 100 shown,
+ * Appear, In. arg1 + 1 (_8D) holds both until the start anim camera ends (in_opening). Clipping: the sphere holding its
+ * model's bounds + 100, out past the far plane (AirFar100m 10000, the others FarMax). row_turn 0 not yet appeared, 1 In,
+ * 2 Out; row_step the frames since Disappear. Drawn: the Air kinds without lit alpha (DarknessRoomAir, TwilightAir,
+ * DimensionAir; slice.py AIR baked at their resting colours). ponytail: Appear / Disappear (DarknessRoomAir's BRK, 59
+ * frames) shown at once / at their end (no BRK at run time, as Halo); tryChange (SwitchA: only SunsetAir has a Change);
+ * HomeAir, SphereAir, SunsetAir and FineAir not drawn: their alpha is GX_LIGHT2's at the camera on each vertex (Alpha2,
+ * LightFunction.cpp:193-195 loadActorLightInfo; their alpha channel lit, diffuse clamp) and VU1 batches carry no vertex
+ * alpha; so neither SphereAir's draw before the planets (PriorDrawAirHolder, SceneExecutor.cpp:140-147) */
+static void update_airs(void)
+{
+    V3 ce, cw, cu;
+    float fovy;
+    camera_pose(&ce, &cw, &cu, &fovy);
+    V3 fwd = vnorm(vsub(cw, ce));
+#ifdef AIR_TEST /* XF=-DAIR_TEST (plain): Mario put at the first drawn Air 60 frames after he is free, back at 600 */
+    static int at_t;
+    static V3 at_home;
+    if (game_test_free() && ++at_t == 60) {
+        at_home = mario->pos;
+        FOR_KIND(i, halo) if (insts[i].halo >= 3) { mario->pos = row_pos(&sc->objs[insts[i].row]); camera_set_override(1, vadd(mario->pos, v3(0, 500, 3000)), mario->pos, v3(0, 1, 0), 45.0f); printf("air test: Mario at %d\n", insts[i].row); break; }
+    }
+    if (at_t == 600) { mario->pos = at_home; camera_set_override(1, vadd(at_home, v3(0, 500, 3000)), at_home, v3(0, 1, 0), 45.0f); printf("air test: Mario back\n"); }
+#endif
+    FOR_KIND(i, halo) {
+        Inst *in = &insts[i];
+        if (in->halo < 3) continue;
+        const Row *r = &sc->objs[in->row];
+        if (r->arg[1] != -1 && in_opening) continue; /* _8D && !isStartAnimCameraEnd */
+        float dist = r->arg[0] != -1 ? (float)r->arg[0] : 70.0f; /* getJMapInfoArg0NoInit(mDistance) */
+        V3 p = v3(in->m[12], in->m[13], in->m[14]);
+        float d = vlen(vsub(p, mario->pos)); /* calcDistanceToPlayer */
+        int dis_len = !strcmp(sc->types + 32 * r->type, "DarknessRoomAir") ? 59 : 0; /* its disappear.brk; 0 none */
+        signed char *nrv = &row_turn[in->row];
+        if (!*nrv) /* appear: In, or Out with Disappear at its end and hideModel */
+            *nrv = d < 100.0f * dist ? 1 : 3;
+        else if (*nrv == 1) { /* exeIn */
+            if (100.0f * (20.0f + dist) < d) { *nrv = 2; row_step[in->row] = 0; } /* Disappear */
+        } else { /* exeOut */
+            row_step[in->row]++;
+            if (*nrv == 2 && dis_len && row_step[in->row] >= dis_len) *nrv = 3; /* isAnyAnimStopped(Disappear): hideModel */
+            if (d < 100.0f * dist) *nrv = 1; /* showModel, Appear */
+        }
+        int hidden = *nrv == 3;
+        /* ClippingJudge: the sphere (model bounds + 100, setClippingTypeSphereContainsModelBoundingBox) past the far
+         * plane (FarMax: never) */
+        float rad = in->md ? in->md->radius * in->s + 100.0f : 100.0f;
+        int clipped = in->halo == 4 && vdot(vsub(p, ce), fwd) - rad > 10000.0f;
+        if (in->invisible != (hidden || clipped)) printf("air %d %s at %d" "\n", in->row, hidden || clipped ? "hidden" : "shown", (int)d);
+        in->invisible = hidden || clipped;
     }
 }
 
@@ -50690,6 +50747,7 @@ void game_update(void)
     if (!opening_on) game_frame++; /* frames of play: the starter flight begins at 2 */
     LQ(1, update_rotors());
     LQ(2, update_halos());
+    update_airs(); /* registerDemoSimpleCastAll: they move in demos too */
     LQ(3, update_railers());
     LQ(4, update_talkers());
     update_bees();
