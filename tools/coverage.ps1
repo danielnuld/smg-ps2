@@ -28,7 +28,7 @@ foreach ($r in $rows) {
     }
     if (-not $line) { $line = ($txt | Select-Object -Last 1) }
     $m = [regex]::Match($line, "slow (\d+), worst (\d+) us, runtime (\d+) KB")
-    if ($line -match "misses [1-9]") { $result = "miss" }  # Mario stands still: any miss is a bug (no ground...)
+    if ($line -match "misses [1-9]") { $result = "miss" }  # Mario stands still, his life kept full (the cover line counts the hits): a miss is a fall, a death area, a black hole
     $res += [pscustomobject]@{ galaxy = $r.galaxy; scenario = $r.scenario; result = $result;
         slow = $m.Groups[1].Value; worst_us = $m.Groups[2].Value; runtime_kb = $m.Groups[3].Value; line = $line.Trim() }
     "$scen $result $($m.Groups[2].Value)"

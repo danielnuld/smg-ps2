@@ -2712,16 +2712,21 @@ int main(void)
 #endif
 #ifdef COVER_TEST
         /* coverage run (tools/coverage.ps1): a launch star at frame 400 (after the ScenarioStarter flight) if there is
-         * one, then one line at 1200 */
+         * one, then one line at 1200. Mario stands still: a hit by an enemy walking or shooting into him is no port bug,
+         * his life is filled again (the hits counted), so a miss is a fall, a death area or a black hole */
         if (frame == 400)
             game_test_spindriver(0);
         {
             static u32 prev, slow;
+            static int hits, life0 = 3;
             if (frame > 120 && prev && t0 - prev > (u32)(20000 * EE_MHZ)) slow++;
             prev = t0;
+            if (game_life() < life0) hits++;
+            if (game_life() > 0 && game_life() < 3) game_test_life(3);
+            life0 = game_life();
             if (frame == 1200)
-                printf("cover: %s ok, slow %u, worst %u us, runtime %u KB, lives %d, misses %d\n", scen, slow,
-                       (u32)(worst / EE_MHZ), mem_total() >> 10, game_lives(), game_misses());
+                printf("cover: %s ok, slow %u, worst %u us, runtime %u KB, lives %d, misses %d, hits %d\n", scen, slow,
+                       (u32)(worst / EE_MHZ), mem_total() >> 10, game_lives(), game_misses(), hits);
         }
 #endif
         stream_update(&scene);

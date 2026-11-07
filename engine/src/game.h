@@ -227,6 +227,7 @@ void game_set_draw_steps(int n); /* logic steps the next draw follows (main's ca
 /* HUD numbers */
 int game_coins(void);
 int game_life(void);
+void game_test_life(int n); /* tests: Mario's life set */
 int game_test_bk(int frame); /* bk test: the BossKameck fight a frame */
 int game_test_tb(int frame); /* tb test: the TripodBoss fight a frame */
 int game_test_dd(int frame); /* dd test: the Dodoryu fight a frame */

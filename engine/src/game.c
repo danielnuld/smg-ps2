@@ -55840,6 +55840,7 @@ void game_debug(char *out, int n)
 
 int game_coins(void) { return got_coins; }
 int game_life(void) { return life; }
+void game_test_life(int n) { life = n; }
 int game_lives(void) { return lives; }
 int game_misses(void) { return misses; }
 int game_stars(void) { return stars; }
