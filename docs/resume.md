@@ -1470,6 +1470,13 @@ there needs the embedded blob and every pack rebuilt.
   already play with its clips; PoltaShadow is never emitted (PoltaFunction::emitEffectShadow is empty). Tests: `plant`
   (EggStar 1: `HintShakeLeaf 1`), `orock` (EggStar 3: `OtaRockDeath 1`, `coconut effects 1`); route gets the star.
   Repack: slice_all.py every galaxy (jpa.py NAMED Bush / StarPiece, NAMED_ONLY Mario WallSpark / BringBubble(Break)).
+- Walker pushes, the rest (feat/enemy-push): walker_push_pass after Petari for KuriboMini (sendMsgPushAndKill, takes
+  1.5), Takobo, PackunPetit (MapObj body / stalk), NokonokoLand, Kabokuri (push, take none), Meramera (0.5 isPushMoved),
+  MechanicKoopaMini (3), Metbo (1.5 from the sender's actor), BombHei (push and kill, takes 2), TakoHei (5, its no-push
+  time _E4 20, its velocity into it cut); no MapObj pair. SmallStone's push reaches only Mario in Petari too (its Range
+  sensor is in the simple group). Test: plain XF=-DPUSH_TEST <galaxy> (two of the most gathered kind put against a third:
+  `walker push f n: kind k took m`). ponytail: Teresa, BombTeresa, BombBird, Poihana, StinkBugSmall, StringSpider,
+  Snakehead not in the pass.
 
 ## Next
 
