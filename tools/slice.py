@@ -129,13 +129,16 @@ ANIM_ARC = {"DemoKoopaJrShip": "KoopaJrShip", "BegomanBabyLauncher": "BegomanLau
             "BenefitItemLifeUp": "KinokoLifeUp", "HammerHeadPackun": "PackunFlower", "Plant": "PlantSeed", "FlowerGroup": "Flower", "FlowerBlueGroup": "FlowerBlue",
             "CutBushGroup": "CutBush", "FirePressureRadiate": "FirePressure", "JumpBeamer": "JumpBeamerBody", "TreasureBoxKinokoOneUp": "TreasureBox", "TreasureBoxCoin": "TreasureBox", "TreasureBoxEmpty": "TreasureBox", "TreasureBoxGoldEmpty": "TreasureBoxGold", "TreasureBoxCrackedKinokoOneUp": "TreasureBoxCracked", "TreasureBoxCrackedAirBubble": "TreasureBoxCracked", "TreasureBoxBlueChip": "TreasureBox", "TreasureBoxYellowChip": "TreasureBox", "TreasureBoxKinokoLifeUp": "TreasureBox", "TreasureBoxCrackedKinokoLifeUp": "TreasureBoxCracked", "TreasureBoxCrackedEmpty": "TreasureBoxCracked"}  # where a class's clips are when not in its own-named archive
 ANIM_ARC.update({c: a for c, a in WAIT_ARC.items() if c not in ANIM_ARC})
-# ponytail: models the renderer cannot reproduce: the atmosphere spheres (*Air: their glow is a TEV rim effect; drawn
-# with their material they flood the screen)
+# Air.cpp (NameObjFactory Air / PriorDrawAir / ProjectionMapAir / AirFar100m): no collision (Air::init makes none);
+# baked at the colours they rest at: tryStartAllAnim(own name), then appear's Appear at its end (setAllAnimFrameAtEnd)
+AIR = {"HomeAir": "HomeAir~appear:99", "SphereAir": "SphereAir~appear:59", "DarknessRoomAir": "DarknessRoomAir~appear:59",
+       "SunsetAir": "SunsetAir~sunsetair:59", "FineAir": "FineAir", "DimensionAir": "DimensionAir~dimensionair:0",
+       "TwilightAir": "TwilightAir"}
 # ponytail: materials left out of a model, the renderer cannot reproduce them: DemoPeachCastleGate's Dark_v_x, a
 # black vignette on a plane before the arrival camera, blended by its vertex alpha (VU1 batches keep no vertex alpha:
 # it would black the screen out)
 DROP_MATERIALS = {("DemoPeachCastleGate", "Dark_v_x")}
-NO_DRAW = ("Hanachan", "SkeletalFishBaby", "ChildSkeletalFishBaby", "ExterminationSkeletalFishBaby", "GhostPlayer", "ExterminationKuriboKeySwitch", "RunawayRabbitCollect", "SphereAir", "DimensionAir", "HomeAir", "TwilightAir", "DarknessRoomAir", "SunsetAir", "FineAir")   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
+NO_DRAW = ("Hanachan", "SkeletalFishBaby", "ChildSkeletalFishBaby", "ExterminationSkeletalFishBaby", "GhostPlayer", "ExterminationKuriboKeySwitch", "RunawayRabbitCollect")   # skinned models converted with SKIN data (milestone 3); Mario's clips go in ANIM
 OBJ_TYPES = ("Coin", "PurpleCoin", "StarPiece", "Kuribo", "CirclePurpleCoinGroup", "PurpleRailCoin", "CircleCoinGroup",
              "RailCoin", "SuperSpinDriver", "StarPieceGroup", "StarPieceFlow")
 # classes whose first NameObjFactory archive is not their model (OtaKing's is FireBall, Tico's TicoBaby): the model
@@ -153,7 +156,7 @@ MODEL_ARC = {"Koura~0": "Koura~koura:0", "Koura~1": "Koura~koura:1",  # Nokonoko
              # rabbits' TrickRabbitBaby and the RunawayTico's TicoBaby are their EXTRA (by arg / cast id)
              "RunawayRabbit": "TrickRabbit", "DemoRabbit": "TrickRabbit", "RunawayTico": "Tico", "TicoBaby": "TicoBaby",
              "DemoKoopaJrShip": "KoopaJrShip",  # DemoKoopaJrShip::init: initModelManagerWithAnm KoopaJrShip
-             "MorphBubble": "ItemBubble"}  # MorphItemObjNeo's container アイテム泡 (startBck Move)
+             "MorphBubble": "ItemBubble", **AIR}  # MorphItemObjNeo's container アイテム泡 (startBck Move)
 # ponytail: no MiniatureGalaxyStarNumber (its digits are texture matrices per material), no MiniatureGalaxyShadow
 MINI_EXTRA = ("MiniatureGalaxyUnknown", "MiniHatenaGalaxy", "MiniatureGalaxyUnknownKoopa", "MiniKoopaGalaxy",
               "MiniatureGalaxySelect")
@@ -268,7 +271,11 @@ KCL_PARTS = {"PhantomShipBridge": {"move.kcl": "Move"}, "SkeletalFishBoss": dict
 # the joint a MapObjActor's own collision follows (SKIN pad 1: game.c Inst.kmove), "Move" unless named here
 COLL_JOINT = {"Shellfish": "Lid"}  # initCollisionPartsAutoEqualScaleOne "Hi" on getJointMtx(Lid)
 HOME_POS = "\u5408\u4f53\u30d6\u30ed\u30c3\u30af\u6545\u90f7\u70b9"  # 合体ブロック故郷点: AssemblyBlock's home (Petari sReturnPosName)
-LOGIC = ("FallingSmallRock", "SubmarineSteam", "SubmarineVolcano", "TimerSwitch", "SkeletalFishBossRail", "SkeletalFishBaby", "ChildSkeletalFishBaby", "ExterminationSkeletalFishBaby", "KoopaSwitchKeeper", "KoopaPowerUpSwitch", "KoopaViewSwitchKeeper", "KoopaRestarterVs3", "BossKameckMoveRail", "TripodBossBaseJointPosition", "TripodBossStepPoint", "TripodBossStepStartArea", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
+# Flag.cpp: the cloth's texture alone (loadTexFromArc(mObjName): <name>.arc's <name>.bti), a model with one empty group
+# whose texture game.c's statics.inc (Flag) draws the cloth with
+TEX_ONLY = ("Flag", "FlagKoopaA", "FlagKoopaB", "FlagRaceA", "FlagKoopaCastle", "FlagPeachCastleA", "FlagPeachCastleB",
+            "FlagPeachCastleC", "FlagSurfing", "FlagTamakoro")
+LOGIC = ("FluffWind", "Fountain", "SpringJetWater", "FallingSmallRock", "SubmarineSteam", "SubmarineVolcano", "TimerSwitch", "SkeletalFishBossRail", "SkeletalFishBaby", "ChildSkeletalFishBaby", "ExterminationSkeletalFishBaby", "KoopaSwitchKeeper", "KoopaPowerUpSwitch", "KoopaViewSwitchKeeper", "KoopaRestarterVs3", "BossKameckMoveRail", "TripodBossBaseJointPosition", "TripodBossStepPoint", "TripodBossStepStartArea", "SwitchSynchronizerReverse", "GroupSwitchWatcher", "CollisionBlocker", "FlipPanelObserver",
          "YellowChipGroup", "BlueChipGroup", "SwitchCube", "SwitchSphere", "SwitchCylinder", "DeathCube", "DeathSphere",
          "DeathCylinder", "RestartCube", "StarPieceSpot", "WaterCube", "WaterSphere", "WaterCylinder",
          "AstroChangeStageCube", "MovieStarter", "RunawayRabbitCollect", "PhantomTorch", "PhantomBonfire", "Hanachan",
@@ -1073,6 +1080,10 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 sk = skin_entry(b, bl, gtab, COLL_JOINT.get(arc.stem, "Move"))
         elif n.endswith(".kcl"):
             kcls[n.split("/")[-1]] = b
+    if not groups and arc.stem in TEX_ONLY:  # TEX_ONLY: its texture in an empty group
+        bti = next(v for k, v in files.items() if k.lower().rsplit("/", 1)[-1] == arc.stem.lower() + ".bti")
+        groups.append(([], [], [], tex.to_ps2(np.ascontiguousarray(jpa.decode_bti(bti)), bti[6], bti[7]), None, None,
+                       (1, 1, 255), False, 1))
     for kn in list(kcls):  # each prism's attribute resolved through its .pa (kcl_codes)
         kcls[kn] = kcl_codes(kcls[kn], next((v for k, v in files.items() if k.lower().split("/")[-1] == kn[:-4] + ".pa"), b""))
     # the model's own collision: <archive>.kcl, else the first that is not a MoveLimit boundary (PuffballPlanetA lists
@@ -2049,7 +2060,7 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
         else:
             vu_seen[key] = len(vumd)
             vumd.append(name32(t) + body)
-        if kcl and collision:
+        if kcl and collision and cls not in AIR:
             kcl = kcl_to_le(kcl)
             kcls.append(name32(t) + struct.pack("<I", len(kcl)) + kcl + b"\0" * (-len(kcl) % 4))
         if collision and cls in KCL_PARTS:  # its joint collisions (KCL_PARTS)

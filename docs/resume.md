@@ -147,6 +147,18 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   a chunk that is not one ends the movie ("movie: chunk n bad"), and "movie: <name> frame n" every 600 frames says
   on the console's udptty log where it stops.
 - gaps (2026-11-04, worktree D:/smg-ps2-wt/gaps, overlay out/wt-gaps): #143's placed classes with no behaviour.
+  - Fountain / SpringJetWater (#331, game.c update_jet_waters): Fountain.cpp (its effect, SE_OJ_LV_FOUNTAIN, SW_A
+    Wait / Move, SW_APPEAR) and SpringJetWater.cpp (Wait / Jet / End on DemoSpringWaterRiseUp part 1 湧き水上昇, kill
+    at 60, setStageBGMState(1, 180)); both ACTMES_FOUNTAINJUMP (sphere 70 at 350 up or the 280 cylinder: MarioFlow).
+    Test XF=-DJWATER_TEST: CosmosGardenGalaxy/1 (Fountain row 200: MarioFlow each time), CannonFleetGalaxy/1 (its
+    demo requested: Jet at part 1, End 240 frames later, killed at 60). slice.py LOGIC, jpa.py NAMED for both.
+    CoinSpot needs nothing: in Petari nothing sets mIsInTornado (CoinSpot.cpp), it only waits.
+  - FluffWind (#328, game.c fluff_wind_*): FluffWind.cpp's effects along its rail (one every 600, kept: forever
+    emitters) and FluffWindHolder::calcWindInfo feeding Fluff::updateWind (push along the rail, side speed 6, front and
+    up lean into the wind, RideFlyOnWind / RideSpinUpOnWind, initAfterPlacement facing the wind; Fluff's SEs, Splash /
+    Blur / HardWind effects, SW_A). Test `fluff` CosmosGardenGalaxy/1 (now timed from Mario's first free frame): takes
+    hold, on the wind (45), spin up on the wind, carried ~5000 along the rail, lets go on the map. slice.py LOGIC
+    FluffWind, jpa.py NAMED Fluff / FluffWind.
   - Rabbit arg1 2 / 3 lectures (game.c rabbit_lecture, #242): SpinLecture / JumpSpinLectureMove every 180 frames of
     Talk outside a long talk; seen HeavenlyBeachGalaxy/1. arg1 0 (rail escape) left out: no placement uses it.
   - SwimTurtle Penguin's shell (game.c penguin_turtle, RemovableTurtle): Koura~0 on its back, Mario takes it (touch or
@@ -340,8 +352,8 @@ Second console round (2026-10-24), from Daniel's report:
 - feat/mario-sidestep: MarioSideStep after Petari (doSideStep, start / close / update, checkWallPush at the end of
   decideWalkAnimation): walking square into a wall Mario leans on it (壁押し), waits (壁ウエイト), walks along it
   (壁右歩き / 壁左歩き at 6), A jumps off, the spin punches off. Test: `build.sh sidestep <blob> KoopaJrShipLv1Galaxy/1`
-  (the nearest vertical wall: lean, wait, walk; the airship's cannon shells interrupt it now and then). ponytail:
-  checkWallJumpCode (barrier / water walls) not ported.
+  (the nearest vertical wall: lean, wait, walk; the airship's cannon shells interrupt it now and then).
+  checkWallJumpCode (barrier / water / trampoline walls: m_check_wall_jump_code) was ported since.
 - feat/mario-slider: MarioSlider after Petari (checkSliderMode / startSlider, start / update / close, calcGroundAccel,
   calcWallHit, postureCtrl, setHipSliderTilt; checkGroundOnSlope's 100 and steep faces on it; no ground spin on it):
   on Slider floors (code 9: ForestHomePlanet in HoneyBeeKingdom, HugeBattleShipPlanet, IceMountainPlanet,
@@ -356,7 +368,17 @@ Second console round (2026-10-24), from Daniel's report:
   TeresaMario2DGalaxy, KoopaBattleVs1/2/3Galaxy, CannonFleetGalaxy, HellProminenceGalaxy, StarDustGalaxy,
   DarkRoomGalaxy, SandClockGalaxy, CosmosGardenGalaxy, BattleShipGalaxy (dev overlay: out/wt-states for TeresaMario2D 1
   and KoopaBattleVs1 1). Test: `XF=-DPACKS_OVERLAY=wt-states build.sh 2d <blob> TeresaMario2DGalaxy/1`. ponytail:
-  PipeModeCube (MarioMove25D), the gravity flip's 2D handling, checkForceGrounding not ported.
+  checkForceGrounding not ported (the port's checkGround keeps him on the ground). The gravity flip's 2D x 0.75 is in
+  m_gravity_turn. PipeModeCube (MarioMove25D): no StageData archive places one (all scanned, 2026-11-06), not ported.
+- feat/mario-atfield (#336): Mario::createAtField after Petari (MarioCollision.cpp:144-243) and its jump part of
+  writeBackPhyisicalVector (Mario.cpp:1579-1638): the faces round him (2 balls of 50 at 50 / 100 up, 40 squatting) that
+  are no floors (45 degrees, 60 NoSlip) cut the velocity into them and halve the jump's part; the tornado jump's 150 field
+  (60-120 degrees within 80); in 2D a moving part's face (not his ground's) pushes him its depth. Replaces the binder-wall
+  stand-in. Test: `2d` prints `atfield:` cuts; the route still gets EggStar 1's star. ponytail: selectPushOff (_FC4 bit
+  17), sendMsgUpperPunch, the Bee's Fur entryWallWalkMode from it, the swimming branch (MarioSwim's knockback).
+  Same PR: Mario::checkHeadPoint (MarioCollision.cpp:1322) for land Mario: a 40 ball at 110 up (50 squatting, his head
+  when damaged, with MarioDamage::stopHead) pushes his velocity off the faces in it (jumping only those looking down),
+  isHeadPushEnableArea (SandClockGalaxy's 2D strip x -7020..-6920) twice. ponytail: no rush ball (_3E), no Fur flag.
 - feat/mario-jetswim: MarioSwim with a carried JetTurtle after Petari (startJet, jet, dropJet, doJetJump and every
   mJetTimer branch of start / update: the jet speed mSwimFrontJetSpeed (Slow), Z brakes, the T inertias, the jet's
   rotation ratios, the floor's mTurboReductionHitFloor, the stream's mTurboReductionStream, the jet jump out of the
@@ -643,7 +665,7 @@ after tags (US: mNoCharSpace starts true, font size tags return NO_CHAR_SPACE wh
     SpaceCocoon (Mario in the air hangs on; R2 with the pointer on it aims, the cocoon follows the pointer on its
     plane; let go 100+ off and he flies off towards its neutral point at 60 for arg0 frames; X lets go; no stalk drawn);
     Fluff (a spin sends it up, it drifts down; Mario in the air takes hold, the stick steers, Square spins up 3 times,
-    X jumps off; no FluffWind); a rebind keeps what Mario rides (by its row);
+    X jumps off; FluffWind: #328); a rebind keeps what Mario rides (by its row);
   - StinkBugSmall (a walker: in its territory it turns to Mario, rushes at 20 up to arg1, walks back; its horn hurts,
     a spin or star piece makes it guard, a hip drop kills it: 3 star pieces; no Panic / Shake on its back);
   - Unizo / UnizoLand / UnizoShoal (walkers: jump and chase Mario within 1500 zigzagging, roll, hurt on touch and
@@ -1102,6 +1124,16 @@ there needs the embedded blob and every pack rebuilt.
   EXTRA, LOGIC DodoryuClosedCylinder, declare_stars Dodoryu, TALK_NAME DodoryuRabbit, clip_key ddlh/; jpa.py NAMED
   DodoryuHill; sound.py now reads the .inc files game.c includes. ponytail: fur, shadows, BTK / BRK / BTP, banmt,
   image effects, the eye sensor on map objects, the sudden-death wipes (dodoryu.inc header).
+
+- Air (feat/332-air, 2026-11-06): Air.cpp's In / Out (arg0 x 100, + 20 x 100 out), its Disappear hide (DarknessRoomAir's
+  59 frames; DimensionAir / TwilightAir have none: once shown they stay), arg1's wait for the opening camera, AirFar100m's
+  far clip (10000) for DimensionAir; update_airs moves in demos (registerDemoSimpleCastAll). slice.py AIR: no collision
+  (DimensionAir's kcl was put in), each baked at its resting colours (own BRK, Appear's end). Drawn: DimensionAir (the 2D
+  rooms' streaked backdrop), TwilightAir, DarknessRoomAir. Test: plain XF=-DAIR_TEST (TeresaMario2DGalaxy/1,
+  PhantomGalaxy/1: Mario and the camera put at the first one). ponytail: Appear / Disappear fades (no BRK at run time);
+  HomeAir, SphereAir, SunsetAir, FineAir stay undrawn: their alpha is GX_LIGHT2's N.L at the camera per vertex
+  (LightFunction.cpp:193-195) and VU1 batches have no vertex alpha (drawn flat they flood the screen); so no PriorDrawAir.
+  Repack: slice_all.py the galaxies with DimensionAir / TwilightAir / DarknessRoomAir.
 
 ## Next
 
@@ -1795,3 +1827,11 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
   (AudBgmMgr::mNextBGM, started by game_bgm_tick once the stage stream stops). Test: `talk` AstroGalaxy/1 XF="-DTALK_CLS=9
   -DROS_BGM_TEST" (events 0 at f 600, 2 at f 1500: SEQ_senario_sel_3, SMG_astroout03_strm after the fades). The
   StarPieceCounter's Flash / Wait stay engine gaps (no runtime per-pane brlan in lyt.c; noted at spc_*). No repack.
+- Static classes, first half (statics agent, 2026-11-06): engine/src/statics.inc (#included by game.c, st_*: st_update
+  after update_gaps, st_draw in the world pass) ports the placed classes class_coverage listed as static.
+  Flag (#329): Flag.cpp's cloth (SwingRopePoint rows, wind, random gusts, light colours, SE_OJ_FLAG, the stick) for
+  Flag / FlagKoopaA / B / FlagRaceA / FlagKoopaCastle / FlagPeachCastleA / B / C / FlagTamakoro; slice.py TEX_ONLY
+  gives their archives' lone .bti as an empty-group model (its texture); render.c render_mesh_vc (a colour a vertex,
+  blend 3: blended with depth writes). Test: plain build XF="-DST_FLAG_TEST=k -DPACKS_OVERLAY=wt-states" (the camera
+  on flag k): PeachCastleGardenGalaxy/1, KoopaJrShipLv1Galaxy/1. ponytail: FlagSurfing (OceanRingPipe's flags), the
+  stick's texel. tools/class_coverage.py now reads game.c's .inc files too.

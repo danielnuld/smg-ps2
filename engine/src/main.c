@@ -2208,6 +2208,13 @@ int main(void)
         if (f0 && frame - f0 < 30000) game_test_kp((int)(frame - f0));
     }
 #endif
+#ifdef JWATER_TEST /* XF=-DJWATER_TEST, CosmosGardenGalaxy/1 (Fountain) or CannonFleetGalaxy/1 (SpringJetWater, its demo requested) */
+    {
+        static u32 f0;
+        if (!f0 && frame > 30 && game_test_free()) { f0 = frame; printf("jwater test: demo %d\n", game_test_jwater(1)); }
+        if (f0 && frame - f0 < 1200 && (frame - f0) % 150 == 100) printf("jwater test f %u: row %d\n", frame, game_test_jwater(0));
+    }
+#endif
 #ifdef MK_TEST /* XF=-DMK_TEST, IceVolcanoGalaxy/1: the IceMerameraKing fight (game_test_mk) */
     {
         static u32 f0;
@@ -2382,16 +2389,19 @@ int main(void)
         if (frame >= 200 && frame % 60 == 20 && frame < 600) printf("waterplant test f %u: %d plants\n", frame, game_test_waterplant());
 #endif
 #ifdef FLUFF_TEST
-        { /* a spin by a Fluff (150), Mario jumps into it (190), spins up (230, 330); logged every 10 frames */
+        { /* from Mario's first free frame t: a spin by a Fluff (150), Mario jumps into it (190), spins up (230, 330); logged every 10 frames */
+            static u32 f0;
             int r = -9;
-            if (frame < 150 && frame % 30 == 0) r = game_test_fluff(-1); /* to its zone */
-            if (frame == 150) r = game_test_fluff(0);
-            else if (frame == 190) r = game_test_fluff(1);
-            if (frame == 230 || frame == 330) game_test_fluff(3);
-            if (frame >= 150 && frame < 600 && frame % 10 == 0) {
+            if (!f0 && frame > 30 && game_test_free()) f0 = frame;
+            u32 t = f0 ? frame - f0 : 0;
+            if (f0 && t < 150 && t % 30 == 0) r = game_test_fluff(-1); /* to its zone */
+            if (f0 && t == 150) r = game_test_fluff(0);
+            else if (f0 && t == 190) r = game_test_fluff(1);
+            if (f0 && (t == 230 || t == 330)) game_test_fluff(3);
+            if (f0 && t >= 150 && t < 900 && t % 10 == 0) {
                 char d[128];
                 game_debug(d, sizeof d);
-                printf("fluff test f %u: %d spins %d %s\n", frame, r, game_test_fluff(2), d);
+                printf("fluff test t %u: %d spins %d wind %d %s\n", t, r, game_test_fluff(2), game_test_fluff(4), d);
             }
         }
 #endif
