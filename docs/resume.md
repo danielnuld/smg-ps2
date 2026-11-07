@@ -626,9 +626,20 @@ Second console round (2026-10-24), from Daniel's report:
   Mario (update_race after update_queen: an A at a talker starts its talk, not a jump). Test plain XF
   "-DRACE_TEST=1 -DPACKS_OVERLAY=..." OceanRingGalaxy/2: the leader's talk, Yes, the race (the racers through
   their land parts), Mario carried along the judge rail in at f 5158, the leader's TakeOutStar, power star got.
-  ponytail: OceanRing's water is not ported (Mario walks the ring's bed; Mario's start is not set on its surface),
-  the star piece reflect message, LodCtrl near clipping, NPCActorItem goggles. Repack: OceanRingGalaxy,
+  ponytail: the star piece reflect message, LodCtrl near clipping, NPCActorItem goggles. Repack: OceanRingGalaxy,
   PeachCastleFinalGalaxy (BRK_ARG), IceVolcanoGalaxy (PenguinSkater's model).
+- OceanRing (feat/422-ocean-ring, 2026-11-07): engine/src/ocean_ring.inc (or_*) after Map/OceanRing.cpp, WaterPoint.cpp,
+  OceanRingDrawer.cpp: the ring's points along its rail (a segment every 200, 15 across at point arg1 / 12, the map
+  check's wave rate and alpha at a point's first update), the waves near Mario (arg1 + 8 segments, faded ends),
+  isInWater / calcWaterInfo (water_obj / water_info kind 4, in_water: Mario swims in it, every in-water check sees it),
+  SE_AT_LV_OCEAN_RING / _SUB at the nearest points to the camera's watch point and eye, the drawer (parts, near ones
+  waving, far ones by their edges; Water.bti scrolled). render.c mesh blend 0x200 | FIX (the frame less a colour: GX's
+  C1 x the screen texture). The penguin race starts on its surface (pr_prep: 15 over it, Mario and the racers float at
+  the start). Cost in OceanRing 2's race: ~0.3 ms update, ~2.3 ms draw a frame. Test plain XF "-DRACE_TEST=1
+  -DPACKS_OVERLAY=..." OceanRingGalaxy/2: start on the surface, Mario swimming the course (in water, depth logged), in
+  at f 5158, star got. ponytail: Water.bti's two stages as one sample, the screen term as a subtraction, no indirect
+  warp, bloom drawer, OceanRingPipe (arg0 0), WaterSurface.kcl. Repack: resident.bin + resident_luigi.bin (jpa.py
+  Water.bti), sound.py --pack OceanRingGalaxy, SurfingLv1Galaxy.
 - ChipCounter (feat/290-chip-counter, 2026-11-05): menu.c chc_* (BlueChipCounter / YellowChipCounter / CollectCounter
   in lyt.py COMMON: menus.bin +84 KB): Hide / FrameIn / Show / FrameOut / TryDemo / Complete / CompleteOut, Chip1-5
   ChipGet, ShowHide by short balloons, the count over Mario; game.c chip_group_*: UI range (chips' box +- 2000 or

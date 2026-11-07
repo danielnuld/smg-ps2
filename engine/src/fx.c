@@ -605,3 +605,4 @@ int fx_fooline_tex(int k) { return fx_waterplant_tex(10 + k); }
 int fx_marinesnow_tex(void) { return fx_waterplant_tex(12); }
 int fx_creeper_tex(void) { return fx_waterplant_tex(13); }
 int fx_bigbubble_tex(int k) { return fx_waterplant_tex(14 + k); }
+int fx_ocean_ring_tex(void) { return fx_waterplant_tex(16); }

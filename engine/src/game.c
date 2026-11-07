@@ -1493,6 +1493,7 @@ static int miss_abyss; /* the next miss is MarioActor::exeGameOverAbyss's (a Dea
 static int miss_ghost; /* the next miss is forceKillPlayerByGhostRace's (EventGhostRaceDown) */
 static int miss_race; /* the next miss is forceKillPlayerByGroundRace's (EventRaceDown) */
 static void rm_reset(void), update_race(void); /* RaceManager and its racers (race.inc) */
+static void or_init(void), or_update(void), draw_oceanrings(void); static int or_in_water(V3 p, V3 up, float *depth), or_row(V3 p); /* OceanRing (ocean_ring.inc) */
 static int rm_ctrl_off(void), pg_jet_hit(V3 p); static void rm_note_star(void); static const char *rm_bck(void); /* offPlayerControl; its startBckPlayer clip on Mario */
 static void gh_reset(void);
 static int gh_ctrl_off(void), gh_puppet(void); /* GhostPlayer: offPlayerControl; its clips on Mario (startBckPlayerJ) */
@@ -3021,6 +3022,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     printf("game: %d static instances, coins %d, purple %d, star pieces %d, kuribo %d, start (%d %d %d)\n", ninsts,
            ncoins, npurple, npieces, nkuribo, (int)start_pos.x, (int)start_pos.y, (int)start_pos.z);
     os_init();
+    or_init();
     bgb_init();
     { /* GameDataHolder: this galaxy's scenario visited (setAlreadyVisitedStage) */
         char gal[48];
@@ -14507,7 +14509,7 @@ static int in_water(V3 p, V3 up, float *depth)
         }
         return 1;
     }
-    return 0;
+    return or_in_water(p, up, depth); /* OceanRing::isInWater */
 }
 
 static void hurt_mario(V3 from, float push);
@@ -19713,15 +19715,16 @@ static int fx_swim_spin, fx_swim_ripple, fx_swim_wave, fx_swim_body, fx_swim_mou
  * pi/2 level), A strokes (水泳一掻き: cFrontAcc over 40 frames), Z sinks (水泳潜り), the spin spins then dashes; he
  * floats (procBuoyancy) or bobs at the surface (flowOnWave), the area's stream carries him, the oxygen runs (mOxygenMax,
  * cold water arg1 1 hurts every 120); the 基本 group of four swim tracks (SwimWait / FlutterSurface / Flutter / Drift)
- * by MarioAnimator's weights; with a carried JetTurtle he jets (startJet, jet, dropJet, doJetJump). ponytail: OceanRing's
- * water comes with its object */
+ * by MarioAnimator's weights; with a carried JetTurtle he jets (startJet, jet, dropJet, doJetJump); OceanRing's water
+ * from ocean_ring.inc */
 enum { SWX_NONE, SWX_JUMP, SWX_POWER_JUMP, SWX_FALL, SWX_4, SWX_SLIDE, SWX_SURFACE }; /* WaterExitAction */
 enum { SWS_NONE, SWS_ENTERING, SWS_UNDERWATER, SWS_SURFACE };                     /* SwimState */
 typedef struct {
     float depth, floor, wave, edge_d;  /* mCamWaterDepth (under its surface), _4 (to its bottom), mWaveHeight, mEdgeDistance */
     V3 surf_pos, surf_n, stream, edge_pos;
-    int row, kind;                     /* the water's row; 0 none, 1 a WaterArea, 2 OceanSphere, 3 OceanBowl */
+    int row, kind;                     /* the water's row; 0 none, 1 a WaterArea, 2 OceanSphere, 3 OceanBowl, 4 OceanRing */
 } WInfo;
+static int or_info(int row, WInfo *w, V3 p, V3 grav); /* OceanRing::calcWaterInfo (ocean_ring.inc) */
 static void winfo_clear(WInfo *w) /* WaterInfo::clear */
 {
     memset(w, 0, sizeof *w);
@@ -19751,6 +19754,7 @@ static int water_obj(WInfo *w, V3 p)
             w->row = (int)i; w->kind = 1; return 1;
         }
     }
+    { int ring = or_row(p); if (ring >= 0) { w->row = ring; w->kind = 4; return 1; } } /* tryInOceanArea: a ring */
     for (u32 k = 0; k < nscan; k++) {
         u32 i = nrows <= 256 ? (u32)rows[k] : k;
         const Row *r = &sc->objs[i];
@@ -19774,6 +19778,7 @@ static float frame_bowl_wave(void) { return -0.04f * (float)game_frame; } /* Oce
 static int water_info(WInfo *w, V3 p, V3 grav, int skip)
 {
     if (w->row < 0) return 0;
+    if (w->kind == 4) return or_info(w->row, w, p, grav);
     const Row *r = &sc->objs[w->row];
     V3 ctr = row_pos(r);
     if (w->kind == 2) { /* OceanSphere::calcWaterInfo */
@@ -51612,6 +51617,7 @@ int game_test_bk(int frame)
 #include "clip_area.inc" /* ClipArea*, ClipFieldSwitch, FallOutFieldDraw, SimpleClipPartsObj, ClipAreaDropLaser: ca_* */
 #include "statics.inc" /* placed classes once drawn still (Flag ...): st_* */
 #include "race.inc" /* RaceManager, RaceRail (PlayerRacer), TeresaRacer: rm_*, game_test_race */
+#include "ocean_ring.inc" /* OceanRing: or_* */
 /* Test builds: Mario in the boss's SwitchCylinder until it starts, then dropped in a hip drop on its BodyHipDrop part
  * whenever a hit is open; game_bsb_state: sequencer x 100 + nerve */
 int game_test_bsb(void)
@@ -53081,6 +53087,7 @@ void game_update(void)
     update_bees();
     update_npc_turn();
     update_queen();
+    or_update(); /* OceanRing::movement (ocean_ring.inc): its points near Mario before his swim reads them */
     update_race(); /* RaceManager and its racer NPCs (race.inc): their talks before the talk director and Mario */
     hud_update();
 
@@ -54885,6 +54892,7 @@ void game_draw(void)
     {
         V3 back = vnorm(vsub(ce, cw)), right = vnorm(vcross(cu, back));
         draw_oceanspheres(ce, right, vcross(back, right));
+        draw_oceanrings();
         draw_bigbubbles(ce, right, vcross(back, right));
     }
     st_draw();

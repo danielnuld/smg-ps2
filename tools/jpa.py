@@ -372,6 +372,13 @@ def pack(fs):
         rb = np.asarray(Image.fromarray(rb, "RGBA").resize((rb.shape[1] // 2, rb.shape[0] // 2), Image.Resampling.BOX)).copy()
         rb[..., 3] = int(env[..., 3].mean() + 0.5)
         out_tex.append(tex.to_ps2(rb, 1, 1))
+        # OceanRingDrawer::loadMaterial (WaterWave.arc Water.bti) after them (fx_ocean_ring_tex): its stages 0 and 1
+        # T0 x T1 / 2 baked with one sample for both scrolled coordinates (the engine adds the frame behind through C1)
+        w = decode_bti(ww["water.bti"]).astype(np.float32) / 255
+        wt = np.zeros(w.shape[:2] + (4,), np.uint8)
+        wt[..., :3] = (w[..., :3] * w[..., :3] / 2 * 255 + 0.5).astype(np.uint8)
+        wt[..., 3] = 255
+        out_tex.append(tex.to_ps2(wt, 1, 1))
     flr = flare(wp, out_tex)
     head = struct.pack("<IIiI", len(used), len(defs), first, len(autos))
     return head + b"".join(defs) + b"".join(recs) + b"".join(autos) + flr, out_tex

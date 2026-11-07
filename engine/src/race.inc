@@ -173,10 +173,14 @@ static void pr_prep(void) /* PlayerRacer::prepRacer */
     RmRail *rr = &rm.rail;
     rr->coord = 0.0f; rr->dir = 1; /* moveCoordToStartPos */
     V3 p = rr_pos(rr), up = up_at(p, mario->up); /* moveTransToCurrentRailPos, calcGravityVector */
-    if (rm.race == RACE_PENGUIN) { /* the water surface over it (getFirstPolyOnLineToWaterSurface), 15 up, SwimDrift
-                                    * (ponytail: OceanRing's water not ported: in a water area only) */
+    if (rm.race == RACE_PENGUIN) { /* the water surface on the line from 500 over it, 1000 down
+                                    * (getFirstPolyOnLineToWaterSurface), 15 up, SwimDrift (ponytail: no WaterSurface.kcl,
+                                    * collision category 2: the water's own surface, OceanRing's or an area's) */
         float depth;
-        if (in_water(p, up, &depth)) p = vadd(p, vmul(up, depth + 15.0f));
+        V3 lo = vsub(p, vmul(up, 500.0f));
+        if (in_water(p, up, &depth) && depth <= 500.0f) p = vadd(p, vmul(up, depth));
+        else if (in_water(lo, up, &depth) && depth <= 500.0f) p = vadd(lo, vmul(up, depth));
+        p = vadd(p, vmul(up, 15.0f));
         rm_player_bck("swimdrift");
     } else if (rm.race == RACE_TERESA_PHANTOM) { /* convertPosOnGround(grav x 1000), BattleWait */
         V3 hp, n; int inst;
@@ -731,6 +735,8 @@ static void game_test_race(void)
                rn_inst(n) && rn_inst(n)->anim && rn_inst(n)->anim->clip_id >= 0 ? sc->clips[rn_inst(n)->anim->clip_id].name : "-",
                (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z, td.nrv);
         for (int i = 0; i < rm.n; i++) printf("race test: racer %d coord %d" "\n", rm.ord[i], (int)rm.r[rm.ord[i]].coord);
+        { float dep = 0; int wet = in_water(mario->pos, mario->up, &dep);
+          printf("race test: Mario swimming %d, in water %d depth %d" "\n", swimming, wet, (int)dep); }
     }
 }
 #endif
@@ -1020,9 +1026,7 @@ static void sk_init(RNpc *t, const Row *r) /* PenguinSkater::init, initAfterPlac
  * sTurnFrame 60). Talk (createTalkCtrl, the balloon 130 up), Wait (SE_SV_LV_PENGUIN_S_CHAT, reactions), RacerWait /
  * Turn, RacerTalk / TalkTurn. The leader: its 会話 camera, branchFunc 0 isStageStatePowerStarAppeared / 1 rank 1,
  * eventFunc 0 startRaceWithWipe / 1 TakeOutStar (then endMultiActorCamera), Pre (Yes: the race), Post (forced talk:
- * rank 1 Talk, else forceKillPlayerByGroundRace). ponytail: OceanRing's water is not ported (game.c's water areas
- * only: Mario's start is not set on its surface, isInWater picks the dry actions there), the star piece reflect
- * message, its LodCtrl near clipping (sNearClipping 200), NPCActorItem (its goggles), the star pointer target */
+ * rank 1 Talk, else forceKillPlayerByGroundRace). ponytail: the star piece reflect message, its LodCtrl near clipping (sNearClipping 200), NPCActorItem (its goggles), the star pointer target */
 static int pg_move_nerve(const RNpc *t) /* getMoveNerve */
 {
     int cur = rr_point_arg(&t->rail, rr_point_no(&t->rail), 1), next = rr_point_arg(&t->rail, rr_next_point(&t->rail), 1);
