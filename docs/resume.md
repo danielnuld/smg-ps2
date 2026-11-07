@@ -664,7 +664,10 @@ Second console round (2026-10-24), from Daniel's report:
   HideOnShore, WaitOnShore after the star / WaitTalkNormal - TalkNormal. Eyes Open / Blink, the flip sensors. slice.py:
   EXTRA Syati -> PrizeRing (skinned, BRK_POSE Loop 0), declare_stars Syati. Test XF "-DSYATI_TEST -DPACKS_OVERLAY=..."
   OceanRingGalaxy/1: into the SwitchCube, the talk, the count, Mario put in each ring: 8 of 8 at ~f 6300, the star demo,
-  power star got. Not run: OceanPhantomCave 3 (deep sea mode), the retry (SYATI_TEST=2). ponytail: BTK / BRK colours,
+  power star got. Run since (fix/syati-runs): OceanPhantomCave 3 (deep sea: 8 of 8 rings, its star got: the test now
+  takes the Syati's own star, not the bubble's), the retry (SYATI_TEST=2, OceanRing 1: Mario kept 1500 behind and 800
+  over it: rail end at f ~6000, Turn, WaitAllRingDisappear, 再挑戦デモ, Failure talk, 水中レース負け, the stage again),
+  TalkSyati (SYATI_TEST=3, OceanRing 2: StartWait / StartTalk, its talk read). Nothing failed. ponytail: BTK / BRK colours,
   the head turn joint, shadow, tryPlayerKillTakingActor, sendMsgPush, OceanPhantomCave's BGM calls. Repack:
   OceanRingGalaxy, OceanPhantomCaveGalaxy (slice_all.py + sound.py --pack).
 - Race best time key (fix/436, 2026-11-07): the penguin race's RECORD read 00:00:00 (OceanRing 2) while Phantom's read
