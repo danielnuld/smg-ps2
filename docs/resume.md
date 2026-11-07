@@ -337,6 +337,14 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   Test `bombbird` gains a star piece at 860 (its scale 1.14 .. 0.92 .. 1). Left: the press between roof and ground (the
   walker binder keeps no roof nor press sensor), the bomb's Normal / Signal BRKs (baked).
 
+- BeamGoRoundPlanet (fix/457-beam-go-round, 2026-11-07, coverage CannonFleetGalaxy 1): BeamGoRoundPlanet.cpp in game.c
+  (bgr_*): its BCK plays (slice.py ANIM_PLANETS), its own collision kept and its Move KCL on joints move1 / move2
+  (KCL_PARTS, JOINT_KCL_INDEXED: "<class>#<joint>.<k>" bound with HoneyQueen's), SE_OJ_LV_BEAM_GO_ROUND, the 16 beams
+  (BeamGoRoundBeam on joints beam1-16, its BTK; electric within 100 of the segment 100..2700 along each joint's up).
+  Before, the planet was static with no ground at the start: Mario fell through the drum face and the disk gravity
+  flipped him through its plane. Still open: at the ScenarioStarter flight's end Mario is 135 from EyeBeamer row 200's
+  beam line (Wait, under 140: burned once); the start itself is 168 from it. ponytail: no beam volume / bloom
+  models. Repack: slice_all.py CannonFleetGalaxy.
 ## Console release (2026-10-23 / 24)
 
 First runs on Daniel's SCPH-75001 (ORBIT launcher, Neutrino over udpfs from nuld; console log = Neutrino's udptty

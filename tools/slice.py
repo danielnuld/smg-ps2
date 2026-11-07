@@ -105,6 +105,7 @@ SKINNED_OBJ += ("SnakeFish",)  # (SkeletalFishBaby)
 SKINNED_OBJ += ("SkeletalFishBoss", "SkeletalFishBossHeadA", "SkeletalFishGuard", "SkeletalFishBossBreak", "SkeletalFishBossScarFlash")
 #  # SkeletalFishBaby::init: initModelManagerWithAnm SnakeFish (Swim / Death; game.c sf_*, its joints on its rail)
 SKINNED_OBJ += ("KoopaJrShip", "KoopaJrShipBreak", "KoopaJrShipPod", "KoopaJr", "DemoKoopaJrShip")  # KoopaJrShip.cpp: Arrival / Damage, its break and pod models (Break, Escape), KoopaJr's ShipBattle clips (game.c koopajr_ship.inc)
+SKINNED_OBJ += ("BeamGoRoundBeam",)  # BeamGoRoundPlanet::initBeam: its 16 beams' model (BTK BeamGoRoundBeam; game.c bgr_*)
 SKINNED_OBJ += ("GhostMario", "GhostLuigi")  # GhostPlayer::init: initModelManagerWithAnm GhostMario / GhostLuigi, posed by Mario's clips (game.c gh_*)
 SKINNED_OBJ += ("PoltaLeftArm", "PoltaRightArm", "PoltaBodyBreak", "PoltaArmBreak", "PoltaFormationRock", "PoltaGroundRockBreak")  # Polta.cpp / PoltaArm.cpp / PoltaGroundRock.cpp: their ModelObjs (startAction, BreakLevel / demo BVAs)
 # MapObjActor::initialize (tryStartAllAnim): a placed class whose model archive holds a BCK of the archive's name
@@ -113,8 +114,8 @@ AUTO_SKINNED = {}
 # PlanetMap::init (PlanetMap.cpp:67): a planet whose archive holds animations of its name plays them all
 # (startAllAnim); the BCK ones skinned here (their BTKs play on every model: anim_btk). ponytail: PhantomHolePlanet
 # left static (its collision follows its BCK's Move joint: PlanetMap.cpp:56, no moving planet collision here);
-# BeamGoRoundPlanet / HatchWaterPlanet are classes of their own (not ported); TeresaMansionPlanetB's BRK not played
-ANIM_PLANETS = ("PlanetRocket", "PlanetDisk", "ChoConveyorPlanetB")  # HomePlanet: its BCK moves no joint
+# HatchWaterPlanet is a class of its own (not ported); TeresaMansionPlanetB's BRK not played
+ANIM_PLANETS = ("PlanetRocket", "PlanetDisk", "ChoConveyorPlanetB", "BeamGoRoundPlanet")  # HomePlanet: its BCK moves no joint; BeamGoRoundPlanet: a MapObjActor (tryStartAllAnim), its Move collisions on move1 / move2
 # the demo camera sheets' anim cameras (DemoCameraKeeper AnimCameraName: a .canm of the target cast's archive): (class,
 # canm stem) per scenario, filled by demo_chunk and baked by canm_chunk (called after it)
 DEMO_CANM = set()
@@ -221,7 +222,7 @@ EXTRA = {"ConcreteBlock": ("ConcreteBlockBreak",),  # SimpleBreakableObj: its br
          "RockCreator": ("RockBreak",), "WanwanRolling": ("WanwanRollingBreak",), "Unizo": ("UnizoBreak",), "UnizoLand": ("UnizoLandBreak",), "UnizoShoal": ("UnizoShoalBreak",),
          "StringSpider": ("StringSpiderString",), "SpiderCoin": ("SpaceCocoon",), "BegomanSpike": ("BegomanSpikeHead", "BegomanBrokenPiece"), "BegomanSpring": ("BegomanSpringHead",), "BegomanSpringHide": ("BegomanSpringHead",), "BossBegoman": ("BossBegomanHead", "BegomanBaby", "BegomanSpike", "BegomanSpikeHead", "BegomanBrokenPiece"),  # its head (PartsModel), followers
          "WoodBox": ("#WoodBox", "WoodBoxBreak"), "KoopaStatue": ("#Break", "KoopaStatueBreak"), "CrystalCageS": ("#CrystalCageS", "CrystalCageSBreak"),
-         "CrystalCageM": ("#CrystalCageM", "CrystalCageSBreak"), "CrystalCageL": ("#CrystalCageL:1", "#CrystalCageL", "CrystalCageLBreak"), "RingBeamer": ("JumpBeamerBeam",), "BallBeamer": ("JumpBeamerBeam",), "SubmarineVolcanoBigColumn": ("SubmarineVolcanoBigColumnBreak",), "Mogu": ("MoguStone", "MoguHole"), "Mogucchi": ("MogucchiHole", "MogucchiHillA", "MogucchiHillB", "MogucchiHillC"), "WaterPressure": ("WaterBullet",), "EyeBeamer": ("EyeBeamerBeam",), "FishGroupA": ("FishA",), "FishGroupB": ("FishB",), "FishGroupC": ("FishC",), "FishGroupD": ("FishD",), "FishGroupE": ("FishE",), "FishGroupF": ("FishF",), "SeaGullGroup": ("SeaGull",), "SunakazeKun": ("SunakazeKunTrap",), "ChooChooTrain": ("ChooChooTrainBody",), "BigFan": ("BigFanWind",), "BigFanNoLeg": ("BigFanWind",), "BombHeiLauncher": ("BombHei",), "BombBird": ("BombBirdBomb",), "WaterBazooka": ("WaterBazookaCapsule", "MogucchiShooter", "WaterBazookaBreak", "WaterBullet"), "ElectricBazooka": ("WaterBazookaCapsule", "MogucchiShooter", "ElectricBazookaBreak", "ElectricBullet"), "BombLauncher": ("BombHei",), "JumpBeamer": ("JumpBeamerBeam", "JumpBeamerHead"), "JumpGuarder": ("JumpGuarderHead", "BegomanBaby")}
+         "CrystalCageM": ("#CrystalCageM", "CrystalCageSBreak"), "CrystalCageL": ("#CrystalCageL:1", "#CrystalCageL", "CrystalCageLBreak"), "RingBeamer": ("JumpBeamerBeam",), "BallBeamer": ("JumpBeamerBeam",), "SubmarineVolcanoBigColumn": ("SubmarineVolcanoBigColumnBreak",), "Mogu": ("MoguStone", "MoguHole"), "Mogucchi": ("MogucchiHole", "MogucchiHillA", "MogucchiHillB", "MogucchiHillC"), "WaterPressure": ("WaterBullet",), "EyeBeamer": ("EyeBeamerBeam",), "BeamGoRoundPlanet": ("BeamGoRoundBeam",), "FishGroupA": ("FishA",), "FishGroupB": ("FishB",), "FishGroupC": ("FishC",), "FishGroupD": ("FishD",), "FishGroupE": ("FishE",), "FishGroupF": ("FishF",), "SeaGullGroup": ("SeaGull",), "SunakazeKun": ("SunakazeKunTrap",), "ChooChooTrain": ("ChooChooTrainBody",), "BigFan": ("BigFanWind",), "BigFanNoLeg": ("BigFanWind",), "BombHeiLauncher": ("BombHei",), "BombBird": ("BombBirdBomb",), "WaterBazooka": ("WaterBazookaCapsule", "MogucchiShooter", "WaterBazookaBreak", "WaterBullet"), "ElectricBazooka": ("WaterBazookaCapsule", "MogucchiShooter", "ElectricBazookaBreak", "ElectricBullet"), "BombLauncher": ("BombHei",), "JumpBeamer": ("JumpBeamerBeam", "JumpBeamerHead"), "JumpGuarder": ("JumpGuarderHead", "BegomanBaby")}
 # MorphItemObjNeo::makeArchiveList: Mario's (and Luigi's: the packs serve both) model of the power-up, then the container by arg3 (0 ItemBubble, -1 CrystalBox + CrystalBoxBreak; none for BenefitItemInvincible).; IceMarioHandL / R, InvincibleMarioHandL / R (initHand: game.c hands)
 MORPH_ARCS = {"MorphItemNeoHopper": ("HopperMario", "HopperLuigi"), "MorphItemNeoBee": ("BeeMarioWing", "BeeMario", "BeeLuigi"),
               "MorphItemNeoTeresa": ("TeresaMario", "TeresaLuigi"), "MorphItemNeoIce": ("IceMario", "IceLuigi", "IceMarioHandL", "IceMarioHandR"),
@@ -292,7 +293,10 @@ KCL_PARTS = {"PhantomShipBridge": {"move.kcl": "Move"}, "SkeletalFishBoss": dict
              # HoneyQueen::init: its ten createCollisionPartsFromLiveActor on their joints (JOINT_KCL_ONLY)
              "HoneyQueen": {"center.kcl": "Center", "centerfur.kcl": "Center", "face.kcl": "Face", "larm01.kcl": "LArm01",
                             "larm02.kcl": "LArm02", "lfoot001.kcl": "LFoot001", "rarm01.kcl": "RArm01",
-                            "rarm02.kcl": "RArm02", "rfoot001.kcl": "RFoot001", "tactile.kcl": "Tactile"}}
+                            "rarm02.kcl": "RArm02", "rfoot001.kcl": "RFoot001", "tactile.kcl": "Tactile"},
+             # BeamGoRoundPlanet::init: createCollisionPartsFromLiveActor "Move" on joints move1 and move2 (JOINT_KCL_INDEXED)
+             "BeamGoRoundPlanet": {"move.kcl": ("move1", "move2")}}
+JOINT_KCL_INDEXED = {"BeamGoRoundPlanet"}  # its joint parts named by index as JOINT_KCL_ONLY's, its own collision kept (MapObjActor::initialize)
 # the joint a MapObjActor's own collision follows (SKIN pad 1: game.c Inst.kmove), "Move" unless named here
 COLL_JOINT = {"Shellfish": "Lid"}  # initCollisionPartsAutoEqualScaleOne "Hi" on getJointMtx(Lid)
 HOME_POS = "\u5408\u4f53\u30d6\u30ed\u30c3\u30af\u6545\u90f7\u70b9"  # 合体ブロック故郷点: AssemblyBlock's home (Petari sReturnPosName)
@@ -2233,7 +2237,7 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
         if collision and cls in KCL_PARTS:  # its joint collisions (KCL_PARTS)
             fl = {k.lower().rsplit("/", 1)[-1]: v for k, v in B.rarc_files(arc.read_bytes())}
             jnames, used = None, {}
-            if cls in JOINT_KCL_ONLY:  # by joint index, "<class>#<n>.<k>" (k: the parts sharing that joint)
+            if cls in JOINT_KCL_ONLY or cls in JOINT_KCL_INDEXED:  # by joint index, "<class>#<n>.<k>" (k: the parts sharing that joint)
                 mb = next(v for k, v in fl.items() if k.endswith((".bdl", ".bmd")))
                 jnames = [j["name"] for j in skin.joints(mb, tex.blocks(mb))]
             for kn, jns in KCL_PARTS[cls].items():
