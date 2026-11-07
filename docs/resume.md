@@ -1487,6 +1487,17 @@ there needs the embedded blob and every pack rebuilt.
   sensor is in the simple group). Test: plain XF=-DPUSH_TEST <galaxy> (two of the most gathered kind put against a third:
   `walker push f n: kind k took m`). ponytail: Teresa, BombTeresa, BombBird, Poihana, StinkBugSmall, StringSpider,
   Snakehead not in the pass.
+- ElectricRail points and shadows (feat/erail-points): ElectricRail::initPoints' ElectricRailPoint at each rail point
+  without a point arg0 (PATH raw points), arg0 stacked 100 apart, drawn at its own rotation (0), its sensor (35) an
+  electric attack (a squat too) and a push once the rail has disappeared; initShadowVolumeSphere 35 on the lowest
+  (ElectricRailMovingPoint's lowest too); initShadow (arg1 / arg2 > 0): start / end cylinders of 20 dropped arg2 or
+  arg1, the volume line between them (arg1) or the separators' strip every 200, 300 deep (arg2), as ovals
+  (render_shadow; ponytail: one disc a shape). Test: plain XF=-DERPOINT_TEST BattleShipGalaxy/2 (`erpoint test: 8
+  points ..., model 1`; that rail's points have no ground within 1050). PhantomGalaxy/1's clip floors: Petari does the
+  same: DarknessRoomPlanet (SimpleClipPartsObj) collides only while SW_A 20 is on, ClipFieldSwitch's (Mario in a clip
+  area), and the areas count only while FallOutFieldDraw's appear switch 1100 (a SwitchCube in the galaxy zone) is on.
+  Repack: slice_all.py BattleShip, BeltConveyerEx, CannonFleet, EggStar, Factory, KoopaJrShipLv1, OceanPhantomCave,
+  Phantom, TransformationEx (slice.py EXTRA ElectricRail: ElectricRailPoint).
 
 ## Next
 
