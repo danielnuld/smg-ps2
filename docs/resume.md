@@ -1261,6 +1261,10 @@ there needs the embedded blob and every pack rebuilt.
   Broken / StepBroken 300 then Recovery, HitReaction / StarPieceHit, Down when invincible Mario tramples or touches it,
   SinkDown on a SinkDeath floor; moveAndTurnToDirection's params; its clips by startAction). Test: `karon`
   (SandClockGalaxy/1).
+- Butterfly on sleeping Mario (feat/bfly-sleep): Butterfly.cpp's GotoSleepingMario / ReadyToPerchOnSleepingMario /
+  PerchOnSleepingMario (within 500 of Mario in 特殊ウエイト1A / 1B: 300 frames, then to his CapPosition x (0, 50.2, 24.9),
+  Wait on it until he wakes); MarioWait's 1A -> 1B not while carrying (_468). Test: `butterfly` (HeavensDoor 2: Mario
+  left still from 480: sleep at ~2400, nrv 3 / 4 / 5). ponytail: PerchOn onto an NPC sensor (no common NPC sensor list).
 
 ## Next
 
