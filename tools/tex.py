@@ -599,9 +599,17 @@ def material_name(b, mat3, m):
 def brk(b, frame):
     """A J3D TEV register animation (J3D1brk1, TRK1) at `frame` -> {material name: {"reg": {id: rgba}, "konst":
     {id: rgba}}}, rgba floats 0..1 (register values are s16 / 255). Keys: count 1 a constant, else (time, value,
-    tangent) triplets (tangent type 0) or (time, value, in, out) quads, Hermite between them."""
-    t = b.find(b"TRK1")
-    if b[:8] != b"J3D1brk1" or t < 0:
+    tangent) triplets (tangent type 0) or (time, value, in, out) quads, Hermite between them.
+    A J3D material colour animation (J3D1bpk1, PAK1) gives {material name: {"mat": rgba}} (its material colour 0:
+    PAK1 +0x0E material count, +0x18 table of 4 (count, index, tangent) per material, +0x20 names, +0x24..0x30 the
+    r, g, b, a s16 values)."""
+    t = b.find(b"PAK1")
+    if b[:8] == b"J3D1bpk1" and t >= 0:
+        pk = True
+    else:
+        pk = False
+        t = b.find(b"TRK1")
+    if not pk and (b[:8] != b"J3D1brk1" or t < 0):
         return {}
     h = lambda k: u16(b, t + k)
     w = lambda k: u32(b, t + k)
@@ -627,6 +635,14 @@ def brk(b, frame):
         a, z = ks[i], ks[i + 1]
         return herm(frame, a[0], a[1], a[2] if st == 3 else a[3], z[0], z[1], z[2])
 
+    if pk:
+        nm = names(b, t + w(0x20))
+        for i in range(h(0x0E)):
+            e = t + w(0x18) + 24 * i
+            vo = (w(0x24), w(0x28), w(0x2C), w(0x30))
+            out[nm[i]] = {"reg": {}, "konst": {}, "mat": [chan(vo[c], u16(b, e + 6 * c), u16(b, e + 6 * c + 2),
+                                                               u16(b, e + 6 * c + 4)) / 255.0 for c in range(4)]}
+        return out
     for kind, n, table, name_off, vo in (("reg", h(0x0C), w(0x20), w(0x30), (w(0x38), w(0x3C), w(0x40), w(0x44))),
                                           ("konst", h(0x0E), w(0x24), w(0x34), (w(0x48), w(0x4C), w(0x50), w(0x54)))):
         if not n:
@@ -707,6 +723,9 @@ def tev(b, mat3, m, tex1, texs, base=None, over=None, max_stages=16, ras_k=1.0):
     if "mat" in ov:  # MR::initDLMakerMatColor0: the actor's material colour 0
         ras = np.array(ov["mat"], np.float32)
     ras = ras * np.array([ras_k, ras_k, ras_k, 1.0], np.float32)  # a lit channel's light level (bake)
+    if "ras_a" in ov:  # camera_alpha: the alpha channel's light level (its material alpha x R)
+        mca = ov["mat"][3] if "mat" in ov else b[off(0x20) + 4 * mc + 3] / 255.0 if mc != 0xFFFF else 1.0
+        ras = np.concatenate([ras[:3], [mca * ov["ras_a"]]]).astype(np.float32)
     tex_cache = {}
     order = lambda stage: u16(b, e + 0xBC + 2 * stage)
     sampled = lambda oi: u16(b, off(0x48) + 2 * u16(b, e + 0x84 + 2 * b[off(0x4C) + 4 * oi + 1]))
@@ -806,6 +825,23 @@ def vertex_colour(b, mat3, m):
     e = off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C
     ci = u16(b, e + 0x0C)
     return ci != 0xFFFF and b[off(0x28) + 8 * ci] == 0 and b[off(0x28) + 8 * ci + 1] == 1
+
+
+def camera_alpha(b, mat3, m):
+    """Material m's alpha channel 0 lit by GX_LIGHT2 alone, as Air's (LightFunction::loadActorLightInfo: GX_LIGHT2
+    colour (0, 0, 0, Alpha2) at the view origin, no attenuation) -> (diffuse function: 1 SIGN, 2 CLAMP; cull mode:
+    0 none, 1 front, 2 back), else None. MAT3: channel indices u16 @0x0C (colour 0, alpha 0, ...) -> table 0x28 of
+    8 B {lighting on, material source, light mask, diffuse fn, attenuation fn, ambient source}; cull modes u32 table
+    0x1C by u8 @1."""
+    off = lambda k: mat3 + u32(b, mat3 + k)
+    e = off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C
+    ci = u16(b, e + 0x0E)
+    if ci == 0xFFFF:
+        return None
+    on, src, mask, dfn = b[off(0x28) + 8 * ci: off(0x28) + 8 * ci + 4]
+    if not on or src != 0 or mask != 4:
+        return None
+    return dfn, u32(b, off(0x1C) + 4 * b[e + 1])
 
 
 def lit(b, mat3, m):

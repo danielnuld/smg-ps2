@@ -308,6 +308,191 @@ envLoop:
         NOP                                 xgkick        VI05
         NOP[E]                              NOP
         NOP                                 NOP
+; Camera-lit alpha batches (VU1Air, render.c AIR_PROGRAM: VuGroup lit 3, Air's materials): laid out as lit ones, the
+; colours unlit; per vertex the alpha channel GX_LIGHT2 lights at the camera (LightFunction::loadActorLightInfo: colour
+; (0, 0, 0, Alpha2) at the view origin, no attenuation): NL = n . (c - p) / |c - p| (x 127: the normals' scale), floored
+; at VU mem 1022.x (CLAMP 0, SIGN -127), R = clamp(ambient alpha + Alpha2 / 127 x NL, 0, 1); then the group's table
+; (VU mem 1008..1021, R = k / 13, lerped: tools/slice.py air_table) T(R): colour x T.rgb, alpha T.a, clamped at 255.
+; The instance's light matrix slots: +4 c, the camera in its local space (quantisation steps), +5 (ambient alpha,
+; Alpha2 / 127). Culling (GX cull mode, which the GS lacks): s = 1023.x x (NL of this vertex and the two before) +
+; 1023.y; s < 0 sets ADC: only a triangle's third vertex kicks, so its own three decide (MAC sign of x, VI10 = 0x80).
+        .global VU1Air_Start
+VU1Air_Start:
+        NOP                                 lq.xyz        VF05,0(VI00)
+        NOP                                 lq            VF10,8(VI00)
+        NOP                                 lq            VF11,9(VI00)
+        NOP                                 lq            VF12,10(VI00)
+        NOP                                 iaddiu        VI01,VI00,1022
+        NOP                                 lq            VF25,0(VI01)
+        NOP                                 lq            VF23,1(VI01)
+        NOP                                 xtop          VI02
+        NOP                                 fcset         0
+        NOP                                 ilw.x         VI07,0(VI02)
+        NOP                                 ilw.y         VI10,0(VI02)
+        NOP                                 ilw.z         VI12,0(VI02)
+        NOP                                 ilw.w         VI13,0(VI02)
+        NOP                                 lq            VF06,1(VI02)
+        NOP                                 iaddiu        VI11,VI02,2
+        NOP                                 iadd          VI03,VI11,VI10
+        NOP                                 ibeq          VI12,VI00,airMatInBatch
+        NOP                                 NOP
+        NOP                                 iadd          VI11,VI12,VI00
+airMatInBatch:
+        NOP                                 iadd          VI08,VI03,VI13
+        NOP                                 iadd          VI14,VI08,VI13
+        NOP                                 iadd          VI04,VI14,VI13
+        NOP                                 iadd          VI05,VI04,VI07
+        NOP                                 iadd          VI06,VI05,VI00
+        NOP                                 sqi           VF06,(VI06++)
+        NOP                                 iadd          VI07,VI02,VI07
+        NOP                                 iaddiu        VI10,VI00,0x80
+        sub           VF30,VF00,VF00        NOP
+airLoop:
+        NOP                                 lq            VF08,0(VI04)
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 mtir          VI12,VF08w
+        NOP                                 iadd          VI13,VI03,VI12
+        NOP                                 iadd          VI15,VI14,VI12
+        NOP                                 iadd          VI12,VI08,VI12
+        NOP                                 lq            VF07,0(VI13)
+        NOP                                 lq            VF09,0(VI12)
+        NOP                                 lq            VF13,0(VI15)
+        NOP                                 NOP
+        itof0.xyz     VF07,VF07             mtir          VI09,VF07w
+        itof0.xyz     VF13,VF13             iadd          VI09,VI09,VI11
+        itof0.xyz     VF22,VF08             lq            VF01,0(VI09)
+        NOP                                 lq            VF02,1(VI09)
+        NOP                                 lq            VF03,2(VI09)
+        NOP                                 lq            VF04,3(VI09)
+        NOP                                 lq            VF14,4(VI09)
+        NOP                                 lq            VF15,5(VI09)
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        sub.xyz       VF16,VF14,VF07        NOP
+        mulax         ACC,VF01,VF07x        NOP
+        madday        ACC,VF02,VF07y        NOP
+        maddaz        ACC,VF03,VF07z        NOP
+        maddw         VF07,VF04,VF00w       NOP
+        mul.xyz       VF17,VF16,VF16        NOP
+        mul.xyz       VF18,VF16,VF13        NOP
+        itof12        VF09,VF09             NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        addy.x        VF17,VF17,VF17y       NOP
+        addy.x        VF18,VF18,VF18y       NOP
+        mulax         ACC,VF10,VF09x        NOP
+        madday        ACC,VF11,VF09y        NOP
+        addz.x        VF17,VF17,VF17z       NOP
+        addz.x        VF18,VF18,VF18z       NOP
+        maddw         VF09,VF12,VF00w       NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 rsqrt         Q,VF18x,VF17x
+        NOP                                 waitq
+        addq.x        VF24,VF00,Q           NOP
+        clipw.xyz     VF07xyz,VF07w         div           Q,VF00w,VF07w
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        maxx.x        VF19,VF24,VF25x       NOP
+        addx.x        VF27,VF24,VF30x       NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        muly.x        VF20,VF19,VF15y       NOP
+        addy.x        VF27,VF27,VF30y       NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        add.x         VF20,VF20,VF15        NOP
+        mulx.x        VF27,VF27,VF23x       NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        max.x         VF20,VF20,VF00        NOP
+        addy.x        VF27,VF27,VF23y       NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 fmand         VI13,VI10
+        miniw.x       VF20,VF20,VF00w       NOP
+        addx.y        VF30,VF00,VF30x       NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        muly.x        VF20,VF20,VF25y       NOP
+        addx.x        VF30,VF00,VF24x       NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        miniz.x       VF20,VF20,VF25z       NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        ftoi0.x       VF21,VF20             NOP
+        NOP                                 waitq
+        mulq.xyz      VF07,VF07,Q           NOP
+        mulq.xyz      VF09,VF09,Q           NOP
+        addw.z        VF09,VF00,VF00w       NOP
+        NOP                                 NOP
+        itof0.x       VF26,VF21             mtir          VI15,VF21x
+        NOP                                 NOP
+        mulaw.xyz     ACC,VF05,VF00w        iaddiu        VI15,VI15,1008
+        madd.xyz      VF07,VF07,VF05        lq            VF28,0(VI15)
+        NOP                                 lq            VF29,1(VI15)
+        NOP                                 NOP
+        sub.x         VF26,VF20,VF26        NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        sub           VF29,VF29,VF28        NOP
+        ftoi4.xyz     VF07,VF07             fcand         VI01,262143
+        NOP                                 iaddiu        VI01,VI01,0x00007fff
+        NOP                                 NOP
+        mulx          VF29,VF29,VF26x       NOP
+        NOP                                 ibeq          VI13,VI00,airKeep
+        NOP                                 NOP
+        NOP                                 iaddiu        VI01,VI00,0x00007fff
+        NOP                                 iaddiu        VI01,VI01,1
+airKeep:
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        add           VF28,VF28,VF29        NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        mul.xyz       VF22,VF22,VF28        NOP
+        mulw.w        VF22,VF28,VF00w       NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        max           VF22,VF22,VF00        NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        miniw         VF22,VF22,VF25w       NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        ftoi0         VF22,VF22             NOP
+        NOP                                 sq            VF09,0(VI06)
+        NOP                                 sq.xyz        VF07,2(VI06)
+        NOP                                 isw.w         VI01,2(VI06)
+        NOP                                 NOP
+        NOP                                 sq            VF22,1(VI06)
+        NOP                                 iaddiu        VI04,VI04,1
+        NOP                                 iaddiu        VI06,VI06,3
+        NOP                                 isubiu        VI07,VI07,1
+        NOP                                 ibne          VI07,VI02,airLoop
+        NOP                                 NOP
+        NOP                                 xgkick        VI05
+        NOP[E]                              NOP
+        NOP                                 NOP
 ; Static strips (VU1Strip, render.c STRIP_PROGRAM): unlit groups of models without a skeleton, as triangle strips
 ; (tools/slice.py strip_batches). No index: the vertices come in emission order at fixed places, so one pointer walks
 ; the three arrays, and four vertices run interleaved per loop (both pipes busy instead of one vertex's latencies).

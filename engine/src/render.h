@@ -32,9 +32,16 @@ int render_model_visible(const Model *md, const float world[16]);
 void render_skinned_visible(const Model *md, const float world[16], const float (*drw)[16]);
 void render_group_tint(const Model *md, u8 r, u8 g, u8 b);
 /* the light lit materials are drawn with from here on (LightFunction::loadActorLightInfo): two lights at world
- * positions (each draw takes its direction from the instance), their colours and the ambient, 0..1 */
-typedef struct { float pos[2][3], col[2][3], amb[3]; } RenderLight;
+ * positions (each draw takes its direction from the instance), their colours and the ambient, 0..1; the ambient's
+ * alpha and Alpha2 (GX_LIGHT2's at the camera: camera-lit alpha groups, VU1Air) */
+typedef struct { float pos[2][3], col[2][3], amb[3], amb_a, alpha2; } RenderLight;
 void render_light(const RenderLight *l);
+/* blended groups drawn where they are drawn (on), not with the frame's blended instances at its end (off):
+ * SceneFunction's Sky / Air draw before the planets when a PriorDrawAir draws */
+void render_xlu_now(int on);
+/* a camera-lit alpha model's table (Air::exeIn / exeOut): kind 0 at rest, 1 Appear, 2 Disappear at `frame` (every
+ * model's instance takes the last one set before the frame's chain is sent) */
+void render_air_fade(const Model *md, int kind, int frame);
 /* BloomEffect (Petari): the frame's bloom models (DrawBufferType_BloomModel) and its strength this frame (BloomArea:
  * intensity 0 off, blur intensities 1 / 2), drawn at render_end */
 void render_bloom_model(const Model *md, const float world[16]);
