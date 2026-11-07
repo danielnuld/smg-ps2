@@ -1596,6 +1596,10 @@ there needs the embedded blob and every pack rebuilt.
   mario_offence(id, ..) takes the receiver's host: tryPunchAirAfter's list (a punched host no longer sees the spin, 8
   at most) and, out of a spin's own clip (_3E5: spin2nd, jump kind 8, 地上ひねり ..), the 45-degree front check
   (m_punch_ok). ponytail: one entry a host, not a sensor (KuriboChief's parts, Dodoryu's).
+- Snakehead push (feat/snakehead-push): Snakehead.cpp attackSensor in walker_push_pass (sn_sensors: head 100 / jaws 250, 200, body
+  300 / 600 at Body03; the jaws push enemies, the body pushes from the rail line's foot within 100 / 300) and Mario pushed
+  when he does not take its attack. Test: plain XF="-DPUSH_TEST -DPUSH_KIND=WALK_SNAKEHEAD -DPUSH_OTHER" HeavenlyBeachGalaxy/1
+  (PUSH_OTHER: two walkers of other kinds in the pass put against it; `kind 25 ... gave 492`).
 - StringSpider push (feat/strspider-push): in walker_push_pass after StringSpider.cpp (body 80 x s: receiveMsgPush half the
   overlap with _C4 kept; an enemy taking its push reflects its velocity 0.25, SE_EM_STRSPIDER_COLLISION from 3). Test:
   plain XF="-DPUSH_TEST -DPUSH_KIND=WALK_STRSPIDER" KoopaJrShipLv1Galaxy/1 (`kind 29 took 12`). ponytail: the SE's volume.

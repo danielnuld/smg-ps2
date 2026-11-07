@@ -31155,6 +31155,7 @@ static void tw_update(Kuribo *k)
  * / 300 of the rail's line) hurts or pushes. Only a shell (JetTurtle) kills it: TurtleDown (Damage BCK,
  * SE_EV_SNAKEHEAD_DAMAGE, back to 300 at sGoHomeSpeed 20 / race 50), killed at the BCK's end: SE_EM_EXPLODE_UNDER_WATER,
  * Death, a small one 9 star pieces at its Head (SE_OJ_STAR_PIECE_BURST_W), a big one its 1-up at its Antenna.
+ * Mario not taking the attack is pushed (from the jaw, or from the rail line's foot at 100 / 300 for the body).
  * ponytail: no star pointer swoon, no anim scale, no smoke effect. The big one's 1-up pops out (bitem_pop,
  * Snakehead.cpp:196-203) */
 static const char *sn_clip(const Kuribo *k, int type, const char *what)
@@ -31166,6 +31167,7 @@ static const char *sn_clip(const Kuribo *k, int type, const char *what)
     int c = !strcmp(what, "Waylay") ? 0 : !strcmp(what, "Wait") ? 1 : !strcmp(what, "Forward") ? 2 : 3;
     return tb[type][c];
 }
+static int sn_sensors(Kuribo *k, V3 *c, float *r, const V3 *foot_of, float *push_r);
 static void snake_update(Kuribo *k)
 {
     const Row *r = &sc->objs[k->row];
@@ -31235,19 +31237,36 @@ static void snake_update(Kuribo *k)
     k->pos = rail_at(rail, rn, k->lva[1]);
     k->qy = k->up = vmul(k->grav, -1.0f); k->qz = vnorm(vtangent(k->front, k->qy)); /* makeMtxFrontUpPos */
     if (vlen(k->qz) < 1e-3f) k->qz = k->front;
-    if (k->phase || mario->hurt_timer || k->nrv == SN_TURTLEDOWN) return; /* attackSensor: none in TurtleDown */
-    const Model *md = walker_new_model(k->row);
-    V3 heads[2];
-    float hr[2];
-    int nh;
-    if (small) { heads[0] = w_joint(k, md, 6, v3(140.0f, -70.0f, 0)); hr[0] = 100.0f; nh = 1; }
-    else { heads[0] = w_joint(k, md, 11, v3(100.0f, 0, 0)); hr[0] = 250.0f; heads[1] = w_joint(k, md, 8, v3(250.0f, 0, 0)); hr[1] = 200.0f; nh = 2; }
-    for (int h = 0; h < nh; h++) if (mario_touch(heads[h], hr[h])) { mario_attack(ATK_STRONG, heads[h]); return; } /* sendMsgEnemyAttackStrong */
-    V3 a = rail_at(rail, rn, 0), b = rail_at(rail, rn, len), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), d = vsub(b, a); /* the body */
-    float t = vdot(d, d) > 1e-6f ? vdot(vsub(mc, a), d) / vdot(d, d) : 0;
-    V3 foot = vadd(a, vmul(d, t < 0 ? 0 : t > 1 ? 1 : t));
-    V3 body = w_joint(k, md, 3, v3(0, 0, 0));
-    if (mario_touch(body, small ? 300.0f : 600.0f) && vlen(vsub(mc, foot)) <= (small ? 100.0f : 300.0f)) mario_attack(ATK_STRONG, foot);
+    if (k->phase || k->nrv == SN_TURTLEDOWN) return; /* attackSensor: none in TurtleDown */
+    V3 cs[3], mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    float hr[3], pr;
+    int n = sn_sensors(k, cs, hr, &mc, &pr);
+    for (int h = 0; h < n - 1; h++) /* sendMsgEnemyAttackStrong, else sendMsgPush */
+        if (mario_touch(cs[h], hr[h])) { if (!mario_attack(ATK_STRONG, cs[h])) mario_push_out(cs[h], hr[h]); return; }
+    if (mario_touch(cs[n - 1], hr[n - 1]) && vlen(vsub(mc, k->bpos)) <= pr && !mario_attack(ATK_STRONG, k->bpos)) /* the body: from the rail line */
+        mario_push_out(k->bpos, pr); /* its sensor moved to the foot, radius 100 / 300: sendMsgPush */
+}
+/* its sensors (head / jaws, then the body at Body03), their count; foot_of: the rail line's nearest point to it in
+ * k->bpos (calcPerpendicFootToLineInside of the rail's start and end), push_r the body's push radius (100 / 300) */
+static int sn_sensors(Kuribo *k, V3 *c, float *r, const V3 *foot_of, float *push_r)
+{
+    int small = !strcmp(walker_cls(k), "SnakeheadSmall"), n;
+    if (k->phase || k->nrv == SN_TURTLEDOWN) return 0; /* hidden (Waylay) / attackSensor off */
+    if (c) {
+        const Model *md = walker_new_model(k->row);
+        if (small) { c[0] = w_joint(k, md, 6, v3(140.0f, -70.0f, 0)); r[0] = 100.0f; c[1] = w_joint(k, md, 3, v3(0, 0, 0)); r[1] = 300.0f; n = 2; }
+        else { c[0] = w_joint(k, md, 11, v3(100.0f, 0, 0)); r[0] = 250.0f; c[1] = w_joint(k, md, 8, v3(250.0f, 0, 0)); r[1] = 200.0f; c[2] = w_joint(k, md, 3, v3(0, 0, 0)); r[2] = 600.0f; n = 3; }
+    } else n = small ? 2 : 3;
+    if (foot_of) {
+        u32 rn; int rcl;
+        const float *rail = w_rail(k, &rn, &rcl);
+        if (!rail) { k->bpos = k->pos; *push_r = 0.0f; return n; }
+        V3 a = rail_at(rail, rn, 0), b = rail_at(rail, rn, w_rail_len(rail, rn)), d = vsub(b, a);
+        float t = vdot(d, d) > 1e-6f ? vdot(vsub(*foot_of, a), d) / vdot(d, d) : 0;
+        k->bpos = vadd(a, vmul(d, t < 0 ? 0 : t > 1 ? 1 : t));
+        *push_r = small ? 100.0f : 300.0f; /* sStartCoord */
+    }
+    return n;
 }
 
 /* Kabokuri.cpp / KabokuriFire.cpp after Petari (walker kit): a pumpkin walking its rail (from the nearest place): Wait
@@ -32485,7 +32504,8 @@ static void bg_permit_update(void);
  * it; takes 5 from the sender on its body (isPushMovable: not down, NonActive, AttackSuccess or Swoon, its no-push
  * time _E4 (20) out). No MapObj pair is checked. Poihana / StinkBugSmall: theirs
  * (poihana.inc, stink.inc). StringSpider (body 80 x s): takes half the overlap, its velocity reflected (0.25) off an
- * enemy taking its push. ponytail: Teresa, BombTeresa (its explosion first), BombBird and Snakehead are not in the pass; TakoHei's BlinkTwice / scale velocity and BombHei's
+ * enemy taking its push. Snakehead: its head / jaws push (their EnemyAttackStrong taken by no walker here), its body pushes from the rail line within
+ * 100 / 300 (sendMsgPush from the foot). ponytail: Teresa, BombTeresa (its explosion first) and BombBird are not in the pass; TakoHei's BlinkTwice / scale velocity and BombHei's
  * thrown rebound are not played; the walkers outside wp_sensors are one point in the sensor list */
 static int kr_broken(const Kuribo *k);
 static int th_down(const Kuribo *k);
@@ -32496,6 +32516,7 @@ static V3 mkm_body(Kuribo *k);
 static int mkm_hipdropped(const Kuribo *k);
 static int mm_push_moved(const Kuribo *k);
 static int ph_sensors_on(const Kuribo *k);
+static int sn_sensors(Kuribo *k, V3 *c, float *r, const V3 *foot_of, float *push_r); /* Snakehead */
 static int ss_down(const Kuribo *k);
 static V3 ss_body(const Kuribo *k);
 static V3 ss_kill_c4(const Kuribo *k, V3 v);
@@ -32568,6 +32589,12 @@ static int wp_sensors(Kuribo *k, WSen *o)
         return n;
     }
     case WALK_STRSPIDER: o[0] = (WSen){ss_body(k), 80.0f * sc->objs[k->row].scale[1], 0, 1, 0}; return 1; /* body 80 x scale.y at (0, -13, 13) */
+    case WALK_SNAKEHEAD: { /* head 100 (small) / upper 250, lower 200 jaws, its body 300 / 600 (the last) */
+        V3 c[3]; float r[3];
+        int n = sn_sensors(k, c, r, NULL, NULL);
+        for (int x = 0; x < n; x++) o[x] = (WSen){c[x], r[x], 0, x == n - 1, 0};
+        return n;
+    }
     case WALK_POIHANA: /* body 70 at Body (its binder is no enemy sensor) */
         if (!ph_sensors_on(k)) return 0;
         o[0] = (WSen){w_joint(k, m_poihana, 1, v3(0, 0, 0)), 70.0f, 0, 1, 0};
@@ -32707,11 +32734,11 @@ static int wp_receive_(Kuribo *b, const WSen *rb, Kuribo *a, const WSen *sa) /* 
     }
     return 0; /* KuriboChief, Jellyfish, JellyfishElectric, Takobo, PackunPetit, Kabokuri, NokonokoLand: LiveActor::receiveMsgPush */
 }
-static int wp_taken[WALK_KINDS]; /* (test builds: the pushes taken by kind) */
+static int wp_taken[WALK_KINDS], wp_given[WALK_KINDS]; /* (test builds: the pushes taken / given by kind) */
 static int wp_receive(Kuribo *b, const WSen *rb, Kuribo *a, const WSen *sa)
 {
     int r = wp_receive_(b, rb, a, sa);
-    wp_taken[b->kind] += r;
+    wp_taken[b->kind] += r; wp_given[a->kind] += r;
     return r;
 }
 static void wp_push_kill(Kuribo *a, const WSen *sa, Kuribo *b, const WSen *rb) /* sendMsgPushAndKillVelocityToTarget */
@@ -32784,6 +32811,19 @@ static void wp_attack(Kuribo *a, const WSen *sa, Kuribo *b, const WSen *rb) /* a
             if (vlen(a->vel) >= 3.0f) w_se(a, SE_EM_STRSPIDER_COLLISION); /* ponytail: its volume (0..100 over 0..15) not set */
         }
         break;
+    case WALK_SNAKEHEAD: /* its jaws' EnemyAttackStrong (no walker here takes it): sendMsgPush; its body pushes from the
+                          * rail line (calcPerpendicFootToLineInside) at 100 / 300 when within that */
+        if (!sa->body) { wp_receive(b, rb, a, sa); break; }
+        {
+            V3 foot; float pr;
+            sn_sensors(a, NULL, NULL, &rb->c, &pr);
+            foot = a->bpos;
+            if (vlen(vsub(rb->c, foot)) > pr) break;
+            WSen moved = *sa;
+            moved.c = foot; moved.r = pr;
+            wp_receive(b, rb, a, &moved);
+        }
+        break;
     case WALK_POIHANA: /* pushed: its velocity into the receiver's actor cut */
         if (!wp_receive(b, rb, a, sa)) break;
         {
@@ -32821,7 +32861,7 @@ static void walker_push_pass(void) /* ponytail: the first WP_MAX walkers with se
 #if defined(WALKER_TEST) || defined(PUSH_TEST)
     if (game_frame && game_frame % 60 == 0) {
         printf("walker push f %u:", game_frame);
-        for (int k = 0; k < WALK_KINDS; k++) if (wp_taken[k]) printf(" kind %d took %d", k, wp_taken[k]);
+        for (int k = 0; k < WALK_KINDS; k++) if (wp_taken[k] || wp_given[k]) printf(" kind %d took %d gave %d", k, wp_taken[k], wp_given[k]);
         printf("%c", 10);
     }
 #endif
@@ -53688,8 +53728,12 @@ void game_update(void)
             Kuribo *b = &kuribo[best];
             V3 side = vnorm(vtangent(v3(1, 0, 0), b->up));
             for (int j = 0, n = 0; j < nkuribo && n < 2; j++) /* two more of its kind put against it, 40 and 80 aside */
+#ifdef PUSH_OTHER /* (two of other kinds in the pass: a walker on a rail, Snakehead) */
+                if (j != best && kuribo[j].kind != b->kind && kuribo[j].state != KURIBO_DEAD && !kuribo[j].host && wp_sensors(&kuribo[j], (WSen[5]){0}) > 0)
+#else
                 if (j != best && kuribo[j].kind == b->kind && kuribo[j].state != KURIBO_DEAD && vlen(vsub(kuribo[j].pos, b->pos)) < 1500.0f)
-                    { kuribo[j].pos = vadd(b->pos, vmul(side, 40.0f * ++n)); kuribo[j].vel = v3(0, 0, 0); }
+#endif
+                    { kuribo[j].pos = vadd(b->pos, vmul(side, 40.0f * ++n)); kuribo[j].vel = v3(0, 0, 0); printf("push test: kind %d row %d put against it%c", kuribo[j].kind, kuribo[j].row, 10); }
             test_noclip = 1;
             mario->up = b->up;
             mario->pos = vadd(b->pos, vadd(vmul(b->up, 300.0f), vmul(side, -600.0f)));
