@@ -253,6 +253,25 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   PhantomGalaxy, FactoryGalaxy.
   Note for agents: `git stash` is shared by every worktree (one repository): a stash pushed in one worktree can be
   popped by another. Do not use it; commit WIP to the branch instead.
+- Release repack (2026-11-06, main 6b9035b + #318): the old packs (all but music / movies) moved to
+  out/packs-backup-2026-11-06 (a copy ran at ~1 MB/s on D:). Full repack with main's tools (out/release_2026-11-06.sh,
+  log out/release_2026-11-06.log): lyt.py (menus.bin 939 KB, menus3d 174 KB, picturebook.bin 3288 KB new, title 1744 KB,
+  ending 1477 KB, subs 143 KB), slice_all.py (resident.bin 4.31 MB with MarioTornado, resident_luigi.bin 4.37 MB; 136 /
+  136 converted and fit 9.10 MB; down the shrink ladder: AstroGalaxy 1-5 TridentZone ratio 0.8 / 0.6 / 0.6 / 0.7 / 0.6
+  with no layers, OceanPhantomCave 1 0.5 no layers, 2 0.6, 3 0.8, 4 0.7, PhantomGalaxy 1 0.8 no layers), `zone_fit.py
+  out/packs` 906 zones, none over (tightest OceanPhantomCave 3 GhostShipCaveZone, 4 KB left; with the disc ELF 4431 KB
+  left: ROOM, not the region, is the bound now), every sound pack and the shared sound.bin (1117 SEs, 32 MEs). Every
+  line of D:/smg-ps2-wt/repack-todo.md up to #299 is in it. Checks: host tests; route EggStar 1 star at f 4215; coverage
+  (out/rel-cover.sh, one galaxy per PCSX2 lock, out/coverage.csv, logs of the failures in out/cover_logs): 118 / 123 ok
+  (KoopaJrShipLv1 1 now ok); misses PhantomGalaxy 6, BattleShip 1, CannonFleet 1 (the cover test's landings, as on
+  10-30); FactoryGalaxy 2 crashed after its first three-zone swap: TicoFat's goods Anim (and the Creeper leaf,
+  HoneyQueen's wing, TicoShop's goods) were allocated in-game above main.c's base_mark and freed by the swap (#314,
+  fixed in #318: a pool from game_init; cover Factory 2, EggStar 2, HoneyBeeKingdom 1 then ok); EggStarGalaxy 1 once
+  jumped to 0 at boot right after opening menus3d.bin (cover ELF), not again in two more boots (cover, plain): the
+  layout-dependent boot crash noted on 10-30 (10-30 tied it to EggStar 1's ME data), still open: it also
+  hit the route ELF once with #318 (out/rel-boot-EggStarGalaxy_1-route-crash1.log), the retry got the star at f 4215. Disc: build.sh plain ... FileSelect/1 disc, disc.py ->
+  out/smg-ps2.iso (3315 MB, 2472 packs, ELF from 6b9035b + #318, not the boss PRs merged since); the 10-31 ISO kept as
+  out/smg-ps2-prev.iso.
 
 ## Console release (2026-10-23 / 24)
 
@@ -970,6 +989,27 @@ there needs the embedded blob and every pack rebuilt.
   top through a gap. ponytail: TripodBossBreakMovement, CameraTripodBoss*, leg shadows, DummyDisplayModel,
   KinokoOneUp, cannon clips, the BreakDown camera (shows the planet close up), the killers' shadow on a cage
   (tripod_boss.inc header).
+- Koopa Vs1 (feat/300-koopa-vs1, 2026-11-06): Bowser after Petari in engine/src/koopa.inc (#included by game.c, kp_*):
+  Koopa / KoopaFunction / KoopaParts / KoopaSensorCtrl (its 27 sensors at Koopa.bdl's joints), KoopaSequencerVs1,
+  KoopaBattleStairsVs1 (registerStair: each KoopaBattleMapStair's mFireAttackStep / target, game.c kss reg / fstep / ac;
+  the stairs stop in demos but the requested ones), KoopaBattleMain with its ActorStateKeeper (a nerve change kills the
+  old state) and the states Guard / AttackHipDrop / AttackShockWave / AttackFireShort / DamageEscape / JumpAway,
+  KoopaSubSequenceBattle, KoopaDemoJumpToPlanet / PowerUp, KoopaFireStairs / FireShort / ShockWave / PlanetShadow,
+  KoopaSwitchKeeper / PowerUpSwitch (LOGIC rows), KoopaBattleMapPlanet with its damage / coin / plain plates (insts made
+  in game_rebind_: kp_insts), the sheet demos with the Koopa clip and its CANM (koopa/<clip>), the actor cameras
+  (クッパ大王（ＶＳ１）), the grand star at デモ中心. Test: plain build XF="-DKP_TEST", KoopaBattleVs1Galaxy/1
+  (D:/smg-ps2-wt/koopa-b.sh / koopa-r.sh): SW_APPEAR, the stairs demo and battle (the climb's switches 21 / 22 set by the
+  test), its SW_A, クッパＶｓ１本戦開始, the jump to the planet, three levels (hip drop on a damage plate, tail spin, body
+  spin) with the power up demos, クッパＶｓ１ダウン, `power star 1 got`. Packs: slice.py (EXTRA KoopaVs1: KOOPA_PARTS and
+  the planet / plates, SKINNED_OBJ parts, CANM_ARC koopa, LOGIC keepers, declare_stars, anim_skipped other battles'
+  demo clips), jpa.py NAMED MeteorStrike / KoopaPlate*. ponytail: no face control (ActorJointCtrl), no shadows / bloom,
+  no screen blur, the plates' / planet's BRKs, the binded collision's sensor is the plate under its feet, anim cameras
+  without interpolation, no attacks on other actors, pooled skinned models share one Anim.
+  Vs2 (#311): KoopaSequencerVs2, KoopaStateAttackSpin (its AttackSpin sensor), KoopaStateAttackFireLong, the Vs2 planet
+  (KoopaBattleMapPlanetVs2, its damage plates only, the grand star plate the first). Test: KP_TEST build with
+  KoopaBattleVs2Galaxy/1 (koopa-b.sh KoopaBattleVs2Galaxy/1 "" 2): クッパＶｓ２本戦開始, three levels, クッパＶｓ２ダウン,
+  `power star 1 got`. Vs3 not started (KoopaSequencerVs3, BattleVs3Lv1 / Lv2, StairsVs3, DemoFallToPlanetVs3Lv2 / Lv3,
+  ChaseRoll / AttackRoll, FigureBall, RockBreak, RestarterVs3, ViewSwitchKeeper, the Peach / KoopaJr / ship demo casts).
 - BossKameck (feat/kameck, 2026-11-05): Kamella after Petari (game.c bk_*, its sequencer Vs1 / Vs2, BattleDemo,
   StateBattle's 12 nerves, MoveRail, BattlePattarn) in StarDustGalaxy 2's ThrowTutorialZone: dead until SW_A (the
   SwitchCube), カメック登場Vs1 (the DemoBossKameckStart anim camera on BossKameckBattleDemo, MBGM_BOSS_04, Mario
@@ -987,6 +1027,54 @@ there needs the embedded blob and every pack rebuilt.
   (dx_cls_moves) fixed in #288; Koopa / KoopaJrShip (not ported) leave their grand stars undeclared (out at once).
   ponytail: the barrier's Wait BRK / BTK, no Suso / Cap dynamic joints, no
   shadow, no star pointer bind on Kamecks, NonActive by distance.
+- IceMerameraKing (feat/304-meramera-king, 2026-11-06): Baron Brr after Petari in engine/src/ice_meraking.inc
+  (#included by game.c, mk_*; walker kind WALK_MERAKING), IceVolcanoGalaxy 1's IceMountainZone: its 17 nerves, its
+  ThrowingIce pool (MoguStone.cpp: IceManIce on a ParabolicPath), IceMerameraKingShockWave (its Shock ring, sensors by
+  its joints' scales), IceMerameraKingBreak, the メラキンオープニング demo (by the arena's SwitchCubes: BeginDemo's
+  throw, 怒りデモ at part 2, 死亡デモ at part 4; its CameraTargetDemoActor through game.c dx_tgt), the pinch BGM
+  (AudBgmConductor playPinchEventBgmLevel / stopPinchEventBgmSoon / movement: game.c bgm_pinch*, bsub.id), its two
+  ChildIceMeramera (dead until AngryDemo2nd's step 90, killed in the death demo), its power star from its place.
+  sound.py --pack now reads the .inc files game.c includes (tripod_boss.inc's SEs were left out). Test: plain build,
+  XF=-DMK_TEST, IceVolcanoGalaxy/1: opening demo, three spin storms / spins while it rolls, both angry demos, death
+  demo, `power star 1 got`. ponytail: SE_DM_LV_MUTE_BGM's BGM mute, BodyIceOff's particle callback, its BRKs; its
+  children are still the improvised Meramera walker (Meramera.cpp, 1765 lines, not ported).
+- Meramera (feat/319-meramera, 2026-11-06): Meramera.cpp after Petari in engine/src/meramera.inc (mm_*, walker kind
+  WALK_MERAMERA: Meramera, IceMeramera, ChildIceMeramera), replacing the improvised walker: its 18 nerves, keep-height
+  over its shadow, chase / dash / turn, the attack sensor (fire / freeze), spin storm Damage -> Runaway (rolling, jumps,
+  diving into a fire floor: Sink / Float / Ignition), Down / FlatDown, star piece / fireball / explosion / invincible,
+  ReadyRestart (arg2), head effects on its Sin joint, its BTPs. IceMerameraKing's children use it (mk_child_kill: its
+  kill). Test: plain XF=-DMM_TEST HellProminenceGalaxy/1 (chase, attack success, spin: Damage, Runaway, Sink, Float,
+  Ignition, Chase). ponytail: BindStarPointer, BRK colours, element attack on enemies. MK_TEST (main too): `power star 1 got` at the king's first damage.
+- FallingSmallRock (feat/306-falling-small-rock, 2026-11-06): MapObj/FallingSmallRock.cpp in game.c update_fsrock
+  (HellProminenceGalaxy 1 / 4): Wait for SW_A, Move (its FallingSmallRock effect, SE_AT_LV_FALLING_ROCK) until its
+  binder (10 at 800 up) touches the map. Rows kept by slice.py LOGIC, its effect by jpa.py NAMED. Test: plain build
+  XF=-DFSROCK_TEST HellProminenceGalaxy/1 (SW_A on at frame 300: 13 move, one bound and dead).
+- Kingfin / Bonefins (feat/303-kingfin, 2026-11-05): engine/src/skeletal_fish.inc (sf_*: SkeletalFishRailControl,
+  SkeletalFishJointCalc, SkeletalFishBaby for SkeletalFishBaby / ChildSkeletalFishBaby rows on the SnakeFish model,
+  ExterminationSkeletalFishBaby: TearDrop's 全滅スター出現 star) and skeletal_fish_boss.inc (sfk_* / sfg_*:
+  SkeletalFishBoss with its Param.bcsv levels, rails by RailIDLv, 13 rail-bent joints, 16 joint collisions as
+  invisible insts (slice.py KCL_PARTS SkeletalFishBoss / SkeletalFishBossHeadA), head sensors, mouth nerves, the
+  出現 / パワーアップ / ２ / 死亡 demos on its four canms (CANM_ARC sfb), demo guards, break model, MBGM_BOSS_09_A / B and
+  the near / far states, SkeletalFishGuard / GuardHolder). A thrown JetTurtle hits them (sf_jet_hit). Clip keys over 31
+  chars shorten skeletalfish to sf (slice.py clip_key, game.c sf_clip). Tests: XF=-DSF_TEST TearDropGalaxy/1, XF=-DSFK_TEST SkullSharkGalaxy/1 (shells
+  thrown at the fish by the test): three babies and the checker's star; the whole fight to its star. ponytail: see the two files' headers (BRK colours, shadows, bloom, bird louse,
+  columns, 2P pointer, the after-demo programmable camera).
+- SubmarineSteam / SubmarineVolcano (feat/307-submarine-steam, 2026-11-06): MapObj/SubmarineSteam.cpp (both names one
+  class, the effect group its name) in game.c update_msteam: Steam (SE_OJ_LV_MARINE_STEAM_OUT, _S in SkullSharkGalaxy)
+  or WaitForSwitchOn; its strong hit (sphere 120 at 600, cylinder 480, Mario's radius x 0.7 + 20). slice.py LOGIC,
+  jpa.py NAMED. Test: plain build XF=-DMSTEAM_TEST SkullSharkGalaxy/1 (both hit Mario). ponytail: group clipping.
+- KoopaJrShip (#302, 2026-11-06): Bowser Jr.'s airship after Petari in engine/src/koopajr_ship.inc (#included by
+  game.c, kj_* / dkj_*): KoopaJrShip's nerves on its rail, propellers / screws, cannon shells and main shells, its
+  HomingKillers, the two Kamecks, 5 JetTurtle hits (Damage / PowerUp / BreakStart / Break), its demo casts (appear,
+  turn to the front, Koopa Jr.'s ShipBattle talk as its cast クッパJr: slice.py DEMO_CAST_ALIAS), the burn / move level
+  SEs, its power star; KoopaJr on its obj joint; DemoKoopaJrShip (FloaterOtaKingGalaxy arg0 1, TriLegLv1Galaxy arg0
+  0: the entry clip and anim camera, the talk, FlyAway). slice.py: SKINNED_OBJ, EXTRA, MODEL_ARC / ANIM_ARC, TALK_NAME,
+  declare_stars. Models looked up again and anims rebound in game_rebind_ (kj_models). TicoShop's goods (#318's keep_anim pool) bound again when a
+  zone swap moves their model (KoopaJrShipLv1's TLB miss in anim_pose / draw_model_ after BattleLv1Tmp1Zone came in).
+  Test: KJ_TEST build with KoopaJrShipLv1Galaxy/1 (Mario to the SW 15 SwitchCube, the switch written after 300
+  frames: the cube's area does not write it there, A through the talk, a JetTurtle hit every 300 frames): opening
+  demo, the talk, 5 hits, the mid demo, the down demo, `power star 1 got`. DKJ_TEST (FloaterOtaKingGalaxy/1, plain):
+  the entry demo by SW 67.
 
 - Dodoryu (feat/301-dodoryu, 2026-11-05): Major Burrows after Petari in engine/src/dodoryu.inc (#included by game.c, dd_*):
   its eight states (Wait, DemoOpening, Lv1, DemoAppear, Lv2, DemoAngry, Lv3 with sDodoryuChaseDataLv3, DemoDown) on their

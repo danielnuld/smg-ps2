@@ -10,7 +10,7 @@ int game_time_left(void);
 void game_update(void);
 /* After the scene's models changed (zone packs swapped): find every placed model again. */
 void game_rebind(void);
-#define KPROF_KINDS 40 /* kprof / kprof_n: update_kuribo's time by walker kind (game.c WALK_KINDS fits) */
+#define KPROF_KINDS 48 /* kprof / kprof_n: update_kuribo's time by walker kind (game.c WALK_KINDS fits) */
 /* full[z]: stage z is loaded in full. need[z]: Mario needs its collision (2: at once); soon[z]: he is heading for it; dist[z]:
  * its priority (smaller first), for the zones that fit the memory room (main.c stream_update). */
 void game_zone_sets(const unsigned char *full, unsigned char *need, unsigned char *soon, float *dist);
@@ -229,6 +229,13 @@ int game_life(void);
 int game_test_bk(int frame); /* bk test: the BossKameck fight a frame */
 int game_test_tb(int frame); /* tb test: the TripodBoss fight a frame */
 int game_test_dd(int frame); /* dd test: the Dodoryu fight a frame */
+int game_test_kp(int frame); /* kp test: the Koopa Vs1 fight a frame */
+int game_test_mk(int frame); /* mk test: the IceMerameraKing fight a frame */
+int game_test_mm(int frame); /* mm test: a placed Meramera a frame */
+int game_test_sfk(int frame); /* sfk test: the SkeletalFishBoss fight a frame */
+int game_test_sf(int frame); /* sf test: shells at the SkeletalFishBabies a frame */
+int game_test_kj(int frame); /* kj test: the KoopaJrShip fight a frame */
+int game_test_pol(int frame); /* pol test: the Polta fight a frame */
 int game_test_bbego(int frame); /* bbego test: the BossBegoman fight a frame */
 int game_lives(void);
 int game_misses(void);
