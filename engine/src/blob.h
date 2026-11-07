@@ -21,7 +21,8 @@ typedef struct {
     u8 blend, zwrite, alpha; /* material: 0 opaque, 1 blended, 2 additive, 4 the frame buffer x alpha + the vertex colour, 5 the frame buffer x (1 + alpha), 3 the frame buffer x alpha (a screen copy
                               * seen through a tint); depth written; constant alpha 0..255 */
     u8 lit;              /* 1 lit material: per-vertex normals, lit on VU1 (render_light); 2 environment-mapped: per-vertex
-                          * normals, UVs from them on VU1 (VU1Env, env) */
+                          * normals, UVs from them on VU1 (VU1Env, env); 3 camera-lit alpha: per-vertex normals, the alpha
+                          * channel lit by GX_LIGHT2 at the camera on VU1 (VU1Air, air) */
     u8 strip;            /* triangle strips (tools/slice.py strip_batches): 1 VU1Strip (static unlit): per batch s16
                           * pos[n][4] (w = -32768 starts a strip), s16 uv[n][2] if textured, u8 rgba[n][4]; 2 VU1SkinLit
                           * (skinned lit): w = 7 x slot with bit 15 for a start, s8 normal[n][4] before the colours */
@@ -37,6 +38,8 @@ typedef struct {
     float *uvm;          /* with btk: the UV matrix the chain uploads (3 qwords: columns s, t, 1; anim_btk); env: 4
                           * qwords (VU mem 8..10 and 15, render_env) */
     const float *env;    /* lit 2: rows s, t, q of the texgen on the view normal, columns n.x, n.y, n.z, 1 (tex.env_mtx) */
+    float *air;          /* lit 3 (camera-lit alpha, VU1Air): 16 qwords for VU mem 1008..1023, from air_src (render_air_fade) */
+    const float *air_src; /* its tables (tools/slice.py air_table): at rest, then [62] Appear's, [63] Disappear's */
     u16 swap[8];         /* its swappable textures (SWAP chunk; [0] its own), scene indices */
     u8 nswap, swap_kind; /* how many; 0 Mario's eyelids (the blink), 1 his ColorChange body / cap (calcAnim) */
     u8 hide;             /* skinned: left out of the draw (its shape hidden by a BVA at its frame: game.c bva_apply) */
@@ -77,7 +80,7 @@ typedef struct {
     VuGroup *vu;
     float radius; /* bounding sphere around the origin, for culling */
     float qscale; /* position quantisation step, folded into the matrices */
-    int lit;      /* some group is lit (VuGroup.lit): its matrices carry light matrices */
+    int lit;      /* some group is lit (VuGroup.lit, bit 0) or camera-lit (bit 1): its matrices carry light matrices */
     void *chain;  /* static models: prebuilt VIF chain of the opaque batches, ends with RET (render.c) */
     void *chain_xlu; /* the same for the alpha-blended batches, drawn after the opaque ones */
     int btp;      /* some group has BTP images (SWAP kind 0x80 | slot): game.c btp_apply */

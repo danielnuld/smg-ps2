@@ -79,7 +79,9 @@ extern u32 VU1SkinLit_Start __attribute__((section(".vudata")));
 #define SKINLIT_PROGRAM ((u32)((u8 *)&VU1SkinLit_Start - (u8 *)&VU1Tex_CodeStart) / 8) /* skinned lit strips */
 extern u32 VU1EnvStrip_Start __attribute__((section(".vudata")));
 #define ENVSTRIP_PROGRAM ((u32)((u8 *)&VU1EnvStrip_Start - (u8 *)&VU1Tex_CodeStart) / 8) /* static env strips */
-#define PROGRAM(vg) ((vg)->strip == 3 ? ENVSTRIP_PROGRAM : (vg)->strip == 2 ? SKINLIT_PROGRAM : (vg)->strip ? STRIP_PROGRAM :                      (vg)->lit == 2 ? ENV_PROGRAM : (vg)->lit ? LIT_PROGRAM : 0)
+extern u32 VU1Air_Start __attribute__((section(".vudata")));
+#define AIR_PROGRAM ((u32)((u8 *)&VU1Air_Start - (u8 *)&VU1Tex_CodeStart) / 8) /* camera-lit alpha batches (lit 3) */
+#define PROGRAM(vg) ((vg)->strip == 3 ? ENVSTRIP_PROGRAM : (vg)->strip == 2 ? SKINLIT_PROGRAM : (vg)->strip ? STRIP_PROGRAM :                      (vg)->lit == 3 ? AIR_PROGRAM : (vg)->lit == 2 ? ENV_PROGRAM : (vg)->lit ? LIT_PROGRAM : 0)
 
 #define SCREEN_W 640
 /* 640 x 224 buffers shown in FRAME mode (each field reads every line): the picture is the same on both fields, so it
@@ -143,6 +145,7 @@ static packet2_t *vif[2], *gif;
 #define GIF_QW 8192             /* HUD text: one sprite per lit font pixel (the boot menu fills it) */
 static int cur;
 static float view[16], proj[16];
+static float eye_w[3];          /* the camera in the world (render_begin): VU1Air's light */
 static float pv[16] __attribute__((aligned(16))); /* proj x view (draw_model), pv_ok 0 after either changes */
 static int pv_ok;
 static float shake_x, shake_y; /* render_set_shake, in pixels */
@@ -447,6 +450,7 @@ void render_begin(const float eye[3], const float target[3], const float up[3])
     view[12] = -(s[0] * eye[0] + s[1] * eye[1] + s[2] * eye[2]);
     view[13] = -(u[0] * eye[0] + u[1] * eye[1] + u[2] * eye[2]);
     view[14] = -(fw[0] * eye[0] + fw[1] * eye[1] + fw[2] * eye[2]);
+    eye_w[0] = eye[0]; eye_w[1] = eye[1]; eye_w[2] = eye[2];
 
     u32 bw0;
     __asm__ volatile("mfc0 %0, $9" : "=r"(bw0));
@@ -870,7 +874,7 @@ static qword_t *blend_states;
 
 static const qword_t *blend_state(const VuGroup *vg)
 {
-    int as = vg->tex != NO_TEX && tex_scene->tex[vg->tex].e->alpha;
+    int as = (vg->tex != NO_TEX && tex_scene->tex[vg->tex].e->alpha) || vg->air; /* VU1Air: its alpha per vertex */
     return blend_states + 4 * ((((vg->blend >= 2 ? vg->blend - 1 : 0) * 2 + !!vg->zwrite) * 2 + as) * 16 + (vg->alpha >> 4));
 }
 
@@ -918,6 +922,16 @@ static void add_uvm(packet2_t *pk, const float *m)
     packet2_vif_nop(pk, 0);
     packet2_chain_close_tag(pk);
     packet2_utils_vu_add_unpack_data(pk, 8, (void *)m, 3, 0);
+}
+
+/* a camera-lit alpha group's table (VuGroup.air) to VU mem 1008..1023, after the double buffers: FLUSHE first */
+static void add_airt(packet2_t *pk, const float *t)
+{
+    packet2_chain_open_cnt(pk, 0, 0, 0);
+    packet2_vif_flushe(pk, 0);
+    packet2_vif_nop(pk, 0);
+    packet2_chain_close_tag(pk);
+    packet2_utils_vu_add_unpack_data(pk, 1008, (void *)t, 16, 0);
 }
 
 /* an environment-mapped group's matrix (render_env): columns to VU mem 8..10, its constant to 15 */
@@ -1028,6 +1042,31 @@ static void light_matrix_drw(float *m, const float drw[16], const float dl[2][3]
     }
 }
 
+/* a camera-lit alpha model's light matrix (VU1Air): m[16..18] the camera in its local space in steps of its
+ * quantisation (w affine: its 3x3 inverted), m[20] the ambient's alpha, m[21] Alpha2 / 127 (the normals' scale);
+ * LightFunction::loadActorLightInfo: GX_LIGHT2 (0, 0, 0, Alpha2) at the view origin, the channel's ambient the light's */
+static void air_matrix(float *m, const float w[16], float qs)
+{
+    zero12(m + 16);
+    const float a = w[0], b = w[4], c = w[8], d = w[1], e = w[5], f = w[9], g = w[2], h = w[6], k = w[10];
+    float det = a * (e * k - f * h) - b * (d * k - f * g) + c * (d * h - e * g);
+    if (fabsf(det) < 1e-12f)
+        return;
+    float x = eye_w[0] - w[12], y = eye_w[1] - w[13], z = eye_w[2] - w[14], inv = 1.0f / (det * qs);
+    m[16] = ((e * k - f * h) * x + (c * h - b * k) * y + (b * f - c * e) * z) * inv;
+    m[17] = ((f * g - d * k) * x + (a * k - c * g) * y + (c * d - a * f) * z) * inv;
+    m[18] = ((d * h - e * g) * x + (b * g - a * h) * y + (a * e - b * d) * z) * inv;
+    m[20] = light ? light->amb_a : 0.5f;
+    m[21] = (light ? light->alpha2 : 0.5f) / 127.0f;
+}
+/* the light matrix of a static instance: lit groups' or (bit 1) camera-lit ones'. ponytail: a model with both kinds
+ * gets the camera's (none has) */
+static void model_light_matrix(const Model *md, float *m, const float w[16])
+{
+    if (md->lit & 2) air_matrix(m, w, md->qscale);
+    else light_matrix(m, w, w + 12);
+}
+
 /* the prebuilt chain of a model's opaque groups (xlu 0) or of its blended ones (xlu 1); NULL when it has none. A BTK
  * group's batches run between its own UV matrix (VuGroup.uvm, refreshed each frame: game_draw, anim_btk) and the
  * identity again */
@@ -1038,7 +1077,7 @@ static packet2_t *build_chain_pass(Model *md, int xlu)
         if ((group_mode(&md->vu[g]) >= 2) == xlu) {
             batches += md->vu[g].nbatch;
             groups++;
-            btks += md->vu[g].uvm != NULL;
+            btks += md->vu[g].uvm != NULL || md->vu[g].air;
         }
     if (!groups)
         return NULL;
@@ -1054,6 +1093,8 @@ static packet2_t *build_chain_pass(Model *md, int xlu)
             add_envm(pk, vg->uvm);
         else if (vg->uvm)
             add_uvm(pk, vg->uvm);
+        if (vg->air)
+            add_airt(pk, vg->air);
         const u8 *d = vg->data;
         const VuGroup *sg = vg - vg->share; /* a layer's base: its batches walked alongside (positions, colours) */
         const u8 *sd = sg->data;
@@ -1158,6 +1199,20 @@ static void call_chain(void *chain, float *m)
 static struct { const Model *md; float *m; float depth; const RenderLight *light; } xlu[MAX_XLU];
 static int nxlu;
 static int bloom_drawing; /* bloom_pass: blended groups drawn at once */
+static int xlu_now;       /* render_xlu_now: the same */
+void render_xlu_now(int on) { xlu_now = on; }
+#define AIR_FADE_STEP 4 /* tools/slice.py AIR_FADE_STEP */
+void render_air_fade(const Model *md, int kind, int frame)
+{
+    for (u32 g = 0; g < md->vu_ngroups; g++) {
+        const VuGroup *vg = &md->vu[g];
+        if (!vg->air_src) continue;
+        int na = (int)vg->air_src[62], nd = (int)vg->air_src[63], k = 0;
+        if (kind == 1 && na) k = 1 + (frame / AIR_FADE_STEP < na - 1 ? frame / AIR_FADE_STEP : na - 1);
+        if (kind == 2 && nd) k = 1 + na + (frame / AIR_FADE_STEP < nd - 1 ? frame / AIR_FADE_STEP : nd - 1);
+        memcpy(vg->air, vg->air_src + 64 * k, 256);
+    }
+}
 
 static inline u32 cy_(void) { u32 c; __asm__ volatile("mfc0 %0, $9" : "=r"(c)); return c; }
 u32 prof_draw, prof_dcalls, prof_dculled; /* EE cycles in draw_model, its calls, those culled (profiling) */
@@ -1299,10 +1354,10 @@ static void draw_model_(const Model *md, const float world[16], const float (*dr
         memcpy(m, pvw, 64);
         scale_cols(m, md->qscale);
         if (md->lit)
-            light_matrix(m, world, world + 12);
+            model_light_matrix(md, m, world);
         if (md->chain)
             call_chain(md->chain, m);
-        if (md->chain_xlu && bloom_drawing)
+        if (md->chain_xlu && (bloom_drawing || xlu_now))
             call_chain(md->chain_xlu, m);
         else if (md->chain_xlu && nxlu < MAX_XLU) { /* blended groups wait for the end of the frame, far ones first */
             int k = nxlu++;
@@ -1336,7 +1391,7 @@ static void draw_model_(const Model *md, const float world[16], const float (*dr
         memcpy(gm, pvw, 64);
         scale_cols(gm[0], md->qscale);
         if (md->lit)
-            light_matrix(gm[0], world, world + 12);
+            model_light_matrix(md, gm[0], world);
         nmats++;
     }
     for (u32 g = 0; g < md->vu_ngroups; g++) {

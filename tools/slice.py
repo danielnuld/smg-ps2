@@ -29,7 +29,8 @@ Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
   'KCL '  u32 n, n × {char[32] model, u32 size, bytes[size] (little-endian KCL, kcl_to_le), pad to 4}
   'VUMD'  u32 n, 12 pad, n × {char[32] name, u32 ngroups, f32 qscale, 8 pad, ngroups × {u32 nverts (3 per
           triangle), u16 tex, u16 nbatch, u8 blend (0 opaque, 1 blended, 2 additive, 3-5 frame buffer
-          tints, 6 multiplied by the texture alpha, 7 subtracted: render.c init_blend_states), u8 z_write, u8 alpha, u8 lit,
+          tints, 6 multiplied by the texture alpha, 7 subtracted: render.c init_blend_states), u8 z_write, u8 alpha, u8 lit
+          (1 lit, 2 environment-mapped: f32 env[12] after the header, 3 camera-lit alpha: f32 air[64] after it, air_table),
           u8 strip (strip_batches' formats), u8 share (a layer pass on the strips of the group that many back: per
           batch only its UVs or normals), 2 pad,
           nbatch × {u16 emitted, u16 unique} padded to 16, then per batch (index_batches): s16 pos[unique][4]
@@ -549,6 +550,73 @@ def ras_colour(b, bl, mat, texs, over, name, clr0):
     return _ras_cache[key]
 
 
+AIR_STEPS = 14  # VU1Air's table: the TEV's factor at R = k / 13 (engine vu1_tex.vsm, VU mem 1008..1021)
+
+
+def air_merge(over, fr):
+    """BRK / BPK overrides (tex.brk) laid over others: per material its registers and material colour replaced."""
+    o = dict(over or {})
+    for mn, v in fr.items():
+        m = dict(o.get(mn, {}))
+        for k in ("reg", "konst"):
+            m[k] = {**m.get(k, {}), **v.get(k, {})}
+        if "mat" in v:
+            m["mat"] = v["mat"]
+        o[mn] = m
+    return o
+
+
+def anim_len(a):
+    """A BRK's / BPK's last frame (TRK1 +0x0A, PAK1 +0x0C)."""
+    t = a.find(b"PAK1")
+    return B.u16(a, t + 0x0C) if a[:8] == b"J3D1bpk1" else B.u16(a, a.find(b"TRK1") + 0x0A)
+
+
+AIR_FADE_STEP = 4  # Appear / Disappear tables every 4 frames (engine render_air_fade)
+
+
+def air_table(b, bl, mat, texs, over, name, cam, lfiles=None, rest=None):
+    """A camera-lit alpha material (tex.camera_alpha: Air's GX_LIGHT2) -> VU1Air's 64 floats: per R = k / 13 (the alpha
+    channel's light level) the TEV's colour and alpha (textures at their mean colour) over those at R = 1 (the level
+    the texture is baked at: its alpha the most, every curve here rising), rgb capped at 2, alpha x 128 (the GS's 1);
+    then (the diffuse floor x 127: SIGN -127, CLAMP 0; 13, 12.999, 255) and the cull (sign, bias: s = sign x sum of a
+    triangle's n.l + bias, off when s < 0; GX_CULL_BACK +1, FRONT -1, NONE 0 / 1, then the counts of the tables
+    after it). With lfiles, the Appear then Disappear (appear / disappear .brk or .bpk) tables follow, every
+    AIR_FADE_STEP frames to the last, each over the resting `over` (Air::exeIn / exeOut's fades). ponytail: exact
+    where the TEV is the texture times f(R) (HomeAir, SunsetAir, FineAir); SphereAir's colour (its alpha in a lerp) is
+    the mean's"""
+    def at(r):
+        o = dict(over or {})
+        o[name] = dict(o.get(name, {}), ras_a=r, env_mean=True)
+        return tex.tev(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, None, o)
+    if rest is None:
+        o = dict(over or {})
+        o[name] = dict(o.get(name, {}), ras_a=1.0, env_mean=True)
+    else:
+        o = dict(rest)
+        o[name] = dict(o.get(name, {}), ras_a=1.0, env_mean=True)
+    one = np.maximum(tex.tev(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, None, o), 1 / 255)
+    rows = []
+    for k in range(AIR_STEPS):
+        v = at(k / (AIR_STEPS - 1)) / one
+        rows += [float(min(v[0], 2.0)), float(min(v[1], 2.0)), float(min(v[2], 2.0)), float(min(v[3], 1.0)) * 128.0]
+    dfn, cull = cam
+    rows += [-127.0 if dfn == 1 else 0.0, AIR_STEPS - 1.0, AIR_STEPS - 1.001, 255.0]
+    rows += [{1: -1.0, 2: 1.0}.get(cull, 0.0), 0.0 if cull in (1, 2) else 1.0, 0.0, 0.0]
+    if lfiles is None:
+        return rows
+    for i, kind in enumerate(("appear", "disappear")):
+        a = lfiles.get(kind + ".brk") or lfiles.get(kind + ".bpk")
+        if not a:
+            continue
+        n = anim_len(a)
+        frames = list(range(0, n, AIR_FADE_STEP)) + [n]
+        for f in frames:
+            rows += air_table(b, bl, mat, texs, air_merge(over, tex.brk(a, f)), name, cam, None, over)
+        rows[62 + i] = float(len(frames))
+    return rows
+
+
 def btk_entry(anim, material, mt, t, group):
     """A BTK chunk entry (after its model name) for VUMD group `group` whose material's texture matrix the BTK animates,
     or None: {u32 size, u16 group, u16 frames, u8 loop, u8 maya, 2x, f32 uv scale[2], f32 static matrix inverse[6]
@@ -701,11 +769,14 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 gtab = []
             shapes = tex.shape_materials(b, bl[b"INF1"])
             texs = tex.textures(b, bl[b"TEX1"]) if b"TEX1" in bl else []
-            ps2, gains, ras_split, lay_cache = {}, {}, {}, {}
+            ps2, gains, ras_split, lay_cache, airt = {}, {}, {}, {}, {}
+            stats.pop("_air", None)
             sky = arc.stem in SKY_ARCS or arc.stem.endswith("Sky")  # 8-bit textures (tex.to_ps2 hi)
             lfiles = {k.lower().rsplit("/", 1)[-1]: v for k, v in files.items()}
             bp = brk or BRK_POSE.get(arc.stem)  # a BRK_ARG variant's (name, frame) first
             over = tex.brk(lfiles[bp[0] + ".brk"], bp[1]) if bp and bp[0] + ".brk" in lfiles else None
+            if arc.stem in AIR and "appear.bpk" in lfiles:  # Air::appear: Appear's material colours at its end too
+                over = air_merge(over, tex.brk(lfiles["appear.bpk"], anim_len(lfiles["appear.bpk"])))
             if mat:  # MAT_COLOR: (material, rgb)
                 over = dict(over or {})
                 over[mat[0]] = dict(over.get(mat[0], {}), mat=[c / 255 for c in mat[1]] + [1.0], env_mean=True)
@@ -753,6 +824,9 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 if mat is not None and (arc.stem, tex.material_name(b, bl[b"MAT3"], mat)) in DROP_MATERIALS:
                     continue
                 mt = tex.material_tex(b, bl[b"MAT3"], mat, bl.get(b"TEX1")) if mat is not None else None
+                # Air's camera-lit alpha (tex.camera_alpha): VU1Air, per vertex its table (air_table, stats "_air")
+                cam = tex.camera_alpha(b, bl[b"MAT3"], mat) if arc.stem in AIR and mat is not None else None
+                air_rows = None
                 get = geom.vtx1_attr(b, bl[b"VTX1"], mt["attr"]) if mt and mt["attr"] in info["at"] else None
                 uvs = t = None
                 gain, split = 1, True
@@ -809,7 +883,14 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                             mn_ = tex.material_name(b, bl[b"MAT3"], mat)
                             o2 = dict(o2 or {})
                             o2[mn_] = dict(o2.get(mn_, {}), coord_val={L["coord"]: L["level"] for L, _ in mlay})
-                        baked = tex.bake(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, mt["tex"], o2, binfo)
+                        if cam:  # Air's camera-lit alpha (VU1Air): the TEV at R = 1, its table (air_table) per vertex
+                            mn_ = tex.material_name(b, bl[b"MAT3"], mat)
+                            o2 = dict(o2 or {})
+                            o2[mn_] = dict(o2.get(mn_, {}), ras_a=1.0)
+                            baked = (tex.tev(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, mt["tex"], o2) * 255 + 0.5).astype(np.uint8)
+                            airt[key] = air_table(b, bl, mat, texs, o2, mn_, cam, lfiles)
+                        else:
+                            baked = tex.bake(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, mt["tex"], o2, binfo)
                         if ras_mean and not separable(b, bl, mat, texs, o2, mn):
                             ras_split[key] = False  # not TEX x f(RAS): baked at the mean, vertices CLR0 / mean
                         elif ras_mean:
@@ -820,6 +901,7 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                         ps2[key] = tex.to_ps2(baked, x["wrap_s"], x["wrap_t"], sky)
                         gains[key] = binfo.get("gain", 1)
                     t = ps2[key]
+                    air_rows = airt.get(key)
                     gain = gains[key]
                     split = ras_split.get(key, True)
                     mname = tex.material_name(b, bl[b"MAT3"], mat)
@@ -940,6 +1022,12 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 slots = cols = None
                 if t is None and mat is not None and not skinned:  # untextured: the TEV's constant colour
                     cols = tuple(int(c * 255 + 0.5) for c in tex.tev(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, None, over)[:3])
+                    if cam:  # camera-lit: its textures (projected: ProjectionMapAir) at their mean, at R = 1
+                        mn_ = tex.material_name(b, bl[b"MAT3"], mat)
+                        o3 = dict(over or {})
+                        o3[mn_] = dict(o3.get(mn_, {}), ras_a=1.0, env_mean=True)
+                        cols = tuple(int(c * 255 + 0.5) for c in tex.tev(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs, None, o3)[:3])
+                        air_rows = air_table(b, bl, mat, texs, over, mn_, cam, lfiles)
                 if not skinned and clr and 11 in info["at"] and mat is not None and tex.vertex_colour(b, bl[b"MAT3"], mat):
                     # unlit, coloured per vertex (VROrbit's cloud layers fade to black): CLR0 times the flat colour
                     o, w = info["at"][11]
@@ -1003,7 +1091,7 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 # per-vertex normals for lit materials (lit by the engine, vu_groups), False for unlit ones, None: lit
                 # without normals (face normals)
                 nrm = None
-                if (mat is None or not tex.lit(b, bl[b"MAT3"], mat)) and not (t and t.get("env")):
+                if (mat is None or not tex.lit(b, bl[b"MAT3"], mat)) and not (t and t.get("env")) and not air_rows:
                     nrm = False
                 elif nget and 10 in info["at"]:
                     o, w = info["at"][10]
@@ -1016,6 +1104,9 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                     cols = [ras_colour(b, bl, mat, texs, over, mn, cv) + tuple(c[3:]) for cv, c in zip(vc, cols)]
                 elif ras_mean and isinstance(cols, list):  # baked at the mean: CLR0 / mean left (at most 1)
                     cols = [tuple(min(255, c[k] * 255 // ras_mean[k]) for k in range(3)) + tuple(c[3:]) for c in cols]
+                if air_rows:  # its table by group (assets: lit byte 3); gain 2: colours stored x 1 as unlit (vu_groups)
+                    stats.setdefault("_air", {})[len(groups)] = air_rows
+                    gain = 2
                 groups.append((verts, [remap[v] for v in tri], uvs, t, slots, cols, blend, nrm, gain))
                 stats.setdefault("_shape", []).append(info["shape"])  # (bvas_entries: its shape's visibility)
                 if layer and (t is not None or ind_layer) and layer["tex"] < len(texs):
@@ -2055,9 +2146,10 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
                 stats["strip_verts"] = stats.get("strip_verts", 0) + sum(
                     struct.unpack_from("<H", body, 4 * i)[0] for i in range(nbt))
                 stats["strip_list_verts"] = stats.get("strip_list_verts", 0) + len(tris)
-            vg += struct.pack("<IHHBBBBBB2x", len(tris), ti, nbt, *bl, 2 if env else 1 if nb else 0,
+            air = st.get("_air", {}).get(gi)  # lit byte 3: VU1Air, its table (air_table) after the header
+            vg += struct.pack("<IHHBBBBBB2x", len(tris), ti, nbt, *bl, 2 if env else 3 if air else 1 if nb else 0,
                               1 if strip else 2 if skstrip else 3 if envstrip else 0, gi - share.get(gi, gi)) + \
-                (struct.pack("<12f", *env) if env else b"") + body
+                (struct.pack("<12f", *env) if env else b"") + (struct.pack(f"<{len(air)}f", *air) if air else b"") + body
         body = struct.pack("<If8x", len(groups), qs) + vg
         key = (body, tuple(btk_e), tuple(e[32:] for e in bva_e))
         if len(swaps) > nsw:  # a model with SWAP keeps its own groups (game.c sets their textures per draw)

@@ -459,7 +459,7 @@ static int wing_on, wing_state; /* alive, _9F0 */
  * is its draw buffer's (TLGT, tools/lighttype.py); classes not found there: skinned Strong, static Planet. The
  * player's light blends to a new area over its Interpolate frames (30 if -1; updateLightBlend).
  * ponytail: other actors switch area at once (their area looked up every 30 frames), the blend mixes world positions
- * (blendActorLightPos mixes view-space ones when FollowCamera differs), no area switches, no Alpha2 / coin / point
+ * (blendActorLightPos mixes view-space ones when FollowCamera differs), no area switches, no coin / point
  * lights */
 enum { LIGHT_PLAYER, LIGHT_STRONG, LIGHT_WEAK, LIGHT_PLANET };
 static const unsigned char *lght;
@@ -525,6 +525,8 @@ static void blend_light(RenderLight *o, const RenderLight *a, const RenderLight 
         }
         o->amb[c] = a->amb[c] + (b->amb[c] - a->amb[c]) * k;
     }
+    o->amb_a = a->amb_a + (b->amb_a - a->amb_a) * k;
+    o->alpha2 = a->alpha2 + (b->alpha2 - a->alpha2) * k; /* blendActorLightInfo: getInterpolateValue */
 }
 
 static void lights_update(V3 eye, V3 target, V3 up, V3 player)
@@ -544,6 +546,8 @@ static void lights_update(V3 eye, V3 target, V3 up, V3 player)
                 for (int c = 0; c < 3; c++) L->col[k][c] = l[c] / 255.0f;
             }
             for (int c = 0; c < 3; c++) L->amb[c] = ty[40 + c] / 255.0f;
+            L->amb_a = ty[43] / 255.0f;
+            L->alpha2 = *(const u32 *)(ty + 44) / 255.0f; /* mAlpha2: GX_LIGHT2's (render.c air_matrix) */
         }
     /* the player: tryFindNewAreaLight, then updateLightBlend from the old area's light to the new one */
     int a = light_area_at(player);
@@ -5106,7 +5110,9 @@ static void class_make(ClassInfo *ci, const char *name)
                   strcmp(name, "Penguin") == 0 || strcmp(name, "PenguinCoach") == 0 || strcmp(name, "PenguinStudent") == 0 ? 12 :
                   strcmp(name, "PenguinMaster") == 0 ? 13 : 0;
     ci->halo = strcmp(name, "ZoneHalo") == 0 ? 1 : strcmp(name, "PowerStarHalo") == 0 ? 2 :
-               strcmp(name, "DimensionAir") == 0 ? 4 : strcmp(name, "TwilightAir") == 0 || strcmp(name, "DarknessRoomAir") == 0 ? 3 : 0;
+               strcmp(name, "DimensionAir") == 0 ? 4 : strcmp(name, "TwilightAir") == 0 || strcmp(name, "DarknessRoomAir") == 0 ||
+               strcmp(name, "HomeAir") == 0 || strcmp(name, "SphereAir") == 0 || strcmp(name, "SunsetAir") == 0 ||
+               strcmp(name, "FineAir") == 0 ? 3 : 0;
     ci->gap = gap_class(name);
     ci->clipcls = strcmp(name, "Tico") == 0 || strcmp(name, "TicoBaby") == 0 || lg_cls(name) ? 1 : /* NameObjFactory: Tico, LuigiNPC */
                   strcmp(name, "SuperSpinDriver") == 0 || strcmp(name, "SuperSpinDriverPink") == 0 || strcmp(name, "SuperSpinDriverGreen") == 0 ? 2 : 0;
@@ -34767,12 +34773,13 @@ static void update_halos(void)
  * Disappear, Out; exeOut: hidden once a Disappear anim stopped (isAnyAnimStopped: none, never), within arg0 x 100 shown,
  * Appear, In. arg1 + 1 (_8D) holds both until the start anim camera ends (in_opening). Clipping: the sphere holding its
  * model's bounds + 100, out past the far plane (AirFar100m 10000, the others FarMax). row_turn 0 not yet appeared, 1 In,
- * 2 Out; row_step the frames since Disappear. Drawn: the Air kinds without lit alpha (DarknessRoomAir, TwilightAir,
- * DimensionAir; slice.py AIR baked at their resting colours). ponytail: Appear / Disappear (DarknessRoomAir's BRK, 59
- * frames) shown at once / at their end (no BRK at run time, as Halo); tryChange (SwitchA: only SunsetAir has a Change);
- * HomeAir, SphereAir, SunsetAir and FineAir not drawn: their alpha is GX_LIGHT2's at the camera on each vertex (Alpha2,
- * LightFunction.cpp:193-195 loadActorLightInfo; their alpha channel lit, diffuse clamp) and VU1 batches carry no vertex
- * alpha; so neither SphereAir's draw before the planets (PriorDrawAirHolder, SceneExecutor.cpp:140-147) */
+ * 2 Out; row_step the frames since Disappear. slice.py AIR bakes them at their resting colours; HomeAir, SphereAir,
+ * SunsetAir and FineAir light their alpha by GX_LIGHT2 at the camera per vertex (LightFunction.cpp:193-195
+ * loadActorLightInfo: Alpha2; VU1Air, render.c air_matrix). SphereAir is a PriorDrawAir: while one draws, the Airs draw
+ * after the skies, before the planets (SceneExecutor.cpp:140-147, game_draw air_prior). Their Appear / Disappear
+ * BRK / BPK fades: per frame tables (slice.py air_table, render_air_fade; row_step the anim's frame, 999 at its end).
+ * ponytail: DarknessRoomAir / TwilightAir / DimensionAir fades shown at once / at their end (no BRK at run time, as
+ * Halo); tryChange (SwitchA: only SunsetAir has a Change) */
 static void update_airs(void)
 {
     V3 ce, cw, cu;
@@ -34796,16 +34803,20 @@ static void update_airs(void)
         float dist = r->arg[0] != -1 ? (float)r->arg[0] : 70.0f; /* getJMapInfoArg0NoInit(mDistance) */
         V3 p = v3(in->m[12], in->m[13], in->m[14]);
         float d = vlen(vsub(p, mario->pos)); /* calcDistanceToPlayer */
-        int dis_len = !strcmp(sc->types + 32 * r->type, "DarknessRoomAir") ? 59 : 0; /* its disappear.brk; 0 none */
+        const char *cls = sc->types + 32 * r->type; /* its Disappear's length (disappear.brk / .bpk); 0 none */
+        int dis_len = !strcmp(cls, "HomeAir") ? 99 : !strcmp(cls, "DarknessRoomAir") || !strcmp(cls, "SphereAir") ||
+                      !strcmp(cls, "SunsetAir") || !strcmp(cls, "FineAir") ? 59 : 0;
         signed char *nrv = &row_turn[in->row];
-        if (!*nrv) /* appear: In, or Out with Disappear at its end and hideModel */
+        if (!*nrv) { /* appear: In, or Out with Disappear at its end and hideModel (setAllAnimFrameAtEnd) */
             *nrv = d < 100.0f * dist ? 1 : 3;
-        else if (*nrv == 1) { /* exeIn */
+            row_step[in->row] = 999;
+        } else if (*nrv == 1) { /* exeIn */
+            if (row_step[in->row] < 999) row_step[in->row]++; /* its Appear's frame */
             if (100.0f * (20.0f + dist) < d) { *nrv = 2; row_step[in->row] = 0; } /* Disappear */
         } else { /* exeOut */
-            row_step[in->row]++;
+            if (row_step[in->row] < 999) row_step[in->row]++;
             if (*nrv == 2 && dis_len && row_step[in->row] >= dis_len) *nrv = 3; /* isAnyAnimStopped(Disappear): hideModel */
-            if (d < 100.0f * dist) *nrv = 1; /* showModel, Appear */
+            if (d < 100.0f * dist) { *nrv = 1; row_step[in->row] = 0; } /* showModel, Appear */
         }
         int hidden = *nrv == 3;
         /* ClippingJudge: the sphere (model bounds + 100, setClippingTypeSphereContainsModelBoundingBox) past the far
@@ -51956,6 +51967,7 @@ static void inst_draw(const Inst *in, const Model *md, const float m[16])
         if (fm && fm->skin && in->anim) { use_row_light(in->row, v3(m[12], m[13], m[14]), LIGHT_STRONG); draw_skin(fm, m, in->anim); fat_goods_draw(in, m); return; }
     }
     use_row_light(in->row, v3(m[12], m[13], m[14]), md->skin ? LIGHT_STRONG : LIGHT_PLANET);
+    if (in->halo >= 3) render_air_fade(md, row_turn[in->row] == 1 ? 1 : 2, row_step[in->row]); /* Air's Appear / Disappear */
     if (in->row == sbp_bva_row && in->anim && !strstr(sc->clips[in->anim->clip_id >= 0 ? in->anim->clip_id : 0].name, "childdeath")) {
         bva_key = "stinkbugparent/childdeath"; bva_frame = 1e9f; /* startBva ChildDeath: its last frame kept */
     }
@@ -52487,7 +52499,16 @@ void game_draw(void)
         inst_draw(in, in->md, cm);
         sky_drawn = 1;
     }
+    /* PriorDrawAirHolder::isExistValidDrawAir: a PriorDrawAir (SphereAir) drawing puts Sky, Air, Sun before the planets
+     * (SceneExecutor.cpp:140-147; else after the opaque actors: drawn with the rest here, their blending at the end) */
+    int air_prior = 0;
+    FOR_KIND(i, halo) if (insts[i].halo >= 3 && !insts[i].invisible && !strcmp(sc->types + 32 * sc->objs[insts[i].row].type, "SphereAir")) air_prior = 1;
     if (sky_drawn) render_clear_depth(); /* the sky stays behind whatever its scale put in front */
+    if (air_prior) {
+        render_xlu_now(1);
+        FOR_KIND(i, halo) if (insts[i].halo >= 3 && !insts[i].invisible) inst_draw(&insts[i], insts[i].md, insts[i].m);
+        render_xlu_now(0);
+    }
     PROF(1);
 #ifdef BENCH
     /* the instances' draw by class over the bench's frames 61..1860, the dearest printed at its end */
@@ -52503,6 +52524,7 @@ void game_draw(void)
         const Inst *in = &insts[i];
         IT_MARK(in->row >= 0 ? (int)sc->objs[in->row].type : 1023);
         if (in->invisible || in->sky || in->sun) continue;
+        if (air_prior && in->halo >= 3) continue; /* drawn before the planets */
         if (in->plant) {
             if (plant_first[in->row] < 0) continue;
             int n = plant_count(&sc->objs[in->row]);
@@ -53389,6 +53411,7 @@ void game_draw(void)
     lens_flare_draw(ce, cw, cu, fovy);
 #endif
     PROF(6);
+    render_world_done(); /* the blended instances (an Air's sky) under the HUD and talks */
     talk_draw();
     wipe_draw();
     menu_draw();

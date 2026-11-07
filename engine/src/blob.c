@@ -94,12 +94,19 @@ int blob_add(Scene *s, const u8 *blob)
                 vg->strip = q[12];
                 vg->share = q[13];
                 vg->nswap = 0; vg->swap_kind = 0;
-                md->lit |= vg->lit == 1;
+                md->lit |= vg->lit == 1 ? 1 : vg->lit == 3 ? 2 : 0;
                 vg->env = vg->lit == 2 ? (const float *)(q + 16) : NULL;
                 if (vg->env) { /* its 12-float matrix after the header (tools/slice.py assets) */
                     q += 48;
                     vg->uvm = mem_alloc(MEM_RENDER, 64);
                     memset(vg->uvm, 0, 64);
+                }
+                vg->air_src = vg->lit == 3 ? (const float *)(q + 16) : NULL;
+                vg->air = NULL;
+                if (vg->air_src) { /* its 64-float tables after the header (tools/slice.py air_table), the first live */
+                    vg->air = mem_alloc(MEM_RENDER, 256);
+                    memcpy(vg->air, vg->air_src, 256);
+                    q += 256 * (1 + (u32)vg->air_src[62] + (u32)vg->air_src[63]);
                 }
                 vg->batch = (const u16 *)(q + 16);
                 vg->data = q + 16 + ((4 * vg->nbatch + 15) & ~15u);

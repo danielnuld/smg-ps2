@@ -1155,6 +1155,21 @@ there needs the embedded blob and every pack rebuilt.
   HomeAir, SphereAir, SunsetAir, FineAir stay undrawn: their alpha is GX_LIGHT2's N.L at the camera per vertex
   (LightFunction.cpp:193-195) and VU1 batches have no vertex alpha (drawn flat they flood the screen); so no PriorDrawAir.
   Repack: slice_all.py the galaxies with DimensionAir / TwilightAir / DarknessRoomAir.
+- Camera-lit alpha (feat/374-air-alpha, 2026-11-07): HomeAir, SphereAir, SunsetAir, FineAir drawn. slice.py
+  air_table (tex.camera_alpha: alpha channel 0 lit by GX_LIGHT2 alone): VUMD lit byte 3, normals, then 64 floats: per
+  R = k / 13 (the channel's level) the TEV's colour / alpha (textures at their mean) over its value at R = 1 (the level
+  the texture or flat colour is baked at), the diffuse floor (SIGN / CLAMP), the cull mode; then Appear / Disappear
+  tables every 4 frames (their BRK, or BPK: tex.brk reads PAK1 material colours now). vu1_tex.vsm VU1Air: per vertex
+  NL = n . normalize(camera - p), R = clamp(ambient alpha + Alpha2 x NL), the table lerped (VU mem 1008..1023, after the
+  double buffers), colour x T.rgb, alpha T.a; a triangle is dropped (ADC) when the sum of its NL has the culled sign
+  (GX cull mode: the GS has none). render.c air_matrix (the camera in the model's space, RenderLight amb_a / alpha2 from
+  LGHT: blended like the rest), render_air_fade (game.c inst_draw by update_airs' row_step), render_xlu_now (a drawing
+  SphereAir puts the Airs after the skies, before the planets). game_draw now ends the world (render_world_done) before
+  the HUD / talks: blended instances were drawn over the HUD. Seen: TearDrop 1 (SphereAir's rim glow), OceanFloaterLand 1
+  and EggStar 3 (HomeAir's sky); EggStar 3 bench 15.90 ms avg either way. ponytail: SphereAir / SunsetAir / FineAir's
+  projected textures (ProjectionMapAir) at their mean colour, SphereAir's colour (its alpha inside a lerp) by the
+  table; one fade table per model a frame; DarknessRoomAir / TwilightAir / DimensionAir still without run-time fades.
+  Repack: slice_all.py EggStarGalaxy, TearDropGalaxy, OceanFloaterLandGalaxy, OceanPhantomCaveGalaxy, HeavensDoorGalaxy.
 
 - BegomanSpring / BegomanSpringHide (feat/350-begoman-spring, 2026-11-07): BegomanSpring.cpp as walker WALK_BEGOSPRING in
   begospike_update (BegomanBase's nerves shared with the Spike): a trample on its body Shakes it (180), shaking a trample
