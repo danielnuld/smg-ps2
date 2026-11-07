@@ -1422,6 +1422,15 @@ there needs the embedded blob and every pack rebuilt.
   (SE_EM_EXPLODE_S, CoinBlock Break). SwitchBox / ItemBlockSwitch are never placed (census): not ported. Test: `box`
   (EggStarGalaxy/1: the TimerPieceBlock punched every 60 frames, 4 pieces until its 240 frames run out; FactoryGalaxy/1:
   the SplashPieceBlocks). ponytail: no Glow effect, point light or shadow volume.
+- Effects (feat/effects): PlantGroup's HintShakeLeaf ("Bush" group) at the hinted member; OtaRockDeath at its kill and
+  its CocoNutBalls' CocoNutLight (thrown) / CocoNutBlur + Light + SpinHitMark (spun back) / CocoNutBreak; the follow
+  group's StarPieceFlyingBlur; Mario's 壁スパーク (WallSpark, doSpinWallEffect), 引き戻し泡 / 引き戻し泡破裂
+  (BringBubble(Break), MarioRecovery start / burst / close); the jet shell's BrakeLamp while Z is held (MarioSwim::jet);
+  clipping-driven loops: Fountain / SpringJetWater Wait / PhantomTorch effects only while their clipping sphere is in
+  the view (render_visible; SpringJetWater's Jet always). Checked: SnakeFish's (SkeletalFishBaby) Swim / Death rows
+  already play with its clips; PoltaShadow is never emitted (PoltaFunction::emitEffectShadow is empty). Tests: `plant`
+  (EggStar 1: `HintShakeLeaf 1`), `orock` (EggStar 3: `OtaRockDeath 1`, `coconut effects 1`); route gets the star.
+  Repack: slice_all.py every galaxy (jpa.py NAMED Bush / StarPiece, NAMED_ONLY Mario WallSpark / BringBubble(Break)).
 
 ## Next
 

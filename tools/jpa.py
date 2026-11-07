@@ -500,7 +500,7 @@ def flare(fs, out_tex):
 NAMED = ("ClipAreaDropLaser", "KillerGunnerSingle", "SpinningBox", "FlexibleSandPlanetPartsA", "MagnumKiller", "TripodBoss", "TripodBossCore", "ItemBubble", "DinoPackunBall", "Mario", "Dossun", "Onimasu", "LavaStrangeRock",
          "LavaStrangeRockL", "LavaStrangeRockTable", "MogucchiHill", "PalmIsland", "KabokuriFire", "LotusLeaf", "ElectricBall",
          "MorphItemObj", "WaterColumn", "PhantomTorch", "PhantomBonfire", "ShockWaveGenerator", "DriftWood", "BossKameckBeam", "BossKameckFireBall",
-         "AirBubble", "PackunFlower", "FireBarBall", "KoopaJrShipCannonShell", "IronCannonLauncherPoint", "TreasureSpot", "CoinFlower", "CocoNut", "SpiderThreadAttachPoint", "TombSpider", "TombSpiderGland", "TombSpiderPlanet", "BigBubble", "MeteorStrike", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate", "IceManIce", "FallingSmallRock", "SubmarineSteam", "SubmarineVolcano", "PoltaRock", "PoltaGroundRock", "DodoryuHill", "Fluff", "FluffWind", "Fountain", "SpringJetWater", "LargeChain", "BombBirdBomb")  # (WaterColumn: MarioActor::emitEffectWaterColumn)  # MorphItemObjNeo's effect group (initEffectKeeper "MorphItemObj")
+         "AirBubble", "PackunFlower", "Bush", "StarPiece", "FireBarBall", "KoopaJrShipCannonShell", "IronCannonLauncherPoint", "TreasureSpot", "CoinFlower", "CocoNut", "SpiderThreadAttachPoint", "TombSpider", "TombSpiderGland", "TombSpiderPlanet", "BigBubble", "MeteorStrike", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate", "IceManIce", "FallingSmallRock", "SubmarineSteam", "SubmarineVolcano", "PoltaRock", "PoltaGroundRock", "DodoryuHill", "Fluff", "FluffWind", "Fountain", "SpringJetWater", "LargeChain", "BombBirdBomb")  # (WaterColumn: MarioActor::emitEffectWaterColumn)  # MorphItemObjNeo's effect group (initEffectKeeper "MorphItemObj")
 NAMED_ONLY = {"Mario": ("SpinLight", "SpinLightBurst", "Invincible", "Ice", "Metamorphosis", "MetamorphosisEnd", "GetAgain", "WaterBound",
                         "SkateL", "SkateR", "IceJumpLand", "IceMarioSpinLight", "FooMarioHandGlowL", "FooMarioHandGlowR",
                         "FooMarioBrakeLampL", "FooMarioBrakeLampR", "FooMarioEndL", "FooMarioEndR",
@@ -512,7 +512,11 @@ NAMED_ONLY = {"Mario": ("SpinLight", "SpinLightBurst", "Invincible", "Ice", "Met
                         "SnowSpin", "StageStartGroundSmoke", "StageStartGroundSand", "WaterRipple",
                         # decide(Squat)WalkAnimation: 水はね右 / 左 / 右弱 / 左弱
                         "WaterSplashRight", "WaterSplashLeft", "WaterSplashSRight", "WaterSplashSLeft", "SlipUp",
-                        "SpaceCocoonBlur", "PunchHit")}  # SlingShooter::tryRelease  # 無敵中 アイス中 変身 変身解除 アイテム再ゲット  # of a big group only the rows the engine plays
+                        "SpaceCocoonBlur", "PunchHit",
+                        # Mario::doSpinWallEffect 壁スパーク, MarioRecovery 引き戻し泡 / 引き戻し泡破裂 (MarioEffect.cpp setEffectName)
+                        "WallSpark", "BringBubble", "BringBubbleBreak"),
+              "Bush": ("HintShakeLeaf",),  # PlantGroup::emitHintEffect (initEffectKeeper "Bush")
+              "StarPiece": ("StarPieceFlyingBlur",)}  # SlingShooter::tryRelease  # 無敵中 アイス中 変身 変身解除 アイテム再ゲット  # of a big group only the rows the engine plays
 # MarioActor::initEffect's registerEffect groups: a particle by its own name (not an AutoEffectList row) on a host
 # matrix, as fx_named rows (group, particle, joint: its getRealMtx host, "" the actor)
 REGISTERED = {"Mario": (("雪煙レベル", "CrestGetFlyC", "FootR"),),
