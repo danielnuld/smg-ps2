@@ -1259,6 +1259,22 @@ there needs the embedded blob and every pack rebuilt.
   table; one fade table per model a frame; DarknessRoomAir / TwilightAir / DimensionAir still without run-time fades.
   Repack: slice_all.py EggStarGalaxy, TearDropGalaxy, OceanFloaterLandGalaxy, OceanPhantomCaveGalaxy, HeavensDoorGalaxy.
 
+- SnowFloor / SnowplowSwitch (feat/419-snow-floor, 2026-11-07): engine/src/snow_floor.inc (snow_*) after Petari: the
+  128 x 128 depth map on its half cylinder (radius 900, +-1024 along Z), Mario's walk digging (doMove) and slowing him
+  (setPlayerWalkingResist: Mario::_2D0 now in game.c, m_walk_resist: target walk speed, walk anim speed, floor
+  material 0x1A, reset after his movement), the spin / hip drop landing erase (SE_OJ_LV_SNOW_ERASE), the pointer's dig
+  (SE_OJ_LV_SNOW_DIG), Mario's fire balls, the fill back, the SnowplowSwitch check list (one a frame; found: SW_A).
+  Drawn as Petari: 12 layers of 16 strips, colour 220 / 220 / 250 - 3 a layer, alpha-tested over 20 x layer + 1,
+  blended, depth written, back strips culled. render.c: render_i8_* (a 128 x 128 PSMT8 texture with an I -> alpha / 2
+  CLUT at the top of VRAM, 68 blocks out of the cache; per slot two EE buffers; the upload a REF + DIRECT in the
+  frame's chain) and render_grid (a vertex grid shifted per call as REGLIST triangle strips; PRE only works in PACKED:
+  PRIM is an A+D before each strip). Cost: fill back 0.4 ms once dug (rows settled within 0.01 skipped, 0 before),
+  draw 1.0-1.3 ms (texture rows rewritten only when changed). Test: plain XF="-DSNOW_TEST=3" SnowCapsuleGalaxy/1 (2 the
+  top floor's switch): Mario on the floor walks to and fro (resist logged, a trail dug), then the pointer digs over
+  the switch: found, SW_A on. Note: the switches lie over holes in SnowCapsulePlanet (Mario put at one falls in).
+  ponytail: the pointer's world point is the cursor ray on the cylinder (no depth buffer read), no 2P pointer, level
+  SEs at full volume, other enemies' feet not digging (none reach it), strips cut in 8 along the axis (GS guard band).
+  Repack: slice_all.py SnowCapsuleGalaxy (LOGIC SnowFloor, SnowplowSwitch).
 - SeaBottomTriplePropeller (feat/396-triple-propeller, 2026-11-07): after Petari (statics.inc ST_TRIPROP): skinned
   (SKINNED_OBJ: its BCK loops), PropellerCap on the root and propeller.kcl on Propeller1-3 (slice.py KCL_PARTS takes a
   tuple of joints: one collision on several; JOINT_KCL_ONLY, game.c's joint parts), SE_OJ_LV_O_TRIPLE_PROP_MOVE at each

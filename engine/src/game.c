@@ -502,6 +502,7 @@ static struct { int area, from, t, n; RenderLight cur; } plight; /* the player's
 static int area_inside(const Row *r, V3 p);
 static int area_obj(const char *cls, V3 p);
 /* clip_area.inc */
+static void snow_init(const Scene *s), snow_update(void), snow_draw(V3 eye); /* snow_floor.inc */
 static int ca_shape_of(const char *name);
 static int ca_parts_of(const char *name);
 static int ca_solid(const Inst *in);
@@ -1496,6 +1497,7 @@ static void rm_reset(void), update_race(void); /* RaceManager and its racers (ra
 static int rm_ctrl_off(void), pg_jet_hit(V3 p); static void rm_note_star(void); static const char *rm_bck(void); /* offPlayerControl; its startBckPlayer clip on Mario */
 static void gh_reset(void);
 static int gh_ctrl_off(void), gh_puppet(void); /* GhostPlayer: offPlayerControl; its clips on Mario (startBckPlayerJ) */
+static float m_walk_resist; /* Mario::_2D0 (setWalkingResist: SnowFloor), reset after his movement */
 static int m_dash_chance, m_item_dash; /* Mario::_436 (noticeDashChance: the race start's dash chance), _434 (the item dash) */
 /* MarioActor::exeGameOverBlackHole2 (MarioActorBlackHole.cpp): the hole's place (mBlackHolePosition), Mario's place
  * about it (mPosRelativeToBlackHole), the axis he spirals about (mBlackHoleRotateAxis), his scale, the nerve step */
@@ -2587,6 +2589,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     dkj_init(s);
     pol_init(s);
     tmk_init(s);
+    snow_init(s);
     gh_reset(); /* GhostPlayer: init at its first update */
     rm_reset(); /* RaceManager: init at its first update (race.inc) */
     for (u32 i = 0; i < s->nobjs; i++)
@@ -15031,7 +15034,7 @@ static void m_stop_walk(Player *m) /* stopWalk (cancelSquatMode, the brake clips
 static float m_target_walk(const Player *m) /* getTargetWalkSpeed (sWalkTargetTable) */
 {
     static const float t[8] = {0.0f, 0.15f, 0.25f, 0.4f, 0.5f, 0.6f, 0.8f, 1.0f};
-    return m->squat ? 0.0f : t[m->tsi];
+    return m->squat ? 0.0f : t[m->tsi] * (1.0f - m_walk_resist); /* _2D0 */
 }
 
 static float m_inertia(Player *m, float speed) /* decideInertia */
@@ -15217,6 +15220,7 @@ static void m_decide_walk_anim(Player *m)
         if (target < tt[6]) f5 = 1.0f;
         float f6 = MC.mStartSpinAnimeRatio * (0.5f * (60.0f * (target * MC.mWalkSpeed * 0.01f / step[2]))), k2 = 2.0f - f5;
         if (sp < f6) sp = sp * k2 + f6 * (1.0f - k2);
+        sp *= 1.0f - m_walk_resist; /* _2D0 */
         m->start_spin_ratio = f5 - 1.0f;
         if (mario_anim) mario_anim->speed = sp; /* changeSpeed */
     }
@@ -22526,7 +22530,7 @@ static int m_floor_material(int flags) /* getFloorMaterialIndex(flags); -1 none 
     if (mario->walling) floor = wall_attr & 0x3F; /* MarioWall: the wall's own code (_964) */
     if (m_wade.under || m_wade.deep) floor = 0x17;
     if ((flags & 2) && m_wade.over) floor = 0x17;
-    /* (_2D0: setWalkingResist, which no ported class calls) */
+    if (m_walk_resist != 0.0f) floor = 0x1A; /* _2D0 */
     if (player_mode == PM_BEE && KCL_WALL(ground_attr) == 8) return -1; /* isWallCodeNoAction */
     int mat = 0;
     switch (floor) {
@@ -51585,6 +51589,7 @@ int game_test_bk(int frame)
 #include "koopajr_ship.inc" /* KoopaJrShip (Bowser Jr.'s airship): kj_*, game_test_kj */
 #include "polta.inc" /* Polta (Bouldergeist): pol_*, game_test_pol */
 #include "tamakoro.inc" /* Tamakoro (the star ball), TamakoroTutorial: tk_*, game_test_tk */
+#include "snow_floor.inc" /* SnowFloor, SnowplowSwitch: snow_* */
 #include "clip_area.inc" /* ClipArea*, ClipFieldSwitch, FallOutFieldDraw, SimpleClipPartsObj, ClipAreaDropLaser: ca_* */
 #include "statics.inc" /* placed classes once drawn still (Flag ...): st_* */
 #include "race.inc" /* RaceManager, RaceRail (PlayerRacer), TeresaRacer: rm_*, game_test_race */
@@ -53070,6 +53075,8 @@ void game_update(void)
         fp_update();
         LQ(6, update_mario());
         mode_movement(mario); /* calcAnimInMovement / calcAnim: the mode's demos and model */
+        m_walk_resist = 0.0f; /* MarioActor::movement's end */
+        snow_update(); /* SnowFloor::control, attackSensor */
         bee_wing_update();
         update_ice_steps();
         teresa_update_anim(mario);
@@ -54869,6 +54876,7 @@ void game_draw(void)
     pro_draw();
     mi_draw();
     draw_ice_steps();
+    snow_draw(ce);
     foot_draw();
     RESTQ(7);
     PROF(5);

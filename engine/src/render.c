@@ -145,6 +145,7 @@ static packet2_t *vif[2], *gif;
 #define GIF_QW 8192             /* HUD text: one sprite per lit font pixel (the boot menu fills it) */
 static int cur;
 static float view[16], proj[16];
+static u32 view_gen; /* render_begin's count: render_grid's view-space cache */
 static float eye_w[3];          /* the camera in the world (render_begin): VU1Air's light */
 static float pv[16] __attribute__((aligned(16))); /* proj x view (draw_model), pv_ok 0 after either changes */
 static int pv_ok;
@@ -180,6 +181,12 @@ static qword_t *tex_packets;     /* per texture 8 qwords (GIF tag + TEX0, TEX1, 
 #define NO_TEX_PACKET (tex_packets + TEXP * SCENE_MAX_TEX)
 static int cur_tex;
 static u64 test_z;               /* TEST with the depth test only */
+/* render_i8_*: a 128 x 128 PSMT8 texture rewritten by the EE every frame (SnowFloor's JUTTexture GX_TF_I8), its
+ * CLUT (I -> 0x80 grey, alpha I / 2) under it, both at the top of VRAM, out of the cache */
+#define I8_BLOCKS (64 + 4)
+#define I8_TBP (VRAM_WORDS / 64 - 64)
+#define I8_CBP (VRAM_WORDS / 64 - 68)
+static void i8_state(void);
 
 void mat_identity(float m[16]) /* stored one by one: memset's call costs more than the 16 stores */
 {
@@ -450,6 +457,7 @@ void render_begin(const float eye[3], const float target[3], const float up[3])
     view[12] = -(s[0] * eye[0] + s[1] * eye[1] + s[2] * eye[2]);
     view[13] = -(u[0] * eye[0] + u[1] * eye[1] + u[2] * eye[2]);
     view[14] = -(fw[0] * eye[0] + fw[1] * eye[1] + fw[2] * eye[2]);
+    view_gen++;
     eye_w[0] = eye[0]; eye_w[1] = eye[1]; eye_w[2] = eye[2];
 
     u32 bw0;
@@ -602,7 +610,7 @@ static void flush_vif(void);
  * send and wait for the chain built so far (textures marked before that may have been evicted since). */
 static int tex_need(u32 t)
 {
-    if (t == NO_TEX)
+    if (t == NO_TEX || t == I8_TEX)
         return 0;
     tex_last[t] = chain_seq;
     if (tex_block[t] >= 0)
@@ -719,7 +727,7 @@ void render_load_textures(const Scene *s, u32 first_tex, u32 first_model)
         block_tex = mem_alloc(MEM_RENDER, TEX_BLOCKS * sizeof(s16));
         upload_chain = mem_alloc(MEM_RENDER, (MAX_UPLOADS * 5 * 16 + 4) * 16); /* base, 3 mips, CLUT */
         block_first = graph_vram_allocate(64, 1, GS_PSM_32, GRAPH_ALIGN_BLOCK) / 64; /* first block above libgraph's */
-        block_end = VRAM_WORDS / 64;
+        block_end = VRAM_WORDS / 64 - I8_BLOCKS; /* the I8 texture at the top (render_i8_*) */
         for (int b = 0; b < TEX_BLOCKS; b++)
             block_tex[b] = -1;
         qword_t *p = NO_TEX_PACKET;
@@ -781,7 +789,8 @@ static void set_tex(u32 t)
     if ((int)t == cur_tex)
         return;
     cur_tex = t;
-    emit_tex(vif[cur], t);
+    if (t == I8_TEX) i8_state();
+    else emit_tex(vif[cur], t);
 }
 
 /* UNPACK of n vectors from `data` in a format narrower than a qword (REF tag, the VIF codes ride in the tag). The
@@ -1879,6 +1888,63 @@ static void ad_source_psm(u32 addr, int tbw, int psm, int tw, int th, int w, int
 }
 #define ad_source(addr, tbw, tw, th, w, h, tcc) ad_source_psm(addr, tbw, GS_PSM_32, tw, th, w, h, tcc)
 
+/* render_i8_*: per slot two EE buffers (GIF image header, then the pixels), the one written this frame while the last
+ * frame's chain may still read the other; the CLUT's upload rides with each */
+typedef struct { qword_t hdr[6]; u8 pix[128 * 128]; } I8Buf;
+static I8Buf i8_buf[I8_SLOTS][2] __attribute__((aligned(64)));
+static qword_t i8_clut[6 + 64] __attribute__((aligned(64)));
+static int i8_cur[I8_SLOTS], i8_aref;
+static void i8_header(qword_t *q, u32 dbp, int dbw, int psm, int w, int h, int qwc)
+{
+    q[0].dw[0] = GIF_SET_TAG(4, 0, 0, 0, GIF_FLG_PACKED, 1); q[0].dw[1] = GIF_REG_AD;
+    q[1].dw[0] = GS_SET_BITBLTBUF(0, 0, 0, dbp, dbw, psm); q[1].dw[1] = GS_REG_BITBLTBUF;
+    q[2].dw[0] = GS_SET_TRXPOS(0, 0, 0, 0, 0); q[2].dw[1] = GS_REG_TRXPOS;
+    q[3].dw[0] = GS_SET_TRXREG(w, h); q[3].dw[1] = GS_REG_TRXREG;
+    q[4].dw[0] = GS_SET_TRXDIR(0); q[4].dw[1] = GS_REG_TRXDIR;
+    q[5].dw[0] = GIF_SET_TAG(qwc, 1, 0, 0, GIF_FLG_IMAGE, 0); q[5].dw[1] = 0;
+}
+static void i8_ref(const void *p, u32 qwc) /* a REF to qwc qwords sent on PATH2 after VU1 / PATH1 are done */
+{
+    packet2_chain_ref(vif[cur], p, qwc, 0, 0, 0);
+    packet2_vif_flush(vif[cur], 0);
+    packet2_vif_open_direct(vif[cur], 0);
+    packet2_vif_close_direct_manual(vif[cur], qwc);
+}
+u8 *render_i8_pixels(int slot)
+{
+    i8_cur[slot] ^= 1;
+    return i8_buf[slot][i8_cur[slot]].pix;
+}
+void render_i8_upload(int slot)
+{
+    I8Buf *b = &i8_buf[slot][i8_cur[slot]];
+    if (!i8_clut[0].dw[1]) { /* CLUT entry i: grey 0x80, alpha i / 2 (0x80 = 1: GX's I / 255), CSM1's order */
+        u32 *c = (u32 *)&i8_clut[6];
+        for (int i = 0; i < 256; i++)
+            c[(i & ~0x18) | (i & 8) << 1 | (i & 16) >> 1] = 0x808080u | (u32)(i >> 1) << 24;
+        i8_header(i8_clut, I8_CBP, 1, GS_PSM_32, 16, 16, 64);
+        SyncDCache(i8_clut, i8_clut + 70);
+    }
+    i8_header(b->hdr, I8_TBP, 2, GS_PSM_8, 128, 128, 1024);
+    SyncDCache(b, b + 1);
+    if (packet2_get_qw_count(vif[cur]) + 16 > PACKET_QW)
+        flush_vif();
+    i8_ref(i8_clut, 70);
+    i8_ref(b, 1030);
+    cur_tex = -1;
+}
+void render_i8_aref(int a) { i8_aref = a; cur_tex = -1; }
+static void i8_state(void) /* set_tex(I8_TEX): the texture (bilinear, clamped), its alpha test GREATER i8_aref */
+{
+    ad_open(6);
+    AD(0, GS_REG_TEXFLUSH);
+    AD(GS_SET_TEX0(I8_TBP, 2, GS_PSM_8, 7, 7, 1, 0, I8_CBP, GS_PSM_32, 0, 0, 1), GS_REG_TEX0);
+    AD(GS_SET_TEX1(1, 0, 1, 1, 0, 0, 0), GS_REG_TEX1);
+    AD(GS_SET_CLAMP(1, 1, 0, 0, 0, 0), GS_REG_CLAMP);
+    AD(GS_SET_TEST(1, ATEST_METHOD_GREATER, i8_aref, 0, 0, 0, 1, ZTEST_METHOD_GREATER_EQUAL), GS_REG_TEST);
+    ad_close();
+}
+
 static void bloom_pass(void)
 {
     if (!bloom_k || !nbloom) { nbloom = 0; return; }
@@ -2013,6 +2079,87 @@ static void mesh_draw(const float (*pos)[3], const float (*uv)[2], int nvert, co
         ad_close();
         cur_tex = -1; /* ALPHA, ZBUF changed */
     }
+}
+
+/* a grid of ncols x nrows vertices (vertex c x nrows + k) moved by k_shift x shift[c], as triangle strips between
+ * columns c and c + 1 where col_on[c]; a strip restarts past rows with a vertex behind the camera or off the guard
+ * band. Blended, depth written, colour 0xAABBGGRR (0x80 = 1.0) modulating tex. The grid's view-space places and UVs
+ * are kept while pos and the view stay (SnowFloor's layers: one grid, shifted). Sent as REGLIST (UV, XYZ2) */
+#define GRID_MAX 1024
+void render_grid(const float (*pos)[3], const float (*shift)[3], float k_shift, const float (*uv)[2], int ncols, int nrows,
+                 const u8 *col_on, u16 tex, u32 rgba)
+{
+    static float gv[GRID_MAX][3], gs[64][3];
+    static u64 gxyz[GRID_MAX], guv[GRID_MAX];
+    static u8 gok[GRID_MAX];
+    static const void *key;
+    static u32 key_gen;
+    static const TexEntry i8_e = {.w = 128, .h = 128};
+    const TexEntry *e = tex == I8_TEX ? &i8_e : tex_scene->tex[tex].e;
+    if (ncols * nrows > GRID_MAX || ncols < 2 || ncols > 64) return;
+    if (key != pos || key_gen != view_gen) { /* the grid in view space, its UVs, the shifts' view directions */
+        key = pos; key_gen = view_gen;
+        for (int v = 0; v < ncols * nrows; v++) {
+            const float *p = pos[v];
+            gv[v][0] = view[0] * p[0] + view[4] * p[1] + view[8] * p[2] + view[12];
+            gv[v][1] = view[1] * p[0] + view[5] * p[1] + view[9] * p[2] + view[13];
+            gv[v][2] = view[2] * p[0] + view[6] * p[1] + view[10] * p[2] + view[14];
+            guv[v] = GS_SET_UV((int)(uv[v][0] * e->w * 16) & 0x3FFF, (int)(uv[v][1] * e->h * 16) & 0x3FFF);
+        }
+        for (int c = 0; c < ncols; c++) {
+            const float *d = shift[c];
+            gs[c][0] = view[0] * d[0] + view[4] * d[1] + view[8] * d[2];
+            gs[c][1] = view[1] * d[0] + view[5] * d[1] + view[9] * d[2];
+            gs[c][2] = view[2] * d[0] + view[6] * d[1] + view[10] * d[2];
+        }
+    }
+    for (int c = 0; c < ncols; c++) {
+        if (!(c < ncols - 1 && col_on[c]) && !(c > 0 && col_on[c - 1])) continue;
+        float dx = gs[c][0] * k_shift, dy = gs[c][1] * k_shift, dz = gs[c][2] * k_shift;
+        for (int v = c * nrows; v < (c + 1) * nrows; v++) {
+            float zv = gv[v][2] + dz;
+            gok[v] = zv >= NEAR && zv <= FAR;
+            if (!gok[v]) continue;
+            float iz = 1.0f / zv, kz = 2048.0f * iz;
+            float sx = 2048.0f + shake_x + proj[0] * (gv[v][0] + dx) * kz, sy = 2048.0f + shake_y + proj[5] * (gv[v][1] + dy) * kz;
+            gok[v] = sx >= 0 && sx <= 4095 && sy >= 0 && sy <= 4095;
+            u32 sz = (u32)(((proj[10] * zv + proj[14]) * iz + 1.0f) * (float)(Z_MAX / 2));
+            gxyz[v] = GS_SET_XYZ((int)(sx * 16), (int)(sy * 16), sz);
+        }
+    }
+    if (packet2_get_qw_count(vif[cur]) + 16 + TEXP + (ncols - 1) * (3 * nrows + 4) + 8 > PACKET_QW)
+        flush_vif();
+    set_tex(tex);
+    packet2_chain_open_cnt(vif[cur], 0, 0, 0);
+    packet2_vif_flush(vif[cur], 0);
+    packet2_vif_open_direct(vif[cur], 0);
+    packet2_add_2x_s64(vif[cur], GIF_SET_TAG(3, 0, 0, 0, GIF_FLG_PACKED, 1), GIF_REG_AD);
+    AD(GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA);
+    AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 0), GS_REG_ZBUF);
+    AD(GS_SET_RGBAQ(rgba & 0xFF, rgba >> 8 & 0xFF, rgba >> 16 & 0xFF, rgba >> 24, 0x3F800000), GS_REG_RGBAQ);
+    u64 prim = GS_SET_PRIM(PRIM_TRIANGLE_STRIP, 0, 1, 0, 1, 0, 1, 0, 0);
+    for (int c = 0; c + 1 < ncols; c++) {
+        if (!col_on[c]) continue;
+        const int a = c * nrows, b = a + nrows;
+        for (int k = 0; k < nrows;) {
+            while (k < nrows && !(gok[a + k] && gok[b + k])) k++;
+            int k0 = k;
+            while (k < nrows && gok[a + k] && gok[b + k]) k++;
+            if (k - k0 < 2) continue;
+            packet2_add_2x_s64(vif[cur], GIF_SET_TAG(1, 0, 0, 0, GIF_FLG_PACKED, 1), GIF_REG_AD); /* PRE is PACKED's alone */
+            AD(prim, GS_REG_PRIM); /* a new strip */
+            packet2_add_2x_s64(vif[cur], GIF_SET_TAG(2 * (k - k0), 0, 0, 0, GIF_FLG_REGLIST, 2), GS_REG_UV | GS_REG_XYZ2 << 4);
+            for (int j = k0; j < k; j++) {
+                packet2_add_2x_s64(vif[cur], guv[a + j], gxyz[a + j]);
+                packet2_add_2x_s64(vif[cur], guv[b + j], gxyz[b + j]);
+            }
+        }
+    }
+    packet2_add_2x_s64(vif[cur], GIF_SET_TAG(1, 1, 0, 0, GIF_FLG_PACKED, 1), GIF_REG_AD);
+    AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 0), GS_REG_ZBUF);
+    packet2_vif_close_direct_auto(vif[cur]);
+    packet2_chain_close_tag(vif[cur]);
+    cur_tex = -1; /* ALPHA changed */
 }
 
 /* ClipArea::draw / FallOutFieldDraw::draw after Petari, on the frame's 1-bit alpha (PSMCT16S's A): GX counts each
