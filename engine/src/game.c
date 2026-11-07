@@ -21091,6 +21091,58 @@ static void m_at_field_jump(Player *m)
         if (f <= 0.0f) m_set_jv(m, vsub(jv, vmul(n, f * 0.5f)));
     }
 }
+/* MarioDamage::stopHead (MarioDamage.cpp:512): his head on a face takes the damage move's part into it (half back) */
+static void dm_stop_head(Player *m, V3 n)
+{
+    if (!dmg.d18) {
+        float v = vdot(dmg.d1C, m->up);
+        V3 h = vtangent(dmg.d1C, m->up);
+        float tw = vdot(h, n);
+        dmg.d1C = vadd(vsub(h, vmul(n, tw)), vmul(m->up, v));
+        if (tw < 0.0f) dmg.d1C = vadd(dmg.d1C, vmul(n, -tw * 0.5f));
+    } else if (!near0(vtangent(n, m->up))) {
+        float tw = vdot(dmg.d1C, n);
+        dmg.d1C = vsub(dmg.d1C, vmul(n, tw));
+        if (tw < 0.0f) dmg.d1C = vadd(dmg.d1C, vmul(n, -tw * 0.5f));
+    }
+}
+/* Mario::isHeadPushEnableArea (MarioSpecial.cpp:341): in 2D, SandClockGalaxy's x -7020 to -6920 */
+static int m_head_push_area(const Player *m)
+{
+    return m2.on && !strncmp(game_stage_name, "SandClockGalaxy", 15) && m->pos.x >= -7020.0f && m->pos.x <= -6920.0f;
+}
+/* Mario::checkHeadPoint (MarioCollision.cpp:1322-1453), not hanging (MarioStatus_Stick / Hang): a ball of 40 at 110 up
+ * (50 squatting; damaged his head, 50 before the damage's fall _18) pushes his velocity off the faces it is in, each
+ * taken to its depth along its normal; jumping only the faces looking down (damaged, not the floors under 45 degrees);
+ * in the head push area each also on its own; damaged the move stops on them (stopHead). As Bee (not sliding,
+ * squatting, side stepping nor on a wall) the ball is at his head. Swimming: MarioSwim's own (sw_hit_head). ponytail:
+ * no rush ball (_3E, MarioActorRush not ported), no Fur ceiling flag (mDrawStates._15, read by MarioAnimator), no
+ * sendMsgUpperPunch (no receiver ported), MarioStatus_Wait / Bury not told apart for the Bee */
+static void m_check_head_point(Player *m)
+{
+    float r = 40.0f;
+    V3 c = vadd(m->pos, vmul(m->up, m->squat ? 50.0f : 110.0f));
+    int damaging = dmg.st == DMS_DAMAGE;
+    if (damaging) { c = mario_joint_drawn(13); if (!dmg.d18) r = 50.0f; }
+    if (player_mode == PM_BEE && !m->s23 && !m->squat && !m->side_step && !m->bee_wall) c = mario_joint_drawn(13);
+    Hit h[32];
+    ghost_through = player_mode == PM_TERESA && m->t418; /* isThroughWall */
+    int n = kcl_query(c, r, h, 32);
+    ghost_through = 0;
+    V3 react = v3(0, 0, 0);
+    for (int i = 0; i < n; i++) {
+        float g = -vdot(h[i].n, m->up); /* normal . gravity */
+        if (damaging) { if (g < -0.707f) continue; }
+        else if (m->jumping && g < 0.0f) continue;
+        float k = vdot(react, h[i].n);
+        if (k < h[i].dist) {
+            react = vadd(vsub(react, vmul(h[i].n, k)), vmul(h[i].n, h[i].dist));
+            if (m_head_push_area(m)) m->vel = vadd(m->vel, vmul(h[i].n, h[i].dist));
+            if (damaging) dm_stop_head(m, h[i].n);
+        }
+    }
+    m->vel = vadd(m->vel, react);
+}
 /* MarioActor::updateGravityVec(false, ..) (MarioActorGravity.cpp:157-345): a gravity turned 0.4 pi or more at once is
  * a sudden turn: on the ground he drops off next frame (_10._1A: tryJump, ショートジャンプ, the carried move as his jump),
  * jumping he plays ショートジャンプ and his ground normal is the new up; his jump loses its old gravity part and halves
@@ -21419,6 +21471,7 @@ static void update_mario_(void)
         if (mario_anim) anim_update(mario_anim);
         return;
     }
+    if (!hg.on && !swimming) m_check_head_point(m); /* checkHeadPoint (not MarioStatus_Stick / Hang) */
     if (!m->grounded && !m->jumping && !m->walling && m->vup != 0) { /* thrown by an object: a free jump */
         m->jumping = 1; m->digital = 1; m->keep_jump = 1; m->jump_from = m->pos; m->hip = 0;
     }

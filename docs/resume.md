@@ -376,6 +376,9 @@ Second console round (2026-10-24), from Daniel's report:
   (60-120 degrees within 80); in 2D a moving part's face (not his ground's) pushes him its depth. Replaces the binder-wall
   stand-in. Test: `2d` prints `atfield:` cuts; the route still gets EggStar 1's star. ponytail: selectPushOff (_FC4 bit
   17), sendMsgUpperPunch, the Bee's Fur entryWallWalkMode from it, the swimming branch (MarioSwim's knockback).
+  Same PR: Mario::checkHeadPoint (MarioCollision.cpp:1322) for land Mario: a 40 ball at 110 up (50 squatting, his head
+  when damaged, with MarioDamage::stopHead) pushes his velocity off the faces in it (jumping only those looking down),
+  isHeadPushEnableArea (SandClockGalaxy's 2D strip x -7020..-6920) twice. ponytail: no rush ball (_3E), no Fur flag.
 - feat/mario-jetswim: MarioSwim with a carried JetTurtle after Petari (startJet, jet, dropJet, doJetJump and every
   mJetTimer branch of start / update: the jet speed mSwimFrontJetSpeed (Slow), Z brakes, the T inertias, the jet's
   rotation ratios, the floor's mTurboReductionHitFloor, the stream's mTurboReductionStream, the jet jump out of the
