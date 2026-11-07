@@ -147,6 +147,12 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   a chunk that is not one ends the movie ("movie: chunk n bad"), and "movie: <name> frame n" every 600 frames says
   on the console's udptty log where it stops.
 - gaps (2026-11-04, worktree D:/smg-ps2-wt/gaps, overlay out/wt-gaps): #143's placed classes with no behaviour.
+  - FluffWind (#328, game.c fluff_wind_*): FluffWind.cpp's effects along its rail (one every 600, kept: forever
+    emitters) and FluffWindHolder::calcWindInfo feeding Fluff::updateWind (push along the rail, side speed 6, front and
+    up lean into the wind, RideFlyOnWind / RideSpinUpOnWind, initAfterPlacement facing the wind; Fluff's SEs, Splash /
+    Blur / HardWind effects, SW_A). Test `fluff` CosmosGardenGalaxy/1 (now timed from Mario's first free frame): takes
+    hold, on the wind (45), spin up on the wind, carried ~5000 along the rail, lets go on the map. slice.py LOGIC
+    FluffWind, jpa.py NAMED Fluff / FluffWind.
   - Rabbit arg1 2 / 3 lectures (game.c rabbit_lecture, #242): SpinLecture / JumpSpinLectureMove every 180 frames of
     Talk outside a long talk; seen HeavenlyBeachGalaxy/1. arg1 0 (rail escape) left out: no placement uses it.
   - SwimTurtle Penguin's shell (game.c penguin_turtle, RemovableTurtle): Koura~0 on its back, Mario takes it (touch or
@@ -643,7 +649,7 @@ after tags (US: mNoCharSpace starts true, font size tags return NO_CHAR_SPACE wh
     SpaceCocoon (Mario in the air hangs on; R2 with the pointer on it aims, the cocoon follows the pointer on its
     plane; let go 100+ off and he flies off towards its neutral point at 60 for arg0 frames; X lets go; no stalk drawn);
     Fluff (a spin sends it up, it drifts down; Mario in the air takes hold, the stick steers, Square spins up 3 times,
-    X jumps off; no FluffWind); a rebind keeps what Mario rides (by its row);
+    X jumps off; FluffWind: #328); a rebind keeps what Mario rides (by its row);
   - StinkBugSmall (a walker: in its territory it turns to Mario, rushes at 20 up to arg1, walks back; its horn hurts,
     a spin or star piece makes it guard, a hip drop kills it: 3 star pieces; no Panic / Shake on its back);
   - Unizo / UnizoLand / UnizoShoal (walkers: jump and chase Mario within 1500 zigzagging, roll, hurt on touch and
