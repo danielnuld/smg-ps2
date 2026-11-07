@@ -461,6 +461,8 @@ VIS = {"PowerStar": ("PowerStar", 0), "DinoPackunEggShell": ("normal", None), "C
 # brk_model picks it by the row's arg). Butterfly: startBrk Butterfly, frame mColorIndex = arg0 (NoInit: 0)
 BRK_ARG = {"Butterfly": ("butterfly", 0), "TicoReading": ("colorchange", 0),  # TicoReading::init: ColorChange at arg0
            "Tico": ("colorchange", 0), "Penguin": ("colorchange", 7),
+           "PenguinRacer": ("colorchange", 7), "PenguinRacerLeader": ("colorchange", 7),  # PenguinRacer::initColor: ColorChange at arg7 (NoInit 0)
+           "PenguinSkater": ("colorchange", 7),  # PenguinSkater::init: ColorChange at frame 0 (its arg7 is -1 in every placement: 0)
            "NokonokoLand": ("nokonokoland", 0)}  # NokonokoLand::init: startBrk NokonokoLand, setBrkFrameAndStop(mTurtleType)  # Tico arg0, Penguin::init arg7
 # MR::initDLMakerMatColor0 per instance: one model per colour, "<class>@<k>" with material colour 0 = the k-th colour
 # (game.c picks it). StarPiece.cpp initColors (arg3 if 0..5, else random; StarPieceDirector's pieces in turn).
