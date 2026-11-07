@@ -674,6 +674,13 @@ Second console round (2026-10-24), from Daniel's report:
   5400: not the test card. race.inc built '<race>/hi' / '/lo' in 48 bytes; ペンギンレース[オーシャンリング]/hi is 50, cut,
   so gd_value found nothing and setRaceBestTime stored nothing. 64 now: OceanRing 2 reads best 5400 (01:30:00), a win
   at 5158 is kept.
+- TakeOutStar's star model (feat/takeout-star-model, 2026-11-07): game.c tos_* after NPCUtil.cpp:619-700
+  (createPowerStarDemoModel): the PowerStar ("PStar", slice.py EXTRA of TeresaRacer, PenguinRacerLeader, PenguinCoach,
+  LuigiNPC, LuigiEvent) at the NPC's base matrix from exeAnim's first step with its TakeOutStar* clip (TeresaRacer /
+  PenguinCoach their own), killed at exeDemo's first step, the power star out at its PowerStar joint (note_star_at).
+  Test plain XF "-DRACE_TEST=1 -DPACKS_OVERLAY=..." PhantomGalaxy/2 (the star circles the Boo, out 280 in front of it)
+  and OceanRingGalaxy/2 (the leader's). ponytail: no PowerStar::setupColor. Repack: slice_all.py every galaxy with
+  those NPCs.
 - TeresaRacer's trample SE (feat/441, 2026-11-07): race.inc tr_control (TeresaRacer::control): npc_react on its Body
   (220 at (0, 25, 40)): a trample bounces Mario and plays SE_SM_TERERACER_TRAMPLE. Test plain XF "-DRACE_TEST=1
   -DRACE_TRAMPLE -DPACKS_OVERLAY=..." PhantomGalaxy/2: Mario dropped on the Boo, `trampled` each bounce. Repack:
