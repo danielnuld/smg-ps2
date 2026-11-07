@@ -1030,8 +1030,24 @@ there needs the embedded blob and every pack rebuilt.
   Vs2 (#311): KoopaSequencerVs2, KoopaStateAttackSpin (its AttackSpin sensor), KoopaStateAttackFireLong, the Vs2 planet
   (KoopaBattleMapPlanetVs2, its damage plates only, the grand star plate the first). Test: KP_TEST build with
   KoopaBattleVs2Galaxy/1 (koopa-b.sh KoopaBattleVs2Galaxy/1 "" 2): クッパＶｓ２本戦開始, three levels, クッパＶｓ２ダウン,
-  `power star 1 got`. Vs3 not started (KoopaSequencerVs3, BattleVs3Lv1 / Lv2, StairsVs3, DemoFallToPlanetVs3Lv2 / Lv3,
-  ChaseRoll / AttackRoll, FigureBall, RockBreak, RestarterVs3, ViewSwitchKeeper, the Peach / KoopaJr / ship demo casts).
+  `power star 1 got`.
+  Vs3 (#324, koopa.inc kq3_* / kb3_* / kr_* / k3_*): KoopaSequencerVs3 (WaitPlayer with KoopaViewSwitchKeeper's
+  switches hiding the Lv1 / Lv2 planets and the outer holed sun), KoopaBattleStairsVs3 (stairs registered when the
+  stairs battle starts: calcFireAttackStep from クッパ階段戦の砲弾出現, speed 30), クッパＶｓ３本戦開始, the jump,
+  KoopaBattleVs3Lv1 (ChaseRoll on a KoopaFigureBall: a spin on ChaseRollFace while it rolls on the ground breaks the
+  rock, DamageReverse), KoopaDemoFallToPlanetVs3Lv2, KoopaBattleVs3Lv2 (AttackRoll: a PunchingKinoko's blow on the roll
+  ball or in its fire: game.c kp_blow), KoopaDemoFallToPlanetVs3Lv3 (the sun swap at 266 / 267, MBGM_BOSS_KOOPA_FINAL),
+  Lv3 / Final in KoopaBattleMain (AttackRoll, its _1C / _1D) on the Lv3 planet's damage plates, クッパＶｓ３ダウン, the grand
+  star at the Lv3 planet. Parts: KoopaRock / RockBreak / RollBall, the demo casts Peach / KoopaJr / KoopaJrShip at デモ中心.
+  KoopaRestarterVs3 (its appear switch: tryRestartKoopa, Koopa and the casts shown). The Lv3 planet (惑星Ｌｖ３) holds
+  the plates; the states' player checks are isPlayerDamaging (dm_damaging, not any damage state). Test: koopa-b.sh
+  KoopaBattleVs3Galaxy/1 "" 3 (KP_TEST: the view keeper's appear switch, Mario on the stairs' foot (the boss zone in:
+  20 stairs registered), the keeper's appear switch, its SW_A 240 frames into the stairs; Lv1 / Lv2 / Lv3 rolls with
+  Mario held 200 over the planet's far side, a side step from fire balls, a face spin in Lv1, a blow in Lv2, then as
+  Vs1). Seen 2026-11-07: the whole fight in one run (stairs, Lv1, fall, Lv2 with a PunchingKinoko blow, the fall into
+  the sun, Lv3 hip drops on the Lv3 damage plates, tail / body spins, クッパＶｓ３ダウン, `power star 1 got`). Packs:
+  slice.py EXTRA KoopaVs3, SKINNED_OBJ the rock / ball / casts. ponytail: the demo meteors, the parts' FixPos, Mario's
+  demo clips, the planets' BRKs, the three placed KoopaBattleMapPlanet rows (static).
 - BossKameck (feat/kameck, 2026-11-05): Kamella after Petari (game.c bk_*, its sequencer Vs1 / Vs2, BattleDemo,
   StateBattle's 12 nerves, MoveRail, BattlePattarn) in StarDustGalaxy 2's ThrowTutorialZone: dead until SW_A (the
   SwitchCube), カメック登場Vs1 (the DemoBossKameckStart anim camera on BossKameckBattleDemo, MBGM_BOSS_04, Mario

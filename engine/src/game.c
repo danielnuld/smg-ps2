@@ -891,6 +891,7 @@ static const Model *m_bk, *m_bkdemo, *m_koura, *m_kfire;
 static int bsb_demo(void);
 static void bk_init(const Scene *s, const unsigned char *blob);
 static void kp_init(const Scene *s, const unsigned char *blob), kp_rebind(const Scene *s), update_kp(void), kp_draw(void); /* koopa.inc */
+static int kp_blow(V3 c, float r, V3 *at); /* koopa.inc: a blow (sendMsgToEnemyAttackBlow) on Koopa's sensors */
 static int kp_demo(void);
 static int bk_demo(void);
 enum { TN_WAITPLAYER, TN_GATEOPEN, TN_COCOON, TN_COCOONBREAK, TN_1STSTART, TN_1STJUMP, TN_ACTION1ST, TN_1STEND, TN_2NDSTART,
@@ -4387,6 +4388,7 @@ static void update_punch(void)
                 if (took < 0) { e->state = KURIBO_DEAD; row_kill(e->row); fx_at(FX_KURIBO_DEATHSMOKEKURIBO, e->pos, e->up); pop_coins(e->pos, e->up, 1); }
                 if (took) { hit = 1; hit_at = ec; printf("punching kinoko %d blows walker row %d" "\n", row, e->row); }
             }
+            if (!hit && kp_blow(in->head, 70.0f, &hit_at)) { hit = 1; printf("punching kinoko %d blows Koopa" "\n", row); }
         }
         float hs = vlen(in->hvel);
         if (!hit && *ph == 5 && vlen(vsub(c, in->head)) < 70.0f + HIT_BODY_R && !mario->hurt_timer) /* CrushedEnd: sendMsgEnemyAttackFlipWeakJump */
