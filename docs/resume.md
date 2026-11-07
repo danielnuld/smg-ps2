@@ -1297,6 +1297,18 @@ there needs the embedded blob and every pack rebuilt.
   table; one fade table per model a frame; DarknessRoomAir / TwilightAir / DimensionAir still without run-time fades.
   Repack: slice_all.py EggStarGalaxy, TearDropGalaxy, OceanFloaterLandGalaxy, OceanPhantomCaveGalaxy, HeavensDoorGalaxy.
 
+- Mirror (feat/437-mirror, 2026-11-07): GameScene::drawMirror / MirrorCamera / SimpleMirrorObj /
+  SimpleMirrorReflectionObj after Petari (statics.inc st_mirror_*): while Mario is in a MirrorAreaCube (slice.py
+  LOGIC), the frame first drawn by the mirror camera (eye, target, up reflected in the plane of
+  MirrorReflectionTwinFallLake's model: its first vertex, its first triangle's normal; render_begin re-squares the
+  basis as updateViewMtx) with the MirrorModelTwinFallLake models and a Sky with arg0 0 (its 鏡内モデル), captured at
+  320 x 224 (render_mirror_capture: the target blocks, now 640); then the surface (render_mirror_surface: its VU1Strip
+  data decoded on the EE) textured with that picture through the mirror camera's projection, its material's alpha
+  (110). Outside the area its own model. HeavenlyBeach 1 at the lake: 60 fps, draw 10.2 ms with the mirror, 10.5 without.
+  Test: plain XF="-DPUT_TEST=MirrorAreaCube -DPUT_NOCAM -DPUT_AT=200 -DPUT_UP=300 -DPUT_XYZ=6873,15330,36834"
+  HeavenlyBeachGalaxy/1 (-DMIRROR_OFF: the surface's own model, to compare). ponytail: fillScreen's blue left to the
+  frame's own clear; Mario has no mirror model (MarioActor's mirror actor not ported).
+  Repack: slice_all.py HeavenlyBeachGalaxy (LOGIC MirrorAreaCube).
 - AstroMapBoard picture (feat/426-mapboard, 2026-11-07): GalaxyMapController::capture after Petari: at the first
   frame of a scene whose board shows (st_mapboard: hasGrandStar(2)), menu_gm_capture draws drawForCapture's layouts
   (the background, the galaxy view with its dome / galaxy / comet icons; no title, Mario or Tico icons) and

@@ -232,22 +232,23 @@ static void st_flag_test(void)
 }
 #endif
 /* ---- MapObj classes by placed type: their per-row state (StSt, kept across rebinds) ---- */
-enum { ST_NONE = 1, ST_TWALL, ST_MIRRORMODEL, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP };
+enum { ST_NONE = 1, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP };
 /* Placed classes whose Petari behaviour is the model drawn with its animations and collision (the engine's generic
  * instance does that): LavaGalaxyParts.cpp (LavaShellTowerStep, LavaStepA / B / C: startBtk / Brk / Bpk / Btp of its
  * name, collision, clipping; ponytail: the steps' DLMakerProjmapEffectMtxSetter lava glow is baked at slice time and
  * LodCtrlPlanet's low models are the zones' low packs), GlaringLight (TeresaRoomGlaringLight: SimpleMapObj in
- * DrawBufferType_GlaringLight; ponytail: drawn with the map objects, not in that buffer's order), SimpleMirrorObj
- * (MirrorReflectionTwinFallLake: the mirror's surface; ponytail: no mirror camera, its reflection texture is drawn as
- * the model's own), CoconutTree.cpp (its model, collision, a clipping sphere of 2000) */
+ * DrawBufferType_GlaringLight; ponytail: drawn with the map objects, not in that buffer's order), CoconutTree.cpp (its
+ * model, collision, a clipping sphere of 2000) */
+static struct { const Scene *at; int inst, ok; V3 n, p; } st_mir = {NULL, -1, 0, {0, 0, 0}, {0, 0, 0}}; /* SimpleMirrorObj (st_mirror_*) */
 static const char *const st_still[] = {"LavaShellTowerStep", "LavaStepA", "LavaStepB", "LavaStepC", "TeresaRoomGlaringLight",
-                                       "MirrorReflectionTwinFallLake", "CoconutTree"};
+                                       "CoconutTree"};
 static signed char st_kinds[1024];
 static const Scene *st_kinds_sc;
 static int st_kind_name(const char *n)
 {
     if (!strcmp(n, "InvisibleWaterfallTwinFallLake") || !strcmp(n, "StatusFloor")) return ST_TWALL; /* TransparentWall */
     if (!strcmp(n, "MirrorModelTwinFallLake")) return ST_MIRRORMODEL; /* SimpleMirrorReflectionObj */
+    if (!strcmp(n, "MirrorReflectionTwinFallLake")) return ST_MIRROR; /* SimpleMirrorObj */
     if (!strcmp(n, "UFOKinokoUnderConstruction")) return ST_UFOKC;
     if (!strcmp(n, "LavaShellTower")) return ST_SHELLTOWER;
     if (!strcmp(n, "AstroDomeDemoAstroGalaxy")) return ST_DOMEGALAXY;
@@ -581,7 +582,17 @@ static void st_objs_update(void)
         switch (k) {
         case ST_TWALL: st_twall(in, g); break;
         case ST_MIRRORMODEL: in->invisible = 1; break; /* connectToSceneMirrorMapObjNoMovement: drawn in the mirror only
-                                                         * (ponytail: no mirror pass, so never) */
+                                                         * (st_mirror_pass) */
+        case ST_MIRROR: /* SimpleMirrorObj: its MirrorCamera's plane (setMirrorMapInfo); drawn by st_mirror_draw */
+            in->invisible = 1;
+            if (st_mir.at != sc || st_mir.inst != i) {
+                float n[3], p[3];
+                st_mir.at = sc; st_mir.inst = i;
+                st_mir.ok = render_mirror_plane(in->md, in->m, n, p);
+                st_mir.n = v3(n[0], n[1], n[2]); st_mir.p = v3(p[0], p[1], p[2]);
+                printf("mirror: row %d plane %d (%.2f %.2f %.2f) at %.0f %.0f %.0f" "\n", in->row, st_mir.ok, n[0], n[1], n[2], p[0], p[1], p[2]);
+            }
+            break;
         case ST_UFOKC: /* UFOKinokoUnderConstruction::init: UFOKinokoLandingAstro's model (and collision) once
                         * isUFOKinokoUnderConstruction is over (EventKinopioExplorerOrganize on) */
             if (organize) {
@@ -1259,8 +1270,54 @@ static void st_update(void)
     st_flag_test();
 #endif
 }
+/* SimpleMirrorObj (MirrorReflectionTwinFallLake) and MirrorCamera / GameScene::drawMirror after Petari: while the
+ * player is in a MirrorArea, the frame first drawn by the mirror camera (the camera's eye, target and up reflected in
+ * the mirror's plane, re-squared as MirrorCamera::updateViewMtx) with the MirrorMapObj models (SimpleMirrorReflectionObj:
+ * MirrorModelTwinFallLake; a Sky with arg0 0: its MirrorReflectionModel, at the reflected eye), captured
+ * (CaptureScreenIndirect), the depth cleared by the frame's own render_begin; the mirror's surface then textured with
+ * it through the mirror camera (MirrorReflectionMtxSetter), its material's alpha. Outside the area: its own model.
+ * ponytail: the picture at 320 x 224 (16-bit); fillScreen's blue left to the frame's clear */
+static int st_mirror_on(void)
+{
+#ifdef MIRROR_OFF /* test builds: the surface's own model, for a comparison */
+    return 0;
+#endif
+    return st_mir.at == sc && st_mir.ok && st_mir.inst < ninsts && area_obj("MirrorAreaCube", mario->pos) >= 0; /* isPlayerInAreaObj("MirrorArea") */
+}
+static void st_mirror_pass(V3 ce, V3 cw, V3 cu)
+{
+    if (!st_mirror_on()) return;
+    V3 n = st_mir.n;
+    V3 e = vsub(ce, vmul(n, 2.0f * vdot(n, vsub(ce, st_mir.p)))), t = vsub(cw, vmul(n, 2.0f * vdot(n, vsub(cw, st_mir.p))));
+    V3 u = vsub(cu, vmul(n, 2.0f * vdot(n, cu)));
+    float eye[3] = {e.x, e.y, e.z}, target[3] = {t.x, t.y, t.z}, up[3] = {u.x, u.y, u.z};
+    render_begin(eye, target, up);
+    int sky = 0;
+    for (int i = 0; i < ninsts; i++) { /* Sky::init: arg0 0 makes its 鏡内モデル (the same model, the sky's matrix) */
+        const Inst *in = &insts[i];
+        if (!in->sky || in->md->radius <= 0 || sc->objs[in->row].arg[0] != 0) continue;
+        float cm[16], k = 108000.0f / (in->md->radius * in->s);
+        memcpy(cm, in->m, 64);
+        for (int j = 0; j < 12; j++) if (j % 4 != 3) cm[j] *= k;
+        cm[12] = e.x; cm[13] = e.y; cm[14] = e.z;
+        inst_draw(in, in->md, cm);
+        sky = 1;
+    }
+    if (sky) render_clear_depth();
+    for (int i = 0; i < ninsts; i++)
+        if (st_kind(sc->objs[insts[i].row].type) == ST_MIRRORMODEL && row_shown(insts[i].row)) inst_draw(&insts[i], insts[i].md, insts[i].m);
+    render_mirror_capture();
+}
+static void st_mirror_draw(void)
+{
+    if (st_mir.at != sc || st_mir.inst < 0 || st_mir.inst >= ninsts) return;
+    const Inst *in = &insts[st_mir.inst];
+    if (!row_shown(in->row)) return;
+    if (!render_mirror_surface(in->md, in->m)) inst_draw(in, in->md, in->m);
+}
 static void st_draw(void)
 {
+    st_mirror_draw();
     st_flags_draw();
     st_bbeamers_draw();
     st_columns_draw();
