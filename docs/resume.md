@@ -211,7 +211,7 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
     moves on it (Penguin::init's speeds by arg0: Walk 1.5 / Swim 5 / SwimSurface 5 / SwimTurtle 10 / DashA 6, on the
     ground for Walk / Dash, reversed at an open rail's end, the Flow nerve Swim at 5), its action _11C while moving, the
     turn / talk ones standing or in a long talk. Penguins / PenguinCoach / PenguinStudent now talk (talkcls 12: their
-    balloon 150 / 430 up). NPCSupportRail: a dead rail holder for PenguinSkater, nothing to run. Test XF="-DGAP_TEST=23
+    balloon 150 / 430 up). NPCSupportRail: a dead rail holder for PenguinSkater (race.inc sk_*). Test XF="-DGAP_TEST=23
     -DDEBUG_HUD -UCATCHUP" HeavenlyBeachGalaxy/1 (rows 339-347 walking, swimming, dashing, talking). Left: Kinopio's
     rail (tryStartArgs at each point).
   - Beach Bowl's swim test (game.c student_update / coach_takeout / pg_branch / pg_event): PenguinStudent's school on
@@ -584,6 +584,15 @@ Second console round (2026-10-24), from Daniel's report:
   2D race's raster scroll, the star model in its hands. TeresaMario2D 1 (racers 0 / 1) not run. Repack: every
   galaxy with a RaceRail (PATH's path_arg0, LOGIC): PhantomGalaxy, OceanRingGalaxy, TeresaMario2DGalaxy,
   SurfingLv1Galaxy, SurfingLv2Galaxy.
+- PenguinSkater (feat/386-penguin-skater, 2026-11-07): race.inc sk_* after NPC/PenguinSkater.cpp: its group's rails
+  (its own loop, NPCSupportRail rows now LOGIC: the other loop and the connectors), Wait (talk to the end, the
+  ペンギンスケート開始 demo and 開始 camera), Demo / Away / Turn / Switch / Provoke on the rails by calcLead, Caught (Mario's
+  touch or spin: the 捕まり demo, TossStart / TossWait, his matrix blended onto it, the 終了 camera), FadeOut / FadeIn
+  (ペンギン移動後 / マリオ移動後, Watch, SitDown), GiveUp (SW_A: IceVolcano 1's SuperSpinDriver), SitDown; reactions by
+  npc_react (Trampled / Spin / Pointing and their voices). Test plain XF "-DRACE_TEST=3 -DPACKS_OVERLAY=..."
+  IceVolcanoGalaxy/1: talk, the chase, Mario sliding after it at 20: Provoke, Away, Switch, caught, moved, SW_A.
+  ponytail: circle wipes as fades, startTalkingSequence / startNPCTalkCamera (the talk's own camera), the star piece
+  reaction. Repack: IceVolcanoGalaxy (slice.py LOGIC NPCSupportRail).
 - ChipCounter (feat/290-chip-counter, 2026-11-05): menu.c chc_* (BlueChipCounter / YellowChipCounter / CollectCounter
   in lyt.py COMMON: menus.bin +84 KB): Hide / FrameIn / Show / FrameOut / TryDemo / Complete / CompleteOut, Chip1-5
   ChipGet, ShowHide by short balloons, the count over Mario; game.c chip_group_*: UI range (chips' box +- 2000 or
@@ -1958,7 +1967,7 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
   SeaBottomTriplePropeller (one KCL on three joints), the Tamakoro family (TamakoroWithTutorial, BallOpener,
   JumpHole, ConcreteBlock: Mario's star ball ride is not ported), ClipAreaDropLaser (clip areas), AstroDomeAsteroid
   (SphereSelector's handled transform), FlexibleSphere, BegomanSpring, Syati / TalkSyati, SpinningBox,
-  BombBird, JumpGuarder, WaterBazooka, BallBeamer, MagnumKiller, PenguinSkater, PenguinRacerLeader,
+  BombBird, JumpGuarder, WaterBazooka, BallBeamer, MagnumKiller, PenguinRacerLeader,
   SubmarineVolcanoBigColumn, AstroChildRoom (update_astro_objs' ponytail).
 - TicoGalaxy's TicoStarRing talk (fix, 2026-11-07): a real bug, not only the test. Its talk ran in update_ticofat,
   after update_mario, so the A that should start it made Mario jump first (ts_test wants him grounded): the talk sat

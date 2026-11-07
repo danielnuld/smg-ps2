@@ -39,10 +39,12 @@ static struct {
     u32 best, time;
     V3 end_p, end_x, end_y, end_z; /* _FC (inverted: a point's local z is its offset along end_z) */
     RmRail rail;   /* the PlayerRacer's */
-    int ctrl_off, cam; const char *bck;
+    int ctrl_off, cam; const char *bck, *bck_demo; /* bck: startBckPlayer's clip while the demo bck_demo holds Mario */
     int test_f;
 } rm;
 enum { TRC_WAIT, TRC_PRE, TRC_READY, TRC_MOVE, TRC_GOAL, TRC_POST, TRC_TALK, TRC_TAKEOUT };
+enum { SK_REACTION = 20, SK_TALK, SK_WAIT, SK_DEMO, SK_AWAY, SK_TURN, SK_PROVOKE, SK_CAUGHT, SK_FADEOUT, SK_FADEIN, SK_GIVEUP,
+       SK_SITDOWN, SK_SWITCH };
 #define RN_MAX 8
 typedef struct {
     int row, kind, id, ar, dead; /* kind 1 TeresaRacer; id: mRacerId */
@@ -55,12 +57,14 @@ typedef struct {
     u8 p0, p1; float p4, p8;         /* mParam _0 / _1, _4, _8 */
     int k, cam, goal, bgm, took, tos, tos_step; /* talker; 会話 camera on; mIsGoal; mBgmState; star out; TakeOutStar (0 Anim, 1 Term) */
     u32 lv, lv2;
+    RmRail sr[8]; int nsr, cur, swr, ri, cross; /* PenguinSkater: its group's rails (sr[0] its own), mCurrentRail, mSwitchRail, mRail, mCrossPoint */
+    NpcReact re; int react;      /* NPCActor's reaction flags; the Reaction nerve's start flags */
 } RNpc;
 static RNpc rn[RN_MAX];
 static int nrn;
 static void rm_reset(void) { rm.scene = NULL; rm.on = 0; rm.ctrl_off = 0; rm.bck = NULL; nrn = 0; }
 static int rm_ctrl_off(void) { return rm.scene == sc && rm.ctrl_off; }
-static const char *rm_bck(void) { return rm.scene == sc && pd.name && !strcmp(pd.name, "レース") ? rm.bck : NULL; }
+static const char *rm_bck(void) { return rm.scene == sc && pd.name && rm.bck_demo && !strcmp(pd.name, rm.bck_demo) ? rm.bck : NULL; }
 static int race_took(int row) { for (int i = 0; i < nrn; i++) if (rn[i].row == row) return rn[i].took; return 0; }
 
 /* --- the rail rider (RailRider.cpp / RailUtil) */
@@ -145,9 +149,10 @@ static void rm_player_at(V3 pos, V3 up, V3 front) /* setPlayerBaseMtx: Mario at 
     if (vlen(f) > 1e-6f) mario->face = vnorm(f);
     mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->launch = -1;
 }
-static void rm_player_bck(const char *b) { rm.bck = b; } /* startBckPlayer (played while the レース demo holds him) */
+static void rm_player_bck(const char *b) { rm.bck = b; rm.bck_demo = "レース"; } /* startBckPlayer (played while the レース demo holds him) */
 static V3 rm_player_center(void) { return vadd(mario->pos, vmul(mario->up, HIT_BODY_H)); } /* getPlayerCenterPos */
 static void rn_reset_racer(RNpc *t);
+static void sk_init(RNpc *t, const Row *r);
 static void rn_prep_racer(RNpc *t);
 static void rn_start_racer(RNpc *t);
 static int rn_update_racer(RNpc *t, RmRacer *a);
@@ -203,7 +208,7 @@ static void rm_init(void)
     memset(&rm, 0, sizeof rm);
     rm.scene = sc; rm.row = -1; rm.req = -1; rm.next = -1;
     nrn = 0;
-    int tr = scene_type(sc, "RaceRail"), tt = scene_type(sc, "TeresaRacer");
+    int tr = scene_type(sc, "RaceRail"), tt = scene_type(sc, "TeresaRacer"), tsk = scene_type(sc, "PenguinSkater");
     for (u32 i = 0; i < sc->nobjs; i++) {
         const Row *r = &sc->objs[i];
         if ((int)r->type == tr && tr >= 0 && rm.row < 0) { /* RaceRail::init: entryRacerPlayer */
@@ -235,6 +240,17 @@ static void rm_init(void)
             t->speed = 20.0f; t->accel = 0.1f; t->blend = 0.05f; /* sSpeed, sAccele, _114 */
             if (!t->dead) { t->ar = rm.n; rm.r[rm.n].npc = nrn; rm.ord[rm.n] = rm.n; rm.n++; } /* entryRacerOthers */
             printf("race: TeresaRacer row %u id %d%s, rail %d points" "\n", i, t->id, t->dead ? " (dead)" : "", rr_npoints(&t->rail));
+            nrn++;
+        } else if ((int)r->type == tsk && tsk >= 0 && nrn < RN_MAX) { /* PenguinSkater::init */
+            RNpc *t = &rn[nrn];
+            memset(t, 0, sizeof *t);
+            t->row = (int)i; t->pushed = -1; t->next = -1;
+            float m[16];
+            mat_translate_rot_scale(m, r->pos, r->rot, (float[3]){1, 1, 1});
+            t->pose.m[12] = r->pos[0]; t->pose.m[13] = r->pos[1]; t->pose.m[14] = r->pos[2];
+            t->pose.nu = t->pose.nu0 = vnorm(v3(m[4], m[5], m[6])); t->pose.nf = t->pose.nf0 = vnorm(v3(m[8], m[9], m[10]));
+            t->pos0 = row_pos(r);
+            sk_init(t, r);
             nrn++;
         }
     }
@@ -497,11 +513,11 @@ static void rn_talker(RNpc *t) /* its mMsgCtrl at its base matrix */
     if (t->k < 0) {
         char lab[32];
         if (!talk_row_label(t->row, lab)) return;
-        t->k = talk_new(lab, t->row, t->row, 150.0f, 500.0f); /* caps.mMessageOffset (0, 150, 0), setDistanceToTalk 500 */
+        t->k = talk_new(lab, t->row, t->row, 150.0f, t->kind == 1 ? 500.0f : 240.0f); /* caps.mMessageOffset (0, 150, 0); TeresaRacer: setDistanceToTalk 500 */
         if (t->k < 0) return;
         Talker *tk = &talkers[t->k];
-        tk->root_auto = 1; tk->branch = tr_branch; tk->anime = tr_anime; tk->event = tr_event;
-        printf("teresa racer row %d: talk %s" "\n", t->row, lab);
+        if (t->kind == 1) { tk->root_auto = 1; tk->branch = tr_branch; tk->anime = tr_anime; tk->event = tr_event; } /* (PenguinSkater: offRootNodeAutomatic) */
+        printf("racer npc row %d: talk %s" "\n", t->row, lab);
     }
     float m[16];
     basis_matrix(m, rn_pos(t), t->pose.nu, t->pose.nf, 0);
@@ -635,8 +651,8 @@ static void game_test_race(void)
     t++;
     RNpc *n = &rn[0];
     V3 p = rn_pos(n);
-    if (t - free_at < 120 && rm.nrv == RM_WAIT && n->nrv == TRC_WAIT) {
-        mario->pos = vadd(vadd(p, vmul(n->pose.nf, 300.0f)), vmul(n->pose.nu, 30.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+    if (t - free_at < 120 && rm.nrv == RM_WAIT && n->nrv == (n->kind == 2 ? SK_WAIT : TRC_WAIT)) {
+        mario->pos = vadd(vadd(p, vmul(n->pose.nf, n->kind == 2 ? 170.0f : 300.0f)), vmul(n->pose.nu, 30.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
         mario->face = vmul(n->pose.nf, -1.0f);
     }
     if (td.nrv != TD_SLCT) slct = 0;
@@ -644,6 +660,13 @@ static void game_test_race(void)
         if (++slct == 60) printf("race test: pointer on BoxRight %d" "\n", menu_test_point("BoxRight"));
         pad_force = slct == 80 ? PAD_CROSS : 0;
     } else if (t - free_at > 150 && (t % 45) < 5 && (rm.nrv != RM_RACE)) pad_force = PAD_CROSS;
+    if (n->kind == 2 && (n->nrv == SK_AWAY || n->nrv == SK_PROVOKE || n->nrv == SK_TURN || n->nrv == SK_SWITCH)) { /* the skater:
+        * Mario slides after it at 20 a frame (sAwaySpeed 14) till he touches it */
+        V3 d = vsub(p, mario->pos);
+        float l = vlen(d);
+        mario->pos = l > 20.0f ? vadd(mario->pos, vmul(d, 20.0f / l)) : p; mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        if (l > 1e-3f) mario->face = vnorm(vtangent(d, mario->up));
+    }
 #if RACE_TEST == 1
     if (rm.nrv == RM_RACE) { /* along the judge rail, 400 ahead of the racer's coord, at 24 a frame at most */
         static float c;
@@ -670,6 +693,283 @@ static void game_test_race(void)
     }
 }
 #endif
+/* --- PenguinSkater (NPC/PenguinSkater.cpp, rn kind 2) and NPCSupportRail (NPC/NPCSupportRail.cpp: a dead actor holding
+ * a rail in the skater's group). With a rail: its group's loop rails are mCurrentRail (its own) and mSwitchRail, the
+ * others the connectors (mSwitchRails); talked to at its end (Wait: offRootNodeAutomatic, forwardNode), the
+ * ペンギンスケート開始 demo with its 開始 camera, Demo (IceSwimStart, sDemoSpeed 18) till half the loop ahead
+ * (sProvokeRangeIn 1000), Away at sAwaySpeed 14 (accel 0.15): Turn (stopRail, brake 0.2, both loops reversed) when Mario
+ * gets ahead, Switch onto a connector met at a passed point (sSamePosition 10, sSameDirection 0.55, within
+ * sSwitchRange 3000) at sSwitchSpeed 10, its end: the other loop; Provoke (Congratulate1, a forced talk, till
+ * sProvokeRangeOut 2000); caught by Mario's touch or spin (Away / Turn / Switch): the 捕まり demo (puppetable), its 終了
+ * camera on Mario, Caught (TossStart, Mario's matrix blended to its over 5 frames), FadeOut (CaughtWait,
+ * closeWipeCircle), FadeIn (ペンギン移動後 / マリオ移動後, Watch, SitDown / SitDownTalk), GiveUp (its talk to the end:
+ * SW_A), SitDown. Without a rail: Talk. Reactions (npc_react: Body 50 at 50 up; Trampled / Spin / Pointing and their
+ * voices, the Reaction nerve). ponytail: the circle wipes are fades, startTalkingSequence / startNPCTalkCamera (the
+ * talk's own camera), the star piece reaction (_DB) */
+static RmRail *sk_rail(RNpc *t) { return &t->sr[t->ri]; } /* mRail */
+static int rr_next_point(const RmRail *rr) /* getNextRailPointNo */
+{
+    int n = rr_npoints(rr), cur = rr_point_no(rr);
+    if (rr->dir > 0) return cur + 1 < n ? cur + 1 : rr->cl ? 0 : cur;
+    if (rr->coord > rr_point_coord(rr, cur) + 0.01f || cur == 0) return rr->cl && cur == 0 && rr->coord <= 0.01f ? n - 1 : cur;
+    return cur - 1;
+}
+static V3 rr_point_pos(const RmRail *rr, int k) { V3 d; return nrail_at(rr->pts, rr->np, rr->cl, rr_point_coord(rr, k), &d); } /* calcRailPointPos */
+static float sk_lead(RNpc *t) /* calcLead */
+{
+    RmRail *rr = sk_rail(t);
+    float pc = nrail_nearest(rr->pts, rr->np, rr->cl, mario->pos), c = rr->coord, half = rr->len / 2.0f; /* calcRailPosNearestPlayer */
+    float diff = fabsf(c - pc);
+    int ahead = c > pc;
+    if (rr->dir > 0) { if ((ahead && diff > half) || (!ahead && diff < half)) diff = -diff; }
+    else if ((ahead && diff < half) || (!ahead && diff > half)) diff = -diff;
+    return diff;
+}
+static void sk_follow(RNpc *t, float blend) /* followRailPoseOnGround(this, mRail, blend) */
+{
+    RmRail *rr = sk_rail(t);
+    V3 rp = rr_pos(rr), up = up_at(rp, t->pose.nu), hp, n; int inst;
+    V3 p = rp;
+    if (map_line(vadd(rp, vmul(up, 10.0f)), vmul(up, -1000.0f), &hp, &n, &inst)) p = hp; /* getFirstPolyOnLineToMap */
+    npc_pose(&t->pose, up, rr_dir(rr), p, blend, 1.0f);
+}
+static void sk_move_rail(RNpc *t, float speed, float blend) /* moveRail: moveCoordAndFollowTransAndCheckPassPointNo */
+{
+    RmRail *rr = sk_rail(t);
+    rr_adjust_speed(rr, speed, 0.15f); /* sAwayAccele */
+    int next = rr_next_point(rr);
+    rr_move(rr);
+    t->cross = next == rr_next_point(rr) ? -1 : next;
+    sk_follow(t, blend);
+}
+static void sk_stop_rail(RNpc *t, float blend) /* stopRail */
+{
+    RmRail *rr = sk_rail(t);
+    rr_adjust_speed(rr, 0.0f, 0.2f); /* sAwayBrake */
+    int next = rr_next_point(rr);
+    rr_move(rr);
+    t->cross = next == rr_next_point(rr) ? -1 : next;
+    sk_follow(t, blend);
+}
+static void sk_reverse(RNpc *t) { t->sr[t->cur].dir = -t->sr[t->cur].dir; t->sr[t->swr].dir = -t->sr[t->swr].dir; } /* both loops */
+static int sk_in_provoke(RNpc *t, float d, float range) { return fabsf(sk_rail(t)->len / 2.0f - fabsf(d)) < range; }
+static int sk_switch(RNpc *t) /* trySwitchRail */
+{
+    RmRail *rr = sk_rail(t);
+    float speed = rr->speed;
+    V3 dir = rr_dir(rr), cross = rr_point_pos(rr, t->cross), d;
+    for (int i = 0; i < t->nsr; i++) {
+        RmRail *c = &t->sr[i];
+        if (i == t->cur || i == t->swr) continue;
+        V3 sp = nrail_at(c->pts, c->np, c->cl, 0.0f, &d);
+        if (vlen(vsub(cross, sp)) < 10.0f && vdot(dir, d) > 0.55f) { c->dir = 1; c->coord = 0.0f; c->speed = speed; t->ri = i; return 1; }
+        V3 ep = nrail_at(c->pts, c->np, c->cl, c->len, &d);
+        if (vlen(vsub(cross, ep)) < 10.0f && vdot(dir, d) < -0.55f) { c->dir = -1; c->coord = c->len; c->speed = speed; t->ri = i; return 1; }
+    }
+    return 0;
+}
+static void sk_end_switch(RNpc *t) /* endSwitchRail */
+{
+    float speed = sk_rail(t)->speed;
+    t->ri = t->swr;
+    int c = t->cur; t->cur = t->swr; t->swr = c;
+    t->sr[t->cur].speed = speed;
+    RmRail *rr = sk_rail(t);
+    rr->coord = nrail_nearest(rr->pts, rr->np, rr->cl, rn_pos(t)); /* moveCoordToNearestPos */
+}
+static int sk_attackable(const RNpc *t) { return t->nrv == SK_AWAY || t->nrv == SK_TURN || t->nrv == SK_SWITCH; }
+static void sk_cam(RNpc *t, const char *ev, int on, int player) /* start / endMultiActorCamera 開始 / 終了 */
+{
+    if (row_camset[t->row] == -1) return;
+    if (!on) { if (t->cam) { camera_event_stop(); t->cam = 0; } return; }
+    t->cam = player ? camera_actor_start("PenguinSkater", ev, (unsigned short)row_camset[t->row], mario->up, mario->face, mario->pos)
+                    : camera_actor_start("PenguinSkater", ev, (unsigned short)row_camset[t->row], t->pose.nu, t->pose.nf, rn_pos(t));
+}
+static int sk_react(RNpc *t) /* tryStartReaction: Trampled / Spin / Pointing (npc_react on its Body 50 at 50 up) */
+{
+    V3 body = vadd(rn_pos(t), vmul(t->pose.nu, 50.0f));
+    int f = npc_react(&t->re, body, 50.0f, t->pose.nu, rn_pos(t), 450.0f, 0);
+    if (!f) return 0;
+    t->react = f;
+    Inst *in = rn_inst(t);
+    if (in) obj_play(in, f & 1 ? "trampled" : f & 2 ? "spin" : "pointing", 0, 0);
+    printf("penguin skater row %d: reaction %d" "\n", t->row, f);
+    return 1;
+}
+static void sk_exe(RNpc *t)
+{
+    int st = t->step;
+    V3 p = rn_pos(t);
+    switch (t->nrv) {
+    case SK_REACTION: /* exeReaction */
+        if (st == 0) {
+            if (t->react & 1) { se_start(SE_SM_PENGUIN_TRAMPLED, &p.x); se_start(SE_SV_PENGUIN_S_TRAMPLED, &p.x); }
+            if (t->react & 8) { se_start(SE_SV_PENGUIN_S_POINTED_2P, &p.x); dpd_hit_sound(); }
+            if (t->react & 2) se_start(SE_SV_PENGUIN_S_SPIN_HIT, &p.x);
+        }
+        if (rn_action_done(t)) rn_pop(t); /* tryStartReactionAndPopNerve: isActionLoopedOrStopped */
+        break;
+    case SK_WAIT: /* exeWait */
+        if (sk_react(t)) { rn_push(t, SK_REACTION); break; }
+        rn_try_talk_action(t);
+        if (!talk_near_at_end(t->k)) break;
+        pd_try_start("ペンギンスケート開始", t->row); /* tryStartDemo */
+        sk_cam(t, "開始", 1, 0);
+        talk_forward_node(t->k);
+        {
+            V3 d, sp = nrail_at(sk_rail(t)->pts, sk_rail(t)->np, sk_rail(t)->cl, 0.0f, &d); /* calcRailStartPointDirection */
+            (void)sp;
+            if (vdot(vsub(mario->pos, p), d) > 0.0f) sk_reverse(t);
+        }
+        rn_set(t, SK_DEMO);
+        printf("penguin skater row %d: the chase starts" "\n", t->row);
+        break;
+    case SK_DEMO: /* exeDemo */
+        if (st == 0) rn_action(t, "iceswimstart", 0);
+        if (st > 0 && rn_action_done(t)) rn_action(t, "iceswim", 1);
+        if (st == 33) se_start(SE_SM_PENGUIN_SKATE_START, &p.x); /* sDemoSkateSeStartTiming */
+        if (st >= 33) t->lv = se_level(SE_SM_LV_PENGUIN_SKATE, &p.x, t->lv);
+        sk_move_rail(t, 18.0f, 0.05f); /* sDemoSpeed, sBlendRatio */
+        if (sk_in_provoke(t, sk_lead(t), 1000.0f)) { sk_cam(t, "開始", 0, 0); pd_end("ペンギンスケート開始"); rn_set(t, SK_AWAY); }
+        break;
+    case SK_AWAY: { /* exeAway */
+        if (st == 0) rn_action(t, "iceswim", 1);
+        t->lv = se_level(SE_SM_LV_PENGUIN_SKATE, &p.x, t->lv);
+        sk_move_rail(t, 14.0f, 0.05f); /* sAwaySpeed */
+        float lead = sk_lead(t);
+        if (lead < 0.0f) rn_set(t, SK_TURN);
+        else if (fabsf(lead) <= 3000.0f && t->cross != -1 && sk_switch(t)) rn_set(t, SK_SWITCH); /* inSwitchRange */
+        else if (sk_in_provoke(t, lead, 1000.0f)) rn_set(t, SK_PROVOKE);
+        break;
+    }
+    case SK_TURN: /* exeTurn */
+        if (st == 0) rn_action(t, "iceswimturn", 0);
+        if (st > 0 && rn_action_done(t)) rn_action(t, "iceswim", 1);
+        sk_stop_rail(t, 1.0f);
+        if (fabsf(sk_rail(t)->speed) < 0.001f) { sk_reverse(t); rn_set(t, SK_AWAY); }
+        break;
+    case SK_SWITCH: /* exeSwitch */
+        t->lv = se_level(SE_SM_LV_PENGUIN_SKATE, &p.x, t->lv);
+        sk_move_rail(t, 10.0f, 0.05f); /* sSwitchSpeed */
+        if (rr_reached_goal(sk_rail(t))) { sk_end_switch(t); rn_set(t, SK_AWAY); }
+        break;
+    case SK_PROVOKE: /* exeProvoke */
+        if (fabsf(sk_rail(t)->speed) >= 0.001f) { sk_stop_rail(t, 1.0f); break; }
+        rn_action(t, "congratulate1", 1); /* tryStartBck */
+        if (vlen(vsub(mario->pos, p)) < 10000.0f) { talk_force(t->k, 1); rn_turn_to_player(t, t->p8); } /* tryTalkForce, turnToPlayer */
+        {
+            float lead = sk_lead(t);
+            if (!sk_in_provoke(t, lead, 2000.0f)) {
+                if (lead < 0.0f) sk_reverse(t);
+                rn_set(t, SK_AWAY);
+                se_start(SE_SM_PENGUIN_SKATE_START, &p.x);
+            }
+        }
+        break;
+    case SK_CAUGHT: /* exeCaught */
+        if (st == 0) {
+            pd_try_start("捕まり", t->row); /* tryStartDemoMarioPuppetable */
+            rm.bck = "tossstart"; rm.bck_demo = "捕まり";
+            sk_cam(t, "終了", 1, 1);
+            rn_action(t, "caught", 0);
+            se_start(SE_SM_PENGUIN_CAUGHT, &p.x);
+            sk_rail(t)->speed = 0.0f; /* zeroVelocity */
+        }
+        if (st == 20) { se_start(SE_SV_PENGUIN_S_CAUGHT, &p.x); se_start(SE_SY_TOTAL_COMPLETE, NULL); }
+        { /* blendBaseMatrixToMario(calcNerveRate(sMarioPoseBlendTime 5)) */
+            float k = fminf((float)st / 5.0f, 1.0f);
+            mario->pos = vadd(mario->pos, vmul(vsub(p, mario->pos), k));
+            mario->up = vnorm(vadd(mario->up, vmul(vsub(t->pose.nu, mario->up), k)));
+            V3 f = vtangent(vadd(mario->face, vmul(vsub(t->pose.nf, mario->face), k)), mario->up);
+            if (vlen(f) > 1e-6f) mario->face = vnorm(f);
+        }
+        if (st > 0 && rn_action_done(t)) { rn_set(t, SK_FADEOUT); rm.bck = "tosswait"; }
+        break;
+    case SK_FADEOUT: /* exeFadeOut */
+        if (st == 0) { rm_player_at(p, t->pose.nu, t->pose.nf); rn_action(t, "caughtwait", 1); menu_wipe(1, -1, 0); } /* closeWipeCircle */
+        if (!menu_wipe_active()) rn_set(t, SK_FADEIN);
+        break;
+    case SK_FADEIN: /* exeFadeIn */
+        if (st == 0) {
+            const float *g = scene_gpos("ペンギン移動後"), *gm = scene_gpos("マリオ移動後");
+            float m[16], one[3] = {1, 1, 1};
+            if (g) { /* setNPCActorPos: placed there, its pose and _B0 / _C0 */
+                float rot[3] = {g[3], g[4], g[5]};
+                mat_translate_rot_scale(m, g, rot, one);
+                t->pose.m[12] = g[0]; t->pose.m[13] = g[1]; t->pose.m[14] = g[2];
+                t->pose.nu = t->pose.nu0 = vnorm(v3(m[4], m[5], m[6])); t->pose.nf = t->pose.nf0 = vnorm(v3(m[8], m[9], m[10]));
+                t->pos0 = v3(g[0], g[1], g[2]);
+            }
+            if (gm) { /* setPlayerPosOnGroundAndWait */
+                float rot[3] = {gm[3], gm[4], gm[5]};
+                mat_translate_rot_scale(m, gm, rot, one);
+                V3 at = v3(gm[0], gm[1], gm[2]), up = up_at(at, v3(m[4], m[5], m[6])), hp, n; int inst;
+                if (map_line(vadd(at, vmul(up, 100.0f)), vmul(up, -1000.0f), &hp, &n, &inst)) at = hp;
+                rm_player_at(at, up, v3(m[8], m[9], m[10]));
+                mario->grounded = 1;
+            }
+            sk_cam(t, "終了", 0, 0);
+            pd_end("捕まり");
+            talk_forward_node(t->k);
+            rm.bck = NULL;
+            menu_wipe(0, -1, 0); /* openWipeCircle */
+            t->mv[0] = t->mv[1] = "sitdown"; t->tk[0] = t->tk[1] = "sitdowntalk"; t->p0 = t->p1 = 0; /* setMoveTalkNoTurnAction */
+            printf("penguin skater row %d: caught, moved" "\n", t->row);
+        }
+        rn_try_turn_action(t);
+        if (!menu_wipe_active()) rn_set(t, SK_GIVEUP);
+        break;
+    case SK_GIVEUP: /* exeGiveUp */
+        rn_try_talk_action(t);
+        if (!talk_force_at_end(t->k, 1)) break;
+        talk_forward_node(t->k);
+        { const Row *r = &sc->objs[t->row]; if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1); } /* onSwitchA */
+        printf("penguin skater row %d: SW_A on" "\n", t->row);
+        rn_set(t, SK_SITDOWN);
+        break;
+    case SK_SITDOWN: /* exeSitDown */
+        rn_try_talk_action(t);
+        talk_near(t->k);
+        break;
+    case SK_TALK: /* exeTalk */
+        if (sk_react(t)) { rn_push(t, SK_REACTION); break; }
+        rn_try_talk_action(t);
+        talk_near(t->k);
+        break;
+    }
+}
+static void sk_sensor(RNpc *t) /* attackSensor (Mario touches its Body) / receiveMsgPlayerAttack (his spin): Caught */
+{
+    if (!sk_attackable(t)) return;
+    V3 body = vadd(rn_pos(t), vmul(t->pose.nu, 50.0f));
+    if (mario_touch(body, 50.0f) || mario_offence(body, 50.0f, vmul(t->pose.nu, -1.0f)) == MSG_HITALL) {
+        pad_rumble(RUMBLE_STRONG);
+        rn_set(t, SK_CAUGHT);
+        printf("penguin skater row %d: caught" "\n", t->row);
+    }
+}
+static void sk_init(RNpc *t, const Row *r) /* PenguinSkater::init, initAfterPlacement */
+{
+    t->kind = 2; t->k = -1;
+    t->mv[0] = "wait"; t->mv[1] = "turn"; t->tk[0] = "talk"; t->tk[1] = "talkturn";
+    t->p0 = t->p1 = 1; t->p4 = 2000.0f; t->p8 = 4.0f;
+    t->re.c158 = 1024;
+    t->nrv = SK_TALK;
+    if (!rr_init(&t->sr[0], r)) return; /* isConnectedWithRail */
+    t->nsr = 1; t->cur = 0; t->swr = -1;
+    int ty = scene_type(sc, "NPCSupportRail");
+    for (u32 i = 0; ty >= 0 && i < sc->nobjs && t->nsr < 8; i++) { /* the group's rails (joinToGroupArray) */
+        const Row *q = &sc->objs[i];
+        if ((int)q->type != ty || q->group != r->group || q->zone != r->zone || !rr_init(&t->sr[t->nsr], q)) continue;
+        if (t->sr[t->nsr].cl && t->swr < 0) t->swr = t->nsr;
+        t->nsr++;
+    }
+    if (t->swr < 0) { t->nsr = 0; return; }
+    t->ri = t->cur;
+    t->nrv = SK_WAIT;
+    sk_follow(t, 1.0f);
+    printf("penguin skater row %d: %d rails (loop %d / %d), len %d" "\n", t->row, t->nsr, t->cur, t->swr, (int)t->sr[0].len);
+}
 static void update_race(void)
 {
     if (rm.scene != sc) rm_init();
@@ -685,9 +985,10 @@ static void update_race(void)
         rn_talker(t);
         if (t->next >= 0) { t->nrv = t->next; t->step = 0; t->next = -1; }
         rn_takeout(t);
-        tr_exe(t);
+        if (t->kind == 1) tr_exe(t);
+        else if (t->kind == 2) { sk_exe(t); sk_sensor(t); }
         t->step++;
-        if (t->next >= 0) { t->nrv = t->next; t->step = 0; t->next = -1; printf("teresa racer row %d: nerve %d" "\n", t->row, t->nrv); }
+        if (t->next >= 0) { t->nrv = t->next; t->step = 0; t->next = -1; printf("racer npc row %d: nerve %d" "\n", t->row, t->nrv); }
         rn_place(t);
     }
 }

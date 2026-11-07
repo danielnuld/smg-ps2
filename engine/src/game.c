@@ -43587,7 +43587,7 @@ static int rabbit_lecture(Inst *in, int talking)
  * _110 0.1, _114 0.08, _118 1. Per class (npc_rail_of): Penguin::init by arg0 (sSpeedWalk 1.5, sSpeedSwim 5,
  * sSpeedSwimTurtle 10, sSpeedDash 6, sBlendDash 0.08), its Flow nerve Swim at sSpeedSwim. row_coord / row_speed /
  * row_rdir its RailRider (row_rdir 0 not set up). NPCSupportRail (NPCSupportRail.cpp) is a dead actor holding a rail
- * for PenguinSkater (not placed in these galaxies): nothing to draw or run.
+ * for PenguinSkater: its rails run in race.inc (sk_*).
  * ponytail: a short talk's moving action _120 at _118 (isTalkTalking but not a long talk) not told apart: our
  * balloons do not report it; Kinopio's / Caretaker's / HoneyBee's / Tico's rails (their own nerves: Kinopio's
  * tryStartArgs at each rail point, Kinopio.cpp:372-390) not ported */
