@@ -1411,6 +1411,12 @@ there needs the embedded blob and every pack rebuilt.
   the overlay, a test hook repeating the marks before the camera). Not ported: StringSpider's (2P pointer only),
   JetTurtle / TombSpiderParts (added, never emitted), DharmaSambo / MarblePlanet / MogucchiShooter (classes not ported).
   Repack: slice_all.py every galaxy (PTCL rows).
+- ItemBlock (feat/item-block): ItemBlock.cpp after Petari replaces the rise-into-it break: Standby / Wait / AppearItem
+  / AppearItemSplash from the upper punch (isPlayerExistDown 0.25, REFLECT_V), the timer (arg1, 240) from the first
+  punch, hop coins / star pieces (taken at once, 30 up, gone after 30), the last 11 pieces at once, Bomb and kill
+  (SE_EM_EXPLODE_S, CoinBlock Break). SwitchBox / ItemBlockSwitch are never placed (census): not ported. Test: `box`
+  (EggStarGalaxy/1: the TimerPieceBlock punched every 60 frames, 4 pieces until its 240 frames run out; FactoryGalaxy/1:
+  the SplashPieceBlocks). ponytail: no Glow effect, point light or shadow volume.
 
 ## Next
 

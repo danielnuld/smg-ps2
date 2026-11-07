@@ -1604,8 +1604,8 @@ int main(void)
             printf("box test: Mario spins on box row %d\n", game_test_box());
         if (frame > 120 && frame <= 240 && frame % 10 == 0)
             printf("box test f %u: coins %d\n", frame, game_coins());
-        if (frame == 300)
-            printf("box test: Mario under item block row %d\n", game_test_block());
+        if (frame >= 300 && frame <= 1800 && frame % 60 == 0) /* the item block punched again and again */
+            printf("box test f %u: Mario under item block row %d, coins %d\n", frame, game_test_block(), game_coins());
         if (frame == 360)
             printf("box test: after the block coins %d pieces out %d\n", game_coins(), game_pieces_out());
         if (frame == 240)

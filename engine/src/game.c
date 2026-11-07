@@ -1159,10 +1159,8 @@ static void zone_grow(const Inst *in);
 /* Breakable classes and what they drop (Petari PunchBox.cpp, WoodBox.cpp, CrystalCage.cpp, HipDropRock.cpp):
  * PunchBox / WoodBox arg0 coins (default 1), WoodBox also arg2 star pieces; CrystalCageS / M one hit, a coin when the
  * item inside (arg7, DummyDisplayModel) is 0; HipDropRock (a hip drop only) a coin when arg0 is 0, arg1 star pieces
- * (default 6) when it is 1; ItemBlock (ItemBlock.cpp, hit from below): TimerCoinBlock 10 coins, SplashCoinBlock arg0
- * (default 8), TimerPieceBlock 20 star pieces, SplashPieceBlock arg0 (default 8), ItemBlockSwitch nothing (its dead
- * switch). Returns 1 (spin or hip drop), 2 (hip drop only), 3 (hit from below) or 0 for anything else. ponytail:
- * a timer block gives everything on its first hit. CrystalCageL takes 2 hits 20 frames apart (its star: star_pos);
+ * (default 6) when it is 1; the ItemBlocks 3 (their upper punch and items: ib_upper / update_item_blocks).
+ * Returns 1 (spin or hip drop), 2 (hip drop only), 3 (an ItemBlock) or 0 for anything else. CrystalCageL takes 2 hits 20 frames apart (its star: star_pos);
  * BreakableCage(Rotate / L) breaks on a spin too (ponytail: in SMG only what Mario rides or throws breaks it)
  * PunchBox: a spin (not standing on it) or a shell: Break, hidden at step 5, its coins at 15; its SW_A: one star piece,
  * its burst. WoodBox (WoodBox.cpp): its items, dead switch, arg3 1 riddle SE and arg4 1-up at exeHit step 15
@@ -5790,7 +5788,7 @@ int game_test_block(void)
 {
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
-        if (in->breaks != 3) continue;
+        if (in->breaks != 3 || row_dead[in->row]) continue;
         V3 p = v3(in->m[12], in->m[13], in->m[14]), up = up_at(p, v3(0, 1, 0));
         mario->up = up;
         mario->pos = vadd(p, vmul(up, -(2.0f * BODY_RADIUS + 120.0f))); /* under it, jumping */
@@ -18003,9 +18001,11 @@ static void m_reflect_v(Player *m)
     m->vup = 0.0f;
 }
 static int st_manhole_upper(int inst);
+static int ib_upper(int i);
 static void break_inst(const Inst *in, int drops);
 /* isMsgPlayerUpperPunch's receivers: WoodBox / PunchBox (receiveMsgPlayerAttack: doHit, ACTMES_REFLECT_V back),
- * KoopaShipManholeCover (ManholeCover: Open from Wait / Rattle). ponytail: ItemBlock and SwitchBox are not ported */
+ * KoopaShipManholeCover (ManholeCover: Open from Wait / Rattle), the ItemBlocks (ib_upper). (SwitchBox and
+ * ItemBlockSwitch are never placed) */
 static int upper_punch_receive(int i)
 {
     Inst *in = &insts[i];
@@ -18018,6 +18018,7 @@ static int upper_punch_receive(int i)
         return 1;
     }
     if (!strcmp(name, "KoopaShipManholeCover")) return st_manhole_upper(i);
+    if (in->breaks == 3) return ib_upper(i);
     return 0;
 }
 static int m_upper_punch(Player *m, int inst) /* MarioActor::sendMsgUpperPunch */
@@ -34503,24 +34504,152 @@ static void draw_spider_cocoons(void)
     }
 }
 
+/* ItemBlock.cpp after Petari (TimerCoinBlock 1, SplashCoinBlock 2, TimerPieceBlock 3, SplashPieceBlock 4,
+ * ItemBlockSwitch 5: the CoinBlock model). Standby (Wait clip) until the upper punch (isMsgPlayerUpperPunch) with
+ * Mario's centre below it (isPlayerExistDown(0, 0.25)): REFLECT_V back; a timer block starts AppearItem (Appear clip),
+ * a splash one AppearItemSplash. AppearItem: Bomb at its start once the timer is out; at step 1, 100 up from its place,
+ * a coin hops (TimerCoinBlock, its 10 declared) or a star piece hops (TimerPieceBlock, 20; the last 11 at once as
+ * appearStarPieceToDirection(11, 10, 40) when the timer is out) with SE_OJ_STAR_PIECE_BURST; when the clip stops it is
+ * killed if the timer is out, else Wait (Wait clip) takes the next punch (the last declared coin, or 11 pieces left,
+ * puts the timer out). The timer (arg1, -1: 240) counts down in Wait and AppearItem from the first punch. Splash:
+ * Bomb, then arg0 (8) coins in a circle (appearCoinCircle: 30 along a quarter out and up; one: appearCoinPop), arg0 (8)
+ * star pieces (appearStarPiece 10, 40, SE_OJ_STAR_PIECE_BURST) or its dead switch, and kill (SE_EM_EXPLODE_S, Break).
+ * A hop (Coin / StarPiece appearHop): taken at once, out at 30 along up, gravity 1, gone after 30 (CoinGet).
+ * ponytail: no Glow effect, point light or shadow volume */
+enum { IB_STANDBY, IB_WAIT, IB_APPEAR, IB_SPLASH };
+#define MAX_IB 32
+static struct { int row, kind, nrv, step, timer, left, count; } ib[MAX_IB];
+static int nib;
+static const Scene *ib_sc;
+#define MAX_IBH 8
+static struct { int t, piece; V3 pos, vel, up; } ibh[MAX_IBH];
+static int ib_slot(const Inst *in) /* checkKind: its block, made at its first punch */
+{
+    if (ib_sc != sc) { nib = 0; ib_sc = sc; memset(ibh, 0, sizeof ibh); }
+    for (int k = 0; k < nib; k++) if (ib[k].row == in->row) return k;
+    if (nib == MAX_IB) return -1;
+    const Row *r = &sc->objs[in->row];
+    const char *n = sc->types + 32 * r->type;
+    int kind = !strcmp(n, "TimerCoinBlock") ? 1 : !strcmp(n, "SplashCoinBlock") ? 2 : !strcmp(n, "TimerPieceBlock") ? 3 : !strcmp(n, "SplashPieceBlock") ? 4 : 5;
+    int count = (kind == 2 || kind == 4) && r->arg[0] >= 0 ? r->arg[0] : 8;
+    ib[nib] = (typeof(ib[0])){in->row, kind, IB_STANDBY, 0, kind == 1 || kind == 3 ? (r->arg[1] == -1 ? 240 : r->arg[1]) : 0,
+                              kind == 1 ? 10 : kind == 3 ? 20 : count, count};
+    return nib++;
+}
+static void ib_nrv(int k, int nrv) { ib[k].nrv = nrv; ib[k].step = 0; }
+static int ib_upper(int i) /* receiveMsgPlayerAttack: the upper punch */
+{
+    const Inst *in = &insts[i];
+    int k = ib_slot(in);
+    if (k < 0) return 0;
+    V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), d = vsub(mw.c, v3(in->m[12], in->m[13], in->m[14]));
+    if (vlen(d) > 1e-6f) d = vnorm(d);
+    if (!(0.25f < vdot(vmul(up, -1.0f), d))) return 0; /* isPlayerExistDown(0, 0.25) */
+    int timer = ib[k].kind == 1 || ib[k].kind == 3; /* tryStartJumpPunch */
+    if (ib[k].nrv == IB_STANDBY) ib_nrv(k, timer ? IB_APPEAR : IB_SPLASH);
+    else if (ib[k].nrv == IB_WAIT && timer) {
+        if (ib[k].kind == 1 ? ib[k].left == 1 : ib[k].left - 11 == 0) ib[k].timer = 0;
+        ib_nrv(k, IB_APPEAR);
+    } else return 0;
+    if (ib[k].nrv == IB_APPEAR) obj_play(in, "appear", 0, 0);
+    printf("item block row %d: upper punch, nerve %d timer %d left %d%c", in->row, ib[k].nrv, ib[k].timer, ib[k].left, 10);
+    m_reflect_v(mario);
+    return 1;
+}
+static void ib_hop(V3 p, V3 up, int piece) /* appearHop */
+{
+    for (int i = 0; i < MAX_IBH; i++)
+        if (!ibh[i].t) {
+            ibh[i] = (typeof(ibh[0])){1, piece, p, vmul(up, 30.0f), up};
+            if (piece) { got_pieces++; se_start(SE_SY_STAR_PIECE_GET, NULL); } /* exeHop: gotByPlayer */
+            else { got_coins++; se_start(SE_SY_COIN, NULL); }                 /* noticeGetCoin */
+            return;
+        }
+}
+static void ib_kill(int k, const Inst *in) /* kill */
+{
+    se_start(SE_EM_EXPLODE_S, &in->m[12]);
+    fx_named("CoinBlock", "Break", in->m, NULL, NULL);
+    printf("item block row %d: killed%c", in->row, 10);
+    row_kill(in->row);
+    game_rebind();
+    ib[k].row = -1;
+}
+static void update_item_blocks(void)
+{
+    if (ib_sc != sc) return;
+    for (int i = 0; i < MAX_IBH; i++) /* exeHop */
+        if (ibh[i].t) {
+            ibh[i].vel = vsub(ibh[i].vel, ibh[i].up);
+            ibh[i].pos = vadd(ibh[i].pos, ibh[i].vel);
+            if (++ibh[i].t > 31) { if (!ibh[i].piece) fx_at(FX_COIN_COINGET, ibh[i].pos, ibh[i].up); ibh[i].t = 0; }
+        }
+    for (int k = 0; k < nib; k++) {
+        if (ib[k].row < 0) continue;
+        Inst *in = row_inst(ib[k].row);
+        if (!in) continue;
+        V3 p = v3(in->m[12], in->m[13], in->m[14]), up = vnorm(v3(in->m[4], in->m[5], in->m[6]));
+        int done = !in->anim || in->anim->done; /* isBckStopped */
+        switch (ib[k].nrv) {
+        case IB_WAIT:
+            if (ib[k].step == 0) obj_play(in, "wait", 1, 0);
+            if (ib[k].timer > 0) ib[k].timer--; /* decTimer */
+            break;
+        case IB_APPEAR:
+            if (ib[k].step == 0 && !ib[k].timer) obj_play(in, "bomb", 0, 0);
+            if (ib[k].step == 1) {
+                V3 at = vadd(p, vmul(up_at(p, up), 100.0f)); /* mPosition - gravity x cAppearItemOffsetY */
+                if (ib[k].kind == 1 && ib[k].left > 0) { ib_hop(at, up_at(p, up), 0); ib[k].left--; }
+                if (ib[k].kind == 3) {
+                    if (!ib[k].timer && ib[k].left - 11 == 0) { launch_pieces(at, up_at(p, up), 11, 10.0f, 40.0f); ib[k].left = 0; }
+                    else if (ib[k].left > 0) { ib_hop(at, up_at(p, up), 1); ib[k].left--; }
+                    se_start(SE_OJ_STAR_PIECE_BURST, &at.x);
+                }
+            }
+            if (ib[k].timer > 0) ib[k].timer--;
+            if (ib[k].step > 1 && done) {
+                if (!ib[k].timer) { ib_kill(k, in); continue; }
+                ib_nrv(k, IB_WAIT);
+                continue;
+            }
+            break;
+        case IB_SPLASH:
+            if (ib[k].step == 0) obj_play(in, "bomb", 0, 0);
+            if (ib[k].step > 0 && done) {
+                V3 g = vmul(up_at(p, up), -1.0f);
+                if (ib[k].kind == 2 && ib[k].count == 1) pop_coins(p, up_at(p, up), 1);
+                else if (ib[k].kind == 2) { /* appearCoinCircle */
+                    V3 ax = vlen(vtangent(v3(0, 0, 1), g)) > 1e-3f ? vnorm(vtangent(v3(0, 0, 1), g)) : vnorm(vtangent(v3(1, 0, 0), g));
+                    for (int c = 0; c < ib[k].count; c++) {
+                        V3 h = vmul(rot_axis(ax, g, (float)c * 6.2831855f / (float)ib[k].count), 0.25f);
+                        coin_to_velocity(p, vmul(vnorm(vsub(h, g)), 30.0f));
+                    }
+                } else if (ib[k].kind == 4) { drop_pieces(p, up_at(p, up), ib[k].count); se_start(SE_OJ_STAR_PIECE_BURST, &p.x); }
+                else if (sc->objs[in->row].sw[SW_DEAD] >= 0) sw_set(&sc->objs[in->row], SW_DEAD, 1); /* onSwitchDead */
+                ib[k].timer = 0;
+                ib_kill(k, in);
+                continue;
+            }
+            break;
+        }
+        ib[k].step++;
+    }
+}
+static void draw_item_block_hops(void)
+{
+    float m[16];
+    for (int i = 0; i < MAX_IBH; i++) {
+        const Model *md = ibh[i].piece ? m_pieces[0] : m_coin;
+        if (!ibh[i].t || !md) continue;
+        basis_matrix(m, ibh[i].pos, ibh[i].up, v3(0, 0, 1), draw_angle(0.2f));
+        render_model(md, m, ibh[i].piece ? 0x60 : 0xF0, ibh[i].piece ? 0xD0 : 0xD0, ibh[i].piece ? 0xF0 : 0x30);
+    }
+}
+
 static void break_boxes(void)
 {
     V3 c = vadd(mario->pos, vmul(mario->up, BODY_RADIUS));
-    V3 head = vadd(mario->pos, vmul(mario->up, 2.0f * BODY_RADIUS + 60.0f));
-    for (int i = 0; i < ninsts; i++) {
-        Inst *in = &insts[i];
-        if (in->breaks != 3) continue;
-        /* ItemBlock: Mario rising into it from below (its sensor: radius 100, 100 up its axis) */
-        V3 p = v3(in->m[12], in->m[13], in->m[14]);
-        V3 d = vsub(vadd(p, vmul(mario->up, 100.0f * in->s)), head);
-        if (mario->vup > 0 && vdot(d, mario->up) > -40.0f && vdot(d, mario->up) < 120.0f * in->s &&
-            vlen(vtangent(d, mario->up)) < 110.0f * in->s) {
-            mario->vup = 0;
-            break_inst(in, 1);
-            game_rebind();
-            return;
-        }
-    }
+    update_item_blocks();
     for (int i = 0; i < ninsts; i++) /* SimpleBreakableObj::initCaseUseSwitchB: SW_B on breaks it */
         if ((insts[i].breaks == 4 || insts[i].breaks == 5 || insts[i].breaks == 8) && !row_dead[insts[i].row] && sc->objs[insts[i].row].sw[SW_B] >= 0 &&
             sw_on(&sc->objs[insts[i].row], SW_B)) {
@@ -54348,6 +54477,7 @@ void game_draw(void)
             basis_matrix(m, shots[i].pos, up_at(shots[i].pos, v3(0, 1, 0)), shots[i].vel, draw_angle(0.5f));
             render_model(m_pieces[shots[i].col], m, 0x60, 0xD0, 0xF0);
         }
+    draw_item_block_hops();
     draw_tako_inks();
     FOR_KIND(i, item) { /* BenefitItemObj::init: initShadowVolumeCylinder 50, setShadowDropLength arg7 (2000) when arg4 is
                          * -1 / 1 / 2 / 3 (_DC; 0 none); exeEscape recalculates it each frame */
