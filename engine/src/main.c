@@ -2411,10 +2411,13 @@ int main(void)
         }
 #endif
 #ifdef POIHANA_TEST
-        { /* Mario in front of a Poihana (150): it chases, catches and throws him; a spin by it (600) */
-            static int at;
-            if ((frame >= 150 && !at && (at = game_test_poihana(0) >= 0 ? frame : 0)) || frame == 600) printf("poihana test f %u: row %d\n", frame, game_test_poihana(frame == 600));
-            if (frame >= 150 && frame < 800 && frame % 10 == 0) {
+        { /* Mario in front of a Poihana once its zone is bound and he is free (at): it chases, catches and throws him;
+           * behind it (at + 300: its back flips him), a spin by it (at + 450) */
+            static u32 at;
+            if (frame >= 150 && !at && game_test_free() && game_test_poihana(0) >= 0) { at = frame; printf("poihana test f %u: placed\n", frame); }
+            if (at && frame == at + 300) printf("poihana test f %u: behind, row %d\n", frame, game_test_poihana(2));
+            if (at && frame == at + 450) printf("poihana test f %u: spin, row %d\n", frame, game_test_poihana(1));
+            if (at && frame < at + 700 && frame % 10 == 0) {
                 char dd[128];
                 game_debug(dd, sizeof dd);
                 printf("poihana test f %u: phase %d %s\n", frame, game_poihana_state(), dd);

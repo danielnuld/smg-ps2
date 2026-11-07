@@ -1528,6 +1528,15 @@ there needs the embedded blob and every pack rebuilt.
   mario_offence(id, ..) takes the receiver's host: tryPunchAirAfter's list (a punched host no longer sees the spin, 8
   at most) and, out of a spin's own clip (_3E5: spin2nd, jump kind 8, 地上ひねり ..), the 45-degree front check
   (m_punch_ok). ponytail: one entry a host, not a sensor (KuriboChief's parts, Dodoryu's).
+- Poihana (feat/471-poihana): poihana.inc after Poihana.cpp replaces the phase walker: every nerve (NonActive past
+  3500, Wait / WalkAround / SleepStart / Sleep / GetUp / Search / ChasePlayer / ShootUpCharge / ShootUp / GoBack / Shock
+  / SwoonLand / Swoon / Recover / Shake / Drown / Hide / Appear), its binder sensor (125 at (0, 130, 120), trampled 200
+  at (0, 150, 0)): Mario touching it is bound (AutoRushBegin) and thrown at sqrt(2 x arg0) at ShootUp step 2, its
+  back flips him (Shake), Bound / Shake scale, its body (70 at Body) in the push pass (1.5 from enemies / map objects).
+  Test: `poihana` HeavenlyBeachGalaxy/1 (Search, Run, ThrowStart, `catches Mario`, `throws Mario up at 44`, behind:
+  nerve 15 Shake, a spin: `shock`, SwoonLand, Swoon, Recover). With no stick input Mario falls back into its binder and
+  is thrown again (Petari's AutoRushBegin in the air; only the rising guard _928). ponytail: no DPDSwoon (2P pointer),
+  no WaterColumn model, no mirror actor.
 - Upper punch scenes (feat/upper-scenes): XF="-DUPPER_TEST -DSQUAT_UPPER" HeavenlyBeachGalaxy/1 (each WoodBox lifted 150,
   Mario squatting under it jumps: the squat uppercut, `upper punch: WoodBox row 334` with `squat 1`). The
   KoopaShipManholeCover (KoopaJrShipLv1 1 / StarDust 2) sits in the KoopaJr battle zone (KoopaJrShipBattleLv1Tmp1Zone):
