@@ -24557,7 +24557,7 @@ static void w_kill(Kuribo *k)
  * hip-dropping (AttackSuccess: Hit, turning to him, 60); a trample: FlatDown (20, a coin), a hip drop: HipDropDown (40,
  * a coin), a spin: Stagger, or a kick once 15 into it: BlowDown (36 / 30 away, 30, three star pieces); arg1 0 starts
  * it AppearFromBox (7 / 30 along its front, Land 15 after the ground). Dead in a death area or water, no item.
- * ponytail: no star pointer bind (BindStarPointer / AnimScaleController), no push between walkers, no shadow, no
+ * ponytail: no star pointer bind (BindStarPointer / AnimScaleController), no push between walkers, no
  * velocity areas / rail-moving ground, no sounds */
 enum { KN_NONACTIVE, KN_APPEARFROMBOX, KN_BLOW, KN_BLOWLAND, KN_WANDER, KN_FINDPLAYER, KN_CHASE, KN_ATTACKSUCCESS,
        KN_STAGGER, KN_FLATDOWN, KN_HIPDROPDOWN, KN_PRESSDOWN, KN_BLOWDOWN };
@@ -25604,7 +25604,7 @@ static void kari_director(void)
  * strongly unless he hip-drops (HitWaitForAttack: Impact, Hit); a trample or hip drop: TrampleDown (Press, a coin);
  * a spin: PunchDown (its head PackunPetitHead flies 20 out, 40 up under 2.5: three star pieces at step 20 or where it
  * strikes, dead at 30); a star piece: SwoonStart, Swoon 250 (a spin then punches it down), SwoonToThreat. arg0 1: it
- * never turns. ponytail: no star pointer (DPDSwoon), no shadow, no hit mark effect */
+ * never turns. ponytail: no star pointer (DPDSwoon), no hit mark effect */
 enum { PN_NONACTIVE, PN_WAIT, PN_FIND, PN_THREAT, PN_LEFTTURN, PN_RIGHTTURN, PN_ATTACKSTART, PN_ATTACK, PN_ATTACKBACK,
        PN_HITWAITFORATTACK, PN_HIT, PN_TRAMPLEDOWN, PN_PUNCHDOWN, PN_SWOONSTART, PN_SWOON, PN_SWOONTOTHREAT };
 static int packun_face(const Kuribo *k, float deg) /* isFaceToPlayerHorizontalDegree */
@@ -29529,13 +29529,14 @@ int game_begoman_state(void)
  * then 16), its life (3) down, JumpToInitPos (a 700 high parabola, 60), SignAttack and new followers; at 0 dead:
  * the power star at its place, startAfterBossBGM. Followers (arg7 -1: 3 BegomanBaby, else 2 BegomanSpike; Spikes
  * from its last life) launched around it (100 off, 10 / 15 or 20 up) when all are dead; it attacks only then.
- * ponytail: the head's BRKs (OffWait / OnWait / SignWait / Damage: one BRKC a model), the shadow's edge scale,
+ * ponytail: the head's BRKs (OffWait / OnWait / SignWait / Damage: one BRKC a model),
  * ROT_NEEDLE's volume by speed, overlayWithPreviousScreen, its sendMsgEnemyAttack to walkers other than Begomans */
 static struct {
     int hnrv, hstep, hseq, hdrawn; float hang; /* BossBegomanHead: nerve, step, its clip (started / drawn), mAngle */
     float r150; int life, fkind, nobody;        /* _150, mHealth, mFollowerKind (0 Baby, 1 Spike), body invalidated */
     V3 p0, py, pz; float pa, pv, pl;            /* mPath: ParabolicPath's mPosition, mAxisY, mAxisZ, _24, _28, _2C */
     int cam;                                    /* the OpeningDemo camera's frame, -1 none */
+    float edge;                                 /* the head's Edge joint scale x (copyJointScale), its shadow's */
 } bb;
 enum { HD_DEMOWAIT, HD_OPENINGDEMO, HD_ONWAIT, HD_OFFWAIT, HD_SWITCHON, HD_SWITCHOFF, HD_TURN, HD_TURNEND };
 static const char *const hd_clip[] = {"demowait", "openingdemo", "onwait", "offwait", "on", "off", "turn", "turnend"};
@@ -29580,7 +29581,7 @@ static void bb_kill_followers(Kuribo *k, int kind) /* killAllFollower: 0 Baby, 1
  * (LAUNCH SE): launchBegomanBabyLauncher (100 out round its front / side, 10 / 30: appearFromLaunch), Disappear (its
  * clip from 90, the effect off) 90, Wait (hidden). Its SW_APPEAR: dead until on, then WaitAfterSwitchOn arg2 frames
  * (mAppearDelay 0) and Launch; its SW_B kills it and its live babies. phase 1 hidden (hideModel), bshow its Launcher
- * effect on. ponytail: no shadow (initShadowVolumeSphere 100), its declareCoin never given */
+ * effect on. ponytail: its declareCoin never given */
 enum { BGL_WAITAFTERSWITCHON, BGL_WAIT, BGL_WAITFORLAUNCH, BGL_LAUNCH, BGL_APPEAR, BGL_DISAPPEAR };
 static void bl_fx(Kuribo *k, int on) { k->bshow = on; } /* emitEffect / deleteEffect Launcher (kept in bl_update) */
 static void bl_update(Kuribo *k)
@@ -30109,6 +30110,7 @@ static void bb_draw_head(Kuribo *k, const float m[16], Anim *a) /* BossBegomanHe
         bb.hdrawn = bb.hseq;
     }
     anim_update(ha);
+    if (ha->skin->njoints > 4) bb.edge = vlen(v3(ha->world[4][0], ha->world[4][1], ha->world[4][2])); /* copyJointScale Edge */
     if (ha->skin->njoints > 8) { /* calcJointEdge: Edge (and its Hand1-4) turned mAngle about Edge's Y */
         const float *e = ha->world[4];
         V3 p = v3(e[12], e[13], e[14]), ax = v3(e[4], e[5], e[6]);
@@ -51966,7 +51968,41 @@ static void walker_shadow(const Kuribo *k)
     case WALK_JELEC: rs = 230.0f; break;                    /* initShadowVolumeSphere 230 */
     case WALK_SAMBOHEAD: if (!k->lvt[0]) return; rs = 60.0f * r->scale[1]; break; /* initShadowVolumeSphere 60 x scale; invalidateShadow */
     case WALK_BOMBTERESA: if (k->lvt[0]) return; rs = 80.0f * r->scale[0]; start = 0.0f; break; /* initShadowVolumeSphere 80, onShadowFollowHostScale */
-    default: return;                                        /* Butterfly, StinkBugSmall: none */
+    case WALK_GESSO: rs = 90.0f; break;                     /* Gesso.cpp:86 */
+    case WALK_BASABASA: rs = 100.0f; break;                 /* BasaBasa.cpp:67 */
+    case WALK_JELLYFISH: rs = 100.0f; len = 1900.0f; break; /* Jellyfish.cpp:86-87 */
+    case WALK_KANINA: if (k->nrv == KA_UNDER) return; rs = 80.0f; break; /* Kanina.cpp:202, exeWaitUnderGround's invalidateShadow */
+    case WALK_MOGU: if (k->nrv != MG_HITBLOW) return; rs = 60.0f * r->scale[1]; break; /* Mogu.cpp:98-99: valid from HitBlow (441) */
+    case WALK_METBO: rs = 80.0f; break;                     /* Metbo.cpp:120 */
+    case WALK_TERESAW: rs = 100.0f; break;                  /* TeresaWater.cpp:53 initShadowVolumeCylinder */
+    case WALK_KABOKURI: rs = 90.0f; break;                  /* Kabokuri.cpp:31 / 93 sShadowRadius */
+    case WALK_PUKUPUKU: rs = 50.0f; break;                  /* Pukupuku.cpp:274 */
+    case WALK_BOMBHEI: rs = 60.0f; break;                   /* BombHei.cpp:167 */
+    case WALK_STRSPIDER: rs = 80.0f * r->scale[1]; if (r->arg[2] > 0) len = (float)r->arg[2]; break; /* StringSpider.cpp:188-195 */
+    case WALK_KAMECK: rs = 70.0f; break;                    /* Kameck.cpp:64 */
+    case WALK_NOKO: rs = 60.0f; break;                      /* NokonokoLand.cpp:32 / 119 sShadowRadius */
+    case WALK_BEGOLAUNCH: rs = 100.0f; break;               /* BegomanLauncher.cpp:74 */
+    case WALK_BEGOSPIKE: case WALK_BEGOSPRING: case WALK_BEGOBABY: case WALK_BBEGO: { /* BegomanBase::initShadow: at its joint */
+        rs = k->kind == WALK_BEGOSPIKE || k->kind == WALK_BEGOSPRING ? 70.0f : k->kind == WALK_BEGOBABY ? 35.0f : 200.0f * (1.0f - 0.35f * (1.0f - (bb.edge > 0 ? bb.edge : 1.0f)));
+        if (k->kind == WALK_BBEGO) len = 4000.0f;           /* BossBegoman.cpp:155-156, control's setShadowVolumeSphereRadius */
+        draw_shadow(k->kind == WALK_BEGOSPRING ? k->pos : bg_center(k), k->up, k->front, rs, rs, 0.0f, start, len);
+        return;
+    }
+    case WALK_KCHIEF: { /* initShadowFromCSV: KuriboChief.arc Shadow.bcsv: Body (VolumeSphere 200 at Body), LFoot / RFoot
+                         * (VolumeOval 180 x 160 at LegL / LegR, DropOffset 50, 0, +-45); DropStart 50, DropLength 1000 */
+        Kuribo *kk = (Kuribo *)k;
+        const Model *md = walker_new_model(k->row);
+        draw_shadow(w_joint(kk, md, 3, v3(0, 0, 0)), k->up, k->front, 200.0f, 200.0f, 0.0f, 50.0f, 1000.0f);
+        for (int s = 0; s < 2; s++) {
+            int j = 8 + s;
+            V3 p = w_joint(kk, md, j, v3(50.0f, 0, s ? -45.0f : 45.0f)), z = vsub(w_joint(kk, md, j, v3(0, 0, 1.0f)), w_joint(kk, md, j, v3(0, 0, 0)));
+            draw_shadow(p, k->up, z, 180.0f, 160.0f, 0.0f, 50.0f, 1000.0f);
+        }
+        return;
+    }
+    default: return;                                        /* Butterfly, StinkBugSmall, Mogucchi: none; ponytail: Snakehead's
+                                                             * flat-model shadows (addShadowVolumeFlatModel SnakeheadShadow /
+                                                             * SnakeheadSmallShadow, Snakehead.cpp:135-140): no model volume */
     }
     if (k->kind == WALK_TERESA && strcmp(sc->types + 32 * r->type, "TeresaChief") == 0) len = 3000.0f;
     draw_shadow(k->pos, k->up, k->front, rs, rf > 0 ? rf : rs, off, start, len);
