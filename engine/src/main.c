@@ -2616,6 +2616,9 @@ int main(void)
           if (t0 && t == t0 + 700) printf("teresa test: star piece at it: %d\n", game_test_shoot(11)); /* Stop */
           if (t0 && t >= t0 && t <= t0 + 900 && t % 15 == 0) { char w[160]; game_teresa_state(w, sizeof w); printf("teresa test t %d: life %d, %s\n", t - t0, game_life(), w); } }
 #endif
+#ifdef UPPER_TEST
+        { extern void game_test_upper(unsigned); game_test_upper(frame); }
+#endif
 #ifdef BUTTERFLY_TEST
         if (frame >= 120 && frame < 300) game_test_enemy(12, 0, 3); /* by a butterfly while the camera settles */
         if (frame == 300 || frame == 360) printf("butterfly test f %u: pointer on row %d, pieces %d\n", frame, game_test_point_walker(12), game_pieces_out());

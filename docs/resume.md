@@ -1319,6 +1319,14 @@ there needs the embedded blob and every pack rebuilt.
   / PreFire / Fire 120 (the fire sensor ahead to Mario's centre, its Fire effect) / FireEnd, Trample / SpinHit then Fire,
   HipDropped (Break, a coin); explosions kill it (a coin), fire balls and blows do nothing; its binder 120 at (0, 110,
   20); calcRotate's up. Test: `mkoopa` (FactoryGalaxy/1). Repack: sound.py --pack FactoryGalaxy, CannonFleetGalaxy.
+- Upper punch and press leftovers (feat/mario-upper): MarioActor::sendMsgUpperPunch (isActionOk アッパーパンチ, 声蹴り,
+  its clip) from checkHeadPoint and the at field's jump part (rising, faces looking down) and the squat uppercut under a
+  ceiling within 160 (calcDistToCeil's _730, しゃがみアッパー, no jump); receivers WoodBox / PunchBox (doHit, REFLECT_V
+  back: m_reflect_v) and KoopaShipManholeCover (Open). checkHeadPoint's rush ball (_3E: land_type after the
+  ScenarioStarter). checkVerticalPress from his centre hanging, the push off a press with nothing under it
+  (mDrawStates._1E), a hang force-dropped instead of pressed; checkSidePressPre's hanging case. Test: plain
+  XF=-DUPPER_TEST HeavenlyBeachGalaxy/1 (WoodBoxes lifted 300, Mario jumping under each: `upper punch:` and broken).
+  ponytail: ItemBlock / SwitchBox not ported; _8C8 taken as the hang's wall when it moves.
 
 ## Next
 
