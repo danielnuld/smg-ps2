@@ -1172,6 +1172,8 @@ there needs the embedded blob and every pack rebuilt.
   Metbo, TeresaWater, Kabokuri, Pukupuku, BombHei, StringSpider (arg2 drop), Kameck, NokonokoLand, BegomanLauncher,
   the Begomans at their joint (BossBegoman 200 x its head's Edge scale, 4000 down) and KuriboChief's Shadow.bcsv
   (Body sphere 200, LegL / LegR ovals 180 x 160). ponytail: Snakehead's flat-model shadows.
+  Item shadows (fix/item-shadows): BenefitItemOneUp / LifeUp / Invincible draw BenefitItemObj::init's cylinder 50
+  (drop arg7, else 2000; none when arg4 is 0); stale marks: rails (the PATH polylines are sampled Bezier), Butterfly.
 
 ## Next
 
