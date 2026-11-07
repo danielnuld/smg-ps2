@@ -40,12 +40,17 @@ def _api():
     return _lib.meshopt_simplify
 
 
+SMALL = 24  # indices: 8 triangles
+
+
 def simplify(indices, positions, ratio, target_error=1.0):
     """indices: flat triangle list; positions: flat xyz floats. -> (new indices, achieved relative error).
     target_error 1.0 = no error cap, so the triangle target decides (ratio is what the sweep varies)."""
     n = len(indices)
     target = max(3, int(round(n * ratio / 3)) * 3)  # rounded: a small mesh at 0.99 keeps every triangle (the sky's quad)
-    if ratio >= 1 or n <= 3 or target >= n:
+    # a mesh of up to 8 triangles (a quad, a card) kept whole: with no error cap the simplifier drops whole faces of it
+    # (AstroMapBoard's screen, two triangles, lost its top-left one at 0.7)
+    if ratio >= 1 or n <= SMALL or target >= n:
         return list(indices), 0.0
     idx = (ctypes.c_uint * n)(*indices)
     pos = (ctypes.c_float * len(positions))(*positions)
@@ -83,6 +88,8 @@ def selftest():
     out, err = simplify(idx, pos, 0.25)
     assert len(idx) == 2400 and 0 < len(out) <= 600 and err < 1e-3, (len(out), err)
     assert simplify(idx, pos, 1.0)[0] == idx
+    quad = [0, 1, 2, 2, 1, 3]  # AstroMapBoard's screen: kept whole at any ratio
+    assert simplify(quad, [-1.0, 1, 0, 1, 1, 0, -1, -1, 0, 1, -1, 0], 0.5)[0] == quad
     strip = stripify(idx, g * g)
     assert len(idx) // 3 + 2 <= len(strip) < len(idx), len(strip)  # strips emit fewer vertices than a list
     print("selftest ok", len(idx) // 3, "->", len(out) // 3, "tris, err", err)
