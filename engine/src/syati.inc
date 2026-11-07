@@ -488,10 +488,19 @@ static int sy_miss_anim(void) { int w = sy_miss_water; sy_miss_water = 0; return
 
 #ifdef SYATI_TEST
 /* XF=-DSYATI_TEST (OceanRingGalaxy/1): once Mario is free, into the SwitchCube by the Syati; A through its talks; in
- * the swim Mario put in each ring as it comes out (=2: none: the retry); then on the star */
+ * the swim Mario put in each ring as it comes out (=2: kept near it over its path, in none: the retry); then on the star */
 static void game_test_sy(Syati *s)
 {
     static int free_at = -1, t;
+#if SYATI_TEST == 3 /* (OceanRingGalaxy/2) the TalkSyati: Mario put 400 in front of it once free, A every 30 frames */
+    if (s->ring) return;
+    pad_force = 0;
+    if (free_at < 0) { if (!game_test_free()) return; free_at = t; printf("syati test: free" "\n"); }
+    if (++t - free_at == 60) { V3 z; q_axes(s->q, NULL, NULL, &z); mario->pos = vadd(s->pos, vmul(z, 400.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+    if (t - free_at > 90 && (t % 30) < 3) pad_force = PAD_CROSS;
+    if (t % 60 == 0) printf("syati test t %d: talk syati nerve %d shown %d | talk %d" "\n", t, s->nrv, s->shown, td.nrv);
+    return;
+#endif
     if (!s->ring) return;
     pad_force = 0;
     if (free_at < 0) { if (!game_test_free()) return; free_at = t; printf("syati test: free" "\n"); }
@@ -512,10 +521,17 @@ static void game_test_sy(Syati *s)
         if (!in) { V3 z; q_axes(s->q, NULL, NULL, &z); mario->pos = vsub(s->pos, vmul(z, 1500.0f)); }
         mario->hvel = v3(0, 0, 0); mario->vup = 0;
     }
+#else
+    if (s->nrv == SY_SWIM || s->nrv == SY_EMIT) { /* 1500 behind the Syati and 800 over its path: near it, no ring */
+        V3 y, z;
+        q_axes(s->q, NULL, &y, &z);
+        mario->pos = vadd(vsub(s->pos, vmul(z, 1500.0f)), vmul(y, 800.0f));
+        mario->hvel = v3(0, 0, 0); mario->vup = 0;
+    }
 #endif
     if (s->took && !pd.name)
         for (int i = 0; i < ninsts; i++)
-            if (insts[i].item == ITEM_STAR && row_shown(insts[i].row) && !row_dead[insts[i].row]) {
+            if (insts[i].item == ITEM_STAR && star_wait[insts[i].row] == s->row + 1 && row_shown(insts[i].row) && !row_dead[insts[i].row]) { /* its star */
                 mario->pos = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]); mario->hvel = v3(0, 0, 0); mario->vup = 0; break;
             }
     if (t % 60 == 0)
