@@ -1284,6 +1284,16 @@ there needs the embedded blob and every pack rebuilt.
   table; one fade table per model a frame; DarknessRoomAir / TwilightAir / DimensionAir still without run-time fades.
   Repack: slice_all.py EggStarGalaxy, TearDropGalaxy, OceanFloaterLandGalaxy, OceanPhantomCaveGalaxy, HeavensDoorGalaxy.
 
+- AstroMapBoard picture (feat/426-mapboard, 2026-11-07): GalaxyMapController::capture after Petari: at the first
+  frame of a scene whose board shows (st_mapboard: hasGrandStar(2)), menu_gm_capture draws drawForCapture's layouts
+  (the background, the galaxy view with its dome / galaxy / comet icons; no title, Mario or Tico icons) and
+  render_target_capture scales that frame into a 256 x 256 PSMCT16 picture under the I8 texture (render_target_reserve:
+  512 blocks out of the cache while the board shows), the scene texture slice.py marks dummy (DUMMY_TEX MapDummy: TEXT
+  pad0 1) pinned there (changeModelDataTexAll). Test: plain XF=-DST_MAPBOARD_TEST AstroGalaxy/1 (the board shown, the
+  camera on it). Known: the board's first triangle (top left) is not drawn, with or without the capture (a model / VU1
+  strip matter, not this). ponytail: 256 x 256 for GX's 304 x 224 half-size capture (the dummy's UVs span it).
+  Repack: slice_all.py AstroGalaxy (DUMMY_TEX); here AstroGalaxy 1-5 came out 8.97-9.07 MB at ratio 0.7-0.8 with
+  everything merged so far (the room is 9.10).
 - SnowFloor / SnowplowSwitch (feat/419-snow-floor, 2026-11-07): engine/src/snow_floor.inc (snow_*) after Petari: the
   128 x 128 depth map on its half cylinder (radius 900, +-1024 along Z), Mario's walk digging (doMove) and slowing him
   (setPlayerWalkingResist: Mario::_2D0 now in game.c, m_walk_resist: target walk speed, walk anim speed, floor

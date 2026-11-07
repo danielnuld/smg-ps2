@@ -4480,6 +4480,34 @@ static void gm_update(void)
     }
 }
 
+/* GalaxyMapController::capture (drawForCapture): the background and the galaxy view (forceToGalaxyMap) with its dome,
+ * galaxy and comet icons, no title, Mario or Tico icons (setModeCapture), into the frame for render_target_capture */
+int menu_gm_capture(void)
+{
+    if (!gm.map) return 0;
+    gm.list_on = 0;
+    gm_force_view(1);
+    gm.title_on = 0; /* mTitle->kill */
+    lyt_update(gm.map); lyt_update(gm.bg);
+    lyt_evaluate(gm.map);
+    for (int i = 0; i < gm.nicon; i++) {
+        if (!gm.icon[i].status) continue;
+        float p[3];
+        lyt_pane_place(gm.map, gm.icon[i].pane, p);
+        gm.icon[i].l_scale = p[2];
+        gm_follow(gm.icon[i].l, gm.icon[i].pane);
+        lyt_update(gm.icon[i].l);
+    }
+    for (int d = 0; d < 6; d++) if (gm.dome[d]) { char p[8]; snprintf(p, sizeof p, "Dome%d", d + 1); gm_follow(gm.dome[d], p); lyt_update(gm.dome[d]); }
+    for (int i = 0; i < gm.nicon; i++) if (gm.comet_on[i]) { gm_follow(gm.comet[i], gm.icon[i].pane); lyt_update(gm.comet[i]); }
+    render_world_done();
+    lyt_draw(gm.bg); lyt_draw(gm.map); /* GalaxyMap::drawForCapture */
+    for (int d = 0; d < 6; d++) if (gm.dome[d]) lyt_draw(gm.dome[d]);
+    for (int i = 0; i < gm.nicon; i++) if (gm.icon[i].status && gm.icon[i].l_scale > 0.01f) lyt_draw(gm.icon[i].l);
+    for (int i = 0; i < gm.nicon; i++) if (gm.comet_on[i]) lyt_draw(gm.comet[i]);
+    return 1;
+}
+
 static int gm_screen(void) /* deactivateGameSceneDraw3D: from FadeinModeMap to ReadyGame */
 {
     return menu_galaxy_map_active() && !nrv_is(&gm.n, GM_READYMODEMAP) && !nrv_is(&gm.n, GM_TC_WAITWHITE) &&
