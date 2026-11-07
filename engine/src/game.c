@@ -5664,7 +5664,7 @@ static void game_rebind_(void)
                                                * getJointMtx, each on its joint */
         const Inst *o = &insts[i];
         const char *cn = o->md ? s->types + 32 * s->objs[o->row].type : "";
-        if (!o->md || !o->md->skin || !o->anim || o->kparent >= 0 || (strcmp(cn, "HoneyQueen") && strcmp(cn, "SandUpDownTriRock") && strcmp(cn, "SeaBottomTriplePropeller"))) continue;
+        if (!o->md || !o->md->skin || !o->anim || o->kparent >= 0 || (strcmp(cn, "HoneyQueen") && strcmp(cn, "SandUpDownTriRock") && strcmp(cn, "SeaBottomTriplePropeller") && strcmp(cn, "BeamGoRoundPlanet"))) continue;
         for (int j = 0; j < o->md->skin->njoints; j++)
             for (int p = 0; ninsts < insts_cap; p++) {
                 char kn[48];
@@ -38542,6 +38542,62 @@ static void update_eyebeamers(void)
         if (d >= 0 && d <= eb_len(r) && vlen(vsub(mc, vadd(b, vmul(dn, d)))) < 140.0f) mario_attack(ATK_HEATBEAM, vadd(b, vmul(dn, d)));
     }
 }
+/* BeamGoRoundPlanet.cpp after Petari: a planet (MapObjActor: its BCK plays from the start, tryStartAllAnim) whose
+ * collision is its Move KCL on joints move1 and move2 (createCollisionPartsFromLiveActor; slice.py KCL_PARTS /
+ * JOINT_KCL_INDEXED, bound with HoneyQueen's; its own collision as a MapObjActor's), SE_OJ_LV_BEAM_GO_ROUND, and 16 BeamGoRoundBeams on its joints
+ * beam1-16: each its model (BeamGoRoundBeam, its BTK) at the joint, and an electric attack
+ * (addHitSensorCallbackEnemyAttack "beam", radius 100: updateHitSensor puts it at the foot of Mario's position on the
+ * segment 100 to 2700 along the joint's up, calcPerpendicFootToLineInside) on Mario's body sensor.
+ * ponytail: no beam volume / bloom models */
+static const u8 bgr_beam_joints[16] = {17, 18, 19, 20, 21, 22, 23, 24, 10, 3, 4, 5, 6, 7, 8, 9}; /* beam1..16 */
+static const Model *m_bgrbeam;
+static int bgr_type = -2;
+static const Scene *bgr_scene;
+static int bgr_beam_mtx(const Inst *in, int b, float m[16]) /* getJointMtx(beam<b + 1>) */
+{
+    int j = bgr_beam_joints[b];
+    if (!in->anim || !in->anim->skin || j >= in->md->skin->njoints) return 0;
+    mat_mul(m, in->m, in->anim->world[j]);
+    return 1;
+}
+static int bgr_planet(const Inst *in)
+{
+    if (bgr_scene != sc) { bgr_scene = sc; bgr_type = scene_type(sc, "BeamGoRoundPlanet"); m_bgrbeam = scene_model(sc, "BeamGoRoundBeam"); }
+    return bgr_type >= 0 && (int)in->row >= 0 && (int)sc->objs[in->row].type == bgr_type && in->kparent < 0 && in->md && in->md->skin && row_shown(in->row);
+}
+static void update_beam_go_round(void)
+{
+    static u32 lv;
+    V3 mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!bgr_planet(in)) continue;
+        lv = se_level(SE_OJ_LV_BEAM_GO_ROUND, &in->m[12], lv); /* exeWait */
+        for (int b = 0; b < 16; b++) {
+            float m[16];
+            if (!bgr_beam_mtx(in, b, m)) continue;
+            V3 up = vnorm(v3(m[4], m[5], m[6])), p = v3(m[12], m[13], m[14]);
+            V3 a = vadd(p, vmul(up, 100.0f));       /* updateHitSensor: radius along its up */
+            float t = vdot(vsub(mario->pos, a), up); /* calcPerpendicFootToLineInside: to 2700 - radius past it */
+            t = t < 0 ? 0 : t > 2600.0f ? 2600.0f : t;
+            if (vlen(vsub(vadd(a, vmul(up, t)), mc)) < 100.0f + HIT_BODY_R) mario_attack(ATK_ELECTRIC, vadd(a, vmul(up, t))); /* sendMsgEnemyAttackElectric */
+        }
+    }
+}
+static void draw_beam_go_round(void)
+{
+    for (int i = 0; i < ninsts; i++) {
+        const Inst *in = &insts[i];
+        if (!bgr_planet(in) || !m_bgrbeam || !m_bgrbeam->skin) continue;
+        Anim *a = obj_anim(30 * (int)sc->nobjs + in->row, m_bgrbeam, "BeamGoRoundBeam"); /* (the 16 started together: one BTK) */
+        if (!a) continue;
+        anim_update(a);
+        for (int b = 0; b < 16; b++) {
+            float m[16];
+            if (bgr_beam_mtx(in, b, m)) draw_skin(m_bgrbeam, m, a);
+        }
+    }
+}
 static void draw_eyebeams(void)
 {
     if (!m_ebeam || !m_ebeam->skin) return;
@@ -53677,6 +53733,7 @@ void game_update(void)
     update_leakpipes();
     update_stairs();
     update_eyebeamers();
+    update_beam_go_round();
     update_leaves();
     update_palms();
     update_fishes();
@@ -55344,6 +55401,7 @@ void game_draw(void)
     draw_wbullets();
     draw_trapeze_ropes();
     draw_eyebeams();
+    draw_beam_go_round();
     draw_fishes();
     draw_gulls();
     draw_storm_traps();
