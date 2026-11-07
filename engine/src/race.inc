@@ -17,9 +17,7 @@
  * 会話 camera, Move by its rail points' arg0 (adjustmentRailCoordSpeed, decidePose 1 / 0.05 / 0.1), Goal near the
  * rail's end (sNearGoalDist 500), changeBgmState (after 480 frames: state 2 within 3000 of Mario, else 1).
  * ponytail: the star pointer demo modes (startStarPointerModeDemo(WithStarPointer) / endStarPointerMode), the
- * layout's RaceStart / RaceGoal effects, the raster
- * scroll of TeresaMario2D (setRasterScroll: its level SE only), the PowerStarDemoModel in its hands (the star comes
- * out at the action's end: star_pos), Luigi's TeresaRacer (arg0 1: slice.py declares Mario's), audiences (only
+ * layout's RaceStart / RaceGoal effects, Luigi's TeresaRacer (arg0 1: slice.py declares Mario's), audiences (only
  * PenguinCoach's surfing modes enter one), the rush actor messages (ACTMES_RACE_*: SurfRay's) */
 enum { RM_WAIT, RM_PREPWIPE, RM_PREPIMME, RM_PREWIPEOUT, RM_PREWIPEWAIT, RM_PREWIPEIN, RM_INTRO, RM_COUNT, RM_RACE,
        RM_DEMO, RM_GOAL, RM_RANK, RM_PSTWIPEOUT, RM_PSTWIPEWAIT, RM_PSTWIPEIN };
@@ -566,9 +564,30 @@ static void tr_bgm(RNpc *t) /* changeBgmState */
     if (vlen(vsub(mario->pos, rn_pos(t))) < 3000.0f) { if (t->bgm != 2) bgm_state(2, 90); t->bgm = 2; }
     else { if (t->bgm != 1) bgm_state(1, 150); t->bgm = 1; }
 }
-static void tr_raster(RNpc *t) /* setRasterScroll (ponytail), its level SE */
+/* MarioActor's raster scroll (MarioActorSpecialDraw.cpp: setRasterScroll, updateRasterScroll, drawRasterScroll):
+ * _1E4 the amplitude (eased 0.1 to the time arg), _1E8 the period, _1EC the wavelength, _1E2 set this frame */
+static struct { float amp, wave; int period, set; } mr_raster;
+static void mario_set_raster(int t, int x, int y) /* MR::setRasterScroll (time, x, y) */
 {
-    if (t->id != -1 && vlen(vsub(mario->pos, rn_pos(t))) < 2500.0f) t->lv = se_level(SE_AT_LV_DEATH_PROM_RASTER, NULL, t->lv);
+    mr_raster.period = x; mr_raster.amp = 0.9f * mr_raster.amp + 0.1f * (float)t; mr_raster.wave = (float)y; mr_raster.set = 1;
+}
+static void mario_update_raster(void) /* updateRasterScroll */
+{
+    if (mr_raster.set) { mr_raster.set = 0; return; }
+    mr_raster.amp *= 0.9f;
+    if (mr_raster.amp < 1.0f) { mr_raster.period = 0; mr_raster.amp = 0.0f; }
+    if (mr_raster.wave < 1.0f) mr_raster.wave = 0.0f;
+}
+static void mario_draw_raster(void) /* drawRasterScroll when _1E4 != 0 (_37C: the frame count) */
+{
+    if (mr_raster.amp != 0.0f) render_raster_scroll(mr_raster.amp, (s16)mr_raster.period, mr_raster.wave, game_frame);
+}
+static void tr_raster(RNpc *t) /* setRasterScroll(sRasterParamTime 16, X 300, Y 1000), its level SE */
+{
+    if (t->id != -1 && vlen(vsub(mario->pos, rn_pos(t))) < 2500.0f) {
+        mario_set_raster(16, 300, 1000);
+        t->lv = se_level(SE_AT_LV_DEATH_PROM_RASTER, NULL, t->lv);
+    }
 }
 static void tr_control(RNpc *t) /* TeresaRacer::control: SE_SM_TERERACER_TRAMPLE on a trample (NPCActor's _D8: npc_react on
                                   * its Body, mSensorSize 220 at mSensorOffset (0, 25, 40)) */

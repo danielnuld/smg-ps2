@@ -661,7 +661,7 @@ Second console round (2026-10-24), from Daniel's report:
   "-DRACE_TEST=1 -DPACKS_OVERLAY=..." PhantomGalaxy/2: talk, Yes, count, Mario carried along the judge rail wins at f
   4171, Goal, the Boo's talk, TakeOutStar, its star; =2 Mario left at the start: the Boo in at f 4282, TimeUp at 7200,
   Lose talk, the race miss. ponytail: star pointer demo modes, the layout's effects, the
-  2D race's raster scroll, the star model in its hands. TeresaMario2D 1 (racers 0 / 1) not run. Repack: every
+  2D race's raster scroll, the star model in its hands (both done since). TeresaMario2D 1 run since. Repack: every
   galaxy with a RaceRail (PATH's path_arg0, LOGIC): PhantomGalaxy, OceanRingGalaxy, TeresaMario2DGalaxy,
   SurfingLv1Galaxy, SurfingLv2Galaxy.
 - PenguinSkater (feat/386-penguin-skater, 2026-11-07): race.inc sk_* after NPC/PenguinSkater.cpp: its group's rails
@@ -725,6 +725,14 @@ Second console round (2026-10-24), from Daniel's report:
   Test plain XF "-DRACE_TEST=1 -DPACKS_OVERLAY=..." PhantomGalaxy/2 (the star circles the Boo, out 280 in front of it)
   and OceanRingGalaxy/2 (the leader's). ponytail: no PowerStar::setupColor. Repack: slice_all.py every galaxy with
   those NPCs.
+- TeresaMario2D's race and the raster scroll (feat/2d-race-raster, 2026-11-07): the 2D race run to its end (plain XF
+  "-DRACE_TEST=1 -DPACKS_OVERLAY=..." TeresaMario2DGalaxy/1: talk, Yes, the race, rank 1, Defeat / Open, TakeOutStar,
+  power star got, back to the Observatory). MarioActor's raster scroll (race.inc mario_*_raster after
+  MarioActorSpecialDraw.cpp: setRasterScroll's eased amplitude, updateRasterScroll's decay, drawRasterScroll each frame
+  it is on) from TeresaRacer's Move / Goal (racer id set, Mario within 2500: 16, 300, 1000); render.c
+  render_raster_scroll: the frame in 64-row bands copied into the target blocks (PSMCT16 as GX's RGB565 strips), each
+  row drawn back shifted (scenes with such a TeresaRacer reserve those blocks). 60 fps kept in the race. ponytail:
+  RasterScrollCube (no area lookup of it ported; MarioCollision.cpp:2297).
 - Circle wipes (feat/wipe-circle, 2026-11-07): menu.c wr_* after Screen/WipeRing.cpp (円ワイプ, SceneWipeHolder's):
   WipeRing.arc in lyt.py COMMON (menus.bin), its nerves Open / Close / WipeIn / WipeOut, the In / Out frames set by
   hand from calcRadius / calcMaxRadius (sqrt 900160) with the half-sine easing, mAnimFrame (wipe(< 1): 90), "Ring"

@@ -2078,6 +2078,39 @@ void render_target_capture(void)
  * projection, here into that picture), its material's alpha */
 static float mview[16];
 static u32 mirror_gen; /* the view_gen the picture is for: the next render_begin's */
+/* MarioActor::drawRasterScroll on the GS: the frame drawn so far in 64-row bands copied into the target blocks
+ * (GXCopyTex's 4-row strips: here a band at a time, PSMCT16 as its RGB565), each row drawn back shifted by
+ * amplitude * sin(sin(row * 2pi / wavelength) * pi + t * 2pi / period); the uncovered edge keeps the frame's pixels */
+void render_raster_scroll(float amplitude, int period, float wavelength, int t)
+{
+    if (block_end != TGT_TBP || wavelength == 0.0f || period == 0) return;
+    render_world_done();
+    u32 fb = frame[back].address, fw = SCREEN_W >> 6;
+    float phase = (float)t * 6.2831853f / (float)period, sp = 6.2831853f / wavelength;
+    for (int y0 = 0; y0 < SCREEN_H; y0 += 64) {
+        ad_open(24 + 6 * 64);
+        AD(GS_SET_FRAME(TGT_TBP >> 5, fw, GS_PSM_16, 0), GS_REG_FRAME);
+        AD(GS_SET_TEST(0, 0, 0, 0, 0, 0, 1, ZTEST_METHOD_ALLPASS), GS_REG_TEST);
+        AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 1), GS_REG_ZBUF);
+        AD(GS_SET_ALPHA(0, 1, 0, 1, 0), GS_REG_ALPHA);
+        AD(GS_SET_DTHE(0), GS_REG_DTHE);
+        ad_source_psm(fb, fw, FB_PSM, 10, FB_TH, SCREEN_W, SCREEN_H, 0);
+        ad_sprite(0, 0, SCREEN_W, 64, 0, (float)y0, SCREEN_W, (float)(y0 + 64), 0x80);
+        AD(GS_SET_FRAME(fb >> 11, fw, FB_PSM, 0), GS_REG_FRAME);
+        ad_source_psm(TGT_TBP << 6, fw, GS_PSM_16, 10, 6, SCREEN_W, 64, 0);
+        for (int r = 0; r < 64 && y0 + r < SCREEN_H; r++) {
+            float off = amplitude * sinf(sinf(sp * (float)(y0 + r)) * 3.14159265f + phase);
+            ad_sprite(off, (float)(y0 + r), off + SCREEN_W, (float)(y0 + r + 1), 0, (float)r, SCREEN_W, (float)(r + 1), 0x80);
+        }
+        AD(test_z, GS_REG_TEST);
+        AD(GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 0), GS_REG_ZBUF);
+        AD(GS_SET_DTHE(FB_PSM != GS_PSM_32), GS_REG_DTHE);
+        AD(0, GS_REG_TEXFLUSH);
+        ad_close();
+    }
+    flush_vif();
+    cur_tex = -1;
+}
 void render_mirror_capture(void)
 {
     if (block_end != TGT_TBP) return;
