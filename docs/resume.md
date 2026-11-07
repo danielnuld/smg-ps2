@@ -1223,6 +1223,11 @@ there needs the embedded blob and every pack rebuilt.
   table; one fade table per model a frame; DarknessRoomAir / TwilightAir / DimensionAir still without run-time fades.
   Repack: slice_all.py EggStarGalaxy, TearDropGalaxy, OceanFloaterLandGalaxy, OceanPhantomCaveGalaxy, HeavensDoorGalaxy.
 
+- TeresaPicture / KinokoOneUpPicture (feat/394-texchange, 2026-11-07): SimpleTextureSwitchChangeObj after Petari
+  (statics.inc ST_TEXSW): SimpleMapObj::init's TexChange BTK at arg1 (-1 none), changeTexture's frame 1 on its SW_A's
+  rise, as models "<class>~<frame>": slice.py BRK_STEPS now also bakes a BTK's frame into the UVs (btk_matrix, the
+  engine's anim_btk). Test: plain XF="-DST_VISIT=TeresaPicture -DST_VISIT_D=500.0f [-DST_TEXSW_TEST]" PhantomGalaxy/1.
+  Repack: slice_all.py PhantomGalaxy.
 - ClipArea system (feat/388-clip-area, 2026-11-07): engine/src/clip_area.inc (ca_*) after Petari ClipArea*.cpp,
   ClipFieldSwitch, FallOutFieldDraw, SimpleClipPartsObj, ClipAreaDrop(Holder), ClipAreaDropLaser: the clip areas (sphere,
   centre / bottom box, top / bottom cone in their base matrix over their scale; moved by the railer), isInClipArea (the
@@ -1988,7 +1993,7 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
   name, the galaxy's flag; fed before: its TicoStarRing (Tico~5 at the paired spin driver, AstroGalaxy_TicoCommon000,
   Yes: Meta, the spin driver out). Tests: plain XF="-DST_VISIT=<Class> [-DST_VISIT_K=k -DST_VISIT_D=d]" (camera on
   that row), `fat` XF="-DTG_TEST=1|2" AstroGalaxy/1 (feed both / their rings), -DST_TWALL_TEST, -DST_SURP_TEST.
-  Left (statics agent): TeresaPicture / KinokoOneUpPicture (per-instance BTK frame: the engine's BTKs run per model),
+  Left (statics agent):
   SeaBottomTriplePropeller (one KCL on three joints), the Tamakoro family (TamakoroWithTutorial, BallOpener,
   JumpHole, ConcreteBlock: Mario's star ball ride is not ported), AstroDomeAsteroid
   (SphereSelector's handled transform), FlexibleSphere, BegomanSpring, Syati / TalkSyati, SpinningBox,

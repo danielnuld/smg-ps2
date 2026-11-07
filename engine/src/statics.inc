@@ -232,7 +232,7 @@ static void st_flag_test(void)
 }
 #endif
 /* ---- MapObj classes by placed type: their per-row state (StSt, kept across rebinds) ---- */
-enum { ST_NONE = 1, ST_TWALL, ST_MIRRORMODEL, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX };
+enum { ST_NONE = 1, ST_TWALL, ST_MIRRORMODEL, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW };
 /* Placed classes whose Petari behaviour is the model drawn with its animations and collision (the engine's generic
  * instance does that): LavaGalaxyParts.cpp (LavaShellTowerStep, LavaStepA / B / C: startBtk / Brk / Bpk / Btp of its
  * name, collision, clipping; ponytail: the steps' DLMakerProjmapEffectMtxSetter lava glow is baked at slice time and
@@ -257,6 +257,7 @@ static int st_kind_name(const char *n)
     if (!strcmp(n, "SubmarineVolcanoBigColumn")) return ST_BIGCOL;
     if (!strcmp(n, "FlexibleSandPlanetPartsA")) return ST_FLEX; /* FlexibleSphere */
     if (!strcmp(n, "TrialBubbleTimerMoveWallA")) return ST_TMWALL; /* TimerMoveWall */
+    if (!strcmp(n, "TeresaPicture") || !strcmp(n, "KinokoOneUpPicture")) return ST_TEXSW; /* SimpleTextureSwitchChangeObj */
     if (!strcmp(n, "SurprisedGalaxy") || (!strncmp(n, "Surp", 4) && strlen(n) > 10 && !strcmp(n + strlen(n) - 6, "Galaxy"))) return ST_SURP;
     for (u32 k = 0; k < sizeof st_still / sizeof *st_still; k++) if (!strcmp(n, st_still[k])) return ST_STILL;
     return ST_NONE;
@@ -582,6 +583,24 @@ static void st_objs_update(void)
         case ST_CHAIN: if (st_chain(in, g)) return; break;
         case ST_BIGCOL: st_column(in, g); break;
         case ST_FLEX: st_flex(in, g, i); break;
+        case ST_TEXSW: { /* SimpleMapObj::init: TexChange (BTK) at arg1 (setupInitInfoTextureChangeArg1; -1 none),
+                          * SimpleTextureSwitchChangeObj::changeTexture on its SW_A's rise: frame 1 for good (slice.py
+                          * BRK_STEPS: "<class>~<frame>") */
+            const Row *r = &sc->objs[in->row];
+#ifdef ST_TEXSW_TEST /* (with ST_VISIT): every picture's SW_A on at frame 300 */
+            if (game_frame == 300 && r->sw[SW_A] >= 0) { sw_set(r, SW_A, 1); printf("texsw: row %d SW_A on%c", in->row, 10); }
+#endif
+            if (r->sw[SW_A] >= 0 && !sw_on(r, SW_A)) g->on = 0;
+            if (r->sw[SW_A] >= 0 && sw_on(r, SW_A) && !g->on) { g->on = 1; g->t2 = 1; }
+            int fr = g->t2 ? 1 : r->arg[1];
+            if (fr >= 0) {
+                char n[40];
+                snprintf(n, sizeof n, "%s~%d", sc->types + 32 * r->type, fr);
+                const Model *md = scene_model(sc, n);
+                if (md) in->md = md;
+            }
+            break;
+        }
         case ST_DOMEGALAXY: { /* AstroDomeDemoAstroGalaxy::init: setBrkFrameAndStop 2 with grand star 5, 1 with 3, else 0
                                * (slice.py BRK_STEPS: "<class>~<frame>") */
             char n[40];

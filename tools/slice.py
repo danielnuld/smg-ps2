@@ -460,7 +460,9 @@ MAT_COLOR = {"StarPiece": ("StarPiece1_v", [(0x80, 0x00, 0x99), (0xE6, 0xA0, 0x0
 # a BRK stopped at a frame the actor sets at run time: its model baked at these frames, "<class>~<k>" (game.c picks k).
 # TicoFat::setScale: FatRed at (scale - 1) / 0.9 of its frame max (59); Normal frame 0 has the same colours as FatRed 0
 BRK_STEPS = {"TicoFat": ("fatred", (0, 20, 39, 59)), "TicoGalaxy": ("fatred", (0, 20, 39, 59)),  # TicoGalaxy: a TicoFat
-             "AstroDomeDemoAstroGalaxy": ("astrodomedemoastrogalaxy", (0, 1, 2))}  # its init: setBrkFrameAndStop by grand stars (statics.inc)
+             "AstroDomeDemoAstroGalaxy": ("astrodomedemoastrogalaxy", (0, 1, 2)),
+             # SimpleTextureSwitchChangeObj::changeTexture: TexChange (a BTK) at getChangedTextureNo 1 (statics.inc)
+             "TeresaPicture": ("texchange", (0, 1, 2)), "KinokoOneUpPicture": ("texchange", (0, 1))}  # its init: setBrkFrameAndStop by grand stars (statics.inc)
 # a class that picks one of several BRKs at run time (MR::startBrk by name): its model baked at frame 0 of each, "<class>~<k>".
 # AstroDomeComet::appear: cCometBrkName[getCometNameId]
 BRK_NAMES = {"AstroDomeComet": ("red", "blue", "white", "yellow", "purple")}
@@ -643,6 +645,33 @@ def btk_entry(anim, material, mt, t, group):
     return struct.pack("<I", len(body)) + body
 
 
+def btk_matrix(hit, frame, maya):
+    """A tex.btk material entry's texture matrix rows at `frame` (engine anim_btk: J3DGetTextureMtx / ...Maya)."""
+    def key(count, tan, k):
+        if count == 1:
+            return k[0]
+        st = 3 if tan == 0 else 4
+        ks = [k[i * st:(i + 1) * st] for i in range(count)]
+        if frame <= ks[0][0]:
+            return ks[0][1]
+        if frame >= ks[-1][0]:
+            return ks[-1][1]
+        i = max(j for j in range(count) if ks[j][0] <= frame)
+        a, z = ks[i], ks[i + 1]
+        t0, v0, m0, t1, v1, m1 = a[0], a[1], a[2] if st == 3 else a[3], z[0], z[1], z[2]
+        d = t1 - t0
+        x = (frame - t0) / d if d else 0.0
+        return v0 + x * d * m0 + x * x * (3 * (v1 - v0) - 2 * d * m0 - d * m1) + x ** 3 * (2 * (v0 - v1) + d * m0 + d * m1)
+    sx, sy, r, tx, ty = (key(*tr) for tr in hit[3])
+    r = math.radians(r)
+    cr, sr, (c0, c1) = math.cos(r), math.sin(r), hit[2]
+    if maya:
+        return ((sx * cr, sy * sr, (tx - 0.5) * cr - sr * (ty - 0.5 + sy) + 0.5),
+                (-sx * sr, sy * cr, -(tx - 0.5) * sr - cr * (ty - 0.5 + sy) + 0.5))
+    return ((sx * cr, -sx * sr, -sx * cr * c0 + sx * sr * c1 + c0 + tx),
+            (sy * sr, sy * cr, -sy * sr * c0 - sy * cr * c1 + c1 + ty))
+
+
 def btp_first(d):
     """A BTP (TPT1 texture pattern) -> {material name: its texture index at frame 0}."""
     o = 0x20
@@ -775,6 +804,8 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
             sky = arc.stem in SKY_ARCS or arc.stem.endswith("Sky")  # 8-bit textures (tex.to_ps2 hi)
             lfiles = {k.lower().rsplit("/", 1)[-1]: v for k, v in files.items()}
             bp = brk or BRK_POSE.get(arc.stem)  # a BRK_ARG variant's (name, frame) first
+            # "<archive>~<BTK>:<frame>" (BRK_STEPS on a BTK): the texture matrices at that frame, baked in the UVs
+            btk_pose = (tex.btk(lfiles[bp[0] + ".btk"]), bp[1]) if bp and bp[0] + ".btk" in lfiles else None
             over = tex.brk(lfiles[bp[0] + ".brk"], bp[1]) if bp and bp[0] + ".brk" in lfiles else None
             if arc.stem in AIR and "appear.bpk" in lfiles:  # Air::appear: Appear's material colours at its end too
                 over = air_merge(over, tex.brk(lfiles["appear.bpk"], anim_len(lfiles["appear.bpk"])))
@@ -940,6 +971,11 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 elif get and mt["tex"] < len(texs):
                     off, w = info["at"][mt["attr"]]
                     m = mt["mtx"]
+                    if btk_pose:  # SimpleTextureSwitchChangeObj::changeTexture: setBtkFrameAndStop
+                        hit = next((x for x in btk_pose[0]["mats"] if x[0] == tex.material_name(b, bl[b"MAT3"], mat) and
+                                    x[1] == mt["slot"]), None)
+                        if hit:
+                            m = btk_matrix(hit, btk_pose[1], mt.get("maya", 0))
                     uvs = []
                     for v in used:
                         k = info["keys"][v]
