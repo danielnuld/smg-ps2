@@ -1087,6 +1087,16 @@ there needs the embedded blob and every pack rebuilt.
   DodoryuHill; sound.py now reads the .inc files game.c includes. ponytail: fur, shadows, BTK / BRK / BTP, banmt,
   image effects, the eye sensor on map objects, the sudden-death wipes (dodoryu.inc header).
 
+- Air (feat/332-air, 2026-11-06): Air.cpp's In / Out (arg0 x 100, + 20 x 100 out), its Disappear hide (DarknessRoomAir's
+  59 frames; DimensionAir / TwilightAir have none: once shown they stay), arg1's wait for the opening camera, AirFar100m's
+  far clip (10000) for DimensionAir; update_airs moves in demos (registerDemoSimpleCastAll). slice.py AIR: no collision
+  (DimensionAir's kcl was put in), each baked at its resting colours (own BRK, Appear's end). Drawn: DimensionAir (the 2D
+  rooms' streaked backdrop), TwilightAir, DarknessRoomAir. Test: plain XF=-DAIR_TEST (TeresaMario2DGalaxy/1,
+  PhantomGalaxy/1: Mario and the camera put at the first one). ponytail: Appear / Disappear fades (no BRK at run time);
+  HomeAir, SphereAir, SunsetAir, FineAir stay undrawn: their alpha is GX_LIGHT2's N.L at the camera per vertex
+  (LightFunction.cpp:193-195) and VU1 batches have no vertex alpha (drawn flat they flood the screen); so no PriorDrawAir.
+  Repack: slice_all.py the galaxies with DimensionAir / TwilightAir / DarknessRoomAir.
+
 ## Next
 
 **In-engine demos (the user, 2026-10-17: "haz las dos cosas, primero los videos": the movies are done (3feb30f), now
