@@ -17,7 +17,7 @@
  * 会話 camera, Move by its rail points' arg0 (adjustmentRailCoordSpeed, decidePose 1 / 0.05 / 0.1), Goal near the
  * rail's end (sNearGoalDist 500), changeBgmState (after 480 frames: state 2 within 3000 of Mario, else 1).
  * ponytail: the star pointer demo modes (startStarPointerModeDemo(WithStarPointer) / endStarPointerMode), the
- * layout's RaceStart / RaceGoal effects, TeresaRacer's trample reaction SE (no NPC reaction sensor here), the raster
+ * layout's RaceStart / RaceGoal effects, the raster
  * scroll of TeresaMario2D (setRasterScroll: its level SE only), the PowerStarDemoModel in its hands (the star comes
  * out at the action's end: star_pos), Luigi's TeresaRacer (arg0 1: slice.py declares Mario's), audiences (only
  * PenguinCoach's surfing modes enter one), the rush actor messages (ACTMES_RACE_*: SurfRay's) */
@@ -256,6 +256,7 @@ static void rm_init(void)
             t->mv[0] = t->mv[1] = "waitopen"; t->tk[0] = t->tk[1] = "waitopentalk"; t->act = "chase";
             t->p0 = t->p1 = 1; t->p4 = 3000.0f; t->p8 = 1.5f;
             t->speed = 20.0f; t->accel = 0.1f; t->blend = 0.05f; /* sSpeed, sAccele, _114 */
+            t->re.c158 = 1024; /* NPCActor _158 */
             if (!t->dead) { t->ar = rm.n; rm.r[rm.n].npc = nrn; rm.ord[rm.n] = rm.n; rm.n++; } /* entryRacerOthers */
             printf("race: TeresaRacer row %u id %d%s, rail %d points" "\n", i, t->id, t->dead ? " (dead)" : "", rr_npoints(&t->rail));
             nrn++;
@@ -569,6 +570,16 @@ static void tr_raster(RNpc *t) /* setRasterScroll (ponytail), its level SE */
 {
     if (t->id != -1 && vlen(vsub(mario->pos, rn_pos(t))) < 2500.0f) t->lv = se_level(SE_AT_LV_DEATH_PROM_RASTER, NULL, t->lv);
 }
+static void tr_control(RNpc *t) /* TeresaRacer::control: SE_SM_TERERACER_TRAMPLE on a trample (NPCActor's _D8: npc_react on
+                                  * its Body, mSensorSize 220 at mSensorOffset (0, 25, 40)) */
+{
+    V3 body = vadd(vadd(rn_pos(t), vmul(t->pose.nu, 25.0f)), vmul(t->pose.nf, 40.0f));
+    if (npc_react(&t->re, body, 220.0f, t->pose.nu, rn_pos(t), 450.0f, 0) & 1) {
+        V3 p = rn_pos(t);
+        se_start(SE_SM_TERERACER_TRAMPLE, &p.x);
+        printf("teresa racer row %d: trampled" "\n", t->row);
+    }
+}
 static void tr_exe(RNpc *t)
 {
     int st = t->step;
@@ -698,6 +709,10 @@ static void game_test_race(void)
         mario->pos = vadd(vadd(p, vmul(n->pose.nf, n->kind != 1 ? 210.0f : 300.0f)), vmul(n->pose.nu, n->kind != 1 ? 0.0f : 30.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
         mario->face = vmul(n->pose.nf, -1.0f);
     }
+#ifdef RACE_TRAMPLE /* (=1 XF -DRACE_TRAMPLE: Mario dropped on the Boo's head first: its trample SE) */
+    if (n->kind == 1 && t - free_at >= 120 && t - free_at < 125) { mario->pos = vadd(p, vmul(n->pose.nu, 400.0f)); mario->hvel = v3(0, 0, 0); mario->vup = -5.0f; mario->grounded = 0; }
+    if (n->kind == 1 && t - free_at < 240 && t - free_at >= 120) return;
+#endif
     if (td.nrv != TD_SLCT) slct = 0;
     if (td.nrv == TD_SLCT) {
         if (++slct == 60) printf("race test: pointer on BoxRight %d" "\n", menu_test_point("BoxRight"));
@@ -1257,7 +1272,7 @@ static void update_race(void)
         rn_talker(t);
         if (t->next >= 0) { t->nrv = t->next; t->step = 0; t->next = -1; }
         rn_takeout(t);
-        if (t->kind == 1) tr_exe(t);
+        if (t->kind == 1) { tr_control(t); tr_exe(t); }
         else if (t->kind == 2) { sk_exe(t); sk_sensor(t); }
         else pg_exe(t);
         t->step++;
