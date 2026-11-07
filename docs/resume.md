@@ -359,6 +359,14 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   -DST_VISIT_SWA_OF=HipDropSwitch -DST_VISIT_SWA_K=1 -DST_VISIT_D=4000.0f" HoneyBeeKingdom 2 (its demo, 19.5 degrees
   eased, then turning), -DST_BELL_TEST ReverseKingdom 2 (two hits at 300 / 700, SW_A, still again), `dome`
   XF=-DDOME_COMET AstroDome/1 (the asteroid with the select).
+- FirePressure, GoldenTurtle, TripodBossKinokoOneUp (feat/482-fire-gold-kinoko, 2026-11-07): update_pressures runs
+  FirePressure too (Inst.pressure 2: PressureBase's nerves, its Cannon1 joint) shooting FirePressureBullets (fpbs:
+  Shot then Move, arg2 speed, arg3 2 follows Mario 3 degrees every 5 steps, the map (binder 100) or step 300 bursts it,
+  arg7 no crash, burns Mario: ATK_FIRERUN, its shadow sphere 75); GoldenTurtle is a JetTurtle of mShellType gold
+  (Glow waiting, HandyGlow held, ExplosionGold, G_LIGHT swimming); tripod_boss.inc tb_kinoko_update: its 1-up out at
+  activeTripodBossParts on the attach matrix of arg0's joint x its placement, killed when the boss breaks.
+  Tests: plain XF="-DST_VISIT=FirePressure -DST_VISIT_SLEEP" FactoryGalaxy/1 (overlay: shot, burst on the wall),
+  `jet` FishTunnelGalaxy/1 (taken, thrown, reset, revived), XF=-DTB_TEST TriLegLv1Galaxy/1.
 
 - BeamGoRoundPlanet (fix/457-beam-go-round, 2026-11-07, coverage CannonFleetGalaxy 1): BeamGoRoundPlanet.cpp in game.c
   (bgr_*): its BCK plays (slice.py ANIM_PLANETS), its own collision kept and its Move KCL on joints move1 / move2

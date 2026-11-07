@@ -1381,6 +1381,9 @@ static void st_visit(void)
         if (game_frame < 90 || (game_frame >= 400 && game_frame < 430)) { mario->pos = vadd(p, vadd(vmul(up, 300.0f), vmul(z, 400.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; } /* (again after a launch star's start) */
         camera_set_override(1, vadd(p, vadd(vmul(vnorm(z), ST_VISIT_D), vmul(up, 600.0f))), p, up, 45.0f);
         if (game_frame % 120 == 60) printf("visit f %u: %s row %u shown %d dead %d%c", game_frame, cls, i, row_shown((int)i), row_dead[i], 10);
+#ifdef ST_VISIT_SLEEP /* -DST_VISIT_SLEEP: its SW_SLEEP on at frame 100 */
+        if (game_frame == 100 && r->sw[SW_SLEEP] >= 0) { sw_set(r, SW_SLEEP, 1); printf("visit: row %u SW_SLEEP on%c", i, 10); }
+#endif
 #ifdef ST_VISIT_SWB /* -DST_VISIT_SWB: its SW_B on at frame 300 */
         if (game_frame == 300 && r->sw[SW_B] >= 0) { sw_set(r, SW_B, 1); printf("visit: row %u SW_B on%c", i, 10); }
 #endif
