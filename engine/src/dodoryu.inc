@@ -12,7 +12,7 @@
  * the DodoryuClosedCylinder, Escape, JumpOut, Null). The hill is MogucchiHill (50 DodoryuHillA / B / C pieces: Lead,
  * Wait, Fade; a hip drop within 300, a trample, a star piece breaks one, a spin it and its neighbours, the boss's eye
  * sensor ones it runs over again).
- * ponytail: no fur (initFur), no shadows, its BTK / BRK / BTP (startBtk / Brk / Btp: but a clip's same-name BTP) and
+ * ponytail: no fur (initFur), its BTK / BRK / BTP (startBtk / Brk / Btp: but a clip's same-name BTP) and
  * the pieces' Normal / Fade BRKs not played, no banmt interpolation (startBck at once), no depth of field / center
  * screen blur / image effects, the eye sensor's enemy attack only on its hill's pieces (map objects: CrystalCageS
  * left), the camera register vector (declareCameraRegisterVec), isPlayerInBind / isPlayerStaggering as Mario's damage,
@@ -83,7 +83,7 @@ static struct {
     int nextCounter;                          /* DodoryuStateWait */
     const char *cam; int cam_f, cam_self;     /* the demo's anim camera */
     int spin_cam; V3 spin_eye;                /* ドドリュウ吹っ飛び (CameraFixedThere) */
-    int hidden, dead, sens, nostep;           /* hideModel, killed, the valid sensors' bits */
+    int hidden, dead, sens, nostep;           /* hideModel, killed, the valid sensors' bits, invalidateShadowAll (nostep) */
     const char *bva;
     float ascy, ascv; int asc;                /* AnimScaleController _C.y, _18, its nerve (0 Stop, 2 HitReaction) */
     Anim *anim, *lh, *rb, *hp[3];
@@ -631,7 +631,7 @@ static void dd_start_state(void) /* start() */
         break;
     case DS_LV2: case DS_LV3: {
         DdLv2 *l = dd_l2();
-        dd_set(L2_START);
+        dd_set(L2_START); dd.nostep = 1; /* invalidateShadowAll */
         ddh.appear = DD_PIECES - 10; /* setHillAppearNumMax */
         dd_shift_null();
         l->chaseAppearEndCounter = 0;
@@ -1259,6 +1259,17 @@ static void dd_draw(void)
         dd_key(k, sizeof k, "Dodoryu", dd.bva ? dd.bva : "Normal");
         bva_key = k; bva_frame = 0.0f; /* startBva */
         draw_skin(dd.md, m, dd.anim);
+        if (!dd.nostep) { /* initShadowFromCSV (valid but between invalidateShadowAll / validateShadowAll: dd.nostep): Body Root sphere 300,
+                           * ArmL ArmL1 oval (250, 100, 150), ArmR ArmR1 oval (200, 100, 150), dropped 1000 */
+            static const struct { int j; float x, z; } sh[3] = {{1, 300.0f, 300.0f}, {19, 250.0f, 150.0f}, {25, 200.0f, 150.0f}};
+            for (int i = 0; i < 3; i++) {
+                if (sh[i].j >= (int)dd.anim->skin->njoints) continue;
+                float w[16];
+                mat_mul(w, m, dd.anim->world[sh[i].j]);
+                V3 p = v3(w[12], w[13], w[14]);
+                draw_shadow(p, up_at(p, v3(0, 1, 0)), v3(w[8], w[9], w[10]), sh[i].x, sh[i].z, 0.0f, 50.0f, 1000.0f);
+            }
+        }
     }
     if (!dd.dead && dd.lh_on && dd.lhmd && dd.lh && dd.lh->skin) { /* DodoryuLeadHill on its host's base */
         dd_base(m);

@@ -1319,6 +1319,11 @@ there needs the embedded blob and every pack rebuilt.
   / PreFire / Fire 120 (the fire sensor ahead to Mario's centre, its Fire effect) / FireEnd, Trample / SpinHit then Fire,
   HipDropped (Break, a coin); explosions kill it (a coin), fire balls and blows do nothing; its binder 120 at (0, 110,
   20); calcRotate's up. Test: `mkoopa` (FactoryGalaxy/1). Repack: sound.py --pack FactoryGalaxy, CannonFleetGalaxy.
+- Non-walker shadows (feat/shadows): MeteorStrike (120 grown over its last 150 steps, 3000), HomingKiller / Torpedo oval
+  (60, 100) x scale (2000) and MagnumKiller's (240, 400), BossKameck / Koopa / Dodoryu / Polta arms and rocks /
+  SkeletalFishBaby from their Shadow.bcsv rows (spheres, ovals, oval poles at their joints) with their invalidate /
+  validate points (Koopa's デモ用 group, Dodoryu's dd.nostep, BossKameck's appear demo, Polta's repair / power-up).
+  ponytail: volume boxes / lines and flat models (TripodBoss legs, Snakehead) are not drawn (one disc a shape).
 - Upper punch and press leftovers (feat/mario-upper): MarioActor::sendMsgUpperPunch (isActionOk アッパーパンチ, 声蹴り,
   its clip) from checkHeadPoint and the at field's jump part (rising, faces looking down) and the squat uppercut under a
   ceiling within 160 (calcDistToCeil's _730, しゃがみアッパー, no jump); receivers WoodBox / PunchBox (doHit, REFLECT_V

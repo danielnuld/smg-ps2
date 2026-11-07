@@ -7,7 +7,8 @@
  * (isMsgJetTurtleAttack) breaks it: shakeCameraNormal, an air bubble where the shell was, Break (Death BCK, SEs), Dead
  * (10 star pieces at Center, kill: SE, SW_DEAD).
  * ponytail: no Bind (isStarPointerPointing2POnPressButton: no 2P pointer), no AnimScaleController reaction to a star
- * piece (asc_ is the walkers' only), no shadow (initShadowFromCSV), no SkeletalFishBaby effects (its AutoEffectList
+ * piece (asc_ is the walkers' only), its Shadow.bcsv volume lines (obi1-3) not drawn (one disc a cylinder: enchu00-03
+ * at Joint00..03, 130 / 100 / 70 / 20, dropped 3000), no SkeletalFishBaby effects (its AutoEffectList
  * rows are not in jpa.py NAMED), the base scale left at 1 (no row scales them), no clipping (sphere 500) */
 #define SF_BABIES 12
 static int sfk_jet_hit(V3 p); /* skeletal_fish_boss.inc */
@@ -225,6 +226,11 @@ static void sf_draw(void)
         float c[3] = {b->base[12], b->base[13], b->base[14]};
         if (!render_visible(c, md->radius + 700.0f)) continue;
         use_row_light(b->row, v3(c[0], c[1], c[2]), LIGHT_STRONG);
+        static const float sr[4] = {130.0f, 100.0f, 70.0f, 20.0f}; /* initShadowFromCSV: Shadow.bcsv enchu00..03 (VolumeCylinder) */
+        for (int k = 0; k < 4; k++) {
+            V3 p = v3(b->wj[k][12], b->wj[k][13], b->wj[k][14]);
+            draw_shadow(p, up_at(p, v3(0, 1, 0)), v3(b->wj[k][8], b->wj[k][9], b->wj[k][10]), sr[k], sr[k], 0.0f, 50.0f, 3000.0f);
+        }
         draw_skin(md, b->base, b->anim);
     }
     sfk_draw();

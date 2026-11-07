@@ -9,7 +9,7 @@
  * クッパＶｓ１本戦開始 sheet, the jump to the planet, the battle in three levels (KoopaBattleMain's nerves and states,
  * the plates on KoopaBattleMapPlanet: a hip drop onto a damage plate burns it, the escape, a spin on its tail, a spin
  * on its body: down), the power up demos, クッパＶｓ１ダウン and the grand star at デモ中心.
- * ponytail: no ActorJointCtrl (face control), no shadow (initShadowFromCSV), no bloom models, no star pointer (2P),
+ * ponytail: no ActorJointCtrl (face control), no bloom models, no star pointer (2P),
  * no center screen blur, no BRK / BTK of the plates and planet (Death, Revival, Break, PowerStarAppear: their effects
  * only), the binded collision's sensor (sendMsgToBindedSensor) is the plate nearest Koopa's feet within its model's
  * radius, makeMtxUpNoSupportPos's front any one, anim cameras start without their interpolation, the attacks on other
@@ -146,6 +146,7 @@ static void kp_joint_m(int j, float o[16]) /* getJointMtx (j -1: its base) */
     mat_mul(o, b, kp.anim->world[j]);
 }
 static V3 kp_joint(int j) { float m[16]; kp_joint_m(j, m); return v3(m[12], m[13], m[14]); } /* copyJointPos */
+static int kp_shadow_demo; /* Shadow.bcsv group デモ用 valid, 戦闘用 not (KoopaSequencerVs1::exeDemoBattleStart) */
 static int kp_gpos(const char *name, float m[16]) /* MR::findNamePos (its matrix) */
 {
     const float *g = scene_gpos(name);
@@ -1456,9 +1457,9 @@ static void kq_update(void)
         if (kp_dx_on()) nv_set(n, !strcmp(demos[kp.dx_k].h->name, "クッパＶｓ１ダウン") ? KQ_DEMOBATTLEEND : KQ_DEMOBATTLESTART); /* the demo started: its nerve */
         break;
     case KQ_DEMOBATTLESTART:
-        if (st == 0) { kp.calc_grav = 0; kp_act("DemoKoopaVs1Start"); kp_acam("DemoKoopaVs1Start"); } /* initDemoSheetTalkAnim */
+        if (st == 0) { kp.calc_grav = 0; kp_act("DemoKoopaVs1Start"); kp_acam("DemoKoopaVs1Start"); kp_shadow_demo = 1; } /* initDemoSheetTalkAnim */
         if (kp_dx_last() || !dx.on) {
-            kp_acam(NULL); kp.calc_grav = 1;
+            kp_acam(NULL); kp.calc_grav = 1; kp_shadow_demo = 0;
             const Row *rr = &sc->objs[kp.row];
             if (rr->sw[SW_B] >= 0) sw_set(rr, SW_B, 1); /* mJumpToPlanet->startReady: onSwitchB */
             nv_set(n, KQ_DEMOJUMPTOPLANET);
@@ -2136,6 +2137,9 @@ static void kp_draw(void)
     if (kp.alive && !kp.hidden && m_kp) {
         kp_base(b);
         if (m_kp->skin && kp.anim && kp.anim->skin == m_kp->skin) draw_skin(m_kp, b, kp.anim); else render_model(m_kp, b, 0x80, 0x80, 0x80);
+        /* initShadowFromCSV: 戦闘用 ボリューム影(球) Center 250 dropped 3000 and 頭 Face 175.78 (1000); デモ用 Center 250 (3000) */
+        draw_shadow(kp_joint(2), kp_up(), kp.b.front, 250.0f, 250.0f, 0.0f, 50.0f, 3000.0f);
+        if (!kp_shadow_demo) draw_shadow(kp_joint(KJ_FACE), kp_up(), kp.b.front, 175.78f, 175.78f, 0.0f, 50.0f, 1000.0f);
         if (kp.thorn && m_kthorn) { kp_joint_m(KJ_TAIL2, jm); render_model(m_kthorn, jm, 0x80, 0x80, 0x80); kp_joint_m(KJ_TAIL3, jm); render_model(m_kthorn, jm, 0x80, 0x80, 0x80); }
         if (kp.armor_break && m_karmorb) { kp_joint_m(KJ_HIP1, jm); render_model(m_karmorb, jm, 0x80, 0x80, 0x80); }
         if (kp.thorn_break && m_kthornb) { /* (its JointName "": the host's base) */
