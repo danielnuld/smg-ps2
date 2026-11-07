@@ -73,6 +73,12 @@ enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
 /* KuriboChief's / ExterminationChecker's KeySwitch (okeys), the ExterminationKuriboKeySwitch checkers (exts) */
 #define MAX_OKEYS 4
 static struct { int on, owner, nrv, step, demo; V3 pos, vel, up; float rate, t; } okeys[MAX_OKEYS];
+/* the BenefitItemOneUp / LifeUp made at run time (MR::createKinokoOneUp / createKinokoSuper): bitem_pop, bitem_rise */
+static void bitem_pop(const float *m, int life, int fast);
+static void bitem_rise(const float *box, int life);
+#define MAX_BITEMS 8
+enum { BI_SHOOT, BI_WAIT, BI_RISE, BI_BOUND };
+static struct { int on, life, nrv, step, gnd, gattr, wall, restart; V3 pos, vel, a4, gn, wn, box, up, target; float rot[16], f0[16], base[16]; const char *clip; } bitm[MAX_BITEMS];
 #define MAX_EXTS 4
 static struct { int row, nrv, step; V3 last; } exts[MAX_EXTS];
 static int nexts;
@@ -1164,6 +1170,7 @@ static int breakable(const char *name, const Row *r, int *coins, int *pieces)
     /* SimpleBreakableObj.cpp: IcicleRock and SandUpDownTowerBreakableWallA / B break at a spin (mBreakFlags 2),
      * TeresaMansionHoleCover at a hip drop (4), KoopaStatue at an explosion or an enemy attack (0x48: breaks 5,
      * explosion_breaks); SnowBlockA at a fire ball (0x20: breaks 7, fireball_breaks); arg3 -1 arg6 coins (1), 3 arg6
+<<<<<<< HEAD
      * star pieces (5); ConcreteBlock at a Tamakoro's ball dash (0x180: breaks 8, tamakoro.inc tmk_bump_msg). ponytail: no
  * 1-up / power star items */
     if (strcmp(name, "ConcreteBlock") == 0) {
@@ -1171,6 +1178,9 @@ static int breakable(const char *name, const Row *r, int *coins, int *pieces)
         else if (r->arg[3] == 3) *pieces = r->arg[6] > 0 ? r->arg[6] : 5;
         return 8;
     }
+=======
+     * star pieces (5). arg3 1 its KinokoOneUp (bitem_pop). ponytail: no power star item, ConcreteBlock (ball dash) stays whole */
+>>>>>>> 4f70225 (Run-time 1-up / life-up mushrooms after Petari (createKinokoOneUp, appearKinokoOneUpPop, TreasureBoxCracked's item))
     if (strcmp(name, "SnowBlockA") == 0) {
         if (r->arg[3] == -1) *coins = r->arg[6] > 0 ? r->arg[6] : 1;
         else if (r->arg[3] == 3) *pieces = r->arg[6] > 0 ? r->arg[6] : 5;
@@ -2618,6 +2628,7 @@ void game_init(const Scene *s, const unsigned char *blob)
     mario = mem_alloc(MEM_PLAYER, sizeof(Player));
     nkillers = 0;
     memset(okeys, 0, sizeof okeys); nexts = 0; /* KeySwitch (owned), ExterminationChecker */
+    memset(bitm, 0, sizeof bitm); /* the run-time mushrooms */
     for (u32 i = 0, t = (u32)scene_type(s, "ExterminationKuriboKeySwitch"); i < s->nobjs && nexts < MAX_EXTS; i++)
         if (s->objs[i].type == t) { memset(&exts[nexts], 0, sizeof exts[0]); exts[nexts++].row = (int)i; }
     norocks = 0;
@@ -12135,8 +12146,8 @@ static int kast_peach; /* KinopioAstro (the messenger): its Peach letter, 0 none
  * killFunc) the Demo nerve: Demo, SE_SM_TICOFAT_META_ITEM / META, at its end SE_SM_METAMORPHOSE_SMOKE and kill: the
  * chosen KinokoOneUp / KinokoSuper. Its goods (NPCData TicoShopItem): TicoShopGoodsOneUp at StarPieceR, ..LifeUp at
  * StarPieceL, Shake. ponytail: no turn to the camera in EatPre (turnQuatZDirRad), no Eat0..2 / Big0..2 growth, no
- * AnimScaleController, no Reaction nerve clips, no star piece hit voice (_DB: Tico's _E5); the shop's mushrooms given
- * at once (no appearKinokoOneUpPop / appearKinokoSuper item popping out, as the treasure boxes' here) */
+ * AnimScaleController, no Reaction nerve clips, no star piece hit voice (_DB: Tico's _E5); the shop's mushrooms
+ * pop out at its kill (bitem_pop) */
 static void wipe_start(int close, int frames);
 static int wipe_active(void);
 static void hud_tico_eat(int center);
@@ -12315,8 +12326,8 @@ static void update_talkers(void)
             if (*ms == 1 && shop) { se_start(SE_SM_TICOFAT_META_ITEM, &m[12]); se_start(SE_SM_TICOFAT_META, &m[12]); }
             if (*ms == 1 && !obj_play(in, shop ? "demo" : "metamorphosis", 0, 0)) *ms = 0xFFFF; /* no clip: at once */
             else if (*ms > 1 && (*ms == 0xFFFF || !in->anim || in->anim->done)) {
-                if (shop && tcm.oneup) { se_start(SE_SY_1UP, NULL); lives++; }  /* appearKinokoOneUpPop */
-                if (shop && tcm.life) change_item_status(10);                   /* appearKinokoSuper: BenefitItemLifeUp */
+                if (shop && tcm.oneup) bitem_pop(m, 0, 0); /* TicoShop::kill: appearKinokoOneUpPop(mOneUp, getBaseMtx(), 15) */
+                if (shop && tcm.life) bitem_pop(m, 1, 0);  /* appearKinokoSuper(mLifeUp, getBaseMtx(), 15) */
                 if (shop) printf("tico shop row %d: demo over, 1-up %d life up %d\n", in->row, tcm.oneup, tcm.life);
                 se_start(SE_SM_METAMORPHOSE_SMOKE, &m[12]); row_kill(in->row);
                 printf("tico row %d: metamorphosis over, killed\n", in->row);
@@ -19342,22 +19353,24 @@ static void mtx_quat(const float *m, float q[4]) /* C_QUATMtx (m's columns its a
     }
 #undef R_
 }
+static void blend_mtx(const float *ma, float m[16], float r) /* MR::blendMtx(ma, m, r, m): JMAQuatLerp, the translation lerped */
+{
+    float a[4], b[4], q[4], d = 0.0f;
+    mtx_quat(ma, a); mtx_quat(m, b);
+    for (int i = 0; i < 4; i++) d += a[i] * b[i];
+    for (int i = 0; i < 4; i++) q[i] = d < 0.0f ? -r * (a[i] + b[i]) + a[i] : -r * (a[i] - b[i]) + a[i];
+    float l = sqrtf(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
+    if (l > 1e-6f) {
+        float x = q[0] / l, y = q[1] / l, z = q[2] / l, w = q[3] / l; /* PSMTXQuat */
+        m[0] = 1 - 2 * (y * y + z * z); m[1] = 2 * (x * y + w * z); m[2] = 2 * (x * z - w * y);
+        m[4] = 2 * (x * y - w * z); m[5] = 1 - 2 * (x * x + z * z); m[6] = 2 * (y * z + w * x);
+        m[8] = 2 * (x * z + w * y); m[9] = 2 * (y * z - w * x); m[10] = 1 - 2 * (x * x + y * y);
+    }
+    for (int i = 12; i < 15; i++) m[i] = ma[i] * (1.0f - r) + m[i] * r;
+}
 static void m_blend_apply(float m[16]) /* calcAndSetBaseMtx's blendMtx from the last drawn matrix */
 {
-    if (m_drawn_ok && m_blend_r < 1.0f) {
-        float a[4], b[4], q[4], r = m_blend_r, d = 0.0f;
-        mtx_quat(m_drawn, a); mtx_quat(m, b);
-        for (int i = 0; i < 4; i++) d += a[i] * b[i];
-        for (int i = 0; i < 4; i++) q[i] = d < 0.0f ? -r * (a[i] + b[i]) + a[i] : -r * (a[i] - b[i]) + a[i];
-        float l = sqrtf(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
-        if (l > 1e-6f) {
-            float x = q[0] / l, y = q[1] / l, z = q[2] / l, w = q[3] / l; /* PSMTXQuat */
-            m[0] = 1 - 2 * (y * y + z * z); m[1] = 2 * (x * y + w * z); m[2] = 2 * (x * z - w * y);
-            m[4] = 2 * (x * y - w * z); m[5] = 1 - 2 * (x * x + z * z); m[6] = 2 * (y * z + w * x);
-            m[8] = 2 * (x * z + w * y); m[9] = 2 * (y * z - w * x); m[10] = 1 - 2 * (x * x + y * y);
-        }
-        for (int i = 12; i < 15; i++) m[i] = m_drawn[i] * (1.0f - r) + m[i] * r;
-    }
+    if (m_drawn_ok && m_blend_r < 1.0f) blend_mtx(m_drawn, m, m_blend_r);
     memcpy(m_drawn, m, 64);
     m_drawn_ok = 1;
 }
@@ -25073,6 +25086,158 @@ static void draw_okeys(void)
     }
 }
 
+/* BenefitItemObj.cpp after Petari, the mushrooms made at run time (MR::createKinokoOneUp: BenefitItemOneUp "KinokoOneUp";
+ * createKinokoSuper / TreasureBoxCracked's: BenefitItemLifeUp "KinokoLifeUp"; initWithoutIter: no args, dead).
+ * MR::appearKinokoOneUpPop(item, mtx, speed) / appearKinokoSuper: its rotation the matrix's, shoot at its place
+ * (the speed unused): appearThrowUp: SE_SY_ITEM_APPEAR, Appear, 10 along the matrix's Y (15 with _DD, WoodBox's),
+ * Shoot: its gravity (calcGravityOrZero) + 0.5 a frame, the side speed off a wall less 1.3 x its part into it;
+ * on the ground Land, still, after step 10 Wait (for good: no Escape without arg2). Binder 50 at 50 (from Shoot on).
+ * Its body sensor (50, 50 up) takes it in Wait / Shoot (exeCatch: Get, requestOneUp, incPlayerLeft; LifeUp
+ * changePlayerItemStatus(10)) with a weak rumble. A fire floor or a death area (moving) kill it (Vanish).
+ * calcAndSetBaseMtxInMovement: in Wait its rotation at its place; else _A4 (ground / wall normal, else the Y it went
+ * up) up and its move front, blended 0.2 a frame. TreasureBoxCracked's item (bitem_rise): made appeared at the box
+ * (its rotation) in Wait, exeOpen raises it (15 along the box's up, + 1.2 a frame) to 130 up, exeItemBound bounces it
+ * 20 frames (15 - 0.75 step) x sin(36 step deg), then it waits there. ponytail: no shadow (initShadowVolumeCylinder),
+ * no Glow / Get / Vanish effects in the packs (jpa.py NAMED), no OneUpBoard popup */
+static int bitem_new(const float *m, int life)
+{
+    for (int i = 0; i < MAX_BITEMS; i++)
+        if (!bitm[i].on) {
+            typeof(&bitm[0]) b = &bitm[i];
+            memset(b, 0, sizeof *b);
+            b->on = 1; b->life = life; b->step = -1;
+            mat_identity(b->rot);
+            for (int c = 0; c < 3; c++) { /* its rotation (getEulerXYZ of the matrix) */
+                V3 ax = vnorm(v3(m[4 * c], m[4 * c + 1], m[4 * c + 2]));
+                b->rot[4 * c] = ax.x; b->rot[4 * c + 1] = ax.y; b->rot[4 * c + 2] = ax.z;
+            }
+            b->pos = v3(m[12], m[13], m[14]);
+            b->a4 = v3(b->rot[4], b->rot[5], b->rot[6]);
+            memcpy(b->base, b->rot, 64); b->base[12] = b->pos.x; b->base[13] = b->pos.y; b->base[14] = b->pos.z;
+            memcpy(b->f0, b->base, 64); /* appear: calcAndSetBaseMtx, _F0 */
+            return i;
+        }
+    return -1;
+}
+static void bitem_pop(const float *m, int life, int fast) /* appearKinokoOneUpPop / appearKinokoSuper: shoot -> appearThrowUp */
+{
+    int i = bitem_new(m, life);
+    if (i < 0) return;
+    se_start(SE_SY_ITEM_APPEAR, NULL);
+    bitm[i].clip = "appear"; bitm[i].restart = 1;
+    bitm[i].vel = vmul(bitm[i].a4, fast ? 15.0f : 10.0f); /* cAppearThrowUpSpd / cAppearThrowUpSpd2 */
+    bitm[i].nrv = BI_SHOOT;
+    printf("kinoko %s %d: pop at %.0f %.0f %.0f\n", life ? "life up" : "1-up", i, m[12], m[13], m[14]);
+}
+static void bitem_rise(const float *box, int life) /* TreasureBoxCracked::exeOpen's first step: makeActorAppeared */
+{
+    int i = bitem_new(box, life);
+    if (i < 0) return;
+    typeof(&bitm[0]) b = &bitm[i];
+    b->nrv = BI_RISE; b->box = b->pos; b->up = b->a4;
+    b->target = vadd(b->pos, vmul(b->up, 130.0f)); /* sKinokoOneUpOffset / sKinokoLifeUpOffset */
+    b->vel = vmul(b->up, 15.0f);                     /* sFirstSpeed */
+    b->restart = 1; /* no clip: its bind pose (no runBck while the box moves it) */
+    printf("kinoko %s %d: out of a treasure box\n", life ? "life up" : "1-up", i);
+}
+static void update_bitems(void)
+{
+    for (int i = 0; i < MAX_BITEMS; i++) {
+        typeof(&bitm[0]) b = &bitm[i];
+        if (!b->on) continue;
+        if (pd.name) continue; /* a demo stops the scene's actors */
+        const char *cls = b->life ? "BenefitItemLifeUp" : "BenefitItemOneUp";
+        const Model *md = scene_model(sc, cls);
+        V3 g = vmul(up_at(b->pos, b->a4), -1.0f); /* calcGravityOrZero */
+        b->step++;
+        if (b->nrv == BI_SHOOT) { /* exeShoot */
+            if (b->gnd) {
+                b->clip = "land"; b->restart = 1;
+                b->vel = v3(0, 0, 0);
+                if (b->step > 10) { b->nrv = BI_WAIT; b->step = -1; }
+            } else {
+                float vs = vdot(b->vel, g);
+                V3 h = vsub(b->vel, vmul(g, vs));
+                if (b->wall) { float s = vdot(h, b->wn); h = vsub(h, vmul(b->wn, s)); h = vsub(h, vmul(b->wn, s * 0.3f)); } /* cReflectWallX */
+                b->vel = vadd(h, vmul(g, vs + 0.5f)); /* cGravity */
+            }
+        } else if (b->nrv == BI_RISE) { /* TreasureBoxCracked::exeOpen */
+            b->vel = vadd(b->vel, vmul(b->up, 1.2f)); /* sAccelRate */
+            b->pos = vadd(b->pos, b->vel);
+            float d = vlen(vsub(b->pos, b->box)), td = vlen(vsub(b->target, b->box)); /* checkItemPos */
+            if (vdot(b->vel, b->up) >= 0.0f ? d >= td : d <= td) { b->pos = b->target; b->vel = v3(0, 0, 0); b->nrv = BI_BOUND; b->step = -1; }
+        } else if (b->nrv == BI_BOUND) { /* exeItemBound: sBoundSpeedMax 15, sBoundTime 20 */
+            float amp = 15.0f - 15.0f / 20.0f * b->step, h = amp * sinf((720.0f / 20.0f) * b->step * 0.0174533f);
+            b->pos = vadd(b->target, vmul(b->up, h));
+            if (b->step == 20) { b->pos = b->target; b->nrv = BI_WAIT; b->step = -1; }
+        }
+        /* control: calcAndSetBaseMtxInMovement */
+        if (b->nrv != BI_SHOOT) {
+            memcpy(b->base, b->rot, 64); b->base[12] = b->pos.x; b->base[13] = b->pos.y; b->base[14] = b->pos.z;
+            memcpy(b->f0, b->base, 64);
+        } else {
+            if (b->gnd) b->a4 = b->gn; else if (b->wall) b->a4 = b->wn;
+            V3 d = vlen(b->vel) > 1e-6f ? vnorm(b->vel) : v3(0, 0, 0);
+            if (vlen(d) > 0.0f) {
+                if (fabsf(b->a4.y * d.z - b->a4.z * d.y) <= 0.01f && fabsf(b->a4.z * d.x - b->a4.x * d.z) <= 0.01f &&
+                    fabsf(b->a4.x * d.y - b->a4.y * d.x) <= 0.01f) { /* isSameDirection: only its place */
+                    b->base[12] = b->pos.x; b->base[13] = b->pos.y; b->base[14] = b->pos.z;
+                } else {
+                    float t[16];
+                    basis_matrix(t, b->pos, b->a4, d, 0); /* makeMtxUpFrontPos */
+                    memcpy(b->base, t, 64);
+                    blend_mtx(b->f0, b->base, 0.2f);
+                    memcpy(b->f0, b->base, 64);
+                    b->base[12] = b->pos.x; b->base[13] = b->pos.y; b->base[14] = b->pos.z;
+                }
+            }
+        }
+        if (b->nrv == BI_SHOOT && ((b->gnd && (b->gattr & 0x3F) == 10) || (vlen(b->vel) > 0.0f && in_death(b->pos)))) {
+            fx_named(b->life ? "BenefitItemObj" : "KinokoOneUp", b->life ? "VanishLifeUp" : "Vanish", b->base, NULL, NULL);
+            b->on = 0; /* isBindedGroundDamageFire / isInDeath: kill */
+            printf("kinoko %d: vanished\n", i);
+            continue;
+        }
+        if (b->nrv == BI_SHOOT) { /* the binder (onBind from Shoot's first step) */
+            V3 up = vmul(g, -1.0f), c = vadd(vadd(b->pos, b->vel), vmul(up, 50.0f)), gn = up, wn = up;
+            int wall = 0;
+            b->gnd = collide_n(&c, up, 50.0f, &gn, &wn, &wall);
+            b->gattr = ground_attr;
+            b->wall = wall; b->gn = gn; b->wn = wn;
+            b->pos = vsub(c, vmul(up, 50.0f));
+        }
+        Anim *a = md && md->skin ? obj_anim(20 * (int)sc->nobjs + i, md, cls) : NULL;
+        if (a && b->restart && !b->clip) { anim_bind(a, md->skin); b->restart = 0; }
+        if (a && b->restart) {
+            char n[48];
+            snprintf(n, sizeof n, "%s/%s", cls, b->clip);
+            for (char *c = n; *c; c++) *c = (char)tolower((unsigned char)*c);
+            anim_start(a, n, 0); /* runBck */
+            b->restart = 0;
+        }
+        V3 sc_ = vadd(b->pos, vmul(vnorm(v3(b->base[4], b->base[5], b->base[6])), 50.0f));
+        if (mario_touch(sc_, 50.0f)) { /* ACTMES_ITEM_GET -> exeCatch */
+            pad_rumble(RUMBLE_WEAK);
+            if (b->life) { change_item_status(10); fx_named("BenefitItemObj", "GetLifeUp", b->base, NULL, NULL); }
+            else { fx_named("KinokoOneUp", "Get", b->base, NULL, NULL); se_start(SE_SY_1UP, NULL); lives++; }
+            b->on = 0;
+            printf("kinoko %s %d: taken, lives %d\n", b->life ? "life up" : "1-up", i, lives);
+        }
+    }
+}
+static void draw_bitems(void)
+{
+    for (int i = 0; i < MAX_BITEMS; i++) {
+        if (!bitm[i].on) continue;
+        const char *cls = bitm[i].life ? "BenefitItemLifeUp" : "BenefitItemOneUp";
+        const Model *md = scene_model(sc, cls);
+        if (!md) continue;
+        Anim *a = md->skin ? obj_anim(20 * (int)sc->nobjs + i, md, cls) : NULL;
+        if (a) { anim_update(a); draw_skin(md, bitm[i].base, a); }
+        else render_model(md, bitm[i].base, 0x80, 0x80, 0x80);
+    }
+}
+
 /* ExterminationChecker.cpp after Petari, ExterminationKuriboKeySwitch (createExterminationKeySwitch: _A0 0, _A1 1):
  * its children (ChildObj: ChildKuribo, createNoItemKuriboActor, 全滅用クリボー; here the ChildKuribo rows of its zone,
  * the one checker a zone has on the disc) watched while it is out (its SW_APPEAR); with every one dead, 30 frames on
@@ -27069,8 +27234,8 @@ static void jelec_update(Kuribo *k)
  * Body) hurts Mario from its front (Attack, Vaunt); a trample or hip drop guards (Guard 90, GuardReturn; the hip drop
  * throws Mario away); a front punch guards (30 back); a punch from behind (60 / 30 behind within 800), a fire ball,
  * a jet turtle or invincible Mario knocks it down (25 / 25 away, PunchDown 15: its item, Death). Gravity 1.5 off the
- * ground (1 knocked down, 2.2 rebounding), friction 0.93 / 0.99 (0.88 guarding) while it stays put. ponytail: the blue
- * one's 1-up is given at once (no KinokoOneUp popping out), no joint rumbler, blink BTP, star pointer, enemy push or
+ * ground (1 knocked down, 2.2 rebounding), friction 0.93 / 0.99 (0.88 guarding) while it stays put. Its 1-up a KinokoOneUp popped out (bitem_pop). ponytail:
+ * no joint rumbler, blink BTP, star pointer, enemy push or
  * base-matrix slerp */
 enum { KA_APPEAR, KA_WAIT, KA_ATTACK, KA_VAUNT, KA_GUARD, KA_GUARDEND, KA_DAMAGEFB, KA_DAMAGEHIP, KA_DIG, KA_UNDER,
        KA_FIND, KA_BREAK, KA_REBOUNDEACH, KA_TURN, KA_TURNEND, KA_WALK, KA_RUN, KA_RUNREB, KA_HITWALL };
@@ -27090,7 +27255,7 @@ static void ka_item(Kuribo *k) /* appearItemPunch / appearItemTrample */
 {
     V3 up = vmul(k->grav, -1.0f);
     if (ka_red(k)) { drop_pieces(k->pos, up, 3); w_se(k, SE_OJ_STAR_PIECE_BURST); }
-    else { lives++; se_start(SE_SY_1UP, NULL); printf("kanina %d: 1-up, lives %d\n", k->row, lives); } /* ponytail: no KinokoOneUp */
+    else { float m[16]; basis_matrix(m, k->pos, k->qy, k->qz, 0); bitem_pop(m, 0, 0); } /* appearKinokoOneUpPop(mKinokoOneUp, getBaseMtx(), sKinokoOneUpShootSpeed) */
 }
 static void ka_kill(Kuribo *k)
 {
@@ -30413,8 +30578,8 @@ static void tw_update(Kuribo *k)
  * / 300 of the rail's line) hurts or pushes. Only a shell (JetTurtle) kills it: TurtleDown (Damage BCK,
  * SE_EV_SNAKEHEAD_DAMAGE, back to 300 at sGoHomeSpeed 20 / race 50), killed at the BCK's end: SE_EM_EXPLODE_UNDER_WATER,
  * Death, a small one 9 star pieces at its Head (SE_OJ_STAR_PIECE_BURST_W), a big one its 1-up at its Antenna.
- * ponytail: no star pointer swoon, no anim scale, no smoke effect; the big one's 1-up given at once (no
- * appearKinokoOneUpPop item actor in the port, Snakehead.cpp:196-203) */
+ * ponytail: no star pointer swoon, no anim scale, no smoke effect. The big one's 1-up pops out (bitem_pop,
+ * Snakehead.cpp:196-203) */
 static const char *sn_clip(const Kuribo *k, int type, const char *what)
 {
     static const char *tb[4][4] = {{"StraightAppear", "StraightWait", "StraightForward", "StraightBack"},
@@ -30481,7 +30646,7 @@ static void snake_update(Kuribo *k)
             basis_matrix(m, k->pos, k->qy, k->qz, 0);
             fx_named(walker_cls(k), "Death", m, NULL, NULL);
             if (small) { V3 h = w_joint(k, md, 6, v3(0, 0, 0)); drop_pieces(h, k->qy, 9); se_start(SE_OJ_STAR_PIECE_BURST_W, &h.x); }
-            else { lives++; se_start(SE_SY_1UP, NULL); } /* appearKinokoOneUpPop (ponytail: given at once) */
+            else { V3 an = w_joint(k, md, 9, v3(0, 0, 0)); m[12] = an.x; m[13] = an.y; m[14] = an.z; bitem_pop(m, 0, 0); } /* its base matrix at Antenna: appearKinokoOneUpPop(15) */
             k->state = KURIBO_DEAD; row_kill(k->row);
             printf("snakehead row %d: turtle down, dead" "\n", k->row);
             return;
@@ -32217,11 +32382,14 @@ static void update_wrecks(void)
             pop_coins(wrecks[i].p, wrecks[i].up, wrecks[i].coins);
             drop_pieces(wrecks[i].p, wrecks[i].up, wrecks[i].pieces);
             Row *r = (Row *)&sc->objs[wrecks[i].row];
-            if (!strcmp(sc->types + 32 * r->type, "WoodBox")) { /* exeHit step 15: its 1-up (arg4), dead switch, riddle SE (arg3 1).
-                * ponytail: the 1-up given at once, no KinokoOneUp popping out 50 up (WoodBox.cpp:250-257: no item actor
-                * made at run time in the port, as the treasure boxes' and Kanina's) */
+            if (!strcmp(sc->types + 32 * r->type, "WoodBox")) { /* exeHit step 15: its 1-up (arg4), dead switch, riddle SE (arg3 1) */
                 int one = r->arg[4] != 0 && r->arg[4] != -1;
-                if (one) { lives++; se_start(SE_SY_1UP, NULL); }
+                if (one) { /* appearKinokoOneUpPop(mOneUp (_DD 1), its base matrix 50 up, 30) */
+                    float m[16];
+                    memcpy(m, wrecks[i].m, 64);
+                    m[12] += wrecks[i].up.x * 50.0f; m[13] += wrecks[i].up.y * 50.0f; m[14] += wrecks[i].up.z * 50.0f;
+                    bitem_pop(m, 0, 1);
+                }
                 if (r->sw[SW_DEAD] >= 0) sw_set(r, SW_DEAD, 1);
                 if (r->arg[3] == 1) se_start(SE_SY_READ_RIDDLE_S, NULL);
                 printf("WoodBox %d step 15: 1-up %d, dead switch %d, riddle SE %d\n", wrecks[i].row, one, r->sw[SW_DEAD], r->arg[3] == 1);
@@ -33438,6 +33606,7 @@ static void break_inst(const Inst *in, int drops)
                        * ModelObj's Break clip, its own BVA Break (stays: endBreak kills only the model) */
             pop_coins(p, up, n); drop_pieces(p, up, sp);
             if (sp) se_start(SE_OJ_STAR_PIECE_BURST, &p.x);
+            if (r->arg[3] == 1) bitem_pop(in->m, 0, 0); /* appearKinokoOneUpPop(mKinokoOneUp, getBaseMtx(), 15) */
             scene_stop = 5; camera_shake(SHAKE_NORMAL_WEAK);
             fx_named(name, "Break", in->m, NULL, NULL);
         } else fx_at(box ? FX_WOODBOXBREAK_BREAK : FX_CRYSTALCAGES_BREAK, p, up);
@@ -38477,7 +38646,7 @@ static void update_dswitches(void)
  * turtle; a gold one (arg2 1) refuses all but special ones: its REFUSE SE) or an explosion opens it (Open clip, the
  * OPEN SE dry or wet), then its item comes out: Coin (popped 130 up), KinokoOneUp (a life), KinokoLifeUp (life up),
  * PowerStar (its declared star: the box gone), Empty (its SW_A arg0 (5) frames on); arg2 2 starts open. Its dead switch
- * at the clip's end. row_turn 0 Wait / 1 Open / 2 OpenWait, row_step its step. ponytail: no rising / bounding item,
+ * at the clip's end. row_turn 0 Wait / 1 Open / 2 OpenWait, row_step its step. its mushroom raised out (bitem_rise). ponytail: the coin popped (not raised),
  * chips and air bubbles give nothing, no flip of Mario off its half-open lid, no Light / Glow effects */
 static int flip_star_out(int row) /* a FlipPanelObserver past its Complete demo: its star requested */
 {
@@ -38506,6 +38675,43 @@ static void tbox_hit(V3 p, float r) /* a jet turtle or an explosion at p */
         if (vlen(vsub(c, p)) < 200.0f + r) tbox_open(in);
     }
 }
+#ifdef KINOKO_TEST
+/* kinoko test (OceanPhantomCaveGalaxy/1): Mario held 400 over the first Kanina (its zone streams in), at 400 its
+ * 1-up pops out (ka_item); at 560 Mario on the mushroom; from 600 over the first treasure box with a mushroom, opened
+ * at 800, Mario on its mushroom at 900. Prints the run-time mushrooms */
+int game_test_kinoko(int frame)
+{
+    static V3 held;
+    if (frame < 400 || (frame >= 600 && frame < 800)) {
+        const char *want = frame < 400 ? "Kanina" : "Kinoko";
+        for (u32 i = 0; i < sc->nobjs; i++) {
+            const char *n = sc->types + 32 * sc->objs[i].type;
+            if (frame < 400 ? strcmp(n, want) : !(strstr(n, want) && !strncmp(n, "TreasureBox", 11))) continue;
+            V3 p = row_pos(&sc->objs[i]);
+            for (int k = 0; k < nkuribo; k++) if (kuribo[k].row == (int)i) p = kuribo[k].pos;
+            mario->up = up_at(p, mario->up); held = vadd(p, vmul(mario->up, 400.0f));
+            break;
+        }
+    }
+    if (frame < 560 || (frame >= 600 && frame < 900)) { mario->pos = held; mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+    if (frame == 400)
+        for (int k = 0; k < nkuribo; k++)
+            if (kuribo[k].kind == WALK_KANINA && !ka_red(&kuribo[k])) { printf("kinoko test: kanina row %d\n", kuribo[k].row); ka_item(&kuribo[k]); break; }
+    if (frame == 800)
+        for (int i = 0; i < ninsts; i++)
+            if (insts[i].tbox && strstr(sc->types + 32 * sc->objs[insts[i].row].type, "Kinoko")) { printf("kinoko test: box row %d\n", insts[i].row); tbox_open(&insts[i]); break; }
+    int n = 0;
+    for (int i = 0; i < MAX_BITEMS; i++) {
+        if (!bitm[i].on) continue;
+        n++;
+        if (frame == 560 || frame == 900) mario->pos = vsub(bitm[i].pos, vmul(mario->up, 20.0f));
+        if (frame % 5 == 0) printf("kinoko test f %d: item %d nrv %d step %d at %.0f %.0f %.0f vel %.1f gnd %d\n", frame, i, bitm[i].nrv, bitm[i].step,
+                                   bitm[i].pos.x, bitm[i].pos.y, bitm[i].pos.z, vlen(bitm[i].vel), bitm[i].gnd);
+    }
+    if (frame % 50 == 0) printf("kinoko test f %d: items %d lives %d\n", frame, n, lives);
+    return n;
+}
+#endif
 static void update_tboxes(void)
 {
     for (int i = 0; i < ninsts; i++) {
@@ -38521,8 +38727,8 @@ static void update_tboxes(void)
         V3 up = vnorm(v3(in->m[4], in->m[5], in->m[6])), p = v3(in->m[12], in->m[13], in->m[14]);
         if (*st == 1) { /* exeOpen: the item */
             if (strstr(n, "Coin")) pop_coins(vadd(p, vmul(up, 130.0f)), up, 1);
-            else if (strstr(n, "KinokoOneUp")) { se_start(SE_SY_1UP, NULL); lives++; }
-            else if (strstr(n, "KinokoLifeUp")) change_item_status(10); /* its BenefitItemLifeUp's exeCatch */
+            else if (strstr(n, "KinokoOneUp")) bitem_rise(in->m, 0); /* its BenefitItemOneUp raised out (exeOpen, exeItemBound) */
+            else if (strstr(n, "KinokoLifeUp")) bitem_rise(in->m, 1); /* its BenefitItemLifeUp */
         }
         /* exeOpenWait (from the Open's first step on): Empty its SW_A at step arg0, PowerStar its star at step 10
          * (tbox_star_out: requestAppearPowerStar, the box stays open) */
@@ -52216,6 +52422,7 @@ void game_update(void)
     update_torches();
     if (!demo_on) update_exts();
     update_okeys();
+    update_bitems();
     update_hanachans();
     update_ghost();
     update_race();
@@ -53440,6 +53647,7 @@ void game_draw(void)
         render_model(md, m, kuribo[i].state == KURIBO_STUN ? 0x50 : 0x90, 0x50, 0x20);
     }
     draw_okeys();
+    draw_bitems();
     PROF(3);
     {
         V3 du = mario->up, df = mario->face;

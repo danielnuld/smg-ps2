@@ -161,6 +161,7 @@ MODEL_ARC = {"TamakoroTutorial": "SignBoard",  # TamakoroTutorial::init: initMod
              # rabbits' TrickRabbitBaby and the RunawayTico's TicoBaby are their EXTRA (by arg / cast id)
              "RunawayRabbit": "TrickRabbit", "DemoRabbit": "TrickRabbit", "RunawayTico": "Tico", "TicoBaby": "TicoBaby",
              "DemoKoopaJrShip": "KoopaJrShip",  # DemoKoopaJrShip::init: initModelManagerWithAnm KoopaJrShip
+             "BenefitItemOneUp": "KinokoOneUp", "BenefitItemLifeUp": "KinokoLifeUp",  # also the run-time ones (KINOKO)
              "MorphBubble": "ItemBubble", **AIR}  # MorphItemObjNeo's container アイテム泡 (startBck Move)
 # ponytail: no MiniatureGalaxyStarNumber (its digits are texture matrices per material), no MiniatureGalaxyShadow
 MINI_EXTRA = ("MiniatureGalaxyUnknown", "MiniHatenaGalaxy", "MiniatureGalaxyUnknownKoopa", "MiniKoopaGalaxy",
@@ -202,7 +203,7 @@ EXTRA = {"ConcreteBlock": ("ConcreteBlockBreak",),  # SimpleBreakableObj: its br
          "UFOKinokoUnderConstruction": ("UFOKinokoLandingAstro",), "LargeChain": ("LargeChainFixPoint",),  # LargeChain: its fixed points
          "TicoGalaxy": ("TicoFatGoodsStarPiece", "Tico~5"),  # TicoFat's goods; its TicoStarRing (Tico::initBase(5): ColorChange 5)  # its init: that model once isUFOKinokoUnderConstruction is over (statics.inc)
          "Polta": ("PoltaLeftArm", "PoltaRightArm", "PoltaBodyBreak", "PoltaArmBreak", "PoltaFormationRock", "PoltaGroundRock", "PoltaGroundRockBreak", "PoltaRock#Color:0", "PoltaRock#Color:1", "PoltaRock#Color:2", "BombTeresa"),  # PoltaRock::setColorWhite / Black / Yellow (Color BVA frame 0 / 1 / 2); BombTeresaHolder
-         "SkeletalFishBaby": ("SnakeFish",), "ChildSkeletalFishBaby": ("SnakeFish",), "SkeletalFishBoss": ("SkeletalFishBossHeadA", "SkeletalFishGuard", "SkeletalFishBossBreak", "SkeletalFishBossScarFlash", "SkeletalFishBossLight"), "IceMerameraKing": ("IceManIce", "IceMerameraKingShock", "IceMerameraKingBreak"), "KoopaVs1": KOOPA_PARTS + ("KoopaBattleMapPlanet", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate"), "KoopaVs2": KOOPA_PARTS + ("KoopaBattleMapPlanetVs2", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate"), "KoopaVs3": KOOPA_PARTS + ("KoopaBattleMapPlanetVs3Lv1", "KoopaBattleMapPlanetVs3Lv2", "KoopaBattleMapPlanetVs3Lv3", "KoopaPlateDamage", "KoopaVS3HoleSunPlanet", "KoopaVS3HoleSunInsidePlanet", "KoopaRock", "KoopaRockBreak", "KoopaRollBall", "Peach", "KoopaJr", "KoopaJrShip"), "GhostPlayer": ("GhostMario", "GhostLuigi", "Koura"), "BegomanBabyLauncher": ("BegomanBaby",), "ElectricRailMoving": ("ElectricRailPoint",), "NokonokoLand": ("Koura~0", "Koura~1"), "Penguin": ("Koura~0",), "PenguinStudent": ("KouraShine",), "Creeper": ("CreeperFlower", "CreeperLeaf"), "TripodBoss": ("TripodBossLow", "HomingKiller"), "Dodoryu": ("DodoryuHillA", "DodoryuHillB", "DodoryuHillC", "DodoryuLeadHill", "DodoryuRabbit"), "HoneyQueen": ("HoneyQueenWing",), "TicoFat": ("TicoFatGoodsStarPiece",), "TicoShop": ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp"), "ShellfishYellowChip": ("YellowChip",), "BossKameck": ("BkDemo", "BossKameckFireBall", "Koura"), "BossKameck2": ("BkDemo", "BossKameckFireBall", "Koura", "BossKameckBarrier"), "FireBallBeamKameck": ("BossKameckFireBall",), "BreakableTrash": ("BreakableCageBreak",), "KuriboChief": ("KeySwitchOwned",), "Teresa": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
+         "SkeletalFishBaby": ("SnakeFish",), "ChildSkeletalFishBaby": ("SnakeFish",), "SkeletalFishBoss": ("SkeletalFishBossHeadA", "SkeletalFishGuard", "SkeletalFishBossBreak", "SkeletalFishBossScarFlash", "SkeletalFishBossLight"), "IceMerameraKing": ("IceManIce", "IceMerameraKingShock", "IceMerameraKingBreak"), "KoopaVs1": KOOPA_PARTS + ("KoopaBattleMapPlanet", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate"), "KoopaVs2": KOOPA_PARTS + ("KoopaBattleMapPlanetVs2", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate"), "KoopaVs3": KOOPA_PARTS + ("KoopaBattleMapPlanetVs3Lv1", "KoopaBattleMapPlanetVs3Lv2", "KoopaBattleMapPlanetVs3Lv3", "KoopaPlateDamage", "KoopaVS3HoleSunPlanet", "KoopaVS3HoleSunInsidePlanet", "KoopaRock", "KoopaRockBreak", "KoopaRollBall", "Peach", "KoopaJr", "KoopaJrShip"), "GhostPlayer": ("GhostMario", "GhostLuigi", "Koura"), "BegomanBabyLauncher": ("BegomanBaby",), "ElectricRailMoving": ("ElectricRailPoint",), "NokonokoLand": ("Koura~0", "Koura~1"), "Penguin": ("Koura~0",), "PenguinStudent": ("KouraShine",), "Creeper": ("CreeperFlower", "CreeperLeaf"), "TripodBoss": ("TripodBossLow", "HomingKiller"), "Dodoryu": ("DodoryuHillA", "DodoryuHillB", "DodoryuHillC", "DodoryuLeadHill", "DodoryuRabbit"), "HoneyQueen": ("HoneyQueenWing",), "TicoFat": ("TicoFatGoodsStarPiece",), "TicoShop": ("TicoShopGoodsOneUp", "TicoShopGoodsLifeUp", "BenefitItemOneUp", "BenefitItemLifeUp"), "ShellfishYellowChip": ("YellowChip",), "BossKameck": ("BkDemo", "BossKameckFireBall", "Koura"), "BossKameck2": ("BkDemo", "BossKameckFireBall", "Koura", "BossKameckBarrier"), "FireBallBeamKameck": ("BossKameckFireBall",), "BreakableTrash": ("BreakableCageBreak",), "KuriboChief": ("KeySwitchOwned",), "Teresa": ("KeySwitchOwned",), "ExterminationKuriboKeySwitch": ("KeySwitchOwned",), "RunawayRabbit": ("TrickRabbitBaby",), "DemoRabbit": ("TrickRabbitBaby",), "RunawayTico": ("TicoBaby",),
          "Rosetta": ("LightDome", "DomeHalo"),  # RosettaDemoHeavensDoor1's parts (ライトドーム, ライト後光)
          "StarReturnDemoStarter": ("PStar", "GStar", "SpinTico", "MarioHair"), "GrandStarReturnDemoStarter": ("GStar",), "FireBar": ("FireBarBall",), "FlipPanel": ("#PanelA", "#PanelEnd"), "FlipPanelReverse": ("#PanelA", "#PanelEnd"),
          "IronCannonLauncher": ("KoopaJrShipCannonShell",),
@@ -227,8 +228,18 @@ MORPH_SKIN = ("BoneMario", "BoneLuigi", "HopperMario", "HopperLuigi", "BeeMario"
               "IceMarioHandL", "IceMarioHandR", "InvincibleMarioHandL", "InvincibleMarioHandR")  # (initHand's, both players')
 
 
+# the mushroom a class makes at run time (createKinokoOneUp / createKinokoSuper / new BenefitItem*: game.c bitem_pop,
+# bitem_rise); a WoodBox only with arg4 (WoodBox.cpp), a SimpleBreakableObj (KoopaStatue) only with arg3 1
+KINOKO = {"Kanina": "BenefitItemOneUp", "Snakehead": "BenefitItemOneUp", "WoodBox": "BenefitItemOneUp", "KoopaStatue": "BenefitItemOneUp",
+          "TreasureBoxKinokoOneUp": "BenefitItemOneUp", "TreasureBoxCrackedKinokoOneUp": "BenefitItemOneUp",
+          "TreasureBoxKinokoLifeUp": "BenefitItemLifeUp", "TreasureBoxCrackedKinokoLifeUp": "BenefitItemLifeUp"}
+
+
 def morph_arcs(o):
-    """The extra models a placed MorphItemObjNeo / BenefitItemInvincible row loads (makeArchiveList)."""
+    """The extra models a placed MorphItemObjNeo / BenefitItemInvincible row loads (makeArchiveList), or its KINOKO."""
+    if o["name"] in KINOKO:
+        a = [s32(v) for v in o["args"]]
+        return () if o["name"] == "WoodBox" and a[4] in (0, -1) or o["name"] == "KoopaStatue" and a[3] != 1 else (KINOKO[o["name"]],)
     if o["name"] not in MORPH_ARCS:
         return ()
     a3 = s32(o["args"][3])
@@ -2404,7 +2415,8 @@ def obj_anim_chunk(fsp, classes, galaxy=None):
     """ANIM for the skinned placed classes among `classes` (and their EXTRA models): "<class>/<clip>" lower case."""
     clips = []
     names = [c for c in SKINNED_OBJ if c in classes or any(c in EXTRA.get(k, ()) + MORPH_ARCS.get(k, ()) for k in classes)
-             or (c in ("MorphBubble", "CrystalBox", "CrystalBoxBreak") and any(k in MORPH_ARCS for k in classes))]
+             or (c in ("MorphBubble", "CrystalBox", "CrystalBoxBreak") and any(k in MORPH_ARCS for k in classes))
+             or any(KINOKO.get(k) == c for k in classes)]
     names += [c for c in AUTO_SKINNED if c in classes and c not in names]
     for c in names:
         arc = fsp / "ObjectData" / f"{AUTO_SKINNED.get(c) or ANIM_ARC.get(c, c)}.arc"
