@@ -1929,3 +1929,9 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
   off, SubmarineVolcanoBigColumnBreak (slice.py EXTRA, skinned) playing Break, SE_OJ_SMN_VOLC_COL_L_BREAK, killed
   when it stops. Test: plain XF=-DST_COL_TEST SkullSharkGalaxy/1 (strikes beside the first column: break, gone).
   Repack: SkullSharkGalaxy (EXTRA / SKINNED_OBJ SubmarineVolcanoBigColumnBreak).
+- FlexibleSphere (2026-11-07): FlexibleSandPlanetPartsA in statics.inc (ST_FLEX): idle until SW_A (Wind) or Mario on
+  it, then grows arg2 / 10000 a frame to arg0 / 10000 and shrinks to arg1 / 10000 (defaults 1, 0.1, 0.002), its
+  collision scaled (in->m, in->s) and Mario carried; a quake at each end (60 frames, shake 0.2 / 3, earthquake SE
+  within 4000, numb rumble on it); arg3 1: shrinking countdown with the timer SEs, then Vanish and its dead switch.
+  Test: plain XF="-DST_VISIT=FlexibleSandPlanetPartsA -DST_VISIT_D=4000" SandClockGalaxy/1: on, quakes at 1.05 and
+  0.5. ponytail: the shape callback's texture scale, the move SE's parameter. Repack: SandClockGalaxy (jpa.py NAMED).
