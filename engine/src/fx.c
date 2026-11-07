@@ -326,8 +326,20 @@ int fx_named(const char *cls, const char *name, const float m[16], const float (
     c[k] = 0;
     for (k = 0; name[k] && k < 23; k++) n[k] = (char)tolower((unsigned char)name[k]);
     n[k] = 0;
-    for (u32 i = 0; res && i < nautos; i++) {
+    /* the rows of cls / name: auto_ix's run of them (the sort is stable: in row order, as a walk over all finds them;
+     * the walk cost ~5 ms a frame in KoopaBattleVs3 with its FireBar balls) */
+    u32 lo = 0, hi = res ? nautos : 0, nc = (u32)strlen(c);
+    if (auto_ix) {
+        while (lo < hi) {
+            u32 mid = (lo + hi) / 2;
+            if (auto_key(&autos[auto_ix[mid]], c, nc, n) < 0) lo = mid + 1; else hi = mid;
+        }
+        hi = res ? nautos : 0;
+    }
+    for (u32 x = lo; x < hi; x++) {
+        u32 i = auto_ix ? auto_ix[x] : x;
         const FxAuto *a = &autos[i];
+        if (auto_ix && auto_key(a, c, nc, n)) break;
         if (a->start != 0xFFFF || strcmp(a->cls, c) || strcmp(a->clip, n)) continue;
         float e[16], j[16], o[16];
         if (a->joint >= 0 && world) { mat_mul(j, m, world[a->joint]); host_size(j, m); }

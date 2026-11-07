@@ -82,6 +82,33 @@ int main(void)
     assert(gravity_at(&wire.g, 1, (float[3]){500, 300, 0}, v) && near3(v, 0, -1, 0));
     assert(gravity_at(&wire.g, 1, (float[3]){1300, 500, 0}, v) && near3(v, -1, 0, 0));
     assert(!gravity_at(&wire.g, 1, (float[3]){500, 2500, 0}, v)); /* 1000+ from both segments */
+    { /* a long wire (a helix of 301 points: runs of segments passed over) against the nearest point of a walk over all */
+        static struct { Gravity g; float pts[3 * 301]; } hx;
+        hx.g = mk(GRAV_WIRE, 0, 0, -1, 1, 1, 1, 0, 0, 0);
+        hx.g.p[0] = 0; hx.g.p[1] = 301;
+        for (int i = 0; i <= 300; i++) {
+            hx.pts[3 * i] = 2000.0f * cosf(i * 0.1f); hx.pts[3 * i + 1] = 40.0f * i; hx.pts[3 * i + 2] = 2000.0f * sinf(i * 0.1f);
+        }
+        unsigned s = 7;
+        for (int t = 0; t < 2000; t++) {
+            float p[3];
+            for (int k = 0; k < 3; k++) { s = s * 1103515245u + 12345u; p[k] = (s >> 8) / 16777216.0f * 6000.0f - 3000.0f; }
+            p[1] += 6000.0f;
+            float best = -1, q[3] = {0, 0, 0};
+            for (int i = 0; i < 300; i++) {
+                const float *a = hx.pts + 3 * i, *b = a + 3;
+                float ab[3] = {b[0] - a[0], b[1] - a[1], b[2] - a[2]}, ap[3] = {p[0] - a[0], p[1] - a[1], p[2] - a[2]};
+                float u = (ab[0] * ap[0] + ab[1] * ap[1] + ab[2] * ap[2]) / (ab[0] * ab[0] + ab[1] * ab[1] + ab[2] * ab[2]);
+                u = u < 0 ? 0 : u > 1 ? 1 : u;
+                float f[3] = {a[0] + ab[0] * u, a[1] + ab[1] * u, a[2] + ab[2] * u}, d[3] = {f[0] - p[0], f[1] - p[1], f[2] - p[2]};
+                float dd = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+                if (best < 0 || dd < best) { best = dd; q[0] = d[0]; q[1] = d[1]; q[2] = d[2]; }
+            }
+            float l = sqrtf(best);
+            assert(gravity_at(&hx.g, 1, p, v) && fabsf(v[0] - q[0] / l) + fabsf(v[1] - q[1] / l) + fabsf(v[2] - q[2] / l) < 1e-3f);
+        }
+        printf("gravity wire: 2000 points, the nearest as the walk over all\n");
+    }
     /* two equal pulls that cancel give no direction; a gravity switched off is left out */
     assert(!gravity_at(two, 2, (float[3]){0, 0, 0}, v));
     unsigned char off[2] = {1, 0};

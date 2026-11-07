@@ -157,9 +157,16 @@ static int cone(const Gravity *g, const float p[3], float dir[3], float *dist)
 
 static const float *wire_pts; /* the wires' points, after the records */
 const unsigned char *gravity_off;
+/* a wire's segments in runs of WCHUNK, each run's points in a sphere (bounds): a run whose sphere is farther than the
+ * nearest point found so far holds no nearer one and is passed over (the same point: the walk keeps the first nearest,
+ * a run passed over has none as near). ~5 ms a frame in KoopaBattleVs3 went to its wires' walks */
+#define WCHUNK 4
+#define MAX_WCH 4096
+static float wch[MAX_WCH][4];
+static int nwch, *wch0; /* wch0[gravity]: its first run, -1 none (bounds) */
 
 /* One gravity's raw vector (direction * 4e6 / r^2), PlanetGravity::calcGravity. Returns 0 when out of range. */
-static int one(const Gravity *g, const float p[3], float v[3])
+static int one(const Gravity *g, int gi, const float p[3], float v[3])
 {
     float dir[3], radius, rel[3], up[3];
     switch (g->kind) {
@@ -276,8 +283,15 @@ static int one(const Gravity *g, const float p[3], float v[3])
     case GRAV_WIRE: { /* WireGravity::calcOwnGravityVector: the nearest point of its polyline */
         const float *w = wire_pts + 3 * (int)g->p[0];
         float best = -1.0f, q[3], d[3];
+        int ch = wch0 && gi >= 0 ? wch0[gi] : -1;
         for (int i = 0; i + 1 < (int)g->p[1]; i++) {
             float f[3];
+            if (ch >= 0 && i % WCHUNK == 0 && best >= 0) {
+                const float *c = wch[ch + i / WCHUNK];
+                sub(d, p, c);
+                float lo = len(d) - c[3] - 1.0f; /* (1: a margin for rounding) */
+                if (lo > 0 && lo * lo > best) { i += WCHUNK - 1; continue; }
+            }
             foot(f, p, w + 3 * i, w + 3 * i + 3);
             sub(d, f, p);
             if (dot(d, d) < best || best < 0) { best = dot(d, d); q[0] = f[0]; q[1] = f[1]; q[2] = f[2]; }
@@ -303,6 +317,7 @@ static int one(const Gravity *g, const float p[3], float v[3])
 static const Gravity *bound_of;
 static int bound_n;
 static float bound_c[MAX_BOUNDS][3], bound_r2[MAX_BOUNDS];
+static int bound_wch[MAX_BOUNDS];
 
 void gravity_reset(void) { bound_of = 0; bound_n = 0; }
 
@@ -310,6 +325,25 @@ static void bounds(const Gravity *g, int n)
 {
     bound_of = g; bound_n = n;
     wire_pts = (const float *)(g + n);
+    wch0 = bound_wch; nwch = 0;
+    for (int i = 0; i < n && i < MAX_BOUNDS; i++) {
+        bound_wch[i] = -1;
+        if (g[i].kind != GRAV_WIRE) continue;
+        int np = (int)g[i].p[1], nr = (np - 2 + WCHUNK) / WCHUNK;
+        if (np < 2 || nwch + nr > MAX_WCH) continue;
+        const float *w = wire_pts + 3 * (int)g[i].p[0];
+        bound_wch[i] = nwch;
+        for (int r = 0; r < nr; r++, nwch++) { /* points r WCHUNK .. (r + 1) WCHUNK: its segments' ends */
+            int a = r * WCHUNK, b = a + WCHUNK < np - 1 ? a + WCHUNK : np - 1;
+            float lo[3], hi[3], d[3], far = 0;
+            for (int k = 0; k < 3; k++) lo[k] = hi[k] = w[3 * a + k];
+            for (int j = a; j <= b; j++)
+                for (int k = 0; k < 3; k++) { lo[k] = fminf(lo[k], w[3 * j + k]); hi[k] = fmaxf(hi[k], w[3 * j + k]); }
+            for (int k = 0; k < 3; k++) wch[nwch][k] = (lo[k] + hi[k]) * 0.5f;
+            for (int j = a; j <= b; j++) { sub(d, w + 3 * j, wch[nwch]); if (dot(d, d) > far) far = dot(d, d); }
+            wch[nwch][3] = sqrtf(far);
+        }
+    }
     for (int i = 0; i < n && i < MAX_BOUNDS; i++) {
         const Gravity *q = &g[i];
         float R = q->range + q->distant, r = -1.0f;
@@ -420,7 +454,7 @@ static inline void visit(const Gravity *g, int i, const float p[3], float total[
         if (dot(d, d) >= bound_r2[i])
             return;
     }
-    if (!one(&g[i], p, v))
+    if (!one(&g[i], g == bound_of && i < MAX_BOUNDS ? i : -1, p, v))
         return;
     if (g[i].priority > *best) {
         *best = g[i].priority;
