@@ -232,7 +232,7 @@ static void st_flag_test(void)
 }
 #endif
 /* ---- MapObj classes by placed type: their per-row state (StSt, kept across rebinds) ---- */
-enum { ST_NONE = 1, ST_TWALL, ST_MIRRORMODEL, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW };
+enum { ST_NONE = 1, ST_TWALL, ST_MIRRORMODEL, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP };
 /* Placed classes whose Petari behaviour is the model drawn with its animations and collision (the engine's generic
  * instance does that): LavaGalaxyParts.cpp (LavaShellTowerStep, LavaStepA / B / C: startBtk / Brk / Bpk / Btp of its
  * name, collision, clipping; ponytail: the steps' DLMakerProjmapEffectMtxSetter lava glow is baked at slice time and
@@ -258,6 +258,7 @@ static int st_kind_name(const char *n)
     if (!strcmp(n, "FlexibleSandPlanetPartsA")) return ST_FLEX; /* FlexibleSphere */
     if (!strcmp(n, "TrialBubbleTimerMoveWallA")) return ST_TMWALL; /* TimerMoveWall */
     if (!strcmp(n, "TeresaPicture") || !strcmp(n, "KinokoOneUpPicture")) return ST_TEXSW; /* SimpleTextureSwitchChangeObj */
+    if (!strcmp(n, "SeaBottomTriplePropeller")) return ST_TRIPROP;
     if (!strcmp(n, "SurprisedGalaxy") || (!strncmp(n, "Surp", 4) && strlen(n) > 10 && !strcmp(n + strlen(n) - 6, "Galaxy"))) return ST_SURP;
     for (u32 k = 0; k < sizeof st_still / sizeof *st_still; k++) if (!strcmp(n, st_still[k])) return ST_STILL;
     return ST_NONE;
@@ -601,6 +602,16 @@ static void st_objs_update(void)
             }
             break;
         }
+        case ST_TRIPROP: /* SeaBottomTriplePropeller::exeWait: its BCK (the class's clip), the level SE at each propeller
+                          * joint (AudSeKeeper); its PropellerCap / Propeller collisions on the root and Propeller1-3
+                          * (slice.py KCL_PARTS, JOINT_KCL_ONLY). ponytail: its demo's Break (kill) not registered */
+            if (in->anim && in->anim->skin == in->md->skin && !in->invisible)
+                for (int j = 1; j < 4 && j < (int)in->md->skin->njoints; j++) {
+                    float jm[16];
+                    mat_mul(jm, in->m, in->anim->world[j]);
+                    g->lv[j - 1] = se_level(SE_OJ_LV_O_TRIPLE_PROP_MOVE, &jm[12], g->lv[j - 1]);
+                }
+            break;
         case ST_DOMEGALAXY: { /* AstroDomeDemoAstroGalaxy::init: setBrkFrameAndStop 2 with grand star 5, 1 with 3, else 0
                                * (slice.py BRK_STEPS: "<class>~<frame>") */
             char n[40];

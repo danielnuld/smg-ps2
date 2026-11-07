@@ -1223,6 +1223,12 @@ there needs the embedded blob and every pack rebuilt.
   table; one fade table per model a frame; DarknessRoomAir / TwilightAir / DimensionAir still without run-time fades.
   Repack: slice_all.py EggStarGalaxy, TearDropGalaxy, OceanFloaterLandGalaxy, OceanPhantomCaveGalaxy, HeavensDoorGalaxy.
 
+- SeaBottomTriplePropeller (feat/396-triple-propeller, 2026-11-07): after Petari (statics.inc ST_TRIPROP): skinned
+  (SKINNED_OBJ: its BCK loops), PropellerCap on the root and propeller.kcl on Propeller1-3 (slice.py KCL_PARTS takes a
+  tuple of joints: one collision on several; JOINT_KCL_ONLY, game.c's joint parts), SE_OJ_LV_O_TRIPLE_PROP_MOVE at each
+  joint. Test: plain XF="-DST_VISIT=SeaBottomTriplePropeller -DST_VISIT_D=2500.0f" OceanFloaterLandGalaxy/1. ponytail:
+  its demo's Break (kill) not registered; as HoneyQueen's, the joint collisions are made at a rebind once it has its
+  Anim. Repack: slice_all.py OceanFloaterLandGalaxy, sound.py its sound.bin.
 - TeresaPicture / KinokoOneUpPicture (feat/394-texchange, 2026-11-07): SimpleTextureSwitchChangeObj after Petari
   (statics.inc ST_TEXSW): SimpleMapObj::init's TexChange BTK at arg1 (-1 none), changeTexture's frame 1 on its SW_A's
   rise, as models "<class>~<frame>": slice.py BRK_STEPS now also bakes a BTK's frame into the UVs (btk_matrix, the
@@ -1994,7 +2000,7 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
   Yes: Meta, the spin driver out). Tests: plain XF="-DST_VISIT=<Class> [-DST_VISIT_K=k -DST_VISIT_D=d]" (camera on
   that row), `fat` XF="-DTG_TEST=1|2" AstroGalaxy/1 (feed both / their rings), -DST_TWALL_TEST, -DST_SURP_TEST.
   Left (statics agent):
-  SeaBottomTriplePropeller (one KCL on three joints), the Tamakoro family (TamakoroWithTutorial, BallOpener,
+  the Tamakoro family (TamakoroWithTutorial, BallOpener,
   JumpHole, ConcreteBlock: Mario's star ball ride is not ported), AstroDomeAsteroid
   (SphereSelector's handled transform), FlexibleSphere, BegomanSpring, Syati / TalkSyati, SpinningBox,
   BombBird, JumpGuarder, WaterBazooka, BallBeamer, MagnumKiller, PenguinRacerLeader,
