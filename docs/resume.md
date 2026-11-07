@@ -1917,3 +1917,9 @@ CollapsePlane's collision shrink (makeEqualScale's mean), OtaKingMagma's collisi
   KCL_JOINT). Test: plain XF=-DST_BB_TEST OceanFloaterLandGalaxy/1 (rings round the planet, Mario shocked).
   ponytail: Erase BRK, bloom, ring shadows, shadow volume. Repack: OceanFloaterLandGalaxy, OceanPhantomCaveGalaxy
   (KCL_JOINT BallBeamer, EXTRA JumpBeamerBeam) + sound.py --pack.
+- SubmarineVolcanoBigColumn (2026-11-07): SubmarineVolcanoBigColumn.cpp in statics.inc (ST_BIGCOL) and
+  SkeletalFishBossBattleDirector::tryColumnCollision in skeletal_fish_boss.inc: the boss head's body sensor (400)
+  striking a column's collision (kcl_query) breaks it: rumble / shake 強 / 弱 within 800, model hidden, collision
+  off, SubmarineVolcanoBigColumnBreak (slice.py EXTRA, skinned) playing Break, SE_OJ_SMN_VOLC_COL_L_BREAK, killed
+  when it stops. Test: plain XF=-DST_COL_TEST SkullSharkGalaxy/1 (strikes beside the first column: break, gone).
+  Repack: SkullSharkGalaxy (EXTRA / SKINNED_OBJ SubmarineVolcanoBigColumnBreak).

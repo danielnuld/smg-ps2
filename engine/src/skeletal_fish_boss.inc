@@ -11,7 +11,7 @@
  * rail, and attack Mario on sight.
  * ponytail: the BRKs / BVAs (Base, DamageNColor, Crack, Down, the guards' Attack ones: colours at their first frame), no
  * shadows, no bloom (turnOnNormalBloom, the LightBloom models), no centre screen blur, no image effect, no bird louse
- * (BirdLouseS / L not ported: appear / killBirdLouse), no tryColumnCollision (SubmarineVolcanoBigColumn not ported), no
+ * (BirdLouseS / L not ported: appear / killBirdLouse), no
  * デモ終了後カメラ (programmable camera: the game camera at once), the power star from the engine's appear point (not
  * _150 * (0, 1573, 0)), no camera register vector, no head enemy attack on other enemies, no guard Numb (2P pointer),
  * the guards' Appear base matrix as the others' (front _D0, up against gravity) */
@@ -648,6 +648,7 @@ static void update_sfk(void)
         sfg_movement();
         sfk_update_bgm();
     } else sfk_pose();
+    if (sfk.nrv != SK_DEAD && sfk.nrv != SK_APPEARWAIT) st_column_strike(tb_mulp(sfk.head, v3(0, -120.0f, 320.0f)), 400.0f); /* tryColumnCollision (statics.inc) */
     sfk_head_touch();
 }
 static void sfk_draw(void)

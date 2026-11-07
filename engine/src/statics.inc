@@ -232,7 +232,7 @@ static void st_flag_test(void)
 }
 #endif
 /* ---- MapObj classes by placed type: their per-row state (StSt, kept across rebinds) ---- */
-enum { ST_NONE = 1, ST_TWALL, ST_MIRRORMODEL, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN };
+enum { ST_NONE = 1, ST_TWALL, ST_MIRRORMODEL, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL };
 /* Placed classes whose Petari behaviour is the model drawn with its animations and collision (the engine's generic
  * instance does that): LavaGalaxyParts.cpp (LavaShellTowerStep, LavaStepA / B / C: startBtk / Brk / Bpk / Btp of its
  * name, collision, clipping; ponytail: the steps' DLMakerProjmapEffectMtxSetter lava glow is baked at slice time and
@@ -254,6 +254,7 @@ static int st_kind_name(const char *n)
     if (!strcmp(n, "LavaBallRisingPlanetLava")) return ST_LAVABALL;
     if (!strcmp(n, "KoopaShipManholeCover")) return ST_MANHOLE; /* ManholeCover */
     if (!strcmp(n, "LargeChain")) return ST_CHAIN;
+    if (!strcmp(n, "SubmarineVolcanoBigColumn")) return ST_BIGCOL;
     if (!strcmp(n, "TrialBubbleTimerMoveWallA")) return ST_TMWALL; /* TimerMoveWall */
     if (!strcmp(n, "SurprisedGalaxy") || (!strncmp(n, "Surp", 4) && strlen(n) > 10 && !strcmp(n + strlen(n) - 6, "Galaxy"))) return ST_SURP;
     for (u32 k = 0; k < sizeof st_still / sizeof *st_still; k++) if (!strcmp(n, st_still[k])) return ST_STILL;
@@ -268,6 +269,7 @@ static int st_kind(int type)
 }
 typedef struct { int row, n, st, on; const unsigned char *kcl; u32 lv[3]; V3 off; } StSt; /* n its nerve, st its step */
 static StSt st_st[128];
+static void st_column(Inst *in, StSt *g); /* SubmarineVolcanoBigColumn (below) */
 static int nst_st;
 static const Scene *st_st_sc;
 static StSt *st_get(int row)
@@ -576,6 +578,7 @@ static void st_objs_update(void)
         case ST_TMWALL: st_tmwall(in, g); break;
         case ST_MANHOLE: st_manhole(in, g, i); break;
         case ST_CHAIN: if (st_chain(in, g)) return; break;
+        case ST_BIGCOL: st_column(in, g); break;
         case ST_DOMEGALAXY: { /* AstroDomeDemoAstroGalaxy::init: setBrkFrameAndStop 2 with grand star 5, 1 with 3, else 0
                                * (slice.py BRK_STEPS: "<class>~<frame>") */
             char n[40];
@@ -750,6 +753,52 @@ static void st_bbeamers_draw(void)
     }
 }
 
+/* SubmarineVolcanoBigColumn.cpp after Petari (SubmarineVolcanoBigColumn; SubmarineVolcanoSmallColumn is placed
+ * nowhere): Wait; SkeletalFishBossBattleDirector::tryColumnCollision: the boss head's body sensor (400) striking its
+ * collision (checkStrikeBall) sends it an enemy attack: Break: startRumbleWithShakeCameraWeak 強 / 弱 within 800 / any,
+ * its model hidden, its collision off, its break model (<name>Break, slice.py EXTRA) out playing Break,
+ * SE_OJ_SMN_VOLC_COL_L_BREAK; killed once that clip stops. StSt n: 0 Wait, 1 Break */
+static const Model *st_col_break(void) { return scene_model(sc, "SubmarineVolcanoBigColumnBreak"); }
+static void st_column_strike(V3 c, float r) /* tryColumnCollision */
+{
+    Hit h[8];
+    int n = kcl_query(c, r, h, 8);
+    for (int j = 0; j < n; j++) {
+        if (h[j].inst < 0) continue;
+        Inst *in = &insts[h[j].inst];
+        if (strcmp(sc->types + 32 * sc->objs[in->row].type, "SubmarineVolcanoBigColumn")) continue;
+        StSt *g = st_get(in->row);
+        if (g->n) continue; /* receiveMsgEnemyAttack: Wait only */
+        g->n = 1; g->st = 0;
+        rumble_shake_weak(v3(in->m[12], in->m[13], in->m[14]), RUMBLE_STRONG, RUMBLE_WEAK, 800.0f, 3.4e38f);
+        in->invisible = 1; in->kcl = NULL; /* hideModel, invalidateHitSensors, invalidateCollisionParts */
+        se_start(SE_OJ_SMN_VOLC_COL_L_BREAK, &in->m[12]);
+        printf("submarine volcano big column %d: break%c", in->row, 10);
+        return; /* (one a frame) */
+    }
+}
+static void st_column(Inst *in, StSt *g)
+{
+    if (g->n != 1) return;
+    in->invisible = 1; in->kcl = NULL; /* (kept over a rebind) */
+    const Model *md = st_col_break();
+    Anim *a = md && md->skin ? obj_anim(16 * (int)sc->nobjs + in->row, md, "SubmarineVolcanoBigColumnBreak") : NULL;
+    if (a && g->st == 0) anim_play(a, "submarinevolcanobigcolumnbreak/break", 1.0f, 0, 0); /* startBck(mBreakModel, Break) */
+    else if (a) anim_update(a);
+    if (!a || (g->st > 0 && a->done)) { g->n = 2; row_kill(in->row); printf("submarine volcano big column %d: gone%c", in->row, 10); }
+}
+static void st_columns_draw(void)
+{
+    const Model *md = st_col_break();
+    if (!md || !md->skin) return;
+    for (int i = 0; i < ninsts; i++) {
+        Inst *in = &insts[i];
+        if (st_kind(sc->objs[in->row].type) != ST_BIGCOL || st_get(in->row)->n != 1) continue;
+        Anim *a = obj_anim(16 * (int)sc->nobjs + in->row, md, "SubmarineVolcanoBigColumnBreak");
+        if (a) draw_skin(md, in->m, a); /* (its base matrix, the column's) */
+    }
+}
+
 #ifdef ST_TWALL_TEST /* plain build XF=-DST_TWALL_TEST, HeavenlyBeachGalaxy/1: Mario Ice from frame 300 to 400 */
 static void st_twall_test(void)
 {
@@ -816,8 +865,27 @@ static void st_bb_test(void)
     }
 }
 #endif
+#ifdef ST_COL_TEST /* plain build XF=-DST_COL_TEST, SkullSharkGalaxy/1: from frame 300 the camera on the first
+                     * SubmarineVolcanoBigColumn, at 400 a 400 sphere struck at its place (tryColumnCollision's) */
+static void st_col_test(void)
+{
+    if (game_frame < 300) return;
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if (strcmp(sc->types + 32 * r->type, "SubmarineVolcanoBigColumn")) continue;
+        V3 p = row_pos(r);
+        camera_set_override(1, vadd(p, v3(3000.0f, 1500.0f, 0.0f)), vadd(p, v3(0, 1000.0f, 0)), v3(0, 1, 0), 45.0f);
+        if (game_frame == 400) { printf("col test: strike row %u (%d %d %d)%c", i, (int)p.x, (int)p.y, (int)p.z, 10); for (int h = 0; h <= 3000; h += 300) for (int x = 0; x <= 2000; x += 200) st_column_strike(vadd(p, v3((float)x, (float)h, 0)), 400.0f); }
+        if (game_frame % 30 == 0) printf("col test f %u: row %u dead %d n %d%c", game_frame, i, row_dead[i], st_get((int)i)->n, 10);
+        return;
+    }
+}
+#endif
 static void st_update(void)
 {
+#ifdef ST_COL_TEST
+    st_col_test();
+#endif
 #ifdef ST_BB_TEST
     st_bb_test();
 #endif
@@ -838,4 +906,5 @@ static void st_draw(void)
 {
     st_flags_draw();
     st_bbeamers_draw();
+    st_columns_draw();
 }
