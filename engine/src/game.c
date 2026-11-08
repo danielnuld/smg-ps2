@@ -5610,6 +5610,17 @@ static void game_rebind_(void)
                 in->m[8] = z.x * sz; in->m[9] = z.y * sz; in->m[10] = z.z * sz;
             }
         }
+        if (!strncmp(name, "EarthenPipe", 11)) /* EarthenPipe::init: drawn and collided on its Top joint (makeMtxUpFrontPos
+            * up / front / the top, unscaled: mScale.y 1), calcTrans(1). The bind pose drew its rim at the placement and
+            * its body under the ground (#527: a red ring). ponytail: rigid model, the Bottom joint stays 350 under the
+            * top (Petari: 50 under the placement), out of sight in the ground; the hidden pipe's rise not drawn */
+        { /* (as game_init's Pipe: the first rebind comes before it) */
+            V3 x, z, pos = row_pos(r);
+            row_axes(r, &x, &z);
+            V3 up = r->arg[6] > 0 ? vcross(z, x) : up_at(pos, vcross(z, x));
+            basis_matrix(in->m, vadd(pos, vmul(up, 100.0f * r->scale[1])), up, z, 0);
+            in->s = 1.0f; in->reach = md->radius;
+        }
         /* NPCActor _A0 / _B0: initDefaultPosAndQuat's placement turn (its matrix's axes, set just above) */
         in->nu = in->nu0 = vnorm(v3(in->m[4], in->m[5], in->m[6])); in->nf = in->nf0 = vnorm(v3(in->m[8], in->m[9], in->m[10]));
         if (in->rotor && row_angle) rotor_matrix(in);
@@ -49796,6 +49807,7 @@ typedef struct {
     int pressure, notc, active, linked, baby;
     float speed;       /* WalkerStateRunaway::mRunawaySpeed */
     int talk;          /* its talker (-1 none) */
+    const char *act;   /* the action last started (gw_ract) */
     const char *want;  /* its action, started once its instance's anim is made (a rebind after showModel) */
     V3 mpos; V3 mup, mfront; /* Mario's pose blended to it (exeCaught) */
 } GwRabbit;
@@ -49876,7 +49888,7 @@ static void gw_body_init(GwRabbit *r, int row)
     r->k.row = row;
     r->k.pos = row_pos(&sc->objs[row]);
     kuribo_init(&r->k);
-    r->talk = -1; r->sw_was = 0; r->want = NULL;
+    r->talk = -1; r->sw_was = 0; r->want = r->act = NULL;
 }
 static const char *gw_rcls(const GwRabbit *r) /* slice.py names the TrickRabbit archive's clips after the placed class */
 { return r->baby ? "TrickRabbitBaby" : sc->types + 32 * sc->objs[r->k.row].type; }
@@ -49884,6 +49896,7 @@ static void gw_ract(GwRabbit *r, const char *clip)
 {
     Inst *in = gw_inst(r->k.row);
     r->want = in && in->anim ? NULL : clip;
+    r->act = clip;
     gw_play(r->k.row, gw_rcls(r), clip, 4);
 }
 /* the binder's step with its gravity: onCalcGravity, the move, the ground / wall */
@@ -50151,10 +50164,15 @@ static void rr_update(GwRabbit *r, int i)
             float t = (r->pressure - 200) / (float)dec;
             t = t < 0 ? 0 : t > 1 ? 1 : t;
             speed = 1.8f + (0.5f - 1.8f) * t;
-            gw_ract(r, speed < 1.3f ? "RunTired" : "Run");
+            /* startAction on the playing action goes on with it (XanimePlayer::changeAnimation: the same one returns);
+             * restarted every frame it froze the rabbit's pose while Mario chased it (#527) */
+            const char *run = speed < 1.3f ? "RunTired" : "Run";
+            if (!r->act || strcmp(r->act, run)) gw_ract(r, run);
         }
         { float dep; if (in_water(r->k.pos, r->k.qy, &dep)) speed *= 0.3f; } /* isBindedGroundWater: sAwayTargetVelocityRate */
         r->speed = speed;
+        { Inst *in = gw_inst(r->k.row); /* setBckRate(sMinRunBckRate 0.9, sMaxRunBckRate 1.4) */
+          if (in && in->anim) in->anim->speed = speed < 0.9f ? 0.9f : speed > 1.4f ? 1.4f : speed; }
         /* attackSensor: the Catch sensor (Spine, 30) on Mario's body */
         V3 spine = vadd(r->k.pos, vmul(r->k.qy, 50.0f));
         if (r->notc == 0 && mario_touch(spine, 30.0f) && gw.catching < 0 && !dx_busy()) gw_caught(r);
@@ -50227,6 +50245,9 @@ static void rt_update(int c)
 {
     int row = gw.tico[c];
     if (row < 0 || gw.tnrv[c] == RT_DEAD) return;
+    /* shown again (appear): its instance and pose come with the next rebind; its first step waits for them (its
+     * Appear clip unstarted never stopped, and the SE read a null instance: the hang on a catch, #527) */
+    if (gw.tstep[c] < 0 && gw.tnrv[c] >= RT_WAIT && gw.tnrv[c] <= RT_TALK && (!gw_inst(row) || !gw_inst(row)->anim)) return;
     int st = ++gw.tstep[c];
     const char *cls = c == 0 ? "TicoBaby" : "RunawayTico";
     switch (gw.tnrv[c]) {

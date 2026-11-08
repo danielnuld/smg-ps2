@@ -508,7 +508,8 @@ BRK_POSE = {"Tico": ("colorchange", 0), "TicoFat": ("normal", 0), "Rosetta": ("n
             "WaterBazooka": ("damage", 0), "ElectricBazooka": ("damage", 0), "WaterBazookaCapsule": ("damage", 0), "MogucchiShooter": ("normal", 0),  # startBrk + setBrkFrameAndStop(0) / startBrk Normal
             "WaterBazookaBreak": ("break", 0), "ElectricBazookaBreak": ("break", 0),
             "HanachanHead": ("normal", 0), "HanachanBody": ("normal", 0), "HanachanBodyS": ("normal", 0),
-            "PrizeRing": ("loop", 0)}  # PrizeRing::exeStart: startBrk Loop, setBrkFrameAndStop(0) (ponytail: Loop / Timeout / End not played)  # HanachanParts::init: startBrk Normal  # TicoFat: startBrk Normal, frame 0 (ponytail: FatRed as it grows)
+            "PrizeRing": ("loop", 0),  # PrizeRing::exeStart: startBrk Loop, setBrkFrameAndStop(0) (ponytail: Loop / Timeout / End not played)  # HanachanParts::init: startBrk Normal  # TicoFat: startBrk Normal, frame 0 (ponytail: FatRed as it grows)
+            "EarthenPipe": ("earthenpipe", 0)}  # EarthenPipe::init: startBrk EarthenPipe, setBrkFrameAndStop(arg7) (NoInit: 0, the green pipe)
 
 
 def bvas_entries(arc, model, shapes):
