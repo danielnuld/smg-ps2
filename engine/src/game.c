@@ -44996,6 +44996,11 @@ static void put_test(void)
         if (row >= 0) { camera_start_pos_end(); camera_set_override(1, vadd(mario->pos, v3(0, 1000, 3000)), vadd(mario->pos, v3(0, 1000, 0)), v3(0, 1, 0), 45.0f); }
 #endif
         printf("put test: %s row %d" "\n", PUT_STR(PUT_TEST), row);
+#ifdef PUT_SW_B_OF /* -DPUT_SW_B_OF=n: then the SW_B of the rows whose SW_A is n turned on (PhantomGalaxy/6: the star's
+                   * door switch 30, its DeathCube's SwitchSynchronizerReverse 54) */
+        for (u32 i = 0; i < sc->nobjs; i++)
+            if (sc->objs[i].sw[SW_A] == PUT_SW_B_OF && sc->objs[i].sw[SW_B] >= 0) sw_set(&sc->objs[i], SW_B, 1);
+#endif
     }
     if (row >= 0 && t % 60 == 0) {
         const Inst *in = NULL;
