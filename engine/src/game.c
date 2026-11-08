@@ -685,6 +685,7 @@ static void bva_apply(const Model *md, const char *key, float frame)
         ((Model *)md)->vu[g].hide = e && g / 32 < e[35] ? ((const u32 *)(e + 36))[f * e[35] + g / 32] >> (g % 32) & 1 : 0;
 }
 static const char *bva_key; /* draw_skin: a BVA started apart from the clip (startBva), at bva_frame; else the clip's */
+static const u8 *btp_over; static float btp_over_f; /* draw_skin: a BTP started apart from the clip (startBtp), at btp_over_f */
 static float bva_frame;
 static int sbp_bva_row = -1; /* StinkBugParent without its child (update_sbp) */
 static int nchg; /* ChipGroup states made (chip_group_of) */
@@ -720,8 +721,10 @@ static void draw_skin(const Model *md, const float m[16], Anim *a)
         const char *cn = sc->clips[a->clip_id].name;
         typeof(bc[0]) *c = &bc[a->clip_id & 255];
         if (c->name != cn) { c->name = cn; c->e = btp_entry(cn); }
-        btp_apply(md, c->e, a->frame);
+        if (btp_over) btp_apply(md, btp_over, btp_over_f);
+        else btp_apply(md, c->e, a->frame);
     }
+    btp_over = NULL;
     if (md->nbvas) { /* its visibility: a BVA started apart, else its clip's same-name one */
         if (bva_key) bva_apply(md, bva_key, bva_frame);
         else bva_apply(md, a->clip_id >= 0 ? sc->clips[a->clip_id].name : NULL, a->frame);
@@ -5965,6 +5968,7 @@ int game_test_enemy(int kind, int k, int how)
         if (how == 6) { mario->grounded = 1; mario->face = vmul(side, -1.0f); } /* 90 off, facing it: walking into it */
         if (how == 8) { mario->pos = vadd(vadd(e->pos, vmul(vnorm(vtangent(e->qz, e->up)), 900.0f)), vmul(e->up, 50.0f)); mario->vup = 0; } /* 900 before it */
         if (how == 9) { mario->pos = vadd(vadd(e->pos, vmul(vnorm(vtangent(e->qz, e->up)), 600.0f)), vmul(e->up, 50.0f)); mario->vup = 0; } /* 600 before it */
+        if (how == 10 && e->kind == WALK_TAKOHEI) { mario->grounded = 1; e->nrv = 7; e->step = -1; } /* 90 off it, put in AttackSign (TH_ATTACKSIGN: no attack, its body pushes him and is pushed) */
         return e->row;
     }
     return -1;
@@ -32166,8 +32170,10 @@ static void draw_shadow(V3 pos, V3 up, V3 front, float rs, float rf, float off, 
  * star piece: Swoon (StunStart, Stun, SWOON_S; 180), Recover (StunEnd, RECOVER, 20). Death effect, EXPLODE_S. Ground
  * friction 0.85, air 0.99 with gravity 1.5; NonActive past 3000 on the ground. The ink (16 at most) falls 0.8 x 0.99,
  * breaks on the map or after 240 (INK_BREAK, Break) and hurts Mario at 50.
- * ponytail: no star pointer bind (WalkerStateBindStarPointer), no AnimScaleController push squash, no BTP blinks
- * (only an action's own BTP plays), no PressDown (the binder has no roof), no move
+ * Its eyes' BTPs as each nerve starts them (Open, Blink every 60 in Wait / Walk, Search, Blink in Pursue, Cry, Angry,
+ * BlinkTwice when pushed or recovering; again as its no-push time _E4 runs out), pushed its AnimScaleController
+ * squashes it (startAndAddScaleVelocityY 0.15 from Mario, 0.1 from an enemy).
+ * ponytail: no star pointer bind (WalkerStateBindStarPointer), no PressDown (the binder has no roof), no move
  * limit collision; an explosion punches it as a shell does; the ink's Wait clip is not played */
 #define TAKO_INKS 16
 static struct { V3 pos, vel; int t, on, bound; } tinks[TAKO_INKS];
@@ -32175,7 +32181,29 @@ enum { TH_NONACTIVE, TH_WAIT, TH_WALK, TH_FINDTURN, TH_FIND, TH_PURSUE, TH_COOLD
        TH_SWOON, TH_RECOVER, TH_PRESSDOWN, TH_HIPDROPDOWN, TH_FLATDOWN, TH_PUNCHDOWN };
 static int th_down(const Kuribo *k) { return k->nrv == TH_HIPDROPDOWN || k->nrv == TH_FLATDOWN || k->nrv == TH_PRESSDOWN || k->nrv == TH_PUNCHDOWN; }
 static int th_can_attack(const Kuribo *k) { return k->nrv >= TH_WAIT && k->nrv <= TH_COOLDOWN; }
-static int th_push_movable(const Kuribo *k) { return k->timer <= 0 && !th_down(k) && k->nrv != TH_NONACTIVE && k->nrv != TH_ATTACKSUCCESS && k->nrv != TH_SWOON; }
+enum { THB_NONE, THB_OPEN, THB_BLINK, THB_BLINKTWICE, THB_SEARCH, THB_CRY, THB_ANGRY }; /* its BTP (lvt[1], frame lva[0]) */
+static const float kr_asc[7];
+static void th_btp(Kuribo *k, int b) /* MR::startBtp */
+{
+    k->lvt[1] = b; k->lva[0] = 0.0f;
+#ifdef TAKO_TEST
+    static const char *const n[] = {"", "open", "blink", "blinktwice", "search", "cry", "angry"};
+    char key[40];
+    snprintf(key, sizeof key, "takohei/%s", n[b % 7]);
+    if (b != 2) printf("takohei row %d: btp %s (%s)\n", k->row, n[b % 7], btp_entry(key) ? "in the pack" : "missing");
+#endif
+}
+static void th_pushed(Kuribo *k, V3 dir, int player) /* receiveMsgPush, isPushMovable: BlinkTwice, the push, its squash, _E4 */
+{
+    th_btp(k, THB_BLINKTWICE);
+    k->vel = vadd(k->vel, vmul(dir, player ? 12.0f : 5.0f)); /* sPushMarioAccel, sPushAccel */
+    k->to += player ? 0.15f : 0.1f; asc_start(k, ASC_ANIM); /* startAndAddScaleVelocityY: sPushScaleYMarioSpeed / sPushScaleYSpeed */
+    k->jc = player ? 60 : 20; /* sNoPushMarioTime, sNoPushTime */
+#if defined(TAKO_TEST) || defined(PUSH_TEST)
+    printf("takohei row %d: pushed by %s, scale velocity %.2f\n", k->row, player ? "Mario" : "an enemy", k->to);
+#endif
+}
+static int th_push_movable(const Kuribo *k) { return k->jc <= 0 && !th_down(k) && k->nrv != TH_NONACTIVE && k->nrv != TH_ATTACKSUCCESS && k->nrv != TH_SWOON; }
 /* reboundVelocityFromCollision(0, 0, 1): the velocity into the map taken off */
 static void w_rebound0(Kuribo *k)
 {
@@ -32236,7 +32264,8 @@ static void takohei_update(Kuribo *k)
     float s = w_scale(k);
     if (!k->front.x && !k->front.y && !k->front.z) { /* init, initAfterPlacement */
         kuribo_init(k);
-        k->item = 0; k->timer = 0;
+        k->item = 0; k->jc = 0; /* _E4 */
+        k->from = 1.0f; k->to = 0.0f; asc_start(k, ASC_STOP); /* AnimScaleController(nullptr) */
         w_nrv(k, TH_WAIT); k->step = 0;
     }
     k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f);
@@ -32247,12 +32276,14 @@ static void takohei_update(Kuribo *k)
 #endif
     switch (k->nrv) {
     case TH_NONACTIVE:
-        if (st == 0) k->bind_off = 1;
+        if (st == 0) { k->bind_off = 1; th_btp(k, THB_OPEN); }
         k->vel = v3(0, 0, 0);
         if (d < 3000.0f) { k->bind_off = 0; w_nrv(k, TH_WAIT); } /* tryActive */
         break;
     case TH_WAIT:
-        if (st == 0) w_act(k, "Wait");
+        if (st == 0) { w_act(k, "Wait"); th_btp(k, THB_OPEN); }
+        if (k->jc == 1) th_btp(k, THB_OPEN);
+        if (st % 60 == 59) th_btp(k, THB_BLINK);
         th_normal_vel(k);
         if (th_sight(k)) w_nrv(k, TH_FINDTURN);
         else if (st > 120) w_nrv(k, TH_WALK);
@@ -32260,9 +32291,11 @@ static void takohei_update(Kuribo *k)
         break;
     case TH_WALK: {
         if (st == 0) { /* decideNextTargetPos */
-            w_act(k, "Walk");
+            w_act(k, "Walk"); th_btp(k, THB_OPEN);
             k->ttarget = vadd(vtangent(v3(frand(-500.0f, 500.0f), frand(-500.0f, 500.0f), frand(-500.0f, 500.0f)), vnorm(k->grav)), k->tcenter);
         }
+        if (k->jc == 1) th_btp(k, THB_OPEN);
+        if (st % 60 == 59) th_btp(k, THB_BLINK);
         th_turn(k, k->ttarget, 6.0f);
         if (st > 10) w_add_move(k, vsub(k->ttarget, k->pos), 0.2f);
         th_normal_vel(k);
@@ -32273,18 +32306,20 @@ static void takohei_update(Kuribo *k)
         break;
     }
     case TH_FINDTURN:
-        if (st == 0) { w_act(k, "Turn"); w_se(k, SE_EM_TAKOHEI_FIND); }
+        if (st == 0) { w_act(k, "Turn"); th_btp(k, THB_OPEN); w_se(k, SE_EM_TAKOHEI_FIND); }
+        if (k->jc == 1) th_btp(k, THB_OPEN);
         th_turn(k, mario->pos, 6.0f);
         th_normal_vel(k);
         if (st > 20) w_nrv(k, TH_FIND);
         break;
     case TH_FIND:
-        if (st == 0) w_act(k, "Search");
+        if (st == 0) { w_act(k, "Search"); th_btp(k, THB_SEARCH); }
         th_normal_vel(k);
         if (st > 30) w_nrv(k, TH_PURSUE);
         break;
     case TH_PURSUE: {
-        if (st == 0) w_act(k, "Run");
+        if (st == 0) { w_act(k, "Run"); th_btp(k, THB_BLINK); }
+        if (k->jc == 1) th_btp(k, THB_BLINK);
         int far = d >= 700.0f;
         w_add_move(k, far ? vsub(mario->pos, k->pos) : vsub(k->pos, mario->pos), 0.5f);
         th_turn(k, mario->pos, 6.0f);
@@ -32296,12 +32331,13 @@ static void takohei_update(Kuribo *k)
         break;
     }
     case TH_COOLDOWN: /* (its turn at 0 degrees a frame: none) */
-        if (st == 0) w_act(k, "CoolDown");
+        if (st == 0) { w_act(k, "CoolDown"); th_btp(k, THB_CRY); }
+        if (k->jc == 1) th_btp(k, THB_CRY);
         th_normal_vel(k);
         if (st > 60) w_nrv(k, th_sight(k) ? TH_PURSUE : TH_WAIT);
         break;
     case TH_ATTACKSIGN:
-        if (st == 0) w_act(k, "ShotStart");
+        if (st == 0) { w_act(k, "ShotStart"); th_btp(k, THB_ANGRY); }
         w_se_lv(k, SE_EM_TAKOHEI_LV_PRE_SPIT_OUT);
         th_turn(k, mario->pos, 8.0f);
         if (th_check_front(k)) k->vel = vadd(k->vel, vmul(k->front, -0.1f));
@@ -32318,25 +32354,25 @@ static void takohei_update(Kuribo *k)
         if (w_bck_stopped(k)) w_nrv(k, TH_WAIT);
         break;
     case TH_ATTACKSUCCESS:
-        if (st == 0) w_act(k, "Attack");
+        if (st == 0) { w_act(k, "Attack"); th_btp(k, THB_ANGRY); }
         th_normal_vel(k);
         if (st > 60) w_nrv(k, TH_WAIT);
         break;
     case TH_SWOON:
-        if (st == 0) w_act(k, "StunStart");
+        if (st == 0) { w_act(k, "StunStart"); th_btp(k, THB_CRY); }
         if (!strcmp(k->act, "StunStart") && w_bck_stopped(k)) w_act(k, "Stun"); /* isBckOneTimeAndStopped */
         if (!strcmp(k->act, "Stun")) w_se_lv(k, SE_EM_LV_SWOON_S);
         th_normal_vel(k);
         if (st > 180) w_nrv(k, TH_RECOVER);
         break;
     case TH_RECOVER:
-        if (st == 0) { w_act(k, "StunEnd"); w_se(k, SE_EV_TAKOHEI_RECOVER); }
+        if (st == 0) { w_act(k, "StunEnd"); th_btp(k, THB_BLINKTWICE); w_se(k, SE_EV_TAKOHEI_RECOVER); }
         th_normal_vel(k);
         if (st > 20) w_nrv(k, TH_WAIT);
         break;
     case TH_PRESSDOWN: case TH_HIPDROPDOWN: case TH_FLATDOWN:
         if (st == 0) {
-            w_act(k, k->nrv == TH_FLATDOWN ? "FlatDown" : "HipDropDown");
+            w_act(k, k->nrv == TH_FLATDOWN ? "FlatDown" : "HipDropDown"); th_btp(k, THB_CRY);
             w_se(k, k->nrv == TH_FLATDOWN ? SE_EM_TAKOHEI_STOMPED : SE_EM_TAKOHEI_STOMPED_L);
             k->vel = v3(0, 0, 0);
         }
@@ -32344,7 +32380,7 @@ static void takohei_update(Kuribo *k)
         break;
     case TH_PUNCHDOWN:
         if (st == 0) {
-            w_act(k, "PunchDown");
+            w_act(k, "PunchDown"); th_btp(k, THB_CRY);
             turn_on_plane(&k->front, vsub(mario->pos, k->pos), k->grav, -1.0f); /* turnDirectionToTarget */
             scene_stop = 2; w_se(k, SE_EM_TAKOHEI_HITPUNCH); w_se(k, SE_PM_SPIN_HIT);
         }
@@ -32354,8 +32390,10 @@ static void takohei_update(Kuribo *k)
     }
     k->step++;
     k->act_t += k->act_rate;
+    k->lva[0] += 1.0f; /* its BTP's frame */
     if (k->nrv != TH_NONACTIVE) { /* control */
-        if (k->timer > 0) k->timer--;
+        asc_update(k, kr_asc); /* _8C->updateNerve (AnimScaleController(nullptr)'s defaults) */
+        if (k->jc > 0) k->jc--;
         w_blend_quat(k, k->on_ground ? k->gn : vmul(k->grav, -1.0f), k->front, 0.1f, 0.2f); /* updatePose */
     }
     w_bind(k, 90.0f * s);
@@ -32375,10 +32413,7 @@ static void takohei_update(Kuribo *k)
         } else mario_push_out(c, 50.0f * s);
     } else if (!th_can_attack(k) && mario_touch(c, 70.0f * s)) { /* its body: sendMsgPush both ways */
         mario_push_out(c, 70.0f * s);
-        if (th_push_movable(k)) {
-            V3 dir = vnorm(vsub(c, mc));
-            k->vel = vadd(k->vel, vmul(dir, 12.0f)); k->timer = 60; /* receiveMsgPush: sPushMarioAccel, sNoPushMarioTime */
-        }
+        if (th_push_movable(k)) th_pushed(k, vnorm(vsub(c, mc)), 1); /* receiveMsgPush from Mario */
     }
 }
 static void update_tako_inks(void) /* TakoHeiInk::exeWait, attackSensor */
@@ -32946,8 +32981,8 @@ static void bg_permit_update(void);
  * (poihana.inc, stink.inc). StringSpider (body 80 x s): takes half the overlap, its velocity reflected (0.25) off an
  * enemy taking its push. Snakehead: its head / jaws push (their EnemyAttackStrong taken by no walker here), its body pushes from the rail line within
  * 100 / 300 (sendMsgPush from the foot). BombTeresa (body 85 x s): in Drift / DriftRelease an enemy taking its EnemyAttackExplosion makes it explode, else it
- * pushes; pushed it takes 3. ponytail: Teresa and BombBird are not in the pass; TakoHei's BlinkTwice / scale velocity and BombHei's
- * thrown rebound are not played; the walkers outside wp_sensors are one point in the sensor list */
+ * pushes; pushed it takes 3. ponytail: Teresa and BombBird are not in the pass; BombHei's
+ * thrown rebound is not played; the walkers outside wp_sensors are one point in the sensor list */
 static int kr_broken(const Kuribo *k);
 static int th_down(const Kuribo *k);
 static int mb_down(const Kuribo *k);
@@ -33140,10 +33175,7 @@ static int wp_receive_(Kuribo *b, const WSen *rb, Kuribo *a, const WSen *sa) /* 
     case WALK_MKOOPA: wp_from_push(b, 3.0f, sa->c, rb->c, 0); return 1; /* (not from the player) */
     case WALK_TAKOHEI: { /* not on its attack sensor, from an enemy: isPushMovable: += 5 from the sender, sNoPushTime 20 */
         if (rb->atk || sa->map) return 0;
-        if (b->lvt[0] > 0 || th_down(b) || b->nrv == TH_NONACTIVE || b->nrv == TH_ATTACKSUCCESS || b->nrv == TH_SWOON) return 1;
-        V3 d = vsub(rb->c, sa->c);
-        if (vlen(d) > 1e-6f) b->vel = vadd(b->vel, vmul(vnorm(d), 5.0f));
-        b->lvt[0] = 20;
+        if (th_push_movable(b)) { V3 d = vsub(rb->c, sa->c); th_pushed(b, vlen(d) > 1e-6f ? vnorm(d) : d, 0); }
         return 1;
     }
     case WALK_METBO: { /* not down: 1.5 away from the sender's actor */
@@ -33247,7 +33279,7 @@ static void wp_attack(Kuribo *a, const WSen *sa, Kuribo *b, const WSen *rb) /* a
     case WALK_BOMBHEI: if (sa->body && !rb->map && a->nrv != BH_LAUNCH && a->nrv != BH_EXPLODE) wp_push_kill(a, sa, b, rb); break;
     case WALK_TAKOHEI: /* not its attack sensor, an enemy; pushed and isPushMovable: its velocity into it cut */
         if (sa->atk || rb->map || !wp_receive(b, rb, a, sa)) break;
-        if (a->lvt[0] > 0 || th_down(a) || a->nrv == TH_NONACTIVE || a->nrv == TH_ATTACKSUCCESS || a->nrv == TH_SWOON) break;
+        if (!th_push_movable(a)) break;
         {
             V3 d = vsub(sa->c, rb->c);
             if (vlen(d) > 1e-6f) { d = vnorm(d); float f = vdot(a->vel, d); if (f < 0.0f) a->vel = vsub(a->vel, vmul(d, f)); }
@@ -33306,7 +33338,6 @@ static void walker_push_pass(void) /* ponytail: the first WP_MAX walkers with se
     for (int i = 0; i < nkuribo && n < WP_MAX; i++) {
         Kuribo *k = &kuribo[i];
         if (k->state == KURIBO_DEAD || !row_shown(k->row) || (k->clipped && !test_noclip) || (k->host && k->kind != WALK_BOMBTERESA)) continue; /* (clipped: invalidateBySystem; Polta's BombTeresas: theirs) */
-        if (k->kind == WALK_TAKOHEI && k->lvt[0] > 0) k->lvt[0]--; /* control: _E4 */
         int c = wp_sensors(k, sen[n]);
         if (c < 0) { hs_add(k->pos, 0.0f, k->kind == WALK_BUTTERFLY ? HS_ANIMAL : HS_ENEMY, k->row); continue; } /* ponytail: one point at its place */
         for (int x = 0; x < c; x++) hs_add(sen[n][x].c, sen[n][x].r, HS_ENEMY, k->row);
@@ -55688,9 +55719,15 @@ void game_draw(void)
                 }
                 if (k->kind == WALK_BOMBTERESA) bt_tongue(k, m, a); /* calcAndSetBaseMtx: its tongue's JointControlDelegators */
                 if (k->kind == WALK_MERAMERA) mm_btp(k, md);
+                if (k->kind == WALK_TAKOHEI && k->lvt[1]) { /* its eyes: startBtp */
+                    static const char *const thb[] = {"", "open", "blink", "blinktwice", "search", "cry", "angry"};
+                    char key[40];
+                    snprintf(key, sizeof key, "takohei/%s", thb[k->lvt[1] % 7]);
+                    btp_over = btp_entry(key); btp_over_f = k->lva[0];
+                }
                 if (k->kind == WALK_TERESA) { ts_draw(k, md, m, a); continue; } /* its _D4, transparency, dummy model */
                 if (k->kind == WALK_MKOOPA && k->nrv == MKM_FIRE) fx_named(walker_cls(k), "Fire", m, (const float (*)[16])a->world, k); /* emitEffect Fire (its joint) */
-                if (k->kind == WALK_KCHIEF || k->kind == WALK_SAMBOHEAD || k->kind == WALK_KARON || (k->kind == WALK_BOMBBIRD && k->len > 0.0f)) { /* setBaseScale(mScaleController->_C x mScale) */
+                if (k->kind == WALK_KCHIEF || k->kind == WALK_SAMBOHEAD || k->kind == WALK_KARON || k->kind == WALK_TAKOHEI || (k->kind == WALK_BOMBBIRD && k->len > 0.0f)) { /* setBaseScale(mScaleController->_C x mScale) */
                     float sy = k->kind == WALK_BOMBBIRD ? k->len : k->from, sx = sqrtf(1.0f / sy);
                     for (int j = 0; j < 3; j++) { m[j] *= sx; m[4 + j] *= sy; m[8 + j] *= sx; }
                 }
