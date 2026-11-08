@@ -876,7 +876,20 @@ static struct {
     int chain_ok, tlock1;          /* the tail active (activate: resetJoint done); node 1 locked */
     float t18;                     /* DinoPackunTail _18 (addAccelToBck: DinoPackunStateAwake) */
     Anim *anim, *brk;              /* its pose; its egg shell break model's (mShellBreakModel) */
+    int vs;                        /* its sequencer's getVsCount: 1 DinoPackunVs1, 2 DinoPackunVs2 */
+    int fire, fire_t, bfire;       /* DinoPackunStateFire (DF_*), its frames; DinoPackunBall _125 (setDamageFire) */
+    int fxhb, fxtail;              /* HeadFire / BodyFire on it, TailFire on its ball (emitEffect .. deleteEffect) */
+    float tc;                      /* DinoPackunTail _C (the bend power's scale: 1.5 while it walks / chases) */
+    int f34, f38, f39, f3a, f3b, f3c, f3d; /* DinoPackunBattleVs2Lv1's flags (_34 the walk's turn side, _38 tail fires,
+                                    * _39 mouth fires, _3A the short walk, _3B angry, _3C fire at appear, _3D crazy) */
+    V3 track_last;                 /* DinoPackunBattleVs2Lv1 _28: the last track fire's place */
 } dino = {.row = -1};
+/* DinoPackunFire (16, DinoPackunFireHolder) and DinoPackunTrackFire (64, DinoPackunTrackFireHolder): Vs2's fires */
+#define DINO_FIRES 16
+#define DINO_TRACKS 64
+static struct { V3 pos, vel, up; float q[4]; int alive, nrv, t; } dfire[DINO_FIRES];
+static struct { V3 pos, vel, up; int alive, nrv, t; } dtrack[DINO_TRACKS];
+static const Model *m_dfire;
 static const Model *m_dino, *m_dball, *m_degg, *m_deggcrack, *m_deggbrk;
 /* OtaKing (Petari Boss/OtaKing.cpp, Enemy/CocoNutBall.cpp, Enemy/FireBall.cpp, Enemy/FireBubble.cpp): one per scene */
 #define OTA_BALLS 3
@@ -2639,9 +2652,12 @@ void game_init(const Scene *s, const unsigned char *blob)
             break;
         }
     for (u32 i = 0; i < s->nobjs; i++)
-        if (strcmp(s->types + 32 * s->objs[i].type, "DinoPackun") == 0) {
+        if (strcmp(s->types + 32 * s->objs[i].type, "DinoPackun") == 0 || strcmp(s->types + 32 * s->objs[i].type, "DinoPackunVs2") == 0) {
             V3 x, z;
             row_axes(&s->objs[i], &x, &z);
+            dino.vs = s->types[32 * s->objs[i].type + 10] == 'V' ? 2 : 1; /* MR::createDinoPackunVs1 / createDinoPackunVs2 */
+            dino.tc = 1.0f; /* DinoPackunTail::_C */
+            memset(dfire, 0, sizeof dfire); memset(dtrack, 0, sizeof dtrack);
             dino.row = i; dino.pos = row_pos(&s->objs[i]); dino.up = up_at(dino.pos, v3(0, 1, 0));
             dino.f = vnorm(vtangent(z, dino.up)); dino.side = 1.0f;
             dino.bpos = vsub(dino.pos, vmul(dino.f, 600.0f));
@@ -5438,6 +5454,11 @@ static void game_rebind_(void)
     m_sambohead = scene_model(s, "CocoSamboHead");
     m_dino = scene_model(s, "DinoPackun"); m_dball = scene_model(s, "DinoPackunTailBall"); m_degg = scene_model(s, "DinoPackunEggShell");
     m_deggbrk = scene_model(s, "DinoPackunEggShellBreak"); m_deggcrack = scene_model(s, "DinoPackunEggShell#EggBroken");
+    if (scene_model(s, "DinoPackunVs2")) { /* DinoPackun2, its parts with their Vs2 BTP (slice.py EXTRA DinoPackunVs2) */
+        m_dino = scene_model(s, "DinoPackunVs2"); m_dball = scene_model(s, "DinoPackunTailBallVs2"); m_degg = scene_model(s, "DinoPackunEggShellVs2");
+        m_deggbrk = scene_model(s, "DinoPackunEggShellBreakVs2"); m_deggcrack = scene_model(s, "DinoPackunEggShellVs2#EggBroken");
+    }
+    m_dfire = scene_model(s, "DinoPackunFireBall");
     m_unizo[0] = scene_model(s, "Unizo"); m_unizo[1] = scene_model(s, "UnizoLand"); m_unizo[2] = scene_model(s, "UnizoShoal");
     int t_coin = scene_type(s, "Coin"), t_pc = scene_type(s, "PurpleCoin"), t_circle = scene_type(s, "CirclePurpleCoinGroup");
     int t_rail = scene_type(s, "PurpleRailCoin"), t_piece = scene_type(s, "StarPiece"), t_kuribo = scene_type(s, "Kuribo");
@@ -5468,7 +5489,7 @@ static void game_rebind_(void)
     ninsts = 0;
     int t_note = scene_type(s, "NoteFairy"), t_petari = scene_type(s, "Petari"), t_rockc = scene_type(s, "RockCreator"),
         t_wan = scene_type(s, "WanwanRolling"), t_wanm = scene_type(s, "WanwanRollingMini"),
-        t_wang = scene_type(s, "WanwanRollingGold"), t_dino = scene_type(s, "DinoPackun"), t_ota = scene_type(s, "OtaKing"), t_bsb = scene_type(s, "BossStinkBug"),
+        t_wang = scene_type(s, "WanwanRollingGold"), t_dino = scene_type(s, "DinoPackun"), t_dino2 = scene_type(s, "DinoPackunVs2"), t_ota = scene_type(s, "OtaKing"), t_bsb = scene_type(s, "BossStinkBug"),
         t_bk1 = scene_type(s, "BossKameck"), t_bk2 = scene_type(s, "BossKameck2"), t_tsp = scene_type(s, "TombSpider"), t_sfk = scene_type(s, "SkeletalFishBoss"), t_pol = scene_type(s, "Polta"), t_dodo = scene_type(s, "Dodoryu"),
         t_tama = scene_type(s, "TamakoroWithTutorial"), t_tamat = scene_type(s, "TamakoroTutorial");
     static signed char wnk[1024]; /* walker_new_kind by type this rebind: 0 not yet, 1 no, 2 yes */
@@ -5484,7 +5505,7 @@ static void game_rebind_(void)
             r->type == t_takobo || r->type == t_mkoopa || r->type == t_kari || r->type == t_kmini || r->type == t_karon || r->type == t_teresa || r->type == t_bfly ||
             r->type == t_rail || r->type == t_spg || r->type == t_flow || r->type == t_erail || r->type == t_ermv || r->type == t_stink || r->type == t_note ||
             r->type == t_uni || r->type == t_unil || r->type == t_unis || r->type == t_poi || r->type == t_petari || r->type == t_rockc || r->type == t_wan ||
-            r->type == t_wanm || r->type == t_wang || r->type == t_dino || r->type == t_ota || r->type == t_bsb || r->type == t_bk1 || r->type == t_bk2 || r->type == t_tsp || r->type == t_sfk || r->type == t_pol || r->type == t_dodo || r->type == t_tama || r->type == t_tamat ||
+            r->type == t_wanm || r->type == t_wang || r->type == t_dino || r->type == t_dino2 || r->type == t_ota || r->type == t_bsb || r->type == t_bk1 || r->type == t_bk2 || r->type == t_tsp || r->type == t_sfk || r->type == t_pol || r->type == t_dodo || r->type == t_tama || r->type == t_tamat ||
             (r->type < 1024 ? wnk[r->type] == 2 : walker_new_kind(s->types + 32 * r->type) >= 0))
             continue;
         const char *name = s->types + 32 * r->type;
@@ -7263,11 +7284,16 @@ int game_test_dino(void)
 {
     if (dino.row < 0) return -1;
     if (dino.phase == 0) { mario->pos = vadd(dino.pos, vadd(vmul(dino.f, 700.0f), vmul(dino.up, 200.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
-    else if ((dino.phase == 1 || dino.phase == 2) && dino.bstate == 0) {
+    else if ((dino.phase == 1 || dino.phase == 2) && dino.bstate == 0 && !dino.bfire) { /* (Vs2: not while it burns) */
         V3 out = vnorm(vtangent(vsub(dino.bpos, dino.pos), dino.up));
         mario->pos = vadd(dino.bpos, vmul(out, 150.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->hurt_timer = 0;
         mario->spin_timer = SPIN_TIME;
+    } else if (dino.phase == 2 && dino.bfire) { /* Vs2 burning: out of its sight, 1200 behind it */
+        mario->pos = vadd(dino.pos, vadd(vmul(dino.f, -1200.0f), vmul(dino.up, 100.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0;
     }
+#ifdef DINO_LOOK /* the camera on it from 1800 ahead, 900 up */
+    if (!dino_demo_on) camera_set_override(1, vadd(dino.pos, vadd(vmul(dino.f, 1800.0f), vmul(dino.up, 900.0f))), vadd(dino.pos, vmul(dino.up, 250.0f)), dino.up, 45);
+#endif
     return dino.phase * 100 + dino.hits * 10 + dino.bstate;
 }
 
@@ -9877,10 +9903,12 @@ static void update_bubbles(void)
  * no footprints, no Mario puppet clips in the demos, the head sensor at the Head joint only once the
  * model has streamed in (else 350 up, 200 ahead), velocity kept on the ground by collision (no binder) */
 enum { DSEQ_WAIT, DSEQ_OPENING, DSEQ_EGG, DSEQ_CRY, DSEQ_LV1, DSEQ_ANGRY, DSEQ_LV2, DSEQ_LV3, DSEQ_DOWN, DSEQ_GONE };
-enum { DN_START, DN_TURN, DN_WALK, DN_FIND, DN_CHASE, DN_COOLDOWN, DN_ATTACKHIT, DN_DAMAGE };
+enum { DN_START, DN_TURN, DN_WALK, DN_FIND, DN_CHASE, DN_COOLDOWN, DN_ATTACKHIT, DN_DAMAGE, DN_AWAKE, DN_FINDCRAZY, DN_CRAZY };
+enum { DF_NORMAL, DF_FIRESIGN, DF_FIRE, DF_COOL }; /* DinoPackunStateFire's nerves */
 enum { DD_PUNCHED, DD_PULLED, DD_EGGBROKEN, DD_DAMAGE, DD_LASTDAMAGE };
 static V3 dino_cam_at(void);
-static const int dseq_len[] = {0, 360, 0, 150, 0, 200, 0, 0, 319 + 60};
+/* its demos' frames (their BCKs; DownDemo: 385, then AppearPowerStar's sAppearPowerStarTime 60): DinoPackun / DinoPackun2 */
+static const int dseq_len[2][9] = {{0, 360, 0, 150, 0, 200, 0, 0, 385 + 60}, {0, 360, 0, 150, 0, 315, 0, 0, 385 + 60}};
 
 /* the old phase codes the test builds read: 0 waiting, 1 egg, 2 battle, 3 damage, 4 demo, 5 down, 6 gone, 7 opening */
 static void dino_phase(void)
@@ -9934,6 +9962,13 @@ static const char *dino_clip(int *loop)
         return c;
     }
     if (dino.seq == DSEQ_EGG) return "eggwalk";
+    if (dino.vs == 2) switch (dino.nrv) { /* DinoPackunBattleVs2Lv1 (DinoPackun2 has no Wait / CoolDown / Angry chase) */
+    case DN_TURN: return dino.side > 0 ? "turnright" : "turnleft";
+    case DN_WALK: return dino.f3b ? "angrywalk" : "walk";
+    case DN_AWAKE: case DN_FINDCRAZY: *loop = 0; return "find";
+    case DN_CHASE: case DN_CRAZY: return dino.f39 ? "firechase" : "chase";
+    default: *loop = 0; return "attackhit";
+    }
     switch (dino.nrv) {
     case DN_START: *loop = 0; return dino.nt < 44 ? "find" : angry ? "angrywait" : "wait";
     case DN_TURN: return angry ? "angrywalk" : dino.side > 0 ? "turnright" : "turnleft";
@@ -9953,7 +9988,7 @@ static void dino_pose(void)
 {
     if (dino.brk && m_deggbrk && m_deggbrk->skin && dino.nrv == DN_DAMAGE && dino.dnrv == DD_EGGBROKEN && dino.dt >= 30) {
         if (dino.brk->skin != m_deggbrk->skin) anim_bind(dino.brk, m_deggbrk->skin);
-        anim_play(dino.brk, "dinopackuneggshellbreak/break", 1.0f, 0, 0); /* exeEggBroken step 30: startBck Break */
+        anim_play(dino.brk, dino.vs == 2 ? "dinopackuneggshellbreakvs2/break" : "dinopackuneggshellbreak/break", 1.0f, 0, 0); /* exeEggBroken step 30: startBck Break */
         anim_update(dino.brk);
     }
     Anim *a = dino.anim;
@@ -9961,7 +9996,7 @@ static void dino_pose(void)
     if (a->skin != m_dino->skin) { anim_bind(a, m_dino->skin); dino.chain_ok = 0; }
     int loop;
     char n[48];
-    snprintf(n, sizeof n, "dinopackun/%s", dino_clip(&loop));
+    snprintf(n, sizeof n, "%s/%s", dino.vs == 2 ? "dinopackunvs2" : "dinopackun", dino_clip(&loop));
     anim_play(a, n, dino.seq == DSEQ_WAIT ? 0.0f : 1.0f, loop, 8);
     anim_pose(a);
     float m[16];
@@ -10019,7 +10054,7 @@ static void dino_pose(void)
             float cs = vdot(d0, d1);
             if (vlen(axis) > 1e-6f && cs < 1.1f) { /* makeAxisAndCosignVecToVec */
                 axis = vnorm(axis);
-                float rate = 1.0f - (cs + 1.0f) / 2.1f, k = rate * bend[i];
+                float rate = 1.0f - (cs + 1.0f) / 2.1f, k = dino.tc * (rate * bend[i]); /* _C x (rate x power) */
                 add[i] = vadd(add[i], vmul(vnorm(vcross(d1, axis)), k));
                 if (i >= 2) add[i - 2] = vadd(add[i - 2], vmul(vnorm(vcross(d0, axis)), k));
             }
@@ -10104,11 +10139,274 @@ static V3 dino_head(void)
 
 static void dino_set_nrv(int n) { dino.nrv = n; dino.nt = 0; }
 
+static void dino_foot(int step, int period);
+
+/* DinoPackunStateFire (the egg's and DinoPackunBattleVs2Lv1's): Normal (brk Normal, the ball harmless), FireSign
+ * (TailFire on the ball), Fire (setFire: TailFire, HeadFire, BodyFire, brk Awake / Heat, SE_BM_D_PAKKUN_TAIL_FIRE_ON,
+ * the ball burns: setDamageFire), Cool (SE_BM_D_PAKKUN_TAIL_FIRE_OFF, its fires deleted, TailFireMisFire, brk Cool:
+ * back to Normal once it stopped, 59 frames). ponytail: the BRKs (Awake / Heat / Cool / Normal colours) not played */
+static void dino_fire_set(int n)
+{
+    V3 bp = dino.bpos;
+    dino.fire = n; dino.fire_t = 0;
+    if (n == DF_FIRE) { dino.fxtail = dino.fxhb = 1; dino.bfire = 1; se_start(SE_BM_D_PAKKUN_TAIL_FIRE_ON, &bp.x); }
+    else if (n == DF_FIRESIGN) { dino.fxtail = 1; dino.bfire = 0; }
+    else if (n == DF_COOL) {
+        float m[16];
+        dino.fxtail = dino.fxhb = 0; dino.bfire = 0;
+        basis_matrix(m, dino.bpos, up_at(dino.bpos, dino.up), dino.f, 0);
+        fx_named("DinoPackunTailBall", "TailFireMisFire", m, NULL, NULL);
+    } else dino.bfire = 0;
+}
+static void dino_fire_req(int n) /* requestFire / requestFireDirect / requestFireSign / requestCool */
+{
+    if (n == DF_FIRE) { if (dino.fire != DF_FIRE) dino_fire_set(DF_FIRE); }
+    else if (n == -1) dino_fire_set(DF_FIRE); /* requestFireDirect: setFire, its BRKs at their end */
+    else if (n == DF_FIRESIGN) { if (dino.fire == DF_NORMAL || dino.fire == DF_COOL) dino_fire_set(DF_FIRESIGN); }
+    else if (dino.fire == DF_FIRESIGN || dino.fire == DF_FIRE) { se_start(SE_BM_D_PAKKUN_TAIL_FIRE_OFF, &dino.bpos.x); dino_fire_set(DF_COOL); }
+}
+
+/* DinoPackunTrackFireHolder / DinoPackunFireHolder::killAll (kill: DinoPackunFire's Break effect) */
+static void dino2_fires_kill(int balls)
+{
+    for (int i = 0; i < DINO_TRACKS; i++) dtrack[i].alive = 0;
+    for (int i = 0; balls && i < DINO_FIRES; i++)
+        if (dfire[i].alive) {
+            float m[16];
+            basis_matrix(m, dfire[i].pos, dfire[i].up, v3(0, 0, 1), 0);
+            fx_named("DinoPackunFireBall", "Break", m, NULL, NULL);
+            dfire[i].alive = 0;
+        }
+}
+
+/* DinoPackunBattleVs2Lv1::emitFireTail (_38): a track fire at the ball once it is 120 from the last one */
+static void dino2_fire_tail(void)
+{
+    if (!dino.f38) return;
+    for (int i = 0; i < DINO_TRACKS; i++)
+        if (!dtrack[i].alive) {
+            if (vlen(vsub(dino.track_last, dino.bpos)) < 120.0f) return;
+            dino.track_last = dino.bpos;
+            dtrack[i].pos = dino.bpos; dtrack[i].vel = v3(0, 0, 0); dtrack[i].up = up_at(dino.bpos, dino.up);
+            dtrack[i].alive = 1; dtrack[i].nrv = 0; dtrack[i].t = 0; /* appearAndSetPos: Wait */
+            se_start(SE_BM_D_PAKKUN_FIREBALL_S_ON, &dtrack[i].pos.x);
+            return;
+        }
+}
+
+/* emitFireMouth (_39): a fire ball from DownMouth1 at sShotMouthFireOffset (150, 150, 0), 50 along the joint's X,
+ * jumping 30, with its velocity */
+static void dino2_fire_mouth(void)
+{
+    if (!dino.f39 || !dino.anim || !m_dino || dino.anim->skin != m_dino->skin || dino.anim->skin->njoints <= 28) return;
+    for (int i = 0; i < DINO_FIRES; i++)
+        if (!dfire[i].alive) {
+            float m[16], jm[16];
+            basis_matrix(m, dino.pos, dino.up, dino.f, 0);
+            mat_mul(jm, m, dino.anim->world[28]);
+            V3 x = vnorm(v3(jm[0], jm[1], jm[2])), y = vnorm(v3(jm[4], jm[5], jm[6]));
+            dfire[i].pos = vadd(v3(jm[12], jm[13], jm[14]), vadd(vmul(x, 150.0f), vmul(y, 150.0f)));
+            dfire[i].up = up_at(dfire[i].pos, dino.up);
+            dfire[i].vel = vadd(vadd(vmul(x, 50.0f), vmul(dfire[i].up, 30.0f)), dino.vel); /* appearShot, addVelocityJump, addVelocity */
+            dfire[i].q[0] = dfire[i].q[1] = dfire[i].q[2] = 0; dfire[i].q[3] = 1;
+            dfire[i].alive = 1; dfire[i].nrv = 0; dfire[i].t = 0;
+            se_start(SE_BM_D_PAKKUN_FIREBALL_L_SHOOT, &dfire[i].pos.x); /* exeShot's first step */
+            return;
+        }
+}
+
+/* the fires (DinoPackunFire: Shot, gravity 2, x 0.98, rebound 0.8 / 15 / 0.4, Ground once landed after 120, gone at 450
+ * or 20 grounded; DinoPackunTrackFire: Wait, gravity 2, x 0.992, Ground once landed, 75 there or 300 in the air):
+ * both burn Mario (sendMsgEnemyAttackFire: 150 / 60). ponytail: the 2P pointer's kill of a track fire */
+static void dino2_fires(V3 c)
+{
+    static u32 lv[DINO_FIRES];
+    for (int i = 0; i < DINO_FIRES; i++) {
+        if (!dfire[i].alive) continue;
+        typeof(dfire[0]) *f = &dfire[i];
+        f->up = up_at(f->pos, f->up);
+        int st = f->t++;
+        if (f->nrv == 0) {
+            V3 hv = vtangent(f->vel, f->up), ax = vcross(f->up, hv);
+            float sp = vlen(hv);
+            if (sp > 1e-3f) { /* rotateQuatRollBall(150 x scale) */
+                float a = sp / 150.0f, s = sinf(a / 2), cq = cosf(a / 2);
+                ax = vnorm(ax);
+                float r[4] = {ax.x * s, ax.y * s, ax.z * s, cq}, *q = f->q, o[4];
+                o[0] = r[3] * q[0] + r[0] * q[3] + r[1] * q[2] - r[2] * q[1];
+                o[1] = r[3] * q[1] - r[0] * q[2] + r[1] * q[3] + r[2] * q[0];
+                o[2] = r[3] * q[2] + r[0] * q[1] - r[1] * q[0] + r[2] * q[3];
+                o[3] = r[3] * q[3] - r[0] * q[0] - r[1] * q[1] - r[2] * q[2];
+                memcpy(q, o, sizeof o);
+            }
+            f->vel = vmul(vadd(f->vel, vmul(f->up, -2.0f)), 0.98f);
+        } else f->vel = v3(0, 0, 0);
+        V3 p = vadd(f->pos, f->vel), gn = f->up, wn = f->up;
+        int wall = 0, gr = collide_n(&p, f->up, 150.0f, &gn, &wn, &wall);
+        if (gr || wall) { /* reboundVelocityFromCollision(0.8, 15, 0.4) */
+            V3 n = gr ? gn : wn;
+            float d = vdot(n, f->vel);
+            if (d < -15.0f) f->vel = vsub(vmul(vsub(f->vel, vmul(n, d)), 0.4f), vmul(n, d * 0.8f));
+            else if (d < 0) f->vel = vsub(f->vel, vmul(n, d));
+        }
+        f->pos = p;
+        if (f->nrv == 0 && st > 120 && gr) { f->nrv = 1; f->t = 0; f->vel = v3(0, 0, 0); }
+        else {
+            lv[i] = se_level(SE_BM_LV_D_PAKKUN_FIREBALL_L, &f->pos.x, lv[i]);
+            if ((f->nrv == 0 && st > 450) || (f->nrv == 1 && st > 20)) {
+                se_start(SE_BM_D_PAKKUN_FIREBALL_L_END, &f->pos.x);
+                float m[16];
+                basis_matrix(m, f->pos, f->up, v3(0, 0, 1), 0);
+                fx_named("DinoPackunFireBall", "Break", m, NULL, NULL); /* kill: emitEffect Break */
+                f->alive = 0;
+                continue;
+            }
+        }
+        if (vlen(vsub(c, f->pos)) < 150.0f + HIT_BODY_R) mario_attack(ATK_FIRERUN, f->pos);
+    }
+    for (int i = 0; i < DINO_TRACKS; i++) {
+        if (!dtrack[i].alive) continue;
+        typeof(dtrack[0]) *f = &dtrack[i];
+        f->up = up_at(f->pos, f->up);
+        int st = f->t++;
+        if (f->nrv == 0) {
+            f->vel = vmul(vadd(f->vel, vmul(f->up, -2.0f)), 0.992f);
+            V3 p = vadd(f->pos, f->vel), gn, wn;
+            int wall = 0;
+            if (collide_n(&p, f->up, 60.0f, &gn, &wn, &wall)) { f->nrv = 1; f->t = 0; f->vel = v3(0, 0, 0); }
+            else if (st > 300) { f->alive = 0; continue; }
+            f->pos = p;
+        } else if (st > 75) { f->alive = 0; continue; }
+        if (vlen(vsub(c, f->pos)) < 60.0f + HIT_BODY_R) mario_attack(ATK_FIRERUN, f->pos);
+    }
+}
+
+static int dino_cone(float dist, float deg) /* isInSightConePlayer(_E8, dist, deg) */
+{
+    V3 d = vsub(mario->pos, dino.pos);
+    float l = vlen(d);
+    return l < dist && (l < 1e-3f || vdot(vmul(d, 1.0f / l), dino.f) > cosf(deg * 0.0174533f));
+}
+static int dino_fan(float dist, float h, float v) /* isInSightFanPlayer(_E8, dist, h, v): isNearAngleDegreeHV */
+{
+    V3 d = vsub(mario->pos, dino.pos), t = vtangent(d, dino.up);
+    float l = vlen(d), tl = vlen(t);
+    if (l >= dist) return 0;
+    if (tl < 1e-3f) return 1;
+    return vdot(vmul(t, 1.0f / tl), dino.f) > cosf(h * 0.0174533f) && fabsf(atan2f(vdot(d, dino.up), tl)) < v * 0.0174533f;
+}
+static void dino_turn(V3 tt, float deg) /* turnDirectionDegree on the plane of its gravity */
+{
+    V3 side = vcross(dino.up, dino.f);
+    tt = vtangent(tt, dino.up);
+    if (vlen(tt) < 1e-3f) return;
+    float a = atan2f(vdot(tt, side), vdot(tt, dino.f)), mx = deg * 0.0174533f;
+    a = a > mx ? mx : a < -mx ? -mx : a;
+    dino.f = vnorm(vadd(vmul(dino.f, cosf(a)), vmul(side, sinf(a))));
+}
+static void dino_rot(float deg) { dino.f = rot_axis(dino.f, vmul(dino.up, -1.0f), deg * 0.0174533f); } /* rotateDirectionGravityDegree */
+
+/* DinoPackunVs2's actions starting (DinoPackunBattleEggVs2::appear, exeBattleLv1 / 2 / 3 + DinoPackunBattleVs2Lv1::appear) */
+static void dino2_appear(void)
+{
+    if (dino.seq == DSEQ_EGG) { dino.fire = DF_NORMAL; dino_fire_req(-1); dino_set_nrv(DN_TURN); return; } /* requestFireDirect */
+    if (dino.seq < DSEQ_LV1 || dino.seq > DSEQ_LV3 || dino.seq == DSEQ_ANGRY) return;
+    if (dino.seq == DSEQ_LV1) dino.fire = DF_NORMAL; /* its own DinoPackunStateFire (init: Normal) */
+    int k = dino.seq == DSEQ_LV1 ? 0 : dino.seq == DSEQ_LV2 ? 1 : 2;
+    static const signed char fl[3][6] = {{0, 0, 0, 0, 0, 0}, {1, 0, 0, 1, 1, 1}, {1, 1, 1, 1, 1, 0}}; /* _38 _39 _3D _3B _3A _3C */
+    dino.f38 = fl[k][0]; dino.f39 = fl[k][1]; dino.f3d = fl[k][2]; dino.f3b = fl[k][3]; dino.f3a = fl[k][4]; dino.f3c = fl[k][5];
+    if (dino.f3c) dino_fire_req(-1);
+    dino_set_nrv(dino.f3d ? DN_FINDCRAZY : DN_AWAKE);
+}
+
+/* updateOnOffFireTail(a1, a2, a3): Fire for the first a1 - a2 of each 2 x a1, FireSign for the last a3, Cool between */
+static void dino2_onoff(int step, int a1, int a2, int a3)
+{
+    int v9 = step % (2 * a1);
+    dino_fire_req(v9 < a1 - a2 ? DF_FIRE : v9 >= 2 * a1 - a3 ? DF_FIRESIGN : DF_COOL);
+    if (dino.fire == DF_FIRE) dino2_fire_tail();
+}
+
+/* DinoPackunBattleEggVs2 (Turn: updateTurn(30, 1.5); Walk: 0.75 a frame each way by 100, its fire by 200: Fire to 80,
+ * FireSign from 180, Cool between; updateWalk(750, 0.9, 40)) and DinoPackunBattleVs2Lv1 (Awake, Turn, Walk, Chase,
+ * FindCrazy, Crazy, AttackHit) without their Damage: -> its forward acceleration (addVelocityMoveToDirection) */
+static float dino2_nerve(int egg)
+{
+    int st = dino.nt - 1; /* the nerve's step */
+    float accel = 0;
+    V3 to = vsub(mario->pos, dino.pos), side = vcross(dino.up, dino.f);
+    if (egg) {
+        if (dino.nrv == DN_TURN) {
+            dino_turn(vmul(side, dino.side), 1.5f);
+            if (st > 30) dino_set_nrv(DN_WALK);
+        } else if (dino.nrv == DN_WALK) {
+            if (st == 0) dino.tc = 1.5f;
+            dino_rot(0.75f * ((st / 100) % 2 ? -1.0f : 1.0f));
+            int v4 = st % 200;
+            dino_fire_req(v4 < 80 ? DF_FIRE : v4 >= 180 ? DF_FIRESIGN : DF_COOL);
+            accel = 0.9f;
+            dino_foot(st, 40);
+            if (st > 750) { dino.side = (rand() & 1) ? 1.0f : -1.0f; dino_set_nrv(DN_TURN); }
+        }
+        return accel;
+    }
+    switch (dino.nrv) {
+    case DN_AWAKE: /* DinoPackunStateAwake::exeFind: 4 to him, until Find stops (59) */
+        dino_turn(to, 4.0f);
+        if (st >= 59) dino_set_nrv(DN_CHASE);
+        break;
+    case DN_WALK: {
+        if (st == 0) dino.f34 = !dino.f34;
+        dino.tc = 1.0f + 0.5f * fminf(st / 30.0f, 1.0f); /* calcNerveValue(30, 1, 1.5) */
+        if (dino_cone(1050.0f, 60.0f)) { dino.tc = 1.0f; dino_set_nrv(DN_AWAKE); break; } /* tryAwake */
+        int v3 = dino.f3b ? 75 : 100, v4 = dino.f3b ? 15 : 20;
+        dino_rot((dino.f3b ? 1.1f : 1.2f) * ((st / v3) % 2 == dino.f34 ? -1.0f : 1.0f));
+        dino2_onoff(st, v3, v4, 20);
+        accel = 1.0f; /* updateWalk(610 / 500, 1, 50) */
+        dino_foot(st, 50);
+        if (st > (dino.f3a ? 500 : 610)) { dino.side = dino.f34 ? -1.0f : 1.0f; dino.tc = 1.0f; dino_set_nrv(DN_TURN); }
+        break;
+    }
+    case DN_TURN:
+        dino2_fire_tail();
+        dino_turn(vmul(side, dino.side), 3.0f); /* updateTurn(60, 3) */
+        if (st > 60) dino_set_nrv(DN_WALK);
+        else if (dino_fan(1050.0f, 40.0f, 80.0f)) dino_set_nrv(DN_AWAKE);
+        break;
+    case DN_FINDCRAZY:
+        if (st == 0) dino_fire_req(DF_FIRE);
+        dino_turn(to, 3.0f);
+        if (st >= 59) dino_set_nrv(DN_CRAZY); /* isActionEnd: Find */
+        break;
+    case DN_CRAZY: case DN_CHASE: {
+        int crazy = dino.nrv == DN_CRAZY;
+        if (st == 0) dino_fire_req(DF_FIRE);
+        if (st % 201 == 32 || st % 201 == 132) dino2_fire_mouth(); /* checkPassBckFrame 32 / 132 (FireChase, 201) */
+        dino.tc = 1.0f + 0.5f * fminf(st / 30.0f, 1.0f);
+        if (crazy ? st < 60 || dino_cone(2000.0f, 45.0f) : dino_cone(2000.0f, 60.0f)) dino_turn(to, crazy ? 1.2f : 1.0f);
+        else dino_rot((crazy ? 1.4f : 2.0f) * ((st / 60) % 2 ? -1.0f : 1.0f));
+        dino_foot(st, 46);
+        if (crazy) dino2_onoff(st, 60, 10, 15); else dino2_fire_tail();
+        accel = (crazy ? 1.9f : 1.8f) * fminf(st / (crazy ? 30.0f : 45.0f), 1.0f);
+        if (crazy && st > 240 && dino_cone(1600.0f, 45.0f)) { dino.tc = 1.0f; dino_set_nrv(DN_FINDCRAZY); }
+        else if (!crazy && st > 120 && !dino_cone(2000.0f, 60.0f)) { dino.tc = 1.0f; dino_set_nrv(DN_WALK); }
+        break;
+    }
+    case DN_ATTACKHIT: /* requestFire, updateAttackHit (179) */
+        if (st == 0) dino_fire_req(DF_FIRE);
+        if (st >= 179) dino_set_nrv(DN_TURN);
+        break;
+    default: break;
+    }
+    return accel;
+}
+
 /* the sequencer's next action once one ends (DinoPackunVs1 exe*: updateActorStateAndNextNerve) */
 static void dino_next_seq(void)
 {
     dino.seq++; dino.t = 0;
-    if (dino.seq == DSEQ_EGG) dino_set_nrv(DN_TURN); /* DinoPackunBattleEgg::appear */
+    if (dino.vs == 2) dino2_appear();
+    else if (dino.seq == DSEQ_EGG) dino_set_nrv(DN_TURN); /* DinoPackunBattleEgg::appear */
     else if (dino.seq == DSEQ_LV1 || dino.seq == DSEQ_LV2) dino_set_nrv(DN_START); /* appear (Lv2: setStartFromDemo) */
     else if (dino.seq == DSEQ_LV3) dino_set_nrv(DN_FIND); /* setStartContinueBattle */
     if (dino.seq == DSEQ_OPENING || dino.seq == DSEQ_CRY || dino.seq == DSEQ_ANGRY || dino.seq == DSEQ_DOWN) dino_demo_reset();
@@ -10212,27 +10510,38 @@ static void update_dino(void)
         static u32 angry_lv;
         if ((dino.seq == DSEQ_OPENING || dino.seq == DSEQ_CRY || dino.seq == DSEQ_ANGRY || dino.seq == DSEQ_DOWN) && t == 1)
             bgm_stop(30); /* exeOpeningDemo / CryDemo / AngryDemo / DownDemo first step: stopStageBGM(30) */
-        if (dseq_len[dino.seq] && t == dseq_len[dino.seq]) { /* the demo's BCK stopped */
+        if (dseq_len[dino.vs == 2][dino.seq] && t == dseq_len[dino.vs == 2][dino.seq]) { /* the demo's BCK stopped */
             if (dino.seq == DSEQ_OPENING) bgm_start("MBGM_GALAXY_INTER");
             if (dino.seq == DSEQ_CRY) bgm_boss(4);   /* BossBgmID_DinoPackunA (03_A) */
             if (dino.seq == DSEQ_ANGRY) bgm_boss(5); /* BossBgmID_DinoPackunB (03_B) */
         }
         if (dino.seq == DSEQ_OPENING) {
+            if (t == 1 && dino.vs == 2) dino.fxtail = 1; /* DinoPackunVs2::exeOpeningDemo: emitEffect TailFire (brk Awake, Heat) */
             if (t == 29) { se_start(SE_DM_MEET_BOSS, NULL); se_start(SE_BV_D_PAKKUN_EGG_CREAK, at); se_start(SE_BM_D_PAKKUN_SLAVER, at); se_start(SE_BM_D_PAKKUN_EGG_CREAK, at); }
             if (t == 119) { se_start(SE_BM_D_PAKKUN_EGG_DIG_OUT, at); se_start(SE_BV_D_PAKKUN_EGG_GROAN, at); se_start(SE_BM_D_PAKKUN_SLAVER, at); }
             if (t == 246) se_start(SE_BM_D_PAKKUN_TAIL_ATTACK, at);
         } else if (dino.seq == DSEQ_ANGRY) {
             if (t == 1) { se_start(SE_BV_D_PAKKUN_EGG_GROAN, at); se_start(SE_BM_D_PAKKUN_SLAVER, at); }
-            if (t < 206) angry_lv = se_level(SE_BM_LV_D_PAKKUN_ANGRY, at, angry_lv);
+            if (t == 1 && dino.vs == 2) dino.fxtail = 1; /* DinoPackunVs2::exeAngryDemo: emitEffect TailFire (brk Heat) */
+            if (dino.vs == 1 || t < 206) angry_lv = se_level(SE_BM_LV_D_PAKKUN_ANGRY, at, angry_lv); /* Vs2: isLessStep 205 */
         } else if (dino.seq == DSEQ_DOWN) {
             if (t == 1) { se_start(SE_BV_D_PAKKUN_DIE, at); se_start(SE_BM_D_PAKKUN_SLAVER, at); }
             if (t == 320) se_start(SE_BM_D_PAKKUN_FALL_DOWN, at);
             if (t == 385) { se_start(SE_BM_D_PAKKUN_EXPLODE, at); pad_rumble(RUMBLE_VERY_STRONG); } /* its BCK stopped */
         } else if ((dino.seq == DSEQ_EGG || dino.seq == DSEQ_LV1 || dino.seq == DSEQ_LV2 || dino.seq == DSEQ_LV3) &&
                    dino.nrv == DN_TURN && dino.nt == 1) { /* DinoPackunBattleEgg / Vs1Lv1 / Vs1Lv2::exeTurn */
-            se_start(SE_BV_D_PAKKUN_EGG_WALK, at); se_start(SE_BM_D_PAKKUN_SLAVER, at);
-        } else if ((dino.seq == DSEQ_LV1 || dino.seq == DSEQ_LV2 || dino.seq == DSEQ_LV3) && dino.nrv == DN_CHASE && dino.nt == 1) {
-            se_start(SE_BV_D_PAKKUN_CHASE, at); se_start(SE_BM_D_PAKKUN_SLAVER, at); /* Vs1Lv1 / Vs1Lv2::exeChase */
+            se_start(SE_BV_D_PAKKUN_EGG_WALK, at);
+            if (!(dino.vs == 2 && dino.seq == DSEQ_EGG)) se_start(SE_BM_D_PAKKUN_SLAVER, at); /* (BattleEggVs2: "SE_BM_D_PAKKUN_LAVER", no such sound) */
+        } else if ((dino.seq == DSEQ_LV1 || dino.seq == DSEQ_LV2 || dino.seq == DSEQ_LV3) && dino.nt == 1 &&
+                   (dino.nrv == DN_CHASE || dino.nrv == DN_CRAZY || dino.nrv == DN_FINDCRAZY)) {
+            se_start(SE_BV_D_PAKKUN_CHASE, at); se_start(SE_BM_D_PAKKUN_SLAVER, at); /* exeChase / exeCrazy / exeFindCrazy */
+        } else if ((dino.seq == DSEQ_LV1 || dino.seq == DSEQ_LV2 || dino.seq == DSEQ_LV3) && dino.nt == 1 &&
+                   (dino.nrv == DN_FIND || dino.nrv == DN_AWAKE)) {
+            se_start(SE_BV_D_PAKKUN_FIND, at); se_start(SE_BM_D_PAKKUN_SLAVER, at); /* updateFind / DinoPackunStateAwake::exeFind */
+        } else if ((dino.seq == DSEQ_LV1 || dino.seq == DSEQ_LV2 || dino.seq == DSEQ_LV3) && dino.nrv == DN_FIND && dino.nt == 15) {
+            se_start(SE_BM_D_PAKKUN_LAND, at); /* updateFind(14): isStep 14 */
+        } else if ((dino.seq == DSEQ_LV1 || dino.seq == DSEQ_LV2 || dino.seq == DSEQ_LV3) && dino.nrv == DN_ATTACKHIT && dino.nt == 1) {
+            se_start(SE_BV_D_PAKKUN_GLAD, at); se_start(SE_BM_D_PAKKUN_SLAVER, at); /* updateAttackHit */
         }
     }
     if (dino.seq == DSEQ_WAIT) {
@@ -10240,8 +10549,8 @@ static void update_dino(void)
         dino_phase(); dino_pose();
         return;
     }
-    if (dseq_len[dino.seq]) { /* a demo */
-        if (dino.t >= dseq_len[dino.seq]) {
+    if (dseq_len[dino.vs == 2][dino.seq]) { /* a demo */
+        if (dino.t >= dseq_len[dino.vs == 2][dino.seq]) {
             if (dino.seq == DSEQ_DOWN) { /* AppearPowerStar: its star, it is gone */
                 bgm_after_boss(); /* exeAppearPowerStar (sAppearPowerStarTime): startAfterBossBGM */
                 dino.seq = DSEQ_GONE; row_kill(dino.row);
@@ -10262,7 +10571,8 @@ static void update_dino(void)
     if (battle) {
         /* tryFind: isInSightConePlayer 1000 / 80 (Lv2 1300 / 90) */
         int sees = !egg && dm < (lv2 ? 1300.0f : 1000.0f) && face > cosf((lv2 ? 90.0f : 80.0f) * 0.0174533f);
-        switch (dino.nrv) {
+        if (dino.vs == 2 && dino.nrv != DN_DAMAGE) accel = dino2_nerve(egg);
+        else switch (dino.nrv) {
         case DN_START: /* updateStart: 60 frames, then Chase */
             if (dino.nt >= 60) dino_set_nrv(DN_CHASE);
             break;
@@ -10300,6 +10610,7 @@ static void update_dino(void)
             if (dino.nt > (lv2 ? 30 : 90)) dino_set_nrv(DN_TURN);
             break;
         case DN_DAMAGE: /* DinoPackunStateDamage */
+            if (dino.vs == 2 && egg && dino.dt == 0 && dino.dnrv == DD_PUNCHED) dino.tc = 1.0f; /* BattleEggVs2::exeDamage */
             dino.dt++;
             if (dino.dnrv == DD_EGGBROKEN && dino.dt == 30) { camera_shake(SHAKE_STRONG); pad_rumble(RUMBLE_STRONG); /* the shell breaks */
                 float at[3] = {body.x, body.y, body.z};
@@ -10318,10 +10629,24 @@ static void update_dino(void)
         }
         /* contact (attackSensor) */
         float dist = vlen(vsub(c, body));
-        if (egg && dist < 400.0f + HIT_BODY_R) { /* the shell pushes him off (sendMsgPush) */
+        int took = 0;
+        if (dino.vs == 2 && egg && dist < 400.0f + HIT_BODY_R) took = mario_attack(ATK_FIRERUN, body); /* BattleEggVs2: the egg burns */
+        if (dino.vs == 2 && !egg && dino.nrv != DN_DAMAGE && dist < 200.0f + HIT_BODY_R && !(mario->spin_timer > 0 && !mario->hurt_timer)) {
+            int fire = dino.fire == DF_FIRE; /* DinoPackunBattleVs2Lv1::attackSensor */
+            if (dino.nrv == DN_CHASE || dino.nrv == DN_WALK || dino.nrv == DN_CRAZY) /* sendBlowAttackMessage */
+                took = mario_attack(vdot(dino.vel, vsub(c, body)) >= 0.0f ? (fire ? ATK_FIRERUN_STRONG : ATK_MAXIMUM) : (fire ? ATK_FIRERUN : ATK_STRONG), dino.pos);
+            else if (dino.nrv == DN_TURN || dino.nrv == DN_AWAKE) took = mario_attack(fire ? ATK_FIRERUN : ATK_STRONG, dino.pos);
+            if (took && !dino.f3d && dino.nrv != DN_ATTACKHIT && dino.nrv != DN_FINDCRAZY) dino_set_nrv(DN_ATTACKHIT);
+        }
+        if (took) {
+        } else if (egg && dist < 400.0f + HIT_BODY_R) { /* the shell pushes him off (sendMsgPush) */
             V3 out = vnorm(vtangent(vsub(c, body), up));
             mario->pos = vadd(mario->pos, vmul(out, 400.0f + HIT_BODY_R - dist));
-        } else if (!egg && dino.nrv != DN_DAMAGE && dino.nrv != DN_ATTACKHIT && dist < 200.0f + HIT_BODY_R) {
+        } else if (dino.vs == 2 && !egg && dist < 200.0f + HIT_BODY_R) { /* sendMsgPush; a spin: FlipWeakJump */
+            V3 out = vnorm(vtangent(vsub(c, body), up));
+            if (mario->spin_timer > 0 && !mario->hurt_timer) { mario->hvel = vmul(out, 10.0f); mario->vup = 15.0f; mario->grounded = 0; }
+            else mario->pos = vadd(mario->pos, vmul(out, 200.0f + HIT_BODY_R - dist));
+        } else if (dino.vs == 1 && !egg && dino.nrv != DN_DAMAGE && dino.nrv != DN_ATTACKHIT && dist < 200.0f + HIT_BODY_R) {
             if (mario->spin_timer > 0 && !mario->hurt_timer) { /* isMsgPlayerSpinAttack: sendMsgEnemyAttackFlipWeakJump */
                 V3 out = vnorm(vtangent(vsub(c, body), up));
                 mario->hvel = vmul(out, 10.0f); mario->vup = 15.0f; mario->grounded = 0;
@@ -10352,16 +10677,18 @@ static void update_dino(void)
     case 0: case 4: /* exeWait / exeRebound: gravity 1, x 0.9 */
         dino.bvel = vmul(vadd(dino.bvel, vmul(bup, -1.0f)), 0.9f);
         if (dino.bstate == 4 && dino.bt >= 180) { dino.bstate = 0; dino.bt = 0; }
-        if (dino.bstate == 0 && battle && dino.nrv != DN_DAMAGE && mario->spin_timer > 0 &&
+        if (dino.bfire && vlen(vsub(c, dino.bpos)) < 135.0f + HIT_BODY_R) mario_attack(ATK_FIRERUN, dino.bpos); /* DinoPackunBall::attackSensor (_125) */
+        else if (dino.bstate == 0 && battle && dino.nrv != DN_DAMAGE && mario->spin_timer > 0 &&
             vlen(vsub(c, dino.bpos)) < 135.0f + HIT_BODY_R + 60.0f) { /* requestPunch: PUNCHED_BALL to the head */
             V3 away = vtangent(vsub(dino.bpos, mario->pos), bup);
             away = vlen(away) > 1e-3f ? vnorm(away) : vmul(dino.f, -1.0f);
             dino.bvel = vadd(vmul(away, 120.0f), vmul(bup, 40.0f)); /* addVelocitySeparateHV 120, 40 */
             dino.bstate = 1; dino.bt = 0; scene_stop = 3; /* exeShoot: stopScene(3) */
+            if (dino.vs == 2) dino2_fires_kill(!egg); /* receiveOtherMsg: the damage message kills the fires */
             pad_rumble(RUMBLE_STRONG);
             dino.prev_nrv = dino.nrv; dino_set_nrv(DN_DAMAGE); dino.dnrv = DD_PUNCHED; dino.dt = 0; /* setNerve Damage */
             if (row_camset[dino.row] != -1) /* exePunched: startDamageCamera ("ダメージ", target mCamTargetMtx) */
-                dino_cam = camera_actor_start("DinoPackun", "ダメージ", (unsigned short)row_camset[dino.row], dino.up, dino.f, dino_cam_at());
+                dino_cam = camera_actor_start(dino.vs == 2 ? "DinoPackunVs2" : "DinoPackun", "ダメージ", (unsigned short)row_camset[dino.row], dino.up, dino.f, dino_cam_at());
             { float at[3] = {dino.bpos.x, dino.bpos.y, dino.bpos.z}, bt[3] = {body.x, body.y, body.z};
               se_start(SE_PM_SPIN_HIT, at); /* DinoPackunBall::exeShoot: startBlowHitSound */
               se_start(SE_BV_D_PAKKUN_SPIN_HIT, bt); se_start(SE_BM_D_PAKKUN_SLAVER, bt); } /* DinoPackunStateDamage: punched */
@@ -10383,6 +10710,7 @@ static void update_dino(void)
                 V3 dir = vnorm(vsub(dino.bpos, head));
                 dino.ddir = vdot(up, dir) > 0.7f ? 3 : vdot(side, dir) < 0.0f ? 2 : 1;
                 dino.dnrv = DD_PULLED; dino.dt = 0; demo_dino_damage = 1;
+                if (dino.vs == 2) dino_fire_req(DF_COOL); /* the damage state took it: requestCool */
             }
         }
         break;
@@ -10405,8 +10733,9 @@ static void update_dino(void)
             if (dino.nrv == DN_DAMAGE) { /* DinoPackunStateDamage: EggBroken / Damage / LastDamage */
                 float hm[16]; /* emitEffectHitBetweenSensors(Hit): between the ball and the head */
                 basis_matrix(hm, vmul(vadd(head, dino.bpos), 0.5f), up, dino.f, 0);
-                fx_named("DinoPackun", "Hit", hm, NULL, NULL);
+                fx_named(dino.vs == 2 ? "DinoPackunVs2" : "DinoPackun", "Hit", hm, NULL, NULL);
                 dino.dnrv = egg ? DD_EGGBROKEN : dino.seq == DSEQ_LV3 ? DD_LASTDAMAGE : DD_DAMAGE; dino.dt = 0;
+                if (dino.vs == 2) dino_fire_req(DF_COOL);
                 { float at[3] = {body.x, body.y, body.z}; /* exeEggBroken / exeDamage / exeLastDamage first steps */
                   if (egg) { se_start(SE_SY_VS_BOSS_DAMAGE_1, NULL); se_start(SE_BM_D_PAKKUN_EGG_BRK_HIT, at); se_start(SE_BV_D_PAKKUN_EGG_BREAK, at); }
                   else if (dino.dnrv == DD_LASTDAMAGE) { se_start(SE_SY_VS_BOSS_LAST_HIT, NULL); se_start(SE_BM_D_PAKKUN_LAST_DAMAGE, at); se_start(SE_BV_D_PAKKUN_LAST_DAMAGE, at); }
@@ -10433,10 +10762,16 @@ static void update_dino(void)
         float at[3] = {dino.bpos.x, dino.bpos.y, dino.bpos.z};
         drag = se_level(SE_BM_LV_D_PAKKUN_TAIL_DRAG, at, drag);
     }
-    if (dino.bstate == 0 && bground && vlen(dino.bvel) > 5.0f) { /* exeWait: TailDrag while it drags on the ground */
+    if (dino.bstate == 0 && bground && vlen(dino.bvel) > 5.0f && !dino.bfire) { /* exeWait: TailDrag (Vs2 _124: TailDragBlack) */
         float bm[16];
         basis_matrix(bm, dino.bpos, bup, dino.bvel, 0);
-        fx_named("DinoPackunBall", "TailDrag", bm, NULL, &dino.bvel);
+        fx_named("DinoPackunBall", dino.vs == 2 ? "TailDragBlack" : "TailDrag", bm, NULL, &dino.bvel);
+    }
+    if (dino.vs == 2) {
+        static u32 tf;
+        if (dino.bfire) tf = se_level(SE_BM_LV_D_PAKKUN_TAIL_FIRE, &dino.bpos.x, tf); /* DinoPackunBall::control (_125) */
+        if (battle && dino.fire == DF_COOL && ++dino.fire_t >= 59) dino_fire_set(DF_NORMAL); /* exeCool: isBrkStopped */
+        dino2_fires(c);
     }
     /* the tail's locks (DinoPackunBattleEgg::appear, StateDamage exePunched: node 1; exeEggBroken: the end until 30;
      * updateDamage unlocks node 1) and _18 (DinoPackunStateAwake: 0.015 x the ease-out over 30 during Find) */
@@ -10446,10 +10781,38 @@ static void update_dino(void)
         if (dino.dt < 30) { if (dino.bstate != 5) { dino.bstate = 5; dino.bt = 0; } }
         else if (dino.bstate == 5) { dino.bstate = 4; dino.bt = 0; } /* requestUnLockPosition: Rebound */
     }
-    { float u = fminf(dino.nt / 30.0f, 1.0f); dino.t18 = dino.nrv == DN_FIND ? 0.015f * (1.0f - (1.0f - u) * (1.0f - u)) : 0.0f; }
+    { float u = fminf(dino.nt / 30.0f, 1.0f); dino.t18 = (dino.nrv == DN_FIND || dino.nrv == DN_AWAKE) && battle ? 0.015f * (1.0f - (1.0f - u) * (1.0f - u)) : 0.0f; }
     #undef DINO_TURN_TO
     dino_phase();
     dino_pose();
+    if (dino.vs == 2) { /* HeadFire / BodyFire on DownMouth1 / Spine1, TailFire on the ball, the track fires' TrackFire */
+        float m[16];
+        int posed = dino.anim && m_dino && dino.anim->skin == m_dino->skin;
+        basis_matrix(m, dino.pos, dino.up, dino.f, 0);
+        if (dino.fxhb && posed) {
+            fx_named("DinoPackunVs2", "HeadFire", m, (const float (*)[16])dino.anim->world, &dino.fxhb);
+            fx_named("DinoPackunVs2", "BodyFire", m, (const float (*)[16])dino.anim->world, &dino.fxhb);
+            static u32 bf;
+            bf = se_level(SE_BM_LV_D_PAKKUN_BODY_FIRE, &body.x, bf);
+        }
+        if (dino.fxtail) {
+            basis_matrix(m, dino.bpos, up_at(dino.bpos, dino.up), dino.f, 0);
+            fx_named("DinoPackunTailBall", "TailFire", m, NULL, &dino.fxtail);
+        }
+        for (int i = 0; i < DINO_TRACKS; i++)
+            if (dtrack[i].alive) { /* makeMtxUpNoSupportPos(-gravity) */
+                basis_matrix(m, dtrack[i].pos, dtrack[i].up, v3(0, 0, 1), 0);
+                fx_named("DinoPackunTrackFire", "TrackFire", m, NULL, &dtrack[i]);
+            }
+        static const float idw[4][16] = {{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}, {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1},
+                                         {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}, {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}};
+        for (int i = 0; i < DINO_FIRES; i++)
+            if (dfire[i].alive) { /* its FireBall (AutoEffect on Move / Shot) */
+                float fm[16];
+                basis_matrix(fm, dfire[i].pos, dfire[i].up, v3(0, 0, 1), 0);
+                fx_anim("dinopackunfireball/move", (float)dfire[i].t - 1.0f, (float)dfire[i].t, fm, idw, &dfire[i]);
+            }
+    }
     { /* its demos' cameras (DinoPackunDemo: OpeningDemo, CryDemo, AngryDemo, DownDemo) */
         const char *cn = dino.seq == DSEQ_OPENING ? "dinopackun/openingdemo" : dino.seq == DSEQ_CRY ? "dinopackun/crydemo" :
                          dino.seq == DSEQ_ANGRY ? "dinopackun/angrydemo" : dino.seq == DSEQ_DOWN && dino.t < 385 ? "dinopackun/downdemo" : NULL;
@@ -55702,7 +56065,15 @@ void game_draw(void)
         }
     }
     RESTQ(2);
-    if (dino.row >= 0 && dino.phase < 6 && row_shown(dino.row)) { /* DinoPackun, its egg shell, its tail ball */
+    for (int i = 0; m_dfire && i < DINO_FIRES; i++) if (dfire[i].alive) { /* DinoPackunFire: rolled by _8C */
+        const float *q = dfire[i].q;
+        float r[9] = {1 - 2 * (q[1] * q[1] + q[2] * q[2]), 2 * (q[0] * q[1] + q[2] * q[3]), 2 * (q[0] * q[2] - q[1] * q[3]),
+                      2 * (q[0] * q[1] - q[2] * q[3]), 1 - 2 * (q[0] * q[0] + q[2] * q[2]), 2 * (q[1] * q[2] + q[0] * q[3]),
+                      2 * (q[0] * q[2] + q[1] * q[3]), 2 * (q[1] * q[2] - q[0] * q[3]), 1 - 2 * (q[0] * q[0] + q[1] * q[1])};
+        float fm[16] = {r[0], r[1], r[2], 0, r[3], r[4], r[5], 0, r[6], r[7], r[8], 0, dfire[i].pos.x, dfire[i].pos.y, dfire[i].pos.z, 1};
+        render_model(m_dfire, fm, 0x80, 0x80, 0x80);
+    }
+    if (dino.row >= 0 && dino.phase < 6 && row_shown(dino.row) && !(dino.seq == DSEQ_DOWN && dino.t >= 385)) { /* DinoPackun, its egg shell, its tail ball */
         basis_matrix(m, dino.pos, dino.up, dino.f, 0);
         if (m_dino && m_dino->skin && dino.anim && dino.anim->skin == m_dino->skin) {
             float jm[16];

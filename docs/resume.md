@@ -373,6 +373,15 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   Petari); `meteor` frames its rail's end from above; ERPOINT_TEST frames the middle point from above (BattleShip 2:
   the ElectricRailPoint model on the ring). Not confirmed on screen: the killer's disc (it falls on invisible
   collision there) and the meteor's (lava under it); the logs show both drawn (draw_shadow's drop hits).
+- DinoPackunVs2 (feat/504-dinopackun-vs2, 2026-11-07, HellProminenceGalaxy 3): the dino code takes DinoPackunVs2
+  (dino.vs 2: DinoPackun2's clips, the Vs2 parts with their Vs2 BTP baked: slice.py "<archive>^<btp>"), its
+  sequencer (BattleEggVs2: Turn 30 / 1.5, Walk 750 / 0.9 with the 200-frame fire cycle; BattleVs2Lv1 with Lv1 / Lv2 /
+  Lv3 flags: Awake, Turn, Walk, Chase, FindCrazy, Crazy, AttackHit), DinoPackunStateFire (Normal / FireSign / Fire /
+  Cool: HeadFire / BodyFire / TailFire, the ball burns and cannot be punched), the mouth fire balls (16) and the tail's
+  track fires (64), fire attacks (FireRun / FireRunStrong). Vs1 fixes on the way: DownDemo 385 + AppearPowerStar 60
+  (was 319 + 60: the explosion never came), the Find / Glad / Land SEs, the angry level SE kept through Vs1's demo.
+  Test: `dino` HellProminenceGalaxy/3 (overlay; XF -DDINO_LOOK frames it): egg, cry, Lv1, angry, Lv2, Lv3, down, star.
+  Route EggStar 1: star at f 4281. ponytail: the BRKs (Awake / Heat / Cool colours), the 2P pointer on track fires.
 - Balloonfish (feat/balloonfish, 2026-11-07): statics.inc st_bfs_* after Balloonfish.cpp: dead until its SW_APPEAR
   (AppearFromBox, APPEAR SE), Wait (appearance, scale 1 -> 1.5 over 120, blendQuatFrontUp toward Mario's centre + 10 x
   his velocity: Z 0.1, Y 0.02), Dash 180 (Attack, SwimBubble, 10 a frame, scale 1.5 -> 0.5), DashEnd 95, killed (Death,
