@@ -373,6 +373,10 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   Petari); `meteor` frames its rail's end from above; ERPOINT_TEST frames the middle point from above (BattleShip 2:
   the ElectricRailPoint model on the ring). Not confirmed on screen: the killer's disc (it falls on invisible
   collision there) and the meteor's (lava under it); the logs show both drawn (draw_shadow's drop hits).
+- HeavensDoorAppearStepA (feat/517-hd-appear-step, 2026-11-07): statics.inc st_hdstep after HeavensDoorDemoObj's Appear:
+  from its appear SE_OJ_HD_STEP_APPEAR, MBGM_GALAXY_24 + sub BGM_APPEAR_HD_TOWER, its appear.btk (slice.py BTK_NAME)
+  at the actor's own frame (st_btk_md) to 299, then Wait. Test: plain XF="-DST_VISIT=HeavensDoorAppearStepA
+  -DST_VISIT_APPEAR" HeavensDoorGalaxy/1 (overlay): appear at 300, wait after the BTK.
 - SpringWaterPlanet (feat/514-springwater, 2026-11-07, CannonFleetGalaxy 1): statics.inc st_merc_* after
   MercatorTransformCube.cpp (the MercatorCube row kept: slice.py LOGIC; its zone's ZONE matrix), st_floater after
   SpringWaterFloaterSpot.cpp (A / B) and OceanSmallTurtle.cpp: Wait in water, FloatSignal, FloatUp, FloatEnd / the
