@@ -313,9 +313,11 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   (makeMtxUpFrontPos at the top, unscaled) and slice.py BRK_POSE bakes earthenpipe.brk frame 0 (green). Every pipe
   galaxy repacked. (3) The freeze on a catch: RunawayTico's Appear ran on the frame it was shown, before the rebind
   made its instance: se_start read a NULL instance (TLB miss, fatal on a PS2) and its Appear clip never started, so
-  its step never ended. Its first step now waits for its instance and pose. #525: kp_init printed row_camset before
+  its step never ended. Its first step now waits for its instance and pose (the rebind first); the TicoBaby /
+  TrickRabbitBaby variants are made with the instance (gw_row_model), not swapped after each rebind (that reset the
+  last Luma's Appear). #525: kp_init printed row_camset before
   game_init made it (NULL read). Test: `XF=-DGW_FOLLOW build.sh gateway <blob> HeavensDoorGalaxy/1` (the opening,
-  the chase through the pipe, catches).
+  the chase through the pipe, the three catches, the tower, the walk to Rosetta, her spin demo).
 - EggStar 1 boot crash (fix/337, 2026-11-07): found. newlib calls fstat on every stdio stream before its first read
   or seek (__smakebuf_r, _fseeko_r); for a host: file that is a FILEIO getstat RPC, and now and then the IOP answered
   the RPC before it (the open, payload to _fio_recv_data) a second time. The stale SIF_CMD_RPC_END completed the
