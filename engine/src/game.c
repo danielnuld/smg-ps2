@@ -79,6 +79,7 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
     V3 gpos, gup; int gok; /* walker_up: the gravity's up at gpos */
     u32 lv2[2]; int lvt[3], jc; float lva[2]; /* Unizo: its land / wall-hit level sounds (kept 30 frames: frames left, levelA), the roll's sRollSoundTime; mJumpCount */
     u32 lv; /* its level sound's handle (se_level) */
+    int an, at; float ay, av; /* its AnimScaleController when no other field is free (wa_start): nerve, step, _C.y, _18 */
     u8 clipped; /* out of the view at the last draw (ClippingJudge: LiveActor::startClipped stops its movement) */
     u8 nograv; /* Kuribo _C4 (arg0 set): offCalcGravity, its gravity its rotation's up */
     short ml; /* trySetMoveLimitCollision: the MoveLimit part's row + 1 it binds, -1 none, 0 not looked yet */
@@ -88,6 +89,31 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
                  * -1 a Polta's BombTeresa (BombTeresaHolder, polta.inc) */ } Kuribo; /* walking
                                          * enemies; row: its placement; phase .. len: Takobo's patrol (takobo_update) */
 enum { KURIBO_WALK, KURIBO_STUN, KURIBO_DEAD };
+enum { ASC_STOP, ASC_ANIM, ASC_HIT }; /* AnimScaleController's nerves (asc_core) */
+static void asc_core(int *nrv, int *t, float *y, float *v, const float p[7]);
+/* a walker's an / at / ay / av AnimScaleController: started (_C.y is 1 whenever it is in Stop), updated (its _C.y
+ * drawn by game_draw while it runs) */
+static void wa_start(Kuribo *k, int nrv)
+{
+    if (k->an == ASC_STOP) { k->ay = 1.0f; k->av = 0.0f; }
+    k->an = nrv; k->at = -1;
+#if defined(ASC_TEST) || defined(ASC_KIND)
+    printf("asc row %d kind %d: %s\n", k->row, k->kind, nrv == ASC_HIT ? "hit reaction" : "anim");
+#endif
+}
+static void wa_update(Kuribo *k, const float p[7])
+{
+#if defined(ASC_TEST) || defined(ASC_KIND)
+    int was = k->an;
+#endif
+    asc_core(&k->an, &k->at, &k->ay, &k->av, p);
+#if defined(ASC_TEST) || defined(ASC_KIND)
+    if (k->an != ASC_STOP && k->at % 4 == 0 && k->at < 24) printf("asc row %d: step %d scale y %.3f\n", k->row, k->at, k->ay);
+    if (was != ASC_STOP && k->an == ASC_STOP) printf("asc row %d: stop at step %d\n", k->row, k->at);
+#endif
+}
+static const float asc_def[7] = {0.2f, 0.91f, 0.2f, 1.8f, 0.06f, 0.12f, 0.91f}, /* sStaticAnimParam */
+                   asc_tight[7] = {0.5f, 0.85f, 0.2f, 1.8f, 0.06f, 0.12f, 0.91f}; /* its tightParam (setParamTight) */
 /* KuriboChief's / ExterminationChecker's KeySwitch (okeys), the ExterminationKuriboKeySwitch checkers (exts) */
 #define MAX_OKEYS 4
 static struct { int on, owner, nrv, step, demo; V3 pos, vel, up; float rate, t; } okeys[MAX_OKEYS];
@@ -23534,6 +23560,7 @@ static void unizo_update(Kuribo *k, V3 to, float d)
     int grounded = 0, damage = 0;
     if (k->timer > 0) k->timer--; /* control: mSpinAnimTimer */
     k->sstep++; /* its BTP's frame */
+    wa_update(k, asc_tight); /* control: mAnimScaleController->update (setParamTight) */
     if (!k->from) { k->from = (float)(100 + rand() % 100); uz_btp(k, UZB_BLINK); } /* init: startBtp Blink, mBlinkFrame getRandom(100, 200) */
     { /* isBindedGround: a sphere a little lower touches; isBreakGround: a Damage (4) / DamageFire (10) face */
         V3 probe = vsub(center, vmul(up, 4.0f));
@@ -25800,7 +25827,6 @@ static V3 w_joint(Kuribo *k, const Model *md, int j, V3 off)
  * its nerve (phase: 0 Stop, 1 Anim, 2 HitReaction) and step (timer); _C = (sqrt(1 / y), y, sqrt(1 / y)).
  * p: _0, _4, _8, _C, _20, _24, _28 of its AnimScaleParam. ponytail: DpdVibration / Crush (the 2P pointer, crushes)
  * left out: no walker here starts them */
-enum { ASC_STOP, ASC_ANIM, ASC_HIT };
 static void asc_start(Kuribo *k, int nrv) { k->phase = nrv; k->timer = -1; }
 static void asc_scale(float *y, float *v, float f1, float f2, float lo, float hi) /* updateScale */
 {
@@ -26391,7 +26417,8 @@ static int spin_hit_exec(Kuribo *k, int max, int item, int stop, float g, int ni
  * touching it in Move / Attack unless he is on top (HitReaction) or hip-dropping; a trample or hip drop: Press (30, a
  * coin); a spin: HitPunch (SpinHitController 22 / 21 / 3, 1.5, 20 / 35, three star pieces); a star piece: StunStart
  * (rate 2), Stun 120, StunEnd, and a spin while stunned blows it too. Its effects TakoboDeath, Hit. ponytail: no star
- * pointer (DpdPointed), no freeze (Ice), no fire floor bounce (arg0), no anim scale */
+ * pointer (DpdPointed), no freeze (Ice), no fire floor bounce (arg0). Its AnimScaleController (defaults): a hit on
+ * Mario starts its hit reaction, its model drawn at _C x scale */
 enum { TN_WAIT, TN_MOVE, TN_PRESS, TN_ATTACK, TN_HITPUNCH, TN_STUNSTART, TN_STUN, TN_STUNEND, TN_HITREACTION };
 static void takobo_update(Kuribo *k, V3 to, float d)
 {
@@ -26483,6 +26510,7 @@ static void takobo_update(Kuribo *k, V3 to, float d)
     }
     k->step++;
     k->act_t += k->act_rate;
+    wa_update(k, asc_def); /* control: mScaleController->updateNerve */
     k->qy = vmul(k->grav, -1.0f); k->qz = vnorm(vtangent(k->front, k->qy)); /* calcMtxFromGravityAndZAxis */
     k->up = k->qy;
     w_bind(k, 80.0f * s);
@@ -26499,6 +26527,7 @@ static void takobo_update(Kuribo *k, V3 to, float d)
     } else if (vlen(vsub(mc, c)) < 70.0f * s + HIT_BODY_R && mario->hip != HIP_FALL && !mario->hurt_timer &&
                (k->nrv == TN_MOVE || k->nrv == TN_ATTACK) && vdot(vsub(mario->pos, c), k->qy) < 0.25f * 70.0f * s) {
         hurt_mario(c, 15.0f);               /* sendMsgEnemyAttack (not isPlayerExistUp) */
+        wa_start(k, ASC_HIT);               /* startHitReaction */
         k->vel = v3(0, 0, 0); w_nrv(k, TN_HITREACTION);
     }
     (void)d;
@@ -27119,8 +27148,9 @@ static void butterfly_update(Kuribo *k)
  * (arg1, 20) 2 every 5 frames from Head3 (20, 40), the rest at the end, then kill (its dead switch). Its body (60, 60
  * up) pushes Mario while shown (isSolidBody); a jet turtle or fire ball then: KickOut, an enemy's blow: SpinOut.
  * Its up turns 0.1 a frame to the ground's normal (control). ponytail: no 2P pointer (Freeze), no
- * footprints (FootPrint decals) or smoke effects, no move limit collision, no AnimScaleController
- * (hit reaction); Mario's spin hits once a spin */
+ * footprints (FootPrint decals) or smoke effects, no move limit collision; Mario's spin hits once a spin.
+ * A star piece in Swoon (which starts over), SwoonStart, SwoonEnd or a shown Wait: its AnimScaleController's hit
+ * reaction (defaults) */
 /* Kuribo fields: phase hidden (hideModel), timer star pieces left, sstep mMeanderStep, to mMeanderAngle, ttarget
  * mTargetDir, tcenter mBodyCenter, bshow its spin latch */
 static int petari_solid(const Kuribo *k) /* isSolidBody */
@@ -27288,6 +27318,7 @@ static void petari_update(Kuribo *k)
     }
     k->step++;
     k->act_t += k->act_rate;
+    wa_update(k, asc_def); /* control: mAnimScaleCtrl->updateNerve */
     /* control: its up 0.1 of the way to the ground's normal (or against gravity), front kept */
     V3 to = w_on_ground(k) ? k->gn : vmul(k->grav, -1.0f), ax = vcross(k->qy, to);
     if (vlen(ax) > 1e-6f) {
@@ -28165,8 +28196,8 @@ static void draw_bbd_bombs(void)
  * (SearchOn), then Threat (SearchWait) facing him (its front turned 0.5 a frame on its side's plane, within 30 of
  * horizontal), or ThreatWith(Left / Right)Turn (SearchRotate) when he is 35 off its front; past 1500 Wait. Its body
  * (100 at 30 up) hurts Mario strongly (Attack); a spin or explosion knocks it out (40 away, Death 30 or bound: its
- * effect, a coin). ponytail: no point light, no star pointer swoon, the star piece's hit reaction (anim scale) not
- * shown */
+ * effect, a coin); a star piece: its AnimScaleController's hit reaction (defaults). ponytail: no point light, no star
+ * pointer swoon */
 enum { JF_WAIT, JF_WAITR, JF_WAITL, JF_FIND, JF_THREAT, JF_THREATR, JF_THREATL, JF_DEATH, JF_ATTACK, JF_RAILGOAL };
 static V3 jf_side(const Kuribo *k) { return vnorm(vcross(vmul(k->grav, -1.0f), k->front)); }
 static void jf_face(Kuribo *k) /* faceToMario */
@@ -28290,6 +28321,7 @@ static void jelly_update(Kuribo *k)
         k->vel = vmul(k->grav, sinf((k->lva[0] + 45.0f) * 0.0174533f));
         k->lva[0] += 1.0f;
     }
+    wa_update(k, asc_def); /* control: mController->updateNerve */
     k->pos = vadd(k->pos, k->vel);
     if (!k->bind_off && k->nrv == JF_DEATH) { /* the binder (130) only once it is knocked out */
         V3 c = k->pos, gn, wn;
@@ -28321,8 +28353,9 @@ static void jelly_update(Kuribo *k)
  * WaitWith(Right / Left)Turn (0.2 x (1 - step / 280) a frame about its up). Its body (350, 60 below) shocks Mario
  * (sendMsgEnemyAttackElectric: HitMarkNormal, Attack); a spin on it shocks him too. A JetTurtle or an explosion
  * knocks it out: Damage (then DangerWait), the second time (or an invincible Mario at once) Death (stopScene 5, the
- * binder (400) on, PRE_DEAD; at 30 or bound: DEAD, a coin). ponytail: no point light, no star pointer swoon
- * (WalkerStateBindStarPointer: the 2P pointer), the star piece's hit reaction (AnimScaleController) not shown, no
+ * binder (400) on, PRE_DEAD; at 30 or bound: DEAD, a coin); a star piece: its AnimScaleController's hit reaction
+ * (setParamTight). ponytail: no point light, no star pointer swoon
+ * (WalkerStateBindStarPointer: the 2P pointer), no
  * BRK / BTK clips (Wait / Damage / DangerWait colours), no DangerBrk BAS, no changeShowModelFlagSyncNearClipping 700 */
 enum { JE_WAIT, JE_WAITR, JE_WAITL, JE_DAMAGE, JE_DEATH, JE_ATTACK, JE_RAILGOAL };
 static void je_knock(Kuribo *k) /* knockOut */
@@ -28408,6 +28441,7 @@ static void jelec_update(Kuribo *k)
             k->lva[0] += 1.0f;
         }
     }
+    wa_update(k, asc_tight); /* control: mController->updateNerve */
     k->pos = vadd(k->pos, k->vel);
     if (!k->bind_off) { /* initBinder 400, on once it dies */
         V3 c = k->pos, gn, wn;
@@ -28702,7 +28736,8 @@ static void kanina_update(Kuribo *k)
  * The stone hurts Mario (EnemyAttack) and breaks; a spin or star piece breaks it. Mario's hip drop landing 130-1500
  * off flips it (SwoonStart, Swoon 120, SwoonEnd back into the hole); a trample or hip drop on it then: StampDeath
  * (60: Death, a coin, SW_DEAD), a spin: HitBlow (30 away, 50 up, 20: three star pieces); a star piece while it is
- * up flips it. Its body (150 at its head) pushes Mario. ponytail: no 2P pointer, no hit-reaction scale, the stone's
+ * up (Appear, Search, Throw) flips it, one while it swoons starts its AnimScaleController's hit reaction (defaults).
+ * Its body (150 at its head) pushes Mario. ponytail: no 2P pointer, the stone's
  * spin only its Rotate clip */
 enum { MG_HIDEWAIT, MG_HIDE, MG_APPEAR, MG_SEARCH, MG_TURN, MG_THROW, MG_SWOONSTART, MG_SWOONEND, MG_SWOON, MG_HIPREACT,
        MG_STAMPDEATH, MG_HITBLOW };
@@ -28784,6 +28819,7 @@ static void mogu_update(Kuribo *k)
     }
     float near = vlen(vsub(mario->pos, k->pos)), sight = mg_cannonfleet() ? 1500.0f : 900.0f;
     int st = ++k->step;
+    wa_update(k, asc_def); /* control: mAnimScaleController->updateNerve */
     switch (k->nrv) {
     case MG_HIDEWAIT: {
         V3 tp = vsub(mario->pos, k->pos);
@@ -32657,7 +32693,8 @@ static void draw_tako_inks(void)
  * Blow (SpinHitController 40 / 20, no gravity, three star pieces at 10, killed bound or at 15; stopScene 3,
  * EXPLODE_S). Dead in a death area or water. Death effect, its dead switch. Its posture slerps 0.15 to upside down,
  * 0.02 to -1.8 in FlyPursueLast, 0.2 back, Blow spins it -1 rad a frame.
- * ponytail: no star pointer bind, no AnimScaleController / AnimStampController squash, no
+ * Its AnimScaleController (defaults) squashes it as it lands from OverturnFall / Recover and as it hits Mario
+ * (startAndAddScaleVelocityY 0.1, hHitScaleYSpeed). ponytail: no star pointer bind, no AnimStampController squash, no
  * Appear effect; the posture turns the whole model about its Center joint (its base matrix) */
 enum { KT_NOCALCWAIT, KT_WAIT, KT_SEARCH, KT_ESCAPESEARCH, KT_PREESCAPE, KT_FLYSTART, KT_FLYPURSUE, KT_FLYESCAPE, KT_FLYPURSUELAST,
        KT_OVERTURNFALL, KT_OVERTURN, KT_PRERECOVER, KT_RECOVER, KT_HITTOPLAYER, KT_BLOW, KT_STAMPDEATH };
@@ -32723,6 +32760,7 @@ static void kotebug_update(Kuribo *k)
     }
     k->grav = vmul(walker_up(k, vmul(k->grav, -1.0f)), -1.0f);
     float depth;
+    wa_update(k, asc_def); /* control: mScaleController->updateNerve */
     if (in_death(k->pos) || in_water(k->pos, vmul(k->grav, -1.0f), &depth)) { kb_kill(k); return; } /* control */
     /* the posture (about its X): slerped to its target, Blow's turning on */
     if (k->nrv == KT_OVERTURN || k->nrv == KT_OVERTURNFALL || k->nrv == KT_PRERECOVER || k->nrv == KT_STAMPDEATH) k->from += (3.1415927f - k->from) * 0.15f;
@@ -32806,6 +32844,7 @@ static void kotebug_update(Kuribo *k)
             basis_matrix(m, k->pos, k->qy, k->qz, 0);
             fx_named("KoteBug", "PoteSmoke", m, NULL, NULL);
             w_se(k, SE_EM_KOTEBUG_FALL_LAND);
+            wa_start(k, ASC_ANIM); k->av += 0.1f; /* startAndAddScaleVelocityY(hHitScaleYSpeed), startAnim */
             w_nrv(k, KT_OVERTURN);
         }
         break;
@@ -32827,10 +32866,10 @@ static void kotebug_update(Kuribo *k)
         if (st == 0) { w_act(k, "Pon"); w_se(k, SE_EM_KOTEBUG_RECOVER); kb_jump(k, 24.0f); }
         w_rebound0(k);
         kb_damp(k);
-        if (w_on_ground(k)) { w_se(k, SE_EM_KOTEBUG_LAND); w_nrv(k, KT_WAIT); }
+        if (w_on_ground(k)) { w_se(k, SE_EM_KOTEBUG_LAND); wa_start(k, ASC_ANIM); k->av += 0.1f; w_nrv(k, KT_WAIT); } /* (startAndAddScaleVelocityY, startAnim) */
         break;
     case KT_HITTOPLAYER:
-        if (st == 0) { w_act(k, "Wait"); kb_jump(k, 10.0f); k->vel = vadd(k->vel, vmul(k->front, -10.0f)); }
+        if (st == 0) { wa_start(k, ASC_ANIM); k->av += 0.1f; w_act(k, "Wait"); kb_jump(k, 10.0f); k->vel = vadd(k->vel, vmul(k->front, -10.0f)); } /* (startAndAddScaleVelocityY, startAnim) */
         w_rebound0(k);
         kb_damp(k);
         if (w_on_ground(k)) w_nrv(k, KT_FLYSTART);
@@ -44159,10 +44198,12 @@ static void update_shots(void)
             else if (e->kind == WALK_BUTTERFLY) { hit = 0; continue; }
             else if (e->kind == WALK_PETARI) { /* isMsgStarPieceAttack: a hit reaction; Swoon starts over */
                 if (e->phase) { hit = 0; continue; }
+                if (e->nrv == PT_SWOON || e->nrv == PT_SWOONSTART || e->nrv == PT_SWOONEND || e->nrv == PT_WAIT) wa_start(e, ASC_HIT); /* startHitReaction */
                 if (e->nrv == PT_SWOON) w_nrv(e, PT_SWOON);
             }
-            else if (e->kind == WALK_UNIZO || e->kind == WALK_POIHANA || e->kind == WALK_JELLYFISH || e->kind == WALK_JELEC) { /* isMsgStarPieceAttack: nothing more
-                                                                                                  * (Jellyfish: its anim scale hit reaction) */ }
+            else if (e->kind == WALK_JELLYFISH || e->kind == WALK_JELEC) wa_start(e, ASC_HIT); /* isMsgStarPieceAttack: startHitReaction */
+            else if (e->kind == WALK_UNIZO) wa_start(e, ASC_HIT); /* isMsgStarPieceReflect: startHitReaction */
+            else if (e->kind == WALK_POIHANA) { } /* isMsgStarPieceAttack: nothing more */
             else if (e->kind == WALK_GESSO) { if (e->nrv != GE_PUNCHDOWN) w_nrv(e, GE_ROTATE); } /* isMsgStarPieceAttack: Rotate */
             else if (e->kind == WALK_METBO) { w_se(e, SE_EM_METBO_TRAMPLE); if (!mb_swoon(e) && e->nrv != MB_RECOVER && !mb_down(e)) w_nrv(e, MB_GUARD); } /* isMsgStarPieceReflect */
             else if (e->kind == WALK_BOMBHEI) { if (e->nrv == BH_GONE) { hit = 0; continue; } } /* isMsgStarPieceReflect */
@@ -44180,7 +44221,8 @@ static void update_shots(void)
             else if (e->kind == WALK_SNAKEHEAD) { if (e->phase) { hit = 0; continue; } } /* isMsgStarPieceReflect: nothing more (Waylay: not there) */
             else if (e->kind == WALK_MOGUCCHI) { if (e->nrv != MC_SCATTER && e->nrv != MC_DIE) w_nrv(e, MC_APPEARDOWN); } /* isMsgStarPieceAttack */
             else if (e->kind == WALK_MOGU) { /* isMsgStarPieceAttack: up, it flips (SwoonStart) */
-                if (e->nrv == MG_APPEAR || e->nrv == MG_SEARCH || e->nrv == MG_TURN || e->nrv == MG_THROW) { if (e->bshow == 1) e->bshow = 0; w_nrv(e, MG_SWOONSTART); }
+                if (e->nrv == MG_SWOONSTART || e->nrv == MG_SWOONEND || e->nrv == MG_SWOON || e->nrv == MG_HIPREACT) wa_start(e, ASC_HIT); /* startHitReaction */
+                else if (e->nrv == MG_APPEAR || e->nrv == MG_SEARCH || e->nrv == MG_THROW) { if (e->bshow == 1) e->bshow = 0; w_nrv(e, MG_SWOONSTART); }
                 else if (e->nrv == MG_HIDEWAIT || e->nrv == MG_HIDE) { hit = 0; continue; }
             }
             else if (e->kind == WALK_KANINA) { /* isMsgStarPieceReflect: Guard */
@@ -55925,7 +55967,13 @@ void game_draw(void)
             f = vlen(f) > 1e-3f ? vnorm(f) : vnorm(vtangent(vsub(mario->pos, k->pos), k->up));
             V3 u2 = vadd(vmul(k->up, cosf(k->to)), vmul(f, sinf(k->to))), f2 = vsub(vmul(f, cosf(k->to)), vmul(k->up, sinf(k->to)));
             float rh = (k->dir == 1 ? 0.0f : 30.0f) * fabsf(sinf(k->len / 60.0f)), hr = vlen(vtangent(k->vel, k->up)) / 4.0f; /* mRollHeight, sRollCycle */
-            basis_matrix(m, vsub(vsub(vadd(k->pos, vmul(k->up, 126.36f)), vmul(u2, 126.36f)), vmul(k->up, rh * (hr >= 1.0f ? 1.0f : hr))), u2, f2, 0);
+            float cy = k->an != ASC_STOP ? k->ay : 1.0f, cx = sqrtf(1.0f / cy); /* its AnimScaleController's _C */
+            basis_matrix(m, vsub(vsub(vadd(k->pos, vmul(k->up, 126.36f * cy)), vmul(u2, 126.36f)), vmul(k->up, rh * (hr >= 1.0f ? 1.0f : hr))), u2, f2, 0);
+            for (int j = 0; j < 3 && cy != 1.0f; j++) { /* scaleMtxToLocalMtx(mBaseMtx: its up, _C): cx across, cy along the up */
+                V3 col = v3(m[4 * j], m[4 * j + 1], m[4 * j + 2]);
+                col = vadd(vmul(col, cx), vmul(k->up, (cy - cx) * vdot(col, k->up)));
+                m[4 * j] = col.x; m[4 * j + 1] = col.y; m[4 * j + 2] = col.z;
+            }
             if (!wvis) continue;
             if (unizo_breaking(k)) { /* its break model's clip, facing away from the camera */
                 const Model *bm = scene_model(sc, unizo_brk[k->dir]);
@@ -56013,6 +56061,10 @@ void game_draw(void)
                 if (k->kind == WALK_MKOOPA && k->nrv == MKM_FIRE) fx_named(walker_cls(k), "Fire", m, (const float (*)[16])a->world, k); /* emitEffect Fire (its joint) */
                 if (k->kind == WALK_KCHIEF || k->kind == WALK_SAMBOHEAD || k->kind == WALK_KARON || k->kind == WALK_TAKOHEI || (k->kind == WALK_BOMBBIRD && k->len > 0.0f)) { /* setBaseScale(mScaleController->_C x mScale) */
                     float sy = k->kind == WALK_BOMBBIRD ? k->len : k->from, sx = sqrtf(1.0f / sy);
+                    for (int j = 0; j < 3; j++) { m[j] *= sx; m[4 + j] *= sy; m[8 + j] *= sx; }
+                }
+                if (k->an != ASC_STOP) { /* setBaseScale(its wa_start AnimScaleController's _C x mScale) */
+                    float sy = k->ay, sx = sqrtf(1.0f / sy);
                     for (int j = 0; j < 3; j++) { m[j] *= sx; m[4 + j] *= sy; m[8 + j] *= sx; }
                 }
                 draw_skin(md, m, a);

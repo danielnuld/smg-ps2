@@ -1921,6 +1921,10 @@ int main(void)
         if (frame == 330) printf("shoot2 test: stomp it row %d\n", game_test_enemy(6, 0, 0));
         if (frame == 360) printf("shoot2 test: %d Takobo alive\n", game_kind_alive(6));
 #endif
+#ifdef ASC_KIND /* XF="-DASC_KIND=<walker kind>": Mario held 600 before its first, two star pieces at it (wa_start's log) */
+        if (frame >= 120 && frame < 300) game_test_enemy(ASC_KIND, 0, 9);
+        if (frame == 300 || frame == 420) printf("asc test f %u: shot at row %d\n", frame, game_test_shoot(ASC_KIND));
+#endif
 #ifdef TSPOT_TEST
         if (frame >= 120 && frame < 300) game_test_tspot_near(); /* the camera settles */
         if (frame == 300 || frame == 360) printf("tspot test f %u: shot at row %d, coins %d\n", frame, game_test_tspot(), game_coins());
