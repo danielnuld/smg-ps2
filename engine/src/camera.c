@@ -7,6 +7,8 @@
  * 500 x scale_x, height 500 x scale_y along R * Y), sphere 160-166 + 277-285 (radius 500 x scale_x). Rotation order
  * as every placement: R = Rz * Ry * Rx (degrees). */
 int camera_big_bubble;
+int (*camera_switch)(int zone, int id);
+const float *(*camera_rail)(int zone, int id, int *n, int *closed);
 static int inside(const CamArea *a, V3 p)
 {
     if (a->shape == 3 && !camera_big_bubble) return 0; /* BigBubbleCameraArea::isInVolume: a box while he is in a bubble */
@@ -63,6 +65,9 @@ static V3 i_eye, i_watch, i_up;       /* interpolated towards the type camera ov
 static int timer, camint;
 static V3 f_eye, f_watch, f_up;       /* final, after the 0.3 per-frame smoothing */
 static float f_fovy = 45.0f;
+static const float *pose_m;           /* the zone frame type_pose runs in (zone_pose), NULL: the world */
+#define AREA_MAX 1024
+static unsigned char area_off[AREA_MAX]; /* CubeCameraArea::mIsValid, inverted (areas past AREA_MAX keep their start) */
 
 #define PI 3.14159265f
 static float clampf(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -118,11 +123,12 @@ static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V
 static void zone_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V3 *watch, V3 *up)
 {
     world_t = t;
+    pose_m = NULL;
     if (!zones || p->zone == 0) {
         type_pose(p, t, move, eye, watch, up);
         return;
     }
-    const float *m = zones[p->zone];
+    const float *m = pose_m = zones[p->zone];
     CamTarget l = *t;
     l.pos = to_local(m, t->pos, 1); l.front = to_local(m, t->front, 0); l.up = to_local(m, t->up, 0);
     l.fly_dir = to_local(m, t->fly_dir, 0);
@@ -142,6 +148,7 @@ static void zone_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V
 void camera_init(const CamParam *c, int nc, const CamArea *a, int na, const float (*z)[16], const CamTarget *t)
 {
     cams = c; ncams = nc; areas = a; nareas = na; zones = z;
+    for (int i = 0; i < na && i < AREA_MAX; i++) area_off[i] = a[i].off;
     null_cam.type = CAM_XZ_PARA; null_cam.dist = 1200.0f; null_cam.angle_b = 0.3f; null_cam.fovy = 45.0f;
     null_cam.camint = 0; null_cam.vpanuse = 1; null_cam.vpanaxis[1] = 1.0f; /* setNullCamera: resetParameter */
     null_cam.upper = 0.3f; null_cam.lower = 0.1f; null_cam.uplay = 500.0f; null_cam.lplay = 800.0f;
@@ -366,6 +373,37 @@ static void follow_height(const CamParam *p, const CamTarget *t, V3 w, V3 *eye)
         fl_pitch_speed += (LOOK_DOWN - ax - fl_pitch_speed) * 0.02f;
 }
 
+/* a rail's polyline (closed: back to its first point) by length (RailRider over its BezierRail) */
+static float rl_len(const float *r, int n, int cl)
+{
+    float l = 0;
+    for (int i = 0; i < (cl ? n : n - 1); i++) l += vlen(vsub(vec(r + 3 * ((i + 1) % n)), vec(r + 3 * i)));
+    return l;
+}
+static V3 rl_at(const float *r, int n, int cl, float d)
+{
+    for (int i = 0; i < (cl ? n : n - 1); i++) {
+        V3 a = vec(r + 3 * i), b = vec(r + 3 * ((i + 1) % n));
+        float l = vlen(vsub(b, a));
+        if (d <= l || i == (cl ? n : n - 1) - 1) return vadd(a, vmul(vsub(b, a), l > 0 ? clampf(d, 0, l) / l : 0));
+        d -= l;
+    }
+    return vec(r);
+}
+static float rl_nearest(const float *r, int n, int cl, V3 q) /* calcNearestPos */
+{
+    float best = 1e30f, at = 0, run = 0;
+    for (int i = 0; i < (cl ? n : n - 1); i++) {
+        V3 a = vec(r + 3 * i), ab = vsub(vec(r + 3 * ((i + 1) % n)), a);
+        float l = vlen(ab), s = l > 0 ? clampf(vdot(vsub(q, a), ab) / (l * l), 0, 1) : 0;
+        float d = vlen(vsub(q, vadd(a, vmul(ab, s))));
+        if (d < best) { best = d; at = run + s * l; }
+        run += l;
+    }
+    return at;
+}
+static float rf_coord, rf_speed; /* CameraRailFollow::mRailCoord, mRailSpeed */
+
 static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V3 *watch, V3 *up)
 {
     V3 Y = v3(0, 1, 0);
@@ -475,6 +513,39 @@ static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V
         V3 pf = vnorm(vsub(w, type_eye)), nf = vnorm(vsub(w, *eye));
         *up = vnorm(rotate_between(pf, nf, type_up));
         if (vlen(*up) < 0.5f) *up = t->up;
+        break;
+    }
+    case CAM_RAIL_FOLLOW: { /* CameraRailFollow.cpp (CamTranslatorRailFollow: num1 the rail (its l_id: camera.py),
+                             * dist the stop margin, wpoint.x the top speed, wpoint.y the acceleration, num2 the
+                             * margin scale); the rail is in the world, the pose in the zone frame */
+        int n = 0, cl = 0;
+        const float *r = camera_rail && p->num1 >= 0 ? camera_rail(p->zone, p->num1, &n, &cl) : NULL;
+        if (!r || n < 2) { *eye = type_eye; break; } /* no rider: calc does nothing */
+        float len = rl_len(r, n, cl), acc = p->wpoint[1], top = p->wpoint[0];
+        if (fresh) { /* reset: the nearest point to the camera's eye */
+            rf_coord = rl_nearest(r, n, cl, pose_m ? to_world(pose_m, type_eye, 1) : type_eye);
+            rf_speed = 0.0f;
+        }
+        float tc = rl_nearest(r, n, cl, world_t->pos);
+        if (cl) {
+            if (rf_coord - tc > len / 2) tc += len;
+            else if (tc - rf_coord > len / 2) tc -= len;
+        }
+        if (p->num2 == 0) tc += rf_coord < tc ? -p->dist : p->dist;
+        else tc += p->dist * p->num2;
+        if (fabsf(tc - rf_coord) > rf_speed * rf_speed / (acc * 2.0f)) { /* getStopLength */
+            if (rf_coord < tc) { rf_speed += acc; if (rf_speed > top) rf_speed = top; }
+            else { rf_speed -= acc; if (rf_speed < -top) rf_speed = -top; }
+        } else if (rf_coord < tc) { rf_speed -= acc; if (rf_speed < 0.0f) rf_speed = 0.0f; }
+        else { rf_speed += acc; if (rf_speed > 0.0f) rf_speed = 0.0f; }
+        rf_coord += rf_speed;
+        if (cl) {
+            if (rf_coord < 0.0f) rf_coord += len;
+            else if (rf_coord > len) rf_coord -= len;
+        } else if (rf_coord < 0.0f) { rf_coord = 0.0f; rf_speed = 0.0f; }
+        else if (rf_coord > len) { rf_coord = len; rf_speed = 0.0f; }
+        V3 e = rl_at(r, n, cl, rf_coord);
+        *eye = pose_m ? to_local(pose_m, e, 1) : e;
         break;
     }
     case CAM_EYEPOS_FIX: /* CameraFixedPoint.cpp:20-60 */
@@ -870,9 +941,14 @@ int camera_input(int left, int right, int reset)
 static void update(const CamTarget *t)
 {
     shake_update();
+    for (int i = 0; i < nareas && i < AREA_MAX && camera_switch; i++) { /* CubeCameraArea::movement */
+        const CamArea *c = &areas[i];
+        if (area_off[i]) { if (c->sw_a >= 0 && camera_switch(c->zone, c->sw_a)) area_off[i] = 0; }
+        else if (c->sw_b >= 0 && camera_switch(c->zone, c->sw_b)) area_off[i] = 1;
+    }
     int a = -1;
     for (int i = nareas - 1; i >= 0; i--)
-        if (inside(&areas[i], t->pos)) { a = i; break; }
+        if (!(i < AREA_MAX ? area_off[i] : areas[i].off) && inside(&areas[i], t->pos)) { a = i; break; }
     /* no area: keep the current camera (the ground-triangle cameras are not ported), the default one at first */
     int want = start_cam >= 0 ? start_cam : a >= 0 && areas[a].cam != 0xFFFF ? areas[a].cam : (cur == -2 || cur == -3 ? -1 : cur);
     V3 move = vsub(t->pos, last_target);
@@ -913,7 +989,7 @@ static void update(const CamTarget *t)
         camint = first ? 0 : back_camint >= 0 ? back_camint : param()->camint;
         back_camint = -1;
         fresh = 1;
-#ifdef BENCH
+#if defined(BENCH) || defined(CAMWALK_TEST)
         printf("camera %d %s\n", cur, camera_type_name());
 #endif
         if (first) {
@@ -1023,7 +1099,8 @@ int camera_game_current(void) { return !ovr && !ev_on && !tk_on && !pr_on; } /* 
 const char *camera_type_name(void)
 {
     static const char *n[] = {"XZ PARA", "TOWER", "FOLLOW", "WONDER PLANET", "EYEPOS FIX", "POINT FIX",
-                              "EYEPOS FIX THERE", "CHARMED FIX", "TOWER POS", "FRONT AND BACK", "TRUNDLE", "CUBE PLANET", "OBJ PARALLEL"};
+                              "EYEPOS FIX THERE", "CHARMED FIX", "TOWER POS", "FRONT AND BACK", "TRUNDLE", "CUBE PLANET", "OBJ PARALLEL",
+                              "RAIL FOLLOW"};
     const CamParam *p = param();
     return p->type == 255 ? "OTHER" : n[p->type];
 }

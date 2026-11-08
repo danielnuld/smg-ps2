@@ -450,17 +450,19 @@ def scene(fs, galaxy, scenario):
             for r, no, cid in zip(rows(sb), int_or(sb, "MarioNo", ns, 0), int_or(sb, "Camera_id", ns, -1)):
                 starts.append(dict(r, zone=zid, args=[no, cid] + r["args"][2:]))  # arg0: MarioNo (RestartCube arg0), arg1: Camera_id
             cb = files.get(f"{root}/jmp/placement/{layer}/cameracubeinfo", b"")
-            valid, sw_a = B.bcsv_column(cb, "Validity"), int_or(cb, "SW_A", len(B.bcsv_column(cb, "name")), -1)
+            ncb = len(B.bcsv_column(cb, "name"))
+            valid, sw_a, sw_b = B.bcsv_column(cb, "Validity"), int_or(cb, "SW_A", ncb, -1), int_or(cb, "SW_B", ncb, -1)
             for i, r in enumerate(rows(cb)):
-                cubes.append(dict(r, zone=zid, invalid=i < len(valid) and valid[i] == "Invalid", sw_a=sw_a[i]))
+                cubes.append(dict(r, zone=zid, invalid=i < len(valid) and valid[i] == "Invalid", sw_a=sw_a[i], sw_b=sw_b[i]))
         bcams.append((zid, files.get(f"{root}/camera/cameraparam.bcam", b"")))
         info = files.get(f"{root}/jmp/path/commonpathinfo", b"")
         ids, closed = col(info, "l_id", len(B.bcsv_column(info, "name")), -1), B.bcsv_column(info, "closed")
+        usage = B.bcsv_column(info, "usage")
         for i, pid in enumerate(ids):
             pts = files.get(f"{root}/jmp/path/commonpathpointinfo.{i}", b"")
             p0, p1, p2 = ([float_column(pts, f"pnt{k}_{a}") for a in "xyz"] for k in range(3))
             npt = len(p0[0])
-            paths.append(dict(zone=zid, id=pid, closed=int(str(closed[i] if i < len(closed) else "").lower() == "close"),
+            paths.append(dict(zone=zid, id=pid, camera=i < len(usage) and usage[i] == "Camera", closed=int(str(closed[i] if i < len(closed) else "").lower() == "close"),
                               pts=list(zip(*p0)), cin=list(zip(*p1)) or list(zip(*p0)), cout=list(zip(*p2)) or list(zip(*p0)),
                               stop=int_or(info, "path_arg1", len(ids), -1)[i], parg0=int_or(info, "path_arg0", len(ids), -1)[i], arg0=int_or(pts, "point_arg0", npt, -1),
                               arg5=int_or(pts, "point_arg5", npt, -1), arg1=int_or(pts, "point_arg1", npt, -1),
@@ -2117,7 +2119,8 @@ def placement(fs, galaxy, scenario):
     out.append(chunk(b"ZPAR", struct.pack(f"<I{len(zones)}i", len(zones),
                                           *[-1 if i == 0 else up_ids.get(i, 0) for i in range(len(zones))])))
     jp2en = dict(zip(B.bcsv_column(names, "jp_name"), B.bcsv_column(names, "en_name")))
-    cams, cam_index, cam_types = camera.cameras(bcams, float_column, int_or, jp2en)
+    rails = {(p["zone"], p["parg0"]): p["id"] for p in paths if p.get("camera") and p.get("parg0", -1) >= 0}  # CameraRailHolder
+    cams, cam_index, cam_types = camera.cameras(bcams, float_column, int_or, jp2en, rails)
     cset = [(i, r["camset"]) for i, r in enumerate(keep) if r.get("camset", -1) >= 0]  # ActorCameraInfo: CameraSetId
     out.append(chunk(b"CSET", struct.pack("<I", len(cset)) + b"".join(struct.pack("<Hh", i, v) for i, v in cset)))
     out.append(demo_chunk(fsp, demos, gpos, keep, jp2en, se_table()))
@@ -2133,11 +2136,13 @@ def placement(fs, galaxy, scenario):
     # GPOS: every GeneralPos by name (MR::findNamePos from code: コア中心...): {u32 n}, n x {char name[48] UTF-8, f32 pos[3], rot[3]}
     out.append(chunk(b"GPOS", struct.pack("<I", len(gpos)) +
                      b"".join(g["name"].encode("utf8")[:47].ljust(48, b"\0") + struct.pack("<6f", *g["pos"], *g["rot"]) for g in gpos)))
-    care = [struct.pack("<BBH9f", camera.SHAPES[r["name"]], r["zone"],
-                        cam_index.get((r["zone"], "c", r["args"][0] & 0xFFFF), 0xFFFF), *r["pos"], *r["rot"], *r["scale"])
+    sw16 = lambda v: v if 0 <= v < 0x8000 else -1
+    care = [struct.pack("<BBH9fhhB3x", camera.SHAPES[r["name"]], r["zone"],
+                        cam_index.get((r["zone"], "c", r["args"][0] & 0xFFFF), 0xFFFF), *r["pos"], *r["rot"], *r["scale"],
+                        sw16(r.get("sw_a", -1)), sw16(r.get("sw_b", -1)), int(bool(r.get("invalid")) or r.get("sw_a", -1) >= 0))
             for r in camera.areas(cubes)]
     out.append(chunk(b"CAMS", struct.pack("<I12x", len(cams)) + b"".join(cams)))
-    out.append(chunk(b"CARE", struct.pack("<I12x", len(care)) + b"".join(care)))
+    out.append(chunk(b"CARE", struct.pack("<II8x", len(care), 48) + b"".join(care)))
     # asset names per stage, in draw order: planets first, then object types
     names = [z["name"] for z in zones]
     per_stage = {st: [] for st in act}

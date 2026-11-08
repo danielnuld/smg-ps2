@@ -284,6 +284,16 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   hit the route ELF once with #318 (out/rel-boot-EggStarGalaxy_1-route-crash1.log), the retry got the star at f 4215. Disc: build.sh plain ... FileSelect/1 disc, disc.py ->
   out/smg-ps2.iso (3315 MB, 2472 packs, ELF from 6b9035b + #318, not the boss PRs merged since); the 10-31 ISO kept as
   out/smg-ps2-prev.iso.
+- Prologue camera and title bloom vs the Wii (fix/garden-rail-camera, 2026-11-08, #529): the user's PS2 capture
+  against the Wii walkthrough. CameraRailFollow ported (camera.c CAM_RAIL_FOLLOW: the eye rides its "Camera" rail
+  (CameraRailHolder: usage Camera, path_arg0 the rail id; camera.py stores its l_id in num1) toward the target's nearest
+  point less the margin, accelerating / stopping as Petari); the garden's road (c:0019, rail 26) and plaza (c:0002,
+  rail 0) used it and ran as a level XZ_PARA. Camera areas with a SW_A are kept (CARE entries 48 B: SW_A, SW_B, starts
+  invalid; game.c widens older 40 B blobs) and CubeCameraArea::movement runs each frame: the plaza's SW_A 10 area after
+  PrologueA. lyt.c applies a layout's animations in the order they were started (LayoutPaneCtrl::start rebinds at the
+  end): A then B on the title held ReactionA's PicBloomA at 255 over Decide, a logo-shaped glow on the file select.
+  Test: `camwalk` (PeachCastleGardenGalaxy 1: the road walked, camera changes logged). Repack: every scene.bin with a
+  RAIL_FOLLOW or SW_A camera area (repack-todo); the 2026-11-08 ISO has PeachCastleGardenGalaxy only.
 - Release repack (2026-11-07, main 1984003): the old packs (all but music / movies) moved to
   out/packs-backup-2026-11-07 (kept; D: had 4.3 GB free after the ISO). Full repack with main's tools
   (out/release_2026-11-07.sh, log out/release_2026-11-07.log, 18:38 - 21:29): lyt.py (menus.bin 1007 KB with WipeRing,

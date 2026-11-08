@@ -774,6 +774,14 @@ static int sw_on_n(const Row *r, int k, int add)
 }
 #define sw_on(r, k) sw_on_n(r, k, 0)
 
+/* camera.h camera_switch: a stage switch by its zone and id as placed (CubeCameraArea's SW_A / SW_B) */
+static int cam_switch(int zone, int id)
+{
+    Row r;
+    r.zone = zone; r.sw[0] = id;
+    return sw_on(&r, 0);
+}
+
 static void sw_set(const Row *r, int k, int on)
 {
     int b = sw_bit(r, k, 0);
@@ -1793,6 +1801,14 @@ static const float *find_rail_of(const unsigned char *blob, int zone, int id, u3
     return (const float *)(p + 24 + (raw ? 12 * np : 0));
 }
 #define find_rail(blob, zone, id, npts, closed) find_rail_of(blob, zone, id, npts, closed, 0)
+static const unsigned char *cam_blob; /* the scene blob the camera's rails come from */
+static const float *cam_rail(int zone, int id, int *n, int *closed) /* camera.h camera_rail */
+{
+    u32 np = 0;
+    const float *r = cam_blob ? find_rail(cam_blob, zone, id, &np, closed) : NULL;
+    *n = (int)np;
+    return r;
+}
 
 /* RailCoin::placementNormalRail: count coins evenly spaced by length (loop rails: length / n) along the rail's
  * polyline (its Bezier parts sampled by slice.py) */
@@ -3110,8 +3126,20 @@ void game_init(const Scene *s, const unsigned char *blob)
             mat_translate_rot_scale(zm[i], e, e + 3, one);
         }
         CamTarget t = {mario->pos, mario->face, mario->up, 0, 0, {0, 0, 0}, NULL};
-        camera_init(c ? (const CamParam *)(c + 16) : NULL, c ? *(const int *)c : 0,
-                    a ? (const CamArea *)(a + 16) : NULL, a ? *(const int *)a : 0, (const float (*)[16])zm, &t);
+        int na = a ? *(const int *)a : 0;
+        const CamArea *ca = a ? (const CamArea *)(a + 16) : NULL;
+        if (a && *(const int *)(a + 4) != (int)sizeof(CamArea)) { /* an older blob's 40-byte areas: no switches */
+            CamArea *w = mem_alloc(MEM_SCENE, na * sizeof(CamArea));
+            for (int i = 0; i < na; i++) {
+                memcpy(&w[i], a + 16 + 40 * i, 40);
+                w[i].sw_a = w[i].sw_b = -1; w[i].off = 0;
+            }
+            ca = w;
+        }
+        camera_switch = cam_switch;
+        cam_blob = blob;
+        camera_rail = cam_rail;
+        camera_init(c ? (const CamParam *)(c + 16) : NULL, c ? *(const int *)c : 0, ca, na, (const float (*)[16])zm, &t);
         /* CameraDirector::closeCreatingCameraChunk: mIsStartCameraActive, startStartPosCamera(false): the start's
          * camera (getCurrentStartCameraId: its Camera_id) until checkStartCondition */
         const Row *st0 = scene_start(s);
@@ -56398,6 +56426,23 @@ int game_demo_fat(int frame) /* EggStar 2: placed 900 off the TicoFat once, he w
         if (sc->objs[i].type == t && !row_dead[i]) { demo_place(vadd(row_pos(&sc->objs[i]), v3(0, 900.0f, 0)), mario->face); return -2; }
     return -1;
 }
+
+#ifdef CAMWALK_TEST
+/* camwalk test (PeachCastleGardenGalaxy 1, start 0): Mario walked down the road to the plaza by the stick, the camera
+ * logged as it changes: its rail camera (c:0019, rail 26) over the road; after PrologueA (the garden again at start 1)
+ * on round the plaza: the SW_A 10 area's rail camera (c:0002, rail 0) */
+int game_test_camwalk(int frame)
+{
+    static const float wp[][3] = {{12700, 0, 11450}, {10750, 0, 10350}, {9750, 0, 9600}, {8750, 0, 8750},
+                                  {7350, 0, 8350}, {6350, 0, 8300}, {5150, 0, 8200}, {4000, 0, 7900},
+                                  {2500, 0, 7050}, {350, 0, 6500}, {-500, 0, 6250}, {-1800, 0, 5200}, {-3000, 0, 4600}, {-2000, 0, 7000}};
+    static int k;
+    if (dx_busy() || talk_active() || k >= (int)(sizeof wp / sizeof wp[0])) { pad_force_stick = 0; return k; }
+    V3 to = v3(wp[k][0], mario->pos.y, wp[k][2]);
+    if (test_walk_to(to, 300.0f)) { k++; printf("camwalk f %d: point %d at (%d %d %d)%c", frame, k, (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z, 10); }
+    return k;
+}
+#endif
 
 int game_demo_explore(int frame) /* any galaxy (explore builds, for the videos): played as a player through the pad
                                   * only: on to the nearest launch star not flown yet (a spin in its ring), a coin or
