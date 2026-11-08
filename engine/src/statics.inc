@@ -232,7 +232,7 @@ static void st_flag_test(void)
 }
 #endif
 /* ---- MapObj classes by placed type: their per-row state (StSt, kept across rebinds) ---- */
-enum { ST_NONE = 1, ST_MARBLE, ST_HDSTEP, ST_TURTLE, ST_SWFLOAT, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP, ST_WTOWER, ST_TIMER, ST_WCC, ST_CFSTEP, ST_IASTONE };
+enum { ST_NONE = 1, ST_MARBLE, ST_HDSTEP, ST_TURTLE, ST_SWFLOAT, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP, ST_WTOWER, ST_TIMER, ST_WCC, ST_CFSTEP, ST_IASTONE, ST_FLOATERU }; enum { FU_WAIT = 1, FU_MOVE, FU_DONE }; /* st_floater nerves */
 /* Placed classes whose Petari behaviour is the model drawn with its animations and collision (the engine's generic
  * instance does that): LavaGalaxyParts.cpp (LavaShellTowerStep, LavaStepA / B / C: startBtk / Brk / Bpk / Btp of its
  * name, collision, clipping; ponytail: the steps' DLMakerProjmapEffectMtxSetter lava glow is baked at slice time and
@@ -269,6 +269,7 @@ static int st_kind_name(const char *n)
     if (!strcmp(n, "WaterfallCaveCover")) return ST_WCC;
     if (!strcmp(n, "CannonFortressBreakStepA") || !strncmp(n, "CannonFortressRotateBreakStep", 29)) return ST_CFSTEP; /* CannonFortressBreakStep */
     if (!strcmp(n, "ItemAppearStoneSpinDriver")) return ST_IASTONE; /* ItemAppearStone */
+    if (!strcmp(n, "OceanFloaterTypeU")) return ST_FLOATERU; /* OceanFloaterLandParts */
     if (!strcmp(n, "SurprisedGalaxy") || (!strncmp(n, "Surp", 4) && strlen(n) > 10 && !strcmp(n + strlen(n) - 6, "Galaxy"))) return ST_SURP;
     for (u32 k = 0; k < sizeof st_still / sizeof *st_still; k++) if (!strcmp(n, st_still[k])) return ST_STILL;
     return ST_NONE;
@@ -1105,6 +1106,11 @@ static int st_cast_hook(int row, int type, int part) /* dx_cast_hook: the demo a
         }
         return 1;
     }
+    if (type == 3 && st_kind(sc->objs[row].type) == ST_FLOATERU) { /* registerDemoActionNerve: HostTypeMove */
+        StSt *g = st_get(row);
+        if (g->n != FU_MOVE) { g->n = FU_MOVE; g->st = 0; }
+        return 1;
+    }
     if (type == 3 && st_kind(sc->objs[row].type) == ST_WTOWER) { /* registerDemoActionNerve: MoveStart */
         StSt *g = st_get(row);
         if (g->n == 0) { g->n = 1; g->t2 = 0; printf("watch tower %d: MoveStart (demo)%c", row, 10); }
@@ -1246,6 +1252,82 @@ static int st_iastone(Inst *in, StSt *g)
     game_rebind();
     return 1;
 }
+/* OceanFloaterLandParts.cpp after Petari (OceanFloaterTypeU, the one class NameObjFactory makes of it): its model with
+ * its anims and collision; off a rail Done, on one Wait with its MapPartsRailMover started; a demo cast
+ * (tryRegisterDemoCast, g->on) gets Move from its demo's action (registerDemoActionNerve, no part). Move:
+ * SE_OJ_HUGE_FLOATER_MOVE_ST and RiseBubble at its first step, SE_OJ_LV_HUGE_FLOATER_MOVE while the rail mover works
+ * (game.c update_railers runs it only in Move: st_floater_rail), at the rail's end ..._MOVE_ED and RiseBubble off
+ * (g->t3 mIsMoving); not a cast: SE_SY_READ_RIDDLE_S, Done; a cast: at the demo's last step SE_SY_READ_RIDDLE_S,
+ * endFloatUpDemo (updateAlreadyDoneFlag フローター浮上, its SW_A on), Done. The flag already set at init
+ * (setupAlreadyDoneFlag): at the rail's end (moveCoordToEndPos), its SW_A on, Done. g->n its nerve, g->t2 the flag.
+ * ponytail: no LodCtrlPlanet (the zones' low packs); its ACTMES_MAPPARTS_DISAPPEAR_WITH_BLINK kill (receiveOtherMsg in
+ * Move) has no sender in the port */
+static int st_floater_rail(const Inst *in) /* update_railers: -1 not a floater, else may its rail mover run */
+{
+    if (st_kind(sc->objs[in->row].type) != ST_FLOATERU) return -1;
+    return st_get(in->row)->n == FU_MOVE;
+}
+static void st_floater_u(Inst *in, StSt *g)
+{
+    const Row *r = &sc->objs[in->row];
+#ifdef FU_TEST /* XF=-DFU_TEST (OceanFloaterLandGalaxy/1): 200 frames in, the BreakableFixation with a dead switch broken
+                * (フローター固定具１ starts); 300 frames after the floater's Done a miss: again, risen from the start */
+    { static int t, d; int ct = scene_type(sc, "BreakableFixation");
+      if (!seq_is_retry() && ++t == 200)
+          for (u32 i = 0; ct >= 0 && i < sc->nobjs; i++)
+              if ((int)sc->objs[i].type == ct && sc->objs[i].sw[SW_DEAD] >= 0 && !row_dead[i]) { row_kill((int)i); printf("fu test: fixation row %u broken%c", i, 10); }
+      if (!seq_is_retry() && g->n == FU_DONE && ++d == 300) game_test_miss(0);
+      if (game_frame % 120 == 0) printf("fu test: floater %d nerve %d at %.0f %.0f %.0f%c", in->row, g->n, in->m[12], in->m[13], in->m[14], 10); }
+#endif
+    if (!g->n) { /* init */
+        g->n = in->railer ? FU_WAIT : FU_DONE; /* isConnectedWithRail: initMoveType, else Done */
+        g->t2 = -1;
+        for (int d = 0; d < ndemos && in->railer; d++) /* tryRegisterDemoCast: mIsRegisteredDemo */
+            for (int c = 0; c < demos[d].h->ncast; c++) if (demos[d].cast[c] == in->row) g->on = 1;
+        int was = 0;
+        g->t2 = seq_done_setup("フローター浮上", r->zone, r->l_id, &was);
+        if (was) {
+            if (in->railer) { /* moveCoordToEndPos, moveTransToCurrentRailPos */
+                const unsigned char *e = in->railer;
+                u32 np = *(const u32 *)(e + 8), nr = *(const u32 *)(e + 12);
+                row_coord[in->row] = *(const float *)(e + 24 + 12 * np + 12 * nr + 12 * (nr - 1));
+                row_rdir[in->row] = 2;
+                railer_place(in);
+            }
+            if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
+            g->n = FU_DONE;
+            printf("ocean floater %d: フローター浮上 already done%c", in->row, 10);
+        }
+        g->st = 0;
+        return;
+    }
+    if (g->n != FU_MOVE) return;
+    if (g->st++ == 0) {
+        se_start(SE_OJ_HUGE_FLOATER_MOVE_ST, &in->m[12]);
+        g->t3 = 0;
+        printf("ocean floater %d: move%c", in->row, 10);
+    }
+    if (!g->t3) {
+        g->lv[0] = se_level(SE_OJ_LV_HUGE_FLOATER_MOVE, &in->m[12], g->lv[0]);
+        fx_named("OceanFloaterTypeU", "RiseBubble", in->m, NULL, g); /* emitEffect .. deleteEffect */
+    }
+    if (row_rdir[in->row] == 2 && !g->t3) { /* !isWorking: the rail's end */
+        se_start(SE_OJ_HUGE_FLOATER_MOVE_ED, &in->m[12]);
+        g->t3 = 1;
+        printf("ocean floater %d: risen%c", in->row, 10);
+        if (!g->on) { se_start(SE_SY_READ_RIDDLE_S, NULL); g->n = FU_DONE; return; }
+    }
+    const Demo *d = dx.on ? &demos[dx.cur] : NULL;
+    if (g->on && d && dx.part == d->h->nparts - 1 && dx.step >= d->parts[dx.part].total - 1) { /* isDemoLastStep */
+        se_start(SE_SY_READ_RIDDLE_S, NULL);
+        if (g->t2 >= 0) { /* endFloatUpDemo */
+            seq_done_update(g->t2, 1);
+            if (r->sw[SW_A] >= 0) sw_set(r, SW_A, 1);
+        }
+        g->n = FU_DONE;
+        printf("ocean floater %d: done, フローター浮上 set%c", in->row, 10);
+    }
+}
 static void st_objs_update(void)
 {
     static int organize = -1;
@@ -1296,6 +1378,7 @@ static void st_objs_update(void)
         case ST_WCC: if (st_wcc(in, g)) return; break;
         case ST_CFSTEP: if (st_cfstep(in, g, i)) return; break;
         case ST_IASTONE: if (st_iastone(in, g)) return; break;
+        case ST_FLOATERU: st_floater_u(in, g); break;
         case ST_TEXSW: { /* SimpleMapObj::init: TexChange (BTK) at arg1 (setupInitInfoTextureChangeArg1; -1 none),
                           * SimpleTextureSwitchChangeObj::changeTexture on its SW_A's rise: frame 1 for good (slice.py
                           * BRK_STEPS: "<class>~<frame>") */

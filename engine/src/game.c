@@ -5299,7 +5299,7 @@ typedef struct {
 /* #143's placed classes ported since the audit (update_gaps) */
 enum { GAP_NONE, GAP_SHOCKWAVE, GAP_CAPSULE, GAP_DRIFT, GAP_SHELLCOIN, GAP_SHELLCHIP, GAP_ELEVATOR, GAP_UFOKINOKO, GAP_TRIROCK };
 static void gap_place(Inst *in);
-static int st_rail_go(const Inst *in); /* statics.inc */
+static int st_rail_go(const Inst *in), st_floater_rail(const Inst *in); /* statics.inc */
 static void st_chain_rebind(const Scene *s), st_wt_rebind(const Scene *s);
 static void ufok_start(int row);
 static int gap_class(const char *name)
@@ -37394,7 +37394,8 @@ static void update_railers(void)
         int was = row_mp_a[in->row] & 2; /* RailMoveObj _D0 */
         row_mp_a[in->row] &= ~2;
         int row = in->row, cond = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) ? r->arg[7] >> 8 & 15 : 0, stop = *(const int *)(e + 16); /* (an objinfo row: MoveConditionType unset, 0) */
-        if (in->eyebeamer ? !eb_patrol(row) : st_turtle_moving(row) >= 0 ? !st_turtle_moving(row) : !mp_running(r, row)) continue;
+        int fu = st_floater_rail(in); /* OceanFloaterLandParts: its SW_A written, not read; it runs in Move */
+        if (fu >= 0 ? !fu : in->eyebeamer ? !eb_patrol(row) : st_turtle_moving(row) >= 0 ? !st_turtle_moving(row) : !mp_running(r, row)) continue;
         if (in->gap == GAP_ELEVATOR && gap_st(row)->n != EV_MOVE) continue; /* BattleShipElevator::control: not in Wait */
         if (in->gap == GAP_UFOKINOKO && gap_st(row)->n != UK_MOVE) continue; /* UFOKinoko: startRailMover at startMove */
         if (!st_rail_go(in)) continue; /* RailDemoMoveObj: its demo started first (statics.inc) */
