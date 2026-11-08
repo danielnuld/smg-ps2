@@ -50142,7 +50142,7 @@ static void dr_update(GwRabbit *r)
     case DR_CHANGE:
         if (st == 0) { gw_ract(r, "Change"); w_se(&r->k, SE_SM_RABBIT_HIDE); }
         dr_normal_vel(r);
-        if (st > 2 && gw_stopped(r->k.row)) { w_se(&r->k, SE_SM_METAMORPHOSE_SMOKE); row_kill(r->k.row); dr_set(r, DR_DEAD); return; }
+        if (st > 2 && gw_stopped(r->k.row)) { w_se(&r->k, SE_SM_METAMORPHOSE_SMOKE); row_kill(r->k.row); sw_changed = 1; dr_set(r, DR_DEAD); return; } /* kill: the rebind drops its instance (else drawn on, frozen where it vanished) */
         break;
     }
     gw_move(r);
