@@ -1343,6 +1343,7 @@ static Pop *pops;
 static int npops, box_coins;
 static Inst *insts;
 static Anim *obj_anim(int row, const Model *md, const char *cls);
+static const Model *gw_row_model(int row, const Model *md, const char **cls);
 /* A demo's camera (CameraAnim::calc, startAnimCameraTargetSelf): the CANM `name`'s frame in the actor's frame `m`
  * (side, up, front, position), the roll about the view; 0 once it is over (or missing: no override) */
 static int demo_camera(const char *name, int frame, const float m[16])
@@ -5514,7 +5515,8 @@ static void game_rebind_(void)
             (r->type < 1024 ? wnk[r->type] == 2 : walker_new_kind(s->types + 32 * r->type) >= 0))
             continue;
         const char *name = s->types + 32 * r->type;
-        const Model *md = scene_model(s, name);
+        const char *acls = name; /* its pose's class (the Gateway's TicoBaby / TrickRabbitBaby rows: gw_row_model) */
+        const Model *md = gw_row_model((int)i, scene_model(s, name), &acls);
         if (!md) { /* slice.py BRK_ARG: its colour BRK stopped at an arg (NoInit: 0): TicoReading / Tico ColorChange arg0,
                     * Penguin ColorChange arg7 */
             static const struct { const char *cls; int arg; } ba[] = {{"TicoReading", 0}, {"Tico", 0}, {"Penguin", 7}, {"PenguinRacer", 7}, {"PenguinRacerLeader", 7}, {"PenguinSkater", 7}};
@@ -5533,7 +5535,7 @@ static void game_rebind_(void)
         Inst *in = &insts[ninsts++];
         in->md = md;
         in->row = i;
-        in->anim = md->skin && !(plant_first && plant_first[i] >= 0) ? obj_anim(i, md, name) : NULL; /* plants: plant_pose */
+        in->anim = md->skin && !(plant_first && plant_first[i] >= 0) ? obj_anim(i, md, acls) : NULL; /* plants: plant_pose */
         in->anim_want = md->skin && !(plant_first && plant_first[i] >= 0) && !in->anim;
         int dc, dp;
         in->breaks = breakable(name, r, &dc, &dp);
@@ -5609,6 +5611,17 @@ static void game_rebind_(void)
                 in->m[4] = y.x * sy; in->m[5] = y.y * sy; in->m[6] = y.z * sy;
                 in->m[8] = z.x * sz; in->m[9] = z.y * sz; in->m[10] = z.z * sz;
             }
+        }
+        if (!strncmp(name, "EarthenPipe", 11)) /* EarthenPipe::init: drawn and collided on its Top joint (makeMtxUpFrontPos
+            * up / front / the top, unscaled: mScale.y 1), calcTrans(1). The bind pose drew its rim at the placement and
+            * its body under the ground (#527: a red ring). ponytail: rigid model, the Bottom joint stays 350 under the
+            * top (Petari: 50 under the placement), out of sight in the ground; the hidden pipe's rise not drawn */
+        { /* (as game_init's Pipe: the first rebind comes before it) */
+            V3 x, z, pos = row_pos(r);
+            row_axes(r, &x, &z);
+            V3 up = r->arg[6] > 0 ? vcross(z, x) : up_at(pos, vcross(z, x));
+            basis_matrix(in->m, vadd(pos, vmul(up, 100.0f * r->scale[1])), up, z, 0);
+            in->s = 1.0f; in->reach = md->radius;
         }
         /* NPCActor _A0 / _B0: initDefaultPosAndQuat's placement turn (its matrix's axes, set just above) */
         in->nu = in->nu0 = vnorm(v3(in->m[4], in->m[5], in->m[6])); in->nf = in->nf0 = vnorm(v3(in->m[8], in->m[9], in->m[10]));
@@ -49796,6 +49809,7 @@ typedef struct {
     int pressure, notc, active, linked, baby;
     float speed;       /* WalkerStateRunaway::mRunawaySpeed */
     int talk;          /* its talker (-1 none) */
+    const char *act;   /* the action last started (gw_ract) */
     const char *want;  /* its action, started once its instance's anim is made (a rebind after showModel) */
     V3 mpos; V3 mup, mfront; /* Mario's pose blended to it (exeCaught) */
 } GwRabbit;
@@ -49831,6 +49845,23 @@ static void gw_tico_at(int c, V3 pos, V3 up, V3 front) /* a Luma's base matrix (
     for (int j = 0; j < 12; j++) gw.tm[c][j] *= s3[j / 4];
     gw.tm_set[c] = 1;
 }
+/* game_rebind_: the variants' models (RunawayTico cast 0: TicoBaby, RunawayRabbit / DemoRabbit by arg2: TrickRabbitBaby)
+ * made with the instance, so a rebind keeps their pose (swapped after it, every rebind restarted it: the last
+ * catch's Luma never ended its Appear, #527) */
+static const Model *gw_row_model(int row, const Model *md, const char **cls)
+{
+    if (!gw.on || !md) return md;
+    const char *v = NULL;
+    if (row == gw.tico[0]) v = "TicoBaby";
+    for (int i = 0; i < gw.ndr + gw.nrr && !v; i++) {
+        const GwRabbit *r = i < gw.ndr ? &gw.dr[i] : &gw.rr[i - gw.ndr];
+        if (r->k.row == row && r->baby) v = "TrickRabbitBaby";
+    }
+    const Model *m = v ? scene_model(sc, v) : NULL;
+    if (!m) return md;
+    *cls = v;
+    return m;
+}
 /* after game_rebind: the variants' models (TrickRabbitBaby, TicoBaby) and the Lumas' places on their instances */
 static void gw_apply(void)
 {
@@ -49843,7 +49874,7 @@ static void gw_apply(void)
     for (int c = 0; c < 3; c++) {
         Inst *in = gw_inst(gw.tico[c]);
         if (!in) continue;
-        if (c == 0 && tb && in->md != tb) { in->md = tb; in->anim = obj_anim(gw.tico[c], tb, "TicoBaby"); }
+        if (c == 0 && tb && in->md != tb) { in->md = tb; in->anim = obj_anim(gw.tico[c], tb, "TicoBaby"); in->anim_want = !in->anim; }
         if (gw.tm_set[c]) memcpy(in->m, gw.tm[c], 64);
     }
 }
@@ -49876,7 +49907,7 @@ static void gw_body_init(GwRabbit *r, int row)
     r->k.row = row;
     r->k.pos = row_pos(&sc->objs[row]);
     kuribo_init(&r->k);
-    r->talk = -1; r->sw_was = 0; r->want = NULL;
+    r->talk = -1; r->sw_was = 0; r->want = r->act = NULL;
 }
 static const char *gw_rcls(const GwRabbit *r) /* slice.py names the TrickRabbit archive's clips after the placed class */
 { return r->baby ? "TrickRabbitBaby" : sc->types + 32 * sc->objs[r->k.row].type; }
@@ -49884,6 +49915,7 @@ static void gw_ract(GwRabbit *r, const char *clip)
 {
     Inst *in = gw_inst(r->k.row);
     r->want = in && in->anim ? NULL : clip;
+    r->act = clip;
     gw_play(r->k.row, gw_rcls(r), clip, 4);
 }
 /* the binder's step with its gravity: onCalcGravity, the move, the ground / wall */
@@ -50151,10 +50183,15 @@ static void rr_update(GwRabbit *r, int i)
             float t = (r->pressure - 200) / (float)dec;
             t = t < 0 ? 0 : t > 1 ? 1 : t;
             speed = 1.8f + (0.5f - 1.8f) * t;
-            gw_ract(r, speed < 1.3f ? "RunTired" : "Run");
+            /* startAction on the playing action goes on with it (XanimePlayer::changeAnimation: the same one returns);
+             * restarted every frame it froze the rabbit's pose while Mario chased it (#527) */
+            const char *run = speed < 1.3f ? "RunTired" : "Run";
+            if (!r->act || strcmp(r->act, run)) gw_ract(r, run);
         }
         { float dep; if (in_water(r->k.pos, r->k.qy, &dep)) speed *= 0.3f; } /* isBindedGroundWater: sAwayTargetVelocityRate */
         r->speed = speed;
+        { Inst *in = gw_inst(r->k.row); /* setBckRate(sMinRunBckRate 0.9, sMaxRunBckRate 1.4) */
+          if (in && in->anim) in->anim->speed = speed < 0.9f ? 0.9f : speed > 1.4f ? 1.4f : speed; }
         /* attackSensor: the Catch sensor (Spine, 30) on Mario's body */
         V3 spine = vadd(r->k.pos, vmul(r->k.qy, 50.0f));
         if (r->notc == 0 && mario_touch(spine, 30.0f) && gw.catching < 0 && !dx_busy()) gw_caught(r);
@@ -50227,6 +50264,19 @@ static void rt_update(int c)
 {
     int row = gw.tico[c];
     if (row < 0 || gw.tnrv[c] == RT_DEAD) return;
+    /* shown again (appear): its instance and pose come with the next rebind; its first step waits for them (its
+     * Appear clip unstarted never stopped, and the SE read a null instance: the hang on a catch, #527) */
+    if (gw.tstep[c] < 0 && gw.tnrv[c] >= RT_WAIT && gw.tnrv[c] <= RT_TALK) {
+        static int wait[3]; /* (a pose from the pool: up to 60 frames, else on without one) */
+        Inst *in = gw_inst(row);
+        if (!in || sw_changed || (!in->anim && wait[c]++ < 60)) { /* (sw_changed: the rebind still to come) */
+#ifdef GATEWAY_TEST
+            if (game_frame % 60 == 0) printf("gateway: tico %d row %d waits: inst %d shown %d dead %d hide %d md %d%c", c, row, in != NULL, row_shown(row), row_dead[row], row_demo_hide[row], scene_model(sc, sc->types + 32 * sc->objs[row].type) != NULL, 10);
+#endif
+            return;
+        }
+        wait[c] = 0;
+    }
     int st = ++gw.tstep[c];
     const char *cls = c == 0 ? "TicoBaby" : "RunawayTico";
     switch (gw.tnrv[c]) {
@@ -50614,6 +50664,12 @@ int game_test_gateway(unsigned frame)
                 if (frame % 40 == 0) { jump = d > last_d - 50.0f && d > 120.0f; last_d = d; }
             } else jump = 0;
             if (frame % 120 == 90) printf("gateway chase f %u: rabbit %d nrv %d to %s d %.0f caught %d\n", frame, ri, ri >= 0 ? gw.rr[ri].k.nrv : -1, why, d, gw.caught);
+        } else if (gw.collect_nrv == 2 && gw.ro_nrv == RO_WAIT && gw.rosetta >= 0 && row_shown(gw.rosetta) && !dx_busy() && !talk_active()) {
+            V3 to = row_pos(&sc->objs[gw.rosetta]); /* the chase over: up the tower's path to Rosetta */
+            test_walk_to(to, 0.0f);
+            if (frame % 40 == 0) { jump = vlen(vsub(to, mario->pos)) > last_d - 50.0f; last_d = vlen(vsub(to, mario->pos)); }
+            if (frame % 120 == 90) printf("gateway follow f %u: to Rosetta d %.0f%c", frame, last_d, 10);
+            if (frame % 600 == 0) mario->pos = to; /* (the pilot stalls on the tower's path) */
         } else jump = 0;
         return jump || talk_active() || (dx.on && dx.paused);
     }

@@ -305,6 +305,19 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   Coverage (out/rel-cover.sh, out/rel-cover.elf, one galaxy per PCSX2 lock, out/coverage.csv; the 11-06 results in
   out/coverage-2026-11-06.csv, cover_logs-2026-11-06): 135 / 135 ok (every scenario but EpilogueDemoStage, hidden
   ones included), 0 misses: PhantomGalaxy 6, BattleShip 1, CannonFleet 1 now ok too.
+- Gateway rabbits / pipe (fix/527, 2026-11-08; seen on a real PS2 with the 11-07 ISO): (1) RunawayRabbit's
+  exeRunaway restarted Run / RunTired every frame Mario pressed it (port's startAction = anim_start, a restart;
+  Petari's changeAnimation keeps the playing one): its pose froze while it slid away. Now only on a change, with its
+  setBckRate (0.9 .. 1.4). (2) EarthenPipe drew its bind pose at the placement: rim on the ground, body under it (a
+  ring), in the BDL's own colours (orange: no BRK). Now its instance (and collision) sit on the Top joint
+  (makeMtxUpFrontPos at the top, unscaled) and slice.py BRK_POSE bakes earthenpipe.brk frame 0 (green). Every pipe
+  galaxy repacked. (3) The freeze on a catch: RunawayTico's Appear ran on the frame it was shown, before the rebind
+  made its instance: se_start read a NULL instance (TLB miss, fatal on a PS2) and its Appear clip never started, so
+  its step never ended. Its first step now waits for its instance and pose (the rebind first); the TicoBaby /
+  TrickRabbitBaby variants are made with the instance (gw_row_model), not swapped after each rebind (that reset the
+  last Luma's Appear). #525: kp_init printed row_camset before
+  game_init made it (NULL read). Test: `XF=-DGW_FOLLOW build.sh gateway <blob> HeavensDoorGalaxy/1` (the opening,
+  the chase through the pipe, the three catches, the tower, the walk to Rosetta, her spin demo).
 - EggStar 1 boot crash (fix/337, 2026-11-07): found. newlib calls fstat on every stdio stream before its first read
   or seek (__smakebuf_r, _fseeko_r); for a host: file that is a FILEIO getstat RPC, and now and then the IOP answered
   the RPC before it (the open, payload to _fio_recv_data) a second time. The stale SIF_CMD_RPC_END completed the

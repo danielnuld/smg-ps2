@@ -2207,7 +2207,7 @@ static void kp_init(const Scene *s, const unsigned char *blob) /* Koopa::init (K
         for (int p = 0; p < KPR_N; p++) { memset(&kpr[p], 0, sizeof kpr[p]); an[6 + p] = kp.vs == 3 ? &kpr[p].a : NULL; }
         for (int k = 0; k < 6 + KPR_N; k++) if (an[k]) { *an[k] = mem_alloc(MEM_PLAYER, sizeof(Anim)); memset(*an[k], 0, sizeof(Anim)); (*an[k])->clip_id = -1; }
         kp_models(s);
-        printf("koopa: row %d (vs%d), camera set %d\n", (int)i, kp.vs, row_camset[i]);
+        printf("koopa: row %d (vs%d)\n", (int)i, kp.vs); /* (row_camset is made after kp_init: its read here was a null one, #525) */
         break;
     }
 }
