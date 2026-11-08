@@ -1672,6 +1672,12 @@ there needs the embedded blob and every pack rebuilt.
   mario_offence(id, ..) takes the receiver's host: tryPunchAirAfter's list (a punched host no longer sees the spin, 8
   at most) and, out of a spin's own clip (_3E5: spin2nd, jump kind 8, 地上ひねり ..), the 45-degree front check
   (m_punch_ok). ponytail: one entry a host, not a sensor (KuriboChief's parts, Dodoryu's).
+- TakoHei eyes and squash (feat/takohei-blink): each nerve starts its BTP as TakoHei.cpp does (Open, Blink every 60 in
+  Wait / Walk, Search, Blink in Pursue, Cry, Angry, BlinkTwice; again as _E4 runs out) through draw_skin's btp_over (a
+  BTP apart from the clip); receiveMsgPush (Mario 12 / 60 frames, an enemy 5 / 20): BlinkTwice and its
+  AnimScaleController's startAndAddScaleVelocityY (0.15 / 0.1), drawn as Karon's. _E4 one counter (jc; #442 kept a
+  second in lvt[0]). Test: `tako` HoneyBeeKingdomGalaxy/1 (f 2300 how 10: `btp blinktwice`, `pushed by Mario, scale
+  velocity 0.15`). PUSH_OTHER / PUSH_KIND / PUSH_FRAME for the push test.
 - BombTeresa push (feat/bteresa-push): its body (85 x s) in walker_push_pass replaces bt_update's own loop (enemies taken
   as 70 about their place, pushes only between BombTeresas): in Drift / DriftRelease the receiver's explosion (walker_blow)
   taken: Explosion, else sendMsgPush; any enemy's push: 3 along the sensors' line. Polta's BombTeresas are in the pass too.

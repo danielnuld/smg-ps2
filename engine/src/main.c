@@ -2581,7 +2581,7 @@ int main(void)
            * another spun over, then blown */
             static const struct { unsigned f; int kind, k, how; } st[] = {{120, 1, 0, 3}, {300, 1, 0, 8}, {1100, 3, 0, 9},
                                                                             {1500, 3, 0, 0}, {1600, 3, 0, 1}, {1640, 3, 0, 1}, {2000, 1, 0, 0},
-                                                                            {2100, 1, 0, 2}};
+                                                                            {2100, 1, 0, 2}, {2300, 1, 1, 10}};
             for (unsigned i = 0; i < sizeof st / sizeof st[0]; i++)
                 if (frame == st[i].f) printf("tako test f %u: kind %d #%d how %d: row %d\n", frame, st[i].kind, st[i].k, st[i].how, game_test_enemy(st[i].kind, st[i].k, st[i].how));
             if (frame == 2100) game_test_spin_now(); /* a spin by it */

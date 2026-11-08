@@ -5966,6 +5966,7 @@ int game_test_enemy(int kind, int k, int how)
         if (how == 6) { mario->grounded = 1; mario->face = vmul(side, -1.0f); } /* 90 off, facing it: walking into it */
         if (how == 8) { mario->pos = vadd(vadd(e->pos, vmul(vnorm(vtangent(e->qz, e->up)), 900.0f)), vmul(e->up, 50.0f)); mario->vup = 0; } /* 900 before it */
         if (how == 9) { mario->pos = vadd(vadd(e->pos, vmul(vnorm(vtangent(e->qz, e->up)), 600.0f)), vmul(e->up, 50.0f)); mario->vup = 0; } /* 600 before it */
+        if (how == 10 && e->kind == WALK_TAKOHEI) { mario->grounded = 1; e->nrv = 7; e->step = -1; } /* 90 off it, put in AttackSign (TH_ATTACKSIGN: no attack, its body pushes him and is pushed) */
         return e->row;
     }
     return -1;
@@ -32196,7 +32197,7 @@ static void th_pushed(Kuribo *k, V3 dir, int player) /* receiveMsgPush, isPushMo
     k->vel = vadd(k->vel, vmul(dir, player ? 12.0f : 5.0f)); /* sPushMarioAccel, sPushAccel */
     k->to += player ? 0.15f : 0.1f; asc_start(k, ASC_ANIM); /* startAndAddScaleVelocityY: sPushScaleYMarioSpeed / sPushScaleYSpeed */
     k->jc = player ? 60 : 20; /* sNoPushMarioTime, sNoPushTime */
-#ifdef TAKO_TEST
+#if defined(TAKO_TEST) || defined(PUSH_TEST)
     printf("takohei row %d: pushed by %s, scale velocity %.2f\n", k->row, player ? "Mario" : "an enemy", k->to);
 #endif
 }
