@@ -720,8 +720,10 @@ static int st_wcc(Inst *in, StSt *g)
     }
     return 0;
 }
+static int st_bf_jet(V3 p);
 static int st_jet_hit(V3 p) /* a thrown JetTurtle at p (receiveMsgPlayerAttack isMsgJetTurtleAttack): 1 taken */
 {
+    if (st_bf_jet(p)) return 1; /* Balloonfish */
     for (int i = 0; i < ninsts; i++) {
         Inst *in = &insts[i];
         if (st_kind(sc->objs[in->row].type) != ST_WCC || !row_shown(in->row)) continue;
@@ -993,8 +995,10 @@ static void st_bbeamers_update(void)
         if (vlen(vsub(mc, body)) < 120.0f + HIT_BODY_R && l > 1e-3f && l < want) mario->pos = vadd(mario->pos, vmul(out, (want - l) / l));
     }
 }
+static int st_bf_shot(V3 p);
 static int st_shot(V3 p) /* a star piece: BallBeamer's body reflects it (receiveMsgPlayerAttack) */
 {
+    if (st_bf_shot(p)) return 1; /* Balloonfish */
     for (int k = 0; k < st_nbbs && st_bb_sc == sc; k++) {
         const Inst *in = row_inst(st_bbs[k].row);
         if (!in || row_dead[in->row]) continue;
@@ -1384,6 +1388,9 @@ static void st_visit(void)
 #ifdef ST_VISIT_SLEEP /* -DST_VISIT_SLEEP: its SW_SLEEP on at frame 100 */
         if (game_frame == 100 && r->sw[SW_SLEEP] >= 0) { sw_set(r, SW_SLEEP, 1); printf("visit: row %u SW_SLEEP on%c", i, 10); }
 #endif
+#ifdef ST_VISIT_APPEAR /* -DST_VISIT_APPEAR: its SW_APPEAR on at frame 300 */
+        if (game_frame == 300 && r->sw[SW_APPEAR] >= 0) { sw_set(r, SW_APPEAR, 1); printf("visit: row %u SW_APPEAR on%c", i, 10); }
+#endif
 #ifdef ST_VISIT_SWB /* -DST_VISIT_SWB: its SW_B on at frame 300 */
         if (game_frame == 300 && r->sw[SW_B] >= 0) { sw_set(r, SW_B, 1); printf("visit: row %u SW_B on%c", i, 10); }
 #endif
@@ -1630,6 +1637,149 @@ static void st_bell_joints(Inst *in) /* polySurface2 (the bell, also its base) a
     st_bell_mtx(&o->b, o->pos, r->scale[0], m); mat_mul(a->world[2], inv, m); memcpy(a->world[0], a->world[2], 64);
     st_bell_mtx(&o->r, o->pos, r->scale[0], m); mat_mul(a->world[1], inv, m);
 }
+/* Balloonfish.cpp after Petari (TearDropGalaxy): dead until its SW_APPEAR (listenStageSwitchOnAppear: AppearFromBox,
+ * SE_EM_BLNFISH_APPEAR). Wait: appearance clip, PRE_DASH SE; its scale 1 -> hWaitMaxScale 1.5 over hWaitTime 120 while
+ * blendQuatFrontUp turns its Z 0.1 toward Mario's centre + 10 x his velocity and its Y 0.02 toward its gravity's up;
+ * past 120 Dash: Attack clip, SwimBubble, hDashVel 10 along its Z, scale 1.5 -> 0.5 over hDashTime 180, then
+ * DashEnd (AttackEnd, 95 frames), killed (Death, EXPLOSION SE) at its end or out of water (its body: 100 at 60 up,
+ * x its scale). Its body pushes Mario in Wait's first 82 frames, else hurts him (sendMsgEnemyAttackMaximum, a push if
+ * not taken); a thrown shell kills it, a star piece starts its AnimScaleController's hit reaction (default
+ * AnimScaleParam). ponytail: its binder (100) does not stop it on the map, the 2P pointer bind (StarPointerBind) left
+ * out, no light control */
+enum { BF_DEAD, BF_WAIT, BF_DASH, BF_DASHEND, BF_GONE };
+typedef struct { int row, nrv, st, nbs, ascn, asct; float s, ascy, ascv; V3 pos, vel, x, y, z, g; u32 lv; } StBf;
+#define ST_BFS 8
+static StBf st_bfs[ST_BFS];
+static int st_nbfs;
+static const Scene *st_bf_sc;
+static const float st_bf_asc[7] = {0.2f, 0.91f, 0.2f, 1.8f, 0.06f, 0.12f, 0.91f}; /* AnimScaleParam's defaults (AnimScaleController(nullptr)) */
+static void st_bf_init(void)
+{
+    if (st_bf_sc == sc) return;
+    st_bf_sc = sc; st_nbfs = 0;
+    int t = scene_type(sc, "Balloonfish");
+    for (u32 i = 0; t >= 0 && i < sc->nobjs && st_nbfs < ST_BFS; i++) {
+        const Row *r = &sc->objs[i];
+        if ((int)r->type != t) continue;
+        StBf *o = &st_bfs[st_nbfs++];
+        float m[16];
+        memset(o, 0, sizeof *o);
+        o->row = (int)i; o->nrv = BF_DEAD; o->pos = row_pos(r); o->s = 1.0f; o->ascy = 1.0f;
+        mat_translate_rot_scale(m, r->pos, r->rot, r->scale); /* mQuat.setEuler(mRotation) */
+        o->x = vnorm(v3(m[0], m[1], m[2])); o->y = vnorm(v3(m[4], m[5], m[6])); o->z = vnorm(v3(m[8], m[9], m[10]));
+    }
+}
+static void st_bf_frame_turn(StBf *o, V3 from, V3 to, float rate) /* q.mult(setRotate(from, to, rate)) on its axes */
+{
+    V3 ax = vcross(from, to);
+    float l = vlen(ax), c = vdot(from, to);
+    if (l < 1e-6f) return; /* (same direction; opposite: turnRandomVector's nudge left out) */
+    float a = atan2f(l, c) * rate;
+    ax = vmul(ax, 1.0f / l);
+    o->x = vnorm(rot_axis(o->x, ax, a)); o->y = vnorm(rot_axis(o->y, ax, a)); o->z = vnorm(rot_axis(o->z, ax, a));
+}
+static V3 st_bf_body(const StBf *o) { return vadd(o->pos, vmul(o->y, 60.0f * o->s)); } /* its body sensor (0, 60 x scale, 0) */
+static void st_bf_kill(StBf *o)
+{
+    float m[16];
+    basis_matrix(m, o->pos, o->y, o->z, 0);
+    fx_named("Balloonfish", "Death", m, NULL, NULL);
+    se_start(SE_EM_BLNFISH_EXPLOSION, &o->pos.x);
+    o->nrv = BF_GONE;
+    row_kill(o->row);
+    printf("balloonfish %d: killed%c", o->row, 10);
+    game_rebind();
+}
+static int st_bf_jet(V3 p)
+{
+    for (int k = 0; k < st_nbfs && st_bf_sc == sc; k++) {
+        StBf *o = &st_bfs[k];
+        if (o->nrv == BF_DEAD || o->nrv == BF_GONE) continue;
+        if (vlen(vsub(p, st_bf_body(o))) < 100.0f * o->s + 50.0f) { st_bf_kill(o); return 1; }
+    }
+    return 0;
+}
+static int st_bf_shot(V3 p)
+{
+    for (int k = 0; k < st_nbfs && st_bf_sc == sc; k++) {
+        StBf *o = &st_bfs[k];
+        if (o->nrv == BF_DEAD || o->nrv == BF_GONE) continue;
+        if (vlen(vsub(p, st_bf_body(o))) < 100.0f * o->s + 30.0f) { o->ascn = ASC_HIT; o->asct = -1; return 1; } /* startHitReaction */
+    }
+    return 0;
+}
+static void st_bfs_update(void)
+{
+    st_bf_init();
+    for (int k = 0; k < st_nbfs; k++) {
+        StBf *o = &st_bfs[k];
+        if (o->nrv == BF_GONE) continue;
+        Inst *in = (Inst *)row_inst(o->row);
+        if (o->nrv == BF_DEAD) {
+            if (!row_shown(o->row)) continue;
+            o->nrv = BF_WAIT; o->st = -1; /* appear */
+            float m[16];
+            basis_matrix(m, o->pos, o->y, o->z, 0);
+            fx_named("Balloonfish", "AppearFromBox", m, NULL, NULL);
+            se_start(SE_EM_BLNFISH_APPEAR, &o->pos.x);
+            printf("balloonfish %d: appear%c", o->row, 10);
+        }
+        if (!dx_row_moves(o->row)) continue;
+        asc_core(&o->ascn, &o->asct, &o->ascy, &o->ascv, st_bf_asc); /* control */
+        int st = ++o->st;
+        o->g = vmul(up_at(o->pos, o->y), -1.0f);
+        if (o->nrv == BF_WAIT) {
+            if (st == 0) { o->vel = v3(0, 0, 0); o->nbs = 0; if (in) obj_play(in, "appearance", 0, 0); se_start(SE_EM_BLNFISH_PRE_DASH, &o->pos.x); }
+            V3 t = vsub(vadd(vadd(mario->pos, vmul(mario->up, HIT_BODY_H)), vmul(vadd(mario->hvel, vmul(mario->up, mario->vup)), 10.0f)), o->pos);
+            float ratio = (float)o->nbs / 120.0f;
+            o->s = (1.0f - ratio) * 1.0f + ratio * 1.5f;
+            if (vlen(t) > 1e-3f) st_bf_frame_turn(o, o->z, vnorm(t), 0.1f); /* blendQuatFrontUp: its Z toward the target */
+            V3 ty = vsub(vmul(o->g, -1.0f), vmul(o->z, vdot(vmul(o->g, -1.0f), o->z)));
+            if (vlen(ty) > 1e-3f) st_bf_frame_turn(o, o->y, vnorm(ty), 0.02f); /* its Y toward the gravity's up */
+            if (o->nbs > 120) { o->nrv = BF_DASH; o->st = -1; continue; }
+            o->nbs++;
+        } else { /* exeDash (Dash, DashEnd) */
+            if (st == 0) { o->nbs = 0; if (in) obj_play(in, o->nrv == BF_DASH ? "attack" : "attackend", 0, 0); o->vel = vmul(o->z, 10.0f); } /* hDashVel */
+            if (in) fx_named("Balloonfish", "SwimBubble", in->m, in->anim && in->anim->skin ? (const float (*)[16])in->anim->world : NULL, o);
+            o->lv = se_level(SE_EM_LV_BLNFISH_DASH, &o->pos.x, o->lv);
+            int max = o->nrv == BF_DASH ? 180 : 95;
+            if (o->nrv == BF_DASH) { float r = (float)o->nbs / 180.0f; o->s = 1.5f * (1.0f - r) + 0.5f * r; }
+            if (max < o->nbs) {
+                if (o->nrv == BF_DASH) { o->nrv = BF_DASHEND; o->st = -1; continue; }
+                st_bf_kill(o); return;
+            }
+            float dep;
+            if (!in_water(st_bf_body(o), vmul(o->g, -1.0f), &dep)) { st_bf_kill(o); return; }
+            o->nbs++;
+        }
+        o->pos = vadd(o->pos, o->vel);
+        V3 b = st_bf_body(o), mc = vadd(mario->pos, vmul(mario->up, HIT_BODY_H));
+        if (vlen(vsub(mc, b)) < 100.0f * o->s + HIT_BODY_R) { /* attackSensor */
+            if (o->nrv == BF_WAIT && st < 82) mario_push_out(b, 100.0f * o->s);
+            else if (!mario_attack(ATK_MAXIMUM, b)) mario_push_out(b, 100.0f * o->s);
+        }
+        if (in) { /* calcAndSetBaseMtx: its quaternion at its place, scale x the controller's _C */
+            float sy = o->ascy, sx = sqrtf(1.0f / sy), s = o->s;
+            mat_identity(in->m);
+            in->m[0] = o->x.x * sx * s; in->m[1] = o->x.y * sx * s; in->m[2] = o->x.z * sx * s;
+            in->m[4] = o->y.x * sy * s; in->m[5] = o->y.y * sy * s; in->m[6] = o->y.z * sy * s;
+            in->m[8] = o->z.x * sx * s; in->m[9] = o->z.y * sx * s; in->m[10] = o->z.z * sx * s;
+            in->m[12] = o->pos.x; in->m[13] = o->pos.y; in->m[14] = o->pos.z;
+            in->s = s;
+        }
+#ifdef ST_BF_TEST
+        if (game_frame % 30 == 0) printf("balloonfish %d: nrv %d nbs %d scale %.2f at (%d %d %d)%c", o->row, o->nrv, o->nbs, o->s, (int)o->pos.x, (int)o->pos.y, (int)o->pos.z, 10);
+#endif
+    }
+}
+static void st_bfs_draw(void) /* initShadowVolumeSphere(80 x its scale) */
+{
+    for (int k = 0; k < st_nbfs && st_bf_sc == sc; k++) {
+        const StBf *o = &st_bfs[k];
+        if (o->nrv == BF_DEAD || o->nrv == BF_GONE) continue;
+        draw_shadow(o->pos, vmul(o->g, -1.0f), o->z, 80.0f * o->s, 80.0f * o->s, 0.0f, 50.0f, 1000.0f);
+    }
+}
 static void st_update(void)
 {
 #ifdef ST_MAPBOARD_TEST /* the camera on the board, 2500 in front of it */
@@ -1661,6 +1811,7 @@ static void st_update(void)
 #endif
     st_flags_update();
     st_objs_update();
+    st_bfs_update();
     st_bells_update();
     st_bbeamers_update();
     st_sboxes_update();
@@ -1719,4 +1870,5 @@ static void st_draw(void)
     st_flags_draw();
     st_bbeamers_draw();
     st_columns_draw();
+    st_bfs_draw();
 }
