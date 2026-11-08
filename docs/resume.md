@@ -367,6 +367,12 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   activeTripodBossParts on the attach matrix of arg0's joint x its placement, killed when the boss breaks.
   Tests: plain XF="-DST_VISIT=FirePressure -DST_VISIT_SLEEP" FactoryGalaxy/1 (overlay: shot, burst on the wall),
   `jet` FishTunnelGalaxy/1 (taken, thrown, reset, revived), XF=-DTB_TEST TriLegLv1Galaxy/1.
+- Shadow / ElectricRailPoint test views (fix/shadow-tests, 2026-11-07): `killer` (game_test_killer(place)) places Mario
+  until a killer is bound, then frames the first flying one's shadow from above and logs its drop (BattleShip 1: the
+  killer flies with its shadow 1200..1680 below on the ship's collision; EggStar 3: none within its 2000 drop, as
+  Petari); `meteor` frames its rail's end from above; ERPOINT_TEST frames the middle point from above (BattleShip 2:
+  the ElectricRailPoint model on the ring). Not confirmed on screen: the killer's disc (it falls on invisible
+  collision there) and the meteor's (lava under it); the logs show both drawn (draw_shadow's drop hits).
 
 - BeamGoRoundPlanet (fix/457-beam-go-round, 2026-11-07, coverage CannonFleetGalaxy 1): BeamGoRoundPlanet.cpp in game.c
   (bgr_*): its BCK plays (slice.py ANIM_PLANETS), its own collision kept and its Move KCL on joints move1 / move2

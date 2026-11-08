@@ -1843,9 +1843,9 @@ int main(void)
 #ifdef KILLER_TEST
         if (frame >= 200 && frame < 260) game_test_freeze(1);
         if (frame == 260) game_test_freeze(0);
-        if (frame >= 120 && frame % 30 == 0) {
+        if (frame >= 120 && frame % 10 == 0) { /* Mario placed until a killer is bound, then the camera on the flying one */
             static int bound;
-            int row = bound ? -3 : game_test_killer();
+            int row = game_test_killer(!bound);
             if (row >= 0) bound = 1;
             if (frame % 120 == 0) printf("killer test f %u: row %d, life %d" "\n", frame, row, game_life());
         }

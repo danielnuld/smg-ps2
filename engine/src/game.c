@@ -6495,6 +6495,9 @@ int game_test_meteor(void)
         V3 a = v3(p[0], p[1], p[2]), b = v3(p[3], p[4], p[5]);
         mario->pos = vsub(vadd(a, vmul(vsub(b, a), 0.5f)), vmul(mario->up, HIT_BODY_H)); /* half way down its rail */
         mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        V3 d = vnorm(vsub(b, a)), side = vnorm(vcross(d, fabsf(d.y) < 0.9f ? v3(0, 1, 0) : v3(1, 0, 0)));
+        camera_set_override(1, vadd(b, vsub(vmul(side, 400.0f), vmul(d, 2500.0f))), b, side, 45.0f); /* its rail's end (the
+                                                                                         * ground its shadow grows on) from above */
         return insts[i].row;
     }
     for (u32 i = 0; i < sc->nobjs; i++) /* not bound yet: Mario at its row, its zone streams in */
@@ -6576,10 +6579,24 @@ int game_test_kari_point(int on) /* test builds: R2 with the cursor on the first
     return -1;
 }
 
-int game_test_killer(void)
+static int map_drop(V3 pos, V3 up, float start, float len, V3 *at, V3 *n);
+int game_test_killer(int place) /* place: Mario 1500 in front of the first bound killer (else: the camera from its side
+                                  * on the first one flying, its shadow on the ground below logged); its row */
 {
+    for (int i = 0; !place && i < nkillers; i++) {
+        const Killer *k = &killers[i];
+        if (row_turn[k->row] != 1 && row_turn[k->row] != 2) continue;
+        V3 up = up_at(k->pos, k->up), side = vnorm(vcross(up, k->front)), ga, gn;
+        int hit = map_drop(k->pos, up, 50.0f, 2000.0f, &ga, &gn); /* the shadow's drop (draw_shadow) */
+        V3 at = hit ? ga : k->pos; /* its shadow on the ground from above, the killer between */
+        camera_set_override(1, vadd(at, vadd(vmul(side, 500.0f), vmul(up, 2600.0f))), at, k->front, 45.0f);
+        printf("killer test: row %d turn %d at (%d %d %d), shadow %s %d below%c", k->row, row_turn[k->row], (int)k->pos.x, (int)k->pos.y,
+               (int)k->pos.z, hit ? "on the ground" : "none", hit ? (int)vlen(vsub(k->pos, ga)) : -1, 10);
+        return k->row;
+    }
     for (int i = 0; i < ninsts; i++) {
         if (!insts[i].killer) continue;
+        if (!place) return -4; /* none flying */
         V3 p = v3(insts[i].m[12], insts[i].m[13], insts[i].m[14]), f = v3(insts[i].m[8], insts[i].m[9], insts[i].m[10]);
         mario->pos = vadd(p, vmul(vnorm(f), 1500.0f)); /* 1500 in front of the launcher */
         mario->hvel = v3(0, 0, 0);
@@ -41503,7 +41520,10 @@ static void update_electric(void)
     { static int tt; static const Scene *ts; if (ts != sc) { ts = sc; tt = 0; }
       int game_test_free(void);
       if (nerpts && game_test_free() && ++tt > 60 && tt < 3000) { V3 p = erpts[nerpts / 2].p, up = up_at(p, mario->up);
-        mario->pos = vadd(p, vmul(up, 250.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+        V3 q = erpts[nerpts / 2 + 1 < nerpts ? nerpts / 2 + 1 : nerpts / 2 - 1].p, side = vcross(up, vsub(q, p)); /* (square to the rail) */
+        side = vlen(side) > 1e-3f ? vnorm(side) : v3(1, 0, 0);
+        mario->pos = vadd(p, vadd(vmul(side, -900.0f), vmul(up, 250.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; /* (off the view) */
+        camera_set_override(1, vadd(p, vadd(vmul(side, 250.0f), vmul(up, 900.0f))), p, vcross(side, up), 45.0f); /* the point and its neighbours from above */
         if (tt == 61 || tt == 900) { int hit = 0; V3 ga, gn; for (int k = 0; k < nerpts; k++) hit += erpts[k].shadow && map_drop(erpts[k].p, up_at(erpts[k].p, v3(0, 1, 0)), 50.0f, 1000.0f, &ga, &gn);
           printf("erpoint test: %d points (row %d), model %d, %d point shadows on the ground, %d rail shadows%c", nerpts, erpts[0].row, m_erpoint != NULL, hit, nershadows, 10); } } }
 #endif

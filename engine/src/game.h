@@ -162,7 +162,7 @@ void game_set_cursor(float x, float y);
 int game_test_flow(void);
 /* Test builds: Mario put 1500 in front of the first HomingKiller launcher (-2: at its row while its zone streams
  * in); its row or -1 */
-int game_test_killer(void);
+int game_test_killer(int place);
 /* Test builds: R2 held with the cursor on the first flying HomingKiller bullet (its row, -1 none); 0: let go */
 int game_test_freeze(int on);
 /* Test builds: R2 with the cursor on the first clinging Karikari (its row, -1 none); 0: let go */
