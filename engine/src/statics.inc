@@ -232,7 +232,7 @@ static void st_flag_test(void)
 }
 #endif
 /* ---- MapObj classes by placed type: their per-row state (StSt, kept across rebinds) ---- */
-enum { ST_NONE = 1, ST_HDSTEP, ST_TURTLE, ST_SWFLOAT, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP, ST_WTOWER, ST_TIMER, ST_WCC, ST_CFSTEP, ST_IASTONE };
+enum { ST_NONE = 1, ST_MARBLE, ST_HDSTEP, ST_TURTLE, ST_SWFLOAT, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP, ST_WTOWER, ST_TIMER, ST_WCC, ST_CFSTEP, ST_IASTONE };
 /* Placed classes whose Petari behaviour is the model drawn with its animations and collision (the engine's generic
  * instance does that): LavaGalaxyParts.cpp (LavaShellTowerStep, LavaStepA / B / C: startBtk / Brk / Bpk / Btp of its
  * name, collision, clipping; ponytail: the steps' DLMakerProjmapEffectMtxSetter lava glow is baked at slice time and
@@ -249,6 +249,7 @@ static int st_kind_name(const char *n)
     if (!strcmp(n, "InvisibleWaterfallTwinFallLake") || !strcmp(n, "StatusFloor")) return ST_TWALL; /* TransparentWall */
     if (!strcmp(n, "OceanSmallTurtle")) return ST_TURTLE;
     if (!strcmp(n, "HeavensDoorAppearStepA")) return ST_HDSTEP; /* HeavensDoorDemoObj */
+    if (!strcmp(n, "MarblePlanet")) return ST_MARBLE;
     if (!strcmp(n, "SpringWaterFloaterA") || !strcmp(n, "SpringWaterFloaterB")) return ST_SWFLOAT; /* SpringWaterFloaterSpot */
     if (!strcmp(n, "MirrorModelTwinFallLake")) return ST_MIRRORMODEL; /* SimpleMirrorReflectionObj */
     if (!strcmp(n, "MirrorReflectionTwinFallLake")) return ST_MIRROR; /* SimpleMirrorObj */
@@ -378,6 +379,188 @@ static void st_hdstep(Inst *in, StSt *g)
     st_btk_fr = g->n == 1 ? (float)g->st : 299.0f;
     if (g->n == 1 && g->st >= 299) { g->n = 2; printf("heavens door appear step %d: wait%c", in->row, 10); } /* isBtkStopped */
 }
+/* MarblePlanet.cpp after Petari (OceanPhantomCaveGalaxy 2): a glass planet with its core (MarblePlanetCore at its
+ * matrix, its BCK / BTK stopped at frame 0) and arg0 (3) electrons (MarblePlanetElectron, 1000 out along its front
+ * turned 360 / n about its up each, their gravity the field's reversed: they roll on the glass's inside, 13 at least
+ * along their direction kept on the ground, x 0.99, at most 30; their shadows MarblePlanetElectronShadow from its
+ * centre towards them). Two electrons within 440 crash (crashElectron: 5 apart, x 1.2, HIT_EACH) and the pusher's
+ * velocity towards the other is killed (HitMarkNormal, a very weak rumble). Mario's hip drop on one (its body 500):
+ * Attack (FLIP, 40 a frame at the planet's centre); reaching the core (its sensor 50) it is gone and the core grows
+ * (ScaleUpCore: middle rumble, normal shake, the core's BCK / BTK at (n - left) / n of 9, scale 1.3 -> 1 over 30 with
+ * the reaction curve, Smoke3f / Smoke6f, HIT_CORE_1 / 2 SEs); the last one breaks it (BreakCore: the core at its end,
+ * Break, HIT_CORE_3, then a strong rumble and shake, startAfterBossBGM, its star, the planet hidden with its
+ * collision swapped for the WaterMelon one, its SW_DEAD). ponytail: the electron's binder as the engine's sphere push
+ * (collide_n, 200) */
+#define ST_MP_E 8
+static struct {
+    const Scene *at; int row, n, left, nrv, st, broke;
+    V3 c, up, front; float m[16];
+    Anim *core, *ea; const Model *mcore, *mel, *msh;
+    struct { V3 pos, vel, dir, g; int alive, nrv, st; u32 lv; } e[ST_MP_E];
+} st_mpl;
+static int st_star_out(int row) { return st_mpl.at == sc && st_mpl.row == row && st_mpl.broke; }
+static float st_reaction(float t, float a, float b) /* MR::getScaleWithReactionValueZeroToOne(t, a, b) */
+{
+    if (t < a) return t / a;
+    float k = (t - a) / (1.0f - a);
+    return 1.0f + b * sinf(k * 3.14159265f) * (1.0f - k);
+}
+static void st_mp(Inst *in, int i)
+{
+    const Row *r = &sc->objs[in->row];
+    if (st_mpl.at != sc || st_mpl.row != in->row) { /* init, initCoreAndElectron */
+        Anim *core = st_mpl.core, *ea = st_mpl.ea;
+        memset(&st_mpl, 0, sizeof st_mpl);
+        st_mpl.at = sc; st_mpl.row = in->row; st_mpl.core = core; st_mpl.ea = ea;
+        st_mpl.n = r->arg[0] != -1 ? r->arg[0] : 3; /* getJMapInfoArg0NoInit */
+        if (st_mpl.n > ST_MP_E) st_mpl.n = ST_MP_E;
+        st_mpl.left = st_mpl.n;
+        memcpy(st_mpl.m, in->m, 64);
+        st_mpl.c = v3(in->m[12], in->m[13], in->m[14]);
+        st_mpl.up = vnorm(v3(in->m[4], in->m[5], in->m[6])); st_mpl.front = vnorm(v3(in->m[8], in->m[9], in->m[10]));
+        st_mpl.mcore = scene_model(sc, "MarblePlanetCore"); st_mpl.mel = scene_model(sc, "MarblePlanetElectron");
+        st_mpl.msh = scene_model(sc, "MarblePlanetElectronShadow");
+        if (!st_mpl.core) { st_mpl.core = mem_alloc(MEM_PLAYER, sizeof(Anim)); st_mpl.ea = mem_alloc(MEM_PLAYER, sizeof(Anim)); }
+        memset(st_mpl.core, 0, sizeof(Anim)); memset(st_mpl.ea, 0, sizeof(Anim));
+        V3 f = st_mpl.front;
+        for (int k = 0; k < st_mpl.n; k++) {
+            if (k) f = rot_axis(f, st_mpl.up, 360.0f / st_mpl.n * 0.0174533f); /* rotateVecDegree */
+            st_mpl.e[k].pos = vadd(st_mpl.c, vmul(f, 1000.0f));
+            st_mpl.e[k].g = up_at(st_mpl.e[k].pos, st_mpl.up); /* calcGravity, negated */
+            V3 d = vtangent(v3(0, 0, 1), st_mpl.e[k].g); /* makeMtxUpNoSupportPos: its front */
+            st_mpl.e[k].dir = vlen(d) > 1e-3f ? vnorm(d) : vnorm(vtangent(v3(1, 0, 0), st_mpl.e[k].g));
+            st_mpl.e[k].alive = 1;
+        }
+        printf("marble planet %d: %d electrons%c", in->row, st_mpl.n, 10);
+    }
+    if (r->zone < 64 && !zone_kcl[r->zone]) return; /* its zone still low: no collision for the electrons yet */
+    if (!st_mpl.mcore) st_mpl.mcore = scene_model(sc, "MarblePlanetCore"); /* (the zone's full pack: its parts) */
+    if (!st_mpl.mel) st_mpl.mel = scene_model(sc, "MarblePlanetElectron");
+    if (!st_mpl.msh) st_mpl.msh = scene_model(sc, "MarblePlanetElectronShadow");
+    if (st_mpl.broke) { in->invisible = 1; in->kcl = scene_kcl(sc, "MarblePlanet#WaterMelon"); } /* (kept over rebinds) */
+    int st = st_mpl.st++;
+    if (st_mpl.nrv == 1) { /* ScaleUpCore */
+        if (st == 0) {
+            pad_rumble(RUMBLE_MIDDLE); camera_shake(SHAKE_NORMAL);
+            st_mpl.left--;
+            float fm[16];
+            memcpy(fm, st_mpl.m, 64);
+            if (st_mpl.left <= 0) { fx_named("MarblePlanet", "Break", fm, NULL, NULL); se_start(SE_OJ_MARBLE_HIT_CORE_3, &st_mpl.c.x); se_start(SE_SY_MARBLE_HIT_CORE_3, NULL); }
+            else if (st_mpl.left == 1) { fx_named("MarblePlanetCore", "Smoke6f", fm, NULL, NULL); se_start(SE_OJ_MARBLE_HIT_CORE_2, &st_mpl.c.x); se_start(SE_SY_MARBLE_HIT_CORE_2, NULL); }
+            else { fx_named("MarblePlanetCore", "Smoke3f", fm, NULL, NULL); se_start(SE_OJ_MARBLE_HIT_CORE_1, &st_mpl.c.x); se_start(SE_SY_MARBLE_HIT_CORE_1, NULL); }
+            printf("marble planet: core hit, %d left%c", st_mpl.left, 10);
+            if (st_mpl.left <= 0) { st_mpl.nrv = 2; st_mpl.st = 0; st = -1; }
+        }
+        if (st_mpl.nrv == 1 && st == 30) { st_mpl.nrv = 0; st_mpl.st = 0; }
+    }
+    if (st_mpl.nrv == 2 && st == 1) { /* BreakCore */
+        pad_rumble(RUMBLE_STRONG); camera_shake(SHAKE_STRONG);
+        bgm_after_boss();
+        st_mpl.broke = 1; /* requestAppearPowerStar */
+        in->invisible = 1; /* hideModel */
+        in->kcl = scene_kcl(sc, "MarblePlanet#WaterMelon"); /* invalidateCollisionParts, validateCollisionParts(WaterMelon) */
+        sw_set(r, SW_DEAD, 1); /* onSwitchDead */
+        printf("marble planet: core broken, its star%c", 10);
+    }
+    /* the electrons */
+    V3 mc = mario->pos;
+    int hip = mario->hip == HIP_LAND && mario->hip_t == 0;
+    for (int k = 0; k < st_mpl.n; k++) {
+        typeof(st_mpl.e[0]) *e = &st_mpl.e[k];
+        if (!e->alive) continue;
+        int est = e->st++;
+        e->g = up_at(e->pos, e->g); /* control: calcGravity, negated */
+        if (e->nrv == 0 && hip && vlen(vsub(mc, e->pos)) < 500.0f + HIT_BODY_R) { e->nrv = 1; e->st = 0; est = 0; } /* isMsgPlayerHipDrop */
+        V3 c = vadd(e->pos, e->vel), gn = e->g, wn = e->g, dn = vmul(e->g, -1.0f);
+        int wall = 0, gr = e->nrv == 0 && collide_n(&c, dn, 200.0f, &gn, &wn, &wall);
+        if (e->nrv == 0 && wall) { float into = vdot(e->vel, wn); if (into < 0) e->vel = vsub(e->vel, vmul(wn, into)); }
+        e->pos = c;
+        if (e->nrv == 0) { /* exeMove */
+            e->dir = vnorm(vtangent(e->dir, gr ? vmul(gn, -1.0f) : e->g)); /* turnDirectionToGround */
+            float sp = vlen(e->vel) * 0.99f;
+            e->vel = vmul(e->dir, sp >= 13.0f ? sp : 13.0f);
+            e->lv = se_level(SE_OJ_LV_MARBLE_ROTATE, &e->pos.x, e->lv);
+            if (vlen(e->vel) > 30.0f) e->vel = vmul(vnorm(e->vel), 30.0f); /* restrictVelocity */
+        } else { /* exeAttack */
+            if (est == 0) se_start(SE_OJ_MARBLE_FLIP, &e->pos.x);
+            e->vel = vmul(vnorm(vsub(st_mpl.c, e->pos)), 40.0f);
+        }
+        /* attackSensor: the core (an enemy sensor, 50), the other electrons (500 each) */
+        if (vlen(vsub(e->pos, st_mpl.c)) < 500.0f + 50.0f && st_mpl.nrv == 0) {
+            st_mpl.nrv = 1; st_mpl.st = 0; e->alive = 0; continue; /* receiveMsgEnemyAttack: ScaleUpCore; kill (and its shadow) */
+        }
+        for (int q = 0; q < st_mpl.n; q++) {
+            if (q == k || !st_mpl.e[q].alive) continue;
+            typeof(st_mpl.e[0]) *o = &st_mpl.e[q];
+            V3 d = vsub(o->pos, e->pos);
+            float l = vlen(d);
+            if (l >= 440.0f || l < 1e-3f) continue; /* (sendMsgEnemyAttack fails; within 440: sendMsgPush) */
+            d = vmul(d, 1.0f / l);
+            pad_rumble(RUMBLE_VERY_WEAK);
+            float hm[16];
+            basis_matrix(hm, vmul(vadd(e->pos, o->pos), 0.5f), e->g, d, 0);
+            fx_named("Common", "HitMarkNormal", hm, NULL, NULL);
+            float into = vdot(e->vel, d); if (into > 0) e->vel = vsub(e->vel, vmul(d, into)); /* killVelocityToTarget */
+            o->vel = vmul(vadd(o->vel, vmul(d, 5.0f)), 1.2f); /* crashElectron: -5 x (sender - it) */
+            if (vlen(o->vel) > 1e-3f) o->dir = vnorm(o->vel);
+            se_start(SE_OJ_MARBLE_HIT_EACH, &o->pos.x);
+        }
+    }
+    (void)i;
+}
+static void st_mp_draw(void)
+{
+    if (st_mpl.at != sc || st_mpl.row < 0 || !row_shown(st_mpl.row)) return;
+    float m[16];
+    if (st_mpl.mcore && st_mpl.mcore->skin) { /* the core: its BCK / BTK frame, its scale */
+        Anim *a = st_mpl.core;
+        if (a->skin != st_mpl.mcore->skin) anim_bind(a, st_mpl.mcore->skin);
+        float fr = st_mpl.nrv == 2 || st_mpl.broke ? 9.0f : (float)(st_mpl.n - st_mpl.left) * 9.0f / st_mpl.n;
+        anim_play(a, "marbleplanetcore/marbleplanetcore", 0.0f, 0, 0);
+        a->frame = fr; anim_update(a);
+        st_btk_md = st_mpl.mcore; st_btk_fr = fr;
+        float s = 1.0f;
+        if (st_mpl.nrv == 1) s = 1.3f + (1.0f - 1.3f) * st_reaction(fminf(st_mpl.st / 30.0f, 1.0f), 0.5f, -0.5f);
+        memcpy(m, st_mpl.m, 64);
+        for (int k = 0; k < 12; k++) if (k % 4 != 3) m[k] *= s;
+        draw_skin(st_mpl.mcore, m, a);
+    }
+    for (int k = 0; k < st_mpl.n; k++) {
+        if (!st_mpl.e[k].alive) continue;
+        V3 p = st_mpl.e[k].pos, g = st_mpl.e[k].g;
+        basis_matrix(m, p, g, st_mpl.e[k].dir, 0); /* (makeMtxUpNoSupportPos(mGravity)) */
+        if (st_mpl.mel && st_mpl.mel->skin) {
+            Anim *a = st_mpl.ea;
+            if (a->skin != st_mpl.mel->skin) anim_bind(a, st_mpl.mel->skin);
+            if (k == 0) { anim_play(a, "marbleplanetelectron/marbleplanetelectron", 1.0f, 1, 0); anim_update(a); }
+            draw_skin(st_mpl.mel, m, a);
+        } else if (st_mpl.mel) render_model(st_mpl.mel, m, 0x80, 0x80, 0x80);
+        if (st_mpl.msh) { /* MarblePlanetElectronShadow: at the centre, up towards it */
+            basis_matrix(m, st_mpl.c, vnorm(vsub(p, st_mpl.c)), st_mpl.front, 0);
+            render_model(st_mpl.msh, m, 0x80, 0x80, 0x80);
+        }
+    }
+}
+#ifdef ST_MP_TEST /* XF=-DST_MP_TEST (OceanPhantomCaveGalaxy 2): Mario over each electron in turn, hip dropping on it */
+static void st_mp_test(void)
+{
+    static u32 tf, hip;
+    tf++;
+    if (hip && tf == hip + 1) mario->hip = 0; /* the landing one frame only */
+    if (st_mpl.at != sc) { if (tf >= 60 && tf < 90) for (u32 i = 0; i < sc->nobjs; i++) if (!strcmp(sc->types + 32 * sc->objs[i].type, "MarblePlanet")) { mario->pos = vadd(row_pos(&sc->objs[i]), v3(0, 2000.0f, 0)); mario->hvel = v3(0, 0, 0); mario->vup = 0; } return; }
+    for (int k = 0; k < st_mpl.n; k++) {
+        if (!st_mpl.e[k].alive || st_mpl.e[k].nrv) continue;
+        if (tf % 240 == 0) { /* above it, outside the glass, then down onto it (the hip drop's landing) */
+            V3 g = st_mpl.e[k].g;
+            mario->pos = vadd(st_mpl.e[k].pos, vmul(g, 250.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+            mario->hip = HIP_LAND; mario->hip_t = 0; hip = tf;
+            printf("mp test f %u: electron %d at %.0f %.0f %.0f%c", tf, k, st_mpl.e[k].pos.x, st_mpl.e[k].pos.y, st_mpl.e[k].pos.z, 10);
+        }
+        break;
+    }
+    camera_set_override(1, vadd(st_mpl.c, vadd(vmul(st_mpl.up, 2500.0f), vmul(st_mpl.front, 3500.0f))), st_mpl.c, st_mpl.up, 45.0f);
+}
+#endif
 /* MercatorTransformCube.cpp after Petari (MercatorCube, the scene's first; arg0 the sphere's radius, 3000 unset): a
  * place in its box (calcCubeLocalPos: its base-origin box, 1000 x scale) is a point of the plane wrapped on a sphere:
  * u = pi x local x / half its X size, v = pi / 2 x -local z / half its Z size, the sphere (radius cos v sin u, radius sin
@@ -1064,6 +1247,7 @@ static void st_objs_update(void)
         switch (k) {
         case ST_TWALL: st_twall(in, g); break;
         case ST_HDSTEP: st_hdstep(in, g); break;
+        case ST_MARBLE: st_mp(in, i); break;
         case ST_TURTLE: case ST_SWFLOAT: st_floater(in, i, k == ST_TURTLE); break;
         case ST_MIRRORMODEL: in->invisible = 1; break; /* connectToSceneMirrorMapObjNoMovement: drawn in the mirror only
                                                          * (st_mirror_pass) */
@@ -2085,6 +2269,9 @@ static void st_update(void)
 #ifdef ST_FL_TEST
     st_fl_test();
 #endif
+#ifdef ST_MP_TEST
+    st_mp_test();
+#endif
     st_bfs_update();
     st_bells_update();
     st_bbeamers_update();
@@ -2145,4 +2332,5 @@ static void st_draw(void)
     st_bbeamers_draw();
     st_columns_draw();
     st_bfs_draw();
+    st_mp_draw();
 }

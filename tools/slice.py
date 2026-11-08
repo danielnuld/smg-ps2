@@ -93,6 +93,7 @@ SKINNED_OBJ += ("PrizeRing",)  # PrizeRing.cpp: Start / Loop / End, its Number B
 SKINNED_OBJ += ("JumpGuarder", "JumpGuarderHead")  # JumpGuarder (game.c update_rbeamers: rbeamer 3) and its head
 SKINNED_OBJ += ("SubmarineVolcanoBigColumnBreak",)  # SubmarineVolcanoBigColumn: its break model's Break (statics.inc)
 SKINNED_OBJ += ("DinoPackunVs2", "DinoPackunEggShellBreakVs2")  # DinoPackun (getVsCount 2): DinoPackun2's clips, its shell break model's Break (game.c dino)
+SKINNED_OBJ += ("MarblePlanetCore", "MarblePlanetElectron")  # MarblePlanet: its core's BCK frame by the electrons left, the electrons' own clip (statics.inc st_mp_*)
 SKINNED_OBJ += ("TicoFatGoodsStarPiece",)  # TicoFat: NPCData TicoFatItem goods on StarPieceL / StarPieceR (TicoFatGoodsStarPiece / ..Far clips)
 # Koopa (Petari Boss/Koopa*.cpp, game.c koopa.inc): the clips of KoopaParts / KoopaFireStairs / KoopaShockWave / KoopaFireShort
 SKINNED_OBJ += ("KoopaThornBreak", "KoopaShockWave", "KoopaShockWaveShadow", "KoopaFire", "MeteorStrikeBreak", "KoopaRock", "KoopaRockBreak", "KoopaRollBall", "KoopaJr", "KoopaJrShip")  # Vs3: the rock, its break, the roll ball, the demo casts (KoopaParts::initVs3)
@@ -226,6 +227,7 @@ EXTRA = {"ConcreteBlock": ("ConcreteBlockBreak",),  # SimpleBreakableObj: its br
          "BossStinkBug": ("BossStinkBugWing", "BossStinkBugBombLauncher", "BossStinkBugBomb", "BossStinkBugDemo"),
          "TombSpider": ("TombSpiderPlanet", "TombSpiderCocoon", "TombSpiderGland", "TombSpiderVitalSpot"),  # TombSpiderEnvironment (planet, cocoon), TombSpiderParts (glands, vital spots)  # its PartsModels, bombs, DemoPositionController  # createScenery, createMarioPosDummyModel
          "MorphItemNeoFire": ("MarioFireBall",), "AirBubbleGenerator": ("AirBubble",),
+         "MarblePlanet": ("MarblePlanetCore", "MarblePlanetElectron", "MarblePlanetElectronShadow"),  # MarblePlanet::initCoreAndElectron (statics.inc st_mp_*)
          "DinoPackunVs2": ("DinoPackunTailBallVs2", "DinoPackunEggShellVs2", "DinoPackunEggShellVs2#EggBroken", "DinoPackunEggShellBreakVs2", "DinoPackunFireBall"),  # DinoPackun::initBall / initEggShell (getVsCount 2: startBtp Vs2), DinoPackunFireHolder (game.c dino2_*)
          "DinoPackun": ("DinoPackunTailBall", "DinoPackunEggShell", "DinoPackunEggShell#EggBroken", "DinoPackunEggShellBreak"), "OtaKing": ("CocoNut", "OtaKingFoot", "FireBall", "FireBubble", "OtaKingMagma", "OtaKingLongFoot", "OtaKingMagmaBloom"), "OtaRock": ("CocoNut", "FireBall"), "HammerHeadPackun": ("PackunLeaf",), "Plant": ("PlantTop", "PlantLeaf"), "CocoSambo": ("CocoSamboHead",), "Hanachan": ("HanachanHead", "HanachanBody", "HanachanBodyS"), "PackunPetit": ("PackunPetitHead",),
          "RockCreator": ("RockBreak",), "WanwanRolling": ("WanwanRollingBreak",), "Unizo": ("UnizoBreak",), "UnizoLand": ("UnizoLandBreak",), "UnizoShoal": ("UnizoShoalBreak",),
@@ -285,7 +287,8 @@ ASTRO_MODELS = {
 POSE = {"NutShipFleetBridge": ("MoveA", {"move.kcl": "Move"})}
 # collisions on a joint of a skinned model (createCollisionPartsFromLiveActor with getJointMtx): KCL "<class>#<joint>"
 # in that joint's space, the engine moves it with the joint (PhantomShipBridge.cpp: "Move" on joint Move)
-KCL_PARTS = {"PhantomShipBridge": {"move.kcl": "Move"}, "SkeletalFishBoss": dict([(f"backbone{i:02}.kcl", f"BackBone{i:02}") for i in range(1, 12)] + [("backfin.kcl", "BackFin"), ("leftfinjoint.kcl", "LeftFinJoint"), ("rightfinjoint.kcl", "RightFinJoint")]),  # SkeletalFishBoss::initCollision (sColInfo)
+KCL_PARTS = {"MarblePlanet": {"watermelon.kcl": "WaterMelon"},  # MarblePlanet's WaterMelon collision (createCollisionPartsFromLiveActor), on once the core breaks
+             "PhantomShipBridge": {"move.kcl": "Move"}, "SkeletalFishBoss": dict([(f"backbone{i:02}.kcl", f"BackBone{i:02}") for i in range(1, 12)] + [("backfin.kcl", "BackFin"), ("leftfinjoint.kcl", "LeftFinJoint"), ("rightfinjoint.kcl", "RightFinJoint")]),  # SkeletalFishBoss::initCollision (sColInfo)
              "SkeletalFishBossHeadA": {"head.kcl": "Head", "jow.kcl": "Jow"},  # SkeletalFishBossHead: Head / Jow on their joints
              "DarknessRoomDoorA": {"open.kcl": "Open"},
              "TeresaMansionDoorA": {"open.kcl": "Open"}, "TeresaMansionDoorB": {"open.kcl": "Open"},
@@ -1994,7 +1997,7 @@ def declare_stars(keep, scenario, appear, jp):
             k = None if s32(r["args"][7]) > 0 else -1
         elif r["name"] == "WoodBox":  # WoodBox::init: declarePowerStar when arg7 is set (no disc data has one)
             k = None if s32(r["args"][7]) not in (0, -1) else -1
-        elif r["name"] in ("CollectTico", "DinoPackun", "DinoPackunVs2", "OtaKing", "BossStinkBug", "BossBegoman", "BossKameck", "BossKameck2", "StinkBugParent", "TripodBoss", "TombSpider", "KoopaVs1", "KoopaVs2", "KoopaVs3", "IceMerameraKing", "ExterminationSkeletalFishBaby", "ExterminationCheckerKuribo", "SkeletalFishBoss", "KoopaJrShip", "Dodoryu", "TamakoroWithTutorial", "TeresaChief", "Syati"):  # their init declarePowerStar, always (Syati: the class, not TalkSyati)
+        elif r["name"] in ("CollectTico", "DinoPackun", "DinoPackunVs2", "MarblePlanet", "OtaKing", "BossStinkBug", "BossBegoman", "BossKameck", "BossKameck2", "StinkBugParent", "TripodBoss", "TombSpider", "KoopaVs1", "KoopaVs2", "KoopaVs3", "IceMerameraKing", "ExterminationSkeletalFishBaby", "ExterminationCheckerKuribo", "SkeletalFishBoss", "KoopaJrShip", "Dodoryu", "TamakoroWithTutorial", "TeresaChief", "Syati"):  # their init declarePowerStar, always (Syati: the class, not TalkSyati)
             k = None
         elif r["name"] in ("WaterBazooka", "ElectricBazooka"):  # WaterBazooka::init: getJMapInfoArg0NoInit(bool): declarePowerStar
             k = None if s32(r["args"][0]) != -1 else -1
