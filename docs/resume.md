@@ -1459,6 +1459,20 @@ there needs the embedded blob and every pack rebuilt.
   holds ~0.8 MB over the most seen; a scene over it stops with "mem: out of memory" (the cover line's peak shows it).
   Next if room runs short again: the Luigi power-up models (InvincibleLuigi 310 KB, TeresaLuigi, ...) ride in every
   common.bin for both players; TicoFat's fatred colour copies could share one mesh.
+- Frame time (#494, 2026-11-07): `explore` builds with XF="-DPACKS_OVERLAY=wt-boss2 -DPERF_LOG -DCATCHUP", the
+  scenario from host:boot.txt, 60 s each, base and new alternated (scratch boss2-perfab.sh / boss2-sum.py: the mean of
+  main.c's `route perf` windows after f 400). The numbers are PCSX2's EE cycles (they do not move with host load; the
+  console's EE is ~1.5-2x slower). The sampling profiler (`-DSAMPLE_PROF`) wraps strcmp: it inflates strcmp-heavy code,
+  compare without it. Fixed (same answers): fx_named walked every AutoEffect row with strcmp (FireBar balls ask it
+  each frame: ~4 ms in KoopaBattleVs3), now auto_ix's run; gamedata.c's name lookups through hash tables (gd_star_num
+  walked find_gal + find_scen for every galaxy); WireGravity's segments in runs of 4 with bounding spheres.
+  Logic / draw ms before -> after: KoopaBattleVs3 1 8.6 / 6.9 -> 4.4 / 6.4, PhantomGalaxy 1 7.6 / 6.4 -> 4.9 / 6.5,
+  AstroGalaxy 1 6.5 -> 5.1, 3 / 5 8.1 -> 6.6 (draw 5.4), BattleShip 1 5.7 -> 3.6; unchanged: EggStar 1 / 3 3.5 / 4.6
+  (draw 5.3 / 4.8), OceanPhantomCave 1 5.4 / 6.8, HoneyBeeKingdom 1 4.4 / 8.9, HeavenlyBeach 1 5.1 / 5.4, StarDust 1
+  2.7 / 5.5, SnowCapsule 1 1.5 / 3.1. Left, by the profiles: draw_model_ (~2 ms: the batch emission per skinned draw),
+  kcl_each / kcl_check_sphere (~1 ms), gravity_at for up_at (FireBar balls ask it in logic and draw), anim_pose /
+  clip_local (~1.5 ms in Astro; objects not in Petari's per-class clipping pose within 8000 of the camera), the
+  host-only _fwalk_sglue (host file reads, not on the disc).
   Repack: slice_all.py every galaxy (ROOM 11.8e6), then zone_fit.py out/packs --elf on the disc ELF.
 - Teresa's body alpha (feat/451-teresa-alpha, 2026-11-07): body_m_v's last TEV stage is lerp(IndDummy screen copy, the
   body, C1.a): Petari's Erase / Appear fade. slice.py took it for a screen tint (blend kind 3: no body texture) since

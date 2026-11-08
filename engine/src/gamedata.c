@@ -38,29 +38,59 @@ static struct {
     u8 comet_pos[6], comet_land[6], comet_ready[6], comet_started; /* GalaxyCometScheduler (gd_comet_*) */
 } gd;
 
+/* names to indices through hash tables (the linear strcmp walks cost ~1.6 ms a frame in AstroGalaxy: gd_star_num
+ * walked every galaxy, each through find_gal and find_scen). Same answers: a table holds indices in order, a probe
+ * stops at the first index whose name matches. The galaxies' names live in gd (reset, loaded, swapped by at_start):
+ * their table is checked by name and rebuilt when a walk finds one it lacks */
+#define HN 1024
+typedef struct { s16 at[HN]; } HTab; /* index + 1, 0 empty */
+static u32 hname(const char *s) { u32 h = 2166136261u; while (*s) h = (h ^ (u8)*s++) * 16777619u; return h; }
+static const char *hnm(const void *b, int stride, int ptr, int i)
+{
+    const char *p = (const char *)b + i * stride;
+    return ptr ? *(const char *const *)p : p;
+}
+static void h_build(HTab *t, const void *b, int stride, int ptr, int n)
+{
+    memset(t, 0, sizeof *t);
+    for (int i = 0; i < n && i < HN / 2; i++) {
+        u32 k = hname(hnm(b, stride, ptr, i)) & (HN - 1);
+        while (t->at[k]) k = (k + 1) & (HN - 1);
+        t->at[k] = (s16)(i + 1);
+    }
+}
+static int h_find(const HTab *t, const void *b, int stride, int ptr, const char *key)
+{
+    for (u32 k = hname(key) & (HN - 1); t->at[k]; k = (k + 1) & (HN - 1))
+        if (!strcmp(hnm(b, stride, ptr, t->at[k] - 1), key)) return t->at[k] - 1;
+    return -1;
+}
+static HTab scen_h, info_h, flag_h, gal_h;
+static int flag_h_ok;
+
 static const GScen *find_scen(const char *g)
 {
-    for (int i = 0; i < nscen; i++)
-        if (!strcmp(scen[i].galaxy, g)) return &scen[i];
-    return NULL;
+    int i = h_find(&scen_h, scen, sizeof *scen, 0, g);
+    return i >= 0 ? &scen[i] : NULL;
 }
 static const GInfo *find_info(const char *g)
 {
-    for (int i = 0; i < ninfo; i++)
-        if (!strcmp(info[i].name, g)) return &info[i];
-    return NULL;
+    int i = h_find(&info_h, info, sizeof *info, 0, g);
+    return i >= 0 ? &info[i] : NULL;
 }
 static int find_gal(const char *g)
 {
-    for (int i = 0; i < gd.ngal; i++)
-        if (!strcmp(gd.gal[i].name, g)) return i;
+    int i = h_find(&gal_h, gd.gal, sizeof gd.gal[0], 0, g);
+    if (i >= 0 && i < gd.ngal) return i;
+    for (i = 0; i < gd.ngal; i++)
+        if (!strcmp(gd.gal[i].name, g)) { h_build(&gal_h, gd.gal, sizeof gd.gal[0], 0, gd.ngal); return i; }
     return -1;
 }
 static int find_flag(const char *name)
 {
-    for (int i = 0; name && i < NFLAGS; i++)
-        if (!strcmp(gd_flags[i].name, name)) return i;
-    return -1;
+    if (!name) return -1;
+    if (!flag_h_ok) { h_build(&flag_h, gd_flags, sizeof gd_flags[0], 1, NFLAGS); flag_h_ok = 1; }
+    return h_find(&flag_h, gd_flags, sizeof gd_flags[0], 1, name);
 }
 
 int gd_scenario_num(const char *g) { const GScen *s = find_scen(g); return s ? s->n : 0; }
@@ -90,11 +120,14 @@ void gd_attach(const Scene *s)
 {
     const u8 *g = s->gdat;
     story = NULL; info = NULL; scen = NULL; nstory = ninfo = nscen = 0;
+    memset(&scen_h, 0, sizeof scen_h); memset(&info_h, 0, sizeof info_h);
     if (!g) return;
     nstory = (int)((const u32 *)g)[0]; ninfo = (int)((const u32 *)g)[1]; nscen = (int)((const u32 *)g)[2];
     story = (const GStory *)(g + 16);
     info = (const GInfo *)(story + nstory);
     scen = (const GScen *)(info + ninfo);
+    h_build(&scen_h, scen, sizeof *scen, 0, nscen);
+    h_build(&info_h, info, sizeof *info, 0, ninfo);
     if (!gd.ok) {
         gd_reset();
         /* ponytail: a dev build booted straight into a galaxy (main.c PACKS, no file select) plays the boot's fresh data;
