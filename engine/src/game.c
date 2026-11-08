@@ -4920,10 +4920,12 @@ static void update_jumpstands(void)
 
 /* a rail-moving part's translation: its rail at row_coord */
 static V3 rail_at(const float *p, u32 n, float d);
+static int st_turtle_rail(Inst *in, V3 p), st_turtle_moving(int row); /* statics.inc */
 static void railer_place(Inst *in)
 {
     const unsigned char *e = in->railer;
     V3 p = rail_at((const float *)(e + 24), *(const u32 *)(e + 8), row_coord[in->row]);
+    if (st_turtle_rail(in, p)) return; /* OceanSmallTurtle: its rail in the Mercator plane (statics.inc) */
     in->m[12] = p.x; in->m[13] = p.y; in->m[14] = p.z;
 }
 
@@ -5578,7 +5580,7 @@ static void game_rebind_(void)
             if (r->type < 1024) { bloom_of[r->type] = in->md_bloom; bloom_ok[r->type] = 1; }
         }
         if (in->seesaw) { in->rotor = 0; seesaw_matrix(in); }
-        in->railer = scene_blob_g && ((r->arg[7] > 0 && (r->arg[7] >> 30 & 1)) || in->eyebeamer || st_rail_obj(name)) && r->path >= 0 ? /* (st_rail_obj: an objinfo RailMoveObj) */
+        in->railer = scene_blob_g && ((r->arg[7] > 0 && (r->arg[7] >> 30 & 1)) || in->eyebeamer || st_rail_obj(name) || !strcmp(name, "OceanSmallTurtle")) && r->path >= 0 ? /* (st_rail_obj: an objinfo RailMoveObj; OceanSmallTurtle's createMapPartsRailMoverForMercator) */
                      find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->kcl = scene_kcl(s, name);
         in->kmove = -1; in->kparent = -1;
@@ -37043,7 +37045,7 @@ static void update_railers(void)
         int was = in->rwork; /* RailMoveObj _D0 */
         in->rwork = 0;
         int row = in->row, cond = r->arg[7] > 0 && (r->arg[7] >> 30 & 1) ? r->arg[7] >> 8 & 15 : 0, stop = *(const int *)(e + 16); /* (an objinfo row: MoveConditionType unset, 0) */
-        if (in->eyebeamer ? !eb_patrol(row) : !mp_running(r, row)) continue;
+        if (in->eyebeamer ? !eb_patrol(row) : st_turtle_moving(row) >= 0 ? !st_turtle_moving(row) : !mp_running(r, row)) continue;
         if (in->gap == GAP_ELEVATOR && gap_st(row)->n != EV_MOVE) continue; /* BattleShipElevator::control: not in Wait */
         if (in->gap == GAP_UFOKINOKO && gap_st(row)->n != UK_MOVE) continue; /* UFOKinoko: startRailMover at startMove */
         if (!st_rail_go(in)) continue; /* RailDemoMoveObj: its demo started first (statics.inc) */

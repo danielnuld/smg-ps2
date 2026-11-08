@@ -373,6 +373,14 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   Petari); `meteor` frames its rail's end from above; ERPOINT_TEST frames the middle point from above (BattleShip 2:
   the ElectricRailPoint model on the ring). Not confirmed on screen: the killer's disc (it falls on invisible
   collision there) and the meteor's (lava under it); the logs show both drawn (draw_shadow's drop hits).
+- SpringWaterPlanet (feat/514-springwater, 2026-11-07, CannonFleetGalaxy 1): statics.inc st_merc_* after
+  MercatorTransformCube.cpp (the MercatorCube row kept: slice.py LOGIC; its zone's ZONE matrix), st_floater after
+  SpringWaterFloaterSpot.cpp (A / B) and OceanSmallTurtle.cpp: Wait in water, FloatSignal, FloatUp, FloatEnd / the
+  turtle's CatchRail and RailMove (update_railers on its plane rail, placed through the Mercator conversion:
+  st_turtle_rail), bounds, SEs, Ripple, Mario carried. Test: plain XF="-DST_FL_TEST" CannonFleetGalaxy/1 (overlay;
+  its 湧き水上昇 demo at 300): both floaters rise to FloatEnd, the turtle reaches its rail and circles the planet.
+  ponytail: the jump-off bound as Mario rising off it; EyeBeamer still ignores the MercatorCube (st_merc_conv is
+  there for it).
 - DinoPackunVs2 (feat/504-dinopackun-vs2, 2026-11-07, HellProminenceGalaxy 3): the dino code takes DinoPackunVs2
   (dino.vs 2: DinoPackun2's clips, the Vs2 parts with their Vs2 BTP baked: slice.py "<archive>^<btp>"), its
   sequencer (BattleEggVs2: Turn 30 / 1.5, Walk 750 / 0.9 with the 200-frame fire cycle; BattleVs2Lv1 with Lv1 / Lv2 /
