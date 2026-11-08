@@ -284,6 +284,27 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   hit the route ELF once with #318 (out/rel-boot-EggStarGalaxy_1-route-crash1.log), the retry got the star at f 4215. Disc: build.sh plain ... FileSelect/1 disc, disc.py ->
   out/smg-ps2.iso (3315 MB, 2472 packs, ELF from 6b9035b + #318, not the boss PRs merged since); the 10-31 ISO kept as
   out/smg-ps2-prev.iso.
+- Release repack (2026-11-07, main 1984003): the old packs (all but music / movies) moved to
+  out/packs-backup-2026-11-07 (kept; D: had 4.3 GB free after the ISO). Full repack with main's tools
+  (out/release_2026-11-07.sh, log out/release_2026-11-07.log, 18:38 - 21:29): lyt.py (menus.bin 1007 KB with WipeRing,
+  menus3d 174 KB, title 1744 KB, picturebook 3288 KB, map 837 KB, letter 516 KB), slice_all.py (resident.bin 4.47 MB,
+  resident_luigi.bin 4.52 MB; 136 / 136 converted and fit ROOM 11.8e6, every scenario at ratio 0.99 with layers;
+  hidden scenarios on their placed scenario's layers: all 136 have a start now), `zone_fit.py out/packs` 914 zones,
+  none over (tightest AstroGalaxy 3 TridentZone 44 KB left; with the disc ELF, `--elf`: region 17664 KB, room
+  11927 KB, 448 KB left), every sound pack and the shared sound.bin (1545 SEs, 32 MEs; its caps went to x 0.29).
+  Every line of D:/smg-ps2-wt/repack-todo.md up to #507 is in it (#513 on: next release). Disc: build.sh plain ...
+  FileSelect/1 disc at 1984003, disc.py -> out/smg-ps2.iso (3403 MB, 2488 packs; old local ISO deleted).
+  Checks: route EggStar 1 star at f 4215 from host packs and again from a CD-sized test image (out/rel-cdsub.sh: the
+  root packs, FileSelect, AstroGalaxy, AstroDome, EggStarGalaxy and their music through main's disc.py, 343 MB, run
+  with `run_quiet.ps1 -Elf <disc ELF> -Iso`); `newfile` with XF="-DNEWFILE_SEED -DNEWFILE_SLOT=0" from that image:
+  title, file select (file 1, 1 star, 123 pieces), Start -> AstroGalaxy/1, the Observatory drawn at 60 fps. Boots
+  (plain, 40 s, out/rel-boot-*.log): AstroGalaxy 1, CosmosGarden 2 (Dodoryu), KoopaBattleVs1 / 2 / 3 1, Tamakoro
+  ExLv1 1, SurfingLv1 / Lv2 1, DarkRoom 1, OceanRing 1, PhantomGalaxy 6 (scenario 2's 674 objects), OceanPhantomCave
+  1, TearDrop 1, Factory 2: all reach their frame lines, no "never fits" / "no memory" / inflate errors. Koopa Vs1 /
+  Vs2 / Vs3 each log one TLB miss in kp_init's kp_models call (a NULL + small offset load, non-fatal in PCSX2): #525.
+  Coverage (out/rel-cover.sh, out/rel-cover.elf, one galaxy per PCSX2 lock, out/coverage.csv; the 11-06 results in
+  out/coverage-2026-11-06.csv, cover_logs-2026-11-06): 135 / 135 ok (every scenario but EpilogueDemoStage, hidden
+  ones included), 0 misses: PhantomGalaxy 6, BattleShip 1, CannonFleet 1 now ok too.
 - EggStar 1 boot crash (fix/337, 2026-11-07): found. newlib calls fstat on every stdio stream before its first read
   or seek (__smakebuf_r, _fseeko_r); for a host: file that is a FILEIO getstat RPC, and now and then the IOP answered
   the RPC before it (the open, payload to _fio_recv_data) a second time. The stale SIF_CMD_RPC_END completed the
