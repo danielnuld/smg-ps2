@@ -294,8 +294,7 @@ KCL_PARTS = {"MarblePlanet": {"watermelon.kcl": "WaterMelon"},  # MarblePlanet's
              "TeresaMansionDoorA": {"open.kcl": "Open"}, "TeresaMansionDoorB": {"open.kcl": "Open"},
              "TeresaMansionEntranceDoor": {"open.kcl": "Open"},
              "DesertLandDownSwitch": {"move.kcl": "Move"}, "DesertLandUpSwitch": {"move.kcl": "Move"},  # TypicalDoor's Open collision too
-             "ShellfishCoin": {"low.kcl": "Static"}, "ShellfishYellowChip": {"low.kcl": "Static"},
-             "UFOStrongA": {"movelimit.kcl": "Static"},  # UFOBase's tryCreateCollisionMoveLimit (following it: game.c update_gaps)  # Shellfish's Low (createCollisionPartsFromLiveActor): a still part
+             "ShellfishCoin": {"low.kcl": "Static"}, "ShellfishYellowChip": {"low.kcl": "Static"},  # Shellfish's Low (createCollisionPartsFromLiveActor): a still part
              "BossStinkBug": {"bodyground.kcl": "Ground", "bodyhipdrop.kcl": "HipDrop"},
              "StinkBugParent": {"switch.kcl": "Switch"},
              "WaterBazooka": {"cannon1.kcl": "Cannon1"}, "ElectricBazooka": {"cannon1.kcl": "Cannon1"},  # initCollisionParts Cannon1 on its joint (AllRoot: its own, at the base)  # createCollisionPartsFromLiveActor Switch (its own: SwitchChildJ)  # initCollision: BodyGround, BodyHipDrop (Body is its own)
@@ -2330,6 +2329,11 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
                         used[ji] = used.get(ji, -1) + 1
                         jn = f"{ji}.{used[ji]}"
                     kcls.append(name32(f"{t}#{jn}") + struct.pack("<I", len(pk)) + pk + b"\0" * (-len(pk) % 4))
+        if collision and (cls in planets or cls == "UFOStrongA"):  # PlanetMap / UFOBase: tryCreateCollisionMoveLimit, "<class>#ML" (31 characters at most)
+            fl = {k.lower().rsplit("/", 1)[-1]: v for k, v in B.rarc_files(arc.read_bytes())}  # (game.c: only trySetMoveLimitCollision's walkers bind to it)
+            if "movelimit.kcl" in fl:
+                pk = kcl_to_le(kcl_codes(fl["movelimit.kcl"], fl.get("movelimit.pa", b"")))
+                kcls.append(name32(f"{t}#ML") + struct.pack("<I", len(pk)) + pk + b"\0" * (-len(pk) % 4))
     head, data = bytearray(), bytearray()
     base = 16 + 32 * len(texts)
     for tx in texts:
