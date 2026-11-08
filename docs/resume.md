@@ -388,7 +388,21 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   Mario after the test's launch star (metbo_update), now ok. EggStarGalaxy 1 (boot TLB miss) was #337 / #382,
   FactoryGalaxy 2 (VIF error after a zone swap) #314 / #318. PhantomGalaxy 6 still misses: the restart start (MarioNo 1,
   -49400 -49829 5200, up -Y) has no ground under it; Mario falls 1490 into BlackHoleCube row 73 (scale 14 / 0.5 / 15),
-  again after every restart; the test's launch star landing (-57281 -49951 7959) has none either. Open.
+  again after every restart; the test's launch star landing (-57281 -49951 7959) has none either. Fixed by #497.
+- Hidden stars' layers (fix/497-hidden-star-layers, 2026-11-07): Petari plays a hidden star (ScenarioData IsHidden) on
+  the layers of MR::getPlacedHiddenStarScenarioNo (ScenarioSelectScene::trySetCurrentScenarioNo; the table's
+  HeavenlyBeachGalaxy 6 -> 3, else the first normal scenario whose PowerStarId has the star's bit). budget.py
+  placed_scenario / scenario_masks(sd, galaxy), used by slice.scene: PhantomGalaxy 6 now has scenario 2's layers
+  (TeresaHouseZone layerc: TeresaMansionGatePlanet under the restart point and the launch star's landing; the IcicleRock
+  whose break shows the SuperSpinDriver to DarknessRoomZone). Remapped: BattleShip 6 -> 2, 7 -> 1, CannonFleet 6 -> 3,
+  CosmosGarden 6 -> 3, EggStar 6 -> 1, Factory 6 -> 2, HeavenlyBeach 6 -> 3, HellProminence 6 -> 1, HoneyBeeKingdom 6
+  -> 1, IceVolcano 6 -> 1, OceanFloaterLand 2 -> 1, OceanPhantomCave 6 -> 1, OceanRing 6 -> 3, Phantom 6 -> 2,
+  ReverseKingdom 6 -> 2, SandClock 6 -> 3, 7 -> 2, StarDust 6 -> 3 (their packs have a MarioNo 0 start now: the coverage
+  run takes them). Checks: cover PhantomGalaxy/6 misses 0 (was 4); plain XF="-DPACKS_OVERLAY=wt-release
+  -DPUT_TEST=PowerStar -DPUT_XYZ=-99930,-68607,12073 -DPUT_UP=0 -DPUT_AT=420 -DPUT_SW_B_OF=54" PhantomGalaxy/6: the
+  star's door switch on, Mario at DarknessRoomZone's PowerStar 6: got. Left: the engine keeps the selected number in
+  game_stage_name (Petari's getCurrentScenarioNo is the placed one: ScenarioStarter::isStartBgmOnWelcome, per-scenario
+  checks by number). Repack: slice_all.py on those 16 galaxies.
 - CannonFleetGalaxy 1 drum (fix/489-eyebeamer-demo, 2026-11-07): after the ScenarioStarter flight Mario fell through
   BeamGoRoundPlanet's bottom face (its "#<joint>.<k>" Move collisions took the model's reach, 1809, while the KCL
   reaches 2600 from the planet's origin: left out of the collision walk; and they were not made at all when the pose
