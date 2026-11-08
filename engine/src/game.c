@@ -29053,8 +29053,9 @@ int game_test_sambo(void) /* SamboHeads in turn: Mario 600 off (it appears, chas
  * killed (its dead switch). Its tongue joints (Tongue1 / Tongue2) stretched to _C4 (rootTongueMtxCallBack /
  * endTongueMtxCallBack, bt_tongue at the draw). ponytail: no BindStarPointer (WalkerStateBindStarPointer: the 2P
  * pointer), no BRK (Normal / CountDown), no ShadowAppear / BallAppear (appearShadow: Polta's), no Shock / blow
- * messages (no shock wave senders), an enemy's sensor taken as 70 about its place, the binded sensor only the map
- * objects explosion_breaks_inst breaks (KoopaStatue), no push to other enemies but BombTeresas */
+ * messages (no shock wave senders), the binded sensor only the map objects explosion_breaks_inst breaks (KoopaStatue).
+ * Its body (85 x scale) on the enemies' sensors is walker_push_pass's: Drift / DriftRelease send them
+ * EnemyAttackExplosion (taken: it explodes), else sendMsgPush; pushed by an enemy it takes 3 apart */
 enum { BT_APPEAR, BT_WAIT, BT_WANDER, BT_CHASE, BT_TONGUEFAILED, BT_TACKLESIGN, BT_TACKLE, BT_DRIFT, BT_DRIFTRELEASE,
        BT_EXPLOSION, BT_DISPERSE, BT_READYRESTART, BT_SHADOWAPPEAR, BT_SHOCK };
 int bt_test_sq; /* game_test_bomb_teresa: a swing (isPadSwing) this frame */
@@ -29339,22 +29340,7 @@ static void bt_update(Kuribo *k)
     if (k->nrv == BT_DRIFT && mario_touch(k->bpos, 20.0f * s) && !m_bomb_teresa_tongue()) { printf("bomb teresa row %d: Mario refuses its tongue\n", k->row); w_nrv(k, BT_TONGUEFAILED); return; }
     int to_player = k->nrv == BT_DRIFT ? st > 190 : bt_hit_ok(k); /* isEnableHitExplosionToPlayer */
     if (to_player && !mario->hurt_timer && vlen(vsub(mc, body)) < 85.0f * s + HIT_BODY_R && mario_attack(ATK_EXPLOSION, body)) { bt_explode(k); return; }
-    for (int i = 0; i < nkuribo; i++) {
-        Kuribo *e = &kuribo[i];
-        if (e == k || e->state == KURIBO_DEAD || !row_shown(e->row)) continue;
-        float d = vlen(vsub(e->pos, body));
-        if (e->kind == WALK_BOMBTERESA) {
-            if (d >= 170.0f * s || e->nrv == BT_READYRESTART) continue;
-            if ((k->nrv == BT_DRIFT || k->nrv == BT_DRIFTRELEASE) && bt_enemy_explosion(e)) { pad_rumble(RUMBLE_MIDDLE); bt_explode(k); return; }
-            V3 dp = vsub(e->pos, body); /* sendMsgPush: receiveMsgPush 3 apart */
-            if (vlen(dp) < 1e-6f) dp = v3(0, 1, 0);
-            e->vel = vadd(e->vel, vmul(vnorm(dp), 3.0f));
-            continue;
-        }
-        if ((k->nrv == BT_DRIFT || k->nrv == BT_DRIFTRELEASE) && d < 85.0f * s + 70.0f && walker_blow(e, body)) { /* isEnableHitExplosionToEnemy */
-            pad_rumble(RUMBLE_MIDDLE); bt_explode(k); return;
-        }
-    }
+    /* (its body on the enemies: walker_push_pass, wp_attack) */
     if ((k->nrv == BT_DRIFT || k->nrv == BT_DRIFTRELEASE) && pol_explosion(body, 85.0f * s)) { pad_rumble(RUMBLE_MIDDLE); bt_explode(k); return; } /* Polta's sensors, its rocks */
 }
 /* rootTongueMtxCallBack / endTongueMtxCallBack: Tongue1 (9) turned 0.5 x _DC to Tongue2's last place and thinned,
@@ -29445,6 +29431,13 @@ int game_test_bomb_teresa(void) /* the first BombTeresa: Mario 1200 off (it chas
         if (BT_ACT && (k->nrv == BT_TACKLESIGN || k->nrv == BT_CHASE) && k->step > 10 && vlen(vsub(mario->pos, k->pos)) < 400.0f && !spun) { mario->spin_timer = SPIN_TIME; mario->spin_t = 0; spun = 1; }
         if (BT_ACT && k->nrv == BT_DRIFT && k->step == 100) bt_test_sq = 1;
         if (BT_ACT && k->nrv == BT_DRIFT && k->step == 200) bt_test_sq = 1;
+        if (BT_ACT == 2 && k->nrv == BT_DRIFT && k->step == 30) /* another BombTeresa against it: its explosion (walker_push_pass) */
+            for (int j = 0; j < nkuribo; j++)
+                if (j != i && kuribo[j].kind == WALK_BOMBTERESA && kuribo[j].state != KURIBO_DEAD && !kuribo[j].lvt[0] && kuribo[j].nrv != BT_APPEAR && kuribo[j].nrv != BT_READYRESTART) {
+                    kuribo[j].pos = vadd(k->pos, vmul(vnorm(vcross(up, k->front)), 120.0f)); kuribo[j].vel = v3(0, 0, 0); test_noclip = 1;
+                    printf("bt test: row %d (nerve %d) put against row %d\n", kuribo[j].row, kuribo[j].nrv, k->row);
+                    break;
+                }
         if (k->nrv == BT_DRIFT && k->step % 20 == 0)
             printf("bt drift %d: tongue %.0f from the hand, b94 %d, upper %d\n", k->step, vlen(vsub(k->bpos, mario_joint_pos(JOINT_HANDR))), m_b94, m_upper_on("ハンマー投げ回転中"));
         static int said;
@@ -32587,7 +32580,8 @@ static void bg_permit_update(void);
  * time _E4 (20) out). No MapObj pair is checked. Poihana / StinkBugSmall: theirs
  * (poihana.inc, stink.inc). StringSpider (body 80 x s): takes half the overlap, its velocity reflected (0.25) off an
  * enemy taking its push. Snakehead: its head / jaws push (their EnemyAttackStrong taken by no walker here), its body pushes from the rail line within
- * 100 / 300 (sendMsgPush from the foot). ponytail: Teresa, BombTeresa (its explosion first) and BombBird are not in the pass; TakoHei's BlinkTwice / scale velocity and BombHei's
+ * 100 / 300 (sendMsgPush from the foot). BombTeresa (body 85 x s): in Drift / DriftRelease an enemy taking its EnemyAttackExplosion makes it explode, else it
+ * pushes; pushed it takes 3. ponytail: Teresa and BombBird are not in the pass; TakoHei's BlinkTwice / scale velocity and BombHei's
  * thrown rebound are not played; the walkers outside wp_sensors are one point in the sensor list */
 static int kr_broken(const Kuribo *k);
 static int th_down(const Kuribo *k);
@@ -32677,6 +32671,10 @@ static int wp_sensors(Kuribo *k, WSen *o)
         for (int x = 0; x < n; x++) o[x] = (WSen){c[x], r[x], 0, x == n - 1, 0};
         return n;
     }
+    case WALK_BOMBTERESA: /* body 85 x scale (none hidden, exploding, dispersed, restarting) */
+        if (k->lvt[0] || k->nrv == BT_READYRESTART || k->nrv == BT_EXPLOSION || k->nrv == BT_DISPERSE || k->nrv == BT_SHADOWAPPEAR) return 0;
+        o[0] = (WSen){k->pos, 85.0f * s, 0, 1, 0};
+        return 1;
     case WALK_POIHANA: /* body 70 at Body (its binder is no enemy sensor) */
         if (!ph_sensors_on(k)) return 0;
         o[0] = (WSen){w_joint(k, m_poihana, 1, v3(0, 0, 0)), 70.0f, 0, 1, 0};
@@ -32804,6 +32802,13 @@ static int wp_receive_(Kuribo *b, const WSen *rb, Kuribo *a, const WSen *sa) /* 
         if (l > 1e-6f) b->vel = vadd(b->vel, ss_kill_c4(b, vmul(d, 0.5f * ((rb->r + sa->r) - l) / l)));
         return 1;
     }
+    case WALK_BOMBTERESA: { /* from an enemy: 3 along the sensors' line (a random way when they meet) */
+        if (sa->map) return 0;
+        V3 d = vsub(rb->c, sa->c);
+        if (vlen(d) < 1e-6f) d = v3(frand(-1.0f, 1.0f), frand(-1.0f, 1.0f), frand(-1.0f, 1.0f)); /* getRandomVector */
+        if (vlen(d) > 1e-6f) b->vel = vadd(b->vel, vmul(vnorm(d), 3.0f));
+        return 1;
+    }
     case WALK_POIHANA: { /* from an enemy or map object: sReceivePushPower 1.5 away from the sender's actor */
         V3 d = vsub(b->pos, a->pos);
         if (vlen(d) > 1e-6f) b->vel = vadd(b->vel, vmul(vnorm(d), 1.5f));
@@ -32906,6 +32911,17 @@ static void wp_attack(Kuribo *a, const WSen *sa, Kuribo *b, const WSen *rb) /* a
             wp_receive(b, rb, a, &moved);
         }
         break;
+    case WALK_BOMBTERESA: /* isEnableHitExplosionToEnemy (Drift / DriftRelease): EnemyAttackExplosion, taken: Explosion;
+                           * else sendMsgPush */
+        if (rb->map) break;
+        if ((a->nrv == BT_DRIFT || a->nrv == BT_DRIFTRELEASE) && walker_blow(b, sa->c) > 0) {
+            pad_rumble(RUMBLE_MIDDLE); /* tryRumbleDefaultHit */
+            printf("bomb teresa row %d: its explosion taken by kind %d row %d\n", a->row, b->kind, b->row);
+            bt_explode(a);
+            break;
+        }
+        wp_receive(b, rb, a, sa);
+        break;
     case WALK_POIHANA: /* pushed: its velocity into the receiver's actor cut */
         if (!wp_receive(b, rb, a, sa)) break;
         {
@@ -32924,7 +32940,7 @@ static void walker_push_pass(void) /* ponytail: the first WP_MAX walkers with se
     int n = 0;
     for (int i = 0; i < nkuribo && n < WP_MAX; i++) {
         Kuribo *k = &kuribo[i];
-        if (k->state == KURIBO_DEAD || !row_shown(k->row) || (k->clipped && !test_noclip) || k->host) continue; /* (clipped: invalidateBySystem) */
+        if (k->state == KURIBO_DEAD || !row_shown(k->row) || (k->clipped && !test_noclip) || (k->host && k->kind != WALK_BOMBTERESA)) continue; /* (clipped: invalidateBySystem; Polta's BombTeresas: theirs) */
         if (k->kind == WALK_TAKOHEI && k->lvt[0] > 0) k->lvt[0]--; /* control: _E4 */
         int c = wp_sensors(k, sen[n]);
         if (c < 0) { hs_add(k->pos, 0.0f, k->kind == WALK_BUTTERFLY ? HS_ANIMAL : HS_ENEMY, k->row); continue; } /* ponytail: one point at its place */
@@ -53805,7 +53821,13 @@ void game_update(void)
     if (!opening_on) game_frame++; /* frames of play: the starter flight begins at 2 */
     hs_flip();
 #ifdef PUSH_TEST
-    if (game_frame == 200) { /* Mario by the walker with the most of its kind within 1500 (they gather on him); XF -DPUSH_KIND=k: of that kind */
+#ifndef PUSH_FRAME
+#define PUSH_FRAME 200 /* XF -DPUSH_FRAME=f: later, its zone streamed in */
+#endif
+#ifndef PUSH_FRAME2
+#define PUSH_FRAME2 PUSH_FRAME /* XF -DPUSH_FRAME2=f: again (the first brought its zone in) */
+#endif
+    if (game_frame == PUSH_FRAME || game_frame == PUSH_FRAME2) { /* Mario by the walker with the most of its kind within 1500 (they gather on him); XF -DPUSH_KIND=k: of that kind */
         int best = -1, bn = 0;
         for (int i = 0; i < nkuribo; i++) {
             int n = 0;
