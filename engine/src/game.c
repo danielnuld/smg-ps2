@@ -49971,6 +49971,12 @@ static void gw_body_init(GwRabbit *r, int row)
     r->k.row = row;
     r->k.pos = row_pos(&sc->objs[row]);
     kuribo_init(&r->k);
+    if (r->k.nograv) { /* (kuribo_init read the RunawayRabbit's group arg0 as Kuribo's: its gravity was its placed up,
+                        * and Appear's jump went 25 into the ground: the hole's rabbit stayed in its crater) */
+        r->k.nograv = 0;
+        r->k.grav = vmul(up_at(r->k.pos, v3(0, 1, 0)), -1.0f); /* onCalcGravity */
+        r->k.qy = vmul(r->k.grav, -1.0f);
+    }
     r->talk = -1; r->sw_was = 0; r->want = r->act = NULL;
 }
 static const char *gw_rcls(const GwRabbit *r) /* slice.py names the TrickRabbit archive's clips after the placed class */
