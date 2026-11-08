@@ -17,8 +17,10 @@
  * 会話 camera, Move by its rail points' arg0 (adjustmentRailCoordSpeed, decidePose 1 / 0.05 / 0.1), Goal near the
  * rail's end (sNearGoalDist 500), changeBgmState (after 480 frames: state 2 within 3000 of Mario, else 1).
  * ponytail: the star pointer demo modes (startStarPointerModeDemo(WithStarPointer) / endStarPointerMode), the
- * layout's RaceStart / RaceGoal effects, Luigi's TeresaRacer (arg0 1: slice.py declares Mario's), audiences (only
- * PenguinCoach's surfing modes enter one), the rush actor messages (ACTMES_RACE_*: SurfRay's) */
+ * layout's RaceStart / RaceGoal effects, Luigi's TeresaRacer (arg0 1: slice.py declares Mario's).
+ * The surfing races (surf.inc): the RaceRail's SW_APPEAR starts the race at once (PlayerRacer::appear:
+ * startImmediately, PrepImme: prepBind), the rush actor's ACTMES_RACE_READY / START / GOAL / RESET (sr_rush_msg), the
+ * surfing PenguinCoach's resetAudience */
 enum { RM_WAIT, RM_PREPWIPE, RM_PREPIMME, RM_PREWIPEOUT, RM_PREWIPEWAIT, RM_PREWIPEIN, RM_INTRO, RM_COUNT, RM_RACE,
        RM_DEMO, RM_GOAL, RM_RANK, RM_PSTWIPEOUT, RM_PSTWIPEWAIT, RM_PSTWIPEIN };
 enum { RACE_PENGUIN, RACE_TERESA_PHANTOM, RACE_TERESA_DEATH_PROMENADE, RACE_SURFING_TRIAL, RACE_SURFING_CHALLENGE };
@@ -38,7 +40,7 @@ static struct {
     V3 end_p, end_x, end_y, end_z; /* _FC (inverted: a point's local z is its offset along end_z) */
     RmRail rail;   /* the PlayerRacer's */
     int ctrl_off, cam; const char *bck, *bck_demo; /* bck: startBckPlayer's clip while the demo bck_demo holds Mario */
-    int test_f;
+    int test_f, appeared;
 } rm;
 enum { TRC_WAIT, TRC_PRE, TRC_READY, TRC_MOVE, TRC_GOAL, TRC_POST, TRC_TALK, TRC_TAKEOUT };
 enum { SK_REACTION = 20, SK_TALK, SK_WAIT, SK_DEMO, SK_AWAY, SK_TURN, SK_PROVOKE, SK_CAUGHT, SK_FADEOUT, SK_FADEIN, SK_GIVEUP,
@@ -287,6 +289,18 @@ static void rm_init(void)
     }
     rm.on = rm.row >= 0;
 }
+static int sr_rush_msg(int msg); /* the rush actor's (surf.inc: SurfRay) ACTMES_RACE_READY / START / GOAL / RESET */
+static void pcs_reset_audience(void); /* PenguinCoach's resetAudience (surf.inc) */
+static void rm_start_immediately(void) /* startImmediately: requestStartDemoWithoutCinemaFrame(レース, PrepImme) */
+{
+    if (!rm.on || rm.nrv != RM_WAIT || rm.req >= 0 || rm.next >= 0) return;
+    rm.rank = 0;
+    menu_race_hide_all();
+    rm.req = RM_PREPIMME;
+    bgm_stop(90);
+    bgm_sub("BGM_MINIGAME_START");
+    printf("race: start immediately%c", 10);
+}
 static void rm_start_with_wipe(void) /* startWithWipe: requestStartDemoMarioPuppetableWithoutCinemaFrame(レース, PrepWipe) */
 {
     if (!rm.on || rm.nrv != RM_WAIT || rm.req >= 0 || rm.next >= 0) return; /* (eventFunc 0 and exePre both ask) */
@@ -301,6 +315,7 @@ static void rm_prep_race(void) /* prepRace: the player's first */
 }
 static void rm_start_race(void) /* startRace */
 {
+    sr_rush_msg(1); /* isPlayerInBind: ACTMES_RACE_START */
     for (int i = 0; i < rm.n; i++) {
         RmRacer *a = &rm.r[rm.ord[i]];
         if (a->npc >= 0) rn_start_racer(&rn[a->npc]);
@@ -312,12 +327,15 @@ static void rm_start_race(void) /* startRace */
 }
 static void rm_goal_race(void) /* goalRace: loseRacer for those not in */
 {
+    sr_rush_msg(2); /* ACTMES_RACE_GOAL */
     for (int i = rm.rank; i < rm.n; i++) if (rm.r[rm.ord[i]].npc >= 0) rn_lose_racer(&rn[rm.r[rm.ord[i]].npc]);
 }
 static void rm_reset_race(void) /* resetRace: the player's first; the layout killed */
 {
+    sr_rush_msg(3); /* ACTMES_RACE_RESET */
     pr_reset();
     for (int i = 0; i < rm.n; i++) if (rm.r[rm.ord[i]].npc >= 0) rn_reset_racer(&rn[rm.r[rm.ord[i]].npc]);
+    pcs_reset_audience(); /* the audiences' resetAudience */
     menu_race_kill();
 }
 static void rm_exe(void)
@@ -328,6 +346,7 @@ static void rm_exe(void)
     case RM_PREPWIPE: case RM_PREPIMME: /* exePrep: initRacer */
         for (int i = 0; i < rm.n; i++) { RmRacer *a = &rm.r[i]; a->coord = 0; a->cur = a->prev = v3(0, 0, 0); }
         rm_player_bck("watch"); /* PlayerRacer::initRacer */
+        if (rm.nrv == RM_PREPIMME) sr_rush_msg(0); /* prepBind: ACTMES_RACE_READY */
         rm_set(rm.nrv == RM_PREPWIPE ? RM_PREWIPEOUT : RM_INTRO);
         break;
     case RM_PREWIPEOUT: case RM_PSTWIPEOUT: /* exeWipeOut */
@@ -423,6 +442,7 @@ static void rm_exe(void)
 static void rm_update(void)
 {
     if (!rm.on) return;
+    if (!rm.appeared && row_shown(rm.row)) { rm.appeared = 1; if (sc->objs[rm.row].sw[SW_APPEAR] >= 0) rm_start_immediately(); } /* PlayerRacer::appear */
     if (rm.req >= 0 && pd_try_start("レース", rm.row)) { rm.next = rm.req; rm.req = -1; } /* the requested demo starts: its nerve */
     if (rm.next >= 0) { rm.nrv = rm.next; rm.step = 0; rm.next = -1; }
     rm_exe();

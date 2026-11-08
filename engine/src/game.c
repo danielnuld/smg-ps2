@@ -1511,6 +1511,7 @@ static int miss_ghost; /* the next miss is forceKillPlayerByGhostRace's (EventGh
 static int miss_race; /* the next miss is forceKillPlayerByGroundRace's (EventRaceDown) */
 static void rm_reset(void), update_race(void); /* RaceManager and its racers (race.inc) */
 static void update_syati(void), draw_syati_rings(void); static int sy_took(int row), sy_bva(const Inst *in, const char **key, float *frame), sy_miss_anim(void); /* Syati (syati.inc) */
+static void update_surf(void); static int sr_try(Player *m), sr_hold(Player *m), pcs_talk(int k, Inst *in), pcs_of(int row), pcs_branch(u32 v); static float sr_reach(void); static V3 sr_body(void); /* SurfRay, SurfRayTutorial, the surfing PenguinCoach (surf.inc) */
 static void or_init(void), or_update(void), draw_oceanrings(void); static int or_in_water(V3 p, V3 up, float *depth), or_row(V3 p); /* OceanRing (ocean_ring.inc) */
 static int rm_ctrl_off(void), pg_jet_hit(V3 p); static void rm_note_star(void); static const char *rm_bck(void); /* offPlayerControl; its startBckPlayer clip on Mario */
 static void gh_reset(void);
@@ -12603,6 +12604,7 @@ static void update_talkers(void)
             if (talk_near_at_end(k)) menu_galaxy_map(sc->objs[in->row].arg[0] > 0);
         } else if (tico && sc->objs[in->row].arg[1] == 3) { /* Tico::exeTalk: at its talk's end Meta (gone) */
             if (talk_near_at_end(k)) row_step[in->row] = 1; /* setNerve(Meta) */
+        } else if (in->talkcls == 12 && pcs_talk(k, &insts[i])) { /* the surfing PenguinCoach's nerves (surf.inc) */
         } else talk_near(k); /* exeWait: tryTalkNearPlayer (Tico / Kinopio: ...AndStartTalkAction) */
     }
 }
@@ -22027,6 +22029,10 @@ static void update_mario_(void)
         return;
     }
     if (pw_update(m)) { if (mario_anim) anim_update(mario_anim); return; } /* MarioWarp's point warp (forceFlyPlayer) */
+    if (sr_hold(m) || (!demo_on && warp.from < 0 && sr_try(m) && sr_hold(m))) { /* on a SurfRay (ACTMES_AUTORUSH_BEGIN; its movement on in the race's demo) */
+        if (mario_anim) anim_update(mario_anim);
+        return;
+    }
     if (demo_on || gh_ctrl_off() || rm_ctrl_off()) { /* a demo (or offPlayerControl): he waits (startBckPlayer PowerStarGet when it is the star's) */
         m->hvel = v3(0, 0, 0); m->vup = 0;
         if (m->hurt_timer) m->hurt_timer--;
@@ -45674,10 +45680,8 @@ static void student_after(Inst *in) /* its place kept, its shell on its back whi
  * TakeOutStar action, SE_OJ_LV_POW_STAR_EXIST(_W in water) past sStarAppearSeStepPenguinCoach 95, at its end the star
  * out: true then), 2 forceKillPlayerByGroundRace. setDistanceToTalk 350, mParam._8 1 (npc_turns). GapSt of its row: n
  * 1 in TakeOutStar, st its step, i its star out.
- * ponytail: the surfing modes (arg0 2 / 3: SurfRayTutorial, the race manager, their cameras and fades;
- * PenguinCoach.cpp:200-300) are SurfingLv1 / Lv2's, not ported: no race time (4 / 5 false), no tutorial flag (2 false),
- * no ground race kill (2); no TurnJointCtrl head turn (control), no reactions (exeReaction's SEs); the PowerStar demo
- * model in its hands not drawn (the star comes from it once the action ends: star_pos) */
+ * The surfing modes (arg0 2 / 3: SurfRayTutorial, its nerves, branchFunc 2-5) are surf.inc's (pcs_*); eventFunc 2
+ * forceKillPlayerByGroundRace. ponytail: no TurnJointCtrl head turn (control), no reactions (exeReaction's SEs) */
 static int pg_branch(int k, u32 v)
 {
     int row = talkers[k].row;
@@ -45686,6 +45690,7 @@ static int pg_branch(int k, u32 v)
     if (!strcmp(c, "PenguinStudent")) { int L = ps_leader(row); return L >= 0 && gap_st(L)->n == PS_LEAD; }
     if (strcmp(c, "PenguinCoach")) return 0;
     int carry = jet.inst >= 0 && jet.phase == 1;
+    if (v >= 2) { int s = pcs_of(row); return v == 3 && !s ? 0 : pcs_branch(v); } /* 2-5 (surf.inc): the flag, mIsRaceComplete, the race time */
     return v == 0 ? carry : v == 1 ? carry && insts[jet.inst].jet == 4 : 0;
 }
 static int pg_event(int k, u32 v)
@@ -45693,6 +45698,7 @@ static int pg_event(int k, u32 v)
     int row = talkers[k].row;
     if (row < 0 || strcmp(sc->types + 32 * sc->objs[row].type, "PenguinCoach")) return 1;
     GapSt *g = gap_st(row);
+    if (v == 2) { miss_race = 1; miss(); printf("penguin coach row %d: forceKillPlayerByGroundRace%c", row, 10); return 1; } /* eventFunc 2 */
     if (v == 0) { if (sc->objs[row].sw[SW_A] >= 0) sw_set(&sc->objs[row], SW_A, 1); printf("penguin coach row %d: SW_A on%c", row, 10); return 1; }
     if (v == 1) {
         if (g->i) return 1;
@@ -46431,6 +46437,7 @@ static void collect(Pickup *p, int n, float reach, int *counter, int fx, u32 se)
     V3 c = vadd(mario->pos, vmul(mario->up, BODY_RADIUS));
     if (bgb_reach() > reach) { reach = bgb_reach(); c = bgbs[bgb_ride].pos; } /* in a BigBubble: its ride sensor gets them */
     if (tmk_reach() > reach) { reach = tmk_reach(); c = tmk_body(); } /* on a Tamakoro: its Body sensor's tryGetItem */
+    if (sr_reach() > reach) { reach = sr_reach(); c = sr_body(); } /* on a SurfRay: its ride sensor's tryGetItem */
     for (int i = 0; i < n; i++)
         if (pickup_on(&p[i], 1) && vlen(vsub(p[i].pos, c)) < reach) {
             p[i].alive = PICK_GONE;
@@ -52338,6 +52345,7 @@ int game_test_bk(int frame)
 #include "race.inc" /* RaceManager, RaceRail (PlayerRacer), TeresaRacer: rm_*, game_test_race */
 #include "ocean_ring.inc" /* OceanRing: or_* */
 #include "syati.inc" /* Syati / TalkSyati, PrizeRing: sy_*, prg_* */
+#include "surf.inc" /* SurfRay, SurfRayTutorial, PenguinCoach 2 / 3: sr_*, srt_*, pcs_* */
 /* Test builds: Mario in the boss's SwitchCylinder until it starts, then dropped in a hip drop on its BodyHipDrop part
  * whenever a hit is open; game_bsb_state: sequencer x 100 + nerve */
 int game_test_bsb(void)
@@ -53854,6 +53862,7 @@ void game_update(void)
     or_update(); /* OceanRing::movement (ocean_ring.inc): its points near Mario before his swim reads them */
     update_race(); /* RaceManager and its racer NPCs (race.inc): their talks before the talk director and Mario */
     update_syati(); /* Syati / TalkSyati and its PrizeRings (syati.inc): likewise */
+    update_surf(); /* SurfRay (surf.inc): moved before Mario, who rides at its Center joint */
     hud_update();
 
     LQ(5, update_talk_director());

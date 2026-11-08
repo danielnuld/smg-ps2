@@ -809,6 +809,22 @@ Second console round (2026-10-24), from Daniel's report:
   (220 at (0, 25, 40)): a trample bounces Mario and plays SE_SM_TERERACER_TRAMPLE. Test plain XF "-DRACE_TEST=1
   -DRACE_TRAMPLE -DPACKS_OVERLAY=..." PhantomGalaxy/2: Mario dropped on the Boo, `trampled` each bounce. Repack:
   sound.py --pack PhantomGalaxy, TeresaMario2DGalaxy.
+- SurfRay (feat/490-surf-ray, 2026-11-07): engine/src/surf.inc (sr_*, srt_*, pcs_*) after Ride/SurfRay.cpp,
+  Ride/SurfRayTutorial.cpp and PenguinCoach.cpp's surfing modes. The ray: WaitPlayer / TurnToWait / Wait, Mario bound at
+  its ride sensor (SW_A on), the ride's water / map / accel / rotate / sound updates, the Accel / Free (Twist) / Jump /
+  JumpHigh / Fall / Land nerves, Mario at its Center joint (+55 up, +12 ahead) with the サーフィン* groups' tilt weights,
+  its Ripple / SwimSplash / RunDashSplash (jpa.py NAMED SurfRay), the tutorial area's circle wipes back to スタート位置
+  （サーフィン） (camera_reset: resetCameraMan), Ready in the race. The coach (arg0 2 Lv1, 3 Lv2): its talk, the fade,
+  the lecture (Common_SurfingTutorial000 nodes 0-7: msg.py COMMON PenguinCoach), the flag サーフィンチュートリアル, the
+  praise and its TakeOutStar. race.inc: a RaceRail with SW_APPEAR starts at once (TimerSwitch / GroupSwitchWatcher /
+  SwitchCube bring it), the rush actor's RACE_READY / START / RESET; ocean_ring.inc takes OceanRingAndFlag (an
+  OceanRing). Tilt = left stick (x, y, z = -sqrt(1 - x^2 - y^2)), swing = square. Test plain XF "-DSURF_TEST=1
+  -DPACKS_OVERLAY=..." SurfingLv1Galaxy/1: talk, Yes, the 13 lectures by the stick, the course to the warp, the race
+  carried on the water under the judge rail (in at f 2507), praise, TakeOutStar, power star got; =2 SurfingLv2Galaxy/1:
+  Yes, Mario at the start falls on the ray, the race (in at f 2531), the star. 60 fps in both. Route EggStar 1 star at
+  f 4215. ponytail: SurfingGuidance (TiltGuidance: the remote), ActorJointCtrl, the BTK rate / Blink BTP, the shadow
+  oval on the water, level SEs' parameter as volume. Repack: resident.bin + resident_luigi.bin (jpa.py), slice_all.py
+  SurfingLv1Galaxy, SurfingLv2Galaxy (msg.py COMMON), sound.py --pack both.
 - ChipCounter (feat/290-chip-counter, 2026-11-05): menu.c chc_* (BlueChipCounter / YellowChipCounter / CollectCounter
   in lyt.py COMMON: menus.bin +84 KB): Hide / FrameIn / Show / FrameOut / TryDemo / Complete / CompleteOut, Chip1-5
   ChipGet, ShowHide by short balloons, the count over Mario; game.c chip_group_*: UI range (chips' box +- 2000 or

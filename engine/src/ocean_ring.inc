@@ -218,9 +218,9 @@ static void or_build(ORing *o, const Row *r)
 static void or_init(void)
 {
     norings = 0; or_scene = sc;
-    int ty = scene_type(sc, "OceanRing");
-    for (u32 i = 0; ty >= 0 && scene_blob_g && i < sc->nobjs && norings < OR_MAX; i++) {
-        if (sc->objs[i].type != ty) continue;
+    int ty = scene_type(sc, "OceanRing"), tf = scene_type(sc, "OceanRingAndFlag"); /* NameObjFactory: OceanRingAndFlag is an OceanRing */
+    for (u32 i = 0; (ty >= 0 || tf >= 0) && scene_blob_g && i < sc->nobjs && norings < OR_MAX; i++) {
+        if ((int)sc->objs[i].type != ty && (int)sc->objs[i].type != tf) continue;
         ORing *o = &orings[norings];
         memset(o, 0, sizeof *o);
         o->row = (int)i;
