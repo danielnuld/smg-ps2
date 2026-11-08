@@ -1684,6 +1684,12 @@ there needs the embedded blob and every pack rebuilt.
   mario_offence(id, ..) takes the receiver's host: tryPunchAirAfter's list (a punched host no longer sees the spin, 8
   at most) and, out of a spin's own clip (_3E5: spin2nd, jump kind 8, 地上ひねり ..), the 45-degree front check
   (m_punch_ok). ponytail: one entry a host, not a sensor (KuriboChief's parts, Dodoryu's).
+- Unizo (feat/512-unizo): the Unizo.cpp parts left as ponytail: doJumpDown on a Damage (4) / DamageFire (10) floor
+  (isBreakGround: 30 up, its break model's Firedown, BREAK, killed at 50), doSpin (SpinStormRange: 0.02 x the spin pull
+  off gravity, its speed kept past 6, Shock every 50), its BTPs (Normal in Wait, Angry from Jump / after CollideEnemy,
+  Blink at a random 100-200 of every 200, twice in CollideEnemy) through btp_over. Test: `unizo` OceanRingGalaxy/1
+  (f 800 a spin: `spin drift, pull 38`, its Angry BTP in the pack). Not seen: JumpDown (no Unizo by a damage floor in
+  the test). Route: EggStar 1 star at f 4201 now on origin/main itself (4135 before #515-#518).
 - TakoHei eyes and squash (feat/takohei-blink): each nerve starts its BTP as TakoHei.cpp does (Open, Blink every 60 in
   Wait / Walk, Search, Blink in Pursue, Cry, Angry, BlinkTwice; again as _E4 runs out) through draw_skin's btp_over (a
   BTP apart from the clip); receiveMsgPush (Mario 12 / 60 frames, an enemy 5 / 20): BlinkTwice and its
