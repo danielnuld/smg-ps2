@@ -373,6 +373,12 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   Petari); `meteor` frames its rail's end from above; ERPOINT_TEST frames the middle point from above (BattleShip 2:
   the ElectricRailPoint model on the ring). Not confirmed on screen: the killer's disc (it falls on invisible
   collision there) and the meteor's (lava under it); the logs show both drawn (draw_shadow's drop hits).
+- Balloonfish (feat/balloonfish, 2026-11-07): statics.inc st_bfs_* after Balloonfish.cpp: dead until its SW_APPEAR
+  (AppearFromBox, APPEAR SE), Wait (appearance, scale 1 -> 1.5 over 120, blendQuatFrontUp toward Mario's centre + 10 x
+  his velocity: Z 0.1, Y 0.02), Dash 180 (Attack, SwimBubble, 10 a frame, scale 1.5 -> 0.5), DashEnd 95, killed (Death,
+  EXPLOSION) at its end or out of water; body push / maximum attack, a shell kills it, a star piece its hit reaction;
+  shadow sphere 80 x scale. Test: plain XF="-DST_VISIT=Balloonfish -DST_VISIT_APPEAR -DST_BF_TEST" TearDropGalaxy/1
+  (overlay): out of its box, waits, dashes, killed. ponytail: binder, 2P pointer bind.
 
 - BeamGoRoundPlanet (fix/457-beam-go-round, 2026-11-07, coverage CannonFleetGalaxy 1): BeamGoRoundPlanet.cpp in game.c
   (bgr_*): its BCK plays (slice.py ANIM_PLANETS), its own collision kept and its Move KCL on joints move1 / move2
