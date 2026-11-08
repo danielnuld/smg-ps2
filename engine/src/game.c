@@ -270,6 +270,7 @@ typedef struct {
     int mloop, mend, mfall; /* calcShootMotionTime: the loop / end / fall motions' steps */
     float mspin;      /* SuperSpinDriver _13C: the spin over mloop..mend */
     u32 lvc;          /* SE_OJ_LV_SPIN_DRV_CAPTURE's handle */
+    int done;         /* SuperSpinDriver arg6 1: its ドライバ出現済み already-done flag (sequence.c), -1 none */
 } Launch;
 #define LAUNCH_BIND 300.0f
 
@@ -1260,9 +1261,16 @@ static short *star_wait;
 #define MAX_GROUP_WAIT 16
 static struct { int row, fat; } group_wait[MAX_GROUP_WAIT];
 static int ngroup_wait;
+/* SuperSpinDriver::initAppearState: one whose ドライバ出現済み flag is set starts appeared (makeActorAppeared), its
+ * appear switch / group / demo no longer waited for */
+#define MAX_DONE_SHOWN 16
+static short done_shown[MAX_DONE_SHOWN];
+static int ndone_shown;
 static int row_shown(int i)
 {
     const Row *r = &sc->objs[i];
+    for (int k = 0; k < ndone_shown; k++)
+        if (done_shown[k] == i) return !row_dead[i] && !row_demo_hide[i];
     for (int k = 0; k < ngroup_wait; k++)
         if (group_wait[k].row == i && !row_dead[group_wait[k].fat]) return 0;
 #ifdef TEST_SHOWN /* a test build's class out at once (its appear switch belongs to a fight or an event) */
@@ -2559,7 +2567,7 @@ void game_init(const Scene *s, const unsigned char *blob)
             row_hold[i] = s->objs[i].arg[3] >= 0 ? s->objs[i].arg[3] : 5;
     scene_blob_g = blob;
     npurple = count_type("PurpleCoin", 0) + count_type("CirclePurpleCoinGroup", 1) + count_type("PurpleRailCoin", 1);
-    ngroup_wait = 0;
+    ngroup_wait = 0; ndone_shown = 0;
     nfats = 0; test_feed = 0; nsambos = 0; ndrings = -1;
     for (u32 i = 0; i < s->nobjs; i++) { /* the spin drivers a TicoFat's group brings out */
         const char *tn = s->types + 32 * s->objs[i].type;
@@ -2848,6 +2856,19 @@ void game_init(const Scene *s, const unsigned char *blob)
         L->mloop = -1; L->mend = L->mfall = 0;
         L->row = i;
         L->shown = -1; L->shine = 0; L->lv = 0; L->clip_r = 0; L->appear = 0;
+        L->done = -1;
+        if (super && r->type != t_starter && r->arg[6] == 1) { /* initAppearState: not appeared at once, arg6 1 */
+            int wait = r->sw[SW_APPEAR] >= 0;
+            for (int k = 0; k < ngroup_wait; k++) wait |= group_wait[k].row == (int)i; /* joinToGroupArray 惑星出現 */
+            for (int d = 0; d < ndemos; d++) /* tryRegisterDemoCast and isRegisteredDemoActionAppear */
+                for (int a = 0; a < demos[d].h->nact; a++)
+                    for (int c = 0; demos[d].act[a].type == 0 && c < demos[d].act[a].cn; c++)
+                        wait |= demos[d].cast[demos[d].act[a].c0 + c] == (int)i;
+            int was = 0;
+            if (wait) L->done = seq_done_setup("ドライバ出現済み", r->zone, r->l_id, &was);
+            if (was && ndone_shown < MAX_DONE_SHOWN) { done_shown[ndone_shown++] = (short)i; L->shown = 1; row_demo_hide[i] = 0; }
+            if (L->done >= 0) printf("launch row %d: ドライバ出現済み flag %d%s" "\n", (int)i, L->done, was ? ", appeared already" : "");
+        }
         nlaunches++;
     }
     int t_erail = scene_type(s, "ElectricRail"), t_ermv = scene_type(s, "ElectricRailMoving");
@@ -3098,11 +3119,13 @@ void game_init(const Scene *s, const unsigned char *blob)
  * arg1 frames (mFlashFrame, its chips flashing) or while Mario is within the range (mIsCounterVisible). A chip taken
  * (noticeGet): the counter shows with the count before it, then setCount with the new one (CollectCounter over
  * Mario); the last one asks for the チップコンプリート demo (ChipCounter: Complete, CompleteOut) with
- * SE_OJ_*CHIP_COMPLETE (port 11 the count); its end (noticeEndCompleteDemo) puts SW_A on. ponytail: arg3's
- * チップ集め済み already-done flag (mIsDeactivated) is not kept (no such flag in gamedata.c); the chips' FlashingCtrl
- * for arg1 frames (ChipBase::appearFlashing, killed at its end) not ported: no disc group sets arg1 */
+ * SE_OJ_*CHIP_COMPLETE (port 11 the count); its end (noticeEndCompleteDemo) puts SW_A on. arg3 1: its チップ集め済み
+ * already-done flag (sequence.c), set at the completion; set at init (mIsDeactivated) its chips are dead (deactive)
+ * and it takes no chip, appear request nor counter. ponytail: the chips' FlashingCtrl for arg1 frames
+ * (ChipBase::appearFlashing, killed at its end) not ported: no disc group sets arg1; a ShellfishYellowChip's chip is
+ * left in its shell when deactivated */
 #define MAX_CHIPG 32
-static struct { short row; u8 visible, done; int timer, got; V3 ui; float range; } chg[MAX_CHIPG];
+static struct { short row; u8 visible, done, deact; int timer, got, adf; V3 ui; float range; } chg[MAX_CHIPG];
 static int nchg;
 static int chip_group_of(int row) /* its state, made at its first use (init / updateUIRange) */
 {
@@ -3126,6 +3149,15 @@ static int chip_group_of(int row) /* its state, made at its first use (init / up
     if (r->arg[2] >= 0) g->range = (float)r->arg[2]; /* mUIRangeFixed */
     else if (n) { g->ui = vmul(vadd(lo, hi), 0.5f); g->range = vlen(vsub(hi, lo)) / 2.0f; }
     else g->range = -1.0f;
+    g->adf = -1;
+    if (r->arg[3] == 1) { /* init: arg3 1, setupAlreadyDoneFlag チップ集め済み (mIsDeactivated) */
+        int was = 0;
+        g->adf = seq_done_setup("チップ集め済み", r->zone, r->l_id, &was);
+        g->deact = (u8)was;
+        printf("%s %d: already-done flag %d%s" "\n", sc->types + 32 * r->type, r->arg[0], g->adf, was ? ", deactivated" : "");
+        for (u32 k = 0, ct = (u32)scene_type(sc, chip); was && k < sc->nobjs; k++) /* registerChip: deactive (makeActorDead) */
+            if (sc->objs[k].type == ct && sc->objs[k].arg[0] == r->arg[0]) { row_dead[k] = 1; sw_changed = 1; }
+    }
     return nchg++;
 }
 static int chip_group_total(int row) /* mTotalCount */
@@ -3147,12 +3179,14 @@ static void chip_notice_get(int yel, int grp, int chip_row)
         int k = chip_group_of(row);
         if (k < 0) return;
         typeof(&chg[0]) g = &chg[k];
+        if (g->deact) return;
         menu_chip_show(yel, grp, g->got); /* noticeGet: showChipCounter */
         if (r->sw[SW_APPEAR] < 0 || r->arg[1] == -1) g->visible = 1;
         g->got++;
         if (g->got >= chip_group_total(row)) { /* isComplete: requestStartChipCompleteDemo */
             menu_chip_complete(yel, grp);
             g->done = 1;
+            if (g->adf >= 0) seq_done_update(g->adf, 1); /* updateAlreadyDoneFlag */
             u32 h = se_start(yel ? SE_OJ_YELLOWCHIP_COMPLETE : SE_OJ_BLUECHIP_COMPLETE, NULL);
             if (h) se_port(h, 11, g->got > 12 ? 12 : g->got); /* modifySe_Takezawa: port 11 the chip count */
             g->timer = -1; g->visible = 0;
@@ -3166,7 +3200,18 @@ static void chip_group_update(int row)
 {
     const Row *r = &sc->objs[row];
     int yel = sc->types[32 * r->type] == 'Y', k = chip_group_of(row), grp = r->arg[0];
-    if (k < 0 || row_dead[row]) return;
+#ifdef DONE_TEST /* XF=-DDONE_TEST (HeavenlyBeachGalaxy/1): 200 frames in, every chip of an arg3 1 group taken; 300
+                  * after its SuperSpinDriver appeared, a miss (update_launch): the galaxy again (a retry), the group
+                  * deactivated, the SuperSpinDriver out at once */
+    if (k >= 0) { typeof(&chg[0]) g = &chg[k]; static int t;
+      if (g->adf >= 0 && !g->deact && ++t == 200)
+          for (u32 c = 0, ct = (u32)scene_type(sc, yel ? "YellowChip" : "BlueChip"), cs = (u32)scene_type(sc, "ShellfishYellowChip"); c < sc->nobjs; c++) {
+              if (sc->objs[c].type == ct && sc->objs[c].arg[0] == grp && !row_dead[c]) { row_dead[c] = 1; sw_changed = 1; chip_notice_get(yel, grp, (int)c); }
+              if (yel && sc->objs[c].type == cs && sc->objs[c].arg[0] == grp) chip_notice_get(yel, grp, (int)c); /* (its shell's chip) */
+          }
+    }
+#endif
+    if (k < 0 || row_dead[row] || chg[k].deact) return; /* (deactivated: no movement, receiveAppearRequest) */
     typeof(&chg[0]) g = &chg[k];
     if (r->sw[SW_APPEAR] >= 0 && row_shown(row) && !(row_step[row] & 0x8000)) { /* receiveAppearRequest */
         row_step[row] |= 0x8000;
@@ -11367,6 +11412,7 @@ typedef struct {
     float m[16];                 /* the host's base matrix (its owner sets it every frame: talk_place) */
     float offy, dist;            /* mMsgBalloonFollowOffs.y, mTalkDistance */
     u8 front, root_auto, read_auto, done, state; /* mIsStartOnlyFront, mIsOnRootNodeAuto, mIsOnReadNodeAuto, _3C, _18 */
+    short adf;                       /* mAlreadyDoneFlags: _3C's already-done flag (sequence.c, its node name), -1 none */
     u16 root, cur, flow;         /* TalkNodeCtrl _38, mCurrentNode, mFlowNode */
     int msg, msg_idx, node_data; /* mMessageInfo (its message, -1 none: _0 = 0), mCurrentNodeIdx, mNodeData */
     u8 talk, balloon;            /* mMessageInfo.mTalkType (history may zero it), mBalloonType */
@@ -11446,13 +11492,20 @@ static int talk_new(const char *label, int ctlrow, int row, float offy, float di
     Talker *t = &talkers[ntalkers];
     memset(t, 0, sizeof *t);
     t->ctl = c; t->row = row; t->offy = offy; t->dist = dist;
-    t->read_auto = 1; t->msg = -1; t->msg_idx = -1; t->node_data = -1; t->b_flag = -1;
+    t->read_auto = 1; t->msg = -1; t->msg_idx = -1; t->node_data = -1; t->b_flag = -1; t->adf = -1;
     t->root = t->cur = t->flow = tk_ctl[c].node;
     if (t->cur == TK_NONE) { /* getMessageDirect */
         const TkMsg *m = &tk_msg[tk_ctl[c].msg];
         t->msg = tk_ctl[c].msg; t->talk = m->talk; t->balloon = m->balloon; t->b_flag = m->b;
         t->done = 1;
-    } else tk_update_message(t);
+    } else {
+        tk_update_message(t);
+        if (ctlrow >= 0) { /* createMessage: setupAlreadyDoneFlag(the node's name, its placement, &_3C) */
+            int was = 0;
+            t->adf = (short)seq_done_setup(label, sc->objs[ctlrow].zone, sc->objs[ctlrow].l_id, &was);
+            t->done = (u8)was;
+        }
+    }
     if (t->talk == 4) { tk_forward(t); t->root = t->flow = t->cur; } /* isFlowTalk */
     if (ctlrow < 0) t->done = 1; /* createMessageDirect */
     tk_reset_flow(t);
@@ -11565,6 +11618,7 @@ static int tk_root_eve(int k) /* rootNodeEve: 1 when the event part is over */
 }
 static void tk_read(Talker *t) /* readMessage */
 {
+    if (!t->done) seq_done_update(t->adf, 1); /* updateAlreadyDoneFlag (_3C itself stays: next visit) */
     if (!t->read_auto) return;
     if (t->talk == 2) {
         int seen = 0;
@@ -22086,9 +22140,14 @@ static void update_mario_(void)
         if (L->cool && !(L->cool == 1 && !small && L->shine)) L->cool--; /* SuperSpinDriver::tryEndCoolDown: and _178 0 */
         if (L->starter) continue;
         int on = row_shown(L->row);
-        if (on && !L->shown) L->appear = launch_appear_frames(L) > 0 ? -1 : 1; /* appear: isUseAppearCamera ?
-                                                                                * requestStartDemo 出現 : Appear */
+        if (on && !L->shown) { /* appear: isUseAppearCamera ? requestStartDemo 出現 : Appear */
+            L->appear = launch_appear_frames(L) > 0 ? -1 : 1;
+            if (L->done >= 0) { seq_done_update(L->done, 1); printf("launch row %d: ドライバ出現済み set" "\n", L->row); } /* updateAlreadyDoneFlag */
+        }
         L->shown = on;
+#ifdef DONE_TEST
+        { static int dt; if (L->done >= 0 && on && !seq_is_retry() && ++dt == 300) game_test_miss(0); }
+#endif
         /* receiveOtherMsg (Mario's sensor on its bind one): _13C 60, counted down in control; exeWait's shine */
         if (on && m->launch != i && vlen(vsub(vadd(m->pos, vmul(m->up, BODY_RADIUS)), L->pos)) < LAUNCH_BIND) L->shine = 60;
         else if (L->shine) L->shine--;

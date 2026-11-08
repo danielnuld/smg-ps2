@@ -415,6 +415,17 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   star's door switch on, Mario at DarknessRoomZone's PowerStar 6: got. Left: the engine keeps the selected number in
   game_stage_name (Petari's getCurrentScenarioNo is the placed one: ScenarioStarter::isStartBgmOnWelcome, per-scenario
   checks by number). Repack: slice_all.py on those 16 galaxies.
+- Already-done flags wired (feat/505-done-flags, 2026-11-07, after #465): SuperSpinDriver arg6 1 (not appeared at once: its
+  appear switch, a 惑星出現 group or a demo's appear action) sets ドライバ出現済み at its appear; set at init it starts
+  appeared (done_shown in row_shown). ChipGroup arg3 1 sets チップ集め済み at the completion; set at init it is
+  deactivated (its chips dead, no chip / appear / counter). TalkMessageCtrl: a flow node's _3C from the flag of its
+  node name (talk_new), set at readMessage. slice.py demo_dead_classes takes SuperSpinDriver / Green / Pink (made by
+  MR::createSuperSpinDriver*: they were shown before their appear demo). Test: plain XF=-DDONE_TEST
+  HeavenlyBeachGalaxy/1: the YellowChipGroup's five chips taken, its demo, the SuperSpinDriver appears, a miss: again,
+  the group deactivated and the SuperSpinDriver out at once. Left: OceanFloaterLandParts フローター浮上 (the class
+  is not ported at all; OceanFloaterTypeU rides the generic rail mover); a ShellfishYellowChip's chip stays in its
+  shell when its group is deactivated. Repack: slice_all.py AstroGalaxy, BattleShipGalaxy, CannonFleetGalaxy,
+  EggStarGalaxy, HeavenlyBeachGalaxy, HellProminenceGalaxy, IceVolcanoGalaxy.
 - CannonFleetGalaxy 1 drum (fix/489-eyebeamer-demo, 2026-11-07): after the ScenarioStarter flight Mario fell through
   BeamGoRoundPlanet's bottom face (its "#<joint>.<k>" Move collisions took the model's reach, 1809, while the KCL
   reaches 2600 from the planet's origin: left out of the collision walk; and they were not made at all when the pose
