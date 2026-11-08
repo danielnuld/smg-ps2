@@ -1663,6 +1663,12 @@ there needs the embedded blob and every pack rebuilt.
   mario_offence(id, ..) takes the receiver's host: tryPunchAirAfter's list (a punched host no longer sees the spin, 8
   at most) and, out of a spin's own clip (_3E5: spin2nd, jump kind 8, 地上ひねり ..), the 45-degree front check
   (m_punch_ok). ponytail: one entry a host, not a sensor (KuriboChief's parts, Dodoryu's).
+- BombTeresa push (feat/bteresa-push): its body (85 x s) in walker_push_pass replaces bt_update's own loop (enemies taken
+  as 70 about their place, pushes only between BombTeresas): in Drift / DriftRelease the receiver's explosion (walker_blow)
+  taken: Explosion, else sendMsgPush; any enemy's push: 3 along the sensors' line. Polta's BombTeresas are in the pass too.
+  PUSH_FRAME / PUSH_FRAME2 move the push test later (a zone streamed in first). Not seen: the explosion on another enemy
+  (`bteresa` XF=-DBT_ACT=2 PhantomGalaxy/1 puts another BombTeresa by a drifting one, but the only active one there aborts
+  its drift at step ~50 on the map between it and its tongue, the others wait in Appear in zones not streamed).
 - Snakehead push (feat/snakehead-push): Snakehead.cpp attackSensor in walker_push_pass (sn_sensors: head 100 / jaws 250, 200, body
   300 / 600 at Body03; the jaws push enemies, the body pushes from the rail line's foot within 100 / 300) and Mario pushed
   when he does not take its attack. Test: plain XF="-DPUSH_TEST -DPUSH_KIND=WALK_SNAKEHEAD -DPUSH_OTHER" HeavenlyBeachGalaxy/1
