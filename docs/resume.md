@@ -373,6 +373,12 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   Petari); `meteor` frames its rail's end from above; ERPOINT_TEST frames the middle point from above (BattleShip 2:
   the ElectricRailPoint model on the ring). Not confirmed on screen: the killer's disc (it falls on invisible
   collision there) and the meteor's (lava under it); the logs show both drawn (draw_shadow's drop hits).
+- MarblePlanet (feat/519-marble-planet, 2026-11-07, OceanPhantomCaveGalaxy 2): statics.inc st_mp* after MarblePlanet.cpp:
+  its core (BCK / BTK stopped by the electrons left, the 1.3 -> 1 reaction scale), arg0 electrons rolling inside the
+  glass (their gravity reversed, 13..30 along the ground, crashes within 440), a hip drop sends one at the core
+  (ScaleUpCore, Smoke3f / 6f, HIT_CORE SEs), the last breaks it (BreakCore: its star via st_star_out, the planet hidden,
+  slice.py KCL_PARTS MarblePlanet#WaterMelon on). Test: plain XF=-DST_MP_TEST OceanPhantomCaveGalaxy/2 (overlay).
+  ponytail: the electrons' binder as collide_n (200).
 - HeavensDoorAppearStepA (feat/517-hd-appear-step, 2026-11-07): statics.inc st_hdstep after HeavensDoorDemoObj's Appear:
   from its appear SE_OJ_HD_STEP_APPEAR, MBGM_GALAXY_24 + sub BGM_APPEAR_HD_TOWER, its appear.btk (slice.py BTK_NAME)
   at the actor's own frame (st_btk_md) to 299, then Wait. Test: plain XF="-DST_VISIT=HeavensDoorAppearStepA
