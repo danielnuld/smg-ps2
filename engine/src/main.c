@@ -1032,7 +1032,7 @@ static void scene_load(void)
     if (!gd_any_left_supply()) gd_add_miss_point(20);
 #endif
     mem_mark(&base_mark);
-    game_set_piece_follow_limit(!strcmp(scen, "EggStarGalaxy/2"));
+    game_set_piece_follow_limit(game_stage_scenario("EggStarGalaxy", 2)); /* isStageStarPieceFollowGroupLimit */
     { /* CometEventKeeper::sTimeLimitInfoTable: the Red / Black comet scenarios' limits (seconds) */
         static const struct { const char *scen; int secs; } limits[] = {
             {"EggStarGalaxy/4", 240}, {"StarDustGalaxy/4", 240}, {"SandClockGalaxy/4", 270}, {"CannonFleetGalaxy/4", 360},

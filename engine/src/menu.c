@@ -2480,9 +2480,7 @@ static void ss_appear(void)
         int hi = 0;
         for (int no = nn + 1; no <= power && hi < 2; no++) {
             if (!gd_scenario_hidden(ss.galaxy, no) || ss_has(no)) continue;
-            int placed = 1; /* getPlacedHiddenStarScenarioNo: the normal scenario whose PowerStarId has it */
-            for (int i = 1; i <= nn; i++)
-                if (gd_scenario_star_mask(ss.galaxy, i) & (1 << (no - 1))) { placed = i; break; }
+            int placed = gd_placed_hidden_star_scenario(ss.galaxy, no);
             lyt_show_rec(ss.l, ss_question_pane[hi], 1);
             lyt_copy_pane_trans(ss.l, ss_star_pane[placed - 1], ss.q_pos[hi]);
             hi++;

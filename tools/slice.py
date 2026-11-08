@@ -2135,7 +2135,7 @@ def placement(fs, galaxy, scenario):
     # GalaxyStatusAccessor::getAppearPowerStarObjName: a Purple / Black comet scenario's star is the 100-coin one
     appear = {n: COIN100 if i < len(comet) and comet[i] in ("Purple", "Black") else a
               for i, (n, a) in enumerate(zip(B.bcsv_column(sd, "ScenarioNo"), B.bcsv_column(sd, "AppearPowerStarObj")))}
-    declare_stars(keep, scenario, appear,
+    declare_stars(keep, B.placed_scenario(sd, galaxy, scenario), appear,  # findStarID: getCurrentScenarioNo (placed)
                   dict(zip(B.bcsv_column(names, "en_name"), B.bcsv_column(names, "jp_name"))))
     types = sorted({o["name"] for o in keep} | {s["name"] for s in starts})
     tid = {t: i for i, t in enumerate(types)}
@@ -2170,7 +2170,7 @@ def placement(fs, galaxy, scenario):
     cset = [(i, r["camset"]) for i, r in enumerate(keep) if r.get("camset", -1) >= 0]  # ActorCameraInfo: CameraSetId
     out.append(chunk(b"CSET", struct.pack("<I", len(cset)) + b"".join(struct.pack("<Hh", i, v) for i, v in cset)))
     out.append(demo_chunk(fsp, demos, gpos, keep, jp2en, se_table()))
-    out.append(canm_chunk(Path(fs), set(types), galaxy, scenario))  # after demo_chunk: DEMO_CANM
+    out.append(canm_chunk(Path(fs), set(types), galaxy, B.placed_scenario(sd, galaxy, scenario)))  # after demo_chunk: DEMO_CANM; StartScenario<getCurrentScenarioNo>.canm
     # GHST: GhostPlayer's packets (GhostPlayer::init: <stage>.gst / <stage>Luigi.gst of GhostData<stage>.arc, as on
     # disc, big-endian): {u32 mario size, u32 luigi size, u32 n}, n names (ghost_names), the Mario file, pad 4, the Luigi file
     if any(o["name"] == "GhostPlayer" for o in keep):
