@@ -9,10 +9,13 @@ Areas (`jmp/placement/<layer>/cameracubeinfo`, NameObjFactory.cpp:63-75, AreaFor
   that contains the target wins (AreaObj.cpp:111-125). Obj_arg3 = category (CubeCamera.cpp:38-45): mask =
   1 << (arg & 15) when arg >> 4 == 0, else arg >> 4; the normal game category is bit 0 (CubeCameraArea::
   ECategory_Normal, CameraManGame.cpp:561). Only areas whose mask has bit 0 are kept.
-- Validity "Invalid" or a SW_A switch makes an area start invalid (CubeCamera.cpp:15-28); those are dropped.
+- Validity "Invalid" or a SW_A switch makes an area start invalid (CubeCamera.cpp:15-28); CubeCameraArea::movement
+  makes it valid when its SW_A comes on and invalid when its SW_B does. Areas invalid for good (Invalid, no SW_A) are
+  dropped.
 
-CARE: u32 n, 12 pad; n x {u8 shape (0 box, 1 cylinder, 2 sphere), u8 zone, u16 camera (index into CAMS, 0xFFFF if
-missing), f32 pos[3], rot[3] (degrees), scale[3]} (40 B), in selection order.
+CARE: u32 n, u32 entry size (48; 0 in older blobs: 40 B entries without the switches), 8 pad; n x {u8 shape (0 box,
+1 cylinder, 2 sphere), u8 zone, u16 camera (index into CAMS, 0xFFFF if missing), f32 pos[3], rot[3] (degrees),
+scale[3], s16 SW_A, s16 SW_B (-1 none), u8 starts invalid, 3 pad} (48 B), in selection order.
 
 Cameras (`camera/cameraparam.bcam`, a JMap table; field names CameraParamChunk.cpp:141-200, vectors as "name.X/Y/Z",
 DotCamParams.cpp:62-66). Kept: game cameras "c:%04x" (areas), "s:%04x" (start), "o:" (named defaults); event cameras
@@ -45,7 +48,7 @@ def areas(rows):
     for r in rows:
         if r["name"] not in SHAPES or not category_mask(r["args"][3]) & 1:
             continue
-        if r.get("invalid") or r.get("sw_a", -1) >= 0:
+        if r.get("invalid") and r.get("sw_a", -1) < 0:
             continue
         out.append(r)
     for i in range(len(out) - 1):   # CubeCameraMgr::sort: selection sort on Obj_arg2 (signed)
@@ -61,7 +64,8 @@ def areas(rows):
 
 TYPES = ("CAM_TYPE_XZ_PARA", "CAM_TYPE_TOWER", "CAM_TYPE_FOLLOW", "CAM_TYPE_WONDER_PLANET", "CAM_TYPE_EYEPOS_FIX",
          "CAM_TYPE_POINT_FIX", "CAM_TYPE_EYEPOS_FIX_THERE", "CAM_TYPE_CHARMED_FIX", "CAM_TYPE_TOWER_POS",
-         "CAM_TYPE_FRONT_AND_BACK", "CAM_TYPE_TRUNDLE", "CAM_TYPE_CUBE_PLANET", "CAM_TYPE_OBJ_PARALLEL")
+         "CAM_TYPE_FRONT_AND_BACK", "CAM_TYPE_TRUNDLE", "CAM_TYPE_CUBE_PLANET", "CAM_TYPE_OBJ_PARALLEL",
+         "CAM_TYPE_RAIL_FOLLOW")
 
 
 def class_hash(name):
@@ -87,8 +91,10 @@ FLOATS = (("dist", 1200.0), ("angleA", 0.0), ("angleB", 0.3), ("wpoint", (0, 0, 
 INTS = (("camint", 120), ("num1", 0), ("num2", 0), ("vpanuse", 1))
 
 
-def cameras(bcams, float_column, int_column, jp2en=None):
-    """bcams: [(zone, bcam bytes)] -> (CAMS entries as bytes, {(zone, kind, num): index}, Counter of types used)."""
+def cameras(bcams, float_column, int_column, jp2en=None, rails=None):
+    """bcams: [(zone, bcam bytes)] -> (CAMS entries as bytes, {(zone, kind, num): index}, Counter of types used).
+    rails: {(zone, path_arg0): l_id} of the zones' "Camera" rails (CameraRailHolder): a CAM_TYPE_RAIL_FOLLOW's num1
+    (its rail id, CamTranslatorRailFollow::setParam) is stored as that rail's l_id (its PATH entry), -1 if none."""
     from collections import Counter
     out, index, used = [], {}, Counter()
     for zone, bc in bcams:
@@ -139,6 +145,8 @@ def cameras(bcams, float_column, int_column, jp2en=None):
             if t == "CAM_TYPE_PLANET" and get("angleA", 0) is None:
                 fl[1] = 30.0
             ints = [int(get(name, d)[i]) if get(name, d) else d for name, d in INTS]
+            if t == "CAM_TYPE_RAIL_FOLLOW":
+                ints[1] = (rails or {}).get((zone, ints[1]), -1)
             pan = [get(f"vpanaxis.{a}", 0)[i] if get(f"vpanaxis.{a}", 0) else (0, 1, 0)[k] for k, a in enumerate("XYZ")]
             flags = sum((1 << k) for k, f in enumerate(FLAGS) if get(f"flag.{f}", 0) and get(f"flag.{f}", 0)[i])
             if get("eflag.enableErpFrame", 0) and get("eflag.enableErpFrame", 0)[i]:  # an event's (CameraParamChunkEvent)
@@ -157,8 +165,10 @@ def cameras(bcams, float_column, int_column, jp2en=None):
 def selftest():
     assert category_mask(-1) == 1 and category_mask(0) == 1 and category_mask(256) == 16 and category_mask(2) == 4
     rows = [dict(name="CubeCameraBox", args=[5, 0, 3, -1]), dict(name="CubeCameraSphere", args=[6, 0, 1, -1]),
-            dict(name="CubeCameraCylinder", args=[7, 0, 2, 256]), dict(name="LightCtrlCube", args=[0, 0, 0, -1])]
-    assert [r["args"][0] for r in areas(rows)] == [6, 5], areas(rows)
+            dict(name="CubeCameraCylinder", args=[7, 0, 2, 256]), dict(name="LightCtrlCube", args=[0, 0, 0, -1]),
+            dict(name="CubeCameraBox", args=[8, 0, 0, -1], invalid=True),
+            dict(name="CubeCameraBox", args=[9, 0, 4, -1], invalid=True, sw_a=10)]
+    assert [r["args"][0] for r in areas(rows)] == [6, 5, 9], areas(rows)
     print("selftest ok")
 
 

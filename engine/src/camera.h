@@ -8,7 +8,9 @@ typedef struct {
     unsigned char shape, zone; /* 0 box (centre origin), 1 cylinder (base origin), 2 sphere, 3 BigBubbleCameraBox */
     unsigned short cam;        /* CAMS index, 0xFFFF if the stage has no such camera */
     float pos[3], rot[3], scale[3];
-} CamArea; /* 40 bytes, matches tools/camera.py CARE */
+    short sw_a, sw_b;          /* CubeCameraArea::movement: valid once SW_A is on, invalid once SW_B is (-1 none) */
+    unsigned char off, pad[3]; /* starts invalid (Validity "Invalid" or a SW_A) */
+} CamArea; /* 48 bytes, matches tools/camera.py CARE (older blobs: 40, game.c widens them) */
 
 /* One camera of cameraparam.bcam (CAMS chunk, tools/camera.py; defaults already applied). */
 typedef struct {
@@ -25,7 +27,8 @@ typedef struct {
 } CamParam; /* 132 bytes */
 
 enum { CAM_XZ_PARA, CAM_TOWER, CAM_FOLLOW, CAM_WONDER_PLANET, CAM_EYEPOS_FIX, CAM_POINT_FIX, CAM_EYEPOS_FIX_THERE,
-       CAM_CHARMED_FIX, CAM_TOWER_POS, CAM_FRONT_AND_BACK, CAM_TRUNDLE, CAM_CUBE_PLANET, CAM_OBJ_PARALLEL };  /* tools/camera.py TYPES */
+       CAM_CHARMED_FIX, CAM_TOWER_POS, CAM_FRONT_AND_BACK, CAM_TRUNDLE, CAM_CUBE_PLANET, CAM_OBJ_PARALLEL,
+       CAM_RAIL_FOLLOW };  /* tools/camera.py TYPES */
 
 /* What the camera follows (Mario): position, facing, up (against gravity), airborne (CameraTargetPlayer::isJumping). */
 typedef struct { V3 pos, front, up; int jumping; int flying; V3 fly_dir; /* flying: a launch star's flight, fly_dir
@@ -36,6 +39,10 @@ typedef struct { V3 pos, front, up; int jumping; int flying; V3 fly_dir; /* flyi
 /* Index of the last area (in the blob's priority order) that contains p, or -1 (AreaObjMgr::find_in). */
 int camera_area_at(const CamArea *a, int n, V3 p);
 extern int camera_big_bubble; /* MR::isPlayerBindedBigBubble (game.c): the BigBubbleCameraBox areas count */
+/* given by game.c: a stage switch's state (zone, id as placed), and a "Camera" rail by its l_id (CameraRailHolder):
+ * its polyline in the world, n points, closed */
+extern int (*camera_switch)(int zone, int id);
+extern const float *(*camera_rail)(int zone, int id, int *n, int *closed);
 
 /* Areas are in world space (tools/slice.py to_world); camera parameters are zone-local, so each camera computes in
  * its zone's frame (Petari Camera::setZoneMtx): zones = world matrix per zone (column-major), NULL = all identity. */

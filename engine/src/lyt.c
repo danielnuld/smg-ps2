@@ -52,7 +52,8 @@ struct LytInst {
     const LytPane *pane;
     const LytMat *mat;
     const LytAnim *anim;
-    struct { const LytAnim *a; float frame, rate; s16 root; u8 ch, on, stopped; } slot[LYT_SLOTS];
+    struct { const LytAnim *a; float frame, rate; s16 root; u8 ch, on, stopped; u32 seq; } slot[LYT_SLOTS]; /* seq:
+                                                              * the order they were started in (evaluate) */
     const u16 **text;
     u16 (*num)[12];  /* setTextBoxNumber's digits, per pane */
     s8 *vpos;        /* a text box's vertical position override, -1 none */
@@ -189,6 +190,8 @@ static int start(LytInst *l, int root, const char *anim, int ch)
     if (k < 0) return 0;
     l->slot[k].a = a; l->slot[k].frame = 0; l->slot[k].rate = 1.0f; l->slot[k].root = (s16)root; l->slot[k].ch = (u8)ch;
     l->slot[k].on = 1; l->slot[k].stopped = 0;
+    static u32 seq;
+    l->slot[k].seq = ++seq;
     return 1;
 }
 
@@ -326,11 +329,21 @@ static void reset_state(LytInst *l)
     }
 }
 
+/* LayoutPaneCtrl::start unbinds its layer's AnimTransform and binds the new one at the end of the panes' and
+ * materials' animation lists (Pane::BindAnimation): nw4r::lyt animates them in that order, so the animation started
+ * last wins where two drive one value (TitleLogo's Decide over a ReactionA held at its first frame on layer 1) */
 static void evaluate(LytInst *l)
 {
     const LytHead *h = l->h;
+    int order[LYT_SLOTS], n = 0;
     for (int k = 0; k < LYT_SLOTS; k++) {
         if (!l->slot[k].on) continue;
+        int j = n++;
+        for (; j > 0 && l->slot[order[j - 1]].seq > l->slot[k].seq; j--) order[j] = order[j - 1];
+        order[j] = k;
+    }
+    for (int o = 0; o < n; o++) {
+        int k = order[o];
         const LytAnim *a = l->slot[k].a;
         const LytTrack *tr = (const LytTrack *)((const u8 *)h + a->tracks);
         const s16 *tmap = (const s16 *)((const u8 *)h + a->texmap);

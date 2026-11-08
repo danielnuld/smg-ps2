@@ -1643,6 +1643,9 @@ int main(void)
             if (frame % 50 == 0) printf("ibubble test f %u: row %d pieces out %d\n", frame, row, game_pieces_out());
         }
 #endif
+#ifdef CAMWALK_TEST
+        { int game_test_camwalk(int frame); if (frame >= 200) game_test_camwalk((int)frame); }
+#endif
 #ifdef EXPLORE_TEST /* videos: any galaxy played through the pad (game_demo_explore) */
         if (frame >= 150) game_demo_explore((int)frame);
 #endif
