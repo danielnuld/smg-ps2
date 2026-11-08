@@ -7065,7 +7065,7 @@ int game_test_fluff(int phase)
  * jet.phase (0 none) */
 /* Test builds: Mario onto the first waiting screw switch, spinning (its row, -1 none); game_screw_state: the first
  * one's row_turn */
-void game_test_spin_now(void) { mario->spin_timer = SPIN_TIME; } /* test builds: a spin this frame */
+void game_test_spin_now(void) { mario->spin_timer = SPIN_TIME; mario->spin_t = 0; } /* test builds: a spin this frame */
 int game_test_spin_timer(void) { return mario->spin_timer; }
 
 /* Test builds: Mario by the first burning candlestand, spinning (how 1) or in its flame (0); its row, -1 none */
@@ -23506,6 +23506,9 @@ static void unizo_update(Kuribo *k, V3 to, float d)
         k->vel = vadd(k->vel, vmul(pv, 0.02f)); /* sDriftSpeedRate */
         if (sp > 6.0f && vlen(k->vel) > 1e-6f) k->vel = vmul(vnorm(k->vel), sp); /* sSpinSpeedMax: setLength(its speed) */
         if (k->timer == 0 && (strcmp(k->act, "Shock") || w_bck_stopped(k))) { k->timer = 50; w_act(k, "Shock"); } /* sSpinAnimationCount */
+#ifdef UNIZO_TEST
+        printf("unizo row %d: spin drift, pull %d, speed %d, btp %d (%s)\n", k->row, (int)vlen(pv), (int)vlen(k->vel), k->snrv, uz_btp_entry(k) ? "in the pack" : "missing");
+#endif
     }
     if (vlen(vsub(c, kc)) < 115.2f + HIT_BODY_R) {
         if (k->nrv != UZ_ATTACK && !mario->hurt_timer) { /* sendMsgEnemyAttackStrong, doAttack */
