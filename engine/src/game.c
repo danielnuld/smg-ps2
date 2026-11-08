@@ -81,6 +81,7 @@ typedef struct { V3 pos, vel, up; int state, timer, row, kind; int phase, dir; f
     u32 lv; /* its level sound's handle (se_level) */
     u8 clipped; /* out of the view at the last draw (ClippingJudge: LiveActor::startClipped stops its movement) */
     u8 nograv; /* Kuribo _C4 (arg0 set): offCalcGravity, its gravity its rotation's up */
+    short ml; /* trySetMoveLimitCollision: the MoveLimit part's row + 1 it binds, -1 none, 0 not looked yet */
     V3 mm[8]; /* Meramera (meramera.inc): _144, _174, _180, _198, _18C, mExtinguishMtx (place, up), its binder's fix */
     u8 pushable; /* Karikari mIsPushable */
     short host; /* a BossBegoman follower (initWithoutIter: no placement of its own; its row the boss's): the boss's slot + 1;
@@ -415,6 +416,7 @@ typedef struct {
     int kstair;      /* KoopaBattleMapStair(Big / Turn): breaks and falls after its switch (update_stairs) */
     int gap;         /* #143's placed classes (update_gaps): GAP_* */
     int nokcl;       /* its collision off (invalidateCollisionParts: Polta's ground rocks) */
+    int movelimit;   /* a "<class>#ML" part (tryCreateCollisionMoveLimit: category 3), bound only by kcl_ml's walker */
 } Inst;
 enum { ITEM_STAR = 1, ITEM_ONEUP, ITEM_LIFEUP, ITEM_QCOIN, ITEM_CHIP, ITEM_KEY, ITEM_INVINCIBLE };
 static V3 firebar_ball(const Inst *in, int j, int k);
@@ -2020,6 +2022,7 @@ static void kcl_cand_begin(V3 c, float r)
 }
 static void kcl_cand_end(void) { nkcl_cand = -1; }
 static int kcl_off_row = -1; /* MR::invalidateCollisionParts: a row's collision left out (RosettaChair in its demo) */
+static int kcl_ml = -1; /* the MoveLimit part's row a walker binds (setExCollisionParts), -2 the MoveLimit parts alone */
 static int kcl_each(V3 c, float radius, KclEach fn, void *ctx)
 {
     if (kcl_list_ninsts != ninsts) kcl_list_build(); /* init, a rebind: the list follows the instances */
@@ -2032,6 +2035,7 @@ static int kcl_each(V3 c, float radius, KclEach fn, void *ctx)
         V3 d = vsub(c, v3(in->m[12], in->m[13], in->m[14])); /* (out of reach first: most are; the tests below are pure) */
         if (vdot(d, d) > (in->reach + radius) * (in->reach + radius)) continue;
         if (!in->kcl || in->row == kcl_off_row || in->nokcl) continue;
+        if (kcl_ml == -2 ? !in->movelimit : in->movelimit && in->row != kcl_ml) continue;
         if (in->beeflower && row_turn && row_turn[in->row] >= 3) continue; /* BeeFlowerHover: its collision off (HardTouch, Recover) */
         if (in->screw == 2 && row_turn && row_turn[in->row] == 3) continue; /* ScrewSwitchReverse: invalidateCollisionParts at its throw */
         if (in->otamagma && ota.nrv == OTA_DEAD) continue;            /* drawn till then (game_draw) */
@@ -2270,12 +2274,16 @@ static int lost(V3 p)
     return 1;
 }
 
+/* a walker's Binder (w_bind): its faces by Binder::storeContactPlane (isFloorPolygon / isWallPolygon: a face within 20
+ * degrees of upright, the deepest one), not Mario's (mForceWallAngle 85, the deepest face's kind) */
+static int coll_binder;
 static int collide_n(V3 *center, V3 up, float radius, V3 *ground_n, V3 *wall_n, int *wall)
 {
     unsigned int c0 = cycles();
     int ground = 0;
     ground_inst = -1; ground_attr = 0;
-    float flat = WALL_ANGLE_COS; /* ground normal = the flattest ground face touched: it is what holds Mario up, and
+    float coll_wall = coll_binder ? 0.34202015f : WALL_ANGLE_COS, coll_roof = coll_binder ? -0.34202015f : -0.3f;
+    float flat = coll_wall; /* ground normal = the flattest ground face touched: it is what holds Mario up, and
                                   * taking the deepest one flipped between the two faces of a crease */
     if (wall) *wall = 0;
     kcl_cand_begin(*center, radius + 64.0f); /* its pushes and resting probe stay near: they walk only those within reach */
@@ -2296,14 +2304,19 @@ static int collide_n(V3 *center, V3 up, float radius, V3 *ground_n, V3 *wall_n, 
                 ground_inst = hits[i].inst; ground_attr = hits[i].attr; ground_sub = hits[i].sub; ground_prism = hits[i].prism;
             }
         }
+        for (int i = 0, wd = -1; coll_binder && wall && i < n; i++) {
+            float di = vdot(hits[i].n, up);
+            if (di <= coll_roof || di >= coll_wall || (wd >= 0 && hits[i].dist <= hits[wd].dist)) continue;
+            wd = i; *wall = 1; *wall_n = hits[i].n; wall_attr = hits[i].attr; wall_inst = hits[i].inst;
+        }
         V3 nrm = hits[deepest].n;
         float d = vdot(nrm, up);
-        if (d <= -0.3f) { collide_ceil = 1; collide_ceil_inst = hits[deepest].inst; }
+        if (d <= coll_roof) { collide_ceil = 1; collide_ceil_inst = hits[deepest].inst; }
         /* walkable ground pushes straight up (depth / cos): pushing along a slope's normal would shift Mario sideways
          * every frame by the grounding step, so he crept downhill while standing; steeper faces push along the normal */
         if (d > SLIP_ANGLE_COS) *center = vadd(*center, vmul(up, (hits[deepest].dist + 0.01f) / d));
         else *center = vadd(*center, vmul(nrm, hits[deepest].dist + 0.01f));
-        if (d > -0.3f && d < WALL_ANGLE_COS && wall) {
+        if (!coll_binder && d > coll_roof && d < coll_wall && wall) {
             *wall = 1;
             *wall_n = nrm;
             wall_attr = hits[deepest].attr; wall_inst = hits[deepest].inst;
@@ -5616,7 +5629,7 @@ static void game_rebind_(void)
         in->railer = scene_blob_g && ((r->arg[7] > 0 && (r->arg[7] >> 30 & 1)) || in->eyebeamer || st_rail_obj(name) || !strcmp(name, "OceanSmallTurtle")) && r->path >= 0 ? /* (st_rail_obj: an objinfo RailMoveObj; OceanSmallTurtle's createMapPartsRailMoverForMercator) */
                      find_path(scene_blob_g, r->zone, r->path) : NULL;
         in->kcl = scene_kcl(s, name);
-        in->kmove = -1; in->kparent = -1;
+        in->kmove = -1; in->kparent = -1; in->movelimit = 0;
         if (in->kcl && in->anim && md->skin && !in->dswitch) /* MapObjActor: the collision on the Move joint (slice.py marks it: pad 1); DesertLandMoveSwitch keeps its own still */
             for (int j = 0; j < md->skin->njoints; j++) if (md->skin->joints[j].pad == 1) { in->kmove = j; break; }
         if (in->tdoor) { char kn[48]; snprintf(kn, sizeof kn, "%s#Open", name); in->kcl_close = in->kcl; in->kcl_open = scene_kcl(s, kn); }
@@ -5824,14 +5837,16 @@ static void game_rebind_(void)
         const Inst *o = &insts[i];
         char kn[48];
         if (!o->md || o->kparent >= 0 || ninsts >= insts_cap) continue;
-        snprintf(kn, sizeof kn, "%s#Static", s->types + 32 * s->objs[o->row].type);
-        const unsigned char *k = scene_kcl(s, kn);
-        if (!k) continue;
-        Inst *in = &insts[ninsts++];
-        memset(in, 0, sizeof *in);
-        in->md = o->md; in->row = o->row; in->zone = o->zone; in->s = o->s; in->reach = o->reach;
-        memcpy(in->m, o->m, sizeof in->m);
-        in->kcl = k; in->kmove = -1; in->kparent = i; in->invisible = 1; in->railer = NULL;
+        for (int ml = 0; ml < 2 && ninsts < insts_cap; ml++) { /* and "<class>#ML", its MoveLimit (PlanetMap / UFOBase) */
+            snprintf(kn, sizeof kn, ml ? "%s#ML" : "%s#Static", s->types + 32 * s->objs[o->row].type);
+            const unsigned char *k = scene_kcl(s, kn);
+            if (!k) continue;
+            Inst *in = &insts[ninsts++];
+            memset(in, 0, sizeof *in);
+            in->md = o->md; in->row = o->row; in->zone = o->zone; in->s = o->s; in->reach = o->reach + kcl_radius(k) * o->s;
+            memcpy(in->m, o->m, sizeof in->m);
+            in->kcl = k; in->kmove = -1; in->kparent = i; in->invisible = 1; in->railer = NULL; in->movelimit = ml;
+        }
     }
     for (int i = 0, n = ninsts; i < n; i++) /* ChooChooTrain's cars (update_trains) */
         if (insts[i].train == 1 && m_trainbody)
@@ -23692,6 +23707,22 @@ static void w_blend_quat(Kuribo *k, V3 up, V3 front, float rate_up, float rate_f
     if (vdot(vcross(k->qz, tf), k->qy) < 0) ang = -ang;
     k->qz = vnorm(vtangent(rot_axis(k->qz, k->qy, ang), k->qy));
 }
+/* MR::trySetMoveLimitCollision (MapUtil.cpp:432), at its first bind (initAfterPlacement): the MoveLimit part 150 over
+ * to 850 under it along its gravity, for the classes whose initAfterPlacement calls it */
+static int w_move_limit(const Kuribo *k)
+{
+    static const char *const cls[] = {"BasaBasa", "Begoman", "Hanachan", "Petari", "BombHei", "BombTeresa", "DharmaSambo",
+        "IceMerameraKing", "Kanina", "Karon", "Kuribo", "KuriboChief", "KuriboMini", "MechanicKoopaMini", "Metbo", "Poihana",
+        "TakoHei", "Unizo", "RunawayRabbit", "TrickRabbit", "TrickRabbitFreeRun", "TrickRabbitSnow"};
+    const char *n = sc->types + 32 * sc->objs[k->row].type;
+    int found = 0, inst = -1;
+    for (u32 i = 0; i < sizeof cls / sizeof *cls; i++) found |= !strncmp(n, cls[i], strlen(cls[i])) && (n[strlen(cls[i])] == 0 || !strcmp(cls[i], "Begoman"));
+    if (!found) return -1;
+    kcl_ml = -2;
+    found = kcl_line(vsub(k->pos, vmul(k->grav, 150.0f)), vadd(k->pos, vmul(k->grav, 850.0f)), NULL, NULL, &inst);
+    kcl_ml = -1;
+    return found && inst >= 0 ? insts[inst].row + 1 : -1;
+}
 /* Binder: the sphere (radius r over its feet) moved by its velocity, pushed out of the map; ground / wall / roof */
 static void w_bind(Kuribo *k, float r)
 {
@@ -23700,7 +23731,12 @@ static void w_bind(Kuribo *k, float r)
     if (k->bind_off) { k->on_ground = k->on_wall = 0; return; }
     V3 c = vadd(k->pos, vmul(up, r)), gn = up, wn = up;
     int wall = 0;
+    if (!k->ml) k->ml = (short)w_move_limit(k);
+    kcl_ml = k->ml > 0 ? k->ml - 1 : -1;
+    coll_binder = 1;
     k->on_ground = collide_n(&c, up, r, &gn, &wn, &wall);
+    coll_binder = 0;
+    kcl_ml = -1;
     k->gn = k->on_ground ? gn : up;
     k->on_wall = wall ? 2 : 0; k->wn = wn;
     k->pos = vsub(c, vmul(up, r));
@@ -55108,7 +55144,7 @@ static int flare_occluded(V3 e, V3 p)
     V3 u = vmul(d, 1.0f / len);
     for (int li = 0; li < nkcl_list; li++) {
         const Inst *in = &insts[kcl_list[li]];
-        if (!in->kcl) continue;
+        if (!in->kcl || in->movelimit) continue;
         V3 c = vsub(v3(in->m[12], in->m[13], in->m[14]), e);
         float t = vdot(c, u), h2 = vdot(c, c) - t * t, r = in->reach;
         if (h2 > r * r) continue;
