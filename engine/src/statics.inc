@@ -232,7 +232,7 @@ static void st_flag_test(void)
 }
 #endif
 /* ---- MapObj classes by placed type: their per-row state (StSt, kept across rebinds) ---- */
-enum { ST_NONE = 1, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP, ST_WTOWER, ST_TIMER, ST_WCC, ST_CFSTEP, ST_IASTONE };
+enum { ST_NONE = 1, ST_TURTLE, ST_SWFLOAT, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP, ST_WTOWER, ST_TIMER, ST_WCC, ST_CFSTEP, ST_IASTONE };
 /* Placed classes whose Petari behaviour is the model drawn with its animations and collision (the engine's generic
  * instance does that): LavaGalaxyParts.cpp (LavaShellTowerStep, LavaStepA / B / C: startBtk / Brk / Bpk / Btp of its
  * name, collision, clipping; ponytail: the steps' DLMakerProjmapEffectMtxSetter lava glow is baked at slice time and
@@ -247,6 +247,8 @@ static const Scene *st_kinds_sc;
 static int st_kind_name(const char *n)
 {
     if (!strcmp(n, "InvisibleWaterfallTwinFallLake") || !strcmp(n, "StatusFloor")) return ST_TWALL; /* TransparentWall */
+    if (!strcmp(n, "OceanSmallTurtle")) return ST_TURTLE;
+    if (!strcmp(n, "SpringWaterFloaterA") || !strcmp(n, "SpringWaterFloaterB")) return ST_SWFLOAT; /* SpringWaterFloaterSpot */
     if (!strcmp(n, "MirrorModelTwinFallLake")) return ST_MIRRORMODEL; /* SimpleMirrorReflectionObj */
     if (!strcmp(n, "MirrorReflectionTwinFallLake")) return ST_MIRROR; /* SimpleMirrorObj */
     if (!strcmp(n, "UFOKinokoUnderConstruction")) return ST_UFOKC;
@@ -355,6 +357,252 @@ static void st_init(const Scene *s)
         if (!strcmp(n, "UFOKinokoUnderConstruction") && !gd_flag_is_on("EventKinopioExplorerRescued")) row_dead[i] = 1;
     }
 }
+/* MercatorTransformCube.cpp after Petari (MercatorCube, the scene's first; arg0 the sphere's radius, 3000 unset): a
+ * place in its box (calcCubeLocalPos: its base-origin box, 1000 x scale) is a point of the plane wrapped on a sphere:
+ * u = pi x local x / half its X size, v = pi / 2 x -local z / half its Z size, the sphere (radius cos v sin u, radius sin
+ * v, radius cos v cos u) raised by the local y along its normal, its frame makeMtxUpFront(that normal, the front
+ * towards the pole), both in its zone's frame (getZonePlacementMtx: the zone's rotation undone first with applyInverse) */
+static struct { const Scene *at; int ok; V3 t, x, y, z; float hx, hz, rad, zr[9]; V3 zt; } st_merc;
+static int st_merc_init(void)
+{
+    if (st_merc.at == sc) return st_merc.ok;
+    st_merc.at = sc; st_merc.ok = 0;
+    int t = scene_type(sc, "MercatorCube");
+    for (u32 i = 0; t >= 0 && i < sc->nobjs; i++) {
+        const Row *r = &sc->objs[i];
+        if (r->type != t) continue;
+        row_axes(r, &st_merc.x, &st_merc.z);
+        st_merc.y = vcross(st_merc.z, st_merc.x);
+        st_merc.t = row_pos(r);
+        st_merc.hx = 500.0f * r->scale[0]; st_merc.hz = 500.0f * r->scale[2]; /* calcLocalBoxSize x 0.5 */
+        st_merc.rad = r->arg[0] == -1 ? 3000.0f : (float)r->arg[0]; /* getSphereRadius */
+        u32 sz;
+        const u8 *zn = scene_blob_g ? blob_chunk(scene_blob_g, "ZONE", &sz) : NULL;
+        float zm[16], one[3] = {1, 1, 1}, zero[3] = {0, 0, 0};
+        if (zn && r->zone < *(const u32 *)zn) { const float *f = (const float *)(zn + 4 + 56 * r->zone + 32); mat_translate_rot_scale(zm, f, f + 3, one); }
+        else mat_translate_rot_scale(zm, zero, zero, one);
+        for (int k = 0; k < 9; k++) st_merc.zr[k] = zm[(k / 3) * 4 + k % 3]; /* its columns */
+        st_merc.zt = v3(zm[12], zm[13], zm[14]);
+        st_merc.ok = 1;
+        break;
+    }
+    return st_merc.ok;
+}
+static V3 st_mz(V3 v) { const float *z = st_merc.zr; return v3(z[0] * v.x + z[3] * v.y + z[6] * v.z, z[1] * v.x + z[4] * v.y + z[7] * v.z, z[2] * v.x + z[5] * v.y + z[8] * v.z); }
+/* convertTransAndRotate: p in the plane -> *pos on the sphere, ax its frame (columns X, Y, Z) */
+static void st_merc_conv(V3 p, int inv, V3 *pos, V3 ax[3])
+{
+    V3 d = vsub(p, st_merc.t);
+    float lx = vdot(d, st_merc.x), ly = vdot(d, st_merc.y), lz = vdot(d, st_merc.z);
+    float u = 3.14159265f * lx / st_merc.hx, v = 1.57079633f * -lz / st_merc.hz, rr = st_merc.rad * cosf(v);
+    V3 q = v3(rr * sinf(u), st_merc.rad * sinf(v), rr * cosf(u));
+    q = vadd(q, vmul(vnorm(q), ly)); /* calcLocalHeight */
+    V3 Y = vnorm(q), fr;
+    if (vlen(vcross(Y, v3(0, 1, 0))) < 0.01f && vdot(Y, v3(0, 1, 0)) > 0) fr = v3(0, 0, q.y < 0 ? -1.0f : 1.0f); /* isSameDirection */
+    else fr = vcross(q, vcross(q, v3(0, 1, 0)));
+    V3 Z = vnorm(vtangent(fr, Y)), X = vcross(Y, Z); /* makeMtxUpFront */
+    if (inv) { /* [X Y Z] x the zone rotation's inverse (its transpose): column j = sum_k col_k x zr[j][k] */
+        const float *z = st_merc.zr;
+        V3 c[3];
+        for (int j = 0; j < 3; j++) c[j] = vadd(vadd(vmul(X, z[j]), vmul(Y, z[3 + j])), vmul(Z, z[6 + j]));
+        X = c[0]; Y = c[1]; Z = c[2];
+    }
+    ax[0] = st_mz(X); ax[1] = st_mz(Y); ax[2] = st_mz(Z);
+    *pos = vadd(st_mz(q), st_merc.zt);
+}
+
+/* SpringWaterFloaterSpot.cpp (SpringWaterFloaterA / B) and OceanSmallTurtle.cpp after Petari: Wait until it has been
+ * in the water (isInWater at arg1 up its gravity) 90 frames (the turtle 150: mFloatDelayTimer), FloatSignal 120
+ * (3 along its side each way by 4 frames, its X rocked 1 degree each way by 6 (the floater only when its model is
+ * longer than high: isModelLongSide), from 60 rising 0.5; SIGN level SE), FloatUp (FLOAT_ST, FLOAT level SE: in the
+ * water up 1 + its speed, the speed growing arg0 / 100 (20 unset) a frame to 40; out of it, once: the Ripple effect
+ * and a bound, its rotation back, stopped) until stopped and not bounding: the floater FloatEnd (FLOAT_ED, its RIPPLE
+ * SE every 60..120 frames), the turtle CatchRail (FLOAT_ED; 2 a frame to the nearest point of its rail in the sphere,
+ * calcNearestRailPosForMercator by 100, until within 10) then RailMove (createMapPartsRailMoverForMercator: the rail
+ * mover on its plane rail, the place and frame converted, x its placement's rotation; MOVE level SE). A bound (Mario
+ * landing on it, or jumping off it): 150 frames of (20 - step / 7.5) x sin(9.6 step) up its gravity, BOUND / RIPPLE SE
+ * first. The turtle starts in the Mercator plane (initDefaultPosForMercator). Mario on it is carried.
+ * ponytail: the jump off it as Mario rising off it (isPlayerJumpRising && checkPlayerActionTrigger); clipping */
+typedef struct { int row, n, st, bound, bstep, started, onp, timer; float h, spd, rate, a1, bsize, ax; V3 pos, vel, near; V3 ax0[3]; } StFl;
+#define ST_FL_MAX 8
+static StFl st_fls[ST_FL_MAX];
+static int st_nfls;
+static const Scene *st_fl_sc;
+static StFl *st_fl(int row)
+{
+    if (st_fl_sc != sc) { st_fl_sc = sc; st_nfls = 0; }
+    for (int k = 0; k < st_nfls; k++) if (st_fls[k].row == row) return &st_fls[k];
+    return NULL;
+}
+static void st_rot_x(V3 ax[3], float deg) /* x Rx(deg): mRotation.x + deg on its Euler XYZ */
+{
+    float c = cosf(deg * 0.0174533f), s = sinf(deg * 0.0174533f);
+    V3 y = ax[1], z = ax[2];
+    ax[1] = vadd(vmul(y, c), vmul(z, s)); ax[2] = vsub(vmul(z, c), vmul(y, s));
+}
+static void st_fl_place(Inst *in, StFl *f, V3 pos, const V3 ax[3])
+{
+    V3 a[3] = {ax[0], ax[1], ax[2]}, up = up_at(pos, a[1]);
+    st_rot_x(a, f->ax);
+    if (f->bound) pos = vadd(pos, vmul(up, f->bsize));
+    float s = in->s;
+    for (int k = 0; k < 3; k++) { in->m[4 * k] = a[k].x * s; in->m[4 * k + 1] = a[k].y * s; in->m[4 * k + 2] = a[k].z * s; }
+    in->m[12] = pos.x; in->m[13] = pos.y; in->m[14] = pos.z;
+}
+static const unsigned char *st_fl_rail(const Inst *in, u32 *np, float *len)
+{
+    const unsigned char *e = in->railer;
+    if (!e) return NULL;
+    u32 nr = *(const u32 *)(e + 12);
+    *np = *(const u32 *)(e + 8);
+    *len = *(const float *)(e + 24 + 12 * *np + 12 * nr + 12 * (nr - 1));
+    return e;
+}
+static int st_turtle_moving(int row) /* update_railers: -1 not a turtle, else its rail mover runs (RailMove) */
+{
+    StFl *f = st_fl(row);
+    if (!f || strcmp(sc->types + 32 * sc->objs[row].type, "OceanSmallTurtle")) return -1;
+    return f->n == 5;
+}
+static int st_turtle_rail(Inst *in, V3 p) /* railer_place: exeRailMove's convertMercatorPlaneToSphereTransAndRotate */
+{
+    StFl *f = st_fl(in->row);
+    if (!f || st_turtle_moving(in->row) != 1 || !st_merc_init()) return 0;
+    V3 ax[3], one[3];
+    st_merc_conv(p, 1, &f->pos, ax);
+    const Row *r = &sc->objs[in->row];
+    float rm[16], s1[3] = {1, 1, 1}, z0[3] = {0, 0, 0};
+    mat_translate_rot_scale(rm, z0, r->rot, s1); /* x makeMtxRotate(mInfoRotate) */
+    for (int k = 0; k < 3; k++) one[k] = vadd(vadd(vmul(ax[0], rm[4 * k]), vmul(ax[1], rm[4 * k + 1])), vmul(ax[2], rm[4 * k + 2]));
+    st_fl_place(in, f, f->pos, one);
+    return 1;
+}
+static void st_floater(Inst *in, int i, int turtle)
+{
+    const Row *r = &sc->objs[in->row];
+    StFl *f = st_fl(in->row);
+    if (!f) { /* init */
+        if (st_fl_sc != sc) { st_fl_sc = sc; st_nfls = 0; }
+        if (st_nfls == ST_FL_MAX) return;
+        f = &st_fls[st_nfls++];
+        memset(f, 0, sizeof *f);
+        f->row = in->row;
+        f->rate = (r->arg[0] != -1 ? (float)r->arg[0] : 20.0f) / 100.0f; /* getJMapInfoArg0NoInit / 100 */
+        f->a1 = r->arg[1] != -1 ? (float)r->arg[1] : 0.0f;
+        f->pos = row_pos(r);
+        for (int k = 0; k < 3; k++) f->ax0[k] = vnorm(v3(in->m[4 * k], in->m[4 * k + 1], in->m[4 * k + 2]));
+        if (turtle) { /* initDefaultPosForMercator(true): sphere frame x its rotation */
+            if (!st_merc_init()) { f->n = -1; return; }
+            V3 ax[3], one[3];
+            st_merc_conv(row_pos(r), 1, &f->pos, ax);
+            for (int k = 0; k < 3; k++) one[k] = vadd(vadd(vmul(ax[0], f->ax0[k].x), vmul(ax[1], f->ax0[k].y)), vmul(ax[2], f->ax0[k].z));
+            memcpy(f->ax0, one, sizeof one);
+            u32 np; float len; /* calcNearestRailPosForMercator(100) */
+            const unsigned char *e = st_fl_rail(in, &np, &len);
+            float best = 3.4e38f;
+            for (float c = 0; e && c <= len; c += 100.0f) {
+                V3 q, a[3];
+                st_merc_conv(rail_at((const float *)(e + 24), np, c), 1, &q, a);
+                if (vlen(vsub(q, f->pos)) < best) { best = vlen(vsub(q, f->pos)); f->near = q; }
+            }
+        }
+        printf("%s %d: placed%c", turtle ? "small turtle" : "spring floater", in->row, 10);
+    }
+    if (f->n < 0) return;
+    float old[16];
+    memcpy(old, in->m, 64);
+    V3 up = up_at(f->pos, f->ax0[1]), side = f->ax0[0];
+    int now = mario_ground == i, st = f->st++;
+    /* isNeedsForBound: Mario jumping off it, or landing on it */
+    int need = (f->onp && !now && mario->vup > 0) || (!f->onp && now);
+    float wait = turtle ? 150.0f : 90.0f;
+    float dep;
+    V3 m12 = v3(in->m[12], in->m[13], in->m[14]);
+    switch (f->n) {
+    case 0: /* Wait */
+        if (in_water(vadd(f->pos, vmul(up, f->a1)), up, &dep)) { if (f->h >= wait) { f->n = 1; f->st = 0; } else f->h += 1.0f; }
+        break;
+    case 1: /* FloatSignal */
+        f->vel = vmul(side, 3.0f * (st % 8 < 4 ? 1.0f : -1.0f));
+        if (turtle || !strcmp(sc->types + 32 * r->type, "SpringWaterFloaterB")) /* isModelLongSide: joint 0's box (B: max x 335.8, z 158.6 over y 102.7; A: 598.5, 269.4 over 578.0) */
+            f->ax += st % 12 < 6 ? 1.0f : -1.0f;
+        if (st > 60) f->vel = vmul(up, 0.5f);
+        f->timer = (int)se_level(turtle ? SE_OJ_LV_O_SML_TURTLE_SIGN : SE_OJ_LV_SPR_FLOATER_SIGN, &m12.x, (u32)f->timer);
+        if (st == 120) { f->n = 2; f->st = 0; f->timer = 0; }
+        break;
+    case 2: /* FloatUp */
+        if (st == 0) se_start(turtle ? SE_OJ_O_SML_TURTLE_FLOAT_ST : SE_OJ_SPR_FLOATER_FLOAT_ST, &m12.x);
+        f->timer = (int)se_level(turtle ? SE_OJ_LV_O_SML_TURTLE_FLOAT : SE_OJ_LV_SPR_FLOATER_FLOAT, &m12.x, (u32)f->timer);
+        if (turtle && vlen(f->vel) == 0.0f && f->started && !f->bound) { /* isEndSpringWater */
+            se_start(SE_OJ_O_SML_TURTLE_FLOAT_ED, &m12.x); f->n = 4; f->st = 0; break;
+        }
+        if (need) { f->bstep = 0; f->bound = 1; }
+        if (!turtle && vlen(f->vel) < 1e-3f && !f->bound) { f->n = 3; f->st = 0; }
+        break;
+    case 3: /* FloatEnd */
+        if (st == 0) { f->vel = v3(0, 0, 0); se_start(SE_OJ_SPR_FLOATER_FLOAT_ED, &m12.x); f->timer = st_rndi(60, 120); }
+        if (--f->timer <= 0) { se_start(SE_OJ_SPR_FLOATER_RIPPLE, &m12.x); f->timer = st_rndi(60, 120); }
+        if (need) { f->bstep = 0; f->bound = 1; }
+        break;
+    case 4: /* CatchRail */
+        if (vdot(vsub(f->near, f->pos), vsub(f->near, f->pos)) < 100.0f) {
+            f->vel = v3(0, 0, 0); f->n = 5; f->st = 0; /* mRailMover->start(): update_railers from its coord */
+            printf("small turtle %d: on its rail%c", in->row, 10);
+        } else f->vel = vmul(vnorm(vsub(f->near, f->pos)), 2.0f);
+        break;
+    case 5: /* RailMove: update_railers moves and places it (st_turtle_rail) */
+        f->timer = (int)se_level(SE_OJ_LV_O_SML_TURTLE_MOVE, &m12.x, (u32)f->timer);
+        if (need) { f->bstep = 0; f->bound = 1; }
+        break;
+    }
+    /* control */
+    f->onp = now;
+    if (f->n == 2) { /* floatFloater */
+        if (in_water(vadd(f->pos, vmul(up, f->a1)), up, &dep)) {
+            if (f->h >= wait) { f->vel = vmul(up, 1.0f + f->spd); f->h = wait; if (f->spd < 40.0f) f->spd += f->rate; }
+            else f->h += 1.0f;
+        } else {
+            if (!f->started) {
+                float m[16];
+                basis_matrix(m, f->pos, up, vcross(side, up), 0);
+                fx_named(sc->types + 32 * r->type, "Ripple", m, NULL, NULL); /* (setEffectHostMtx: its _CC) */
+                f->bstep = 0; f->bound = 1;
+            }
+            f->started = 1; f->spd = 0; f->ax = 0; f->vel = v3(0, 0, 0);
+        }
+    }
+    if (f->bound) { /* boundFloater */
+        if (f->bstep == 0) se_start(turtle ? SE_OJ_O_SML_TURTLE_RIPPLE : SE_OJ_SPR_FLOATER_BOUND, &m12.x);
+        if (f->bstep == 150) { f->bound = 0; f->bsize = 0; f->bstep = 0; }
+        else { f->bsize = (20.0f - f->bstep * (2.0f / 15.0f)) * sinf(9.6f * f->bstep * 0.0174533f); f->bstep++; }
+    }
+    f->pos = vadd(f->pos, f->vel);
+    if (f->n == 5) return; /* placed by update_railers */
+    st_fl_place(in, f, f->pos, f->ax0);
+    if (now) carry(old, in);
+}
+#ifdef ST_FL_TEST /* XF=-DST_FL_TEST (with ST_VISIT): the floaters' states every 100 frames; from frame 1500 Mario dropped on each in turn (300 frames) */
+static void st_fl_test(void)
+{
+    if (game_frame == 300) printf("fl test: demo %d%c", dx_request("湧き水上昇", 0) != 0, 10); /* 湧き水上昇 */
+    for (int k = 0; game_frame % 100 == 0 && k < st_nfls; k++) {
+        StFl *f = &st_fls[k];
+        printf("fl test f %u row %d: n %d st %d h %.0f bound %d pos %.0f %.0f %.0f%c", game_frame, f->row, f->n, f->st, f->h, f->bound, f->pos.x, f->pos.y, f->pos.z, 10);
+    }
+    if (game_frame >= 60 && game_frame < 90) /* to SpringWaterFloaterA's zone (its row) */
+        for (u32 i = 0; i < sc->nobjs; i++) if (!strcmp(sc->types + 32 * sc->objs[i].type, "SpringWaterFloaterA")) { mario->pos = vadd(row_pos(&sc->objs[i]), v3(0, 300.0f, 0)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+    if (game_frame >= 1500 && st_nfls) { /* the last one (the turtle) watched, Mario dropped on it each 300 */
+        StFl *f = &st_fls[st_nfls - 1];
+        V3 up = up_at(f->pos, f->ax0[1]);
+        camera_set_override(1, vadd(f->pos, vadd(vmul(up, 1200.0f), vmul(f->ax0[2], 1600.0f))), f->pos, up, 45.0f);
+    }
+    if (game_frame >= 1500 && st_nfls && (game_frame - 1500) % 300 == 0) {
+        StFl *f = &st_fls[st_nfls - 1];
+        V3 up = up_at(f->pos, f->ax0[1]);
+        mario->pos = vadd(f->pos, vmul(up, 500.0f)); mario->hvel = v3(0, 0, 0); mario->vup = 0;
+    }
+}
+#endif
 /* TransparentWall.cpp after Petari (InvisibleWaterfallTwinFallLake, StatusFloor: InvisiblePolygonObj, never drawn):
  * its collision off from init, on while Mario is in a mode of arg4's bits 0..9 (isPlayerElementMode), skating (bit
  * 10) or, with bit 11, while not in Teresa Mario's disappearing (isPlayerTeresaDisappear); off again when none holds
@@ -794,6 +1042,7 @@ static void st_objs_update(void)
 #endif
         switch (k) {
         case ST_TWALL: st_twall(in, g); break;
+        case ST_TURTLE: case ST_SWFLOAT: st_floater(in, i, k == ST_TURTLE); break;
         case ST_MIRRORMODEL: in->invisible = 1; break; /* connectToSceneMirrorMapObjNoMovement: drawn in the mirror only
                                                          * (st_mirror_pass) */
         case ST_MIRROR: /* SimpleMirrorObj: its MirrorCamera's plane (setMirrorMapInfo); drawn by st_mirror_draw */
@@ -1811,6 +2060,9 @@ static void st_update(void)
 #endif
     st_flags_update();
     st_objs_update();
+#ifdef ST_FL_TEST
+    st_fl_test();
+#endif
     st_bfs_update();
     st_bells_update();
     st_bbeamers_update();
