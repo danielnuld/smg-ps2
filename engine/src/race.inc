@@ -170,6 +170,7 @@ static void rn_exit_racer(RNpc *t);
 /* PlayerRacer */
 static void pr_prep(void) /* PlayerRacer::prepRacer */
 {
+    drop_damage(); /* tryPlayerKillTakingActor */
     RmRail *rr = &rm.rail;
     rr->coord = 0.0f; rr->dir = 1; /* moveCoordToStartPos */
     V3 p = rr_pos(rr), up = up_at(p, mario->up); /* moveTransToCurrentRailPos, calcGravityVector */
@@ -194,6 +195,7 @@ static void pr_prep(void) /* PlayerRacer::prepRacer */
 }
 static void pr_reset(void) /* PlayerRacer::resetRacer: setPlayerPosOnGround(レース終了後位置) */
 {
+    drop_damage(); /* tryPlayerKillTakingActor */
     const float *g = scene_gpos("レース終了後位置");
     if (g) {
         float m[16], one[3] = {1, 1, 1}, rot[3] = {g[3], g[4], g[5]};

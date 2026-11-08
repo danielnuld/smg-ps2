@@ -11,6 +11,14 @@ Four agents in worktrees D:/smg-ps2-wt/{perf,release,goodegg,gaps} (branches age
 build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode>.elf, take PCSX2 in turns through
 `mkdir D:/smg-ps2-wt/pcsx2.lock`; only the release agent writes out/packs). From Git Bash call WSL as
 `MSYS_NO_PATHCONV=1 wsl.exe -e bash /mnt/d/...` (else the /mnt path is rewritten: E_INVALIDARG). Merged:
+- Carried drops (fix/491-drop-carried, 2026-11-07): game.c drop_taking after MarioActorTakeMsg.cpp
+  damageDropThrowMemoSensor / rushDropThrowMemoSensor: the held JetTurtle's DAMAGEDROP (resetPositionAndVanish: Vanish /
+  VanishRed / VanishGold, Restart or killed when _E0 is off) and RUSHDROP (its Drop nerve: up 10, ahead 10, boundDrop,
+  gravity 1, reset(0) at 90: jet.phase 3), resetJet, tryReleaseBombTeresa on a damage. damage: the MarioDamage paths,
+  the game over, the black hole, MR::tryPlayerKillTakingActor (RaceRail prep / reset, Syati's WaitBlank, GhostPlayer's
+  WinDemo); rush: the mode changes, settingRush (mode_rush's binds, Fluff, SpiderAttachPoint). Test `jet` XF
+  -DDROP_TEST=1 / 2 OceanRingGalaxy/1: taken, dropped at 600 (vanished, revived / Drop, reset at 90, revived).
+  (Pole, the plants, Creeper, SpaceCocoon, JumpBranch: rush_drop.) Left: JumpStand, SwingRope, Sandstorm binds.
 - #9 (issue #3) EE performance: Good Egg bench, EE time a frame (render_begin's flip / VIF / clear wait now printed
   apart: ~3.4 ms of the old "draw" was that wait): start view 19.9 -> 12.5 ms (logic 6.7 -> 5.1, draw 12.7 -> 7.0),
   path 16.4 -> 11.5, worst 38-42 -> 26. Clip cache sized per clip (inflates 8300-15000 -> 7-22 a bench), skinned
