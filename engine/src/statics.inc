@@ -232,7 +232,7 @@ static void st_flag_test(void)
 }
 #endif
 /* ---- MapObj classes by placed type: their per-row state (StSt, kept across rebinds) ---- */
-enum { ST_NONE = 1, ST_TURTLE, ST_SWFLOAT, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP, ST_WTOWER, ST_TIMER, ST_WCC, ST_CFSTEP, ST_IASTONE };
+enum { ST_NONE = 1, ST_HDSTEP, ST_TURTLE, ST_SWFLOAT, ST_TWALL, ST_MIRRORMODEL, ST_MIRROR, ST_UFOKC, ST_SHELLTOWER, ST_DOMEGALAXY, ST_STILL, ST_SURP, ST_LAVABALL, ST_TMWALL, ST_MANHOLE, ST_CHAIN, ST_BIGCOL, ST_FLEX, ST_TEXSW, ST_TRIPROP, ST_WTOWER, ST_TIMER, ST_WCC, ST_CFSTEP, ST_IASTONE };
 /* Placed classes whose Petari behaviour is the model drawn with its animations and collision (the engine's generic
  * instance does that): LavaGalaxyParts.cpp (LavaShellTowerStep, LavaStepA / B / C: startBtk / Brk / Bpk / Btp of its
  * name, collision, clipping; ponytail: the steps' DLMakerProjmapEffectMtxSetter lava glow is baked at slice time and
@@ -248,6 +248,7 @@ static int st_kind_name(const char *n)
 {
     if (!strcmp(n, "InvisibleWaterfallTwinFallLake") || !strcmp(n, "StatusFloor")) return ST_TWALL; /* TransparentWall */
     if (!strcmp(n, "OceanSmallTurtle")) return ST_TURTLE;
+    if (!strcmp(n, "HeavensDoorAppearStepA")) return ST_HDSTEP; /* HeavensDoorDemoObj */
     if (!strcmp(n, "SpringWaterFloaterA") || !strcmp(n, "SpringWaterFloaterB")) return ST_SWFLOAT; /* SpringWaterFloaterSpot */
     if (!strcmp(n, "MirrorModelTwinFallLake")) return ST_MIRRORMODEL; /* SimpleMirrorReflectionObj */
     if (!strcmp(n, "MirrorReflectionTwinFallLake")) return ST_MIRROR; /* SimpleMirrorObj */
@@ -356,6 +357,26 @@ static void st_init(const Scene *s)
         /* UFOKinokoUnderConstruction::init: isUFOKinokoBeforeConstruction (EventKinopioExplorerRescued off): dead */
         if (!strcmp(n, "UFOKinokoUnderConstruction") && !gd_flag_is_on("EventKinopioExplorerRescued")) row_dead[i] = 1;
     }
+}
+/* HeavensDoorDemoObj.cpp after Petari, HeavensDoorAppearStepA (the Gateway's tower step: its SW_APPEAR,
+ * syncStageSwitchAppear): Appear from its appear (startAllAnim Appear: its BTK, 299 frames once, the light wiping up
+ * AppearLightMat_v; StageEffect SE_OJ_HD_STEP_APPEAR; startStageBGM MBGM_GALAXY_24, startSubBGM BGM_APPEAR_HD_TOWER)
+ * until the BTK stops, then Wait (the BTK at its end). n: 0 not out yet, 1 Appear, 2 Wait */
+static const Model *st_btk_md; /* the model whose BTK runs at st_btk_fr, not the game's frame (game_draw) */
+static float st_btk_fr;
+static void st_hdstep(Inst *in, StSt *g)
+{
+    if (!row_shown(in->row) || row_dead[in->row]) { g->n = 0; return; }
+    st_btk_md = in->md;
+    if (g->n == 0) {
+        g->n = 1; g->st = 0;
+        se_start(SE_OJ_HD_STEP_APPEAR, &in->m[12]); /* tryStageEffectStart */
+        bgm_start("MBGM_GALAXY_24");
+        bgm_sub("BGM_APPEAR_HD_TOWER");
+        printf("heavens door appear step %d: appear%c", in->row, 10);
+    }
+    st_btk_fr = g->n == 1 ? (float)g->st : 299.0f;
+    if (g->n == 1 && g->st >= 299) { g->n = 2; printf("heavens door appear step %d: wait%c", in->row, 10); } /* isBtkStopped */
 }
 /* MercatorTransformCube.cpp after Petari (MercatorCube, the scene's first; arg0 the sphere's radius, 3000 unset): a
  * place in its box (calcCubeLocalPos: its base-origin box, 1000 x scale) is a point of the plane wrapped on a sphere:
@@ -1042,6 +1063,7 @@ static void st_objs_update(void)
 #endif
         switch (k) {
         case ST_TWALL: st_twall(in, g); break;
+        case ST_HDSTEP: st_hdstep(in, g); break;
         case ST_TURTLE: case ST_SWFLOAT: st_floater(in, i, k == ST_TURTLE); break;
         case ST_MIRRORMODEL: in->invisible = 1; break; /* connectToSceneMirrorMapObjNoMovement: drawn in the mirror only
                                                          * (st_mirror_pass) */

@@ -55178,7 +55178,7 @@ void game_draw(void)
      * started with the scene, not each actor's own startBtk */
     for (u32 i = 0; i < sc->nmodels; i++)
         for (u32 g = 0; g < sc->models[i].vu_ngroups; g++)
-            if (sc->models[i].vu[g].btk) anim_btk(sc->models[i].vu[g].btk, (float)game_frame, sc->models[i].vu[g].uvm);
+            if (sc->models[i].vu[g].btk) anim_btk(sc->models[i].vu[g].btk, &sc->models[i] == st_btk_md ? st_btk_fr : (float)game_frame, sc->models[i].vu[g].uvm); /* (st_btk_md: its actor's own frame, statics.inc) */
     render_proj(sc); /* ProjectionMapAir's texgen through those (~6000 EE cycles, 0.02 ms, OceanPhantomCave 1) */
     int sky_drawn = 0;
     for (int i = 0; i < ninsts; i++) { /* skies first, at the camera; ponytail: scaled to fit inside the far plane

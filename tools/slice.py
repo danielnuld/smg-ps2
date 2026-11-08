@@ -474,6 +474,8 @@ def scene(fs, galaxy, scenario):
 # coloured star (1, the empty one of a star already got: ponytail, not drawn in the stages)
 VIS = {"PowerStar": ("PowerStar", 0), "DinoPackunEggShell": ("normal", None), "CrystalCageS": ("CrystalCageS", 0), "CrystalCageM": ("CrystalCageM", 0),
        "CrystalCageL": ("CrystalCageL", 0)}  # CrystalCageL: frame 1 cracked, 2 (its last) the stump: EXTRA "#CrystalCageL:1" / "#CrystalCageL"
+# HeavensDoorDemoObj::exeAppear (HeavensDoorAppearStepA): startAllAnim Appear, its BTK's frame from the instance
+BTK_NAME = {"HeavensDoorAppearStepA": "appear"}
 # models baked with a BRK's registers at a frame (Tico.cpp: ColorChange at its colour, frame 0 the yellow one)
 # startBrk + setBrkFrameAndStop(argN): one model per frame its rows use, "<class>~<frame>" baked at that frame (game.c
 # brk_model picks it by the row's arg). Butterfly: startBrk Butterfly, frame mColorIndex = arg0 (NoInit: 0)
@@ -855,7 +857,9 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                     over[n_] = dict(over.get(n_, {}), env_mean=True)
             # MapObjActor::init (tryStartAllAnim(mObjectName)), OtaKingMagma (startBtk): the model's own-name BTK, played
             # at run time (anim_btk). ponytail: every model's, not only those classes'
-            anim_tex = tex.btk(lfiles[arc.stem.lower() + ".btk"]) if arc.stem.lower() + ".btk" in lfiles else None
+            # (BTK_NAME: a class that starts another of its BTKs, its frame set at run time: game.c st_btk_md)
+            bn_ = BTK_NAME.get(arc.stem, arc.stem.lower())
+            anim_tex = tex.btk(lfiles[bn_ + ".btk"]) if bn_ + ".btk" in lfiles else None
             # the wait pattern's first frame (FileSelectData*: EyeMat_v's own texture is the shut eye, wait.btp opens it)
             texs0 = texs  # (the BTP alternatives from the archive's own images)
             bt_order, bt_tex, _ = btp_tables(lfiles) if skinned and arc.stem not in SKINNED_ARCS else ([], {}, {})
