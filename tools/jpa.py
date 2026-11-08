@@ -497,7 +497,7 @@ def flare(fs, out_tex):
 
 
 # classes whose emitEffect calls game.c makes by name (fx_named), besides the skinned ones (their joints: -1)
-NAMED = ("ClipAreaDropLaser", "KillerGunnerSingle", "SpinningBox", "FlexibleSandPlanetPartsA", "MagnumKiller", "TripodBoss", "TripodBossCore", "ItemBubble", "DinoPackunBall", "Mario", "Dossun", "Onimasu", "LavaStrangeRock",
+NAMED = ("SurfRay", "ClipAreaDropLaser", "KillerGunnerSingle", "SpinningBox", "FlexibleSandPlanetPartsA", "MagnumKiller", "TripodBoss", "TripodBossCore", "ItemBubble", "DinoPackunBall", "Mario", "Dossun", "Onimasu", "LavaStrangeRock",
          "LavaStrangeRockL", "LavaStrangeRockTable", "MogucchiHill", "PalmIsland", "KabokuriFire", "LotusLeaf", "ElectricBall",
          "MorphItemObj", "WaterColumn", "PhantomTorch", "PhantomBonfire", "ShockWaveGenerator", "DriftWood", "BossKameckBeam", "BossKameckFireBall",
          "AirBubble", "PackunFlower", "Bush", "StarPiece", "FireBarBall", "KoopaJrShipCannonShell", "IronCannonLauncherPoint", "TreasureSpot", "CoinFlower", "CocoNut", "SpiderThreadAttachPoint", "TombSpider", "TombSpiderGland", "TombSpiderPlanet", "BigBubble", "MeteorStrike", "KoopaPlateDamage", "KoopaPlateCoin", "KoopaPlate", "IceManIce", "FallingSmallRock", "SubmarineSteam", "SubmarineVolcano", "PoltaRock", "PoltaGroundRock", "DodoryuHill", "Fluff", "FluffWind", "Fountain", "SpringJetWater", "LargeChain", "BombBirdBomb", "Bell", "HeavenlyBeachTimerStepA", "HeavenlyBeachTimerStepB")  # (WaterColumn: MarioActor::emitEffectWaterColumn)  # MorphItemObjNeo's effect group (initEffectKeeper "MorphItemObj")

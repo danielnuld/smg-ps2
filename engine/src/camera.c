@@ -840,6 +840,7 @@ void camera_start_pos(int zone, int id)
         if (cams[i].kind == 's' && cams[i].zone == zone && cams[i].num == (unsigned)(id & 0xFFFF)) start_cam = i;
 }
 void camera_start_pos_end(void) { start_cam = -1; }
+void camera_reset(void) { cur = -2; } /* CameraDirector::resetCameraMan: the camera made again at the target */
 static void update(const CamTarget *t);
 void camera_update(const CamTarget *t)
 {
