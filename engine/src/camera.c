@@ -9,6 +9,9 @@
 int camera_big_bubble;
 int (*camera_switch)(int zone, int id);
 const float *(*camera_rail)(int zone, int id, int *n, int *closed);
+int (*camera_gravity)(V3 p, V3 *g);
+int (*camera_map_poly)(V3 a, V3 d, V3 *hp);
+int (*camera_map_ball)(V3 c, float r, V3 *n, float *depth, int max);
 static int inside(const CamArea *a, V3 p)
 {
     if (a->shape == 3 && !camera_big_bubble) return 0; /* BigBubbleCameraArea::isInVolume: a box while he is in a bubble */
@@ -403,6 +406,7 @@ static float rl_nearest(const float *r, int n, int cl, V3 q) /* calcNearestPos *
     return at;
 }
 static float rf_coord, rf_speed; /* CameraRailFollow::mRailCoord, mRailSpeed */
+static V3 is_pos, is_vel;        /* CameraInwardSphere::mPos, mVelocity (world) */
 
 static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V3 *watch, V3 *up)
 {
@@ -655,6 +659,60 @@ static void type_pose(const CamParam *p, const CamTarget *t, V3 move, V3 *eye, V
         f = rot_axis(f, side, p->angle_a);
         *eye = vsub(w, vmul(f, p->dist));
         *up = u;
+        break;
+    }
+    case CAM_INWARD_SPHERE: { /* CameraInwardSphere.cpp (CamTranslatorInwardSphere: angleA the least distance, dist
+                               * the most, angleB the base distance off the map); it reads no zone matrix: in the world */
+        if (!camera_gravity || !camera_map_poly || !camera_map_ball) { *eye = type_eye; break; } /* no map given */
+        const CamTarget *wt = world_t;
+        float dmin = p->angle_a, dmax = p->dist, base = p->angle_b;
+        V3 ww = pose_m ? to_world(pose_m, w, 1) : w, pos = pose_m ? to_world(pose_m, type_eye, 1) : type_eye;
+        V3 pup = pose_m ? to_world(pose_m, type_up, 0) : type_up, g = v3(0, 0, 0);
+        if (fresh) { /* reset: calcGravityCenter, the camera man's position at the target's distance less the base */
+            V3 up1, up2 = v3(0, 0, 0), p1 = wt->pos;
+            camera_gravity(p1, &up1);
+            up1 = vmul(up1, -1.0f);
+            V3 p2 = vsub(wt->front, vmul(up1, vdot(up1, wt->front)));
+            if (near_zero(p2)) { p2 = vcross(wt->up, wt->front); p2 = vsub(p2, vmul(up1, vdot(up1, p2))); }
+            if (vdot(p2, p2) > 1e-6f) p2 = vmul(vnorm(p2), 1000.0f);
+            p2 = vadd(p2, p1);
+            camera_gravity(p2, &up2);
+            up2 = vmul(up2, -1.0f);
+            float sq1 = vdot(up1, up1), sq2 = vdot(up2, up2), dt = vdot(up1, up2);
+            float pr1 = vdot(vsub(p1, p2), up2), pr2 = vdot(vsub(p2, p1), up1), cd = sq1 * sq2 - dt * dt;
+            V3 center = cd < 0.001f ? p1 : vadd(p1, vmul(up1, 1.0f / cd * (sq2 * pr2 + dt * pr1)));
+            V3 off = vsub(pos, center);
+            if (vdot(off, off) > 1e-6f) off = vmul(vnorm(off), vlen(vsub(wt->pos, center)) - base);
+            pos = vadd(center, off);
+            is_vel = v3(0, 0, 0);
+            is_pos = pos;
+        }
+        V3 co = vsub(is_pos, ww);
+        float cdist = vlen(co), d;
+        if (cdist < 1.0f) { co = vmul(wt->front, -1.0f); d = dmin; }
+        else { co = vmul(co, 1.0f / cdist); d = clampf(cdist, dmin, dmax); }
+        V3 cp = vadd(vmul(co, d), ww), np, hp;
+        camera_gravity(cp, &g);
+        np = camera_map_poly(vsub(cp, vmul(g, 1000.0f)), vmul(g, 2000.0f), &hp) ? vsub(hp, vmul(g, base)) : cp;
+        is_vel = vadd(is_vel, vmul(g, 0.7f));
+        if (vlen(is_vel) > 35.0f) is_vel = vmul(vnorm(is_vel), 35.0f);
+        np = vadd(np, is_vel);
+        V3 hn[32];
+        float hd[32], push = 0.0f;
+        int nh = camera_map_ball(np, base, hn, hd, 32);
+        for (int i = 0; i < nh; i++) {
+            float dot = vdot(g, vmul(hn[i], hd[i]));
+            if (push < -dot) push = -dot;
+        }
+        if (push > 0.0f) is_vel = v3(0, 0, 0);
+        np = vsub(np, vmul(g, push));
+        is_pos = np;
+        V3 upos = vsub(np, vmul(g, 1000.0f));
+        float nd = vlen(vsub(pos, upos)) * 0.9f + vlen(vsub(np, upos)) * 0.1f;
+        V3 e = vadd(upos, vmul(g, nd)), u = vsub(vmul(pup, 0.9f), vmul(g, 0.1f));
+        if (vdot(u, u) > 1e-12f) u = vnorm(u);
+        *eye = pose_m ? to_local(pose_m, e, 1) : e;
+        *up = pose_m ? to_local(pose_m, u, 0) : u;
         break;
     }
     default: /* CAM_XZ_PARA, CameraParallel.cpp:61-87, CamTranslatorParallel.cpp:12 */
@@ -1100,7 +1158,7 @@ const char *camera_type_name(void)
 {
     static const char *n[] = {"XZ PARA", "TOWER", "FOLLOW", "WONDER PLANET", "EYEPOS FIX", "POINT FIX",
                               "EYEPOS FIX THERE", "CHARMED FIX", "TOWER POS", "FRONT AND BACK", "TRUNDLE", "CUBE PLANET", "OBJ PARALLEL",
-                              "RAIL FOLLOW"};
+                              "RAIL FOLLOW", "INWARD SPHERE"};
     const CamParam *p = param();
     return p->type == 255 ? "OTHER" : n[p->type];
 }

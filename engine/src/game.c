@@ -2154,6 +2154,27 @@ static int kcl_line(V3 a, V3 b, V3 *hp, V3 *n, int *inst)
     return 1;
 }
 
+/* camera.h's map services (CameraInwardSphere): MR::calcGravityVector (zero where none), getFirstPolyOnLineToMap with
+ * the isCameraCodeThrough filter (Camera_through, slice.py kcl_codes bit 10: such faces passed through), and
+ * Collision::checkStrikeBallToMap (each face's normal and depth) */
+static int cam_gravity(V3 p, V3 *g) { return gravity_at(grav, ngrav, (const float *)&p, (float *)g); }
+static int cam_map_poly(V3 a, V3 d, V3 *hp)
+{
+    V3 b = vadd(a, d);
+    for (int k = 0; k < 8 && kcl_line(a, b, hp, NULL, NULL); k++) {
+        if (!(kcl_attribute(kcl_line_tri.kcl, kcl_line_tri.prism) & 0x400)) return 1;
+        a = vadd(*hp, vmul(vnorm(d), 0.01f));
+    }
+    return 0;
+}
+static int cam_map_ball(V3 c, float r, V3 *n, float *depth, int max)
+{
+    Hit h[32];
+    int k = kcl_query(c, r, h, max < 32 ? max : 32);
+    for (int i = 0; i < k; i++) { n[i] = h[i].n; depth[i] = h[i].dist; }
+    return k;
+}
+
 /* the part a Tri is on now (CollisionParts::mBaseMatrix, as kcl_each takes it) and k, its KCL units' scale over its
  * columns'; 0 if gone (a rebind, a melted IceStep) */
 static int tri_part(const Tri *t, float m[16], float *k)
@@ -3152,6 +3173,7 @@ void game_init(const Scene *s, const unsigned char *blob)
         camera_switch = cam_switch;
         cam_blob = blob;
         camera_rail = cam_rail;
+        camera_gravity = cam_gravity; camera_map_poly = cam_map_poly; camera_map_ball = cam_map_ball;
         camera_init(c ? (const CamParam *)(c + 16) : NULL, c ? *(const int *)c : 0, ca, na, (const float (*)[16])zm, &t);
         /* CameraDirector::closeCreatingCameraChunk: mIsStartCameraActive, startStartPosCamera(false): the start's
          * camera (getCurrentStartCameraId: its Camera_id) until checkStartCondition */
@@ -56927,6 +56949,37 @@ void game_test_pullback(unsigned frame)
  * y axis (frame 300 from free): he falls into its crater, the pod takes him to its pair in the other crater */
 void game_test_crater(unsigned frame)
 {
+#ifdef INSIDE_CAM
+    /* XF=-DINSIDE_CAM: Mario put on a side face of HeavensDoorInsidePlanet's inside (its top has the EarthenPipe), then
+     * walked over its edges to the other side, bottom and side faces; the camera (c:003c, CAM_INWARD_SPHERE) logged in the planet's frame */
+    static int prow = -1, k;
+    static const float wp[][3] = {{600, 300, -1450}, {700, -1400, -500}, {1450, -400, 500}, {1450, 700, 0}};
+    int t = scene_type(sc, "HeavensDoorInsidePlanet");
+    for (u32 i = 0; frame == 300 && prow < 0 && t >= 0 && i < sc->nobjs; i++) if (sc->objs[i].type == t) prow = (int)i;
+    if (prow < 0) { if (frame == 300) printf("insidecam test: no HeavensDoorInsidePlanet\n"); return; }
+    const Row *pr = &sc->objs[prow];
+    V3 x, z, c = row_pos(pr);
+    row_axes(pr, &x, &z);
+    V3 y = vcross(z, x);
+    if (frame >= 300 && frame <= 480) { /* held there till its zone's collision is in */
+        mario->pos = vadd(c, vadd(vmul(y, 300.0f), vmul(x, 1300.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
+        if (frame == 300) printf("insidecam test f %u: put in, planet row %d at %d %d %d\n", frame, prow, (int)c.x, (int)c.y, (int)c.z);
+    }
+    if (frame > 560 && k < (int)(sizeof wp / sizeof wp[0])) {
+        V3 to = vadd(c, vadd(vadd(vmul(x, wp[k][0]), vmul(y, wp[k][1])), vmul(z, wp[k][2])));
+        if (test_walk_to(to, 250.0f)) printf("insidecam test f %u: point %d%c", frame, k++, 10);
+    } else if (k >= (int)(sizeof wp / sizeof wp[0])) pad_force_stick = 0;
+    if (frame >= 300 && frame % 20 == 0) {
+        V3 e, w, u, d = vsub(mario->pos, c);
+        float fov;
+        camera_pose(&e, &w, &u, &fov);
+        V3 de = vsub(e, c);
+        printf("insidecam test f %u: mario %d %d %d cam %s eye %d %d %d (r %.0f, %.0f from mario) up.mario %.2f\n", frame,
+               (int)vdot(d, x), (int)vdot(d, y), (int)vdot(d, z), camera_type_name(), (int)vdot(de, x), (int)vdot(de, y),
+               (int)vdot(de, z), vlen(de), vlen(vsub(e, mario->pos)), vdot(u, mario->up));
+    }
+    return;
+#endif
     static int row = -1;
     for (int i = 0; frame == 300 && row < 0 && i < ninsts; i++) {
         const Row *r = &sc->objs[insts[i].row];
