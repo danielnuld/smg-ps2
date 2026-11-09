@@ -424,6 +424,14 @@ static Pack mv_pack;
 static u8 *mv_dst;
 static u32 mv_n, mv_lsn;
 #endif
+#ifdef DISC
+static u32 mv_t0; /* when the chunk's read was asked (cycles) */
+static void mv_issue(void)
+{
+    mv_t0 = cycles();
+    if (!cd_start(mv_lsn, mv_n / SECTOR, mv_dst)) render_fatal("movie: the disc does not read (sector %u)\n", mv_lsn);
+}
+#endif
 static int mv_open(const char *path, u32 *size)
 {
     if (!pack_open(&mv_pack, path)) return 0;
@@ -437,7 +445,7 @@ static void mv_start(u8 *dst, u32 n)
     mv_lsn = mv_pack.base + mv_pack.pos / SECTOR;
     mv_n = PACK_ALLOC(n);
     mv_pack.pos += n;
-    if (!cd_start(mv_lsn, mv_n / SECTOR, dst)) render_fatal("movie: the disc does not read (sector %u)\n", mv_lsn);
+    mv_issue();
 #else
     pack_read(&mv_pack, dst, n);
 #endif
@@ -446,9 +454,18 @@ static int mv_done(void)
 {
 #ifdef DISC
     if (mv_dst) {
-        if (sceCdSync(1)) return 0;
+        if (sceCdSync(1)) {
+            /* a read that never ends (the console, Neutrino over udpfs: PrologueB froze, the sound looping) is broken
+             * and asked again after 2 s */
+            if (cycles() - mv_t0 < 2u * 294912000u) return 0;
+            printf("cd: movie read %u + %u stuck, again\n", mv_lsn, mv_n / SECTOR);
+            sceCdBreak();
+            sceCdSync(0);
+            mv_issue();
+            return 0;
+        }
         if (cd_failed(mv_lsn, mv_n / SECTOR)) { /* the chunk read again: played from a stale buffer, libmpeg lost the stream */
-            if (!cd_start(mv_lsn, mv_n / SECTOR, mv_dst)) render_fatal("movie: the disc does not read (sector %u)\n", mv_lsn);
+            mv_issue();
             return 0;
         }
         InvalidDCache(mv_dst, mv_dst + mv_n - 1);
@@ -1040,6 +1057,8 @@ static void scene_load(void)
 
 int main(void)
 {
+    setvbuf(stdout, NULL, _IOLBF, 0); /* a line at a time to the console's udptty: with _fstat failing newlib buffered
+                                       * it whole, and a freeze kept its last lines back */
 #ifdef PACKS
     gamedata_boot = malloc(__stop_gamedata - __start_gamedata); /* before anything writes it */
     memcpy(gamedata_boot, __start_gamedata, __stop_gamedata - __start_gamedata);
