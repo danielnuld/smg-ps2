@@ -328,6 +328,13 @@ build with their own build.sh, run ELFs copied to D:/smg-ps2/out/wt-<name>-<mode
   last Luma's Appear). #525: kp_init printed row_camset before
   game_init made it (NULL read). Test: `XF=-DGW_FOLLOW build.sh gateway <blob> HeavensDoorGalaxy/1` (the opening,
   the chase through the pipe, the three catches, the tower, the walk to Rosetta, her spin demo).
+- Gateway inside planet camera (fix/537, 2026-11-08; seen on a real PS2): HeavensDoorInsideZone's only camera area
+  (CubeCameraSphere r 2160) runs c:003c, CAM_TYPE_INWARD_SPHERE, unknown to camera.py (type 255: run as XZ_PARA, its
+  angleA 1400 / angleB 300 as a polar pose: high above, outside the hull). Now CameraInwardSphere.cpp (camera.c
+  CAM_INWARD_SPHERE: min angleA, max dist, base angleB; calcGravityCenter reset, map ray / ball push along gravity,
+  in the world) with game.c's camera_gravity / camera_map_poly (Camera_through faces passed) / camera_map_ball. Test:
+  `XF="-DINSIDE_CAM" build.sh crater <blob> HeavensDoorGalaxy/1` (Mario put on the inside's +x face, walked over
+  three edges: the eye 1400 off him, ~1170 from the centre). Only that zone uses the type. Repack HeavensDoorGalaxy.
 - EggStar 1 boot crash (fix/337, 2026-11-07): found. newlib calls fstat on every stdio stream before its first read
   or seek (__smakebuf_r, _fseeko_r); for a host: file that is a FILEIO getstat RPC, and now and then the IOP answered
   the RPC before it (the open, payload to _fio_recv_data) a second time. The stale SIF_CMD_RPC_END completed the
