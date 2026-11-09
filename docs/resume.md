@@ -765,6 +765,7 @@ Second console round (2026-10-24), from Daniel's report:
   -DCAPTURE_SMALL=1 on HeavenlyBeach 1: let go at step 41, flight 80, 2 / 10 / 60). #286: their own clips (every
   BCK is packed): Wait, Appear (its end waits for the clip by length), SpinDriver Active, SuperSpinDriver Start.
   ponytail: no BPK colours, no SpinDriverPathDrawer (no strip draw, no SpinDriverPath textures).
+  2026-11-08 (fix/launch-star-square): the stars were drawn with a zero rotation (launch_place scaled by in->m0, never set for them: invisible, or flat when a stale m0 held something), now the placement scale; their Light kept only while Petari emits it (Wait with _13C / _178 > 0, Capture); and every particle sprite samples its base level (Q 1 made a mipped texture's LOD its K: level 2, an 8 x 8 blur with opaque corners, the dark square). Seen with a local Gateway shortcut (tower demo, Rosetta, the crystals broken).
 - SmallStone / CircleShell / CircleStrawberry (fix/275-smallstone, 2026-11-05): ring across its gravity
   (makeAxisCrossPlane; arg1: its rotation's -Y), members on the ground by an exact line (map_poly), CircleShell's
   random turn / scale / Kind BVA frame shuffled with its Break1-3 effect, the centre as the members' box and the Range

@@ -1720,7 +1720,10 @@ void render_sprites(const Sprite *sp, int n)
         packet2_add_2x_s64(vif[cur], GS_SET_TEST(1, ATEST_METHOD_GREATER, 0, 0, 0, 0, 1, ZTEST_METHOD_GREATER_EQUAL), GS_REG_TEST);
         packet2_add_2x_s64(vif[cur], GS_SET_ZBUF(zbuf.address >> 11, zbuf.zsm, 1), GS_REG_ZBUF);
         packet2_add_2x_s64(vif[cur], GS_SET_PRIM(PRIM_SPRITE, 0, 1, 0, 1, 0, 1, 0, 0), GS_REG_PRIM);
-        u32 regs = 4;
+        /* the base level, as GX draws JPA's unmipped textures: sprites carry Q 1, so a mipped texture's LOD would be its
+         * K alone (LOD_BIAS: level 2, an 8 x 8 blur whose 16 shared colours leave the quad's corners opaque) */
+        packet2_add_2x_s64(vif[cur], GS_SET_TEX1(1, 0, 1, 1, 0, 0, 0), GS_REG_TEX1);
+        u32 regs = 5;
         for (; i < j; i++) {
             const Sprite *s = &sp[i];
             float o[5];
