@@ -5,6 +5,26 @@
 #include <stdio.h>
 #include "../src/camera.h"
 
+/* a hollow sphere of radius SP_R at the origin, its gravity out to the shell (the map's faces inside it) */
+#define SP_R 1500.0f
+static int sp_gravity(V3 p, V3 *g) { float l = vlen(p); *g = l > 0 ? vmul(p, 1.0f / l) : v3(0, 0, 0); return l > 0; }
+static int sp_poly(V3 a, V3 d, V3 *hp)
+{
+    float A = vdot(d, d), B = 2 * vdot(a, d), C = vdot(a, a) - SP_R * SP_R, D = B * B - 4 * A * C;
+    if (A <= 0 || D < 0) return 0;
+    float t = (-B + sqrtf(D)) / (2 * A); /* leaving the inside: the face met from its front */
+    if (t < 0 || t > 1 || vdot(vadd(a, vmul(d, t)), d) <= 0) return 0;
+    *hp = vadd(a, vmul(d, t));
+    return 1;
+}
+static int sp_ball(V3 c, float r, V3 *n, float *depth, int max)
+{
+    float l = vlen(c);
+    if (max < 1 || l + r <= SP_R || l <= 0) return 0;
+    *n = vmul(c, -1.0f / l); *depth = l + r - SP_R;
+    return 1;
+}
+
 int main(void)
 {
     CamArea a[3] = {
@@ -62,6 +82,33 @@ int main(void)
         assert(most > 0.03f && most < 30.0f / 456.0f);
         camera_update(&t);
         assert(camera_shake_y() == 0.0f);
+    }
+    { /* CAM_INWARD_SPHERE (HeavensDoorInsideZone's c:003c: angleA 1400, dist 1400, angleB 300) inside a hollow sphere of
+       * radius R with gravity out to its shell: Mario walks half round its inside; the eye stays inside, off the shell,
+       * near him */
+        static CamParam c;
+        memset(&c, 0, sizeof c);
+        c.type = CAM_INWARD_SPHERE; c.dist = 1400; c.angle_a = 1400; c.angle_b = 300; c.camint = 120; c.fovy = 45;
+        camera_gravity = sp_gravity; camera_map_poly = sp_poly; camera_map_ball = sp_ball;
+        CamArea all = {2, 0, 0, {0, 0, 0}, {0, 0, 0}, {100, 100, 100}};
+        CamTarget t = {v3(0, SP_R, 0), v3(0, 0, 1), v3(0, -1, 0), 0};
+        camera_init(&c, 1, &all, 1, NULL, &t);
+        for (int f = 0; f < 600; f++) {
+            float a = fminf(f * 15.0f / SP_R, 3.1f);
+            t.pos = v3(0, SP_R * cosf(a), SP_R * sinf(a));
+            t.up = vmul(t.pos, -1.0f / SP_R);
+            t.front = v3(0, -sinf(a), cosf(a));
+            camera_update(&t);
+            V3 e, w, u;
+            float fov;
+            camera_pose(&e, &w, &u, &fov);
+            if (f > 120 && !(vlen(e) < SP_R - 100 && vlen(vsub(e, t.pos)) < 2500 && fabsf(vlen(u) - 1) < 0.01f)) {
+                printf("inward sphere frame %d: eye %g %g %g (r %g) mario %g %g %g\n", f, e.x, e.y, e.z, vlen(e),
+                       t.pos.x, t.pos.y, t.pos.z);
+                return 1;
+            }
+        }
+        camera_gravity = NULL; camera_map_poly = NULL; camera_map_ball = NULL;
     }
     printf("test_camera ok\n");
     return 0;

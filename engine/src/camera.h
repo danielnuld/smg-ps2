@@ -28,7 +28,7 @@ typedef struct {
 
 enum { CAM_XZ_PARA, CAM_TOWER, CAM_FOLLOW, CAM_WONDER_PLANET, CAM_EYEPOS_FIX, CAM_POINT_FIX, CAM_EYEPOS_FIX_THERE,
        CAM_CHARMED_FIX, CAM_TOWER_POS, CAM_FRONT_AND_BACK, CAM_TRUNDLE, CAM_CUBE_PLANET, CAM_OBJ_PARALLEL,
-       CAM_RAIL_FOLLOW };  /* tools/camera.py TYPES */
+       CAM_RAIL_FOLLOW, CAM_INWARD_SPHERE };  /* tools/camera.py TYPES */
 
 /* What the camera follows (Mario): position, facing, up (against gravity), airborne (CameraTargetPlayer::isJumping). */
 typedef struct { V3 pos, front, up; int jumping; int flying; V3 fly_dir; /* flying: a launch star's flight, fly_dir
@@ -43,6 +43,11 @@ extern int camera_big_bubble; /* MR::isPlayerBindedBigBubble (game.c): the BigBu
  * its polyline in the world, n points, closed */
 extern int (*camera_switch)(int zone, int id);
 extern const float *(*camera_rail)(int zone, int id, int *n, int *closed);
+/* given by game.c, in the world: MR::calcGravityVector at p (unit, zero where none), getFirstPolyOnLineToMap from a
+ * along d past isCameraCodeThrough faces (its point), Collision::checkStrikeBallToMap (each face's normal and depth) */
+extern int (*camera_gravity)(V3 p, V3 *g);
+extern int (*camera_map_poly)(V3 a, V3 d, V3 *hp);
+extern int (*camera_map_ball)(V3 c, float r, V3 *n, float *depth, int max);
 
 /* Areas are in world space (tools/slice.py to_world); camera parameters are zone-local, so each camera computes in
  * its zone's frame (Petari Camera::setZoneMtx): zones = world matrix per zone (column-major), NULL = all identity. */
