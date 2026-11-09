@@ -715,6 +715,15 @@ def btk_matrix(hit, frame, maya):
             (sy * sr, sy * cr, -sy * sr * c0 - sy * cr * c1 + c1 + ty))
 
 
+def bake_as(b, bl, mat, texs, main, img, over):
+    """Material mat baked with the image img in its texture main's place (J3DTexNoAnm: a BTP frame takes the slot of
+    the material's texture). Baked as its own TEX1 entry instead, no TEV stage samples it, so tex.tev read the slot's
+    texture at its mean colour: Rosetta's eyelid frames came out one flat grey, the shut one a grey patch over her eye."""
+    sub = list(texs)
+    sub[main] = img
+    return tex.bake(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), sub, main, over, {})
+
+
 def btp_first(d):
     """A BTP (TPT1 texture pattern) -> {material name: its texture index at frame 0}."""
     o = 0x20
@@ -1000,7 +1009,7 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                             t = dict(t, alts=alts)
                     elif mname in bt_tex and all(i < len(texs0) for i in bt_tex[mname]):
                         # its BTPs' images (runtime texture patterns), each baked through the material
-                        alts = [tex.to_ps2(tex.bake(b, bl[b"MAT3"], mat, bl.get(b"TEX1"), texs0, i, over, {}),
+                        alts = [tex.to_ps2(bake_as(b, bl, mat, texs, mt["tex"], texs0[i], over),
                                            texs0[i]["wrap_s"], texs0[i]["wrap_t"], sky) for i in bt_tex[mname]]
                         t = dict(t, alts=alts, swap_kind=0x80 | bt_order.index(mname))
                     elif arc.stem in SKINNED_ARCS and mname in ("Body1_v", "Cap_v") and mt["tex"] + 2 < len(texs):
