@@ -8726,10 +8726,9 @@ static void launch_place(const Launch *L) /* calcAndSetBaseMtx: makeMtxUpFrontPo
 {
     Inst *in = row_inst(L->row);
     if (!in) return;
-    float sx = vlen(v3(in->m0[0], in->m0[1], in->m0[2])), sy = vlen(v3(in->m0[4], in->m0[5], in->m0[6])),
-          sz = vlen(v3(in->m0[8], in->m0[9], in->m0[10]));
+    const float *s = sc->objs[L->row].scale; /* setBaseTRMtx: its mScale (the placement's) stays (in->m0 is never set for it) */
     basis_matrix(in->m, L->pos, L->pu, L->pf, L->rot);
-    for (int j = 0; j < 3; j++) { in->m[j] *= sx; in->m[4 + j] *= sy; in->m[8 + j] *= sz; }
+    for (int j = 0; j < 3; j++) { in->m[j] *= s[0]; in->m[4 + j] *= s[1]; in->m[8 + j] *= s[2]; }
 }
 static void launch_motion(Launch *L) /* calcShootMotionTime (SpinDriver.cpp:785, SuperSpinDriver.cpp:942) */
 {
@@ -47082,12 +47081,16 @@ static void keep_effects(void)
             basis_matrix(m, pieces[i].pos, pick_up(&pieces[i]), v3(0, 0, 1), 0);
             fx_keep(FX_STARPIECE_STARPIECELIGHT, &pieces[i], m);
         }
-    for (int i = 0; i < nlaunches; i++)
-        if (row_shown(launches[i].row) && vlen(vsub(launches[i].pos, cam_pos)) < 4000.0f) {
-            basis_matrix(m, launches[i].pos, up_at(launches[i].pos, mario->up), v3(0, 0, 1), 0);
-            fx_keep(launches[i].start < 45 ? FX_SPINDRIVER_SPINDRIVERLIGHT : FX_SUPERSPINDRIVER_SUPERSPINDRIVERLIGHT,
-                    &launches[i], m);
+    for (int i = 0; i < nlaunches; i++) { /* (Super)SpinDriverLight: emitted in exeWait while _13C / _178 > 0 (Mario's
+                                           * sensor on it within 60 frames) and in exeCapture; deleted in Wait at 0 and in
+                                           * ShootStart (deleteEffectAll), so never in Shoot / CoolDown */
+        const Launch *L = &launches[i];
+        int lit = mario->launch == i ? L->cap > 0 : !L->cool && L->shine > 0;
+        if (!L->starter && lit && row_shown(L->row) && vlen(vsub(L->pos, cam_pos)) < 4000.0f) {
+            basis_matrix(m, L->pos, up_at(L->pos, mario->up), v3(0, 0, 1), 0);
+            fx_keep(L->start < 45 ? FX_SPINDRIVER_SPINDRIVERLIGHT : FX_SUPERSPINDRIVER_SUPERSPINDRIVERLIGHT, L, m);
         }
+    }
     for (int i = 0; i < ninsts; i++) {
         const Inst *in = &insts[i];
         if (!in->item || !row_shown(in->row) || in->row == qth.row ||
