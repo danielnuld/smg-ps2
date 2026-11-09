@@ -15,7 +15,7 @@ import ctypes
 import sys
 from pathlib import Path
 
-DLL = Path(__file__).resolve().parent.parent / "bin/meshopt.dll"
+DLL = Path(__file__).resolve().parent.parent / ("bin/meshopt.dll" if sys.platform == "win32" else "bin/meshopt.so")  # (WSL: g++ -fPIC, same sources)
 _lib = None
 
 
