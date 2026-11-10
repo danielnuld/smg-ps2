@@ -44676,7 +44676,7 @@ static void hdo_update(void)
         if (st > (k == 0 ? 39 : 119)) { /* isBtkStopped */
             if (k == 1) bgm_start("STM_STAR_EXIST_2");
             if (k == 0) { camera_shake_stop(&hdo[0]); hdo[0].rumble = 0; } /* stopShakingCameraMoving */
-            row_kill(hdo[k].row);
+            row_kill(hdo[k].row); game_rebind(); /* (the drawn and colliding instances: dead rows left out) */
             printf("heavens door demo obj: row %d killed\n", hdo[k].row);
             hdo[k].step = -1;
         }
@@ -56952,6 +56952,30 @@ void game_test_pullback(unsigned frame)
  * y axis (frame 300 from free): he falls into its crater, the pod takes him to its pair in the other crater */
 void game_test_crater(unsigned frame)
 {
+#ifdef HD_CAGE
+    /* XF=-DHD_CAGE (crater mode, HeavensDoorGalaxy/1): Mario put inside HeavensDoorInsidePlanet (frames 300-480), from
+     * 600 onto each FlipPanel(Reverse) still on its front: the observer's SW_A starts ミニ太陽消失; the cage,
+     * PlanetPartsA and the GrandStar logged, at 3000 Mario on the GrandStar */
+    int t = scene_type(sc, "HeavensDoorInsidePlanet"), tc = scene_type(sc, "HeavensDoorInsideCage"),
+        tp = scene_type(sc, "HeavensDoorInsidePlanetPartsA"), tg = scene_type(sc, "GrandStar");
+    for (u32 i = 0; i < sc->nobjs; i++) {
+        int ty = (int)sc->objs[i].type;
+        if (ty == t && frame >= 300 && frame <= 480) {
+            V3 x, z, c = row_pos(&sc->objs[i]);
+            row_axes(&sc->objs[i], &x, &z);
+            mario->pos = vadd(c, vadd(vmul(vcross(z, x), 300.0f), vmul(x, 1300.0f))); mario->hvel = v3(0, 0, 0); mario->vup = 0; mario->grounded = 0;
+        }
+        if ((ty == tc || ty == tp || ty == tg) && frame >= 600 && frame % 30 == 0)
+            printf("hdcage test f %u: %s row %d dead %d shown %d inst %d demo %d\n", frame, sc->types + 32 * ty, (int)i,
+                   row_dead[i], row_shown((int)i), row_inst((int)i) != NULL, dx.on ? dx.part * 1000 + dx.step : -1);
+    }
+    if (frame >= 600 && frame < 3000 && frame % 40 == 0) { /* Mario onto each panel still on its front */
+        int r = game_test_flip_front();
+        if (frame % 200 == 0) printf("hdcage test f %u: flip row %d, %d back\n", frame, r, game_flips_back());
+    }
+    if (frame == 3000) printf("hdcage test f %u: on item %d (the GrandStar, the cage gone)\n", frame, game_test_item());
+    return;
+#endif
 #ifdef INSIDE_CAM
     /* XF=-DINSIDE_CAM: Mario put on a side face of HeavensDoorInsidePlanet's inside (its top has the EarthenPipe), then
      * walked over its edges to the other side, bottom and side faces; the camera (c:003c, CAM_INWARD_SPHERE) logged in the planet's frame */
