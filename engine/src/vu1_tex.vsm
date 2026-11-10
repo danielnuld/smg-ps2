@@ -3,7 +3,8 @@
 ; double buffering, clipw/fcand ADC trick and scale step. Untextured batches run the same code: their PRIM has
 ; TME = 0, so the GS ignores the ST it is given.
 ;
-; VU mem 0      : scale (2048, 2048, 0xFFFFFF / 32), written once at init (outside the double buffers)
+; VU mem 0      : scale (2048, 2048, 0xFFFFFF / 32), written at init (outside the double buffers); w (int) VU1Tex's
+;                 cull mask: 0x20 around a GX_CULL_BACK group's batches (render.c add_cull), else 0
 ; VU mem 1..7   : the matrix of a static model instance (prebuilt chains, written after a FLUSHE): 4 columns
 ;                 local -> clip, then its light matrix (3 columns, x: light 0, y: light 1, of the light directions in
 ;                 the local space x 1 / 127; lit batches only)
@@ -37,6 +38,7 @@
         .global VU1Env_Start
 VU1Tex_CodeStart:
         NOP                                 lq.xyz        VF05,0(VI00)
+        NOP                                 ilw.w         VI15,0(VI00)
         NOP                                 lq            VF10,8(VI00)
         NOP                                 lq            VF11,9(VI00)
         NOP                                 lq            VF12,10(VI00)
@@ -101,10 +103,27 @@ vertexLoop:
         NOP                                 NOP
         mulaw.xyz     ACC,VF05,VF00w        NOP
         madd.xyz      VF07,VF07,VF05        NOP
+; GX's cull (VI15 = VU mem 0.w, 0: none, the batches' only cost the branch): z of (v1 - v0) x (v2 - v0) on screen,
+; v0 v1 the two vertices before (VF13, VF14), its MAC sign flag (0x20: counter-clockwise, y down) masked by VI15 and
+; added to the clip flag: ADC, as for a clipped triangle (only a list triangle's third vertex kicks: its own three)
+        NOP                                 ibeq          VI15,VI00,noCull
+        NOP                                 iadd          VI14,VI00,VI00
+        NOP                                 NOP
+        sub.xyz       VF16,VF14,VF13        NOP
+        sub.xyz       VF17,VF07,VF13        move.xyz      VF13,VF14
+        NOP                                 move.xyz      VF14,VF07
         NOP                                 NOP
         NOP                                 NOP
+        opmula.xyz    ACC,VF16,VF17         NOP
+        opmsub.xyz    VF18,VF17,VF16        NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 NOP
+        NOP                                 fmand         VI14,VI15
+noCull:
         NOP                                 NOP
         ftoi4.xyz     VF07,VF07             fcand         VI01,262143
+        NOP                                 iadd          VI01,VI01,VI14
         NOP                                 iaddiu        VI01,VI01,0x00007fff
         NOP                                 sq            VF09,0(VI06)
         NOP                                 sq            VF08,1(VI06)

@@ -163,6 +163,7 @@ static qword_t *headers;         /* [mode][matrices 1..MAX_MAT][count 3..BATCH]:
                                   * bit 0 textured, bit 1 alpha blended (group_mode) */
 #define MODES 4
 static qword_t scale_qw __attribute__((aligned(16)));
+static qword_t cull_qw __attribute__((aligned(16))); /* scale_qw with w 0x20: VU1Tex culls (VuGroup.cull, add_cull) */
 static float uv_ident[12] __attribute__((aligned(16))) = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0}; /* VU mem 8..10 */
 static float light_qw[16] __attribute__((aligned(16)));          /* VU mem 11..14: render_light */
 static const RenderLight *light, *light_sent;                     /* the current light, the one VU mem holds */
@@ -407,6 +408,8 @@ void render_init(void)
     ((float *)&scale_qw)[0] = 2048.0f;
     ((float *)&scale_qw)[1] = 2048.0f;
     ((float *)&scale_qw)[2] = Z_SCALE;
+    cull_qw = scale_qw;
+    cull_qw.sw[3] = 0x20; /* the MAC sign flag of z (vu1_tex.vsm: a triangle wound counter-clockwise on screen) */
     p = packet2_create(6, P2_TYPE_NORMAL, P2_MODE_CHAIN, 1);
     packet2_utils_vu_add_unpack_data(p, 0, &scale_qw, 1, 0);
     packet2_utils_vu_add_unpack_data(p, 8, uv_ident, 3, 0); /* the UV matrix, identity */
@@ -1109,27 +1112,50 @@ static void model_light_matrix(const Model *md, float *m, const float w[16])
     else light_matrix(m, w, w + 12);
 }
 
+/* whether a model has a group showing the screen behind it (blend 3: slice.py's IndDummy, the frame buffer through a
+ * tint). The Wii's copy (CaptureScreenIndirect) is taken before the model draws, so none of the model's own faces is in
+ * it: its screen groups go first, their depth hiding what of the model lies behind (HeavensDoorInsideCage's
+ * CrystalBackFace far wall, under IndMat), and its other groups after them, all in the late pass */
+static int screen_model(const Model *md)
+{
+    for (u32 g = 0; g < md->vu_ngroups; g++)
+        if (md->vu[g].blend == 3) return 1;
+    return 0;
+}
+
+/* GX's cull on (VU mem 0's w: cull_qw) or off (scale_qw) for the batches after: FLUSHE first, as add_uvm */
+static void add_cull(packet2_t *pk, int on)
+{
+    packet2_chain_open_cnt(pk, 0, 0, 0);
+    packet2_vif_flushe(pk, 0);
+    packet2_vif_nop(pk, 0);
+    packet2_chain_close_tag(pk);
+    packet2_utils_vu_add_unpack_data(pk, 0, on ? &cull_qw : &scale_qw, 1, 0);
+}
+
 /* the prebuilt chain of a model's opaque groups (xlu 0) or of its blended ones (xlu 1); NULL when it has none. A BTK
  * group's batches run between its own UV matrix (VuGroup.uvm, refreshed each frame: game_draw, anim_btk) and the
- * identity again */
+ * identity again, a culled one's between add_cull on and off */
 static packet2_t *build_chain_pass(Model *md, int xlu)
 {
     u32 batches = 0, groups = 0, btks = 0;
+    int scr = screen_model(md);
     for (u32 g = 0; g < md->vu_ngroups; g++)
-        if ((group_mode(&md->vu[g]) >= 2) == xlu) {
+        if ((scr || group_mode(&md->vu[g]) >= 2) == xlu) {
             batches += md->vu[g].nbatch;
             groups++;
-            btks += md->vu[g].uvm != NULL || md->vu[g].air;
+            btks += (md->vu[g].uvm != NULL || md->vu[g].air) + md->vu[g].cull;
         }
     if (!groups)
         return NULL;
     u32 qw = batches * 9 + groups * 4 + btks * 12 + 4;
     packet2_t *pk = packet2_create(qw, P2_TYPE_NORMAL, P2_MODE_CHAIN, 1);
     mem_charge(MEM_RENDER, qw * 16);
-    for (u32 g = 0; g < md->vu_ngroups; g++) {
+    for (u32 gi = 0; gi < 2 * md->vu_ngroups; gi++) { /* screen groups (screen_model) first, then the rest */
+        u32 g = gi % md->vu_ngroups;
         const VuGroup *vg = &md->vu[g];
         int mode = group_mode(vg);
-        if ((mode >= 2) != xlu) continue;
+        if ((scr || mode >= 2) != xlu || (gi < md->vu_ngroups) != (!scr || vg->blend == 3)) continue;
         emit_group(pk, vg);
         if (vg->proj)
             add_envm(pk, vg->projm);
@@ -1139,6 +1165,8 @@ static packet2_t *build_chain_pass(Model *md, int xlu)
             add_uvm(pk, vg->uvm);
         if (vg->air)
             add_airt(pk, vg->air);
+        if (vg->cull)
+            add_cull(pk, 1);
         const u8 *d = vg->data;
         const VuGroup *sg = vg - vg->share; /* a layer's base: its batches walked alongside (positions, colours) */
         const u8 *sd = sg->data;
@@ -1172,6 +1200,8 @@ static packet2_t *build_chain_pass(Model *md, int xlu)
         }
         if (vg->uvm || vg->proj)
             add_uvm(pk, uv_ident);
+        if (vg->cull)
+            add_cull(pk, 0);
     }
     packet2_chain_ret(pk, 0, 0);
     packet2_vif_nop(pk, 0);
@@ -1418,7 +1448,7 @@ static void draw_model_(const Model *md, const float world[16], const float (*dr
     u32 need = drw ? 0 : 1, batches = 0, btks = 0;
     for (u32 g = 0; g < md->vu_ngroups; g++) {
         batches += md->vu[g].nbatch;
-        btks += md->vu[g].uvm != NULL;
+        btks += (md->vu[g].uvm != NULL) + md->vu[g].cull;
         if (drw)
             need += md->skin->groups[g].nmat;
     }
@@ -1438,8 +1468,11 @@ static void draw_model_(const Model *md, const float world[16], const float (*dr
             model_light_matrix(md, gm[0], world);
         nmats++;
     }
-    for (u32 g = 0; g < md->vu_ngroups; g++) {
+    int scr = screen_model(md);
+    for (u32 gi = 0; gi < 2 * md->vu_ngroups; gi++) { /* screen groups first (screen_model), then the rest */
+        u32 g = gi % md->vu_ngroups;
         const VuGroup *vg = &md->vu[g];
+        if ((gi < md->vu_ngroups) != (!scr || vg->blend == 3)) continue;
         if (vg->strip == 1 || vg->strip == 3) continue; /* static strip groups: their model's prebuilt chain only */
         if (drw && vg->hide) continue; /* a BVA's hidden shape */
         if (drw) {
@@ -1474,6 +1507,8 @@ static void draw_model_(const Model *md, const float world[16], const float (*dr
             add_envm(vif[cur], vg->uvm);
         else if (vg->uvm)
             add_uvm(vif[cur], vg->uvm);
+        if (vg->cull)
+            add_cull(vif[cur], 1);
         for (u32 b = 0; b < vg->nbatch; b++) {
             u32 ne = vg->batch[2 * b], nu = vg->batch[2 * b + 1];
             /* strip 2 (VU1SkinLit): {n} + strip GIF tag, the matrices, the arrays at fixed places; else indexed */
@@ -1483,6 +1518,8 @@ static void draw_model_(const Model *md, const float world[16], const float (*dr
         }
         if (vg->uvm)
             add_uvm(vif[cur], uv_ident);
+        if (vg->cull)
+            add_cull(vif[cur], 0);
         prof_x[drw ? 2 : 3] += cy_() - pb0;
     }
 }

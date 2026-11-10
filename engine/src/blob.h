@@ -29,6 +29,7 @@ typedef struct {
     u8 share;            /* a layer pass (tools/slice.py layers) on the strips of the group this many back (a VU1Strip
                           * one): per batch only its s16 uv[n][2] (strip 1) or s8 normal[n][4] (strip 3), positions and
                           * colours read from that group's batch */
+    u8 cull;             /* 1: GX_CULL_BACK (VU1Tex only: clockwise on screen kept; tools/slice.py, render.c add_cull) */
     const u16 *batch;    /* nbatch x {emitted, unique} ({n, 0} for strips) */
     const u8 *data;      /* per batch: s16 pos[unique][4] (x, y, z in steps of Model.qscale, w = 7 * matrix slot),
                           * s16 uv[unique][2] (12 fraction bits) if textured, s8 normal[unique][4] (x 127) if lit,

@@ -287,10 +287,10 @@ def tex_mtx(b, e):
             (sy * sr, sy * cr, -sy * sr * cx - sy * cr * cy + cy + ty))
 
 
-def projmap(b, mat3, m, slot, srt_only=False):
+def projmap(b, mat3, m, slot, srt_only=False, srt=None):
     """Material m's texture matrix `slot` when it projects positions (J3DTexMtx mode 8, Projmap: J3DTevs.cpp) -> the
     3x4 rows SRT x Q x effect (s, t, q of a model-space position with the camera at the origin: uv = (s, t) / q),
-    else None."""
+    else None. srt: 2x3 rows in place of its own SRT (a BTK's at some frame)."""
     off = lambda k: mat3 + u32(b, mat3 + k)
     e = off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C
     mi = u16(b, e + 0x48 + 2 * slot)
@@ -300,6 +300,7 @@ def projmap(b, mat3, m, slot, srt_only=False):
     if b[t + 1] & 0x3F != 8:
         return None
     eff = np.array(struct.unpack_from(">16f", b, t + 0x24), np.float64).reshape(4, 4)
+    srt_ = srt
     cx, cy = struct.unpack_from(">2f", b, t + 4)[:2]
     sx, sy = struct.unpack_from(">2f", b, t + 0x10)
     rot = struct.unpack_from(">h", b, t + 0x18)[0] * math.pi / 0x8000
@@ -308,10 +309,42 @@ def projmap(b, mat3, m, slot, srt_only=False):
     srt = np.eye(4)
     srt[0, :3] = (sx * cr, -sx * sr, -sx * cr * cx + sx * sr * cy + cx + tx)
     srt[1, :3] = (sy * sr, sy * cr, -sy * sr * cx - sy * cr * cy + cy + ty)
+    if srt_:
+        srt[:2, :3] = srt_
     if srt_only:  # its SRT as a 2x3 on (s, t) / q: the translation stays a uniform shift after the divide
         return (tuple(srt[0, :3]), tuple(srt[1, :3]))
     q = np.array([[0.5, 0, 0.5, 0], [0, -0.5, 0.5, 0], [0, 0, 1, 0], [0, 0, 0, 1]], np.float64)
     return (srt @ q @ eff)[:3]
+
+
+def proj_texels(b, mat3, m, texs, verts, srt=None):
+    """Material m's textures projected from positions (Projmap, projmap) -> {texture coordinate: mean RGBA 0..255
+    (texa) of the texels the model-space positions `verts` read, through the texture's GX wrap (0 clamp, 1 repeat,
+    2 mirror)}, srt {texture matrix slot: 2x3} the SRT at rest (a BTK's, projmap): what tev takes for such a texture
+    on other coordinates than the base's, the texture's mean being no measure of the part the shape shows
+    (HeavensDoorInsideCage's Vanish: a dissolve ramp kept on the cage by ProjmapEffectMtxSetter, model space through
+    updateMtxUseBaseMtx; its CrystalFaceMat adds K wherever it reads under K's red, the dissolving edge)."""
+    out = {}
+    p = np.c_[np.asarray(verts, np.float64).reshape(-1, 3), np.ones(len(verts))]
+    for c, t in stage_coords(b, mat3, m):
+        g = coord_gen(b, mat3, m, c)
+        if not g or g["proj"] is None or t >= len(texs) or c in out or not len(p):
+            continue
+        stq = p @ projmap(b, mat3, m, g["slot"], srt=(srt or {}).get(g["slot"])).T
+        q = np.where(np.abs(stq[:, 2]) < 1e-9, 1e-9, stq[:, 2])
+        x = texa(texs[t])
+
+        def wrap(u, n, mode):
+            i = np.floor(u * n).astype(np.int64)
+            if mode == 1:
+                return i % n
+            if mode == 2:
+                i %= 2 * n
+                return np.where(i < n, i, 2 * n - 1 - i)
+            return np.clip(i, 0, n - 1)
+        out[c] = x[wrap(stq[:, 1] / q, x.shape[0], texs[t]["wrap_t"]),
+                   wrap(stq[:, 0] / q, x.shape[1], texs[t]["wrap_s"])].mean(0)
+    return out
 
 
 def mtx_slot(b, mat3, m, slot):
@@ -763,17 +796,20 @@ def tev(b, mat3, m, tex1, texs, base=None, over=None, max_stages=16, ras_k=1.0):
         # a texture on other coordinates than the base's (environment maps, scrolling sparkles, projections) cannot
         # be laid over the base's texels: its mean colour stands in (layers draws the main ones as passes of their own);
         # another coordinate made as the base's is (same source and matrix) is baked texel for texel
+        # (a Projmap one: the mean of what the shape's own positions read instead, proj_texels in over["proj_val"])
         other = t != base and texgen_key(b, mat3, m, b[off(0x4C) + 4 * oi]) != texgen_key(b, mat3, m, base_coord)
-        if (t, other) not in tex_cache:
+        pv = ov.get("proj_val", {}).get(b[off(0x4C) + 4 * oi]) if other else None
+        k = (t, other, None if pv is None else b[off(0x4C) + 4 * oi])
+        if k not in tex_cache:
             x = texa(texs[t] if t < len(texs) else texs[base])
             if other:
-                x = np.broadcast_to(x.reshape(-1, 4).mean(0), shape + (4,))
+                x = np.broadcast_to(x.reshape(-1, 4).mean(0) if pv is None else pv, shape + (4,))
             elif x.shape[:2] != shape:  # nearest resize to the base texture's size
                 ys = np.arange(shape[0]) * x.shape[0] // shape[0]
                 xs = np.arange(shape[1]) * x.shape[1] // shape[1]
                 x = x[ys][:, xs]
-            tex_cache[(t, other)] = x.astype(np.float32) / 255.0
-        return tex_cache[(t, other)]
+            tex_cache[k] = x.astype(np.float32) / 255.0
+        return tex_cache[k]
 
     def ksel(sel, alpha):
         if sel < 8:
@@ -855,6 +891,12 @@ def camera_alpha(b, mat3, m):
     if not on or src != 0 or mask != 4:
         return None
     return dfn, u32(b, off(0x1C) + 4 * b[e + 1])
+
+
+def cull_mode(b, mat3, m):
+    """Material m's GX cull mode: 0 none, 1 front, 2 back, 3 all (MAT3 cull table 0x1C, u32 by u8 @1)."""
+    off = lambda k: mat3 + u32(b, mat3 + k)
+    return u32(b, off(0x1C) + 4 * b[off(0x0C) + u16(b, off(0x10) + 2 * m) * 0x14C + 1])
 
 
 def lit(b, mat3, m):

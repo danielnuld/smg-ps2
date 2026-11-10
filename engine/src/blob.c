@@ -93,6 +93,7 @@ int blob_add(Scene *s, const u8 *blob)
                 vg->lit = q[11];
                 vg->strip = q[12];
                 vg->share = q[13];
+                vg->cull = q[15];
                 vg->nswap = 0; vg->swap_kind = 0;
                 md->lit |= vg->lit == 1 ? 1 : vg->lit == 3 ? 2 : 0;
                 vg->env = vg->lit == 2 ? (const float *)(q + 16) : NULL;
