@@ -32,7 +32,7 @@ Blob (all little-endian; every payload starts 16-byte aligned, for DMA):
           tints, 6 multiplied by the texture alpha, 7 subtracted: render.c init_blend_states), u8 z_write, u8 alpha, u8 lit
           (1 lit, 2 environment-mapped: f32 env[12] after the header, 3 camera-lit alpha: f32 air[64] after it, air_table),
           u8 strip (strip_batches' formats), u8 share (a layer pass on the strips of the group that many back: per
-          batch only its UVs or normals), 2 pad,
+          batch only its UVs or normals), u8 proj (VU1AirProj), u8 cull (1: GX_CULL_BACK, clockwise on screen kept),
           nbatch × {u16 emitted, u16 unique} padded to 16, then per batch (index_batches): s16 pos[unique][4]
           (x, y, z in steps of qscale, w = 7 * matrix slot), s16 uv[unique][2] if textured, s8 normal[unique][4] if
           lit (x 127), u8 rgbi[emitted][4] (colour + unique index), each array padded to 16}}
@@ -853,6 +853,7 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
             texs = tex.textures(b, bl[b"TEX1"]) if b"TEX1" in bl else []
             ps2, gains, ras_split, lay_cache, airt = {}, {}, {}, {}, {}
             stats.pop("_air", None)
+            stats.pop("_cull", None)
             sky = arc.stem in SKY_ARCS or arc.stem.endswith("Sky")  # 8-bit textures (tex.to_ps2 hi)
             lfiles = {k.lower().rsplit("/", 1)[-1]: v for k, v in files.items()}
             bp = brk or BRK_POSE.get(arc.stem)  # a BRK_ARG variant's (name, frame) first
@@ -910,6 +911,21 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 mat = shapes.get(info["shape"])
                 if mat is not None and (arc.stem, tex.material_name(b, bl[b"MAT3"], mat)) in DROP_MATERIALS:
                     continue
+                pj_ = None
+                if mat is not None:  # its Projmap textures at what this shape reads of them (tex.proj_texels), through
+                    # the own-name BTK at rest (MapObjActor::init tryStartAllAnim): its end when played once (J3D loop
+                    # 0), else frame 0 (CapsuleCage's 39 frames bring its Vanish ramp onto the cage)
+                    mn_ = tex.material_name(b, bl[b"MAT3"], mat)
+                    rest = {}
+                    for c_, _ in tex.stage_coords(b, bl[b"MAT3"], mat) if anim_tex else ():
+                        g_ = tex.coord_gen(b, bl[b"MAT3"], mat, c_)
+                        hit = next((x for x in anim_tex["mats"] if g_ and x[0] == mn_ and x[1] == g_["slot"]), None)
+                        if hit:
+                            rest[g_["slot"]] = btk_matrix(hit, anim_tex["frames"] if anim_tex["loop"] == 0 else 0, g_["maya"])
+                    pj_ = tex.proj_texels(b, bl[b"MAT3"], mat, texs, verts, rest)
+                if pj_:
+                    over = dict(over or {})
+                    over[mn_] = dict(over.get(mn_, {}), proj_val=pj_)
                 mt = tex.material_tex(b, bl[b"MAT3"], mat, bl.get(b"TEX1")) if mat is not None else None
                 # Air's camera-lit alpha (tex.camera_alpha): VU1Air, per vertex its table (air_table, stats "_air")
                 cam = tex.camera_alpha(b, bl[b"MAT3"], mat) if arc.stem in AIR and mat is not None else None
@@ -1252,6 +1268,9 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
                 if air_rows:  # its table by group (assets: lit byte 3); gain 2: colours stored x 1 as unlit (vu_groups)
                     stats.setdefault("_air", {})[len(groups)] = air_rows
                     gain = 2
+                cm = tex.cull_mode(b, bl[b"MAT3"], mat) if mat is not None else 0
+                if cm in (1, 2):  # GX's cull (assets: header byte 15), kept for screen models only (the return)
+                    stats.setdefault("_cull", {})[len(groups)] = cm
                 groups.append((verts, [remap[v] for v in tri], uvs, t, slots, cols, blend, nrm, gain))
                 stats.setdefault("_shape", []).append(info["shape"])  # (bvas_entries: its shape's visibility)
                 if layer and (t is not None or ind_layer) and layer["tex"] < len(texs):
@@ -1346,6 +1365,15 @@ def model_groups(arc, ratio, stats=None, skinned=False, pose=None, brk=None, mat
         js = skin.joints(mb, bl)
         w = skin.world(js)[[j["name"] for j in js].index(KCL_JOINT[arc.stem])]
         kcl = kcl_shift(kcl, [float(x) for x in w[:3, 3]])
+    if not any(g[6][0] == 3 for g in groups):
+        # ponytail: GX's cull mode only in a model with a screen group (render.c screen_model: HeavensDoorInsideCage's
+        # CrystalBackFace, whose near side the GS would draw over IndMat), and only on VU1Tex groups (assets); the rest
+        # stays two-sided as the GS draws it. Everywhere would need the VU1Strip / Lit / Env programs culling too
+        stats.pop("_cull", None)
+    for gi, cm in stats.get("_cull", {}).items():  # GX_CULL_FRONT: wound the other way round, culled as BACK
+        if cm == 1:
+            g = groups[gi]
+            groups[gi] = g[:1] + ([g[1][i + (0, 2, 1)[i % 3] - i % 3] for i in range(len(g[1]))],) + g[2:]
     return groups, kcl, sk
 
 
@@ -2259,7 +2287,7 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
             j = next((j for j in range(gi - 1, -1, -1) if groups[j][0] is g[0] and not (groups[j][3] or {}).get("layer")),
                      None)
             if j is not None and gi - j < 256 and groups[j][3] and not groups[j][3].get("env") and not vgs[j][3] and \
-                    bool(g[3].get("env")) == bool(vgs[gi][3]):
+                    bool(g[3].get("env")) == bool(vgs[gi][3]) and j not in st.get("_cull", {}):  # (a culled base: no strips)
                 share[gi] = j
         for gi, ((verts, tris, uvs, tx, _, _, bl, _, _), (pos, col, uv, nb)) in enumerate(zip(groups, vgs)):
             ti = 0xFFFF
@@ -2280,7 +2308,8 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
                     sw = struct.pack("<HBB", gi, len(ids) + 1, tx.get("swap_kind", 0)) + struct.pack(f"<{len(ids) + 1}H", ti, *ids)
                     swaps.append(name32(t) + sw + b"\0" * (-len(sw) % 8))
             env = tx.get("env") if tx else None  # lit byte 2: VU1Env, its 12-float matrix (tex.env_mtx) after the header
-            strip = not sk and not nb and not env  # static unlit: triangle strips for VU1Strip (fmt byte 1)
+            cull = gi in st.get("_cull", ()) and not nb and not env  # byte 15: GX_CULL_BACK on VU1Tex (indexed)
+            strip = not sk and not nb and not env and not cull  # static unlit: triangle strips for VU1Strip (fmt byte 1)
             skstrip = bool(sk) and bool(nb) and not env  # skinned lit: strips for VU1SkinLit (fmt byte 2)
             envstrip = not sk and bool(env)  # static environment-mapped: strips for VU1EnvStrip (fmt byte 3), no UVs
             mine = [k for k, j in share.items() if j == gi]
@@ -2306,8 +2335,9 @@ def assets(fsp, models, planets, ratio=0.99, stats=None, collision=True, fx=Fals
             # byte 14: VU1AirProj (PROJ_AIR), the texgen's columns x, y, z (in steps of qs) and its constant, 12 floats
             pj = tx.get("proj") if tx and air else None
             pjc = [pj[r * 4 + j] * (qs if j < 3 else 1.0) for j in range(4) for r in range(3)] if pj else []
-            vg += struct.pack("<IHHBBBBBBB1x", len(tris), ti, nbt, *bl, 2 if env else 3 if air else 1 if nb else 0,
-                              1 if strip else 2 if skstrip else 3 if envstrip else 0, gi - share.get(gi, gi), 1 if pj else 0) + \
+            vg += struct.pack("<IHHBBBBBBBB", len(tris), ti, nbt, *bl, 2 if env else 3 if air else 1 if nb else 0,
+                              1 if strip else 2 if skstrip else 3 if envstrip else 0, gi - share.get(gi, gi), 1 if pj else 0,
+                              1 if cull else 0) + \
                 (struct.pack("<12f", *env) if env else b"") + struct.pack(f"<{len(pjc)}f", *pjc) + \
                 (struct.pack(f"<{len(air)}f", *air) if air else b"") + body
         body = struct.pack("<If8x", len(groups), qs) + vg
@@ -2943,6 +2973,10 @@ def selftest():
         ls = tex.layers(b, bl[b"MAT3"], m, bl[b"TEX1"], texs, tex.material_tex(b, bl[b"MAT3"], m, bl[b"TEX1"])["tex"])
         assert [(q["coord"], q["kind"], q["level"]) for q in ls] == [(1, "mul", 1.0)] and ls[0]["err"] < 0.01, ls
         assert any(g[6][0] == LAYER_BLEND["mul"] for g in model_groups(eg, 1.0)[0])
+    hc = fp.with_name("HeavensDoorInsideCage.arc")
+    if hc.exists():  # CrystalFaceMat's Vanish read where the cage sits (tex.proj_texels): TEX x RAS x 2, no K (grey) added
+        env = [g[3] for g in model_groups(hc, 1.0)[0] if g[3] and g[3].get("env")]
+        assert len(env) == 1 and max(env[0]["clut"][2::4]) == 0, env[0]["clut"][:16]
     # a unit right triangle mapped onto a 64 x 64 texture: 64 texels per unit -> K = 16 log2(64 / LOD_F)
     sq = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
     full = lod_sums(sq, [0, 1, 2], [(0, 0), (1, 0), (0, 1)], {"w": 64, "h": 64})
