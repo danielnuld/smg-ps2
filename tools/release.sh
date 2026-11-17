@@ -21,6 +21,7 @@ mkdir -p $W/out/sound_cache
 # repack, the scenarios left alone (zone_fit reads them all)
 rsync -a --modify-window=2 --exclude movies --exclude music $S/out/packs/ $W/out/packs/
 cd $W
+$PY -c "import scipy" 2>/dev/null || ~/smgvenv/bin/pip install -q scipy   # sound.py: a wave not in sound_cache yet
 
 step lyt
 $PY tools/lyt.py data/fs/files

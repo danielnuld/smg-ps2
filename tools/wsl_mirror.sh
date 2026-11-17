@@ -18,6 +18,7 @@ for d in data vendor; do
     ln -sfn $CI/$d $W/$d
 done
 rsync -rt --modify-window=2 --delete $S/data/fs/files/ $CI/data/fs/files/
+rsync -rt --modify-window=2 --delete $S/data/fs/sys $CI/data/fs/   # (lyt.py: main.dol's tables)
 rsync -rt --modify-window=2 --delete --exclude .git $S/vendor/Petari/ $CI/vendor/Petari/
 rsync -a --delete --exclude __pycache__ $S/tools/ $W/tools/
 rsync -a --delete $S/engine/src/ $W/engine/src/
