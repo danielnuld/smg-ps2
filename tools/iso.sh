@@ -15,11 +15,7 @@ DST="/srv/data/ps2/DVD/Super Mario Galaxy.iso"
 step() { echo "== $1 $(date +%T)"; }
 
 step "mirror in"
-mkdir -p $W/out/disc $W/out/packs $W/tools $W/engine/src $W/vendor/Petari $W/bin
-rsync -a --delete --exclude __pycache__ $S/tools/ $W/tools/
-rsync -a --delete $S/engine/src/ $W/engine/src/   # (disc.py's zone_fit imports slice.py: what it reads)
-rsync -a --delete --exclude .git $S/vendor/Petari/ $W/vendor/Petari/
-rsync -a $S/bin/meshopt.so $W/bin/
+. $S/tools/wsl_mirror.sh
 rsync -a --modify-window=2 $S/out/packs/ $W/out/packs/   # (movies and music too)
 [ -f $S/out/disc/SLICE.ELF ] && mv -f $S/out/disc/SLICE.ELF $S/out/disc/SMGP_000.01   # as disc.py does: one boot file
 cp $S/out/disc/SMGP_000.01 $W/out/disc/

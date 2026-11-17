@@ -14,12 +14,8 @@ J=${2:-$(nproc)}
 step() { echo "== $1 $(date +%T)"; }
 
 step "mirror in"
-mkdir -p $W/data/fs/files $W/tools $W/vendor/Petari $W/engine/src $W/bin $W/out/packs $W/out/sound_cache
-rsync -a --delete $S/data/fs/files/ $W/data/fs/files/
-rsync -a --delete --exclude __pycache__ $S/tools/ $W/tools/
-rsync -a --delete --exclude .git $S/vendor/Petari/ $W/vendor/Petari/
-rsync -a --delete $S/engine/src/ $W/engine/src/
-rsync -a $S/bin/meshopt.so $W/bin/
+mkdir -p $W/out/sound_cache
+. $S/tools/wsl_mirror.sh
 [ -d $S/out/sound_cache ] && rsync -a --ignore-existing $S/out/sound_cache/ $W/out/sound_cache/
 # the packs other tools make (letter.bin, title.bin...: slice_all's room counts the menus') and, for a partial
 # repack, the scenarios left alone (zone_fit reads them all)
