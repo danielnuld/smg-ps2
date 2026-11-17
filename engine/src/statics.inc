@@ -332,9 +332,11 @@ static void st_surp(Inst *in, StSt *g)
     }
 }
 /* the scene's start (game_init): the classes dead from their init */
+static int st_nbtk; /* (st_btk's count, below) */
 static void st_init(const Scene *s)
 {
     st_mapboard = 0;
+    st_nbtk = 0;
     for (u32 i = 0; i < s->nobjs; i++) {
         const char *n = s->types + 32 * s->objs[i].type;
         if (st_kind_name(n) == ST_SURP && s->objs[i].sw[SW_APPEAR] < 0) { /* SurprisedGalaxy::init */
@@ -363,12 +365,25 @@ static void st_init(const Scene *s)
  * syncStageSwitchAppear): Appear from its appear (startAllAnim Appear: its BTK, 299 frames once, the light wiping up
  * AppearLightMat_v; StageEffect SE_OJ_HD_STEP_APPEAR; startStageBGM MBGM_GALAXY_24, startSubBGM BGM_APPEAR_HD_TOWER)
  * until the BTK stops, then Wait (the BTK at its end). n: 0 not out yet, 1 Appear, 2 Wait */
-static const Model *st_btk_md; /* the model whose BTK runs at st_btk_fr, not the game's frame (game_draw) */
-static float st_btk_fr;
+/* the models whose BTK runs at their actor's own frame, not the game's (game_draw; slice.py BTK_NAME); reset by st_init */
+static struct { const Model *md; float fr; } st_btk[12];
+static int st_nbtk;
+static void st_btk_set(const Model *md, float fr)
+{
+    int i = 0;
+    while (i < st_nbtk && st_btk[i].md != md) i++;
+    if (i == (int)(sizeof st_btk / sizeof st_btk[0])) return;
+    if (i == st_nbtk) st_nbtk++;
+    st_btk[i].md = md; st_btk[i].fr = fr;
+}
+static float st_btk_frame(const Model *md, float fr)
+{
+    for (int i = 0; i < st_nbtk; i++) if (st_btk[i].md == md) return st_btk[i].fr;
+    return fr;
+}
 static void st_hdstep(Inst *in, StSt *g)
 {
     if (!row_shown(in->row) || row_dead[in->row]) { g->n = 0; return; }
-    st_btk_md = in->md;
     if (g->n == 0) {
         g->n = 1; g->st = 0;
         se_start(SE_OJ_HD_STEP_APPEAR, &in->m[12]); /* tryStageEffectStart */
@@ -376,7 +391,7 @@ static void st_hdstep(Inst *in, StSt *g)
         bgm_sub("BGM_APPEAR_HD_TOWER");
         printf("heavens door appear step %d: appear%c", in->row, 10);
     }
-    st_btk_fr = g->n == 1 ? (float)g->st : 299.0f;
+    st_btk_set(in->md, g->n == 1 ? (float)g->st : 299.0f);
     if (g->n == 1 && g->st >= 299) { g->n = 2; printf("heavens door appear step %d: wait%c", in->row, 10); } /* isBtkStopped */
 }
 /* MarblePlanet.cpp after Petari (OceanPhantomCaveGalaxy 2): a glass planet with its core (MarblePlanetCore at its
@@ -518,7 +533,7 @@ static void st_mp_draw(void)
         float fr = st_mpl.nrv == 2 || st_mpl.broke ? 9.0f : (float)(st_mpl.n - st_mpl.left) * 9.0f / st_mpl.n;
         anim_play(a, "marbleplanetcore/marbleplanetcore", 0.0f, 0, 0);
         a->frame = fr; anim_update(a);
-        st_btk_md = st_mpl.mcore; st_btk_fr = fr;
+        st_btk_set(st_mpl.mcore, fr);
         float s = 1.0f;
         if (st_mpl.nrv == 1) s = 1.3f + (1.0f - 1.3f) * st_reaction(fminf(st_mpl.st / 30.0f, 1.0f), 0.5f, -0.5f);
         memcpy(m, st_mpl.m, 64);

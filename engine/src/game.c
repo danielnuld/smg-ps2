@@ -397,7 +397,7 @@ typedef struct {
     int leaves;      /* CoconutTreeLeaf: its leaves sway, each with its collision (update_leaves, leaf_joints, lf_mats) */
     int palm;        /* PalmIsland: bobs on the water (update_palms) */
     int sstorm;      /* SunakazeKun 1, TwisterSan 2, TwisterSanSlim 3: catches Mario, a spin throws him up (update_storms, ss_hold) */
-    int tdoor;       /* TypicalDoor 1, DarknessRoomDoor 2, TypicalDoorOpen 3 (update_doors, door_place) */
+    int tdoor;       /* TypicalDoor 1, DarknessRoomDoor 2, TypicalDoorOpen 3, AstroMapObj's door 4 (update_doors, door_place) */
     int clipa;       /* a clip area's shape (clip_area.inc CA_*): not drawn, its volume masks the ClippedMapParts */
     int clipp;       /* SimpleClipPartsObj 1, DarknessRoomDoorA 2 (ClippedMapParts with arg0 -1), ClipAreaDropLaser 3 */
     int lotus;       /* LotusLeaf: shakes under Mario (update_lotus) */
@@ -5353,7 +5353,8 @@ static void class_make(ClassInfo *ci, const char *name)
     ci->sstorm = strcmp(name, "SunakazeKun") == 0 ? 1 : strcmp(name, "TwisterSan") == 0 ? 2 : strcmp(name, "TwisterSanSlim") == 0 ? 3 : 0;
     ci->clipa = ca_shape_of(name);
     ci->clipp = strcmp(name, "ClipAreaDropLaser") == 0 ? 3 : ca_parts_of(name);
-    ci->tdoor = strcmp(name, "TeresaMansionDoorA") == 0 || strcmp(name, "TeresaMansionDoorB") == 0 ? 1 : strcmp(name, "DarknessRoomDoorA") == 0 ? 2 : strcmp(name, "TeresaMansionEntranceDoor") == 0 ? 3 : 0;
+    ci->tdoor = strcmp(name, "TeresaMansionDoorA") == 0 || strcmp(name, "TeresaMansionDoorB") == 0 ? 1 : strcmp(name, "DarknessRoomDoorA") == 0 ? 2 : strcmp(name, "TeresaMansionEntranceDoor") == 0 ? 3 :
+                !strncmp(name, "AstroDomeEntrance", 17) || !strcmp(name, "AstroLibrary") ? 4 : 0; /* (AstroMapObj.cpp checkStrings) */
     ci->lotus = strcmp(name, "LotusLeaf") == 0;
     ci->train = strcmp(name, "ChooChooTrain") == 0;
     ci->vflow = strcmp(name, "LavaHomeVolcanoFlow") == 0;
@@ -5654,7 +5655,7 @@ static void game_rebind_(void)
         in->kmove = -1; in->kparent = -1; in->movelimit = 0;
         if (in->kcl && in->anim && md->skin && !in->dswitch) /* MapObjActor: the collision on the Move joint (slice.py marks it: pad 1); DesertLandMoveSwitch keeps its own still */
             for (int j = 0; j < md->skin->njoints; j++) if (md->skin->joints[j].pad == 1) { in->kmove = j; break; }
-        if (in->tdoor) { char kn[48]; snprintf(kn, sizeof kn, "%s#Open", name); in->kcl_close = in->kcl; in->kcl_open = scene_kcl(s, kn); }
+        if (in->tdoor) { char kn[48]; /* (4, AstroMapObj: createCollisionPartsFromLiveActor Close / Open) */ snprintf(kn, sizeof kn, in->tdoor == 4 ? "%s#Op" : "%s#Open", name); in->kcl_close = in->kcl; in->kcl_open = scene_kcl(s, kn); }
         in->zone = r->zone;
         mat_translate_rot_scale(in->m, r->pos, r->rot, r->scale);
         in->s = r->scale[0];
@@ -39991,8 +39992,26 @@ static int door_solid(const Inst *in) /* kcl_query: DarknessRoomDoor::control's 
     const Row *r = &sc->objs[in->row];
     return in->tdoor != 2 || r->arg[0] != -1 || r->sw[SW_A] < 0 || sw_on(r, SW_A);
 }
+/* AstroMapObj (AstroDomeEntrance, AstroLibrary: tdoor 4) setStateDoorOpenOrClose: its Open collision once
+ * AstroMapObjFunction::isAlreadyOpen (the library: isOnGameEventFlagLibraryRoom; a dome's entrance:
+ * getOpenedAstroDomeNum >= its dome, arg0), its Close one till then; its Open BTK (the door's texture matrix, slice.py
+ * BTK_NAME) at its end or at 0 with it. ponytail: no Open nerve (the demo's Open BTK played, its BRK: StarLightMat_v's
+ * alpha 0 -> 0.5, and SE_OJ_ASTRO_ENTRANCE_OPEN; the door swaps when the grand star's result is over, not in the demo) */
+static int astro_opened_domes(void);
+static void st_btk_set(const Model *md, float fr);
+static int astro_door_open(const Inst *in)
+{
+    if (!strcmp(sc->types + 32 * sc->objs[in->row].type, "AstroLibrary")) return gd_book_can_read() > 0;
+    return astro_opened_domes() >= sc->objs[in->row].arg[0];
+}
 static void door_place(Inst *in)
 {
+    if (in->tdoor == 4) { /* (its Open BTK at its end, 119, or stopped at 0: setAllAnimFrameAtEnd / setAllAnimFrameAndStop) */
+        int open = astro_door_open(in);
+        if (in->kcl_open) in->kcl = open ? in->kcl_open : in->kcl_close;
+        if (in->md) st_btk_set(in->md, open ? 119.0f : 0.0f);
+        return;
+    }
     if (!row_turn || !in->kcl_open) return;
     in->kcl = row_turn[in->row] && row_step[in->row] >= 30 ? in->kcl_open : in->kcl_close;
 }
@@ -40001,6 +40020,7 @@ static void update_doors(void)
     FOR_KIND(i, tdoor) {
         Inst *in = &insts[i];
         if (!in->tdoor || !row_shown(in->row)) continue;
+        if (in->tdoor == 4) { door_place(in); continue; }
         const Row *r = &sc->objs[in->row];
         signed char *open = &row_turn[in->row];
         unsigned short *st = &row_step[in->row];
@@ -41708,6 +41728,31 @@ int game_test_movie(int which) /* tests: the appear switch of the MovieStarter o
 }
 
 static int ac_row = -1, ac_wait;
+#ifdef ASTRO_DOOR
+/* astro test with XF=-DASTRO_DOOR=1: Mario 600 out of dome 1's door (its cube's side of the dome's centre), walked by the stick through its door to its
+ * AstroChangeStageCube (its Open collision: the Close one stops him at the door, as with =0, no grand star) */
+int game_test_astro_door(int frame)
+{
+    static int put;
+    int t = scene_type(sc, "AstroDomeEntranceObservatory"), e = -1, c = -1;
+    for (u32 i = 0; t >= 0 && i < sc->nobjs; i++) if ((int)sc->objs[i].type == t) e = (int)i;
+    for (int i = 0; i < nlogic; i++) {
+        const Row *r = &sc->objs[logic[i].row];
+        if (logic[i].kind == LOGIC_ASTROCUBE && r->arg[0] == 5 && r->arg[2] == 1) c = logic[i].row;
+    }
+    if (e < 0 || c < 0) return -1;
+    V3 ep = row_pos(&sc->objs[e]), cp = row_pos(&sc->objs[c]);
+    if (!put) { put = 1; mario->pos = vadd(vadd(cp, vmul(vnorm(vsub(cp, ep)), 600.0f)), v3(0, 150, 0)); mario->hvel = v3(0, 0, 0); mario->vup = 0; }
+    int at = test_walk_to(cp, 60.0f);
+    if (frame % 30 == 0) {
+        const Inst *in = NULL;
+        for (int i = 0; i < ninsts; i++) if (insts[i].row == e) in = &insts[i];
+        printf("astro door f %d: mario %d %d %d, %d from the cube, door %s%c", frame, (int)mario->pos.x, (int)mario->pos.y, (int)mario->pos.z,
+               (int)vlen(vsub(cp, mario->pos)), !in || !in->kcl_open ? "none" : in->kcl == in->kcl_open ? "open" : "close", 10);
+    }
+    return at;
+}
+#endif
 int game_test_astro_cube(int mode) /* tests: Mario put in the first AstroChangeStageCube of arg0 `mode`; its row */
 {
     for (int i = 0; i < nlogic; i++) {
@@ -55374,7 +55419,7 @@ void game_draw(void)
      * started with the scene, not each actor's own startBtk */
     for (u32 i = 0; i < sc->nmodels; i++)
         for (u32 g = 0; g < sc->models[i].vu_ngroups; g++)
-            if (sc->models[i].vu[g].btk) anim_btk(sc->models[i].vu[g].btk, &sc->models[i] == st_btk_md ? st_btk_fr : (float)game_frame, sc->models[i].vu[g].uvm); /* (st_btk_md: its actor's own frame, statics.inc) */
+            if (sc->models[i].vu[g].btk) anim_btk(sc->models[i].vu[g].btk, st_btk_frame(&sc->models[i], (float)game_frame), sc->models[i].vu[g].uvm); /* (st_btk: its actor's own frame, statics.inc) */
     render_proj(sc); /* ProjectionMapAir's texgen through those (~6000 EE cycles, 0.02 ms, OceanPhantomCave 1) */
     int sky_drawn = 0;
     for (int i = 0; i < ninsts; i++) { /* skies first, at the camera; ponytail: scaled to fit inside the far plane

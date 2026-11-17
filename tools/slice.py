@@ -293,6 +293,12 @@ KCL_PARTS = {"MarblePlanet": {"watermelon.kcl": "WaterMelon"},  # MarblePlanet's
              "DarknessRoomDoorA": {"open.kcl": "Open"},
              "TeresaMansionDoorA": {"open.kcl": "Open"}, "TeresaMansionDoorB": {"open.kcl": "Open"},
              "TeresaMansionEntranceDoor": {"open.kcl": "Open"},
+             # AstroMapObj (AstroDomeEntrance, AstroLibrary): createCollisionPartsFromLiveActor Close (the model's own
+             # here: the archive's first) and Open, swapped once the door is open (game.c door_place, tdoor 4); "#Op":
+             # "AstroDomeEntranceObservatory#Open" is over name32's 31 characters
+             **{n: {"open.kcl": "Op"} for n in ("AstroDomeEntranceObservatory", "AstroDomeEntranceWell",
+                                                  "AstroDomeEntranceKitchen", "AstroDomeEntranceBedRoom",
+                                                  "AstroDomeEntranceMachine", "AstroDomeEntranceTower", "AstroLibrary")},
              "DesertLandDownSwitch": {"move.kcl": "Move"}, "DesertLandUpSwitch": {"move.kcl": "Move"},  # TypicalDoor's Open collision too
              "ShellfishCoin": {"low.kcl": "Static"}, "ShellfishYellowChip": {"low.kcl": "Static"},  # Shellfish's Low (createCollisionPartsFromLiveActor): a still part
              "BossStinkBug": {"bodyground.kcl": "Ground", "bodyhipdrop.kcl": "HipDrop"},
@@ -479,7 +485,11 @@ def scene(fs, galaxy, scenario):
 VIS = {"PowerStar": ("PowerStar", 0), "DinoPackunEggShell": ("normal", None), "CrystalCageS": ("CrystalCageS", 0), "CrystalCageM": ("CrystalCageM", 0),
        "CrystalCageL": ("CrystalCageL", 0)}  # CrystalCageL: frame 1 cracked, 2 (its last) the stump: EXTRA "#CrystalCageL:1" / "#CrystalCageL"
 # HeavensDoorDemoObj::exeAppear (HeavensDoorAppearStepA): startAllAnim Appear, its BTK's frame from the instance
-BTK_NAME = {"HeavensDoorAppearStepA": "appear"}
+# AstroMapObj::setStateDoorOpenOrClose (AstroDomeEntrance*, AstroLibrary): Open's BTK at 0 or its end (game.c door_place)
+BTK_NAME = {"HeavensDoorAppearStepA": "appear",
+            **{n: "open" for n in ("AstroDomeEntranceObservatory", "AstroDomeEntranceWell", "AstroDomeEntranceKitchen",
+                                   "AstroDomeEntranceBedRoom", "AstroDomeEntranceMachine", "AstroDomeEntranceTower",
+                                   "AstroLibrary")}}
 # models baked with a BRK's registers at a frame (Tico.cpp: ColorChange at its colour, frame 0 the yellow one)
 # startBrk + setBrkFrameAndStop(argN): one model per frame its rows use, "<class>~<frame>" baked at that frame (game.c
 # brk_model picks it by the row's arg). Butterfly: startBrk Butterfly, frame mColorIndex = arg0 (NoInit: 0)
