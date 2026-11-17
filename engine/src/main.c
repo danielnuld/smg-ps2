@@ -1153,10 +1153,15 @@ int main(void)
         }
 #endif
 #if defined(PACKS) && defined(ASTRO_TEST)
+#ifdef ASTRO_DOOR /* XF=-DASTRO_DOOR=1: walked through dome 1's entrance instead (=0: without the grand star, its door shut) */
+        if (frame == 200 && ASTRO_DOOR) gd_set_star("HeavensDoorGalaxy", 1);
+        if (frame > 260) { extern int game_test_astro_door(int); game_test_astro_door((int)frame); }
+#else
         if (frame == 200) { /* the first grand star (the first dome open), Mario in a dome's entrance cube */
             gd_set_star("HeavensDoorGalaxy", 1);
             printf("astro test: grand star 1 %d, cube row %d\n", gd_flag_is_on("SpecialStarGrand1"), game_test_astro_cube(5));
         }
+#endif
 #endif
 #if defined(PACKS) && defined(ENDING_TEST)
         { /* KoopaBattleVs3Galaxy/1's star faked: EpilogueA, EpilogueDemoStage's エピローグデモ, EndingA, the staff roll, its
@@ -1317,6 +1322,13 @@ int main(void)
                 printf("grand test f %u: busy %d demo %d result %d saving %d\n", frame, game_story_busy(), game_test_demo(-1),
                        menu_result_showing(), menu_saving());
             (void)pages;
+#ifdef ASTRO_DOOR /* XF=-DASTRO_DOOR=1: once the return's demos are over, Mario walked through the Terrace's door (its Open collision) */
+            if (frame > 1500 && !second && !game_story_busy() && game_test_demo(-1) < 0 && !menu_result_showing() && !menu_saving()) {
+                extern int game_test_astro_door(int);
+                pad_force = 0;
+                game_test_astro_door((int)frame);
+            }
+#endif
         }
 #endif
 #if defined(PACKS) && defined(FINALMOVIE_TEST) /* AstroGalaxy/5: the FinalBattle MovieStarter, then the scenario select */
