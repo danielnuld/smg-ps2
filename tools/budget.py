@@ -4,13 +4,14 @@ usage: python tools/budget.py data/fs/files [out_dir] [--levers]    (nodtool ext
        python tools/budget.py --selftest
 Every format detail below cites docs/sources.md (Petari file:line).
 """
-import csv, json, re, struct, sys, zlib
+import csv, functools, json, re, struct, sys, zlib
 from pathlib import Path
 
 def u16(b, o): return struct.unpack_from(">H", b, o)[0]
 def u32(b, o): return struct.unpack_from(">I", b, o)[0]
 
 # ---------- Yaz0 (JKRDecomp.cpp:195-260) ----------
+@functools.lru_cache(maxsize=128)  # slice.py opens the same archives for every scenario of a galaxy (a tenth of a repack)
 def yaz0(src):
     if src[:4] != b"Yaz0":
         return src

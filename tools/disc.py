@@ -10,6 +10,7 @@ name, since launchers (ORBIT's catalog, OPL) take the boot file's name as the ga
 Before it, tools/zone_fit.py --elf checks every scenario's main stage fits the pack region that ELF leaves (it fails here
 otherwise, not with "packs: no memory" on the PS2). Then the ISO through mkisofs in WSL (ISO 9660 level 1: the PS2
 ROM's cdrom0: reads 8.3 names only, hence one big file and a table instead of the packs' own names).
+Runs under WSL too (tools/release.sh disc: on the WSL disk, where PACKS.BIN is written in a minute, not half an hour).
 """
 import struct
 import subprocess
@@ -43,7 +44,7 @@ def build(packs, disc):
 
 def wsl_path(p):
     p = p.resolve()
-    return f"/mnt/{p.drive[0].lower()}{p.as_posix()[2:]}"
+    return p.as_posix() if sys.platform != "win32" else f"/mnt/{p.drive[0].lower()}{p.as_posix()[2:]}"
 
 
 def main():
@@ -63,7 +64,7 @@ def main():
     order = disc / "order.txt"
     order.write_bytes("".join(f"{wsl_path(disc / f)} {w}\n" for f, w in
                               (("SYSTEM.CNF", 300), (BOOT, 200), ("PACKS.TOC", 100))).encode())
-    subprocess.run(["wsl.exe", "-e", "mkisofs", "-quiet", "-iso-level", "1", "-V", "SMGPS2", "-sysid", "PLAYSTATION",
+    subprocess.run((["wsl.exe", "-e"] if sys.platform == "win32" else []) + ["mkisofs", "-quiet", "-iso-level", "1", "-V", "SMGPS2", "-sysid", "PLAYSTATION",
                     "-sort", wsl_path(order), "-m", "order.txt", "-o", wsl_path(iso), wsl_path(disc)], check=True)
     print(f"{iso}: {iso.stat().st_size / 2**20:.0f} MB")
 
