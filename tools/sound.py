@@ -940,6 +940,14 @@ BAS_ARCS = ("MarioAnime", "Butler", "CocoSamboBody", "CocoSamboHead", "DinoPacku
             "TicoBaby", "TicoComet", "TicoFat")
 
 
+def write_if_changed(path, text):
+    """The generated headers are the same for every pack: packs built in parallel must not rewrite one while
+    another reads it."""
+    p = Path(path)
+    if not p.exists() or p.read_text("utf-8") != text:
+        p.write_text(text, "utf-8")
+
+
 def mario_table(out_h):
     """Petari Player/MarioSound.cpp `soundlist` (key, SE, flags, the companion key played under water) ->
     engine/src/mario_snd.h for Mario::playSoundJ: kind = flags byte 0 (& 3: 0 on Mario, 1 level on Mario, 2 system,
@@ -954,9 +962,9 @@ def mario_table(out_h):
             continue
         comp = comp.strip()
         rows.append(f'    {{"{key}", {se}, {int(flags, 0) >> 24}, {comp if comp != "0" else "NULL"}}},\n')
-    Path(out_h).write_text("/* Mario's sound table, Petari Player/MarioSound.cpp soundlist (tools/sound.py pack) */\n"
+    write_if_changed(out_h, "/* Mario's sound table, Petari Player/MarioSound.cpp soundlist (tools/sound.py pack) */\n"
                            "static const struct { const char *key; u32 id; u8 kind; const char *water; } mario_snd[] = {\n"
-                           + "".join(rows) + "};\n", "utf-8")
+                           + "".join(rows) + "};\n")
     return len(rows)
 
 
@@ -1126,7 +1134,7 @@ def pack(fs, out_bin, ids_h, sources, cap=16000, budget=1850000, scene=None):
         names = {n for n in names if baa.ids[n][1] in (0, 1, 2) or n in keep or n not in known or n in bas_names
                  or n in talk}
     names = sorted(names)
-    Path(ids_h).write_text("/* SE names -> JAISoundID (section << 24 | group << 16 | index), tools/sound.py pack */\n"
+    write_if_changed(ids_h, "/* SE names -> JAISoundID (section << 24 | group << 16 | index), tools/sound.py pack */\n"
                            "#ifndef SE_IDS_H\n#define SE_IDS_H\n" +
                            "".join(f"#define {n} 0x{s << 24 | g << 16 | i:08X}u\n" for (s, g, i), n in
                                    sorted(baa.names.items()) if s == 0 and re.fullmatch(r"SE_[A-Z0-9_]+", n)) +
