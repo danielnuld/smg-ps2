@@ -16787,6 +16787,21 @@ static void m_try_squat_jump(Player *m) /* trySquatJump: the long jump */
     m->jumping = 1; m->turn_slip = 0; m->connect = 0; m->turn_brake = 0;
 }
 
+/* MarioSwim::checkUnderWaterFull(dir): from 100 along dir and 100 up, down his gravity every 40 up to 10000: the
+ * distance at which water is met, -1 if the map (a point) or a ForbidWaterSearchCube comes first.
+ * ponytail: ForbidWaterSearchCube is not in the packs yet (slice.py LOGIC): area_obj finds none */
+static float sw_under_water_full(const Player *m, V3 dir)
+{
+    Hit h[1];
+    float depth;
+    for (float d = 0.0f; d < 10000.0f; d += 40.0f) {
+        V3 p = vadd(vadd(m->pos, vmul(dir, 100.0f)), vmul(m->up, -(d - 100.0f)));
+        if (area_obj("ForbidWaterSearchCube", p) >= 0) return -1.0f;
+        if (in_water(p, m->up, &depth)) return d;
+        if (kcl_query(p, 1.0f, h, 1)) return -1.0f; /* checkStrikePointToMap */
+    }
+    return -1.0f;
+}
 static void m_try_back_jump(Player *m) /* tryBackJump: the back flip */
 {
     m->squat_lock = 1; m->squat = 0;
@@ -16797,6 +16812,10 @@ static void m_try_back_jump(Player *m) /* tryBackJump: the back flip */
     mario_play("jumpback", 1.0f, 0);
     mario_sound("後ジャンプ"); mario_sound("声後ジャンプ"); mario_sound("ジャンプ踏切");
     mario_smoke(SMOKE_HIGH_JUMP);
+    if (sw_under_water_full(m, vmul(m->face, -1.0f)) > 500.0f && m_sz == 0.0f) { /* deep water behind: the back dive */
+        m_anim("後方飛び込みジャンプ");
+        mario_sound("声高飛び込み"); mario_sound("ジャンプ踏切");
+    }
 #ifdef BENCH
     printf("jump jumpback\n");
 #endif
@@ -16857,6 +16876,12 @@ static void m_try_jump(Player *m) /* tryJump: 1st / 2nd / 3rd jump, or the turn,
     }
     else if (m->jump_kind == 1) { mario_sound("中ジャンプ"); mario_sound("声中ジャンプ"); mario_sound("ジャンプ踏切"); }
     else { mario_sound("大ジャンプ"); mario_sound("声大ジャンプ"); mario_sound("ジャンプ踏切"); mario_smoke(SMOKE_HIGH_JUMP); }
+    if (sw_under_water_full(m, m->face) > 500.0f && m_sz == 0.0f) { /* deep water ahead, the stick let go: the dive
+                                                                     * (mMovementStates._E: the swim reads the clip) */
+        m_anim("飛び込みジャンプ");
+        mario_sound("声高飛び込み"); mario_sound("ジャンプ踏切");
+        m_set_jv(m, vadd(m_jv(m), vmul(m->face, 5.0f))); /* (mStickPos.z < 0.1) */
+    }
     m->connect = 1;
 #ifdef BENCH
     printf("jump %s\n", clips[m->jump_kind]);
